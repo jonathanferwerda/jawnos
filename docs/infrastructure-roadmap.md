@@ -571,13 +571,25 @@ Euro at ≈1.50 CAD, so Hetzner's monthly is **1.5–2× the KS-5** even with no
 wins. KS-A and KS-GAME are both rejects: one is slower network at 3× the price, the other is +$16
 for ~7% single-thread and a lower RAM ceiling.
 
-### Order now; do not wait for Black Friday
+### Order now, or wait for the event — no codes exist
 
-The wait buys exactly one thing: the **$26.69 setup fee**. Provisioning is an hour, so waiting three
-and a half weeks costs three and a half weeks of the thing the laptop needs. Pay the fee, or make
-one pre-sales ask first — a **seven-server account is real leverage**, and a setup waiver or a
-loyalty credit is a single ticket away. Ask for a multi-server discount on the monthly at the same
-time; it costs nothing to ask.
+**There are no promo codes** (checked 2026-11-02). Kimsufi's own Black Friday page states the
+discount "is applied automatically when you order, with no promo code", that it applies to **new**
+server orders from existing accounts (not to renewals), and that stock is limited per datacentre.
+The page is a placeholder until the event launches, so the size of the discount is unknown.
+Third-party "Kimsufi coupon" sites are affiliate spam — one of them promises "free shipping" on a
+dedicated server.
+
+So the wait buys the **$26.69 setup fee and possibly a monthly discount** — which is worth more than
+the fee if the event lands. Against that: three and a half weeks without the box, and no guarantee
+the 64 GB KS-5 in Beauharnois stays in stock.
+
+The decision, plainly: ask pre-sales for a waiver **now**, and if they grant one, order. If they
+don't and the saving matters, wait for the event and watch stock; if the laptop being the bottleneck
+is the real cost, pay the fee today. Ask about a multi-server discount on the monthly either way.
+
+One thing to confirm either way: **whether $38.58 is ex-tax.** Kimsufi's catalogue prices are, so
+the cart will add GST/HST/QST — budget roughly $43–44 as the real monthly.
 
 If the box lands after **2026-12-02**, renew the VPS one more month (~$9) rather than compress the
 cutover. The migration is the risky part; the VPS month is not.
