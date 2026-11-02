@@ -214,4 +214,87 @@ my $report = {
 my $no_rows = &subs::ai_balance_chart({ at => $now, rows => [], history => { deepseek => \@points } }, $now);
 is scalar @{ $no_rows->{'series'} }, 0, 'history without a registered row draws nothing';
 
+# The hourly graph: the same samples grouped into clock hours. A fall lands in
+# the hour its later reading was taken, a top-up adds nothing, and the drop
+# from the last sample before the window is carried in at the left edge - the
+# same rule the line window uses, so the two agree on the day's spend.
+my $hourly_points = [
+	{ t => $now - 5 * $H, v => 100 },
+	{ t => $now - 4 * $H, v => 90 },   # 10 spent in that hour
+	{ t => $now - 3 * $H, v => 90 },
+	{ t => $now - 2 * $H, v => 95 },   # a top-up, not a negative hour
+	{ t => $now - 1 * $H, v => 90 },   # 5 spent
+	{ t => $now,          v => 90 },
+];
+my $hourly = &subs::ai_balance_hourly($hourly_points, $now);
+is scalar @{ $hourly->{'buckets'} }, 24, 'the hourly graph has one bucket per hour';
+is $hourly->{'samples'}, 6, 'and counts the readings inside the day';
+cmp_ok abs($hourly->{'buckets'}->[19]->{'spend'} - 10), '<', 0.001, 'a fall lands in the hour it was seen';
+cmp_ok abs($hourly->{'buckets'}->[21]->{'spend'}), '<', 0.001, 'a top-up spends nothing in its hour';
+cmp_ok abs($hourly->{'buckets'}->[22]->{'spend'} - 5), '<', 0.001, 'the later fall lands in its own hour';
+cmp_ok abs($hourly->{'total'} - 15), '<', 0.001, 'the day\'s spend is the sum of the hours';
+cmp_ok abs($hourly->{'max'} - 10), '<', 0.001, 'the busiest hour sets the scale';
+is $hourly->{'peak'}->{'start'}, $hourly->{'buckets'}->[19]->{'start'}, 'and is named as the peak';
+like $hourly->{'peak'}->{'label'}, qr/^\d\d:00$/, 'every hour is labelled on the clock';
+is $hourly->{'buckets'}->[19]->{'end'} - $hourly->{'buckets'}->[19]->{'start'}, $H, 'a bucket is exactly an hour';
+
+# The bucket edges are whole clock hours, so the last one is the hour in
+# progress and holds everything since it began.
+is $hourly->{'top'} % $H, 0, 'the newest bucket starts on the hour';
+cmp_ok $hourly->{'buckets'}->[-1]->{'start'}, '<=', $now, 'and does not start in the future';
+cmp_ok $now - $hourly->{'buckets'}->[-1]->{'start'}, '<', $H, 'the last hour is the one in progress';
+
+# A fall that began before the window is carried in at the left edge rather
+# than vanishing; with a clock-aligned now the share is exact.
+my $edge_now = &subs::ai_balance_hourly([], $now)->{'top'};
+my $edge = &subs::ai_balance_hourly([
+	{ t => $edge_now - 30 * $H, v => 200 },
+	{ t => $edge_now - 12 * $H, v => 100 },
+], $edge_now);
+cmp_ok abs($edge->{'buckets'}->[11]->{'spend'} - (100 - 100 * 7 / 18)), '<', 0.001,
+	'the drop across the window edge is counted where the next reading lands';
+cmp_ok abs($edge->{'total'} - $edge->{'buckets'}->[11]->{'spend'}), '<', 0.001,
+	'and nowhere else';
+is $edge->{'buckets'}->[0]->{'spend'}, 0, 'the first hour does not invent a spend';
+
+# A flat balance is empty, not a busy hour; one reading is not a day.
+my $flat_hours = &subs::ai_balance_hourly([
+	{ t => $now - 2 * $H, v => 5 },
+	{ t => $now,          v => 5 },
+], $now);
+is $flat_hours->{'total'}, 0, 'a balance that held steady spent nothing';
+ok !$flat_hours->{'peak'}, 'and has no busiest hour';
+my $one_hour = &subs::ai_balance_hourly([ { t => $now, v => 5 } ], $now);
+is $one_hour->{'samples'}, 1, 'a single reading is one sample';
+is $one_hour->{'total'}, 0, 'with nothing to spend';
+
+# The drawing: one bar per hour, the peak marked, and nothing unrenderable.
+my $bars = &subs::ai_balance_bars($hourly, 320, 48);
+like $bars, qr/^<svg class="balance_bars"/, 'the hourly graph is an svg';
+is scalar(() = $bars =~ /<rect/g), 24, 'with a bar for every hour';
+like $bars, qr/<rect class="peak"/, 'the busiest hour is marked';
+unlike $bars, qr/NaN|undef/, 'and nothing unrenderable';
+unlike &subs::ai_balance_bars($flat_hours, 320, 48), qr/class="peak"/,
+	'a day with no fall marks no peak';
+is &subs::ai_balance_bars({ buckets => [] }, 320, 48), '', 'no hours draws nothing';
+
+# The chart carries the breakdown on every series, in the same currency it
+# converted the line into.
+{
+	local *subs::crypto_report_currency = sub { 'CAD' };
+	local *subs::exchange_rate = sub { return ($_[0] eq 'USD' && $_[1] eq 'CAD') ? 1.5 : undef };
+	my $chart = &subs::ai_balance_chart($report, $now);
+	my $series_hourly = $chart->{'series'}->[0]->{'hourly'};
+	ok $series_hourly, 'a charted series carries its hourly breakdown';
+	is scalar @{ $series_hourly->{'buckets'} }, 24, 'with a bar per hour';
+	# The hourly graph is the last twenty-four clock hours, so it starts on
+	# the hour rather than at this instant; the invariant is that it is the
+	# same day converted by the same rate as the line beside it.
+	my $raw_hourly = &subs::ai_balance_hourly(\@points, $now);
+	cmp_ok abs($series_hourly->{'total'} - $raw_hourly->{'total'} * 1.5), '<', 0.001,
+		'and its total is converted with the rest';
+	cmp_ok abs($series_hourly->{'max'} - $raw_hourly->{'max'} * 1.5), '<', 0.001,
+		'as is the busiest hour it scales the bars against';
+}
+
 done_testing();

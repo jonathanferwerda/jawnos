@@ -283,6 +283,114 @@ sub ai_balance_window {
 	return $window_data;
 }
 
+# The same samples counted by the clock hour, newest last. A line shows how far
+# a balance has fallen; bars show when - a quiet night against a burst at noon.
+# The buckets are whole clock hours in this machine's own time, ending with the
+# hour in progress, so every label reads on the hour. Only the falls count,
+# exactly as in ai_balance_window, so a top-up inside an hour cannot read as a
+# negative spend; the drawing carries an interpolated point at the window's
+# left edge, so the drop from the last sample before it is not lost.
+# `max` is the busiest hour's spend and `peak` that bucket.
+sub ai_balance_hourly {
+	my ($points, $now, $hours) = @_;
+	$hours = 24 unless defined $hours && $hours =~ /^\d+$/ && $hours > 0;
+	$now = &subs::rightNow() unless defined $now;
+	my $hour = 60 * 60 * 1000;
+	# the top of the hour this reading is in, in local time
+	my $timepiece = localtime(int($now / 1000));
+	my $top = (ref $timepiece && defined $timepiece->epoch)
+		? $timepiece->epoch * 1000 - ($timepiece->min * 60 + $timepiece->sec) * 1000
+		: int($now / $hour) * $hour;
+	my $start = $top - ($hours - 1) * $hour;
+	my @all = sort { $a->{'t'} <=> $b->{'t'} }
+		grep { ref $_ eq 'HASH' && defined $_->{'t'} && defined $_->{'v'} && $_->{'t'} <= $now }
+		@{ ref $points eq 'ARRAY' ? $points : [] };
+	my @in = grep { $_->{'t'} >= $start } @all;
+	my @buckets = map {
+		my $b_start = $start + $_ * $hour;
+		my $bt = localtime($b_start / 1000);
+		{
+			start => $b_start,
+			end   => $b_start + $hour,
+			label => (ref $bt ? $bt->strftime('%H:00') : ''),
+			spend => 0,
+		}
+	} ( 0 .. $hours - 1 );
+	my $hourly = {
+		hours   => $hours,
+		start   => $start,
+		top     => $top,
+		now     => $now,
+		buckets => \@buckets,
+		samples => scalar @in,
+		total   => 0,
+		max     => 0,
+		peak    => undef,
+	};
+	return $hourly unless @in;
+	my @draw = @in;
+	my ($anchor) = reverse grep { $_->{'t'} < $start } @all;
+	if ($anchor && $in[0]->{'t'} > $start) {
+		my $dt = $in[0]->{'t'} - $anchor->{'t'};
+		my $v = $anchor->{'v'};
+		$v += ($in[0]->{'v'} - $anchor->{'v'}) * (($start - $anchor->{'t'}) / $dt) if $dt > 0;
+		unshift @draw, { t => $start, v => $v };
+	}
+	my $epsilon = 0.000001;
+	my $total = 0;
+	for my $i ( 0 .. $#draw ) {
+		my $b = int(($draw[$i]{'t'} - $start) / $hour);
+		$b = 0 if $b < 0;
+		$b = $hours - 1 if $b > $hours - 1;
+		next unless $i;
+		my $fall = $draw[ $i - 1 ]{'v'} - $draw[$i]{'v'};
+		next unless $fall > $epsilon;
+		$buckets[$b]{'spend'} += $fall;
+		$total += $fall;
+	}
+	my ($max, $peak) = (0, undef);
+	foreach my $b ( @buckets ) {
+		if ($b->{'spend'} > $max) { $max = $b->{'spend'}; $peak = $b; }
+	}
+	$hourly->{'total'} = $total;
+	$hourly->{'max'} = $max;
+	$hourly->{'peak'} = $peak;
+	return $hourly;
+}
+
+# One bar per hour, relative to the busiest, on the panel's accent. The heights
+# are shares of `max` rather than money, so a currency change never redraws it -
+# the amount is printed beside the drawing, where the picker can convert it.
+sub ai_balance_bars {
+	my ($hourly, $width, $height) = @_;
+	$width ||= 320;
+	$height ||= 48;
+	my $buckets = (ref $hourly eq 'HASH' && ref $hourly->{'buckets'} eq 'ARRAY') ? $hourly->{'buckets'} : [];
+	my $count = scalar @{$buckets};
+	return '' unless $count;
+	my $max = (ref $hourly eq 'HASH') ? ($hourly->{'max'} || 0) : 0;
+	my $peak = (ref $hourly eq 'HASH' && ref $hourly->{'peak'} eq 'HASH') ? $hourly->{'peak'} : undef;
+	my $top = 3;
+	my $bottom = $height - 1;
+	my $plot = $width / $count;
+	my $gap = $plot > 6 ? 1.5 : 0.5;
+	my @bars;
+	for my $i ( 0 .. $count - 1 ) {
+		my $b = $buckets->[$i];
+		my $spend = $b->{'spend'} || 0;
+		my $h = ($max > 0 && $spend > 0) ? ($spend / $max) * ($bottom - $top) : 0;
+		$h = 0.8 if $spend > 0 && $h < 0.8;   # an hour that spent a little still shows
+		my $x = $i * $plot + $gap / 2;
+		my $w = $plot - $gap;
+		my $y = $bottom - $h;
+		my $class = ($peak && $peak eq $b) ? ' class="peak"' : '';
+		push @bars, sprintf('<rect%s x="%.2f" y="%.2f" width="%.2f" height="%.2f" rx="%.2f"/>', $class, $x, $y, $w, $h, ($w < 3 ? 0 : 1));
+	}
+	my $base = sprintf('<line x1="0" y1="%.1f" x2="%d" y2="%.1f" stroke="currentColor" stroke-opacity="0.18" stroke-width="1" vector-effect="non-scaling-stroke"/>', $bottom, $width, $bottom);
+	return '<svg class="balance_bars" viewBox="0 0 ' . $width . ' ' . $height . '" preserveAspectRatio="none" aria-hidden="true">'
+		. $base . join('', @bars) . '</svg>';
+}
+
 # A line for one provider over one window. currentColor means it follows the
 # theme, and a flat balance gets a little headroom so it does not sit on the
 # floor. Only the caller's numbers reach the markup.
@@ -379,8 +487,9 @@ sub ai_balance_chart {
 			source_available => $row->{'available'},
 			converted       => $converted,
 			rate            => ($converted ? $rate : undef),
-			available       => (defined $row->{'available'} && $converted ? $row->{'available'} * $rate : $row->{'available'}),
+			available       => ((defined $row->{'available'} && $converted) ? $row->{'available'} * $rate : $row->{'available'}),
 			windows         => \%windows,
+			hourly          => &ai_balance_hourly(\@scaled, $now),
 		};
 	}
 	return {

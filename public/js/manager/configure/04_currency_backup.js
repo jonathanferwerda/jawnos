@@ -40,6 +40,15 @@ function jawnosCurrencyApply(select) {
 		var money = function (span) { return jawnosCurrencyValue(Math.abs(perDay * span * rate)) + ' ' + code; };
 		line.text(template.replace('{0}', money(1)).replace('{1}', money(7)).replace('{2}', money(30)));
 	});
+	series.find('.balance_hour_peak').each(function () {
+		var line = $(this);
+		var amount = parseFloat(line.attr('data-base-amount'));
+		var template = line.attr('data-template') || '';
+		if (!isFinite(amount) || template.indexOf('{1}') < 0) { return; }
+		// the hour is a clock reading and does not change with the currency
+		var hour = line.attr('data-hour') || '';
+		line.text(template.replace('{0}', hour).replace('{1}', jawnosCurrencyValue(Math.abs(amount * rate)) + ' ' + code));
+	});
 	series.find('.balance_currency_note').each(function () {
 		var note = $(this);
 		var template = note.attr('data-template') || '';

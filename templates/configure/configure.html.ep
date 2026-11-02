@@ -90,6 +90,16 @@
 	.cfg .currency_picker { font:inherit; font-size:12px; line-height:1.2; padding:1px 4px; border:1px solid var(--line); border-radius:5px; background:var(--panel); color:var(--ink); }
 	.balance_spark { display:block; width:100%; height:80px; color:var(--accent, currentColor); }
 	.balance_rate { margin:4px 0 0; font-variant-numeric:tabular-nums; }
+	/* Balance drop by hour: one bar per clock hour over the last day. The bars
+	   are shares of the busiest hour, so a currency change never redraws the
+	   shape; the amount it cost is printed beneath, where the picker reaches it. */
+	.balance_hours { margin:10px 0 0; }
+	.balance_hours_head { display:flex; gap:8px; align-items:baseline; flex-wrap:wrap; font-size:13px; margin-bottom:3px; }
+	.balance_hours_head .cfg-note { margin:0; }
+	.balance_bars { display:block; width:100%; height:48px; color:var(--accent, currentColor); }
+	.balance_bars rect { fill:currentColor; opacity:.45; }
+	.balance_bars rect.peak { opacity:1; }
+	.balance_hour_peak { margin:4px 0 0; font-variant-numeric:tabular-nums; }
 	@media (prefers-reduced-motion: reduce) { .cfg .cfg-acc > summary::before { transition:none; } }
 	@media (max-width:560px) {
 		.cfg-row { flex-direction:column; align-items:stretch; }
