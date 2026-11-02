@@ -427,7 +427,34 @@ sub _fenced_block {
 	return undef;
 }
 
-# Either a JSON object (edits/diff/done/note) or a bare unified diff. A JSON
+# The first balanced {...} object in the text, respecting strings and escapes.
+# A model that appends prose after its JSON (or a second object) must not make
+# the whole reply unparseable.
+sub _first_json_object {
+	my ($text) = @_;
+	return undef unless defined $text;
+	my $start = index($text, '{');
+	return undef if $start < 0;
+	my ($depth, $in_string, $escape) = (0, 0, 0);
+	for my $i ($start .. length($text) - 1) {
+		my $ch = substr($text, $i, 1);
+		if ($in_string) {
+			if ($escape) { $escape = 0 }
+			elsif ($ch eq '\\') { $escape = 1 }
+			elsif ($ch eq '"') { $in_string = 0 }
+			next;
+		}
+		if ($ch eq '"') { $in_string = 1; next }
+		if ($ch eq '{') { $depth++; next }
+		if ($ch eq '}') {
+			$depth--;
+			return substr($text, $start, $i - $start + 1) if $depth == 0;
+		}
+	}
+	return undef;
+}
+
+# Either a JSON object (edits/diff/done/note/read/grep) or a bare unified diff.
 # object may be wrapped in ```json fences, and a patch in ```diff/```patch
 # fences; prose around either one is ignored. Returns
 # ({ edits, diff, done, note }, undef) or (undef, reason).
@@ -448,21 +475,31 @@ sub parse_model_response {
 	my $json_text = _fenced_block($raw, 'json');
 	$json_text = $raw unless defined $json_text;
 	my $object;
-	my $start = index($json_text, '{');
-	my $end = rindex($json_text, '}');
-	if ($start >= 0 && $end > $start) {
-		$object = eval { JSON::PP::decode_json(substr($json_text, $start, $end - $start + 1)) };
+	my $candidate = _first_json_object($json_text);
+	my $json_error = '';
+	if (defined $candidate) {
+		my $json_bytes = $candidate =~ /[^\x00-\xff]/ ? Encode::encode("UTF-8", $candidate) : $candidate;
+		$object = eval { JSON::PP::decode_json($json_bytes) };
+		$json_error = $@ if $@;
 		$object = undef unless ref $object eq 'HASH';
 	}
 
 	if ($object) {
 		my @edits;
+		my @edit_diffs;
 		if (ref $object->{'edits'} eq 'ARRAY') {
 			for my $e ( @{ $object->{'edits'} } ) {
 				next unless ref $e eq 'HASH';
 				my $content = $e->{'content'};
 				$content = $e->{'write'} if !defined $content && defined $e->{'write'};
 				$content = $e->{'text'}  if !defined $content && defined $e->{'text'};
+				# A per-file "diff" is a common shape: collect the patches and
+				# apply them as one turn, so atomicity is unchanged.
+				my $patch = $e->{'diff'} // $e->{'patch'};
+				if (!defined $content && defined $patch && length $patch) {
+					push @edit_diffs, $patch;
+					next;
+				}
 				push @edits, {
 					path    => $e->{'path'},
 					content => $content,
@@ -471,8 +508,15 @@ sub parse_model_response {
 			}
 		}
 		my $diff = ref $object->{'diff'} eq 'SCALAR' ? ${ $object->{'diff'} } : $object->{'diff'};
+		$diff = join("\n", @edit_diffs) if !defined $diff && @edit_diffs;
 		my $done = $object->{'done'} ? 1 : 0;
 		my $note = $object->{'note'} // '';
+		my $read = $object->{'read'};
+		my $grep = $object->{'grep'};
+		if ((ref $read eq 'ARRAY' && @$read) || (defined $grep && length $grep)) {
+			return ({ edits => [], diff => '', done => 0, note => $note,
+				read => (ref $read eq 'ARRAY' ? $read : []), grep => $grep }, undef);
+		}
 		if (!@edits && !(defined $diff && length $diff) && !$done) {
 			return (undef, 'the JSON has no edits, no diff and no done flag');
 		}
@@ -480,12 +524,13 @@ sub parse_model_response {
 	}
 
 	my $fenced  = _fenced_block($raw, 'diff|patch');
-	my $candidate = defined $fenced ? $fenced
+	my $patch   = defined $fenced ? $fenced
 		: (($raw =~ /^(?:diff --git |--- )/m) ? $raw : '');
-	if (defined $candidate && length $candidate && $candidate =~ /^--- /m) {
-		return ({ edits => [], diff => $candidate, done => 0, note => '' }, undef);
+	if (defined $patch && length $patch && $patch =~ /^--- /m) {
+		return ({ edits => [], diff => $patch, done => 0, note => '' }, undef);
 	}
-	return (undef, 'the reply is neither a JSON object nor a unified diff');
+	return (undef, 'the reply is neither a JSON object nor a unified diff'
+		. ($json_error ? " (JSON: $json_error)" : ''));
 }
 
 # --- checks -----------------------------------------------------------------
@@ -524,6 +569,69 @@ sub check_files {
 		};
 	}
 	return { ok => (@failures ? 0 : 1), failures => \@failures, skipped => \@skipped };
+}
+
+# --- tool turns -------------------------------------------------------------
+#
+# The model has no shell, so it may ask for a bounded look at the worktree
+# before it edits: up to three files, or one bounded grep. Both are read-only,
+# stay inside the worktree, and go through the same path checks as a write.
+sub read_tools {
+	my ($root, $req) = @_;
+	my $MAX_FILES = 3;
+	my $PER_FILE  = 4096;
+	my $TOTAL     = 12288;
+	my $MAX_HITS  = 60;
+	my @out;
+	my $used = 0;
+
+	for my $rel ( @{ ref $req->{'read'} eq 'ARRAY' ? $req->{'read'} : [] } ) {
+		last if $used >= $TOTAL;
+		last if scalar(@out) >= $MAX_FILES + 4;
+		next unless defined $rel && length $rel;
+		my ($abs, $why) = resolve($root, "$rel");
+		if (!$abs) { push @out, "FILE $rel: refused ($why)"; next }
+		my $text = slurp($abs);
+		if (!defined $text) { push @out, "FILE $rel: could not be read"; next }
+		if (is_binary_content($text)) { push @out, "FILE $rel: binary, not shown"; next }
+		my $show = $text;
+		$show = substr($show, 0, $PER_FILE) . "\n[... truncated]" if length($show) > $PER_FILE;
+		$used += length $show;
+		push @out, "FILE $rel (" . length($text) . " bytes)\n$show\nEND FILE $rel";
+	}
+
+	if (defined $req->{'grep'} && length $req->{'grep'}) {
+		my $pat = $req->{'grep'};
+		$pat =~ s/[\x00\r\n]//g;
+		$pat = substr($pat, 0, 200);
+		my $pid = open(my $fh, '-|');
+		if (!defined $pid) {
+			push @out, "GREP $pat: could not run ($!)";
+		}
+		elsif (!$pid) {
+			chdir $root or exit 127;
+			exec 'grep', '-rn', '-I', '-m1',
+				'--exclude-dir=.git', '--exclude-dir=.secrets',
+				'--exclude-dir=node_modules', '--exclude-dir=releases',
+				'--exclude-dir=.gradle', '--', $pat, '.';
+			exit 127;
+		}
+		else {
+			my @hits;
+			while (my $line = <$fh>) {
+				$line =~ s/\s+$//;
+				$line = substr($line, 0, 200);
+				push @hits, $line;
+				last if @hits >= $MAX_HITS;
+			}
+			close $fh;
+			push @out, "GREP $pat (" . scalar(@hits) . " hit(s))\n" . join("\n", @hits);
+		}
+	}
+
+	my $text = join "\n\n", @out;
+	$text = substr($text, 0, $TOTAL) . "\n[... tool output truncated]" if length($text) > $TOTAL;
+	return "TOOL RESULT\n$text\n\nContinue: reply with an edit/diff, or another {\"read\":[...]} / {\"grep\":\"...\"}.\n";
 }
 
 sub which {

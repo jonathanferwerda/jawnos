@@ -64,6 +64,8 @@ use lib "$FindBin::Bin/../lib", "$FindBin::Bin/lib";
 use Cwd qw(abs_path);
 use Fcntl qw(:flock);
 use File::Path qw(make_path);
+use File::Copy qw(copy);
+use File::Spec;
 use JSON::PP;
 use POSIX ();
 use Time::HiRes qw(time sleep);
@@ -368,6 +370,17 @@ for my $note ( @{$notes} ) {
 
 		# 1. the build is the gate. A failed build has bumped nothing, committed
 		# nothing, pushed nothing and staged nothing.
+		# A fresh worktree has no local.properties (the SDK path is untracked),
+		# so Gradle would not find the SDK at all. Carry the checkout's copy in;
+		# the file is build configuration, not source, and stays out of the commit.
+		{
+			my $from = File::Spec->catfile($app, 'local.properties');
+			my $to   = File::Spec->catfile($worktree, 'local.properties');
+			if (-f $from && !-f $to) {
+				copy($from, $to) or warn "qa/coding_night: local.properties: $!\n";
+			}
+		}
+
 		my $build_env = { JAVA_HOME => CodingNight::app_java_home() };
 		my ($build_rc) = run_cmd(
 			cmd     => CodingNight::app_build_command(),

@@ -63,6 +63,7 @@ sub select_notes {
 		"coalesce(text, '') != ''",
 		"coalesce(ost, '') != 'deleting'",
 		"lower(coalesce(category, '')) = 'jawnos'",
+		"coalesce(text, '') not like 'Nightly failed:%'",
 	);
 	push @where, "lower(coalesce(status, 'open')) != 'completed'" if $cols->{'status'};
 	push @where, "lower(coalesce(completed, '')) not in ('1','on','yes','true')" if $cols->{'completed'};

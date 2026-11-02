@@ -46,7 +46,7 @@ require CodingEdit;
 
 my %opt = (
 	dry_run     => 0,
-	max_turns   => 6,
+	max_turns   => 12,
 	context_dir => undef,
 	worktree    => undef,
 	responder   => undef,
@@ -74,7 +74,7 @@ binmode STDOUT, ':encoding(UTF-8)';
 binmode STDERR, ':encoding(UTF-8)';
 
 my $max_turns = $opt{'max_turns'};
-$max_turns = 6 unless defined $max_turns && $max_turns =~ /^\d+$/;
+$max_turns = 12 unless defined $max_turns && $max_turns =~ /^\d+$/;
 $max_turns = 1  if $max_turns < 1;
 $max_turns = 20 if $max_turns > 20;
 
@@ -226,10 +226,14 @@ print 'qa/coding_night agent: ' . CodingContext::context_summary($accounting) . 
 print 'ACCOUNTING ' . JSON::PP::encode_json($accounting) . "\n";
 
 my @messages = (
-	{ role => 'user', content => $note_message . $help_block . "\nThis is turn 1 of at most $max_turns.\n"
+	{ role => 'user', content => $note_message . $help_block
+		. "\nBefore editing you may ask to see the tree: reply {\"read\":[\"path\",...]} (at most 3 files) "
+		. "or {\"grep\":\"regex\"}; you will get the contents in the next turn. Do not guess paths.\n"
+		. "This is turn 1 of at most $max_turns.\n"
 		. "Reply with the first JSON object.\n" },
 );
 my $state = { bytes => 0 };
+my $tool_turns = 0;
 my $files_changed = 0;
 my $checks_ok = 1;
 my $finished = 0;
@@ -273,9 +277,29 @@ for my $turn (1 .. $max_turns) {
 		next;
 	}
 
+	my ($parsed, $perr) = CodingEdit::parse_model_response($reply);
+
+	# A read/grep request is a tool turn, not an edit: resolve it, hand the
+	# contents back, and let the model edit with evidence instead of guessing.
+	if (!$perr && ((ref $parsed->{'read'} eq 'ARRAY' && @{ $parsed->{'read'} })
+		|| (defined $parsed->{'grep'} && length $parsed->{'grep'}))) {
+		push @messages, { role => 'assistant', content => $reply };
+		if ($tool_turns >= 6) {
+			print "turn $turn: tool budget spent; asking for an edit\n";
+			push @messages, { role => 'user', content =>
+				'You have used the read budget. Make the edit now with what you have; '
+				. 'one JSON object, and no more read/grep requests.\n' };
+			next;
+		}
+		$tool_turns++;
+		my $tool = CodingEdit::read_tools($root, $parsed);
+		print "turn $turn: tool turn (" . length($tool) . " bytes back)\n";
+		push @messages, { role => 'user', content => $tool };
+		next;
+	}
+
 	push @messages, { role => 'assistant', content => $reply };
 
-	my ($parsed, $perr) = CodingEdit::parse_model_response($reply);
 	if (defined $perr) {
 		# Keep the exact bytes in the runner's agent log before any refusal: a
 		# rejected turn has to be debuggable without guessing what the model sent.
@@ -290,15 +314,20 @@ for my $turn (1 .. $max_turns) {
 		next;
 	}
 
-	my $result;
-	if (defined $parsed->{'diff'} && length $parsed->{'diff'}) {
-		$result = CodingEdit::apply_diff($root, $parsed->{'diff'}, $state);
-	}
-	elsif (ref $parsed->{'edits'} eq 'ARRAY' && @{ $parsed->{'edits'} }) {
-		$result = CodingEdit::apply_edits($root, $parsed->{'edits'}, $state);
-	}
-	else {
-		$result = { ok => 1, applied => [], errors => [], bytes => $state->{'bytes'} };
+	my $result = { ok => 1, applied => [], errors => [], bytes => $state->{'bytes'} };
+	# A reply may carry both whole-file edits and per-file diffs (the model does
+	# this when a new test file accompanies a patch). Apply both in the turn; a
+	# failure anywhere marks the turn refused and the nightly never commits it.
+	my @parts;
+	push @parts, CodingEdit::apply_edits($root, $parsed->{'edits'}, $state)
+		if ref $parsed->{'edits'} eq 'ARRAY' && @{ $parsed->{'edits'} };
+	push @parts, CodingEdit::apply_diff($root, $parsed->{'diff'}, $state)
+		if defined $parsed->{'diff'} && length $parsed->{'diff'};
+	for my $part (@parts) {
+		$result->{'ok'} = 0 unless $part->{'ok'};
+		push @{ $result->{'applied'} }, @{ $part->{'applied'} || [] };
+		push @{ $result->{'errors'} }, @{ $part->{'errors'} || [] };
+		$result->{'bytes'} = $part->{'bytes'} if defined $part->{'bytes'};
 	}
 
 	if (!$result->{'ok'}) {
