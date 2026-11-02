@@ -20,7 +20,9 @@ cover it). `--topics` lists the help registry, `--tech <app>` prints the technic
 the tables and settings it touches, the tests that claim its files, and its own comments. `--schema`
 or `--schema=<table>` gives every column, its type, the indexes and the apps that use the table.
 - **`grep` is for what the indexes cannot know**: free text, a string literal, a comment, a value that
-  is not a name. Everything else has a faster, correct answer above.
+  is not a name. Everything else has a faster, correct answer above. If the locator is not helpful for
+  something you needed, make it better in the same change — every agent reads it, so keep its
+  `file:line` output and `t/96`/`t/93` green.
 
 The indexes are pinned by `t/54` (Manager helpers), `t/58` (routes), `t/91` (domain subs), `t/11` (help
 pages) and `t/99` (files no test claims), so a stale one fails the push rather than misleading you.
