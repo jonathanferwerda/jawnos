@@ -1,6 +1,7 @@
 /* [[js-split]]
    budget.js is part 1. The rest live in budget/ in name order:
      01_reconcile_payables.js - budget light timers - display save delete - bank import and reconcile - payables - journal rebuild
+     00_budget_light.js - the light handler shared with appointment views
    /js/manager/bundle.js concatenates the index and these parts.
    [[/js-split]] */
 
