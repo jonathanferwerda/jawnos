@@ -209,7 +209,7 @@ sub setting_initializer {
 };
 
 sub signatorial_establisher {
-	my $context = shift;
+	my $context = shift // '';
 	# Pin the session secret even when the signatorial image is missing. Left
 	# unpinned, each Mojolicious worker signs sessions with its own random key, so
 	# a session the dock mints (a ticket) will not verify at the manager - the
