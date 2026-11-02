@@ -43,8 +43,7 @@ __pycache__/
 # --- Agent test harnesses (see .shots/README.md) ---
 .shots/
 
-# --- Agent field notes: kept on disk, never committed ---
-AGENTS.md
+# --- Agent field notes: the map is tracked, the deep notes stay on disk ---
 docs/AGENTS-notes.md
 
 # --- The machine's one live database and its backups: install-local, never ---

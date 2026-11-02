@@ -18,8 +18,8 @@ user for the exact file/folder/name. A wrong guess costs far more tokens than a 
 
 - **Entry:** `./jawn` (master) → `President.pl` in a PTY → workers keyed by `$ENV{PURPOSE}`
   (`manager`, `websocket`, …) running `Manager.pl`, `Websocket.pl`.
-- **Log:** `~/manager.log`. **DB:** `./database/jawnos.db` (SQLite, WAL). The old
-  `/home/jawn/initial.db` is a zero-byte decoy — never query it; the live house DB is the one under `database/`.
+- **Log:** `~/manager.log`. **DB:** `./database/jawnos.db` (SQLite, WAL) — the live house
+  DB; query that one, never another file that looks like a database.
 - **Restart:** `perl scripts/restart.pl --reason "v<version> - <summary>"` — it asks the master over
   `~/.president/control` and **waits for the verdict**: exit 0 accepted (and verified), 1 refused with the
   report naming the file, 2 no master / no answer, 3 asked through the status file with no verdict.
