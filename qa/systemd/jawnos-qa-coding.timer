@@ -3,7 +3,7 @@ Description=Nightly JawnOS coding agent
 Documentation=file:/home/jawn/jawnos/qa/README.md
 
 [Timer]
-# After the 04:00 suite and the 05:30 UX loop. One note at a time, so the run
+# After the 05:00 suite and the 05:30 UX loop. One note at a time, so the run
 # can be long; Persistent=true catches up after a missed night.
 OnCalendar=*-*-* 06:00:00
 Persistent=true

@@ -816,4 +816,104 @@ sub action_50003 {
 	$c->render(json => $result);
 }
 
+# GET /manager/configure/qa_schedule
+sub action_50004 {
+	my $c = shift;
+	# The panel asks about the chosen device; a peer asks about itself. A peer
+	# request names the caller in `signatorial` and rides the signed rail, so it
+	# is authenticated the same way every other peer call is, and a peer is only
+	# ever answered about the machine it is running on.
+	my $caller = $c->param('signatorial');
+	my $peer_ok = 0;
+	if (defined $caller && length $caller) {
+		my $rm = &subs::db_select('remote_machines', undef, { signatorial => $caller })->hashes->[0];
+		$peer_ok = ($rm && &subs::peer_verify($c, $rm)) ? 1 : 0;
+	}
+	unless ($c->session('authentication') eq 'approved' || $peer_ok) {
+		$c->render(json => { ok => 0, error => 'not signed in' }, status => 403);
+		return;
+	}
+	my $result = $peer_ok ? &subs::qa_schedule_local() : &subs::qa_schedule_for($c->param('target') // '');
+	$c->render(json => $result);
+}
+
+# POST /manager/configure/qa_schedule_save
+sub action_50005 {
+	my $c = shift;
+	unless ($c->session('authentication') eq 'approved') {
+		$c->render(json => { ok => 0, error => 'not signed in' }, status => 403);
+		return;
+	}
+	# All three times are validated server-side before anything is written. The
+	# target is the machine the panel has chosen; a phone or a tablet is refused
+	# here, so a hand-made POST cannot retime a house timer from one.
+	my $dry = $c->param('dry_run') ? 1 : 0;
+	my $times = {
+		suite => $c->param('suite_time'),
+		ux => $c->param('ux_time'),
+		coding => $c->param('coding_time'),
+	};
+	my $saved = &subs::qa_times_save($times, {
+		signatorial => $c->param('signatorial') // &subs::qa_nightly_device(),
+	});
+	unless ($saved->{'ok'}) { $c->render(json => $saved); return }
+	my $target = $saved->{'target'};
+	my $retime;
+	if ($target->{'local'}) {
+		$retime = &subs::qa_retime_local({ times => $saved->{'times'}, dry_run => $dry });
+	}
+	else {
+		# The chosen machine retimes its own timers, through the same signed rail
+		# the readiness and install actions use.
+		$retime = &remote_command_send({
+			uuid => $target->{'uuid'},
+			verb => 'qa_retime',
+			args => { times => $saved->{'times'}, dry_run => $dry },
+		});
+		$retime = $retime->{'observation'}
+			if ref $retime eq 'HASH' && $retime->{'ok'} && ref $retime->{'observation'} eq 'HASH';
+	}
+	$c->render(json => {
+		%{$saved},
+		retime => $retime,
+		retime_ok => (ref $retime eq 'HASH' && $retime->{'ok'}) ? 1 : 0,
+	});
+}
+
+# POST /manager/configure/qa_run
+sub action_50006 {
+	my $c = shift;
+	unless ($c->session('authentication') eq 'approved') {
+		$c->render(json => { ok => 0, error => 'not signed in' }, status => 403);
+		return;
+	}
+	my $run = $c->param('run') // '';
+	unless (&subs::qa_run_lookup($run)) {
+		$c->render(json => { ok => 0, error => 'unknown run', run => $run });
+		return;
+	}
+	# Run now starts a unit, so it runs the same guard as a retime: the target
+	# must be a computer or server, and it must be the machine the house chose.
+	my $sig = defined $c->param('signatorial') ? $c->param('signatorial') : '';
+	$sig = &subs::qa_nightly_device() unless length $sig;
+	my $guard = &subs::qa_run_guard($sig, {});
+	unless ($guard->{'ok'}) { $c->render(json => $guard); return }
+	my $dry = $c->param('dry_run') ? 1 : 0;
+	my $target = $guard->{'target'};
+	my $result;
+	if ($target->{'local'}) {
+		$result = &subs::qa_run_now_local($run, { dry_run => $dry });
+	}
+	else {
+		$result = &remote_command_send({
+			uuid => $target->{'uuid'},
+			verb => 'qa_run_now',
+			args => { run => $run, dry_run => $dry },
+		});
+		$result = $result->{'observation'}
+			if ref $result eq 'HASH' && $result->{'ok'} && ref $result->{'observation'} eq 'HASH';
+	}
+	$c->render(json => $result);
+}
+
 1;

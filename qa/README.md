@@ -388,9 +388,10 @@ names the layer and log. A dirty main tree is also a stop: it refuses to merge
 over other work. A non-zero agent exit is handled the same way.
 
 **No agent is exit 3.** It prints `no coding agent configured`, fetches
-nothing, creates no worktree or branch, and leaves every note open. That is the
-state until a headless coding model is wired to the hook - the 06:00 run will
-be a quick, loud skip, not a partial night.
+nothing, creates no worktree or branch, and leaves every note open. With
+`qa/coding_night/agent.pl` wired to the hook, the same exit 3 means no Coding
+model is set (Configure -> Platform -> Coding); it changes nothing. The stub
+still exists so the pipeline itself can be exercised.
 
 ### The agent hook
 
@@ -418,6 +419,53 @@ JAWNOS_CODING_AGENT="/usr/bin/perl /home/jawn/jawnos/qa/coding_night/agent_stub.
 `--dry-run` prints the queue, the note limit, the agent and each planned
 worktree/branch, and writes nothing (no lock file, fetch, worktree or report).
 One run at a time is held by `flock` on `~/jawnos-qa/.coding-night.lock`.
+
+### The 06:00 agent
+
+`qa/coding_night/agent.pl` is the command to point the hook at once a Coding
+model is configured. It runs in the worktree and:
+
+1. **Assembles the context from the main checkout** (`$HOME/jawnos` or
+   `--context-dir`): `AGENTS.md`, `docs/AGENTS-notes.md`, this README, and the
+   help topic for the app the note names. Each is capped at 20 KB and the
+   prompt says when it was truncated.
+2. **Redacts before sending.** A line that mentions `.secrets/`, `.shots/`,
+   `config.json`, `downloads.json`, a `*.pem`, or one of the secret words
+   (password, passphrase, token, api key, secret, credential, signatorial, a
+   ticket uuid) is replaced whole; a PEM block is withheld with its body.
+   Absolute `/home/<user>/jawnos` paths become repository-relative. The note
+   itself is redacted only for pasted values, so "fix the password field" still
+   works.
+3. **Calls the configured model exactly as the Coding app does**:
+   `mail/coding_assistant` (fallback `coding_assistant_fallback`, thinking from
+   `ai_role_thinking('coding_assistant')`) through
+   `subs::ai_chat_parts_with_fallback` - the same helper behind
+   `POST /manager/coding/heal`. No second provider configuration exists here.
+4. **Applies only whole-file writes or unified diffs inside the worktree.**
+   Absolute paths, `..`, symlinks and anything that resolves outside are
+   refused; `.git`, `.secrets`, `.shots`, `.president`, `releases`,
+   `signatorials`, `database/*.db`, `config.json`, `downloads.json` and `*.pem`
+   are never written. Binary files are refused, and the whole run may write at
+   most 256 KB. A refused turn writes nothing.
+5. **Checks each turn**: `perl -c` for Perl and `node --check` for JavaScript;
+   a failure is fed back to the model. It stops when the model says done and
+   the checks pass, or after `--max-turns` (default 6).
+
+It never bumps, commits, pushes or restarts - the runner does that after the
+suite is green. Exit 0 means the worktree changed and its checks passed; 1 means
+the note could not be attempted; 2 is a usage or environment failure; 3 is no
+model. `--dry-run` prints the prompt, the documents and the call plan and writes
+nothing. `--responder FILE` replaces the model with a fixture (tests only).
+
+```sh
+# point the nightly at the agent, then see the plan without touching anything
+JAWNOS_CODING_AGENT="/usr/bin/perl /home/jawn/jawnos/qa/coding_night/agent.pl" \
+  perl qa/coding_night/run.pl --dry-run
+
+# or assemble the prompt for a note by hand (cwd should be a worktree)
+JAWNOS_NOTE_ID=demo JAWNOS_NOTE_TITLE="a note" JAWNOS_NOTE_TEXT="the task" \
+  perl qa/coding_night/agent.pl --dry-run
+```
 
 ### Schedule it
 
@@ -479,8 +527,8 @@ can be read - the local fallback is always the safe answer. Install the units on
 every machine that might be chosen; the unchosen ones still have the timer, they
 just skip their run.
 
-There is no 05:00 unit today: the suite runs at **04:00**, the UX loop at
-**05:30**, and the coding night at **06:00**. The choice applies to all three. The weekly artefact build
+There are three nightly units, and the Configure choice applies to all three: the
+suite at **05:00**, the UX loop at **05:30**, and the coding night at **06:00**. The weekly artefact build
 (`jawnos-qa-build.timer`, Sunday 03:00) deliberately does **not** carry the
 condition: it belongs where the toolchain is (mkosi, qemu, a full JDK), not on
 the machine that happens to run the route/database suite.

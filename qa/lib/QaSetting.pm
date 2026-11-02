@@ -2,14 +2,17 @@ package QaSetting;
 
 # The house settings the QA nightlies read, and the one clamp they share.
 #
-# Configure -> Plat -> QA writes `__president/qa_note_limit` and
-# `__president/qa_coding_agent`; qa/ux/run and qa/coding_night/run.pl read the
-# same rows here, without booting the app or the domain layer. Every live read
-# uses a `mode=ro` SQLite URI, so a nightly can never write the house database.
+# Configure -> Plat -> QA writes `__president/qa_note_limit`,
+# `__president/qa_coding_agent` and the three nightly times
+# (`qa_night_time`, `qa_ux_time`, `qa_coding_time`); qa/ux/run and
+# qa/coding_night/run.pl read the same rows here, without booting the app or the
+# domain layer. Every live read uses a `mode=ro` SQLite URI, so a nightly can
+# never write the house database.
 #
-# The clamp is the contract: 1..25, default 3. It is duplicated in
+# The clamp is the contract: 1..25, default 3, and a time is `HH:MM` between
+# 00:00 and 23:59 or it is rejected. Both are duplicated in
 # lib/JawnOS/Domain/Remote.pm for the panel's server-side check (that file is
-# the app, this one is the fence); t/88 asserts both answers match.
+# the app, this one is the fence); t/88 and t/90 assert both answers match.
 
 use strict;
 use warnings;
@@ -96,6 +99,38 @@ sub read_note_limit {
 sub read_coding_agent {
 	my ($db) = @_;
 	return read_setting($db, 'qa_coding_agent');
+}
+
+# The three nightly times, in HH:MM. They are house settings (device 'all') and
+# the panel validates them; this reader is the fenced copy, so a script that has
+# no app can still answer with the same rules. Anything that is not 00:00-23:59
+# reads as the default: a bad row never becomes an unreadable timer.
+our %NIGHT_TIME_DEFAULT = (
+	qa_night_time  => '05:00',
+	qa_ux_time     => '05:30',
+	qa_coding_time => '06:00',
+);
+
+sub night_time_default {
+	my ($setting) = @_;
+	return $NIGHT_TIME_DEFAULT{$setting} // '';
+}
+
+sub clamp_time {
+	my ($value) = @_;
+	return '' unless defined $value;
+	$value =~ s/^\s+//;
+	$value =~ s/\s+$//;
+	return '' unless $value =~ /^(\d{1,2}):(\d{2})$/;
+	my ( $hour, $minute ) = ( $1 + 0, $2 + 0 );
+	return '' if $hour > 23 || $minute > 59;
+	return sprintf('%02d:%02d', $hour, $minute);
+}
+
+sub read_night_time {
+	my ($db, $setting) = @_;
+	my $clean = clamp_time( read_setting( $db, $setting ) );
+	return length $clean ? $clean : night_time_default($setting);
 }
 
 1;

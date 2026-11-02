@@ -26,6 +26,9 @@ sub routes {
 	[50001, 'get', '/manager/configure/qa_device_ready', 'action_50001'],
 	[50002, 'post', '/manager/configure/qa_device_target', 'action_50002'],
 	[50003, 'post', '/manager/configure/qa_device_install', 'action_50003'],
+	[50004, 'get', '/manager/configure/qa_schedule', 'action_50004'],
+	[50005, 'post', '/manager/configure/qa_schedule_save', 'action_50005'],
+	[50006, 'post', '/manager/configure/qa_run', 'action_50006'],
 	);
 }
 

@@ -290,8 +290,14 @@ sub remote_command_run($c, $data) {
 		my $live = &help::live_verb_names();
 		# qa_install is a machine action, not a Guide verb: the Configure panel
 		# sends it over this same signed rail to prepare the target's QA
-		# environment. It is not offered to the model in actions_prompt.
-		return { ok => 0, error => 'unknown verb: ' . $verb } unless $live->{$verb} || $verb eq 'qa_install';
+		# environment. qa_retime and qa_run_now are the same kind of action -
+		# they write a timer drop-in and start a unit on the machine the house
+		# chose. None is offered to the model in actions_prompt.
+		return { ok => 0, error => 'unknown verb: ' . $verb }
+			unless $live->{$verb}
+				|| $verb eq 'qa_install'
+				|| $verb eq 'qa_retime'
+				|| $verb eq 'qa_run_now';
 		$action = { action => $verb, %{$args} };
 	}
 	elsif (length $text) {
@@ -324,6 +330,25 @@ sub remote_command_execute($c, $action) {
 		return { ok => 0, error => 'not an eligible device (computer or server only)' }
 			unless &subs::qa_device_kind_eligible(&subs::device_setter());
 		return &subs::qa_install_local({ dry_run => ($action->{'dry_run'} ? 1 : 0) });
+	}
+	# The nightly's schedule and its Run now are the same class of action: a
+	# timer drop-in and a `systemctl start`, both on the one machine the house
+	# chose. A phone refuses them, and so does any machine the setting does not
+	# name - the panel's own guard already said no, but the far end must too.
+	if ($a eq 'qa_retime' || $a eq 'qa_run_now') {
+		return { ok => 0, error => 'not an eligible device (computer or server only)' }
+			unless &subs::qa_device_kind_eligible(&subs::device_setter());
+		my $chosen = &subs::qa_nightly_device();
+		my $mine = &subs::signatorial_designer();
+		return { ok => 0, error => 'this machine is not the chosen nightly device' }
+			if length $chosen && (!$mine || $chosen ne $mine);
+		if ($a eq 'qa_retime') {
+			return &subs::qa_retime_local({
+				times => (ref $action->{'times'} eq 'HASH' ? $action->{'times'} : {}),
+				dry_run => ($action->{'dry_run'} ? 1 : 0),
+			});
+		}
+		return &subs::qa_run_now_local($action->{'run'} // '', { dry_run => ($action->{'dry_run'} ? 1 : 0) });
 	}
 	# a runtime (learned) verb runs through the same primitive executor
 	return guide_verb_execute($c, $action) if grep { $_->{'name'} eq ($a // '') } @{ &help::learned_verbs() };

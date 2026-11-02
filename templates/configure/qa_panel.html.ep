@@ -8,6 +8,7 @@
 	my $qa_chosen = &subs::qa_nightly_device();
 	my $qa_note_limit = &subs::qa_note_limit();
 	my ($qa_note_min, $qa_note_max) = &subs::qa_note_limit_bounds();
+	my $qa_times = &subs::qa_times_read();
 	my $qa_local_ok = &subs::qa_device_kind_eligible(&subs::device_setter());
 	my $qa_label = sub {
 		my ($rm) = @_;
@@ -39,6 +40,37 @@
 	</div>
 	<p class="cfg-note" style="margin:6px 0 0;">
 		<%= &subs::ui('The nightly systemd timer reads this setting through qa/device_target.pl. The unit must be installed on every machine that might be chosen; the machine that is not chosen skips its run, and the chosen one runs it. The weekly artefact build stays wherever its toolchain is (mkosi, qemu, a full JDK) - it does not follow this choice.') %>
+	</p>
+</div>
+<div class="cfg-card">
+	<h3 style="margin-top:0;"><%= &subs::lang('configure.qa_schedule') %></h3>
+	<div class="cfg-row">
+		<label for="qa_suite_time"><%= &subs::lang('configure.qa_suite_time') %></label>
+		<input type="text" id="qa_suite_time" class="qa_time" size="6" maxlength="5" placeholder="HH:MM" inputmode="numeric" autocomplete="off" value="<%= $qa_times->{'suite'} %>">
+		<button type="button" class="button qa_run_now" data-run="suite"><%= &subs::lang('configure.qa_run_now') %></button>
+		<span id="qa_suite_state" class="cfg-note" style="margin:0;"></span>
+	</div>
+	<div class="cfg-note" id="qa_suite_effective" style="margin:0 0 8px;"></div>
+	<div class="cfg-row">
+		<label for="qa_ux_time"><%= &subs::lang('configure.qa_ux_time') %></label>
+		<input type="text" id="qa_ux_time" class="qa_time" size="6" maxlength="5" placeholder="HH:MM" inputmode="numeric" autocomplete="off" value="<%= $qa_times->{'ux'} %>">
+		<button type="button" class="button qa_run_now" data-run="ux"><%= &subs::lang('configure.qa_run_now') %></button>
+		<span id="qa_ux_state" class="cfg-note" style="margin:0;"></span>
+	</div>
+	<div class="cfg-note" id="qa_ux_effective" style="margin:0 0 8px;"></div>
+	<div class="cfg-row">
+		<label for="qa_coding_time"><%= &subs::lang('configure.qa_coding_time') %></label>
+		<input type="text" id="qa_coding_time" class="qa_time" size="6" maxlength="5" placeholder="HH:MM" inputmode="numeric" autocomplete="off" value="<%= $qa_times->{'coding'} %>">
+		<button type="button" class="button qa_run_now" data-run="coding"><%= &subs::lang('configure.qa_run_now') %></button>
+		<span id="qa_coding_state" class="cfg-note" style="margin:0;"></span>
+	</div>
+	<div class="cfg-note" id="qa_coding_effective" style="margin:0 0 8px;"></div>
+	<div class="cfg-row">
+		<button type="button" id="qa_schedule_save" class="button"><%= &subs::lang('configure.qa_save_times') %></button>
+		<span id="qa_schedule_status" class="cfg-note" style="margin:0 0 0 8px;white-space:pre-wrap;"></span>
+	</div>
+	<p class="cfg-note" style="margin:6px 0 0;">
+		<%= &subs::ui('Each run has an HH:MM time and its systemd timer is retimed to match: saving writes a small drop-in beside the unit (50-jawn-schedule.conf), reloads systemd and restarts the timer on the chosen machine, and every run reports whether its timer was retimed, is not installed there, or failed. The line under each field is the schedule the timer actually holds, so a field and the unit cannot drift apart unseen. Run now starts that run on the chosen machine at once, refuses while it is already running, and shows the job state until it finishes. The drop-in, the reload and the start are root work: that machine needs passwordless sudo for install and systemctl, and the timer units installed under /etc/systemd/system.') %>
 	</p>
 </div>
 <div class="cfg-card">

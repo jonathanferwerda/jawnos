@@ -741,6 +741,471 @@ sub qa_install_execute {
 	return { state => $failed ? 'failed' : 'done', log => $log, steps => \@state };
 }
 
+# ---------------------------------------------------------------------------
+# Nightly schedule: the three times, and the timer that holds each one
+# ---------------------------------------------------------------------------
+# Configure -> Plat -> QA owns three times - the 05:00 suite, the 05:30 UX run
+# and the 06:00 coding night. Each is a house setting (device 'all') in HH:MM,
+# and each is pushed to the chosen machine's systemd timer as a drop-in beside
+# the unit (`<unit>.timer.d/50-jawn-schedule.conf`, an OnCalendar line). The
+# panel shows the OnCalendar the timer actually holds, so a field and the unit
+# can never quietly disagree.
+#
+# The drop-in is a change to /etc and a `systemctl restart`, so it is privileged
+# work: locally through the same `sudo -n` path the QA install already uses,
+# remotely over the signed remote-command rail (the target runs the identical
+# helper on itself). Neither writes outside those two files and one reload.
+
+# The three runs. `delay` is the only one that carries a randomized delay: the
+# suite is 20 minutes of route and database work and a jitter keeps two machines
+# from starting it in the same second. The UX and coding runs are left alone.
+sub qa_runs {
+	return (
+		{ key => 'suite',  setting => 'qa_night_time',  unit => 'jawnos-qa',        default => '05:00', delay => '5m' },
+		{ key => 'ux',     setting => 'qa_ux_time',     unit => 'jawnos-qa-ux',     default => '05:30', delay => '' },
+		{ key => 'coding', setting => 'qa_coding_time', unit => 'jawnos-qa-coding', default => '06:00', delay => '' },
+	);
+}
+
+sub qa_run_lookup {
+	my ($key) = @_;
+	return undef unless defined $key && length $key;
+	foreach my $run ( &qa_runs() ) {
+		return $run if $run->{'key'} eq $key;
+	}
+	return undef;
+}
+
+# A time the panel, the setting and the unit can all agree on: `HH:MM`, 00:00 to
+# 23:59. Anything else - 24:00, 9:5, `five`, a blank - is '' and is rejected,
+# never guessed or clamped into a valid-looking hour.
+sub qa_time_clean {
+	my ($value) = @_;
+	return '' unless defined $value;
+	$value =~ s/^\s+//;
+	$value =~ s/\s+$//;
+	return '' unless $value =~ /^(\d{1,2}):(\d{2})$/;
+	my ($hour, $minute) = ( $1 + 0, $2 + 0 );
+	return '' if $hour > 23 || $minute > 59;
+	return sprintf('%02d:%02d', $hour, $minute);
+}
+
+# A stored value that is not a time falls back to the run's own default, so a
+# bad row can never hand the panel (or the timer) an unreadable schedule.
+sub qa_times_read {
+	my $opts = shift || {};
+	my $grab = $opts->{'grabber'};
+	my %out;
+	foreach my $run ( &qa_runs() ) {
+		my $raw;
+		if ($grab) {
+			$raw = $grab->( $run->{'setting'} );
+		}
+		else {
+			$raw = &subs::setting_grabber({ app => '__president', setting => $run->{'setting'}, device => 'all' });
+			$raw = &subs::setting_grabber({ app => '__president', setting => $run->{'setting'} })
+				unless defined $raw && length $raw;
+		}
+		my $clean = &qa_time_clean($raw);
+		$out{ $run->{'key'} } = length $clean ? $clean : $run->{'default'};
+	}
+	return \%out;
+}
+
+# Save one time. The setter is handed ($value, $setting_name) so a test can keep
+# the three apart without reaching the database.
+sub qa_time_save {
+	my ($key, $value, $opts) = @_;
+	$opts ||= {};
+	my $run = &qa_run_lookup($key);
+	return { ok => 0, error => 'unknown run', field => ($key // '') } unless $run;
+	my $clean = &qa_time_clean($value);
+	return { ok => 0, error => 'time must be HH:MM between 00:00 and 23:59', field => $key }
+		unless length $clean;
+	my $set = $opts->{'setter'};
+	unless ($set) {
+		$set = sub {
+			&subs::setting_setter({ app => '__president', setting => $_[1], device => 'all', value => $_[0] });
+		};
+	}
+	$set->( $clean, $run->{'setting'} );
+	return { ok => 1, key => $key, time => $clean, setting => $run->{'setting'} };
+}
+
+# The guard a save and a Run now share: the target must be a computer or a
+# server, and it must be the machine the house chose. A phone that opens
+# Configure cannot retime or start a run on itself or anywhere else.
+sub qa_run_guard {
+	my ($signatorial, $opts) = @_;
+	$opts ||= {};
+	my $guard = &qa_install_guard($signatorial, $opts);
+	return $guard unless $guard->{'ok'};
+	my $target = $guard->{'target'};
+	my $chosen = exists $opts->{'chosen'} ? &qa_nightly_clean( $opts->{'chosen'} ) : &qa_nightly_device($opts);
+	my $self = exists $opts->{'self'} ? $opts->{'self'} : &subs::signatorial_designer();
+	if ($target->{'local'}) {
+		my $kind = exists $opts->{'device_kind'} ? $opts->{'device_kind'} : &subs::device_setter();
+		return { ok => 0, error => 'not an eligible device (computer or server only)' }
+			unless &qa_device_kind_eligible($kind);
+		return { ok => 0, error => 'the nightly belongs to another machine, so it cannot be run or retimed here' }
+			if length $chosen && (!$self || $chosen ne $self);
+		return { ok => 1, target => $target };
+	}
+	return { ok => 0, error => 'that machine is not the chosen nightly device' }
+		if $chosen ne $target->{'signatorial'};
+	return { ok => 1, target => $target };
+}
+
+# Save all three times. Every field is validated before anything is written, and
+# the target is guarded first, so a refused save changes neither the settings nor
+# a timer.
+sub qa_times_save {
+	my ($times, $opts) = @_;
+	$opts ||= {};
+	my ( %clean, @bad );
+	foreach my $run ( &qa_runs() ) {
+		my $raw = ref $times eq 'HASH' ? $times->{ $run->{'key'} } : undef;
+		my $time = &qa_time_clean($raw);
+		if (length $time) { $clean{ $run->{'key'} } = $time }
+		else { push @bad, $run->{'key'} }
+	}
+	return { ok => 0, error => 'time must be HH:MM between 00:00 and 23:59', fields => \@bad }
+		if @bad;
+	my $target_sig;
+	if (exists $opts->{'signatorial'}) { $target_sig = $opts->{'signatorial'} }
+	elsif (exists $opts->{'chosen'}) { $target_sig = &qa_nightly_clean( $opts->{'chosen'} ) }
+	else { $target_sig = &qa_nightly_device($opts) }
+	my $guard = &qa_run_guard( $target_sig, $opts );
+	return { ok => 0, error => $guard->{'error'} } unless $guard->{'ok'};
+	foreach my $run ( &qa_runs() ) {
+		&qa_time_save( $run->{'key'}, $clean{ $run->{'key'} }, $opts );
+	}
+	return {
+		ok => 1,
+		saved => 1,
+		times => \%clean,
+		target => $guard->{'target'},
+		local => ( $guard->{'target'}->{'local'} ? 1 : 0 ),
+	};
+}
+
+sub qa_dropin_file {
+	my ($run) = @_;
+	$run = &qa_run_lookup($run) unless ref $run eq 'HASH';
+	return '' unless $run;
+	return '/etc/systemd/system/' . $run->{'unit'} . '.timer.d/50-jawn-schedule.conf';
+}
+
+# The drop-in is deliberately only the line the panel owns. Persistent, the
+# service and the fence stay in the shipped unit file.
+sub qa_dropin_body {
+	my ($run, $time) = @_;
+	$run = &qa_run_lookup($run) unless ref $run eq 'HASH';
+	return '' unless $run;
+	my $clean = &qa_time_clean($time);
+	return '' unless length $clean;
+	my $body = "# Written by JawnOS Configure -> Plat -> QA. The panel rewrites this\n"
+		. "# file when the time is changed there; edit the time in the panel.\n"
+		. "[Timer]\n"
+		. "OnCalendar=*-*-* $clean:00\n";
+	$body .= "RandomizedDelaySec=" . $run->{'delay'} . "\n" if $run->{'delay'};
+	return $body;
+}
+
+# Run one command without a shell and hand back its status and text. Only the
+# QA schedule path uses this; the output is a line or two of systemctl text.
+sub qa_command {
+	my (@cmd) = @_;
+	require IPC::Open3;
+	require Symbol;
+	my $err = Symbol::gensym();
+	my ( $in, $out );
+	my $pid = eval { IPC::Open3::open3( $in, $out, $err, @cmd ) };
+	return ( 127, 'could not run ' . join(' ', @cmd) ) unless $pid;
+	close $in;
+	local $/;
+	my $stdout = <$out> // '';
+	my $stderr = <$err> // '';
+	close $out;
+	close $err;
+	waitpid($pid, 0);
+	my $rc = $? >> 8;
+	my $text = $stdout . $stderr;
+	$text =~ s/^\s+|\s+$//g;
+	return ( $rc, $text );
+}
+
+sub qa_systemd_missing {
+	my ($text) = @_;
+	return 0 unless defined $text && length $text;
+	return $text =~ /not found|No such file|does not exist/i ? 1 : 0;
+}
+
+# Write the three drop-ins, reload systemd once, and restart each timer. Every
+# unit is reported separately: a timer that is not installed on the machine is
+# named as such, and a real failure is a failure - the panel never shows a
+# silent success. `dry_run` returns the file and its content and changes
+# nothing, which is what the tests use.
+sub qa_retime_local {
+	my $opts = shift || {};
+	my $dry = $opts->{'dry_run'} ? 1 : 0;
+	my $run_cmd = $opts->{'runner'} || sub { &qa_command(@_) };
+	my $times = ref $opts->{'times'} eq 'HASH' ? $opts->{'times'} : &qa_times_read($opts);
+	my ( @rows, @written );
+	foreach my $run ( &qa_runs() ) {
+		my $time = &qa_time_clean( $times->{ $run->{'key'} } );
+		my $row = {
+			key => $run->{'key'}, unit => $run->{'unit'}, setting => $run->{'setting'},
+			path => &qa_dropin_file($run),
+		};
+		unless (length $time) {
+			$row->{'ok'} = 0;
+			$row->{'state'} = 'invalid';
+			$row->{'error'} = 'time must be HH:MM between 00:00 and 23:59';
+			push @rows, $row;
+			next;
+		}
+		$row->{'time'} = $time;
+		$row->{'body'} = &qa_dropin_body( $run, $time );
+		if ($dry) {
+			$row->{'ok'} = 1;
+			$row->{'state'} = 'planned';
+			$row->{'command'} = [ 'sudo', '-n', 'install', '-D', '-m', '0644', '<drop-in>', $row->{'path'} ];
+			push @rows, $row;
+			next;
+		}
+		my ( $fh, $tmp );
+		{
+			require File::Temp;
+			( $fh, $tmp ) = File::Temp::tempfile( 'jawn-qa-schedule-XXXXXX', TMPDIR => 1, UNLINK => 1 );
+			print {$fh} $row->{'body'};
+			close $fh;
+		}
+		my ( $rc, $out ) = $run_cmd->( 'sudo', '-n', 'install', '-D', '-m', '0644', $tmp, $row->{'path'} );
+		unless ($rc == 0) {
+			$row->{'ok'} = 0;
+			$row->{'state'} = 'failed';
+			$row->{'error'} = length $out ? $out : 'the drop-in could not be written (needs root on that machine)';
+			push @rows, $row;
+			next;
+		}
+		push @written, $row;
+		push @rows, $row;
+	}
+	if (!$dry && @written) {
+		my ( $rc, $out ) = $run_cmd->( 'sudo', '-n', 'systemctl', 'daemon-reload' );
+		foreach my $row (@written) {
+			if ($rc != 0) {
+				$row->{'ok'} = 0;
+				$row->{'state'} = 'failed';
+				$row->{'error'} = 'systemd daemon-reload failed' . (length $out ? ": $out" : '');
+				next;
+			}
+			my ( $rrc, $rout ) = $run_cmd->( 'sudo', '-n', 'systemctl', 'restart', $row->{'unit'} . '.timer' );
+			if ($rrc == 0) {
+				$row->{'ok'} = 1;
+				$row->{'state'} = 'retimed';
+				next;
+			}
+			if ( &qa_systemd_missing($rout) ) {
+				$row->{'ok'} = 1;
+				$row->{'state'} = 'not-installed';
+				$row->{'note'} = 'the timer is not installed on that machine';
+				next;
+			}
+			$row->{'ok'} = 0;
+			$row->{'state'} = 'failed';
+			$row->{'error'} = length $rout ? $rout : 'systemctl restart exited ' . $rrc;
+		}
+	}
+	my $failed = scalar( grep { !$_->{'ok'} } @rows );
+	return {
+		ok => $failed ? 0 : 1,
+		dry_run => $dry,
+		rows => \@rows,
+		error => $failed ? 'some timers were not retimed' : '',
+	};
+}
+
+# The HH:MM a unit's timer really fires at. `systemctl show -p TimersCalendar`
+# answers for an installed timer; a machine with no timer falls back to the
+# drop-in, and then to the unit file shipped in the repo. `source` says which.
+sub qa_oncalendar_time {
+	my ($text) = @_;
+	return '' unless defined $text && length $text;
+	# One OnCalendar line, whether it came from systemd's one-line report (with
+	# the `; next_elapse=...` tail) or from a unit or drop-in file.
+	return '' unless $text =~ /OnCalendar=[^\n;}]*?(\d{1,2}):(\d{2}):\d{2}/;
+	my ( $hour, $minute ) = ( $1 + 0, $2 + 0 );
+	return '' if $hour > 23 || $minute > 59;
+	return sprintf('%02d:%02d', $hour, $minute);
+}
+
+sub qa_file_oncalendar {
+	my ($path) = @_;
+	return '' unless defined $path && length $path && -e $path;
+	open( my $fh, '<', $path ) or return '';
+	my $body = do { local $/; <$fh> } // '';
+	close $fh;
+	return &qa_oncalendar_time($body);
+}
+
+sub qa_run_state_file {
+	my $opts = shift || {};
+	return $opts->{'state_file'} if defined $opts->{'state_file'};
+	return &subs::home('~/.president/qa_runs.json');
+}
+
+sub qa_run_state_read {
+	my $opts = shift || {};
+	my $file = &qa_run_state_file($opts);
+	return {} unless $file && -e $file;
+	open( my $fh, '<', $file ) or return {};
+	my $raw = do { local $/; <$fh> } // '';
+	close $fh;
+	my $data = eval { decode_json($raw) };
+	return ref $data eq 'HASH' ? $data : {};
+}
+
+sub qa_run_state_write {
+	my ($data, $opts) = @_;
+	return unless ref $data eq 'HASH';
+	my $file = &qa_run_state_file( $opts || {} );
+	return unless $file && length $file;
+	(my $dir = $file) =~ s{/[^/]+$}{};
+	mkdir $dir unless -d $dir;
+	open( my $fh, '>', $file ) or return;
+	print {$fh} encode_json($data);
+	close $fh;
+	return $data;
+}
+
+# What the panel shows per run: the setting, the schedule the unit actually
+# holds, and whether the run is going. A `drift` is a field that no longer
+# matches the timer, which is exactly what the panel must make visible.
+sub qa_schedule_local {
+	my $opts = shift || {};
+	my $run_cmd = $opts->{'runner'} || sub { &qa_command(@_) };
+	my $times = &qa_times_read($opts);
+	my $repo = defined $opts->{'repo'} ? $opts->{'repo'} : &subs::home('~/jawnos');
+	my $state = &qa_run_state_read($opts);
+	my @runs;
+	foreach my $run ( &qa_runs() ) {
+		my $unit = $run->{'unit'};
+		my $row = {
+			key => $run->{'key'}, unit => $unit, setting => $run->{'setting'},
+			time => $times->{ $run->{'key'} },
+			dropin => &qa_dropin_file($run),
+			oncalendar => '', source => '', state => 'unknown', active => 0,
+		};
+		my ( $crc, $cout ) = $run_cmd->( 'systemctl', 'show', '-p', 'TimersCalendar', "$unit.timer" );
+		my $cal = $crc == 0 ? &qa_oncalendar_time($cout) : '';
+		if (length $cal) { $row->{'oncalendar'} = $cal; $row->{'source'} = 'systemd' }
+		else {
+			my $drop = &qa_file_oncalendar( $row->{'dropin'} );
+			if (length $drop) { $row->{'oncalendar'} = $drop; $row->{'source'} = 'drop-in' }
+			else {
+				my $unit_file = &qa_file_oncalendar( "$repo/qa/systemd/$unit.timer" );
+				$row->{'oncalendar'} = $unit_file;
+				$row->{'source'} = length $unit_file ? 'unit-file' : '';
+			}
+		}
+		my ( $arc, $aout ) = $run_cmd->( 'systemctl', 'show', '-p', 'ActiveState', '-p', 'SubState', "$unit.service" );
+		if ($arc == 0 && defined $aout) {
+			my ($act) = $aout =~ /ActiveState=(\w+)/;
+			my ($sub) = $aout =~ /SubState=(\w+)/;
+			$row->{'active'} = ( ($act // '') =~ /^(?:active|activating|reloading)$/ ) ? 1 : 0;
+			$row->{'state'} = $row->{'active'} ? 'running' : ( ($act // '') eq 'failed' ? 'failed' : 'idle' );
+			$row->{'substate'} = $sub // '';
+		}
+		my $last = $state->{ $run->{'key'} };
+		$row->{'last_started'} = $last->{'started'} if ref $last eq 'HASH' && $last->{'started'};
+		$row->{'drift'} = (length $row->{'oncalendar'} && $row->{'oncalendar'} ne $row->{'time'}) ? 1 : 0;
+		push @runs, $row;
+	}
+	return {
+		ok => 1, local => 1,
+		hostname => &subs::machine_name(),
+		runs => \@runs,
+	};
+}
+
+# Ask the chosen machine for its schedule over the signed peer rail, exactly as
+# the readiness card does. No unauthenticated route is added for it.
+sub qa_schedule_for {
+	my ($signatorial, $opts) = @_;
+	$opts ||= {};
+	my $guard = &qa_install_guard( $signatorial, $opts );
+	return { ok => 0, error => $guard->{'error'} } unless $guard->{'ok'};
+	my $target = $guard->{'target'};
+	if ( $target->{'local'} ) {
+		my $here = &qa_schedule_local($opts);
+		$here->{'target'} = $target->{'signatorial'} || '';
+		return $here;
+	}
+	my $hop_row = { %{$target} };
+	delete $hop_row->{'cookie'};
+	my $hop = eval { &remote_useragent_maker({ signatorial => $target->{'signatorial'}, rm => $hop_row }) };
+	return { ok => 0, error => 'no route to that machine', target => $target->{'signatorial'} }
+		unless $hop && $hop->{'ua'} && $hop->{'manager'};
+	my $url = $hop->{'manager'} . '/manager/configure/qa_schedule?signatorial=' . &subs::signatorial_designer();
+	my $res = eval { $hop->{'ua'}->inactivity_timeout(25)->get($url)->result };
+	my $body = ( $res && $res->is_success ) ? eval { decode_json $res->body } : undef;
+	return $body if ref $body eq 'HASH';
+	return { ok => 0, error => 'that machine did not answer the schedule check', target => $target->{'signatorial'} };
+}
+
+# Start one run on this machine now. `systemctl is-active` is the first guard
+# (a run already going is a refusal), and a short cooldown in the state file is
+# the second: a oneshot can finish in under a second, so a double press would
+# otherwise start it twice before the first answer reached the panel.
+sub qa_run_now_local {
+	my ($key, $opts) = @_;
+	$opts ||= {};
+	my $run = &qa_run_lookup($key);
+	return { ok => 0, error => 'unknown run', run => ($key // '') } unless $run;
+	my $unit = $run->{'unit'};
+	my $now = exists $opts->{'now'} ? $opts->{'now'} : &subs::rightNow();
+	my $cooldown = exists $opts->{'cooldown'} ? $opts->{'cooldown'} : 30;
+	my $run_cmd = $opts->{'runner'} || sub { &qa_command(@_) };
+	my $state = &qa_run_state_read($opts);
+	my $last = $state->{$key};
+	if ( ref $last eq 'HASH' && $last->{'started'} && $cooldown > 0
+		&& ( $now - $last->{'started'} ) < $cooldown * 1000 )
+	{
+		return {
+			ok => 0, run => $key, unit => $unit, state => 'running',
+			error => 'that run has just been started; give it a moment',
+			started => $last->{'started'},
+		};
+	}
+	my ( $src, $sout ) = $run_cmd->( 'systemctl', 'is-active', $unit . '.service' );
+	# The word decides, not the exit code: `is-active` answers 0 for active and
+	# for activating on some systemd versions, and a run that is still starting is
+	# just as much a run in progress.
+	my $word = defined $sout ? $sout : '';
+	$word =~ s/\s+$//;
+	my $active = ( $word =~ /^(?:active|activating|reloading|deactivating)$/ ) ? 1 : 0;
+	if ($active) {
+		return { ok => 0, run => $key, unit => $unit, state => 'running', error => 'that run is already running' };
+	}
+	return {
+		ok => 1, run => $key, unit => $unit, state => 'planned', dry_run => 1,
+		command => [ 'sudo', '-n', 'systemctl', 'start', '--no-block', $unit . '.service' ],
+	}
+		if $opts->{'dry_run'};
+	my ( $rc, $out ) = $run_cmd->( 'sudo', '-n', 'systemctl', 'start', '--no-block', $unit . '.service' );
+	unless ($rc == 0) {
+		return {
+			ok => 0, run => $key, unit => $unit, state => 'failed',
+			error => length $out ? $out : 'systemctl could not start the run (needs root on that machine)',
+		};
+	}
+	$state->{$key} = { started => $now, state => 'running', unit => $unit };
+	&qa_run_state_write( $state, $opts );
+	return { ok => 1, run => $key, unit => $unit, state => 'running', started => $now };
+}
+
 # The install action's one entry point. `dry_run` (the tests, and a preview)
 # returns the plan and changes nothing; a real run starts the steps in a
 # background job so the panel can poll the status the readiness payload carries.

@@ -355,7 +355,7 @@ SKIP: {
 	my $none_head = git_out($none->{'repo'}, 'rev-parse', 'HEAD');
 	my ($no_rc, $no_out) = run_runner(
 		{ 'JAWNOS_CODING_AGENT' => undef },
-		'--ignore-device', '--repo', $none->{'repo'}, '--root', $none_root,
+		'--agent', '', '--ignore-device', '--repo', $none->{'repo'}, '--root', $none_root,
 		'--db', $ndb, '--stamp', 'noagent01');
 	is($no_rc, 3, 'no configured agent exits 3');
 	like($no_out, qr/no coding agent configured/i, 'the message says why');

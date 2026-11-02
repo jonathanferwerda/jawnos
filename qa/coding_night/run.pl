@@ -151,8 +151,10 @@ my $limit = defined $opt{'limit'}
 
 # --- the agent hook ---------------------------------------------------------
 my $agent_line = defined $opt{'agent'} ? $opt{'agent'} : $ENV{'JAWNOS_CODING_AGENT'};
+# The in-tree agent is the default hook, so a configured model is enough.
+$agent_line = "$^X $FindBin::Bin/agent.pl" unless defined $opt{'agent'} || (defined $agent_line && length $agent_line);
 $agent_line = QaSetting::read_coding_agent($db)
-	unless defined $agent_line && length $agent_line;
+	unless defined $opt{'agent'} || (defined $agent_line && length $agent_line);
 my $agent = CodingNight::agent_command($agent_line);
 
 # --- the plan ---------------------------------------------------------------
