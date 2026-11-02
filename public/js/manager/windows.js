@@ -355,7 +355,7 @@ function windowMaker(response, fragment) {
 					var blci2 = $(new_v).attr('current_information');
 					if (blci.attr('status') == 'open' || blci2) {
 						var circumstance = blci2 || blci.attr('circumstance');
-						budgetLight(app_attr,circumstance,'open');
+						if (typeof budgetLight === 'function') { budgetLight(app_attr,circumstance,'open'); }
 					}
 					carry_on = 1;
 				}
@@ -407,6 +407,19 @@ function windowMaker(response, fragment) {
 			});
 			win = $('#' + window_id);
 			windowDraggable(win);
+			// The details form is fetched on demand. Asking for it once the window
+			// is drawn keeps the first press of the details control instant without
+			// putting the form back on the page: the fetch lands hidden, and the
+			// press just shows it. Idle time is used when the browser offers it, so
+			// the open itself is never delayed by it.
+			if (typeof appSectionGrabber === 'function') {
+				var details_here = win.find('.app_section_placeholder[section="details"]');
+				if (details_here.length) {
+					var prefetch = function() { appSectionGrabber(app, 'details', win); };
+					if (window.requestIdleCallback) { requestIdleCallback(prefetch, { timeout: 2500 }); }
+					else { setTimeout(prefetch, 600); }
+				}
+			}
 			if (isJson(jopen)) {
 				var v = {};
 				v.jopen = JSON.parse(jopen);

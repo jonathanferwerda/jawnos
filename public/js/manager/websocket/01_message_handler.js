@@ -197,7 +197,7 @@ function wsMessageDispatch(raw) {
 		}
 		else if (data['terminal']) {
 			console.log(data);
-			terminalDataReceiver(data);
+			if (typeof terminalDataReceiver === 'function') { terminalDataReceiver(data); }
 		}
 		else if ( data['utility_controller'] ) {
 			
@@ -454,7 +454,7 @@ function wsMessageDispatch(raw) {
 			header.attr('last_updated', now);
 			var circumstance = blci.attr('circumstance');
 			if (circumstance && blci.is(':visible')) {
-				budgetLight(data['app'],circumstance,'open');
+				if (typeof budgetLight === 'function') { budgetLight(data['app'],circumstance,'open'); }
 			}
 			appointment_chron()
 		}
@@ -463,7 +463,7 @@ function wsMessageDispatch(raw) {
 			var circumstance = blci.attr('circumstance');
 			$('.budget_light[app="' + data['app'] + '"][circumstance="' + data['budget']['circumstance'] + '"]').css({ 'background-color': data['budget']['colour'] });
 			if (circumstance && blci.is(':visible')) {
-				budgetLight(data['app'],circumstance,'open');
+				if (typeof budgetLight === 'function') { budgetLight(data['app'],circumstance,'open'); }
 			}
 			appointment_chron()
 		}

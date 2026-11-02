@@ -468,7 +468,7 @@ function manager_play(response) {
 
 	var zone = quality_inventory(response.timestamp);
 
-	portfolioMaker(response['portfolio']);
+	if (typeof portfolioMaker === 'function') { portfolioMaker(response['portfolio']); }
 	sessionStorage.setItem('time_machine', zone);
 	$('#time_machine').val(zone);	
 }

@@ -39,7 +39,9 @@ async function jpCanvas(app) {
 	else {
 		wb.attr('status', 'recording');
 		var timestamp = Date.now();
-		var marker = markerInfoGrabber();
+		// Marker's chunk carries its recording settings; with no Marker window on
+		// this page there are none to read, and the call used to throw here.
+		var marker = (typeof markerInfoGrabber === 'function') ? markerInfoGrabber() : {};
 		var formData = new FormData();
 		var type = 'video';
 		formData.delete('timestamp');

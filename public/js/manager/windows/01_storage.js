@@ -412,7 +412,7 @@ function appWindowOpenerNow(i,timestamp,v) {
 					windowjOpener(window, { jopen: refresh_jopen, scrollTop: v.scrollTop });
 				}
 				if (v.current_information) {
-					budgetLight(i,v['current_information'],'open');
+					if (typeof budgetLight === 'function') { budgetLight(i,v['current_information'],'open'); }
 				}
 				else if (typeof budgetLightRestore === 'function') {
 					budgetLightRestore(i);

@@ -208,8 +208,12 @@ function windowDraggable(win) {
 					windowDimensionSetter(win);
 				}
 			},
+			// Marker's own drawing of a window's place is in its app chunk, which may
+			// not have been loaded: with no Marker window open there is no marker to
+			// move. Calling it unguarded threw out of jQuery UI's drag callback, and
+			// the exception stopped the window being moved at all.
 			drag: function(p,ui) {
-				markerDragger(p.target.id,'drag');
+				if (typeof markerDragger === 'function') { markerDragger(p.target.id,'drag'); }
 			},
 			stop: function(p,ui) {
 				var d = mouse_position();
@@ -238,7 +242,7 @@ function windowDraggable(win) {
 
 					$('#window_' + timestamp).css({'height': tnh, 'width': tnw });
 				}
-				markerDragger(p.target.id,'stop');
+				if (typeof markerDragger === 'function') { markerDragger(p.target.id,'stop'); }
 				windowDimensionSetter($('#' + p.target.id));
 				// a phone's pile is a cascade; a drag would leave the window over the
 				// others' bars and swallow their taps, so restack it - to the top of

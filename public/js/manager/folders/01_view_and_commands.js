@@ -321,8 +321,9 @@ function foldersFileOpener(state) {
 			} else if (response['app'] == 'music') {
 				musicToggle(response['raw_files']);
 			} else if (response['app'] == 'studio') {
-				studioImport(response['files']);
+				if (typeof studioImport === 'function') { studioImport(response['files']); }
 			} else if (response['app'] == 'ide') {
+				if (typeof ideFileOpen !== 'function') { return; }
 				$.each(response['raw_files'], function(i,v) {
 					ideFileOpen({
 						location: st['folder'],
