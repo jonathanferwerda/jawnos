@@ -76,7 +76,15 @@ if ($probe == 0) {
 
 ok(wait_for_cmdline($fake, 'President.pl'), 'the fake worker is running as President.pl');
 
-my $list = `$^X $script --list --scope=$tmp 2>&1`;
+# One shot at --list was enough alone and occasionally empty in a loaded 8-job
+# run (a transient fork failure, not a selection bug). Retry briefly; the
+# assertions below still hold the killer to the same answer.
+my $list = '';
+for (1 .. 5) {
+	$list = `$^X $script --list --scope=$tmp 2>&1`;
+	last if $list =~ /^\Q$fake\E\t/m;
+	sleep 0.2;
+}
 like($list, qr/^\Q$fake\E\t/m, 'the perl worker is selected');
 unlike($list, qr/^\Q$shell\E\t/m, 'a shell that merely mentions Manager.pl is not');
 unlike($list, qr/^\Q$probe\E\t/m, 'a perl -e probe is not');

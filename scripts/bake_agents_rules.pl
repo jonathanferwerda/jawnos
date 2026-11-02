@@ -15,9 +15,13 @@
 use strict;
 use warnings;
 use File::Slurp qw(read_file write_file);
+use Getopt::Long qw(GetOptions);
 
+# --src/--out exist so this can be tested against a fixture: the real run takes
+# the defaults (AGENTS.md -> docs/coding_agent_protocols.md).
 my $src = 'AGENTS.md';
 my $out = 'docs/coding_agent_protocols.md';
+GetOptions('src=s' => \$src, 'out=s' => \$out) or exit 2;
 
 # Nothing to bake without the source (a fresh clone has only the baked file).
 exit 0 unless -f $src;

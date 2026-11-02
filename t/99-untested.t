@@ -76,7 +76,6 @@ my %owed = map { $_ => 1 } qw(
 	public/js/screensaver.js
 	scripts/app_displayer.pl
 	scripts/app_ticket.pl
-	scripts/bake_agents_rules.pl
 	scripts/black_images.pl
 	scripts/deploy_neighbours.pl
 	scripts/factory_seed.pl
@@ -89,7 +88,6 @@ my %owed = map { $_ => 1 } qw(
 	scripts/mkosi_publish.pl
 	scripts/paper_share_qr.pl
 	scripts/pph_compare.pl
-	scripts/settings_audit.pl
 	scripts/sponsors_goal.pl
 	scripts/store_invoice_email_driver.pl
 	scripts/thumb_reorient.pl
