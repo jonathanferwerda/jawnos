@@ -455,4 +455,7 @@ $catalog{'es'} = {
 		'review_before_commit' => 'Revisar antes de confirmar',
 		'approve' => 'Aprobar',
 		'reject' => 'Rechazar',
+		'approved_committing' => 'Aprobado: confirmando…',
+		'rejected_stopped' => 'Rechazado: la ejecución se detuvo.',
+		'diff_truncated' => 'El diff es largo: solo se muestra la primera parte.',
 	};

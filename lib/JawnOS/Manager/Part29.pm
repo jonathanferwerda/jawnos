@@ -509,18 +509,24 @@ sub coding_execute($c, $action, $touched) {
 		# fails is named back to the agent to fix, and nothing is committed.
 		my @check = sort keys %{ $touched || {} };
 		if (@check && -f "$repo/scripts/verify_change.pl") {
-			my $list = join(' ', map { '"' . $_ . '"' } @check);
-			my $vout = `cd "$repo" && perl scripts/verify_change.pl $list 2>&1`;
+			my $list = join(' ', map { &subs::coding_shell_quote($_) } @check);
+			my $vout = `cd @{[&subs::coding_shell_quote($repo)]} && perl scripts/verify_change.pl $list 2>&1`;
 			my $vcode = $? >> 8;
 			$vout = '' unless defined $vout;
 			return 'refused: the change does not pass the verifier - fix it before committing:' . "\n" . substr($vout, 0, 1500) if $vcode != 0;
 		}
 		# stage only what the agent actually wrote (plus the version file), so a
-		# commit it makes never sweeps in someone else's work-in-progress
-		my @files = map { '"' . $_ . '"' } sort keys %{ $touched || {} };
-		push @files, '"VERSION"' if -f "$repo/VERSION";
-		return 'nothing to commit' unless @files;
-		my $cmd = 'cd "' . $repo . '" && git add -- ' . join(' ', @files) . ' 2>&1 && git commit -m "v' . $v . ' - ' . $msg . '" 2>&1';
+		# commit it makes never sweeps in someone else's work-in-progress. The
+		# pathspec on the commit itself is the half that makes that true when the
+		# person has something else already staged: without it `git commit` would
+		# take the whole index, including work the review never showed. The list
+		# comes from coding_review_files, the same one the review displayed.
+		my @review = &subs::coding_review_files($touched);
+		return 'nothing to commit' unless @review;
+		my @files = map { &subs::coding_shell_quote($_) } @review;
+		my $paths = join(' ', @files);
+		my $cmd = 'cd ' . &subs::coding_shell_quote($repo) . ' && git add -- ' . $paths . ' 2>&1'
+			. ' && git commit -m ' . &subs::coding_shell_quote("v$v - $msg") . ' -- ' . $paths . ' 2>&1';
 		my $out = `$cmd`;
 		$out = '' unless defined $out;
 		if (length $out > 4000) { $out = substr($out, 0, 4000); }

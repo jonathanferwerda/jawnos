@@ -442,4 +442,7 @@ $catalog{'ko'} = {
 		'review_before_commit' => '커밋 전 검토',
 		'approve' => '승인',
 		'reject' => '거절',
+		'approved_committing' => '승인됨 — 커밋 중…',
+		'rejected_stopped' => '거절됨 — 실행이 중단되었습니다.',
+		'diff_truncated' => 'diff가 길어 — 첫 부분만 표시됩니다.',
 	};

@@ -442,4 +442,7 @@ $catalog{'ja'} = {
 		'review_before_commit' => 'コミット前に確認',
 		'approve' => '承認',
 		'reject' => '却下',
+		'approved_committing' => '承認済み — コミット中…',
+		'rejected_stopped' => '却下済み — 実行は停止しました。',
+		'diff_truncated' => '差分が長い — 最初の部分のみ表示されます。',
 	};

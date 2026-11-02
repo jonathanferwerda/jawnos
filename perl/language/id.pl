@@ -442,4 +442,7 @@ $catalog{'id'} = {
 		'review_before_commit' => 'Tinjau sebelum commit',
 		'approve' => 'Setujui',
 		'reject' => 'Tolak',
+		'approved_committing' => 'Disetujui — sedang melakukan commit…',
+		'rejected_stopped' => 'Ditolak — proses dihentikan.',
+		'diff_truncated' => 'Diff-nya panjang — hanya bagian pertama yang ditampilkan.',
 	};

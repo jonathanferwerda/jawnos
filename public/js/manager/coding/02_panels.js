@@ -359,6 +359,11 @@ codingChatPoll = function (mount, run) {
 	// one poller per panel: a second one would draw every step twice
 	var old = panel.data('coding_poll_timer');
 	if (old) { clearTimeout(old); }
+	// every explicit start begins a new chain, and a response already in flight
+	// belongs to the chain it was sent under: without the stamp the push listener
+	// starting a poll would leave the old one to arm a second chain beside it
+	var gen = (parseInt(panel.data('coding_poll_gen'), 10) || 0) + 1;
+	panel.data('coding_poll_gen', gen);
 	var tick = function () {
 		var p = codingChatPanel(mount);
 		if (!p.length) { return; }
@@ -373,6 +378,8 @@ codingChatPoll = function (mount, run) {
 				var now = codingChatPanel(mount);
 				if (!now.length) { return; }
 				if (now.data('coding_run') && now.data('coding_run') !== run) { return; }
+				// a newer chain owns the panel now: it has the timer, this one stops
+				if ((parseInt(now.data('coding_poll_gen'), 10) || 0) !== gen) { return; }
 				if (again) { now.data('coding_poll_timer', setTimeout(tick, 1000)); }
 				else { now.removeData('coding_poll_timer'); }
 			},
@@ -380,6 +387,8 @@ codingChatPoll = function (mount, run) {
 				var now = codingChatPanel(mount);
 				if (!now.length) { return; }
 				if (now.data('coding_run') && now.data('coding_run') !== run) { return; }
+				// a late failure from a replaced chain must not tear down the live one
+				if ((parseInt(now.data('coding_poll_gen'), 10) || 0) !== gen) { return; }
 				codingChatAdd(mount, 'guide', 'The coding agent could not be reached.');
 				now.data('coding_running', 0);
 				codingChatRunning(now);
@@ -430,8 +439,24 @@ function codingChatReviewShow(mount, run, r) {
 		log.append(block);
 	}
 	block.data('coding_review_run', runId || 0);
+	// a second review in the same run is a new question: the old press would leave
+	// both buttons dead under its word, so the review's own stamp starts it over
+	var at = (pending.at == null) ? '' : String(pending.at);
+	var was = block.data('coding_review_at');
+	if (was !== undefined && was !== at) {
+		block.removeData('coding_review_answer');
+		block.find('.coding_chat_approve, .coding_chat_reject').prop('disabled', false).css('opacity', '');
+		block.find('.coding_chat_review_status').first().text(codingT('review_before_commit'));
+	}
+	block.data('coding_review_at', at);
+	// the file line also carries the word that the diff was cut, so a shortened
+	// diff is not read as the whole of it
+	var bits = [];
+	if (names) { bits.push(names); }
+	if (pending.truncated) { bits.push(codingT('diff_truncated')); }
+	var filesText = bits.join(' · ');
 	var filesEl = block.find('.coding_chat_review_files').first();
-	if (filesEl.text() !== names) { filesEl.text(names); }
+	if (filesEl.text() !== filesText) { filesEl.text(filesText); }
 	var diffEl = block.find('.coding_chat_review_diff').first();
 	if (diffEl.text() !== diff) { diffEl.text(diff); }
 	// a press already answered keeps its word until the run moves on
@@ -451,7 +476,7 @@ function codingChatReviewAnswer(block, approved) {
 	block.data('coding_review_answer', approved ? 'approved' : 'rejected');
 	block.find('.coding_chat_approve, .coding_chat_reject').prop('disabled', true).css('opacity', '.55');
 	block.find('.coding_chat_review_status').first()
-		.text(codingT(approved ? 'Approved — committing…' : 'Rejected — the run stopped.'));
+		.text(codingT(approved ? 'approved_committing' : 'rejected_stopped'));
 }
 
 function codingChatReviewUndo(block, why) {
@@ -488,10 +513,28 @@ $(document).on('click', '.coding_chat_reject', function () {
 });
 
 // A new ask takes the panel back: what the last run was offering to commit is
-// not this run's business. An empty send changes nothing.
+// not this run's business. An empty send changes nothing. An offer still
+// unanswered has to be told so first — the worker is asleep on that review and
+// holds the single queue slot, so the new ask would wait behind it for minutes.
 var codingChatSendCore = codingChatSend;
 codingChatSend = function (mount) {
-	if ($.trim(codingChatPanel(mount).find('.coding_chat_input').val() || '')) { codingChatReviewClear(mount); }
+	var panel = codingChatPanel(mount);
+	if ($.trim(panel.find('.coding_chat_input').val() || '')) {
+		var block = panel.find('.coding_chat_review').first();
+		if (block.length && !block.data('coding_review_answer')) {
+			var run = parseInt(block.data('coding_review_run'), 10) || parseInt(panel.data('coding_run'), 10) || 0;
+			// fire and forget: the send is the answer, so a failure needs no report
+			if (run) {
+				$.ajax({
+					url: '/manager/coding/reject',
+					type: 'POST',
+					dataType: 'json',
+					data: { id: run }
+				});
+			}
+		}
+		codingChatReviewClear(mount);
+	}
 	return codingChatSendCore(mount);
 };
 

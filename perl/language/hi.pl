@@ -442,4 +442,7 @@ $catalog{'hi'} = {
 		'review_before_commit' => 'कमिट से पहले समीक्षा करें',
 		'approve' => 'स्वीकृत करें',
 		'reject' => 'अस्वीकार करें',
+		'approved_committing' => 'स्वीकृत — कमिट हो रहा है…',
+		'rejected_stopped' => 'अस्वीकृत — रन रुक गया।',
+		'diff_truncated' => 'डिफ लंबा है — केवल पहला भाग दिखाया गया है।',
 	};

@@ -442,4 +442,7 @@ $catalog{'it'} = {
 		'review_before_commit' => 'Rivedi prima del commit',
 		'approve' => 'Approva',
 		'reject' => 'Rifiuta',
+		'approved_committing' => 'Approvato — commit in corso…',
+		'rejected_stopped' => 'Rifiutato — l\'esecuzione si è fermata.',
+		'diff_truncated' => 'Il diff è lungo — viene mostrata solo la prima parte.',
 	};

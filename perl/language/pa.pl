@@ -442,4 +442,7 @@ $catalog{'pa'} = {
 		'review_before_commit' => 'ਕਮਿਟ ਤੋਂ ਪਹਿਲਾਂ ਸਮੀਖਿਆ',
 		'approve' => 'ਮਨਜ਼ੂਰ ਕਰੋ',
 		'reject' => 'ਅਸਵੀਕਾਰ ਕਰੋ',
+		'approved_committing' => 'ਮਨਜ਼ੂਰ — ਕਮਿਟ ਕੀਤੀ ਜਾ ਰਹੀ ਹੈ…',
+		'rejected_stopped' => 'ਅਸਵੀਕਾਰ — ਰਨ ਰੁਕ ਗਈ।',
+		'diff_truncated' => 'ਡਿਫ ਲੰਮਾ ਹੈ — ਸਿਰਫ਼ ਪਹਿਲਾ ਹਿੱਸਾ ਦਿਖਾਇਆ ਗਿਆ ਹੈ।',
 	};

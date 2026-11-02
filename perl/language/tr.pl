@@ -442,4 +442,7 @@ $catalog{'tr'} = {
 		'review_before_commit' => 'Commit öncesi incele',
 		'approve' => 'Onayla',
 		'reject' => 'Reddet',
+		'approved_committing' => 'Onaylandı — commit yapılıyor…',
+		'rejected_stopped' => 'Reddedildi — çalışma durduruldu.',
+		'diff_truncated' => 'Diff uzun — yalnızca ilk kısım gösteriliyor.',
 	};

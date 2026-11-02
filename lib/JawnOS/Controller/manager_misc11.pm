@@ -398,8 +398,9 @@ sub action_37570 {
 }
 
 # Approve or reject the commit a paused run is waiting on. The worker is asleep
-# between two polls; it reads the flag off the run state and either runs the
-# commit it already showed or stops without one.
+# between two polls; it takes the answer off its own setting and either runs the
+# commit it already showed or stops without one. The verdict is not written into
+# the run snapshot: the worker owns that, and two writers of one blob lose one.
 # POST /manager/coding/approve
 sub action_37571 {
 	my $c = shift;
@@ -414,8 +415,12 @@ sub action_37571 {
 		$c->render(json => { error => 'no run awaiting approval' });
 		return;
 	}
-	$state->{'approve'} = 1;
-	&subs::coding_run_state_save($id, $state);
+	# A paused review is only answered by the worker that opened it.
+	unless (&subs::coding_worker_alive()) {
+		$c->render(json => { error => 'the background coding process is not running, so nothing would take the answer' });
+		return;
+	}
+	&subs::coding_verdict_set($id, 'approve');
 	$c->render(json => { ok => 1 });
 }
 
@@ -433,8 +438,11 @@ sub action_37572 {
 		$c->render(json => { error => 'no run awaiting approval' });
 		return;
 	}
-	$state->{'reject'} = 1;
-	&subs::coding_run_state_save($id, $state);
+	unless (&subs::coding_worker_alive()) {
+		$c->render(json => { error => 'the background coding process is not running, so nothing would take the answer' });
+		return;
+	}
+	&subs::coding_verdict_set($id, 'reject');
 	$c->render(json => { ok => 1 });
 }
 

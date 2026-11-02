@@ -442,4 +442,7 @@ $catalog{'ar'} = {
 		'review_before_commit' => 'مراجعة قبل الإيداع',
 		'approve' => 'موافقة',
 		'reject' => 'رفض',
+		'approved_committing' => 'تمت الموافقة — جارٍ الإيداع…',
+		'rejected_stopped' => 'تم الرفض — توقف التشغيل.',
+		'diff_truncated' => 'الفرق طويل — يتم عرض الجزء الأول فقط.',
 	};

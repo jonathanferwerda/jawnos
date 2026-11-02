@@ -455,4 +455,7 @@ $catalog{'zh'} = {
 		'review_before_commit' => '提交前审查',
 		'approve' => '批准',
 		'reject' => '拒绝',
+		'approved_committing' => '已批准——正在提交…',
+		'rejected_stopped' => '已拒绝——运行已停止。',
+		'diff_truncated' => '差异内容很长——仅显示第一部分。',
 	};

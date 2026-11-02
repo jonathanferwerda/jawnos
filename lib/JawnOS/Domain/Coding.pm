@@ -24,6 +24,8 @@ use utf8;
 
 use Mojo::JSON qw(decode_json encode_json);
 use Minion;
+use File::Temp ();
+use Digest::SHA ();
 
 # The coding queue is its own SQLite file, not the tree's minion.db. The master
 # wipes ~/.president on a reload (that is how the tree gets a clean run state),
@@ -206,6 +208,12 @@ sub coding_run_view {
 	elsif ($view->{'state'} eq 'queued' || $view->{'state'} eq 'active') {
 		$view->{'state'} = 'stale';
 		$view->{'error'} = 'the background coding process is not running this job';
+	}
+	# A review only a running worker will ever take. Polling it forever, with
+	# buttons that answer into the void, is worse than saying it is over.
+	if ($view->{'state'} eq 'awaiting_approval' && !$view->{'worker'}) {
+		$view->{'state'} = 'stale';
+		$view->{'error'} = 'the background coding process is not running, so nothing would take the answer';
 	}
 	return $view;
 }
@@ -441,41 +449,144 @@ sub coding_run_subagent {
 	return $record;
 }
 
-# The diff a commit would ship, for the person reviewing it. A new file is
-# invisible to `git diff` until it is in the index, so `add -N` marks it
-# intent-to-add first. Every path is reduced to the characters a repo path may
-# use and a `..` component is dropped outright, so an unsafe path can never
-# reach the shell line.
+# A path as one shell word. The review and the commit both build a command line
+# from filenames the agent chose, and a name may hold a space - or a `$`, which
+# a double-quoted word would expand.
+sub coding_shell_quote {
+	my $s = defined $_[0] ? "$_[0]" : '';
+	$s =~ s/'/'\\''/g;
+	return "'" . $s . "'";
+}
+
+# The paths a commit stages: what the run wrote, plus VERSION, which the commit
+# always includes. The review and the commit read this one list, so what a person
+# approves is what the commit stages - VERSION used to be committed unreviewed.
+sub coding_review_files {
+	my ($touched) = @_;
+	my %seen;
+	my @files;
+	foreach my $f ( ref $touched eq 'HASH' ? sort keys %{$touched} : () ) {
+		next unless defined $f && length "$f";
+		next if $seen{"$f"}++;
+		push @files, "$f";
+	}
+	my $repo = &subs::coding_repo();
+	if (defined $repo && length $repo && -f "$repo/VERSION" && !$seen{'VERSION'}++) {
+		push @files, 'VERSION';
+	}
+	return @files;
+}
+
+# The diff a commit would ship, for the person reviewing it, and a fingerprint of
+# it. A new file is invisible to `git diff` until it is in an index, so `add -N`
+# marks it intent-to-add in a throwaway index seeded from HEAD: the real index is
+# never touched, because an intent-to-add left behind by a refused review changes
+# what the person's next commit does.
+#
+# The review fails closed. A path this cannot put on a command line, or a git
+# call that fails, is an error - never an empty diff that a caller would read as
+# "nothing to review" and auto-approve.
 our $coding_diff_view_bytes = 20000;
 
-sub coding_diff_text {
+sub coding_diff_bundle {
 	my ($files) = @_;
-	return '' unless ref $files eq 'ARRAY' && scalar @{$files};
+	my $out = { text => '', hash => '', truncated => 0, error => '' };
+	return $out unless ref $files eq 'ARRAY' && scalar @{$files};
 	my $repo = &subs::coding_repo();
-	return '' unless defined $repo && length $repo;
+	unless (defined $repo && length $repo) {
+		$out->{'error'} = 'the repository is not set, so the change cannot be shown';
+		return $out;
+	}
 	my @safe;
 	foreach my $path ( @{$files} ) {
-		# The same normalisation the repo guard uses, kept local so this helper
-		# has no cross-package dependency and a path can never reach the shell
-		# line with anything but a plain repo path.
-		my $rel = defined $path ? "$path" : '';
+		my $raw = defined $path ? "$path" : '';
+		my $rel = $raw;
 		$rel =~ s{^\./+}{};
 		$rel =~ s{^/+}{};
 		$rel =~ s{/+$}{};
-		$rel =~ s/[^A-Za-z0-9_.\/-]//g;
-		next if $rel =~ m{(^|/)\.\.(/|$)};
 		next unless length $rel;
+		# Refused, not rewritten: a rewritten name matches no file (a `+` becomes
+		# nothing, a non-ASCII letter loses its bytes) and the empty diff that
+		# follows would read as an approval of a change nobody saw.
+		if ($rel =~ m{(^|/)\.\.(/|$)} || $rel !~ m{^[A-Za-z0-9_.][A-Za-z0-9_./-]*$}) {
+			$out->{'error'} = 'cannot show a diff for that path: ' . $raw;
+			return $out;
+		}
 		push @safe, $rel;
 	}
-	return '' unless @safe;
-	my $list = join(' ', map { '"' . $_ . '"' } @safe);
-	my $out = `cd "$repo" && (git add -N -- $list >/dev/null 2>&1; git diff --no-color -- $list 2>&1)`;
-	$out = '' unless defined $out;
-	$out =~ s/\x00//g;
-	if (length $out > $coding_diff_view_bytes) {
-		$out = substr($out, 0, $coding_diff_view_bytes) . '…';
+	unless (@safe) {
+		$out->{'error'} = 'there is nothing to review';
+		return $out;
 	}
+	my $scratch = File::Temp::tempdir(CLEANUP => 1);
+	my $index = "$scratch/index";
+	my $list = join(' ', map { &coding_shell_quote($_) } @safe);
+	my $git = 'GIT_INDEX_FILE=' . &coding_shell_quote($index);
+	my $cd = 'cd ' . &coding_shell_quote($repo);
+	my $trim = sub {
+		my $t = defined $_[0] ? "$_[0]" : '';
+		$t =~ s/\s+/ /g;
+		$t =~ s/^\s+|\s+$//g;
+		return substr($t, 0, 300);
+	};
+	my $setup = `$cd && $git git read-tree HEAD 2>&1`;
+	if ($? >> 8) { $out->{'error'} = 'could not read the repository state: ' . $trim->($setup); return $out; }
+	my $added = `$cd && $git git add -N -- $list 2>&1`;
+	if ($? >> 8) { $out->{'error'} = 'could not prepare the change for review: ' . $trim->($added); return $out; }
+	my $text = `$cd && $git git diff --no-color -- $list 2>&1`;
+	if ($? >> 8) { $out->{'error'} = 'could not read the diff: ' . $trim->($text); return $out; }
+	$text = '' unless defined $text;
+	$text =~ s/\x00//g;
+	my $full = $text;
+	if (length $text > $coding_diff_view_bytes) {
+		my $cut = substr($text, 0, $coding_diff_view_bytes);
+		# Never end on half a character: the text is encoded into the run state,
+		# and half a UTF-8 sequence is not something JSON can carry.
+		for (1 .. 3) {
+			my $probe = $cut;
+			last if utf8::decode($probe);
+			chop $cut;
+		}
+		$text = $cut . "\n... the rest of the diff is not shown\n";
+		$out->{'truncated'} = 1;
+	}
+	$out->{'text'} = $text;
+	$out->{'hash'} = Digest::SHA::sha256_hex(join("\n", @safe) . "\x00" . $full);
 	return $out;
+}
+
+# The diff text alone, for a caller that only wants to show it. An error is an
+# empty string here; the gate uses coding_diff_bundle so it can tell the two
+# apart and refuse.
+sub coding_diff_text {
+	my ($files) = @_;
+	my $bundle = &coding_diff_bundle($files);
+	return $bundle->{'text'};
+}
+
+# The answer to a paused commit lives in its own setting, not in the run
+# snapshot. The worker owns that snapshot and rewrites it every step and on a
+# timeout; a route that read-modify-wrote the same blob could lose either
+# write, resurrecting a review no worker will ever consume.
+sub coding_verdict_set {
+	my ($id, $verdict) = @_;
+	return 0 unless defined $id && $id =~ /^[0-9]+$/;
+	$verdict = defined $verdict ? "$verdict" : '';
+	$verdict = '' unless $verdict eq 'approve' || $verdict eq 'reject';
+	&subs::setting_setter({ app => '__president', setting => 'coding_verdict_' . $id, value => $verdict });
+	return 1;
+}
+
+# Read the verdict and clear it in one step, so one answer is consumed once and
+# a stale verdict from an earlier pause cannot answer the next one.
+sub coding_verdict_take {
+	my ($id) = @_;
+	return '' unless defined $id && $id =~ /^[0-9]+$/;
+	my $v = &subs::setting_grabber({ app => '__president', setting => 'coding_verdict_' . $id });
+	$v = defined $v ? "$v" : '';
+	return '' unless $v eq 'approve' || $v eq 'reject';
+	&subs::setting_setter({ app => '__president', setting => 'coding_verdict_' . $id, value => '' });
+	return $v;
 }
 
 # How often a paused run looks for the person's verdict, and how long it waits
@@ -484,20 +595,71 @@ sub coding_diff_text {
 our $coding_approve_poll = 2;
 our $coding_approve_timeout = 30 * 60;
 
+# Drop the review offer and put the run back to working.
+sub coding_await_resume {
+	my ($id, $conversation) = @_;
+	my $state = &coding_run_state_load($id);
+	$state = {} unless ref $state eq 'HASH';
+	delete $state->{'pending_commit'};
+	$state->{'state'} = 'active';
+	$state->{'current'} = { state => 'active', at => &subs::rightNow() };
+	$state->{'updated'} = &subs::rightNow();
+	&coding_run_state_save($id, $state);
+	&coding_run_push($id, $conversation);
+	return 1;
+}
+
+# The review could not happen (or the tree moved under it): say why and leave the
+# offer off the panel. Nothing is committed.
+sub coding_await_fail {
+	my ($id, $conversation, $why) = @_;
+	my $state = &coding_run_state_load($id);
+	$state = {} unless ref $state eq 'HASH';
+	delete $state->{'pending_commit'};
+	$state->{'state'} = 'active';
+	$state->{'error'} = defined $why && length $why ? "$why" : 'the change could not be shown for review';
+	$state->{'current'} = { state => 'active', at => &subs::rightNow() };
+	$state->{'updated'} = &subs::rightNow();
+	&coding_run_state_save($id, $state);
+	&coding_run_push($id, $conversation);
+	return 1;
+}
+
 # Pause before a commit and wait for approve/reject/cancel. Returns one word:
-# `approved` (run the commit), `rejected`, `cancelled`, `timeout` or `orphaned`.
-# An empty diff is nothing to review, so it approves at once without pausing.
+# `approved` (run the commit), `rejected`, `cancelled`, `timeout`, `orphaned`,
+# `diff_failed` (nothing could be shown) or `changed` (the tree moved after it
+# was shown). Only the first of those lets the commit run; every other answer
+# stops short, so an unshowable change is never quietly committed.
 sub coding_await_commit {
 	my ($id, $conversation, $files, $deadline) = @_;
 	$files = [] unless ref $files eq 'ARRAY';
-	my $diff = &coding_diff_text($files);
-	return 'approved' unless defined $diff && length $diff;
+	# Nothing was written. There is no change to show, and the commit itself says
+	# so; this is not a review that was skipped.
+	return 'approved' unless scalar @{$files};
+	my $bundle = &coding_diff_bundle($files);
+	if (length $bundle->{'error'}) {
+		&coding_await_fail($id, $conversation, $bundle->{'error'});
+		return 'diff_failed';
+	}
+	unless (length $bundle->{'text'}) {
+		&coding_await_fail($id, $conversation, 'there is no change to show for this commit');
+		return 'diff_failed';
+	}
+	my $hash = $bundle->{'hash'};
+	# A verdict left from an earlier pause must not answer this one.
+	&coding_verdict_set($id, '');
 	my $now = &subs::rightNow();
 	$deadline = $now + $coding_approve_timeout * 1000 unless defined $deadline;
 	my $state = &coding_run_state_load($id);
 	$state = {} unless ref $state eq 'HASH';
 	$state->{'state'} = 'awaiting_approval';
-	$state->{'pending_commit'} = { files => [ @{$files} ], diff => $diff, at => $now };
+	$state->{'pending_commit'} = {
+		files     => [ @{$files} ],
+		diff      => $bundle->{'text'},
+		hash      => $hash,
+		truncated => $bundle->{'truncated'} ? 1 : 0,
+		at        => $now,
+	};
 	$state->{'current'} = { state => 'awaiting_approval', at => $now };
 	$state->{'updated'} = $now;
 	&coding_run_state_save($id, $state);
@@ -506,28 +668,25 @@ sub coding_await_commit {
 	while (1) {
 		select(undef, undef, undef, $coding_approve_poll);
 		if ($master && !kill(0, $master)) { return 'orphaned'; }
-		my $fresh = &coding_run_state_load($id);
-		$fresh = {} unless ref $fresh eq 'HASH';
-		if ($fresh->{'approve'}) {
-			delete $fresh->{'approve'};
-			delete $fresh->{'pending_commit'};
-			$fresh->{'state'} = 'active';
-			$fresh->{'current'} = { state => 'active', at => &subs::rightNow() };
-			$fresh->{'updated'} = &subs::rightNow();
-			&coding_run_state_save($id, $fresh);
-			&coding_run_push($id, $conversation);
+		my $verdict = &coding_verdict_take($id);
+		if ($verdict eq 'approve') {
+			# The commit stages the tree as it is now, so the tree as it is now
+			# must still be the change the person was shown.
+			my $again = &coding_diff_bundle($files);
+			if (length $again->{'error'} || $again->{'hash'} ne $hash) {
+				&coding_await_fail($id, $conversation, 'the change moved after it was shown, so nothing was committed');
+				return 'changed';
+			}
+			&coding_await_resume($id, $conversation);
 			return 'approved';
 		}
-		if ($fresh->{'reject'}) {
-			delete $fresh->{'reject'};
-			$fresh->{'state'} = 'active';
-			$fresh->{'current'} = { state => 'active', at => &subs::rightNow() };
-			$fresh->{'updated'} = &subs::rightNow();
-			&coding_run_state_save($id, $fresh);
-			&coding_run_push($id, $conversation);
+		if ($verdict eq 'reject') {
+			&coding_await_resume($id, $conversation);
 			return 'rejected';
 		}
-		if ($fresh->{'cancel'}) {
+		# The cancel flag still lives in the snapshot; read it, never rewrite it.
+		my $fresh = &coding_run_state_load($id);
+		if (ref $fresh eq 'HASH' && $fresh->{'cancel'}) {
 			return 'cancelled';
 		}
 		if (&subs::rightNow() > $deadline) {
@@ -702,7 +861,7 @@ sub coding_run_job {
 				# A commit that follows a review uses the same touched set: the
 				# diff a person approved is the one the commit stages.
 				if (($action->{'action'} // '') eq 'commit' && &coding_review_setting()) {
-					my @files = sort keys %touched;
+					my @files = &coding_review_files(\%touched);
 					my $verdict = &coding_await_commit($id, $conversation, \@files);
 					if ($verdict eq 'rejected') {
 						$final = 'Stopped: the commit was rejected. The changed files are still in the tree.';
@@ -716,6 +875,13 @@ sub coding_run_job {
 						$error = $verdict eq 'timeout'
 							? 'the commit waited more than 30 minutes for review'
 							: 'the master that owns this worker is gone';
+						last;
+					}
+					# Nothing was shown, or the tree moved under it: fail closed.
+					if ($verdict eq 'diff_failed' || $verdict eq 'changed') {
+						$error = $verdict eq 'changed'
+							? 'the change moved after it was shown, so nothing was committed'
+							: 'the change could not be shown for review, so nothing was committed';
 						last;
 					}
 				}
