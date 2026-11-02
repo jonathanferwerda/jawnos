@@ -959,10 +959,20 @@ elsif ($type eq 'delay') {
 #	$commander = &subs::run_command($appts->{$app}->{'setting'}->{'command'}) if $appts->{$app}->{'setting'}->{'command'} && $type =~ /command/;
 #	&subs::cache_delete({ app => $app, context => 'template' });
 
-	my $cv = &centre_view_grabber({ c => $c, app => $app, timestamp => $timestamp, header => $appt_header, appts => $header_appts, cached => 'no' });
+	# The press that started or stopped this wants the header it changed, and
+	# nothing else in this reply. A full centre-view render here (a ~40 KB window)
+	# used to sit between the press and the reply, so the page that pressed only
+	# saw the new header after the whole window had been drawn - and that reply is
+	# the only path when the socket is asleep. The window is redrawn by the header
+	# worker's own fork and by budget_runner; only a caller that actually reads
+	# `cv` out of the reply asks for it synchronously.
+	my $cv;
+	if (($c->param('cv') // '') eq 'yes') {
+		$cv = &centre_view_grabber({ c => $c, app => $app, timestamp => $timestamp, header => $appt_header, appts => $header_appts, cached => 'no' });
+		$returner->{'cv'} = $cv;
+	}
 	&budget_runner($app);
 	&padlock_time_extender($c);
-	$returner->{'cv'} = $cv;
 	$returner->{'uuid'} = $uuid;
 	# The header the press just changed, so the page that pressed it can show the
 	# new state even when the live socket is the thing that was asleep. The same
@@ -971,7 +981,17 @@ elsif ($type eq 'delay') {
 	unless ($c->param('account') && $c->param('account') eq 'gallery' && &subs::setting_grabber({ app => 'me', setting => 'gallery_appts' }) eq 'off' ) {
 	#	&Websocket::send('tab', { app => $app, window => $cv, timestamp => $timestamp });
 	}
-	&subs::file_encrypter({ app => $app, suds => &subs::session_suds($c) });
+	# Sealing an app's attached media walks its files, and the reply carries none
+	# of them: it is work for a fork, not for the press's wait. Skipped outright
+	# when the app does not seal its media (file_encrypter's own no-op), so the
+	# common press does not pay for a fork it would never use.
+	if (&subs::setting_grabber({ app => $app, setting => 'enc' }) eq 'on') {
+		my $suds = &subs::session_suds($c);
+		&subs::subprocessor(sub {
+			Mojo::IOLoop->reset;
+			&subs::file_encrypter({ app => $app, suds => $suds });
+		}, { name => 'reset file encrypt' });
+	}
 	&subs::appointment_theme_push() if ($theme_movement =~ /^(?:start|stop|record|cancel|resume|pause|delay)$/);
 	return $returner;
 }

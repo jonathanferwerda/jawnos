@@ -72,7 +72,10 @@ $(document).on('keyup', '.timed_input', function(e) {
 			i.addClass('active');
 			url = '/manager/reset';
 			var entry = 'add';
-			data = { app: value, timeshift: timeshift, timestamp: timestamp, type: entry, movement: 'expense', time_machine: time_machine, project: project };
+			// This caller reads the redrawn window out of the reply (`response.cv`),
+			// so it asks for the synchronous centre-view render. The start/stop press
+			// does not, and takes the instant header reply instead.
+			data = { app: value, timeshift: timeshift, timestamp: timestamp, type: entry, movement: 'expense', time_machine: time_machine, project: project, cv: 'yes' };
 			timeout = 1000;
 		}
 		else if (i.hasClass('name_change')) {
