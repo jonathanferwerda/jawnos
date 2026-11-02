@@ -44,7 +44,18 @@ my $inspect = sub {
 	return &subs::plaintext_verdict($_[0]);
 };
 
-my @ranges = ([0, 100], [1, 1], [15, 33], [4096, 8192], [length($plain) - 10, 10], [int(length($plain) / 2), undef]);
+# The ranges must stay inside the plaintext whatever --bytes asks for: a range
+# past the end asked the opener for bytes that are not there, which the run
+# reported as a failure of the cipher rather than of the test. Clamped, a small
+# --bytes still exercises the same four paths.
+my $size   = length $plain;
+my @ranges = map {
+	my ($start, $len) = @{$_};
+	$start = 0 if $start < 0;
+	$start = 0 if $start > $size - 1;
+	$len = $size - $start if defined $len && $start + $len > $size;
+	[ $start, $len ];
+} ([0, 100], [1, 1], [15, 33], [4096, 8192], [length($plain) - 10, 10], [int(length($plain) / 2), undef]);
 my $fail = 0;
 
 for my $std (@standards) {

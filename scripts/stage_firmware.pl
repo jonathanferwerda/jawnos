@@ -7,6 +7,8 @@
 #
 #   perl scripts/stage_firmware.pl            # copy the current build
 #   perl scripts/stage_firmware.pl --build    # run pio run -j 4 first
+#   perl scripts/stage_firmware.pl --root DIR # stage into another tree (a test,
+#                                             # or a copy of the checkout)
 #
 # Add an entry to @targets when another device gains a hardwired OTA path.
 use strict;
@@ -19,6 +21,15 @@ use Cwd qw(abs_path);
 
 my $root  = abs_path("$RealBin/..");
 my $build = grep { $_ eq '--build' } @ARGV;
+
+# --root stages into another checkout. It exists so this can be tested (and so a
+# release tree can be staged without cd-ing into it); the default is the repo the
+# script lives in.
+for my $i (0 .. $#ARGV) {
+	next unless $ARGV[$i] eq '--root' && defined $ARGV[ $i + 1 ] && length $ARGV[ $i + 1 ];
+	$root = abs_path($ARGV[ $i + 1 ]) || $ARGV[ $i + 1 ];
+	last;
+}
 
 my @targets = (
 	{

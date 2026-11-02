@@ -93,12 +93,9 @@ my %owed = map { $_ => 1 } qw(
 	scripts/paper_share_qr.pl
 	scripts/pph_compare.pl
 	scripts/privacy_permissions.pl
-	scripts/records_recover.pl
-	scripts/sealed_selftest.pl
 	scripts/settings_audit.pl
 	scripts/signatorial_audit.pl
 	scripts/sponsors_goal.pl
-	scripts/stage_firmware.pl
 	scripts/store_invoice_email_driver.pl
 	scripts/thumb_reorient.pl
 	scripts/thumbs_hidden.pl
