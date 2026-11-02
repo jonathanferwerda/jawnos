@@ -201,6 +201,12 @@ $ws_plain_port = $ws_port - 100 if $ws_plain_port > 60000;
 # and the pid, so a ballooning worker can be attributed rather than guessed.
 sub prefork_tune {
 	my ($prefork, %opt) = @_;
+	# Workers leave with their manager at once where prctl exists (see
+	# perl/parent_guard.pl); this heartbeat is the fallback on a platform that
+	# has no PR_SET_PDEATHSIG, so a dead manager is noticed in a second rather
+	# than the module's default of five. A worker still holding the listening
+	# socket is a dead tree's port kept open.
+	$prefork->heartbeat_interval(1);
 	# Recycle workers so a grown heap dies with its worker instead of living
 	# forever. `accepts` ends a worker once it has taken that many connections and
 	# prefork starts a lean replacement before the old one stops. A phone already

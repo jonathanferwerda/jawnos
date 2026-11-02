@@ -21,7 +21,9 @@ package parent_guard;
 
 use strict;
 use warnings;
+use Config;
 use POSIX ();
+use Mojo::IOLoop;
 use Time::HiRes qw(sleep);
 
 # start(tree => PID, master => PID, interval => SECONDS)
@@ -97,6 +99,54 @@ sub alive {
 		$cmd = '' unless defined $cmd;
 		$cmd =~ s/\0/ /g;
 		return 0 if length $cmd && $cmd !~ m{(?:^|/)jawn(?:\s|$)};
+	}
+	return 1;
+}
+
+# prctl(PR_SET_PDEATHSIG, SIGKILL): the kernel kills a worker the instant its
+# manager thread dies, even if a request has the event loop blocked. The
+# syscall number is per architecture; an unknown platform falls back to the
+# prefork heartbeat (now 1s) and the loop check below.
+my %PRCTL = (
+	x86_64  => 157,
+	aarch64 => 167,
+	arm     => 172,
+	i386    => 172,
+	i686    => 172,
+	riscv64 => 167,
+	ppc64   => 171,
+	ppc64le => 171,
+);
+
+sub pdeathsig_supported {
+	return 0 unless $^O eq 'linux';
+	my ($arch) = $Config{'archname'} =~ /^([^-]+)/;
+	return $PRCTL{$arch} ? 1 : 0;
+}
+
+sub pdeathsig {
+	return 0 unless &pdeathsig_supported;
+	my ($arch) = $Config{'archname'} =~ /^([^-]+)/;
+	my $ok = eval { syscall($PRCTL{$arch}, 1, 9) };   # PR_SET_PDEATHSIG, SIGKILL
+	return (defined $ok && $ok == 0) ? 1 : 0;
+}
+
+# A prefork worker must leave with the manager that forked it. The kernel does
+# this at once where prctl exists; otherwise the worker's loop checks its parent
+# every second, and the prefork heartbeat is the same fallback from the other
+# side. This is what closes the old five-second window in which a SIGKILLed
+# manager's workers still held the listening sockets.
+sub worker {
+	my ($manager) = @_;
+	$manager ||= getppid();
+	return 0 unless $manager && $manager =~ /^[0-9]+$/;
+	my $direct = &pdeathsig();
+	# the manager can die between fork and this call; prctl is too late then
+	POSIX::_exit(0) if getppid() != $manager;
+	unless ($direct) {
+		Mojo::IOLoop->recurring(1 => sub {
+			POSIX::_exit(0) if getppid() != $manager;
+		});
 	}
 	return 1;
 }

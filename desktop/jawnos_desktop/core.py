@@ -422,17 +422,21 @@ def version_mismatch(jawn_dir):
 
 
 def restart_if_stale(jawn_dir, with_ble=True):
-    """Restart the tree when its running version is not the on-disk version.
+    """Keep the tree up, and on the on-disk version.
 
-    Returns (action, message): ``current``, ``down``, ``restarted`` or
-    ``failed``. The caller owns the cadence (see ``jawnosctl watch`` and the
-    dashboard tick); a restart is a full stop-and-start, as the Restart button
-    is, so no half-boot window is left behind.
+    Returns (action, message): ``current``, ``started``, ``down``, ``restarted``
+    or ``failed``. A tree that is simply down is started, so ``jawnosctl watch``
+    is a supervisor and not only a version chaser; a running tree whose version
+    is not the on-disk one is restarted whole, as the Restart button is, so no
+    half-boot window is left behind.
     """
     mismatch = version_mismatch(jawn_dir)
     if not mismatch:
         if not jawn_up(jawn_dir):
-            return "down", "jawn is not running"
+            ok, message = start_all(jawn_dir, with_ble=with_ble)
+            if ok:
+                return "started", "jawn was down; started it (%s)" % message
+            return "failed", "jawn is down and could not be started (%s)" % message
         return "current", "running the on-disk version"
     running, disk = mismatch
     ok, message = restart_all(jawn_dir, with_ble=with_ble)

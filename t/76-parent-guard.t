@@ -17,6 +17,7 @@ use RepoSource;
 # both the wiring and the behaviour.
 
 my $root = repo_root();
+require "$root/perl/parent_guard.pl";
 my $jawn = read_file("$root/jawn");
 my $president = read_file("$root/perl/President.pl");
 my $guard = read_file("$root/perl/parent_guard.pl");
@@ -85,5 +86,49 @@ like(-e $marker ? read_file($marker) : '', qr/term/,
 
 kill 'KILL', $tree if kill(0, $tree);
 waitpid($tree, 0) if $tree;
+
+# ---- a worker leaves with its manager, even while the loop is blocked ------
+SKIP: {
+	skip 'PR_SET_PDEATHSIG is not available on this platform', 3
+		unless parent_guard::pdeathsig_supported();
+
+	pipe(my $reader, my $writer) or die "pipe: $!\n";
+	my $mgr = fork();
+	die "fork manager: $!\n" unless defined $mgr;
+	if ($mgr == 0) {
+		# the worker must be a child of the manager, not of the test
+		my $me = $$;
+		my $w = fork();
+		if (!defined $w) { exit 1 }
+		if ($w == 0) {
+			parent_guard::worker($me);
+			select(undef, undef, undef, 0.2) while 1;
+		}
+		print $writer "$w\n";
+		close $writer;
+		sleep 30;
+		exit 0;
+	}
+	close $writer;
+	my $worker = <$reader>;
+	chomp $worker;
+	close $reader;
+	ok($worker =~ /^[0-9]+$/, 'the manager forked a worker');
+
+	sleep 0.4;
+	ok(parent_guard::running($worker), 'a worker is alive while its manager lives');
+
+	kill 'KILL', $mgr;
+	waitpid($mgr, 0);
+	my $deadline = time + 2;
+	my $gone = 0;
+	while (time < $deadline) {
+		if (!parent_guard::running($worker)) { $gone = 1; last }
+		sleep 0.05;
+	}
+	ok($gone, 'PR_SET_PDEATHSIG ends the worker with a SIGKILLed manager');
+
+	kill 'KILL', $worker if kill(0, $worker);
+}
 
 done_testing();

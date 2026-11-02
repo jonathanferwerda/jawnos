@@ -1,0 +1,6 @@
+#!/bin/sh
+# User-facing entry point. The implementation and its installer live in
+# desktop/; this wrapper keeps the command at the tree root, beside ./jawn,
+# so a checkout has one place for the commands people run.
+here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+exec "$here/desktop/jawnosctl" "$@"

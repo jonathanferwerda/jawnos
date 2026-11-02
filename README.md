@@ -90,6 +90,11 @@ links to whichever machine is in range. The app can come up as a kiosk session (
 configuration ships in `desktop/wayland/`) or sit in the tray, holds the machine awake while
 media plays, updates itself in place, and reports the house version it is running.
 
+From a checkout the user-facing commands are at the tree root — `./jawnos-desktop`,
+`./jawnosctl` and `./jawnos-bt-daemon` — with their implementation and installer in `desktop/`.
+`./jawn` is the service entry both the desktop and Android apps start, not a command you normally
+type.
+
 ### Files, media & creation
 
 - **Folders** — the file manager: Places sidebar, tabs and extra windows, grid or list view,

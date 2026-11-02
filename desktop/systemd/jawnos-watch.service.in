@@ -1,0 +1,21 @@
+[Unit]
+Description=JawnOS supervisor (starts jawn when down, restarts it when stale)
+Documentation=https://github.com/jonathanferwerda/jawnos
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+UMask=0077
+StateDirectory=jawnos
+WorkingDirectory=@JAWN_DIR@
+ExecStart=@DESKTOP@/jawnosctl watch --interval 10
+# The watcher supervises jawn; stopping the watcher must not take the tree down.
+KillMode=process
+Restart=always
+RestartSec=5
+StandardOutput=append:%h/.local/state/jawnos/jawn-watch.log
+StandardError=append:%h/.local/state/jawnos/jawn-watch.log
+
+[Install]
+WantedBy=default.target

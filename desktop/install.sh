@@ -243,20 +243,28 @@ fi
 # --- systemd --user units (a desktop, not a server) -------------------------
 if [ "$WITH_SYSTEMD" -eq 1 ] && [ "$WITH_HEADLESS" -eq 0 ]; then
 	mkdir -p "$UNITS"
-	for unit in jawnos-bt jawnos; do
+	for unit in jawnos-bt jawnos jawnos-watch; do
 		sed -e "s|@PYTHON@|$PYTHON|g" \
 			-e "s|@PERL@|${PERL:-/usr/bin/perl}|g" \
 			-e "s|@DESKTOP@|$DEST|g" \
 			-e "s|@JAWN_DIR@|$JAWN_DIR|g" \
 			"$DESKTOP_SRC/systemd/$unit.service.in" > "$UNITS/$unit.service"
 	done
-	echo "Wrote $UNITS/jawnos-bt.service and jawnos.service"
+	echo "Wrote $UNITS/jawnos-bt.service, jawnos.service and jawnos-watch.service"
 	if command -v systemctl >/dev/null 2>&1; then
 		systemctl --user daemon-reload || true
 		systemctl --user enable --now jawnos-bt.service 2>/dev/null \
 			&& echo "Enabled jawnos-bt.service" \
 			|| echo "Enable it with: systemctl --user enable --now jawnos-bt.service"
-		echo "For jawn itself: systemctl --user enable --now jawnos.service"
+		systemctl --user enable --now jawnos-watch.service 2>/dev/null \
+			&& echo "Enabled jawnos-watch.service (starts jawn when down, restarts it when stale)" \
+			|| echo "Enable it with: systemctl --user enable --now jawnos-watch.service"
+		if systemctl --user is-enabled jawnos.service >/dev/null 2>&1; then
+			echo "Note: jawnos.service is also enabled. The watcher already starts"
+			echo "jawn; to keep one supervisor: systemctl --user disable --now jawnos.service"
+		else
+			echo "jawn is supervised by jawnos-watch.service; jawnos.service is optional"
+		fi
 	fi
 fi
 

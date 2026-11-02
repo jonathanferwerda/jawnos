@@ -56,14 +56,19 @@ installs `/etc/udev/rules.d/99-jawnos-input.rules` for the installing user's
 group, so the desk can read every keyboard, mouse, touchpad and tablet (X11 and
 Wayland alike) and write `/dev/uinput`. It needs sudo once; replacing a mouse
 or keyboard needs no rerun because the rule matches the standard `ID_INPUT`
-tags. You do not have to install it at all — the tools run in place from the
-checkout:
+tags. You do not have to install it at all — the commands live at the tree
+root and run in place from the checkout (their implementation and installer
+stay in `desktop/`):
 
 ```sh
-./desktop/jawnosctl status
-./desktop/jawnos-desktop
-./desktop/jawnos-bt-daemon
+./jawnosctl status
+./jawnos-desktop
+./jawnos-bt-daemon
 ```
+
+`./jawn` is the service entry those commands (and both apps) start; it is not
+normally typed. The installed copy links the same three commands into
+`~/.local/bin`.
 
 Distro packages, when you need them:
 
@@ -257,7 +262,7 @@ exactly what the Android daemon speaks, so the shared `scripts/jawn-bt` client
 works unchanged:
 
 ```sh
-jawnosctl ble start           # or: ./desktop/jawnosctl ble start
+jawnosctl ble start           # the root command; the same as ./desktop/jawnosctl
 ./scripts/jawn-bt status
 ./scripts/jawn-bt scan 8      # lists nearby LE devices
 ./scripts/jawn-bt connect 64:E8:33:4B:38:39 \

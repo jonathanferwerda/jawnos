@@ -81,6 +81,18 @@ use Number::Format qw/:subs/;
 use SQL::Abstract;
 use Mojo::SQLite;
 use Mojo::IOLoop;
+
+# A prefork worker is forked after this file is loaded, and the manager that
+# forked it never ticks the IOLoop (Prefork polls its heartbeat pipe instead),
+# so this next_tick runs in the worker only. It installs the parent-death guard
+# before the worker's first request: a SIGKILLed manager takes its workers with
+# it at once, not after the five-second heartbeat. See perl/parent_guard.pl.
+our $worker_manager_pid = $$;
+Mojo::IOLoop->next_tick(sub {
+	return if $$ == $worker_manager_pid;
+	require './perl/parent_guard.pl';
+	parent_guard::worker($worker_manager_pid);
+});
 use Mojo::IOLoop::ReadWriteFork;
 use Mojolicious::Sessions;
 use Mojo::Server::Daemon;

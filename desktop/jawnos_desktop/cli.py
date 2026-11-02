@@ -85,12 +85,12 @@ def cmd_restart(args):
 
 
 def cmd_watch(args):
-    """Keep the running tree on the on-disk version.
+    """Keep the running tree up and on the on-disk version.
 
     A code sync writes new files (and VERSION) without touching the process,
-    so a supervisor that only starts the tree once can sit on old code. The
-    dashboard runs this same check on its own tick; this loop is for a
-    headless host or a container where no dashboard is running.
+    so a supervisor that only starts the tree once can sit on old code. This
+    loop is also the liveness supervisor: when the tree is down it starts it,
+    and when the running version is not the on-disk one it restarts it whole.
     """
     settings = core.load_settings()
     jawn_dir = settings["jawn_dir"]
@@ -105,11 +105,11 @@ def cmd_watch(args):
             # the tree that is still coming down or booting
             if time.time() - last_restart >= 180:
                 action, message = core.restart_if_stale(jawn_dir, with_ble=with_ble)
-                if action == "restarted":
+                if action in ("started", "restarted"):
                     last_restart = time.time()
             else:
                 action, message = "waiting", "restart settling"
-            if action != last_action and action in ("restarted", "failed", "down"):
+            if action != last_action and action in ("started", "restarted", "failed", "down"):
                 print("%s %s" % (time.strftime("%Y-%m-%d %H:%M:%S"), message), flush=True)
             last_action = action
             time.sleep(interval)

@@ -23,116 +23,239 @@ BEGIN {
 	}
 }
 
-use File::Slurp;
-use Mojo::JSON qw/decode_json encode_json/;
+use strict;
+use warnings;
+use File::Slurp qw(read_file write_file);
+use Mojo::JSON qw(decode_json);
+use Time::HiRes qw(sleep);
 
-# Stops everything jawn runs: the master, the President/Manager/websocket tree,
-# the BLE client, ollama, and whatever still holds the web port.
+# Stop everything jawn runs: the tree and its workers, the BLE client, ollama,
+# and whatever still holds the web port. This is the clean path behind the
+# app's Stop button, a restart, and ./jawn's own shut_down.
 #
-# Called two ways:
-#   ./jawn Ctrl+C         no arguments -- the master is the caller and takes
-#                         itself down, so it is left alone here
-#   the app's Stop button "master" -- ./jawn is taken down too. The app used to
-#                         only stop the terminal session, which SIGKILLs the
-#                         master before its Ctrl+C handler runs; the tree
-#                         survived, and a surviving master keeps
-#                         ~/.process_watch answering, so the next start would
-#                         see "another jawn is running" and stand down
-#                         (2026-10-10: after Stop the web UI was still up and
-#                         the phone ran hot for an hour).
+# It used to run pkill and pgrep four times per name, each of them a process,
+# and a match was anything whose command line mentioned the name - an editor
+# with Manager.pl open looked exactly like a worker. This scans /proc once,
+# reads each command line and executable, and signals the exact pids. In the
+# common case the whole stop is two scans and a short TERM-to-KILL grace.
 #
-# The sweeps take each program by process name and again by full command line:
-# the same script runs as "President.pl" on one machine and "perl
-# ./perl/President.pl" on another, and a "perl <script>" parent has only "perl" for
-# a name.
+#   perl scripts/manager_killer.pl            # the tree (the master caller stays)
+#   perl scripts/manager_killer.pl master     # the master too (the app's Stop)
+#   perl scripts/manager_killer.pl --list     # what would be signalled
+#   perl scripts/manager_killer.pl --scope=DIR --list
+#
+# --scope keeps only processes whose command line contains DIR. It is how the
+# regression suite drives this without touching the live house.
 
-my $self = shift;
 my $kill_master = 0;
-if (($self || '') =~ /^master$/i) {
-	$kill_master = 1;
-	$self = '';
+my $list_only = 0;
+my $scope = '';
+foreach my $arg (@ARGV) {
+	if ($arg =~ /^master$/i) { $kill_master = 1 }
+	elsif ($arg eq '--list' || $arg eq '--dry-run') { $list_only = 1 }
+	elsif ($arg =~ /^--scope=(.+)$/) { $scope = $1 }
 }
-my $uname = `uname -r`;
-print "Protecting " . $self . "\n\n\n";
 
-my $allowed = 1;
-$allowed = 0 unless $self =~ /[0-9]/gi;
-$self = 000000000000 unless $self;
+my $self = $$;
+my $parent = getppid();
+my $android = (-e '/system/bin/init' || defined $ENV{'ANDROID_ROOT'}) ? 1 : 0;
+my @SCRIPTS = qw(President.pl Manager.pl Websocket.pl teletype.pl watch.pl Music.pl Alarm.pl);
+my %RANK = (master => 0, tree => 1, 'jawn-bt' => 2, ollama => 3, tts => 4, sshpass => 5, ssh => 6);
 
-sub killer_sweep {
-	my ($pattern, $label) = @_;
-	print "killing $label\n";
-	`pkill '$pattern' 2>/dev/null`;
-	`pkill -f '$pattern' 2>/dev/null`;
-	for my $round (1 .. 4) {
-		sleep .3;
-		my @pids = grep { /^[0-9]+$/ } split "\n", `pgrep '$pattern' 2>/dev/null`;
-		push @pids, grep { /^[0-9]+$/ } split "\n", `pgrep -f '$pattern' 2>/dev/null`;
-		last unless scalar @pids;
-		foreach my $pid (@pids) {
-			next if $pid == $$ || $pid == getppid();
-			`kill -9 $pid` unless $pid == $self;
+sub cmdline {
+	my ($pid) = @_;
+	open(my $fh, '<', "/proc/$pid/cmdline") or return '';
+	local $/;
+	my $line = <$fh>;
+	close $fh;
+	$line = '' unless defined $line;
+	$line =~ s/\0/ /g;
+	return $line;
+}
+
+sub exe_path {
+	my ($pid) = @_;
+	my $link = readlink("/proc/$pid/exe");
+	return $link if defined $link && length $link;
+	my ($first) = split /\s+/, &cmdline($pid);
+	return defined $first ? $first : '';
+}
+
+sub base {
+	my ($path) = @_;
+	$path = '' unless defined $path;
+	$path =~ s{.*/}{};
+	return $path;
+}
+
+sub state {
+	my ($pid) = @_;
+	open(my $fh, '<', "/proc/$pid/stat") or return '';
+	my $line = <$fh>;
+	close $fh;
+	return '' unless defined $line;
+	$line =~ s/^.*\)\s+//;
+	my ($state) = split /\s+/, $line;
+	return defined $state ? $state : '';
+}
+
+sub running {
+	my ($pid) = @_;
+	return 0 unless $pid && $pid =~ /^[0-9]+$/;
+	return 0 unless kill 0, $pid;
+	my $s = &state($pid);
+	return 0 if $s eq 'Z' || $s eq 'X' || $s eq 'x';
+	return 1;
+}
+
+sub is_perl_exe {
+	my ($name) = @_;
+	return 1 if $name =~ /^perl[0-9.]*$/;
+	return 1 if $name eq 'libbin_perl.so';
+	return 0;
+}
+
+sub is_master {
+	my ($cmd, $exe) = @_;
+	return 0 unless &is_perl_exe(&base($exe));
+	return 0 if $cmd =~ / (?:-c|-e|-M) /;
+	return $cmd =~ m{(?:^|[\s/])jawn(?:\s|$)} ? 1 : 0;
+}
+
+sub is_tree {
+	my ($cmd, $exe) = @_;
+	return 0 if $cmd =~ / (?:-c|-e|-M) /;
+	my $perl = &is_perl_exe(&base($exe));
+	if ($perl) {
+		foreach my $name (@SCRIPTS) {
+			return 1 if $cmd =~ m{(?:^|[\s/])\Q$name\E(?:\s|$)};
 		}
+		return 0;
+	}
+	# a direct shebang run carries the script as argv[0]
+	my ($first) = split /\s+/, $cmd;
+	return (defined $first && &base($first)) =~ /^(?:President|Manager|Websocket|teletype|watch|Music|Alarm)\.pl$/
+		? 1 : 0;
+}
+
+sub extra {
+	my ($cmd, $exe) = @_;
+	my $name = &base($exe);
+	return 'ollama' if $name eq 'ollama';
+	return 'ollama' if $name =~ /^(?:runsv|runsvdir|sv)$/ && $cmd =~ /(?:^|\s)ollama(?:\s|$)/;
+	return 'jawn-bt' if &is_perl_exe($name) && $cmd =~ /jawn-bt\s+listen/;
+	return 'tts' if $name =~ /^termux-tts-spea/;
+	return 'sshpass' if $name eq 'sshpass';
+	return 'ssh' if $android && $name eq 'ssh';
+	return '';
+}
+
+# One /proc pass. Only processes that name a jawn program (or one of the few
+# helpers the tree starts) are returned, and only when their executable still
+# is perl - a shell, editor, compiler probe or a test that merely mentions a
+# script in its command line is left alone.
+sub scan_processes {
+	my @found;
+	opendir(my $procs, '/proc') or return @found;
+	foreach my $pid (grep { /^[0-9]+$/ } readdir $procs) {
+		next if $pid == $self || $pid == $parent;
+		next unless &running($pid);
+		my $cmd = &cmdline($pid);
+		next unless length $cmd;
+		next if length $scope && index($cmd, $scope) < 0;
+		my $exe = &exe_path($pid);
+		my $label = '';
+		if ($kill_master && &is_master($cmd, $exe)) { $label = 'master' }
+		elsif (&is_tree($cmd, $exe)) { $label = 'tree' }
+		else { $label = &extra($cmd, $exe) }
+		next unless $label;
+		push @found, { pid => $pid, label => $label, cmd => $cmd };
+	}
+	closedir $procs;
+	return @found;
+}
+
+my @found = &scan_processes();
+my @ordered = sort { $RANK{$a->{'label'}} <=> $RANK{$b->{'label'}} || $a->{'pid'} <=> $b->{'pid'} } @found;
+
+if ($list_only) {
+	printf "%d\t%s\t%s\n", $_->{'pid'}, $_->{'label'}, $_->{'cmd'} foreach @ordered;
+	exit 0;
+}
+
+if (@ordered) {
+	print "manager_killer: " . scalar(@ordered) . " process(es)\n";
+	foreach my $p (@ordered) {
+		kill 'TERM', $p->{'pid'};
+		print "TERM $p->{'pid'} $p->{'label'}\n";
+	}
+	sleep 0.4;
+	foreach my $p (@ordered) {
+		next unless &running($p->{'pid'});
+		kill 'KILL', $p->{'pid'};
+		print "KILL $p->{'pid'} $p->{'label'}\n";
+	}
+	# A prefork manager can start a spare while it is being stopped. One more
+	# pass catches it without the old four rounds of sleeps.
+	foreach my $p (&scan_processes()) {
+		next if grep { $_->{'pid'} == $p->{'pid'} } @ordered;
+		next unless &running($p->{'pid'});
+		kill 'KILL', $p->{'pid'};
+		print "KILL $p->{'pid'} $p->{'label'} (spawned during the stop)\n";
 	}
 }
 
-if ($kill_master) {
-	# before anything has a chance to outlive it: the master's process name is
-	# plain "perl", so only the command line finds it
-	killer_sweep('perl [.]/jawn', 'the jawn master');
+# The web port is the tree's last claim on the machine. If anything still
+# listens there, it lost its manager; take the pids the socket names. (Skipped
+# under --scope so a test run cannot touch the live tree's port.)
+unless ($list_only || $scope) {
+	my $working_port = &working_port();
+	my %listeners;
+	my $ss = `ss -tlnp 2>/dev/null`;
+	foreach my $line (split /\n/, $ss) {
+		next unless $line =~ /:(\d+)\s/;
+		my $port = $1;
+		next unless $port == $working_port || $port == 3000;
+		while ($line =~ /pid=(\d+)/g) { $listeners{$1} = 1 }
+	}
+	foreach my $pid (sort { $a <=> $b } keys %listeners) {
+		next if $pid == $self || $pid == $parent;
+		next unless &running($pid);
+		kill 'KILL', $pid;
+		print "KILL $pid listener\n";
+	}
 }
 
-foreach my $k ( 'President[.]pl', 'teletype[.]pl', 'watch[.]pl', 'Manager[.]pl', 'Websocket[.]pl', 'termux-tts-spea', 'sshpass' ) {
-	killer_sweep($k, $k);
+sub working_port {
+	my $port = 3000;
+	my $config_file = -e './config.json' ? './config.json'
+		: ($ENV{'HOME'} ? "$ENV{'HOME'}/jawnos/config.json" : '');
+	if ($config_file && -e $config_file) {
+		my $config = eval { decode_json(scalar read_file($config_file)) };
+		$port = $config->{'working_port'}
+			if $config && $config->{'working_port'} && $config->{'working_port'} =~ /^[0-9]+$/;
+	}
+	return $port;
 }
 
-# ollama: jawn spawns its own 'ollama serve' child; on the phone a runit
-# service wants a second one, dies on the taken port, and runsv retries it
-# forever (a process spawn a second, for as long as the phone is up). Take the
-# service down first, and leave the down file: the sweep below kills runsv too
-# (its command line names ollama), and the runsv that runsvdir starts in its
-# place would otherwise bring the service up again. jawn starts its own ollama
-# on the next Start; 'sv up ollama' brings the service back if it is wanted.
-my $prefix = $ENV{PREFIX}
-	|| ( -d '/data/data/com.jawnos/files/usr' ? '/data/data/com.jawnos/files/usr' : '/data/data/com.termux/files/usr' );
-my $ollama_service = "$prefix/var/service/ollama";
-if (-x "$prefix/bin/sv" && -d $ollama_service) {
-	print "starting the ollama service down\n";
-	`export SVDIR=$prefix/var/service; $prefix/bin/sv down ollama 2>/dev/null`;
-	eval { write_file("$ollama_service/down", "") };
-}
-killer_sweep('ollama', 'ollama');
-
-# the BLE client daemon a jawn worker starts ('perl <home>/jawnos/scripts/
-# jawn-bt listen'); its process name is plain "perl"
-killer_sweep('jawn-bt listen', 'the jawn-bt client');
-
-# the web port: whatever still answers there lost its tree, so take the pids
-# the socket names. config.json knows the port; 3000 is the manager's own dock
-# port on top of that. (read_file must be in scalar context: a list-returning
-# read hands decode_json only the first line and the port silently defaults.)
-my $working_port = 3000;
-my $config_file = -e './config.json' ? './config.json' : ($ENV{HOME} ? "$ENV{HOME}/jawnos/config.json" : '');
-if ($config_file && -e $config_file) {
-	my $config = eval { return decode_json scalar read_file($config_file) };
-	$working_port = $config->{'working_port'} if eval { $config->{'working_port'} };
-}
-my %seen_port;
-my $running_pids = '';
-foreach my $listening_port ( $working_port, 3000 ) {
-	next if $seen_port{$listening_port}++;
-	my $block = `ss -tlnp 2>/dev/null | grep ":$listening_port " | sed -n "s/.*pid=\\([0-9]*\\).*/\\1/p"`;
-	$running_pids .= $block;
-}
-print "ports ($working_port, 3000): " . $running_pids . "\n";
-foreach my $p ( grep { /^[0-9]+$/ } split /\n/, $running_pids ) {
-	next if $p == $$ || $p == $self;
-	`kill -9 $p`;
-	print "killed the listener\n";
+# ollama: jawn spawns its own; on the phone a runit service wants a second one,
+# dies on the taken port and runsv retries it forever. Take the service down
+# first and leave the down file, or the runsv that runsvdir starts in its place
+# brings it straight back. jawn starts its own ollama on the next Start.
+unless ($list_only || $scope) {
+	my $prefix = $ENV{'PREFIX'}
+		|| ( -d '/data/data/com.jawnos/files/usr' ? '/data/data/com.jawnos/files/usr'
+			: '/data/data/com.termux/files/usr' );
+	my $ollama_service = "$prefix/var/service/ollama";
+	if (-x "$prefix/bin/sv" && -d $ollama_service) {
+		print "manager_killer: starting the ollama service down\n";
+		local $ENV{'SVDIR'} = "$prefix/var/service";
+		system("$prefix/bin/sv", 'down', 'ollama');
+		eval { write_file("$ollama_service/down", "") };
+	}
 }
 
-if ($uname =~ /android/) {
-	`pkill ssh`;
+if ($android && !$list_only && !$scope) {
 	# Same invocation Manager.pl uses (subs::sshd_start): the prefix's host keys
 	# and an absolute AuthorizedKeysFile. A bare `sshd` here starts with Termux's
 	# paths on Android, so key auth fails even though the port answers.
@@ -151,6 +274,6 @@ if ($uname =~ /android/) {
 		system(@sshd);
 	}
 	else {
-		`sshd`;
+		system('sshd');
 	}
 }
