@@ -23,6 +23,13 @@ sub source {
 	return read_file("$root/$rel");
 }
 
+sub put {
+	my ($path, $text) = @_;
+	open(my $fh, '>', $path) or die "open $path: $!";
+	print $fh $text;
+	close $fh;
+}
+
 # --- the pure child rules ----------------------------------------------------
 {
 	# the guard resolves symlinks, so it needs a repository to resolve against
@@ -110,6 +117,32 @@ ok(!&subs::coding_child_limit_ok(1, 0, 10), 'a child at depth 1 may not start on
 		{ task => 'a', scope => 'write', paths => ['lib'] },
 		{ task => 'b', scope => 'write', paths => ['alias'] },
 	]), qr/may both write/, 'two names for one folder clash');
+	# the path handed to the writer is the one that was checked, not the alias
+	my $handed = &subs::coding_path('alias/fine.txt');
+	is($handed, &subs::coding_real_path("$root/lib/fine.txt"),
+		'the path handed back is the resolved one, so a swap cannot redirect the write');
+}
+
+# The write itself: whole, and never through a symlink.
+{
+	my $dir = tempdir(CLEANUP => 1);
+	my $outside = tempdir(CLEANUP => 1);
+	is(&subs::coding_write_file("$dir/a.txt", "one\ntwo\n"), '', 'a plain write succeeds');
+	is(read_file("$dir/a.txt"), "one\ntwo\n", 'and the content lands whole');
+	my @temps = glob("$dir/a.txt.jawn-tmp-*");
+	is(scalar @temps, 0, 'no temp file is left behind');
+	is(&subs::coding_write_file("$dir/new/deep/b.txt", "x\n"), '', 'a missing folder is made');
+	ok(-f "$dir/new/deep/b.txt", 'and the file is written');
+	put("$outside/target.txt", "outside\n");
+	symlink("$outside/target.txt", "$dir/link.txt") or die 'symlink target';
+	like(&subs::coding_write_file("$dir/link.txt", "evil\n"), qr/symlink/,
+		'a symlink is refused, not followed');
+	is(read_file("$outside/target.txt"), "outside\n", 'and the file outside is untouched');
+	# rewriting an executable must not hand it the plain file mode
+	put("$dir/run.sh", "#!/bin/sh\n");
+	chmod 0755, "$dir/run.sh";
+	is(&subs::coding_write_file("$dir/run.sh", "#!/bin/sh\necho hi\n"), '', 'an existing file is rewritten');
+	is((stat("$dir/run.sh"))[2] & 07777, 0755, 'and keeps its permissions');
 }
 
 # --- the configured subagent cap --------------------------------------------
@@ -442,6 +475,13 @@ sub run_fake_job {
 	my @done = map { $_->{'current'}{'done'} } @prog;
 	ok(scalar(grep { $_ >= 1 } @done), 'and counts a child as it finishes');
 	is((sort { $a <=> $b } @done)[-1], 2, 'until the batch is complete');
+	# each finished child is named while the others still run
+	my @kids = map { @{ $_->{'current'}{'children'} || [] } } grep {
+		ref $_->{'current'} eq 'HASH' && ($_->{'current'}{'state'} // '') eq 'subagents'
+	} @snaps;
+	ok(scalar @kids, 'a finished child is listed while the batch runs');
+	is($kids[0]{'ok'}, 1, 'a child that answered is shown as done');
+	like($kids[0]{'said'}, qr/child done/, 'with what it said');
 }
 
 # A batch whose write scopes overlap is refused whole, and the run continues.

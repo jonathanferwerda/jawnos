@@ -743,6 +743,56 @@ sub coding_child_line {
 	return $line;
 }
 
+# Write $content to $abs, which coding_path has already resolved and checked. A
+# destination that is a symlink is refused rather than followed, and the file is
+# written whole (a temp file in the same folder, then a rename) so neither the
+# verifier nor a commit can read a half-written file. Returns '' on success, or
+# the sentence to hand the agent.
+sub coding_write_file {
+	my ($abs, $content) = @_;
+	return 'could not write that file' unless defined $abs && length $abs;
+	$content = '' unless defined $content;
+	# A symlink planted where the file goes would take the write with it. The
+	# resolved path has no symlink in it, so one can only appear after the check.
+	return 'refused: that path is a symlink, which the agent may not write through' if -l $abs;
+	require File::Basename;
+	my $dir = File::Basename::dirname($abs);
+	unless (-d $dir) {
+		require File::Path;
+		eval { File::Path::make_path($dir) };
+		return 'could not make that folder' unless -d $dir;
+	}
+	my $bytes = $content;
+	# The same bytes the old whole-file write produced, without a wide-character
+	# warning on the way out.
+	utf8::encode($bytes) if utf8::is_utf8($bytes);
+	# A rename would otherwise hand an executable script the plain file mode.
+	my $mode = -f $abs ? ((stat($abs))[2] & 07777) : undef;
+	require Fcntl;
+	my $tmp = $abs . '.jawn-tmp-' . $$;
+	my $flags = Fcntl::O_WRONLY() | Fcntl::O_CREAT() | Fcntl::O_EXCL();
+	$flags |= Fcntl::O_NOFOLLOW() if defined &Fcntl::O_NOFOLLOW;
+	my $fh;
+	unless (sysopen($fh, $tmp, $flags, 0666)) {
+		return 'could not write that file';
+	}
+	binmode($fh);
+	# sysopen's mode is filtered by the umask; an existing file keeps its own.
+	chmod($mode, $tmp) if defined $mode;
+	my $ok = print $fh $bytes;
+	$ok = 0 unless close($fh);
+	unless ($ok) {
+		unlink $tmp;
+		return 'could not write that file';
+	}
+	# rename replaces the destination entry; it does not follow a symlink there.
+	unless (rename($tmp, $abs)) {
+		unlink $tmp;
+		return 'could not write that file';
+	}
+	return '';
+}
+
 # A path as one shell word. The review and the commit both build a command line
 # from filenames the agent chose, and a name may hold a space - or a `$`, which
 # a double-quoted word would expand.
@@ -1147,9 +1197,11 @@ sub coding_run_job {
 				if (@run) {
 					$state->{'children'} = $children + scalar(@run);
 					my $batch_total = scalar @run;
+					my @progress;
 					# A batch is work in progress, not one silent action: the panel is
-					# told how many are running, and how many have finished.
-					$state->{'current'} = { state => 'subagents', total => $batch_total, done => 0, at => &subs::rightNow() }
+					# told how many are running, how many have finished, and what each
+					# finished one said.
+					$state->{'current'} = { state => 'subagents', total => $batch_total, done => 0, children => [], at => &subs::rightNow() }
 						if $batch_total > 1;
 					&coding_run_state_save($id, $state);
 					&coding_run_push($id, $conversation);
@@ -1163,12 +1215,21 @@ sub coding_run_job {
 						max         => $child_max,
 						run         => $id,
 						on_child    => sub {
-							my $cur = ref $state->{'current'} eq 'HASH' ? $state->{'current'} : {};
+							my $r = shift;
+							my $failed = (($r->{'error'} // '') ne '') ? 1 : 0;
+							my $said = $failed ? 'failed: ' . $r->{'error'}
+								: (length($r->{'final'} // '') ? $r->{'final'} : 'done');
+							push @progress, {
+								task => substr(($r->{'task'} // ''), 0, 120),
+								said => substr($said, 0, 160),
+								ok   => $failed ? 0 : 1,
+							};
 							$state->{'current'} = {
-								state => 'subagents',
-								total => $batch_total,
-								done  => ($cur->{'done'} // 0) + 1,
-								at    => &subs::rightNow(),
+								state    => 'subagents',
+								total    => $batch_total,
+								done     => scalar(@progress),
+								children => [ @progress ],
+								at       => &subs::rightNow(),
 							};
 							$state->{'updated'} = &subs::rightNow();
 							&coding_run_state_save($id, $state);

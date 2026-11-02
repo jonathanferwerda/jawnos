@@ -171,7 +171,9 @@ sub coding_path($rel) {
 	if (length $repo_real && length $abs_real) {
 		return undef unless $abs_real eq $repo_real || index($abs_real, "$repo_real/") == 0;
 	}
-	return $abs;
+	# Hand back the path that was actually checked, not the name it was asked for,
+	# so nothing between the check and the write can be redirected by a symlink.
+	return length $abs_real ? $abs_real : $abs;
 }
 
 sub coding_repo { return &subs::home('~/jawnos'); }

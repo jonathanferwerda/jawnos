@@ -322,6 +322,49 @@ function codingChatLive(mount, current) {
 	if (node && (node.scrollHeight - node.scrollTop - node.clientHeight) < 60) { node.scrollTop = node.scrollHeight; }
 }
 
+// The children a batch of subagents has already finished, under the live line: the
+// task each was given and what it said back, so a run that spends a while
+// delegating shows its work as it lands rather than only a count. One block per
+// panel, its rows rebuilt when the list moves, and taken away the moment the batch
+// is over (or no child has finished yet). The server has already trimmed both
+// strings, so nothing here truncates them again.
+function codingChatSubagents(mount, current) {
+	var log = codingChatPanel(mount).find('.coding_chat_log');
+	if (!log.length) { return; }
+	var c = (current && typeof current === 'object') ? current : {};
+	var kids = (c.state === 'subagents' && Array.isArray(c.children)) ? c.children : [];
+	var block = log.find('.coding_chat_subagents').first();
+	if (!kids.length) { block.remove(); return; }
+	if (!block.length) {
+		block = $('<div class="coding_chat_subagents" style="margin:4px 0 0;font-size:12px;opacity:.7;"></div>');
+		log.append(block);
+	}
+	// a cheap signature: rebuild the handful of rows only when the list has moved
+	var first = kids[0] || {};
+	var last = kids[kids.length - 1] || {};
+	var sig = kids.length + ':' + String(first.task == null ? '' : first.task) + ':'
+		+ String(last.said == null ? '' : last.said) + ':' + String(last.ok == null ? '' : last.ok);
+	if (block.data('coding_subagents_sig') !== sig) {
+		block.data('coding_subagents_sig', sig);
+		block.find('.coding_chat_subagent_row').remove();
+		kids.forEach(function (child) {
+			var kid = (child && typeof child === 'object') ? child : {};
+			var row = $('<div class="coding_chat_subagent_row" style="overflow-wrap:break-word;margin:1px 0;"></div>');
+			row.append($('<span class="coding_chat_subagent_task"></span>').text(String(kid.task == null ? '' : kid.task)));
+			row.append($('<span class="coding_chat_subagent_arrow" style="opacity:.5;"></span>').text(' → '));
+			// a child that failed says so in colour; the word itself is the server's
+			row.append($('<span class="coding_chat_subagent_said"></span>')
+				.text(String(kid.said == null ? '' : kid.said))
+				.css('color', (kid.ok === 0 || kid.ok === '0') ? '#c33' : ''));
+			block.append(row);
+		});
+	}
+	// a step appended below it leaves the block above: bring it back down
+	if (block.next().length) { log.append(block); }
+	var node = log[0];
+	if (node && (node.scrollHeight - node.scrollTop - node.clientHeight) < 60) { node.scrollTop = node.scrollHeight; }
+}
+
 // The index draws a snapshot's steps; read the same snapshot's live state after
 // it, and let a settled run (or a panel a newer run has taken) keep no line.
 var codingChatPollApplyCore = codingChatPollApply;
@@ -341,6 +384,7 @@ codingChatPollApply = function (mount, run, r) {
 	var current = again ? (r && r.current) : null;
 	codingChatNow(mount, current);
 	codingChatLive(mount, current);
+	codingChatSubagents(mount, current);
 	if (state === 'awaiting_approval') {
 		// the run has stopped mid-flow and is waiting for a word: the review
 		// stays up, and polling keeps going so an approve or a reject is seen
@@ -399,6 +443,7 @@ codingChatPoll = function (mount, run) {
 				codingChatRunning(now);
 				codingChatNow(mount, null);
 				codingChatLive(mount, null);
+				codingChatSubagents(mount, null);
 				now.removeData('coding_poll_timer');
 			}
 		});

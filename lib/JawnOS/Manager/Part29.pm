@@ -468,8 +468,8 @@ sub coding_execute($c, $action, $touched) {
 		require File::Basename;
 		my $dir = File::Basename::dirname($abs);
 		if (!-d $dir) { require File::Path; File::Path::make_path($dir); }
-		eval { write_file($abs, $content) };
-		return 'could not write that file' if $@;
+		my $why = &subs::coding_write_file($abs, $content);
+		return $why if length $why;
 		$touched->{ coding_rel($action->{'path'}) } = 1 if $touched;
 		# tell the agent at once when what it just wrote cannot parse, so it can
 		# correct the file before it tries to commit (the commit action refuses a
