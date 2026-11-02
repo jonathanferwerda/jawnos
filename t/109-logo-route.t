@@ -82,5 +82,6 @@ ok(Manager::app_public_path('/house/logo.png'), 'the favicon is reachable before
 ok(!Manager::app_public_path('/house/other.png'), 'the public exemption is that one path');
 my $hooks = read_file("$repo/perl/hooks.pl");
 like($hooks, qr{\$path ne '/house/logo\.png'}, 'the locker gate lets the mark through as well');
+like($hooks, qr{\$path eq '/house/logo\.png'}, 'the login gate lets the mark through before a session');
 
 done_testing();

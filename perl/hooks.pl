@@ -425,6 +425,9 @@ Manager::app->hook(before_dispatch => sub {
 		$path eq '/apps/list' ||
 		$path eq '/apps/icon' ||
 		$path eq '/apps/start' ||
+		# every public page and the lock screen name the house's mark as their
+		# favicon; it is one settings row, not a door, and the route only reads it
+		$path eq '/house/logo.png' ||
 		$path eq '/', ) {
 
 		my $device = &subs::device_setter();
