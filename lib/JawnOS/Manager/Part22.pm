@@ -489,7 +489,7 @@ sub window_maker($type,$timestamp) {
 		$type->{'title'} = $heading;
 		$type->{'window_name'} = $heading;
 	}
-	my $window_settings = [ 'pos', 'main_image', 'dimensions', 'colour', 'dark_colour', 'uuid', 'navigation', 'ci', 'scrollTop', 'jopen' ];
+	my $window_settings = [ 'pos', 'main_image', 'dimensions', 'place', 'colour', 'dark_colour', 'uuid', 'navigation', 'ci', 'scrollTop', 'jopen' ];
 	my $settings = $type->{'settings'} || &subs::settings_grabber({ app => $app, settings => $window_settings });
 	my $temp_s = {};
 	foreach my $win_s ( @{$window_settings} ) {
@@ -583,13 +583,32 @@ sub window_maker($type,$timestamp) {
 	my $navbar_agent_control = ($app_attr eq 'internet')
 		? '<button id="window_' . $timestamp . '_page_agent" class="' . $html_name . '_page_agent_button window_action page_agent_button" timestamp="' . $timestamp . '" app="' . $app_attr . '" hint="' . xml_escape(&subs::ui(q{Page agent — read and fill this window's form for you})) . '"><img class="window_control_icon" src="' . $page_agent_icon . '"></button>'
 		: '<button id="window_' . $timestamp . '_help" class="' . $html_name . '_help_button window_action help_button" timestamp="' . $timestamp . '" app="' . $app_attr . '" hint="Help">' . $window_control->('help', '?') . '</button>';
+	# A window's place is a choice, and the pin in its title bar is the whole
+	# choice: pinned, the window keeps the size and position it was pinned at;
+	# unpinned, it has none and cascades in like a window that has never been
+	# opened. Saving a place used to be automatic and invisible, which is how a
+	# desk full of windows became a memory of where they all were.
+	#
+	# The screen a place was saved on travels with it (place_vw/place_vh): a
+	# window pinned on a 1920-wide desk would otherwise open past the edge of a
+	# 1366 screen. The client rescales it from those two numbers.
+	my $place_locked = (($settings->{'place'} || '') eq 'lock') ? 1 : 0;
 	my $pre_dimensioned = 0;
-	if ($settings->{'dimensions'} && ($user_agent !~ /Android/gi || $user_agent !~ /Mobile/gi)) {
+	if ($place_locked && $settings->{'dimensions'} && ($user_agent !~ /Android/gi || $user_agent !~ /Mobile/gi)) {
 		$settings->{'dimensions'} = eval { return decode_json $settings->{'dimensions'} } || {};
 		$pre_dimensioned = 1;
 	}
 	else {
 		$settings->{'dimensions'} = {};
+	}
+	my $place_screen = '';
+	if ($pre_dimensioned) {
+		my $pv = $settings->{'dimensions'}->{'vw'} || '';
+		my $ph = $settings->{'dimensions'}->{'vh'} || '';
+		# only digits: this goes into an attribute
+		$pv = ($pv =~ /^\d+$/) ? $pv : '';
+		$ph = ($ph =~ /^\d+$/) ? $ph : '';
+		$place_screen = ' place_vw="' . $pv . '" place_vh="' . $ph . '"' if length $pv && length $ph;
 	}
 	if (!$settings->{'colour'} || $settings->{'colour'} !~ /^#/) {
 		$settings->{'colour'} = '#' . &subs::random_colour_grabber();
@@ -609,7 +628,7 @@ sub window_maker($type,$timestamp) {
 	my $default_height = 640;
 
 	my $display =
-		'<div class="wind" id="window_' . $timestamp . '" pre_dimensioned="' . $pre_dimensioned . '"' . $terminal_attr . $window_instance_attr . '  style="background-color:var(--window, var(--panel));
+		'<div class="wind" id="window_' . $timestamp . '" pre_dimensioned="' . $pre_dimensioned . '"' . $terminal_attr . $window_instance_attr . $place_screen . '  style="background-color:var(--window, var(--panel));
 			position:fixed;left:' . ($settings->{'dimensions'}->{'left'}) . 'px;top:' . ($settings->{'dimensions'}->{'top'} || 100) . 'px;width:' . ($settings->{'dimensions'}->{'width'} || $default_width) . 'px;height:' . ($settings->{'dimensions'}->{'height'} || $default_height) . 'px" app="'. $app_attr .'" visible="yes" timestamp="' . $timestamp . '" navigation="' . ($settings->{'navigation'} || 'once') . '"
 			locked="yes" current_information="' . $settings->{'ci'} . '" scrollTop="' . $settings->{'scrollTop'} . '">
 			<div id="top_navbar_' . $timestamp . '" class="top_navbar" app="' . $app_attr . '" background_colour="' . $window_colour . '" data-appt-tint="yes" style="--appt-dark:' . $window_dark . ';--appt-dark-ink:' . $window_dark_ink . ';height:var(--navbar_h, 36px);max-height:var(--navbar_h, 36px);position:absolute;width:100%;border:var(--window_border, 3px) solid var(--window_border_colour, var(--line));background-color:'.$window_colour .
@@ -625,6 +644,7 @@ sub window_maker($type,$timestamp) {
 				</span>
 				<span class="navbar_buttons">
 					' . $navbar_agent_control . '
+					<button id="window_' . $timestamp . '_place" class="' . $html_name . '_place_button window_action place_button" status="' . ($place_locked ? 'on' : 'off') . '" timestamp="' . $timestamp . '" app="' . $app_attr . '" hint="' . xml_escape(&subs::ui(q{Keep this window here (press again to let it tile like any other)})) . '">' . $window_control->('place', '&#128204;') . '</button>
 					<button id="window_' . $timestamp . '_minify" class="' . $html_name . '_minify_button window_action minimize_button" timestamp="'. $timestamp . '" app="' . $app_attr . '">' . $window_control->('minimize', '_') . '</button>
 					<button id="window_' . $timestamp . '_restore" style="display:none;" class="' . $html_name . '_restore_button window_action restore_button" timestamp="' . $timestamp . '" app="' . $app_attr . '">' . $window_control->('restore', '#') . '</button>
 					<button id="window_' . $timestamp . '_maximize" class="' . $html_name . '_maximize_button window_action maximize_button">' . $window_control->('maximize', '&#9634;') . '</button>

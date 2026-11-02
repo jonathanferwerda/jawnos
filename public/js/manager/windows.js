@@ -383,6 +383,9 @@ function windowMaker(response, fragment) {
 			// open: the server rendered the app's ci setting onto the panel
 			if (typeof budgetLightRestore === 'function') { budgetLightRestore(app); }
 			carry_on = 1;
+			// a pinned window keeps the place it was saved at, rescaled onto this
+			// screen; an unpinned one cascades in with the others
+			if (typeof windowPlaceRestore === 'function') { windowPlaceRestore($('#' + window_id)); }
 			if ($('#' + window_id).attr('pre_dimensioned') != 1) {
 				windowReorganizer(window_id);
 			}

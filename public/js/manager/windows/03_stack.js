@@ -383,8 +383,18 @@ function windowDimensionSetter(w) {
 		var top = w.offset().top;
 		var left = w.offset().left;
 		var right = (left + width);
-		var dimensions = JSON.stringify({ 'width': width, 'height': height, 'top': top, 'left': left });
-		settingSetter({ 'app': app, 'setting': 'dimensions', 'value': dimensions });
+		// The screen the place was saved on travels with it, so the same place can
+		// be rescaled onto a smaller or larger one.
+		var dimensions = JSON.stringify({ 'width': width, 'height': height, 'top': top, 'left': left,
+			'vw': $(window).width(), 'vh': $(window).height() });
+		// Only a pinned window remembers where it is. An unpinned one is a window
+		// with no place of its own: moving it must not quietly pin it. A pinned
+		// window that is being rescaled onto this screen (windowPlaceRestore) is
+		// not being moved by the person either.
+		if (w.attr('place_restoring') == '1') { return; }
+		if (typeof windowPlaceIsLocked === 'function' && windowPlaceIsLocked(w)) {
+			settingSetter({ 'app': app, 'setting': 'dimensions', 'value': dimensions });
+		}
 		if ((width / $(window).width()) > .95) {
 			w.attr('view', 'max');
 		} else if (left <= 1 && (right <= ($(window).width() / 2 + 5) && right >= ($(window).width() / 2 - 5))) {

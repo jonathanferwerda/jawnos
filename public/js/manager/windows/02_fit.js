@@ -258,6 +258,81 @@ function windowDraggable(win) {
 	}
 }
 
+// ---------------------------------------------------------------- a window's place
+//
+// The pin in the title bar is the whole choice. Pinned, a window keeps the size
+// and position it was pinned at; unpinned, it has no place of its own and
+// cascades in like a window that has never been opened. A window is only saved
+// while it is pinned - dragging an unpinned one is just moving it about.
+function windowPlaceIsLocked(win) {
+	return $(win).find('.place_button').attr('status') == 'on';
+}
+
+// The saved place travels with the screen it was saved on. A window pinned to
+// the right of a 1920 desk opens off the right of a 1366 one unless it is
+// rescaled, so the place is scaled to this screen and the edge it sits nearest
+// is the edge it keeps (a window pinned to the right stays flush right).
+function windowPlaceRestore(win) {
+	win = $(win);
+	if (win.attr('pre_dimensioned') != 1) { return; }
+	var saved_w = parseFloat(win.attr('place_vw')) || 0;
+	var saved_h = parseFloat(win.attr('place_vh')) || 0;
+	var now_w = $(window).width() || 0;
+	var now_h = $(window).height() || 0;
+	// a place saved before the screen was recorded is used as it stands: windowFit
+	// below still keeps it on the screen
+	if (!saved_w || !saved_h || !now_w || !now_h) { return; }
+	if (Math.abs(saved_w - now_w) < 8 && Math.abs(saved_h - now_h) < 8) { return; }
+	var scale = Math.min(now_w / saved_w, now_h / saved_h);
+	if (!isFinite(scale) || scale <= 0) { return; }
+	var left = parseFloat(win.css('left')) || 0;
+	var top = parseFloat(win.css('top')) || 0;
+	var width = parseFloat(win.css('width')) || 0;
+	var height = parseFloat(win.css('height')) || 0;
+	if (!width || !height) { return; }
+	var from_right = saved_w - (left + width);
+	var from_bottom = saved_h - (top + height);
+	var new_w = Math.max(240, Math.round(width * scale));
+	var new_h = Math.max(160, Math.round(height * scale));
+	var new_left = (from_right < left) ? (now_w - from_right - new_w) : (left * scale);
+	var new_top = (from_bottom < top) ? (now_h - from_bottom - new_h) : (top * scale);
+	win.css({
+		'width': new_w + 'px',
+		'height': new_h + 'px',
+		'left': Math.max(0, Math.round(new_left)) + 'px',
+		'top': Math.max(0, Math.round(new_top)) + 'px'
+	});
+	// The window is pinned, so the fit that follows would save this screen's
+	// rescaled size over the place the person actually pinned - a place opened
+	// once on a small screen would shrink for good. The save is held off until
+	// the window has settled; only a move or resize after that is a new place.
+	win.attr('place_restoring', '1');
+	setTimeout(function() { win.removeAttr('place_restoring'); }, 900);
+}
+
+$(document).on('click', '.place_button', function(e) {
+	e.preventDefault();
+	e.stopPropagation();
+	var button = $(this);
+	var win = button.closest('.wind');
+	var app = win.attr('app');
+	if (!win.length || !app) { return; }
+	if (button.attr('status') == 'on') {
+		// let it tile again: no place of its own, and the next open cascades it
+		button.attr('status', 'off');
+		win.attr('pre_dimensioned', 0);
+		settingDeleter({ 'app': app, 'setting': 'dimensions' });
+		settingSetter({ 'app': app, 'setting': 'place', 'value': 'tile' });
+	}
+	else {
+		// keep it as it sits, on the screen it sits on
+		button.attr('status', 'on');
+		win.attr('pre_dimensioned', 1);
+		windowDimensionSetter(win);
+		settingSetter({ 'app': app, 'setting': 'place', 'value': 'lock' });
+	}
+});
+
 
 $(document).on('click touchend', '.close_button', function(e) {
   // Prevent the event from bubbling up to the draggable container
