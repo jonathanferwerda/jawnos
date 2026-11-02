@@ -52,4 +52,9 @@ unlike($ime_rule || '', qr/env\(\s*safe-area-inset-bottom/i,
 ok(($ime_rule || '') !~ /(?:^|;)\s*padding(?:-bottom)?\s*:/,
 	'the IME page leaves the dock padding to soft_keyboard.css');
 
+like($ime, qr{/css/soft_keyboard\.css\?string=},
+	'the IME page versions the keyboard stylesheet so a fix reaches it');
+like($ime, qr{/css/universal\.css\?string=},
+	'the IME page versions the shared stylesheet too');
+
 done_testing();

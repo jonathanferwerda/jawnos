@@ -15,8 +15,8 @@
 	<meta charset="utf-8">
 	<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
 	<title>JawnOS Keyboard</title>
-	<link rel="stylesheet" href="/css/universal.css">
-	<link rel="stylesheet" href="/css/soft_keyboard.css">
+	<link rel="stylesheet" href="/css/universal.css?string=<%= &subs::jawn_version() %>">
+	<link rel="stylesheet" href="/css/soft_keyboard.css?string=<%= &subs::jawn_version() %>">
 	<style>
 		html, body {
 			height: 100%;
