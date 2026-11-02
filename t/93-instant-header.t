@@ -74,6 +74,29 @@ ok($stop_header < $stop_toggle,
 like($stop_branch, qr/skip_toggle => \(\$seen eq 'yes' \? 1 : 0\)/,
 	'a live stop does not repeat the toggle write in the header');
 
+# --- a closed child keeps no running header in its own app ------------------
+
+# A stop rewrites the default model/option sessions seeded from the row it
+# closes (source_uuid = the stopped uuid). Those children live in their own
+# apps, and only the stopped app's header was rendered after the write, so a
+# child window stayed on the "running" header it drew before the stop. One
+# header per changed child app, rendered after its rows are written.
+
+like($stop_branch, qr/\$child_apps\{ \$so->\{'app'\} \} = 1;[\s\S]*?&subs::source_header_printer\(\[ keys %child_apps \], \$timestamp\);/,
+	'the stop renders a header for every child app whose session it closed');
+
+my ($writer_stop) = $part05 =~ /(if \(\$app->\{'type'\} eq 'stop'\) \{.*?\n\t\}\n\s*elsif)/s;
+ok($writer_stop, 'appointment_writer keeps its stop branch in one block');
+like($writer_stop, qr/\$child_apps\{ \$so->\{'app'\} \} = 1;[\s\S]*?&subs::source_header_printer\(\[ keys %child_apps \], \$timestamp\);/,
+	'a relayed stop renders the same child headers');
+
+my ($child_sub) = $calendar =~ /(sub source_header_printer \{.*?\n\}\n)/s;
+ok($child_sub, 'the child header printer is one sub');
+like($child_sub, qr/next if \$seen\{\$app\}\Q++\E;/,
+	'it renders each changed app once, not once per child row');
+like($child_sub, qr/&appt_header_printer\(\{ app => \$app, timestamp => \$timestamp \}\);/,
+	'and goes through the same header printer, so the push and cache match');
+
 # --- manager_reset: header now, window in a fork ----------------------------
 
 like($part14, qr/my \$wants_cv = \(\$c->param\('cv'\) \/\/ ''\) eq 'yes' \? 1 : 0;/,

@@ -299,6 +299,24 @@ sub appt_header_printer {
 	return wantarray ? ($header, $appts) : $header;
 }
 
+# A stop - and its cancel/pause/resume/delay kin - rewrites the rows seeded from
+# the session it names: the default model/option sessions whose source_uuid is
+# that session's uuid. Those children live in their own apps, so rendering the
+# stopped app's header leaves every child app drawing the header it made while
+# its session was still running - the child window reads "running" after the
+# stop. Render one header per app that changed, once each, after its rows are
+# written.
+sub source_header_printer {
+	my ($apps, $timestamp) = @_;
+	my %seen;
+	foreach my $app ( @{ $apps || [] } ) {
+		next unless defined $app && length $app;
+		next if $seen{$app}++;
+		&appt_header_printer({ app => $app, timestamp => $timestamp });
+	}
+	return;
+}
+
 # The domain layer was written while Mojolicious::Lite was imported into package
 # subs, so its controller builder says `app->...`; that import is gone (it built a
 # second app and re-pointed app() in Manager). There is one application object,
