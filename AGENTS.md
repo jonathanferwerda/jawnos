@@ -246,6 +246,12 @@ code that concatenates `$app` into a path without `path_name` is a bug.
   slower. A defect you find but do not fix gets a `TODO` test
   naming the file and line — never a test that asserts the broken behaviour. The
   pre-push hook runs the suite, so a regression blocks the push.
+- **A new Manager helper goes in the map in the same change** — its name in
+  `lib/JawnOS/Manager/Index.pm` (`%SUB`, name → part) and a forward declaration in
+  `lib/JawnOS/Manager/Declarations.pm`. The map, not the part file, is what
+  `AUTOLOAD` reads, so a helper missing from it is unreachable by name and dies at
+  runtime. `t/54-manager-split.t` checks both directions and the pre-push hook
+  blocks the drift; `perl scripts/where.pl <name>` prints the part it is in.
 - **Cap parallel jobs on this shared box:** `pio run -j 4`, `gradle --max-workers=4`, `make -j4`.
 - **Bump the version on every push.** Run `perl scripts/version_bump.pl` (patch bump of `./VERSION`,
   e.g. `0.1.20 → 0.1.21`) and prefix the commit subject with it: `v<version> - <summary>`. Verify with

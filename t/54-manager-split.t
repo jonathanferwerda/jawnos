@@ -14,8 +14,9 @@ use File::Slurp qw(read_file);
 # the bootstrap plus an index of helpers in lib/JawnOS/Manager/Part*.pm that load
 # on first call. These are the invariants that break *quietly* if the split is
 # disturbed - a worker that boots but has no session secret, a helper whose index
-# entry points at a file that no longer defines it, or the Lite DSL coming back
-# into package Manager and re-pointing app() at a second app.
+# entry points at a file that no longer defines it, a helper a part defines that
+# the index never learned about, or the Lite DSL coming back into package Manager
+# and re-pointing app() at a second app.
 
 my $root = "$FindBin::Bin/..";
 sub slurp_rel { my $t = read_file("$root/$_[0]"); return defined $t ? $t : '' }
@@ -51,6 +52,30 @@ for my $name (sort keys %in_index) {
 }
 is(scalar @missing, 0, 'every indexed helper is defined in the part it names')
 	or diag(join "\n", @missing[0 .. ($#missing > 9 ? 9 : $#missing)]);
+
+# 2b. And the other direction: every helper a part defines is indexed. The map
+#     is what AUTOLOAD reads, so a sub missing from it is unreachable by name
+#     from any other part - the call dies "Undefined subroutine" at runtime, on
+#     a person's machine, with nothing here having noticed. Two were missing
+#     (native_capture_spelling, inventory_allocation): both were only called
+#     from inside their own file, which works by accident. When this fails, add
+#     the name to Index.pm and Declarations.pm; scripts/where.pl <name> prints
+#     the part it lives in.
+my %part_sub;
+for my $file (glob "$root/lib/JawnOS/Manager/Part*.pm") {
+	my ($rel) = $file =~ m{lib/(JawnOS/Manager/Part\d+\.pm)$};
+	next unless $rel;
+	my $src = slurp_rel("lib/$rel");
+	while ($src =~ /^\s*sub\s+([A-Za-z_]\w*)\s*(?:\(|\{)/mg) {
+		$part_sub{$1} = $rel;
+	}
+}
+cmp_ok(scalar keys %part_sub, '>', 500, 'the helper parts define helpers');
+
+my @unindexed = grep { !$in_index{$_} } sort keys %part_sub;
+is(scalar @unindexed, 0, 'every helper a part defines is in the index')
+	or diag('add to Index.pm and Declarations.pm: '
+		. join(', ', map { "$_ ($part_sub{$_})" } @unindexed[0 .. ($#unindexed > 9 ? 9 : $#unindexed)]));
 
 # 3. Every indexed helper is forward-declared, so the eager files compile and a
 #    call reaches AUTOLOAD instead of dying.
