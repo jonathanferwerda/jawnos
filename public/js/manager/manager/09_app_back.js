@@ -10,7 +10,7 @@ $(document).on('click', '.top_navbar, .neighbour_window, .room_appt', function(e
 	var clicker = $(this);
 	var win = clicker.closest('.wind');
 	var text = $(this).attr('app');
-	if ($(e.target).parent().hasClass('navbar_buttons')) { return false; }
+	if ($(e.target).closest('.navbar_buttons, .navbar_reveal').length) { return false; }
 	if (typeof windowStacker === 'function' && typeof windowPhoneChecker === 'function'
 		&& windowPhoneChecker() && clicker.hasClass('top_navbar')) {
 		// a phone walks its pile on touchend, not here: a title bar that was just
@@ -58,7 +58,7 @@ $(document).on('click', '.top_navbar, .neighbour_window, .room_appt', function(e
 // drag state - the touch itself always fires, so the walk hangs off that.
 $(document).on('touchend', '.top_navbar', function(e) {
 	if (typeof windowPhoneChecker != 'function' || !windowPhoneChecker()) { return; }
-	if ($(e.target).closest('.navbar_buttons').length) { return; }
+	if ($(e.target).closest('.navbar_buttons, .navbar_reveal, .window_icon_holder').length) { return; }
 	if (typeof windowStacker != 'function') { return; }
 	windowStacker($(this).attr('app'));
 });

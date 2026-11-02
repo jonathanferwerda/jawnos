@@ -1131,7 +1131,7 @@ our %topic = (
 		verified => '2026-11-01',
 		body => [
 			'Everything that opens opens in a window. Windows stack in the order you last touched them, drag by their title bar, resize by their edge, and minimise to a small bar. Pressing or scrolling in a window brings it to the front, so the window you are reading is the one you are working in.',
-			'The title bar\'s buttons are help (?), the pin, minimise, restore, maximise and close, and each window\'s drop-down menu adds snapping to half the screen and a move mode for precise placement.',
+			'The title bar shows the app\'s icon and name and the four window controls: minimise, restore, maximise and close. Press the app\'s icon to bring out the two quiet controls beside it - Help (the question mark, or the page agent on the Internet window) and the pin - and press it again to put them away; a press anywhere else does the same. They sit behind the icon so a narrow window keeps its room for the title instead of a row of six buttons.',
 			'A window has no place of its own until you pin it. The pin is the map-pin button in the title bar: press it and the window keeps the size and position it is at, and the pin shows pressed in while it holds. Press it again and the window forgets that place, so the next time it opens it steps down and across from the window before it like any other. Moving or resizing an unpinned window never pins it - only the pin does.',
 			'A pinned place is kept for this device, and saved with the screen it was saved on: a window pinned on a wide desk opens on a narrower screen scaled to fit and in the same corner, with the edge it sat nearest stayed nearest (flush right stays flush right), instead of hanging off the edge.'
 		],

@@ -566,7 +566,7 @@ sub window_maker($type,$timestamp) {
 		$settings->{'navigation'} = &subs::time_abbrev_translator($settings->{'navigation'});
 	}
 
-	my $main_image = &subs::main_icon_maker({ app => $unformatted_name, timestamp => $timestamp, settings => $settings, size => 'tiny', hint => $type->{'window_name'} });
+	my $main_image = &subs::main_icon_maker({ app => $unformatted_name, timestamp => $timestamp, settings => $settings, size => 'tiny', hint => $type->{'window_name'}, onclick => 'onclick="navbarReveal(this)"' });
 	# the window controls wear the icon set when it offers them, and the old text
 	# glyphs when it does not (the hand-drawn set, or no set at all)
 	my $window_control = sub {
@@ -610,6 +610,10 @@ sub window_maker($type,$timestamp) {
 		$ph = ($ph =~ /^\d+$/) ? $ph : '';
 		$place_screen = ' place_vw="' . $pv . '" place_vh="' . $ph . '"' if length $pv && length $ph;
 	}
+	# The pin and the window's own Help are the bar's quiet controls: they live
+	# behind the app icon (see .navbar_reveal) so a narrow window keeps its room
+	# for the name instead of a row of six buttons.
+	my $navbar_place_control = '<button id="window_' . $timestamp . '_place" class="' . $html_name . '_place_button window_action place_button" status="' . ($place_locked ? 'on' : 'off') . '" timestamp="' . $timestamp . '" app="' . $app_attr . '" hint="' . xml_escape(&subs::ui(q{Keep this window here (press again to let it tile like any other)})) . '">' . $window_control->('place', '&#128204;') . '</button>';
 	if (!$settings->{'colour'} || $settings->{'colour'} !~ /^#/) {
 		$settings->{'colour'} = '#' . &subs::random_colour_grabber();
 		&subs::setting_setter({ app => $app, setting => 'colour', value => $settings->{'colour'} });
@@ -631,9 +635,10 @@ sub window_maker($type,$timestamp) {
 		'<div class="wind" id="window_' . $timestamp . '" pre_dimensioned="' . $pre_dimensioned . '"' . $terminal_attr . $window_instance_attr . $place_screen . '  style="background-color:var(--window, var(--panel));
 			position:fixed;left:' . ($settings->{'dimensions'}->{'left'}) . 'px;top:' . ($settings->{'dimensions'}->{'top'} || 100) . 'px;width:' . ($settings->{'dimensions'}->{'width'} || $default_width) . 'px;height:' . ($settings->{'dimensions'}->{'height'} || $default_height) . 'px" app="'. $app_attr .'" visible="yes" timestamp="' . $timestamp . '" navigation="' . ($settings->{'navigation'} || 'once') . '"
 			locked="yes" current_information="' . $settings->{'ci'} . '" scrollTop="' . $settings->{'scrollTop'} . '">
-			<div id="top_navbar_' . $timestamp . '" class="top_navbar" app="' . $app_attr . '" background_colour="' . $window_colour . '" data-appt-tint="yes" style="--appt-dark:' . $window_dark . ';--appt-dark-ink:' . $window_dark_ink . ';height:var(--navbar_h, 36px);max-height:var(--navbar_h, 36px);position:absolute;width:100%;border:var(--window_border, 3px) solid var(--window_border_colour, var(--line));background-color:'.$window_colour .
+			<div id="top_navbar_' . $timestamp . '" class="top_navbar" app="' . $app_attr . '" revealed="no" background_colour="' . $window_colour . '" data-appt-tint="yes" style="--appt-dark:' . $window_dark . ';--appt-dark-ink:' . $window_dark_ink . ';height:var(--navbar_h, 36px);max-height:var(--navbar_h, 36px);position:absolute;width:100%;border:var(--window_border, 3px) solid var(--window_border_colour, var(--line));background-color:'.$window_colour .
 				';" app="' . $app_attr .'">
 					<span class="window_icon_holder">' . $main_image . '</span>
+					<span class="navbar_reveal">' . $navbar_agent_control . $navbar_place_control . '</span>
 				<span class="appointment_name">
 					<span class="appointment_name_marks">
 						<img class="medium_thumb unlock droppable" app="' . $app_attr . '" style="display:none;" src="/images/make believe/lock.png">
@@ -643,8 +648,6 @@ sub window_maker($type,$timestamp) {
 					<span class="name_text" data-appt-ink="yes" style="--appt-dark-ink:' . $window_dark_ink . ';color:' . $window_ink . ';"  app="' . $app_attr . '">' . $app_text . '</span>
 				</span>
 				<span class="navbar_buttons">
-					' . $navbar_agent_control . '
-					<button id="window_' . $timestamp . '_place" class="' . $html_name . '_place_button window_action place_button" status="' . ($place_locked ? 'on' : 'off') . '" timestamp="' . $timestamp . '" app="' . $app_attr . '" hint="' . xml_escape(&subs::ui(q{Keep this window here (press again to let it tile like any other)})) . '">' . $window_control->('place', '&#128204;') . '</button>
 					<button id="window_' . $timestamp . '_minify" class="' . $html_name . '_minify_button window_action minimize_button" timestamp="'. $timestamp . '" app="' . $app_attr . '">' . $window_control->('minimize', '_') . '</button>
 					<button id="window_' . $timestamp . '_restore" style="display:none;" class="' . $html_name . '_restore_button window_action restore_button" timestamp="' . $timestamp . '" app="' . $app_attr . '">' . $window_control->('restore', '#') . '</button>
 					<button id="window_' . $timestamp . '_maximize" class="' . $html_name . '_maximize_button window_action maximize_button">' . $window_control->('maximize', '&#9634;') . '</button>

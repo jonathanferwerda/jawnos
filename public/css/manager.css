@@ -1020,16 +1020,28 @@ body.dark_theme .top_navbar,
 body.dark_theme .top_navbar .appointment_name,
 body.dark_theme .top_navbar .name_text { color: var(--ink) !important; }
 /* the window controls share the row's centre line with the icon and the name,
-   and sit hard against the right edge. */
-.top_navbar .navbar_buttons { margin-left: auto; display: flex; align-items: center; flex: 0 0 auto; height: 100%; }
+   and sit hard against the right edge. The name's own flex-grow is what pushes
+   them there: an auto margin here took the free space before flex-grow could,
+   which left the title squeezed to a sliver and an empty band beside it. */
+.top_navbar .navbar_buttons { display: flex; align-items: center; flex: 0 0 auto; height: 100%; }
 .top_navbar .navbar_buttons .window_action { flex: 0 0 auto; width: calc(var(--navbar_h, 36px) - 6px); height: calc(var(--navbar_h, 36px) - 6px); min-width: calc(var(--navbar_h, 36px) - 6px); }
+/* Help and the pin sit behind the app icon: hidden until the icon is pressed,
+   then they take their width from the name (which ellipsizes), never overlapping
+   it. */
+.top_navbar .navbar_reveal { display: none; align-items: center; flex: 0 0 auto; height: 100%; gap: 1px; }
+.top_navbar[revealed="yes"] .navbar_reveal { display: flex; }
+.top_navbar .navbar_reveal .window_action { flex: 0 0 auto; width: calc(var(--navbar_h, 36px) - 6px); height: calc(var(--navbar_h, 36px) - 6px); min-width: calc(var(--navbar_h, 36px) - 6px); }
 /* the pin: a window that keeps its place reads as pressed in, so the state is
    visible without reading the hint. Unpinned, it looks like the other controls
    and the window has no place of its own. */
-.top_navbar .navbar_buttons .place_button { border-radius: 5px; }
-.top_navbar .navbar_buttons .place_button[status="on"] { background-color: var(--appt-dark-ink, #222); box-shadow: inset 0 0 0 2px var(--appt-dark, #fff), 0 0 0 1px rgba(0,0,0,.35); }
-.top_navbar .navbar_buttons .place_button[status="on"] .window_control_icon { filter: invert(1) drop-shadow(0 0 1px #000); }
-.top_navbar .navbar_buttons .place_button[status="on"]:hover { filter: brightness(1.08); }
+.top_navbar .navbar_buttons .place_button,
+.top_navbar .navbar_reveal .place_button { border-radius: 5px; }
+.top_navbar .navbar_buttons .place_button[status="on"],
+.top_navbar .navbar_reveal .place_button[status="on"] { background-color: var(--appt-dark-ink, #222); box-shadow: inset 0 0 0 2px var(--appt-dark, #fff), 0 0 0 1px rgba(0,0,0,.35); }
+.top_navbar .navbar_buttons .place_button[status="on"] .window_control_icon,
+.top_navbar .navbar_reveal .place_button[status="on"] .window_control_icon { filter: invert(1) drop-shadow(0 0 1px #000); }
+.top_navbar .navbar_buttons .place_button[status="on"]:hover,
+.top_navbar .navbar_reveal .place_button[status="on"]:hover { filter: brightness(1.08); }
 #mouse_shadow { z-index:1; width: 100%; position:fixed; left: 0px; bottom: 0px; display:none;}
 #keyboard_container { z-index: 9100; }
 .keyboard { z-index: 9100; border:solid;border-radius:var(--jawnos-corner, 10px);border-width:3px; }

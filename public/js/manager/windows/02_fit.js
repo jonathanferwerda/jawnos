@@ -334,6 +334,37 @@ $(document).on('click', '.place_button', function(e) {
 });
 
 
+// ---------------------------------------------------------------- the bar's quiet controls
+//
+// The app icon in the title bar opens the two controls a window does not need
+// in front of it all the time: Help (or the page agent, on Internet) and the
+// pin. Six buttons crowded a narrow window and left the name a sliver; with
+// them behind the icon the bar shows the name and the four window controls, and
+// the name is pushed right only while the two are out.
+function navbarReveal(el) {
+	var bar = $(el).closest('.top_navbar');
+	if (!bar.length) { return false; }
+	var open = bar.attr('revealed') == 'yes';
+	$('.top_navbar[revealed="yes"]').attr('revealed', 'no');
+	bar.attr('revealed', open ? 'no' : 'yes');
+	// false keeps the press from reaching the document handler below, which is
+	// what closes a revealed bar when the person clicks anywhere else
+	return false;
+}
+
+// A press anywhere outside the revealed pair (or the icon that opened it) puts
+// them away again, the way a menu closes.
+$(document).on('click touchend', function(e) {
+	if ($('.top_navbar[revealed="yes"]').length == 0) { return; }
+	if ($(e.target).closest('.window_icon_holder, .navbar_reveal').length) { return; }
+	$('.top_navbar[revealed="yes"]').attr('revealed', 'no');
+});
+
+$(document).on('keydown', function(e) {
+	if (e.key != 'Escape') { return; }
+	$('.top_navbar[revealed="yes"]').attr('revealed', 'no');
+});
+
 $(document).on('click touchend', '.close_button', function(e) {
   // Prevent the event from bubbling up to the draggable container
   e.stopPropagation();
