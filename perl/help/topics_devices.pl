@@ -53,8 +53,8 @@ $topic{'ble_bridge'} = {
 		related => [ 'watch', 'tdeck', 'pico' ]
 	};
 $topic{'help_app'} = {
-		title => 'This Help app', category => 'features',
-		templates => [ 'public/js/manager/page_agent.js' ],
+		title => 'This Help app', category => 'features', app => 'help',
+		templates => [ 'templates/apps/help.html.ep', 'public/js/manager/help.js', 'public/js/manager/page_agent.js' ],
 		summary => 'The map you are reading now, and its guide.',
 		verified => '2026-10-30',
 		body => [

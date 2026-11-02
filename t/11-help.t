@@ -75,15 +75,16 @@ ok(!defined help::get('definitely-not-a-topic'), 'an unknown topic does not reso
 # lists the page in templates but not in its app field does not count, because
 # the Open button and the file resolution both key off the app.
 my %known_gap = map { $_ => 1 } qw(
-	account clothesline coding_chat evaluation help pen project
+	account coding_chat project
 	app_details app_file app_measure_details app_measures app_transaction
 	appointment_header budget_current_information edit_app evaluation_controls
 	evaluation_report gallery_album gallery_home ide_files information
 	inventory_info people_person
 );
-# account/clothesline/coding_chat/evaluation/help/pen/project are apps with no
-# topic yet (clothesline and evaluation HAVE a topic - it just lacks `app =>`).
-# The rest are fragments of an app's page, explained by that app's topic.
+# account and project have no route that renders them (nothing includes or
+# redirects to either page), so there is nothing to explain yet. coding_chat is
+# a chatbox other apps mount, named by the `ide` topic's templates list. The rest
+# are fragments of an app's page, explained by that app's topic.
 
 my @orphans;
 for my $file (sort glob("$root/templates/apps/*.html.ep")) {

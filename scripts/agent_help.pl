@@ -387,7 +387,36 @@ sub brief {
 	return join("\n", @out) . "\n";
 }
 
+# Which app owns a file: the reverse of sources(). A change usually lands on an
+# app's page or script, and the app's name is the handle everything else is keyed
+# by - routes, tables, settings, tests.
+sub app_for_path {
+	my ($path) = @_;
+	load();
+	return () unless defined $path && length $path;
+	$path =~ s{^\./}{};
+	my %apps;
+	for my $name (names()) {
+		my $entry = resolve_name($name) or next;
+		my $app = $entry->{'page'} || $entry->{'name'};
+		for my $file (sources($entry)) {
+			$apps{$app} = 1 if $file eq $path;
+		}
+	}
+	return sort keys %apps;
+}
+
 # ---- the compact index -----------------------------------------------------
+
+sub _topic_for_app {
+	my ($app) = @_;
+	return undef unless defined $app && length $app;
+	my $key = help::key($app);
+	return $key if $TOPIC{$key};
+	# A topic's id is not always the app's name (help -> help_app).
+	my ($by_app) = sort grep { ($TOPIC{$_}{'app'} || '') eq $app } keys %TOPIC;
+	return $by_app;
+}
 
 sub index_text {
 	load();
@@ -407,7 +436,7 @@ sub index_text {
 	my @quiet;
 	for my $app (sort keys %apps) {
 		my @routes = routes_for($app);
-		my $id = do { my $k = help::key($app); $TOPIC{$k} ? $k : undef };
+		my $id = _topic_for_app($app);
 		my $entry = { 'name' => $app, 'page' => $app };
 		$entry->{'topic'} = $id if $id;
 		my @sources = sources($entry);

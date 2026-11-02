@@ -147,4 +147,28 @@ subtest 'every test is reachable' => sub {
 	is_deeply([sort @names], [sort keys %declared], 'and they are the same set');
 };
 
+subtest 'an unclaimed app file is matched through agent_help' => sub {
+	# The Gallery app's script is claimed by no header; agent_help derives the
+	# app from the tree, so the change runs Gallery's tests instead of all of
+	# them. The match itself is still tests_for_path's.
+	#
+	# The paths are built, not written: a literal in this body would claim them
+	# for this test (that is the mention tier), and the case would vanish.
+	my $gallery = join('/', 'public', 'js', 'images' . '.js');
+	my $vendor  = join('/', 'public', 'js', 'jquery-ui' . '.js');
+
+	my ($out, $rc) = run_tests_for('--files', $gallery, '--json');
+	is($rc, 0, 'the derived tier runs');
+	like($out, qr/"derived":\["\Q$gallery\E"\]/,
+		'the path is reported as derived, not guessed');
+	unlike($out, qr/"full":1/, 'the whole suite is not selected');
+
+	# A file no app owns still fails safe: the derived tier narrows, never guesses.
+	my ($vendor_out, $vrc) = run_tests_for('--files', $vendor, '--json');
+	is($vrc, 0, 'a vendor script still runs');
+	like($vendor_out, qr/"full":1/, 'and runs the full suite');
+	like($vendor_out, qr/"unmapped":\["\Q$vendor\E"\]/,
+		'because it belongs to no app');
+};
+
 done_testing();

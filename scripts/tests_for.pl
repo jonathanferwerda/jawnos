@@ -24,6 +24,11 @@
 # spells the path out (a source-grep test usually does). Globs: `*` within one
 # path segment, `**` across segments, `?` one character, a trailing `/` means
 # everything under that directory.
+#
+# A path no header claims is looked up again through scripts/agent_help.pl: the
+# file is an app's page or script, and the tests that claim that app's other
+# files are the ones to run. The full suite is still the answer when even that
+# finds nothing - the fallback only narrows, it never guesses.
 
 use strict;
 use warnings;
@@ -168,6 +173,34 @@ sub forces_full_suite {
 	return 0;
 }
 
+# --- the derived tier --------------------------------------------------------
+# A `tests-for:` header is the first word on what a test covers, and the map
+# drifts. Most of the drift is not a surprise, though: a template or a script
+# belongs to an app, and that app's other files are already claimed. agent_help
+# derives the app relation from the tree (the same brief an agent reads), so a
+# change to an app's page runs the app's tests rather than the whole suite.
+#
+# Only the *file list* comes from agent_help: the matching stays here, in
+# tests_for_path, so the repository has one glob rule. An unclaimed file that
+# belongs to no app still runs the full suite - the fail-safe is untouched.
+my $agent_help_loaded;
+
+sub derived_tests {
+	my $path = shift;
+	unless (defined $agent_help_loaded) {
+		$agent_help_loaded = eval { require "$root/scripts/agent_help.pl"; 1 } ? 1 : 0;
+	}
+	return () unless $agent_help_loaded;
+
+	my @tests;
+	for my $app (agent_help::app_for_path($path)) {
+		my $entry = agent_help::resolve_name($app) or next;
+		push @tests, tests_for_path($_) for agent_help::sources($entry);
+	}
+	my %seen;
+	return grep { !$seen{$_}++ } @tests;
+}
+
 # Nothing a test can observe. Kept short and explicit so a new directory is
 # unmapped (and therefore safe) rather than silently ignored.
 my @NOT_TESTED = (
@@ -190,9 +223,9 @@ sub not_tested {
 	return 0;
 }
 
-my (%selected, %path_tests, @unmapped, @ignored);
+my (%selected, %path_tests, %path_app, @unmapped, @ignored);
 for my $path (@changed) {
-	if ($path =~ m{^t/([^/]+\.t)$}) {
+	if ($path =~ m{^t/([^/]+)\.t$}) {
 		# a test's own edit selects that test
 		$selected{"t/$1"} = 1;
 		$path_tests{$path} = [ "t/$1" ];
@@ -209,6 +242,10 @@ for my $path (@changed) {
 		next;
 	}
 	my @hit = tests_for_path($path);
+	unless (@hit) {
+		@hit = derived_tests($path);
+		$path_app{$path} = join(', ', agent_help::app_for_path($path)) if @hit;
+	}
 	if (@hit) {
 		$selected{$_} = 1 for @hit;
 		$path_tests{$path} = \@hit;
@@ -227,12 +264,14 @@ my $full  = $all ? 1 : (@unmapped ? 1 : 0);
 
 my $command = join(' ', $^X, 'scripts/run_tests.pl', @tests);
 
-if ($json) {
-	my $q = sub { join(',', map { qq{"$_"} } @_) };
-	print '{"changed":[' . $q->(@changed) . '],"tests":[' . $q->(@tests) . '],'
-		. '"unmapped":[' . $q->(@unmapped) . '],"full":' . ($full ? 1 : 0) . "}\n";
-	exit 2 if $strict && @unmapped;
-}
+	if ($json) {
+		my $q = sub { join(',', map { qq{"$_"} } @_) };
+		print '{"changed":[' . $q->(@changed) . '],"tests":[' . $q->(@tests) . '],'
+			. '"unmapped":[' . $q->(@unmapped) . '],'
+			. '"derived":[' . $q->(sort keys %path_app) . '],'
+			. '"full":' . ($full ? 1 : 0) . "}\n";
+		exit 2 if $strict && @unmapped;
+	}
 else {
 	if ($strict && @unmapped) {
 		print "strict: refusing to guess\n";
@@ -242,8 +281,9 @@ else {
 		print "changed: ", scalar(@changed), "\n";
 		for my $path (@changed) {
 			my $hit = $path_tests{$path};
-			printf "  %-44s %s\n", $path,
-				(ref $hit ? join(' ', @$hit) : (defined $hit ? $hit : ''));
+			printf "  %-44s %s%s\n", $path,
+				(ref $hit ? join(' ', @$hit) : (defined $hit ? $hit : '')),
+				($path_app{$path} ? " (derived from app $path_app{$path})" : '');
 		}
 	}
 	if (@unmapped) {
@@ -282,6 +322,8 @@ Usage: perl scripts/tests_for.pl [options] [path...]
   --strict         exit 2 rather than falling back to the full suite
 
 A path is claimed by a `# tests-for:` glob in a test's first 40 lines, or by
-the test spelling the path out. Anything unclaimed runs the full suite.
+the test spelling the path out. A path neither names is looked up through
+scripts/agent_help.pl (the app it belongs to, then that app's tests). Anything
+still unclaimed runs the full suite.
 USAGE
 }

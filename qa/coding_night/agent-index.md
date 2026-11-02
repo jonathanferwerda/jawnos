@@ -13,7 +13,7 @@ symbol or route, `perl scripts/where.pl <name>` prints its file:line.
 - cards (topic cards): templates/cards.html.ep; 1 route(s)
 - chat (topic chat): templates/apps/chat.html.ep, templates/mail/mailbox.html.ep, templates/mail/conversation.html.ep, templates/mail/message.html.ep, templates/mail/chat_sections.html.ep, templates/soft_keyboard.html.ep, templates/ime.html.ep, public/js/manager/chat.js, public/js/manager/chat/01_lorawan.js, public/js/manager/soft_keyboard.js, public/js/manager/soft_keyboard/01_scroll_dictate.js, public/js/manager/soft_keyboard/02_ime_input.js, public/js/manager/soft_keyboard/03_convert.js, public/js/manager/soft_keyboard/04_eval_text.js, public/js/manager/soft_keyboard/05_vault_ime.js, public/css/chat.css, public/css/soft_keyboard.css; 1 route(s)
 - clock (topic clock): templates/apps/clock.html.ep, public/js/manager/clock.js, public/js/manager/clock/01_alarms_timers.js, public/js/manager/clock/02_stopwatch_world_ring.js, templates/manager.html.ep; 5 route(s)
-- clothesline (topic clothesline): templates/apps/clothesline.html.ep, public/js/manager/clothesline.js; 3 route(s)
+- clothesline (topic clothesline): templates/apps/clothesline.html.ep, public/js/manager/clothesline.js, public/js/manager/clothesline/01_timeline.js; 3 route(s)
 - configure (topic configure): templates/configure/configure.html.ep, templates/configure/misc_setting_list.html.ep, templates/configure/device_lister.html.ep, templates/configure/plat_setting_list.html.ep, templates/configure/qa_panel.html.ep, templates/configure/map_setting_list.html.ep, templates/configure/dns_clients.html.ep, public/js/manager/configure.js, public/js/manager/configure/01_update_controls.js, public/js/manager/configure/02_remote_devices.js, public/js/manager/configure/03_platform_misc.js, public/js/manager/configure/04_currency_backup.js, public/js/manager/configure/05_database_records.js, public/js/manager/configure/06_watch_pay.js, public/js/manager/configure/07_qa_nightly.js; 120 route(s)
 - edit_app (no topic): templates/apps/edit_app.html.ep; 2 route(s)
 - editor (topic editor): templates/editor.html.ep, public/js/manager/editor.js; 3 route(s)
@@ -23,7 +23,7 @@ symbol or route, `perl scripts/where.pl <name>` prints its file:line.
 - folders (topic folders): templates/folders/folders.html.ep, templates/folders/context.html.ep, templates/folders/properties.html.ep, templates/folders/dialog_box.html.ep, templates/folders/app_picker.html.ep, public/js/manager/folders.js, public/js/manager/folders/01_view_and_commands.js, public/js/manager/folders/02_archive_and_keyboard.js, public/js/manager/desk.js; 25 route(s)
 - gallery (topic gallery): templates/apps/gallery.html.ep, public/js/images.js; 4 route(s)
 - handbook (topic handbook): templates/handbook/handbook.html.ep, templates/handbook/today.html.ep; 4 route(s)
-- help (no topic): templates/apps/help.html.ep, public/js/manager/help.js; 29 route(s)
+- help (topic help_app): templates/apps/help.html.ep, public/js/manager/help.js, public/js/manager/help/01_music_speech.js, public/js/manager/help/02_converse_coding_wiring.js, public/js/manager/page_agent.js; 29 route(s)
 - ide (topic ide): templates/apps/coding_chat.html.ep, public/js/manager/coding.js, templates/ide.html.ep, public/js/manager/ide.js; 9 route(s)
 - information (no topic): templates/apps/information.html.ep; 3 route(s)
 - internet (topic internet): templates/internet/internet.html.ep, templates/web/web.html.ep, public/js/manager/internet.js, public/js/manager/page_agent.js; 3 route(s)
@@ -35,7 +35,7 @@ symbol or route, `perl scripts/where.pl <name>` prints its file:line.
 - music (topic music): templates/apps/music/music.html.ep, templates/apps/music/configuration.html.ep, templates/apps/music/audio.html.ep, templates/apps/music/files.html.ep, templates/apps/video.html.ep, templates/apps/video/markup.html.ep, templates/keyboard_music.html.ep, public/js/music.js, public/js/manager/keyboard.js, public/js/manager/keyboard/01_side_dock.js, public/js/manager/keyboard/02_keyboard_maker.js, public/js/manager/keyboard/03_editor_switcher.js; 1 route(s)
 - network (topic network): templates/apps/network.html.ep, public/js/manager/network.js, public/js/manager/network/01_wifi_vpn_android.js; 8 route(s)
 - notes (topic notes): templates/notes/notes.html.ep, public/js/manager/notes.js; 1 route(s)
-- pen (no topic): templates/apps/pen.html.ep, public/js/manager/pen.js; 1 route(s)
+- pen (topic pen): templates/apps/pen.html.ep, public/js/manager/pen.js; 1 route(s)
 - people (topic people): templates/apps/people.html.ep, templates/apps/people/body.html.ep, templates/apps/people_person.html.ep, public/js/manager/people.js, public/js/manager/people/01_crest_tabs.js; 18 route(s)
 - phone (topic phone): templates/apps/phone.html.ep, public/js/manager/phone.js; 5 route(s)
 - process_monitor (topic process_monitor): templates/monitor/monitor.html.ep, public/js/manager/monitor.js; 2 route(s)
@@ -68,7 +68,7 @@ One route: `perl scripts/where.pl /manager/pen`.
 ## helpers
 
 605 Manager helpers across 37 parts: `lib/JawnOS/Manager/Index.pm` (%SUB) is the name map, `t/54-manager-split.t` keeps it complete.
-1443 domain subs in subs::, mapped by `lib/JawnOS/Domain/Loader.pm` (%DOMAIN_MODULE); `t/91-domain-loader-qa.t` keeps it complete.
+1453 domain subs in subs::, mapped by `lib/JawnOS/Domain/Loader.pm` (%DOMAIN_MODULE); `t/91-domain-loader-qa.t` keeps it complete.
 One helper: `perl scripts/where.pl app_release_sync`.
 
 ## firmware

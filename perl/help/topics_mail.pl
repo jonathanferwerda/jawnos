@@ -88,6 +88,17 @@ $topic{'mailbox'} = {
 		],
 		related => [ 'relational', 'store', 'sealing_files', 'assistant' ]
 	};
+$topic{'pen'} = {
+		title => 'Pen', category => 'apps', app => 'pen',
+		templates => [ 'templates/apps/pen.html.ep', 'public/js/manager/pen.js' ],
+		verified => '2026-11-02',
+		summary => 'A conversation that remembers, and can make pictures, sounds and videos.',
+		body => [
+			'Pen is the house\'s general chat, kept apart from the mailbox: the window it opens is the mailbox\'s pen section drawn on its own, so the conversation picker, the thread and the live socket are the same ones, but it carries no section switcher - the pen is the only section it owns. Each conversation keeps its own thread, so a new chat starts clean and an old one carries on where it stopped.',
+			'It remembers: earlier lines and a running account of the conversation are read back when you write again, which is what lets a later question refer to something said earlier without repeating it. Ask it for a picture, a sound or a video and the request is turned into that file rather than described in words; the result is filed into Studio, Marker or Music, ready to edit or play. Which model answers is the one chosen for the Assistant under Configure → Plat, so a local model keeps the conversation on this machine.'
+		],
+		related => [ 'assistant', 'mailbox', 'studio', 'music' ]
+	};
 $topic{'process_monitor'} = {
 		title => 'Process Monitor', category => 'apps', app => 'process_monitor',
 		templates => [ 'templates/monitor/monitor.html.ep', 'public/js/manager/monitor.js' ],

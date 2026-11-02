@@ -1,4 +1,4 @@
-# tests-for: scripts/agent_help.pl scripts/where.pl perl/help/ templates/apps/ qa/coding_night/agent-index.md
+# tests-for: scripts/agent_help.pl scripts/where.pl scripts/tests_for.pl .githooks/pre-commit perl/help/ templates/apps/ qa/coding_night/agent-index.md
 # covers:    The second tier of help - the generated technical brief, its
 #           exhaustiveness, and the committed repository index staying current
 
@@ -50,6 +50,14 @@ require "$root/scripts/agent_help.pl";
 
 # --- a name nobody has ------------------------------------------------------
 is(agent_help::brief('definitely-not-an-app'), undef, 'an unknown name has no brief');
+
+# --- the hook keeps the committed index fresh --------------------------------
+{
+	my $hook = eval { read_file("$root/.githooks/pre-commit") } // '';
+	like($hook, qr{agent_help\.pl --write-index}, 'the pre-commit hook regenerates the index');
+	like($hook, qr{git diff --quiet -- lib templates public/js perl/help database/schema\.sql},
+		'and only from a settled tree, so it cannot bake in uncommitted work');
+}
 
 # --- the committed index is the tree ----------------------------------------
 {
