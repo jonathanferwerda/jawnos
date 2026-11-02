@@ -147,10 +147,12 @@ like($world, qr/use Socket qw\(MSG_PEEK MSG_DONTWAIT\);/,
 	'the sender can ask the kernel whether the peer is still there');
 like($world, qr/my \$peeked = recv\(\$socket, \$peek, 1, MSG_PEEK \| MSG_DONTWAIT\);/,
 	'a reused socket is checked for EOF before a send');
-like($world, qr/if \(defined \$peeked && \$peeked == 0\) \{/,
-	'0 bytes from a non-blocking peek is a dead peer');
-like($world, qr/my \$got = recv\(\$socket, \$junk, 65536, MSG_DONTWAIT\);\s*last unless defined \$got && \$got > 0;/s,
+like($world, qr/return length\(\$peek\) == 0 \? 1 : 0;/,
+	'0 bytes in the peeked buffer is a dead peer (recv returns the address, not a count)');
+like($world, qr/my \$got = recv\(\$socket, \$junk, 65536, MSG_DONTWAIT\);\s*last unless defined \$got && length\(\$junk\) > 0;/s,
 	'the uuid a push is answered with is drained first, so the peek sees EOF');
+like($world, qr/if \(&socket_drain_peek\(\$socket, \$rcv \? 0 : 1\)\) \{/,
+	'the cached socket is drained and peeked in one helper');
 like($world, qr/if \(!\$retried && !\$rcv && \$had_cached && \$bytes_written == 0 && \$err =~ \/Write error\|Broken pipe\|Connection reset\/\) \{\s*return &unix_socket_sender\(\$file, \$data, \$rcv, 1\);/s,
 	'a write that left no bytes is retried once on a fresh socket');
 

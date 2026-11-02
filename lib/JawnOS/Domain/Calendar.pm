@@ -336,6 +336,30 @@ sub socket_retry_note {
 	return $state;
 }
 
+# Drain what a push got written back, then report whether the peer is gone.
+#
+# recv() returns the *sender's address*, not a byte count. On a unix socket that
+# is a packed sockaddr_un ("\x01\0/tmp/ws/server\0"), so comparing it to 0 warns
+# on every push - and a flood of those warnings fills the pty and blocks the
+# worker that wrote them (v0.1.1850). The bytes live in the buffer recv filled;
+# the call itself only says whether it succeeded.
+#
+# 1 means the peek found EOF and the caller should drop the cached socket.
+sub socket_drain_peek {
+	my ($socket, $drain) = @_;
+	if ($drain) {
+		while (1) {
+			my $junk = '';
+			my $got = recv($socket, $junk, 65536, MSG_DONTWAIT);
+			last unless defined $got && length($junk) > 0;
+		}
+	}
+	my $peek = '';
+	my $peeked = recv($socket, $peek, 1, MSG_PEEK | MSG_DONTWAIT);
+	return 0 unless defined $peeked;
+	return length($peek) == 0 ? 1 : 0;
+}
+
 sub unix_socket_sender {
 	my ($file,$data,$rcv,$retried) = @_;
 	$rcv = 0 unless defined $rcv;
@@ -365,16 +389,7 @@ sub unix_socket_sender {
         # so the honest test is a non-blocking peek - 0 bytes is EOF. A push
         # also gets its uuid written back by the receiver; drain that first so
         # the peek can see the EOF and the buffer cannot grow.
-        if (!$rcv) {
-            while (1) {
-                my $junk = '';
-                my $got = recv($socket, $junk, 65536, MSG_DONTWAIT);
-                last unless defined $got && $got > 0;
-            }
-        }
-        my $peek = '';
-        my $peeked = recv($socket, $peek, 1, MSG_PEEK | MSG_DONTWAIT);
-        if (defined $peeked && $peeked == 0) {
+        if (&socket_drain_peek($socket, $rcv ? 0 : 1)) {
             $socket->close;
             undef $socket;
             delete $cached_sockets->{$cache_key};
