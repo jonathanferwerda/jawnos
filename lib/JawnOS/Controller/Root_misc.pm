@@ -100,18 +100,14 @@ sub action_2999 {
 	}
 	$c->res->headers->content_type($parts ? $parts->{'mime'} : 'image/png');
 	my $etag = '"' . md5_sum($bytes) . '"';
-	my $if_none_match = $c->req->headers->if_none_match;
-	if (defined $if_none_match && index($if_none_match, $etag) >= 0) {
-		$c->res->code(304);
-		$c->res->headers->etag($etag);
-		$c->res->body('');
-		return;
-	}
 	$c->res->headers->etag($etag);
 	# The mark changes only when the house uploads a new one. Let the browser keep
 	# it for a day, then revalidate to a 304 rather than re-sending the image.
 	$c->res->headers->cache_control('public, max-age=86400, must-revalidate');
+	my $if_none_match = $c->req->headers->if_none_match;
+	return $c->rendered(304) if defined $if_none_match && index($if_none_match, $etag) >= 0;
 	$c->res->body($bytes);
+	return $c->rendered(200);
 }
 
 # POST manager/ws/remote_control

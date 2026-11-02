@@ -61,6 +61,7 @@ my $controller = read_file("$repo/lib/JawnOS/Controller/Root_misc.pm");
 like($controller, qr/^sub action_2999\b/m, 'the route has its action');
 like($controller, qr/if_none_match/, 'a repeat request can answer 304');
 like($controller, qr/cache_control\(/, 'the response is cacheable');
+like($controller, qr/return \$c->rendered\(200\)/, 'the binary body is finalized, not left unset on the wire');
 
 # --- no layout inlines the image any more ------------------------------------
 for my $layout (qw(manager homepage store public_view padlock_key)) {
