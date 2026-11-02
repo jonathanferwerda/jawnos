@@ -223,6 +223,8 @@ sub action_47050 {
 	# column is refreshed on a slow cadence so a crashed tab still ages out.
 	my %ws_written;
 	my $ws_write_refresh = 30000;
+	my %ws_lockdown_state;
+	my %ws_lockdown_swept;
 	my ($ws_neighbour_stamp, $ws_neighbour_at) = ('', 0);
 	my $ws_neighbour_refresh = 20000;
 	$c->on(message => sub ($ws, $msg) {
@@ -427,11 +429,26 @@ sub action_47050 {
 
 			&Websocket::send($app,$return_data);
 
-			# A lockdown is continuous, not a one-off setting: the beat is the
-			# backstop that closes a window opened before the rule changed, and keeps
-			# the start menu's own face in step.
-			eval { &subs::lockdown_sweep({ browser_tab_id => $browser_tab_id }) };
-			&Websocket::send('server', { console => '$("#start_menu").toggleClass("lockdown", ' . (&subs::lockdown_active() ? 'true' : 'false') . ');', browser_tab_id => $browser_tab_id });
+			# The lockdown face is a fact, not a beat. Sending it every 10 s made
+			# every open tab eval a console line, append a terminal entry and repaint
+			# its clock - per tab, per beat, for a value that hardly ever moves. Send
+			# it when it changes for that tab; the sweep is the backstop that closes
+			# a window opened before the rule changed, so it runs when the state turns
+			# on and then on a slow cadence while it stays on.
+			my $lockdown = &subs::lockdown_active() ? 1 : 0;
+			my $lockdown_key = $browser_tab_id || '';
+			if (!defined $ws_lockdown_state{$lockdown_key} || $ws_lockdown_state{$lockdown_key} != $lockdown) {
+				$ws_lockdown_state{$lockdown_key} = $lockdown;
+				&Websocket::send('server', { console => '$("#start_menu").toggleClass("lockdown", ' . ($lockdown ? 'true' : 'false') . ');', browser_tab_id => $browser_tab_id });
+				if ($lockdown) {
+					$ws_lockdown_swept{$lockdown_key} = $server_time;
+					eval { &subs::lockdown_sweep({ browser_tab_id => $browser_tab_id, force => 1 }) };
+				}
+			}
+			elsif ($lockdown && ($server_time - ($ws_lockdown_swept{$lockdown_key} || 0)) >= 20000) {
+				$ws_lockdown_swept{$lockdown_key} = $server_time;
+				eval { &subs::lockdown_sweep({ browser_tab_id => $browser_tab_id }) };
+			}
 
 		}
 		elsif (($data->{'type'} || '') eq 'act') {

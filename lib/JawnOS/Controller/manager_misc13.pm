@@ -539,6 +539,9 @@ sub action_44922 {
 sub action_45064 {
 	my $c = shift;
 	unless (&health_allowed($c)) { $c->rendered(403); return; }
+	# A peer asking us for a reading is alive: whatever silence earned a backoff
+	# is over, so the next levels pass asks it again.
+	&subs::levels_peer_announced($c->param('signatorial'));
 	$c->render(json => &health_report());
 }
 
@@ -555,6 +558,8 @@ sub action_45074 {
 	unless (ref $body eq 'HASH') { $c->render(json => { ok => 0, error => 'bad body' }); return; }
 	my $sig = $body->{'signatorial'} // '';
 	unless ($sig =~ /^[0-9a-f]{32}$/) { $c->render(json => { ok => 0, error => 'bad signatorial' }); return; }
+	# the peer is awake and telling us so: clear the backoff from when it was not
+	&subs::levels_peer_announced($sig);
 	# A machine reports only itself. Ignoring a push for our own row stops a
 	# stale or spoofed copy replacing the live reading this machine just took.
 	if ($sig eq &subs::signatorial_designer()) { $c->render(json => { ok => 1, ignored => 1 }); return; }
@@ -604,6 +609,8 @@ sub action_45121 {
 	$body = {} unless ref $body eq 'HASH';
 	my $sig = $c->param('signatorial') // '';
 	unless ($sig =~ /^[0-9a-f]{32}$/) { $c->render(json => { ok => 0, error => 'bad signatorial' }); return; }
+	# a scheduled wake says "I am here": the backoff its silence earned is over
+	&subs::levels_peer_announced($sig);
 	my $wm = &subs::db_query('select server_time from backups where reason = ? and signatorial = ? and recipient = ? order by server_time desc limit 1',
 		'remote_upgraded', $sig, &subs::signatorial_designer())->hashes->[0] || {};
 	my $newest = ($body->{'newest'} || 0) + 0;

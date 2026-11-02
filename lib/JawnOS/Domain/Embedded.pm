@@ -406,7 +406,7 @@ sub house_levels_sync {
 		local => 1,
 		seen => &rightNow(),
 	});
-	my ($peers, $failed) = (0, 0);
+	my ($peers, $failed, $skipped) = (0, 0, 0);
 	# Push this machine's own row to the peers, so a handheld that slept through
 	# their poll still updates their cards. The pull above cannot reach a phone
 	# between its scheduled wakes, and waiting for a poll to coincide with a wake
@@ -453,6 +453,22 @@ sub house_levels_sync {
 			$keep_previous->($rsig, $pname);
 			next;
 		}
+		# A peer that has stopped answering is not asked every pass: each attempt
+		# is a socket and a radio wake, and a phone pays for both. The backoff is
+		# per peer and doubles, capped at fifteen minutes; a peer's own announce
+		# (/manager/health_report, /manager/available) clears it at once, which is
+		# how a machine coming back is noticed without polling for it.
+		my $backoff = &cache_get({ app => '__president', context => 'levels_backoff', subcontext => $rsig }) || {};
+		my $failures = ($backoff->{'failures'} || 0) + 0;
+		my $hold = ($backoff->{'until'} || 0) > &rightNow();
+		# the card being open is a person waiting: it may look again past a first
+		# blip, but not past a peer that has been gone for several passes
+		$hold = 0 if $opts->{'fast'} && $failures <= 2;
+		if ($hold) {
+			$skipped++;
+			$keep_previous->($rsig, $pname);
+			next;
+		}
 		if ($push) {
 			eval {
 				$ua->connect_timeout($connect_timeout)->inactivity_timeout($inactivity_timeout)
@@ -464,11 +480,22 @@ sub house_levels_sync {
 		my $h = ($res && $res->is_success) ? eval { decode_json $res->body } : undef;
 		unless (ref $h eq 'HASH') {
 			$failed++;
+			$failures++;
+			my $delay = 240000 * (2 ** ($failures - 1));
+			$delay = 900000 if $delay > 900000;
+			&cache_set({ app => '__president', context => 'levels_backoff', subcontext => $rsig, warranty => '+1d' },
+				{ failures => $failures, until => &rightNow() + $delay, at => &rightNow() });
 			my $err = $@ ? do { my $e = $@; $e =~ s/\s+/ /g; substr($e, 0, 120) } : '';
 			$log->info('house levels: ' . $pname . ' '
-				. ($res ? ('HTTP ' . $res->code) : 'no answer') . ($err ne '' ? " ($err)" : ''));
+				. ($res ? ('HTTP ' . $res->code) : 'no answer') . ($err ne '' ? " ($err)" : '')
+				. ' - next try in ' . int($delay / 60000) . 'm');
 			$keep_previous->($rsig, $pname);
 			next;
+		}
+		# it answered: the next pass asks it again
+		if ($failures) {
+			&cache_set({ app => '__president', context => 'levels_backoff', subcontext => $rsig, warranty => '+1d' },
+				{ failures => 0, until => 0, at => &rightNow() });
 		}
 		$peers++;
 		my $peer_battery = (ref $h->{'battery'} eq 'HASH') ? &battery_gauge_eta($h->{'battery'}) : {};
@@ -497,6 +524,7 @@ sub house_levels_sync {
 		devices => $device_list,
 		peers => $peers,
 		failed => $failed,
+		skipped => $skipped,
 	};
 	&cache_set({ app => '__president', context => 'levels', subcontext => 'current', warranty => '-1d' }, $snapshot);
 	return $snapshot;
@@ -517,6 +545,18 @@ sub levels_devices {
 		}
 	}
 	return [ sort { ($a->{'host'} || '') cmp ($b->{'host'} || '') || ($a->{'name'} || '') cmp ($b->{'name'} || '') } values %device ];
+}
+
+# A peer announcing itself is proof it is back. Whatever backoff its silence
+# earned is dropped here, so the coming pass asks it again instead of waiting
+# out a timer that was set while it was away.
+sub levels_peer_announced {
+	my ($sig) = @_;
+	return 0 unless defined $sig && $sig =~ /^[0-9a-f]{32}$/;
+	my $before = &cache_get({ app => '__president', context => 'levels_backoff', subcontext => $sig }) || {};
+	&cache_set({ app => '__president', context => 'levels_backoff', subcontext => $sig, warranty => '+1d' },
+		{ failures => 0, until => 0, at => &rightNow(), announced => &rightNow() });
+	return ($before->{'until'} || 0) > &rightNow() ? 1 : 0;
 }
 
 sub remote_available_announce {
