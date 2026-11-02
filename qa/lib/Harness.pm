@@ -38,6 +38,9 @@ use POSIX ();
 use Mojo::UserAgent;
 use Mojo::UserAgent::CookieJar;
 
+# Relay is loaded lazily: the pre-push verifier compiles each changed file in a
+# temp directory, where this module's neighbours are not on @INC.
+
 our $VERSION = '1';
 
 # ---------------------------------------------------------------------------
@@ -148,13 +151,23 @@ sub new {
 	$self->{'source'}   = $opt{'source'} || 'head';
 	$self->{'booted'}   = {};
 
+	# The deliberate hole (see Relay.pm): default OFF, so every existing run and
+	# the nightly are byte-for-byte the same as before.
+	$self->{'relay'}         = $opt{'relay'} ? 1 : 0;
+	$self->{'relay_pids'}    = {};
+	$self->{'relay_sockets'} = {};
+
 	# a fresh net namespace starts with loopback down, and the tree binds
 	# https://*:PORT - which succeeds even then, while 127.0.0.1 is unreachable
 	bring_up_loopback();
 
-	make_path($self->{'tree'}, $self->{'home'}, $self->{'tmp'},
+	my @dirs = ($self->{'tree'}, $self->{'home'}, $self->{'tmp'},
 		$self->{'logs'}, $self->{'results'},
 		"$self->{'home'}/.president");
+	# The relay socket lives in the run root, never /tmp: the fence mounts a
+	# private tmpfs there, so a socket in /tmp is two different files.
+	push @dirs, "$self->{'run'}/relay" if $self->{'relay'};
+	make_path(@dirs);
 	return $self;
 }
 
@@ -389,6 +402,7 @@ sub boot {
 	}
 	$self->{'booted'}->{$name}->{'up'} = 1;
 	$self->{'booted'}->{$name}->{'seconds'} = time - $t0;
+	$self->relay_start() if $self->{'relay'};
 	return $self->{'booted'}->{$name};
 }
 
@@ -428,6 +442,9 @@ sub stop {
 	my $left = $self->instance_pids();
 	$b->{'up'} = 0;
 	$b->{'left'} = scalar @$left;
+	# the relay has no meaning without the tree it forwards to
+	my $any_up = grep { $_->{'up'} } values %{ $self->{'booted'} };
+	$self->relay_stop() unless $any_up;
 	return $b;
 }
 
@@ -436,6 +453,94 @@ sub stop_all {
 	for my $name (keys %{ $self->{'booted'} }) {
 		$self->stop($name);
 	}
+	$self->relay_stop();
+}
+
+# ---------------------------------------------------------------------------
+# the deliberate hole: a unix socket the fence cannot namespace
+# ---------------------------------------------------------------------------
+#
+# Default off. With relay => 1, boot() also starts, inside the instance's net
+# namespace, a listener on <run>/relay/qa-<port>.sock that forwards to
+# https://127.0.0.1:<port>. The host half is started outside the fence
+# (qa/android/run.sh) and listens on 127.0.0.1:<port> only. The socket is a
+# file, so both namespaces see the same object; the port is the same number on
+# both sides because the instance's port is free on the host.
+
+sub relay_enabled { $_[0]->{'relay'} ? 1 : 0 }
+
+sub relay_socket {
+	my ($self, $port) = @_;
+	require Relay;
+	die "Harness: the relay is off (construct with relay => 1)\n"
+		unless $self->{'relay'};
+	$self->{'relay_sockets'}->{$port} ||= Relay::socket_path(
+		"$self->{'run'}/relay", 'qa', $port);
+	return $self->{'relay_sockets'}->{$port};
+}
+
+sub relay_state {
+	my ($self) = @_;
+	my $p = $self->{'ports'} || {};
+	my %sockets;
+	if ($self->{'relay'}) {
+		%sockets = map { $_ => $self->relay_socket($_) }
+			(grep { defined } ($p->{'working'}, $p->{'dock'}));
+	}
+	return {
+		enabled => $self->relay_enabled(),
+		sockets => \%sockets,
+		pids    => { map { $_ => $self->{'relay_pids'}->{$_}->{'pid'} }
+			keys %{ $self->{'relay_pids'} } },
+	};
+}
+
+sub relay_start {
+	my ($self) = @_;
+	return 0 unless $self->{'relay'};
+	require Relay;
+	my $p = $self->{'ports'} or return 0;
+	if ($ENV{'JAWNOS_QA_NO_NS'}) {
+		warn "qa: relay requested without a net namespace (--no-namespace); the instance's\n"
+			. "qa: port is already on the host's loopback, so adb reverse needs no relay\n";
+		return 0;
+	}
+
+	for my $port ($p->{'working'}, $p->{'dock'}) {
+		next unless defined $port;
+		next if $self->{'relay_pids'}->{$port};
+		my $path = $self->relay_socket($port);
+		my $log = "$self->{'logs'}/relay-$port.log";
+		my $pid = Relay::spawn_upstream(
+			socket => $path,
+			port   => $port,
+			log    => $log,
+			forbid => [$self->{'repo'}],
+		);
+		$self->{'relay_pids'}->{$port} = { pid => $pid, socket => $path, port => $port };
+
+		# the child binds asynchronously; say so now rather than at the first
+		# WebView request that finds an empty socket
+		my $deadline = time + 5;
+		sleep 0.05 while time < $deadline && !-S $path;
+		unless (-S $path) {
+			$self->relay_stop();
+			die "Harness: the relay socket $path did not appear (see $log)\n";
+		}
+	}
+	return 1;
+}
+
+sub relay_stop {
+	my ($self) = @_;
+	my $pids = $self->{'relay_pids'} || {};
+	return 1 unless %$pids;
+	require Relay;
+	for my $port (keys %$pids) {
+		Relay::stop($pids->{$port}->{'pid'}, $pids->{$port}->{'socket'});
+	}
+	$self->{'relay_pids'} = {};
+	return 1;
 }
 
 # Is the tree answering right now? Used between requests to tell a route's own

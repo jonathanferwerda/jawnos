@@ -1,4 +1,4 @@
-// The Notes app: what the watch heard that was not a command, plus anything typed
+// The Notes app: what the watch heard when it was not a command, plus anything typed
 // here. The list comes from the notes table (its own store, not appointments). A
 // row is clicked to edit, dragged onto an appointment window to fold into that
 // app's notes, and removed with the two-click X.
@@ -16,7 +16,7 @@ function notesMaker(timestamp) {
 		type: 'GET',
 		data: { window_maker: 'yes', timestamp: timestamp },
 		success: function(response) {
-			if (response) { windowMaker(response); notesDraggable(); }
+			if (response) { windowMaker(response); notesDraggable(); notesCategoryApply(); }
 		}
 	});
 }
@@ -31,13 +31,21 @@ function notesReload() {
 		type: 'GET',
 		data: { window_maker: 'yes', timestamp: w.attr('timestamp') },
 		success: function(response) {
-			var fresh = $(response).find('#notes_list');
-			if (fresh.length) { w.find('#notes_list').replaceWith(fresh); }
+			// The chips and their counts are redrawn with the rows, so the count a
+			// save changes is right without reopening the window; the filter the
+			// person is looking through is re-applied after the swap.
+			var fresh = $(response).find('#notes_body');
+			if (fresh.length) { w.find('#notes_body').replaceWith(fresh); }
+			else {
+				var list = $(response).find('#notes_list');
+				if (list.length) { w.find('#notes_list').replaceWith(list); }
+			}
 			// The fresh rows carry blank .time spans; paint them now, in the same
 			// frame as the swap, instead of waiting for the next one-second tick.
 			// Otherwise the list is briefly one line shorter and then grows.
 			if (typeof appointment_chron === 'function') { appointment_chron(); }
 			notesDraggable();
+			notesCategoryApply();
 		}
 	});
 }
@@ -62,7 +70,7 @@ function noteSave() {
 	$.ajax({
 		url: '/manager/note_save',
 		type: 'POST',
-		data: { uuid: notesEditing, text: text, timestamp: Date.now() },
+		data: { uuid: notesEditing, text: text, category: $('#notes_category').val() || '', timestamp: Date.now() },
 		success: function(response) {
 			input.val('');
 			notesEditing = null;
@@ -72,10 +80,15 @@ function noteSave() {
 }
 
 // Click a note's body to load it into the box for editing; saving updates the
-// same row (notesEditing carries its uuid).
+// same row (notesEditing carries its uuid). The picker follows the note, so a
+// save cannot move a note to another category by accident; a draft has no
+// category of its own, so the picker is left where it was and the save names
+// none (the server keeps the row as it was).
 $(document).on('click', '.note_text', function(e) {
 	var note = $(this).closest('.note');
 	notesEditing = note.attr('uuid');
+	var category = note.attr('category') || '';
+	if (category) { $('#notes_category').val(category); }
 	$('#notes_input').val($(this).text()).focus();
 });
 
@@ -163,3 +176,59 @@ function notesDraggable() {
 		});
 	});
 }
+
+// --- Categories ---------------------------------------------------
+// The six categories a note is filed under. The chips, their counts and the
+// picker are drawn by the server with their translated labels, so this script
+// only moves them: which chip is showing, which rows belong under it, and the
+// one link a category hands off to. Roadmap opens Store, Shopping opens Market,
+// Dreams opens the Handbook's Today (where dreams are planted), Social opens
+// People; Journal and JawnOS stay here, because JawnOS is the queue the nightly
+// agent reads.
+var notesCategoryFilter = '';
+
+function notesCategoryApply() {
+	var w = $('.wind[app="notes"]');
+	if (!w.length) { return; }
+	var filter = notesCategoryFilter || '';
+	w.find('#notes_category_bar .notes_chip').each(function() {
+		var chip = $(this);
+		var on = (chip.attr('category') || '') == filter;
+		chip.css({
+			'opacity': (on ? '1' : '0.8'),
+			'font-weight': (on ? 'bold' : 'normal'),
+			'border-color': (on ? 'var(--ink, var(--line))' : 'var(--line)')
+		});
+	});
+	w.find('#notes_list .note').each(function() {
+		var note = $(this);
+		note.toggle(filter == '' || (note.attr('category') || '') == filter);
+	});
+	w.find('.notes_category_open').each(function() {
+		var link = $(this);
+		link.toggle(filter != '' && (link.attr('category') || '') == filter);
+	});
+	// An empty category says so instead of showing a blank list.
+	w.find('#notes_empty').toggle(filter != '' && w.find('#notes_list .note:visible').length == 0);
+}
+
+$(document).on('click', '#notes_category_bar .notes_chip', function() {
+	notesCategoryFilter = $(this).attr('category') || '';
+	var category = notesCategoryFilter;
+	// A note written while a category is showing is filed under it.
+	if (category) { $('#notes_category').val(category); }
+	notesCategoryApply();
+});
+
+// The hand-off. Store, Market and People are windowMaker apps, so they open
+// through appWindowOpener, which loads a lazy app's chunk first. The Handbook is
+// not one: its own grabber is what its links use, and it opens on Today.
+$(document).on('click', '.notes_category_open', function() {
+	var target = $(this).attr('target') || '';
+	if (!target) { return; }
+	if (target == 'handbook') {
+		if (typeof handbookGrabber == 'function') { handbookGrabber('today'); }
+		return;
+	}
+	if (typeof appWindowOpener == 'function') { appWindowOpener(target, Date.now(), { visible: 'yes' }); }
+});

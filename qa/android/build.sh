@@ -49,6 +49,27 @@ if [ -z "${JAVA_HOME:-}" ] || [ ! -x "$JAVA_HOME/bin/java" ]; then
 		fi
 	done
 fi
+# Last resort on Arch: whatever archlinux-java calls the default, if supported.
+if [ -z "${JAVA_HOME:-}" ] && command -v archlinux-java > /dev/null 2>&1; then
+	ALT=$(archlinux-java get 2>/dev/null || true)
+	case "$ALT" in
+		java-17-*|java-21-*)
+			JAVA_HOME=/usr/lib/jvm/$ALT
+			export JAVA_HOME
+			;;
+	esac
+fi
+
+# A java-only package (jre17-openjdk) looks fine until AGP's JdkImageTransform
+# calls jlink, so check the JDK is complete before the build starts.
+if [ -n "${JAVA_HOME:-}" ]; then
+	for t in java javac jlink; do
+		if [ ! -x "$JAVA_HOME/bin/$t" ]; then
+			echo "qa-android: $JAVA_HOME has no bin/$t (needs a full JDK 17-21)" >&2
+			exit 2
+		fi
+	done
+fi
 
 # cap the jobs: this box is shared with the live house
 ./gradlew --max-workers=4 :app:assembleDebug

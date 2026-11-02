@@ -1,25 +1,59 @@
-<% 	no warnings 'uninitialized'; %>
+<% 	no warnings 'uninitialized';
+	# A render that comes from anywhere but the Notes route (a probe, a test) still
+	# draws an empty bar rather than dying on an undefined list.
+	$categories ||= [];
+	$counts ||= {};
+	$total ||= 0;
+	$selected ||= ''; %>
 <%# The Notes app: what the watch heard when the words were not a command, plus
     anything typed here. A note is its own row now, not an appointment. Click a
     note to edit it in the box at the foot, drag one onto an appointment window to
-    fold it into that app's notes, and the X is a two-click delete. %>
+    fold it into that app's notes, and the X is a two-click delete.
+
+    A note is filed under one of six categories. The chips carry the count over
+    the rows below them, the picker at the foot is what a new note (or the note
+    being edited) is saved under, and each category that lives somewhere else
+    hands off to that app: Roadmap to Store, Shopping to Market, Dreams to the
+    Handbook's Today, Social to People. Journal and JawnOS stay here - JawnOS is
+    the queue the nightly agent reads. An appointment's draft has no category of
+    its own: it is not a note the person filed. %>
 <div id="notes" style="width:100%;height:100%;background-color:var(--panel);padding:6px;display:flex;flex-direction:column;">
-	<div id="notes_list" style="flex:1 1 auto;overflow:scroll;">
-		<% if (!scalar @{$notes}) { %>
-			<span style="font-size:18px;">No notes yet. Anything the watch hears that is not a command lands here.</span>
-		<% } %>
-		<% foreach my $n ( @{$notes} ) { %>
-			<% my $draft_of = $n->{'app'} || ''; %>
-			<div class="note hover" uuid="<%= $n->{'uuid'} %>" timestamp="<%= $n->{'timestamp'} %>" style="border-bottom:solid 1px var(--line);padding:6px;font-size:18px;cursor:move;">
-				<button class="note_delete" uuid="<%= $n->{'uuid'} %>" style="float:right;" title="Delete">X</button>
-				<% if ($draft_of ne '' && $draft_of ne 'notes') { %><span class="note_app" title="<%= &subs::lang('notes.draft') %>"><%= $draft_of %> · <%= &subs::lang('notes.draft') %></span><% } %>
-				<span class="time" timestamp="<%= $n->{'timestamp'} %>" style="opacity:0.7;font-size:14px;"></span>
-				<div class="note_text" style="white-space:pre-wrap;"><%= $n->{'text'} %></div>
-			</div>
-		<% } %>
+	<div id="notes_body" style="flex:1 1 auto;min-height:0;display:flex;flex-direction:column;">
+		<div id="notes_category_bar" style="flex:0 0 auto;display:flex;flex-wrap:wrap;align-items:center;gap:4px;padding-bottom:4px;font-size:13px;">
+			<button class="notes_chip" category="" style="padding:2px 9px;border:1px solid var(--line);border-radius:999px;font-size:13px;opacity:0.8;cursor:pointer;"><%= &subs::lang('notes.all') %> <span class="notes_count" style="opacity:0.7;font-size:11px;"><%= $total || 0 %></span></button>
+			<% foreach my $cat ( @{$categories} ) { %>
+				<button class="notes_chip" category="<%= $cat->{'code'} %>" style="padding:2px 9px;border:1px solid var(--line);border-radius:999px;font-size:13px;opacity:0.8;cursor:pointer;"><%= $cat->{'label'} %> <span class="notes_count" style="opacity:0.7;font-size:11px;"><%= $counts->{ $cat->{'code'} } || 0 %></span></button>
+			<% } %>
+			<% foreach my $cat ( @{$categories} ) { next unless $cat->{'target'}; %>
+				<button class="notes_category_open" category="<%= $cat->{'code'} %>" target="<%= $cat->{'target'} %>" style="display:none;margin-left:auto;padding:2px 9px;border:1px solid var(--line);border-radius:999px;font-size:13px;cursor:pointer;" title="<%= $cat->{'open_label'} %>"><%= $cat->{'open_label'} %></button>
+			<% } %>
+		</div>
+		<div id="notes_list" style="flex:1 1 auto;overflow:scroll;">
+			<div id="notes_empty" style="display:none;padding:6px;font-size:18px;opacity:0.7;"><%= &subs::ui('No notes in this category yet.') %></div>
+			<% if (!scalar @{$notes}) { %>
+				<span style="font-size:18px;"><%= &subs::ui('No notes yet. Anything the watch hears that is not a command lands here.') %></span>
+			<% } %>
+			<% foreach my $n ( @{$notes} ) { %>
+				<% my $draft_of = $n->{'app'} || ''; %>
+				<div class="note hover" uuid="<%= $n->{'uuid'} %>" timestamp="<%= $n->{'timestamp'} %>" category="<%= $n->{'category'} %>" style="border-bottom:solid 1px var(--line);padding:6px;font-size:18px;cursor:move;">
+					<button class="note_delete" uuid="<%= $n->{'uuid'} %>" style="float:right;" title="<%= &subs::lang('delete') %>">X</button>
+					<% if ($draft_of ne '' && $draft_of ne 'notes') { %><span class="note_app" title="<%= &subs::lang('notes.draft') %>"><%= $draft_of %> · <%= &subs::lang('notes.draft') %></span><% } elsif (($n->{'category'} || '') ne '') { %><span class="note_category" title="<%= &subs::lang('notes.category') %>" style="padding:1px 7px;border:1px solid var(--line);border-radius:999px;font-size:11px;opacity:0.8;"><%= &subs::lang( 'notes.category.' . $n->{'category'} ) %></span><% } %>
+					<span class="time" timestamp="<%= $n->{'timestamp'} %>" style="opacity:0.7;font-size:14px;"></span>
+					<div class="note_text" style="white-space:pre-wrap;"><%= $n->{'text'} %></div>
+				</div>
+			<% } %>
+		</div>
 	</div>
 	<div id="notes_input_row" style="flex:0 0 auto;padding-top:4px;">
-		<textarea id="notes_input" rows="2" placeholder="Write a note... (Enter saves, Shift+Enter makes a line)" style="width:80%;vertical-align:top;"></textarea>
-		<button id="notes_save" style="width:16%;vertical-align:top;">Save</button>
+		<div id="notes_category_row" style="padding-bottom:2px;font-size:14px;">
+			<label for="notes_category" style="opacity:0.8;"><%= &subs::lang('notes.category') %></label>
+			<select id="notes_category" style="margin-left:4px;">
+				<% foreach my $cat ( @{$categories} ) { %>
+					<option value="<%= $cat->{'code'} %>"<%= (($cat->{'code'} || '') eq ($selected || '') ? ' selected' : '') %>><%= $cat->{'label'} %></option>
+				<% } %>
+			</select>
+		</div>
+		<textarea id="notes_input" rows="2" placeholder="<%= &subs::ui('Write a note... (Enter saves, Shift+Enter makes a line)') %>" style="width:80%;vertical-align:top;"></textarea>
+		<button id="notes_save" style="width:16%;vertical-align:top;"><%= &subs::lang('save') %></button>
 	</div>
 </div>

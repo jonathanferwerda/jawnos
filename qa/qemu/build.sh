@@ -19,8 +19,19 @@ if [ ! -f scripts/mkosi_build.pl ]; then
 	exit 2
 fi
 
+# mkosi needs root. As root (a systemd unit) no sudo is involved; as a user it
+# must be passwordless, or an unattended build stalls on a prompt forever.
+if [ "$(id -u)" -eq 0 ]; then
+	SUDO=
+elif command -v sudo > /dev/null 2>&1 && sudo -n true 2>/dev/null; then
+	SUDO='sudo -n'
+else
+	echo "qa-qemu: mkosi needs root or passwordless sudo (try: sudo -v first)" >&2
+	exit 2
+fi
+
 # Always rebuild: a cached image is the failure this layer exists to catch.
-sudo perl scripts/mkosi_build.pl
+$SUDO perl scripts/mkosi_build.pl
 
 IMG=$(ls -t desktop/mkosi/output/*.raw 2>/dev/null | head -n 1 || true)
 if [ -z "$IMG" ]; then

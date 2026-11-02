@@ -1,0 +1,14 @@
+[Unit]
+Description=Weekly JawnOS QA artefact build (QEMU image + Android APK)
+
+[Timer]
+# Sunday 03:00, ahead of the 04:00 QA suite, which then boots the fresh image.
+# Not nightly on purpose: the build is 20-40 min and a tree that has not moved
+# produces the same artefact.
+OnCalendar=Sun *-*-* 03:00:00
+Persistent=true
+RandomizedDelaySec=20m
+Unit=jawnos-qa-build.service
+
+[Install]
+WantedBy=timers.target

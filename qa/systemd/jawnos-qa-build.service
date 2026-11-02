@@ -1,0 +1,30 @@
+[Unit]
+Description=JawnOS QA artefact build (QEMU image + Android APK)
+Documentation=file:/home/jawn/jawnos/qa/README.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=jawn
+WorkingDirectory=/home/jawn/jawnos
+Environment=HOME=/home/jawn
+Environment=QA_ROOT=/home/jawn/jawnos-qa
+Environment=JAVA_HOME=/usr/lib/jvm/java-17-openjdk
+# The image needs root: `sudo -n` must be passwordless for this user.
+ExecStart=/bin/sh /home/jawn/jawnos/qa/nightly_build.sh
+
+# A cold image build downloads the whole base system. It is heavy but it is a
+# build, not the suite: no isolation beyond leaving the live tree alone, and no
+# NoNewPrivileges (sudo and mkosi need real root).
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+MemoryMax=5G
+CPUQuota=350%
+TimeoutStartSec=2h
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

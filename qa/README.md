@@ -71,6 +71,20 @@ would resolve back to the live tree. So:
 If `unshare` or unprivileged user namespaces are unavailable, the runner
 **refuses** to run (pass `--no-namespace` to override, and read the warning).
 
+**One deliberate hole, for l4 only.** The Android layer needs the emulator's
+WebView to reach a real QA instance, and a socket in the fence's net namespace
+is unreachable from `adb reverse`. Since unix sockets are files, a relay socket
+in the run root (never `/tmp`, which the mount namespace makes private) is
+visible from both sides: `qa/lib/Relay.pm` listens on it inside the instance's
+namespace and forwards to `https://127.0.0.1:<port>`, and `qa/android/run.sh`
+listens on `127.0.0.1:<port>` on the host and forwards into the socket. The
+port is the same number on both sides because the instance's port is free on
+the host. Its risk: for the life of the layer any **local** process on the host
+can dial that loopback port (nothing is opened on 0.0.0.0 and no route to the
+LAN is added), and it reaches only the QA copy - the hop still meets the QA
+house's ticket/session gate. `Harness` takes `relay => 1` to start the inside
+half; the default is off, so l1-l3 and the nightly are unchanged.
+
 The live files are snapshotted (inode/size/mtime) before and after for the
 report. They may legitimately move because the live app is running; that is
 recorded as drift, not as a verdict. The verdict is the PID audit.
@@ -213,6 +227,15 @@ build cannot pass as a release:
   stays on `android_asset/splash.html` and the result is an explicit **skip**,
   never a pass. It writes `results/device.json` and runs `qa/budget.pl` on it.
   It talks only to the QA instance (`adb reverse`), never to a real tablet.
+  With `QA_INSTANCE=1` it boots a fenced instance itself (`qa/android/instance.pl`),
+  bridges it through the run-root relay, mints the app ticket
+  (`scripts/app_ticket.pl`) and opens it with the `com.jawnos.app.EXTRA_URL`
+  extra. The factory seed does not create the vault, so the helper first runs
+  one real login (`qa/android/vault_seed.pl`); without that the ticket renders
+  the Gate. The app already proceeds on a self-signed certificate for
+  `127.0.0.1`, so no CA is installed. When a ticket was minted and the
+  WebView still lands on the splash, the layer **fails** with the probe JSON as
+  evidence, rather than reporting a pass.
 - `qa/qemu/run.sh` (POSIX sh) boots headlessly with `-snapshot=on` and
   `-display none`, drives the serial console through `qa/qemu/serial.pl`, and
   has three modes:

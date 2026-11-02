@@ -9,9 +9,21 @@
 # user's own AVD state is never written, and the emulator is started with
 # -no-snapshot so a stale quickboot image cannot pass as the current build.
 #
-# The app is pointed at the QA instance, not at the live house:
-#   adb reverse tcp:$QADOCK tcp:$QADOCK
-# and the ticket in $QA_TICKET (minted by the run) is the login.
+# The app is pointed at the QA instance, not at the live house. The instance is
+# fenced (user/PID/net/mount namespaces), so its port is on its own loopback and
+# `adb reverse` - which dials the *host's* 127.0.0.1 - cannot see it. With
+# QA_INSTANCE=1 this script boots one, and qa/lib/Relay.pm bridges it:
+#
+#   instance netns: unix <run>/relay/qa-P.sock  ->  https://127.0.0.1:P
+#   host:           127.0.0.1:P                  ->  unix <run>/relay/qa-P.sock
+#   adb reverse tcp:P tcp:P, then the ticket URL is the login
+#
+# The helper writes its ports, sockets and ticket to $OUT/handle.json.
+#
+# The socket is a file, so both namespaces see it; it is deliberately NOT in
+# /tmp (the fence makes /tmp private). The host relay binds loopback only, and
+# the QA house's own ticket/session still gates the hop. Without QA_INSTANCE=1
+# the script behaves exactly as before (QADOCK, or no reverse at all).
 #
 # What this records, per launch:
 #   cold start (am start -W TotalTime), warm start (back/home + relaunch),
@@ -39,6 +51,20 @@ SDK=${ANDROID_SDK_ROOT:-${ANDROID_HOME:-$HOME/android-sdk}}
 AVD_NAME=${QA_AVD:-jawnos}
 DOCK=${QADOCK:-0}
 CDP_PORT=${QA_CDP_PORT:-9223}
+# Boot a fenced QA instance and relay it to the emulator. Off by default: the
+# nightly and every other l4 run are unchanged unless this is set.
+QA_INSTANCE=${QA_INSTANCE:-0}
+APP_URL=
+INST_PID=
+INST_RUN=
+INST_WORKING=
+INST_DOCK=
+INST_SOCK_WORKING=
+INST_SOCK_DOCK=
+REVERSE_PORTS=
+INSIDE_FENCE=0
+RELAY_WORKING_PID=
+RELAY_DOCK_PID=
 APP_PID=
 EPID=
 SERIAL=
@@ -49,6 +75,8 @@ mkdir -p "$OUT" "$RESULTS"
 : > "$OUT/findings.txt"
 RESULT="$OUT/result.txt"
 : > "$RESULT"
+HANDLE="$OUT/handle.json"
+QA_STOP="$OUT/qa-stop"
 
 say() { printf 'qa-android: %s\n' "$*"; }
 finding() { # <ok|warn|skip|fail> <area> <text>
@@ -68,12 +96,19 @@ fail() {
 cleanup() {
 	[ -n "$PINNED" ] && return 0
 	PINNED=1
+	for p in $REVERSE_PORTS; do
+		[ -n "$SERIAL" ] && adb -s "$SERIAL" reverse --remove "tcp:$p" >/dev/null 2>&1 || true
+	done
 	if [ -n "$CDP_PORT" ] && [ -n "$SERIAL" ]; then
 		adb -s "$SERIAL" forward --remove "tcp:$CDP_PORT" >/dev/null 2>&1 || true
 	fi
 	if [ "$DOCK" != "0" ] && [ -n "$SERIAL" ]; then
 		adb -s "$SERIAL" reverse --remove "tcp:$DOCK" >/dev/null 2>&1 || true
 	fi
+	# the host half of the relay first: it must not outlive the bridge
+	[ -n "$RELAY_WORKING_PID" ] && kill -9 "$RELAY_WORKING_PID" >/dev/null 2>&1 || true
+	[ -n "$RELAY_DOCK_PID" ] && kill -9 "$RELAY_DOCK_PID" >/dev/null 2>&1 || true
+	qa_instance_stop
 	if [ -n "$SERIAL" ]; then
 		adb -s "$SERIAL" emu kill >/dev/null 2>&1 || true
 	fi
@@ -107,6 +142,157 @@ mem_guard() {
 	A=$(mem_avail)
 	[ "${A:-0}" -ge 400 ] && return 0
 	fail "host memory below 400 MB available ($A MB); stopped instead of squeezing the box"
+}
+
+# Own session so a terminal's process-group cleanup does not take the instance
+# (or its relay) down mid-run; teardown is still explicit below.
+if command -v setsid >/dev/null 2>&1; then
+	SETSID=setsid
+else
+	SETSID=
+fi
+
+# ---------------------------------------------------------------------------
+# the QA instance and the fence hole
+# ---------------------------------------------------------------------------
+# handle_get <dotted.path> -> the value from $HANDLE, empty when absent
+handle_get() {
+	perl -MJSON::PP -e '
+		my $key = shift @ARGV;
+		my $h = JSON::PP->new->decode(do { local $/; <> });
+		for my $k (split /\./, $key) {
+			last unless ref($h) eq "HASH" && exists $h->{$k};
+			$h = $h->{$k};
+		}
+		print ref($h) ? "" : (defined $h ? $h : "");
+	' "$1" "$HANDLE" 2>/dev/null || true
+}
+
+# Spawn the fenced instance now and wait for it later, so its boot overlaps
+# the emulator's.
+qa_instance_spawn() {
+	[ "$QA_INSTANCE" = "1" ] || return 0
+	case "$OUT" in
+	/tmp/*)
+		finding warn instance "QA_OUT is under /tmp, which the fence makes a private tmpfs; not booting a QA instance"
+		return 0
+		;;
+	esac
+	if [ ! -f "$DIR/instance.pl" ]; then
+		finding warn instance "no $DIR/instance.pl; the app has no QA instance"
+		return 0
+	fi
+	if ! command -v unshare >/dev/null 2>&1; then
+		finding warn instance "unshare is not installed; the QA instance would be unfenced, so it was not booted"
+		return 0
+	fi
+
+	rm -f "$HANDLE" "$QA_STOP"
+	say "booting a fenced QA instance (its relay sockets are named in $OUT/handle.json)"
+	if [ "${JAWNOS_QA_NS:-}" = "1" ]; then
+		# qa/run.pl already fenced this process tree. The instance inherits it,
+		# but adb and the emulator are in that netns too, which is not a state
+		# this layer was ever able to drive.
+		INSIDE_FENCE=1
+		finding warn instance "already inside a QA namespace; adb cannot reach the host from here"
+		$SETSID perl "$DIR/instance.pl" --out "$OUT" --stop "$QA_STOP" \
+			>"$OUT/instance-console.log" 2>&1 </dev/null &
+	else
+		$SETSID unshare --user --map-root-user --mount --pid --fork --mount-proc --net -- \
+			perl "$DIR/instance.pl" --out "$OUT" --stop "$QA_STOP" \
+			>"$OUT/instance-console.log" 2>&1 </dev/null &
+	fi
+	INST_PID=$!
+	return 0
+}
+
+# Start the host half of the relay: 127.0.0.1:<port> -> <sock>. Loopback only.
+relay_start() { # <socket> <port>  (prints the pid)
+	$SETSID perl -I"$DIR/../lib" -MRelay -e 'exit Relay::cli(@ARGV)' down \
+		--socket "$1" --port "$2" --log "$OUT/relay-$2.log" \
+		</dev/null >>"$OUT/relay-$2.console" 2>&1 &
+	printf '%s\n' "$!"
+}
+
+qa_instance_wait() {
+	[ "$QA_INSTANCE" = "1" ] || return 0
+	[ -n "$INST_PID" ] || return 0
+	say "waiting for the QA instance"
+	i=0
+	while [ "$i" -lt 180 ]; do
+		[ -s "$HANDLE" ] && break
+		kill -0 "$INST_PID" 2>/dev/null || break
+		mem_guard
+		sleep 2
+		i=$((i + 1))
+	done
+	if [ ! -s "$HANDLE" ]; then
+		finding warn instance "the QA instance wrote no handle; see $OUT/instance-console.log"
+		qa_instance_stop
+		return 0
+	fi
+
+	INST_RUN=$(handle_get run)
+	INST_WORKING=$(handle_get ports.working)
+	INST_DOCK=$(handle_get ports.dock)
+	INST_SOCK_WORKING=$(handle_get sockets.working)
+	INST_SOCK_DOCK=$(handle_get sockets.dock)
+	APP_URL=$(handle_get ticket)
+	if [ -z "$INST_WORKING" ]; then
+		finding warn instance "the handle names no working port; no relay started"
+		qa_instance_stop
+		return 0
+	fi
+
+	if [ "$INSIDE_FENCE" = "1" ]; then
+		# The host half would bind the very port the instance already holds in
+		# this shared netns. Say why there is no bridge instead.
+		finding warn instance "no relay started: the instance's port is on this netns's loopback, and adb cannot reach the host from it"
+		[ -z "$APP_URL" ] && finding warn instance "no ticket url ($(handle_get ticket_error | head -c 200))"
+		return 0
+	fi
+
+	if [ -n "$INST_SOCK_WORKING" ]; then
+		RELAY_WORKING_PID=$(relay_start "$INST_SOCK_WORKING" "$INST_WORKING")
+	fi
+	if [ -n "$INST_SOCK_DOCK" ] && [ -n "$INST_DOCK" ]; then
+		RELAY_DOCK_PID=$(relay_start "$INST_SOCK_DOCK" "$INST_DOCK")
+	fi
+	REVERSE_PORTS="$INST_WORKING $INST_DOCK"
+	sleep 1
+
+	if [ -n "$RELAY_WORKING_PID" ] && kill -0 "$RELAY_WORKING_PID" 2>/dev/null; then
+		finding ok instance "QA instance on $INST_WORKING/$INST_DOCK; host relay on 127.0.0.1 only; vault=$(handle_get vault) ticket=$([ -n "$APP_URL" ] && echo yes || echo no)"
+	else
+		finding warn instance "the host relay did not stay up; see $OUT/relay-$INST_WORKING.console"
+	fi
+	if [ -z "$APP_URL" ]; then
+		finding warn instance "no ticket url ($(handle_get ticket_error | head -c 200)); the app falls back to the splash"
+	fi
+	return 0
+}
+
+# SIGKILL the helper and anything still running out of its run root. The helper
+# does this itself on the stop file; this is for the case where it did not.
+qa_instance_stop() {
+	[ -n "$INST_PID" ] || return 0
+	: > "$QA_STOP"
+	i=0
+	while [ "$i" -lt 12 ] && kill -0 "$INST_PID" 2>/dev/null; do
+		sleep 1
+		i=$((i + 1))
+	done
+	kill -9 "$INST_PID" >/dev/null 2>&1 || true
+	if [ -n "$INST_RUN" ]; then
+		for p in /proc/[0-9]*; do
+			c=$(readlink "$p/cwd" 2>/dev/null) || continue
+			case "$c" in
+			"$INST_RUN"/*) kill -9 "${p#/proc/}" >/dev/null 2>&1 || true ;;
+			esac
+		done
+	fi
+	INST_PID=
+	return 0
 }
 
 # Never reuse a serial that is already on the bus: a stale emulator (or, in
@@ -159,6 +345,8 @@ fi
 # boot
 # ---------------------------------------------------------------------------
 mem_guard
+# The instance is spawned first so its boot overlaps the emulator's.
+qa_instance_spawn
 say "starting the emulator on port $PORT"
 # -accel auto uses KVM where it exists; on table it does.
 "$SDK/emulator/emulator" \
@@ -186,6 +374,9 @@ done
 [ "$BOOT" = "1" ] || fail "the emulator did not finish booting in 360 s"
 mem_guard
 
+# The reverse is only worth setting up if the relay behind it is listening.
+qa_instance_wait
+
 # ---------------------------------------------------------------------------
 # install: -s is load-bearing, a real tablet must never receive the QA APK
 # ---------------------------------------------------------------------------
@@ -202,7 +393,12 @@ if ! printf '%s\n' "$INSTALL" | grep -q '^Success'; then
 	fail "adb install failed: $(printf '%s' "$INSTALL" | tail -n 3 | tr '\n' ' ')"
 fi
 
-if [ "$DOCK" != "0" ]; then
+if [ -n "$REVERSE_PORTS" ]; then
+	for p in $REVERSE_PORTS; do
+		timeout 60 adb -s "$SERIAL" reverse "tcp:$p" "tcp:$p" >/dev/null 2>&1 \
+			|| finding warn dock "adb reverse tcp:$p failed; the app cannot reach the QA relay"
+	done
+elif [ "$DOCK" != "0" ]; then
 	timeout 60 adb -s "$SERIAL" reverse "tcp:$DOCK" "tcp:$DOCK" >/dev/null 2>&1 \
 		|| finding warn dock "adb reverse tcp:$DOCK failed; the app has no QA instance"
 fi
@@ -231,7 +427,14 @@ start_app() { # <label>
 	label=$1
 	START_MS=
 	if [ -n "$ACT" ] && [ "$ACT" != "No activity found" ]; then
-		out=$(timeout 150 adb -s "$SERIAL" shell am start -W -n "$ACT" 2>&1 | tr -d '\r' || true)
+		if [ -n "$APP_URL" ]; then
+			# the view takes a URL extra: open the QA house's ticket directly,
+			# exactly as a machine in someone's hands would
+			out=$(timeout 150 adb -s "$SERIAL" shell am start -W -n "$ACT" \
+				--es com.jawnos.app.EXTRA_URL "'$APP_URL'" 2>&1 | tr -d '\r' || true)
+		else
+			out=$(timeout 150 adb -s "$SERIAL" shell am start -W -n "$ACT" 2>&1 | tr -d '\r' || true)
+		fi
 	else
 		out=$(timeout 150 adb -s "$SERIAL" shell monkey -p "$PKG" \
 			-c android.intent.category.LAUNCHER 1 2>&1 | tr -d '\r' || true)
@@ -281,6 +484,9 @@ offline_on() {
 		|| true
 	timeout 60 adb -s "$SERIAL" shell svc wifi disable >/dev/null 2>&1 || true
 	timeout 60 adb -s "$SERIAL" shell svc data disable >/dev/null 2>&1 || true
+	for p in $REVERSE_PORTS; do
+		timeout 60 adb -s "$SERIAL" reverse --remove "tcp:$p" >/dev/null 2>&1 || true
+	done
 	if [ "$DOCK" != "0" ]; then
 		timeout 60 adb -s "$SERIAL" reverse --remove "tcp:$DOCK" >/dev/null 2>&1 || true
 	fi
@@ -289,6 +495,9 @@ offline_off() {
 	timeout 60 adb -s "$SERIAL" shell cmd connectivity airplane-mode disable >/dev/null 2>&1 \
 		|| timeout 60 adb -s "$SERIAL" shell settings put global airplane_mode_on 0 >/dev/null 2>&1 \
 		|| true
+	for p in $REVERSE_PORTS; do
+		timeout 60 adb -s "$SERIAL" reverse "tcp:$p" "tcp:$p" >/dev/null 2>&1 || true
+	done
 	if [ "$DOCK" != "0" ]; then
 		timeout 60 adb -s "$SERIAL" reverse "tcp:$DOCK" "tcp:$DOCK" >/dev/null 2>&1 || true
 	fi
@@ -523,7 +732,8 @@ DEVJSON="$RESULTS/device.json"
 	printf '  "l4.gfxinfo_reset": %s,\n' "$GFX_RESET"
 	printf '  "l4.cdp_page_loaded": %s,\n' "$(jnum "$CDP_PAGE_LOADED")"
 	printf '  "l4.cdp_nodes": %s,\n' "$(jnum "$CDP_NODES")"
-	printf '  "l4.cdp_start_menu": %s\n' "$(jnum "$CDP_MENU")"
+	printf '  "l4.cdp_start_menu": %s,\n' "$(jnum "$CDP_MENU")"
+	printf '  "l4.qa_instance": %s\n' "$([ -n "$INST_WORKING" ] && echo 1 || echo 0)"
 	printf '}\n'
 } > "$DEVJSON"
 
@@ -534,6 +744,7 @@ DEVJSON="$RESULTS/device.json"
 	echo "apk $APK"
 	echo "avd $AVD_NAME"
 	echo "serial $SERIAL"
+	echo "qa_instance $QA_INSTANCE working=${INST_WORKING:-none} dock=${INST_DOCK:-none} vault=$(handle_get vault) ticket=$([ -n "$APP_URL" ] && echo yes || echo no)"
 	echo "package $PKG"
 	echo "activity $ACT"
 	echo "sdk $(timeout 30 adb -s "$SERIAL" shell getprop ro.build.version.sdk 2>/dev/null | tr -d '\r')"
@@ -587,6 +798,12 @@ if [ "$ANR" = "1" ]; then
 fi
 if [ "$ROT_OK" != "1" ]; then
 	fail "rotation broke the app (alive/crash/resumed check failed)"
+fi
+if [ "$QA_INSTANCE" = "1" ] && [ -n "$APP_URL" ] && [ "$CDP_PAGE_LOADED" != "1" ]; then
+	# A relay, a ticket and an emulator were all asked for; sitting on the
+	# splash means the path is not proven, so this is the honest blocker and
+	# not a pass. The evidence is the probe JSON and the logcat crash buffer.
+	fail "the WebView never loaded the QA manager (url=${CDP_URL:-none} nodes=${CDP_NODES:-none} start_menu=${CDP_MENU:-?}); see $OUT/cdp.json and $OUT/cdp-*.json"
 fi
 if [ "$OFFLINE_ALIVE" != "1" ]; then
 	fail "the app did not survive an offline relaunch"

@@ -167,6 +167,15 @@ sub update_database($data) {
 		'CREATE TABLE IF NOT EXISTS notes (uuid VARCHAR(255) unique, timestamp VARCHAR(255), server_time VARCHAR(255), app VARCHAR(255), device VARCHAR(255), text LONGTEXT, ost VARCHAR(25))',
 		'CREATE INDEX IF NOT EXISTS idx1_notes on notes (timestamp)',
 		'CREATE INDEX IF NOT EXISTS idx2_notes on notes (uuid)',
+		# A note is filed under one of six categories (journal, roadmap, social,
+		# shopping, dreams, JawnOS). The code is stored, not the label, so the chips
+		# translate without rewriting rows; anything that is not one of the six reads
+		# as blank. An older note - or one typed before this column existed - is a
+		# journal note, and the backfill below says so in the row itself. A draft
+		# (app_draft's row, under an appointment's app name) is left alone: it is not
+		# a note the person filed.
+		'alter table notes add column category VARCHAR(255)',
+		"update notes set category = 'journal' where (category is null or category = '') and (app is null or app = '' or app = 'notes')",
 		'alter table appointments add column subtype VARCHAR(255)',
 		# A construct's identity is its stable uuid, not its name; the label beside
 		# it can change and two houses can use the same label. Filled from the

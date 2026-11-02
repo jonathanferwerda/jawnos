@@ -480,21 +480,27 @@ our %topic = (
 	},
 	'notes' => {
 		title => 'Notes', category => 'apps', app => 'notes',
-		verified => '2026-10-30',
-		summary => 'Free-form notes, and the drafts of notes being typed in an appointment.',
+		templates => [ 'templates/notes/notes.html.ep', 'public/js/manager/notes.js' ],
+		verified => '2026-11-01',
+		summary => 'Free-form notes filed under six categories, and the drafts of notes being typed in an appointment.',
 		body => [
 			'Notes is the house\'s free-form notebook. Every note is a row of its own, newest first: a watch that heard something that was not a command lands here, and so does anything typed in the box at the foot.',
+			'Every note is filed under one category. Journal is a day\'s thought and the home of a note that names no other; Roadmap is where you are going; Social is people, communities and clubs; Shopping is the shopping list; Dreams is the dream journal; and JawnOS collects ideas and bugs for JawnOS itself, which the nightly agent reads. The chips along the top name every category with the number of notes it holds - press one to read just that category, or All for everything. The picker above the box is what the note being saved is filed under, and opening a note for editing moves the picker to that note\'s category.',
+			'Four categories hand off to the app they belong with. With one of those chips showing, an Open button sits beside the chips: Open Store for Roadmap, Open Market for Shopping, Open Dreams for the Handbook\'s Today, where dreams are planted, and Open People for Social. Journal and JawnOS stay in Notes.',
 			'Notes ride the house sync, so a note written on one machine appears on the rest. Click a note to load it into the box for editing, drag one onto an appointment window to fold it into that app\'s notes, and the X is a two-click delete.',
-			'While an appointment\'s Notes field is being typed into, the words are kept as a draft: this browser holds a copy on every keystroke, against a crash or a refresh, and the house holds one in this same table so it reaches every machine. The draft is rewritten in place as the words grow - it is one row, not a new note per save - and the list shows it under the appointment it belongs to, marked Draft, until the appointment is saved, which clears it.',
-			'A browser that still held older notes in its own storage hands every non-empty one over the first time it opens the manager after this, so they turn up here under their appointment names instead of having to be found by hand. A draft the house already has is kept, so an old copy cannot undo newer words.'
+			'While an appointment\'s Notes field is being typed into, the words are kept as a draft: this browser holds a copy on every keystroke, against a crash or a refresh, and the house holds one in this same table so it reaches every machine. A draft belongs to no category - it is not a note you filed - so it is marked Draft instead of carrying a chip\'s name, and the appointment name beside it says where it came from. The draft is rewritten in place as the words grow - it is one row, not a new note per save - until the appointment is saved, which clears it.',
+			'A browser that still held older notes in its own storage hands every non-empty one over the first time it opens the manager after this, so they turn up here under their appointment names instead of having to be found by hand. A draft the house already has is kept, so an old copy cannot undo newer words. A note that was written before categories existed reads as a Journal note.'
 		],
 		steps => [
 			'Open Notes and type in the box at the foot; press Save (Enter saves on a desk, Shift+Enter makes a line).',
+			'Choose the category in the picker before saving; a note written while a category chip is showing is filed under that category.',
+			'Press a chip to read one category, or All for every note with its count beside it.',
+			'Press the Open button beside the chips to go on to Store for Roadmap, Market for Shopping, the Handbook\'s Today for Dreams or People for Social.',
 			'Click a note to load it into the box and edit it; saving updates that row.',
 			'Drag a note onto an appointment window to fold it into that app\'s notes.',
 			'Press X twice to delete a note.'
 		],
-		related => [ 'editor', 'folders' ]
+		related => [ 'editor', 'folders', 'handbook', 'store', 'market', 'people' ]
 	},
 	'tasks' => {
 		title => 'Tasks', category => 'apps', app => 'tasks',

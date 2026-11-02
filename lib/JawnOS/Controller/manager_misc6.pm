@@ -91,12 +91,18 @@ sub action_22696 {
 # GET /manager/notes
 sub action_22702 {
 	my $c = shift;
-	# Every note, newest first: the plain rows subs::voice_note_store and the app's
-	# own input write. Notes are no longer appointments - a note is just its text.
-	my $notes = &subs::db_query("select text, timestamp, uuid, app from notes where coalesce(text, '') != '' order by timestamp desc limit 300")->hashes;
+	# Every note, newest first, with the category it is filed under. Notes are no
+	# longer appointments - a note is its text and its category. The chips, their
+	# counts and the picker are drawn here so their labels go through subs::lang.
+	my $notes = &subs::notes_category_rows();
+	my ($counts, $total) = &subs::notes_category_counts($notes);
 	my $content = $c->render_to_string(
 		template => 'notes/notes',
-		notes => $notes
+		notes => $notes,
+		categories => &subs::notes_category_list(),
+		counts => $counts,
+		total => $total,
+		selected => &subs::notes_category_default()
 	);
 	my $contents = &window_maker({ user_agent => $c->param('user_agent'), app => 'notes', title => 'Notes', contents => $content }, $c->param('timestamp'));
 	$c->render(text => $contents);
@@ -251,18 +257,24 @@ sub action_24915 {
 sub action_24950 {
 	my $c = shift;
 	# Write a note by hand, or save one being edited: a uuid that is already a note
-	# updates in place, anything else is a new note. Every open Notes window is
-	# refreshed, so the list stays live.
+	# updates in place, anything else is a new note. The category is one of the six
+	# the Notes app draws; a save that does not name one (an appointment's draft
+	# being edited, say) leaves the row's category as it was, and a new note falls
+	# back to the default. Every open Notes window is refreshed, so the list stays
+	# live.
 	my $uuid = $c->param('uuid');
 	my $text = $c->param('text');
 	$text = '' unless defined $text;
 	$text =~ s/\r\n/\n/g;
 	$text =~ s/^\s+|\s+$//g;
+	my $category = &subs::notes_category_valid($c->param('category'));
 	my $now = &subs::rightNow();
 	my $exists = $uuid ? &subs::db_select('notes', ['uuid'], { uuid => $uuid })->hash : undef;
 	my $created = 0;
 	if ($exists && $exists->{'uuid'}) {
-		&subs::db_update('notes', { text => $text, server_time => $now }, { uuid => $uuid });
+		my %set = ( text => $text, server_time => $now );
+		$set{'category'} = $category if length $category;
+		&subs::db_update('notes', \%set, { uuid => $uuid });
 	}
 	else {
 		$uuid = &subs::random_string_creator(21);
@@ -270,6 +282,7 @@ sub action_24950 {
 			uuid => $uuid,
 			app => 'notes',
 			text => $text,
+			category => ( length $category ? $category : &subs::notes_category_default() ),
 			timestamp => $now,
 			server_time => $now
 		});

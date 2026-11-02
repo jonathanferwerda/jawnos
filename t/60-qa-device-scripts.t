@@ -43,7 +43,8 @@ for my $script (qw(android/build.sh android/run.sh qemu/build.sh qemu/run.sh)) {
 # --- QEMU: rebuild, then snapshot --------------------------------------------
 {
 	my $build = read_file("$qa/qemu/build.sh");
-	like($build, qr/sudo\s+perl\s+scripts\/mkosi_build\.pl/, 'the image is rebuilt as root, every run');
+	like($build, qr/\$SUDO\s+perl\s+scripts\/mkosi_build\.pl|sudo\s+-n\s+perl\s+scripts\/mkosi_build\.pl/,
+		'the image is rebuilt as root (directly, or through passwordless sudo)');
 	unlike($build, qr/--no-build|reuse/i, 'there is no cached-image path');
 }
 
