@@ -150,7 +150,9 @@ sub stop {
 	return unless $pid;
 	kill 'KILL', -$pid;
 	kill 'KILL', $pid;
-	waitpid($pid, 0);
+	# Do not waitpid an already-reaped sampler: that sets $? to -1 and can turn
+	# a clean exit into 255 when this runs again from an END block.
+	waitpid($pid, 0) if kill(0, $pid);
 	return 1;
 }
 

@@ -420,7 +420,10 @@ sub stop {
 		my ($n) = $dir =~ m{/proc/(\d+)};
 		kill 'KILL', $n if $n;
 	}
-	waitpid($pid, 0) if $pid;
+	# Only reap a child that is still there. A second stop() (the END cleanup
+	# after the normal path already stopped it) must not waitpid a reaped pid:
+	# that sets $? to -1 and turns a clean exit into 255.
+	waitpid($pid, 0) if $pid && kill(0, $pid);
 	sleep 1;
 	my $left = $self->instance_pids();
 	$b->{'up'} = 0;

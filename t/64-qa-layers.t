@@ -88,4 +88,15 @@ like($service, qr/IPAddressAllow=localhost/, 'the nightly run has loopback only'
 like($service, qr/--layers l0,l1,l2/, 'the nightly set excludes the moving UI layer');
 is(system($^X, '-Ilib', '-c', "$qa/prune.pl"), 0, 'prune.pl compiles');
 
+# --- teardown is idempotent ---------------------------------------------------
+# The END cleanup runs after the normal path already stopped the tree and the
+# sampler. Re-waiting a reaped pid sets $? to -1 and turned a clean exit into 255.
+like(read_file("$qa/lib/Harness.pm"),
+	qr/waitpid\(\$pid, 0\) if \$pid && kill\(0, \$pid\)/,
+	'the instance teardown does not reap a reaped pid');
+like(read_file("$qa/lib/Monitor.pm"),
+	qr/waitpid\(\$pid, 0\) if kill\(0, \$pid\)/,
+	'the sampler teardown does not reap a reaped pid');
+like(read_file("$qa/run.pl"), qr/\$monitor_pid = 0/, 'the sampler is stopped once');
+
 done_testing();

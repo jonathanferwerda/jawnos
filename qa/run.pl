@@ -175,10 +175,10 @@ my $monitor_pid = Monitor->start(
 # child that matters is the instance (its cwd is the QA copy); this stops all
 # of them without ever naming the live tree.
 our $CLEANUP;
-END { $CLEANUP->() if $CLEANUP }
+END { eval { $CLEANUP->() }; warn "qa cleanup: $@" if $@ }
 $CLEANUP = sub {
-	eval { $h->stop_all() };
-	Monitor->stop($monitor_pid) if $monitor_pid;
+	eval { $h->stop_all() }; warn "qa: cleanup h: $@" if $@;
+	eval { Monitor->stop($monitor_pid) } if $monitor_pid; warn "qa: cleanup m: $@" if $@;
 };
 $SIG{'INT'} = $SIG{'TERM'} = sub { $CLEANUP->(); exit 1 };
 
@@ -562,7 +562,8 @@ if ($want_l3) {
 # ---------------------------------------------------------------------------
 
 Monitor->stop($monitor_pid);
-$report{'monitor'} = Monitor->summarise($monitor_out);
+$monitor_pid = 0;   # the END cleanup must not reap it again
+$report{"monitor"} = Monitor->summarise($monitor_out);
 $report{'live_after'} = $h->live_snapshot();
 
 # the live files may legitimately change while the live app is running; record
@@ -588,7 +589,7 @@ $say->('');
 $say->('RESULT: ' . ($report{'ok'} ? 'PASS' : 'FAIL')
 	. ' (' . scalar(@{ $report{'failures'} }) . ' failure(s))');
 $say->('results: ' . $h->results);
-exit($report{'ok'} ? 0 : 1);
+exit($report{"ok"} ? 0 : 1);
 
 # ---------------------------------------------------------------------------
 
