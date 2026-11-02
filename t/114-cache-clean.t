@@ -60,15 +60,20 @@ $add->execute('other', 'thing', 'x', 'other_live', '9999999999999', 'live');
 $add->execute('other', 'thing', 'y', 'other_expired', '1', 'expired');
 $add->execute('music', 'content', "$version-locked", 'music_live', '9999999999999', 'live');
 $add->execute('music', 'content', '0.0.1-locked', 'music_dead', '9999999999999', 'dead');
+$add->execute('music', 'loudness', 'loudness-abc', 'music_loud', '9999999999999', 'loudness');
 $add->finish;
 $d2->disconnect;
 
-my $all_out = qx{$^X "$script" --database="$db2" --all --apply --no-backup 2>&1};
+# With no library folder reachable (a Termux ssh session whose $HOME does not
+# exist), the loudness walk sees nothing; it must refuse to delete every key.
+local $ENV{'HOME'} = '/nonexistent';
+my $all_out = qx{$^X "$script" --database="$db2" --all --prune-loudness --apply --no-backup 2>&1};
 is(($? >> 8), 0, '--all runs against a database') or diag($all_out);
+like($all_out, qr/loudness pruning skipped/, 'the loudness rule refuses to run with no library folder');
 $d2 = DBI->connect("dbi:SQLite:dbname=$db2", '', '', { RaiseError => 1, PrintError => 0 });
 my @all_left = map { $_->[0] } @{ $d2->selectall_arrayref('select uuid from cache order by uuid') };
-is_deeply(\@all_left, [ 'music_live', 'other_content', 'other_live' ],
-	'--all expires rows everywhere but judges content keys only for music');
+is_deeply(\@all_left, [ 'music_live', 'music_loud', 'other_content', 'other_live' ],
+	'--all expires rows everywhere, judges content keys only for music, and keeps loudness keys it could not check');
 $d2->disconnect;
 
 done_testing();

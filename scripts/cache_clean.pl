@@ -112,6 +112,7 @@ if ($prune_loudness) {
 	find({ no_chdir => 1, wanted => $wanted }, @roots) if @roots;
 }
 
+my $loudness_ready = ($prune_loudness && scalar @roots) ? 1 : 0;
 my $now = int(time() * 1000);
 my %current_content = map { $_ => 1 } ( "$version-locked", "$version-unlocked" );
 
@@ -135,7 +136,7 @@ for my $r ( @{$rows} ) {
 		my ($live) = grep { index($subcontext, $_) == 0 } keys %current_content;
 		$reason = 'old code revision' unless $live;
 	}
-	elsif ($row_app eq 'music' && $context eq 'loudness' && $prune_loudness) {
+	elsif ($row_app eq 'music' && $context eq 'loudness' && $loudness_ready) {
 		$reason = 'no file hashes to it' unless $live_loudness{$subcontext};
 	}
 	elsif ($row_app eq 'music' && $context eq 'file_information' && $prune_paths && defined $subcontext) {
@@ -152,8 +153,9 @@ for my $r ( @{$rows} ) {
 printf "app: %s; cache rows: %d (%d bytes); to delete: %d\n", ($all ? 'all' : $app), $seen, $bytes, scalar @plan;
 printf "  %-22s %d\n", $_, $why{$_} for sort keys %why;
 printf "  content live for: %s\n", join(', ', sort keys %current_content);
-printf "  loudness keys matching a current file: %d\n", scalar keys %live_loudness if $prune_loudness;
+printf "  loudness keys matching a current file: %d\n", scalar keys %live_loudness if $loudness_ready;
 printf "  library folders walked: %s\n", (@roots ? join(', ', @roots) : 'none') if $prune_loudness;
+print "  loudness pruning skipped: no library folder exists here\n" if $prune_loudness && !$loudness_ready;
 
 unless ($apply) {
 	print "\ndry run: nothing changed (pass --apply)\n";
