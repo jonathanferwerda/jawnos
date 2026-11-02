@@ -124,6 +124,10 @@ that into a slow patch instead of a frozen machine. Protect the work, not the ch
   line in the test that covers it, or deleting the file. The remaining debt is `%owed` in that test
   — it may shrink, so remove an entry when its test lands (`perl scripts/tests_for.pl --files <path>`
   says whether it is still unclaimed).
+- **Look it up before grepping.** `perl scripts/where.pl <name>` for a symbol, a route, a help topic
+  or a file; `perl scripts/agent_help.pl <app>` (and `--schema=<table>`) for an app's facts. `grep` is
+  for free text, literals and comments only. The indexes behind them are test-pinned, so a stale one
+  fails the push instead of misleading you.
 - **A new Manager helper goes in the map in the same change** — its name in
   `lib/JawnOS/Manager/Index.pm` (`%SUB`, name → part) and a forward declaration in
   `lib/JawnOS/Manager/Declarations.pm`. The map, not the part file, is what

@@ -8,6 +8,25 @@ A low-token index of where things live. Read this before searching, then search 
 
 ---
 
+## Look it up — do not grep for it
+
+The tree has definitive, test-checked indexes, and two commands read them. **Reach for these before
+`grep`** — a grep answers "this string appears here", not "this is where that lives".
+
+- `perl scripts/where.pl <name>` — one line, `file:line`: a Manager helper, a domain sub, a route
+action (`action_7408`), a route path (`/manager/pen`), a help topic by name, or a file (which topics
+cover it). `--topics` lists the help registry, `--tech <app>` prints the technical brief.
+- `perl scripts/agent_help.pl <app>` — what an app is made of: sources, the routes that reach it,
+the tables and settings it touches, the tests that claim its files, and its own comments. `--schema`
+or `--schema=<table>` gives every column, its type, the indexes and the apps that use the table.
+- **`grep` is for what the indexes cannot know**: free text, a string literal, a comment, a value that
+  is not a name. Everything else has a faster, correct answer above.
+
+The indexes are pinned by `t/54` (Manager helpers), `t/58` (routes), `t/91` (domain subs), `t/11` (help
+pages) and `t/99` (files no test claims), so a stale one fails the push rather than misleading you.
+
+---
+
 ## Next up (deferred)
 
 - **House key — operational finish (no code left)**: Phase 2 shipped in v0.1.940–v0.1.959. The
@@ -251,6 +270,10 @@ code that concatenates `$app` into a path without `path_name` is a bug.
   line in the test that covers it, or deleting the file. The remaining debt is `%owed` in that test
   — it may shrink, so remove an entry when its test lands (`perl scripts/tests_for.pl --files <path>`
   says whether it is still unclaimed).
+- **Look it up before grepping.** `perl scripts/where.pl <name>` for a symbol, a route, a help topic
+  or a file; `perl scripts/agent_help.pl <app>` (and `--schema=<table>`) for an app's facts. `grep` is
+  for free text, literals and comments only. The indexes behind them are test-pinned, so a stale one
+  fails the push instead of misleading you.
 - **A new Manager helper goes in the map in the same change** — its name in
   `lib/JawnOS/Manager/Index.pm` (`%SUB`, name → part) and a forward declaration in
   `lib/JawnOS/Manager/Declarations.pm`. The map, not the part file, is what

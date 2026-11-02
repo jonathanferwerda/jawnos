@@ -314,4 +314,28 @@ like($run_src, qr/\$run->\{'context_bytes'\}/, 'the run report records context_b
 like($run_src, qr/\$run->\{'reply_bytes'\}/, 'the run report records reply_bytes per turn');
 like($run_src, qr/\$run->\{'context_sections'\}/, 'the run report records the per-section list');
 
+# --- every agent is told where to look, not just to grep --------------------
+# The tree has generated indexes and two lookups over them; an agent that greps
+# for a symbol burns turns and still guesses. The prompt the nightly agent gets,
+# and the protocol file a fresh clone's Coding agent reads, must say so - or the
+# tools exist and nobody uses them.
+{
+	my $real = CodingContext::assemble(context_dir => $repo, note_text => 'Chat');
+	like($real->{'system'}, qr/^## How to look things up$/m,
+		'the nightly prompt has a how-to-look-it-up section');
+	like($real->{'system'}, qr/agent-index\.md/,
+		'naming the generated index it carries');
+	like($real->{'system'}, qr{scripts/where\.pl},
+		'and the locator a shell-capable agent uses');
+	like($real->{'system'}, qr{scripts/agent_help\.pl},
+		'and the technical brief');
+	like($real->{'system'}, qr/Grep is for what the indexes cannot know/,
+		'telling it what grep is still for');
+
+	my $baked = read_file("$repo/docs/coding_agent_protocols.md");
+	like($baked, qr{scripts/where\.pl}, 'the baked protocol file names the locator');
+	like($baked, qr{scripts/agent_help\.pl}, 'and the technical brief');
+	like($baked, qr/Look it up before grepping/, 'as a rule, not a footnote');
+}
+
 done_testing();

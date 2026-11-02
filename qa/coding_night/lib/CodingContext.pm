@@ -627,6 +627,7 @@ sub assemble {
 
 	my $system = _system_prompt(
 		core => \@core, retrieved => \@retrieved, sha => $sha,
+		index => ($index_doc ? 1 : 0),
 	);
 
 	my @documents = (@core, @retrieved, ($help_doc ? $help_doc : ()));
@@ -941,11 +942,35 @@ already finished and have nothing further to change, reply with shape 3 alone.
   in "note"; never invent a path or keep guessing.
 - Never print a secret (key, token, password) in an edit or in a note.
 
+## How to look things up
+
+This repository keeps generated indexes so that nobody has to read it to find
+something. Read what this prompt carries before you grep - it answers "what
+exists" and "where does it live".
+
+You have no shell, so the two commands a person uses are not available to you:
+`perl scripts/where.pl <name>` (a symbol, a route, a help topic or a file, to the
+line) and `perl scripts/agent_help.pl <app>` (an app's sources, routes, tables,
+settings and the tests that claim them). When a note needs an answer the index does
+not carry, say so in "note" instead of guessing from a grep.
+
+Grep is for what the indexes cannot know: free text, a string literal, a comment, a
+value that is not a name. A symbol, a route path, a table or a help topic is not.
+
 ## Core context
 
 HEAD
 
 	$p .= 'repo: ' . ($a{'sha'} // '(unknown)') . "\n\n";
+
+	# Only name the generated index when it was actually sent: telling the model
+	# about a document it does not have is how it starts guessing at its contents.
+	if ($a{'index'}) {
+		$p .= "The compact index is in the core context below "
+			. "(`qa/coding_night/agent-index.md`): every app with its file and route count, "
+			. "every table with its columns, the route modules and the firmware sketches. "
+			. "Read it before you grep.\n\n";
+	}
 	$p .= "These documents come from the main checkout, not from this worktree. They are "
 		. "repository-relative and are the rules that apply to this repository.\n\n";
 	$p .= _render_doc($_) for @core;
