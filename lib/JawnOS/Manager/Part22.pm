@@ -566,7 +566,7 @@ sub window_maker($type,$timestamp) {
 		$settings->{'navigation'} = &subs::time_abbrev_translator($settings->{'navigation'});
 	}
 
-	my $main_image = &subs::main_icon_maker({ app => $unformatted_name, timestamp => $timestamp, settings => $settings, size => 'tiny', hint => $type->{'window_name'}, onclick => 'onclick="navbarReveal(this)"' });
+	my $main_image = &subs::main_icon_maker({ app => $unformatted_name, timestamp => $timestamp, settings => $settings, size => 'tiny', hint => $type->{'window_name'}, onclick => 'onclick="navbarReveal(this)"', class => 'hover' });
 	# the window controls wear the icon set when it offers them, and the old text
 	# glyphs when it does not (the hand-drawn set, or no set at all)
 	my $window_control = sub {

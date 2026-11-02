@@ -20,6 +20,7 @@ use RepoSource;
 
 my $root = repo_root();
 my $maker = read_file("$root/lib/JawnOS/Manager/Part22.pm");
+my $icons = read_file("$root/lib/JawnOS/Domain/Say.pm");
 my $fit = read_file("$root/public/js/manager/windows/02_fit.js");
 my $back = read_file("$root/public/js/manager/manager/09_app_back.js");
 my $css = read_file("$root/public/css/manager.css");
@@ -31,6 +32,8 @@ like($maker, qr/class="navbar_reveal">' \. \$navbar_agent_control \. \$navbar_pl
 like($maker, qr/revealed="no"/, 'a bar starts with the group put away');
 like($maker, qr/onclick="navbarReveal\(this\)"/, 'the app icon reveals it');
 like($fit, qr/function navbarReveal\(el\)/, 'there is one toggle for it');
+like($maker, qr/class => 'hover'/, 'the title-bar icon is a control, so it shows the pointer');
+like($icons, qr/my \$extra_class = \(defined \$data->\{'class'\}/, 'the icon maker can take a class of its own');
 like($fit, qr/\.top_navbar\[revealed="yes"\]'\)\.attr\('revealed', 'no'\)/, 'only one bar is open at a time');
 like($fit, qr/if \(e\.key != 'Escape'\) \{ return; \}/, 'Escape puts it away');
 like($css, qr/\.top_navbar\[revealed="yes"\] \.navbar_reveal \{ display: flex; \}/,

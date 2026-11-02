@@ -438,10 +438,13 @@ sub main_icon_maker {
 	# a window may wear a name that is not its key (the accounting app is still
 	# stored under 'budget'), so the caller can name the hint it shows
 	my $hint = (defined $data->{'hint'} && length $data->{'hint'}) ? $data->{'hint'} : &subs::format_name($unformatted_name);
+	# a caller may want the icon to read as a control (the title bar's icon opens
+	# the window's quiet controls), so it can add a class of its own
+	my $extra_class = (defined $data->{'class'} && length $data->{'class'}) ? ' ' . $data->{'class'} : '';
 	my $src = &subs::main_icon_source({ app => $unformatted_name, settings => $settings });
-	my $main_image = '<span id="window_icon_' . $timestamp . '" style="display:none;" class="window_icon ' . $size . '_thumb" app="' . $unformatted_name . '" hint="' . $hint . '" ' . $onclick . '>' . &subs::initialize_name($hint) . '</span>';
+	my $main_image = '<span id="window_icon_' . $timestamp . '" style="display:none;" class="window_icon ' . $size . '_thumb' . $extra_class . '" app="' . $unformatted_name . '" hint="' . $hint . '" ' . $onclick . '>' . &subs::initialize_name($hint) . '</span>';
 	if (length $src) {
-		$main_image = '<img id="window_icon_' . $timestamp . '" class="window_icon ' . $size . '_thumb" app="' . $unformatted_name . '" hint="' . $hint . '" src="' . $src . '" class="little_thumb" ' . $onclick . '>';
+		$main_image = '<img id="window_icon_' . $timestamp . '" class="window_icon ' . $size . '_thumb' . $extra_class . '" app="' . $unformatted_name . '" hint="' . $hint . '" src="' . $src . '" class="little_thumb" ' . $onclick . '>';
 	}
 	return $main_image
 }
