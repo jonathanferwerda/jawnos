@@ -369,7 +369,7 @@ sub translation_model_batch {
 		. "These are interface labels and help text: translate naturally, keep help text complete, and do not summarize.\n"
 		. 'If a string is only a product name or code token, keep it unchanged.';
 	my $user = "Input JSON array:\n" . JSON::PP->new->utf8(0)->encode($texts);
-	my ( $out, $err ) = &evaluation_model_call_with_fallback( $model, $fallback, $system, $user, &ai_role_thinking('help_assistant') );
+	my ( $out, $err ) = &evaluation_model_call_with_fallback( $model, $fallback, $system, $user, &ai_role_thinking('help_assistant'), 'help_assistant' );
 	return {} if $err || !defined $out || !length $out;
 	my $parsed = &json_from_model($out);
 	return {} unless ref $parsed eq 'HASH';

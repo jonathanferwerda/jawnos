@@ -569,7 +569,7 @@ sub coding_propose_fix {
 	my $final = '';
 	my $tries = 0;
 	while ($tries++ < 10) {
-		my ($text, $err) = &subs::evaluation_model_call_with_fallback($model, &subs::setting_grabber({ app => 'mail', setting => 'coding_assistant_fallback' }), $system, join("\n", @lines), $thinking);
+		my ($text, $err) = &subs::evaluation_model_call_with_fallback($model, &subs::setting_grabber({ app => 'mail', setting => 'coding_assistant_fallback' }), $system, join("\n", @lines), $thinking, 'coding_assistant');
 		if ($err || !$text) {
 			push @steps, { action => { action => 'error' }, observation => ($err || 'the model returned nothing') };
 			$final = 'the model could not be reached: ' . ($err || 'no answer');

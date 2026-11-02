@@ -658,7 +658,7 @@ sub sync_digest_map {
 	# so is the AI ledger: ai_jobs carries the evaluation dispatch and ai_house the
 	# liveness it is addressed by, so a quiet house must still pull them when they
 	# move (they are a few small rows).
-	my %skip = map { $_ => 1 } qw(backups ai_budget continent notifications);
+	my %skip = map { $_ => 1 } qw(backups ai_budget ai_spend continent notifications);
 	my %map;
 	foreach my $t ( @{ &sync_table_list() } ) {
 		next if $t eq 'settings' || $skip{$t};

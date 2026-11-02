@@ -298,7 +298,10 @@ sub ai_balance_window {
 	$window = '1d' unless defined $window && $BALANCE_BUCKET_MS{$window};
 	$now = &subs::rightNow() unless defined $now;
 	my $span = &ai_window_span_ms($window, $now);
-	my $start = $now - $span;
+	# Start where the bars start, not at this instant minus the span: the two
+	# drawings then cover exactly the same period and their totals agree.
+	my $edges = &ai_balance_edges($window, $now);
+	my $start = @{$edges} ? $edges->[0]->{'start'} : $now - $span;
 	my @all = sort { $a->{'t'} <=> $b->{'t'} }
 		grep { ref $_ eq 'HASH' && defined $_->{'t'} && defined $_->{'v'} && $_->{'t'} <= $now }
 		@{ ref $points eq 'ARRAY' ? $points : [] };
@@ -334,11 +337,12 @@ sub ai_balance_window {
 	# happened in the window: a balance that jumps and then falls again reads as
 	# an accident otherwise. The newest few are enough.
 	my @topups;
+	my $label_format = ($window eq '1w' || $window eq '1m') ? '%Y-%m-%d %H:%M' : '%H:%M';
 	for my $i ( 1 .. $#draw ) {
 		my $rise = $draw[$i]->{'v'} - $draw[$i - 1]->{'v'};
 		next unless $rise > $epsilon;
 		my $t = localtime($draw[$i]->{'t'} / 1000);
-		push @topups, { t => $draw[$i]->{'t'}, amount => $rise, label => (ref $t ? $t->strftime('%H:%M') : '') };
+		push @topups, { t => $draw[$i]->{'t'}, amount => $rise, label => (ref $t ? $t->strftime($label_format) : '') };
 	}
 	@topups = reverse @topups;
 	splice(@topups, 4) if @topups > 4;
@@ -369,14 +373,15 @@ sub ai_balance_window {
 }
 
 # The midnight that starts the local day a reading falls in, in epoch ms. The
-# local clock components are subtracted from the instant itself, so this stays
-# right across a daylight-saving change (a 23- or 25-hour day).
+# date is read from the local clock and the midnight rebuilt from it, so a
+# daylight-saving change since midnight cannot shift the answer by an hour.
 sub ai_local_midnight_ms {
 	my ($ms) = @_;
 	$ms = &subs::rightNow() unless defined $ms && $ms =~ /^-?\d+$/;
 	my $t = localtime(int($ms / 1000));
 	return int($ms) unless ref $t;
-	return ($t->epoch - ($t->hour * 3600 + $t->min * 60 + $t->sec)) * 1000;
+	my $epoch = POSIX::mktime(0, 0, 0, $t->mday, $t->mon - 1, $t->year - 1900);
+	return (defined $epoch && $epoch >= 0) ? $epoch * 1000 : int($ms);
 }
 
 # Where each bar of a window starts and ends, in this machine's own clock. A
@@ -395,15 +400,20 @@ sub ai_balance_edges {
 	return [] unless ref $t;
 	my @edges;
 	if ($granularity eq 'day') {
-		my $midnight = &ai_local_midnight_ms($now);
+		# Walk the calendar back one date at a time: mktime normalises an
+		# out-of-range day, so a clock change inside the span cannot skip or
+		# repeat a midnight the way subtracting 86 400 000ms would. Build the
+		# midnights first and make each bar end where the next begins.
+		my @starts;
 		for my $i ( 0 .. $count - 1 ) {
-			my $back = $count - 1 - $i;
-			my $start = &ai_local_midnight_ms($midnight - $back * 86400000);
-			# 36 hours on lands inside the next local day whatever its length
-			my $next = &ai_local_midnight_ms($start + 36 * 3600000);
-			my $lt = localtime($start / 1000);
+			my $epoch = POSIX::mktime(0, 0, 0, $t->mday - ($count - 1 - $i), $t->mon - 1, $t->year - 1900);
+			push @starts, (defined $epoch && $epoch >= 0) ? $epoch * 1000 : &ai_local_midnight_ms($now);
+		}
+		push @starts, &ai_local_midnight_ms($starts[-1] + 36 * 3600000);
+		for my $i ( 0 .. $count - 1 ) {
+			my $lt = localtime($starts[$i] / 1000);
 			my $key = $lt->strftime('%Y-%m-%d');
-			push @edges, { start => $start, end => $next, key => $key, label => $key };
+			push @edges, { start => $starts[$i], end => $starts[ $i + 1 ], key => $key, label => $key };
 		}
 		return \@edges;
 	}
@@ -476,9 +486,14 @@ sub ai_balance_buckets {
 		}
 	}
 	my $tokens = 0;
+	my %attached;
 	foreach my $bucket ( @buckets ) {
 		$bucket->{'tracked'} = (defined $ledger_since && $ledger_since =~ /^\d+$/ && $bucket->{'end'} > $ledger_since) ? 1 : 0;
 		next unless ref $spend eq 'HASH';
+		# A clock change repeats a wall-clock hour (01:00 runs twice on a
+		# fall-back night); the ledger keys on that wall clock, so only the
+		# first bar of the pair banks the hour rather than counting it twice.
+		next if $attached{ $bucket->{'key'} }++;
 		my $slot = $spend->{ $bucket->{'key'} };
 		next unless ref $slot eq 'HASH';
 		$bucket->{'tokens'} = $slot->{'tokens'} || 0;
@@ -689,7 +704,12 @@ sub ai_balance_chart {
 					};
 				}
 			}
-			my $per_k = $bars->{'tokens'} > 0 ? ($bars->{'total'} / $bars->{'tokens'}) * 1000 : undef;
+			# The price per thousand tokens only means something when the ledger
+			# covers the whole window: a fall it did not see divided by the tokens
+			# it did would read as an inflated price.
+			my $per_k = ($bars->{'tokens'} > 0 && @{ $bars->{'buckets'} } && $bars->{'buckets'}->[0]{'tracked'})
+				? ($bars->{'total'} / $bars->{'tokens'}) * 1000
+				: undef;
 			$windows{$window} = { line => $line, bars => $bars, roles => \@roles, per_k => $per_k };
 		}
 		push @series, {
@@ -801,9 +821,18 @@ sub ai_alert_tick {
 	$now = &subs::rightNow() unless defined $now;
 	my $check = &ai_alert_check($report, $now);
 	my @written;
+	# The conditions standing at the last turn. An hour that crosses is a new
+	# event each hour (its key carries the hour), while a runway crosses once
+	# and stays quiet until it clears - so a recovery and a later re-crossing
+	# are two events, not one.
+	my $state = &subs::cache_get({ app => '__president', context => 'ai_alert', subcontext => 'state' });
+	my %standing = (ref $state eq 'HASH' && ref $state->{'keys'} eq 'ARRAY') ? map { $_ => 1 } @{ $state->{'keys'} } : ();
+	my %current;
 	foreach my $alert ( @{ $check->{'fired'} } ) {
-		my $key = $alert->{'kind'} . '|' . $alert->{'provider'} . '|' . $alert->{'period'};
-		next if &subs::cache_get({ app => '__president', context => 'ai_alert', subcontext => $key });
+		my $key = $alert->{'kind'} . '|' . $alert->{'provider'};
+		$key .= '|' . $alert->{'period'} if $alert->{'kind'} eq 'hour';
+		$current{$key} = 1;
+		next if $standing{$key};
 		my $money = sub { &subs::currency_money($_[0]) . ' ' . ($alert->{'currency'} || '') };
 		my $text = $alert->{'kind'} eq 'hour'
 			? &subs::ui(sprintf('AI balance: %s spent %s in %s, over the %s alert.',
@@ -818,9 +847,9 @@ sub ai_alert_tick {
 			timestamp => $now,
 			server_time => $now,
 		});
-		&subs::cache_set({ app => '__president', context => 'ai_alert', subcontext => $key, warranty => '-2d' }, { at => $now });
 		push @written, $key;
 	}
+	&subs::cache_set({ app => '__president', context => 'ai_alert', subcontext => 'state', warranty => '-2d' }, { keys => [ sort keys %current ] });
 	eval { &subs::ai_spend_prune(40) };
 	return { fired => scalar @{ $check->{'fired'} }, written => \@written };
 }

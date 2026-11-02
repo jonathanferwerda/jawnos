@@ -642,7 +642,8 @@ sub agent_title {
 		&subs::setting_grabber({ app => 'mail', setting => ($kind eq 'coding' ? 'coding_assistant_fallback' : 'help_assistant_fallback') }),
 		'You name chat threads. Reply with only a short title of two to five words - no quotes, no full stop, no other words.',
 		'Name this thread: ' . substr($text, 0, 400),
-		&subs::ai_role_thinking($kind eq 'coding' ? 'coding_assistant' : 'help_assistant')
+		&subs::ai_role_thinking($kind eq 'coding' ? 'coding_assistant' : 'help_assistant'),
+		($kind eq 'coding' ? 'coding_assistant' : 'help_assistant')
 	);
 	return $fallback if $err || !defined $out;
 	$out =~ s/[\r\n"`*]+/ /g;

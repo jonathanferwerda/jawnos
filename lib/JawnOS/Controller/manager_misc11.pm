@@ -369,7 +369,7 @@ sub action_37291 {
 	my $tries = 0;
 	while ($tries++ < 12) {
 		my $system = coding_system_prompt();
-		my ($text, $err) = &subs::evaluation_model_call_with_fallback($model, &subs::setting_grabber({ app => 'mail', setting => 'coding_assistant_fallback' }), $system, join("\n", @lines) . "\n\nReply with the single next JSON action.", $thinking);
+		my ($text, $err) = &subs::evaluation_model_call_with_fallback($model, &subs::setting_grabber({ app => 'mail', setting => 'coding_assistant_fallback' }), $system, join("\n", @lines) . "\n\nReply with the single next JSON action.", $thinking, 'coding_assistant');
 		if ($err || !$text) { push @steps, { action => { action => 'error' }, observation => ($err || 'the model returned nothing') }; last; }
 		my $action = eval { decode_json $text };
 		unless ($action && $action->{'action'}) {

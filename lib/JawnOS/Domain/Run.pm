@@ -975,9 +975,10 @@ sub ai_spend_roles {
 sub ai_spend_since {
 	my $row = eval { &subs::db_query('select min(minute) as m from ai_spend where minute is not null and minute != ?', '')->hashes->[0] } || {};
 	my $m = $row->{'m'} // '';
-	return undef unless $m =~ /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/;
-	my $t = Time::Piece->strptime($m, '%Y-%m-%d %H:%M');
-	return ref $t ? $t->epoch * 1000 : undef;
+	return undef unless $m =~ /^(\d{4})-(\d\d)-(\d\d) (\d\d):(\d\d)$/;
+	# the key is local wall clock, so it is read back as local time
+	my $t = POSIX::mktime(0, $5, $4, $3, $2 - 1, $1 - 1900);
+	return (defined $t && $t >= 0) ? $t * 1000 : undef;
 }
 
 # The ledger grows one row per call, so it needs a prune. Legacy rows from the

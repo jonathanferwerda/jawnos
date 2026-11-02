@@ -30,6 +30,9 @@ my @points = (
 	{ t => $now - 12 * $H, v => 80,  c => 'USD' },
 	{ t => $now,           v => 70,  c => 'USD' },
 );
+# The same readings, moved onto the top of the hour, so the window tests that
+# compare against clock-aligned bars have a sample exactly at the window's end.
+my @aligned_points = map { { t => $_->{'t'} - ($now - $aligned), v => $_->{'v'}, c => $_->{'c'} } } @points;
 
 # ---- the windows ------------------------------------------------------------
 is &subs::ai_window_span_ms('1h'), $H, 'the hour window spans an hour';
@@ -45,18 +48,19 @@ is &subs::ai_window_bucket_count('1m', $now), 30, 'and the month one per day of 
 is &subs::ai_window_bucket_count('1m', ts(2026, 12, 3, 9)), 31, 'December has thirty-one';
 is &subs::ai_window_bucket_count('1m', ts(2028, 2, 3, 9)), 29, 'a leap February has twenty-nine';
 
-my $day = &subs::ai_balance_window(\@points, '1d', $now);
+my $day = &subs::ai_balance_window(\@aligned_points, '1d', $aligned);
 is scalar @{ $day->{'points'} }, 3,
 	'the day window adds an interpolated point at its left edge';
-is $day->{'points'}->[0]->{'t'}, $now - 24 * $H,
+is $day->{'start'}, $aligned - 23 * $H, 'the window starts where its first bar starts';
+is $day->{'points'}->[0]->{'t'}, $day->{'start'},
 	'and that point sits at the start of the window';
-cmp_ok abs($day->{'points'}->[0]->{'v'} - (90 - 10 / 13)), '<', 0.001,
+cmp_ok abs($day->{'points'}->[0]->{'v'} - (90 - 20 / 13)), '<', 0.001,
 	'its value is the line between the sample before and the first inside';
-is $day->{'hours'}, 24, 'the span runs the whole 24 hours';
-cmp_ok abs($day->{'change'} - (90 - 10 / 13 - 70)), '<', 0.001,
+is $day->{'hours'}, 23, 'the covered span runs twenty-three hours';
+cmp_ok abs($day->{'change'} - (90 - 20 / 13 - 70)), '<', 0.001,
 	'the change is the fall from the window start to the last sample';
-cmp_ok abs($day->{'per_day'} - $day->{'change'}), '<', 0.001,
-	'and a 24 hour window reads that change as the daily pace';
+cmp_ok abs($day->{'per_day'} - $day->{'change'} / 23 * 24), '<', 0.001,
+	'and the pace is that change spread over a day';
 
 my $week = &subs::ai_balance_window(\@points, '1w', $now);
 is scalar @{ $week->{'points'} }, 4, 'the week window keeps every sample in the week';
@@ -64,9 +68,9 @@ is $week->{'hours'}, 48, 'over the span the samples actually cover';
 cmp_ok abs($week->{'change'} - 30), '<', 0.001, 'the change is the fall over the week';
 cmp_ok abs($week->{'per_day'} - 15), '<', 0.001, 'and the pace is scaled to a day';
 
-my $last_hour = &subs::ai_balance_window(\@points, '1h', $now);
+my $last_hour = &subs::ai_balance_window(\@aligned_points, '1h', $aligned);
 is $last_hour->{'window'}, '1h', 'the hour window names itself';
-is $last_hour->{'hours'}, 1, 'and covers an hour';
+cmp_ok abs($last_hour->{'hours'} - 58 / 60), '<', 0.001, 'and covers the bars\' fifty-eight minutes';
 is scalar @{ $last_hour->{'points'} }, 2, 'with the sample and its interpolated edge';
 my $unknown_window = &subs::ai_balance_window(\@points, 'nonsense', $now);
 is $unknown_window->{'window'}, '1d', 'an unknown window reads as the day';
@@ -192,6 +196,43 @@ cmp_ok $week_edges->[0]{'start'}, '<=', $now - 6 * 24 * $H, 'the first starts si
 my $month_edges = &subs::ai_balance_edges('1m', $now);
 is scalar @{$month_edges}, 30, 'the month window has a bar per day of November';
 is $month_edges->[-1]{'key'}, '2023-11-14', 'ending today';
+
+my $fall_back;
+my $spring;
+
+# A clock change must not skip or overlap a midnight: the bars stay contiguous
+# and the day that lost or gained an hour is still one bar.
+{
+	local $ENV{'TZ'} = 'America/New_York';
+	POSIX::tzset();
+	$fall_back = &subs::ai_balance_edges('1w', ts(2026, 11, 2, 12));
+	$spring = &subs::ai_balance_edges('1w', ts(2026, 3, 9, 12));
+}
+POSIX::tzset();
+for my $case ( [ 'fall back', $fall_back, 25 ], [ 'spring forward', $spring, 23 ] ) {
+	my ($name, $edges, $long) = @{$case};
+	my $gaps = 0;
+	for my $i ( 1 .. $#$edges ) { $gaps++ if $edges->[$i]{'start'} != $edges->[$i-1]{'end'}; }
+	is $gaps, 0, "the days stay contiguous across the $name";
+	ok grep({ abs((($_->{'end'} - $_->{'start'}) / $H) - $long) < 0.001 } @{$edges}),
+		"and the $name day is $long hours";
+	like $edges->[-1]{'key'}, qr/^2026-(?:11|03)-\d\d$/, 'with today as the last bar';
+}
+
+# The ledger's earliest minute, read back as an instant in local time.
+{
+	package FakeSince;
+	sub new { return bless { rows => $_[1] }, $_[0] }
+	sub hashes { return $_[0]->{'rows'} }
+}
+package main;
+{
+	no warnings 'redefine';
+	local *subs::db_query = sub { FakeSince->new([ { m => '2026-11-02 10:05' } ]) };
+	is &subs::ai_spend_since(), ts(2026, 11, 2, 10, 5), 'the ledger start is read back as an instant';
+	local *subs::db_query = sub { FakeSince->new([ { m => undef } ]) };
+	ok !defined &subs::ai_spend_since(), 'an empty ledger has no start';
+}
 
 # ---- a fall spread across the bars it covers --------------------------------
 my $spread_points = [
@@ -359,8 +400,11 @@ my $report = {
 	ok $one_day->{'bars'}, 'and its bars';
 	is $one_day->{'bars'}->{'count'}, 24, 'with twenty-four of them';
 	my $raw_bars = &subs::ai_balance_buckets(\@points, '1d', $now, {});
-	cmp_ok abs($one_day->{'line'}->{'per_day'} - (90 - 10 / 13 - 70) * 1.5), '<', 0.001,
-		'and the pace is converted by the same rate';
+	my $raw_line = &subs::ai_balance_window(\@points, '1d', $now);
+	cmp_ok abs($one_day->{'line'}->{'change'} - $raw_line->{'change'} * 1.5), '<', 0.001,
+		'and the fall is converted by the same rate';
+	cmp_ok abs($one_day->{'line'}->{'per_day'} - $one_day->{'line'}->{'change'} / $one_day->{'line'}->{'hours'} * 24), '<', 0.001,
+		'with the pace spread over the hours the window covers';
 	cmp_ok abs($one_day->{'bars'}->{'total'} - $raw_bars->{'total'} * 1.5), '<', 0.001,
 		'the bars are the same day converted by the same rate';
 	is scalar @{ $one_day->{'roles'} }, 2, 'and the roles the ledger recorded are listed';
@@ -398,7 +442,7 @@ my $report = {
 	# The cost per thousand tokens and the provider comparison show up when the
 	# ledger has counted any traffic and there is a second account to compare.
 	local *subs::crypto_report_currency = sub { 'USD' };
-	local *subs::ai_spend_since = sub { undef };
+	local *subs::ai_spend_since = sub { $aligned - 60 * 24 * $H };
 	local *subs::ai_spend_buckets = sub {
 		my ($granularity, $since) = @_;
 		return $granularity eq 'day'
@@ -465,14 +509,15 @@ is &subs::ai_balance_role_label(''), 'Other', 'a call that did not say who asked
 	my ($hour_alert) = grep { $_->{'kind'} eq 'hour' } @{ $check->{'fired'} };
 	my ($runway_alert) = grep { $_->{'kind'} eq 'runway' } @{ $check->{'fired'} };
 	ok $hour_alert, 'the hour is judged on the last complete bar';
-	cmp_ok $hour_alert->{'amount'}, '>', 1, 'with the money it saw';
+	cmp_ok abs($hour_alert->{'amount'} - (5 * 800 / 3600)), '<', 0.001,
+		'with the money spread into that hour';
 	ok $runway_alert, 'and the runway on the day window';
 	cmp_ok $runway_alert->{'days'}, '<', 30, 'under the limit set';
 
 	# A standing condition writes once, not on every turn.
 	my (%cached, @inserted);
 	local *subs::cache_get = sub { my ($args) = @_; return $cached{ $args->{'subcontext'} } };
-	local *subs::cache_set = sub { my ($args) = @_; $cached{ $args->{'subcontext'} } = 1; return 1 };
+	local *subs::cache_set = sub { my ($args, $value) = @_; $cached{ $args->{'subcontext'} } = $value; return 1 };
 	local *subs::db_insert = sub { push @inserted, $_[1]; return 1 };
 	my $tick = &subs::ai_alert_tick($alert_report, $now);
 	is scalar @{ $tick->{'written'} }, 2, 'both crossings write a note';

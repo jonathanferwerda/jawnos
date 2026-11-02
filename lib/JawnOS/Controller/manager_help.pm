@@ -156,7 +156,7 @@ sub action_34687 {
 	my $fallback = &subs::setting_grabber({ app => 'mail', setting => 'help_assistant_fallback' });
 	my $thinking = &subs::ai_role_thinking('help_assistant');
 	&subs::render_in_subprocess($c, sub {
-		my ($text, $err) = &subs::evaluation_model_call_with_fallback($model, $fallback, $system, $question, $thinking);
+		my ($text, $err) = &subs::evaluation_model_call_with_fallback($model, $fallback, $system, $question, $thinking, 'help_assistant');
 		return { text => $text, err => $err };
 	}, sub {
 		my ($c, $r) = @_;
@@ -325,7 +325,7 @@ sub action_34818 {
 	my $fallback = &subs::setting_grabber({ app => 'mail', setting => 'help_assistant_fallback' });
 	my $thinking = &subs::ai_role_thinking('help_assistant');
 	&subs::render_in_subprocess($c, sub {
-		my ($text, $err) = &subs::evaluation_model_call_with_fallback($model, $fallback, $system, join("\n", @lines), $thinking);
+		my ($text, $err) = &subs::evaluation_model_call_with_fallback($model, $fallback, $system, join("\n", @lines), $thinking, 'help_assistant');
 		return { text => $text, err => $err };
 	}, sub {
 		my ($c, $r) = @_;

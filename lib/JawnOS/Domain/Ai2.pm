@@ -661,8 +661,8 @@ sub ai_chat_parts_with_fallback {
 }
 
 sub evaluation_model_call_with_fallback {
-	my ($primary, $fallback, $system, $user, $thinking) = @_;
-	return &ai_chat_with_fallback($primary, $fallback, [ { role => 'system', content => $system }, { role => 'user', content => $user } ], $thinking);
+	my ($primary, $fallback, $system, $user, $thinking, $role) = @_;
+	return &ai_chat_with_fallback($primary, $fallback, [ { role => 'system', content => $system }, { role => 'user', content => $user } ], $thinking, $role);
 }
 
 sub ai_chat_with_fallback {
@@ -674,8 +674,8 @@ sub ai_chat_with_fallback {
 }
 
 sub evaluation_model_call {
-	my ($model, $system, $user, $thinking) = @_;
-	return &subs::ai_chat($model, [ { role => 'system', content => $system }, { role => 'user', content => $user } ], $thinking);
+	my ($model, $system, $user, $thinking, $role) = @_;
+	return &subs::ai_chat($model, [ { role => 'system', content => $system }, { role => 'user', content => $user } ], $thinking, $role);
 }
 
 # Whether this machine can actually run the evaluation right now. The wish to
