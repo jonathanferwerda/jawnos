@@ -50,15 +50,15 @@ my %TOOL = map { $_ => 1 } qw(
 	pgrep pkill ps kill killall nohup tee which
 	sshd scp sftp ssh-keygen
 	base64 timeout ip ss ping
-	ffmpeg ffprobe
 );
-# ImageMagick left the runtime (2026-10-31). Every image call site now asks the
-# device bridge first - resize, save, edit, cover, thumbnail, identify, convert,
-# gray, normalize and montage - so magick/convert are fallbacks a desktop runs
-# and a phone never reaches. ffmpeg stays on purpose: its uses are film frames,
-# loudness, subtitle extraction and Music's video stream, and no native path
-# covers those yet. When one exists, that call site moves and the binary follows
-# it out.
+# ffmpeg/ffprobe and their codec stack moved to the optional `video` part
+# (2026-11-01). Their uses are film frames, loudness, subtitle extraction and
+# Music's video stream; nothing that must run before a part is installed needs
+# them, and they were most of the core archive's bytes. The `video` part keeps
+# the pair and everything its DT_NEEDED chain names.
+#
+# ImageMagick is the `media` part and Tesseract the `ocr` part for the same
+# reason: a fallback/optional tool should cost a download only when it is used.
 
 # Never ship, even if the source has it: the package manager and its state.
 my %NEVER = map { $_ => 1 } qw(
@@ -140,11 +140,22 @@ my %PART = (
 		bins     => [ 'bin/tesseract' ],
 		min_core => 1,
 	},
+	video => {
+		# The pair plus the whole DT_NEEDED closure the loader asks for. No data
+		# directory: ffmpeg's codecs and formats are compiled in or linked, not
+		# loaded from share/.
+		tools    => [qw(ffmpeg ffprobe)],
+		dirs     => [],
+		requires => [ 'bin/ffmpeg', 'bin/ffprobe' ],
+		bins     => [ 'bin/ffmpeg', 'bin/ffprobe' ],
+		min_core => 1,
+	},
 );
 
 # --- options ----------------------------------------------------------------
 my ($from, $out, $dry, $list, $help, $abi, $rewrite, $perl_version, $no_bin);
 my ($part, $baseline, $min_core, $version_override);
+my @keep;
 while ( defined(my $a = shift @ARGV) ) {
 	if ($a eq '--from') { $from = shift @ARGV }
 	elsif ($a eq '--out') { $out = shift @ARGV }
@@ -152,6 +163,7 @@ while ( defined(my $a = shift @ARGV) ) {
 	elsif ($a eq '--part') { $part = shift @ARGV }
 	elsif ($a eq '--baseline') { $baseline = shift @ARGV }
 	elsif ($a eq '--min-core') { $min_core = shift @ARGV }
+	elsif ($a eq '--keep') { push @keep, shift @ARGV }
 	elsif ($a eq '--version') { $version_override = shift @ARGV }
 	elsif ($a eq '--rewrite-prefix') { $rewrite = shift @ARGV }
 	elsif ($a eq '--perl-version') { $perl_version = shift @ARGV }
@@ -164,17 +176,20 @@ while ( defined(my $a = shift @ARGV) ) {
 if ($help) {
 	print <<'USAGE';
 perl scripts/runtime_build.pl --from PREFIX [--out FILE] [--abi ABI] [--no-bin]
-    [--part core|media|ocr] [--baseline CORE_ZIP] [--min-core VERSION]
-    [--version VERSION] [--dry-run] [--list]
+    [--part core|media|ocr|video] [--baseline CORE_ZIP] [--min-core VERSION]
+    [--keep PATH] [--version VERSION] [--dry-run] [--list]
 
   --from      the built prefix to pack (a device's $PREFIX, or a staging dir)
   --out       the archive to write (default releases/jawnrt-<abi>-<VERSION>.zip,
               or releases/jawnrt-<abi>-<part>-<VERSION>.zip for a part)
   --abi       the archive's ABI, for the manifest (default aarch64)
-  --part      core (default) keeps the whole dieted runtime; media packs
-              ImageMagick + delegates; ocr packs Tesseract + eng tessdata
+  --part      core (default) keeps the whole booted runtime; media packs
+              ImageMagick + delegates; ocr packs Tesseract + eng tessdata;
+              video packs ffmpeg/ffprobe + their codec libraries
   --baseline  a pinned core archive whose paths a part must not carry
   --min-core  the core version a part needs (default: this tree's VERSION)
+  --keep      force an exact prefix path (usually an alias symlink such as
+              lib/libz.so) into the archive; repeatable
   --version   the part/core version to record (default: this tree's VERSION)
   --no-bin    omit the executables and symlinks under bin/ and libexec/ that the
               app supplies as native libraries; data files in those trees stay
@@ -376,6 +391,12 @@ for (my $i = 0; $i < @files; $i++) {
 		my @need = elf_needed($path);
 		foreach my $name (@need) {
 			next unless $name =~ m{\.so(?:\.\d+)*$};
+			# The Vulkan loader belongs to the device. Termux's copy needs vendor
+			# HIDL libraries (android.hardware.configstore@1.0.so, libgfxgrab.so)
+			# that an app's linker namespace does not expose on Android 13+, so
+			# ffmpeg failed to link. /system/lib64/libvulkan.so satisfies
+			# libplacebo's DT_NEEDED and is found without shipping anything.
+			next if $name eq 'libvulkan.so';
 			# Only the prefix's own libraries: everything Android supplies (its
 			# libc, its graphics and HIDL stacks) belongs to the device, and
 			# shipping one would shadow it. A part must also leave the pinned
@@ -391,6 +412,7 @@ for (my $i = 0; $i < @files; $i++) {
 		}
 	}
 	foreach my $rel2 (@add) {
+		next if %baseline && $baseline{$rel2};   # a core path stays the core's
 		next if $have{$rel2};
 		push @files, $rel2;
 		$have{$rel2} = 1;
@@ -399,6 +421,20 @@ for (my $i = 0; $i < @files; $i++) {
 @files = sort @files;
 @linked = sort keys %{{ map { $_ => 1 } @linked }};
 print "runtime_build: +" . scalar(@linked) . " linked librar" . (@linked == 1 ? 'y' : 'ies') . ": @linked\n" if @linked;
+
+# --keep is for a path the closure cannot infer but the runtime must own: an
+# unversioned alias symlink (lib/libz.so) that a part's ELF names in DT_NEEDED
+# while every core ELF names the versioned libz.so.1. Keeping it in the core
+# lets the part point at a core path instead of shipping a cross-part link.
+foreach my $k (@keep) {
+	die "runtime_build.pl: --keep $k is not in $from\n"
+		unless -e "$from/$k" || -l "$from/$k";
+	next if $have{$k};
+	push @files, $k;
+	$have{$k} = 1;
+	print "runtime_build: keeping $k\n";
+}
+@files = sort @files;
 
 # A library nobody in the prefix provides is a broken runtime: say which, and
 # refuse. The source prefix, not this script, has to grow.

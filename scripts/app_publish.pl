@@ -223,9 +223,24 @@ foreach my $j (@jobs) {
 # re-sends 200 MB of runtime. Old runtime files are left alone: a device still
 # on an older APK pins its own file and must keep finding it.
 if (@runtime) {
-my $assets = `gh release view $tag --repo $repo --json assets -q '.assets[].name' 2>/dev/null`;
-my %have = map { $_ => 1 } split /\s+/, ($assets || '');
-my @up = grep { $runtime_mode eq 'force' || $_->{'pin'} || !$have{ $_->{'file'} } } @runtime;
+my $assets = `gh release view $tag --repo $repo --json assets -q '.assets[] | "\\(.name) \\(.size)"' 2>/dev/null`;
+my (%have, %remote_size);
+foreach my $line ( split /\n/, ($assets || '') ) {
+	my ($name, $size) = split /\s+/, $line, 2;
+	next unless defined $name && length $name;
+	$have{$name} = 1;
+	$remote_size{$name} = $size;
+}
+# A part rebuilt under the same file name changes its bytes, not its name; the
+# missing-only rule would leave the old archive on the release and every device
+# that already has the pin would keep the broken copy. Size is cheap to read and
+# changed whenever the archive is rebuilt here.
+my @up = grep {
+	$runtime_mode eq 'force'
+		|| $_->{'pin'}
+		|| !$have{ $_->{'file'} }
+		|| (defined $remote_size{ $_->{'file'} } && $remote_size{ $_->{'file'} } != $_->{'size'})
+} @runtime;
 foreach my $r (@up) {
 	print "uploading runtime asset $r->{'file'}\n";
 	system('gh', 'release', 'upload', $tag, $r->{'path'}, '--clobber', '--repo', $repo) == 0

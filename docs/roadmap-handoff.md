@@ -18,17 +18,21 @@ roadmap was deleted once this summary was in place.
   opens its browser through the same `open.url` method. The shared module is
   BSD-2; the **app and APK remain GPL-3.0-only by decision** (2026-10-31).
 - **Runtime.** A clean install unpacks a pinned core archive into `$PREFIX` — no
-  bootstrap, no `pkg`/`apt`/`dpkg`. Current pins: `jawnrt-aarch64-0.1.1706.zip`
-  (built `--no-bin`) and `jawnrt-x86_64-0.1.1702.zip`. Executables ship as
-  `jniLibs` and `JawnRuntimeBins.ensure()` re-points the `$PREFIX/bin` symlinks
-  at every app start. `git` is deliberately bundled because the first run and
-  the 30-minute code sync are git operations. Optional **parts** are separate,
-  independently versioned archives in the same pin (`parts.aarch64`): `media`
-  (`jawnrt-aarch64-media-0.1.1741.zip`, 14,700,113 B, ImageMagick 7.1.2-35 and
-  its DT_NEEDED delegates) and `ocr` (`jawnrt-aarch64-ocr-0.1.1741.zip`,
-  14,796,519 B, Tesseract 5.5.4 + eng tessdata), both `min_core 0.1.1706`.
-  Parts unpack additively into the same prefix and never carry a core path;
-  schema, ownership, update/rollback and the Java contract are in
+  bootstrap, no `pkg`/`apt`/`dpkg`. Current pins: `jawnrt-aarch64-0.1.1750.zip`
+  (31,311,461 B, built `--no-bin`; was 69,360,792 B at `0.1.1706`) and
+  `jawnrt-x86_64-0.1.1702.zip` (unchanged). Executables ship as `jniLibs` and
+  `JawnRuntimeBins.ensure()` re-points the `$PREFIX/bin` symlinks at every app
+  start. `git` is deliberately bundled because the first run and the 30-minute
+  code sync are git operations. Optional **parts** are separate, independently
+  versioned archives in the same pin (`parts.aarch64`, all `min_core 0.1.1750`):
+  `video` (`jawnrt-aarch64-video-0.1.1750.zip`, 38,049,353 B, ffmpeg/ffprobe +
+  the codec stack), `media` (`jawnrt-aarch64-media-0.1.1750.zip`, 27,838,364 B,
+  ImageMagick 7.1.2-35 + its delegates) and `ocr`
+  (`jawnrt-aarch64-ocr-0.1.1750.zip`, 16,151,930 B, Tesseract 5.5.4 + eng
+  tessdata). The core is the boot set only (perl, sqlite3, openssl, curl, git,
+  ssh/sshd, coreutils, 3044 entries); core+video is 69,360,814 B, about the old
+  core alone. Parts unpack additively into the same prefix and never carry a
+  core path; schema, ownership, update/rollback and the Java contract are in
   [`docs/runtime-parts.md`](runtime-parts.md). `runtime_build.pl --part`,
   `runtime_native_bins.pl --zip PART=FILE` and `app_publish.pl` handle them.
 - **Distribution.** One release key (`.secrets/jawnos-release.jks`), the GitHub
