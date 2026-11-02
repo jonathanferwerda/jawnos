@@ -5,8 +5,9 @@
 # own Help page and this sheet are always the same words. This script writes
 # them out as Markdown for printing or for reading away from the screen.
 #
-#   perl scripts/keyboard_shortcuts.pl            # rewrite docs/KEYBOARD-SHORTCUTS.md
-#   perl scripts/keyboard_shortcuts.pl --check    # exit 1 when the file is stale
+#   perl scripts/keyboard_shortcuts.pl                 # rewrite docs/KEYBOARD-SHORTCUTS.md
+#   perl scripts/keyboard_shortcuts.pl --check         # exit 1 when the file is stale
+#   perl scripts/keyboard_shortcuts.pl --out=<path>    # write (or check) another file
 #
 # Run it after changing any topic's shortcut list.
 use strict;
@@ -17,6 +18,9 @@ require './perl/help.pl';
 
 my $check = grep { $_ eq '--check' } @ARGV;
 my $path = 'docs/KEYBOARD-SHORTCUTS.md';
+foreach my $arg (@ARGV) {
+	$path = $1 if $arg =~ /\A--out=(.+)\z/s;
+}
 
 my $text = "# JawnOS keyboard shortcuts\n\n";
 $text .= "Generated from the Help registry (`help.pl`) by `perl scripts/keyboard_shortcuts.pl`.\n";

@@ -78,11 +78,8 @@ my %owed = map { $_ => 1 } qw(
 	scripts/black_images.pl
 	scripts/deploy_neighbours.pl
 	scripts/factory_seed.pl
-	scripts/help_audit.pl
 	scripts/home_plate_self_migrate.pl
 	scripts/internet_appointments_repair.pl
-	scripts/jawnos_network.pl
-	scripts/keyboard_shortcuts.pl
 	scripts/mkosi_build.pl
 	scripts/mkosi_publish.pl
 	scripts/paper_share_qr.pl
@@ -91,7 +88,6 @@ my %owed = map { $_ => 1 } qw(
 	scripts/store_invoice_email_driver.pl
 	scripts/thumb_reorient.pl
 	scripts/tls_issue.pl
-	scripts/web_measures_audit.pl
 );
 
 my @source = git_paths(qw(lib perl templates public/js scripts));

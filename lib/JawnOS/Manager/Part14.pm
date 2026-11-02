@@ -196,10 +196,9 @@ sub manager_reset($c) {
 	$warranty = &subs::ago_calc($warranty_spec, $warranty_holder) unless defined $warranty;
 	$returner->{'warranty'} = $warranty;
 	my $usual_schedule = &subs::setting_grabber({ app => $app, setting => 'schedule' });
-	my $schedule = &schedule_maker($c,$c->param('schedule'),$timestamp);
-	$schedule = &schedule_maker($c,$usual_schedule,$timestamp) unless $c->param('schedule');
-	$returner->{'schedule'} = $schedule if $schedule;
-	$returner->{'schedule_ask'} = $schedule->{'question'} if $schedule && $schedule->{'ask'};
+	# Not expanded here. A usual schedule can name hundreds of future repeats, and
+	# each one is an existence check and a write; expanding it before the header is
+	# what made a press wait. It runs after the branch, behind the header below.
 	my $seen = 'yes';
 	if ($timestamp > &subs::rightNow() + 1000) {
 		$seen = undef;
@@ -960,6 +959,24 @@ elsif ($type eq 'delay') {
 		&appt_measure_writer($c,{ app => $app, uuid => $uuid, timestamp => $timestamp });
 	}
 	&Websocket::send('tab', { console => 'appointmentDetailGrabber(\'' . $app . '\',\'' . $uuid .'\');'});
+
+	# The header is already on the wire. A schedule the press typed itself answers
+	# in the reply (it may need a clarifying question); the app's usual schedule
+	# only writes future repeats, so it runs in its own process.
+	if ($c->param('schedule')) {
+		my $schedule = &schedule_maker($c, $c->param('schedule'), $timestamp);
+		$returner->{'schedule'} = $schedule if $schedule;
+		$returner->{'schedule_ask'} = $schedule->{'question'} if $schedule && $schedule->{'ask'};
+	}
+	elsif ($usual_schedule) {
+		my $fork_c = $c;
+		my $fork_ts = $timestamp;
+		my $fork_schedule = $usual_schedule;
+		&subs::subprocessor(sub {
+			Mojo::IOLoop->reset;
+			&schedule_maker($fork_c, $fork_schedule, $fork_ts);
+		}, { name => 'schedule repeats' });
+	}
 
 	my $todays_date = localtime()->strftime('%A %B %d %Y');
 	my $todays_time = localtime()->strftime('%I:%M%P');

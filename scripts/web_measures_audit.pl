@@ -6,12 +6,19 @@
 #   perl scripts/web_measures_audit.pl --app weather --paths [--limit 40]
 #   perl scripts/web_measures_audit.pl --app weather --convert-json [--apply]
 #   perl scripts/web_measures_audit.pl --prune [--apply]
+#   perl scripts/web_measures_audit.pl --root DIR [--stored] ...
 #
 # --prune removes a web_measure_data row whose measure is not in app_measures
 # (dead config such as weather/visibility). Without --fetch an HTML app is read
 # from the last page stored in `websites`;
 # a JSON app is fetched because the stored page is the prettyfied HTML, not the
 # data. --fetch always asks the site. Nothing is written without --apply.
+#
+# --stored reads only the last page kept in `websites`, even for a JSON app: a
+# caller that must not touch the network (a test, a probe) says so. --root treats
+# DIR as the install - the database is DIR/database/jawnos.db and everything the
+# run would write stays under DIR - which is how a fixture tree is driven without
+# reading the live house database.
 use strict;
 use warnings;
 no warnings 'once';
@@ -22,8 +29,8 @@ use Mojo::UserAgent;
 use Mojo::DOM;
 use Mojo::JSON qw(decode_json encode_json);
 
-my ($json, $fetch, $apply, $paths, $convert, $suggest, $prune, $limit) = (0, 0, 0, 0, 0, 0, 0, 40);
-my (@apps, $only);
+my ($json, $fetch, $apply, $paths, $convert, $suggest, $prune, $stored, $limit) = (0, 0, 0, 0, 0, 0, 0, 0, 40);
+my (@apps, $only, $root);
 for (my $i = 0; $i < @ARGV; $i++) {
 	my $a = $ARGV[$i];
 	$json = 1 if $a eq '--json';
@@ -33,9 +40,19 @@ for (my $i = 0; $i < @ARGV; $i++) {
 	$convert = 1 if $a eq '--convert-json';
 	$suggest = 1 if $a eq '--suggest';
 	$prune = 1 if $a eq '--prune';
+	$stored = 1 if $a eq '--stored';
+	$root = $ARGV[$i + 1] if $a eq '--root' && defined $ARGV[$i + 1];
 	@apps = split /,/, $ARGV[$i + 1] if $a eq '--app' && defined $ARGV[$i + 1];
 	$limit = $ARGV[$i + 1] if $a eq '--limit' && defined $ARGV[$i + 1] && $ARGV[$i + 1] =~ /^\d+$/;
 	$only = $ARGV[$i + 1] if $a eq '--measure' && defined $ARGV[$i + 1];
+}
+
+# A named root is the install for this run: database_path() is then
+# DIR/database/jawnos.db, and the cwd-relative writes (the signatorial mirror)
+# land in DIR too, never in this tree. Without --root nothing moves.
+if (defined $root && length $root) {
+	$subs::install_dir = $root;
+	chdir $root or die "cannot use the root $root: $!\n";
 }
 
 my %want = map { $_ => 1 } @apps;
@@ -69,7 +86,7 @@ foreach my $a ( @{$apps} ) {
 	}
 
 	my ($raw, $data, $source);
-	if ($fetch || $format eq 'json') {
+	if ($fetch || (!$stored && $format eq 'json')) {
 		my $ua = Mojo::UserAgent->new(insecure => 1, inactivity_timeout => 30, connect_timeout => 10);
 		my $res = eval { $ua->get($url => { user_agent => $gb::user_agent })->result };
 		if ($res && $res->is_success) { $raw = $res->body; $source = 'fetch'; }
