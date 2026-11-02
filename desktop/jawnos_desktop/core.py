@@ -70,6 +70,45 @@ def settings_path():
     return os.path.join(config_dir(), "desktop.json")
 
 
+def _boot_id():
+    try:
+        with open("/proc/sys/kernel/random/boot_id", "r", encoding="utf-8") as fh:
+            return fh.read().strip()
+    except OSError:
+        return ""
+
+
+def held_path():
+    """A deliberate Stop is remembered for this boot only.
+
+    The watcher must not resurrect a tree the person stopped, but a stop before
+    a reboot should not keep jawn down at the next login either. The Android
+    app's ``wantRunning`` has the same lifetime; the boot id gives the desktop
+    the equivalent.
+    """
+    return os.path.join(state_dir(), "held")
+
+
+def is_held():
+    try:
+        with open(held_path(), "r", encoding="utf-8") as fh:
+            return fh.read().strip() == _boot_id() and bool(_boot_id())
+    except OSError:
+        return False
+
+
+def set_held(on):
+    if on:
+        os.makedirs(state_dir(), exist_ok=True)
+        with open(held_path(), "w", encoding="utf-8") as fh:
+            fh.write(_boot_id() + "\n")
+        return
+    try:
+        os.remove(held_path())
+    except OSError:
+        pass
+
+
 def daemon_path():
     """The BLE bridge daemon that ships beside this package."""
     return os.path.join(DESKTOP_DIR, "jawnos-bt-daemon")
@@ -433,6 +472,8 @@ def restart_if_stale(jawn_dir, with_ble=True):
     mismatch = version_mismatch(jawn_dir)
     if not mismatch:
         if not jawn_up(jawn_dir):
+            if is_held():
+                return "held", "stopped by request"
             ok, message = start_all(jawn_dir, with_ble=with_ble)
             if ok:
                 return "started", "jawn was down; started it (%s)" % message
@@ -582,6 +623,8 @@ def reap_detached():
 
 def start_jawn(jawn_dir):
     """Start jawn. Skips if it is already up, or a master is mid-restart."""
+    # An explicit start ends a deliberate stop; the watcher may supervise again.
+    set_held(False)
     if jawn_up(jawn_dir):
         return True, "jawn is already running"
     if _jawn_master_pids():
@@ -597,6 +640,9 @@ def stop_jawn(jawn_dir, wait=12.0):
     """Take the whole tree and the master down. The killer is the clean path;
     any master still alive after it is terminated directly, so stop is never a
     no-op when the master is wedged."""
+    # Remember the choice before the killer runs: a watcher tick during the stop
+    # must not read the gap as a crash and start the tree again.
+    set_held(True)
     killer = os.path.join(jawn_dir, "scripts", "manager_killer.pl")
     if not os.path.exists(killer):
         return False, "no scripts/manager_killer.pl in %s" % jawn_dir

@@ -23,10 +23,12 @@ like($core, qr/return "started", "jawn was down; started it/,
 	'a down tree is started, not just reported');
 like($core, qr/ok, message = start_all\(jawn_dir, with_ble=with_ble\)/,
 	'it goes through the combined jawn + BLE start');
+like($core, qr/def is_held\(\):/, 'a deliberate stop is remembered');
+like($core, qr/return "held", "stopped by request"/, 'the watcher leaves a stopped tree alone');
 like($cli, qr/action in \("started", "restarted"\)/,
 	'the watch cooldown covers a start');
-like($cli, qr/action in \("started", "restarted", "failed", "down"\)/,
-	'the watch reports a start');
+like($cli, qr/action in \("started", "restarted", "failed", "down", "held"\)/,
+	'the watch reports a start and a hold');
 like($unit, qr{^ExecStart=\@DESKTOP\@/jawnosctl watch --interval 10$}m,
 	'the unit runs the watcher');
 like($unit, qr/^Restart=always$/m, 'systemd restarts the watcher itself');
@@ -37,17 +39,27 @@ like($install, qr/enable --now jawnos-watch\.service/, 'and enables it');
 my $python = qx{python3 --version 2>/dev/null};
 
 SKIP: {
-	skip 'python3 is not installed', 2 unless $python;
+	skip 'python3 is not installed', 5 unless $python;
 
 	my $dir = tempdir(CLEANUP => 1);
+	my $state = tempdir(CLEANUP => 1);
 	my $py = "$dir/probe.py";
 	write_file($py, <<'PY');
+import os
 import sys
+
+os.environ['XDG_STATE_HOME'] = sys.argv[2]
 sys.path.insert(0, sys.argv[1] + '/desktop')
 from jawnos_desktop import core
 
+core.set_held(True)
+print('held:' + str(core.is_held()))
 core.version_mismatch = lambda d: None
 core.jawn_up = lambda d: False
+print('downheld:' + core.restart_if_stale('/x')[0])
+core.set_held(False)
+print('cleared:' + str(core.is_held()))
+
 core.start_all = lambda d, with_ble=True: (True, 'starting jawn')
 print('down:' + core.restart_if_stale('/x')[0])
 
@@ -56,9 +68,12 @@ core.restart_all = lambda d, with_ble=True: (True, 'restarted')
 print('stale:' + core.restart_if_stale('/x')[0])
 PY
 
-	open(my $fh, '-|', 'python3', $py, $root) or die "python3: $!\n";
+	open(my $fh, '-|', 'python3', $py, $root, $state) or die "python3: $!\n";
 	my $out = do { local $/; <$fh> };
 	close $fh;
+	like($out, qr/^held:True$/m, 'a stop is held for this boot');
+	like($out, qr/^downheld:held$/m, 'the watcher does not resurrect a stopped tree');
+	like($out, qr/^cleared:False$/m, 'a start clears the hold');
 	like($out, qr/^down:started$/m, 'restart_if_stale starts a down tree');
 	like($out, qr/^stale:restarted$/m, 'and still restarts a stale one');
 }

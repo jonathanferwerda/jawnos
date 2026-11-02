@@ -109,7 +109,7 @@ def cmd_watch(args):
                     last_restart = time.time()
             else:
                 action, message = "waiting", "restart settling"
-            if action != last_action and action in ("started", "restarted", "failed", "down"):
+            if action != last_action and action in ("started", "restarted", "failed", "down", "held"):
                 print("%s %s" % (time.strftime("%Y-%m-%d %H:%M:%S"), message), flush=True)
             last_action = action
             time.sleep(interval)
