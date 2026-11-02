@@ -23,7 +23,7 @@ What this buys, in order:
 2. **A cloud server that is not at 90% of two cores.** Today it runs the tailnet control plane,
    the house's always-on JawnOS server, the public hub, DNS and a mail stack on 2 vCPU.
 3. **One place to run builds** (Gradle, PlatformIO, the suite) with 64 GB and NVMe.
-4. **The VPS freed** for the Elixir app, with the apex `:443` still doing its one job.
+4. **The VPS freed** for the Elixir app, which takes `thejunderground.com` and its certbot pair.
 
 ---
 
@@ -107,8 +107,9 @@ Headscale lists four nodes: `table`, `cloud`, `laptop`, `tablet`.
 | D6 | The laptop keeps `performance`; the fan noise is accepted in exchange for maximum clocks | decided by the person, 2026-11-02 |
 | D7 | Any dev container gets a **fresh database** and stays **off the mesh** | decided — a rule |
 | D8 | The house's always-on JawnOS server runs in its **own container**, separate from `dev` | decided |
-| D9 | **The apex domain follows Headscale to the KS-5.** The Elixir app takes a subdomain on the | decided |
-| | VPS. One IP, one name, so no failover-IP or virtual-MAC work is needed. | |
+| D9 | **The control plane gets its own name under the house wildcard** — | decided |
+| | `headscale.jonathanferwerda.com` — not a bare IP and not the apex. `thejunderground.com` is | |
+| | freed for the Elixir app, which keeps certbot on the VPS. | |
 
 **The cost of D5, stated plainly:** the tailnet's control plane now lives on the box that gets
 snapshotted, rebuilt and rebooting. Mitigations, all in P5:
@@ -127,20 +128,55 @@ and the second container that D8 needs. The "Proxmox is a drain" reputation is Z
 
 ---
 
-## 4. Target topology
+## 4. Target topology and naming
 
-- **KS-5** — public apex name; cores, RAM and bandwidth:
+- **KS-5** — cores, RAM and bandwidth, and the tailnet's names:
   - the **host** — `tailscaled`, the exit node, Proxmox;
-  - **Headscale** — own container (or host service), `:443` and DERP on `3478/udp`;
-  - **`house`** — the always-on JawnOS server and public hub (`3000`, `45545`–`45550`);
+  - **Headscale** — own container (or host service) at `headscale.jonathanferwerda.com`,
+    `:443` and DERP on `3478/udp`;
+  - **`house`** — the always-on JawnOS server and public hub at `hub.jonathanferwerda.com`
+    (`3000`, `45545`–`45550`);
   - **`dev`** — Zed remote, the suite, PlatformIO and Gradle builds.
-- **VPS (`cloud`)** — Elixir only, on `app.thejunderground.com`. Quiet, cheap, always on.
+- **VPS (`cloud`)** — Elixir only, at `thejunderground.com`. Quiet, cheap, always on.
 - **laptop / table / tablet** — clients, *and* the **LAN manager for the embedded devices**
   (§5). This does not move.
 
-Public DNS: Cloudflare. The apex A record moves from the VPS to the KS-5; everything else is
-unchanged. Because the app is one name on one IP, there is no additional-IP or virtual-MAC
-configuration in this design.
+### Names and certificates
+
+Two certificates already exist, and they already split along this line:
+
+| Cert | Covers | Renewed by | Expires |
+|---|---|---|---|
+| `*.jonathanferwerda.com` | any subdomain — the house manager and hub today | `scripts/tls_issue.pl`, **DNS-01** through the provider in Configure → Plat → DNS | 2027-01-01 |
+| `thejunderground.com` | apex + `www` | system **certbot** on the VPS | 2026-12-07 |
+
+So the tailnet does **not** need the apex, and it does **not** need a certificate of its own: point
+Headscale's `tls_cert_path`/`tls_key_path` at copies of `server/fullchain.pem` and
+`server/privkey.pem` from the `house` tree, and `headscale.jonathanferwerda.com` validates against
+the wildcard. `thejunderground.com` is then entirely the Elixir app's, and certbot stays on the
+VPS with it.
+
+### Why not the IP, and why not a nameserver
+
+A bare IP is not an option. Tailscale clients validate the control URL's certificate against the
+system roots and there is no insecure switch; Let's Encrypt issues certificates for **names** (a
+wildcard by DNS-01, and only short-lived IP certificates at the very edge of what it offers).
+`https://<ip>` would fail verification.
+
+The good news: none of this needs a nameserver on the box, or port 80. **DNS-01 writes a TXT
+record through the provider's API** — exactly what `tls_issue.pl` already does for the house
+wildcard. So:
+
+- Cloudflare stays the authority; nothing is delegated to the KS-5.
+- One A record per name (`headscale`, `hub`) → the KS-5's single IP.
+- No inbound 80; only **443/tcp**, **3478/udp** and **41641/udp**.
+- No failover IPs and no virtual MACs: one name on one address.
+
+**The cost, stated plainly: changing the control URL touches every node.** Each client must run
+`tailscale up --login-server https://headscale.jonathanferwerda.com` and may need re-registering.
+Four devices, and the phone is off-tailnet today — do it while every device is in reach. The
+alternative that avoids all of it is keeping `thejunderground.com` as the control URL and giving
+Elixir a subdomain instead: cheaper now, uglier later.
 
 ---
 
@@ -156,6 +192,16 @@ The firmware is hardwired to a **LAN** manager, not to the public name:
 So **a manager on the KS-5 cannot serve them**: they are on the house WiFi and cannot route to a
 remote address. The LAN manager (today the laptop) stays where it is, and so does its address —
 changing it means reflashing or BLE re-provisioning every device.
+
+**USB flashing can happen from the table as well**, and that is fine: USB is a local act with no
+manager involved. Two ways to do it, and the light one is usually right: install PlatformIO on the
+table so `usb_upload` can build there, **or** flash the artifact that was copied over the tailnet
+with `esptool`/`picotool` and skip the toolchain. Either way the device is plugged into the port,
+not into the server.
+
+Keep exactly **one** authoritative LAN manager for OTA (the address compiled into the firmware).
+The table is a flashing host, not a second staging host — a second staging tree is how a device
+gets yesterday's firmware from the other machine.
 
 That decides the build workflow the person asked about: **compile on the KS-5, bring the artifact
 back to the LAN, upload from there.** In order:
@@ -173,7 +219,7 @@ back to the LAN, upload from there.** In order:
    - **ESP32 boards (T-Deck, T-Watch)** — the panel's `ota_uploader_wifi` hands over a `.bin` you
      pick, so put the copied build in that device's `.pio/build/<env>/` and pick it.
    - **USB** — must be local anyway; `usb_upload` builds over USB on the machine the device is
-     plugged into.
+     plugged into (the laptop or the table, per the note above).
 4. **Keep the build settings** with the source: the Pico 2 W's
    `board_build.filesystem_size = 2M` split is not optional (at 0 MB the image boots without
    `config.txt` and the device drops to its AP), and the LoRaWAN mode/credentials stay the
@@ -261,23 +307,27 @@ Nothing is deleted until its replacement answers. That ordering *is* the rollbac
 This is the one phase that can lock people out. Everything below happens in one window, with the
 old host kept intact for a rollback.
 
-- [ ] Lower the Cloudflare apex A TTL to 60 s a day ahead.
+- [ ] Lower the Cloudflare TTL on the `headscale` (and `hub`) records to 60 s a day ahead.
 - [ ] `systemctl stop headscale` on the VPS (clean WAL), then copy **all** of
       `/var/lib/headscale/`: `db.sqlite` (+ `-wal`/`-shm` after the stop), `noise_private.key`,
       `derp_server_private.key`, and `tls/`.
-- [ ] Install Headscale on the KS-5 with the **same** values: `server_url`, `listen_addr` on 443,
-      `stun_listen_addr` on 3478, embedded DERP, the two prefixes, `magic_dns`,
-      `base_domain`, the nameservers, and the same TLS paths.
-- [ ] Open on the KS-5: **443/tcp**, **3478/udp** (STUN), **41641/udp** (tailscaled), and
-      **80/tcp** if the ACME challenge is HTTP-01. Confirm the cert files were moved and that
-      something still renews them before **2026-12-07**.
-- [ ] Point the apex A record at the KS-5.
+- [ ] Install Headscale on the KS-5 with the same prefixes, `magic_dns`, `base_domain` and
+      nameservers, but `server_url: https://headscale.jonathanferwerda.com`, and the TLS paths
+      pointing at copies of the house wildcard (`server/fullchain.pem`, `server/privkey.pem`).
+- [ ] Open on the KS-5: **443/tcp**, **3478/udp** (STUN), **41641/udp** (tailscaled). **No 80.**
+- [ ] Add the `headscale` A record in Cloudflare (TTL 60) → the KS-5's IP.
+- [ ] Re-point every node: `tailscale up --login-server https://headscale.jonathanferwerda.com`.
+      Laptop and table first, then the Android devices; do it while every device is in reach.
+- [ ] Move the wildcard's renewal with the repo: whatever triggers `scripts/tls_issue.pl`, plus
+      the DNS-provider credentials from Configure → Plat → DNS, must exist on the KS-5.
+      certbot stays on the VPS — it now only renews the Elixir app's certificate.
 - [ ] Verify: `headscale nodes list` shows table, cloud, laptop and tablet; `tailscale status` on
       the laptop; the DERPMap carries the embedded region.
 - [ ] **Never run both instances at once** — two servers with the same keys and diverging
       databases is the one unrecoverable state.
-- [ ] Rollback: repoint the A record and start the old Headscale. The copied state is a snapshot;
-      keep it for a week.
+- [ ] Rollback: keep the old instance stopped but intact. To go back, restore the old control URL
+      (its `server_url` is still the apex) and re-run the client `--login-server` command with it.
+      The copied state is a snapshot; keep it for a week.
 - **Exit:** every node online through the KS-5, the hub answering on the same name, the VPS's
   Headscale disabled.
 
@@ -285,7 +335,8 @@ old host kept intact for a rollback.
 
 - [ ] Move the always-on JawnOS server to `house`. It is the top CPU consumer on the VPS: this is
       the step that fixes the 2-vCPU box.
-- [ ] The hub moves with the apex, so it must already answer on the KS-5 before P5 repoints DNS.
+- [ ] The hub moves to `hub.jonathanferwerda.com` (same wildcard), so it must already answer on
+      the KS-5 before the clients are re-pointed.
 - [ ] Remove what is not in the path (see §6): rspamd and valkey have no reference in the tree;
       exim4 is local-delivery only.
 - [ ] Keep dnsmasq only if `jawnferroda.com` names are still needed; the public zone is Cloudflare.
@@ -294,8 +345,8 @@ old host kept intact for a rollback.
 
 ### P7 — Elixir, last
 
-- [ ] Only after P6 leaves the VPS quiet. Give it `app.thejunderground.com`; the apex `:443`
-      belongs to Headscale.
+- [ ] Only after P6 leaves the VPS quiet. The Elixir app takes `thejunderground.com` and keeps
+      certbot; `headscale.jonathanferwerda.com` and `hub.jonathanferwerda.com` are the KS-5's.
 - [ ] Back up the Headscale state and TLS material before any reinstall on that host.
 - **Exit:** Elixir serving its subdomain, Headscale untouched, tailnet healthy.
 
@@ -313,8 +364,9 @@ old host kept intact for a rollback.
 ## 8. Open questions
 
 1. **Which machine fetches IMAP today** — the laptop or the VPS's JawnOS? This places clamd (§6).
-2. **What renews the TLS certificate**, and can it run on the KS-5? The current pair expires
-   **2026-12-07**.
+2. **What triggers `scripts/tls_issue.pl` on the VPS?** No cron entry or system timer was found
+   for it (certbot's is separate and only renews the apex). Find the trigger — a `--user` timer is
+   the likely answer — because it has to run on the KS-5 before **2027-01-01**.
 3. **Does the hub's public URL live in a setting on each house** (`tunnel_hub`), or is it learned
    from the handshake? This decides whether moving the hub is one change or one per house.
 4. **Where is the Elixir app's load ceiling?** BEAM wants cores; if it outgrows 2 vCPU, it is the
@@ -331,7 +383,10 @@ old host kept intact for a rollback.
   every node re-registers.
 - **The one easy own-goal** is a broken bridge or a closed 3478/udp on a host with no console.
   Snapshot first, keep the old SSH session open, and confirm the ports before repointing DNS.
-- **The one dated risk** is the certificate: **2026-12-07**.
+- **The one dated risk** is the certificate split: the apex pair expires **2026-12-07** (certbot,
+  stays on the VPS) and the wildcard expires **2027-01-01** (must move to the KS-5).
+- **The one thing that cannot be done** is pointing Tailscale at a bare IP: the client validates
+  the control certificate and will not connect without a name.
 - **The one rule that must not be bent** is D7. A copied database on a dev container looks like it
   works and then quietly poisons the mesh.
 - **The one coupling to watch** is D5: reboot the host deliberately, and never leave the laptop
