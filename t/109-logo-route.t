@@ -1,4 +1,4 @@
-# tests-for: lib/JawnOS/Domain/Name.pm lib/JawnOS/Controller/Root_misc.pm lib/JawnOS/Routes/Root_misc.pm lib/JawnOS/Controller/manifest_json_misc.pm lib/JawnOS/Manager/Part30.pm templates/layouts/manager.html.ep templates/layouts/homepage.html.ep templates/layouts/store.html.ep templates/layouts/public_view.html.ep templates/layouts/padlock_key.html.ep
+# tests-for: lib/JawnOS/Domain/Name.pm lib/JawnOS/Controller/Root_misc.pm lib/JawnOS/Routes/Root_misc.pm lib/JawnOS/Controller/manifest_json_misc.pm lib/JawnOS/Manager/Part30.pm perl/hooks.pl templates/layouts/manager.html.ep templates/layouts/homepage.html.ep templates/layouts/store.html.ep templates/layouts/public_view.html.ep templates/layouts/padlock_key.html.ep
 # covers:    the house mark is one cacheable URL, never 195 KB of base64 inside every page.
 
 use strict;
@@ -80,5 +80,7 @@ unlike($manifest, qr/settings_grabber\(\{\s*app\s*=>\s*'me'\s*,\s*settings\s*=>\
 require "$repo/lib/JawnOS/Manager/Part30.pm";
 ok(Manager::app_public_path('/house/logo.png'), 'the favicon is reachable before a session');
 ok(!Manager::app_public_path('/house/other.png'), 'the public exemption is that one path');
+my $hooks = read_file("$repo/perl/hooks.pl");
+like($hooks, qr{\$path ne '/house/logo\.png'}, 'the locker gate lets the mark through as well');
 
 done_testing();

@@ -118,6 +118,8 @@ Manager::app->hook(before_dispatch => sub {
 			$path ne '/public_view' && 
 			$path ne '/css/universal.css' && 
 			$path ne '/manifest.json' &&
+			# the mark every public page and the lock screen names as its favicon
+			$path ne '/house/logo.png' &&
 			$path ne '/denial' && 
 			$path !~ /^\/images\/jbuttons/ && 
 			# the gate's own pictures resolve through the selected icon set (and the
