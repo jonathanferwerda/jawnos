@@ -312,7 +312,13 @@ sub appointment_writer($c,$app) {
 			}
 		}
 		if ($db_written == 1) {
-			&subs::db_update('appointments', $app, { app => $app->{'app'}, uuid => $app->{'uuid'} });
+			# The row was written at the top. Only the fields this maker and the
+			# record branch produce are ours to update: rewriting the whole row here
+			# put `type` and `stop_timestamp` back from a start (or record) that a
+			# stop had closed while the default model/option chain was still running,
+			# leaving the child session visibly open forever.
+			my %maker_fields = map { $_ => $app->{$_} } grep { defined $app->{$_} } qw/data model options unit quantity manufacturer seen/;
+			&subs::db_update('appointments', { %maker_fields, app => $app->{'app'}, server_time => &subs::rightNow() }, { app => $app->{'app'}, uuid => $app->{'uuid'} });
 		} else {
 			&subs::db_insert('appointments', $app);
 		}

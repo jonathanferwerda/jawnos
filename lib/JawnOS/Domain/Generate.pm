@@ -349,6 +349,17 @@ sub source_appt_writer {
 	my $uuid = $data->{'uuid'};
 	my $type = $data->{'type'};
 	my $duration = $data->{'duration'};
+	# The parent may have been stopped or deleted while this default's start was
+	# still in flight - the model/option chain now runs after the press has its
+	# header. A deleted parent writes nothing; a stopped one must not start a
+	# child that nothing will ever stop.
+	my $source_row = &subs::db_select('appointments', undef, { uuid => $uuid })->hashes->[0];
+	return unless $source_row;
+	if (($type eq 'start' || $type eq 'record')
+		&& (($source_row->{'stop_seen'} || '') eq 'yes'
+			|| ($source_row->{'type'} || '') =~ /^(?:stop|cancel)$/)) {
+		return;
+	}
 	my $char = eval { return decode_json $m->{'characteristics'} } || [];
 	my $measures = { uuid => &subs::random_string_creator(19) };
 	my $unit =  ($app eq $m->{'unit'}) ? $data->{'unit'} : $m->{'unit'};

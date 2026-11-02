@@ -1,4 +1,4 @@
-# tests-for: lib/JawnOS/Manager/Part14.pm lib/JawnOS/Manager/Part05.pm lib/JawnOS/Manager/Part32.pm lib/JawnOS/Domain/Calendar.pm lib/JawnOS/Controller/manager_misc5.pm lib/JawnOS/Controller/manager_misc12.pm public/js/manager/manager/06_appointment_distance.js
+# tests-for: lib/JawnOS/Manager/Part14.pm lib/JawnOS/Manager/Part05.pm lib/JawnOS/Manager/Part32.pm lib/JawnOS/Domain/Calendar.pm lib/JawnOS/Domain/Generate.pm lib/JawnOS/Controller/manager_misc5.pm lib/JawnOS/Controller/manager_misc12.pm public/js/manager/manager/06_appointment_distance.js
 # covers:    the header goes out at once; the caller forks the centre-view render after it
 
 use strict;
@@ -25,6 +25,7 @@ my $calendar  = read_file("$root/lib/JawnOS/Domain/Calendar.pm");
 my $part14    = read_file("$root/lib/JawnOS/Manager/Part14.pm");
 my $part05    = read_file("$root/lib/JawnOS/Manager/Part05.pm");
 my $part32    = read_file("$root/lib/JawnOS/Manager/Part32.pm");
+my $generate  = read_file("$root/lib/JawnOS/Domain/Generate.pm");
 my $reset     = read_file("$root/lib/JawnOS/Controller/manager_misc5.pm");
 my $delete    = read_file("$root/lib/JawnOS/Controller/manager_misc12.pm");
 my $js        = read_file("$root/public/js/manager/manager/06_appointment_distance.js");
@@ -84,12 +85,27 @@ like($part14, qr/else \{\s*my \$fork_app = \$app;\s*my \$fork_header = \$appt_he
 like($part14, qr/\$returner->\{'header'\} = \$appt_header/,
 	'the reply still carries the header the press just changed');
 
+# --- a late default cannot resurrect or orphan a stopped child -------------
+
+like($generate, qr/my \$source_row = &subs::db_select\('appointments', undef, \{ uuid => \$uuid \}\)->hashes->\[0\];\s*return unless \$source_row;/,
+	'a default whose parent was deleted writes nothing');
+like($generate, qr/\(\$source_row->\{'stop_seen'\} \|\| ''\) eq 'yes'/,
+	'a stopped parent starts no child session');
+like($generate, qr/\(\$source_row->\{'type'\} \|\| ''\) =~ \/\^\(\?:stop\|cancel\)\$\//,
+	'a cancelled or stopped parent starts no child session');
+like($part05, qr/my %maker_fields = map \{ \$_ => \$app->\{\$_\} \} grep \{ defined \$app->\{\$_\} \} qw\/data model options unit quantity manufacturer seen\//,
+	'the post-maker update carries only the fields the maker produced');
+unlike($part05, qr/&subs::db_update\('appointments', \$app, \{ app => \$app->\{'app'\}, uuid => \$app->\{'uuid'\} \}\);/,
+	'the post-maker update no longer rewrites type/stop_timestamp over a stop');
+
 # --- appointment_writer and delete_app fork the same call -------------------
 
 like($part05, qr/my \$centre_app = &subs::unformat_name\(\$app->\{'app'\}\);[\s\S]*?&subs::subprocessor\(sub \{\s*Mojo::IOLoop->reset;\s*&centre_view_grabber\(\{ c => \$c, app => \$centre_app/,
 	'appointment_writer forks the window render');
 like($part32, qr/&subs::appt_header_printer\(\{ app => \$app, timestamp => &subs::rightNow\(\) \}\);[\s\S]*?&subs::subprocessor\(sub \{\s*Mojo::IOLoop->reset;\s*&centre_view_grabber\(\{ app => \$app/,
 	'delete_app sends the header at once and forks the window render');
+like($part32, qr/foreach my \$so \( \@\{ &subs::db_select\('appointments', undef, \{ source_uuid => \$uuid \}\)->hashes \|\| \[\] \} \) \{\s*next if \$so_seen\{\s*\$so->\{'uuid'\} \}\+\+;\s*&delete_app\(\$so->\{'app'\},\$so->\{'uuid'\},\$so->\{'server_time'\},'late source deletion'\);/s,
+	'delete_app sweeps for a child that landed during the delete');
 
 # --- the manual delete route no longer renders the window itself ------------
 

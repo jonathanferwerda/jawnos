@@ -222,6 +222,13 @@ sub delete_app($app,$uuid,$server_time,$reason,$silent = 0) {
 			&embedded_app_deleter({ appt_uuid => $so->{'uuid'} });
 			&delete_app($so->{'app'},$so->{'uuid'},$so->{'server_time'},'source deletion');
 		}
+		# A default model/option chain may still be writing while this delete runs -
+		# it is forked after the press now. Sweep once more for a child that landed
+		# between the first read and here, so it goes with its parent.
+		foreach my $so ( @{ &subs::db_select('appointments', undef, { source_uuid => $uuid })->hashes || [] } ) {
+			next if $so_seen{ $so->{'uuid'} }++;
+			&delete_app($so->{'app'},$so->{'uuid'},$so->{'server_time'},'late source deletion');
+		}
 		&Websocket::send('tab', { console => '$(\'.appointment_detail[app="' . $app . '"][uuid="' . $uuid . '"]\').remove();'});
 		&deletion_registration({ table => 'appointments', app => $app, uuid => $uuid, scope => 'single', server_time => $server_time });
 		&subs::vacuum($app) unless $silent;
