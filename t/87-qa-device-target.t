@@ -117,8 +117,31 @@ ok(!$bad->{'ok'}, 'a phone cannot be chosen');
 like($bad->{'error'} || '', qr/computer or server/i, 'the refusal names the eligible kinds');
 is($store{'value'}, '', 'a refused save changes nothing');
 
+# Off is a house decision, not a machine: any signed-in device may make it,
+# and every timer stands down until a machine is chosen again.
+my $off_save = subs::qa_nightly_save('none', { rows => \@rows, self => $self, device_kind => 'mobile', setter => $setter });
+ok($off_save->{'ok'}, 'a phone can turn the whole nightly system off');
+is($store{'value'}, 'none', 'off is stored as the house setting');
+is(subs::qa_nightly_device({ grabber => $grabber }), 'none', 'off reads back as off');
+ok($off_save->{'off'}, 'the save says the nightly is off');
+ok(subs::qa_nightly_is_off(' NONE '), 'the off value is recognised case-insensitively');
+
+my $off_guard = subs::qa_install_guard('none', { rows => \@rows, self => $self });
+ok(!$off_guard->{'ok'}, 'install is refused while the nightly is off');
+like($off_guard->{'error'} || '', qr/nightly system is off/i, 'the install refusal says why');
+
+my $off_run = subs::qa_run_guard('', { rows => \@rows, self => $self, device_kind => 'computer', chosen => 'none' });
+ok(!$off_run->{'ok'}, 'Run now is refused while the nightly is off');
+like($off_run->{'error'} || '', qr/nightly system is off/i, 'the Run now refusal says why');
+
+my $ready_off = subs::qa_readiness_for('none');
+ok($ready_off->{'ok'} && $ready_off->{'off'}, 'readiness answers the off state, not an error');
+my $sched_off = subs::qa_schedule_for('none');
+ok($sched_off->{'ok'} && $sched_off->{'off'}, 'the schedule answers the off state');
+
 is(subs::qa_nightly_clean(' ' . ('B' x 24) . ' '), 'b' x 24, 'a stored value is trimmed and lower-cased');
 is(subs::qa_nightly_clean('not-a-machine'), '', 'a value that is not a signatorial reads as no choice');
+is(subs::qa_nightly_clean('NONE'), 'none', 'the off value survives cleaning');
 
 my $remote_source = read_file("$root/lib/JawnOS/Domain/Remote.pm");
 my @house_rows = ($remote_source =~ /setting => 'qa_nightly_device', device => 'all'/g);
@@ -218,6 +241,11 @@ if ($sqlite3 && length $sqlite3) {
 
 	$choose->('a' x 24);
 	is($run->(), 1, 'another machine is skipped');
+
+	$choose->('none');
+	is($run->(), 1, 'the off choice skips the chosen machine');
+	unlink "$sandbox/.jawnos_signatorial_id";
+	is($run->(), 1, 'off skips even a machine that cannot prove its identity');
 
 	$db->disconnect;
 }

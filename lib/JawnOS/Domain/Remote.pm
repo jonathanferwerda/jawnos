@@ -401,18 +401,32 @@ sub qa_target_lookup {
 # on it both refuse a device that is not computer/server.
 sub qa_install_guard {
 	my ($signatorial, $opts) = @_;
+	return { ok => 0, error => 'the nightly system is off; choose a machine to turn it on' }
+		if &qa_nightly_is_off($signatorial);
 	my $target = &qa_target_lookup($signatorial, $opts);
 	return { ok => 0, error => 'not an eligible device (computer or server only)' } unless $target;
 	return { ok => 1, target => $target };
 }
 
-# A stored choice is a signatorial (hex) or '' for the local fallback. Anything
-# else is treated as no choice at all, never handed to a path or a query.
+# The stored value `none` is a deliberate choice, not a machine: every nightly
+# timer skips (qa/device_target.pl exits 1), the readiness and schedule cards
+# answer off, and nothing can be installed, retimed or started until a machine
+# is chosen again. It is a real value because the empty setting is the local
+# fallback, which must keep meaning "this machine runs its own suite".
+sub qa_nightly_is_off {
+	my ($value) = @_;
+	return (defined $value && lc($value) =~ /^\s*none\s*$/) ? 1 : 0;
+}
+
+# A stored choice is a signatorial (hex), the literal 'none' (the whole nightly
+# system is off), or '' for the local fallback. Anything else is treated as no
+# choice at all, never handed to a path or a query.
 sub qa_nightly_clean {
 	my ($value) = @_;
 	return '' unless defined $value;
 	$value =~ s/^\s+//;
 	$value =~ s/\s+$//;
+	return 'none' if lc($value) eq 'none';
 	return '' unless $value =~ /^[0-9a-f]{16,64}$/i;
 	return lc $value;
 }
@@ -435,6 +449,18 @@ sub qa_nightly_device {
 sub qa_nightly_save {
 	my ($signatorial, $opts) = @_;
 	$opts ||= {};
+	# Turning the whole system off is a house decision any signed-in machine may
+	# make, including a phone: it does not name a device to run on.
+	if (&qa_nightly_is_off($signatorial)) {
+		my $set = $opts->{'setter'};
+		unless ($set) {
+			$set = sub {
+				&subs::setting_setter({ app => '__president', setting => 'qa_nightly_device', device => 'all', value => $_[0] });
+			};
+		}
+		$set->('none');
+		return { ok => 1, signatorial => 'none', local => 0, off => 1, device => 'none' };
+	}
 	my $guard = &qa_install_guard($signatorial, $opts);
 	return $guard unless $guard->{'ok'};
 	my $target = $guard->{'target'};
@@ -585,6 +611,11 @@ sub qa_readiness {
 sub qa_readiness_for {
 	my ($signatorial, $opts) = @_;
 	$opts ||= {};
+	return {
+		ok => 1, off => 1, ready => 0,
+		missing => [], missing_required => [], checks => [],
+		hostname => '', install => {}, target => 'none', local => 0,
+	} if &qa_nightly_is_off($signatorial);
 	my $guard = &qa_install_guard($signatorial, $opts);
 	return { ok => 0, error => $guard->{'error'} } unless $guard->{'ok'};
 	my $target = $guard->{'target'};
@@ -842,6 +873,8 @@ sub qa_run_guard {
 	return $guard unless $guard->{'ok'};
 	my $target = $guard->{'target'};
 	my $chosen = exists $opts->{'chosen'} ? &qa_nightly_clean( $opts->{'chosen'} ) : &qa_nightly_device($opts);
+	return { ok => 0, error => 'the nightly system is off; choose a machine to turn it on' }
+		if &qa_nightly_is_off($chosen);
 	my $self = exists $opts->{'self'} ? $opts->{'self'} : &subs::signatorial_designer();
 	if ($target->{'local'}) {
 		my $kind = exists $opts->{'device_kind'} ? $opts->{'device_kind'} : &subs::device_setter();
@@ -1135,6 +1168,8 @@ sub qa_schedule_local {
 sub qa_schedule_for {
 	my ($signatorial, $opts) = @_;
 	$opts ||= {};
+	return { ok => 1, off => 1, runs => [], target => 'none' }
+		if &qa_nightly_is_off($signatorial);
 	my $guard = &qa_install_guard( $signatorial, $opts );
 	return { ok => 0, error => $guard->{'error'} } unless $guard->{'ok'};
 	my $target = $guard->{'target'};

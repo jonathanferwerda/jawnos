@@ -323,6 +323,12 @@ sub remote_command_execute($c, $action) {
 	$action = &guide_resolve_action($action) if ref $action eq 'HASH';
 	return $action->{'text'} if ref $action eq 'HASH' && ($action->{'action'} || '') eq 'ask';
 	my $a = $action->{'action'};
+	# Off is a house decision the far end honours too: no timer edit and no
+	# systemctl start may happen while the nightly system is turned off.
+	if (($a eq 'qa_install' || $a eq 'qa_retime' || $a eq 'qa_run_now')
+		&& &subs::qa_nightly_is_off(&subs::qa_nightly_device())) {
+		return { ok => 0, error => 'the nightly system is off; choose a machine to turn it on' };
+	}
 	# Preparing the QA environment is local work the Configure panel asked for
 	# over the peer rail; it never goes near the Guide's action table. A phone
 	# or tablet refuses it even if someone sends the verb by hand.

@@ -1108,7 +1108,8 @@ state it is in. Handoff note written 2026-11-02 03:45.
 **Where it is**
 - 05:00 QA suite, 05:30 UX loop, 06:00 coding nightly (on the machine chosen in
   Configure -> QA), Sunday 03:00 image + APK build. Times are editable in that
-  card; Run now is there too.
+  card; Run now is there too, and the machine picker has **Off** to stop all
+  three nightly timers on every machine.
 - 06:00: reads the open JawnOS notes (`__president/qa_note_limit`, 1-25) newest
   first, makes a worktree from `origin/main`, picks the repo or app lane, runs
   the coding agent there (read/grep tool turns), gates on the suite (`l0,l1`,
@@ -1140,6 +1141,13 @@ state it is in. Handoff note written 2026-11-02 03:45.
   `repairs:` line. The system prompt now names the `[[js-split]]` manifest,
   the `# tests-for:` header and t/93 map, the lazy-app maps, and one behaviour
   change = one test.
+- 2026-11-02: the app lane repairs too - a red Gradle build goes back to the
+  agent with its compiler errors and a bounded log tail before the note is
+  failed. Configure -> Plat -> QA's machine picker also has **Off**
+  (`qa_nightly_device=none`), which stops the suite, UX and coding timers on
+  every machine while keeping the saved times; install, Save times and Run now
+  are refused with the off message, and `qa/device_target.pl` honours Off even
+  on a machine with no identity file.
 
 **Next (in order)**
 1. **First app-lane run.** The keyboard note (status/navigation bars -> IME

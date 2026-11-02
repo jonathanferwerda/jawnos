@@ -3,16 +3,16 @@
 #
 # The choice is Configure -> Plat -> QA, stored as the house setting
 # `__president/qa_nightly_device` (device 'all'). It holds the signatorial of a
-# computer or server, or '' for the local fallback. The systemd units read it
-# with ExecCondition:
+# computer or server, `none` for the whole nightly system turned off, or '' for
+# the local fallback. The systemd units read it with ExecCondition:
 #
 #   ExecCondition=/usr/bin/perl /home/jawn/jawnos/qa/device_target.pl
 #
 # Exit 0 means this machine is the chosen one (or there is no choice, or this
 # machine cannot prove its own identity - the local fallback is always safe).
-# Exit 1 means another machine was chosen, and systemd skips this unit without
-# marking it failed. Install the unit on every machine that might be chosen;
-# only the chosen one runs.
+# Exit 1 means the nightly is off, or another machine was chosen, and systemd
+# skips this unit without marking it failed. Install the unit on every machine
+# that might be chosen; only the chosen one runs.
 #
 # No app boot and no library: this runs before the QA service, under the same
 # read-only fence, so it reads the database and the identity file directly.
@@ -68,6 +68,11 @@ sub read_identity {
 }
 
 my $chosen = read_setting($db);
+# Off stops every nightly timer on every machine, even one with no identity file.
+if (lc $chosen eq 'none') {
+	say_out('the nightly system is off');
+	exit 1;
+}
 $chosen = lc $chosen if $chosen =~ /^[0-9a-f]{16,64}$/i;
 
 # No choice: the local fallback keeps every machine's own suite running.

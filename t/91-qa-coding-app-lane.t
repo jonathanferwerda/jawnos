@@ -200,6 +200,15 @@ GRADLE
 if [ -n "$FAKE_GRADLE_LOG" ]; then
 	printf '%s\n' "$*" >> "$FAKE_GRADLE_LOG"
 fi
+if [ "${FAKE_GRADLE_FAIL_FIRST:-0}" = "1" ] && [ -n "$FAKE_GRADLE_COUNTER" ]; then
+	n=$(cat "$FAKE_GRADLE_COUNTER" 2>/dev/null || echo 0)
+	n=$((n+1))
+	echo "$n" > "$FAKE_GRADLE_COUNTER"
+	if [ "$n" = "1" ]; then
+		echo "e: error: the fixture build failed" >&2
+		exit 1
+	fi
+fi
 if [ "${FAKE_GRADLE_EXIT:-0}" != "0" ]; then
 	exit "$FAKE_GRADLE_EXIT"
 fi
@@ -241,7 +250,8 @@ my $log = $ENV{'FAKE_APP_AGENT_LOG'} || '';
 if (length $log) {
 	open(my $lf, '>>', $log) or die $!;
 	print $lf join("\t", $ENV{'JAWNOS_APP_LANE'} // '', $ENV{'JAWNOS_APP_DIR'} // '',
-		$ENV{'JAWNOS_NOTE_TITLE'} // ''), "\n";
+		$ENV{'JAWNOS_NOTE_TITLE'} // '',
+		($ENV{'JAWNOS_NOTE_TEXT'} // '') =~ s/\n/\\n/gr), "\n";
 	close $lf;
 }
 open(my $fh, '>>', 'app/src/Main.java') or die $!;
@@ -375,6 +385,7 @@ sub app_night {
 			'JAWNOS_APP_DIR'      => $a{'app'},
 			'PATH'                => $path,
 			'FAKE_GRADLE_LOG'     => "$a{'dir'}/gradle.log",
+			'FAKE_GRADLE_COUNTER' => "$a{'dir'}/gradle.count",
 			'FAKE_APP_AGENT_LOG'  => "$a{'dir'}/agent.log",
 			'FAKE_RELEASE_LOG'    => "$a{'dir'}/release.log",
 			'FAKE_PUBLISH_LOG'    => "$a{'dir'}/publish.log",
@@ -531,6 +542,10 @@ SKIP: {
 		is($rc, 1, 'a failed app build exits 1');
 		my $run = $report->{'runs'}->[0] || {};
 		is($run->{'status'}, 'build_failed', 'the report names the build');
+		is($run->{'repair_attempts'}, 2, 'a red build gets two repair turns first');
+		is_deeply($run->{'repair_exits'}, [0, 0], 'both repair agents ran');
+		is_deeply($run->{'repair_suite_exits'}, [1, 1], 'both repair builds failed too');
+		like($run->{'error'} // '', qr/after 2 repair attempt/, 'the report says repairs were tried');
 		ok(!defined $run->{'app_version_code'}, 'no versionCode was reported');
 		like(read_file("$fixture->{'app'}/app/build.gradle"), qr/versionCode 7/,
 			'the app checkout was not bumped');
@@ -539,6 +554,37 @@ SKIP: {
 		my $release = -f "$fixture->{'dir'}/release.log" ? read_file("$fixture->{'dir'}/release.log") : '';
 		is($release, '', 'nothing was staged');
 		is(note_status($db, 'app-3'), 'open', 'the note stays open');
+	}
+
+	# -- a red build the agent repairs: the same worktree, then green ---------
+	{
+		my $fixture = fake_app_repo();
+		my $repo    = fake_jawnos_repo();
+		my $agent   = fake_agent($fixture->{'dir'});
+		my ($rc, $out, $report, $qa_root, $db) = app_night(
+			dir => $fixture->{'dir'}, app => $fixture->{'app'}, bare => $fixture->{'bare'},
+			bin => $fixture->{'bin'}, repo => $repo->{'repo'}, agent => $agent,
+			stamp => 'apprepair01', uuid => 'app-repair',
+			text => 'The status bar leaves a gap above the keyboard',
+			env => { 'FAKE_GRADLE_FAIL_FIRST' => 1 },
+		);
+		is($rc, 0, 'a build the agent repairs still ships');
+		my $run = $report->{'runs'}->[0] || {};
+		is($run->{'status'}, 'green', 'the note is green after the repair');
+		is($run->{'repair_attempts'}, 1, 'one repair turn was needed');
+		is_deeply($run->{'repair_exits'}, [0], 'the repair agent ran');
+		is_deeply($run->{'repair_suite_exits'}, [0], 'the repair build was green');
+		is($run->{'app_version_code'}, 8, 'the bump still happened after a repair');
+		ok($run->{'marked_completed'}, 'the repaired note is completed');
+		like($out, qr/app repair 1 of 2/, 'the run says it is repairing the build');
+
+		my $agent_log = -f "$fixture->{'dir'}/agent.log" ? read_file("$fixture->{'dir'}/agent.log") : '';
+		like($agent_log, qr/repair attempt 1 of 2/, 'the repair agent was told which attempt it is');
+		like($agent_log, qr/error: the fixture build failed/,
+			'the repair agent saw the compiler error');
+		my $gradle = -f "$fixture->{'dir'}/gradle.log" ? read_file("$fixture->{'dir'}/gradle.log") : '';
+		my @gradle_calls = grep { /\S/ } split /\n/, $gradle;
+		is(scalar @gradle_calls, 3, 'first build, repair build, rebuild after the bump');
 	}
 
 	# -- a dirty app checkout is never touched --------------------------------

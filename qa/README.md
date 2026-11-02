@@ -382,14 +382,15 @@ The runner, one note at a time:
    `templates/`, `public/js/`, `lib/JawnOS/Controller|Routes` or `perl/*.pl`.
    l3 includes the real-engine click check: a UI change is not green when the
    appointment budget light is dead in WebKitGTK, even if every page loads.
-6. **Repair** - a red suite is not yet a verdict. The same worktree goes back
-   to the agent with the failing test names and the last 40 lines of the log
-   (the block is capped at 4 KB, and it is always appended to the *original*
-   note, so it cannot snowball), the layers are recomputed from the change
-   list, and the suite is re-run. `--repair-attempts` sets the number of tries
-   (0..3, default 2). A non-zero repair agent exit stops repairing at once.
-   The run records `repair_attempts`, `repair_exits` and `repair_suite_exits`,
-   and the reports print a `repairs:` line.
+6. **Repair** - a red suite (or, in the app lane, a red Gradle build) is not
+   yet a verdict. The same worktree goes back to the agent with the failing
+   test names or compiler errors and the last 40 lines of the log (the block is
+   capped at 4 KB, and it is always appended to the *original* note, so it
+   cannot snowball), the layers are recomputed from the change list, and the
+   gate is re-run. `--repair-attempts` sets the number of tries (0..3, default
+   2). A non-zero repair agent exit stops repairing at once. The run records
+   `repair_attempts`, `repair_exits` and `repair_suite_exits` (build exits in
+   the app lane), and the reports print a `repairs:` line.
 7. **Green** - `scripts/version_bump.pl`, one commit
    `v<version> - <note title>`, push the branch, `git merge --ff-only` into
    main, push main, `scripts/restart.pl --reason ...`, require HTTP 200 from
@@ -412,7 +413,9 @@ worktree is `~/jawnos-qa/work-app/<stamp>-<n>` and the branch is still
 `qa/nightly-<stamp>-<n>`. The agent's context is that checkout's `AGENTS.md` and
 `JAWNOS.md`, never this repository's. The gate is
 `JAVA_HOME=/usr/lib/jvm/java-17-openjdk ./gradlew --max-workers=4
-:app:assembleDebug`. Only after a green build are `versionCode` and the
+:app:assembleDebug`. A red build gets the same repair turns as a red suite:
+its compiler errors and a bounded tail of the Gradle log go back to the agent
+in the same worktree before the build counts as failed. Only after a green build are `versionCode` and the
 `versionName` patch bumped, the APK rebuilt, `v<versionName> - <title>`
 committed, the branch pushed, `jawnos` fast-forwarded and `fork` pushed. Then
 `scripts/app_release.pl <apk>` stages it and `scripts/app_publish.pl` publishes
@@ -599,6 +602,15 @@ signatorial of a **computer** or **server**; a phone or tablet is never offered,
 and the save and install actions refuse one. An empty value is the local
 fallback: every machine runs its own suite, as it always did.
 
+The literal value `none` is the third choice in the picker, **Off**: the whole
+nightly system - the suite, the UX loop and the coding night - stands down on
+every machine. It is a real value, not an empty one, because empty must keep
+meaning the local fallback. Any signed-in machine may choose Off (it names no
+device), nothing is deleted, and the three times stay saved for when a machine
+is chosen again. While it is off the readiness and schedule cards answer the
+off state, and install, Save times and Run now are refused with a message that
+says the nightly is off.
+
 Both timers honour the choice through `qa/device_target.pl`:
 
 ```
@@ -610,7 +622,9 @@ it with this machine's identity (`~/.jawnos_signatorial_id`, or the copy beside
 the database), and exits 0 when this machine is the chosen one. It exits 1 for
 every other machine, and systemd skips the unit without marking it failed. It
 also exits 0 when no choice is saved, the row is missing, or no identity file
-can be read - the local fallback is always the safe answer. Install the units on
+can be read - the local fallback is always the safe answer - **except** when
+the choice is `none`: Off is checked first and exits 1 even on a machine with
+no identity file. Install the units on
 every machine that might be chosen; the unchosen ones still have the timer, they
 just skip their run.
 

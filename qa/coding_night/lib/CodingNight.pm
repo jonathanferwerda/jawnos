@@ -371,6 +371,18 @@ sub repair_note {
 	};
 }
 
+# One line for every report that can carry a repair. The lane decides whether
+# the second list is suite exits (repo) or build exits (app), so a reader is
+# never told a Gradle build was a suite.
+sub repair_summary {
+	my ($run) = @_;
+	return '' unless (($run->{'repair_attempts'} // 0) > 0);
+	my $what = (($run->{'lane'} // '') eq 'app') ? 'build exits' : 'suite exits';
+	return '- repairs: ' . $run->{'repair_attempts'} . ' (agent exits '
+		. (join(', ', @{ $run->{'repair_exits'} || [] }) || '-')
+		. ', ' . $what . ' ' . (join(', ', @{ $run->{'repair_suite_exits'} || [] }) || '-') . ")\n";
+}
+
 # --- the backup the night leaves behind -------------------------------------
 # A tag is the whole recovery: it is a commit id, so a reset lands on exactly
 # the tree the night started from. rollback.sh is the human path; the runner
@@ -526,11 +538,7 @@ sub report_markdown {
 		$md .= '- push target: `' . ($run->{'push_target'} // 'origin') . "`\n";
 		$md .= '- agent exit: ' . ($run->{'agent_exit'} // '-') . "\n";
 		$md .= '- suite exit: ' . ($run->{'suite_exit'} // '-') . "\n";
-		if (($run->{'repair_attempts'} // 0) > 0) {
-			$md .= '- repairs: ' . $run->{'repair_attempts'} . ' (agent exits '
-				. (join(', ', @{ $run->{'repair_exits'} || [] }) || '-')
-				. ', suite exits ' . (join(', ', @{ $run->{'repair_suite_exits'} || [] }) || '-') . ")\n";
-		}
+		$md .= repair_summary($run);
 		$md .= '- pushed: ' . ($run->{'pushed'} ? 'yes' : 'no')
 			. ' · merged: ' . ($run->{'merged'} ? 'yes' : 'no')
 			. ' · restarted: ' . ($run->{'restarted'} ? 'yes' : 'no')

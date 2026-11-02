@@ -411,12 +411,73 @@ for my $note ( @{$notes} ) {
 			timeout => $opt{'suite_timeout'},
 		);
 		$run{'build_exit'} = $build_rc;
+
+		# The build is this lane's suite, so a red build gets the same repair
+		# turns: the same worktree goes back to the agent with the compiler's
+		# errors and a bounded tail of the Gradle log. A bad build has bumped,
+		# committed, pushed and staged nothing, so trying again in place is safe.
+		my @repair_exits;
+		my @repair_build_exits;
+		my $repair = 0;
+		while ($build_rc != 0 && $repair < $opt{'repair_attempts'}) {
+			$repair++;
+			my $gradle_log = $log->('gradle');
+			my $repair_note = CodingNight::repair_note(
+				note    => $note,
+				attempt => $repair,
+				max     => $opt{'repair_attempts'},
+				failing => build_failure_lines($gradle_log),
+				tail    => log_tail($gradle_log),
+			);
+			print '  app repair ' . $repair . ' of ' . $opt{'repair_attempts'}
+				. ": the build was red; asking the same agent again\n";
+			my %repair_env = (
+				%{ CodingNight::note_env($repair_note) },
+				%{ CodingNight::app_lane_env($app) },
+			);
+			my ($repair_rc) = run_cmd(
+				cmd     => $agent,
+				cwd     => $worktree,
+				env     => \%repair_env,
+				log     => $log->("agent-repair-$repair"),
+				timeout => $opt{'suite_timeout'},
+			);
+			push @repair_exits, $repair_rc;
+			record_agent_accounting(\%run, $log->("agent-repair-$repair"));
+			# An agent that cannot run is not a repair: stop and report the build.
+			last if $repair_rc != 0;
+
+			@app_files = changed_files($worktree, CodingNight::app_base_branch());
+			($build_rc) = run_cmd(
+				cmd     => CodingNight::app_build_command(),
+				cwd     => $worktree,
+				env     => $build_env,
+				log     => $log->("gradle-repair-$repair"),
+				timeout => $opt{'suite_timeout'},
+			);
+			push @repair_build_exits, $build_rc;
+			$run{'build_exit'} = $build_rc;
+		}
+		$run{'repair_attempts'}    = scalar @repair_exits;
+		$run{'repair_exits'}       = \@repair_exits;
+		$run{'repair_suite_exits'} = \@repair_build_exits;
+
 		if ($build_rc != 0) {
 			$run{'status'} = 'build_failed';
-			$run{'error'}  = "the Gradle build failed (exit $build_rc); no bump, push or stage was made"
-				. '; see ' . $log->('gradle');
+			$run{'error'}  = "the Gradle build failed (exit $build_rc)"
+				. (@repair_exits ? ' after ' . scalar(@repair_exits) . ' repair attempt(s)' : '')
+				. '; no bump, push or stage was made; see ' . $log->('gradle');
 			$failed = 1;
 			last;
+		}
+
+		if (!@app_files) {
+			# A repair can undo the only change; a green build of nothing is not work.
+			$run{'status'} = 'no_change';
+			$run{'error'}  = 'the build was green but the worktree has no change; the note stays open';
+			run_cmd(cmd => ['git', 'worktree', 'remove', '--force', $worktree], cwd => $app, log => $log->('cleanup'));
+			run_cmd(cmd => ['git', 'branch', '-D', $branch], cwd => $app, log => $log->('cleanup'));
+			next;
 		}
 
 		# 2. only a green build earns the version bump, and the bumped version is
@@ -1098,6 +1159,24 @@ sub failure_lines {
 	return \@lines;
 }
 
+# The app lane's suite is Gradle: its failures do not look like TAP. Keep the
+# lines that name a compiler error or a failed task, so a repair prompt carries
+# the real diagnostic rather than only the tail.
+sub build_failure_lines {
+	my ($path) = @_;
+	return [] unless defined $path && length $path && -f $path;
+	open(my $fh, '<', $path) or return [];
+	my @lines;
+	while (my $line = <$fh>) {
+		chomp $line;
+		push @lines, $line
+			if $line =~ /^\s*(?:e:\s|error:|FAILURE:|What went wrong|Execution failed|>\s+Task\b.*FAILED|BUILD FAILED|Caused by:)/i;
+		last if @lines >= 20;
+	}
+	close $fh;
+	return \@lines;
+}
+
 # The last few lines of a log for the repair prompt: enough to see the shape of
 # the failure without pasting a whole suite's output into the agent's context.
 sub log_tail {
@@ -1208,11 +1287,7 @@ sub write_failure_md {
 			. '  health 200 ' . (defined $run->{'rollback_health_ok'} ? ($run->{'rollback_health_ok'} ? 'yes' : 'no') : 'not checked') . ')';
 	}
 	print {$fh} "\n";
-	if (($run->{'repair_attempts'} // 0) > 0) {
-		print {$fh} '- repairs: ' . $run->{'repair_attempts'} . ' (agent exits '
-			. (join(', ', @{ $run->{'repair_exits'} || [] }) || '-') . ", suite exits "
-			. (join(', ', @{ $run->{'repair_suite_exits'} || [] }) || '-') . ")\n";
-	}
+	print {$fh} CodingNight::repair_summary($run);
 	print {$fh} '- report: `' . $dir . "/report.json`\n";
 	print {$fh} '- rollback script: `' . $dir . "/rollback.sh`\n";
 	print {$fh} '- ' . CodingContext::context_summary($run) . "\n"
@@ -1253,10 +1328,7 @@ sub failure_note_text {
 			. ', health 200 ' . (defined $run->{'rollback_health_ok'} ? ($run->{'rollback_health_ok'} ? 'yes' : 'no') : 'not checked') . ')';
 	}
 	$text .= "\n- report: $dir/report.json\n";
-	$text .= '- repairs: ' . $run->{'repair_attempts'} . ' (agent exits '
-		. (join(', ', @{ $run->{'repair_exits'} || [] }) || '-')
-		. ", suite exits " . (join(', ', @{ $run->{'repair_suite_exits'} || [] }) || '-') . ")\n"
-		if ($run->{'repair_attempts'} // 0) > 0;
+	$text .= CodingNight::repair_summary($run);
 	$text .= "- failure: $dir/failure.md\n";
 	$text .= "- rollback script: $dir/rollback.sh\n";
 	if (@failing) {

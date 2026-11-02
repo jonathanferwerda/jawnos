@@ -14,6 +14,17 @@ function qaTarget() {
 	return pick.length ? (pick.val() || '') : '';
 }
 
+// Off is a house-wide stop: the select, the schedule and Run now all stand
+// down. Only the state change touches the buttons, so a run's own in-flight
+// disable is not undone by a routine refresh.
+var qaOffState = false;
+function qaApplyOff(off) {
+	off = !!off;
+	if (off === qaOffState) { return; }
+	qaOffState = off;
+	$('#qa_schedule_save, .qa_run_now, #qa_install').prop('disabled', off);
+}
+
 function qaRender(r) {
 	var box = $('#qa_readiness');
 	var status = $('#qa_install_status');
@@ -22,6 +33,13 @@ function qaRender(r) {
 		$('#qa_install').hide();
 		return;
 	}
+	if (r.off) {
+		box.text(qaT('Off') + ' — ' + qaT('No nightly runs on any machine.'));
+		$('#qa_install').hide();
+		qaApplyOff(true);
+		return;
+	}
+	qaApplyOff(false);
 	var missing = r.missing || [];
 	var lines = [];
 	if (r.hostname) { lines.push(r.hostname); }
@@ -71,6 +89,15 @@ function qaScheduleRender(r) {
 		$('#qa_schedule_status').text((r && r.error) ? r.error : qaT('No answer from that machine.'));
 		return anyRunning;
 	}
+	if (r.off) {
+		['suite', 'ux', 'coding'].forEach(function(run) {
+			$('#qa_' + run + '_effective').text(qaT('Off'));
+			$('#qa_' + run + '_state').text('');
+		});
+		qaApplyOff(true);
+		return false;
+	}
+	qaApplyOff(false);
 	(r.runs || []).forEach(function(run) {
 		var field = $('#qa_' + run.key + '_time');
 		// never overwrite what a person is typing
@@ -152,6 +179,7 @@ $(document).on('change', '#qa_nightly_device', function() {
 			return;
 		}
 		qaRefresh();
+		qaScheduleRefresh();
 	}).fail(function() {
 		$('#qa_readiness').text(qaT('Could not save the choice.'));
 	});

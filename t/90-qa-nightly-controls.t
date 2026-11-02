@@ -138,6 +138,14 @@ ok($chosen_remote->{'ok'}, 'a phone may save times for the chosen server (the se
 ok(!$chosen_remote->{'local'}, 'the chosen server is a remote target');
 is($chosen_remote->{'target'}->{'uuid'}, 'u-table', 'the target row is the one to send the rail command to');
 
+my $off_times = subs::qa_times_save(
+	{ suite => '03:10', ux => '04:20', coding => '05:30' },
+	{ rows => \@rows, self => $self, device_kind => 'computer', chosen => 'none', setter => $three_setter },
+);
+ok(!$off_times->{'ok'}, 'times cannot be retimed while the nightly is off');
+like($off_times->{'error'} || '', qr/nightly system is off/i, 'the refusal says the nightly is off');
+is_deeply(\%three, $before, 'an off save wrote nothing');
+
 # --- the drop-in -------------------------------------------------------------
 my $suite_run = subs::qa_run_lookup('suite');
 my $ux_run    = subs::qa_run_lookup('ux');
@@ -313,6 +321,9 @@ my $run_chosen = subs::qa_run_guard('b' x 24, { rows => \@rows, self => $self, d
 ok($run_chosen->{'ok'} && !$run_chosen->{'target'}->{'local'}, 'Run now accepts the chosen server');
 my $run_unknown = subs::qa_run_guard('9' x 24, { rows => \@rows, self => $self, chosen => '9' x 24 });
 ok(!$run_unknown->{'ok'}, 'Run now refuses a machine that is not on the roster');
+my $run_off = subs::qa_run_guard('', { rows => \@rows, self => $self, device_kind => 'computer', chosen => 'none' });
+ok(!$run_off->{'ok'}, 'Run now refuses while the nightly is off');
+like($run_off->{'error'} || '', qr/nightly system is off/i, 'the refusal names the off state');
 
 # --- the fenced copy agrees ---------------------------------------------------
 require "$root/qa/lib/QaSetting.pm";
@@ -355,6 +366,8 @@ like($panel, qr/data-run="ux"/, 'the panel carries a Run now for the UX run');
 like($panel, qr/data-run="coding"/, 'the panel carries a Run now for the coding night');
 like($panel, qr/qa_times_read\(\)/, 'the fields are rendered from the saved times');
 like($panel, qr/configure\.qa_schedule/, 'the card title is a core language key');
+like($panel, qr/value="none"/, 'the machine picker offers Off');
+like($panel, qr/configure\.qa_off/, 'the Off option is a core language key');
 like($panel, qr/50-jawn-schedule\.conf/, 'the panel explains the drop-in');
 
 my $js = read_file("$root/public/js/manager/configure/07_qa_nightly.js");
@@ -364,6 +377,8 @@ like($js, qr{/manager/configure/qa_run'}, 'the script posts Run now');
 like($js, qr/'#qa_schedule_save'/, 'the save button is wired');
 like($js, qr/\.qa_run_now/, 'the Run now buttons are wired');
 like($js, qr/qaRunPollStart/, 'the script polls the job state');
+like($js, qr/function qaApplyOff/, 'the script knows how to stand the controls down');
+like($js, qr/if \(r\.off\)/, 'the script renders the off state');
 
 my $controller = read_file("$root/lib/JawnOS/Controller/manager_configure2.pm");
 like($controller, qr/qa_times_save\(/, 'the save route validates server-side');
@@ -385,6 +400,7 @@ my $rail = read_file("$root/lib/JawnOS/Manager/Part28.pm");
 like($rail, qr/qa_retime/, 'the remote-command rail accepts the retime verb');
 like($rail, qr/qa_run_now/, 'the remote-command rail accepts the run verb');
 like($rail, qr/chosen nightly device/, 'the far end re-checks the house choice');
+like($rail, qr/nightly system is off/, 'the far end refuses to install, retime or run while off');
 
 my $loader = read_file("$root/lib/JawnOS/Domain/Loader.pm");
 like($loader, qr/JawnOS::Domain::Remote.*qa_retime_local/, 'the loader maps the retime helpers');
@@ -400,7 +416,8 @@ like($help, qr/Run now/, 'and the Run now trigger');
 	my @codes = map { $_->{'code'} } @language::languages;
 	is(scalar(@codes), 16, 'all sixteen interface languages are listed');
 	foreach my $key (qw(configure.qa_schedule configure.qa_suite_time configure.qa_ux_time
-		configure.qa_coding_time configure.qa_save_times configure.qa_run_now configure.qa_effective)) {
+		configure.qa_coding_time configure.qa_save_times configure.qa_run_now configure.qa_effective
+		configure.qa_off)) {
 		for my $code (@codes) {
 			my $label = language::translate($code, $key);
 			ok(defined $label && length $label && $label ne $key, "$code has $key");

@@ -125,6 +125,11 @@ that into a slow patch instead of a frozen machine. Protect the work, not the ch
   `AUTOLOAD` reads, so a helper missing from it is unreachable by name and dies at
   runtime. `t/54-manager-split.t` checks both directions and the pre-push hook
   blocks the drift; `perl scripts/where.pl <name>` prints the part it is in.
+- **The name indexes are checked, not just trusted.** A new domain sub needs its
+  `qw(...)` in `lib/JawnOS/Domain/Loader.pm` (`t/91`), a route action needs its row
+  in `lib/JawnOS/Routes/` (`t/58`), and a new app page needs a help topic with
+  `app => <name>` (`t/11`). Each test fails the push rather than letting the index
+  go quietly stale; `scripts/where.pl` is the lookup those tests keep honest.
 - **Cap parallel jobs on this shared box:** `pio run -j 4`, `gradle --max-workers=4`, `make -j4`.
 - **Bump the version on every push.** Run `perl scripts/version_bump.pl` (patch bump of `./VERSION`,
   e.g. `0.1.20 → 0.1.21`) and prefix the commit subject with it: `v<version> - <summary>`. Verify with

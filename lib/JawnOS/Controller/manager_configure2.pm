@@ -775,9 +775,10 @@ sub action_50002 {
 		$c->render(json => &subs::qa_note_limit_save($c->param('note_limit')));
 		return;
 	}
-	# The value is a signatorial or '' for this machine. A phone or tablet is
-	# refused here as well as at install, so a hand-made POST cannot pin the
-	# nightly to a device that cannot run it.
+	# The value is a signatorial, the literal 'none' (the whole nightly system
+	# off), or '' for this machine. A phone or tablet is refused here as well as
+	# at install, so a hand-made POST cannot pin the nightly to a device that
+	# cannot run it; 'none' names no device, so any signed-in machine may choose it.
 	my $result = &subs::qa_nightly_save($c->param('signatorial') // '');
 	$c->render(json => $result);
 }
