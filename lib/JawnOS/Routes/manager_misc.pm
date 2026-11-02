@@ -26,6 +26,7 @@ sub routes {
 	[5474, 'get', '/manager/warehouse/journal', 'action_5474'],
 	[5502, 'get', '/manager/warehouse/on_hand', 'action_5502'],
 	[7071, 'get', '/manager/editor', 'action_7071'],
+	[18101, 'get', '/manager/app_section', 'action_18101'],
 	[7077, 'get', '/manager/magazine/neighbour_publish', 'action_7077'],
 	);
 }

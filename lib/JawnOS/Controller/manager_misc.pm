@@ -708,6 +708,35 @@ sub action_7071 {
 	$c->render(text => $website);
 }
 
+# GET /manager/app_section
+#
+# The two forms an appointment window carries but does not show - the details
+# (transaction) panel and the app's measures - used to be rendered into every
+# open and left hidden, which was 11 KB of the 42 KB a window costs for a form
+# nobody had asked to see. They are fetched here the first time a control shows
+# them. The set is read the same way the window reads it, markers and all, so the
+# form is the one the window would have drawn.
+sub action_18101 {
+	my $c = shift;
+	my $app = &subs::unformat_name($c->param('app'));
+	my $section = $c->param('section') || '';
+	return $c->render(text => '', status => 400) unless length $app && $section =~ /^(?:details|measures)$/;
+	return $c->render(text => '', status => 403) if &subs::app_hidden_now($app);
+	my $appts = &log_reader({ app => $app, view => 'centre_view' });
+	return $c->render(text => '') unless $appts->{$app};
+	my $markers = (ref $appts->{'__specs'} eq 'HASH') ? ($appts->{'__specs'}->{'markers'} || '') : '';
+	&appts_marker_builder($appts) if $markers ne 'yes';
+	$appts->{$app}->{'setting'}->{'app_measures'} = eval { return decode_json $appts->{$app}->{'setting'}->{'app_measures'} } || {};
+	my $html;
+	if ($section eq 'details') {
+		$html = $c->render_to_string(template => 'apps/app_details', appts => $appts, a => $app, app => {});
+	}
+	else {
+		$html = $c->render_to_string(template => 'apps/app_measures', settings => $appts->{$app}->{'setting'}, a => $app);
+	}
+	$c->render(text => $html);
+}
+
 # GET /manager/magazine/neighbour_publish
 sub action_7077 {
 	my $c = shift;

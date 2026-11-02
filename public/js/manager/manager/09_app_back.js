@@ -63,6 +63,40 @@ $(document).on('touchend', '.top_navbar', function(e) {
 	windowStacker($(this).attr('app'));
 });
 
+// ---------------------------------------------------------------- app sections
+//
+// Two forms a window carries but does not show - the details (transaction) panel
+// and the app's measures - are fetched the first time a control reveals them
+// instead of being rendered into every open. A window is ~42 KB of HTML, and the
+// details form alone was 11 KB of it for a form nobody had asked to see.
+//
+// The placeholder is replaced in place, so every selector that already looks for
+// .app_details or .app_measure keeps working once the fetch lands; a second
+// press finds the form already there.
+function appSectionGrabber(app, section, container, done) {
+	var scope = container && container.length ? $(container) : $('.appointment[app="' + app + '"]');
+	var holder = scope.find('.app_section_placeholder[section="' + section + '"]').first();
+	if (!holder.length) { if (done) { done(); } return; }
+	if (holder.attr('loaded') == 'yes' || holder.attr('loading') == 'yes') { if (done) { done(); } return; }
+	holder.attr('loading', 'yes');
+	$.ajax({
+		url: '/manager/app_section',
+		type: 'GET',
+		data: { app: app, section: section },
+		success: function(response) {
+			holder.removeAttr('loading');
+			// an empty answer is a question worth asking again later, not a form
+			if (response) { holder.attr('loaded', 'yes').html(response); }
+			if (done) { done(); }
+		},
+		error: function() {
+			// a failed fetch leaves the placeholder: the next press asks again
+			holder.removeAttr('loading');
+			if (done) { done(); }
+		}
+	});
+}
+
 $(document).on('click', '.reset', function() {
 	var appointment = $(this).closest('.appointment');
 	var app = appointment.attr('app');
@@ -72,7 +106,10 @@ $(document).on('click', '.reset', function() {
 	}
 	else {
 		appActExclusive(app, 'reset');
-		details.show();
+		// the form arrives hidden; showing it happens once it has landed
+		appSectionGrabber(app, 'details', appointment, function() {
+			appointment.find('.app_details').show();
+		});
 	}
 	appActSync(app);
 
@@ -335,6 +372,7 @@ $(document).on('click', '.measures', function() {
 	}
 	else {
 		appActExclusive(app, 'measures');
+		appSectionGrabber(app, 'measures', parent);
 		appointmentMeasuresGrabber(a);
 		container.show();
 	}

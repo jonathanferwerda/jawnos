@@ -183,7 +183,8 @@
 			<textarea class="timed_input notes" rows="1" app="<%= $a %>" text="notes" placeholder="note" upgradeable="yes" magic_vars="appointment:<%= $a %>"></textarea>
 			<br>
 			<div class="re_measures" app="<%= $a %>" style="display:none;vertical-align:top;width:100%">
-				<%= include 'apps/app_measures', settings => $appts->{$a}->{'setting'}, a => $a %>
+				<%# fetched by appSectionGrabber() the first time the measures are opened %>
+				<span class="app_section_placeholder" app="<%= $a %>" section="measures"></span>
 			</div>
 
 
@@ -203,7 +204,9 @@
 			<span class="inventory_details" style="display:none;">
 				<b>Loading Inventory Details...</b><br>
 			</span>
-			<%= include 'apps/app_details', appts => $appts, a => $a, app => {} %>
+			<%# the details form is 11 KB of a 42 KB window and hidden until a person
+			    asks for it: appSectionGrabber() fetches it on the first open %>
+			<span class="app_section_placeholder" app="<%= $a %>" section="details"></span>
 			<div app="<%= $a %>" style="display:none;" class="appointment_details"></div>
 			<span class="media_out vid"></span>
 			<span class="media_out snd" style="width:100%;"><audio autoplay="true" controls style="width:100%;display:none;" id="<%= $a %>_snd"></audio></span>

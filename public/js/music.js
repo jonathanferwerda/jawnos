@@ -4821,6 +4821,9 @@ var musicVisual = {
 	freq: null,
 	raf: 0,
 	last: 0,
+	lastDraw: 0,
+	waitTimer: 0,
+	track: null,
 	resumeAt: 0,
 	canvas: null,
 	feedCanvas: null,
@@ -5415,8 +5418,9 @@ function musicVisualSample(analyser, dt) {
 }
 
 // The house fit: in the big picture the bitmap follows the canvas' css box, at
-// most 2x for a retina screen and 1920 on the long edge - the picture is soft
-// shapes, and a 4K screen should not cost 8M pixels a frame. The corner is a
+// most 2x for a retina screen and 1280 on the long edge - the picture is soft
+// shapes, so a 4K screen should not cost 8M pixels a frame, and every frame of
+// this canvas is also encoded and decoded by the feed video. The corner is a
 // picture of its own shape, a small 16:9 band, so the thumbnail never inherits
 // the shape of the whole player.
 function musicVisualFit(canvas, big) {
@@ -5427,7 +5431,7 @@ function musicVisualFit(canvas, big) {
 		if (cw < 4 || ch < 4) { return false; }
 		var scale = Math.min(window.devicePixelRatio || 1, 2);
 		var long = Math.max(cw, ch);
-		if (long * scale > 1920) { scale = 1920 / long; }
+		if (long * scale > 1280) { scale = 1280 / long; }
 		w = Math.max(4, Math.round(cw * scale));
 		h = Math.max(4, Math.round(ch * scale));
 	}
@@ -5460,11 +5464,35 @@ function musicVisualElements() {
 
 // The canvas as a picture: its stream, made once per canvas (a re-render hands
 // back a fresh one, and a spent stream with it), given to the muted feed video.
+//
+// The stream is made with a zero frame rate and pushed one frame at a time, when
+// a frame has actually been drawn. Asking for 30 a second made WebKit encode and
+// decode the whole player-sized canvas whether or not anything had changed: with
+// the drawing paused it was still a video pipeline running flat out, which is
+// where most of a core went. requestFrame() is the same picture for the cost of
+// the frames the drawing really makes.
 function musicVisualFeed(parts) {
 	if (!parts.canvas.captureStream) { return; }
-	if (musicVisual.feedCanvas !== parts.canvas) {
+	if (musicVisual.feedCanvas !== parts.canvas || !musicVisual.stream) {
+		// a re-render hands back a fresh canvas: the stream that fed the old one
+		// has nothing left to capture, so it is closed rather than left running
+		try {
+			if (musicVisual.stream) {
+				musicVisual.stream.getTracks().forEach(function(t) { t.stop(); });
+			}
+		}
+		catch (e0) {}
 		musicVisual.feedCanvas = parts.canvas;
-		musicVisual.stream = parts.canvas.captureStream(30);
+		try { musicVisual.stream = parts.canvas.captureStream(0); }
+		catch (e) { musicVisual.stream = null; }
+		var track = musicVisual.stream ? musicVisual.stream.getVideoTracks()[0] : null;
+		if (!track || typeof track.requestFrame != 'function') {
+			// an engine without on-demand frames keeps the old behaviour rather than
+			// losing the picture
+			try { musicVisual.stream = parts.canvas.captureStream(30); } catch (e2) { musicVisual.stream = null; }
+			track = musicVisual.stream ? musicVisual.stream.getVideoTracks()[0] : null;
+		}
+		musicVisual.track = track || null;
 	}
 	if (!musicVisual.stream) { return; }
 	if (parts.feed.srcObject !== musicVisual.stream) {
@@ -5475,6 +5503,14 @@ function musicVisualFeed(parts) {
 		var p = parts.feed.play();
 		if (p && p.catch) { p.catch(function () {}); }
 	}
+}
+
+// Hand the frame that was just drawn to the feed. A track without requestFrame
+// is already sending its own, so there is nothing to do.
+function musicVisualPush() {
+	var track = musicVisual.track;
+	if (!track || typeof track.requestFrame != 'function') { return; }
+	try { track.requestFrame(); } catch (e) {}
 }
 
 // The picture's dress and place, taken from the player's own two: the corner
@@ -5490,11 +5526,38 @@ function musicVisualPlace(parts, big) {
 
 function musicVisualStop() {
 	if (musicVisual.raf) { cancelAnimationFrame(musicVisual.raf); musicVisual.raf = 0; }
+	if (musicVisual.waitTimer) { clearTimeout(musicVisual.waitTimer); musicVisual.waitTimer = 0; }
 	var feed = musicVisualElements().feed;
 	if (feed && feed.style.display != 'none') { feed.style.display = 'none'; }
 	musicVisual.canvas = null;
 	musicVisual.painted = null;
 	musicVisual.last = 0;
+	musicVisual.lastDraw = 0;
+}
+
+// Parked: the drawing is not running and nothing is scheduled. The last frame
+// stays on the canvas, and the feed keeps showing it, so a paused player shows
+// the picture it stopped on rather than an empty box.
+function musicVisualPark() {
+	if (musicVisual.raf) { cancelAnimationFrame(musicVisual.raf); musicVisual.raf = 0; }
+	if (musicVisual.waitTimer) { clearTimeout(musicVisual.waitTimer); musicVisual.waitTimer = 0; }
+	musicVisual.last = 0;
+}
+
+// Look again shortly, without spinning: a video track may become audio, a
+// collapsed window may be given a box, a hidden page may come back.
+function musicVisualWait(ms) {
+	musicVisualPark();
+	musicVisual.waitTimer = setTimeout(function() {
+		musicVisual.waitTimer = 0;
+		musicVisualApply();
+	}, ms || 500);
+}
+
+// Is the player making sound? Its own element answers, so a track that is
+// buffering or ended counts as still.
+function musicVisualPlaying(parts) {
+	try { return !!(parts.el && !parts.el.paused && !parts.el.ended); } catch (e) { return false; }
 }
 
 // Put the chosen drawing on the player: there is nothing to open and nothing to
@@ -5502,7 +5565,8 @@ function musicVisualStop() {
 function musicVisualApply() {
 	var parts = musicVisualElements();
 	if (!parts.el || !parts.canvas || !parts.feed || musicVisual.mode == 'none') { musicVisualStop(); return; }
-	if (!musicVisual.raf) { musicVisual.raf = requestAnimationFrame(musicVisualFrame); }
+	if (document.hidden) { musicVisualPark(); return; }
+	if (!musicVisual.raf && !musicVisual.waitTimer) { musicVisual.raf = requestAnimationFrame(musicVisualFrame); }
 }
 
 function musicVisualChoose(mode) {
@@ -5527,11 +5591,13 @@ function musicVisualFrame(ts) {
 		musicVisualStop();
 		return;
 	}
+	// a hidden page has no one to draw for; coming back resumes the loop
+	if (document.hidden) { musicVisualPark(); return; }
 	if (parts.el.getAttribute('type') != 'audio') {
 		// a video track brings its own picture: the drawing is put away and the
-		// loop waits, so it comes straight back on its own
+		// loop looks again shortly, so it comes straight back on its own
 		musicVisualStop();
-		musicVisual.raf = requestAnimationFrame(musicVisualFrame);
+		musicVisualWait(1000);
 		return;
 	}
 	// a re-render hands back a fresh dropdown at its default; the drawing is the
@@ -5542,11 +5608,22 @@ function musicVisualFrame(ts) {
 	musicVisualFeed(parts);
 	musicVisualPlace(parts, big);
 	if (!musicVisualFit(parts.canvas, big)) {
-		// the player has no box to paint into (mid-resize, collapsed window):
-		// there is nothing to paint, but the loop stays on for when it has one
+		// the player has no box to paint into (mid-resize, collapsed window). The
+		// loop used to keep asking for frames it could not draw, a hundred times
+		// what the drawing itself costs; look again shortly instead
+		musicVisualWait(400);
+		return;
+	}
+	// A frame budget: thirty a second while sound is playing, eight while it is
+	// still (the idle breath does not need sixty, and the fast one used to run
+	// with the player paused, drawing a full canvas for nothing).
+	var playing = musicVisualPlaying(parts);
+	var budget = playing ? 1000 / 30 : 1000 / 8;
+	if (musicVisual.lastDraw && (ts - musicVisual.lastDraw) < budget - 2) {
 		musicVisual.raf = requestAnimationFrame(musicVisualFrame);
 		return;
 	}
+	musicVisual.lastDraw = ts;
 	musicVisual.canvas = parts.canvas;
 	var g = parts.canvas.getContext('2d');
 	if (!g) { musicVisualStop(); return; }
@@ -5568,8 +5645,29 @@ function musicVisualFrame(ts) {
 	st.hue = (st.hue + dt * (14 + st.level * 160)) % 360;
 	var draw = musicVisualDraw[musicVisual.mode];
 	if (draw) { draw(g, parts.canvas.width, parts.canvas.height, st, dt); }
+	musicVisualPush();
 	musicVisual.raf = requestAnimationFrame(musicVisualFrame);
 }
+
+// The loop is brought back when there is something to draw again: a page that
+// was hidden, a player that started or stopped, a window that was restored.
+// musicVisualApply is cheap to call and does nothing when the loop is running.
+$(document).on('play pause playing waiting ended seeked', 'video, audio', function() {
+	if (!musicVisual.mode || musicVisual.mode == 'none') { return; }
+	musicVisual.lastDraw = 0;
+	musicVisualApply();
+});
+
+$(document).on('visibilitychange', function() {
+	if (!musicVisual.mode || musicVisual.mode == 'none') { return; }
+	musicVisual.lastDraw = 0;
+	musicVisualApply();
+});
+
+$(window).on('resize', function() {
+	if (!musicVisual.mode || musicVisual.mode == 'none') { return; }
+	musicVisualApply();
+});
 
 var musicVisualDraw = {
 
