@@ -200,14 +200,36 @@ $(document).ready(function () {
 		});
 		jawnosClockObserver.observe(document.body, { childList: true, subtree: true });
 	}
-	jawnosClockPollTimer = setInterval(function () {
-		if (document.hidden) { return; }
-		// The state is fetched even with no Clock window open, so a phone sitting
-		// on the manager (or another app) still learns an alarm is ringing and
-		// draws the ring card.
-		jawnosClockRefresh();
-	}, 5000);
-	jawnosClockTickTimer = setInterval(jawnosClockTick, 250);
+	// Both loops reschedule themselves instead of running a fixed interval: a
+	// fixed 250 ms tick kept the main thread awake 4x/s with nothing to draw, and a
+	// fixed 5 s poll asked the server about a window that was not open.
+	var clockPollSchedule = function (delay) {
+		clearTimeout(jawnosClockPollTimer);
+		jawnosClockPollTimer = setTimeout(function () {
+			if (document.hidden) { clockPollSchedule(5000); return; }
+			var open = $('.clock_app').length > 0;
+			// The state is fetched even with no Clock window open, so a phone sitting
+			// on the manager (or another app) still learns an alarm is ringing and
+			// draws the ring card. That backstop has nothing on screen to keep in step,
+			// so it can wait 60 s; an open window keeps the old 5 s cadence.
+			jawnosClockRefresh();
+			clockPollSchedule(open ? 5000 : 60000);
+		}, delay);
+	};
+	var clockTickSchedule = function (delay) {
+		clearTimeout(jawnosClockTickTimer);
+		jawnosClockTickTimer = setTimeout(function () {
+			// A hidden tab (or one with no Clock window) has nothing to tick: wake
+			// once a second, cheaply, and leave the 4 Hz work to an open window.
+			if (document.hidden || !$('.clock_app').length) { clockTickSchedule(1000); return; }
+			jawnosClockTick();
+			clockTickSchedule(250);
+		}, delay);
+	};
+	// A window opened later is hydrated (and refreshed) by the observer above, so
+	// the idle poll can stay slow until its next wake sees the window.
+	clockPollSchedule(5000);
+	clockTickSchedule(250);
 });
 
 // ------------------------------------------------------------------- state
