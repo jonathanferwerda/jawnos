@@ -11,9 +11,12 @@ Moved out of `AGENTS.md` (a per-task reference, not an every-request map).
   "What remains"): run the lost-key drill on a physical spare machine with three shares the person
   actually holds, and resolve the two keyless Desktop window rows (bridge them or remove them).
 - **Dev box offload — not started**: move the suite, the builds and the programming load to the
-  Kimsufi box in an LXC, and the exit node with them. The sequencing is the point: `cloud` is the
-  2-vCPU VPS running the tailnet's Headscale control plane *and* the house's always-on JawnOS
-  server and public hub, so it is shed down to the control plane last, never wiped first. Elixir
-  is not deployed anywhere yet. The apex `:443` is Headscale's, so the hub and the Elixir app need
-  subdomains — layouts L1/L2. Phases, measured baseline and open questions:
-  `docs/infrastructure-roadmap.md`.
+  Kimsufi box in an LXC, and the exit node with them. **Headscale moves too** (decided
+  2026-11-02), so the apex domain follows it to the KS-5 and the Elixir app takes a subdomain on
+  the freed VPS — the cutover (P5) is the phase that can lock people out, so it is scheduled, with
+  `/var/lib/headscale/` copied and a rollback by DNS. Two constraints: the embedded devices are
+  hardwired to a **LAN** manager (`192.168.1.3` in the Pico 2 W, `192.168.2.3:45547` on the
+  ESP32s), so firmware is **compiled on the KS-5 and staged/uploaded on the laptop**; and the
+  current certificate expires **2026-12-07**. The VPS's mail stack is not a mail server — IMAP/SMTP
+  go straight to Gmail; rspamd and valkey are unreferenced. Phases, measured baseline and open
+  questions: `docs/infrastructure-roadmap.md`.
