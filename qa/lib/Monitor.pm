@@ -181,6 +181,29 @@ sub summarise {
 			if defined $r->{'mem_available_kb'}
 			&& (!$mem_min || $r->{'mem_available_kb'} < $mem_min);
 	}
+
+	# A soak's question is not "how high did it get" but "is it still going up".
+	# Least squares over the whole series answers that without a sampling window,
+	# and a flat run gives an honest ~0 instead of a false positive from noise.
+	my ($n, $sx, $sy, $sxx, $sxy) = (0, 0, 0, 0, 0);
+	my $t0 = $rows[0]->{'t'};
+	my $tlast = $t0;
+	for my $r (@rows) {
+		next unless defined $r->{'pss_kb'};
+		my $x = $r->{'t'} - $t0;
+		my $y = $r->{'pss_kb'} / 1024;   # MB, so the slope is readable
+		$n++;
+		$sx += $x; $sy += $y; $sxx += $x * $x; $sxy += $x * $y;
+		$tlast = $r->{'t'};
+	}
+	my $slope;
+	# A slope needs time, not just samples: at l1 pace the tree is still booting
+	# for the whole series and the fit describes the ramp, not a leak. 300 s is
+	# the shortest span where "still climbing" means something.
+	if ($n >= 5 && $tlast - $t0 >= 300) {
+		my $den = $n * $sxx - $sx * $sx;
+		$slope = ($n * $sxy - $sx * $sy) / $den if $den > 0;
+	}
 	my $sum = {
 		samples      => scalar @rows,
 		seconds      => $rows[-1]->{'t'} - $rows[0]->{'t'},
@@ -193,6 +216,8 @@ sub summarise {
 		first        => $rows[0],
 		last         => $rows[-1],
 	};
+	$sum->{'pss_slope_mb_per_h'} = int($slope * 3600 * 10 + ($slope < 0 ? -0.5 : 0.5)) / 10
+		if defined $slope;
 	return $sum;
 }
 

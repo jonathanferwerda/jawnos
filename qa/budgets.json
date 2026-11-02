@@ -1,0 +1,30 @@
+{
+  "_note": "Limits, not targets. Every number is a thin margin over a measurement taken on table.jonathanferwerda.com on 2026-11-01; see qa/README.md -> Budgets. A limit that can fail a run must say level: fail.",
+  "version": 1,
+  "l1": {
+    "p50_ms": { "limit": 60, "level": "warn", "why": "baseline 13-14 ms on table" },
+    "p95_ms": { "limit": 250, "level": "warn", "why": "baseline ~90 ms on table" },
+    "max_ms": { "limit": 6000, "level": "warn", "why": "one known slow page; a single route past 6 s is a finding" }
+  },
+  "monitor": {
+    "pss_peak_mb": { "limit": 1200, "level": "fail", "why": "past this a 4 GB box starts swapping, and the tree OOMs" },
+    "cpu_peak_cores": { "limit": 6, "level": "warn", "why": "table has 8 cores; a fan-out shows here" },
+    "cpu_seconds": { "limit": 900, "level": "warn", "why": "a full l1 smoke used ~120 s" },
+    "rss_slope_mb_per_h": { "limit": 48, "level": "fail", "why": "a soak that climbs faster than this leaks" }
+  },
+  "l2": {
+    "db_failures": { "limit": 0, "level": "fail", "why": "a broken schema or query plan is not a warning" }
+  },
+  "l3": {
+    "ui_failures": { "limit": 0, "level": "fail", "why": "a page that crashes the tree or 5xxes is a failure" },
+    "pages_captured": { "limit": 8, "level": "warn", "why": "below the eight pages the layer asks for" }
+  },
+  "l4": {
+    "cold_start_s": { "limit": 10, "level": "warn", "why": "baseline 6.2-8.1 s on the emulator" },
+    "pss_mb": { "limit": 300, "level": "warn", "why": "baseline 96-113 MB" }
+  },
+  "l5": {
+    "health_s": { "limit": 420, "level": "warn", "why": "baseline 285 s (firstboot seeding); an installed disk answers in ~24 s" },
+    "host_rss_mb": { "limit": 3400, "level": "fail", "why": "RSS is guest RAM + ~20 MB; run.sh gives the VM 3072 MB so the host needs ~3.1 GB" }
+  }
+}

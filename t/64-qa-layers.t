@@ -62,7 +62,11 @@ else {
 
 # --- the policy and the runner agree on the layers ---------------------------
 my $runner = read_file("$qa/run.pl");
-like($runner, qr/known: l0 l1 l2 l3/, 'the runner names all four layers');
+like($runner, qr/known: l0 l1 l2 l3 l4 l5/, 'the runner names all six layers');
+like($runner, qr/--apk/, 'l4 can be given the APK to install');
+like($runner, qr/--image/, 'l5 can be given the image to boot');
+like($runner, qr/qemu\/run\.sh/, 'l5 hands the VM to the qemu script');
+like($runner, qr/Budget->apply/, 'the measurements are judged against the budgets');
 like($runner, qr/live => 1/, 'the UI layer boots a loopback session');
 like($runner, qr/Db->checks/, 'the database layer runs the checks');
 my $wk_at = index($runner, 'my $w = Ui->webkit');
@@ -73,7 +77,7 @@ ok($wk_at >= 0 && $cr_at > $wk_at,
 # --- the Android runner's four fixed defects -------------------------------
 my $android = read_file("$qa/android/run.sh");
 like($android, qr/-s "\$SERIAL" install -r/, 'install is pinned to the QA emulator');
-like($android, qr/timeout 180 adb/, 'wait-for-device has a timeout');
+like($android, qr/timeout 240 adb -s "\$SERIAL" wait-for-device/, 'wait-for-device has a timeout, scoped to the QA emulator');
 like($android, qr/sed -n '1,40p'/, 'meminfo reaches the TOTAL PSS row');
 like($android, qr/grep -F "\$PKG"/, 'top keeps the app row');
 

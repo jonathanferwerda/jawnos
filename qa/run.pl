@@ -53,6 +53,7 @@ use Probe;
 use Monitor;
 use Db;
 use Ui;
+use Budget;
 
 my %opt = (
 	layers => 'l0,l1',
@@ -62,6 +63,10 @@ my %opt = (
 	anon => 1,
 	keep => 1,
 	namespace => 1,
+	budgets => undef,
+	apk => undef,
+	image => undef,
+	contract => 0,
 );
 my @argv = @ARGV;
 while (my $arg = shift @argv) {
@@ -76,6 +81,13 @@ while (my $arg = shift @argv) {
 	if ($arg eq '--no-anon')     { $opt{'anon'} = 0; next }
 	if ($arg eq '--no-namespace') { $opt{'namespace'} = 0; next }
 	if ($arg eq '--no-keep')     { $opt{'keep'} = 0; next }
+	if ($arg eq '--budgets')     { $opt{'budgets'} = shift @argv; next }
+	if ($arg =~ /^--budgets=(.*)$/) { $opt{'budgets'} = $1; next }
+	if ($arg eq '--apk')         { $opt{'apk'} = shift @argv; next }
+	if ($arg =~ /^--apk=(.*)$/)  { $opt{'apk'} = $1; next }
+	if ($arg eq '--image')       { $opt{'image'} = shift @argv; next }
+	if ($arg =~ /^--image=(.*)$/){ $opt{'image'} = $1; next }
+	if ($arg eq '--device-contract') { $opt{'contract'} = 1; next }
 	if ($arg eq '--help' || $arg eq '-h') { usage(); exit 0 }
 	die "qa: unknown argument: $arg\n";
 }
@@ -85,7 +97,7 @@ $opt{'anon'} = 1 if $opt{'profile'} eq 'full';
 my @layers = grep { length } split /,/, $opt{'layers'};
 die "qa: --layers wants l0, l1 and/or l2\n" unless @layers;
 for my $l (@layers) {
-	die "qa: unknown layer '$l' (known: l0 l1 l2 l3)\n" unless $l =~ /^l[0-3]$/;
+	die "qa: unknown layer '$l' (known: l0 l1 l2 l3 l4 l5)\n" unless $l =~ /^l[0-5]$/;
 }
 
 my $say = sub { print $_[0], "\n" };
@@ -558,6 +570,103 @@ if ($want_l3) {
 }
 
 # ---------------------------------------------------------------------------
+# l4 / l5 - the device layers
+# ---------------------------------------------------------------------------
+#
+# These are not fenced the way l1-l3 are. They drive a real emulator and a real
+# VM, and the script in qa/android / qa/qemu is the authority for what happens
+# inside them: it boots with a snapshot or a throwaway overlay, and it never
+# points a device at the host's live tree. The runner's job is narrower - give
+# the script an output directory, keep its log, and merge the metrics it writes
+# so the budgets can judge them.
+
+if (grep { $_ eq 'l4' || $_ eq 'l5' } @layers) {
+	$report{'device'} = {};
+	$report{'device_logs'} = [];
+
+	my $merge = sub {
+		my ($layer, $path) = @_;
+		if (!-f $path) {
+			$fatal->("$layer: the device script wrote no metrics ($path)");
+			return;
+		}
+		open(my $fh, '<', $path) or do { $fatal->("$layer: $path: $!"); return };
+		local $/;
+		my $text = <$fh>;
+		close $fh;
+		my $m = eval { JSON::PP->new->decode($text) };
+		if (ref $m ne 'HASH') {
+			$fatal->("$layer: $path is not a JSON object");
+			return;
+		}
+		for my $k (sort keys %$m) {
+			$report{'device'}->{$k} = $m->{$k};
+			$say->(sprintf('  %-28s %s', $k,
+				(defined $m->{$k} ? $m->{$k} : '-'))) if $k =~ /^l[45]\./;
+		}
+	};
+
+	my $run = sub {
+		my ($layer, $script, $log, $env, @args) = @_;
+		my $rc = run_device($script, $log, $env, @args);
+		push @{ $report{'device_logs'} }, $log;
+		if ($rc != 0) {
+			my @tail = tail_lines($log, 4);
+			$fatal->("$layer: the device script failed (exit $rc): " . join(' / ', @tail));
+			return 0;
+		}
+		return 1;
+	};
+
+	if (grep { $_ eq 'l4' } @layers) {
+		my $apk = $opt{'apk'};
+		if (!$apk) {
+			my @apks = sort { (stat($b))[9] <=> (stat($a))[9] } glob("$repo/releases/*.apk");
+			$apk = $apks[0];
+		}
+		if (!$apk || !-f $apk) {
+			$fatal->('l4: no APK to install (pass --apk, or stage one in releases/)');
+		}
+		else {
+			$say->("\n[l4] android emulator, $apk");
+			my $log = $h->logs . '/android.log';
+			my $ok = $run->('l4', "$FindBin::Bin/android/run.sh", $log,
+				{ QA_OUT => $h->results . '/android', QA_RESULTS => $h->results }, $apk);
+			$merge->('l4', $h->results . '/device.json') if $ok;
+		}
+	}
+
+	if (grep { $_ eq 'l5' } @layers) {
+		my $img = $opt{'image'} || $ENV{'JAWNOS_QA_IMAGE'};
+		if (!$img) {
+			my @imgs = sort { (stat($b))[9] <=> (stat($a))[9] }
+				glob("$repo/desktop/mkosi/output/*.raw");
+			$img = $imgs[0];
+		}
+		if (!$img || !-f $img) {
+			$fatal->('l5: no image to boot (pass --image, set JAWNOS_QA_IMAGE, or build one)');
+		}
+		else {
+			$say->("\n[l5] qemu image, $img");
+			my $log = $h->logs . '/qemu.log';
+			my @args = ($opt{'contract'} ? ('--contract') : (), $img);
+			my $ok = $run->('l5', "$FindBin::Bin/qemu/run.sh", $log,
+				{ QA_OUT => $h->results . '/qemu' }, @args);
+			$merge->('l5', $h->results . '/qemu/results/device.json') if $ok;
+		}
+	}
+
+	# An old artefact proves old code. Say which versions disagreed; the budget
+	# cannot see this, because a version is a string.
+	if (($report{'device'}->{'l5.version_match'} || '') eq 'no') {
+		$report{'warnings'}++;
+		$say->(sprintf('  warn l5: the image is %s but this tree is %s',
+			$report{'device'}->{'l5.image_version'} // '?',
+			$report{'device'}->{'l5.repo_version'} // '?'));
+	}
+}
+
+# ---------------------------------------------------------------------------
 # results
 # ---------------------------------------------------------------------------
 
@@ -565,6 +674,28 @@ Monitor->stop($monitor_pid);
 $monitor_pid = 0;   # the END cleanup must not reap it again
 $report{"monitor"} = Monitor->summarise($monitor_out);
 $report{'live_after'} = $h->live_snapshot();
+
+# The numbers the layers collected finally get a verdict. This runs before
+# `ok` is computed, so a failed budget is a failed run.
+{
+	my $cfg = eval { Budget->load($opt{'budgets'} || "$FindBin::Bin/budgets.json") };
+	if (!$cfg) {
+		$fatal->('budgets: ' . ($@ || 'could not be loaded'));
+	}
+	else {
+		my $rows = Budget->apply(\%report, $cfg);
+		for my $row (@$rows) {
+			next unless $row->{'verdict'} eq 'fail';
+			$say->(sprintf('  budget %s: %.1f > %d (%s)', $row->{'metric'},
+				$row->{'value'}, $row->{'limit'}, $row->{'detail'}));
+		}
+		$report{'warnings'} += $report{'budget_warnings'};
+		$say->(sprintf('[budgets] %d metric(s): %d fail, %d warn, %d pass, %d not measured',
+			scalar(@$rows), $report{'budget_failures'}, $report{'budget_warnings'},
+			scalar(grep { $_->{'verdict'} eq 'pass' } @$rows),
+			scalar(grep { $_->{'verdict'} eq 'skip' } @$rows)));
+	}
+}
 
 # the live files may legitimately change while the live app is running; record
 # the deltas as evidence, not as a verdict (the fence audit is the verdict)
@@ -592,6 +723,35 @@ $say->('results: ' . $h->results);
 exit($report{"ok"} ? 0 : 1);
 
 # ---------------------------------------------------------------------------
+
+sub run_device {
+	my ($script, $log, $env, @args) = @_;
+	my $pid = fork();
+	die "qa: fork: $!\n" unless defined $pid;
+	if (!$pid) {
+		open(STDOUT, '>', $log) or POSIX::_exit(127);
+		open(STDERR, '>&', \*STDOUT) or POSIX::_exit(127);
+		$ENV{$_} = $env->{$_} for keys %$env;
+		exec 'sh', $script, @args;
+		POSIX::_exit(127);
+	}
+	waitpid($pid, 0);
+	return $? >> 8;
+}
+
+sub tail_lines {
+	my ($path, $n) = @_;
+	open(my $fh, '<', $path) or return ();
+	my @keep;
+	while (my $line = <$fh>) {
+		chomp $line;
+		next unless length $line;
+		push @keep, $line;
+		shift @keep if @keep > $n;
+	}
+	close $fh;
+	return @keep;
+}
 
 sub write_report {
 	my ($dir, $r) = @_;
@@ -661,6 +821,35 @@ sub write_report {
 			$r->{'timings'}->{'max'} * 1000);
 	}
 
+	if (@{ $r->{'budgets'} || [] }) {
+		$md .= "## Budgets\n\n| metric | value | limit | verdict |\n| --- | --- | --- | --- |\n";
+		for my $b (@{ $r->{'budgets'} }) {
+			$md .= '| `' . $b->{'metric'} . '` | '
+				. (defined $b->{'value'} ? sprintf('%.1f', $b->{'value'}) : '-') . ' | '
+				. sprintf('%.0f', $b->{'limit'}) . ' | '
+				. ($b->{'verdict'} eq 'pass' ? 'ok' : uc $b->{'verdict'})
+				. ($b->{'verdict'} eq 'pass' || $b->{'verdict'} eq 'skip' ? '' : ' - ' . $b->{'detail'})
+				. " |\n";
+		}
+		$md .= "\n";
+	}
+
+	if (my $d = $r->{'device'}) {
+		my @keys = sort keys %$d;
+		if (@keys) {
+			$md .= "## Devices\n\n| metric | value |\n| --- | --- |\n";
+			for my $k (@keys) {
+				my $v = $d->{$k};
+				$v = 'null' unless defined $v;
+				$md .= "| `$k` | $v |\n";
+			}
+			$md .= "\n";
+		}
+		if (@{ $r->{'device_logs'} || [] }) {
+			$md .= "- device logs: " . join(', ', map { "`$_`" } @{ $r->{'device_logs'} }) . "\n\n";
+		}
+	}
+
 	my $m = $r->{'monitor'} || {};
 	if (($m->{'samples'} || 0) > 0) {
 		$md .= "## CPU and memory\n\n";
@@ -669,7 +858,10 @@ sub write_report {
 		$md .= sprintf("- peak instance RSS (shared pages counted again): %.1f MB\n", $m->{'rss_peak_kb'} / 1024);
 		$md .= sprintf("- peak instance CPU: %.2f cores\n", $m->{'cpu_peak'});
 		$md .= sprintf("- CPU seconds used: %.1f\n", $m->{'cpu_seconds'});
-		$md .= sprintf("- peak processes: %d\n\n", $m->{'procs_peak'});
+		$md .= sprintf("- peak processes: %d\n", $m->{'procs_peak'});
+		$md .= sprintf("- PSS drift: %+.1f MB/hour\n", $m->{'pss_slope_mb_per_h'})
+			if defined $m->{'pss_slope_mb_per_h'};
+		$md .= "\n";
 	}
 
 	if (@{ $r->{'failures'} }) {
@@ -715,6 +907,10 @@ Usage: perl qa/run.pl [options]
   --no-anon          skip the anonymous pass even in the full profile
   --no-namespace     do not enter the fence; read the warning
   --no-keep          accepted for symmetry; runs are always kept
+  --budgets FILE     limits to check (default qa/budgets.json)
+  --apk FILE         l4: install this APK (default: newest in releases/)
+  --image FILE       l5: boot this raw image (default: newest mkosi output)
+  --device-contract  l5: also install to a blank disk and boot it twice
   --help
 
 The run writes tree/, home/, logs/ and results/ under --root and never touches

@@ -15,9 +15,14 @@ perl qa/run.pl --profile full      # adds the anonymous gate pass
 perl qa/run.pl --layers l1         # route layer only
 perl qa/run.pl --layers l2         # database contracts and query plans
 perl qa/run.pl --layers l3         # UI: Chromium breadth + WebKitGTK engine
+perl qa/run.pl --layers l4         # Android emulator (table: SDK + AVD)
+perl qa/run.pl --layers l5         # QEMU image boot (table: KVM + qemu)
+perl qa/run.pl --layers l5 --device-contract   # + install, boot the disk twice
+perl qa/run.pl --layers l4 --apk releases/jawnos-app-1256-0.118.257.apk
 perl qa/run.pl --source worktree   # test uncommitted code
 perl qa/run.pl --no-namespace      # read the warning first
 perl qa/run.pl --layers l0         # just the old regression suite
+perl qa/budget.pl <metrics.json>   # judge one device file on its own
 ```
 
 Results land in `$HOME/jawnos-qa/runs/<stamp>/` (override with `--root`):
@@ -33,7 +38,9 @@ tree/ home/            the throwaway copy and its private home
 
 `report.md` opens with the fence audit: how many instance processes existed, how
 many referenced the live database (**must be 0**), whether the PID and net
-namespaces were real, and whether the live repo was mounted read-only.
+namespaces were real, and whether the live repo was mounted read-only. It closes
+with the budget table: every number the layers measured against the limit it must
+stay under.
 
 ## The fence
 
@@ -75,9 +82,9 @@ recorded as drift, not as a verdict. The verdict is the PID audit.
 | `l0` | `prove -l t` (runs outside the fence; it is hermetic) | done |
 | `l1` | every classified GET route over HTTP, signed-in and anonymous; timings; crash detection + restart; fence audit | done |
 | `l2` | database contracts: integrity, stamps, real query plans | done |
-| `l3` | Chromium CDP smoke + WebKitGTK engine probe | experimental |
-| `l4` | Android emulator, WebView CDP, PSS/jank/start | scaffolded |
-| `l5` | QEMU image boot, first-boot seed, persistence, host/guest measures | scaffolded |
+| `l3` | Chromium CDP smoke + WebKitGTK engine probe | done on table |
+| `l4` | Android emulator: cold/warm start, rotation, offline, repeat jank, WebView CDP, crash/ANR | done on table |
+| `l5` | QEMU image: version fidelity, boot evidence, install + reboot persistence, host/guest measures | done on table |
 
 ### l1 classification
 
@@ -135,6 +142,56 @@ count, host `MemAvailable`, load and PSI memory pressure, database and WAL
 sizes. `report.md` shows peaks and total CPU seconds; `monitor.jsonl` is the
 raw series.
 
+The report also carries a **PSS slope** (least squares over the whole series,
+MB per hour). A soak's question is not "how high did it get" but "is it still
+going up"; a flat run reports ~0 instead of a false spike.
+
+## Budgets
+
+`qa/budgets.json` holds the limits; `qa/lib/Budget.pm` compares each measured
+value with its limit and `qa/run.pl` applies it before it computes PASS/FAIL.
+A measurement nobody compares against anything is a chart, not a test.
+
+| metric | limit | level | baseline (table, 2026-11-01) |
+| --- | --- | --- | --- |
+| `l1.p50_ms` / `l1.p95_ms` | 60 / 250 ms | warn | 13-14 / ~90 ms |
+| `l1.max_ms` | 6000 ms | warn | one known slow page |
+| `monitor.pss_peak_mb` | 1200 MB | **fail** | ~1 GB nightly peak |
+| `monitor.cpu_peak_cores` | 6 | warn | 8 cores on table |
+| `monitor.cpu_seconds` | 900 | warn | ~120 s for l1 |
+| `monitor.rss_slope_mb_per_h` | 48 | **fail** | soak: must not climb |
+| `l2.db_failures` | 0 | **fail** | 10 checks pass |
+| `l3.ui_failures` | 0 | **fail** | 0 |
+| `l3.pages_captured` | 8 | warn | 8 |
+| `l4.cold_start_s` | 10 s | warn | 6.2-8.1 s |
+| `l4.pss_mb` | 300 MB | warn | 96-113 MB |
+| `l5.health_s` | 420 s | warn | 285 s (firstboot seed) |
+| `l5.host_rss_mb` | 3400 MB | **fail** | 3093 MB at 3072 MB guest RAM |
+
+Rules that keep the file honest:
+
+- A bare number defaults to **warn**; a limit that fails a run must say
+  `"level": "fail"` on purpose.
+- A metric that was not measured is `skip`, never `pass`.
+- A budget entry naming a metric `Budget.pm` cannot read is a typo;
+  `t/67-qa-budgets.t` fails on it.
+- `l4.jank_pct` is deliberately **not** gated: the emulator is software-rendered
+  and reports 95-100 % janky frames on every run, so a threshold there would warn
+  forever. It is still measured (`results/device.json`) and shown when it moves.
+- The VM's host RSS is guest RAM + ~20 MB. `qa/qemu/run.sh` therefore defaults to
+  `QA_VM_RAM=3072`, `QA_VM_CPUS=2`, which fits table next to the live tree.
+- An image older than the tree cannot prove the tree. `l5` records
+  `l5.version_match`; the runner warns when the artefact and the checkout
+  disagree (it does today: image 0.1.1739, tree 0.1.1757+).
+
+A device script is also usable alone; both write the same flat shape:
+
+```sh
+sh qa/android/run.sh /path/to/app.apk      # QA_RESULTS/device.json
+sh qa/qemu/run.sh [--version-check|--contract] [image.raw]
+perl qa/budget.pl results/device.json
+```
+
 ## Android and QEMU
 
 Both are rebuilt from the **newest source every run**, on purpose, so a dev
@@ -144,37 +201,62 @@ build cannot pass as a release:
   `~/jawnos-app/termux-app` and copies the APK into the run. It does **not**
   bump `versionCode` and does **not** stage into `releases/` (that is
   `scripts/app_build.pl`'s job for a real release).
-- `qa/android/run.sh` copies the AVD, boots it headless, installs that APK,
-  drives the WebView over CDP, and records `am start -W`, `gfxinfo` jank,
-  `dumpsys meminfo` PSS, and battery. It talks only to the QA instance
-  (`adb reverse`), never to a real tablet.
-- `qa/qemu/build.sh` runs `sudo perl scripts/mkosi_build.pl`, so the image is
-  the current tree.
-- `qa/qemu/run.sh` boots it with `-snapshot` and `-display none`, waits for
-  `manager/health` over a forwarded port, measures host and guest, then powers
-  off through QMP.
+- `qa/android/run.sh` copies the AVD, boots it headless, installs the APK with
+  `-s "$SERIAL"` (a real tablet on the bus must never receive it), and drives
+  the real flows: cold start, warm start, rotation, airplane-mode relaunch and a
+  three-launch jank series. It scans `logcat` for `FATAL EXCEPTION`/ANR **for the
+  package only** and fails the layer on one. It then attaches to the app's
+  WebView over `webview_devtools_remote_<pid>` (`qa/android/webview_probe.js`)
+  and records console errors and DOM nodes; with no manager reachable the page
+  stays on `android_asset/splash.html` and the result is an explicit **skip**,
+  never a pass. It writes `results/device.json` and runs `qa/budget.pl` on it.
+  It talks only to the QA instance (`adb reverse`), never to a real tablet.
+- `qa/qemu/run.sh` (POSIX sh) boots headlessly with `-snapshot=on` and
+  `-display none`, drives the serial console through `qa/qemu/serial.pl`, and
+  has three modes:
+  - `--version-check` mounts the image read-only with `qemu-nbd` and compares its
+    `VERSION` with the checkout's; nothing is booted.
+  - default: boot, wait for `manager/health` on the forwarded port, record boot
+    markers from the serial transcript and the VM process's `VmHWM`.
+  - `--contract`: additionally installs to a throwaway 16 G qcow2 target, boots
+    the installed disk, reboots it, and proves persistence with the QA-PERSIST
+    marker. The live image is never written.
+  Output: `version.txt`, `phase-*.txt`, `serial-*.log/.status`, `qemu.txt` and
+  `results/device.json`.
+- The shipped image boots `quiet splash loglevel=3 plymouth.ignore-serial-consoles`,
+  so **no manager/health or session line ever reaches the serial console**. The
+  harness reads the manager line from `/home/jawn/manager.log` instead. Any
+  expectation of a serial "health" marker is wrong for 0.1.1739 and earlier.
 
 Neither device layer runs unless `--layers l4` or `l5` is asked for, and both
-are expected on `table` where the SDK, AVD and KVM live.
+are expected on `table` where the SDK, AVD and KVM live. Table's Java is
+JRE-only (`jre17-openjdk-headless`, no `jlink`/`javac`), so a gradle build there
+fails in `JdkImageTransform`; `qa/android/build.sh` must run on a machine with a
+full JDK, or the layer takes `--apk` / the newest staged APK from `releases/`.
 
 ## Validated so far (2026-11-01)
 
 | where | what | result |
 | --- | --- | --- |
-| table | `l1` full (signed + anonymous) | PASS, 201 requests, p50 14 ms, p95 89 ms |
+| table | `l1` full (signed + anonymous) | PASS, 201 requests, p50 14 ms, p95 117 ms; budgets 0 fail, 1 warn (`max_ms` = the store page) |
 | table | `l2` | PASS, 10 checks |
-| table | QEMU image boot | health after 303 s (HTTP 403, gated), host RSS 2.1 GB, live tree stayed 200 |
+| table | `l3` | PASS; WebKit `hasMenu: true`, TLS allowed for 127.0.0.1; Chromium 8 pages |
+| table | `l4` emulator + app flows | PASS: cold 8.1 s, warm 0.5 s, PSS 96.3 MB, jank 100/100/100 %, rotation + offline ok, 0 crash/ANR; CDP **skip** (no manager reachable) |
+| table | `l5` boot | health 285 s (HTTP 403 gated), host peak 3093 MB at 3072 MB guest RAM |
+| table | `l5 --contract` | install 41 s; installed boot 24 s, second boot 23 s; **persistence yes** (16 G qcow2) |
+| table | `l5` version check | image **0.1.1739**, tree 0.1.1757 → match **no** (table cannot rebuild: no `mkosi`) |
+| table | nightly service | PASS, 0 failures, 1 GB peak; timer enabled, next 04:01 |
 | laptop | `l0` + `l1` full | PASS |
 | laptop | `l2` | PASS, 10 checks |
 | laptop | `l3` | 9 UI checks, 0 failures; WebKit **loads the manager** (`QAHouse`, 479 nodes) |
-| table | `l3` | PASS; WebKit `hasMenu: true`, TLS allowed for 127.0.0.1; Chromium 8 pages |
-| table | Android emulator | boot 36.6 s; app launched (COLD, 6.2 s); PSS 113 MB; jank 95% (baseline) |
-| table | nightly service | **PASS**, 0 failures, 1 GB peak; timer enabled, next 04:01 |
 | laptop | `qa/android/build.sh` | PASS, `jawnos-qa-3207084f.apk` from the app repo's HEAD |
+| laptop | `qa/qemu/build.sh` | `mkosi` is installed; the image in `desktop/mkosi/output` is the artefact l5 boots |
 | table | `l0` | FAILS at `t/44-native-bins.t` (pre-existing: the native-bin converter/compile toolchain is not installed there) |
-| table | Android run | has the `jawnos` AVD and JDK 17, but no app repo; copy the APK from the build machine or set `JAWNOS_APP_DIR` |
-| laptop | QEMU image build | `mkosi` is installed; the build is `qa/qemu/build.sh` and was not run in this pass |
+| table | Android build | FAILS: table's Java is JRE-only (`jre17-openjdk-headless`); no `jlink`, so `JdkImageTransform` fails. Use `--apk` / the staged APK |
 
+The phone/tablet build needs JDK 17-21: AGP 8.7/Gradle 8.9 fail in `JdkImageTransform`
+on Java 26, which is the only JDK on the laptop until `jdk17-openjdk` was installed
+for this run. `qa/android/build.sh` prefers it.
 The phone/tablet build needs JDK 17-21: AGP 8.7/Gradle 8.9 fail in
 `JdkImageTransform` on Java 26, which is the only JDK on the laptop until
 `jdk17-openjdk` was installed for this run. `qa/android/build.sh` prefers it.
@@ -197,8 +279,34 @@ repo read-only (`ProtectHome=read-only`, `ProtectSystem=strict`), only
 legitimately clamp). `qa/prune.pl --keep 14` runs first. UI (`l3`) is
 deliberately not in the nightly set while the JavaScript refactor is in flight.
 
-## Known findings from the first runs (2026-11-01)
+## Known findings from the first runs (2026-11-01/02)
 
+- **Live-tree wedge on table (recovered).** The live master sat in `wait_woken`
+  while every worker blocked in `file_tty_write`, with the accept queue growing
+  and no `manager.log` line for over an hour; the master watchdog had already
+  restarted once at 18:37 for the same reason. This is the PTY deadlock, not a
+  QA-suite failure (the QA instance never shares the master's PTY). Recovery:
+  `kill -TERM <master>` → `perl scripts/manager_killer.pl` → relaunch `./jawn`;
+  health returned and the database was intact. The wedge's trigger is still open.
+- **The QEMU image is old.** The table artefact is 0.1.1739 while the checkout is
+  0.1.1757+, and table has no `mkosi`, so l5 currently proves an old artefact.
+  `l5.version_match=no` is reported and warned; rebuilding must happen on a
+  machine with `mkosi` and the image shipped over.
+- **Table cannot build the app either**: `jre17-openjdk-headless` has no `jlink`
+  or `javac`, so gradle fails in `JdkImageTransform`. Install a full JDK there or
+  keep building the APK on the laptop and passing `--apk`.
+- **The WebView never reaches the manager in l4** because no QA instance/ticket
+  exists on table for the app to load; it stays on `android_asset/splash.html`.
+  The layer records that as a skip. Giving the app a real page needs a QA
+  instance reachable over `adb reverse`, which the netns in the fence deliberately
+  prevents; that is a design decision for the next pass, not a bug.
+- **The serial console of the shipped image shows no manager line**
+  (`quiet splash loglevel=3 plymouth.ignore-serial-consoles`). Boot markers must
+  accept agetty/motd lines, and the manager's own line is read from
+  `/home/jawn/manager.log`.
+- **`dumpsys gfxinfo reset` is issued while the app is force-stopped**, so the
+  readback cannot confirm zero and the three jank figures may be cumulative;
+  they are recorded separately and flagged.
 - `POST /manager/clothesline` and `POST /manager/mail/email/server/delete` are
   each registered twice (`manager_misc12:41744`/`:41867`,
   `manager_mail:31319`/`:31328`); first-match-wins means the later handler can
@@ -220,9 +328,8 @@ deliberately not in the nightly set while the JavaScript refactor is in flight.
   (`Mojolicious/Controller.pm:189`) after `store.html.ep:39` warns about an
   uninitialised value, and the tree exits. `l1` sees it as a slow (40 s) route;
   `l3` reaches it with Chromium and names it as the route that killed the
-  instance (it now runs WebKit first so the engine result is not lost). This is
-  in the area of the in-flight JavaScript/template refactor and was not fixed
-  here.
+  instance. This is in the area of the in-flight JavaScript/template refactor
+  and was not fixed here.
 - The Android runner had four defects, fixed after the first run: `dumpsys
   meminfo` stopped before `TOTAL PSS`, `top` was CPU-sorted so the idle app was
   absent, `adb install` omitted `-s "$SERIAL"` (a real tablet on the bus could
