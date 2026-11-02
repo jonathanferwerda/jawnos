@@ -391,7 +391,40 @@ sub ai_usage_tokens {
 	my $out = $usage->{'completion_tokens'};
 	$out = $usage->{'output_tokens'} unless defined $out;
 	$out = $body->{'eval_count'} unless defined $out;
+	# Anthropic bills the cached prompt separately from the new input: the prompt
+	# was read (cache_read) plus whatever was newly written to the cache
+	# (cache_creation). Both were input work, so the ledger counts them together;
+	# otherwise a cached turn looks almost free. Harmless where the fields are
+	# absent.
+	$in += ($usage->{'cache_creation_input_tokens'} // 0) + ($usage->{'cache_read_input_tokens'} // 0)
+		if defined $usage->{'input_tokens'};
 	return ($in, $out);
+}
+
+# The provider's prompt-cache marker, where it has to be said out loud. A stable
+# prefix (the coding system prompt plus AGENTS.md) is reused at the cheaper read
+# rate only when the marker sits at the end of it. Manager::coding_system_prompt
+# closes with "Right now it is <date>", which changes every call, so that line is
+# split off and sent outside the cached block - keeping it inside would miss the
+# cache on every turn. Anthropic and a Claude model on OpenRouter take an explicit
+# block; every other provider (the OpenAI-compatible crowd, Gemini, Ollama) caches
+# the prefix automatically, or runs locally, so its system prompt is unchanged.
+# Returns a plain string, or an arrayref of content blocks.
+sub ai_system_payload {
+	my ($provider, $real, $system) = @_;
+	$system = '' unless defined $system;
+	my ($stable, $dynamic) = ($system, '');
+	if ($system =~ /^(.*?\n)(Right now it is .*)$/s) { ($stable, $dynamic) = ($1, $2); }
+	my $explicit = ($provider eq 'anthropic')
+		|| ($provider eq 'openrouter' && ($real // '') =~ /anthropic|claude/i);
+	return $system unless $explicit;
+	# under the minimum cacheable size a block marker is pointless, so send the
+	# prompt as it was
+	return $system unless length($stable) >= 4000;
+	return [
+		{ type => 'text', text => $stable, cache_control => { type => 'ephemeral' } },
+		(length $dynamic ? { type => 'text', text => $dynamic } : ()),
+	];
 }
 
 # One provider's streamed frame, as [ kind, text ] deltas. The providers frame
@@ -585,6 +618,18 @@ sub ai_chat_raw {
 		$headers = { 'Authorization' => 'Bearer ' . $secret->($settings->{ $key{$provider} }), 'Content-Type' => 'application/json' };
 		my $system_role = ($provider eq 'cohere') ? 'developer' : 'system';
 		$payload = { model => $real, messages => [ { role => $system_role, content => $system }, @wire ], stream => \0 };
+	}
+
+	# Say the cache marker where the provider needs it. The marker must go on
+	# before the streaming flag is set and the retry snapshot is taken, so a 400
+	# retry carries the same cached prefix. Gemini and Ollama are left alone:
+	# the first caches implicitly, the second runs locally.
+	if ($provider eq 'anthropic') {
+		$payload->{'system'} = &ai_system_payload('anthropic', $real, $system);
+	}
+	elsif ($provider eq 'openrouter') {
+		my $blocks = &ai_system_payload('openrouter', $real, $system);
+		$payload->{'messages'}[0]{'content'} = $blocks if ref $blocks eq 'ARRAY';
 	}
 
 	# Thinking effort (none/low/high/max): a hint each provider reads its own way.

@@ -438,4 +438,5 @@ $catalog{'ko'} = {
 		'page_fill' => '이 페이지를 읽고 채우기',
 		'thinking' => '생각',
 		'subagent' => '하위 에이전트',
+		'subagents' => '하위 에이전트',
 	};

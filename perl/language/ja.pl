@@ -438,4 +438,5 @@ $catalog{'ja'} = {
 		'page_fill' => 'このページを読み取って入力する',
 		'thinking' => '思考',
 		'subagent' => 'サブエージェント',
+		'subagents' => 'サブエージェント',
 	};

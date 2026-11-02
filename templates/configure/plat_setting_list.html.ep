@@ -169,6 +169,20 @@
 						</select>
 					</div>
 				<% } %>
+				<% if ($setting eq 'coding_assistant') {
+					my $subagents = &subs::setting_grabber({ app => 'mail', setting => 'coding_subagents' });
+					$subagents = 10 unless defined $subagents && $subagents =~ /^\d+$/;
+					$subagents = 10 if $subagents > 10;
+				%>
+					<div class="cfg-row">
+						<label><%= &subs::lang('subagents') %></label>
+						<select class="configure_input" app="mail" setting="coding_subagents" hint="How many subagents one coding run may start; 0 turns them off">
+							<% foreach my $n (0 .. 10) { %>
+								<option value="<%= $n %>" <% if ($subagents == $n) { %>selected="selected"<% } %>><%= $n %></option>
+							<% } %>
+						</select>
+					</div>
+				<% } %>
 				<% if ($setting eq 'eval_assistant' && scalar @{$machines}) { %>
 					<div class="cfg-row">
 						<label><%= &subs::ui('Preferred worker') %></label>

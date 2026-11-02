@@ -438,4 +438,5 @@ $catalog{'it'} = {
 		'page_fill' => 'Leggi e compila questa pagina',
 		'thinking' => 'Ragionamento',
 		'subagent' => 'Subagente',
+		'subagents' => 'Subagenti',
 	};

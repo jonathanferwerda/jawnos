@@ -451,4 +451,5 @@ $catalog{'pt'} = {
 		'page_fill' => 'Ler e preencher esta página',
 		'thinking' => 'Raciocínio',
 		'subagent' => 'Subagente',
+		'subagents' => 'Subagentes',
 	};

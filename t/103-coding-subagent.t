@@ -63,10 +63,28 @@ is(&subs::coding_unwrap_final(q({"action":"done","text":"{\"action\":\"done\",\"
 is(&subs::coding_unwrap_final('  plain prose  '), 'plain prose', 'prose is trimmed, not changed');
 is(&subs::coding_unwrap_final(undef), '', 'an empty final stays empty');
 
-ok(&subs::coding_child_limit_ok(0, 0), 'the parent may start its first child');
-ok(&subs::coding_child_limit_ok(0, 1), 'the parent may start its second child');
-ok(!&subs::coding_child_limit_ok(0, 2), 'a third child is refused');
-ok(!&subs::coding_child_limit_ok(1, 0), 'a child at depth 1 may not start one');
+ok(&subs::coding_child_limit_ok(0, 9, 10), 'the parent may start a child before the cap');
+ok(!&subs::coding_child_limit_ok(0, 10, 10), 'a child at the cap is refused');
+ok(!&subs::coding_child_limit_ok(0, 2, 2), 'a child at a lower cap is refused');
+ok(!&subs::coding_child_limit_ok(0, 0, 0), 'a max of 0 refuses every child');
+ok(!&subs::coding_child_limit_ok(1, 0, 10), 'a child at depth 1 may not start one');
+
+# --- the configured subagent cap --------------------------------------------
+{
+	my $value;
+	no warnings 'redefine';
+	local *subs::setting_grabber = sub { $value };
+	$value = undef;
+	is(&subs::coding_child_max_setting(), 10, 'a missing setting falls back to ten');
+	$value = '10';
+	is(&subs::coding_child_max_setting(), 10, 'a setting of ten is ten');
+	$value = '0';
+	is(&subs::coding_child_max_setting(), 0, 'a setting of zero turns subagents off');
+	$value = '99';
+	is(&subs::coding_child_max_setting(), 10, 'anything above ten is capped at ten');
+	$value = 'x';
+	is(&subs::coding_child_max_setting(), 10, 'a non-numeric setting falls back to ten');
+}
 
 # --- the run loop, with the model and the tools stubbed ----------------------
 {
@@ -78,7 +96,8 @@ ok(!&subs::coding_child_limit_ok(1, 0), 'a child at depth 1 may not start one');
 }
 
 sub run_fake_job {
-	my ($responder, $execute) = @_;
+	my ($responder, $execute, $subagent_max) = @_;
+	$subagent_max = '2' unless defined $subagent_max;
 	my %state;
 	my @snapshots;
 	my @executed;
@@ -89,7 +108,11 @@ sub run_fake_job {
 	{
 		no warnings 'redefine';
 		local *subs::rightNow = sub { $clock += 1000 };
-		local *subs::setting_grabber = sub { 'fake-model' };
+		local *subs::setting_grabber = sub {
+			my ($arg) = @_;
+			return $subagent_max if ref $arg eq 'HASH' && ($arg->{'setting'} // '') eq 'coding_subagents';
+			return 'fake-model';
+		};
 		local *subs::ai_role_thinking = sub { '' };
 		local *subs::ai_chat_parts_with_fallback = sub {
 			my ($model, $fallback, $messages, $thinking, $role, $opt) = @_;
@@ -201,6 +224,20 @@ sub run_fake_job {
 	like($state->{'steps'}[2]{'observation'}, qr/^subagent failed: .*2 subagents/,
 		'the refused third child says the run has used its two');
 	is($state->{'state'}, 'finished', 'the parent continues after a refused child');
+}
+
+# A setting of zero refuses the agent action outright, and the parent continues.
+{
+	my ($state, $job) = run_fake_job(sub {
+		my $n = shift;
+		return ('{"action":"agent","task":"one","scope":"read"}', undef) if $n == 1;
+		return ('{"action":"done","text":"parent done"}', undef);
+	}, undef, '0');
+	ok(!($state->{'children'} // 0), 'no child is counted when subagents are off');
+	like($state->{'steps'}[0]{'observation'}, qr/^subagent failed: .*0 subagents/,
+		'the refused child says subagents are off');
+	is($state->{'state'}, 'finished', 'the parent continues with subagents off');
+	is($state->{'final'}, 'parent done', 'the parent still finishes its run');
 }
 
 # --- the prompt and the tool list -------------------------------------------

@@ -438,4 +438,5 @@ $catalog{'pa'} = {
 		'page_fill' => 'ਇਹ ਪੇਜ ਪੜ੍ਹੋ ਅਤੇ ਭਰੋ',
 		'thinking' => 'ਸੋਚ',
 		'subagent' => 'ਸਹਾਇਕ ਏਜੰਟ',
+		'subagents' => 'ਸਹਾਇਕ ਏਜੰਟ',
 	};

@@ -59,9 +59,21 @@ our $coding_child_turns = 6;
 # newest text is the useful part, so the tail is kept and the cut is marked.
 our $coding_live_bytes = 4000;
 
-# How many subagents one run may start, and how deep one may go. A child is
-# depth 1, so the depth check refuses a child that asks for another child.
-our $coding_child_max = 2;
+# How many subagents one run may start (the fallback when no setting is
+# readable), and how deep one may go. A child is depth 1, so the depth check
+# refuses a child that asks for another child.
+our $coding_child_max = 10;
+
+# The configured cap: Configure -> Plat -> Coding -> Subagents. A missing,
+# empty or non-numeric setting falls back to the same ten, zero turns
+# subagents off, and anything above ten is capped at ten.
+sub coding_child_max_setting {
+	my $n = &subs::setting_grabber({ app => 'mail', setting => 'coding_subagents' });
+	return $coding_child_max unless defined $n && "$n" =~ /^[0-9]+$/;
+	$n = $n + 0;
+	return $coding_child_max if $n > $coding_child_max;
+	return $n;
+}
 
 # Snapshot a run for the panel. `steps` is the whole list, so a poller can
 # render only the new tail; observations in it are already trimmed.
@@ -253,13 +265,15 @@ sub coding_child_run_ok {
 	return 1;
 }
 
-# Two children per run, and a child (depth 1) may not start one of its own.
+# $max children per run (the configured cap by default), and a child (depth 1)
+# may not start one of its own. A max of 0 refuses every child.
 sub coding_child_limit_ok {
-	my ($depth, $count) = @_;
+	my ($depth, $count, $max) = @_;
 	$depth = 0 unless defined $depth;
 	$count = 0 unless defined $count;
+	$max = &coding_child_max_setting() unless defined $max;
 	return 0 if $depth >= 1;
-	return 0 if $count >= $coding_child_max;
+	return 0 if $count >= $max;
 	return 1;
 }
 
@@ -331,10 +345,12 @@ sub coding_run_subagent {
 	};
 	my $depth = $opt->{'depth'} // 0;
 	my $count = $opt->{'count'} // 0;
-	unless (&coding_child_limit_ok($depth, $count)) {
+	my $max = $opt->{'max'};
+	$max = &coding_child_max_setting() unless defined $max;
+	unless (&coding_child_limit_ok($depth, $count, $max)) {
 		$record->{'error'} = $depth >= 1
 			? 'a subagent may not start another subagent'
-			: "this run has already used its $coding_child_max subagents";
+			: "this run has already used its $max subagents";
 		return $record;
 	}
 	if ($scope eq 'write') {
@@ -437,6 +453,10 @@ sub coding_run_job {
 	my $final = '';
 	my $error = '';
 	eval {
+		my $child_max = &coding_child_max_setting();
+		my $child_note = $child_max > 0
+			? "\nYou may use at most $child_max subagents in this run; use them only for self-contained work."
+			: "\nDo not use subagents in this run.";
 		my $model = &subs::setting_grabber({ app => 'mail', setting => 'coding_assistant' })
 			|| &subs::setting_grabber({ app => 'mail', setting => 'help_assistant' });
 		die "No Coding model is set (Configure \x{2192} Platform).\n" unless $model;
@@ -469,7 +489,7 @@ sub coding_run_job {
 			if ($master && !kill(0, $master)) { $error = 'the master that owns this worker is gone'; last; }
 			my $fresh = &coding_run_state_load($id);
 			if ($fresh->{'cancel'}) { $final = 'Stopped at your request.'; last; }
-			my $system = &Manager::coding_system_prompt();
+			my $system = &Manager::coding_system_prompt() . $child_note;
 			# What the poller shows while the model is answering.
 			$live_text = '';
 			$live_reasoning = '';
@@ -523,7 +543,7 @@ sub coding_run_job {
 			my $subagent;
 			if (($action->{'action'} // '') eq 'agent') {
 				my $children = $state->{'children'} // 0;
-				if (&coding_child_limit_ok(0, $children)) {
+				if (&coding_child_limit_ok(0, $children, $child_max)) {
 					$state->{'children'} = $children + 1;
 					$subagent = &coding_run_subagent({
 						action      => $action,
@@ -533,6 +553,7 @@ sub coding_run_job {
 						parent_task => $task,
 						depth       => 0,
 						count       => $children,
+						max         => $child_max,
 					});
 				}
 				else {
@@ -543,7 +564,7 @@ sub coding_run_job {
 						scope => $scope,
 						paths => (ref $action->{'paths'} eq 'ARRAY' ? [ @{$action->{'paths'}} ] : []),
 						steps => [],
-						error => "this run has already used its $coding_child_max subagents",
+						error => "this run has already used its $child_max subagents",
 					};
 				}
 				if (($subagent->{'error'} // '') ne '') {
