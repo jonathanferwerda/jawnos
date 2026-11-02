@@ -427,6 +427,35 @@ sub action_47050 {
 				$return_data->{'slim'} = 1;
 			}
 
+			# A start or stop pushes the header once, and a tab that was
+			# reconnecting can miss that frame. The beat names the version each
+			# open window is wearing; answer any newer header here, so a lost push
+			# is corrected within one beat instead of waiting for a reload. The
+			# cache is written by appt_header_printer on every header it renders.
+			if (($apper || '') eq 'tab' && ref $data->{'headers_at'} eq 'HASH') {
+				my (%stale_headers, %stale_times);
+				my $checked = 0;
+				foreach my $ha ( keys %{ $data->{'headers_at'} } ) {
+					last if $checked++ >= 30;
+					my $wa = &subs::unformat_name($ha);
+					next if $wa eq '';
+					my $hrow = &subs::db_query('select timestamp, data from cache where app = ? and context = ? order by server_time desc limit 1', $wa, 'header')->hashes->[0];
+					next unless $hrow && $hrow->{'data'};
+					my $newer = 0 + ($hrow->{'timestamp'} || 0);
+					my $wearing = 0 + ($data->{'headers_at'}->{$ha} || 0);
+					next unless $newer > $wearing;
+					my $cached = eval { decode_sereal $hrow->{'data'} } || {};
+					my $html = (ref $cached eq 'HASH') ? ($cached->{'header'} // '') : '';
+					next unless length $html;
+					$stale_headers{$wa} = $html;
+					$stale_times{$wa} = $newer;
+				}
+				if (scalar keys %stale_headers) {
+					$return_data->{'headers'} = \%stale_headers;
+					$return_data->{'header_at'} = \%stale_times;
+				}
+			}
+
 			&Websocket::send($app,$return_data);
 
 			# The lockdown face is a fact, not a beat. Sending it every 10 s made

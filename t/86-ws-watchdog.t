@@ -166,6 +166,24 @@ like($world, qr/if \(!\$retried && !\$rcv && \$had_cached && \$bytes_written == 
 		or diag('both var and function: ' . join(', ', @both));
 }
 
+like($ws, qr/var seen_headers = \{\};\s*\$\('\.wind'\)\.each\(function \(\) \{.*?seen_headers\[ha\] = hh\.attr\('last_updated'\) \|\| hh\.attr\('last_update'\) \|\| '';/s,
+	'the tab beat names the header version every open window wears');
+like($ws, qr/data\['headers_at'\] = seen_headers;/, 'and ships the map on the beat');
+like(read_file("$root/public/js/manager/websocket/02_heartbeat_and_reload.js"),
+	qr/if \(data\.headers && typeof jawnosHeaderApply === 'function'\) \{.*?\$\.each\(data\.headers, function \(app, html\) \{\s*jawnosHeaderApply\(app, html, header_at\[app\] \|\| 0\);/s,
+	'a beat reply with newer headers applies them');
+
+# --- a lost header push is corrected on the next beat -----------------------
+
+like($ws_pm, qr/if \(\(\$apper \|\| ''\) eq 'tab' && ref \$data->\{'headers_at'\} eq 'HASH'\) \{/,
+	'the tab beat is answered with stale headers');
+like($ws_pm, qr/select timestamp, data from cache where app = \? and context = \? order by server_time desc limit 1/,
+	'the answer compares against the header cache a push writes');
+like($ws_pm, qr/my \$newer = 0 \+ \(\$hrow->\{'timestamp'\} \|\| 0\);\s*my \$wearing = 0 \+ \(\$data->\{'headers_at'\}->\{\$ha\} \|\| 0\);\s*next unless \$newer > \$wearing;/s,
+	'only a header newer than the one on screen is sent');
+like($ws_pm, qr/\$return_data->\{'headers'\} = \\%stale_headers;\s*\$return_data->\{'header_at'\} = \\%stale_times;/s,
+	'the beat reply carries the header and its version');
+
 # --- the touched files still parse ------------------------------------------
 
 my $node = `command -v node 2>/dev/null`;

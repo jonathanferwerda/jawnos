@@ -4,6 +4,14 @@ function stayingAlive(data) {
 
 	if (!data || !data.app) { return; }
 	if (ws[data.app]) { ws[data.app]['stayingAlive'] = now; }
+	// A header a start or stop pushed can miss a tab that was reconnecting. The
+	// beat names what this page is wearing; the server answers any newer one.
+	if (data.headers && typeof jawnosHeaderApply === 'function') {
+		var header_at = data.header_at || {};
+		$.each(data.headers, function (app, html) {
+			jawnosHeaderApply(app, html, header_at[app] || 0);
+		});
+	}
 	// A slim beat is the server saying "still here; nothing on screen changed".
 	// There is no neighbour list to rebuild and no pulse to paint.
 	if (data.slim) { return; }

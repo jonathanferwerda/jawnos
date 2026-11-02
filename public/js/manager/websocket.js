@@ -430,7 +430,7 @@ function heartbeatSend(app) {
 				}
 				windowWsMouseMove = mm;
 			}
-			// the localStorage debrief is for auditing, not for liveness. The
+			// The localStorage debrief is for auditing, not for liveness. The
 			// snapshot is a whole-store blob written to a ticket row, so only ship
 			// it when the store actually moved since the last one.
 			if (now - windowWsDebriefer > debrieferInterval) {
@@ -441,6 +441,18 @@ function heartbeatSend(app) {
 					data['debriefer'] = debrief;
 				}
 			}
+			// A start or stop pushes the header once. A tab that was reconnecting
+			// can miss that one frame, so name the version each open window is
+			// wearing; the server answers any newer header on this beat.
+			var seen_headers = {};
+			$('.wind').each(function () {
+				var ha = $(this).attr('app');
+				if (!ha) { return; }
+				var hh = $(this).find('.appointment_header_background');
+				if (!hh.length) { return; }
+				seen_headers[ha] = hh.attr('last_updated') || hh.attr('last_update') || '';
+			});
+			data['headers_at'] = seen_headers;
 		}
 		else if ((app == 'music' || apper == 'music') && tree['music_data'] != undefined) {
 			tree['music_data'] = musicAppointmentWriter('data_entry');
