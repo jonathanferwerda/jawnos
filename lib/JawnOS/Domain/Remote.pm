@@ -226,6 +226,20 @@ sub remote_relay_request($c, $extra_params = {}) {
 	}
 }
 
+# Fetch a peer ticket. The stored peer session cookie can be stale (the peer
+# then answers its Gate's denial with 403), while the same request freshly
+# signed needs no cookie: the peer's ticket desk verifies the pinned key. Try
+# the stored session first, then retry once without it.
+sub peer_ticket_fetch {
+	my ($url, $ua) = @_;
+	return undef unless $url && ref $ua;
+	my $res = eval { $ua->inactivity_timeout(15)->get($url)->result };
+	return $res if $res && $res->is_success;
+	my $fresh = Mojo::UserAgent->new;
+	$fresh->on(start => sub { my ($fresh_ua, $tx) = @_; &subs::peer_sign_request($tx->req); });
+	return eval { $fresh->insecure(1)->inactivity_timeout(15)->get($url)->result };
+}
+
 sub remote_useragent_maker($data) {
 	my $ip = $data->{'ip'};
 	my $signatorial = $data->{'signatorial'};

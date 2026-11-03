@@ -562,7 +562,9 @@ sub remote_manager_ticket($c, $rm) {
 			. '&privilege=citizen&keep_warranty=1'
 			. '&signatorial=' . url_escape(&subs::signatorial_designer())
 			. '&warranty=' . url_escape('-2h') . '&name=' . url_escape($name) . '&timestamp=' . $timestamp;
-		my $res = eval { $peer->{'ua'}->inactivity_timeout(15)->get($url)->result };
+		# A stored peer session can be stale; the helper retries the same signed
+		# request without its cookie before the reauth below spends a round.
+		my $res = &subs::peer_ticket_fetch($url, $peer->{'ua'});
 		return '' unless $res && $res->is_success;
 		my $data = eval { decode_json $res->body } || {};
 		my $ticket = $data->{'url'} || '';
