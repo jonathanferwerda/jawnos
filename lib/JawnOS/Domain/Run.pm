@@ -150,6 +150,73 @@ sub version_newer {
 	return &subs::version_cmp($candidate, $mine) > 0 ? 1 : 0;
 }
 
+# Whether a reset target would put older code on this machine. A reset is a
+# repair, not a downgrade: every push bumps VERSION, so a target that sorts
+# below HEAD's is older whatever the commit graph says - a rewritten origin, a
+# stale fetch, or a peer whose advertised version outran its actual tree. The
+# fast-forward paths never ask: a true descendant is always the newer tree. An
+# unreadable VERSION on either side keeps the old behaviour.
+my $target_is_older = sub {
+	my ($repo, $target) = @_;
+	return 0 unless defined $target && $target =~ /^[A-Za-z0-9_.\/^~-]+$/;
+	my $git = &subs::git_binary();
+	my $at = sub {
+		my $v = `cd "$repo" && "$git" show "$_[0]:VERSION" 2>/dev/null`;
+		chomp $v;
+		return ($v =~ /\d/) ? $v : '';
+	};
+	my $mine   = $at->('HEAD');
+	my $theirs = $at->($target);
+	return 0 unless length $mine && length $theirs;
+	return &subs::version_cmp($theirs, $mine) < 0 ? 1 : 0;
+};
+
+# Whether the working tree's VERSION is older than HEAD's - the code-sync case,
+# where a peer's files are laid over the checkout and no commit names them yet.
+# An unreadable VERSION on either side keeps the old behaviour.
+my $worktree_is_older = sub {
+	my ($repo) = @_;
+	my $git = &subs::git_binary();
+	my $theirs = '';
+	if (open(my $fh, '<', "$repo/VERSION")) {
+		$theirs = do { local $/; <$fh> } // '';
+		close $fh;
+		$theirs =~ s/\s+//g;
+		$theirs = '' unless $theirs =~ /\d/;
+	}
+	my $mine = `cd "$repo" && "$git" show HEAD:VERSION 2>/dev/null`;
+	chomp $mine;
+	$mine =~ s/\s+//g;
+	return 0 unless length $mine && length $theirs;
+	return &subs::version_cmp($theirs, $mine) < 0 ? 1 : 0;
+};
+
+# A refused reset is logged once, not every tick: the version pair names the
+# reason, and repeats of the same pair stay quiet.
+my $rollback_refused_note = '';
+my $rollback_refused = sub {
+	my ($repo, $target, $source) = @_;
+	return unless $subs::logfile;
+	my $git = &subs::git_binary();
+	my $at = sub {
+		my $v = `cd "$repo" && "$git" show "$_[0]:VERSION" 2>/dev/null`;
+		chomp $v;
+		$v =~ s/\s+//g;
+		return ($v =~ /\d/) ? $v : '';
+	};
+	my $mine   = $at->('HEAD');
+	my $theirs = $at->($target);
+	my $note = join ' ', $source, $target, $theirs, $mine;
+	return if $rollback_refused_note eq $note;
+	$rollback_refused_note = $note;
+	open(my $fh, '>>', $subs::logfile) or return;
+	print $fh &subs::rightNow() . " $source: refused to reset to $target"
+		. (length $mine && length $theirs ? " ($theirs is older than HEAD $mine)" : '')
+		. "; left the checkout at HEAD\n";
+	close $fh;
+	return;
+};
+
 # The tree the working files would commit as, without touching the worktree or
 # the index. A code sync writes a peer's files over a checkout, so this is what
 # a commit would carry - and what can be compared with the commits origin knows.
@@ -190,7 +257,29 @@ sub git_checkout_normalize {
 	my $fetched = ($? == 0);
 	my $tree = &subs::git_worktree_tree($repo);
 	if ($fetched && $tree && &subs::git_origin_has_tree($repo, $tree)) {
-		my $out = `cd "$repo" && "$git" reset --hard origin/main 2>&1`;
+		# The synced files may be an older peer's tree laid over a newer checkout.
+		# Follow the authority when it advanced; otherwise reset to HEAD, which
+		# cleans the tree without putting older code back on the machine.
+		my $older = $target_is_older->($repo, 'origin/main');
+		$rollback_refused->($repo, 'origin/main', 'code sync') if $older;
+		my $target = $older ? 'HEAD' : 'origin/main';
+		my $out = `cd "$repo" && "$git" reset --hard $target 2>&1`;
+		return ('reset', $out);
+	}
+	# With no route to origin, a peer's older tree is all there is to inspect. It
+	# must not be committed over newer code: that would move the checkout
+	# backwards without a reset for anyone to notice. Restore HEAD and say why.
+	if ($worktree_is_older->($repo)) {
+		my $synced = '';
+		if (open(my $fh, '<', "$repo/VERSION")) { $synced = do { local $/; <$fh> } // ''; close $fh }
+		$synced =~ s/\s+//g;
+		my $out = `cd "$repo" && "$git" reset --hard HEAD 2>&1`;
+		if ($subs::logfile) {
+			open(my $fh, '>>', $subs::logfile);
+			print $fh &subs::rightNow() . " code sync: the synced tree"
+				. (length $synced ? " ($synced)" : '') . " is older than HEAD; restored HEAD\n";
+			close $fh;
+		}
 		return ('reset', $out);
 	}
 	my $version = &subs::jawn_version();
@@ -225,7 +314,12 @@ sub git_repo_update {
 		if ($fetch_ok) {
 			my $tree = &subs::git_worktree_tree($repo);
 			if ($tree && &subs::git_origin_has_tree($repo, $tree)) {
-				my $reset = $run->("\"$git\" reset --hard origin/main");
+				# Same rule as the code-sync normalize: restore HEAD when origin is
+				# behind, so a synced tree cannot drag the checkout backwards.
+				my $older = $target_is_older->($repo, 'origin/main');
+				$rollback_refused->($repo, 'origin/main', 'git update') if $older;
+				my $target = $older ? 'HEAD' : 'origin/main';
+				my $reset = $run->("\"$git\" reset --hard $target");
 				return ('reset', $dirty . $reset);
 			}
 		}
@@ -237,6 +331,10 @@ sub git_repo_update {
 	return ('current', $out) if $head eq $origin;
 	# force makes the checkout exactly origin/main, whatever the local state
 	if ($force) {
+		if ($target_is_older->($repo, 'origin/main')) {
+			$rollback_refused->($repo, 'origin/main', 'forced update');
+			return ('ahead', $out);
+		}
 		$out .= $run->("\"$git\" reset --hard origin/main");
 		return ('reset', $out);
 	}
@@ -250,6 +348,10 @@ sub git_repo_update {
 	# upstream under a rewritten hash (git cherry marks those with '-')
 	my $cherry = $run->("\"$git\" cherry origin/main HEAD");
 	return ('diverged', $out . $cherry) if grep { /^\+/ } split /\n/, $cherry;
+	if ($target_is_older->($repo, 'origin/main')) {
+		$rollback_refused->($repo, 'origin/main', 'git update');
+		return ('diverged', $out . $cherry);
+	}
 	$out .= $run->("\"$git\" reset --hard origin/main");
 	return ('reset', $out);
 }
@@ -284,12 +386,19 @@ sub git_peer_update {
 	print $fh $res->body;
 	close $fh;
 	my $fetch = `cd "$repo" && "$git" fetch "$path" HEAD 2>&1`;
+	my $fetch_ok = ($? == 0);
 	my $target = `cd "$repo" && "$git" rev-parse FETCH_HEAD 2>/dev/null`; chomp $target;
 	unlink $path;
-	return ('fetch-error', $fetch) unless $target;
+	# A failed fetch leaves the previous FETCH_HEAD in place, so the target above
+	# can be an older bundle from an earlier run. Never act on it.
+	return ('fetch-error', $fetch) unless $fetch_ok && $target;
 	my $current = `cd "$repo" && "$git" rev-parse HEAD 2>/dev/null`; chomp $current;
 	return ('current', '') if $current eq $target;
 	if ($opts->{'force'}) {
+		if ($target_is_older->($repo, $target)) {
+			$rollback_refused->($repo, $target, 'peer update');
+			return ('diverged', 'the peer tree is older than this checkout');
+		}
 		my $out = `cd "$repo" && "$git" reset --hard $target 2>&1`;
 		return ('reset', $out);
 	}
@@ -301,6 +410,10 @@ sub git_peer_update {
 	# commit '-') is a reset, not a conflict
 	my $cherry = `cd "$repo" && "$git" cherry $target HEAD 2>&1`;
 	return ('diverged', $cherry) if $opts->{'ff_only'} || grep { /^\+/ } split /\n/, $cherry;
+	if ($target_is_older->($repo, $target)) {
+		$rollback_refused->($repo, $target, 'peer update');
+		return ('diverged', 'the peer tree is older than this checkout');
+	}
 	my $out = `cd "$repo" && "$git" reset --hard $target 2>&1`;
 	return ('reset', $out);
 }

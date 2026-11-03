@@ -246,7 +246,13 @@ sub source_kind {
 # reported as a skip, the way the JavaScript parse is skipped when node is absent.
 # A named or --range check judges a change, so it stays strict.
 my @dep_skips;
-sub missing_module { my $t = shift; return (defined $t && $t =~ /Can't locate \S+\.pm in \@INC/) ? 1 : 0; }
+sub missing_module_name {
+	my $t = shift;
+	return undef unless defined $t;
+	return $1 if $t =~ /Can't locate (\S+)\.pm in \@INC/;
+	return undef;
+}
+sub missing_module { return defined &missing_module_name($_[0]) ? 1 : 0; }
 
 sub check {
 	my ($rel, $src, $path) = @_;
@@ -262,8 +268,16 @@ sub check {
 			my $again = `cd "$root" && "$^X" -Mfeature=signatures -MMojolicious::Lite -MMojo::JSON=decode_json,encode_json -c "$path" 2>&1`;
 			$again = '' unless defined $again;
 			unless ($again =~ /syntax OK/) {
+				my $missing = &missing_module_name($out);
+				$missing = &missing_module_name($again) unless defined $missing;
 				if ($all && &missing_module($out) && $out !~ /syntax error/i) {
 					push @dep_skips, $rel;
+				}
+				elsif (defined $missing && $out !~ /syntax error/i && $again !~ /syntax error/i) {
+					# A module the machine does not have stops the compile before the
+					# file is judged; say which side of the fence this is, so nobody
+					# rewrites good code because the hook's Perl lacked a library.
+					push @probs, "perl -c: cannot load $missing (install it; this is the hook's environment, not the code)";
 				}
 				else {
 					push @probs, 'perl -c: ' . &first_line($out);
