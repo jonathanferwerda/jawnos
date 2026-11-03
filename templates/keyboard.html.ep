@@ -19,8 +19,7 @@
 				<% } %>
 			</select>
 			<button type="button" id="remote_control_go" class="remote_manager_open" uuid="<%= $selected_rm ? $selected_rm->{'uuid'} : '' %>" manager="<%= $selected_rm ? $selected_rm->{'manager'} : '' %>" hint="<%= &subs::ui("Open this machine's Manager") %>" <% if (!$selected_rm) { %>style="display:none;"<% } %>><%= &subs::lang('common.go') %></button>
-			<select id="remote_control_vpn_node" hint="<%= &subs::ui('The machine your web traffic leaves from while the VPN is on') %>" style="display:none;vertical-align:top;"></select>
-			<button type="button" id="remote_control_vpn" class="hover" hint="<%= &subs::ui("Route this device's web traffic through the exit node chosen beside it") %>" status="off" style="display:none;"><%= &subs::lang('vpn') %></button>
+			<button type="button" id="remote_control_vpn" class="hover" hint="<%= &subs::ui("Route this device's web traffic through the exit node chosen on the Me view") %>" status="off" style="display:none;"><%= &subs::lang('vpn') %></button>
 			<img class="jonathan little_thumb keyboard_config_toggle" onclick="keyboardConfigToggle('remote_control')" src="<%= &subs::icon_for('/images/decipherable/wrench.png') %>" hint="Configure"></img>
 			<br>
 			<div id="remote_control_view" class="keyboard_content">
@@ -34,6 +33,7 @@
 						<% my $server_public_ip = &subs::public_interface_address({ network => &subs::network_interface_reporter() }); %>
 						<% if ($server_public_ip) { %><%= &subs::lang('remote_control.public_ip') %>: <span class="clip" hint="<%= &subs::ui('Click to copy the public address') %>"><%= $server_public_ip %></span><% } %>
 					<% } %>
+					<span id="remote_control_vpn_row" style="display:none;"><br><%= &subs::lang('vpn') %>: <select id="remote_control_vpn_node" hint="<%= &subs::ui('The machine your web traffic leaves from while the VPN is on') %>" style="vertical-align:top;"></select></span>
 				<% } else { %>
 					<%= $selected_rm->{'hostname'} || $selected_rm->{'fqdn'} || $selected_rm->{'ip'} %><br>
 					<%= $selected_rm->{'ip'} %><br>

@@ -19,8 +19,14 @@ my $tpl  = read_file("$root/templates/keyboard.html.ep");
 my $js   = read_file("$root/public/js/manager/keyboard/03_editor_switcher.js");
 
 # --- the panel offers the node it will use ----------------------------------
-like($tpl, qr/<select id="remote_control_vpn_node"/,
-	'the VPN area carries its own exit-node list');
+my ($toolbar, $content) = split /<div id="remote_control_view"/, $tpl, 2;
+unlike($toolbar // '', qr/id="remote_control_vpn_node"/,
+	'the exit-node list is not in the top toolbar');
+my ($me_view) = ($content // '') =~ /if \( !\$selected_rm \) \{(.*?)\} else \{/s;
+like($me_view // '', qr/id="remote_control_vpn_node"/,
+	'the exit-node list lives on the Me view');
+like($me_view // '', qr/id="remote_control_vpn_row"/,
+	'and has a row that can stay hidden when no node offers one');
 like($tpl, qr/<button type="button" id="remote_control_vpn"/,
 	'the VPN button is still there');
 
@@ -35,6 +41,10 @@ unlike($js, qr/if \(!picked\.ip\) \{/,
 	'a machine with no tailnet address no longer blocks the button');
 like($js, qr/sel\.append\(\$\('<option>'\)\.val\(nodes\[i\]\.ip\)\.text\(nodes\[i\]\.name\)\)/,
 	'each exit node becomes an option on the list');
+like($js, qr/\$\('#remote_control_vpn_row'\)\.toggle\(nodes\.length > 0\)/,
+	'the Me view hides the row when no node offers one');
+like($js, qr/if \(!\$\('#remote_control_vpn_node'\)\.length\) \{ b\.hide\(\); return; \}/,
+	'a peer view shows no VPN button');
 like($js, qr/function jawnosVpnTarget\(\)/,
 	'the button has one place that names its target');
 like($js, qr/var target = on \? '' : jawnosVpnTarget\(\);/,

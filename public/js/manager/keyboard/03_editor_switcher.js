@@ -502,7 +502,7 @@ function jawnosVpnChooser(nodes, preferred) {
 	}
 	if (!want && nodes.length) { want = nodes[0].ip; }
 	sel.val(want);
-	sel.toggle(nodes.length > 0);
+	$('#remote_control_vpn_row').toggle(nodes.length > 0);
 	return want;
 }
 
@@ -526,6 +526,9 @@ function jawnosVpnPaint(on) {
 function jawnosVpnRefresh() {
 	var b = $('#remote_control_vpn');
 	if (!b.length) { return; }
+	// The VPN moves this device's own traffic, so it belongs to the Me view;
+	// a peer view has no exit-node list and shows no button.
+	if (!$('#remote_control_vpn_node').length) { b.hide(); return; }
 	jawnosVpnStatus(function (s) {
 		var nodes = jawnosVpnNodes(s);
 		var picked = jawnosVpnSelected();
