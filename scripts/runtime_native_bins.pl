@@ -276,6 +276,22 @@ printf "runtime_native_bins: %d entries under bin/ libexec/ (%d executables, %d 
 	$entries, $executables, $symlinks, $other;
 printf "runtime_native_bins: wrote %d files, %s MB to %s/%s\n",
 	$executables, $mb, $out, $abi;
+# A runtime built with a narrow prefix rewrite (.../files/usr) leaves the home
+# path that sshd and sshd-session carry, and every phone login then prints
+# "Could not chdir to home directory /data/data/com.termux/files/home". That
+# shipped once (0.1.1750's jniLibs), so refuse to emit such a library.
+for my $so (glob("$out/$abi/*.so")) {
+	open(my $sh, '<', $so) or die "runtime_native_bins: $so: $!\n";
+	binmode $sh;
+	local $/;
+	my $raw = <$sh>;
+	close $sh;
+	if (defined $raw && $raw =~ /com\.termux/) {
+		die "runtime_native_bins: $so still names com.termux; build the runtime with\n"
+		  . "  --rewrite-prefix /data/data/com.termux/files=/data/data/com.jawnos/files\n";
+	}
+}
+
 printf "runtime_native_bins: manifest %s (%d entries: %d file, %d link)\n",
 	$manifest_path, scalar(@manifest), $executables, $symlinks;
 printf "runtime_native_bins: parts %s (%d entries)\n", $parts_path, scalar(@parts_manifest);
