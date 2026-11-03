@@ -7,11 +7,13 @@ under a dated heading; older sections stay as history.
 
 ## 2026-11-03 — the alarm at the level you chose, and answerable anywhere
 
-- **The alarm no longer forces the phone's alarm stream to maximum.** The
+- **The alarm sets the phone to the Clock's volume, then puts it back.** The
   player still asks for Android's alarm channel, so Do Not Disturb and the
-  ringer's alarm rules still apply, but the phone's alarm volume is left where
-  the person set it. The Clock's own Volume scales on top, so a quiet phone
-  stays quiet and a 30% alarm is actually 30%.
+  ringer's alarm rules still apply. Instead of forcing the alarm stream to
+  maximum, the app moves it to the alarm's own Volume for the ring and restores
+  the previous alarm-stream step when the ring ends - Dismiss, Snooze, a timer
+  finishing, or the five-minute guard. A 30% alarm is 30%, and the phone is left
+  where the person had it.
 - **Every open Manager window shows the ring card.** The card's duplicate
   guard lived in localStorage, which every window on a machine shares, so only
   the first window to hear the push drew it. Each window now keeps its own
