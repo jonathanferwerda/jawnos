@@ -20,9 +20,19 @@ package subs;
 # descendant's run - and when it does kill, it signals the group, so the
 # grandchild leaves with its wrapper instead of being orphaned.
 #
+# 'run_p' does not fork at the call. It queues the fork on the next tick of the
+# caller's loop, so the child starts when the request that asked for it finally
+# returns - on a phone under load that is seconds later, and every job queued in
+# the same request starts then too. The warranty was stamped at the ask, so a 5s
+# header render was already half spent before its process existed, and a busy
+# request spent all of it: the reaper TERM'd the child seconds into its work, no
+# header came back, and the models queued behind it waited out their own lease in
+# a worker the fork had closed. A job asked for that way starts its warranty when
+# its process does (Deferred), so the clock it is judged by is the one it runs on.
+#
 # Nothing here reads the database, so the master can require it before President
-# or the domain loader exists. /proc is read for the pid-reuse guard and the
-# descendant scan.
+# or the domain loader exists. /proc is read for the pid-reuse guard, the
+# descendant scan and a deferred start.
 use strict;
 use warnings;
 no warnings 'once';
@@ -79,7 +89,7 @@ our %WARRANTY = (
 	# A header render is the fast half (the window render is the fork).
 	'address report'                 => '120s',
 	'remote availability'            => '120s',
-	'appt_header_printer'            => '5s',
+	'appt_header_printer'            => '10s',
 	'folders open with'              => '10s',
 	'thumb shredder'                 => '10s',
 	'padlock time extender'          => '10s',
@@ -532,6 +542,19 @@ sub subprocessor_reap {
 					$report->{'reaped'}++;
 					next;
 				}
+			}
+			# A job asked for through run_p starts its warranty here, when its
+			# process first appears, not when the request asked for it. Once, on the
+			# pass that sees it: re-stamping every pass would move the deadline it is
+			# being judged by. A child that never forks keeps its last moment and is
+			# expired then, so a fork that never lands is still reaped.
+			if ($record->{'deferred_warranty_spec'} && !$record->{'warranty_started_at'}) {
+				$record->{'warranty'} = &subprocessor_warranty_at($record->{'deferred_warranty_spec'}, $now);
+				$record->{'warranty_started_at'} = $now;
+				# This pass is the job's start, so it also has to be the one that may
+				# judge it - a spec of no length would otherwise get one pass of grace
+				# it never asked for.
+				delete $record->{'extended_at'};
 			}
 			unless ($alive->($pid)) {
 				delete $kids->{$pid};

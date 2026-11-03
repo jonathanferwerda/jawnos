@@ -604,6 +604,11 @@ sub subprocessor {
 		: &subs::subprocessor_warranty_for($name);
 	my $started = &subs::rightNow();
 	my $warranty = &subs::subprocessor_warranty_at($warranty_spec, $started);
+	# run_p forks on the next tick, not at this call, so the child's own clock
+	# starts when it runs (see subprocessor_reap): the ask asks, the process is
+	# judged. 'forever' and an absolute moment are the same either way.
+	my $forked = $gb::subprocessed > 1 && !$params->{'fork'} ? 0 : 1;
+	my $runs_later = $forked && !(defined $warranty_spec && $warranty_spec =~ /^\s*(?:forever|\d{12,})\s*$/i);
 	# A resident loop is 'forever', but it still has to prove it is working. The
 	# lease is the longest quiet gap the loop is allowed; the loop calls
 	# subs::subprocessor_heartbeat() each turn.
@@ -657,6 +662,7 @@ sub subprocessor {
 			heartbeat_spec => $heartbeat_spec,
 			start_ticks => $start_ticks,
 			pgid => $pgid,
+			($runs_later ? (deferred_warranty_spec => $warranty_spec) : ()),
 		};
 		&subs::unix_socket_sender($file,$subprocess);
 

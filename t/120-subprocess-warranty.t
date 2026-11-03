@@ -266,6 +266,61 @@ sub tracked_record {
 	is($report->{'capped'}, 1, 'the cap was reached');
 }
 
+# A job asked for through run_p is forked on the caller's next tick, so its
+# record is stamped at the ask but its process starts later - seconds later on a
+# busy phone. Its warranty must run from the fork, not from the ask: a 5s header
+# render was half spent before it existed and the reaper TERM'd it mid-render.
+{
+	my $tracked = tracked_record(
+		name => 'appt_header_printer',
+		warranty => $NOW + 5000,
+		deferred_warranty_spec => '10s',
+		pgid => 200, pid => 200);
+	my $record = $tracked->{100}{subprocesses}{200};
+	my @kills;
+	# The fork lands late: the first pass that sees the live pid is the start.
+	my $report = &subs::subprocessor_reap($tracked,
+		now => $NOW + 3000, alive => sub { 1 }, kill => sub { push @kills, [@_] },
+		starttime => sub { '' }, descendants => sub { [] }, descendant_step => 30_000);
+	is($record->{'warranty'}, $NOW + 3000 + 10_000, 'a deferred job starts its warranty when its process appears');
+	is($record->{'warranty_started_at'}, $NOW + 3000, 'and the pass that saw it is named');
+	is($report->{'expired'}, 0, 'so the ask-to-fork wait is not billed to it');
+
+	# A later pass judges it by that clock: 11s after the fork is past 10s.
+	&subs::subprocessor_reap($tracked,
+		now => $NOW + 12_500, alive => sub { 1 }, kill => sub { push @kills, [@_] },
+		starttime => sub { '' }, descendants => sub { [] });
+	is_deeply(\@kills, [], 'inside its own run it is left alone');
+	&subs::subprocessor_reap($tracked,
+		now => $NOW + 13_100, alive => sub { 1 }, kill => sub { push @kills, [@_] },
+		starttime => sub { '' }, descendants => sub { [] });
+	is(scalar @kills, 1, 'past ten seconds of its own run it is expired');
+
+	# Stamping is once: a pass must not push the deadline it is judged by.
+	my $moved = $record->{'warranty'};
+	&subs::subprocessor_reap($tracked,
+		now => $NOW + 40_000, alive => sub { 1 }, kill => sub { push @kills, [@_] },
+		starttime => sub { '' }, descendants => sub { [] });
+	is($record->{'warranty'}, $moved, 'a later pass does not restamp the deadline');
+}
+
+# A fork that never lands keeps the moment it was due and is signalled then.
+{
+	my $tracked = tracked_record(
+		name => 'appt_header_printer',
+		warranty => $NOW + 10_000,
+		warranty_started_at => $NOW,
+		deferred_warranty_spec => '10s',
+		pgid => 0, pid => 200);
+	my @kills;
+	my $report = &subs::subprocessor_reap($tracked,
+		now => $NOW + 11_000, alive => sub { 1 }, kill => sub { push @kills, [@_] },
+		starttime => sub { '' }, descendants => sub { [] });
+	is($report->{'expired'}, 1, 'a job whose process never appeared still expires on its last moment');
+	is(scalar @kills, 1, 'and is signalled once');
+	is($tracked->{100}{subprocesses}{200}{'warranty'}, $NOW + 10_000, 'without moving that moment');
+}
+
 # --------------------------------------------------------------- the wiring
 my $calendar = read_file("$root/lib/JawnOS/Domain/Calendar.pm");
 like($calendar, qr/subprocessor_warranty_at\(\$warranty_spec, \$started\)/,
@@ -274,6 +329,9 @@ like($calendar, qr/warranty\s*=>\s*\$warranty/, 'the record carries the absolute
 like($calendar, qr/start_ticks\s*=>\s*\$start_ticks/, 'the record carries the pid-reuse guard');
 like($calendar, qr/heartbeat_lease\s*=>\s*\$heartbeat_lease/, 'the record carries the heartbeat lease');
 like($calendar, qr/pgid\s*=>\s*\$pgid/, 'the record carries its process group');
+like($calendar, qr/deferred_warranty_spec\s*=>\s*\$warranty_spec/, 'a run_p job asks for its warranty at its fork');
+like($calendar, qr/my \$forked = \$gb::subprocessed > 1 && !\$params->\{'fork'\} \? 0 : 1;/,
+	'a job that may run inline is not stamped as deferred');
 like($calendar, qr/setpgrp\(0, 0\)/, 'the wrapper owns its process group');
 like($president, qr/subs::subprocessor_heartbeat\(\)/, 'a resident loop heartbeats');
 
