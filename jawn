@@ -730,6 +730,29 @@ Mojo::IOLoop->recurring(2 => sub {
 
 });
 
+# A subprocessor stamps a warranty when it starts; this is the only place that
+# can enforce it, because the master owns the records the workers send it. A
+# dead pid is forgotten (a SIGKILLed child never writes its stop record, which
+# used to leave an entry for the master's lifetime); a finite warranty gets one
+# TERM, then a KILL after the grace; 'forever' - the resident loops, the
+# servers, a tunnel holder - is never touched. Required here because the master
+# does not load the domain tree.
+require './lib/JawnOS/Domain/Process.pm' unless defined &subs::subprocessor_reap;
+Mojo::IOLoop->recurring(5 => sub {
+	my $report = eval { &subs::subprocessor_reap($subprocesses, {
+		now => time() * 1000,
+		on_expire => sub {
+			my ($record, $why) = @_;
+			my $line = 'subprocess ' . ($record->{'name'} || '?')
+				. ' pid ' . ($record->{'pid'} || '?') . ' ' . $why;
+			eval { $log->info($line) } if $log;
+			print "$line\n";
+		},
+	}) };
+	$log->info('subprocess reaper: ' . join(', ', map { "$_=$report->{$_}" } sort keys %{$report}))
+		if $report && ($report->{'reaped'} || $report->{'expired'} || $report->{'killed'});
+});
+
 sub shut_down() {
 	my ($keep_coding) = @_;
 	print "pres Ctrl+C! Closing...\n";

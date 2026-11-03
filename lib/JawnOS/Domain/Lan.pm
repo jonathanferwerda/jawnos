@@ -619,7 +619,7 @@ sub tunnel_starter {
 					in_port => $rb->{$r}->{'source'},
 					out_port => $rb->{$r}->{'dest'},
 					name => $r,
-					warranty => &subs::ago_calc('-1d', &subs::rightNow()),
+					warranty => &subs::forever_warranty(),
 					status => 'connecting',
 					signatorial => $signatorial || $rm->{'signatorial'},
 					uuid => $uuid,
@@ -649,7 +649,7 @@ sub tunnel_starter {
 				$pid = $$;
 				&subs::db_update('tunnels', { process_id => $pid, server_time => &subs::rightNow(), status => 'active' }, { uuid => $_ }) for @uuids;
 				&subs::tunnel_wss_peer($rm->{'manager'}, $rm->{'ws_port'});
-			}, { name => 'tunnel holder wss ' . scalar(@uuids) . ' ports' });
+			}, { name => 'tunnel holder wss ' . scalar(@uuids) . ' ports', warranty => 'forever' });
 
 
 		}

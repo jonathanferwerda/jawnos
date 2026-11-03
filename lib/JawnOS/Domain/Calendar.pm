@@ -586,21 +586,45 @@ sub subprocessor {
 		return $result;
 	}
 	my $parent_pid = $$;
+	# The warranty belongs to the job's name, not to each call site: one seed map
+	# (Domain::Process) gives a tunnel holder 'forever' and a header render five
+	# seconds, and a caller may still override it with warranty =>. A name that is
+	# not listed is 'forever', so a new job is never killed on its first slow run.
+	my $name = $params->{'name'};
+	my $warranty_spec = defined $params->{'warranty'}
+		? $params->{'warranty'}
+		: &subs::subprocessor_warranty_for($name);
+	my $started = &subs::rightNow();
+	my $warranty = &subs::subprocessor_warranty_at($warranty_spec, $started);
 	my $wrapped_subroutine = sub {
 		Mojo::IOLoop->reset({ freeze => 1 });
 		$gb::subprocessed++;
 		my $file = &subs::home('~/.process_watch');
 #		my $file = $tmp_dir . '/process_watch';
 		my $pid = $$;
+		# The kernel's start time for this pid, so a reaper can tell a live record
+		# from a number the OS has since given to another process.
+		my $start_ticks = '';
+		if (open(my $stat_fh, '<', '/proc/self/stat')) {
+			my $stat_line = <$stat_fh>;
+			close $stat_fh;
+			if (defined $stat_line && (my $close = rindex($stat_line, ')')) >= 0) {
+				my @stat_field = split ' ', substr($stat_line, $close + 2);
+				$start_ticks = $stat_field[19] // '';
+			}
+		}
 
 		my $subprocess = {
 			parent    => $parent_pid,
 			pid       => $pid,
-			timestamp => &subs::rightNow(),
-			start_timestamp => &subs::rightNow(),
-			name      => $params->{'name'},
+			timestamp => $started,
+			start_timestamp => $started,
+			name      => $name,
 			uuid      => &subs::random_string_creator(10),
 			status    => 'start',
+			warranty  => $warranty,
+			warranty_spec => (defined $warranty_spec && length $warranty_spec) ? $warranty_spec : 'forever',
+			start_ticks => $start_ticks,
 		};
 		&subs::unix_socket_sender($file,$subprocess);
 
