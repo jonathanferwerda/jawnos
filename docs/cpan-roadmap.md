@@ -29,7 +29,42 @@ Two facts make this practical:
 6. **Hardware tests use a fake transport.** A module that needs the deck, the watch or the Pico to
    pass is not testable and will rot.
 7. **Eleven is the cap.** Each dist is a version to bump, a PAUSE release, and a security surface.
-   The bench exists so the cap can be enforced without losing the ideas.
+   The bench exists so the cap can be enforced without losing the ideas. The first reserve is
+   `Business::POS::Register` (`#31`).
+
+## The zero-friction contract
+
+A module that needs a technical document before it can be wired up has failed, whatever its
+quality. Every entry must pass this before release:
+
+| Rule | Test |
+|---|---|
+| Installs in seconds | `cpanm Module` with no mandatory compiler step beyond deps already present (CryptX, HTML::Parser). No Moose/Mouse/Type::Tiny. |
+| One obvious entry point | `Module->new(%opts)` with no required argument where a sane default exists; environment variables (`OPENAI_API_KEY`, `DEVICE_TOKEN`) fill the rest. |
+| Three lines to first success | the SYNOPSIS is a working example, not a sketch. If it cannot be wired in three lines, the API is wrong. |
+| Errors say the fix | `"pass rp_id => 'example.com' (or set WEBAUTHN_RP_ID)"`, never `"invalid argument"`. |
+| Heavy work is lazy | `require` an optional dependency only on the path that needs it, so the install stays small. |
+| No hidden state | no cwd dependency, no `$HOME` writes, no globals; every default is documented and overridable. |
+| A demo ships | `eg/` or `bin/` runs offline against `127.0.0.1` or fixtures. |
+| Docs lead with the answer | SYNOPSIS, a ten-line **Quick start**, then the reference. Theory goes in NOTES, which nobody is required to read. |
+
+### The three-line wire-up (target SYNOPSIS)
+
+| Module | First success |
+|---|---|
+| `Mojo::Tunnel` | `my $hub = Mojo::Tunnel->hub($ws, listen => { ssh => { source => 2222, dest => 22 } });` |
+| `WebAuthn::Verify` | `my ($ok, $cred) = WebAuthn::Verify::registration($json, rp_id => 'example.com');` |
+| `Crypt::Sealed` | `my $blob = Crypt::Sealed::seal($secret, $recipient_pub);` |
+| `LoRaWAN::Uplink` | `my $up = LoRaWAN::Uplink::decode($webhook_json);` |
+| `Device::Fleet` | `my $fleet = Device::Fleet->new(send => sub { ... }); $fleet->register(%device);` |
+| `AI::Transport` | `my $t = AI::Transport->new(provider => 'openai'); my $req = $t->encode(\@messages);` |
+| `HTML::Allowlist` | `my $safe = HTML::Allowlist::clean($html);` |
+| `Device::Bridge` | `my $battery = Device::Bridge->new->call('battery.status');` |
+| `Lock::SingleFlight` | `Lock::SingleFlight->new(store => $db)->claim('pull') or die "busy";` |
+| `App::TestsFor` | `my @tests = App::TestsFor->new->tests_for(@changed);` |
+| `Log::Ring` | `my $ring = Log::Ring->new(max => 2_000_000); $ring->append($bytes);` |
+
+If a module cannot reach that shape, it is not ready — the fix is the API, not a longer README.
 
 ## How JawnOS consumes one
 
@@ -47,10 +82,12 @@ For a module `Foo::Bar` extracted from `lib/JawnOS/Domain/Baz.pm`:
 - `perl scripts/where.pl <name>` must stop reporting the old part after the change; the locator is
   the acceptance test that the seam was cut cleanly.
 
-## The 30 candidates
+## The 34 candidates
 
-Gap = what CPAN lacks today (checked on MetaCPAN 2026-11-02). Effort: S ≈ 1–3 days, M ≈ 1–2 weeks,
-L ≈ 2–4 weeks including tests. PICK = the eleven; BENCH = keep, do not start; DROP = no.
+Thirty from the first pass, four more from the store/handbook/marker/music pass. Gap = what CPAN
+lacks today (checked on MetaCPAN 2026-11-02). Effort: S ≈ 1–3 days, M ≈ 1–2 weeks, L ≈ 2–4 weeks
+including tests. PICK = the eleven; RESERVE = first to replace a slip; BENCH = keep, do not start;
+DROP = no.
 
 ### Transport, presence, local IPC
 
@@ -113,10 +150,31 @@ L ≈ 2–4 weeks including tests. PICK = the eleven; BENCH = keep, do not start
 | 30 | `Schedule::Recur` | `Domain/Schedule.pm` (`schedule_next`, `nth_weekday_of_month`, `easter_sunday`) | recurrence keeping local time-of-day across months | M | DROP — Date::Calc / DateTime::Event::Recurrence cover it |
 
 Also considered and dismissed: `Date::Human` (`Domain/Resolve.pm` — `DateTime::Format::Natural`
-1.27, June 2026, is active), `Business::Change` (`Domain/Store.pm` — too small), `Server::Control`
-shim (`perl/control.pl` — an older module exists and this one is verdict-shaped), `Where`
-(`scripts/where.pl`) and `Agent::Help` (`scripts/agent_help.pl`) — both read JawnOS's own maps and
-have no meaning elsewhere.
+1.27, June 2026, is active), `Business::Change` (`Domain/Store.pm` — too small on its own),
+`Server::Control` shim (`perl/control.pl` — an older module exists and this one is verdict-shaped),
+`Where` (`scripts/where.pl`) and `Agent::Help` (`scripts/agent_help.pl`) — both read JawnOS's own
+maps and have no meaning elsewhere.
+
+### Second pass: store, handbook, marker, music
+
+| # | Candidate | Source | Gap | Effort | Verdict |
+|---|---|---|---|---|---|
+| 31 | `Business::POS::Register` | `Domain/Store.pm` (329 lines, **0** `subs::` calls) | order/line/quantity lifecycle, payment-method validation, denominations, change breakdown, underpayment refusal; CPAN has payment gateways but no till | S | RESERVE |
+| 32 | `Media::Name` | `perl/Music.pl:63-100`, `Domain/File.pm` | artist/album/track from tags **and** episode/season from names (`S03E06`, `1x02`, `Season 3 Episode 6`), quality/codec/group stripped; `Video::Filename` is 2009, GPL and video-only | S | BENCH |
+| 33 | `Audio::Stream::Sync` | `perl/Music/01_remote_audio_receiver.pl`, `public/js/music.js` | remote audio lead measurement, stale-frame drop, L/R split, Opus/PCM choice | L | BENCH |
+| 34 | `Marker::Session` | `Manager/Part35.pm:334-380` | layered canvas session blobs with autosave | S | DROP — the drawing is client-side; only a blob store would ship |
+
+- **Handbook** is an aggregation view (Today reads money, measures, notes, projects and people;
+  Plant calls the Guide). Its reusable parts are `Resolve` (dates, dismissed above) and the AI
+  transport. Nothing on its own.
+- **Marker** is a layered paint board in the browser; the server only stores session serialisations
+  (`marker_sessions`, `marker_session_store`). A module here would be a generic “JSON blob with a
+  thumbnail”, which is not worth a dist.
+- **Store** gave one real candidate. `Domain/Store.pm` is already uncoupled and pure: money in,
+  money out, no database. It is the reserve because it is the easiest of the whole list to make
+  excellent.
+- **Music** gave two: the library-name parser (small, pure) and the remote-audio synchroniser
+  (large, browser-shaped). The player itself is not a Perl module.
 
 ## The eleven
 
@@ -252,6 +310,38 @@ have no meaning elsewhere.
 - **API.** `Log::Ring->new(max => $bytes)`, `append($bytes)`, `since($seq)`, `serve($path)`.
 - **Tests.** Wrap and `dropped` count, cursor reset, ANSI/UTF-8 bytes intact, concurrent readers.
 
+## LoRa: what a Perl module can and cannot do
+
+The honest split is three layers, and only the first is a CPAN dist.
+
+1. **`LoRaWAN::Uplink` — CPAN, host side.** Validates credentials and the region plan, normalises
+   network-server uplinks, and emits the board's config document. Pure Perl and pure functions:
+   testable with fixtures, no radio.
+2. **`JawnLoRa` — a firmware library, not CPAN.** An Arduino/PlatformIO library over RadioLib with a
+   deliberately tiny API: `begin($plan)`, `join()`, `send($bytes)`, `onDownlink(\&cb)`, `sleep()`.
+   It owns duty-cycle pacing, the channel plan, retries and the uplink queue. Distributed through
+   the PlatformIO registry and GitHub, BSD-2-Clause like the rest.
+3. **The shared document.** Both sides read the same `lorawan_config` JSON
+   (`{ region, subband, join_eui, dev_eui, app_key, fport, confirmed }`), which is what the manager
+   already pushes to a deck's `/lorawan_config`.
+
+**Can the module select the frequencies?** Yes, at the plan level: `LoRaWAN::Uplink::plan(region =>
+'US915', subband => 2)` returns the sub-band, channel list, data-rate range and duty-cycle limit. It
+must not transmit, and it must not pretend to know the radio's state. Frequency hopping, dwell time
+and the join procedure stay next to the radio, where RadioLib already implements them.
+
+**Can it operate the ESP32 in-process?** No — a CPAN module is Perl on the host. What it *can* do is
+generate the plan, validate it, flash/configure the board over USB or OTA (`bin/lora`), and decode
+what the board sends back. The MCU work lives in the firmware library, which is the only way to keep
+RF rules testable on real hardware.
+
+**Raw LoRa (the watch's broadcast chat)** gets the same treatment with a smaller plan:
+`plan(mode => 'raw', region => 'US915', channel => 0)` → frequency, bandwidth, spreading factor,
+SX126x sync word and TX power. That is enough to make two watches talk without a network server.
+
+So: yes to frequency selection and a modular firmware library, no to “the CPAN module runs on the
+ESP32”. Keeping that line clear is what makes both halves good.
+
 ## Bench (do not start yet)
 
 Ordered by how likely they are to be promoted:
@@ -276,6 +366,10 @@ Ordered by how likely they are to be promoted:
 | 2 | `Crypt::Sealed`, `WebAuthn::Verify` | First real WebAuthn vectors; ES256 encoding pinned |
 | 3 | `Device::Fleet`, `LoRaWAN::Uplink` | Watch/T-Deck/Pico integration passes against a fake transport |
 | 4 | `AI::Transport`, `Lock::SingleFlight` | Golden provider JSON + marker state-machine tests |
+| 5 | `JawnLoRa` firmware library (PlatformIO), alongside `LoRaWAN::Uplink` | T-Deck, T-Watch and Pico join, send and sleep on a plan generated by the Perl module |
+
+The reserve `Business::POS::Register` starts when any pick slips, and should be the second pilot if
+Phase 0 goes smoothly — it is the cheapest possible proof that the zero-friction contract is real.
 
 Phase 0 pilot should be `HTML::Allowlist`: smallest seam, zero coupling, already tested.
 
@@ -285,7 +379,9 @@ Phase 0 pilot should be `HTML::Allowlist`: smallest seam, zero coupling, already
 - [ ] no `require './…'`, no cwd-relative path, no `$HOME` assumption
 - [ ] no insecure default; TLS verification is opt-out only
 - [ ] tests pass with no hardware and no network (`127.0.0.1` allowed)
-- [ ] POD: NAME, SYNOPSIS, DESCRIPTION, METHODS, DIAGNOSTICS, LICENSE
+- [ ] three-line SYNOPSIS actually runs (copied into `eg/` and exercised by a test)
+- [ ] install has no mandatory compiler step beyond CryptX/HTML::Parser; optional deps are lazy
+- [ ] POD: NAME, SYNOPSIS, ten-line Quick start, DESCRIPTION, METHODS, DIAGNOSTICS, LICENSE
 - [ ] `Changes` starts at 0.001; `MIN_PERL_VERSION` declared
 - [ ] JawnOS's map/route/help indexes updated in the same commit
 - [ ] `where.pl` no longer reports the old location
