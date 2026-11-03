@@ -35,10 +35,10 @@ my $js        = read_file("$root/public/js/manager/manager/06_appointment_distan
 
 my ($header_sub) = $calendar =~ /(sub appt_header_printer \{.*?\n\}\n)/s;
 ok($header_sub, 'appt_header_printer is one sub');
-like($header_sub, qr/if \(\$data->\{'defer'\} && !\$data->\{'header_only'\}\)/,
-	'a press can run the header render in its own process');
-like($header_sub, qr/&subs::subprocessor\(sub \{\s*Mojo::IOLoop->reset;\s*&appt_header_printer\(\\%deferred\);\s*\}, \{ name => 'appt_header_printer', fork => 1 \}\);/s,
-	'named for the warranty seed and forced into a real fork, so the press never waits');
+unlike($header_sub, qr/subprocessor/,
+	'the header render never forks: it is the fast half and fires before the defaults');
+unlike($header_sub, qr/defer/,
+	'no caller can ask for the header on a delay');
 unlike($header_sub, qr/&(?:Manager::)?centre_view_grabber\s*\(/,
 	'the header no longer renders the centre view');
 like($header_sub, qr/foreach my \$a \( \@\{ \(\$appts->\{\$app\} \|\| \{\}\)->\{'list'\} \|\| \[\] \} \) \{\s*&appt_alarm_setter\(\$a\);/s,
@@ -62,12 +62,12 @@ ok($start_insert >= 0 && $start_header > $start_insert,
 	'the start header follows the row write');
 ok($start_header < $start_toggle && $start_header < $start_models,
 	'and precedes the toggle write and the default model/option sessions');
-like($start_branch, qr/skip_toggle => \(\$seen eq 'yes' \? 1 : 0\)/,
+like($start_branch, qr/skip_toggle => \(\$seen eq 'yes' \? 1 : 0\)\s*\}\);/,
 	'a live start does not repeat the toggle write in the header');
-like($start_branch, qr/defer => \$defer_header/,
-	'the start header is deferred so the models and options are not held behind it');
-like($part14, qr/my \$defer_header = \$wants_cv \? 0 : 1;/,
-	'a caller that needs the header in its reply still renders it inline');
+unlike($start_branch, qr/defer/,
+	'a start renders its header inline, so the push lands before the defaults start');
+unlike($part14, qr/defer_header/,
+	'and no press defers the header any more');
 
 my ($stop_branch) = $part14 =~ /(elsif \(\$type eq 'stop'\) \{.*?\n\s*elsif \(\$type eq 'cancel'\) \{)/s;
 ok($stop_branch, 'the stop branch is one block');

@@ -79,11 +79,10 @@ sub manager_reset($c) {
 	# the foot of this sub repaints every open manager at once
 	my $theme_movement = $type || '';
 	# The Add press reads the redrawn window out of the reply (`cv`); a start or
-	# stop does not, and only needs its header at once. A start's header is rendered
-	# in its own process, so a busy render cannot hold the toggle and the default
-	# model/option sessions behind it.
+	# stop does not, and only needs its header at once. The header is rendered
+	# inline for every press - see appt_header_printer for why it must not be
+	# forked - and $wants_cv only decides whether the window is drawn here too.
 	my $wants_cv = ($c->param('cv') // '') eq 'yes' ? 1 : 0;
-	my $defer_header = $wants_cv ? 0 : 1;
 	my $seg_t0 = &subs::rightNow();
 	my @seg_times;
 	my $seg = sub { my $now = &subs::rightNow(); push @seg_times, ($_[0] . '=' . ($now - $seg_t0)); $seg_t0 = $now; };
@@ -291,7 +290,7 @@ sub manager_reset($c) {
 		# The header goes out the instant the row is written, before the toggle, the
 		# automation and the default model/option sessions: those can wait, the
 		# person watching the header cannot.
-		($appt_header, $header_appts) = &subs::appt_header_printer({ app => $app, timestamp => $timestamp, skip_toggle => ($seen eq 'yes' ? 1 : 0), defer => $defer_header }); 
+		($appt_header, $header_appts) = &subs::appt_header_printer({ app => $app, timestamp => $timestamp, skip_toggle => ($seen eq 'yes' ? 1 : 0) });
 		$seg->('hdr');
 		# The row and its header are out. The default model/option sessions can start
 		# (or stop) a chain of child appointments and take seconds; they run in their
