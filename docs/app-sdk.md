@@ -184,6 +184,17 @@ plugin 'JawnOS::App::Gallery' => host => JawnOS::Host::Solo->new(
 catalog and a default theme. It does **not** provide mesh sync, BLE, OTA or AI; those are optional
 capabilities of a different host, and `supports()` says so.
 
+## Lifecycle and generated apps
+
+`docs/app-lifecycle.md` is the operations half: the `apps` registry, `jawnos-app
+install|uninstall|enable|disable|upgrade|doctor`, manifest validation, trust tiers (`core`,
+`reviewed`, `agent`, `untrusted`), the Coding agent's generation pipeline (scaffold → tests →
+canary → promote/rollback), per-app health and guarded auto-tuning.
+
+In the SDK this appears as `JawnOS::App::Manager`, the `jawnos-app` CLI, `Host::Health`, and a
+canary route prefix/schema used only while a candidate is being measured. The registry, not the
+three hand-maintained JS maps, becomes the source of the route, asset, start-menu and help lists.
+
 ## Compatibility
 
 - `api_version` is an integer. A host answers `$host->api_version`; an app declares the minimum it
@@ -203,6 +214,9 @@ capabilities of a different host, and `supports()` says so.
 | E | Convert **Travel**, declaring its Gallery dependency as a capability. | Travel boots only when the photos capability resolves. |
 | F | Convert **Music** last, or keep it host-only and extract `Audio::Stream::Sync` / `Media::Name`. | A decision, not an obligation. |
 | G | Publish `JawnOS::Host`, `JawnOS::App`, `JawnOS::Server` and the app dists. | `cpanm` install, three-line plugin, standalone run. |
+
+Phases A–C should land with lifecycle L0–L1 (`docs/app-lifecycle.md`): a registry and an
+install/uninstall path are what make the plugin loader a product rather than a convention.
 
 Phase A is deliberately invisible: the context object delegates to the code that exists, so the
 monolith's performance and behaviour are unchanged while the seam is proven. If Phase A cannot be
