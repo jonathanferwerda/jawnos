@@ -408,6 +408,7 @@ def cap_log(path, cap=DEFAULT_LOG_CAP):
             tail = src.read()
         with open(path + ".1", "wb") as dst:
             dst.write(tail)
+        os.chmod(path + ".1", 0o600)
         os.truncate(path, 0)
     except OSError:
         return False
