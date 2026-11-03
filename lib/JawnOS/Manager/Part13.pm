@@ -83,10 +83,10 @@ sub thumbnail_creator($data) {
 			$thumb = join '.', @thumb;
 			$data->{'thumb'} = $thumb;
 			if ($upload_type eq 'video') {
-				my $command2 = 'ffmpeg -ss ' . &subs::thumbnail_seek_position() . ' -i ' . $filename . ' -vframes 1 -c:v png -f image2pipe - | magick - -resize ' . $thumbnail_size . ' ' . $thumb;
+				my $command2 = 'ffmpeg -nostdin -ss ' . &subs::thumbnail_seek_position() . ' -i ' . $filename . ' -vframes 1 -c:v png -f image2pipe - | magick - -resize ' . $thumbnail_size . ' ' . $thumb;
 				my $native = &native_thumb_png($filename, $thumbnail_size);
 				if (defined $native && length $native) { write_file($thumb, $native); }
-				else { `$command2`; }
+				else { &run_thumb_command($command2); }
 			}
 			elsif ($upload_type eq 'image' || $upload_type eq 'document') {
 				# [0] takes the first page/layer, so a multi-page TIFF or a layered
@@ -94,7 +94,7 @@ sub thumbnail_creator($data) {
 				my $command2 = 'magick ' . &subs::shell_quote($filename . '[0]') . ' -auto-orient -strip -resize ' . &subs::shell_quote($thumbnail_size) . ' ' . &subs::shell_quote($thumb);
 				my $native = &native_thumb_png($filename, $thumbnail_size);
 				if (defined $native && length $native) { write_file($thumb, $native); }
-				else { `$command2`; }
+				else { &run_thumb_command($command2); }
 			}
 			else {
 				return $data;

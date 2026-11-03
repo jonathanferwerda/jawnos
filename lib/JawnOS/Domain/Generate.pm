@@ -125,7 +125,7 @@ sub generate_ai_media {
 			my $native = &subs::image_bridge_thumbnail($file_path, $max || 256, $t);
 			unless ($native) {
 				my $cmd = ($upload_type eq 'video')
-					? 'ffmpeg -ss ' . &subs::thumbnail_seek_position() . ' -i ' . $file_path . ' -vframes 1 -c:v png -f image2pipe - | magick - -resize ' . $thumbnail_size . ' ' . $t
+					? 'ffmpeg -nostdin -ss ' . &subs::thumbnail_seek_position() . ' -i ' . $file_path . ' -vframes 1 -c:v png -f image2pipe - | magick - -resize ' . $thumbnail_size . ' ' . $t
 					: 'magick ' . $file_path . ' -resize ' . $thumbnail_size . ' ' . $t;
 				`$cmd`;
 			}

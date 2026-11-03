@@ -95,6 +95,21 @@ sub startup {
 	require JawnOS::Routes;
 	JawnOS::Routes->register($self, $r);
 
+	# The tree runs inside a PTY, and the prefork request workers are background
+	# process groups there: the tree leader holds the terminal's foreground
+	# group. A child that reads the inherited stdin - every interactive ffmpeg
+	# does, even when it is only writing a thumbnail - raises SIGTTIN, and the
+	# default action stops the whole worker group. The web port then goes silent
+	# until the master restarts the tree, and the same request repeats after the
+	# restart. Ignore the terminal job-control stops in the worker (the rest of
+	# its request group inherits the disposition), the way a daemon does. The
+	# prefork manager's own TTIN/TTOU autoscale handlers live in another process
+	# and are not touched; the workers reset these to DEFAULT before this hook.
+	$self->hook(before_dispatch => sub {
+		$SIG{TTIN} = 'IGNORE';
+		$SIG{TTOU} = 'IGNORE';
+	});
+
 	# after_dispatch sees the finished response exactly once, just before it is
 	# written, which is the only place every route's HTML, JSON and CSS meets.
 	$self->hook(after_dispatch => sub {

@@ -249,7 +249,7 @@ sub music_video_pump_start($st, $time) {
 	my $rate = $st->{'rate'} || 1;
 	$rate = 1 unless $rate =~ /^\d+(?:\.\d+)?$/ && $rate >= 0.25 && $rate <= 4;
 	$time = 0 unless defined $time && $time =~ /^\d+(?:\.\d+)?$/;
-	my @cmd = ('ffmpeg', '-hide_banner', '-loglevel', 'error');
+	my @cmd = ('ffmpeg', '-nostdin', '-hide_banner', '-loglevel', 'error');
 	push @cmd, ('-ss', sprintf('%.3f', $time)) if $time > 0;
 	push @cmd, ($rate == 1 ? '-re' : '-readrate', ($rate == 1 ? () : $rate),
 		'-i', $st->{'file'}, '-an', '-threads', '4',

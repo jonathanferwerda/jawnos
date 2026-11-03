@@ -199,7 +199,7 @@ sub action_45403 {
 				my $whisper_model = &subs::home('~/whisper.cpp/models/ggml-base.bin');
 
 				my $pipeline_cmd = sprintf(
-					'ffmpeg -loglevel error -i - -blocksize 4096 -f wav -ar 16000 -ac 1 -acodec pcm_s16le - | %s -m %s --output-txt --file -',
+					'ffmpeg -nostdin -loglevel error -i - -blocksize 4096 -f wav -ar 16000 -ac 1 -acodec pcm_s16le - | %s -m %s --output-txt --file -',
 					$whisper_bin,
 					$whisper_model
 				);

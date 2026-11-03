@@ -155,7 +155,7 @@ sub take_picture($c,$data) {
 		&subs::device_call('camera.photo', { path => $filename, camera => $camera });
 	}
 	elsif ($device eq 'computer' && $camera eq 'webcam') {
-		eval { `ffmpeg -i /dev/video0 $filename` };
+		eval { `ffmpeg -nostdin -i /dev/video0 $filename` };
 	}
 	if (-e $filename) {
 		if ($kind eq 'image') {

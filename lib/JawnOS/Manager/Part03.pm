@@ -65,7 +65,7 @@ sub media_loudness_measure_path($path) {
 	eval {
 		local $SIG{ALRM} = sub { die "loudness measurement timed out\n" };
 		alarm 120;
-		my $cmd = 'ffmpeg -nostats -i ' . &subs::terminal_name($path) . ' -vn -af volumedetect -f null - 2>&1';
+		my $cmd = 'ffmpeg -nostdin -nostats -i ' . &subs::terminal_name($path) . ' -vn -af volumedetect -f null - 2>&1';
 		$out = `$cmd`;
 		alarm 0;
 	};

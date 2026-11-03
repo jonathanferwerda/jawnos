@@ -408,7 +408,7 @@ sub rock_and_roll($c) {
 
 									if ($file_data->{'type'} eq 'video' || grep { $_ eq $ext } qw/mp4 webm mpg mpeg mov mkv avi/ ) {
 										my $seek = defined $hover_position ? sprintf('%.3f', $hover_position) : &subs::thumbnail_seek_position($c->param('duration'));
-										my $command2 = 'ffmpeg -ss ' . $seek . ' -f ' . $ext . ' -i ' . $filename . ' -vframes 1 -c:v png -f image2pipe - | magick - -resize ' . $thumbnail_size . ' - ';
+										my $command2 = 'ffmpeg -nostdin -ss ' . $seek . ' -f ' . $ext . ' -i ' . $filename . ' -vframes 1 -c:v png -f image2pipe - | magick - -resize ' . $thumbnail_size . ' - ';
 										$file_data->{'type'} = 'video';
 										$data = &native_thumb_png($filename, $thumbnail_size);
 										$data = &run_thumb_command($command2) unless defined $data && length $data;
@@ -536,7 +536,7 @@ sub rock_and_roll($c) {
 						return;
 					}
 					else {
-						my $command = 'ffmpeg -i ' . &subs::terminal_name($file) . ' -map 0:s:0 ' . &subs::terminal_name($sub_file);
+						my $command = 'timeout 25 ffmpeg -nostdin -i ' . &subs::terminal_name($file) . ' -map 0:s:0 ' . &subs::terminal_name($sub_file);
 						`$command`;
 						if (-e $sub_file) {
 							my $data = read_file($sub_file);
@@ -562,9 +562,9 @@ sub rock_and_roll($c) {
 					}
 					else {
 						my $filename = $tdir . '/' . &subs::random_string_creator(20) . '.png';
-						my $command = 'ffmpeg -ss 00:01:30.010 -i ' . &subs::terminal_name($file) . ' -vframes 1 -c:v png -f image2pipe - | magick - -resize 200x200 -';
+						my $command = 'ffmpeg -nostdin -ss 00:01:30.010 -i ' . &subs::terminal_name($file) . ' -vframes 1 -c:v png -f image2pipe - | magick - -resize 200x200 -';
 						my $data = &native_thumb_png($file, 200);
-						$data = `$command` unless defined $data && length $data;
+						$data = &run_thumb_command($command) unless defined $data && length $data;
 						if ($c->param('position')) {
 							$data ? $c->render_file(data => $data, content_type => 'image/png') : $c->render(text => 'none');
 						}
@@ -603,7 +603,7 @@ sub rock_and_roll($c) {
 						return;
 					}
 					else {
-						my $command = 'ffmpeg -i ' . &subs::terminal_name($file) . ' -map 0:s:0 ' . &subs::terminal_name($sub_file);
+						my $command = 'timeout 25 ffmpeg -nostdin -i ' . &subs::terminal_name($file) . ' -map 0:s:0 ' . &subs::terminal_name($sub_file);
 						`$command`;
 						if (-e $sub_file) {
 							my $data = read_file($sub_file);
@@ -663,11 +663,11 @@ sub rock_and_roll($c) {
 							elsif ($c->param('chapter') ne 'ya') {
 								$duration = &subs::thumbnail_seek_position($duration);
 							}
-							my $command = 'ffmpeg -ss ' . $duration . ' -i ' . &subs::terminal_name($file) . ' -vframes 1 -c:v png -f image2pipe - | magick - -resize 200x200 -';
+							my $command = 'ffmpeg -nostdin -ss ' . $duration . ' -i ' . &subs::terminal_name($file) . ' -vframes 1 -c:v png -f image2pipe - | magick - -resize 200x200 -';
 							$data = &native_thumb_png($file, 200);
-							$data = `$command` unless defined $data && length $data;
+							$data = &run_thumb_command($command) unless defined $data && length $data;
 
-							write_file($tfile, $data) if $save == 1;
+							write_file($tfile, $data) if $save == 1 && defined $data && length $data;
 						}
 					}
 					$data ? $c->render_file(data => $data) : $c->render(text => 'none');

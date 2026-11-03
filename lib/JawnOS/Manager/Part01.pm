@@ -79,7 +79,7 @@ sub record_video($data) {
 	$filename = $filename . '/' . $app_path . '_' . $timestamp . '.webm';
 
 	&subs::subprocessor(sub {
-		`ffmpeg -i /dev/video0 $filename`;
+		`ffmpeg -nostdin -i /dev/video0 $filename`;
 	}, { name => "Video file converter" });
 
 	return [];

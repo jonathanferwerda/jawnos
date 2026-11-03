@@ -263,7 +263,7 @@ sub device_reply_wav {
 	my $path = "$dir/reply_$id.wav";
 	my @piper = (@{$argv}, @{$espeak}, '--output_raw', '-m', $model);
 	my $pipeline = join(' | ', &subs::pipeline_quote(@piper),
-		"ffmpeg -loglevel error -f s16le -ar $rate -ac 1 -i - -ar 8000 -ac 1 -f wav -");
+		"ffmpeg -nostdin -loglevel error -f s16le -ar $rate -ac 1 -i - -ar 8000 -ac 1 -f wav -");
 	my $err = Symbol::gensym();
 	my ($pin, $pout);
 	my $pid = eval { IPC::Open3::open3($pin, $pout, $err, 'sh', '-c', $pipeline) };
@@ -402,7 +402,7 @@ sub watch_reply_stream {
 	# every machine that can already hear). Otherwise piper's own rate rides along
 	# in the messages and the watch opens the codec at it.
 	my $pipeline = join(' | ', &subs::pipeline_quote(@piper),
-		"ffmpeg -loglevel error -f s16le -ar $rate -ac 1 -i - -ar 8000 -ac 1 -f s16le -");
+		"ffmpeg -nostdin -loglevel error -f s16le -ar $rate -ac 1 -i - -ar 8000 -ac 1 -f s16le -");
 	my $done = 0;
 	for my $attempt ( [ $pipeline, 8000 ], [ &subs::pipeline_quote(@piper), $rate ] ) {
 		my ($pipe, $out_rate) = @{$attempt};

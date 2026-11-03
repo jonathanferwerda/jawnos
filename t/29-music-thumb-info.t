@@ -81,4 +81,21 @@ unlike($subs, qr/-ss 00:00:00\.010/,
 like($manager, qr/&subs::thumbnail_seek_position\(/,
 	'Manager.pl takes the poster at a frame past the fade');
 
+# --- a media child cannot stop the request group -----------------------------
+# The tree runs in a PTY and its prefork workers are background process groups
+# there. An interactive ffmpeg that reads the inherited stdin raises SIGTTIN,
+# whose default action stops the whole worker group: the web port goes silent
+# until the master restarts the tree, and the same thumbnail is retried after
+# every restart. The worker ignores the terminal job-control stops, and every
+# request-path ffmpeg runs non-interactively so it never touches that stdin.
+like($manager, qr/\$SIG\{TTIN\} = 'IGNORE';/, 'the request worker ignores SIGTTIN');
+like($manager, qr/\$SIG\{TTOU\} = 'IGNORE';/, 'the request worker ignores SIGTTOU');
+like($manager, qr/hook\(before_dispatch => sub \{\s*\$SIG\{TTIN\}/,
+	'the ignores are installed per request, after the prefork worker reset');
+my @ffmpeg = ($manager =~ /'ffmpeg ([^']*)'/g);
+ok(scalar @ffmpeg, 'the manager still builds ffmpeg commands');
+is(scalar(grep { $_ !~ /^-nostdin\b/ } @ffmpeg), 0, 'every request-path ffmpeg is non-interactive');
+like($video, qr/\('ffmpeg', '-nostdin'/,
+	'the video frame pump is non-interactive too');
+
 done_testing();

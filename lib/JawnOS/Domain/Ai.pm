@@ -180,7 +180,7 @@ sub whisper_cli_transcribe {
 	return '' unless -e $bin && -e $model;
 	my $language = (defined $lang && $lang =~ /^[a-z]{2,3}$/ && $lang ne 'auto') ? ' -l ' . $lang : '';
 	my $cmd = sprintf(
-		'ffmpeg -loglevel error -i - -blocksize 4096 -f wav -ar 16000 -ac 1 -acodec pcm_s16le - | %s -m %s%s --output-txt --file - 2>/dev/null',
+		'ffmpeg -nostdin -loglevel error -i - -blocksize 4096 -f wav -ar 16000 -ac 1 -acodec pcm_s16le - | %s -m %s%s --output-txt --file - 2>/dev/null',
 		$bin, $model, $language
 	);
 	my ($in, $out, $err);
