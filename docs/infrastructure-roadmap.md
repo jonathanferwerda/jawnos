@@ -58,27 +58,27 @@ Headscale lists `table`, `cloud`, `laptop`, `tablet`, `phone` and (since 2026-11
 - The suite: 149 test files, ~12–20 s at 8 jobs. `t/README.md` is explicit that **nothing in `t/`
   writes to the live database, the repo, or a fixed port** — every test gets a temp sandbox.
 
-### KS-5 — installed 2026-11-02
+### KS-5 — installed 2026-11-02 (reinstalled with ZFS root the same day)
 
-Measured after the install and a reboot:
+Measured after the install and two reboot drills:
 
 - Proxmox VE **9.2.25** (Debian 13, kernel 7.0.14-26-pve), hostname `ks5`.
 - Intel Xeon E3-1270 v6: 4 cores / 8 threads; **64 GB** DDR4 ECC; 2 × 450 GB NVMe.
-- Public **54.39.157.133** (gateway `.254`), tailnet **100.64.0.10**, SSH **8022**.
-- The installer laid out **mdadm RAID1** for `/boot/efi`, `/boot` and `/` (ext4, 20 GB) with 1 GB
-  swap per disk, and a **ZFS mirror pool `data`** on the remaining ~397 GB, mounted at
-  `/var/lib/vz`. ZFS ARC is capped at **12 GB** (`/etc/modprobe.d/zfs.conf`).
-- The installer wrote **no `storage.cfg`**: `local` (dir on `/var/lib/vz`) was the only storage, so
-  containers had no snapshot target. A **`local-zfs`** zfspool was added on `data` for
+- Public **54.39.157.133** (gateway `.254`), tailnet **100.64.0.11**, SSH **8022**.
+- **ZFS root**: `rpool` is a mirror of `nvme0n1p3` + `nvme1n1p3`, with `rpool/zd0` (80 GiB) on `/`
+  and `root=ZFS=rpool/zd0`. A second mirror `data` uses the rest of both disks (~326 GiB) for
+  `/var/lib/vz`. `/boot` (ext4) and `/boot/efi` (vfat) stay on md RAID1; swap is 2 × 1 GiB.
+- ZFS ARC capped at **12 GB** (`/etc/modprobe.d/zfs.conf`); a baseline snapshot
+  **`rpool/zd0@install-2026-11-02`** exists.
+- The OVH template wrote **no `storage.cfg`**: `local` (dir on `/var/lib/vz`) was the only storage,
+  so containers had no snapshot target. A **`local-zfs`** zfspool was added on `data` for
   `images,rootdir`; `local` keeps ISO/template/backup.
 - Hardening in place: SSH keys only (`PasswordAuthentication no`, `PermitRootLogin
-  prohibit-password`), unattended upgrades on, `console=ttyS0` already in the cmdline, and the PVE
-  firewall enabled with `policy_in: ACCEPT` where **8006 accepts only `100.64.0.0/10`** and is
-  dropped from the internet. Port 22 is closed; the host listens on 8022.
-- **Deviation from D1:** the host root is ext4 on md, so it **cannot be snapshotted**. Guest
-  snapshots come from `local-zfs`; a snapshot of `/etc` before a network change is not available.
-  The rollback path for host changes is the serial console and OVH rescue, and possibly a reinstall
-  with ZFS root.
+  prohibit-password`) on **8022** (22 closed), unattended upgrades on, `console=ttyS0` in the
+  cmdline, and the PVE firewall enabled with `policy_in: ACCEPT` where **8006 accepts only
+  `100.64.0.0/10`** and is dropped from the internet.
+- **Host snapshots work** (`zfs snapshot rpool/zd0@…`), but a rollback needs rescue or the
+  initramfs because `/` is mounted. Guest snapshots come from `local-zfs`.
 - Unmanaged: **no IPMI/KVM console**, hardware replacement only, rescue mode as the fallback.
 
 ### The cloud server (`cloud`, `vps-7c120a57`)
@@ -147,10 +147,9 @@ its value is the snapshot you take before a network change on a machine you cann
 and the second container that D8 needs. The "Proxmox is a drain" reputation is ZFS's default ARC
 (50% of RAM — 32 GB here) and oversubscribing small machines.
 
-**On ks5 the D1 promise is only partial.** The installer put the host root on md/ext4, which cannot
-be snapshotted; snapshots exist only for guests on the ZFS mirror `data` (`local-zfs`). Host-config
-rollback is therefore the serial console and OVH rescue — or a reinstall with ZFS root, which is
-cheapest while the box is still empty.
+**On ks5 the D1 promise holds**: root is `rpool/zd0`, so `zfs snapshot rpool/zd0@before-change`
+exists (a baseline is already taken). A rollback still needs rescue or the initramfs, because `/`
+is mounted; guest snapshots live on `local-zfs` (`data`).
 
 ---
 
@@ -305,23 +304,27 @@ Nothing is deleted until its replacement answers. That ordering *is* the rollbac
 
 ### P1 — Install the host — DONE 2026-11-02
 
-- [x] Installed **Proxmox VE 9.2.25** from the panel; the installer produced md/RAID1 for the OS
-      and a ZFS mirror `data` for `/var/lib/vz`. (No ZFS-root option was used.)
-- [x] **ARC capped** at 12 GB in `/etc/modprobe.d/zfs.conf`, set at runtime too; survives a reboot.
+- [x] Installed **Proxmox VE 9.2.25** from the OVH template. The first pass left the root on
+      ext4/md; reinstalled the same day with **ZFS root**: `rpool/zd0` (80 GiB) on `/`, a second
+      mirror `data` (~326 GiB) for `/var/lib/vz`, with `/boot` and `/boot/efi` still ext4/vfat on
+      md RAID1.
+- [x] **ARC capped** at 12 GB in `/etc/modprobe.d/zfs.conf`, set at runtime too.
 - [x] Firewall **8006 off the internet** (PVE firewall: accept from `100.64.0.0/10`, drop the rest).
-      SSH keys only; unattended upgrades enabled.
-- [x] `console=ttyS0,115200n8` was already on the kernel cmdline.
-- [x] Reboot drill passed: ARC cap, `tailscaled`, the firewall and both storage entries all return.
-- **Exit:** host up, ARC capped, 8006 unreachable from outside, one reboot survived. **Host-root
-      snapshot is not available in this layout** (see §2); `local-zfs` covers guests. Decide later
-      whether to reinstall with ZFS root for host rollback.
+      SSH keys only on 8022; unattended upgrades enabled.
+- [x] `console=ttyS0,115200n8` already on the kernel cmdline.
+- [x] **Two reboot drills passed**: both pools import, `/var/lib/vz` mounts, the ARC cap,
+      `tailscaled` and the firewall all return.
+- [x] Baseline snapshot **`rpool/zd0@install-2026-11-02`**.
+- **Exit:** host up, ARC capped, 8006 unreachable from outside, host and guest snapshots available,
+      reboots survived.
 
 ### P2 — Join the tailnet (as a client, before anything moves) — DONE 2026-11-02
 
 - [x] `tailscale up --login-server https://thejunderground.com --authkey … --hostname ks5
       --accept-dns=false` on the host. Outbound only; `accept-dns=false` keeps the host's own
       resolver, which the containers need.
-- [x] `headscale nodes list` on the VPS shows `ks5` at **100.64.0.10**, online.
+- [x] The reinstall invalidated the old node, so Headscale ID 10 was deleted before rejoining.
+      `headscale nodes list` shows `ks5` at **100.64.0.11**, online.
 - **Exit:** the new node is in the tailnet. P3 is next.
 
 ### P3 — The containers
