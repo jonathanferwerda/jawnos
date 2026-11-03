@@ -1,7 +1,7 @@
 # Infrastructure roadmap — dev box, tailnet and the cloud server
 
-**Status:** in progress — P0–P4 are done and **P5 is mid-cutover** (2026-11-02): headscale is
-running on ks5, waiting on the apex DNS record; P5's exit is not yet met.
+**Status:** in progress — P0–P5 are done (2026-11-02; the tablet reconnects when it wakes);
+P6 is next.
 **Started:** 2026-11-02 · **Baseline measured** 2026-11-02 by logging into all four hosts.
 **Related:** `AGENTS.md` (run/restart, the database-is-per-device rule, the mesh rules),
 `docs/AGENTS-restart.md`, `docs/AGENTS-firmware.md`, `t/README.md` (what the suite touches)
@@ -84,6 +84,9 @@ Measured after the install and two reboot drills:
   prohibit-password`) on **8022** (22 closed), unattended upgrades on, `console=ttyS0` in the
   cmdline, and the PVE firewall enabled with `policy_in: ACCEPT` where **8006 accepts only
   `100.64.0.0/10`** and is dropped from the internet.
+- **Headscale (P5)** runs in CT **102** (`10.20.0.30`), v0.29.5, with the VPS's state. DNAT
+  forwards **443/tcp** and **3478/udp** to it; an OUTPUT rule is needed too, because the host's own
+  traffic to its public IP does not traverse PREROUTING.
 - **Host snapshots work** (`zfs snapshot rpool/zd0@…`), but a rollback needs rescue or the
   initramfs because `/` is mounted. Guest snapshots come from `local-zfs`.
 - Unmanaged: **no IPMI/KVM console**, hardware replacement only, rescue mode as the fallback.
@@ -182,7 +185,7 @@ Two certificates already exist, and they already split along this line:
 | Cert | Covers | Renewed by | Expires |
 |---|---|---|---|
 | `*.jonathanferwerda.com` | any subdomain — the house manager and hub today | **`jawnos-tls.timer` on the laptop** (`scripts/tls_issue.pl --renew`), with the older `certbot-renew.timer` still running beside it | 2027-01-31 |
-| `thejunderground.com` | apex + `www` | system **certbot** on the VPS — retired with it (D11) | 2026-12-07 |
+| `thejunderground.com` | apex + `www` | **certbot on ks5** (standalone `:80`, deploy hook into headscale) | 2027-02-01 |
 
 So the tailnet does **not** need the apex, and it does **not** need a certificate of its own: point
 Headscale's `tls_cert_path`/`tls_key_path` at copies of `server/fullchain.pem` and
@@ -213,7 +216,7 @@ control plane. `base_domain` must stay `jonathanferwerda.com` because the house 
 `https://thejunderground.com`**, which also means **no node is re-pointed**: the apex A record
 moves to ks5 and the apex certificate moves with it. Consequences: the apex stays in use for the
 control plane (Elixir takes a `thejunderground.com` subdomain at P7), the apex certificate is
-renewed on ks5 (certbot standalone on :80, deploy hook staged), and the
+renewed on ks5 (certbot standalone on :80, deploy hook installed), and the
 `headscale.jonathanferwerda.com` A record (created, unused) can be removed.
 
 ### Why not the IP, and why not a nameserver
@@ -227,7 +230,9 @@ The good news: none of this needs a nameserver on the box, or port 80. **DNS-01 
 record through the provider's API** — exactly what `tls_issue.pl` already does for the house
 wildcard. So:
 
-- Cloudflare stays the authority; nothing is delegated to the KS-5.
+- The public zones are split: **`jonathanferwerda.com` is GoDaddy** (the wildcard's DNS-01
+  credential) and **`thejunderground.com` is Cloudflare** (the apex record). Nothing is delegated
+  to the KS-5.
 - One A record per name (`headscale`, `hub`) → the KS-5's single IP.
 - No inbound 80; only **443/tcp**, **3478/udp** and **41641/udp**.
 - No failover IPs and no virtual MACs: one name on one address.
@@ -383,27 +388,29 @@ Nothing is deleted until its replacement answers. That ordering *is* the rollbac
 - **Exit:** ks5 offers the exit node and the bridge, the laptop uses neither by default, and the VPS
       is quiet.
 
-### P5 — Move Headscale (the cutover) — IN PROGRESS 2026-11-02
+### P5 — Move Headscale (the cutover) — DONE 2026-11-02
 
 Headscale runs in **CT 102** (`10.20.0.30`) with the VPS's state, listening on 443 with the apex
 certificate. **The control URL stays `https://thejunderground.com`** (§4: D9's name is rejected by
-headscale while MagicDNS owns `jonathanferwerda.com`), so **no node has to be re-pointed** — the
-one external step left is the apex A record.
+headscale while MagicDNS owns `jonathanferwerda.com`), so **no node was re-pointed** — the apex A
+record moved instead.
 
 - [x] Headscale **v0.29.5** in an unprivileged container, onboot, using the copied
       `/var/lib/headscale/` (db.sqlite, noise and DERP keys, TLS) and the VPS config.
 - [x] DNAT on ks5: **443/tcp** and **3478/udp** → `10.20.0.30`, persisted by
-      `headscale-dnat.service`; 41641/udp is the host's own `tailscaled`.
+      `headscale-dnat.service`; 41641/udp is the host's own `tailscaled`. An **OUTPUT** DNAT was
+      also required, or the host cannot reach its own control plane by name.
 - [x] The VPS instance is **stopped** and left intact (`/tmp/headscale-state.tgz` is the rollback);
       never start both — same keys, diverging databases.
-- [x] Verified `https://thejunderground.com/health` → `{"status":"pass"}` via `--resolve` at
-      54.39.157.133; `headscale nodes list` shows the copied users and nodes.
-- [ ] **Pending:** in Cloudflare, point `thejunderground.com` (A, **DNS-only**, not proxied) at
-      **54.39.157.133**. No client changes follow — the URL is unchanged.
-- [ ] Renew the apex certificate on ks5 (expires **2026-12-07**): certbot standalone on `:80` with
-      the staged `/usr/local/sbin/headscale-deploy-cert.sh`, on a weekly timer.
-- [ ] Rollback: move the A record back and start the VPS instance; its `server_url` is unchanged.
-- **Exit:** every node online through ks5, the apex answering there, the VPS instance disabled.
+- [x] `thejunderground.com` A → **54.39.157.133**, DNS-only, in Cloudflare. Clients kept the same
+      URL; Table, cloud, laptop, phone and ks5 are back online. **The tablet reconnects when it
+      wakes** (it was asleep before the cutover; no config change is needed).
+- [x] **Apex certificate reissued on ks5** the same day: certbot standalone on `:80`, with
+      `/usr/local/sbin/headscale-deploy-cert.sh` as the renewal hook. Served cert now expires
+      **2027-02-01**; `certbot.timer` renews and the hook pushes the pair into the container.
+- [x] Rollback: move the A record back and start the VPS instance; its `server_url` is unchanged.
+- **Exit:** every node returns on the same URL, the apex answers from ks5, the VPS instance is
+      disabled.
 
 ### P6 — Move the house server off the VPS, then retire it
 
@@ -466,9 +473,8 @@ one external step left is the apex A record.
   Snapshot first, keep the old SSH session open, and confirm the ports before repointing DNS.
 - **The one dated risk** is the wildcard: it expires **2027-01-31**. The laptop renews it through
   `jawnos-tls.timer` (installed 2026-11-02), and the `house` container needs the same timer in P6.
-  **The apex pair now served by headscale on ks5 expires 2026-12-07**; it has to be issued on ks5
-  (certbot standalone on :80, deploy hook staged) before then, because the VPS's HTTP-01 renewal
-  stops working once the apex record moves.
+  **The apex pair was reissued on ks5 on 2026-11-02 and expires 2027-02-01**, renewed by
+  `certbot.timer` there with the deploy hook; the VPS's HTTP-01 renewal is no longer used.
 - **The one thing that cannot be done** is pointing Tailscale at a bare IP: the client validates
   the control certificate and will not connect without a name.
 - **The one rule that must not be bent** is D7. A copied database on a dev container looks like it
