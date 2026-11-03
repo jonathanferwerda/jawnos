@@ -104,6 +104,7 @@ Measured today:
 | App | Perl | JS | Templates | Routes | Coupling |
 |---|---|---|---|---|---|
 | **Embedded** | 685 (controller) + Manager helpers | 1,089 | 612 | 19 | devices, BLE bridge, OTA, settings |
+| **Folders** | 2,123 (domain + 2 controllers) | 1,868 | 172 page + partials | 22 | files, crypto, jobs, archive machines |
 | **Gallery** | 331 (controller) | template-driven, no app chunk | 224 | 4 | files, thumbnails, encryption, private albums |
 | **Travel** | 596 (controller) + helpers | 1,657 | 110 | 8 | files, measures, Gallery, maps, georef |
 | **Music** | 2,882 (`Music.pl` + 8 parts) | 6,076 | ~690 | 9 (registered inside `Music.pl`, not the route map) | archive, folders, encryption, WebSocket, remote audio/video |
@@ -134,10 +135,11 @@ Two facts decide the feasibility:
 
 ### Order, if it is done
 
-1. **Embedded** — pilot. It has a real route surface, a clean template folder, and a domain
-   (devices/OTA) that does not depend on media encryption. It proves the host SDK under BLE and OTA.
-2. **Gallery** — smallest controller and no app JS chunk; most of it is server-rendered. It proves
-   the asset/share-dir path and the permission model.
+1. **Gallery** — pilot for the SDK, per `docs/app-sdk.md`. Smallest controller, no app JS chunk,
+   server-rendered; it proves the host contract (db, files, crypto, auth, assets) with the least
+   surface. It is the app to make stand alone first.
+2. **Embedded** — the hardware proof: optional capabilities (BLE, OTA, device registry) and the
+   first app that is not pure request/response.
 3. **Travel** — depends on Gallery, files and measures being reachable through the host context; the
    map engine is 1.6k lines of browser code that has to ship as an asset.
 4. **Music** — last, and plausibly never. 6k lines of player JS, remote audio/video, WebSockets,
@@ -147,12 +149,13 @@ Two facts decide the feasibility:
 **Recommendation.** Do not put whole apps on CPAN in this roadmap's first year. The eleven modules
 are the reusable core of these apps; extracting them makes each app thinner and is the prerequisite
 work either way. Revisit whole apps only if a third-party app ecosystem or a headless app runtime is
-actually wanted — then build the host SDK and ship `JawnOS::App::Embedded` as the proof.
+actually wanted — then build the host SDK and ship `JawnOS::App::Gallery` as the proof.
+`docs/app-sdk.md` is that design.
 
-## The 38 candidates
+## The 41 candidates
 
 Thirty from the first pass, four from the store/handbook/marker/music pass, four from the
-travel/soft-keyboard pass. Gap = what CPAN lacks today (checked on MetaCPAN 2026-11-02). Effort: S ≈ 1–3 days, M ≈ 1–2 weeks, L ≈ 2–4 weeks
+travel/soft-keyboard pass, three from the folders pass. Gap = what CPAN lacks today (checked on MetaCPAN 2026-11-02). Effort: S ≈ 1–3 days, M ≈ 1–2 weeks, L ≈ 2–4 weeks
 including tests. PICK = the eleven; RESERVE = first to replace a slip; BENCH = keep, do not start;
 DROP = no.
 
@@ -226,7 +229,7 @@ maps and have no meaning elsewhere.
 
 | # | Candidate | Source | Gap | Effort | Verdict |
 |---|---|---|---|---|---|
-| 31 | `Business::POS::Register` | `Domain/Store.pm` (329 lines, **0** `subs::` calls) | order/line/quantity lifecycle, payment-method validation, denominations, change breakdown, underpayment refusal; CPAN has payment gateways but no till | S | RESERVE |
+| 31 | `Business::POS::Register` | `Domain/Store.pm` (329 lines, database-free; calls four app helpers: `lang`, `right`, `random_string_creator`, `format_name`) | order/line/quantity lifecycle, payment-method validation, denominations, change breakdown, underpayment refusal; CPAN has payment gateways but no till | S | RESERVE |
 | 32 | `Media::Name` | `perl/Music.pl:63-100`, `Domain/File.pm` | artist/album/track from tags **and** episode/season from names (`S03E06`, `1x02`, `Season 3 Episode 6`), quality/codec/group stripped; `Video::Filename` is 2009, GPL and video-only | S | BENCH |
 | 33 | `Audio::Stream::Sync` | `perl/Music/01_remote_audio_receiver.pl`, `public/js/music.js` | remote audio lead measurement, stale-frame drop, L/R split, Opus/PCM choice | L | BENCH |
 | 34 | `Marker::Session` | `Manager/Part35.pm:334-380` | layered canvas session blobs with autosave | S | DROP — the drawing is client-side; only a blob store would ship |
@@ -237,9 +240,9 @@ maps and have no meaning elsewhere.
 - **Marker** is a layered paint board in the browser; the server only stores session serialisations
   (`marker_sessions`, `marker_session_store`). A module here would be a generic “JSON blob with a
   thumbnail”, which is not worth a dist.
-- **Store** gave one real candidate. `Domain/Store.pm` is already uncoupled and pure: money in,
-  money out, no database. It is the reserve because it is the easiest of the whole list to make
-  excellent.
+- **Store** gave one real candidate. `Domain/Store.pm` is database-free and pure money maths; it
+  calls four app helpers (i18n, the clock, a random id, name formatting) that become constructor
+  arguments. It is the reserve because it is the easiest of the whole list to make excellent.
 - **Music** gave two: the library-name parser (small, pure) and the remote-audio synchroniser
   (large, browser-shaped). The player itself is not a Perl module.
 
@@ -272,6 +275,21 @@ component: layouts, a calculator, unit conversion, a vault sheet and an IME brid
 not a Perl dist. Its only server-side piece is the conversion registry, and `Physics::Unit` already
 owns that ground. The Android side (`/manager/keyboard/ime`) is a WebView over the manager's own
 page — deliberately not a second implementation.
+
+### Fourth pass: folders
+
+| # | Candidate | Source | Gap | Effort | Verdict |
+|---|---|---|---|---|---|
+| 39 | `Path::Reference` | `Domain/Folders.pm:114-285` (`file_reference_*`) | index every path inside arbitrary nested JSON/Hash/Array blobs, then rewrite them on a move (including a folder-prefix handover), writing back only changed rows | M | RESERVE 3 |
+| 40 | `Files::Sealed::Tree` | `Domain/Folders.pm:285-455, 471-569, 641-782` | resumable seal/open/reseal of a directory tree with progress, cancel, per-file standard tracking and reference updates | L | BENCH |
+| 41 | `File::Copy::Verified` | `Domain/Folders.pm:285-396` (`folders_copy_job`) | resume a copy from bytes already there, byte-level progress, size+SHA match before the original is removed | M | BENCH |
+
+Folders is not small — 22 routes, 2,123 lines of Perl (`Domain/Folders.pm` 796 plus two controller
+parts) and 1,868 lines of JS — but three of its primitives are portable. `file_reference_index`
+walks a decoded blob and records every `f`/`thumb`/bare path with the exact spot to write back;
+`file_reference_apply` then handles folder prefixes and only updates rows that changed. That is a
+real library in search of a home. The seal/open jobs are the house key and `openssl` welded to a
+DB job object, which is why they are bench and not pick.
 
 ## The eleven
 
