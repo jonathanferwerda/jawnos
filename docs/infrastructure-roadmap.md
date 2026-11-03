@@ -1,6 +1,6 @@
 # Infrastructure roadmap — dev box, tailnet and the cloud server
 
-**Status:** in progress — P0–P2 are done (2026-11-02); P3 is next, P5 is the cutover and needs a
+**Status:** in progress — P0–P3 are done (2026-11-02); P4 is next, P5 is the cutover and needs a
 maintenance window.
 **Started:** 2026-11-02 · **Baseline measured** 2026-11-02 by logging into all four hosts.
 **Related:** `AGENTS.md` (run/restart, the database-is-per-device rule, the mesh rules),
@@ -39,7 +39,7 @@ Measured, not assumed. Re-measure before acting; this section goes stale.
 | **laptop** | ASUS Vivobook X1504ZA, i5-1235U (2P+8E), 15.6 GB, Manjaro | the editor, the agents, its own JawnOS, **the LAN manager the devices talk to** |
 | **table** | Manjaro, 4 cores, 7.6 GB, 239 GB root (74% used) | its own JawnOS, GTK desktop |
 | **cloud** | OVH VPS, Debian 13, **2 vCPU, 3.7 GB, 40 GB** | Headscale, the always-on JawnOS house server, the public hub, DNS, mail, exit node |
-| **ks5** | Kimsufi, Proxmox VE 9.2.25, **4c/8t, 64 GB, 2×450 GB NVMe** | the host + `tailscaled`; `headscale`, `house` and `dev` containers are P3/P5 |
+| **ks5** | Kimsufi, Proxmox VE 9.2.25, **4c/8t, 64 GB, 2×450 GB NVMe** | the host + `tailscaled`; `dev` (100) and `house` (101) on `vmbr1`; `headscale` is P5 |
 | **tablet** | Android | tailnet client only |
 | **phone** | Android | tailnet client — registered 2026-11-02, `100.64.0.9` |
 
@@ -74,6 +74,9 @@ Measured after the install and two reboot drills:
   before `/var/lib/vz` mounted (systemd retried and succeeded ~12 s later). Fixed with
   `zpool set cachefile=/etc/zfs/zpool.cache data` and an initramfs rebuild; the mount now succeeds
   on the first try and `systemctl --failed` is clean.
+- The `data` pool root also had **`mountpoint=none`**, so a container's ZFS subvol could not be
+  mounted and `pct create` failed. `zfs set mountpoint=/data data` fixed it; `local-zfs` creates
+  containers normally from there.
 - The OVH template wrote **no `storage.cfg`**: `local` (dir on `/var/lib/vz`) was the only storage,
   so containers had no snapshot target. A **`local-zfs`** zfspool was added on `data` for
   `images,rootdir`; `local` keeps ISO/template/backup.
@@ -331,23 +334,29 @@ Nothing is deleted until its replacement answers. That ordering *is* the rollbac
       `headscale nodes list` shows `ks5` at **100.64.0.11**, online.
 - **Exit:** the new node is in the tailnet. P3 is next.
 
-### P3 — The containers
+### P3 — The containers — DONE 2026-11-02
 
-- [ ] `dev`: privileged LXC, Debian, ~8 GB RAM, the repo cloned inside (never `releases/`,
-      never `.secrets/`).
-- [ ] **Fresh database** from `database/schema.sql`. Never a copy of the live `jawnos.db` — that
-      is the cross-machine restore `AGENTS.md` documents, and it leaves the container wearing the
-      laptop's `devices` row and `remote_machines` list (D7). No mesh, no tunnels.
-- [ ] `house`: a second LXC for the always-on server that moves off the VPS in P6 (D8).
-- [ ] Reachability, one of:
-      **(a)** the host advertises the bridge — `tailscale up --advertise-routes=10.20.0.0/24`,
-      approved with `headscale routes enable`, and clients need `tailscale set --accept-routes`
-      (the laptop has it off today); or
-      **(b)** `tailscaled` inside each container with `/dev/net/tun` passed through.
-- [ ] Zed remote over SSH into `dev`. `perlnavigator` and `git status` move there.
-- [ ] `perl scripts/run_tests.pl --jobs 6` — 6 on 4C/8T, not the default 8.
-- **Exit:** green suite on the server, Zed editing the remote tree, laptop `zed+ext` down to
-  roughly 0.2 core.
+- [x] `dev`: privileged LXC **100**, Debian 13, 4 cores / 8 GB + 2 GB swap, 40 GB on `local-zfs`,
+      `10.20.0.10` on `vmbr1`. Repo cloned as `jawn` at `/home/jawn/jawnos`; no `releases/`, no
+      `.secrets/`, no mesh, no tunnels.
+- [x] **Fresh database** from `database/schema.sql` (38 tables). Never a copy of the live
+      `jawnos.db` — that is the cross-machine restore `AGENTS.md` documents (D7).
+- [x] `house`: unprivileged LXC **101**, 2 cores / 2 GB, 20 GB, `10.20.0.20`; the app moves in at P6.
+- [x] Reachability chose **(a)**: `vmbr1` is `10.20.0.1/24` with NAT to `vmbr0`, the host advertises
+      `10.20.0.0/24`, Headscale node 11 approved it, and the laptop runs
+      `tailscale set --accept-routes`. Both containers answer on the tailnet route.
+- [x] Both containers run `sshd` on **8022**, keys only, as `jawn`. Debian 13 socket-activates SSH,
+      so the port is moved in an `ssh.socket` drop-in — `Port` in `sshd_config` does nothing.
+- [x] **Zed remote**: `ssh -p 8022 jawn@10.20.0.10` works from the laptop; the remote tree is
+      `/home/jawn/jawnos`.
+- [x] `perl scripts/run_tests.pl --jobs 6`: **162 files, green, 21.8 s** on the server.
+- **Fresh-clone gaps found and fixed:** a fresh clone has no gitignored `config.json`, and the
+      scripts the suite spawns read `./config.json` — `dev` got the minimal boot config the harness
+      itself writes. `scripts/app_migrate.pl` used IPC::Open3's `['&', $fh]` form, which Debian 13's
+      perl 5.40 rejects; `'>&HANDLE'` works on both (v0.1.1928). `t/89` asserted that the gitignored
+      deep notes are truncated, so that assertion now skips on a clone without them (v0.1.1928).
+- **Exit:** the suite is green on the server and the remote tree is reachable; confirming Zed itself
+      edits it is the person's step.
 
 ### P4 — Exit node
 
