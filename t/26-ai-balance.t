@@ -12,7 +12,7 @@ use JawnOSTest;
 # The domain layer is lazy: load the real definitions before the local *subs::
 # stubs below, or a later module load would replace them.
 subs::preload($_) for qw(crypto_rates_read crypto_report_currency exchange_rate);
-subs::preload($_) for qw(ai_spend_since ai_spend_buckets ai_spend_roles ai_spend_minute_ms ai_spend_sessions ai_balance_role_label);
+subs::preload($_) for qw(ai_spend_since ai_spend_buckets ai_spend_roles ai_spend_minute_ms ai_spend_sessions ai_balance_role_label ai_balance_active_html ai_balance_roles_html);
 
 # The Sys panel's "Balance drop" chart. These tests pin the four windows (Last
 # Hour in two-minute bars, Last Day in hours, Last Week and Last Month in days),
@@ -564,7 +564,33 @@ my $report = {
 my $no_rows = &subs::ai_balance_chart({ at => $now, rows => [], history => { deepseek => \@points } }, $now);
 is scalar @{ $no_rows->{'series'} }, 0, 'history without a registered row draws nothing';
 
-# ---- role labels ------------------------------------------------------------
+# ---- the time-in-use and role lines ------------------------------------------
+{
+	no warnings 'redefine';
+	local *subs::ui = sub { return $_[0] };
+	local *subs::lang = sub { my ($key, $value) = @_; return defined $value ? $value : $key };
+	my $wd = {
+		active_ms => 2 * $H, sessions => 3,
+		per_active_hour => 7.5, tokens_per_hour => 500,
+		roles => [
+			{ role => 'help_assistant', label => 'Guide', share => 70, tokens => 700, active_ms => $H, cost => 21, per_active_hour => 21 },
+			{ role => 'eval_assistant', label => 'Evaluation', share => 30, tokens => 300, active_ms => 0 },
+		],
+	};
+	my $active = &subs::ai_balance_active_html($wd, 'CAD');
+	like $active, qr/class="cfg-note balance_active"/, 'the time-in-use line is drawn';
+	like $active, qr/2 h in use .* 3 sessions/, 'with the span and how many sessions made it';
+	like $active, qr/data-base-per-hour="7\.500000"/, 'the hourly rate carries its base amount';
+	like $active, qr/7\.50 CAD per hour in use/, 'and reads in the series currency';
+	like $active, qr/500 tokens per hour in use/, 'with the tokens per hour beside it';
+	my $roles = &subs::ai_balance_roles_html($wd, 'CAD');
+	like $roles, qr/Guide 70% .* 1 h .* 21\.00 CAD \(21\.00 CAD\/h\)/, 'a role shows its share, time and money';
+	like $roles, qr/data-base-cost="21\.000000"/, 'with its base cost for the currency picker';
+	like $roles, qr/Evaluation 30%/, 'and a role without a money split keeps its share';
+	is &subs::ai_balance_active_html({ active_ms => 0 }, 'CAD'), '', 'no time in use draws nothing';
+	is &subs::ai_balance_roles_html({ roles => [] }, 'CAD'), '', 'no roles draws nothing';
+}
+
 is &subs::ai_balance_role_label('help_assistant'), 'Guide', 'a known role reads as its app';
 is &subs::ai_balance_role_label('coding_assistant'), 'Coding', 'the coding agent keeps its name';
 is &subs::ai_balance_role_label('weird_assistant'), 'Weird', 'an unknown role is tidied up';

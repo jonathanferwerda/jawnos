@@ -532,6 +532,67 @@ sub ai_balance_buckets {
 	};
 }
 
+# The line under the pace that says how long the agents were actually in use,
+# and what an hour of that cost. The time is a duration and never changes with
+# the currency; the money carries its own base figure so the picker converts it
+# in place. Empty when the ledger has no sessions in the window.
+sub ai_balance_active_html {
+	my ($wd, $currency) = @_;
+	return '' unless ref $wd eq 'HASH' && ($wd->{'active_ms'} || 0) > 0;
+	$currency = '' unless defined $currency;
+	my $span = &ai_balance_span_label($wd->{'active_ms'} / 3600000);
+	my $template = &subs::ui('{0} in use · {1} sessions');
+	my $sessions = $wd->{'sessions'} || 0;
+	my $text = $template;
+	$text =~ s/\{0\}/$span/;
+	$text =~ s/\{1\}/$sessions/;
+	my $html = '<p class="cfg-note balance_active"><span class="balance_active_time">' . xml_escape($text) . '</span>';
+	if (defined $wd->{'per_active_hour'} && $wd->{'per_active_hour'} > 0.005) {
+		my $hour_template = &subs::ui('{0} per hour in use');
+		my $hour_text = ' · ' . $hour_template;
+		$hour_text =~ s/\{0\}/&currency_money($wd->{'per_active_hour'}) . ' ' . $currency/e;
+		$html .= '<span class="balance_active_rate" data-base-per-hour="' . sprintf('%.6f', $wd->{'per_active_hour'}) . '" data-template="' . xml_escape($hour_template) . '">' . xml_escape($hour_text) . '</span>';
+	}
+	if (defined $wd->{'tokens_per_hour'} && $wd->{'tokens_per_hour'} > 0) {
+		my $tokens_template = &subs::ui('{0} tokens per hour in use');
+		my $tokens_text = ' · ' . $tokens_template;
+		$tokens_text =~ s/\{0\}/sprintf('%.0f', $wd->{'tokens_per_hour'})/e;
+		$html .= '<span class="balance_active_tokens">' . xml_escape($tokens_text) . '</span>';
+	}
+	return $html . '</p>';
+}
+
+# Who spent the window, with each app's share, time in use and money. The money
+# is the account's own fall split by that app's tokens, so the role figures add
+# up to the provider's; each carries its base amount so the picker can convert
+# it without a rebuild. Empty when the window has no roles.
+sub ai_balance_roles_html {
+	my ($wd, $currency) = @_;
+	return '' unless ref $wd eq 'HASH' && ref $wd->{'roles'} eq 'ARRAY' && @{ $wd->{'roles'} };
+	$currency = '' unless defined $currency;
+	my @chunks;
+	foreach my $role ( @{ $wd->{'roles'} } ) {
+		my $label = ($role->{'label'} // '') . ' ' . sprintf('%.0f%%', $role->{'share'} || 0);
+		$label .= ' · ' . &ai_balance_span_label($role->{'active_ms'} / 3600000) if ($role->{'active_ms'} || 0) > 0;
+		if (defined $role->{'cost'} && $role->{'cost'} > 0.000001) {
+			my $per_hour = (defined $role->{'per_active_hour'} && $role->{'per_active_hour'} > 0) ? $role->{'per_active_hour'} : undef;
+			my $template = $label . ' · {0}';
+			my $text = $template;
+			$text =~ s/\{0\}/&currency_money($role->{'cost'}) . ' ' . $currency/e;
+			if (defined $per_hour) {
+				$template .= ' ({1}/h)';
+				$text .= ' (' . &currency_money($per_hour) . ' ' . $currency . '/h)';
+			}
+			push @chunks, '<span class="balance_role_money" data-base-cost="' . sprintf('%.6f', $role->{'cost'}) . '" data-base-per-hour="' . (defined $per_hour ? sprintf('%.6f', $per_hour) : '') . '" data-template="' . xml_escape($template) . '">' . xml_escape($text) . '</span>';
+		}
+		else {
+			push @chunks, '<span class="balance_role">' . xml_escape($label) . '</span>';
+		}
+	}
+	my $line = &subs::lang('configure.spend_by_role', '<span class="balance_role_list">' . join(' · ', @chunks) . '</span>');
+	return '<p class="cfg-note balance_roles">' . $line . '</p>';
+}
+
 # One bar per bucket, relative to the busiest, on the panel's accent. Heights
 # are shares of `max` rather than money, so a currency change never redraws the
 # drawing; the amount is built into the line under it, where the picker's rate

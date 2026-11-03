@@ -222,20 +222,7 @@
 									<%# Time actually spent with the agents, and what that hour cost. The
 									   span is built from the call ledger's sessions, not the calendar, so
 									   a quiet week does not dilute the rate into a meaningless number. %>
-									<% if (($wd->{'active_ms'} || 0) > 0) { %>
-										<% my $active_span = &subs::ai_balance_span_label($wd->{'active_ms'} / 3600000); %>
-										<% my $active_template = &subs::ui('{0} in use · {1} sessions'); %>
-										<% my $active_text = $active_template; $active_text =~ s/\{0\}/$active_span/; my $session_count = $wd->{'sessions'} || 0; $active_text =~ s/\{1\}/$session_count/; %>
-										<% my $hour_template = &subs::ui('{0} per hour in use'); %>
-										<% my $hour_text; if (defined $wd->{'per_active_hour'} && $wd->{'per_active_hour'} > 0.005) { $hour_text = $hour_template; $hour_text =~ s/\{0\}/&subs::currency_money($wd->{'per_active_hour'}) . ' ' . $series_currency; } %>
-										<% my $tokens_template = &subs::ui('{0} tokens per hour in use'); %>
-										<% my $tokens_text; if (defined $wd->{'tokens_per_hour'} && $wd->{'tokens_per_hour'} > 0) { $tokens_text = $tokens_template; $tokens_text =~ s/\{0\}/sprintf('%.0f', $wd->{'tokens_per_hour'}); } %>
-										<p class="cfg-note balance_active">
-											<span class="balance_active_time"><%= $active_text %></span>
-											<% if (defined $hour_text) { %><span class="balance_active_rate" data-base-per-hour="<%= sprintf('%.6f', $wd->{'per_active_hour'}) %>" data-template="<%= $hour_template %>"> · <%= $hour_text %></span><% } %>
-											<% if (defined $tokens_text) { %><span class="balance_active_tokens"> · <%= $tokens_text %></span><% } %>
-										</p>
-									<% } %>
+									<%== &subs::ai_balance_active_html($wd, $series_currency) %>
 									<%# The same burn read two ways: how long the balance lasts at this
 									   rate, and what that rate costs. Both carry their own data so the
 									   currency picker can convert them in place, like the rate line. %>
@@ -288,24 +275,7 @@
 											   data-template="<%= &subs::lang('configure.balance_peak', '{0}', '{1}') %>"><%= &subs::lang('configure.balance_peak', $peak->{'label'}, &subs::currency_money($peak->{'spend'}) . ' ' . $series_currency) %></p>
 										<% } %>
 									<% } %>
-									<% if (@{ $wd->{'roles'} || [] }) { %>
-										<% my @role_chunks; %>
-										<% foreach my $role ( @{ $wd->{'roles'} } ) { %>
-											<% my $label = $role->{'label'} . ' ' . sprintf('%.0f%%', $role->{'share'} || 0); %>
-											<% $label .= ' · ' . &subs::ai_balance_span_label($role->{'active_ms'} / 3600000) if ($role->{'active_ms'} || 0) > 0; %>
-											<% if (defined $role->{'cost'} && $role->{'cost'} > 0.000001) { %>
-												<% my $per_hour = (defined $role->{'per_active_hour'} && $role->{'per_active_hour'} > 0) ? $role->{'per_active_hour'} : undef; %>
-												<% my $chunk_template = $label . ' · {0}'; %>
-												<% my $chunk_text = $chunk_template; $chunk_text =~ s/\{0\}/&subs::currency_money($role->{'cost'}) . ' ' . $series_currency/e; %>
-												<% if (defined $per_hour) { $chunk_template .= ' ({1}/h)'; $chunk_text .= ' (' . &subs::currency_money($per_hour) . ' ' . $series_currency . '/h)'; } %>
-												<% push @role_chunks, '<span class="balance_role_money" data-base-cost="' . sprintf('%.6f', $role->{'cost'}) . '" data-base-per-hour="' . (defined $per_hour ? sprintf('%.6f', $per_hour) : '') . '" data-template="' . &subs::xml_escape($chunk_template) . '">' . &subs::xml_escape($chunk_text) . '</span>'; %>
-											<% } else { %>
-												<% push @role_chunks, '<span class="balance_role">' . &subs::xml_escape($label) . '</span>'; %>
-											<% } %>
-										<% } %>
-										<% my $roles_line = &subs::lang('configure.spend_by_role', '<span class="balance_role_list">' . join(' · ', @role_chunks) . '</span>'); %>
-										<p class="cfg-note balance_roles"><%== $roles_line %></p>
-									<% } %>
+									<%== &subs::ai_balance_roles_html($wd, $series_currency) %>
 									<% if (($wd->{'house_tokens'} || 0) > 0) { %>
 										<p class="cfg-note balance_house_tokens"><%= &subs::lang('configure.house_tokens', $wd->{'house_tokens'}) %></p>
 									<% } %>
