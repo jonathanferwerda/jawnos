@@ -1,4 +1,4 @@
-# tests-for: lib/JawnOS/Controller/manager_transaction2.pm public/js/manager/transaction.js public/js/manager/transaction/ public/css/manager.css templates/apps/transaction/transfer.html.ep templates/apps/app_details.html.ep perl/help/topics_functions.pl
+# tests-for: lib/JawnOS/Controller/manager_transaction2.pm lib/JawnOS/Controller/manager_transaction.pm public/js/manager/transaction.js public/js/manager/transaction/ public/css/manager.css templates/apps/transaction/transfer.html.ep templates/apps/app_details.html.ep perl/help/topics_functions.pl
 # covers:    Saving a transfer was refused with "Enter the amount or the total before saving." because the form's only figure lives in .transfer_amount; the transfer form itself was bare markup.
 
 use strict;
@@ -21,6 +21,7 @@ my $template = read_file("$root/templates/apps/transaction/transfer.html.ep");
 my $details = read_file("$root/templates/apps/app_details.html.ep");
 my $css = read_file("$root/public/css/manager.css");
 my $controller = read_file("$root/lib/JawnOS/Controller/manager_transaction2.pm");
+my $entry = read_file("$root/lib/JawnOS/Controller/manager_transaction.pm");
 my $help = help_source();
 
 # --- the save guard asks each movement for the figure it has ----------------
@@ -65,6 +66,14 @@ like($controller, qr/\$transfer_amount = &subs::numeric_formatter\(\$transfer_am
 	'the route normalizes the transfer amount');
 like($controller, qr/\$to_account eq \$account/, 'the route refuses a transfer to itself');
 like($controller, qr/Enter the amount to transfer\./, 'the route returns a readable error');
+
+# --- suggestions only ask a real column ------------------------------------
+# transfer_amount is not a column, so the autocomplete query used to die with a
+# 500 on every keystroke in that field.
+like($entry, qr/pragma_table_info\(\?\).*'appointments', \$attribute/,
+	'the autocomplete checks that the attribute is a column');
+like($entry, qr/unless \(\$is_column\) \{\s*\$c->render\(json => \[\]\);\s*return;/,
+	'and answers an empty list instead of failing');
 
 # --- the guide says what the form does -------------------------------------
 like($help, qr/Choose Transfer from Type/, 'the transactions topic explains Transfer');

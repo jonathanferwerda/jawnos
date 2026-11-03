@@ -70,6 +70,14 @@ sub action_16801 {
 	my $app = $c->param('app');
 	my $list;
 	if ($attribute) {
+		# Only a real column can offer suggestions. The transaction form also
+		# carries fields that are not columns (transfer_amount, transfer_aux);
+		# an unknown name used to reach the query and fail it with a 500.
+		my $is_column = &subs::db_query('select 1 from pragma_table_info(?) where name=?', 'appointments', $attribute)->hashes->[0];
+		unless ($is_column) {
+			$c->render(json => []);
+			return;
+		}
 		my $query = 'select distinct(app),' . $attribute . ' from appointments where app=? and (type=? or type=?) and ' . $attribute . ' like ? and ' . $attribute . ' != \'\' order by server_time desc limit 5';
 		$list = &subs::db_query($query, $app, 'purchase','transaction', '%' . $value . '%')->hashes;
 	}
