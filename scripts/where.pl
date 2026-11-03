@@ -872,12 +872,32 @@ sub where_context {
 		$parent_cmd =~ s/\s+/ /g;
 		$parent_cmd =~ s/^\s+|\s+$//g;
 	}
+	# The immediate parent is usually the shell that ran the tool call; the one
+	# above it is the editor or agent that asked for it, which is the useful name.
+	my $grandparent_cmd = '';
+	if ($parent && open(my $sf, '<', "/proc/$parent/stat")) {
+		local $/;
+		my $stat = <$sf> // '';
+		close $sf;
+		if ($stat =~ /^\d+\s+\(.*\)\s+\S+\s+(\d+)/) {
+			my $gp = $1;
+			if ($gp && open(my $gf, '<', "/proc/$gp/cmdline")) {
+				local $/;
+				$grandparent_cmd = <$gf> // '';
+				close $gf;
+				$grandparent_cmd =~ s/\0/ /g;
+				$grandparent_cmd =~ s/\s+/ /g;
+				$grandparent_cmd =~ s/^\s+|\s+$//g;
+			}
+		}
+	}
 	my $context = {
-		cwd    => substr($cwd, 0, 300),
-		args   => substr(join(' ', @raw_argv), 0, 300),
-		parent => substr($parent_cmd, 0, 300),
-		term   => substr($ENV{'TERM_PROGRAM'} // $ENV{'TERM'} // '', 0, 80),
-		agent  => substr($ENV{'JAWNOS_AGENT'} // '', 0, 80),
+		cwd         => substr($cwd, 0, 300),
+		args        => substr(join(' ', @raw_argv), 0, 300),
+		parent      => substr($parent_cmd, 0, 300),
+		grandparent => substr($grandparent_cmd, 0, 300),
+		term        => substr($ENV{'TERM_PROGRAM'} // $ENV{'TERM'} // '', 0, 80),
+		agent       => substr($ENV{'JAWNOS_AGENT'} // '', 0, 80),
 	};
 	return JSON::PP->new->canonical->encode($context);
 }

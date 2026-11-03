@@ -62,7 +62,7 @@ my $dbh = DBI->connect("dbi:SQLite:dbname=$db", '', '', { RaiseError => 1, Print
 $dbh->do('create table where_calls (uuid text, machine text, minute text, name text, hit int, hits int, context text, ost text, server_time text)');
 $dbh->do('create table where_feedback (uuid text, call_uuid text, machine text, minute text, name text, verdict text, selected text, found text, note text, ost text, server_time text)');
 my $minute = strftime('%Y-%m-%d %H:%M', localtime);
-$dbh->do("insert into where_calls (uuid,machine,minute,name,hit,hits,context) values (?,?,?,?,?,?,?)", undef, 'c1', 'me', $minute, 'missed_name', 0, 0, '{"cwd":"/tmp/probe","args":"missed_name","parent":"zed"}');
+$dbh->do("insert into where_calls (uuid,machine,minute,name,hit,hits,context) values (?,?,?,?,?,?,?)", undef, 'c1', 'me', $minute, 'missed_name', 0, 0, '{"cwd":"/tmp/probe","args":"missed_name","parent":"sh","grandparent":"zed"}');
 $dbh->do("insert into where_calls (uuid,machine,minute,name,hit,hits) values ('c2','me','$minute','good_name',1,1)");
 $dbh->do("insert into where_feedback (uuid,machine,minute,name,verdict,found) values ('f1','me','$minute','missed_name','wrong','lib/JawnOS/Domain/Format.pm:140')");
 $dbh->do("insert into where_feedback (uuid,machine,minute,name,verdict,selected,found) values ('f2','me','$minute','multi_probe','wrong','public/js/a.js:1','public/js/b.js:1')");
@@ -81,6 +81,7 @@ like($out, qr/\[\w+ \/ coverage\]/, 'classifying a location the locator never re
 like($out, qr/\[\w+ \/ ranking\]/, 'and a right answer that was among the hits');
 like($out, qr/\[miss \/ coverage\]/, 'and a reported miss as coverage');
 like($out, qr/cwd \/tmp\/probe/, 'with the context the call was made in');
+like($out, qr/via zed/, 'including the agent above the shell');
 like($out, qr/MAP DRIFT/, 'and the map drift');
 like($out, qr/drifted_name/, 'naming the drifted Index entry');
 like($out, qr/missing_sub/, 'and the missing domain entry');

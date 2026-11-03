@@ -255,6 +255,7 @@ sub context_text {
 	push @bits, 'cwd ' . $c->{'cwd'} if length($c->{'cwd'} // '');
 	push @bits, 'args ' . $c->{'args'} if length($c->{'args'} // '');
 	push @bits, 'parent ' . $c->{'parent'} if length($c->{'parent'} // '');
+	push @bits, 'via ' . $c->{'grandparent'} if length($c->{'grandparent'} // '');
 	my $text = join(' · ', @bits);
 	return length($text) > 300 ? substr($text, 0, 300) . '...' : $text;
 }
