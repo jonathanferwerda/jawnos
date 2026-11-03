@@ -915,6 +915,28 @@ sub ai_spend_note {
 	return 1;
 }
 
+# Today's locator use, from the rows where.pl writes. A miss is the number that
+# matters - it is the lookup that sends an agent back to grep - so the panel can
+# show the rate. An absent table (a database that has not migrated yet) reads as
+# no calls rather than taking the panel down.
+sub where_lookup_stats {
+	my ($since_key) = @_;
+	$since_key = '' unless defined $since_key;
+	my $row = eval {
+		&subs::db_query(
+			'select count(*) as calls,'
+			. ' sum(case when hit > 0 then 1 else 0 end) as hits,'
+			. ' sum(case when hit = 0 then 1 else 0 end) as misses'
+			. ' from where_calls where minute >= ?', $since_key)->hashes->[0];
+	};
+	return { calls => 0, hits => 0, misses => 0 } unless $row;
+	return {
+		calls  => ($row->{'calls'}  || 0) + 0,
+		hits   => ($row->{'hits'}   || 0) + 0,
+		misses => ($row->{'misses'} || 0) + 0,
+	};
+}
+
 # The ledger summed per provider in the granularity the caller asks for: '2m'
 # (an even-minute bucket, folded here), 'hour' or 'day' (a prefix of the minute
 # key, grouped by SQLite). `$since_key` is the earliest minute key to count;

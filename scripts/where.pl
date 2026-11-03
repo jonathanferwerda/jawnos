@@ -11,18 +11,23 @@
 #   perl scripts/where.pl --topics                   # the whole help registry
 #   perl scripts/where.pl --context 6 guide_find_target
 #   perl scripts/where.pl --terse path_name
+#   perl scripts/where.pl --outline lib/JawnOS/Domain/Coding.pm   # its symbols
 #
 # The maps are read, never loaded: lib/JawnOS/Manager/Index.pm is %SUB (helper
 # -> part) and lib/JawnOS/Domain/Loader.pm is %DOMAIN_MODULE (sub -> module).
 # Routes are read from lib/JawnOS/Routes/*.pm and help topics from
 # perl/help/topics_*.pl, so nothing boots the app. A name neither map knows is
-# searched for as a sub across the parts and the domain modules, then as a help
-# topic, then as a declaration in a controller, the app's JavaScript or a
-# firmware sketch (jp/, jw/, jt/), then as a mention that prints the matching
+# searched for as a sub across the parts, the domain modules, perl/ and scripts/,
+# then as a help topic, then as a declaration in a controller, a JavaScript file
+# or a firmware sketch (jp/, jw/, jt/), then as a mention that prints the matching
 # line itself (capped by --limit). A single JavaScript or firmware declaration
 # arrives with its body (--body), because a location still costs a second read.
 # When a map names a file that does not define the sub, the hit prints where it
 # really is and says the map drifted - that is the audit, for free.
+#
+# Every lookup is recorded in the where_calls table (a hit or a miss, the minute
+# and the machine), so Configure -> System can show the locator's hit rate beside
+# the cost ledger. --no-log skips the row.
 
 use strict;
 use warnings;
@@ -31,13 +36,19 @@ use Cwd qw(abs_path);
 use File::Find qw(find);
 use FindBin ();
 use Getopt::Long qw(GetOptions);
+use POSIX qw(strftime);
+use Sys::Hostname qw(hostname);
 
-my $root       = abs_path("$FindBin::Bin/..");
+my $real_root  = abs_path("$FindBin::Bin/..");
+my $root       = $real_root;
 my $context    = 0;
 my $limit      = 8;
 my $terse      = 0;
 my $body_flag;
 my $body_lines;
+my $body_chars;
+my $outline    = 0;
+my $log_flag;
 my $tech_name;
 my $list_topics = 0;
 my $help       = 0;
@@ -48,6 +59,9 @@ GetOptions(
 	'terse'        => \$terse,
 	'body!'        => \$body_flag,
 	'body-lines=i' => \$body_lines,
+	'body-chars=i' => \$body_chars,
+	'outline'      => \$outline,
+	'log!'         => \$log_flag,
 	'tech=s'       => \$tech_name,
 	'topics'       => \$list_topics,
 	'root=s'       => \$root,
@@ -57,6 +71,16 @@ GetOptions(
 $body_flag = 1 if defined $body_lines && !defined $body_flag;
 $body_lines = 16 unless defined $body_lines;
 $body_lines = 0 if $body_lines < 0;
+$body_chars = 2000 unless defined $body_chars;
+$body_chars = 0 if $body_chars < 0;
+
+# Every lookup is evidence: a hit says the locator answered without a read, a
+# miss says the agent is about to grep. The row rides the same sync as the cost
+# ledger, so Configure -> System can show both. A fixture tree (--root) never
+# writes to the real database, and --no-log turns it off for a curious call.
+my $log_enabled = (!defined $log_flag || $log_flag)
+	&& $root eq $real_root
+	&& !$ENV{'JAWNOS_WHERE_LOG_OFF'};
 
 usage(0) if $help;
 usage(2) unless defined $root && length $root && -d $root;
@@ -99,6 +123,19 @@ my @embedded_files = source_files(
 	ext       => [qw(ino cpp cc c h hpp py)],
 	max_bytes => 131072,
 );
+
+# perl/ and scripts/ sit outside every name map, so a name defined in help.pl or
+# a CLI script used to fall through to "no X in the tree". Tests belong here too:
+# a helper that only exists in t/ is still a real location.
+my %mapped = map { $_ => 1 } (@manager_files, @domain_files, @controller_files, @route_files);
+my @perl_extra_files = sort grep { !$mapped{$_} } (
+	source_files(dirs => [qw(perl scripts t)], ext => [qw(pl pm t)]),
+	grep { -f $_ } ("$root/lib/JawnOS.pm", glob("$root/lib/JawnOS/*.pm")),
+);
+# A test file is a place a sub can be declared, but its fixture strings are not
+# evidence a name exists: mention-search would find the test's own 'no such name'
+# probe and call it a hit. Definitions in t/ stay in scope.
+my @perl_extra_mention = grep { $_ !~ m{/t/[^/]+\.t\z} } @perl_extra_files;
 
 sub source_files {
 	my (%spec) = @_;
@@ -165,6 +202,23 @@ my %domain_file;
 
 # --- the lookup -------------------------------------------------------------
 
+if ($outline) {
+	my $ok = 0;
+	for my $raw (@ARGV) {
+		my $abs = $raw =~ m{^/} ? $raw : "$root/$raw";
+		unless (-f $abs) {
+			warn "where: no file $raw\n";
+			next;
+		}
+		print "$raw\n" if @ARGV > 1;
+		for my $symbol ( outline_symbols($abs) ) {
+			print $symbol->[0], "\t", $symbol->[1], ' ', $symbol->[2], "\n";
+		}
+		$ok = 1;
+	}
+	exit($ok ? 0 : 1);
+}
+
 my $found = 0;
 for my $raw (@ARGV) {
 	my ($name, $hint) = normalize($raw);
@@ -172,7 +226,9 @@ for my $raw (@ARGV) {
 		warn "where: '$raw' is not a name\n";
 		next;
 	}
-	$found += lookup($raw, $name, $hint);
+	my $hits = lookup($raw, $name, $hint);
+	where_log($name, $hits);
+	$found += $hits;
 }
 exit($found ? 0 : 1);
 
@@ -226,7 +282,7 @@ sub lookup {
 	return $topic if $topic;
 
 	my @decl;
-	for my $file (@controller_files, @js_files, @embedded_files) {
+	for my $file (@controller_files, @perl_extra_files, @js_files, @embedded_files) {
 		my $line = find_definition($file, $name) or next;
 		push @decl, [ $file, $line ];
 		last if @decl >= $limit;
@@ -257,7 +313,7 @@ sub lookup {
 	# script exists to avoid - so a mention prints grep's matching line too.
 	my $hits = 0;
 	for my $file (@manager_files, @domain_files, @controller_files, @route_files,
-		@js_files, @template_files, @embedded_files)
+		@perl_extra_mention, @js_files, @template_files, @embedded_files)
 	{
 		my $text = slurp($file) // next;
 		my $n    = 0;
@@ -503,7 +559,7 @@ sub is_definition {
 	$ext = lc($ext // '');
 	my $n = quotemeta $name;
 
-	if ($ext eq 'pm' || $ext eq 'pl') {
+	if ($ext eq 'pm' || $ext eq 'pl' || $ext eq 't') {
 		return $line =~ /^\s*sub\s+$n\b/;
 	}
 	if ($ext eq 'js') {
@@ -558,7 +614,7 @@ sub print_extra {
 
 sub is_perl {
 	my ($file) = @_;
-	return $file =~ /\.p[lm]\z/;
+	return $file =~ /\.(?:p[lm]|t)\z/;
 }
 
 # Print the declaration's body, stopping at its closing brace (or the dedent
@@ -577,10 +633,27 @@ sub print_body {
 		? python_body(\@lines, $line, $max)
 		: brace_body(\@lines, $line, $max);
 
-	# The declaration line is already printed; the body starts after it.
-	for my $i ($line .. $line + $after - 1) {
-		last unless defined $lines[$i];
-		print "  $lines[$i]\n";
+	# Blank lines and shared indentation are tokens that buy nothing, and a body
+	# of long string literals can pass a line cap without passing a useful size.
+	# Strip both, then stop at the character budget as well as the line cap.
+	my @body = grep { defined && /\S/ } @lines[ $line .. $line + $after - 1 ];
+	my $cut;
+	for my $text (@body) {
+		my $w = indent_width($text);
+		$cut = $w if !defined $cut || $w < $cut;
+	}
+	$cut = 0 unless defined $cut;
+
+	my $spent = 0;
+	for my $text (@body) {
+		my $shown = $cut ? substr($text, $cut) : $text;
+		$shown =~ s/\s+\z//;
+		if ($body_chars && $spent + length($shown) + 1 > $body_chars) {
+			$more = 1;
+			last;
+		}
+		print "  $shown\n";
+		$spent += length($shown) + 1;
 	}
 	print "  ...\n" if $more;
 }
@@ -697,6 +770,87 @@ sub mention_text {
 	return " $line";
 }
 
+# One row per name the locator was asked about. A miss is the row that matters:
+# it is the lookup that sends an agent back to grep, so the panel can show the
+# rate rather than guess it. Guarded end to end - a database problem must never
+# take a lookup down, and a pre-migration install records nothing.
+sub where_log {
+	my ($name, $hits) = @_;
+	return 0 unless $log_enabled && defined $name && length $name;
+	my $db = $ENV{'JAWNOS_WHERE_DB'} || "$root/database/jawnos.db";
+	return 0 unless -f $db;
+	my $ok = eval {
+		require DBI;
+		my $dbh = DBI->connect("dbi:SQLite:dbname=$db", '', '', {
+			RaiseError => 0, PrintError => 0, AutoCommit => 1,
+			sqlite_busy_timeout => 2000,
+		}) or die "connect\n";
+		my $now    = time() * 1000;
+		my $minute = strftime('%Y-%m-%d %H:%M', localtime);
+		my $uuid   = sprintf('%d-%d-%d', time, $$, int(rand(1_000_000)));
+		my $safe   = $name;
+		$safe =~ s/[\x00-\x1f]+/ /g;
+		$safe = substr($safe, 0, 200);
+		$dbh->do(
+			'insert into where_calls (uuid, machine, minute, name, hit, hits, ost, server_time) values (?,?,?,?,?,?,?,?)',
+			undef, $uuid, hostname(), $minute, $safe, ($hits ? 1 : 0), ($hits || 0), $now, $now,
+		);
+		$dbh->disconnect;
+		1;
+	};
+	return $ok ? 1 : 0;
+}
+
+# Every declaration in a file, in line order, so an agent can read a range
+# instead of the whole file. The same shapes the locator finds by name; here the
+# name is read off the line rather than searched for.
+sub outline_symbols {
+	my ($file) = @_;
+	my $text = slurp($file) or return;
+	my ($ext) = $file =~ /\.([^.]+)\z/;
+	$ext = lc($ext // '');
+	my @out;
+	my $n = 0;
+	for my $line (split /\n/, $text, -1) {
+		$n++;
+		my $symbol = outline_symbol($ext, $line) or next;
+		push @out, [ $n, $symbol->[0], $symbol->[1] ];
+	}
+	return @out;
+}
+
+sub outline_symbol {
+	my ($ext, $line) = @_;
+	if ($ext eq 'pm' || $ext eq 'pl' || $ext eq 't') {
+		return [ 'sub', $1 ] if $line =~ /^\s*sub\s+([A-Za-z_]\w*)\b/;
+		return;
+	}
+	if ($ext eq 'js') {
+		return [ 'function', $1 ] if $line =~ /\bfunction\s+([A-Za-z_$][\w$]*)\s*\(/;
+		return [ 'class', $1 ] if $line =~ /\bclass\s+([A-Za-z_$][\w$]*)\b/;
+		return [ 'const', $1 ] if $line =~ /\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:async\s+)?(?:function\b|\()/;
+		return [ 'method', $1 ] if $line =~ /^\s*([A-Za-z_$][\w$]*)\s*[:=]\s*(?:async\s+)?(?:function\b|\()/;
+		return;
+	}
+	if ($ext eq 'py') {
+		return [ 'def', $1 ] if $line =~ /^\s*(?:async\s+)?def\s+([A-Za-z_]\w*)\b/;
+		return [ 'class', $1 ] if $line =~ /^\s*class\s+([A-Za-z_]\w*)\b/;
+		return;
+	}
+	if ($ext eq 'ino' || $ext eq 'c' || $ext eq 'cpp' || $ext eq 'cc'
+		|| $ext eq 'h' || $ext eq 'hpp')
+	{
+		return [ 'define', $1 ] if $line =~ /^\s*#\s*define\s+([A-Za-z_]\w*)\b/;
+		if ($line =~ /^\s*(class|struct|enum|namespace)\s+([A-Za-z_]\w*)\b/) {
+			return [ $1, $2 ];
+		}
+		return [ 'function', $1 ] if $line =~ /^\s*(?!if\b|for\b|while\b|switch\b|return\b|else\b|case\b|do\b)
+			(?:[\w:<>*&\[\]]+\s+)+[*&]?\s*([A-Za-z_]\w*)\s*\([^;]*\)\s*(?:const\s*)?(?:\{|\z)/x;
+		return;
+	}
+	return;
+}
+
 sub print_context {
 	my ($file, $line) = @_;
 	my $text = slurp($file) or return;
@@ -728,26 +882,31 @@ sub usage {
 	my ($code) = @_;
 	my $fh = $code ? \*STDERR : \*STDOUT;
 	print $fh <<'TXT';
-usage: perl scripts/where.pl [--context N] [--limit N] [--terse] [--topics] [--tech NAME] [--root DIR] NAME...
+usage: perl scripts/where.pl [options] NAME... | --outline FILE...
 
   NAME   a Manager helper (app_release_sync), a domain sub (subs::path_name or
          path_name), a route action (action_7408), a route path (/manager/pen),
-         a help topic (budget), or a file (templates/apps/gallery.html.ep, which
-         reports the help topics covering it). Several names may be given.
+         a function in perl/ or scripts/, a help topic (budget), or a file
+         (templates/apps/gallery.html.ep, which reports the help topics
+         covering it). Several names may be given.
 
 Prints file:line for each. A name the maps do not know is searched for as a
-sub, then as a help topic, then as a declaration in a controller, a JavaScript
-file or a firmware sketch (jp/, jw/, jt/), then as a mention: file:line plus the
-matching line, at most --limit lines. --context N adds N lines after any hit,
---terse prints only file:line, --topics lists every help topic with the line it
-is defined on. Exits 0 if anything was found.
+sub in lib/, perl/ or scripts/, then as a help topic, then as a declaration in a
+controller, a JavaScript file or a firmware sketch (jp/, jw/, jt/), then as a
+mention: file:line plus the matching line, at most --limit lines. --context N
+adds N lines after any hit, --terse prints only file:line, --topics lists every
+help topic with the line it is defined on. Exits 0 if anything was found.
 
   --body        print the declaration and its body, stopping at the closing
                 brace (or the dedent of a Python def), at most --body-lines
                 (default 16) following lines. On by default when exactly one
                 JavaScript or firmware declaration matches; --no-body stops it.
   --body-lines N  the cap for --body (implies --body).
+  --body-chars N  the character cap for --body (default 2000; 0 is no cap).
   --context N   the plain N-line form; it wins over --body when both are given.
+  --outline     for each FILE, print "line<TAB>kind name" for every declaration
+                in it, so an agent can read a range instead of the whole file.
+  --no-log      do not record this lookup in database/jawnos.db.
 
   --tech NAME  the tier-2 technical brief for an app or topic (routes, tables,
                settings, tests, source notes) - same as scripts/agent_help.pl

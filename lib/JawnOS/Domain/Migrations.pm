@@ -481,6 +481,21 @@ sub update_database($data) {
 		'drop index if exists idx_ai_spend',
 		'create index if not exists idx_ai_spend_minute on ai_spend (minute)',
 		'create index if not exists idx_ai_spend_provider on ai_spend (provider, minute)',
+		# The locator's own ledger: one row per name where.pl was asked about. A miss
+		# is the row that matters - it is the lookup that sends an agent back to
+		# grep - so Configure -> System can show the rate rather than guess it.
+		# server_time lets it ride the same peer sync as the rest of the ledger.
+		'create table if not exists where_calls (
+			uuid VARCHAR(255),
+			machine VARCHAR(255),
+			minute VARCHAR(25),
+			name VARCHAR(200),
+			hit INT,
+			hits INT,
+			ost VARCHAR(255),
+			server_time VARCHAR(255)
+		)',
+		'create index if not exists idx_where_calls_minute on where_calls (minute)',
 		'alter table continent add column signatorial VARCHAR(500)',
 		'alter table continent add column speed VARCHAR(25)',
 		'alter table continent add column altitude VARCHAR(25)',

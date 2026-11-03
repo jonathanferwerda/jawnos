@@ -26,6 +26,10 @@
 use strict;
 use warnings;
 
+# where.pl records every lookup in the live ledger; a test run must not. The one
+# test that checks the row turns this off for itself and uses a fixture database.
+$ENV{'JAWNOS_WHERE_LOG_OFF'} = 1;
+
 my $MAX_JOBS = 8;
 
 my ($jobs, $serial, $dry, $jobs_given, $prove);

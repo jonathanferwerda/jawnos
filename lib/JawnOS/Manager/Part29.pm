@@ -457,8 +457,32 @@ sub coding_execute($c, $action, $touched) {
 		return 'no such file' unless -f $abs;
 		my $text = eval { read_file($abs) } // '';
 		$text =~ s/\x00//g;
+		# A symbol lives in a range, not in a whole part: let the agent ask for
+		# the lines where.pl pointed it instead of paying for the file.
+		if (defined $action->{'offset'} || defined $action->{'limit'}) {
+			return &subs::coding_read_range($text, $action->{'offset'}, $action->{'limit'});
+		}
 		if (length $text > 40000) { $text = substr($text, 0, 40000) . "\n... [trimmed]"; }
 		return length($text) ? $text : '(empty file)';
+	}
+	if ($a eq 'patch') {
+		my $abs = coding_path($action->{'path'});
+		return 'refused: that path is outside the repo or not allowed' unless $abs;
+		return 'no such file' unless -f $abs;
+		my $text = eval { read_file($abs) } // '';
+		$text =~ s/\x00//g;
+		my ($patched, $at, $count, $why) = &subs::coding_patch_text(
+			$text, $action->{'old'}, $action->{'new'}, $action->{'all'});
+		return $why if defined $why;
+		my $write_error = &subs::coding_write_file($abs, $patched);
+		return $write_error if length $write_error;
+		$touched->{ coding_rel($action->{'path'}) } = 1 if $touched;
+		# The same verifier as write: a patch that breaks the file is named now,
+		# not at the commit that refuses it.
+		my $problem = &subs::coding_verify_text(coding_rel($action->{'path'}), $patched);
+		return 'patched ' . ($action->{'path'} // '') . " at line $at"
+			. ($action->{'all'} ? " ($count matches)" : '')
+			. ($problem ? ' - IT DOES NOT PASS THE VERIFIER: ' . $problem . '; correct it with another patch' : '');
 	}
 	if ($a eq 'write') {
 		my $abs = coding_path($action->{'path'});

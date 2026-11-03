@@ -11,7 +11,9 @@ use File::Slurp qw(read_file);
 
 # The domain layer is lazy: load the real definitions before the local *subs::
 # stubs below, or a later module load would replace them.
-subs::preload($_) for qw(ai_spend_minute_key ai_spend_note ai_spend_buckets ai_spend_roles ai_spend_prune);
+subs::preload($_) for qw(ai_spend_minute_key ai_spend_note where_lookup_stats ai_spend_buckets ai_spend_roles ai_spend_prune);
+
+my $root = "$FindBin::Bin/..";
 
 # The per-call AI token ledger. Every model call writes its own row carrying the
 # minute, model and role, so the balance chart can put tokens against the minute
@@ -180,5 +182,39 @@ like $migrations, qr/idx_ai_spend_provider/, 'and one on provider and minute';
 like $migrations, qr/drop index if exists idx_ai_spend\b/, 'and drops the old unique hourly index';
 unlike $migrations, qr/create unique index if not exists idx_ai_spend\b/,
 	'no unique index is created on a per-call table';
+
+# ---- the locator's own ledger ----------------------------------------------
+{
+	require DBI;
+	my $dbh = DBI->connect('dbi:SQLite::memory:', '', '', { RaiseError => 1, PrintError => 0 });
+	$dbh->do('create table where_calls (uuid text, machine text, minute text, name text, hit int, hits int, ost text, server_time text)');
+	$dbh->do("insert into where_calls (minute,name,hit,hits) values ('2026-11-02 17:43','a',1,1)");
+	$dbh->do("insert into where_calls (minute,name,hit,hits) values ('2026-11-02 17:44','b',0,0)");
+	$dbh->do("insert into where_calls (minute,name,hit,hits) values ('2026-11-01 09:00','c',1,2)");
+	no warnings 'redefine';
+	local *subs::db_query = sub {
+		my ($sql, @args) = @_;
+		my $sth = $dbh->prepare($sql);
+		$sth->execute(@args);
+		return FakeRowSet->new($sth->fetchall_arrayref({}), 1);
+	};
+	my $stats = &subs::where_lookup_stats('2026-11-02');
+	is($stats->{'calls'}, 2, 'today counts both locator lookups');
+	is($stats->{'hits'}, 1, 'a declaration is a hit');
+	is($stats->{'misses'}, 1, 'an unknown name is a miss');
+}
+{
+	no warnings 'redefine';
+	local *subs::db_query = sub { die "no such table: where_calls\n" };
+	my $stats = &subs::where_lookup_stats('2026-11-02');
+	is_deeply($stats, { calls => 0, hits => 0, misses => 0 },
+		'a pre-migration database reads as no calls');
+}
+
+# ---- the panel reads it -----------------------------------------------------
+like(read_file("$root/lib/JawnOS/Controller/manager_configure4.pm"),
+	qr/where_stats => &subs::where_lookup_stats/, 'the Sys panel is given the locator stats');
+like(read_file("$root/templates/configure/system_setting_list.html.ep"),
+	qr/where_lookup_note/, 'and shows them beside the cost ledger');
 
 done_testing();

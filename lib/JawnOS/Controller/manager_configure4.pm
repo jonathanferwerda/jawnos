@@ -477,6 +477,7 @@ sub action_19179 {
 		evaluation => $evaluation,
 		ai_house => &subs::ai_house_report(),
 		ai_balance => &subs::ai_balance_report(),
+		where_stats => &subs::where_lookup_stats(substr(&subs::ai_spend_minute_key(), 0, 10)),
 		settings => $settings,
 		last_restart => $last_restart,
 		device => $device

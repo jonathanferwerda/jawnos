@@ -24,6 +24,11 @@ use Test::More;
 my $root   = "$FindBin::Bin/..";
 my $script = "$root/scripts/where.pl";
 
+# The locator records every lookup in the live database. A test that runs it must
+# not write into the house ledger; the one test that checks the row turns this off
+# for itself and points JAWNOS_WHERE_DB at a fixture.
+local $ENV{'JAWNOS_WHERE_LOG_OFF'} = 1;
+
 sub where {
 	my @args = @_;
 	my $err  = gensym;
@@ -137,8 +142,8 @@ for my $name (qw(subs::path_name path_name)) {
 {
 	my ($code, $out) = where('jawnosAgentsPanel');
 	is($code, 0, 'a single JS declaration resolves');
-	like($out, qr{^  \tvar panel = \$\('#jawnos_agents'\);$}m,
-		'and its first body line arrives by default');
+	like($out, qr{^  var panel = \$\('#jawnos_agents'\);$}m,
+		'and its first body line arrives by default, dedented');
 	like($out, qr{^  \.\.\.$}m, 'a long body is capped and the cut is marked');
 	unlike($out, qr{^\s*function\s+jawnosAgentsPanel\b}m,
 		'the declaration line is not repeated in the body');
@@ -163,15 +168,15 @@ for my $name (qw(subs::path_name path_name)) {
 	unlike($out, qr{offset_sane}, 'the next function is not pulled in');
 
 	(undef, $out) = where('load_clock_font');
-	like($out, qr{^      src = open\(path\)\.read\(\)$}m,
-		'a python def brings its indented body');
+	like($out, qr{^  src = open\(path\)\.read\(\)$}m,
+		'a python def brings its body, dedented');
 }
 
 # --- a body is opt-in for Perl, and several hits stay locations ------------
 {
 	my (undef, $out) = where('--body', 'guide_find_target');
-	like($out, qr{^  \t\$opts = \{\} unless ref \$opts eq 'HASH';$}m,
-		'--body works for a Perl map hit too');
+	like($out, qr{^  \$opts = \{\} unless ref \$opts eq 'HASH';$}m,
+		'--body works for a Perl map hit too, dedented');
 
 	(undef, $out) = where('loop');
 	is(scalar(grep { /^  / } split /\n/, $out), 0,
@@ -276,6 +281,52 @@ PM
 
 	my (undef, $out2) = where('--root', $tmp, 'other_thing');
 	like($out2, qr{Part01\.pm:3}, 'a sub missing from the map is still found');
+}
+
+# --- a function in perl/ or scripts/ is in scope ---------------------------
+{
+	my ($code, $out) = where('coding_prompt');
+	is($code, 0, 'a function in perl/ resolves');
+	like($out, qr{^coding_prompt\tperl/help\.pl:\d+$}m, 'to the file that defines it');
+}
+
+# --- --outline lists a file's declarations ---------------------------------
+{
+	my ($code, $out) = where('--outline', 'lib/JawnOS/Domain/Format.pm');
+	is($code, 0, 'an outline resolves');
+	like($out, qr{^\d+\tsub path_name$}m, 'with the line and kind of a declaration');
+}
+
+# --- the body has a character budget as well as a line budget --------------
+{
+	my (undef, $out) = where('--body-chars', 300, 'jawnosAgentsPanel');
+	cmp_ok(length($out), '<', 400, 'a small character budget bounds the body');
+	like($out, qr{^  \.\.\.$}m, 'and marks the cut');
+}
+
+# --- every lookup is recorded, hit and miss --------------------------------
+{
+	my $dir = tempdir(CLEANUP => 1);
+	my $db  = "$dir/where.db";
+	require DBI;
+	my $dbh = DBI->connect("dbi:SQLite:dbname=$db", '', '', { RaiseError => 1, PrintError => 0 });
+	$dbh->do('create table where_calls (uuid text, machine text, minute text, name text, hit int, hits int, ost text, server_time text)');
+	$dbh->disconnect;
+
+	local $ENV{'JAWNOS_WHERE_LOG_OFF'};
+	delete $ENV{'JAWNOS_WHERE_LOG_OFF'};
+	local $ENV{'JAWNOS_WHERE_DB'} = $db;
+
+	where('jawnosAgentsPanel');
+	where('no_such_helper_at_all');
+
+	my $check = DBI->connect("dbi:SQLite:dbname=$db", '', '', { RaiseError => 1, PrintError => 0 });
+	my $rows  = $check->selectall_arrayref('select name, hit from where_calls');
+	$check->disconnect;
+	my %by = map { $_->[0] => $_->[1] } @{$rows};
+	is(scalar @{$rows}, 2, 'one row for the hit and one for the miss');
+	is($by{'jawnosAgentsPanel'}, 1, 'the declaration is a hit');
+	is($by{'no_such_helper_at_all'}, 0, 'the unknown name is a miss');
 }
 
 done_testing();

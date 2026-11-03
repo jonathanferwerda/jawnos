@@ -28,6 +28,15 @@
 			today <%= $ai_house->{'spent'} %> tokens<%= ($ai_house->{'budget'} ? ' of ' . $ai_house->{'budget'} : ' (no cap)') %>.
 			Each job runs once for the house; a machine that goes quiet hands its job on.
 		</p>
+		<%# What the locator saved today: a hit is a name answered without a file read,
+		   a miss is the lookup that sends an agent back to grep. Translated on
+		   demand by the Guide engine, with the numbers filled after translation. %>
+		<p class="cfg-note where_lookup_note">
+		<% my @where_values = map { ($where_stats || {})->{$_} || 0 } qw(calls hits misses); %>
+		<% my $where_line = &subs::ui('Locator today: {0} asked, {1} answered, {2} missed.'); %>
+		<% $where_line =~ s/\{(\d+)\}/$where_values[$1]/g; %>
+		<%= $where_line %>
+		</p>
 		<div class="cfg-scroll">
 			<table>
 				<thead>

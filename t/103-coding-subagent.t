@@ -540,6 +540,39 @@ sub run_fake_job {
 	is($view->{'children'}, 3, 'the view says how many subagents the run has used');
 }
 
+# --- patch: exact, unique, and small ----------------------------------------
+{
+	my ($out, $line, $count) = &subs::coding_patch_text("a\nb\nc\n", 'b', 'B');
+	is($out, "a\nB\nc\n", 'an exact block is replaced');
+	is($line, 2, 'and the line is reported');
+	is($count, 1, 'with one match');
+
+	my (undef, undef, undef, $why) = &subs::coding_patch_text("a\n", 'z', 'y');
+	like($why, qr/no match/, 'a missing block is refused');
+
+	my ($many, undef, $n) = &subs::coding_patch_text("x\ny\nx\n", 'x', 'z', 1);
+	is($many, "z\ny\nz\n", 'all replaces every match');
+	is($n, 2, 'and says how many');
+
+	(undef, undef, undef, $why) = &subs::coding_patch_text("x\ny\nx\n", 'x', 'z');
+	like($why, qr/ambiguous/, 'a repeated block is ambiguous without all');
+
+	(undef, undef, undef, $why) = &subs::coding_patch_text("a\n", 'a', 'a');
+	like($why, qr/identical/, 'an unchanged patch is refused');
+
+	my ($literal) = &subs::coding_patch_text("a\n", 'a', '$x\\1');
+	is($literal, "\$x\\1\n", 'the replacement is literal, not interpolated');
+	my ($meta) = &subs::coding_patch_text("a+b\n", 'a+b', 'a-b');
+	is($meta, "a-b\n", 'the old block is literal, not a pattern');
+}
+
+# --- a read can be one range ------------------------------------------------
+{
+	is(&subs::coding_read_range("a\nb\nc\nd\n", 2, 2), "b\nc", 'a range reads only those lines');
+	is(&subs::coding_read_range("a\nb\n", 2, 99), 'b', 'a short file stops at its end');
+	is(&subs::coding_read_range("a\nb\n", 9, 2), 'no such range', 'past the end is refused');
+}
+
 # --- the prompt and the tool list -------------------------------------------
 my $tools = source('perl/gb/03_engines_and_tools.pl');
 like($tools, qr/name => 'agent'/, 'the Coding tool list offers agent');
@@ -549,11 +582,14 @@ like($tools, qr/scope.*write|write.*scope/s, 'the agent entry names the write sc
 like($tools, qr/cannot ship/, 'the agent entry says it cannot ship');
 like($tools, qr/"tasks"/, 'the agent entry offers the batch form');
 like($tools, qr/at the same time/, 'the agent entry says a batch runs at once');
+like($tools, qr/name => 'patch'/, 'the Coding tool list offers patch');
+like($tools, qr/"offset"\s*:\s*10/, 'the read entry shows a range example');
 
 my $help = source('perl/help.pl');
 like($help, qr/Use agent for a self-contained investigation or a scoped edit/,
 	'the coding prompt tells the agent when to use a subagent');
 like($help, qr/Never ask a subagent to spawn/, 'the coding prompt forbids nesting');
 like($help, qr/they run at the same\s+time/, 'the coding prompt says a batch runs at once');
+like($help, qr/Prefer patch to write/, 'the coding prompt tells the agent to prefer patch');
 
 done_testing();

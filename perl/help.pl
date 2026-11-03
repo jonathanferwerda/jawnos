@@ -747,8 +747,11 @@ sub coding_prompt {
 	}
 	my $rules = <<'TXT';
 Rules:
-- Work in small steps: read the file you are about to change first, then write it
-  whole, then run "perl -c <file>" (or a test) to check it before you commit.
+- Work in small steps: read the file (or just the range where the symbol is),
+  patch it, then run "perl -c <file>" (or a test) to check it before you commit.
+- Prefer patch to write for a small change: give the exact old text and its
+  replacement. Write whole only when the file is new or most of it changes. A
+  patch answers with the line it changed; do not re-read the file to check it.
 - Use agent for a self-contained investigation or a scoped edit. Send several
   tasks in one list when they do not depend on each other: they run at the same
   time, and one answer per task comes back. Write-scope tasks in one batch must

@@ -468,7 +468,7 @@ sub coding_run_subagent {
 				last;
 			}
 			my $obs;
-			if ($verb eq 'write' && $scope eq 'write') {
+			if (($verb eq 'write' || $verb eq 'patch') && $scope eq 'write') {
 				$obs = &coding_child_write_ok($act->{'path'}, \@paths)
 					? &Manager::coding_execute(undef, $act, \%touched)
 					: 'refused: that path is not one of this subagent\'s allowed paths';
@@ -482,7 +482,7 @@ sub coding_run_subagent {
 			else {
 				$obs = 'refused: a subagent may not ' . ($verb || 'do that')
 					. '; it may list, read, run, say and done'
-					. ($scope eq 'write' ? ', and write inside its allowed paths' : '');
+					. ($scope eq 'write' ? ', and write or patch inside its allowed paths' : '');
 			}
 			my $step = { action => $act, observation => &coding_step_view($obs) };
 			$step->{'reasoning'} = &coding_reasoning_view($reasoning) if length $reasoning;
@@ -741,6 +741,50 @@ sub coding_child_line {
 		: 'subagent: ' . (length($record->{'final'} // '') ? $record->{'final'} : 'done');
 	$line = substr($line, 0, 2000) . '…' if length($line) > 2000;
 	return $line;
+}
+
+# Apply one exact patch to $text. The block is a literal, not a pattern: exact
+# match only, unique unless "all" is set, so a small change stays small and a
+# miss is reported rather than guessed at. Returns ($new_text, $line, $count) or
+# (undef, 0, 0, $why).
+sub coding_patch_text {
+	my ($text, $old, $new, $all) = @_;
+	$text = '' unless defined $text;
+	$old  = '' unless defined $old;
+	$new  = '' unless defined $new;
+	return (undef, 0, 0, 'patch needs a non-empty "old" block') unless length $old;
+	return (undef, 0, 0, 'patch "old" and "new" are identical') if $old eq $new;
+	return (undef, 0, 0, 'refused: a patch block is capped at 200000 bytes')
+		if length($old) > 200_000 || length($new) > 200_000;
+
+	my $quoted = quotemeta $old;
+	my $count  = () = $text =~ /$quoted/g;
+	return (undef, 0, 0, 'no match: the "old" text does not appear in that file') unless $count;
+	return (undef, 0, 0, "ambiguous: the \"old\" text appears $count times; include more context or set \"all\"")
+		if $count > 1 && !$all;
+
+	my $at  = 1 + ( substr($text, 0, index($text, $old)) =~ tr/\n// );
+	my $out = $text;
+	if ($all) { $out =~ s/$quoted/$new/g }
+	else      { $out =~ s/$quoted/$new/ }
+	return ($out, $at, $count);
+}
+
+# One range of a file, so an agent that needs a symbol does not pull a
+# 1,000-line file into its context. offset is 1-based; limit is capped so a bad
+# number cannot silently become a whole-file read.
+sub coding_read_range {
+	my ($text, $offset, $limit) = @_;
+	$text = '' unless defined $text;
+	my @lines = split /\n/, $text;
+	return '' unless @lines;
+	my $from  = (defined $offset && $offset =~ /^\d+$/ && $offset > 0) ? $offset + 0 : 1;
+	my $count = (defined $limit  && $limit  =~ /^\d+$/ && $limit  > 0) ? $limit  + 0 : 200;
+	$count = 200 if $count > 200;
+	return 'no such range' if $from > @lines;
+	my $to = $from + $count - 1;
+	$to = scalar @lines if $to > @lines;
+	return join("\n", @lines[ $from - 1 .. $to - 1 ]);
 }
 
 # Write $content to $abs, which coding_path has already resolved and checked. A
