@@ -384,6 +384,36 @@ def jawn_stdout_log_path():
     return os.path.join(state_dir(), "jawn-stdout.log")
 
 
+DEFAULT_LOG_CAP = 32 * 1024 * 1024
+
+
+def cap_log(path, cap=DEFAULT_LOG_CAP):
+    """Keep a grown console log bounded.
+
+    The tree's stdout is opened append-only here and inherited by ./jawn, so the
+    writer's descriptor is O_APPEND: truncating the file makes the next write
+    land at offset 0 instead of leaving a hole. The tail is copied to <path>.1
+    first, so the last words before the cap survive.
+    """
+    try:
+        size = os.path.getsize(path)
+    except OSError:
+        return False
+    if size <= cap:
+        return False
+    keep = min(size, cap // 2)
+    try:
+        with open(path, "rb") as src:
+            src.seek(size - keep)
+            tail = src.read()
+        with open(path + ".1", "wb") as dst:
+            dst.write(tail)
+        os.truncate(path, 0)
+    except OSError:
+        return False
+    return True
+
+
 def ble_log_path():
     return os.path.join(state_dir(), "jawnos-bt.log")
 
@@ -564,6 +594,7 @@ def spawn_detached(argv, cwd, log_path, env=None):
     terminal closes -- the desktop equivalent of a background Termux task.
     """
     os.makedirs(os.path.dirname(log_path), exist_ok=True)
+    cap_log(log_path)
     logf = open(log_path, "ab", buffering=0)
     try:
         proc = subprocess.Popen(

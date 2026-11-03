@@ -145,8 +145,11 @@ unzip -q releases/jawnrt-aarch64-0.1.1706.zip -d /tmp/rtp/coreprefix
 perl scripts/runtime_build.pl --from /tmp/rtp/coreprefix --part core \
   --keep lib/libz.so --abi aarch64 --version 0.1.1750 --no-bin
 
-# parts: the same prefix rewrite the core uses (both paths are equal length)
-RW=/data/data/com.termux/files/usr=/data/data/com.jawnos/files/usr
+# parts: the same prefix rewrite the core uses (both paths are equal length).
+# Name `files`, not `files/usr`: the OpenSSH binaries embed the home path too,
+# and a narrower rewrite leaves their `com.termux/files/home` behind - which is
+# what made every phone login print "Could not chdir to home directory".
+RW=/data/data/com.termux/files=/data/data/com.jawnos/files
 perl scripts/runtime_build.pl --from /tmp/rtp/coreprefix --part video \
   --baseline releases/jawnrt-aarch64-0.1.1750.zip --abi aarch64 \
   --version 0.1.1750 --min-core 0.1.1750 --rewrite-prefix "$RW" --no-bin
@@ -168,7 +171,7 @@ all archives to the merged converter, and merge the result with the existing
 core manifest:
 
 ```sh
-RW=/data/data/com.termux/files/usr=/data/data/com.jawnos/files/usr
+RW=/data/data/com.termux/files=/data/data/com.jawnos/files
 perl scripts/runtime_build.pl --from /tmp/rtp/coreprefix --part video --baseline ... \
   --abi aarch64 --min-core 0.1.1750 --rewrite-prefix "$RW" --out /tmp/video-full.zip
 perl scripts/runtime_build.pl --from /tmp/rtp/prefix --part media --baseline ... \

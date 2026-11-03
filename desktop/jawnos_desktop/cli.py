@@ -112,6 +112,10 @@ def cmd_watch(args):
             if action != last_action and action in ("started", "restarted", "failed", "down", "held"):
                 print("%s %s" % (time.strftime("%Y-%m-%d %H:%M:%S"), message), flush=True)
             last_action = action
+            # The console stream is append-only and inherited by ./jawn, so a
+            # long run can grow it without bound; trim it on each tick.
+            core.cap_log(core.jawn_stdout_log_path())
+            core.cap_log(core.ble_log_path())
             time.sleep(interval)
     except KeyboardInterrupt:
         print("stopped", flush=True)
