@@ -40,8 +40,16 @@ my $root = abs_path("$FindBin::Bin/..");
 # --- the diet ---------------------------------------------------------------
 # M3's decision table, executable. "Keep bundled" is here; the replacements
 # (espeak→TextToSpeech, tesseract→ML Kit, convert→BitmapFactory, ffmpeg→
-# MediaCodec) are gone from the runtime; node/tmux/qrencode/zbarimg are dropped
-# (only dev scripts and the QR share reach them, and the share has a bridge).
+# MediaCodec) are gone from the runtime; node/tmux/zbarimg are dropped (only
+# dev scripts and the QR share reach them, and the share has a bridge).
+#
+# qrencode is NOT dev-only: the Box Office ("Passes") mints every pass ticket
+# by running `qrencode -o - URL`, so without it on the phone a pass saved a
+# 22-byte `data:image/png;base64,` image and showed a blank thumbnail. It ships
+# in bin/ like any other tool. The library pass below follows its DT_NEEDED,
+# so libqrencode.so, libpng16.so and libz.so ship with it from /lib of the
+# source prefix; libc/libm come from the device (the SYSMAP list) and are not
+# packed. scripts/jawnos_deps.pl names Termux's libqrencode for a hand build.
 my %TOOL = map { $_ => 1 } qw(
 	perl openssl sqlite3 argon2 curl ssh sshpass rsync git zip unzip tar gzip xz zstd
 	bash sh env sed awk grep egrep fgrep cut tr head tail sort uniq wc
@@ -50,6 +58,7 @@ my %TOOL = map { $_ => 1 } qw(
 	pgrep pkill ps kill killall nohup tee which
 	sshd scp sftp ssh-keygen
 	base64 timeout ip ss ping
+	qrencode
 );
 # ffmpeg/ffprobe and their codec stack moved to the optional `video` part
 # (2026-11-01). Their uses are film frames, loudness, subtitle extraction and

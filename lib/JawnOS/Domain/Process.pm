@@ -190,6 +190,45 @@ our %HEARTBEAT = (
 	'sshd watcher'          => '5m',
 );
 
+# How a run_p job that did not report is worded. The child writes its result
+# down the pipe on the way out, so a child that is killed first (the OOM killer's
+# SIGKILL, the reaper's TERM) leaves the pipe empty and Mojo::IOLoop::Subprocess
+# rejects the promise with the deserializer's error on an empty buffer - on the
+# phone 'malformed JSON string ... Mojo/JSON.pm line 47' - which reads on the log
+# as a JSON bug in the job. It is not: the job was killed. The job object keeps
+# exit_code() and the child's pid(), so the signal is recoverable on the phone's
+# Mojolicious; elsewhere exit_code() may be a plain code, and then the message
+# still names the death without inventing one.
+sub subprocessor_failure_message {
+	my ($name, $why, $job) = @_;
+	$name = '?' unless defined $name && length $name;
+	$why = defined $why ? $why : '';
+	$why =~ s/\s+/ /g;
+	$why =~ s/^\s+|\s+$//g;
+	my $started = $why =~ /malformed JSON|at character offset|JSON\.pm|Missing or empty input/i ? 0 : 1;
+	my $status = ref $job ? $job->exit_code : undef;
+	my $pid = ref $job ? $job->pid : undef;
+	my $where = (defined $pid && $pid =~ /^\d+$/) ? " pid $pid" : '';
+	if (!$started || (defined $status && defined $pid)) {
+		my $how;
+		# Mojolicious records the child's end as $? >> 8, so a child killed by
+		# signal N arrives as a shell's 128+N and a plain exit is below 126; the
+		# two cannot be told apart under 126, so only a signal-sized number is
+		# called a signal.
+		if (defined $status && $status > 125 && $status < 256) {
+			$how = 'signal ' . ($status - 128);
+		}
+		elsif (defined $status && $status < 126) {
+			$how = 'exit ' . $status;
+		}
+		else {
+			$how = 'exit unknown';
+		}
+		return "subprocessor $name$where died without reporting ($how)";
+	}
+	return "subprocessor $name$where could not start: " . ($why eq '' ? 'no reason reported' : $why);
+}
+
 # The seed lookup both maps share: exact first, then the longest key the name
 # starts with, so 'tunnel holder wss 4 ports' finds 'tunnel holder wss'.
 my $seed_for = sub {
@@ -536,9 +575,9 @@ sub subprocessor_reap {
 		foreach my $pid (keys %{$kids}) {
 			my $record = $kids->{$pid};
 			next unless ref $record eq 'HASH';
+			my $current_start = $starttime->($pid);
 			my $recorded_start = $record->{'start_ticks'};
 			if (defined $recorded_start && length $recorded_start) {
-				my $current_start = $starttime->($pid);
 				if (length $current_start && $current_start ne $recorded_start) {
 					delete $kids->{$pid};
 					$report->{'reaped'}++;
@@ -549,8 +588,12 @@ sub subprocessor_reap {
 			# process first appears, not when the request asked for it. Once, on the
 			# pass that sees it: re-stamping every pass would move the deadline it is
 			# being judged by. A child that never forks keeps its last moment and is
-			# expired then, so a fork that never lands is still reaped.
-			if ($record->{'deferred_warranty_spec'} && !$record->{'warranty_started_at'}) {
+			# expired then, so a fork that never lands is still reaped. 'No start
+			# time' is not 'not started': the pid answered, so its run has begun; the
+			# /proc read failing must not hold the stamp back for the whole run, and
+			# the ask's deadline is what the job would be judged by meanwhile.
+			my $started = !defined $current_start || $current_start ne '0';
+			if ($record->{'deferred_warranty_spec'} && !$record->{'warranty_started_at'} && $started) {
 				$record->{'warranty'} = &subprocessor_warranty_at($record->{'deferred_warranty_spec'}, $now);
 				$record->{'warranty_started_at'} = $now;
 				# This pass is the job's start, so it also has to be the one that may
@@ -652,13 +695,17 @@ sub subprocessor_reap {
 		}
 	}
 
-	# 4. Expire what is still past its deadline or its lease.
+	# 4. Expire what is still past its deadline or its lease. A deferred job whose
+	#    warranty has not started is judged by the moment it was asked (the backstop
+	#    for a fork that never lands), and nothing else: its real deadline does not
+	#    exist until its process does.
 	foreach my $pid (keys %live) {
 		my $record = $live{$pid};
 		next if defined $record->{'extended_at'} && $record->{'extended_at'} == $now;
+		my $unstamped = $record->{'deferred_warranty_spec'} && !$record->{'warranty_started_at'};
 		my $why;
 		my $warranty = $record->{'warranty'};
-		if (defined $warranty && $warranty =~ /^\d+$/ && $warranty < $forever && $now > $warranty) {
+		if (!$unstamped && defined $warranty && $warranty =~ /^\d+$/ && $warranty < $forever && $now > $warranty) {
 			$why = 'warranty';
 		}
 		my $lease = $record->{'heartbeat_lease'};

@@ -376,7 +376,13 @@ sub source_appt_writer {
 		unit => $data->{'unit'} || $m->{'unit'},
 		quantity => ($data->{'quantity'} || $m->{'quantity'}),
 		project => $data->{'project'} || $m->{'project'},
-		manufacturer => $data->{'manufacturer'} || $m->{'manufacturer'}
+		manufacturer => $data->{'manufacturer'} || $m->{'manufacturer'},
+		# The press that made this child has already drawn the window: a child
+		# that forked its own centre view re-read and re-rendered the whole app
+		# window on a 200-380 MB process, once per default model and option.
+		# The writer drops the fork and its bookkeeping for a quiet child and
+		# deletes the key before any insert (see Manager::appointment_writer).
+		quiet_child => 1
 	};
 
 	if ($type eq 'start' && $m->{'delay_start'}) {

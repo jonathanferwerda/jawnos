@@ -147,7 +147,14 @@
 							<% my $status = $t->{'status'} || 'expired'; %>
 							<tr class="ticket_holder" uuid="<%= $t->{'uuid'} %>" data-status="<%= $status %>">
 								<td class="bo_qr_cell">
+									<% if (length $t->{'image'}) { %>
 									<img class="little_thumb ticket bo_qr" src="<%= $t->{'image'} %>" alt="<%= &subs::ui('Pass QR code') %>" title="<%= &subs::ui('Click to enlarge') %>">
+									<% } else { %>
+									<%# A pass minted where qrencode was missing has no picture; its link is
+									    still the credential, so offer the link rather than a broken image
+									    (qrcode_updater draws the QR on the next desk open once qrencode is there). %>
+									<a class="bo_qr_missing" href="<%= $t->{'url'} %>" title="<%= &subs::ui('The code could not be drawn; open the pass link') %>"><%= &subs::ui('No QR code') %></a>
+									<% } %>
 								</td>
 								<td>
 									<span class="ticket_name bo_ticket_name"><%= &subs::format_name($t->{'name'}) %></span>

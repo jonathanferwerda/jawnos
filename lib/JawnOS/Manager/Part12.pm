@@ -549,8 +549,23 @@ sub qrcode_generator($params) {
 	$warranty = (($warranty || '') =~ /^\s*forever\s*$/i) ? &subs::forever_warranty() : &subs::ago_calc($warranty,$timestamp);
 	my $duration = $warranty - $timestamp;
 
-	my $qr = `qrencode -o - $url`;
-	my $image = 'data:image/png;base64,' . encode_base64($qr);
+	# The pass's url column is the ticket; the QR is a convenience drawn from it.
+	# A phone runtime without qrencode used to write 'data:image/png;base64,' +
+	# an empty body (a 22-byte "image") and the desk showed a blank thumbnail.
+	# Now a failed encode stores '' and the pass still mints - see
+	# markup.html.ep's <% if ($t->{'image'}) %> guard.
+	# $url is handed over as a list: backticks would re-parse the shell-quoted
+	# secret, and a ';' or '$' in it would run there.
+	my $image = '';
+	{
+		my $qr = qx/qrencode -o - "\$url"/;
+		$image = 'data:image/png;base64,' . encode_base64($qr, '')
+			if defined $qr && length $qr && substr($qr, 0, 4) eq "\x89PNG";
+	}
+	unless (length $image) {
+		print STDERR "box_office: qrencode produced no PNG (is qrencode installed?); "
+			. "pass " . $sj->{'uuid'} . " minted without a QR image\n";
+	}
 	my $data = {
 		timestamp => $timestamp,
 		uuid => $sj->{'uuid'},
@@ -577,6 +592,17 @@ sub qrcode_generator($params) {
 	return $data;
 }
 
+# Does a ticket row's stored image hold a real PNG? The updater repairs a row
+# only when it does not - a good QR is never rewritten. File-private: a `sub` at
+# column 0 is a Manager helper by contract (and the name index must list it), and
+# this is reachable only from the updater below, so it is a lexical.
+my $ticket_image_is_png = sub ($image) {
+	return 0 unless defined $image && length $image;
+	return 0 unless $image =~ m{^data:image/png;base64,([A-Za-z0-9+/=]+)$};
+	my $head = decode_base64(substr($1, 0, 8));
+	return (length $head >= 4 && substr($head, 0, 4) eq "\x89PNG") ? 1 : 0;
+};
+
 sub qrcode_updater($c) {
 	my ($db,$database,$sql) = &subs::database_grabber();
 	my $timestamp = $c->param('timestamp');
@@ -595,19 +621,30 @@ sub qrcode_updater($c) {
 		my $ts = &subs::note_decrypter($t->{'password'},$ver);
 
 		my $sj = decode_json $ts;
+		my $secret_json = encode_json $sj;
+		my $secret = &subs::note_encrypter($t->{'password'}, $secret_json);
+		$secret = url_escape `echo "$secret" | base64 -w 0`;
+		my $x = &subs::device_lister($timestamp, '')->[0]->{'address'};
+		# A pass minted where qrencode was missing holds a blank image; its link is
+		# the credential and the QR is how it is shown, so repair it here, on the
+		# visit that reads the desk, rather than only when the row's port or key
+		# age happens to ask for a re-encrypt. A good QR is never rewritten.
+		if (defined $t->{'uuid'} && !$ticket_image_is_png->($t->{'image'})) {
+			my $ip = (ref $x eq 'HASH' && $t->{'nic'} && $x->{$t->{'nic'}}) ? $x->{$t->{'nic'}}->{'ip'} : '';
+			my $url = 'https://' . $ip . ':' . $ENV{'PORT_DOCK'} . '/box_office/' . $t->{'uuid'} . '?s=' . $secret;
+			my $qr = qx/qrencode -o - "\$url"/;
+			if (defined $qr && length $qr && substr($qr, 0, 4) eq "\x89PNG") {
+				&subs::db_update('tickets', {
+					image => 'data:image/png;base64,' . encode_base64($qr, ''),
+					server_time => &subs::rightNow()
+				}, { uuid => $t->{'uuid'} });
+			}
+		}
 		if ( $t->{'port'} ne $ENV{PORT_AHOY} || $level_one->[0]->{'timestamp'} >= $t->{'server_time'}) {
 		#	$sj->{'ts'} = &subs::rightNow();
-			my $secret_json = encode_json $sj;
-			my $secret = &subs::note_encrypter($t->{'password'}, $secret_json);
-			$secret = url_escape `echo "$secret" | base64 -w 0`;
-			my $x = &subs::device_lister($timestamp, '')->[0]->{'address'};
-			my $url = 'https://' . $x->{$t->{'nic'}}->{'ip'} . ':' . $ENV{'PORT_DOCK'} . '/box_office/' . $t->{'uuid'} . '?s=' . $secret;
-			my $qr = `qrencode -o - $url`;
-			my $image = 'data:image/png;base64,' . encode_base64($qr);
 			&subs::db_update('tickets', {
 				ip => $x->{$t->{'nic'}}->{'ip'},
-			#	url => $url,
-			#	image => $image,
+				# the repair above owns the image; this write never touches it
 				port => $ENV{PORT_AHOY},
 				server_time => &subs::rightNow(),
 			#	secret => $secret,
@@ -650,4 +687,7 @@ sub random_word_grabber($times) {
 	return $sentence;
 };
 
+# A ticket's stored image is a PNG data URI or it is nothing: a phone runtime
+# without qrencode stored 'data:image/png;base64,' with an empty body, so a
+# length test is not enough. qrcode_updater uses this to decide whether a row
 1;

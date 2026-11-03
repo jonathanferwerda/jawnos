@@ -708,12 +708,17 @@ sub subprocessor {
 		# through its promise. Nothing used to read it, so a job that never
 		# started - and the pull claim its caller had already written - failed
 		# in silence. Name it.
-		my $promise = Mojo::IOLoop->subprocess->run_p($wrapped_subroutine);
+		# The job object, not only its promise: when the child is killed before it
+		# writes its result (the OOM killer's SIGKILL, the reaper's TERM) the pipe
+		# closes empty and the promise rejects with decode_json('')'s error, which
+		# blamed a JSON bug for a process that never ran to the end.
+		my $job = Mojo::IOLoop->subprocess;
+		my $promise = $job->run_p($wrapped_subroutine);
 		eval {
 			$promise->catch(sub {
 				my $why = join ' ', grep { defined } @_;
 				$why =~ s/\s+/ /g;
-				eval { $log->error('subprocessor ' . ($params->{'name'} || '?') . ' could not start: ' . $why) } if $log;
+				eval { $log->error(&subs::subprocessor_failure_message($name, $why, $job)) } if $log;
 			});
 		};
 	}

@@ -78,6 +78,14 @@ sub appointment_writer($c,$app) {
 	# insert/update below.
 	my $source_chip_id = $app->{'source_chip_id'};
 	delete $app->{'source_chip_id'};
+	# A default model/option session is a child write: the press that started it
+	# already forked the centre view and ran the house bookkeeping, so the child
+	# only writes its row. Without this the window render forks once per child and
+	# each fork re-reads and re-renders the whole app window in a 200-380 MB
+	# process, which pins the phone's CPU. A flag, not a column - keep it out of
+	# the insert/update below, like remote_address and source_chip_id above.
+	my $quiet_child = $app->{'quiet_child'};
+	delete $app->{'quiet_child'};
 	my $timestamp = $app->{'timestamp'};
 	my $server_time = $app->{'server_time'};
 	$app->{'device'} = $device;
@@ -336,9 +344,15 @@ sub appointment_writer($c,$app) {
 	# a transaction with an account is a money move, so it is written to the
 	# warehouse ledger too; the budget and the warehouse then read one store
 	&warehouse_money_mirror($app);
-	&Websocket::send('tab', { console => 'calculator();' });
-	&Websocket::send('tab', { console => 'appointmentDetailGrabber("' . $app->{'app'} . '","' . $app->{'uuid'} .'");' });
-	&Websocket::send('tab', { console => 'continent_record({\'uuid\':\'' . $app->{'uuid'} . '\', \'app\':\'' . $app->{'app'} .'\',\'purpose\':\'app\',\'timestamp\':\'' . $app->{'timestamp'} . '\',\'navigation\':"once" });' });
+	# The row, the hardware toggle and the theme push are the child's; everything
+	# below is the press's to do once. A quiet child skips the window render fork,
+	# the tab pushes and the budget/evaluation bookkeeping, which the parent press
+	# already ran - one press then forks the window once, not once per child.
+	unless ($quiet_child) {
+		&Websocket::send('tab', { console => 'calculator();' });
+		&Websocket::send('tab', { console => 'appointmentDetailGrabber("' . $app->{'app'} . '","' . $app->{'uuid'} .'");' });
+		&Websocket::send('tab', { console => 'continent_record({\'uuid\':\'' . $app->{'uuid'} . '\', \'app\':\'' . $app->{'app'} .'\',\'purpose\':\'app\',\'timestamp\':\'' . $app->{'timestamp'} . '\',\'navigation\':"once" });' });
+	}
 	# The header went out as soon as the row was written. The window render is the
 	# slow half; fork it so the writer - and the default model and option sessions
 	# it starts - does not wait for a full redraw.
@@ -346,11 +360,11 @@ sub appointment_writer($c,$app) {
 	&subs::subprocessor(sub {
 		Mojo::IOLoop->reset;
 		&centre_view_grabber({ c => $c, app => $centre_app, timestamp => &subs::rightNow(), cached => 'no' });
-	}, { name => 'centre view' });
-	&budget_runner($app->{'app'});
+	}, { name => 'centre view' }) unless $quiet_child;
+	&budget_runner($app->{'app'}) unless $quiet_child;
 	# every run: a scope on the each_run cadence queues an evaluation as soon as it
 	# has run, throttled by a Minion lock so a burst is one run, not many
-	&subs::evaluation_run_trigger($app->{'app'}, $app);
+	&subs::evaluation_run_trigger($app->{'app'}, $app) unless $quiet_child;
 
 	if (1 == 1 && $app->{'app'}) {
 		my $params = Mojo::Parameters->new(%{$app});
