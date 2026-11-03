@@ -396,9 +396,73 @@ sub notes_for {
 
 # The brief is a lookup, not a dump: most tasks want the sources, tables,
 # settings and tests, and routes are the one section that grows with an app.
-# Keep the first ROUTE_CAP rows and say what was left; --routes prints every row.
+# The default renders every route as a compressed brace tree (the shared path
+# prefix once, each branch once), so nothing is hidden. --routes prints the
+# full rows with their controller lines when the exact route is what you need.
 our $ALL_ROUTES = 0;
-my $ROUTE_CAP = 15;
+
+# A brace tree: /manager/configure{/a,/b{/c,/d}}. The shared prefix is printed
+# once and each branch once, so every route stays visible at a fraction of the
+# full row's bytes. Grouped by method, because a leaf alone does not say GET
+# from POST; a path that is also a prefix of others is printed whole first.
+sub compact_routes {
+	my ($routes) = @_;
+	my %by_method;
+	push @{ $by_method{ $_->{'method'} } }, $_->{'path'} for @$routes;
+	my @lines;
+	for my $method (sort keys %by_method) {
+		my %seen;
+		my @paths = sort grep { !$seen{$_}++ } @{ $by_method{$method} };
+
+		# A route that is the parent of another is its own row: the brace
+		# tree below it would otherwise lose the parent itself.
+		my %whole;
+		for my $p (@paths) {
+			next if !grep { $_ ne $p && index($_, "$p/") == 0 } @paths;
+			$whole{$p} = 1;
+			push @lines, sprintf('  %-6s %s', $method, $p);
+		}
+		my @rest = grep { !$whole{$_} } @paths;
+		next unless @rest;
+
+		my @seg = map { [ grep { length } split m{/}, $_ ] } @rest;
+		my $n = 0;
+		while (1) {
+			my $seg = $seg[0][$n];
+			last unless defined $seg;
+			my $ok = 1;
+			for my $s (@seg) {
+				if ( !defined $s->[$n] || $s->[$n] ne $seg ) { $ok = 0; last }
+			}
+			last unless $ok;
+			$n++;
+		}
+		# Always leave one segment for the brace: the whole path is the leaf,
+		# not a prefix, even when a method has only one route.
+		my $last = $#{ $seg[0] };
+		$n = $last if $n > $last;
+		my $prefix = join '/', @{ $seg[0] }[ 0 .. $n - 1 ];
+
+		my $root = {};
+		for my $s (@seg) {
+			my $node = $root;
+			$node = $node->{$_} ||= {} for @{$s}[ $n .. $#{$s} ];
+		}
+		my $head = length $prefix ? '/' . $prefix . '{/' : '/{';
+		push @lines, sprintf('  %-6s %s%s}', $method, $head, _route_branches($root));
+	}
+	return @lines;
+}
+
+sub _route_branches {
+	my ($node) = @_;
+	my @parts;
+	for my $seg (sort keys %$node) {
+		my $kid = $node->{$seg};
+		push @parts, keys %$kid ? $seg . '/{' . _route_branches($kid) . '}' : $seg;
+	}
+	return join ',', @parts;
+}
 
 sub brief {
 	my ($name) = @_;
@@ -428,34 +492,26 @@ sub brief {
 
 	push @out, 'routes (' . scalar(@routes) . ')';
 	if (@routes) {
-		my %controller_line;
-		for my $file (@controllers) {
-			my $text = _slurp($file) or next;
-			my $n = 0;
-			for my $line (split /\n/, $text) {
-				$n++;
-				$controller_line{$1} = "$file:$n" if $line =~ /^\s*sub\s+(action_\d+)\b/;
+		if ($ALL_ROUTES) {
+			my %controller_line;
+			for my $file (@controllers) {
+				my $text = _slurp($file) or next;
+				my $n = 0;
+				for my $line (split /\n/, $text) {
+					$n++;
+					$controller_line{$1} = "$file:$n" if $line =~ /^\s*sub\s+(action_\d+)\b/;
+				}
 			}
-		}
-		my @shown = $ALL_ROUTES ? @routes
-			: @routes[ 0 .. ( $#routes > $ROUTE_CAP - 1 ? $ROUTE_CAP - 1 : $#routes ) ];
-		for my $r (@shown) {
-			push @out, sprintf('  %-6s %-40s %s', $r->{'method'}, $r->{'path'},
-				"Routes/$r->{'module'}.pm:$r->{'line'}"
-					. ( $controller_line{ $r->{'action'} } ? '  -> ' . $controller_line{ $r->{'action'} } : '' ));
-		}
-		if (@shown < @routes) {
-			my %mods;
-			$mods{ $_->{'module'} }++ for @routes;
-			my $app = $entry->{'page'} || $entry->{'name'};
-			my ($pointer) = map { $_->{'path'} }
-				grep { $_->{'path'} =~ m{/\Q$app\E$} } @routes;
-			$pointer ||= $routes[0]{'path'};
-			push @out, '  ... ' . ( @routes - @shown ) . ' more; by module: '
-				. join(', ', map {"$_ ($mods{$_})"}
-					sort { $mods{$b} <=> $mods{$a} || $a cmp $b } keys %mods)
-				. '; one route: perl scripts/where.pl ' . $pointer;
-			push @out, "  all routes: perl scripts/agent_help.pl --routes $app";
+			for my $r (@routes) {
+				push @out, sprintf('  %-6s %-40s %s', $r->{'method'}, $r->{'path'},
+					"Routes/$r->{'module'}.pm:$r->{'line'}"
+						. ( $controller_line{ $r->{'action'} } ? '  -> ' . $controller_line{ $r->{'action'} } : '' ));
+			}
+		} else {
+			push @out, compact_routes(\@routes);
+			push @out, '  one route: perl scripts/where.pl <a path above>';
+			push @out, '  full rows: perl scripts/agent_help.pl --routes '
+				. ( $entry->{'page'} || $entry->{'name'} );
 		}
 	} else {
 		push @out, '  (none - no route path names this app)';

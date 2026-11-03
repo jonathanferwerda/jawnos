@@ -36,22 +36,26 @@ require "$root/scripts/agent_help.pl";
 {
 	my $text = agent_help::brief('configure');
 	ok(defined $text, 'a large app has a brief');
-	cmp_ok(length $text, '<', 8_000, 'the default brief keeps the route list capped');
-	like($text, qr/^routes \(121\)$/m, 'it still counts every route');
-	like($text, qr/^  \.\.\. \d+ more; by module: \w+ \(\d+\)/m,
-		'and summarises the module split for the rows it does not print');
-	like($text, qr{perl scripts/where\.pl /manager/}, 'with a pointer at the full lookup');
+	cmp_ok(length $text, '<', 8_000, 'the default brief stays small');
+	like($text, qr/^routes \(121\)$/m, 'it counts every route');
+	like($text, qr{^  get\s+/manager/configure$}m, 'a parent route is printed whole');
+	like($text, qr{^  get\s+/manager\{/configure/\{}m,
+		'and a prefix shared by branches is printed once');
+	like($text, qr{dns_client/\{}m, 'nested branches stay nested');
+	like($text, qr/pseudonym_defaulter/,
+		'a late route is still present, not truncated');
+	like($text, qr{perl scripts/where\.pl <a path above>},
+		'with a pointer at the single lookup');
 
-	# The cap is a display rule, not a loss of data: budget's 14 routes are all
-	# still printed (the assertion above), and --routes lifts the cap entirely.
+	# --routes is the exact-route form: full rows, controller lines, no grouping.
 	my @rows;
 	if (open my $fh, '-|', $^X, "$root/scripts/agent_help.pl", '--routes', 'configure') {
 		@rows = grep { m{^\s+(?:any|get|post)\s+/manager/} } <$fh>;
 		close $fh;
 	}
-	cmp_ok(scalar @rows, '>', 15, '--routes prints the uncapped list');
+	cmp_ok(scalar @rows, '>', 15, '--routes prints the full row list');
 	like(join('', @rows), qr{/manager/configure\s+Routes/},
-		'including a route the default brief leaves out');
+		'with the module and controller line');
 }
 
 # --- every name has one, including the pages with no user help --------------
