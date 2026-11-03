@@ -1,6 +1,6 @@
 # Infrastructure roadmap — dev box, tailnet and the cloud server
 
-**Status:** in progress — P0–P3 are done (2026-11-02); P4 is next, P5 is the cutover and needs a
+**Status:** in progress — P0–P4 are done (2026-11-02); P5 is the cutover and needs a
 maintenance window.
 **Started:** 2026-11-02 · **Baseline measured** 2026-11-02 by logging into all four hosts.
 **Related:** `AGENTS.md` (run/restart, the database-is-per-device rule, the mesh rules),
@@ -38,7 +38,7 @@ Measured, not assumed. Re-measure before acting; this section goes stale.
 |---|---|---|
 | **laptop** | ASUS Vivobook X1504ZA, i5-1235U (2P+8E), 15.6 GB, Manjaro | the editor, the agents, its own JawnOS, **the LAN manager the devices talk to** |
 | **table** | Manjaro, 4 cores, 7.6 GB, 239 GB root (74% used) | its own JawnOS, GTK desktop |
-| **cloud** | OVH VPS, Debian 13, **2 vCPU, 3.7 GB, 40 GB** | Headscale, the always-on JawnOS house server, the public hub, DNS, mail, exit node |
+| **cloud** | OVH VPS, Debian 13, **2 vCPU, 3.7 GB, 40 GB** | Headscale, the always-on JawnOS house server, the public hub, DNS, mail |
 | **ks5** | Kimsufi, Proxmox VE 9.2.25, **4c/8t, 64 GB, 2×450 GB NVMe** | the host + `tailscaled`; `dev` (100) and `house` (101) on `vmbr1`; `headscale` is P5 |
 | **tablet** | Android | tailnet client only |
 | **phone** | Android | tailnet client — registered 2026-11-02, `100.64.0.9` |
@@ -105,7 +105,8 @@ Measured after the install and two reboot drills:
   `WorkingDirectory=/home/jawn/jawnos`, 1.1 GB) on **3000** (manager, ticket) and
   **45545 / 45546 / 45550** (the public hub and its websocket). `:45545` is what other houses dial
   (`Lan.pm`, `tunnel_hub_url`).
-- **The tailnet exit node**, offering `0.0.0.0/0`. The laptop is pinned to it.
+- **The exit node moved to ks5 (P4).** `cloud` no longer advertises one; the laptop is not
+  pinned to any exit node by default.
 - **dnsmasq on `:53`**, whose whole config is `addn-hosts` for `jawnferroda.com` — a local name
   resolver, **not** the public DNS. Public DNS is Cloudflare, so a move touches one A record.
 - **A mail stack that is not a mail server.** See §5.3.
@@ -147,7 +148,7 @@ snapshotted, rebuilt and rebooting. Mitigations, all in P5:
 - Existing tunnels survive a coordination outage (WireGuard keys and DERP paths are established);
   what breaks is new node joins, route changes and DNS refreshes.
 - **Do not leave the laptop pinned to the KS-5 exit node by default.** If the KS-5 is down, a
-  pinned laptop has no internet. Use the exit node deliberately, or point it at the VPS.
+  pinned laptop has no internet. Use the exit node deliberately; the VPS no longer offers one (P4).
 
 D1 is not a performance argument. Proxmox costs about 0.5–1% of a core and ~1 GB RAM on the KS-5;
 its value is the snapshot you take before a network change on a machine you cannot walk over to,
@@ -358,11 +359,18 @@ Nothing is deleted until its replacement answers. That ordering *is* the rollbac
 - **Exit:** the suite is green on the server and the remote tree is reachable; confirming Zed itself
       edits it is the person's step.
 
-### P4 — Exit node
+### P4 — Exit node — DONE 2026-11-02
 
-- [ ] Offer an exit node from the KS-5; select it on the laptop **deliberately**, confirm the path.
-- [ ] Clear the old selection (`tailscale set --exit-node=`) so the VPS stops carrying fleet egress.
-- **Exit:** the VPS is no longer an exit node and `tailscaled` there is quiet.
+- [x] ks5 advertises an exit node (`tailscale set --advertise-exit-node`) alongside `10.20.0.0/24`;
+      Headscale approved `0.0.0.0/0`, `::/0` and the bridge on node 11.
+- [x] Selected on the laptop deliberately: egress became **54.39.157.133** over a direct path to
+      `ks5:41641`.
+- [x] Un-pinned again (`tailscale set --exit-node=`) so a ks5 outage cannot cut the laptop's
+      internet (D5/§9); the tailnet stayed direct.
+- [x] The VPS no longer advertises (`AdvertiseRoutes: null`) and its approved routes are cleared, so
+      `cloud` is not an exit node in Headscale either.
+- **Exit:** ks5 offers the exit node and the bridge, the laptop uses neither by default, and the VPS
+      is quiet.
 
 ### P5 — Move Headscale (the cutover; schedule it)
 
@@ -399,7 +407,7 @@ old host kept intact for a rollback.
       the step that fixes the 2-vCPU box.
 - [ ] The hub moves to `hub.jonathanferwerda.com` (same wildcard), so it must already answer on
       the KS-5 before the clients are re-pointed. Update `tunnel_hub` on each house.
-- [ ] Move the exit node to the KS-5, if P4 has not already done it.
+- [x] Exit node is already on the KS-5 (done in P4).
 - [ ] Make the wildcard self-renewing on the KS-5 (§4): a weekly
       `perl scripts/tls_issue.pl --renew` writes `server/` itself, using the DNS credentials that
       already ride the mesh. Do not rely on the laptop's certbot to keep someone else's copy fresh.
