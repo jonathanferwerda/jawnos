@@ -2,7 +2,7 @@
 
 Status: design, 2026-11-03. Decision: pivot to a standard host API, then move apps onto it.
 Build order and the rewrite-vs-strangler choice: `docs/v1-strategy.md` (greenfield core, old data,
-one app at a time; fork only at parity).
+one app at a time; no fork — phased in place).
 
 The goal is not "extract the apps" — it is to make an app a **thing with a contract**, so the same
 app can run:

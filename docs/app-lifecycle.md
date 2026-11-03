@@ -1,4 +1,4 @@
-# App lifecycle, agent-built apps, and the v1 fork
+# App lifecycle, agent-built apps, and the v1 transition
 
 Status: design, 2026-11-03. Companion to `docs/app-sdk.md` and `docs/app-databases.md`.
 
@@ -6,7 +6,8 @@ This is the layer that turns the SDK from a contract into a product: apps can be
 upgraded and removed without hand-editing the tree; the Coding agent can build one on the fly; and
 the host watches each app's health and tunes it — or rolls it back.
 
-It also records the **jawnos-v1 fork** as a roadmap item, not work to start now.
+It also records the **v1 transition** — phased and in place, with no fork — as a roadmap item, not
+work to start now.
 
 ## Today
 
@@ -204,33 +205,37 @@ change permissions, crypto, auth, sync policy or core tables. Every change is ap
 measured against the SLO, and promoted or reverted. A tune that cannot name its metric is a rewrite,
 not a tune.
 
-## The jawnos-v1 fork (roadmap, not now)
+## The v1 transition (no fork)
 
-**Do not fork yet.** `main` stays v0 — the house — while the SDK, per-app databases and lifecycle are
-built on it. The fork is a milestone with entry criteria, not a branch created in hope.
+**There is no fork.** `main` stays v0 — the house — while the SDK, per-app databases and lifecycle
+are built on it. v1 is a phased, in-place transition: features land behind `JawnOS::Host` and a
+config flag, and the legacy path stays until the new one passes the **Music invariant**
+(`docs/v1-strategy.md`) plus the conformance corpus.
 
-Entry criteria:
+Completion criteria:
 
 1. `JawnOS::Host` API 1.0 frozen; `Host::Local` is a thin delegation and `Host::Solo` runs an app
    alone.
-2. Gallery, Embedded and Travel are on the SDK (`docs/app-sdk.md` phases A–E); Music is decided.
+2. Music's vertical slice (server side, player as an asset) and Gallery's contract pilot are on the
+   SDK; Embedded and Travel follow; Music is cut over **last**.
 3. Per-app databases at Phase 2+, sync v4 and the multi-DB backup bundle (`docs/app-databases.md`).
 4. The lifecycle is at L3: registry, install/uninstall/upgrade with rollback, health panel, canary.
-5. A full suite and a canary house green for a week on the new server.
+5. Store at S2 and sandbox at SB1/SB2.
+6. The suite and a canary house green for a week; the Music checklist green on the real app.
 
-When it happens:
+How it ships:
 
-- `main` remains v0 and the running house. `v1` is developed on the new server; `release/v1` tags are
-  cut from it. The autonomous agent works on `v1`, never pushes to `main`.
-- v1 runs against **copies** of the house database and files, side by side with v0. Feature flags
-  decide which host powers v1 uses; a machine moves to v1 one at a time.
-- v0 stays runnable as the fallback for one release after cutover.
-- Versioning: `VERSION` stays 0.x until the fork; v1.0 at the fork. App dists version independently.
-- Autonomy rules: branch + tests + review gate before merge; token/budget caps; the error watch and
-  the Evaluation jobs are the night shift; every autonomous batch must be revertible by commit.
+- **One trunk.** No `v1` branch, no `release/v1`. Every change is revertible by commit.
+- The host is chosen per app (and, for Music, per request): `Host::Local` for the legacy path, the
+  new host for the candidate path. A red Music flips the switch back without a deploy.
+- **Data is never forked.** No schema change before sync v4; migrations are additive; v0 and v1 read
+  the same files and rows.
+- `VERSION` stays 0.x until completion; `1.0` is the release that deletes the legacy path.
+- Autonomy: commit + tests + review gate; token/budget caps; the error watch and the Evaluation jobs
+  are the night shift; the Music invariant is the release gate, not a suggestion.
 
-Infrastructure (the new server, containers, off-box backups) is already tracked in
-`docs/AGENTS-roadmap.md`; the fork adds the branch and release policy, not new hardware.
+Infrastructure (the new server, containers, off-box backups) is tracked in `docs/AGENTS-roadmap.md`;
+the transition adds flags and gates, not new hardware.
 
 ## Phases
 
@@ -241,7 +246,7 @@ Infrastructure (the new server, containers, off-box backups) is already tracked 
 | L2 | Per-app metrics, `/manager/apps/health`, SLOs, the panel | Injected errors mark an app degraded; the reading is JSON and survives a restart |
 | L3 | `jawnos-app new`, canary slot, trust tiers, the generation pipeline | The agent produces a passing app that installs into canary and is promoted or rolled back |
 | L4 | Auto-tune with canary measurement and revert | A tune improves or reverts; permissions/core are untouchable |
-| L5 | v1 fork rehearsal: branch, copied DB, side-by-side run | v0 and v1 serve the same data; cutover and fallback are both rehearsed |
+| L5 | v1 completion: legacy path removed, `VERSION` 1.0, one clean release with Music green | v0 and v1 served the same data; the legacy path is deleted; the Music checklist is green |
 
 ## Risks
 
@@ -255,10 +260,10 @@ Infrastructure (the new server, containers, off-box backups) is already tracked 
    Only reversible knobs, only against a stated SLO, always measured on the canary.
 5. **Autonomy without review.** The agent can generate plausible code that passes tests and still
    leaks. Agent-first works only because a *second* agent reviews and because capabilities are
-   limited regardless of the verdict. Promotion to `human-reviewed` stays a human act; push rights
-   are scoped to the v1 branch.
-6. **Fork divergence.** Two source trees with different data formats is how houses get lost. v1
-   reads the same schema until sync v4 is proven; no fork before the entry criteria.
+   limited regardless of the verdict. Promotion to `human-reviewed` stays a human act; pushes are
+   scoped to the phase's own files, and the Music gate can revert a batch.
+6. **Data divergence.** One trunk, but two host paths can still drift. No schema change before sync
+   v4; the conformance corpus is the check.
 7. **Secrets.** Generated code must never contain a key, token or credential; scan on generation and
    again on install.
 
@@ -271,6 +276,6 @@ Infrastructure (the new server, containers, off-box backups) is already tracked 
 - The registry is the source of the route/asset/menu/help maps, replacing the hand-maintained ones.
 
 The six documents now form one story: `app-sdk.md` (contract), `app-databases.md` (data boundary),
-`app-lifecycle.md` (operations, generation, review, and the v1 fork), `app-store.md` (distribution
+`app-lifecycle.md` (operations, generation, review, and the v1 transition), `app-store.md` (distribution
 through junderground), `app-sandbox.md` (containment) and `app-database-encryption.md` (the key and
 the broker).

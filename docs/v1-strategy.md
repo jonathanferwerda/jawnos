@@ -1,7 +1,7 @@
 # v1 strategy: new architecture, old data, one app at a time
 
-Status: decision, 2026-11-03. Supersedes the "fork when the SDK is ready" framing with a concrete
-build order.
+Status: decision, 2026-11-03. **Phased, in-place transition to v1. No fork.** Supersedes the
+"fork when the SDK is ready" framing with a concrete build order.
 
 ## The question
 
@@ -17,7 +17,33 @@ sandbox and store — with none of v0's globals or conventions. Keep the current
 **behaviour oracle and data owner**, and move one app at a time onto the new core. Fork the
 repository only when parity is proven, not on day one.
 
-That gets the writing benefits of a rewrite without betting the house on a multi-year big bang.
+That gets the writing benefits of a rewrite without betting the house on a multi-year big bang. It
+ships on the **same trunk** — there is no `v1` branch and no `release/v1` — with the legacy path
+behind a flag until the new one passes the Music invariant.
+
+## The Music invariant (the credit card)
+
+Music is not a pilot that may fail; it is the acceptance test for every phase. If the player does not
+work, the phase is reverted. Concretely:
+
+- the player keeps serving from the v0 path until the v1 path passes the checklist **on the real
+  WebKitGTK app**, not on a headless browser;
+- `perl/Music/*` is adapted to the host API behind a per-request switch, so a regression flips back
+  to the legacy path without a deploy or a restart;
+- every phase ships with Music green; a red Music is a stop, not a bug to schedule;
+- Music is the **last app cut over**, even though it is the first to be adapted.
+
+The checklist, run at every gate on a real device and the real engine:
+
+1. the library lists, plays, pauses, seeks, and the queue moves next/previous;
+2. a remote output (L / name / R) works over PCM and Opus and stays in sync;
+3. video shows picture and subtitles, including the remote screen;
+4. a sealed track and a private album open only under the padlock;
+5. an archived track fetches home and plays;
+6. screen-off playback on the phone continues to the next track;
+7. the appointment write path is unaffected (the house's shared invariant).
+
+A failure here is a rollback of the phase, not a note in a backlog.
 
 ## What a rewrite actually has to re-earn
 
@@ -156,7 +182,8 @@ the important boundary is that new code has no path back into `subs::`.
 ## What to start now
 
 1. `JawnOS::Host` + `Host::Local` as a thin delegation; convert **Music's server side**
-   (`perl/Music/*`) to it first, with `public/js/music.js` untouched as an asset.
+   (`perl/Music/*`) to it first, with `public/js/music.js` untouched as an asset. The v0 path keeps
+   serving; the new path runs beside it behind a switch.
 2. Convert **Gallery's** controller as the contract pilot. `Host::Solo` + `JawnOS::Server`; run
    Gallery standalone against a **copy** of the database.
 3. Build the conformance corpus in parallel — the Music suite is the first part of it.
@@ -170,10 +197,12 @@ the important boundary is that new code has no path back into `subs::`.
 | G1 | Host API stable; Music's vertical slice runs on `Host::Local`; Gallery runs embedded and standalone; corpus green |
 | G2 | Music parity (playback, queue, remote output, padlock, archive); Embedded and Travel on the SDK; per-app DBs at Phase 2; sandbox at SB1 |
 | G3 | `sync_version = 4`, multi-DB backup bundle, lifecycle at L3, store at S2 |
-| G4 | v1 parity on the corpus; cutover one machine; v0 stays runnable for one release |
+| G4 | v1 parity on the corpus and the Music checklist; the legacy path removed after one clean release |
 
-Fork (`v1` branch, `release/v1`) when **G4 is in sight**, not before. The fork is a release event,
-not a design event.
+There is no fork. v1 is the same trunk and the same data: features land behind `JawnOS::Host` and a
+config flag, the legacy path stays until the new one passes the Music invariant, and completion is a
+release (`1.0`) that deletes the legacy path — not a branch. Autonomous work happens on the same
+trunk behind flags, with the corpus and the error watch as the night shift.
 
 ## Risks
 

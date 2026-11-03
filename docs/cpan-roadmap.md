@@ -153,7 +153,8 @@ are the reusable core of these apps; extracting them makes each app thinner and 
 work either way. Revisit whole apps only if a third-party app ecosystem or a headless app runtime is
 actually wanted — then build the host SDK and ship `JawnOS::App::Gallery` as the proof.
 `docs/app-sdk.md` is that design. The operations half — the `apps` registry, install/uninstall and
-upgrade, agent-built apps, per-app health and the v1 fork criteria — is `docs/app-lifecycle.md`.
+upgrade, agent-built apps, per-app health and the v1 transition criteria (no fork) — is
+`docs/app-lifecycle.md`.
 
 ## The 41 candidates
 

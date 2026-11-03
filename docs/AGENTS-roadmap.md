@@ -4,19 +4,18 @@ Moved out of `AGENTS.md` (a per-task reference, not an every-request map).
 
 ## Next up (deferred)
 
-- **jawnos-v1 fork — not yet; roadmap only.** `main` stays v0 (the house) while the App SDK,
-  per-app databases and the app lifecycle are built. Fork when: the host API is 1.0 and
-  `Host::Solo` runs an app alone; Music's vertical slice (server side, player as an asset) and
-  Gallery's contract pilot are on the SDK, with Embedded and Travel following; per-app DBs are at
-  Phase 2+ with sync v4 and the multi-DB backup bundle; the lifecycle is at L3 (registry,
-  install/upgrade with rollback, health panel, canary); the app store is at S2 (signed release
-  records, bundle verification, peer/cache fetch) with the review gate wired to install; the sandbox
-  is at SB1 (`userns` on desktop/Android) or SB2 (`systemd` on the installed OS); and the suite plus
-  a canary house have been green for a week on the new server. Then `v1` is developed mostly autonomously on that server,
-  against copies of the house database, with `release/v1` tags, human review before merge and v0 as
-  the fallback for one release. Entry criteria, branch policy and autonomy rules:
-  `docs/app-lifecycle.md`. Build order and the rewrite-vs-strangler decision:
-  `docs/v1-strategy.md` (greenfield core, old data, one app at a time; fork only at parity).
+- **v1 transition — phased, in place; no fork.** `main` stays v0 (the house) while the App SDK,
+  per-app databases, lifecycle, store and sandbox are built behind `JawnOS::Host`. There is no `v1`
+  branch and no `release/v1`: features land on the trunk behind a host/flag, and the legacy path is
+  removed only when the new one passes the **Music invariant** — the credit card: library, playback,
+  queue, remote outputs over PCM/Opus, video and subtitles, the padlock and sealed tracks, archive
+  fetch, screen-off playback — plus the conformance corpus. Music is adapted first but cut over
+  **last**. The transition is complete when: the host API is 1.0 and `Host::Solo` runs an app alone;
+  Music's vertical slice and Gallery's contract pilot are on the SDK, with Embedded and Travel
+  following; per-app DBs are at Phase 2+ with sync v4 and the multi-DB backup; the lifecycle is at
+  L3; the store is at S2; the sandbox is at SB1/SB2; and the suite plus a canary house have been
+  green for a week. Then `VERSION` becomes 1.0 and the legacy path is deleted. Build order:
+  `docs/v1-strategy.md`; criteria and autonomy rules: `docs/app-lifecycle.md`.
 
 - **House key — operational finish (no code left)**: Phase 2 shipped in v0.1.940–v0.1.959. The
   password is login-only (a bootstrap session never resolves the data key), `K_house` is wrapped to
