@@ -20,9 +20,9 @@ the lines that mention it **with their text**, so a miss is still judgeable with
 file. A single JS/firmware declaration comes with its body (`--body`, capped); `--outline FILE`
 lists a file's declarations as `line<TAB>kind name`, so read the range, not the file. `--topics`
 lists the help registry, `--tech <app>` prints the technical brief. After you act on a hit,
-report it: `where.pl --report <name> right`, or `wrong --found path:line` when it sent you to the
-wrong place. `perl scripts/where_audit.pl` turns those rows, the misses and map drift into a
-maintenance brief for the Coding agent.
+report it: `where.pl --report <name> right --at path:line`, or `wrong --at path:line --found path:line`
+when it sent you to the wrong place. `perl scripts/where_audit.pl` turns those rows, the misses and
+map drift into a maintenance brief for the Coding agent.
 - `perl scripts/agent_help.pl <app>` — what an app is made of: sources, the routes that reach it,
 the tables and settings it touches, the tests that claim its files, and its own comments. `--schema`
 or `--schema=<table>` gives every column, its type, the indexes and the apps that use the table.

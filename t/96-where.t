@@ -311,7 +311,7 @@ PM
 	require DBI;
 	my $dbh = DBI->connect("dbi:SQLite:dbname=$db", '', '', { RaiseError => 1, PrintError => 0 });
 	$dbh->do('create table where_calls (uuid text, machine text, minute text, name text, hit int, hits int, ost text, server_time text)');
-	$dbh->do('create table where_feedback (uuid text, call_uuid text, machine text, minute text, name text, verdict text, found text, note text, ost text, server_time text)');
+	$dbh->do('create table where_feedback (uuid text, call_uuid text, machine text, minute text, name text, verdict text, selected text, found text, note text, ost text, server_time text)');
 	$dbh->disconnect;
 
 	local $ENV{'JAWNOS_WHERE_LOG_OFF'};
@@ -320,7 +320,7 @@ PM
 
 	where('jawnosAgentsPanel');
 	where('no_such_helper_at_all');
-	my ($right_code) = where('--report', 'jawnosAgentsPanel', 'right');
+	my ($right_code) = where('--report', 'jawnosAgentsPanel', 'right', '--at', 'public/js/manager/agents.js:10');
 	is($right_code, 0, 'a right report is accepted');
 	my ($wrong_code) = where('--report', 'no_such_helper_at_all', 'wrong', '--found', 'lib/JawnOS/Domain/Format.pm:140');
 	is($wrong_code, 0, 'a wrong report is accepted');
@@ -332,13 +332,14 @@ PM
 	is($by{'jawnosAgentsPanel'}, 1, 'the declaration is a hit');
 	is($by{'no_such_helper_at_all'}, 0, 'the unknown name is a miss');
 
-	my $feedback = $check->selectall_arrayref('select name, verdict, found, call_uuid from where_feedback');
+	my $feedback = $check->selectall_arrayref('select name, verdict, found, selected, call_uuid from where_feedback');
 	$check->disconnect;
 	my %fb = map { $_->[0] => $_ } @{$feedback};
 	is($fb{'jawnosAgentsPanel'}[1], 'right', 'the right verdict is stored');
 	is($fb{'no_such_helper_at_all'}[1], 'wrong', 'the wrong verdict is stored');
 	like($fb{'no_such_helper_at_all'}[2], qr/Format\.pm:140/, 'with the place the agent actually found it');
-	ok($fb{'jawnosAgentsPanel'}[3], 'and the call it refers to');
+	is($fb{'jawnosAgentsPanel'}[3], 'public/js/manager/agents.js:10', 'the selected hit is stored');
+	ok($fb{'jawnosAgentsPanel'}[4], 'and the call it refers to');
 }
 
 done_testing();

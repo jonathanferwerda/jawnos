@@ -21,7 +21,9 @@ use Cwd qw(abs_path);
 use DBI;
 use FindBin ();
 use Getopt::Long qw(GetOptions);
+use IPC::Open3 qw(open3);
 use POSIX qw(strftime);
+use Symbol qw(gensym);
 
 my $real_root = abs_path("$FindBin::Bin/..");
 my $root      = $real_root;
@@ -87,7 +89,7 @@ if (-f $db) {
 		@misses = @{$miss_rows};
 		my $wrong_rows = eval {
 			$dbh->selectall_arrayref(
-				"select name, found, note, max(minute) as last"
+				"select name, selected, found, note, max(minute) as last"
 				. " from where_feedback where verdict = 'wrong' and minute >= ?"
 				. ' group by name order by last desc limit ' . $limit,
 				{ Slice => {} }, $since);
@@ -95,6 +97,13 @@ if (-f $db) {
 		@wrong = @{$wrong_rows};
 		$dbh->disconnect;
 	}
+}
+
+# A wrong report is two different problems. Ask the locator again, read-only:
+# if the reported location is already among its hits, the order is the fault
+# (ranking); if it is not there at all, the location is missing (coverage).
+for my $row (@wrong) {
+	$row->{'kind'} = classify_wrong($row);
 }
 
 my @drift   = map_drift();
@@ -131,9 +140,12 @@ if (@misses) {
 if (@wrong) {
 	print "\nWRONG (an agent said the hit was not the right one)\n";
 	for my $r (@wrong) {
-		printf "  %s  ->  %s%s\n", $r->{'name'}, ($r->{'found'} || '(no location given)'),
+		printf "  %s  ->  %s [%s]%s%s\n", $r->{'name'}, ($r->{'found'} || '(no location given)'),
+			$r->{'kind'},
+			(defined $r->{'selected'} && length $r->{'selected'} ? ' (selected ' . $r->{'selected'} . ')' : ''),
 			($r->{'note'} ? '  [' . $r->{'note'} . ']' : '');
 	}
+	print "  (ranking = the right answer was among the hits; coverage = it was not returned)\n";
 }
 if (@drift) {
 	print "\nMAP DRIFT (the map names a file that no longer defines the name)\n";
@@ -156,8 +168,11 @@ sub audit_prompt {
 	}
 	if (@{$wrong}) {
 		push @lines, '', 'WRONG (open the reported location, confirm it, then correct the locator):';
-		push @lines, sprintf('  %s -> %s%s', $_->{'name'}, ($_->{'found'} || '(no location)'),
+		push @lines, sprintf('  %s -> %s [%s]%s%s', $_->{'name'}, ($_->{'found'} || '(no location)'),
+			$_->{'kind'},
+			(defined $_->{'selected'} && length $_->{'selected'} ? ' (selected ' . $_->{'selected'} . ')' : ''),
 			($_->{'note'} ? ' [' . $_->{'note'} . ']' : '')) for @{$wrong};
+		push @lines, '', 'ranking: the right answer was already among the hits - improve the order or priority. coverage: the locator did not return it - add the location.';
 	}
 	if (@{$drift}) {
 		push @lines, '', 'MAP DRIFT (the map names a file that no longer defines the name):';
@@ -186,6 +201,38 @@ sub find_sub {
 		return $n if $line =~ /^\s*sub\s+\Q$name\E\b/;
 	}
 	return;
+}
+
+# The locator's hits for one name, read-only. undef when it could not run;
+# an empty list is a real miss, which is what makes a coverage gap.
+sub locator_hits {
+	my ($name) = @_;
+	my $script = "$real_root/scripts/where.pl";
+	return undef unless -f $script;
+	my $err = gensym;
+	my ($in, $out);
+	my $pid = eval {
+		open3($in, $out, $err, $^X, $script, '--root', $root, '--no-log', '--terse', $name);
+	};
+	return undef unless $pid;
+	close $in;
+	my @lines = <$out>;
+	chomp @lines;
+	{
+		local $/;
+		my $junk = <$err>;
+	}
+	waitpid($pid, 0);
+	return \@lines;
+}
+
+sub classify_wrong {
+	my ($row) = @_;
+	my $found = defined $row->{'found'} ? $row->{'found'} : '';
+	return 'unknown' unless length $found;
+	my $hits = locator_hits($row->{'name'});
+	return 'unknown' unless defined $hits;
+	return (grep { $_ eq $found } @{$hits}) ? 'ranking' : 'coverage';
 }
 
 sub map_drift {

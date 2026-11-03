@@ -50,6 +50,7 @@ my $body_chars;
 my $outline    = 0;
 my $log_flag;
 my $report_name;
+my $report_at;
 my $report_found;
 my $report_note;
 my $tech_name;
@@ -66,6 +67,7 @@ GetOptions(
 	'outline'      => \$outline,
 	'log!'         => \$log_flag,
 	'report=s'     => \$report_name,
+	'at=s'         => \$report_at,
 	'found=s'      => \$report_found,
 	'note=s'       => \$report_note,
 	'tech=s'       => \$tech_name,
@@ -99,7 +101,7 @@ if (defined $report_name) {
 	my $verdict = shift @ARGV // '';
 	$verdict = lc $verdict;
 	usage(2) unless $verdict eq 'right' || $verdict eq 'wrong';
-	exit(report_feedback($report_name, $verdict, $report_found, $report_note) ? 0 : 2);
+	exit(report_feedback($report_name, $verdict, $report_at, $report_found, $report_note) ? 0 : 2);
 }
 
 # The second tier of help is a whole brief, not a location: hand it to the script
@@ -826,7 +828,7 @@ sub where_log {
 # without one, because a report is worth more than a missing join. A wrong one
 # should carry --found, the place the agent actually found the name.
 sub report_feedback {
-	my ($name, $verdict, $found, $note) = @_;
+	my ($name, $verdict, $at, $found, $note) = @_;
 	my $db = $ENV{'JAWNOS_WHERE_DB'} || "$root/database/jawnos.db";
 	unless (-f $db) {
 		warn "where: no database at $db\n";
@@ -845,11 +847,12 @@ sub report_feedback {
 			'select uuid from where_calls where machine = ? and name = ? and minute >= ? order by server_time desc limit 1',
 			undef, hostname(), $name, $since);
 		my $uuid = sprintf('%d-%d-%d', time, $$, int(rand(1_000_000)));
+		$at    = substr($at, 0, 500)    if defined $at;
 		$found = substr($found, 0, 500) if defined $found;
 		$note  = substr($note, 0, 500)  if defined $note;
 		$dbh->do(
-			'insert into where_feedback (uuid, call_uuid, machine, minute, name, verdict, found, note, ost, server_time) values (?,?,?,?,?,?,?,?,?,?)',
-			undef, $uuid, $call, hostname(), $minute, substr($name, 0, 200), $verdict, $found, $note, $now, $now,
+			'insert into where_feedback (uuid, call_uuid, machine, minute, name, verdict, selected, found, note, ost, server_time) values (?,?,?,?,?,?,?,?,?,?,?)',
+			undef, $uuid, $call, hostname(), $minute, substr($name, 0, 200), $verdict, $at, $found, $note, $now, $now,
 		);
 		$dbh->disconnect;
 		1;
@@ -859,6 +862,7 @@ sub report_feedback {
 		return 0;
 	}
 	print 'reported ', $name, ' ', $verdict,
+		(defined $at && length $at ? " at $at" : ''),
 		(defined $found && length $found ? " -> $found" : ''), "\n";
 	return 1;
 }
@@ -966,10 +970,10 @@ help topic with the line it is defined on. Exits 0 if anything was found.
   --outline     for each FILE, print "line<TAB>kind name" for every declaration
                 in it, so an agent can read a range instead of the whole file.
   --no-log      do not record this lookup in database/jawnos.db.
-  --report NAME right|wrong [--found LOC] [--note TEXT]
-                record an agent's verdict on a hit it acted on; --found names
-                the real location when the hit was wrong. This is the signal
-                that scripts/where_audit.pl learns from.
+  --report NAME right|wrong [--at LOC] [--found LOC] [--note TEXT]
+                record an agent's verdict on a hit it acted on; --at is the hit
+                it used, and --found the real location when that hit was wrong.
+                This is the signal that scripts/where_audit.pl learns from.
 
   --tech NAME  the tier-2 technical brief for an app or topic (routes, tables,
                settings, tests, source notes) - same as scripts/agent_help.pl

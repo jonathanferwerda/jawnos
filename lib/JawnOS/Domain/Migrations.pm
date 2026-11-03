@@ -513,6 +513,10 @@ sub update_database($data) {
 		)',
 		'create index if not exists idx_where_feedback_minute on where_feedback (minute)',
 		'create index if not exists idx_where_feedback_name on where_feedback (name, minute)',
+		# The hit the agent actually used, so a wrong report can be told apart:
+		# a ranking complaint (the right answer was already among the hits, just
+		# not first) is a different fix from a coverage gap.
+		'alter table where_feedback add column selected VARCHAR(500)',
 		'alter table continent add column signatorial VARCHAR(500)',
 		'alter table continent add column speed VARCHAR(25)',
 		'alter table continent add column altitude VARCHAR(25)',
