@@ -324,6 +324,17 @@ sub app_public_path {
 	return 1 if $path eq '/manager/address_lookup';
 	return 1 if $path =~ m{^/passkey(?:/|$)};
 	return 1 if $path eq '/manager/ws' || $path eq '/manager/tunnel/ws';
+	# The tunnel control calls authenticate themselves with the peer's pinned
+	# signature (tunnel_rail_allowed), and the liveness ping does the same. They
+	# are already session-gate exempt in hooks.pl; the tier carve-out has to
+	# agree, or a peer whose roster row carries a resident cookie - the same row
+	# the manager uses - is refused as a resident editing Configure and the
+	# tunnel never forms (the laptop, 2026-11-02). The browser's own toggle is
+	# not here: it is a Configure action and stays citizen.
+	return 1 if $path eq '/manager/tunnel/alive'
+		|| $path eq '/manager/configure/remote_machine/tunnel/request'
+		|| $path eq '/manager/configure/remote_machine/tunnel/confirm'
+		|| $path eq '/manager/configure/remote_machine/tunnel/close';
 	# The padlock is its own small protocol: a locked screen must still be able
 	# to ask another device for a print even when its app window has lapsed, and
 	# every one of these routes checks its own device key or pairing.

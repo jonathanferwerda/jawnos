@@ -27,6 +27,7 @@ use MIME::Base64;
 use Math::Trig qw(cartesian_to_spherical spherical_to_cartesian great_circle_distance rad2deg deg2rad great_circle_bearing great_circle_direction great_circle_destination);
 use Mojo::IOLoop;
 use Mojo::JSON qw(decode_json encode_json);
+use Mojo::URL;
 use Mojo::Util qw/md5_sum xml_escape html_unescape term_escape quote unquote secure_compare url_escape url_unescape network_contains punycode_decode punycode_encode b64_decode b64_encode/;
 use POSIX ();   # mktime: a local-time epoch that still predates 1970
 use Text::Unidecode;
@@ -245,9 +246,37 @@ sub tunnel_checker {
 			&subs::setting_setter({ app => '__president', setting => 'tunnel_duties', value => $jtd });
 		}
 	} else {
+		my @server_targets;
 		foreach my $d ( reverse @{$devices} ) {
 			foreach my $ad ( keys %{$d->{'address'}} ) {
-				foreach my $n ( grep { $_->{'mac'} && $_->{'purpose'} eq 'server' && $_->{'tunnel'} eq 'active' } @{$d->{'address'}->{$ad}->{'neigh'}} ) {
+				push @server_targets, grep { $_->{'mac'} && ($_->{'purpose'} || '') eq 'server' && ($_->{'tunnel'} || '') eq 'active' } @{$d->{'address'}->{$ad}->{'neigh'} || []};
+			}
+		}
+		# A hub named by config (tunnel_hub) is not on this LAN: it sits behind a
+		# subnet route, so no NIC's neighbour table ever lists it and a scan cannot
+		# discover it. Without this, moving the hub is one change per house and the
+		# config value alone did nothing (the laptop, 2026-11-02: tunnel_hub set,
+		# no tunnel started, sync still pointed at the retired cloud). Name it from
+		# the roster row the movement left behind, so the tunnel starts from the
+		# same value the peer dials.
+		if ($config->{'tunnel_hub'}) {
+			my $hub_host = eval { Mojo::URL->new($config->{'tunnel_hub'})->host } || '';
+			if ($hub_host && !grep { ($_->{'ip'} || '') eq $hub_host } @server_targets) {
+				my $rows = &subs::db_select('remote_machines', undef, { device => 'server' })->hashes;
+				my ($row) = grep {
+					my $h = eval { Mojo::URL->new($_->{'manager'} || '')->host } || '';
+					$h eq $hub_host;
+				} @{$rows};
+				$row ||= (sort { ($b->{'server_time'} || 0) <=> ($a->{'server_time'} || 0) } @{$rows})[0];
+				push @server_targets, {
+					ip          => $hub_host,
+					signatorial => $row->{'signatorial'},
+					domain      => $hub_host,
+					mac         => 'hub',
+				} if $row && $row->{'signatorial'};
+			}
+		}
+		foreach my $n ( @server_targets ) {
 					next if grep { $_ eq $n->{'signatorial'} } @seen_signatorials;
 					push @seen_signatorials, $n->{'signatorial'};
 					my $tunnels = &subs::db_select('tunnels', undef, { status => 'active', signatorial => $n->{'signatorial'} })->hashes;
@@ -334,10 +363,8 @@ sub tunnel_checker {
 					}
 				}
 			}
-		}
+		&Websocket::send('server', { console => 'tunnelLister()' });
 	}
-	&Websocket::send('server', { console => 'tunnelLister()' });
-}
 
 sub tunnel_port_mapper {
 	my $data = shift;

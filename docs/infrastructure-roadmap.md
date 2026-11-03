@@ -1,7 +1,7 @@
 # Infrastructure roadmap — dev box, tailnet and the cloud server
 
-**Status:** in progress — P0–P6 are effectively done (2026-11-02); what remains is verifying from
-outside and cancelling the VPS at its renewal.
+**Status:** in progress — the hub move is live on ks5. The 2026-11-03 re-pointing is rolling to
+every device; what remains is the outside verification and cancelling the VPS at its renewal.
 **Started:** 2026-11-02 · **Baseline measured** 2026-11-02 by logging into all four hosts.
 **Related:** `AGENTS.md` (run/restart, the database-is-per-device rule, the mesh rules),
 `docs/AGENTS-restart.md`, `docs/AGENTS-firmware.md`, `t/README.md` (what the suite touches)
@@ -422,8 +422,17 @@ record moved instead.
       45545/45546/45550 → `10.20.0.20`). MagicDNS shadows names under `base_domain`, so a headscale
       **`extra_records`** entry resolves the hub to 54.39.157.133 for tailnet clients too.
 - [x] `tunnel_hub = https://hub.jonathanferwerda.com:45545` on the laptop and the table, both apps
-      restarted. The laptop's tunnel to the house is established (`tunnel=yes` in the house's peer
-      table); the table's has not been seen yet and should establish on demand.
+      restarted.
+- [x] **Corrected 2026-11-03 — the config alone did not form a tunnel.** The house's `config.json`
+      still named itself `cloud` (`name`, `public_host`), so every client that re-enrolled learned
+      the retired name; each client's `sync_hub` still pointed at the cloud signatorial, and
+      `tunnels` / `remote_machine_sync` were switched **off** in its utility row. The laptop's
+      `tunnel=yes` on the hub was a stale row, not a live data plane. Fixed: the house names itself
+      `house` at `hub.jonathanferwerda.com`; a client re-enrolls the house, drops the cloud row,
+      sets `sync_hub`, and switches the two utilities on. `tunnel_checker` now starts a tunnel for a
+      configured `tunnel_hub` even when no NIC neighbour table lists the hub (it sits behind the
+      subnet route), and the tunnel control rail is tier-exempt like its session gate, so a rostered
+      peer carrying a resident cookie can reserve its ports. Tests: `t/124`, `t/15`.
 - [x] **Wildcard renewal in the house works.** The moved GoDaddy credential was bad (`401`) and the
       laptop's credential is sealed with a different house key, so the working key was unsealed on
       the laptop and re-sealed under the house's own key in transit. The timer is enabled and the
@@ -432,7 +441,12 @@ record moved instead.
       at 04:15 by a user timer, the table at 04:15 by cron. Both databases pass `integrity_check`,
       and the certificate/key pair and the 115,378-row appointment table were verified from the
       copy. The restore steps are written in §11.
-- [ ] Verify from outside the house (phone on cellular) and cancel the VPS at renewal.
+- [ ] Roll the re-pointing to every device. Phone and tablet still carry the cloud signatorial and
+      no house row; the table carries the cloud row and its utilities are off. The phone's `config`
+      also lacks `tunnel_hub`.
+- [ ] Verify from outside the house (phone on cellular) and cancel the VPS at renewal. The VPS
+      node stays online in the tailnet until then: it is the rollback, and `cloud.jonathanferwerda.com`
+      is MagicDNS's name for it (the JawnOS service there is stopped).
 - **Exit:** the hub and the tailnet answer from ks5, the VPS is cancelled, and the restore has been
       rehearsed once.
 

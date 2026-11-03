@@ -1,4 +1,4 @@
-# tests-for: lib/JawnOS/Domain/Crest.pm perl/hooks.pl public/js/jquery.js
+# tests-for: lib/JawnOS/Domain/Crest.pm lib/JawnOS/Manager/Part30.pm perl/hooks.pl public/js/jquery.js
 # covers:    The privilege tiers behind hooks.pl's before_dispatch.
 
 use strict;
@@ -53,6 +53,24 @@ ok(&subs::tier_denied('/manager/configuredness', 'guest'), 'a guest may not reac
 # the caller with a device key. Pinned here so the layering is explicit.
 ok(&subs::tier_denied('/manager/security/padlock_unlock', 'guest'),
 	'the table claims the padlock rail; the caller carves it out');
+
+# The tunnel control calls are signed by the peer, but the roster row also
+# carries the peer's resident cookie. Part30 is lazy, so preload it for the
+# call (the same require t/109 uses).
+require(root() . '/lib/JawnOS/Manager/Part30.pm');
+
+# Without the carve-out the tier check refuses a resident on a Configure path
+# before tunnel_rail_allowed runs.
+ok(Manager::app_public_path('/manager/configure/remote_machine/tunnel/request'),
+	'the tunnel request is tier-exempt and verifies the peer itself');
+ok(Manager::app_public_path('/manager/configure/remote_machine/tunnel/confirm'),
+	'the tunnel confirm is tier-exempt');
+ok(Manager::app_public_path('/manager/configure/remote_machine/tunnel/close'),
+	'the tunnel close is tier-exempt');
+ok(Manager::app_public_path('/manager/tunnel/alive'),
+	'the tunnel liveness ping is tier-exempt');
+ok(!Manager::app_public_path('/manager/configure/remote_machine/tunnel/toggle'),
+	'the browser tunnel toggle stays a Configure action');
 
 # ------------------------------------------------------- privilege_is_house
 ok(&subs::privilege_is_house('citizen'),  'a citizen is house');
