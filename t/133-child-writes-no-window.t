@@ -43,8 +43,14 @@ is($default_guard, 3, 'exactly the fork, the budget and the evaluation are guard
 
 like($writer, qr/my \$quiet_child = \$app->\{'quiet_child'\};/,
 	'the caller can set quiet_child on the hash it passes');
-like($writer, qr/unless \(\$quiet_child\) \{\s*&Websocket::send\('tab', \{ console => 'calculator\(\);' \}\);/,
-	'and the three tab pushes sit inside the quiet guard');
+# The pushes are socket writes, not renders: they are what makes the new child
+# appear on screen at once, so a quiet child keeps them. Only the fork and the
+# bookkeeping are skipped (measured on the phone: suppressing the pushes made a
+# started app's options and models look like they never arrived).
+like($writer, qr/\&Websocket::send\('tab', \{ console => 'calculator\(\);' \}\);\s*\n\s*\&Websocket::send\('tab', \{ console => 'appointmentDetailGrabber/,
+	'a quiet child still pushes its own detail redraw');
+unlike($writer, qr/unless \(\$quiet_child\) \{\s*&Websocket::send\('tab', \{ console => 'calculator\(\);' \}\);/,
+	'the tab pushes are not behind the quiet guard');
 my $row_start = index($writer, "if (\$app->{'type'} eq 'usual'");
 my $fork_at   = index($writer, "{ name => 'centre view' }");
 ok($row_start >= 0 && $fork_at > $row_start,
@@ -56,9 +62,9 @@ like($writer, qr/&subs::intelligent_automation_toggle\(\{ appt_uuid => \$app->\{
 like($writer, qr/&subs::appointment_theme_push\(\) if \(\(\$theme_movement \/\/ ''\) =~ \/\^\(\?:start\|stop\|record\)\$\//,
 	'and the theme push is unguarded, on the remembered type');
 my $quiet_block = $writer;
-ok($quiet_block =~ /unless \(\$quiet_child\) \{([\s\S]*?)\n\t\}/, 'the quiet guard is one block');
-like($1, qr/appointmentDetailGrabber/, 'the detail push is inside it');
-like($1, qr/continent_record/, 'and the continent record push');
+ok($quiet_block =~ /\{ name => 'centre view' \}\) unless \$quiet_child;/, 'the window fork is the guarded part');
+like($quiet_block, qr/&budget_runner\(\$app->\{'app'\}\) unless \$quiet_child;/, 'and the budget runner');
+like($quiet_block, qr/&subs::evaluation_run_trigger\(\$app->\{'app'\}, \$app\) unless \$quiet_child;/, 'and the evaluation trigger');
 unlike(substr($writer, $fork_at), qr/&subs::db_insert|&subs::db_update/,
 	'nothing after the guarded fork writes the row: the write does not depend on the window');
 

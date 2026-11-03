@@ -344,15 +344,14 @@ sub appointment_writer($c,$app) {
 	# a transaction with an account is a money move, so it is written to the
 	# warehouse ledger too; the budget and the warehouse then read one store
 	&warehouse_money_mirror($app);
-	# The row, the hardware toggle and the theme push are the child's; everything
-	# below is the press's to do once. A quiet child skips the window render fork,
-	# the tab pushes and the budget/evaluation bookkeeping, which the parent press
-	# already ran - one press then forks the window once, not once per child.
-	unless ($quiet_child) {
-		&Websocket::send('tab', { console => 'calculator();' });
-		&Websocket::send('tab', { console => 'appointmentDetailGrabber("' . $app->{'app'} . '","' . $app->{'uuid'} .'");' });
-		&Websocket::send('tab', { console => 'continent_record({\'uuid\':\'' . $app->{'uuid'} . '\', \'app\':\'' . $app->{'app'} .'\',\'purpose\':\'app\',\'timestamp\':\'' . $app->{'timestamp'} . '\',\'navigation\':"once" });' });
-	}
+	# The row, the hardware toggle and the theme push are the child's; the window
+	# render is the press's to do once. The three tab pushes below are socket
+	# writes, not renders, and they are what makes the new child appear on the
+	# screen at once - they stay for a quiet child too. A press then forks the
+	# window once, not once per child, and still shows every child immediately.
+	&Websocket::send('tab', { console => 'calculator();' });
+	&Websocket::send('tab', { console => 'appointmentDetailGrabber("' . $app->{'app'} . '","' . $app->{'uuid'} .'");' });
+	&Websocket::send('tab', { console => 'continent_record({\'uuid\':\'' . $app->{'uuid'} . '\', \'app\':\'' . $app->{'app'} .'\',\'purpose\':\'app\',\'timestamp\':\'' . $app->{'timestamp'} . '\',\'navigation\':"once" });' });
 	# The header went out as soon as the row was written. The window render is the
 	# slow half; fork it so the writer - and the default model and option sessions
 	# it starts - does not wait for a full redraw.
