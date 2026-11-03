@@ -510,11 +510,11 @@ sub log_reader {
 			}
 
 		}
-		# an app born before dark_colour existed has no row for it: give the viewers
-		# the same counterpart the settings getter would hand them
-		if (!$appts->{$a->{'app'}}->{'setting'}->{'dark_colour'}) {
-			$appts->{$a->{'app'}}->{'setting'}->{'dark_colour'} = &subs::dark_colour_for($appts->{$a->{'app'}}->{'setting'}->{'colour'});
-		}
+		# an app born before dark_colour existed has no row for it, and one born on
+		# a dark desktop stored that cut as its colour: give the viewers the same
+		# light/dark pair the settings getter hands them
+		($appts->{$a->{'app'}}->{'setting'}->{'colour'}, $appts->{$a->{'app'}}->{'setting'}->{'dark_colour'}) =
+			&subs::appointment_colours($appts->{$a->{'app'}}->{'setting'}->{'colour'}, $appts->{$a->{'app'}}->{'setting'}->{'dark_colour'});
 	# A private appointment never appears on the timeline, even while the
 	# private fingerprint grant is live and even at home. Configure's own card is
 	# the deliberate exception: it must stay readable so the level can be changed.

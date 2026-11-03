@@ -681,10 +681,11 @@ sub settings_grabber {
 		# change does not repaint the appointments behind the user's back
 		$returner->{'colour'} = &theme_colour_for_app($app, $returner->{'colour'}, $settings->{'device'}) unless (length $returner->{'colour'});
 	}
-	if (!$settings->{'benign'} && length($returner->{'colour'} || '') && !length($returner->{'dark_colour'} || '')) {
-		# the dark-theme face is a setting of its own; an app born before it
-		# existed (or one whose row was never written) still gets one to paint
-		$returner->{'dark_colour'} = &dark_colour_for($returner->{'colour'});
+	if (!$settings->{'benign'} && length($returner->{'colour'} || '')) {
+		# colour is the light face and dark_colour the dark one. An app born on a
+		# dark desktop stored that cut as its colour, so restore the pair here: a
+		# light desk then paints the light step instead of a near-black plate.
+		($returner->{'colour'}, $returner->{'dark_colour'}) = &appointment_colours($returner->{'colour'}, $returner->{'dark_colour'});
 	}
 	return $returner;
 }

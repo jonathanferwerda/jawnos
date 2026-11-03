@@ -400,6 +400,58 @@ sub dark_colour_for {
 	return lc &_hsl_to_hex($h, $s, $target);
 }
 
+# The light-face counterpart of a colour an appointment stored while a dark cut
+# was in charge. A colour is the light face and dark_colour the dark one, but an
+# app born on a dark desktop took its colour from that cut's ramp, so switching
+# to a light theme left its plates near-black. A step only a dark pair knows maps
+# back to the same step of its light pair; a colour any light scheme already
+# names is left alone (some steps, like Graphite's last, are shared by both
+# cuts), and a hand-picked colour no scheme knows is untouched.
+sub light_colour_for {
+	my ($colour) = @_;
+	return $colour unless defined $colour && $colour =~ /^\#?([0-9a-fA-F]{6})$/;
+	my $hex = lc('#' . $1);
+	foreach my $name ( @colour_scheme_order ) {
+		next if $name =~ / Dark$/;
+		my $palette = $colour_schemes{$name};
+		next unless ref $palette eq 'ARRAY';
+		foreach my $step ( @{$palette} ) {
+			return $colour if lc($step) eq $hex;
+		}
+	}
+	foreach my $name ( @colour_scheme_order ) {
+		next unless $name =~ / Dark$/;
+		my $palette = $colour_schemes{$name};
+		next unless ref $palette eq 'ARRAY';
+		my $index = 0;
+		foreach my $step ( @{$palette} ) {
+			if (lc($step) eq $hex) {
+				(my $light_name = $name) =~ s/ Dark$//;
+				my $light = $colour_schemes{$light_name};
+				return $light->[$index] if ref $light eq 'ARRAY' && defined $light->[$index];
+				last;
+			}
+			$index++;
+		}
+	}
+	return $colour;
+}
+
+# The two faces of an appointment's colour: the light one a light desk paints and
+# the dark one a dark desk paints. A stored colour that is really a dark cut's
+# step is the dark face, and its light pair is the light face; anything else gets
+# its dark face derived (or keeps the one the row already names).
+sub appointment_colours {
+	my ($colour, $dark) = @_;
+	return ($colour, $dark) unless defined $colour && length $colour;
+	my $light = &light_colour_for($colour);
+	if (defined $light && length $light && lc($light) ne lc($colour)) {
+		return ($light, $colour);
+	}
+	$dark = &dark_colour_for($colour) unless defined $dark && length $dark;
+	return ($colour, $dark);
+}
+
 # Every app's chosen theme in one read, for the appointment list (one query
 # rather than one per app block). A house-wide row wins, then this device's,
 # then the person's.
