@@ -255,6 +255,15 @@ function websocketStop(app) {
 	var closer = $('.close_appointment[app="' + app + '"]');
 	var browser_tab_id = sessionStorage.getItem('browser_tab_id');
 
+	// The music socket is the house's playback line, not the music window's
+	// private one: closing that window (or a pane inside it) calls this with
+	// app = music, and the socket must outlive the window. Only a healthy socket
+	// is spared - a socket that is no longer open still falls through and is
+	// dropped, which is what the heartbeat and the status check call this for,
+	// and websocketStart then builds it again. Closing every socket at once
+	// (the desktop clear) does not pass an app name, so it still takes music.
+	if (app == 'music' && ws[app] && ws[app].readyState == 1) { return; }
+
 	if (app && ws[app]) {
 		if ( ws[app] ) { ws[app].close(); ws[app] = null;	delete ws[app]; };
 		clearInterval(heartbeat[app]);

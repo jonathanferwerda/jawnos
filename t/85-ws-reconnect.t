@@ -94,6 +94,22 @@ like($controller, qr/<% if \(\$toggle eq 'controller'\) \{ %>.*?stayingAliveNow\
 like($controller, qr/setTimeout\(function\(\) \{.*?stayingAliveNow\('server'\);/s,
 	'the request waits until the panel is on screen');
 
+# --- the music socket is a permanent line -----------------------------------
+
+# The music socket is not the music window's private connection: its beat is what
+# advertises this device's playback to the house, and the house's playback comes
+# back on it. So every manager page opens it, and closing the music window must
+# not close it - only a socket that is no longer open falls through, so the
+# heartbeat and the watchdog can still drop a dead one and rebuild it.
+
+my $stop = read_file("$root/public/js/manager/websocket/02_heartbeat_and_reload.js");
+like($ws, qr/var wappts = \['server','tab','music'\];/,
+	'a manager page opens the music socket even with no music window');
+like($stop, qr/if \(app == 'music' && ws\[app\] && ws\[app\]\.readyState == 1\) \{ return; \}/,
+	'closing the music window leaves a healthy music socket up');
+like($ws, qr/tree\['music_data'\] != undefined && tree\.sound/,
+	'the beat reports music only while the app can answer');
+
 # --- the touched script still parses ----------------------------------------
 
 my $node = `command -v node 2>/dev/null`;

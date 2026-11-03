@@ -250,10 +250,13 @@ function wsSocketUrl(base, tail) {
 function websocketStart(appt,address) {
 
 	var timestamp = Date.now();
-	// The music socket is opened by the music window itself (windows.js calls
-	// websocketStart(app)); an idle tab that is not playing music does not need a
-	// third connection beating for nothing.
-	var wappts = ['server','tab'];
+	// The music socket is a permanent line, not the music window's own: every
+	// music socket advertises this device's playback on its beat and receives the
+	// house's (another device starting, stopping, seeking), so it stays open for
+	// as long as the manager page does. The music window still calls
+	// websocketStart('music') when it opens; that call now finds the socket
+	// already up and leaves it alone.
+	var wappts = ['server','tab','music'];
 	var origin = 'self';
 	if (appt != undefined) {
 	//	wappts.push(appt);
@@ -454,7 +457,12 @@ function heartbeatSend(app) {
 			});
 			data['headers_at'] = seen_headers;
 		}
-		else if ((app == 'music' || apper == 'music') && tree['music_data'] != undefined) {
+		// The music socket now beats on pages that never opened the music app, and
+		// after that window was locked. tree carries the writer's state only once
+		// the app has run, and a locked app clears tree.sound - calling the writer
+		// without it throws on every beat. The last advertised state stands until
+		// the app can answer again.
+		else if ((app == 'music' || apper == 'music') && tree['music_data'] != undefined && tree.sound) {
 			tree['music_data'] = musicAppointmentWriter('data_entry');
 			data['music_data'] = tree['music_data']
 		}

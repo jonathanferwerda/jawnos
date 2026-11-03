@@ -177,7 +177,11 @@ sub action_47050 {
 					if ($appt->{'type'} eq 'stop') {
 						if (($appt->{'timestamp'} - $appt->{'duration'}) > &subs::rightNow() - 120000) {
 							$resolved = 1;
-							&subs::db_update('appointments', { server_time => &subs::rightNow(), type => 'start' }, { uuid => $appt->{'uuid'}, app => $appt->{'app'} });
+							# A reopen is open again: `stop_seen is null` is what stop_target_row and
+							# open_session_uuid read, so the stop's 'yes' must go with the type. Left
+							# on, the row was a 'start' that no later stop could name - the socket
+							# close then matched nothing and the desk session ran on forever.
+							&subs::db_update('appointments', { server_time => &subs::rightNow(), type => 'start', stop_seen => undef, stop_timestamp => undef }, { uuid => $appt->{'uuid'}, app => $appt->{'app'} });
 							&subs::intelligent_automation_toggle({ appt_uuid => $appt->{'uuid'}, app => $appt->{'app'}, 'state' => 'on', timestamp => $timestamp });
 							&subs::appt_header_printer({ app => $appt->{'app'} });
 							&Websocket::send('server', { console => 'appointmentDetailGrabber(\'' . $appt->{'app'} . '\',\'' . $appt->{'uuid'} .'\');'});
@@ -189,7 +193,7 @@ sub action_47050 {
 								push @{$sources}, @{&subs::db_select('appointments', undef, { source_uuid => $so->{'uuid'} })->hashes};
 								if ( $so->{'type'} eq 'stop' ) {
 									my $dur = $so->{'timestamp'} - $timestamp;
-									&subs::db_update('appointments', { stop_seen => 'yes', type => 'start', duration => $dur, server_time => $server_time }, { source_uuid => $so->{'source_uuid'}, uuid => $so->{'uuid'}, app => $so->{'app'} });
+									&subs::db_update('appointments', { stop_seen => undef, stop_timestamp => undef, type => 'start', duration => $dur, server_time => $server_time }, { source_uuid => $so->{'source_uuid'}, uuid => $so->{'uuid'}, app => $so->{'app'} });
 									$child_apps{ $so->{'app'} } = 1;
 									&budget_runner($so->{'app'});
 									&subs::intelligent_automation_toggle({ appt_uuid => $so->{'uuid'}, app => $so->{'app'}, 'state' => 'on', timestamp => $timestamp });

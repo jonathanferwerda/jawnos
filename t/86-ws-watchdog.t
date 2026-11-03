@@ -188,6 +188,22 @@ like($ws_pm, qr/my \$newer = 0 \+ \(\$hrow->\{'timestamp'\} \|\| 0\);\s*my \$wea
 like($ws_pm, qr/\$return_data->\{'headers'\} = \\%stale_headers;\s*\$return_data->\{'header_at'\} = \\%stale_times;/s,
 	'the beat reply carries the header and its version');
 
+# --- a reopened desk session is open again ----------------------------------
+
+# The desk-session hook (music connect, log_me on) reopens the row a refresh
+# stopped two minutes ago. A reopen must clear the stop flag: `stop_seen is
+# null` is what stop_target_row and open_session_uuid read, so a row left with
+# type=start and stop_seen=yes can never be named by the next stop, and the
+# session runs on. The children it reopens are sessions of their own and follow
+# the same rule.
+
+like($ws_pm, qr/&subs::db_update\('appointments', \{ server_time => &subs::rightNow\(\), type => 'start', stop_seen => undef, stop_timestamp => undef \}/,
+	'a refreshed desk session is reopened with the stop flag cleared');
+like($ws_pm, qr/&subs::db_update\('appointments', \{ stop_seen => undef, stop_timestamp => undef, type => 'start', duration => \$dur, server_time => \$server_time \}/,
+	'and so is each child session it reopens');
+unlike($ws_pm, qr/stop_seen => 'yes', type => 'start'/,
+	'a start is never written with the stop flag still set');
+
 # --- the touched files still parse ------------------------------------------
 
 my $node = `command -v node 2>/dev/null`;
