@@ -440,6 +440,27 @@ sub watch_reply_stream {
 	return $done;
 }
 
+# The picture an app's `main_image` setting names, as an <img> can draw it. The
+# row is written per device, and a synced row can name the file on the machine
+# that wrote it; a path this machine can open is used as it stands, and a foreign
+# one is mapped through this device's photo folder (file_device_renamer) the way
+# the gallery maps a row another machine wrote. A snapshot main image is a data
+# URI that carries its own bytes. Returns '' when nothing here can be shown.
+sub main_image_src {
+	my ($value, $app) = @_;
+	return '' unless defined $value && length $value;
+	return $value if $value =~ /\Adata:image\//i;
+	my $file = -e $value ? $value : '';
+	if (!length $file) {
+		my ($destination, $asset) = &subs::file_device_renamer({ file => $value, app => $app, type => 'image' });
+		my $local = (defined $destination && defined $asset) ? $destination . $asset : '';
+		$file = $local if length $local && -e $local;
+	}
+	return '' unless length $file;
+	return '/file_open?file=' . &subs::url_escape_utf8($file)
+		. ((defined $app && length $app) ? '&app=' . &subs::url_escape_utf8($app) : '');
+}
+
 # The picture an app's icon shows: the person's own main image when there is
 # one, else the active icon set's version of the app's known picture, else the
 # placeholder for its pos. main_icon_maker renders this in HTML; the native
@@ -451,8 +472,8 @@ sub main_icon_source {
 	my $settings = $data->{'settings'};
 	$settings = &subs::settings_grabber({ app => $unformatted_name }) unless $settings;
 	if ($settings->{'main_image'}) {
-		my ($destination,$asset) = &subs::file_device_renamer({ file => $settings->{'main_image'}, app => $unformatted_name, type => 'image' });
-		return '/file_open?file=' . $destination . $asset if defined $destination && defined $asset && -e ($destination . $asset);
+		my $src = &subs::main_image_src($settings->{'main_image'}, $unformatted_name);
+		return $src if length $src;
 	}
 	# the Internet app's picture lives under the web button's name
 	return &icon_for('/images/make believe/web_button.png') if $unformatted_name eq 'internet';

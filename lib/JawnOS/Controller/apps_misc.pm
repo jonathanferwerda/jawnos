@@ -77,6 +77,16 @@ sub action_27002 {
 	return $missing->() unless length $app;
 	my $src = &subs::main_icon_source({ app => $app });
 	return $missing->() unless length $src;
+	# a snapshot main image is a data URI: answer its bytes as the picture, not a
+	# redirect to an address a native fetch will not follow
+	if ($src =~ /\Adata:image\/([a-z0-9.+-]+);base64,(.*)\z/si) {
+		my ($type, $b64) = (lc $1, $2);
+		my $bytes = eval { decode_base64($b64) };
+		return $missing->() unless defined $bytes && length $bytes;
+		$c->res->headers->cache_control('private, max-age=60');
+		$c->render(data => $bytes, content_type => "image/$type");
+		return;
+	}
 	# a person's own icon is sealed in the vault, and /file_open keeps the gate
 	return $c->redirect_to($src) if $src =~ m{\A/file_open};
 	# the hand-drawn set (and any set without a glyph) is already a PNG

@@ -561,13 +561,15 @@ sub search_index_icon($data) {
 	my $app = $data->{'app'};
 	my $main_image = $data->{'main_image'} || '';
 	if (length $main_image) {
-		return $main_image if $main_image =~ /^data:/;
-		my ($destination, $asset) = &subs::file_device_renamer({ file => $main_image, app => $app, type => 'image' });
-		if (defined $destination && defined $asset && -e ($destination . $asset)) {
+		# the same rule the gallery and the icon use: an existing path as it
+		# stands, a foreign one mapped onto this machine, or a data URI as-is
+		my $src = &subs::main_image_src($main_image, $app);
+		if (length $src) {
 			# the setting's own stamp keeps a replaced picture from being read
 			# back out of the browser's cache under the same path
 			my $stamp = $data->{'stamp'} || '';
-			return '/file_open?file=' . $destination . $asset . (length $stamp ? '&v=' . $stamp : '');
+			$src .= '&v=' . $stamp if length $stamp && $src =~ m{\A/file_open\?};
+			return $src;
 		}
 	}
 	if ($gb::known_appts->{$app} && $gb::known_appts->{$app}->{'icon'}) {
