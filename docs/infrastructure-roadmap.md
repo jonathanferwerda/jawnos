@@ -70,6 +70,10 @@ Measured after the install and two reboot drills:
   `/var/lib/vz`. `/boot` (ext4) and `/boot/efi` (vfat) stay on md RAID1; swap is 2 × 1 GiB.
 - ZFS ARC capped at **12 GB** (`/etc/modprobe.d/zfs.conf`); a baseline snapshot
   **`rpool/zd0@install-2026-11-02`** exists.
+- The template created `data` with **`cachefile=none`**, so the first boot could not import it
+  before `/var/lib/vz` mounted (systemd retried and succeeded ~12 s later). Fixed with
+  `zpool set cachefile=/etc/zfs/zpool.cache data` and an initramfs rebuild; the mount now succeeds
+  on the first try and `systemctl --failed` is clean.
 - The OVH template wrote **no `storage.cfg`**: `local` (dir on `/var/lib/vz`) was the only storage,
   so containers had no snapshot target. A **`local-zfs`** zfspool was added on `data` for
   `images,rootdir`; `local` keeps ISO/template/backup.
