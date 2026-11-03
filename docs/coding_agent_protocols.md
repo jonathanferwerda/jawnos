@@ -64,6 +64,9 @@ that into a slow patch instead of a frozen machine. Protect the work, not the ch
 
 ## Rules
 
+- **Reply budget.** A final message is what changed (`file:line`), what verified it (command → result),
+  and one risk. No code you wrote, no diff, no narration, no restating the request. Tool output is
+  quoted only for the failing lines. The commit message carries the rationale; the chat carries the pointer.
 - **Test fixtures only:** `email_test`, `email_tester`, `testing`, `testings`, `testingser`, plus the one
   sanctioned phone/email in `docs/AGENTS-notes.md`. Every other number/address is prohibited; only the
   sanctioned email may receive mail.

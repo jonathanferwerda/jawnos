@@ -72,7 +72,10 @@ function stayingAlive(data) {
 
 				else if (data['app'] == 'music') {
 
-					if ( n.music_data != undefined) {
+					// The beat sends '' when this tab has no track to report (its player
+					// window is closed or locked), which is not JSON - treat it as absent,
+					// the same as a peer that never played anything.
+					if ( n.music_data ) {
 						var md = JSON.parse(n.music_data) ? JSON.parse(n.music_data) : {};
 						var height = 200;
 						var width = height * md.title.ratio;

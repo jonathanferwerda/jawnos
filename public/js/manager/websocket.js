@@ -457,14 +457,22 @@ function heartbeatSend(app) {
 			});
 			data['headers_at'] = seen_headers;
 		}
-		// The music socket now beats on pages that never opened the music app, and
-		// after that window was locked. tree carries the writer's state only once
-		// the app has run, and a locked app clears tree.sound - calling the writer
-		// without it throws on every beat. The last advertised state stands until
-		// the app can answer again.
-		else if ((app == 'music' || apper == 'music') && tree['music_data'] != undefined && tree.sound) {
-			tree['music_data'] = musicAppointmentWriter('data_entry');
-			data['music_data'] = tree['music_data']
+		// The music socket now beats on pages that never opened the music app. A
+		// track on screen is the only thing the writer can report: the window
+		// closing takes its play element with it, the media lock clears
+		// tree.sound, and either way the writer would read empty selectors and
+		// send a hollow record that other devices draw as "undefined". Report
+		// nothing in that case, so this tab drops out of their music list until
+		// the player has a track again.
+		else if (app == 'music' || apper == 'music') {
+			if (tree['music_data'] != undefined && tree.sound && $('.track_item.playing').length) {
+				tree['music_data'] = musicAppointmentWriter('data_entry');
+				data['music_data'] = tree['music_data']
+			}
+			else if (tree['music_data'] != undefined) {
+				tree['music_data'] = '';
+				data['music_data'] = '';
+			}
 		}
 		else if ((app == 'server' || apper == 'server')) {
 			data['ws'] = [];

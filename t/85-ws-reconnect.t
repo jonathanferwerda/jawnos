@@ -107,8 +107,12 @@ like($ws, qr/var wappts = \['server','tab','music'\];/,
 	'a manager page opens the music socket even with no music window');
 like($stop, qr/if \(app == 'music' && ws\[app\] && ws\[app\]\.readyState == 1\) \{ return; \}/,
 	'closing the music window leaves a healthy music socket up');
-like($ws, qr/tree\['music_data'\] != undefined && tree\.sound/,
-	'the beat reports music only while the app can answer');
+like($ws, qr/tree\['music_data'\] != undefined && tree\.sound && \$\(\'\.track_item\.playing\'\)\.length/,
+	'the beat reports music only while a track is on screen');
+like($ws, qr/else if \(tree\['music_data'\] != undefined\) \{\s*tree\['music_data'\] = '';\s*data\['music_data'\] = '';/s,
+	'a closed or locked player advertises nothing instead of a hollow record');
+like($stop, qr/if \( n\.music_data \) \{/,
+	'a peer drawing a music list skips the blank row');
 
 # --- the touched script still parses ----------------------------------------
 
