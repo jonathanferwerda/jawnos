@@ -353,9 +353,9 @@ Nothing is deleted until its replacement answers. That ordering *is* the rollbac
 
 ### P3 — The containers — DONE 2026-11-02
 
-- [x] `dev`: privileged LXC **100**, Debian 13, 4 cores / 8 GB + 2 GB swap, 40 GB on `local-zfs`,
-      `10.20.0.10` on `vmbr1`. Repo cloned as `jawn` at `/home/jawn/jawnos`; no `releases/`, no
-      `.secrets/`, no mesh, no tunnels.
+- [x] `dev`: privileged LXC **100**, Debian 13, **8 cores / 40 GB + 8 GB swap, 256 GB** on
+      `local-zfs` (resized after P3; it was 4/8/40), `10.20.0.10` on `vmbr1`. Repo cloned as `jawn`
+      at `/home/jawn/jawnos`; no `releases/`, no mesh, no tunnels. It joined the tailnet at P8.
 - [x] **Fresh database** from `database/schema.sql` (38 tables). Never a copy of the live
       `jawnos.db` — that is the cross-machine restore `AGENTS.md` documents (D7).
 - [x] `house`: unprivileged LXC **101**, 2 cores / 2 GB, 20 GB, `10.20.0.20`; the app moves in at P6.
@@ -374,6 +374,47 @@ Nothing is deleted until its replacement answers. That ordering *is* the rollbac
       deep notes are truncated, so that assertion now skips on a clone without them (v0.1.1928).
 - **Exit:** the suite is green on the server and the remote tree is reachable; confirming Zed itself
       edits it is the person's step.
+
+### P8 — `dev` joins the tailnet, and key-only SSH everywhere — DONE 2026-11-03
+
+`dev` was the one node that could not see the other devices: it sat behind the ks5 NAT with no
+route into the house LAN, and it held none of the house SSH keys. Both are fixed.
+
+- [x] **`/dev/net/tun` in CT 100.** The container had no TUN device, so `tailscaled` died with
+      `CreateTUN("tailscale0") failed`. Added to `/etc/pve/lxc/100.conf`:
+      `lxc.cgroup2.devices.allow: c 10:200 rwm` and
+      `lxc.mount.entry: /dev/net/tun dev/net/tun none bind,create=file 0 0`. Needs a container restart.
+- [x] **Headscale reachable from `vmbr1`.** `headscale-dnat.service` only DNATs `-i vmbr0` (internet)
+      plus a host-local `OUTPUT` rule, so a container's own traffic to `54.39.157.133:443` matched
+      neither and got connection-refused. Added `-i vmbr1 -d 54.39.157.133` to the unit. **The `-d`
+      matters:** the first cut omitted it and hijacked *every* container's outbound 443, so `dev`
+      reached Headscale's certificate for every HTTPS host and could not reach the DERP relay.
+- [x] **`--accept-routes=false` on `dev`.** With it on, `dev` learned `10.20.0.0/24 dev tailscale0`
+      back from ks5 into table 52, which shadowed its own `eth0` route to its own bridge and made
+      `10.20.0.10` unreachable. `dev` is **100.64.0.4**; use the tailnet address, not the bridge one.
+- [x] **Key-only SSH on every host** — `table`, `cloud`, `laptop`, `ks5`, `dev`, `phone`, `tablet`.
+      Installed as `/etc/ssh/sshd_config.d/99-no-password.conf` (Termux: the same file under
+      `$PREFIX/etc/ssh/sshd_config.d/`). The `99-` prefix is load-bearing: `sshd_config`'s `Include`
+      sits at line 12, so drop-ins apply *after* its own `PasswordAuthentication` line — on ks5,
+      `50-cloud-init.conf` was silently re-enabling passwords.
+- [x] **Two keys authorised everywhere:** `jawnos-agent` (the laptop) and `jawnos-dev`
+      (`~/.ssh/id_ed25519_github` on `dev`). The laptop previously had **no** `authorized_keys` and
+      could not log into itself.
+- [x] **Android specifics.** Both boxes run Termux-adjacent `sshd` as **`u0_a369`**, not `jawn`, and
+      are started by hand (no pidfile, no systemd), so the invocation must be reproducible:
+      `-o AuthorizedKeysFile=<app>/files/home/.ssh/authorized_keys -o StrictModes=no`
+      `-o SetEnv=HOME=<app>/files/home`. A restart that expands `$PREFIX` wrongly makes sshd read
+      `<app>/files/usr/home/...` and reject every key — that locked the phone out once.
+      `StrictModes=no` is required because Android's `/data/data` is `0771 system:system`.
+- [x] **`.secrets/ssh.txt` corrected.** Phone LAN is `192.168.1.124` (not `.140`); `cloud` is `agent`;
+      the phone and tablet are `u0_a369`; the file's `100.64.0.2 # phone` was `cloud`.
+- **Known gap:** the **tablet is LAN-only.** It has no Tailscale client and no `tailscale0`
+      interface, so its Headscale node 8 (`100.64.0.8`) is stale and `dev` cannot reach it — `dev`
+      has no route into `192.168.1.0/24`. Reach the tablet from the laptop, or re-enrol it.
+- **Known gap:** `dev` holds the gitignored `docs/AGENTS-notes.md` but none of the token files
+      (`cloudflare.*`, `youtube.env`); only `jawnos-release.jks` was there already.
+- **Exit:** the laptop and `dev` each key-login to every tailnet host plus `ks5`, and password auth
+      is refused everywhere it was tested.
 
 ### P4 — Exit node — DONE 2026-11-02
 
