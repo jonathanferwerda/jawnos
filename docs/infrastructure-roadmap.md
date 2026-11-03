@@ -1,7 +1,7 @@
 # Infrastructure roadmap — dev box, tailnet and the cloud server
 
-**Status:** in progress — P0–P5 are done (2026-11-02); **P6 is in progress**: the house server and
-hub run on ks5, with backups and the house certificate credential still open.
+**Status:** in progress — P0–P6 are effectively done (2026-11-02); what remains is verifying from
+outside and cancelling the VPS at its renewal.
 **Started:** 2026-11-02 · **Baseline measured** 2026-11-02 by logging into all four hosts.
 **Related:** `AGENTS.md` (run/restart, the database-is-per-device rule, the mesh rules),
 `docs/AGENTS-restart.md`, `docs/AGENTS-firmware.md`, `t/README.md` (what the suite touches)
@@ -424,12 +424,14 @@ record moved instead.
 - [x] `tunnel_hub = https://hub.jonathanferwerda.com:45545` on the laptop and the table, both apps
       restarted. The laptop's tunnel to the house is established (`tunnel=yes` in the house's peer
       table); the table's has not been seen yet and should establish on demand.
-- [ ] **Wildcard renewal in the house is blocked on a credential.** The timer is installed but
-      **disabled**: the VPS's GoDaddy key returns `401`, and the laptop's working credential is
-      sealed with a different house key, so it cannot be transplanted. The pair in `house` is valid
-      to **2027-01-31**. Fix by adding a GoDaddy API key in the house's Configure → Plat → DNS, or
-      fall back to the laptop deploying the pair (the §4 alternative); do one before the date.
-- [ ] Off-box backups and one rehearsed restore (§11) — not started.
+- [x] **Wildcard renewal in the house works.** The moved GoDaddy credential was bad (`401`) and the
+      laptop's credential is sealed with a different house key, so the working key was unsealed on
+      the laptop and re-sealed under the house's own key in transit. The timer is enabled and the
+      pair was reissued the same day: it now expires **2027-02-01**.
+- [x] **Off-box backups started and drilled** (§11): ks5 stages nightly at 03:30; the laptop pulls
+      at 04:15 by a user timer, the table at 04:15 by cron. Both databases pass `integrity_check`,
+      and the certificate/key pair and the 115,378-row appointment table were verified from the
+      copy. The restore steps are written in §11.
 - [ ] Verify from outside the house (phone on cellular) and cancel the VPS at renewal.
 - **Exit:** the hub and the tailnet answer from ks5, the VPS is cancelled, and the restore has been
       rehearsed once.
@@ -477,9 +479,10 @@ record moved instead.
   `jawnos-tls.timer` (installed 2026-11-02), and the `house` container needs the same timer in P6.
   **The apex pair was reissued on ks5 on 2026-11-02 and expires 2027-02-01**, renewed by
   `certbot.timer` there with the deploy hook; the VPS's HTTP-01 renewal is no longer used.
-- **The open certificate risk** is the house's wildcard renewal: its timer is installed but
-  disabled because the moved GoDaddy credential returns `401` and the laptop's credential uses a
-  different house key. Fix the credential (or deploy from the laptop) before 2027-01-31.
+- **The open certificate risk** was the house's wildcard renewal: the moved GoDaddy credential
+  returned `401` and the laptop's credential used a different house key. **Closed 2026-11-02** by
+  re-sealing the working key under the house's key; the timer is enabled and the pair now expires
+  **2027-02-01**.
 - **The one thing that cannot be done** is pointing Tailscale at a bare IP: the client validates
   the control certificate and will not connect without a name.
 - **The one rule that must not be bent** is D7. A copied database on a dev container looks like it
@@ -546,12 +549,27 @@ reason to look elsewhere; every alternative costs more at equal memory (§13).
 
 The VPS is paid to its next renewal — that is the migration window, so use it and cancel (D11).
 It was never much insurance once the control plane, the house server and the hub all move off it.
-The real insurance is a **restore that has been rehearsed**:
+The real insurance is a **restore that has been rehearsed**.
 
-- nightly: `/var/lib/headscale/` (stop the service for a clean `db.sqlite`), `jawnos.db`, and
-  `server/fullchain.pem` + `server/privkey.pem`;
-- copied **off the box** to the laptop and the table;
-- and one written drill, because an untested backup is a hope, not a plan.
+### The backup as built (2026-11-02)
+
+- **ks5 stages** `/var/backups/jawnos/` nightly at 03:30 (`jawnos-backup.timer` +
+  `jawnos-backup.sh`): headscale `db.sqlite` (SQLite `.backup`, no service stop), its
+  `config.yaml`, the noise/DERP/TLS keys; the house `jawnos.db`, `config.json` and `server/`; and
+  the apex pair from `/etc/letsencrypt/live/thejunderground.com/`.
+- **The laptop pulls** it at 04:15 into `~/jawnos-backups/ks5/` (`jawnos-backup-pull.timer`, a user
+  unit). **The table pulls** it at 04:15 by cron into the same path.
+- **Drill, run the same day:** both databases pass `pragma integrity_check`; the house certificate
+  and private key produce the same public-key hash; the headscale keys tarball carries
+  `noise_private.key`, `derp_server_private.key` and `tls/`; the house DB holds **115,378**
+  appointments. A full boot from the copy was deliberately **not** done: a second instance with the
+  same keys or identity is the one state that must not exist.
+- **Restore:** stop the service. Headscale: copy `db.sqlite`, `keys.tgz` (noise, DERP, `tls/`) and
+  `config.yaml` into `/var/lib/headscale`, chown `headscale`, start. House: copy `jawnos.db` into
+  `database/`, extract `state.tgz` (`config.json` + `server/`) into the tree, chown `jawn`,
+  start. Apex pair: replace `/etc/letsencrypt/live/thejunderground.com/` and let the deploy hook
+  restart headscale. Verify with `curl https://thejunderground.com/health`,
+  `headscale nodes list`, the house manager, and `tailscale status`.
 
 ---
 
