@@ -14,7 +14,8 @@ Moved out of `AGENTS.md` (a per-task reference, not an every-request map).
   a canary house have been green for a week on the new server. Then `v1` is developed mostly autonomously on that server,
   against copies of the house database, with `release/v1` tags, human review before merge and v0 as
   the fallback for one release. Entry criteria, branch policy and autonomy rules:
-  `docs/app-lifecycle.md`.
+  `docs/app-lifecycle.md`. Build order and the rewrite-vs-strangler decision:
+  `docs/v1-strategy.md` (greenfield core, old data, one app at a time; fork only at parity).
 
 - **House key — operational finish (no code left)**: Phase 2 shipped in v0.1.940–v0.1.959. The
   password is login-only (a bootstrap session never resolves the data key), `K_house` is wrapped to
