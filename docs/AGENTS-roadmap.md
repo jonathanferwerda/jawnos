@@ -4,23 +4,6 @@ Moved out of `AGENTS.md` (a per-task reference, not an every-request map).
 
 ## Next up (deferred)
 
-- **Current plan: `docs/reality-check.md`.** The v1 transition below is the north star, not the
-  queue. Near term: publish four CPAN modules (`HTML::Allowlist`, `Log::Ring`, `Mojo::Tunnel`,
-  `App::TestsFor`), ship a minimal app format with `app_check`/`app_install`/`app_enable`/
-  `app_uninstall`, and write, use and share two real AI-written apps — all while Music stays green.
-  No router, sandbox, store, per-app DB or Music port until two apps have worked for a week.
-
-- **v1 transition — phased, in place; no fork; deferred.** `main` stays v0 (the house) while the App
-  SDK, per-app databases, lifecycle, store and sandbox are built behind `JawnOS::Host`. No `v1`
-  branch, no `release/v1`: features land behind a flag, and the legacy path is removed only when the
-  new one passes the **Music invariant** (library, playback, queue, remote outputs over PCM/Opus,
-  video and subtitles, padlock/sealed tracks, archive fetch, screen-off playback) plus the
-  conformance corpus. Complete when: host API 1.0 and `Host::Solo` runs an app alone; Music's vertical
-  slice and Gallery's contract are on the SDK; Embedded and Travel follow; per-app DBs at Phase 2+
-  with sync v4 and the multi-DB backup; lifecycle L3; store S2; sandbox SB1/SB2; and the suite plus a
-  canary house green for a week. Then `VERSION` becomes 1.0 and the legacy path is deleted. Build
-  order: `docs/v1-strategy.md`; criteria: `docs/app-lifecycle.md`.
-
 - **House key — operational finish (no code left)**: Phase 2 shipped in v0.1.940–v0.1.959. The
   password is login-only (a bootstrap session never resolves the data key), `K_house` is wrapped to
   each device's key, and recovery is the paper code or 3-of-5 Shamir shares — there is no
