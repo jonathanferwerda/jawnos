@@ -56,6 +56,46 @@ unless the old tree is the oracle.
 | Data migration | incremental | all at once | incremental |
 | Final architecture | the intended one | clean | the intended one |
 
+## Music first: the impact
+
+Starting with Music is defensible — if the contract carries Music, it carries everything — but it
+changes four things.
+
+**The pilot becomes the largest app.** Music is 2,882 lines of Perl in nine files, 6,076 lines of
+player JS, ~690 lines of templates and 16 routes. Gallery is 331 lines of controller, 4 routes and no
+app JS chunk. G1 moves from weeks to months.
+
+**The API grows before it stabilises.** Music reaches for `rightNow`, settings, db, cache, `home`,
+`signatorial_designer`, peer sign/verify, `remote_relay_request`, `window_maker`, `media_unlock_open`,
+`rock_and_roll` and `private_revealed`. Running it needs `media`, `peers`, `events`, `padlock`,
+`archive` and `windows` in the host on day one — a superset of the other apps, with a real risk of
+overfitting the contract to media.
+
+**It cannot be the sandbox pilot.** Music needs network (WebSocket), the peer mesh, audio devices and
+media files. The first sandbox must stay no-network and file-scoped; Gallery or Embedded proves that
+fence. Music is the second sandbox target, with an explicit WS/media proxy.
+
+**Its conformance corpus is thin.** Six test files reference Music today; it is the app where parity
+is hardest to prove. Porting it means writing the Music suite and the port together.
+
+**What it buys.** The hard host services (media, peers, events, padlock, archive) are designed under
+real pressure, not guessed. If Music runs on the SDK, the rest is mostly UI and CRUD.
+
+### The shape that works
+
+Music first **as a vertical slice, not as the parity gate**:
+
+1. Convert `perl/Music/*` to `Host::Local` — routes, library/queue, remote audio/video, padlock.
+2. Keep `public/js/music.js` as an asset. Change endpoints and the host contract, not the player.
+3. Add `media`, `peers`, `events`, `padlock`, `archive`, `windows` to the host as capabilities with
+   local implementations.
+4. Keep **Gallery** as the contract pilot: small, server-rendered, full corpus. If the API carries
+   Music and Gallery without contortion, it is stable.
+5. Write the Music conformance suite (playback, queue, remote output, padlock, archive) before the
+   port; it is the parity proof, not an afterthought.
+6. Sandbox Music after Gallery/Embedded: `userns` with a WebSocket and media proxy, or `systemd` on
+   the installed OS.
+
 ## The compatibility surface (one-way doors)
 
 These are decided once and versioned; changing any of them is a data migration, not a refactor:
@@ -80,8 +120,9 @@ data is a rewrite; a v1 that reads a different data is a migration project with 
    rewrite is a separate project.
 4. **Nothing is deleted until its replacement passes the conformance corpus and a canary.**
 5. **v0 stays runnable.** v1 serves copies of the house data, side by side, until cutover.
-6. **One app at a time**: Gallery (smallest) → Embedded (hardware) → Travel (depends on Gallery) →
-   Music (last, or never; extract `Audio::Stream::Sync`/`Media::Name` instead).
+6. **Music is the first vertical slice; Gallery is the contract pilot.** Convert Music's server side
+   onto `Host::Local` first and keep the player as an asset; then Embedded and Travel. The player's
+   UI rewrite stays last, or never.
 7. **Every new module ships with tests** (`JawnOS::SDK::Test`, `App::TestsFor`), and the low-risk CPAN
    modules (`HTML::Allowlist`, `Log::Ring`, `Mojo::Tunnel`, `App::TestsFor`) ship as they are.
 
@@ -114,19 +155,20 @@ the important boundary is that new code has no path back into `subs::`.
 
 ## What to start now
 
-1. `JawnOS::Host` + `Host::Local` as a thin delegation; convert **Gallery's** controller calls only.
-   No route, UI or data change.
-2. `Host::Solo` + `JawnOS::Server`; run Gallery standalone against a **copy** of the database.
-3. Build the conformance corpus in parallel with (1) and (2).
+1. `JawnOS::Host` + `Host::Local` as a thin delegation; convert **Music's server side**
+   (`perl/Music/*`) to it first, with `public/js/music.js` untouched as an asset.
+2. Convert **Gallery's** controller as the contract pilot. `Host::Solo` + `JawnOS::Server`; run
+   Gallery standalone against a **copy** of the database.
+3. Build the conformance corpus in parallel — the Music suite is the first part of it.
 4. Ship the low-risk modules; keep the 11-module roadmap independent.
-5. Do **not** start with Music, the UI, or a new database format.
+5. Do **not** start with the player UI, a new database format, or Music in the sandbox.
 
 ## Decision gates
 
 | Gate | Condition |
 |---|---|
-| G1 | Host API stable; Gallery runs embedded and standalone; corpus green |
-| G2 | Embedded and Travel on the SDK; per-app DBs at Phase 2; sandbox at SB1 |
+| G1 | Host API stable; Music's vertical slice runs on `Host::Local`; Gallery runs embedded and standalone; corpus green |
+| G2 | Music parity (playback, queue, remote output, padlock, archive); Embedded and Travel on the SDK; per-app DBs at Phase 2; sandbox at SB1 |
 | G3 | `sync_version = 4`, multi-DB backup bundle, lifecycle at L3, store at S2 |
 | G4 | v1 parity on the corpus; cutover one machine; v0 stays runnable for one release |
 

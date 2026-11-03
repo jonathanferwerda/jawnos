@@ -209,7 +209,7 @@ three hand-maintained JS maps, becomes the source of the route, asset, start-men
 
 | Phase | Work | Acceptance |
 |---|---|---|
-| A | Introduce `JawnOS::Host::Local` as a thin delegation to today's functions; convert **Gallery** only. No route or UI change. Add the DB registry + `ATTACH` (`docs/app-databases.md` Phase 0). | The full suite is green; Gallery's actions no longer call `subs::`/`Manager::`. |
+| A | Introduce `JawnOS::Host::Local` as a thin delegation to today's functions; convert **Music's server side** (`perl/Music/*`) as the vertical slice, player JS untouched, then **Gallery** as the contract pilot. No route, UI or data change. Add the DB registry + `ATTACH` (`docs/app-databases.md` Phase 0). | The full suite is green; Music and Gallery no longer call `subs::`/`Manager::`. |
 | B | Add `JawnOS::App` + manifest and a plugin loader; mount Gallery through it inside the monolith. | Gallery loads via `plugin`, the three JS maps are generated from manifests, and nothing else moves. |
 | C | Add `JawnOS::Host::Solo` and `JawnOS::Server`; ship Gallery standalone. | `jawnos-app --app Gallery` serves the same page from a temp DB; its tests use the SDK harness. |
 | D | Convert **Embedded**; formalize BLE/OTA/devices as optional capabilities. | Embedded runs embedded and standalone (hardware capabilities absent in solo). |

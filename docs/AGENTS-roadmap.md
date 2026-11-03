@@ -6,7 +6,8 @@ Moved out of `AGENTS.md` (a per-task reference, not an every-request map).
 
 - **jawnos-v1 fork — not yet; roadmap only.** `main` stays v0 (the house) while the App SDK,
   per-app databases and the app lifecycle are built. Fork when: the host API is 1.0 and
-  `Host::Solo` runs an app alone; Gallery, Embedded and Travel are on the SDK; per-app DBs are at
+  `Host::Solo` runs an app alone; Music's vertical slice (server side, player as an asset) and
+  Gallery's contract pilot are on the SDK, with Embedded and Travel following; per-app DBs are at
   Phase 2+ with sync v4 and the multi-DB backup bundle; the lifecycle is at L3 (registry,
   install/upgrade with rollback, health panel, canary); the app store is at S2 (signed release
   records, bundle verification, peer/cache fetch) with the review gate wired to install; the sandbox
