@@ -306,6 +306,10 @@ PM
 	my ($code, $out) = where('--outline', 'lib/JawnOS/Domain/Format.pm');
 	is($code, 0, 'an outline resolves');
 	like($out, qr{^\d+\tsub path_name$}m, 'with the line and kind of a declaration');
+
+	my ($js_code, $js_out) = where('--outline', 'public/js/manager/websocket/02_heartbeat_and_reload.js');
+	is($js_code, 0, 'a JavaScript outline resolves too');
+	like($js_out, qr{^\d+\tfunction jawnosRevisionArrived$}m, 'and names the functions');
 }
 
 # --- the body has a character budget as well as a line budget --------------

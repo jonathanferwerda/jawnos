@@ -964,10 +964,11 @@ sub outline_symbol {
 		return;
 	}
 	if ($ext eq 'js') {
-		return [ 'function', $1 ] if $line =~ /\bfunction\s+([A-Za-z_$][\w$]*)\s*\(/;
-		return [ 'class', $1 ] if $line =~ /\bclass\s+([A-Za-z_$][\w$]*)\b/;
-		return [ 'const', $1 ] if $line =~ /\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:async\s+)?(?:function\b|\()/;
-		return [ 'method', $1 ] if $line =~ /^\s*([A-Za-z_$][\w$]*)\s*[:=]\s*(?:async\s+)?(?:function\b|\()/;
+		# \$ so the regex does not read $] as the Perl version
+		return [ 'function', $1 ] if $line =~ /\bfunction\s+([A-Za-z_\$][\w\$]*)\s*\(/;
+		return [ 'class', $1 ] if $line =~ /\bclass\s+([A-Za-z_\$][\w\$]*)\b/;
+		return [ 'const', $1 ] if $line =~ /\b(?:const|let|var)\s+([A-Za-z_\$][\w\$]*)\s*=\s*(?:async\s+)?(?:function\b|\()/;
+		return [ 'method', $1 ] if $line =~ /^\s*([A-Za-z_\$][\w\$]*)\s*[:=]\s*(?:async\s+)?(?:function\b|\()/;
 		return;
 	}
 	if ($ext eq 'py') {
