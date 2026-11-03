@@ -23,6 +23,16 @@ Rule 2 is the one people skip. Most apps today store their data as rows in `appo
 scale). Creating `gallery.db` before normalizing those rows changes nothing. The per-app database is
 the *destination* of a normalization, not a new place to put the same blob.
 
+## Encryption and access
+
+A per-app database can be encrypted so the app never holds the key. The design is
+`docs/app-database-encryption.md`: a per-app **broker** outside the sandbox owns `K_app` (derived
+from the house key) and the file, and the app speaks a framed protocol over directional Unix sockets.
+The encryption ladder is `row` → `snapshot` → `sqlcipher` → `volume`; the existing `Salted__`
+container is seekable for reads but not a live writable DB, and SQLCipher is a build cost (no
+`DBD::SQLCipher` on CPAN). Cross-app access still goes through the host or a capability — a broker
+only ever serves its own app.
+
 ## The handle: one connection, many schemas
 
 `database_grabber()` (`Domain/Key.pm:377`) is already a good seam: one handle per process, an inode

@@ -123,6 +123,9 @@ systemd directives are the same contract the sandbox descriptor describes, just 
 - The app's SQLite file lives in its state dir. The **host still reads it** for backup and sync:
   the fence hides the host from the app, not the app from the host. Snapshot under the export lock;
   WAL keeps the read consistent.
+- When the database is encrypted, it lives behind a **broker** outside the fence and the app never
+  sees the path or the key (`docs/app-database-encryption.md`). The host still snapshots the file;
+  the app streams queries and rows over directional Unix sockets.
 - The app must not hold an exclusive lock across a request; use WAL and short transactions.
 - The host API is the only way an app writes core tables; the database registry
   (`docs/app-databases.md`) is enforced at that socket, not by file permissions.

@@ -270,6 +270,7 @@ Infrastructure (the new server, containers, off-box backups) is already tracked 
 - A canary route prefix and a second schema per app, only while a candidate is being measured.
 - The registry is the source of the route/asset/menu/help maps, replacing the hand-maintained ones.
 
-The five documents now form one story: `app-sdk.md` (contract), `app-databases.md` (data boundary),
+The six documents now form one story: `app-sdk.md` (contract), `app-databases.md` (data boundary),
 `app-lifecycle.md` (operations, generation, review, and the v1 fork), `app-store.md` (distribution
-through junderground) and `app-sandbox.md` (containment).
+through junderground), `app-sandbox.md` (containment) and `app-database-encryption.md` (the key and
+the broker).
