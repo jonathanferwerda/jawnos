@@ -154,7 +154,7 @@ Two certificates already exist, and they already split along this line:
 
 | Cert | Covers | Renewed by | Expires |
 |---|---|---|---|
-| `*.jonathanferwerda.com` | any subdomain — the house manager and hub today | **certbot on the laptop** (`dns-godaddy`, `certbot-renew.timer`), or `scripts/tls_issue.pl` from the panel | 2027-01-01 |
+| `*.jonathanferwerda.com` | any subdomain — the house manager and hub today | **`jawnos-tls.timer` on the laptop** (`scripts/tls_issue.pl --renew`), with the older `certbot-renew.timer` still running beside it | 2027-01-31 |
 | `thejunderground.com` | apex + `www` | system **certbot** on the VPS — retired with it (D11) | 2026-12-07 |
 
 So the tailnet does **not** need the apex, and it does **not** need a certificate of its own: point
@@ -167,8 +167,8 @@ it (D11); the apex certificate retires with the VPS.
 `certbot-renew.timer` with `authenticator = dns-godaddy` renews `*.jonathanferwerda.com` into
 `/etc/letsencrypt/live/jonathanferwerda.com-0001/`. The pair each machine serves
 (`server/fullchain.pem` + `server/privkey.pem`) is **deployed, not issued** — the VPS holds the same
-file, but nothing there renews it. The app's only path is the panel's *Issue / renew now*
-(`POST /manager/tls/issue` → `scripts/tls_issue.pl --renew`), and it has no timer anywhere either.
+file, but nothing there renews it. The app's own path is `scripts/tls_issue.pl`, and since 2026-11-02
+it runs from a **weekly user timer on the laptop** (`jawnos-tls.timer`, §12).
 So the KS-5 is not self-sufficient until one of these is true:
 
 - it runs `perl scripts/tls_issue.pl --renew` on a **weekly timer** (it writes `server/` itself), or
@@ -176,7 +176,7 @@ So the KS-5 is not self-sufficient until one of these is true:
 
 The first is better: the DNS credentials live in the `dns` settings app, sealed with the house key,
 so they **ride the mesh** to the `house` container — the off-mesh `dev` container never gets them.
-Hard date: **2027-01-01**.
+Hard date: **2027-01-31** (the wildcard was reissued on 2026-11-02).
 
 ### Why not the IP, and why not a nameserver
 
@@ -412,8 +412,8 @@ old host kept intact for a rollback.
   every node re-registers.
 - **The one easy own-goal** is a broken bridge or a closed 3478/udp on a host with no console.
   Snapshot first, keep the old SSH session open, and confirm the ports before repointing DNS.
-- **The one dated risk** is the wildcard: it expires **2027-01-01**. It is renewed **on the
-  laptop** today and nothing renews it on either server, so the KS-5 needs its own timer (§4). The
+- **The one dated risk** is the wildcard: it expires **2027-01-31**. The laptop renews it through
+  `jawnos-tls.timer` (installed 2026-11-02), and the `house` container needs the same timer in P6. The
   apex pair expires 2026-12-07 and retires with the VPS.
 - **The one thing that cannot be done** is pointing Tailscale at a bare IP: the client validates
   the control certificate and will not connect without a name.
@@ -533,10 +533,17 @@ systemctl --user enable --now jawnos-tls.timer
 systemctl --user list-timers jawnos-tls.timer
 ```
 
-**Prove it now, without waiting for a week:** `perl scripts/tls_issue.pl --renew` should answer
-*"certificate for *.jonathanferwerda.com is current (nothing to install)"* — the cert is not due
-until roughly 2026-12-02. If it fails instead, the DNS credentials under Configure → Plat → DNS
-are the thing to fix, and that is exactly what would have surfaced in December otherwise.
+**Prove it now, without waiting for a week:** `perl scripts/tls_issue.pl --renew` answers
+*"certificate for *.jonathanferwerda.com is current (nothing to install)"* when the app's own certbot
+lineage already exists. **Outcome of the first run (2026-11-02):** there was no lineage under
+`~/.jawnos_tls`, so the proof did the stronger thing and issued: the hook wrote and cleaned up
+`_acme-challenge.jonathanferwerda.com`, a fresh wildcard was installed (expires 2027-01-31), and the
+house was asked to restart. That run also found a real defect, now fixed: certbot 5.x validates a
+manual hook's first whitespace-separated token as a literal path, so `tls_issue.pl`'s quoted
+`'/usr/bin/perl'` was reported as not found and the renewal died before ACME. `tls::certbot_hook()`
+now emits bare paths (quoted only for a path with a space, with `--disable-hook-validation` then).
+If the proof fails instead, the DNS credentials under Configure → Plat → DNS are the thing to fix,
+and that is exactly what would have surfaced in December otherwise.
 
 Notes:
 
@@ -548,7 +555,7 @@ Notes:
   … restart requested"* or *"is current (nothing to install)"*.
 - Keep the laptop's existing `certbot-renew.timer` for now. Two issuers of the same name is
   harmless while one of them is not yet proven; retire it once the KS-5 has renewed once on its own.
-- Hard date: **2027-01-01**.
+- Hard date: **2027-01-31**.
 
 ---
 

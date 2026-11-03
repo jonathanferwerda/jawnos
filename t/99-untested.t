@@ -86,7 +86,6 @@ my %owed = map { $_ => 1 } qw(
 	scripts/sponsors_goal.pl
 	scripts/store_invoice_email_driver.pl
 	scripts/thumb_reorient.pl
-	scripts/tls_issue.pl
 );
 
 my @source = git_paths(qw(lib perl templates public/js scripts));

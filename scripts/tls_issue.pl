@@ -151,12 +151,13 @@ if (($client->{'provider'} || '') eq 'manual') {
 	push @cmd, '--manual', '--preferred-challenges', 'dns';
 }
 else {
-	my $hook = "'$^X' '$self' hook";
+	my $manual = &tls::certbot_hook($^X, $self);
 	push @cmd,
 		'--manual',
 		'--preferred-challenges', 'dns',
-		'--manual-auth-hook', $hook . ' auth',
-		'--manual-cleanup-hook', $hook . ' cleanup';
+		'--manual-auth-hook',    $manual->{'hook'} . ' auth',
+		'--manual-cleanup-hook', $manual->{'hook'} . ' cleanup';
+	push @cmd, '--disable-hook-validation' if $manual->{'disable_validation'};
 }
 
 my $rc = system(@cmd);

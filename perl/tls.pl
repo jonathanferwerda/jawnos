@@ -118,6 +118,21 @@ sub tx_ok {
 	return $res->is_success ? 1 : 0;
 }
 
+# The manual hook certbot runs to write and remove the record. certbot checks
+# the hook by looking up its first whitespace-separated token as a literal path
+# (manual._validate_hooks -> hooks.validate_hook), so a quoted interpreter
+# reads as "not found" and the run dies before ACME starts. Keep the paths
+# bare; quote only if one really has a space, and then the caller has to pass
+# --disable-hook-validation because that check cannot parse quotes.
+sub certbot_hook {
+	my ($perl, $script) = @_;
+	my $spaced = (($perl || '') =~ /\s/ || ($script || '') =~ /\s/);
+	return {
+		hook               => ($spaced ? qq{"$perl" "$script" hook} : "$perl $script hook"),
+		disable_validation => ($spaced ? 1 : 0),
+	};
+}
+
 # The TXT name a domain's validation goes at. CERTBOT_DOMAIN is the base name
 # even for a wildcard, so this is the same record for apex and *.
 sub dns_record_name {
