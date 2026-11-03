@@ -19,9 +19,10 @@
 # searched for as a sub across the parts and the domain modules, then as a help
 # topic, then as a declaration in a controller, the app's JavaScript or a
 # firmware sketch (jp/, jw/, jt/), then as a mention that prints the matching
-# line itself (capped by --limit). When a map names a file that does not define
-# the sub, the hit prints where it really is and says the map drifted - that is
-# the audit, for free.
+# line itself (capped by --limit). A single JavaScript or firmware declaration
+# arrives with its body (--body), because a location still costs a second read.
+# When a map names a file that does not define the sub, the hit prints where it
+# really is and says the map drifted - that is the audit, for free.
 
 use strict;
 use warnings;
@@ -35,19 +36,27 @@ my $root       = abs_path("$FindBin::Bin/..");
 my $context    = 0;
 my $limit      = 8;
 my $terse      = 0;
+my $body_flag;
+my $body_lines;
 my $tech_name;
 my $list_topics = 0;
 my $help       = 0;
 
 GetOptions(
-	'context=i' => \$context,
-	'limit=i'   => \$limit,
-	'terse'     => \$terse,
-	'tech=s'    => \$tech_name,
-	'topics'    => \$list_topics,
-	'root=s'    => \$root,
-	'help'      => \$help,
+	'context=i'    => \$context,
+	'limit=i'      => \$limit,
+	'terse'        => \$terse,
+	'body!'        => \$body_flag,
+	'body-lines=i' => \$body_lines,
+	'tech=s'       => \$tech_name,
+	'topics'       => \$list_topics,
+	'root=s'       => \$root,
+	'help'         => \$help,
 ) or usage(2);
+
+$body_flag = 1 if defined $body_lines && !defined $body_flag;
+$body_lines = 16 unless defined $body_lines;
+$body_lines = 0 if $body_lines < 0;
 
 usage(0) if $help;
 usage(2) unless defined $root && length $root && -d $root;
@@ -216,24 +225,32 @@ sub lookup {
 	my $topic = topic_lookup($name);
 	return $topic if $topic;
 
-	my $declared = 0;
+	my @decl;
 	for my $file (@controller_files, @js_files, @embedded_files) {
 		my $line = find_definition($file, $name) or next;
-		$declared += emit($name, undef, $file, $line);
-		last if $declared >= $limit;
+		push @decl, [ $file, $line ];
+		last if @decl >= $limit;
 	}
 
 	# A plain `const NAME = value` is a declaration, but a local variable of a
 	# name that a real function also has is not the answer, so weak hits wait
 	# until nothing stronger matched.
-	if (!$declared) {
+	if (!@decl) {
 		for my $file (@js_files) {
 			my $line = find_definition($file, $name, 'weak') or next;
-			$declared += emit($name, undef, $file, $line);
-			last if $declared >= $limit;
+			push @decl, [ $file, $line ];
+			last if @decl >= $limit;
 		}
 	}
-	return $declared if $declared;
+
+	if (@decl) {
+		# One declaration in a language with no package is the common case, and
+		# its body is the answer: print it without a second read. Several hits
+		# are a choice, so locations alone keep the output small.
+		my $auto = @decl == 1 && !is_perl($decl[0][0]);
+		print_declaration($name, $_->[0], $_->[1], $auto) for @decl;
+		return scalar @decl;
+	}
 
 	# Nothing declares it: show the lines that mention it, with their text. A
 	# bare file:line cannot be judged without opening the file - the cost this
@@ -266,7 +283,7 @@ sub emit {
 	$line //= find_sub($map_file, $name);
 	if ($line) {
 		print $terse ? rel($map_file) . ":$line\n" : "$label\t" . rel($map_file) . ":$line\n";
-		print_context($map_file, $line) if $context && !$terse;
+		print_extra($map_file, $line);
 		return 1;
 	}
 
@@ -275,7 +292,7 @@ sub emit {
 		my $at = find_sub($other, $name) or next;
 		print $terse ? rel($other) . ":$at\n" : "$label\t" . rel($other) . ":$at\n";
 		print '  map drift: ', rel($map_file), " does not define $name\n" unless $terse;
-		print_context($other, $at) if $context && !$terse;
+		print_extra($other, $at);
 		return 1;
 	}
 
@@ -513,6 +530,148 @@ sub is_definition {
 	return 0;
 }
 
+# Print one located declaration. The package label is omitted for a language
+# with no package; --context wins over --body, and --terse prints no code.
+sub print_declaration {
+	my ($name, $file, $line, $auto) = @_;
+	print $terse ? rel($file) . ":$line\n" : "$name\t" . rel($file) . ":$line\n";
+	return if $terse;
+	if ($context) {
+		print_context($file, $line);
+		return;
+	}
+	my $want = defined $body_flag ? $body_flag : $auto;
+	print_body($file, $line, $body_lines) if $want;
+}
+
+# A map hit is Perl: its body is opt-in, because reading a part is exactly what
+# the map exists to avoid. --body still asks for it explicitly.
+sub print_extra {
+	my ($file, $line) = @_;
+	return if $terse;
+	if ($context) {
+		print_context($file, $line);
+		return;
+	}
+	print_body($file, $line, $body_lines) if $body_flag;
+}
+
+sub is_perl {
+	my ($file) = @_;
+	return $file =~ /\.p[lm]\z/;
+}
+
+# Print the declaration's body, stopping at its closing brace (or the dedent
+# that ends a Python def) and capped at $max following lines. A short function
+# arrives whole, so a second read is not needed.
+sub print_body {
+	my ($file, $line, $max) = @_;
+	return unless $max && $max > 0;
+	my $text = slurp($file) or return;
+	my @lines = split /\n/, $text, -1;
+	return unless $line >= 1 && $line <= @lines;
+
+	my ($ext) = $file =~ /\.([^.]+)\z/;
+	$ext = lc($ext // '');
+	my ($after, $more) = $ext eq 'py'
+		? python_body(\@lines, $line, $max)
+		: brace_body(\@lines, $line, $max);
+
+	# The declaration line is already printed; the body starts after it.
+	for my $i ($line .. $line + $after - 1) {
+		last unless defined $lines[$i];
+		print "  $lines[$i]\n";
+	}
+	print "  ...\n" if $more;
+}
+
+# Braces, not a parser: depth returns to zero at the closing line, and the cap
+# bounds a miscount. A declaration that never opens a brace (a #define, a
+# one-line arrow) has no body to print.
+sub brace_body {
+	my ($lines, $line, $max) = @_;
+	my $first = $lines->[ $line - 1 ] // '';
+	return (0, 0) if $first =~ /^\s*#/;
+	return (0, 0) if $first =~ /;\s*\z/ && $first !~ /\{/;
+
+	my $depth  = 0;
+	my $opened = 0;
+	my $count  = 0;
+
+	for my $i ($line - 1 .. $#{$lines}) {
+		my $delta = brace_delta($lines->[$i]);
+		$depth += $delta;
+		$opened = 1 if $delta > 0;
+
+		if ($i == $line - 1) {
+			return (0, 0) if $opened && $depth <= 0;
+			next;
+		}
+
+		$count++;
+		return ($count, 0) if $opened && $depth <= 0;
+		return ($count, 1) if $count >= $max;
+		return ($count, 0) if !$opened && $count >= 5;
+	}
+
+	return ($count, 0);
+}
+
+sub python_body {
+	my ($lines, $line, $max) = @_;
+	my $indent = indent_width($lines->[ $line - 1 ] // '');
+	my $count  = 0;
+
+	for my $i ($line .. $#{$lines}) {
+		my $text = $lines->[$i];
+		next if $text =~ /^\s*\z/;
+		last if indent_width($text) <= $indent;
+		$count++;
+		next if $count < $max;
+
+		# Only say "more" when the body really continues past the cap.
+		for my $j ($i + 1 .. $#{$lines}) {
+			next if $lines->[$j] =~ /^\s*\z/;
+			return ($count, indent_width($lines->[$j]) > $indent ? 1 : 0);
+		}
+		return ($count, 0);
+	}
+
+	return ($count, 0);
+}
+
+sub indent_width {
+	my ($text) = @_;
+	my ($ws) = $text =~ /^([ \t]*)/;
+	return length $ws;
+}
+
+# The braces on one line, ignoring those inside a string, a line comment or a
+# single-line block comment. Block comments that span lines are not tracked; a
+# brace inside one is rare, and the cap stops a miscount from printing the
+# whole file.
+sub brace_delta {
+	my ($line) = @_;
+	return 0 if $line =~ /^\s*#/;
+	$line =~ s{/\*.*?\*/}{}g;
+
+	my $delta = 0;
+	my $quote;
+	for (my $i = 0; $i < length $line; $i++) {
+		my $c = substr($line, $i, 1);
+		if (defined $quote) {
+			if ($c eq '\\') { $i++; next }
+			$quote = undef if $c eq $quote;
+			next;
+		}
+		last if $c eq '/' && substr($line, $i + 1, 1) eq '/';
+		if ($c eq q{"} || $c eq q{'} || $c eq q{`}) { $quote = $c; next }
+		$delta++ if $c eq '{';
+		$delta-- if $c eq '}';
+	}
+	return $delta;
+}
+
 # Weak declarations: `const NAME = value`. Reported only when no function,
 # class, sub or sketch symbol of that name exists.
 sub is_weak_definition {
@@ -579,9 +738,16 @@ usage: perl scripts/where.pl [--context N] [--limit N] [--terse] [--topics] [--t
 Prints file:line for each. A name the maps do not know is searched for as a
 sub, then as a help topic, then as a declaration in a controller, a JavaScript
 file or a firmware sketch (jp/, jw/, jt/), then as a mention: file:line plus the
-matching line, at most --limit lines. --context N adds N lines after a located
-sub, --terse prints only file:line, --topics lists every help topic with the
-line it is defined on. Exits 0 if anything was found.
+matching line, at most --limit lines. --context N adds N lines after any hit,
+--terse prints only file:line, --topics lists every help topic with the line it
+is defined on. Exits 0 if anything was found.
+
+  --body        print the declaration and its body, stopping at the closing
+                brace (or the dedent of a Python def), at most --body-lines
+                (default 16) following lines. On by default when exactly one
+                JavaScript or firmware declaration matches; --no-body stops it.
+  --body-lines N  the cap for --body (implies --body).
+  --context N   the plain N-line form; it wins over --body when both are given.
 
   --tech NAME  the tier-2 technical brief for an app or topic (routes, tables,
                settings, tests, source notes) - same as scripts/agent_help.pl

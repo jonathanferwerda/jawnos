@@ -1,7 +1,7 @@
 # tests-for: scripts/where.pl lib/JawnOS/Routes/ perl/help/
 # covers:    the point locator - helper/domain/route resolution, JavaScript and
-#           firmware declarations, mention lines, the map the output agrees
-#           with, and the map-drift report
+#           firmware declarations and their bodies, mention lines, the map the
+#           output agrees with, and the map-drift report
 
 use strict;
 use warnings;
@@ -131,6 +131,51 @@ for my $name (qw(subs::path_name path_name)) {
 	my @src = split /\n/, read_file("$root/public/js/manager/agents.js");
 	like($src[$line - 1], qr/^\s*function\s+jawnosAgentsPanel\b/,
 		'the line is the declaration, not a call');
+}
+
+# --- a single declaration brings its body ----------------------------------
+{
+	my ($code, $out) = where('jawnosAgentsPanel');
+	is($code, 0, 'a single JS declaration resolves');
+	like($out, qr{^  \tvar panel = \$\('#jawnos_agents'\);$}m,
+		'and its first body line arrives by default');
+	like($out, qr{^  \.\.\.$}m, 'a long body is capped and the cut is marked');
+	unlike($out, qr{^\s*function\s+jawnosAgentsPanel\b}m,
+		'the declaration line is not repeated in the body');
+
+	(undef, $out) = where('--no-body', 'jawnosAgentsPanel');
+	is(scalar(grep { /^  / } split /\n/, $out), 0, '--no-body prints no code');
+
+	(undef, $out) = where('--body-lines', 3, 'jawnosAgentsPanel');
+	my @body = grep { /^  / } split /\n/, $out;
+	is(scalar @body, 4, '--body-lines 3 prints three lines and the cut');
+
+	(undef, $out) = where('--terse', 'jawnosAgentsPanel');
+	like($out, qr{^public/js/manager/agents\.js:\d+\n\z}, '--terse still suppresses the body');
+}
+
+# --- a short body ends at its brace, not at the cap ------------------------
+{
+	my (undef, $out) = where('now_ms');
+	like($out, qr{^    return epoch_ms \+ \(uint32_t\)\(millis\(\) - epoch_ref\);$}m,
+		'the sketch body comes through');
+	like($out, qr{^  \}$}m, 'and stops on its closing brace');
+	unlike($out, qr{offset_sane}, 'the next function is not pulled in');
+
+	(undef, $out) = where('load_clock_font');
+	like($out, qr{^      src = open\(path\)\.read\(\)$}m,
+		'a python def brings its indented body');
+}
+
+# --- a body is opt-in for Perl, and several hits stay locations ------------
+{
+	my (undef, $out) = where('--body', 'guide_find_target');
+	like($out, qr{^  \t\$opts = \{\} unless ref \$opts eq 'HASH';$}m,
+		'--body works for a Perl map hit too');
+
+	(undef, $out) = where('loop');
+	is(scalar(grep { /^  / } split /\n/, $out), 0,
+		'several declarations print locations only, not a wall of bodies');
 }
 
 # --- a firmware declaration, and no generated tree -------------------------
