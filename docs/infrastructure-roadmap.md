@@ -1,6 +1,7 @@
 # Infrastructure roadmap — dev box, tailnet and the cloud server
 
-**Status:** proposed — P0–P3 are ready to start; P5 is the cutover and needs a maintenance window.
+**Status:** in progress — P0–P2 are done (2026-11-02); P3 is next, P5 is the cutover and needs a
+maintenance window.
 **Started:** 2026-11-02 · **Baseline measured** 2026-11-02 by logging into all four hosts.
 **Related:** `AGENTS.md` (run/restart, the database-is-per-device rule, the mesh rules),
 `docs/AGENTS-restart.md`, `docs/AGENTS-firmware.md`, `t/README.md` (what the suite touches)
@@ -38,10 +39,11 @@ Measured, not assumed. Re-measure before acting; this section goes stale.
 | **laptop** | ASUS Vivobook X1504ZA, i5-1235U (2P+8E), 15.6 GB, Manjaro | the editor, the agents, its own JawnOS, **the LAN manager the devices talk to** |
 | **table** | Manjaro, 4 cores, 7.6 GB, 239 GB root (74% used) | its own JawnOS, GTK desktop |
 | **cloud** | OVH VPS, Debian 13, **2 vCPU, 3.7 GB, 40 GB** | Headscale, the always-on JawnOS house server, the public hub, DNS, mail, exit node |
+| **ks5** | Kimsufi, Proxmox VE 9.2.25, **4c/8t, 64 GB, 2×450 GB NVMe** | the host + `tailscaled`; `headscale`, `house` and `dev` containers are P3/P5 |
 | **tablet** | Android | tailnet client only |
-| **phone** | Android | **not registered in Headscale today** — treat it as off-tailnet until it appears |
+| **phone** | Android | tailnet client — registered 2026-11-02, `100.64.0.9` |
 
-Headscale lists four nodes: `table`, `cloud`, `laptop`, `tablet`.
+Headscale lists `table`, `cloud`, `laptop`, `tablet`, `phone` and (since 2026-11-02) `ks5`.
 
 ### The laptop (the client)
 
@@ -56,15 +58,28 @@ Headscale lists four nodes: `table`, `cloud`, `laptop`, `tablet`.
 - The suite: 149 test files, ~12–20 s at 8 jobs. `t/README.md` is explicit that **nothing in `t/`
   writes to the live database, the repo, or a fixed port** — every test gets a temp sandbox.
 
-### The new server (Kimsufi)
+### KS-5 — installed 2026-11-02
 
-- Intel Xeon E3-1270 v6: 4 cores / 8 threads, 3.8–4.2 GHz, 72 W, no throttling in a server chassis.
-- 64 GB DDR4-2400 ECC — the platform maximum, and **the only configuration offered in
-  Beauharnois** (the catalogue's 32 GB option is not available in this region). $38.58/month at
-  that config, confirmed at checkout 2026-11-02.
-- 2 × 450 GB SSD NVMe, soft RAID. **450 GB usable, not 900.**
-- 500 Mbit/s unmetered. Beauharnois, Canada East — the same region as the VPS.
-- Unmanaged: assume **no IPMI/KVM console**, hardware replacement only, rescue mode as the fallback.
+Measured after the install and a reboot:
+
+- Proxmox VE **9.2.25** (Debian 13, kernel 7.0.14-26-pve), hostname `ks5`.
+- Intel Xeon E3-1270 v6: 4 cores / 8 threads; **64 GB** DDR4 ECC; 2 × 450 GB NVMe.
+- Public **54.39.157.133** (gateway `.254`), tailnet **100.64.0.10**, SSH **8022**.
+- The installer laid out **mdadm RAID1** for `/boot/efi`, `/boot` and `/` (ext4, 20 GB) with 1 GB
+  swap per disk, and a **ZFS mirror pool `data`** on the remaining ~397 GB, mounted at
+  `/var/lib/vz`. ZFS ARC is capped at **12 GB** (`/etc/modprobe.d/zfs.conf`).
+- The installer wrote **no `storage.cfg`**: `local` (dir on `/var/lib/vz`) was the only storage, so
+  containers had no snapshot target. A **`local-zfs`** zfspool was added on `data` for
+  `images,rootdir`; `local` keeps ISO/template/backup.
+- Hardening in place: SSH keys only (`PasswordAuthentication no`, `PermitRootLogin
+  prohibit-password`), unattended upgrades on, `console=ttyS0` already in the cmdline, and the PVE
+  firewall enabled with `policy_in: ACCEPT` where **8006 accepts only `100.64.0.0/10`** and is
+  dropped from the internet. Port 22 is closed; the host listens on 8022.
+- **Deviation from D1:** the host root is ext4 on md, so it **cannot be snapshotted**. Guest
+  snapshots come from `local-zfs`; a snapshot of `/etc` before a network change is not available.
+  The rollback path for host changes is the serial console and OVH rescue, and possibly a reinstall
+  with ZFS root.
+- Unmanaged: **no IPMI/KVM console**, hardware replacement only, rescue mode as the fallback.
 
 ### The cloud server (`cloud`, `vps-7c120a57`)
 
@@ -131,6 +146,11 @@ D1 is not a performance argument. Proxmox costs about 0.5–1% of a core and ~1 
 its value is the snapshot you take before a network change on a machine you cannot walk over to,
 and the second container that D8 needs. The "Proxmox is a drain" reputation is ZFS's default ARC
 (50% of RAM — 32 GB here) and oversubscribing small machines.
+
+**On ks5 the D1 promise is only partial.** The installer put the host root on md/ext4, which cannot
+be snapshotted; snapshots exist only for guests on the ZFS mirror `data` (`local-zfs`). Host-config
+rollback is therefore the serial console and OVH rescue — or a reinstall with ZFS root, which is
+cheapest while the box is still empty.
 
 ---
 
@@ -283,22 +303,26 @@ Nothing is deleted until its replacement answers. That ordering *is* the rollbac
 - [x] Decided: keep `governor = performance`, turbo on, PL1 39 W. The fan is accepted (D6).
 - [ ] Do not re-litigate this. The sluggishness was contention, and P3 is what fixes it.
 
-### P1 — Install the host
+### P1 — Install the host — DONE 2026-11-02
 
-- [ ] Install Proxmox VE. Check the panel's image list first; otherwise minimal Debian plus the
-      PVE repository.
-- [ ] ZFS mirror across both NVMe. **Cap ARC** — the default is 50% of RAM (32 GB);
-      `zfs_arc_max` at 8–12 GB is right for 64 GB and several containers.
-- [ ] Firewall 8006 off the internet; SSH keys only; unattended upgrades.
-- [ ] Assume no console: `console=ttyS0`, change networking only with a second SSH session open
-      and a snapshot to roll back to.
-- **Exit:** host up, ARC capped, 8006 unreachable from outside, one snapshot taken.
+- [x] Installed **Proxmox VE 9.2.25** from the panel; the installer produced md/RAID1 for the OS
+      and a ZFS mirror `data` for `/var/lib/vz`. (No ZFS-root option was used.)
+- [x] **ARC capped** at 12 GB in `/etc/modprobe.d/zfs.conf`, set at runtime too; survives a reboot.
+- [x] Firewall **8006 off the internet** (PVE firewall: accept from `100.64.0.0/10`, drop the rest).
+      SSH keys only; unattended upgrades enabled.
+- [x] `console=ttyS0,115200n8` was already on the kernel cmdline.
+- [x] Reboot drill passed: ARC cap, `tailscaled`, the firewall and both storage entries all return.
+- **Exit:** host up, ARC capped, 8006 unreachable from outside, one reboot survived. **Host-root
+      snapshot is not available in this layout** (see §2); `local-zfs` covers guests. Decide later
+      whether to reinstall with ZFS root for host rollback.
 
-### P2 — Join the tailnet (as a client, before anything moves)
+### P2 — Join the tailnet (as a client, before anything moves) — DONE 2026-11-02
 
-- [ ] `tailscale up --login-server https://thejunderground.com --authkey …` on the host.
-      **Outbound only** — no inbound rule needed for this one step.
-- **Exit:** `headscale nodes list` on the VPS shows the new node.
+- [x] `tailscale up --login-server https://thejunderground.com --authkey … --hostname ks5
+      --accept-dns=false` on the host. Outbound only; `accept-dns=false` keeps the host's own
+      resolver, which the containers need.
+- [x] `headscale nodes list` on the VPS shows `ks5` at **100.64.0.10**, online.
+- **Exit:** the new node is in the tailnet. P3 is next.
 
 ### P3 — The containers
 
