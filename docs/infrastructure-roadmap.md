@@ -1,7 +1,7 @@
 # Infrastructure roadmap — dev box, tailnet and the cloud server
 
-**Status:** in progress — P0–P5 are done (2026-11-02; the tablet reconnects when it wakes);
-P6 is next.
+**Status:** in progress — P0–P5 are done (2026-11-02); **P6 is in progress**: the house server and
+hub run on ks5, with backups and the house certificate credential still open.
 **Started:** 2026-11-02 · **Baseline measured** 2026-11-02 by logging into all four hosts.
 **Related:** `AGENTS.md` (run/restart, the database-is-per-device rule, the mesh rules),
 `docs/AGENTS-restart.md`, `docs/AGENTS-firmware.md`, `t/README.md` (what the suite touches)
@@ -38,8 +38,8 @@ Measured, not assumed. Re-measure before acting; this section goes stale.
 |---|---|---|
 | **laptop** | ASUS Vivobook X1504ZA, i5-1235U (2P+8E), 15.6 GB, Manjaro | the editor, the agents, its own JawnOS, **the LAN manager the devices talk to** |
 | **table** | Manjaro, 4 cores, 7.6 GB, 239 GB root (74% used) | its own JawnOS, GTK desktop |
-| **cloud** | OVH VPS, Debian 13, **2 vCPU, 3.7 GB, 40 GB** | JawnOS house server, public hub, DNS, mail; **its Headscale is stopped** (state kept for rollback) |
-| **ks5** | Kimsufi, Proxmox VE 9.2.25, **4c/8t, 64 GB, 2×450 GB NVMe** | the host + `tailscaled`; `dev` (100), `house` (101) and `headscale` (102) on `vmbr1` |
+| **cloud** | OVH VPS, Debian 13, **2 vCPU, 3.7 GB, 40 GB** | DNS and mail; **its Headscale and JawnOS server are stopped** (state kept for rollback) |
+| **ks5** | Kimsufi, Proxmox VE 9.2.25, **4c/8t, 64 GB, 2×450 GB NVMe** | the host + `tailscaled`; `dev` (100), `house` (101, the JawnOS server + hub) and `headscale` (102) on `vmbr1` |
 | **tablet** | Android | tailnet client only |
 | **phone** | Android | tailnet client — registered 2026-11-02, `100.64.0.9` |
 
@@ -412,25 +412,27 @@ record moved instead.
 - **Exit:** every node returns on the same URL, the apex answers from ks5, the VPS instance is
       disabled.
 
-### P6 — Move the house server off the VPS, then retire it
+### P6 — Move the house server off the VPS, then retire it — IN PROGRESS 2026-11-02
 
-- [ ] Move the always-on JawnOS server to `house`. It is the top CPU consumer on the VPS: this is
-      the step that fixes the 2-vCPU box.
-- [ ] The hub moves to `hub.jonathanferwerda.com` (same wildcard), so it must already answer on
-      the KS-5 before the clients are re-pointed. Update `tunnel_hub` on each house.
-- [x] Exit node is already on the KS-5 (done in P4).
-- [ ] Make the wildcard self-renewing on the KS-5 (§4): a weekly
-      `perl scripts/tls_issue.pl --renew` writes `server/` itself, using the DNS credentials that
-      already ride the mesh. Do not rely on the laptop's certbot to keep someone else's copy fresh.
-- [ ] Verify **from outside the house** — laptop off-LAN, phone, tablet — not from the shell you
-      are already in.
-- [ ] Start the off-box backup (§11): `/var/lib/headscale/`, `jawnos.db`,
-      `server/fullchain.pem` + `server/privkey.pem`, nightly, to the laptop and the table.
-- [ ] **Cancel the VPS at its next renewal**, a few days before the date, once the steps above are
-      green. Before deleting it, confirm the apex record no longer points at it and that nothing
-      still dials its address (`tunnel_hub`, the exit-node selection, the peer list).
-- **Exit:** the tailnet and the hub answer from the KS-5, the VPS is cancelled, and the restore has
-  been rehearsed once — not just written down.
+- [x] The always-on app moved to **`house`** (CT 101, 4 GB): the VPS's Perl/library set, config,
+      `server/` state and a checkpointed `jawnos.db` (306 MB) were copied. The VPS `jawnos.service`
+      is **stopped**. The manager answers on 3000 and the hub listeners on 45545/45546/45550. The
+      `devices` row keeps its uuid and the `vps-7c120a57` hostname (the same logical server).
+- [x] The hub answers publicly at **`hub.jonathanferwerda.com`** (GoDaddy A → ks5; DNAT
+      45545/45546/45550 → `10.20.0.20`). MagicDNS shadows names under `base_domain`, so a headscale
+      **`extra_records`** entry resolves the hub to 54.39.157.133 for tailnet clients too.
+- [x] `tunnel_hub = https://hub.jonathanferwerda.com:45545` on the laptop and the table, both apps
+      restarted. The laptop's tunnel to the house is established (`tunnel=yes` in the house's peer
+      table); the table's has not been seen yet and should establish on demand.
+- [ ] **Wildcard renewal in the house is blocked on a credential.** The timer is installed but
+      **disabled**: the VPS's GoDaddy key returns `401`, and the laptop's working credential is
+      sealed with a different house key, so it cannot be transplanted. The pair in `house` is valid
+      to **2027-01-31**. Fix by adding a GoDaddy API key in the house's Configure → Plat → DNS, or
+      fall back to the laptop deploying the pair (the §4 alternative); do one before the date.
+- [ ] Off-box backups and one rehearsed restore (§11) — not started.
+- [ ] Verify from outside the house (phone on cellular) and cancel the VPS at renewal.
+- **Exit:** the hub and the tailnet answer from ks5, the VPS is cancelled, and the restore has been
+      rehearsed once.
 
 ### P7 — Elixir, when it exists
 
@@ -475,6 +477,9 @@ record moved instead.
   `jawnos-tls.timer` (installed 2026-11-02), and the `house` container needs the same timer in P6.
   **The apex pair was reissued on ks5 on 2026-11-02 and expires 2027-02-01**, renewed by
   `certbot.timer` there with the deploy hook; the VPS's HTTP-01 renewal is no longer used.
+- **The open certificate risk** is the house's wildcard renewal: its timer is installed but
+  disabled because the moved GoDaddy credential returns `401` and the laptop's credential uses a
+  different house key. Fix the credential (or deploy from the laptop) before 2027-01-31.
 - **The one thing that cannot be done** is pointing Tailscale at a bare IP: the client validates
   the control certificate and will not connect without a name.
 - **The one rule that must not be bent** is D7. A copied database on a dev container looks like it

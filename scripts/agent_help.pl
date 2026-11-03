@@ -394,6 +394,12 @@ sub notes_for {
 
 # ---- the brief -------------------------------------------------------------
 
+# The brief is a lookup, not a dump: most tasks want the sources, tables,
+# settings and tests, and routes are the one section that grows with an app.
+# Keep the first ROUTE_CAP rows and say what was left; --routes prints every row.
+our $ALL_ROUTES = 0;
+my $ROUTE_CAP = 15;
+
 sub brief {
 	my ($name) = @_;
 	load();
@@ -431,10 +437,25 @@ sub brief {
 				$controller_line{$1} = "$file:$n" if $line =~ /^\s*sub\s+(action_\d+)\b/;
 			}
 		}
-		for my $r (@routes) {
+		my @shown = $ALL_ROUTES ? @routes
+			: @routes[ 0 .. ( $#routes > $ROUTE_CAP - 1 ? $ROUTE_CAP - 1 : $#routes ) ];
+		for my $r (@shown) {
 			push @out, sprintf('  %-6s %-40s %s', $r->{'method'}, $r->{'path'},
 				"Routes/$r->{'module'}.pm:$r->{'line'}"
 					. ( $controller_line{ $r->{'action'} } ? '  -> ' . $controller_line{ $r->{'action'} } : '' ));
+		}
+		if (@shown < @routes) {
+			my %mods;
+			$mods{ $_->{'module'} }++ for @routes;
+			my $app = $entry->{'page'} || $entry->{'name'};
+			my ($pointer) = map { $_->{'path'} }
+				grep { $_->{'path'} =~ m{/\Q$app\E$} } @routes;
+			$pointer ||= $routes[0]{'path'};
+			push @out, '  ... ' . ( @routes - @shown ) . ' more; by module: '
+				. join(', ', map {"$_ ($mods{$_})"}
+					sort { $mods{$b} <=> $mods{$a} || $a cmp $b } keys %mods)
+				. '; one route: perl scripts/where.pl ' . $pointer;
+			push @out, "  all routes: perl scripts/agent_help.pl --routes $app";
 		}
 	} else {
 		push @out, '  (none - no route path names this app)';
@@ -654,7 +675,7 @@ sub main {
 
 	if (!@argv || $argv[0] eq '--help' || $argv[0] eq '-h') {
 		print <<'TXT';
-usage: perl scripts/agent_help.pl [--list | --index | --write-index | --schema[=TABLE]] NAME...
+usage: perl scripts/agent_help.pl [--list | --index | --write-index | --schema[=TABLE] | --routes] NAME...
 
   NAME          an app (budget), a help topic (start_menu), or an app page
                 (templates/apps/gallery.html.ep). Prints the generated brief.
@@ -663,8 +684,18 @@ usage: perl scripts/agent_help.pl [--list | --index | --write-index | --schema[=
   --schema=T    one table
   --index       print the compact repository index
   --write-index rewrite qa/coding_night/agent-index.md
+  --routes      every route that reaches NAME, uncapped (the brief shows 15)
 TXT
 		return 0;
+	}
+
+	if ($argv[0] eq '--routes') {
+		shift @argv;
+		if (!@argv) {
+			warn "agent_help: --routes needs at least one NAME (try --list)\n";
+			return 1;
+		}
+		$ALL_ROUTES = 1;
 	}
 
 	if ($argv[0] eq '--list') {
@@ -702,6 +733,7 @@ TXT
 		print $text;
 		print "\n" if @argv > 1;
 	}
+	$ALL_ROUTES = 0;
 	return $failed ? 1 : 0;
 }
 

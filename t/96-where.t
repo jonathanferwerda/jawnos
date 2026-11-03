@@ -97,6 +97,15 @@ for my $name (qw(subs::path_name path_name)) {
 		'with the part it is defined in');
 	like($out, qr/^  app: gallery$/m, 'and the app it explains');
 
+	my ($start) = $out =~ /^help::gallery\t\S+:(\d+)$/m;
+	my ($end)   = $out =~ /^  end: (\d+)$/m;
+	ok($start && $end && $end > $start, 'the topic carries a usable end line');
+	my ($file) = $out =~ /^help::gallery\t(\S+):\d+$/m;
+	my @src = split /\n/, read_file("$root/$file");
+	like(join("\n", @src[$start - 1 .. $end - 1]), qr/^\$topic\{'gallery'\}\s*=\s*\{/m,
+		'and start..end contains the topic opener');
+	like($out, qr/^  bytes: \d+$/m, 'with its byte size');
+
 	(undef, $out) = where('start menu');
 	like($out, qr/^help::start_menu\t/m, 'a spaced name resolves like help() does');
 }
@@ -134,6 +143,23 @@ for my $name (qw(subs::path_name path_name)) {
 	cmp_ok(scalar @lines, '>=', 70, 'every topic is listed');
 	is(scalar(grep { !/^help::[a-z0-9_]+\tperl\/help\/topics_\w+\.pl:\d+$/ } @lines), 0,
 		'each line is a topic and its definition line');
+}
+
+# --- --topics PATTERN narrows the registry ---------------------------------
+{
+	my ($code, $out) = where('--topics', 'gallery');
+	is($code, 0, 'a filtered --topics exits 0');
+	my @lines = grep { length } split /\n/, $out;
+	is(scalar @lines, 1, 'only the matching topic is printed');
+	like($lines[0], qr{^help::gallery\tperl/help/topics_\w+\.pl:\d+$},
+		'in the same one-line format');
+
+	(undef, $out) = where('--topics', 'start menu');
+	like($out, qr{^help::start_menu\t}m, 'a spaced pattern folds like a topic name');
+
+	($code, $out) = where('--topics', 'no_such_topic_anywhere');
+	is($code, 0, 'a filter that matches nothing still exits 0');
+	is($out, '', 'and prints nothing');
 }
 
 # --- a JavaScript declaration ---------------------------------------------
@@ -310,6 +336,31 @@ PM
 	my ($js_code, $js_out) = where('--outline', 'public/js/manager/websocket/02_heartbeat_and_reload.js');
 	is($js_code, 0, 'a JavaScript outline resolves too');
 	like($js_out, qr{^\d+\tfunction jawnosRevisionArrived$}m, 'and names the functions');
+
+	my $tmp = tempdir(CLEANUP => 1);
+	make_path("$tmp/templates");
+	write_file("$tmp/templates/probe.html.ep", <<'EP');
+<div id="probe_root">
+	<button type="button" id="probe_go" hint="Go">Go</button>
+	<%= include 'probe_partial', n => 1 %>
+	<div id="<%= $dynamic_id %>"></div>
+	<script>
+		var html = '<div id="script_only"></div>';
+	</script>
+</div>
+EP
+
+	my ($ep_code, $ep_out) = where('--root', $tmp, '--outline', 'templates/probe.html.ep');
+	is($ep_code, 0, 'a Mojo template outline resolves');
+	like($ep_out, qr{^1\tid probe_root$}m, 'an element id is an anchor');
+	like($ep_out, qr{^2\tid probe_go$}m, 'and a control id on a shared line');
+	like($ep_out, qr{^2\thint Go$}m, 'with the control label');
+	like($ep_out, qr{^3\tpartial probe_partial$}m, 'and an include');
+	unlike($ep_out, qr/dynamic_id/, 'a template expression is not a stable anchor');
+	unlike($ep_out, qr/script_only/, 'and neither is an id inside a script block');
+
+	my (undef, $page_out) = where('--outline', 'templates/apps/gallery.html.ep');
+	like($page_out, qr{^\d+\tid gallery$}m, 'a real page names its root id');
 }
 
 # --- the body has a character budget as well as a line budget --------------
@@ -362,6 +413,39 @@ PM
 	is($fb{'miss_probe'}[1], 'miss', 'the miss verdict is stored');
 	is($fb{'jawnosAgentsPanel'}[3], 'public/js/manager/agents.js:10', 'the selected hit is stored');
 	ok($fb{'jawnosAgentsPanel'}[4], 'and the call it refers to');
+}
+
+# --- the expensive modes are priced in the same ledger ---------------------
+{
+	my $dir = tempdir(CLEANUP => 1);
+	my $db  = "$dir/where.db";
+	require DBI;
+	require JSON::PP;
+	my $dbh = DBI->connect("dbi:SQLite:dbname=$db", '', '', { RaiseError => 1, PrintError => 0 });
+	$dbh->do('create table where_calls (uuid text, machine text, minute text, name text, hit int, hits int, context text, ost text, server_time text)');
+	$dbh->do('create table where_feedback (uuid text, call_uuid text, machine text, minute text, name text, verdict text, selected text, found text, note text, ost text, server_time text)');
+	$dbh->disconnect;
+
+	local $ENV{'JAWNOS_WHERE_LOG_OFF'};
+	delete $ENV{'JAWNOS_WHERE_LOG_OFF'};
+	local $ENV{'JAWNOS_WHERE_DB'} = $db;
+
+	my ($code, $out) = where('--topics', 'gallery');
+	is($code, 0, 'a topics filter runs with the ledger on');
+	my ($outline_code) = where('--outline', 'templates/apps/gallery.html.ep');
+	is($outline_code, 0, 'an outline runs with the ledger on');
+
+	my $check = DBI->connect("dbi:SQLite:dbname=$db", '', '', { RaiseError => 1, PrintError => 0 });
+	my $rows = $check->selectall_arrayref('select name, context from where_calls order by name');
+	$check->disconnect;
+	is(scalar @{$rows}, 2, 'one row per invocation, not one per line');
+
+	my %context = map { $_->[0] => JSON::PP->new->decode($_->[1]) } @{$rows};
+	is($context{'--topics'}{'mode'}, 'topics', 'the topics mode is recorded');
+	is($context{'--topics'}{'out_bytes'}, length($out), 'with the bytes it printed');
+	cmp_ok($context{'--topics'}{'out_bytes'}, '>', 0, 'and the count is positive');
+	is($context{'--outline'}{'mode'}, 'outline', 'the outline mode is recorded');
+	cmp_ok($context{'--outline'}{'out_bytes'}, '>', 0, 'with its bytes too');
 }
 
 done_testing();

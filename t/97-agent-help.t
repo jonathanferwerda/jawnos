@@ -32,6 +32,28 @@ require "$root/scripts/agent_help.pl";
 	like($text, qr/^tests that claim these files/m, 'including what pins it');
 }
 
+# --- the brief is a lookup, not a dump --------------------------------------
+{
+	my $text = agent_help::brief('configure');
+	ok(defined $text, 'a large app has a brief');
+	cmp_ok(length $text, '<', 8_000, 'the default brief keeps the route list capped');
+	like($text, qr/^routes \(121\)$/m, 'it still counts every route');
+	like($text, qr/^  \.\.\. \d+ more; by module: \w+ \(\d+\)/m,
+		'and summarises the module split for the rows it does not print');
+	like($text, qr{perl scripts/where\.pl /manager/}, 'with a pointer at the full lookup');
+
+	# The cap is a display rule, not a loss of data: budget's 14 routes are all
+	# still printed (the assertion above), and --routes lifts the cap entirely.
+	my @rows;
+	if (open my $fh, '-|', $^X, "$root/scripts/agent_help.pl", '--routes', 'configure') {
+		@rows = grep { m{^\s+(?:any|get|post)\s+/manager/} } <$fh>;
+		close $fh;
+	}
+	cmp_ok(scalar @rows, '>', 15, '--routes prints the uncapped list');
+	like(join('', @rows), qr{/manager/configure\s+Routes/},
+		'including a route the default brief leaves out');
+}
+
 # --- every name has one, including the pages with no user help --------------
 {
 	my @names = agent_help::names();

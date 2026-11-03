@@ -113,11 +113,20 @@ if (defined $report_name) {
 }
 
 # The second tier of help is a whole brief, not a location: hand it to the script
-# that generates it rather than growing a second copy of that logic here.
+# that generates it rather than growing a second copy of that logic here. The
+# child's stdout is captured so the ledger can price the bytes, then printed and
+# its exit status passed on unchanged.
 if (defined $tech_name) {
 	usage(2) unless length $tech_name;
-	exec($^X, "$root/scripts/agent_help.pl", $tech_name)
+	open my $tech_fh, '-|', $^X, "$root/scripts/agent_help.pl", $tech_name
 		or die "where: cannot run scripts/agent_help.pl: $!\n";
+	local $/;
+	my $out = <$tech_fh> // '';
+	close $tech_fh;
+	my $status = $? >> 8;
+	print $out;
+	where_log("--tech $tech_name", ($status ? 0 : 1), 'tech', length $out);
+	exit $status;
 }
 
 usage(2) unless $list_topics || @ARGV;
@@ -200,9 +209,18 @@ sub source_files {
 my $topics_cache;
 
 if ($list_topics) {
+	# --topics is a flag, so a pattern to filter by arrives in @ARGV. No pattern
+	# keeps the whole registry in the one-line form agents already parse.
+	my @wanted = grep { length } map { topic_token($_) } @ARGV;
+	my $out = '';
+	my $matched = 0;
 	for my $t (@{ topics() }) {
-		print 'help::', $t->{'id'}, "\t", rel($t->{'file'}), ':', $t->{'line'}, "\n";
+		next if @wanted && !grep { topic_matches($t, $_) } @wanted;
+		$out .= 'help::' . $t->{'id'} . "\t" . rel($t->{'file'}) . ':' . $t->{'line'} . "\n";
+		$matched++;
 	}
+	print $out;
+	where_log('--topics', ($matched ? 1 : 0), 'topics', length $out);
 	exit 0;
 }
 
@@ -230,19 +248,22 @@ my %domain_file;
 # --- the lookup -------------------------------------------------------------
 
 if ($outline) {
-	my $ok = 0;
+	my $ok  = 0;
+	my $out = '';
 	for my $raw (@ARGV) {
 		my $abs = $raw =~ m{^/} ? $raw : "$root/$raw";
 		unless (-f $abs) {
 			warn "where: no file $raw\n";
 			next;
 		}
-		print "$raw\n" if @ARGV > 1;
+		$out .= "$raw\n" if @ARGV > 1;
 		for my $symbol ( outline_symbols($abs) ) {
-			print $symbol->[0], "\t", $symbol->[1], ' ', $symbol->[2], "\n";
+			$out .= $symbol->[0] . "\t" . $symbol->[1] . ' ' . $symbol->[2] . "\n";
 		}
 		$ok = 1;
 	}
+	print $out;
+	where_log('--outline', $ok, 'outline', length $out);
 	exit($ok ? 0 : 1);
 }
 
@@ -253,8 +274,10 @@ for my $raw (@ARGV) {
 		warn "where: '$raw' is not a name\n";
 		next;
 	}
-	my $hits = lookup($raw, $name, $hint);
-	where_log($name, $hits);
+	# Capture the hit so the ledger can record what this name cost to print.
+	my ($text, $hits) = capture_stdout(sub { lookup($raw, $name, $hint) });
+	print $text;
+	where_log($name, $hits, 'name', length $text);
 	$found += $hits;
 }
 exit($found ? 0 : 1);
@@ -403,13 +426,29 @@ sub topics {
 			my $from = $starts[$s];
 			my $to   = $s < $#starts ? $starts[ $s + 1 ] - 1 : $#lines;
 			my ($id) = $lines[$from] =~ /^\$topic\{'([A-Za-z0-9_]+)'\}/;
-			my $chunk = join "\n", @lines[ $from .. $to ];
+
+			# The chunk runs to the line before the next topic, so the section
+			# comments, blank lines and the file's trailing 1; are not part of
+			# it. end is the last line sed -n can use safely.
+			my $end = $to;
+			$end-- while $end > $from
+				&& $lines[$end] =~ /^\s*(?:#.*|1;)?\s*$/;
+
+			my $chunk = join "\n", @lines[ $from .. $end ];
 			my ($app) = $chunk =~ /\bapp\s*=>\s*'([^']+)'/;
+			my ($category) = $chunk =~ /\bcategory\s*=>\s*'([^']+)'/;
+			my ($summary) = $chunk =~ /\bsummary\s*=>\s*'((?:[^'\\]|\\.)*)'/;
+			$summary =~ s/\\(.)/$1/g if defined $summary;
 			my ($list) = $chunk =~ /\btemplates\s*=>\s*\[(.*?)\]/s;
 			my @templates = defined $list ? ($list =~ /'([^']+)'/g) : ();
+			my $bytes = 0;
+			$bytes += length($lines[$_]) + 1 for $from .. $end;
+
 			push @out, {
 				'id' => $id, 'file' => $file, 'line' => $from + 1,
 				'app' => $app, 'templates' => \@templates,
+				'category' => $category, 'summary' => $summary,
+				'end' => $end + 1, 'bytes' => $bytes,
 			};
 		}
 	}
@@ -417,12 +456,33 @@ sub topics {
 	return $topics_cache;
 }
 
+# Fold a topic name or a --topics pattern the way help() does: lower case, with
+# spaces and hyphens read as underscores.
+sub topic_token {
+	my ($text) = @_;
+	$text = lc($text // '');
+	$text =~ s/[-\s]+/_/g;
+	return $text;
+}
+
+# --topics PATTERN matches an id, an app or a summary. The fields are folded the
+# same way the pattern is, so "start menu" finds start_menu and "media" finds a
+# summary that mentions it.
+sub topic_matches {
+	my ($topic, $want) = @_;
+	return 1 if index(topic_token($topic->{'id'}), $want) >= 0;
+	return 1 if defined $topic->{'app'}
+		&& index(topic_token($topic->{'app'}), $want) >= 0;
+	return 1 if defined $topic->{'summary'}
+		&& index(topic_token($topic->{'summary'}), $want) >= 0;
+	return 0;
+}
+
 # A topic answers to its id the way help() answers: case-insensitive, with
 # spaces or hyphens where the id has underscores.
 sub topic_lookup {
 	my ($name) = @_;
-	my $want = lc $name;
-	$want =~ s/[-\s]+/_/g;
+	my $want = topic_token($name);
 
 	my @hits = grep { lc($_->{'id'}) eq $want } @{ topics() };
 	@hits = grep { lc($_->{'id'}) =~ /\Q$want\E/ } @{ topics() } unless @hits;
@@ -432,6 +492,9 @@ sub topic_lookup {
 		print 'help::', $t->{'id'}, "\t", rel($t->{'file'}), ':', $t->{'line'}, "\n";
 		next if $terse;
 		print "  app: $t->{'app'}\n" if defined $t->{'app'};
+		print "  category: $t->{'category'}\n" if defined $t->{'category'};
+		print "  end: $t->{'end'}\n" if defined $t->{'end'};
+		print "  bytes: $t->{'bytes'}\n" if defined $t->{'bytes'};
 		for my $template (@{ $t->{'templates'} }) {
 			print "  template: $template\n";
 		}
@@ -818,12 +881,29 @@ sub mention_text {
 	return " $line";
 }
 
+# Run a block with the default output captured, so the ledger can record what
+# it printed. select() is the supported way to move bare print here; reopening
+# STDOUT itself is not (a real handle cannot become a scalar on this Perl).
+# Returns the text and whatever the block returned. Warnings still go to STDERR.
+sub capture_stdout {
+	my ($code) = @_;
+	my $text = '';
+	open my $capture, '>', \$text or die "where: cannot capture output: $!\n";
+	my $selected = select($capture);
+	my @result = eval { $code->() };
+	my $error  = $@;
+	select($selected);
+	close $capture;
+	die $error if $error;
+	return ($text, @result);
+}
+
 # One row per name the locator was asked about. A miss is the row that matters:
 # it is the lookup that sends an agent back to grep, so the panel can show the
 # rate rather than guess it. Guarded end to end - a database problem must never
 # take a lookup down, and a pre-migration install records nothing.
 sub where_log {
-	my ($name, $hits) = @_;
+	my ($name, $hits, $mode, $out_bytes) = @_;
 	return 0 unless $log_enabled && defined $name && length $name;
 	my $db = $ENV{'JAWNOS_WHERE_DB'} || "$root/database/jawnos.db";
 	return 0 unless -f $db;
@@ -841,7 +921,7 @@ sub where_log {
 		$safe = substr($safe, 0, 200);
 		$dbh->do(
 			'insert into where_calls (uuid, machine, minute, name, hit, hits, context, ost, server_time) values (?,?,?,?,?,?,?,?,?)',
-			undef, $uuid, hostname(), $minute, $safe, ($hits ? 1 : 0), ($hits || 0), where_context(), $now, $now,
+			undef, $uuid, hostname(), $minute, $safe, ($hits ? 1 : 0), ($hits || 0), where_context($mode, $out_bytes), $now, $now,
 		);
 		$dbh->disconnect;
 		1;
@@ -860,7 +940,11 @@ sub where_log {
 # directory, the terminal and (on Linux) the parent process's command. It is
 # enough to tell a busy agent from a person at a shell, and it rides the same
 # sync as the lookup row. Values are capped; no environment secrets are read.
+# mode and out_bytes are how the expensive modes are priced in the same row: a
+# named lookup, a --topics filter, an --outline or a --tech brief, and the bytes
+# it printed. The context column stays well inside its 2000-character cap.
 sub where_context {
+	my ($mode, $out_bytes) = @_;
 	my $cwd = eval { getcwd() } // ($ENV{'PWD'} // '');
 	my $parent = getppid();
 	my $parent_cmd = '';
@@ -898,6 +982,8 @@ sub where_context {
 		grandparent => substr($grandparent_cmd, 0, 300),
 		term        => substr($ENV{'TERM_PROGRAM'} // $ENV{'TERM'} // '', 0, 80),
 		agent       => substr($ENV{'JAWNOS_AGENT'} // '', 0, 80),
+		mode        => $mode // 'name',
+		out_bytes   => defined $out_bytes ? int($out_bytes) : 0,
 	};
 	return JSON::PP->new->canonical->encode($context);
 }
@@ -949,45 +1035,79 @@ sub outline_symbols {
 	$ext = lc($ext // '');
 	my @out;
 	my $n = 0;
+	my $in_script = 0;
 	for my $line (split /\n/, $text, -1) {
 		$n++;
-		my $symbol = outline_symbol($ext, $line) or next;
-		push @out, [ $n, $symbol->[0], $symbol->[1] ];
+		# A .ep file embeds JavaScript; an id= or hint= inside a script block is
+		# a string, not an anchor the page exposes. Skip the block whole.
+		if ($ext eq 'ep') {
+			if ($in_script) {
+				$in_script = 0 if $line =~ m{</script>}i;
+				next;
+			}
+			if ($line =~ m{<script\b}i) {
+				$in_script = 1 if $line !~ m{</script>}i;
+				next;
+			}
+		}
+		for my $symbol ( outline_symbol($ext, $line) ) {
+			push @out, [ $n, $symbol->[0], $symbol->[1] ];
+		}
 	}
 	return @out;
 }
 
 sub outline_symbol {
 	my ($ext, $line) = @_;
+	if ($ext eq 'ep') {
+		my @found;
+		# An element id the page can address. \s keeps data-id out, and the
+		# [A-Za-z] start skips a Mojo expression such as id="<%= $key %>".
+		while ($line =~ /\sid="([A-Za-z][-A-Za-z0-9_.:]*)"?/g) {
+			push @found, [ 'id', $1 ];
+		}
+		# A control's hint label; a templated hint is not a stable label.
+		while ($line =~ /\shint="([^"]+)"/g) {
+			my $label = $1;
+			next if $label =~ /<%/;
+			$label =~ s/^\s+|\s+$//g;
+			push @found, [ 'hint', $label ] if length $label;
+		}
+		# A partial: <%= include 'path', ... %> and the line-start %= form.
+		while ($line =~ /(?:<%[=%]?\s*|^\s*%=\s*)include\s+'([^']+)'/g) {
+			push @found, [ 'partial', $1 ];
+		}
+		return @found;
+	}
 	if ($ext eq 'pm' || $ext eq 'pl' || $ext eq 't') {
-		return [ 'sub', $1 ] if $line =~ /^\s*sub\s+([A-Za-z_]\w*)\b/;
-		return;
+		return ( [ 'sub', $1 ] ) if $line =~ /^\s*sub\s+([A-Za-z_]\w*)\b/;
+		return ();
 	}
 	if ($ext eq 'js') {
 		# \$ so the regex does not read $] as the Perl version
-		return [ 'function', $1 ] if $line =~ /\bfunction\s+([A-Za-z_\$][\w\$]*)\s*\(/;
-		return [ 'class', $1 ] if $line =~ /\bclass\s+([A-Za-z_\$][\w\$]*)\b/;
-		return [ 'const', $1 ] if $line =~ /\b(?:const|let|var)\s+([A-Za-z_\$][\w\$]*)\s*=\s*(?:async\s+)?(?:function\b|\()/;
-		return [ 'method', $1 ] if $line =~ /^\s*([A-Za-z_\$][\w\$]*)\s*[:=]\s*(?:async\s+)?(?:function\b|\()/;
-		return;
+		return ( [ 'function', $1 ] ) if $line =~ /\bfunction\s+([A-Za-z_\$][\w\$]*)\s*\(/;
+		return ( [ 'class', $1 ] ) if $line =~ /\bclass\s+([A-Za-z_\$][\w\$]*)\b/;
+		return ( [ 'const', $1 ] ) if $line =~ /\b(?:const|let|var)\s+([A-Za-z_\$][\w\$]*)\s*=\s*(?:async\s+)?(?:function\b|\()/;
+		return ( [ 'method', $1 ] ) if $line =~ /^\s*([A-Za-z_\$][\w\$]*)\s*[:=]\s*(?:async\s+)?(?:function\b|\()/;
+		return ();
 	}
 	if ($ext eq 'py') {
-		return [ 'def', $1 ] if $line =~ /^\s*(?:async\s+)?def\s+([A-Za-z_]\w*)\b/;
-		return [ 'class', $1 ] if $line =~ /^\s*class\s+([A-Za-z_]\w*)\b/;
-		return;
+		return ( [ 'def', $1 ] ) if $line =~ /^\s*(?:async\s+)?def\s+([A-Za-z_]\w*)\b/;
+		return ( [ 'class', $1 ] ) if $line =~ /^\s*class\s+([A-Za-z_]\w*)\b/;
+		return ();
 	}
 	if ($ext eq 'ino' || $ext eq 'c' || $ext eq 'cpp' || $ext eq 'cc'
 		|| $ext eq 'h' || $ext eq 'hpp')
 	{
-		return [ 'define', $1 ] if $line =~ /^\s*#\s*define\s+([A-Za-z_]\w*)\b/;
+		return ( [ 'define', $1 ] ) if $line =~ /^\s*#\s*define\s+([A-Za-z_]\w*)\b/;
 		if ($line =~ /^\s*(class|struct|enum|namespace)\s+([A-Za-z_]\w*)\b/) {
-			return [ $1, $2 ];
+			return ( [ $1, $2 ] );
 		}
-		return [ 'function', $1 ] if $line =~ /^\s*(?!if\b|for\b|while\b|switch\b|return\b|else\b|case\b|do\b)
+		return ( [ 'function', $1 ] ) if $line =~ /^\s*(?!if\b|for\b|while\b|switch\b|return\b|else\b|case\b|do\b)
 			(?:[\w:<>*&\[\]]+\s+)+[*&]?\s*([A-Za-z_]\w*)\s*\([^;]*\)\s*(?:const\s*)?(?:\{|\z)/x;
-		return;
+		return ();
 	}
-	return;
+	return ();
 }
 
 sub print_context {
@@ -1034,7 +1154,8 @@ sub in lib/, perl/ or scripts/, then as a help topic, then as a declaration in a
 controller, a JavaScript file or a firmware sketch (jp/, jw/, jt/), then as a
 mention: file:line plus the matching line, at most --limit lines. --context N
 adds N lines after any hit, --terse prints only file:line, --topics lists every
-help topic with the line it is defined on. Exits 0 if anything was found.
+help topic with the line it is defined on (PATTERN... narrows it by id, app or
+summary). Exits 0 if anything was found.
 
   --body        print the declaration and its body, stopping at the closing
                 brace (or the dedent of a Python def), at most --body-lines
@@ -1043,8 +1164,11 @@ help topic with the line it is defined on. Exits 0 if anything was found.
   --body-lines N  the cap for --body (implies --body).
   --body-chars N  the character cap for --body (default 2000; 0 is no cap).
   --context N   the plain N-line form; it wins over --body when both are given.
+  --topics [PATTERN...]  list the help registry in one line each; a pattern
+                matches an id, an app or a summary (case-insensitive).
   --outline     for each FILE, print "line<TAB>kind name" for every declaration
                 in it, so an agent can read a range instead of the whole file.
+                A .ep template lists its ids, hint labels and included partials.
   --no-log      do not record this lookup in database/jawnos.db.
   --report NAME right|wrong|miss [--at LOC] [--found LOC] [--note TEXT]
                 record an agent's verdict on a hit it acted on; --at is the hit
