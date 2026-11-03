@@ -248,13 +248,12 @@ our $main_process = $$;
 our $device = &subs::device_setter();
 our $user_agent = $gb::user_agent;
 
-if ($device eq 'mobile' && !&subs::sshd_running()) {
-	# The command that used to live here was a bare `sshd`, which starts with no
-	# usable host key on Android and (worse) made this guard skip the properly
-	# configured daemon below. subs::sshd_start names the prefix's keys and an
-	# absolute AuthorizedKeysFile.
-	&subs::sshd_start();
-}
+# sshd is NOT started here. This file is Manager.pl's body: the master loads it
+# into every worker of every server, so a start here ran once per worker and
+# was skipped entirely by a replacement worker that found the daemon already up
+# - the daemon then belonged to whichever worker started it and died with that
+# process' group. President starts it once per tree instead ('sshd watcher' in
+# perl/President.pl) with the prefix's keys and an absolute AuthorizedKeysFile.
 
 # A pull interrupted by an app update or a tree restart leaves the
 # `remote_upgrade` marker behind; peers then hear "merging" and skip this

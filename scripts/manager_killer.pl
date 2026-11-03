@@ -256,24 +256,21 @@ unless ($list_only || $scope) {
 }
 
 if ($android && !$list_only && !$scope) {
-	# Same invocation Manager.pl uses (subs::sshd_start): the prefix's host keys
-	# and an absolute AuthorizedKeysFile. A bare `sshd` here starts with Termux's
-	# paths on Android, so key auth fails even though the port answers.
-	my $prefix = $ENV{'PREFIX'} || '';
-	my $home = $ENV{'HOME'} || '';
-	if (length $prefix && length $home) {
-		my @host_keys = grep { -f $_ } map { "$prefix/etc/ssh/ssh_host_$_\_key" } qw/ed25519 ecdsa rsa/;
-		my @sshd = (
-			'sshd', '-f', "$prefix/etc/ssh/sshd_config",
-			'-o', "PidFile=$prefix/tmp/sshd.pid",
-			'-o', "AuthorizedKeysFile=$home/.ssh/authorized_keys",
-			'-o', 'StrictModes=no',
-			'-o', "SetEnv=HOME=$home",
-		);
-		push @sshd, ('-h', $_) foreach @host_keys;
-		system(@sshd);
+	# Stop takes the tree down, and the daemon it started with it, so what comes
+	# back after a Start is this script's own. Same builder the tree uses
+	# (subs::sshd_command) so the two cannot drift, and subs::sshd_start's probe
+	# so a daemon that outlived the tree is not doubled. No bare `sshd` fallback:
+	# with Termux's paths on Android the port answers and every key is refused
+	# (the phone, 2026-10-31). The tree is found from this file's path, not the
+	# cwd: a restart can run this from anywhere.
+	my $tree = $0;
+	$tree =~ s{/+[^/]+$}{};
+	$tree =~ s{/+scripts$}{};
+	if (-f "$tree/perl/subroutines.pl") {
+		require "$tree/perl/subroutines.pl";
+		&subs::sshd_start();
 	}
 	else {
-		system('sshd');
+		print "manager_killer: no tree at $tree; sshd not started\n";
 	}
 }

@@ -64,6 +64,9 @@ our %WARRANTY = (
 	'app release sync'               => 'forever',
 	'evaluation schedules'           => 'forever',
 	'evaluation dispatch'            => 'forever',
+	# Starts sshd and probes for it every minute; nothing in it can outlive a turn,
+	# so a wedge in the loop is the only thing that can outlive the warranty.
+	'sshd watcher'                   => 'forever',
 
 	# Holders and players that run until someone stops them.
 	'tunnel holder wss'              => 'forever',
@@ -174,6 +177,7 @@ our %HEARTBEAT = (
 	'evaluation dispatch'   => '10m',
 	'utility functions'     => '5m',
 	'whisper server'        => '10m',
+	'sshd watcher'          => '5m',
 );
 
 # The seed lookup both maps share: exact first, then the longest key the name

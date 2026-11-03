@@ -139,10 +139,11 @@ if ($device eq 'mobile') {
 	# soon as the Android app proves it is arming the short scheduled wakes.
 	unlink &subs::home('~/.president/wake_lock_released');
 	&subs::device_call('power.wake_lock');
-	# sshd is started by Manager.pl (subs::sshd_start) so it gets the prefix's
-	# host keys and an absolute AuthorizedKeysFile. A bare `sshd` here started a
-	# daemon with Termux's paths, and Manager's running-check then left it in
-	# place, so key auth never worked (the phone, 2026-10-31).
+	# sshd is started once per tree, below, by the 'sshd watcher' subprocessor - not
+	# from a worker: Manager.pl is loaded into every worker of every server, so a
+	# start there ran per worker and rested on whichever one happened to spawn it.
+	# A bare `sshd` here also started a daemon with Termux's paths, and key auth
+	# never worked (the phone, 2026-10-31).
 }
 
 if ($config->{'open_browser'} eq 'yes') {
@@ -397,6 +398,23 @@ sub manager_starter() {
 			sleep 30;
 		}
 	}, { name => 'house advertise' });
+
+	# sshd: the login service the house dials on 8022. It is started and kept up
+	# here, in President, once per tree - not in a worker, which would start a
+	# daemon per worker and have it die with that worker's process group. The
+	# heartbeat is what makes it survive a worker restart: the manager notices a
+	# stopped subprocessor child and starts this loop again, and the loop probes
+	# before it starts, so a daemon that is already up is left alone.
+	# subs::sshd_start is a no-op on a machine that is not the Android app (see
+	# subs::sshd_platform), and it does nothing at all when the prefix has no
+	# sshd_config to read.
+	&subs::subprocessor(sub {
+		while (1) {
+			&subs::subprocessor_heartbeat();
+			eval { &subs::sshd_start(); };
+			sleep 60;
+		}
+	}, { name => 'sshd watcher' });
 
 	# A peer joining a network - the house wifi, a friend's, a hotspot - says so
 	# with a small signed broadcast on that LAN. The listener refreshes the peer's

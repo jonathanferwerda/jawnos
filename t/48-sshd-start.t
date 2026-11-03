@@ -1,5 +1,4 @@
-# tests-for: lib/JawnOS.pm lib/JawnOS/Controller/ lib/JawnOS/Domain/House.pm lib/JawnOS/Manager.pm lib/JawnOS/Manager/ lib/JawnOS/Routes.pm lib/JawnOS/Routes/ perl/Manager.pl perl/President.pl perl/subroutines.pl
-# covers:    A bare `sshd` on Android is not a working sshd: Termux's sshd_config comments out every HostKey line, and the ...
+# tests-for: lib/JawnOS/Domain/House.pm lib/JawnOS/Domain/Process.pm perl/President.pl scripts/manager_killer.pl
 
 use strict;
 use warnings;
@@ -7,6 +6,8 @@ use warnings;
 use FindBin;
 use lib "$FindBin::Bin/lib", "t/lib";
 use Test::More;
+use File::Temp qw(tempdir);
+use File::Path qw(make_path);
 use RepoSource;
 use JawnOSTest;
 
@@ -14,12 +15,31 @@ use JawnOSTest;
 # out every HostKey line, and the login user's home in the passwd entry is the
 # old Termux prefix, so AuthorizedKeysFile resolved to a path this app cannot
 # read. The port answered and every key was refused - the phone, 2026-10-31.
-# One builder produces the argv so the options can be checked without a daemon.
+#
+# The second lockout was the invocation itself: sshd was handed a literal
+# '$PREFIX' (not expanded) and a home under files/usr/home. Both tests below are
+# about the string that reaches exec, which is why they read ssd_command and not
+# the running daemon.
 
-my @cmd = subs::sshd_command('/data/user/0/com.jawnos/files/usr',
-	'/data/user/0/com.jawnos/files/home');
+# A prefix shaped like the app's, so sshd_paths can find it.
+my $root = tempdir(CLEANUP => 1);
+my $prefix = "$root/files/usr";
+my $home = "$root/files/home";
+make_path("$prefix/etc/ssh", "$prefix/tmp", "$home/.ssh");
+open(my $cfg, '>', "$prefix/etc/ssh/sshd_config") or die $!;
+close $cfg;
+foreach my $kind (qw(ed25519 ecdsa)) {
+	open($cfg, '>', "$prefix/etc/ssh/ssh_host_$kind\_key") or die $!;
+	close $cfg;
+}
+
+local $ENV{'PREFIX'} = $prefix;
+local $ENV{'HOME'} = $home;
+
+my @cmd = subs::sshd_command();
 my %opt;
 my $config_file;
+my @host_keys;
 for my $i ( 0 .. $#cmd ) {
 	my $arg = $cmd[$i];
 	next unless defined $cmd[$i + 1];
@@ -28,32 +48,89 @@ for my $i ( 0 .. $#cmd ) {
 		$opt{$k} = $v if defined $k && defined $v;
 	}
 	elsif ($arg eq '-f') { $config_file = $cmd[$i + 1]; }
+	elsif ($arg eq '-h') { push @host_keys, $cmd[$i + 1]; }
 }
+
 is($cmd[0], 'sshd', 'the daemon is still sshd');
-is($opt{'AuthorizedKeysFile'}, '/data/user/0/com.jawnos/files/home/.ssh/authorized_keys',
-	'authorized_keys is absolute, not the passwd home');
+is($config_file, "$prefix/etc/ssh/sshd_config", 'the prefix config is named');
+is($opt{'PidFile'}, "$prefix/tmp/sshd.pid", 'the pid file lives in the prefix tmp');
+is($opt{'AuthorizedKeysFile'}, "$home/.ssh/authorized_keys",
+	'authorized_keys is under the app home, not the passwd home');
 is($opt{'StrictModes'}, 'no', 'StrictModes is off over /data/user/0');
-is($opt{'PidFile'}, '/data/user/0/com.jawnos/files/usr/tmp/sshd.pid',
-	'the pid file lives in the prefix tmp');
-is($opt{'SetEnv'}, 'HOME=/data/user/0/com.jawnos/files/home',
-	'the session gets the app home back');
-is($config_file, '/data/user/0/com.jawnos/files/usr/etc/ssh/sshd_config',
-	'the prefix config is named');
+is($opt{'SetEnv'}, "HOME=$home", 'the session gets the app home back');
+is_deeply(\@host_keys, [ "$prefix/etc/ssh/ssh_host_ed25519_key", "$prefix/etc/ssh/ssh_host_ecdsa_key" ],
+	'the prefix host keys that exist are named');
 
-# No prefix means no daemon to start: never fall back to a bare `sshd`.
-is_deeply([ subs::sshd_command('', '/tmp/home') ], [],
-	'an empty prefix produces no command');
+# The $PREFIX lockout: nothing in the argv may be a shell variable, a tilde or a
+# relative path. Every option value is a plain absolute path built in Perl.
+my $line = subs::sshd_command_line(@cmd);
+unlike($line, qr/\$[A-Za-z{_]/, 'the command carries no literal $VAR');
+unlike($line, qr{/usr/home}, 'the home is not files/usr/home');
+unlike($line, qr/(^|\s)~/, 'the command carries no tilde');
+foreach my $arg (@cmd) {
+	next if $arg eq 'sshd' || $arg eq '-o' || $arg eq '-f' || $arg eq '-h';
+	# an -o value is Key=value; the keys whose value IS a path must be absolute
+	my ($key, $value) = $arg =~ /^([A-Za-z]+)=(.+)$/ ? ($1, $2) : ('', $arg);
+	next unless $key eq '' || $key =~ /^(?:PidFile|AuthorizedKeysFile)$/;
+	like($value, qr{^/}, "argument '$arg' is an absolute path");
+}
+like($line, qr/^sshd /, 'the command line renders for the log');
 
-# The source must keep the ownership straight: Manager starts it, President does
-# not, and the recovery script does not fall back to a bare `sshd` either.
-my $subs = do { local $/; open(my $fh, '<', "$FindBin::Bin/../perl/subroutines.pl") or die $!; <$fh> };
-my $manager = manager_source();
+# An AUTHORIZEDKEYS home that is not under the app (the passwd one, the old
+# Termux prefix) is replaced by the app home, and never becomes files/usr/home.
+{
+	local $ENV{'HOME'} = '/data/data/com.termux/files/home';
+	my %alt;
+	my @alt = subs::sshd_command();
+	for my $i ( 0 .. $#alt ) {
+		next unless $alt[$i] eq '-o' && defined $alt[$i + 1];
+		my ($k, $v) = split /=/, $alt[$i + 1], 2;
+		$alt{$k} = $v;
+	}
+	is($alt{'AuthorizedKeysFile'}, "$root/files/home/.ssh/authorized_keys",
+		'a foreign HOME still resolves authorized_keys into the app home');
+	unlike($alt{'AuthorizedKeysFile'}, qr{/usr/home/}, 'never files/usr/home');
+}
+
+# A prefix with no sshd_config is not this app: no command, so no bare fallback.
+{
+	local $ENV{'PREFIX'} = "$root/nothing-here";
+	is_deeply([ subs::sshd_command() ], [], 'a prefix without sshd_config produces no command');
+	is_deeply([ subs::sshd_command('', "$home") ], [], 'an empty prefix produces no command');
+}
+
+# Android vs Linux. The suite runs on the Linux box, so the default answer must
+# be "not Android", and each of the app's signals must be enough on its own.
+is(subs::sshd_platform(), 0, 'a Linux box is not the Android app');
+{
+	local $ENV{'ANDROID_ROOT'} = '/system';
+	is(subs::sshd_platform(), 1, 'ANDROID_ROOT marks the Android app');
+}
+{
+	local $ENV{'JAWNOS_APP_PACKAGE'} = 'com.jawnos';
+	is(subs::sshd_platform(), 1, 'the app package marks the Android app');
+}
+
+# Idempotence on this box: sshd_running is a live probe (this suite starts no
+# daemon), so a start here is a no-op that never reaches exec.
+ok(!subs::sshd_running($prefix), 'nothing is listening; the probe answers, not a pid file');
+my $started = subs::sshd_start();
+is($started, 0, 'sshd_start is a no-op on Linux even with a prefix to point at');
+
+# The source must keep the ownership straight: President owns the start, Manager
+# does not start one per worker, and the recovery script has no bare `sshd`.
 my $president = do { local $/; open(my $fh, '<', "$FindBin::Bin/../perl/President.pl") or die $!; <$fh> };
-like($manager, qr/sshd_running\(\)/,
-	'the manager checks whether sshd is already running');
-like($manager, qr/subs::sshd_start\(\)/,
-	'the manager starts sshd through the shared builder');
-unlike($president, qr/^\s*`sshd`;/m,
-	'President.pl does not start a bare sshd at boot');
+my $manager = manager_source();
+my $killer = do { local $/; open(my $fh, '<', "$FindBin::Bin/../scripts/manager_killer.pl") or die $!; <$fh> };
+like($president, qr/&subs::sshd_start\(\)/, 'President starts sshd once per tree');
+like($president, qr/name => 'sshd watcher'/, 'and keeps it up from a supervised loop');
+unlike($manager, qr/subs::sshd_start\(\)/, 'Manager.pl does not start a daemon in every worker');
+unlike($president, qr/^\s*`sshd`;/m, 'President.pl does not start a bare sshd at boot');
+unlike($killer, qr/^\s*system\('sshd'\);/m, 'the recovery script has no bare sshd fallback');
+like($killer, qr/&subs::sshd_start\(\)/, 'the recovery script uses the shared builder');
+
+# The watched loop has a warranty and a lease, or the manager reaps a healthy one.
+is(subs::subprocessor_warranty_for('sshd watcher'), 'forever', 'the sshd watcher has a forever warranty');
+is(subs::subprocessor_heartbeat_for('sshd watcher'), '5m', 'and a heartbeat lease longer than its turn');
 
 done_testing();

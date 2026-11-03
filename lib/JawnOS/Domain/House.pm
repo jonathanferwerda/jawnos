@@ -338,31 +338,82 @@ sub peer_resolve_addresses {
 # and the login user's home in the passwd entry is the old Termux prefix. A bare
 # `sshd` therefore starts with no usable host key (or resolves keys and
 # authorized_keys under a path this app cannot read), and key auth silently
-# fails while the port still answers. Start it once, here, with the prefix's own
-# keys and an absolute AuthorizedKeysFile. StrictModes is off because it walks
-# /data/user/0, which is system-owned.
-sub sshd_running {
-	foreach my $proc ( glob('/proc/[0-9]*') ) {
-		my $cmd = eval { read_file("$proc/cmdline") } || '';
-		$cmd =~ s/\0.*//s;
-		return 1 if $cmd =~ m{(?:^|/)sshd$};
-	}
+# fails while the port still answers.
+#
+# Every option below is load-bearing on Android, and each was learned from a
+# lockout rather than a manual:
+#   AuthorizedKeysFile  the home is <app>/files/home. `$PREFIX/home` is
+#                       <app>/files/usr/home, which holds no authorized_keys; a
+#                       file that does not exist refuses every key, and with
+#                       PasswordAuthentication=no that is a lockout (2026-10-31).
+#   StrictModes=no      /data/user/0 is 0771 system:system, and StrictModes
+#                       refuses authorized_keys through it whatever the modes of
+#                       the file and ~/.ssh.
+#   the host keys        the prefix's own, named absolutely: the config's
+#                       HostKey lines are commented out.
+#   SetEnv=HOME=        the session's home, so a login lands in files/home.
+#
+# The paths are resolved here, in Perl, from PREFIX and HOME (or the prefix's
+# own files/home), and the daemon is exec'd with an argv and no shell - so a
+# literal '$PREFIX' or '~' can never reach sshd. That unexpanded form is exactly
+# what locked the phone out once.
+
+# Android only. $^O is 'linux' there too, so the test is the system image: an
+# Android tree has /system/bin/init and exports ANDROID_ROOT, and a Linux laptop,
+# 'dev', 'cloud' and 'ks5' have neither and never start sshd. JAWNOS_APP_PACKAGE
+# is a third signal: the app sets it for every child it launches.
+sub sshd_platform {
+	return 1 if defined $ENV{'ANDROID_ROOT'} && length $ENV{'ANDROID_ROOT'};
+	return 1 if defined $ENV{'JAWNOS_APP_PACKAGE'} && length $ENV{'JAWNOS_APP_PACKAGE'};
+	return 1 if -e '/system/bin/init';
 	return 0;
 }
 
-sub sshd_start {
-	my @cmd = &sshd_command();
-	return 0 unless @cmd;
-	system(@cmd);
-	return 1;
+# The app's own directories. PREFIX is what the app exports; a tree started from
+# a Termux shell without it still has /data/data/com.jawnos, and the old fork's
+# prefix is the last resort. An empty return means nothing to start.
+sub sshd_paths {
+	my @prefixes = ( $ENV{'PREFIX'} );
+	foreach my $base ( qw(/data/data/com.jawnos /data/user/0/com.jawnos /data/data/com.termux) ) {
+		push @prefixes, "$base/files/usr";
+	}
+	my $prefix = '';
+	foreach my $candidate ( @prefixes ) {
+		next unless defined $candidate && length $candidate;
+		next unless $candidate =~ m{^/};
+		next unless -f "$candidate/etc/ssh/sshd_config";
+		$prefix = $candidate;
+		last;
+	}
+	return () unless length $prefix;
+	# HOME is the app's home on Android (files/home). A HOME that is not under the
+	# app's files directory is not this app's home - the passwd one is the old
+	# Termux prefix - so the session home stays <app>/files/home.
+	my $home = $ENV{'HOME'} || '';
+	my $files = $prefix;
+	$files =~ s{/usr$}{};
+	$home = "$files/home" unless length $home && $home =~ m{^/} && index($home, "$files/") == 0;
+	return ($prefix, $home);
 }
 
 # The argv for the daemon, with no side effects, so the options can be checked.
 sub sshd_command {
 	my ($prefix, $home) = @_;
-	$prefix = $ENV{'PREFIX'} || '' unless defined $prefix && length $prefix;
+	# An explicit argument wins even when it is empty: the caller said which prefix
+	# it meant, and '' means there is none. Only a call with no arguments looks
+	# them up from the environment.
+	unless (defined $prefix || defined $home) {
+		($prefix, $home) = &sshd_paths();
+		return () unless defined $prefix && length $prefix;
+	}
+	$prefix = '' unless defined $prefix;
 	return () unless length $prefix;
-	$home = $ENV{'HOME'} || "$prefix/home" unless defined $home && length $home;
+	unless (defined $home && length $home) {
+		my (undef, $found_home) = &sshd_paths();
+		$home = $found_home || "$prefix/home";
+	}
+	$home =~ s{/+$}{};
+	$prefix =~ s{/+$}{};
 	my @host_keys = grep { -f $_ } map { "$prefix/etc/ssh/ssh_host_$_\_key" } qw/ed25519 ecdsa rsa/;
 	my @sshd = (
 		'sshd', '-f', "$prefix/etc/ssh/sshd_config",
@@ -373,6 +424,78 @@ sub sshd_command {
 	);
 	push @sshd, ('-h', $_) foreach @host_keys;
 	return @sshd;
+}
+
+# The command as one line for the log, quoted the way a shell would read it back.
+# shellwords is not installed on this box, so this is the three-character rule:
+# wrap in single quotes unless the word is plainly safe, and escape a quote.
+sub sshd_command_line {
+	my (@argv) = @_;
+	return '' unless @argv;
+	my @words = map {
+		my $word = defined $_ ? "$_" : '';
+		if ($word eq '' || $word =~ m{[^A-Za-z0-9_./=:@%+,-]}) {
+			$word =~ s/'/'\\''/g;
+			$word = "'$word'";
+		}
+		$word;
+	} @argv;
+	return join ' ', @words;
+}
+
+# 1 when a daemon is up. Two answers, because either one alone has lied: an sshd
+# started without a pidfile (the bare `sshd` this replaces) has no pid file, and
+# a stale pid file outlives a killed daemon. The pid file is believed only when
+# the process it names is still running and would rename itself 'sshd' (a
+# recycled pid is not it); otherwise the /proc scan decides.
+sub sshd_running {
+	my ($prefix) = @_;
+	unless (defined $prefix && length $prefix) {
+		($prefix) = &sshd_paths();
+	}
+	if (defined $prefix && length $prefix && open(my $fh, '<', "$prefix/tmp/sshd.pid")) {
+		my $pid = <$fh>;
+		close $fh;
+		if (defined $pid && $pid =~ /^\s*(\d+)/) {
+			my $candidate = $1;
+			if ($candidate > 1 && kill 0, $candidate) {
+				my $comm = eval { read_file("/proc/$candidate/comm") } || '';
+				chomp $comm;
+				return 1 if $comm eq 'sshd';
+			}
+		}
+	}
+	foreach my $proc ( glob('/proc/[0-9]*') ) {
+		my $cmd = eval { read_file("$proc/cmdline") } || '';
+		$cmd =~ s/\0.*//s;
+		return 1 if $cmd =~ m{(?:^|/)sshd$};
+	}
+	return 0;
+}
+
+# One daemon per tree, whatever calls this - the master's boot loop and the
+# watchdog both do. The check and the move to /tmp are the lock; the lock file
+# keeps a second caller from racing between its check and its exec.
+sub sshd_start {
+	return 0 unless &sshd_platform();
+	my @cmd = &sshd_command();
+	return 0 unless @cmd;
+	return 0 if &sshd_running();
+	my $lock = "$ENV{'TMPDIR'}/jawnos-sshd.lock";
+	$lock = '/tmp/jawnos-sshd.lock' unless defined $ENV{'TMPDIR'} && length $ENV{'TMPDIR'};
+	open(my $guard, '>>', $lock) or return 0;
+	flock($guard, LOCK_EX | LOCK_NB) or do { close $guard; return 0 };
+	my $started = 0;
+	unless (&sshd_running()) {
+		# setsid detaches the daemon from this process group, so a subprocessor
+		# reaper's TERM to the group (or the tree stopping) leaves the login
+		# service up; sshd itself forks into the background and exits at once, so
+		# the next call is not a wait for a login session.
+		system('setsid', @cmd);
+		$started = 1;
+	}
+	close $guard;
+	return $started;
 }
 
 # Every literal address a peer row can be dialled at, best first: the stored ip,
