@@ -5,6 +5,25 @@ this file, adds the release date and the version codes that are actually
 staged, and writes it back to the release. Keep the newest release at the top
 under a dated heading; older sections stay as history.
 
+## 2026-11-03 — the alarm at the level you chose, and answerable anywhere
+
+- **The alarm no longer forces the phone's alarm stream to maximum.** The
+  player still asks for Android's alarm channel, so Do Not Disturb and the
+  ringer's alarm rules still apply, but the phone's alarm volume is left where
+  the person set it. The Clock's own Volume scales on top, so a quiet phone
+  stays quiet and a 30% alarm is actually 30%.
+- **Every open Manager window shows the ring card.** The card's duplicate
+  guard lived in localStorage, which every window on a machine shares, so only
+  the first window to hear the push drew it. Each window now keeps its own
+  guard. A ring also tells the other machines, so a Manager window on another
+  device draws the same card; Dismiss and Snooze then reach every machine.
+- **Alarms can open over the lock screen again.** The move to targetSdk 36 made
+  `USE_FULL_SCREEN_INTENT` a special access that a sideloaded build can be left
+  without, turning the full-screen alarm into a heads-up notice. The ring
+  notification now offers **Allow over lock screen** when the permission is
+  missing, the dashboard's Grant device permissions screen has the same page,
+  and a locked phone is asked for the alarm face directly as a fallback.
+
 ## 2026-10-31 — appointment photos that land
 
 - **A photo from an appointment's Details view no longer ends in HTTP 500.**

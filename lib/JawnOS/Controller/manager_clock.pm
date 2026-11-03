@@ -110,6 +110,23 @@ sub action_22744 {
 		|| ($peer_rm && &subs::peer_verify($c, $peer_rm)) || &app_peer_ok($c)) {
 		return $c->rendered(403);
 	}
+	# A machine that is ringing tells the rest of the house, so a Manager window
+	# on any of them can draw the ring card. This is a display notice, not an
+	# edit: the shared row stays the source for ringing and stop_at.
+	if ($action eq 'ring_notice') {
+		my $uuid = $c->param('uuid') || '';
+		my $alarms = &subs::clock_alarms_read();
+		my ($alarm) = grep { ($_->{'uuid'} || '') eq $uuid } @{$alarms};
+		if (!$alarm) {
+			$c->render(json => { ok => 0, error => 'missing', server_time => $now });
+			return;
+		}
+		my $at = $c->param('at');
+		$at = $now unless defined $at && "$at" =~ /^\d+$/ && $at > 0;
+		&subs::clock_alarm_cmd($alarm, $at, $now);
+		$c->render(json => { ok => 1, server_time => $now });
+		return;
+	}
 	# An edit a peer hands over is applied here and, when it names a third
 	# machine, forwarded once. It never writes through the UI branches below.
 	if ($action eq 'remote_apply') {
@@ -356,9 +373,12 @@ sub action_22744 {
 	&subs::clock_device_dismissed($action eq 'stop_all' ? '' : ($c->param('uuid') || '')) if $rings_stopped;
 	# The shared settings row carries the stop to every machine in time; this
 	# relay is what ends the sound now rather than at the next sync. A request
-	# that arrived this way does not relay again.
+	# that arrived this way does not relay again. Dismiss and Snooze also go to
+	# the machines that are only showing the ring card, so every open Manager
+	# window closes with the sound instead of waiting for the row to sync.
 	if ($rings_stopped && !$c->param('relayed')) {
-		my $machines = $action eq 'stop_all'
+		my $everywhere = ($action eq 'stop_all' || $action eq 'dismiss' || $action eq 'snooze');
+		my $machines = $everywhere
 			? [ map { $_->{'value'} } @{ &subs::clock_machines() } ]
 			: $relay_machines;
 		my %extra;

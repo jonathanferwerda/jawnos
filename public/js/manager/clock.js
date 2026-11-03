@@ -243,21 +243,29 @@ function jawnosClockApplyState(state) {
 	jawnosClockSyncRinging(state);
 }
 
-function jawnosClockTargetsMe(alarm, state) {
-	var machines = alarm.machines || [];
-	if (!machines.length) { return true; }
-	var me = (state && state.me) || '';
-	return me ? $.inArray(me, machines) >= 0 : true;
-}
-
 // A ring card follows the server's ringing flag as well as the live push, so a
 // window opened (or reloaded) while an alarm is still sounding shows the card
-// again, and one dismissed on another screen closes here too.
+// again, and one dismissed on another screen closes here too. Every machine
+// draws the card, not only the one carrying the sound: the answer is a shared
+// edit, so any open Manager window can end the ring everywhere.
 function jawnosClockSyncRinging(state) {
-	var ringing = $.grep(state.alarms || [], function (a) { return a.ringing && jawnosClockTargetsMe(a, state); });
+	var alarms = state.alarms || [];
+	var ringing = $.grep(alarms, function (a) { return a.ringing; });
 	if (jawnosClockRingingCurrent) {
-		var still = $.grep(ringing, function (a) { return a.uuid == jawnosClockRingingCurrent.uuid; });
-		if (!still.length) { jawnosClockAlarmStop(); }
+		var current = jawnosClockRingingCurrent;
+		var same = $.grep(alarms, function (a) { return a.uuid == current.uuid; });
+		// A relayed notice can arrive before the shared row does. Keep the card
+		// until its own guard runs out rather than closing it on an empty poll.
+		if (!same.length) { return; }
+		var a = same[0];
+		var at = parseInt(current.ring_at || current.fired_at || 0, 10) || 0;
+		var stopAt = parseInt(a.stop_at || 0, 10) || 0;
+		// A peer's notice can arrive before the shared row has caught up with
+		// the ring. Only a stop at or after this ring - or the five-minute
+		// guard running out - takes the card down early.
+		if (stopAt && at && stopAt >= at) { jawnosClockAlarmStop(); return; }
+		if (!a.ringing && at && (Date.now() - at) > 300000) { jawnosClockAlarmStop(); return; }
+		if (!a.ringing && !at) { jawnosClockAlarmStop(); return; }
 		return;
 	}
 	if (ringing.length && !jawnosClockRinging.length) {
@@ -265,7 +273,8 @@ function jawnosClockSyncRinging(state) {
 		jawnosClockShowRing({
 			uuid: a.uuid, label: a.label, hour: a.hour, minute: a.minute,
 			sound: a.sound, volume: a.volume, ramp: a.ramp, app: a.app,
-			snooze: a.snooze, play: a.play, nfc: (a.nfc_ready || 0), nfc_action: a.nfc_action
+			snooze: a.snooze, play: a.play, nfc: (a.nfc_ready || 0), nfc_action: a.nfc_action,
+			fired_at: a.ring_started || 0
 		});
 	}
 }

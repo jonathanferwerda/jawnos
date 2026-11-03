@@ -1,13 +1,16 @@
 // ------------------------------------------------------------- alarm ring
+// The claim is per window, not per browser. localStorage is shared by every
+// Manager window on the machine, so a stored claim let only the first window
+// draw the ring - usually not the one in front of the person. Each window now
+// keeps its own short guard against the two notices (this machine's ring and a
+// peer's) describing the same alarm.
+var jawnosClockRingSeen = {};
+var jawnosClockRingGuardTimer = null;
 function jawnosClockRingClaim(uuid) {
-	try {
-		var key = 'jawnos_clock_ring_' + uuid;
-		var last = parseFloat(localStorage.getItem(key) || '0');
-		var now = Date.now();
-		if (last && now - last < 15000) { return false; }
-		localStorage.setItem(key, String(now));
-		return true;
-	} catch (e) { return true; }
+	var now = Date.now();
+	if (jawnosClockRingSeen[uuid] && now - jawnosClockRingSeen[uuid] < 15000) { return false; }
+	jawnosClockRingSeen[uuid] = now;
+	return true;
 }
 
 function jawnosClockRingCard() {
@@ -89,6 +92,12 @@ function jawnosClockMathReset(card) {
 
 function jawnosClockShowRing(payload) {
 	jawnosClockRingingCurrent = payload;
+	// The server's ring guard is five minutes. A card shown from a peer's
+	// notice can outlive the shared row's ringing flag for a moment, so the
+	// card takes itself down when that guard has run out even if no state
+	// poll answers.
+	payload.ring_at = payload.fired_at || payload.at || Date.now();
+	jawnosClockRingGuardArm();
 	var card = jawnosClockRingCard();
 	card.find('.clock_ring_label').text(payload.label || jawnosT('alarm'));
 	card.find('.clock_ring_time').text(jawnosClockTime(payload.hour, payload.minute) + (payload.app ? ' · ' + String(payload.app).replace(/_/g, ' ') : ''));
@@ -118,7 +127,23 @@ function jawnosClockAlarmRing(payload) {
 	if (!jawnosClockRingingCurrent) { jawnosClockShowRing(jawnosClockRinging.shift()); }
 }
 
+function jawnosClockRingGuardArm() {
+	if (jawnosClockRingGuardTimer) { clearTimeout(jawnosClockRingGuardTimer); }
+	var current = jawnosClockRingingCurrent;
+	var at = current && current.ring_at ? current.ring_at : 0;
+	var left = at ? 300000 - (Date.now() - at) : 300000;
+	if (left < 1000) { left = 1000; }
+	jawnosClockRingGuardTimer = setTimeout(function () {
+		jawnosClockRingGuardTimer = null;
+		if (jawnosClockRingingCurrent) { jawnosClockAlarmStop(); }
+	}, left);
+}
+
 function jawnosClockAlarmStop() {
+	if (jawnosClockRingGuardTimer) {
+		clearTimeout(jawnosClockRingGuardTimer);
+		jawnosClockRingGuardTimer = null;
+	}
 	jawnosClockRingingCurrent = null;
 	var card = $('#clock_ring_overlay');
 	if (card.length) {

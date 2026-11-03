@@ -72,6 +72,14 @@ sub clock_alarm_ring {
 	$alarm->{'ring_last'} = $now;
 	&clock_alarm_cmd($alarm, $fire_at, $now);
 	&clock_device_ring($alarm, $fire_at);
+	# The ring is local to the machines that carry the alarm, but the answer is
+	# not. Tell every peer now, so a Manager window open anywhere can draw the
+	# ring card and dismiss the sound everywhere. The push above only reaches
+	# this machine's tabs; a peer draws its card from the shared row.
+	eval {
+		my @peers = map { $_->{'value'} } @{ &subs::clock_machines() };
+		&clock_relay('ring_notice', ($alarm->{'uuid'} || ''), \@peers, at => ($fire_at || $now));
+	};
 
 	my $label = $alarm->{'label'} || 'Alarm';
 	my $app = $alarm->{'app'} || '';
