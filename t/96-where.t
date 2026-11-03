@@ -1,6 +1,7 @@
 # tests-for: scripts/where.pl lib/JawnOS/Routes/ perl/help/
-# covers:    the point locator - helper/domain/route resolution, the map the
-#           output agrees with, and the map-drift report
+# covers:    the point locator - helper/domain/route resolution, JavaScript and
+#           firmware declarations, mention lines, the map the output agrees
+#           with, and the map-drift report
 
 use strict;
 use warnings;
@@ -117,6 +118,75 @@ for my $name (qw(subs::path_name path_name)) {
 	cmp_ok(scalar @lines, '>=', 70, 'every topic is listed');
 	is(scalar(grep { !/^help::[a-z0-9_]+\tperl\/help\/topics_\w+\.pl:\d+$/ } @lines), 0,
 		'each line is a topic and its definition line');
+}
+
+# --- a JavaScript declaration ---------------------------------------------
+{
+	my ($code, $out) = where('jawnosAgentsPanel');
+	is($code, 0, 'a JS function resolves outside the Perl maps');
+	like($out, qr{^jawnosAgentsPanel\tpublic/js/manager/agents\.js:(\d+)$}m,
+		'with its script and line');
+
+	my ($line) = $out =~ /agents\.js:(\d+)/;
+	my @src = split /\n/, read_file("$root/public/js/manager/agents.js");
+	like($src[$line - 1], qr/^\s*function\s+jawnosAgentsPanel\b/,
+		'the line is the declaration, not a call');
+}
+
+# --- a firmware declaration, and no generated tree -------------------------
+{
+	my ($code, $out) = where('now_ms');
+	is($code, 0, 'a sketch function resolves');
+	like($out, qr{^now_ms\tjp/alarmclock/alarmclock_01_globals_clock_ble\.ino:\d+$}m,
+		'to the sketch that defines it');
+	unlike($out, qr{music\.js}, 'a local variable of the same name does not win');
+	unlike($out, qr{/\.pio/|/build/}, 'generated trees are not searched');
+
+	(undef, $out) = where('HOUSE_MAX');
+	like($out, qr{^HOUSE_MAX\tjp/alarmclock/\S+\.ino:\d+$}m, 'a firmware #define resolves');
+
+	(undef, $out) = where('load_clock_font');
+	like($out, qr{^load_clock_font\tjw/tools/face_preview\.py:\d+$}m, 'a firmware tool def resolves');
+}
+
+# --- a mention prints the matching line, grep-style ------------------------
+{
+	my ($code, $out) = where('chat_method_label');
+	is($code, 0, 'an undeclared name still resolves');
+	like($out, qr{^  public/js/manager/chat\.js:\d+: .*chat_method_label}m,
+		'a JS mention comes with its line');
+	like($out, qr{^  templates/apps/chat\.html\.ep:\d+: .*chat_method_label}m,
+		'and so does a template mention');
+}
+
+# --- a fixture: JS const declarations and generated-tree pruning -----------
+{
+	my $tmp = tempdir(CLEANUP => 1);
+	make_path("$tmp/public/js", "$tmp/jw/.pio/build");
+	write_file("$tmp/public/js/app.js", <<'JS');
+function plainOne() {
+}
+const probeConst = function (x) {
+	return x;
+};
+JS
+	write_file("$tmp/jw/sketch.ino", "void probe_fn() {\n}\n");
+	write_file("$tmp/jw/.pio/build/dup.cpp", "void probe_fn() {\n}\n");
+	write_file("$tmp/jw/big_model.h", "#define probe_big 1\n" . ('x' x 140000) . "\n");
+	write_file("$tmp/public/js/jquery.js", "function probe_vendored() {\n}\n");
+
+	my (undef, $out) = where('--root', $tmp, 'probeConst');
+	like($out, qr{^probeConst\tpublic/js/app\.js:3$}m, 'a const-function is a declaration');
+
+	(undef, $out) = where('--root', $tmp, 'probe_fn');
+	like($out, qr{^probe_fn\tjw/sketch\.ino:1$}m, 'the sketch that defines it');
+	unlike($out, qr{\.pio|dup\.cpp}, 'the build copy is pruned');
+
+	my ($code) = where('--root', $tmp, 'probe_big');
+	is($code, 1, 'a generated header over the size cap is skipped');
+
+	($code) = where('--root', $tmp, 'probe_vendored');
+	is($code, 1, 'a vendored library is skipped');
 }
 
 # --- a name nobody has -----------------------------------------------------

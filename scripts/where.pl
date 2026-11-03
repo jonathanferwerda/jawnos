@@ -17,14 +17,17 @@
 # Routes are read from lib/JawnOS/Routes/*.pm and help topics from
 # perl/help/topics_*.pl, so nothing boots the app. A name neither map knows is
 # searched for as a sub across the parts and the domain modules, then as a help
-# topic, then as a bare reference (capped by --limit). When a map names a file
-# that does not define the sub, the hit prints where it really is and says the
-# map drifted - that is the audit, for free.
+# topic, then as a declaration in a controller, the app's JavaScript or a
+# firmware sketch (jp/, jw/, jt/), then as a mention that prints the matching
+# line itself (capped by --limit). When a map names a file that does not define
+# the sub, the hit prints where it really is and says the map drifted - that is
+# the audit, for free.
 
 use strict;
 use warnings;
 
 use Cwd qw(abs_path);
+use File::Find qw(find);
 use FindBin ();
 use Getopt::Long qw(GetOptions);
 
@@ -64,6 +67,62 @@ my @manager_files = grep { -f $_ } map { glob "$root/lib/JawnOS/Manager/$_" }
 my @domain_files     = grep { -f $_ } glob "$root/lib/JawnOS/Domain/*.pm";
 my @controller_files = grep { -f $_ } glob "$root/lib/JawnOS/Controller/*.pm";
 my @route_files      = grep { -f $_ } glob "$root/lib/JawnOS/Routes/*.pm";
+
+# --- source groups the locator can search -----------------------------------
+#
+# The name maps cover lib/ only. The app's JavaScript, the templates and the
+# three firmware trees (jp alarm clock, jw watch, jt panel) are scanned here so
+# a name that lives outside lib/ is still one command away. Generated trees are
+# pruned, never read: .pio/build and __pycache__ are build output, and the
+# firmware's generated model/font headers are bigger than any hand-written
+# source, so a size cap keeps them out without a name blacklist to maintain.
+my @js_files = source_files(
+	dirs       => ['public/js'],
+	ext        => [qw(js)],
+	skip_names => qr/^(?:jquery|jquery-ui|moment)\.js$/,
+);
+my @template_files = source_files(
+	dirs => ['templates'],
+	ext  => [qw(ep)],
+);
+my @embedded_files = source_files(
+	dirs      => [qw(jp jw jt)],
+	ext       => [qw(ino cpp cc c h hpp py)],
+	max_bytes => 131072,
+);
+
+sub source_files {
+	my (%spec) = @_;
+	my %ext    = map { $_ => 1 } @{ $spec{'ext'} };
+	my $skip   = $spec{'skip_names'};
+	my $max    = $spec{'max_bytes'};
+	my @out;
+
+	for my $dir (@{ $spec{'dirs'} }) {
+		my $base = "$root/$dir";
+		next unless -d $base;
+		find({
+			no_chdir => 1,
+			wanted   => sub {
+				my $path = $File::Find::name;
+				if (-d $path) {
+					$File::Find::prune = 1
+						if $path =~ m{/(?:\.pio|build|__pycache__|node_modules)(?:/|\z)};
+					return;
+				}
+				return unless -f $path;
+				my ($name) = $path =~ m{([^/]+)\z};
+				return if $skip && $name =~ $skip;
+				my ($ext) = $name =~ /\.([^.]+)\z/ or return;
+				return unless $ext{ lc $ext };
+				return if $max && -s $path > $max;
+				push @out, $path;
+			},
+		}, $base);
+	}
+
+	return sort @out;
+}
 
 my $topics_cache;
 
@@ -142,8 +201,13 @@ sub lookup {
 		}
 	}
 
-	# Neither map knows it: look for the sub itself, then for a help topic that
-	# answers to the name, then for a mention.
+	# Neither map knows it: look for the declaration itself, then for a help
+	# topic that answers to the name, then for a mention.
+	#
+	# Perl first, because the two maps only cover lib/ and a part is still the
+	# most likely home. A help topic keeps its priority over a same-named JS
+	# function, the way help() resolves it. Then the declaration in a controller,
+	# the app's JavaScript or a firmware sketch.
 	for my $file (@manager_files, @domain_files) {
 		my $line = find_sub($file, $name);
 		return emit($name, undef, $file, $line) if $line;
@@ -152,19 +216,43 @@ sub lookup {
 	my $topic = topic_lookup($name);
 	return $topic if $topic;
 
+	my $declared = 0;
+	for my $file (@controller_files, @js_files, @embedded_files) {
+		my $line = find_definition($file, $name) or next;
+		$declared += emit($name, undef, $file, $line);
+		last if $declared >= $limit;
+	}
+
+	# A plain `const NAME = value` is a declaration, but a local variable of a
+	# name that a real function also has is not the answer, so weak hits wait
+	# until nothing stronger matched.
+	if (!$declared) {
+		for my $file (@js_files) {
+			my $line = find_definition($file, $name, 'weak') or next;
+			$declared += emit($name, undef, $file, $line);
+			last if $declared >= $limit;
+		}
+	}
+	return $declared if $declared;
+
+	# Nothing declares it: show the lines that mention it, with their text. A
+	# bare file:line cannot be judged without opening the file - the cost this
+	# script exists to avoid - so a mention prints grep's matching line too.
 	my $hits = 0;
-	for my $file (@manager_files, @domain_files, @controller_files, @route_files) {
+	for my $file (@manager_files, @domain_files, @controller_files, @route_files,
+		@js_files, @template_files, @embedded_files)
+	{
 		my $text = slurp($file) // next;
 		my $n    = 0;
 		for my $line (split /\n/, $text, -1) {
 			$n++;
 			next unless $line =~ /(?<![\w:])\Q$name\E(?!\w)/;
-			print '  ', rel($file), ":$n\n";
+			print '  ', rel($file), ":$n:", mention_text($line), "\n";
 			last if ++$hits >= $limit;
 		}
 		last if $hits >= $limit;
 	}
-	warn "where: no $name in the tree (maps, subs, references)\n" unless $hits;
+	warn "where: no $name in the tree (maps, subs, declarations, references)\n" unless $hits;
 	return $hits;
 }
 
@@ -376,6 +464,80 @@ sub find_sub {
 	return;
 }
 
+# A declaration, not a mention. Each language answers in its own syntax, so a
+# JS function, an Arduino sketch function and a Perl sub are all findable. The
+# extension decides how the line is read.
+sub find_definition {
+	my ($file, $name, $weak) = @_;
+	my $text = slurp($file) or return;
+	my $n    = 0;
+	for my $line (split /\n/, $text, -1) {
+		$n++;
+		return $n if $weak
+			? is_weak_definition($file, $line, $name)
+			: is_definition($file, $line, $name);
+	}
+	return;
+}
+
+sub is_definition {
+	my ($file, $line, $name) = @_;
+	my ($ext) = $file =~ /\.([^.]+)\z/;
+	$ext = lc($ext // '');
+	my $n = quotemeta $name;
+
+	if ($ext eq 'pm' || $ext eq 'pl') {
+		return $line =~ /^\s*sub\s+$n\b/;
+	}
+	if ($ext eq 'js') {
+		return 1 if $line =~ /\bfunction\s+$n\s*\(/;
+		return 1 if $line =~ /\bclass\s+$n\b/;
+		# A value assigned a function is a definition; a plain value is weak.
+		return 1 if $line =~ /\b(?:const|let|var)\s+$n\s*=\s*(?:async\s+)?(?:function\b|\()/;
+		return $line =~ /^\s*$n\s*[:=]\s*(?:async\s+)?(?:function\b|\()/;
+	}
+	if ($ext eq 'py') {
+		return $line =~ /^\s*(?:def|class)\s+$n\b/;
+	}
+	if ($ext eq 'ino' || $ext eq 'c' || $ext eq 'cpp' || $ext eq 'cc'
+		|| $ext eq 'h' || $ext eq 'hpp')
+	{
+		return 1 if $line =~ /^\s*#\s*define\s+$n\b/;
+		return 1 if $line =~ /^\s*(?:class|struct|enum|namespace)\s+$n\b/;
+		# A definition starts with a return type. The keywords are excluded
+		# because "return foo(" and "if (foo(" fit the shape; a prototype ends
+		# in ';' and is not a definition.
+		return $line =~ /^\s*(?!if\b|for\b|while\b|switch\b|return\b|else\b|case\b|do\b)
+			(?:[\w:<>*&\[\]]+\s+)+[*&]?\s*$n\s*\([^;]*\)\s*(?:const\s*)?(?:\{|\z)/x;
+	}
+	return 0;
+}
+
+# Weak declarations: `const NAME = value`. Reported only when no function,
+# class, sub or sketch symbol of that name exists.
+sub is_weak_definition {
+	my ($file, $line, $name) = @_;
+	my ($ext) = $file =~ /\.([^.]+)\z/;
+	return 0 unless lc($ext // '') eq 'js';
+	my $n = quotemeta $name;
+	return $line =~ /\b(?:const|let|var)\s+$n\s*=/;
+}
+
+# grep's matching line, trimmed. A mention line can be a 700-character qw(...)
+# row; the point is enough text to judge the hit, not the whole row.
+sub mention_text {
+	my ($line) = @_;
+	$line =~ s/\A\s+//;
+	$line =~ s/\s+\z//;
+	if (length($line) > 200) {
+		$line = substr($line, 0, 200);
+		$line =~ s/[\x80-\xBF]+\z//;
+		$line =~ s/[\xC0-\xFD]\z//;
+		$line .= '...';
+	}
+	return " $line";
+}
+
 sub print_context {
 	my ($file, $line) = @_;
 	my $text = slurp($file) or return;
@@ -415,10 +577,11 @@ usage: perl scripts/where.pl [--context N] [--limit N] [--terse] [--topics] [--t
          reports the help topics covering it). Several names may be given.
 
 Prints file:line for each. A name the maps do not know is searched for as a
-sub, then as a help topic, then as a mention (at most --limit lines).
---context N adds N lines after a located sub, --terse prints only file:line,
---topics lists every help topic with the line it is defined on. Exits 0 if
-anything was found.
+sub, then as a help topic, then as a declaration in a controller, a JavaScript
+file or a firmware sketch (jp/, jw/, jt/), then as a mention: file:line plus the
+matching line, at most --limit lines. --context N adds N lines after a located
+sub, --terse prints only file:line, --topics lists every help topic with the
+line it is defined on. Exits 0 if anything was found.
 
   --tech NAME  the tier-2 technical brief for an app or topic (routes, tables,
                settings, tests, source notes) - same as scripts/agent_help.pl

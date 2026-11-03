@@ -14,8 +14,10 @@ The tree has definitive, test-checked indexes, and two commands read them. **Rea
 `grep`** — a grep answers "this string appears here", not "this is where that lives".
 
 - `perl scripts/where.pl <name>` — one line, `file:line`: a Manager helper, a domain sub, a route
-action (`action_7408`), a route path (`/manager/pen`), a help topic by name, or a file (which topics
-cover it). `--topics` lists the help registry, `--tech <app>` prints the technical brief.
+action (`action_7408`), a route path (`/manager/pen`), a help topic by name, a JavaScript or firmware
+declaration (in `public/js/`, `jp/ jw/ jt/`), or a file (which topics cover it). A name nothing
+declares prints the lines that mention it **with their text**, so a miss is still judgeable without
+opening the file. `--topics` lists the help registry, `--tech <app>` prints the technical brief.
 - `perl scripts/agent_help.pl <app>` — what an app is made of: sources, the routes that reach it,
 the tables and settings it touches, the tests that claim its files, and its own comments. `--schema`
 or `--schema=<table>` gives every column, its type, the indexes and the apps that use the table.
