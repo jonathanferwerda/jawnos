@@ -250,7 +250,11 @@ like($real->{'system'}, qr/Every behaviour change ships with a test/,
 	"the repository's own testing rule is in the prompt");
 like($real->{'system'}, qr/RULE 1[^\n]*Stop and ask after 3 attempts/,
 	'the repository rule about three attempts is in the prompt');
-like($real->{'system'}, qr/TRUNCATED/, 'the real deep notes are declared truncated');
+SKIP: {
+	skip 'docs/AGENTS-notes.md is gitignored, so a fresh clone has no deep notes to truncate', 1
+		unless -e "$repo/docs/AGENTS-notes.md";
+	like($real->{'system'}, qr/TRUNCATED/, 'the real deep notes are declared truncated');
+}
 unlike($real->{'system'}, qr{/home/}, 'the real system prompt carries no absolute home path');
 is($real->{'help_topic'}, 'chat', 'the real assembly picks the chat topic');
 

@@ -492,14 +492,17 @@ sub run_command {
 
 	my $stderr = gensym;
 	my ( $in, $out, $pid );
-	my $out_fh;
+	my $to_file = 0;
 	if ( defined $a{stdout_file} ) {
-		open( $out_fh, '>', $a{stdout_file} )
+		open( APP_MIGRATE_OUT, '>', $a{stdout_file} )
 			or die "app_migrate.pl: cannot write $a{stdout_file}: $!\n";
+		$to_file = 1;
 	}
 	my $opened = eval {
-		if ($out_fh) {
-			$pid = open3( $in, [ '&', $out_fh ], $stderr, @cmd );
+		if ($to_file) {
+			# The ['&', $fh] form needs an IPC::Open3 newer than Debian 13
+			# ships with perl 5.40; the documented string form works on both.
+			$pid = open3( $in, '>&APP_MIGRATE_OUT', $stderr, @cmd );
 		}
 		else {
 			$pid = open3( $in, $out, $stderr, @cmd );
@@ -511,7 +514,7 @@ sub run_command {
 		die "app_migrate.pl: cannot run $cmd[0]: $e\n";
 	}
 	close $in;
-	close $out_fh if $out_fh;
+	close APP_MIGRATE_OUT if $to_file;
 
 	my $stdout = '';
 	if ( defined $out ) {
