@@ -129,6 +129,40 @@ unlike($president, qr/^\s*`sshd`;/m, 'President.pl does not start a bare sshd at
 unlike($killer, qr/^\s*system\('sshd'\);/m, 'the recovery script has no bare sshd fallback');
 like($killer, qr/&subs::sshd_start\(\)/, 'the recovery script uses the shared builder');
 
+# The launcher itself, on this box, with a command that is not sshd. Two paths:
+# setsid when the app ships it, a detached fork when it does not. A missing
+# launcher used to be a silent no-start, so both are asserted here.
+{
+	my $dir = tempdir(CLEANUP => 1);
+	my $out = "$dir/ran";
+	my @cmd = ($^X, '-e', "open(my \$f, '>', '$out'); print \$f 'x'; close \$f");
+
+	# (a) no setsid on PATH: the fork path must still run the command.
+	my $bare = tempdir(CLEANUP => 1);
+	local $ENV{'PATH'} = $bare;
+	ok(!-x "$bare/setsid", 'the empty PATH has no setsid, so the fallback is what runs');
+	is(subs::sshd_launch(@cmd), 1, 'the fork fallback reports a launch');
+	my $deadline = time + 10;
+	1 until (-e $out || time > $deadline);
+	ok(-e $out, 'the fallback ran the command');
+
+	# (b) setsid on PATH: it is preferred and still runs the command.
+	unlink $out;
+	my $with = tempdir(CLEANUP => 1);
+	my $real = do { my $p; foreach my $d (split /:/, $ENV{'ORIGINAL_PATH'} || '/usr/bin:/bin') { if (-x "$d/setsid") { $p = "$d/setsid"; last } } $p };
+	SKIP: {
+		skip 'no setsid on this box to prefer', 2 unless defined $real;
+		symlink($real, "$with/setsid") or skip "cannot stage setsid: $!", 2;
+		local $ENV{'PATH'} = $with;
+		is(subs::sshd_launch(@cmd), 1, 'setsid is used when it is there');
+		my $until = time + 10;
+		1 until (-e $out || time > $until);
+		ok(-e $out, 'and it runs the command');
+	}
+
+	is(subs::sshd_launch(), 0, 'no command is not a launch');
+}
+
 # The watched loop has a warranty and a lease, or the manager reaps a healthy one.
 is(subs::subprocessor_warranty_for('sshd watcher'), 'forever', 'the sshd watcher has a forever warranty');
 is(subs::subprocessor_heartbeat_for('sshd watcher'), '5m', 'and a heartbeat lease longer than its turn');

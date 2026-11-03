@@ -473,6 +473,38 @@ sub sshd_running {
 	return 0;
 }
 
+# Where a daemon is launched from, and how: setsid when it is there, a plain fork
+# otherwise. setsid is a BusyBox applet on Android, and an app that ships its own
+# bin may not carry it - a missing launcher must not become a silent no-start, so
+# the fallback detaches by hand (fork, setsid(2) in the child, exec). Returns 1
+# when something was launched.
+sub sshd_launch {
+	my (@cmd) = @_;
+	return 0 unless @cmd;
+	foreach my $dir ( split /:/, ( $ENV{'PATH'} || '' ) ) {
+		next unless length $dir;
+		if (-f "$dir/setsid" && -x _) {
+			return 1 if system('setsid', @cmd) == 0;
+			last;    # found but it would not run: fall through to the fork
+		}
+	}
+	my $pid = fork();
+	return 0 unless defined $pid;
+	if ($pid == 0) {
+		# The child: its own session, no inherited descriptors back to the tree.
+		# Qualified: House imports POSIX with an empty list, so setsid is not in
+		# scope as a bare word.
+		POSIX::setsid();
+		open(STDIN, '<', '/dev/null');
+		open(STDOUT, '>', '/dev/null');
+		open(STDERR, '>', '/dev/null');
+		exec(@cmd);
+		exit 127;
+	}
+	waitpid($pid, 0);
+	return 1;
+}
+
 # One daemon per tree, whatever calls this - the master's boot loop and the
 # watchdog both do. The check and the move to /tmp are the lock; the lock file
 # keeps a second caller from racing between its check and its exec.
@@ -487,12 +519,9 @@ sub sshd_start {
 	flock($guard, LOCK_EX | LOCK_NB) or do { close $guard; return 0 };
 	my $started = 0;
 	unless (&sshd_running()) {
-		# setsid detaches the daemon from this process group, so a subprocessor
-		# reaper's TERM to the group (or the tree stopping) leaves the login
-		# service up; sshd itself forks into the background and exits at once, so
-		# the next call is not a wait for a login session.
-		system('setsid', @cmd);
-		$started = 1;
+		# sshd itself forks into the background and exits at once, so the next call
+		# is not a wait for a login session.
+		$started = &sshd_launch(@cmd);
 	}
 	close $guard;
 	return $started;
