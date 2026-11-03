@@ -398,17 +398,12 @@ sub network_helper {
 	my ($arguments, $stdin) = @_;
 	my $script = 'scripts/jawnos_network.pl';
 	return { ok => 0, error => 'The network helper is missing.' } unless -e $script;
-	my ($output, $input);
-	my $pid = eval { open2($output, $input, $^X, $script, @{$arguments || []}) };
-	return { ok => 0, error => 'The network helper could not start.' } unless $pid;
-	if (defined $stdin) {
-		eval { print {$input} $stdin; };
-	}
-	eval { close $input; };
-	local $/;
-	my $json = eval { <$output> } // '';
-	eval { close $output; };
-	waitpid($pid, 0);
+	my $run = eval { &subs::subprocessor_command(
+		[ $^X, $script, @{$arguments || []} ],
+		{ name => 'network helper', stdin => $stdin, stdout => 'capture', stderr => 'inherit' }
+	) };
+	return { ok => 0, error => 'The network helper could not start.' } unless ref $run eq 'HASH' && $run->{'pid'};
+	my $json = $run->{'output'} // '';
 	my $answer = eval { decode_json($json) };
 	return $answer if ref $answer eq 'HASH';
 	return { ok => 0, error => 'The network helper did not return a readable answer.' };

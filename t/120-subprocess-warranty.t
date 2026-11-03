@@ -1,4 +1,4 @@
-# tests-for: lib/JawnOS/Domain/Process.pm lib/JawnOS/Domain/Calendar.pm lib/JawnOS/Domain/Lan.pm lib/JawnOS/Domain/Loader.pm perl/President.pl jawn
+# tests-for: lib/JawnOS/Domain/Process.pm lib/JawnOS/Domain/Calendar.pm lib/JawnOS/Domain/Lan.pm lib/JawnOS/Domain/Loader.pm lib/JawnOS/Domain/Render.pm lib/JawnOS/Manager/Part02.pm lib/JawnOS/Manager/Part08.pm perl/President.pl jawn
 # covers:    a subprocessor stamps a warranty, the reaper forgets a dead pid and kills a job past its
 #            finite warranty, and a resident loop or a tunnel holder declared 'forever' is never touched.
 
@@ -16,6 +16,7 @@ use JawnOSTest;
 # deadline from the child's start; 'forever' is for the resident loops, the
 # servers and a tunnel holder, whose own stop path ends them.
 
+subs::preload('subprocessor_command');
 subs::preload('subprocessor_warranty_at');
 subs::preload('subprocessor_warranty_for');
 subs::preload('subprocessor_reap');
@@ -149,7 +150,7 @@ sub tracked_record {
 {
 	my $tracked = { status => 'report' };
 	my $report = &subs::subprocessor_reap($tracked, now => $NOW, alive => sub { 0 });
-	is_deeply($report, { reaped => 0, expired => 0, killed => 0, extended => 0 }, 'the report key is not a parent');
+	is_deeply($report, { reaped => 0, expired => 0, killed => 0, extended => 0, capped => 0 }, 'the report key is not a parent');
 }
 
 # A 'forever' process with a stale heartbeat is wedged: the lease expires it.
@@ -235,6 +236,36 @@ sub tracked_record {
 	is_deeply($kills[1], ['KILL', -424242], 'KILL goes to the wrapper group');
 }
 
+# --------------------------------------------------------- a tracked command
+{
+	my $run = &subs::subprocessor_command([$^X, '-e', 'print "hello"'],
+		{ name => 'test command', record => 0, warranty => '5s' });
+	is($run->{'ok'}, 1, 'a command that exits zero is ok');
+	is($run->{'output'}, 'hello', 'the command output is captured');
+
+	$run = &subs::subprocessor_command([$^X, '-e', 'exit 3'],
+		{ name => 'test command', record => 0, warranty => '5s' });
+	is($run->{'ok'}, 0, 'a non-zero command is not ok');
+	is($run->{'exit'}, 3, 'the exit status is reported');
+
+	$run = &subs::subprocessor_command([$^X, '-e', 'sleep 10'],
+		{ name => 'test command', record => 0, warranty => '0.2s' });
+	ok($run->{'timed_out'}, 'a command past its warranty is stopped');
+	ok(!$run->{'ok'}, 'and reports failure');
+}
+
+# An untracked descendant cannot extend an ancestor forever: past the cap the
+# ancestor expires and the group kill takes the hung descendant.
+{
+	my $tracked = tracked_record(warranty => $NOW - 1, pgid => 200);
+	my @kills;
+	my $report = &subs::subprocessor_reap($tracked,
+		now => $NOW, alive => sub { 1 }, kill => sub { push @kills, [@_] },
+		starttime => sub { '' }, descendants => sub { ['300'] }, max_descendant_ms => 0);
+	is($report->{'expired'}, 1, 'a spent descendant cap lets the ancestor expire');
+	is($report->{'capped'}, 1, 'the cap was reached');
+}
+
 # --------------------------------------------------------------- the wiring
 my $calendar = read_file("$root/lib/JawnOS/Domain/Calendar.pm");
 like($calendar, qr/subprocessor_warranty_at\(\$warranty_spec, \$started\)/,
@@ -257,6 +288,14 @@ like($loader, qr/JawnOS::Domain::Process' for qw\([^)]*subprocessor_reap[^)]*sub
 	'the loader maps the process helpers');
 like($loader, qr/JawnOS::Domain::Process' for qw\([^)]*subprocessor_heartbeat[^)]*subprocessor_heartbeat_for/,
 	'the loader maps the heartbeat helpers');
+like($loader, qr/JawnOS::Domain::Process' for qw\([^)]*subprocessor_command/, 'the loader maps the command helper');
+
+my $render = read_file("$root/lib/JawnOS/Domain/Render.pm");
+like($render, qr/subs::subprocessor_command\(\$command/, 'the arbitrary command runner tracks its child');
+my $part08 = read_file("$root/lib/JawnOS/Manager/Part08.pm");
+like($part08, qr/subs::subprocessor_command/, 'the network helper is a tracked command');
+my $part02 = read_file("$root/lib/JawnOS/Manager/Part02.pm");
+like($part02, qr/subs::subprocessor_command\(\$command/, 'the scanner command is tracked');
 
 my $lan = read_file("$root/lib/JawnOS/Domain/Lan.pm");
 like($lan, qr/warranty => &subs::forever_warranty\(\)/,

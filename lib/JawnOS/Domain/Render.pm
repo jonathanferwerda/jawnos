@@ -455,7 +455,11 @@ sub run_command {
 			&Websocket::send('server', $json);
 		}
 		else {
-			$exec = eval { return `$command` };
+			# A command is a grandchild of this wrapper. The tracked helper gives it
+			# its own warranty, so a hung command is killed instead of extending this
+			# wrapper's deadline forever.
+			my $run = eval { &subs::subprocessor_command($command, { name => 'run command', stderr => 'inherit' }) };
+			$exec = ref $run eq 'HASH' ? ($run->{'error'} // $run->{'output'} // '') : '';
 			my $json = { type => 'command', whoami => $whoami, hostname => $hostname, uuid => &subs::random_string_creator(), command => $command, 'return' => $exec, timestamp => $timestamp };
 
 			&Websocket::send('server', $json);

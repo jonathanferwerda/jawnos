@@ -750,7 +750,7 @@ Mojo::IOLoop->recurring(5 => sub {
 		},
 	}) };
 	$log->info('subprocess reaper: ' . join(', ', map { "$_=$report->{$_}" } sort keys %{$report}))
-		if $report && ($report->{'reaped'} || $report->{'expired'} || $report->{'killed'});
+		if $report && ($report->{'reaped'} || $report->{'expired'} || $report->{'killed'} || $report->{'capped'});
 });
 
 sub shut_down() {

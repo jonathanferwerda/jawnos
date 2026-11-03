@@ -289,7 +289,8 @@ sub scan($c,$scandata) {
     Mojo::IOLoop->reset;
 		($db,$database,$sql) = &subs::database_grabber();
 		my $command = &scanner_scan_command($feed, $file);
-		my $caseworker = `$command`;
+		my $run = &subs::subprocessor_command($command, { name => 'document scanner', stderr => 'inherit' });
+		my $caseworker = $run->{'output'} // '';
 		sleep 1;
 		my @scans = &scanner_page_list($file);
 		my @filenames;

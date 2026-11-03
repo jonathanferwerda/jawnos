@@ -26,6 +26,8 @@ package subs;
 use strict;
 use warnings;
 no warnings 'once';
+use File::Temp qw(tempfile);
+use POSIX ();
 
 # The warranty seed map, keyed by the name a caller passes to
 # subs::subprocessor. Values are a compact duration ('5s', '30m', '2h') or
@@ -143,6 +145,7 @@ our %WARRANTY = (
 	'manual ble adopt scan'          => '60s',
 	'reset file encrypt'             => '5m',
 	'run command'                    => '5m',
+	'network helper'                 => '5m',
 	'teletype backup'                => '10m',
 	'remote upgrade'                 => '30m',
 	'merge database'                 => '30m',
@@ -248,6 +251,182 @@ sub subprocessor_heartbeat {
 	return 1;
 }
 
+# Run a command as a tracked child with its own warranty. The wrapper that calls
+# this (a subprocessor child) is waiting on the command, so the command is a
+# grandchild; without its own record the reaper could only see it as an unnamed
+# process-group member and would extend the wrapper for as long as it lived - a
+# hung ffmpeg kept its ancestor alive forever. With this record the reaper bounds
+# the command itself, extends the wrapper only to the command's deadline, and
+# kills the command by pid (its pgid is 0, so the wrapper's group is untouched).
+#
+# $command is an arrayref (exec list, no shell) or a string (run by /bin/sh -c).
+# $params:
+#   name        the record name and, unless warranty is given, its seed key
+#   warranty    a spec or absolute moment; default 60s
+#   stdout      'capture' (default) or a path to write
+#   stderr      'stdout' (default), 'inherit', or a path
+#   stdin       data to write to the command; stdin_path names a file instead
+#   cwd, env    optional
+#   record      0 to skip the process-watch record and heartbeats (tests)
+# Returns { ok, status, exit, signal, timed_out, output, pid, error }.
+sub subprocessor_command {
+	my ($command, $params) = @_;
+	$params ||= {};
+	my $name = (defined $params->{'name'} && length $params->{'name'}) ? $params->{'name'} : 'command';
+	my $spec = defined $params->{'warranty'}
+		? $params->{'warranty'}
+		: &subs::subprocessor_warranty_for($name);
+	$spec = '60s' unless defined $spec && length $spec;
+	my $started = &subs::rightNow();
+	my $warranty = &subs::subprocessor_warranty_at($spec, $started);
+	my $forever = &subs::forever_warranty();
+	my $record = defined $params->{'record'} ? $params->{'record'} : 1;
+
+	my $out_setting = defined $params->{'stdout'} ? $params->{'stdout'} : 'capture';
+	my $capture = ($out_setting eq 'capture') ? 1 : 0;
+	my $out_path = $out_setting;
+	my $out_tmp;
+	if ($capture) {
+		my ($out_fh, $tmp) = tempfile('jawnos-command-XXXXXX', TMPDIR => 1, UNLINK => 0);
+		close $out_fh if $out_fh;
+		$out_path = $out_tmp = $tmp;
+	}
+
+	my $stdin_path = $params->{'stdin_path'} || '/dev/null';
+	my $in_tmp;
+	if (!defined $params->{'stdin_path'} && defined $params->{'stdin'}) {
+		my ($in_fh, $tmp) = tempfile('jawnos-command-in-XXXXXX', TMPDIR => 1, UNLINK => 0);
+		if ($in_fh) {
+			print {$in_fh} $params->{'stdin'};
+			close $in_fh;
+			$stdin_path = $in_tmp = $tmp;
+		}
+	}
+
+	my $stderr = defined $params->{'stderr'} ? $params->{'stderr'} : 'stdout';
+
+	my $pid = fork();
+	if (!defined $pid) {
+		unlink $out_tmp if defined $out_tmp;
+		unlink $in_tmp if defined $in_tmp;
+		return { ok => 0, error => "could not fork: $!" };
+	}
+	if (!$pid) {
+		open(STDIN, '<', $stdin_path) or POSIX::_exit(127);
+		open(STDOUT, '>', $out_path) or POSIX::_exit(127);
+		if ($stderr eq 'stdout' || $stderr eq 'capture') {
+			open(STDERR, '>&', \*STDOUT) or POSIX::_exit(127);
+		}
+		elsif ($stderr ne 'inherit') {
+			open(STDERR, '>', $stderr) or POSIX::_exit(127);
+		}
+		if (defined $params->{'cwd'}) {
+			chdir $params->{'cwd'} or POSIX::_exit(127);
+		}
+		if (ref $params->{'env'} eq 'HASH') {
+			foreach my $key (keys %{$params->{'env'}}) {
+				$ENV{$key} = $params->{'env'}->{$key};
+			}
+		}
+		if (ref $command eq 'ARRAY') { exec(@{$command}); }
+		else { exec('/bin/sh', '-c', $command); }
+		POSIX::_exit(127);
+	}
+
+	# The command inherits the wrapper's process group (pgid 0 here), so a group
+	# kill of the wrapper still takes it, while its own expiry kills only it.
+	my $start_ticks = '';
+	if (open(my $stat_fh, '<', "/proc/$pid/stat")) {
+		my $stat_line = <$stat_fh>;
+		close $stat_fh;
+		if (defined $stat_line && (my $close = rindex($stat_line, ')')) >= 0) {
+			my @stat_field = split ' ', substr($stat_line, $close + 2);
+			$start_ticks = $stat_field[19] // '';
+		}
+	}
+	my $child = {
+		parent => $$,
+		pid => $pid,
+		name => $name,
+		status => 'start',
+		timestamp => $started,
+		start_timestamp => $started,
+		uuid => &subs::random_string_creator(10),
+		warranty => $warranty,
+		warranty_spec => $spec,
+		start_ticks => $start_ticks,
+		pgid => 0,
+	};
+	my $watch;
+	if ($record) {
+		$watch = &subs::home('~/.process_watch');
+		&subs::unix_socket_sender($watch, $child) if $watch && -e $watch;
+	}
+
+	my $status;
+	my $timed_out = 0;
+	my $deadline = ($warranty < $forever) ? $warranty : 0;
+	while (1) {
+		my $done = waitpid($pid, POSIX::WNOHANG);
+		if ($done == $pid) { $status = $?; last; }
+		if ($done == -1 && $!{ECHILD}) { $status = -1; last; }
+		if ($deadline && &subs::rightNow() > $deadline) {
+			$timed_out = 1;
+			kill 'TERM', $pid;
+			my $give_up = time + 2;
+			while (1) {
+				my $reaped = waitpid($pid, POSIX::WNOHANG);
+				if ($reaped == $pid) { $status = $?; last; }
+				if ($reaped == -1 && $!{ECHILD}) { $status = -1; last; }
+				last if time > $give_up;
+				select(undef, undef, undef, 0.1);
+			}
+			if (!defined $status) {
+				kill 'KILL', $pid;
+				waitpid($pid, 0);
+				$status = $?;
+			}
+			last;
+		}
+		&subs::subprocessor_heartbeat() if $record;
+		select(undef, undef, undef, 0.25);
+	}
+
+	if ($record) {
+		$child->{'status'} = 'stop';
+		$child->{'stop_timestamp'} = &subs::rightNow();
+		$child->{'exit'} = (defined $status && $status >= 0) ? ($status >> 8) : 127;
+		&subs::unix_socket_sender($watch, $child) if $watch && -e $watch;
+	}
+
+	my $output = '';
+	if ($capture && defined $out_tmp && -e $out_tmp) {
+		if (open(my $fh, '<', $out_tmp)) {
+			local $/;
+			$output = <$fh> // '';
+			close $fh;
+		}
+	}
+	unlink $out_tmp if defined $out_tmp;
+	unlink $in_tmp if defined $in_tmp;
+
+	my $exit = (defined $status && $status >= 0) ? ($status >> 8) : 127;
+	my $signal = (defined $status && $status > 0) ? ($status & 127) : 0;
+	my $error;
+	$error = "the command did not finish within $spec" if $timed_out;
+	$error = 'the command was reaped before it returned' if !$error && defined $status && $status < 0;
+	return {
+		ok => (!$timed_out && defined $status && $status == 0) ? 1 : 0,
+		status => defined $status ? $status : 127,
+		exit => $exit,
+		signal => $signal,
+		timed_out => $timed_out,
+		output => $output,
+		pid => $pid,
+		error => $error,
+	};
+}
+
 # One reaper pass over %subprocesses (the shape ./jawn keeps:
 # { parent_pid => { subprocesses => { pid => record } } }).
 #
@@ -268,12 +447,13 @@ sub subprocessor_heartbeat {
 # without forking.
 sub subprocessor_reap {
 	my ($tracked, %opt) = @_;
-	my $report = { reaped => 0, expired => 0, killed => 0, extended => 0 };
+	my $report = { reaped => 0, expired => 0, killed => 0, extended => 0, capped => 0 };
 	return $report unless ref $tracked eq 'HASH';
 	my $now = defined $opt{'now'} ? $opt{'now'} : time() * 1000;
 	my $grace = defined $opt{'grace_ms'} ? $opt{'grace_ms'} : 5000;
 	my $forever = defined $opt{'forever'} ? $opt{'forever'} : 32503680000000;
 	my $step = defined $opt{'descendant_step'} ? $opt{'descendant_step'} : 30_000;
+	my $max_descendant = defined $opt{'max_descendant_ms'} ? $opt{'max_descendant_ms'} : 900_000;
 
 	my $alive = $opt{'alive'} || sub {
 		my ($pid) = @_;
@@ -378,13 +558,30 @@ sub subprocessor_reap {
 		my $found = $descendants->($pid, $pgid);
 		next unless ref $found eq 'ARRAY' && @{$found};
 		my $deadline = $now + $step;
+		my $untracked = 0;
 		foreach my $kid (@{$found}) {
 			my $child = $live{$kid};
-			next unless $child;
-			my $child_warranty = $child->{'warranty'};
-			next unless defined $child_warranty && $child_warranty =~ /^\d+$/ && $child_warranty < $forever;
-			$deadline = $child_warranty + $step if $child_warranty + $step > $deadline;
+			my $child_warranty = $child ? $child->{'warranty'} : undef;
+			if (defined $child_warranty && $child_warranty =~ /^\d+$/ && $child_warranty < $forever) {
+				$deadline = $child_warranty + $step if $child_warranty + $step > $deadline;
+			}
+			else {
+				$untracked = 1;
+			}
 		}
+		# A tracked child has its own deadline, so it may extend the ancestor for
+		# as long as it is allowed to run. An untracked grandchild has none, so
+		# cap the extension: past the cap the ancestor expires and the group kill
+		# takes the hung descendant with it instead of extending forever.
+		if ($untracked) {
+			$record->{'descendant_since'} = $now unless defined $record->{'descendant_since'};
+			my $cap = $record->{'descendant_since'} + $max_descendant;
+			if ($deadline > $cap) {
+				$deadline = $cap;
+				$report->{'capped'}++;
+			}
+		}
+		next if $deadline <= $now;
 		if (defined $warranty && $warranty =~ /^\d+$/ && $warranty < $forever && $deadline > $warranty) {
 			$record->{'warranty'} = $deadline;
 		}
