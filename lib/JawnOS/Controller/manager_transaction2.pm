@@ -106,6 +106,22 @@ sub action_16986 {
 	my $jtransactions = $c->param('transactions');
 	my $transactions = eval { return decode_json $c->param('transactions') } || {};
 
+	# A transfer needs both ends and one figure. An empty amount used to write two
+	# zero-value legs, and a destination equal to the source moved money in a
+	# circle; say so before anything values or records the move.
+	if ($movement eq 'transfer') {
+		$transfer_amount = &subs::numeric_formatter($transfer_amount) + 0;
+		if (!$transfer_amount) {
+			$c->render(json => { error => &subs::ui('Enter the amount to transfer.') });
+			return;
+		}
+		if (!defined $to_account || $to_account eq '' || $to_account eq $account) {
+			$c->render(json => { error => &subs::ui('Choose a different account to receive the transfer.') });
+			return;
+		}
+		$transfer_amount = abs($transfer_amount);
+	}
+
 	# ---- crypto wallets -----------------------------------------------------
 	# A wallet account is read in its own coin: every figure on the form is a
 	# native amount, so it is converted at the cached snapshot rate and the

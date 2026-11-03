@@ -1,22 +1,50 @@
-<span class="transferable_transaction" attribute="movement">
-	<label>To</label>
-	<% my $to_accounts = $appts->{'__accounts'} || []; %>
-	<% my $to_chosen = $appts->{$a}->{'setting'}->{'to_account'} || $appts->{$a}->{'last_account'} || ''; %>
-	<% $to_chosen = '' if length($to_chosen) && !grep { $_->{'app'} eq $to_chosen } @{$to_accounts}; %>
-	<% $to_chosen = $to_accounts->[0]->{'app'} if !length($to_chosen) && scalar @{$to_accounts}; %>
-	<select class="to_account app_setting purchase_input" app="<%= $a %>" attribute="to_account" name="account" style="max-width:40%;color:var(--ink);">
-		<% foreach my $ap (@{$to_accounts}) { %>
-			<option 
-				value="<%= $ap->{'app'} %>"
-				label="<%= $ap->{'formatted_name'} %>"
-				<% if ($ap->{'crypto_asset'}) { %>data-crypto="1" data-asset="<%= $ap->{'crypto_asset'} %>"<% } %>
-				<% if ($ap->{'app'} eq $to_chosen) { %>
-					selected
+<%
+	# A transfer is two ends and one figure. app_details already chose the
+	# "Paid from" account, which is this transfer's source, so the form names it
+	# and makes the destination picker start on a different account. The
+	# destination select is deliberately not a .purchase_input: that class writes
+	# a setting keyed by the input's name, and this one is to_account, not
+	# account.
+	no warnings 'uninitialized';
+	my $to_accounts = $appts->{'__accounts'} || [];
+	my $from_account = $app->{'account'} || $appts->{$a}->{'setting'}->{'account'} || $appts->{$a}->{'last_account'} || '';
+	my ($from_entry) = grep { $_->{'app'} eq $from_account } @{$to_accounts};
+	my $from_name = $from_entry ? $from_entry->{'formatted_name'} : &subs::format_name($from_account);
+	my $to_chosen = $appts->{$a}->{'setting'}->{'to_account'} || '';
+	$to_chosen = '' unless grep { $_->{'app'} eq $to_chosen } @{$to_accounts};
+	$to_chosen = '' if $to_chosen eq $from_account;
+	if (!length($to_chosen)) {
+		my ($other) = grep { $_->{'app'} ne $from_account } @{$to_accounts};
+		$to_chosen = $other ? $other->{'app'} : ($to_accounts->[0] ? $to_accounts->[0]->{'app'} : '');
+	}
+%>
+<div class="tx_line_body tx_transfer_body">
+	<div class="tx_row tx_transfer_route">
+		<span class="tx_field tx_transfer_end">
+			<label><%= &subs::ui('From') %></label>
+			<span class="tx_transfer_account tx_transfer_from_name"><%= $from_name %></span>
+		</span>
+		<span class="tx_transfer_arrow" aria-hidden="true">→</span>
+		<span class="tx_field tx_transfer_end">
+			<label><%= &subs::ui('To') %></label>
+			<select class="to_account app_setting" app="<%= $a %>" attribute="to_account">
+				<% if (!scalar @{$to_accounts}) { %>
+					<option value=""><%= &subs::ui('No accounts yet') %></option>
 				<% } %>
-				<%= $ap->{'formatted_name'} %>
-			</option>
-		<% } %>
-	</select>
-	<label>Amount</label>
-	<input type="number" attribute="transfer_amount" name="amount" app="<%= $a %>" class="purchase_input transfer_amount"><br>
-</span><br>
+				<% foreach my $ap (@{$to_accounts}) { %>
+					<option value="<%= $ap->{'app'} %>" label="<%= $ap->{'formatted_name'} %>"
+						<% if ($ap->{'crypto_asset'}) { %>data-crypto="1" data-asset="<%= $ap->{'crypto_asset'} %>"<% } %>
+						<% if ($ap->{'app'} eq $to_chosen) { %>selected<% } %>
+						><%= $ap->{'formatted_name'} %></option>
+				<% } %>
+			</select>
+		</span>
+	</div>
+	<div class="tx_row tx_money_row">
+		<span class="tx_field tx_total">
+			<label><%= &subs::ui('Amount') %></label>
+			<input type="text" inputmode="decimal" attribute="transfer_amount" app="<%= $a %>" class="transfer_amount" placeholder="0.00" autocomplete="off">
+		</span>
+	</div>
+	<p class="tx_transfer_note"><%= &subs::ui('The amount leaves the From account and arrives in the To account.') %></p>
+</div>

@@ -32,7 +32,7 @@
 	</select>
 	<br>
 	<br>
-	<label><%= &subs::ui('Paid from') %></label>
+	<label class="tx_account_label"><%= &subs::ui('Paid from') %></label>
 	<% my $accounts_list = $appts->{'__accounts'} || []; %>
 	<% my $current_account = $app->{'account'} || $appts->{$a}->{'setting'}->{'account'} || $appts->{$a}->{'last_account'} || ''; %>
 	<% $current_account = '' if length($current_account) && !grep { $_->{'app'} eq $current_account } @{$accounts_list}; %>

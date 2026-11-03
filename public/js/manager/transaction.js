@@ -428,8 +428,34 @@ $(document).on('input change', '.tx_tendered', function() {
 });
 
 $(document).on('change', '.app_details .account', function() {
-	txTenderPaint($(this).closest('.app_details'));
+	var ad = $(this).closest('.app_details');
+	txTenderPaint(ad);
+	txTransferPaint(ad);
 });
+
+// The same account picker is the source of an expense and of a transfer, so its
+// label follows the movement: "Paid from" for a payment, "From" for a move.
+function txAccountLabel(ad, movement) {
+	var text = (movement == 'transfer') ? 'From' : 'Paid from';
+	ad.find('.tx_account_label').text((typeof jawnosT === 'function') ? jawnosT(text) : text);
+}
+
+// A transfer reads From -> To: the name beside From follows the paid-from
+// picker, and the destination starts on a different account so the default is a
+// real move rather than an account paying itself.
+function txTransferPaint(ad) {
+	if (!ad || !ad.length) { return; }
+	var to = ad.find('.to_account');
+	if (!to.length) { return; }
+	var picked = ad.find('.account option:selected');
+	var name = picked.attr('label') || picked.text() || '';
+	ad.find('.tx_transfer_from_name').text(name);
+	var from = ad.find('.account').val();
+	if (to.val() === from) {
+		var other = to.find('option').filter(function() { return $(this).val() !== from; }).first();
+		if (other.length) { to.val(other.val()); }
+	}
+}
 
 $(document).on('change', '.app_details .movement', function() {
 	txTenderPaint($(this).closest('.app_details'));
@@ -439,7 +465,9 @@ $(function() {
 	$('.app_details').each(function() {
 		var ad = $(this);
 		txTenderPaint(ad);
+		txTransferPaint(ad);
 		var movement = ad.find('.movement').val();
+		txAccountLabel(ad, movement);
 		if (movement == 'transfer' || movement == 'inventory') {
 			ad.closest('.appointment').find('.tx_add_row, .tx_summary').hide();
 		}

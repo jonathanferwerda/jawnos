@@ -220,6 +220,10 @@ $(document).on('change', '.transaction.movement', function() {
 	var app = $(this).closest('.app_details').attr('app');
 	var movement = $(this).val();
 	var appointment = $(this).closest('.appointment');
+	// The same picker is the source of an expense and of a transfer; name it
+	// for the movement so a transfer reads From -> To.
+	var ad = $(this).closest('.app_details');
+	txAccountLabel(ad, movement);
 	appointment.find('.tx_add_row, .tx_summary').toggle(!(movement == 'transfer' || movement == 'inventory'));
 	if (movement == 'transfer') {
 		$('.transferable_transaction').show();
@@ -305,18 +309,35 @@ $(document).on('click', '.record_purchase', function() {
 	var item = iq.find('.item').val();
 	var model = iq.find('.model').val();
 	var total = iq.find('.total').val();
-
-	var sum_total = numeral(iq.find('.transaction_total[attribute="total"]').text()).value();
-	if ($.trim(total || '') === '' && $.trim(amount || '') === '' && sum_total === 0) {
-		alert((typeof jawnosT === 'function') ? jawnosT('Enter the amount or the total before saving.') : 'Enter the amount or the total before saving.');
-		return;
-	}
-
-	var unit = iq.find('.unit').val() || 1;
-
 	var transfer_amount = iq.find('.transfer_amount').val();
 	var transfer_aux = iq.find('.transfer_aux').val();
 	var to_account = iq.find('.to_account').val();
+
+	// A transfer carries its figure in transfer_amount, not in the line amount
+	// and total an expense uses, so the old check rejected every transfer with
+	// the amount-or-total message. Each movement is now asked for what it has.
+	var t = function(text) { return (typeof jawnosT === 'function') ? jawnosT(text) : text; };
+	if (movement == 'transfer') {
+		if (!(numeral(transfer_amount).value() > 0)) {
+			alert(t('Enter the amount to transfer.'));
+			iq.find('.transfer_amount').focus();
+			return;
+		}
+		if (!to_account || to_account === account) {
+			alert(t('Choose a different account to receive the transfer.'));
+			iq.find('.to_account').focus();
+			return;
+		}
+	}
+	else {
+		var sum_total = numeral(iq.find('.transaction_total[attribute="total"]').text()).value();
+		if ($.trim(total || '') === '' && $.trim(amount || '') === '' && sum_total === 0) {
+			alert(t('Enter the amount or the total before saving.'));
+			return;
+		}
+	}
+
+	var unit = iq.find('.unit').val() || 1;
 
 	var data = { 
 		ago: ago,

@@ -3078,6 +3078,14 @@ details.cfg-acc > summary:focus-visible { outline: 2px solid var(--accent, curre
 .app_details table.tx_summary td { font-size: 20px; padding: 2px 4px; }
 .app_details .tx_actions { display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; align-items: center; margin-top: 6px; }
 .app_details .tx_actions .tx_save { font-weight: 700; background: var(--accent-soft, var(--panel-2)); border-color: var(--accent-line, var(--line)); }
+/* A transfer is a route rather than a line: the source is named on the left,
+   the destination picked on the right, and the money sits under both. */
+.app_details .tx_transfer_route { align-items: flex-end; }
+.app_details .tx_transfer_end { flex: 1 1 160px; }
+.app_details .tx_transfer_end > select { width: 100%; }
+.app_details .tx_transfer_account { display: flex; align-items: center; min-height: 34px; font-size: 17px; font-weight: 600; }
+.app_details .tx_transfer_arrow { align-self: flex-end; padding: 0 2px 8px; font-size: 22px; line-height: 1; opacity: .6; }
+.app_details .tx_transfer_note { margin: 2px 0 0; font-size: 12px; line-height: 1.35; opacity: .65; }
 .purchase_details.tx_added_line .tx_header_only { display: none; }
 
 /* ---- the magazine Editor app ------------------------------------------------
