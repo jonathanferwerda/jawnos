@@ -129,6 +129,8 @@ like($ws_pm, qr/\$ra_html = eval \{ &subs::appt_header_printer\(\{ app => \$ra, 
 	'only a window with no cached header is rendered');
 like($ws_pm, qr/destination => \$browser_tab_id,.*?timestamp => &subs::rightNow\(\)/s,
 	'the catch-up goes to the tab that asked');
+like($ws_pm, qr/\$data->\{'method'\} = '' unless defined \$data->\{'method'\};/,
+	'a frame that omits method is normalised before the eq chain (no warning flood)');
 like($ws_pm, qr/eval \{ &subs::appointment_theme_push\(\) \} if \$data->\{'theme'\};/,
 	'a reconnect asks the theme to speak once more');
 like($part37, qr/my \$deliver = sub \{.*?my \$ok = eval \{ \$conn->send\(\$wire\); 1 \};.*?delete \$target->\{\$app\}->\{\$key\} if defined \$key;/s,

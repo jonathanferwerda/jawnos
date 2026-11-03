@@ -129,7 +129,7 @@ sub action_47050 {
 		pathname => $c->param('pathname'),
 		ticket_uuid => $c->session('ticket_uuid')
 	};
-	if ($c->param('remote') eq 'yes') {
+	if (($c->param('remote') || '') eq 'yes') {
 		my @app = split /\@/, $app;
 		my $sapp = $app[0];
 		$gb::remote_ws->{$sapp}->{$browser_tab_id} = $c->tx;
@@ -236,6 +236,14 @@ sub action_47050 {
 	my $ws_neighbour_refresh = 20000;
 	$c->on(message => sub ($ws, $msg) {
 		my $data = eval { return decode_json $msg };
+		# A frame that omits app/type/method used to reach the eq chains below
+		# undefined, warning once per comparison - thousands per minute on a busy
+		# socket, and a warning flood is what fills the pty and blocks the worker
+		# that wrote it. Normalise the three keys once, here.
+		$data = {} unless ref $data eq 'HASH';
+		$data->{'app'} = '' unless defined $data->{'app'};
+		$data->{'type'} = '' unless defined $data->{'type'};
+		$data->{'method'} = '' unless defined $data->{'method'};
 		my $app = $data->{'app'};
 		my $apper = $data->{'app'};
 		if ($app =~ /@/gi) {
