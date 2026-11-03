@@ -415,8 +415,16 @@ sub sshd_command {
 	$home =~ s{/+$}{};
 	$prefix =~ s{/+$}{};
 	my @host_keys = grep { -f $_ } map { "$prefix/etc/ssh/ssh_host_$_\_key" } qw/ed25519 ecdsa rsa/;
+	# The daemon is named by its absolute path under the prefix, never the bare
+	# word. `sshd` is not on an Android app's PATH (that is /system/bin and the
+	# APEX dirs, not files/usr/bin), so a bare 'sshd' makes execvp answer ENOENT
+	# and the login service never starts - the tablet, 2026-11-03, whose log said
+	# exactly `setsid: exec sshd: No such file or directory`. The prefix path is
+	# also the one the app's runtime installs, so this names the binary this
+	# command's own config and host keys belong to.
+	my $daemon = "$prefix/bin/sshd";
 	my @sshd = (
-		'sshd', '-f', "$prefix/etc/ssh/sshd_config",
+		$daemon, '-f', "$prefix/etc/ssh/sshd_config",
 		'-o', "PidFile=$prefix/tmp/sshd.pid",
 		'-o', "AuthorizedKeysFile=$home/.ssh/authorized_keys",
 		'-o', 'StrictModes=no',
@@ -478,6 +486,12 @@ sub sshd_running {
 # bin may not carry it - a missing launcher must not become a silent no-start, so
 # the fallback detaches by hand (fork, setsid(2) in the child, exec). Returns 1
 # when something was launched.
+#
+# "Launched" means the child did not exit 127. The fork path used to return 1
+# whatever happened, so an exec that could not find the daemon looked like a
+# healthy start on every pass of the watcher and the log stayed empty (the
+# tablet, 2026-11-03: `setsid: exec sshd: No such file or directory` was the one
+# and only line). The exit status is now the answer.
 sub sshd_launch {
 	my (@cmd) = @_;
 	return 0 unless @cmd;
@@ -502,7 +516,8 @@ sub sshd_launch {
 		exit 127;
 	}
 	waitpid($pid, 0);
-	return 1;
+	# exec's failure is 127 from the child; sshd itself forks and exits 0.
+	return (($? >> 8) == 127 ? 0 : 1);
 }
 
 # One daemon per tree, whatever calls this - the master's boot loop and the
@@ -513,6 +528,13 @@ sub sshd_start {
 	my @cmd = &sshd_command();
 	return 0 unless @cmd;
 	return 0 if &sshd_running();
+	# The pid file lives in the prefix's tmp, and sshd will not create the
+	# directory: it exits before it binds, which is a start that leaves no daemon
+	# and no pid file (the tablet, 2026-11-03, had no files/usr/tmp at all).
+	if ($cmd[1] eq '-f' && defined $cmd[2]) {
+		(my $usr = $cmd[2]) =~ s{/etc/ssh/sshd_config$}{};
+		mkdir "$usr/tmp" unless -d "$usr/tmp";
+	}
 	my $lock = "$ENV{'TMPDIR'}/jawnos-sshd.lock";
 	$lock = '/tmp/jawnos-sshd.lock' unless defined $ENV{'TMPDIR'} && length $ENV{'TMPDIR'};
 	open(my $guard, '>>', $lock) or return 0;
