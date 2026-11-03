@@ -82,6 +82,73 @@ For a module `Foo::Bar` extracted from `lib/JawnOS/Domain/Baz.pm`:
 - `perl scripts/where.pl <name>` must stop reporting the old part after the change; the locator is
   the acceptance test that the seam was cut cleanly.
 
+## Whole apps: the contract question
+
+Could Music, Travel, Gallery or Embedded become a CPAN distribution of its own? **Yes — but not by
+copying an app out.** An app here is not a module; it is eight registrations that happen to agree
+on a name:
+
+| Where | What it registers |
+|---|---|
+| `lib/JawnOS/Routes/*.pm` (and sometimes `perl/*.pl`) | routes |
+| `lib/JawnOS/Controller/*.pm` | actions |
+| `lib/JawnOS/Manager/*.pm`, `lib/JawnOS/Domain/*.pm` | helpers |
+| `templates/apps/…`, `templates/<app>/…` | pages |
+| `public/js/manager/<app>.js`, `public/js/manager/<app>/` | the lazy chunk |
+| `%manager_app_scripts`, `%manager_app_entry`, `%manager_toggle_apps` (`Manager/Core1_tables_hooks.pm:648-714`) | the bundle, entries and start-menu toggle |
+| `perl/help/topics_*.pl` | the help topic (`t/11`) |
+| rows keyed by `app` in `appointments`, `settings`, `cache`, … | the data |
+
+Measured today:
+
+| App | Perl | JS | Templates | Routes | Coupling |
+|---|---|---|---|---|---|
+| **Embedded** | 685 (controller) + Manager helpers | 1,089 | 612 | 19 | devices, BLE bridge, OTA, settings |
+| **Gallery** | 331 (controller) | template-driven, no app chunk | 224 | 4 | files, thumbnails, encryption, private albums |
+| **Travel** | 596 (controller) + helpers | 1,657 | 110 | 8 | files, measures, Gallery, maps, georef |
+| **Music** | 2,882 (`Music.pl` + 8 parts) | 6,076 | ~690 | 9 (registered inside `Music.pl`, not the route map) | archive, folders, encryption, WebSocket, remote audio/video |
+
+Two facts decide the feasibility:
+
+1. **Every app uses host powers it does not own**: the database and its `app`-scoped rows, settings,
+   sessions and principals, encrypted files, the WebSocket channel, i18n, theme, the lazy JS bundle
+   and the sync/watermark machinery. A CPAN dist that “works on its own” is impossible for these;
+   a dist that **plugs into a JawnOS host** is possible.
+2. **There is no app contract today**, only conventions. Music even registers its routes directly on
+   `Manager::app` (`perl/Music.pl:126`, `:256`), so there are two route registries to unify before
+   anything can be mounted.
+
+### What a real extraction needs
+
+1. **A host SDK** — `JawnOS::App` with a manifest (`name`, `title`, `icon`, `requires`, `tables`,
+   `settings`) and a context object that hands an app: db, settings, cache, principal/permissions,
+   crypto, files/media, WebSocket send, i18n, theme, jobs and logging. Nothing global, nothing
+   `subs::`.
+2. **Three registration calls** — `routes($r)`, `assets` (templates/JS/CSS from `File::ShareDir`),
+   `help` (topic text). Plus `schema` (ordered migrations) and `tests` (a harness that boots a
+   minimal host).
+3. **One line at the host** — `plugin 'JawnOS::App::Gallery'` (or a `%apps` manifest) so the
+   zero-friction rule still holds: `cpanm JawnOS::App::Gallery`, add the plugin, open the app.
+4. **The data stays where it is** — apps are rows keyed by app name, not their own schemas. An app
+   dist still writes into the host's tables; that is the price of portability here.
+
+### Order, if it is done
+
+1. **Embedded** — pilot. It has a real route surface, a clean template folder, and a domain
+   (devices/OTA) that does not depend on media encryption. It proves the host SDK under BLE and OTA.
+2. **Gallery** — smallest controller and no app JS chunk; most of it is server-rendered. It proves
+   the asset/share-dir path and the permission model.
+3. **Travel** — depends on Gallery, files and measures being reachable through the host context; the
+   map engine is 1.6k lines of browser code that has to ship as an asset.
+4. **Music** — last, and plausibly never. 6k lines of player JS, remote audio/video, WebSockets,
+   archives and sealed media. The valuable parts are already on the eleven (`Audio::Stream::Sync`,
+   `Media::Name`), and the player is a browser application, not a library.
+
+**Recommendation.** Do not put whole apps on CPAN in this roadmap's first year. The eleven modules
+are the reusable core of these apps; extracting them makes each app thinner and is the prerequisite
+work either way. Revisit whole apps only if a third-party app ecosystem or a headless app runtime is
+actually wanted — then build the host SDK and ship `JawnOS::App::Embedded` as the proof.
+
 ## The 38 candidates
 
 Thirty from the first pass, four from the store/handbook/marker/music pass, four from the
