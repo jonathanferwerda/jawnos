@@ -12,15 +12,6 @@ function softKbImeBackspace() {
 	softKbImeSync();
 }
 
-function softKbImeDeleteBack(count) {
-	count = Math.max(1, count | 0);
-	if (window.JawnIme && typeof window.JawnIme.deleteBack === 'function') { window.JawnIme.deleteBack(count); }
-	else if (window.JawnIme && typeof window.JawnIme.backspace === 'function') {
-		for (var i = 0; i < count; i++) { window.JawnIme.backspace(); }
-	}
-	softKbImeSync();
-}
-
 // A number field holds one answer, so the calculator's operand replaces it
 // rather than being appended (the dock does this by assigning field.value).
 function softKbImeSetNumber(value) {
@@ -120,74 +111,14 @@ function softKbBackspace() {
 
 // ---- hold-to-repeat ---------------------------------------------------------
 // A held backspace repeats characters, starting after a short wait and getting
-// faster the longer it is held. A double tap takes a whole word at once, and
-// holding after it keeps taking words the same way. The calculator has no
-// words, so it always repeats its expression one character at a time.
+// faster the longer it is held. Every tap — however quickly it follows the last
+// — deletes one character; there is no double-tap word delete.
 var JAWN_SOFT_HOLD_DELAY = 450;
 var JAWN_SOFT_CHAR_FIRST = 140;
 var JAWN_SOFT_CHAR_MIN = 30;
-var JAWN_SOFT_WORD_FIRST = 220;
-var JAWN_SOFT_WORD_MIN = 90;
 var JAWN_SOFT_ACCEL = 0.82;
-var JAWN_SOFT_DOUBLE = 380;
 var jawnSoftHold = null;
 var jawnSoftHoldAt = 0;
-var jawnSoftBackspaceAt = 0;
-
-function softKbDeleteSpan(el, start, end) {
-	if (!el || start == null || end == null || start >= end) { return; }
-	try { el.setRangeText('', start, end, 'end'); }
-	catch (err) {
-		el.value = el.value.slice(0, start) + el.value.slice(end);
-		el.selectionStart = el.selectionEnd = start;
-	}
-	if (!(jawnVault.sheet && el === jawnVault.sheet)) {
-		try { el.focus({ preventScroll: true }); } catch (err2) { el.focus(); }
-	}
-	softKbNotify(el);
-}
-
-// backward to the start of the previous word, trailing spaces included
-function softKbDeleteWord() {
-	if (jawnSoftIme && !jawnSoftField) {
-		var words = jawnImeText || '';
-		var i = words.length;
-		while (i > 0 && /\s/.test(words.charAt(i - 1))) { i--; }
-		while (i > 0 && !/\s/.test(words.charAt(i - 1))) { i--; }
-		if (i < words.length) { softKbImeDeleteBack(words.length - i); }
-		return;
-	}
-	var el = jawnSoftField;
-	if (!el) { return; }
-	if (el.isContentEditable) { softKbDeleteGranularity('word'); return; }
-	var v = el.value || '';
-	var end = (el.selectionStart == null) ? v.length : el.selectionStart;
-	var start = (el.selectionEnd == null) ? end : el.selectionEnd;
-	if (start != end) { softKbDeleteSpan(el, start, end); return; }
-	var i = end;
-	while (i > 0 && /\s/.test(v.charAt(i - 1))) { i--; }
-	while (i > 0 && !/\s/.test(v.charAt(i - 1))) { i--; }
-	softKbDeleteSpan(el, i, end);
-}
-
-// contenteditable: let the selection walk back by a word, then delete
-function softKbDeleteGranularity(gran) {
-	var el = jawnSoftField;
-	if (!el) { return; }
-	try { el.focus({ preventScroll: true }); } catch (err) {}
-	var sel = window.getSelection ? window.getSelection() : null;
-	if (sel && sel.rangeCount) {
-		try { sel.modify('extend', 'backward', gran); }
-		catch (err2) { sel = null; }
-		if (sel) {
-			try { document.execCommand('delete'); } catch (err3) {}
-			softKbNotify(el);
-			return;
-		}
-	}
-	try { document.execCommand('delete'); } catch (err4) {}
-	softKbNotify(el);
-}
 
 function softKbRepeatStop() {
 	if (!jawnSoftHold) { return; }
@@ -202,10 +133,6 @@ function softKbRepeatBegin() {
 	if (!jawnSoftField && !jawnSoftIme) { softKbRepeatStop(); return; }
 	if (hold.mode == 'calc') {
 		softKbRepeatStart(hold, JAWN_SOFT_CHAR_FIRST, JAWN_SOFT_CHAR_MIN, function () { softKbCalcKey('backspace'); });
-		return;
-	}
-	if (hold.mode == 'word') {
-		softKbRepeatStart(hold, JAWN_SOFT_WORD_FIRST, JAWN_SOFT_WORD_MIN, softKbDeleteWord);
 		return;
 	}
 	softKbRepeatStart(hold, JAWN_SOFT_CHAR_FIRST, JAWN_SOFT_CHAR_MIN, softKbBackspace);
@@ -235,17 +162,11 @@ function softKbBackspaceOnce() {
 
 function softKbBackspaceDown(el) {
 	var now = Date.now();
-	var double = (now - jawnSoftBackspaceAt) < JAWN_SOFT_DOUBLE;
-	jawnSoftBackspaceAt = now;
 	softKbRepeatStop();
-	if (double && jawnSoftMode != 'calc') {
-		// a double tap takes the whole word at once
-		softKbDeleteWord();
-	}
-	else { softKbBackspaceOnce(); }
+	softKbBackspaceOnce();
 	if (!jawnSoftField && !jawnSoftIme) { return; }
 	jawnSoftHold = {
-		mode: (jawnSoftMode == 'calc') ? 'calc' : (double ? 'word' : 'char'),
+		mode: (jawnSoftMode == 'calc') ? 'calc' : 'char',
 		started: now,
 		timer: null, every: 0, min: 0, fn: null
 	};
