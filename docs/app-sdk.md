@@ -149,6 +149,13 @@ A UI split is not a module boundary. `docs/app-databases.md` defines the data ha
 The empty-database trap matters: most app data lives in `appointments` today, so the value starts
 when an app's own tables are normalized out, not when the file is created.
 
+## The data plane
+
+`docs/router.md` is the transport half: app↔app, app↔DB broker, app↔browser, app↔peer and streams
+ride one envelope with adapter-local transports (`local`, `unix`, `ws`, `tunnel`). The routing table
+and its ACL are central; the bytes are not. **R0** — envelope, `local`/`unix`, RPC, Gallery — is the
+first milestone, before streams, video or the Music port.
+
 ## App-to-app communication
 
 Two mechanisms, both declared:

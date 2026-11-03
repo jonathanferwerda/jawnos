@@ -275,7 +275,7 @@ the transition adds flags and gates, not new hardware.
 - A canary route prefix and a second schema per app, only while a candidate is being measured.
 - The registry is the source of the route/asset/menu/help maps, replacing the hand-maintained ones.
 
-The six documents now form one story: `app-sdk.md` (contract), `app-databases.md` (data boundary),
-`app-lifecycle.md` (operations, generation, review, and the v1 transition), `app-store.md` (distribution
-through junderground), `app-sandbox.md` (containment) and `app-database-encryption.md` (the key and
-the broker).
+The seven documents now form one story: `app-sdk.md` (contract), `router.md` (data plane),
+`app-databases.md` (data boundary), `app-lifecycle.md` (operations, generation, review, and the v1
+transition), `app-store.md` (distribution through junderground), `app-sandbox.md` (containment) and
+`app-database-encryption.md` (the key and the broker).

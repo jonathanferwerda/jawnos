@@ -181,21 +181,24 @@ the important boundary is that new code has no path back into `subs::`.
 
 ## What to start now
 
-1. `JawnOS::Host` + `Host::Local` as a thin delegation; convert **Music's server side**
-   (`perl/Music/*`) to it first, with `public/js/music.js` untouched as an asset. The v0 path keeps
+1. **`JawnOS::Router` R0** (`docs/router.md`): envelope + `local` + `unix` + RPC, no streams and no
+   peer; wire **Gallery** through it. The routing table is central; the bytes are adapter-local.
+2. `JawnOS::Host` + `Host::Local` as a thin delegation; convert **Music's server side**
+   (`perl/Music/*`) to it, with `public/js/music.js` untouched as an asset. The v0 path keeps
    serving; the new path runs beside it behind a switch.
-2. Convert **Gallery's** controller as the contract pilot. `Host::Solo` + `JawnOS::Server`; run
+3. Convert **Gallery's** controller as the contract pilot. `Host::Solo` + `JawnOS::Server`; run
    Gallery standalone against a **copy** of the database.
-3. Build the conformance corpus in parallel — the Music suite is the first part of it.
-4. Ship the low-risk modules; keep the 11-module roadmap independent.
-5. Do **not** start with the player UI, a new database format, or Music in the sandbox.
+4. Build the conformance corpus in parallel — the Music suite is the first part of it.
+5. Ship the low-risk modules; keep the 11-module roadmap independent.
+6. Do **not** start with the player UI, a new database format, Music in the sandbox, or router
+   streams/video before R0.
 
 ## Decision gates
 
 | Gate | Condition |
 |---|---|
-| G1 | Host API stable; Music's vertical slice runs on `Host::Local`; Gallery runs embedded and standalone; corpus green |
-| G2 | Music parity (playback, queue, remote output, padlock, archive); Embedded and Travel on the SDK; per-app DBs at Phase 2; sandbox at SB1 |
+| G1 | Router R0 green (envelope, local/unix RPC, Gallery); Host API stable; Music's vertical slice runs on `Host::Local`; Gallery runs embedded and standalone; corpus green |
+| G2 | Router R1/R2 (topics, DB broker, streams); Music parity (playback, queue, remote output, padlock, archive); Embedded and Travel on the SDK; per-app DBs at Phase 2; sandbox at SB1 |
 | G3 | `sync_version = 4`, multi-DB backup bundle, lifecycle at L3, store at S2 |
 | G4 | v1 parity on the corpus and the Music checklist; the legacy path removed after one clean release |
 

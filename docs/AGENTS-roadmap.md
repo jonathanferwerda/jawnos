@@ -7,6 +7,9 @@ Moved out of `AGENTS.md` (a per-task reference, not an every-request map).
 - **v1 transition — phased, in place; no fork.** `main` stays v0 (the house) while the App SDK,
   per-app databases, lifecycle, store and sandbox are built behind `JawnOS::Host`. There is no `v1`
   branch and no `release/v1`: features land on the trunk behind a host/flag, and the legacy path is
+    removed only when the new one passes the Music invariant. The first component is `JawnOS::Router`
+    R0 (`docs/router.md`): envelope, `local`/`unix` transports, RPC, Gallery — no streams or peers yet.
+  The router is the first build, then the host API; the legacy path is
   removed only when the new one passes the **Music invariant** — the credit card: library, playback,
   queue, remote outputs over PCM/Opus, video and subtitles, the padlock and sealed tracks, archive
   fetch, screen-off playback — plus the conformance corpus. Music is adapted first but cut over
