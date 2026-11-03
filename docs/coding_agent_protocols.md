@@ -54,6 +54,9 @@ The Zed panel keeps every byte it is shown; zram + earlyoom only slow the crash.
 - **Maintain the locator from its ledger.** Before changing `scripts/where.pl` or its maps, run
   `perl scripts/where_audit.pl --prompt` and fix what it names: misses, wrong reports, map drift.
   Confirm each case in the source, add a test for each new shape, and report a hit you acted on.
+- **Look it up before grepping.** `perl scripts/where.pl <name>` for a symbol, a route, a help topic
+  or a file; `perl scripts/agent_help.pl <app>` for an app's facts. `grep` is for free text, literals
+  and comments only.
 - **Reply budget.** A final message is what changed (`file:line`), what verified it (command → result),
   and one risk. No code, diff, narration or restating the request; quote only failing lines. The commit
   message carries the rationale; the chat carries the pointer.
