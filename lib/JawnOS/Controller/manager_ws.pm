@@ -183,17 +183,20 @@ sub action_47050 {
 							&Websocket::send('server', { console => 'appointmentDetailGrabber(\'' . $appt->{'app'} . '\',\'' . $appt->{'uuid'} .'\');'});
 							my $sources = &subs::db_select('appointments', undef, { source_uuid => $appt->{'uuid'} })->hashes;
 							my %so_seen;
+							my %child_apps;
 							foreach my $so ( @{$sources} ) {
 								next if $so_seen{ $so->{'uuid'} }++;
 								push @{$sources}, @{&subs::db_select('appointments', undef, { source_uuid => $so->{'uuid'} })->hashes};
 								if ( $so->{'type'} eq 'stop' ) {
 									my $dur = $so->{'timestamp'} - $timestamp;
 									&subs::db_update('appointments', { stop_seen => 'yes', type => 'start', duration => $dur, server_time => $server_time }, { source_uuid => $so->{'source_uuid'}, uuid => $so->{'uuid'}, app => $so->{'app'} });
+									$child_apps{ $so->{'app'} } = 1;
 									&budget_runner($so->{'app'});
 									&subs::intelligent_automation_toggle({ appt_uuid => $so->{'uuid'}, app => $so->{'app'}, 'state' => 'on', timestamp => $timestamp });
 									&Websocket::send('tab', { console => 'appointmentDetailGrabber(\'' . $so->{'app'} . '\',\'' . $so->{'uuid'} .'\');'});
 								}
 							}
+							&subs::source_header_printer([ keys %child_apps ], $timestamp);
 						}
 					}
 					elsif ($appt->{'type'} eq 'start') {

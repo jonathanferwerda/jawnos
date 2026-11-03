@@ -1,4 +1,4 @@
-# tests-for: lib/JawnOS/Manager/Part14.pm lib/JawnOS/Manager/Part05.pm lib/JawnOS/Manager/Part32.pm lib/JawnOS/Domain/Calendar.pm lib/JawnOS/Domain/Generate.pm lib/JawnOS/Controller/manager_misc5.pm lib/JawnOS/Controller/manager_misc12.pm public/js/manager/manager/06_appointment_distance.js
+# tests-for: lib/JawnOS/Manager/Part14.pm lib/JawnOS/Manager/Part05.pm lib/JawnOS/Manager/Part32.pm lib/JawnOS/Domain/Calendar.pm lib/JawnOS/Domain/Generate.pm lib/JawnOS/Controller/manager_misc5.pm lib/JawnOS/Controller/manager_misc12.pm lib/JawnOS/Controller/manager_ws.pm public/js/manager/manager/06_appointment_distance.js
 # covers:    the header goes out at once; the caller forks the centre-view render after it
 
 use strict;
@@ -28,6 +28,7 @@ my $part32    = read_file("$root/lib/JawnOS/Manager/Part32.pm");
 my $generate  = read_file("$root/lib/JawnOS/Domain/Generate.pm");
 my $reset     = read_file("$root/lib/JawnOS/Controller/manager_misc5.pm");
 my $delete    = read_file("$root/lib/JawnOS/Controller/manager_misc12.pm");
+my $manager_ws = read_file("$root/lib/JawnOS/Controller/manager_ws.pm");
 my $js        = read_file("$root/public/js/manager/manager/06_appointment_distance.js");
 
 # --- the header is the fast half, with no fork of its own -------------------
@@ -96,6 +97,12 @@ like($child_sub, qr/next if \$seen\{\$app\}\Q++\E;/,
 	'it renders each changed app once, not once per child row');
 like($child_sub, qr/&appt_header_printer\(\{ app => \$app, timestamp => \$timestamp \}\);/,
 	'and goes through the same header printer, so the push and cache match');
+
+# The desk-session reopen (music socket connect, log_me on) reopens the children
+# of the tab's own duty row. It is the same write without a header, so the child
+# window stayed on the stopped header it drew before the reopen.
+like($manager_ws, qr/my \$sources = &subs::db_select\('appointments', undef, \{ source_uuid => \$appt->\{'uuid'\} \}\)->hashes;[\s\S]*?\$child_apps\{ \$so->\{'app'\} \} = 1;[\s\S]*?&subs::source_header_printer\(\[ keys %child_apps \], \$timestamp\);/,
+	'the desk-session reopen renders a header for each child app it reopens');
 
 # --- manager_reset: header now, window in a fork ----------------------------
 
