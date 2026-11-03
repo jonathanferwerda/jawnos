@@ -97,13 +97,13 @@
 				<% if (@{ $wa->{'misses'} || [] }) { %>
 					<p class="cfg-note"><b><%= &subs::ui('Misses') %></b></p>
 					<ul class="cfg-note">
-					<% foreach my $r (@{ $wa->{'misses'} }) { %><li><%= $r->{'name'} %> (<%= $r->{'n'} %>)<% if ($r->{'last'}) { %> &middot; <%= $r->{'last'} %><% } %></li><% } %>
+					<% foreach my $r (@{ $wa->{'misses'} }) { %><li><%= $r->{'name'} %> (<%= $r->{'n'} %>)<% if ($r->{'last'}) { %> &middot; <%= $r->{'last'} %><% } %><% if ($r->{'context_text'}) { %> &mdash; <%= $r->{'context_text'} %><% } %></li><% } %>
 					</ul>
 				<% } %>
 				<% if (@{ $wa->{'wrong'} || [] }) { %>
 					<p class="cfg-note"><b><%= &subs::ui('Wrong') %></b></p>
 					<ul class="cfg-note">
-					<% foreach my $r (@{ $wa->{'wrong'} }) { %><li><%= $r->{'name'} %> &rarr; <%= $r->{'found'} || '' %> [<%= $r->{'kind'} || 'unknown' %>]<% if ($r->{'selected'}) { %> (selected <%= $r->{'selected'} %>)<% } %></li><% } %>
+					<% foreach my $r (@{ $wa->{'wrong'} }) { %><li><%= $r->{'name'} %> &rarr; <%= $r->{'found'} || '' %> [<%= $r->{'verdict'} || 'wrong' %> / <%= $r->{'kind'} || 'unknown' %>]<% if ($r->{'selected'}) { %> (selected <%= $r->{'selected'} %>)<% } %></li><% } %>
 					</ul>
 				<% } %>
 				<% if (@{ $wa->{'drift'} || [] }) { %>

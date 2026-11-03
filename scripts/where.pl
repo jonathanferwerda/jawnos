@@ -32,13 +32,15 @@
 use strict;
 use warnings;
 
-use Cwd qw(abs_path);
+use Cwd qw(abs_path getcwd);
 use File::Find qw(find);
 use FindBin ();
 use Getopt::Long qw(GetOptions);
+use JSON::PP ();
 use POSIX qw(strftime);
 use Sys::Hostname qw(hostname);
 
+my @raw_argv   = @ARGV;
 my $real_root  = abs_path("$FindBin::Bin/..");
 my $root       = $real_root;
 my $context    = 0;
@@ -100,7 +102,13 @@ if (defined $report_name) {
 	usage(2) unless length $report_name;
 	my $verdict = shift @ARGV // '';
 	$verdict = lc $verdict;
-	usage(2) unless $verdict eq 'right' || $verdict eq 'wrong';
+	usage(2) unless $verdict eq 'right' || $verdict eq 'wrong' || $verdict eq 'miss';
+	# A miss is only useful with the place that did work: it is the coverage gap
+	# the audit exists to see, and without it the row says nothing new.
+	if ($verdict eq 'miss' && !(defined $report_found && length $report_found)) {
+		warn "where: a miss report needs --found, the place that did work\n";
+		exit 2;
+	}
 	exit(report_feedback($report_name, $verdict, $report_at, $report_found, $report_note) ? 0 : 2);
 }
 
@@ -517,6 +525,27 @@ sub route_path {
 		}
 	}
 
+	# A path that is not a route is often the parent of several that are:
+	# /manager/transaction is not a route, but seven sit under it. Print those
+	# as near matches and count them as an answer, so the agent does not have to
+	# guess and the ledger records a hit.
+	if (!$hits) {
+		my $prefix = $path;
+		$prefix =~ s{/+\z}{};
+		for my $file (@route_files) {
+			my $text = slurp($file) // next;
+			my $n    = 0;
+			for my $row (split /\n/, $text, -1) {
+				$n++;
+				my ($method, $p, $action) =
+					$row =~ /\[\s*\d+\s*,\s*'(\w+)'\s*,\s*'([^']*)'\s*,\s*'(\w+)'\s*\]/ or next;
+				next unless $p =~ m{^\Q$prefix\E/};
+				print 'near route', "\t", rel($file), ":$n\t$method $p -> $action\n";
+				last if ++$hits >= $limit;
+			}
+			last if $hits >= $limit;
+		}
+	}
 	warn "where: no route for $path\n" unless $hits;
 	return $hits;
 }
@@ -811,8 +840,8 @@ sub where_log {
 		$safe =~ s/[\x00-\x1f]+/ /g;
 		$safe = substr($safe, 0, 200);
 		$dbh->do(
-			'insert into where_calls (uuid, machine, minute, name, hit, hits, ost, server_time) values (?,?,?,?,?,?,?,?)',
-			undef, $uuid, hostname(), $minute, $safe, ($hits ? 1 : 0), ($hits || 0), $now, $now,
+			'insert into where_calls (uuid, machine, minute, name, hit, hits, context, ost, server_time) values (?,?,?,?,?,?,?,?,?)',
+			undef, $uuid, hostname(), $minute, $safe, ($hits ? 1 : 0), ($hits || 0), where_context(), $now, $now,
 		);
 		$dbh->disconnect;
 		1;
@@ -827,6 +856,32 @@ sub where_log {
 # on this machine is linked when it is recent; the verdict is still recorded
 # without one, because a report is worth more than a missing join. A wrong one
 # should carry --found, the place the agent actually found the name.
+# What the call looked like from the caller's side: the args, the working
+# directory, the terminal and (on Linux) the parent process's command. It is
+# enough to tell a busy agent from a person at a shell, and it rides the same
+# sync as the lookup row. Values are capped; no environment secrets are read.
+sub where_context {
+	my $cwd = eval { getcwd() } // ($ENV{'PWD'} // '');
+	my $parent = getppid();
+	my $parent_cmd = '';
+	if ($parent && open(my $fh, '<', "/proc/$parent/cmdline")) {
+		local $/;
+		$parent_cmd = <$fh> // '';
+		close $fh;
+		$parent_cmd =~ s/\0/ /g;
+		$parent_cmd =~ s/\s+/ /g;
+		$parent_cmd =~ s/^\s+|\s+$//g;
+	}
+	my $context = {
+		cwd    => substr($cwd, 0, 300),
+		args   => substr(join(' ', @raw_argv), 0, 300),
+		parent => substr($parent_cmd, 0, 300),
+		term   => substr($ENV{'TERM_PROGRAM'} // $ENV{'TERM'} // '', 0, 80),
+		agent  => substr($ENV{'JAWNOS_AGENT'} // '', 0, 80),
+	};
+	return JSON::PP->new->canonical->encode($context);
+}
+
 sub report_feedback {
 	my ($name, $verdict, $at, $found, $note) = @_;
 	my $db = $ENV{'JAWNOS_WHERE_DB'} || "$root/database/jawnos.db";
@@ -970,10 +1025,11 @@ help topic with the line it is defined on. Exits 0 if anything was found.
   --outline     for each FILE, print "line<TAB>kind name" for every declaration
                 in it, so an agent can read a range instead of the whole file.
   --no-log      do not record this lookup in database/jawnos.db.
-  --report NAME right|wrong [--at LOC] [--found LOC] [--note TEXT]
+  --report NAME right|wrong|miss [--at LOC] [--found LOC] [--note TEXT]
                 record an agent's verdict on a hit it acted on; --at is the hit
-                it used, and --found the real location when that hit was wrong.
-                This is the signal that scripts/where_audit.pl learns from.
+                it used, and --found the real location when that hit was wrong
+                or the locator missed (a miss report requires --found). This is
+                the signal that scripts/where_audit.pl learns from.
 
   --tech NAME  the tier-2 technical brief for an app or topic (routes, tables,
                settings, tests, source notes) - same as scripts/agent_help.pl

@@ -496,6 +496,9 @@ sub update_database($data) {
 			server_time VARCHAR(255)
 		)',
 		'create index if not exists idx_where_calls_minute on where_calls (minute)',
+		# The args, cwd and parent process of the call, as JSON. It is what tells a
+		# busy agent from a person at a shell when a miss needs explaining.
+		'alter table where_calls add column context VARCHAR(2000)',
 		# An agent's own verdict on a lookup it acted on: right, or wrong with where
 		# the real thing was. Kept apart from where_calls so the lookup ledger stays
 		# immutable; the audit joins them by name and machine.

@@ -59,14 +59,15 @@ write_file("$tree/public/js/b.js", "function multi_probe() {\n}\n");
 
 require DBI;
 my $dbh = DBI->connect("dbi:SQLite:dbname=$db", '', '', { RaiseError => 1, PrintError => 0 });
-$dbh->do('create table where_calls (uuid text, machine text, minute text, name text, hit int, hits int, ost text, server_time text)');
+$dbh->do('create table where_calls (uuid text, machine text, minute text, name text, hit int, hits int, context text, ost text, server_time text)');
 $dbh->do('create table where_feedback (uuid text, call_uuid text, machine text, minute text, name text, verdict text, selected text, found text, note text, ost text, server_time text)');
 my $minute = strftime('%Y-%m-%d %H:%M', localtime);
-$dbh->do("insert into where_calls (uuid,machine,minute,name,hit,hits) values ('c1','me','$minute','missed_name',0,0)");
+$dbh->do("insert into where_calls (uuid,machine,minute,name,hit,hits,context) values (?,?,?,?,?,?,?)", undef, 'c1', 'me', $minute, 'missed_name', 0, 0, '{"cwd":"/tmp/probe","args":"missed_name","parent":"zed"}');
 $dbh->do("insert into where_calls (uuid,machine,minute,name,hit,hits) values ('c2','me','$minute','good_name',1,1)");
 $dbh->do("insert into where_feedback (uuid,machine,minute,name,verdict,found) values ('f1','me','$minute','missed_name','wrong','lib/JawnOS/Domain/Format.pm:140')");
 $dbh->do("insert into where_feedback (uuid,machine,minute,name,verdict,selected,found) values ('f2','me','$minute','multi_probe','wrong','public/js/a.js:1','public/js/b.js:1')");
 $dbh->do("insert into where_feedback (uuid,machine,minute,name,verdict) values ('f3','me','$minute','good_name','right')");
+$dbh->do("insert into where_feedback (uuid,machine,minute,name,verdict,found) values ('f4','me','$minute','miss_probe','miss','lib/JawnOS/Domain/Format.pm:140')");
 $dbh->disconnect;
 
 my ($code, $out) = run_audit('--db', $db, '--root', $tree, '--days', 14);
@@ -76,8 +77,10 @@ like($out, qr/MISSES/, 'it lists the misses');
 like($out, qr/missed_name/, 'naming the missed lookup');
 like($out, qr/WRONG/, 'and the wrong report');
 like($out, qr/lib\/JawnOS\/Domain\/Format\.pm:140/, 'with the place the agent found');
-like($out, qr/\[coverage\]/, 'classifying a location the locator never returned');
-like($out, qr/\[ranking\]/, 'and a right answer that was among the hits');
+like($out, qr/\[\w+ \/ coverage\]/, 'classifying a location the locator never returned');
+like($out, qr/\[\w+ \/ ranking\]/, 'and a right answer that was among the hits');
+like($out, qr/\[miss \/ coverage\]/, 'and a reported miss as coverage');
+like($out, qr/cwd \/tmp\/probe/, 'with the context the call was made in');
 like($out, qr/MAP DRIFT/, 'and the map drift');
 like($out, qr/drifted_name/, 'naming the drifted Index entry');
 like($out, qr/missing_sub/, 'and the missing domain entry');
@@ -86,9 +89,11 @@ my (undef, $json_out) = run_audit('--db', $db, '--root', $tree, '--days', 14, '-
 my $data = decode_json($json_out);
 is($data->{'summary'}{'calls'}, 2, 'the JSON carries the counts');
 is($data->{'summary'}{'hits'}, 1, 'and the hits');
-is($data->{'summary'}{'wrong'}, 2, 'and the wrong reports');
+is($data->{'summary'}{'wrong'}, 3, 'and the wrong and missed reports');
 my ($ranked) = grep { $_->{'name'} eq 'multi_probe' } @{ $data->{'wrong'} };
 is($ranked->{'kind'}, 'ranking', 'the JSON carries the ranking/coverage distinction');
+my ($missed) = grep { $_->{'name'} eq 'missed_name' } @{ $data->{'misses'} };
+like($missed->{'context_text'}, qr/cwd \/tmp\/probe/, 'the JSON carries the miss context');
 ok((grep { $_->{'name'} eq 'missed_name' } @{ $data->{'misses'} }), 'and the missed name');
 ok((grep { $_->{'name'} eq 'drifted_name' } @{ $data->{'drift'} }), 'and the drift');
 
@@ -98,6 +103,8 @@ like($brief, qr/missed_name/, 'and the name to fix');
 like($brief, qr/run_tests\.pl/, 'and the check to run');
 like($brief, qr/ranking: the right answer/, 'and says what a ranking report means');
 like($brief, qr/coverage: the locator did not return it/, 'and what a coverage report means');
+like($brief, qr/miss \/ coverage/, 'the brief names the reported miss');
+like($brief, qr/cwd \/tmp\/probe/, 'and shows the context it was made in');
 
 my ($strict_code) = run_audit('--db', $db, '--root', $tree, '--days', 14, '--strict');
 is($strict_code, 1, '--strict fails when there is anything to fix');

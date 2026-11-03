@@ -22,6 +22,7 @@ use DBI;
 use FindBin ();
 use Getopt::Long qw(GetOptions);
 use IPC::Open3 qw(open3);
+use JSON::PP ();
 use POSIX qw(strftime);
 use Symbol qw(gensym);
 
@@ -83,7 +84,7 @@ if (-f $db) {
 		my $feedback = eval {
 			$dbh->selectrow_arrayref(
 				"select sum(case when verdict = 'right' then 1 else 0 end),"
-				. " sum(case when verdict = 'wrong' then 1 else 0 end)"
+				. " sum(case when verdict in ('wrong','miss') then 1 else 0 end)"
 				. ' from where_feedback where minute >= ?', undef, $since);
 		};
 		if ($feedback) {
@@ -92,7 +93,7 @@ if (-f $db) {
 		}
 		my $miss_rows = eval {
 			$dbh->selectall_arrayref(
-				'select name, count(*) as n, max(minute) as last'
+				'select name, count(*) as n, max(minute) as last, context'
 				. ' from where_calls where hit = 0 and minute >= ?'
 				. ' group by name order by n desc, last desc limit ' . $limit,
 				{ Slice => {} }, $since);
@@ -100,8 +101,8 @@ if (-f $db) {
 		@misses = @{$miss_rows};
 		my $wrong_rows = eval {
 			$dbh->selectall_arrayref(
-				"select name, selected, found, note, max(minute) as last"
-				. " from where_feedback where verdict = 'wrong' and minute >= ?"
+				"select name, verdict, selected, found, note, max(minute) as last"
+				. " from where_feedback where verdict in ('wrong','miss') and minute >= ?"
 				. ' group by name order by last desc limit ' . $limit,
 				{ Slice => {} }, $since);
 		} || [];
@@ -115,6 +116,9 @@ if (-f $db) {
 # (ranking); if it is not there at all, the location is missing (coverage).
 for my $row (@wrong) {
 	$row->{'kind'} = classify_wrong($row);
+}
+for my $row (@misses) {
+	$row->{'context_text'} = context_text($row->{'context'});
 }
 
 my @drift   = map_drift();
@@ -147,13 +151,14 @@ if (@misses) {
 	print "\nMISSES (the locator found nothing; cover these)\n";
 	for my $r (@misses) {
 		printf "  %4d  %s  (last %s)\n", $r->{'n'}, $r->{'name'}, $r->{'last'};
+		print "        ", $r->{'context_text'}, "\n" if length $r->{'context_text'};
 	}
 }
 if (@wrong) {
-	print "\nWRONG (an agent said the hit was not the right one)\n";
+	print "\nWRONG OR MISSED (an agent reported a wrong hit or a miss)\n";
 	for my $r (@wrong) {
-		printf "  %s  ->  %s [%s]%s%s\n", $r->{'name'}, ($r->{'found'} || '(no location given)'),
-			$r->{'kind'},
+		printf "  %s  ->  %s [%s%s]%s%s\n", $r->{'name'}, ($r->{'found'} || '(no location given)'),
+			($r->{'verdict'} || 'wrong'), ($r->{'kind'} ? ' / ' . $r->{'kind'} : ''),
 			(defined $r->{'selected'} && length $r->{'selected'} ? ' (selected ' . $r->{'selected'} . ')' : ''),
 			($r->{'note'} ? '  [' . $r->{'note'} . ']' : '');
 	}
@@ -176,12 +181,13 @@ sub audit_prompt {
 	push @lines, "Its ledger for the last $days days shows:";
 	if (@{$misses}) {
 		push @lines, '', 'MISSES (find each with `perl scripts/where.pl <name>` and add the missing coverage, map or pattern, with a t/96-where.t case):';
-		push @lines, sprintf('  %s (%d, last %s)', $_->{'name'}, $_->{'n'}, $_->{'last'}) for @{$misses};
+		push @lines, sprintf('  %s (%d, last %s)%s', $_->{'name'}, $_->{'n'}, $_->{'last'},
+			($_->{'context_text'} ? ' - ' . $_->{'context_text'} : '')) for @{$misses};
 	}
 	if (@{$wrong}) {
-		push @lines, '', 'WRONG (open the reported location, confirm it, then correct the locator):';
-		push @lines, sprintf('  %s -> %s [%s]%s%s', $_->{'name'}, ($_->{'found'} || '(no location)'),
-			$_->{'kind'},
+		push @lines, '', 'WRONG OR MISSED (open the reported location, confirm it, then correct the locator):';
+		push @lines, sprintf('  %s -> %s [%s%s]%s%s', $_->{'name'}, ($_->{'found'} || '(no location)'),
+			($_->{'verdict'} || 'wrong'), ($_->{'kind'} ? ' / ' . $_->{'kind'} : ''),
 			(defined $_->{'selected'} && length $_->{'selected'} ? ' (selected ' . $_->{'selected'} . ')' : ''),
 			($_->{'note'} ? ' [' . $_->{'note'} . ']' : '')) for @{$wrong};
 		push @lines, '', 'ranking: the right answer was already among the hits - improve the order or priority. coverage: the locator did not return it - add the location.';
@@ -236,6 +242,21 @@ sub locator_hits {
 	}
 	waitpid($pid, 0);
 	return \@lines;
+}
+
+# A miss row carries the last call's context as JSON; a compact line is what the
+# report and the panel can show. This is deliberately lossy.
+sub context_text {
+	my ($json) = @_;
+	return '' unless defined $json && length $json;
+	my $c = eval { JSON::PP->new->decode($json) };
+	return '' unless ref $c eq 'HASH';
+	my @bits;
+	push @bits, 'cwd ' . $c->{'cwd'} if length($c->{'cwd'} // '');
+	push @bits, 'args ' . $c->{'args'} if length($c->{'args'} // '');
+	push @bits, 'parent ' . $c->{'parent'} if length($c->{'parent'} // '');
+	my $text = join(' · ', @bits);
+	return length($text) > 300 ? substr($text, 0, 300) . '...' : $text;
 }
 
 sub classify_wrong {

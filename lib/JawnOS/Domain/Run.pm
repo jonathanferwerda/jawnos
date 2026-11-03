@@ -932,7 +932,7 @@ sub where_lookup_stats {
 	my $feedback = eval {
 		&subs::db_query(
 			"select sum(case when verdict = 'right' then 1 else 0 end) as right,"
-			. " sum(case when verdict = 'wrong' then 1 else 0 end) as wrong"
+			. " sum(case when verdict in ('wrong','miss') then 1 else 0 end) as wrong"
 			. ' from where_feedback where minute >= ?', $since_key)->hashes->[0];
 	};
 	return {

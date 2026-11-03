@@ -754,7 +754,8 @@ Rules:
   patch answers with the line it changed; do not re-read the file to check it.
 - When you act on a where.pl hit, report it: `perl scripts/where.pl --report
   <name> right --at <path:line>`, or `wrong --at <path:line> --found
-  <path:line>` when it was the wrong place. Before changing the locator, run
+  <path:line>` when it was the wrong place. If it missed, say what worked and
+  report `miss --found <path:line>`. Before changing the locator, run
   `perl scripts/where_audit.pl --prompt` and fix what it names.
 - Use agent for a self-contained investigation or a scoped edit. Send several
   tasks in one list when they do not depend on each other: they run at the same

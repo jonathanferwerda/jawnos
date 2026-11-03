@@ -101,6 +101,17 @@ for my $name (qw(subs::path_name path_name)) {
 	like($out, qr/^help::start_menu\t/m, 'a spaced name resolves like help() does');
 }
 
+# --- a route that is only a parent of routes --------------------------------
+{
+	my ($code, $out) = where('/manager/transaction');
+	is($code, 0, 'a parent path resolves through its children');
+	like($out, qr{^near route\tlib/JawnOS/Routes/manager_transaction2\.pm:\d+\tpost /manager/transaction/record -> action_16986$}m,
+		'with the child route');
+
+	my ($none) = where('/manager/nothing_under_here');
+	is($none, 1, 'a path with no children is still a miss');
+}
+
 # --- a file, and the topic that covers it -----------------------------------
 {
 	my ($code, $out) = where('templates/apps/gallery.html.ep');
@@ -310,7 +321,7 @@ PM
 	my $db  = "$dir/where.db";
 	require DBI;
 	my $dbh = DBI->connect("dbi:SQLite:dbname=$db", '', '', { RaiseError => 1, PrintError => 0 });
-	$dbh->do('create table where_calls (uuid text, machine text, minute text, name text, hit int, hits int, ost text, server_time text)');
+	$dbh->do('create table where_calls (uuid text, machine text, minute text, name text, hit int, hits int, context text, ost text, server_time text)');
 	$dbh->do('create table where_feedback (uuid text, call_uuid text, machine text, minute text, name text, verdict text, selected text, found text, note text, ost text, server_time text)');
 	$dbh->disconnect;
 
@@ -324,10 +335,16 @@ PM
 	is($right_code, 0, 'a right report is accepted');
 	my ($wrong_code) = where('--report', 'no_such_helper_at_all', 'wrong', '--found', 'lib/JawnOS/Domain/Format.pm:140');
 	is($wrong_code, 0, 'a wrong report is accepted');
+	my ($miss_refused) = where('--report', 'miss_probe', 'miss');
+	is($miss_refused, 2, 'a miss report without the place that worked is refused');
+	my ($miss_code) = where('--report', 'miss_probe', 'miss', '--found', 'lib/JawnOS/Domain/Format.pm:140');
+	is($miss_code, 0, 'a miss report with --found is accepted');
 
 	my $check = DBI->connect("dbi:SQLite:dbname=$db", '', '', { RaiseError => 1, PrintError => 0 });
-	my $rows  = $check->selectall_arrayref('select name, hit from where_calls');
+	my $rows  = $check->selectall_arrayref('select name, hit, context from where_calls');
 	my %by = map { $_->[0] => $_->[1] } @{$rows};
+	my %context = map { $_->[0] => $_->[2] } @{$rows};
+	like($context{'jawnosAgentsPanel'}, qr/"cwd"/, 'the lookup records the call context');
 	is(scalar @{$rows}, 2, 'one row for the hit and one for the miss');
 	is($by{'jawnosAgentsPanel'}, 1, 'the declaration is a hit');
 	is($by{'no_such_helper_at_all'}, 0, 'the unknown name is a miss');
@@ -338,6 +355,7 @@ PM
 	is($fb{'jawnosAgentsPanel'}[1], 'right', 'the right verdict is stored');
 	is($fb{'no_such_helper_at_all'}[1], 'wrong', 'the wrong verdict is stored');
 	like($fb{'no_such_helper_at_all'}[2], qr/Format\.pm:140/, 'with the place the agent actually found it');
+	is($fb{'miss_probe'}[1], 'miss', 'the miss verdict is stored');
 	is($fb{'jawnosAgentsPanel'}[3], 'public/js/manager/agents.js:10', 'the selected hit is stored');
 	ok($fb{'jawnosAgentsPanel'}[4], 'and the call it refers to');
 }

@@ -200,6 +200,7 @@ unlike $migrations, qr/create unique index if not exists idx_ai_spend\b/,
 	$dbh->do("insert into where_feedback (minute,name,verdict) values ('2026-11-02 17:45','a','right')");
 	$dbh->do("insert into where_feedback (minute,name,verdict) values ('2026-11-02 17:46','b','wrong')");
 	$dbh->do("insert into where_feedback (minute,name,verdict) values ('2026-11-01 09:05','c','right')");
+	$dbh->do("insert into where_feedback (minute,name,verdict) values ('2026-11-02 17:47','d','miss')");
 	no warnings 'redefine';
 	local *subs::db_query = sub {
 		my ($sql, @args) = @_;
@@ -212,7 +213,7 @@ unlike $migrations, qr/create unique index if not exists idx_ai_spend\b/,
 	is($stats->{'hits'}, 1, 'a declaration is a hit');
 	is($stats->{'misses'}, 1, 'an unknown name is a miss');
 	is($stats->{'right'}, 1, 'and the confirmed hit is counted');
-	is($stats->{'wrong'}, 1, 'and the wrong report');
+	is($stats->{'wrong'}, 2, 'and the wrong and missed reports');
 }
 {
 	no warnings 'redefine';
