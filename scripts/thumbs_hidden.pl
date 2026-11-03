@@ -130,23 +130,30 @@ my @pairs = (
 	[ '/thumbs"',     '/.thumbs"' ],
 );
 
-my $dbh = DBI->connect("dbi:SQLite:dbname=$db_file", '', '', {
-	RaiseError => 1, PrintError => 0, AutoCommit => 1,
-}) or die "cannot open $db_file: $DBI::errstr\n";
-$dbh->do('PRAGMA busy_timeout = 30000');
+my $dbh;
+my @tables;
+# --files-only means the database is not touched at all (see the option's
+# comment above), so it must not even be opened: a read-only checkout (the QA
+# fence) cannot give SQLite a writable handle, and opening it there fails.
+if (!$files_only) {
+	$dbh = DBI->connect("dbi:SQLite:dbname=$db_file", '', '', {
+		RaiseError => 1, PrintError => 0, AutoCommit => 1,
+	}) or die "cannot open $db_file: $DBI::errstr\n";
+	$dbh->do('PRAGMA busy_timeout = 30000');
 
-if ($apply && !$files_only && !$no_backup) {
-	my $stamp = time;
-	my $backup = ($ENV{'HOME'} || '.') . "/jawnos-thumbs-hidden-$stamp.db";
-	my $ok = eval { $dbh->sqlite_backup_to_file($backup); 1 };
-	if (!$ok) { system('sqlite3', $db_file, ".backup '$backup'"); }
-	die "could not take a database backup at $backup\n" unless -s $backup;
-	print "backup: $backup\n";
+	if ($apply && !$no_backup) {
+		my $stamp = time;
+		my $backup = ($ENV{'HOME'} || '.') . "/jawnos-thumbs-hidden-$stamp.db";
+		my $ok = eval { $dbh->sqlite_backup_to_file($backup); 1 };
+		if (!$ok) { system('sqlite3', $db_file, ".backup '$backup'"); }
+		die "could not take a database backup at $backup\n" unless -s $backup;
+		print "backup: $backup\n";
+	}
+
+	@tables = map { $_->[0] } @{ $dbh->selectall_arrayref(
+		"select name from sqlite_master where type = 'table' and name not like 'sqlite_%' order by name"
+	) };
 }
-
-my @tables = map { $_->[0] } @{ $dbh->selectall_arrayref(
-	"select name from sqlite_master where type = 'table' and name not like 'sqlite_%' order by name"
-) };
 my $now = int(time * 1000);
 # cache and websockets use server_time as an expiry, not as a version: bumping
 # them would extend a backoff or a remembered tab. No thumbnail path lives there.
@@ -190,5 +197,5 @@ unless ($files_only) {
 	printf "database: %d cell(s) rewritten across %d row(s)\n", $cells, $rows_changed if $apply;
 }
 
-$dbh->disconnect;
+$dbh->disconnect if $dbh;
 print "\ndry run - nothing changed; add --apply\n" unless $apply;

@@ -9,6 +9,9 @@ Type=oneshot
 User=jawn
 WorkingDirectory=/home/jawn/jawnos
 Environment=HOME=/home/jawn
+# The relay test needs a writable directory that is not /tmp; the QA root is
+# the one path this unit leaves writable.
+Environment=JAWNOS_QA_ROOT=/home/jawn/jawnos-qa
 # The house's nightly suite runs on the machine chosen in Configure -> Plat ->
 # QA. The helper exits 0 for the chosen machine (or when no choice is saved, or
 # when this machine cannot read its own identity) and 1 for every other, which

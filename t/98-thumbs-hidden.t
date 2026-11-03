@@ -8,6 +8,7 @@ use warnings;
 use FindBin;
 use lib "$FindBin::Bin/lib", "t/lib";
 use File::Path qw(make_path);
+use Cwd qw(cwd);
 use File::Slurp qw(read_file write_file);
 use File::Temp qw(tempdir);
 use IPC::Open3 qw(open3);
@@ -89,5 +90,23 @@ sub fixture {
 
 	ok(-f "$tree/Trash/thumbs/e.enc", 'a trash can keeps its thumbs folder');
 	}
+
+# --- --files-only never opens the database -----------------------------------
+# A read-only checkout (the QA fence) cannot give SQLite a writable handle, so
+# the option that promises not to touch the database must not open it either.
+{
+	my $tree = fixture();
+	my $cwd = tempdir(CLEANUP => 1);
+	# `database` is a file, so database/jawnos.db cannot be opened even as root.
+	write_file("$cwd/database", "not a directory\n");
+
+	my $old = cwd();
+	chdir $cwd or die "chdir $cwd: $!";
+	my ($rc, $out, $err) = run_pass('--root', $tree, '--files-only');
+	chdir $old or die "chdir $old: $!";
+
+	is($rc, 0, '--files-only works with no openable database');
+	unlike($err // '', qr/cannot open|unable to open/, 'and never tries to open it');
+}
 
 	done_testing();

@@ -28,9 +28,10 @@ use Harness;
 my $repo = abs_path("$FindBin::Bin/..");
 
 # The relay refuses /tmp (the fence makes it a private tmpfs), so this suite
-# cannot use File::Temp's default. A hidden directory under $HOME is outside
-# both /tmp and the live repo.
-my $sandbox = tempdir('qa-relay-XXXXXX', DIR => ($ENV{'HOME'} || '.'), CLEANUP => 1);
+# cannot use File::Temp's default. Under the nightly's systemd fence $HOME is
+# read-only too, so prefer the QA root, which the unit leaves writable.
+my $sandbox = tempdir('qa-relay-XXXXXX',
+	DIR => ($ENV{'JAWNOS_QA_ROOT'} || $ENV{'HOME'} || '.'), CLEANUP => 1);
 my $relay_dir = "$sandbox/relay";
 make_path($relay_dir);
 
