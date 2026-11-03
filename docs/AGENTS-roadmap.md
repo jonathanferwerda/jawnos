@@ -8,8 +8,9 @@ Moved out of `AGENTS.md` (a per-task reference, not an every-request map).
   per-app databases and the app lifecycle are built. Fork when: the host API is 1.0 and
   `Host::Solo` runs an app alone; Gallery, Embedded and Travel are on the SDK; per-app DBs are at
   Phase 2+ with sync v4 and the multi-DB backup bundle; the lifecycle is at L3 (registry,
-  install/upgrade with rollback, health panel, canary); and the suite plus a canary house have been
-  green for a week on the new server. Then `v1` is developed mostly autonomously on that server,
+  install/upgrade with rollback, health panel, canary); the app store is at S2 (signed release
+  records, bundle verification, peer/cache fetch) with the review gate wired to install; and the
+  suite plus a canary house have been green for a week on the new server. Then `v1` is developed mostly autonomously on that server,
   against copies of the house database, with `release/v1` tags, human review before merge and v0 as
   the fallback for one release. Entry criteria, branch policy and autonomy rules:
   `docs/app-lifecycle.md`.

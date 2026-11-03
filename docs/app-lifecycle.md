@@ -85,21 +85,42 @@ Before a single file is copied:
 7. **Trust** — the source decides the initial tier (below); a `core` app cannot be installed from a
    local path.
 
-## Trust tiers for generated code
+## Trust tiers: agent-first
 
-The critical risk is arbitrary code in the house. Four tiers, enforced by the host, not by convention:
+The default is **agent-reviewed**, not human-reviewed. A second, independent agent reads the code
+before anything installs. Human review is the escalation, not the gate.
 
 | Tier | Source | Powers |
 |---|---|---|
 | `core` | shipped/signed | everything declared |
-| `reviewed` | a human approved the diff | everything declared |
-| `agent` | the Coding agent, not reviewed | own schema only; **no shell, no network, no core writes**, no secrets beyond host crypto, resource quotas, canary slot only |
-| `untrusted` | third party | as `agent`, plus a required signature |
+| `agent-reviewed` | local agent generated or fetched it, and an **independent reviewer agent** approved it | own schema; declared host capabilities; **no shell, no network, no core writes**; no secrets beyond host crypto; resource quotas; canary first |
+| `human-reviewed` | a person approved the diff (or a quorum of trusted houses vouched) | everything declared, including `shell`/`network` if explicitly granted |
+| `quarantined` | fetched from the store, not yet reviewed | cannot run; held only for review |
 
-A manifest that asks for `shell` or `network` is only valid at `reviewed`/`core`. The same path checks
-the Coding agent already uses for its own writes (`coding_child_norm_path`, `coding_child_write_ok`)
-become the app's file sandbox. An `agent` app may be promoted to `reviewed` by an explicit command
-after a human reads the diff; promotion is a registry change, not a reinstall.
+A manifest that asks for `shell` or `network` installs as `agent-reviewed` only in the canary, and
+needs `human-reviewed` to serve live. The same path checks the Coding agent already uses for its own
+writes (`coding_child_norm_path`, `coding_child_write_ok`) become the app's file sandbox.
+
+### The review gate
+
+The author agent never reviews its own output. The gate is:
+
+1. **Independent reviewer** — a fresh context (and preferably a different model) is given the diff,
+   the manifest, the dependency delta and the test results. Its prompt is adversarial: "find what
+   this app can do that its manifest does not declare."
+2. **Deterministic checks** — capability diff, secret scan, dependency-diff allowlist, license,
+   manifest/asset path checks, no core-table writes, no obfuscation, no dynamic `eval` of remote
+   input.
+3. **Behavioural evidence** — the SDK tests plus the canary's health sample. A review that cannot
+   point at a passing test is not a review.
+4. **Evidence, not a verdict** — the transcript, checks and diff hash are stored on the install row
+   (`apps.review`). Promotion to `human-reviewed` reads that evidence.
+5. **Fail closed** — any failed check quarantines the app; there is no "review later".
+
+Correlated blindness is the real risk: two models trained alike can miss the same trick. The
+mitigations are determinism (checks that do not depend on judgement), capability limits that make
+most attacks useless even if missed, and the canary's measured behaviour. The reviewer is a filter,
+not a proof; the sandbox is what makes the filter sufficient.
 
 ## Agent-built apps on the fly
 
@@ -110,9 +131,10 @@ The Coding agent already writes, tests, reviews, commits and pushes. The lifecyc
 prompt → scaffold (manifest, route, template, test, migration)
        → SDK tests (JawnOS::SDK::Test, App::TestsFor)
        → manifest validation
-       → install into the canary slot (trust=agent, own DB)
+       → independent reviewer agent + deterministic checks
+       → install into the canary slot (trust=agent-reviewed, own DB)
        → health sample (N real requests + jobs)
-       → promote (reviewed) or roll back
+       → promote or quarantine/roll back
 ```
 
 - `jawnos-app new Foo --prompt "..."` writes a minimal, passing app to a temp directory. The agent
@@ -125,6 +147,22 @@ prompt → scaffold (manifest, route, template, test, migration)
 - Guardrails: token/budget cap per app, no secrets in generated source (scan), no new CPAN
   dependency without approval, automatic rollback on an SLO breach, and an audit row per generation.
 - Output is a local dist. Publishing to CPAN is a separate, human decision.
+
+## The app store
+
+`docs/app-store.md` is the distribution half. It reuses junderground instead of adding a service:
+
+- a publisher is a **crest**, and a release is a hash-chained signed record (`seq`, `prev`, `sig`)
+  carrying the bundle's SHA-256 and its manifest;
+- bundles are content-addressed and mirrored, so the switch holds records and optionally blobs, and a
+  house can install from a peer or a cache when the switch is unreachable;
+- a fetched bundle lands in `quarantined`, then goes through the **same agent-first review and
+  canary** as a locally generated app;
+- trust is local: the People map (`jg_grade`), signed vouches, capability allowlists and the
+  reviewer's evidence — there is no global score and no central approval.
+
+An app may also be a CPAN dist; the store is the channel that carries a manifest, capabilities and
+review evidence, which CPAN does not.
 
 ## Health and performance
 
@@ -204,7 +242,9 @@ Infrastructure (the new server, containers, off-box backups) is already tracked 
 4. **Metric noise / auto-tune harm.** An agent optimizing the wrong number can make an app worse.
    Only reversible knobs, only against a stated SLO, always measured on the canary.
 5. **Autonomy without review.** The agent can generate plausible code that passes tests and still
-   leaks. Promotion to `reviewed` is a human act; push rights are scoped to the v1 branch.
+   leaks. Agent-first works only because a *second* agent reviews and because capabilities are
+   limited regardless of the verdict. Promotion to `human-reviewed` stays a human act; push rights
+   are scoped to the v1 branch.
 6. **Fork divergence.** Two source trees with different data formats is how houses get lost. v1
    reads the same schema until sync v4 is proven; no fork before the entry criteria.
 7. **Secrets.** Generated code must never contain a key, token or credential; scan on generation and
@@ -218,5 +258,6 @@ Infrastructure (the new server, containers, off-box backups) is already tracked 
 - A canary route prefix and a second schema per app, only while a candidate is being measured.
 - The registry is the source of the route/asset/menu/help maps, replacing the hand-maintained ones.
 
-The three documents now form one story: `app-sdk.md` (contract), `app-databases.md` (data boundary),
-`app-lifecycle.md` (operations, generation, and the v1 fork).
+The four documents now form one story: `app-sdk.md` (contract), `app-databases.md` (data boundary),
+`app-lifecycle.md` (operations, generation, review, and the v1 fork) and `app-store.md`
+(distribution through junderground).
