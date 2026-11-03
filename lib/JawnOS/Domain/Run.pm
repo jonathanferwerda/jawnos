@@ -949,6 +949,16 @@ sub where_lookup_stats {
 # window is since the last successful run (with a one-minute overlap so a row
 # written while the audit runs is never skipped); the first run reads the
 # script's default 14 days.
+# The master switch for the scheduled audit, separate from the cadence: off
+# pauses the butler without losing the frequency, and the Run now button still
+# works. The per-lookup ledger keeps recording; this gates the audit only.
+sub where_audit_enabled {
+	my $v = &subs::setting_grabber({ app => '__president', setting => 'where_audit_enabled' });
+	return 1 unless defined $v && length $v;
+	return 0 if $v =~ /^(?:0|off|no|false|disabled)$/i;
+	return 1;
+}
+
 sub where_audit_cadence {
 	my $c = &subs::setting_grabber({ app => '__president', setting => 'where_audit_cadence' });
 	return $c if defined $c && grep { $_ eq $c } qw/off hourly daily weekly monthly yearly/;
@@ -972,6 +982,7 @@ sub where_audit_report {
 }
 
 sub where_audit_next {
+	return 0 unless &where_audit_enabled();
 	my $interval = &where_audit_interval(&where_audit_cadence());
 	return 0 unless $interval;
 	my $at = (&where_audit_report()->{'at'} || 0) + 0;
@@ -979,6 +990,7 @@ sub where_audit_next {
 }
 
 sub where_audit_due {
+	return 0 unless &where_audit_enabled();
 	my $interval = &where_audit_interval(&where_audit_cadence());
 	return 0 unless $interval;
 	my $report  = &where_audit_report();

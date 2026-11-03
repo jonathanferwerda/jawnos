@@ -13,7 +13,7 @@ use File::Temp qw(tempdir);
 
 # The domain layer is lazy: load the real definitions before the local *subs::
 # stubs below, or a later module load would replace them.
-subs::preload($_) for qw(ai_spend_minute_key ai_spend_note where_lookup_stats where_audit_cadence where_audit_interval where_audit_report where_audit_next where_audit_due where_audit_run where_audit_tick ai_spend_buckets ai_spend_roles ai_spend_prune);
+subs::preload($_) for qw(ai_spend_minute_key ai_spend_note where_lookup_stats where_audit_enabled where_audit_cadence where_audit_interval where_audit_report where_audit_next where_audit_due where_audit_run where_audit_tick ai_spend_buckets ai_spend_roles ai_spend_prune);
 
 my $root = "$FindBin::Bin/..";
 
@@ -248,6 +248,23 @@ like(read_file("$root/templates/configure/system_setting_list.html.ep"),
 }
 {
 	no warnings 'redefine';
+	local *subs::setting_grabber = sub { undef };
+	is(&subs::where_audit_enabled(), 1, 'the butler is on by default');
+	local *subs::setting_grabber = sub { 'off' };
+	is(&subs::where_audit_enabled(), 0, 'off turns the butler off');
+	local *subs::setting_grabber = sub { 'on' };
+	is(&subs::where_audit_enabled(), 1, 'on turns it back on');
+}
+{
+	no warnings 'redefine';
+	local *subs::setting_grabber = sub { 'off' };
+	local *subs::cache_get = sub { {} };
+	local *subs::rightNow = sub { 1_000_000_000_000 };
+	is(&subs::where_audit_due(), 0, 'a paused butler is never due');
+	is(&subs::where_audit_next(), 0, 'and has no next run');
+}
+{
+	no warnings 'redefine';
 	my $now = 1_000_000_000_000;
 	local *subs::rightNow = sub { $now };
 	local *subs::setting_grabber = sub { 'hourly' };
@@ -275,6 +292,8 @@ like(read_file("$root/lib/JawnOS/Routes/manager_configure4.pm"), qr#where_audit/
 	'and the route reaches it');
 like(read_file("$root/templates/configure/system_setting_list.html.ep"), qr/where_audit_cadence/,
 	'the Sys panel offers the cadence');
+like(read_file("$root/templates/configure/system_setting_list.html.ep"), qr/where_audit_enabled/,
+	'and the butler switch');
 
 # ---- a run banks the script's JSON report -----------------------------------
 {

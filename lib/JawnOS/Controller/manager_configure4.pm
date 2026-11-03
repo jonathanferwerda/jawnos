@@ -479,6 +479,7 @@ sub action_19179 {
 		ai_balance => &subs::ai_balance_report(),
 		where_stats => &subs::where_lookup_stats(substr(&subs::ai_spend_minute_key(), 0, 10)),
 		where_audit => &subs::where_audit_report(),
+		where_audit_enabled => &subs::where_audit_enabled(),
 		where_audit_cadence => &subs::where_audit_cadence(),
 		where_audit_next => &subs::where_audit_next(),
 		settings => $settings,

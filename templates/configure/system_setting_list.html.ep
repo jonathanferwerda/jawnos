@@ -67,6 +67,7 @@
 			<%= &subs::ui('Reads the lookup ledger and the name maps, then lists the names that missed, the hits an agent said were wrong, and map drift.') %>
 			</p>
 			<p class="cfg-note">
+			<label class="cfg-note" hint="<%= &subs::ui('Off pauses the scheduled audit; Run audit now still works, and the lookup ledger keeps recording.') %>"><input type="checkbox" class="where_audit_enabled"<% if ($where_audit_enabled) { %> checked<% } %>> <%= &subs::ui('Butler on') %></label>
 			<label><%= &subs::ui('Run on its own') %>
 				<select class="where_audit_cadence" hint="<%= &subs::ui('How often the locator audit runs on its own. Off leaves it to the button.') %>">
 				<% foreach my $c (qw/off hourly daily weekly monthly yearly/) { %>
@@ -75,7 +76,7 @@
 				</select>
 			</label>
 			<button type="button" class="button where_audit_run"><%= &subs::ui('Run audit now') %></button>
-			<% if ($where_audit_next) { %>
+			<% if ($where_audit_enabled && $where_audit_next) { %>
 				<span class="cfg-note"><%= &subs::ui('Next run') %> <span class="time" timestamp="<%= $where_audit_next %>"></span></span>
 			<% } %>
 			</p>

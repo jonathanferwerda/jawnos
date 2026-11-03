@@ -18,3 +18,11 @@ $(document).on('change', '.where_audit_cadence', function() {
 	var pick = $(this);
 	settingSetter({ app: '__president', setting: 'where_audit_cadence', value: pick.val() });
 });
+
+// The butler's master switch. Off pauses the scheduled audit without losing
+// the cadence; the Run-now button and the lookup ledger are untouched.
+$(document).on('change', '.where_audit_enabled', function() {
+	var box = $(this);
+	settingSetter({ app: '__president', setting: 'where_audit_enabled', value: box.is(':checked') ? 'on' : 'off' });
+	$('#system_setting_lister').trigger('click');
+});

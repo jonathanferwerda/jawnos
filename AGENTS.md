@@ -26,7 +26,8 @@ say what did work). The ledger records the args, cwd and parent process of each 
 `perl scripts/where_audit.pl` turns those rows, the misses and map drift into a maintenance brief for
 the Coding agent. Configure → System runs it on a cadence
 (off/hourly/daily/weekly/monthly/yearly) or on demand; each run reads since its last successful
-minute, and the first run reads 14 days.
+minute, and the first run reads 14 days. A **Butler on** switch pauses the schedule without losing
+the cadence; the Run-now button and the lookup ledger keep working.
 - `perl scripts/agent_help.pl <app>` — what an app is made of: sources, the routes that reach it,
 the tables and settings it touches, the tests that claim its files, and its own comments. `--schema`
 or `--schema=<table>` gives every column, its type, the indexes and the apps that use the table.
