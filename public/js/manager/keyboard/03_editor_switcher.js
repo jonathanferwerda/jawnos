@@ -446,15 +446,31 @@ function jawnosRemoteCommand() {
 	}).fail(function () { reply.text('no reply'); });
 }
 
-// The remote_control panel's VPN button: set this device's tailnet exit node to
-// the machine picked above, so this device's web traffic leaves at that
-// machine's address. Android answers through the JawnVPN bridge (the embedded
-// client owns the VPN); a Linux peer asks its own manager, which drives the
-// local tailscale. The button only offers a machine that advertises an exit
-// node, and turning it off comes back to this device's own network.
+// The remote_control panel's VPN button: set this device's tailnet exit node,
+// so its web traffic leaves at that machine's address. The node is not
+// necessarily a machine this house has enrolled - the house's own server
+// usually is not a roster row, and a roster row carries no tailnet address
+// unless the peer reported one - so the list comes from the tailnet itself
+// (/manager/tailnet/status) rather than from the machine picker above.
+// Android answers through the JawnVPN bridge (the embedded client owns the
+// VPN); a Linux peer asks its own manager, which drives the local tailscale.
 function jawnosVpnSelected() {
 	var opt = $('#remote_control_machine_select').find('option:selected');
 	return { uuid: opt.val() || '', ip: opt.attr('data-tailnet') || '' };
+}
+
+// The peers that can carry this device's traffic: online, and offering an exit
+// node. An offline node is left out because picking it would only show a
+// button that cannot connect.
+function jawnosVpnNodes(status) {
+	var nodes = [];
+	var peers = (status && status.peers) || [];
+	for (var i = 0; i < peers.length; i++) {
+		var p = peers[i] || {};
+		if (!p.ip || !p.exit || !p.online) { continue; }
+		nodes.push({ ip: p.ip, name: p.name || p.ip });
+	}
+	return nodes;
 }
 
 function jawnosVpnStatus(cb) {
@@ -465,42 +481,61 @@ function jawnosVpnStatus(cb) {
 		.fail(function () { cb({ available: 0, exit: '', peers: [] }); });
 }
 
-function jawnosVpnPaint(on, available) {
+// Keep the exit-node list in step with the tailnet, and keep the choice: the
+// machine picked above if it is itself an exit node, then the node already
+// carrying the traffic, then what was chosen before, then the first one.
+function jawnosVpnChooser(nodes, preferred) {
+	var sel = $('#remote_control_vpn_node');
+	if (!sel.length) { return ''; }
+	var before = sel.val() || '';
+	var have = {};
+	sel.empty();
+	for (var i = 0; i < nodes.length; i++) {
+		have[nodes[i].ip] = 1;
+		sel.append($('<option>').val(nodes[i].ip).text(nodes[i].name));
+	}
+	var want = '';
+	var wanted = (preferred || []).concat([before]);
+	for (var j = 0; j < wanted.length; j++) {
+		var ip = wanted[j] || '';
+		if (ip && have[ip]) { want = ip; break; }
+	}
+	if (!want && nodes.length) { want = nodes[0].ip; }
+	sel.val(want);
+	sel.toggle(nodes.length > 0);
+	return want;
+}
+
+function jawnosVpnTarget() {
+	return $('#remote_control_vpn_node').val() || '';
+}
+
+function jawnosVpnPaint(on) {
 	var b = $('#remote_control_vpn');
 	if (!b.length) { return; }
-	b.attr('status', on ? 'on' : (available ? 'off' : 'unavailable'));
-	b.prop('disabled', !on && !available);
+	var target = jawnosVpnTarget();
+	b.attr('status', on ? 'on' : 'off');
+	b.prop('disabled', !on && !target);
 	b.css({
-		'opacity': (on || available) ? 1 : 0.45,
+		'opacity': (on || target) ? 1 : 0.45,
 		'background-color': on ? 'var(--jawnos-ok, #4caf50)' : ''
 	});
-	b.attr('hint', on ? jawnosT('Turn the VPN off') : jawnosT("Route this device's web traffic through the selected machine when it offers an exit node"));
+	b.attr('hint', on ? jawnosT('Turn the VPN off') : jawnosT("Route this device's web traffic through the exit node chosen beside it"));
 }
 
 function jawnosVpnRefresh() {
 	var b = $('#remote_control_vpn');
 	if (!b.length) { return; }
-	var picked = jawnosVpnSelected();
-	if (!picked.ip) {
-		// "Me" has no exit node to switch to, but keep the button in sight so
-		// the choice is discoverable; picking a machine enables it.
-		b.show();
-		jawnosVpnPaint(false, false);
-		b.attr('hint', jawnosT('Pick a machine that offers an exit node'));
-		return;
-	}
 	jawnosVpnStatus(function (s) {
-		var peers = (s && s.peers) || [];
-		var peer = null;
-		for (var i = 0; i < peers.length; i++) {
-			if (peers[i] && peers[i].ip === picked.ip) { peer = peers[i]; break; }
-		}
-		var on = !!(s && s.exit && s.exit === picked.ip);
-		// Linux reports online as 1/0, Android as true/false.
-		var available = !!(peer && peer.exit && peer.online);
+		var nodes = jawnosVpnNodes(s);
+		var picked = jawnosVpnSelected();
+		var on = !!(s && s.exit);
+		jawnosVpnChooser(nodes, [picked.ip, (s && s.exit) || '']);
 		b.show();
-		jawnosVpnPaint(on, available);
-		if (!available && !on) { b.attr('hint', jawnosT('That machine does not offer an exit node')); }
+		jawnosVpnPaint(on);
+		if (!on && !nodes.length) {
+			b.attr('hint', jawnosT('No machine on the tailnet offers an exit node'));
+		}
 	});
 }
 
@@ -529,11 +564,11 @@ function jawnosPublicIpRefresh(refresh) {
 }
 
 function jawnosVpnToggle() {
-	var picked = jawnosVpnSelected();
-	if (!picked.ip) { return; }
 	var b = $('#remote_control_vpn');
+	if (!b.length) { return; }
 	var on = b.attr('status') === 'on';
-	var target = on ? '' : picked.ip;
+	var target = on ? '' : jawnosVpnTarget();
+	if (!on && !target) { return; }
 	b.prop('disabled', true);
 	var finish = function (r) {
 		b.prop('disabled', false);
