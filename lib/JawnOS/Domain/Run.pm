@@ -1018,6 +1018,15 @@ sub ai_spend_prune {
 			$before, $before_day
 		);
 	};
+	# The locator's rows share the same window: the panel only reads today, so an
+	# older row is dead weight that would otherwise sync forever. Its own failure
+	# is not the AI ledger's failure.
+	eval {
+		&subs::db_query(
+			"delete from where_calls where minute is not null and minute != '' and minute < ?",
+			$before
+		);
+	};
 	return 0 unless $res;
 	my $deleted = eval { $res->rows };
 	return defined $deleted ? ($deleted + 0) : 1;

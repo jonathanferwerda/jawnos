@@ -155,18 +155,21 @@ package main;
 # ---- the prune --------------------------------------------------------------
 {
 	no warnings 'redefine';
-	my ($seen_sql, @seen_params);
+	my @seen;
 	local *subs::rightNow = sub { $now };
 	local *subs::db_query = sub {
 		my ($sql, @params) = @_;
-		($seen_sql, @seen_params) = ($sql, @params);
+		push @seen, [ $sql, @params ];
 		return FakeRowSet->new(undef, 7);
 	};
 	is &subs::ai_spend_prune(40), 7, 'the prune reports the rows it deleted';
+	my ($seen_sql, @seen_params) = @{ $seen[0] };
 	like $seen_sql, qr/minute < \?/, 'it bounds the per-call rows by minute';
 	like $seen_sql, qr/hour < \?/, 'and the legacy hourly rows by their day';
 	is $seen_params[0], '2026-09-23 17:43', 'forty days before now, in local minutes';
 	is $seen_params[1], '2026-09-23', 'with the day bound for the old hour column';
+	ok scalar(grep { $_->[0] =~ /from where_calls/ } @seen),
+		'and the locator ledger is pruned on the same window';
 
 	local *subs::db_query = sub { return undef };
 	is &subs::ai_spend_prune(40), 0, 'a failed delete is reported as zero, not a quiet success';
