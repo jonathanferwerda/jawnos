@@ -191,4 +191,21 @@ sub tracked_record {
 	}
 }
 
+# A job started from inside another job must fork. Inline it would report with
+# the outer process's pid, and the master keys its records by pid: the inner
+# name and warranty replace the outer ones, so the reaper kills the whole group
+# at the inner deadline. Measured on the phone: `appointment models` (60s) was
+# TERMed at 35s under the record name `embedded toggle push` (30s).
+{
+	my $calendar = read_file(root() . "/lib/JawnOS/Domain/Calendar.pm");
+	like($calendar, qr/my \$nested = \(defined \$gb::subprocessor_uuid && length \$gb::subprocessor_uuid\) \? 1 : 0;/,
+		'a nested call knows it is already inside a subprocessor');
+	like($calendar, qr/\$params->\{'fork'\} = 1 if \$nested;/,
+		'and it is forced into its own process, so it cannot rename or shorten the outer record');
+	my $nested_at = index($calendar, "\$params->{'fork'} = 1 if \$nested;");
+	my $forked_at = index($calendar, 'my $forked = $gb::subprocessed > 1');
+	ok($nested_at >= 0 && $forked_at > $nested_at,
+		'the forced fork is decided before the inline/fork test, so nested work always forks');
+}
+
 done_testing();

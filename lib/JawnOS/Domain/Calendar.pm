@@ -604,6 +604,15 @@ sub subprocessor {
 		: &subs::subprocessor_warranty_for($name);
 	my $started = &subs::rightNow();
 	my $warranty = &subs::subprocessor_warranty_at($warranty_spec, $started);
+	# A job asked for from inside another job must be its own process. Run inline
+	# it sends its record with this pid, which renames the outer job and gives it
+	# the inner job's (shorter) warranty - the reaper then kills the whole group at
+	# the inner deadline. Measured on the phone: `appointment models` was killed at
+	# 35s under the name `embedded toggle push` (30s), so a start's sugar and cream
+	# never arrived. The outer job's own child handle (subprocessor_uuid) is the
+	# signal that we are already inside one.
+	my $nested = (defined $gb::subprocessor_uuid && length $gb::subprocessor_uuid) ? 1 : 0;
+	$params->{'fork'} = 1 if $nested;
 	# run_p forks on the next tick, not at this call, so the child's own clock
 	# starts when it runs (see subprocessor_reap): the ask asks, the process is
 	# judged. 'forever' and an absolute moment are the same either way.
