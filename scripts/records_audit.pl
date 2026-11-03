@@ -6,6 +6,7 @@
 # Runs the fixed audit (subs::records_audit) against this machine's database and
 # prints the findings and the suggested action per row. Writes nothing: it is the
 # dry run the Coding agent's reconcile would be proposed from.
+# The repair rules and the recover flow: docs/AGENTS-records.md.
 use strict;
 use warnings;
 use FindBin;

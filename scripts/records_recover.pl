@@ -14,7 +14,8 @@
 # snapshot is younger than ten minutes, taking a fresh one if it is not.
 #
 # Writes nothing without --apply. This is the tool the Coding agent runs when a
-# person reports numbers that do not match what they remember.
+# person reports numbers that do not match what they remember. The repair rules
+# and the per-device database incident: docs/AGENTS-records.md.
 use strict;
 use warnings;
 use FindBin;

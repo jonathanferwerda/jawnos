@@ -164,6 +164,8 @@ sub records_repair_bad_dates {
 
 sub records_audit {
 	my ($window_ms) = @_;
+	# A repair is permanent and the wrong one is worse than none. The rule, the
+	# incident and the recover flow: docs/AGENTS-records.md.
 	# 0 means all time: the sweep predates the fix by weeks, so the default window is
 	# only a convenience for a quick look
 	$window_ms = 172800000 unless defined $window_ms && $window_ms =~ /^[0-9]+$/;

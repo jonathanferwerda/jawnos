@@ -184,13 +184,12 @@ translatable in the same change:
 
 ## Layout
 
-- `perl/` — service layer: `President.pl`, `Manager.pl` (~24-line launcher), `Websocket.pl`, `Alarm.pl`,
+- `perl/` — the service layer (`President.pl`, the `Manager.pl` launcher, `Websocket.pl`, `Alarm.pl`,
   `Music.pl`, `watch.pl`, `teletype.pl`, `subroutines.pl`, `gb.pl`, `hooks.pl`, `help.pl`,
-  `language.pl`. Every `require` is cwd-relative: run from the root.
-- `lib/` — `JawnOS.pm` (the app; `startup` publishes `Manager::app`), `Manager.pm` + `Manager/Part*.pm`
-  (package `Manager`, lazy via `AUTOLOAD`; `Declarations.pm` forward-declares every name), `Controller/*`
-  (one `sub action_<line>` per route), `Routes*` (order = original line number), `Domain/*` (package
-  `subs`, lazy via `Domain/Loader.pm`).
+  `language.pl`). Every `require` is cwd-relative: run from the root.
+- `lib/` — `JawnOS.pm` (the app), `Manager.pm` + lazy `Manager/Part*.pm` (`AUTOLOAD`; `Declarations.pm`
+  forward-declares), `Controller/*` (one `sub action_<line>` per route), `Routes*`, `Domain/*`
+  (package `subs`, lazy via `Domain/Loader.pm`).
 - `templates/` Mojo `.ep` (pages at top level, partials in feature folders; a page over ~300 lines
   includes its own folder's partials) · `public/` assets (`js/` are `foo.js` indexes + `foo/` parts) ·
   `scripts/` · `database/` · `desktop/` · `docs/` · `jp/ jt/ jw/` firmware · `.shots/` · `releases/`.
@@ -231,19 +230,9 @@ on a normal task:
 - `lib/JawnOS/Manager/Index.pm` and `lib/JawnOS/Domain/Loader.pm` are name → file maps. **Do not read
   them to find one function** — `perl scripts/where.pl <name>` prints `file:line`.
 
-## Facts that save a search (verified 2026-11-02)
+## Facts that save a search
 
-**Data model.** `appointments` is the big table; satellites: `warehouse`, `mailbox`, `notes`,
-`model`/`option`/`subcategory`, `continent`, `magazine`, `credentials`, `devices`. Sync: `sync_log`,
-`sync_cursors`, `sync_jobs`, `sync_snapshots`, `staged_appointments`. Every synced table carries `ost`
-and `server_time` or the rail skips it. Schema: `database/schema.sql`; deep notes: `docs/AGENTS-notes.md`.
-
-**Journal is a use case, not a table** — `notes` plus the Handbook, no `journal` table or template.
-**Maps are measured images** — `public/js/manager/mapengine.js` places a scan by a `home_plate` pixel +
-scale bar; `travel.js` is the picker; coordinates live in `continent`, no `maps` table.
-**Chat is a set of roads** — `templates/apps/chat.html.ep` sections `sms, dial, list, tickets, rooms,
-lora`; SMS/MMS via the Android app, LoRa via the T-Watch/T-Deck. **WebRTC is not a transport yet** (the
-only code is `public/js/manager/jp/01_watcher_webrtc.js`); the destination is per-thread (`chat.js`).
+Data model, journal, maps and chat: `docs/AGENTS-facts.md`. Schema: `database/schema.sql`.
 
 ## Token economy
 

@@ -147,6 +147,9 @@ sub action_19406 {
 }
 
 # POST /manager/configure/restore_now
+# A database is per device: restoring another machine's copy leaves this one
+# wearing the source's identity. Restore only onto the same machine; the
+# incident and the repair: docs/AGENTS-records.md.
 sub action_19489 {
 	my $c = shift;
 	my $filename = $c->param('filename');
