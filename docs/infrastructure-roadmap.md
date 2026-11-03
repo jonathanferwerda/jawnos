@@ -441,9 +441,11 @@ record moved instead.
       at 04:15 by a user timer, the table at 04:15 by cron. Both databases pass `integrity_check`,
       and the certificate/key pair and the 115,378-row appointment table were verified from the
       copy. The restore steps are written in §11.
-- [ ] Roll the re-pointing to every device. Phone and tablet still carry the cloud signatorial and
-      no house row; the table carries the cloud row and its utilities are off. The phone's `config`
-      also lacks `tunnel_hub`.
+- [x] Re-pointed the laptop, table, and phone: each enrols the house, drops the cloud row, sets
+      `sync_hub`, and switches `tunnels` / `remote_machine_sync` on. All three tunnels report seven
+      listeners, and the hub lists every one as `tunnel=yes` with a loopback manager. The phone also
+      gained `tunnel_hub`; it was never set there. The tablet is a tailnet client only and reconnects
+      when it wakes.
 - [ ] Verify from outside the house (phone on cellular) and cancel the VPS at renewal. The VPS
       node stays online in the tailnet until then: it is the rollback, and `cloud.jonathanferwerda.com`
       is MagicDNS's name for it (the JawnOS service there is stopped).
