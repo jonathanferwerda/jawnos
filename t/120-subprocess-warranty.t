@@ -1,4 +1,4 @@
-# tests-for: lib/JawnOS/Domain/Process.pm lib/JawnOS/Domain/Calendar.pm lib/JawnOS/Domain/Lan.pm lib/JawnOS/Domain/Loader.pm jawn
+# tests-for: lib/JawnOS/Domain/Process.pm lib/JawnOS/Domain/Calendar.pm lib/JawnOS/Domain/Lan.pm lib/JawnOS/Domain/Loader.pm perl/President.pl jawn
 # covers:    a subprocessor stamps a warranty, the reaper forgets a dead pid and kills a job past its
 #            finite warranty, and a resident loop or a tunnel holder declared 'forever' is never touched.
 

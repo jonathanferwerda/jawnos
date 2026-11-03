@@ -773,7 +773,7 @@ sub manager_starter() {
 	if (`ollama -v` =~ /client version is/) {
 		&subs::subprocessor(sub {
 			`OLLAMA_IGPU_ENABLE=1 OLLAMA_VULKAN=1 HIP_VISIBLE_DEVICES=-1 OLLAMA_NOHISTORY=1 ollama serve`;
-		});
+		}, { name => 'ollama serve' });
 	}
 	&subs::subprocessor(sub {
 

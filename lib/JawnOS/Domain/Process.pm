@@ -35,6 +35,7 @@ our %WARRANTY = (
 	'utility functions'              => 'forever',
 	'Minion Worker'                  => 'forever',
 	'whisper server'                 => 'forever',
+	'ollama serve'                   => 'forever',
 	'slow loops'                     => 'forever',
 	'house levels'                   => 'forever',
 	'device mdns sync'               => 'forever',
