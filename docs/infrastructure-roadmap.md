@@ -1,7 +1,7 @@
 # Infrastructure roadmap — dev box, tailnet and the cloud server
 
-**Status:** in progress — P0–P4 are done (2026-11-02); P5 is the cutover and needs a
-maintenance window.
+**Status:** in progress — P0–P4 are done and **P5 is mid-cutover** (2026-11-02): headscale is
+running on ks5, waiting on the apex DNS record; P5's exit is not yet met.
 **Started:** 2026-11-02 · **Baseline measured** 2026-11-02 by logging into all four hosts.
 **Related:** `AGENTS.md` (run/restart, the database-is-per-device rule, the mesh rules),
 `docs/AGENTS-restart.md`, `docs/AGENTS-firmware.md`, `t/README.md` (what the suite touches)
@@ -38,8 +38,8 @@ Measured, not assumed. Re-measure before acting; this section goes stale.
 |---|---|---|
 | **laptop** | ASUS Vivobook X1504ZA, i5-1235U (2P+8E), 15.6 GB, Manjaro | the editor, the agents, its own JawnOS, **the LAN manager the devices talk to** |
 | **table** | Manjaro, 4 cores, 7.6 GB, 239 GB root (74% used) | its own JawnOS, GTK desktop |
-| **cloud** | OVH VPS, Debian 13, **2 vCPU, 3.7 GB, 40 GB** | Headscale, the always-on JawnOS house server, the public hub, DNS, mail |
-| **ks5** | Kimsufi, Proxmox VE 9.2.25, **4c/8t, 64 GB, 2×450 GB NVMe** | the host + `tailscaled`; `dev` (100) and `house` (101) on `vmbr1`; `headscale` is P5 |
+| **cloud** | OVH VPS, Debian 13, **2 vCPU, 3.7 GB, 40 GB** | JawnOS house server, public hub, DNS, mail; **its Headscale is stopped** (state kept for rollback) |
+| **ks5** | Kimsufi, Proxmox VE 9.2.25, **4c/8t, 64 GB, 2×450 GB NVMe** | the host + `tailscaled`; `dev` (100), `house` (101) and `headscale` (102) on `vmbr1` |
 | **tablet** | Android | tailnet client only |
 | **phone** | Android | tailnet client — registered 2026-11-02, `100.64.0.9` |
 
@@ -90,17 +90,17 @@ Measured after the install and two reboot drills:
 
 ### The cloud server (`cloud`, `vps-7c120a57`)
 
-- **Headscale owns `0.0.0.0:443` on the apex domain.** `server_url: https://thejunderground.com`,
-  `listen_addr: 0.0.0.0:443`, embedded DERP with `stun_listen_addr: 0.0.0.0:3478`,
-  `automatically_add_embedded_derp_region: true`, `magic_dns: true`,
-  `base_domain: jonathanferwerda.com`, prefixes `100.64.0.0/10` and `fd7a:115c:a1e0::/48`.
-  `thejunderground.com:443` is the control plane and nothing else: `/manager` is **404** there,
-  `/windows` is Headscale's own page.
-  State is small and portable: `db.sqlite` (~86 KB) plus `noise_private.key`,
-  `derp_server_private.key`, and the TLS pair in `/var/lib/headscale/tls/`.
+- **Headscale moved to ks5 (P5); the VPS instance is stopped with its state intact for
+  rollback.** `server_url: https://thejunderground.com`, `listen_addr: 0.0.0.0:443`, embedded DERP
+  with `stun_listen_addr: 0.0.0.0:3478`, `automatically_add_embedded_derp_region: true`,
+  `magic_dns: true`, `base_domain: jonathanferwerda.com`, prefixes `100.64.0.0/10` and
+  `fd7a:115c:a1e0::/48`. The apex is the control plane and nothing else: `/manager` is **404**
+  there, `/windows` is Headscale's own page. State is small and portable: `db.sqlite` (~86 KB)
+  plus `noise_private.key`, `derp_server_private.key`, and the TLS pair.
 - **TLS**: Let's Encrypt, `notAfter 2026-12-07`. The cert files are the source of truth
   (`tls_cert_path`/`tls_key_path` are set); the config also declares `HTTP-01` on `:http`.
-  **Whatever renews it has to move too, or the name goes dark in December.**
+  **Served from ks5 since P5; its renewal must move there too, or the name goes dark in
+  December.**
 - **The always-on JawnOS house server** (`jawnos.service`, `User=jawn`,
   `WorkingDirectory=/home/jawn/jawnos`, 1.1 GB) on **3000** (manager, ticket) and
   **45545 / 45546 / 45550** (the public hub and its websocket). `:45545` is what other houses dial
@@ -132,7 +132,7 @@ Measured after the install and two reboot drills:
 | D6 | The laptop keeps `performance`; the fan noise is accepted in exchange for maximum clocks | decided by the person, 2026-11-02 |
 | D7 | Any dev container gets a **fresh database** and stays **off the mesh** | decided — a rule |
 | D8 | The house's always-on JawnOS server runs in its **own container**, separate from `dev` | decided |
-| D9 | **The control plane gets its own name under the house wildcard** — | decided |
+| D9 | **The control plane gets its own name under the house wildcard** — | superseded — §4 |
 | | `headscale.jonathanferwerda.com` — not a bare IP and not the apex. The hub is `hub.` under | |
 | | the same wildcard. | |
 | D10 | **64 GB of RAM, because it is the only configuration offered in Beauharnois.** 32 GB was the | decided |
@@ -204,6 +204,17 @@ So the KS-5 is not self-sufficient until one of these is true:
 The first is better: the DNS credentials live in the `dns` settings app, sealed with the house key,
 so they **ride the mesh** to the `house` container — the off-mesh `dev` container never gets them.
 Hard date: **2027-01-31** (the wildcard was reissued on 2026-11-02).
+
+**D9 was not implementable (found during P5, 2026-11-02).** Headscale v0.29.5 refuses a
+`server_url` that sits inside `base_domain` while MagicDNS is on — MagicDNS could shadow the
+control plane. `base_domain` must stay `jonathanferwerda.com` because the house names
+(`phone.`, `laptop.`, `table.jonathanferwerda.com`) are resolved by MagicDNS, so
+`headscale.jonathanferwerda.com` cannot be the control URL. The cutover therefore **keeps
+`https://thejunderground.com`**, which also means **no node is re-pointed**: the apex A record
+moves to ks5 and the apex certificate moves with it. Consequences: the apex stays in use for the
+control plane (Elixir takes a `thejunderground.com` subdomain at P7), the apex certificate is
+renewed on ks5 (certbot standalone on :80, deploy hook staged), and the
+`headscale.jonathanferwerda.com` A record (created, unused) can be removed.
 
 ### Why not the IP, and why not a nameserver
 
@@ -372,34 +383,27 @@ Nothing is deleted until its replacement answers. That ordering *is* the rollbac
 - **Exit:** ks5 offers the exit node and the bridge, the laptop uses neither by default, and the VPS
       is quiet.
 
-### P5 — Move Headscale (the cutover; schedule it)
+### P5 — Move Headscale (the cutover) — IN PROGRESS 2026-11-02
 
-This is the one phase that can lock people out. Everything below happens in one window, with the
-old host kept intact for a rollback.
+Headscale runs in **CT 102** (`10.20.0.30`) with the VPS's state, listening on 443 with the apex
+certificate. **The control URL stays `https://thejunderground.com`** (§4: D9's name is rejected by
+headscale while MagicDNS owns `jonathanferwerda.com`), so **no node has to be re-pointed** — the
+one external step left is the apex A record.
 
-- [ ] Lower the Cloudflare TTL on the `headscale` (and `hub`) records to 60 s a day ahead.
-- [ ] `systemctl stop headscale` on the VPS (clean WAL), then copy **all** of
-      `/var/lib/headscale/`: `db.sqlite` (+ `-wal`/`-shm` after the stop), `noise_private.key`,
-      `derp_server_private.key`, and `tls/`.
-- [ ] Install Headscale on the KS-5 with the same prefixes, `magic_dns`, `base_domain` and
-      nameservers, but `server_url: https://headscale.jonathanferwerda.com`, and the TLS paths
-      pointing at copies of the house wildcard (`server/fullchain.pem`, `server/privkey.pem`).
-- [ ] Open on the KS-5: **443/tcp**, **3478/udp** (STUN), **41641/udp** (tailscaled). **No 80.**
-- [ ] Add the `headscale` A record in Cloudflare (TTL 60) → the KS-5's IP.
-- [ ] Re-point every node: `tailscale up --login-server https://headscale.jonathanferwerda.com`.
-      Laptop and table first, then the Android devices; do it while every device is in reach.
-- [ ] Move the wildcard's renewal with the repo: whatever triggers `scripts/tls_issue.pl`, plus
-      the DNS-provider credentials from Configure → Plat → DNS, must exist on the KS-5.
-      certbot stays on the VPS for now — it retires with it (D11).
-- [ ] Verify: `headscale nodes list` shows table, cloud, laptop and tablet; `tailscale status` on
-      the laptop; the DERPMap carries the embedded region.
-- [ ] **Never run both instances at once** — two servers with the same keys and diverging
-      databases is the one unrecoverable state.
-- [ ] Rollback: keep the old instance stopped but intact. To go back, restore the old control URL
-      (its `server_url` is still the apex) and re-run the client `--login-server` command with it.
-      The copied state is a snapshot; keep it for a week.
-- **Exit:** every node online through the KS-5, the hub answering on the same name, the VPS's
-  Headscale disabled.
+- [x] Headscale **v0.29.5** in an unprivileged container, onboot, using the copied
+      `/var/lib/headscale/` (db.sqlite, noise and DERP keys, TLS) and the VPS config.
+- [x] DNAT on ks5: **443/tcp** and **3478/udp** → `10.20.0.30`, persisted by
+      `headscale-dnat.service`; 41641/udp is the host's own `tailscaled`.
+- [x] The VPS instance is **stopped** and left intact (`/tmp/headscale-state.tgz` is the rollback);
+      never start both — same keys, diverging databases.
+- [x] Verified `https://thejunderground.com/health` → `{"status":"pass"}` via `--resolve` at
+      54.39.157.133; `headscale nodes list` shows the copied users and nodes.
+- [ ] **Pending:** in Cloudflare, point `thejunderground.com` (A, **DNS-only**, not proxied) at
+      **54.39.157.133**. No client changes follow — the URL is unchanged.
+- [ ] Renew the apex certificate on ks5 (expires **2026-12-07**): certbot standalone on `:80` with
+      the staged `/usr/local/sbin/headscale-deploy-cert.sh`, on a weekly timer.
+- [ ] Rollback: move the A record back and start the VPS instance; its `server_url` is unchanged.
+- **Exit:** every node online through ks5, the apex answering there, the VPS instance disabled.
 
 ### P6 — Move the house server off the VPS, then retire it
 
@@ -461,8 +465,10 @@ old host kept intact for a rollback.
 - **The one easy own-goal** is a broken bridge or a closed 3478/udp on a host with no console.
   Snapshot first, keep the old SSH session open, and confirm the ports before repointing DNS.
 - **The one dated risk** is the wildcard: it expires **2027-01-31**. The laptop renews it through
-  `jawnos-tls.timer` (installed 2026-11-02), and the `house` container needs the same timer in P6. The
-  apex pair expires 2026-12-07 and retires with the VPS.
+  `jawnos-tls.timer` (installed 2026-11-02), and the `house` container needs the same timer in P6.
+  **The apex pair now served by headscale on ks5 expires 2026-12-07**; it has to be issued on ks5
+  (certbot standalone on :80, deploy hook staged) before then, because the VPS's HTTP-01 renewal
+  stops working once the apex record moves.
 - **The one thing that cannot be done** is pointing Tailscale at a bare IP: the client validates
   the control certificate and will not connect without a name.
 - **The one rule that must not be bent** is D7. A copied database on a dev container looks like it
