@@ -493,7 +493,7 @@ sub evaluation_agent {
 	my $user = $instructions . "\n\n" . encode_json($briefing);
 	my ($text, $error);
 	if ($model && &evaluation_agent_ready()) {
-		($text, $error) = &evaluation_model_call_role('eval_assistant', $system, $user, &subs::ai_role_thinking('eval_assistant'));
+		($text, $error) = &evaluation_model_call_role('eval_assistant', $system, $user, &subs::ai_role_thinking_effective('eval_assistant'));
 	}
 	elsif ($model) {
 		$error = 'no evaluation agent is reachable from this machine';

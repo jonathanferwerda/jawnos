@@ -98,6 +98,27 @@ $(document).on('click', '#translate_clear', function () {
 	location.reload();
 });
 
+// The Thinking switches under Configure -> Misc are one setting per device: a
+// comma-separated list of the agent roles that may not think here. Each select
+// owns one role, so saving rebuilds the whole list from the five of them rather
+// than letting the last change replace the others (which is what one shared
+// setting would do). A role left on is simply absent from the list.
+$(document).on('change', '.misc_setting[setting="thinking_off"]', function() {
+	var sel = $(this);
+	var device = sel.attr('device');
+	var off = [];
+	$('.misc_setting[setting="thinking_off"]').filter(function() {
+		return $(this).attr('device') === device;
+	}).each(function() {
+		if ($(this).val() === 'off') { off.push($(this).attr('role')); }
+	});
+	$.ajax({
+		url: '/manager/setting_setter',
+		type: 'POST',
+		data: { app: 'misc', setting: 'thinking_off', value: off.join(','), device: device, timestamp: Date.now() }
+	});
+});
+
 $(document).on('change','.misc_setting', function() {
 	var timestamp = Date.now();
 	var set = $(this);

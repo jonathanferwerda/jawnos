@@ -169,7 +169,7 @@ sub action_26602 {
 	my $system = 'You are the Search app\'s AI inside JawnOS, a personal, self-hosted operating environment. '
 		. 'Answer the question directly in a few short paragraphs of plain text. '
 		. 'No headings, no bullet lists, no markdown and no preamble. If you are unsure, say so plainly.';
-	my ($text, $err) = &subs::evaluation_model_call_role('help_assistant', $system, $q, &subs::ai_role_thinking('help_assistant'));
+	my ($text, $err) = &subs::evaluation_model_call_role('help_assistant', $system, $q, &subs::ai_role_thinking_effective('help_assistant'));
 	unless (defined $text && length $text) {
 		$c->render(json => { ok => 0, error => ($err || &subs::ui('The AI did not answer.')) });
 		return;

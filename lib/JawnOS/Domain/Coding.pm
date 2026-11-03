@@ -1126,7 +1126,7 @@ sub coding_run_job {
 			|| &subs::setting_grabber({ app => 'mail', setting => 'help_assistant' });
 		die "No Coding model is set (Configure \x{2192} Platform).\n" unless $model;
 		my $fallback = &subs::setting_grabber({ app => 'mail', setting => 'coding_assistant_fallback' });
-		my $thinking = &subs::ai_role_thinking('coding_assistant');
+		my $thinking = &subs::ai_role_thinking_effective('coding_assistant');
 		my $remembered = &Manager::coding_conversation_load($conversation);
 		my @lines;
 		foreach my $m ( @{$remembered} ) {

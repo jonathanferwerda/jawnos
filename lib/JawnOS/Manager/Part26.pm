@@ -226,7 +226,7 @@ sub travel_guess_describe_area {
 	my $model = &subs::setting_grabber({ app => 'mail', setting => 'visual_assistant' }) || &subs::setting_grabber({ app => '__president', setting => 'visual_assistant' });
 	return (undef, \@names) unless $model && @images;
 	my $ask = 'These pictures are the parts of our own maps that fall in or beside one patch of ground we have not mapped' . (@names ? ' (the maps are: ' . join(', ', @names) . ')' : '') . '. Each is a crop, not a whole map. In one paragraph (no preamble, no lists), describe what most likely fills the unmapped patch, as a prompt for an image generator: terrain, land use, roads that visibly continue from the crops, water, season and the look of the imagery. Stay conservative: only say what these crops support; do not invent turns, junctions, buildings or landmarks.';
-	my ($text) = &subs::ai_chat_role('visual_assistant', [ { role => 'system', content => 'You describe real places conservatively, for a satellite-imagery image generator.' }, { role => 'user', content => $ask, images => \@images } ], &subs::ai_role_thinking('visual_assistant'));
+	my ($text) = &subs::ai_chat_role('visual_assistant', [ { role => 'system', content => 'You describe real places conservatively, for a satellite-imagery image generator.' }, { role => 'user', content => $ask, images => \@images } ], &subs::ai_role_thinking_effective('visual_assistant'));
 	return ($text, \@names);
 }
 

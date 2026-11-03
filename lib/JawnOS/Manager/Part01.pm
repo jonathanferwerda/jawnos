@@ -535,7 +535,7 @@ sub guide_time_machine {
 			. '{"action":"time","when":"YYYY-MM-DD HH:MM:SS"} naming the moment the phrase means in local time, to travel there; '
 			. 'or {"action":"create","app":"lunch","title":"Lunch","when":"in 20 minutes","type":"start","duration":"20 minutes"} to make an appointment, when they ask you to start, begin or log something ("type" is start, record or command for something the alarm fires; "duration" is how long it lasts, only when they say it - give a plain positive length, the tree stores it as the negative accrual itself). '
 			. 'If the phrase names no moment and asks for nothing, reply {"action":"time","when":"unknown"}';
-		my ($text, $err) = &subs::evaluation_model_call_role('help_assistant', $system, $spec, &subs::ai_role_thinking('help_assistant'));
+		my ($text, $err) = &subs::evaluation_model_call_role('help_assistant', $system, $spec, &subs::ai_role_thinking_effective('help_assistant'));
 		if ($text) {
 			my $action = &subs::json_from_model($text);
 			$action = { action => 'time', when => $text } unless $action && $action->{'action'};

@@ -544,7 +544,7 @@ sub coding_propose_fix {
 	}
 	my $ai_start = { calls => $ai_tokens->{'calls'}, in => $ai_tokens->{'in'}, out => $ai_tokens->{'out'} };
 	# the coding agent's thinking effort, set in Configure -> Plat beside its model
-	my $thinking = &subs::ai_role_thinking('coding_assistant');
+	my $thinking = &subs::ai_role_thinking_effective('coding_assistant');
 	# a fallback model's stand-down notice must not speak from this fork
 	local $say_quiet = 1;
 	require &error_watch_repo() . '/help.pl';

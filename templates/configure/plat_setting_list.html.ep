@@ -39,6 +39,10 @@
 	# this build keeps the panel's old shape instead of dying on an unknown sub.
 	my $thinks_of = subs::provides('ai_model_thinks') ? sub { &subs::ai_model_thinks(@_) } : sub { 0 };
 	my $thinking_of = subs::provides('ai_role_thinking') ? sub { &subs::ai_role_thinking(@_) } : sub { '' };
+	# This device's off switch (Configure -> Misc) silences a role here: its
+	# Thinking row is not shown at all, so nothing on this machine can ask for
+	# a level the call would drop.
+	my $allowed_of = subs::provides('ai_role_thinking_allowed') ? sub { &subs::ai_role_thinking_allowed(@_) } : sub { 1 };
 	# which providers can answer here at all: a key entered, or a running Ollama.
 	# The role lists below only offer these - the rest are named under them, so it
 	# is clear which of them wants a key (or a daemon). Until the tree restarts
@@ -92,6 +96,7 @@
 			# (ai_model_thinks). The row rides the model, appearing and going as the
 			# pick changes.
 			my $thinking_cap = ($cap eq 'chat' || $cap eq 'vision') ? 1 : 0;
+			$thinking_cap = 0 unless $allowed_of->($setting);
 			my $thinks = ($thinking_cap && $current && $thinks_of->($current)) ? 1 : 0;
 			my $think = $thinking_of->($setting);
 			$think = 'none' unless length $think;

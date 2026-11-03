@@ -462,6 +462,27 @@
 		</div>
 		</details>
 
+		<%# Which of the language agents may reason on this device. A role named here
+		    stops carrying a Thinking level in its calls (ai_role_thinking_allowed),
+		    and Configure -> Plat hides its Thinking row for this machine too. %>
+		<details class="cfg-acc cfg-acc-sub" data-acc="misc-<%= &subs::html_name($dt) %>-thinking">
+			<summary><%= &subs::ui('Thinking (AI agents)') %></summary>
+			<div class="cfg-grid misc_grid">
+			<% my $thinking_off = &subs::setting_grabber({ app => 'misc', setting => 'thinking_off', device => $dt }) // '';
+			   my %thinking_off = map { $_ => 1 } split /[,\s]+/, $thinking_off;
+			   foreach my $agent ( [ 'coding_assistant', 'Coding agent' ], [ 'help_assistant', 'Help guide' ], [ 'eval_assistant', 'Evaluation' ], [ 'visual_assistant', 'Vision' ], [ 'chatbot_model', 'Pen chat' ] ) { %>
+				<label hint="<%= &subs::ui('Off: this device\'s calls for this agent carry no Thinking level, whatever Configure -> Plat has chosen for it. On: the level chosen there applies.') %>">
+					<b><%= &subs::ui($agent->[1]) %></b>
+					<select class="misc_setting" device="<%= $dt %>" setting="thinking_off" role="<%= $agent->[0] %>">
+						<option value="on" <% if (($thinking_off{$agent->[0]} || '') eq 'off') { %>selected="selected"<% } %>>on</option>
+						<option value="off" <% if (($thinking_off{$agent->[0]} || '') ne 'off') { %>selected="selected"<% } %>>off</option>
+					</select>
+				</label>
+			<% } %>
+			</div>
+			<p class="cfg-note"><%= &subs::ui('A level chosen under Configure -> Plat still stands; this switch only decides whether this machine asks for it. Image, audio and video generation never reason, so they are not listed.') %></p>
+		</details>
+
 		<% my @locations = &subs::location_types(); %>
 		<% my $remote_machines = &subs::remote_machine_lister({ archive => 'yes' }); %>
 		<details class="cfg-acc cfg-acc-sub" data-acc="misc-<%= &subs::html_name($dt) %>-locations">

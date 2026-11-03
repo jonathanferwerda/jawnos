@@ -448,7 +448,7 @@ sub pen_message {
 			},
 			# thinking, where the chat model is a local one that reasons (Ollama's own
 			# think field); Cloudflare's endpoint takes none
-			my $lvl = &subs::ai_thinking_level(&subs::ai_role_thinking(($data->{'images'} && $settings->{'visual_assistant'}) ? 'visual_assistant' : 'chatbot_model'));
+			my $lvl = &subs::ai_thinking_level(&subs::ai_role_thinking_effective(($data->{'images'} && $settings->{'visual_assistant'}) ? 'visual_assistant' : 'chatbot_model'));
 			$payload->{'think'} = ($lvl eq 'max' ? 'high' : $lvl) if length $lvl && &subs::ai_model_thinks($try_model);
 		}
 

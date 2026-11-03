@@ -340,7 +340,7 @@ sub inventory_cell_summary($data) {
 	# falls back to the plain sentence and must not speak on the device
 	local $subs::say_quiet = 1;
 	if ($model && &subs::evaluation_agent_ready()) {
-		($text, $error) = &subs::evaluation_model_call_role('eval_assistant', $system, encode_json($briefing), &subs::ai_role_thinking('eval_assistant'));
+		($text, $error) = &subs::evaluation_model_call_role('eval_assistant', $system, encode_json($briefing), &subs::ai_role_thinking_effective('eval_assistant'));
 	}
 	elsif ($model) {
 		$error = 'no evaluation agent is reachable from this machine';

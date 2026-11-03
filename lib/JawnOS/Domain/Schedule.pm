@@ -271,7 +271,7 @@ Their saved birthdays: $bday_text.
 If the phrase is ambiguous, or a person is not saved and you do not know their birthday, reply {"ask":"a short question"}.
 Do not write prose. Do not invent a date you are unsure of.
 TXT
-	my ($out, $err) = &evaluation_model_call_role('help_assistant', $system, $text, &ai_role_thinking('help_assistant'));
+	my ($out, $err) = &evaluation_model_call_role('help_assistant', $system, $text, &ai_role_thinking_effective('help_assistant'));
 	return { ask => ($err || 'I could not read that schedule.') } unless defined $out && $out =~ /\S/;
 	my $plan = eval { decode_json $out };
 	unless (ref $plan eq 'HASH') {

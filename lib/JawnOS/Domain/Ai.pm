@@ -250,7 +250,7 @@ sub dictation_punctuate {
 		. 'Never add, remove, reorder or reword anything: keep every word, name, number and filler exactly as given. '
 		. 'Do not translate, do not explain, and do not wrap the answer in quotes. '
 		. 'If the text is already correct, return it unchanged.';
-	my ($out, $err) = &evaluation_model_call_with_fallback($primary, $fallback, $system, $text, &ai_role_thinking('help_assistant'), 'help_assistant');
+	my ($out, $err) = &evaluation_model_call_with_fallback($primary, $fallback, $system, $text, &ai_role_thinking_effective('help_assistant'), 'help_assistant');
 	return (undef, $err || 'no answer') if $err || !defined $out || !length $out;
 	$out =~ s/^\s+|\s+$//g;
 	$out =~ s/^["'`\x{201C}\x{201D}]+|["'`\x{201C}\x{201D}]+$//g;
@@ -532,8 +532,8 @@ sub voice_brain {
 		. "or answer; do not reply with a question. Keep spoken answers to one or two short sentences.\n";
 	$system .= 'Right now it is ' . localtime(&subs::rightNow() / 1000)->strftime('%A, %B %d %Y, %I:%M%P') . ".\n";
 	my ($out) = $fast
-		? &subs::evaluation_model_call_with_fallback($fast, $model, $system, 'USER: ' . $text . "\n\nReply with the single JSON action.", &subs::ai_role_thinking('help_assistant'), 'help_assistant')
-		: &subs::evaluation_model_call_role('help_assistant', $system, 'USER: ' . $text . "\n\nReply with the single JSON action.", &subs::ai_role_thinking('help_assistant'));
+		? &subs::evaluation_model_call_with_fallback($fast, $model, $system, 'USER: ' . $text . "\n\nReply with the single JSON action.", &subs::ai_role_thinking_effective('help_assistant'), 'help_assistant')
+		: &subs::evaluation_model_call_role('help_assistant', $system, 'USER: ' . $text . "\n\nReply with the single JSON action.", &subs::ai_role_thinking_effective('help_assistant'));
 	$log->info('voice: brain model ' . ($fast || $model) . ' raw ' . (defined $out ? substr($out, 0, 240) : 'undef'));
 	my $action = &json_from_model($out);
 	if ($action && ref $action eq 'HASH' && $action->{'action'}) {

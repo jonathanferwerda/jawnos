@@ -584,7 +584,7 @@ sub records_ask {
 	my $user = join("\n", @lines);
 	$user .= "\n\n" . $history if defined $history && length $history;
 	$user .= "\nPERSON: " . (defined $question && length $question ? $question : 'What do you make of this?');
-	my ($text, $err) = &subs::evaluation_model_call_with_fallback($model, &subs::setting_grabber({ app => 'mail', setting => 'coding_assistant_fallback' }), $system, $user, &subs::ai_role_thinking('coding_assistant'), 'coding_assistant');
+	my ($text, $err) = &subs::evaluation_model_call_with_fallback($model, &subs::setting_grabber({ app => 'mail', setting => 'coding_assistant_fallback' }), $system, $user, &subs::ai_role_thinking_effective('coding_assistant'), 'coding_assistant');
 	return $err && !$text ? ('I could not reach the model: ' . $err) : ($text || 'The model returned nothing readable.');
 }
 

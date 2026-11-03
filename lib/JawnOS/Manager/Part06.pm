@@ -386,7 +386,7 @@ sub market_receipt_read {
 	my ($text, $err) = &subs::ai_chat_role('visual_assistant', [
 		{ role => 'system', content => $system },
 		{ role => 'user', content => $ask, images => $pages },
-	], &subs::ai_role_thinking('visual_assistant'));
+	], &subs::ai_role_thinking_effective('visual_assistant'));
 	return (undef, $err || 'the vision model returned nothing') unless $text;
 	my ($json) = $text =~ /(\{.*\})/s;
 	my $out = eval { return decode_json $json } || {};

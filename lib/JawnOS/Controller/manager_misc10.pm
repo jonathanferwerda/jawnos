@@ -559,7 +559,7 @@ sub action_34548 {
 		. 'If an entry names no time, choose a horizon that fits: a plan one week, an idea one month, a dream one year after the journal day. '
 		. 'Maximum 6 items. If nothing points forward, return {"items":[]}.';
 	my $prompt = "Journal entries (newest first):\n\n$journal_text\n\nPlant what points forward.";
-	my ($answer, $err) = &subs::evaluation_model_call_role('help_assistant', $system, $prompt, &subs::ai_role_thinking('help_assistant'));
+	my ($answer, $err) = &subs::evaluation_model_call_role('help_assistant', $system, $prompt, &subs::ai_role_thinking_effective('help_assistant'));
 	unless ($answer) {
 		$c->render(json => { ok => 0, error => $err || &subs::ui('The Guide did not answer.') });
 		return;

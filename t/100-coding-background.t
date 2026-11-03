@@ -87,7 +87,7 @@ sub run_fake_job {
 		no warnings 'redefine';
 		local *subs::rightNow = sub { 123 };
 		local *subs::setting_grabber = sub { 'fake-model' };
-		local *subs::ai_role_thinking = sub { '' };
+		local *subs::ai_role_thinking_effective = sub { '' };
 		local *subs::ai_chat_parts_with_fallback = sub {
 			$calls++;
 			my ($text, $err) = $responder->($calls);

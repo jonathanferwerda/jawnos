@@ -454,7 +454,7 @@ sub action_15171 {
 		unless ($model) { unlink $tmp; $c->render(json => { error => 'no vision model is set (Configure, Plat, Vision)' }); return; }
 		my $system = 'You label a single map screenshot for JawnOS. The map is meant to be north-up.';
 		my $ask = 'Return ONLY JSON, no prose: {"legend":"the scale-bar text exactly as printed (e.g. 200 m or 1 km), or empty","rotate":degrees to turn the image CLOCKWISE so its north points up (a number; 0 if already north-up),"bar":{"x1":0.0,"y1":0.0,"x2":0.0,"y2":0.0}}. For bar, give the two ends of the scale bar as fractions of the image width and height, each between 0 and 1 (x1,y1 the left end, x2,y2 the right end). Judge the rotation from the map content (roads, labels, the graticule), not from the scale bar, which is drawn horizontally however the map is turned.';
-		my ($text, $err) = &subs::ai_chat_role('visual_assistant', [ { role => 'system', content => $system }, { role => 'user', content => $ask, images => [ encode_base64($bytes, '') ] } ], &subs::ai_role_thinking('visual_assistant'));
+		my ($text, $err) = &subs::ai_chat_role('visual_assistant', [ { role => 'system', content => $system }, { role => 'user', content => $ask, images => [ encode_base64($bytes, '') ] } ], &subs::ai_role_thinking_effective('visual_assistant'));
 		unlink $tmp;
 		unless ($text) { $c->render(json => { error => $err || 'the vision model returned nothing' }); return; }
 		my ($json) = $text =~ /(\{.*\})/s;

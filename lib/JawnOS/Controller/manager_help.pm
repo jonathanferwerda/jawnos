@@ -153,7 +153,7 @@ sub action_34687 {
 	# The model can take a minute. Run it in a child so this worker keeps
 	# answering the rest of the UI while it waits; the answer is the same JSON.
 	my $fallback = &subs::setting_grabber({ app => 'mail', setting => 'help_assistant_fallback' });
-	my $thinking = &subs::ai_role_thinking('help_assistant');
+	my $thinking = &subs::ai_role_thinking_effective('help_assistant');
 	&subs::render_in_subprocess($c, sub {
 		my ($text, $err) = &subs::evaluation_model_call_with_fallback($model, $fallback, $system, $question, $thinking, 'help_assistant');
 		return { text => $text, err => $err };
@@ -322,7 +322,7 @@ sub action_34818 {
 	# the child returns, so every write (an alias, a staged appointment) still
 	# happens in the request worker.
 	my $fallback = &subs::setting_grabber({ app => 'mail', setting => 'help_assistant_fallback' });
-	my $thinking = &subs::ai_role_thinking('help_assistant');
+	my $thinking = &subs::ai_role_thinking_effective('help_assistant');
 	&subs::render_in_subprocess($c, sub {
 		# The reply arrives as parts so the model's reasoning is kept apart from its
 		# answer: the answer is what the action parser reads, the reasoning is shown
@@ -738,7 +738,7 @@ sub action_37610 {
 	my $system = 'You check one JawnOS appointment\'s part of speech. An appointment logs one kind of activity; its "pos" (part of speech) is what sort of thing it is, and "mab" (might also be) names a second reading when the name is ambiguous. The valid pos values are: '
 		. join(', ', @poses) . '. Given the app\'s name and any description, reply with EXACTLY ONE JSON object and nothing else: {"pos":"<a valid pos>"} to correct it, or {"pos":"' . $pos . '","keep":true} when the current one already fits. Add "mab":"<a valid pos>" only if a second reading clearly applies.';
 	my $user = 'App: ' . $app . '\nCurrent pos: ' . $pos . '\nCurrent mab: ' . $mab . ($description ? ('\nDescription: ' . $description) : '');
-	my ($text, $err) = &subs::evaluation_model_call_role('help_assistant', $system, $user, &subs::ai_role_thinking('help_assistant'));
+	my ($text, $err) = &subs::evaluation_model_call_role('help_assistant', $system, $user, &subs::ai_role_thinking_effective('help_assistant'));
 	my $action;
 	if ($text) { $action = eval { decode_json $text }; }
 	if (!$action || ($action->{'keep'} && !$action->{'mab'})) {

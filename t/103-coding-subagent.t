@@ -189,7 +189,7 @@ sub run_fake_job {
 			return $subagent_max if ref $arg eq 'HASH' && ($arg->{'setting'} // '') eq 'coding_subagents';
 			return 'fake-model';
 		};
-		local *subs::ai_role_thinking = sub { '' };
+		local *subs::ai_role_thinking_effective = sub { '' };
 		local *subs::ai_chat_parts_with_fallback = sub {
 			my ($model, $fallback, $messages, $thinking, $role, $opt) = @_;
 			$calls++;
@@ -406,7 +406,7 @@ sub run_fake_job {
 			return '9' if ref $arg eq 'HASH' && ($arg->{'setting'} // '') eq 'coding_subagents';
 			return 'fake-model';
 		};
-		local *subs::ai_role_thinking = sub { '' };
+		local *subs::ai_role_thinking_effective = sub { '' };
 		local *subs::ai_chat_parts_with_fallback = sub {
 			my ($model, $fallback, $messages, $thinking, $role, $opt) = @_;
 			my $prompt = ($messages && @$messages) ? ($messages->[-1]{'content'} // '') : '';
@@ -498,7 +498,7 @@ sub run_fake_job {
 			return '9' if ref $arg eq 'HASH' && ($arg->{'setting'} // '') eq 'coding_subagents';
 			return 'fake-model';
 		};
-		local *subs::ai_role_thinking = sub { '' };
+		local *subs::ai_role_thinking_effective = sub { '' };
 		local *subs::ai_chat_parts_with_fallback = sub {
 			$calls++;
 			my $text = $calls == 1

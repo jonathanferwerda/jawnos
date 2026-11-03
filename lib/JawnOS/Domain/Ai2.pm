@@ -893,6 +893,39 @@ sub ai_role_thinking {
 	return defined $v ? $v : '';
 }
 
+# Whether a device lets a role think: the off switch kept under Configure ->
+# Misc (the `thinking_off` setting) names the roles it silences, comma-separated.
+# A device with no switch reads as allowing every role, and two roles also carry
+# their own long-standing 'off' in their role setting (the Coding agent's
+# `coding_thinking_off` and the Guide's `guide_thinking_off`), which absent means
+# on. Those two are spelled here because the panels that write them are not the
+# switch above.
+sub ai_role_thinking_allowed {
+	my ($role, $device) = @_;
+	return 1 unless defined $role && length $role;
+	$device = &subs::device_setter() unless defined $device && length $device;
+	my $switch = &subs::setting_grabber({ app => 'misc', setting => 'thinking_off', device => $device });
+	foreach my $off ( split /[,\s]+/, ($switch // '') ) {
+		return 0 if length $off && $off eq $role;
+	}
+	my %own = ( coding_assistant => 'coding_thinking_off', help_assistant => 'guide_thinking_off' );
+	if (my $key = $own{$role}) {
+		return 0 if ((&subs::setting_grabber({ app => 'mail', setting => $key }) // '') eq 'off');
+	}
+	return 1;
+}
+
+# The level every call actually carries for a role: the one chosen in Plat,
+# unless this device has turned that role's thinking off, when it is none. The
+# callers that pass a level to ai_chat_parts directly (the Coding run, a
+# subagent) read this one; ai_chat_parts_role drops a level it was handed for a
+# silenced role itself.
+sub ai_role_thinking_effective {
+	my ($role) = @_;
+	return '' unless &ai_role_thinking_allowed($role);
+	return &ai_role_thinking($role);
+}
+
 # The primary and fallback models chosen for a role (the fallback list is the
 # same catalogue minus the primary, set in Configure -> Plat). A caller retries
 # the fallback when the primary is down. whisper.cpp is the transcription role's
@@ -915,7 +948,9 @@ sub ai_chat_parts_role {
 	my ($role, $messages, $thinking, $opt) = @_;
 	my ($primary, $fallback) = &ai_role_models($role);
 	return (undef, "no $role model is set") unless $primary;
-
+	# a device that has switched this role's thinking off carries no level, whatever
+	# the caller handed in; nothing else about the call changes
+	$thinking = '' unless &ai_role_thinking_allowed($role);
 	my ($placed, $placed_why, $placed_ok);
 	if (defined &crew::choose_model) {
 		my @chosen = eval { &crew::choose_model($role) };

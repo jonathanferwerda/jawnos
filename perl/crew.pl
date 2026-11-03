@@ -895,7 +895,7 @@ sub _job_ai_evaluate {
 	my $user = $payload->{'user'} // $payload->{'prompt'} // '';
 	die "ai.evaluate needs a prompt\n" unless defined $user && length $user;
 	my $system = $payload->{'system'} // '';
-	my $thinking = $payload->{'thinking'} // &subs::ai_role_thinking($role);
+	my $thinking = $payload->{'thinking'} // &subs::ai_role_thinking_effective($role);
 	my ($text, $err) = &subs::evaluation_model_call_role($role, $system, $user, $thinking);
 	die(($err || 'no answer') . "\n") if $err;
 	return { text => $text, role => $role, model => ($subs::ai_last_model // '') };

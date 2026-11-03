@@ -308,7 +308,7 @@ sub remote_command_run($c, $data) {
 		# cannot pick an action whose effect has nowhere to go.
 		my %remote_verbs = map { $_ => 1 } qw/open_app play_music measure where_when say ask done/;
 		my $system = &help::actions_prompt(\%remote_verbs) . "\n\nRight now it is " . localtime(&subs::rightNow() / 1000)->strftime('%A, %B %d %Y, %I:%M%P') . ".\n";
-		my ($out) = &subs::evaluation_model_call_role('help_assistant', $system, 'USER: ' . $text . "\n\nReply with the single JSON action.", &subs::ai_role_thinking('help_assistant'));
+		my ($out) = &subs::evaluation_model_call_role('help_assistant', $system, 'USER: ' . $text . "\n\nReply with the single JSON action.", &subs::ai_role_thinking_effective('help_assistant'));
 		$action = $out ? &subs::json_from_model($out) : undef;
 		return { ok => 0, error => 'the guide returned nothing readable' } unless $action && $action->{'action'};
 	}
