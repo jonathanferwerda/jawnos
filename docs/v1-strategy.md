@@ -3,6 +3,10 @@
 Status: decision, 2026-11-03. **Phased, in-place transition to v1. No fork.** Supersedes the
 "fork when the SDK is ready" framing with a concrete build order.
 
+**Near-term plan: `docs/reality-check.md`.** This document is the destination; the reality check is
+the queue. Nothing here starts until two AI-written apps have worked for a week, except the four
+CPAN modules and the minimal app format.
+
 ## The question
 
 Should this be treated as a brand-new project — a total rewrite that picks parts out of JawnOS as it
