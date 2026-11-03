@@ -266,6 +266,23 @@ sub tracked_record {
 	is($report->{'capped'}, 1, 'the cap was reached');
 }
 
+# The master (./jawn) hands its options as one hashref - `subprocessor_reap($subprocesses,
+# { now => ..., on_expire => ... })`. Destructured as `my ($t, %opt) = @_` that is an
+# even-sized list: it warned and emptied %opt, so every pass ran with defaults and
+# nothing was ever expired. The reaper must work with either shape.
+{
+	for my $shape (qw(hashref list)) {
+		my $record = { parent => 100, pid => 200, name => 'test job', warranty => $NOW - 1, pgid => 0 };
+		my $tracked = { 100 => { subprocesses => { 200 => $record } } };
+		my %opt = (now => $NOW, alive => sub { 1 }, kill => sub { 0 }, starttime => sub { '' },
+			descendants => sub { [] });
+		my $report = ($shape eq 'hashref')
+			? &subs::subprocessor_reap($tracked, \%opt)
+			: &subs::subprocessor_reap($tracked, %opt);
+		is($report->{'expired'}, 1, "the reaper honours its options given as a $shape");
+	}
+}
+
 # A job asked for through run_p is forked on the caller's next tick, so its
 # record is stamped at the ask but its process starts later - seconds later on a
 # busy phone. Its warranty must run from the fork, not from the ask: a 5s header

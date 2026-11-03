@@ -458,9 +458,11 @@ sub subprocessor_command {
 #   handed to another process is forgotten, never signalled.
 #
 # alive/kill/starttime/descendants are injectable so the rules are testable
-# without forking.
+# without forking. The options arrive as a plain hash: as one hashref the
+# even-sized list warning (printed on this line) made every call a no-op.
 sub subprocessor_reap {
-	my ($tracked, %opt) = @_;
+	my $tracked = shift;
+	my %opt = (ref $_[0] eq 'HASH') ? %{ $_[0] } : @_;
 	my $report = { reaped => 0, expired => 0, killed => 0, extended => 0, capped => 0 };
 	return $report unless ref $tracked eq 'HASH';
 	my $now = defined $opt{'now'} ? $opt{'now'} : time() * 1000;
