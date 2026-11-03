@@ -131,7 +131,9 @@ Two facts decide the feasibility:
 3. **One line at the host** — `plugin 'JawnOS::App::Gallery'` (or a `%apps` manifest) so the
    zero-friction rule still holds: `cpanm JawnOS::App::Gallery`, add the plugin, open the app.
 4. **The data stays where it is** — apps are rows keyed by app name, not their own schemas. An app
-   dist still writes into the host's tables; that is the price of portability here.
+   dist still writes into the host's tables; that is the price of portability here. The next step
+   after the contract is per-app databases: `docs/app-databases.md` keeps the core shared, gives
+   each app its own attached schema, and makes backup/sync carry `{ db, table }` descriptors.
 
 ### Order, if it is done
 

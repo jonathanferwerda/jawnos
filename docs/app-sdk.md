@@ -131,6 +131,22 @@ Rules an app must satisfy:
 6. Every table has a migration; no `create table if not exists` at request time.
 7. The app runs with `supports('sync')` false and no network.
 
+## Data: one database per app
+
+A UI split is not a module boundary. `docs/app-databases.md` defines the data half:
+
+- **core stays shared** — appointments, `continent`, settings, devices, credentials, `sync_*`;
+- **each app owns `database/apps/<name>.db`** for its own normalized tables;
+- **one connection, many schemas** — `database_grabber($app)` attaches the schema; the handle shape
+  and every existing core query stay unchanged;
+- **backup and sync carry a descriptor** — `{ db, table }`, one encrypted bundle with a manifest,
+  and `sync_version = 4`;
+- **cross-app reads** go through core `continent` or a declared capability, never another app's
+  schema handle.
+
+The empty-database trap matters: most app data lives in `appointments` today, so the value starts
+when an app's own tables are normalized out, not when the file is created.
+
 ## App-to-app communication
 
 Two mechanisms, both declared:
@@ -180,7 +196,7 @@ capabilities of a different host, and `supports()` says so.
 
 | Phase | Work | Acceptance |
 |---|---|---|
-| A | Introduce `JawnOS::Host::Local` as a thin delegation to today's functions; convert **Gallery** only. No route or UI change. | The full suite is green; Gallery's actions no longer call `subs::`/`Manager::`. |
+| A | Introduce `JawnOS::Host::Local` as a thin delegation to today's functions; convert **Gallery** only. No route or UI change. Add the DB registry + `ATTACH` (`docs/app-databases.md` Phase 0). | The full suite is green; Gallery's actions no longer call `subs::`/`Manager::`. |
 | B | Add `JawnOS::App` + manifest and a plugin loader; mount Gallery through it inside the monolith. | Gallery loads via `plugin`, the three JS maps are generated from manifests, and nothing else moves. |
 | C | Add `JawnOS::Host::Solo` and `JawnOS::Server`; ship Gallery standalone. | `jawnos-app --app Gallery` serves the same page from a temp DB; its tests use the SDK harness. |
 | D | Convert **Embedded**; formalize BLE/OTA/devices as optional capabilities. | Embedded runs embedded and standalone (hardware capabilities absent in solo). |
