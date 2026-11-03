@@ -929,11 +929,18 @@ sub where_lookup_stats {
 			. ' sum(case when hit = 0 then 1 else 0 end) as misses'
 			. ' from where_calls where minute >= ?', $since_key)->hashes->[0];
 	};
-	return { calls => 0, hits => 0, misses => 0 } unless $row;
+	my $feedback = eval {
+		&subs::db_query(
+			"select sum(case when verdict = 'right' then 1 else 0 end) as right,"
+			. " sum(case when verdict = 'wrong' then 1 else 0 end) as wrong"
+			. ' from where_feedback where minute >= ?', $since_key)->hashes->[0];
+	};
 	return {
-		calls  => ($row->{'calls'}  || 0) + 0,
-		hits   => ($row->{'hits'}   || 0) + 0,
-		misses => ($row->{'misses'} || 0) + 0,
+		calls  => ($row && $row->{'calls'}  || 0) + 0,
+		hits   => ($row && $row->{'hits'}   || 0) + 0,
+		misses => ($row && $row->{'misses'} || 0) + 0,
+		right  => ($feedback && $feedback->{'right'} || 0) + 0,
+		wrong  => ($feedback && $feedback->{'wrong'} || 0) + 0,
 	};
 }
 

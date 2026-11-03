@@ -49,6 +49,9 @@ my $body_lines;
 my $body_chars;
 my $outline    = 0;
 my $log_flag;
+my $report_name;
+my $report_found;
+my $report_note;
 my $tech_name;
 my $list_topics = 0;
 my $help       = 0;
@@ -62,6 +65,9 @@ GetOptions(
 	'body-chars=i' => \$body_chars,
 	'outline'      => \$outline,
 	'log!'         => \$log_flag,
+	'report=s'     => \$report_name,
+	'found=s'      => \$report_found,
+	'note=s'       => \$report_note,
 	'tech=s'       => \$tech_name,
 	'topics'       => \$list_topics,
 	'root=s'       => \$root,
@@ -84,6 +90,17 @@ my $log_enabled = (!defined $log_flag || $log_flag)
 
 usage(0) if $help;
 usage(2) unless defined $root && length $root && -d $root;
+
+# An agent that acted on a hit can tell us whether it was the right one. This is
+# a write, not a lookup: it records the verdict against the latest call for the
+# same name and exits, so a report never grows the lookup counts.
+if (defined $report_name) {
+	usage(2) unless length $report_name;
+	my $verdict = shift @ARGV // '';
+	$verdict = lc $verdict;
+	usage(2) unless $verdict eq 'right' || $verdict eq 'wrong';
+	exit(report_feedback($report_name, $verdict, $report_found, $report_note) ? 0 : 2);
+}
 
 # The second tier of help is a whole brief, not a location: hand it to the script
 # that generates it rather than growing a second copy of that logic here.
@@ -804,6 +821,48 @@ sub where_log {
 # Every declaration in a file, in line order, so an agent can read a range
 # instead of the whole file. The same shapes the locator finds by name; here the
 # name is read off the line rather than searched for.
+# An agent's verdict on a lookup it acted on. The latest call for the same name
+# on this machine is linked when it is recent; the verdict is still recorded
+# without one, because a report is worth more than a missing join. A wrong one
+# should carry --found, the place the agent actually found the name.
+sub report_feedback {
+	my ($name, $verdict, $found, $note) = @_;
+	my $db = $ENV{'JAWNOS_WHERE_DB'} || "$root/database/jawnos.db";
+	unless (-f $db) {
+		warn "where: no database at $db\n";
+		return 0;
+	}
+	my $ok = eval {
+		require DBI;
+		my $dbh = DBI->connect("dbi:SQLite:dbname=$db", '', '', {
+			RaiseError => 0, PrintError => 0, AutoCommit => 1,
+			sqlite_busy_timeout => 2000,
+		}) or die "connect\n";
+		my $now    = time() * 1000;
+		my $minute = strftime('%Y-%m-%d %H:%M', localtime);
+		my $since  = strftime('%Y-%m-%d %H:%M', localtime(time - 6 * 3600));
+		my ($call) = $dbh->selectrow_array(
+			'select uuid from where_calls where machine = ? and name = ? and minute >= ? order by server_time desc limit 1',
+			undef, hostname(), $name, $since);
+		my $uuid = sprintf('%d-%d-%d', time, $$, int(rand(1_000_000)));
+		$found = substr($found, 0, 500) if defined $found;
+		$note  = substr($note, 0, 500)  if defined $note;
+		$dbh->do(
+			'insert into where_feedback (uuid, call_uuid, machine, minute, name, verdict, found, note, ost, server_time) values (?,?,?,?,?,?,?,?,?,?)',
+			undef, $uuid, $call, hostname(), $minute, substr($name, 0, 200), $verdict, $found, $note, $now, $now,
+		);
+		$dbh->disconnect;
+		1;
+	};
+	unless ($ok) {
+		warn "where: could not record the report (is the migration applied?)\n";
+		return 0;
+	}
+	print 'reported ', $name, ' ', $verdict,
+		(defined $found && length $found ? " -> $found" : ''), "\n";
+	return 1;
+}
+
 sub outline_symbols {
 	my ($file) = @_;
 	my $text = slurp($file) or return;
@@ -907,6 +966,10 @@ help topic with the line it is defined on. Exits 0 if anything was found.
   --outline     for each FILE, print "line<TAB>kind name" for every declaration
                 in it, so an agent can read a range instead of the whole file.
   --no-log      do not record this lookup in database/jawnos.db.
+  --report NAME right|wrong [--found LOC] [--note TEXT]
+                record an agent's verdict on a hit it acted on; --found names
+                the real location when the hit was wrong. This is the signal
+                that scripts/where_audit.pl learns from.
 
   --tech NAME  the tier-2 technical brief for an app or topic (routes, tables,
                settings, tests, source notes) - same as scripts/agent_help.pl

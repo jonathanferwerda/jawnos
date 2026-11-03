@@ -752,6 +752,10 @@ Rules:
 - Prefer patch to write for a small change: give the exact old text and its
   replacement. Write whole only when the file is new or most of it changes. A
   patch answers with the line it changed; do not re-read the file to check it.
+- When you act on a where.pl hit, report it: `perl scripts/where.pl --report
+  <name> right`, or `wrong --found <path:line>` when it was the wrong place.
+  Before changing the locator, run `perl scripts/where_audit.pl --prompt` and
+  fix what it names.
 - Use agent for a self-contained investigation or a scoped edit. Send several
   tasks in one list when they do not depend on each other: they run at the same
   time, and one answer per task comes back. Write-scope tasks in one batch must

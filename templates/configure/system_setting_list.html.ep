@@ -32,8 +32,8 @@
 		   a miss is the lookup that sends an agent back to grep. Translated on
 		   demand by the Guide engine, with the numbers filled after translation. %>
 		<p class="cfg-note where_lookup_note">
-		<% my @where_values = map { ($where_stats || {})->{$_} || 0 } qw(calls hits misses); %>
-		<% my $where_line = &subs::ui('Locator today: {0} asked, {1} answered, {2} missed.'); %>
+		<% my @where_values = map { ($where_stats || {})->{$_} || 0 } qw(calls hits misses right wrong); %>
+		<% my $where_line = &subs::ui('Locator today: {0} asked, {1} answered, {2} missed, {3} confirmed, {4} wrong.'); %>
 		<% $where_line =~ s/\{(\d+)\}/$where_values[$1]/g; %>
 		<%= $where_line %>
 		</p>

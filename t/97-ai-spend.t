@@ -191,9 +191,13 @@ unlike $migrations, qr/create unique index if not exists idx_ai_spend\b/,
 	require DBI;
 	my $dbh = DBI->connect('dbi:SQLite::memory:', '', '', { RaiseError => 1, PrintError => 0 });
 	$dbh->do('create table where_calls (uuid text, machine text, minute text, name text, hit int, hits int, ost text, server_time text)');
+	$dbh->do('create table where_feedback (uuid text, call_uuid text, machine text, minute text, name text, verdict text, found text, note text, ost text, server_time text)');
 	$dbh->do("insert into where_calls (minute,name,hit,hits) values ('2026-11-02 17:43','a',1,1)");
 	$dbh->do("insert into where_calls (minute,name,hit,hits) values ('2026-11-02 17:44','b',0,0)");
 	$dbh->do("insert into where_calls (minute,name,hit,hits) values ('2026-11-01 09:00','c',1,2)");
+	$dbh->do("insert into where_feedback (minute,name,verdict) values ('2026-11-02 17:45','a','right')");
+	$dbh->do("insert into where_feedback (minute,name,verdict) values ('2026-11-02 17:46','b','wrong')");
+	$dbh->do("insert into where_feedback (minute,name,verdict) values ('2026-11-01 09:05','c','right')");
 	no warnings 'redefine';
 	local *subs::db_query = sub {
 		my ($sql, @args) = @_;
@@ -205,12 +209,14 @@ unlike $migrations, qr/create unique index if not exists idx_ai_spend\b/,
 	is($stats->{'calls'}, 2, 'today counts both locator lookups');
 	is($stats->{'hits'}, 1, 'a declaration is a hit');
 	is($stats->{'misses'}, 1, 'an unknown name is a miss');
+	is($stats->{'right'}, 1, 'and the confirmed hit is counted');
+	is($stats->{'wrong'}, 1, 'and the wrong report');
 }
 {
 	no warnings 'redefine';
 	local *subs::db_query = sub { die "no such table: where_calls\n" };
 	my $stats = &subs::where_lookup_stats('2026-11-02');
-	is_deeply($stats, { calls => 0, hits => 0, misses => 0 },
+	is_deeply($stats, { calls => 0, hits => 0, misses => 0, right => 0, wrong => 0 },
 		'a pre-migration database reads as no calls');
 }
 

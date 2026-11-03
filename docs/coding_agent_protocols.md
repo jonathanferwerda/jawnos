@@ -64,6 +64,9 @@ that into a slow patch instead of a frozen machine. Protect the work, not the ch
 
 ## Rules
 
+- **Maintain the locator from its ledger.** Before changing `scripts/where.pl` or its maps, run
+  `perl scripts/where_audit.pl --prompt` and fix what it names: misses, wrong reports, map drift.
+  Confirm each case in the source, add a test for each new shape, and report a hit you acted on.
 - **Reply budget.** A final message is what changed (`file:line`), what verified it (command → result),
   and one risk. No code you wrote, no diff, no narration, no restating the request. Tool output is
   quoted only for the failing lines. The commit message carries the rationale; the chat carries the pointer.

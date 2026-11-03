@@ -496,6 +496,23 @@ sub update_database($data) {
 			server_time VARCHAR(255)
 		)',
 		'create index if not exists idx_where_calls_minute on where_calls (minute)',
+		# An agent's own verdict on a lookup it acted on: right, or wrong with where
+		# the real thing was. Kept apart from where_calls so the lookup ledger stays
+		# immutable; the audit joins them by name and machine.
+		'create table if not exists where_feedback (
+			uuid VARCHAR(255),
+			call_uuid VARCHAR(255),
+			machine VARCHAR(255),
+			minute VARCHAR(25),
+			name VARCHAR(200),
+			verdict VARCHAR(16),
+			found VARCHAR(500),
+			note VARCHAR(500),
+			ost VARCHAR(255),
+			server_time VARCHAR(255)
+		)',
+		'create index if not exists idx_where_feedback_minute on where_feedback (minute)',
+		'create index if not exists idx_where_feedback_name on where_feedback (name, minute)',
 		'alter table continent add column signatorial VARCHAR(500)',
 		'alter table continent add column speed VARCHAR(25)',
 		'alter table continent add column altitude VARCHAR(25)',

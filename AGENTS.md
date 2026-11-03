@@ -19,7 +19,10 @@ action (`action_7408`), a route path (`/manager/pen`), a help topic by name, a J
 the lines that mention it **with their text**, so a miss is still judgeable without opening the
 file. A single JS/firmware declaration comes with its body (`--body`, capped); `--outline FILE`
 lists a file's declarations as `line<TAB>kind name`, so read the range, not the file. `--topics`
-lists the help registry, `--tech <app>` prints the technical brief.
+lists the help registry, `--tech <app>` prints the technical brief. After you act on a hit,
+report it: `where.pl --report <name> right`, or `wrong --found path:line` when it sent you to the
+wrong place. `perl scripts/where_audit.pl` turns those rows, the misses and map drift into a
+maintenance brief for the Coding agent.
 - `perl scripts/agent_help.pl <app>` — what an app is made of: sources, the routes that reach it,
 the tables and settings it touches, the tests that claim its files, and its own comments. `--schema`
 or `--schema=<table>` gives every column, its type, the indexes and the apps that use the table.
@@ -172,6 +175,9 @@ code that concatenates `$app` into a path without `path_name` is a bug.
 
 ## Rules
 
+- **Maintain the locator from its ledger.** Before changing `scripts/where.pl` or its maps, run
+  `perl scripts/where_audit.pl --prompt` and fix what it names: misses, wrong reports, map drift.
+  Confirm each case in the source, add a test for each new shape, and report a hit you acted on.
 - **Reply budget.** A final message is what changed (`file:line`), what verified it (command → result),
   and one risk. No code you wrote, no diff, no narration, no restating the request. Tool output is
   quoted only for the failing lines. The commit message carries the rationale; the chat carries the pointer.
