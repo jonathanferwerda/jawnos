@@ -7,11 +7,26 @@ $(document).on('click', '#misc_setting', function() {
 		data: { timestamp: timestamp },
 		success: function(response){
 			$('#misc_setting_list').html(response);
+			jawnosUpdateAutoreloadPaint();
 			if (jawnosConfigureShow('misc_setting', $('#misc_setting_list'))) {
 				b.attr('status', 'active');
 			}
 		}
 	});
+});
+
+// The update-follow switch is per device (localStorage), not a house setting:
+// off is the default and means pill only.
+function jawnosUpdateAutoreloadPaint() {
+	var box = $('#update_autoreload');
+	if (!box.length) { return; }
+	var on = false;
+	try { on = localStorage.getItem('jawnos_update_autoreload') === 'on'; } catch (e) { on = false; }
+	box.prop('checked', on);
+}
+
+$(document).on('change', '#update_autoreload', function() {
+	try { localStorage.setItem('jawnos_update_autoreload', this.checked ? 'on' : 'off'); } catch (e) {}
 });
 
 $(document).on('click', '#plat_setting', function() {

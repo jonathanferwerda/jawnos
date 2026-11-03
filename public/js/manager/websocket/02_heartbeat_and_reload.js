@@ -433,12 +433,20 @@ function jawnosUpdateNote(text) {
 	window.jawnos_update_note_timer = setTimeout(function () { note.css('opacity', 0); }, 2600);
 }
 
+// Auto-reload on update is a per-device choice (Misc), default off. Off means
+// pill only: the page stays until the person presses it.
+function jawnosUpdateAutoReload() {
+	try { return localStorage.getItem('jawnos_update_autoreload') === 'on'; } catch (e) { return false; }
+}
+
 // A script (or the shell) changed: one reload is the only safe answer, so ask
-// for it - never over someone's typing, and never when they are not looking.
+// for it - never over someone's typing, and never on its own unless the person
+// chose Auto-reload under Misc.
 function jawnosUpdateQuietReload() {
 	var save = function () { if (typeof jawnosCodingChatSave === 'function') { jawnosCodingChatSave(); } };
 	save();
-	if (document.hidden) { jawnosReloadWhenReady(); return; }
+	var auto = jawnosUpdateAutoReload();
+	if (auto && document.hidden) { jawnosReloadWhenReady(); return; }
 	if ($('#jawnos_update_pill').length) { return; }
 	// a real button, not a text block: on a phone Chrome reads plain text as
 	// something to touch-and-search, and a tap on "update" offered a web search.
@@ -446,10 +454,13 @@ function jawnosUpdateQuietReload() {
 	var pill = $('<button type="button" id="jawnos_update_pill" hint="A new build has shipped" style="position:fixed;left:12px;bottom:12px;z-index:2147483000;background:var(--panel);border:2px solid var(--line);border-radius:10px;padding:7px 12px;font-family:inherit;font-size:13px;color:inherit;line-height:1.2;-webkit-appearance:none;appearance:none;cursor:pointer;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none;touch-action:manipulation;box-shadow:0 6px 18px rgba(0,0,0,.35);">A fix has shipped — <b>press to update</b></button>');
 	pill.on('click', function () { save(); jawnosReloadWhenReady(); });
 	$('body').append(pill);
-	// the hidden tab does not wait for a press: come back and it is already new
-	$(document).on('visibilitychange.jawnos_update_pill', function () {
-		if (document.hidden && $('#jawnos_update_pill').length) { save(); jawnosReloadWhenReady(); }
-	});
+	// with Auto-reload on, a tab that becomes hidden does not wait for the
+	// press: come back and it is already new. Off leaves the pill waiting.
+	if (auto) {
+		$(document).on('visibilitychange.jawnos_update_pill', function () {
+			if (document.hidden && $('#jawnos_update_pill').length) { save(); jawnosReloadWhenReady(); }
+		});
+	}
 }
 
 // Reload, but only once the tree is actually answering. An update is a push

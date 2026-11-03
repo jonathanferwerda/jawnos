@@ -6,6 +6,9 @@
 		<div class="cfg-row">
 			<label><input type="checkbox" class="anchor_all_settings" setting_type="misc"> Anchor to all devices</label>
 		</div>
+		<div class="cfg-row">
+			<label hint="<%= &subs::ui('On: a shipped script change reloads this tab when it is hidden. Off: a press-to-update note waits instead. This device only.') %>"><input type="checkbox" id="update_autoreload"> <%= &subs::ui('Auto-reload on update') %></label>
+		</div>
 	</div>
 
 <% my $signatorial = &subs::signatorial_designer(); %>
