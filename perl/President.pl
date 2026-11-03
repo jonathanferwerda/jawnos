@@ -850,6 +850,7 @@ sub manager_starter() {
 		while (1) {
 			&subs::subprocessor_heartbeat();
 			eval { &subs::evaluation_dispatch_tick(); };
+			eval { &subs::where_audit_tick(); };
 			sleep 60;
 		}
 	}, { name => 'evaluation dispatch' });

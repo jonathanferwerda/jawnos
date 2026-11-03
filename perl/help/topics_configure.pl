@@ -52,7 +52,8 @@ $topic{'configure'} = {
 			'To work in another machine\'s Manager, press Go on its row in the Dev panel; the window opens on that machine, with its own storage. In the installed desktop or Android app, Go first asks for a second factor: touch this computer\'s fingerprint reader, use the phone\'s own fingerprint, or ask another paired phone or tablet to approve it. Once that print is accepted, the Go pass is minted over the signed peer rail and the window opens already signed in - the pass carries the minting house\'s vouch, mints a person there, and passes the app gate as that peer, so a headless machine opens for a trusted house without needing a local app key or a person of its own. A house with no reader and no other paired device falls back to the app key alone. In a plain browser Go opens the peer\'s Gate instead, where a fingerprint or another of your devices confirms the login - that confirmation is what stops a link from signing a browser in behind your back. A pass minted at a box office has no such vouch and is still answered by the app gate when Enforce is on.',
 			'To make another house a resident, open its row in the Dev panel, pick Resident under Privilege, and type a number of days (or leave it blank for no expiry); the change saves at once.',
 			'To add another number or address to a person, open their card, tap Phones or Emails, pick a type and press Add Phone (or Add Email).',
-			'Changes save as you make them; a bar or theme change is felt at once.'
+			'Changes save as you make them; a bar or theme change is felt at once.',
+			'To check the locator, open Sys and press Run audit now, or set it to run hourly, daily, weekly, monthly or yearly. It lists names the locator missed, hits an agent reported wrong, and map drift; each scheduled run reads only what the ledger gained since the last successful run.'
 		],
 		related => [ 'themes', 'icon_sets', 'devices_and_mesh', 'platform', 'assistant' ]
 	};

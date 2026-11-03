@@ -944,6 +944,105 @@ sub where_lookup_stats {
 	};
 }
 
+# The locator audit, on the same settings pattern as the evaluation: a cadence
+# in the house settings, a run-now button, and a report kept in the cache. The
+# window is since the last successful run (with a one-minute overlap so a row
+# written while the audit runs is never skipped); the first run reads the
+# script's default 14 days.
+sub where_audit_cadence {
+	my $c = &subs::setting_grabber({ app => '__president', setting => 'where_audit_cadence' });
+	return $c if defined $c && grep { $_ eq $c } qw/off hourly daily weekly monthly yearly/;
+	return 'off';
+}
+
+sub where_audit_interval {
+	my ($cadence) = @_;
+	$cadence = '' unless defined $cadence;
+	return 3600 * 1000 if $cadence eq 'hourly';
+	return 86400 * 1000 if $cadence eq 'daily';
+	return 7 * 86400000 if $cadence eq 'weekly';
+	return 30 * 86400000 if $cadence eq 'monthly';
+	return 365 * 86400000 if $cadence eq 'yearly';
+	return 0;
+}
+
+sub where_audit_report {
+	my $report = eval { &subs::cache_get({ app => '__president', context => 'where_audit' }) };
+	return ref $report eq 'HASH' ? $report : {};
+}
+
+sub where_audit_next {
+	my $interval = &where_audit_interval(&where_audit_cadence());
+	return 0 unless $interval;
+	my $at = (&where_audit_report()->{'at'} || 0) + 0;
+	return $at ? $at + $interval : 0;
+}
+
+sub where_audit_due {
+	my $interval = &where_audit_interval(&where_audit_cadence());
+	return 0 unless $interval;
+	my $report  = &where_audit_report();
+	my $at      = ($report->{'at'} || 0) + 0;
+	my $attempt = ($report->{'attempt'} || 0) + 0;
+	my $now     = &subs::rightNow();
+	# A failed run leaves `at` where it was; the attempt marker keeps the tick
+	# from retrying a broken script every minute.
+	return 0 if $attempt && !$report->{'ok'} && ($now - $attempt) < 5 * 60 * 1000;
+	return 1 unless $at;
+	return $now >= $at + $interval ? 1 : 0;
+}
+
+sub where_audit_tick {
+	return 0 unless &where_audit_due();
+	return 0 unless &ai_house_dispatcher() eq &ai_house_me();
+	return &where_audit_run({ reason => 'schedule' }) ? 1 : 0;
+}
+
+sub where_audit_run {
+	my ($opt) = @_;
+	$opt = {} unless ref $opt eq 'HASH';
+	my $now    = &subs::rightNow();
+	my $minion = eval { &subs::minion_grabber() };
+	return 0 unless $minion && $minion->lock('where_audit_run', 120);
+
+	my $previous = &where_audit_report();
+	my $repo     = &subs::home('~/jawnos');
+	my $script   = "$repo/scripts/where_audit.pl";
+	my $fail     = sub {
+		my ($why) = @_;
+		&subs::cache_set({ app => '__president', context => 'where_audit', warranty => '-40d' },
+			{ %{$previous}, attempt => $now, ok => 0, error => $why });
+		return 0;
+	};
+	return $fail->('the checkout has no scripts/where_audit.pl') unless -f $script;
+
+	my @args = ('--json');
+	my $last = ($previous->{'at'} || 0) + 0;
+	push @args, '--since', &ai_spend_minute_key($last - 60_000) if $last;
+
+	my ($out, $code) = ('', 1);
+	eval {
+		open(my $fh, '-|', $^X, $script, @args) or die "open: $!\n";
+		local $/;
+		$out = <$fh> // '';
+		close $fh;
+		$code = $? >> 8;
+		1;
+	} or return $fail->('the audit could not start');
+	return $fail->('the audit did not return a report') if $code != 0;
+
+	my $data = eval { JSON::PP->new->utf8->decode($out) };
+	return $fail->('the audit returned invalid JSON') unless ref $data eq 'HASH';
+
+	$data->{'at'}      = $now;
+	$data->{'attempt'} = $now;
+	$data->{'ok'}      = 1;
+	$data->{'reason'}  = $opt->{'reason'} || 'manual';
+	delete $data->{'error'};
+	&subs::cache_set({ app => '__president', context => 'where_audit', warranty => '-40d' }, $data);
+	return 1;
+}
+
 # The ledger summed per provider in the granularity the caller asks for: '2m'
 # (an even-minute bucket, folded here), 'hour' or 'day' (a prefix of the minute
 # key, grouped by SQLite). `$since_key` is the earliest minute key to count;

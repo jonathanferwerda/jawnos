@@ -478,6 +478,9 @@ sub action_19179 {
 		ai_house => &subs::ai_house_report(),
 		ai_balance => &subs::ai_balance_report(),
 		where_stats => &subs::where_lookup_stats(substr(&subs::ai_spend_minute_key(), 0, 10)),
+		where_audit => &subs::where_audit_report(),
+		where_audit_cadence => &subs::where_audit_cadence(),
+		where_audit_next => &subs::where_audit_next(),
 		settings => $settings,
 		last_restart => $last_restart,
 		device => $device
@@ -680,6 +683,21 @@ sub action_19387 {
 		backups => $returner,
 		tables => \@tables
 	);
+}
+
+# POST /manager/configure/where_audit/run
+sub action_19400 {
+	my $c = shift;
+	my $ok = &subs::where_audit_run({ reason => 'button' });
+	my $report = &subs::where_audit_report();
+	return $c->render(json => {
+		ok       => $ok ? 1 : 0,
+		at       => $report->{'at'} || 0,
+		since    => $report->{'since'} || '',
+		summary  => $report->{'summary'} || {},
+		findings => $report->{'findings'} || 0,
+		error    => $report->{'error'} || '',
+	});
 }
 
 1;

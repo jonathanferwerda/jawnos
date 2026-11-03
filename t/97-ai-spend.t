@@ -7,11 +7,13 @@ use FindBin;
 use lib "$FindBin::Bin/lib", "t/lib";
 use Test::More;
 use JawnOSTest;
-use File::Slurp qw(read_file);
+use File::Path qw(make_path);
+use File::Slurp qw(read_file write_file);
+use File::Temp qw(tempdir);
 
 # The domain layer is lazy: load the real definitions before the local *subs::
 # stubs below, or a later module load would replace them.
-subs::preload($_) for qw(ai_spend_minute_key ai_spend_note where_lookup_stats ai_spend_buckets ai_spend_roles ai_spend_prune);
+subs::preload($_) for qw(ai_spend_minute_key ai_spend_note where_lookup_stats where_audit_cadence where_audit_interval where_audit_report where_audit_next where_audit_due where_audit_run where_audit_tick ai_spend_buckets ai_spend_roles ai_spend_prune);
 
 my $root = "$FindBin::Bin/..";
 
@@ -225,5 +227,78 @@ like(read_file("$root/lib/JawnOS/Controller/manager_configure4.pm"),
 	qr/where_stats => &subs::where_lookup_stats/, 'the Sys panel is given the locator stats');
 like(read_file("$root/templates/configure/system_setting_list.html.ep"),
 	qr/where_lookup_note/, 'and shows them beside the cost ledger');
+
+# ---- the locator audit's cadence -------------------------------------------
+{
+	no warnings 'redefine';
+	local *subs::setting_grabber = sub { 'hourly' };
+	is(&subs::where_audit_cadence(), 'hourly', 'the cadence is read from the house settings');
+	is(&subs::where_audit_interval('hourly'), 3600 * 1000, 'hourly is an hour');
+	is(&subs::where_audit_interval('daily'), 86400 * 1000, 'daily is a day');
+	is(&subs::where_audit_interval('weekly'), 7 * 86400000, 'weekly is seven days');
+	is(&subs::where_audit_interval('monthly'), 30 * 86400000, 'monthly is thirty days');
+	is(&subs::where_audit_interval('yearly'), 365 * 86400000, 'yearly is a year');
+	is(&subs::where_audit_interval('off'), 0, 'off has no interval');
+}
+{
+	no warnings 'redefine';
+	local *subs::setting_grabber = sub { 'nonsense' };
+	is(&subs::where_audit_cadence(), 'off', 'an unknown cadence reads as off');
+}
+{
+	no warnings 'redefine';
+	my $now = 1_000_000_000_000;
+	local *subs::rightNow = sub { $now };
+	local *subs::setting_grabber = sub { 'hourly' };
+	local *subs::cache_get = sub { {} };
+	is(&subs::where_audit_due(), 1, 'with no report yet the audit is due');
+	is(&subs::where_audit_next(), 0, 'and there is no next run to show');
+
+	local *subs::cache_get = sub { { at => $now - 30 * 60 * 1000, ok => 1 } };
+	is(&subs::where_audit_due(), 0, 'a run half an hour ago is not due');
+	is(&subs::where_audit_next(), $now + 30 * 60 * 1000, 'the next run is an hour after the last');
+
+	local *subs::cache_get = sub { { at => $now - 2 * 3600 * 1000, ok => 1 } };
+	is(&subs::where_audit_due(), 1, 'a run two hours ago is due');
+
+	local *subs::cache_get = sub { { at => $now - 2 * 3600 * 1000, attempt => $now - 60 * 1000, ok => 0 } };
+	is(&subs::where_audit_due(), 0, 'a failure backs off for five minutes');
+}
+
+# ---- the audit is wired to the button and the master -------------------------
+like(read_file("$root/perl/President.pl"), qr/where_audit_tick/,
+	'the master ticks the locator audit');
+like(read_file("$root/lib/JawnOS/Controller/manager_configure4.pm"), qr/sub action_19400/,
+	'the run-now route has an action');
+like(read_file("$root/lib/JawnOS/Routes/manager_configure4.pm"), qr#where_audit/run#,
+	'and the route reaches it');
+like(read_file("$root/templates/configure/system_setting_list.html.ep"), qr/where_audit_cadence/,
+	'the Sys panel offers the cadence');
+
+# ---- a run banks the script's JSON report -----------------------------------
+{
+	no warnings 'redefine';
+	my $dir = tempdir(CLEANUP => 1);
+	make_path("$dir/scripts");
+	write_file("$dir/scripts/where_audit.pl", <<'FAKE');
+print '{"days":14,"since":"2026-11-02 10:00","summary":{"calls":2},"misses":[],"wrong":[],"drift":[],"findings":0}';
+FAKE
+	my $saved;
+	{
+		package FakeMinion;
+		sub lock { 1 }
+	}
+	package main;
+	local *subs::home = sub { $dir };
+	local *subs::minion_grabber = sub { bless {}, 'FakeMinion' };
+	local *subs::cache_get = sub { {} };
+	local *subs::cache_set = sub { my ($key, $value) = @_; $saved = $value; 1 };
+	local *subs::rightNow = sub { 1_000_000_000_000 };
+	ok(&subs::where_audit_run({ reason => 'test' }), 'a run banks the report');
+	is($saved->{'ok'}, 1, 'the report is marked ok');
+	is($saved->{'summary'}{'calls'}, 2, 'and carries what the script found');
+	is($saved->{'reason'}, 'test', 'with the reason it ran');
+	is($saved->{'at'}, 1_000_000_000_000, 'stamped when it finished');
+}
 
 done_testing();

@@ -30,6 +30,7 @@ my $root      = $real_root;
 my $db;
 my $days  = 14;
 my $limit = 20;
+my $since_arg;
 my $json  = 0;
 my $prompt = 0;
 my $strict = 0;
@@ -38,6 +39,7 @@ GetOptions(
 	'db=s'    => \$db,
 	'root=s'  => \$root,
 	'days=i'  => \$days,
+	'since=s' => \$since_arg,
 	'limit=i' => \$limit,
 	'json'    => \$json,
 	'prompt'  => \$prompt,
@@ -47,6 +49,15 @@ usage(2) if $days < 1 || $limit < 1;
 $db = "$root/database/jawnos.db" unless defined $db && length $db;
 
 my $since = strftime('%Y-%m-%d %H:%M', localtime(time - $days * 86400));
+if (defined $since_arg && length $since_arg) {
+	if ($since_arg =~ /^\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2})?$/) {
+		$since = $since_arg;
+	}
+	else {
+		warn "where_audit: --since wants YYYY-MM-DD or YYYY-MM-DD HH:MM\n";
+		exit 2;
+	}
+}
 
 my %summary = (calls => 0, hits => 0, misses => 0, right => 0, wrong => 0);
 my (@misses, @wrong);
@@ -113,6 +124,7 @@ if ($json) {
 	require JSON::PP;
 	print JSON::PP->new->canonical->encode({
 		days     => $days,
+		since    => $since,
 		summary  => { %summary },
 		misses   => \@misses,
 		wrong    => \@wrong,
@@ -127,7 +139,7 @@ if ($prompt) {
 	exit(($strict && $findings) ? 1 : 0);
 }
 
-printf "where audit: last %d days from %s\n", $days, $db;
+printf "where audit: since %s from %s\n", $since, $db;
 printf "calls %d · hit %d · miss %d · confirmed %d · wrong %d\n",
 	@summary{qw(calls hits misses right wrong)};
 
@@ -289,6 +301,8 @@ sub usage {
 usage: perl scripts/where_audit.pl [--days N] [--limit N] [--json] [--prompt] [--strict] [--db PATH] [--root DIR]
 
   --days N    the window to read (default 14)
+  --since STR the window starts at STR (YYYY-MM-DD or YYYY-MM-DD HH:MM);
+              the scheduled run passes its last successful minute
   --limit N   the most names per section (default 20)
   --prompt    print a task brief for the Coding agent instead of the report
   --json      machine-readable output

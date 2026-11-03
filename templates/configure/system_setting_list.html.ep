@@ -57,6 +57,67 @@
 	</div>
 </details>
 
+	<%# The locator audit: the same cadence idea as the evaluation agent, with a
+	   run-now button. The report is the server's own render from the cache, so a
+	   run and a reload cannot disagree. %>
+	<details class="cfg-acc" data-acc="sys-where-audit">
+		<summary><%= &subs::ui('Locator audit') %></summary>
+		<div class="cfg-card">
+			<p class="cfg-note">
+			<%= &subs::ui('Reads the lookup ledger and the name maps, then lists the names that missed, the hits an agent said were wrong, and map drift.') %>
+			</p>
+			<p class="cfg-note">
+			<label><%= &subs::ui('Run on its own') %>
+				<select class="where_audit_cadence" hint="<%= &subs::ui('How often the locator audit runs on its own. Off leaves it to the button.') %>">
+				<% foreach my $c (qw/off hourly daily weekly monthly yearly/) { %>
+					<option value="<%= $c %>"<% if ((($where_audit_cadence || 'off') eq $c)) { %> selected<% } %>><%= &subs::format_name($c) %></option>
+				<% } %>
+				</select>
+			</label>
+			<button type="button" class="button where_audit_run"><%= &subs::ui('Run audit now') %></button>
+			<% if ($where_audit_next) { %>
+				<span class="cfg-note"><%= &subs::ui('Next run') %> <span class="time" timestamp="<%= $where_audit_next %>"></span></span>
+			<% } %>
+			</p>
+			<% my $wa = $where_audit || {}; %>
+			<% if ($wa->{'at'}) { %>
+				<p class="cfg-note">
+				<%= &subs::ui('Last run') %> <span class="time" timestamp="<%= $wa->{'at'} %>"></span>
+				<% if ($wa->{'since'}) { %> &middot; <%= &subs::ui('since') %> <%= $wa->{'since'} %><% } %>
+				<% if (!$wa->{'ok'}) { %> &middot; <%= &subs::ui('failed') %>: <%= $wa->{'error'} || '' %><% } %>
+				</p>
+				<% my $sum = $wa->{'summary'} || {}; %>
+				<p class="cfg-note">
+				<%= &subs::ui('calls') %> <%= $sum->{'calls'} || 0 %> &middot;
+				<%= &subs::ui('hit') %> <%= $sum->{'hits'} || 0 %> &middot;
+				<%= &subs::ui('missed') %> <%= $sum->{'misses'} || 0 %> &middot;
+				<%= &subs::ui('confirmed') %> <%= $sum->{'right'} || 0 %> &middot;
+				<%= &subs::ui('wrong') %> <%= $sum->{'wrong'} || 0 %>
+				</p>
+				<% if (@{ $wa->{'misses'} || [] }) { %>
+					<p class="cfg-note"><b><%= &subs::ui('Misses') %></b></p>
+					<ul class="cfg-note">
+					<% foreach my $r (@{ $wa->{'misses'} }) { %><li><%= $r->{'name'} %> (<%= $r->{'n'} %>)<% if ($r->{'last'}) { %> &middot; <%= $r->{'last'} %><% } %></li><% } %>
+					</ul>
+				<% } %>
+				<% if (@{ $wa->{'wrong'} || [] }) { %>
+					<p class="cfg-note"><b><%= &subs::ui('Wrong') %></b></p>
+					<ul class="cfg-note">
+					<% foreach my $r (@{ $wa->{'wrong'} }) { %><li><%= $r->{'name'} %> &rarr; <%= $r->{'found'} || '' %> [<%= $r->{'kind'} || 'unknown' %>]<% if ($r->{'selected'}) { %> (selected <%= $r->{'selected'} %>)<% } %></li><% } %>
+					</ul>
+				<% } %>
+				<% if (@{ $wa->{'drift'} || [] }) { %>
+					<p class="cfg-note"><b><%= &subs::ui('Map drift') %></b></p>
+					<ul class="cfg-note">
+					<% foreach my $r (@{ $wa->{'drift'} }) { %><li><%= $r->{'name'} %> &middot; <%= $r->{'kind'} %> <%= $r->{'map'} %></li><% } %>
+					</ul>
+				<% } %>
+			<% } else { %>
+				<p class="cfg-note"><%= &subs::ui('No audit has run yet.') %></p>
+			<% } %>
+		</div>
+	</details>
+
 	<%# The provider balances: only an account on file is a row, and only a couple
 	   of those publish a balance, so the rest read — %>
 	<details class="cfg-acc" data-acc="sys-balances">

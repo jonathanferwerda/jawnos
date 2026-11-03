@@ -102,4 +102,13 @@ like($brief, qr/coverage: the locator did not return it/, 'and what a coverage r
 my ($strict_code) = run_audit('--db', $db, '--root', $tree, '--days', 14, '--strict');
 is($strict_code, 1, '--strict fails when there is anything to fix');
 
+# --since is what the scheduled run uses: the window starts at its last
+# successful minute, so a future bound sees no calls but the maps are still read.
+my (undef, $since_out) = run_audit('--db', $db, '--root', $tree, '--since', '2099-01-01', '--json');
+my $bounded = decode_json($since_out);
+is($bounded->{'summary'}{'calls'}, 0, '--since bounds the lookup window');
+is($bounded->{'since'}, '2099-01-01', 'and the window is reported');
+ok((grep { $_->{'name'} eq 'drifted_name' } @{ $bounded->{'drift'} }),
+	'while map drift is still read');
+
 done_testing();

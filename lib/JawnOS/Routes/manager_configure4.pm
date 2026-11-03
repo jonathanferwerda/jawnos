@@ -22,6 +22,7 @@ sub routes {
 	[19305, 'post', '/manager/configure/utility_pools/save', 'action_19305'],
 	[19355, 'post', '/manager/configure/utility_batch_group/save', 'action_19355'],
 	[19387, 'get', '/manager/configure/restore_list', 'action_19387'],
+	[19400, 'post', '/manager/configure/where_audit/run', 'action_19400'],
 	);
 }
 

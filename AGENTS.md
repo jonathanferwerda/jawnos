@@ -22,7 +22,9 @@ lists a file's declarations as `line<TAB>kind name`, so read the range, not the 
 lists the help registry, `--tech <app>` prints the technical brief. After you act on a hit,
 report it: `where.pl --report <name> right --at path:line`, or `wrong --at path:line --found path:line`
 when it sent you to the wrong place. `perl scripts/where_audit.pl` turns those rows, the misses and
-map drift into a maintenance brief for the Coding agent.
+map drift into a maintenance brief for the Coding agent. Configure → System runs it on a cadence
+(off/hourly/daily/weekly/monthly/yearly) or on demand; each run reads since its last successful
+minute, and the first run reads 14 days.
 - `perl scripts/agent_help.pl <app>` — what an app is made of: sources, the routes that reach it,
 the tables and settings it touches, the tests that claim its files, and its own comments. `--schema`
 or `--schema=<table>` gives every column, its type, the indexes and the apps that use the table.
