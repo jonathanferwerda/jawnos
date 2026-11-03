@@ -48,6 +48,10 @@ is(&subs::subprocessor_warranty_for('tunnel peer enrol abcd1234'), '30s',
 is(&subs::subprocessor_warranty_for('nothing anyone declared'), undef,
 	'an unlisted name has no seed value');
 
+is(&subs::subprocessor_heartbeat_for('house levels'), '10m', 'a resident loop has a lease');
+is(&subs::subprocessor_heartbeat_for('tunnel holder wss 4 ports'), undef,
+	'a holder with no heartbeat listed has no lease');
+
 # Every resident job President starts is in the map: a missing entry would still
 # be safe (forever), but it would be an inventory nobody can review.
 my $root = root();
@@ -61,11 +65,12 @@ is_deeply(\@unseeded, [], 'every named President subprocess has a warranty seed'
 # ---------------------------------------------------------------------- reaper
 sub tracked_record {
 	my (%record) = @_;
+	my $pid = $record{'pid'} || 200;
 	my $record = {
-		parent => 100, pid => 200, name => 'test job', status => 'start',
-		warranty => &subs::forever_warranty(), %record,
+		parent => 100, pid => $pid, name => 'test job', status => 'start',
+		warranty => &subs::forever_warranty(), pgid => 0, %record,
 	};
-	return { 100 => { subprocesses => { 200 => $record } } };
+	return { 100 => { subprocesses => { $pid => $record } } };
 }
 
 # A pid that is gone is forgotten, whatever its warranty said. A child killed
@@ -144,7 +149,90 @@ sub tracked_record {
 {
 	my $tracked = { status => 'report' };
 	my $report = &subs::subprocessor_reap($tracked, now => $NOW, alive => sub { 0 });
-	is_deeply($report, { reaped => 0, expired => 0, killed => 0 }, 'the report key is not a parent');
+	is_deeply($report, { reaped => 0, expired => 0, killed => 0, extended => 0 }, 'the report key is not a parent');
+}
+
+# A 'forever' process with a stale heartbeat is wedged: the lease expires it.
+{
+	my $tracked = tracked_record(warranty => &subs::forever_warranty(),
+		heartbeat_lease => 60_000, heartbeat_at => $NOW - 61_000);
+	my @kills;
+	my $report = &subs::subprocessor_reap($tracked,
+		now => $NOW, alive => sub { 1 }, kill => sub { push @kills, [@_] },
+		starttime => sub { '' }, descendants => sub { [] });
+	is($report->{'expired'}, 1, 'a stale heartbeat expires a forever job');
+	is_deeply($kills[0], ['TERM', 200], 'the wedged job gets TERM');
+}
+
+# A fresh heartbeat keeps it.
+{
+	my $tracked = tracked_record(warranty => &subs::forever_warranty(),
+		heartbeat_lease => 60_000, heartbeat_at => $NOW - 1000);
+	my @kills;
+	my $report = &subs::subprocessor_reap($tracked,
+		now => $NOW, alive => sub { 1 }, kill => sub { push @kills, [@_] },
+		starttime => sub { '' }, descendants => sub { [] });
+	is($report->{'expired'}, 0, 'a fresh heartbeat keeps a forever job');
+	is_deeply(\@kills, [], 'and signals nothing');
+}
+
+# A live descendant extends its ancestor for the descendant's run, so a wrapper
+# waiting on ffmpeg is not killed at its own deadline.
+{
+	my $tracked = tracked_record(warranty => $NOW - 1, pgid => 200);
+	my @kills;
+	my @scanned;
+	my $report = &subs::subprocessor_reap($tracked,
+		now => $NOW, alive => sub { 1 }, kill => sub { push @kills, [@_] },
+		starttime => sub { '' }, descendants => sub { push @scanned, $_[1]; ['300'] });
+	is($report->{'extended'}, 1, 'a live descendant extends the ancestor');
+	is($report->{'expired'}, 0, 'and the ancestor is not expired');
+	is_deeply(\@kills, [], 'and is not signalled');
+	is_deeply(\@scanned, [200], 'the scan asks for the wrapper group');
+	my $record = $tracked->{100}{subprocesses}{200};
+	is_deeply($record->{'extended_for'}, ['300'], 'the record names the descendant');
+	cmp_ok($record->{'warranty'}, '>', $NOW, 'the deadline moved forward');
+
+	# With the descendant gone and the extension spent, the original deadline wins.
+	$report = &subs::subprocessor_reap($tracked,
+		now => $NOW + 31_000, alive => sub { 1 }, kill => sub { push @kills, [@_] },
+		starttime => sub { '' }, descendants => sub { [] });
+	is($report->{'expired'}, 1, 'the descendant gone, the ancestor expires');
+}
+
+# The child's warranty walks the parent chain: the parents and the parents'
+# parents keep their deadline for the length of the child's run.
+{
+	my $tracked = {
+		100 => { subprocesses => { 111 => { parent => 100, pid => 111, warranty => $NOW + 60_000, pgid => 0 } } },
+		111 => { subprocesses => { 200 => { parent => 111, pid => 200, warranty => $NOW + 60_000, pgid => 0 } } },
+		200 => { subprocesses => { 300 => { parent => 200, pid => 300, warranty => $NOW + 600_000, pgid => 0 } } },
+	};
+	my $report = &subs::subprocessor_reap($tracked,
+		now => $NOW, alive => sub { 1 }, kill => sub { die 'no kill' },
+		starttime => sub { '' }, descendants => sub { [] }, descendant_step => 30_000);
+	my $child = $tracked->{200}{subprocesses}{300};
+	my $parent = $tracked->{111}{subprocesses}{200};
+	my $grand = $tracked->{100}{subprocesses}{111};
+	cmp_ok($parent->{'warranty'}, '>', $NOW + 600_000, 'the parent keeps the child deadline plus a step');
+	cmp_ok($grand->{'warranty'}, '>=', $child->{'warranty'}, 'the grandparent keeps at least the child deadline');
+	cmp_ok($grand->{'warranty'}, '>=', $NOW + 600_000, 'which is the grandchild run plus a step');
+	ok($report->{'extended'} >= 2, 'both ancestors were extended');
+}
+
+# The wrapper owns its process group, so an expired job takes its grandchildren
+# with it.
+{
+	my $tracked = tracked_record(warranty => $NOW - 1, pid => 424242, pgid => 424242);
+	my @kills;
+	my $report = &subs::subprocessor_reap($tracked,
+		now => $NOW, alive => sub { 1 }, kill => sub { push @kills, [@_] },
+		starttime => sub { '' }, descendants => sub { [] });
+	is_deeply($kills[0], ['TERM', -424242], 'TERM goes to the wrapper group');
+	$report = &subs::subprocessor_reap($tracked,
+		now => $NOW + 6000, alive => sub { 1 }, kill => sub { push @kills, [@_] },
+		starttime => sub { '' }, descendants => sub { [] });
+	is_deeply($kills[1], ['KILL', -424242], 'KILL goes to the wrapper group');
 }
 
 # --------------------------------------------------------------- the wiring
@@ -153,15 +241,22 @@ like($calendar, qr/subprocessor_warranty_at\(\$warranty_spec, \$started\)/,
 	'the wrapper resolves the warranty at start');
 like($calendar, qr/warranty\s*=>\s*\$warranty/, 'the record carries the absolute warranty');
 like($calendar, qr/start_ticks\s*=>\s*\$start_ticks/, 'the record carries the pid-reuse guard');
+like($calendar, qr/heartbeat_lease\s*=>\s*\$heartbeat_lease/, 'the record carries the heartbeat lease');
+like($calendar, qr/pgid\s*=>\s*\$pgid/, 'the record carries its process group');
+like($calendar, qr/setpgrp\(0, 0\)/, 'the wrapper owns its process group');
+like($president, qr/subs::subprocessor_heartbeat\(\)/, 'a resident loop heartbeats');
 
 my $launcher = read_file("$root/jawn");
 like($launcher, qr/subs::subprocessor_reap\(\$subprocesses/,
 	'the master reaps the records the workers send it');
 like($launcher, qr/Mojo::IOLoop->recurring\(5 => sub/, 'the reaper runs on its own tick');
+like($launcher, qr/'heartbeat'/, 'the master accepts a heartbeat');
 
 my $loader = read_file("$root/lib/JawnOS/Domain/Loader.pm");
 like($loader, qr/JawnOS::Domain::Process' for qw\([^)]*subprocessor_reap[^)]*subprocessor_warranty_at[^)]*subprocessor_warranty_for/,
 	'the loader maps the process helpers');
+like($loader, qr/JawnOS::Domain::Process' for qw\([^)]*subprocessor_heartbeat[^)]*subprocessor_heartbeat_for/,
+	'the loader maps the heartbeat helpers');
 
 my $lan = read_file("$root/lib/JawnOS/Domain/Lan.pm");
 like($lan, qr/warranty => &subs::forever_warranty\(\)/,

@@ -295,6 +295,7 @@ sub manager_starter() {
 	&subs::subprocessor(sub {
 		sleep 45;
 		while (1) {
+			&subs::subprocessor_heartbeat();
 			eval { &subs::app_release_sync(); };
 			sleep 300;
 		}
@@ -334,6 +335,7 @@ sub manager_starter() {
 		my $started = time;
 		my %due = map { $_->{'name'} => $started + $_->{'first'} } @slow_loops;
 		while (1) {
+			&subs::subprocessor_heartbeat();
 			my $now = time;
 			foreach my $loop ( @slow_loops ) {
 				next if $now < $due{ $loop->{'name'} };
@@ -350,6 +352,7 @@ sub manager_starter() {
 	&subs::subprocessor(sub {
 		sleep 20;
 		while (1) {
+			&subs::subprocessor_heartbeat();
 			# Two minutes is the house pace, but a System card on screen asks for
 			# quick passes (levels_fast_request): sleep in slices and answer it
 			# within seconds, so a phone plugged in a moment ago updates.
@@ -374,6 +377,7 @@ sub manager_starter() {
 	&subs::subprocessor(sub {
 		sleep 12;
 		while (1) {
+			&subs::subprocessor_heartbeat();
 			eval { &subs::device_mdns_sync(); };
 			sleep 15;
 		}
@@ -388,6 +392,7 @@ sub manager_starter() {
 	&subs::subprocessor(sub {
 		sleep 5;
 		while (1) {
+			&subs::subprocessor_heartbeat();
 			eval { &subs::house_advertise_supervise(); };
 			sleep 30;
 		}
@@ -402,6 +407,7 @@ sub manager_starter() {
 	&subs::subprocessor(sub {
 		sleep 6;
 		while (1) {
+			&subs::subprocessor_heartbeat();
 			eval { &subs::lan_presence_send(); };
 			sleep 5;
 		}
@@ -410,6 +416,7 @@ sub manager_starter() {
 	&subs::subprocessor(sub {
 		sleep 3;
 		while (1) {
+			&subs::subprocessor_heartbeat();
 			eval { &subs::lan_presence_listen(); };
 			sleep 5;
 		}
@@ -420,6 +427,7 @@ sub manager_starter() {
 	&subs::subprocessor(sub {
 		sleep 7;
 		while (1) {
+			&subs::subprocessor_heartbeat();
 			sleep 2;
 			my $wake = &subs::cache_get({ app => '__president', context => 'lan', subcontext => 'wake' });
 			next unless $wake;
@@ -441,6 +449,7 @@ sub manager_starter() {
 	&subs::subprocessor(sub {
 		sleep 40;
 		while (1) {
+			&subs::subprocessor_heartbeat();
 			eval { &subs::ble_adopt_scan(); };
 			sleep 300;
 		}
@@ -471,6 +480,7 @@ sub manager_starter() {
 			# do the actual unlock, so the lock is never dropped from here.
 			if (-e $music_file && !-e $music_state_file) { write_file($music_file, 0); }
 			while (1) {
+				&subs::subprocessor_heartbeat();
 				eval {
 					my $setting = &subs::setting_grabber({ app => '__president', setting => 'wake_schedule' });
 					$setting = 'on' unless defined $setting && $setting =~ /\S/;
@@ -513,6 +523,7 @@ sub manager_starter() {
 		eval { &AddressDirectory::report('boot'); };
 		my $last = eval { &AddressDirectory::fingerprint() } || '';
 		while (1) {
+			&subs::subprocessor_heartbeat();
 			sleep 60;
 			my $now = eval { &AddressDirectory::fingerprint() } || '';
 			next if $now eq $last;
@@ -546,6 +557,7 @@ sub manager_starter() {
 	&subs::subprocessor(sub {
 		sleep 30;
 		while (1) {
+			&subs::subprocessor_heartbeat();
 			my $bin   = &subs::home('~/whisper.cpp/build/bin/whisper-server');
 			my $model = &subs::home('~/whisper.cpp/models/ggml-tiny.bin');
 			$model = &subs::home('~/whisper.cpp/models/ggml-base.bin') unless -e $model;
@@ -781,6 +793,7 @@ sub manager_starter() {
 			&utility_functions();
 		});
 		Mojo::IOLoop->recurring(2 => sub {
+			&subs::subprocessor_heartbeat();
 			if ($gb::utility_functions_watcher == 0) {
 
 				$gb::utility_functions_watcher = 1;
@@ -821,6 +834,7 @@ sub manager_starter() {
 	&subs::subprocessor(sub {
 		sleep 120;
 		while (1) {
+			&subs::subprocessor_heartbeat();
 			eval { &subs::nightly_evaluation_reconcile(); };
 			sleep 300;
 		}
@@ -834,6 +848,7 @@ sub manager_starter() {
 	&subs::subprocessor(sub {
 		sleep 45;
 		while (1) {
+			&subs::subprocessor_heartbeat();
 			eval { &subs::evaluation_dispatch_tick(); };
 			sleep 60;
 		}

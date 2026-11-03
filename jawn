@@ -1474,8 +1474,25 @@ sub process_watch() {
 						};
 						if ($@) { warn "Worker $$: Failed to send 'stop' state: $@" }
 					}
-					elsif ($process->{'status'} eq 'report') {
+					elsif (($process->{'status'} || '') eq 'report') {
 						$log->info('i see the report');
+					}
+					elsif (($process->{'status'} || '') eq 'heartbeat') {
+						# A resident loop proving it is still working. Find the record by
+						# pid, and by uuid when one is present, so a pid the OS reused
+						# cannot refresh another job's lease.
+						my $pid = $process->{'pid'};
+						if ($pid) {
+							foreach my $parent (keys %{$subprocesses}) {
+								next unless $parent =~ /^\d+$/;
+								my $record = $subprocesses->{$parent}->{'subprocesses'}->{$pid};
+								next unless $record;
+								next if $process->{'uuid'} && ($record->{'uuid'} || '') ne $process->{'uuid'};
+								$record->{'heartbeat_at'} = $process->{'at'} || time() * 1000;
+								$record->{'heartbeat_seen'} = ($record->{'heartbeat_seen'} || 0) + 1;
+								last;
+							}
+						}
 					}
 					else {
 						$subprocesses->{$process->{'parent'}}->{'subprocesses'}->{$process->{'pid'}} = $process;

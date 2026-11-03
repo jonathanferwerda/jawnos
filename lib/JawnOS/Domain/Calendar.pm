@@ -596,12 +596,32 @@ sub subprocessor {
 		: &subs::subprocessor_warranty_for($name);
 	my $started = &subs::rightNow();
 	my $warranty = &subs::subprocessor_warranty_at($warranty_spec, $started);
+	# A resident loop is 'forever', but it still has to prove it is working. The
+	# lease is the longest quiet gap the loop is allowed; the loop calls
+	# subs::subprocessor_heartbeat() each turn.
+	my $heartbeat_spec = &subs::subprocessor_heartbeat_for($name);
+	my $heartbeat_lease = defined $heartbeat_spec
+		? &subs::subprocessor_warranty_at($heartbeat_spec, 0)
+		: undef;
 	my $wrapped_subroutine = sub {
 		Mojo::IOLoop->reset({ freeze => 1 });
 		$gb::subprocessed++;
+		$subs::heartbeat_sent_at = undef;
 		my $file = &subs::home('~/.process_watch');
 #		my $file = $tmp_dir . '/process_watch';
 		my $pid = $$;
+		# The wrapper owns its process group, so the reaper can signal the whole
+		# tree it starts (a command's own children) instead of orphaning them. Only
+		# a real fork: the inline path is the caller's own process, and moving a
+		# request worker into its own group would be a surprise.
+		my $pgid = 0;
+		if ($pid != $parent_pid) {
+			eval {
+				setpgrp(0, 0);
+				my $group = getpgrp();
+				$pgid = $group if $group == $pid;
+			};
+		}
 		# The kernel's start time for this pid, so a reaper can tell a live record
 		# from a number the OS has since given to another process.
 		my $start_ticks = '';
@@ -624,15 +644,26 @@ sub subprocessor {
 			status    => 'start',
 			warranty  => $warranty,
 			warranty_spec => (defined $warranty_spec && length $warranty_spec) ? $warranty_spec : 'forever',
+			heartbeat_at => $started,
+			heartbeat_lease => $heartbeat_lease,
+			heartbeat_spec => $heartbeat_spec,
 			start_ticks => $start_ticks,
+			pgid => $pgid,
 		};
 		&subs::unix_socket_sender($file,$subprocess);
 
 		if ($@) { warn "Worker $$: Failed to send 'start' state: $@" }
+		# The helper the loop calls reads these from the child's own package.
+		my $previous_uuid = $gb::subprocessor_uuid;
+		my $previous_name = $gb::subprocessor_name;
+		$gb::subprocessor_uuid = $subprocess->{'uuid'};
+		$gb::subprocessor_name = $name;
 		eval {
 			$subroutine->();
 		};
 		my $sub_error = $@; # Capture error if the main task fails
+		$gb::subprocessor_uuid = $previous_uuid;
+		$gb::subprocessor_name = $previous_name;
 		eval {
 			# Update payload state to stop
 			$subprocess->{'status'} = 'stop';
