@@ -40,6 +40,15 @@ my $source_at = index($hook_text, 'scripts/perl_env.sh');
 my $guard_at = index($hook_text, 'scripts/verify_change.pl');
 ok($source_at >= 0 && $guard_at > $source_at,
 	'the helper is sourced before the guard is called');
+# The hook carries its own seed ahead of the helper (the laptop's edit, restored
+# after a hard reset dropped it), so a shell that never reaches the helper still
+# gets local::lib; it fires only when PERL5LIB is absent, so it never fights a
+# library the push already carries.
+my $seed_at = index($hook_text, 'export PERL5LIB');
+ok($seed_at >= 0 && $seed_at < $source_at,
+	'the hook seeds local::lib itself before the helper is sourced');
+like($hook_text, qr/^if \[ -z "\$\{PERL5LIB:-\}" \]/m,
+	'and only when PERL5LIB is absent');
 like($hook_text, qr/"\$PERL" scripts\/verify_change\.pl/,
 	'the guard runs on the interpreter the helper chose');
 like($hook_text, qr/"\$PERL" scripts\/help_audit\.pl/, 'so does the help audit');

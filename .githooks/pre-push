@@ -18,7 +18,27 @@
 # Bypass for a moment:     git push --no-verify
 cd "$(git rev-parse --show-toplevel)" || exit 0
 
-# --- run Perl the way the app runs it (scripts/perl_env.sh) ---
+# --- run Perl the way the app runs it ---
+# Git launches this hook from whatever shell the push came from, so it may not
+# have the user's local::lib on @INC. A GUI or bare shell push then fails a
+# file for 'Can't locate Text/Unidecode.pm' while the same commit passes the
+# restart guard, which ./jawn runs with its own BEGIN block seeding local::lib.
+# Do the same here: if PERL5LIB is already supplied, trust it; otherwise put
+# $HOME/perl5/lib/perl5 and its version/arch subdirs on it. With no local::lib
+# at all nothing is added, so a clean box still pushes against the system perl.
+if [ -z "${PERL5LIB:-}" ] && [ -n "${HOME:-}" ] && [ -d "$HOME/perl5/lib/perl5" ]; then
+	perl5lib="$HOME/perl5/lib/perl5"
+	for dir in "$perl5lib"/*; do
+		[ -d "$dir" ] || continue
+		case "${dir##*/}" in
+			*-linux-*|[0-9]*.[0-9]*) perl5lib="$perl5lib:$dir" ;;
+		esac
+	done
+	PERL5LIB="$perl5lib"
+	export PERL5LIB
+fi
+
+# --- the same rule again, plus the interpreter (scripts/perl_env.sh) ---
 # Git launches this hook from whatever shell the push came from, so @INC may be
 # the bare system one and a GUI or bare-shell push fails a file for
 # 'Can't locate Text/Unidecode.pm' while the same commit passes the restart
