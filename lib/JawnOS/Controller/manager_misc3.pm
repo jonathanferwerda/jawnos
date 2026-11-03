@@ -722,8 +722,14 @@ sub action_11740 {
 		}
 	}
 	# app_device is set only by app_login, which is the installed app proving
-	# its device key; a browser (even one opened by a ticket) never has it.
-	my $in_app = ($c->session('app_device') || '') ne '' ? 1 : 0;
+	# its device key. A remote manager window opened by the app can instead be a
+	# ticket session, but it still carries the app's own desktop/bridge flags;
+	# a plain browser carries neither. Both are the app's deliberate Go.
+	my $in_app = &subs::go_from_app({
+		app_device => $c->session('app_device'),
+		desktop => $c->param('desktop'),
+		bridge => $c->param('bridge'),
+	});
 	my $ticket_url = '';
 	my $need_approval = 0;
 	my $request_id = '';

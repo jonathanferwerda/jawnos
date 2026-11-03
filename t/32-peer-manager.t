@@ -70,6 +70,23 @@ is(subs::peer_ticket_port({}),
 is(subs::peer_ticket_port({ manager => 'https://hub.example:45545', dock_port => 3000 }),
 	45545, 'a row with no port field takes the port from its manager url');
 
+# A Go request from the installed app may be a ticket session rather than an
+# app_login, but the app's own bridge flags are still its proof. A plain browser
+# sends neither and must not mint.
+is(subs::go_from_app({ app_device => 'device-1' }), 1,
+	'an app_login device is the app');
+is(subs::go_from_app({ desktop => '1', bridge => '1' }), 1,
+	'a remote window opened by the app is the app even without app_device');
+is(subs::go_from_app({ desktop => '1' }), 0,
+	'the desktop flag alone is not proof');
+is(subs::go_from_app({ bridge => '1' }), 0,
+	'the bridge flag alone is not proof');
+is(subs::go_from_app({ desktop => '1', bridge => '1', app_device => '' }), 1,
+	'an empty app_device does not cancel the app window');
+is(subs::go_from_app({ desktop => '0', bridge => '0' }), 0,
+	'a browser is not the app');
+is(subs::go_from_app({}), 0, 'no proof, no ticket');
+
 # The client every peer call is built from must apply it.
 my $source = join "\n", map {
 	open(my $fh, '<', $_) or die $!;

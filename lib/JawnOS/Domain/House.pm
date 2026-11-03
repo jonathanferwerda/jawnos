@@ -288,6 +288,19 @@ sub peer_ticket_port {
 	return 3000;
 }
 
+# Whether a Go request came from the installed app. app_device is the proof an
+# app_login left; a remote manager window opened by the app may instead carry a
+# ticket session, so the app's own bridge flags (desktop + bridge, injected only
+# by the desktop shell) are the other proof. A plain browser sends neither and
+# still gets no ticket.
+sub go_from_app {
+	my ($p) = @_;
+	$p ||= {};
+	return 1 if defined $p->{'app_device'} && $p->{'app_device'} ne '';
+	return 1 if ($p->{'desktop'} || '') eq '1' && ($p->{'bridge'} || '') eq '1';
+	return 0;
+}
+
 # Which roster row a person or a script meant by a name. An exact uuid,
 # signatorial, hostname, fqdn, ip or name wins over a longer value that merely
 # contains the term; an ambiguous substring is refused rather than guessed at.
