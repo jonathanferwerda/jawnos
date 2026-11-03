@@ -657,12 +657,13 @@ sub ai_balance_chart {
 	# tells a bar before the ledger began apart from a bar that spent nothing. A
 	# provider nobody has called yet is simply absent.
 	my $ledger_since = &ai_spend_since();
-	my (%spend_by_window, %roles_by_window);
+	my (%spend_by_window, %roles_by_window, %sessions_by_window);
 	foreach my $window ( @BALANCE_WINDOWS ) {
 		my $edges = &ai_balance_edges($window, $now);
 		my $since_key = @{$edges} ? $edges->[0]->{'key'} : '';
 		$spend_by_window{$window} = &ai_spend_buckets($BALANCE_GRANULARITY{$window}, $since_key);
 		$roles_by_window{$window} = &ai_spend_roles($since_key);
+		$sessions_by_window{$window} = &ai_spend_sessions($since_key);
 	}
 	# Everything the house spent in tokens, whichever account served it. A
 	# balance can fall with no token count beside it - the traffic went to a
@@ -720,13 +721,46 @@ sub ai_balance_chart {
 					};
 				}
 			}
+			my $role_active = $sessions_by_window{$window}->{'providers'}->{$provider}->{'roles'} || {};
 			# The price per thousand tokens only means something when the ledger
 			# covers the whole window: a fall it did not see divided by the tokens
 			# it did would read as an inflated price.
-			my $per_k = ($bars->{'tokens'} > 0 && @{ $bars->{'buckets'} } && $bars->{'buckets'}->[0]{'tracked'})
+			my $tracked = (@{ $bars->{'buckets'} } && $bars->{'buckets'}->[0]{'tracked'}) ? 1 : 0;
+			my $per_k = ($bars->{'tokens'} > 0 && $tracked)
 				? ($bars->{'total'} / $bars->{'tokens'}) * 1000
 				: undef;
-			$windows{$window} = { line => $line, bars => $bars, roles => \@roles, per_k => $per_k, house_tokens => $house_tokens{$window} };
+			# Time in use, from the same ledger: the spans of the sessions the
+			# calls make, so money can be read against the hour a person actually
+			# spent rather than only against the calendar. A window the ledger does
+			# not cover makes neither rate trustworthy.
+			my $active = $sessions_by_window{$window}->{'providers'}->{$provider} || {};
+			my $active_ms = $active->{'active_ms'} || 0;
+			my $active_hours = $active_ms / 3600000;
+			my $per_active_hour = ($tracked && $bars->{'total'} > 0 && $active_hours > 0)
+				? $bars->{'total'} / $active_hours
+				: undef;
+			my $tokens_per_hour = ($tracked && $bars->{'tokens'} > 0 && $active_hours > 0)
+				? $bars->{'tokens'} / $active_hours
+				: undef;
+			foreach my $role ( @roles ) {
+				my $rs = $role_active->{ $role->{'role'} } || {};
+				$role->{'active_ms'} = $rs->{'active_ms'} || 0;
+				$role->{'sessions'}  = $rs->{'sessions'} || 0;
+				next unless defined $per_k;
+				# The account's money is split by the tokens each app spent, so the
+				# per-agent figures add up to the provider's own.
+				$role->{'cost'} = $per_k * ($role->{'tokens'} || 0) / 1000;
+				$role->{'per_active_hour'} = ($role->{'cost'} > 0 && $role->{'active_ms'} > 0)
+					? $role->{'cost'} / ($role->{'active_ms'} / 3600000)
+					: undef;
+			}
+			$windows{$window} = {
+				line => $line, bars => $bars, roles => \@roles, per_k => $per_k,
+				house_tokens => $house_tokens{$window},
+				active_ms => $active_ms, sessions => ($active->{'sessions'} || 0),
+				per_active_hour => $per_active_hour, tokens_per_hour => $tokens_per_hour,
+				house_active_ms => $sessions_by_window{$window}->{'all'}->{'active_ms'} || 0,
+			};
 		}
 		push @series, {
 			provider        => $provider,

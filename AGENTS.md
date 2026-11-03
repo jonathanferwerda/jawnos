@@ -141,9 +141,7 @@ translatable in the same change:
 - **Look it up before grepping.** `perl scripts/where.pl <name>` for a symbol, a route, a help topic
   or a file; `perl scripts/agent_help.pl <app>` for an app's facts. `grep` is for free text, literals
   and comments only.
-- **Reply budget.** A final message is what changed (`file:line`), what verified it (command → result),
-  and one risk. No code, diff, narration or restating the request; quote only failing lines. The commit
-  message carries the rationale; the chat carries the pointer.
+- **Reply budget.** A final message must let a reviewer understand the change without opening every file: what changed and why, grouped by area, with the paths (`file:line`); how it was verified (command → result); any behaviour, migration or follow-up the person must know; one realistic risk; and the obvious next step as a question. Quote only failing lines or a small hunk that carries a decision — never a whole file or a diff dump, never a tool-by-tool narration, and never a restatement of the request. The commit message carries the rationale; the chat carries the explanation, not just the pointer.
 - **Test fixtures only:** `email_test`, `email_tester`, `testing`, `testings`, `testingser`, plus the one
   sanctioned phone/email in `docs/AGENTS-notes.md`. Every other number/address is prohibited; only the
   sanctioned email may receive mail.

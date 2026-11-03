@@ -12,7 +12,7 @@ use JawnOSTest;
 # The domain layer is lazy: load the real definitions before the local *subs::
 # stubs below, or a later module load would replace them.
 subs::preload($_) for qw(crypto_rates_read crypto_report_currency exchange_rate);
-subs::preload($_) for qw(ai_spend_since ai_spend_buckets ai_spend_roles ai_balance_role_label);
+subs::preload($_) for qw(ai_spend_since ai_spend_buckets ai_spend_roles ai_spend_minute_ms ai_spend_sessions ai_balance_role_label);
 
 # The Sys panel's "Balance drop" chart. These tests pin the four windows (Last
 # Hour in two-minute bars, Last Day in hours, Last Week and Last Month in days),
@@ -234,6 +234,50 @@ package main;
 	ok !defined &subs::ai_spend_since(), 'an empty ledger has no start';
 }
 
+# ---- the ledger's minutes and sessions --------------------------------------
+is &subs::ai_spend_minute_ms('2026-11-02 10:05'), ts(2026, 11, 2, 10, 5),
+	'a minute key is read back as its instant';
+ok !defined &subs::ai_spend_minute_ms('not a minute'), 'and anything else has no instant';
+ok !defined &subs::ai_spend_minute_ms(undef), 'including nothing at all';
+{
+	no warnings 'redefine';
+	# One provider, two roles: a burst from 10:00 to 10:06, then a lone call at
+	# 10:30. The gap over the threshold starts a second session.
+	local *subs::db_query = sub {
+		FakeSince->new([
+			{ provider => 'deepseek', role => 'help_assistant', minute => '2026-11-02 10:00', tokens => 100, calls => 1 },
+			{ provider => 'deepseek', role => 'help_assistant', minute => '2026-11-02 10:05', tokens => 200, calls => 1 },
+			{ provider => 'deepseek', role => 'eval_assistant', minute => '2026-11-02 10:06', tokens => 50,  calls => 2 },
+			{ provider => 'deepseek', role => 'help_assistant', minute => '2026-11-02 10:30', tokens => 300, calls => 1 },
+		]);
+	};
+	my $sessions = &subs::ai_spend_sessions();
+	my $deepseek = $sessions->{'providers'}->{'deepseek'};
+	is $deepseek->{'sessions'}, 2, 'a gap over fifteen minutes starts a second session';
+	is $deepseek->{'active_ms'}, 8 * 60_000,
+		'and the span counts each session from its first call to its last minute';
+	is $deepseek->{'calls'}, 5, 'the calls are summed';
+	is $deepseek->{'tokens'}, 650, 'and the tokens with them';
+	is $deepseek->{'roles'}->{'help_assistant'}->{'sessions'}, 2,
+		'a role keeps its own sessions';
+	is $deepseek->{'roles'}->{'help_assistant'}->{'active_ms'}, 7 * 60_000,
+		'with its own time in use';
+	is $deepseek->{'roles'}->{'help_assistant'}->{'tokens'}, 600, 'and its tokens';
+	is $deepseek->{'roles'}->{'eval_assistant'}->{'sessions'}, 1, 'a short role has one session';
+	is $deepseek->{'roles'}->{'eval_assistant'}->{'active_ms'}, 60_000, 'of one minute';
+	is $sessions->{'all'}->{'sessions'}, 2, 'all providers together are two sessions';
+	is $sessions->{'all'}->{'active_ms'}, 8 * 60_000, 'and the same time in use';
+	my $joined = &subs::ai_spend_sessions('', 60 * 60 * 1000);
+	is $joined->{'providers'}->{'deepseek'}->{'sessions'}, 1,
+		'a wider gap threshold joins the burst and the later call';
+	is $joined->{'providers'}->{'deepseek'}->{'active_ms'}, 31 * 60_000,
+		'and counts the whole span';
+	local *subs::db_query = sub { FakeSince->new([]) };
+	my $empty = &subs::ai_spend_sessions();
+	is_deeply $empty->{'providers'}, {}, 'an empty ledger has no provider';
+	is $empty->{'all'}->{'active_ms'}, 0, 'and no time in use';
+}
+
 # ---- a fall spread across the bars it covers --------------------------------
 my $spread_points = [
 	{ t => $aligned - 5 * $H, v => 100 },
@@ -393,6 +437,12 @@ my $report = {
 	local *subs::ai_spend_roles = sub {
 		return { deepseek => { help_assistant => 700, eval_assistant => 200 } };
 	};
+	local *subs::ai_spend_sessions = sub {
+		return {
+			providers => { deepseek => { active_ms => 3600000, sessions => 2, roles => { help_assistant => { active_ms => 3600000, sessions => 2 } } } },
+			all => { active_ms => 3600000, sessions => 2 },
+		};
+	};
 	my $chart = &subs::ai_balance_chart($report, $now);
 	is scalar @{ $chart->{'series'} }, 1, 'only the registered provider is charted';
 	is $chart->{'series'}->[0]->{'provider'}, 'deepseek', 'with its own name';
@@ -422,6 +472,12 @@ my $report = {
 	is $one_day->{'roles'}->[0]->{'role'}, 'help_assistant', 'with the role kept';
 	cmp_ok abs($one_day->{'roles'}->[0]->{'share'} - (700 / 900 * 100)), '<', 0.001,
 		'and its share of the window';
+	is $one_day->{'roles'}->[0]->{'active_ms'}, 3600000, 'and the time that role was in use';
+	is $one_day->{'active_ms'}, 3600000, 'the window carries the account\'s time in use';
+	is $one_day->{'sessions'}, 2, 'and how many sessions made it';
+	ok !defined $one_day->{'per_active_hour'}, 'the per-hour rate needs a ledger that covers the window';
+	ok !defined $one_day->{'tokens_per_hour'}, 'and so does the tokens-per-hour rate';
+	ok !defined $one_day->{'roles'}->[0]->{'cost'}, 'a role has no money split without a price per token';
 	ok !defined $one_day->{'per_k'}, 'the cost per thousand tokens needs both sides measured';
 	my $week_window = $chart->{'series'}->[0]->{'windows'}->{'1w'};
 	is scalar @{ $week_window->{'compare'} || [] }, 1, 'a single account has nothing to compare';
@@ -432,6 +488,7 @@ my $report = {
 	local *subs::ai_spend_since = sub { undef };
 	local *subs::ai_spend_buckets = sub { {} };
 	local *subs::ai_spend_roles = sub { {} };
+	local *subs::ai_spend_sessions = sub { {} };
 	my $chart = &subs::ai_balance_chart($report, $now);
 	is $chart->{'series'}->[0]->{'currency'}, 'USD', 'no rate keeps the provider currency';
 	ok !$chart->{'converted'}, 'and does not claim a conversion';
@@ -443,6 +500,7 @@ my $report = {
 	local *subs::ai_spend_since = sub { undef };
 	local *subs::ai_spend_buckets = sub { {} };
 	local *subs::ai_spend_roles = sub { {} };
+	local *subs::ai_spend_sessions = sub { {} };
 	my $chart = &subs::ai_balance_chart($report, $now);
 	is $chart->{'series'}->[0]->{'currency'}, 'USD', 'a provider already in house currency stays as it is';
 	ok !$chart->{'converted'}, 'with no conversion claimed';
@@ -462,7 +520,15 @@ my $report = {
 			}
 			: {};
 	};
-	local *subs::ai_spend_roles = sub { {} };
+	local *subs::ai_spend_roles = sub { return { deepseek => { help_assistant => 700, eval_assistant => 300 } }; };
+	local *subs::ai_spend_sessions = sub {
+		return {
+			providers => {
+				deepseek => { active_ms => 2 * $H, sessions => 3, roles => { help_assistant => { active_ms => $H, sessions => 2 } } },
+			},
+			all => { active_ms => 2 * $H, sessions => 3 },
+		};
+	};
 	local *subs::exchange_rate = sub { 1 };
 	my $two = {
 		at => $now,
@@ -479,6 +545,17 @@ my $report = {
 	cmp_ok abs($wd->{'per_k'} - (30 / 1000 * 1000)), '<', 0.001,
 		'which is the spend over the tokens';
 	is $wd->{'house_tokens'}, 1500, 'and the house total adds every account';
+	is $wd->{'active_ms'}, 2 * $H, 'the window carries the account\'s time in use';
+	is $wd->{'sessions'}, 3, 'over three sessions';
+	cmp_ok abs($wd->{'per_active_hour'} - (30 / 2)), '<', 0.001,
+		'and the rate is the money over the hours actually in use';
+	cmp_ok abs($wd->{'tokens_per_hour'} - 500), '<', 0.001,
+		'with the tokens per hour beside it';
+	my $guide = $chart->{'series'}->[0]->{'windows'}->{'1w'}->{'roles'}->[0];
+	cmp_ok abs($guide->{'cost'} - (30 * 700 / 1000)), '<', 0.001,
+		'a role carries its share of the money';
+	cmp_ok abs($guide->{'per_active_hour'} - (30 * 700 / 1000)), '<', 0.001,
+		'and its own cost per hour in use';
 	is scalar @{ $wd->{'compare'} }, 2, 'and both accounts are compared';
 	is $wd->{'compare'}->[0]->{'label'}, 'DeepSeek', 'by name';
 	ok length $chart->{'tz'}, 'and the chart names the clock it times its bars by';
@@ -501,6 +578,7 @@ is &subs::ai_balance_role_label(''), 'Other', 'a call that did not say who asked
 	local *subs::ai_spend_since = sub { undef };
 	local *subs::ai_spend_buckets = sub { {} };
 	local *subs::ai_spend_roles = sub { {} };
+	local *subs::ai_spend_sessions = sub { {} };
 	local *subs::ui = sub { return $_[0] };
 	local *subs::random_string_creator = sub { 'alertuuid' };
 	local *subs::ai_spend_prune = sub { return 1 };

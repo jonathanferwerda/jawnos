@@ -1117,16 +1117,101 @@ sub ai_spend_roles {
 	return \%map;
 }
 
+# One wall-clock minute key ('YYYY-MM-DD HH:MM', in this machine's own time)
+# as epoch ms. The key is local, so it is rebuilt as local time; an instant like
+# that reads back to the same minute. Undefined for anything else.
+sub ai_spend_minute_ms {
+	my ($key) = @_;
+	return undef unless defined $key && $key =~ /^(\d{4})-(\d\d)-(\d\d) (\d\d):(\d\d)$/;
+	my $t = POSIX::mktime(0, $5, $4, $3, $2 - 1, $1 - 1900);
+	return (defined $t && $t >= 0) ? $t * 1000 : undef;
+}
+
 # The earliest minute the ledger knows, in epoch ms, so the chart can tell a
 # bar that predates the ledger apart from a bar that genuinely spent nothing.
 # Undefined when the ledger is empty.
 sub ai_spend_since {
 	my $row = eval { &subs::db_query('select min(minute) as m from ai_spend where minute is not null and minute != ?', '')->hashes->[0] } || {};
-	my $m = $row->{'m'} // '';
-	return undef unless $m =~ /^(\d{4})-(\d\d)-(\d\d) (\d\d):(\d\d)$/;
-	# the key is local wall clock, so it is read back as local time
-	my $t = POSIX::mktime(0, $5, $4, $3, $2 - 1, $1 - 1900);
-	return (defined $t && $t >= 0) ? $t * 1000 : undef;
+	return &ai_spend_minute_ms($row->{'m'});
+}
+
+# How long two calls may be apart and still count as one stretch of use. A
+# person thinking between turns, or a slow local model, leaves gaps; a coffee
+# break does not. Above this a new session starts, so the chart can say "two
+# hours in use over four sessions" rather than reading every call as its own
+# minute of work.
+our $AI_SPEND_SESSION_GAP_MS = 15 * 60 * 1000;
+
+# How long the agents were actually in use in a window. The ledger has one row
+# per model call with the minute it ran, so a session is the run of calls with
+# no gap wider than $AI_SPEND_SESSION_GAP_MS: its span is the last call's minute
+# minus the first's, plus the minute the last call occupies. A lone call is one
+# minute. The same arithmetic runs per provider (a session may span roles) and
+# per role (the agents the person actually talked to), so the panel can put
+# money beside time rather than only beside the calendar.
+#
+# Returns provider -> { active_ms, sessions, calls, tokens, roles -> role -> the
+# same shape }, plus `all` for every provider's minutes together. An absent
+# table (a database that has not migrated yet) reads as no sessions.
+sub ai_spend_sessions {
+	my ($since_key, $gap_ms) = @_;
+	$since_key = '' unless defined $since_key;
+	$gap_ms = $AI_SPEND_SESSION_GAP_MS unless defined $gap_ms && $gap_ms =~ /^\d+$/ && $gap_ms > 0;
+	my $rows = eval {
+		&subs::db_query('select provider, role, minute, sum(tokens_in + tokens_out) as tokens, count(*) as calls from ai_spend where minute >= ? group by provider, role, minute', $since_key)->hashes;
+	} || [];
+	my (%providers, %all_minutes);
+	foreach my $r ( @{$rows} ) {
+		my $ms = &ai_spend_minute_ms($r->{'minute'});
+		next unless defined $ms;
+		my $provider = $r->{'provider'} // '';
+		my $role = $r->{'role'} // '';
+		my $tokens = $r->{'tokens'} || 0;
+		my $calls = $r->{'calls'} || 0;
+		my $p = $providers{$provider} ||= { minutes => {}, roles => {}, tokens => 0, calls => 0 };
+		$p->{'minutes'}->{$ms} = 1;
+		$p->{'tokens'} += $tokens;
+		$p->{'calls'} += $calls;
+		my $role_row = $p->{'roles'}->{$role} ||= { minutes => {}, tokens => 0, calls => 0 };
+		$role_row->{'minutes'}->{$ms} = 1;
+		$role_row->{'tokens'} += $tokens;
+		$role_row->{'calls'} += $calls;
+		$all_minutes{$ms} = 1;
+	}
+	my $span = sub {
+		my ($minutes) = @_;
+		my @m = sort { $a <=> $b } keys %{$minutes};
+		return { active_ms => 0, sessions => 0 } unless @m;
+		my ($active, $sessions) = (0, 0);
+		my ($start, $prev) = ($m[0], $m[0]);
+		for my $i ( 1 .. $#m ) {
+			my $t = $m[$i];
+			if ($t - $prev > $gap_ms) {
+				$active += $prev - $start + 60_000;
+				$sessions++;
+				$start = $t;
+			}
+			$prev = $t;
+		}
+		$active += $prev - $start + 60_000;
+		$sessions++;
+		return { active_ms => $active, sessions => $sessions };
+	};
+	my %out;
+	foreach my $provider ( keys %providers ) {
+		my $p = $providers{$provider};
+		my $own = $span->($p->{'minutes'});
+		my %roles;
+		foreach my $role ( keys %{ $p->{'roles'} } ) {
+			my $r = $p->{'roles'}->{$role};
+			$roles{$role} = { %{ $span->($r->{'minutes'}) }, tokens => $r->{'tokens'}, calls => $r->{'calls'} };
+		}
+		$out{$provider} = {
+			%{$own}, roles => \%roles,
+			tokens => $p->{'tokens'}, calls => $p->{'calls'},
+		};
+	}
+	return { providers => \%out, all => $span->(\%all_minutes) };
 }
 
 # The ledger grows one row per call, so it needs a prune. Legacy rows from the

@@ -125,6 +125,29 @@ function jawnosCurrencyApply(select) {
 		if (!isFinite(amount) || template.indexOf('{0}') < 0) { return; }
 		line.text(template.replace('{0}', jawnosCurrencyValue(Math.abs(amount * rate)) + ' ' + code).replace('{1}', line.attr('data-time') || ''));
 	});
+	// What an hour actually in use costs follows the picker too. The time in
+	// use is a duration, not money, and stays put.
+	series.find('.balance_active_rate').each(function () {
+		var line = $(this);
+		var perHour = parseFloat(line.attr('data-base-per-hour'));
+		var template = line.attr('data-template') || '';
+		if (!isFinite(perHour) || template.indexOf('{0}') < 0) { return; }
+		line.text(' · ' + template.replace('{0}', jawnosCurrencyValue(Math.abs(perHour * rate)) + ' ' + code));
+	});
+	// Each role's share of the money, and its own hourly rate, convert in place.
+	// The label, share and time in its template are wording and a duration.
+	series.find('.balance_role_money').each(function () {
+		var line = $(this);
+		var cost = parseFloat(line.attr('data-base-cost'));
+		var perHour = parseFloat(line.attr('data-base-per-hour'));
+		var template = line.attr('data-template') || '';
+		if (!isFinite(cost) || template.indexOf('{0}') < 0) { return; }
+		var text = template.replace('{0}', jawnosCurrencyValue(Math.abs(cost * rate)) + ' ' + code);
+		if (isFinite(perHour) && template.indexOf('{1}') >= 0) {
+			text = text.replace('{1}', jawnosCurrencyValue(Math.abs(perHour * rate)) + ' ' + code);
+		}
+		line.text(text);
+	});
 	// The open bar's line is built from the bar's own attributes, so it follows
 	// the picker too.
 	jawnosBalanceBucketRefresh(series[0], rate, code);
