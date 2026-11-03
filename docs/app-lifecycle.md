@@ -164,6 +164,18 @@ prompt → scaffold (manifest, route, template, test, migration)
 An app may also be a CPAN dist; the store is the channel that carries a manifest, capabilities and
 review evidence, which CPAN does not.
 
+## The sandbox
+
+`docs/app-sandbox.md` is the containment: a sandboxed app is its own process, its Mojolicious server
+on a Unix socket, its host API over a second socket, and a fence chosen from
+`inproc`/`process`/`userns`/`bwrap`/`systemd`/`nspawn`/`vm`/`proot`. The QA harness already proves
+the `unshare` fence on the desktop and on Android (`qa/lib/Harness.pm`, `qa/android/run.sh`), so
+the default for `agent-reviewed` is `userns` on desktop/Android and `systemd` on the installed OS.
+
+The rule is blunt: **in-process apps are core only**; anything generated or fetched runs in a
+process the host can contain and kill. `proot` is compatibility, not containment, and the UI shows
+the level actually achieved.
+
 ## Health and performance
 
 Every app reports a small, comparable set of facts; the host stores the last reading and a short
@@ -258,6 +270,6 @@ Infrastructure (the new server, containers, off-box backups) is already tracked 
 - A canary route prefix and a second schema per app, only while a candidate is being measured.
 - The registry is the source of the route/asset/menu/help maps, replacing the hand-maintained ones.
 
-The four documents now form one story: `app-sdk.md` (contract), `app-databases.md` (data boundary),
-`app-lifecycle.md` (operations, generation, review, and the v1 fork) and `app-store.md`
-(distribution through junderground).
+The five documents now form one story: `app-sdk.md` (contract), `app-databases.md` (data boundary),
+`app-lifecycle.md` (operations, generation, review, and the v1 fork), `app-store.md` (distribution
+through junderground) and `app-sandbox.md` (containment).
