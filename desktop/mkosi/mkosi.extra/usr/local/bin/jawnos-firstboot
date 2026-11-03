@@ -24,13 +24,41 @@ LOG=/var/log/jawnos-firstboot.log
 
 mkdir -p "$STATE"
 
+# A database counts as an adopted house when it is non-empty: an older schema
+# is the app's to migrate, and deleting it would lose the person's rows. Only a
+# zero-byte file (what a crashing first boot leaves behind) is dropped, because
+# jawnos_setup.pl leaves any existing file alone and the app cannot start from
+# an empty one. A fresh seed is stricter: it must answer a schema query.
+db_present() {
+    [ -s "$1" ]
+}
+
+db_has_schema() {
+    db_present "$1" && sqlite3 "$1" 'select count(*) from sync_jobs' >/dev/null 2>&1
+}
+
+# The WAL and SHM sidecars belong to the database they were written with; a new
+# database must not inherit them.
+drop_database() {
+    rm -f "$1" "$1-wal" "$1-shm"
+}
+
 # What discovery left here. An adopted config is this session's deliberate
 # identity and must not be replaced by the image's config.json (which carries
 # the live flag); an adopted database must not be seeded over.
 HAD_CONFIG=no
 [ -f "$STATE/jawnos/config.json" ] && HAD_CONFIG=yes
+DB=$STATE/jawnos/database/jawnos.db
+ENC=$STATE/jawnos/database/backups/jawnos.enc
 HAD_DB=no
-[ -f "$STATE/jawnos/database/jawnos.db" ] && HAD_DB=yes
+if db_present "$DB"; then
+    HAD_DB=yes
+elif [ -e "$DB" ]; then
+    # unusable (zero bytes): remove it, its sidecars and an empty sealed copy so
+    # the seed builds a real database in its place
+    drop_database "$DB"
+    [ -s "$ENC" ] || rm -f "$ENC"
+fi
 
 if [ -d "$SEED_HOME" ]; then
     if command -v rsync >/dev/null 2>&1; then
@@ -42,7 +70,9 @@ fi
 
 # The tree. Test for the entry point rather than the directory: host-drive
 # adoption may already have created jawnos/database/ before the checkout exists.
-if [ -d "$SEED_TREE" ] && [ ! -f "$STATE/jawnos/Manager.pl" ]; then
+# A zero-byte Manager.pl is what an interrupted boot-time checkout leaves behind
+# (the launcher lives in perl/), so the test is for a non-empty file.
+if [ -d "$SEED_TREE" ] && [ ! -s "$STATE/jawnos/perl/Manager.pl" ]; then
     mkdir -p "$STATE/jawnos"
     # Keep an adopted config through the copy. The image's config.json is the
     # live-flag default and would otherwise overwrite the host's identity.
@@ -125,6 +155,19 @@ if [ "$HAD_CONFIG" = no ] || [ "$HAD_DB" = no ]; then
         echo "jawnos-firstboot: setup failed; see $LOG" >&2
         exit 1
     fi
+fi
+
+# Only a real house is marked seeded. A freshly seeded database must answer the
+# schema probe; an adopted one only has to be non-empty (its older schema is the
+# app's to migrate). Re-check before writing the marker: a failed seed must leave
+# .seeded absent so the unit retries on the next boot.
+if [ "$NEW_DB" = yes ] && ! db_has_schema "$DB"; then
+    echo "jawnos-firstboot: the live database at $DB is missing or has no schema; not marking the house seeded (see $LOG)" >&2
+    exit 1
+fi
+if [ "$HAD_DB" = yes ] && ! db_present "$DB"; then
+    echo "jawnos-firstboot: the adopted database at $DB is empty; not marking the house seeded (see $LOG)" >&2
+    exit 1
 fi
 
 if [ "$NEW_DB" = yes ]; then

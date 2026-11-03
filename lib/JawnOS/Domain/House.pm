@@ -265,6 +265,29 @@ sub peer_manager_base {
 	return $manager;
 }
 
+# The port a peer serves a minted ticket on. The ticket is minted through the
+# peer's manager, so its URL must name a door this machine can reach: a tunnel
+# mirror's mapping (port_dock) first, otherwise the manager's own port. dock_port
+# is the peer's LAN port (3000 on the house); a peer whose public listener is
+# PORT_AHOY (45545) does not expose 3000, so naming it left the Go window blank.
+sub peer_ticket_port {
+	my ($rm) = @_;
+	$rm ||= {};
+	for my $key (qw(port_dock port)) {
+		my $port = $rm->{$key};
+		return $port + 0 if defined $port && $port ne '' && $port =~ /^[0-9]+$/;
+	}
+	# A row can carry the address without its own port field. Read the
+	# authority, not the path: the stored manager may end in /manager.
+	my $manager = $rm->{'manager'} || '';
+	if ($manager =~ m{^https?://(?:\[[^\]]+\]|[^/:]+):([0-9]{1,5})(?:/|$)}i) {
+		return $1 + 0;
+	}
+	my $dock = $rm->{'dock_port'};
+	return $dock + 0 if defined $dock && $dock ne '' && $dock =~ /^[0-9]+$/;
+	return 3000;
+}
+
 # Which roster row a person or a script meant by a name. An exact uuid,
 # signatorial, hostname, fqdn, ip or name wins over a longer value that merely
 # contains the term; an ambiguous substring is refused rather than guessed at.

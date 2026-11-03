@@ -229,6 +229,23 @@ sub fast_forward {
     return ('diverged', "local and published history have diverged; left alone");
 }
 
+# A boot that is killed mid-checkout (the update unit's timeout killed the first
+# fetch on VM 103) leaves a .git whose HEAD or index cannot be read and tracked
+# files at zero bytes. git cannot fast-forward from that, and the old code then
+# reported 'error' on every boot forever. Treat it like a seeded tree instead.
+sub checkout_broken {
+    my ($head_code) = &git_value('rev-parse', '--verify', 'HEAD');
+    return 1 if $head_code;
+    # status fails on a corrupt index, but also while another git command holds
+    # the index lock. Retry once so a momentary lock cannot cost the .git.
+    for my $attempt (1, 2) {
+        my ($status_code) = &git('status', '--porcelain', '--untracked-files=no');
+        return 0 unless $status_code;
+        sleep 1 if $attempt == 1;
+    }
+    return 1;
+}
+
 sub rollback {
     my ($had_git, $old_sha) = @_;
     if ($had_git && $old_sha) {
@@ -295,8 +312,18 @@ sub main {
     my $had_git = -d "$repo/.git" ? 1 : 0;
     my $old_sha = '';
     if ($had_git) {
-        my (undef, $head) = &git_value('rev-parse', 'HEAD');
-        $old_sha = $head;
+        if (&checkout_broken()) {
+            &log_line('checkout is broken (no readable HEAD or index); re-bootstrapping');
+            my ($code, $out) = &capture_in_repo('rm', '-rf', '.git');
+            &finish('error', "could not remove the broken checkout: $out") if $code;
+            # with no usable history this is the same situation as a seeded tree:
+            # bootstrap again, and roll back to the seed if that fails.
+            $had_git = 0;
+        }
+        else {
+            my (undef, $head) = &git_value('rev-parse', '--verify', 'HEAD');
+            $old_sha = $head;
+        }
     }
 
     &log_line("start: repo=$repo local=$mine published=$published git=" . ($had_git ? 'yes' : 'no'));
@@ -308,7 +335,12 @@ sub main {
     }
     else {
         my ($ok, $error) = &bootstrap();
-        &finish('error', "bootstrap failed: $error") unless $ok;
+        unless ($ok) {
+            my ($rolled, $rollback_error) = &rollback($had_git, $old_sha);
+            &finish('error', $rolled
+                ? "bootstrap failed; seed restored: $error"
+                : "bootstrap failed; seed restore failed: $rollback_error");
+        }
         &log_line("bootstrapped a checkout from $remote ($branch)");
     }
 

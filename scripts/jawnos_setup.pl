@@ -330,8 +330,32 @@ sub make_database {
 	undef $sql;
 
 	# the live database is written straight out - no gate pick-a-database step -
-	# and a copy is sealed beside it exactly the way the app expects
-	`cp -f $working $live_db`;
+	# and a copy is sealed beside it exactly the way the app expects. The copy is
+	# checked before this returns ok: firstboot writes the unlock code and its
+	# .seeded marker on the strength of this answer, and a partial live database
+	# then takes the whole tree down in a crash loop.
+	unlink "$live_db-wal", "$live_db-shm";
+	system('cp', '-f', $working, $live_db);
+	if ( $? != 0 || !-s $live_db ) {
+		return { error => "could not write the live database at $live_db." };
+	}
+	# the schema probe is the same one firstboot uses: an empty file or a copy
+	# that stopped halfway must not be reported as a finished house. Run sqlite3
+	# with an argument list, not a shell string: an install path may contain
+	# spaces or a quote.
+	my $probe = '';
+	my $probe_status = -1;
+	if ( open( my $fh, '-|', 'sqlite3', $live_db, 'select count(*) from sync_jobs' ) ) {
+		local $/;
+		$probe = <$fh> // '';
+		close $fh;
+		$probe_status = $?;
+	}
+	if ( $probe_status != 0 || $probe !~ /^\s*\d+\s*$/ ) {
+		$probe = '' unless defined $probe;
+		$probe =~ s/\s+/ /g;
+		return { error => "the live database at $live_db has no schema: $probe" };
+	}
 	my $temp_backup = $working . '.1.db';
 	`sqlite3 $working ".backup '$temp_backup'"`;
 	`openssl enc -e -k "$code" -$standard -pbkdf2 -in $temp_backup -out $enc_file`;

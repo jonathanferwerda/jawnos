@@ -54,6 +54,22 @@ is(subs::peer_manager_base('https://127.0.0.1:53665'),
 	'a tunnel route keeps its literal base');
 is(subs::peer_manager_base(''), '', 'an empty manager stays empty');
 
+# A minted ticket's URL must name a port the peer actually serves it on. The
+# mint request goes to the peer's manager, so a direct row uses the manager's own
+# port; a tunnel mirror keeps the mapping it is reached through. dock_port is the
+# peer's LAN port (3000 on the house), which a peer published on PORT_AHOY does
+# not expose from a laptop - that authority was the blank Go window.
+is(subs::peer_ticket_port({ port => 45545, dock_port => 3000, fqdn => 'hub.example' }),
+	45545, 'a direct row uses its manager port, not dock_port');
+is(subs::peer_ticket_port({ port => 45545, port_dock => 45123, dock_port => 3000 }),
+	45123, 'a tunnel mirror keeps its mapped dock port');
+is(subs::peer_ticket_port({ port => 3001, dock_port => 3000 }),
+	3001, 'a direct LAN row uses its own manager port');
+is(subs::peer_ticket_port({}),
+	3000, 'with no port fields the dock default answers');
+is(subs::peer_ticket_port({ manager => 'https://hub.example:45545', dock_port => 3000 }),
+	45545, 'a row with no port field takes the port from its manager url');
+
 # The client every peer call is built from must apply it.
 my $source = join "\n", map {
 	open(my $fh, '<', $_) or die $!;

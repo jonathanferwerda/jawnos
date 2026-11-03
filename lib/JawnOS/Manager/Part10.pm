@@ -567,7 +567,10 @@ sub remote_manager_ticket($c, $rm) {
 		my $data = eval { decode_json $res->body } || {};
 		my $ticket = $data->{'url'} || '';
 		return '' unless $ticket;
-		my $dock = $rm->{'port_dock'} || $rm->{'dock_port'} || 3000;
+		# The ticket door is on the port the peer's manager answers on, not its
+		# LAN dock port: a peer published on PORT_AHOY (45545) does not expose
+		# 3000, and opening that authority is the blank Go window.
+		my $dock = &subs::peer_ticket_port($rm);
 		$ticket =~ s{^https?://[^/]+}{https://$ticket_host:$dock} if $ticket_host;
 		return $ticket;
 	};

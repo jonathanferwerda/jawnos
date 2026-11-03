@@ -39,6 +39,7 @@ use Unicode::Normalize qw(NFC);
 
 our $device;
 our %m;
+our $log;
 our %note_cipher_specs;
 our %note_key_material;
 # Whether one standard can be sealed and opened again on this machine. The
@@ -208,7 +209,8 @@ sub sync_job_step {
 	my ($uuid, $key, $data) = @_;
 	return unless $uuid && defined $key && $key ne '';
 	$data ||= {};
-	my $row = &db_query('select steps from sync_jobs where uuid = ?', $uuid)->hashes->[0] || {};
+	my $result = &db_query('select steps from sync_jobs where uuid = ?', $uuid);
+	my $row = $result ? ($result->hashes->[0] || {}) : {};
 	my $steps = eval { decode_json($row->{'steps'} || '[]') } || [];
 	my ($step) = grep { ref $_ eq 'HASH' && ($_->{'key'} || '') eq $key } @{$steps};
 	unless ($step) {
@@ -241,7 +243,14 @@ sub sync_jobs_reap {
 		push @args, $direction;
 	}
 	my $scope = join ' and ', @where;
-	my $row = &db_query("select count(*) as c from sync_jobs where $scope", @args)->hashes->[0] || {};
+	my $result = &db_query("select count(*) as c from sync_jobs where $scope", @args);
+	unless ($result) {
+		# A missing database or table (a half-seeded first boot) must not take the
+		# tree down: this runs from President.pl before any worker exists.
+		$log->error('sync_jobs_reap: sync_jobs is not readable; no jobs reaped') if $log;
+		return 0;
+	}
+	my $row = $result->hashes->[0] || {};
 	my $n = $row->{'c'} || 0;
 	return 0 unless $n;
 	# Leave `updated` alone: it is when the job last actually ran, and moving it to
@@ -258,7 +267,8 @@ sub sync_job_finish {
 	my $now = &rightNow();
 	# Settle any bar still open, so a failed job does not leave a table reading
 	# "running" in the panel after the dot has already shown a red cross.
-	my $row = &db_query('select steps from sync_jobs where uuid = ?', $uuid)->hashes->[0] || {};
+	my $result = &db_query('select steps from sync_jobs where uuid = ?', $uuid);
+	my $row = $result ? ($result->hashes->[0] || {}) : {};
 	my $steps = eval { decode_json($row->{'steps'} || '[]') } || [];
 	foreach my $step ( @{$steps} ) {
 		next unless ref $step eq 'HASH';

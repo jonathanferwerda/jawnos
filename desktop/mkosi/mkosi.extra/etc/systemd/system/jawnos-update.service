@@ -17,7 +17,11 @@ ConditionPathExists=/home/jawn/jawnos
 Type=oneshot
 ExecStart=/usr/local/bin/jawnos-update
 RemainAfterExit=yes
-TimeoutStartSec=120
+# A first boot has to clone the whole tree at depth 1 and install its Perl
+# modules; the old 120s bound killed that fetch mid-checkout, leaving zero-byte
+# tracked files and a .git with no readable HEAD (VM 103). Allow a slow network
+# and the dependency install to finish.
+TimeoutStartSec=900
 
 [Install]
 WantedBy=multi-user.target
