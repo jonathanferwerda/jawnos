@@ -287,6 +287,7 @@ FAKE
 	{
 		package FakeMinion;
 		sub lock { 1 }
+		sub unlock { 1 }
 	}
 	package main;
 	local *subs::home = sub { $dir };

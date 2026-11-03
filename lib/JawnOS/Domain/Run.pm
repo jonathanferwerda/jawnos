@@ -1005,6 +1005,14 @@ sub where_audit_run {
 	my $minion = eval { &subs::minion_grabber() };
 	return 0 unless $minion && $minion->lock('where_audit_run', 120);
 
+	# The lock is a guard against a hung run, not a cooldown: release it as soon
+	# as the run finishes so the button works again at once.
+	my $finish = sub {
+		my ($result) = @_;
+		eval { $minion->unlock('where_audit_run') };
+		return $result;
+	};
+
 	my $previous = &where_audit_report();
 	my $repo     = &subs::home('~/jawnos');
 	my $script   = "$repo/scripts/where_audit.pl";
@@ -1014,7 +1022,7 @@ sub where_audit_run {
 			{ %{$previous}, attempt => $now, ok => 0, error => $why });
 		return 0;
 	};
-	return $fail->('the checkout has no scripts/where_audit.pl') unless -f $script;
+	return $finish->($fail->('the checkout has no scripts/where_audit.pl')) unless -f $script;
 
 	my @args = ('--json');
 	my $last = ($previous->{'at'} || 0) + 0;
@@ -1028,11 +1036,11 @@ sub where_audit_run {
 		close $fh;
 		$code = $? >> 8;
 		1;
-	} or return $fail->('the audit could not start');
-	return $fail->('the audit did not return a report') if $code != 0;
+	} or return $finish->($fail->('the audit could not start'));
+	return $finish->($fail->('the audit did not return a report')) if $code != 0;
 
 	my $data = eval { JSON::PP->new->utf8->decode($out) };
-	return $fail->('the audit returned invalid JSON') unless ref $data eq 'HASH';
+	return $finish->($fail->('the audit returned invalid JSON')) unless ref $data eq 'HASH';
 
 	$data->{'at'}      = $now;
 	$data->{'attempt'} = $now;
@@ -1040,7 +1048,7 @@ sub where_audit_run {
 	$data->{'reason'}  = $opt->{'reason'} || 'manual';
 	delete $data->{'error'};
 	&subs::cache_set({ app => '__president', context => 'where_audit', warranty => '-40d' }, $data);
-	return 1;
+	return $finish->(1);
 }
 
 # The ledger summed per provider in the granularity the caller asks for: '2m'
