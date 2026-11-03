@@ -508,6 +508,7 @@ sub brief {
 						. ( $controller_line{ $r->{'action'} } ? '  -> ' . $controller_line{ $r->{'action'} } : '' ));
 			}
 		} else {
+			push @out, '  (brace form: /a{b,c} means /a/b and /a/c)';
 			push @out, compact_routes(\@routes);
 			push @out, '  one route: perl scripts/where.pl <a path above>';
 			push @out, '  full rows: perl scripts/agent_help.pl --routes '
@@ -740,7 +741,7 @@ usage: perl scripts/agent_help.pl [--list | --index | --write-index | --schema[=
   --schema=T    one table
   --index       print the compact repository index
   --write-index rewrite qa/coding_night/agent-index.md
-  --routes      every route that reaches NAME, uncapped (the brief shows 15)
+  --routes      every route that reaches NAME as an exact row (the brief compresses them)
 TXT
 		return 0;
 	}
