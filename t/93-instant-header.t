@@ -35,8 +35,10 @@ my $js        = read_file("$root/public/js/manager/manager/06_appointment_distan
 
 my ($header_sub) = $calendar =~ /(sub appt_header_printer \{.*?\n\}\n)/s;
 ok($header_sub, 'appt_header_printer is one sub');
-unlike($header_sub, qr/subprocessor/,
-	'the header render does not fork; the caller forks the window instead');
+like($header_sub, qr/if \(\$data->\{'defer'\} && !\$data->\{'header_only'\}\)/,
+	'a press can run the header render in its own process');
+like($header_sub, qr/&subs::subprocessor\(sub \{\s*Mojo::IOLoop->reset;\s*&appt_header_printer\(\\%deferred\);\s*\}, \{ name => 'appt_header_printer', fork => 1 \}\);/s,
+	'named for the warranty seed and forced into a real fork, so the press never waits');
 unlike($header_sub, qr/&(?:Manager::)?centre_view_grabber\s*\(/,
 	'the header no longer renders the centre view');
 like($header_sub, qr/foreach my \$a \( \@\{ \(\$appts->\{\$app\} \|\| \{\}\)->\{'list'\} \|\| \[\] \} \) \{\s*&appt_alarm_setter\(\$a\);/s,
@@ -62,6 +64,10 @@ ok($start_header < $start_toggle && $start_header < $start_models,
 	'and precedes the toggle write and the default model/option sessions');
 like($start_branch, qr/skip_toggle => \(\$seen eq 'yes' \? 1 : 0\)/,
 	'a live start does not repeat the toggle write in the header');
+like($start_branch, qr/defer => \$defer_header/,
+	'the start header is deferred so the models and options are not held behind it');
+like($part14, qr/my \$defer_header = \$wants_cv \? 0 : 1;/,
+	'a caller that needs the header in its reply still renders it inline');
 
 my ($stop_branch) = $part14 =~ /(elsif \(\$type eq 'stop'\) \{.*?\n\s*elsif \(\$type eq 'cancel'\) \{)/s;
 ok($stop_branch, 'the stop branch is one block');

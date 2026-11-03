@@ -264,6 +264,21 @@ sub appt_header_printer {
 	my $data = shift;
 	my $app = $data->{'app'};
 
+	# A press wants its new header on screen, not the HTML in its reply. Run the
+	# render/cache/push in its own process so the request does not wait on a busy
+	# header before it starts the default models and options. The five-second
+	# warranty in Domain::Process bounds a wedged render. A caller that needs the
+	# HTML (the centre view's wrapper, a reconnect's resync) never asks for this.
+	if ($data->{'defer'} && !$data->{'header_only'}) {
+		my %deferred = %$data;
+		delete $deferred{'defer'};
+		&subs::subprocessor(sub {
+			Mojo::IOLoop->reset;
+			&appt_header_printer(\%deferred);
+		}, { name => 'appt_header_printer', fork => 1 });
+		return wantarray ? ('', undef) : '';
+	}
+
 	# The header is the fast half: read its two rows, render it, push it. The
 	# window render is the slow half, and it belongs to the caller - a start or
 	# stop forks centre_view_grabber after this so the new header is on screen

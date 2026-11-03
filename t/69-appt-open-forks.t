@@ -38,8 +38,12 @@ like($grabber, qr/if \(\$@\) \{\s*eval \{ &subs::log_writer\('centre view cache 
 
 my ($header_sub) = $calendar =~ /(sub appt_header_printer \{.*?\n\}\n)/s;
 ok($header_sub, 'appt_header_printer is still one sub');
-unlike($header_sub, qr/subprocessor/,
-	'the header render does not fork; the caller forks the window render instead');
+like($header_sub, qr/if \(\$data->\{'defer'\} && !\$data->\{'header_only'\}\)/,
+	'a press can defer the render to its own process');
+like($header_sub, qr/name => 'appt_header_printer'/,
+	'and the deferred render carries the warranty seed name');
+like($header_sub, qr/return wantarray \? \('', undef\) : '';/,
+	'a deferred caller gets no HTML back');
 unlike($header_sub, qr/&(?:Manager::)?centre_view_grabber\s*\(/,
 	'the header no longer renders the centre view');
 like($header_sub, qr/foreach my \$a \( \@\{ \(\$appts->\{\$app\} \|\| \{\}\)->\{'list'\} \|\| \[\] \} \) \{\s*&appt_alarm_setter\(\$a\);/s,
