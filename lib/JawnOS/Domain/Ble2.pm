@@ -512,12 +512,15 @@ sub ble_listener_start {
 		# Reads are arbitrary chunks: a JSON line longer than one chunk used to
 		# be decoded in halves and silently dropped. Buffer until the newline.
 		$gb::ble_listener_buffer .= $bytes;
-		if (length($gb::ble_listener_buffer) > 1048576) {
-			$log->error('BLE listener buffer overflow; dropping partial data');
-			$gb::ble_listener_buffer = '';
-		}
-		while ($gb::ble_listener_buffer =~ s/^(.*?)\n//) {
-			my $event = eval { decode_json $1 };
+		# Drain the complete lines in one pass. s/^(.*?)\n// copies the whole
+		# remaining buffer per line, so a burst that ended with one large event
+		# (a runaway BLE message) was quadratic: a phone spent minutes of CPU
+		# on a few megabytes. split is linear; the last element is the part of
+		# a line still in hand and stays buffered.
+		my @lines = split /\n/, $gb::ble_listener_buffer, -1;
+		$gb::ble_listener_buffer = @lines ? pop @lines : '';
+		foreach my $line (@lines) {
+			my $event = eval { decode_json $line };
 			next unless $event && ref $event eq 'HASH';
 			my $name = $event->{'event'} || '';
 			# Keep the per-MAC link map current. Every link-scoped event names its
@@ -549,6 +552,12 @@ sub ble_listener_start {
 			elsif ($name eq 'message') {
 				&ble_message_processor($event->{'data'}, $event->{'mac'});
 			}
+		}
+		# Only the unterminated tail is dropped. The check used to run before the
+		# drain, so one overlong event discarded the complete lines behind it too.
+		if (length($gb::ble_listener_buffer) > 8 * 1024 * 1024) {
+			$log->error('BLE listener buffer overflow; dropping partial data');
+			$gb::ble_listener_buffer = '';
 		}
 	});
 	$gb::ble_listener->on(close => sub {

@@ -20,7 +20,7 @@ use Time::HiRes qw(sleep time);
 
 $| = 1; # stdout must flush: listen runs for a long time
 
-my $port = 45999;
+my $port = $ENV{'JAWNOS_BT_PORT'} || 45999;
 
 # The host app. The installed package is com.jawnos and its Java package is
 # com.jawnos.app, so a component reads com.jawnos/.app.X and an action
@@ -155,11 +155,24 @@ sub wait_for {
 		my $n = sysread($sock, $chunk, 65536);
 		return undef unless defined $n && $n > 0;
 		$buf .= $chunk;
-		while ($buf =~ s/^(.*?)\n//) {
-			my $line = $1;
+		# Drain the complete lines in one pass. Removing each line with
+		# s/^(.*?)\n// copies the whole remaining buffer, so a burst that ended
+		# with one large event was quadratic - a phone burned minutes of CPU on
+		# a few megabytes. split is linear; the final element is the partial
+		# line, which stays buffered.
+		my @lines = split /\n/, $buf, -1;
+		$buf = @lines ? pop @lines : '';
+		foreach my $line (@lines) {
 			print $line, "\n";
 			my $o = eval { JSON::PP->new->decode($line) };
 			return $o if $o && $cond->($o);
+		}
+		# An unterminated line must not grow the buffer without bound. The
+		# bridge's own cap is a couple of megabytes, so anything past this is
+		# garbage: report it and start the line again rather than carry it.
+		if (length($buf) > 8 * 1024 * 1024) {
+			print JSON::PP->new->encode({ event => 'error', error => 'line too long', bytes => length $buf }), "\n";
+			$buf = '';
 		}
 	}
 	return undef;
