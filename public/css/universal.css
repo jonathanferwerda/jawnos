@@ -33,6 +33,9 @@ input[type=number] {
 	--time-fixed: #ddffee;
 	--chat-bubble-me: #cdeccd; --chat-bubble-them: #cfe3f5;
 	--accent: #3b7ddd; --accent-soft: #e6effb; --accent-line: #2f6cc4; --accent-ink: #ffffff;
+	/* the two directions a period's money can move, used by the Runway chart and
+	   its bars; muted so neither shouts over the balance line */
+	--runway-good: #2f7d4f; --runway-bad: #b3453f;
 	--jawnos-corner: var(--corner_radius, 12px);
 	--button_border: 1px;
 	--shadow-1: 0 1px 2px rgba(0, 0, 0, .06), 0 2px 6px rgba(0, 0, 0, .05);
@@ -99,7 +102,7 @@ body {
    autofill wash itself. Without it a dark desktop still opened a white
    <select> menu and pale native fields, whatever the control's own surface
    said. The variables below are the same surfaces the rules further down use. */
-body.dark_theme { --ink: #e6e6e6; --ink-muted: #9a9a9a; --panel: #1b1d21; --panel-2: #24272c; --line: #3a3f47; --time-fixed: #1f3a2a; --chat-bubble-me: #2b4a33; --chat-bubble-them: #24394f; color-scheme: dark; }
+body.dark_theme { --ink: #e6e6e6; --ink-muted: #9a9a9a; --panel: #1b1d21; --panel-2: #24272c; --line: #3a3f47; --time-fixed: #1f3a2a; --chat-bubble-me: #2b4a33; --chat-bubble-them: #24394f; --runway-good: #6fbf8a; --runway-bad: #e0837c; color-scheme: dark; }
 body.dark_theme {
 	background-image: linear-gradient(180deg, rgba(255,255,255,.035), rgba(0,0,0,.18));
 }

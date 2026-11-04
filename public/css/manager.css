@@ -3199,6 +3199,79 @@ body.dark_theme .budget_cell {
 	color: var(--ink);
 }
 
+/* ---------------- Accounting: the charts and the Runway view ----------------
+   The balance chart was drawn in black on a stretched buffer; both charts now
+   read their ink, grid and fills from the theme variables, so they follow a
+   light or a dark desktop. The tooltip is one surface for both, and a click on a
+   period opens it rather than the hover merely naming it. */
+#budget_account_canvas { display: block; margin: 6px 0 0; }
+.budget_chart_hint { color: var(--ink-muted); font-size: 11px; margin: 2px 0 8px; }
+#budget_account_information, #budget_runway_tip {
+	position: fixed;
+	z-index: 60; pointer-events: none;
+	min-width: 150px; max-width: 280px;
+	color: var(--ink); background-color: var(--panel);
+	border: 1px solid var(--line); border-radius: var(--jawnos-corner);
+	box-shadow: var(--shadow-2);
+	padding: 6px 8px; font-size: 12px; line-height: 1.4;
+}
+.budget_tip_when { font-weight: 600; margin-bottom: 3px; }
+.budget_tip_row { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+.budget_tip_row b { font-weight: 600; }
+.budget_tip_total { border-top: 1px solid var(--line); margin-top: 3px; padding-top: 3px; }
+.budget_tip_swatch { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 5px; }
+.budget_tip_hint { color: var(--ink-muted); font-size: 11px; margin-top: 4px; }
+
+.runway { color: var(--ink); padding: 2px 2px 10px; }
+.runway_head { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.runway_head h2 { margin: 2px 0; }
+.runway_units { display: flex; gap: 4px; }
+.runway_unit {
+	font: inherit; font-size: 12px; cursor: pointer;
+	color: var(--ink); background: var(--panel-2);
+	border: 1px solid var(--line); border-radius: var(--jawnos-corner);
+	padding: 3px 10px;
+}
+.runway_unit:hover { border-color: var(--accent-line); }
+.runway_unit_on { background: var(--accent-soft); border-color: var(--accent-line); color: var(--accent-line); font-weight: 600; }
+.runway_summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(155px, 1fr)); gap: 8px; margin: 8px 0; }
+.runway_figure { background: var(--panel-2); border: 1px solid var(--line); border-radius: var(--jawnos-corner); padding: 7px 10px; min-width: 0; }
+.runway_caption { color: var(--ink-muted); font-size: 11px; letter-spacing: .04em; text-transform: uppercase; }
+.runway_number { font-size: 22px; font-weight: 700; line-height: 1.25; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.runway_figure_lead .runway_number { font-size: 26px; }
+.runway_alert { color: var(--runway-bad); }
+.runway_note { color: var(--ink-muted); font-size: 11px; line-height: 1.35; }
+.runway_chart_wrap { position: relative; }
+.runway_canvas { display: block; width: 100%; height: 280px; }
+.runway_legend { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; color: var(--ink-muted); font-size: 11px; margin: 2px 0 8px; }
+.runway_key { display: inline-block; width: 14px; height: 3px; border-radius: 2px; margin-right: 4px; vertical-align: middle; }
+.runway_key_line { background: var(--accent); }
+.runway_key_projected { background: repeating-linear-gradient(90deg, var(--accent) 0 4px, transparent 4px 7px); }
+.runway_key_floor { background: repeating-linear-gradient(90deg, var(--runway-bad) 0 3px, transparent 3px 6px); }
+.runway_key_net { background: var(--runway-good); }
+.runway_hint { margin-left: auto; }
+.runway_detail { background: var(--panel-2); border: 1px solid var(--line); border-radius: var(--jawnos-corner); padding: 8px 10px; margin-bottom: 8px; }
+.runway_detail_head { display: flex; align-items: baseline; gap: 8px; }
+.runway_detail_kind { color: var(--ink-muted); font-size: 11px; }
+.runway_close { margin-left: auto; border: none; background: none; color: var(--ink); font-size: 18px; line-height: 1; cursor: pointer; }
+.runway_detail_totals { display: flex; flex-wrap: wrap; gap: 14px; color: var(--ink-muted); font-size: 12px; margin: 4px 0 6px; }
+.runway_detail_totals b { color: var(--ink); }
+.runway_detail_rows { width: 100%; border-collapse: collapse; font-size: 12px; }
+.runway_detail_rows th { text-align: left; font-weight: 600; color: var(--ink-muted); border-bottom: 1px solid var(--line); }
+.runway_detail_rows td { padding: 1px 4px; border-bottom: 1px solid var(--line); }
+.runway_detail_out td { color: var(--runway-bad); }
+.runway_detail_empty, .runway_detail_more { color: var(--ink-muted); font-size: 12px; margin-top: 4px; }
+.runway_detail_actions { margin-top: 8px; }
+.runway_table_details { margin-top: 8px; }
+.runway_table_details summary { cursor: pointer; color: var(--ink-muted); font-size: 12px; }
+.runway_table { width: 100%; border-collapse: collapse; margin-top: 6px; }
+.runway_table th, .runway_table td { padding: 2px 6px; border-bottom: 1px solid var(--line); font-size: 12px; }
+.runway_table th { color: var(--ink-muted); font-weight: 600; }
+.runway_row { cursor: pointer; }
+.runway_row:hover { background: var(--accent-soft); }
+.runway_row_future { color: var(--ink-muted); }
+.runway_footnote { color: var(--ink-muted); font-size: 11px; margin-top: 8px; max-width: 78%; line-height: 1.45; }
+
 /* ---------------- Inventory: the panel's two palettes ---------------- */
 /* The inventory panel colours two things: the share wheel's slices and the tint
    a cell wears for its budget status. Both are defined once per theme, as

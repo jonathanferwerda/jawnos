@@ -32,9 +32,12 @@
 		</table>
 	</div>
 	<% if ($accounts) { %>
-		<canvas style="width:98%;height:200px;display:none;" id="budget_account_canvas"></canvas>
-		<div id="budget_account_information" style="display:none;position:fixed;background-color:var(--panel);border:solid;border-radius:5px;"></div>
 		<div id="budget_json_data" style="display:none;"></div>
+		<% unless ($display eq 'runway') { %>
+			<canvas style="width:98%;height:200px;display:none;" id="budget_account_canvas" role="img" aria-label="<%= &subs::ui('Each account balance over the period, with the total') %>"></canvas>
+			<div id="budget_account_information" style="display:none;position:fixed;background-color:var(--panel);border-radius:5px;"></div>
+			<div class="budget_chart_hint"><%= &subs::ui('Hover a point for its figures; click it to show that period.') %></div>
+		<% } %>
 	<% } %>
 	<% if ($display eq 'income_statement') { %>
 		<h2 style="margin:4px 0;"><%= &subs::ui('Income Statement') %></h2>
@@ -118,6 +121,8 @@
 			</tbody>
 		</table>
 		<div style="opacity:.65;margin-top:6px;max-width:70%;"><%= &subs::ui('A transfer between two of the house accounts moves cash without changing the total; a balance adjustment is an inventory figure replacing what the ledger had.') %></div>
+	<% } elsif ($display eq 'runway') { %>
+		<%= include 'budget/runway' %>
 	<% } elsif ($display eq 'account_activity') { %>
 		<h2 style="margin:4px 0;"><%= &subs::ui('Account Activity') %></h2>
 		<div style="opacity:.75;"><%= &subs::ui('For the period') %> <b><%= $period_start %></b> <%= &subs::ui('to') %> <b><%= $period_end %></b> &middot; <%= &subs::ui('Cash basis') %></div>

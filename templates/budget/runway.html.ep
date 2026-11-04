@@ -1,0 +1,105 @@
+<% my $r = $runway || {}; %>
+<% my $unit = $r->{'unit'} || 'month'; %>
+<% my @units = @{ $r->{'units'} || [] }; %>
+<% my @buckets = @{ $r->{'buckets'} || [] }; %>
+<% my $held = $r->{'held'} || 0; %>
+<% my $reserve = $r->{'reserve'} || 0; %>
+<% my $available = $r->{'available'} || 0; %>
+<% my $pace = $r->{'pace'} || 0; %>
+<% my $days = $r->{'runway_days'}; %>
+<% my $unit_label = { day => 'day', week => 'week', month => 'month', quarter => 'quarter', year => 'year' }->{$unit} || 'month'; %>
+<div class="runway">
+	<div class="runway_head">
+		<h2><%= &subs::ui('Runway') %></h2>
+		<div class="runway_units" role="group" aria-label="<%= &subs::ui('Period') %>">
+			<% foreach my $u ( @units ) { %>
+				<button type="button" class="runway_unit<% if ($u eq $unit) { %> runway_unit_on<% } %>" unit="<%= $u %>"
+					aria-pressed="<%= $u eq $unit ? 'true' : 'false' %>"><%= &subs::ui(ucfirst $u) %></button>
+			<% } %>
+		</div>
+	</div>
+
+	<div class="runway_summary">
+		<div class="runway_figure runway_figure_lead">
+			<div class="runway_caption"><%= &subs::ui('Available now') %></div>
+			<div class="runway_number"><%= &subs::price_formatter($available) %></div>
+			<div class="runway_note">
+				<%= &subs::price_formatter($held) %> <%= &subs::ui('held') %><% if ($reserve) { %> &middot; <%= &subs::price_formatter($reserve) %> <%= &subs::ui('kept as the floor') %><% } %>
+			</div>
+		</div>
+		<div class="runway_figure">
+			<div class="runway_caption"><%= &subs::ui('Money lasts') %></div>
+			<% if (defined $days && $days <= 0) { %>
+				<div class="runway_number runway_alert"><%= &subs::ui('Empty') %></div>
+				<div class="runway_note"><%= &subs::ui('The balance is already at or under the floor.') %></div>
+			<% } elsif (defined $days) { %>
+				<div class="runway_number"><% if ($days < 1) { %><%= &subs::ui('Today') %><% } elsif ($days < 60) { %><%= int($days + 0.5) %> <%= &subs::ui('days') %><% } else { %><%= &subs::duration_sayer($days * 86400) %><% } %></div>
+				<div class="runway_note"><%= &subs::ui('to') %> <span class="time" timestamp="<%= $r->{'runway_at'} %>"></span></div>
+			<% } else { %>
+				<div class="runway_number"><%= &subs::ui('No burnout') %></div>
+				<div class="runway_note"><%= &subs::ui('Nothing in the next') %> <%= int(($r->{'horizon_days'} || 0) / 30) %> <%= &subs::ui('months runs the balance to the floor.') %></div>
+			<% } %>
+		</div>
+		<div class="runway_figure">
+			<div class="runway_caption"><%= &subs::ui('Pace') %></div>
+			<% if ($r->{'has_history'}) { %>
+				<div class="runway_number<% if ($pace < 0) { %> runway_alert<% } %>"><%= ($pace >= 0 ? '+' : '-') . &subs::price_formatter(abs $pace) %></div>
+				<div class="runway_note"><%= &subs::ui('net per') %> <%= &subs::ui($unit_label) %> &middot; <%= &subs::price_formatter(abs($r->{'pace_per_day'} || 0)) %> <%= &subs::ui('a day') %> <%= $pace < 0 ? &subs::ui('out') : &subs::ui('in') %></div>
+			<% } else { %>
+				<div class="runway_number">&mdash;</div>
+				<div class="runway_note"><%= &subs::ui('No completed periods to read a pace from yet.') %></div>
+			<% } %>
+		</div>
+		<div class="runway_figure">
+			<div class="runway_caption"><%= &subs::ui('Promised') %></div>
+			<div class="runway_number"><%= &subs::price_formatter(abs($r->{'planned_total'} || 0)) %></div>
+			<div class="runway_note">
+				<% if ($r->{'owed'}) { %><%= &subs::price_formatter($r->{'owed'}) %> <%= &subs::ui('owed now') %> &middot; <% } %><%= &subs::ui('bills and dated transactions ahead') %>
+			</div>
+		</div>
+	</div>
+
+	<div class="runway_chart_wrap">
+		<canvas id="budget_runway_canvas" class="runway_canvas" role="img"
+			aria-label="<%= &subs::ui('Balance by period: past on the left, the projection on the right') %>"></canvas>
+		<div id="budget_runway_tip" class="runway_tip" style="display:none;"></div>
+	</div>
+	<div class="runway_legend">
+		<span class="runway_key runway_key_line"></span> <%= &subs::ui('Balance') %>
+		<span class="runway_key runway_key_projected"></span> <%= &subs::ui('Projection') %>
+		<span class="runway_key runway_key_floor"></span> <%= &subs::ui('Floor') %>
+		<span class="runway_key runway_key_net"></span> <%= &subs::ui('Net in each period') %>
+		<span class="runway_hint"><%= &subs::ui('Click a period for its transactions.') %></span>
+	</div>
+	<div id="budget_runway_detail" class="runway_detail" style="display:none;"></div>
+
+	<details class="runway_table_details">
+		<summary><%= &subs::ui('Period by period') %></summary>
+		<table class="runway_table">
+			<thead>
+				<tr>
+					<th><%= &subs::ui('Period') %></th>
+					<th style="text-align:right;"><%= &subs::ui('In') %></th>
+					<th style="text-align:right;"><%= &subs::ui('Out') %></th>
+					<th style="text-align:right;"><%= &subs::ui('Planned') %></th>
+					<th style="text-align:right;"><%= &subs::ui('Balance') %></th>
+				</tr>
+			</thead>
+			<tbody>
+				<% foreach my $b ( @buckets ) { %>
+					<tr class="runway_row runway_row_<%= $b->{'kind'} %>" bucket="<%= $b->{'index'} %>">
+						<td><%= $b->{'label'} %></td>
+						<td style="text-align:right;"><%= $b->{'actual_in'} ? &subs::price_formatter($b->{'actual_in'}) : '' %></td>
+						<td style="text-align:right;"><%= $b->{'actual_out'} ? &subs::price_formatter($b->{'actual_out'}) : '' %></td>
+						<td style="text-align:right;"><%= $b->{'planned_net'} ? &subs::price_formatter($b->{'planned_net'}) : '' %></td>
+						<td style="text-align:right;"><%= &subs::price_formatter(defined $b->{'projected_balance'} ? $b->{'projected_balance'} : $b->{'balance'}) %></td>
+					</tr>
+				<% } %>
+			</tbody>
+		</table>
+	</details>
+
+	<div class="runway_footnote">
+		<%= &subs::ui('Past periods are the money ledger. The projection keeps your average net of the completed periods and adds the bills a schedule will raise, the transactions dated ahead, and the bills already owed; the floor is what your accounts are set to keep.') %>
+	</div>
+</div>

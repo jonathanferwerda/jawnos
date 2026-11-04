@@ -631,4 +631,457 @@ sub budget_current_information($app,$circumstance,$timestamp) {
 	return { template => $template, circumstance => $circumstance, improvement => $improvement, autocalc => $autocalc, budget => $budget, goal => $goal, running => $running };
 }
 
+# ---------------------------------------------------------------------------
+# Runway: how long the money lasts
+#
+# The Runway display answers one question - the date the house's cash falls to
+# the floor it keeps - from two sides. Past performance is the money ledger's
+# net movement in each complete period. The future is what has already been
+# promised: the bills a payable schedule will raise, the transactions recorded
+# with a date still to come, and the bills already owed. Where a future period
+# has no figure of its own the trailing pace fills it in, so the line reaches the
+# horizon instead of jumping to a guess.
+#
+# The calendar and the arithmetic are kept free of the database so they can be
+# read and exercised on their own (t/142-runway.t). accounting_runway() only
+# gathers the rows and hands them over; accounting_runway_steps() does the work.
+# ---------------------------------------------------------------------------
+
+my %runway_shape = (
+	day     => { back => 14, ahead => 14 },
+	week    => { back => 12, ahead => 12 },
+	month   => { back => 12, ahead => 12 },
+	quarter => { back => 8,  ahead => 8  },
+	year    => { back => 5,  ahead => 5  },
+);
+
+# The periods each reading is counted in, and how far either side of now it
+# looks. Kept together so the buttons and the chart cannot disagree.
+sub accounting_runway_shape {
+	my $unit = shift || 'month';
+	return $runway_shape{$unit} if $runway_shape{$unit};
+	return $runway_shape{'month'};
+}
+
+sub accounting_runway_units {
+	return [qw(day week month quarter year)];
+}
+
+# The first instant of the calendar period a moment belongs to. Weeks start on
+# Sunday, as the locked budget windows count them; quarters start in January,
+# April, July and October. A day, week and quarter are stepped by whole days and
+# then read back through localtime, so the wall clock stays put across a
+# daylight-saving change.
+sub accounting_runway_bucket_start {
+	my ($unit, $timestamp) = @_;
+	$timestamp = 0 unless defined $timestamp;
+	my @at = localtime(int($timestamp / 1000));
+	my ($mday, $mon, $year, $wday) = @at[3, 4, 5, 6];
+	return timelocal(0, 0, 0, 1, 0, $year) * 1000 if $unit eq 'year';
+	return timelocal(0, 0, 0, 1, int($mon / 3) * 3, $year) * 1000 if $unit eq 'quarter';
+	return timelocal(0, 0, 0, 1, $mon, $year) * 1000 if $unit eq 'month';
+	my $back = $unit eq 'week' ? $wday : 0;
+	my @date = gmtime(timegm(0, 0, 0, $mday, $mon, $year) - $back * 86400);
+	return timelocal(0, 0, 0, $date[3], $date[4], $date[5]) * 1000;
+}
+
+sub accounting_runway_step {
+	my ($start, $unit, $count) = @_;
+	$count = 0 unless defined $count;
+	return $start unless $count;
+	return &subs::calendar_shift($start, $count, 'day') if $unit eq 'day';
+	return &subs::calendar_shift($start, $count * 7, 'day') if $unit eq 'week';
+	return &subs::calendar_shift($start, $count * 3, 'month', 1) if $unit eq 'quarter';
+	return &subs::calendar_shift($start, $count, $unit);
+}
+
+sub accounting_runway_label {
+	my ($unit, $start) = @_;
+	my @at = localtime(int($start / 1000));
+	my ($mon, $year) = @at[4, 5];
+	return POSIX::strftime('%Y', @at) if $unit eq 'year';
+	return 'Q' . (int($mon / 3) + 1) . ' ' . ($year + 1900) if $unit eq 'quarter';
+	return POSIX::strftime('%b %Y', @at) if $unit eq 'month';
+	return POSIX::strftime('%b %e', @at) if $unit eq 'week';
+	return POSIX::strftime('%a %b %e', @at);
+}
+
+# The tick a bar or a line segment is named by, short enough for an axis.
+sub accounting_runway_short {
+	my ($unit, $start) = @_;
+	my @at = localtime(int($start / 1000));
+	my $mon = $at[4];
+	return POSIX::strftime('%Y', @at) if $unit eq 'year';
+	return 'Q' . (int($mon / 3) + 1) if $unit eq 'quarter';
+	return POSIX::strftime('%b', @at) if $unit eq 'month';
+	return POSIX::strftime('%b %e', @at) if $unit eq 'week';
+	return POSIX::strftime('%a %e', @at);
+}
+
+# Every boundary from the first past period to the last future one. Count is one
+# more than the number of buckets.
+sub accounting_runway_edges {
+	my ($unit, $now, $back, $ahead) = @_;
+	$unit = 'month' unless $runway_shape{$unit};
+	my $shape = accounting_runway_shape($unit);
+	$back = $shape->{'back'} unless defined $back;
+	$ahead = $shape->{'ahead'} unless defined $ahead;
+	my $start = &accounting_runway_bucket_start($unit, $now);
+	$start = &accounting_runway_step($start, $unit, -$back);
+	my @edges;
+	for (my $i = 0; $i <= $back + 1 + $ahead; $i++) {
+		push @edges, $start;
+		$start = &accounting_runway_step($start, $unit, 1);
+	}
+	return { start => $edges[0], end => $edges[-1], edges => \@edges, back => $back, ahead => $ahead };
+}
+
+# A bucket a moment belongs to, as an index into the edges. A row before the
+# first boundary lands in the first bucket and one past the last in the last, so
+# a stray timestamp can never be dropped from a total.
+sub accounting_runway_slot {
+	my ($edges, $timestamp) = @_;
+	return 0 if $timestamp < $edges->[0];
+	for (my $i = scalar(@{$edges}) - 2; $i >= 0; $i--) {
+		return $i if $timestamp >= $edges->[$i];
+	}
+	return 0;
+}
+
+# The runway a set of rows describes. The rows arrive already read, so the
+# calendar and the arithmetic can be exercised without a database:
+#
+#   moves    cash rows, total signed: income positive, an expense or a payment
+#            negative (a transfer's two legs cancel in the total). A row dated
+#            after now is promised money, not spent money.
+#   bills    money promised ahead, total positive: a scheduled bill on its due
+#            date, or a transaction already dated ahead.
+#   owed     bills raised and not yet paid, total positive: cash that leaves
+#            now rather than later.
+#   anchors  inventory balances that re-state an account; the running balance
+#            follows them, exactly as bank_ledger_balance() does.
+sub accounting_runway_steps {
+	my $args = shift || {};
+	my $unit = $args->{'unit'} || 'month';
+	$unit = 'month' unless $runway_shape{$unit};
+	my $now = defined $args->{'now'} ? $args->{'now'} + 0 : &subs::rightNow();
+	my $reserve = ($args->{'reserve'} || 0) + 0;
+	my $opening = ($args->{'opening'} || 0) + 0;
+	my $edges = $args->{'edges'} || &accounting_runway_edges($unit, $now)->{'edges'};
+	my $moves = $args->{'moves'} || [];
+	my $bills = $args->{'bills'} || [];
+	my $owed = $args->{'owed'} || [];
+	my $anchors = $args->{'anchors'} || [];
+	my $count = scalar(@{$edges}) - 1;
+	return { unit => $unit, now => $now, buckets => [], edges => $edges } if $count < 1;
+
+	my @buckets;
+	for (my $i = 0; $i < $count; $i++) {
+		my $start = $edges->[$i];
+		my $end = $edges->[$i + 1];
+		my $kind = $end <= $now ? 'past' : ($start <= $now ? 'current' : 'future');
+		push @buckets, {
+			index => $i, start => $start, end => $end, kind => $kind,
+			label => &accounting_runway_label($unit, $start),
+			short => &accounting_runway_short($unit, $start),
+			actual_net => 0, actual_in => 0, actual_out => 0, actual_count => 0,
+			planned_net => 0, planned_count => 0, owed => 0,
+			rows => [], planned_rows => []
+		};
+	}
+
+	my $current_index = &accounting_runway_slot($edges, $now);
+
+	# The cash that has already moved, and the cash that is dated ahead.
+	my @events;
+	foreach my $m ( @{$moves} ) {
+		my $ts = ($m->{'timestamp'} || 0) + 0;
+		my $total = ($m->{'total'} || 0) + 0;
+		my $i = &accounting_runway_slot($edges, $ts);
+		my $row = {
+			timestamp => $ts,
+			app => ($m->{'app'} || ''),
+			movement => ($m->{'movement'} || ''),
+			vendor => ($m->{'vendor'} || ''),
+			item => ($m->{'item'} || ''),
+			total => $total
+		};
+		if ($ts > $now) {
+			$buckets[$i]->{'planned_net'} += $total;
+			$buckets[$i]->{'planned_count'}++;
+			push @{$buckets[$i]->{'planned_rows'}}, $row if scalar @{$buckets[$i]->{'planned_rows'}} < 25;
+			next;
+		}
+		$buckets[$i]->{'actual_net'} += $total;
+		$buckets[$i]->{'actual_in'} += $total if $total > 0;
+		$buckets[$i]->{'actual_out'} += $total if $total < 0;
+		$buckets[$i]->{'actual_count'}++;
+		push @{$buckets[$i]->{'rows'}}, $row if scalar @{$buckets[$i]->{'rows'}} < 25;
+		push @events, { ts => $ts, delta => $total };
+	}
+
+	# A scheduled bill or a future expense leaves the account on its date.
+	foreach my $b ( @{$bills} ) {
+		my $ts = ($b->{'timestamp'} || 0) + 0;
+		$ts = $now if $ts < $now;
+		my $total = abs(($b->{'total'} || 0) + 0);
+		next if $total < 0.005;
+		my $i = &accounting_runway_slot($edges, $ts);
+		$buckets[$i]->{'planned_net'} -= $total;
+		$buckets[$i]->{'planned_count'}++;
+		push @{$buckets[$i]->{'planned_rows'}}, {
+			timestamp => $ts,
+			app => ($b->{'app'} || ''),
+			movement => 'bill',
+			vendor => ($b->{'vendor'} || ''),
+			item => ($b->{'item'} || ''),
+			total => -$total
+		} if scalar @{$buckets[$i]->{'planned_rows'}} < 25;
+	}
+
+	# A bill already raised and not yet paid is cash that leaves from here: it
+	# has no date of its own still to come, so it lands on the current period.
+	foreach my $o ( @{$owed} ) {
+		my $total = abs(($o->{'total'} || 0) + 0);
+		next if $total < 0.005;
+		$buckets[$current_index]->{'planned_net'} -= $total;
+		$buckets[$current_index]->{'owed'} += $total;
+		$buckets[$current_index]->{'planned_count'}++;
+		push @{$buckets[$current_index]->{'planned_rows'}}, {
+			timestamp => $now,
+			app => ($o->{'app'} || ''),
+			movement => 'owed',
+			vendor => ($o->{'vendor'} || ''),
+			item => ($o->{'item'} || ''),
+			total => -$total
+		} if scalar @{$buckets[$current_index]->{'planned_rows'}} < 25;
+	}
+
+	# The running balance, with an inventory anchor re-stating it where one falls.
+	foreach my $a ( @{$anchors} ) {
+		my $ts = ($a->{'timestamp'} || 0) + 0;
+		push @events, { ts => $ts, set => ($a->{'amount'} || 0) + 0 };
+	}
+	@events = sort { $a->{'ts'} <=> $b->{'ts'} } @events;
+	my $running = $opening;
+	my $at = 0;
+	foreach my $b ( @buckets ) {
+		while ($at < scalar(@events) && $events[$at]->{'ts'} < $b->{'end'}) {
+			my $e = $events[$at++];
+			# the opening figure already counts everything up to the first
+			# boundary, so those rows are not added a second time
+			next if $e->{'ts'} <= $edges->[0];
+			if (defined $e->{'set'}) { $running = $e->{'set'}; }
+			else { $running += $e->{'delta'}; }
+		}
+		$b->{'balance'} = $running;
+	}
+	my $balance_now = $buckets[$current_index]->{'balance'};
+
+	# The pace is the mean net of the complete periods behind now. A period with
+	# no movement at all counts as the zero it was, so a house that only started
+	# last month is not given a history it does not have.
+	my @past = grep { $_->{'kind'} eq 'past' } @buckets;
+	my $past_net = 0;
+	$past_net += $_->{'actual_net'} for @past;
+	my $pace = scalar(@past) ? $past_net / scalar(@past) : 0;
+	my $pace_days = scalar(@past) ? (($edges->[scalar(@past)] - $edges->[0]) / 86400000) / scalar(@past) : 0;
+	my $has_history = (grep { $_->{'actual_count'} > 0 } @past) ? 1 : 0;
+
+	# The rest of the current period still to come, as a share of it.
+	my $current = $buckets[$current_index];
+	my $current_span = $current->{'end'} - $current->{'start'};
+	my $remaining = $current_span > 0 ? (($current->{'end'} - $now) / $current_span) : 0;
+	$remaining = 0 if $remaining < 0;
+	$remaining = 1 if $remaining > 1;
+
+	# Two readings of the same walk: the pace alone, and the pace plus the bills
+	# already promised. The second is the headline, because a bill that is owed
+	# is money that will leave whether or not the average says so.
+	my $walk = sub {
+		my ($with_bills, $store) = @_;
+		my $running = $balance_now;
+		my ($cross_at, $cross_index);
+		my $before = $running;
+		for (my $i = $current_index; $i < scalar(@buckets); $i++) {
+			my $b = $buckets[$i];
+			my $share = ($i == $current_index) ? $remaining : 1;
+			my $net = $pace * $share;
+			$net += $b->{'planned_net'} if $with_bills;
+			if ($store) { $b->{'projected_net'} = $net; }
+			$running = $b->{'balance'} + $net if $i == $current_index;
+			$running += $net unless $i == $current_index;
+			if ($store) { $b->{'projected_balance'} = $running; }
+			if (!defined $cross_at && $running <= $reserve) {
+				my $drop = $before - $running;
+				my $frac = $drop > 0 ? ($before - $reserve) / $drop : 1;
+				$frac = 0 if $frac < 0;
+				$frac = 1 if $frac > 1;
+				my $from = ($i == $current_index) ? $now : $b->{'start'};
+				$cross_at = $from + $frac * ($b->{'end'} - $from);
+				$cross_index = $i;
+			}
+			$before = $running;
+		}
+		return ($cross_at, $cross_index);
+	};
+
+	# already at or under the floor: the runway ended before it began
+	my ($runway_at, $runway_index, $pace_at, $pace_index);
+	if ($balance_now <= $reserve) {
+		$runway_at = $now;
+		$pace_at = $now;
+		$runway_index = $pace_index = $current_index;
+		$walk->(1, 1);
+		$walk->(0, 0);
+	}
+	else {
+		# the pace alone is read first, then the walk that is kept on the buckets
+		# (the headline reading) so the drawn projection carries the bills
+		($pace_at, $pace_index) = $walk->(0, 0);
+		($runway_at, $runway_index) = $walk->(1, 1);
+	}
+
+	my $planned_total = 0;
+	$planned_total += $_->{'planned_net'} for grep { $_->{'kind'} ne 'past' } @buckets;
+
+	return {
+		unit => $unit,
+		now => $now,
+		edges => $edges,
+		buckets => \@buckets,
+		current_index => $current_index,
+		opening => $opening,
+		balance => $balance_now,
+		reserve => $reserve,
+		available => $balance_now - $reserve,
+		pace => $pace,
+		pace_per_day => $pace_days > 0 ? $pace / $pace_days : 0,
+		has_history => $has_history,
+		planned_total => $planned_total,
+		owed => $current->{'owed'},
+		runway_at => $runway_at,
+		runway_days => defined $runway_at ? ($runway_at - $now) / 86400000 : undef,
+		runway_index => $runway_index,
+		pace_at => $pace_at,
+		pace_days => defined $pace_at ? ($pace_at - $now) / 86400000 : undef,
+		pace_index => $pace_index,
+		horizon_days => ($edges->[-1] - $now) / 86400000
+	};
+}
+
+# The bills a live schedule will raise in a window. Read only: a schedule that
+# has not come due is not written here, so opening the runway does not change
+# the ledger the way reading Payables does.
+sub accounting_runway_bills {
+	my ($from, $to) = @_;
+	$from = 0 unless defined $from;
+	$to = 0 unless defined $to;
+	my @bills;
+	foreach my $s ( @{ &payable_schedules() } ) {
+		next if (($s->{'active'} || 'on') eq 'off');
+		my $amount = abs(($s->{'amount'} || 0) + 0);
+		next if $amount < 0.005;
+		my @due;
+		if (ref $s->{'dates'} eq 'ARRAY') {
+			@due = sort { $a <=> $b } grep { defined $_ && $_ > $from && $_ <= $to } @{ $s->{'dates'} };
+		}
+		else {
+			my $next = ($s->{'next'} || 0) + 0;
+			my $until = ($s->{'until'} || 0) + 0;
+			my $guard = 0;
+			# a schedule read before may still point at a date already past
+			while ($next && $next <= $from && $guard++ < 400) {
+				$next = &payable_next_date($next, $s->{'every'}, $s->{'anchor_day'});
+				last if $until && $next >= $until;
+			}
+			while ($next && $next <= $to && $guard++ < 800) {
+				last if $until && $next >= $until;
+				push @due, $next;
+				$next = &payable_next_date($next, $s->{'every'}, $s->{'anchor_day'});
+			}
+		}
+		foreach my $due ( @due ) {
+			push @bills, {
+				timestamp => $due, total => $amount, app => ($s->{'app'} || ''),
+				vendor => ($s->{'vendor'} || ''), item => ($s->{'item'} || ''),
+				scheduled => 1, schedule_uuid => $s->{'uuid'}
+			};
+		}
+	}
+	return \@bills;
+}
+
+# The bills already raised and not yet paid, the same figure Payables shows but
+# without that screen's bookkeeping. A payment is counted against a bill only
+# through its source_uuid, so a payment with no bill behind it cannot make the
+# owed figure smaller than it is.
+sub accounting_open_payables {
+	my $to = shift;
+	$to = &subs::rightNow() unless defined $to;
+	my $billed = &subs::db_query("select coalesce(sum(abs(cast(total as real))),0) as s from warehouse where kind='money' and type='transaction' and movement='payable' and cast(timestamp as integer) <= cast(? as integer)", $to)->hashes->[0] || {};
+	my $paid = &subs::db_query("select coalesce(sum(abs(cast(p.total as real))),0) as s from warehouse p where p.kind='money' and p.type='transaction' and p.movement='payment' and p.source_uuid in (select w.uuid from warehouse w where w.kind='money' and w.movement='payable')")->hashes->[0] || {};
+	my $owed = (($billed->{'s'} || 0) - ($paid->{'s'} || 0)) + 0;
+	return $owed > 0 ? $owed : 0;
+}
+
+# The runway the live ledger describes: gather the cash rows, the schedules and
+# the balances the accounts hold, then hand them to accounting_runway_steps().
+sub accounting_runway {
+	my $args = shift || {};
+	my $accounts = [ grep { defined $_ && length $_ } @{ $args->{'accounts'} || [] } ];
+	my $now = defined $args->{'now'} ? $args->{'now'} + 0 : &subs::rightNow();
+	my $unit = $args->{'unit'} || 'month';
+	$unit = 'month' unless $runway_shape{$unit};
+	my $shape = accounting_runway_shape($unit);
+	my $bounds = &accounting_runway_edges($unit, $now, $shape->{'back'}, $shape->{'ahead'});
+	my $first = $bounds->{'start'};
+	my $last = $bounds->{'end'};
+
+	my ($opening, $held, $reserve) = (0, 0, 0);
+	foreach my $a ( @{$accounts} ) {
+		$opening += &bank_ledger_balance($a, $first);
+		$held += &bank_ledger_balance($a, $now);
+		my $settings = &subs::settings_grabber({ app => $a });
+		$reserve += ($settings->{'minimum'} || 0) + 0;
+	}
+
+	# cash movements only: a payable is a promise, not money moved, and the
+	# inventory movement is an anchor the running balance reads instead
+	my @moves = grep {
+		my $m = $_->{'movement'} || '';
+		$m eq 'income' || $m eq 'expense' || $m eq 'payment' || $m eq 'transfer'
+	} @{ &accounting_moves($accounts, $first, $last) || [] };
+
+	my @anchors;
+	foreach my $a ( @{$accounts} ) {
+		push @anchors, @{ &subs::db_query("select amount, timestamp from appointments where account=? and type='transaction' and movement='inventory' and cast(timestamp as integer) >= cast(? as integer) and cast(timestamp as integer) <= cast(? as integer) order by timestamp", $a, $first, $now)->hashes || [] };
+	}
+
+	my $bills = &accounting_runway_bills($now, $last);
+	my $owed = &accounting_open_payables($now);
+	my $read = sub {
+		my $from = shift;
+		return &accounting_runway_steps({
+			unit => $unit, now => $now, edges => $bounds->{'edges'},
+			opening => $from, reserve => $reserve,
+			moves => \@moves, bills => $bills,
+			owed => [ { timestamp => $now, total => $owed } ],
+			anchors => \@anchors
+		});
+	};
+	my $runway = $read->($opening);
+	# The walk and the ledger's own balance are the same arithmetic. If a row the
+	# window clipped makes them disagree, the ledger's figure wins: the opening is
+	# moved by the difference and the walk is read again, rather than showing a
+	# projection that starts from a balance the house does not hold.
+	if (abs($runway->{'balance'} - $held) > 0.005) {
+		$runway = $read->($opening + ($held - $runway->{'balance'}));
+	}
+	$runway->{'held'} = $held;
+	$runway->{'available'} = $held - $reserve;
+	$runway->{'units'} = &accounting_runway_units();
+	return $runway;
+}
+
 1;

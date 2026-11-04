@@ -1,6 +1,7 @@
 /* [[js-split]]
    budget.js is part 1. The rest live in budget/ in name order:
      01_reconcile_payables.js - display save delete - bank import and reconcile - payables - journal rebuild
+     02_runway.js             - the Runway chart and its period detail
    The appointment view's budget light is core (public/js/manager/budget_light.js),
    not part of this lazy chunk: a view opens it without the Budget app.
    /js/manager/bundle.js concatenates the index and these parts.
@@ -18,6 +19,13 @@ function budgetInit(data) {
 	var jnew_settings = JSON.stringify(new_settings);
 	var adata = deloreanBringer();
 	adata['new_settings'] = jnew_settings;
+	// a click on a chart names the window outright, so the press opens the period
+	// it pointed at without rewriting the scope the person set
+	if (data.display) { adata['display'] = data.display; }
+	if (data.period && data.period.start && data.period.end) {
+		adata['period_start'] = Math.round(data.period.start);
+		adata['period_end'] = Math.round(data.period.end);
+	}
 	var settingsVisibility = $('#budget_settings').is(':visible');
 	$.ajax({
 		url: '/manager/budget',
@@ -30,180 +38,332 @@ function budgetInit(data) {
 			if (settingsVisibility) {
 				$('#budget_settings').show();
 			}
-			console.log(response);
 			budgetAccountCanvasWriter(response);
+			budgetRunwayWriter(response);
 		}
 	});
 }
 
-function budgetAccountCanvasWriter(response) {
-	if (response.accounts) {
-		var id = 'budget_account_canvas';
-		var g = document.getElementById(id);
-		var ctx = g.getContext('2d');
-		var highest = {};
-		var lowest = {};
-		var increments = numeral($('.budget_config[config="increments"]').val()).value();
-		var allotment = (numeral(response.end).value() - numeral(response.start).value()) / numeral(increments).value();
-		timeStops = [{}];
-		for (var i = 0; i < increments; i++) {
-			timeStops[i] = { uuid: crypto.randomUUID() };
-			if (i > 0) {
-				timeStops[i]['start'] = (timeStops[ i - 1 ]['end']);
-			}
-			else {
-				timeStops[i]['start'] = numeral(response['start']).value();
-			}
-			timeStops[i]['end'] = (timeStops[i]['start'] + allotment);
-		}
+// ---------------------------------------------------------------------------
+// The statement's balance chart
+//
+// The old chart drew its lines straight onto a 150-pixel buffer stretched to the
+// window, in black, with no axis, and never cleared itself, so every redraw ran
+// on top of the last one. It is drawn on the theme's own paper now: the ink, the
+// grid and the money labels come from the theme, each account keeps its colour,
+// and the chart is rebuilt from its data on every pass. A click opens the period
+// under the pointer, which the hover was only describing.
+// ---------------------------------------------------------------------------
 
-		$.each(timeStops, function(ii,tt) {
-			$.each(response.accounts, function(i,v) {
-				if (ii == 0 && response.accounts[i]['starting_balance']) {
-					timeStops[ii]['total'] = response.accounts[i]['starting_balance'];
-				}
-				if (v.journals) {
-					var lastva;	
-					$.each(v.journals, function(ia,va) {
-						if (va.timestamp >= tt.start && va.timestamp <= tt.end) {
-							lastva = va;
-						}
-					});
-					if (lastva) {
-						timeStops[ii][i] = lastva['amount'];
-					} else if (ii > 0) {
-						timeStops[ii][i] = timeStops[ii - 1][i];
-					}
-					else {
-						timeStops[ii][i] = response.accounts[i]['starting_balance'];
-					}
-					if (timeStops[ii][i]) {
-						timeStops[ii]['total'] = (numeral(timeStops[ii]['total'] || 0).value() + numeral(timeStops[ii][i]).value());
-						if (!highest[i] || timeStops[ii][i] > highest[i]) {
-							highest[i] = timeStops[ii][i];
-						}
-						if (!lowest[i] || timeStops[ii][i] < lowest[i]) {
-							lowest[i] = timeStops[ii][i];
-						}
-						if (!highest['total'] || timeStops[ii]['total'] > highest['total']) {
-							highest['total'] = timeStops[ii]['total'];
-						}
-						if (!lowest['total'] || timeStops[ii]['total'] < lowest['total']) {
-							lowest['total'] = timeStops[ii]['total'];
-						}
-					}
-				}
-			});
-		});
+var budgetChartPad = { left: 62, right: 14, top: 14, bottom: 24 };
+var budgetChartResponse = null;
+var budgetChartHover = -1;
 
-
-		var wind = $('.wind[app="budget"]');
-		g.width = wind.width();
-
-		ctx.beginPath();
-		ctx.fillStyle = 'black';
-		ctx.strokeStyle = 'black';
-		ctx.globalAlpha = 1;	
-		ctx.font = "400 10px Arial";
-		if (highest['total'] && lowest['total']) {
-			$('#' + id).show();
-
-			var max = highest['total'] * 1.1;
-			if (lowest['total'] < 0) {
-				max = highest['total'] + Math.abs(lowest['total']);
-			}
-			var min = g.height * .9;
-
-			var colWidth = g.width / increments + 1;
-			$.each(highest, function(i,v) {
-				if (!response['accounts'][i]) { response['accounts'][i] = {}; }
-				if (response['accounts'][i]['settings']) {
-					ctx.strokeStyle = response['accounts'][i]['settings']['colour'] || 'black';
-				} else {
-					ctx.strokeStyle = 'black';
-				}
-				ctx.beginPath();
-				ctx.moveTo(0,0);
-				$.each(timeStops, function(ii,ts) {
-					if (response.accounts[i]['graphable'] != 'no') {
-						var point = numeral(ts[i]).value();
-						if (lowest[i] < 0) {
-							point = point + Math.abs(lowest['total']);
-						}
-						var x = g.width * (ii / increments);
-						var y = min - (min * point / max);
-						ctx.lineTo(x, y);
-						ts['point'] = {};
-						ts['point']['x'] = x;
-						ts['point']['y'] = y;
-						ts['point']['point'] = point;
-						ctx.stroke();
-					}
-				});
-			});
-
-		}
-	}
-	console.log(timeStops);
+function budgetChartInk() {
+	var css = window.getComputedStyle(document.body);
+	var read = function(name, fallback) {
+		var value = css.getPropertyValue(name);
+		return (value && value.trim().length) ? value.trim() : fallback;
+	};
+	return {
+		ink: read('--ink', '#111417'),
+		muted: read('--ink-muted', '#61666d'),
+		line: read('--line', '#d7d9de'),
+		panel: read('--panel', '#ffffff'),
+		accent: read('--accent', '#3b7ddd'),
+		good: read('--runway-good', '#2f7d4f'),
+		bad: read('--runway-bad', '#b3453f')
+	};
 }
 
-$(document).on('click mousemove touchmove', '#budget_account_canvas, #budget_account_information', function(m) {
-	var bai = $('#budget_account_information');
-	if (m.type == 'click' && $('#budget_account_information').is(':visible')) {
-		bai.hide();
-	}
-	if (m.target.id == 'budget_account_canvas') {
-		var data = JSON.parse($('#budget_json_data').text());
-		var x = m.originalEvent.clientX;
-		var y = m.originalEvent.clientY;
-		if (m.originalEvent.targetTouches) {
-			x = m.originalEvent.targetTouches[0].clientX;
-			y = m.originalEvent.targetTouches[0].clientY;
-		}
-		x = numeral(x - w.offset().left).value();
-		y = numeral(y - w.offset().top).value();
-		var hovering;
-		$.each(timeStops, function(i,t) {
-			if (x > t.point.x) {
-				hovering = t;
-			}
-			if (x < t.point.x) {
-				return;
-			}
-		});
-		if (hovering['uuid'] != bai.attr('uuid')) {
-			var html = '<span style="padding:1px;";><div class="time" timestamp="' + hovering.end + '"></div>';
-			var minimum = 0;
-			$.each(hovering, function(i,v) {
-				if (data['accounts'][i]) {
-					var colour;
-					if (data['accounts'][i]['settings']) {
-						colour = data['accounts'][i]['settings']['colour'];
-						minimum = minimum + numeral(data['accounts'][i]['settings']['minimum']).value();
-					}
-					var nhtml = '<div><b style="color:' + colour + ';">' + format_name(i) + ':</b> ' + numeral(v).format('$0.00') + '</div>';
-					html += nhtml;
-				}
-			});
-			console.log( numeral(minimum).value());
-			html += '<div><b>' + format_name('available') + ':</b> ' + numeral(numeral(hovering['total']).value() + numeral(minimum * -1).value()).format('$0.00') + '</div>';
-			html += '<div><b><u>' + format_name('total') + ':</u></b> ' + numeral(hovering['total']).format('$0.00') + '</div></span>';
+// Size the drawing buffer to the screen's own pixels and hand back a context
+// already scaled to CSS pixels, so a line is crisp on a retina panel instead of
+// a stretched blur. The canvas must be visible: a hidden element measures zero.
+function budgetChartPaper(canvas) {
+	var wide = Math.round($(canvas).width());
+	var tall = Math.round(numeral($(canvas).css('height')).value());
+	if (!wide || !tall) { return null; }
+	var thick = window.devicePixelRatio || 1;
+	canvas.width = Math.round(wide * thick);
+	canvas.height = Math.round(tall * thick);
+	var ctx = canvas.getContext('2d');
+	ctx.setTransform(thick, 0, 0, thick, 0, 0);
+	ctx.clearRect(0, 0, wide, tall);
+	return { ctx: ctx, wide: wide, tall: tall };
+}
 
-			bai.html(html).show();
-			bai.css({ 'left': (x + 20), 'top': y, 'right': '' });
-			if (numeral(bai.css('right')).value() < 0 || bai.width() < 130) {
-				bai.css({ 'right': (($(window).width() - x) + 20), 'left': '' });
-			}
-			bai.attr('uuid', hovering['uuid']);
-			appointment_chron();
-		}
+// A short figure for an axis, where cents are noise.
+function budgetMoney(value) {
+	var v = numeral(value).value() || 0;
+	var sign = v < 0 ? '-' : '';
+	var abs = Math.abs(v);
+	if (abs >= 1000000) { return sign + '$' + (abs / 1000000).toFixed(abs >= 10000000 ? 0 : 1) + 'M'; }
+	if (abs >= 1000) { return sign + '$' + (abs / 1000).toFixed(abs >= 10000 ? 0 : 1) + 'k'; }
+	// below ten dollars the cents are the reading, not noise
+	if (abs > 0 && abs < 10) { return sign + '$' + abs.toFixed(2); }
+	return sign + '$' + Math.round(abs);
+}
+
+function budgetMoneyFull(value) {
+	return numeral(value || 0).format('$0.00');
+}
+
+// A handful of round steps between the low and the high, so an axis reads
+// $0 / $500 / $1,000 rather than whatever two extremes happened to be.
+function budgetTicks(low, high, want) {
+	var range = high - low;
+	if (!(range > 0)) { return [low]; }
+	var rough = range / Math.max(2, want || 4);
+	var power = Math.pow(10, Math.floor(Math.log(rough) / Math.LN10));
+	var step = power;
+	$.each([1, 2, 2.5, 5, 10], function(i, multiple) {
+		if (power * multiple >= rough) { step = power * multiple; return false; }
+	});
+	var ticks = [];
+	for (var v = Math.ceil(low / step) * step; v <= high + step * 0.0001; v += step) {
+		ticks.push(v);
 	}
+	return ticks.length ? ticks : [low, high];
+}
+
+function budgetChartLabel(timestamp, span) {
+	var d = new Date(numeral(timestamp).value());
+	if (!(d.getTime())) { return ''; }
+	if (span > 0 && span < 2 * 86400000) {
+		return d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+	}
+	if (span > 0 && span < 400 * 86400000) {
+		return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+	}
+	return d.toLocaleDateString(undefined, { month: 'short', year: 'numeric' });
+}
+
+// The pointer in the canvas's own pixels, and on the screen for a fixed tip.
+function budgetChartPointer(canvas, event) {
+	var box = canvas.getBoundingClientRect();
+	var original = event.originalEvent || event;
+	var touch = (original.targetTouches && original.targetTouches.length) ? original.targetTouches[0] : original;
+	return {
+		x: touch.clientX - box.left,
+		y: touch.clientY - box.top,
+		clientX: touch.clientX,
+		clientY: touch.clientY
+	};
+}
+
+// Which bucket the pointer is over, for a chart whose stops share one width.
+function budgetChartIndex(canvas, event, count) {
+	var point = budgetChartPointer(canvas, event);
+	var plot = Math.max(10, Math.round($(canvas).width()) - budgetChartPad.left - budgetChartPad.right);
+	var index = Math.floor(((point.x - budgetChartPad.left) / plot) * count);
+	if (index < 0) { index = 0; }
+	if (index >= count) { index = count - 1; }
+	return { index: index, point: point };
+}
+
+// Keep a tip inside the window, on whichever side of the pointer has room.
+function budgetTipShow(selector, html, point) {
+	var tip = $(selector);
+	tip.html(html).show();
+	var wide = tip.outerWidth();
+	var tall = tip.outerHeight();
+	var left = point.clientX + 16;
+	var top = point.clientY + 12;
+	if (left + wide > $(window).width() - 8) { left = point.clientX - wide - 16; }
+	if (top + tall > $(window).height() - 8) { top = $(window).height() - tall - 8; }
+	if (left < 8) { left = 8; }
+	if (top < 8) { top = 8; }
+	tip.css({ left: left, top: top });
+}
+
+function budgetAccountCanvasWriter(response) {
+	if (!response || !response.accounts) { return; }
+	var g = document.getElementById('budget_account_canvas');
+	if (!g || !g.getContext) { return; }
+	budgetChartResponse = response;
+
+	var increments = Math.round(numeral($('.budget_config[config="increments"]').val()).value() || 30);
+	if (!(increments > 0)) { increments = 30; }
+	var start = numeral(response.start).value() || 0;
+	var end = numeral(response.end).value() || 0;
+	var allotment = (end - start) / increments;
+	if (!(allotment > 0)) { $(g).hide(); return; }
+
+	timeStops = [];
+	for (var i = 0; i < increments; i++) {
+		timeStops.push({
+			uuid: 'budget-stop-' + i,
+			start: start + allotment * i,
+			end: start + allotment * (i + 1) - 1,
+			series: {}
+		});
+	}
+
+	var series = [];
+	var low = 0;
+	var high = 0;
+	var any = false;
+	$.each(response.accounts, function(name, account) {
+		if (!account || name == 'gallery') { return; }
+		var journals = account.journals || [];
+		// an account the period never touched is not a flat line at zero; it is
+		// simply not on this chart
+		if (!journals.length && !numeral(account.starting_balance).value()) { return; }
+		var value = numeral(account.starting_balance || 0).value() || 0;
+		var at = 0;
+		var points = [];
+		for (var s = 0; s < timeStops.length; s++) {
+			while (at < journals.length && numeral(journals[at].timestamp).value() <= timeStops[s].end) {
+				value = numeral(journals[at].amount).value() || 0;
+				at++;
+			}
+			points.push(value);
+			timeStops[s].series[name] = value;
+			if (value < low) { low = value; }
+			if (value > high) { high = value; }
+			if (value) { any = true; }
+		}
+		if (journals.length) { any = true; }
+		series.push({ name: name, account: account, points: points });
+	});
+	if (!series.length || !any) { $(g).hide(); return; }
+
+	// the total is the sum of the accounts at each stop, whether or not a line is
+	// switched off, so hiding one does not move the headline
+	var totals = [];
+	for (var s = 0; s < timeStops.length; s++) {
+		var sum = 0;
+		$.each(series, function(i, row) {
+			sum += row.points[s] || 0;
+		});
+		totals.push(sum);
+		timeStops[s].total = sum;
+		if (sum < low) { low = sum; }
+		if (sum > high) { high = sum; }
+	}
+
+	$(g).show();
+	var paper = budgetChartPaper(g);
+	if (!paper) { return; }
+	var ctx = paper.ctx;
+	var wide = paper.wide;
+	var tall = paper.tall;
+	var ink = budgetChartInk();
+	var plotW = Math.max(10, wide - budgetChartPad.left - budgetChartPad.right);
+	var plotH = Math.max(10, tall - budgetChartPad.top - budgetChartPad.bottom);
+	if (low > 0) { low = 0; }
+	if (high < low) { high = low + 1; }
+	if (high == low) { high = low + 1; }
+	var range = high - low;
+	var yOf = function(value) { return budgetChartPad.top + plotH - ((value - low) / range) * plotH; };
+	var xOf = function(index) { return budgetChartPad.left + (plotW * (index + 0.5)) / increments; };
+
+	ctx.font = '400 10px Arial, sans-serif';
+	ctx.textBaseline = 'middle';
+	$.each(budgetTicks(low, high, 4), function(i, value) {
+		var gy = Math.round(yOf(value)) + 0.5;
+		ctx.strokeStyle = ink.line;
+		ctx.globalAlpha = 0.6;
+		ctx.beginPath();
+		ctx.moveTo(budgetChartPad.left, gy);
+		ctx.lineTo(wide - budgetChartPad.right, gy);
+		ctx.stroke();
+		ctx.globalAlpha = 1;
+		ctx.fillStyle = ink.muted;
+		ctx.textAlign = 'right';
+		ctx.fillText(budgetMoney(value), budgetChartPad.left - 8, gy);
+	});
+	if (low < 0 && high > 0) {
+		ctx.strokeStyle = ink.ink;
+		ctx.globalAlpha = 0.45;
+		ctx.beginPath();
+		ctx.moveTo(budgetChartPad.left, Math.round(yOf(0)) + 0.5);
+		ctx.lineTo(wide - budgetChartPad.right, Math.round(yOf(0)) + 0.5);
+		ctx.stroke();
+		ctx.globalAlpha = 1;
+	}
+
+	var span = end - start;
+	var every = Math.max(1, Math.ceil(increments / Math.max(2, Math.floor(plotW / 90))));
+	ctx.fillStyle = ink.muted;
+	ctx.textAlign = 'center';
+	ctx.textBaseline = 'top';
+	for (var label = 0; label < increments; label += every) {
+		ctx.fillText(budgetChartLabel(timeStops[label].start, span), xOf(label), budgetChartPad.top + plotH + 7);
+	}
+
+	ctx.lineJoin = 'round';
+	ctx.lineCap = 'round';
+	var draw = function(points, colour, width, alpha) {
+		if (!points.length) { return; }
+		ctx.save();
+		ctx.globalAlpha = alpha || 1;
+		ctx.strokeStyle = colour || ink.muted;
+		ctx.lineWidth = width;
+		ctx.beginPath();
+		$.each(points, function(i, value) {
+			if (i === 0) { ctx.moveTo(xOf(i), yOf(value)); }
+			else { ctx.lineTo(xOf(i), yOf(value)); }
+		});
+		ctx.stroke();
+		ctx.restore();
+	};
+	$.each(series, function(i, row) {
+		if (row.account.graphable == 'no') { return; }
+		var colour = (row.account.settings && row.account.settings.colour) ? row.account.settings.colour : ink.muted;
+		draw(row.points, colour, 1.4, 0.9);
+	});
+	if (series.length > 1) { draw(totals, ink.accent, 2.4, 1); }
+
+	for (var mark = 0; mark < increments; mark += Math.max(1, Math.floor(increments / 10))) {
+		ctx.fillStyle = ink.accent;
+		ctx.beginPath();
+		ctx.arc(xOf(mark), yOf(totals[mark]), 2, 0, Math.PI * 2);
+		ctx.fill();
+	}
+}
+
+function budgetStopTip(index) {
+	var stop = timeStops[index];
+	var response = budgetChartResponse || {};
+	var span = (numeral(response.end).value() || 0) - (numeral(response.start).value() || 0);
+	var html = '<div class="budget_tip_when">' + budgetChartLabel(stop.start, span) + '</div>';
+	var minimum = 0;
+	$.each(stop.series || {}, function(name, value) {
+		var account = (response.accounts || {})[name] || {};
+		minimum += numeral(account.settings && account.settings.minimum).value() || 0;
+		if (account.graphable == 'no') { return; }
+		var colour = (account.settings && account.settings.colour) ? account.settings.colour : '';
+		html += '<div class="budget_tip_row"><span class="budget_tip_swatch" style="background:' + colour + '"></span>' +
+			format_name(name) + '<b>' + budgetMoneyFull(value) + '</b></div>';
+	});
+	html += '<div class="budget_tip_row">' + format_name('available') + '<b>' + budgetMoneyFull((numeral(stop.total).value() || 0) - minimum) + '</b></div>';
+	html += '<div class="budget_tip_row budget_tip_total">' + format_name('total') + '<b>' + budgetMoneyFull(stop.total) + '</b></div>';
+	html += '<div class="budget_tip_hint">' + jawnosT('Click to open this period') + '</div>';
+	return html;
+}
+
+$(document).on('mousemove touchmove', '#budget_account_canvas', function(event) {
+	if (!timeStops.length) { return; }
+	var hit = budgetChartIndex(this, event, timeStops.length);
+	if (hit.index === budgetChartHover) { return; }
+	budgetChartHover = hit.index;
+	budgetTipShow('#budget_account_information', budgetStopTip(hit.index), hit.point);
 });
 
-$(document).on('mouseleave', '#budget_account_canvas', function(m) {
-	if (m.relatedTarget.id != 'budget_account_information') {
-	//	$('#budget_account_information').hide();
-	}
+$(document).on('mouseleave', '#budget_account_canvas', function() {
+	budgetChartHover = -1;
+	$('#budget_account_information').hide();
+});
+
+// A click names a period: the same chart, redrawn for the stop under the pointer.
+$(document).on('click', '#budget_account_canvas', function(event) {
+	if (!timeStops.length) { return; }
+	var hit = budgetChartIndex(this, event, timeStops.length);
+	var stop = timeStops[hit.index];
+	if (!stop) { return; }
+	$('#budget_account_information').hide();
+	budgetInit({ period: { start: Math.round(stop.start), end: Math.round(stop.end) } });
 });
 
 $(document).on('click', '.budget_account', function() {

@@ -142,7 +142,18 @@ sub action_21514 {
 	# a father_time window ends on the next period's first instant, so that bound
 	# is exclusive; an end_time the user picked stays inclusive
 	my $t2_comp = '<=';
-	if ($settings->{'start_time'} || $settings->{'end_time'}) {
+	# A click on the chart names a window outright. It is the period the person
+	# pointed at, so it wins over the scope and is not written to the settings:
+	# the next control they touch puts the app back on its own window.
+	my $period_start = $c->param('period_start');
+	my $period_end = $c->param('period_end');
+	if (defined $period_start && defined $period_end
+		&& $period_start =~ /^[0-9]+$/ && $period_end =~ /^[0-9]+$/
+		&& $period_end > $period_start) {
+		$bt = $period_start + 0;
+		$t2 = $period_end + 0;
+	}
+	elsif ($settings->{'start_time'} || $settings->{'end_time'}) {
 		$bt = $settings->{'start_time'};
 		$t2 = $settings->{'end_time'};
 		if ($settings->{'start_time'} && !$settings->{'end_time'}) {
@@ -434,6 +445,7 @@ sub action_21514 {
 		[ 'income_statement', &subs::ui('Income Statement') ],
 		[ 'balance_sheet', &subs::ui('Balance Sheet') ],
 		[ 'cash_flow', &subs::ui('Cash Flow') ],
+		[ 'runway', &subs::ui('Runway') ],
 		[ 'account_activity', &subs::ui('Account Activity') ],
 		[ 'trial_balance', &subs::ui('Trial Balance') ],
 		[ 'statement', &subs::ui('Ledger') ],
@@ -450,6 +462,7 @@ sub action_21514 {
 	my $payables = {};
 	my $schedules = [];
 	my $notification_booked = [];
+	my $runway = {};
 	my @payable_apps;
 	if ($display eq 'trial_balance') {
 		# the journal is derived; bring it up to date before reading it so the
@@ -466,6 +479,16 @@ sub action_21514 {
 	if ($display eq 'income_statement' || $display eq 'balance_sheet' || $display eq 'cash_flow' || $display eq 'account_activity' || $display eq 'receivables') {
 		my @report_accounts = map { $_->{'app'} } grep { $_->{'app'} ne 'all' && $_->{'app'} ne 'gallery' } @{$accounts};
 		$reports = &accounting_reports({ accounts => \@report_accounts, from => $bt, to => $t2 });
+	}
+	if ($display eq 'runway') {
+		# the runway reads the cash itself, not the statement window: its periods
+		# are its own, and the scope along the top only narrows the accounts
+		my @runway_accounts = map { $_->{'app'} } grep { $_->{'app'} ne 'all' && $_->{'app'} ne 'gallery' } @{$accounts};
+		$runway = &accounting_runway({
+			accounts => \@runway_accounts,
+			now => &subs::rightNow(),
+			unit => $settings->{'runway_unit'} || 'month'
+		});
 	}
 	my $period_span = $t2 - $bt;
 	my $period_start_label = POSIX::strftime('%b %e, %Y', localtime($bt / 1000));
@@ -504,6 +527,7 @@ sub action_21514 {
 		displays => \@display_options,
 		reports => $reports,
 		trial => $trial,
+		runway => $runway,
 		payables => $payables,
 		payable_apps => \@payable_apps,
 		schedules => $schedules,
