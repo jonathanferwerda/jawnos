@@ -47,6 +47,7 @@
 #include <time.h>
 #include <unistd.h>
 
+#include <alsa/asoundlib.h>
 #include <bluetooth/bluetooth.h>
 #include <bluetooth/hci.h>
 #include <bluetooth/hci_lib.h>
@@ -57,6 +58,8 @@
 #define CHUNK_BYTES (CHUNK_SAMPLES * 2)
 #define BYTES_PER_MS (RATE * 2 / 1000)
 #define CHUNK_NS 7500000LL
+/* how long the call audio must be flowing before a prompt starts */
+#define SETTLE_NS 700000000LL
 
 static volatile sig_atomic_t running = 1;
 static int sco_fd = -1, listen_fd = -1;
@@ -65,9 +68,57 @@ static const char *peer_want = NULL;
 static int voice = BT_VOICE_CVSD_16BIT;
 static int silence_level = 400;
 static int loopback = 0, fast = 0;
+static const char *pcm_dev = NULL;        /* BlueALSA PCM, e.g. bluealsa:DEV=...,PROFILE=hfp-hf */
+static snd_pcm_t *pcm_cap = NULL, *pcm_play = NULL;
 static const char *downlink_path = NULL, *uplink_path = NULL;
 static FILE *uplink_raw = NULL;
 static int have_accepted = 0;
+
+/* ---- BlueALSA PCM ------------------------------------------------------ */
+
+/* A Hands-Free stack (BlueALSA) owns the link; this program is just an audio
+ * client. The PCM exists only while a call is up, so opening succeeds when the
+ * phone starts the call and that is what "accepted" means here. */
+static int pcm_open_one(snd_pcm_t **pcm, snd_pcm_stream_t dir) {
+	if (*pcm) return 0;
+	snd_pcm_t *h = NULL;
+	if (snd_pcm_open(&h, pcm_dev, dir, SND_PCM_NONBLOCK) < 0) return -1;
+	if (snd_pcm_set_params(h, SND_PCM_FORMAT_S16_LE, SND_PCM_ACCESS_RW_INTERLEAVED,
+			1, RATE, 1, 40000) < 0) {
+		snd_pcm_close(h);
+		return -1;
+	}
+	snd_pcm_prepare(h);
+	*pcm = h;
+	return 0;
+}
+
+static void pcm_close_pair(void) {
+	if (pcm_cap) { snd_pcm_drain(pcm_cap); snd_pcm_close(pcm_cap); pcm_cap = NULL; }
+	if (pcm_play) { snd_pcm_drain(pcm_play); snd_pcm_close(pcm_play); pcm_play = NULL; }
+}
+
+static int pcm_read_chunk(unsigned char *buf, size_t len) {
+	if (!pcm_cap) return -1;
+	snd_pcm_sframes_t got = snd_pcm_readi(pcm_cap, buf, (snd_pcm_uframes_t) (len / 2));
+	if (got == -EAGAIN) return 0;
+	if (got < 0) {
+		if (snd_pcm_recover(pcm_cap, (int) got, 1) < 0) return -1;
+		return 0;
+	}
+	return (int) got * 2;
+}
+
+static int pcm_write_chunk(const unsigned char *buf, size_t len) {
+	if (!pcm_play) return -1;
+	snd_pcm_sframes_t put = snd_pcm_writei(pcm_play, buf, (snd_pcm_uframes_t) (len / 2));
+	if (put == -EAGAIN) return 0;
+	if (put < 0) {
+		if (snd_pcm_recover(pcm_play, (int) put, 1) < 0) return -1;
+		return 0;
+	}
+	return (int) put * 2;
+}
 
 /* ---- uplink clip ------------------------------------------------------- */
 
@@ -324,7 +375,15 @@ static int uplink_step(int fd) {
 			clip_ms += 7;
 		}
 		else {
-			ssize_t w = write(fd, clip + clip_pos, take);
+			ssize_t w;
+			if (pcm_dev) {
+				int wrote = pcm_write_chunk(clip + clip_pos, take);
+				if (wrote <= 0) return 0;
+				w = wrote;
+			}
+			else {
+				w = write(fd, clip + clip_pos, take);
+			}
 			if (w < 0) {
 				if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR) return 0;
 				emit_error("uplink write failed");
@@ -465,12 +524,117 @@ static int addrs_from_sys(char addresses[][18], int max) {
 	return out;
 }
 
+/* The BlueALSA mode: no SCO socket of our own. The HF stack owns the link, and
+ * this program only reads and writes its PCM. The PCM appears when the phone
+ * starts sending call audio, so a successful open is the "accepted" event. */
+static int pcm_mode_main(void) {
+	char inbuf[8192];
+	size_t inlen = 0;
+	unsigned char chunk[CHUNK_BYTES];
+	fcntl(STDIN_FILENO, F_SETFL, fcntl(STDIN_FILENO, F_GETFL, 0) | O_NONBLOCK);
+	emit("{\"event\":\"listening\",\"local\":\"pcm\"}");
+	int quiet_polls = 0;
+	long long first_frame_at = 0;
+	long long next_write = now_ns();
+	while (running) {
+		/* control channel */
+		ssize_t got = read(STDIN_FILENO, inbuf + inlen, sizeof(inbuf) - inlen - 1);
+		if (got > 0) {
+			inlen += (size_t) got;
+			inbuf[inlen] = 0;
+			char *start = inbuf;
+			char *nl;
+			while ((nl = memchr(start, '\n', inlen - (size_t) (start - inbuf)))) {
+				*nl = 0;
+				if (*start) command(start);
+				start = nl + 1;
+				if (!running) break;
+			}
+			size_t used = (size_t) (start - inbuf);
+			if (used) memmove(inbuf, start, inlen - used);
+			inlen -= used;
+		}
+		else if (got == 0) {
+			break;
+		}
+
+		if (!have_accepted) {
+			int cap_ok = pcm_open_one(&pcm_cap, SND_PCM_STREAM_CAPTURE) == 0;
+			int play_ok = pcm_open_one(&pcm_play, SND_PCM_STREAM_PLAYBACK) == 0;
+			if (cap_ok && play_ok) {
+				/* An idle Hands-Free stack keeps its transport alive, so an open
+				 * PCM is not a call. The first frame of audio is: the phone only
+				 * sends call audio once the call is actually up. */
+				int first = pcm_read_chunk(chunk, sizeof(chunk));
+				if (first > 0) {
+					/* The link carries frames a moment before the phone's own
+					 * audio path is fully up, and a prompt that starts then loses
+					 * its first words. Wait for the stream to settle. */
+					if (!first_frame_at) first_frame_at = now_ns();
+					downlink_chunk(chunk, (size_t) first);
+					if (now_ns() - first_frame_at < SETTLE_NS) {
+						usleep(20000);
+						continue;
+					}
+					have_accepted = 1;
+					quiet_polls = 0;
+					emit("{\"event\":\"accepted\",\"peer\":\"pcm\"}");
+				}
+				else {
+					usleep(50000);
+					continue;
+				}
+			}
+			else {
+				if (pcm_cap) { snd_pcm_close(pcm_cap); pcm_cap = NULL; }
+				if (pcm_play) { snd_pcm_close(pcm_play); pcm_play = NULL; }
+				usleep(200000);
+				continue;
+			}
+		}
+
+		int n = pcm_read_chunk(chunk, sizeof(chunk));
+		if (n < 0) {
+			emit("{\event\":\"closed\",\"reason\":\"pcm\"}");
+			if (rec_active) record_close(1, "link");
+			pcm_close_pair();
+			have_accepted = 0;
+			continue;
+		}
+		if (n > 0) {
+			quiet_polls = 0;
+			downlink_chunk(chunk, (size_t) n);
+		}
+		else if (n == 0 && have_accepted && ++quiet_polls > 40) {
+			/* the transport stays open between calls; two seconds of nothing is
+			 * the end of one */
+			emit("{\"event\":\"closed\",\"reason\":\"pcm idle\"}");
+			if (rec_active) record_close(1, "link");
+			pcm_close_pair();
+			have_accepted = 0;
+			quiet_polls = 0;
+			first_frame_at = 0;
+		}
+
+		long long t = now_ns();
+		if (clip_active && t >= next_write) {
+			uplink_step(-1);
+			next_write = t + CHUNK_NS;
+		}
+		usleep(500);
+	}
+	if (rec_active) record_close(1, "quit");
+	pcm_close_pair();
+	return 0;
+}
+
 int main(int argc, char **argv) {
 	for (int i = 1; i < argc; i++) {
 		if (!strcmp(argv[i], "--local") && i + 1 < argc) local_addr = argv[++i];
 		else if (!strcmp(argv[i], "--peer") && i + 1 < argc) peer_want = argv[++i];
 		else if (!strcmp(argv[i], "--loopback") && i + 1 < argc) { loopback = 1; downlink_path = argv[++i]; }
 		else if (!strcmp(argv[i], "--loopback-uplink") && i + 1 < argc) uplink_path = argv[++i];
+		else if (!strcmp(argv[i], "--pcm") && i + 1 < argc) pcm_dev = argv[++i];
 		else if (!strcmp(argv[i], "--fast")) fast = 1;
 		else if (!strcmp(argv[i], "--silence-level") && i + 1 < argc) silence_level = atoi(argv[++i]);
 		else if (!strcmp(argv[i], "--transparent")) voice = BT_VOICE_TRANSPARENT;
@@ -488,6 +652,8 @@ int main(int argc, char **argv) {
 	signal(SIGTERM, on_signal);
 	signal(SIGINT, on_signal);
 	signal(SIGPIPE, SIG_IGN);
+
+	if (pcm_dev) return pcm_mode_main();
 
 	if (uplink_path) {
 		uplink_raw = fopen(uplink_path, "wb");
@@ -583,6 +749,13 @@ int main(int argc, char **argv) {
 			socklen_t plen = sizeof(peer);
 			memset(&peer, 0, sizeof(peer));
 			int c = accept(listen_fd, (struct sockaddr *) &peer, &plen);
+			if (c < 0) {
+				/* a link that cannot be taken is the one failure that used to be
+				 * silent: say who refused it, once per attempt */
+				char msg[96];
+				snprintf(msg, sizeof(msg), "accept failed: %s", strerror(errno));
+				emit_error(msg);
+			}
 			if (c >= 0) {
 				const char *who = peers_name(&peer);
 				if (peer_want && strcasecmp(who, peer_want) != 0) {

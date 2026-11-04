@@ -59,6 +59,13 @@ sub helper_command {
 	return @cmd;
 }
 
+# The BlueALSA PCM this machine's Hands-Free stack exposes, when it has one.
+sub pcm_device {
+	my ($self) = @_;
+	my $pcm = eval { &subs::misc_setting('sco_pcm') };
+	return $pcm || '';
+}
+
 sub local_address {
 	my ($self) = @_;
 	return $self->{'local'} if defined $self->{'local'};
@@ -83,7 +90,7 @@ sub status {
 		last_error => $self->{'last_error'},
 		helper => ($self->helper_command() ? 1 : 0),
 		recordings => $self->{'recordings'},
-		plan => [ map { $_->{'key'} } @{ $self->{'steps'} || [] } ],
+		plan => [ map { $_->{'key'} || ($_->{'tone'} ? 'tone' : 'step') } @{ $self->{'steps'} || [] } ],
 		local => $self->{'local'} || '',
 	};
 }
@@ -127,13 +134,31 @@ sub arm {
 	$self->cancel() if $self->{'state'} ne 'idle' || $self->{'pid'};
 	my @cmd = $self->helper_command();
 	return { ok => 0, error => 'the SCO helper is not built on this machine' } unless @cmd;
-	$self->{'local'} = $args{'local'} if defined $args{'local'};
-	my $local = $self->local_address();
-	push @cmd, '--local', $local if $local;
-	push @cmd, '--peer', $args{'peer'} if $args{'peer'};
+	# A Hands-Free stack (BlueALSA) owning the link leaves us as a plain audio
+	# client of its PCM; without one, the helper takes the raw SCO socket itself.
+	my $pcm = defined $args{'pcm'} && length $args{'pcm'} ? $args{'pcm'} : $self->pcm_device();
+	if ($pcm) {
+		push @cmd, '--pcm', $pcm;
+	}
+	else {
+		$self->{'local'} = $args{'local'} if defined $args{'local'};
+		my $local = $self->local_address();
+		push @cmd, '--local', $local if $local;
+		push @cmd, '--peer', $args{'peer'} if $args{'peer'};
+	}
 
 	my $clips = $args{'clips'} || {};
 	my @steps;
+	# a diagnostic tone: proof that the uplink reaches the caller, with nothing
+	# else in the way
+	my $tone = $args{'tone'};
+	if (ref $tone eq 'HASH') {
+		push @steps, {
+			tone => 1,
+			hz => ($tone->{'hz'} && $tone->{'hz'} =~ /^\d+$/) ? int($tone->{'hz'}) : 660,
+			ms => ($tone->{'ms'} && $tone->{'ms'} =~ /^\d+$/) ? int($tone->{'ms'}) : 1200,
+		};
+	}
 	foreach my $key (qw(greeting prompt)) {
 		my $path = $clips->{$key} || '';
 		push @steps, { play => $path, key => $key } if $path;
@@ -231,7 +256,10 @@ sub _advance {
 		$self->write_status();
 		return;
 	}
-	if ($step->{'record'}) {
+	if ($step->{'tone'}) {
+		$self->_send(cmd => 'tone', id => $self->{'next_id'}, hz => $step->{'hz'}, ms => $step->{'ms'});
+	}
+	elsif ($step->{'record'}) {
 		my $opts = $self->{'record_opts'} || {};
 		my $file = $self->{'dir'} . '/name-' . $self->{'call_id'} . '.wav';
 		$self->{'pending_record'} = $file;

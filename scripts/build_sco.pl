@@ -31,9 +31,10 @@ if ($check) {
 
 die "no $src\n" unless -e $src;
 
-# -lbluetooth is BlueZ; -lm is the tone generator. -O2 keeps the 7.5 ms frame
+# -lbluetooth is BlueZ; -lm is the tone generator; -lasound is the BlueALSA
+# PCM path the gateway uses when a Hands-Free stack owns the link. -O2 keeps the 7.5 ms frame
 # loop well inside a frame on the Odroid's Cortex-A35.
-my @cmd = ('cc', '-O2', '-Wall', '-Wextra', '-o', $out, $src, '-lbluetooth', '-lm');
+my @cmd = ('cc', '-O2', '-Wall', '-Wextra', '-o', $out, $src, '-lbluetooth', '-lm', '-lasound');
 print "+ @cmd\n";
 system(@cmd) == 0 or die "build failed\n";
 chmod 0755, $out;
