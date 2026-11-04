@@ -41,7 +41,11 @@ sub event_note {
 	my ($line, $epoch) = @_;
 	$line = '' unless defined $line;
 	my ($event) = $line =~ /"event"\s*:\s*"([^"]{1,40})"/;
-	my ($mac)   = $line =~ /"mac"\s*:\s*"([^"]{1,40})"/;
+	# Only a top-level mac: a status event's links[] also carry one.
+	my $top = $line;
+	my $links = index($top, '"links"');
+	$top = substr($top, 0, $links) if $links >= 0;
+	my ($mac) = $top =~ /"mac"\s*:\s*"([^"]{1,40})"/;
 	my $head = substr($line, 0, $HEAD_BYTES);
 	$head =~ s/[^\x20-\x7e]/./g;
 	$head =~ s/"/'/g;

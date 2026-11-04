@@ -581,10 +581,12 @@ sub ble_listener_start {
 				&ble_message_processor($event->{'data'}, $event->{'mac'});
 			}
 			elsif ($name eq 'error') {
-				# The client gives up rather than spin when its select has gone
-				# bad; say why in the log, because the process then exits and
-				# the only other trace is the restart 30 s later.
-				$log->error('BLE listener error: ' . ($event->{'error'} || 'unknown')
+				# The client's own errors use 'error'; the bridge's use 'message'
+				# (and may echo the whole bad command, so bound it).
+				my $why = $event->{'error'} || $event->{'message'} || 'unknown';
+				$why =~ s/\s+/ /g;
+				$why = substr($why, 0, 200);
+				$log->error('BLE listener error: ' . $why
 					. (defined $event->{'err'} ? " ($event->{'err'})" : ''));
 			}
 		}

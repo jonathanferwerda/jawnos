@@ -65,6 +65,8 @@ my $ring = "/tmp/jawnos-ring-$$.log";
 unlink $ring;
 my $note = &event_note('{"event":"message","mac":"AA:BB:CC","data":"' . ('x' x 200) . '"}', 123);
 like($note, qr/^ts=123 event=message bytes=\d+ mac=AA:BB:CC head=/, 'an event note names type, size and mac');
+my $st_note = &event_note('{"event":"status","mac":null,"links":[{"mac":"AA:BB"}]}', 1);
+unlike($st_note, qr/mac=/, 'a link mac under links[] is not reported as the event mac');
 unlike($note, qr/\n/, 'and is one line');
 ok(length($note) < 300, 'with a bounded head');
 ok(&ring_note('{"event":"status","connected":false}', $ring, 1), 'a note is appended');
@@ -83,6 +85,8 @@ unlink $ring;
 
 like($client, qr/ring_note\(/, 'the client names the event before it prints it');
 like($ble, qr/ring_tail\(/, 'the parent logs the ring when the listener goes away');
+like($ble, qr/\{'message'\}/, 'a bridge error event is logged by its message, not as unknown');
+like($ble, qr/substr\(\$why, 0, 200\)/, 'and a huge echoed command is bounded');
 
 # ---- the buffer helper ------------------------------------------------------
 my $b = drain_new();
