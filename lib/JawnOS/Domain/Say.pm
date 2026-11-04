@@ -333,7 +333,7 @@ sub watch_reply {
 				# piper/ffmpeg failed: the BLE stream still gets the sound there
 				&subs::watch_reply_stream($meta, $text);
 			}
-		}, { name => 'watch reply wifi' });
+		}, { name => 'watch reply wifi', fork => 1 });
 		return;
 	}
 	# Piper synthesizes far faster than the answer is spoken, and the WiFi path
@@ -343,7 +343,7 @@ sub watch_reply {
 	&subs::subprocessor(sub {
 		Mojo::IOLoop->reset;
 		&subs::watch_reply_stream($meta, $text);
-	}, { name => 'watch reply audio' });
+	}, { name => 'watch reply audio', fork => 1 });
 }
 
 # Stream the spoken answer to the watch as PCM parts. Piper writes raw samples as

@@ -307,7 +307,7 @@ sub now_me($data) {
 				}
 				1;
 			};
-		}, { name => 'now me push' });
+		}, { name => 'now me push', fork => 1 });
 		# say so, rather than fall through to the empty {} the caller then
 		# rendered as HASH(0x...) and read as a button that did nothing
 		return 'pushed over bluetooth';

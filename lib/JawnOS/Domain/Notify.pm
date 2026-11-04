@@ -286,7 +286,7 @@ sub embedded_toggle($data) {
 					}
 				}
 			};
-		}, { name => 'embedded toggle sender' });
+		}, { name => 'embedded toggle sender', fork => 1 });
 		return { state => $number_state, formatted_state => $state };
 	}
 
@@ -308,7 +308,7 @@ sub embedded_toggle($data) {
 			}
 			my $number_state = $state eq 'on' ? 1 : 0;
 		};
-	}, { name => 'embedded toggle sender' });
+	}, { name => 'embedded toggle sender', fork => 1 });
 	my $number_state = $state eq 'on' ? 1 : 0;
 	my $returner = { 'state' => $number_state, formatted_state => $state };
 

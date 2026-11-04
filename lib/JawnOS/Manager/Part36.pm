@@ -349,6 +349,21 @@ sub remote_machine_reconnector($c) {
 							my $hostname = `hostname`;
 							chomp $hostname;
 							my $gimme = $deep;
+							# A phone or tablet handed a nine-table plan merges all nine in
+							# one pass; that is the 30-50s burn under the start menu's gauge.
+							# One table per pass keeps a pass inside a tick, and sync_plan
+							# re-derives the rest from the digests on the next handshake, so
+							# the tables left behind are deferred, not lost. A deep (gimme)
+							# repair is deliberately not capped.
+							if ($plan_pull && !$gimme && &subs::device_setter() eq 'mobile') {
+								my $capped = &subs::sync_plan_step($plan, 1);
+								my $before = scalar keys %{$plan};
+								my $after = scalar keys %{$capped};
+								if ($after < $before) {
+									$log->info('sync plan stepped: ' . $before . ' -> ' . $after . ' table(s) this pass');
+									$plan = $capped;
+								}
+							}
 							my $params = {
 								timestamp => $rj->{'now'},
 								ip => $rm->{'ip'},

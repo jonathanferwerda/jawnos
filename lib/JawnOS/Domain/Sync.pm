@@ -172,6 +172,21 @@ sub sync_plan {
 	return \%plan;
 }
 
+sub sync_plan_step {
+	# One table per pass, when the caller asks for it. A phone or tablet that was
+	# handed a nine-table plan merged all nine in one request and held the gauge
+	# hot for most of a minute. The digests are recomputed on the next handshake,
+	# so a table left out here is deferred, not lost; the pass stays short.
+	my ($plan, $max) = @_;
+	return {} unless ref $plan eq 'HASH';
+	return $plan unless defined $max && $max > 0;
+	my @tables = sort keys %{$plan};
+	return $plan if @tables <= $max;
+	my %step;
+	$step{$_} = $plan->{$_} for @tables[0 .. $max - 1];
+	return \%step;
+}
+
 sub sync_map_encode {
 	my ($map) = @_;
 	return '' unless ref $map eq 'HASH';

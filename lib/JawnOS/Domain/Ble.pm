@@ -511,7 +511,7 @@ sub bluetooth_sender_async {
 		Mojo::IOLoop->reset;
 		eval { &bluetooth_sender($data) };
 		$log->error('ble send failed: ' . ($@ =~ s/\s+/ /gr)) if $@ && $log;
-	}, { name => 'ble send' });
+	}, { name => 'ble send', fork => 1 });
 	return 1;
 }
 
@@ -636,7 +636,7 @@ sub watch_toggle_pusher {
 				message => { type => 'toggle', data => { app => $app, state => $state } }
 			});
 		}
-	}, { name => 'embedded toggle push' });
+	}, { name => 'embedded toggle push', fork => 1 });
 }
 
 sub ble_rehome_check {
