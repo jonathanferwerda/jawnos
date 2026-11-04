@@ -48,7 +48,8 @@ sub action_52002 {
 	my $ms = $c->param('ms');
 	my %record = (
 		ms => ($ms && $ms =~ /^\d+$/) ? int($ms) : 20000,
-		silence_ms => 1200,
+		# a name ends on this much pause, and only after this much speech
+		silence_ms => 2000,
 		min_ms => 400,
 	);
 	$c->render(json => &sco_client()->call({

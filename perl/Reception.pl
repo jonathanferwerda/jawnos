@@ -105,12 +105,16 @@ sub tick {
 	}
 	# a machine without the helper has no admission to give
 	return unless -x $helper;
-	return if $state eq 'armed' && time - $armed_at < 300;
 	my $voice = $settings->{'voice'} || '';
 	my @text = map { $settings->{$_} || '' } qw(greeting prompt thanks);
 	my $from = join("\x00", $voice, @text);
-	# the prompts have not changed since the last arm: leave the listener up
-	return if $state eq 'armed' && $from eq $armed_from;
+	# A pipe gateway waits in `waiting` (the phone has not called yet) and an
+	# adapter gateway listens in `armed`; both are ready. Re-arming tears the
+	# watcher down, so a ready gateway is left alone while its prompts stand.
+	# (Only `armed` was checked, so pipe mode was re-armed every six seconds.)
+	return if ($state eq 'armed' || $state eq 'waiting')
+		&& $from eq $armed_from
+		&& time - $armed_at < 300;
 	my %clips;
 	foreach my $key (qw(greeting prompt thanks)) {
 		my $text = $settings->{$key} || '';
@@ -121,7 +125,8 @@ sub tick {
 	my $armed = $client->call({
 		cmd => 'arm',
 		clips => \%clips,
-		record => { ms => 20000, silence_ms => 1200, min_ms => 400 },
+		# the helper keeps the clip open until it hears a name and then a pause
+		record => { ms => 20000, silence_ms => 2000, min_ms => 400 },
 	});
 	$armed_at = time;
 	if ($armed && $armed->{'ok'}) {

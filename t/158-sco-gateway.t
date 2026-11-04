@@ -187,31 +187,56 @@ my $cancelled = $gateway->cancel();
 is($cancelled->{'state'}, 'idle', 'cancel puts the gateway down');
 
 # ------------------------------------------------------- the real helper
+# The voice gate, with a file standing in for the caller. These are the cases a
+# screened call actually has: a caller who waits a moment, a line whose own
+# noise ticks once before the caller speaks (the tick used to open the clip and
+# 1.2 s of line noise then close it, so the name was cut off before it began),
+# and a caller who says nothing at all.
 my $helper = "$repo/perl/sco/sco_helper";
 SKIP: {
-	skip 'the SCO helper is not built on this machine', 3 unless -x $helper;
-	my $down = "$dir/down.raw";
-	my $samples = 8000;    # one second of a tone, then a second of quiet
-	open(my $raw, '>', $down) or die "$down: $!";
-	binmode $raw;
-	for my $i (0 .. $samples - 1) { print {$raw} pack('s<', int(sin(2 * 3.14159 * 440 * $i / 8000) * 8000)); }
-	print {$raw} pack('s<', 0) x 16000;
-	close $raw;
-	my $out = "$dir/loopback.wav";
-	my $fh;
-	my $child = open($fh, '|-', $helper, '--loopback', $down, '--fast');
-	print {$fh} JSON::PP->new->encode({ cmd => 'record', id => 1, file => $out, ms => 5000,
-		silence_ms => 300, min_ms => 300 }) . "\n";
-	close $fh;
-	ok(-s $out, 'the helper records the downlink in loopback');
-	open(my $wav, '<', $out) or die "$out: $!";
-	binmode $wav;
-	seek($wav, 44, 0);
-	local $/;
-	my $pcm = <$wav>;
-	close $wav;
-	ok(length($pcm) > 16000, 'the clip holds the caller');
-	ok(length($pcm) <= 24000, 'the clip stops at the silence, not at the maximum');
+	skip 'the SCO helper is not built on this machine', 4 unless -x $helper;
+	my $voice = sub {
+		my ($ms) = @_;
+		return join('', map { pack('s<', int(sin(2 * 3.14159 * 440 * $_ / 8000) * 8000)) } 0 .. int(8 * $ms) - 1);
+	};
+	my $quiet = sub { "\0" x (16 * $_[0]) };
+	my $record = sub {
+		my ($name, $audio, %opts) = @_;
+		my $raw = "$dir/$name.raw";
+		open(my $rh, '>', $raw) or die "$raw: $!";
+		binmode $rh;
+		print {$rh} $audio;
+		close $rh;
+		my $out = "$dir/$name.wav";
+		my $fh;
+		open($fh, '|-', $helper, '--loopback', $raw, '--fast') or die "helper: $!";
+		print {$fh} JSON::PP->new->encode({
+			cmd => 'record', id => 1, file => $out,
+			ms => $opts{'ms'} || 8000,
+			silence_ms => $opts{'silence_ms'} || 600,
+			min_ms => $opts{'min_ms'} || 300,
+		}) . "\n";
+		close $fh;
+		open(my $wav, '<', $out) or return 0;
+		binmode $wav;
+		seek($wav, 44, 0);
+		local $/;
+		my $pcm = <$wav> // '';
+		close $wav;
+		return length $pcm;
+	};
+	# half a second of room, then a name the caller took their time to start
+	my $patient = $record->('patient', $quiet->(600) . $voice->(700) . $quiet->(1600));
+	ok($patient > 16000, 'the name is recorded once the caller speaks');
+	ok($patient > 25600 && $patient < 41600,
+		'the clip runs to the pause after the name, not to the ceiling');
+	# a tick of line noise, then a pause, then the name: the tick is not a name
+	my $blip = $record->('blip', $quiet->(1200) . $voice->(20) . $quiet->(800)
+		. $voice->(600) . $quiet->(1500));
+	ok($blip > 38400, 'a single tick does not open the clip or cut the name short');
+	# nobody spoke: the ceiling ends it, and the clip is marked as silent
+	my $none = $record->('none', $quiet->(3000), ms => 1500);
+	ok($none >= 16000 && $none <= 24000, 'a silent caller is ended by the ceiling');
 }
 
 done_testing();

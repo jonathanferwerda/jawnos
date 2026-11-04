@@ -66,6 +66,8 @@ static int sco_fd = -1, listen_fd = -1;
 static const char *local_addr = NULL;
 static const char *peer_want = NULL;
 static int voice = BT_VOICE_CVSD_16BIT;
+/* --silence-level: the room floor to assume when the room reads as nothing at
+ * all. The record's own reader learns the real one (see the room reader). */
 static int silence_level = 400;
 static int loopback = 0, fast = 0;
 static const char *pcm_dev = NULL;
@@ -148,10 +150,38 @@ static long long now_ns(void);
 
 static FILE *rec_file = NULL;
 static char rec_path[PATH_MAX];
-static long rec_bytes = 0, rec_total_ms = 0, rec_silence_bytes = 0;
-static long rec_want_ms = 0, rec_silence_ms = 1200, rec_min_ms = 400;
+static long rec_bytes = 0, rec_total_ms = 0;
+static long rec_want_ms = 0, rec_silence_ms = 1800, rec_min_ms = 400;
 static int rec_id = 0, rec_active = 0, rec_quiet = 0;
-static int rec_speech_seen = 0;
+
+/* ---- the room reader ----------------------------------------------------
+ * A caller's name is recorded the way the keyboard's dictation records a
+ * phrase: the room is read first, speech has to hold before it counts, and the
+ * pause that ends the name is measured against that room and against the name's
+ * own peak. A fixed level cannot do it - a Bluetooth line's own hiss sits above
+ * any threshold that reads as silence, so the first noisy frame used to count
+ * as the name and 1.2 s of line noise then closed a clip the caller had not
+ * begun. (The keyboard's copy is public/js/manager/soft_keyboard/01_scroll_dictate.js.)
+ */
+#define VAD_WINDOW_MS 100                 /* one judged window of the call */
+#define VAD_READ_WINDOWS 5                /* half a second to read the room */
+#define VAD_ONSET_WINDOWS 3               /* speech has to hold this long */
+#define VAD_ROOM_FALLBACK 655.0           /* 0.02 of the 16-bit scale */
+#define VAD_ROOM_MARGIN 491.0             /* 0.015 */
+#define VAD_ROOM_SCALE 0.5
+#define VAD_ROOM_ONSET_SCALE 1.5
+#define VAD_ROOM_PEAK_RATIO 3.5
+
+static double rec_window[VAD_READ_WINDOWS];
+static int rec_window_count = 0;
+static double rec_window_sq = 0;          /* sum of squares, window so far */
+static long rec_window_samples = 0;
+static double rec_floor = 0;
+static int rec_run = 0;                   /* loud windows in a row */
+static int rec_heard = 0;                 /* the name has begun */
+static long rec_speech_ms = 0;
+static long rec_pause_ms = 0;
+static long rec_peak = 0;
 
 /* ---- small JSON helpers (our own emitter; nothing else writes the line) - */
 
@@ -251,7 +281,8 @@ static void wav_header(FILE *f, uint32_t data_len, uint32_t rate) {
 static void record_close(int announce, const char *reason) {
 	if (!rec_active) return;
 	rec_active = 0;
-	rec_quiet = (strcmp(reason, "silence") == 0);
+	/* "no speech" is as good as silence: nobody said a name */
+	rec_quiet = (strcmp(reason, "silence") == 0 || strcmp(reason, "no speech") == 0);
 	if (rec_file) {
 		fflush(rec_file);
 		if (fseek(rec_file, 0, SEEK_SET) == 0) wav_header(rec_file, (uint32_t) rec_bytes, RATE);
@@ -276,51 +307,111 @@ static void record_start(const char *path, int want_ms, int silence_ms, int min_
 	if (!rec_file) { emit_error("cannot open recording"); return; }
 	wav_header(rec_file, 0, RATE);
 	fflush(rec_file);
-	rec_bytes = rec_total_ms = rec_silence_bytes = 0;
+	rec_bytes = rec_total_ms = 0;
 	rec_want_ms = want_ms > 0 ? want_ms : 0;
 	rec_silence_ms = silence_ms > 0 ? silence_ms : 0;
 	rec_min_ms = min_ms > 0 ? min_ms : 0;
 	rec_id = id;
 	rec_active = 1;
-	rec_speech_seen = 0;
+	rec_window_count = 0;
+	rec_window_sq = 0;
+	rec_window_samples = 0;
+	rec_floor = 0;
+	rec_run = 0;
+	rec_heard = 0;
+	rec_speech_ms = 0;
+	rec_pause_ms = 0;
+	rec_peak = 0;
 	emit("{\"event\":\"recording\",\"id\":%d}", id);
 }
 
 /* ---- downlink ----------------------------------------------------------- */
 
+/* The room's own level, with the onset margin wider than the pause margin so
+ * the room's jitter never reads as a word. */
+static double vad_threshold(int onset) {
+	double floor = rec_floor > 0 ? rec_floor : (silence_level > 0 ? (double) silence_level : VAD_ROOM_FALLBACK);
+	double margin = floor * VAD_ROOM_SCALE;
+	if (margin < VAD_ROOM_MARGIN) margin = VAD_ROOM_MARGIN;
+	if (onset) margin *= VAD_ROOM_ONSET_SCALE;
+	return floor + margin;
+}
+
+/* One judged 100 ms window of the caller's voice: read the room, wait for the
+ * name to hold, then end the clip on a pause measured against the room and the
+ * name's own peak. */
+static void record_window(double rms) {
+	if (rec_window_count < VAD_READ_WINDOWS) {
+		rec_window[rec_window_count++] = rms;
+		if (rec_window_count == VAD_READ_WINDOWS) {
+			/* the clip opens right after the prompt, so the first half second is
+			 * the room; its quietest window is the floor, because the caller may
+			 * already be speaking in the rest of it */
+			double low = rec_window[0];
+			for (int i = 1; i < VAD_READ_WINDOWS; i++) {
+				if (rec_window[i] < low) low = rec_window[i];
+			}
+			rec_floor = low;
+		}
+		return;
+	}
+	if (!rec_heard) {
+		/* one loud tick is line noise or a tap, so speech has to hold before the
+		 * name is taken to have started */
+		if (rms <= vad_threshold(1)) { rec_run = 0; return; }
+		if (++rec_run < VAD_ONSET_WINDOWS) return;
+		rec_heard = 1;
+		rec_run = 0;
+		rec_peak = (long) rms;
+		rec_speech_ms = VAD_ONSET_WINDOWS * VAD_WINDOW_MS;
+		return;
+	}
+	if ((long) rms > rec_peak) rec_peak = (long) rms;
+	int quiet = rms <= vad_threshold(0);
+	int hushed = rec_peak > (long) VAD_ROOM_FALLBACK
+		&& rms * VAD_ROOM_PEAK_RATIO < (double) rec_peak;
+	if (!quiet && !hushed) {
+		rec_pause_ms = 0;
+		rec_speech_ms += VAD_WINDOW_MS;
+		return;
+	}
+	rec_pause_ms += VAD_WINDOW_MS;
+	/* the pause ends the name only once a name has been heard, and a caller who
+	 * pauses to think keeps the line for as long as the ceiling allows */
+	if (rec_silence_ms && rec_pause_ms >= rec_silence_ms && rec_speech_ms >= rec_min_ms) {
+		record_close(1, "silence");
+	}
+}
+
 /* Write one 7.5 ms chunk of the caller's voice, and decide when the clip has
- * ended. Silence is measured per frame (RMS) and only counts once min_ms has
- * passed, so a breath before the name does not cut the recording. */
+ * ended. The audio is kept from the first frame, so nothing said while the
+ * room is being read is lost. */
 static void downlink_chunk(const unsigned char *buf, size_t len) {
 	if (len > CHUNK_BYTES) len = CHUNK_BYTES;
-	if (rec_active) {
-		fwrite(buf, 1, len, rec_file);
-		rec_bytes += (long) len;
-		/* time comes from the bytes, not the frame count, so a short final
-		 * frame cannot make the clip disagree with its own length */
-		rec_total_ms = rec_bytes / BYTES_PER_MS;
-		long sum = 0;
-		int n = (int) (len / 2);
-		for (int i = 0; i < n; i++) {
-			int16_t s = (int16_t) (buf[i * 2] | (buf[i * 2 + 1] << 8));
-			long v = s;
-			sum += v * v;
-		}
-		long rms = n ? (long) (sqrt((double) sum / n)) : 0;
-		if (rms < silence_level) {
-			rec_silence_bytes += (long) len;
-		}
-		else {
-			rec_silence_bytes = 0;
-			rec_speech_seen = 1;
-		}
-		if (rec_want_ms && rec_total_ms >= rec_want_ms) record_close(1, "length");
-		/* the pause only ends the name once there is a name: before the caller
-		 * speaks, a quiet second must not close the recording */
-		else if (rec_speech_seen && rec_silence_ms
-			&& rec_silence_bytes >= rec_silence_ms * BYTES_PER_MS
-			&& rec_total_ms >= rec_min_ms)
-			record_close(1, "silence");
+	if (!rec_active) return;
+	fwrite(buf, 1, len, rec_file);
+	rec_bytes += (long) len;
+	/* time comes from the bytes, not the frame count, so a short final
+	 * frame cannot make the clip disagree with its own length */
+	rec_total_ms = rec_bytes / BYTES_PER_MS;
+	long sum = 0;
+	int n = (int) (len / 2);
+	for (int i = 0; i < n; i++) {
+		int16_t s = (int16_t) (buf[i * 2] | (buf[i * 2 + 1] << 8));
+		long v = s;
+		sum += v * v;
+	}
+	rec_window_sq += (double) sum;
+	rec_window_samples += n;
+	if (rec_want_ms && rec_total_ms >= rec_want_ms) {
+		record_close(1, rec_heard ? "length" : "no speech");
+		return;
+	}
+	if (rec_window_samples >= RATE * VAD_WINDOW_MS / 1000) {
+		double rms = sqrt(rec_window_sq / rec_window_samples);
+		rec_window_sq = 0;
+		rec_window_samples = 0;
+		record_window(rms);
 	}
 }
 
@@ -368,8 +459,8 @@ static void clip_tone(int hz, int ms, int id) {
 	if (!clip) { emit_error("out of memory"); return; }
 	for (size_t i = 0; i < samples; i++) {
 		double t = (double) i / RATE;
-		/* a quarter of full scale: audible in a call without clipping */
-		int16_t v = (int16_t) (sin(2.0 * 3.141592653589793 * hz * t) * 8000);
+		/* a third of full scale: a beep the caller cannot miss, without clipping */
+		int16_t v = (int16_t) (sin(2.0 * 3.141592653589793 * hz * t) * 11000);
 		clip[i * 2] = (unsigned char) (v & 0xff);
 		clip[i * 2 + 1] = (unsigned char) ((v >> 8) & 0xff);
 	}
@@ -858,8 +949,10 @@ int main(int argc, char **argv) {
 				inlen -= used;
 			}
 			else if (got == 0) {
-				/* the daemon closed its end: the call is over */
-				running = 0;
+				/* the daemon closed its end: the call is over. A loopback probe
+				 * hands its command over from a pipe that ends at once, so there
+				 * the recorded file is what ends the call, not stdin. */
+				if (!loopback) running = 0;
 			}
 		}
 
@@ -913,9 +1006,10 @@ int main(int argc, char **argv) {
 			if (!fast) next_write = t + CHUNK_NS;
 		}
 
-		if (loopback && rec_active) {
-			/* a file stands in for the caller: it ends the call at EOF, and it
-			 * only advances while something is listening to the downlink */
+		if (loopback) {
+			/* a file stands in for the caller: it ends the call at EOF. It is
+			 * drained whether or not a recording is open, so the probe always
+			 * reaches the end rather than spinning on a finished clip. */
 			unsigned char chunk[CHUNK_BYTES];
 			int steps = 0;
 			do {
@@ -928,7 +1022,7 @@ int main(int argc, char **argv) {
 				}
 				downlink_chunk(chunk, (size_t) n);
 				if (!fast) { usleep(7500); break; }
-			} while (rec_active && ++steps < 64);
+			} while (++steps < 64);
 		}
 	}
 

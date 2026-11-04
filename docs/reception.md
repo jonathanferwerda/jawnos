@@ -85,9 +85,15 @@ the first time a call needs them.
 3. The helper treats the **first frame of call audio** as the start of the call
    (an open PCM is not a call), waits 1.2 s for the phone's audio path to settle,
    leaves a 450 ms lead-in, then plays the plan.
-4. The name is recorded to `~/.president/sco/name-<call_id>.wav`; `Reception.pl`
-   copies it to `~/.president/sco/kept/<call_id>.wav` and appends a line to
-   `kept/index.jsonl`.
+4. The greeting and the name prompt play, then a 400 ms cue tone, then the name
+   is recorded to `~/.president/sco/name-<call_id>.wav`. The clip is opened the
+   way dictation opens a phrase: half a second reads the room, speech has to
+   hold before it counts as the name, and the pause that ends it is measured
+   against that room and the name's own peak (`silence_ms`, 2 s). A caller who
+   waits keeps the line up to the ceiling (`ms`, 20 s); a single tick of line
+   noise no longer opens and closes the clip before they speak. `Reception.pl`
+   copies the clip to `~/.president/sco/kept/<call_id>.wav`, transcribes it to
+   the name and appends a line to `kept/index.jsonl`.
 5. Routes: `GET /manager/sco/status|result|recording`, `POST /manager/sco/arm|cancel`.
 
 ## Known limits

@@ -136,6 +136,9 @@ sub write_status {
 # %args: peer => BDADDR (optional pin), greeting/prompt/voicemail/thanks =>
 # clip text or '' (voicemail replaced the old one and is not played here),
 # record => { ms, silence_ms, min_ms }, clips => { key => raw path }.
+# `ms` is the ceiling for the whole clip (including the wait for the caller), and
+# the helper keeps the clip open until it hears a name and then a pause;
+# `min_ms` is how much speech has to have been heard before a pause may end it.
 # The plan is greeting, name prompt, record the name, thanks - in that order.
 sub arm {
 	my ($self, %args) = @_;
@@ -177,9 +180,9 @@ sub arm {
 		my $path = $clips->{$key} || '';
 		push @steps, { play => $path, key => $key } if $path;
 	}
-	# the prompt says "after the tone", so there is one, and it also marks the
-	# moment the recording opens
-	push @steps, { tone => 1, hz => 660, ms => 300, key => 'cue' };
+	# the prompt says "after the tone", so there is one: a cue the caller can
+	# hear, which also marks the moment the recording opens
+	push @steps, { tone => 1, hz => 660, ms => 400, key => 'cue' };
 	push @steps, { record => 1, key => 'name' };
 	my $thanks = $clips->{'thanks'} || '';
 	push @steps, { play => $thanks, key => 'thanks' } if $thanks;
@@ -332,7 +335,7 @@ sub _advance {
 			file => $file,
 			ms => $opts->{'ms'} || 30000,
 			silence_ms => $opts->{'silence_ms'} || 1800,
-			min_ms => $opts->{'min_ms'} || 1500,
+			min_ms => $opts->{'min_ms'} || 400,
 		);
 	}
 	else {
