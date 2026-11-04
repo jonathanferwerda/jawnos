@@ -71,6 +71,59 @@ sub leave($c) {
 	$sql = undef;
 }
 
+# The power choices the Leave menu may offer. A phone's app cannot power the
+# phone, so a handheld gets none and the menu offers Exit alone; a machine
+# with neither systemd nor logind has nothing to ask, so it does not grow
+# buttons that can only fail.
+our %power_actions_cache;
+sub power_actions() {
+	my $machine = &subs::device_setter() || '';
+	my $key = ($machine eq 'mobile') ? 'mobile' : 'machine';
+	return @{ $power_actions_cache{$key} } if $power_actions_cache{$key};
+	my @actions;
+	unless ($key eq 'mobile') {
+		my $systemctl = `command -v systemctl 2>/dev/null`;
+		my $loginctl = `command -v loginctl 2>/dev/null`;
+		@actions = qw(restart shutdown sleep) if length $systemctl || length $loginctl;
+	}
+	$power_actions_cache{$key} = \@actions;
+	return @actions;
+}
+
+# Run one of the menu's choices. The action is a fixed word from
+# power_actions(), never the request body, and only a citizen session reaches
+# the route. --no-block hands the job to systemd and returns, so the reply
+# reaches the page before the machine goes down.
+sub power_action($action) {
+	$action = '' unless defined $action;
+	my %allowed = map { $_ => 1 } &power_actions();
+	return { ok => 0, error => 'unsupported' } unless $allowed{$action};
+	my %verb = ( restart => 'reboot', shutdown => 'poweroff', sleep => 'suspend' );
+	my $verb = $verb{$action};
+	my @cmd;
+	my $systemctl = `command -v systemctl 2>/dev/null`;
+	chomp $systemctl;
+	if (length $systemctl) {
+		@cmd = ($systemctl, '--no-block', $verb);
+	}
+	else {
+		my $loginctl = `command -v loginctl 2>/dev/null`;
+		chomp $loginctl;
+		@cmd = ($loginctl, $verb) if length $loginctl;
+	}
+	return { ok => 0, error => 'no power tool' } unless @cmd;
+	my $rc = system(@cmd);
+	# A desktop started outside the graphical session (a system unit, a
+	# headless test) is not an active logind session, so polkit may refuse.
+	# The live image grants passwordless sudo; -n never prompts and never hangs.
+	if ($rc != 0) {
+		my $sudo = `command -v sudo 2>/dev/null`;
+		$rc = system('sudo', '-n', @cmd) if length $sudo;
+	}
+	&subs::say_it('power ' . $action . ($rc == 0 ? ' requested' : ' failed'));
+	return $rc == 0 ? { ok => 1, action => $action } : { ok => 0, error => 'refused' };
+}
+
 sub misc_setting_list {
     my ($db, $database, $sql) = &subs::database_grabber();
 		my @locations = &subs::location_types();

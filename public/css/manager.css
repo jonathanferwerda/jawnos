@@ -2994,6 +2994,36 @@ body.dark_theme .folders_dialog, body.dark_theme .jawnos_dialog { --folders-acce
 .jawnos_dialog_body h1 { font-size: 20px; margin: 0 0 8px; }
 .jawnos_dialog_body h4 { font-size: 15px; margin: 0 0 8px; }
 
+/* The Leave button's power menu: one big target per choice, two across in a
+   dialog and one across on a narrow screen. The note under each label says
+   what the press does, so no choice is a guess. */
+.leave_power_menu {
+	display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
+	gap: 12px; padding: 4px 0; text-align: left;
+}
+.leave_power_button {
+	display: flex; flex-direction: column; align-items: center; justify-content: center;
+	gap: 6px; min-height: 108px; padding: 14px 10px; box-sizing: border-box;
+	border: 1px solid var(--line); border-radius: var(--jawnos-corner, 12px);
+	background: var(--panel-2, var(--panel)); color: var(--ink);
+	font: inherit; font-size: 18px; font-weight: bold; line-height: 1.2;
+	cursor: pointer; white-space: normal;
+}
+.leave_power_button:hover, .leave_power_button:focus-visible {
+	border-color: var(--accent-line, var(--accent, var(--line)));
+	background: var(--accent-soft, var(--panel));
+}
+.leave_power_label { display: block; }
+.leave_power_note { display: block; font-size: 12px; font-weight: normal; opacity: .75; }
+.leave_power_working { font-size: 17px; margin: 18px 8px; }
+@media (max-width: 480px) {
+	.leave_power_menu { grid-template-columns: 1fr; gap: 10px; }
+	.leave_power_button {
+		flex-direction: row; justify-content: flex-start; align-items: center;
+		min-height: 76px; padding: 12px 16px; text-align: left;
+	}
+}
+
 /* ---------------- Properties ---------------- */
 .folders_properties { font-size: 14px; }
 .folders_properties_head { display: flex; align-items: flex-start; gap: 12px; margin-bottom: 14px; }

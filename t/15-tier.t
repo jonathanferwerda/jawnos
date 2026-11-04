@@ -21,6 +21,7 @@ is(&subs::tier_needed('/manager/configure/oauth_panel'), 'citizen', 'configure p
 is(&subs::tier_needed('/manager/security'),            'citizen',  'security is the citizen desk');
 is(&subs::tier_needed('/manager/security/rotate_key'), 'citizen',  'security actions are citizen');
 is(&subs::tier_needed('/manager/magazine/publish'),    'citizen',  'publishing is citizen');
+is(&subs::tier_needed('/manager/power'),               'citizen',  'powering the machine is citizen');
 is(&subs::tier_needed('/store/category_grabber'),      '',         'the public store claims no tier');
 is(&subs::tier_needed('/'),                            '',         'the homepage claims no tier');
 is(&subs::tier_needed('/js/jquery.js'),                '',         'assets claim no tier');
@@ -39,6 +40,8 @@ ok(!&subs::tier_denied('/manager/configure', 'citizen'), 'a citizen can');
 ok(&subs::tier_denied('/manager/security', 'resident'),  'a resident cannot open security');
 ok(&subs::tier_denied('/manager/security/rotate_key', 'resident'), 'nor rotate the key');
 ok(&subs::tier_denied('/manager/magazine/publish', 'resident'),    'nor publish');
+ok(&subs::tier_denied('/manager/power', 'resident'),               'nor restart or shut down the machine');
+ok(!&subs::tier_denied('/manager/power', 'citizen'),               'a citizen can');
 ok(!&subs::tier_denied('/manager/security', 'citizen'),  'a citizen can');
 ok(&subs::tier_denied('/manager/configure', 'blacklisted'), 'an unknown privilege is refused');
 ok(&subs::tier_denied('/manager/configure', ''),            'a missing privilege is refused');

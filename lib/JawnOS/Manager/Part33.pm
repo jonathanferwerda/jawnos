@@ -324,12 +324,27 @@ sub authentication_passer($c) {
 			$c->session('warranty' => &subs::forever_warranty());
 			$c->session('server_time' => &subs::rightNow());
 			$c->session('name' => &subs::setting_grabber({ app => 'me', setting => 'name' }) || 'Me');
-			$c->session('privilege' => 'resident');
-			$c->session('role' => 'resident');
+			# The person at a live machine is the house: the wrench (Configure)
+			# and Security are citizen desks, and a resident session opened them
+			# as a denial page, so the live image could not configure itself.
+			$c->session('privilege' => 'citizen');
+			$c->session('role' => 'citizen');
 			$c->session('source' => 'local_ticket');
 			$c->session('bootstrap' => undef);
 			$c->session('peer' => undef);
 		}
+	}
+	# The live-local session carries a forever warranty, so a cookie minted
+	# before this rule would keep its old resident privilege for good. Upgrade
+	# it on the same loopback: the machine in someone's hands is the house, and
+	# Configure and Security are citizen desks. A denial or a blacklist is a
+	# deliberate refusal and is left alone.
+	if ($live_local
+		&& ($c->session('authentication') || '') eq 'approved'
+		&& ($c->session('privilege') || '') =~ /\A(?:resident|guest)?\z/) {
+		$c->session('privilege' => 'citizen');
+		$c->session('role' => 'citizen');
+		$c->session('source' => 'local_ticket');
 	}
 	# Ensure the app columns exist before anything asks for them, public path or
 	# not. It is a no-op after the first call in a worker.

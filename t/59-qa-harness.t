@@ -74,6 +74,7 @@ for my $c (@cases) {
 is(Probe::tier_needed('/manager/people'),     'resident', 'people is resident tier');
 is(Probe::tier_needed('/manager/configure'),  'citizen',  'configure is citizen tier');
 is(Probe::tier_needed('/manager/security'),   'citizen',  'security is citizen tier');
+is(Probe::tier_needed('/manager/power'),      'citizen',  'powering the machine is citizen tier');
 is(Probe::tier_needed('/gate'),               '',         'the gate needs no tier');
 is(Probe::expected_status($policy, { method => 'get', path => '/manager/configure' }, 'resident'),
 	403, 'a resident session is expected to be refused configure');

@@ -126,6 +126,34 @@ foreach my $code ( keys %internet_labels ) {
 	$catalog{$code} = { %{$catalog{$code} || {}}, %add };
 }
 
+# The Leave menu's choices. These are core labels on the start menu and its
+# dialog, so they are written here in every interface language; the sentence
+# under each choice is UI text and goes through jawnosT/sub::ui on demand.
+my @power_keys = qw( power_leave power_exit power_restart power_shutdown power_sleep );
+my %power_labels = (
+en => [ 'Leave', 'Exit', 'Restart', 'Shut down', 'Sleep' ],
+zh => [ '离开', '退出', '重启', '关机', '睡眠' ],
+fr => [ 'Quitter', 'Quitter', 'Redémarrer', 'Éteindre', 'Veille' ],
+es => [ 'Salir', 'Salir', 'Reiniciar', 'Apagar', 'Suspender' ],
+de => [ 'Verlassen', 'Beenden', 'Neustart', 'Herunterfahren', 'Standby' ],
+pt => [ 'Sair', 'Sair', 'Reiniciar', 'Desligar', 'Suspender' ],
+hi => [ 'छोड़ें', 'बाहर निकलें', 'पुनः चालू करें', 'बंद करें', 'स्लीप' ],
+ar => [ 'مغادرة', 'خروج', 'إعادة التشغيل', 'إيقاف التشغيل', 'سكون' ],
+bn => [ 'প্রস্থান', 'প্রস্থান', 'পুনরায় চালু করুন', 'বন্ধ করুন', 'স্লিপ' ],
+ru => [ 'Выйти', 'Выйти', 'Перезагрузить', 'Выключить', 'Сон' ],
+ja => [ '退出', '終了', '再起動', 'シャットダウン', 'スリープ' ],
+pa => [ 'ਛੱਡੋ', 'ਬਾਹਰ ਜਾਓ', 'ਮੁੜ ਚਾਲੂ ਕਰੋ', 'ਬੰਦ ਕਰੋ', 'ਸਲੀਪ' ],
+id => [ 'Keluar', 'Keluar', 'Mulai ulang', 'Matikan', 'Tidur' ],
+ko => [ '나가기', '종료', '다시 시작', '시스템 종료', '절전' ],
+it => [ 'Esci', 'Esci', 'Riavvia', 'Spegni', 'Sospendi' ],
+tr => [ 'Çık', 'Çık', 'Yeniden başlat', 'Kapat', 'Uyku' ],
+);
+foreach my $code ( keys %power_labels ) {
+	my %add;
+	@add{@power_keys} = @{$power_labels{$code}};
+	$catalog{$code} = { %{$catalog{$code} || {}}, %add };
+}
+
 # Configure -> Plat -> QA. These are core labels on a settings panel, so they
 # are written here in every interface language rather than left to the English
 # backfill. The surrounding explanation is help text and goes through subs::ui.

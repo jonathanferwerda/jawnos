@@ -466,8 +466,62 @@ $(document).on('click', '.notes_toggle', function() {
 
 
 $(document).on('click', '.leave', function() {
-	leave();
+	jawnosLeaveMenu($(this));
 });
+
+// The Leave button is the house's power menu. Exit is what Leave always did -
+// seal the database and end the session. The rest ask this machine to restart,
+// shut down or sleep. A machine that cannot do one (the Android app) does not
+// carry it: the start menu renders `power` from subs::power_actions().
+function jawnosLeaveMenu(toggle) {
+	if (typeof startMenuCloser == 'function') { startMenuCloser(0); }
+	var supported = String((toggle && toggle.attr('power')) || '').split(',');
+	var choices = [
+		{ action: 'exit', label: 'power_exit', note: 'Encrypt the database and close the session' }
+	];
+	var extra = {
+		restart: { label: 'power_restart', note: 'Restart the computer' },
+		shutdown: { label: 'power_shutdown', note: 'Turn the computer off' },
+		sleep: { label: 'power_sleep', note: 'Suspend, the same as closing the lid' }
+	};
+	$.each(supported, function (i, action) {
+		if (extra[action]) { choices.push($.extend({ action: action }, extra[action])); }
+	});
+	var html = '<div class="leave_power_menu">';
+	$.each(choices, function (i, choice) {
+		html += '<button type="button" class="leave_power_button" data-leave-action="' + choice.action + '">'
+			+ '<span class="leave_power_label">' + jawnosT(choice.label) + '</span>'
+			+ '<span class="leave_power_note">' + jawnosT(choice.note) + '</span>'
+			+ '</button>';
+	});
+	html += '</div>';
+	jawnosAlert(html, { title: jawnosT('power_leave') });
+}
+
+$(document).on('click', '.leave_power_button', function() {
+	var action = $(this).attr('data-leave-action');
+	if (action == 'exit') { jawnosAlertClose(); leave(); return; }
+	jawnosLeavePower(action);
+});
+
+function jawnosLeavePower(action) {
+	var working = action == 'sleep' ? 'Sleeping…' : (action == 'restart' ? 'Restarting…' : 'Shutting down…');
+	jawnosAlert('<p class="leave_power_working">' + jawnosT(working) + '</p>', { title: jawnosT('power_leave') });
+	$.ajax({
+		url: '/manager/power',
+		type: 'POST',
+		dataType: 'json',
+		data: { action: action, timestamp: Date.now() },
+		success: function(response) {
+			if (response && response.ok) { return; }
+			jawnosAlert('<p>' + jawnosT('That did not work.') + '</p>', { title: jawnosT('power_leave') });
+		},
+		error: function() {
+			jawnosAlert('<p>' + jawnosT('That did not work.') + '</p>', { title: jawnosT('power_leave') });
+		}
+	});
+}
+
 function leave() {
 	var d = JSON.stringify(localStorage);
 	jpStop();

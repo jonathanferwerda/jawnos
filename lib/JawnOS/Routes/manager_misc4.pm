@@ -28,6 +28,7 @@ sub routes {
 	[14686, 'post', '/manager/cache_set', 'action_14686'],
 	[14697, 'post', '/manager/cache_delete', 'action_14697'],
 	[14706, 'get', '/manager/cache_get', 'action_14706'],
+	[20001, 'post', '/manager/power', 'action_20001'],
 	);
 }
 

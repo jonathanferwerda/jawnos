@@ -699,4 +699,16 @@ sub action_14706 {
 	$c->render(json => $cache);
 }
 
+# POST /manager/power
+sub action_20001 {
+	my $c = shift;
+	# This can stop the machine, so it is a citizen's alone; the hook's tier
+	# check is the first lock and this is the second.
+	unless (($c->session('privilege') || '') eq 'citizen') {
+		return $c->render(status => 403, json => { ok => 0, error => 'citizen only' });
+	}
+	my $result = &subs::power_action($c->param('action'));
+	$c->render(json => $result);
+}
+
 1;

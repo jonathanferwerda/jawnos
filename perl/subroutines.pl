@@ -720,7 +720,7 @@ our $crockford_alphabet = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
 our $crest_peer_list_cache;
 our $crest_peer_list_raw;
 our $tier_required = [
-	[ 'citizen',  qr{^/manager/(?:configure|security|magazine/publish)(?:/|$)} ],
+	[ 'citizen',  qr{^/manager/(?:configure|security|magazine/publish|power)(?:/|$)} ],
 	[ 'resident', qr{^/manager(?:/|$)} ],
 ];
 our %tier_rank = ( guest => 1, resident => 2, citizen => 3 );
