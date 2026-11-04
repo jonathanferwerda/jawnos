@@ -23,6 +23,7 @@ use IPC::Open2;
 use JSON::PP ();
 use JawnOS::Ble::Drain qw(drain_new drain_feed);
 use JawnOS::Ble::Guard qw(cpu_ticks cpu_hog);
+use JawnOS::Ble::Ring qw(ring_tail);
 use List::Util qw(shuffle);
 use MIME::Base64;
 use Math::Trig qw(cartesian_to_spherical spherical_to_cartesian great_circle_distance rad2deg deg2rad great_circle_bearing great_circle_direction great_circle_destination);
@@ -523,7 +524,10 @@ sub ble_listener_start {
 			if ($child == $watched && $at) {
 				$runs = &cpu_hog($cpu - $ticks, $now - $at, $hz) ? $runs + 1 : 0;
 				if ($runs >= 2) {
-					$log->error('BLE listener held a core for 40s without progress; restarting it');
+					my @tail = &ring_tail(8);
+					$log->error('BLE listener held a core for 40s without progress; restarting it'
+						. (@tail ? '; last events: ' . join(' | ', @tail) : ''));
+					$gb::ble_listener_guard_fired = 1;
 					kill 'TERM', $child;
 					($watched, $ticks, $at, $runs) = (0, 0, 0, 0);
 					return;
@@ -592,6 +596,13 @@ sub ble_listener_start {
 	});
 	$gb::ble_listener->on(close => sub {
 		$gb::ble_listener = undef;
+		if ($gb::ble_listener_guard_fired) {
+			$gb::ble_listener_guard_fired = 0;
+		}
+		else {
+			my @tail = &ring_tail(8);
+			$log->warn('BLE listener closed; last events: ' . join(' | ', @tail)) if @tail;
+		}
 		Mojo::IOLoop->timer(30 => sub { &ble_listener_start(); });
 	});
 	print "Starting BLE bridge listener\n";

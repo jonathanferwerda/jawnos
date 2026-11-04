@@ -19,6 +19,7 @@ Run from the repo root, or with an explicit path. `sh` tools run under
 | `mem-report.py` | Where is memory going, by category and by JawnOS PURPOSE? (RSS/PSS) | `./scripts/tools/mem-report.py` | read |
 | `heat-watch.sh` | Is the phone hot / charging / draining, and which worker is busy? | `./scripts/tools/heat-watch.sh --interval 60 --count 10` | read; `--log FILE` writes |
 | `ble-bridge-probe.py` | Does the BLE bridge read loop block, or does `select()` return immediately? | `./scripts/tools/ble-bridge-probe.py --seconds 6` | read |
+| `ble-watch.sh` | Is the BLE listener burning a core, and what did it last see? (guard/close lines + event ring) | `./scripts/tools/ble-watch.sh ~/manager.log 30 20` | read |
 | `ble-mock.py` | Fake bridge (`hold`/`close`/`data`) to test `jawn-bt listen` with no device | `./scripts/tools/ble-mock.py 45998 hold` | read (binds a port) |
 | `port-scan.py` | Which port is open in a range (e.g. Android wireless debugging)? | `./scripts/tools/port-scan.py 192.0.2.10 30000 50000` | read |
 | `net-latency.sh` | Which peer is slow or unreachable, and is it connect or server time? | `./scripts/tools/net-latency.sh --port 45545 192.0.2.1 192.0.2.2` | read |
@@ -29,6 +30,10 @@ Run from the repo root, or with an explicit path. `sh` tools run under
 
 ## Notes
 
+- `ble-watch.sh` reads the listener's event ring (`$JAWNOS_BT_RING`, default
+  `~/.jawn-bt-ring.log`): type, byte length, MAC and a short head, with small
+  events sampled once a second and every large event kept. The manager logs the
+  ring's tail when it restarts a listener that held a core; the file is capped.
 - `cpuspy.py` and `pid-io.py` are ports of the scratch `cpuspy.pl` and
   `iospy.pl`; `ble-bridge-probe.py`/`ble-mock.py` are ports of `bt_probe.pl`/
   `ble_mock.pl`. The algorithms are unchanged; only argument handling and

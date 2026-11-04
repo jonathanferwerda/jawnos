@@ -23,6 +23,7 @@ use IO::Select;
 use JSON::PP;
 use JawnOS::Ble::Select;
 use JawnOS::Ble::Drain qw(drain_new drain_feed);
+use JawnOS::Ble::Ring qw(ring_note);
 use Time::HiRes qw(sleep time);
 
 $| = 1; # stdout must flush: listen runs for a long time
@@ -183,6 +184,9 @@ sub wait_for {
 		# every read pinned a core while the bridge streamed one long event.
 		my ($lines, $dropped) = drain_feed($inbuf, $chunk, 8 * 1024 * 1024);
 		foreach my $line (@$lines) {
+			# Name the event before it is printed or decoded: if this one stalls
+			# the reader, the parent's guard logs the ring and we can see it.
+			eval { ring_note($line) };
 			print $line, "\n";
 			# listen has no condition: the parent decodes the line. Decoding it
 			# here too made a large event cost two parses, the client's pure-Perl

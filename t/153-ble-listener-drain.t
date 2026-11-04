@@ -1,4 +1,4 @@
-# tests-for: scripts/jawn-bt lib/JawnOS/Domain/Ble2.pm lib/JawnOS/Ble/Drain.pm lib/JawnOS/Ble/Guard.pm
+# tests-for: scripts/jawn-bt lib/JawnOS/Domain/Ble2.pm lib/JawnOS/Ble/Drain.pm lib/JawnOS/Ble/Guard.pm lib/JawnOS/Ble/Ring.pm
 # covers:    the BLE listener drains a burst of events in one linear pass. Removing
 #           each line with s/^(.*?)\n// copied the whole remaining buffer, so a
 #           burst that ended with one large event was quadratic: a phone spent
@@ -21,6 +21,7 @@ use Test::More;
 use Time::HiRes qw(time sleep);
 use JawnOS::Ble::Drain qw(drain_new drain_feed);
 use JawnOS::Ble::Guard qw(cpu_ticks cpu_hog);
+use JawnOS::Ble::Ring qw(event_note ring_note ring_tail);
 
 my $root = "$FindBin::Bin/..";
 
@@ -58,6 +59,30 @@ is(&cpu_hog(10, 0, 100), 0, 'a zero window is not');
 my $t0cpu = &cpu_ticks($$);
 my $x = 0; $x += $_ for 1 .. 200_000;
 cmp_ok(&cpu_ticks($$), '>=', $t0cpu, 'this process\'s own cpu time is readable');
+
+# ---- the event ring --------------------------------------------------------
+my $ring = "/tmp/jawnos-ring-$$.log";
+unlink $ring;
+my $note = &event_note('{"event":"message","mac":"AA:BB:CC","data":"' . ('x' x 200) . '"}', 123);
+like($note, qr/^ts=123 event=message bytes=\d+ mac=AA:BB:CC head=/, 'an event note names type, size and mac');
+unlike($note, qr/\n/, 'and is one line');
+ok(length($note) < 300, 'with a bounded head');
+ok(&ring_note('{"event":"status","connected":false}', $ring, 1), 'a note is appended');
+is(scalar(&ring_tail(5, $ring)), 1, 'and is in the tail');
+$JawnOS::Ble::Ring::LAST_SMALL = time();
+ok(!&ring_note('{"event":"status"}', $ring), 'a small event inside the gap is sampled out');
+ok(&ring_note('{"event":"big","pad":"' . ('z' x 5000) . '"}', $ring), 'a large event is always noted');
+ok(&ring_note('{"event":"status"}', $ring, 1), 'force notes a small one');
+for my $i (1 .. 400) {
+	&ring_note('{"event":"x","pad":"' . ('y' x 150) . '"}', $ring, 1);
+}
+cmp_ok(-s $ring, '<=', 32 * 1024 + 512, 'the ring is capped by bytes, not unbounded');
+is(scalar(&ring_tail(5, $ring)), 5, 'the tail returns the newest lines');
+ok(!&ring_note('x', '/nonexistent-dir/ring.log'), 'a broken ring path is ignored, not fatal');
+unlink $ring;
+
+like($client, qr/ring_note\(/, 'the client names the event before it prints it');
+like($ble, qr/ring_tail\(/, 'the parent logs the ring when the listener goes away');
 
 # ---- the buffer helper ------------------------------------------------------
 my $b = drain_new();
