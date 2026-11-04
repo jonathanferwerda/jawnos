@@ -120,6 +120,14 @@ sends the previous firmware. alarmclock (Pico 2 W): `pio run -j 4` in `jp/alarmc
 ESP32 boards take the `.bin` picked from `.pio/build/<env>/`. Hardwired paths, `@targets` and LoRaWAN:
 `docs/AGENTS-firmware.md`.
 
+## Phone reception (screened calls)
+
+A screened call is answered by the app and carried over Bluetooth to a gateway
+machine that plays the house's prompts and records the caller's name. The audio
+setup that works (PipeWire's virtual handset, its settings and its limits) is in
+`docs/reception.md`; the code is `lib/JawnOS/Sco/`, `perl/Sco.pl`,
+`perl/Reception.pl` and `perl/sco/sco_helper.c`.
+
 ## Languages and translation
 
 JawnOS ships English plus fifteen interface languages (listed in `language.pl`); core labels have

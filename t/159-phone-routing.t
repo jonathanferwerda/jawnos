@@ -95,5 +95,7 @@ like(read_file("$repo/lib/JawnOS/Domain/Phone.pm"), qr/device => 'all'/,
 like($reception, qr/-x \$helper/, 'and only arms where the helper is built');
 like($reception, qr/cmd => 'cancel'/, 'turning IVR off drops the listener');
 like(read_file("$repo/perl/President.pl"), qr/Phone Reception/, 'the master starts it');
+like($reception, qr/keep_new_recordings/, 'the names a call leaves are kept for the house');
+like(read_file("$repo/docs/reception.md"), qr/jawn_call_in/, 'the working audio setup is written down');
 
 done_testing();

@@ -141,7 +141,7 @@ static long clip_ms = 0;
 static int clip_active = 0;
 static long long next_write = 0;
 static long long clip_start_at = 0;
-#define LEAD_IN_NS 250000000LL
+#define LEAD_IN_NS 450000000LL
 static long long now_ns(void);
 
 /* ---- recording --------------------------------------------------------- */

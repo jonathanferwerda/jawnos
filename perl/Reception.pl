@@ -16,7 +16,7 @@ use strict;
 use warnings;
 use lib './lib';
 use Mojo::IOLoop;
-use Mojo::JSON qw(decode_json);
+use Mojo::JSON qw(decode_json encode_json);
 use Mojo::Log;
 use File::Slurp qw(read_file);
 
@@ -31,7 +31,55 @@ my $helper = './perl/sco/sco_helper';
 my $armed_at = 0;
 my $armed_from = '';
 
+# Keep the names a screened call left, where the house can find them after the
+# call is over: the gateway's own recordings directory is pruned, and the index
+# beside it is what the pane and a later filing read.
+sub keep_new_recordings {
+	my $status = $client->call({ cmd => 'status' });
+	return unless $status && $status->{'ok'};
+	my ($newest) = @{ $status->{'recordings'} || [] };
+	return unless $newest && $newest->{'file'} && -s $newest->{'file'};
+	my $dir = &subs::home('~/.president/sco/kept');
+	mkdir $dir unless -d $dir;
+	my $id = $newest->{'call_id'} || 'call';
+	$id =~ s/[^A-Za-z0-9_-]//g;
+	return unless length $id;
+	my $kept = "$dir/$id.wav";
+	my $index = "$dir/index.jsonl";
+	return if -e $kept;
+	my $copy = eval {
+		open(my $in, '<', $newest->{'file'}) or die "open: $!";
+		open(my $out, '>', $kept) or die "open: $!";
+		binmode $in;
+		binmode $out;
+		local $/;
+		print {$out} <$in>;
+		close $out;
+		close $in;
+		1;
+	};
+	return unless $copy;
+	if (open(my $fh, '>>', $index)) {
+		print {$fh} encode_json({
+			call_id => $id,
+			at => $newest->{'at'} || time,
+			ms => $newest->{'ms'} || 0,
+			peer => $newest->{'peer'} || '',
+			file => $kept,
+		}) . "\n";
+		close $fh;
+	}
+	$log->info("reception: kept $kept");
+	# a hundred names is plenty; older ones go
+	my @kept = sort { (stat($a))[9] <=> (stat($b))[9] } glob("$dir/*.wav");
+	if (@kept > 100) {
+		unlink $_ for @kept[ 0 .. @kept - 101 ];
+	}
+	return 1;
+}
+
 sub tick {
+	&keep_new_recordings();
 	my $status = $client->call({ cmd => 'status' });
 	my $state = ($status && $status->{'ok'}) ? ($status->{'state'} || 'idle') : '';
 	return if $state eq 'in_call';
