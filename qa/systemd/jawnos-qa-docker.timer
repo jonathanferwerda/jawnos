@@ -1,0 +1,14 @@
+[Unit]
+Description=Nightly JawnOS Docker compose smoke (testing only)
+
+[Timer]
+# 04:30, ahead of the 05:00 suite and apart from the 05:30 UX loop. It runs
+# where Docker is, like the weekly build unit, and is not one of the three
+# Configure -> Plat -> QA times.
+OnCalendar=*-*-* 04:30:00
+Persistent=true
+RandomizedDelaySec=10m
+Unit=jawnos-qa-docker.service
+
+[Install]
+WantedBy=timers.target

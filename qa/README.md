@@ -24,6 +24,7 @@ perl qa/run.pl --layers l4 --apk releases/jawnos-app-1256-0.118.257.apk
 perl qa/run.pl --source worktree   # test uncommitted code
 perl qa/run.pl --no-namespace      # read the warning first
 perl qa/run.pl --layers l0         # just the old regression suite
+perl qa/docker/smoke.sh            # nightly Docker image smoke (loopback, testing only)
 perl qa/budget.pl <metrics.json>   # judge one device file on its own
 ```
 
@@ -102,6 +103,11 @@ recorded as drift, not as a verdict. The verdict is the PID audit.
 | `l4` | Android emulator: cold/warm start, rotation, offline, repeat jank, WebView CDP, crash/ANR | done on table |
 | `l5` | QEMU image: version fidelity, boot evidence, install + reboot persistence, host/guest measures | done on table |
 | `l6` | UX loop: the owner's JawnOS notes attempted in a fenced copy, judged easy/help/works | harness + rubric + skip when unmodelled |
+
+The Docker compose smoke is **not a layer**: it needs the real Docker daemon
+and the network, so it runs as its own nightly unit at 04:30 (see
+[Docker compose smoke](#docker-compose-smoke-0430)) on the machine that carries
+Docker.
 
 ### l1 classification
 
@@ -594,6 +600,41 @@ deliberately not in the nightly set while the JavaScript refactor is in flight.
 The UX loop (`l6`) has its own timer at 05:30 - do not add it to this unit, or a
 20-minute UX run can hold the route/database layers.
 
+### Docker compose smoke (04:30)
+
+`qa/docker/smoke.sh` is the nightly test of the container image. It is
+**testing only**: it never deploys the app and never touches the live tree,
+database or ports. It:
+
+1. extracts the **committed tree** (`git archive HEAD`) into
+   `$QA_ROOT/docker/<stamp>/tree`, so a dirty worktree is not tested;
+2. builds the image as `jawnos:nightly` and runs it as Compose project
+   `jawnos-nightly` on free ports, published to **`127.0.0.1` only**, with a
+   factory-seeded database and a new home volume;
+3. checks the manager/locker/websocket ports, the unlock code, the database,
+   the **threaded Perl**, the pinned Mojolicious 9.39 and `ifconfig`;
+4. restarts the container (the volumes must be reused) and asks the app's own
+   `scripts/restart.pl` to restart its tree;
+5. removes its volumes and extracted tree, and stops Docker again if the script
+   started it.
+
+Install it on the machine that carries Docker and passwordless sudo (the same
+place as the weekly artefact build), not necessarily the machine chosen for the
+route suite:
+
+```sh
+sudo cp qa/systemd/jawnos-qa-docker.service qa/systemd/jawnos-qa-docker.timer /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now jawnos-qa-docker.timer
+systemctl list-timers jawnos-qa-docker.timer
+```
+
+It needs `docker` with the compose plugin (`docker.io` + `docker-compose` on
+Debian), `git`, `perl`, `curl` and passwordless `sudo -n` to start/stop the
+daemon when it was inactive. A missing Docker is a **skip**, not a pass; Docker
+present but unusable (no compose plugin, daemon will not start) is a **failure**.
+Logs are in `$QA_ROOT/docker/<stamp>/smoke.log`; the last 14 runs are kept.
+
 ### Which machine runs the night
 
 Configure -> Plat -> QA names one machine for the nightly, and the choice is the
@@ -635,11 +676,12 @@ no identity file. Install the units on
 every machine that might be chosen; the unchosen ones still have the timer, they
 just skip their run.
 
-There are three nightly units, and the Configure choice applies to all three: the
-suite at **05:00**, the UX loop at **05:30**, and the coding night at **06:00**. The weekly artefact build
-(`jawnos-qa-build.timer`, Sunday 03:00) deliberately does **not** carry the
-condition: it belongs where the toolchain is (mkosi, qemu, a full JDK), not on
-the machine that happens to run the route/database suite.
+There are four nightly units. The Configure choice applies to the suite at
+**05:00**, the UX loop at **05:30**, and the coding night at **06:00**. The
+Docker compose smoke at **04:30** and the weekly artefact build
+(`jawnos-qa-build.timer`, Sunday 03:00) deliberately do **not** carry the
+condition: both belong where their toolchain is (Docker; mkosi, qemu and a full
+JDK), not on the machine that happens to run the route/database suite.
 
 The panel's readiness card asks the chosen machine what it has: the checkout,
 `perl` and `prove`, `sqlite3`, `unshare` (the fence) are required for the

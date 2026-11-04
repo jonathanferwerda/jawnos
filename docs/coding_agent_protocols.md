@@ -29,7 +29,9 @@ user for the exact file/folder/name. A wrong guess costs far more tokens than a 
   rebuilds from mtimes).
 - **Docker:** `docker compose up -d --build` runs this same tree from `Dockerfile`; the entry point
   seeds `config.json` and the database on first boot. Ports, volumes and what is deliberately absent
-  (desktop app, firmware, SSH, hardware passthrough): `docs/docker.md`.
+  (desktop app, firmware, SSH, hardware passthrough): `docs/docker.md`. The nightly smoke
+  (`qa/docker/smoke.sh`, `jawnos-qa-docker.timer` at 04:30) builds HEAD, runs it loopback-only and
+  removes its volumes: testing only, and a missing Docker is a skip.
 - **Tests:** while iterating `perl scripts/tests_for.pl --staged --run`; before a commit
   `perl scripts/run_tests.pl`. Never bare `prove -l t`.
 - Master plumbing, verify manifest, restart record, socket rules: `docs/AGENTS-restart.md`.

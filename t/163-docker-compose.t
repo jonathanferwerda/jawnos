@@ -83,8 +83,10 @@ ok( defined $working, 'compose defaults the manager port' );
 ok( defined $ws,      'compose defaults the websocket port' );
 is( $ws, defined $working ? $working + 1 : undef,
 	'the websocket default is one above the manager port' );
-my $published = "\${JAWNOS_WORKING_PORT:-$working}:\${JAWNOS_WORKING_PORT:-$working}";
+my $published = "\${JAWNOS_BIND_ADDR:-0.0.0.0}:\${JAWNOS_WORKING_PORT:-$working}:\${JAWNOS_WORKING_PORT:-$working}";
 like( $compose, qr/\Q$published\E/, 'the manager port is published' );
+like( $compose, qr/\$\{JAWNOS_BIND_ADDR:-0\.0\.0\.0\}/, 'published ports can be pinned to loopback' );
+like( $compose, qr/\$\{JAWNOS_IMAGE:-jawnos:local\}/, 'the image tag is overridable for the nightly' );
 
 like( $entry, qr{scripts/jawnos_setup\.pl --seed}, 'first boot uses the non-interactive seed' );
 like( $entry, qr{exec perl \./jawn},                    'the tree runs in the foreground under the image Perl' );

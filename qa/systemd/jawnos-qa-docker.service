@@ -1,0 +1,33 @@
+[Unit]
+Description=JawnOS nightly Docker compose smoke (testing only)
+Documentation=file:/home/jawn/jawnos/qa/README.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=jawn
+WorkingDirectory=/home/jawn/jawnos
+Environment=HOME=/home/jawn
+Environment=QA_ROOT=/home/jawn/jawnos-qa
+# This unit belongs where Docker and passwordless sudo are, not necessarily the
+# machine chosen in Configure -> Plat -> QA, so it deliberately does NOT carry
+# the nightly device gate. The weekly artefact build makes the same choice for
+# its toolchain.
+ExecStart=/bin/bash /home/jawn/jawnos/qa/docker/smoke.sh
+
+# The script starts Docker only when it was inactive and stops it again, so a
+# testing box is left as it was found. No ProtectHome/System fence: sudo and
+# /var/lib/docker need the real machine; the script itself uses only the QA
+# root for its extracted tree and logs, and binds the test ports to loopback.
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+MemoryMax=6G
+CPUQuota=400%
+TimeoutStartSec=45min
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

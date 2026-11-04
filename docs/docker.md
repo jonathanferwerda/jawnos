@@ -77,6 +77,12 @@ matter:
   code to exist only in your head.
 - `JAWNOS_LOCKER_PORT`, `JAWNOS_WORKING_PORT`, `JAWNOS_WS_PORT` — published and
   listened-on ports. Keep `JAWNOS_WS_PORT` at `JAWNOS_WORKING_PORT + 1`.
+- `JAWNOS_BIND_ADDR` (default `0.0.0.0`) — the host address the published ports
+  bind to. Use `127.0.0.1` for a test instance that must not be reachable from
+  the LAN.
+- `JAWNOS_IMAGE` (default `jawnos:local`) — the image tag Compose builds and
+  runs. The nightly smoke uses `jawnos:nightly` so it cannot overwrite a
+  hand-built image.
 - `JAWNOS_FOLDERS` — colon-separated container paths replacing the seeded
   folder list.
 - `JAWNOS_MAIN_WORKERS` — override the server's four resting workers on a small
@@ -126,6 +132,25 @@ docker compose restart jawnos
 A Docker restart is the same as stopping the tree and starting it again. Use
 `docker compose restart jawnos` for the container, or the `restart.pl` command
 above when you want the app's own verdict.
+
+## Nightly smoke (testing only)
+
+`qa/docker/smoke.sh` is the nightly image test. It never deploys the app and
+never touches the live tree, database or ports:
+
+- it extracts the **committed tree** (`git archive HEAD`) into
+  `$QA_ROOT/docker/<stamp>/tree`, builds `jawnos:nightly`, and runs it under
+  the `jawnos-nightly` Compose project on free ports bound to `127.0.0.1` only;
+- it checks first boot, the unlock code, the database, the manager/locker/
+  websocket ports, the threaded Perl, pinned Mojolicious 9.39 and `ifconfig`;
+- it restarts the container and verifies the volumes are reused, then asks the
+  app's own `scripts/restart.pl` to restart its tree;
+- it removes its volumes and tree, and stops Docker again if it started it.
+
+It is driven by `qa/systemd/jawnos-qa-docker.timer` at **04:30**, on the machine
+that carries Docker and passwordless sudo - like the weekly build unit, not the
+machine chosen for the route suite. A missing Docker is a skip, not a pass.
+Install it from `qa/README.md`; logs land in `$QA_ROOT/docker/<stamp>/smoke.log`.
 
 ## What is missing, and why
 
