@@ -143,7 +143,11 @@ sub appt_alarm_setter {
 	# the alarm clock in time to start the recording - without the small grace
 	# the start was filtered away and the clock only woke at the stop, taking
 	# a take of nothing
-	if (grep { $_ && $_ >= &subs::rightNow() - 5000 } @times) {
+	# An appointment built by a caller that omitted a time (the model rows a
+	# tick builds) reached this comparison undefined: every call warned twice and
+	# wrote both lines to the log, which on a phone was a steady stream of I/O to
+	# decide nothing. A missing or non-numeric time is simply not due yet.
+	if (grep { defined $_ && $_ =~ /^\d+$/ && $_ >= &subs::rightNow() - 5000 } @times) {
 		my $file = $gb::tmp_dir . '/alarm';
 		eval {
 			my $socket = IO::Socket::UNIX->new(
