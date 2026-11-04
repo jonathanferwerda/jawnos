@@ -462,6 +462,13 @@ record moved instead.
 - [x] The hub answers publicly at **`hub.jonathanferwerda.com`** (GoDaddy A → ks5; DNAT
       45545/45546/45550 → `10.20.0.20`). MagicDNS shadows names under `base_domain`, so a headscale
       **`extra_records`** entry resolves the hub to 54.39.157.133 for tailnet clients too.
+- [x] **Corrected 2026-11-03 — the exit node needs the same DNAT.** The laptop runs ks5 as its
+      exit node (`RouteAll`, `ExitNodeID=11`), so its packets to the hub's public address arrive on
+      `tailscale0`, not `vmbr0`; the vmbr0 rules never saw them and the house's Go window stayed
+      white. `headscale-dnat.service` now installs the 443/45545/45546/45550 DNATs on `tailscale0`
+      too (after `tailscaled`), and the manager answers from the laptop on the public name again.
+      A peer whose manager still ships the image's `CN=localhost` certificate (the phone, dev) is a
+      separate certificate problem; the desktop app now trusts it only in a peer Manager window.
 - [x] `tunnel_hub = https://hub.jonathanferwerda.com:45545` on the laptop and the table, both apps
       restarted.
 - [x] **Corrected 2026-11-03 — the config alone did not form a tunnel.** The house's `config.json`

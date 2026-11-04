@@ -463,7 +463,8 @@ class WebViewPanel(Gtk.Box):
         self._repaint_source = 0
         self.connect("destroy", self._on_destroy)
 
-        self.view = WebKit2.WebView.new_with_context(_context_get())
+        self.view = WebKit2.WebView.new_with_context(
+            self._window_context(manager_url_override))
         self._configure(self.view)
         self.pack_start(self.view, True, True, 0)
 
@@ -581,6 +582,27 @@ class WebViewPanel(Gtk.Box):
         self.view.load_uri(url)
 
     # ---- webkit wiring ----
+
+    @staticmethod
+    def _window_context(manager_url_override):
+        """The WebKit context this panel's view runs in.
+
+        The local manager shares the app's default context, where TLS errors
+        fail (external sites in the Internet app stay strict too). A peer's
+        Manager is a paired machine opened by a signed Go, and its default
+        certificate is CN=localhost, which does not name the peer: WebKit's
+        per-host allowance cannot rescue that, so the peer window gets its own
+        context with TLS errors ignored. The peer rail already trusts the
+        pinned key (insecure(1)), and the ticket is the session.
+        """
+        if not manager_url_override:
+            return _context_get()
+        try:
+            context = WebKit2.WebContext.new()
+            context.set_tls_errors_policy(WebKit2.TLSErrorsPolicy.IGNORE)
+            return context
+        except Exception:
+            return _context_get()
 
     def _configure(self, view):
         s = view.get_settings()
@@ -952,7 +974,7 @@ class WebViewPanel(Gtk.Box):
         except Exception:
             pass
         try:
-            _context_get().allow_tls_certificate_for_host(certificate, host)
+            view.get_context().allow_tls_certificate_for_host(certificate, host)
         except Exception:
             pass
         view.load_uri(failing_uri)
