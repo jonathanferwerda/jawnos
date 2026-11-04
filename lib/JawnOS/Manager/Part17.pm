@@ -401,13 +401,16 @@ sub merge_table_rows {
 												if ($configuration->{'remote'}) {
 													#$file = url_unescape $file;
 													my $url = $configuration->{'remote'}->{'manager'} . '/file_open?timestamp=' . $r->{'server_time'} . '&as_is=yes&file=' . $file;
-													my $file_data = $configuration->{'remote'}->{'ua'}->get($url)->result;
-													if ($file_data) {
-														unless ($file_data->body eq 'not found') {
-															my $fd = $file_data->body;
-															$fd = decode_base64 $fd;
-															write_file($dest,$fd);
-														}
+													# A peer file that cannot be fetched (a big gallery page, a closed
+													# worker) used to kill the whole merge. The row is still
+													# worth keeping; its file can be fetched by a later pass.
+													my $file_data = eval { $configuration->{'remote'}->{'ua'}->get($url)->result };
+													if ($file_data && $file_data->is_success && $file_data->body ne 'not found') {
+														my $fd = $file_data->body;
+														$fd = decode_base64 $fd;
+														# the destination can be unwritable (a logo row whose
+														# app has no local media folder); keep the row anyway
+														eval { write_file($dest,$fd) };
 													}
 												}
 											}
