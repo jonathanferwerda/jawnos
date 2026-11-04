@@ -80,6 +80,17 @@ ok( !defined JawnOS::Packages::parse_sdk_repository('<sdkRepository></sdkReposit
 	'SDK: an index with no packages is no answer' );
 ok( !defined JawnOS::Packages::parse_sdk_repository('not xml'), 'SDK: junk is no answer' );
 
+is_deeply( [ JawnOS::Packages::ndk_prune_plan([qw(22.1.7171670 30.0.16248370)], 2, '30.0.16248370') ],
+	[], 'prune: the pinned NDK and the newest two are all kept' );
+is_deeply( [ JawnOS::Packages::ndk_prune_plan([qw(22.1.7171670 30.0.16248370 31.0.1)], 2, '30.0.16248370') ],
+	['22.1.7171670'], 'prune: a third NDK drops the oldest, not the pin' );
+is_deeply( [ JawnOS::Packages::ndk_prune_plan([qw(22.1.7171670 30.0.16248370 31.0.1)], 2, undef) ],
+	['22.1.7171670'], 'prune: without a pin the newest two win' );
+is_deeply( [ JawnOS::Packages::ndk_prune_plan([qw(22.1.7171670 30.0.16248370)], 1, '22.1.7171670') ],
+	[], 'prune: the pin survives even when it is the oldest' );
+is_deeply( [ JawnOS::Packages::ndk_prune_plan([qw(22.1.7171670 30.0.16248370)], 1, undef) ],
+	['22.1.7171670'], 'prune: --android-keep 1 removes exactly one' );
+
 my $tools = JawnOS::Packages::parse_sdk_repository(
 	'<r><remotePackage path="build-tools;36.0.0"/><remotePackage path="build-tools;36.1.0"/>'
 	. '<remotePackage path="build-tools;37.0.0-rc1"/><remotePackage path="build-tools;38.0.0-beta2"/>'
@@ -242,6 +253,7 @@ is( $rc, 1, '--strict makes a toolchain behind upstream fail' );
 
 ($rc, $out) = freshness_in($newer, '--android', '--android-update', '--only=build-tools', '--only=ndk');
 unlike( $out, qr/sdkmanager --install/, 'a fixture run never installs anything, even when asked to update' );
+unlike( $out, qr/android prune/, 'and never deletes an NDK' );
 
 # --- the nightly job downloads nothing ---------------------------------------
 
@@ -269,6 +281,7 @@ like( $deps, qr{api\.ftp-master\.debian\.org/madison}, 'the Debian endpoint is p
 like( $deps, qr{archlinux\.org/packages/search/json/}, 'the Arch endpoint is pinned in the source' );
 like( $deps, qr{dl\.google\.com/android/repository/repository2-3\.xml},
 	'the Android SDK index is pinned in the source' );
+like( $deps, qr/android-keep/, 'and the NDK keep count is a flag' );
 
 my $service = read_file("$root/qa/systemd/jawnos-qa-installers.service");
 my $timer   = read_file("$root/qa/systemd/jawnos-qa-installers.timer");

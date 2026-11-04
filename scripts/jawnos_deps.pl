@@ -35,6 +35,10 @@
 #                                                    # install a newer
 #                                                    # build-tools/NDK with
 #                                                    # sdkmanager
+#   perl scripts/jawnos_deps.pl --freshness --android --android-update --android-keep=1
+#                                                    # ...and drop every NDK
+#                                                    # but the pinned one and
+#                                                    # the newest N (default 2)
 #
 # --freshness asks MetaCPAN, Debian's madison and Arch's package API for the
 # candidate version and compares it with what is installed here. It downloads
@@ -56,7 +60,7 @@ use FindBin;
 use lib "$FindBin::Bin/../lib";
 use JawnOS::Packages;
 
-my ($report_only, $json, $sh, $install, $yes, $desktop, $extras_only, $no_extras, $local_lib, $freshness, $strict, $fixtures, $android, $android_update);
+my ($report_only, $json, $sh, $install, $yes, $desktop, $extras_only, $no_extras, $local_lib, $freshness, $strict, $fixtures, $android, $android_update, $android_keep);
 my @only;
 GetOptions(
 	'report'      => \$report_only,
@@ -73,6 +77,7 @@ GetOptions(
 	'fixtures=s'  => \$fixtures,
 	'android'     => \$android,
 	'android-update' => \$android_update,
+	'android-keep=i' => \$android_keep,
 	'only=s@'     => \@only,
 ) or die "bad options\n";
 
@@ -638,6 +643,7 @@ sub freshness_report {
 	my $json_out = $opt{'json'};
 	my $android = $opt{'android'};
 	my $android_update = $opt{'android_update'};
+	my $android_keep = $opt{'android_keep'} || 2;
 	my $platform = $opt{'platform'} || 'unknown';
 	my @only = @{ $opt{'only'} || [] };
 	my %only = map { $_ => 1 } @only;
@@ -984,6 +990,7 @@ sub freshness_report {
 		my @todo = map { $_->{'update'} }
 			grep { defined $_->{'update'} && ($_->{'status'} || '') eq 'outdated' } @toolchain_rows;
 		$ok = 0 if !android_update(@todo);
+		android_prune($android_keep);
 	}
 	return $ok ? 0 : 1;
 }
@@ -1026,6 +1033,50 @@ sub android_update {
 	return $ok;
 }
 
+# The NDK the app pins in its gradle.properties. The app repo lives outside
+# this tree, so without it there is no pin to protect and the keep count alone
+# decides.
+sub app_pinned_ndk {
+	my $app = $ENV{'JAWNOS_APP_DIR'} || (($ENV{'HOME'} || '') . '/jawnos-app/termux-app');
+	my $path = "$app/gradle.properties";
+	return undef unless -f $path;
+	open(my $fh, '<', $path) or return undef;
+	my $pinned;
+	while (my $line = <$fh>) {
+		next unless $line =~ /^\s*ndkVersion\s*=\s*(\S+)\s*$/;
+		$pinned = $1;
+	}
+	close $fh;
+	return $pinned;
+}
+
+# Keep the pinned NDK and the newest $keep; remove the rest. It runs with the
+# update, so a report-only night still changes nothing on the machine. A failed
+# removal is disk hygiene, not a verdict, so it never fails the check.
+sub android_prune {
+	my ($keep) = @_;
+	my $root = sdk_root();
+	return 0 unless defined $root && -d "$root/ndk";
+	my @versions = grep { /^\d+(?:\.\d+)+$/ } sdk_dir_names("$root/ndk");
+	return 0 unless @versions;
+	my $pinned = app_pinned_ndk();
+	my @remove = JawnOS::Packages::ndk_prune_plan(\@versions, $keep, $pinned);
+	return 0 unless @remove;
+	require File::Path;
+	for my $version (@remove) {
+		my $path = "$root/ndk/$version";
+		next unless -d $path && !-l $path;
+		if (File::Path::remove_tree($path, { error => \my $errors })) {
+			print "android prune: removed ndk;$version (keeping the newest $keep"
+				. (defined $pinned ? " and the pinned ndk;$pinned" : '') . ")\n";
+		}
+		else {
+			print "android prune: could not remove ndk;$version\n";
+		}
+	}
+	return 0;
+}
+
 if ($freshness) {
 	exit freshness_report(
 		strict   => $strict,
@@ -1035,6 +1086,7 @@ if ($freshness) {
 		json     => $json,
 		android  => $android,
 		android_update => $android_update,
+		android_keep => $android_keep,
 	);
 }
 

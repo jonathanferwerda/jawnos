@@ -207,4 +207,20 @@ sub sdk_newest {
 	return $best;
 }
 
+# Which NDKs to drop from an SDK installation: everything except the version the
+# app pins and the newest `keep`. The pin is never dropped even when it is old:
+# a build uses exactly that version, and pulling it would make gradle re-fetch
+# it at build time.
+sub ndk_prune_plan {
+	my ($versions, $keep, $pinned) = @_;
+	return () unless ref $versions eq 'ARRAY';
+	$keep = 2 unless defined $keep && $keep =~ /^\d+$/ && $keep >= 1;
+	my %wanted;
+	$wanted{$pinned} = 1 if defined $pinned && length $pinned;
+	my @sorted = sort { compare_module($b, $a) } @$versions;
+	my $take = @sorted < $keep ? scalar @sorted : $keep;
+	$wanted{ $sorted[$_] } = 1 for 0 .. $take - 1;
+	return grep { !$wanted{$_} } @$versions;
+}
+
 1;
