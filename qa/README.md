@@ -703,12 +703,16 @@ An NDK is 2-4 GB and every build-tools is tens of megabytes, so the same run
 **prunes** them: for `ndk`, `build-tools` and `platforms`, everything but the
 version the app pins and the newest `--android-keep` (default 2) is removed,
 and each removal is logged. The pins are read from the app repo
-(`~/jawnos-app/termux-app`, or `JAWNOS_APP_DIR`): `ndkVersion`, `buildToolsVersion`
-when the app sets one, and `compileSdkVersion` for the platform directory. A pin
-is never removed, even when it is older than the newest two -- a build uses
-exactly that version, and a missing one would be re-fetched mid-build. With no
-app repo on the machine, the keep count alone decides. Pruning only happens
-with the update, so a report-only run deletes nothing.
+(`~/jawnos-app/termux-app`, or `JAWNOS_APP_DIR`): `ndkVersion`,
+`buildToolsVersion` when the app sets one, `compileSdkVersion` for the platform
+directory, and -- because AGP resolves one exact build-tools and re-fetches it
+when it is missing -- the default AGP itself carries, read from its builder jar
+in the Gradle cache. If that cannot be read, **no build-tools are pruned at
+all**: deleting the version the build needs only buys it back at build time. A
+pin is never removed, even when it is older than the newest two -- a build uses
+exactly that version. With no app repo on the machine, the keep count alone
+decides. Pruning only happens with the update, so a report-only run deletes
+nothing.
 
 ```sh
 sudo cp qa/systemd/jawnos-qa-installers.service qa/systemd/jawnos-qa-installers.timer /etc/systemd/system/

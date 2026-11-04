@@ -231,4 +231,22 @@ sub ndk_prune_plan {
 	return sdk_prune_plan($versions, $keep, $pinned);
 }
 
+# The Android Gradle plugin resolves one exact build-tools version and re-fetches
+# it when it is missing, so "keep the newest" is wrong for that family: it would
+# delete the version the build needs and buy it back at build time. AGP's default
+# lives in its builder jar as a string constant in ToolsRevisionUtils.
+sub parse_agp_version {
+	my ($text) = @_;
+	return undef unless defined $text && length $text;
+	return $1 if $text =~ /com\.android\.tools\.build:gradle:([\d.]+)/;
+	return undef;
+}
+
+sub parse_agp_build_tools {
+	my ($bytes) = @_;
+	return undef unless defined $bytes && length $bytes;
+	return $1 if $bytes =~ /(\d+\.\d+\.\d+)/;
+	return undef;
+}
+
 1;

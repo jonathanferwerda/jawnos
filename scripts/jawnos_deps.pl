@@ -1060,6 +1060,37 @@ sub app_pins {
 	return \%pins;
 }
 
+# The build-tools version the Android Gradle plugin resolves, read from the AGP
+# that the app uses (its builder jar carries the default). undef when it cannot
+# be read, which means "do not prune build-tools": deleting the one the build
+# needs only makes gradle fetch it again at build time.
+sub agp_build_tools {
+	my $app = $ENV{'JAWNOS_APP_DIR'} || (($ENV{'HOME'} || '') . '/jawnos-app/termux-app');
+	open(my $gradle, '<', "$app/build.gradle") or return undef;
+	local $/;
+	my $text = <$gradle>;
+	close $gradle;
+	my $agp = JawnOS::Packages::parse_agp_version($text);
+	return undef unless defined $agp;
+	my $caches = ($ENV{'GRADLE_USER_HOME'} || (($ENV{'HOME'} || '') . '/.gradle'))
+		. "/caches/modules-2/files-2.1/com.android.tools.build/builder/$agp";
+	my ($jar) = glob("$caches/*/builder-$agp.jar");
+	return undef unless defined $jar && -f $jar;
+	require IO::Uncompress::Unzip;
+	my $zip = IO::Uncompress::Unzip->new($jar) or return undef;
+	while (1) {
+		my $info = $zip->getHeaderInfo;
+		last unless $info && defined $info->{'Name'};
+		if ($info->{'Name'} eq 'com/android/builder/core/ToolsRevisionUtils.class') {
+			my $class = '';
+			while ($zip->read(my $chunk) > 0) { $class .= $chunk }
+			return JawnOS::Packages::parse_agp_build_tools($class);
+		}
+		last unless $zip->nextStream;
+	}
+	return undef;
+}
+
 # Keep the pinned component and the newest $keep of each family; remove the
 # rest. It runs with the update, so a report-only night still changes nothing on
 # the machine. A failed removal is disk hygiene, not a verdict, so it never
@@ -1069,9 +1100,11 @@ sub android_prune {
 	my $root = sdk_root();
 	return 0 unless defined $root;
 	my $pins = app_pins();
+	my $build_tools_pin = defined $pins->{'build-tools'} ? $pins->{'build-tools'} : agp_build_tools();
 	my @families = (
 		{ name => 'ndk',         pin => $pins->{'ndk'},      match => qr/^\d+(?:\.\d+)+$/ },
-		{ name => 'build-tools', pin => $pins->{'build-tools'}, match => qr/^\d+(?:\.\d+)+$/ },
+		{ name => 'build-tools', pin => $build_tools_pin,    match => qr/^\d+(?:\.\d+)+$/,
+			require_pin => 1 },
 		{ name => 'platforms',   pin => (defined $pins->{'platform'} ? "android-$pins->{'platform'}" : undef),
 			match => qr/^android-[\d.]+$/, normalize => sub { $_[0] =~ /^android-([\d.]+)$/ ? $1 : $_[0] } },
 	);
@@ -1079,6 +1112,10 @@ sub android_prune {
 	for my $family (@families) {
 		my $dir = "$root/$family->{'name'}";
 		next unless -d $dir;
+		if ($family->{'require_pin'} && !defined $family->{'pin'}) {
+			print "android prune: cannot tell which build-tools AGP resolves; leaving them alone\n";
+			next;
+		}
 		my @versions = grep { /$family->{'match'}/ } sdk_dir_names($dir);
 		next unless @versions;
 		my @remove = JawnOS::Packages::sdk_prune_plan(

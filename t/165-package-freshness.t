@@ -93,6 +93,16 @@ is_deeply( [ JawnOS::Packages::ndk_prune_plan([qw(22.1.7171670 30.0.16248370)], 
 
 is_deeply( [ JawnOS::Packages::sdk_prune_plan([qw(34.0.0 35.0.0 36.0.0 37.0.0)], 2, '35.0.0') ],
 	['34.0.0'], 'prune: build-tools keep the newest two and the version the app pins' );
+is_deeply( [ JawnOS::Packages::sdk_prune_plan([qw(34.0.0 36.0.0 37.0.0)], 2, '34.0.0') ],
+	[], 'prune: the build-tools AGP resolves survive even though they are the oldest' );
+is( JawnOS::Packages::parse_agp_version(q{classpath 'com.android.tools.build:gradle:8.7.3'}),
+	'8.7.3', 'AGP: the plugin version is read from the app build file' );
+ok( !defined JawnOS::Packages::parse_agp_version('classpath "org.other:thing:1.0"'),
+	'AGP: no plugin, no version' );
+is( JawnOS::Packages::parse_agp_build_tools("\xca\xfe\xba\xbe" . '34.0.0' . "\x00\x01"), '34.0.0',
+	'AGP: its default build-tools is read from the class constant' );
+ok( !defined JawnOS::Packages::parse_agp_build_tools('no version here'),
+	'AGP: an unreadable class yields no pin, and nothing is pruned' );
 my $platform_version = sub { $_[0] =~ /^android-([\d.]+)$/ ? $1 : $_[0] };
 is_deeply(
 	[ JawnOS::Packages::sdk_prune_plan([qw(android-34 android-35 android-36)], 2, 'android-36',
