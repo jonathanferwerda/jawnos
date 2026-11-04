@@ -135,6 +135,10 @@ above when you want the app's own verdict.
 - **Optional extras** (weasyprint PDF rendering, Ollama, whisper.cpp, Piper
   voices) are not in the image. Add them in a derived image or through a volume
   if you need them; the app uses its documented fallbacks until then.
+- **One benign warning in the logs.** `Manager::encode_json` prints a
+  `Prototype mismatch` warning from `perl/junderground.pl` and `perl/Music.pl`.
+  It comes from the app's own imports under Perl 5.40; it does not stop the
+  servers.
 - **Systemd timers** are host concerns. Backups, records audits and the help
   index audit still run from the app's own loops, but a host timer calling
   `docker compose exec ...` is the way to add a scheduled job.

@@ -8,14 +8,17 @@
 # Run:    docker compose up -d
 
 # ---- modules ---------------------------------------------------------------
+# President.pl does `use threads`; the non-threaded perl image dies at "This
+# Perl not built to support threads", so every stage uses the threaded build.
 # Both stages start from the same Perl image, so the site_perl path the builder
 # writes is exactly the one the runtime searches. The builder adds the compiler
 # and the development headers; the runtime only needs the shared libraries the
 # compiled modules link against.
-FROM perl:5.40-slim-bookworm AS modules
+FROM perl:5.40-slim-threaded-bookworm AS modules
 
 ENV DEBIAN_FRONTEND=noninteractive \
-    PERL_MM_USE_DEFAULT=1
+    PERL_MM_USE_DEFAULT=1 \
+    MAKEFLAGS=-j4
 
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
@@ -25,16 +28,21 @@ RUN apt-get update \
 
 # Keep this list in step with scripts/jawnos_deps.pl @modules. Text::Unidecode
 # and Email::Sender are loaded by the domain layer but are not in that list.
+# The four pinned modules are the set this house runs; unpinned, cpanm pulled
+# Mojolicious 9.53 + Mojo::SQLite 4 + Minion 12 and logged encode_json prototype
+# warnings. Minion::Backend::SQLite 6 requires that newer trio, so it is pinned
+# to 5.0.0 with them.
 RUN cpanm --notest --force \
-      Mojolicious \
-      Mojo::SQLite \
-      Minion \
-      Minion::Backend::SQLite \
-      Mojo::IOLoop::ReadWriteFork \
-      Sereal::Encoder \
-      Sereal::Decoder \
+      Mojolicious@9.39 \
+      Mojo::SQLite@3.009 \
+      Minion@10.31 \
+      Minion::Backend::SQLite@5.0.0 \
+      Mojo::IOLoop::ReadWriteFork@2.02 \
+      Sereal::Encoder@5.004 \
+      Sereal::Decoder@5.004 \
+      CryptX@0.085 \
+      DBD::SQLite@1.76 \
       Crypt::Simple \
-      CryptX \
       WWW::Mechanize \
       Time::Duration \
       Date::Parse \
@@ -64,7 +72,7 @@ RUN cpanm --notest --force \
 # Node 18); only the binary is needed, not npm.
 FROM node:22-bookworm-slim AS node
 
-FROM perl:5.40-slim-bookworm
+FROM perl:5.40-slim-threaded-bookworm
 
 ENV DEBIAN_FRONTEND=noninteractive \
     LANG=C.UTF-8 \
@@ -80,6 +88,7 @@ RUN apt-get update \
       ca-certificates tzdata procps util-linux \
       openssl sqlite3 argon2 curl \
       openssh-client sshpass autossh rsync \
+      net-tools iproute2 \
       ffmpeg imagemagick tesseract-ocr qrencode zbar-tools \
       espeak sox zip unzip tmux \
       git \
@@ -103,7 +112,7 @@ COPY --chown=jawn:jawn . .
 # fresh volume starts empty.
 RUN mkdir -p /home/jawn/.president /app/database/backups /app/voices /app/releases \
  && chmod +x /app/docker/entrypoint.sh \
- && chown -R jawn:jawn /home/jawn /app/database /app/voices /app/releases /app/server
+ && chown -R jawn:jawn /home/jawn /app
 
 USER jawn
 

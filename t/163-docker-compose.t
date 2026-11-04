@@ -33,6 +33,10 @@ ok( defined $entry,      'docker/entrypoint.sh exists' );
 ok( defined $ignore,     '.dockerignore exists' );
 ok( -x "$root/docker/entrypoint.sh", 'the entry point is executable' );
 
+# President.pl does `use threads`; the non-threaded perl image built and then
+# died at boot with "This Perl not built to support threads".
+like( $dockerfile, qr/^FROM perl:\S*threaded\S*/m, 'the base Perl is the threaded build' );
+
 my $syntax = system( '/bin/sh', '-n', "$root/docker/entrypoint.sh" );
 is( $syntax, 0, 'the entry point parses under /bin/sh' );
 
@@ -49,8 +53,15 @@ my @dist = qw(
 	Date::Parse Hash::Merge Time::Duration Compress::Zlib Clone
 );
 for my $module (@dist) {
-	like( $dockerfile, qr/(?:^|\s)\Q$module\E(?:\s|\\|$)/m, "the image installs $module" );
+	like( $dockerfile, qr/(?:^|\s)\Q$module\E(?:\s|\\|@|$)/m, "the image installs $module" );
 }
+
+# The house runs this set; an unpinned build pulled Mojolicious 9.53 and its
+# companions, and President.pl's encode_json import warned on every worker.
+like( $dockerfile, qr/Mojolicious\@9\.39/,              'Mojolicious is pinned to the tested version' );
+like( $dockerfile, qr/Mojo::SQLite\@3\.009/,            'Mojo::SQLite is pinned with it' );
+like( $dockerfile, qr/Minion\@10\.31/,                  'Minion is pinned with it' );
+like( $dockerfile, qr/Minion::Backend::SQLite\@5\.0\.0/, 'the SQLite backend is pinned with Minion' );
 
 # The live database must never become an image layer; only the factory seed and
 # the schema are needed to build a fresh one.
