@@ -68,7 +68,9 @@ static const char *peer_want = NULL;
 static int voice = BT_VOICE_CVSD_16BIT;
 static int silence_level = 400;
 static int loopback = 0, fast = 0;
-static const char *pcm_dev = NULL;        /* BlueALSA PCM, e.g. bluealsa:DEV=...,PROFILE=hfp-hf */
+static const char *pcm_dev = NULL;
+static char pcm_error[128] = "";
+static long long last_complain = 0;        /* BlueALSA PCM, e.g. bluealsa:DEV=...,PROFILE=hfp-hf */
 static snd_pcm_t *pcm_cap = NULL, *pcm_play = NULL;
 static const char *downlink_path = NULL, *uplink_path = NULL;
 static FILE *uplink_raw = NULL;
@@ -82,7 +84,8 @@ static int have_accepted = 0;
 static int pcm_open_one(snd_pcm_t **pcm, snd_pcm_stream_t dir) {
 	if (*pcm) return 0;
 	snd_pcm_t *h = NULL;
-	if (snd_pcm_open(&h, pcm_dev, dir, SND_PCM_NONBLOCK) < 0) return -1;
+	int rc = snd_pcm_open(&h, pcm_dev, dir, SND_PCM_NONBLOCK);
+	if (rc < 0) { snprintf(pcm_error, sizeof(pcm_error), "%s", snd_strerror(rc)); return -1; }
 	if (snd_pcm_set_params(h, SND_PCM_FORMAT_S16_LE, SND_PCM_ACCESS_RW_INTERLEAVED,
 			1, RATE, 1, 40000) < 0) {
 		snd_pcm_close(h);
@@ -581,6 +584,14 @@ static int pcm_mode_main(void) {
 					emit("{\"event\":\"accepted\",\"peer\":\"pcm\"}");
 				}
 				else {
+					long long t = now_ns();
+					if (t - last_complain > 2000000000LL) {
+						last_complain = t;
+						int st = pcm_cap ? (int) snd_pcm_state(pcm_cap) : -1;
+						char msg[96];
+						snprintf(msg, sizeof(msg), "waiting for call audio (pcm state %d)", st);
+						emit_error(msg);
+					}
 					usleep(50000);
 					continue;
 				}
@@ -588,6 +599,13 @@ static int pcm_mode_main(void) {
 			else {
 				if (pcm_cap) { snd_pcm_close(pcm_cap); pcm_cap = NULL; }
 				if (pcm_play) { snd_pcm_close(pcm_play); pcm_play = NULL; }
+				long long t = now_ns();
+				if (t - last_complain > 5000000000LL) {
+					last_complain = t;
+					char msg[256];
+					snprintf(msg, sizeof(msg), "pcm open failed: %s", pcm_error[0] ? pcm_error : "unknown");
+					emit_error(msg);
+				}
 				usleep(200000);
 				continue;
 			}
@@ -595,7 +613,7 @@ static int pcm_mode_main(void) {
 
 		int n = pcm_read_chunk(chunk, sizeof(chunk));
 		if (n < 0) {
-			emit("{\event\":\"closed\",\"reason\":\"pcm\"}");
+			emit("{\"event\":\"closed\",\"reason\":\"pcm\"}");
 			if (rec_active) record_close(1, "link");
 			pcm_close_pair();
 			have_accepted = 0;

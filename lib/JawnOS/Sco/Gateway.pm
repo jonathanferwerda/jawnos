@@ -331,10 +331,10 @@ sub event {
 		$self->write_status();
 	}
 	elsif ($name eq 'error') {
+		# a complaint is not a death: the helper keeps trying (a PCM that is
+		# not up yet, a link that was refused) and the reason is kept for the
+		# pane. Only a close ends it.
 		$self->{'last_error'} = $event->{'error'} || 'helper error';
-		$self->{'state'} = 'idle';
-		$self->{'since'} = time;
-		$self->_reap();
 		$self->write_status();
 	}
 	else {
