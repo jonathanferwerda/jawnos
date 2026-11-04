@@ -641,7 +641,7 @@
 #cards_solitaire.sol31 .cards_win h2 { color: #fff; font-family: "MS Sans Serif", Tahoma, sans-serif; }
 
 /* ---- blackjack -------------------------------------------------------- */
-#cards_blackjack { --card-w: clamp(50px, 5.6vw, 82px); flex-direction: column; padding: 12px 16px 20px; }
+#cards_blackjack { --card-w: clamp(50px, 5.6vw, 82px); flex-direction: column; padding: 12px 16px 20px; overflow: auto; }
 #cards_blackjack .bj_table {
 	flex: 1 1 auto;
 	width: 100%;
@@ -717,10 +717,96 @@ body.cards_dragging { cursor: grabbing; user-select: none; }
 #cards .sol_column.drop_ok, #cards .sol_foundation.drop_ok { box-shadow: inset 0 0 0 2px #ffe66d; background: rgba(255, 230, 109, .14); }
 #cards .sol_column.drop_no, #cards .sol_foundation.drop_no { box-shadow: inset 0 0 0 2px #d9544d; background: rgba(217, 84, 77, .12); }
 
-@media (max-width: 640px) {
-	#cards .cards_bar { flex-wrap: wrap; }
-	#cards .cards_variant { padding: 6px 10px; }
-	#cards .tarot_history { width: 132px; }
+/* ---- narrow screens --------------------------------------------------- */
+/* The window is often the whole phone width; these rules let every table fit
+   without the deck bar eating the height. */
+@media (max-width: 760px) {
+	#cards .cards_bar { padding: 7px 9px; gap: 5px 8px; }
+	#cards .cards_brand { padding: 4px 6px; font-size: 13px; letter-spacing: .1em; }
+	#cards .cards_variant_bar {
+		order: 2;
+		width: 100%;
+		flex-wrap: nowrap;
+		overflow-x: auto;
+		scrollbar-width: none;
+		-webkit-overflow-scrolling: touch;
+	}
+	#cards .cards_variant_bar::-webkit-scrollbar { display: none; }
+	#cards .cards_variant { flex: 0 0 auto; padding: 6px 11px; font-size: 11px; }
+
+	/* chooser: one column, the whole sheet scrolls */
+	#cards .cards_chooser { padding: 14px; align-items: flex-start; }
+	#cards .cards_chooser_inner { margin: auto 0; }
+	#cards .cards_choices { grid-template-columns: 1fr; gap: 10px; }
+	#cards .cards_choice { padding: 12px 14px; }
+	#cards .deck_art { height: 58px; }
+
+	/* tarot: the card on top, the history as a strip underneath */
+	#cards_tarot { flex-direction: column; }
+	#cards .tarot_left { flex: 1 1 auto; min-height: 0; }
+	#cards .cards_modes {
+		flex-wrap: nowrap;
+		overflow-x: auto;
+		scrollbar-width: none;
+		padding: 8px 10px 4px;
+	}
+	#cards .cards_modes::-webkit-scrollbar { display: none; }
+	#cards .cards_mode { flex: 0 0 auto; padding: 6px 9px; }
+	#cards .cards_deal { flex: 0 0 auto; margin-left: 0; padding: 7px 12px; }
+	#cards .tarot_stage { padding: 4px 10px 8px; gap: 6px; }
+	#cards #deck_spread img { max-width: 32%; }
+	#cards #deck_card { max-width: 88%; }
+	#cards #card_title { font-size: 17px; }
+	#cards #card_description { font-size: 12px; line-height: 1.45; max-height: 16vh; }
+	#cards .tarot_history {
+		width: 100%;
+		max-height: 30vh;
+		border-left: 0;
+		border-top: 1px solid rgba(231, 200, 115, .18);
+	}
+	#cards .tarot_history h3 { padding: 8px 12px 4px; }
+	#cards #deck_history {
+		flex-direction: row;
+		overflow-x: auto;
+		overflow-y: hidden;
+		padding: 0 10px 10px;
+		gap: 8px;
+	}
+	#cards .history_draw { flex: 0 0 112px; padding: 5px; }
+	#cards .history_meta { font-size: 9px; }
+
+	/* solitaire: seven columns in the window */
+	#cards_solitaire { --card-w: clamp(30px, 11.4vw, 64px); --sol-gap: 2px; padding: 8px 4px 16px; gap: 8px; }
+	#cards_solitaire.sol31 .sol_board { padding: 10px 6px 18px; gap: 14px; }
+	#cards_solitaire.sol31 .sol_hud { padding: 4px 6px; gap: 8px; }
+	#cards_solitaire .sol_stat b { font-size: 13px; }
+	#cards_solitaire .sol_stat span { font-size: 8px; }
+	#cards_solitaire .sol_status { display: none; }
+	#cards_solitaire .sol_actions { margin-left: 0; width: 100%; gap: 4px; justify-content: flex-start; }
+	#cards_solitaire.sol31 .sol_btn { padding: 2px 7px; font-size: 10px; }
 	#cards .sol_pip { display: none; }
+	#cards .sol_corner { font-size: calc(var(--card-w) * .26); }
+
+	/* mahjong: twelve tiles across */
+	#cards_mahjong { --mj-tw: clamp(15px, 6.1vw, 34px); padding: 8px 4px 16px; gap: 8px; }
+	#cards .mj_banner { font-size: 11px; padding: 0 8px; }
+	#cards .mj_hud { gap: 8px; }
+	#cards .mj_tile .mj_glyph { font-size: calc(var(--mj-tw) * .5); }
+
+	/* blackjack: smaller cards, controls on their own rows */
+	#cards_blackjack { --card-w: clamp(38px, 10.2vw, 64px); padding: 8px 8px 14px; }
+	#cards_blackjack .bj_table { gap: 6px; }
+	#cards_blackjack .bj_hud { gap: 8px; padding: 4px 6px; }
+	#cards_blackjack .bj_hud .sol_status { width: 100%; text-align: center; }
+	#cards_blackjack .bj_divider { font-size: 10px; padding: 5px 8px; }
+	#cards_blackjack .bj_btn { padding: 7px 12px; font-size: 11px; }
+	#cards_blackjack .bj_chips { margin-left: 0; flex: 1 0 100%; justify-content: center; }
+	#cards_blackjack .bj_chip { width: 32px; height: 32px; font-size: 10px; }
+}
+
+@media (max-height: 520px) {
+	/* A short landscape phone: give the table the height, not the captions. */
+	#cards .tarot_history { max-height: 26vh; }
+	#cards_solitaire .sol_hud, #cards_blackjack .bj_hud { padding-top: 2px; padding-bottom: 2px; }
 }
 </style>

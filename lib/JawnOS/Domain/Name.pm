@@ -541,6 +541,72 @@ sub setting_grabber {
 	return $returner;
 }
 
+# The tarot draw lists are one list for the house, stored on the settings row
+# with device 'all'. A house from before that has only per-device rows: read this
+# device's row until a draw writes the house one, so the old list carries over
+# instead of disappearing. Names an early build escaped with terminal_name are
+# unescaped here, where every reader meets them.
+sub cards_list {
+	my ($setting) = @_;
+	return [] unless defined $setting && length $setting;
+	my $raw = &setting_grabber({ app => 'cards', setting => $setting, device => &warranty_device() });
+	if (!defined $raw || !length $raw) {
+		$raw = &setting_grabber({ app => 'cards', setting => $setting });
+	}
+	return [] unless defined $raw && length $raw;
+	my $list = eval { return decode_json $raw } || [];
+	return [] unless ref $list eq 'ARRAY';
+	foreach my $entry ( @{$list} ) {
+		next unless ref $entry eq 'HASH';
+		next unless ref $entry->{'cards'} eq 'ARRAY';
+		$entry->{'cards'} = [ map { (my $name = $_) =~ s/\\(.)/$1/g; $name } @{$entry->{'cards'}} ];
+	}
+	return $list;
+}
+
+# A draw list is a house fact, so the write lands on the row every machine reads.
+# The first write of a house that still has per-device rows seeds the house row
+# from all of them, so no device's draws are lost when the list becomes one.
+sub cards_list_write {
+	my ($setting, $list) = @_;
+	return unless defined $setting && length $setting && ref $list eq 'ARRAY';
+	my $house_raw = &setting_grabber({ app => 'cards', setting => $setting, device => &warranty_device() });
+	unless (defined $house_raw && length $house_raw) {
+		$list = &cards_list_merge($setting, $list);
+	}
+	my $json = eval { return encode_json $list } || '[]';
+	&setting_setter({ app => 'cards', setting => $setting, device => &warranty_device(), value => $json });
+	return 1;
+}
+
+# One list from every device row for a setting: newest first, one copy of a
+# draw, capped at the forty the app keeps.
+sub cards_list_merge {
+	my ($setting, $list) = @_;
+	my @all = @{ ref $list eq 'ARRAY' ? $list : [] };
+	my $rows = eval { return &db_select_simple('settings', ['value'], { app => 'cards', setting => $setting }) };
+	if ($rows) {
+		foreach my $row ( @{ $rows->hashes } ) {
+			my $decoded = eval { return decode_json($row->{'value'}) } || [];
+			push @all, @{$decoded} if ref $decoded eq 'ARRAY';
+		}
+	}
+	my (%seen, @merged);
+	foreach my $entry ( @all ) {
+		next unless ref $entry eq 'HASH';
+		if (ref $entry->{'cards'} eq 'ARRAY') {
+			$entry->{'cards'} = [ map { (my $name = $_) =~ s/\\(.)/$1/g; $name } @{$entry->{'cards'}} ];
+		}
+		my $key = join '|', ($entry->{'timestamp'} // ''), ($entry->{'title'} // ''),
+			join(',', @{ ref $entry->{'cards'} eq 'ARRAY' ? $entry->{'cards'} : [] });
+		next if $seen{$key}++;
+		push @merged, $entry;
+	}
+	@merged = sort { ($b->{'timestamp'} || 0) <=> ($a->{'timestamp'} || 0) } @merged;
+	splice @merged, 40;
+	return \@merged;
+}
+
 # A misc setting as this device should read it: this device's own row when it has
 # one, then the person's own ("Me"), then nothing - the caller names the
 # fallback. The configure panel's per-device blocks write the tab's row, so a

@@ -62,7 +62,7 @@ our ($APP, $ws_live_window, $encoder, $decoder, $tuuid, $thread_uuid, $universal
 
 sub card_of_the_day() {
 	my $card;
-	my $cards = eval { decode_json &subs::setting_grabber({ app => 'cards', setting => 'day' }) } || [];
+	my $cards = &subs::cards_list('day');
 	splice @{$cards}, 40;
 	my $last_card = $cards->[0];
 	$card = $last_card->{'title'};
@@ -75,8 +75,7 @@ sub card_of_the_day() {
 		my $car = { title => $new_card, timestamp => &subs::rightNow() };
 		$card = $car->{'title'};
 		unshift @{$cards}, $car;
-		my $jcards = encode_json $cards;
-		&subs::setting_setter({ app => 'cards', setting => 'day', value => $jcards });
+		&subs::cards_list_write('day', $cards);
 	}
 
 	return $card . '.png';
@@ -84,7 +83,7 @@ sub card_of_the_day() {
 
 sub card_of_the_week() {
 	my $card;
-	my $cards = eval { decode_json &subs::setting_grabber({ app => 'cards', setting => 'week' }) } || [];
+	my $cards = &subs::cards_list('week');
 	splice @{$cards}, 40;
 	my $last_card = $cards->[0] || {};
 	$card = $last_card->{'title'};
@@ -105,15 +104,14 @@ sub card_of_the_week() {
 		my $car = { title => $new_card, timestamp => &subs::rightNow() };
 		$card = $car->{'title'};
 		unshift @{$cards}, $car;
-		my $jcards = encode_json $cards;
-		&subs::setting_setter({ app => 'cards', setting => 'week', value => $jcards });
+		&subs::cards_list_write('week', $cards);
 	}
 	return $card . '.png';
 }
 
 sub card_of_the_month() {
 	my $card;
-	my $cards = eval { decode_json &subs::setting_grabber({ app => 'cards', setting => 'month' }) } || [];
+	my $cards = &subs::cards_list('month');
 	splice @{$cards}, 40;
 	my $last_card = $cards->[0];
 	$card = $last_card->{'title'};
@@ -125,15 +123,14 @@ sub card_of_the_month() {
 		my $car = { title => $new_card, timestamp => &subs::rightNow() };
 		$card = $car->{'title'};
 		unshift @{$cards}, $car;
-		my $jcards = encode_json $cards;
-		&subs::setting_setter({ app => 'cards', setting => 'month', value => $jcards });
+		&subs::cards_list_write('month', $cards);
 	}
 	return $card . '.png';
 }
 
 sub card_of_the_year() {
 	my $card;
-	my $cards = eval { decode_json &subs::setting_grabber({ app => 'cards', setting => 'year' }) } || [];
+	my $cards = &subs::cards_list('year');
 	splice @{$cards}, 40;
 	my $last_card = $cards->[0];
 	$card = $last_card->{'title'};
@@ -145,8 +142,7 @@ sub card_of_the_year() {
 		my $car = { title => $new_card, timestamp => &subs::rightNow() };
 		$card = $car->{'title'};
 		unshift @{$cards}, $car;
-		my $jcards = encode_json $cards;
-		&subs::setting_setter({ app => 'cards', setting => 'year', value => $jcards });
+		&subs::cards_list_write('year', $cards);
 	}
 	return $card . '.png';
 }

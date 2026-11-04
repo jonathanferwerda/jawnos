@@ -32,6 +32,8 @@ my @pages = (
 	[ 'templates/cards/mahjong.html.ep', qr/id="mj_board"/, 'the mahjong pane has a board' ],
 	[ 'templates/cards/blackjack.html.ep', qr/id="bj_dealer"/, 'the blackjack pane has a dealer hand' ],
 	[ 'templates/cards/blackjack.html.ep', qr/id="bj_hit"/, 'and the player actions' ],
+	[ 'templates/cards/style.html.ep', qr/\@media \(max-width: 760px\)/, 'the table has a phone layout' ],
+	[ 'templates/cards/style.html.ep', qr/#cards_tarot \{ flex-direction: column/, 'tarot stacks on a narrow screen' ],
 );
 foreach my $page (@pages) {
 	my ($file, $pattern, $label) = @{$page};

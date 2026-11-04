@@ -1,21 +1,23 @@
-# tests-for: lib/JawnOS/Controller/manager_misc9.pm scripts/cards_spread_files.pl templates/cards.html.ep templates/cards/tarot.html.ep public/js/manager/manager/12_cards.js
-# covers:    a spread is three deck files, not a stored montage. The history
-#            keeps the names, the template draws them side by side from
-#            /images/cards/, the reply carries the names, and the migration
-#            takes an old data-URI montage out of the row while leaving an
-#            entry whose card is no longer in the deck alone.
+# tests-for: lib/JawnOS/Controller/manager_misc9.pm lib/JawnOS/Domain/Name.pm lib/JawnOS/Manager/Part23.pm scripts/cards_spread_files.pl templates/cards.html.ep templates/cards/tarot.html.ep public/js/manager/manager/12_cards.js
+# covers:    the tarot draw lists are one list for the house (device 'all'), a
+#            read falls back to a device row until the house row exists, a
+#            spread is three deck files not a stored montage, names with spaces
+#            are unescaped and percent-encoded, and the page renders with every
+#            stash key its routes pass.
 
 use strict;
 use warnings;
 
 use FindBin;
-use lib "$FindBin::Bin/lib", "$FindBin::Bin/../lib";
+use lib "$FindBin::Bin/lib", "$FindBin::Bin/../lib", 't/lib';
 use Test::More;
-use File::Temp qw(tempdir);
+use File::Temp qw(tempdir tempfile);
 use File::Slurp qw(read_file);
-use Mojo::Template;
 use DBI;
 use JSON::PP ();
+use Mojo::Template;
+use Mojo::SQLite;
+use JawnOSTest;
 
 my $json = JSON::PP->new->utf8;
 my $dir = tempdir(CLEANUP => 1);
@@ -69,7 +71,8 @@ like($controller, qr/if \(ref \$spread_cards eq 'ARRAY'\) \{ \$entry\{'cards'\} 
 like($controller, qr/cards => \$spread_cards/, 'and the reply carries the three names');
 unlike($controller, qr/card_spread_stream/, 'no montage is built for the spread');
 unlike($controller, qr/&subs::terminal_name/, 'a deck file name is not shell-escaped on the way into a URL');
-like($controller, qr/sub cards_history_clean/, 'stored names are unescaped when a history is read');
+like($controller, qr/&subs::cards_list\(/, 'a draw list comes from the house list');
+like($controller, qr/&subs::cards_list_write\(/, 'and a draw writes it back to the house row');
 
 # A template is compiled strictly with the stash keys it is given, so a render
 # that leaves one out is a 500 on that route, not a missing value. The deal
@@ -122,5 +125,54 @@ is($@, '', 'the cards page renders with the stash its routes pass');
 like($rendered // '', qr/id="cards_blackjack"/, 'and the blackjack pane is on the page');
 like($rendered // '', qr{src="/images/cards/the%20fool\.png"}, 'a card name with a space is percent-encoded');
 like($rendered // '', qr{data-cards="the fool\.png\|the star\.png\|the moon\.png"}, 'the history keeps the names for the browser');
+
+# ---------------------------------------------------------- one list per house
+# The draw lists live on the settings row every machine reads (device 'all'). A
+# house from before that still has only a device row; it is read until a draw
+# writes the house row, and the escaped names an early build left are repaired.
+my ($bfh, $carddb) = tempfile('jawnos-cards-house-XXXXXX', TMPDIR => 1, UNLINK => 1);
+close $bfh;
+my $csql = Mojo::SQLite->new('sqlite:' . $carddb);
+my $cdb = $csql->db;
+$cdb->query('create table settings (setting text, value text, timestamp text, '
+	. 'id integer primary key autoincrement, app text, server_time text, device text, '
+	. 'browser_tab_id text, uuid text, ost text, subsetting text)');
+my @cst = stat($carddb);
+$gb::database_holder = {
+	server_time => &subs::rightNow(),
+	database => $carddb,
+	db => $cdb,
+	dbh => $cdb->dbh,
+	sql => $csql,
+	pid => $$,
+	dev => $cst[0],
+	ino => $cst[1],
+};
+$subs::say_quiet = 1;
+my $now = &subs::rightNow();
+
+my $legacy = $json->encode([ { title => 'The Fool', timestamp => 5, cards => [ 'the\\ fool.png' ] } ]);
+&subs::db_insert('settings', {
+	app => 'cards', setting => 'free', value => $legacy, device => &subs::device_setter(),
+	timestamp => $now, server_time => $now, uuid => 'cards-device-row',
+});
+my $list = &subs::cards_list('free');
+is(scalar @{$list}, 1, 'a device list is read until the house has one');
+is($list->[0]->{'cards'}[0], 'the fool.png', 'and its escaped names are repaired');
+
+my $laptop = $json->encode([ { title => 'The Moon', timestamp => 7 } ]);
+&subs::db_insert('settings', {
+	app => 'cards', setting => 'free', value => $laptop, device => 'laptop',
+	timestamp => $now, server_time => $now, uuid => 'cards-laptop-row',
+});
+
+&subs::cards_list_write('free', [ { title => 'The Star', timestamp => 6 } ]);
+my $house = $cdb->query("select value from settings where app='cards' and setting='free' and device='all'")->hashes;
+is(scalar @{$house}, 1, 'a draw write makes the house row');
+is_deeply(&subs::cards_list('free'), [
+	{ title => 'The Moon', timestamp => 7 },
+	{ title => 'The Star', timestamp => 6 },
+	{ title => 'The Fool', timestamp => 5, cards => [ 'the fool.png' ] },
+], 'and every device reads one house list, newest first, with no draw lost');
 
 done_testing();
