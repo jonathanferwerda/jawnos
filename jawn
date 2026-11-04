@@ -179,7 +179,7 @@ my $dump_dir = &home('~/.president');
 # moment before or after the master starts; deleting it here made the manager
 # take the permanent wake lock back and lose the batched-wake markers and the
 # navigation pace until the next beat.
-my %handshake = map { $_ => 1 } qw(wake_ready wake_lock_released utility_idle music_stream_wake gps_pace location.json verify-manifest restart.json restart.log restart.log.1 pending_restart coding.pid coding-queue.db coding-queue.db-wal coding-queue.db-shm coding-queue.db-journal);
+my %handshake = map { $_ => 1 } qw(wake_ready wake_lock_released utility_idle music_stream_wake gps_pace location.json verify-manifest restart.json restart.log restart.log.1 pending_restart coding.pid coding-queue.db coding-queue.db-wal coding-queue.db-shm coding-queue.db-journal sco.sock sco.json sco);
 if (-e $dump_dir && opendir(my $dump, $dump_dir)) {
 	while (my $entry = readdir($dump)) {
 		next if $entry eq '.' || $entry eq '..' || $handshake{$entry};
@@ -1022,7 +1022,7 @@ sub sweep_orphans {
 	opendir(my $procs, '/proc') or return 0;
 	my @pids = grep { /^[0-9]+$/ } readdir $procs;
 	closedir $procs;
-	my $ours = qr/President\.pl|Manager\.pl|Websocket\.pl|teletype\.pl|watch\.pl|Music\.pl|Alarm\.pl/;
+	my $ours = qr/President\.pl|Manager\.pl|Websocket\.pl|teletype\.pl|watch\.pl|Music\.pl|Alarm\.pl|Sco\.pl/;
 	my $supervised = qr/(?:^|[\/\s])jawn(?:\s|$)|President\.pl|Manager\.pl|Websocket\.pl|teletype\.pl|watch\.pl/;
 	foreach my $pid (@pids) {
 		next if $pid == $$;

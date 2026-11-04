@@ -793,6 +793,15 @@ sub manager_starter() {
 
 	my $uthr;
 	my @results;
+	# The Bluetooth SCO gateway. A machine that has the helper built (the laptop
+	# now, the Odroid Go in a bag later) also has an adapter to hold the link;
+	# one that does not pays nothing and answers "not built" on the routes.
+	if (-x './perl/sco/sco_helper') {
+		&subs::subprocessor(sub {
+			$ENV{PURPOSE} = 'sco';
+			require './perl/Sco.pl';
+		}, { name => 'SCO Gateway' });
+	}
 	my $f_status = read_file($status_file);
 	my $socket_watch = &socket_watch($dump_dir . '/memory');
 	if (-e $status_file) {

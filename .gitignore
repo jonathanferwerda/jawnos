@@ -60,3 +60,7 @@ database/.icons/
 # the machine's own signatorial, mirrored beside the database so a restored
 # database (or a run with the wrong HOME) cannot change this machine's identity
 database/.jawnos_signatorial_id
+
+# --- The SCO gateway helper: built per machine by scripts/build_sco.pl ---
+# --- (it links the local BlueZ), so the source is tracked and the binary is not. ---
+perl/sco/sco_helper

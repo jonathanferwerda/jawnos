@@ -54,6 +54,9 @@ our %WARRANTY = (
 	'Pro WS Server'                  => 'forever',
 	'Pro Main Server'                => 'forever',
 	'Pro Alarm Server'               => 'forever',
+	# Holds the Bluetooth SCO link for as long as a call lasts; a caller waiting
+	# to say their name is not a slow job, so it has no deadline of its own.
+	'SCO Gateway'                    => 'forever',
 	'Watch Server'                   => 'forever',
 	'TTY Server'                     => 'forever',
 	'TTY WS Server'                  => 'forever',
