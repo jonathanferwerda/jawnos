@@ -1,0 +1,20 @@
+<section id="cards_mahjong" class="cards_pane<% if ($active) { %> active<% } %>">
+	<div class="mj_hud">
+		<div class="sol_stat"><span><%= &subs::ui('Tiles left') %></span><b id="mj_left">0</b></div>
+		<div class="sol_stat"><span><%= &subs::ui('Moves') %></span><b id="mj_moves">0</b></div>
+		<div class="sol_stat"><span><%= &subs::ui('Time') %></span><b id="mj_time">0:00</b></div>
+		<div class="sol_actions">
+			<button type="button" class="mj_btn" id="mj_new"><%= &subs::ui('New game') %></button>
+			<button type="button" class="mj_btn ghost" id="mj_shuffle"><%= &subs::ui('Shuffle') %></button>
+		</div>
+	</div>
+	<div class="mj_banner" id="mj_banner"><%= &subs::ui('Pair two free tiles that match. Free means no tile immediately left or right of it.') %></div>
+	<div class="mj_board" id="mj_board"></div>
+	<div id="mj_win" class="cards_win">
+		<div class="cards_win_inner">
+			<h2><%= &subs::ui('The turtle is clear') %></h2>
+			<p id="mj_win_note"></p>
+			<button type="button" class="mj_btn" id="mj_again"><%= &subs::ui('Shuffle again') %></button>
+		</div>
+	</div>
+</section>

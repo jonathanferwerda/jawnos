@@ -1,0 +1,533 @@
+<style>
+/* The Cards app is a card table: one felt surface, one brass hairline, and the
+   deck's own colours on top of it. Everything is scoped under #cards so the
+   games can use plain names without touching the rest of the panel. */
+#cards.cards_app {
+	--felt-0: #176049;
+	--felt-1: #0d4433;
+	--felt-2: #06231b;
+	--gold: #e7c873;
+	--gold-dim: #a98f4d;
+	--paper: #fbf7ec;
+	--ink: #f6f2e6;
+	--muted: #b9cbbf;
+	--danger: #d9544d;
+	--card-w: clamp(48px, 6.4vw, 88px);
+	--card-h: calc(var(--card-w) * 1.42);
+	--sol-gap: clamp(5px, 0.9vw, 13px);
+	--tile-w: clamp(21px, 4.2vw, 52px);
+	position: relative;
+	flex: 1 1 auto;
+	min-width: 0;
+	min-height: 0;
+	display: flex;
+	flex-direction: column;
+	color: var(--ink);
+	font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+	background:
+		radial-gradient(125% 105% at 50% 0%, var(--felt-0), var(--felt-1) 46%, var(--felt-2) 100%);
+	overflow: hidden;
+}
+#cards.cards_app::before {
+	content: "";
+	position: absolute;
+	inset: 0;
+	pointer-events: none;
+	opacity: .35;
+	background-image: repeating-linear-gradient(45deg, rgba(255,255,255,.025) 0 1px, transparent 1px 4px);
+}
+#cards .cards_bar {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	padding: 9px 16px;
+	border-bottom: 1px solid rgba(231, 200, 115, .22);
+	background: linear-gradient(rgba(0,0,0,.26), rgba(0,0,0,.04));
+	z-index: 5;
+	flex: 0 0 auto;
+}
+#cards .cards_brand {
+	appearance: none;
+	border: 0;
+	background: transparent;
+	color: var(--gold);
+	font: 700 15px/1 Georgia, "Times New Roman", serif;
+	letter-spacing: .16em;
+	text-transform: uppercase;
+	padding: 6px 10px;
+	border-radius: 8px;
+	cursor: pointer;
+}
+#cards .cards_brand:hover { background: rgba(231, 200, 115, .12); }
+#cards .cards_variant_bar {
+	display: flex;
+	gap: 4px;
+	padding: 3px;
+	border-radius: 999px;
+	background: rgba(0, 0, 0, .24);
+	border: 1px solid rgba(231, 200, 115, .16);
+}
+#cards .cards_variant {
+	appearance: none;
+	border: 0;
+	background: transparent;
+	color: var(--muted);
+	font: 600 12px/1 system-ui, sans-serif;
+	letter-spacing: .04em;
+	padding: 7px 14px;
+	border-radius: 999px;
+	cursor: pointer;
+	transition: background .15s, color .15s;
+}
+#cards .cards_variant:hover { color: var(--ink); background: rgba(255,255,255,.06); }
+#cards .cards_variant.active { background: var(--gold); color: #1d1608; }
+
+#cards .cards_body { position: relative; flex: 1 1 auto; min-height: 0; display: flex; }
+#cards .cards_pane { display: none; flex: 1 1 auto; min-width: 0; min-height: 0; }
+#cards .cards_pane.active { display: flex; }
+
+/* ---- chooser ---------------------------------------------------------- */
+#cards .cards_chooser {
+	position: absolute;
+	inset: 0;
+	display: none;
+	align-items: center;
+	justify-content: center;
+	padding: 22px;
+	z-index: 20;
+	overflow: auto;
+	background: radial-gradient(90% 80% at 50% 30%, rgba(6, 35, 27, .55), rgba(3, 17, 13, .9));
+}
+#cards .cards_chooser.open { display: flex; }
+#cards .cards_chooser_inner { width: min(820px, 100%); text-align: center; }
+#cards .cards_chooser h1 {
+	margin: 0 0 6px;
+	font: 400 clamp(22px, 3vw, 32px)/1.15 Georgia, "Times New Roman", serif;
+	letter-spacing: .04em;
+	color: var(--gold);
+}
+#cards .cards_lead { margin: 0 auto 22px; max-width: 520px; color: var(--muted); font-size: 13px; line-height: 1.5; }
+#cards .cards_choices {
+	display: grid;
+	grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+	gap: 14px;
+}
+#cards .cards_choice {
+	appearance: none;
+	text-align: left;
+	padding: 16px 16px 14px;
+	border-radius: 14px;
+	border: 1px solid rgba(231, 200, 115, .2);
+	background: linear-gradient(rgba(255,255,255,.06), rgba(255,255,255,.02));
+	color: var(--ink);
+	cursor: pointer;
+	transition: transform .15s, border-color .15s, background .15s;
+}
+#cards .cards_choice:hover {
+	transform: translateY(-3px);
+	border-color: rgba(231, 200, 115, .55);
+	background: linear-gradient(rgba(255,255,255,.1), rgba(255,255,255,.03));
+}
+#cards .cards_choice h2 { margin: 12px 0 4px; font: 600 16px/1.2 system-ui, sans-serif; letter-spacing: .02em; }
+#cards .cards_choice p { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.45; }
+#cards .deck_art { height: 72px; display: flex; align-items: center; justify-content: center; gap: 6px; position: relative; }
+#cards .deal_art i {
+	display: block;
+	width: 30px;
+	height: 43px;
+	border-radius: 4px;
+	background: var(--paper);
+	border: 1px solid #cfc7b4;
+	box-shadow: 0 3px 8px rgba(0,0,0,.4);
+	position: relative;
+}
+#cards .deal_art i::after {
+	content: "\2660";
+	position: absolute;
+	inset: 0;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	color: #22252b;
+	font-size: 16px;
+}
+#cards .deal_art i:nth-child(1) { transform: rotate(-12deg) translateX(8px); background: #123a2c; }
+#cards .deal_art i:nth-child(1)::after { content: ""; }
+#cards .deal_art i:nth-child(2) { transform: translateY(-4px); z-index: 1; }
+#cards .deal_art i:nth-child(3) { transform: rotate(12deg) translateX(-8px); }
+#cards .deal_art i:nth-child(3)::after { content: "\2665"; color: #b02530; }
+#cards .tile_art { display: grid; grid-template-columns: repeat(3, 21px); gap: 4px; }
+#cards .tile_art i {
+	display: block;
+	width: 21px;
+	height: 28px;
+	border-radius: 3px;
+	background: linear-gradient(#fffdf4, #e9e1cc);
+	border: 1px solid #b7ab8d;
+	border-bottom-width: 2px;
+	box-shadow: 0 2px 4px rgba(0,0,0,.35);
+}
+#cards .tarot_art i {
+	display: block;
+	width: 27px;
+	height: 43px;
+	border-radius: 4px;
+	background: linear-gradient(#2a1b4d, #140b2b);
+	border: 1px solid #6b57a0;
+	box-shadow: 0 3px 8px rgba(0,0,0,.45);
+	position: relative;
+}
+#cards .tarot_art i::after {
+	content: "\2726";
+	position: absolute;
+	inset: 0;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	color: var(--gold);
+	font-size: 15px;
+}
+#cards .tarot_art i:nth-child(1) { transform: rotate(-9deg) translateX(6px); }
+#cards .tarot_art i:nth-child(2) { transform: translateY(-5px); z-index: 1; }
+#cards .tarot_art i:nth-child(3) { transform: rotate(9deg) translateX(-6px); }
+
+/* ---- tarot ------------------------------------------------------------ */
+#cards_tarot { flex-direction: row; }
+#cards .tarot_left { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; }
+#cards .cards_modes {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px;
+	padding: 12px 16px 4px;
+	flex: 0 0 auto;
+}
+#cards .cards_mode {
+	appearance: none;
+	background: rgba(0, 0, 0, .18);
+	border: 1px solid rgba(255,255,255,.12);
+	color: var(--muted);
+	font: 500 11px/1 system-ui, sans-serif;
+	letter-spacing: .03em;
+	padding: 7px 11px;
+	border-radius: 999px;
+	cursor: pointer;
+	transition: background .15s, color .15s, border-color .15s;
+}
+#cards .cards_mode:hover { color: var(--ink); border-color: rgba(231, 200, 115, .4); }
+#cards .cards_mode[status="enabled"] {
+	background: rgba(231, 200, 115, .16);
+	border-color: var(--gold);
+	color: var(--gold);
+}
+#cards .tarot_stage {
+	flex: 1 1 auto;
+	min-height: 0;
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	justify-content: center;
+	gap: 12px;
+	padding: 8px 18px 18px;
+}
+#cards .tarot_art { flex: 1 1 auto; min-height: 0; width: 100%; display: flex; align-items: center; justify-content: center; }
+#cards #deck_spread { display: flex; gap: clamp(8px, 1.6vw, 22px); align-items: center; justify-content: center; width: 100%; }
+#cards #deck_spread img {
+	max-height: min(56vh, 500px);
+	max-width: 31%;
+	width: auto;
+	height: auto;
+	border-radius: 10px;
+	border: 1px solid rgba(231, 200, 115, .35);
+	box-shadow: 0 12px 30px rgba(0,0,0,.55), 0 0 0 1px rgba(0,0,0,.3);
+}
+#cards #deck_card {
+	max-height: min(56vh, 500px);
+	max-width: 78%;
+	width: auto;
+	border-radius: 10px;
+	border: 1px solid rgba(231, 200, 115, .35);
+	box-shadow: 0 12px 30px rgba(0,0,0,.55), 0 0 0 1px rgba(0,0,0,.3);
+	cursor: pointer;
+}
+#cards .tarot_caption { text-align: center; max-width: 640px; }
+#cards #card_title {
+	margin: 0;
+	font: 400 clamp(17px, 2.1vw, 24px)/1.25 Georgia, "Times New Roman", serif;
+	color: var(--gold);
+	letter-spacing: .03em;
+	cursor: pointer;
+}
+#cards #card_description {
+	margin: 8px auto 0;
+	max-width: 560px;
+	color: var(--ink);
+	font-size: 12.5px;
+	line-height: 1.55;
+	cursor: pointer;
+	max-height: 22vh;
+	overflow: auto;
+}
+#cards .tarot_history {
+	width: clamp(150px, 22vw, 250px);
+	flex: 0 0 auto;
+	border-left: 1px solid rgba(231, 200, 115, .16);
+	background: rgba(0, 0, 0, .16);
+	display: flex;
+	flex-direction: column;
+	min-height: 0;
+}
+#cards .tarot_history h3 {
+	margin: 0;
+	padding: 12px 14px 8px;
+	font: 600 10.5px/1 system-ui, sans-serif;
+	letter-spacing: .16em;
+	text-transform: uppercase;
+	color: var(--gold-dim);
+}
+#cards #deck_history {
+	flex: 1 1 auto;
+	min-height: 0;
+	overflow-y: auto;
+	padding: 0 10px 18px;
+	display: flex;
+	flex-direction: column;
+	gap: 9px;
+}
+#cards .history_draw {
+	border-radius: 9px;
+	padding: 7px;
+	background: rgba(255,255,255,.045);
+	border: 1px solid rgba(255,255,255,.07);
+	cursor: pointer;
+	transition: background .15s, border-color .15s;
+}
+#cards .history_draw:hover { background: rgba(255,255,255,.09); border-color: rgba(231,200,115,.35); }
+#cards .history_spread { display: flex; gap: 4px; }
+#cards .history_spread img { width: calc((100% - 8px) / 3); border-radius: 4px; display: block; cursor: pointer; }
+#cards .history_single img { width: 100%; border-radius: 5px; display: block; cursor: pointer; }
+#cards .history_meta {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 6px;
+	margin-top: 6px;
+	color: var(--muted);
+	font-size: 10px;
+	line-height: 1.3;
+}
+#cards .history_meta .card_description_icon {
+	width: 14px;
+	height: 14px;
+	flex: 0 0 auto;
+	cursor: pointer;
+	opacity: .8;
+}
+#cards .history_meta .card_description_icon:hover { opacity: 1; }
+
+/* ---- solitaire -------------------------------------------------------- */
+#cards_solitaire { flex-direction: column; padding: 12px 14px 22px; gap: 16px; overflow: auto; }
+#cards .sol_hud {
+	display: flex;
+	align-items: center;
+	gap: 18px;
+	flex-wrap: wrap;
+	flex: 0 0 auto;
+}
+#cards .sol_stat { display: flex; flex-direction: column; gap: 2px; }
+#cards .sol_stat span {
+	font: 600 9.5px/1 system-ui, sans-serif;
+	letter-spacing: .14em;
+	text-transform: uppercase;
+	color: var(--gold-dim);
+}
+#cards .sol_stat b { font: 600 19px/1.1 system-ui, sans-serif; color: var(--gold); font-variant-numeric: tabular-nums; }
+#cards .sol_status { color: var(--muted); font-size: 12px; font-style: italic; }
+#cards .sol_actions { margin-left: auto; display: flex; gap: 8px; flex-wrap: wrap; }
+#cards .sol_btn, #cards .mj_btn {
+	appearance: none;
+	background: rgba(231, 200, 115, .1);
+	border: 1px solid rgba(231, 200, 115, .45);
+	color: var(--gold);
+	font: 600 11px/1 system-ui, sans-serif;
+	letter-spacing: .04em;
+	padding: 8px 13px;
+	border-radius: 8px;
+	cursor: pointer;
+	transition: background .15s, color .15s;
+}
+#cards .sol_btn:hover, #cards .mj_btn:hover { background: var(--gold); color: #1d1608; }
+#cards .sol_btn.ghost, #cards .mj_btn.ghost { background: transparent; border-color: rgba(255,255,255,.18); color: var(--muted); }
+#cards .sol_btn.ghost:hover, #cards .mj_btn.ghost:hover { color: var(--ink); border-color: rgba(255,255,255,.4); background: rgba(255,255,255,.06); }
+#cards .sol_board { display: flex; flex-direction: column; gap: calc(var(--card-h) * .38); align-items: center; flex: 0 0 auto; }
+#cards .sol_row {
+	display: grid;
+	grid-template-columns: repeat(7, var(--card-w));
+	gap: var(--sol-gap);
+	justify-content: center;
+	align-items: start;
+}
+#cards .sol_gap { width: var(--card-w); height: var(--card-h); }
+#cards .sol_pile { position: relative; width: var(--card-w); height: var(--card-h); }
+#cards .sol_slot {
+	position: absolute;
+	inset: 0;
+	border: 1.5px dashed rgba(231, 200, 115, .28);
+	border-radius: calc(var(--card-w) * .09);
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	color: rgba(231, 200, 115, .3);
+	font-size: calc(var(--card-w) * .34);
+	background: rgba(0,0,0,.1);
+}
+#cards .sol_column { position: relative; width: var(--card-w); min-height: calc(var(--card-h) * 2.4); }
+#cards .sol_column .sol_slot { inset: 0 auto auto 0; width: var(--card-w); height: var(--card-h); }
+#cards .sol_recycle {
+	position: absolute;
+	inset: 0;
+	border-radius: calc(var(--card-w) * .09);
+	border: 1.5px dashed rgba(231, 200, 115, .38);
+	background: rgba(0,0,0,.14);
+	color: var(--gold);
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	font-size: calc(var(--card-w) * .36);
+	cursor: pointer;
+}
+#cards .sol_count {
+	position: absolute;
+	right: -5px;
+	top: -5px;
+	min-width: 17px;
+	height: 17px;
+	padding: 0 4px;
+	border-radius: 9px;
+	background: var(--felt-2);
+	border: 1px solid rgba(231,200,115,.5);
+	color: var(--gold);
+	font: 600 9.5px/15px system-ui, sans-serif;
+	text-align: center;
+	box-sizing: border-box;
+}
+#cards .sol_card {
+	width: var(--card-w);
+	height: var(--card-h);
+	border-radius: calc(var(--card-w) * .09);
+	border: 1px solid #cfc7b4;
+	background: var(--paper);
+	color: #22252b;
+	box-shadow: 0 3px 7px rgba(0,0,0,.4);
+	position: relative;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	user-select: none;
+	cursor: pointer;
+	transition: box-shadow .1s, transform .1s;
+	box-sizing: border-box;
+}
+#cards .sol_card.red { color: #b02530; }
+#cards .sol_card.down {
+	background:
+		repeating-linear-gradient(45deg, #123a2c 0 4px, #0d2f24 4px 8px);
+	border-color: #0a2a1f;
+	box-shadow: 0 2px 5px rgba(0,0,0,.5), inset 0 0 0 2px rgba(231,200,115,.16);
+	cursor: default;
+}
+#cards .sol_card.down::after {
+	content: "";
+	width: 40%;
+	height: 40%;
+	border: 1px solid rgba(231,200,115,.28);
+	border-radius: 3px;
+}
+#cards .sol_corner {
+	position: absolute;
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	font-weight: 700;
+	font-size: calc(var(--card-w) * .2);
+	line-height: .95;
+}
+#cards .sol_corner.tl { top: 4%; left: 6%; }
+#cards .sol_corner.br { bottom: 4%; right: 6%; transform: rotate(180deg); }
+#cards .sol_pip { font-size: calc(var(--card-w) * .4); line-height: 1; }
+#cards .sol_column .sol_card { margin-top: calc(var(--card-h) * -.7); }
+#cards .sol_column .sol_card:first-child { margin-top: 0; }
+#cards .sol_column .sol_card.up { margin-top: calc(var(--card-h) * -.52); }
+#cards .sol_card.sel {
+	box-shadow: 0 0 0 3px var(--gold), 0 6px 14px rgba(0,0,0,.5);
+	transform: translateY(-3px);
+}
+#cards .sol_waste .sol_card { position: absolute; top: 0; left: 0; }
+#cards .sol_waste .sol_slot { font-size: calc(var(--card-w) * .22); letter-spacing: .06em; }
+
+/* ---- mahjong ---------------------------------------------------------- */
+#cards_mahjong { flex-direction: column; align-items: center; padding: 12px 12px 24px; gap: 12px; overflow: auto; }
+#cards .mj_hud { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; justify-content: center; flex: 0 0 auto; }
+#cards .mj_banner { color: var(--muted); font-size: 12px; text-align: center; max-width: 520px; line-height: 1.45; min-height: 17px; }
+#cards .mj_board { display: flex; flex-direction: column; gap: calc(var(--tile-w) * .12); align-items: center; padding: 6px; flex: 0 0 auto; }
+#cards .mj_row { display: flex; gap: calc(var(--tile-w) * .12); }
+#cards .mj_tile {
+	appearance: none;
+	width: var(--tile-w);
+	height: calc(var(--tile-w) * 1.3);
+	border-radius: calc(var(--tile-w) * .12);
+	border: 1px solid #b7ab8d;
+	border-bottom-width: 3px;
+	background: linear-gradient(#fffdf4, #e9e1cc);
+	color: #24221c;
+	font-family: inherit;
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	justify-content: center;
+	padding: 0;
+	cursor: pointer;
+	box-shadow: 0 2px 3px rgba(0,0,0,.35);
+	transition: transform .12s, opacity .22s, box-shadow .12s;
+	box-sizing: border-box;
+}
+#cards .mj_tile .mj_glyph { font-size: calc(var(--tile-w) * .48); line-height: 1; font-weight: 700; }
+#cards .mj_tile .mj_label { font-size: calc(var(--tile-w) * .19); line-height: 1.2; opacity: .7; letter-spacing: .08em; }
+#cards .mj_tile.free:hover { transform: translateY(-2px); box-shadow: 0 5px 9px rgba(0,0,0,.45); }
+#cards .mj_tile.blocked { filter: saturate(.5) brightness(.8); cursor: default; }
+#cards .mj_tile.sel { outline: 3px solid var(--gold); outline-offset: -1px; transform: translateY(-3px); }
+#cards .mj_tile.gone { opacity: 0; transform: scale(.55); pointer-events: none; }
+#cards .mj_tile.shake { animation: cards_shake .28s; }
+#cards .mj_char { color: #a3242d; }
+#cards .mj_bam { color: #1c6b3a; }
+#cards .mj_dot { color: #1f4f9e; }
+#cards .mj_wind { color: #34302a; }
+#cards .mj_dragon { color: #a3242d; }
+#cards .mj_flower { color: #9a6b12; }
+@keyframes cards_shake {
+	0%, 100% { transform: translateX(0); }
+	25% { transform: translateX(-3px); }
+	75% { transform: translateX(3px); }
+}
+
+/* ---- win overlays ----------------------------------------------------- */
+#cards .cards_win {
+	position: absolute;
+	inset: 0;
+	display: none;
+	align-items: center;
+	justify-content: center;
+	z-index: 15;
+	background: radial-gradient(80% 80% at 50% 40%, rgba(8, 48, 36, .82), rgba(3, 16, 12, .94));
+}
+#cards .cards_win.show { display: flex; }
+#cards .cards_win_inner { text-align: center; max-width: 420px; padding: 24px; }
+#cards .cards_win h2 { margin: 0 0 6px; font: 400 30px/1.1 Georgia, serif; color: var(--gold); letter-spacing: .04em; }
+#cards .cards_win p { margin: 0 0 18px; color: var(--muted); font-size: 13px; line-height: 1.5; }
+
+@media (max-width: 640px) {
+	#cards .cards_bar { flex-wrap: wrap; }
+	#cards .cards_variant { padding: 6px 10px; }
+	#cards .tarot_history { width: 132px; }
+	#cards .sol_pip { display: none; }
+}
+</style>

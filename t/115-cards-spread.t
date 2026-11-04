@@ -1,8 +1,9 @@
-# tests-for: lib/JawnOS/Controller/manager_misc9.pm scripts/cards_spread_files.pl templates/cards.html.ep
+# tests-for: lib/JawnOS/Controller/manager_misc9.pm scripts/cards_spread_files.pl templates/cards.html.ep templates/cards/tarot.html.ep public/js/manager/manager/12_cards.js
 # covers:    a spread is three deck files, not a stored montage. The history
-#            keeps the names, the template draws them from /images/cards/, and
-#            the migration takes an old data-URI montage out of the row while
-#            leaving an entry whose card is no longer in the deck alone.
+#            keeps the names, the template draws them side by side from
+#            /images/cards/, the reply carries the names, and the migration
+#            takes an old data-URI montage out of the row while leaving an
+#            entry whose card is no longer in the deck alone.
 
 use strict;
 use warnings;
@@ -53,11 +54,18 @@ is_deeply($json->decode($free), [ { title => 'keep', stream => 'data:image/png;b
 $dbh->disconnect;
 
 my $template = read_file("$FindBin::Bin/../templates/cards.html.ep");
-like($template, qr/ref \$his->\{'cards'\} eq 'ARRAY'/, 'the history draws a spread from its file names');
+my $tarot = read_file("$FindBin::Bin/../templates/cards/tarot.html.ep");
+my $js = read_file("$FindBin::Bin/../public/js/manager/manager/12_cards.js");
+like($tarot, qr/ref \$his->\{'cards'\} eq 'ARRAY'/, 'the history draws a spread from its file names');
+like($tarot, qr/id="deck_spread"/, 'the spread has a row of its own');
+like($js, qr/function cardsShowSpread/, 'the browser draws the three pictures side by side');
+like($js, qr/response\.cards/, 'from the names the reply carries');
+like($template, qr/cards\/tarot/, 'the page includes the tarot pane');
 
 my $controller = read_file("$FindBin::Bin/../lib/JawnOS/Controller/manager_misc9.pm");
 like($controller, qr/if \(ref \$spread_cards eq 'ARRAY'\) \{ \$entry\{'cards'\} = \$spread_cards \}/,
 	'a new spread stores names, not a montage');
-like($controller, qr/sub card_spread_stream/, 'the montage is built for the reply only');
+like($controller, qr/cards => \$spread_cards/, 'and the reply carries the three names');
+unlike($controller, qr/card_spread_stream/, 'no montage is built for the spread');
 
 done_testing();

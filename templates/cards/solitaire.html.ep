@@ -1,0 +1,39 @@
+
+<section id="cards_solitaire" class="cards_pane<% if ($active) { %> active<% } %>" data-bank="<%= defined $bank && length $bank ? $bank : 0 %>">
+	<div class="sol_hud">
+		<div class="sol_stat"><span><%= &subs::ui('Bank') %></span><b id="sol_bank">0</b></div>
+		<div class="sol_stat"><span><%= &subs::ui('Moves') %></span><b id="sol_moves">0</b></div>
+		<div class="sol_status" id="sol_status"><%= &subs::ui('Deal three. Cards keep their value; the bank keeps every round.') %></div>
+		<div class="sol_actions">
+			<button type="button" class="sol_btn" id="sol_new"><%= &subs::ui('New game') %></button>
+			<button type="button" class="sol_btn ghost" id="sol_undo"><%= &subs::ui('Undo') %></button>
+			<button type="button" class="sol_btn ghost" id="sol_reset"><%= &subs::ui('Reset bank') %></button>
+		</div>
+	</div>
+	<div class="sol_board">
+		<div class="sol_row sol_piles">
+			<div class="sol_pile" id="sol_stock" data-zone="stock"></div>
+			<div class="sol_pile sol_waste" id="sol_waste" data-zone="waste"></div>
+			<div class="sol_gap"></div>
+			<% for my $suit (0 .. 3) { %>
+				<div class="sol_pile sol_foundation" data-zone="foundation" data-suit="<%= $suit %>">
+					<div class="sol_slot sol_slot_suit" data-suit="<%= $suit %>"></div>
+				</div>
+			<% } %>
+		</div>
+		<div class="sol_row sol_tableau" id="sol_tableau">
+			<% for my $col (0 .. 6) { %>
+				<div class="sol_column" data-zone="tableau" data-col="<%= $col %>">
+					<div class="sol_slot"></div>
+				</div>
+			<% } %>
+		</div>
+	</div>
+	<div id="sol_win" class="cards_win">
+		<div class="cards_win_inner">
+			<h2><%= &subs::ui('The table is clear') %></h2>
+			<p id="sol_win_note"></p>
+			<button type="button" class="sol_btn" id="sol_again"><%= &subs::ui('Deal again') %></button>
+		</div>
+	</div>
+</section>

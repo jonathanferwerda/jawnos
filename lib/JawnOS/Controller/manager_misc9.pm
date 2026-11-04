@@ -332,32 +332,20 @@ sub action_28156 {
 	my $timestamp = $c->param('timestamp');
 	my $mode = &subs::setting_grabber({ app => 'cards', setting => 'mode' });
 	my $history = eval { return decode_json &subs::setting_grabber({ app => 'cards', setting => $mode }) } || [];
+	my $variant = &subs::setting_grabber({ app => 'cards', setting => 'variant' });
+	my $bank = &subs::setting_grabber({ app => 'cards', setting => 'solitaire_bank' });
 	my $contents = $c->render_to_string(
 		template => 'cards',
 		history => $history,
-		mode => $mode
+		mode => $mode,
+		variant => $variant,
+		bank => $bank
 	);
 	my $website = &Manager::window_maker({ user_agent => $c->param('user_agent'), app => 'cards', contents => $contents }, $timestamp);
 	$c->render('text' => $website);
 }
 
 # GET /manager/card_picker
-# The spread's picture: a montage of the three deck files. It is a render, so it
-# is built for the reply and never stored; the history keeps the file names.
-sub card_spread_stream {
-	my ($paths) = @_;
-	my @paths = grep { defined $_ && length $_ && -e $_ } @{ ref $paths eq 'ARRAY' ? $paths : [] };
-	return '' unless @paths;
-	my $montage = &subs::image_bridge_montage(\@paths);
-	unless (defined $montage && length $montage) {
-		my $cmd = join ' ', 'magick montage', map { &subs::shell_quote($_) } @paths, '-';
-		$montage = `$cmd`;
-	}
-	return (defined $montage && length $montage)
-		? 'data:image/png;base64,' . encode_base64($montage)
-		: '';
-}
-
 sub action_28170 {
 	my $c = shift;
 	my $timestamp = $c->param('timestamp');
@@ -405,7 +393,7 @@ sub action_28170 {
 			$title =~ s/.png$//gi;
 		}
 		elsif ($mode eq 'spread') {
-			my (@cards, @names);
+			my (@cards, @names, @labels);
 			for (my $n = 0; $n <= 2; $n++) {
 				my ($ca,$car);
 
@@ -421,12 +409,13 @@ sub action_28170 {
 				$cards[$n] = $car;
 				(my $name = $car) =~ s{^\./public/images/cards/}{};
 				push @names, $name;
-				$ca =~ s/.png$//gi;
-				$title .= &subs::format_name($ca) . '<br> ';
+				(my $label = $ca) =~ s/.png$//gi;
+				push @labels, &subs::format_name($label);
 			}
-			# The spread picture is a render of three deck files, not data to
-			# keep: build it for this reply and remember only the file names.
-			$stream = &card_spread_stream(\@cards);
+			# The spread is three deck files side by side. The reply carries the
+			# names and the browser draws three pictures; the old montage needed
+			# an image tool and silently lost cards when it was missing.
+			$title = join(' \x{b7} ', @labels);
 			splice @{$history}, 10;
 			$spread_cards = \@names;
 		}
@@ -437,17 +426,22 @@ sub action_28170 {
 		}
 	}
 	else {
-		if ($history->[0]->{'stream'}) {
-			$stream = $history->[0]->{'stream'};
-			$title = $history->[0]->{'title'};
+		my $latest = (ref $history->[0] eq 'HASH') ? $history->[0] : undef;
+		if (!$latest) {
+			# A first open has no history yet; show the deck's own cover.
+			$card = 'title.png';
 		}
-		elsif (ref $history->[0]->{'cards'} eq 'ARRAY') {
-			$stream = &card_spread_stream([ map { './public/images/cards/' . $_ } @{$history->[0]->{'cards'}} ]);
-			$title = $history->[0]->{'title'};
+		elsif ($latest->{'stream'}) {
+			$stream = $latest->{'stream'};
+			$title = $latest->{'title'};
+		}
+		elsif (ref $latest->{'cards'} eq 'ARRAY') {
+			$spread_cards = $latest->{'cards'};
+			$title = $latest->{'title'};
 		}
 		else {
-			$card = $history->[0]->{'title'} . '.png';
-			$title = $history->[0]->{'title'};
+			$card = $latest->{'title'} . '.png';
+			$title = $latest->{'title'};
 		}
 	}
 
@@ -472,12 +466,13 @@ sub action_28170 {
 	);
 	$c->render(json => {
 		html => $html,
-		description => $tree->{$card},
+		description => (defined $card ? $tree->{$card} : undef),
 		title => &subs::format_name($title),
 		filename => $card,
 		history => $history,
 		mode => $mode,
-		stream => $stream
+		stream => $stream,
+		cards => $spread_cards
 	});
 }
 

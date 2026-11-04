@@ -10,7 +10,8 @@
      08_handbook.js               - web delete, graphicalize and the Handbook Today page
      09_app_back.js               - openApps, project accounts, manager reset and the app-back stack
      10_appointment_edit.js       - the appointment edit form and details/measures grabbers
-     11_lock_session.js           - lock session, leave, the remote manager windows and the cache
+     11_lock_session.js          - lock session, leave, the remote manager windows and the cache
+     12_cards.js                 - the Cards app: deck chooser, solitaire, mahjong, tarot picker
    /js/manager/bundle.js concatenates the index and these parts.
    [[/js-split]] */
 var nfc = {

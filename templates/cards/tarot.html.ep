@@ -1,0 +1,68 @@
+<% my @modes = (
+	[ free    => &subs::ui('Free draw') ],
+	[ cycle   => &subs::ui('Cycle') ],
+	[ day     => &subs::ui('Card of the day') ],
+	[ week    => &subs::ui('Card of the week') ],
+	[ month   => &subs::ui('Card of the month') ],
+	[ year    => &subs::ui('Card of the year') ],
+	[ spread  => &subs::ui('Three-card spread') ],
+	[ all     => &subs::ui('Whole deck') ],
+);
+my $lead = (ref $history eq 'ARRAY' && ref $history->[0] eq 'HASH') ? $history->[0] : undef;
+my $lead_cards = ($lead && ref $lead->{'cards'} eq 'ARRAY') ? $lead->{'cards'} : undef;
+my $lead_title = $lead ? &subs::format_name($lead->{'title'}) : '';
+%>
+<section id="cards_tarot" class="cards_pane<% if ($active) { %> active<% } %>">
+	<div class="tarot_left">
+		<div id="cards_mode" class="cards_modes">
+			<% foreach my $m ( @modes ) { %>
+				<button type="button" class="cards_mode" mode="<%= $m->[0] %>"<% if (($mode // '') eq $m->[0]) { %> status="enabled"<% } %>><%= $m->[1] %></button>
+			<% } %>
+		</div>
+		<div class="tarot_stage">
+			<div class="tarot_art">
+				<div id="deck_spread"<% if (!$lead_cards) { %> style="display:none;"<% } %>>
+					<% foreach my $cn ( @{ $lead_cards || [] } ) { %>
+						<img class="deck_spread_card" src="/images/cards/<%= &subs::html_text($cn) %>" alt="<%= &subs::format_name($cn) %>">
+					<% } %>
+				</div>
+				<img id="deck_card" class="card hover"<% if ($lead_cards) { %> style="display:none;"<% } else { %> src="<%= &subs::icon_for('/images/cards/title.png') %>"<% } %> hint="<%= &subs::ui('Deal a card') %>" alt="<%= $lead ? $lead_title : &subs::ui('Deck of cards') %>">
+			</div>
+			<div class="tarot_caption">
+				<h2 id="card_title"><%= $lead && length $lead_title ? $lead_title : &subs::ui('Deck of cards') %></h2>
+				<p id="card_description" style="display:none;"></p>
+			</div>
+		</div>
+	</div>
+	<aside class="tarot_history">
+		<h3><%= &subs::ui('Recent draws') %></h3>
+		<div id="deck_history">
+			<% foreach my $his ( @{ ref $history eq 'ARRAY' ? $history : [] } ) { %>
+				<% next unless ref $his eq 'HASH'; %>
+				<% my $rn = &subs::random_string_creator(10); %>
+				<% my $title = &subs::format_name($his->{'title'}); %>
+				<% my $name_list = (ref $his->{'cards'} eq 'ARRAY') ? join('|', @{ $his->{'cards'} }) : ''; %>
+				<div class="history_draw" rn="<%= $rn %>" data-title="<%= $title %>"<% if (length $name_list) { %> data-cards="<%= &subs::html_text($name_list) %>"<% } elsif ($his->{'stream'}) { %> data-src="<%= &subs::html_text($his->{'stream'}) %>"<% } else { %> data-src="/images/cards/<%= &subs::html_text($his->{'title'}) %>.png"<% } %>>
+					<% if (ref $his->{'cards'} eq 'ARRAY') { %>
+						<span class="history_spread">
+							<% foreach my $cn ( @{ $his->{'cards'} } ) { %>
+								<img class="card history hover" rn="<%= $rn %>" alt="<%= &subs::format_name($cn) %>" src="/images/cards/<%= &subs::html_text($cn) %>">
+							<% } %>
+						</span>
+					<% } else { %>
+						<span class="history_single">
+							<img class="card history hover" rn="<%= $rn %>" alt="<%= $title %>" src="<% if ($his->{'stream'}) { %><%= &subs::html_text($his->{'stream'}) %><% } else { %>/images/cards/<%= &subs::html_text($his->{'title'}) %>.png<% } %>">
+						</span>
+					<% } %>
+					<div class="history_meta">
+						<span class="time" timestamp="<%= $his->{'timestamp'} %>"></span>
+						<% if ($his->{'description'}) { %>
+							<img class="tiny_thumb card_description_icon" src="<%= &subs::icon_for('/images/make believe/Pillow.png') %>" hint="<%= &subs::ui('About this card') %>" alt="">
+							<span class="card_history_description" rn="<%= $rn %>" style="display:none;"><%= $his->{'description'} %></span>
+						<% } %>
+					</div>
+				</div>
+			<% } %>
+		</div>
+	</aside>
+</section>

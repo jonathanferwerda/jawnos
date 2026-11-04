@@ -1,31 +1,25 @@
-<div id="cards" style="background-color:pink;width:100%;height:120%;">
-	<span id="cards_mode" style="height:10%">
-		<% foreach my $mod ( qw/free cycle day week month year spread all/ ) { %>
-			<button class="cards_mode" mode="<%= $mod %>" <% if ($mode eq $mod) { %>status="enabled"<% } %>><%= &subs::shorthand_name(&subs::format_name($mod), 3) %></button>
-		<% } %>
-	</span>
-	<img id="deck_card" class="card hover" style="align:center;width:70%;height:80%;float:left;" src="<%= &subs::icon_for('/images/cards/title.png') %>" hint="Title">
-	<span id="deck_history" style="float:right;width:30%;height:90%;overflow:scroll;">
-		<% foreach my $his ( @{$history} ) { %>
-			<% my $rn = &subs::random_string_creator(10); %>
-			<% if (ref $his->{'cards'} eq 'ARRAY') { %>
-				<span class="card_spread" style="display:flex;gap:2px;">
-				<% foreach my $cn ( @{$his->{'cards'}} ) { %>
-					<img class="card history hover" rn="<%= $rn %>" title="<%= &subs::format_name($his->{'title'}) %>" style="width:33%;" src="/images/cards/<%= $cn %>">
-				<% } %>
-				</span>
-			<% } else { %>
-			<img class="huge_thumb card history hover" rn="<%= $rn %>" title="<%= &subs::format_name($his->{'title'}) %>" style="width:100%;" src="<% if ($his->{'stream'}) { %><%= $his->{'stream'} %><% } else { %>/images/cards/<%= $his->{'title'} %>.png<% } %>">
+<% my @decks = (
+	[ tarot     => &subs::ui('Tarot') ],
+	[ solitaire => &subs::ui('Solitaire') ],
+	[ mahjong   => &subs::ui('Mahjong') ],
+);
+my $start = $variant // '';
+my $known = ($start eq 'tarot' || $start eq 'solitaire' || $start eq 'mahjong') ? $start : '';
+%>
+<div id="cards" class="cards_app" data-variant="<%= $known %>">
+<%= include 'cards/style' %>
+	<header class="cards_bar">
+		<button type="button" class="cards_brand" data-variant=""><%= &subs::ui('Cards') %></button>
+		<nav class="cards_variant_bar" aria-label="<%= &subs::ui('Decks') %>">
+			<% foreach my $deck ( @decks ) { %>
+				<button type="button" class="cards_variant<% if ($known eq $deck->[0]) { %> active<% } %>" data-variant="<%= $deck->[0] %>"><%= $deck->[1] %></button>
 			<% } %>
-			<br><span class="time" style="text-align:center;" timestamp="<%= $his->{'timestamp'} %>"></span>
-			<% if ($his->{'description'}) { %>
-				<img class="tiny_thumb card_description_icon" src="<%= &subs::icon_for('/images/make believe/Pillow.png') %>" hint="JawnOS">
-				<span class="card_history_description" rn="<%= $rn %>" style="display:none;"><%= $his->{'description'} %></span>
-			<% } %>
-			<br>
-		<% } %>
-	</span>
-	<p style="font-size:36px;" id="card_title">Deck of Jawn!</p>
-	<p style="display:none;" id="card_description"></p>
-
+		</nav>
+	</header>
+	<main class="cards_body">
+		<%= include 'cards/chooser', open => (length $known ? 0 : 1) %>
+		<%= include 'cards/tarot', history => $history, mode => $mode, active => ($known eq 'tarot') %>
+		<%= include 'cards/solitaire', bank => $bank, active => ($known eq 'solitaire') %>
+		<%= include 'cards/mahjong', active => ($known eq 'mahjong') %>
+	</main>
 </div>

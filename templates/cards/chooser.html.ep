@@ -1,0 +1,26 @@
+<% my @decks = (
+	{ key => 'solitaire', art => 'deal_art', count => 3,
+	  name => &subs::ui('Solitaire'),
+	  hint => &subs::ui('Klondike with a three-card deal and a bank that keeps every round.') },
+	{ key => 'mahjong', art => 'tile_art', count => 6,
+	  name => &subs::ui('Mahjong'),
+	  hint => &subs::ui('Clear the turtle by pairing free tiles, two at a time.') },
+	{ key => 'tarot', art => 'tarot_art', count => 3,
+	  name => &subs::ui('Tarot'),
+	  hint => &subs::ui('The deck drawn from your own days: a daily card or a three-card spread.') },
+); %>
+<div id="cards_chooser" class="cards_chooser<% if ($open) { %> open<% } %>">
+	<div class="cards_chooser_inner">
+		<h1><%= &subs::ui('Choose a deck') %></h1>
+		<p class="cards_lead"><%= &subs::ui('Three ways to play. The table remembers your last choice; Cards in the corner brings this list back.') %></p>
+		<div class="cards_choices">
+			<% foreach my $deck ( @decks ) { %>
+				<button type="button" class="cards_choice" data-variant="<%= $deck->{'key'} %>">
+					<span class="deck_art <%= $deck->{'art'} %>"><% for (1 .. $deck->{'count'}) { %><i></i><% } %></span>
+					<h2><%= $deck->{'name'} %></h2>
+					<p><%= $deck->{'hint'} %></p>
+				</button>
+			<% } %>
+		</div>
+	</div>
+</div>

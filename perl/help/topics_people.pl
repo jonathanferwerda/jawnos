@@ -173,10 +173,13 @@ $topic{'relational'} = {
 	};
 $topic{'cards'} = {
 		title => 'Cards', category => 'apps', app => 'cards',
-		verified => '2026-10-14',
-		summary => 'A deck of cards, drawn from your own data.',
+		verified => '2026-11-03',
+		summary => 'Three decks: tarot drawn from your own data, solitaire and mahjong.',
 		body => [
-			'Cards is a card deck — part game, part lens. It deals from your own appointments and measures, so a draw is a small reflection rather than a random flip.'
+			'Cards opens on a chooser with three decks. The table remembers the one you picked; press Cards in the top left to bring the chooser back.',
+			'Tarot is the deck of Jawn: a daily card, a weekly card, or a three-card spread drawn from your own appointments and measures. A spread shows its three cards side by side, and Recent draws keeps the last ones.',
+			'Solitaire is Klondike with a three-card deal. Click a card, then the column or foundation to move it; double-click sends a card to its foundation. Bank keeps a running casino score across rounds, New game deals again, Undo takes a move back and Reset bank starts the score at zero.',
+			'Mahjong is a single-layer turtle of paired tiles. Click two matching tiles that are free, which means nothing sits immediately left or right of them. Shuffle rearranges what is left; the timer starts with your first pick.'
 		],
 		related => [ 'twirl', 'measures' ]
 	};

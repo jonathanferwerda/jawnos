@@ -9,7 +9,7 @@ symbol or route, `perl scripts/where.pl <name>` prints its file:line.
 Counts only: `perl scripts/agent_help.pl <app>` names every file, route, table, setting and test behind one line here.
 
 - app_measures (no topic): 1 file(s), 1 route(s)
-- box_office (topic box_office): 15 file(s), 9 route(s)
+- box_office (topic box_office): 16 file(s), 9 route(s)
 - budget (topic budget): 4 file(s), 14 route(s)
 - camera (topic camera): 2 file(s), 1 route(s)
 - cards (topic cards): 1 file(s), 1 route(s)
