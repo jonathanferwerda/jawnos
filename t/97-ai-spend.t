@@ -10,10 +10,11 @@ use JawnOSTest;
 use File::Path qw(make_path);
 use File::Slurp qw(read_file write_file);
 use File::Temp qw(tempdir);
+use JSON::PP ();
 
 # The domain layer is lazy: load the real definitions before the local *subs::
 # stubs below, or a later module load would replace them.
-subs::preload($_) for qw(ai_spend_minute_key ai_spend_note where_lookup_stats where_audit_enabled where_audit_cadence where_audit_interval where_audit_report where_audit_next where_audit_due where_audit_run where_audit_tick ai_spend_buckets ai_spend_roles ai_spend_prune);
+subs::preload($_) for qw(ai_spend_minute_key ai_spend_note where_lookup_stats where_audit_uuid where_audit_bank where_audit_enabled where_audit_cadence where_audit_interval where_audit_report where_audit_next where_audit_due where_audit_run where_audit_tick ai_spend_buckets ai_spend_roles ai_spend_prune);
 
 my $root = "$FindBin::Bin/..";
 
@@ -258,7 +259,7 @@ like(read_file("$root/templates/configure/system_setting_list.html.ep"),
 {
 	no warnings 'redefine';
 	local *subs::setting_grabber = sub { 'off' };
-	local *subs::cache_get = sub { {} };
+	local *subs::where_audit_report = sub { {} };
 	local *subs::rightNow = sub { 1_000_000_000_000 };
 	is(&subs::where_audit_due(), 0, 'a paused butler is never due');
 	is(&subs::where_audit_next(), 0, 'and has no next run');
@@ -268,32 +269,50 @@ like(read_file("$root/templates/configure/system_setting_list.html.ep"),
 	my $now = 1_000_000_000_000;
 	local *subs::rightNow = sub { $now };
 	local *subs::setting_grabber = sub { 'hourly' };
-	local *subs::cache_get = sub { {} };
+	local *subs::where_audit_report = sub { {} };
 	is(&subs::where_audit_due(), 1, 'with no report yet the audit is due');
 	is(&subs::where_audit_next(), 0, 'and there is no next run to show');
 
-	local *subs::cache_get = sub { { at => $now - 30 * 60 * 1000, ok => 1 } };
+	local *subs::where_audit_report = sub { { at => $now - 30 * 60 * 1000, ok => 1 } };
 	is(&subs::where_audit_due(), 0, 'a run half an hour ago is not due');
 	is(&subs::where_audit_next(), $now + 30 * 60 * 1000, 'the next run is an hour after the last');
 
-	local *subs::cache_get = sub { { at => $now - 2 * 3600 * 1000, ok => 1 } };
+	local *subs::where_audit_report = sub { { at => $now - 2 * 3600 * 1000, ok => 1 } };
 	is(&subs::where_audit_due(), 1, 'a run two hours ago is due');
 
-	local *subs::cache_get = sub { { at => $now - 2 * 3600 * 1000, attempt => $now - 60 * 1000, ok => 0 } };
+	local *subs::where_audit_report = sub { { at => $now - 2 * 3600 * 1000, attempt => $now - 60 * 1000, ok => 0 } };
 	is(&subs::where_audit_due(), 0, 'a failure backs off for five minutes');
 }
 
-# ---- the audit is wired to the button and the master -------------------------
-like(read_file("$root/perl/President.pl"), qr/where_audit_tick/,
-	'the master ticks the locator audit');
-like(read_file("$root/lib/JawnOS/Controller/manager_configure4.pm"), qr/sub action_19400/,
-	'the run-now route has an action');
-like(read_file("$root/lib/JawnOS/Routes/manager_configure4.pm"), qr#where_audit/run#,
-	'and the route reaches it');
-like(read_file("$root/templates/configure/system_setting_list.html.ep"), qr/where_audit_cadence/,
-	'the Sys panel offers the cadence');
-like(read_file("$root/templates/configure/system_setting_list.html.ep"), qr/where_audit_enabled/,
-	'and the butler switch');
+# ---- the report is synced ----------------------------------------------------
+{
+	require DBI;
+	my $dbh = DBI->connect('dbi:SQLite::memory:', '', '', { RaiseError => 1, PrintError => 0 });
+	$dbh->do('create table where_audit (uuid text, machine text unique, at text, report text, ost text, server_time text)');
+	$dbh->do('insert into where_audit (uuid,machine,at,report,server_time) values (?,?,?,?,?)',
+		undef, 'old', 'desktop', 1000, JSON::PP->new->encode({ at => 1000, ok => 1, summary => { calls => 3 } }), 1000);
+	$dbh->do('insert into where_audit (uuid,machine,at,report,server_time) values (?,?,?,?,?)',
+		undef, 'new', 'laptop', 2000, JSON::PP->new->encode({ at => 2000, ok => 1, summary => { calls => 4 } }), 2000);
+	no warnings 'redefine';
+	my $seen_sql;
+	local *subs::db_query = sub {
+		my ($sql, @args) = @_;
+		$seen_sql = $sql;
+		my $sth = $dbh->prepare($sql);
+		$sth->execute(@args);
+		return FakeRowSet->new($sth->fetchall_arrayref({}), 1);
+	};
+	my $report = &subs::where_audit_report();
+	like $seen_sql, qr/order by cast\(server_time as integer\) desc/,
+		'the newest synced report is the one shown';
+	is $report->{'summary'}{'calls'}, 4, 'with the latest run\'s numbers';
+	is $report->{'machine'}, 'laptop', 'and the machine that made it';
+}
+{
+	no warnings 'redefine';
+	local *subs::db_query = sub { die "no such table: where_audit\n" };
+	is_deeply(&subs::where_audit_report(), {}, 'a pre-migration database reads as no report');
+}
 
 # ---- a run banks the script's JSON report -----------------------------------
 {
@@ -311,15 +330,55 @@ FAKE
 	}
 	package main;
 	local *subs::home = sub { $dir };
+	local *subs::ai_house_me = sub { 'machine-a' };
 	local *subs::minion_grabber = sub { bless {}, 'FakeMinion' };
-	local *subs::cache_get = sub { {} };
-	local *subs::cache_set = sub { my ($key, $value) = @_; $saved = $value; 1 };
+	local *subs::where_audit_report = sub { {} };
+	local *subs::db_select = sub { FakeRowSet->new([]) };
+	local *subs::db_insert = sub { my ($table, $row) = @_; $saved = $row; 1 };
+	local *subs::db_update = sub { 1 };
 	local *subs::rightNow = sub { 1_000_000_000_000 };
 	ok(&subs::where_audit_run({ reason => 'test' }), 'a run banks the report');
-	is($saved->{'ok'}, 1, 'the report is marked ok');
-	is($saved->{'summary'}{'calls'}, 2, 'and carries what the script found');
-	is($saved->{'reason'}, 'test', 'with the reason it ran');
-	is($saved->{'at'}, 1_000_000_000_000, 'stamped when it finished');
+	my $banked = JSON::PP->new->decode($saved->{'report'});
+	is($banked->{'ok'}, 1, 'the report is marked ok');
+	is($banked->{'summary'}{'calls'}, 2, 'and carries what the script found');
+	is($banked->{'reason'}, 'test', 'with the reason it ran');
+	is($banked->{'at'}, 1_000_000_000_000, 'stamped when it finished');
+	is($saved->{'machine'}, 'machine-a', 'the row names this machine');
+	is($saved->{'uuid'}, &subs::where_audit_uuid('machine-a'), 'under the machine\'s natural key');
+	is($saved->{'server_time'}, 1_000_000_000_000, 'and is stamped for the peer sync');
 }
+
+# ---- the report is a synced table, not the machine-local cache --------------
+{
+	require DBI;
+	my @dbs;
+	no warnings 'redefine';
+	local *subs::ai_house_me = sub { 'machine-a' };
+	local *subs::rightNow = sub { 1_000_000_000_000 };
+	local *subs::db_select = sub { FakeRowSet->new([]) };
+	local *subs::db_update = sub { 1 };
+	local *subs::db_insert = sub { my ($table, $row) = @_; push @dbs, [ $table, $row ]; 1 };
+	local *subs::cache_set = sub { die 'the report must not go to the cache\n' };
+	ok &subs::where_audit_bank({ at => 1, summary => { calls => 1 } }), 'a report is banked';
+	is $dbs[0][0], 'where_audit', 'in the synced table';
+	ok exists $dbs[0][1]->{'server_time'}, 'with the server_time the peer sync needs';
+}
+
+like(read_file("$root/lib/JawnOS/Domain/Migrations.pm"), qr/create table if not exists where_audit/,
+	'the migration creates the synced report table');
+
+# ---- the audit is wired to the button and the master -------------------------
+like(read_file("$root/perl/President.pl"), qr/where_audit_tick/,
+	'the master ticks the locator audit');
+like(read_file("$root/lib/JawnOS/Controller/manager_configure4.pm"), qr/sub action_19400/,
+	'the run-now route has an action');
+like(read_file("$root/lib/JawnOS/Routes/manager_configure4.pm"), qr#where_audit/run#,
+	'and the route reaches it');
+like(read_file("$root/templates/configure/system_setting_list.html.ep"), qr/where_audit_cadence/,
+	'the Sys panel offers the cadence');
+like(read_file("$root/templates/configure/system_setting_list.html.ep"), qr/where_audit_enabled/,
+	'and the butler switch');
+like(read_file("$root/templates/configure/system_setting_list.html.ep"), qr/Run on \{0\}/,
+	'and names the machine that made the report');
 
 done_testing();

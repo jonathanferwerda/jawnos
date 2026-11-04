@@ -65,6 +65,7 @@
 		<div class="cfg-card">
 			<p class="cfg-note">
 			<%= &subs::ui('Reads the lookup ledger and the name maps, then lists the names that missed, the hits an agent said were wrong, and map drift.') %>
+			<%= &subs::ui('The report is kept with the house, so every machine shows the latest run.') %>
 			</p>
 			<p class="cfg-note">
 			<label class="cfg-note" hint="<%= &subs::ui('Off pauses the scheduled audit; Run audit now still works, and the lookup ledger keeps recording.') %>"><input type="checkbox" class="where_audit_enabled"<% if ($where_audit_enabled) { %> checked<% } %>> <%= &subs::ui('Butler on') %></label>
@@ -84,6 +85,7 @@
 			<% if ($wa->{'at'}) { %>
 				<p class="cfg-note">
 				<%= &subs::ui('Last run') %> <span class="time" timestamp="<%= $wa->{'at'} %>"></span>
+				<% if ($wa->{'machine'}) { %><% my $machine_label = $machine_name{$wa->{'machine'}} || $wa->{'machine'}; %><% my $run_line = &subs::ui('Run on {0}.'); %><% $run_line =~ s/\{0\}/$machine_label/; %> &middot; <%= $run_line %><% } %>
 				<% if ($wa->{'since'}) { %> &middot; <%= &subs::ui('since') %> <%= $wa->{'since'} %><% } %>
 				<% if (!$wa->{'ok'}) { %> &middot; <%= &subs::ui('failed') %>: <%= $wa->{'error'} || '' %><% } %>
 				</p>

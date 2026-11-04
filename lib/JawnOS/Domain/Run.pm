@@ -546,6 +546,9 @@ sub ai_house_uuid { return 'ai_house_' . md5_sum(($_[0] // '')) }
 
 sub ai_budget_uuid { return 'ai_budget_' . md5_sum(($_[0] // '') . '|' . ($_[1] // '')) }
 
+# The audit's natural key: one row per machine, even after a peer syncs it.
+sub where_audit_uuid { return 'where_audit_' . md5_sum(($_[0] // '')) }
+
 sub ai_house_have_model {
 	return ( &subs::setting_grabber({ app => 'mail', setting => 'coding_assistant' })
 		|| &subs::setting_grabber({ app => 'mail', setting => 'help_assistant' })
@@ -1058,10 +1061,15 @@ sub where_lookup_stats {
 }
 
 # The locator audit, on the same settings pattern as the evaluation: a cadence
-# in the house settings, a run-now button, and a report kept in the cache. The
-# window is since the last successful run (with a one-minute overlap so a row
-# written while the audit runs is never skipped); the first run reads the
-# script's default 14 days.
+# in the house settings, a run-now button, and a report kept in the synced
+# `where_audit` table. The window is since the last successful run (with a
+# one-minute overlap so a row written while the audit runs is never skipped);
+# the first run reads the script's default 14 days.
+# The report used to live in the cache, which is machine-local and deliberately
+# never synced, so a laptop could not see a run made on the desktop. The table
+# carries server_time, which is what lets it ride the ordinary peer sync; one
+# row per machine means a peer's newer report is shown without replacing the
+# other machine's copy.
 # The master switch for the scheduled audit, separate from the cadence: off
 # pauses the butler without losing the frequency, and the Run now button still
 # works. The per-lookup ledger keeps recording; this gates the audit only.
@@ -1090,8 +1098,45 @@ sub where_audit_interval {
 }
 
 sub where_audit_report {
-	my $report = eval { &subs::cache_get({ app => '__president', context => 'where_audit' }) };
-	return ref $report eq 'HASH' ? $report : {};
+	my $row = eval {
+		&subs::db_query(
+			'select machine, report from where_audit'
+			. ' order by cast(server_time as integer) desc, cast(at as integer) desc limit 1'
+		)->hashes->[0];
+	};
+	return {} unless $row && defined $row->{'report'} && length $row->{'report'};
+	my $report = eval { decode_json($row->{'report'}) };
+	return {} unless ref $report eq 'HASH';
+	$report->{'machine'} = $row->{'machine'} if defined $row->{'machine'} && length $row->{'machine'};
+	return $report;
+}
+
+# Store a report as this machine's row. Update in place: delete-then-insert
+# would drop the report if the insert failed, and the natural-key uuid already
+# identifies the row a peer synced. The server_time stamp is what the sync uses
+# to pick the newer report from another machine.
+sub where_audit_bank {
+	my ($report) = @_;
+	return 0 unless ref $report eq 'HASH';
+	my $me   = &ai_house_me() || 'me';
+	my $uuid = &where_audit_uuid($me);
+	my $value = {
+		machine     => $me,
+		at          => $report->{'at'} || 0,
+		report      => encode_json($report),
+		server_time => &subs::rightNow(),
+	};
+	my $ok = eval {
+		my $found = &subs::db_select('where_audit', ['uuid'], { uuid => $uuid })->hashes->[0];
+		if ($found && $found->{'uuid'}) {
+			&subs::db_update('where_audit', $value, { uuid => $uuid });
+		}
+		else {
+			&subs::db_insert('where_audit', { %{$value}, uuid => $uuid });
+		}
+		1;
+	};
+	return $ok ? 1 : 0;
 }
 
 sub where_audit_next {
@@ -1143,8 +1188,7 @@ sub where_audit_run {
 	my $script   = "$repo/scripts/where_audit.pl";
 	my $fail     = sub {
 		my ($why) = @_;
-		&subs::cache_set({ app => '__president', context => 'where_audit', warranty => '-40d' },
-			{ %{$previous}, attempt => $now, ok => 0, error => $why });
+		&where_audit_bank({ %{$previous}, attempt => $now, ok => 0, error => $why });
 		return 0;
 	};
 	return $finish->($fail->('the checkout has no scripts/where_audit.pl')) unless -f $script;
@@ -1172,8 +1216,9 @@ sub where_audit_run {
 	$data->{'ok'}      = 1;
 	$data->{'reason'}  = $opt->{'reason'} || 'manual';
 	delete $data->{'error'};
-	&subs::cache_set({ app => '__president', context => 'where_audit', warranty => '-40d' }, $data);
-	return $finish->(1);
+	my $banked = &where_audit_bank($data);
+	&subs::log_writer('where audit: the report could not be banked') unless $banked;
+	return $finish->($banked ? 1 : 0);
 }
 
 # The ledger summed per provider in the granularity the caller asks for: '2m'

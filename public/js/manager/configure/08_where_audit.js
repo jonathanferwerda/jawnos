@@ -1,6 +1,6 @@
 // The locator audit: run it now, and persist the cadence like any other house
 // setting. A run reloads the Sys panel, so the report on screen is the server's
-// own render of the cache rather than a second copy built here.
+// own render of the synced report rather than a second copy built here.
 $(document).on('click', '.where_audit_run', function() {
 	var b = $(this);
 	var text = b.text();

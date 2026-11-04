@@ -520,6 +520,20 @@ sub update_database($data) {
 		# a ranking complaint (the right answer was already among the hits, just
 		# not first) is a different fix from a coverage gap.
 		'alter table where_feedback add column selected VARCHAR(500)',
+		# The audit's report, one row per machine. It lives here rather than in the
+		# cache because the cache is machine-local: a run on the desktop has to be
+		# the report the laptop shows. server_time lets it ride the ordinary peer
+		# sync, and the natural-key uuid (where_audit_uuid) keeps one machine's
+		# row the same row everywhere, so a peer updates it instead of adding a
+		# second copy.
+		'create table if not exists where_audit (
+			uuid VARCHAR(255) unique,
+			machine VARCHAR(255) unique,
+			at VARCHAR(25),
+			report LONGTEXT,
+			ost VARCHAR(25),
+			server_time VARCHAR(255)
+		)',
 		'alter table continent add column signatorial VARCHAR(500)',
 		'alter table continent add column speed VARCHAR(25)',
 		'alter table continent add column altitude VARCHAR(25)',

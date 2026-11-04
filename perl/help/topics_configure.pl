@@ -54,7 +54,7 @@ $topic{'configure'} = {
 			'To make another house a resident, open its row in the Dev panel, pick Resident under Privilege, and type a number of days (or leave it blank for no expiry); the change saves at once.',
 			'To add another number or address to a person, open their card, tap Phones or Emails, pick a type and press Add Phone (or Add Email).',
 			'Changes save as you make them; a bar or theme change is felt at once.',
-			'To check the locator, open Sys and press Run audit now, or set it to run hourly, daily, weekly, monthly or yearly. It lists names the locator missed, hits an agent reported wrong, and map drift; each scheduled run reads only what the ledger gained since the last successful run. A Butler on switch pauses the schedule without losing the cadence; Run audit now still works, and the lookup ledger keeps recording.'
+			'To check the locator, open Sys and press Run audit now, or set it to run hourly, daily, weekly, monthly or yearly. It lists names the locator missed, hits an agent reported wrong, and map drift; each scheduled run reads only what the ledger gained since the last successful run. The report is kept with the house, so every machine shows the latest run and names the machine that made it. A Butler on switch pauses the schedule without losing the cadence; Run audit now still works, and the lookup ledger keeps recording.'
 		],
 		related => [ 'themes', 'icon_sets', 'devices_and_mesh', 'platform', 'assistant' ]
 	};
