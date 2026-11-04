@@ -1295,6 +1295,12 @@ html.jawnos_webview #admin_console_toggle {
 	opacity: .65;
 	margin: 2px 2px 7px;
 }
+#htop_viewer .levels_sync {
+	font-size: 11px;
+	font-variant-numeric: tabular-nums;
+	opacity: .85;
+	margin: -3px 2px 7px;
+}
 #htop_viewer .levels_caption {
 	font-size: 10px;
 	letter-spacing: .08em;

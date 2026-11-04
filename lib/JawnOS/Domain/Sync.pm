@@ -327,6 +327,54 @@ sub sync_job_active {
 	my ($limit) = @_;
 	return [ grep { ($_->{'state'} || '') eq 'running' } @{ &sync_job_list($limit || 4) } ];
 }
+
+# One line for the System card: the newest sync job, how many rows it has
+# moved, and how long the rest should take at that job's own pace.
+#
+# Rows come from the job's per-table steps. The `merge` step is the pull's
+# overall marker and carries no count of its own, so it is skipped - summing it
+# would count the same work twice. Time left is the only figure not stored in
+# the database; it is derived from this job's own elapsed time and rows, never
+# carried across jobs, so a machine that was busy a minute ago cannot make the
+# next pull look slow or quick before it has moved anything.
+sub sync_progress {
+	my $jobs = &sync_job_list(1);
+	my $job = $jobs->[0] || {};
+	my $now = &rightNow();
+	my ($rows, $total, $tables) = (0, 0, 0);
+	foreach my $step ( @{ $job->{'steps'} || [] } ) {
+		next unless ref $step eq 'HASH';
+		next if ($step->{'key'} || '') eq 'merge';
+		$tables++;
+		$rows += ($step->{'current'} || 0) + 0;
+		$total += ($step->{'total'} || 0) + 0;
+	}
+	my $state = $job->{'state'} || '';
+	my $started = ($job->{'started'} || 0) + 0;
+	my $updated = ($job->{'updated'} || 0) + 0;
+	my $elapsed = ($started && $updated > $started) ? ($updated - $started) / 1000 : 0;
+	# A rate measured over less than a second is noise, not a pace.
+	my $rate = ($elapsed >= 1 && $rows > 0) ? $rows / $elapsed : 0;
+	my $left = ($state eq 'running' && $rate > 0 && $total > $rows)
+		? int(($total - $rows) / $rate + 0.5)
+		: undef;
+	return {
+		active => ($state eq 'running') ? 1 : 0,
+		known => $job->{'uuid'} ? 1 : 0,
+		state => $state,
+		direction => $job->{'direction'} || '',
+		peer => $job->{'peer'} || '',
+		note => $job->{'note'} || '',
+		tables => $tables,
+		rows => $rows,
+		total => $total,
+		rate => $rate,
+		eta => $left,
+		# Seconds since the job last moved: the card says "done 20s ago" rather
+		# than inventing an estimate for a job that has already finished.
+		age => $updated ? int(($now - $updated) / 1000) : undef,
+	};
+}
 {
 	package Jawn::SyncJob;
 	sub new { my ($class, $uuid) = @_; return bless { uuid => $uuid, done => 0 }, $class; }

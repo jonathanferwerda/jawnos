@@ -136,11 +136,38 @@
 <% my @local = grep { $_->{'local'} } @machines; %>
 <% my @peers = sort { ($a->{'hostname'} || '') cmp ($b->{'hostname'} || '') } grep { !$_->{'local'} } @machines; %>
 <% my @devices = @{ $levels->{'devices'} || [] }; %>
+<% my $sp = &subs::sync_progress(); %>
+<% my $thousands = sub {
+	my $n = shift;
+	$n = 0 unless defined $n && $n =~ /^\d+$/;
+	my $s = reverse $n;
+	$s =~ s/(\d{3})(?=\d)/$1,/g;
+	return scalar reverse $s;
+}; %>
+<% my $eta_short = sub {
+	my $s = shift;
+	return '~' . $s . 's ' . &subs::ui('left') if $s < 60;
+	my $m = int(($s + 30) / 60);
+	return '~' . $m . 'm ' . &subs::ui('left') if $m < 60;
+	my $h = int($m / 60);
+	return '~' . $h . 'h ' . ($m % 60) . 'm ' . &subs::ui('left');
+}; %>
+<% my $sync_bits = []; %>
+<% if ($sp->{'active'}) {
+	push @{$sync_bits}, &subs::ui('Sync') . ' ' . $thousands->($sp->{'rows'}) . ($sp->{'total'} ? ' / ' . $thousands->($sp->{'total'}) : '') . ' ' . &subs::ui('rows');
+	push @{$sync_bits}, $eta_short->($sp->{'eta'}) if defined $sp->{'eta'};
+}
+elsif ($sp->{'known'} && defined $sp->{'age'} && $sp->{'age'} < 300) {
+	push @{$sync_bits}, &subs::ui('Sync') . ' ' . &subs::ui('done') . ' ' . $sp->{'age'} . 's ' . &subs::ui('ago') . ' &middot; ' . $thousands->($sp->{'rows'}) . ' ' . &subs::ui('rows');
+} %>
 <div id="htop_viewer">
 	<div class="levels_head">
 		<span><%= &subs::ui('Levels') %></span>
 		<span><%= $when->($levels->{'at'}) %></span>
 	</div>
+	<% if (scalar @{$sync_bits}) { %>
+		<div class="levels_sync"><%== join(' &middot; ', @{$sync_bits}) %></div>
+	<% } %>
 	<% foreach my $m ( @local ) { %>
 		<% my $b = $m->{'battery'} || {}; %>
 		<% my $pct = $b->{'percentage'}; %>

@@ -227,7 +227,19 @@ sub sync_rows_pull {
 				}
 			}
 			else {
-				&subs::log_writer('sync bucket map failed for ' . $table . ': ' . ($berr || 'no map') . '; reading the whole table');
+				# A map that did not arrive must not turn a small divergence into a
+				# whole-table read: on a phone that scan runs a core hot for minutes and
+				# the rows it finds are almost always the few above the watermark. Read
+				# from the caller's watermark window instead. The digest gate keeps the
+				# table in the plan, so a later pass with a working map still localises
+				# an old row the window could not name.
+				if ($default_cut && $default_cut > 0) {
+					$cut = $default_cut;
+					&subs::log_writer('sync bucket map failed for ' . $table . ': ' . ($berr || 'no map') . '; reading from the watermark instead of the whole table');
+				}
+				else {
+					&subs::log_writer('sync bucket map failed for ' . $table . ': ' . ($berr || 'no map') . '; reading the whole table');
+				}
 			}
 		}
 		if (ref $bands eq 'ARRAY') {

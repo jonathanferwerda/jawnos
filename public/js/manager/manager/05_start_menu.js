@@ -461,9 +461,11 @@ function startMenuCloser(wait) {
 
 // The System card is live while it is on screen: a phone plugged in a moment
 // ago must show its new state without waiting for the next utility push. Poll
-// it on a short timer - the server's levels loop takes the same cue and runs
-// quick passes - and skip the swap when the markup has not changed, so the
-// card does not flicker every few seconds.
+// it on a ten-second timer - long enough that the card is not itself work the
+// machine has to do, short enough that a sync's rows and time left read as
+// live - and skip the swap when the markup has not changed, so the card does
+// not flicker every refresh. The route also tells the server's levels loop the
+// card is on screen, so the house pass runs on its quick cadence.
 var htopViewerTimer = null;
 var htopViewerBusy = false;
 function htopViewer() {
@@ -493,7 +495,7 @@ function htopViewer() {
 
 function htopViewerSchedule() {
 	clearTimeout(htopViewerTimer);
-	htopViewerTimer = setTimeout(function() { htopViewer(); }, 8000);
+	htopViewerTimer = setTimeout(function() { htopViewer(); }, 10000);
 }
 
 $(function() { htopViewerSchedule(); });

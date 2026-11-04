@@ -494,6 +494,11 @@ sub action_11014 {
 	elsif ($table eq 'settings') { $where .= " and (setting is null or setting not in ('open_tabs','scrollTop','jopen','dimensions'))"; }
 	my $total = 0;
 	if ($after eq '') {
+		# A cut-free first batch is a whole-table read, the one expensive shape
+		# this route serves. It used to leave no trace of its owner: a peer
+		# walking 115k rows held a worker hot for minutes and the log named
+		# nothing. One line per pull, carrying the peer and the table.
+		$log->info('sync rows: ' . ($signatorial || '?') . ' reads ' . $table . ' whole (cut=0, no band)') if $log && !defined $from && $cut == 0;
 		$total = &subs::db_query('select count(*) as c from ' . $table . $where, @args)->hashes->[0]->{'c'} || 0;
 	}
 	my $rows = &subs::db_query('select rowid as __sync_rowid, * from ' . $table . $where . ' order by rowid limit ?', @args, @after_args, $limit + 1)->hashes || [];
