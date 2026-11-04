@@ -147,6 +147,48 @@ function jawnosDockElement(el) {
 		|| el.closest('#pseudonym_home').length > 0;
 }
 
+// Where the pointer is, kept on every move. The hider runs from a timer, and
+// mouse_position() reads window.event, which is not set outside an event, so it
+// could hand back an older point and tuck the dock while the pointer was
+// resting on it.
+var pseudonymPointerX = null;
+var pseudonymPointerY = null;
+$(document).on('mousemove', function (e) {
+	pseudonymPointerX = e.clientX;
+	pseudonymPointerY = e.clientY;
+});
+
+// Is the point over the dock in either of its places? The home's box covers the
+// showing row and the tucked strip that stays on screen, while the faces cover
+// a row that overhangs the box. The strip is checked on its own as well, so the
+// point that called the row out is still the dock's after the row has moved up
+// under the pointer.
+function pseudonymDockPointOnDock(x, y) {
+	if (!isFinite(x) || !isFinite(y)) { return false; }
+	var inside = function (el) {
+		if (!el || !el.getBoundingClientRect) { return false; }
+		var r = el.getBoundingClientRect();
+		if (!(r.width > 0 && r.height > 0)) { return false; }
+		return x >= r.left && x <= r.right && y >= r.top && y <= r.bottom;
+	};
+	if (inside(document.getElementById('pseudonym_home'))) { return true; }
+	var on_face = false;
+	$('#pseudonym_home').find('.pseudonym, #search_entanglement').each(function () {
+		if (inside(this)) { on_face = true; return false; }
+	});
+	if (on_face) { return true; }
+	var strip = (typeof pseudonymDockStrip == 'function') ? pseudonymDockStrip() : 0;
+	if (!(strip > 0)) { return false; }
+	var vw = $(window).width();
+	var vh = $(window).height();
+	if (typeof jawnosDockTop == 'function' && jawnosDockTop()) { return y >= 0 && y <= strip; }
+	if (typeof jawnosSideDock == 'function' && jawnosSideDock()) {
+		if (typeof jawnosDockLeft == 'function' && jawnosDockLeft()) { return x >= 0 && x <= strip; }
+		return x >= vw - strip && x <= vw;
+	}
+	return y >= vh - strip && y <= vh;
+}
+
 function pseudonymHomeShower(x,y,interval) { 
 	var was = 0;
 	var okay = 1;
@@ -175,6 +217,7 @@ function pseudonymHomeShower(x,y,interval) {
 			}
 
 		});
+		if (was == 0 && pseudonymDockPointOnDock(x, y)) { was++; }
 	}
 	var t = $('#pseudonym_home').offset();
 
@@ -266,17 +309,27 @@ function pseudonymHomeHider(interval) {
 	var dock_top = (typeof jawnosDockTop == 'function') && jawnosDockTop();
 	var dock_side = (typeof jawnosSideDock == 'function') && jawnosSideDock();
 	pseudonymFreeSpaceFinder();
-	var m = mouse_position();
+	// The pointer hider and the shower share one answer to "is this the dock?"
+	// The tracked pointer is the current one; mouse_position() is only the
+	// fallback before the first move (it reads window.event).
+	var x = pseudonymPointerX;
+	var y = pseudonymPointerY;
+	if (x === null || y === null) {
+		var m = mouse_position();
+		x = m.x;
+		y = m.y;
+	}
 	// a desk whose mouse has never moved has no position yet; it counts as away
 	// from the dock rather than crashing elementsFromPoint on a non-finite
 	var was = 0;
-	if (isFinite(m.x) && isFinite(m.y)) {
-		var elements = document.elementsFromPoint(m.x, m.y);
+	if (isFinite(x) && isFinite(y)) {
+		var elements = document.elementsFromPoint(x, y);
 		$.each(elements, function(i,v) {
 			if (jawnosDockElement(v)) {
 				was++;
 			}
 		});
+		if (was == 0 && pseudonymDockPointOnDock(x, y)) { was++; }
 	}
 
 	interval = interval || pseudonymHIntervals;

@@ -360,6 +360,9 @@ function softKbDockOpen(mode) {
 	}
 	softKbPlace(null);
 	dock.prop('hidden', false).attr('aria-hidden', 'false');
+	// raise the keys: removing `hidden` alone leaves them at their closed
+	// translateY(100%), which hid the dock for the keyboard without showing it
+	softKbSlideUp(dock);
 	$('body').addClass('soft_kb_open');
 	jawnSoftContext = '';
 	jawnSoftNumeric = false;
