@@ -670,6 +670,25 @@ sub ai_house_servers {
 	return keys %server;
 }
 
+# Whether a machine may carry an automatic evaluation: a server or a computer.
+# An automatic run re-reads the history and then holds a model call, which is
+# minutes of one core and the wrong work for a handheld on battery, so a phone or
+# tablet is left out of both the dispatcher and the election. Manual Evaluate is
+# not routed through this - that path calls the agent directly.
+sub evaluation_auto_machine {
+	my ($machine) = @_;
+	return 0 unless defined $machine && length $machine;
+	my $device;
+	if ($machine eq &ai_house_me()) {
+		$device = &subs::device_setter() // '';
+	}
+	else {
+		my $row = eval { &subs::db_select('remote_machines', ['device'], { signatorial => $machine })->hashes->[0] };
+		$device = $row ? ($row->{'device'} // '') : '';
+	}
+	return ($device eq 'server' || $device eq 'computer') ? 1 : 0;
+}
+
 # Whether a named machine can take the work now. The local machine is asked
 # directly (its heartbeat may be this very process's); a peer is judged by the
 # row it synced, so a machine that has gone quiet is not believed.
@@ -763,6 +782,10 @@ sub ai_house_quorum_ok {
 sub ai_job_runner {
 	my ($job, $ttl, $need_eval, $prefer_server) = @_;
 	my @house = &ai_house_members($need_eval);
+	# An evaluation run is automatic work, so only a server or a computer may be
+	# elected; a ready phone stays out of the election just as the dispatcher
+	# never addresses it.
+	@house = grep { &evaluation_auto_machine($_) } @house if $need_eval;
 	# A job that needs the evaluation model has no runner when no member can
 	# reach it. Returning the local machine anyway was the old fallback, and it
 	# made an unequipped device claim the run only to skip it.
@@ -851,12 +874,15 @@ sub ai_job_note {
 }
 
 # ---- evaluation dispatch ----------------------------------------------------
-# The server is the dispatcher; a mobile or computer is a worker. The dispatcher
-# assigns each scheduled run to one ready worker a few minutes before it is due,
-# and a worker only runs what is addressed to it. A partition that cannot see
-# the server receives no fresh assignment and stands down, which is what keeps a
-# split house from running the same report twice. A house with no server at all
-# elects by quorum instead.
+# A server is the dispatcher; a server or a computer is a worker, and a phone or
+# tablet is neither. The dispatcher assigns each scheduled run to one ready
+# worker a few minutes before it is due, and a worker only runs what is
+# addressed to it. A partition that cannot see the server receives no fresh
+# assignment and stands down, which is what keeps a split house from running the
+# same report twice. A house with no server at all elects by quorum instead.
+# A computer is a worker on purpose: a server that has a model named but cannot
+# reach it still dispatches, and the ready computer is the machine that carries
+# the night.
 
 # Minion lists schedules with next_run as epoch seconds; a stored string form
 # is accepted too when a caller reads the row directly.
@@ -911,15 +937,21 @@ sub evaluation_dispatch_sweep {
 	my $lead = 10 * 60 * 1000;
 	my $guard = 30 * 60 * 1000;
 	my $count = 0;
-	# Automatic evaluation runs on a server, so an assignment goes to the
-	# dispatcher or to another ready server. Handing one to a phone or laptop
-	# would leave the row unclaimed - those machines no longer schedule or run
-	# one by themselves - and the report would silently never run.
-	my %server_member;
+	# Automatic evaluation runs on a server or a computer, so an assignment goes
+	# to the dispatcher or to another ready machine of one of those classes. A
+	# phone or tablet is never addressed: it does not run one by itself, so the
+	# row would go unclaimed and the report would silently never run. A computer
+	# is eligible on purpose - when the server is unequipped (a model is named
+	# but cannot answer), the dispatcher still writes the assignment and the
+	# computer claims it.
+	my (%auto_member, %server_member);
 	foreach my $rm ( @{ &subs::db_select('remote_machines', [ 'signatorial', 'device' ], {})->hashes || [] } ) {
-		next unless (($rm->{'device'} || '') eq 'server');
-		$server_member{ $rm->{'signatorial'} || '' } = 1;
+		my $device = $rm->{'device'} // '';
+		next unless $device eq 'server' || $device eq 'computer';
+		$auto_member{ $rm->{'signatorial'} || '' } = 1;
+		$server_member{ $rm->{'signatorial'} || '' } = 1 if $device eq 'server';
 	}
+	$auto_member{$me} = 1;
 	$server_member{$me} = 1;
 	foreach my $sch ( @{ $listed->{'schedules'} || [] } ) {
 		next unless ($sch->{'name'} // '') =~ /^nightly_evaluation_(.+)$/;
@@ -930,12 +962,16 @@ sub evaluation_dispatch_sweep {
 		my $key = 'eval:' . $app;
 		my $existing = eval { &subs::db_select('ai_jobs', undef, { job => $key })->hashes->[0] };
 		next if $existing && (($existing->{'at'} || 0) + 0) > ($now - $guard);
-		# the server dispatches to a ready server (or runs the report itself)
-		my @workers = grep { $_ ne $me && $server_member{$_} } @ready;
+		# the dispatcher assigns to a ready server or computer (or runs the
+		# report itself); a ready server is the more dependable worker, so a
+		# computer is chosen only when no server can carry it
+		my @workers = grep { $_ ne $me && $auto_member{$_} } @ready;
 		my $owner;
-		if ($named && $named ne $me && $ready{$named} && $server_member{$named}) { $owner = $named; }
+		if ($named && $named ne $me && $ready{$named} && $auto_member{$named}) { $owner = $named; }
 		elsif (@workers) {
-			$owner = (sort { &ai_job_rank($key, $a) <=> &ai_job_rank($key, $b) } @workers)[0];
+			my @servers = grep { $server_member{$_} } @workers;
+			my @pool = @servers ? @servers : @workers;
+			$owner = (sort { &ai_job_rank($key, $a) <=> &ai_job_rank($key, $b) } @pool)[0];
 		}
 		elsif (&ai_house_eval_ready()) { $owner = $me; }
 		else { next; }
@@ -953,9 +989,9 @@ sub evaluation_dispatch_sweep {
 # than the cron means an assignment that reaches a worker a few seconds late is
 # still picked up on the next minute instead of waiting for the next cadence.
 sub evaluation_dispatch_tick {
-	# Only a server dispatches or takes an automatic run; the other machines stop
-	# scheduling (see subs::evaluation_auto_here), so an assignment sent to one
-	# would never be claimed.
+	# Only a server or a computer dispatches or takes an automatic run (see
+	# subs::evaluation_auto_here); a phone or tablet stops scheduling, so an
+	# assignment sent to one would never be claimed.
 	return 0 unless &subs::evaluation_auto_here();
 	my $me = &ai_house_me();
 	return 0 unless length $me;

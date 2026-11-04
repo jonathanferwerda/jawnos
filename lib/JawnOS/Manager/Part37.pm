@@ -341,15 +341,20 @@ sub websocket_sender($wsm) {
 		my $timestamp = $wsm->{'timestamp'};
 		# the overlay/open/key/console pushes are how a locked device is driven
 		# and how the phone hears about the lock; everything else that a server
-		# pushes to a tab is dropped for a device with a manual padlock row
+		# pushes to a tab is dropped for a device the padlock gate considers
+		# locked. The rule is the HTTP gate's own: this connection's device, so a
+		# screen whose per-device unlock is still in the future keeps receiving
+		# even when the house-wide pl_time has expired.
 		my $locked_ok = $original_msg->{'padlock'} || $original_msg->{'padlock_open'} || $original_msg->{'padlock_key_show'} || $original_msg->{'console'};
 		my $server_push = ($app eq 'server' && !$locked_ok) ? 1 : 0;
 		my $recipient_locked = sub {
 			my ($conn) = @_;
 			return 0 unless $server_push && $conn;
 			my $dev = $conn->{'device_uuid'} || '';
-			return 0 unless $dev;
-			return &padlock_device_locked($dev);
+			# padlock_locked_now falls back to the house-wide stamp when the
+			# connection has no device of its own, so an unpaired socket keeps
+			# the old global answer instead of being fed while the house is locked.
+			return &padlock_locked_now(undef, $dev);
 		};
 		# One recipient, one guarded write. A connection the loop has already
 		# finished still sits in the registry until its finish handler runs, and a

@@ -1,4 +1,4 @@
-# tests-for: public/js/manager/websocket.js public/js/manager/websocket/ public/js/manager/manager/09_app_back.js lib/JawnOS/Controller/manager_ws.pm lib/JawnOS/Domain/Calendar.pm lib/JawnOS/Manager/Part37.pm lib/JawnOS/Manager/Part14.pm
+# tests-for: public/js/manager/websocket.js public/js/manager/websocket/ public/js/manager/manager/09_app_back.js lib/JawnOS/Controller/manager_ws.pm lib/JawnOS/Domain/Calendar.pm lib/JawnOS/Manager/Part37.pm lib/JawnOS/Manager/Part14.pm perl/Websocket.pl
 # covers:    A websocket can read OPEN while the machine slept or the server went silent, and a start/stop pushed in that gap
 #
 
@@ -31,6 +31,7 @@ my $watch = read_file("$root/public/js/manager/websocket/03_watchdog.js");
 my $world = read_file("$root/lib/JawnOS/Domain/Calendar.pm");
 my $ws_pm = read_file("$root/lib/JawnOS/Controller/manager_ws.pm");
 my $part37 = read_file("$root/lib/JawnOS/Manager/Part37.pm");
+my $websocket_pl = read_file("$root/perl/Websocket.pl");
 my $part14 = read_file("$root/lib/JawnOS/Manager/Part14.pm");
 my $app_back = read_file("$root/public/js/manager/manager/09_app_back.js");
 my $handler = read_file("$root/public/js/manager/websocket/01_message_handler.js");
@@ -137,6 +138,19 @@ like($part37, qr/my \$deliver = sub \{.*?my \$ok = eval \{ \$conn->send\(\$wire\
 	'one dead recipient is dropped, not the broadcast');
 like($part37, qr/next if eval \{ \$recipient_locked->\(\$conn\) \};/,
 	'a failing padlock check cannot take the push down');
+
+# --- the padlock gate is per recipient --------------------------------------
+# A house-wide pl_time expires while a screen can hold a future
+# padlock_device_time (activity_timeout is per device). The HTTP gate honours
+# that screen, so the live push must use the same rule; a global drop at the
+# producer silenced the connect frame and left the manager painted but frozen.
+like($part37, qr/return &padlock_locked_now\(undef, \$dev\);/,
+	'the recipient gate asks the same per-device rule as HTTP');
+unlike($part37, qr/return &padlock_device_locked\(\$dev\);/,
+	'it does not stop at the manual per-device lock row');
+unlike($websocket_pl, qr/&padlock_gate_locked\(\)/,
+	'the producer no longer drops every server frame on the house-wide stamp');
+
 { my $n = () = $part37 =~ /\$returner = \$deliver->\(\$ws, \$conn, \$w\);/g;
   is($n, 2, 'both broadcast arms deliver through the guard'); }
 

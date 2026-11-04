@@ -291,9 +291,10 @@ sub evaluation_schedule_arrange {
 	$app = '__president' unless $app && $app ne '';
 	my $minion = &subs::minion_grabber();
 	my $name = &subs::nightly_evaluation_name($app);
-	# Only the server keeps an automatic schedule. Anywhere else the wish is
-	# stored (the cadence setting is shared) and the server's reconcile turns it
-	# into a schedule; a machine that used to have one loses it here.
+	# A server or a computer keeps an automatic schedule; a phone or tablet keeps
+	# none. The wish is stored wherever it was set (the cadence setting is
+	# shared) and the reconcile is what turns it into a schedule; a machine that
+	# used to have one loses it here.
 	unless (&evaluation_auto_here()) {
 		$minion->unschedule($name);
 		delete $schedule_memo{$app};
@@ -338,13 +339,17 @@ sub nightly_evaluation_apply {
 # A run re-reads the whole history across five windows and then holds a model
 # call. Measured on the phone that is seconds of gathering and minutes of one
 # core once the call is under way, which is the wrong work for a handheld that
-# is usually on battery. Automatic runs are the server's; a phone, tablet or
-# laptop still runs one when a person presses Evaluate (that path calls
-# evaluation_agent directly), it just never starts one on its own. The controls
-# still record a cadence anywhere - the setting is house-wide and the server's
-# reconcile is what turns it into a schedule.
+# is usually on battery. Automatic runs are a server's or a computer's work; a
+# phone or tablet never starts one on its own, though any machine still runs one
+# when a person presses Evaluate (that path calls evaluation_agent directly). A
+# computer is included on purpose: a house whose server has a model named but
+# cannot reach it (a key that was never entered, an Ollama that is not running)
+# can still let a ready computer carry the night. The controls still record a
+# cadence anywhere - the setting is house-wide and the reconcile is what turns
+# it into a schedule.
 sub evaluation_auto_here {
-	return (&subs::device_setter() eq 'server') ? 1 : 0;
+	my $device = &subs::device_setter() // '';
+	return ($device eq 'server' || $device eq 'computer') ? 1 : 0;
 }
 
 sub evaluation_run_trigger {
@@ -369,10 +374,10 @@ sub evaluation_run_trigger {
 # take the worker down with it.
 sub nightly_evaluation_reconcile {
 	eval {
-		# Automatic evaluation is the server's job (see evaluation_auto_here). A
-		# machine that is not the server keeps its queue empty of these schedules,
-		# so a wake cannot hand a handheld a core for minutes; the catch-up below
-		# is skipped for the same reason.
+		# Automatic evaluation is a server's or a computer's job (see
+		# evaluation_auto_here). A phone or tablet keeps its queue empty of these
+		# schedules, so a wake cannot hand a handheld a core for minutes; the
+		# catch-up below is skipped for the same reason.
 		unless (&evaluation_auto_here()) {
 			my $minion = &subs::minion_grabber();
 			my $listed = $minion->list_schedules(0, 1000) || {};
@@ -382,7 +387,8 @@ sub nightly_evaluation_reconcile {
 			}
 			return;
 		}
-		# Every machine that reaches here is the server. It keeps the schedules.
+		# Every machine that reaches here is a server or a computer. It keeps the
+		# schedules.
 		# every scope ever given a cadence, or the old nightly checkbox: the
 		# effective cadence decides which of them wants a schedule
 		my %scope;
@@ -445,7 +451,7 @@ sub nightly_evaluation_reconcile {
 				my $last = ($report->{'timestamp'} || 0) + 0;
 				next if $last && ($now_ms - $last) < $interval * 1.15;
 				# one machine queues the catch-up: the same election the job uses,
-				# so a ready phone and a ready laptop do not both enqueue every scope.
+				# so a ready phone and a ready computer do not both enqueue every scope.
 				# A dead claim of our own is not a live runner, so we queue it ourselves.
 				my $chosen = $dead_own ? &subs::ai_house_me() : eval { &subs::ai_job_runner($key, 10 * 60 * 1000, 1, 0) };
 				next unless defined $chosen && $chosen eq &subs::ai_house_me();
@@ -470,9 +476,10 @@ sub appointment_evaluation_job {
 	my ($job, $data) = @_;
 	my $app = $data->{'app'} || '__president';
 	# A job queued before this machine stopped scheduling (a restart, or a policy
-	# change with one still waiting behind the worker's delay) must not run here.
+	# change with one still waiting behind the worker's delay) must not run on a
+	# phone or tablet.
 	unless (&evaluation_auto_here()) {
-		$job->finish({ app => $app, skipped => 'automatic evaluations run on the server' });
+		$job->finish({ app => $app, skipped => 'automatic evaluations run on a server or a computer' });
 		return;
 	}
 	my $key = 'eval:' . $app;
