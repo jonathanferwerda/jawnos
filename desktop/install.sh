@@ -131,7 +131,18 @@ fi
 # --- copy the tree ----------------------------------------------------------
 echo "Installing to $DEST"
 mkdir -p "$DEST"
-cp -R "$DESKTOP_SRC/." "$DEST/"
+# desktop/mkosi is the image build tree, not the app. A build can leave
+# root-owned .stage/output files there, and copying the whole desktop aborted on
+# them. Copy the app's own entries only, and clear an older install that still
+# carried the build tree.
+for entry in "$DESKTOP_SRC"/* "$DESKTOP_SRC"/.[!.]*; do
+	[ -e "$entry" ] || continue
+	case "$(basename "$entry")" in
+		mkosi) continue ;;
+	esac
+	cp -R "$entry" "$DEST/"
+done
+rm -rf "$DEST/mkosi"
 find "$DEST" -name '__pycache__' -type d -prune -exec rm -rf {} + 2>/dev/null || true
 chmod +x "$DEST/jawnosctl" "$DEST/jawnos-desktop" "$DEST/jawnos-bt-daemon" "$DEST/install-wallet.sh" "$DEST/jawnos-browse" "$DEST/jawnos-shell" "$DEST/jawnos-usage"
 # Record what was installed, so the app's own Update button offers only a newer

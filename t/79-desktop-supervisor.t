@@ -39,6 +39,15 @@ like($unit, qr/^KillMode=process$/m, 'stopping the watcher leaves the tree runni
 like($install, qr/for unit in jawnos-bt jawnos jawnos-watch/, 'the installer writes the watcher unit');
 like($install, qr/enable --now jawnos-watch\.service/, 'and enables it');
 
+# desktop/mkosi is the image build tree. A build can leave root-owned .stage or
+# output files there; copying the whole desktop aborted the table's install on
+# exactly those. The app's own entries are copied and mkosi is skipped.
+like($install, qr/for entry in "\$DESKTOP_SRC"\/\*/, 'the installer copies the app entries');
+like($install, qr/mkosi\) continue/, 'and skips the image build tree');
+like($install, qr/rm -rf "\$DEST\/mkosi"/, 'an older install loses the build tree');
+unlike($install, qr/cp -R "\$DESKTOP_SRC\/\." "\$DEST\/"/,
+	'never copies the whole desktop including mkosi');
+
 my $python = qx{python3 --version 2>/dev/null};
 
 SKIP: {
