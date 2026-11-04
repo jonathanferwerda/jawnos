@@ -74,6 +74,9 @@ function codingChatArmAll(root) {
 		codingChatRestore(panel);
 		codingChatReattach(panel);
 		codingChatDraggable(panel);
+		if (typeof jawnosPanelResizable == 'function') {
+			jawnosPanelResizable(panel, function (p) { return 'coding:' + (p.attr('conversation') || p.attr('mount')); });
+		}
 	});
 }
 

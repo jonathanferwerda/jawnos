@@ -298,6 +298,9 @@ function assistantInitializer() {
 				jawnosPanelPosSave('guide:' + (p.attr('conversation') || 'assistant'), p);
 			}
 		});
+		if (typeof jawnosPanelResizable == 'function') {
+			jawnosPanelResizable(panel, function (p) { return 'guide:' + (p.attr('conversation') || 'assistant'); });
+		}
 	});
 
 	assistantIconInitializer();

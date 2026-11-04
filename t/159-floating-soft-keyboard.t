@@ -31,14 +31,26 @@ like($kb, qr/if \(!floating\) \{[\s\S]*?dock\.draggable\('destroy'\);[\s\S]*?lef
 like($kb, qr/function softKbFloatDraggable\(dock\)/, 'the floating panel is made draggable');
 like($kb, qr/handle: '\.soft_kb_bar'/, 'the bar above the keys is the handle');
 like($kb, qr/distance: 4/, 'a tap on the bar does not start a move');
-like($kb, qr/\$\(this\)\.css\(\{ bottom: 'auto' \}\)/, 'a moved panel is not stretched by top and bottom together');
+like($kb, qr/if \(panel\.css\('bottom'\) != 'auto'\)/, 'a moved panel is not stretched by top and bottom together');
+like($kb, qr/panel\.css\(\{ 'left': rect\.left \+ 'px', 'top': rect\.top \+ 'px', 'bottom': 'auto' \}\)/,
+	'the move keeps the visual spot while it takes the top edge');
+like($kb, qr/function softKbFloatSave\(panel\)/, 'one save keeps the panel spot and size');
 like($kb, qr/localStorage\.setItem\('jawn_soft_place'/, 'the place is kept on the device');
 like($kb, qr/function softKbFloatRestore\(dock\)/, 'the place is restored on the next open');
 like($kb, qr/localStorage\.getItem\('jawn_soft_place'\)/, 'from the same device setting');
-like($kb, qr/Math\.min\(saved\.left, Math\.max\(0, \$\(window\)\.width\(\) - width\)\)/,
+like($kb, qr/Math\.min\(saved\.left, Math\.max\(0, vw - width\)\)/,
 	'a saved place is kept inside the screen');
 like($kb, qr/if \(typeof softKbReserve == 'function'\) \{ softKbReserve\(\); \}/,
 	'the field reserve follows the moved panel');
+
+# --- the floating panel is resized too --------------------------------------
+like($kb, qr/dock\.resizable\(\{[\s\S]*?handles: 'e, s, se'/, 'the floating panel is resizable');
+like($kb, qr/minWidth: 320,\s*minHeight: 180,/, 'it keeps a usable minimum');
+like($kb, qr/box\.width = Math\.round\(w\)/, 'a resized width is kept');
+like($kb, qr/box\.height = Math\.round\(h\)/, 'a resized height is kept');
+like($kb, qr/dock\.css\('width', Math\.min\(saved\.width/, 'the width is restored');
+like($kb, qr/dock\.css\('height', Math\.min\(saved\.height/, 'the height is restored');
+like($kb, qr/dock\.resizable\('destroy'\)/, 'a phone\'s dock has no resize handles');
 
 # --- the stylesheet gives the floating dock a panel look --------------------
 my ($float) = $css =~ /\.soft_kb\.soft_kb_floating \{([^}]*)\}/s;

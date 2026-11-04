@@ -676,29 +676,63 @@ function softKbFloatApply(dock) {
 	dock.toggleClass('soft_kb_floating', floating);
 	if (!floating) {
 		if (dock.hasClass('ui-draggable')) { dock.draggable('destroy'); }
-		dock.removeClass('soft_kb_dragging').css({ left: '', top: '', bottom: '' });
+		if (dock.hasClass('ui-resizable')) { dock.resizable('destroy'); }
+		dock.removeClass('soft_kb_dragging').css({ left: '', top: '', bottom: '', width: '', height: '' });
 		return;
 	}
-	if (!dock.hasClass('ui-draggable')) { softKbFloatDraggable(dock); }
+	if (!dock.hasClass('ui-draggable') || !dock.hasClass('ui-resizable')) { softKbFloatDraggable(dock); }
 	softKbFloatRestore(dock);
 }
 
-// Put the floating panel back where it was left on this device, kept inside the
-// screen if the screen has changed shape since.
+// Put the floating panel back where it was left on this device, at the size it
+// was left, kept inside the screen if the screen has changed shape since.
 function softKbFloatRestore(dock) {
 	var saved = null;
 	try { saved = JSON.parse(localStorage.getItem('jawn_soft_place') || 'null'); } catch (err) { saved = null; }
-	if (!saved || !isFinite(saved.left) || !isFinite(saved.top)) {
+	if (!saved) {
+		dock.css({ left: '', top: '', bottom: '', width: '', height: '' });
+		return;
+	}
+	var vw = $(window).width();
+	var vh = $(window).height();
+	if (isFinite(saved.width) && saved.width > 0) {
+		dock.css('width', Math.min(saved.width, Math.max(320, vw - 8)) + 'px');
+	}
+	if (isFinite(saved.height) && saved.height > 0) {
+		dock.css('height', Math.min(saved.height, Math.max(180, vh - 8)) + 'px');
+	}
+	if (!isFinite(saved.left) || !isFinite(saved.top)) {
 		dock.css({ left: '', top: '', bottom: '' });
 		return;
 	}
 	var width = dock.outerWidth() || 0;
 	var height = dock.outerHeight() || 0;
-	if (!(width > 0)) { width = Math.min(760, $(window).width() - 24); }
+	if (!(width > 0)) { width = Math.min(760, vw - 24); }
 	if (!(height > 0)) { height = 300; }
-	var left = Math.max(0, Math.min(saved.left, Math.max(0, $(window).width() - width)));
-	var top = Math.max(0, Math.min(saved.top, Math.max(0, $(window).height() - height)));
+	var left = Math.max(0, Math.min(saved.left, Math.max(0, vw - width)));
+	var top = Math.max(0, Math.min(saved.top, Math.max(0, vh - height)));
 	dock.css({ left: left + 'px', top: top + 'px', bottom: 'auto' });
+}
+
+function softKbFloatSave(panel) {
+	var width = panel.outerWidth() || 0;
+	var height = panel.outerHeight() || 0;
+	var left = parseFloat(panel.css('left')) || 0;
+	var top = parseFloat(panel.css('top')) || 0;
+	left = Math.max(0, Math.min(left, Math.max(0, $(window).width() - width)));
+	top = Math.max(0, Math.min(top, Math.max(0, $(window).height() - height)));
+	panel.css({ left: left + 'px', top: top + 'px' });
+	var box = { left: Math.round(left), top: Math.round(top) };
+	// only a size the person set by resizing is kept: a page that was merely
+	// dragged must keep its own height (the calculator is shorter than the
+	// letters page), so the restore never freezes the default
+	var inline = panel[0].style;
+	var w = parseFloat(panel.css('width'));
+	var h = parseFloat(panel.css('height'));
+	if (inline.width && isFinite(w) && w > 0) { box.width = Math.round(w); }
+	if (inline.height && isFinite(h) && h > 0) { box.height = Math.round(h); }
+	try { localStorage.setItem('jawn_soft_place', JSON.stringify(box)); } catch (err) {}
+	if (typeof softKbReserve == 'function') { softKbReserve(); }
 }
 
 function softKbFloatDraggable(dock) {
@@ -708,21 +742,35 @@ function softKbFloatDraggable(dock) {
 		start: function () {
 			// a top/bottom pair with a fixed height would stretch the panel; the
 			// drag owns the top edge from here
-			$(this).css({ bottom: 'auto' }).addClass('soft_kb_dragging');
+			var panel = $(this);
+			if (panel.css('bottom') != 'auto') {
+				var rect = panel[0].getBoundingClientRect();
+				panel.css({ 'left': rect.left + 'px', 'top': rect.top + 'px', 'bottom': 'auto' });
+			}
+			panel.addClass('soft_kb_dragging');
 		},
 		stop: function () {
-			var panel = $(this).removeClass('soft_kb_dragging');
-			var width = panel.outerWidth() || 0;
-			var height = panel.outerHeight() || 0;
-			var left = parseFloat(panel.css('left')) || 0;
-			var top = parseFloat(panel.css('top')) || 0;
-			left = Math.max(0, Math.min(left, Math.max(0, $(window).width() - width)));
-			top = Math.max(0, Math.min(top, Math.max(0, $(window).height() - height)));
-			panel.css({ left: left + 'px', top: top + 'px' });
-			try { localStorage.setItem('jawn_soft_place', JSON.stringify({ left: left, top: top })); } catch (err) {}
-			if (typeof softKbReserve == 'function') { softKbReserve(); }
+			softKbFloatSave($(this).removeClass('soft_kb_dragging'));
 		}
 	});
+	if ($.fn.resizable && !dock.hasClass('ui-resizable')) {
+		dock.resizable({
+			handles: 'e, s, se',
+			minWidth: 320,
+			minHeight: 180,
+			start: function () {
+				var panel = $(this);
+				if (panel.css('bottom') != 'auto' || panel.css('right') != 'auto') {
+					var rect = panel[0].getBoundingClientRect();
+					panel.css({ 'left': rect.left + 'px', 'top': rect.top + 'px', 'right': 'auto', 'bottom': 'auto' });
+				}
+				panel.addClass('soft_kb_dragging');
+			},
+			stop: function () {
+				softKbFloatSave($(this).removeClass('soft_kb_dragging'));
+			}
+		});
+	}
 }
 
 // How far the search box and the dropdown must stay off the foot of the page:

@@ -81,8 +81,9 @@ function keyboardDragEnabler(k,id,state) {
 
 // A keyboard panel is moved by the thin bar across its top, so the body stays
 // free for tapping buttons and typing: a drag only ever starts on the bar. The
-// bar carries the panel's close button at its own right end. The bar is added
-// once; safe to call again on the same panel.
+// bar carries the panel's close button at its own right end. The panel is sized
+// by its edge or corner, and both its place and its size are kept. The bar is
+// added once; safe to call again on the same panel.
 function keyboardDragBarMaker(k) {
 	k = $(k);
 	if (k.length == 0) { return; }
@@ -106,32 +107,54 @@ function keyboardDragBarMaker(k) {
 				}
 			},
 			stop: function(p) {
-				// the computed style is the only record of where the panel sits
-				// once it has been moved, so keep the lot (minus the claim border)
-				var panel = $(this);
-				var id = panel.attr('id');
-				if (panel.css('position') == 'fixed') {
-					var top = parseFloat(panel.css('top'));
-					if (!isNaN(top) && top < panelTopLimit()) {
-						panel.css({ 'top': panelTopLimit() + 'px' });
-					}
-				}
-				var css = {};
-				var style = panel[0].style;
-				$.each(style, function(i,v) {
-					if (!v.match('border-left')) {
-						css[v] = panel.css(v);
-					}
-				});
-				var jcss = JSON.stringify(css);
-				jawnosWindowStyleSet(id, jcss);
-				jawnosWindowPlaceSet(id, jcss);
+				keyboardPanelSave($(this));
 			}
 		});
 	}
 	else {
 		k.draggable('enable');
 	}
+	if ($.fn.resizable && !k.hasClass('ui-resizable')) {
+		k.resizable({
+			handles: 'e, s, se',
+			minWidth: 220,
+			minHeight: 120,
+			start: function() {
+				var panel = $(this);
+				if (panel.css('right') != 'auto' || panel.css('bottom') != 'auto') {
+					var rect = panel[0].getBoundingClientRect();
+					panel.css({ 'left': rect.left + 'px', 'top': rect.top + 'px', 'right': 'auto', 'bottom': 'auto' });
+				}
+			},
+			stop: function() { keyboardPanelSave($(this)); }
+		});
+	}
+}
+
+// The whole style dump the panel wears, kept as its place: a resized panel's
+// width and height ride in the same dump as the spot its drag bar leaves.
+function keyboardPanelSave(panel) {
+	if (!panel || !panel.length) { return; }
+	var id = panel.attr('id');
+	if (!id) { return; }
+	// the computed style is the only record of where the panel sits
+	// once it has been moved, so keep the lot (minus the claim border)
+	if (panel.css('position') == 'fixed') {
+		var top = parseFloat(panel.css('top'));
+		if (!isNaN(top) && top < panelTopLimit()) {
+			panel.css({ 'top': panelTopLimit() + 'px' });
+		}
+	}
+	var css = {};
+	var style = panel[0].style;
+	$.each(style, function(i,v) {
+		if (!v.match('border-left')) {
+			css[v] = panel.css(v);
+		}
+	});
+	var jcss = JSON.stringify(css);
+	jawnosWindowStyleSet(id, jcss);
+	jawnosWindowPlaceSet(id, jcss);
 }
 
 // Whether a hit-tested element belongs to the pseudonym dock. A tucked dock

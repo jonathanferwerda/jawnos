@@ -112,7 +112,9 @@ async function keyboardMaker(data) {
 				// a re-rendered panel starts on the markup's idle text; ask once
 				musicReceiverRefresh();
 				if (css) {
-					css['width'] = t.width();
+					// a saved width is the one the person resized to; only a panel that
+					// has never been sized takes its own default here
+					if (css['width'] == null || css['width'] === '') { css['width'] = t.width(); }
 					t.css(css);
 				}
 				t.attr('claimed', 'yes');

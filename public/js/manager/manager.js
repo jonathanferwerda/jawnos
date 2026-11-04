@@ -441,7 +441,16 @@ function jawnosPanelPosSave(key, panel) {
 	if (!key || !panel || !panel.length) { return; }
 	var left = parseFloat(panel.css('left')), top = parseFloat(panel.css('top'));
 	if (isNaN(left) || isNaN(top)) { return; }
-	jawnosPanelSpotSet(key, JSON.stringify({ left: Math.round(left), top: Math.round(top) }));
+	var spot = { left: Math.round(left), top: Math.round(top) };
+	// The size is kept with the place: a panel resized by hand opens at that
+	// size next time, on this device. Only an inline size counts - a panel that
+	// has merely been dragged keeps its own default, which lets a content-sized
+	// list grow and the keyboard keep each page's own height.
+	var inline = panel[0].style;
+	var width = parseFloat(panel.css('width')), height = parseFloat(panel.css('height'));
+	if (inline.width && isFinite(width) && width > 0) { spot.width = Math.round(width); }
+	if (inline.height && isFinite(height) && height > 0) { spot.height = Math.round(height); }
+	jawnosPanelSpotSet(key, JSON.stringify(spot));
 }
 function jawnosPanelPosRestore(key, panel) {
 	if (!key || !panel || !panel.length) { return false; }
@@ -450,14 +459,59 @@ function jawnosPanelPosRestore(key, panel) {
 	var s = null;
 	try { s = JSON.parse(raw); } catch (e) { return false; }
 	if (!s || typeof s.left !== 'number' || typeof s.top !== 'number') { return false; }
+	var bar = (typeof jawnosTaskbarHeight == 'function') ? jawnosTaskbarHeight() : 0;
+	// apply a remembered size before measuring, so the place is clamped against
+	// the box the panel will really wear
+	var saved_w = 0, saved_h = 0;
+	if (typeof s.width === 'number' && s.width > 0) {
+		saved_w = Math.min(s.width, Math.max(160, $(window).width() - 8));
+		panel.css('width', saved_w + 'px');
+	}
+	if (typeof s.height === 'number' && s.height > 0) {
+		saved_h = Math.min(s.height, Math.max(120, $(window).height() - bar - 8));
+		panel.css('height', saved_h + 'px');
+	}
 	// keep it on screen if the window has since shrunk; a hidden panel has no box
 	// to measure, and a zero width simply leaves the stored spot alone
-	var w = panel.outerWidth() || 0, h = panel.outerHeight() || 0;
-	var bar = (typeof jawnosTaskbarHeight === 'function') ? jawnosTaskbarHeight() : 0;
+	var w = saved_w || panel.outerWidth() || 0, h = saved_h || panel.outerHeight() || 0;
 	var left = Math.max(0, Math.min(s.left, $(window).width() - w));
 	var top = Math.max(0, Math.min(s.top, $(window).height() - h - bar));
 	panel.css({ left: left + 'px', top: top + 'px', right: 'auto', bottom: 'auto' });
 	return true;
+}
+
+// A right/bottom anchored panel gets a left/top before it is resized, so the
+// widget can grow it without the two anchors stretching the box.
+function jawnosPanelAnchor(panel) {
+	if (!panel || !panel.length) { return; }
+	if (panel.css('right') == 'auto' && panel.css('bottom') == 'auto') { return; }
+	var rect = panel[0].getBoundingClientRect();
+	panel.css({ left: rect.left + 'px', top: rect.top + 'px', right: 'auto', bottom: 'auto' });
+}
+
+// A chat panel is sized by its edge or corner. The stop clamps it on screen
+// (a corner can reach past the desk) and keeps the size beside its place.
+function jawnosPanelResizable(panel, keyOf) {
+	if (!panel || !panel.length || !$.fn.resizable || panel.hasClass('ui-resizable')) { return; }
+	panel.resizable({
+		handles: 'e, s, se',
+		minWidth: 240,
+		minHeight: 180,
+		start: function () { jawnosPanelAnchor($(this)); },
+		stop: function () {
+			var p = $(this);
+			var w = p.outerWidth(), h = p.outerHeight();
+			var bar = (typeof jawnosTaskbarHeight == 'function') ? jawnosTaskbarHeight() : 0;
+			var limit = (typeof panelTopLimit == 'function') ? panelTopLimit() : 0;
+			var left = parseFloat(p.css('left')) || 0;
+			var top = parseFloat(p.css('top')) || 0;
+			left = Math.max(0, Math.min(left, Math.max(0, $(window).width() - w)));
+			var highest = Math.max(limit, $(window).height() - h - bar);
+			top = Math.max(limit, Math.min(top, highest));
+			p.css({ left: left + 'px', top: top + 'px', right: 'auto', bottom: 'auto' });
+			jawnosPanelPosSave((typeof keyOf == 'function') ? keyOf(p) : keyOf, p);
+		}
+	});
 }
 
 function assistantOpenPanel(panel) {

@@ -37,6 +37,9 @@ function jawnosAgentsPanel() {
 			jawnosPanelPosSave('agents', $(this));
 		}
 	});
+	if (typeof jawnosPanelResizable == 'function') {
+		jawnosPanelResizable(panel, 'agents');
+	}
 	return panel;
 }
 
