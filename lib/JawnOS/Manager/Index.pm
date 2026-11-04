@@ -452,6 +452,7 @@ our %SUB = (
 	'phone_route_set'                        => 'JawnOS/Manager/Part12.pm',
 	'phone_routes_read'                      => 'JawnOS/Manager/Part12.pm',
 	'phone_routes_save'                      => 'JawnOS/Manager/Part12.pm',
+	'phone_self_signatorial'                 => 'JawnOS/Manager/Part12.pm',
 	'play_audio'                             => 'JawnOS/Manager/Part02.pm',
 	'play_audio_stop'                        => 'JawnOS/Manager/Part02.pm',
 	'president_restarter'                    => 'JawnOS/Manager/Part35.pm',

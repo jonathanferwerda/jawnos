@@ -193,6 +193,7 @@ sub phone_route_for;
 sub phone_route_set;
 sub phone_routes_read;
 sub phone_routes_save;
+sub phone_self_signatorial;
 sub phone_avatar_thumb;
 sub phone_avatar_data;
 sub ticket_contact_clean;

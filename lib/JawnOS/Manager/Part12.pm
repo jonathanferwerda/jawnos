@@ -502,9 +502,47 @@ sub phone_ivr_save($params) {
 # The machines the IVR pane can offer, online first. A machine is available when
 # the mesh's own remote_machines row says it is connected; the pane shows the
 # difference rather than hiding an offline choice the person may still want.
+# This machine's own signatorial, read from the mirror beside the database. A
+# gateway is usually the machine in front of you - the one with the adapter - and
+# that machine has no remote_machines row for itself, so the pane would never
+# offer it.
+sub phone_self_signatorial {
+	return $gb::phone_self_signatorial if defined $gb::phone_self_signatorial;
+	my $sig = '';
+	my $file = &subs::signatorial_identity_mirror();
+	if ($file && -e $file) {
+		if (open(my $fh, '<', $file)) {
+			local $/;
+			$sig = <$fh> // '';
+			close $fh;
+			$sig =~ s/\s+//g;
+		}
+	}
+	$gb::phone_self_signatorial = ($sig =~ /^[0-9a-f]{32}$/) ? $sig : '';
+	return $gb::phone_self_signatorial;
+}
+
 sub phone_ivr_machines {
 	my @machines;
+	# only a machine that can run the helper can be a gateway
+	my $self = (-x './perl/sco/sco_helper') ? &phone_self_signatorial() : '';
+	if ($self) {
+		push @machines, {
+			key         => $self,
+			hostname    => &subs::machine_hostname() . ' (this machine)',
+			ip          => '',
+			connection  => 'active',
+			available   => 1,
+			device      => &subs::device_setter(),
+			manager     => '',
+			port        => '',
+			signatorial => $self,
+			server_time => '',
+			local       => 1,
+		};
+	}
 	foreach my $rm ( @{ &subs::db_select('remote_machines')->hashes } ) {
+		next if $self && (($rm->{'signatorial'} || '') eq $self);
 		next unless ref $rm eq 'HASH';
 		my $key = $rm->{'signatorial'} || $rm->{'ip'} || '';
 		next unless length $key;
@@ -530,6 +568,17 @@ sub phone_ivr_machines {
 
 sub phone_ivr_machine($key) {
 	return undef unless defined $key && length $key;
+	my $self = (-x './perl/sco/sco_helper') ? &phone_self_signatorial() : '';
+	if ($self && $key eq $self) {
+		return {
+			signatorial => $self,
+			hostname => &subs::machine_hostname(),
+			ip => '',
+			connection => 'active',
+			device => &subs::device_setter(),
+			manager => '',
+		};
+	}
 	return &subs::db_select('remote_machines', undef, { signatorial => $key })->hashes->[0]
 		|| &subs::db_select('remote_machines', undef, { ip => $key })->hashes->[0];
 }
