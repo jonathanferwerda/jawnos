@@ -105,7 +105,7 @@
 							<% foreach my $check_set ( qw/unique permanent/ ) { %>
 								<span>
 									<input app="<%= $a %>" class="configure_checkbox" value="checked" type="checkbox" 
-										<% if ($appts->{$a}->{'setting'}->{$check_set} eq "checked") { %> checked="checked" <% } %> setting="<%= $check_set %>" id="configure_visibility_<%= $a %>"></input> <%= &subs::format_name($check_set) %>
+										<% if ($appts->{$a}->{'setting'}->{$check_set} eq "checked") { %> checked="checked" <% } %> setting="<%= $check_set %>" id="configure_visibility_<%= $a %>_<%= $check_set %>"> <%= &subs::format_name($check_set) %>
 								</span>
 							<% } %>
 						</span>
@@ -127,7 +127,7 @@
 							<label>Might Also Be</label>
 							<span>
 								<select class='mab' app='<%= $a %>' id="<%= $a %>_mab" setting="mab">
-									<option <% if ( $appts->{$a}->{'setting'}->{'mab'} eq '' ){ %>selected="selected"<% } %>
+									<option value="" <% if ( $appts->{$a}->{'setting'}->{'mab'} eq '' ){ %>selected="selected"<% } %>></option>
 									<% foreach my $o (sort keys %{$gb::pos}) { %>
 										<option <% if ( $appts->{$a}->{'setting'}->{'mab'} eq $o ){ %>selected="selected"<% } %>
 										value="<%= $o %>"><%= &subs::format_name($o) %></option>
@@ -141,7 +141,7 @@
 							<% my $main_image = &subs::main_icon_maker({ app => $a, timestamp => $timestamp, settings => $appts->{$a}->{'setting'}, size => 'huge' }); %>
 							<br>
 							<%== $main_image %>
-							<img src="<%= &subs::icon_for('/icons/trash.png') %>" hint="Delete" class="little_thumb" onClick="settingDeleter({ 'app': '<%= $a %>', 'setting': 'main_image' });$('.main_image_config[app=<%= $a %>]').remove()"
+							<img src="<%= &subs::icon_for('/icons/trash.png') %>" hint="Delete" class="little_thumb" onClick="settingDeleter({ 'app': '<%= $a %>', 'setting': 'main_image' });$('.main_image_config[app=<%= $a %>]').remove()" />
 						</span>
 					<% } %>
 					<div class="app_abilities">
@@ -270,7 +270,7 @@
 											<div class="cfg-scroll app_web_measures">
 												<table>
 													<thead>
-														<th>Meas</th><th>Sel</th><th>Count</th><th>Del</th>
+														<tr><th>Meas</th><th>Sel</th><th>Count</th><th>Del</th></tr>
 													</thead>
 													<tbody>
 														<% foreach my $wm ( @{$web_measures} ) { %>
@@ -279,8 +279,8 @@
 																<td data-label="Meas"><%= &subs::format_name($wd->{'measure'}) %></td>
 																<td data-label="Sel"><%= $wd->{'selector'} %></td>
 																<td data-label="Count"><%= $wd->{'count'} %></td>
-																<td data-label="Del"><img class="little_thumb hover web_measure_delete" app="<%= $a %>" measure="<%= $wd->{'measure'} %>" src="<%= &subs::icon_for('/icons/trash.png') %>" hint="Delete">
-															</tr>											
+																<td data-label="Del"><img class="little_thumb hover web_measure_delete" app="<%= $a %>" measure="<%= $wd->{'measure'} %>" src="<%= &subs::icon_for('/icons/trash.png') %>" hint="Delete"></td>
+															</tr>
 														<% } %>
 													</tbody>
 												</table>

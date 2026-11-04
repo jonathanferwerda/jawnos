@@ -116,11 +116,12 @@
 	<div class="statistic_table_scroll" style="max-height:360px;overflow:auto;border:solid 1px;border-radius:6px;">
 	<table id="<%= $app %>_inventory_table" style="width:100%;">
 		<thead style="position:sticky;top:0;background:var(--panel);z-index:1;">
-			<th></th>
-			<% foreach my $ty ( @cols ) { %>
-				<th><%= &subs::format_name($ty) %></th>
-			<% } %>
-
+			<tr>
+				<th></th>
+				<% foreach my $ty ( @cols ) { %>
+					<th><%= &subs::format_name($ty) %></th>
+				<% } %>
+			</tr>
 		</thead>
 		<tbody >
 			<% foreach my $rw ( @rows ) { %>
@@ -172,7 +173,6 @@
 									<% } else { %>
 										<%= $returner->{$rw}->{$ry} %>
 									<% } %>
-								</span>
 							<% } %>
 
 						<% } %>
