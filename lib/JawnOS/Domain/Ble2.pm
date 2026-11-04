@@ -552,6 +552,13 @@ sub ble_listener_start {
 			elsif ($name eq 'message') {
 				&ble_message_processor($event->{'data'}, $event->{'mac'});
 			}
+			elsif ($name eq 'error') {
+				# The client gives up rather than spin when its select has gone
+				# bad; say why in the log, because the process then exits and
+				# the only other trace is the restart 30 s later.
+				$log->error('BLE listener error: ' . ($event->{'error'} || 'unknown')
+					. (defined $event->{'err'} ? " ($event->{'err'})" : ''));
+			}
 		}
 		# Only the unterminated tail is dropped. The check used to run before the
 		# drain, so one overlong event discarded the complete lines behind it too.

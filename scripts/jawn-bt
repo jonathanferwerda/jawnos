@@ -13,9 +13,15 @@
 # Up to four links may be live at once; every link-scoped event carries "mac".
 use strict;
 use warnings;
+use FindBin;
+# `lib` as well as the script's own tree: the pre-push guard compiles a blob
+# from a temp directory, where FindBin's ../lib does not exist, and runs it from
+# the repository root.
+use lib "$FindBin::Bin/../lib", 'lib';
 use IO::Socket::INET;
 use IO::Select;
 use JSON::PP;
+use JawnOS::Ble::Select;
 use Time::HiRes qw(sleep time);
 
 $| = 1; # stdout must flush: listen runs for a long time
@@ -119,6 +125,10 @@ $sock->blocking(0);
 
 my $sel = IO::Select->new($sock);
 my $buf = '';
+# A select that returns at once with nothing is not a timeout: the handle is
+# unusable and it will keep returning at once. Ten in a row is a spin, so stop
+# and let the supervisor start a fresh listener rather than hold a core.
+my $SPIN_LIMIT = 10;
 
 sub send_cmd {
 	my $h = shift;
@@ -147,9 +157,18 @@ sub status_shows_connected {
 sub wait_for {
 	my ($cond, $timeout) = @_;
 	my $deadline = time() + $timeout;
+	my $spin = 0;
 	while (time() < $deadline) {
 		my $rem = $deadline - time();
-		my @ready = $sel->can_read($rem > 0.2 ? 0.2 : $rem);
+		my $wait = $rem > 0.2 ? 0.2 : $rem;
+		my @ready = JawnOS::Ble::Select::wait_ready($sel, $wait, \$spin);
+		if ($spin >= $SPIN_LIMIT) {
+			print JSON::PP->new->encode({
+				event => 'error', error => 'select spin',
+				err   => '' . $!, run => $spin,
+			}), "\n";
+			exit 3;
+		}
 		next unless @ready;
 		my $chunk = '';
 		my $n = sysread($sock, $chunk, 65536);
