@@ -699,13 +699,16 @@ the `sdkmanager` doing the installing. A newer NDK is staged, not adopted: the
 build keeps using the app's `ndkVersion` pin until that pin moves, so the report
 naming both is the signal to bump it.
 
-An NDK is 2-4 GB, so the same run **prunes** them: everything but the NDK the
-app pins (`~/jawnos-app/termux-app/gradle.properties`, or `JAWNOS_APP_DIR`) and
-the newest `--android-keep` (default 2) is removed, and each removal is logged.
-The pin is never removed, even when it is older than the newest two -- a build
-uses exactly that version, and a missing NDK would be re-fetched mid-build.
-With no app repo on the machine, the keep count alone decides. Pruning only
-happens with the update, so a report-only run deletes nothing.
+An NDK is 2-4 GB and every build-tools is tens of megabytes, so the same run
+**prunes** them: for `ndk`, `build-tools` and `platforms`, everything but the
+version the app pins and the newest `--android-keep` (default 2) is removed,
+and each removal is logged. The pins are read from the app repo
+(`~/jawnos-app/termux-app`, or `JAWNOS_APP_DIR`): `ndkVersion`, `buildToolsVersion`
+when the app sets one, and `compileSdkVersion` for the platform directory. A pin
+is never removed, even when it is older than the newest two -- a build uses
+exactly that version, and a missing one would be re-fetched mid-build. With no
+app repo on the machine, the keep count alone decides. Pruning only happens
+with the update, so a report-only run deletes nothing.
 
 ```sh
 sudo cp qa/systemd/jawnos-qa-installers.service qa/systemd/jawnos-qa-installers.timer /etc/systemd/system/

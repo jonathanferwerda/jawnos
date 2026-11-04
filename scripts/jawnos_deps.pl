@@ -36,8 +36,9 @@
 #                                                    # build-tools/NDK with
 #                                                    # sdkmanager
 #   perl scripts/jawnos_deps.pl --freshness --android --android-update --android-keep=1
-#                                                    # ...and drop every NDK
-#                                                    # but the pinned one and
+#                                                    # ...and drop every NDK,
+#                                                    # build-tools and platform
+#                                                    # but the pinned ones and
 #                                                    # the newest N (default 2)
 #
 # --freshness asks MetaCPAN, Debian's madison and Arch's package API for the
@@ -1033,45 +1034,65 @@ sub android_update {
 	return $ok;
 }
 
-# The NDK the app pins in its gradle.properties. The app repo lives outside
-# this tree, so without it there is no pin to protect and the keep count alone
-# decides.
-sub app_pinned_ndk {
+# Every pinned version the app declares, as the property name -> value. The
+# app repo lives outside this tree; without it there are no pins to protect and
+# the keep count alone decides. compileSdkVersion names the platform directory
+# (`android-36`), not a package id.
+sub app_pins {
+	my %pins;
 	my $app = $ENV{'JAWNOS_APP_DIR'} || (($ENV{'HOME'} || '') . '/jawnos-app/termux-app');
-	my $path = "$app/gradle.properties";
-	return undef unless -f $path;
-	open(my $fh, '<', $path) or return undef;
-	my $pinned;
-	while (my $line = <$fh>) {
-		next unless $line =~ /^\s*ndkVersion\s*=\s*(\S+)\s*$/;
-		$pinned = $1;
+	if (open(my $props, '<', "$app/gradle.properties")) {
+		while (my $line = <$props>) {
+			$pins{'ndk'} = $1 if $line =~ /^\s*ndkVersion\s*=\s*(\S+)\s*$/;
+			$pins{'platform'} = $1 if $line =~ /^\s*compileSdkVersion\s*=\s*(\S+)\s*$/;
+		}
+		close $props;
 	}
-	close $fh;
-	return $pinned;
+	# buildToolsVersion is optional in the app (AGP bundles aapt2/d8), so it is
+	# only a pin when it is written down.
+	if (open(my $gradle, '<', "$app/app/build.gradle")) {
+		while (my $line = <$gradle>) {
+			$pins{'build-tools'} = $1
+				if $line =~ /^\s*buildToolsVersion\s*=?\s*["']([\d.]+)["']/;
+		}
+		close $gradle;
+	}
+	return \%pins;
 }
 
-# Keep the pinned NDK and the newest $keep; remove the rest. It runs with the
-# update, so a report-only night still changes nothing on the machine. A failed
-# removal is disk hygiene, not a verdict, so it never fails the check.
+# Keep the pinned component and the newest $keep of each family; remove the
+# rest. It runs with the update, so a report-only night still changes nothing on
+# the machine. A failed removal is disk hygiene, not a verdict, so it never
+# fails the check.
 sub android_prune {
 	my ($keep) = @_;
 	my $root = sdk_root();
-	return 0 unless defined $root && -d "$root/ndk";
-	my @versions = grep { /^\d+(?:\.\d+)+$/ } sdk_dir_names("$root/ndk");
-	return 0 unless @versions;
-	my $pinned = app_pinned_ndk();
-	my @remove = JawnOS::Packages::ndk_prune_plan(\@versions, $keep, $pinned);
-	return 0 unless @remove;
+	return 0 unless defined $root;
+	my $pins = app_pins();
+	my @families = (
+		{ name => 'ndk',         pin => $pins->{'ndk'},      match => qr/^\d+(?:\.\d+)+$/ },
+		{ name => 'build-tools', pin => $pins->{'build-tools'}, match => qr/^\d+(?:\.\d+)+$/ },
+		{ name => 'platforms',   pin => (defined $pins->{'platform'} ? "android-$pins->{'platform'}" : undef),
+			match => qr/^android-[\d.]+$/, normalize => sub { $_[0] =~ /^android-([\d.]+)$/ ? $1 : $_[0] } },
+	);
 	require File::Path;
-	for my $version (@remove) {
-		my $path = "$root/ndk/$version";
-		next unless -d $path && !-l $path;
-		if (File::Path::remove_tree($path, { error => \my $errors })) {
-			print "android prune: removed ndk;$version (keeping the newest $keep"
-				. (defined $pinned ? " and the pinned ndk;$pinned" : '') . ")\n";
-		}
-		else {
-			print "android prune: could not remove ndk;$version\n";
+	for my $family (@families) {
+		my $dir = "$root/$family->{'name'}";
+		next unless -d $dir;
+		my @versions = grep { /$family->{'match'}/ } sdk_dir_names($dir);
+		next unless @versions;
+		my @remove = JawnOS::Packages::sdk_prune_plan(
+			\@versions, $keep, $family->{'pin'}, $family->{'normalize'});
+		for my $version (@remove) {
+			my $path = "$dir/$version";
+			next unless -d $path && !-l $path;
+			if (File::Path::remove_tree($path, { error => \my $errors })) {
+				print "android prune: removed $family->{'name'};$version (keeping the newest $keep"
+					. (defined $family->{'pin'} ? " and the pinned $family->{'pin'}" : '') . ")\n";
+			}
+			else {
+				print "android prune: could not remove $family->{'name'};$version\n";
+			}
 		}
 	}
 	return 0;

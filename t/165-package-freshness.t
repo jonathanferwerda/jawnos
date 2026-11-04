@@ -91,6 +91,18 @@ is_deeply( [ JawnOS::Packages::ndk_prune_plan([qw(22.1.7171670 30.0.16248370)], 
 is_deeply( [ JawnOS::Packages::ndk_prune_plan([qw(22.1.7171670 30.0.16248370)], 1, undef) ],
 	['22.1.7171670'], 'prune: --android-keep 1 removes exactly one' );
 
+is_deeply( [ JawnOS::Packages::sdk_prune_plan([qw(34.0.0 35.0.0 36.0.0 37.0.0)], 2, '35.0.0') ],
+	['34.0.0'], 'prune: build-tools keep the newest two and the version the app pins' );
+my $platform_version = sub { $_[0] =~ /^android-([\d.]+)$/ ? $1 : $_[0] };
+is_deeply(
+	[ JawnOS::Packages::sdk_prune_plan([qw(android-34 android-35 android-36)], 2, 'android-36',
+		$platform_version) ],
+	['android-34'], 'prune: platforms compare by number, not by name' );
+is_deeply(
+	[ JawnOS::Packages::sdk_prune_plan([qw(android-34 android-36 android-37)], 2, 'android-36',
+		$platform_version) ],
+	['android-34'], 'prune: a new platform keeps the compileSdk platform and the newest' );
+
 my $tools = JawnOS::Packages::parse_sdk_repository(
 	'<r><remotePackage path="build-tools;36.0.0"/><remotePackage path="build-tools;36.1.0"/>'
 	. '<remotePackage path="build-tools;37.0.0-rc1"/><remotePackage path="build-tools;38.0.0-beta2"/>'

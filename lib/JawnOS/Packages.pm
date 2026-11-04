@@ -207,20 +207,28 @@ sub sdk_newest {
 	return $best;
 }
 
-# Which NDKs to drop from an SDK installation: everything except the version the
-# app pins and the newest `keep`. The pin is never dropped even when it is old:
-# a build uses exactly that version, and pulling it would make gradle re-fetch
-# it at build time.
-sub ndk_prune_plan {
-	my ($versions, $keep, $pinned) = @_;
+# Which SDK components to drop: everything except the version the build pins and
+# the newest `keep`. The pin is never dropped even when it is old -- a build uses
+# exactly that version, and pulling it would make gradle re-fetch it mid-build.
+# `$normalize` turns a directory name into something comparable (a platform is
+# `android-36`, which is not a version until the prefix is gone).
+sub sdk_prune_plan {
+	my ($versions, $keep, $pinned, $normalize) = @_;
 	return () unless ref $versions eq 'ARRAY';
+	$normalize = sub { $_[0] } unless ref $normalize eq 'CODE';
 	$keep = 2 unless defined $keep && $keep =~ /^\d+$/ && $keep >= 1;
 	my %wanted;
 	$wanted{$pinned} = 1 if defined $pinned && length $pinned;
-	my @sorted = sort { compare_module($b, $a) } @$versions;
+	my @sorted = sort { compare_module($normalize->($b), $normalize->($a)) } @$versions;
 	my $take = @sorted < $keep ? scalar @sorted : $keep;
 	$wanted{ $sorted[$_] } = 1 for 0 .. $take - 1;
 	return grep { !$wanted{$_} } @$versions;
+}
+
+# Keep `ndk_prune_plan` as the name the NDK case reads best with.
+sub ndk_prune_plan {
+	my ($versions, $keep, $pinned) = @_;
+	return sdk_prune_plan($versions, $keep, $pinned);
 }
 
 1;
