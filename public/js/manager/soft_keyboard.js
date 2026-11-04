@@ -664,6 +664,65 @@ function softKbPlace(el) {
 	// cannot take the keyboard with it.
 	if (!dock.parent().is('body')) { $('body').append(dock); }
 	dock.removeClass('soft_kb_in_window soft_kb_inline');
+	softKbFloatApply(dock);
+}
+
+// On a desk the dock is a floating panel like the older keyboard panels: a
+// fixed width with its own frame and shadow, moved by the bar above the keys.
+// A phone's or tablet's keyboard stays the full width of the screen, and the
+// input method page is never floated (it is Android's own window).
+function softKbFloatApply(dock) {
+	var floating = softKbDesk();
+	dock.toggleClass('soft_kb_floating', floating);
+	if (!floating) {
+		if (dock.hasClass('ui-draggable')) { dock.draggable('destroy'); }
+		dock.removeClass('soft_kb_dragging').css({ left: '', top: '', bottom: '' });
+		return;
+	}
+	if (!dock.hasClass('ui-draggable')) { softKbFloatDraggable(dock); }
+	softKbFloatRestore(dock);
+}
+
+// Put the floating panel back where it was left on this device, kept inside the
+// screen if the screen has changed shape since.
+function softKbFloatRestore(dock) {
+	var saved = null;
+	try { saved = JSON.parse(localStorage.getItem('jawn_soft_place') || 'null'); } catch (err) { saved = null; }
+	if (!saved || !isFinite(saved.left) || !isFinite(saved.top)) {
+		dock.css({ left: '', top: '', bottom: '' });
+		return;
+	}
+	var width = dock.outerWidth() || 0;
+	var height = dock.outerHeight() || 0;
+	if (!(width > 0)) { width = Math.min(760, $(window).width() - 24); }
+	if (!(height > 0)) { height = 300; }
+	var left = Math.max(0, Math.min(saved.left, Math.max(0, $(window).width() - width)));
+	var top = Math.max(0, Math.min(saved.top, Math.max(0, $(window).height() - height)));
+	dock.css({ left: left + 'px', top: top + 'px', bottom: 'auto' });
+}
+
+function softKbFloatDraggable(dock) {
+	dock.draggable({
+		handle: '.soft_kb_bar',
+		distance: 4,
+		start: function () {
+			// a top/bottom pair with a fixed height would stretch the panel; the
+			// drag owns the top edge from here
+			$(this).css({ bottom: 'auto' }).addClass('soft_kb_dragging');
+		},
+		stop: function () {
+			var panel = $(this).removeClass('soft_kb_dragging');
+			var width = panel.outerWidth() || 0;
+			var height = panel.outerHeight() || 0;
+			var left = parseFloat(panel.css('left')) || 0;
+			var top = parseFloat(panel.css('top')) || 0;
+			left = Math.max(0, Math.min(left, Math.max(0, $(window).width() - width)));
+			top = Math.max(0, Math.min(top, Math.max(0, $(window).height() - height)));
+			panel.css({ left: left + 'px', top: top + 'px' });
+			try { localStorage.setItem('jawn_soft_place', JSON.stringify({ left: left, top: top })); } catch (err) {}
+			if (typeof softKbReserve == 'function') { softKbReserve(); }
+		}
+	});
 }
 
 // How far the search box and the dropdown must stay off the foot of the page:

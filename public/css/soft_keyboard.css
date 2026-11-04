@@ -38,6 +38,31 @@
 	transform: translateY(0);
 }
 
+/* On a desk the dock is a floating panel: a fixed width with its own frame and
+   shadow, moved by the bar above the keys and remembered on the device. A
+   phone's keyboard keeps the full width of the screen. */
+.soft_kb.soft_kb_floating {
+	left: max(12px, calc(50% - 380px));
+	right: auto;
+	width: min(760px, calc(100vw - 24px));
+	bottom: calc(var(--taskbar_bottom_h, 0px) + 12px);
+	border: 1px solid var(--line);
+	border-radius: var(--jawnos-corner, 12px);
+	box-shadow: 0 12px 40px rgba(0, 0, 0, .32);
+	overflow: hidden;
+	/* a floating panel fades and steps aside rather than sliding the whole
+	   screen-height down from the foot */
+	transform: translateY(24px);
+	opacity: 0;
+	transition: transform .22s cubic-bezier(.22, .61, .36, 1), opacity .18s ease;
+}
+.soft_kb.soft_kb_floating.soft_kb_up { transform: translateY(0); opacity: 1; }
+.soft_kb.soft_kb_floating .soft_kb_bar { cursor: move; }
+.soft_kb.soft_kb_floating.ui-draggable-dragging .soft_kb_bar { cursor: grabbing; }
+@media (prefers-reduced-motion: reduce) {
+	.soft_kb.soft_kb_floating { transition: none; }
+}
+
 /* A desk's dock is an explicit ask, so while it is up it holds the input: it
    paints over whatever top-level window is behind it, and it keeps the field
    (or the calculator) it was using until another field takes the keys or the

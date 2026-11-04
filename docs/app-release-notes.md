@@ -5,6 +5,14 @@ this file, adds the release date and the version codes that are actually
 staged, and writes it back to the release. Keep the newest release at the top
 under a dated heading; older sections stay as history.
 
+## 2026-11-04 — Back puts the keyboard away first
+
+- **Back hides the manager's keyboard before it leaves the screen.** The
+  on-screen keyboard is part of the page, not an Android input method, so the
+  WebView's Back press walked history and took the person out of the app. On
+  the manager page and in an app window, Back now hides the keyboard when it is
+  up; the next press walks the history (or the app's own back steps) as before.
+
 ## 2026-11-03 — the alarm at the level you chose, and answerable anywhere
 
 - **The alarm sets the phone to the Clock's volume, then puts it back.** The
