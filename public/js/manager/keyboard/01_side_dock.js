@@ -194,8 +194,9 @@ function pseudonymHomeShower(x,y,interval) {
 			else if (dock_top) {
 				$('#pseudonym_home').css({ 'top': jawnosDockTopOffset() });
 				pseudonymFreeSpaceFinder();
-				var so = $('#search').offset();
-				$('#search_results').css({ 'top': Math.round(so.top + $('#search').outerHeight() + 8), 'bottom': 'auto' });
+				// the dropdown follows the box's new edge; the shared placement knows
+				// about the keyboard, which a hand-rolled offset here would not
+				if (typeof jawnosSearchResultsPlace == 'function') { jawnosSearchResultsPlace(); }
 				pseudonymIntervals = Date.now();
 			}
 			else {
@@ -223,8 +224,7 @@ function pseudonymHomeShower(x,y,interval) {
 					}
 				});
 				$('#pseudonym_home').css({ 'bottom': ((typeof jawnosDockBottomOffset == 'function') ? jawnosDockBottomOffset() : 0) });
-				var o = $('#search').offset();
-				$('#search_results').css({ 'bottom': $(window).height() - o.top });
+				if (typeof jawnosSearchResultsPlace == 'function') { jawnosSearchResultsPlace(); }
 				pseudonymIntervals = Date.now();
 			}
 		}
@@ -308,9 +308,10 @@ function pseudonymHomeHider(interval) {
 				if (d == 80) {
 					kbg.css({'bottom': diff_body });
 				}
-				var o = $('#search').offset();
-				$('#search_results').css({ 'bottom': $(window).height() - o.top });
 			});
+			// once for the dock, not once per panel: the shared placement measures the
+			// visible page, so the list never lands under a keyboard
+			if (typeof jawnosSearchResultsPlace == 'function') { jawnosSearchResultsPlace(); }
 		}
 	}
 	else {

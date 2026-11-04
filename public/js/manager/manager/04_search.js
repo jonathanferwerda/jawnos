@@ -203,24 +203,34 @@ function jawnosSearchResultsPlace() {
 	var rect = input[0].getBoundingClientRect();
 	var vw = window.innerWidth || $(window).width();
 	var vh = window.innerHeight || $(window).height();
-	// while the on-screen keyboard is up, the keys are the floor of the visible
-	// page: the list may not run over them
-	var bound = vh;
+	// The visible page, not the layout viewport: a phone's or tablet's platform
+	// keyboard shrinks the visual viewport without changing window.innerHeight,
+	// so a list measured against the latter is drawn under the keys. JawnOS's own
+	// keyboard is a fixed element in the page instead, so its top comes from its
+	// height rather than its (still transformed) edge.
+	var view_top = 0;
+	var view_bottom = vh;
+	if (window.visualViewport && window.visualViewport.height) {
+		view_top = Math.max(0, window.visualViewport.offsetTop || 0);
+		view_bottom = Math.min(view_bottom, view_top + window.visualViewport.height);
+	}
 	var kb = $('#jawn_soft_keyboard');
 	if (kb.length && kb.is(':visible')) {
-		// measured from its height, not its top edge: the dock slides up, and
-		// while it rises its transformed box still starts off the screen
 		var kb_top = vh - (kb.outerHeight() || 0);
-		if (kb_top > 0 && kb_top < bound) { bound = kb_top; }
+		if (kb_top > 0 && kb_top < view_bottom) { view_bottom = kb_top; }
 	}
 	var gap = 6;
 	var width = Math.max(0, rect.width);
 	var left = Math.max(4, Math.min(rect.left, vw - width - 4));
 	var content = $('#manager_search_results').outerHeight() || 0;
-	var below = bound - rect.bottom - gap;
-	var above = rect.top - gap;
+	// A box that rides the dock's foot can itself be behind the platform
+	// keyboard. There is no room beside it then, so the list hooks onto the
+	// keyboard's top edge instead of running under it.
+	var input_visible = rect.top < view_bottom;
+	var below = view_bottom - rect.bottom - gap;
+	var above = (input_visible ? rect.top : view_bottom) - view_top - gap;
 	// below is the natural side; go above only when it has more room
-	var place_below = below >= Math.min(content, 80) || below >= above;
+	var place_below = input_visible && (below >= Math.min(content, 80) || below >= above);
 	var height = Math.max(0, Math.min(content, place_below ? below : above));
 	var drop = {
 		'position': 'fixed',
@@ -238,15 +248,23 @@ function jawnosSearchResultsPlace() {
 		drop['bottom'] = 'auto';
 	}
 	else {
-		drop['bottom'] = vh - rect.top + gap;
+		drop['bottom'] = vh - (input_visible ? rect.top : view_bottom) + gap;
 		drop['top'] = 'auto';
 	}
 	box.css(drop);
 }
 
-$(window).on('resize', function () {
+// The platform keyboard slides in and out without a window resize, so the list
+// has to follow the visual viewport as well.
+function jawnosSearchResultsReposition() {
 	if ($('#search_results').is(':visible')) { jawnosSearchResultsPlace(); }
-});
+}
+
+$(window).on('resize orientationchange', jawnosSearchResultsReposition);
+if (window.visualViewport) {
+	window.visualViewport.addEventListener('resize', jawnosSearchResultsReposition);
+	window.visualViewport.addEventListener('scroll', jawnosSearchResultsReposition);
+}
 
 // The details list's Dur column ticks while a session is open: the row carries
 // its start, stop and duration, and the same two-unit shape duration_sayer
