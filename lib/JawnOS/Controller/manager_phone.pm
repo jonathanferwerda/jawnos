@@ -291,6 +291,12 @@ sub action_24760 {
 		thanks    => $c->param('thanks'),
 		flows     => $c->param('flows'),
 	});
+	# The reception is the house's: hand the same save to the peers now, so the
+	# gateway machine and the phone hold it immediately instead of waiting for
+	# the next sync. A relayed copy does not relay again.
+	unless (($c->param('remoted') || '') eq 'yes') {
+		eval { &subs::remote_relay_request($c, { dissemination => 'yes' }); };
+	}
 	$c->render(json => { ok => 1, ivr => $saved });
 }
 
@@ -304,6 +310,11 @@ sub action_24761 {
 	my $number = $c->param('number') || '';
 	my $saved = &phone_route_set($number, $c->param('flow'));
 	$saved->{'resolved'} = &phone_route_for($number) if $saved->{'ok'};
+	# a number's route decides what the phone does before it rings, so it has to
+	# reach the phone now rather than at the next sync
+	unless (($c->param('remoted') || '') eq 'yes') {
+		eval { &subs::remote_relay_request($c, { dissemination => 'yes' }); };
+	}
 	$c->render(json => $saved);
 }
 

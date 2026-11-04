@@ -157,6 +157,9 @@ is $writes[8]->{'setting'}, 'ivr_flows', 'the flow matrix is written as one row'
 my $manager = manager_source();
 like $manager, qr{/manager/phone/ivr}, 'the IVR route is registered';
 like $manager, qr{sub action_24760}, 'the IVR route has its action';
+# the save reaches the gateway machine and the phone now, not at the next sync
+like $manager, qr/remote_relay_request\(\$c, \{ dissemination => 'yes' \}\)/,
+	'an IVR save is relayed to the peers';
 like $manager, qr{phone_ivr_save\(}, 'the action saves the IVR settings';
 like $manager, qr{ivr => \$ivr}, 'the sync blob carries the IVR policy';
 

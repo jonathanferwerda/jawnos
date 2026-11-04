@@ -72,6 +72,9 @@ my $controller = read_file("$repo/lib/JawnOS/Controller/manager_phone.pm");
 like($controller, qr/^sub action_24761\b/m, 'the save has its action');
 like($controller, qr/^sub action_24762\b/m, 'the read has its action');
 like($controller, qr/routes => &phone_routes_read\(\)/, 'the sync blob carries the routes');
+like($controller, qr/remote_relay_request\(\$c, \{ dissemination => 'yes' \}\)/,
+	'a route save is handed to the peers at once');
+like($controller, qr/remoted/, 'and a relayed copy does not relay again');
 
 my $template = read_file("$repo/templates/apps/phone.html.ep");
 like($template, qr/id="phone_route_sheet"/, 'the phone page has the routing sheet');
