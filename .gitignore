@@ -18,6 +18,9 @@ server/privkey.pem
 server/fullchain.pem
 *.pem
 *.key
+# Docker Compose environment: .env.example is tracked, a filled .env is not
+# (it may carry JAWNOS_UNLOCK_CODE).
+.env
 
 # --- Logs ---
 *.log

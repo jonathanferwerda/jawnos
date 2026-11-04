@@ -447,6 +447,19 @@ perl scripts/jawnos_deps.pl --desktop # also check/install the desktop app's Web
                                       # emoji font Chat's SMS emoji need (optional)
 ```
 
+### Docker (a server)
+
+A container image runs the same tree as a house server, with the desktop app,
+firmware, SSH and hardware passthrough deliberately left out:
+
+```sh
+docker compose up -d --build
+docker compose logs -f     # first boot prints the unlock code once
+```
+
+The panel answers on <https://127.0.0.1:45545/>; setup, ports, volumes, host
+media and the operations commands are in [`docs/docker.md`](docs/docker.md).
+
 ### Android (Termux)
 
 Install F-Droid, then install **Termux** and **Termux:api** from it.

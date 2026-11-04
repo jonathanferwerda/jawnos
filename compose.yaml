@@ -1,0 +1,79 @@
+name: jawnos
+
+services:
+  jawnos:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: jawnos:local
+    restart: unless-stopped
+    init: true
+    stop_grace_period: 30s
+    environment:
+      TZ: ${TZ:-UTC}
+      JAWNOS_NAME: ${JAWNOS_NAME:-JawnOS}
+      JAWNOS_DEVICE: ${JAWNOS_DEVICE:-server}
+      JAWNOS_LANGUAGE: ${JAWNOS_LANGUAGE:-en}
+      JAWNOS_THEME: ${JAWNOS_THEME:-}
+      JAWNOS_EMAIL: ${JAWNOS_EMAIL:-}
+      JAWNOS_DOMAIN: ${JAWNOS_DOMAIN:-127.0.0.1}
+      JAWNOS_UNLOCK_CODE: ${JAWNOS_UNLOCK_CODE:-}
+      JAWNOS_SAVE_UNLOCK_CODE: ${JAWNOS_SAVE_UNLOCK_CODE:-0}
+      JAWNOS_FOLDERS: ${JAWNOS_FOLDERS:-}
+      JAWNOS_MAIN_WORKERS: ${JAWNOS_MAIN_WORKERS:-}
+      JAWNOS_LOCKER_PORT: ${JAWNOS_LOCKER_PORT:-3000}
+      JAWNOS_WORKING_PORT: ${JAWNOS_WORKING_PORT:-45545}
+      JAWNOS_WS_PORT: ${JAWNOS_WS_PORT:-45546}
+    ports:
+      # Locker: the box office mints login tickets here, then redirects to the
+      # manager on working_port.
+      - "${JAWNOS_LOCKER_PORT:-3000}:${JAWNOS_LOCKER_PORT:-3000}"
+      # The panel itself.
+      - "${JAWNOS_WORKING_PORT:-45545}:${JAWNOS_WORKING_PORT:-45545}"
+      # Websockets (President listens on working_port + 1).
+      - "${JAWNOS_WS_PORT:-45546}:${JAWNOS_WS_PORT:-45546}"
+      # A server skips the watch/teletype servers. The alarm server still
+      # listens on working_port + 5; publish it for a paired phone.
+      # - "45550:45550"
+    volumes:
+      # The encrypted database and its sealed backups. A named volume is
+      # initialised from database/initial.enc and schema.sql on first use.
+      - jawnos-database:/app/database
+      # config.json, the signatorial, manager.log and ~/.president.
+      - jawnos-home:/home/jawn
+      # server/fullchain.pem + privkey.pem when you have a real certificate.
+      - jawnos-server:/app/server
+      # Blob stores the app fills from peers / releases.
+      - jawnos-voices:/app/voices
+      - jawnos-releases:/app/releases
+      # Host media. Mount it where the folder list expects it, then set
+      # JAWNOS_FOLDERS to the container paths (colon-separated).
+      # - /srv/media/Music:/home/jawn/Music:ro
+      # - /srv/media/Pictures:/home/jawn/Pictures:ro
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          curl -ksS -o /dev/null -w '%{http_code}'
+          https://127.0.0.1:${JAWNOS_WORKING_PORT:-45545}/
+          | grep -qE '^(200|30[0-9])$'
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  jawnos-database:
+  jawnos-home:
+  jawnos-server:
+  jawnos-voices:
+  jawnos-releases:

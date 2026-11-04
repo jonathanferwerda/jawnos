@@ -1,0 +1,53 @@
+# The container gets the runtime tree, not the whole workbench.
+.git
+.github
+.githooks
+.zed
+.shots
+.secrets
+.venv
+.env
+.env.*
+config.json
+
+# Secrets and generated TLS material: an operator supplies these per install.
+signatorials/
+*.pem
+*.key
+*.log
+
+# Never copy the live database or its backups into an image. The factory seed
+# and the schema are the two files the setup path needs.
+database/*
+!database/initial.enc
+!database/schema.sql
+
+# Blob stores (APKs, Piper voices) are install-local and multi-megabyte.
+releases/
+voices/
+
+# Generated trees.
+**/.pio
+**/build
+**/node_modules
+**/__pycache__
+perl/sco/sco_helper
+
+# Agent field notes are gitignored because they carry fixtures and a login
+# token; they must never be baked into an image either.
+docs/AGENTS-notes.md
+
+# Not part of the server: the desktop app, firmware, tests, provisioning tools.
+desktop/
+jp/
+jt/
+jw/
+training/
+t/
+qa/qemu/
+docs/screenshots/
+
+# The packaging files and this list are not copied into /app.
+Dockerfile
+.dockerignore
+compose.yaml
