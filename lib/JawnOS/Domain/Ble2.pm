@@ -21,6 +21,7 @@ use File::Path;
 use File::Slurp;
 use IPC::Open2;
 use JSON::PP ();
+use JawnOS::Ble::Drain qw(drain_new drain_feed);
 use List::Util qw(shuffle);
 use MIME::Base64;
 use Math::Trig qw(cartesian_to_spherical spherical_to_cartesian great_circle_distance rad2deg deg2rad great_circle_bearing great_circle_direction great_circle_destination);
@@ -505,21 +506,18 @@ sub ble_listener_start {
 		Mojo::IOLoop->timer(8 => sub { eval { &ble_battery_poll(); }; });
 		Mojo::IOLoop->recurring(120 => sub { eval { &ble_battery_poll(); }; });
 	}
-	$gb::ble_listener_buffer = '';
+	$gb::ble_listener_buffer = drain_new();
 	$gb::ble_listener = Mojo::IOLoop::ReadWriteFork->new;
 	$gb::ble_listener->on(read => sub {
 		my ($fork, $bytes) = @_;
 		# Reads are arbitrary chunks: a JSON line longer than one chunk used to
-		# be decoded in halves and silently dropped. Buffer until the newline.
-		$gb::ble_listener_buffer .= $bytes;
-		# Drain the complete lines in one pass. s/^(.*?)\n// copies the whole
-		# remaining buffer per line, so a burst that ended with one large event
-		# (a runaway BLE message) was quadratic: a phone spent minutes of CPU
-		# on a few megabytes. split is linear; the last element is the part of
-		# a line still in hand and stays buffered.
-		my @lines = split /\n/, $gb::ble_listener_buffer, -1;
-		$gb::ble_listener_buffer = @lines ? pop @lines : '';
-		foreach my $line (@lines) {
+		# be decoded in halves and silently dropped. drain_feed buffers until the
+		# newline. An incomplete line is kept as chunks and joined only when a
+		# newline arrives: splitting (or appending to) an unterminated tail on
+		# every read was quadratic, and pinned a core while the bridge streamed
+		# one long event.
+		my ($lines, $dropped) = drain_feed($gb::ble_listener_buffer, $bytes, 8 * 1024 * 1024);
+		foreach my $line (@$lines) {
 			my $event = eval { decode_json $line };
 			next unless $event && ref $event eq 'HASH';
 			my $name = $event->{'event'} || '';
@@ -562,9 +560,8 @@ sub ble_listener_start {
 		}
 		# Only the unterminated tail is dropped. The check used to run before the
 		# drain, so one overlong event discarded the complete lines behind it too.
-		if (length($gb::ble_listener_buffer) > 8 * 1024 * 1024) {
-			$log->error('BLE listener buffer overflow; dropping partial data');
-			$gb::ble_listener_buffer = '';
+		if ($dropped) {
+			$log->error('BLE listener buffer overflow; dropping partial data (' . $dropped . ' bytes)');
 		}
 	});
 	$gb::ble_listener->on(close => sub {

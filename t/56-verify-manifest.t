@@ -124,4 +124,19 @@ my $range_out = `cd "$repo" && perl scripts/verify_change.pl --quiet --range HEA
 is($? >> 8, 0, 'a --range run still behaves') or diag($range_out);
 unlike($range_out, qr/unchanged from the last verified run/, 'and never consults the manifest');
 
+# 8. a lib module may use a sibling under lib/: the app runs with lib/ on @INC,
+# so the guard must compile that way too (a new helper there is not installed).
+make_path("$repo/lib/JawnOS");
+my %lib = (
+	Helper => "package JawnOS::Helper;\n1;\n",
+	User   => "package JawnOS::User;\nuse JawnOS::Helper;\n1;\n",
+);
+for my $name (sort keys %lib) {
+	open(my $fh, '>', "$repo/lib/JawnOS/$name.pm") or die $!;
+	print $fh $lib{$name};
+	close $fh;
+}
+($code, $out) = verify();
+is($code, 0, 'a lib module that uses a sibling under lib/ compiles') or diag($out);
+
 done_testing();

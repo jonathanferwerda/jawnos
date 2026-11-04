@@ -22,6 +22,7 @@ use IO::Socket::INET;
 use IO::Select;
 use JSON::PP;
 use JawnOS::Ble::Select;
+use JawnOS::Ble::Drain qw(drain_new drain_feed);
 use Time::HiRes qw(sleep time);
 
 $| = 1; # stdout must flush: listen runs for a long time
@@ -124,7 +125,7 @@ $sock->autoflush(1);
 $sock->blocking(0);
 
 my $sel = IO::Select->new($sock);
-my $buf = '';
+my $inbuf = drain_new();
 # A select that returns at once with nothing is not a timeout: the handle is
 # unusable and it will keep returning at once. Ten in a row is a spin, so stop
 # and let the supervisor start a fresh listener rather than hold a core.
@@ -173,15 +174,15 @@ sub wait_for {
 		my $chunk = '';
 		my $n = sysread($sock, $chunk, 65536);
 		return undef unless defined $n && $n > 0;
-		$buf .= $chunk;
 		# Drain the complete lines in one pass. Removing each line with
 		# s/^(.*?)\n// copies the whole remaining buffer, so a burst that ended
 		# with one large event was quadratic - a phone burned minutes of CPU on
-		# a few megabytes. split is linear; the final element is the partial
-		# line, which stays buffered.
-		my @lines = split /\n/, $buf, -1;
-		$buf = @lines ? pop @lines : '';
-		foreach my $line (@lines) {
+		# a few megabytes. drain_feed keeps an incomplete line as chunks and
+		# joins it only when a newline arrives: a read with no newline copies
+		# nothing, where splitting (or appending to) an unterminated tail on
+		# every read pinned a core while the bridge streamed one long event.
+		my ($lines, $dropped) = drain_feed($inbuf, $chunk, 8 * 1024 * 1024);
+		foreach my $line (@$lines) {
 			print $line, "\n";
 			my $o = eval { JSON::PP->new->decode($line) };
 			return $o if $o && $cond->($o);
@@ -189,9 +190,8 @@ sub wait_for {
 		# An unterminated line must not grow the buffer without bound. The
 		# bridge's own cap is a couple of megabytes, so anything past this is
 		# garbage: report it and start the line again rather than carry it.
-		if (length($buf) > 8 * 1024 * 1024) {
-			print JSON::PP->new->encode({ event => 'error', error => 'line too long', bytes => length $buf }), "\n";
-			$buf = '';
+		if ($dropped) {
+			print JSON::PP->new->encode({ event => 'error', error => 'line too long', bytes => $dropped }), "\n";
 		}
 	}
 	return undef;
