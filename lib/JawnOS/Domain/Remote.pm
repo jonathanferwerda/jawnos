@@ -351,13 +351,24 @@ sub remote_useragent_maker($data) {
 # nightly's systemd unit reads the same rows through qa/device_target.pl, so the
 # panel and the timer can never disagree about which machine runs.
 
-# Where a tool is, without shelling out: PATH is enough, and a name is never
-# passed to a shell.
+# Where a tool is, without shelling out: PATH first, then the directory perl
+# itself installs its scripts in. Arch and Manjaro put prove (with the other
+# core scripts) under /usr/bin/core_perl, which their default PATH omits, so a
+# machine whose suite runs fine still looked unready for a missing prove. A
+# name is never passed to a shell. `installscript` is a test seam; production
+# callers pass only the name.
 sub qa_which {
-	my ($name) = @_;
+	my ($name, $opts) = @_;
+	$opts ||= {};
 	return '' unless defined $name && length $name;
 	return $name if $name =~ m{/} && -x $name;
-	foreach my $dir ( split /:/, ($ENV{'PATH'} || '/usr/local/bin:/usr/bin:/bin') ) {
+	my @dirs = split /:/, ($ENV{'PATH'} || '/usr/local/bin:/usr/bin:/bin');
+	my $script = exists $opts->{'installscript'} ? $opts->{'installscript'}
+		: (eval { require Config; $Config::Config{'installscript'} } || '');
+	if (length $script && $script =~ m{^/} && -d $script && !grep { $_ eq $script } @dirs) {
+		push @dirs, $script;
+	}
+	foreach my $dir (@dirs) {
 		next unless length $dir;
 		my $candidate = "$dir/$name";
 		return $candidate if -x $candidate;

@@ -92,6 +92,31 @@ ok(!$blocked->{'ready'}, 'a missing prove leaves the nightly unready');
 ok((grep { $_ eq 'prove' } @{ $blocked->{'missing_required'} || [] }),
 	'a missing required tool is named in missing_required');
 
+# --- the tool lookup covers Arch-family perl --------------------------------
+# Manjaro and Arch install prove (with the other core scripts) under
+# /usr/bin/core_perl, which their default PATH omits. A machine whose suite
+# runs is not unready for a tool that is present.
+my $core_dir = tempdir(CLEANUP => 1);
+open(my $prove_fh, '>', "$core_dir/prove") or die "$core_dir/prove: $!";
+print $prove_fh "#!/bin/sh\nexit 0\n";
+close $prove_fh;
+chmod 0755, "$core_dir/prove";
+{
+	local $ENV{'PATH'} = '/nonexistent';
+	is(subs::qa_which('prove', { installscript => $core_dir }), "$core_dir/prove",
+		'qa_which finds a core script under perl installscript, off PATH');
+}
+{
+	local $ENV{'PATH'} = "$core_dir:/nonexistent";
+	is(subs::qa_which('prove', { installscript => '/nonexistent' }), "$core_dir/prove",
+		'a PATH hit is still found first');
+}
+{
+	local $ENV{'PATH'} = '/nonexistent';
+	is(subs::qa_which('prove', { installscript => '/nonexistent' }), '',
+		'a missing tool is still missing');
+}
+
 # --- saving and reading the choice -------------------------------------------
 my %store;
 my $setter = sub { $store{'value'} = $_[0]; };
