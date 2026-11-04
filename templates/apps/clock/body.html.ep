@@ -157,6 +157,10 @@
 					<input type="text" class="clock_timer_app" autocomplete="off" data-app="" placeholder="<%= &subs::lang('link_appointment') %>" aria-label="<%= &subs::lang('link_appointment') %>">
 					<button type="button" class="clock_app_toggle" tabindex="-1" aria-label="<%= &subs::lang('link_appointment') %>">▾</button>
 				</div>
+				<label class="clock_field clock_timer_volume_field">
+					<span><%= &subs::lang('volume') %> · 70%</span>
+					<input type="range" min="5" max="100" step="5" class="clock_timer_volume" inputmode="none" data-soft_keyboard="off" aria-label="<%= &subs::lang('volume') %>" value="70">
+				</label>
 				<button type="button" class="clock_add clock_add_timer"<%= $running_timers >= $max ? ' disabled' : '' %>><%= &subs::lang('add_timer') %></button>
 			</div>
 			<div class="clock_presets">

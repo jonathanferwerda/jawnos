@@ -88,9 +88,11 @@ sub clock_alarm_ring {
 	my $sound = $sound_path;
 	$sound =~ s{.*/}{};
 	# On a phone the app sounds the alarm on the alarm channel; the Perl player
-	# would talk over it on the media stream.
+	# would talk over it on the media stream. On a computer the sink is moved to
+	# the alarm's Volume for the ring and put back when it ends.
 	my $mobile = (&device_setter() eq 'mobile') ? 1 : 0;
-	my $play = $mobile ? '' : &clock_alarm_play_command($alarm, 0);
+	my $system_volume = $mobile ? 0 : &clock_alarm_volume_raise($alarm);
+	my $play = $mobile ? '' : &clock_alarm_play_command($alarm, 0, $system_volume);
 
 	# The alarm turns its linked appointment on. A session already running is the
 	# same activity and is left alone, so a late tick cannot open a second one.
@@ -164,7 +166,8 @@ sub clock_timer_finish {
 	my $sound = $sound_path;
 	$sound =~ s{.*/}{};
 	my $file = &clock_sound_file($sound_path);
-	my $play = 'play -q -v 0.7 ' . &quote($file);
+	my $timer_volume = sprintf('%.2f', (($timer->{'volume'} || 70) / 100));
+	my $play = 'play -q -v ' . $timer_volume . ' ' . &quote($file);
 	# A phone sounds the timer on the alarm channel through the app.
 	my $mobile = (&device_setter() eq 'mobile') ? 1 : 0;
 	&clock_device_timer($timer) if $mobile;

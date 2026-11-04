@@ -603,26 +603,166 @@ sub clock_alarm_pidfile {
 	return $dir . '/clock_alarm_' . $uuid . '.pid';
 }
 
+# ---- the machine's own volume ------------------------------------------------
+# A desktop alarm is played by sox on whatever sink the machine uses. The
+# alarm's Volume is the loudness the person chose, so the sink itself is set for
+# the ring and the level it was on is put back when the ring ends. The backend is
+# discovered once; a machine with no mixer keeps the old sox scaling.
+our $clock_volume_backend;
+
+sub clock_volume_backend {
+	return $clock_volume_backend if ref $clock_volume_backend eq 'HASH';
+	my %bin;
+	foreach my $cmd (qw(pactl wpctl amixer)) {
+		my $path = `command -v $cmd 2>/dev/null`;
+		chomp $path;
+		$bin{$cmd} = $path if length $path;
+	}
+	my $found;
+	if ($bin{'pactl'}) {
+		my $info = `$bin{'pactl'} info 2>/dev/null`;
+		$found = { kind => 'pactl', bin => $bin{'pactl'} } if $info =~ /Server Name:/;
+	}
+	if (!$found && $bin{'wpctl'}) {
+		my $status = `$bin{'wpctl'} status 2>/dev/null`;
+		$found = { kind => 'wpctl', bin => $bin{'wpctl'} } if $status =~ /PipeWire|Audio/;
+	}
+	if (!$found && $bin{'amixer'}) {
+		foreach my $control (qw(Master PCM Speaker)) {
+			my $out = `$bin{'amixer'} sget $control 2>/dev/null`;
+			next unless $out =~ /\[(\d+)%\]/;
+			$found = { kind => 'amixer', bin => $bin{'amixer'}, control => $control };
+			last;
+		}
+	}
+	$clock_volume_backend = $found if $found;
+	return $found;
+}
+
+sub clock_system_volume_get {
+	my $b = &clock_volume_backend();
+	return undef unless $b;
+	if ($b->{'kind'} eq 'pactl') {
+		my $sink = '@DEFAULT_SINK@';
+		my $out = `$b->{'bin'} get-sink-volume $sink 2>/dev/null`;
+		return int($1) if $out =~ /(\d+)%/;
+	}
+	elsif ($b->{'kind'} eq 'wpctl') {
+		my $sink = '@DEFAULT_AUDIO_SINK@';
+		my $out = `$b->{'bin'} get-volume $sink 2>/dev/null`;
+		return int(($1 * 100) + 0.5) if $out =~ /Volume:\s*([0-9.]+)/;
+	}
+	elsif ($b->{'kind'} eq 'amixer') {
+		my $out = `$b->{'bin'} sget $b->{'control'} 2>/dev/null`;
+		return int($1) if $out =~ /\[(\d+)%\]/;
+	}
+	return undef;
+}
+
+sub clock_system_volume_set {
+	my $percent = shift;
+	return 0 unless defined $percent && "$percent" =~ /^\d+$/;
+	$percent = 5 if $percent < 5;
+	$percent = 100 if $percent > 100;
+	my $b = &clock_volume_backend();
+	return 0 unless $b;
+	my $rc;
+	if ($b->{'kind'} eq 'pactl') {
+		my $sink = '@DEFAULT_SINK@';
+		$rc = system($b->{'bin'}, 'set-sink-volume', $sink, $percent . '%');
+	}
+	elsif ($b->{'kind'} eq 'wpctl') {
+		my $sink = '@DEFAULT_AUDIO_SINK@';
+		$rc = system($b->{'bin'}, 'set-volume', $sink, $percent . '%');
+	}
+	elsif ($b->{'kind'} eq 'amixer') {
+		$rc = system($b->{'bin'}, 'sset', $b->{'control'}, $percent . '%');
+	}
+	else {
+		return 0;
+	}
+	return $rc == 0 ? 1 : 0;
+}
+
+sub clock_alarm_volume_file {
+	my $uuid = shift || 'x';
+	$uuid =~ s/[^A-Za-z0-9_\-]//g;
+	my $dir = &home('~/.president');
+	eval { File::Path::make_path($dir); } unless -d $dir;
+	$dir = '/tmp' unless -d $dir;
+	return $dir . '/clock_volume_' . $uuid . '.json';
+}
+
+# Set the machine's sink to the alarm's Volume and remember the level it was on.
+# Returns 1 only when the ring can rely on the sink; a machine with no mixer
+# returns 0 and the sox command keeps carrying the percentage.
+sub clock_alarm_volume_raise {
+	my $alarm = shift;
+	return 0 unless ref $alarm eq 'HASH';
+	my $uuid = $alarm->{'uuid'} || '';
+	return 0 unless length $uuid;
+	my $file = &clock_alarm_volume_file($uuid);
+	if (-e $file) {
+		# A previous ring for this alarm never put the level back (the app was
+		# restarted mid-ring). Undo its raised level before saving this one.
+		my $old = eval { decode_json(read_file($file)) };
+		&clock_system_volume_set(int($old->{'volume'})) if ref $old eq 'HASH' && defined $old->{'volume'};
+		unlink $file;
+	}
+	my $current = &clock_system_volume_get();
+	return 0 unless defined $current;
+	my $wanted = int($alarm->{'volume'} || 70);
+	$wanted = 5 if $wanted < 5;
+	$wanted = 100 if $wanted > 100;
+	# Write the restore point first, so a failed set cannot leave a raised level
+	# with nothing to put back.
+	eval { write_file($file, encode_json({ volume => $current, wanted => $wanted, at => &rightNow() })); };
+	return 0 unless -e $file;
+	unless (&clock_system_volume_set($wanted)) {
+		unlink $file;
+		return 0;
+	}
+	return 1;
+}
+
+sub clock_alarm_volume_saved {
+	my $uuid = shift;
+	return 0 unless defined $uuid && length $uuid;
+	return -e &clock_alarm_volume_file($uuid) ? 1 : 0;
+}
+
+sub clock_alarm_volume_restore {
+	my $uuid = shift;
+	return 0 unless defined $uuid && length $uuid;
+	my $file = &clock_alarm_volume_file($uuid);
+	return 0 unless -e $file;
+	my $state = eval { decode_json(read_file($file)) };
+	unlink $file;
+	return 0 unless ref $state eq 'HASH' && defined $state->{'volume'};
+	return &clock_system_volume_set(int($state->{'volume'}));
+}
+
 # A long-form track is one process; Dismiss kills it through the pid its shell
 # wrote when it started. A short chime finishes on its own and has no pid file.
 sub clock_alarm_stop_sound {
 	my $uuid = shift;
 	return 0 unless defined $uuid && length $uuid;
+	my $restored = &clock_alarm_volume_restore($uuid);
 	my $file = &clock_alarm_pidfile($uuid);
-	return 0 unless -e $file;
+	return $restored unless -e $file;
 	my $pid = eval { read_file($file) };
 	unlink $file;
-	return 0 unless defined $pid;
+	return $restored unless defined $pid;
 	$pid =~ s/\D//g;
-	return 0 unless length $pid;
+	return $restored unless length $pid;
 	# A stale pid file after a reboot must not kill whatever inherited the number.
 	# The player's command line still names play and the sounds directory.
 	if (-e '/proc/' . $pid . '/cmdline') {
 		my $cmdline = eval { read_file('/proc/' . $pid . '/cmdline') } // '';
-		return 0 unless $cmdline =~ /play/ && $cmdline =~ m{public/sounds};
+		return $restored unless $cmdline =~ /play/ && $cmdline =~ m{public/sounds};
 	}
 	else {
-		return 0;
+		return $restored;
 	}
 	eval { kill 'TERM', $pid; };
 	eval { kill 'KILL', $pid; };

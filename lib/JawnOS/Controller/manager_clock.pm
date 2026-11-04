@@ -472,6 +472,7 @@ sub action_23058 {
 				state => 'running',
 				app => $app,
 				sound => $sound,
+				volume => $c->param('volume'),
 				created => $now,
 			});
 			if ($app) {

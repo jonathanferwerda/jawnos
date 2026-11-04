@@ -142,7 +142,7 @@ sub clock_device_timer {
 		app => ($timer->{'app'} || ''),
 		at => ($timer->{'ends_at'} || &rightNow()),
 		file => 'public/sounds/' . $sound,
-		volume => 70,
+		volume => int($timer->{'volume'} || 70),
 		ramp => 0,
 		loop => 0,
 		guard => 60000,
@@ -281,6 +281,9 @@ sub clock_normalize_timer {
 	$label = 'Timer' unless length $label;
 	my $state = $t->{'state'} // 'running';
 	$state = 'running' unless grep { $_ eq $state } qw/running done cancelled/;
+	my $volume = (defined $t->{'volume'} && "$t->{'volume'}" =~ /^\d+$/) ? int($t->{'volume'}) : 70;
+	$volume = 5 if $volume < 5;
+	$volume = 100 if $volume > 100;
 	return {
 		uuid => ($t->{'uuid'} // ''),
 		label => $label,
@@ -292,6 +295,7 @@ sub clock_normalize_timer {
 		app => ($t->{'app'} // ''),
 		appt_uuid => ($t->{'appt_uuid'} // ''),
 		sound => &clock_valid_timer_sound($t->{'sound'}),
+		volume => $volume,
 		created => int($t->{'created'} || 0),
 	};
 }
@@ -669,8 +673,10 @@ sub clock_send_console {
 # the start, then the alarm's own volume by the end of its ramp. The browser
 # draws the ring card, but the sound belongs to the machine.
 sub clock_alarm_volume_at {
-	my ($alarm, $elapsed) = @_;
-	my $target = (($alarm->{'volume'} || 70) / 100);
+	my ($alarm, $elapsed, $system_set) = @_;
+	# When the machine's sink already carries the chosen level, the player only
+	# adds the ramp; scaling by the percentage again would square it.
+	my $target = $system_set ? 1 : (($alarm->{'volume'} || 70) / 100);
 	my $ramp = ($alarm->{'ramp'} || 0) * 1000;
 	my $progress = 1;
 	if ($ramp > 0) {
@@ -697,18 +703,18 @@ sub clock_alarm_ring_length {
 # at the alarm's volume, with the ramp as its fade-in, and its pid is written so
 # Dismiss can stop it. A chime is played at the moment's ramped volume.
 sub clock_alarm_play_command {
-	my ($alarm, $elapsed) = @_;
+	my ($alarm, $elapsed, $system_set) = @_;
 	$elapsed ||= 0;
 	my $sound = &clock_valid_alarm_sound($alarm->{'sound'}) || 'notifications/ring.mp3';
 	my $file = &clock_sound_file($sound);
 	if (&clock_sound_is_long($sound)) {
-		my $target = sprintf('%.2f', ($alarm->{'volume'} || 70) / 100);
+		my $target = $system_set ? '1.00' : sprintf('%.2f', ($alarm->{'volume'} || 70) / 100);
 		my $ramp = int($alarm->{'ramp'} || 0);
 		$ramp = 1 if $ramp < 1;
 		my $play = 'play -q -v ' . $target . ' ' . &quote($file) . ' fade t ' . $ramp . ' repeat 1000';
 		return $play . ' & echo $! > ' . &clock_alarm_pidfile($alarm->{'uuid'});
 	}
-	my $level = &clock_alarm_volume_at($alarm, $elapsed);
+	my $level = &clock_alarm_volume_at($alarm, $elapsed, $system_set);
 	return 'play -q -v ' . $level . ' ' . &quote($file) . ' fade t 1';
 }
 
@@ -725,7 +731,7 @@ sub clock_alarm_sound {
 	# and stops it on Dismiss. A Perl player here would sound on the media
 	# stream beside it.
 	return '' if &device_setter() eq 'mobile';
-	my $command = &clock_alarm_play_command($alarm, $elapsed);
+	my $command = &clock_alarm_play_command($alarm, $elapsed, &clock_alarm_volume_saved($alarm->{'uuid'} || ''));
 	eval {
 		&subprocessor(sub { &run_command('clock', $command); }, { name => 'clock alarm sound' });
 	};

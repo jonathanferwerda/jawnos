@@ -62,7 +62,9 @@ sub clock_tick {
 				my $stop_at = $alarm->{'stop_at'} || 0;
 				my $stopped = !$targeted || !$alarm->{'ringing'} || ($stop_at != ($ring->{'base'} || 0));
 				if ($stopped || $elapsed >= &clock_alarm_ring_length($alarm)) {
-					push @actions, [ 'stop_sound', $uuid ] if $long;
+					# Restore the sink even for a chime: a chime has no player to
+					# kill, but the ring still raised the machine's volume.
+					push @actions, [ 'stop_sound', $uuid ];
 					$ring->{'ringing'} = 0;
 					$ring->{'stopped'} = $now;
 					$rings_changed = 1;

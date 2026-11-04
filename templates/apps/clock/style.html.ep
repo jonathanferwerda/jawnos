@@ -75,7 +75,7 @@
 	.clock_alarm_preview:hover { background:var(--line); }
 	.clock_alarm_preview[data-playing=yes] { background-color:#2f8f6d; color:#fff; border-color:transparent; }
 	.clock_timer_new { display:grid; grid-template-columns:repeat(3, 1fr); gap:6px; border:1px solid var(--line); border-radius:calc(var(--jawnos-corner, 12px) * .55); padding:9px; margin-bottom:10px; background:var(--panel); }
-	.clock_timer_new .clock_timer_label, .clock_timer_new .clock_timer_app, .clock_timer_new .clock_app_picker { grid-column:1 / -1; }
+	.clock_timer_new .clock_timer_label, .clock_timer_new .clock_timer_app, .clock_timer_new .clock_app_picker, .clock_timer_new .clock_timer_volume_field { grid-column:1 / -1; }
 	.clock_timer_new .clock_add_timer { grid-column:1 / -1; }
 	.clock_timer_new input, .clock_timer_new button { font:inherit; font-size:13px; min-width:0; padding:6px 8px; color:inherit;
 		border:1px solid var(--line); border-radius:6px; background:var(--window, var(--panel)); }

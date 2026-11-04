@@ -14,6 +14,14 @@ under a dated heading; older sections stay as history.
   the previous alarm-stream step when the ring ends - Dismiss, Snooze, a timer
   finishing, or the five-minute guard. A 30% alarm is 30%, and the phone is left
   where the person had it.
+- **Timers get the same Volume.** A timer's creator now has a Volume slider, so
+  its chime uses the same phone alarm channel at the level chosen instead of a
+  fixed 70%, and the previous alarm volume comes back when the chime finishes.
+- **Computer alarms set the machine's output volume too.** On a computer with
+  `pactl`, `wpctl` or `amixer`, an alarm moves the machine's own output volume
+  to its Volume for the ring and restores the previous level on Dismiss,
+  Snooze, a timer finishing or the five-minute guard. A machine with no mixer
+  keeps the old sox scaling.
 - **Every open Manager window shows the ring card.** The card's duplicate
   guard lived in localStorage, which every window on a machine shares, so only
   the first window to hear the push drew it. Each window now keeps its own

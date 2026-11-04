@@ -109,6 +109,11 @@ function jawnosClockRenderTimers(state) {
 	app.find('.clock_add_timer').prop('disabled', running >= (state.max || 10));
 }
 
+$(document).on('input', '.clock_timer_volume', function () {
+	var field = $(this).closest('.clock_timer_volume_field');
+	field.find('span').first().text(jawnosT('volume') + ' · ' + $(this).val() + '%');
+});
+
 $(document).on('click', '.clock_preset', function () {
 	var seconds = parseInt($(this).attr('data-preset'), 10) || 0;
 	var panel = $(this).closest('.clock_panel');
@@ -129,8 +134,9 @@ $(document).on('click', '.clock_add_timer', function () {
 	var label = panel.find('.clock_timer_label').val() || '';
 	var app_input = panel.find('.clock_timer_app');
 	var app = app_input.attr('data-app') || app_input.val() || '';
+	var volume = parseInt(panel.find('.clock_timer_volume').val() || 70, 10);
 	jawnosClockPost('/manager/clock/timer', {
-		action: 'start', hours: hours, minutes: minutes, seconds: seconds, label: label, app: app
+		action: 'start', hours: hours, minutes: minutes, seconds: seconds, label: label, app: app, volume: volume
 	}, function (state) {
 		if (state && state.ok !== 0) {
 			panel.find('.clock_timer_hours, .clock_timer_minutes, .clock_timer_seconds, .clock_timer_label, .clock_timer_app').val('');
