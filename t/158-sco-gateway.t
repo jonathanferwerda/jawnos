@@ -183,6 +183,20 @@ ok($gateway->recording_path('name-test-call.wav'), 'a recording by bare name is 
 is($gateway->recording_path('../../etc/passwd'), '', 'a path is not a name');
 is($gateway->recording_path('.hidden'), '', 'a dot file is not served');
 
+# The call a plan was just spoken into is still up for a moment after the
+# thanks. Its stream pair is what tells the next arm to wait for a real call.
+{
+	my $pair = { sink_input => '41', source_output => '42' };
+	is(JawnOS::Sco::Gateway::same_streams($pair, { sink_input => '41', source_output => '42' }), 1,
+		'the line just served is recognised and not served twice');
+	is(JawnOS::Sco::Gateway::same_streams($pair, { sink_input => '43', source_output => '42' }), 0,
+		'a replaced stream is a new call');
+	is(JawnOS::Sco::Gateway::same_streams($pair, { sink_input => '43', source_output => '44' }), 0,
+		'a fresh pair is a new call');
+	is(JawnOS::Sco::Gateway::same_streams(undef, { sink_input => '43', source_output => '44' }), 0,
+		'nothing served yet means serve');
+}
+
 my $cancelled = $gateway->cancel();
 is($cancelled->{'state'}, 'idle', 'cancel puts the gateway down');
 
@@ -253,6 +267,43 @@ SKIP: {
 	# nobody spoke: the ceiling ends it, and the clip is marked as silent
 	my $none = $record->('none', $quiet->(3000), ms => 1500);
 	ok($none >= 16000 && $none <= 24000, 'a silent caller is ended by the ceiling');
+}
+
+# A link that hands the gateway nothing but digital silence is not a call yet:
+# our own sink produces frames whether or not the phone's audio path is up, and
+# speaking then speaks into nothing. The plan waits for a frame that carries
+# something; a stream that never does is taken as a call after eight seconds.
+SKIP: {
+	skip 'the SCO helper is not built on this machine', 2 unless -x $helper;
+	require IPC::Open2;
+	my $accepted_within = sub {
+		my ($source, $seconds) = @_;
+		my ($out, $in);
+		my $pid = IPC::Open2::open2($out, $in, $helper,
+			'--pipe-in', $source, '--pipe-out', 'cat > /dev/null');
+		return 0 unless $pid;
+		$in->autoflush(1);
+		my $start = time;
+		my $buffer = '';
+		my $seen = 0;
+		while (time - $start < $seconds) {
+			my $rin = '';
+			vec($rin, fileno($out), 1) = 1;
+			my $rout = $rin;
+			next unless select($rout, undef, undef, 0.5);
+			my $got = sysread($out, my $chunk, 4096);
+			last unless $got;
+			$buffer .= $chunk;
+			if ($buffer =~ /"event":"accepted"/) { $seen = 1; last; }
+		}
+		print {$in} '{"cmd":"quit"}' . "\n";
+		close $in;
+		close $out;
+		waitpid($pid, 0);
+		return $seen;
+	};
+	ok(!$accepted_within->('cat /dev/zero', 3), 'a link of pure silence is not answered yet');
+	ok($accepted_within->('yes', 4), 'a link that carries audio is answered');
 }
 
 done_testing();

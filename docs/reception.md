@@ -95,9 +95,19 @@ the first time a call needs them.
    copies the clip to `~/.president/sco/kept/<call_id>.wav`, transcribes it to
    the name and appends a line to `kept/index.jsonl`.
 5. Routes: `GET /manager/sco/status|result|recording`, `POST /manager/sco/arm|cancel`.
+6. The pair of streams the plan was spoken into is remembered until the line is
+   really gone, so arming again while the call is still hanging up does not speak
+   a second plan into it. While a call is up the pair is also re-checked once a
+   second and moved again if the phone replaces it (a Bluetooth link that is
+   re-established makes a new pair).
 
 ## Known limits
 
+- The helper waits for a frame that carries something before it speaks: our own
+  sink produces frames whether or not the phone's audio path is up, and a link
+  that only hands us digital silence used to be greeted into nothing. Eight
+  seconds of silence is taken as a call anyway, so a genuinely quiet line is
+  still greeted.
 - The **voicemail greeting is not used yet**: the phone decides the flow at
   ring time, but the gateway is armed before it knows which caller arrived, so
   every screened call gets the same plan. Splitting them needs the phone to send

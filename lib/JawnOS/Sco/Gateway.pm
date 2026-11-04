@@ -206,6 +206,7 @@ sub arm {
 		$self->{'state'} = 'waiting';
 		$self->write_status();
 		$self->watch_streams();
+		$self->watch_call();
 		return { ok => 1, state => 'waiting', call_id => $self->{'call_id'} };
 	}
 	$self->{'peer'} = $args{'peer'} || '';
@@ -228,6 +229,11 @@ sub call_id {
 
 # Wait until the gateway's own two streams appear (the call has started), move
 # them onto our devices, and only then start the audio helper.
+#
+# A line that the last plan was just spoken into is still up for a moment after
+# the thanks; arming again promptly must not treat that pair as a new call and
+# speak a whole second plan into it. The pair we served is remembered until the
+# line is gone.
 sub watch_streams {
 	my ($self) = @_;
 	return if $self->{'watcher'};
@@ -235,7 +241,12 @@ sub watch_streams {
 		return unless $self->{'state'} eq 'waiting';
 		my $mixer = $self->{'mixer'} or return;
 		my $streams = $mixer->call_streams($self->{'peer'});
-		return unless $streams->{'sink_input'} && $streams->{'source_output'};
+		unless ($streams->{'sink_input'} && $streams->{'source_output'}) {
+			# nothing of the old call is left: whatever appears next is new
+			delete $self->{'served'};
+			return;
+		}
+		return if &same_streams($self->{'served'}, $streams);
 		my $moved = $mixer->attach($self->{'peer'});
 		my @cmd = ( $self->helper_command(), '--pipe-in', $mixer->capture_command(),
 			'--pipe-out', $mixer->playback_command() );
@@ -244,6 +255,7 @@ sub watch_streams {
 			$mixer->detach();
 			return;
 		}
+		$self->{'served'} = &stream_pair($streams);
 		$self->{'last_event'} = 'attached';
 		$self->{'state'} = 'armed';
 		$self->{'since'} = time;
@@ -252,10 +264,50 @@ sub watch_streams {
 	return 1;
 }
 
+# A call's two streams can be replaced under us: the phone's own audio path comes
+# up after it answers, and a Bluetooth link that is re-established makes a new
+# pair. Moving them is harmless when they are already ours, so while a call is up
+# the pair is checked again and moved again when it changes.
+sub watch_call {
+	my ($self) = @_;
+	return if $self->{'call_watcher'};
+	$self->{'call_watcher'} = Mojo::IOLoop->recurring(1 => sub {
+		return unless $self->{'state'} eq 'in_call';
+		my $mixer = $self->{'mixer'} or return;
+		my $streams = $mixer->call_streams($self->{'peer'});
+		return unless $streams->{'sink_input'} && $streams->{'source_output'};
+		return if &same_streams($self->{'served'}, $streams);
+		$mixer->attach($self->{'peer'});
+		$self->{'served'} = &stream_pair($streams);
+		$self->{'last_event'} = 'reattached';
+		$self->write_status();
+	});
+	return 1;
+}
+
+sub stream_pair {
+	my ($streams) = @_;
+	return {
+		sink_input => $streams->{'sink_input'} || '',
+		source_output => $streams->{'source_output'} || '',
+	};
+}
+
+sub same_streams {
+	my ($served, $streams) = @_;
+	return 0 unless $served && $streams;
+	return 0 unless $served->{'sink_input'} && $served->{'source_output'};
+	return 0 unless $streams->{'sink_input'} && $streams->{'source_output'};
+	return ($served->{'sink_input'} eq $streams->{'sink_input'}
+		&& $served->{'source_output'} eq $streams->{'source_output'}) ? 1 : 0;
+}
+
 sub stop_watch {
 	my ($self) = @_;
-	if (my $w = delete $self->{'watcher'}) {
-		Mojo::IOLoop->remove($w);
+	foreach my $key (qw(watcher call_watcher)) {
+		if (my $w = delete $self->{$key}) {
+			Mojo::IOLoop->remove($w);
+		}
 	}
 	return 1;
 }

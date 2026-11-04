@@ -60,6 +60,8 @@
 #define CHUNK_NS 7500000LL
 /* how long the call audio must be flowing before a prompt starts */
 #define SETTLE_NS 1200000000LL
+/* how long a silent link is waited on before it is treated as a call anyway */
+#define SETTLE_WAIT_NS 8000000000LL
 
 static volatile sig_atomic_t running = 1;
 static int sco_fd = -1, listen_fd = -1;
@@ -80,6 +82,7 @@ static int pipe_write_chunk(const unsigned char *buf, size_t len);
 static int backend_open(void);
 static int backend_read(unsigned char *buf, size_t cap);
 static int backend_write(const unsigned char *buf, size_t len);
+static int chunk_has_signal(const unsigned char *buf, size_t len);
 static char pcm_error[128] = "";
 static long long last_complain = 0;        /* BlueALSA PCM, e.g. bluealsa:DEV=...,PROFILE=hfp-hf */
 static snd_pcm_t *pcm_cap = NULL, *pcm_play = NULL;
@@ -645,6 +648,16 @@ static int backend_open(void) {
 	return pipe_mode ? pipe_open_pair() : -1;
 }
 
+/* A frame that is all zeros is not a call: our own sink keeps producing frames
+ * whether or not the phone's audio path is up, and a link still settling hands
+ * us digital silence. */
+static int chunk_has_signal(const unsigned char *buf, size_t len) {
+	for (size_t i = 0; i + 1 < len; i += 2) {
+		if (buf[i] || buf[i + 1]) return 1;
+	}
+	return 0;
+}
+
 static int backend_read(unsigned char *buf, size_t cap) {
 	return pipe_mode ? pipe_read_chunk(buf, cap) : pcm_read_chunk(buf, cap);
 }
@@ -755,7 +768,15 @@ static int pcm_mode_main(void) {
 					last_frame_at = now_ns();
 					/* The link carries frames a moment before the phone's own
 					 * audio path is fully up, and a prompt that starts then loses
-					 * its first words. Wait for the stream to settle. */
+					 * its first words. A frame of digital silence says the path is
+					 * not up at all, so wait for one that carries something - but
+					 * not forever, or a line that is genuinely quiet is never
+					 * greeted. */
+					if (!chunk_has_signal(chunk, (size_t) first)
+						&& now_ns() - opened_at < SETTLE_WAIT_NS) {
+						usleep(20000);
+						continue;
+					}
 					if (!first_frame_at) first_frame_at = now_ns();
 					downlink_chunk(chunk, (size_t) first);
 					if (now_ns() - first_frame_at < SETTLE_NS) {
