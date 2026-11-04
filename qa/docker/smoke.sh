@@ -74,10 +74,25 @@ wait_http() {
 		code=$(curl -ksS -o /dev/null -w '%{http_code}' "https://127.0.0.1:$WORKING/" 2>/dev/null || true)
 		case "$code" in
 			200|30*) return 0 ;;
-		esac
+			esac
 		sleep 2
 	done
 	echo "FAIL: the manager did not answer on 127.0.0.1:$WORKING (last code ${code:-none})" >&2
+	return 1
+}
+
+# The log driver can lag the first HTTP answer by a moment; wait for the line
+# instead of sampling it once. Read a file, not a pipe: with pipefail a
+# `compose logs | grep -q` reports SIGPIPE (141) when grep matches and exits.
+wait_log() {
+	local needle=$1 deadline=$((SECONDS + 30))
+	while [ "$SECONDS" -lt "$deadline" ]; do
+		compose logs --no-color > "$RUN_DIR/container.log" 2>/dev/null || true
+		if grep -qF -- "$needle" "$RUN_DIR/container.log"; then
+			return 0
+		fi
+		sleep 1
+	done
 	return 1
 }
 
@@ -174,6 +189,10 @@ main() {
 	git -C "$REPO" archive --format=tar HEAD | tar -x -C "$TREE"
 	TREE_MADE=1
 
+	# A failed prior run must not leave its volumes behind and turn "first boot"
+	# into "existing config". The flock above means this project is ours.
+	compose down -v --remove-orphans >/dev/null 2>&1 || true
+
 	echo "docker-smoke: building $IMAGE from HEAD"
 	compose build
 	echo "docker-smoke: starting $PROJECT"
@@ -212,7 +231,7 @@ main() {
 	echo "docker-smoke: restarting the container"
 	compose restart
 	wait_http
-	if ! compose logs --no-color 2>/dev/null | grep -q 'using the existing config and database'; then
+	if ! wait_log 'using the existing config and database'; then
 		echo "FAIL: the restart did not reuse the volumes"
 		return 1
 	fi
@@ -241,8 +260,9 @@ if command -v flock >/dev/null 2>&1; then
 fi
 
 set +e
-main 2>&1 | tee "$LOG"
-rc=${PIPESTATUS[0]}
+main >"$LOG" 2>&1
+rc=$?
 set -e
+cat "$LOG"
 echo "docker-smoke: log $LOG"
 exit "$rc"
