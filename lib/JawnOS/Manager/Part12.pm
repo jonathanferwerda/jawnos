@@ -372,6 +372,97 @@ sub phone_ivr_defaults {
 # The six call-flow buckets. `route` is the older three-way knob; when a phone
 # has no saved matrix, the matrix is derived from it so an existing phone keeps
 # behaving the same way.
+# A route for one number, set by tapping it in the Phone app. The value is the
+# same five words the bucket flows use (ring, ivr, voicemail, reject), and an
+# empty one means "let the person's relationship decide". Numbers are keyed by
+# the cleaned ten digits the rest of the phone code matches on.
+sub phone_routes_read {
+	my $raw = &subs::setting_grabber({ app => 'phone', setting => 'ivr_routes', device => 'all', benign => 1 });
+	my $stored = (defined $raw && length $raw) ? eval { decode_json($raw) } : undef;
+	return {} unless ref $stored eq 'HASH';
+	my %clean;
+	foreach my $number ( keys %{$stored} ) {
+		my $key = &ticket_contact_clean('phone', $number);
+		next unless $key;
+		my $flow = $stored->{$number};
+		$flow = $flow->{'flow'} if ref $flow eq 'HASH';
+		next unless defined $flow && $flow =~ /^(?:ring|ivr|voicemail|reject)$/;
+		$clean{$key} = $flow;
+	}
+	return \%clean;
+}
+
+sub phone_routes_save {
+	my ($routes) = @_;
+	my %clean;
+	my $given = ref $routes eq 'HASH' ? $routes : {};
+	foreach my $number ( keys %{$given} ) {
+		my $key = &ticket_contact_clean('phone', $number);
+		next unless $key;
+		my $flow = $given->{$number};
+		$flow = $flow->{'flow'} if ref $flow eq 'HASH';
+		next unless defined $flow && $flow =~ /^(?:ring|ivr|voicemail|reject)$/;
+		$clean{$key} = $flow;
+	}
+	&subs::setting_setter({
+		app => 'phone',
+		setting => 'ivr_routes',
+		value => encode_json(\%clean),
+		device => 'all',
+		timestamp => &subs::rightNow(),
+	});
+	return \%clean;
+}
+
+# Set or clear one number's route. 'default' (or '') removes the entry, so the
+# person's relationship decides again.
+sub phone_route_set {
+	my ($number, $flow) = @_;
+	my $key = &ticket_contact_clean('phone', $number);
+	return { ok => 0, error => 'no number' } unless $key;
+	my $routes = &phone_routes_read();
+	my $want = defined $flow ? $flow : '';
+	if (!length $want || $want eq 'default') {
+		delete $routes->{$key};
+	}
+	elsif ($want =~ /^(?:ring|ivr|voicemail|reject)$/) {
+		$routes->{$key} = $want;
+	}
+	else {
+		return { ok => 0, error => 'unknown route' };
+	}
+	&phone_routes_save($routes);
+	return { ok => 1, number => $key, flow => $routes->{$key} || '', routes => $routes };
+}
+
+# How a call from this number is handled: the number's own route first, then the
+# relationship it belongs to, then 'unknown' for a number the house cannot name.
+sub phone_route_for {
+	my ($number) = @_;
+	my $key = &ticket_contact_clean('phone', $number);
+	my $routes = &phone_routes_read();
+	if ($key && $routes->{$key}) {
+		return { flow => $routes->{$key}, source => 'number', number => $key };
+	}
+	my $ivr = &phone_ivr_settings();
+	unless (($ivr->{'enabled'} || 'no') eq 'yes') {
+		return { flow => 'ring', source => 'off', number => $key };
+	}
+	my $bucket = 'unknown';
+	if ($key) {
+		my $relations = &phone_relationships();
+		my $row = $relations->{$key};
+		if ($row && $row->{'value'}) {
+			$bucket = $row->{'value'};
+		}
+		elsif (&phone_names()->{$key}) {
+			$bucket = 'stranger';
+		}
+	}
+	my $flow = $ivr->{'flows'}->{$bucket} || 'ring';
+	return { flow => $flow, source => $bucket, number => $key };
+}
+
 sub phone_ivr_flow_defaults($route) {
 	my %flow = (
 		unknown     => 'ivr',

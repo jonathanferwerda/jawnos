@@ -57,6 +57,8 @@ our %WARRANTY = (
 	# Holds the Bluetooth SCO link for as long as a call lasts; a caller waiting
 	# to say their name is not a slow job, so it has no deadline of its own.
 	'SCO Gateway'                    => 'forever',
+	# Re-arms the gateway between calls; a caller waiting to speak is not a job.
+	'Phone Reception'                => 'forever',
 	'Watch Server'                   => 'forever',
 	'TTY Server'                     => 'forever',
 	'TTY WS Server'                  => 'forever',

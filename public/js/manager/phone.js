@@ -353,3 +353,131 @@ $(document).ready(function () {
 	// a call that ended while the app was away is still waiting to be filed
 	jawnPhoneAppFileCalls();
 });
+
+// ---- call routing for one number ----------------------------------------
+// A person or a number can answer differently from the rest of their bucket.
+// The sheet is one number at a time: the resolved route is fetched when it
+// opens, so "Follow the person" shows what the relationship would do.
+
+function jawnPhoneRouteOpen(number, app) {
+	var sheet = $('#phone_app #phone_route_sheet');
+	if (!number) { return; }
+	sheet.attr('number', number).attr('app', app || '');
+	$('#phone_app #phone_route_who').text((app ? jawnPhoneRouteName(app) + ' · ' : '') + number);
+	$('#phone_app #phone_route_note').text('');
+	$('#phone_app #phone_route_status').text('');
+	$('#phone_app .phone_route_choice').removeClass('on');
+	sheet.show();
+	$.ajax({
+		url: '/manager/phone/route',
+		type: 'GET',
+		dataType: 'json',
+		data: { number: number, timestamp: Date.now() },
+		success: function (res) {
+			if (!res) { return; }
+			var flow = res.flow || 'ring';
+			var pick = (res.source === 'number') ? flow : 'default';
+			$('#phone_app .phone_route_choice[route="' + pick + '"]').addClass('on');
+			var source = res.source || '';
+			var note = 'Now: ' + flow;
+			if (source === 'number') { note += ' — set for this number'; }
+			else if (source === 'off') { note += ' — the reception flow is off'; }
+			else if (source) { note += ' — from ' + source; }
+			$('#phone_app #phone_route_note').text(note);
+		}
+	});
+}
+
+function jawnPhoneRouteName(app) {
+	var formatted = $('.people_person_link[app="' + app + '"]').text();
+	if (formatted) { return formatted; }
+	return app.replace(/_/g, ' ');
+}
+
+$(document).on('click', '#phone_app .phone_app_row_route', function (e) {
+	e.stopPropagation();
+	var icon = $(this);
+	var row = icon.closest('.phone_app_row');
+	var number = icon.attr('number') || row.attr('number') || '';
+	jawnPhoneRouteOpen(number, icon.attr('app') || row.attr('app') || '');
+});
+
+$(document).on('click', '#phone_app #phone_route_close', function () {
+	$('#phone_app #phone_route_sheet').hide();
+});
+
+$(document).on('click', '#phone_app .phone_route_choice', function () {
+	var sheet = $('#phone_app #phone_route_sheet');
+	var flow = $(this).attr('route');
+	var number = sheet.attr('number');
+	$.ajax({
+		url: '/manager/phone/route',
+		type: 'POST',
+		dataType: 'json',
+		data: { number: number, flow: flow, timestamp: Date.now() },
+		success: function (res) {
+			if (!res || !res.ok) {
+				$('#phone_app #phone_route_status').text('Could not save.');
+				return;
+			}
+			$('#phone_app .phone_route_choice').removeClass('on');
+			$('#phone_app .phone_route_choice[route="' + flow + '"]').addClass('on');
+			$('#phone_app #phone_route_status').text('Saved.');
+			var saved = (flow === 'default') ? '' : flow;
+			$('#phone_app .phone_app_row_route').filter(function () {
+				return $(this).attr('number') === number;
+			}).attr('route', saved);
+			if (typeof jawnPhoneSync === 'function') { jawnPhoneSync(); }
+			var resolved = res.resolved || {};
+			$('#phone_app #phone_route_note').text(resolved.flow ? ('Now: ' + resolved.flow) : '');
+		},
+		error: function () { $('#phone_app #phone_route_status').text('Could not save.'); }
+	});
+});
+
+// ---- the gateway's own state, on the IVR pane ---------------------------
+
+function jawnPhoneGatewayState() {
+	$.ajax({
+		url: '/manager/sco/status',
+		type: 'GET',
+		dataType: 'json',
+		data: { timestamp: Date.now() },
+		success: function (res) {
+			var state = (res && res.state) || 'unavailable';
+			var label = 'Gateway: ' + state;
+			if (res && res.helper === 0) { label = 'Gateway: the helper is not built on this machine'; }
+			else if (state === 'in_call') { label = 'Gateway: a call is up'; }
+			else if (state === 'armed') { label = 'Gateway: listening for the next call'; }
+			$('#phone_app #phone_ivr_gateway_state').text(label);
+		},
+		error: function () { $('#phone_app #phone_ivr_gateway_state').text('Gateway: not answering'); }
+	});
+}
+
+$(document).on('click', '#phone_app .phone_app_tab[pane="ivr"]', function () {
+	jawnPhoneGatewayState();
+});
+
+$(document).on('click', '#phone_app #phone_ivr_arm', function (e) {
+	e.preventDefault();
+	var label = $('#phone_app #phone_ivr_gateway_state');
+	label.text('Arming…');
+	$.ajax({
+		url: '/manager/sco/arm',
+		type: 'POST',
+		dataType: 'json',
+		data: {
+			timestamp: Date.now(),
+			voice: $('#phone_app #phone_ivr_voice').val() || '',
+			greeting: $('#phone_app #phone_ivr_greeting').val() || '',
+			prompt: $('#phone_app #phone_ivr_prompt').val() || '',
+			thanks: $('#phone_app #phone_ivr_thanks').val() || ''
+		},
+		success: function (res) {
+			if (res && res.ok) { label.text('Gateway: listening for the next call'); }
+			else { label.text('Gateway: ' + ((res && res.error) || 'could not arm')); }
+		},
+		error: function () { label.text('Gateway: not answering'); }
+	});
+});

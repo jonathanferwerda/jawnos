@@ -57,6 +57,24 @@
 		border-radius:12px; background:var(--panel); cursor:pointer; user-select:none; }
 	.phone_app_key:active { background:var(--line); }
 	.phone_app_call { margin-top:14px; text-align:center; }
+	.phone_app_row_route { flex:0 0 auto; opacity:0.55; cursor:pointer; }
+	.phone_app_row_route:hover { opacity:1; }
+	.phone_app_row_route[route] { opacity:0.9; }
+	#phone_app { position:relative; }
+	.phone_app_sheet { position:absolute; inset:0; background:rgba(0,0,0,0.45); display:flex;
+		align-items:center; justify-content:center; z-index:30; padding:14px; box-sizing:border-box; }
+	.phone_app_sheet_card { background:var(--panel,#fff); color:inherit; border:1px solid var(--line);
+		border-radius:14px; padding:16px; width:100%; max-width:360px; box-shadow:0 10px 40px rgba(0,0,0,0.35); }
+	.phone_app_sheet_title { display:flex; align-items:center; justify-content:space-between;
+		font-size:16px; margin-bottom:4px; }
+	.phone_app_sheet_close { cursor:pointer; font-size:22px; line-height:1; padding:0 4px; opacity:0.7; }
+	.phone_app_sheet_who { font-size:14px; margin-bottom:2px; }
+	.phone_app_sheet_note { font-size:12px; color:var(--muted,#8e8e8e); min-height:16px; margin-bottom:10px; }
+	.phone_app_sheet_choices { display:flex; flex-direction:column; gap:6px; }
+	.phone_route_choice { padding:8px 12px; border:1px solid var(--line); border-radius:9px;
+		background:var(--panel); color:inherit; cursor:pointer; text-align:left; font:inherit; }
+	.phone_route_choice:hover { background:var(--line); }
+	.phone_route_choice.on { border-color:var(--accent,#4a90d9); box-shadow:inset 0 0 0 1px var(--accent,#4a90d9); }
 	.phone_app_empty { color:var(--muted,#8e8e8e); font-size:13px; text-align:center; padding:18px; }
 </style>
 
@@ -85,6 +103,7 @@
 					<span class="phone_app_avatar"><img src="<%= &subs::icon_for('/images/decipherable/phone.png') %>"></span>
 					<span class="phone_app_name"><%= &subs::format_name($contact->{'app'}) %></span>
 					<span class="phone_app_sub"><% my $sep = ''; foreach my $l (@lines) { %><%== $sep %><span class="phone_app_line" dial="<%= $l->{'value'} %>"><%= $l->{'display'} || $l->{'value'} %></span><% $sep = ' · '; } %></span>
+					<img class="little_thumb phone_app_row_route" hint="Call routing" number="<%= $contact->{'value'} %>" app="<%= $contact->{'app'} %>" route="<%= $contact->{'route'} || '' %>" src="<%= &subs::icon_path('routing', '/images/decipherable/phone.png') %>">
 				</div>
 			<% } %>
 			</div>
@@ -105,7 +124,8 @@
 					<span class="phone_app_name"><%= $name %></span>
 					<span class="phone_app_sub" duration="<%= $call->{'duration'} %>"><%= &subs::formatted_time($call->{'timestamp'}) %></span>
 					<% if (defined $call->{'account'} && length $call->{'account'}) { %>
-						<img class="little_thumb phone_app_row_call" hint="Call" number="<%= $call->{'account'} %>" src="<%= &subs::icon_path('phone', '/images/decipherable/phone.png') %>">
+							<img class="little_thumb phone_app_row_route" hint="Call routing" number="<%= $call->{'account'} %>" app="<%= $call->{'app'} %>" route="<%= $call->{'route'} || '' %>" src="<%= &subs::icon_path('routing', '/images/decipherable/phone.png') %>">
+					<img class="little_thumb phone_app_row_call" hint="Call" number="<%= $call->{'account'} %>" src="<%= &subs::icon_path('phone', '/images/decipherable/phone.png') %>">
 					<% } %>
 					<img class="little_thumb phone_app_block" hint="Block" src="<%= &subs::icon_path('ne pas', '/images/decipherable/padlock.png') %>">
 				</div>
@@ -154,6 +174,10 @@
 				<% } else { %>
 					No IVR gateway selected.
 				<% } %>
+			</div>
+			<div class="phone_app_ivr_flow_row">
+				<span class="phone_app_ivr_flow_label" id="phone_ivr_gateway_state">Gateway idle</span>
+				<button class="phone_app_ivr_save" id="phone_ivr_arm" hint="Arm the gateway">Arm the gateway</button>
 			</div>
 			<label>Call routing
 				<div class="phone_app_ivr_flows">
@@ -226,6 +250,23 @@
 			<div class="phone_app_call">
 				<img class="medium_thumb phone_app_dial_btn" hint="Call" src="<%= &subs::icon_path('phone', '/images/decipherable/phone.png') %>">
 			</div>
+		</div>
+	</div>
+
+	<%# Call routing: one number's own flow, opened from a person or a number %>
+	<div class="phone_app_sheet" id="phone_route_sheet" style="display:none;">
+		<div class="phone_app_sheet_card">
+			<div class="phone_app_sheet_title"><span hint="Call routing">Call routing</span><span class="phone_app_sheet_close" id="phone_route_close">×</span></div>
+			<div class="phone_app_sheet_who" id="phone_route_who"></div>
+			<div class="phone_app_sheet_note" id="phone_route_note"></div>
+			<div class="phone_app_sheet_choices">
+				<button class="phone_route_choice" route="default" hint="Follow the person">Follow the person</button>
+				<button class="phone_route_choice" route="ring" hint="Ring through">Ring through</button>
+				<button class="phone_route_choice" route="ivr" hint="Receptionist">Receptionist</button>
+				<button class="phone_route_choice" route="voicemail" hint="Voicemail">Voicemail</button>
+				<button class="phone_route_choice" route="reject" hint="Reject">Reject</button>
+			</div>
+			<div class="phone_app_status" id="phone_route_status" style="margin-top:8px;"></div>
 		</div>
 	</div>
 </div>

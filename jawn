@@ -1022,7 +1022,7 @@ sub sweep_orphans {
 	opendir(my $procs, '/proc') or return 0;
 	my @pids = grep { /^[0-9]+$/ } readdir $procs;
 	closedir $procs;
-	my $ours = qr/President\.pl|Manager\.pl|Websocket\.pl|teletype\.pl|watch\.pl|Music\.pl|Alarm\.pl|Sco\.pl/;
+	my $ours = qr/President\.pl|Manager\.pl|Websocket\.pl|teletype\.pl|watch\.pl|Music\.pl|Alarm\.pl|Sco\.pl|Reception\.pl/;
 	my $supervised = qr/(?:^|[\/\s])jawn(?:\s|$)|President\.pl|Manager\.pl|Websocket\.pl|teletype\.pl|watch\.pl/;
 	foreach my $pid (@pids) {
 		next if $pid == $$;

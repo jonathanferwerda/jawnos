@@ -79,6 +79,12 @@ sub action_23201 {
 		&subs::db_query('select app,uuid,timestamp,type,duration,account from appointments where subtype=? order by timestamp desc limit 60', 'phone')->hashes,
 		[ map { $_->{'number'} } @{$blocked} ],
 	);
+	# a row carries its own route (the number's own, or '' for the person's
+	# relationship) so the routing sheet opens on the right choice
+	my $number_routes = &phone_routes_read();
+	foreach my $call ( @{$calls} ) {
+		$call->{'route'} = $number_routes->{ &ticket_contact_clean('phone', $call->{'account'} || '') } || '';
+	}
 	my %blocked_number = map { $_->{'number'} => 1 } @{$blocked};
 	my $ivr = &phone_ivr_settings();
 	my $ivr_machine = &phone_ivr_machine($ivr->{'machine'});
@@ -88,6 +94,7 @@ sub action_23201 {
 	# line carries its own reading (the number, its type, whether it is blocked) so
 	# the template joins them without walking the tuples itself
 	foreach my $r ( @{ $directory->{'known'} }, @{ $directory->{'numbers'} } ) {
+		$r->{'route'} = $number_routes->{ &ticket_contact_clean('phone', $r->{'value'} || '') } || '';
 		my $any = 0;
 		foreach my $l ( @{ $r->{'numbers'} } ) {
 			$l->{'blocked'} = $blocked_number{ &ticket_contact_clean('phone', $l->{'value'}) } ? 1 : 0;
@@ -104,6 +111,7 @@ sub action_23201 {
 		blocked => $blocked,
 		ivr => $ivr,
 		ivr_machines => &phone_ivr_machines(),
+		routes => &phone_routes_read(),
 		ivr_voices => [ &subs::say_voices() ],
 	);
 	my $contents = &window_maker({ user_agent => $c->param('user_agent'), app => 'phone', title => 'Phone', contents => $content }, $c->param('timestamp'));
@@ -286,6 +294,25 @@ sub action_24760 {
 	$c->render(json => { ok => 1, ivr => $saved });
 }
 
+# POST /manager/phone/route
+#
+# One number's own route, set from the routing sheet the Phone app opens. The
+# answer carries the resolved route so the sheet never has to guess what the
+# person's relationship would have done.
+sub action_24761 {
+	my $c = shift;
+	my $number = $c->param('number') || '';
+	my $saved = &phone_route_set($number, $c->param('flow'));
+	$saved->{'resolved'} = &phone_route_for($number) if $saved->{'ok'};
+	$c->render(json => $saved);
+}
+
+# GET /manager/phone/route
+sub action_24762 {
+	my $c = shift;
+	$c->render(json => &phone_route_for($c->param('number') || ''));
+}
+
 # GET /manager/phone/sync
 sub action_24755 {
 	my $c = shift;
@@ -311,6 +338,7 @@ sub action_24755 {
 		blocked => &ticket_blacklist_numbers(),
 		names => \%names,
 		relationships => &phone_relationships(),
+		routes => &phone_routes_read(),
 		avatars => \%avatars,
 		ivr => $ivr,
 	});

@@ -801,6 +801,12 @@ sub manager_starter() {
 			$ENV{PURPOSE} = 'sco';
 			require './perl/Sco.pl';
 		}, { name => 'SCO Gateway' });
+		# Reception keeps that gateway armed from the phone's own settings, so a
+		# caller is answered even when no page is open anywhere.
+		&subs::subprocessor(sub {
+			$ENV{PURPOSE} = 'reception';
+			require './perl/Reception.pl';
+		}, { name => 'Phone Reception' });
 	}
 	my $f_status = read_file($status_file);
 	my $socket_watch = &socket_watch($dump_dir . '/memory');
