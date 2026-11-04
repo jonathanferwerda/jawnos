@@ -61,7 +61,7 @@ var jawnosSearchEnterConsumed = false;
 function jawnosSearchIndex(force) {
 	if (jawnosSearchApps && !force) { return $.Deferred().resolve(jawnosSearchApps).promise(); }
 	if (jawnosSearchLoading) { return jawnosSearchLoading; }
-	jawnosSearchLoading = $.ajax({ url: '/manager/search_index', type: 'GET', dataType: 'json', cache: false })
+	jawnosSearchLoading = $.ajax({ url: '/manager/search_index', type: 'GET', dataType: 'json', cache: false, timeout: 20000 })
 		.then(function (response) {
 			jawnosSearchApps = (response && response.apps) ? response.apps : [];
 			jawnosSearchVersion = (response && response.version) || '';

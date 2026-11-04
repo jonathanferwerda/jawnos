@@ -14,7 +14,7 @@ use Digest::SHA qw(sha256_hex);
 use File::Slurp qw(read_file);
 use JawnOSTest;
 
-subs::preload('format_name unformat_name path_name html_name http_name kb_symbol_map settings_orphan_plan');
+subs::preload('format_name unformat_name path_name html_name http_name kb_symbol_map settings_orphan_plan name_overlong');
 
 # The database handle is in byte mode, so this is what a stored app name looks
 # like: UTF-8 bytes, not a decoded string.
@@ -24,6 +24,16 @@ my $expected = encode('UTF-8', "I’m Confident");
 my $formatted = &subs::format_name($bytes);
 is(encode('UTF-8', $formatted), $expected, 'format_name decodes a UTF-8 byte string once');
 unlike($formatted, qr/[ÃÂâ]/, 'the displayed name carries no mojibake');
+
+# A corrupt key of megabytes made NFC spend over a minute on one name. The
+# formatter bounds the string first; the same 100-character rule quarantines it.
+ok(!&subs::name_overlong('i' x 100), 'a 100-character key is still a name');
+ok(&subs::name_overlong('i' x 101), 'a 101-character key is corruption');
+my $huge = 'i' . ('ÃÂ' x 50000);
+ok(&subs::name_overlong($huge), 'a megabyte-scale key is overlong');
+my $bounded = &subs::format_name($huge);
+cmp_ok(length($bounded), '<=', 100, 'format_name bounds a corrupt key before NFC');
+is(&subs::format_name('i' x 100), 'I' . ('i' x 99), 'a 100-character name is formatted in full');
 
 my $unformatted = &subs::unformat_name($bytes);
 is(encode('UTF-8', $unformatted), $bytes, 'unformat_name returns the stored key');

@@ -44,7 +44,10 @@ die "no database at $database\n" unless -f $database;
 
 # The plan itself is a pure domain function, so the same rule is used by the
 # app and pinned by t/112-name-encoding.t.
+# The plan shares Format.pm's overlong-name rule; require it beside Name.pm so
+# a standalone run resolves the call without the manager's lazy loader.
 require "$root/lib/JawnOS/Domain/Name.pm";
+require "$root/lib/JawnOS/Domain/Format.pm";
 
 my $dbh = DBI->connect("dbi:SQLite:dbname=$database", '', '', {
 	RaiseError => 1,

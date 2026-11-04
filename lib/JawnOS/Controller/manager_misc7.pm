@@ -520,6 +520,10 @@ sub action_26091 {
 	foreach my $app ( sort keys %settings_by_app ) {
 		my $s = $settings_by_app{$app};
 		next if &help_app_hidden($app);
+		# a quarantine key and an overlong key are the corrupt data that
+		# settings_orphans.pl renames, never an app the box should offer
+		next if $app =~ /^__/;
+		next if &subs::name_overlong($app);
 		# a known app stays even when it has gallery rows; those rows are its work
 		next if $gallery->{$app} && !$gb::known_appts->{$app};
 		my $pos_entry = &search_index_setting($s->{'pos'}, $device);

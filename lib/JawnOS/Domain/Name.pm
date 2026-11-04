@@ -808,7 +808,7 @@ sub settings_orphan_plan {
 	my @rename;
 	for my $app (@apps) {
 		next if $app =~ /^__orphan_/;
-		my $corrupt = length($app) > 100 ? 1 : 0;
+		my $corrupt = &name_overlong($app);
 		unless ($corrupt) {
 			# A byte string's mojibake shows as C3 83/C3 82/C3 A2 (the second
 			# encoding of the mark); a character string shows as the visible

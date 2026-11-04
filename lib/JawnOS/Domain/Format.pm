@@ -72,9 +72,21 @@ sub kb_symbol_map {
 	};
 }
 
+# A stored key longer than this is corruption, not a name: settings_orphans.pl
+# applies the same 100-character rule to quarantine a mojibake cascade. NFC is
+# superlinear on such a key (a 1.5 MB key cost 75 seconds on the tablet), so a
+# formatter must bound the string before it normalizes it.
+our $NAME_LIMIT = 100;
+
+sub name_overlong($name) {
+	return 0 unless defined $name && length $name;
+	return length($name) > $NAME_LIMIT ? 1 : 0;
+}
+
 sub format_name {
 	my $name = shift || "";
 	$name = &text_chars($name);
+	$name = substr($name, 0, $NAME_LIMIT) if &name_overlong($name);
 	# Work on characters, not bytes: a name in Chinese, Arabic or French must
 	# keep its letters. The DB and JSON layers hand us decoded strings; NFC makes
 	# a composed and a decomposed spelling read the same.
