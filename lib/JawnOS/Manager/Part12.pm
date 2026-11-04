@@ -334,6 +334,23 @@ sub phone_blocked() {
 	return \@blocked;
 }
 
+# Recent is the calls worth seeing: a blocked number is turned away before it
+# rings, so its cancelled appointment is the house's record of the refusal, not a
+# call to read. Drop it from the pane, matching on the same last-ten-digits form
+# the blacklist uses (ticket_contact_clean), so a stored country code or dashes
+# cannot let it back in.
+sub phone_recent_unblocked($calls, $numbers) {
+	my %blocked;
+	foreach my $n ( @{ $numbers || [] } ) {
+		my $clean = &ticket_contact_clean('phone', $n);
+		$blocked{$clean} = 1 if $clean;
+	}
+	return [ grep {
+		my $account = &ticket_contact_clean('phone', $_->{'account'});
+		!$account || !$blocked{$account};
+	} @{ $calls || [] } ];
+}
+
 sub phone_avatar_thumb($file) {
 	return '' unless $file && -e $file;
 	my $dir = &subs::database_dir() . '/.thumbs';

@@ -70,9 +70,15 @@ sub action_23201 {
 	# blocked numbers, and the dial pad. The pad places a call on a phone
 	# (termux-telephony-call); the app's own address book and live call state ride
 	# the native JawnContacts bridge.
-	my $calls = &subs::db_query('select app,uuid,timestamp,type,duration,account from appointments where subtype=? order by timestamp desc limit 60', 'phone')->hashes;
 	my $directory = &phone_directory();
 	my $blocked = &phone_blocked();
+	# Recent leaves the blacklist out: a refused call is filed as a cancelled
+	# appointment so the house keeps the record, but the pane is for calls to
+	# read, and a number the desk blocks is not one of them.
+	my $calls = &phone_recent_unblocked(
+		&subs::db_query('select app,uuid,timestamp,type,duration,account from appointments where subtype=? order by timestamp desc limit 60', 'phone')->hashes,
+		[ map { $_->{'number'} } @{$blocked} ],
+	);
 	my %blocked_number = map { $_->{'number'} => 1 } @{$blocked};
 	# a row says so itself when any of its lines is on the desk's list, and each
 	# line carries its own reading (the number, its type, whether it is blocked) so

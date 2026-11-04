@@ -180,6 +180,7 @@ sub ticket_blacklist_block;
 sub phone_names;
 sub phone_directory;
 sub phone_blocked;
+sub phone_recent_unblocked;
 sub phone_avatar_thumb;
 sub phone_avatar_data;
 sub ticket_contact_clean;

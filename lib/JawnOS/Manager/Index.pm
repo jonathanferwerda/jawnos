@@ -425,6 +425,7 @@ our %SUB = (
 	'phone_blocked'                          => 'JawnOS/Manager/Part12.pm',
 	'phone_directory'                        => 'JawnOS/Manager/Part12.pm',
 	'phone_names'                            => 'JawnOS/Manager/Part12.pm',
+	'phone_recent_unblocked'                 => 'JawnOS/Manager/Part12.pm',
 	'play_audio'                             => 'JawnOS/Manager/Part02.pm',
 	'play_audio_stop'                        => 'JawnOS/Manager/Part02.pm',
 	'president_restarter'                    => 'JawnOS/Manager/Part35.pm',

@@ -116,12 +116,12 @@ $topic{'phone'} = {
 		body => [
 			'Phone shows the calls the house has logged - every call is an appointment with the subtype phone, on the caller\'s own app - and the numbers the house knows. Known is the people it knows; Recent lists the latest calls, and a row opens that person\'s thread; All adds the numbers that are only numbers, the ones a caller left behind that no name has claimed yet, which is where you go to find an unknown caller and name them.',
 			'A person can keep more than one line (a home number, a work number, a second mobile - set under Configure, in the app\'s Phones tile). They are listed together on one row, the plain phone number first and the rest with their type; tapping any one fills the dial pad with that number, and a call or text from any of them still reaches the person.',
-			'Blocked shows the Box Office\'s blocked numbers, each with an Unblock button. A number there never rings: the phone turns the call away and files it as a cancelled call, so it still shows in Recent.',
+			'Blocked shows the Box Office\'s blocked numbers, each with an Unblock button. A number there never rings: the phone turns the call away and files it as a cancelled call, and Recent leaves it out.',
 			'Known and All: tapping a number fills the dial pad with it. In the app the device\'s own address book (window.JawnContacts) replaces the Known list once its permission is granted.',
 			'Dial is a pad that places a call on a phone (termux-telephony-call). On the desktop it says dialing is only available on a phone.',
 			'With Caller ID on (the button asks for the Call screening role), the house learns who is calling as it rings. In the app that role names the caller on screen: an incoming call wakes the screen over the lock screen with their picture (the house\'s own image for them, or the JawnOS logo), their name, the number, and Answer and Decline. Without it the house\'s call-log check files the call a moment later.',
 			'A call is recorded by the app itself, not by whatever page happens to be open: the phone keeps one record per call - who, which way, when, and whether anyone answered - and the house files it from that, so a call taken with the app in the background still becomes an appointment on the caller\'s own app (or the phone app when the number is not known). It opens at the ring and closes at the hangup, or cancels when nobody answered.',
-			'A recent call\'s Block button - twice, the house\'s habit for anything that leaves a lasting rule - puts that number on the Box Office\'s blacklist, and Unblock in the Blocked pane takes it off again.'
+			'A recent call\'s Block button - twice, the house\'s habit for anything that leaves a lasting rule - puts that number on the Box Office\'s blacklist, drops the call out of Recent, and Unblock in the Blocked pane takes it off again.'
 		],
 		steps => [
 			'Open Phone from the start menu, or pin it to the taskbar.',
