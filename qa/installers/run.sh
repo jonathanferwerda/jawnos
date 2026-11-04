@@ -7,6 +7,8 @@
 #   CPAN   fastapi.metacpan.org  (every module in scripts/jawnos_deps.pl)
 #   Debian api.ftp-master.debian.org madison (the apt package names)
 #   Arch   archlinux.org package API (the pacman package names)
+#   Android dl.google.com/android/repository/repository2-3.xml (the SDK/NDK
+#          components this machine has, plus platform-tools and cmdline-tools)
 #
 # It downloads NO package, tarball or distribution, runs no `apt-get update`
 # or `pacman -Sy`, needs no sudo and does not touch the live tree, database or
@@ -84,7 +86,7 @@ main() {
 
 	note "installer freshness: $(git -C "$REPO" rev-parse --short HEAD) ($(cat "$REPO/VERSION" 2>/dev/null || echo v?))"
 
-	local args=(--freshness --desktop)
+	local args=(--freshness --desktop --android)
 	[ "$STRICT" = 1 ] && args+=(--strict)
 	if ! perl "$TREE/scripts/jawnos_deps.pl" "${args[@]}"; then
 		note "FAIL: an installer's package is gone upstream, or every lookup failed"

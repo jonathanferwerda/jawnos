@@ -158,4 +158,21 @@ sub compare_arch {
 	return _compare_segments(_arch_segments($a_pkgrel), _arch_segments($b_pkgrel));
 }
 
+# The Android SDK repository index (dl.google.com/android/repository/
+# repository2-3.xml) lists every component sdkmanager can install as
+#   <remotePackage path="platforms;android-36">
+# Those paths are the package ids; `sdkmanager --list` prints the same strings.
+# One entry per component is all the caller needs to know whether what an
+# installer asks for is still offered.
+sub parse_sdk_repository {
+	my ($text) = @_;
+	return undef unless defined $text && length $text;
+	my %packages;
+	while ($text =~ /<remotePackage\s+path="([^"]+)"/g) {
+		$packages{$1} = 1;
+	}
+	return undef unless %packages;
+	return { packages => \%packages };
+}
+
 1;

@@ -75,6 +75,9 @@ user for the exact file/folder/name. A wrong guess costs far more tokens than a 
   (desktop app, firmware, SSH, hardware passthrough): `docs/docker.md`. The nightly smoke
   (`qa/docker/smoke.sh`, `jawnos-qa-docker.timer` at 04:30) builds HEAD, runs it loopback-only and
   removes its volumes: testing only, and a missing Docker is a skip.
+- **Packages:** `qa/installers/run.sh` (`jawnos-qa-installers.timer`, 03:45) checks CPAN, Debian, Arch
+  and the Android SDK index still offer what we install; metadata only. `missing` fails, `STRICT=1`
+  fails `outdated`.
 - **Tests:** while iterating `perl scripts/tests_for.pl --staged --run`; before a commit
   `perl scripts/run_tests.pl`. Never bare `prove -l t`.
 - Master plumbing, verify manifest, restart record, socket rules: `docs/AGENTS-restart.md`.

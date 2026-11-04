@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!-- A cut-down dl.google.com/android/repository/repository2-3.xml: the shape
+     sdkmanager reads, with the components qa/android builds against. -->
+<sdkRepository>
+  <remotePackage path="platform-tools">
+    <type-details xsi:type="generic:genericDetailsType"/>
+    <revision><major>35</major><minor>0</minor><micro>2</micro></revision>
+  </remotePackage>
+  <remotePackage path="cmdline-tools;latest">
+    <type-details xsi:type="generic:genericDetailsType"/>
+    <revision><major>19</major><minor>0</minor></revision>
+  </remotePackage>
+  <remotePackage path="platforms;android-36">
+    <type-details xsi:type="platform:platformDetailsType"/>
+  </remotePackage>
+  <remotePackage path="build-tools;36.0.0">
+    <type-details xsi:type="generic:genericDetailsType"/>
+  </remotePackage>
+  <remotePackage path="ndk;22.1.7171670">
+    <type-details xsi:type="generic:genericDetailsType"/>
+  </remotePackage>
+</sdkRepository>

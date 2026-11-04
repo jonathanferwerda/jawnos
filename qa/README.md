@@ -652,6 +652,7 @@ and downloads nothing else:
 | jawn itself, and the desktop app | every module in `scripts/jawnos_deps.pl` | `fastapi.metacpan.org/v1/module/<name>` |
 | Debian / Ubuntu | each `apt` name in its package lists | `api.ftp-master.debian.org/madison?package=<pkg>&table=all` |
 | Arch | each `pacman` name in its package lists | `archlinux.org/packages/search/json/?name=<pkg>` |
+| the Android app | every SDK/NDK component this machine has, plus `platform-tools` and `cmdline-tools;latest` | `dl.google.com/android/repository/repository2-3.xml` |
 
 The report marks each name `current` (installed matches the candidate),
 `outdated` (installed is behind it), `available` (not installed here but
@@ -662,12 +663,24 @@ Sereal build; a manual `STRICT=1` run fails on it too, which is how you review
 the drift before a release.
 
 It is deliberately cheap: one small JSON/text answer per name, no tarball, no
-`apt-get update`, no `pacman -Sy`, no `cpanm`, no `sudo`. The estimate for a
-full pass is well under a megabyte, which is what makes it safe to run nightly
-against repository hosts that pay for their own bandwidth. Installed versions
-are read locally (`dpkg-query`, `pacman -Q`, `perl -M<module>`) and compared
-with `dpkg --compare-versions`, `vercmp`, or a pure-Perl Arch comparison where
-`vercmp` is absent.
+`apt-get update`, no `pacman -Sy`, no `cpanm`, no `sudo`. A full pass over the
+three text repositories is well under a megabyte, which is what makes it safe
+to run nightly against hosts that pay for their own bandwidth. Installed
+versions are read locally (`dpkg-query`, `pacman -Q`, `perl -M<module>`) and
+compared with `dpkg --compare-versions`, `vercmp`, or a pure-Perl Arch
+comparison where `vercmp` is absent.
+
+The Android half asks Google's SDK index (one request, about 430 KB) whether
+it still lists each component the build here has -- `platforms;android-36`,
+`build-tools;36.0.0`, `ndk;<version>`, `cmdline-tools;<version>` -- plus
+`platform-tools` and `cmdline-tools;latest`, which every install needs whether
+or not an SDK is present. The component list comes from
+`$ANDROID_SDK_ROOT` (or `~/android-sdk`); with no SDK there, only the two base
+components are checked. `sdkmanager` reads the same index, so a component that
+leaves it is one a fresh build could no longer install. Nothing is downloaded.
+A component that leaves the index fails the run, and so does an index that
+cannot be read at all: it is one request made on purpose, so silence is a
+failure rather than a quiet pass over the Android half.
 
 ```sh
 sudo cp qa/systemd/jawnos-qa-installers.service qa/systemd/jawnos-qa-installers.timer /etc/systemd/system/

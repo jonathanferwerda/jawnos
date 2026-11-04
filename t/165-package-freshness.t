@@ -11,7 +11,9 @@ use strict;
 use warnings;
 
 use FindBin;
+use File::Copy;
 use File::Slurp qw(read_file);
+use File::Temp ();
 use JSON::PP;
 use Test::More;
 
@@ -65,6 +67,19 @@ is( JawnOS::Packages::arch_version({ latest => '20260924', rel => '1', epoch => 
 ok( !defined JawnOS::Packages::parse_arch('{"results":[]}'),
 	'Arch: a package with no builds is no candidate (and the caller calls that missing)' );
 
+my $sdk = JawnOS::Packages::parse_sdk_repository(
+	'<sdkRepository>'
+	. '<remotePackage path="platform-tools"><revision/></remotePackage>'
+	. '<remotePackage path="ndk;22.1.7171670"/>'
+	. '<channel id="beta"><remotePackage path="platforms;android-37-beta"/></channel>'
+	. '</sdkRepository>');
+is( $sdk->{'packages'}{'platform-tools'}, 1, 'SDK: platform-tools is a package id' );
+is( $sdk->{'packages'}{'ndk;22.1.7171670'}, 1, 'SDK: ndk;<version> is a package id' );
+is( $sdk->{'packages'}{'platforms;android-37-beta'}, 1, 'SDK: channels do not hide a package' );
+ok( !defined JawnOS::Packages::parse_sdk_repository('<sdkRepository></sdkRepository>'),
+	'SDK: an index with no packages is no answer' );
+ok( !defined JawnOS::Packages::parse_sdk_repository('not xml'), 'SDK: junk is no answer' );
+
 is( JawnOS::Packages::compare_module('0.085', '0.091'), -1, 'CPAN: 0.085 is behind 0.091' );
 is( JawnOS::Packages::compare_module('9.39', '9.39'), 0, 'CPAN: equal versions compare equal' );
 is( JawnOS::Packages::compare_module('10.31', '9.53'), 1, 'CPAN: versions compare as numbers, not strings' );
@@ -81,9 +96,9 @@ is( JawnOS::Packages::compare_arch('1.10-1', '1.9-1'), 1, 'Arch: digit runs comp
 
 # --- the report against a simulated host -------------------------------------
 
-sub freshness {
-	my (@args) = @_;
-	my @cmd = ($^X, "$root/scripts/jawnos_deps.pl", '--freshness', '--fixtures', $fixtures, @args);
+sub freshness_in {
+	my ($dir, @args) = @_;
+	my @cmd = ($^X, "$root/scripts/jawnos_deps.pl", '--freshness', '--fixtures', $dir, @args);
 	my $pid = open(my $fh, '-|');
 	die "fork: $!" unless defined $pid;
 	if (!$pid) {
@@ -95,6 +110,10 @@ sub freshness {
 	my $out = <$fh>;
 	close $fh;
 	return ($? >> 8, defined $out ? $out : '');
+}
+
+sub freshness {
+	return freshness_in($fixtures, @_);
 }
 
 my ($rc, $out) = freshness('--json',
@@ -136,6 +155,48 @@ like( $out, qr/noto-fonts-emoji\s+1:20250924-1\s+->\s+1:20260924-1\s+outdated/,
 is( $rc, 2, 'an --only that matches nothing is a usage error, not a pass' );
 like( $out, qr/no requested names matched/, 'and it says so' );
 
+# --- the Android SDK/NDK -----------------------------------------------------
+# A fixture run describes the machine too: sdk_installed.txt is what the SDK
+# here has, sdk_repository.xml is what Google offers.
+my @sdk_ids = ('platform-tools', 'cmdline-tools;latest', 'platforms;android-36',
+	'build-tools;36.0.0', 'ndk;22.1.7171670');
+($rc, $out) = freshness('--android', '--json', map { "--only=$_" } @sdk_ids);
+is( $rc, 0, 'an SDK the index still offers passes' );
+my $sdk_json = eval { decode_json($out) };
+my @android = @{ $sdk_json->{'android'} || [] };
+is( scalar @android, 5, 'every component this machine has is checked once' );
+is( scalar(grep { $_->{'status'} eq 'offered' } @android), 5, 'and each is offered' );
+is( scalar(grep { $_->{'installed'} } @android), 5, 'the report marks what is installed here' );
+is( $sdk_json->{'summary'}{'android_missing'}, 0, 'the summary counts no missing component' );
+
+# The failure this job exists for: Google stops offering a component the build
+# here depends on. One variable changes, in a throwaway copy of the fixtures.
+my $tmp = File::Temp::tempdir(CLEANUP => 1);
+opendir(my $dh, $fixtures) or die "fixtures: $!";
+for my $name (grep { !/^\.\.?$/ } readdir $dh) {
+	next unless -f "$fixtures/$name";
+	File::Copy::copy("$fixtures/$name", "$tmp/$name") or die "copy $name: $!";
+}
+closedir $dh;
+my $xml = read_file("$fixtures/sdk_repository.xml");
+my $crippled = join '', grep { !/remotePackage path="(?:ndk|cmdline-tools)/ } split /^/, $xml;
+open(my $xh, '>', "$tmp/sdk_repository.xml") or die "write: $!";
+print {$xh} $crippled;
+close $xh;
+
+($rc, $out) = freshness_in($tmp, '--android', '--only=ndk;22.1.7171670', '--only=cmdline-tools;latest');
+is( $rc, 1, 'a component the index dropped fails, even when it is installed locally' );
+like( $out, qr/ndk;22\.1\.7171670\s+missing/, 'the ndk row is marked missing' );
+like( $out, qr/android missing: cmdline-tools;latest, ndk;22\.1\.7171670/,
+	'and both dropped components are named' );
+
+# And the index itself gone: one request, so "no answer" is a failure, not a
+# quiet pass over the section the caller asked for.
+unlink "$tmp/sdk_repository.xml";
+($rc, $out) = freshness_in($tmp, '--android', '--only=platform-tools');
+is( $rc, 1, 'a vanished SDK index fails the check' );
+like( $out, qr/repository index\s+missing/, 'and the report says the index is the missing thing' );
+
 # --- the nightly job downloads nothing ---------------------------------------
 
 ok( -x "$root/qa/installers/run.sh", 'the nightly freshness job is executable' );
@@ -145,6 +206,7 @@ my $script = read_file("$root/qa/installers/run.sh");
 my $bare   = join "\n", grep { !/^\s*#/ } split /\n/, $script;
 like( $script, qr/--freshness/, 'the job runs the metadata check' );
 like( $script, qr/--desktop/, 'and it covers the desktop app too' );
+like( $script, qr/--android/, 'and the Android SDK/NDK index' );
 like( $script, qr/QA_SOURCE/, 'it checks the committed tree unless asked otherwise' );
 like( $script, qr/flock/, 'two timers cannot overlap' );
 unlike( $bare, qr/apt-get\s+update/, 'it never refreshes the apt index' );
@@ -157,6 +219,8 @@ my $deps = read_file("$root/scripts/jawnos_deps.pl");
 like( $deps, qr{fastapi\.metacpan\.org/v1/module/}, 'the CPAN endpoint is pinned in the source' );
 like( $deps, qr{api\.ftp-master\.debian\.org/madison}, 'the Debian endpoint is pinned in the source' );
 like( $deps, qr{archlinux\.org/packages/search/json/}, 'the Arch endpoint is pinned in the source' );
+like( $deps, qr{dl\.google\.com/android/repository/repository2-3\.xml},
+	'the Android SDK index is pinned in the source' );
 
 my $service = read_file("$root/qa/systemd/jawnos-qa-installers.service");
 my $timer   = read_file("$root/qa/systemd/jawnos-qa-installers.timer");
@@ -167,5 +231,6 @@ like( $service, qr/MemoryMax=1G/, 'a metadata check stays small' );
 
 my $readme = read_file("$root/qa/README.md");
 like( $readme, qr/installer package freshness/i, 'the QA README documents the job' );
+like( $readme, qr{repository2-3\.xml}, 'and the Android half of it' );
 
 done_testing;

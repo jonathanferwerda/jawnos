@@ -29,6 +29,8 @@
 #   perl scripts/jawnos_deps.pl --freshness --json   # machine-readable
 #   perl scripts/jawnos_deps.pl --freshness --only=NAME  # one name (repeatable)
 #   perl scripts/jawnos_deps.pl --freshness --fixtures=DIR  # offline, canned
+#   perl scripts/jawnos_deps.pl --freshness --android      # also the Android
+#                                                    # SDK/NDK components
 #
 # --freshness asks MetaCPAN, Debian's madison and Arch's package API for the
 # candidate version and compares it with what is installed here. It downloads
@@ -50,7 +52,7 @@ use FindBin;
 use lib "$FindBin::Bin/../lib";
 use JawnOS::Packages;
 
-my ($report_only, $json, $sh, $install, $yes, $desktop, $extras_only, $no_extras, $local_lib, $freshness, $strict, $fixtures);
+my ($report_only, $json, $sh, $install, $yes, $desktop, $extras_only, $no_extras, $local_lib, $freshness, $strict, $fixtures, $android);
 my @only;
 GetOptions(
 	'report'      => \$report_only,
@@ -65,6 +67,7 @@ GetOptions(
 	'freshness'   => \$freshness,
 	'strict'      => \$strict,
 	'fixtures=s'  => \$fixtures,
+	'android'     => \$android,
 	'only=s@'     => \@only,
 ) or die "bad options\n";
 
@@ -488,6 +491,50 @@ sub fixture_version {
 	return length $value ? $value : undef;
 }
 
+sub sdk_root {
+	for my $candidate ($ENV{'ANDROID_SDK_ROOT'}, $ENV{'ANDROID_HOME'},
+		($ENV{'HOME'} || '') . '/android-sdk') {
+		next unless defined $candidate && length $candidate;
+		return $candidate if -d $candidate;
+	}
+	return undef;
+}
+
+# The SDK components this machine has, as the package ids sdkmanager uses
+# (`platforms;android-36`, `build-tools;36.0.0`, `ndk;22.1.7171670`, ...). The
+# directory layout is the id with the `;` replaced by a `/`. A fixture run
+# reads a list instead, so the test does not depend on the SDK here.
+sub sdk_components {
+	my ($fixtures) = @_;
+	if (defined $fixtures && length $fixtures) {
+		my $path = "$fixtures/sdk_installed.txt";
+		return () unless -e $path;
+		open(my $fh, '<', $path) or return ();
+		my @list;
+		while (my $line = <$fh>) {
+			$line =~ s/^\s+|\s+$//g;
+			next unless length $line && $line !~ /^#/;
+			push @list, $line;
+		}
+		close $fh;
+		return @list;
+	}
+	my $root = sdk_root();
+	return () unless defined $root;
+	my @list;
+	push @list, 'platform-tools' if -d "$root/platform-tools";
+	for my $family (qw(platforms build-tools ndk cmdline-tools)) {
+		opendir(my $dh, "$root/$family") or next;
+		for my $name (sort readdir $dh) {
+			next if $name eq '.' || $name eq '..';
+			next unless -d "$root/$family/$name";
+			push @list, "$family;$name";
+		}
+		closedir $dh;
+	}
+	return @list;
+}
+
 # Two attempts: a nightly check should not report `unknown` because one
 # upstream reset the connection. Only a transport failure (code 0) is retried;
 # 200 and 404 are answers. The Arch endpoint in particular resets a burst, so
@@ -496,7 +543,7 @@ sub meta_fetch {
 	my ($fixtures, $kind, $key, $url) = @_;
 	if (defined $fixtures && length $fixtures) {
 		(my $safe = $key) =~ s/[^A-Za-z0-9_.-]/_/g;
-		my $ext = $kind eq 'debian' ? '.txt' : '.json';
+		my $ext = $kind eq 'debian' ? '.txt' : $kind eq 'sdk' ? '.xml' : '.json';
 		my $path = "$fixtures/${kind}_$safe$ext";
 		# A name the simulated repositories do not offer has no file at all;
 		# an empty file is an answer with nothing in it (a 404 too, since
@@ -534,6 +581,7 @@ sub freshness_report {
 	my $strict = $opt{'strict'};
 	my $fixtures = $opt{'fixtures'};
 	my $json_out = $opt{'json'};
+	my $android = $opt{'android'};
 	my $platform = $opt{'platform'} || 'unknown';
 	my @only = @{ $opt{'only'} || [] };
 	my %only = map { $_ => 1 } @only;
@@ -545,9 +593,10 @@ sub freshness_report {
 		return 0;
 	};
 
-	my (@module_rows, @debian_rows, @arch_rows);
+	my (@module_rows, @debian_rows, @arch_rows, @android_rows);
 	my %summary = (current => 0, outdated => 0, available => 0,
-		missing => 0, unknown => 0, core => 0, checked => 0);
+		missing => 0, unknown => 0, core => 0, checked => 0,
+		android_offered => 0, android_missing => 0, android_unknown => 0);
 	my $curl_missing = !defined $fixtures && !which('curl');
 	# A fixture run simulates every platform at once, so its rows compare even
 	# when the machine doing the checking is the other distribution.
@@ -702,13 +751,59 @@ sub freshness_report {
 		push @arch_rows, $row;
 	}
 
-	if (!@module_rows && !@debian_rows && !@arch_rows) {
+	if ($android) {
+		# sdkmanager reads this same index; the paths in it are the package ids.
+		my $sdk_url = 'https://dl.google.com/android/repository/repository2-3.xml';
+		my ($body, $code) = meta_fetch($fixtures, 'sdk', 'repository', $sdk_url);
+		my $repo = defined $body && length $body
+			? JawnOS::Packages::parse_sdk_repository($body) : undef;
+		if (!$repo) {
+			# The index is one request, so "we could not read it" is not a
+			# detail to pass over: with --android the caller asked this
+			# question, and a silent pass would hide an unreachable Google.
+			my $row = { component => 'repository index' };
+			if (defined $code && $code == 404) {
+				$row->{'status'} = 'missing';
+				$summary{'android_missing'}++;
+			}
+			else {
+				$row->{'status'} = 'unknown';
+				$summary{'android_unknown'}++;
+			}
+			push @android_rows, $row;
+		}
+		else {
+			# The two every build needs whether or not an SDK is installed
+			# here, then whatever this machine already has: a component the
+			# build depends on must not silently disappear from the index.
+			my %wanted = map { $_ => 0 } ('platform-tools', 'cmdline-tools;latest');
+			$wanted{$_} = 1 for sdk_components($fixtures);
+			for my $component (sort keys %wanted) {
+				next unless $want->($component);
+				my $row = { component => $component };
+				$row->{'installed'} = $wanted{$component};
+				if ($repo->{'packages'}{$component}) {
+					$row->{'status'} = 'offered';
+					$summary{'android_offered'}++;
+				}
+				else {
+					$row->{'status'} = 'missing';
+					$summary{'android_missing'}++;
+				}
+				push @android_rows, $row;
+			}
+		}
+	}
+
+	if (!@module_rows && !@debian_rows && !@arch_rows && !@android_rows) {
 		print "freshness: no requested names matched the installer lists\n";
 		return 2;
 	}
 
 	my $ok = 1;
 	$ok = 0 if $summary{'missing'};
+	$ok = 0 if $summary{'android_missing'};
+	$ok = 0 if $summary{'android_unknown'};
 	$ok = 0 if $strict && $summary{'outdated'};
 	$ok = 0 if $summary{'checked'} && $summary{'unknown'} == $summary{'checked'};
 	$ok = 0 if $curl_missing;
@@ -721,6 +816,7 @@ sub freshness_report {
 			modules => \@module_rows,
 			debian => \@debian_rows,
 			arch => \@arch_rows,
+			android => \@android_rows,
 			curl_missing => $curl_missing ? 1 : 0,
 			strict => $strict ? 1 : 0,
 		});
@@ -761,6 +857,22 @@ sub freshness_report {
 	print "missing upstream: ", join(', ', map { $_->{'package'} || $_->{'name'} }
 		grep { ($_->{'status'} || '') eq 'missing' } (@module_rows, @debian_rows, @arch_rows)), "\n"
 		if $summary{'missing'};
+	if (@android_rows) {
+		print "\nAndroid SDK components (repository2-3.xml; installed here?)\n";
+		for my $row (@android_rows) {
+			printf "  %-30s %s%s\n",
+				$row->{'component'},
+				$row->{'status'},
+				$row->{'installed'} ? ' (installed)' : '';
+		}
+		print "android: $summary{'android_offered'} offered, $summary{'android_missing'} missing"
+			. ($summary{'android_unknown'} ? ", $summary{'android_unknown'} unknown" : '') . "\n";
+		print "android missing: ", join(', ', map { $_->{'component'} }
+			grep { ($_->{'status'} || '') eq 'missing' } @android_rows), "\n"
+			if $summary{'android_missing'};
+		print "android: the index could not be read; the Android check did not run\n"
+			if $summary{'android_unknown'};
+	}
 	return $ok ? 0 : 1;
 }
 
@@ -771,6 +883,7 @@ if ($freshness) {
 		only     => \@only,
 		platform => $platform,
 		json     => $json,
+		android  => $android,
 	);
 }
 

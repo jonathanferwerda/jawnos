@@ -1,0 +1,7 @@
+# The SDK components the simulated build machine has, as sdkmanager package ids
+# (the same strings `sdkmanager --list` prints).
+platform-tools
+cmdline-tools;latest
+platforms;android-36
+build-tools;36.0.0
+ndk;22.1.7171670
