@@ -1,0 +1,1 @@
+fonts-noto-color-emoji | 2.051-0+deb13u1 | stable | all

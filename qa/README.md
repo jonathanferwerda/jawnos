@@ -25,6 +25,7 @@ perl qa/run.pl --source worktree   # test uncommitted code
 perl qa/run.pl --no-namespace      # read the warning first
 perl qa/run.pl --layers l0         # just the old regression suite
 perl qa/docker/smoke.sh            # nightly Docker image smoke (loopback, testing only)
+STRICT=1 perl qa/installers/run.sh # nightly package freshness; STRICT also fails outdated
 perl qa/budget.pl <metrics.json>   # judge one device file on its own
 ```
 
@@ -108,6 +109,10 @@ The Docker compose smoke is **not a layer**: it needs the real Docker daemon
 and the network, so it runs as its own nightly unit at 04:30 (see
 [Docker compose smoke](#docker-compose-smoke-0430)) on the machine that carries
 Docker.
+
+The [installer package freshness](#installer-package-freshness-0345) check is
+not a layer either: it reads package metadata rather than running the app, and
+runs as its own unit at 03:45.
 
 ### l1 classification
 
@@ -635,6 +640,50 @@ daemon when it was inactive. A missing Docker is a **skip**, not a pass; Docker
 present but unusable (no compose plugin, daemon will not start) is a **failure**.
 Logs are in `$QA_ROOT/docker/<stamp>/smoke.log`; the last 14 runs are kept.
 
+### Installer package freshness (03:45)
+
+`qa/installers/run.sh` answers the other half of "does the installer still
+work": not whether the app builds, but whether the **repositories still offer
+the packages the installers ask for**. It asks each one for a version number
+and downloads nothing else:
+
+| Installer | Asked | Endpoint |
+| --- | --- | --- |
+| jawn itself, and the desktop app | every module in `scripts/jawnos_deps.pl` | `fastapi.metacpan.org/v1/module/<name>` |
+| Debian / Ubuntu | each `apt` name in its package lists | `api.ftp-master.debian.org/madison?package=<pkg>&table=all` |
+| Arch | each `pacman` name in its package lists | `archlinux.org/packages/search/json/?name=<pkg>` |
+
+The report marks each name `current` (installed matches the candidate),
+`outdated` (installed is behind it), `available` (not installed here but
+upstream has it), `missing` (upstream no longer offers it) or `unknown`. **A
+`missing` name fails the run.** `outdated` is informational, because the image
+deliberately pins older Mojolicious, Sereal and CryptX for the threads and
+Sereal build; a manual `STRICT=1` run fails on it too, which is how you review
+the drift before a release.
+
+It is deliberately cheap: one small JSON/text answer per name, no tarball, no
+`apt-get update`, no `pacman -Sy`, no `cpanm`, no `sudo`. The estimate for a
+full pass is well under a megabyte, which is what makes it safe to run nightly
+against repository hosts that pay for their own bandwidth. Installed versions
+are read locally (`dpkg-query`, `pacman -Q`, `perl -M<module>`) and compared
+with `dpkg --compare-versions`, `vercmp`, or a pure-Perl Arch comparison where
+`vercmp` is absent.
+
+```sh
+sudo cp qa/systemd/jawnos-qa-installers.service qa/systemd/jawnos-qa-installers.timer /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now jawnos-qa-installers.timer
+systemctl list-timers jawnos-qa-installers.timer
+```
+
+A checkout without `curl`, or a network where no repository answers, is a
+**skip**. A repository that answers the probe but not the queries is a
+**failure** naming it: "we can no longer see the module" is the signal this job
+exists for. It checks `git archive HEAD` like the Docker smoke, so a
+half-edited installer list is not judged; `QA_SOURCE=worktree` checks the
+working tree for a run before committing. Logs are in
+`$QA_ROOT/installers/<stamp>/freshness.log`; the last 14 runs are kept.
+
 ### Which machine runs the night
 
 Configure -> Plat -> QA names one machine for the nightly, and the choice is the
@@ -676,12 +725,13 @@ no identity file. Install the units on
 every machine that might be chosen; the unchosen ones still have the timer, they
 just skip their run.
 
-There are four nightly units. The Configure choice applies to the suite at
+There are five nightly units. The Configure choice applies to the suite at
 **05:00**, the UX loop at **05:30**, and the coding night at **06:00**. The
-Docker compose smoke at **04:30** and the weekly artefact build
-(`jawnos-qa-build.timer`, Sunday 03:00) deliberately do **not** carry the
-condition: both belong where their toolchain is (Docker; mkosi, qemu and a full
-JDK), not on the machine that happens to run the route/database suite.
+Docker compose smoke at **04:30**, the installer package freshness at **03:45**
+and the weekly artefact build (`jawnos-qa-build.timer`, Sunday 03:00)
+deliberately do **not** carry the condition: each belongs where its toolchain
+is (Docker; a package manager reading its own repo lists; mkosi, qemu and a
+full JDK), not on the machine that happens to run the route/database suite.
 
 The panel's readiness card asks the chosen machine what it has: the checkout,
 `perl` and `prove`, `sqlite3`, `unshare` (the fence) are required for the

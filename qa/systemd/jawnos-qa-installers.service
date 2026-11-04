@@ -1,0 +1,32 @@
+[Unit]
+Description=JawnOS nightly installer package freshness (testing only)
+Documentation=file:/home/jawn/jawnos/qa/README.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=jawn
+WorkingDirectory=/home/jawn/jawnos
+Environment=HOME=/home/jawn
+Environment=QA_ROOT=/home/jawn/jawnos-qa
+# Metadata only: this unit asks MetaCPAN, Debian's madison and Arch's package
+# API for version numbers. It downloads no package and needs no sudo, so it can
+# run on any machine rather than only the one with Docker and the toolchain --
+# which is why, like the Docker smoke, it carries no Configure -> Plat -> QA
+# device gate.
+ExecStart=/bin/bash /home/jawn/jawnos/qa/installers/run.sh
+
+# No ProtectHome/System fence: the check reads the real install to compare
+# installed versions with upstream candidates. It writes only under QA_ROOT.
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+MemoryMax=1G
+CPUQuota=50%
+TimeoutStartSec=30min
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

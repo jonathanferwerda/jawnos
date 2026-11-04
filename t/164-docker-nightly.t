@@ -59,6 +59,6 @@ like( $compose, qr/\$\{JAWNOS_IMAGE:-jawnos:local\}/,  'Compose can tag the nigh
 like( $env, qr/^# JAWNOS_BIND_ADDR=0\.0\.0\.0$/m, 'the env sample documents the bind' );
 like( $env, qr/^# JAWNOS_IMAGE=jawnos:local$/m,   'the env sample documents the image tag' );
 like( $readme, qr/Docker compose smoke \(04:30\)/,       'the QA map names the nightly smoke' );
-like( $readme, qr/There are four nightly units/,   'the QA map counts the Docker unit' );
+like( $readme, qr/There are five nightly units/,   'the QA map counts the Docker unit' );
 
 done_testing();

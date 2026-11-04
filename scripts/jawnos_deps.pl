@@ -19,6 +19,23 @@
 #                                          # current user; never runs sudo
 #   perl scripts/jawnos_deps.pl --no-extras # skip the optional apps
 #
+# Freshness (no install, no download): does upstream still offer what the
+# installer asks for, and is an installed copy far behind?
+#   perl scripts/jawnos_deps.pl --freshness          # metadata only; exit 1 if
+#                                                    # anything is missing
+#   perl scripts/jawnos_deps.pl --freshness --desktop  # include the desktop
+#                                                    # app's packages
+#   perl scripts/jawnos_deps.pl --freshness --strict # also fail on outdated
+#   perl scripts/jawnos_deps.pl --freshness --json   # machine-readable
+#   perl scripts/jawnos_deps.pl --freshness --only=NAME  # one name (repeatable)
+#   perl scripts/jawnos_deps.pl --freshness --fixtures=DIR  # offline, canned
+#
+# --freshness asks MetaCPAN, Debian's madison and Arch's package API for the
+# candidate version and compares it with what is installed here. It downloads
+# no package, tarball or distribution and runs no `apt-get update`/`pacman -Sy`:
+# the whole check is a few kilobytes per name, so it is safe to run nightly
+# against upstream hosts that pay for their bandwidth.
+#
 # It also reports which key-derivation features OpenSSL offers (Argon2id,
 # scrypt). Those are never fatal: a recovery share falls back and records the
 # KDF it used, so an older OpenSSL on a phone still works.
@@ -29,8 +46,12 @@ use strict;
 use warnings;
 use Getopt::Long qw(GetOptions);
 use JSON::PP ();
+use FindBin;
+use lib "$FindBin::Bin/../lib";
+use JawnOS::Packages;
 
-my ($report_only, $json, $sh, $install, $yes, $desktop, $extras_only, $no_extras, $local_lib);
+my ($report_only, $json, $sh, $install, $yes, $desktop, $extras_only, $no_extras, $local_lib, $freshness, $strict, $fixtures);
+my @only;
 GetOptions(
 	'report'      => \$report_only,
 	'json'        => \$json,
@@ -41,6 +62,10 @@ GetOptions(
 	'extras-only' => \$extras_only,
 	'no-extras'   => \$no_extras,
 	'local-lib=s' => \$local_lib,
+	'freshness'   => \$freshness,
+	'strict'      => \$strict,
+	'fixtures=s'  => \$fixtures,
+	'only=s@'     => \@only,
 ) or die "bad options\n";
 
 $install = 1 if $yes;
@@ -357,6 +382,396 @@ sub detect_platform {
 	return 'debian' if -x '/usr/bin/apt-get' || -x '/usr/bin/apt';
 	return 'arch'   if -x '/usr/bin/pacman';
 	return 'unknown';
+}
+
+# --- freshness: availability and versions, metadata only --------------------
+# The install lists above are the contract: every module in @modules and every
+# package in @tools/@desktop must still be offered by CPAN, Debian and Arch, and
+# an installed package should not be behind its candidate. All requests are
+# small JSON/text metadata (MetaCPAN, Debian madison, archlinux.org); nothing is
+# downloaded, installed, `apt-get update`d or `pacman -Sy`d.
+
+# An absent package is the normal answer to this question, and every one of
+# `perl -M`, `dpkg-query` and `pacman -Q` explains the absence on stderr. The
+# report prints the row itself, so the explanation is suppressed: a nightly log
+# with one CPAN or dpkg complaint per absent package buries the result.
+sub query_first_line {
+	my (@cmd) = @_;
+	my $pid = open(my $fh, '-|');
+	return (undef, 1) unless defined $pid;
+	if (!$pid) {
+		open STDERR, '>', '/dev/null';
+		exec @cmd;
+		exit 127;
+	}
+	my $value = <$fh>;
+	close $fh;
+	return ($value, $?);
+}
+
+sub module_version {
+	my ($module) = @_;
+	my $code = 'no strict "refs"; print ${"' . $module . '::VERSION"} // "";';
+	my ($value, $status) = query_first_line('perl', "-M$module", '-e', $code);
+	return undef if $status != 0;
+	$value = '' unless defined $value;
+	$value =~ s/\s+//g;
+	return length $value ? $value : '';
+}
+
+sub module_is_core {
+	my ($module) = @_;
+	return 0 unless eval { require Module::CoreList; 1 };
+	return Module::CoreList::is_core($module, $]) ? 1 : 0;
+}
+
+sub dpkg_version {
+	my ($package) = @_;
+	return undef unless which('dpkg-query');
+	my ($value, $status) = query_first_line('dpkg-query', '-W', '-f=${Version}', $package);
+	return undef if $status != 0;
+	$value = '' unless defined $value;
+	$value =~ s/\s+//g;
+	return length $value ? $value : undef;
+}
+
+sub pacman_version {
+	my ($package) = @_;
+	return undef unless which('pacman');
+	my ($line, $status) = query_first_line('pacman', '-Q', $package);
+	return undef if $status != 0;
+	my (undef, $version) = split /\s+/, (defined $line ? $line : '');
+	return defined $version && length $version ? $version : undef;
+}
+
+sub debian_lt {
+	my ($installed, $latest) = @_;
+	return undef unless defined $installed && defined $latest;
+	return undef unless which('dpkg');
+	my $rc = system('dpkg', '--compare-versions', $installed, 'lt', $latest);
+	return undef if $rc == -1 || $rc == 2 || ($rc >> 8) > 1;
+	return (($rc >> 8) == 0) ? 1 : 0;
+}
+
+sub arch_lt {
+	my ($installed, $latest) = @_;
+	return undef unless defined $installed && defined $latest;
+	my $vercmp = which('vercmp');
+	return JawnOS::Packages::compare_arch($installed, $latest) < 0 ? 1 : 0
+		unless $vercmp;
+	open(my $fh, '-|', $vercmp, $installed, $latest) or return undef;
+	my $value = <$fh>;
+	close $fh;
+	return undef if $? != 0;
+	$value = '' unless defined $value;
+	$value =~ s/\s+//g;
+	return undef unless $value =~ /^-?\d+$/;
+	return $value < 0 ? 1 : 0;
+}
+
+# A fixture run describes a whole simulated host, so the installed version
+# comes from the fixture tree too (an absent file means "not installed here").
+# That keeps the test deterministic on any machine instead of reading whatever
+# this box happens to have. The ecosystem is part of the name: Debian `tmux`
+# and Arch `tmux` are different installed versions.
+sub fixture_version {
+	my ($fixtures, $kind, $key) = @_;
+	return undef unless defined $fixtures && length $fixtures;
+	(my $safe = $key) =~ s/[^A-Za-z0-9_.-]/_/g;
+	my $path = "$fixtures/installed_${kind}_$safe.txt";
+	return undef unless -e $path;
+	open(my $fh, '<', $path) or return undef;
+	my $value = <$fh>;
+	close $fh;
+	return undef unless defined $value;
+	$value =~ s/\s+//g;
+	return length $value ? $value : undef;
+}
+
+# Two attempts: a nightly check should not report `unknown` because one
+# upstream reset the connection. Only a transport failure (code 0) is retried;
+# 200 and 404 are answers. The Arch endpoint in particular resets a burst, so
+# the second attempt waits a moment rather than knocking again at once.
+sub meta_fetch {
+	my ($fixtures, $kind, $key, $url) = @_;
+	if (defined $fixtures && length $fixtures) {
+		(my $safe = $key) =~ s/[^A-Za-z0-9_.-]/_/g;
+		my $ext = $kind eq 'debian' ? '.txt' : '.json';
+		my $path = "$fixtures/${kind}_$safe$ext";
+		# A name the simulated repositories do not offer has no file at all;
+		# an empty file is an answer with nothing in it (a 404 too, since
+		# none of the three endpoints sends an empty body for a live package).
+		return (undef, 404) unless -e $path;
+		open(my $fh, '<', $path) or return (undef, 0);
+		local $/;
+		my $text = <$fh>;
+		close $fh;
+		return (undef, 404) unless defined $text && length $text;
+		return ($text, 200);
+	}
+	return (undef, -1) unless which('curl');
+	my ($body, $code) = ('', 0);
+	for my $attempt (1 .. 2) {
+		open(my $fh, '-|', 'curl', '-sS', '--connect-timeout', '3', '--max-time', '8',
+			'-w', "\n%{http_code}", $url) or return (undef, 0);
+		local $/;
+		my $raw = <$fh>;
+		close $fh;
+		if ($? != 0) {
+			($body, $code) = ('', 0);
+			select undef, undef, undef, 1 if $attempt == 1;
+			next;
+		}
+		($body, $code) = (defined $raw ? $raw : '') =~ /^(.*)\n(\d{3})\s*$/s;
+		$code = defined $code ? $code + 0 : 0;
+		last if $code;
+	}
+	return (defined $body ? $body : '', $code);
+}
+
+sub freshness_report {
+	my (%opt) = @_;
+	my $strict = $opt{'strict'};
+	my $fixtures = $opt{'fixtures'};
+	my $json_out = $opt{'json'};
+	my $platform = $opt{'platform'} || 'unknown';
+	my @only = @{ $opt{'only'} || [] };
+	my %only = map { $_ => 1 } @only;
+	my $want = sub {
+		return 1 unless %only;
+		for my $name (@_) {
+			return 1 if defined $name && length $name && $only{$name};
+		}
+		return 0;
+	};
+
+	my (@module_rows, @debian_rows, @arch_rows);
+	my %summary = (current => 0, outdated => 0, available => 0,
+		missing => 0, unknown => 0, core => 0, checked => 0);
+	my $curl_missing = !defined $fixtures && !which('curl');
+	# A fixture run simulates every platform at once, so its rows compare even
+	# when the machine doing the checking is the other distribution.
+	my $simulated = defined $fixtures && length $fixtures;
+
+	for my $module (@modules) {
+		next unless $want->($module);
+		my $installed = $simulated
+			? fixture_version($fixtures, 'metacpan', $module)
+			: module_version($module);
+		my $row = { name => $module, installed => $installed };
+		if (module_is_core($module)) {
+			$row->{'status'} = 'core';
+			$summary{'core'}++;
+			push @module_rows, $row;
+			next;
+		}
+		my ($body, $code) = meta_fetch($fixtures, 'metacpan', $module,
+			"https://fastapi.metacpan.org/v1/module/$module");
+		my $meta = defined $body && length $body
+			? JawnOS::Packages::parse_metacpan($body) : undef;
+		if ($meta) {
+			$row->{'latest'} = $meta->{'latest'};
+			$row->{'release'} = $meta->{'release'};
+			if (!defined $installed) {
+				$row->{'status'} = 'available';
+			}
+			else {
+				$row->{'status'} = JawnOS::Packages::compare_module($installed, $meta->{'latest'}) < 0
+					? 'outdated' : 'current';
+			}
+		}
+		elsif (defined $code && $code == 404) {
+			$row->{'status'} = 'missing';
+		}
+		else {
+			$row->{'status'} = 'unknown';
+		}
+		$summary{'checked'}++;
+		$summary{ $row->{'status'} }++;
+		push @module_rows, $row;
+	}
+
+	my (%seen_deb, %seen_arch);
+	my @deb_packages;
+	for my $tool (@tools) {
+		my $package = $tool->{'apt'};
+		next unless defined $package && length $package;
+		next if $seen_deb{$package}++;
+		next unless $want->($tool->{'cmd'}, $tool->{'apt'}, $tool->{'pacman'}, $tool->{'label'});
+		push @deb_packages, [ $package, $tool->{'label'} || $tool->{'cmd'} ];
+	}
+	for my $extra (@desktop) {
+		my $package = $extra->{'apt'};
+		next unless defined $package && length $package;
+		next if $seen_deb{$package}++;
+		next unless $want->($extra->{'apt'}, $extra->{'pacman'}, $extra->{'label'});
+		push @deb_packages, [ $package, $extra->{'label'} ];
+	}
+
+	for my $entry (@deb_packages) {
+		my ($package, $label) = @$entry;
+		my $row = { package => $package, label => $label };
+		my ($body, $code) = meta_fetch($fixtures, 'debian', $package,
+			"https://api.ftp-master.debian.org/madison?package=$package&table=all");
+		my $parsed = defined $body && length $body
+			? JawnOS::Packages::parse_madison($body) : undef;
+		my $latest = $parsed ? JawnOS::Packages::debian_latest($parsed) : undef;
+		if ($latest) {
+			$row->{'latest'} = $latest->{'version'};
+			$row->{'suite'} = $latest->{'suite'};
+			if ($platform eq 'debian' || $simulated) {
+				my $installed = $simulated
+					? fixture_version($fixtures, 'debian', $package)
+					: dpkg_version($package);
+				$row->{'installed'} = $installed;
+				if (defined $installed) {
+					my $lt = debian_lt($installed, $latest->{'version'});
+					$row->{'status'} = !defined $lt ? 'unknown' : ($lt ? 'outdated' : 'current');
+				}
+				else {
+					$row->{'status'} = 'available';
+				}
+			}
+			else {
+				$row->{'status'} = 'available';
+			}
+		}
+		elsif (defined $code && $code == 200) {
+			$row->{'status'} = 'missing';
+		}
+		else {
+			$row->{'status'} = 'unknown';
+		}
+		$summary{'checked'}++;
+		$summary{ $row->{'status'} }++;
+		push @debian_rows, $row;
+	}
+
+	my @arch_packages;
+	for my $tool (@tools) {
+		my $package = $tool->{'pacman'};
+		next unless defined $package && length $package;
+		next if $seen_arch{$package}++;
+		next unless $want->($tool->{'cmd'}, $tool->{'apt'}, $tool->{'pacman'}, $tool->{'label'});
+		push @arch_packages, [ $package, $tool->{'label'} || $tool->{'cmd'} ];
+	}
+	for my $extra (@desktop) {
+		my $package = $extra->{'pacman'};
+		next unless defined $package && length $package;
+		next if $seen_arch{$package}++;
+		next unless $want->($extra->{'apt'}, $extra->{'pacman'}, $extra->{'label'});
+		push @arch_packages, [ $package, $extra->{'label'} ];
+	}
+
+	for my $entry (@arch_packages) {
+		my ($package, $label) = @$entry;
+		my $row = { package => $package, label => $label };
+		my ($body, $code) = meta_fetch($fixtures, 'arch', $package,
+			"https://archlinux.org/packages/search/json/?name=$package");
+		my $parsed = defined $body && length $body
+			? JawnOS::Packages::parse_arch($body) : undef;
+		my $latest = $parsed ? JawnOS::Packages::arch_version($parsed) : undef;
+		if (defined $latest) {
+			$row->{'latest'} = $latest;
+			$row->{'repo'} = $parsed->{'repo'};
+			if ($platform eq 'arch' || $simulated) {
+				my $installed = $simulated
+					? fixture_version($fixtures, 'arch', $package)
+					: pacman_version($package);
+				$row->{'installed'} = $installed;
+				if (defined $installed) {
+					my $lt = arch_lt($installed, $latest);
+					$row->{'status'} = !defined $lt ? 'unknown' : ($lt ? 'outdated' : 'current');
+				}
+				else {
+					$row->{'status'} = 'available';
+				}
+			}
+			else {
+				$row->{'status'} = 'available';
+			}
+		}
+		elsif (defined $code && $code == 200) {
+			$row->{'status'} = 'missing';
+		}
+		else {
+			$row->{'status'} = 'unknown';
+		}
+		$summary{'checked'}++;
+		$summary{ $row->{'status'} }++;
+		push @arch_rows, $row;
+	}
+
+	if (!@module_rows && !@debian_rows && !@arch_rows) {
+		print "freshness: no requested names matched the installer lists\n";
+		return 2;
+	}
+
+	my $ok = 1;
+	$ok = 0 if $summary{'missing'};
+	$ok = 0 if $strict && $summary{'outdated'};
+	$ok = 0 if $summary{'checked'} && $summary{'unknown'} == $summary{'checked'};
+	$ok = 0 if $curl_missing;
+
+	if ($json_out) {
+		print JSON::PP->new->canonical->pretty->encode({
+			ok => $ok,
+			metadata_only => 1,
+			summary => \%summary,
+			modules => \@module_rows,
+			debian => \@debian_rows,
+			arch => \@arch_rows,
+			curl_missing => $curl_missing ? 1 : 0,
+			strict => $strict ? 1 : 0,
+		});
+		return $ok ? 0 : 1;
+	}
+
+	print "package freshness: metadata only; no package, tarball or distribution is downloaded\n";
+	print "FAIL: curl is required for the metadata checks; nothing was fetched\n" if $curl_missing;
+	print "\nPerl modules (CPAN)\n";
+	for my $row (@module_rows) {
+		printf "  %-30s %-12s -> %-12s %s\n",
+			$row->{'name'},
+			defined $row->{'installed'} ? $row->{'installed'} : '-',
+			defined $row->{'latest'} ? $row->{'latest'} : '-',
+			$row->{'status'};
+	}
+	print "\nDebian packages (stable/testing; installed -> candidate)\n";
+	for my $row (@debian_rows) {
+		printf "  %-30s %-12s -> %-12s %s%s\n",
+			$row->{'package'},
+			defined $row->{'installed'} ? $row->{'installed'} : '-',
+			defined $row->{'latest'} ? $row->{'latest'} : '-',
+			$row->{'status'},
+			defined $row->{'suite'} ? " ($row->{'suite'})" : '';
+	}
+	print "\nArch packages (official; installed -> latest)\n";
+	for my $row (@arch_rows) {
+		printf "  %-30s %-12s -> %-12s %s%s\n",
+			$row->{'package'},
+			defined $row->{'installed'} ? $row->{'installed'} : '-',
+			defined $row->{'latest'} ? $row->{'latest'} : '-',
+			$row->{'status'},
+			defined $row->{'repo'} ? " ($row->{'repo'})" : '';
+	}
+	print "\nsummary: $summary{'current'} current, $summary{'outdated'} outdated, "
+		. "$summary{'available'} available, $summary{'missing'} missing, "
+		. "$summary{'unknown'} unknown, $summary{'core'} core\n";
+	print "missing upstream: ", join(', ', map { $_->{'package'} || $_->{'name'} }
+		grep { ($_->{'status'} || '') eq 'missing' } (@module_rows, @debian_rows, @arch_rows)), "\n"
+		if $summary{'missing'};
+	return $ok ? 0 : 1;
+}
+
+if ($freshness) {
+	exit freshness_report(
+		strict   => $strict,
+		fixtures => $fixtures,
+		only     => \@only,
+		platform => $platform,
+		json     => $json,
+	);
 }
 
 my (@missing_tools, @missing_modules, @missing_desktop, @missing_extras);
