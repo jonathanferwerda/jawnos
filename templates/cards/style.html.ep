@@ -479,16 +479,27 @@
 #cards .sol_waste .sol_slot { font-size: calc(var(--card-w) * .22); letter-spacing: .06em; }
 
 /* ---- mahjong ---------------------------------------------------------- */
-#cards_mahjong { flex-direction: column; align-items: center; padding: 12px 12px 24px; gap: 12px; overflow: auto; }
+#cards_mahjong {
+	--mj-tw: clamp(19px, 3.4vw, 44px);
+	--mj-th: calc(var(--mj-tw) * 1.3);
+	--mj-gap: calc(var(--mj-tw) * .08);
+	--mj-pad: calc(var(--mj-th) * .8);
+	flex-direction: column; align-items: center; padding: 12px 12px 24px; gap: 12px; overflow: auto;
+}
 #cards .mj_hud { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; justify-content: center; flex: 0 0 auto; }
-#cards .mj_banner { color: var(--muted); font-size: 12px; text-align: center; max-width: 520px; line-height: 1.45; min-height: 17px; }
-#cards .mj_board { display: flex; flex-direction: column; gap: calc(var(--tile-w) * .12); align-items: center; padding: 6px; flex: 0 0 auto; }
-#cards .mj_row { display: flex; gap: calc(var(--tile-w) * .12); }
+#cards .mj_banner { color: var(--muted); font-size: 12px; text-align: center; max-width: 560px; line-height: 1.45; min-height: 17px; }
+#cards .mj_board {
+	position: relative;
+	flex: 0 0 auto;
+	width: calc((var(--mj-tw) + var(--mj-gap)) * 12 + var(--mj-tw));
+	height: calc(var(--mj-pad) + (var(--mj-th) + var(--mj-gap)) * 8);
+}
 #cards .mj_tile {
 	appearance: none;
-	width: var(--tile-w);
-	height: calc(var(--tile-w) * 1.3);
-	border-radius: calc(var(--tile-w) * .12);
+	position: absolute;
+	width: var(--mj-tw);
+	height: var(--mj-th);
+	border-radius: calc(var(--mj-tw) * .12);
 	border: 1px solid #b7ab8d;
 	border-bottom-width: 3px;
 	background: linear-gradient(#fffdf4, #e9e1cc);
@@ -504,10 +515,14 @@
 	transition: transform .12s, opacity .22s, box-shadow .12s;
 	box-sizing: border-box;
 }
-#cards .mj_tile .mj_glyph { font-size: calc(var(--tile-w) * .48); line-height: 1; font-weight: 700; }
-#cards .mj_tile .mj_label { font-size: calc(var(--tile-w) * .19); line-height: 1.2; opacity: .7; letter-spacing: .08em; }
+#cards .mj_tile[data-layer="1"] { box-shadow: 0 3px 0 #9c9074, 0 5px 8px rgba(0,0,0,.4); }
+#cards .mj_tile[data-layer="2"] { box-shadow: 0 4px 0 #948866, 0 7px 10px rgba(0,0,0,.45); }
+#cards .mj_tile[data-layer="3"] { box-shadow: 0 5px 0 #8a7d59, 0 9px 12px rgba(0,0,0,.5); }
+#cards .mj_tile[data-layer="4"] { box-shadow: 0 6px 0 #80734f, 0 11px 14px rgba(0,0,0,.55); }
+#cards .mj_tile .mj_glyph { font-size: calc(var(--mj-tw) * .46); line-height: 1; font-weight: 700; }
+#cards .mj_tile .mj_label { font-size: calc(var(--mj-tw) * .18); line-height: 1.2; opacity: .7; letter-spacing: .08em; }
 #cards .mj_tile.free:hover { transform: translateY(-2px); box-shadow: 0 5px 9px rgba(0,0,0,.45); }
-#cards .mj_tile.blocked { filter: saturate(.5) brightness(.8); cursor: default; }
+#cards .mj_tile.blocked { filter: saturate(.5) brightness(.78); cursor: default; }
 #cards .mj_tile.sel { outline: 3px solid var(--gold); outline-offset: -1px; transform: translateY(-3px); }
 #cards .mj_tile.gone { opacity: 0; transform: scale(.55); pointer-events: none; }
 #cards .mj_tile.shake { animation: cards_shake .28s; }
@@ -537,6 +552,169 @@
 #cards .cards_win_inner { text-align: center; max-width: 420px; padding: 24px; }
 #cards .cards_win h2 { margin: 0 0 6px; font: 400 30px/1.1 Georgia, serif; color: var(--gold); letter-spacing: .04em; }
 #cards .cards_win p { margin: 0 0 18px; color: var(--muted); font-size: 13px; line-height: 1.5; }
+
+#cards .bj_art { position: relative; }
+#cards .bj_art i {
+	display: block;
+	width: 32px;
+	height: 46px;
+	border-radius: 4px;
+	background: var(--paper);
+	border: 1px solid #cfc7b4;
+	box-shadow: 0 3px 8px rgba(0,0,0,.4);
+	position: relative;
+}
+#cards .bj_art i::after {
+	position: absolute;
+	inset: 0;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	font-size: 17px;
+	font-weight: 700;
+	color: #22252b;
+	content: "A\2660";
+}
+#cards .bj_art i:nth-child(1) { transform: rotate(-8deg) translateX(9px); }
+#cards .bj_art i:nth-child(2) { transform: rotate(8deg) translateX(-9px); color: #b02530; }
+#cards .bj_art i:nth-child(2)::after { content: "K\2665"; color: #b02530; }
+
+/* ---- solitaire, the Windows 3.1 table --------------------------------- */
+#cards_solitaire.sol31 { background: #008000; gap: 0; padding: 0; }
+#cards_solitaire.sol31 .sol_hud {
+	width: 100%;
+	box-sizing: border-box;
+	background: #c0c0c0;
+	color: #000;
+	padding: 5px 10px;
+	gap: 14px;
+	border-bottom: 2px solid;
+	border-color: #fff #808080 #808080 #fff;
+	flex: 0 0 auto;
+}
+#cards_solitaire.sol31 .sol_stat span { color: #000080; letter-spacing: .04em; }
+#cards_solitaire.sol31 .sol_stat b { color: #000; font-size: 15px; }
+#cards_solitaire.sol31 .sol_status { color: #000; font-size: 11px; font-style: normal; }
+#cards_solitaire.sol31 .sol_actions { gap: 4px; }
+#cards_solitaire.sol31 .sol_btn {
+	background: #c0c0c0;
+	color: #000;
+	border: 2px solid;
+	border-color: #fff #808080 #808080 #fff;
+	border-radius: 0;
+	padding: 3px 10px;
+	font: 11px/1.4 "MS Sans Serif", Tahoma, sans-serif;
+	letter-spacing: 0;
+}
+#cards_solitaire.sol31 .sol_btn:hover { background: #d0d0d0; color: #000; }
+#cards_solitaire.sol31 .sol_btn:active { border-color: #808080 #fff #fff #808080; }
+#cards_solitaire.sol31 .sol_board { padding: 18px 18px 28px; gap: 20px; }
+#cards_solitaire.sol31 .sol_slot {
+	border: 1px solid rgba(255,255,255,.45);
+	border-radius: 2px;
+	color: rgba(255,255,255,.5);
+	background: transparent;
+}
+#cards_solitaire.sol31 .sol_card {
+	border-radius: 2px;
+	border: 1px solid #000;
+	box-shadow: 1px 1px 0 rgba(0,0,0,.4);
+	background: #fff;
+	touch-action: none;
+}
+#cards_solitaire.sol31 .sol_card.down {
+	background:
+		repeating-linear-gradient(45deg, #000080 0 3px, #f4f4ff 3px 4px);
+	border-color: #fff;
+	box-shadow: 1px 1px 0 rgba(0,0,0,.4), inset 0 0 0 2px #000080;
+}
+#cards_solitaire.sol31 .sol_card.down::after { border-color: #f4f4ff; }
+#cards_solitaire.sol31 .sol_card.sel { box-shadow: 0 0 0 2px #ffff00, 2px 2px 0 rgba(0,0,0,.4); transform: translateY(-2px); }
+#cards_solitaire.sol31 .sol_count {
+	background: #c0c0c0;
+	color: #000;
+	border: 1px solid #000;
+	border-radius: 0;
+}
+#cards_solitaire.sol31 .cards_win { background: rgba(0, 64, 0, .86); }
+#cards_solitaire.sol31 .cards_win h2 { color: #fff; font-family: "MS Sans Serif", Tahoma, sans-serif; }
+
+/* ---- blackjack -------------------------------------------------------- */
+#cards_blackjack { --card-w: clamp(50px, 5.6vw, 82px); flex-direction: column; padding: 12px 16px 20px; }
+#cards_blackjack .bj_table {
+	flex: 1 1 auto;
+	width: 100%;
+	max-width: 900px;
+	margin: 0 auto;
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	justify-content: space-between;
+	gap: 10px;
+}
+#cards_blackjack .bj_hud { width: 100%; justify-content: center; }
+#cards_blackjack .bj_dealer, #cards_blackjack .bj_player { display: flex; flex-direction: column; align-items: center; gap: 8px; }
+#cards_blackjack h3 {
+	margin: 0;
+	font: 600 10px/1 system-ui, sans-serif;
+	letter-spacing: .18em;
+	text-transform: uppercase;
+	color: var(--gold-dim);
+}
+#cards_blackjack h3 span { color: var(--gold); letter-spacing: .02em; }
+#cards_blackjack .bj_hand { display: flex; justify-content: center; min-height: var(--card-h); padding-left: calc(var(--card-w) * .62); }
+#cards_blackjack .bj_hand .sol_card { margin-left: calc(var(--card-w) * -.62); flex: 0 0 auto; }
+#cards_blackjack .bj_hand .sol_card:first-child { margin-left: 0; }
+#cards_blackjack .bj_divider {
+	color: var(--muted);
+	font-size: 11px;
+	letter-spacing: .04em;
+	padding: 7px 18px;
+	border-top: 1px solid rgba(231,200,115,.2);
+	border-bottom: 1px solid rgba(231,200,115,.2);
+	text-align: center;
+}
+#cards_blackjack .bj_actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: center; }
+#cards_blackjack .bj_btn {
+	appearance: none;
+	background: rgba(231, 200, 115, .1);
+	border: 1px solid rgba(231, 200, 115, .45);
+	color: var(--gold);
+	font: 700 12px/1 system-ui, sans-serif;
+	letter-spacing: .04em;
+	padding: 9px 17px;
+	border-radius: 8px;
+	cursor: pointer;
+}
+#cards_blackjack .bj_btn:hover:enabled { background: var(--gold); color: #1d1608; }
+#cards_blackjack .bj_btn:disabled { opacity: .4; cursor: default; }
+#cards_blackjack .bj_chips { display: flex; gap: 6px; margin-left: 8px; }
+#cards_blackjack .bj_chip {
+	appearance: none;
+	width: 38px;
+	height: 38px;
+	border-radius: 50%;
+	border: 2px dashed rgba(231, 200, 115, .6);
+	background: radial-gradient(circle at 40% 35%, rgba(255,255,255,.2), rgba(0,0,0,.25));
+	color: var(--gold);
+	font: 700 11px/1 system-ui, sans-serif;
+	cursor: pointer;
+}
+#cards_blackjack .bj_chip:hover:enabled { border-style: solid; background: rgba(231,200,115,.2); }
+#cards_blackjack .bj_chip:disabled { opacity: .45; cursor: default; }
+#cards_blackjack .bj_stat.disabled b { color: var(--muted); }
+
+/* ---- solitaire drag --------------------------------------------------- */
+body.cards_dragging { cursor: grabbing; user-select: none; }
+#cards .sol_drag_ghost {
+	position: fixed;
+	z-index: 9000;
+	pointer-events: none;
+	opacity: .9;
+}
+#cards .sol_drag_ghost .sol_card { position: absolute; left: 0; }
+#cards .sol_column.drop_ok, #cards .sol_foundation.drop_ok { box-shadow: inset 0 0 0 2px #ffe66d; background: rgba(255, 230, 109, .14); }
+#cards .sol_column.drop_no, #cards .sol_foundation.drop_no { box-shadow: inset 0 0 0 2px #d9544d; background: rgba(217, 84, 77, .12); }
 
 @media (max-width: 640px) {
 	#cards .cards_bar { flex-wrap: wrap; }

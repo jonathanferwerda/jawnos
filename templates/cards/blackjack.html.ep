@@ -1,0 +1,30 @@
+<section id="cards_blackjack" class="cards_pane<% if ($active) { %> active<% } %>" data-bank="<%= defined $bank && length $bank ? $bank : 500 %>">
+	<div class="bj_table">
+		<div class="sol_hud bj_hud">
+			<div class="sol_stat"><span><%= &subs::ui('Bank') %></span><b id="bj_bank">500</b></div>
+			<div class="sol_stat bj_stat"><span><%= &subs::ui('Bet') %></span><b id="bj_bet">10</b></div>
+			<div class="sol_status" id="bj_message"><%= &subs::ui('Place your bet and deal.') %></div>
+			<button type="button" class="sol_btn" id="bj_reset"><%= &subs::ui('Reset bank') %></button>
+		</div>
+		<div class="bj_dealer">
+			<h3><%= &subs::ui('Dealer') %> <span id="bj_dealer_total"></span></h3>
+			<div class="bj_hand" id="bj_dealer"></div>
+		</div>
+		<div class="bj_divider"><%= &subs::ui('Blackjack pays three to two. Dealer stands on seventeen.') %></div>
+		<div class="bj_player">
+			<div class="bj_hand" id="bj_player"></div>
+			<h3><%= &subs::ui('You') %> <span id="bj_player_total"></span></h3>
+		</div>
+		<div class="bj_actions">
+			<button type="button" class="bj_btn" id="bj_deal"><%= &subs::ui('Deal') %></button>
+			<button type="button" class="bj_btn" id="bj_hit"><%= &subs::ui('Hit') %></button>
+			<button type="button" class="bj_btn" id="bj_stand"><%= &subs::ui('Stand') %></button>
+			<button type="button" class="bj_btn" id="bj_double"><%= &subs::ui('Double') %></button>
+			<span class="bj_chips">
+				<% foreach my $chip ( 5, 10, 25, 100 ) { %>
+					<button type="button" class="bj_chip" data-bet="<%= $chip %>"><%= $chip %></button>
+				<% } %>
+			</span>
+		</div>
+	</div>
+</section>

@@ -13,6 +13,7 @@ use lib "$FindBin::Bin/lib", "$FindBin::Bin/../lib";
 use Test::More;
 use File::Temp qw(tempdir);
 use File::Slurp qw(read_file);
+use Mojo::Template;
 use DBI;
 use JSON::PP ();
 
@@ -67,5 +68,51 @@ like($controller, qr/if \(ref \$spread_cards eq 'ARRAY'\) \{ \$entry\{'cards'\} 
 	'a new spread stores names, not a montage');
 like($controller, qr/cards => \$spread_cards/, 'and the reply carries the three names');
 unlike($controller, qr/card_spread_stream/, 'no montage is built for the spread');
+
+# A template is compiled strictly with the stash keys it is given, so a render
+# that leaves one out is a 500 on that route, not a missing value. The deal
+# route re-renders the whole page for its history rail, and it used to omit the
+# deck choice and the bank: every tarot deal answered 500.
+my @card_renders;
+while ($controller =~ /render_to_string\((.*?)\);/gs) {
+	my $call = $1;
+	push @card_renders, $call if $call =~ /template\s*=>\s*'cards'/;
+}
+ok(scalar @card_renders >= 2, 'the cards page is rendered from more than one route');
+for my $call (@card_renders) {
+	like($call, qr/variant\s*=>/, 'every cards render passes variant');
+	like($call, qr/bank\s*=>/, 'every cards render passes bank');
+	like($call, qr/blackjack_bank\s*=>/, 'every cards render passes blackjack_bank');
+}
+
+# The static check above names the three keys the page needs today; this renders
+# the real page with a stand-in for the include helper, so a key added to a
+# partial without being passed is a red test rather than a 500.
+my $mt = Mojo::Template->new(vars => 1, namespace => 'CardsRenderTest');
+my $read_template = sub {
+	my ($name) = @_;
+	return read_file("$FindBin::Bin/../templates/$name.html.ep");
+};
+{
+	no warnings 'redefine';
+	*CardsRenderTest::include = sub {
+		my ($name, @pairs) = @_;
+		my %stash = @pairs;
+		my $src = $read_template->($name);
+		return $mt->render($src, \%stash);
+	};
+}
+my $rendered = eval {
+	my $src = $read_template->('cards');
+	$mt->render($src, {
+		history => [],
+		mode => 'spread',
+		variant => 'solitaire',
+		bank => 120,
+		blackjack_bank => 500,
+	});
+};
+is($@, '', 'the cards page renders with the stash its routes pass');
+like($rendered // '', qr/id="cards_blackjack"/, 'and the blackjack pane is on the page');
 
 done_testing();

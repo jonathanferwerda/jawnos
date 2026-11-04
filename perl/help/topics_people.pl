@@ -173,13 +173,14 @@ $topic{'relational'} = {
 	};
 $topic{'cards'} = {
 		title => 'Cards', category => 'apps', app => 'cards',
-		verified => '2026-11-03',
-		summary => 'Three decks: tarot drawn from your own data, solitaire and mahjong.',
+		verified => '2026-11-04',
+		summary => 'Four decks: tarot drawn from your own data, solitaire, mahjong and blackjack.',
 		body => [
-			'Cards opens on a chooser with three decks. The table remembers the one you picked; press Cards in the top left to bring the chooser back.',
-			'Tarot is the deck of Jawn: a daily card, a weekly card, or a three-card spread drawn from your own appointments and measures. A spread shows its three cards side by side, and Recent draws keeps the last ones.',
-			'Solitaire is Klondike with a three-card deal. Click a card, then the column or foundation to move it; double-click sends a card to its foundation. Bank keeps a running casino score across rounds, New game deals again, Undo takes a move back and Reset bank starts the score at zero.',
-			'Mahjong is a single-layer turtle of paired tiles. Click two matching tiles that are free, which means nothing sits immediately left or right of them. Shuffle rearranges what is left; the timer starts with your first pick.'
+			'Cards opens on a chooser with four decks. The table remembers the one you picked; press Cards in the top left to bring the chooser back.',
+			'Tarot is the deck of Jawn: a daily card, a weekly card, or a three-card spread drawn from your own appointments and measures. Press Deal, or click a card, to draw; a spread shows its three cards side by side, and Recent draws keeps the last ones.',
+			'Solitaire is Klondike with a three-card deal and a Windows 3.1 table. Click a card, then the column or foundation to move it, or drag the card where it belongs; double-click sends a card to its foundation. The stock is top left and the four foundations stack at the top right. Auto sends the cards that are safe to go up, Undo takes a move back, and Bank keeps a running casino score across rounds.',
+			'Mahjong is a five-layer turtle: pair two matching tiles that are free, which means nothing is stacked on top of them and nothing sits immediately left or right. Clear the upper layers to free the ones below. Shuffle rearranges what is left; the timer starts with your first pick.',
+			'Blackjack is the casino table. Pick a chip, press Deal, then Hit or Stand; Double doubles the stake and draws one card. The dealer stands on seventeen, blackjack pays three to two, and Bank carries across rounds. Reset bank starts it at five hundred again.'
 		],
 		related => [ 'twirl', 'measures' ]
 	};

@@ -334,12 +334,14 @@ sub action_28156 {
 	my $history = eval { return decode_json &subs::setting_grabber({ app => 'cards', setting => $mode }) } || [];
 	my $variant = &subs::setting_grabber({ app => 'cards', setting => 'variant' });
 	my $bank = &subs::setting_grabber({ app => 'cards', setting => 'solitaire_bank' });
+	my $blackjack_bank = &subs::setting_grabber({ app => 'cards', setting => 'blackjack_bank' });
 	my $contents = $c->render_to_string(
 		template => 'cards',
 		history => $history,
 		mode => $mode,
 		variant => $variant,
-		bank => $bank
+		bank => $bank,
+		blackjack_bank => $blackjack_bank
 	);
 	my $website = &Manager::window_maker({ user_agent => $c->param('user_agent'), app => 'cards', contents => $contents }, $timestamp);
 	$c->render('text' => $website);
@@ -462,7 +464,10 @@ sub action_28170 {
 	my $html = $c->render_to_string(
 		template => 'cards',
 		history => $history,
-		mode => $mode
+		mode => $mode,
+		variant => &subs::setting_grabber({ app => 'cards', setting => 'variant' }),
+		bank => &subs::setting_grabber({ app => 'cards', setting => 'solitaire_bank' }),
+		blackjack_bank => &subs::setting_grabber({ app => 'cards', setting => 'blackjack_bank' })
 	);
 	$c->render(json => {
 		html => $html,

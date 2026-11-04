@@ -1,10 +1,11 @@
-# tests-for: public/js/manager/manager/12_cards.js templates/cards.html.ep templates/cards/style.html.ep templates/cards/chooser.html.ep templates/cards/tarot.html.ep templates/cards/solitaire.html.ep templates/cards/mahjong.html.ep
-# covers:    The Cards app's three decks. The template offers the choice
-#            (tarot, solitaire, mahjong), the tarot spread is three pictures
-#            side by side, and the solitaire/mahjong rule functions are loaded
-#            in a bare JS context and played out here: deal three, the casino
-#            scores, runs, foundations, the turtle's free-tile rule and a
-#            shuffle that keeps the same faces.
+# tests-for: public/js/manager/manager/12_cards.js templates/cards.html.ep templates/cards/style.html.ep templates/cards/chooser.html.ep templates/cards/tarot.html.ep templates/cards/solitaire.html.ep templates/cards/mahjong.html.ep templates/cards/blackjack.html.ep
+# covers:    The Cards app's four decks. The template offers the choice
+#            (tarot, solitaire, mahjong, blackjack), the tarot spread is three
+#            pictures side by side, and the solitaire, mahjong and blackjack
+#            rule functions are loaded in a bare JS context and played out
+#            here: deal three, the casino scores, runs, foundations, the
+#            turtle's five layers and free-tile rule, and a blackjack shoe
+#            dealt from a known order.
 
 use strict;
 use warnings;
@@ -29,6 +30,8 @@ my @pages = (
 	[ 'templates/cards/solitaire.html.ep', qr/data-bank/, 'the solitaire pane carries the bank in' ],
 	[ 'templates/cards/solitaire.html.ep', qr/id="sol_stock"/, 'and has a stock to deal from' ],
 	[ 'templates/cards/mahjong.html.ep', qr/id="mj_board"/, 'the mahjong pane has a board' ],
+	[ 'templates/cards/blackjack.html.ep', qr/id="bj_dealer"/, 'the blackjack pane has a dealer hand' ],
+	[ 'templates/cards/blackjack.html.ep', qr/id="bj_hit"/, 'and the player actions' ],
 );
 foreach my $page (@pages) {
 	my ($file, $pattern, $label) = @{$page};
@@ -162,36 +165,42 @@ eq(s.bank, 0, 'and the score with it');
 
 // ---- mahjong ----
 var tiles = ctx.mahjongDeal();
-eq(tiles.length, 72, 'the turtle is seventy-two tiles');
-eq(ctx.MAHJONG_ROWS.join(','), '6,8,10,12,12,10,8,6', 'in eight rows');
-var counts = {}, pairs_ok = true;
+eq(tiles.length, 144, 'the turtle is one hundred and forty-four tiles');
+var layerCounts = {};
+for (var tl = 0; tl < tiles.length; tl++) {
+	layerCounts[tiles[tl].layer] = (layerCounts[tiles[tl].layer] || 0) + 1;
+}
+eq(JSON.stringify([ 0, 1, 2, 3, 4 ].map(function (l) { return layerCounts[l]; })),
+	JSON.stringify([ 84, 36, 16, 6, 2 ]), 'in five layers');
+var counts = {}, faces_ok = true;
 for (var t = 0; t < tiles.length; t++) {
 	counts[tiles[t].key] = (counts[tiles[t].key] || 0) + 1;
 }
-for (var key in counts) { if (counts[key] !== 2) { pairs_ok = false; } }
-ok(pairs_ok, 'every face appears exactly twice');
+for (var key in counts) { if (counts[key] !== 4) { faces_ok = false; } }
+ok(faces_ok, 'every face appears four times');
 
 var row = [
-	{ row: 0, col: 0, removed: false, key: 'a' },
-	{ row: 0, col: 1, removed: false, key: 'b' },
-	{ row: 0, col: 2, removed: false, key: 'a' }
+	{ layer: 0, x: 0, y: 0, removed: false, key: 'a' },
+	{ layer: 0, x: 1, y: 0, removed: false, key: 'b' },
+	{ layer: 0, x: 2, y: 0, removed: false, key: 'a' },
+	{ layer: 1, x: 0, y: 0, removed: false, key: 'a' }
 ];
-ok(ctx.mahjongFreeAt(row, 0), 'the left end of a row is free');
+ok(!ctx.mahjongFreeAt(row, 0), 'a tile with another layer over it is not free');
+ok(ctx.mahjongFreeAt(row, 2), 'the outer end of the bottom row is free');
+row[3].removed = true;
+ok(ctx.mahjongFreeAt(row, 0), 'removing the tile above frees the one underneath');
 ok(!ctx.mahjongFreeAt(row, 1), 'a tile with both neighbours is blocked');
-ok(ctx.mahjongFreeAt(row, 2), 'the right end of a row is free');
-row[2].removed = true;
-ok(ctx.mahjongFreeAt(row, 1), 'removing the right tile frees its neighbour');
-ok(!ctx.mahjongHasMove(row), 'the ends that remain are not a pair');
 var pair = [
-	{ row: 0, col: 0, removed: false, key: 'a' },
-	{ row: 1, col: 0, removed: false, key: 'a' }
+	{ layer: 0, x: 0, y: 0, removed: false, key: 'a' },
+	{ layer: 2, x: 5, y: 3, removed: false, key: 'a' }
 ];
 ok(ctx.mahjongHasMove(pair), 'two free tiles of one face are a move');
-row[0].removed = true;
-ok(!ctx.mahjongHasMove(row), 'a lone tile has no move');
+var lone = [ { layer: 0, x: 0, y: 0, removed: false, key: 'a' } ];
+ok(!ctx.mahjongHasMove(lone), 'a lone tile has no move');
 
-var before = tiles.map(function (tile) { return tile.key; }).sort().join(',');
-tiles[0].removed = true;
+var live = tiles.filter(function (tile) { return !tile.removed; });
+var removedTile = tiles[0];
+removedTile.removed = true;
 var want = tiles.filter(function (tile) { return !tile.removed; })
 	.map(function (tile) { return tile.key; }).sort().join(',');
 ctx.mahjongShuffleRemaining(tiles);
@@ -199,6 +208,78 @@ eq(tiles[0].removed, true, 'a shuffle leaves the removed tiles alone');
 var after = tiles.filter(function (tile) { return !tile.removed; })
 	.map(function (tile) { return tile.key; }).sort().join(',');
 eq(after, want, 'and keeps exactly the faces that were still on the table');
+
+// ---- blackjack ----
+eq(ctx.blackjackShoe().length, 312, 'the shoe holds six decks');
+eq(ctx.blackjackValue([ card(1, 0), card(13, 0) ]).total, 21, 'an ace and a face are twenty-one');
+eq(ctx.blackjackValue([ card(1, 0), card(1, 1), card(9, 0) ]).total, 21, 'two aces soften to twenty-one');
+eq(ctx.blackjackValue([ card(10, 0), card(9, 0), card(5, 0) ]).total, 24, 'a hard hand busts over twenty-one');
+eq(ctx.blackjackValue([ card(10, 0, true), card(1, 0, false) ], true).total, 10,
+	'a hole card is left out of the visible total');
+
+// The shoe is popped, so the deal order is reversed and any later draws sit
+// in front of it. Deal order is dealer, player, dealer, player.
+function bjShoe(dealOrder, draws) {
+	var shoe = dealOrder.slice().reverse();
+	if (draws) {
+		for (var i = draws.length - 1; i >= 0; i--) { shoe.unshift(draws[i]); }
+	}
+	return shoe;
+}
+
+var bj = ctx.blackjackNewState(100);
+bj.bet = 10;
+bj.shoe = bjShoe([ card(9, 0), card(1, 0), card(7, 2), card(13, 1) ]);
+ctx.blackjackStartHand(bj);
+eq(bj.bank, 115, 'a natural pays three to two after the stake comes out');
+eq(bj.phase, 'done', 'and the hand is over');
+eq(bj.message, 'Blackjack!', 'with the blackjack message');
+
+bj = ctx.blackjackNewState(100);
+bj.bet = 10;
+bj.shoe = bjShoe([ card(10, 3), card(10, 0), card(9, 3), card(9, 1) ]);
+ctx.blackjackStartHand(bj);
+eq(bj.bank, 90, 'the stake leaves the bank at the deal');
+ctx.blackjackStand(bj);
+eq(bj.bank, 100, 'a push returns the stake');
+eq(bj.message, 'Push.', 'and says so');
+
+bj = ctx.blackjackNewState(100);
+bj.bet = 10;
+bj.shoe = bjShoe([ card(10, 1), card(10, 0), card(5, 3), card(8, 2) ], [ card(2, 0) ]);
+ctx.blackjackStartHand(bj);
+ctx.blackjackStand(bj);
+eq(bj.bank, 110, 'the dealer draws to seventeen and loses');
+eq(ctx.blackjackValue(bj.dealer).total, 17, 'the dealer stopped on seventeen');
+
+bj = ctx.blackjackNewState(100);
+bj.bet = 10;
+bj.shoe = bjShoe([ card(1, 1), card(10, 0), card(6, 3), card(9, 2) ]);
+var shoeBefore = bj.shoe.length;
+ctx.blackjackStartHand(bj);
+ctx.blackjackStand(bj);
+eq(bj.shoe.length, shoeBefore - 4, 'a soft seventeen draws nothing');
+eq(ctx.blackjackValue(bj.dealer).total, 17, 'the soft seventeen stands');
+eq(bj.bank, 110, 'and the player wins with nineteen');
+
+bj = ctx.blackjackNewState(100);
+bj.bet = 10;
+bj.shoe = bjShoe([ card(10, 1), card(10, 0), card(10, 2), card(6, 3) ], [ card(10, 3) ]);
+ctx.blackjackStartHand(bj);
+ctx.blackjackHit(bj);
+eq(bj.phase, 'done', 'a bust ends the hand at once');
+eq(bj.bank, 90, 'and the stake is gone');
+eq(bj.message, 'Bust.', 'with the bust message');
+
+bj = ctx.blackjackNewState(100);
+bj.bet = 10;
+bj.shoe = bjShoe([ card(10, 1), card(5, 0), card(6, 2), card(6, 3) ], [ card(10, 2), card(2, 0) ]);
+ctx.blackjackStartHand(bj);
+ctx.blackjackDouble(bj);
+eq(bj.doubled, true, 'double marks the hand');
+eq(bj.bet, 20, 'and doubles the stake');
+eq(bj.bank, 120, 'a winning double pays both stakes back');
+eq(bj.phase, 'done', 'the dealer plays out after a double');
 
 process.exit(fail ? 1 : 0);
 JS

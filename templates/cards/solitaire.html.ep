@@ -1,13 +1,14 @@
-
-<section id="cards_solitaire" class="cards_pane<% if ($active) { %> active<% } %>" data-bank="<%= defined $bank && length $bank ? $bank : 0 %>">
+<section id="cards_solitaire" class="cards_pane sol31<% if ($active) { %> active<% } %>" data-bank="<%= defined $bank && length $bank ? $bank : 0 %>">
 	<div class="sol_hud">
 		<div class="sol_stat"><span><%= &subs::ui('Bank') %></span><b id="sol_bank">0</b></div>
 		<div class="sol_stat"><span><%= &subs::ui('Moves') %></span><b id="sol_moves">0</b></div>
-		<div class="sol_status" id="sol_status"><%= &subs::ui('Deal three. Cards keep their value; the bank keeps every round.') %></div>
+		<div class="sol_stat"><span><%= &subs::ui('Time') %></span><b id="sol_time">0:00</b></div>
+		<div class="sol_status" id="sol_status"><%= &subs::ui('Deal three. Click a card or drag it to its pile.') %></div>
 		<div class="sol_actions">
-			<button type="button" class="sol_btn" id="sol_new"><%= &subs::ui('New game') %></button>
-			<button type="button" class="sol_btn ghost" id="sol_undo"><%= &subs::ui('Undo') %></button>
-			<button type="button" class="sol_btn ghost" id="sol_reset"><%= &subs::ui('Reset bank') %></button>
+			<button type="button" class="sol_btn" id="sol_new"><%= &subs::ui('Deal') %></button>
+			<button type="button" class="sol_btn" id="sol_undo"><%= &subs::ui('Undo') %></button>
+			<button type="button" class="sol_btn" id="sol_auto"><%= &subs::ui('Auto') %></button>
+			<button type="button" class="sol_btn" id="sol_reset"><%= &subs::ui('Reset bank') %></button>
 		</div>
 	</div>
 	<div class="sol_board">

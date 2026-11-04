@@ -1,8 +1,9 @@
-// The Cards app: three decks on one table.
+// The Cards app: four decks on one table.
 //
 // Tarot is the old deck of Jawn, drawn from the person's own days. Solitaire is
-// Klondike with a three-card deal and a bank that carries across rounds.
-// Mahjong is a single-layer turtle of paired tiles.
+// Klondike with a three-card deal, a Windows 3.1 table and a bank that carries
+// across rounds. Mahjong is a multi-layer turtle of paired tiles. Blackjack is
+// the casino table with chips and a running bank.
 //
 // The rules live in plain functions so they can be checked without a browser
 // (t/116-cards-games.t); the event handlers at the bottom only wire them to the
@@ -12,14 +13,25 @@
 var SOL_RANKS = [ '', 'A', '2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K' ];
 var SOL_SUITS = [ '\u2660', '\u2665', '\u2666', '\u2663' ];
 var SOL_DRAW = 3;
-var MAHJONG_ROWS = [ 6, 8, 10, 12, 12, 10, 8, 6 ];
+var MAHJONG_ROWS = [ 12, 8, 10, 12, 12, 10, 8, 12 ];
+var MAHJONG_LAYERS = [
+	{ x: 0, y: 0, cols: 12, rows: 8, counts: MAHJONG_ROWS },
+	{ x: 3, y: 1, cols: 6, rows: 6, counts: [ 6, 6, 6, 6, 6, 6 ] },
+	{ x: 4, y: 2, cols: 4, rows: 4, counts: [ 4, 4, 4, 4 ] },
+	{ x: 4, y: 3, cols: 3, rows: 2, counts: [ 3, 3 ] },
+	{ x: 5, y: 3, cols: 2, rows: 1, counts: [ 2 ] }
+];
 
 var solitaireState = null;
 var solitaireStatusDefault = '';
 var solitaireStatusTimer = null;
 var solitaireSaveTimer = null;
+var solitaireDrag = null;
+var solitaireSuppressClick = false;
 var mahjongState = null;
 var mahjongBannerDefault = '';
+var blackjackState = null;
+var blackjackSaveTimer = null;
 
 // ---- shared helpers --------------------------------------------------------
 
@@ -56,10 +68,12 @@ function cardsShowSingle(src, title) {
 
 // ---- choosing a deck -------------------------------------------------------
 
+var CARDS_VARIANTS = [ 'tarot', 'solitaire', 'mahjong', 'blackjack' ];
+
 function cardsShowVariant(variant, save) {
 	var root = cardsRoot();
 	if (!root) { return; }
-	var known = (variant === 'tarot' || variant === 'solitaire' || variant === 'mahjong') ? variant : '';
+	var known = (CARDS_VARIANTS.indexOf(variant) >= 0) ? variant : '';
 	root.setAttribute('data-variant', known);
 	$('.cards_variant', root).each(function() {
 		$(this).toggleClass('active', $(this).attr('data-variant') === known);
@@ -67,12 +81,14 @@ function cardsShowVariant(variant, save) {
 	$('#cards_tarot', root).toggleClass('active', known === 'tarot');
 	$('#cards_solitaire', root).toggleClass('active', known === 'solitaire');
 	$('#cards_mahjong', root).toggleClass('active', known === 'mahjong');
+	$('#cards_blackjack', root).toggleClass('active', known === 'blackjack');
 	$('#cards_chooser', root).toggleClass('open', !known);
 	if (save && typeof settingSetter === 'function') {
 		settingSetter({ app: 'cards', setting: 'variant', value: known });
 	}
 	if (known === 'solitaire') { solitaireEnsure(); }
 	else if (known === 'mahjong') { mahjongEnsure(); }
+	else if (known === 'blackjack') { blackjackEnsure(); }
 	else if (known === 'tarot') { cardPicker(); }
 }
 
@@ -82,14 +98,32 @@ function cardsInit() {
 	var variant = root.getAttribute('data-variant') || '';
 	if (variant === 'solitaire') { solitaireEnsure(); }
 	else if (variant === 'mahjong') { mahjongEnsure(); }
+	else if (variant === 'blackjack') { blackjackEnsure(); }
 	else if (variant === 'tarot') { cardPicker(); }
 }
 
-// ---- solitaire: the rules --------------------------------------------------
+// ---- playing cards ---------------------------------------------------------
 
 function solitaireColor(card) {
 	return (card.s === 1 || card.s === 2) ? 'red' : 'black';
 }
+
+function solitaireCardHtml(card, extra) {
+	if (!card.up) {
+		return '<div class="sol_card down ' + (extra || '') + '"></div>';
+	}
+	var suit = SOL_SUITS[card.s];
+	var red = solitaireColor(card) === 'red' ? ' red' : '';
+	var rank = SOL_RANKS[card.r];
+	var centre = (card.r >= 11) ? rank : suit;
+	return '<div class="sol_card up' + red + ' ' + (extra || '') + '">'
+		+ '<span class="sol_corner tl"><b>' + rank + '</b><i>' + suit + '</i></span>'
+		+ '<span class="sol_pip">' + centre + '</span>'
+		+ '<span class="sol_corner br"><b>' + rank + '</b><i>' + suit + '</i></span>'
+		+ '</div>';
+}
+
+// ---- solitaire: the rules --------------------------------------------------
 
 function solitaireDeck() {
 	var deck = [];
@@ -125,7 +159,9 @@ function solitaireDeal(rnd) {
 		bank: 0,
 		selected: null,
 		undo: [],
-		won: false
+		won: false,
+		startedAt: 0,
+		timer: null
 	};
 	for (var col = 0; col < 7; col++) {
 		for (var row = 0; row <= col; row++) {
@@ -302,6 +338,14 @@ function solitaireApply(state, target) {
 	return delta;
 }
 
+// Could this selection land there? A throwaway copy answers without touching
+// the real table, which the drag highlight uses on every pointer move.
+function solitaireCanDrop(state, from, target) {
+	var copy = JSON.parse(JSON.stringify(state));
+	copy.selected = from;
+	return solitaireApply(copy, target) !== null;
+}
+
 // Double-click sends a single card to the foundation that will take it.
 function solitaireSendToFoundation(state, from) {
 	var card = null;
@@ -318,6 +362,51 @@ function solitaireSendToFoundation(state, from) {
 		}
 	}
 	return false;
+}
+
+// A card can go up without hurting the table when the opposite colour, one rank
+// lower, is no longer available in the stock, the waste or the face-up tableau.
+function solitaireSafeToFoundation(state, card) {
+	if (!card || card.r <= 1) { return true; }
+	var want = solitaireColor(card) === 'red' ? 'black' : 'red';
+	var lower = card.r - 1;
+	var matches = function(c) { return c && c.up && c.r === lower && solitaireColor(c) === want; };
+	if (state.waste.some(matches)) { return false; }
+	if (state.stock.some(matches)) { return false; }
+	for (var col = 0; col < state.tableau.length; col++) {
+		if (state.tableau[col].some(matches)) { return false; }
+	}
+	return true;
+}
+
+function solitaireAutoFinish(state) {
+	var moved = 0;
+	for (var guard = 0; guard < 200; guard++) {
+		var did = false;
+		if (state.waste.length) {
+			var wasteCard = state.waste[state.waste.length - 1];
+			for (var s = 0; s < 4 && !did; s++) {
+				if (solitaireCanFoundation(wasteCard, state.foundations[s]) && solitaireSafeToFoundation(state, wasteCard)) {
+					state.selected = { zone: 'waste' };
+					did = solitaireApply(state, { zone: 'foundation', suit: s }) !== null;
+				}
+			}
+		}
+		for (var col = 0; col < 7 && !did; col++) {
+			var pile = state.tableau[col];
+			if (!pile.length) { continue; }
+			var top = pile[pile.length - 1];
+			for (var f = 0; f < 4 && !did; f++) {
+				if (solitaireCanFoundation(top, state.foundations[f]) && solitaireSafeToFoundation(state, top)) {
+					state.selected = { zone: 'tableau', col: col, idx: pile.length - 1 };
+					did = solitaireApply(state, { zone: 'foundation', suit: f }) !== null;
+				}
+			}
+		}
+		if (!did) { break; }
+		moved++;
+	}
+	return moved;
 }
 
 // ---- solitaire: the table --------------------------------------------------
@@ -338,21 +427,6 @@ function solitaireSaveBank() {
 		if (!solitaireState || typeof settingSetter !== 'function') { return; }
 		settingSetter({ app: 'cards', setting: 'solitaire_bank', value: Math.round(solitaireState.bank) });
 	}, 800);
-}
-
-function solitaireCardHtml(card, extra) {
-	if (!card.up) {
-		return '<div class="sol_card down ' + (extra || '') + '"></div>';
-	}
-	var suit = SOL_SUITS[card.s];
-	var red = solitaireColor(card) === 'red' ? ' red' : '';
-	var rank = SOL_RANKS[card.r];
-	var centre = (card.r >= 11) ? rank : suit;
-	return '<div class="sol_card up' + red + ' ' + (extra || '') + '">'
-		+ '<span class="sol_corner tl"><b>' + rank + '</b><i>' + suit + '</i></span>'
-		+ '<span class="sol_pip">' + centre + '</span>'
-		+ '<span class="sol_corner br"><b>' + rank + '</b><i>' + suit + '</i></span>'
-		+ '</div>';
 }
 
 function solitaireRender(state) {
@@ -425,8 +499,35 @@ function solitaireCheckWin(state) {
 	if (state.won || !solitaireWon(state)) { return; }
 	state.won = true;
 	state.bank += 500;
+	solitaireStopClock(state);
 	solitaireSaveBank();
 	solitaireShowWin(state);
+}
+
+function solitaireTick() {
+	if (!solitaireState || !solitaireState.startedAt) { return; }
+	var seconds = Math.floor((Date.now() - solitaireState.startedAt) / 1000);
+	var mins = Math.floor(seconds / 60);
+	var secs = seconds % 60;
+	$('#sol_time').text(mins + ':' + (secs < 10 ? '0' : '') + secs);
+}
+
+function solitaireStartClock(state) {
+	if (state.timer) { clearInterval(state.timer); }
+	state.startedAt = Date.now();
+	state.timer = setInterval(solitaireTick, 1000);
+	solitaireTick();
+}
+
+function solitaireStopClock(state) {
+	if (state && state.timer) { clearInterval(state.timer); state.timer = null; }
+}
+
+function solitaireNewDeal(bank) {
+	var state = solitaireDeal();
+	state.bank = bank;
+	solitaireStartClock(state);
+	return state;
 }
 
 function solitaireEnsure() {
@@ -435,8 +536,10 @@ function solitaireEnsure() {
 	if (!solitaireState) {
 		var bank = parseFloat($root.attr('data-bank'));
 		if (isNaN(bank)) { bank = 0; }
-		solitaireState = solitaireDeal();
-		solitaireState.bank = bank;
+		solitaireState = solitaireNewDeal(bank);
+	}
+	else if (!solitaireState.timer && !solitaireState.won) {
+		solitaireStartClock(solitaireState);
 	}
 	solitaireStatusDefault = $('#sol_status').text();
 	solitaireRender(solitaireState);
@@ -450,6 +553,86 @@ function solitaireAction(mutate) {
 	solitaireRender(solitaireState);
 	if (!before) { solitaireCheckWin(solitaireState); }
 	solitaireSaveBank();
+}
+
+// ---- solitaire: drag and drop ---------------------------------------------
+
+function solitaireFromElement($el) {
+	var zone = $el.attr('data-zone');
+	if (zone === 'waste') { return { zone: 'waste' }; }
+	if (zone === 'tableau') {
+		return { zone: 'tableau', col: parseInt($el.attr('data-col'), 10), idx: parseInt($el.attr('data-idx'), 10) };
+	}
+	if (zone === 'foundation') {
+		return { zone: 'foundation', suit: parseInt($el.attr('data-suit'), 10) };
+	}
+	return null;
+}
+
+function solitaireRunFor(state, from) {
+	if (!state || !from) { return null; }
+	if (from.zone === 'waste') {
+		return state.waste.length ? [ state.waste[state.waste.length - 1] ] : null;
+	}
+	if (from.zone === 'tableau') {
+		var pile = state.tableau[from.col];
+		if (!pile || from.idx < 0 || from.idx >= pile.length) { return null; }
+		return pile.slice(from.idx);
+	}
+	if (from.zone === 'foundation') {
+		var found = state.foundations[from.suit];
+		return found.length ? [ found[found.length - 1] ] : null;
+	}
+	return null;
+}
+
+function solitaireGhost(run) {
+	var $ghost = $('<div class="sol_drag_ghost"></div>');
+	for (var i = 0; i < run.length; i++) {
+		var $card = $(solitaireCardHtml(run[i]));
+		$card.css('top', 'calc(var(--card-h) * ' + (i * 0.22).toFixed(2) + ')');
+		$ghost.append($card);
+	}
+	$ghost.css({ width: 'var(--card-w)', height: 'calc(var(--card-h) + var(--card-h) * ' + (Math.max(0, run.length - 1) * 0.22).toFixed(2) + ')' });
+	return $ghost;
+}
+
+function solitaireDropTarget(x, y) {
+	var el = document.elementFromPoint(x, y);
+	if (!el) { return null; }
+	var $target = $(el).closest('.sol_column, .sol_foundation');
+	if (!$target.length) { return null; }
+	if ($target.hasClass('sol_column')) {
+		return { zone: 'tableau', col: parseInt($target.attr('data-col'), 10) };
+	}
+	return { zone: 'foundation', suit: parseInt($target.attr('data-suit'), 10) };
+}
+
+function solitaireDropAt(from, x, y) {
+	if (!solitaireState) { return; }
+	var target = solitaireDropTarget(x, y);
+	if (!target) { return; }
+	var landed = false;
+	solitaireAction(function(state) {
+		state.selected = from;
+		landed = solitaireApply(state, target) !== null;
+		if (!landed) { state.selected = null; }
+	});
+	if (!landed) {
+		solitaireStatus(window.jawnosT ? jawnosT('That card will not go there.') : 'That card will not go there.');
+	}
+}
+
+function solitaireHighlight(x, y) {
+	$('.sol_column, .sol_foundation').removeClass('drop_ok drop_no');
+	if (!solitaireState || !solitaireDrag || !solitaireDrag.from) { return; }
+	var target = solitaireDropTarget(x, y);
+	if (!target) { return; }
+	var ok = solitaireCanDrop(solitaireState, solitaireDrag.from, target);
+	var $el = (target.zone === 'tableau')
+		? $('.sol_column[data-col="' + target.col + '"]')
+		: $('.sol_foundation[data-suit="' + target.suit + '"]');
+	$el.addClass(ok ? 'drop_ok' : 'drop_no');
 }
 
 // ---- mahjong: the rules ----------------------------------------------------
@@ -474,47 +657,76 @@ function mahjongShuffle(list, rnd) {
 	return solitaireShuffle(list, rnd);
 }
 
-// The turtle: a long body, a narrower head and tail, one layer deep.
+// The turtle is five layers deep: 84 / 36 / 16 / 6 / 2 tiles, 144 in all. Every
+// layer is a centred block so an upper tile sits over the one below it.
+function mahjongPositions() {
+	var positions = [];
+	for (var layer = 0; layer < MAHJONG_LAYERS.length; layer++) {
+		var spec = MAHJONG_LAYERS[layer];
+		for (var row = 0; row < spec.rows; row++) {
+			var count = spec.counts[row];
+			var offset = spec.x + Math.floor((spec.cols - count) / 2);
+			for (var col = 0; col < count; col++) {
+				positions.push({ layer: layer, x: offset + col, y: spec.y + row });
+			}
+		}
+	}
+	return positions;
+}
+
 function mahjongDeal(rnd) {
 	var faces = mahjongFaces();
 	var deck = [];
 	for (var i = 0; i < faces.length; i++) {
-		deck.push({ key: faces[i].key, glyph: faces[i].glyph, label: faces[i].label, cls: faces[i].cls });
-		deck.push({ key: faces[i].key, glyph: faces[i].glyph, label: faces[i].label, cls: faces[i].cls });
+		for (var copy = 0; copy < 4; copy++) {
+			deck.push({ key: faces[i].key, glyph: faces[i].glyph, label: faces[i].label, cls: faces[i].cls });
+		}
 	}
 	mahjongShuffle(deck, rnd);
+	var positions = mahjongPositions();
 	var tiles = [];
-	var next = 0;
-	for (var row = 0; row < MAHJONG_ROWS.length; row++) {
-		for (var col = 0; col < MAHJONG_ROWS[row]; col++) {
-			var face = deck[next++];
-			tiles.push({
-				id: next,
-				key: face.key,
-				glyph: face.glyph,
-				label: face.label,
-				cls: face.cls,
-				row: row,
-				col: col,
-				removed: false
-			});
-		}
+	for (var p = 0; p < positions.length; p++) {
+		var face = deck[p];
+		tiles.push({
+			id: p + 1,
+			key: face.key,
+			glyph: face.glyph,
+			label: face.label,
+			cls: face.cls,
+			layer: positions[p].layer,
+			x: positions[p].x,
+			y: positions[p].y,
+			removed: false
+		});
 	}
 	return tiles;
 }
 
-// A tile is free when no tile is immediately left or right of it. The turtle is
-// one layer deep, so nothing can ever sit on top.
+// A tile is free when nothing is stacked over it and a neighbour is missing on
+// at least one side of its row. Nothing sits on a lower layer unless it shares
+// the same x/y, which is how the turtle's layers are built.
+function mahjongCovered(tiles, index) {
+	var tile = tiles[index];
+	if (!tile) { return true; }
+	for (var i = 0; i < tiles.length; i++) {
+		var other = tiles[i];
+		if (other.removed || other.layer <= tile.layer) { continue; }
+		if (other.x === tile.x && other.y === tile.y) { return true; }
+	}
+	return false;
+}
+
 function mahjongFreeAt(tiles, index) {
 	var tile = tiles[index];
 	if (!tile || tile.removed) { return false; }
+	if (mahjongCovered(tiles, index)) { return false; }
 	var left = false;
 	var right = false;
 	for (var i = 0; i < tiles.length; i++) {
 		var other = tiles[i];
-		if (other.removed || other.row !== tile.row) { continue; }
-		if (other.col === tile.col - 1) { left = true; }
-		if (other.col === tile.col + 1) { right = true; }
+		if (other.removed || other.layer !== tile.layer || other.y !== tile.y) { continue; }
+		if (other.x === tile.x - 1) { left = true; }
+		if (other.x === tile.x + 1) { right = true; }
 	}
 	return !left || !right;
 }
@@ -572,23 +784,25 @@ function mahjongRender() {
 	var state = mahjongState;
 	if (!state || !$('#cards_mahjong').length) { return; }
 	var $board = $('#mj_board').empty();
-	for (var row = 0; row < MAHJONG_ROWS.length; row++) {
-		var $row = $('<div class="mj_row"></div>');
-		for (var i = 0; i < state.tiles.length; i++) {
-			var tile = state.tiles[i];
-			if (tile.row !== row) { continue; }
-			var free = mahjongFreeAt(state.tiles, i);
-			var cls = 'mj_tile ' + tile.cls;
-			if (!free) { cls += ' blocked'; }
-			else { cls += ' free'; }
-			if (state.tiles[i].removed) { cls += ' gone'; }
-			if (state.selected === i) { cls += ' sel'; }
-			var $tile = $('<button type="button" class="' + cls + '" data-idx="' + i + '"></button>');
-			$tile.append($('<span class="mj_glyph"></span>').text(tile.glyph));
-			if (tile.label) { $tile.append($('<span class="mj_label"></span>').text(tile.label)); }
-			$row.append($tile);
-		}
-		$board.append($row);
+	for (var i = 0; i < state.tiles.length; i++) {
+		var tile = state.tiles[i];
+		var free = mahjongFreeAt(state.tiles, i);
+		var cls = 'mj_tile ' + tile.cls;
+		if (!free) { cls += ' blocked'; }
+		else { cls += ' free'; }
+		if (tile.removed) { cls += ' gone'; }
+		if (state.selected === i) { cls += ' sel'; }
+		var left = (tile.x + tile.layer * 0.16).toFixed(2);
+		var top = (tile.y - tile.layer * 0.16).toFixed(2);
+		var $tile = $('<button type="button" class="' + cls + '" data-idx="' + i + '" data-layer="' + tile.layer + '"></button>');
+		$tile.css({
+			left: 'calc((var(--mj-tw) + var(--mj-gap)) * ' + left + ')',
+			top: 'calc(var(--mj-pad) + (var(--mj-th) + var(--mj-gap)) * ' + top + ')',
+			'z-index': tile.layer * 1000 + tile.y * 10 + tile.x
+		});
+		$tile.append($('<span class="mj_glyph"></span>').text(tile.glyph));
+		if (tile.label) { $tile.append($('<span class="mj_label"></span>').text(tile.label)); }
+		$board.append($tile);
 	}
 	$('#mj_left').text(mahjongTilesLeft(state.tiles));
 	$('#mj_moves').text(state.moves);
@@ -683,8 +897,7 @@ function mahjongClick(index) {
 }
 
 function mahjongNewGame() {
-	var $root = $('#cards_mahjong');
-	if (!$root.length) { return; }
+	if (!$('#cards_mahjong').length) { return; }
 	mahjongStopClock();
 	$('#mj_win').removeClass('show');
 	mahjongState = {
@@ -705,6 +918,220 @@ function mahjongEnsure() {
 	if (!$('#cards_mahjong').length) { return; }
 	if (!mahjongState) { mahjongNewGame(); return; }
 	mahjongRender();
+}
+
+// ---- blackjack: the rules --------------------------------------------------
+
+var BJ_BANK_START = 500;
+var BJ_MIN_BET = 5;
+var BJ_DECKS = 6;
+
+function blackjackShoe(rnd) {
+	var shoe = [];
+	for (var d = 0; d < BJ_DECKS; d++) {
+		for (var s = 0; s < 4; s++) {
+			for (var r = 1; r <= 13; r++) {
+				shoe.push({ r: r, s: s, up: true });
+			}
+		}
+	}
+	return solitaireShuffle(shoe, rnd);
+}
+
+// Aces count eleven until that would bust; the returned soft flag says whether
+// one is still counted as eleven.
+function blackjackValue(hand, onlyUp) {
+	var total = 0;
+	var aces = 0;
+	for (var i = 0; i < hand.length; i++) {
+		var card = hand[i];
+		if (!card || (onlyUp && !card.up)) { continue; }
+		if (card.r === 1) { total += 11; aces++; }
+		else if (card.r >= 11) { total += 10; }
+		else { total += card.r; }
+	}
+	while (total > 21 && aces > 0) { total -= 10; aces--; }
+	return { total: total, soft: aces > 0 };
+}
+
+function blackjackDraw(state, up) {
+	if (!state.shoe.length) { state.shoe = blackjackShoe(); }
+	var card = state.shoe.pop();
+	card.up = (up !== false);
+	return card;
+}
+
+function blackjackNewState(bank) {
+	return {
+		shoe: blackjackShoe(),
+		player: [],
+		dealer: [],
+		bet: 10,
+		bank: (typeof bank === 'number' && !isNaN(bank)) ? bank : BJ_BANK_START,
+		phase: 'bet',
+		doubled: false,
+		message: ''
+	};
+}
+
+function blackjackNaturals(state) {
+	var p = blackjackValue(state.player).total;
+	var d = blackjackValue(state.dealer).total;
+	var stake = state.bet;
+	if (p === 21 && d === 21) {
+		state.bank += stake;
+		state.phase = 'done';
+		state.message = 'Push. Both have blackjack.';
+		return true;
+	}
+	if (p === 21) {
+		state.bank += Math.round(stake * 2.5);
+		state.phase = 'done';
+		state.message = 'Blackjack!';
+		return true;
+	}
+	if (d === 21) {
+		state.phase = 'done';
+		state.message = 'Dealer blackjack.';
+		return true;
+	}
+	return false;
+}
+
+function blackjackStartHand(state) {
+	if (!state || state.phase === 'player') { return false; }
+	var stake = Number(state.bet) || BJ_MIN_BET;
+	if (state.bank < stake) {
+		state.message = 'Not enough in the bank for that bet.';
+		return false;
+	}
+	if (!state.shoe.length) { state.shoe = blackjackShoe(); }
+	state.player = [];
+	state.dealer = [];
+	state.doubled = false;
+	state.message = '';
+	state.phase = 'player';
+	state.bank -= stake;
+	state.dealer.push(blackjackDraw(state, false));
+	state.player.push(blackjackDraw(state, true));
+	state.dealer.push(blackjackDraw(state, false));
+	state.player.push(blackjackDraw(state, true));
+	if (blackjackNaturals(state)) { return true; }
+	return true;
+}
+
+function blackjackDealerPlay(state) {
+	for (var i = 0; i < state.dealer.length; i++) { state.dealer[i].up = true; }
+	while (blackjackValue(state.dealer).total < 17) {
+		state.dealer.push(blackjackDraw(state, true));
+	}
+	var player = blackjackValue(state.player).total;
+	var dealer = blackjackValue(state.dealer).total;
+	if (dealer > 21 || player > dealer) {
+		state.bank += state.bet * 2;
+		state.message = dealer > 21 ? 'Dealer busts. You win.' : 'You win.';
+	}
+	else if (player === dealer) {
+		state.bank += state.bet;
+		state.message = 'Push.';
+	}
+	else {
+		state.message = 'Dealer wins.';
+	}
+	state.phase = 'done';
+}
+
+function blackjackHit(state) {
+	if (!state || state.phase !== 'player') { return false; }
+	state.player.push(blackjackDraw(state, true));
+	if (blackjackValue(state.player).total > 21) {
+		state.phase = 'done';
+		state.message = 'Bust.';
+	}
+	return true;
+}
+
+function blackjackStand(state) {
+	if (!state || state.phase !== 'player') { return false; }
+	blackjackDealerPlay(state);
+	return true;
+}
+
+function blackjackDouble(state) {
+	if (!state || state.phase !== 'player' || state.player.length !== 2) { return false; }
+	if (state.bank < state.bet) {
+		state.message = 'Not enough in the bank to double.';
+		return false;
+	}
+	state.bank -= state.bet;
+	state.bet = state.bet * 2;
+	state.doubled = true;
+	state.player.push(blackjackDraw(state, true));
+	if (blackjackValue(state.player).total > 21) {
+		state.phase = 'done';
+		state.message = 'Bust.';
+		return true;
+	}
+	blackjackDealerPlay(state);
+	return true;
+}
+
+// ---- blackjack: the table --------------------------------------------------
+
+function blackjackSaveBank() {
+	clearTimeout(blackjackSaveTimer);
+	blackjackSaveTimer = setTimeout(function() {
+		if (!blackjackState || typeof settingSetter !== 'function') { return; }
+		settingSetter({ app: 'cards', setting: 'blackjack_bank', value: Math.round(blackjackState.bank) });
+	}, 800);
+}
+
+function blackjackRender() {
+	var state = blackjackState;
+	if (!state || !$('#cards_blackjack').length) { return; }
+	var $dealer = $('#bj_dealer').empty();
+	for (var d = 0; d < state.dealer.length; d++) {
+		$dealer.append(solitaireCardHtml(state.dealer[d]));
+	}
+	var $player = $('#bj_player').empty();
+	for (var p = 0; p < state.player.length; p++) {
+		$player.append(solitaireCardHtml(state.player[p]));
+	}
+	var dealerView = blackjackValue(state.dealer, true);
+	var playerView = blackjackValue(state.player);
+	$('#bj_dealer_total').text(state.dealer.length ? String(dealerView.total) + (dealerView.soft ? ' soft' : '') : '');
+	$('#bj_player_total').text(state.player.length ? String(playerView.total) + (playerView.soft ? ' soft' : '') : '');
+	$('#bj_bank').text(Math.round(state.bank));
+	$('#bj_bet').text(state.bet);
+	$('#bj_bet').closest('.bj_stat').toggleClass('disabled', state.phase === 'player');
+	var playing = (state.phase === 'player');
+	$('#bj_deal').prop('disabled', playing);
+	$('#bj_hit').prop('disabled', !playing);
+	$('#bj_stand').prop('disabled', !playing);
+	$('#bj_double').prop('disabled', !playing || state.player.length !== 2 || state.bank < state.bet);
+	$('.bj_chip').prop('disabled', playing);
+	var message = state.message || (playing ? 'Hit or stand.' : 'Place your bet and deal.');
+	if (state.phase === 'done' && state.bank < BJ_MIN_BET) {
+		message += ' Out of chips - reset the bank.';
+	}
+	$('#bj_message').text(message);
+}
+
+function blackjackNewBank(bank) {
+	blackjackState = blackjackNewState(bank);
+	blackjackRender();
+	blackjackSaveBank();
+}
+
+function blackjackEnsure() {
+	if (!$('#cards_blackjack').length) { return; }
+	if (!blackjackState) {
+		var bank = parseFloat($('#cards_blackjack').attr('data-bank'));
+		if (isNaN(bank)) { bank = BJ_BANK_START; }
+		blackjackNewBank(bank);
+		return;
+	}
+	blackjackRender();
 }
 
 // ---- tarot: the deck picker ------------------------------------------------
@@ -843,7 +1270,7 @@ if (typeof jQuery !== 'undefined') {
 	});
 
 	$(document).on('click', '#cards_solitaire .sol_card, #cards_solitaire .sol_foundation, #cards_solitaire .sol_column', function(e) {
-		if (!solitaireState) { return; }
+		if (!solitaireState || solitaireSuppressClick) { return; }
 		// A card also matches its column/foundation through the delegated
 		// selector; only the innermost match should act on the click.
 		if (!$(this).is('.sol_card') && $(e.target).closest('.sol_card').length) { return; }
@@ -883,7 +1310,6 @@ if (typeof jQuery !== 'undefined') {
 			var idx = $this.attr('data-idx');
 			var isCard = idx !== undefined;
 			idx = isCard ? parseInt(idx, 10) : state.tableau[col].length - 1;
-			if (!isCard && !state.tableau[col].length) { idx = -1; }
 
 			if (state.selected) {
 				if (state.selected.zone === 'tableau' && state.selected.col === col && isCard) {
@@ -925,11 +1351,45 @@ if (typeof jQuery !== 'undefined') {
 		if (!sent) { solitaireStatus(window.jawnosT ? jawnosT('No foundation takes that card yet.') : 'No foundation takes that card yet.'); }
 	});
 
+	$(document).on('pointerdown', '#cards_solitaire .sol_card', function(e) {
+		if (!solitaireState || e.button !== 0) { return; }
+		var from = solitaireFromElement($(this));
+		if (!from || (from.zone !== 'waste' && from.zone !== 'tableau')) { return; }
+		var run = solitaireRunFor(solitaireState, from);
+		if (!run || !solitaireRunOk(run)) { return; }
+		solitaireDrag = { from: from, x: e.clientX, y: e.clientY, started: false, ghost: null, run: run };
+	});
+
+	$(document).on('pointermove', function(e) {
+		if (!solitaireDrag) { return; }
+		if (!solitaireDrag.started) {
+			if (Math.abs(e.clientX - solitaireDrag.x) < 6 && Math.abs(e.clientY - solitaireDrag.y) < 6) { return; }
+			solitaireDrag.started = true;
+			solitaireDrag.ghost = solitaireGhost(solitaireDrag.run);
+			$('#cards').append(solitaireDrag.ghost);
+			$(document.body).addClass('cards_dragging');
+		}
+		solitaireDrag.ghost.css({ left: (e.clientX + 12) + 'px', top: (e.clientY + 10) + 'px' });
+		solitaireHighlight(e.clientX, e.clientY);
+		if (e.preventDefault) { e.preventDefault(); }
+	});
+
+	$(document).on('pointerup', function(e) {
+		if (!solitaireDrag) { return; }
+		var drag = solitaireDrag;
+		solitaireDrag = null;
+		$(document.body).removeClass('cards_dragging');
+		$('.sol_column, .sol_foundation').removeClass('drop_ok drop_no');
+		if (!drag.ghost) { return; }
+		drag.ghost.remove();
+		solitaireSuppressClick = true;
+		setTimeout(function() { solitaireSuppressClick = false; }, 60);
+		solitaireDropAt(drag.from, e.clientX, e.clientY);
+	});
+
 	$(document).on('click', '#cards_solitaire #sol_new', function() {
 		if (!solitaireState) { return; }
-		var bank = solitaireState.bank;
-		solitaireState = solitaireDeal();
-		solitaireState.bank = bank;
+		solitaireState = solitaireNewDeal(solitaireState.bank);
 		$('#sol_win').removeClass('show');
 		solitaireRender(solitaireState);
 	});
@@ -945,6 +1405,13 @@ if (typeof jQuery !== 'undefined') {
 			solitaireRender(solitaireState);
 			solitaireSaveBank();
 		}
+	});
+
+	$(document).on('click', '#cards_solitaire #sol_auto', function() {
+		if (!solitaireState) { return; }
+		var moved = 0;
+		solitaireAction(function(state) { moved = solitaireAutoFinish(state); });
+		solitaireStatus((window.jawnosT ? jawnosT('Sent') : 'Sent') + ' ' + moved + ' ' + (window.jawnosT ? jawnosT('cards up.') : 'cards up.'));
 	});
 
 	$(document).on('click', '#cards_solitaire #sol_reset', function() {
@@ -978,6 +1445,53 @@ if (typeof jQuery !== 'undefined') {
 		mahjongState.lock = false;
 		mahjongRender();
 		mahjongCheck();
+	});
+
+	// ---- blackjack ----
+
+	$(document).on('click', '#cards_blackjack #bj_deal', function() {
+		if (!blackjackState) { return; }
+		if (blackjackStartHand(blackjackState)) {
+			blackjackRender();
+			blackjackSaveBank();
+		}
+		else {
+			blackjackRender();
+		}
+	});
+
+	$(document).on('click', '#cards_blackjack #bj_hit', function() {
+		if (!blackjackState) { return; }
+		blackjackHit(blackjackState);
+		blackjackRender();
+	});
+
+	$(document).on('click', '#cards_blackjack #bj_stand', function() {
+		if (!blackjackState) { return; }
+		blackjackStand(blackjackState);
+		blackjackRender();
+		blackjackSaveBank();
+	});
+
+	$(document).on('click', '#cards_blackjack #bj_double', function() {
+		if (!blackjackState) { return; }
+		blackjackDouble(blackjackState);
+		blackjackRender();
+		blackjackSaveBank();
+	});
+
+	$(document).on('click', '#cards_blackjack .bj_chip', function() {
+		if (!blackjackState || blackjackState.phase === 'player') { return; }
+		blackjackState.bet = parseInt($(this).attr('data-bet'), 10);
+		blackjackState.message = '';
+		blackjackRender();
+	});
+
+	$(document).on('click', '#cards_blackjack #bj_reset', function() {
+		if (!blackjackState) { return; }
+		var ask = window.jawnosT ? jawnosT('Reset the bank to 500?') : 'Reset the bank to 500?';
+		if (window.confirm && !window.confirm(ask)) { return; }
+		blackjackNewBank(BJ_BANK_START);
 	});
 
 	// An app window opened directly (not through the start menu) still needs its

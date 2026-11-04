@@ -8,7 +8,7 @@
 			<button type="button" class="mj_btn ghost" id="mj_shuffle"><%= &subs::ui('Shuffle') %></button>
 		</div>
 	</div>
-	<div class="mj_banner" id="mj_banner"><%= &subs::ui('Pair two free tiles that match. Free means no tile immediately left or right of it.') %></div>
+	<div class="mj_banner" id="mj_banner"><%= &subs::ui('Pair two free tiles that match. Free means nothing stacked on top, and no tile immediately left or right.') %></div>
 	<div class="mj_board" id="mj_board"></div>
 	<div id="mj_win" class="cards_win">
 		<div class="cards_win_inner">
