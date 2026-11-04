@@ -483,9 +483,17 @@ sub phone_ivr_save($params) {
 	my %voices = map { $_->{'value'} => 1 } &subs::say_voices();
 	$next->{'voice'} = &subs::say_default_voice() unless $voices{ $next->{'voice'} };
 	if (defined $next->{'machine'} && length $next->{'machine'}) {
-		my $known = &subs::db_select('remote_machines', undef, { signatorial => $next->{'machine'} })->hashes->[0]
-			|| &subs::db_select('remote_machines', undef, { ip => $next->{'machine'} })->hashes->[0];
-		$next->{'machine'} = $known ? $next->{'machine'} : '';
+		# a gateway may be a peer, this machine (which has no remote_machines row
+		# for itself), or a peer another machine knows by its own key - the pane
+		# only offers real ones, so the shape is enough to keep it
+		my $machine = $next->{'machine'};
+		my $self = (-x './perl/sco/sco_helper') ? &phone_self_signatorial() : '';
+		my $known = ($self && $machine eq $self)
+			|| &subs::db_select('remote_machines', undef, { signatorial => $machine })->hashes->[0]
+			|| &subs::db_select('remote_machines', undef, { ip => $machine })->hashes->[0]
+			|| $machine =~ /^[0-9a-f]{32}$/
+			|| $machine =~ /^[0-9a-fA-F.:]+$/;
+		$next->{'machine'} = $known ? $machine : '';
 	}
 	foreach my $key (qw(greeting prompt voicemail thanks)) {
 		$next->{$key} = substr($next->{$key}, 0, 1000);
