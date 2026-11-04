@@ -59,7 +59,21 @@ sub helper_command {
 	return @cmd;
 }
 
-# The BlueALSA PCM this machine's Hands-Free stack exposes, when it has one.
+# The virtual-handset mode: PipeWire carries the call, and two null sinks plus
+# a remapped source let the gateway own the audio without touching the defaults.
+sub pipe_mode {
+	my ($self) = @_;
+	my $on = eval { &subs::misc_setting('sco_pipe') } || '';
+	return $on eq 'yes';
+}
+
+sub peer_address {
+	my ($self) = @_;
+	my $addr = eval { &subs::misc_setting('sco_peer') } || '';
+	return $addr;
+}
+
+# # The BlueALSA PCM this machine's Hands-Free stack exposes, when it has one.
 sub pcm_device {
 	my ($self) = @_;
 	my $pcm = eval { &subs::misc_setting('sco_pcm') };
@@ -169,6 +183,18 @@ sub arm {
 
 	$self->{'steps'} = \@steps;
 	$self->{'step_at'} = 0;
+	if ($self->pipe_mode()) {
+		require JawnOS::Sco::Mixer;
+		$self->{'mixer'} = JawnOS::Sco::Mixer->new();
+		$self->{'peer'} = $args{'peer'} || $self->peer_address();
+		$self->{'call_id'} = $args{'call_id'} || &call_id();
+		$self->{'last_error'} = '';
+		$self->{'last_event'} = 'waiting for a call';
+		$self->{'state'} = 'waiting';
+		$self->write_status();
+		$self->watch_streams();
+		return { ok => 1, state => 'waiting', call_id => $self->{'call_id'} };
+	}
 	$self->{'peer'} = $args{'peer'} || '';
 	$self->{'call_id'} = $args{'call_id'} || &call_id();
 	$self->{'last_error'} = '';
@@ -186,6 +212,40 @@ sub arm {
 sub call_id {
 	my ($self) = @_;
 	return sprintf('%d-%04x', time, int(rand(65536)));
+}
+
+# Wait until the gateway's own two streams appear (the call has started), move
+# them onto our devices, and only then start the audio helper.
+sub watch_streams {
+	my ($self) = @_;
+	return if $self->{'watcher'};
+	$self->{'watcher'} = Mojo::IOLoop->recurring(0.3 => sub {
+		return unless $self->{'state'} eq 'waiting';
+		my $mixer = $self->{'mixer'} or return;
+		my $streams = $mixer->call_streams($self->{'peer'});
+		return unless $streams->{'sink_input'} && $streams->{'source_output'};
+		my $moved = $mixer->attach($self->{'peer'});
+		my @cmd = ( $self->helper_command(), '--pipe-in', $mixer->capture_command(),
+			'--pipe-out', $mixer->playback_command() );
+		unless ($self->_spawn(@cmd)) {
+			$self->{'last_error'} = 'the audio helper would not start';
+			$mixer->detach();
+			return;
+		}
+		$self->{'last_event'} = 'attached';
+		$self->{'state'} = 'armed';
+		$self->{'since'} = time;
+		$self->write_status();
+	});
+	return 1;
+}
+
+sub stop_watch {
+	my ($self) = @_;
+	if (my $w = delete $self->{'watcher'}) {
+		Mojo::IOLoop->remove($w);
+	}
+	return 1;
 }
 
 sub _spawn {
@@ -286,6 +346,9 @@ sub event {
 	my ($self, $event) = @_;
 	my $name = $event->{'event'} || '';
 	$self->{'last_event'} = $name;
+	if ($name eq 'closed' && $self->{'mixer'} && $self->{'mixer'}->{'attached'}) {
+		$self->{'mixer'}->detach();
+	}
 	if ($name eq 'listening') {
 		$self->{'local'} = $event->{'local'} || $self->{'local'};
 		$self->{'state'} = 'armed' if $self->{'state'} eq 'starting';
@@ -347,6 +410,10 @@ sub event {
 
 sub cancel {
 	my ($self) = @_;
+	$self->stop_watch();
+	if ($self->{'mixer'} && $self->{'mixer'}->{'attached'}) {
+		$self->{'mixer'}->detach();
+	}
 	return { ok => 1, state => $self->{'state'} } if $self->{'state'} eq 'idle';
 	$self->_send(cmd => 'quit');
 	$self->_reap();

@@ -81,6 +81,18 @@ isnt(JawnOS::Sco::Render::key('hello', 'piper-a'), JawnOS::Sco::Render::key('hel
 	'a different voice is a different clip');
 isnt(JawnOS::Sco::Render::key('hello', 'piper-a'), JawnOS::Sco::Render::key('hello!', 'piper-a'),
 	'editing the prompt makes a new clip');
+# The virtual handset's commands and its stream matching.
+{
+	require JawnOS::Sco::Mixer;
+	my $mixer = JawnOS::Sco::Mixer->new();
+	ok($mixer, 'the mixer constructs');
+	like($mixer->capture_command(), qr/jawn_call_in\.monitor/, 'capture reads the call sink monitor');
+	like($mixer->playback_command(), qr/jawn_prompt/, 'playback writes the prompt sink');
+	like($mixer->playback_command(), qr/latency-msec=20/, 'and asks for a small buffer');
+	is_deeply($mixer->call_streams(''), { sink_input => undef, source_output => undef },
+		'no address means no streams');
+}
+
 JawnOS::Sco::Render::prune();
 
 # ------------------------------------------------------------- the gateway

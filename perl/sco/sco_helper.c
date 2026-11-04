@@ -59,7 +59,7 @@
 #define BYTES_PER_MS (RATE * 2 / 1000)
 #define CHUNK_NS 7500000LL
 /* how long the call audio must be flowing before a prompt starts */
-#define SETTLE_NS 700000000LL
+#define SETTLE_NS 1200000000LL
 
 static volatile sig_atomic_t running = 1;
 static int sco_fd = -1, listen_fd = -1;
@@ -69,6 +69,15 @@ static int voice = BT_VOICE_CVSD_16BIT;
 static int silence_level = 400;
 static int loopback = 0, fast = 0;
 static const char *pcm_dev = NULL;
+static const char *pipe_in_cmd = NULL, *pipe_out_cmd = NULL;
+static FILE *pipe_in = NULL, *pipe_out = NULL;
+static int pipe_mode = 0;
+static int pipe_open_pair(void);
+static int pipe_read_chunk(unsigned char *buf, size_t cap);
+static int pipe_write_chunk(const unsigned char *buf, size_t len);
+static int backend_open(void);
+static int backend_read(unsigned char *buf, size_t cap);
+static int backend_write(const unsigned char *buf, size_t len);
 static char pcm_error[128] = "";
 static long long last_complain = 0;        /* BlueALSA PCM, e.g. bluealsa:DEV=...,PROFILE=hfp-hf */
 static snd_pcm_t *pcm_cap = NULL, *pcm_play = NULL;
@@ -131,6 +140,8 @@ static int clip_id = 0;
 static long clip_ms = 0;
 static int clip_active = 0;
 static long long next_write = 0;
+static long long clip_start_at = 0;
+#define LEAD_IN_NS 250000000LL
 static long long now_ns(void);
 
 /* ---- recording --------------------------------------------------------- */
@@ -332,7 +343,8 @@ static void clip_load_file(const char *path, int id) {
 	clip_id = id;
 	clip_ms = 0;
 	clip_active = 1;
-	next_write = now_ns();
+	clip_start_at = now_ns() + LEAD_IN_NS;
+	next_write = clip_start_at;
 }
 
 static void clip_tone(int hz, int ms, int id) {
@@ -356,7 +368,8 @@ static void clip_tone(int hz, int ms, int id) {
 	clip_id = id;
 	clip_ms = 0;
 	clip_active = 1;
-	next_write = now_ns();
+	clip_start_at = now_ns() + LEAD_IN_NS;
+	next_write = clip_start_at;
 }
 
 /* One 7.5 ms of the clip toward the caller. Returns 1 when it finished now. */
@@ -379,8 +392,8 @@ static int uplink_step(int fd) {
 		}
 		else {
 			ssize_t w;
-			if (pcm_dev) {
-				int wrote = pcm_write_chunk(clip + clip_pos, take);
+			if (pcm_dev || pipe_mode) {
+				int wrote = backend_write(clip + clip_pos, take);
 				if (wrote <= 0) return 0;
 				w = wrote;
 			}
@@ -527,6 +540,53 @@ static int addrs_from_sys(char addresses[][18], int max) {
 	return out;
 }
 
+static int backend_open(void) {
+	return pipe_mode ? pipe_open_pair() : -1;
+}
+
+static int backend_read(unsigned char *buf, size_t cap) {
+	return pipe_mode ? pipe_read_chunk(buf, cap) : pcm_read_chunk(buf, cap);
+}
+
+static int backend_write(const unsigned char *buf, size_t len) {
+	return pipe_mode ? pipe_write_chunk(buf, len) : pcm_write_chunk(buf, len);
+}
+
+/* A PipeWire backend: the caller's audio arrives on a capture command's
+ * stdout, and what we write goes to a playback command's stdin. The phones do
+ * the audio routing; this program only speaks the plan. */
+static int pipe_open_pair(void) {
+	if (!pipe_in && pipe_in_cmd) {
+		pipe_in = popen(pipe_in_cmd, "r");
+		if (pipe_in) {
+			setvbuf(pipe_in, NULL, _IONBF, 0);
+			int fd = fileno(pipe_in);
+			fcntl(fd, F_SETFL, fcntl(fd, F_GETFL, 0) | O_NONBLOCK);
+		}
+	}
+	if (!pipe_out && pipe_out_cmd) {
+		pipe_out = popen(pipe_out_cmd, "w");
+		if (pipe_out) setvbuf(pipe_out, NULL, _IONBF, 0);
+	}
+	return (pipe_in && pipe_out) ? 0 : -1;
+}
+
+static int pipe_read_chunk(unsigned char *buf, size_t cap) {
+	if (!pipe_in) return -1;
+	size_t n = fread(buf, 1, cap, pipe_in);
+	if (n > 0) return (int) n;
+	if (ferror(pipe_in)) {
+		if (errno == EAGAIN || errno == EWOULDBLOCK) { clearerr(pipe_in); return 0; }
+		return -1;
+	}
+	return 0;
+}
+
+static int pipe_write_chunk(const unsigned char *buf, size_t len) {
+	if (!pipe_out) return -1;
+	return (int) fwrite(buf, 1, len, pipe_out);
+}
+
 /* The BlueALSA mode: no SCO socket of our own. The HF stack owns the link, and
  * this program only reads and writes its PCM. The PCM appears when the phone
  * starts sending call audio, so a successful open is the "accepted" event. */
@@ -539,6 +599,7 @@ static int pcm_mode_main(void) {
 	int quiet_polls = 0;
 	long long first_frame_at = 0;
 	long long opened_at = 0;
+	long long last_frame_at = 0;
 	long long next_write = now_ns();
 	while (running) {
 		/* control channel */
@@ -564,24 +625,33 @@ static int pcm_mode_main(void) {
 
 		if (!have_accepted) {
 			/* The Hands-Free transport is torn down a few seconds after a call,
-			 * so a handle left open from the last one goes deaf. While idle, start
-			 * over: the next call then finds a live transport. */
+			 * so a handle left open from the last one goes deaf. Start over only
+			 * when nothing has arrived for a while - never on a timer, which tore
+			 * the transport down in the middle of a call. */
 			long long now = now_ns();
-			if (pcm_cap && pcm_play && opened_at && now - opened_at > 8000000000LL) {
+			if (!pipe_mode && pcm_cap && pcm_play && now - last_frame_at > 5000000000LL
+					&& now - opened_at > 5000000000LL) {
 				pcm_close_pair();
 				opened_at = 0;
 				first_frame_at = 0;
 				quiet_polls = 0;
 			}
-			int cap_ok = pcm_open_one(&pcm_cap, SND_PCM_STREAM_CAPTURE) == 0;
-			int play_ok = pcm_open_one(&pcm_play, SND_PCM_STREAM_PLAYBACK) == 0;
+			int cap_ok, play_ok;
+			if (pipe_mode) {
+				cap_ok = play_ok = (backend_open() == 0);
+			}
+			else {
+				cap_ok = pcm_open_one(&pcm_cap, SND_PCM_STREAM_CAPTURE) == 0;
+				play_ok = pcm_open_one(&pcm_play, SND_PCM_STREAM_PLAYBACK) == 0;
+			}
 			if (cap_ok && play_ok) {
 				if (!opened_at) opened_at = now_ns();
 				/* An idle Hands-Free stack keeps its transport alive, so an open
 				 * PCM is not a call. The first frame of audio is: the phone only
 				 * sends call audio once the call is actually up. */
-				int first = pcm_read_chunk(chunk, sizeof(chunk));
+				int first = backend_read(chunk, sizeof(chunk));
 				if (first > 0) {
+					last_frame_at = now_ns();
 					/* The link carries frames a moment before the phone's own
 					 * audio path is fully up, and a prompt that starts then loses
 					 * its first words. Wait for the stream to settle. */
@@ -609,8 +679,8 @@ static int pcm_mode_main(void) {
 				}
 			}
 			else {
-				if (pcm_cap) { snd_pcm_close(pcm_cap); pcm_cap = NULL; }
-				if (pcm_play) { snd_pcm_close(pcm_play); pcm_play = NULL; }
+				if (pipe_mode) { if (pipe_in) { pclose(pipe_in); pipe_in = NULL; } if (pipe_out) { pclose(pipe_out); pipe_out = NULL; } }
+				else { if (pcm_cap) { snd_pcm_close(pcm_cap); pcm_cap = NULL; } if (pcm_play) { snd_pcm_close(pcm_play); pcm_play = NULL; } }
 				long long t = now_ns();
 				if (t - last_complain > 5000000000LL) {
 					last_complain = t;
@@ -623,7 +693,7 @@ static int pcm_mode_main(void) {
 			}
 		}
 
-		int n = pcm_read_chunk(chunk, sizeof(chunk));
+		int n = backend_read(chunk, sizeof(chunk));
 		if (n < 0) {
 			emit("{\"event\":\"closed\",\"reason\":\"pcm\"}");
 			if (rec_active) record_close(1, "link");
@@ -633,6 +703,7 @@ static int pcm_mode_main(void) {
 		}
 		if (n > 0) {
 			quiet_polls = 0;
+			last_frame_at = now_ns();
 			downlink_chunk(chunk, (size_t) n);
 		}
 		else if (n == 0 && have_accepted && ++quiet_polls > 40) {
@@ -640,16 +711,22 @@ static int pcm_mode_main(void) {
 			 * the end of one */
 			emit("{\"event\":\"closed\",\"reason\":\"pcm idle\"}");
 			if (rec_active) record_close(1, "link");
-			pcm_close_pair();
+			if (pipe_mode) { if (pipe_in) { pclose(pipe_in); pipe_in = NULL; } if (pipe_out) { pclose(pipe_out); pipe_out = NULL; } }
+			else pcm_close_pair();
 			have_accepted = 0;
 			quiet_polls = 0;
 			first_frame_at = 0;
 		}
 
 		long long t = now_ns();
-		if (clip_active && t >= next_write) {
-			uplink_step(-1);
-			next_write = t + CHUNK_NS;
+		if (clip_active && t >= clip_start_at) {
+			int steps = 0;
+			while (t >= next_write && clip_active && steps++ < 8) {
+				uplink_step(-1);
+				next_write += CHUNK_NS;
+			}
+			/* a long stall must not be paid back as a burst: resync the clock */
+			if (next_write < t - 100000000LL) next_write = t;
 		}
 		usleep(500);
 	}
@@ -665,6 +742,8 @@ int main(int argc, char **argv) {
 		else if (!strcmp(argv[i], "--loopback") && i + 1 < argc) { loopback = 1; downlink_path = argv[++i]; }
 		else if (!strcmp(argv[i], "--loopback-uplink") && i + 1 < argc) uplink_path = argv[++i];
 		else if (!strcmp(argv[i], "--pcm") && i + 1 < argc) pcm_dev = argv[++i];
+		else if (!strcmp(argv[i], "--pipe-in") && i + 1 < argc) pipe_in_cmd = argv[++i];
+		else if (!strcmp(argv[i], "--pipe-out") && i + 1 < argc) pipe_out_cmd = argv[++i];
 		else if (!strcmp(argv[i], "--fast")) fast = 1;
 		else if (!strcmp(argv[i], "--silence-level") && i + 1 < argc) silence_level = atoi(argv[++i]);
 		else if (!strcmp(argv[i], "--transparent")) voice = BT_VOICE_TRANSPARENT;
@@ -683,6 +762,7 @@ int main(int argc, char **argv) {
 	signal(SIGINT, on_signal);
 	signal(SIGPIPE, SIG_IGN);
 
+	if (pipe_in_cmd || pipe_out_cmd) { pipe_mode = 1; return pcm_mode_main(); }
 	if (pcm_dev) return pcm_mode_main();
 
 	if (uplink_path) {
