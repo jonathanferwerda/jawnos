@@ -165,16 +165,17 @@ sub whisper_server_transcribe {
 # The one-shot CLI path. It is also the local path on a machine whose warm
 # server is not up yet.
 sub whisper_cli_transcribe {
-	my ($raw, $lang) = @_;
+	my ($raw, $lang, $wanted) = @_;
 	return '' unless $raw;
 	require IPC::Open3;
 	require Symbol;
 	my $bin   = &subs::home('~/whisper.cpp/build/bin/whisper-cli');
 	# A command is a handful of words against a tiny vocabulary, so the fast tiny
 	# model is plenty and a clip gets through much sooner, especially on the
-	# phone; base is the fallback when tiny is not installed.
-	my $model = &subs::home('~/whisper.cpp/models/ggml-tiny.bin');
-	unless (-e $model) {
+	# phone; base is the fallback when tiny is not installed. A caller that knows
+	# its clip needs more (a screened call's name) names the model it wants.
+	my $model = ($wanted && -e $wanted) ? $wanted : &subs::home('~/whisper.cpp/models/ggml-tiny.bin');
+	if (!defined $wanted && !-e $model) {
 		$model = &subs::home('~/whisper.cpp/models/ggml-base.bin');
 	}
 	return '' unless -e $bin && -e $model;
@@ -233,6 +234,38 @@ sub whisper_transcribe {
 	}
 	return $local_text->() unless $local_chosen;
 	return '';
+}
+
+sub whisper_name_transcribe {
+	# The one thing a screened call leaves is who called, and the words are a
+	# handful over a narrowband 8 kHz link. The tiny model that keeps dictation
+	# fast read one such clip as "Listen strong." where base read "This is John."
+	# - through ffmpeg, sox and miniaudio alike - and base still answers in
+	# seconds over a clip this short. So the name takes base and the CLI, and the
+	# warm server's model is left to the keyboard. '' when nobody spoke.
+	my ($raw, $lang) = @_;
+	return '' unless defined $raw && length $raw;
+	my $base = &subs::home('~/whisper.cpp/models/ggml-base.bin');
+	my $text = -e $base
+		? &whisper_cli_transcribe($raw, $lang || 'auto', $base)
+		: &whisper_transcribe($raw, $lang || 'auto');
+	return '' if !length $text || &voice_silence_hallucination($text);
+	return &name_from_transcript($text);
+}
+
+sub name_from_transcript {
+	# A caller answers "who are you" with a sentence - "This is Jon", "It's Jon
+	# speaking", "My name is Jon Smith". What the house files is the name itself.
+	my ($text) = @_;
+	return '' unless defined $text;
+	my $name = $text;
+	$name =~ s/^\s*[-\x{2013}\x{2014}]\s*//;
+	$name =~ s/^\s*(?:well|okay|ok|hi|hello),?\s+//i;
+	$name =~ s/^\s*(?:this is|that'?s|it'?s|i'?m|i am|my name is|you'?re speaking (?:to|with)|speaking to|here is|call me)\s+//i;
+	$name =~ s/\s+(?:speaking|here|on the line)[\s.,!?;:]*$//i;
+	$name =~ s/[\s.,!?;:]+$//;
+	$name =~ s/^\s+//;
+	return $name;
 }
 
 sub dictation_punctuate {

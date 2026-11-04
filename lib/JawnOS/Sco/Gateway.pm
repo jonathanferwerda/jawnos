@@ -31,6 +31,7 @@ sub new {
 		dir => $dir,
 		helper => $args{'helper'} || './perl/sco/sco_helper',
 		status_path => $args{'status_path'} || &subs::home('~/.president/sco.json'),
+		(defined $args{'pipe'} ? (pipe => ($args{'pipe'} ? 1 : 0)) : ()),
 		state => 'idle',
 		peer => '',
 		since => 0,
@@ -63,6 +64,8 @@ sub helper_command {
 # a remapped source let the gateway own the audio without touching the defaults.
 sub pipe_mode {
 	my ($self) = @_;
+	# a caller (a test) may say outright which transport it means
+	return $self->{'pipe'} ? 1 : 0 if exists $self->{'pipe'};
 	my $on = eval { &subs::misc_setting('sco_pipe') } || '';
 	return $on eq 'yes';
 }
@@ -189,6 +192,10 @@ sub arm {
 
 	$self->{'steps'} = \@steps;
 	$self->{'step_at'} = 0;
+	# the record options belong to the plan, not to one transport: pipe mode
+	# returns below, and used to leave them unset, so a screened call ran the
+	# helper's 30 s / 1.8 s defaults instead of what the phone asked for
+	$self->{'record_opts'} = $args{'record'} || {};
 	if ($self->pipe_mode()) {
 		require JawnOS::Sco::Mixer;
 		$self->{'mixer'} = JawnOS::Sco::Mixer->new();
@@ -205,7 +212,6 @@ sub arm {
 	$self->{'call_id'} = $args{'call_id'} || &call_id();
 	$self->{'last_error'} = '';
 	$self->{'last_event'} = '';
-	$self->{'record_opts'} = $args{'record'} || {};
 	$self->{'state'} = 'starting';
 
 	return { ok => 0, error => 'the SCO helper would not start' } unless $self->_spawn(@cmd);

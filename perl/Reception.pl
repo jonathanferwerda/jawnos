@@ -59,8 +59,8 @@ sub keep_new_recordings {
 		1;
 	};
 	return unless $copy;
-	# the name in words, the way dictation does it: the clip goes to the house's
-	# transcription role (whisper.cpp on this machine, or the chosen cloud model)
+	# the name in words: base and the CLI, not the warm server's tiny model - tiny
+	# reads a narrowband name as "Listen strong." where base reads "This is John."
 	my $name = '';
 	my $bytes = '';
 	if (open(my $rf, '<', $kept)) {
@@ -69,7 +69,7 @@ sub keep_new_recordings {
 		close $rf;
 	}
 	if (length $bytes) {
-		$name = eval { &subs::whisper_transcribe($bytes, 'auto') } || '';
+		$name = eval { &subs::whisper_name_transcribe($bytes, 'auto') } || '';
 		$name =~ s/^\s+|\s+$//g;
 	}
 	if (open(my $fh, '>>', $index)) {

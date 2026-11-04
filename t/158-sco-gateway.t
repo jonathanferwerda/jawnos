@@ -186,6 +186,22 @@ is($gateway->recording_path('.hidden'), '', 'a dot file is not served');
 my $cancelled = $gateway->cancel();
 is($cancelled->{'state'}, 'idle', 'cancel puts the gateway down');
 
+# Pipe mode returns before the adapter branch, and used to leave the record
+# options unset: a screened call then ran the helper's 30 s / 1.8 s defaults
+# instead of the 20 s / 2 s the phone asked for.
+my $pipeway = JawnOS::Sco::Gateway->new(
+	dir => "$dir/sco-pipe",
+	helper => $fake,
+	status_path => "$dir/sco-pipe.json",
+	pipe => 1,
+);
+my $pipe_armed = $pipeway->arm(record => { ms => 20000, silence_ms => 2000, min_ms => 400 });
+is($pipe_armed->{'state'}, 'waiting', 'pipe mode waits for the call streams');
+is($pipeway->{'record_opts'}->{'ms'}, 20000, 'the record ceiling reaches pipe mode');
+is($pipeway->{'record_opts'}->{'silence_ms'}, 2000, 'and so does the pause that ends a name');
+is($pipeway->{'record_opts'}->{'min_ms'}, 400, 'and the speech floor');
+$pipeway->cancel();
+
 # ------------------------------------------------------- the real helper
 # The voice gate, with a file standing in for the caller. These are the cases a
 # screened call actually has: a caller who waits a moment, a line whose own

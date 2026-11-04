@@ -1,7 +1,8 @@
-# tests-for: lib/JawnOS/Manager/Part12.pm lib/JawnOS/Controller/manager_phone.pm lib/JawnOS/Routes/manager_phone.pm templates/apps/phone.html.ep public/js/manager/phone.js perl/Reception.pl
+# tests-for: lib/JawnOS/Manager/Part12.pm lib/JawnOS/Controller/manager_phone.pm lib/JawnOS/Routes/manager_phone.pm templates/apps/phone.html.ep public/js/manager/phone.js perl/Reception.pl lib/JawnOS/Domain/Ai.pm
 # covers:    One number's own call route: saved, cleared, resolved before the
 #            person's relationship, carried on the sync blob and offered by the
-#            routing sheet; the reception worker only arms where the helper is.
+#            routing sheet; the reception worker only arms where the helper is;
+#            the name a screened call leaves is the name, not the sentence.
 use strict;
 use warnings;
 
@@ -101,5 +102,17 @@ like($reception, qr/\$state eq 'armed' \|\| \$state eq 'waiting'/,
 like($reception, qr/silence_ms => 2000/,
 	'the name ends on a pause the caller makes, not on a fixed clip length');
 like(read_file("$repo/docs/reception.md"), qr/jawn_call_in/, 'the working audio setup is written down');
+
+# ------------------------------------------------------------ the name
+is(&subs::name_from_transcript('This is John.'), 'John',
+	'the name is filed, not the sentence around it');
+is(&subs::name_from_transcript("It's Jon speaking."), 'Jon',
+	'and a caller who says it that way');
+is(&subs::name_from_transcript('My name is Ada Lovelace'), 'Ada Lovelace',
+	'a full name keeps both words');
+is(&subs::name_from_transcript('Smith'), 'Smith', 'a bare name is left alone');
+is(&subs::name_from_transcript(''), '', 'nothing said is no name');
+like($reception, qr/whisper_name_transcribe/,
+	'the name takes the model that reads a narrowband clip');
 
 done_testing();
