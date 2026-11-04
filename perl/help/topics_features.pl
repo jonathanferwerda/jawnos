@@ -63,6 +63,7 @@ $topic{'windows'} = {
 		verified => '2026-11-01',
 		body => [
 			'Everything that opens opens in a window. Windows stack in the order you last touched them, drag by their title bar, resize by their edge, and minimise to a small bar. Pressing or scrolling in a window brings it to the front, so the window you are reading is the one you are working in.',
+			'The title bar of the window in front is drawn at full strength, and the other windows\' title bars are greyed, so before you type it is plain which window will receive the keys.',
 			'The title bar shows the app\'s icon and name and the four window controls: minimise, restore, maximise and close. Press the app\'s icon to bring out the two quiet controls beside it - Help (the question mark, or the page agent on the Internet window) and the pin - and press it again to put them away; a press anywhere else does the same. They sit behind the icon so a narrow window keeps its room for the title instead of a row of six buttons.',
 			'A window has no place of its own until you pin it. The pin is the map-pin button in the title bar: press it and the window keeps the size and position it is at, and the pin shows pressed in while it holds. Press it again and the window forgets that place, so the next time it opens it steps down and across from the window before it like any other. Moving or resizing an unpinned window never pins it - only the pin does.',
 			'A pinned place is kept for this device, and saved with the screen it was saved on: a window pinned on a wide desk opens on a narrower screen scaled to fit and in the same corner, with the edge it sat nearest stayed nearest (flush right stays flush right), instead of hanging off the edge.'
@@ -97,6 +98,7 @@ $topic{'taskbar'} = {
 		summary => 'A reorderable row of window slots, the clock, the start button and pins.',
 		body => [
 			'The taskbar is an ordered list of slots: the open windows, the clock, the start button, the search box and any apps or keyboards you have pinned. It can sit on any edge, be shown, hidden or set to auto-hide.',
+			'The open windows sit in the order they were opened, oldest on the left, and raising one does not move its tile. Drag a tile along the window list to put it where you want; a window opened after that joins at the right-hand end.',
 			'While the on-screen keyboard is up, typing in the search box lifts the box itself to just above the keys - the bar it lives in keeps its own mode - and its result list opens in the space above the keys, never across them.',
 			'Right-click (or long-press) the bar for its context menu: rearrange the slots in edit mode, move it, choose the clock\'s format and time zone, and add items.',
 			'The clock shows the time the view is standing on, so when the time machine or a timeshift carries you off the present its plate lights up - a warm, breathing glow - and goes dark again when the face reads now.',
@@ -107,6 +109,7 @@ $topic{'taskbar'} = {
 		steps => [
 			'Right-click the bar to open its context menu.',
 			'Turn on edit mode to rearrange the slots and pins.',
+			'Or drag a window tile along the bar to reorder the open windows.',
 			'Or use Position to move the bar, and Autohide to tuck it away.',
 			'Set the clock\'s format and time zone from the same menu.',
 			'Click the clock and type a time to travel to it.'

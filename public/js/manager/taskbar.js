@@ -47,6 +47,10 @@ var jawnosBars = {
 	// the bar's furniture in order (drag/drop edit mode writes it), and whether
 	// the bar tucks itself away when idle
 	order: jawnosTaskbarOrderSetting(jawnos_bar_settings['taskbar_order']),
+	// the open windows' own order: the keys the person dragged into place, in
+	// the order they left them. An empty list means the order they were opened
+	// in, and a window opened after a drag joins at the right-hand end.
+	window_order: jawnosTaskbarWindowOrderSetting(jawnos_bar_settings['taskbar_window_order']),
 	autohide: jawnos_bar_settings['taskbar_autohide'] || 'off'
 };
 
@@ -56,6 +60,15 @@ var jawnosBars = {
 function jawnosTaskbarOrderSetting(value) {
 	if (Array.isArray(value)) { return value.length ? value : null; }
 	return jawnosTaskbarParseOrder(value);
+}
+
+// The window list's order is a list of window keys (see
+// jawnosTaskbarWindowKey); an older value may still be JSON text. No key list
+// is a valid answer - it means "the order they were opened in" - so an empty
+// value lands as an empty array rather than falling back to undefined.
+function jawnosTaskbarWindowOrderSetting(value) {
+	if (Array.isArray(value)) { return value; }
+	return jawnosTaskbarParseOrder(value) || [];
 }
 
 // A string form of the order setting, if that is what came through.

@@ -38,6 +38,12 @@
 	transform: translateY(0);
 }
 
+/* A desk's dock is an explicit ask, so while it is up it holds the input: it
+   paints over whatever top-level window is behind it, and it keeps the field
+   (or the calculator) it was using until another field takes the keys or the
+   dock is closed. */
+#jawn_soft_keyboard.soft_kb_sticky { z-index: 100000; }
+
 .soft_kb[hidden] {
 	display: none;
 }

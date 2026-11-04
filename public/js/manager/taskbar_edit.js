@@ -190,6 +190,68 @@ function jawnosTaskbarOrderApply() {
 	}
 }
 
+// ---- the open windows' own order -------------------------------------------
+// The bar's furniture has its order (above); the window tiles inside it have
+// their own. They arrive in the order they were opened and stay there while
+// they are raised. Dragging a tile writes the order they were left in, and a
+// window opened later joins at the right-hand end (windows.js does the sort; a
+// saved key that no longer names an open window is dropped there).
+var jawnosTaskbarWindowDragAt = 0;
+
+function jawnosTaskbarWindowOrderSave() {
+	var order = [];
+	// every tile on the bar, including an app pin's parked window button, so a
+	// pinned window keeps its place when it is unpinned
+	$('#taskbar .window_toggle').each(function () {
+		order.push(jawnosTaskbarWindowKey(this));
+	});
+	if (typeof jawnosBars == 'undefined') { return; }
+	jawnosBars.window_order = order;
+	jawnosTaskbarSave('taskbar_window_order', JSON.stringify(order));
+}
+
+// A window tile drags within the window list, on any bar state except edit mode
+// (there the whole list is one slot being dragged). `distance` leaves a plain
+// press - raise, minimise, restore - a press; only a real drag sorts.
+function jawnosTaskbarWindowDragInit() {
+	var list = $('#taskbar_windows');
+	if (!list.length || list.hasClass('ui-sortable')) { return; }
+	list.sortable({
+		items: '> .window_toggle',
+		axis: 'x',
+		distance: 8,
+		tolerance: 'pointer',
+		placeholder: 'taskbar_window_placeholder',
+		forcePlaceholderSize: true,
+		start: function () { list.addClass('taskbar_window_dragging'); },
+		stop: function () {
+			list.removeClass('taskbar_window_dragging');
+			jawnosTaskbarWindowDragAt = Date.now();
+			jawnosTaskbarWindowOrderSave();
+		}
+	});
+	if (jawnosTaskbarEditing()) { list.sortable('disable'); }
+}
+
+// ---- which window has the keyboard -----------------------------------------
+// The front window's title bar is drawn at full strength and every other one
+// is greyed, so before a key is pressed it is plain where the press will land.
+// The comparison is by element, not app: a Terminal or a Folders window can
+// have siblings of its own, and only the one in front has the focus.
+function jawnosWindowFocusApply() {
+	var top = null;
+	var topz = -1;
+	$('.wind').filter(':visible').each(function () {
+		var z = parseInt($(this).css('z-index'), 10) || 0;
+		if (z >= topz) { topz = z; top = this; }
+	});
+	$('.wind').each(function () {
+		var bar = $(this).find('.top_navbar').first();
+		if (!bar.length) { return; }
+		bar.attr('data-focus', (this === top) ? 'on' : 'off');
+	});
+}
+
 // Read the bar back into an order and keep it. Called when a drag settles.
 function jawnosTaskbarOrderSave() {
 	var order = [];
@@ -229,7 +291,11 @@ function jawnosTaskbarSave(setting, value) {
 function jawnosTaskbarEdit(on) {
 	var bar = $('#taskbar');
 	if (!bar.length) { return; }
+	// the window tiles drag on their own while the bar is not in edit mode; in
+	// edit mode the whole window list is the slot being dragged
+	var tiles = bar.find('#taskbar_windows');
 	if (on) {
+		if (tiles.hasClass('ui-sortable')) { tiles.sortable('disable'); }
 		bar.addClass('taskbar_edit');
 		if (!bar.hasClass('ui-sortable')) {
 			bar.sortable({
@@ -244,6 +310,7 @@ function jawnosTaskbarEdit(on) {
 	else {
 		if (bar.hasClass('ui-sortable')) { bar.sortable('disable'); }
 		bar.removeClass('taskbar_edit');
+		if (tiles.hasClass('ui-sortable')) { tiles.sortable('enable'); }
 	}
 }
 
@@ -397,6 +464,8 @@ function jawnosTaskbarPinsRefresh() {
 		el.removeAttr('state');
 		if (visible) { el.attr('state', (app == top) ? 'active' : 'open'); }
 	});
+	// the window in front keeps a bright title bar; the rest are greyed
+	if (typeof jawnosWindowFocusApply == 'function') { jawnosWindowFocusApply(); }
 }
 
 function jawnosTaskbarClockZones() {

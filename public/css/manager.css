@@ -659,6 +659,19 @@ body.dark_theme #taskbar { background-image: linear-gradient(rgba(255,255,255,.0
 	box-shadow: none;
 }
 
+/* The window tiles hold the order the windows were opened in (oldest left,
+   newest right), or the order they were last dragged into, and any tile can be
+   dragged along the list into another place. A press without travel still
+   answers as a press; only a real drag sorts. */
+#taskbar_windows .window_toggle { cursor: grab; }
+#taskbar_windows.taskbar_window_dragging .window_toggle { cursor: grabbing; }
+.taskbar_window_placeholder {
+	flex: 0 0 auto;
+	opacity: .35;
+	border: dashed 2px var(--ink-muted, #888);
+	border-radius: calc(var(--jawnos-corner, 12px) * .75);
+}
+
 /* Edit mode: the slots drag along the bar. While it is on the furniture ignores
    the pointer (a press would open a window or a menu mid-drag), but the slots
    themselves still take the drag. */
@@ -995,7 +1008,10 @@ body.dark_theme .wind { box-shadow: 0 22px 56px rgba(0,0,0,.55), 0 2px 8px rgba(
    edge, out of line with .window_contents. The border is the same width on all
    four sides, so the bar reads evenly - and its top corners land exactly on the
    frame ring, which carries the same width. */
-.top_navbar { line-height: 0; box-sizing: border-box; height: var(--navbar_h, 36px); border-radius: var(--window_radius, var(--jawnos-corner, 12px)) var(--window_radius, var(--jawnos-corner, 12px)) 0 0; display: flex; align-items: center; padding: 0 2px; overflow: hidden; background-image: linear-gradient(rgba(255,255,255,.14), rgba(0,0,0,.04)); user-select: none; -webkit-user-select: none; }
+.top_navbar { line-height: 0; box-sizing: border-box; height: var(--navbar_h, 36px); border-radius: var(--window_radius, var(--jawnos-corner, 12px)) var(--window_radius, var(--jawnos-corner, 12px)) 0 0; display: flex; align-items: center; padding: 0 2px; overflow: hidden; background-image: linear-gradient(rgba(255,255,255,.14), rgba(0,0,0,.04)); user-select: none; -webkit-user-select: none; transition: opacity .15s ease, filter .15s ease; }
+/* The window in front owns the keyboard: its title bar is at full strength and
+   every other window's is greyed, so it is plain where a key press lands. */
+.top_navbar[data-focus="off"] { opacity: .62; filter: grayscale(.9); }
 body.dark_theme .top_navbar { background-image: linear-gradient(rgba(255,255,255,.06), rgba(0,0,0,.12)); }
 /* the icon sits in a bare tile with a collar of the bar's colour around it;
    the holder and the tile both centre on the bar's line. */

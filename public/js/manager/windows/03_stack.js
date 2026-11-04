@@ -97,6 +97,11 @@ function closeWindow(timestamp) {
 	}
 	$('#window_' + timestamp ).remove();
 	$('#window_icon_' + timestamp).remove();
+	// Closing the window that owns the dock puts the keys away with it, rather
+	// than leaving them aimed at a field that is no longer on the page.
+	if (typeof jawnSoftField !== 'undefined' && jawnSoftField && win.length && $.contains(win[0], jawnSoftField)) {
+		if (typeof softKbHide == 'function') { softKbHide(); }
+	}
 	//pseudonymFreeSpaceFinder();
 	$('#little_window_' + timestamp).remove();
 	var window_saver = sessionStorage.getItem('window_storage');

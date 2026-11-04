@@ -26,7 +26,7 @@ function softKbImeReplace(value) {
 }
 
 function softKbInsert(text, target, nofocus) {
-	var el = target || jawnSoftField;
+	var el = target || softKbLiveField();
 	// the vault's own form is a real field in the page: write it in place, not
 	// into the app's editor
 	if (jawnSoftIme && !el) { softKbImeSend(text); return; }
@@ -79,7 +79,7 @@ function softKbInsert(text, target, nofocus) {
 
 function softKbBackspace() {
 	if (jawnSoftIme && !jawnSoftField) { softKbImeBackspace(); return; }
-	var el = jawnSoftField;
+	var el = softKbLiveField();
 	if (!el) { return; }
 	if (el.isContentEditable) {
 		el.focus({ preventScroll: true });
@@ -180,7 +180,7 @@ function softKbEnter() {
 		if (window.JawnIme && typeof window.JawnIme.enter === 'function') { window.JawnIme.enter(); }
 		return;
 	}
-	var el = jawnSoftField;
+	var el = softKbLiveField();
 	if (!el) { return; }
 	if (el.tagName == 'TEXTAREA' || el.isContentEditable) { softKbInsert('\n'); return; }
 	$(el).trigger($.Event('keydown', { key: 'Enter', keyCode: 13, which: 13 }));
@@ -221,11 +221,12 @@ function softKbCalcSyncNumeric() {
 	if (value == '-' || value == '.') { value = ''; }
 	if (/\.$/.test(value)) { value = value.slice(0, -1); }
 	if (jawnSoftIme && !jawnSoftField) { softKbImeSetNumber(value); return; }
-	if (!jawnSoftField) { return; }
+	var field = softKbLiveField();
+	if (!field) { return; }
 	jawnSoftSetting = true;
-	jawnSoftField.value = value;
-	$(jawnSoftField).trigger('input');
-	$(jawnSoftField).trigger($.Event('keyup', { key: ' ', keyCode: 32 }));
+	field.value = value;
+	$(field).trigger('input');
+	$(field).trigger($.Event('keyup', { key: ' ', keyCode: 32 }));
 	jawnSoftSetting = false;
 }
 
@@ -254,11 +255,13 @@ function softKbCalcEquals() {
 			softKbImeSetNumber(out);
 			return;
 		}
+		var field = softKbLiveField();
+		if (!field) { softKbInsert(out); return; }
 		jawnSoftSetting = true;
-		jawnSoftField.value = out;
-		try { jawnSoftField.focus({ preventScroll: true }); } catch (err) { jawnSoftField.focus(); }
-		$(jawnSoftField).trigger('input');
-		$(jawnSoftField).trigger('change');
+		field.value = out;
+		try { field.focus({ preventScroll: true }); } catch (err) { field.focus(); }
+		$(field).trigger('input');
+		$(field).trigger('change');
 		jawnSoftSetting = false;
 	}
 	else { softKbInsert(out); }

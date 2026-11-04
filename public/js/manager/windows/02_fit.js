@@ -23,6 +23,8 @@ function windowMinimizer(timestamp,app) {
 		$('#window_' + timestamp).css({'height': tnh, 'width': tnw });
 	}
 	windowDimensionSetter(win);
+	// the window that steps forward or away from the front owns the keyboard cue
+	if (typeof jawnosWindowFocusApply == 'function') { jawnosWindowFocusApply(); }
 }
 
 function windowHalfski(win,side) {
@@ -160,6 +162,7 @@ function windowRestorer(timestamp,app) {
 		win.attr('visible', 'no');
 	}
 	windowDimensionSetter(win);
+	if (typeof jawnosWindowFocusApply == 'function') { jawnosWindowFocusApply(); }
 
 }
 

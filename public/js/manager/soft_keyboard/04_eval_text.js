@@ -441,6 +441,10 @@ $(document).on('click', 'input, textarea, [contenteditable="true"]', function ()
 
 $(document).on('focusout', function (e) {
 	if (!softKbEditable(e.target)) { return; }
+	// a desk's dock keeps the input until another field asks for it (or the
+	// dock is closed); focusing a window's body or raising another window must
+	// not take the keys away
+	if (jawnSoftSticky) { return; }
 	clearTimeout(jawnSoftHideTimer);
 	jawnSoftHideTimer = setTimeout(function () {
 		var active = document.activeElement;

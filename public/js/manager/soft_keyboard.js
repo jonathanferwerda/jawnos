@@ -22,6 +22,11 @@
 // window it is fixed above the taskbar. The focused field is scrolled clear of it.
 
 var jawnSoftField = null;
+// On a desk the dock is an explicit ask, so once it is up it holds the input:
+// another top-level window coming and going must not take the keys away. It
+// stays until another field takes them or the dock is closed. A phone keeps the
+// follow-the-field behaviour.
+var jawnSoftSticky = false;
 var jawnSoftMode = 'letters';
 var jawnSoftShift = false;
 var jawnSoftNumeric = false;
@@ -360,6 +365,8 @@ function softKbDockOpen(mode) {
 	jawnSoftNumeric = false;
 	softKbModeSet(want);
 	softKbReserve();
+	// the calculator needs no field: the dock itself holds the input from here
+	if (softKbDesk()) { softKbStickySet(true); }
 }
 
 function softKbOn() {
@@ -566,6 +573,7 @@ function softKbShow(el) {
 	jawnMeasureHide();
 	var changed = jawnSoftField !== el;
 	jawnSoftField = el;
+	if (softKbDesk()) { softKbStickySet(true); }
 	jawnSoftNumeric = softKbNumeric(el);
 	jawnSoftContext = softKbContext(el);
 	if (changed) {
@@ -602,6 +610,7 @@ function softKbHide() {
 	softKbMagnifyHide();
 	softKbRepeatStop();
 	softKbDictateStop();
+	softKbStickySet(false);
 	$('#soft_kb_layouts').prop('hidden', true);
 	$('#soft_kb_layout_button').attr('aria-expanded', 'false').removeClass('active');
 	softKbSlideDown($('#jawn_soft_keyboard'));
@@ -624,6 +633,26 @@ function softKbHide() {
 
 function softKbVisible() {
 	return $('#jawn_soft_keyboard').is(':visible');
+}
+
+// The dock holds the input on a desk until another field claims it or it is
+// put away. The stylesheet uses the class to keep the dock over any top-level
+// window while it owns the keys.
+function softKbStickySet(on) {
+	jawnSoftSticky = !!on;
+	$('#jawn_soft_keyboard').toggleClass('soft_kb_sticky', jawnSoftSticky);
+}
+
+// A window re-render replaces the field's element; keep the caret in the same
+// field by finding its replacement by id rather than typing into a detached
+// node (which looked like the keys had stopped working).
+function softKbLiveField() {
+	if (!jawnSoftField) { return null; }
+	if (document.contains(jawnSoftField)) { return jawnSoftField; }
+	var id = jawnSoftField.id;
+	var found = id ? document.getElementById(id) : null;
+	jawnSoftField = (found && softKbEditable(found)) ? found : null;
+	return jawnSoftField;
 }
 
 function softKbPlace(el) {

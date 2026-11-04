@@ -184,5 +184,6 @@ $(document).ready(function () {
 		taskbarDisplayer.__jawnos_wrapped = true;
 	}
 	if (typeof jawnosTaskbarOrderApply == 'function') { jawnosTaskbarOrderApply(); }
+	if (typeof jawnosTaskbarWindowDragInit == 'function') { jawnosTaskbarWindowDragInit(); }
 	if (typeof jawnosTaskbarPinsRefresh == 'function') { jawnosTaskbarPinsRefresh(); }
 });

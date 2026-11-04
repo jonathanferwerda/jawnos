@@ -63,13 +63,71 @@ function window_initializer(id) {
 	wind.css({ 'left': '30%', 'bottom': 0, 'background-color': 'red', 'height': '80%', 'width': '70%' }).show();
 }
 
-// The taskbar's window list: one button per open window, oldest on the left and
-// newest on the right (ascending z-index, so the most recently raised window
-// sits at the right hand end), each wearing the window's own icon and name.
-// This is the list the start menu used to carry at its foot, so every caller
-// that kept the menu's strip fresh keeps the bar fresh by the same name. Dialog
-// boxes count as windows too - the Alert, a folder question and a job's progress
-// each get a tile - so any of them can be brought back or minimised from here.
+// A window tile's identity, stable enough to keep a dragged order: a dialog's
+// own id, a Terminal's session, a Folders window's id, or the app itself for
+// the single-window apps (which the window maker reuses rather than doubling).
+function jawnosTaskbarWindowKey(v) {
+	var el = $(v);
+	var dialog_id = el.attr('data-dialog-id') || '';
+	if (dialog_id) { return 'dialog:' + dialog_id; }
+	var app = el.attr('app') || '';
+	var terminal_id = el.attr('data-terminal-id') || '';
+	if (terminal_id) { return 'terminal:' + terminal_id; }
+	var window_id = el.attr('data-window-id') || '';
+	if (window_id) { return 'window:' + window_id; }
+	return 'app:' + app;
+}
+
+// When a window entered the list. The server stamps every window with the
+// moment it opened; a dialog is handed a sequence the first time it is seen (it
+// is appended in the order it opened), so with no dragged order the tiles read
+// left-to-right in the order they came up.
+var jawnosTaskbarSeqSeen = 0;
+function jawnosTaskbarWindowSeq(v) {
+	var el = $(v);
+	var timestamp = parseInt(el.attr('timestamp'), 10);
+	if (!isNaN(timestamp) && timestamp > 0) { return timestamp; }
+	var seen = parseInt(el.attr('data-taskbar-seq'), 10);
+	if (!isNaN(seen) && seen > 0) { return seen; }
+	jawnosTaskbarSeqSeen = Math.max(Date.now(), jawnosTaskbarSeqSeen + 1);
+	el.attr('data-taskbar-seq', jawnosTaskbarSeqSeen);
+	return jawnosTaskbarSeqSeen;
+}
+
+// The tiles in the order the person left them. Saved keys that no longer name
+// an open window are dropped - a closed window has gone, so opening it again is
+// a new one and belongs on the right - and tiles with no saved key follow in
+// the order they were opened.
+function jawnosTaskbarWindowOrderTiles(tiles) {
+	var saved = (typeof jawnosBars != 'undefined' && jawnosBars.window_order) ? jawnosBars.window_order.slice() : [];
+	var live = {};
+	tiles.forEach(function (t) { live[t.key] = 1; });
+	var pruned = saved.filter(function (k) { return live[k]; });
+	if (pruned.length != saved.length && typeof jawnosBars != 'undefined') {
+		jawnosBars.window_order = pruned;
+		if (typeof jawnosTaskbarSave == 'function') { jawnosTaskbarSave('taskbar_window_order', JSON.stringify(pruned)); }
+	}
+	var pos = {};
+	pruned.forEach(function (k, i) { if (pos[k] === undefined) { pos[k] = i; } });
+	tiles.sort(function (a, b) {
+		var ia = pos[a.key];
+		var ib = pos[b.key];
+		if (ia === undefined && ib === undefined) { return (a.seq - b.seq) || (a.index - b.index); }
+		if (ia === undefined) { return 1; }
+		if (ib === undefined) { return -1; }
+		return (ia - ib) || (a.index - b.index);
+	});
+	return tiles;
+}
+
+// The taskbar's window list: one button per open window, in the order the
+// windows were opened - oldest on the left, newest on the right - until the
+// person drags a tile somewhere else. A dragged order is kept (the misc setting
+// taskbar_window_order holds the window keys), and a window opened after that
+// joins at the right-hand end. Raising a window never changes its place: the
+// order is not the z-order. Dialog boxes count as windows too - the Alert, a
+// folder question and a job's progress each get a tile - so any of them can be
+// brought back or minimised from here.
 function taskbarDisplayer(destination) {
 	if (!destination) {
 		destination = '#taskbar_windows';
@@ -99,7 +157,7 @@ function taskbarDisplayer(destination) {
 		new_icon.removeClass('window_icon');
 		new_icon.addClass('window_toggle_icon little_thumb');
 
-		tiles.push({ z: z, html: new_icon.wrap('<span/>').parent().html() });
+		tiles.push({ z: z, key: jawnosTaskbarWindowKey(v), seq: jawnosTaskbarWindowSeq(v), index: tiles.length, html: new_icon.wrap('<span/>').parent().html() });
 
 		new_icon.show();
 	});
@@ -117,12 +175,17 @@ function taskbarDisplayer(destination) {
 		var icon = $('<img class="window_toggle_icon little_thumb">').attr('src', icon_src)
 			.attr('app', 'dialog').attr('formatted_name', title)
 			.attr('data-dialog-id', dialog_id);
-		tiles.push({ z: numeral($(v).css('z-index')).value(), html: icon.wrap('<span/>').parent().html() });
+		tiles.push({ z: numeral($(v).css('z-index')).value(), key: jawnosTaskbarWindowKey(v), seq: jawnosTaskbarWindowSeq(v), index: tiles.length, html: icon.wrap('<span/>').parent().html() });
 	});
-	tiles.sort(function(a, b) { return a.z - b.z; });
+	// The dragged order when there is one, otherwise the order the windows were
+	// opened in (see jawnosTaskbarWindowOrderTiles).
+	jawnosTaskbarWindowOrderTiles(tiles);
 	var html = '';
 	var stamp = '';
-	$.each(tiles, function(i,v) { html += v.html; stamp += v.z + '\u0001' + v.html + '\u0002'; });
+	// The stamp deliberately leaves the z-index out: raising a window is not a
+	// change to the list, and rebuilding identical tiles on every focus made the
+	// buttons blink. The state pass (jawnosTaskbarPinsRefresh) still runs.
+	$.each(tiles, function(i,v) { html += v.html; stamp += v.html + '\u0002'; });
 	// The view poll calls windowBackgroundAdjuster every few seconds, and that
 	// calls this. Rebuilding identical tiles emptied and refilled the bar each
 	// time, which made every window button blink. Paint only when the list (its
@@ -196,6 +259,9 @@ function startMenuDisplayer(destination) {
 
 
 $(document).on('click', '.window_toggle', function() {
+	// a tile that was just dragged into a new place must not also answer as a
+	// press (raise or minimise the window it holds)
+	if (typeof jawnosTaskbarWindowDragAt != 'undefined' && Date.now() - jawnosTaskbarWindowDragAt < 300) { return; }
 
 	var timestamp = Date.now();
 	var dialog_id = $(this).attr('data-dialog-id') || '';
