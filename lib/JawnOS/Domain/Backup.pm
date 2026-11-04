@@ -383,24 +383,10 @@ sub backup_now {
 		$tdb->delete('cache', { context => 'template' });
 		$tdb->delete('cache', { context => 'header' });
 		$tdb->query('VACUUM');
-		my $max_backups = &subs::misc_setting_list()->{$signatorial}->{'max_backups'} || 3;
-		my $backup_list_command = 'ls -t ' . $path . '_*.enc';
-		my $backups = `$backup_list_command`;
-
-		my @backups = split "\n", $backups;
-		@backups = grep { $_ ne $enc_file } @backups;
-		if (scalar @backups > $max_backups) {
-			for (my $n = $max_backups; $n < scalar @backups; $n++) {
-
-				my $shredder = 'shred -u ' . $backups[$n];
-				my $backs = &subs::db_select('backups', undef, { enc_file => $backups[$n] })->hashes;
-				foreach my $ba ( @{$backs} ) {
-					&subs::deletion_registration({ table => 'backups', uuid => $ba->{'uuid'}, scope => 'single', server_time => $ba->{'server_time'} });
-				}
-				&subs::db_delete('backups', { enc_file => $backups[$n] });
-				`$shredder`;
-			}
-		}
+		# Delete this machine's dated archives beyond its limit. The prune lives
+		# beside the limit and the remover so a manual run deletes exactly what
+		# the next scheduled backup would.
+		&backup_prune();
 
 	}
 
@@ -559,6 +545,85 @@ sub durable_settings_where {
 	return "(app not in ($app_list) or device = 'all')"
 		. " and setting not in ('open_tabs','scrollTop','jopen','dimensions','utility_controller','remote_connect_timer','remote_upgrade','remote_backup_lock','remote_auth_probe_timer','ws_pa','chip_chyea','settings_sync_timer','remote_sync_state','log','schema_version','toggle','ci','errors','email_config')"
 		. " and setting not like 'remote\\_%' escape '\\'";
+}
+
+# How many dated archives this machine keeps.
+#
+# The Misc setting is stored per device class (mobile, server, computer) and may
+# also carry an override for this machine's own signatorial. A machine with
+# neither keeps three. Resolved in one place so the prune and the panel cannot
+# disagree, and so a missing class row falls through to the next choice instead
+# of becoming an accidental 3.
+sub backup_limit {
+	my $misc = &subs::misc_setting_list();
+	foreach my $key ( &subs::signatorial_designer(), &subs::device_setter() ) {
+		next unless defined $key && length $key;
+		my $value = $misc->{$key}->{'max_backups'};
+		return $value + 0 if defined $value && $value =~ /^\d+$/;
+	}
+	return 3;
+}
+
+# Delete the dated archives beyond this machine's limit. Shared by backup_now
+# (after the new archive is built) and by an operator run, so the panel, the
+# schedule and a manual prune agree on the limit and on what is removed.
+#
+# Newest first: the newest `limit` archives survive, everything older goes with
+# its registry row (and a tombstone, so the deletion syncs). Read in Perl rather
+# than through `ls -t`, which word-splits a path with a space and used to leave
+# the archive list empty.
+sub backup_prune {
+	my $database = ( &subs::database_grabber() )[1];
+	my $databaser = $database || '';
+	$databaser =~ s{.*/}{};
+	$databaser =~ s/\.db$//i;
+	$databaser =~ s/_\d+$//;
+	my $path = &subs::backups_dir() . '/' . $databaser;
+	my $enc_file = $path . '.enc';
+	my $limit = &backup_limit();
+	my @backups = sort { (stat $b)[9] <=> (stat $a)[9] }
+		grep { $_ ne $enc_file } glob($path . '_*.enc');
+	my $kept = scalar @backups;
+	my $removed = 0;
+	if ($kept > $limit) {
+		for (my $n = $limit; $n < $kept; $n++) {
+			my $backs = &subs::db_select('backups', undef, { enc_file => $backups[$n] })->hashes || [];
+			foreach my $ba ( @{$backs} ) {
+				&subs::deletion_registration({ table => 'backups', uuid => $ba->{'uuid'}, scope => 'single', server_time => $ba->{'server_time'} });
+			}
+			&subs::db_delete('backups', { enc_file => $backups[$n] });
+			$removed++ if &backup_prune_remove($backups[$n]);
+		}
+	}
+	return { limit => $limit, seen => $kept, kept => ($kept > $limit ? $limit : $kept), removed => $removed };
+}
+
+# Delete one dated archive.
+#
+# `shred -u` is the right tool where the platform has it; Termux does not, and
+# the prune used to trust it anyway. The rows were already deleted, so the
+# deletion looked done while the file stayed on disk - the phone reached 108
+# archives against a limit of 20, 17GB in database/backups. The unlink is the
+# answer that always works; shred is only the extra pass.
+# The secure-delete tool this platform has, or '' when it has none (Termux).
+# Resolved once per call: a prune is rare, and a path that exists is cheaper
+# than a PATH search.
+sub backup_shred_tool {
+	foreach my $candidate ( '/usr/bin/shred', '/bin/shred' ) {
+		return $candidate if -x $candidate;
+	}
+	my $found = `command -v shred 2>/dev/null`;
+	chomp $found if defined $found;
+	return (defined $found && length $found) ? $found : '';
+}
+
+sub backup_prune_remove {
+	my ($file) = @_;
+	return 0 unless defined $file && length $file;
+	my $shred = &backup_shred_tool();
+	system($shred, '-u', $file) if $shred ne '';
+	unlink $file if -e $file;
+	return (-e $file) ? 0 : 1;
 }
 
 sub sync_table_list {
