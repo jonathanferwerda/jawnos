@@ -45,12 +45,11 @@
 			<div class="people_relationship_row">
 				<label for="people_relationship_<%= $app %>"><%= &subs::ui('Relationship') %></label>
 				<select id="people_relationship_<%= $app %>" class="people_relationship_select" app="<%= $app %>">
-					<option value="" <% if (!length($relationship || '')) { %>selected<% } %>><%= &subs::ui('Not set') %></option>
 					<% foreach my $opt ( @{&subs::relationship_options()} ) { %>
-						<option value="<%= $opt->{'value'} %>" data-rating="<%= $opt->{'rating'} %>" <% if (($relationship || '') eq $opt->{'value'}) { %>selected<% } %>><%= &subs::ui(ucfirst($opt->{'value'})) %></option>
+						<option value="<%= $opt->{'value'} %>" data-rating="<%= $opt->{'rating'} %>" <% if ((&subs::relationship_normalize($relationship) eq $opt->{'value'})) { %>selected<% } %>><%= $opt->{'label'} %></option>
 					<% } %>
 				</select>
-				<span class="people_relationship_rating"><%= length($relationship || '') ? &subs::relationship_rating($relationship) : '' %></span>
+				<span class="people_relationship_rating"><%= &subs::relationship_rating($relationship) %></span>
 			</div>
 		</div>
 	</div>

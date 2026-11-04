@@ -24,6 +24,17 @@ our $site_types = {
 	'dangerous' => { colour => 'red', icon => '/images/make believe/explosion.png', name => 'dangerous', rating => 3 }
 };
 
+# A person's relationship is a configuration, like a place's visibility, not an
+# app measure. Self and friend share the safest rating; a stranger is neutral; an
+# enemy is the dangerous end that can lower a room's exposure.
+our $relationship_types = {
+	'self'     => { name => 'self',     rating => 1 },
+	'friend'   => { name => 'friend',   rating => 1 },
+	'stranger' => { name => 'stranger', rating => 2 },
+	'enemy'    => { name => 'enemy',    rating => 3 },
+};
+our @relationship_order = qw/self friend stranger enemy/;
+
 our $last_updater = sub {
 	return $last_update ||= &subs::jawn_version();
 };

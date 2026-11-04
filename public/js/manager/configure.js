@@ -448,14 +448,14 @@ $(document).on('change', '.configure_checkbox', function(e) {
 		}
 	});
 });
-$(document).on('change', '.configure_visibility', function(e) {
+$(document).on('change', '.configure_visibility, .configure_relationship', function(e) {
 	var s = $(this);
 	var parent = s.closest('.appointment_configuration_cell');
 	var display = parent.find('.appointment_display');
 	$.ajax({
 		url: '/manager/configure',
 		type: 'POST',
-		data: { app: s.attr('app'), timestamp: Date.now(), setting: 'visible', value: s.val() },
+		data: { app: s.attr('app'), timestamp: Date.now(), setting: s.attr('setting') || 'visible', value: s.val() },
 		success: function(response) {
 			display.html(response);
 			localStorage.removeItem('manager_search_cache');

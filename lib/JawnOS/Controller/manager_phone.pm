@@ -280,6 +280,8 @@ sub action_24760 {
 		greeting  => $c->param('greeting'),
 		prompt    => $c->param('prompt'),
 		voicemail => $c->param('voicemail'),
+		thanks    => $c->param('thanks'),
+		flows     => $c->param('flows'),
 	});
 	$c->render(json => { ok => 1, ivr => $saved });
 }
@@ -308,6 +310,7 @@ sub action_24755 {
 	$c->render(json => {
 		blocked => &ticket_blacklist_numbers(),
 		names => \%names,
+		relationships => &phone_relationships(),
 		avatars => \%avatars,
 		ivr => $ivr,
 	});

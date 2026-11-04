@@ -306,9 +306,9 @@ $(document).on('click', '.people_person_link_crest', function() {
 	});
 });
 
-// A person's relationship is one of Friend, Stranger or Enemy. It is the same
-// numbered measure the visibility rule reads, so an Enemy present can lower the
-// room's exposure.
+// A person's relationship is one of Self, Friend, Stranger or Enemy. It is a
+// configuration (like a place's visibility), not an app measure; the call-flow
+// matrix reads it.
 $(document).on('change', '.people_relationship_select', function() {
 	var sel = $(this);
 	var app = sel.attr('app') || '';
@@ -318,9 +318,9 @@ $(document).on('change', '.people_relationship_select', function() {
 	var rating = sel.find('option:selected').attr('data-rating') || '';
 	peopleStatus(peopleT('Saving…'));
 	$.ajax({
-		url: '/manager/app_measures',
+		url: '/manager/configure',
 		type: 'POST',
-		data: { app: app, measure: 'relationship', value: value, just_one: 1, setting_only: 'yes', timestamp: Date.now() },
+		data: { app: app, setting: 'relationship', value: value, source: 'people', timestamp: Date.now() },
 		success: function() {
 			peopleStatus(peopleT('Saved.'));
 			var row = $('.people_person_row[app="' + app + '"] .people_relationship');

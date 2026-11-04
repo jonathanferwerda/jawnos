@@ -627,8 +627,8 @@ our %icon_plate_memo;
 
 
 &signatorial_establisher();
-our %relationship_rating = (friend => 1, stranger => 2, enemy => 3);
-our @relationship_order = qw/friend stranger enemy/;
+our %relationship_rating = (self => 1, friend => 1, stranger => 2, enemy => 3);
+our @relationship_order = qw/self friend stranger enemy/;
 
 # A relationship value as a number. Understands the new single values, the old
 # multiple_select JSON list and the old relationship words, so a row written by

@@ -649,6 +649,32 @@ sub guide_message_warranty {
 			&say_it("backfill relationship_types_v1: normalised $n relationship value(s)");
 			return 1;
 		},
+		'relationship_setting_v1' => sub {
+			# A relationship is a configuration setting now, not an app measure.
+			# Move the old measure value onto the direct house-wide row, then remove
+			# the measure key so the measure editor cannot rewrite it.
+			my $rows = &db_query("select uuid, app, value from settings where setting = 'app_measures' and value like '%relationship%'")->hashes || [];
+			my $n = 0;
+			foreach my $row ( @{$rows} ) {
+				my $am = eval { decode_json($row->{'value'}) } || {};
+				next unless ref $am eq 'HASH' && exists $am->{'relationship'};
+				my $old = ref $am->{'relationship'} eq 'HASH' ? $am->{'relationship'}->{'value'} : $am->{'relationship'};
+				my $value = &subs::relationship_value($old);
+				my $existing = &db_query("select value from settings where app = ? and setting = 'relationship' and device = 'all' order by cast(server_time as integer) desc limit 1", $row->{'app'})->hashes->[0];
+				&subs::setting_setter({ app => $row->{'app'}, setting => 'relationship', value => $value, device => 'all' }) unless $existing;
+				delete $am->{'relationship'};
+				if (scalar keys %{$am}) {
+					&db_update('settings', { value => encode_json($am), server_time => &rightNow() }, { uuid => $row->{'uuid'} });
+				}
+				else {
+					&db_delete('settings', { uuid => $row->{'uuid'} });
+				}
+				$n++;
+			}
+			&visibility_cache_clear();
+			&say_it("backfill relationship_setting_v1: moved $n relationship(s) onto settings");
+			return 1;
+		},
 		'visibility_levels_v1' => sub {
 			# Visibility is private/public/dangerous now. The old checkbox words and
 			# the retired on/off map to the three levels: checked/on to public (the

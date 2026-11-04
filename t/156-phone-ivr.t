@@ -35,8 +35,14 @@ is $defaults->{'enabled'}, 'no', 'IVR starts off';
 is $defaults->{'route'}, 'unknown', 'strangers are the default route';
 is $defaults->{'voice'}, &subs::say_default_voice(), 'the default voice is the house default';
 like $defaults->{'prompt'}, qr/name/i, 'the default name prompt asks for a name';
-ok length($defaults->{'greeting'}) && length($defaults->{'voicemail'}),
-	'the greeting and voicemail prompt have defaults';
+ok length($defaults->{'greeting'}) && length($defaults->{'voicemail'}) && length($defaults->{'thanks'}),
+	'the greeting, voicemail prompt and thanks have defaults';
+is_deeply [ sort keys %{ $defaults->{'flows'} } ],
+	[ qw(blacklisted enemy friend self stranger unknown) ],
+	'the flow matrix has the six buckets';
+is $defaults->{'flows'}->{'unknown'}, 'ivr', 'an unknown caller goes to IVR by default';
+is $defaults->{'flows'}->{'friend'}, 'ring', 'a friend rings by default';
+is $defaults->{'flows'}->{'enemy'}, 'reject', 'an enemy is rejected by default';
 
 # ---------------------------------------------------------------- reading
 {
@@ -44,6 +50,8 @@ ok length($defaults->{'greeting'}) && length($defaults->{'voicemail'}),
 		ivr_enabled => 'yes', ivr_machine => 'gw-sig', ivr_route => 'all',
 		ivr_voice => 'piper-john', ivr_greeting => 'Hi there',
 		ivr_prompt => 'Who is this?', ivr_voicemail => 'Leave a message',
+		ivr_thanks => 'Thanks',
+		ivr_flows => '{"unknown":"ring","friend":"ivr"}',
 	);
 	local *subs::setting_grabber = sub {
 		my $request = shift;
@@ -55,6 +63,10 @@ ok length($defaults->{'greeting'}) && length($defaults->{'voicemail'}),
 	is $settings->{'voice'}, 'piper-john', 'the chosen voice is read back';
 	is $settings->{'prompt'}, 'Who is this?', 'the prompt is read back';
 	is $settings->{'machine'}, 'gw-sig', 'the gateway is read back';
+	is $settings->{'thanks'}, 'Thanks', 'the thanks prompt is read back';
+	is $settings->{'flows'}->{'unknown'}, 'ring', 'a saved flow is read back';
+	is $settings->{'flows'}->{'friend'}, 'ivr', 'a saved relationship flow is read back';
+	is $settings->{'flows'}->{'stranger'}, 'ivr', 'a missing flow falls back to the route';
 }
 {
 	local *subs::setting_grabber = sub {
@@ -87,16 +99,24 @@ ok length($defaults->{'greeting'}) && length($defaults->{'voicemail'}),
 	my $saved = Manager::phone_ivr_save({
 		enabled => 'yes', machine => 'gw-sig', route => 'all',
 		voice => 'piper-john', greeting => '  Hello  ',
-		prompt => 'Name?', voicemail => 'Leave it',
+		prompt => 'Name?', voicemail => 'Leave it', thanks => 'Thanks',
+		flows => '{"unknown":"reject","blacklisted":"voicemail","friend":"ivr"}',
 	});
 	is $saved->{'enabled'}, 'yes', 'saving normalises enabled to yes';
 	is $saved->{'machine'}, 'gw-sig', 'a known gateway is kept';
 	is $saved->{'route'}, 'all', 'a known route is kept';
 	is $saved->{'voice'}, 'piper-john', 'a known voice is kept';
 	is $saved->{'greeting'}, 'Hello', 'the prompt text is trimmed';
-	is scalar @writes, 7, 'every IVR setting is written';
+	is $saved->{'thanks'}, 'Thanks', 'the thanks prompt is kept';
+	is $saved->{'flows'}->{'unknown'}, 'reject', 'the unknown flow is saved';
+	is $saved->{'flows'}->{'blacklisted'}, 'voicemail', 'the blacklist flow is saved';
+	is $saved->{'flows'}->{'friend'}, 'ivr', 'the friend flow is saved';
+	is $saved->{'flows'}->{'enemy'}, 'reject', 'a missing flow keeps its default';
+	is scalar @writes, 9, 'every IVR setting is written';
 	is $writes[0]->{'app'}, 'phone', 'the settings belong to the phone app';
 	like $writes[0]->{'setting'}, qr/^ivr_/, 'the settings carry the ivr_ prefix';
+is $writes[8]->{'setting'}, 'ivr_flows', 'the flow matrix is written as one row';
+	like $writes[8]->{'value'}, qr/"unknown":"reject"/, 'the flow row is JSON';
 }
 {
 	local *subs::setting_grabber = sub { return undef };
@@ -106,6 +126,20 @@ ok length($defaults->{'greeting'}) && length($defaults->{'voicemail'}),
 	my $saved = Manager::phone_ivr_save({ machine => 'not-a-machine', prompt => 'x' x 2000 });
 	is $saved->{'machine'}, '', 'a machine that is not in remote_machines is dropped';
 	is length($saved->{'prompt'}), 1000, 'a prompt is capped at 1000 characters';
+}
+
+# ---------------------------------------------------------------- relationships
+{
+	local *Manager::phone_names = sub {
+		return { '5199188319' => 'alice', '5550100' => 'bob' };
+	};
+	local *subs::person_relationships = sub {
+		return { alice => { value => 'self', rating => 1 }, bob => { value => 'enemy', rating => 3 } };
+	};
+	my $relations = Manager::phone_relationships();
+	is $relations->{'5199188319'}->{'value'}, 'self', 'a self relationship is carried by number';
+	is $relations->{'5199188319'}->{'app'}, 'alice', 'the relationship names the person app';
+	is $relations->{'5550100'}->{'value'}, 'enemy', 'an enemy relationship is carried by number';
 }
 
 # ---------------------------------------------------------------- machines
@@ -131,14 +165,19 @@ like $template, qr{pane="ivr"}, 'the Phone app has an IVR pane';
 like $template, qr{phone_ivr_prompt}, 'the pane has a name-prompt field';
 like $template, qr{phone_app_row_call}, 'a recent call carries a phone icon';
 like $template, qr{phone_ivr_machine}, 'the pane chooses a remote machine';
+like $template, qr{phone_app_ivr_flow}, 'the pane has the per-caller flow matrix';
+like $template, qr{phone_ivr_thanks}, 'the pane has the thanks prompt';
 
 my $js = js_source('public/js/manager/phone.js');
 like $js, qr{/manager/phone/ivr}, 'the pane saves through its route';
 like $js, qr{JawnPhone\.dial}, 'the recent icon asks the native bridge to dial';
 like $js, qr{phone_app_row_call}, 'the recent icon has a click handler';
+like $js, qr{phone_app_ivr_flow}, 'the pane collects the flow matrix';
+like $js, qr{thanks}, 'the pane saves the thanks prompt';
 
 my $sync = js_source('public/js/manager/manager.js');
 like $sync, qr{ivr:\s*\(response && response\.ivr\)}, 'the sync blob carries the IVR policy';
+like $sync, qr{relationships:\s*\(response && response\.relationships\)}, 'the sync blob carries the relationships';
 
 my $help = help_source();
 like $help, qr/IVR is the reception page/, 'the help topic explains the IVR pane';

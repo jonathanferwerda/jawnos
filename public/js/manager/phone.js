@@ -157,6 +157,10 @@ $(document).on('click', '#phone_app #phone_ivr_save', function (e) {
 	e.preventDefault();
 	var status = $('#phone_app #phone_ivr_status');
 	status.text(jawnosT('Saving…'));
+	var flows = {};
+	$('#phone_app .phone_app_ivr_flow').each(function() {
+		flows[$(this).attr('bucket')] = $(this).val();
+	});
 	$.ajax({
 		url: '/manager/phone/ivr',
 		type: 'POST',
@@ -164,11 +168,12 @@ $(document).on('click', '#phone_app #phone_ivr_save', function (e) {
 			timestamp: Date.now(),
 			enabled: $('#phone_app #phone_ivr_enabled').is(':checked') ? 'yes' : 'no',
 			machine: $('#phone_app #phone_ivr_machine').val() || '',
-			route: $('#phone_app #phone_ivr_route').val() || 'unknown',
 			voice: $('#phone_app #phone_ivr_voice').val() || '',
 			greeting: $('#phone_app #phone_ivr_greeting').val() || '',
 			prompt: $('#phone_app #phone_ivr_prompt').val() || '',
-			voicemail: $('#phone_app #phone_ivr_voicemail').val() || ''
+			voicemail: $('#phone_app #phone_ivr_voicemail').val() || '',
+			thanks: $('#phone_app #phone_ivr_thanks').val() || '',
+			flows: JSON.stringify(flows)
 		},
 		success: function (res) {
 			if (res && res.ok) {

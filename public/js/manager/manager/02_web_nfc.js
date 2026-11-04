@@ -270,6 +270,7 @@ function jawnPhoneSync() {
 					window.JawnPhone.setFacts(JSON.stringify({
 						blocked: (response && response.blocked) || [],
 						names: (response && response.names) || {},
+						relationships: (response && response.relationships) || {},
 						avatars: (response && response.avatars) || {},
 						ivr: (response && response.ivr) || {}
 					}));

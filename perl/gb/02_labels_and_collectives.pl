@@ -59,24 +59,12 @@ our $pos = {
 	idea => {},
 	person => {
 		template => 'pos/person',
-		app_template => 'apps/person', 
+		app_template => 'apps/person',
 		app_measures => {
 			'friend' => { type => 'range', min => 0, max => 100 },
-			'volition' => { type => 'range', min => 0, max => 100 }, 
+			'volition' => { type => 'range', min => 0, max => 100 },
 			'fun' => { type => 'range', min => 0, max => 100 },
-			# Numbered so a relationship compares with the place rating in the
-			# visibility rule: friend 1 (private), stranger 2 (public), enemy 3
-			# (dangerous). One relationship per person, not a list.
-			'relationship' => {
-				'type' => 'select',
-				options => [ 'friend', 'stranger', 'enemy' ],
-				ratings => { friend => 1, stranger => 2, enemy => 3 },
-				default => 'stranger',
-			}
-		} 
-	},
-	project => {
-		app_template => 'apps/project'
+		},
 	},
 	account => {
 		app_template => 'apps/account'

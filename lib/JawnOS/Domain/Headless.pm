@@ -383,34 +383,78 @@ sub relationship_rating {
 
 sub relationship_value {
 	my ($value) = @_;
-	my $rating = &relationship_rating($value);
-	return '' unless $rating;
+	return &relationship_normalize($value);
+}
+
+# A relationship is a configuration word, like a place's visibility: self,
+# friend, stranger or enemy. Blank and unknown values read as stranger, the same
+# way an unset place reads as public. Self is kept distinct from friend even
+# though both sit at the safest rating.
+sub relationship_normalize {
+	my ($value) = @_;
+	$value = $value->{'value'} if ref $value eq 'HASH';
+	$value = join ',', @{$value} if ref $value eq 'ARRAY';
+	my $v = lc($value // '');
+	$v =~ s/^\s+|\s+$//g;
+	if ($v =~ /^\s*\[/) {
+		my $list = eval { decode_json($v) };
+		$v = ref $list eq 'ARRAY' ? join ',', @{$list} : '';
+	}
+	my @parts = grep { length } split /[,\s]+/, $v;
+	return 'stranger' unless scalar @parts;
+	my ($rating, $has_self) = (0, 0);
+	foreach my $part ( @parts ) {
+		$has_self = 1 if $part eq 'self';
+		my $r = &relationship_part_rating($part);
+		$rating = $r if $r > $rating;
+	}
+	return 'stranger' unless $rating;
+	return 'self' if $rating == 1 && $has_self;
 	return ('', 'friend', 'stranger', 'enemy')[$rating];
+}
+
+sub relationship_label {
+	my ($value) = @_;
+	my $v = &relationship_normalize($value);
+	my %label = (
+		self     => &subs::ui('Self'),
+		friend   => &subs::ui('Friend'),
+		stranger => &subs::ui('Stranger'),
+		enemy    => &subs::ui('Enemy'),
+	);
+	return $label{$v} || &subs::format_name($v);
+}
+
+sub relationship_rank {
+	my ($value) = @_;
+	my $v = &relationship_normalize($value);
+	return 1 if $v eq 'self' || $v eq 'friend';
+	return 3 if $v eq 'enemy';
+	return 2;
 }
 
 sub relationship_options {
 	return [ map { {
 		value => $_,
 		rating => $relationship_rating{$_},
-		label => &format_name($_),
+		label => &relationship_label($_),
 	} } @relationship_order ];
 }
 
 sub person_relationship_value {
 	my ($app) = @_;
 	return '' unless defined $app && length $app;
+	# The direct configuration row is the truth; the legacy app_measures row is
+	# only a fallback so a peer on an older build is still readable.
+	my $direct = eval {
+		&db_query("select value from settings where app = ? and setting = 'relationship' order by cast(server_time as integer) desc limit 1", $app)->hashes->[0];
+	};
+	return &relationship_value($direct->{'value'}) if $direct && defined $direct->{'value'} && length $direct->{'value'};
 	my $row = eval {
 		&db_query("select value from settings where app = ? and setting = 'app_measures' order by cast(server_time as integer) desc limit 1", $app)->hashes->[0];
 	};
 	my $am = $row ? (eval { decode_json($row->{'value'}) } || {}) : {};
-	my $value = &relationship_value($am->{'relationship'}->{'value'} // '');
-	unless (length $value) {
-		my $direct = eval {
-			&db_query("select value from settings where app = ? and setting = 'relationship' order by cast(server_time as integer) desc limit 1", $app)->hashes->[0];
-		};
-		$value = &relationship_value($direct->{'value'} // '') if $direct;
-	}
-	return $value;
+	return &relationship_value($am->{'relationship'}->{'value'} // '');
 }
 
 sub person_relationship_rating {

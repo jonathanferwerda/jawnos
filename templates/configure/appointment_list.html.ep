@@ -91,6 +91,17 @@
 									<% } %>
 								</select>
 							</span>
+							<% if (($appts->{$a}->{'setting'}->{'pos'} || '') eq 'person') { %>
+								<span class="app_relationship_field" hint="<%= &subs::ui('A person is Self, Friend, Stranger or Enemy. It is a configuration, like a place\'s visibility, and the call-flow matrix reads it.') %>">
+									<label><%= &subs::ui('Relationship') %></label>
+									<% my $rel = &subs::relationship_normalize($appts->{$a}->{'setting'}->{'relationship'}); %>
+									<select app="<%= $a %>" class="configure_relationship" setting="relationship">
+										<% foreach my $opt ( @{&subs::relationship_options()} ) { %>
+											<option value="<%= $opt->{'value'} %>" <% if ($rel eq $opt->{'value'}) { %>selected="selected"<% } %>><%= $opt->{'label'} %></option>
+										<% } %>
+									</select>
+								</span>
+							<% } %>
 							<% foreach my $check_set ( qw/unique permanent/ ) { %>
 								<span>
 									<input app="<%= $a %>" class="configure_checkbox" value="checked" type="checkbox" 

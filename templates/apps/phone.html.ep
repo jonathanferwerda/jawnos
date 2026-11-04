@@ -41,6 +41,10 @@
 	.phone_app_ivr_save { align-self:flex-start; padding:7px 18px; border-radius:999px;
 		border:1px solid var(--line); background:var(--panel); color:inherit; cursor:pointer; }
 	.phone_app_ivr_status { min-height:18px; color:var(--muted,#8e8e8e); font-size:12px; }
+	.phone_app_ivr_flows { display:flex; flex-direction:column; gap:6px; }
+	.phone_app_ivr_flow_row { display:flex; align-items:center; gap:8px; }
+	.phone_app_ivr_flow_label { flex:1 1 auto; }
+	.phone_app_ivr_flow_row select { flex:0 0 150px; }
 	.phone_app_stranger .phone_app_name { font-variant-numeric:tabular-nums; letter-spacing:1px; }
 	.phone_app_stranger .phone_app_avatar { opacity:0.6; }
 	.phone_app_unblock { flex:0 0 auto; font-size:12px; padding:3px 10px; border-radius:999px;
@@ -152,11 +156,23 @@
 				<% } %>
 			</div>
 			<label>Call routing
-				<select id="phone_ivr_route">
-					<option value="unknown" <%= (($ivr->{'route'} || '') eq 'unknown') ? 'selected' : '' %>>Strangers only</option>
-					<option value="all" <%= (($ivr->{'route'} || '') eq 'all') ? 'selected' : '' %>>Everyone</option>
-					<option value="off" <%= (($ivr->{'route'} || '') eq 'off') ? 'selected' : '' %>>Off</option>
-				</select>
+				<div class="phone_app_ivr_flows">
+					<% my @flow_buckets = (
+						[ unknown => &subs::ui('Unknown') ], [ blacklisted => &subs::ui('Blacklisted') ],
+						[ self => &subs::ui('Self') ], [ friend => &subs::ui('Friend') ],
+						[ stranger => &subs::ui('Stranger') ], [ enemy => &subs::ui('Enemy') ]
+					); %>
+					<% foreach my $fb (@flow_buckets) { my ($bucket, $label) = @{$fb}; my $action = $ivr->{'flows'}->{$bucket} || 'ring'; %>
+						<span class="phone_app_ivr_flow_row">
+							<span class="phone_app_ivr_flow_label"><%= $label %></span>
+							<select class="phone_app_ivr_flow" bucket="<%= $bucket %>" id="phone_ivr_flow_<%= $bucket %>">
+								<% foreach my $opt ( [ ring => &subs::ui('Ring') ], [ ivr => &subs::ui('IVR') ], [ voicemail => &subs::ui('Voicemail') ], [ reject => &subs::ui('Reject') ] ) { my ($val, $lbl) = @{$opt}; %>
+									<option value="<%= $val %>" <%= ($action eq $val) ? 'selected' : '' %>><%= $lbl %></option>
+								<% } %>
+							</select>
+						</span>
+					<% } %>
+				</div>
 			</label>
 			<label>Voice
 				<select id="phone_ivr_voice">
@@ -168,6 +184,7 @@
 			<label>Greeting<textarea id="phone_ivr_greeting" rows="2"><%= $ivr->{'greeting'} %></textarea></label>
 			<label>Name prompt<textarea id="phone_ivr_prompt" rows="2"><%= $ivr->{'prompt'} %></textarea></label>
 			<label>Voicemail greeting<textarea id="phone_ivr_voicemail" rows="2"><%= $ivr->{'voicemail'} %></textarea></label>
+			<label>Thanks<textarea id="phone_ivr_thanks" rows="1"><%= $ivr->{'thanks'} %></textarea></label>
 			<button class="phone_app_ivr_save" id="phone_ivr_save" hint="Save">Save</button>
 			<div class="phone_app_ivr_status" id="phone_ivr_status"></div>
 		</div>

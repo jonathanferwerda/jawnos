@@ -364,12 +364,49 @@ sub phone_ivr_defaults {
 		greeting  => &subs::ui('This automated system records calls.'),
 		prompt    => &subs::ui('Please say your name after the tone.'),
 		voicemail => &subs::ui('Please leave a message after the tone.'),
+		thanks    => &subs::ui('Thank you.'),
+		flows     => &phone_ivr_flow_defaults('unknown'),
 	};
+}
+
+# The six call-flow buckets. `route` is the older three-way knob; when a phone
+# has no saved matrix, the matrix is derived from it so an existing phone keeps
+# behaving the same way.
+sub phone_ivr_flow_defaults($route) {
+	my %flow = (
+		unknown     => 'ivr',
+		blacklisted => 'reject',
+		enemy       => 'reject',
+		stranger    => 'ivr',
+		friend      => 'ring',
+		self        => 'ring',
+	);
+	if (($route || '') eq 'off') {
+		$flow{$_} = 'ring' for qw(unknown stranger friend self);
+	}
+	elsif (($route || '') eq 'all') {
+		$flow{$_} = 'ivr' for qw(unknown stranger friend self);
+	}
+	return \%flow;
+}
+
+sub phone_ivr_flow_clean($flows, $route) {
+	my $base = &phone_ivr_flow_defaults($route);
+	my %clean = %{$base};
+	if (ref $flows eq 'HASH') {
+		foreach my $bucket (qw(unknown blacklisted self friend stranger enemy)) {
+			my $action = $flows->{$bucket};
+			next unless defined $action && $action =~ /^(?:ring|ivr|voicemail|reject)$/;
+			$clean{$bucket} = $action;
+		}
+	}
+	return \%clean;
 }
 
 sub phone_ivr_settings {
 	my $settings = &phone_ivr_defaults();
 	foreach my $key ( keys %{$settings} ) {
+		next if $key eq 'flows';
 		my $value = &subs::setting_grabber({ app => 'phone', setting => 'ivr_' . $key, benign => 1 });
 		$settings->{$key} = $value if defined $value && length $value;
 	}
@@ -377,16 +414,24 @@ sub phone_ivr_settings {
 	$settings->{'route'} = 'unknown' unless $settings->{'route'} =~ /^(?:unknown|all|off)$/;
 	my %voices = map { $_->{'value'} => 1 } &subs::say_voices();
 	$settings->{'voice'} = &subs::say_default_voice() unless $voices{ $settings->{'voice'} };
+	my $stored_flows = &subs::setting_grabber({ app => 'phone', setting => 'ivr_flows', benign => 1 });
+	my $flows = eval { decode_json($stored_flows) } if defined $stored_flows && length $stored_flows;
+	$settings->{'flows'} = &phone_ivr_flow_clean($flows, $settings->{'route'});
 	return $settings;
 }
 
 sub phone_ivr_save($params) {
 	my $next = &phone_ivr_settings();
-	foreach my $key (qw(enabled machine route voice greeting prompt voicemail)) {
+	foreach my $key (qw(enabled machine route voice greeting prompt voicemail thanks)) {
 		next unless exists $params->{$key};
 		my $value = defined $params->{$key} ? $params->{$key} : '';
 		$value =~ s/^\s+|\s+$//g;
 		$next->{$key} = $value;
+	}
+	if (exists $params->{'flows'}) {
+		my $flows = $params->{'flows'};
+		$flows = eval { decode_json($flows) } if defined $flows && !ref $flows;
+		$next->{'flows'} = &phone_ivr_flow_clean($flows, $next->{'route'});
 	}
 	$next->{'enabled'} = ($next->{'enabled'} eq 'yes' || $next->{'enabled'} eq '1' || $next->{'enabled'} eq 'on') ? 'yes' : 'no';
 	$next->{'route'} = 'unknown' unless $next->{'route'} =~ /^(?:unknown|all|off)$/;
@@ -397,12 +442,13 @@ sub phone_ivr_save($params) {
 			|| &subs::db_select('remote_machines', undef, { ip => $next->{'machine'} })->hashes->[0];
 		$next->{'machine'} = $known ? $next->{'machine'} : '';
 	}
-	foreach my $key (qw(greeting prompt voicemail)) {
+	foreach my $key (qw(greeting prompt voicemail thanks)) {
 		$next->{$key} = substr($next->{$key}, 0, 1000);
 	}
-	foreach my $key (qw(enabled machine route voice greeting prompt voicemail)) {
+	foreach my $key (qw(enabled machine route voice greeting prompt voicemail thanks)) {
 		&subs::setting_setter({ app => 'phone', setting => 'ivr_' . $key, value => $next->{$key} });
 	}
+	&subs::setting_setter({ app => 'phone', setting => 'ivr_flows', value => encode_json($next->{'flows'}) });
 	return $next;
 }
 
@@ -439,6 +485,24 @@ sub phone_ivr_machine($key) {
 	return undef unless defined $key && length $key;
 	return &subs::db_select('remote_machines', undef, { signatorial => $key })->hashes->[0]
 		|| &subs::db_select('remote_machines', undef, { ip => $key })->hashes->[0];
+}
+
+# The caller's relationship by number, for the app's call screening. The house's
+# phone names give the app; person_relationships gives the configuration word.
+sub phone_relationships {
+	my $names = &phone_names();
+	my $relations = &subs::person_relationships();
+	my %out;
+	foreach my $number ( keys %{$names} ) {
+		my $app = $names->{$number};
+		my $rel = $relations->{$app} or next;
+		$out{$number} = {
+			app    => $app,
+			value  => $rel->{'value'},
+			rating => $rel->{'rating'},
+		};
+	}
+	return \%out;
 }
 
 sub phone_avatar_thumb($file) {

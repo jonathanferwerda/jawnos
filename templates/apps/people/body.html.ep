@@ -144,7 +144,7 @@
 							<%= $person->{'name'} %>
 							<div class="people_row_sub"><%= $person->{'formatted_name'} %> &middot; <span class="people_fp"><%= $person->{'app'} %></span></div>
 							<% if ($person->{'relationship'}) { %>
-								<span class="people_relationship" data-rating="<%= $person->{'relationship_rating'} %>"><%= &subs::ui(ucfirst($person->{'relationship'})) %></span>
+								<span class="people_relationship" data-rating="<%= $person->{'relationship_rating'} %>"><%= &subs::relationship_label($person->{'relationship'}) %></span>
 							<% } %>
 							<% if (@{$person->{'chips'}}) { %>
 								<div class="people_chips">

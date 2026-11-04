@@ -374,8 +374,13 @@ sub action_19033 {
 	my $setting_data = { app => $app, setting => $setting, value => $value, timestamp => $timestamp, source => 'panel' };
 	# an appointment type's theme and its warranty are properties of the type, not
 	# of the machine that happened to set them: keep both on the house-wide row
-	$setting_data->{'device'} = 'all' if $setting eq 'theme' || $setting eq 'warranty';
+	$setting_data->{'device'} = 'all' if $setting eq 'theme' || $setting eq 'warranty' || $setting eq 'relationship';
+	$setting_data->{'value'} = &subs::relationship_normalize($setting_data->{'value'}) if $setting eq 'relationship';
 	&subs::setting_setter($setting_data);
+	if (($source || '') eq 'people') {
+		$c->render(json => { ok => 1, app => $app, setting => $setting, value => $setting_data->{'value'} });
+		return;
+	}
 	# the rename has relabelled the surviving rows, so a planned drop can now be
 	# tombstoned under the name every peer will be using
 	&subs::name_change_history_apply_plan($renamed_to, $history_plan) if $history_plan && $renamed_to;

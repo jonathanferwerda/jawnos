@@ -29,12 +29,11 @@
 
 		<% $am->{$meas} = {} unless eval { keys %{$am->{$meas}} }; %>
 		<% my $m = $am->{$meas} || $gb::pos->{$settings->{'pos'}}->{'app_measures'}->{$meas}; %>
-		<% if ($meas eq 'relationship') { my $gbrel = $gb::pos->{'person'}->{'app_measures'}->{'relationship'}; $m = $gbrel if $gbrel; } %>
+		<% next if $meas eq 'relationship'; %>
 		<% next if $m->{'type'} eq 'none'; %>
 		<b><%= &subs::format_name($meas) %></b><br>
 		<% if ($m->{'type'} eq 'select') { %>
 			<% my $mval = $am->{$meas}->{'value'}; %>
-			<% $mval = &subs::relationship_value($mval) if $meas eq 'relationship'; %>
 			<select class="app_measure" measure="<%= $meas %>" value="<%= $mval %>" unit="<%= $am->{$meas}->{'unit'} %>" style="width:100%;">
 				<option value=""></option>
 				<% foreach my $me ( sort @{$m->{'options'}} ) { %>
