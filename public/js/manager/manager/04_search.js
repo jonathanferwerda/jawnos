@@ -216,7 +216,14 @@ function jawnosSearchResultsPlace() {
 	}
 	var kb = $('#jawn_soft_keyboard');
 	if (kb.length && kb.is(':visible')) {
-		var kb_top = vh - (kb.outerHeight() || 0);
+		// the keyboard measured its own top edge for the lift; use that edge, not
+		// its layout height, so the list sits on what the person sees
+		var kb_lift = 0;
+		try {
+			kb_lift = parseFloat(window.getComputedStyle(document.body).getPropertyValue('--soft_kb_h')) || 0;
+		} catch (err) { kb_lift = 0; }
+		if (!(kb_lift > 0)) { kb_lift = kb.outerHeight() || 0; }
+		var kb_top = vh - kb_lift;
 		if (kb_top > 0 && kb_top < view_bottom) { view_bottom = kb_top; }
 	}
 	var gap = 6;
@@ -441,7 +448,7 @@ function jawnosSearchOpen(app) {
 	if (typeof appointmentGrabber == 'function') { appointmentGrabber(app, Date.now()); }
 }
 
-$(document).on('keyup click', '#search', function(e) {
+$(document).on('input keyup click', '#search', function(e) {
 	var search = $(this).val();
 	var timestamp = Date.now();
 	lastSearchTime = timestamp;
@@ -464,6 +471,11 @@ $(document).on('keyup click', '#search', function(e) {
 		}
 		if (e.keyCode == 38 || e.keyCode == 40 || e.keyCode == 27) { return; }
 		// typing again makes the next Enter the box's own
+		jawnosSearchEnterConsumed = false;
+	}
+	else if (e.type == 'input') {
+		// an input method (the Android keyboard, a composition) commits text
+		// without a keyup; the list must still follow what the box holds
 		jawnosSearchEnterConsumed = false;
 	}
 	if (!search) {

@@ -536,6 +536,12 @@ function softKbSlideUp(dock) {
 	void dock[0].offsetHeight;
 	dock.addClass('soft_kb_up');
 	jawnSoftSlideAt = Date.now();
+	// the box is measured from the keyboard's top edge once it has settled;
+	// while it rises that edge is still on its way up from the screen's foot
+	setTimeout(function () {
+		if (dock.prop('hidden') || !dock.hasClass('soft_kb_up')) { return; }
+		softKbReserve();
+	}, softKbSlideMs() + 60);
 }
 
 function softKbSlideDown(dock) {
@@ -628,6 +634,23 @@ function softKbPlace(el) {
 	dock.removeClass('soft_kb_in_window soft_kb_inline');
 }
 
+// How far the search box and the dropdown must stay off the foot of the page:
+// the keyboard's own top edge. A bottom anchor makes that its height, but a
+// panned page or a system bar can put the edge elsewhere, and the person sees
+// the edge, not the box. While the dock is sliding its transformed box still
+// starts off the screen, so its height is the honest answer then.
+function softKbLift(dock) {
+	dock = (dock && dock.length) ? dock : $('#jawn_soft_keyboard');
+	var h = dock.outerHeight() || 0;
+	var vh = window.innerHeight || $(window).height();
+	var settling = (Date.now() - jawnSoftSlideAt) < (softKbSlideMs() + 40);
+	if (!settling && dock[0] && dock[0].getBoundingClientRect) {
+		var top = dock[0].getBoundingClientRect().top;
+		if (top > 0 && top < vh) { return Math.round(vh - top); }
+	}
+	return Math.round(h);
+}
+
 // Keep the field's own scrolling area above the keys: the Chat shell gives up
 // the overlap at its foot, and an appointment (or any other window) gives it up
 // in its scroll area, so its lower fields and buttons stay reachable. The window
@@ -638,8 +661,9 @@ function softKbReserve() {
 	var dock = $('#jawn_soft_keyboard');
 	if (!dock.is(':visible') || !jawnSoftField) { return; }
 	// the dock and taskbar rules lift themselves by this much
+	var lift = softKbLift(dock);
 	if (document.body && document.body.style) {
-		document.body.style.setProperty('--soft_kb_h', (dock.outerHeight() || 0) + 'px');
+		document.body.style.setProperty('--soft_kb_h', lift + 'px');
 	}
 	// the search dropdown lives in the space above the keys, and the keys just
 	// changed height
@@ -648,9 +672,8 @@ function softKbReserve() {
 	var scroller = chat.length ? chat : $(jawnSoftField).closest('.appointment_contents, .window_contents');
 	if (!scroller.length) { return; }
 	if (!chat.length && !scroller.closest('.wind').length) { return; }
-	// the dock rides the screen foot and slides, so its box is measured from
-	// its height rather than its (still transformed) top edge
-	var dockTop = window.innerHeight - (dock.outerHeight() || 0);
+	// the keyboard's own top edge, not just its height
+	var dockTop = window.innerHeight - lift;
 	var box = scroller[0].getBoundingClientRect();
 	var bottom = Math.min(box.bottom, window.innerHeight);
 	var overlap = Math.max(0, bottom - dockTop);

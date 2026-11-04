@@ -59,7 +59,10 @@ body.soft_kb_open .soft_kb_search_lifted {
 	left: 10px !important;
 	right: 10px !important;
 	top: auto !important;
-	bottom: calc(var(--soft_kb_h, 0px) + 8px) !important;
+	/* --soft_kb_h is the keyboard's own top edge, measured from the foot of the
+	   page by soft_keyboard.js: the box sits flush on the keys instead of
+	   leaving a band between them */
+	bottom: var(--soft_kb_h, 0px) !important;
 	width: auto !important;
 	margin: 0 !important;
 	transform: none !important;
