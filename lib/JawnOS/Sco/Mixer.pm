@@ -132,6 +132,21 @@ sub detach {
 	return 1;
 }
 
+# Is the caller actually being played into our sink? A call's two streams
+# outlive the call (the phone's gateway profile keeps its nodes), so a listed
+# pair is not a call. What is: the sink itself is RUNNING because something is
+# feeding it. That is how the gateway tells a live line from the leftovers of
+# the last one.
+sub call_active {
+	my ($self) = @_;
+	foreach my $line ( split /\n/, &pactl('list', 'short', 'sinks') ) {
+		my @field = split /\t/, $line;
+		next unless @field > 4 && $field[1] eq $SINK_IN;
+		return $field[4] =~ /^RUNNING$/i ? 1 : 0;
+	}
+	return 0;
+}
+
 # The two commands the audio helper runs.
 sub capture_command {
 	my ($self) = @_;

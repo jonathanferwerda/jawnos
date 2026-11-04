@@ -230,10 +230,11 @@ sub call_id {
 # Wait until the gateway's own two streams appear (the call has started), move
 # them onto our devices, and only then start the audio helper.
 #
-# A line that the last plan was just spoken into is still up for a moment after
-# the thanks; arming again promptly must not treat that pair as a new call and
-# speak a whole second plan into it. The pair we served is remembered until the
-# line is gone.
+# The pair is moved whether or not it is new. A phone's Hands-Free nodes
+# outlive the call they were made for, and PipeWire remembers the device an
+# application used last, so the pair can come back sitting on the laptop's own
+# sink and microphone - which is the room on the caller's ear and silence in
+# our recording. Moving them again costs nothing.
 sub watch_streams {
 	my ($self) = @_;
 	return if $self->{'watcher'};
@@ -241,21 +242,14 @@ sub watch_streams {
 		return unless $self->{'state'} eq 'waiting';
 		my $mixer = $self->{'mixer'} or return;
 		my $streams = $mixer->call_streams($self->{'peer'});
-		unless ($streams->{'sink_input'} && $streams->{'source_output'}) {
-			# nothing of the old call is left: whatever appears next is new
-			delete $self->{'served'};
-			return;
-		}
-		return if &same_streams($self->{'served'}, $streams);
-		my $moved = $mixer->attach($self->{'peer'});
+		return unless $streams->{'sink_input'} && $streams->{'source_output'};
+		$mixer->attach($self->{'peer'});
 		my @cmd = ( $self->helper_command(), '--pipe-in', $mixer->capture_command(),
 			'--pipe-out', $mixer->playback_command() );
 		unless ($self->_spawn(@cmd)) {
 			$self->{'last_error'} = 'the audio helper would not start';
-			$mixer->detach();
 			return;
 		}
-		$self->{'served'} = &stream_pair($streams);
 		$self->{'last_event'} = 'attached';
 		$self->{'state'} = 'armed';
 		$self->{'since'} = time;
@@ -264,42 +258,49 @@ sub watch_streams {
 	return 1;
 }
 
-# A call's two streams can be replaced under us: the phone's own audio path comes
-# up after it answers, and a Bluetooth link that is re-established makes a new
-# pair. Moving them is harmless when they are already ours, so while a call is up
-# the pair is checked again and moved again when it changes.
+# One more piece of state a call has: whether it is still being fed. While it
+# is, the pair is moved onto our devices again once a second (a stream the
+# phone replaces, or one PipeWire re-routes, does not take the old move with
+# it). When a *finished* plan's line stops being fed, the call is over: the
+# helper is put down and the gateway goes idle, which is what lets Reception
+# arm for the next call without ever speaking a second plan into a dying one.
 sub watch_call {
 	my ($self) = @_;
 	return if $self->{'call_watcher'};
 	$self->{'call_watcher'} = Mojo::IOLoop->recurring(1 => sub {
-		return unless $self->{'state'} eq 'in_call';
+		my $state = $self->{'state'} || '';
+		return unless $state eq 'armed' || $state eq 'in_call' || $state eq 'done';
 		my $mixer = $self->{'mixer'} or return;
 		my $streams = $mixer->call_streams($self->{'peer'});
-		return unless $streams->{'sink_input'} && $streams->{'source_output'};
-		return if &same_streams($self->{'served'}, $streams);
-		$mixer->attach($self->{'peer'});
-		$self->{'served'} = &stream_pair($streams);
-		$self->{'last_event'} = 'reattached';
-		$self->write_status();
+		return $self->end_call('streams gone')
+			unless $streams->{'sink_input'} && $streams->{'source_output'};
+		if ($mixer->call_active()) {
+			$self->{'quiet'} = 0;
+			$mixer->attach($self->{'peer'});
+			return;
+		}
+		# a line that has not begun to carry the caller is not over yet
+		return unless $state eq 'done';
+		$self->{'quiet'} = ($self->{'quiet'} || 0) + 1;
+		$self->end_call('line idle') if $self->{'quiet'} >= 3;
 	});
 	return 1;
 }
 
-sub stream_pair {
-	my ($streams) = @_;
-	return {
-		sink_input => $streams->{'sink_input'} || '',
-		source_output => $streams->{'source_output'} || '',
-	};
-}
-
-sub same_streams {
-	my ($served, $streams) = @_;
-	return 0 unless $served && $streams;
-	return 0 unless $served->{'sink_input'} && $served->{'source_output'};
-	return 0 unless $streams->{'sink_input'} && $streams->{'source_output'};
-	return ($served->{'sink_input'} eq $streams->{'sink_input'}
-		&& $served->{'source_output'} eq $streams->{'source_output'}) ? 1 : 0;
+# The plan is over and the line it was spoken into is quiet: end the call.
+sub end_call {
+	my ($self, $why) = @_;
+	$self->{'quiet'} = 0;
+	$self->{'steps'} = [];
+	$self->{'step_at'} = 0;
+	return 1 if $self->{'state'} eq 'idle';
+	$self->{'state'} = 'idle';
+	$self->{'since'} = time;
+	$self->{'last_event'} = $why || 'line idle';
+	$self->_send(cmd => 'quit');
+	$self->_reap();
+	$self->write_status();
+	return 1;
 }
 
 sub stop_watch {
@@ -410,9 +411,6 @@ sub event {
 	my ($self, $event) = @_;
 	my $name = $event->{'event'} || '';
 	$self->{'last_event'} = $name;
-	if ($name eq 'closed' && $self->{'mixer'} && $self->{'mixer'}->{'attached'}) {
-		$self->{'mixer'}->detach();
-	}
 	if ($name eq 'listening') {
 		$self->{'local'} = $event->{'local'} || $self->{'local'};
 		$self->{'state'} = 'armed' if $self->{'state'} eq 'starting';
@@ -475,7 +473,11 @@ sub event {
 sub cancel {
 	my ($self) = @_;
 	$self->stop_watch();
-	if ($self->{'mixer'} && $self->{'mixer'}->{'attached'}) {
+	# Put the call's streams back only when no call is up. Cancelling also
+	# happens at every re-arm, while the line is still breathing, and moving a
+	# live call to the laptop's own sink and microphone is exactly what made
+	# the caller hear the room and left our recording silent.
+	if ($self->{'mixer'} && $self->{'mixer'}->{'attached'} && !$self->{'mixer'}->call_active()) {
 		$self->{'mixer'}->detach();
 	}
 	return { ok => 1, state => $self->{'state'} } if $self->{'state'} eq 'idle';

@@ -184,17 +184,20 @@ is($gateway->recording_path('../../etc/passwd'), '', 'a path is not a name');
 is($gateway->recording_path('.hidden'), '', 'a dot file is not served');
 
 # The call a plan was just spoken into is still up for a moment after the
-# thanks. Its stream pair is what tells the next arm to wait for a real call.
+# thanks, so the gateway must not serve it a second plan. A finished plan is put
+# down when its line stops being fed, and only then can Reception arm again.
 {
-	my $pair = { sink_input => '41', source_output => '42' };
-	is(JawnOS::Sco::Gateway::same_streams($pair, { sink_input => '41', source_output => '42' }), 1,
-		'the line just served is recognised and not served twice');
-	is(JawnOS::Sco::Gateway::same_streams($pair, { sink_input => '43', source_output => '42' }), 0,
-		'a replaced stream is a new call');
-	is(JawnOS::Sco::Gateway::same_streams($pair, { sink_input => '43', source_output => '44' }), 0,
-		'a fresh pair is a new call');
-	is(JawnOS::Sco::Gateway::same_streams(undef, { sink_input => '43', source_output => '44' }), 0,
-		'nothing served yet means serve');
+	my $finished = JawnOS::Sco::Gateway->new(
+		dir => "$dir/sco-done",
+		helper => $fake,
+		status_path => "$dir/sco-done.json",
+	);
+	$finished->{'state'} = 'done';
+	$finished->end_call('line idle');
+	is($finished->{'state'}, 'idle', 'a finished plan lets go of its line');
+	ok(JawnOS::Sco::Mixer->can('call_active'), 'the mixer can say whether a call is being fed');
+	like(read_file("$repo/perl/Reception.pl"), qr/\$state eq 'in_call' \|\| \$state eq 'done'/,
+		'a finished plan is not armed over');
 }
 
 my $cancelled = $gateway->cancel();

@@ -242,7 +242,10 @@ sub whisper_name_transcribe {
 	# fast read one such clip as "Listen strong." where base read "This is John."
 	# - through ffmpeg, sox and miniaudio alike - and base still answers in
 	# seconds over a clip this short. So the name takes base and the CLI, and the
-	# warm server's model is left to the keyboard. '' when nobody spoke.
+	# warm server's model is left to the keyboard. What comes back is the words as
+	# heard; the caller is filed under name_from_transcript of them, and the raw
+	# line is kept beside it because a surname over this link is often only
+	# close. '' when nobody spoke.
 	my ($raw, $lang) = @_;
 	return '' unless defined $raw && length $raw;
 	my $base = &subs::home('~/whisper.cpp/models/ggml-base.bin');
@@ -250,7 +253,7 @@ sub whisper_name_transcribe {
 		? &whisper_cli_transcribe($raw, $lang || 'auto', $base)
 		: &whisper_transcribe($raw, $lang || 'auto');
 	return '' if !length $text || &voice_silence_hallucination($text);
-	return &name_from_transcript($text);
+	return $text;
 }
 
 sub name_from_transcript {

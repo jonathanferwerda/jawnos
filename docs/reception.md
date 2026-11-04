@@ -95,11 +95,16 @@ the first time a call needs them.
    copies the clip to `~/.president/sco/kept/<call_id>.wav`, transcribes it to
    the name and appends a line to `kept/index.jsonl`.
 5. Routes: `GET /manager/sco/status|result|recording`, `POST /manager/sco/arm|cancel`.
-6. The pair of streams the plan was spoken into is remembered until the line is
-   really gone, so arming again while the call is still hanging up does not speak
-   a second plan into it. While a call is up the pair is also re-checked once a
-   second and moved again if the phone replaces it (a Bluetooth link that is
-   re-established makes a new pair).
+6. The phone's Hands-Free nodes outlive the call they were made for, and
+   PipeWire remembers the device an application used last. So the pair is moved
+   onto our devices at every arm and again once a second while the call is being
+   fed. A pair left on the laptop's own sink and microphone is the room on the
+   caller's ear and silence in our recording.
+7. A finished plan (`done`) keeps its line until the call sink stops being fed
+   (the phone's stream is what makes `jawn_call_in` RUNNING). Then the helper is
+   put down and the gateway is idle; Reception arms only from
+   `idle`/`armed`/`waiting`, so a line that is still breathing is never served a
+   second plan.
 
 ## Known limits
 
@@ -129,5 +134,12 @@ the first time a call needs them.
   built-in radio).
 - `pactl list short sink-inputs` during a call: the Bluetooth stream should carry
   the phone's address; if it does not, the phone is not routed to the machine.
+- `pactl list short sink-inputs` should show the phone's playback on
+  `jawn_call_in`, and `pactl list short source-outputs` its capture on
+  `jawn_ivr_mic`. On the laptop's own sink and microphone instead, the caller
+  hears the room and nothing is recorded.
+- `pactl list short sinks | grep jawn_call_in` is `RUNNING` while a call is
+  carried and `SUSPENDED`/`IDLE` when it is not; that is how the gateway knows a
+  call is over.
 - The helper logs `waiting for call audio` every few seconds while it waits; a
   `pcm open failed` means the PCM device name is wrong (BlueALSA only).

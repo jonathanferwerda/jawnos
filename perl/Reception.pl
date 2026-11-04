@@ -62,6 +62,7 @@ sub keep_new_recordings {
 	# the name in words: base and the CLI, not the warm server's tiny model - tiny
 	# reads a narrowband name as "Listen strong." where base reads "This is John."
 	my $name = '';
+	my $heard = '';
 	my $bytes = '';
 	if (open(my $rf, '<', $kept)) {
 		local $/;
@@ -69,8 +70,9 @@ sub keep_new_recordings {
 		close $rf;
 	}
 	if (length $bytes) {
-		$name = eval { &subs::whisper_name_transcribe($bytes, 'auto') } || '';
-		$name =~ s/^\s+|\s+$//g;
+		$heard = eval { &subs::whisper_name_transcribe($bytes, 'auto') } || '';
+		$heard =~ s/^\s+|\s+$//g;
+		$name = &subs::name_from_transcript($heard);
 	}
 	if (open(my $fh, '>>', $index)) {
 		print {$fh} encode_json({
@@ -80,10 +82,14 @@ sub keep_new_recordings {
 			peer => $newest->{'peer'} || '',
 			file => $kept,
 			name => $name,
+			# the words as heard: a surname over an 8 kHz link is often only
+			# close, and the raw line is what a person checks the clip against
+			heard => $heard,
 		}) . "\n";
 		close $fh;
 	}
-	$log->info("reception: kept $kept" . (length $name ? " - \"$name\"" : ""));
+	$log->info("reception: kept $kept" . (length $name ? " - \"$name\"" : '')
+		. (length $heard && $heard ne $name ? " (heard \"$heard\")" : ''));
 	# a hundred names is plenty; older ones go
 	my @kept = sort { (stat($a))[9] <=> (stat($b))[9] } glob("$dir/*.wav");
 	if (@kept > 100) {
@@ -96,7 +102,10 @@ sub tick {
 	&keep_new_recordings();
 	my $status = $client->call({ cmd => 'status' });
 	my $state = ($status && $status->{'ok'}) ? ($status->{'state'} || 'idle') : '';
-	return if $state eq 'in_call';
+	# `done` is a plan finished on a line that may still be up: the gateway puts
+	# that call down itself when the line goes quiet, and only then is there a
+	# gateway to arm again. Arming into a dying line spoke a second plan into it.
+	return if $state eq 'in_call' || $state eq 'done';
 	# the same settings the Phone app saves, defaults included
 	my $settings = &subs::phone_ivr_settings();
 	if (($settings->{'enabled'} || 'no') ne 'yes') {
@@ -141,7 +150,8 @@ sub tick {
 $SIG{'TERM'} = sub { Mojo::IOLoop->stop };
 $SIG{'INT'} = sub { Mojo::IOLoop->stop };
 Mojo::IOLoop->timer(1 => \&tick);
-Mojo::IOLoop->recurring(6 => \&tick);
+# often enough that a call placed just after the last one still finds a gateway
+Mojo::IOLoop->recurring(3 => \&tick);
 $log->info('reception started');
 Mojo::IOLoop->start;
 $log->info('reception stopped');
