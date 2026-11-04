@@ -371,7 +371,6 @@ sub notification_grabber($data) {
 	my $q = &subs::db_query('select * from notifications order by timestamp DESC LIMIT 100');
 	my $more_notifications = $q->hashes;
 	if ($device eq 'mobile') {
-		my $bridge_nl = &subs::device_call('notification.list');
 		# The listener answers only after the person grants notification access;
 		# without the grant there is nothing to read, so the list stays empty.
 		my $bridge_nl = &subs::device_call('notification.list');

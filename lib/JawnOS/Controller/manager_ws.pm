@@ -702,22 +702,11 @@ sub action_47050 {
 		&subs::db_query('delete from websockets where room is null and browser_tab_id = ? and server_time < ?', $browser_tab_id, $stale)->hashes;
 	});
 
-	unless (1 == 0 && $c->param('remote') eq 'yes') {
-		my $remote_machine_query = &subs::db_query('select * from remote_machines where connection=?','active' );
-		my $remote_machines = $remote_machine_query->hashes;
-		foreach my $rm ( @{$remote_machines} ) {
-			my $id = '';
-			my @ip = split /\./, $rm->{'ip'};
-			if ($rm->{'ip'} =~ /[A-Za-z]/gi) {
-				$id = $ip[0];
-			}
-			else {
-				$id = $ip[-1];
-			}
-			my $command = { console => 'websocketStart(\''. $app . '@' . $id . '\',\'wss://' . $rm->{'ip'} . ':' . $rm->{'ws_port'} . '/manager/ws?remote=yes&app=' . $app . '@' . $id . '&browser_tab_id=' . $rm->{'signatorial'} . '&timestamp=' . &subs::rightNow() . '&ws_auth=' . $rm->{'ws_auth'} . '\');' };
-			#&Websocket::send('server', $command);# if !grep { $_ eq $app } qw/music server tab/;
-		}
-	}
+	# The remote-tab fan-out used to be built here. `unless (1 == 0 && ...)`
+	# was always true, the command was never sent, and every socket connect
+	# queried the roster and printed undefined ws_port/ws_auth warnings (the
+	# log on a phone ran to thousands of lines). A remote tab is started by
+	# websocketStart on the client; the dead builder is gone.
 }
 
 1;
