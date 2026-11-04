@@ -123,7 +123,11 @@ if ($cmd ne 'listen' && $cmd ne 'sendloop') {
 
 my $sock = dial();
 $sock->autoflush(1);
-$sock->blocking(0);
+# listen is the only command that must not block: it waits in select. Every
+# other command writes its whole line first. On a non-blocking socket a large
+# send (a room/toggles payload, a clip) was truncated mid-string and the daemon
+# echoed the fragment as a multi-megabyte "bad command".
+$sock->blocking($cmd eq 'listen' ? 0 : 1);
 
 my $sel = IO::Select->new($sock);
 my $inbuf = drain_new();

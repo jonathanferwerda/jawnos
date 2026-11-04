@@ -16,6 +16,7 @@ use IO::Select;
 use IO::Socket::INET;
 use IPC::Open3;
 use POSIX qw(sysconf _SC_CLK_TCK);
+use JSON::PP ();
 use Symbol qw(gensym);
 use Test::More;
 use Time::HiRes qw(time sleep);
@@ -217,6 +218,60 @@ SKIP: {
 	close $out2; close $err2;
 	waitpid($client2, 0);
 	waitpid($server2, 0);
+}
+
+# ---- a large send is not truncated ----------------------------------------
+# send used to write to the same non-blocking socket listen needs: a 4 MB
+# command reached the bridge cut mid-string and the daemon echoed the fragment
+# as a multi-megabyte "bad command". Every non-listen command must block.
+{
+	my $srv3 = IO::Socket::INET->new(
+		LocalAddr => '127.0.0.1', LocalPort => 0,
+		Proto => 'tcp', Listen => 1, ReuseAddr => 1,
+	) or skip 'cannot bind a send-test port', 4;
+	my $port3 = $srv3 ? $srv3->sockport : 0;
+	my $capture = "/tmp/jawnos-send-$$.json";
+	unlink $capture;
+	my $server3 = fork();
+	if (!$server3) {
+		my $c = $srv3->accept or exit 0;
+		$c->autoflush(1);
+		my $buf = '';
+		my $end = time + 10;
+		while (time < $end && index($buf, "\n") < 0) {
+			my $rin = '';
+			vec($rin, fileno($c), 1) = 1;
+			my $n = select(my $r = $rin, undef, undef, 0.2);
+			next unless $n;
+			my $d = '';
+			my $got = sysread($c, $d, 65536);
+			last unless defined $got && $got > 0;
+			$buf .= $d;
+		}
+		open(my $fh, '>', $capture) or exit 0;
+		print $fh $buf;
+		close $fh;
+		print $c '{"event":"sent"}', "\n";
+		sleep 2;
+		exit 0;
+	}
+	local $ENV{'JAWNOS_BT_PORT'} = $port3;
+	my $err3 = gensym;
+	my $client3 = open3(my $in3, my $out3, $err3, $^X, "$root/scripts/jawn-bt", 'send');
+	my $payload = 'A' x (4 * 1024 * 1024);
+	print {$in3} $payload;
+	close $in3;
+	waitpid($client3, 0);
+	my $rc3 = $? >> 8;
+	waitpid($server3, 0);
+	my $got = '';
+	if (open(my $fh, '<', $capture)) { local $/; $got = <$fh>; close $fh }
+	unlink $capture;
+	ok($got =~ /\n\z/, 'a large command is newline-terminated, not cut mid-string');
+	my $cmd = eval { JSON::PP->new->decode($got) };
+	ok($cmd && $cmd->{'cmd'} eq 'send', 'and decodes as a send command');
+	is($cmd && length($cmd->{'message'}), length($payload), 'with the whole payload');
+	is($rc3, 0, 'send completes');
 }
 
 done_testing();
