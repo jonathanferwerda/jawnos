@@ -166,7 +166,8 @@ sub _compute_abilities {
 	my ($on_ac, $battery_percent) = _power();
 	my $os = _os_name();
 
-	my $has_ollama = _which('ollama') ? 1 : 0;
+	my $ollama_bin = _ollama_binary();
+	my $has_ollama = length $ollama_bin ? 1 : 0;
 	my @ollama_models;
 	if ($has_ollama) {
 		@ollama_models = _ollama_models();
@@ -822,10 +823,27 @@ sub _whisper_binary {
 	return '';
 }
 
+# The Ollama client, wherever it was installed. A machine that cannot reach
+# /usr/local/bin (an LXC whose tree runs under a root-installed service, with no
+# sudo for the person who owns it) installs Ollama under the home directory, so
+# the service's PATH never names it. Look where that install lands as well.
+sub _ollama_binary {
+	my $path = _which('ollama');
+	return $path if length $path;
+	my $home = $ENV{'HOME'} || '';
+	return '' unless length $home;
+	foreach my $candidate ( "$home/.local/bin/ollama", "$home/ollama/bin/ollama" ) {
+		return $candidate if -f $candidate && -x $candidate;
+	}
+	return '';
+}
+
 # `ollama list` is a daemon round trip. Run it with a hard cap so a hung daemon
 # costs two seconds, never a request.
 sub _ollama_models {
-	my $out = _run_capped(2, 'ollama', 'list');
+	my $bin = _ollama_binary();
+	return () unless length $bin;
+	my $out = _run_capped(2, $bin, 'list');
 	return () unless defined $out && length $out;
 	my @models;
 	foreach my $line ( split /\n/, $out ) {
