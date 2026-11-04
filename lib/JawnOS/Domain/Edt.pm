@@ -432,8 +432,20 @@ sub network_report_from_bridge {
 	return $address;
 }
 
+# net-tools and iproute2 live in /usr/sbin and /sbin, which a normal user's PATH on
+# a Debian box does not carry. A bare `ifconfig` there prints "not found", and the
+# parser below read that error line as an interface literally named "sh" - so the
+# address report came back empty and the presence beacon had no LAN to sit on.
+sub system_path_with_sbin {
+	my ($path) = @_;
+	return '/usr/sbin:/sbin:' . (defined $path && length $path ? $path : '');
+}
+
 sub network_interface_reporter {
 	my $c = shift;
+	# The probes below run through the shell, and the login shell of a service
+	# account often has no sbin paths at all.
+	local $ENV{'PATH'} = &system_path_with_sbin($ENV{'PATH'});
 	# Reading the interfaces shells out to ifconfig/arp for every NIC (about
 	# 100ms). Callers ask several times in one pass - a BLE device walk asks once
 	# per chip - and nothing changes second to second, so keep the report for a

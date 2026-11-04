@@ -60,6 +60,18 @@ is( subs::network_report_from_bridge({ interfaces => {} }), undef,
 is_deeply( subs::network_report_from_bridge({ interfaces => { lo => { ip => '' } } }), {},
 	'an interface without an address is not reported' );
 
+# net-tools and iproute2 are in /usr/sbin and /sbin, which a normal user's PATH on a
+# Debian box does not carry: the reporter's bare `ifconfig` printed "not found",
+# and that error text was read as an interface named "sh". The reporter runs its
+# probes with the system paths in front, and this helper is the one place that
+# decision lives.
+is( subs::system_path_with_sbin('/usr/bin:/bin'), '/usr/sbin:/sbin:/usr/bin:/bin',
+	'the system sbin paths are put in front of the shell PATH' );
+is( subs::system_path_with_sbin(''), '/usr/sbin:/sbin:',
+	'an unset PATH still gets the system paths' );
+is( subs::system_path_with_sbin(undef), '/usr/sbin:/sbin:',
+	'and so does an undefined one' );
+
 is( subs::address_signature( { b => { ip => '2' }, a => { ip => '1' } } ),
 	subs::address_signature( { a => { ip => '1' }, b => { ip => '2' } } ),
 	'the address signature does not depend on key order' );
