@@ -341,8 +341,20 @@ function solitaireApply(state, target) {
 // Could this selection land there? A throwaway copy answers without touching
 // the real table, which the drag highlight uses on every pointer move.
 function solitaireCanDrop(state, from, target) {
-	var copy = JSON.parse(JSON.stringify(state));
-	copy.selected = from;
+	// Only the layout is copied: the undo stack can hold sixty snapshots and
+	// this runs on every pointer move while a card is in the air.
+	var copy = JSON.parse(JSON.stringify({
+		stock: state.stock,
+		waste: state.waste,
+		foundations: state.foundations,
+		tableau: state.tableau,
+		moves: 0,
+		passes: 0,
+		bank: state.bank,
+		selected: from,
+		undo: [],
+		won: false
+	}));
 	return solitaireApply(copy, target) !== null;
 }
 
@@ -967,6 +979,7 @@ function blackjackNewState(bank) {
 		player: [],
 		dealer: [],
 		bet: 10,
+		stake: 10,
 		bank: (typeof bank === 'number' && !isNaN(bank)) ? bank : BJ_BANK_START,
 		phase: 'bet',
 		doubled: false,
@@ -977,7 +990,7 @@ function blackjackNewState(bank) {
 function blackjackNaturals(state) {
 	var p = blackjackValue(state.player).total;
 	var d = blackjackValue(state.dealer).total;
-	var stake = state.bet;
+	var stake = state.stake;
 	if (p === 21 && d === 21) {
 		state.bank += stake;
 		state.phase = 'done';
@@ -1006,16 +1019,19 @@ function blackjackStartHand(state) {
 		return false;
 	}
 	if (!state.shoe.length) { state.shoe = blackjackShoe(); }
+	state.stake = stake;
 	state.player = [];
 	state.dealer = [];
 	state.doubled = false;
 	state.message = '';
 	state.phase = 'player';
 	state.bank -= stake;
-	state.dealer.push(blackjackDraw(state, false));
+	// Player, dealer up, player, dealer hole: the usual order, so the hole card
+	// is the last card of the dealer's hand.
+	state.player.push(blackjackDraw(state, true));
+	state.dealer.push(blackjackDraw(state, true));
 	state.player.push(blackjackDraw(state, true));
 	state.dealer.push(blackjackDraw(state, false));
-	state.player.push(blackjackDraw(state, true));
 	if (blackjackNaturals(state)) { return true; }
 	return true;
 }
@@ -1028,11 +1044,11 @@ function blackjackDealerPlay(state) {
 	var player = blackjackValue(state.player).total;
 	var dealer = blackjackValue(state.dealer).total;
 	if (dealer > 21 || player > dealer) {
-		state.bank += state.bet * 2;
+		state.bank += state.stake * 2;
 		state.message = dealer > 21 ? 'Dealer busts. You win.' : 'You win.';
 	}
 	else if (player === dealer) {
-		state.bank += state.bet;
+		state.bank += state.stake;
 		state.message = 'Push.';
 	}
 	else {
@@ -1059,12 +1075,12 @@ function blackjackStand(state) {
 
 function blackjackDouble(state) {
 	if (!state || state.phase !== 'player' || state.player.length !== 2) { return false; }
-	if (state.bank < state.bet) {
+	if (state.bank < state.stake) {
 		state.message = 'Not enough in the bank to double.';
 		return false;
 	}
-	state.bank -= state.bet;
-	state.bet = state.bet * 2;
+	state.bank -= state.stake;
+	state.stake = state.stake * 2;
 	state.doubled = true;
 	state.player.push(blackjackDraw(state, true));
 	if (blackjackValue(state.player).total > 21) {
@@ -1099,16 +1115,17 @@ function blackjackRender() {
 	}
 	var dealerView = blackjackValue(state.dealer, true);
 	var playerView = blackjackValue(state.player);
-	$('#bj_dealer_total').text(state.dealer.length ? String(dealerView.total) + (dealerView.soft ? ' soft' : '') : '');
-	$('#bj_player_total').text(state.player.length ? String(playerView.total) + (playerView.soft ? ' soft' : '') : '');
+	var soft = (window.jawnosT ? jawnosT('soft') : 'soft');
+	$('#bj_dealer_total').text(state.dealer.length ? String(dealerView.total) + (dealerView.soft ? ' ' + soft : '') : '');
+	$('#bj_player_total').text(state.player.length ? String(playerView.total) + (playerView.soft ? ' ' + soft : '') : '');
 	$('#bj_bank').text(Math.round(state.bank));
-	$('#bj_bet').text(state.bet);
+	$('#bj_bet').text(state.phase === 'player' ? state.stake : state.bet);
 	$('#bj_bet').closest('.bj_stat').toggleClass('disabled', state.phase === 'player');
 	var playing = (state.phase === 'player');
 	$('#bj_deal').prop('disabled', playing);
 	$('#bj_hit').prop('disabled', !playing);
 	$('#bj_stand').prop('disabled', !playing);
-	$('#bj_double').prop('disabled', !playing || state.player.length !== 2 || state.bank < state.bet);
+	$('#bj_double').prop('disabled', !playing || state.player.length !== 2 || state.bank < state.stake);
 	$('.bj_chip').prop('disabled', playing);
 	var message = state.message || (playing ? 'Hit or stand.' : 'Place your bet and deal.');
 	if (state.phase === 'done' && state.bank < BJ_MIN_BET) {

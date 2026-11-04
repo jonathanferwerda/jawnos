@@ -218,7 +218,7 @@ eq(ctx.blackjackValue([ card(10, 0, true), card(1, 0, false) ], true).total, 10,
 	'a hole card is left out of the visible total');
 
 // The shoe is popped, so the deal order is reversed and any later draws sit
-// in front of it. Deal order is dealer, player, dealer, player.
+// in front of it. Deal order is player, dealer up, player, dealer hole.
 function bjShoe(dealOrder, draws) {
 	var shoe = dealOrder.slice().reverse();
 	if (draws) {
@@ -229,7 +229,7 @@ function bjShoe(dealOrder, draws) {
 
 var bj = ctx.blackjackNewState(100);
 bj.bet = 10;
-bj.shoe = bjShoe([ card(9, 0), card(1, 0), card(7, 2), card(13, 1) ]);
+bj.shoe = bjShoe([ card(1, 0), card(9, 0), card(13, 1), card(7, 2) ]);
 ctx.blackjackStartHand(bj);
 eq(bj.bank, 115, 'a natural pays three to two after the stake comes out');
 eq(bj.phase, 'done', 'and the hand is over');
@@ -237,7 +237,7 @@ eq(bj.message, 'Blackjack!', 'with the blackjack message');
 
 bj = ctx.blackjackNewState(100);
 bj.bet = 10;
-bj.shoe = bjShoe([ card(10, 3), card(10, 0), card(9, 3), card(9, 1) ]);
+bj.shoe = bjShoe([ card(10, 0), card(10, 3), card(9, 1), card(9, 3) ]);
 ctx.blackjackStartHand(bj);
 eq(bj.bank, 90, 'the stake leaves the bank at the deal');
 ctx.blackjackStand(bj);
@@ -246,7 +246,7 @@ eq(bj.message, 'Push.', 'and says so');
 
 bj = ctx.blackjackNewState(100);
 bj.bet = 10;
-bj.shoe = bjShoe([ card(10, 1), card(10, 0), card(5, 3), card(8, 2) ], [ card(2, 0) ]);
+bj.shoe = bjShoe([ card(10, 0), card(10, 1), card(8, 2), card(5, 3) ], [ card(2, 0) ]);
 ctx.blackjackStartHand(bj);
 ctx.blackjackStand(bj);
 eq(bj.bank, 110, 'the dealer draws to seventeen and loses');
@@ -254,7 +254,7 @@ eq(ctx.blackjackValue(bj.dealer).total, 17, 'the dealer stopped on seventeen');
 
 bj = ctx.blackjackNewState(100);
 bj.bet = 10;
-bj.shoe = bjShoe([ card(1, 1), card(10, 0), card(6, 3), card(9, 2) ]);
+bj.shoe = bjShoe([ card(10, 0), card(1, 1), card(9, 2), card(6, 3) ]);
 var shoeBefore = bj.shoe.length;
 ctx.blackjackStartHand(bj);
 ctx.blackjackStand(bj);
@@ -264,7 +264,7 @@ eq(bj.bank, 110, 'and the player wins with nineteen');
 
 bj = ctx.blackjackNewState(100);
 bj.bet = 10;
-bj.shoe = bjShoe([ card(10, 1), card(10, 0), card(10, 2), card(6, 3) ], [ card(10, 3) ]);
+bj.shoe = bjShoe([ card(10, 0), card(10, 1), card(6, 3), card(10, 3) ], [ card(10, 2) ]);
 ctx.blackjackStartHand(bj);
 ctx.blackjackHit(bj);
 eq(bj.phase, 'done', 'a bust ends the hand at once');
@@ -273,11 +273,12 @@ eq(bj.message, 'Bust.', 'with the bust message');
 
 bj = ctx.blackjackNewState(100);
 bj.bet = 10;
-bj.shoe = bjShoe([ card(10, 1), card(5, 0), card(6, 2), card(6, 3) ], [ card(10, 2), card(2, 0) ]);
+bj.shoe = bjShoe([ card(5, 0), card(10, 1), card(6, 2), card(6, 3) ], [ card(10, 2), card(2, 0) ]);
 ctx.blackjackStartHand(bj);
 ctx.blackjackDouble(bj);
 eq(bj.doubled, true, 'double marks the hand');
-eq(bj.bet, 20, 'and doubles the stake');
+eq(bj.stake, 20, 'and doubles the stake');
+eq(bj.bet, 10, 'while leaving the next bet alone');
 eq(bj.bank, 120, 'a winning double pays both stakes back');
 eq(bj.phase, 'done', 'the dealer plays out after a double');
 

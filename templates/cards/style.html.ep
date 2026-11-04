@@ -39,7 +39,8 @@
 #cards .cards_bar {
 	display: flex;
 	align-items: center;
-	gap: 10px;
+	flex-wrap: wrap;
+	gap: 6px 10px;
 	padding: 9px 16px;
 	border-bottom: 1px solid rgba(231, 200, 115, .22);
 	background: linear-gradient(rgba(0,0,0,.26), rgba(0,0,0,.04));
@@ -663,7 +664,7 @@
 }
 #cards_blackjack h3 span { color: var(--gold); letter-spacing: .02em; }
 #cards_blackjack .bj_hand { display: flex; justify-content: center; min-height: var(--card-h); padding-left: calc(var(--card-w) * .62); }
-#cards_blackjack .bj_hand .sol_card { margin-left: calc(var(--card-w) * -.62); flex: 0 0 auto; }
+#cards_blackjack .bj_hand .sol_card { margin-left: calc(var(--card-w) * -.62); flex: 0 0 auto; cursor: default; }
 #cards_blackjack .bj_hand .sol_card:first-child { margin-left: 0; }
 #cards_blackjack .bj_divider {
 	color: var(--muted);
