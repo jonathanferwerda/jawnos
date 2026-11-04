@@ -793,6 +793,14 @@ if (typeof jQuery !== 'undefined') {
 		cardPicker('new');
 	});
 
+	$(document).on('click', '#cards_deal', function() {
+		cardPicker('new');
+	});
+
+	$(document).on('click', '#cards #deck_spread img', function() {
+		cardPicker('new');
+	});
+
 	$(document).on('click', '#cards .history_draw', function(e) {
 		e.stopPropagation();
 		var draw = $(this);
