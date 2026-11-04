@@ -298,6 +298,14 @@ Manager::app->hook(before_dispatch => sub {
 		# a peer's scheduled wake announces that it is briefly up and its rows have
 		# moved; this machine's own sync pass decides and pulls over the same rail
 		$path eq '/manager/available' ||
+		# the QA readiness and schedule cards ask a linked machine what it has and
+		# which timers it holds. qa_readiness_for deliberately drops the stored
+		# cookie, so the request arrives with no session and the signed rail is its
+		# only proof. Both routes peer_verify the caller against the roster; without
+		# this entry the peer got the Gate page, the JSON decode failed, and every
+		# machine in the picker answered "did not answer the readiness check".
+		$path eq '/manager/configure/qa_device_ready' ||
+		$path eq '/manager/configure/qa_schedule' ||
 		# the house address book: a machine reports where it is when it boots,
 		# changes network or wakes, a relay carries a signed notice for a peer that
 		# cannot reach the server, and a machine asks where a peer is now. All three
