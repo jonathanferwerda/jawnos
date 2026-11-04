@@ -274,13 +274,16 @@ sub watch_call {
 		my $streams = $mixer->call_streams($self->{'peer'});
 		return $self->end_call('streams gone')
 			unless $streams->{'sink_input'} && $streams->{'source_output'};
+		# The pair arrives in pieces - the phone's capture before its playback,
+		# or a stream re-created when the link re-establishes - so move again
+		# every second rather than trusting the one move made at attach.
+		$mixer->attach($self->{'peer'});
+		# only a finished plan ends here, and only when the line stops feeding
+		return unless $state eq 'done';
 		if ($mixer->call_active()) {
 			$self->{'quiet'} = 0;
-			$mixer->attach($self->{'peer'});
 			return;
 		}
-		# a line that has not begun to carry the caller is not over yet
-		return unless $state eq 'done';
 		$self->{'quiet'} = ($self->{'quiet'} || 0) + 1;
 		$self->end_call('line idle') if $self->{'quiet'} >= 3;
 	});
