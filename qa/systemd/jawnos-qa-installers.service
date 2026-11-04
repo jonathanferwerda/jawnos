@@ -22,9 +22,13 @@ ExecStart=/bin/bash /home/jawn/jawnos/qa/installers/run.sh
 Nice=10
 IOSchedulingClass=best-effort
 IOSchedulingPriority=7
-MemoryMax=1G
-CPUQuota=50%
-TimeoutStartSec=30min
+# The check itself is a few MB; the Android update it may run is a JVM
+# (sdkmanager) plus the unpacking of a 700 MB NDK, so leave it room.
+MemoryMax=3G
+CPUQuota=200%
+# An NDK update is a 700 MB fetch and a few GB of unpacking, so the run may be
+# long on a slow link; everything else is seconds.
+TimeoutStartSec=45min
 StandardOutput=journal
 StandardError=journal
 

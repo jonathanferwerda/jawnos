@@ -175,4 +175,36 @@ sub parse_sdk_repository {
 	return { packages => \%packages };
 }
 
+# The versions a family offers, previews excluded: sdkmanager installs
+# `build-tools;36.1.0` on a stable channel, not `36.1.0-rc1`, and `latest` is an
+# alias rather than a version to compare.
+sub sdk_stable_versions {
+	my ($repo, $family) = @_;
+	return () unless ref $repo eq 'HASH' && ref $repo->{'packages'} eq 'HASH';
+	my @versions;
+	for my $id (keys %{ $repo->{'packages'} }) {
+		next unless $id =~ /^\Q$family\E;(.+)$/;
+		my $version = $1;
+		next if $version eq 'latest';
+		next if $version =~ /(?:^|[-.])(?:alpha|beta|rc|canary)/i;
+		push @versions, $version;
+	}
+	return @versions;
+}
+
+# The newest stable version of one family in the index, or undef when the index
+# has no stable member of it. Versions compare the way they read (36.1.0 is
+# newer than 36.0.0; 30.0.16 is newer than 22.1.7).
+sub sdk_newest {
+	my ($repo, $family) = @_;
+	my @versions = sdk_stable_versions($repo, $family);
+	return undef unless @versions;
+	my $best = shift @versions;
+	for my $candidate (@versions) {
+		my $newer = eval { version->parse($candidate) > version->parse($best) };
+		$best = $candidate if $newer;
+	}
+	return $best;
+}
+
 1;

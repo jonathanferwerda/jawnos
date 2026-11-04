@@ -80,6 +80,20 @@ ok( !defined JawnOS::Packages::parse_sdk_repository('<sdkRepository></sdkReposit
 	'SDK: an index with no packages is no answer' );
 ok( !defined JawnOS::Packages::parse_sdk_repository('not xml'), 'SDK: junk is no answer' );
 
+my $tools = JawnOS::Packages::parse_sdk_repository(
+	'<r><remotePackage path="build-tools;36.0.0"/><remotePackage path="build-tools;36.1.0"/>'
+	. '<remotePackage path="build-tools;37.0.0-rc1"/><remotePackage path="build-tools;38.0.0-beta2"/>'
+	. '<remotePackage path="cmdline-tools;latest"/></r>');
+is( JawnOS::Packages::sdk_newest($tools, 'build-tools'), '36.1.0',
+	'SDK: a preview is not a candidate to install' );
+is( JawnOS::Packages::sdk_newest($tools, 'cmdline-tools'), undef,
+	'SDK: `latest` is an alias, not a version to compare' );
+is( JawnOS::Packages::sdk_newest($tools, 'ndk'), undef, 'SDK: a family the index lacks has no candidate' );
+is( JawnOS::Packages::sdk_newest(
+		JawnOS::Packages::parse_sdk_repository(
+			'<r><remotePackage path="ndk;9.0.1"/><remotePackage path="ndk;30.0.16248370"/></r>'),
+		'ndk'), '30.0.16248370', 'SDK: versions compare as numbers, not strings' );
+
 is( JawnOS::Packages::compare_module('0.085', '0.091'), -1, 'CPAN: 0.085 is behind 0.091' );
 is( JawnOS::Packages::compare_module('9.39', '9.39'), 0, 'CPAN: equal versions compare equal' );
 is( JawnOS::Packages::compare_module('10.31', '9.53'), 1, 'CPAN: versions compare as numbers, not strings' );
@@ -197,6 +211,38 @@ unlink "$tmp/sdk_repository.xml";
 is( $rc, 1, 'a vanished SDK index fails the check' );
 like( $out, qr/repository index\s+missing/, 'and the report says the index is the missing thing' );
 
+# --- is there a newer build-tools or NDK? ----------------------------------
+# The base fixtures describe a machine that is up to date; this copy offers a
+# newer build-tools and NDK, which is the drift the check must name.
+my $newer = File::Temp::tempdir(CLEANUP => 1);
+opendir(my $ndh, $fixtures) or die "fixtures: $!";
+for my $name (grep { !/^\.\.?$/ } readdir $ndh) {
+	next unless -f "$fixtures/$name";
+	File::Copy::copy("$fixtures/$name", "$newer/$name") or die "copy $name: $!";
+}
+closedir $ndh;
+my $offered = read_file("$fixtures/sdk_repository.xml");
+$offered =~ s{</sdkRepository>}{  <remotePackage path="build-tools;36.1.0"/>\n  <remotePackage path="ndk;30.0.16248370"/>\n</sdkRepository>};
+open(my $nh, '>', "$newer/sdk_repository.xml") or die "write: $!";
+print {$nh} $offered;
+close $nh;
+
+($rc, $out) = freshness_in($newer, '--android', '--json', '--only=build-tools', '--only=ndk');
+my $toolchain = eval { decode_json($out) };
+my %tool = map { $_->{'tool'} => $_ } @{ $toolchain->{'toolchain'} || [] };
+is( $rc, 0, 'a newer toolchain is informational, not a failure' );
+is( $tool{'build-tools'}{'status'}, 'outdated', 'build-tools behind upstream is outdated' );
+is( $tool{'build-tools'}{'latest'}, '36.1.0', 'and it names the version offered' );
+is( $tool{'build-tools'}{'update'}, 'build-tools;36.1.0', 'and the package id to install' );
+is( $tool{'ndk'}{'status'}, 'outdated', 'so is an NDK behind upstream' );
+is( $toolchain->{'summary'}{'android_outdated'}, 2, 'the summary counts both' );
+
+($rc) = freshness_in($newer, '--android', '--strict', '--json', '--only=build-tools', '--only=ndk');
+is( $rc, 1, '--strict makes a toolchain behind upstream fail' );
+
+($rc, $out) = freshness_in($newer, '--android', '--android-update', '--only=build-tools', '--only=ndk');
+unlike( $out, qr/sdkmanager --install/, 'a fixture run never installs anything, even when asked to update' );
+
 # --- the nightly job downloads nothing ---------------------------------------
 
 ok( -x "$root/qa/installers/run.sh", 'the nightly freshness job is executable' );
@@ -207,6 +253,8 @@ my $bare   = join "\n", grep { !/^\s*#/ } split /\n/, $script;
 like( $script, qr/--freshness/, 'the job runs the metadata check' );
 like( $script, qr/--desktop/, 'and it covers the desktop app too' );
 like( $script, qr/--android/, 'and the Android SDK/NDK index' );
+like( $script, qr/--android-update/, 'and it installs a newer toolchain' );
+like( $script, qr/ANDROID_UPDATE/, 'with an opt-out' );
 like( $script, qr/QA_SOURCE/, 'it checks the committed tree unless asked otherwise' );
 like( $script, qr/flock/, 'two timers cannot overlap' );
 unlike( $bare, qr/apt-get\s+update/, 'it never refreshes the apt index' );
@@ -227,7 +275,7 @@ my $timer   = read_file("$root/qa/systemd/jawnos-qa-installers.timer");
 like( $service, qr{ExecStart=/bin/bash \S+/qa/installers/run\.sh}, 'the unit runs the job' );
 like( $timer, qr/OnCalendar=\*-\*-\* 03:45:00/, 'nightly at 03:45, ahead of the Docker smoke' );
 unlike( $service, qr/device_target/, 'metadata only, so it is not gated on the QA machine' );
-like( $service, qr/MemoryMax=1G/, 'a metadata check stays small' );
+like( $service, qr/MemoryMax=3G/, 'a metadata check plus an SDK install stays bounded' );
 
 my $readme = read_file("$root/qa/README.md");
 like( $readme, qr/installer package freshness/i, 'the QA README documents the job' );

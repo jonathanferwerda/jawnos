@@ -19,6 +19,14 @@
 # candidate is reported, and fails only with STRICT=1 (the image deliberately
 # pins older Mojo/Sereal/CryptX, so the nightly does not gate on that).
 #
+# The Android toolchain is the one thing this job installs: a newer build-tools
+# or NDK than the SDK here has is fetched with the SDK's own sdkmanager
+# (ANDROID_UPDATE=1, the default; set 0 to report only). That is tens of MB for
+# build-tools and hundreds of MB for an NDK, once -- afterwards it is current.
+# A newer NDK is staged, not adopted: the build keeps using the app's
+# ndkVersion pin until that pin moves. cmdline-tools is reported, never
+# installed, because it is the sdkmanager doing the installing.
+#
 # A checkout without curl, or a network where no repository answers, is a
 # SKIP. A repository host that answers the probe but not the queries is a FAIL
 # naming it, because "we can no longer see the module" is exactly the signal
@@ -41,6 +49,7 @@ TREE="$RUN_DIR/tree"
 LOG="$RUN_DIR/freshness.log"
 KEEP=14
 STRICT=${STRICT:-0}
+ANDROID_UPDATE=${ANDROID_UPDATE:-1}
 QA_SOURCE=${QA_SOURCE:-head}
 
 note() { printf '%s\n' "$*"; }
@@ -88,6 +97,7 @@ main() {
 
 	local args=(--freshness --desktop --android)
 	[ "$STRICT" = 1 ] && args+=(--strict)
+	[ "$ANDROID_UPDATE" = 1 ] && args+=(--android-update)
 	if ! perl "$TREE/scripts/jawnos_deps.pl" "${args[@]}"; then
 		note "FAIL: an installer's package is gone upstream, or every lookup failed"
 		return 1

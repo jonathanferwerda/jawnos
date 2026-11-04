@@ -682,6 +682,23 @@ A component that leaves the index fails the run, and so does an index that
 cannot be read at all: it is one request made on purpose, so silence is a
 failure rather than a quiet pass over the Android half.
 
+The same index answers the other question -- **is there a newer toolchain than
+the one here** -- for `build-tools`, `ndk` and `cmdline-tools`: the newest
+installed version against the newest stable one offered (previews are never a
+candidate, and `cmdline-tools;latest` is an alias, so its real version is read
+from `source.properties`). Those rows are `outdated`, informational unless
+`STRICT=1`.
+
+Unlike everything else in the job, the Android toolchain is **installed** when
+it is behind: `ANDROID_UPDATE=1` (the default; `0` reports only) runs the SDK's
+own `sdkmanager --install` for the newer `build-tools` and `ndk`, accepting the
+licences first. Expect tens of megabytes for build-tools and several hundred
+for an NDK, once -- afterwards it is current, and a night with nothing behind
+costs nothing. `cmdline-tools` is reported but never installed, because it is
+the `sdkmanager` doing the installing. A newer NDK is staged, not adopted: the
+build keeps using the app's `ndkVersion` pin until that pin moves, so the report
+naming both is the signal to bump it.
+
 ```sh
 sudo cp qa/systemd/jawnos-qa-installers.service qa/systemd/jawnos-qa-installers.timer /etc/systemd/system/
 sudo systemctl daemon-reload

@@ -31,6 +31,10 @@
 #   perl scripts/jawnos_deps.pl --freshness --fixtures=DIR  # offline, canned
 #   perl scripts/jawnos_deps.pl --freshness --android      # also the Android
 #                                                    # SDK/NDK components
+#   perl scripts/jawnos_deps.pl --freshness --android --android-update
+#                                                    # install a newer
+#                                                    # build-tools/NDK with
+#                                                    # sdkmanager
 #
 # --freshness asks MetaCPAN, Debian's madison and Arch's package API for the
 # candidate version and compares it with what is installed here. It downloads
@@ -52,7 +56,7 @@ use FindBin;
 use lib "$FindBin::Bin/../lib";
 use JawnOS::Packages;
 
-my ($report_only, $json, $sh, $install, $yes, $desktop, $extras_only, $no_extras, $local_lib, $freshness, $strict, $fixtures, $android);
+my ($report_only, $json, $sh, $install, $yes, $desktop, $extras_only, $no_extras, $local_lib, $freshness, $strict, $fixtures, $android, $android_update);
 my @only;
 GetOptions(
 	'report'      => \$report_only,
@@ -68,6 +72,7 @@ GetOptions(
 	'strict'      => \$strict,
 	'fixtures=s'  => \$fixtures,
 	'android'     => \$android,
+	'android-update' => \$android_update,
 	'only=s@'     => \@only,
 ) or die "bad options\n";
 
@@ -504,35 +509,85 @@ sub sdk_root {
 # (`platforms;android-36`, `build-tools;36.0.0`, `ndk;22.1.7171670`, ...). The
 # directory layout is the id with the `;` replaced by a `/`. A fixture run
 # reads a list instead, so the test does not depend on the SDK here.
+#
+# Each component carries its family and the version actually installed:
+# `cmdline-tools;latest` is an alias whose version is only in source.properties,
+# so the directory name is enough for the other families but not for that one.
 sub sdk_components {
 	my ($fixtures) = @_;
 	if (defined $fixtures && length $fixtures) {
 		my $path = "$fixtures/sdk_installed.txt";
 		return () unless -e $path;
 		open(my $fh, '<', $path) or return ();
-		my @list;
+		my @components;
 		while (my $line = <$fh>) {
 			$line =~ s/^\s+|\s+$//g;
 			next unless length $line && $line !~ /^#/;
-			push @list, $line;
+			my ($family, $version) = $line =~ /^([^;]+);(.*)$/;
+			$family = $line unless defined $family;
+			$version = undef if defined $version && $version eq 'latest';
+			push @components, { id => $line, family => $family, version => $version };
 		}
 		close $fh;
-		return @list;
+		return @components;
 	}
 	my $root = sdk_root();
 	return () unless defined $root;
-	my @list;
-	push @list, 'platform-tools' if -d "$root/platform-tools";
+	my @components;
+	push @components, { id => 'platform-tools', family => 'platform-tools' }
+		if -d "$root/platform-tools";
 	for my $family (qw(platforms build-tools ndk cmdline-tools)) {
 		opendir(my $dh, "$root/$family") or next;
 		for my $name (sort readdir $dh) {
 			next if $name eq '.' || $name eq '..';
 			next unless -d "$root/$family/$name";
-			push @list, "$family;$name";
+			push @components, {
+				id      => "$family;$name",
+				family  => $family,
+				version => $family eq 'cmdline-tools'
+					? sdk_pkg_revision("$root/$family/$name")
+					: $name,
+			};
 		}
 		closedir $dh;
 	}
-	return @list;
+	return @components;
+}
+
+# sdkmanager writes the real version of an alias directory here.
+sub sdk_pkg_revision {
+	my ($dir) = @_;
+	return undef unless defined $dir && -e "$dir/source.properties";
+	open(my $fh, '<', "$dir/source.properties") or return undef;
+	my $version;
+	while (my $line = <$fh>) {
+		next unless $line =~ /^Pkg\.Revision\s*=\s*(.+?)\s*$/;
+		$version = $1;
+	}
+	close $fh;
+	return $version;
+}
+
+# The sdkmanager this SDK ships. `latest` first: that is the directory the
+# install instructions create.
+sub sdkmanager_path {
+	my $root = sdk_root();
+	return undef unless defined $root;
+	for my $candidate ("$root/cmdline-tools/latest/bin/sdkmanager",
+		(map { "$_/bin/sdkmanager" } sort { $b cmp $a }
+			map  { "$root/cmdline-tools/$_" }
+			grep { -d "$root/cmdline-tools/$_" } sdk_dir_names("$root/cmdline-tools"))) {
+		return $candidate if -x $candidate;
+	}
+	return undef;
+}
+
+sub sdk_dir_names {
+	my ($dir) = @_;
+	opendir(my $dh, $dir) or return ();
+	my @names = grep { !/^\.\.?$/ && -d "$dir/$_" } readdir $dh;
+	closedir $dh;
+	return @names;
 }
 
 # Two attempts: a nightly check should not report `unknown` because one
@@ -582,6 +637,7 @@ sub freshness_report {
 	my $fixtures = $opt{'fixtures'};
 	my $json_out = $opt{'json'};
 	my $android = $opt{'android'};
+	my $android_update = $opt{'android_update'};
 	my $platform = $opt{'platform'} || 'unknown';
 	my @only = @{ $opt{'only'} || [] };
 	my %only = map { $_ => 1 } @only;
@@ -593,10 +649,11 @@ sub freshness_report {
 		return 0;
 	};
 
-	my (@module_rows, @debian_rows, @arch_rows, @android_rows);
+	my (@module_rows, @debian_rows, @arch_rows, @android_rows, @toolchain_rows);
 	my %summary = (current => 0, outdated => 0, available => 0,
 		missing => 0, unknown => 0, core => 0, checked => 0,
-		android_offered => 0, android_missing => 0, android_unknown => 0);
+		android_offered => 0, android_missing => 0, android_unknown => 0,
+		android_outdated => 0);
 	my $curl_missing = !defined $fixtures && !which('curl');
 	# A fixture run simulates every platform at once, so its rows compare even
 	# when the machine doing the checking is the other distribution.
@@ -776,12 +833,18 @@ sub freshness_report {
 			# The two every build needs whether or not an SDK is installed
 			# here, then whatever this machine already has: a component the
 			# build depends on must not silently disappear from the index.
-			my %wanted = map { $_ => 0 } ('platform-tools', 'cmdline-tools;latest');
-			$wanted{$_} = 1 for sdk_components($fixtures);
+			my %wanted = map { $_ => { id => $_, installed => 0 } }
+				('platform-tools', 'cmdline-tools;latest');
+			my @components = sdk_components($fixtures);
+			for my $component (@components) {
+				$wanted{$component->{'id'}} = { %$component, installed => 1 };
+			}
 			for my $component (sort keys %wanted) {
 				next unless $want->($component);
-				my $row = { component => $component };
-				$row->{'installed'} = $wanted{$component};
+				my $row = {
+					component => $component,
+					installed => $wanted{$component}{'installed'},
+				};
 				if ($repo->{'packages'}{$component}) {
 					$row->{'status'} = 'offered';
 					$summary{'android_offered'}++;
@@ -792,10 +855,41 @@ sub freshness_report {
 				}
 				push @android_rows, $row;
 			}
+
+			# Is there a newer build-tools, NDK or cmdline-tools than the one
+			# this machine has? A newer NDK only reaches the build once the
+			# app's ndkVersion pin moves, so this is a report, not a verdict.
+			my %newest_installed;
+			for my $component (@components) {
+				next unless defined $component->{'version'};
+				next unless $component->{'family'} =~ /^(?:build-tools|ndk|cmdline-tools)$/;
+				my $family = $component->{'family'};
+				my $current = $newest_installed{$family};
+				$newest_installed{$family} = $component->{'version'}
+					if !defined $current
+					|| JawnOS::Packages::compare_module($component->{'version'}, $current) > 0;
+			}
+			for my $family (sort keys %newest_installed) {
+				next unless $want->($family);
+				my $installed = $newest_installed{$family};
+				my $newest = JawnOS::Packages::sdk_newest($repo, $family);
+				my $row = { tool => $family, installed => $installed, latest => $newest };
+				$row->{'status'} = !defined $newest ? 'unknown'
+					: JawnOS::Packages::compare_module($installed, $newest) < 0 ? 'outdated'
+					: 'current';
+				if ($row->{'status'} eq 'outdated') {
+					$summary{'android_outdated'}++;
+					# cmdline-tools is the sdkmanager this job is about to
+					# run; replacing it mid-run is not worth the surprise, so
+					# it is reported and left for a person.
+					$row->{'update'} = "$family;$newest" if $family ne 'cmdline-tools';
+				}
+				push @toolchain_rows, $row;
+			}
 		}
 	}
 
-	if (!@module_rows && !@debian_rows && !@arch_rows && !@android_rows) {
+	if (!@module_rows && !@debian_rows && !@arch_rows && !@android_rows && !@toolchain_rows) {
 		print "freshness: no requested names matched the installer lists\n";
 		return 2;
 	}
@@ -805,6 +899,7 @@ sub freshness_report {
 	$ok = 0 if $summary{'android_missing'};
 	$ok = 0 if $summary{'android_unknown'};
 	$ok = 0 if $strict && $summary{'outdated'};
+	$ok = 0 if $strict && $summary{'android_outdated'};
 	$ok = 0 if $summary{'checked'} && $summary{'unknown'} == $summary{'checked'};
 	$ok = 0 if $curl_missing;
 
@@ -817,6 +912,7 @@ sub freshness_report {
 			debian => \@debian_rows,
 			arch => \@arch_rows,
 			android => \@android_rows,
+			toolchain => \@toolchain_rows,
 			curl_missing => $curl_missing ? 1 : 0,
 			strict => $strict ? 1 : 0,
 		});
@@ -873,7 +969,61 @@ sub freshness_report {
 		print "android: the index could not be read; the Android check did not run\n"
 			if $summary{'android_unknown'};
 	}
+	if (@toolchain_rows) {
+		print "\nAndroid toolchain (newest installed -> newest offered)\n";
+		for my $row (@toolchain_rows) {
+			printf "  %-30s %-12s -> %-12s %s\n",
+				$row->{'tool'},
+				defined $row->{'installed'} ? $row->{'installed'} : '-',
+				defined $row->{'latest'} ? $row->{'latest'} : '-',
+				$row->{'status'};
+		}
+		print "android toolchain: $summary{'android_outdated'} behind upstream\n";
+	}
+	if ($android_update && !$json_out && !$simulated) {
+		my @todo = map { $_->{'update'} }
+			grep { defined $_->{'update'} && ($_->{'status'} || '') eq 'outdated' } @toolchain_rows;
+		$ok = 0 if !android_update(@todo);
+	}
 	return $ok ? 0 : 1;
+}
+
+# Install the newer components with the SDK's own sdkmanager. This is the one
+# place the check writes to the machine, so it only runs when asked
+# (--android-update) and never in a fixture or JSON run. A newer NDK is staged,
+# not adopted: the build keeps using the app's ndkVersion pin until that moves.
+sub android_update {
+	my (@ids) = @_;
+	if (!@ids) {
+		print "android update: nothing behind upstream\n";
+		return 1;
+	}
+	my $sdkmanager = sdkmanager_path();
+	if (!defined $sdkmanager) {
+		print "android update: no sdkmanager under the SDK; reporting only\n";
+		return 1;
+	}
+	if (!which('java')) {
+		print "android update: no java on PATH; sdkmanager cannot run, reporting only\n";
+		return 1;
+	}
+	# sdkmanager refuses an install until the licences are accepted; this is the
+	# non-interactive form the SDK's own instructions use.
+	system('bash', '-c', 'yes 2>/dev/null | "$1" --licenses >/dev/null 2>&1', 'bash', $sdkmanager);
+	my $ok = 1;
+	for my $id (@ids) {
+		print "android update: sdkmanager --install $id (large; the NDK is hundreds of MB)\n";
+		my $rc = system($sdkmanager, '--install', $id);
+		my $code = $rc == -1 ? 1 : ($rc >> 8) || ($rc & 127 ? 1 : 0);
+		if ($code) {
+			print "android update: $id FAILED (exit $code)\n";
+			$ok = 0;
+		}
+		else {
+			print "android update: $id installed\n";
+		}
+	}
+	return $ok;
 }
 
 if ($freshness) {
@@ -884,6 +1034,7 @@ if ($freshness) {
 		platform => $platform,
 		json     => $json,
 		android  => $android,
+		android_update => $android_update,
 	);
 }
 
