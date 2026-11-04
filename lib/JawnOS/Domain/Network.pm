@@ -201,7 +201,19 @@ sub ble_link_apply_event {
 			next unless ref $l eq 'HASH';
 			my $mac = &ble_link_key($l->{'mac'});
 			next unless $mac;
-			$next{$mac} = { %{$l}, mac => $mac };
+			my %link = %{$l};
+			# A link waiting out its retry is still being chased. The daemon
+			# reports the raw state plus next_retry_ms; keep the "reconnecting"
+			# reading the disconnected event uses, or ble_enforce_hosts reads
+			# "disconnected" and issues a fresh connect that resets the daemon's
+			# backoff and its attempt count. A down link with nothing pending is
+			# idle, the other name the disconnected event uses; "connecting" is
+			# a live attempt and is left alone.
+			unless ($link{'connected'}) {
+				if ( ($link{'next_retry_ms'} || 0) > 0 ) { $link{'state'} = 'reconnecting'; }
+				elsif ( ($link{'state'} || '') eq 'disconnected' ) { $link{'state'} = 'idle'; }
+			}
+			$next{$mac} = { %link, mac => $mac };
 		}
 		if (!@{ $event->{'links'} || [] }) {
 			my $mac = &ble_link_key($event->{'mac'});
