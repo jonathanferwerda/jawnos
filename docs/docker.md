@@ -15,6 +15,14 @@ docker compose logs -f    # watch the first boot
 The first build compiles the CPAN modules the tree loads, so allow several
 minutes. Later builds reuse the cached module layer.
 
+## Proxmox / LXC
+
+Docker needs a privileged LXC, or an unprivileged one with
+`features: nesting=1,keyctl=1` and cgroup delegation in
+`/etc/pve/lxc/<id>.conf`. This image was exercised inside the privileged `dev`
+LXC; a default unprivileged `house` LXC needs those settings (or a VM). The
+container itself still runs as the unprivileged `jawn` user.
+
 On the first boot `docker/entrypoint.sh` calls
 `perl scripts/jawnos_setup.pl --seed`, which writes `config.json` and builds
 `database/jawnos.db` from the factory seed without a browser. The unlock code is
