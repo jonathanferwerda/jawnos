@@ -53,8 +53,8 @@ my $part35 = read_file("$root/lib/JawnOS/Manager/Part35.pm");
 like( $part35, qr/name => 'now me push', fork => 1/, 'the Now Me push rides a child' );
 
 my $part36 = read_file("$root/lib/JawnOS/Manager/Part36.pm");
-like( $part36, qr/\$plan_pull && !\$gimme && &subs::device_setter\(\) eq 'mobile'/,
-	'a mobile pull caps the plan, and a deep repair is not capped' );
+like( $part36, qr/\$plan_pull && !\$gimme && \(&subs::device_setter\(\) eq 'mobile' \|\| \$mobile_peer\)/,
+	'a mobile pull caps the plan, and so does a pull from a mobile peer' );
 like( $part36, qr/sync_plan_step\(\$plan, 1\)/, 'the mobile cap is one table per pass' );
 
 done_testing();

@@ -354,8 +354,12 @@ sub remote_machine_reconnector($c) {
 							# One table per pass keeps a pass inside a tick, and sync_plan
 							# re-derives the rest from the digests on the next handshake, so
 							# the tables left behind are deferred, not lost. A deep (gimme)
-							# repair is deliberately not capped.
-							if ($plan_pull && !$gimme && &subs::device_setter() eq 'mobile') {
+							# repair is deliberately not capped. The puller steps too when
+							# the PEER is a phone: the export rides the peer's tunnel and
+							# battery, and a six-table pull held a phone's export workers
+							# and its tunnel at 100%.
+							my $mobile_peer = (($rm->{'data'}->{'device'} || '') eq 'mobile') ? 1 : 0;
+							if ($plan_pull && !$gimme && (&subs::device_setter() eq 'mobile' || $mobile_peer)) {
 								my $capped = &subs::sync_plan_step($plan, 1);
 								my $before = scalar keys %{$plan};
 								my $after = scalar keys %{$capped};
