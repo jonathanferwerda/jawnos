@@ -63,6 +63,7 @@ sub keep_new_recordings {
 	# reads a narrowband name as "Listen strong." where base reads "This is John."
 	my $name = '';
 	my $heard = '';
+	my $person = '';
 	my $bytes = '';
 	if (open(my $rf, '<', $kept)) {
 		local $/;
@@ -73,6 +74,9 @@ sub keep_new_recordings {
 		$heard = eval { &subs::whisper_name_transcribe($bytes, 'auto') } || '';
 		$heard =~ s/^\s+|\s+$//g;
 		$name = &subs::name_from_transcript($heard);
+		# the words are matched against the people the house knows: an 8 kHz
+		# link turns a surname into something close, a first name usually holds
+		$person = eval { &subs::person_name_match(length $name ? $name : $heard) } || '';
 	}
 	if (open(my $fh, '>>', $index)) {
 		print {$fh} encode_json({
@@ -82,6 +86,8 @@ sub keep_new_recordings {
 			peer => $newest->{'peer'} || '',
 			file => $kept,
 			name => $name,
+			# the house's own person, when the words match one of them
+			person => $person,
 			# the words as heard: a surname over an 8 kHz link is often only
 			# close, and the raw line is what a person checks the clip against
 			heard => $heard,
@@ -89,6 +95,7 @@ sub keep_new_recordings {
 		close $fh;
 	}
 	$log->info("reception: kept $kept" . (length $name ? " - \"$name\"" : '')
+		. (length $person ? " ($person)" : '')
 		. (length $heard && $heard ne $name ? " (heard \"$heard\")" : ''));
 	# a hundred names is plenty; older ones go
 	my @kept = sort { (stat($a))[9] <=> (stat($b))[9] } glob("$dir/*.wav");

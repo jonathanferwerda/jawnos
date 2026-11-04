@@ -462,6 +462,62 @@ sub person_relationship_rating {
 	return &relationship_rating(&person_relationship_value($app));
 }
 
+sub person_name_match {
+	# A caller gives their name over an 8 kHz link: "Jonathan Ferwerda" comes
+	# back as "Jonathan for World Health". The house knows who its people are
+	# (the apps with a relationship), so the words are matched against those
+	# names rather than trusted on their own. A person's first name has to be
+	# heard; how much of the rest of their name follows decides between people
+	# who share it, and two equally good matches are left as no match rather than
+	# guessed. Returns the house's own app name for the person, or ''.
+	my ($text) = @_;
+	return '' unless defined $text && length $text;
+	my $heard = &name_tokens($text);
+	return '' unless scalar @{$heard};
+	my $people = eval { &person_relationships() } || {};
+	my ($best, $best_score, $tie) = ('', 0, 0);
+	foreach my $app ( sort keys %{$people} ) {
+		my $tokens = &name_tokens($app);
+		next unless scalar @{$tokens};
+		my $first = &name_token_score($tokens->[0], $heard);
+		next unless $first > 0;
+		my $score = $first;
+		foreach my $token ( @{$tokens}[ 1 .. $#{$tokens} ] ) {
+			$score += &name_token_score($token, $heard);
+		}
+		$score = $score / scalar @{$tokens};
+		if ($score > $best_score) {
+			$best = $app;
+			$best_score = $score;
+			$tie = 0;
+		}
+		elsif ($score == $best_score) {
+			$tie = 1;
+		}
+	}
+	return $best if length $best && !$tie;
+	return '';
+}
+
+sub name_tokens {
+	my ($text) = @_;
+	my $flat = lc($text // '');
+	$flat =~ s/[^a-z0-9]+/ /g;
+	return [ grep { length } split ' ', $flat ];
+}
+
+# 1 for the same word, half for a prefix either way ("jon" for "jonathan"),
+# and only once a word is long enough to mean anything.
+sub name_token_score {
+	my ($token, $heard) = @_;
+	foreach my $word ( @{$heard} ) {
+		return 1 if $word eq $token;
+		next if length $token < 4 || length $word < 4;
+		return 0.5 if index($word, $token) == 0 || index($token, $word) == 0;
+	}
+	return 0;
+}
+
 sub person_relationships {
 	my %map;
 	my $rows = eval {

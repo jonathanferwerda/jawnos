@@ -109,6 +109,9 @@ sub status {
 		recordings => $self->{'recordings'},
 		plan => [ map { $_->{'key'} || ($_->{'tone'} ? 'tone' : 'step') } @{ $self->{'steps'} || [] } ],
 		local => $self->{'local'} || '',
+		# where the call's own two streams were on the last look: the pane and a
+		# person debugging a silent call both need to know whether they are ours
+		streams => ($self->{'mixer'} ? ($self->{'mixer'}->{'attached'} || {}) : {}),
 	};
 }
 

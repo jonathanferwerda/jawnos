@@ -1,4 +1,4 @@
-# tests-for: lib/JawnOS/Manager/Part12.pm lib/JawnOS/Controller/manager_phone.pm lib/JawnOS/Routes/manager_phone.pm templates/apps/phone.html.ep public/js/manager/phone.js perl/Reception.pl lib/JawnOS/Domain/Ai.pm
+# tests-for: lib/JawnOS/Manager/Part12.pm lib/JawnOS/Controller/manager_phone.pm lib/JawnOS/Routes/manager_phone.pm templates/apps/phone.html.ep public/js/manager/phone.js perl/Reception.pl lib/JawnOS/Domain/Ai.pm lib/JawnOS/Domain/Headless.pm
 # covers:    One number's own call route: saved, cleared, resolved before the
 #            person's relationship, carried on the sync blob and offered by the
 #            routing sheet; the reception worker only arms where the helper is;
@@ -114,5 +114,24 @@ is(&subs::name_from_transcript('Smith'), 'Smith', 'a bare name is left alone');
 is(&subs::name_from_transcript(''), '', 'nothing said is no name');
 like($reception, qr/whisper_name_transcribe/,
 	'the name takes the model that reads a narrowband clip');
+
+# The words are matched against the people the house knows, because the surname
+# does not survive the 8 kHz link.
+{
+	local *subs::person_relationships = sub {
+		return {
+			'jonathan' => { value => 'self' },
+			'alice' => { value => 'friend' },
+			'bob smith' => { value => 'enemy' },
+		};
+	};
+	is(&subs::person_name_match('Jonathan'), 'jonathan', 'a first name names the house person');
+	is(&subs::person_name_match('Jonathan for World Health'), 'jonathan',
+		'a surname heard wrong does not lose the caller');
+	is(&subs::person_name_match('This is alice'), 'alice', 'and so does another person');
+	is(&subs::person_name_match('Bob Smith'), 'bob smith', 'a full name matches the full name');
+	is(&subs::person_name_match('Carol'), '', 'a stranger matches nobody');
+	is(&subs::person_name_match(''), '', 'nothing said matches nobody');
+}
 
 done_testing();
