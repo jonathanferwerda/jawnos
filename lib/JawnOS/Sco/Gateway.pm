@@ -70,9 +70,12 @@ sub local_address {
 
 sub status {
 	my ($self) = @_;
+	my $state = $self->{'state'};
+	# an armed gateway whose helper is gone is idle, whatever the last event said
+	$state = 'idle' if ($state eq 'armed' || $state eq 'starting') && !$self->{'pid'};
 	return {
 		ok => 1,
-		state => $self->{'state'},
+		state => $state,
 		peer => $self->{'peer'},
 		since => $self->{'since'},
 		call_id => $self->{'call_id'},
@@ -116,6 +119,11 @@ sub arm {
 	my ($self, %args) = @_;
 	return { ok => 0, error => 'a call is already up' }
 		if $self->{'state'} eq 'in_call';
+	# a second arm while one is starting would leave the first helper holding the
+	# SCO listener and its parent's pipe gone: the helper then exits unreaped and
+	# the next call finds a gateway that only looks armed
+	return { ok => 1, state => 'starting' } if $self->{'state'} eq 'starting';
+	$self->cancel() if $self->{'state'} ne 'idle' || $self->{'pid'};
 	my @cmd = $self->helper_command();
 	return { ok => 0, error => 'the SCO helper is not built on this machine' } unless @cmd;
 	$self->{'local'} = $args{'local'} if defined $args{'local'};
@@ -339,8 +347,10 @@ sub _reap {
 		select(undef, undef, undef, 0.02);
 	}
 	unless ($gone) {
+		# the helper has PR_SET_PDEATHSIG, so it is on its way out; wait for it
+		# rather than leaving a zombie with nothing left to reap it
 		kill 'TERM', $pid;
-		waitpid($pid, WNOHANG);
+		waitpid($pid, 0);
 	}
 	$self->{'reaping'} = 0;
 	return;
