@@ -31,32 +31,27 @@ my $helper = './perl/sco/sco_helper';
 my $armed_at = 0;
 my $armed_from = '';
 
-sub setting {
-	my ($key) = @_;
-	my $value = eval { &subs::setting_grabber({ app => 'phone', setting => $key, benign => 1 }) };
-	return defined $value ? $value : '';
-}
-
 sub tick {
 	my $status = $client->call({ cmd => 'status' });
 	my $state = ($status && $status->{'ok'}) ? ($status->{'state'} || 'idle') : '';
 	return if $state eq 'in_call';
-	my $enabled = &setting('ivr_enabled');
-	if (($enabled || '') ne 'yes') {
+	# the same settings the Phone app saves, defaults included
+	my $settings = &subs::phone_ivr_settings();
+	if (($settings->{'enabled'} || 'no') ne 'yes') {
 		$client->call({ cmd => 'cancel' }) if $state && $state ne 'idle';
 		return;
 	}
 	# a machine without the helper has no admission to give
 	return unless -x $helper;
 	return if $state eq 'armed' && time - $armed_at < 300;
-	my $voice = &setting('ivr_voice');
-	my @text = map { &setting('ivr_' . $_) } qw(greeting prompt thanks);
+	my $voice = $settings->{'voice'} || '';
+	my @text = map { $settings->{$_} || '' } qw(greeting prompt thanks);
 	my $from = join("\x00", $voice, @text);
 	# the prompts have not changed since the last arm: leave the listener up
 	return if $state eq 'armed' && $from eq $armed_from;
 	my %clips;
 	foreach my $key (qw(greeting prompt thanks)) {
-		my $text = &setting('ivr_' . $key);
+		my $text = $settings->{$key} || '';
 		next unless length $text;
 		my $raw = &JawnOS::Sco::Render::render($text, $voice);
 		$clips{$key} = $raw if $raw;

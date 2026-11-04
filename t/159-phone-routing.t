@@ -86,7 +86,9 @@ like($js, qr{url: '/manager/sco/arm'}, 'the IVR pane arms the gateway');
 
 # ------------------------------------------------------------ reception
 my $reception = read_file("$repo/perl/Reception.pl");
-like($reception, qr/ivr_enabled/, 'the worker reads the phone\'s IVR switch');
+like($reception, qr/phone_ivr_settings/, 'the worker reads the same IVR settings the phone saves');
+like(read_file("$repo/lib/JawnOS/Domain/Phone.pm"), qr/device => 'all'/,
+	'and the reception settings are read house-wide, not per device');
 like($reception, qr/-x \$helper/, 'and only arms where the helper is built');
 like($reception, qr/cmd => 'cancel'/, 'turning IVR off drops the listener');
 like(read_file("$repo/perl/President.pl"), qr/Phone Reception/, 'the master starts it');

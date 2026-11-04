@@ -80,6 +80,7 @@ sub status {
 		last_error => $self->{'last_error'},
 		helper => ($self->helper_command() ? 1 : 0),
 		recordings => $self->{'recordings'},
+		plan => [ map { $_->{'key'} } @{ $self->{'steps'} || [] } ],
 	};
 }
 

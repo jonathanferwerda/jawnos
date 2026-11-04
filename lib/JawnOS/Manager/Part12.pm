@@ -356,17 +356,7 @@ sub phone_recent_unblocked($calls, $numbers) {
 # owns them; the selected machine is a remote_machines signatorial (or its IP
 # when it has no signatorial yet).
 sub phone_ivr_defaults {
-	return {
-		enabled   => 'no',
-		machine   => '',
-		route     => 'unknown',
-		voice     => &subs::say_default_voice(),
-		greeting  => &subs::ui('This automated system records calls.'),
-		prompt    => &subs::ui('Please say your name after the tone.'),
-		voicemail => &subs::ui('Please leave a message after the tone.'),
-		thanks    => &subs::ui('Thank you.'),
-		flows     => &phone_ivr_flow_defaults('unknown'),
-	};
+	return &subs::phone_ivr_defaults();
 }
 
 # The six call-flow buckets. `route` is the older three-way knob; when a phone
@@ -464,51 +454,15 @@ sub phone_route_for {
 }
 
 sub phone_ivr_flow_defaults($route) {
-	my %flow = (
-		unknown     => 'ivr',
-		blacklisted => 'reject',
-		enemy       => 'reject',
-		stranger    => 'ivr',
-		friend      => 'ring',
-		self        => 'ring',
-	);
-	if (($route || '') eq 'off') {
-		$flow{$_} = 'ring' for qw(unknown stranger friend self);
-	}
-	elsif (($route || '') eq 'all') {
-		$flow{$_} = 'ivr' for qw(unknown stranger friend self);
-	}
-	return \%flow;
+	return &subs::phone_ivr_flow_defaults($route);
 }
 
 sub phone_ivr_flow_clean($flows, $route) {
-	my $base = &phone_ivr_flow_defaults($route);
-	my %clean = %{$base};
-	if (ref $flows eq 'HASH') {
-		foreach my $bucket (qw(unknown blacklisted self friend stranger enemy)) {
-			my $action = $flows->{$bucket};
-			next unless defined $action && $action =~ /^(?:ring|ivr|voicemail|reject)$/;
-			$clean{$bucket} = $action;
-		}
-	}
-	return \%clean;
+	return &subs::phone_ivr_flow_clean($flows, $route);
 }
 
 sub phone_ivr_settings {
-	my $settings = &phone_ivr_defaults();
-	foreach my $key ( keys %{$settings} ) {
-		next if $key eq 'flows';
-		my $value = &subs::setting_grabber({ app => 'phone', setting => 'ivr_' . $key, benign => 1 });
-		$settings->{$key} = $value if defined $value && length $value;
-	}
-	$settings->{'enabled'} = ($settings->{'enabled'} eq 'yes') ? 'yes' : 'no';
-	$settings->{'route'} = 'unknown' unless $settings->{'route'} =~ /^(?:unknown|all|off)$/;
-	my %voices = map { $_->{'value'} => 1 } &subs::say_voices();
-	$settings->{'voice'} = &subs::say_default_voice() unless $voices{ $settings->{'voice'} };
-	my $stored_flows = &subs::setting_grabber({ app => 'phone', setting => 'ivr_flows', benign => 1 });
-	my $flows = eval { decode_json($stored_flows) } if defined $stored_flows && length $stored_flows;
-	$settings->{'flows'} = &phone_ivr_flow_clean($flows, $settings->{'route'});
-	return $settings;
+	return &subs::phone_ivr_settings();
 }
 
 sub phone_ivr_save($params) {
@@ -536,10 +490,12 @@ sub phone_ivr_save($params) {
 	foreach my $key (qw(greeting prompt voicemail thanks)) {
 		$next->{$key} = substr($next->{$key}, 0, 1000);
 	}
+	# the reception is the house's, not the device's: the phone turns it on and
+	# the gateway machine plays it, so both read the same row
 	foreach my $key (qw(enabled machine route voice greeting prompt voicemail thanks)) {
-		&subs::setting_setter({ app => 'phone', setting => 'ivr_' . $key, value => $next->{$key} });
+		&subs::setting_setter({ app => 'phone', setting => 'ivr_' . $key, value => $next->{$key}, device => 'all' });
 	}
-	&subs::setting_setter({ app => 'phone', setting => 'ivr_flows', value => encode_json($next->{'flows'}) });
+	&subs::setting_setter({ app => 'phone', setting => 'ivr_flows', value => encode_json($next->{'flows'}), device => 'all' });
 	return $next;
 }
 
