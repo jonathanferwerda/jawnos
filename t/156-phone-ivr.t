@@ -34,6 +34,7 @@ my $defaults = Manager::phone_ivr_defaults();
 is $defaults->{'enabled'}, 'no', 'IVR starts off';
 is $defaults->{'route'}, 'unknown', 'strangers are the default route';
 is $defaults->{'voice'}, &subs::say_default_voice(), 'the default voice is the house default';
+is $defaults->{'bluetooth'}, 'jawn-gateway', 'the gateway adapter has a Bluetooth name';
 like $defaults->{'prompt'}, qr/name/i, 'the default name prompt asks for a name';
 ok length($defaults->{'greeting'}) && length($defaults->{'voicemail'}) && length($defaults->{'thanks'}),
 	'the greeting, voicemail prompt and thanks have defaults';
@@ -98,7 +99,7 @@ is $defaults->{'flows'}->{'enemy'}, 'reject', 'an enemy is rejected by default';
 	local *subs::setting_setter = sub { push @writes, { %{ $_[0] } } };
 	my $saved = Manager::phone_ivr_save({
 		enabled => 'yes', machine => 'gw-sig', route => 'all',
-		voice => 'piper-john', greeting => '  Hello  ',
+		voice => 'piper-john', bluetooth => 'jawn-gateway', greeting => '  Hello  ',
 		prompt => 'Name?', voicemail => 'Leave it', thanks => 'Thanks',
 		flows => '{"unknown":"reject","blacklisted":"voicemail","friend":"ivr"}',
 	});
@@ -112,11 +113,11 @@ is $defaults->{'flows'}->{'enemy'}, 'reject', 'an enemy is rejected by default';
 	is $saved->{'flows'}->{'blacklisted'}, 'voicemail', 'the blacklist flow is saved';
 	is $saved->{'flows'}->{'friend'}, 'ivr', 'the friend flow is saved';
 	is $saved->{'flows'}->{'enemy'}, 'reject', 'a missing flow keeps its default';
-	is scalar @writes, 9, 'every IVR setting is written';
+	is scalar @writes, 10, 'every IVR setting is written';
 	is $writes[0]->{'app'}, 'phone', 'the settings belong to the phone app';
 	like $writes[0]->{'setting'}, qr/^ivr_/, 'the settings carry the ivr_ prefix';
-is $writes[8]->{'setting'}, 'ivr_flows', 'the flow matrix is written as one row';
-	like $writes[8]->{'value'}, qr/"unknown":"reject"/, 'the flow row is JSON';
+is $writes[9]->{'setting'}, 'ivr_flows', 'the flow matrix is written as one row';
+	like $writes[9]->{'value'}, qr/"unknown":"reject"/, 'the flow row is JSON';
 }
 {
 	local *subs::setting_grabber = sub { return undef };

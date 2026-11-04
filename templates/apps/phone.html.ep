@@ -165,6 +165,9 @@
 	<div class="phone_app_pane" pane="ivr">
 		<div class="phone_app_ivr">
 			<label class="phone_app_ivr_toggle"><input type="checkbox" id="phone_ivr_enabled" <%= (($ivr->{'enabled'} || '') eq 'yes') ? 'checked' : '' %>> Enable IVR</label>
+			<label>Gateway Bluetooth name
+				<input type="text" id="phone_ivr_bluetooth" value="<%= $ivr->{'bluetooth'} || '' %>" placeholder="jawn-gateway">
+			</label>
 			<label>Remote machine
 				<select id="phone_ivr_machine">
 					<option value="">— No gateway —</option>

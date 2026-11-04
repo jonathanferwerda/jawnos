@@ -467,7 +467,7 @@ sub phone_ivr_settings {
 
 sub phone_ivr_save($params) {
 	my $next = &phone_ivr_settings();
-	foreach my $key (qw(enabled machine route voice greeting prompt voicemail thanks)) {
+	foreach my $key (qw(enabled machine route voice bluetooth greeting prompt voicemail thanks)) {
 		next unless exists $params->{$key};
 		my $value = defined $params->{$key} ? $params->{$key} : '';
 		$value =~ s/^\s+|\s+$//g;
@@ -500,7 +500,7 @@ sub phone_ivr_save($params) {
 	}
 	# the reception is the house's, not the device's: the phone turns it on and
 	# the gateway machine plays it, so both read the same row
-	foreach my $key (qw(enabled machine route voice greeting prompt voicemail thanks)) {
+	foreach my $key (qw(enabled machine route voice bluetooth greeting prompt voicemail thanks)) {
 		&subs::setting_setter({ app => 'phone', setting => 'ivr_' . $key, value => $next->{$key}, device => 'all' });
 	}
 	&subs::setting_setter({ app => 'phone', setting => 'ivr_flows', value => encode_json($next->{'flows'}), device => 'all' });

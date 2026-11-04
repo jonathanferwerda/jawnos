@@ -169,6 +169,7 @@ $(document).on('click', '#phone_app #phone_ivr_save', function (e) {
 			enabled: $('#phone_app #phone_ivr_enabled').is(':checked') ? 'yes' : 'no',
 			machine: $('#phone_app #phone_ivr_machine').val() || '',
 			voice: $('#phone_app #phone_ivr_voice').val() || '',
+			bluetooth: $('#phone_app #phone_ivr_bluetooth').val() || '',
 			greeting: $('#phone_app #phone_ivr_greeting').val() || '',
 			prompt: $('#phone_app #phone_ivr_prompt').val() || '',
 			voicemail: $('#phone_app #phone_ivr_voicemail').val() || '',
@@ -481,6 +482,7 @@ $(document).on('click', '#phone_app #phone_ivr_arm', function (e) {
 		data: {
 			timestamp: Date.now(),
 			voice: $('#phone_app #phone_ivr_voice').val() || '',
+			bluetooth: $('#phone_app #phone_ivr_bluetooth').val() || '',
 			greeting: $('#phone_app #phone_ivr_greeting').val() || '',
 			prompt: $('#phone_app #phone_ivr_prompt').val() || '',
 			thanks: $('#phone_app #phone_ivr_thanks').val() || ''

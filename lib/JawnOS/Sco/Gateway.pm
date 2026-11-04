@@ -84,6 +84,7 @@ sub status {
 		helper => ($self->helper_command() ? 1 : 0),
 		recordings => $self->{'recordings'},
 		plan => [ map { $_->{'key'} } @{ $self->{'steps'} || [] } ],
+		local => $self->{'local'} || '',
 	};
 }
 
@@ -258,6 +259,7 @@ sub event {
 	my $name = $event->{'event'} || '';
 	$self->{'last_event'} = $name;
 	if ($name eq 'listening') {
+		$self->{'local'} = $event->{'local'} || $self->{'local'};
 		$self->{'state'} = 'armed' if $self->{'state'} eq 'starting';
 		$self->write_status();
 	}

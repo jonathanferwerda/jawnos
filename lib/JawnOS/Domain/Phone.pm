@@ -18,6 +18,8 @@ sub phone_ivr_defaults {
 		machine   => '',
 		route     => 'unknown',
 		voice     => &subs::say_default_voice(),
+		# the adapter the phone must send call audio to, by Bluetooth name
+		bluetooth => 'jawn-gateway',
 		greeting  => &subs::ui('This automated system records calls.'),
 		prompt    => &subs::ui('Please say your name after the tone.'),
 		voicemail => &subs::ui('Please leave a message after the tone.'),
