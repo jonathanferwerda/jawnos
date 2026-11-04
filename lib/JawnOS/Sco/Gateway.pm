@@ -177,6 +177,9 @@ sub arm {
 		my $path = $clips->{$key} || '';
 		push @steps, { play => $path, key => $key } if $path;
 	}
+	# the prompt says "after the tone", so there is one, and it also marks the
+	# moment the recording opens
+	push @steps, { tone => 1, hz => 660, ms => 300, key => 'cue' };
 	push @steps, { record => 1, key => 'name' };
 	my $thanks = $clips->{'thanks'} || '';
 	push @steps, { play => $thanks, key => 'thanks' } if $thanks;
@@ -327,9 +330,9 @@ sub _advance {
 			cmd => 'record',
 			id => $self->{'next_id'},
 			file => $file,
-			ms => $opts->{'ms'} || 20000,
-			silence_ms => $opts->{'silence_ms'} || 1200,
-			min_ms => $opts->{'min_ms'} || 400,
+			ms => $opts->{'ms'} || 30000,
+			silence_ms => $opts->{'silence_ms'} || 1800,
+			min_ms => $opts->{'min_ms'} || 1500,
 		);
 	}
 	else {

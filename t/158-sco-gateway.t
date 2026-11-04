@@ -119,7 +119,7 @@ say_line({ event => 'accepted', peer => '00:11:22:33:44:55' });
 while (my $line = <STDIN>) {
 	my $cmd = eval { $json->decode($line) } || {};
 	my $id = $cmd->{id} || 0;
-	if (($cmd->{cmd} || '') eq 'play') {
+	if (($cmd->{cmd} || '') eq 'play' || ($cmd->{cmd} || '') eq 'tone') {
 		say_line({ event => 'played', id => $id, ms => 10 });
 	}
 	elsif (($cmd->{cmd} || '') eq 'record') {

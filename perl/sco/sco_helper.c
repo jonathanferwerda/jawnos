@@ -151,6 +151,7 @@ static char rec_path[PATH_MAX];
 static long rec_bytes = 0, rec_total_ms = 0, rec_silence_bytes = 0;
 static long rec_want_ms = 0, rec_silence_ms = 1200, rec_min_ms = 400;
 static int rec_id = 0, rec_active = 0, rec_quiet = 0;
+static int rec_speech_seen = 0;
 
 /* ---- small JSON helpers (our own emitter; nothing else writes the line) - */
 
@@ -281,6 +282,7 @@ static void record_start(const char *path, int want_ms, int silence_ms, int min_
 	rec_min_ms = min_ms > 0 ? min_ms : 0;
 	rec_id = id;
 	rec_active = 1;
+	rec_speech_seen = 0;
 	emit("{\"event\":\"recording\",\"id\":%d}", id);
 }
 
@@ -305,10 +307,18 @@ static void downlink_chunk(const unsigned char *buf, size_t len) {
 			sum += v * v;
 		}
 		long rms = n ? (long) (sqrt((double) sum / n)) : 0;
-		if (rms < silence_level) rec_silence_bytes += (long) len;
-		else rec_silence_bytes = 0;
+		if (rms < silence_level) {
+			rec_silence_bytes += (long) len;
+		}
+		else {
+			rec_silence_bytes = 0;
+			rec_speech_seen = 1;
+		}
 		if (rec_want_ms && rec_total_ms >= rec_want_ms) record_close(1, "length");
-		else if (rec_silence_ms && rec_silence_bytes >= rec_silence_ms * BYTES_PER_MS
+		/* the pause only ends the name once there is a name: before the caller
+		 * speaks, a quiet second must not close the recording */
+		else if (rec_speech_seen && rec_silence_ms
+			&& rec_silence_bytes >= rec_silence_ms * BYTES_PER_MS
 			&& rec_total_ms >= rec_min_ms)
 			record_close(1, "silence");
 	}

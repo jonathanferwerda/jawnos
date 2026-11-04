@@ -59,6 +59,19 @@ sub keep_new_recordings {
 		1;
 	};
 	return unless $copy;
+	# the name in words, the way dictation does it: the clip goes to the house's
+	# transcription role (whisper.cpp on this machine, or the chosen cloud model)
+	my $name = '';
+	my $bytes = '';
+	if (open(my $rf, '<', $kept)) {
+		local $/;
+		$bytes = <$rf> // '';
+		close $rf;
+	}
+	if (length $bytes) {
+		$name = eval { &subs::whisper_transcribe($bytes, 'auto') } || '';
+		$name =~ s/^\s+|\s+$//g;
+	}
 	if (open(my $fh, '>>', $index)) {
 		print {$fh} encode_json({
 			call_id => $id,
@@ -66,10 +79,11 @@ sub keep_new_recordings {
 			ms => $newest->{'ms'} || 0,
 			peer => $newest->{'peer'} || '',
 			file => $kept,
+			name => $name,
 		}) . "\n";
 		close $fh;
 	}
-	$log->info("reception: kept $kept");
+	$log->info("reception: kept $kept" . (length $name ? " - \"$name\"" : ""));
 	# a hundred names is plenty; older ones go
 	my @kept = sort { (stat($a))[9] <=> (stat($b))[9] } glob("$dir/*.wav");
 	if (@kept > 100) {
