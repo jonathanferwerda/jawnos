@@ -30,6 +30,17 @@
 	.phone_app_missed .phone_app_name { color:#e0444e; }
 	.phone_app_block { flex:0 0 auto; opacity:0.55; cursor:pointer; }
 	.phone_app_block:hover { opacity:1; }
+	.phone_app_row_call { flex:0 0 auto; opacity:0.7; cursor:pointer; }
+	.phone_app_row_call:hover { opacity:1; }
+	.phone_app_ivr { max-width:420px; margin:0 auto; display:flex; flex-direction:column; gap:10px; }
+	.phone_app_ivr label { display:flex; flex-direction:column; gap:4px; font-size:13px; }
+	.phone_app_ivr textarea, .phone_app_ivr select { width:100%; box-sizing:border-box; font:inherit; padding:7px;
+		border:1px solid var(--line); border-radius:8px; background:var(--panel); color:inherit; }
+	.phone_app_ivr textarea { resize:vertical; }
+	.phone_app_ivr .phone_app_ivr_toggle { flex-direction:row; align-items:center; gap:8px; }
+	.phone_app_ivr_save { align-self:flex-start; padding:7px 18px; border-radius:999px;
+		border:1px solid var(--line); background:var(--panel); color:inherit; cursor:pointer; }
+	.phone_app_ivr_status { min-height:18px; color:var(--muted,#8e8e8e); font-size:12px; }
 	.phone_app_stranger .phone_app_name { font-variant-numeric:tabular-nums; letter-spacing:1px; }
 	.phone_app_stranger .phone_app_avatar { opacity:0.6; }
 	.phone_app_unblock { flex:0 0 auto; font-size:12px; padding:3px 10px; border-radius:999px;
@@ -50,6 +61,7 @@
 		<span class="phone_app_tab on" pane="known" hint="Known">Known</span>
 		<span class="phone_app_tab" pane="recent" hint="Recent">Recent</span>
 		<span class="phone_app_tab" pane="blocked" hint="Blocked">Blocked</span>
+		<span class="phone_app_tab" pane="ivr" hint="IVR">IVR</span>
 		<span class="phone_app_tab" pane="all" hint="All">All</span>
 		<span class="phone_app_tab" pane="dial" hint="Dial">Dial</span>
 	</div>
@@ -88,6 +100,9 @@
 					<span class="phone_app_avatar"><img src="<%= &subs::icon_for('/images/decipherable/phone.png') %>"></span>
 					<span class="phone_app_name"><%= $name %></span>
 					<span class="phone_app_sub" duration="<%= $call->{'duration'} %>"><%= &subs::formatted_time($call->{'timestamp'}) %></span>
+					<% if (defined $call->{'account'} && length $call->{'account'}) { %>
+						<img class="little_thumb phone_app_row_call" hint="Call" number="<%= $call->{'account'} %>" src="<%= &subs::icon_path('phone', '/images/decipherable/phone.png') %>">
+					<% } %>
 					<img class="little_thumb phone_app_block" hint="Block" src="<%= &subs::icon_path('ne pas', '/images/decipherable/padlock.png') %>">
 				</div>
 			<% } %>
@@ -113,6 +128,49 @@
 		<% } else { %>
 			<div class="phone_app_empty">Nothing is blocked.</div>
 		<% } %>
+	</div>
+
+	<%# IVR: the reception settings. The machine list is the house's remote_machines,
+	    online first; the chosen one runs the audio gateway. The prompts are the
+	    words the gateway speaks, and the voice is the Piper voice it renders. %>
+	<div class="phone_app_pane" pane="ivr">
+		<div class="phone_app_ivr">
+			<label class="phone_app_ivr_toggle"><input type="checkbox" id="phone_ivr_enabled" <%= (($ivr->{'enabled'} || '') eq 'yes') ? 'checked' : '' %>> Enable IVR</label>
+			<label>Remote machine
+				<select id="phone_ivr_machine">
+					<option value="">— No gateway —</option>
+					<% foreach my $m (@{$ivr_machines || []}) { %>
+						<option value="<%= $m->{'key'} %>" <%= (($ivr->{'machine'} || '') eq $m->{'key'}) ? 'selected' : '' %>><%= $m->{'hostname'} %> — <%= $m->{'available'} ? 'online' : 'offline' %></option>
+					<% } %>
+				</select>
+			</label>
+			<div class="phone_app_ivr_status">
+				<% if ($ivr->{'machine'}) { %>
+					Gateway: <%= $ivr->{'machine_label'} || $ivr->{'machine'} %> — <%= $ivr->{'machine_available'} ? 'online' : 'offline' %>
+				<% } else { %>
+					No IVR gateway selected.
+				<% } %>
+			</div>
+			<label>Call routing
+				<select id="phone_ivr_route">
+					<option value="unknown" <%= (($ivr->{'route'} || '') eq 'unknown') ? 'selected' : '' %>>Strangers only</option>
+					<option value="all" <%= (($ivr->{'route'} || '') eq 'all') ? 'selected' : '' %>>Everyone</option>
+					<option value="off" <%= (($ivr->{'route'} || '') eq 'off') ? 'selected' : '' %>>Off</option>
+				</select>
+			</label>
+			<label>Voice
+				<select id="phone_ivr_voice">
+					<% foreach my $v (@{$ivr_voices || []}) { %>
+						<option value="<%= $v->{'value'} %>" <%= (($ivr->{'voice'} || '') eq $v->{'value'}) ? 'selected' : '' %>><%= $v->{'label'} %></option>
+					<% } %>
+				</select>
+			</label>
+			<label>Greeting<textarea id="phone_ivr_greeting" rows="2"><%= $ivr->{'greeting'} %></textarea></label>
+			<label>Name prompt<textarea id="phone_ivr_prompt" rows="2"><%= $ivr->{'prompt'} %></textarea></label>
+			<label>Voicemail greeting<textarea id="phone_ivr_voicemail" rows="2"><%= $ivr->{'voicemail'} %></textarea></label>
+			<button class="phone_app_ivr_save" id="phone_ivr_save" hint="Save">Save</button>
+			<div class="phone_app_ivr_status" id="phone_ivr_status"></div>
+		</div>
 	</div>
 
 	<%# All: every number the house holds - the people, and the numbers a caller

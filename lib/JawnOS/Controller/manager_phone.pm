@@ -80,6 +80,10 @@ sub action_23201 {
 		[ map { $_->{'number'} } @{$blocked} ],
 	);
 	my %blocked_number = map { $_->{'number'} => 1 } @{$blocked};
+	my $ivr = &phone_ivr_settings();
+	my $ivr_machine = &phone_ivr_machine($ivr->{'machine'});
+	$ivr->{'machine_available'} = ($ivr_machine && (($ivr_machine->{'connection'} || '') eq 'active')) ? 1 : 0;
+	$ivr->{'machine_label'} = $ivr_machine ? ($ivr_machine->{'hostname'} || $ivr_machine->{'ip'} || '') : '';
 	# a row says so itself when any of its lines is on the desk's list, and each
 	# line carries its own reading (the number, its type, whether it is blocked) so
 	# the template joins them without walking the tuples itself
@@ -98,6 +102,9 @@ sub action_23201 {
 		known => $directory->{'known'},
 		numbers => $directory->{'numbers'},
 		blocked => $blocked,
+		ivr => $ivr,
+		ivr_machines => &phone_ivr_machines(),
+		ivr_voices => [ &subs::say_voices() ],
 	);
 	my $contents = &window_maker({ user_agent => $c->param('user_agent'), app => 'phone', title => 'Phone', contents => $content }, $c->param('timestamp'));
 	$c->render(text => $contents);
@@ -259,6 +266,24 @@ sub action_24636 {
 	$c->render(json => { ok => 0, error => 'unknown event' });
 }
 
+# POST /manager/phone/ivr
+sub action_24760 {
+	my $c = shift;
+	# The IVR pane's save. The settings are ordinary phone settings, so the
+	# selected remote_machine, the routing choice and the three prompts all ride
+	# the same setting rows the phone otherwise owns.
+	my $saved = &phone_ivr_save({
+		enabled   => $c->param('enabled'),
+		machine   => $c->param('machine'),
+		route     => $c->param('route'),
+		voice     => $c->param('voice'),
+		greeting  => $c->param('greeting'),
+		prompt    => $c->param('prompt'),
+		voicemail => $c->param('voicemail'),
+	});
+	$c->render(json => { ok => 1, ivr => $saved });
+}
+
 # GET /manager/phone/sync
 sub action_24755 {
 	my $c = shift;
@@ -274,10 +299,17 @@ sub action_24755 {
 		my $picture = &phone_avatar_data($names{$number});
 		$avatars{$number} = $picture if $picture;
 	}
+	my $ivr = &phone_ivr_settings();
+	my $ivr_machine = &phone_ivr_machine($ivr->{'machine'});
+	$ivr->{'machine_available'} = ($ivr_machine && (($ivr_machine->{'connection'} || '') eq 'active')) ? 1 : 0;
+	$ivr->{'machine_host'} = $ivr_machine ? ($ivr_machine->{'hostname'} || $ivr_machine->{'ip'} || '') : '';
+	$ivr->{'machine_ip'} = $ivr_machine ? ($ivr_machine->{'ip'} || '') : '';
+	$ivr->{'machine_manager'} = $ivr_machine ? ($ivr_machine->{'manager'} || '') : '';
 	$c->render(json => {
 		blocked => &ticket_blacklist_numbers(),
 		names => \%names,
 		avatars => \%avatars,
+		ivr => $ivr,
 	});
 }
 

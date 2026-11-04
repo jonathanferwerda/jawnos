@@ -351,6 +351,96 @@ sub phone_recent_unblocked($calls, $numbers) {
 	} @{ $calls || [] } ];
 }
 
+# The reception settings the Phone app's IVR pane reads and writes. They are
+# ordinary phone settings, so the phone that carries the SIM is the one that
+# owns them; the selected machine is a remote_machines signatorial (or its IP
+# when it has no signatorial yet).
+sub phone_ivr_defaults {
+	return {
+		enabled   => 'no',
+		machine   => '',
+		route     => 'unknown',
+		voice     => &subs::say_default_voice(),
+		greeting  => &subs::ui('This automated system records calls.'),
+		prompt    => &subs::ui('Please say your name after the tone.'),
+		voicemail => &subs::ui('Please leave a message after the tone.'),
+	};
+}
+
+sub phone_ivr_settings {
+	my $settings = &phone_ivr_defaults();
+	foreach my $key ( keys %{$settings} ) {
+		my $value = &subs::setting_grabber({ app => 'phone', setting => 'ivr_' . $key, benign => 1 });
+		$settings->{$key} = $value if defined $value && length $value;
+	}
+	$settings->{'enabled'} = ($settings->{'enabled'} eq 'yes') ? 'yes' : 'no';
+	$settings->{'route'} = 'unknown' unless $settings->{'route'} =~ /^(?:unknown|all|off)$/;
+	my %voices = map { $_->{'value'} => 1 } &subs::say_voices();
+	$settings->{'voice'} = &subs::say_default_voice() unless $voices{ $settings->{'voice'} };
+	return $settings;
+}
+
+sub phone_ivr_save($params) {
+	my $next = &phone_ivr_settings();
+	foreach my $key (qw(enabled machine route voice greeting prompt voicemail)) {
+		next unless exists $params->{$key};
+		my $value = defined $params->{$key} ? $params->{$key} : '';
+		$value =~ s/^\s+|\s+$//g;
+		$next->{$key} = $value;
+	}
+	$next->{'enabled'} = ($next->{'enabled'} eq 'yes' || $next->{'enabled'} eq '1' || $next->{'enabled'} eq 'on') ? 'yes' : 'no';
+	$next->{'route'} = 'unknown' unless $next->{'route'} =~ /^(?:unknown|all|off)$/;
+	my %voices = map { $_->{'value'} => 1 } &subs::say_voices();
+	$next->{'voice'} = &subs::say_default_voice() unless $voices{ $next->{'voice'} };
+	if (defined $next->{'machine'} && length $next->{'machine'}) {
+		my $known = &subs::db_select('remote_machines', undef, { signatorial => $next->{'machine'} })->hashes->[0]
+			|| &subs::db_select('remote_machines', undef, { ip => $next->{'machine'} })->hashes->[0];
+		$next->{'machine'} = $known ? $next->{'machine'} : '';
+	}
+	foreach my $key (qw(greeting prompt voicemail)) {
+		$next->{$key} = substr($next->{$key}, 0, 1000);
+	}
+	foreach my $key (qw(enabled machine route voice greeting prompt voicemail)) {
+		&subs::setting_setter({ app => 'phone', setting => 'ivr_' . $key, value => $next->{$key} });
+	}
+	return $next;
+}
+
+# The machines the IVR pane can offer, online first. A machine is available when
+# the mesh's own remote_machines row says it is connected; the pane shows the
+# difference rather than hiding an offline choice the person may still want.
+sub phone_ivr_machines {
+	my @machines;
+	foreach my $rm ( @{ &subs::db_select('remote_machines')->hashes } ) {
+		next unless ref $rm eq 'HASH';
+		my $key = $rm->{'signatorial'} || $rm->{'ip'} || '';
+		next unless length $key;
+		push @machines, {
+			key         => $key,
+			hostname    => $rm->{'hostname'} || $rm->{'ip'} || $key,
+			ip          => $rm->{'ip'} || '',
+			connection  => $rm->{'connection'} || 'inactive',
+			available   => (($rm->{'connection'} || '') eq 'active') ? 1 : 0,
+			device      => $rm->{'device'} || '',
+			manager     => $rm->{'manager'} || '',
+			port        => $rm->{'port'} || '',
+			signatorial => $rm->{'signatorial'} || '',
+			server_time => $rm->{'server_time'} || '',
+		};
+	}
+	@machines = sort {
+		($b->{'available'} <=> $a->{'available'})
+			|| (lc($a->{'hostname'}) cmp lc($b->{'hostname'}))
+	} @machines;
+	return \@machines;
+}
+
+sub phone_ivr_machine($key) {
+	return undef unless defined $key && length $key;
+	return &subs::db_select('remote_machines', undef, { signatorial => $key })->hashes->[0]
+		|| &subs::db_select('remote_machines', undef, { ip => $key })->hashes->[0];
+}
+
 sub phone_avatar_thumb($file) {
 	return '' unless $file && -e $file;
 	my $dir = &subs::database_dir() . '/.thumbs';

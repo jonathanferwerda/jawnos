@@ -110,13 +110,14 @@ $topic{'camera'} = {
 $topic{'phone'} = {
 		title => 'Phone', category => 'apps', app => 'phone',
 		templates => [ 'templates/apps/phone.html.ep', 'public/js/manager/phone.js' ],
-		controls => [ 'Known', 'Recent', 'Blocked', 'All', 'Dial', 'Call', 'Caller ID', 'Block', 'Unblock' ],
-		verified => '2026-10-16',
+		controls => [ 'Known', 'Recent', 'Blocked', 'All', 'IVR', 'Dial', 'Call', 'Caller ID', 'Block', 'Unblock', 'Save' ],
+		verified => '2026-11-04',
 		summary => 'Calls, the house\'s known contacts, and a dial pad.',
 		body => [
 			'Phone shows the calls the house has logged - every call is an appointment with the subtype phone, on the caller\'s own app - and the numbers the house knows. Known is the people it knows; Recent lists the latest calls, and a row opens that person\'s thread; All adds the numbers that are only numbers, the ones a caller left behind that no name has claimed yet, which is where you go to find an unknown caller and name them.',
 			'A person can keep more than one line (a home number, a work number, a second mobile - set under Configure, in the app\'s Phones tile). They are listed together on one row, the plain phone number first and the rest with their type; tapping any one fills the dial pad with that number, and a call or text from any of them still reaches the person.',
 			'Blocked shows the Box Office\'s blocked numbers, each with an Unblock button. A number there never rings: the phone turns the call away and files it as a cancelled call, and Recent leaves it out.',
+			'IVR is the reception page. Turn it on, choose the remote machine that runs the audio gateway, pick the Piper voice, and write the greeting, the name prompt, and the voicemail greeting. Strangers only sends unknown callers through the reception flow; Everyone sends every caller; Off keeps IVR out of the way. The machine list shows which house machines are online, and the chosen one must be running the IVR bridge.',
 			'Known and All: tapping a number fills the dial pad with it. In the app the device\'s own address book (window.JawnContacts) replaces the Known list once its permission is granted.',
 			'Dial is a pad that places a call on a phone (termux-telephony-call). On the desktop it says dialing is only available on a phone.',
 			'With Caller ID on (the button asks for the Call screening role), the house learns who is calling as it rings. In the app that role names the caller on screen: an incoming call wakes the screen over the lock screen with their picture (the house\'s own image for them, or the JawnOS logo), their name, the number, and Answer and Decline. Without it the house\'s call-log check files the call a moment later.',
@@ -129,6 +130,7 @@ $topic{'phone'} = {
 			'Recent: tap a call to open the caller\'s appointment thread.',
 			'Recent: press Block twice on a call to bar that number from ringing again.',
 			'Blocked: press Unblock twice to let a number through again.',
+			'IVR: choose a machine and voice, write the greeting and name prompt, then press Save.',
 			'Dial: key a number and press Call.'
 		],
 		related => [ 'mailbox', 'box_office' ]

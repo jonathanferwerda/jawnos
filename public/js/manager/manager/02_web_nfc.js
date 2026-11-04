@@ -270,7 +270,8 @@ function jawnPhoneSync() {
 					window.JawnPhone.setFacts(JSON.stringify({
 						blocked: (response && response.blocked) || [],
 						names: (response && response.names) || {},
-						avatars: (response && response.avatars) || {}
+						avatars: (response && response.avatars) || {},
+						ivr: (response && response.ivr) || {}
 					}));
 				} catch (e) { }
 			}

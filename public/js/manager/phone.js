@@ -133,6 +133,55 @@ $(document).on('click', '#phone_app .phone_app_tab', function () {
 	$('#phone_app .phone_app_pane[pane="' + pane + '"]').addClass('on');
 });
 
+// The phone icon on a recent opens the device's default dialer with the number
+// already typed. The native JawnPhone bridge is the only half that can do that;
+// on the desktop the house's own dial pad is the fallback.
+$(document).on('click', '#phone_app .phone_app_row_call', function (e) {
+	e.stopPropagation();
+	var row = $(this).closest('.phone_app_row');
+	var number = $(this).attr('number') || row.attr('number') || '';
+	if (!number) { jawnPhoneAppStatus(jawnosT('No number to dial.')); return; }
+	if (window.JawnPhone && typeof window.JawnPhone.dial === 'function') {
+		window.JawnPhone.dial(number);
+		jawnPhoneAppStatus(jawnosT('Opening dialer…'));
+		return;
+	}
+	jawnPhoneApp.number = number;
+	$('#phone_app #phone_app_display').text(number);
+	$('#phone_app .phone_app_tab[pane="dial"]').trigger('click');
+});
+
+// The IVR pane's save: the settings are the phone's own setting rows, and the
+// machine is the remote_machines signatorial (or IP) the gateway runs on.
+$(document).on('click', '#phone_app #phone_ivr_save', function (e) {
+	e.preventDefault();
+	var status = $('#phone_app #phone_ivr_status');
+	status.text(jawnosT('Saving…'));
+	$.ajax({
+		url: '/manager/phone/ivr',
+		type: 'POST',
+		data: {
+			timestamp: Date.now(),
+			enabled: $('#phone_app #phone_ivr_enabled').is(':checked') ? 'yes' : 'no',
+			machine: $('#phone_app #phone_ivr_machine').val() || '',
+			route: $('#phone_app #phone_ivr_route').val() || 'unknown',
+			voice: $('#phone_app #phone_ivr_voice').val() || '',
+			greeting: $('#phone_app #phone_ivr_greeting').val() || '',
+			prompt: $('#phone_app #phone_ivr_prompt').val() || '',
+			voicemail: $('#phone_app #phone_ivr_voicemail').val() || ''
+		},
+		success: function (res) {
+			if (res && res.ok) {
+				status.text(jawnosT('IVR saved.'));
+				if (typeof jawnPhoneSync === 'function') { jawnPhoneSync(); }
+			} else {
+				status.text(jawnosT('Could not save IVR.'));
+			}
+		},
+		error: function () { status.text(jawnosT('Could not save IVR.')); }
+	});
+});
+
 // dial pad
 $(document).on('click', '#phone_app .phone_app_key', function () {
 	jawnPhoneApp.number += $(this).attr('key');
