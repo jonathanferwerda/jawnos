@@ -729,6 +729,23 @@ half-edited installer list is not judged; `QA_SOURCE=worktree` checks the
 working tree for a run before committing. Logs are in
 `$QA_ROOT/installers/<stamp>/freshness.log`; the last 14 runs are kept.
 
+### Weekly artefact build (Sunday 03:00)
+
+`qa/nightly_build.sh` (`jawnos-qa-build.timer`) builds the two artefacts a person
+would build by hand -- the QEMU image and the Android APK -- through the same
+scripts (`qa/qemu/build.sh`, `qa/android/build.sh`), logging each step under
+`$QA_ROOT/build/`. Nothing is staged into `releases/` and no `versionCode` is
+bumped: these are dev builds.
+
+The Android step is a **clean** build (`gradlew clean`). A run in which every
+task is `UP-TO-DATE` proves nothing about the JDK, AGP, NDK or build-tools that
+are installed, and catching drift in those is the point -- the weekly run of
+2026-11-03 was 51 tasks up-to-date in 8 s and could not have noticed that the
+build-tools AGP needs had been pruned. For the same reason the step **fails** if
+the build log says `Installing Android SDK ...`: that means the toolchain here
+was missing something the build wanted, so the freshness check and the build
+disagree.
+
 ### Which machine runs the night
 
 Configure -> Plat -> QA names one machine for the nightly, and the choice is the

@@ -7,6 +7,10 @@
 #
 # Every QA run builds again, so a stale staged APK can never pass as the current
 # tree. The output path is printed on stdout.
+#
+# CLEAN=1 compiles from scratch (`gradlew clean`) instead of reusing the app
+# repo's incremental state. An all-UP-TO-DATE run says nothing about the JDK,
+# AGP or SDK that are installed, so the weekly unit sets it.
 
 set -eu
 
@@ -72,7 +76,11 @@ if [ -n "${JAVA_HOME:-}" ]; then
 fi
 
 # cap the jobs: this box is shared with the live house
-./gradlew --max-workers=4 :app:assembleDebug
+if [ "${CLEAN:-0}" = 1 ]; then
+	./gradlew --max-workers=4 clean :app:assembleDebug
+else
+	./gradlew --max-workers=4 :app:assembleDebug
+fi
 
 APK=$(ls -t app/build/outputs/apk/debug/*.apk 2>/dev/null | head -n 1 || true)
 if [ -z "$APK" ] || [ ! -s "$APK" ]; then

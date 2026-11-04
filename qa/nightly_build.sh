@@ -63,7 +63,24 @@ if [ "$WHAT" = all ] || [ "$WHAT" = qemu ]; then
 	run qemu sh "$REPO/qa/qemu/build.sh" || :
 fi
 if [ "$WHAT" = all ] || [ "$WHAT" = android ]; then
-	run android sh "$REPO/qa/android/build.sh" || :
+	# A clean build. An incremental run where every task is UP-TO-DATE (which is
+	# what this produced before) says nothing about the JDK, AGP, NDK or
+	# build-tools that are installed, and catching drift in those is the point.
+	CLEAN=1
+	export CLEAN
+	if run android sh "$REPO/qa/android/build.sh"; then
+		# The build had to fetch an SDK component. The freshness check keeps
+		# or installs what the build needs, so this means the two disagree --
+		# exactly the drift this unit exists to catch (AGP wanted
+		# build-tools 34.0.0 while the freshest ones were kept).
+		ANDROID_LOG="$LOGS/$STAMP-android.log"
+		if grep -q 'Installing Android SDK' "$ANDROID_LOG" 2>/dev/null; then
+			echo "qa-build: the Android build had to download an SDK component:" >&2
+			grep 'Installing Android SDK' "$ANDROID_LOG" | sed 's/^/  /' >&2
+			RC=1
+		fi
+	fi
+	unset CLEAN
 fi
 
 if [ "$RC" -eq 0 ]; then

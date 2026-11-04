@@ -1,4 +1,4 @@
-# tests-for: qa/android/build.sh qa/android/run.sh qa/qemu/build.sh qa/qemu/run.sh scripts/verify_change.pl
+# tests-for: qa/android/build.sh qa/android/run.sh qa/qemu/build.sh qa/qemu/run.sh qa/nightly_build.sh scripts/verify_change.pl
 # covers:    The device layers are shell scripts, which verify_change.pl does not look at.
 
 use strict;
@@ -33,6 +33,20 @@ for my $script (qw(android/build.sh android/run.sh qemu/build.sh qemu/run.sh)) {
 		'the release bump/stage script is not run');
 	unlike($build, qr/versionCode\s*=/, 'versionCode is not touched');
 	like($build, qr/java-17-openjdk|java-21-openjdk/, 'a supported JDK is selected');
+	like($build, qr/CLEAN/, 'a clean build can be asked for');
+	like($build, qr/gradlew[^\n]*clean[^\n]*:app:assembleDebug/,
+		'a clean run compiles from scratch rather than reusing incremental state');
+}
+
+# --- the weekly artefact build ------------------------------------------------
+{
+	my $weekly = read_file("$qa/nightly_build.sh");
+	ok( -f "$qa/nightly_build.sh", 'the weekly build script exists' );
+	is( system('sh', '-n', "$qa/nightly_build.sh"), 0, 'it parses under sh' );
+	like($weekly, qr/CLEAN=1/, 'the Android step is a clean build, never an UP-TO-DATE no-op');
+	like($weekly, qr/Installing Android SDK/,
+		'a component the build had to download fails the run (the prune and the build disagree)');
+	unlike($weekly, qr/app_publish\.pl|app_build\.pl/, 'it never publishes or bumps a release');
 }
 
 {
