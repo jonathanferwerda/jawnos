@@ -241,6 +241,8 @@ sub accounting_runway_bills;
 sub accounting_runway_bucket_start;
 sub accounting_runway_edges;
 sub accounting_runway_label;
+sub accounting_runway_lookback_start;
+sub accounting_runway_lookbacks;
 sub accounting_runway_shape;
 sub accounting_runway_short;
 sub accounting_runway_slot;

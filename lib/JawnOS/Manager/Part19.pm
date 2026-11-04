@@ -667,6 +667,27 @@ sub accounting_runway_units {
 	return [qw(day week month quarter year)];
 }
 
+# The windows the pace can be estimated from. The step (day, week, month...) is
+# how wide a column is; this is how far back the rate behind those columns is
+# read, so a person can say "a month is what a month costs" without changing the
+# shape of the chart.
+sub accounting_runway_lookbacks {
+	return [qw(week month quarter year decade all)];
+}
+
+sub accounting_runway_lookback_start {
+	my ($lookback, $now, $earliest) = @_;
+	$now = &subs::rightNow() unless defined $now;
+	$lookback = 'month' unless defined $lookback && length $lookback;
+	return (defined $earliest ? $earliest : $now - 30 * 86400000) if $lookback eq 'all';
+	return &subs::calendar_shift($now, -7, 'day') if $lookback eq 'week';
+	return &subs::calendar_shift($now, -1, 'month') if $lookback eq 'month';
+	return &subs::calendar_shift($now, -3, 'month') if $lookback eq 'quarter';
+	return &subs::calendar_shift($now, -12, 'month') if $lookback eq 'year';
+	return &subs::calendar_shift($now, -120, 'month') if $lookback eq 'decade';
+	return &subs::calendar_shift($now, -1, 'month');
+}
+
 # The first instant of the calendar period a moment belongs to. Weeks start on
 # Sunday, as the locked budget windows count them; quarters start in January,
 # April, July and October. A day, week and quarter are stepped by whole days and
@@ -754,12 +775,18 @@ sub accounting_runway_slot {
 #   moves    cash rows, total signed: income positive, an expense or a payment
 #            negative (a transfer's two legs cancel in the total). A row dated
 #            after now is promised money, not spent money.
-#   bills    money promised ahead, total positive: a scheduled bill on its due
-#            date, or a transaction already dated ahead.
-#   owed     bills raised and not yet paid, total positive: cash that leaves
-#            now rather than later.
+#   bills    money promised ahead, total positive: a bill a schedule will raise or
+#            one already raised and owed. It is reported but NOT added to the
+#            projection: the pace is read from the ledger, which already paid the
+#            bills of the periods it covers, so adding them again would double
+#            count them. Only a transaction the person has dated ahead is extra.
+#   owed     bills raised and not yet paid, total positive, reported on the period
+#            you are in for the same reason.
 #   anchors  inventory balances that re-state an account; the running balance
 #            follows them, exactly as bank_ledger_balance() does.
+#   pace_from  the first instant the pace is estimated from. The default is the
+#            left edge of the chart; Runway passes the lookback the person chose,
+#            which may reach back much further than the buckets on screen.
 sub accounting_runway_steps {
 	my $args = shift || {};
 	my $unit = $args->{'unit'} || 'month';
@@ -785,8 +812,8 @@ sub accounting_runway_steps {
 			label => &accounting_runway_label($unit, $start),
 			short => &accounting_runway_short($unit, $start),
 			actual_net => 0, actual_in => 0, actual_out => 0, actual_count => 0,
-			planned_net => 0, planned_count => 0, owed => 0,
-			rows => [], planned_rows => []
+			planned_net => 0, planned_count => 0, bills_net => 0, bill_count => 0, owed => 0,
+			rows => [], planned_rows => [], bill_rows => []
 		};
 	}
 
@@ -820,41 +847,44 @@ sub accounting_runway_steps {
 		push @events, { ts => $ts, delta => $total };
 	}
 
-	# A scheduled bill or a future expense leaves the account on its date.
+	# A bill a schedule will raise, or one already owed, is reported beside the
+	# period it belongs to. It is deliberately not added to the projection: the
+	# pace already carries the bills of the periods it estimates from, and adding
+	# them once more is the double count that made a month look far too kind.
 	foreach my $b ( @{$bills} ) {
 		my $ts = ($b->{'timestamp'} || 0) + 0;
 		$ts = $now if $ts < $now;
 		my $total = abs(($b->{'total'} || 0) + 0);
 		next if $total < 0.005;
 		my $i = &accounting_runway_slot($edges, $ts);
-		$buckets[$i]->{'planned_net'} -= $total;
-		$buckets[$i]->{'planned_count'}++;
-		push @{$buckets[$i]->{'planned_rows'}}, {
+		$buckets[$i]->{'bills_net'} -= $total;
+		$buckets[$i]->{'bill_count'}++;
+		push @{$buckets[$i]->{'bill_rows'}}, {
 			timestamp => $ts,
 			app => ($b->{'app'} || ''),
 			movement => 'bill',
 			vendor => ($b->{'vendor'} || ''),
 			item => ($b->{'item'} || ''),
 			total => -$total
-		} if scalar @{$buckets[$i]->{'planned_rows'}} < 25;
+		} if scalar @{$buckets[$i]->{'bill_rows'}} < 25;
 	}
 
 	# A bill already raised and not yet paid is cash that leaves from here: it
-	# has no date of its own still to come, so it lands on the current period.
+	# has no date of its own still to come, so it is reported on this period.
 	foreach my $o ( @{$owed} ) {
 		my $total = abs(($o->{'total'} || 0) + 0);
 		next if $total < 0.005;
-		$buckets[$current_index]->{'planned_net'} -= $total;
+		$buckets[$current_index]->{'bills_net'} -= $total;
 		$buckets[$current_index]->{'owed'} += $total;
-		$buckets[$current_index]->{'planned_count'}++;
-		push @{$buckets[$current_index]->{'planned_rows'}}, {
+		$buckets[$current_index]->{'bill_count'}++;
+		push @{$buckets[$current_index]->{'bill_rows'}}, {
 			timestamp => $now,
 			app => ($o->{'app'} || ''),
 			movement => 'owed',
 			vendor => ($o->{'vendor'} || ''),
 			item => ($o->{'item'} || ''),
 			total => -$total
-		} if scalar @{$buckets[$current_index]->{'planned_rows'}} < 25;
+		} if scalar @{$buckets[$current_index]->{'bill_rows'}} < 25;
 	}
 
 	# The running balance, with an inventory anchor re-stating it where one falls.
@@ -878,72 +908,67 @@ sub accounting_runway_steps {
 	}
 	my $balance_now = $buckets[$current_index]->{'balance'};
 
-	# The pace is the mean net of the complete periods behind now. A period with
-	# no movement at all counts as the zero it was, so a house that only started
-	# last month is not given a history it does not have.
-	my @past = grep { $_->{'kind'} eq 'past' } @buckets;
-	my $past_net = 0;
-	$past_net += $_->{'actual_net'} for @past;
-	my $pace = scalar(@past) ? $past_net / scalar(@past) : 0;
-	my $pace_days = scalar(@past) ? (($edges->[scalar(@past)] - $edges->[0]) / 86400000) / scalar(@past) : 0;
-	my $has_history = (grep { $_->{'actual_count'} > 0 } @past) ? 1 : 0;
-
-	# The rest of the current period still to come, as a share of it.
+	# The pace is the net rate of the window the person chose to estimate from,
+	# not the mean of whatever periods happen to be on screen: a month of vape,
+	# koho, banking and dinners is what a month actually costs, and the same rate
+	# is then read against each bucket's own length. A row dated ahead is extra
+	# (it has not happened, so no window covers it) and the only thing added to
+	# the projection on top of the pace.
+	my $pace_from = defined $args->{'pace_from'} ? $args->{'pace_from'} + 0 : $edges->[0];
+	$pace_from = $now - 1 if $pace_from >= $now;
+	my $estimate_days = ($now - $pace_from) / 86400000;
+	my $window_net = 0;
+	my $window_rows = 0;
+	foreach my $m ( @{$moves} ) {
+		my $ts = ($m->{'timestamp'} || 0) + 0;
+		next unless $ts > $pace_from && $ts <= $now;
+		$window_net += ($m->{'total'} || 0) + 0;
+		$window_rows++;
+	}
+	my $rate = ($now > $pace_from) ? ($window_net / ($now - $pace_from)) : 0;
+	my $has_history = $window_rows ? 1 : 0;
 	my $current = $buckets[$current_index];
-	my $current_span = $current->{'end'} - $current->{'start'};
-	my $remaining = $current_span > 0 ? (($current->{'end'} - $now) / $current_span) : 0;
-	$remaining = 0 if $remaining < 0;
-	$remaining = 1 if $remaining > 1;
+	my $current_days = ($current->{'end'} - $current->{'start'}) / 86400000;
+	my $pace = $rate * 86400000 * $current_days;
 
-	# Two readings of the same walk: the pace alone, and the pace plus the bills
-	# already promised. The second is the headline, because a bill that is owed
-	# is money that will leave whether or not the average says so.
-	my $walk = sub {
-		my ($with_bills, $store) = @_;
-		my $running = $balance_now;
-		my ($cross_at, $cross_index);
-		my $before = $running;
-		for (my $i = $current_index; $i < scalar(@buckets); $i++) {
-			my $b = $buckets[$i];
-			my $share = ($i == $current_index) ? $remaining : 1;
-			my $net = $pace * $share;
-			$net += $b->{'planned_net'} if $with_bills;
-			if ($store) { $b->{'projected_net'} = $net; }
-			$running = $b->{'balance'} + $net if $i == $current_index;
-			$running += $net unless $i == $current_index;
-			if ($store) { $b->{'projected_balance'} = $running; }
-			if (!defined $cross_at && $running <= $reserve) {
-				my $drop = $before - $running;
-				my $frac = $drop > 0 ? ($before - $reserve) / $drop : 1;
-				$frac = 0 if $frac < 0;
-				$frac = 1 if $frac > 1;
-				my $from = ($i == $current_index) ? $now : $b->{'start'};
-				$cross_at = $from + $frac * ($b->{'end'} - $from);
-				$cross_index = $i;
-			}
-			$before = $running;
+	# The walk forward: the pace up to the end of each period, plus the money the
+	# person has already dated ahead. The rest of the current period is counted
+	# only from now.
+	my $projected = $balance_now;
+	my $before = $projected;
+	my ($runway_at, $runway_index);
+	for (my $i = $current_index; $i < scalar(@buckets); $i++) {
+		my $b = $buckets[$i];
+		my $span = ($i == $current_index) ? ($b->{'end'} - $now) : ($b->{'end'} - $b->{'start'});
+		$span = 0 if $span < 0;
+		my $net = $rate * $span + ($b->{'planned_net'} || 0);
+		$b->{'projected_net'} = $net;
+		$projected = $b->{'balance'} + $net if $i == $current_index;
+		$projected += $net unless $i == $current_index;
+		$b->{'projected_balance'} = $projected;
+		if (!defined $runway_at && $projected <= $reserve) {
+			my $drop = $before - $projected;
+			my $frac = $drop > 0 ? ($before - $reserve) / $drop : 1;
+			$frac = 0 if $frac < 0;
+			$frac = 1 if $frac > 1;
+			my $from = ($i == $current_index) ? $now : $b->{'start'};
+			$runway_at = $from + $frac * ($b->{'end'} - $from);
+			$runway_index = $i;
 		}
-		return ($cross_at, $cross_index);
-	};
-
+		$before = $projected;
+	}
 	# already at or under the floor: the runway ended before it began
-	my ($runway_at, $runway_index, $pace_at, $pace_index);
 	if ($balance_now <= $reserve) {
 		$runway_at = $now;
-		$pace_at = $now;
-		$runway_index = $pace_index = $current_index;
-		$walk->(1, 1);
-		$walk->(0, 0);
-	}
-	else {
-		# the pace alone is read first, then the walk that is kept on the buckets
-		# (the headline reading) so the drawn projection carries the bills
-		($pace_at, $pace_index) = $walk->(0, 0);
-		($runway_at, $runway_index) = $walk->(1, 1);
+		$runway_index = $current_index;
 	}
 
 	my $planned_total = 0;
-	$planned_total += $_->{'planned_net'} for grep { $_->{'kind'} ne 'past' } @buckets;
+	my $bills_total = 0;
+	foreach my $b ( @buckets ) {
+		$planned_total += $b->{'planned_net'} if $b->{'kind'} ne 'past';
+		$bills_total += $b->{'bills_net'};
+	}
 
 	return {
 		unit => $unit,
@@ -956,16 +981,16 @@ sub accounting_runway_steps {
 		reserve => $reserve,
 		available => $balance_now - $reserve,
 		pace => $pace,
-		pace_per_day => $pace_days > 0 ? $pace / $pace_days : 0,
+		pace_per_day => $rate * 86400000,
+		estimate_from => $pace_from,
+		estimate_days => $estimate_days,
 		has_history => $has_history,
 		planned_total => $planned_total,
+		bills_total => $bills_total,
 		owed => $current->{'owed'},
 		runway_at => $runway_at,
 		runway_days => defined $runway_at ? ($runway_at - $now) / 86400000 : undef,
 		runway_index => $runway_index,
-		pace_at => $pace_at,
-		pace_days => defined $pace_at ? ($pace_at - $now) / 86400000 : undef,
-		pace_index => $pace_index,
 		horizon_days => ($edges->[-1] - $now) / 86400000
 	};
 }
@@ -1037,6 +1062,23 @@ sub accounting_runway {
 	my $bounds = &accounting_runway_edges($unit, $now, $shape->{'back'}, $shape->{'ahead'});
 	my $first = $bounds->{'start'};
 	my $last = $bounds->{'end'};
+	my $lookback = $args->{'lookback'} || 'month';
+	$lookback = 'month' unless grep { $_ eq $lookback } @{ &accounting_runway_lookbacks() };
+	# "all time" reaches back to the first cash row the accounts hold; the other
+	# windows are calendar lengths off now, so a quarter is three real months and
+	# not ninety days
+	my $earliest;
+	if ($lookback eq 'all' && scalar @{$accounts}) {
+		my $marks = join ',', ('?') x scalar(@{$accounts});
+		my $row = &subs::db_query(
+			"select min(cast(timestamp as integer)) as first from warehouse where kind='money' and type='transaction' and movement in ('income','expense','payment','transfer') and account in ($marks)",
+			@{$accounts})->hashes->[0] || {};
+		$earliest = ($row->{'first'} || 0) + 0;
+	}
+	my $pace_from = &accounting_runway_lookback_start($lookback, $now, $earliest);
+	# the moves are read from whichever is further back: the chart's left edge or
+	# the window the pace is estimated from
+	my $fetch_from = ($pace_from && $pace_from < $first) ? $pace_from : $first;
 
 	my ($opening, $held, $reserve) = (0, 0, 0);
 	foreach my $a ( @{$accounts} ) {
@@ -1051,7 +1093,7 @@ sub accounting_runway {
 	my @moves = grep {
 		my $m = $_->{'movement'} || '';
 		$m eq 'income' || $m eq 'expense' || $m eq 'payment' || $m eq 'transfer'
-	} @{ &accounting_moves($accounts, $first, $last) || [] };
+	} @{ &accounting_moves($accounts, $fetch_from, $last) || [] };
 
 	my @anchors;
 	foreach my $a ( @{$accounts} ) {
@@ -1067,7 +1109,7 @@ sub accounting_runway {
 			opening => $from, reserve => $reserve,
 			moves => \@moves, bills => $bills,
 			owed => [ { timestamp => $now, total => $owed } ],
-			anchors => \@anchors
+			anchors => \@anchors, pace_from => $pace_from
 		});
 	};
 	my $runway = $read->($opening);
@@ -1081,6 +1123,8 @@ sub accounting_runway {
 	$runway->{'held'} = $held;
 	$runway->{'available'} = $held - $reserve;
 	$runway->{'units'} = &accounting_runway_units();
+	$runway->{'lookbacks'} = &accounting_runway_lookbacks();
+	$runway->{'lookback'} = $lookback;
 	return $runway;
 }
 

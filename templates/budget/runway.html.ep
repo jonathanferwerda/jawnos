@@ -1,21 +1,33 @@
 <% my $r = $runway || {}; %>
 <% my $unit = $r->{'unit'} || 'month'; %>
 <% my @units = @{ $r->{'units'} || [] }; %>
+<% my @lookbacks = @{ $r->{'lookbacks'} || [] }; %>
 <% my @buckets = @{ $r->{'buckets'} || [] }; %>
 <% my $held = $r->{'held'} || 0; %>
 <% my $reserve = $r->{'reserve'} || 0; %>
 <% my $available = $r->{'available'} || 0; %>
 <% my $pace = $r->{'pace'} || 0; %>
 <% my $days = $r->{'runway_days'}; %>
+<% my $lookback = $r->{'lookback'} || 'month'; %>
 <% my $unit_label = { day => 'day', week => 'week', month => 'month', quarter => 'quarter', year => 'year' }->{$unit} || 'month'; %>
+<% my $lookback_label = { week => 'week', month => 'month', quarter => 'quarter', year => 'year', decade => 'decade', all => 'all time' }->{$lookback} || 'month'; %>
 <div class="runway">
 	<div class="runway_head">
 		<h2><%= &subs::ui('Runway') %></h2>
-		<div class="runway_units" role="group" aria-label="<%= &subs::ui('Period') %>">
-			<% foreach my $u ( @units ) { %>
-				<button type="button" class="runway_unit<% if ($u eq $unit) { %> runway_unit_on<% } %>" unit="<%= $u %>"
-					aria-pressed="<%= $u eq $unit ? 'true' : 'false' %>"><%= &subs::ui(ucfirst $u) %></button>
-			<% } %>
+		<div class="runway_controls">
+			<div class="runway_units" role="group" aria-label="<%= &subs::ui('Period') %>">
+				<% foreach my $u ( @units ) { %>
+					<button type="button" class="runway_unit<% if ($u eq $unit) { %> runway_unit_on<% } %>" unit="<%= $u %>"
+						aria-pressed="<%= $u eq $unit ? 'true' : 'false' %>"><%= &subs::ui(ucfirst $u) %></button>
+				<% } %>
+			</div>
+			<label class="runway_lookback_label"><%= &subs::ui('Estimate from') %>
+				<select class="runway_lookback">
+					<% foreach my $l ( @lookbacks ) { %>
+						<option value="<%= $l %>" <% if ($l eq $lookback) { %>selected<% } %>><%= &subs::ui($l eq 'all' ? 'All time' : ucfirst $l) %></option>
+					<% } %>
+				</select>
+			</label>
 		</div>
 	</div>
 
@@ -44,17 +56,17 @@
 			<div class="runway_caption"><%= &subs::ui('Pace') %></div>
 			<% if ($r->{'has_history'}) { %>
 				<div class="runway_number<% if ($pace < 0) { %> runway_alert<% } %>"><%= ($pace >= 0 ? '+' : '-') . &subs::price_formatter(abs $pace) %></div>
-				<div class="runway_note"><%= &subs::ui('net per') %> <%= &subs::ui($unit_label) %> &middot; <%= &subs::price_formatter(abs($r->{'pace_per_day'} || 0)) %> <%= &subs::ui('a day') %> <%= $pace < 0 ? &subs::ui('out') : &subs::ui('in') %></div>
+				<div class="runway_note"><%= &subs::ui('net per') %> <%= &subs::ui($unit_label) %> &middot; <%= &subs::price_formatter(abs($r->{'pace_per_day'} || 0)) %> <%= &subs::ui('a day') %> <%= $pace < 0 ? &subs::ui('out') : &subs::ui('in') %> &middot; <%= &subs::ui('from the last') %> <%= &subs::ui($lookback_label) %></div>
 			<% } else { %>
 				<div class="runway_number">&mdash;</div>
-				<div class="runway_note"><%= &subs::ui('No completed periods to read a pace from yet.') %></div>
+				<div class="runway_note"><%= &subs::ui('Nothing moved in the last') %> <%= &subs::ui($lookback_label) %>, <%= &subs::ui('so there is no pace to read.') %></div>
 			<% } %>
 		</div>
 		<div class="runway_figure">
-			<div class="runway_caption"><%= &subs::ui('Promised') %></div>
-			<div class="runway_number"><%= &subs::price_formatter(abs($r->{'planned_total'} || 0)) %></div>
+			<div class="runway_caption"><%= &subs::ui('Bills ahead') %></div>
+			<div class="runway_number"><%= &subs::price_formatter(abs($r->{'bills_total'} || 0)) %></div>
 			<div class="runway_note">
-				<% if ($r->{'owed'}) { %><%= &subs::price_formatter($r->{'owed'}) %> <%= &subs::ui('owed now') %> &middot; <% } %><%= &subs::ui('bills and dated transactions ahead') %>
+				<% if ($r->{'owed'}) { %><%= &subs::price_formatter($r->{'owed'}) %> <%= &subs::ui('owed now') %> &middot; <% } %><%= &subs::ui('already in your pace, so they are not added twice') %>
 			</div>
 		</div>
 	</div>
@@ -69,6 +81,7 @@
 		<span class="runway_key runway_key_projected"></span> <%= &subs::ui('Projection') %>
 		<span class="runway_key runway_key_floor"></span> <%= &subs::ui('Floor') %>
 		<span class="runway_key runway_key_net"></span> <%= &subs::ui('Net in each period') %>
+		<span class="runway_key runway_key_estimate"></span> <%= &subs::ui('Estimated from here') %>
 		<span class="runway_hint"><%= &subs::ui('Click a period for its transactions.') %></span>
 	</div>
 	<div id="budget_runway_detail" class="runway_detail" style="display:none;"></div>
@@ -81,7 +94,8 @@
 					<th><%= &subs::ui('Period') %></th>
 					<th style="text-align:right;"><%= &subs::ui('In') %></th>
 					<th style="text-align:right;"><%= &subs::ui('Out') %></th>
-					<th style="text-align:right;"><%= &subs::ui('Planned') %></th>
+					<th style="text-align:right;"><%= &subs::ui('Dated ahead') %></th>
+					<th style="text-align:right;"><%= &subs::ui('Bills') %></th>
 					<th style="text-align:right;"><%= &subs::ui('Balance') %></th>
 				</tr>
 			</thead>
@@ -92,6 +106,7 @@
 						<td style="text-align:right;"><%= $b->{'actual_in'} ? &subs::price_formatter($b->{'actual_in'}) : '' %></td>
 						<td style="text-align:right;"><%= $b->{'actual_out'} ? &subs::price_formatter($b->{'actual_out'}) : '' %></td>
 						<td style="text-align:right;"><%= $b->{'planned_net'} ? &subs::price_formatter($b->{'planned_net'}) : '' %></td>
+						<td style="text-align:right;"><%= $b->{'bills_net'} ? &subs::price_formatter($b->{'bills_net'}) : '' %></td>
 						<td style="text-align:right;"><%= &subs::price_formatter(defined $b->{'projected_balance'} ? $b->{'projected_balance'} : $b->{'balance'}) %></td>
 					</tr>
 				<% } %>
@@ -100,6 +115,6 @@
 	</details>
 
 	<div class="runway_footnote">
-		<%= &subs::ui('Past periods are the money ledger. The projection keeps your average net of the completed periods and adds the bills a schedule will raise, the transactions dated ahead, and the bills already owed; the floor is what your accounts are set to keep.') %>
+		<%= &subs::ui('Past periods are the money ledger. The projection carries the pace you estimated from, read against each period, plus any transaction you have dated ahead; the bills a schedule will raise are listed beside it but are not added again, because the pace already paid the bills of the periods it covers. The floor is what your accounts are set to keep.') %>
 	</div>
 </div>

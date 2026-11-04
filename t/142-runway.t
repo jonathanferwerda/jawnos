@@ -62,16 +62,40 @@ is(Manager::accounting_runway_shape('nonsense')->{'back'}, 12,
 	is(Manager::accounting_runway_slot(\@edges, ts(2030, 1, 1)), 4, 'a row after it lands in the last');
 }
 
+# --- the estimate window is the person's choice ---------------------------
+{
+	my $now = ts(2026, 11, 15);
+	is(JawnOSTest::ymd(Manager::accounting_runway_lookback_start('week', $now)), '2026-11-08',
+		'a week looks back seven days');
+	is(JawnOSTest::ymd(Manager::accounting_runway_lookback_start('month', $now)), '2026-10-15',
+		'a month looks back one calendar month');
+	is(JawnOSTest::ymd(Manager::accounting_runway_lookback_start('quarter', $now)), '2026-08-15',
+		'a quarter looks back three');
+	is(JawnOSTest::ymd(Manager::accounting_runway_lookback_start('year', $now)), '2025-11-15',
+		'a year looks back twelve');
+	is(JawnOSTest::ymd(Manager::accounting_runway_lookback_start('decade', $now)), '2016-11-15',
+		'a decade looks back a hundred and twenty');
+	is(JawnOSTest::ymd(Manager::accounting_runway_lookback_start('all', $now, ts(2020, 1, 2))), '2020-01-02',
+		'all time starts at the first row the ledger holds');
+	is(JawnOSTest::ymd(Manager::accounting_runway_lookback_start('nonsense', $now)), '2026-10-15',
+		'an unknown window reads as a month');
+	is_deeply(Manager::accounting_runway_lookbacks(),
+		[qw(week month quarter year decade all)],
+		'the dropdown offers six windows');
+}
+
 # --- the walk: a pace that burns, a floor it reaches -----------------------
 {
 	my $now = ts(2026, 11, 15);
 	my $bounds = Manager::accounting_runway_edges('month', $now, 2, 3);
+	my $edges = $bounds->{'edges'};
 	my $runway = Manager::accounting_runway_steps({
 		unit => 'month',
 		now => $now,
-		edges => $bounds->{'edges'},
+		edges => $edges,
 		opening => 3000,
 		reserve => 0,
+		pace_from => $edges->[0],
 		moves => [
 			{ timestamp => ts(2026, 9, 10), total => -1000, movement => 'expense', app => 'store' },
 			{ timestamp => ts(2026, 10, 10), total => -1000, movement => 'expense', app => 'store' },
@@ -99,21 +123,31 @@ is(Manager::accounting_runway_shape('nonsense')->{'back'}, 12,
 	is($runway->{'balance'}, 900, 'the balance now is the walk’s own');
 	is($runway->{'available'}, 900, 'with no floor set, all of it is available');
 
-	# the pace is the mean of the two complete months behind, not of the part-month
-	is($runway->{'pace'}, -1000, 'the pace is the mean net of the completed periods');
-	is($b[3]->{'planned_net'}, -500, 'December carries its 500 bill');
-	is($b[2]->{'owed'}, 100, 'money already owed lands on the period you are in');
+	# The pace is a rate over the chosen window, then read against each bucket.
+	# 75 days from 1 Sep to 15 Nov carry a net of -2100, so -28 a day.
+	my $span_days = ($now - $edges->[0]) / 86400000;
+	my $rate = -2100 / $span_days;
+	is(sprintf('%.4f', $runway->{'pace_per_day'}), sprintf('%.4f', $rate),
+		'the pace is the net rate of the estimate window');
+	is(sprintf('%.2f', $runway->{'pace'}), sprintf('%.2f', $rate * 30),
+		'read per month for the headline');
 
-	# the projection: the rest of this month at pace, then each period after it
-	my $edges = $bounds->{'edges'};
-	my $share = ($edges->[3] - $now) / ($edges->[3] - $edges->[2]);
-	my $november = 900 + (-1000 * $share) - 100;
-	is(sprintf('%.2f', $b[2]->{'projected_net'}), sprintf('%.2f', (-1000 * $share) - 100),
-		'the rest of November at pace, less the money already owed');
+	# A bill is reported, never added on top: the pace already paid the bills of
+	# the periods it covers, and adding them again was the double count.
+	is($b[3]->{'planned_net'}, 0, 'a scheduled bill is not dated-ahead money');
+	is($b[3]->{'bills_net'}, -500, 'December still reports its 500 bill');
+	is($b[2]->{'owed'}, 100, 'money already owed lands on the period you are in');
+	is($b[2]->{'bills_net'}, -100, 'and is reported there too');
+
+	my $november = 900 + $rate * (($edges->[3] - $now) / 86400000);
+	is(sprintf('%.2f', $b[2]->{'projected_net'}),
+		sprintf('%.2f', $rate * (($edges->[3] - $now) / 86400000)),
+		'the rest of November is the pace to its end');
 	is(sprintf('%.2f', $b[2]->{'projected_balance'}), sprintf('%.2f', $november),
 		'so November is projected to close part way down');
-	is(sprintf('%.2f', $b[3]->{'projected_balance'}), sprintf('%.2f', $november - 1500),
-		'December runs the balance under: the pace plus its bill');
+	is(sprintf('%.2f', $b[3]->{'projected_balance'}),
+		sprintf('%.2f', $november + $rate * (($edges->[4] - $edges->[3]) / 86400000)),
+		'December carries the pace alone — the 500 bill is not counted twice');
 
 	ok(defined $runway->{'runway_at'}, 'the projection runs out inside the window');
 	ok($runway->{'runway_at'} > ts(2026, 12, 1), 'the money lasts into December');
@@ -121,13 +155,39 @@ is(Manager::accounting_runway_shape('nonsense')->{'back'}, 12,
 	cmp_ok($runway->{'runway_days'}, '>', 15, 'the runway is the days between now and that date');
 	cmp_ok($runway->{'runway_days'}, '<', 46, 'and is less than a month and a half');
 
-	# the same walk without the bills is the more hopeful reading, and is kept
-	# beside the headline rather than replacing it
-	ok(defined $runway->{'pace_at'}, 'the pace alone also crosses the floor');
-	cmp_ok($runway->{'pace_at'}, '>', $runway->{'runway_at'},
-		'the bills bring the date forward from the pace alone');
+	is($runway->{'bills_total'}, -600, 'the bills ahead are summed for the headline');
+	is($runway->{'has_history'}, 1, 'movement in the window is a history to read');
+	is($runway->{'estimate_from'}, $edges->[0], 'the estimate window is the one asked for');
+}
 
-	is($runway->{'has_history'}, 1, 'two completed periods are a history to read');
+# --- a short window does not drag in old spending -------------------------
+{
+	my $now = ts(2026, 11, 15);
+	my $bounds = Manager::accounting_runway_edges('month', $now, 2, 2);
+	my $recent = Manager::accounting_runway_steps({
+		unit => 'month', now => $now, edges => $bounds->{'edges'},
+		opening => 6000, reserve => 0,
+		pace_from => Manager::accounting_runway_lookback_start('month', $now),
+		moves => [
+			{ timestamp => ts(2026, 9, 5), total => -5000, movement => 'expense', app => 'one_off' },
+			{ timestamp => ts(2026, 10, 20), total => -100, movement => 'expense', app => 'store' },
+		],
+	});
+	my $all = Manager::accounting_runway_steps({
+		unit => 'month', now => $now, edges => $bounds->{'edges'},
+		opening => 6000, reserve => 0,
+		pace_from => ts(2026, 1, 1),
+		moves => [
+			{ timestamp => ts(2026, 9, 5), total => -5000, movement => 'expense', app => 'one_off' },
+			{ timestamp => ts(2026, 10, 20), total => -100, movement => 'expense', app => 'store' },
+		],
+	});
+	is($recent->{'balance'}, 900, 'the old 5000 still moved the balance');
+	cmp_ok($recent->{'pace_per_day'}, '>', -5, 'but a month estimate does not read it as a monthly cost');
+	cmp_ok($all->{'pace_per_day'}, '<', $recent->{'pace_per_day'},
+		'while the all-time window does carry it');
+	ok(!defined $recent->{'runway_at'}, 'so the short window sees no burnout in sight');
+	ok(defined $all->{'runway_at'}, 'while the long one still finds a date');
 }
 
 # --- a house with no history is not given a guess --------------------------
@@ -138,7 +198,7 @@ is(Manager::accounting_runway_shape('nonsense')->{'back'}, 12,
 		unit => 'month', now => $now, edges => $bounds->{'edges'},
 		opening => 500, reserve => 0, moves => [], bills => [], owed => [],
 	});
-	is($runway->{'has_history'}, 0, 'a month with no movement is not a history');
+	is($runway->{'has_history'}, 0, 'a window with no movement is not a history');
 	is($runway->{'pace'}, 0, 'and reads as a pace of nothing');
 	ok(!defined $runway->{'runway_at'}, 'so no date is invented for the money running out');
 }
@@ -195,10 +255,17 @@ like($controller, qr/\$bt = \$period_start \+ 0;/,
 like($statement, qr/include 'budget\/runway'/,
 	'the runway is a partial of the statement, not more markup in it');
 like($partial, qr/id="budget_runway_canvas"/, 'the runway draws on its own canvas');
+like($controller, qr/lookback => \$settings->\{'runway_lookback'\}/,
+	'the display reads the estimate window from the settings');
+like($partial, qr/class="runway_lookback"/,
+	'the view offers the estimate window beside the readings');
+like($partial, qr/&subs::ui\('Estimate from'\)/, 'and names what it is for');
 like($partial, qr/class="runway_unit/, 'the five readings are on screen');
 like($partial, qr/&subs::ui\('Available now'\)/, 'the headline names the money available');
 like($partial, qr/&subs::ui\('Money lasts'\)/, 'and how long it lasts');
-like($partial, qr/&subs::ui\('Promised'\)/, 'and what is already promised');
+like($partial, qr/&subs::ui\('Bills ahead'\)/, 'and the bills it is not adding twice');
+like($partial, qr/not added twice/, 'and says so');
+like($partial, qr/runway_key_estimate/, 'the estimate window is in the legend');
 
 like($part, qr/function budgetRunwayWriter\(response\)/,
 	'the chart is painted from the response the route rendered');
@@ -210,6 +277,11 @@ like($part, qr/budgetInit\(\{ display: 'statement', period: \{ start: start, end
 	'which re-renders the Ledger on that window');
 like($part, qr/settings\['runway_unit'\] = unit/,
 	'a reading button changes the bucket and the view follows');
+like($part, qr/settings\['runway_lookback'\] = lookback/,
+	'and the estimate window is sent the same way');
+like($part, qr/jawnosT\('estimate from'\)/,
+	'the chart marks the window the pace is read from');
+like($part, qr/bucket\.bill_rows/, 'the panel lists the bills it is not adding');
 
 like($index, qr/budgetInit\(\{ period: \{ start: Math\.round\(stop\.start\), end: Math\.round\(stop\.end\) \} \}\)/,
 	'a click on the statement chart opens the period it points at');

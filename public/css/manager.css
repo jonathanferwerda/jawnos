@@ -3225,7 +3225,15 @@ body.dark_theme .budget_cell {
 .runway { color: var(--ink); padding: 2px 2px 10px; }
 .runway_head { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
 .runway_head h2 { margin: 2px 0; }
+.runway_controls { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 .runway_units { display: flex; gap: 4px; }
+.runway_lookback_label { display: flex; align-items: center; gap: 6px; color: var(--ink-muted); font-size: 12px; }
+.runway_lookback {
+	font: inherit; font-size: 12px; cursor: pointer;
+	color: var(--ink); background: var(--panel-2);
+	border: 1px solid var(--line); border-radius: var(--jawnos-corner);
+	padding: 3px 6px;
+}
 .runway_unit {
 	font: inherit; font-size: 12px; cursor: pointer;
 	color: var(--ink); background: var(--panel-2);
@@ -3249,6 +3257,7 @@ body.dark_theme .budget_cell {
 .runway_key_projected { background: repeating-linear-gradient(90deg, var(--accent) 0 4px, transparent 4px 7px); }
 .runway_key_floor { background: repeating-linear-gradient(90deg, var(--runway-bad) 0 3px, transparent 3px 6px); }
 .runway_key_net { background: var(--runway-good); }
+.runway_key_estimate { background: repeating-linear-gradient(90deg, var(--ink-muted) 0 3px, transparent 3px 6px); }
 .runway_hint { margin-left: auto; }
 .runway_detail { background: var(--panel-2); border: 1px solid var(--line); border-radius: var(--jawnos-corner); padding: 8px 10px; margin-bottom: 8px; }
 .runway_detail_head { display: flex; align-items: baseline; gap: 8px; }
@@ -3260,6 +3269,7 @@ body.dark_theme .budget_cell {
 .runway_detail_rows th { text-align: left; font-weight: 600; color: var(--ink-muted); border-bottom: 1px solid var(--line); }
 .runway_detail_rows td { padding: 1px 4px; border-bottom: 1px solid var(--line); }
 .runway_detail_out td { color: var(--runway-bad); }
+.runway_detail_note { color: var(--ink-muted); font-size: 11px; }
 .runway_detail_empty, .runway_detail_more { color: var(--ink-muted); font-size: 12px; margin-top: 4px; }
 .runway_detail_actions { margin-top: 8px; }
 .runway_table_details { margin-top: 8px; }

@@ -487,7 +487,8 @@ sub action_21514 {
 		$runway = &accounting_runway({
 			accounts => \@runway_accounts,
 			now => &subs::rightNow(),
-			unit => $settings->{'runway_unit'} || 'month'
+			unit => $settings->{'runway_unit'} || 'month',
+			lookback => $settings->{'runway_lookback'} || 'month'
 		});
 	}
 	my $period_span = $t2 - $bt;

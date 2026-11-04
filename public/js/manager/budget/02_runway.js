@@ -259,6 +259,36 @@ function budgetRunwayPaint() {
 		ctx.globalAlpha = 1;
 	}
 
+	// where the pace is estimated from: a quiet line, so a month chosen over the
+	// year reads as the window it is instead of an unexplained rate
+	var estimateFrom = numeral(data.estimate_from).value();
+	if (estimateFrom && estimateFrom > (buckets[0].start || 0) && estimateFrom < data.now) {
+		var estimateX = nowX;
+		for (var e = 0; e < count; e++) {
+			var eb = buckets[e];
+			if (estimateFrom >= eb.start && estimateFrom < eb.end) {
+				var eshare = (eb.end > eb.start) ? (estimateFrom - eb.start) / (eb.end - eb.start) : 0;
+				estimateX = xOf(e) - step / 2 + step * Math.max(0, Math.min(1, eshare));
+				break;
+			}
+		}
+		ctx.save();
+		ctx.strokeStyle = ink.muted;
+		ctx.globalAlpha = 0.55;
+		ctx.setLineDash([2, 4]);
+		ctx.beginPath();
+		ctx.moveTo(estimateX, padTop);
+		ctx.lineTo(estimateX, padTop + plotH);
+		ctx.stroke();
+		ctx.restore();
+		ctx.fillStyle = ink.muted;
+		ctx.globalAlpha = 0.9;
+		ctx.textAlign = 'left';
+		ctx.textBaseline = 'bottom';
+		ctx.fillText(jawnosT('estimate from'), estimateX + 4, padTop + plotH - 4);
+		ctx.globalAlpha = 1;
+	}
+
 	// the line that marks now
 	ctx.strokeStyle = ink.muted;
 	ctx.globalAlpha = 0.35;
@@ -289,11 +319,14 @@ function budgetRunwayTip(index) {
 	html += row(jawnosT('In'), budgetMoneyFull(bucket.actual_in || 0));
 	html += row(jawnosT('Out'), budgetMoneyFull(-(bucket.actual_out || 0)));
 	if (bucket.kind != 'past') {
-		html += row(jawnosT('Planned'), budgetMoneyFull(bucket.planned_net || 0));
+		html += row(jawnosT('Dated ahead'), budgetMoneyFull(bucket.planned_net || 0));
 		html += row(jawnosT('Projected balance'), budgetMoneyFull(bucket.projected_balance || 0));
 	}
 	else {
 		html += row(jawnosT('Balance'), budgetMoneyFull(bucket.balance || 0));
+	}
+	if (bucket.bills_net) {
+		html += row(jawnosT('Bills'), budgetMoneyFull(bucket.bills_net) + ' ' + jawnosT('(in your pace)'));
 	}
 	html += '<div class="budget_tip_hint">' + jawnosT('Click for the transactions') + '</div>';
 	return html;
@@ -315,7 +348,10 @@ function budgetRunwaySelect(index) {
 	html += '<span>' + jawnosT('In') + ' <b>' + budgetMoneyFull(bucket.actual_in || 0) + '</b></span>';
 	html += '<span>' + jawnosT('Out') + ' <b>' + budgetMoneyFull(-(bucket.actual_out || 0)) + '</b></span>';
 	if (bucket.planned_net) {
-		html += '<span>' + jawnosT('Planned') + ' <b>' + budgetMoneyFull(bucket.planned_net) + '</b></span>';
+		html += '<span>' + jawnosT('Dated ahead') + ' <b>' + budgetMoneyFull(bucket.planned_net) + '</b></span>';
+	}
+	if (bucket.bills_net) {
+		html += '<span>' + jawnosT('Bills') + ' <b>' + budgetMoneyFull(bucket.bills_net) + '</b> ' + jawnosT('(already in your pace)') + '</span>';
 	}
 	html += '<span>' + jawnosT('Balance') + ' <b>' + budgetMoneyFull(bucket.kind == 'past' ? bucket.balance : bucket.projected_balance) + '</b></span>';
 	html += '</div>';
@@ -323,16 +359,22 @@ function budgetRunwaySelect(index) {
 	var rows = [];
 	$.each(bucket.rows || [], function(i, row) { rows.push(row); });
 	$.each(bucket.planned_rows || [], function(i, row) { rows.push(row); });
+	$.each(bucket.bill_rows || [], function(i, row) { rows.push(row); });
 	if (rows.length) {
 		html += '<table class="runway_detail_rows"><thead><tr>' +
 			'<th>' + jawnosT('When') + '</th><th>' + jawnosT('What') + '</th>' +
 			'<th style="text-align:right;">' + jawnosT('Amount') + '</th></tr></thead><tbody>';
 		$.each(rows, function(i, row) {
 			var what = row.vendor || row.item || format_name(row.app || '');
-			if (row.scheduled) { what = jawnosT('Scheduled bill') + (what ? ': ' + format_name(what) : ''); }
+			var note = '';
+			if (row.movement == 'bill') { note = jawnosT('scheduled bill') + ' &middot; ' + jawnosT('in your pace'); }
+			else if (row.movement == 'owed') { note = jawnosT('owed now') + ' &middot; ' + jawnosT('in your pace'); }
+			else if (row.timestamp > (budgetRunwayData.now || 0)) { note = jawnosT('dated ahead'); }
+			var label = format_name(what);
+			if (note) { label += ' <span class="runway_detail_note">' + note + '</span>'; }
 			html += '<tr class="runway_detail_row' + (row.total < 0 ? ' runway_detail_out' : '') + '">' +
 				'<td><span class="time" timestamp="' + row.timestamp + '"></span></td>' +
-				'<td>' + format_name(what) + '</td>' +
+				'<td>' + label + '</td>' +
 				'<td style="text-align:right;">' + budgetMoneyFull(row.total) + '</td></tr>';
 		});
 		html += '</tbody></table>';
@@ -340,7 +382,7 @@ function budgetRunwaySelect(index) {
 	else {
 		html += '<div class="runway_detail_empty">' + jawnosT('Nothing was recorded in this period.') + '</div>';
 	}
-	var extra = (bucket.actual_count || 0) + (bucket.planned_count || 0) - rows.length;
+	var extra = (bucket.actual_count || 0) + (bucket.planned_count || 0) + (bucket.bill_count || 0) - rows.length;
 	if (extra > 0) {
 		html += '<div class="runway_detail_more">+' + extra + ' ' + jawnosT('more') + '</div>';
 	}
@@ -381,6 +423,14 @@ $(document).on('click', '.runway_unit', function() {
 	if (!unit) { return; }
 	var settings = {};
 	settings['runway_unit'] = unit;
+	budgetInit({ new_settings: settings });
+});
+
+$(document).on('change', '.runway_lookback', function() {
+	var lookback = $(this).val();
+	if (!lookback) { return; }
+	var settings = {};
+	settings['runway_lookback'] = lookback;
 	budgetInit({ new_settings: settings });
 });
 
