@@ -48,6 +48,8 @@
 #include <unistd.h>
 
 #include <bluetooth/bluetooth.h>
+#include <bluetooth/hci.h>
+#include <bluetooth/hci_lib.h>
 #include <bluetooth/sco.h>
 
 #define RATE 8000
@@ -401,6 +403,68 @@ static const char *peers_name(struct sockaddr_sco *peer) {
 	return ba;
 }
 
+/* Bind a SCO listener. '' (NULL) means any adapter, which the kernel refuses
+ * with EADDRINUSE as soon as one controller already has an SCO listener, so
+ * the caller falls back to asking each adapter for its own address. */
+static int sco_listen(const char *addr_str, char *bound, size_t bound_cap) {
+	int s = socket(AF_BLUETOOTH, SOCK_SEQPACKET, BTPROTO_SCO);
+	if (s < 0) return -1;
+	setsockopt(s, SOL_BLUETOOTH, BT_VOICE, &voice, sizeof(voice));
+	struct sockaddr_sco addr;
+	memset(&addr, 0, sizeof(addr));
+	addr.sco_family = AF_BLUETOOTH;
+	if (addr_str && str2ba(addr_str, &addr.sco_bdaddr) < 0) {
+		close(s);
+		errno = EINVAL;
+		return -1;
+	}
+	if (bind(s, (struct sockaddr *) &addr, sizeof(addr)) < 0) {
+		int saved = errno;
+		close(s);
+		errno = saved;
+		return -1;
+	}
+	if (listen(s, 1) < 0) {
+		int saved = errno;
+		close(s);
+		errno = saved;
+		return -1;
+	}
+	if (bound && bound_cap) {
+		if (addr_str) snprintf(bound, bound_cap, "%s", addr_str);
+		else snprintf(bound, bound_cap, "any");
+	}
+	return s;
+}
+
+/* Every adapter the kernel knows. hci_dev_list() left BlueZ's public API, so
+ * the ids are probed directly; /sys/class/bluetooth is missing on some
+ * kernels, which is why this is not a directory walk. */
+static int addrs_from_sys(char addresses[][18], int max) {
+	/* the default route first: the adapter the house paired the phone with */
+	int order[16];
+	int out = 0;
+	int first = hci_get_route(NULL);
+	int count = 0;
+	if (first >= 0) order[count++] = first;
+	for (int id = 0; id < 16; id++) {
+		if (id == first) continue;
+		order[count++] = id;
+	}
+	for (int i = 0; i < count && out < max; i++) {
+		int dd = hci_open_dev(order[i]);
+		if (dd < 0) continue;
+		bdaddr_t ba;
+		int ok = hci_devba(order[i], &ba) == 0;
+		hci_close_dev(dd);
+		if (!ok) continue;
+		char line[18];
+		ba2str(&ba, line);
+		if (strlen(line) == 17) snprintf(addresses[out++], 18, "%s", line);
+	}
+	return out;
+}
+
 int main(int argc, char **argv) {
 	for (int i = 1; i < argc; i++) {
 		if (!strcmp(argv[i], "--local") && i + 1 < argc) local_addr = argv[++i];
@@ -438,23 +502,32 @@ int main(int argc, char **argv) {
 		have_accepted = 1;
 	}
 	else {
-		listen_fd = socket(AF_BLUETOOTH, SOCK_SEQPACKET, BTPROTO_SCO);
-		if (listen_fd < 0) { perror("socket(BTPROTO_SCO)"); return 1; }
-		if (setsockopt(listen_fd, SOL_BLUETOOTH, BT_VOICE, &voice, sizeof(voice)) < 0)
-			perror("setsockopt(BT_VOICE)");
-		struct sockaddr_sco addr;
-		memset(&addr, 0, sizeof(addr));
-		addr.sco_family = AF_BLUETOOTH;
-		if (local_addr && str2ba(local_addr, &addr.sco_bdaddr) < 0) {
-			fprintf(stderr, "bad --local address\n");
-			return 2;
+		char bound[32] = "any";
+		if (local_addr) {
+			listen_fd = sco_listen(local_addr, bound, sizeof(bound));
+			errno = errno;
 		}
-		if (bind(listen_fd, (struct sockaddr *) &addr, sizeof(addr)) < 0) {
-			perror("bind");
+		else {
+			/* an unqualified SCO bind is refused when a machine has more than
+			 * one controller, so each adapter is asked for its own address */
+			char addresses[8][18];
+			int count = addrs_from_sys(addresses, 8);
+			int last_errno = 0;
+			for (int i = 0; i < count && listen_fd < 0; i++) {
+				listen_fd = sco_listen(addresses[i], bound, sizeof(bound));
+				last_errno = errno;
+			}
+			if (listen_fd < 0 && count == 0) {
+				listen_fd = sco_listen(NULL, bound, sizeof(bound));
+				last_errno = errno;
+			}
+			errno = last_errno;
+		}
+		if (listen_fd < 0) {
+			perror(local_addr ? "bind" : "bind (no adapter took the SCO listener)");
 			return 1;
 		}
-		if (listen(listen_fd, 1) < 0) { perror("listen"); return 1; }
-		emit("{\"event\":\"listening\",\"local\":\"%s\"}", local_addr ? local_addr : "any");
+		emit("{\"event\":\"listening\",\"local\":\"%s\"}", bound);
 	}
 
 	/* stdin is the control channel: one JSON object per line */

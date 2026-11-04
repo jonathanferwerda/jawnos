@@ -87,6 +87,7 @@ JawnOS::Sco::Render::prune();
 # A stand-in helper that speaks the protocol: it listens, accepts at once, and
 # answers each command, so the gateway's plan can be walked without a radio.
 my $fake = "$dir/fake-helper";
+$ENV{'FAKE_ARGV'} = "$dir/argv.txt";
 write_file($fake, <<'FAKE');
 #!/usr/bin/perl
 use strict;
@@ -94,6 +95,11 @@ use warnings;
 use JSON::PP;
 my $json = JSON::PP->new;
 sub say_line { print $json->encode(shift), "\n"; $| = 1; }
+if ($ENV{FAKE_ARGV}) {
+	open(my $af, '>', $ENV{FAKE_ARGV}) or exit 0;
+	print {$af} join(" ", @ARGV), "\n";
+	close $af;
+}
 $| = 1;
 say_line({ event => 'listening', local => 'fake' });
 select(undef, undef, undef, 0.05);
@@ -128,6 +134,7 @@ my $gateway = JawnOS::Sco::Gateway->new(
 	status_path => "$dir/sco.json",
 );
 my $armed = $gateway->arm(
+	local => 'E0:E1:A9:3D:4B:B8',
 	clips => { greeting => $clip, prompt => $clip, thanks => $clip },
 	record => { ms => 5000 },
 	call_id => 'test-call',
@@ -148,6 +155,8 @@ Mojo::IOLoop->start;
 ok($stopped, 'the gateway reached a resting state on its own');
 
 is($gateway->{'state'}, 'done', 'the plan runs to the end');
+like(-e "$dir/argv.txt" ? read_file("$dir/argv.txt") : '', qr/--local E0:E1:A9:3D:4B:B8/,
+	'the adapter the caller named reaches the helper');
 is(scalar @{ $gateway->{'recordings'} }, 1, 'one name was recorded');
 my $recording = $gateway->{'recordings'}->[0];
 is($recording->{'ms'}, 1234, 'the helper length is kept');

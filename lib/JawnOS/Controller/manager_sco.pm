@@ -54,6 +54,9 @@ sub action_52002 {
 	$c->render(json => &sco_client()->call({
 		cmd => 'arm',
 		peer => $c->param('peer') || '',
+		# the adapter to listen on: the gateway machine's own setting is the
+		# default, and a caller that knows better can name it
+		local => $c->param('local') || '',
 		call_id => $c->param('call_id') || '',
 		clips => \%clips,
 		record => \%record,
