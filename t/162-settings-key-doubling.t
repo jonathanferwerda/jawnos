@@ -29,6 +29,12 @@ $db->query('create table settings (setting text, value text, timestamp text, '
 	. 'browser_tab_id text, uuid text, ost text, subsetting text)');
 $db->query('create table cache (app text, context text, subcontext text, data text, '
 	. 'device text, timestamp text, server_time text, uuid text, ost text)');
+# setting_deleter now records a durable tombstone, so the fixture carries the two
+# tables that path writes: the short-lived deletions list and the sync log.
+$db->query('create table remote_machines (uuid text, signatorial text, deletions text)');
+$db->query('create table sync_log (id integer primary key autoincrement, '
+	. 'server_time text, signatorial text, tbl text, app text, uuid text, '
+	. 'scope text, additional text, ost text)');
 my @st = stat($dbfile);
 $gb::database_holder = {
 	server_time => &subs::rightNow(),

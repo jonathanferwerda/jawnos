@@ -315,6 +315,88 @@ sub embedded_toggle($data) {
 	return $returner;
 }
 
+# A settings row has no uuid: it is identified by the key it is stored under.
+# Normalise a settings row or a settings deletion into that key (app, setting,
+# subsetting, device), decoding a byte-string key exactly as the settings write
+# gate and the merge do - a tombstone that keeps the bytes names a different
+# row. A record for any other table (a legacy uuid/table one included) answers
+# undef, so the uuid path is untouched.
+sub settings_deletion_record {
+	my ($record) = @_;
+	return undef unless ref $record eq 'HASH';
+	my $table = defined $record->{'table'} ? $record->{'table'} : $record->{'tbl'};
+	return undef if defined $table && $table ne 'settings';
+	my $extra = {};
+	if (ref $record->{'additional'} eq 'HASH') {
+		$extra = $record->{'additional'};
+	}
+	elsif (defined $record->{'additional'} && !ref $record->{'additional'} && length $record->{'additional'}) {
+		my $decoded = eval { decode_json $record->{'additional'} };
+		$extra = ref $decoded eq 'HASH' ? $decoded : {};
+	}
+	my %part = map { $_ => (defined $record->{$_} ? $record->{$_} : $extra->{$_}) } qw(app setting subsetting device);
+	$part{'app'} = &subs::text_chars($part{'app'}) if defined $part{'app'};
+	$part{'setting'} = &subs::text_chars($part{'setting'}) if defined $part{'setting'};
+	$part{'subsetting'} = &subs::text_chars($part{'subsetting'}) if defined $part{'subsetting'};
+	$part{'device'} = &subs::text_chars($part{'device'}) if defined $part{'device'};
+	# a deletion that cannot name a row must not be applied as one
+	return undef unless defined $part{'app'} && length $part{'app'}
+		&& defined $part{'setting'} && length $part{'setting'};
+	# NULL and empty are the same key: a row written before subsetting existed,
+	# and a delete that named no subsetting, must meet.
+	$part{'subsetting'} = '' unless defined $part{'subsetting'};
+	$part{'device'} = '' unless defined $part{'device'};
+	# The durable sync_log row is stamped when the tombstone is written; the
+	# deletion's own moment rides in `additional` so an echo of a peer's
+	# deletion cannot move the cutoff past a deliberate re-add.
+	my $time = defined $extra->{'server_time'} ? $extra->{'server_time'} : $record->{'server_time'};
+	$part{'server_time'} = (defined $time && $time =~ /^\d+$/) ? $time + 0 : 0;
+	return \%part;
+}
+
+# The comparable form of a settings key. Undef for anything that is not one.
+sub settings_deletion_key {
+	my $deletion = &settings_deletion_record(shift);
+	return undef unless $deletion;
+	return join "\x1f", @{$deletion}{qw(app setting subsetting device)};
+}
+
+# When a settings row was deleted, in epoch milliseconds.
+sub settings_deletion_time {
+	my $deletion = &settings_deletion_record(shift);
+	return $deletion ? $deletion->{'server_time'} : 0;
+}
+
+# A key -> newest-deletion-time map, built once per merge instead of decoding
+# every tombstone again for every incoming settings row.
+sub settings_deletion_index {
+	my ($deletions) = @_;
+	my %index;
+	return \%index unless ref $deletions eq 'ARRAY';
+	foreach my $tomb ( @{$deletions} ) {
+		next unless ref $tomb eq 'HASH';
+		my $key = &settings_deletion_key($tomb);
+		next unless defined $key;
+		my $time = &settings_deletion_time($tomb);
+		$index{$key} = $time if !defined $index{$key} || $time > $index{$key};
+	}
+	return \%index;
+}
+
+# Would a tombstone hold this incoming settings row back? Only a tombstone for
+# the same key, stamped at or after the row's own server_time, does: a row
+# written after the deletion is a deliberate re-add and must still land.
+sub settings_deletion_blocks {
+	my ($row, $deletions) = @_;
+	return 0 unless ref $row eq 'HASH';
+	my $key = &settings_deletion_key($row);
+	return 0 unless defined $key;
+	my $row_time = (defined $row->{'server_time'} && $row->{'server_time'} =~ /^\d+$/) ? $row->{'server_time'} + 0 : 0;
+	my $index = ref $deletions eq 'HASH' ? $deletions : &settings_deletion_index($deletions);
+	return 1 if defined $index->{$key} && $index->{$key} >= $row_time;
+	return 0;
+}
+
 sub deletion_registration($data) {
 	# Record one durable tombstone. It stays in sync_log until every remote
 	# machine has confirmed reading past it, so an offline machine still learns
@@ -323,6 +405,20 @@ sub deletion_registration($data) {
 	# A file deletion must name the file it removes: a peer applies it by uuid,
 	# and without one the tombstone reached the other machines and did nothing.
 	$additional = encode_json({ file_uuid => $data->{'file_uuid'} }) if !$additional && $data->{'file_uuid'};
+	my $settings_record = (($data->{'table'} || '') eq 'settings') ? 1 : 0;
+	my $server_time = $data->{'server_time'};
+	$server_time = &subs::rightNow() if $settings_record && !defined $server_time;
+	# sync_log's only free-form field is `additional`, so the rest of a settings
+	# key rides there for the durable log; the short-lived list below also carries
+	# it at the top level, where a peer on this build reads it directly.
+	if ($settings_record && !$additional) {
+		$additional = encode_json({
+			setting => $data->{'setting'},
+			subsetting => $data->{'subsetting'},
+			device => $data->{'device'},
+			server_time => $server_time,
+		});
+	}
 	&subs::tombstone_writer({
 		table => $data->{'table'}, app => $data->{'app'},
 		uuid => $data->{'uuid'}, scope => $data->{'scope'},
@@ -332,11 +428,16 @@ sub deletion_registration($data) {
 	my $uuid = $data->{'uuid'};
 	my $scope = $data->{'scope'};
 	my $table = $data->{'table'};
-	my $server_time = $data->{'server_time'};
 	my $remote_machines = &subs::db_select('remote_machines')->hashes;
 	foreach my $rm ( @{$remote_machines} ) {
 		my $deletions = eval { return decode_json $rm->{'deletions'} } || [];
-		push @{$deletions}, { table => $table, app => $app, uuid => $uuid, scope => $scope, initialization => &subs::rightNow(), server_time => $server_time, additional => $additional };
+		my $record = { table => $table, app => $app, uuid => $uuid, scope => $scope, initialization => &subs::rightNow(), server_time => $server_time, additional => $additional };
+		if ($settings_record) {
+			$record->{'setting'} = $data->{'setting'} if defined $data->{'setting'};
+			$record->{'subsetting'} = $data->{'subsetting'} if defined $data->{'subsetting'};
+			$record->{'device'} = $data->{'device'} if defined $data->{'device'};
+		}
+		push @{$deletions}, $record;
 		my $del = encode_json $deletions;
 		&subs::db_update('remote_machines', { deletions => $del }, { uuid => $rm->{'uuid'}, signatorial => $rm->{'signatorial'} });
 	}

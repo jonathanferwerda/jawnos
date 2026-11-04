@@ -775,15 +775,28 @@ sub setting_deleter {
 	# the same decode the write gate applies, so a byte-string caller deletes
 	# the row its character string names instead of leaving it behind
 	$setting->{'app'} = defined $setting->{'app'} ? &subs::text_chars($setting->{'app'}) : undef;
+	$setting->{'setting'} = &subs::text_chars($setting->{'setting'}) if defined $setting->{'setting'};
 	$setting->{'subsetting'} = &subs::text_chars($setting->{'subsetting'}) if defined $setting->{'subsetting'};
 	$setting->{'device'} = $setting->{'device'} || &device_setter();
+	$setting->{'device'} = &subs::text_chars($setting->{'device'}) if defined $setting->{'device'};
+	# A settings row has no uuid, so a peer that still holds it can hand it back
+	# on the next pull. Name the key in a tombstone. The moment is the delete,
+	# not the row's own timestamp: a later write is a deliberate re-add and must
+	# be allowed to land. Only a row that was really here gets a tombstone, or
+	# applying a peer's tombstone would write a fresh one on every pass.
+	my $server_time = $setting->{'server_time'} || &subs::rightNow();
+	my $named = defined $setting->{'app'} && defined $setting->{'setting'};
 	if ($setting->{'subsetting'}) {
-	#	&subs::deletion_registration({ table => 'settings', app => $setting->{'app'}, setting => $setting->{'setting'}, server_time => $setting->{'server_time'}, subsetting => $setting->{'subsetting'} });
-		&db_delete('settings', { app => $setting->{'app'}, setting => $setting->{'setting'}, subsetting => $setting->{'subsetting'}, device => $setting->{'device'} });
+		my %key = (app => $setting->{'app'}, setting => $setting->{'setting'}, subsetting => $setting->{'subsetting'}, device => $setting->{'device'});
+		my $existed = eval { scalar @{ &db_select('settings', ['uuid'], \%key)->hashes || [] } } || 0;
+		&db_delete('settings', \%key);
+		&subs::deletion_registration({ table => 'settings', %key, server_time => $server_time }) if $named && $existed;
 	}
 	else {
-	#	&subs::deletion_registration({ table => 'settings', app => $setting->{'app'}, setting => $setting->{'setting'} });
-		&db_delete('settings',{ app => $setting->{'app'}, setting => $setting->{'setting'}, device => $setting->{'device'} });
+		my %key = (app => $setting->{'app'}, setting => $setting->{'setting'}, device => $setting->{'device'});
+		my $existed = eval { scalar @{ &db_select('settings', ['uuid'], \%key)->hashes || [] } } || 0;
+		&db_delete('settings', \%key);
+		&subs::deletion_registration({ table => 'settings', %key, server_time => $server_time }) if $named && $existed;
 	}
 	return $setting;
 }

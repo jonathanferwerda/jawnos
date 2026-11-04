@@ -402,15 +402,31 @@ sub deletion_performer($json) {
 				&delete_file({ app => $deletion->{'app'}, app_uuid => $deletion->{'uuid'}, file_uuid => $file_uuid }) if defined $file_uuid && length $file_uuid;
 			}
 		}
-	#	elsif ($deletion->{'table'} eq 'settings') {
-	#		if ($deletion->{'subsetting'}) {
-	#			&subs::setting_deleter({ app => $deletion->{'app'}, setting => $deletion->{'setting'}, subsetting => $deletion->{'subsetting'} });
-	#		}
-	#		else {
-	#			&subs::setting_deleter({ app => $deletion->{'app'}, setting => $deletion->{'setting'} });
-	#		}
-	#	}
+		elsif (($deletion->{'table'} || '') eq 'settings' && defined(my $setting_key = &subs::settings_deletion_key($deletion))) {
+			# A settings row is named by its key, not a uuid. Apply the tombstone
+			# only to a row that is not newer than it: a deliberate re-add after
+			# the deletion must survive a stale peer's log.
+			my ($dapp, $dsetting, $dsubsetting, $ddevice) = split /\x1f/, $setting_key, 4;
+			$dsubsetting = undef unless defined $dsubsetting && length $dsubsetting;
+			$ddevice = undef unless defined $ddevice && length $ddevice;
+			my %where = (app => $dapp, setting => $dsetting);
+			$where{'subsetting'} = $dsubsetting if defined $dsubsetting;
+			$where{'device'} = $ddevice if defined $ddevice;
+			my $tomb_time = &subs::settings_deletion_time($deletion);
+			my $held = &subs::db_select('settings', ['server_time'], \%where)->hashes || [];
+			my $newer = grep {
+				(defined $_->{'server_time'} && $_->{'server_time'} =~ /^\d+$/ ? $_->{'server_time'} + 0 : 0) > $tomb_time
+			} @{$held};
+			&subs::setting_deleter({
+				app => $dapp, setting => $dsetting,
+				subsetting => $dsubsetting, device => $ddevice,
+				server_time => $tomb_time,
+			}) unless $newer;
+		}
 		else {
+			# A settings record that does not name its key is not one this mesh
+			# wrote; deleting by a missing uuid would be a broad `uuid IS NULL`.
+			next if ($deletion->{'table'} || '') eq 'settings';
 			&subs::db_delete($deletion->{'table'}, { uuid => $deletion->{'uuid'} });
 		}
 		push @{$returner}, $deletion;

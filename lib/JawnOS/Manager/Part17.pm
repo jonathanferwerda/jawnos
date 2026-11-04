@@ -101,6 +101,16 @@ sub merge_table_rows {
 			}
 		}
 	}
+	# Settings have no uuid, so their tombstones are keyed by (app, setting,
+	# subsetting, device). Take the durable local log and the queued deletions a
+	# peer handed us; the index is built once for the whole table.
+	my $settings_deletions = {};
+	if ($q eq 'settings') {
+		$settings_deletions = &subs::settings_deletion_index([
+			@{ &subs::db_query('select tbl, app, additional, server_time from sync_log where tbl = ?', $q)->hashes || [] },
+			@{ [ grep { ref $_ eq 'HASH' && (($_->{'table'} || '') eq 'settings') } @{$deletions} ] },
+		]);
+	}
 	my $universal_settings = $ctx->{'universal_settings'};
 	my $updateables = $ctx->{'updateables'};
 	my $sync_job = $ctx->{'sync_job'};
@@ -214,6 +224,11 @@ sub merge_table_rows {
 									# keyed by, or it never matches and a stale peer value is written
 									# over the newer one we hold.
 									$r->{'app'} = &subs::text_chars($r->{'app'}) if defined $r->{'app'};
+									# The row names its identity by key, not uuid, so the uuid gate at
+									# the bottom cannot see it. A tombstone at or after this row's own
+									# server_time holds it back; a newer row is a deliberate re-add and
+									# still lands.
+									next if &subs::settings_deletion_blocks($r, $settings_deletions);
 									# Window/tab state is the machine's own view, not a setting: a
 									# peer's snapshot must never open or move a window here.
 									if (($r->{'setting'} || '') =~ /^(?:open_tabs|scrollTop|jopen|dimensions)$/) { next; }
@@ -425,7 +440,7 @@ sub merge_table_rows {
 									}
 									$r->{'file'} = encode_json $files;
 								}
-								unless ( grep { ($_->{'uuid'} eq $r->{'uuid'} ) && $_->{'table'} eq $q && ($_->{'scope'} || '') ne 'file' } @{$deletions} ) {
+								unless ( grep { defined $_->{'uuid'} && defined $r->{'uuid'} && ($_->{'uuid'} eq $r->{'uuid'} ) && ($_->{'table'} || '') eq $q && ($_->{'scope'} || '') ne 'file' } @{$deletions} ) {
 									if (scalar @resulters == 0) {
 										my $inserted = eval { &subs::db_insert($q,$r)};
 										if ($@) { push @insert_errors, ($r->{'uuid'} || '?') . ': ' . ($@ =~ s/\s+/ /gr); }
