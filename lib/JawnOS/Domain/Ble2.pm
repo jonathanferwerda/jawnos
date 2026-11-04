@@ -22,6 +22,7 @@ use File::Slurp;
 use IPC::Open2;
 use JSON::PP ();
 use JawnOS::Ble::Drain qw(drain_new drain_feed);
+use JawnOS::Ble::Guard qw(cpu_ticks cpu_hog);
 use List::Util qw(shuffle);
 use MIME::Base64;
 use Math::Trig qw(cartesian_to_spherical spherical_to_cartesian great_circle_distance rad2deg deg2rad great_circle_bearing great_circle_direction great_circle_destination);
@@ -505,6 +506,31 @@ sub ble_listener_start {
 		$gb::ble_battery_timer = 1;
 		Mojo::IOLoop->timer(8 => sub { eval { &ble_battery_poll(); }; });
 		Mojo::IOLoop->recurring(120 => sub { eval { &ble_battery_poll(); }; });
+	}
+	# A child that is alive but stuck holds a core forever: on(close) only sees
+	# an exit. Watch its CPU time and restart what sustains a core without
+	# making progress (a runaway event stalled the client inside one read).
+	unless ($gb::ble_listener_guard_timer) {
+		$gb::ble_listener_guard_timer = 1;
+		my $hz = do { local $@; eval { require POSIX; POSIX::sysconf(POSIX::_SC_CLK_TCK()) } } || 100;
+		my ($watched, $ticks, $at, $runs) = (0, 0, 0, 0);
+		Mojo::IOLoop->recurring(20 => sub {
+			my $fork = $gb::ble_listener or return;
+			my $now = time;
+			my $child = eval { $fork->pid } || 0;
+			my $cpu = &cpu_ticks($child);
+			return unless defined $cpu;
+			if ($child == $watched && $at) {
+				$runs = &cpu_hog($cpu - $ticks, $now - $at, $hz) ? $runs + 1 : 0;
+				if ($runs >= 2) {
+					$log->error('BLE listener held a core for 40s without progress; restarting it');
+					kill 'TERM', $child;
+					($watched, $ticks, $at, $runs) = (0, 0, 0, 0);
+					return;
+				}
+			}
+			($watched, $ticks, $at) = ($child, $cpu, $now);
+		});
 	}
 	$gb::ble_listener_buffer = drain_new();
 	$gb::ble_listener = Mojo::IOLoop::ReadWriteFork->new;

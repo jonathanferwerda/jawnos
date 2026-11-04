@@ -184,6 +184,10 @@ sub wait_for {
 		my ($lines, $dropped) = drain_feed($inbuf, $chunk, 8 * 1024 * 1024);
 		foreach my $line (@$lines) {
 			print $line, "\n";
+			# listen has no condition: the parent decodes the line. Decoding it
+			# here too made a large event cost two parses, the client's pure-Perl
+			# one on the listener's critical path.
+			next unless $cond;
 			my $o = eval { JSON::PP->new->decode($line) };
 			return $o if $o && $cond->($o);
 		}
@@ -310,7 +314,7 @@ elsif ($cmd eq 'listen') {
 	# targets, so a listener that attaches after that connect would otherwise
 	# never see a 'connected' event and not know which radios are linked.
 	send_cmd({ cmd => 'status' });
-	$last = wait_for(sub { 0 }, 86400 * 365);
+	$last = wait_for(undef, 86400 * 365);
 	exit 0;
 }
 else {

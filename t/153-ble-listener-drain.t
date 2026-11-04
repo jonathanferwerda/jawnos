@@ -1,4 +1,4 @@
-# tests-for: scripts/jawn-bt lib/JawnOS/Domain/Ble2.pm lib/JawnOS/Ble/Drain.pm
+# tests-for: scripts/jawn-bt lib/JawnOS/Domain/Ble2.pm lib/JawnOS/Ble/Drain.pm lib/JawnOS/Ble/Guard.pm
 # covers:    the BLE listener drains a burst of events in one linear pass. Removing
 #           each line with s/^(.*?)\n// copied the whole remaining buffer, so a
 #           burst that ended with one large event was quadratic: a phone spent
@@ -20,6 +20,7 @@ use Symbol qw(gensym);
 use Test::More;
 use Time::HiRes qw(time sleep);
 use JawnOS::Ble::Drain qw(drain_new drain_feed);
+use JawnOS::Ble::Guard qw(cpu_ticks cpu_hog);
 
 my $root = "$FindBin::Bin/..";
 
@@ -40,6 +41,23 @@ my $drain_at = index($ble, 'drain_feed');
 my $cap_at   = index($ble, 'BLE listener buffer overflow');
 ok($drain_at >= 0 && $cap_at > $drain_at,
 	'the parent handles complete lines before it drops an overlong tail');
+
+# ---- the listener's own work and the parent's watchdog ---------------------
+open(my $cfile, '<', "$root/scripts/jawn-bt") or die $!;
+my $client = do { local $/; <$cfile> };
+close $cfile;
+like($client, qr/wait_for\(undef, 86400/, 'listen does not decode a line the parent will decode');
+like($ble, qr/cpu_hog\(/, 'the parent checks whether the listener is a CPU hog');
+like($ble, qr/kill 'TERM', \$child/, 'and restarts it rather than leave it holding a core');
+
+is(&cpu_hog(1600, 20, 100), 1, 'a full core for 20s is a hog');
+is(&cpu_hog(1000, 20, 100), 0, 'half a core is not');
+is(&cpu_hog(0, 20, 100), 0, 'idle is not');
+is(&cpu_hog(undef, 20, 100), 0, 'a missing sample is not');
+is(&cpu_hog(10, 0, 100), 0, 'a zero window is not');
+my $t0cpu = &cpu_ticks($$);
+my $x = 0; $x += $_ for 1 .. 200_000;
+cmp_ok(&cpu_ticks($$), '>=', $t0cpu, 'this process\'s own cpu time is readable');
 
 # ---- the buffer helper ------------------------------------------------------
 my $b = drain_new();
