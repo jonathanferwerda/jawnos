@@ -911,6 +911,16 @@ sub evaluation_dispatch_sweep {
 	my $lead = 10 * 60 * 1000;
 	my $guard = 30 * 60 * 1000;
 	my $count = 0;
+	# Automatic evaluation runs on a server, so an assignment goes to the
+	# dispatcher or to another ready server. Handing one to a phone or laptop
+	# would leave the row unclaimed - those machines no longer schedule or run
+	# one by themselves - and the report would silently never run.
+	my %server_member;
+	foreach my $rm ( @{ &subs::db_select('remote_machines', [ 'signatorial', 'device' ], {})->hashes || [] } ) {
+		next unless (($rm->{'device'} || '') eq 'server');
+		$server_member{ $rm->{'signatorial'} || '' } = 1;
+	}
+	$server_member{$me} = 1;
 	foreach my $sch ( @{ $listed->{'schedules'} || [] } ) {
 		next unless ($sch->{'name'} // '') =~ /^nightly_evaluation_(.+)$/;
 		my $app = $1;
@@ -920,11 +930,10 @@ sub evaluation_dispatch_sweep {
 		my $key = 'eval:' . $app;
 		my $existing = eval { &subs::db_select('ai_jobs', undef, { job => $key })->hashes->[0] };
 		next if $existing && (($existing->{'at'} || 0) + 0) > ($now - $guard);
-		# the server dispatches to a mobile/computer when one is ready; it runs
-		# the report itself only when no worker can
-		my @workers = grep { $_ ne $me } @ready;
+		# the server dispatches to a ready server (or runs the report itself)
+		my @workers = grep { $_ ne $me && $server_member{$_} } @ready;
 		my $owner;
-		if ($named && $named ne $me && $ready{$named}) { $owner = $named; }
+		if ($named && $named ne $me && $ready{$named} && $server_member{$named}) { $owner = $named; }
 		elsif (@workers) {
 			$owner = (sort { &ai_job_rank($key, $a) <=> &ai_job_rank($key, $b) } @workers)[0];
 		}
@@ -944,6 +953,10 @@ sub evaluation_dispatch_sweep {
 # than the cron means an assignment that reaches a worker a few seconds late is
 # still picked up on the next minute instead of waiting for the next cadence.
 sub evaluation_dispatch_tick {
+	# Only a server dispatches or takes an automatic run; the other machines stop
+	# scheduling (see subs::evaluation_auto_here), so an assignment sent to one
+	# would never be claimed.
+	return 0 unless &subs::evaluation_auto_here();
 	my $me = &ai_house_me();
 	return 0 unless length $me;
 	if (&ai_house_dispatcher() eq $me) {

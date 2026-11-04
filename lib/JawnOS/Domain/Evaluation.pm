@@ -291,6 +291,14 @@ sub evaluation_schedule_arrange {
 	$app = '__president' unless $app && $app ne '';
 	my $minion = &subs::minion_grabber();
 	my $name = &subs::nightly_evaluation_name($app);
+	# Only the server keeps an automatic schedule. Anywhere else the wish is
+	# stored (the cadence setting is shared) and the server's reconcile turns it
+	# into a schedule; a machine that used to have one loses it here.
+	unless (&evaluation_auto_here()) {
+		$minion->unschedule($name);
+		delete $schedule_memo{$app};
+		return;
+	}
 	my $cron = &subs::evaluation_schedule_cron($app);
 	if ($cron) {
 		# one retry, in case the model was only briefly unreachable
@@ -325,6 +333,20 @@ sub nightly_evaluation_apply {
 # morning of records does not queue a morning of model calls. Only a completed
 # run counts - a one-shot ('usual') or the end of a start/stop pair ('stop') -
 # and never a spawned child.
+# Where an evaluation may start by itself.
+#
+# A run re-reads the whole history across five windows and then holds a model
+# call. Measured on the phone that is seconds of gathering and minutes of one
+# core once the call is under way, which is the wrong work for a handheld that
+# is usually on battery. Automatic runs are the server's; a phone, tablet or
+# laptop still runs one when a person presses Evaluate (that path calls
+# evaluation_agent directly), it just never starts one on its own. The controls
+# still record a cadence anywhere - the setting is house-wide and the server's
+# reconcile is what turns it into a schedule.
+sub evaluation_auto_here {
+	return (&subs::device_setter() eq 'server') ? 1 : 0;
+}
+
 sub evaluation_run_trigger {
 	my ($app, $appt) = @_;
 	return unless $app && $app ne '__president';
@@ -332,6 +354,7 @@ sub evaluation_run_trigger {
 	my $type = $appt->{'type'} || '';
 	return unless $type eq 'usual' || $type eq 'stop';
 	return if $appt->{'source_uuid'};
+	return unless &evaluation_auto_here();
 	return unless &subs::evaluation_cadence($app) eq 'each_run';
 	my $minion = &subs::minion_grabber();
 	return unless $minion->lock('evaluation_each_run_' . $app, 300);
@@ -346,9 +369,20 @@ sub evaluation_run_trigger {
 # take the worker down with it.
 sub nightly_evaluation_reconcile {
 	eval {
-		# Every machine keeps the schedules. The named machine is a preference the
-		# job honours, not a pin: when it is asleep the peers must already hold
-		# the same schedules to take the night over, so they are rebuilt here too.
+		# Automatic evaluation is the server's job (see evaluation_auto_here). A
+		# machine that is not the server keeps its queue empty of these schedules,
+		# so a wake cannot hand a handheld a core for minutes; the catch-up below
+		# is skipped for the same reason.
+		unless (&evaluation_auto_here()) {
+			my $minion = &subs::minion_grabber();
+			my $listed = $minion->list_schedules(0, 1000) || {};
+			foreach my $sch ( @{ $listed->{'schedules'} || [] } ) {
+				next unless ($sch->{'name'} // '') =~ /^nightly_evaluation_/;
+				$minion->unschedule($sch->{'name'});
+			}
+			return;
+		}
+		# Every machine that reaches here is the server. It keeps the schedules.
 		# every scope ever given a cadence, or the old nightly checkbox: the
 		# effective cadence decides which of them wants a schedule
 		my %scope;
@@ -435,6 +469,12 @@ sub nightly_evaluation_reconcile {
 sub appointment_evaluation_job {
 	my ($job, $data) = @_;
 	my $app = $data->{'app'} || '__president';
+	# A job queued before this machine stopped scheduling (a restart, or a policy
+	# change with one still waiting behind the worker's delay) must not run here.
+	unless (&evaluation_auto_here()) {
+		$job->finish({ app => $app, skipped => 'automatic evaluations run on the server' });
+		return;
+	}
 	my $key = 'eval:' . $app;
 	my $me = &ai_house_me();
 	my $here = &subs::setting_grabber({ app => 'me', setting => 'my_name' }) || '';
