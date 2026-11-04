@@ -352,15 +352,31 @@ sub nearby_position {
 	return {};
 }
 
+# Wait out a quiet spell while keeping the supervisor's lease. A resident loop
+# with a two-minute heartbeat (Process.pm's seed map) that blocks longer than
+# that is expired and killed - "died without reporting" in manager.log - which is
+# what happened to the presence listener on every quiet network.
+sub lan_presence_wait {
+	my ($seconds) = @_;
+	my $until = time() + ($seconds || 0);
+	do {
+		&subs::subprocessor_heartbeat();
+		my $left = $until - time();
+		sleep($left > 10 ? 10 : $left) if $left > 0;
+	} while (time() < $until);
+	&subs::subprocessor_heartbeat();
+}
+
 sub lan_presence_listen {
 	require Socket;
 	require IO::Socket::INET;
+	require IO::Select;
 	while (1) {
 		# A cloud server whose only address is public has no LAN to listen on;
 		# do not open the port to the internet.
 		my @lan_nics = @{ &lan_presence_network() };
 		unless (@lan_nics) {
-			sleep 60;
+			&lan_presence_wait(60);
 			next;
 		}
 		my $sock = IO::Socket::INET->new(
@@ -371,13 +387,22 @@ sub lan_presence_listen {
 			Broadcast => 1,
 		);
 		unless ($sock) {
-			sleep 10;
+			&lan_presence_wait(10);
 			next;
 		}
+		my $ready = IO::Select->new($sock);
 		while (1) {
+			# Read only what is there. A blocking recv on a silent network never
+			# returns, so the lease expired and the reaper killed the listener - the
+			# presence wake then never fired again on this machine.
+			unless ($ready->can_read(15)) {
+				&subs::subprocessor_heartbeat();
+				next;
+			}
 			my $data = '';
 			my $peer = recv($sock, $data, 4096, 0);
 			last unless defined $peer;
+			&subs::subprocessor_heartbeat();
 			next unless length $data;
 			my ($port, $iaddr) = Socket::sockaddr_in($peer);
 			my $ip = $iaddr ? Socket::inet_ntoa($iaddr) : '';
@@ -391,7 +416,7 @@ sub lan_presence_listen {
 			eval { &lan_presence_accept($msg, $ip) };
 		}
 		close $sock;
-		sleep 2;
+		&lan_presence_wait(2);
 	}
 }
 

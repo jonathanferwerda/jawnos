@@ -377,5 +377,18 @@ like($lan, qr/warranty => &subs::forever_warranty\(\)/,
 	'a tunnel row is warrantied forever');
 like($lan, qr/name => 'tunnel holder wss ' .*?warranty => 'forever'/s,
 	'the tunnel holder is a forever subprocess');
+# The presence listener is a resident loop with a two-minute lease. A blocking
+# recv on a quiet network never returns, so its heartbeat stopped, the reaper
+# expired it, and the presence wake never fired again on that machine.
+like($lan, qr/\$ready->can_read\(/,
+	'the presence listener reads with a timeout instead of blocking on recv');
+like($lan, qr/sub lan_presence_listen \{.*?subprocessor_heartbeat.*?\n\}/s,
+	'the presence listener heartbeats while it waits');
+like($loader, qr/JawnOS::Domain::Lan' for qw\([^)]*lan_presence_listen[^)]*lan_presence_wait/,
+	'the loader maps the presence wait helper');
+
+# Waiting out a quiet spell must heartbeat in chunks, not sleep past the lease.
+like($lan, qr/sub lan_presence_wait \{.*?subprocessor_heartbeat.*?sleep\(.*?\n\}/s,
+	'the wait helper heartbeats between short sleeps');
 
 done_testing();
