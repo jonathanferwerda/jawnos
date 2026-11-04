@@ -185,6 +185,8 @@ function timelineScroller(data) {
 		$('#time_machine').val(ts)
 		localStorage.setItem('time_machine', ts);
 	}
+	// a slide leaves the view on one moment, so the clock stands still there
+	response.appts['__specs']['time_machine_stationary'] = 1;
 //	timestamp = response.appts['__specs']['timestamp'];
 	timelinePositions(response.appts);
 	graphicalize(response);

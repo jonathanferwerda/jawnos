@@ -310,6 +310,29 @@ function jawnosClockShow(timestamp) {
 	jawnosClockAstrayApply();
 }
 
+// The face is anchored on the view's centre as the server last read it, and then
+// ticked here every second: the appointment poll only comes around every few
+// seconds, which left the seconds standing between two reads. A time machine that
+// names one fixed moment (a date, an event) is stationary - its face stays where
+// it was put - while a relative one and the present keep moving.
+var jawnosClockAnchor = null;
+function jawnosClockAnchorSet(timestamp, stationary) {
+	timestamp = numeral(timestamp).value();
+	jawnosClockAnchor = { timestamp: timestamp, at: Date.now(), moving: !stationary };
+	jawnosClockShow(timestamp);
+}
+function jawnosClockFaceTick() {
+	if (!jawnosClockAnchor || !jawnosClockAnchor.moving) { return; }
+	// the desk's own one-second tick already owns the face while it is up
+	if (typeof desk_visible != 'undefined' && desk_visible) { return; }
+	var stamp = jawnosClockAnchor.timestamp + (Date.now() - jawnosClockAnchor.at);
+	jawnosClockShow(stamp);
+	if (!jawnosClockInTaskbar() && typeof fixedTimeString == 'function') {
+		$('#header').text(fixedTimeString(stamp));
+	}
+}
+if (typeof jawnos_tick_register == 'function') { jawnos_tick_register('taskbar_clock', jawnosClockFaceTick); }
+
 // The clock doubles as a time machine: click it and type a time - "-3h", "jul
 // 16", "last dec 25", "dec 25 2025 at 7:04pm" - and Enter carries the view
 // there, exactly as the keyboard's #time_machine does. Escape or a click away

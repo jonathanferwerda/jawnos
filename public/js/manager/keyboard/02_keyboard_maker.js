@@ -479,24 +479,25 @@ function initializer() {
 	if (!scope) {
 		keyboard = 'none';
 		localStorage.setItem('keyboard', keyboard);
-		update_frequency = 'no';
+		update_frequency = '3000';
 		localStorage.setItem('update_frequency', update_frequency);
-		scope = 'hour';
+		scope = 'fifteenminute';
 		localStorage.setItem('scope', scope);
 		timeshift_scope = 's';
 		localStorage.setItem('timeshift_scope', timeshift_scope);
-		layout = 'leaderboard';
+		layout = 'desk';
 		localStorage.setItem('layout', layout);
 		sorts = 'timestamp';
 		localStorage.setItem('sorts', sorts);
 		timeshift = 0;
 		localStorage.setItem('timeshift', timeshift);
+		filter = 'all';
 		localStorage.setItem('filter', filter);
 		time_machine = '';
 		localStorage.setItem('time_machine',time_machine);
-		project = 'def';
+		project = 'all';
 		localStorage.setItem('project',project);
-		account = 'def';
+		account = 'all';
 		localStorage.setItem('account',account);
 	}
 	if ($('#scope').is(':visible')) {

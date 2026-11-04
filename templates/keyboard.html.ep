@@ -192,7 +192,7 @@
 				<option value="calendar">Calendar</option>
 				<option value="continent">Continent</option>
 				<option value="narrator">Narrator</option>
-				<option value="desk"><%= &subs::lang('layout.desktop') %></option>
+				<option value="desk" selected><%= &subs::lang('layout.desktop') %></option>
 			</select>
 			<select name="sorts" id="sorts">
 				<option value="alphabetical">Alphabetical</option>
@@ -207,7 +207,7 @@
 			<span id="timeshift_viewer"></span><br>
 			<select name="scope" id="scope">
 				<% foreach my $span ( &subs::time_span_picker() ) { %>
-					<option value="<%= $span %>"><%= &subs::time_span_label($span) %></option>
+					<option value="<%= $span %>"<%= $span eq 'fifteenminute' ? ' selected' : '' %>><%= &subs::time_span_label($span) %></option>
 				<% } %>
 			</select>
 			<select id="timeshift_scope" name="timeshift_scope">
@@ -225,7 +225,7 @@
 			</select>
 			<select name="filter" id="filter">
 				<% foreach my $m ( @gb::movements ) { %>
-					<option value="<%= $m %>"><%= ucfirst($m) %></option>
+					<option value="<%= $m %>"<%= $m eq 'all' ? ' selected' : '' %>><%= ucfirst($m) %></option>
 				<% } %>
 			</select>
 			<br>

@@ -433,6 +433,8 @@ sub action_25183 {
 		$chosen_appts = decode_json $c->param('appts');
 	}
 	else { $chosen_appts = \@appointments; }
+	# the anchor the words are read against, kept before the machine resolves them
+	my $anchor = (defined $timestamp && $timestamp =~ /\S/) ? $timestamp : &subs::rightNow();
 	if ($time_machine) {
 		$timestamp = &time_machine_resolve($time_machine,$timestamp);
 	}
@@ -442,6 +444,14 @@ sub action_25183 {
 	# and the server would apply the timeshift a second time on every poll, so the
 	# view marched further back with every slide.
 	my $time_machine_timestamp = $timestamp;
+	# Resolve the same words an hour later: a relative time machine (now, "-3h",
+	# "in 20 minutes") moves with the anchor, while a named moment stays put. The
+	# clock reads this to know whether its face should keep ticking between polls.
+	my $time_machine_stationary = 0;
+	if ($time_machine) {
+		my $later = &time_machine_resolve($time_machine, $anchor + 3600000);
+		$time_machine_stationary = 1 if abs($later - $time_machine_timestamp) < 1000;
+	}
 	if ($timeshift && $timeshift =~ /[0-9]/) {
 		$timestamp = &subs::ago_calc($timeshift,$timestamp);
 	#	$timestamp = $timestamp - ($timeshift);
@@ -462,6 +472,7 @@ sub action_25183 {
 	});
 	$appts->{'__specs'}->{'layout'} = $layout;
 	$appts->{'__specs'}->{'time_machine_timestamp'} = $time_machine_timestamp;
+	$appts->{'__specs'}->{'time_machine_stationary'} = $time_machine_stationary;
 	if (($appts->{'updateable'} || '') eq 'no') {
 		$c->render(json => { updateable => 'no', '__specs' => $appts->{'__specs'} });
 		$c->rendered;
