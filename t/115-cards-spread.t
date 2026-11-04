@@ -68,6 +68,8 @@ like($controller, qr/if \(ref \$spread_cards eq 'ARRAY'\) \{ \$entry\{'cards'\} 
 	'a new spread stores names, not a montage');
 like($controller, qr/cards => \$spread_cards/, 'and the reply carries the three names');
 unlike($controller, qr/card_spread_stream/, 'no montage is built for the spread');
+unlike($controller, qr/&subs::terminal_name/, 'a deck file name is not shell-escaped on the way into a URL');
+like($controller, qr/sub cards_history_clean/, 'stored names are unescaped when a history is read');
 
 # A template is compiled strictly with the stash keys it is given, so a render
 # that leaves one out is a 500 on that route, not a missing value. The deal
@@ -105,7 +107,11 @@ my $read_template = sub {
 my $rendered = eval {
 	my $src = $read_template->('cards');
 	$mt->render($src, {
-		history => [],
+		history => [ {
+			title => 'The Fool \x{b7} The Star \x{b7} The Moon',
+			timestamp => 1,
+			cards => [ 'the fool.png', 'the star.png', 'the moon.png' ],
+		} ],
 		mode => 'spread',
 		variant => 'solitaire',
 		bank => 120,
@@ -114,5 +120,7 @@ my $rendered = eval {
 };
 is($@, '', 'the cards page renders with the stash its routes pass');
 like($rendered // '', qr/id="cards_blackjack"/, 'and the blackjack pane is on the page');
+like($rendered // '', qr{src="/images/cards/the%20fool\.png"}, 'a card name with a space is percent-encoded');
+like($rendered // '', qr{data-cards="the fool\.png\|the star\.png\|the moon\.png"}, 'the history keeps the names for the browser');
 
 done_testing();

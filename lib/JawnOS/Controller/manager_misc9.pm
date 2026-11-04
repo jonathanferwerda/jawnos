@@ -326,12 +326,26 @@ sub action_28131 {
 
 }
 
+# A history read may carry names an early build made with terminal_name, which
+# escapes a space as "\ " for a shell. A filename is not a shell word: undo the
+# escape so the template and the browser see the real name.
+sub cards_history_clean {
+	my ($history) = @_;
+	return [] unless ref $history eq 'ARRAY';
+	foreach my $entry ( @{$history} ) {
+		next unless ref $entry eq 'HASH';
+		next unless ref $entry->{'cards'} eq 'ARRAY';
+		$entry->{'cards'} = [ map { (my $name = $_) =~ s/\\(.)/$1/g; $name } @{$entry->{'cards'}} ];
+	}
+	return $history;
+}
+
 # GET /manager/cards
 sub action_28156 {
 	my $c = shift;
 	my $timestamp = $c->param('timestamp');
 	my $mode = &subs::setting_grabber({ app => 'cards', setting => 'mode' });
-	my $history = eval { return decode_json &subs::setting_grabber({ app => 'cards', setting => $mode }) } || [];
+	my $history = &cards_history_clean(eval { return decode_json &subs::setting_grabber({ app => 'cards', setting => $mode }) } || []);
 	my $variant = &subs::setting_grabber({ app => 'cards', setting => 'variant' });
 	my $bank = &subs::setting_grabber({ app => 'cards', setting => 'solitaire_bank' });
 	my $blackjack_bank = &subs::setting_grabber({ app => 'cards', setting => 'blackjack_bank' });
@@ -360,7 +374,7 @@ sub action_28170 {
 	my $history = [];
 
 	if ($mode && $mode ne 'all') {
-		$history = eval { return decode_json &subs::setting_grabber({ app => 'cards', setting => $mode }) } || [];
+		$history = &cards_history_clean(eval { return decode_json &subs::setting_grabber({ app => 'cards', setting => $mode }) } || []);
 	}
 	elsif ($mode eq 'all') {
 		my $cards = `ls ./public/images/cards`;
@@ -400,11 +414,11 @@ sub action_28170 {
 				my ($ca,$car);
 
 				$ca = &random_card_picker();
-				$car = './public/images/cards/' . &subs::terminal_name($ca);
+				$car = './public/images/cards/' . $ca;
 				while (grep { $car eq $_ } @cards) {
 
 					$ca = &random_card_picker();
-					$car = './public/images/cards/' . &subs::terminal_name($ca);
+					$car = './public/images/cards/' . $ca;
 
 				}
 

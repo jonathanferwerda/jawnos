@@ -63,6 +63,8 @@ function blank() {
 }
 
 // ---- solitaire deal ----
+eq(ctx.cardsCardUrl('the fool.png'), '/images/cards/the%20fool.png',
+	'a deck name with a space is percent-encoded');
 var deal = ctx.solitaireDeal(function () { return 0.5; });
 var total = deal.stock.length, down = 0, up = 0, shape = true;
 for (var col = 0; col < 7; col++) {

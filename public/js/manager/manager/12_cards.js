@@ -46,7 +46,9 @@ function cardsEscape(text) {
 }
 
 function cardsCardUrl(name) {
-	return encodeURI('/images/cards/' + String(name || ''));
+	// Card files carry spaces ("the fool.png"); a path segment is encoded so the
+	// request is the same on every engine.
+	return '/images/cards/' + encodeURIComponent(String(name || ''));
 }
 
 function cardsShowSpread(names) {
@@ -1171,7 +1173,7 @@ function cardPicker(newCard) {
 				$('#deck_card').css('height', 'auto');
 			}
 			else {
-				cardsShowSingle('/images/cards/' + response.filename, null);
+				cardsShowSingle(cardsCardUrl(response.filename), null);
 			}
 			if (response.title) { $('#card_title').html(cardsEscape(response.title)).show(); }
 			else { $('#card_title').text(window.jawnosT ? jawnosT('Deck of cards') : 'Deck of cards').show(); }

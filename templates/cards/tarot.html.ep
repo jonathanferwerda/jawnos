@@ -25,7 +25,7 @@ my $lead_title = $lead ? &subs::format_name($lead->{'title'}) : '';
 				<div id="deck_spread"<% if (!$lead_cards) { %> style="display:none;"<% } %>>
 					<% foreach my $cn ( @{ $lead_cards || [] } ) { %>
 						<% (my $cn_label = $cn) =~ s/\.png$//i; %>
-						<img class="deck_spread_card" src="/images/cards/<%= &subs::html_text($cn) %>" alt="<%= &subs::format_name($cn_label) %>">
+						<img class="deck_spread_card" src="/images/cards/<%= &subs::url_escape_utf8($cn) %>" alt="<%= &subs::format_name($cn_label) %>">
 					<% } %>
 				</div>
 				<img id="deck_card" class="card hover"<% if ($lead_cards) { %> style="display:none;"<% } else { %> src="<%= &subs::icon_for('/images/cards/title.png') %>"<% } %> hint="<%= &subs::ui('Deal a card') %>" alt="<%= $lead ? $lead_title : &subs::ui('Deck of cards') %>">
@@ -44,17 +44,17 @@ my $lead_title = $lead ? &subs::format_name($lead->{'title'}) : '';
 				<% my $rn = &subs::random_string_creator(10); %>
 				<% my $title = &subs::format_name($his->{'title'}); %>
 				<% my $name_list = (ref $his->{'cards'} eq 'ARRAY') ? join('|', @{ $his->{'cards'} }) : ''; %>
-				<div class="history_draw" rn="<%= $rn %>" data-title="<%= $title %>"<% if (length $name_list) { %> data-cards="<%= &subs::html_text($name_list) %>"<% } elsif ($his->{'stream'}) { %> data-src="<%= &subs::html_text($his->{'stream'}) %>"<% } else { %> data-src="/images/cards/<%= &subs::html_text($his->{'title'}) %>.png"<% } %>>
+				<div class="history_draw" rn="<%= $rn %>" data-title="<%= $title %>"<% if (length $name_list) { %> data-cards="<%= &subs::html_text($name_list) %>"<% } elsif ($his->{'stream'}) { %> data-src="<%= &subs::html_text($his->{'stream'}) %>"<% } else { %> data-src="/images/cards/<%= &subs::url_escape_utf8($his->{'title'}) %>.png"<% } %>>
 					<% if (ref $his->{'cards'} eq 'ARRAY') { %>
 						<span class="history_spread">
 							<% foreach my $cn ( @{ $his->{'cards'} } ) { %>
 								<% (my $cn_label = $cn) =~ s/\.png$//i; %>
-								<img class="card history hover" rn="<%= $rn %>" alt="<%= &subs::format_name($cn_label) %>" src="/images/cards/<%= &subs::html_text($cn) %>">
+								<img class="card history hover" rn="<%= $rn %>" alt="<%= &subs::format_name($cn_label) %>" src="/images/cards/<%= &subs::url_escape_utf8($cn) %>">
 							<% } %>
 						</span>
 					<% } else { %>
 						<span class="history_single">
-							<img class="card history hover" rn="<%= $rn %>" alt="<%= $title %>" src="<% if ($his->{'stream'}) { %><%= &subs::html_text($his->{'stream'}) %><% } else { %>/images/cards/<%= &subs::html_text($his->{'title'}) %>.png<% } %>">
+							<img class="card history hover" rn="<%= $rn %>" alt="<%= $title %>" src="<% if ($his->{'stream'}) { %><%= &subs::html_text($his->{'stream'}) %><% } else { %>/images/cards/<%= &subs::url_escape_utf8($his->{'title'}) %>.png<% } %>">
 						</span>
 					<% } %>
 					<div class="history_meta">
