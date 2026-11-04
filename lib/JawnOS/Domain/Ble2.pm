@@ -23,6 +23,7 @@ use IPC::Open2;
 use JSON::PP ();
 use JawnOS::Ble::Drain qw(drain_new drain_feed);
 use JawnOS::Ble::Guard qw(cpu_ticks cpu_hog);
+use JawnOS::Ble::Payload qw(toggle_map toggle_chunks);
 use JawnOS::Ble::Ring qw(ring_tail);
 use List::Util qw(shuffle);
 use MIME::Base64;
@@ -137,12 +138,12 @@ sub ble_message_processor {
 		my $edt = $msg->{'edt'} || 'watch';
 		# bridged to a machine that is not the watch's homebase? re-home it
 		&subs::ble_rehome_check($edt, $chip_id, $msg->{'homebase'});
-		my $toggles = {};
 		my $rows = &subs::db_select('settings', undef, { setting => 'toggle' })->hashes;
-		foreach my $row ( @{$rows} ) {
-			next unless $row->{'app'};
-			$toggles->{$row->{'app'}} = $row->{'value'} eq 'on' ? 'on' : 'off';
-		}
+		# The map is built through the payload guard, not straight from the rows:
+		# a corrupt `app` key (a doubling double-encode, a serialized blob) is not
+		# a name and must not reach a device. This is the only path that ships the
+		# whole map, so the guard lives with the builder it uses.
+		my $toggles = toggle_map($rows);
 		if ($edt eq 'microcontroller') {
 			# A board only needs the apps its own components name; the house can
 			# carry a thousand toggles, and sending them all would overflow a
@@ -155,13 +156,41 @@ sub ble_message_processor {
 			}
 			$toggles = { map { $_ => $toggles->{$_} } grep { $wanted{$_} } keys %{$toggles} };
 		}
-		$log->info('BLE state_request for ' . $chip_id . ': ' . scalar(keys %{$toggles}) . ' toggles');
-		&subs::bluetooth_sender_async({
-			intent => 'com.jawn.president.bt.connect',
-			chip_id => $chip_id,
-			edt => $edt,
-			message => { type => 'toggles', data => $toggles }
-		});
+		# The bridge holds writes in a 64 KB queue and sends plain UTF-8 (the
+		# compress flag is stored, not used), so the house's whole map does not fit
+		# in one message. Send it as pages, each well under that queue. The reply
+		# measures with the same encoder bluetooth_sender will use.
+		my $chunks = toggle_chunks($toggles, encode => \&encode_json);
+		# A watch that has just booted asks before it owns any toggles; keep the
+		# one empty reply it used to get, so it is not left waiting.
+		$chunks = [ {} ] unless @{$chunks};
+		$log->info('BLE state_request for ' . $chip_id . ': ' . scalar(keys %{$toggles})
+			. ' toggles in ' . scalar(@{$chunks}) . ' message(s)');
+		if ( @{$chunks} == 1 ) {
+			&subs::bluetooth_sender_async({
+				intent => 'com.jawn.president.bt.connect',
+				chip_id => $chip_id,
+				edt => $edt,
+				message => { type => 'toggles', data => $chunks->[0] }
+			});
+		}
+		else {
+			# One child for the whole run, one blocking send per chunk: the next
+			# chunk is queued only after the previous write was acknowledged, so the
+			# chunks cannot all sit in the 64 KB queue at once. bluetooth_sender also
+			# re-runs the homebase check per chunk, so a watch that walks away stops
+			# the rest rather than stealing the link.
+			&subs::subprocessor(sub {
+				foreach my $chunk ( @{$chunks} ) {
+					&subs::bluetooth_sender({
+						intent => 'com.jawn.president.bt.connect',
+						chip_id => $chip_id,
+						edt => $edt,
+						message => { type => 'toggles', data => $chunk }
+					});
+				}
+			}, { name => 'ble toggles page', warranty => '120s', fork => 1 });
+		}
 		return;
 	}
 	if ($type && $type eq 'room_request') {

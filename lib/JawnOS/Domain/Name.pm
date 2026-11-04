@@ -214,10 +214,18 @@ sub setting_setter {
 	&visibility_cache_clear() if (($settings->{'setting'} // '') =~ /^(?:visible|app_measures)$/);
 	# a language change must be seen by the next page in this same worker
 	&language_reset() if (($settings->{'setting'} // '') eq 'language');
-	my $app = $settings->{'app'};
+	# A name reaches this gate from a form, a sync batch or the database, and a
+	# caller behind a pre-unicode SQLite handle or an old worker can hand it as a
+	# byte string. SQLite then reads those UTF-8 bytes as Latin-1 characters and
+	# re-encodes them, so one three-byte mark becomes six bytes: the key doubled
+	# on every save and a peer's row came back one layer longer on each merge
+	# (the cascade that reached 1.5 MB). Decode once, here, where every settings
+	# write meets. Only a defined value is touched: a window-state row with no
+	# app must stay NULL, because the NULL-safe delete below keys on that.
+	my $app = defined $settings->{'app'} ? &subs::text_chars($settings->{'app'}) : undef;
 	my $original_app = $app;
 	my $setting = $settings->{'setting'};
-	my $subsetting = $settings->{'subsetting'};
+	my $subsetting = defined $settings->{'subsetting'} ? &subs::text_chars($settings->{'subsetting'}) : undef;
 	my $value = $settings->{'value'};
 	my $timestamp = $settings->{'timestamp'} || &rightNow();
 	my $browser_tab_id = $settings->{'browser_tab_id'};
@@ -486,7 +494,12 @@ sub setting_grabber {
 		$settings->{'app'} = $s->{'app'};
 	}
 
-	my $app = $settings->{'app'};
+	# decode a byte-string name once, exactly as the write gate does: a caller
+	# that hands the row back as bytes must find the character-keyed row, or its
+	# read looks like a missing app and the automatic uuid below forks the app
+	my $app = defined $settings->{'app'} ? &subs::text_chars($settings->{'app'}) : undef;
+	# the query below is built from this hash, so carry the decoded form into it
+	$settings->{'app'} = $app;
 	my $device_defined = 0;
 	$device_defined = 1 if $settings->{'device'};
 	$settings->{'device'} = $settings->{'device'} || &device_setter();
@@ -691,7 +704,7 @@ sub settings_grabber {
 	}
 
 
-	my $app = $settings->{'app'};
+	my $app = defined $settings->{'app'} ? &subs::text_chars($settings->{'app'}) : undef;
 	my $device_defined = 0;
 	$device_defined = 1 if $settings->{'device'};
 	$settings->{'device'} = $settings->{'device'} || &device_setter();
@@ -759,6 +772,10 @@ sub settings_grabber {
 sub setting_deleter {
 	%setting_memo = ();
 	my $setting = shift;
+	# the same decode the write gate applies, so a byte-string caller deletes
+	# the row its character string names instead of leaving it behind
+	$setting->{'app'} = defined $setting->{'app'} ? &subs::text_chars($setting->{'app'}) : undef;
+	$setting->{'subsetting'} = &subs::text_chars($setting->{'subsetting'}) if defined $setting->{'subsetting'};
 	$setting->{'device'} = $setting->{'device'} || &device_setter();
 	if ($setting->{'subsetting'}) {
 	#	&subs::deletion_registration({ table => 'settings', app => $setting->{'app'}, setting => $setting->{'setting'}, server_time => $setting->{'server_time'}, subsetting => $setting->{'subsetting'} });

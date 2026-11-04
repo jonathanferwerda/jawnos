@@ -224,6 +224,14 @@ sub action_43067 {
 	}
 	# else the device is on the network already: tell it to pull its own copy
 	my $teletype = &subs::device_lister($timestamp, $edt, undef, $chip_id);
+	# device_lister answers with the whole device array when the chip has no
+	# neighbour row (a board that was never seen on the LAN, or whose only
+	# sighting has lapsed). Dereferencing that as a hash was a 500; say plainly
+	# that neither the link nor the network could reach it.
+	if (ref $teletype ne 'HASH' || ($teletype->{'ip'} || '') !~ /^\d{1,3}(?:\.\d{1,3}){3}$/) {
+		$c->render(text => 'not reachable: no live Bluetooth link and no network address');
+		return;
+	}
 	my $wifi_url = 'http://' . $teletype->{'ip'} . ':' . $config->{'port'} . '/wifi_update';
 	my $ua = Mojo::UserAgent->new();
 	my $res = $ua->insecure(1)->get($wifi_url)->result;

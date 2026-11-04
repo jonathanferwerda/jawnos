@@ -25,6 +25,7 @@ Run from the repo root, or with an explicit path. `sh` tools run under
 | `net-latency.sh` | Which peer is slow or unreachable, and is it connect or server time? | `./scripts/tools/net-latency.sh --port 45545 192.0.2.1 192.0.2.2` | read |
 | `sync-watch.sh` | Is a sync stuck, how many pulls finished, and is the box loaded? | `./scripts/tools/sync-watch.sh --samples 5` | read; `--log FILE` writes |
 | `db-state.sh` | Is the database in WAL, how big is the WAL, can read-only see new rows? | `./scripts/tools/db-state.sh ./database/jawnos.db` | read |
+| `fix-toggle-keys.sh` | Which `toggle` settings rows carry a doubled (mojibake) app key, and can they be removed? | `./scripts/tools/fix-toggle-keys.sh [--apply]` | read; `--apply` deletes through `subs::setting_deleter` after a row backup |
 | `serial-watch.py` | What is the bridge board printing, with timestamps? (DTR-aware) | `./scripts/tools/serial-watch.py /dev/ttyACM0 30 reset` | read; `reset` reboots the board |
 | `android-battery-log.sh` | Android battery/power/wakefulness and top CPU consumers over adb | `./scripts/tools/android-battery-log.sh SERIAL 40 15` | read |
 

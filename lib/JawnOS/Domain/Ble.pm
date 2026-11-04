@@ -447,7 +447,12 @@ sub bluetooth_sender {
 	return unless &ble_may_serve($data->{'edt'}, $data->{'chip_id'});
 	my $intent = $data->{'intent'};
 	my $message = $data->{'message'};
-	my $embedded = &subs::device_lister(&subs::rightNow(),$data->{'edt'},undef,$data->{'chip_id'});
+	# Resolve through embedded_device, not the plain listing: a board off its
+	# WiFi has a sighting older than the presence window, and device_lister then
+	# answers with the whole device array instead of the one device. Its recorded
+	# radio address is still the only way to reach it - the connect attempt is
+	# the probe, and it is what provisions a board that has no network yet.
+	my $embedded = &subs::embedded_device(&subs::rightNow(), $data->{'edt'}, $data->{'chip_id'});
 	# The link's service and characteristics: use what the device record carries,
 	# but fall back to the Nordic UART uuids the watch and boards advertise, so a
 	# connect is never issued without them (a bare one clears the daemon's saved
@@ -522,7 +527,10 @@ sub ble_push_available {
 	my ($edt, $chip_id) = @_;
 	return 0 unless $edt && $chip_id && &subs::ble_bridge_capable();
 	return 0 unless &ble_may_serve($edt, $chip_id);
-	my $embedded = &subs::device_lister(&subs::rightNow(), $edt, undef, $chip_id);
+	# Same resolver as the send itself: a recorded chip stays pushable after its
+	# last sighting leaves the presence window, so the WiFi button is not dead
+	# until someone happens to run a scan.
+	my $embedded = &subs::embedded_device(&subs::rightNow(), $edt, $chip_id);
 	return 0 unless ref $embedded eq 'HASH' && $embedded->{'mac_addresses'}->{'bluetooth'};
 	return 1;
 }

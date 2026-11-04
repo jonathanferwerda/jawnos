@@ -209,6 +209,11 @@ sub merge_table_rows {
 									}
 								}
 								if ($q eq 'settings') {
+									# A peer behind a pre-unicode SQLite handle sends the name as bytes.
+									# The time check below must compare the same characters the row is
+									# keyed by, or it never matches and a stale peer value is written
+									# over the newer one we hold.
+									$r->{'app'} = &subs::text_chars($r->{'app'}) if defined $r->{'app'};
 									# Window/tab state is the machine's own view, not a setting: a
 									# peer's snapshot must never open or move a window here.
 									if (($r->{'setting'} || '') =~ /^(?:open_tabs|scrollTop|jopen|dimensions)$/) { next; }
