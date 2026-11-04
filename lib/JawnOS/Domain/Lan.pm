@@ -674,7 +674,7 @@ sub tunnel_starter {
 				$pid = $$;
 				&subs::db_update('tunnels', { process_id => $pid, server_time => &subs::rightNow(), status => 'active' }, { uuid => $_ }) for @uuids;
 				&subs::tunnel_wss_peer($rm->{'manager'}, $rm->{'ws_port'});
-			}, { name => 'tunnel holder wss ' . scalar(@uuids) . ' ports', warranty => 'forever' });
+			}, { name => 'tunnel holder wss ' . scalar(@uuids) . ' ports', warranty => 'forever', fork => 1 });
 
 
 		}

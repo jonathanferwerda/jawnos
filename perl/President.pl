@@ -429,7 +429,7 @@ sub manager_starter() {
 			eval { &subs::lan_presence_send(); };
 			sleep 5;
 		}
-	}, { name => 'lan presence beacon' });
+	}, { name => 'lan presence beacon', fork => 1 });
 
 	&subs::subprocessor(sub {
 		sleep 3;
@@ -438,7 +438,7 @@ sub manager_starter() {
 			eval { &subs::lan_presence_listen(); };
 			sleep 5;
 		}
-	}, { name => 'lan presence listener' });
+	}, { name => 'lan presence listener', fork => 1 });
 
 	# The listener only leaves a cache stamp; this loop runs the mesh sync in its
 	# own process so the listener is never blocked behind a pull.
@@ -452,7 +452,7 @@ sub manager_starter() {
 			&subs::cache_delete({ app => '__president', context => 'lan', subcontext => 'wake' });
 			eval { &subs::remote_machine_negotiator({}); };
 		}
-	}, { name => 'lan mesh wake' });
+	}, { name => 'lan mesh wake', fork => 1 });
 
 	# A device that has never been on WiFi cannot be named by mDNS, and the tree
 	# holds no address for it, so nothing ever connects and it stays invisible while
@@ -471,7 +471,7 @@ sub manager_starter() {
 			eval { &subs::ble_adopt_scan(); };
 			sleep 300;
 		}
-	}, { name => 'ble adopt scan' });
+	}, { name => 'ble adopt scan', fork => 1 });
 
 	# The Android app's scheduled wake (JawnWakeReceiver) holds the CPU for a
 	# short window each navigation interval. Once the app has proved it is
