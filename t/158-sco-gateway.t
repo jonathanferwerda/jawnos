@@ -93,6 +93,51 @@ isnt(JawnOS::Sco::Render::key('hello', 'piper-a'), JawnOS::Sco::Render::key('hel
 		'no address means no streams');
 }
 
+# Moving a stream that is already ours re-links it and drops a word of the
+# greeting, so a move happens only when the stream is somewhere else.
+{
+	require JawnOS::Sco::Mixer;
+	my $mixer = JawnOS::Sco::Mixer->new();
+	my $moves = '';
+	my $sink_on = 3472;
+	my $source_on = 3473;
+	my %name = (
+		3472 => 'alsa_output.pci-0000_00_1f.3.analog-stereo',
+		3657 => 'jawn_call_in',
+		3473 => 'alsa_input.pci-0000_00_1f.3.analog-stereo',
+		3672 => 'jawn_ivr_mic',
+	);
+	local *JawnOS::Sco::Mixer::pactl = sub {
+		my @arg = @_;
+		my $line = join ' ', @arg;
+		if ($line eq 'list short sinks') {
+			return join '', map { "$_\t$name{$_}\tPipeWire\ts16 2ch\tRUNNING\n" } sort keys %name;
+		}
+		if ($line eq 'list short sources') {
+			return join '', map { "$_\t$name{$_}\tPipeWire\ts16 2ch\tRUNNING\n" } sort keys %name;
+		}
+		if ($line eq 'list sink-inputs') {
+			return "Sink Input #41\n\tSink: $sink_on\n\tProperties:\n\t\tdevice.string = \"00:2B:70:E9:7E:B2\"\n\n";
+		}
+		if ($line eq 'list source-outputs') {
+			return "Source Output #42\n\tSource: $source_on\n\tProperties:\n\t\tdevice.string = \"00:2B:70:E9:7E:B2\"\n\n";
+		}
+		$moves .= "$line\n" if $arg[0] =~ /^move-/;
+		return '';
+	};
+	my $first = $mixer->attach('00:2B:70:E9:7E:B2');
+	is_deeply($first->{'moved'}, [ 'sink-input', 'source-output' ],
+		'streams on the laptop\'s own devices are moved');
+	like($moves, qr/move-sink-input 41 jawn_call_in/, 'the caller\'s voice is moved');
+	like($moves, qr/move-source-output 42 jawn_ivr_mic/, 'and the phone\'s capture');
+	$moves = '';
+	$sink_on = 3657;
+	$source_on = 3672;
+	my $second = $mixer->attach('00:2B:70:E9:7E:B2');
+	is_deeply($second->{'moved'}, [], 'streams already on our devices are left alone');
+	is($moves, '', 'and nothing is re-linked');
+}
+
 JawnOS::Sco::Render::prune();
 
 # ------------------------------------------------------------- the gateway

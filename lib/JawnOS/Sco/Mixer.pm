@@ -79,34 +79,64 @@ sub _blocks {
 	return grep { /\S/ } split /\n\s*\n/, $text;
 }
 
+sub _device_names {
+	my ($kind) = @_;
+	my %name;
+	foreach my $line ( split /\n/, &pactl('list', 'short', $kind) ) {
+		my @field = split /\t/, $line;
+		$name{ $field[0] } = $field[1] if @field > 1;
+	}
+	return %name;
+}
+
+# The two streams a call owns, with the device each one is on right now: the id
+# alone says nothing about whether it still needs moving, and moving a stream
+# that is already ours re-links it and drops a word of the greeting.
 sub call_streams {
 	my ($self, $address) = @_;
 	my $want = $address ? lc $address : '';
 	return { sink_input => undef, source_output => undef } unless $want;
-	my ($sink_input, $source_output);
+	my ($sink_name, $source_name);
+	my ($sink_input, $source_output, $sink, $source);
 	foreach my $block ( &_blocks(&pactl('list', 'sink-inputs')) ) {
 		next unless lc($block) =~ /\Q$want\E/;
 		($sink_input) = $block =~ /Sink Input #(\d+)/;
+		my ($id) = $block =~ /^\s*Sink:\s*(\d+)/m;
+		if ($id) {
+			$sink_name ||= { &_device_names('sinks') };
+			$sink = $sink_name->{$id};
+		}
 	}
 	foreach my $block ( &_blocks(&pactl('list', 'source-outputs')) ) {
 		next unless lc($block) =~ /\Q$want\E/;
 		($source_output) = $block =~ /Source Output #(\d+)/;
+		my ($id) = $block =~ /^\s*Source:\s*(\d+)/m;
+		if ($id) {
+			$source_name ||= { &_device_names('sources') };
+			$source = $source_name->{$id};
+		}
 	}
-	return { sink_input => $sink_input, source_output => $source_output };
+	return {
+		sink_input => $sink_input,
+		source_output => $source_output,
+		sink => $sink,
+		source => $source,
+	};
 }
 
-# Move the call's streams onto our devices. The caller's voice comes to
-# jawn_call_in, and the phone's input reads jawn_ivr_mic.
+# Move the call's streams onto our devices - but only the ones that are not
+# there already. The caller's voice comes to jawn_call_in, and the phone's
+# input reads jawn_ivr_mic.
 sub attach {
 	my ($self, $address) = @_;
 	$self->ensure();
 	my $streams = $self->call_streams($address);
 	my @moved;
-	if ($streams->{'sink_input'}) {
+	if ($streams->{'sink_input'} && ($streams->{'sink'} // '') ne $SINK_IN) {
 		&pactl('move-sink-input', $streams->{'sink_input'}, $SINK_IN);
 		push @moved, 'sink-input';
 	}
-	if ($streams->{'source_output'}) {
+	if ($streams->{'source_output'} && ($streams->{'source'} // '') ne $SOURCE) {
 		&pactl('move-source-output', $streams->{'source_output'}, $SOURCE);
 		push @moved, 'source-output';
 	}
