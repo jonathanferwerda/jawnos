@@ -1,6 +1,7 @@
-# tests-for: perl/gb/01_state_and_defaults.pl
+# tests-for: perl/gb/01_state_and_defaults.pl perl/President.pl
 # covers:    the built-in utility switches a fresh machine starts from - the sync
-#            pass runs on its own timer so a box with no LAN presence still syncs.
+#            pass runs on its own timer so a box with no LAN presence still syncs -
+#            and the task leaves the scheduling to utility_runner.
 
 use strict;
 use warnings;
@@ -8,6 +9,7 @@ use warnings;
 use FindBin;
 use lib "$FindBin::Bin/lib", "t/lib";
 use Test::More;
+use File::Slurp qw(read_file);
 use JawnOSTest;
 
 # The defaults are what a machine clones into its utility row when that row does
@@ -28,5 +30,15 @@ ok(($sync->{'timeout'} || 0) >= 900, 'its slot is long enough for a full snapsho
 
 # An unrelated switch keeps its old default; this change is scoped to sync.
 is($gb::timeouts->{'navigation'}->{'toggle'}, 'off', 'navigation still starts off');
+
+# utility_runner decides when a slot is due. A second gate inside the task on
+# `lasted_run` looked equivalent, but adoption stamps that marker to "now" for a
+# fresh process, so the first slot after every restart was skipped - and a box
+# that restarts often could defer the pass indefinitely.
+my $president = read_file("$root/perl/President.pl");
+my ($sync_task) = $president =~ /(\$gb::timeouts->\{'remote_machine_sync'\}->\{'subroutine'\} = sub \{.*?\n\t\t\};)/s;
+ok(defined $sync_task && length $sync_task, 'the sync task is declared in President');
+unlike($sync_task, qr/lasted_run'\}\s*>=\s*\(\$interval \* 1000\)/,
+	'the sync task does not gate itself on lasted_run: the runner slot is the schedule');
 
 done_testing();

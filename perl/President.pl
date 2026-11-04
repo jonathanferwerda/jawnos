@@ -1520,44 +1520,44 @@ sub utility_functions() {
 		};
 		$gb::timeouts->{'remote_machine_sync'}->{'subroutine'} = sub {
 			my $now = &subs::rightNow();
-			my $interval = &subs::batch_interval($gb::timeouts, 'remote_machine_sync') || $gb::timeouts->{'remote_machine_sync'}->{'interval'};
-			# utility_runner already holds this to its interval; the tolerance keeps
-			# a call that lands a few milliseconds early from skipping a whole slot.
-			if ($now - $gb::timeouts->{'remote_machine_sync'}->{'lasted_run'} >= ($interval * 1000) - 5000) {
-				$gb::timeouts->{'remote_machine_sync'}->{'lasted_run'} = $now;
-				eval {
-					$gb::syncing = 1;
-					my $gimme;
-					my $lt = localtime( $now / 1000 );
-					my $hour = $lt->strftime("%H");
-					if ($hour == 4) {
-						# One deep three-day reconciliation a night, but not from every
-						# machine in the same minute: each machine takes its own slot in
-						# the four o'clock hour from its name, so the peers stop asking
-						# each other for three days of everything at once (that
-						# simultaneous export is what the phone ran out of memory on).
-						my $min = int($lt->strftime("%M"));
-						my $slot = (unpack('%32C*', &subs::signatorial_designer()) % 5) * 12;
-						if (abs($min - $slot) <= 1) {
-							# The window is several minutes wide and this job ticks inside
-							# it, so without a marker the deep pull started again on every
-							# tick - and again after every restart of this machine. Record
-							# the night before asking, so a restart during the sync cannot
-							# start a second one. The signatorial in the setting name keeps
-							# another machine's merged copy from standing for this one.
-							my $night = $lt->strftime("%Y-%m-%d");
-							my $key = 'remote_gimme_night_' . &subs::signatorial_designer();
-							my $done = &subs::setting_grabber({ app => '__president', setting => $key });
-							if (($done || '') ne $night) {
-								&subs::setting_setter({ app => '__president', setting => $key, value => $night });
-								$gimme = '3d';
-							}
+			# No second interval gate here: utility_runner has already decided this slot
+			# is due. A gate on `lasted_run` looked equivalent, but adoption stamps that
+			# marker to "now" for a fresh process, so the first slot after every restart
+			# was skipped - and on a box that restarts often, the pass could be pushed
+			# back indefinitely.
+			$gb::timeouts->{'remote_machine_sync'}->{'lasted_run'} = $now;
+			eval {
+				$gb::syncing = 1;
+				my $gimme;
+				my $lt = localtime( $now / 1000 );
+				my $hour = $lt->strftime("%H");
+				if ($hour == 4) {
+					# One deep three-day reconciliation a night, but not from every
+					# machine in the same minute: each machine takes its own slot in
+					# the four o'clock hour from its name, so the peers stop asking
+					# each other for three days of everything at once (that
+					# simultaneous export is what the phone ran out of memory on).
+					my $min = int($lt->strftime("%M"));
+					my $slot = (unpack('%32C*', &subs::signatorial_designer()) % 5) * 12;
+					if (abs($min - $slot) <= 1) {
+						# The window is several minutes wide and this job ticks inside
+						# it, so without a marker the deep pull started again on every
+						# tick - and again after every restart of this machine. Record
+						# the night before asking, so a restart during the sync cannot
+						# start a second one. The signatorial in the setting name keeps
+						# another machine's merged copy from standing for this one.
+						my $night = $lt->strftime("%Y-%m-%d");
+						my $key = 'remote_gimme_night_' . &subs::signatorial_designer();
+						my $done = &subs::setting_grabber({ app => '__president', setting => $key });
+						if (($done || '') ne $night) {
+							&subs::setting_setter({ app => '__president', setting => $key, value => $night });
+							$gimme = '3d';
 						}
 					}
-					&subs::remote_machine_negotiator({ gimme => $gimme });
-					$gb::syncing = 0;
-				};
-			}
+				}
+				&subs::remote_machine_negotiator({ gimme => $gimme });
+				$gb::syncing = 0;
+			};
 		};
 		# The headless relay: drain the queue a job or a CLI leaves (see
 		# subs::remote_relay_queue_run), so a machine with no browser can still
