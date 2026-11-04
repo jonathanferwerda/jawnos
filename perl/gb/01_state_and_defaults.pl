@@ -67,7 +67,13 @@ our $timeouts = {
 	'budget' => { interval => 60 * 20, toggle => 'off', timeout => 180, group => 'fast' },
 	'clothesline' => { interval => 5 * 60, toggle => 'off', timeout => 180, group => 'fast' },
 	'tasks' => { interval => 5 * 60, toggle => 'off', timeout => 180, group => 'fast' },
-	'remote_machine_sync' => { interval => (2 * 60), interval_divider => 10, last_run => &subs::rightNow(), toggle => 'off', timeout => 1000, group => 'fast' },
+	# On by default: a machine joins the house by syncing, and the LAN presence wake
+	# only fires where a peer's broadcast can reach it. A headless or remote box (a
+	# virtual machine, a LXC reached over the tailnet) never hears one, so with this
+	# off it would only ever sync when someone started a pull by hand. Every machine
+	# in a configured house runs it; the pass still starts at most one pull and is
+	# held by the peer's marker, so the pace is the cheap handshake's, not a copy.
+	'remote_machine_sync' => { interval => (2 * 60), interval_divider => 10, last_run => &subs::rightNow(), toggle => 'on', timeout => 1000, group => 'fast' },
 	'navigation' => { interval => 4 * 60, interval_divider => 10, last_run => &subs::rightNow(), toggle => 'off', timeout => 90, group => 'navigation' },
 	'sms' => { interval => 30 * 10, toggle => 'off', timeout => 90, group => 'fast' },
 	'backups' => { interval => 1 * 60 * 60, toggle => 'on', timeout => 360, group => 'daily' },
