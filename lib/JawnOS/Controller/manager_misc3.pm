@@ -257,9 +257,13 @@ sub action_10345 {
 		$c->rendered(403);
 		return;
 	}
+	# A release sync asks every peer (a 20s inactivity timeout each) and may copy
+	# a 32MB APK. Inline it held the request worker for minutes with one socket
+	# per peer - the phone's "one worker at 100%" with no job to blame. The route
+	# already answers `syncing`, so the work was always meant to be a child.
 	&subs::subprocessor(sub {
 		eval { &subs::app_release_sync(); };
-	}, { name => 'app release sync (on demand)' });
+	}, { name => 'app release sync (on demand)', fork => 1 });
 	$c->render(json => { ok => 1, syncing => 1 });
 }
 
