@@ -320,7 +320,18 @@ function jawnPhoneAppCallerId() {
 	try { held = window.JawnContacts.screeningRole() === 'yes'; } catch (e) { }
 	$('#phone_app .phone_app_callerid').toggle(!held);
 	$('#phone_app .phone_app_callerid_state').text(held ? 'Caller ID is on' : '');
+	// Without the phone role the system dialer answers the call and the house
+	// never sees it, so the reception cannot work until this is on.
+	var dialer = 'yes';
+	try { dialer = (window.JawnPhone && typeof window.JawnPhone.dialerRole === 'function') ? window.JawnPhone.dialerRole() : 'yes'; } catch (e) { }
+	$('#phone_app .phone_app_dialer').toggle(dialer !== 'yes');
 }
+$(document).on('click', '#phone_app .phone_app_dialer', function () {
+	if (window.JawnPhone && typeof window.JawnPhone.requestDialer === 'function') {
+		try { window.JawnPhone.requestDialer(); } catch (e) { }
+	}
+});
+
 $(document).on('click', '#phone_app .phone_app_callerid', function () {
 	if (window.JawnContacts && typeof window.JawnContacts.requestScreening === 'function') {
 		window.JawnContacts.requestScreening();

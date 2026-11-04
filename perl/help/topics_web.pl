@@ -110,7 +110,7 @@ $topic{'camera'} = {
 $topic{'phone'} = {
 		title => 'Phone', category => 'apps', app => 'phone',
 		templates => [ 'templates/apps/phone.html.ep', 'public/js/manager/phone.js' ],
-		controls => [ 'Known', 'Recent', 'Blocked', 'All', 'IVR', 'Dial', 'Call', 'Call routing', 'Caller ID', 'Block', 'Unblock', 'Save', 'Follow the person', 'Ring through', 'Receptionist', 'Voicemail', 'Reject', 'Arm the gateway' ],
+		controls => [ 'Known', 'Recent', 'Blocked', 'All', 'IVR', 'Dial', 'Call', 'Call routing', 'Caller ID', 'Phone app', 'Block', 'Unblock', 'Save', 'Follow the person', 'Ring through', 'Receptionist', 'Voicemail', 'Reject', 'Arm the gateway' ],
 		verified => '2026-11-04',
 		summary => 'Calls, the house\'s known contacts, and a dial pad.',
 		body => [
@@ -121,6 +121,7 @@ $topic{'phone'} = {
 			'IVR is the reception page. Turn it on, choose the remote machine that runs the audio gateway, pick the Piper voice, and write the greeting, the name prompt, the voicemail greeting and the thanks. Below them is the call flow for each kind of caller - unknown numbers, blocked numbers, and a person who is you, a friend, a stranger or an enemy - each set to ring through, go to the receptionist, go to voicemail, or be rejected. The machine list shows which house machines are online, the line under it shows what the gateway is doing, and Arm the gateway puts it back to listening after you have changed the prompts.',
 			'Known and All: tapping a number fills the dial pad with it. In the app the device\'s own address book (window.JawnContacts) replaces the Known list once its permission is granted.',
 			'Dial is a pad that places a call on a phone (termux-telephony-call). On the desktop it says dialing is only available on a phone.',
+			'The reception only works while JawnOS is the phone app: without that role Android hands an incoming call to another dialer and the house never sees it, so a Be the phone app button appears beside the caller-ID button. Press it and accept the system\'s confirmation.',
 			'With Caller ID on (the button asks for the Call screening role), the house learns who is calling as it rings. In the app that role names the caller on screen: an incoming call wakes the screen over the lock screen with their picture (the house\'s own image for them, or the JawnOS logo), their name, the number, and Answer and Decline. Without it the house\'s call-log check files the call a moment later.',
 			'A call is recorded by the app itself, not by whatever page happens to be open: the phone keeps one record per call - who, which way, when, and whether anyone answered - and the house files it from that, so a call taken with the app in the background still becomes an appointment on the caller\'s own app (or the phone app when the number is not known). It opens at the ring and closes at the hangup, or cancels when nobody answered.',
 			'A recent call\'s Block button - twice, the house\'s habit for anything that leaves a lasting rule - puts that number on the Box Office\'s blacklist, drops the call out of Recent, and Unblock in the Blocked pane takes it off again.'

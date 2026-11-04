@@ -8,7 +8,11 @@
 	/* the panel is the window's only child and the window's contents are a flex
 	   box, so this div has to claim the space itself: without it the flex parent
 	   shrink-wraps it to its widest row and the whole app sits off to the left. */
-	#phone_app { width:100%; height:100%; box-sizing:border-box; }
+	#phone_app { width:100%; height:100%; box-sizing:border-box; display:flex; flex-direction:column; }
+	/* a pane keeps its own room and scrolls inside the window: the IVR page is
+	   taller than the window on a phone, and it used to hang out of it */
+	.phone_app_tabs, .phone_app_status, .phone_app_callerid_row { flex:0 0 auto; }
+	.phone_app_pane.on { display:block; flex:1 1 auto; min-height:0; overflow-y:auto; }
 	.phone_app_tabs { display:flex; gap:6px; justify-content:center; flex-wrap:wrap; margin-bottom:10px; }
 	.phone_app_tab { padding:6px 14px; border:1px solid var(--line); border-radius:999px;
 		background:var(--panel); cursor:pointer; font-size:13px; user-select:none; }
@@ -91,6 +95,7 @@
 	<div class="phone_app_callerid_row" style="text-align:center;margin-bottom:10px;">
 		<span class="phone_app_callerid_state" style="color:var(--muted,#8e8e8e);font-size:12px;"></span>
 		<button class="phone_app_callerid" hint="Caller ID" style="display:none;">Turn on Caller ID</button>
+		<button class="phone_app_dialer" hint="Phone app" style="display:none;">Be the phone app</button>
 	</div>
 
 	<%# Known: the people the house knows - their numbers, and nothing else %>
