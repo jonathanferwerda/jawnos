@@ -538,6 +538,7 @@ static int pcm_mode_main(void) {
 	emit("{\"event\":\"listening\",\"local\":\"pcm\"}");
 	int quiet_polls = 0;
 	long long first_frame_at = 0;
+	long long opened_at = 0;
 	long long next_write = now_ns();
 	while (running) {
 		/* control channel */
@@ -562,9 +563,20 @@ static int pcm_mode_main(void) {
 		}
 
 		if (!have_accepted) {
+			/* The Hands-Free transport is torn down a few seconds after a call,
+			 * so a handle left open from the last one goes deaf. While idle, start
+			 * over: the next call then finds a live transport. */
+			long long now = now_ns();
+			if (pcm_cap && pcm_play && opened_at && now - opened_at > 8000000000LL) {
+				pcm_close_pair();
+				opened_at = 0;
+				first_frame_at = 0;
+				quiet_polls = 0;
+			}
 			int cap_ok = pcm_open_one(&pcm_cap, SND_PCM_STREAM_CAPTURE) == 0;
 			int play_ok = pcm_open_one(&pcm_play, SND_PCM_STREAM_PLAYBACK) == 0;
 			if (cap_ok && play_ok) {
+				if (!opened_at) opened_at = now_ns();
 				/* An idle Hands-Free stack keeps its transport alive, so an open
 				 * PCM is not a call. The first frame of audio is: the phone only
 				 * sends call audio once the call is actually up. */
