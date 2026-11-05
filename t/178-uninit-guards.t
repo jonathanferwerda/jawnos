@@ -1,4 +1,4 @@
-# tests-for: lib/JawnOS/Domain/Log.pm lib/JawnOS/Controller/manager_misc3.pm lib/JawnOS/Domain/Remote.pm lib/JawnOS/Domain/Calendar.pm lib/JawnOS/Domain/Budget.pm lib/JawnOS/Domain/Headless.pm lib/JawnOS/Domain/Name.pm lib/JawnOS/Domain/Appointment.pm lib/JawnOS/Domain/Generate.pm lib/JawnOS/Domain/File.pm lib/JawnOS/Controller/Root_misc.pm lib/JawnOS/Domain/Warehouse.pm public/js/manager/websocket/03_watchdog.js
+# tests-for: lib/JawnOS/Domain/Log.pm lib/JawnOS/Controller/manager_misc3.pm lib/JawnOS/Domain/Remote.pm lib/JawnOS/Domain/Calendar.pm lib/JawnOS/Domain/Budget.pm lib/JawnOS/Domain/Headless.pm lib/JawnOS/Domain/Name.pm lib/JawnOS/Domain/Appointment.pm lib/JawnOS/Domain/Generate.pm lib/JawnOS/Domain/File.pm lib/JawnOS/Controller/Root_misc.pm lib/JawnOS/Controller/manager_ws.pm lib/JawnOS/Domain/Warehouse.pm public/js/manager/websocket/03_watchdog.js
 # covers:    every optional row field these warnings came from is compared
 #            with a defined default. A row that lacks the column used to write
 #            a warning per call (26,662 in one phone log); the comparison now
@@ -30,6 +30,7 @@ foreach my $f (qw(
 	lib/JawnOS/Domain/Generate.pm
 	lib/JawnOS/Domain/File.pm
 	lib/JawnOS/Controller/Root_misc.pm
+	lib/JawnOS/Controller/manager_ws.pm
 	lib/JawnOS/Domain/Warehouse.pm
 	public/js/manager/websocket/03_watchdog.js
 )) {
@@ -127,5 +128,9 @@ ok(has('lib/JawnOS/Domain/Remote.pm', "(\$extra_params->{\$ep} || '')"),
 # Warehouse: a task duration with no settings row
 ok(has('lib/JawnOS/Domain/Warehouse.pm', 'defined $dur_text ? abs &subs::time_abbrev_translator($dur_text) : 0'),
 	'a task with no settings duration is zero, not a warning');
+
+# The websocket controller's log_me setting may be absent
+ok(has('lib/JawnOS/Controller/manager_ws.pm', "my \$log_me = \$me_settings->{'log_me'} || '';"),
+	'a missing log_me setting is the empty string');
 
 done_testing();

@@ -80,7 +80,7 @@ sub action_47050 {
 	my $browser_tab = $c->param('browser_tab');
 	my $me_settings = &subs::settings_grabber({ app => 'me', settings => [ 'computer_name', 'log_me' ] });
 	my $computer_name = &subs::config_reader()->{'name'} || $me_settings->{'computer_name'};
-	my $log_me = $me_settings->{'log_me'};
+	my $log_me = $me_settings->{'log_me'} || '';
 	if ($c->param('browser_tab_id') eq '') {
 		$c->render('text' => 'no');
 		return;
