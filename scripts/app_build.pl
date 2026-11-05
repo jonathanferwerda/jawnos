@@ -84,6 +84,14 @@ exit 0 unless $build;
 # old layout.
 my $native_bins = "$root/releases/native-bins";
 my @gradle_props;
+# A release APK is what every phone installs, and every files/usr/bin entry on
+# a device is a symlink into its lib/arm64-v8a. Built without the bins it ships
+# no runtime at all: 0.118.294 was staged that way and every phone that took it
+# stopped at "starting" with a dangling perl. A worktree has no releases/ (the
+# directory is gitignored), so this is the shape the mistake takes.
+die "app: $native_bins is missing; a release APK built without it ships no runtime, "
+	. "and every install stops at 'starting'. Build the native bins on this checkout first.\n"
+	if $release && !-d $native_bins;
 if (-d $native_bins) {
 	my $manifest = "$native_bins/runtime-bins.txt";
 	if (-f $manifest) {
@@ -131,6 +139,15 @@ my @apks = grep { -f } glob("$dir/app/build/outputs/apk/$flavour/*.apk");
 die "app: no $flavour APK under $dir/app/build/outputs/apk/$flavour\n" unless @apks;
 my ($apk) = sort { (-s $b) <=> (-s $a) } @apks;
 print "app: apk $apk (" . (-s $apk) . " bytes)\n";
+# Check the artifact itself, not only the inputs: a release that cannot start
+# must never reach releases/ (and so never reach a phone's updater).
+if ($release) {
+	my $listing = `unzip -l "$apk" 2>/dev/null`;
+	unless ($listing =~ m{libbin_perl\.so} && $listing =~ m{runtime-bins\.txt}) {
+		die "app: $apk carries no libbin_perl.so / runtime-bins.txt; "
+			. "a release without the runtime cannot start. Not staging it.\n";
+	}
+}
 system('perl', "$root/scripts/app_release.pl", $apk) == 0 or die "app: app_release.pl failed\n";
 
 print "next: commit the bumped app/build.gradle, then run perl scripts/app_publish.pl\n";

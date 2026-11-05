@@ -54,7 +54,8 @@ sub shq {
 # script resolves $root from its own location, so releases/ and the fake
 # app_release.pl stay inside the temp dir (the real releases/ is never touched).
 sub fake_tree {
-	my ($manifest, $with_bins) = @_;
+	my ($manifest, $with_bins, $opt) = @_;
+	$opt ||= {};
 	my $tmp  = tempdir(CLEANUP => 1);
 	my $tree = "$tmp/tree";
 	my $app  = "$tmp/app";
@@ -68,7 +69,9 @@ sub fake_tree {
 	spew("$app/app/src/main/assets/runtime-bins.txt", "placeholder\n");
 
 	my $args_file = "$tmp/gradle-args";
-	my $apk_dir   = "$app/app/build/outputs/apk/debug";
+	my $flavour   = $opt->{'release'} ? 'release' : 'debug';
+	my $apk_dir   = "$app/app/build/outputs/apk/$flavour";
+	spew("$app/keystore.properties", "storeFile=dev_keystore.jks\n") if $opt->{'release'};
 	spew("$app/gradlew",
 		"#!/bin/sh\n"
 		. "printf '%s\\n' \"\$@\" > " . shq($args_file) . "\n"
@@ -91,7 +94,10 @@ sub fake_tree {
 	{
 		local $ENV{'JAVA_HOME'}        = $jdk;
 		local $ENV{'ANDROID_SDK_ROOT'} = $sdk;
-		$out = qx{$^X '$tree/scripts/app_build.pl' --repo '$app' 2>&1};
+		my @args = ('--repo', $app);
+		push @args, '--release' if $opt->{'release'};
+		my $argv = join ' ', map { shq($_) } @args;
+		$out = qx{$^X '$tree/scripts/app_build.pl' $argv 2>&1};
 	}
 	my $code = $? >> 8;
 
@@ -144,5 +150,19 @@ unlike($absent->{args}, qr/-PjawnNativeBins=/,
 	'no -PjawnNativeBins property when the directory is absent');
 is(slurp($absent->{asset}), "placeholder\n",
 	'the checked-in placeholder is left alone when there is nothing to copy');
+
+# A release APK without the runtime is a phone that cannot start: 0.118.294
+# was staged with no libbin_* at all, so every files/usr/bin symlink on every
+# install pointed into nothing and the tree never started. Both shapes are
+# refused now - the missing input directory, and an artifact that came back
+# without the runtime.
+my $nobins = fake_tree($manifest, 0, { release => 1 });
+isnt($nobins->{code}, 0, 'a release build with no releases/native-bins is refused');
+like($nobins->{output}, qr/native-bins/, 'and the refusal names the missing directory');
+
+my $limbless = fake_tree($manifest, 1, { release => 1 });
+isnt($limbless->{code}, 0, 'a release APK with no runtime in it is refused');
+like($limbless->{output}, qr/libbin_perl\.so/, 'and the refusal names the missing library');
+unlike($limbless->{output}, qr/^staged$/m, 'the staging step never ran');
 
 done_testing();
