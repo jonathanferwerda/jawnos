@@ -260,6 +260,15 @@ sub action_41468 {
 		# the row already carries instead of flipping the history on a save
 		$duration = (abs $duration) * -1 if ($appt->{'duration'} // 0) < 0;
 		$data->{'duration'} = $duration;
+		# A closed session's stop is its start plus the length it carries, so a
+		# length edited here has to move the stop with it. Leaving the stop at the
+		# press time was how a hand-set duration and its stop came to disagree (and
+		# the records audit then read the row as corrupt). Only a negative accrual
+		# names a length; a positive duration is not a session span.
+		if ($duration < 0 && defined $appt->{'stop_timestamp'} && $appt->{'stop_timestamp'} ne '') {
+			my $start = defined $data->{'timestamp'} ? $data->{'timestamp'} : $appt->{'timestamp'};
+			$data->{'stop_timestamp'} = (0 + $start) + abs($duration);
+		}
 	}
 	$data->{'warranty'} = $c->param('warranty') if $given->('warranty');
 	foreach my $k (qw/account project movement amount tax aux aux_description total manufacturer vendor unit quantity item state has_tax has_totes/) {

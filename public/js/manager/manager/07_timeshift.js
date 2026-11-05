@@ -66,6 +66,15 @@ $(document).on('keyup', '.notes, .ago, .duration', function() {
 	},200);
 });
 
+// A keypress in the duration field marks its value as the person's own length,
+// not the client's remembered default. It rides the next press (see
+// managerReset) so a live stop uses it instead of the length the row ran.
+$(document).on('keyup', '.duration', function() {
+	var appointment = $(this).closest('.appointment').attr('app');
+	if ($(this).val()) { jawnosAppFieldSet(appointment, 'duration_typed', 'yes'); }
+	else { jawnosAppFieldRemove(appointment, 'duration_typed'); }
+});
+
 
 $(document).on('focus, click', 'input.time', function() {
 	$(this).addClass('editing');

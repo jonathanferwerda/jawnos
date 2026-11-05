@@ -382,18 +382,24 @@ sub manager_reset($c) {
 					&Websocket::send('music', { console => 'jpStop(\'' . $o->{'app'} . '\',\'' . $data->{'recorder'} . '\',\'' . $o->{'uuid'} . '\');' });
 				}
 			}
-			# The phone sends its duration field on every press, so a live stop always
-			# arrived with one and took the backdated branch below: that moved the stop
-			# into the future, so stop_seen stayed NULL and the row still read as open
-			# ("start becomes stop", "only one at a time"). A stop pressed now is a live
-			# stop and its length is what the row ran, whatever duration the client sent;
-			# only a backdated stop means the duration as the person's account of it.
+			# The phone sends its remembered duration field on every press, so a live
+			# stop always arrived with one and took the backdated branch below: that
+			# moved the stop into the future, so stop_seen stayed NULL and the row still
+			# read as open ("start becomes stop", "only one at a time"). A live stop
+			# therefore ignores a duration it cannot tell apart from that default - but
+			# a duration the person typed beside the stop button is their account of
+			# this session, and it moves the stop back to the length they named. The
+			# panel flags a typed duration, and only one that lands the stop now or
+			# earlier is used, so no stop is ever written into the future.
 			my $live_stop = defined $timestamp
 				&& abs($timestamp - &subs::rightNow()) <= &subs::stale_action_ms();
-			if ($live_stop || !$c->param('duration')) {
-				# A live stop ignores whatever duration the client sent and takes its
-				# length from the press time and the row's start, exactly as a stop
-				# that carried none always did; the average below learns from it.
+			my $typed_duration = (($c->param('duration_typed') || '') eq 'yes')
+				&& $duration
+				&& ($timestamp1 + abs($duration)) <= &subs::rightNow() + 1000;
+			if (!$c->param('duration') || ($live_stop && !$typed_duration)) {
+				# A live stop with no usable duration takes its length from the press
+				# time and the row's start, exactly as a stop that carried none always
+				# did; the average below learns from it.
 				$duration = $timestamp1 - $timestamp;
 				my $all_durations = &subs::db_query('select * from appointments where app=? and type=? order by server_time DESC LIMIT 40',$app,'stop')->hashes;
 				my $total_durations = abs $duration;
@@ -410,10 +416,11 @@ sub manager_reset($c) {
 				&subs::setting_setter({ app => $app, setting => 'duration', value => &subs::duration_sayer($new_duration / 1000 ) });
 			}
 			else {
-				# A backdated stop (time machine, ago, timeshift) keeps this: there the
-				# duration is how the person says the session really ran, so the stop is
-				# placed back from the start. Do not fold this into the live path above -
-				# moving a live stop's timestamp forward is the bug that path now avoids.
+				# A backdated stop (time machine, ago, timeshift) keeps this, and so does
+				# a live press carrying a duration the person typed: there the duration
+				# is how the person says the session really ran, so the stop is placed
+				# back from the start. Do not fold this into the live path above - moving
+				# a stop's timestamp forward is the bug that path now avoids.
 				$duration = (abs $duration) * -1;
 				$timestamp = $timestamp1 - $duration;
 			}

@@ -198,6 +198,11 @@ function managerReset(caller,e) {
 	var amount = form.find('.amount').val();
 	var ago = $('#ago').val() || container.find('.ago').val();
 	var duration = container.find('.duration').val();
+	// A duration the person typed is an account of this session; one the window
+	// restored from an earlier visit is just the client's remembered field. The
+	// stop may use the first and must not mistake the second for a length.
+	var duration_typed = (duration && typeof jawnosAppFieldGet === 'function'
+		&& jawnosAppFieldGet(app, 'duration_typed') === 'yes') ? 'yes' : 'no';
 	var schedule = container.find('.schedule').val();
 	var quantity = container.find('.main_input.quantity').val();
 	var notes = container.find('.text_editor').html();
@@ -230,6 +235,7 @@ function managerReset(caller,e) {
 		type: type, 
 		ago: ago,
 		duration: duration,
+		duration_typed: duration_typed,
 		warranty: warranty,
 		project: project,
 		amount: amount,
@@ -290,6 +296,7 @@ function appClearer(app) {
 		jawnosAppFieldRemove(app, 'notes');
 		jawnosAppFieldRemove(app, 'ago');
 		jawnosAppFieldRemove(app, 'duration');
+		jawnosAppFieldRemove(app, 'duration_typed');
 		container.find('.ago').val('');
 		container.find('.duration').val('');
 		container.find('.schedule').val('');
