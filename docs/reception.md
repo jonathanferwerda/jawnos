@@ -116,6 +116,64 @@ retried call log cannot file it twice. The gateway never learns the caller's
 number - the phone knows it - which is why the filing lives on the phone's call
 log rather than on the gateway.
 
+## The face
+
+A screened call is answered by the phone and carried by the gateway, so the
+ordinary in-call screen shows a call nobody is holding. The app now shows a
+screening face instead (`JawnScreenFace`, `JawnScreeningActivity`):
+
+- **Screen on:** a floating panel over whatever app is up, using the overlay
+  permission the status dot already holds. It does not take focus, so typing
+  carries on around it.
+- **Screen off or locked:** the alarm's pattern - a silent high-importance
+  notification with a full-screen intent, and an activity that turns the
+  screen on and shows over the keyguard.
+
+Both hosts draw the same panel: the caller's number, the gateway's transcript
+as chat bubbles (the sentence still being recognised is dimmed and italic), and
+the engine's note when there is no transcript. It polls
+`GET /manager/sco/status` every 1.5 s with the president cookie over the same
+loopback origin `cancelGateway` already trusts; the websocket is not used
+because no socket survives the app being in the background.
+
+Two buttons:
+
+- **Connect phone** - the call comes back to this phone: the communication
+device is cleared, AudioManager's mode is put back, and Telecom's route goes to
+the earpiece (or a wired headset) because clearing only the first leaves the
+call silent; the reception watchdog is cancelled so a call the person has taken
+over is not hung up at 40 s; then `/manager/sco/cancel` stops the gateway. The
+Trip remembers that the gateway no longer carries it, so a later state change
+cannot re-pin it.
+- **Disconnect** - hangs up.
+
+### Connect me (not built)
+
+A third button, **Connect me**, would route the call to the device that pressed
+it. WebRTC is the right transport because the device's microphone must carry
+echo cancellation - a tablet in another room picking up the gateway's speakers
+into a raw WebSocket would send the caller their own voice.
+
+The shape it would take, fitting what is already here:
+
+1. A bridge on the gateway machine (Python `aiortc`, or a small Go/Pion peer)
+   that is a PipeWire client: capture `jawn_call_in.monitor` as the outgoing
+   track, and write the incoming track to `jawn_prompt` (the caller's
+   "microphone"). The plan's prompts pause while the bridge is up; the caller
+   is then simply talking to the person.
+2. Opus, mono, 20 ms frames; 8 kHz in and out is all the SCO link carries. The
+   house is on a tailnet, so ICE can use host candidates over Tailscale and
+   needs no STUN/TURN.
+3. Signalling over the manager's websocket (`offer`/`answer`/`ice` messages on
+   the phone channel), so the same session that reads the transcript also
+   offers the bridge. A route such as `POST /manager/sco/bridge` starts and
+   stops it per device.
+4. The face swaps its two buttons for the bridge's state while a connection is
+   up: *connected on this device*, with the same **Disconnect** and a way back
+   to **Connect phone**.
+
+The TODO is named in `JawnScreenFace.java` beside the two buttons.
+
 ## The plan
 
 1. The phone answers; PipeWire's gateway streams appear within a second or two.
