@@ -90,6 +90,49 @@ sub local_address {
 	return $addr;
 }
 
+# ---- the radio the machine's WiFi is on ---------------------------------
+#
+# A combo card's Bluetooth and WiFi share one antenna, and a 2.4 GHz connection
+# starves the eSCO link: the caller's voice arrives as "corrupted SCO packet" and
+# every name is recorded silent (367 of them in 500 kernel lines on the dev box;
+# none after it moved to 5 GHz). The pane is told the band so that failure looks
+# like what it is. The parse is separate from the command so it can be tested
+# without a radio.
+sub wifi_band_of {
+	my ($link) = @_;
+	return '' unless defined $link && $link =~ /freq:\s*([0-9.]+)/;
+	my $mhz = $1;
+	return ($mhz >= 2400 && $mhz < 2500) ? '2.4' : '5';
+}
+
+# '' when this machine has no wireless or is not associated: a machine on a wire
+# has no band to warn about.
+sub wifi_band {
+	my ($self) = @_;
+	my $now = time;
+	return $self->{'wifi'} if defined $self->{'wifi'} && $now - ($self->{'wifi_at'} || 0) < 30;
+	$self->{'wifi_at'} = $now;
+	$self->{'wifi'} = '';
+	my $list = '';
+	if (open(my $iw, '-|', 'iw', 'dev')) {
+		local $/;
+		$list = <$iw> // '';
+		close $iw;
+	}
+	foreach my $if ($list =~ /^Interface\s+(\S+)/mg) {
+		next unless $if =~ /^[A-Za-z0-9_.-]+$/;
+		my $link = '';
+		if (open(my $lh, '-|', 'iw', 'dev', $if, 'link')) {
+			local $/;
+			$link = <$lh> // '';
+			close $lh;
+		}
+		my $band = &wifi_band_of($link);
+		if (length $band) { $self->{'wifi'} = $band; last; }
+	}
+	return $self->{'wifi'};
+}
+
 # ---- status -------------------------------------------------------------
 
 sub status {
@@ -97,6 +140,11 @@ sub status {
 	my $state = $self->{'state'};
 	# an armed gateway whose helper is gone is idle, whatever the last event said
 	$state = 'idle' if ($state eq 'armed' || $state eq 'starting') && !$self->{'pid'};
+	# the band the machine's WiFi is on, and the warning it earns
+	my $wifi = $self->wifi_band();
+	my $warning = $wifi eq '2.4'
+		? "This gateway machine's WiFi is on 2.4 GHz, which shares its antenna with Bluetooth: the caller will break up. Move it to 5 GHz or wired."
+		: '';
 	return {
 		ok => 1,
 		state => $state,
@@ -112,6 +160,8 @@ sub status {
 		# where the call's own two streams were on the last look: the pane and a
 		# person debugging a silent call both need to know whether they are ours
 		streams => ($self->{'mixer'} ? ($self->{'mixer'}->{'attached'} || {}) : {}),
+		wifi => $wifi,
+		warning => $warning,
 	};
 }
 

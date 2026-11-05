@@ -57,6 +57,10 @@ own when they vanish).
 sudo systemctl enable --now bluetooth
 # the phone paired with the machine's adapter; PipeWire puts its card on the
 # "audio-gateway" profile
+# and keep this machine off 2.4 GHz while it is the gateway: on a combo card the
+# Bluetooth and WiFi radios share one antenna, and the caller's voice then
+# arrives as "corrupted SCO packet". The dev box on 2.4 GHz logged 367 of them in
+# 500 kernel lines and every name was a silent clip; on 5 GHz, none.
 ```
 
 Settings, per machine (`app = misc`):
@@ -127,14 +131,21 @@ the first time a call needs them.
   never left open.
 - The PipeWire path needs the phone to be **bonded to the machine's adapter**;
   the gateway name in the IVR pane is what the phone matches on.
+- **A Realtek RTL8821CU dongle (`0bda:c820`) carries the call one way.** Prompts
+  reach the caller and nothing comes back: the streams are moved correctly, the
+  plan runs, and every clip is a silent 20 s. Measured on 5 GHz with the dongle's
+  own WiFi unmanaged, so it is the radio, not coexistence. Use the built-in
+  adapter and keep the dongle for a machine with no other Bluetooth.
 
 ## Troubleshooting
 
 - `~/.president/sco.json` is the truth: `state`, `plan`, `peer`, `last_error`,
   `recordings`.
 - `journalctl -k | grep -i "SCO"` — `corrupted SCO packet` means the adapter's
-  SCO path is broken; try another adapter (a cheap dongle may be worse than the
-  built-in radio).
+  SCO path is broken, and the usual cause is not the adapter: a combo WiFi card
+  on 2.4 GHz shares its antenna with Bluetooth. Move the machine to 5 GHz (or
+  wired) before blaming the radio; on the laptop that took the count from 367 to
+  zero. Only then try another adapter.
 - `pactl list short sink-inputs` during a call: the Bluetooth stream should carry
   the phone's address; if it does not, the phone is not routed to the machine.
 - `pactl list short sink-inputs` should show the phone's playback on

@@ -282,8 +282,10 @@ static void wav_header(FILE *f, uint32_t data_len, uint32_t rate) {
 static void record_close(int announce, const char *reason) {
 	if (!rec_active) return;
 	rec_active = 0;
-	/* "no speech" is as good as silence: nobody said a name */
-	rec_quiet = (strcmp(reason, "silence") == 0 || strcmp(reason, "no speech") == 0);
+	/* "no speech" is the only quiet verdict: a clip that ended on the pause
+	 * after a name was heard is a name, not silence. They used to share the
+	 * word, so every good recording was reported as a silent one. */
+	rec_quiet = (strcmp(reason, "no speech") == 0);
 	if (rec_file) {
 		fflush(rec_file);
 		if (fseek(rec_file, 0, SEEK_SET) == 0) wav_header(rec_file, (uint32_t) rec_bytes, RATE);
@@ -380,7 +382,7 @@ static void record_window(double rms) {
 	/* the pause ends the name only once a name has been heard, and a caller who
 	 * pauses to think keeps the line for as long as the ceiling allows */
 	if (rec_silence_ms && rec_pause_ms >= rec_silence_ms && rec_speech_ms >= rec_min_ms) {
-		record_close(1, "silence");
+		record_close(1, "pause");
 	}
 }
 

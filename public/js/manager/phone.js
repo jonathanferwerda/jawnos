@@ -461,6 +461,11 @@ function jawnPhoneGatewayState() {
 			if (res && res.helper === 0) { label = 'Gateway: the helper is not built on this machine'; }
 			else if (state === 'in_call') { label = 'Gateway: a call is up'; }
 			else if (state === 'armed') { label = 'Gateway: listening for the next call'; }
+			// a 2.4 GHz connection shares the antenna with Bluetooth on a combo
+			// card: the caller breaks up instead of anything failing loudly
+			if (res && res.wifi === '2.4') {
+				label = label + ' - ' + jawnosT('this machine is on 2.4 GHz WiFi, so the caller will break up');
+			}
 			$('#phone_app #phone_ivr_gateway_state').text(label);
 		},
 		error: function () { $('#phone_app #phone_ivr_gateway_state').text('Gateway: not answering'); }
@@ -488,7 +493,7 @@ $(document).on('click', '#phone_app #phone_ivr_arm', function (e) {
 			thanks: $('#phone_app #phone_ivr_thanks').val() || ''
 		},
 		success: function (res) {
-			if (res && res.ok) { label.text('Gateway: listening for the next call'); }
+			if (res && res.ok) { jawnPhoneGatewayState(); }
 			else { label.text('Gateway: ' + ((res && res.error) || 'could not arm')); }
 		},
 		error: function () { label.text('Gateway: not answering'); }

@@ -1,4 +1,4 @@
-# tests-for: perl/Sco.pl lib/JawnOS/Sco/ scripts/build_sco.pl perl/sco/ lib/JawnOS/Routes/manager_sco.pm lib/JawnOS/Controller/manager_sco.pm perl/President.pl
+# tests-for: perl/Sco.pl lib/JawnOS/Sco/ scripts/build_sco.pl perl/sco/ lib/JawnOS/Routes/manager_sco.pm lib/JawnOS/Controller/manager_sco.pm perl/President.pl public/js/manager/phone.js
 # covers:    The SCO gateway's socket client, prompt cache, one-call plan and
 #            the routes that arm it; the helper's loopback mode when built.
 use strict;
@@ -11,6 +11,7 @@ use File::Temp qw(tempdir);
 use File::Path qw(make_path);
 use File::Slurp qw(read_file write_file);
 use IO::Socket::UNIX;
+use IO::Socket::INET;
 use JSON::PP;
 use Mojo::IOLoop;
 
@@ -73,6 +74,51 @@ waitpid($pid, 0);
 my $missing = JawnOS::Sco::Client->new(path => "$dir/none.sock")->call({ cmd => 'status' });
 is($missing->{'ok'}, 0, 'no socket is an ordinary answer, not a crash');
 like($missing->{'error'}, qr/no gateway socket/, 'and it says why');
+
+# ------------------------------------------------ the gateway in the bag
+# The house can drive a daemon that is not on this machine: the same line over
+# TCP, carrying the token that daemon requires.
+my $tcp = IO::Socket::INET->new(
+	LocalAddr => '127.0.0.1', LocalPort => 0, Proto => 'tcp',
+	Listen => 1, ReuseAddr => 1,
+);
+ok($tcp, 'a stub gateway listener was created on the tailnet face');
+my $tcp_port = $tcp->sockport;
+my $tcp_pid = fork();
+die "fork: $!\n" unless defined $tcp_pid;
+if (!$tcp_pid) {
+	my $peer = $tcp->accept();
+	if ($peer) {
+		my $line = <$peer>;
+		my $request = eval { JSON::PP->new->decode($line // '') } || {};
+		print {$peer} JSON::PP->new->encode({
+			ok => 1,
+			echo => $request->{'cmd'} || '',
+			token => $request->{'token'} || '',
+		}) . "\n";
+		close $peer;
+	}
+	close $tcp;
+	exit 0;
+}
+my $bag = JawnOS::Sco::Client->new(
+	host => '127.0.0.1', port => $tcp_port, token => 's3cret', timeout => 5);
+ok($bag->remote(), 'a named address makes the gateway remote');
+is($bag->where(), "127.0.0.1:$tcp_port", 'and it says where it is');
+my $over_tcp = $bag->call({ cmd => 'status' });
+is($over_tcp->{'echo'}, 'status', 'the command reaches a gateway over TCP');
+is($over_tcp->{'token'}, 's3cret', 'and carries the token that gateway requires');
+waitpid($tcp_pid, 0);
+
+my $unreachable = JawnOS::Sco::Client->new(
+	host => '127.0.0.1', port => 1, timeout => 2)->call({ cmd => 'status' });
+is($unreachable->{'ok'}, 0, 'a puck that is not there is an ordinary answer');
+like($unreachable->{'error'}, qr/unreachable/, 'and the error names the address');
+
+my $daemon = read_file("$repo/perl/Sco.pl");
+like($daemon, qr/--listen/, 'the daemon can listen on the tailnet');
+like($daemon, qr/--listen needs --token/, 'and refuses to listen without a token');
+like($daemon, qr/bad token/, 'a line without the token is refused');
 
 # ------------------------------------------------------------- the clips
 is(JawnOS::Sco::Render::key('hello', 'piper-a'), JawnOS::Sco::Render::key('hello', 'piper-a'),
@@ -139,6 +185,21 @@ isnt(JawnOS::Sco::Render::key('hello', 'piper-a'), JawnOS::Sco::Render::key('hel
 }
 
 JawnOS::Sco::Render::prune();
+
+# ------------------------------------------------ the band the gateway is on
+# Bluetooth and WiFi share one antenna on a combo card, and a 2.4 GHz
+# connection starves the SCO link, so the gateway says which band it is on.
+is(JawnOS::Sco::Gateway::wifi_band_of("Connected to aa:bb\n\tfreq: 2462.0\n"), '2.4',
+	'a 2.4 GHz association is named');
+is(JawnOS::Sco::Gateway::wifi_band_of("Connected to aa:bb\n\tfreq: 5180.0\n"), '5',
+	'and a 5 GHz one');
+is(JawnOS::Sco::Gateway::wifi_band_of('Not connected.'), '', 'a machine on a wire has no band');
+is(JawnOS::Sco::Gateway::wifi_band_of(undef), '', 'and neither has one with no wireless');
+my $gateway_src = read_file("$repo/lib/JawnOS/Sco/Gateway.pm");
+like($gateway_src, qr/wifi => \$wifi,/, 'the status carries the band');
+like($gateway_src, qr/wifi eq '2\.4'/, 'and warns when it is the crowded one');
+like(read_file("$repo/public/js/manager/phone.js"), qr/res\.wifi === '2\.4'/,
+	'the pane says so on the IVR tab');
 
 # ------------------------------------------------------------- the gateway
 # A stand-in helper that speaks the protocol: it listens, accepts at once, and
@@ -282,12 +343,14 @@ $pipeway->cancel();
 # and a caller who says nothing at all.
 my $helper = "$repo/perl/sco/sco_helper";
 SKIP: {
-	skip 'the SCO helper is not built on this machine', 4 unless -x $helper;
+	skip 'the SCO helper is not built on this machine', 6 unless -x $helper;
 	my $voice = sub {
 		my ($ms) = @_;
 		return join('', map { pack('s<', int(sin(2 * 3.14159 * 440 * $_ / 8000) * 8000)) } 0 .. int(8 * $ms) - 1);
 	};
 	my $quiet = sub { "\0" x (16 * $_[0]) };
+	# what the last run announced, so a verdict can be checked, not guessed
+	my $last_events = '';
 	my $record = sub {
 		my ($name, $audio, %opts) = @_;
 		my $raw = "$dir/$name.raw";
@@ -296,8 +359,16 @@ SKIP: {
 		print {$rh} $audio;
 		close $rh;
 		my $out = "$dir/$name.wav";
+		my $events = "$dir/$name.json";
 		my $fh;
-		open($fh, '|-', $helper, '--loopback', $raw, '--fast') or die "helper: $!";
+		# the helper speaks JSON on its stdout; keep it out of the TAP stream
+		# so the verdict it announced can be read back
+		my $spawned = open($fh, '|-');
+		die "helper: $!" unless defined $spawned;
+		if (!$spawned) {
+			open(STDOUT, '>', $events) or die "$events: $!";
+			exec($helper, '--loopback', $raw, '--fast') or die "helper: $!";
+		}
 		print {$fh} JSON::PP->new->encode({
 			cmd => 'record', id => 1, file => $out,
 			ms => $opts{'ms'} || 8000,
@@ -305,6 +376,12 @@ SKIP: {
 			min_ms => $opts{'min_ms'} || 300,
 		}) . "\n";
 		close $fh;
+		$last_events = '';
+		if (open(my $ef, '<', $events)) {
+			local $/;
+			$last_events = <$ef> // '';
+			close $ef;
+		}
 		open(my $wav, '<', $out) or return 0;
 		binmode $wav;
 		seek($wav, 44, 0);
@@ -318,6 +395,8 @@ SKIP: {
 	ok($patient > 16000, 'the name is recorded once the caller speaks');
 	ok($patient > 25600 && $patient < 41600,
 		'the clip runs to the pause after the name, not to the ceiling');
+	like($last_events, qr/"silence":false/,
+		'a name that ends on a pause is not reported as silence');
 	# a tick of line noise, then a pause, then the name: the tick is not a name
 	my $blip = $record->('blip', $quiet->(1200) . $voice->(20) . $quiet->(800)
 		. $voice->(600) . $quiet->(1500));
@@ -325,6 +404,8 @@ SKIP: {
 	# nobody spoke: the ceiling ends it, and the clip is marked as silent
 	my $none = $record->('none', $quiet->(3000), ms => 1500);
 	ok($none >= 16000 && $none <= 24000, 'a silent caller is ended by the ceiling');
+	like($last_events, qr/"silence":true/,
+		'and a caller who never spoke is');
 }
 
 # A link that hands the gateway nothing but digital silence is not a call yet:
