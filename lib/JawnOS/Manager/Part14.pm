@@ -132,6 +132,10 @@ sub manager_reset($c) {
 		&remote_relay_request($c, { dissemination => 'yes' });
 	}, { name => 'reset remote relay' });
 	my $duration = &duration_read($c->param('duration'));
+	# A value the person typed but the reader could not parse falls back to the
+	# app's usual length for a start; it must not pass that fallback off as a typed
+	# stop length or schedule a stop nobody named.
+	my $duration_readable = defined $duration ? 1 : 0;
 	$duration = &duration_read($usual_duration) unless defined $duration;
 	$duration = 0 unless defined $duration;
 	$c->param('uuid' => $uuid);
@@ -356,29 +360,37 @@ sub manager_reset($c) {
 		# through subs::stop_target_row, so a stop lands on one and the same row.
 		my $stop_row = &subs::stop_target_row($app, $target_uuid, $timestamp);
 		my $old_appts = $stop_row ? [ $stop_row ] : [];
+		my $scheduled_stop = 0;
 
 		foreach my $o ( @{$old_appts} ) {
 		#	next;
 			my $timestamp1 = $o->{'timestamp'};
 			$uuid = $o->{'uuid'};
 			$c->param('uuid' => $uuid);
+			# A typed length that lands after the press schedules the stop. The
+			# recording keeps running until the Alarm reaches that moment, so the
+			# checks below must not end it here.
+			my $schedules_stop = (($c->param('duration_typed') || '') eq 'yes')
+				&& $c->param('duration')
+				&& $duration_readable
+				&& ($timestamp1 + abs($duration)) > &subs::rightNow() + 1000;
 			if ($o->{'type'} eq 'record') {
 				my $data = eval { return decode_json $o->{'data'} } || {};
 				if ($data->{'recorder'} eq 'security') {
-					if ($seen eq 'yes') {
+					if ($seen eq 'yes' && !$schedules_stop) {
 						&record_video_stop({ app => $app, timestamp => $timestamp1, uuid => $o->{'uuid'} }) if $o->{'uuid'};
 						next;
 					}
 					else { $type = 'record'; };
 				}
 				elsif ($data->{'recorder'} eq 'system') {
-					if ($seen eq 'yes') {
+					if ($seen eq 'yes' && !$schedules_stop) {
 						&record_audio_stop({ app => $app, timestamp => $timestamp1, uuid => $o->{'uuid'} }) if $o->{'uuid'};
 						next;
 					}
 					else { $type = 'record'; };
 				}
-				elsif ($seen eq 'yes') {
+				elsif ($seen eq 'yes' && !$schedules_stop) {
 					&Websocket::send('music', { console => 'jpStop(\'' . $o->{'app'} . '\',\'' . $data->{'recorder'} . '\',\'' . $o->{'uuid'} . '\');' });
 				}
 			}
@@ -388,14 +400,14 @@ sub manager_reset($c) {
 			# read as open ("start becomes stop", "only one at a time"). A live stop
 			# therefore ignores a duration it cannot tell apart from that default - but
 			# a duration the person typed beside the stop button is their account of
-			# this session, and it moves the stop back to the length they named. The
-			# panel flags a typed duration, and only one that lands the stop now or
-			# earlier is used, so no stop is ever written into the future.
+			# this session, and it places the stop at the length they named whether that
+			# is behind or ahead of the press. The panel flags a typed duration, so the
+			# remembered default still cannot schedule a stop on its own.
 			my $live_stop = defined $timestamp
 				&& abs($timestamp - &subs::rightNow()) <= &subs::stale_action_ms();
 			my $typed_duration = (($c->param('duration_typed') || '') eq 'yes')
-				&& $duration
-				&& ($timestamp1 + abs($duration)) <= &subs::rightNow() + 1000;
+				&& $duration_readable
+				&& $duration;
 			if (!$c->param('duration') || ($live_stop && !$typed_duration)) {
 				# A live stop with no usable duration takes its length from the press
 				# time and the row's start, exactly as a stop that carried none always
@@ -418,13 +430,24 @@ sub manager_reset($c) {
 			else {
 				# A backdated stop (time machine, ago, timeshift) keeps this, and so does
 				# a live press carrying a duration the person typed: there the duration
-				# is how the person says the session really ran, so the stop is placed
-				# back from the start. Do not fold this into the live path above - moving
-				# a stop's timestamp forward is the bug that path now avoids.
+				# is how the person says the session really ran (or is to run), so the
+				# stop is placed from the start. Do not fold this into the live path
+				# above - moving a stop forward without the typed flag is the bug that
+				# path avoids.
 				$duration = (abs $duration) * -1;
 				$timestamp = $timestamp1 - $duration;
 			}
-			if ($o->{'type'} eq 'start' || $o->{'type'} eq 'record') {
+			# A typed length that ends the session after this press schedules the stop:
+			# the row stays the open start/record it was, with a future stop_timestamp
+			# and stop_seen NULL, which is the shape the Alarm applies at that moment.
+			# Only a typed length reaches here with a future stop (the live path above
+			# keeps an untyped one at the press), so the remembered default still
+			# cannot schedule anything.
+			$scheduled_stop = $timestamp > &subs::rightNow() + 1000 ? 1 : 0;
+			if ($scheduled_stop) {
+				$type = $o->{'type'};
+			}
+			elsif ($o->{'type'} eq 'start' || $o->{'type'} eq 'record') {
 				$type = 'stop';
 			}
 			else {
@@ -468,51 +491,57 @@ sub manager_reset($c) {
 					uuid => $o->{'uuid'}
 				});
 			}
-			($appt_header, $header_appts) = &subs::appt_header_printer({ app => $app, timestamp => $timestamp, skip_toggle => ($seen eq 'yes' ? 1 : 0) });
+			($appt_header, $header_appts) = &subs::appt_header_printer({ app => $app, timestamp => ($scheduled_stop ? &subs::rightNow() : $timestamp), skip_toggle => ($seen eq 'yes' ? 1 : 0) });
 			$seg->('stop_hdr');
-			&subs::setting_setter({ app => $app, setting => 'toggle', value => 'off' }) if $seen eq 'yes';
-			# a start carries the amount; this stop is when the session is finished,
-			# so it is the one movement the session makes. A record moved at creation
-			# and is not moved again here.
-			if (($o->{'type'} || '') eq 'start') {
-				my $stock_qty = (defined $quantity && $quantity =~ /[0-9]/) ? $quantity : $o->{'quantity'};
-				my $stock_unit = (defined $unit && $unit ne '') ? $unit : $o->{'unit'};
-				&appointment_stock_movement($c, $app, 'stop', $stock_qty, $stock_unit, $timestamp, $uuid);
-			}
-			&subs::intelligent_automation_toggle({ appt_uuid => $o->{'uuid'}, app => $app, 'state' => 'off', timestamp => $timestamp });
-			my $sources = &subs::db_select('appointments', undef, { source_uuid => $o->{'uuid'} })->hashes;
-			my $options = eval { return decode_json $o->{'options'} } || [];
-			my $model = eval { return decode_json $o->{'model'} } || {};
-			push @{$options}, $model if $model->{'uuid'};
-			my %so_seen;
-			my %child_apps;
-			foreach my $so ( @{$sources} ) {
-				next if $so_seen{ $so->{'uuid'} }++;
-				push @{$sources}, @{&subs::db_select('appointments', undef, { source_uuid => $so->{'uuid'} })->hashes};
-				if ( $so->{'type'} eq 'start' ) {
-					my @current_option = grep { $_->{'name'} eq $so->{'app'} } @{$options};
-					my $co = $current_option[0];
-					my $dur = $so->{'timestamp'} - $timestamp;
-					my $ts = $timestamp;
-					if ($co->{'delay_stop'}) {
-						my $t = &subs::time_abbrev_translator($co->{'delay_stop'});
-						$ts = $ts + $t;
-						$dur = $dur + $t;
-					}
-					my $so_data = { stop_timestamp => $ts, duration => $dur, server_time => $server_time };
-					if ($ts <= &subs::rightNow()) {
-						$so_data->{'type'} = $type;
-						$so_data->{'stop_seen'} = 'yes';
-					}
-					&subs::db_update('appointments', $so_data, { source_uuid => $so->{'source_uuid'}, uuid => $so->{'uuid'}, app => $so->{'app'} });
-					$child_apps{ $so->{'app'} } = 1;
-					&budget_runner($so->{'app'});
-
-					&subs::intelligent_automation_toggle({ appt_uuid => $so->{'uuid'}, app => $so->{'app'}, 'state' => 'off', timestamp => $ts });
-					&Websocket::send('tab', { console => 'appointmentDetailGrabber(\'' . $so->{'app'} . '\',\'' . $so->{'uuid'} .'\');'});
+			# A scheduled stop is still running: the Alarm closes the row, stops its
+			# children and turns the toggle off when the stop_timestamp arrives. Doing
+			# that here would paint the session over while it still runs, so only a
+			# stop that lands now does the work at the press.
+			unless ($scheduled_stop) {
+				&subs::setting_setter({ app => $app, setting => 'toggle', value => 'off' }) if $seen eq 'yes';
+				# a start carries the amount; this stop is when the session is finished,
+				# so it is the one movement the session makes. A record moved at creation
+				# and is not moved again here.
+				if (($o->{'type'} || '') eq 'start') {
+					my $stock_qty = (defined $quantity && $quantity =~ /[0-9]/) ? $quantity : $o->{'quantity'};
+					my $stock_unit = (defined $unit && $unit ne '') ? $unit : $o->{'unit'};
+					&appointment_stock_movement($c, $app, 'stop', $stock_qty, $stock_unit, $timestamp, $uuid);
 				}
+				&subs::intelligent_automation_toggle({ appt_uuid => $o->{'uuid'}, app => $app, 'state' => 'off', timestamp => $timestamp });
+				my $sources = &subs::db_select('appointments', undef, { source_uuid => $o->{'uuid'} })->hashes;
+				my $options = eval { return decode_json $o->{'options'} } || [];
+				my $model = eval { return decode_json $o->{'model'} } || {};
+				push @{$options}, $model if $model->{'uuid'};
+				my %so_seen;
+				my %child_apps;
+				foreach my $so ( @{$sources} ) {
+					next if $so_seen{ $so->{'uuid'} }++;
+					push @{$sources}, @{&subs::db_select('appointments', undef, { source_uuid => $so->{'uuid'} })->hashes};
+					if ( $so->{'type'} eq 'start' ) {
+						my @current_option = grep { $_->{'name'} eq $so->{'app'} } @{$options};
+						my $co = $current_option[0];
+						my $dur = $so->{'timestamp'} - $timestamp;
+						my $ts = $timestamp;
+						if ($co->{'delay_stop'}) {
+							my $t = &subs::time_abbrev_translator($co->{'delay_stop'});
+							$ts = $ts + $t;
+							$dur = $dur + $t;
+						}
+						my $so_data = { stop_timestamp => $ts, duration => $dur, server_time => $server_time };
+						if ($ts <= &subs::rightNow()) {
+							$so_data->{'type'} = $type;
+							$so_data->{'stop_seen'} = 'yes';
+						}
+						&subs::db_update('appointments', $so_data, { source_uuid => $so->{'source_uuid'}, uuid => $so->{'uuid'}, app => $so->{'app'} });
+						$child_apps{ $so->{'app'} } = 1;
+						&budget_runner($so->{'app'});
+
+						&subs::intelligent_automation_toggle({ appt_uuid => $so->{'uuid'}, app => $so->{'app'}, 'state' => 'off', timestamp => $ts });
+						&Websocket::send('tab', { console => 'appointmentDetailGrabber(\'' . $so->{'app'} . '\',\'' . $so->{'uuid'} .'\');'});
+					}
+				}
+				&subs::source_header_printer([ keys %child_apps ], $timestamp);
 			}
-			&subs::source_header_printer([ keys %child_apps ], $timestamp);
 
 			&Websocket::send('server', { console => 'appointmentDetailGrabber(\'' . $app . '\',\'' . $o->{'uuid'} . '\');' });
 		}
@@ -520,8 +549,10 @@ sub manager_reset($c) {
 		# A stop names one row, but a replayed start may have left an open twin
 		# beside it (same press, different uuid). One press means one session, so
 		# retire the twins too; otherwise a machine that received only the twin
-		# keeps showing the appointment as running long after it was stopped.
-		if ($seen eq 'yes' && $stop_row && $stop_row->{'uuid'}) {
+		# keeps showing the appointment as running long after it was stopped. A
+		# scheduled stop is still running, and the Alarm closes only the named row,
+		# so retiring twins here would close them before the session ends.
+		if ($seen eq 'yes' && !$scheduled_stop && $stop_row && $stop_row->{'uuid'}) {
 			my $stop_at = $timestamp;
 			my %twin_apps;
 			foreach my $tw ( @{ &subs::session_twin_rows($app, $stop_row->{'uuid'}, $stop_row->{'timestamp'}, 2000) } ) {

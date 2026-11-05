@@ -1,5 +1,5 @@
 # tests-for: lib/JawnOS/Manager/Part14.pm lib/JawnOS/Controller/manager_misc12.pm public/js/manager/manager/09_app_back.js public/js/manager/manager/07_timeshift.js
-# covers:    a live stop uses a duration the person typed, ignores one the window restored, and never writes a stop in the future; a backdated stop still uses its duration; editing a closed row's duration moves its stop
+# covers:    a live stop uses a duration the person typed, schedules a future stop for one longer than the session, ignores one the window restored; a backdated stop still uses its duration; editing a closed row's duration moves its stop
 
 use strict;
 use warnings;
@@ -15,13 +15,15 @@ use RepoSource;
 # machine, ago, timeshift).
 #
 # The stop's duration field has two meanings. A person who types a length beside
-# the stop button means "this session ran that long", and the stop belongs at
-# start + length. A window that restores a remembered duration into the same
-# field means nothing about this session - the phone measured an app's 47d
-# default arriving on a live stop, which used to move the stop into the FUTURE,
-# leave stop_seen NULL and keep the row reading as open ("start becomes stop",
-# "only one at a time"). The panel now flags a typed duration, so the server can
-# tell the two apart instead of guessing from the value alone.
+# the stop button means "this session runs that long": the stop belongs at
+# start + length, in the past when the session already ran longer, or in the
+# future as a scheduled stop the Alarm applies at that moment. A window that
+# restores a remembered duration into the same field means nothing about this
+# session - the phone measured an app's 47d default arriving on a live stop,
+# which used to move the stop into the FUTURE by itself, leave stop_seen NULL
+# and keep the row reading as open ("start becomes stop", "only one at a time").
+# The panel now flags a typed duration, so the server can tell the two apart
+# instead of guessing from the value alone.
 
 my $root   = repo_root();
 my $part14 = read_file("$root/lib/JawnOS/Manager/Part14.pm");
@@ -41,8 +43,8 @@ my ($typed_guard) = $stop_branch =~ /(my \$typed_duration = .*?;)/s;
 ok($typed_guard, 'and which durations the person typed');
 like($typed_guard, qr/duration_typed/,
 	'the typed flag the panel sends is what marks a personal length');
-like($typed_guard, qr/\(\$timestamp1 \+ abs\(\$duration\)\) <= &subs::rightNow\(\) \+ 1000/,
-	'only a typed duration that ends the session now or earlier is taken');
+unlike($typed_guard, qr/rightNow/,
+	'a typed length is taken whatever moment it names, behind or ahead of the press');
 
 like($stop_branch, qr/if \(!\$c->param\('duration'\) \|\| \(\$live_stop && !\$typed_duration\)\)/,
 	'a live stop still ignores the duration unless the person typed it');
@@ -56,6 +58,25 @@ my ($backdated) = $stop_branch =~ /(else \{\s*(?:\#[^\n]*\n\s*)*\$duration = \(a
 ok($backdated, 'the backdated branch survives');
 like($backdated, qr/\$duration = \(abs \$duration\) \* -1;\s*\$timestamp = \$timestamp1 - \$duration;/,
 	'a backdated stop is still placed back from the start by the duration');
+
+# A typed length that lands after the press is a scheduled stop: the row stays an
+# open start/record with a future stop_timestamp and stop_seen NULL, which is the
+# shape Alarm.pl applies when the stop time arrives. Retiring the row (and its
+# children) at the press instead would close a session that is still running - and
+# the Alarm only reads stops from start/record rows, never from type=stop.
+like($stop_branch, qr/\$scheduled_stop = \$timestamp > &subs::rightNow\(\) \+ 1000 \? 1 : 0;/,
+	'the stop branch names a scheduled stop');
+like($stop_branch, qr/if \(\$scheduled_stop\) \{\s*\$type = \$o->\{'type'\};/,
+	'a scheduled stop keeps the row an open start/record for the Alarm');
+like($stop_branch, qr/unless \(\$scheduled_stop\) \{/,
+	'while the stop work itself waits for the Alarm');
+like($stop_branch, qr/\$seen eq 'yes' && !\$scheduled_stop && \$stop_row/,
+	'and the twin sweep waits with it');
+my ($defer_guard) = $stop_branch =~ /(my \$schedules_stop = .*?;)/s;
+ok($defer_guard, 'a typed future length is recognised before a recording is ended');
+like($defer_guard, qr/duration_typed/, 'by the same typed flag');
+like($defer_guard, qr/\(\$timestamp1 \+ abs\(\$duration\)\) > &subs::rightNow\(\) \+ 1000/,
+	'and only when it lands after the press');
 
 # The write records the stop at $timestamp. The seen path writes
 # stop_timestamp => $timestamp, and the unseen path only records a future
@@ -113,14 +134,24 @@ sub stop_decision {
 	# the branch keeps its own $duration, as manager_reset does
 	my $duration = defined $param_duration ? $param_duration : 0;
 	my $live_stop = abs($timestamp - $now) <= $stale;
-	my $typed_duration = $typed && $duration
-		&& ($timestamp1 + abs($duration)) <= $now + 1000;
+	my $typed_duration = $typed && $duration;
+	my ($out_ts, $out_dur);
 	if (!$param_duration || ($live_stop && !$typed_duration)) {
-		return { timestamp => $timestamp, duration => $timestamp1 - $timestamp };
+		$out_ts  = $timestamp;
+		$out_dur = $timestamp1 - $timestamp;
 	}
 	else {
-		return { timestamp => $timestamp1 + abs($duration), duration => -abs($duration) };
+		$out_dur = -abs($duration);
+		$out_ts  = $timestamp1 - $out_dur;
 	}
+	my $scheduled = $out_ts > $now + 1000 ? 1 : 0;
+	return {
+		timestamp => $out_ts,
+		duration  => $out_dur,
+		scheduled => $scheduled,
+		type      => $scheduled ? 'start' : 'stop',
+		stop_seen => $out_ts <= $now + 1000 ? 'yes' : undef,
+	};
 }
 
 my $sent_duration = 3600000;    # the person typed 1h
@@ -130,7 +161,8 @@ is($remembered->{'timestamp'}, $now - 2000,
 	'a live stop still closes at the press time when the duration was only restored');
 is($remembered->{'duration'}, $session_start - ($now - 2000),
 	'and takes the length the session actually ran');
-cmp_ok($remembered->{'timestamp'}, '<=', $now + 1000, 'so stop_seen reads yes');
+is($remembered->{'scheduled'}, 0, 'a remembered default never schedules a stop');
+is($remembered->{'stop_seen'}, 'yes', 'and the row closes as seen');
 
 my $typed = stop_decision($now - 2000, $sent_duration, 1);
 is($typed->{'timestamp'}, $session_start + $sent_duration,
@@ -138,13 +170,22 @@ is($typed->{'timestamp'}, $session_start + $sent_duration,
 is($typed->{'duration'}, -$sent_duration, 'and records that length');
 is($typed->{'timestamp'} - $session_start, abs($typed->{'duration'}),
 	'so the stop and the duration add up');
-cmp_ok($typed->{'timestamp'}, '<=', $now + 1000, 'and the stop is still not in the future');
+is($typed->{'scheduled'}, 0, 'a length inside the session closes now');
+is($typed->{'stop_seen'}, 'yes', 'and the row closes as seen');
 
-my $too_long = stop_decision($now - 2000, 5 * 3600000, 1);
-is($too_long->{'timestamp'}, $now - 2000,
-	'a typed length longer than the session closes at the press time, never in the future');
-is($too_long->{'duration'}, $session_start - ($now - 2000),
-	'and keeps the length the session ran');
+my $later = stop_decision($now - 2000, 3 * 3600000, 1);
+is($later->{'timestamp'}, $session_start + 3 * 3600000,
+	'a typed length longer than the session ends it that long after the start');
+cmp_ok($later->{'timestamp'}, '>', $now + 1000, 'which is in the future');
+is($later->{'duration'}, -3 * 3600000, 'the duration still names the whole session');
+is($later->{'scheduled'}, 1, 'so the stop is scheduled');
+is($later->{'type'}, 'start', 'the row stays open for the Alarm to close');
+is($later->{'stop_seen'}, undef, 'and stop_seen waits for the Alarm');
+
+my $default_long = stop_decision($now - 2000, 3 * 3600000, 0);
+is($default_long->{'timestamp'}, $now - 2000,
+	'an untyped length longer than the session cannot schedule anything');
+is($default_long->{'scheduled'}, 0, 'so the remembered default still closes now');
 
 my $old = stop_decision($now - 3 * 3600 * 1000, $sent_duration, 0);
 is($old->{'timestamp'}, $session_start + abs($sent_duration),
