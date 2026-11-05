@@ -1023,8 +1023,20 @@ require './perl/President/utility_stopper.pl';
 # process) still stops every utility with it.
 our %utility_slots;
 our $announced_beat;
+# When this tree's utility child came up, and how many due jobs one tick may
+# start. A restart makes every slot past due at once (each is rebuilt from its
+# persisted last_run), and a job may fork a subprocessor - a copy of this grown
+# process as far as the kernel's accounting is concerned. Android charges every
+# fork's RSS to the app's uid, so a first pass that starts a dozen jobs looks
+# like a gigabyte to the low-memory killer and the app is reaped every few
+# seconds. Two at a time drains the backlog without that spike.
+our $utility_boot_at;
+our $utility_pass_cap = 2;
 sub utility_runner() {
 	return if $gb::utility_functions_watcher == 0;
+	# Give the servers and the WebView their few seconds first: a tree that has
+	# just started should not also be starting work.
+	return if $utility_boot_at && &subs::rightNow() - $utility_boot_at < 20000;
 	# The app's scheduled wake wants to know when the due work is done so it can
 	# release the CPU before its 45s backstop. It is written only after a tick
 	# that ran nothing, and removed as soon as a job starts, so a reader can tell
@@ -1037,6 +1049,8 @@ sub utility_runner() {
 	my $ready_at = (-e $ready_file) ? ((stat($ready_file))[9] || 0) : 0;
 	my $ran = 0;
 	my $next_due;
+	my $started = 0;
+	my $pending = 0;
 	# A job's next slot only ever moves by its interval. The old check measured
 	# the interval from the last completion, so every run started its interval
 	# late by its own duration plus the tick: a five-minute job slipped about
@@ -1100,6 +1114,14 @@ sub utility_runner() {
 			$next_due = $slot->{'due'} if !defined $next_due || $slot->{'due'} < $next_due;
 			next;
 		}
+		# This one stays due for the next tick, not this pass: the backlog is
+		# drained a couple of jobs at a time (see $utility_pass_cap).
+		if ($started >= $utility_pass_cap) {
+			$pending = 1;
+			$next_due = $now if !defined $next_due || $now < $next_due;
+			next;
+		}
+		$started++;
 
 		if ($nudged) {
 			&subs::cache_set({ app => '__president', context => 'remote_nudge', subcontext => 'pending' }, 0);
@@ -1176,7 +1198,7 @@ sub utility_runner() {
 	# tick - a five-second write would keep the flash busy for nothing - and only
 	# when no job is about to fall due, so a release never skips a beat that is
 	# already at the door. A hold defers it while peers pull the announced rows.
-	if (!$ran && (!defined $next_due || $next_due > &subs::rightNow() + 12000)) {
+	if (!$ran && !$pending && (!defined $next_due || $next_due > &subs::rightNow() + 12000)) {
 		my $idle_at = (-e $idle_file) ? ((stat($idle_file))[9] || 0) : 0;
 		my $hold = &subs::cache_get({ app => '__president', context => 'wake', subcontext => 'hold' }) || 0;
 		# A peer reading rows from us is the one reason a wake may outlive its
@@ -1190,6 +1212,7 @@ sub utility_runner() {
 sub utility_functions() {
 
 	$gb::utility_functions_watcher = 1;
+	$utility_boot_at = &subs::rightNow();
 	print "Starting Alarm Clock\n";
 
 	require './perl/Alarm.pl';
