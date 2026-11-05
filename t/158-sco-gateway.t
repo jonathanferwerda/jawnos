@@ -421,7 +421,7 @@ SKIP: {
 			'--pipe-in', 'cat /dev/zero', '--pipe-out', 'cat > /dev/null');
 		print {$in} JSON::PP->new->encode({ cmd => 'line' }) . "\n" if $with_line;
 		$in->flush;
-		select(undef, undef, undef, 2.6);
+		select(undef, undef, undef, 3.6);
 		close $in;
 		my $said = do { local $/; <$out> // '' };
 		close $out;

@@ -59,7 +59,11 @@
 #define BYTES_PER_MS (RATE * 2 / 1000)
 #define CHUNK_NS 7500000LL
 /* how long the call audio must be flowing before a prompt starts */
-#define SETTLE_NS 1200000000LL
+/* The first seconds of a screened call are the noisiest: the phone is still
+ * switching its call audio onto the Hands-Free link and the controller logs a
+ * burst of corrupted SCO packets. A greeting that starts inside that burst is
+ * heard as one word or not at all, so the plan waits it out. */
+#define SETTLE_NS 2000000000LL
 
 static volatile sig_atomic_t running = 1;
 static int sco_fd = -1, listen_fd = -1;
