@@ -492,6 +492,8 @@ function jawnPhoneTranscriptPartial(text) {
 // added, and a new call starts the bubbles over.
 function jawnPhoneTranscriptSync(callId, lines, partial, note) {
 	if ((callId || '') !== jawnPhoneTranscriptCall) {
+		// a new call (or none) is not the one this device was listening to
+		if (jawnPhoneRtc.pc) { jawnPhoneRtcStop(); }
 		jawnPhoneTranscriptCall = callId || '';
 		jawnPhoneTranscriptClear();
 	}
@@ -515,6 +517,114 @@ function jawnPhoneTranscriptPushed(data) {
 	if (data.line) { jawnPhoneTranscriptLine(data.line); }
 	else if (typeof data.partial === 'string') { jawnPhoneTranscriptPartial(data.partial); }
 }
+
+// ---- Connect me: the call on this device, over WebRTC ---------------------
+// The gateway bridges the call's two streams to this page: the caller arrives
+// as an audio track, and this page's microphone - with the browser's own echo
+// cancellation - is written back to what the caller hears. Signalling goes
+// through the manager because the gateway already owns the call there; the
+// answer and the gateway's candidates arrive on the phone websocket, not in the
+// POST's reply, since they follow the offer.
+var jawnPhoneRtc = { pc: null, stream: null, audio: null, call: '' };
+
+function jawnPhoneRtcSignal(data) {
+	$.ajax({
+		url: '/manager/sco/rtc',
+		type: 'POST',
+		dataType: 'json',
+		data: data,
+		error: function () { }
+	});
+}
+
+function jawnPhoneRtcButton(text, on) {
+	$('#phone_app #phone_transcript_connect').text(text).toggleClass('on', !!on);
+}
+
+function jawnPhoneRtcStop(notify) {
+	var rtc = jawnPhoneRtc;
+	var was = !!rtc.pc;
+	try { if (rtc.pc) rtc.pc.close(); } catch (e) { }
+	try { if (rtc.stream) rtc.stream.getTracks().forEach(function (t) { t.stop(); }); } catch (e) { }
+	try {
+		if (rtc.audio) { rtc.audio.pause(); rtc.audio.srcObject = null; }
+	} catch (e) { }
+	jawnPhoneRtc = { pc: null, stream: null, audio: null, call: '' };
+	jawnPhoneRtcButton('Connect me', false);
+	if (was && notify !== false) { jawnPhoneRtcSignal({ action: 'stop' }); }
+}
+
+function jawnPhoneRtcConnect() {
+	if (jawnPhoneRtc.pc) { jawnPhoneRtcStop(); return; }
+	if (!window.RTCPeerConnection || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+		$('#phone_app #phone_transcript_note').text(jawnosT('This window cannot carry the call.'));
+		return;
+	}
+	jawnPhoneRtcSignal({ action: 'start' });
+	navigator.mediaDevices.getUserMedia({
+		audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
+	}).then(function (stream) {
+		// no STUN: the house is on its tailnet, where the peers can reach each
+		// other's own candidates, and a public relay would only add a hop
+		var pc = new RTCPeerConnection({ iceServers: [] });
+		jawnPhoneRtc = { pc: pc, stream: stream, audio: null, call: jawnPhoneTranscriptCall };
+		stream.getTracks().forEach(function (track) { pc.addTrack(track, stream); });
+		pc.ontrack = function (event) {
+			var audio = jawnPhoneRtc.audio || new Audio();
+			jawnPhoneRtc.audio = audio;
+			audio.srcObject = event.streams[0];
+			audio.autoplay = true;
+			audio.play().catch(function () { });
+		};
+		pc.onicecandidate = function (event) {
+			if (!event.candidate) { return; }
+			var c = event.candidate;
+			jawnPhoneRtcSignal({
+				action: 'signal',
+				candidate: c.candidate,
+				sdp_mid: c.sdpMid || '0',
+				sdp_mline_index: c.sdpMLineIndex || 0
+			});
+		};
+		return pc.createOffer().then(function (offer) {
+			return pc.setLocalDescription(offer);
+		}).then(function () {
+			jawnPhoneRtcSignal({
+				action: 'signal',
+				sdp: pc.localDescription.sdp,
+				sdp_type: pc.localDescription.type
+			});
+			jawnPhoneRtcButton('Disconnect this device', true);
+		});
+	}).catch(function (err) {
+		jawnPhoneRtcStop(false);
+		jawnPhoneRtcSignal({ action: 'stop' });
+		$('#phone_app #phone_transcript_note').text(jawnosT('The microphone could not be opened.') + ' ' + err);
+	});
+}
+
+function jawnPhoneRtcPushed(data) {
+	if (!data || !jawnPhoneRtc.pc) { return; }
+	var pc = jawnPhoneRtc.pc;
+	if (data.answer) {
+		pc.setRemoteDescription({ type: data.sdp_type || 'answer', sdp: data.answer }).catch(function () { });
+	}
+	else if (data.ice && data.ice.candidate) {
+		pc.addIceCandidate({
+			candidate: data.ice.candidate,
+			sdpMid: data.ice.sdpMid,
+			sdpMLineIndex: data.ice.sdpMLineIndex
+		}).catch(function () { });
+	}
+	else if (data.error) {
+		$('#phone_app #phone_transcript_note').text(data.error);
+	}
+}
+
+$(document).on('click', '#phone_app #phone_transcript_connect', function (e) {
+	e.preventDefault();
+	jawnPhoneRtcConnect();
+});
 
 var jawnPhoneGatewayTimer = null;
 

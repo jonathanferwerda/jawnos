@@ -229,6 +229,16 @@ sub vosk_streamer {
 	return $runner;
 }
 
+# The WebRTC bridge sits beside the other two readers and uses the same venv
+# (aiortc lives there).
+sub rtc_bridge {
+	my $script = $ENV{'JAWNOS_RTC_BRIDGE'};
+	return $script if defined $script && length $script;
+	my $runner = &vosk_runner();
+	$runner =~ s{[^/]+$}{rtc_bridge.py};
+	return $runner;
+}
+
 sub vosk_python {
 	my $venv = &vosk_root() . '/venv/bin/python3';
 	return $venv if -x $venv;

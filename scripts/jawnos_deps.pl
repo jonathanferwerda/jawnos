@@ -148,6 +148,7 @@ my $vosk_dir  = "$home/.local/share/jawnos/vosk";
 my @extras = (
 	{ id => 'piper', label => 'Piper TTS (natural voice)', check => \&have_piper, install => \&install_piper },
 	{ id => 'vosk',  label => 'Vosk speech-to-text (offline)', check => \&have_vosk, install => \&install_vosk },
+	{ id => 'rtc',   label => 'WebRTC bridge (Connect me)', check => \&have_rtc, install => \&install_rtc },
 );
 
 if ($extras_only) {
@@ -403,35 +404,36 @@ sub have_vosk {
 	return system($py, '-c', 'import vosk') == 0 ? 1 : 0;
 }
 
+# The venv every gateway media helper shares: Vosk's model and the WebRTC
+# bridge's aiortc. It is checked for pip, not only for the interpreter - a venv
+# made before python3-venv was installed has no pip and would fail forever.
+sub ensure_venv {
+	my $py = which('python3') || which('python');
+	return '' unless $py;
+	my $venv_py = "$vosk_dir/venv/bin/python3";
+	my $has_pip = -x $venv_py && system($venv_py, '-m', 'pip', '--version') == 0;
+	unless ($has_pip) {
+		remove_tree("$vosk_dir/venv") if -d "$vosk_dir/venv";
+		run($py, '-m', 'venv', "$vosk_dir/venv");
+	}
+	return '' unless -x $venv_py;
+	return '' unless system($venv_py, '-m', 'pip', '--version') == 0;
+	return $venv_py;
+}
+
 sub install_vosk {
 	if ($platform eq 'termux') {
 		print "  vosk: Termux (Bionic) has no Vosk wheel; the gateway machine runs it.\n";
 		return;
 	}
-	my $py = which('python3') || which('python');
-	if (!$py) {
+	if (!(which('python3') || which('python'))) {
 		print "  vosk: python3 is not installed; skipping (transcription falls back to whisper.cpp).\n";
 		return;
 	}
 	system('mkdir', '-p', vosk_models_dir());
-	my $venv_py = "$vosk_dir/venv/bin/python3";
-	# A venv made before python3-venv was installed has the interpreter but no
-	# pip, and reusing it would fail at the install every time. Check the pip,
-	# not just the interpreter, and rebuild the venv when it is missing.
-	my $has_pip = -x $venv_py && system($venv_py, '-m', 'pip', '--version') == 0;
-	unless ($has_pip) {
-		remove_tree("$vosk_dir/venv") if -d "$vosk_dir/venv";
-		if (run($py, '-m', 'venv', "$vosk_dir/venv") != 0) {
-			print "  vosk: could not make a virtual environment (install python3-venv); skipping.\n";
-			return;
-		}
-	}
-	unless (-x $venv_py) {
-		print "  vosk: the venv has no python3; skipping.\n";
-		return;
-	}
-	if (!$has_pip && system($venv_py, '-m', 'pip', '--version') != 0) {
-		print "  vosk: the venv still has no pip (install python3-venv); skipping.\n";
+	my $venv_py = ensure_venv();
+	if (!$venv_py) {
+		print "  vosk: could not make a working virtual environment (install python3-venv); skipping.\n";
 		return;
 	}
 	if (run($venv_py, '-m', 'pip', 'install', '--disable-pip-version-check', 'vosk') != 0) {
@@ -451,7 +453,7 @@ sub install_vosk {
 		my $unzip = which('unzip');
 		my $ok = $unzip
 			? run($unzip, '-q', '-o', $zip, '-d', vosk_models_dir()) == 0
-			: run($py, '-m', 'zipfile', '-e', $zip, vosk_models_dir()) == 0;
+			: run((which('python3') || which('python')), '-m', 'zipfile', '-e', $zip, vosk_models_dir()) == 0;
 		unlink $zip;
 		unless ($ok && -d vosk_model_path()) {
 			print "  vosk: model extract failed.\n";
@@ -460,6 +462,33 @@ sub install_vosk {
 	}
 	print "  vosk: installed to $vosk_dir\n" if have_vosk();
 	print "  vosk: installed, but the import probe failed\n" unless have_vosk();
+}
+
+# The bridge is a WebRTC peer (aiortc) in the same venv. It is what "Connect me"
+# runs; without it the face's button has nothing to talk to, so it is an extra
+# of its own rather than a surprise at the first call.
+sub have_rtc {
+	my $py = "$vosk_dir/venv/bin/python3";
+	return 0 unless -x $py;
+	return system($py, '-c', 'import aiortc') == 0 ? 1 : 0;
+}
+
+sub install_rtc {
+	if ($platform eq 'termux') {
+		print "  webrtc: Termux has no aiortc wheel; the gateway machine runs the bridge.\n";
+		return;
+	}
+	my $venv_py = ensure_venv();
+	if (!$venv_py) {
+		print "  webrtc: no working Python environment (install python3-venv); skipping.\n";
+		return;
+	}
+	if (run($venv_py, '-m', 'pip', 'install', '--disable-pip-version-check', 'aiortc') != 0) {
+		print "  webrtc: pip could not install aiortc; Connect me stays off.\n";
+		return;
+	}
+	print "  webrtc: installed to $vosk_dir/venv\n" if have_rtc();
+	print "  webrtc: installed, but the import probe failed\n" unless have_rtc();
 }
 
 # --- desktop extra probes ----------------------------------------------------

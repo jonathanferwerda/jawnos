@@ -69,6 +69,10 @@ function wsMessageDispatch(raw) {
 		if (data['type'] === 'sco_transcript' && typeof jawnPhoneTranscriptPushed === 'function') {
 			jawnPhoneTranscriptPushed(data);
 		}
+		// The "Connect me" bridge's answer and candidates, on the same channel.
+		if (data['type'] === 'sco_rtc' && typeof jawnPhoneRtcPushed === 'function') {
+			jawnPhoneRtcPushed(data);
+		}
 		// Every connect carries the tree's boot stamp. A new boot is the one
 		// event that drops a media grant, so that - not the length of a socket
 		// outage - is what re-fetches the open media windows. The first stamp of

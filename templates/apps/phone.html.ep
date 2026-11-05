@@ -194,6 +194,7 @@
 				<div class="phone_transcript_head">
 					<span class="phone_transcript_title"><%= &subs::ui('Live transcript') %></span>
 					<span class="phone_transcript_note" id="phone_transcript_note"></span>
+					<button class="phone_transcript_connect" id="phone_transcript_connect" hint="Connect me">Connect me</button>
 				</div>
 				<div class="phone_transcript_lines" id="phone_transcript_lines"></div>
 			</div>

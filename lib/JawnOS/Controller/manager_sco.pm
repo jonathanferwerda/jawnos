@@ -111,4 +111,41 @@ sub action_52005 {
 	$c->render(data => $bytes);
 }
 
+
+# POST /manager/sco/rtc
+#
+# The "Connect me" signalling hop. The browser's offer, its ICE candidates and
+# the stop travel to the gateway daemon over the socket that already owns the
+# call; the answer and the gateway's candidates come back on the phone's
+# websocket, not in this reply, because they arrive after the offer has left.
+sub action_52006 {
+	my $c = shift;
+	my $action = $c->param('action') || '';
+	return $c->render(json => { ok => 0, error => 'unknown bridge action' })
+		unless $action =~ /^(?:start|signal|stop)$/;
+	my %message;
+	if ($action eq 'signal') {
+		my $sdp = $c->param('sdp') || '';
+		my $candidate = $c->param('candidate') || '';
+		if (length $sdp) {
+			%message = (sdp => $sdp, type => ($c->param('sdp_type') || 'offer'));
+		}
+		elsif (length $candidate) {
+			%message = (candidate => {
+				candidate => $candidate,
+				sdpMid => ($c->param('sdp_mid') || '0'),
+				sdpMLineIndex => 0 + ($c->param('sdp_mline_index') || 0),
+			});
+		}
+		else {
+			return $c->render(json => { ok => 0, error => 'nothing to signal' });
+		}
+	}
+	$c->render(json => &sco_client()->call({
+		cmd => 'rtc',
+		action => $action,
+		message => \%message,
+	}));
+}
+
 1;

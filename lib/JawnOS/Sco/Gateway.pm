@@ -174,6 +174,8 @@ sub status {
 		partial => $self->{'partial'} || '',
 		transcript_engine => $self->{'transcript_engine'} || '',
 		transcript_note => $self->{'transcript_note'} || '',
+		# the WebRTC bridge, when someone pressed Connect me
+		rtc => $self->{'rtc'} || { state => 'idle', error => '' },
 		plan => [ map { $_->{'key'} || ($_->{'tone'} ? 'tone' : 'step') } @{ $self->{'steps'} || [] } ],
 		local => $self->{'local'} || '',
 		# where the call's own two streams were on the last look: the pane and a
@@ -386,7 +388,8 @@ sub watch_streams {
 			($self->{'done_at'} ? time - $self->{'done_at'} : undef),
 			($self->{'accepted_at'} ? time - $self->{'accepted_at'} : undef),
 		);
-		$self->end_call($why) if length $why;
+		# a bridged call belongs to the person, not to the plan's timer
+		$self->end_call($why) if length $why && !$self->{'rtc_up'};
 	});
 	return 1;
 }
@@ -408,6 +411,7 @@ sub end_call {
 	$self->_send(cmd => 'quit');
 	$self->_reap();
 	$self->_stop_transcript();
+	$self->_stop_rtc();
 	$self->write_status();
 	return 1;
 }
@@ -666,7 +670,198 @@ sub _stop_transcript {
 	return 1;
 }
 
+
+# ---- the WebRTC bridge ---------------------------------------------------
+#
+# "Connect me" hands the call to the device that pressed it: the caller's voice
+# goes out as an Opus track, and the person's microphone comes back into
+# jawn_prompt, which is the caller's ear. The media is one process
+# (scripts/rtc_bridge.py, aiortc) spawned per bridge; this side only routes the
+# offer/answer/ICE lines between that process and the phone's websocket.
+#
+# Signalling comes back through the same manager: the browser posts to
+# /manager/sco/rtc, the route calls this daemon on its socket, and the bridge's
+# answer and candidates are pushed to the phone channel. One port, one session.
+#
+# A bridged call is not the plan's to end: the four-second "plan done" rule and
+# the forty-two-second ceiling describe a screening nobody joined.
+
+sub rtc {
+	my ($self, $request) = @_;
+	my $action = ref $request eq 'HASH' ? ($request->{'action'} || '') : '';
+	return $self->_start_rtc() if $action eq 'start';
+	return $self->_rtc_signal($request->{'message'}) if $action eq 'signal';
+	return $self->_stop_rtc() if $action eq 'stop';
+	return { ok => 0, error => 'unknown bridge action' };
+}
+
+sub _start_rtc {
+	my ($self) = @_;
+	return { ok => 0, error => 'the WebRTC bridge needs the virtual handset (sco_pipe)' }
+		unless $self->pipe_mode();
+	return { ok => 0, error => 'no call is up' }
+		unless $self->{'state'} =~ /^(?:armed|in_call|done)$/;
+	return { ok => 1, state => $self->{'rtc'}->{'state'} } if $self->{'rtc_pid'};
+	my $python = eval { &subs::vosk_python() } || '';
+	my $script = eval { &subs::rtc_bridge() } || '';
+	unless ($python && -x $python && $script && -f $script) {
+		$self->{'rtc'} = { state => 'unavailable', error => 'the WebRTC bridge is not installed on this machine' };
+		$self->write_status();
+		return { ok => 0, error => $self->{'rtc'}->{'error'} };
+	}
+	require JawnOS::Sco::Mixer;
+	my $mixer = $self->{'mixer'} || JawnOS::Sco::Mixer->new();
+	# the plan must not talk over the person who just joined
+	$self->_send(cmd => 'stop');
+	$self->{'rtc'} = { state => 'starting', error => '' };
+	$self->{'rtc_up'} = 1;
+	unless ($self->_spawn_rtc($python, $script,
+		'--in-cmd', $mixer->bridge_capture_command(),
+		'--out-cmd', $mixer->bridge_playback_command())) {
+		$self->{'rtc'} = { state => 'failed', error => $self->{'rtc_note'} || 'the bridge would not start' };
+		$self->{'rtc_up'} = 0;
+		$self->write_status();
+		return { ok => 0, error => $self->{'rtc'}->{'error'} };
+	}
+	$self->write_status();
+	return { ok => 1, state => 'starting' };
+}
+
+sub _spawn_rtc {
+	my ($self, @cmd) = @_;
+	my ($out, $in);
+	my $pid = eval { IPC::Open2::open2($out, $in, @cmd) };
+	unless ($pid) {
+		$self->{'rtc_note'} = 'the bridge would not start';
+		return 0;
+	}
+	$self->{'rtc_pid'} = $pid;
+	$self->{'rtc_in'} = $in;
+	$self->{'rtc_out'} = $out;
+	$self->{'rtc_buffer'} = '';
+	$in->autoflush(1);
+	my $ok = eval {
+		$out->blocking(0);
+		my $stream = Mojo::IOLoop::Stream->new($out)->timeout(0);
+		$stream->on(read => sub {
+			my ($stream, $bytes) = @_;
+			$self->{'rtc_buffer'} .= $bytes;
+			while ($self->{'rtc_buffer'} =~ s/^(.*?)\n//) {
+				my $line = $1;
+				next unless $line =~ /\S/;
+				my $event = eval { decode_json($line) };
+				next unless ref $event eq 'HASH';
+				$self->_rtc_event($event);
+			}
+		});
+		$stream->on(close => sub {
+			my $state = $self->{'rtc'}->{'state'} || '';
+			$self->{'rtc'}->{'state'} = 'closed' unless $state =~ /^(?:failed|closed)$/;
+			$self->{'rtc_up'} = 0;
+		});
+		$stream->start;
+		$self->{'rtc_stream'} = $stream;
+		1;
+	};
+	unless ($ok) {
+		$self->{'rtc_note'} = "the bridge could not be read: $@";
+		$self->_stop_rtc();
+		return 0;
+	}
+	return 1;
+}
+
+sub _rtc_signal {
+	my ($self, $message) = @_;
+	return { ok => 0, error => 'no bridge is up' } unless $self->{'rtc_in'};
+	my $json = eval { encode_json($message || {}) };
+	return { ok => 0, error => 'bad signalling message' } unless defined $json;
+	my $ok = eval {
+		print { $self->{'rtc_in'} } $json . "\n";
+		$self->{'rtc_in'}->flush;
+		1;
+	};
+	return { ok => $ok ? 1 : 0, error => $ok ? '' : 'the bridge is gone' };
+}
+
+sub _rtc_event {
+	my ($self, $event) = @_;
+	my $name = $event->{'event'} || '';
+	if ($name eq 'ready') {
+		$self->{'rtc'}->{'state'} = 'ready';
+		$self->write_status();
+		return 1;
+	}
+	if ($name eq 'answer') {
+		$self->{'rtc'}->{'state'} = 'answering';
+		$self->write_status();
+		$self->_push_rtc({ answer => $event->{'sdp'}, sdp_type => $event->{'type'} });
+		return 1;
+	}
+	if ($name eq 'ice') {
+		$self->_push_rtc({ ice => $event->{'candidate'} }) if ref $event->{'candidate'} eq 'HASH';
+		return 1;
+	}
+	if ($name eq 'state') {
+		my $state = $event->{'state'} || '';
+		$self->{'rtc'}->{'state'} = $state;
+		$self->{'rtc_up'} = ($state eq 'connected' || $state eq 'connecting') ? 1 : 0;
+		$self->write_status();
+		$self->_push_rtc({ state => $state });
+		return 1;
+	}
+	if ($name eq 'error') {
+		$self->{'rtc'}->{'error'} = $event->{'error'} || 'the bridge failed';
+		$self->{'rtc'}->{'state'} = 'failed';
+		$self->write_status();
+		$self->_push_rtc({ error => $self->{'rtc'}->{'error'} });
+	}
+	return 1;
+}
+
+sub _push_rtc {
+	my ($self, $what) = @_;
+	return 0 unless defined &Websocket::send;
+	my $msg = {
+		type => 'sco_rtc',
+		call_id => $self->{'call_id'},
+		%{ $what || {} },
+	};
+	eval { &Websocket::send('phone', $msg) };
+	return 1;
+}
+
+sub _stop_rtc {
+	my ($self) = @_;
+	my $pid = delete $self->{'rtc_pid'};
+	if ($self->{'rtc_in'}) {
+		eval { print { $self->{'rtc_in'} } "{\"cmd\":\"quit\"}\n"; $self->{'rtc_in'}->flush; };
+	}
+	foreach my $key (qw(rtc_stream rtc_in rtc_out)) {
+		my $thing = delete $self->{$key};
+		next unless $thing;
+		eval { $thing->close };
+	}
+	$self->{'rtc_buffer'} = '';
+	$self->{'rtc_up'} = 0;
+	$self->{'rtc'}->{'state'} = 'closed' if $self->{'rtc'};
+	return 1 unless $pid;
+	my $tries = 0;
+	my $gone = 0;
+	while ($tries++ < 10) {
+		my $done = waitpid($pid, WNOHANG);
+		if ($done == $pid) { $gone = 1; last; }
+		select(undef, undef, undef, 0.02);
+	}
+	unless ($gone) {
+		kill 'TERM', $pid;
+		waitpid($pid, 0);
+	}
+	return 1;
+}
+
 # ---- the plan -----------------------------------------------------------
+
 
 sub _send {
 	my ($self, %request) = @_;
@@ -765,6 +960,7 @@ sub event {
 		$self->{'since'} = time;
 		$self->_reap();
 		$self->_stop_transcript();
+		$self->_stop_rtc();
 		$self->write_status();
 	}
 	elsif ($name eq 'error') {
@@ -796,6 +992,7 @@ sub cancel {
 	$self->_send(cmd => 'quit');
 	$self->_reap();
 	$self->_stop_transcript();
+	$self->_stop_rtc();
 	$self->{'state'} = 'idle';
 	$self->{'since'} = time;
 	$self->{'last_event'} = 'cancelled';

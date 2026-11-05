@@ -22,6 +22,7 @@ adapter.
 | `perl/sco/sco_helper.c` | gateway | the audio half: `--pcm` (BlueALSA) or `--pipe` (`parec`/`pacat`), one JSON line per event |
 | `perl/Reception.pl` | gateway | keeps the gateway armed from the phone's settings, and keeps the names a call left in `~/.president/sco/kept/` |
 | `scripts/vosk_stream.py` | gateway | reads the helper's `--tee` FIFO, segments the caller's voice and asks Vosk for one sentence at a time |
+| `scripts/rtc_bridge.py` | gateway | the WebRTC peer behind **Connect me**: the caller out as an Opus track, the person's microphone back into `jawn_prompt` |
 
 ## Why a virtual handset
 
@@ -147,32 +148,36 @@ Trip remembers that the gateway no longer carries it, so a later state change
 cannot re-pin it.
 - **Disconnect** - hangs up.
 
-### Connect me (not built)
+### Connect me
 
-A third button, **Connect me**, would route the call to the device that pressed
-it. WebRTC is the right transport because the device's microphone must carry
-echo cancellation - a tablet in another room picking up the gateway's speakers
-into a raw WebSocket would send the caller their own voice.
+**Connect me** routes the call to the device that pressed it. It is a WebRTC
+bridge on the gateway, because the device's microphone must carry echo
+cancellation - a tablet in another room picking up the gateway's speakers into
+a raw audio socket would send the caller their own voice.
 
-The shape it would take, fitting what is already here:
+1. The browser creates an offer with `getUserMedia({audio: {echoCancellation:
+true, noiseSuppression: true, autoGainControl: true}})` and posts it to
+`POST /manager/sco/rtc` (`action=start`, then `action=signal`). That route calls
+the gateway daemon on its own socket; the gateway spawns
+`scripts/rtc_bridge.py` (aiortc, in the same venv as Vosk) with
+`parec ... jawn_call_in.monitor` as its outgoing track and `pacat ...
+jawn_prompt` as its incoming one, both at 48 kHz under the name
+`jawn-sco-bridge`.
+2. The answer and the gateway's ICE candidates come back on the phone's
+websocket as `sco_rtc`, so signalling never needs a second port or a second
+login. There are no STUN/TURN servers: the house is on its tailnet, where the
+peers reach each other's own candidates.
+3. While the bridge is up the plan's four-second "done" rule and its
+forty-two-second ceiling do not apply - the call belongs to the person, not to
+the screening. Starting the bridge sends `stop` to the helper so a greeting
+cannot talk over them.
+4. The button toggles: a second press stops the bridge, and so does the call
+ending.
 
-1. A bridge on the gateway machine (Python `aiortc`, or a small Go/Pion peer)
-   that is a PipeWire client: capture `jawn_call_in.monitor` as the outgoing
-   track, and write the incoming track to `jawn_prompt` (the caller's
-   "microphone"). The plan's prompts pause while the bridge is up; the caller
-   is then simply talking to the person.
-2. Opus, mono, 20 ms frames; 8 kHz in and out is all the SCO link carries. The
-   house is on a tailnet, so ICE can use host candidates over Tailscale and
-   needs no STUN/TURN.
-3. Signalling over the manager's websocket (`offer`/`answer`/`ice` messages on
-   the phone channel), so the same session that reads the transcript also
-   offers the bridge. A route such as `POST /manager/sco/bridge` starts and
-   stops it per device.
-4. The face swaps its two buttons for the bridge's state while a connection is
-   up: *connected on this device*, with the same **Disconnect** and a way back
-   to **Connect phone**.
-
-The TODO is named in `JawnScreenFace.java` beside the two buttons.
+It lives in the Phone app's IVR pane today, which is where a second device
+(tablet, laptop) already has the house's session. The Android face still offers
+only **Connect phone** and **Disconnect**; a native WebRTC button there is the
+follow-up.
 
 ## The plan
 

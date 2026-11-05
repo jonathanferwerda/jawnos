@@ -226,4 +226,22 @@ sub playback_command {
 		. $SINK_OUT;
 }
 
+# The WebRTC bridge's own pair. A second application name on purpose: the plan's
+# helper keeps its streams, and both stay named so WirePlumber has no saved
+# route to restore onto the wrong device. 48 kHz because that is what Opus
+# speaks; PipeWire resamples the 8 kHz SCO link at the edges.
+sub bridge_capture_command {
+	my ($self) = @_;
+	return 'parec --client-name=jawn-sco-bridge --stream-name=jawn-sco-bridge'
+		. ' --raw --format=s16le --rate=48000 --channels=1 --latency-msec=20 --device='
+		. $SINK_IN . '.monitor';
+}
+
+sub bridge_playback_command {
+	my ($self) = @_;
+	return 'pacat --client-name=jawn-sco-bridge --stream-name=jawn-sco-bridge'
+		. ' --raw --format=s16le --rate=48000 --channels=1 --latency-msec=20 --playback --device='
+		. $SINK_OUT;
+}
+
 1;

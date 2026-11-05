@@ -78,6 +78,11 @@ sub answer {
 	if ($cmd eq 'cancel') {
 		return $gateway->cancel();
 	}
+	if ($cmd eq 'rtc') {
+		my %args = %{$request};
+		delete $args{'cmd'};
+		return $gateway->rtc(\%args);
+	}
 	if ($cmd eq 'ping') {
 		return { ok => 1, pong => time };
 	}

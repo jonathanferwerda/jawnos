@@ -3459,6 +3459,7 @@ body.dark_theme .inventory_details {
 	display: flex;
 	align-items: baseline;
 	justify-content: space-between;
+	flex-wrap: wrap;
 	gap: 8px;
 	margin-bottom: 6px;
 }
@@ -3481,3 +3482,14 @@ body.dark_theme .inventory_details {
 }
 .phone_transcript_bubble[who="caller"] { align-self: flex-start; }
 .phone_transcript_bubble.phone_transcript_partial { opacity: .55; font-style: italic; }
+
+.phone_transcript_connect {
+	font-size: 12px;
+	padding: 3px 10px;
+	border-radius: 999px;
+	border: 1px solid currentColor;
+	background: transparent;
+	cursor: pointer;
+	white-space: nowrap;
+}
+.phone_transcript_connect.on { font-weight: 600; }
