@@ -102,21 +102,35 @@ SKIP: {
 	like($help, qr/--in-cmd/, 'and names the caller capture it needs');
 }
 
-# ------------------------------------------------------------- the pane
+# ------------------------------------------------------------- the pane and the panel
 my $js = read_file("$repo/public/js/manager/phone.js");
+my $panel_js = read_file("$repo/public/js/manager/screening.js");
 like($js, qr/function jawnPhoneRtcConnect/, 'the Phone pane can start a bridge');
-like($js, qr/echoCancellation: true/, 'with the browser echo canceller on, which is the point');
-like($js, qr/iceServers: \[\]/, 'and no public relay: the tailnet owns the path');
-like($js, qr/action: 'start'/, 'telling the gateway to start');
-like($js, qr/function jawnPhoneRtcPushed/, 'and applying the answer that comes back on the socket');
+like($js, qr/jawnScreenRtcConnect/, 'through the one every page loads');
 like($js, qr/connect=me/, 'the face opens the page with the connect query');
 like($js, qr/jawnPhoneConnectMeWanted/, 'and the page presses Connect me once a call is up');
 like($js, qr/history\.replaceState/, 'stripping the query so a reload does not connect a second time');
+like($panel_js, qr/function jawnScreenRtcConnect/, 'the shared bridge can start a call');
+like($panel_js, qr/echoCancellation: true/, 'with the browser echo canceller on, which is the point');
+like($panel_js, qr/iceServers: \[\]/, 'and no public relay: the tailnet owns the path');
+like($panel_js, qr/action: 'start'/, 'telling the gateway to start');
+like($panel_js, qr/function jawnScreenRtcPushed/, 'and applying the answer that comes back on the socket');
+like($panel_js, qr/function jawnScreenPushed/, 'the screening announcement opens a panel');
+like($panel_js, qr/jawn_screening_lines/, 'with the transcript as bubbles');
+like($panel_js, qr#/manager/sco/status#, 'polled while it is up');
 my $ws = read_file("$repo/public/js/manager/websocket/01_message_handler.js");
 like($ws, qr/sco_rtc/, 'the websocket dispatcher knows the bridge event');
+like($ws, qr/sco_screen/, 'and the screening announcement');
+my $bundle = read_file("$repo/lib/JawnOS/Manager/Core1_tables_hooks.pm");
+like($bundle, qr{/js/manager/screening\.js}, 'the panel loads on every page, not only in the Phone app');
 my $tpl = read_file("$repo/templates/apps/phone.html.ep");
 like($tpl, qr/id="phone_transcript_connect"/, 'the pane has the button');
 like($tpl, qr/Connect me/, 'labelled Connect me');
+
+# the gateway tells every open window, and the line going free closes the panel
+like($gateway_pm, qr/_push_screen\('started'\)/, 'the gateway announces a screening');
+like($gateway_pm, qr/_push_screen\('ended'\)/, 'and that the line is free again');
+like($gateway_pm, qr/&Websocket::send\('tab'/, 'on the channel every window keeps open');
 
 # ------------------------------------------------------------- the installer
 my $deps = read_file("$repo/scripts/jawnos_deps.pl");

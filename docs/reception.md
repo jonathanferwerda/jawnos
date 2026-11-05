@@ -181,8 +181,21 @@ itself once the gateway reports a call - so the WebRTC stack lives in one place,
 the page, and the face carries a button rather than a second copy of it. The
 page strips the query at load, so a reload does not connect the device again.
 
-The tablet still only sees the call if it is looking at the house: a screening
-pushed to other devices' faces is the next step.
+### The panel on every device
+
+A screening is the house's business, not one pane's. When the gateway hears the
+line come up it pushes `sco_screen` (`state: started`) on the tab channel - the
+one every open window keeps, which the padlock gate does not hold back - and the
+same event with `state: ended` when the line frees. `public/js/manager/screening.js`
+draws a small floating panel with the live transcript (polled from
+`/manager/sco/status`, so a page that just woke catches up), **Connect me**,
+**Open Phone** and a dismiss. The Phone app's IVR pane suppresses the panel while
+it is showing, because the transcript is already there.
+
+The panel needs a page to be open. A tablet whose app is closed still hears
+nothing: reaching it means posting a notification to that device (the
+`notification_sender` mobile branch only targets the machine it runs on today,
+so cross-device delivery over the peer rail is the next step).
 
 ## The plan
 

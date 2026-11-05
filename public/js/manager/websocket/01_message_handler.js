@@ -70,8 +70,14 @@ function wsMessageDispatch(raw) {
 			jawnPhoneTranscriptPushed(data);
 		}
 		// The "Connect me" bridge's answer and candidates, on the same channel.
-		if (data['type'] === 'sco_rtc' && typeof jawnPhoneRtcPushed === 'function') {
-			jawnPhoneRtcPushed(data);
+		if (data['type'] === 'sco_rtc' && typeof jawnScreenRtcPushed === 'function') {
+			jawnScreenRtcPushed(data);
+		}
+		// A screening began or the line is free: every open window gets the
+		// floating panel, so a call answered by the receptionist is visible on
+		// the tablet and the laptop too, not only on the phone.
+		if (data['type'] === 'sco_screen' && typeof jawnScreenPushed === 'function') {
+			jawnScreenPushed(data);
 		}
 		// Every connect carries the tree's boot stamp. A new boot is the one
 		// event that drops a media grant, so that - not the length of a socket

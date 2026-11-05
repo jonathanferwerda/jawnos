@@ -636,6 +636,7 @@ our @manager_bundle_files = qw(
 	/js/manager/camera.js
 	/js/manager/internet.js
 	/js/manager/search.js
+	/js/manager/screening.js
 	/js/manager/phone.js
 	/js/manager/people.js
 );

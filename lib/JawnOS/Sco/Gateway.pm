@@ -408,6 +408,7 @@ sub end_call {
 	$self->{'state'} = 'idle';
 	$self->{'since'} = time;
 	$self->{'last_event'} = $why || 'line idle';
+	$self->_push_screen('ended');
 	$self->_send(cmd => 'quit');
 	$self->_reap();
 	$self->_stop_transcript();
@@ -630,6 +631,22 @@ sub _write_transcript_line {
 	};
 	$self->{'transcript_note'} = "could not save the transcript: $@" unless $ok;
 	return $ok ? 1 : 0;
+}
+
+# # A screening is the house's business, not one pane's: every open window hears
+# that the line was picked up and that it is free again, and draws the floating
+# panel from the status. The tab channel is the one every window keeps open and
+# the one the padlock gate does not hold back.
+sub _push_screen {
+	my ($self, $state) = @_;
+	return 0 unless defined &Websocket::send;
+	eval { &Websocket::send('tab', {
+		type => 'sco_screen',
+		state => $state,
+		call_id => $self->{'call_id'},
+		peer => $self->{'peer'},
+	}) };
+	return 1;
 }
 
 sub _push_transcript {
@@ -926,6 +943,7 @@ sub event {
 		$self->{'since'} = time;
 		$self->{'accepted_at'} = time;
 		$self->{'peer'} = $event->{'peer'} || $self->{'peer'};
+		$self->_push_screen('started');
 		$self->{'step_at'} = -1;
 		$self->_advance();
 	}
@@ -957,6 +975,7 @@ sub event {
 	elsif ($name eq 'closed' || $name eq 'stopped') {
 		$self->{'last_event'} = $name;
 		$self->{'state'} = $self->{'state'} eq 'done' ? 'done' : 'idle';
+		$self->_push_screen('ended');
 		$self->{'since'} = time;
 		$self->_reap();
 		$self->_stop_transcript();
@@ -989,6 +1008,7 @@ sub cancel {
 		$self->{'mixer'}->detach();
 	}
 	return { ok => 1, state => $self->{'state'} } if $self->{'state'} eq 'idle';
+	$self->_push_screen('ended');
 	$self->_send(cmd => 'quit');
 	$self->_reap();
 	$self->_stop_transcript();
