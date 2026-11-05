@@ -209,6 +209,7 @@ sub arm {
 		$self->{'state'} = 'waiting';
 		$self->{'gone'} = 0;
 		$self->{'accepted_at'} = 0;
+		$self->{'done_at'} = 0;
 		$self->write_status();
 		$self->watch_streams();
 		$self->watch_call();
@@ -289,13 +290,12 @@ sub watch_streams {
 		# or a stream re-created when the link re-establishes - so move again
 		# every second rather than trusting the one move made at attach.
 		$mixer->attach($self->{'peer'});
-		# The phone holds a screened call up to its own 40 s limit and hangs up
-		# then. A finished plan therefore keeps its line until the streams go or
-		# that limit passes - arming over it spoke a second plan into the same
-		# call, which the caller heard as the greeting starting again.
-		return unless $state eq 'done';
-		my $since = $self->{'accepted_at'} || $self->{'since'} || time;
-		$self->end_call('call limit') if time - $since >= 42;
+		my $why = &call_over(
+			$state,
+			($self->{'done_at'} ? time - $self->{'done_at'} : undef),
+			($self->{'accepted_at'} ? time - $self->{'accepted_at'} : undef),
+		);
+		$self->end_call($why) if length $why;
 	});
 	return 1;
 }
@@ -306,6 +306,7 @@ sub end_call {
 	$self->{'quiet'} = 0;
 	$self->{'gone'} = 0;
 	$self->{'accepted_at'} = 0;
+	$self->{'done_at'} = 0;
 	$self->{'steps'} = [];
 	$self->{'step_at'} = 0;
 	return 1 if $self->{'state'} eq 'idle';
@@ -316,6 +317,23 @@ sub end_call {
 	$self->_reap();
 	$self->write_status();
 	return 1;
+}
+
+## A plan that has finished is done with the line
+##
+## The caller has heard the thanks; the phone is only holding the call until its
+## own forty-second limit, so the gateway can be free for the next call a few
+## seconds later. It used to wait for that limit, and a call arriving in the
+## three-quarters of a minute that followed found a gateway still busy - the
+## caller heard silence until the next arm. Arming over the finished call cannot
+## greet it twice: a fresh helper speaks only once a frame carries audio.
+sub call_over {
+	my ($state, $since_done, $since_accepted) = @_;
+	return 'plan done' if $state eq 'done'
+		&& defined $since_done && $since_done >= 4;
+	# a step that never ends must not hold the line forever either
+	return 'call limit' if defined $since_accepted && $since_accepted >= 42;
+	return '';
 }
 
 sub stop_watch {
@@ -393,6 +411,7 @@ sub _advance {
 	unless ($step) {
 		$self->{'state'} = 'done';
 		$self->{'since'} = time;
+		$self->{'done_at'} = time;
 		$self->write_status();
 		return;
 	}

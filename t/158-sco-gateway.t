@@ -243,6 +243,16 @@ is($gateway->recording_path('.hidden'), '', 'a dot file is not served');
 	ok(JawnOS::Sco::Mixer->can('call_active'), 'the mixer can say whether a call is being fed');
 	like(read_file("$repo/perl/Reception.pl"), qr/\$state eq 'in_call' \|\| \$state eq 'done'/,
 		'a finished plan is not armed over');
+	# A finished plan lets go of its line quickly: the caller has heard the
+	# thanks, and the phone is only holding the call for its own limit.
+	is(JawnOS::Sco::Gateway::call_over('done', 3, 30), '',
+		'a finished plan keeps its line for a moment');
+	is(JawnOS::Sco::Gateway::call_over('done', 5, 30), 'plan done',
+		'then the gateway is free for the next call');
+	is(JawnOS::Sco::Gateway::call_over('in_call', undef, 50), 'call limit',
+		'a step that never ends is bounded');
+	is(JawnOS::Sco::Gateway::call_over('in_call', undef, 10), '',
+		'a live call is left alone');
 }
 
 my $cancelled = $gateway->cancel();

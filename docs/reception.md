@@ -100,12 +100,14 @@ the first time a call needs them.
    onto our devices at every arm and again once a second while the call is being
    fed. A pair left on the laptop's own sink and microphone is the room on the
    caller's ear and silence in our recording.
-7. A finished plan (`done`) keeps its line until the phone's streams go (three
-   seconds of absence, because a re-route drops them for a moment) or its own
-   40 s call limit passes - the phone answers a screened call and only hangs up
-   on that limit or the caller. Then the helper is put down and the gateway is
-   idle; Reception arms only from `idle`/`armed`/`waiting`, so a line that is
-   still breathing is never served a second plan.
+7. A finished plan (`done`) lets go of its line four seconds after the thanks:
+   the caller has heard it and the phone is only holding the call for its own
+   40 s limit, so a call placed straight after the last one is not left waiting
+   on a busy gateway. A step that never ends is bounded at 42 s, and a pair of
+   streams that stay away for three seconds ends it sooner. Then the helper is
+   put down and the gateway is idle; Reception arms only from
+   `idle`/`armed`/`waiting`, and a fresh helper speaks only once a frame carries
+   audio, so the finished call cannot be greeted twice.
 
 ## Known limits
 
