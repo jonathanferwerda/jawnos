@@ -51,7 +51,7 @@
 				<% if ($ap->{'payment_type'}) { %>data-payment="<%= $ap->{'payment_type'} %>"<% } %>
 				<% if ($ap->{'app'} eq $current_account) { %>
 					selected
-				<% } %>
+				<% } %>>
 				<%= $ap->{'formatted_name'} %>
 			</option>
 		<% } %>

@@ -1,9 +1,9 @@
 <div id="studio_plug_select" channel="<%= $channel %>" direction="<%= $direction %>">
 
-	<h3>Channel <%= $channel %> <%= &subs::format_name($direction) %>s <span style="float:right;"><img src="<%= &subs::icon_for('/images/make believe/cancel_button.png') %>" hint="Close" class="hover little_thumb close_plug_select"></h2>
+	<h3>Channel <%= $channel %> <%= &subs::format_name($direction) %>s <span style="float:right;"><img src="<%= &subs::icon_for('/images/make believe/cancel_button.png') %>" hint="Close" class="hover little_thumb close_plug_select"></span></h3>
 	<table>
 		<thead>
-			<th></th><th></th>
+			<tr><th></th><th></th></tr>
 		</thead>
 		<tbody>
 			<% foreach my $av ( @{$constraints->{'all'}} ) {

@@ -58,7 +58,7 @@
 		</tbody>
 	</table>
 	<datalist id="budget_reconcile_apps">
-		<% foreach my $app_choice ( @{$app_choices || []} ) { %><option value="<%= $app_choice %>"><% } %>
+		<% foreach my $app_choice ( @{$app_choices || []} ) { %><option value="<%= $app_choice %>"></option><% } %>
 	</datalist>
 
 	<h4><%= &subs::ui('In Budget, not on the statement') %></h4>

@@ -7,12 +7,12 @@
 	</div>
 	<table style="width:100%;">
 		<thead style="font-size:24px;">
-			<th class="hover">M</th>
+			<tr><th class="hover">M</th>
 			<th class="hover">Name</th>
 			<th class="hover">Types</th>
 			<th class="hover">Formulas</th>
 			<th class="hover">App</th>
-			<th class="hover">PV</th>
+			<th class="hover">PV</th></tr>
 		</thead>
 		<tbody>
 
@@ -44,13 +44,14 @@
 							<%= &subs::format_name($measures->{$m}->{'app'}) %><br>
 							<%= &subs::format_name($measures->{$m}->{'app_measure'}) %>
 						<% } %>
+					</td>
 					<td class="measures_pv hover" app="<%= $measures->{$m}->{'app'} %>" measure="<%= $measures->{$m}->{'app_measure'} %>"><%= $measures->{$m}->{'pv'} || 'PV' %></td>
 				</tr>
 				<tr>
 					<td colspan="6" class="measure_editor_container" uuid="<%= $measures->{$m}->{'uuid'} %>" style="display:none;"><%= include 'measures/edit', measure => $measures->{$m} %></td>
 				</tr>
 			<% } %>
-		<tbody>
+		</tbody>
 	</table>
 
 

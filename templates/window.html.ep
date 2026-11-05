@@ -1,6 +1,6 @@
 <div class="wind" id="window_<%= $timestamp %>" style="background-color:var(--window, var(--panel));position:fixed;bottom:0px;left:0px;width:400px;height:500px">
 	<div class="window_topbar" style="border:solid;background-color:<%= $c %>;position;fixed;" 
-		app="<%= $type->{'app'} %>'"><span class="appointment_name"><%= $formatted_name %>
+		app="<%= $type->{'app'} %>"><span class="appointment_name"><%= $formatted_name %>
 		<span style="float:right;">
 			<button id="window_<%= $timestamp %>_minify" 
 				onClick="$(\'#window_<%= $timestamp %>\').hide(); 
@@ -15,6 +15,7 @@
 					$(\'#little_window_<%= $timestamp %>\').remove()">X
 			</button>
 		</span>
+			</span>
 	</div>
 	<span class="window_contents" style="overflow:scroll;"><%= $contents %></span>
 </div>
@@ -22,7 +23,7 @@
 	var w = $("#window_<%= $timestamp %>");
 	w.draggable();w.resizable();
 	$('#main_display').css({ 'display':'flex', 'height':'93%', 'width': '93%' });
-	var wl = $("#little_window_' . $timestamp . '");
+	var wl = $("#little_window_<%= $timestamp %>");
 </script>
 <div class="little_window" style="display:none;" id="little_window_<%= $timestamp %>" 
 	onClick="$(\'#window_<%= $timestamp %>\').show(); $(\'#little_window_<%= $timestamp %>\').hide()"><%= $formatted_name %>

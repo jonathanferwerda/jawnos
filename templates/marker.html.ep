@@ -52,12 +52,12 @@
 				my $colours = eval { return decode_json $settings->{'colours'} } || [];
 				if (scalar @{$colours} > 0) { %>
 					<% foreach my $colour ( @{$colours} ) { %>
-						<input type="color" style="width:45%;" uuid="<%= $colour->{'uuid'} %>" id="marker_colour" class="marker_colour" value="<%= $colour->{'colour'} %>" />
+						<input type="color" style="width:45%;" uuid="<%= $colour->{'uuid'} %>" id="marker_colour_<%= $colour->{'uuid'} %>" class="marker_colour" value="<%= $colour->{'colour'} %>" />
 						<button class="marker_colour_remove" uuid="<%= $colour->{'uuid'} %>">-</button><br>
 					<% } %>
 				<% } else { %>
 					<% my $uuid = &subs::random_string_creator(10); %>
-					<input type="color" style="width:45%;" uuid="<%= $uuid %>" id="marker_colour" class="marker_colour" value="#000000" />
+					<input type="color" style="width:45%;" uuid="<%= $uuid %>" id="marker_colour_<%= $uuid %>" class="marker_colour" value="#000000" />
 					<button class="marker_colour_remove" uuid="<%= $uuid %>">-</button><br>
 				<% } %>
 				<script>

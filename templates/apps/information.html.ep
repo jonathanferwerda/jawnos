@@ -29,7 +29,7 @@
 			<% foreach my $oc ( keys %{$d->{'options'}} ) { %>
 				<tr>
 					<% foreach my $o ( @{$d->{'options'}->{$oc}} ) { %>
-						<td><%= &subs::format_name($o->{'name'}) %>
+						<td><%= &subs::format_name($o->{'name'}) %></td>
 						<% foreach my $col ( @mcols ) { %>
 							<td>
 								<% if ($col eq 'total' && $o->{$col} == 0) { %>

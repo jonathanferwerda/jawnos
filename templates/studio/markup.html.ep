@@ -147,7 +147,7 @@
 			<%= include 'studio/song_select', songs => $songs, last_song => $last_song %>
 			<img id="studio_save" hint="Save" style="vertical-align:top;" class="little_thumb hover" src="<%= &subs::icon_for('/images/decipherable/diskette.png') %>">
 			<img id="studio_delete" hint="Delete" style="vertical-align:top;" class="little_thumb hover" src="<%= &subs::icon_for('/icons/trash.png') %>">
-			<img class="little_thumb hover" hint="Configure" src="<%= &subs::icon_for('/images/decipherable/gear.png') %>" id="studio_config_toggle"><br>
+			<img class="little_thumb hover studio_config_toggle_close" hint="Configure" src="<%= &subs::icon_for('/images/decipherable/gear.png') %>" id="studio_config_close"><br>
 			<input type="hidden" id="studio_name">
 		</div>
 		<div>

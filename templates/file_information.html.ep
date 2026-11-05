@@ -17,7 +17,7 @@
 	<input type="checkbox" <% unless ($file->{'visible'} eq 'unchecked') { %>checked<% } %>>Visible<br>
 	<input class="warranty time file_information_updater" timestamp="<%= $file->{'warranty'} || $appt->{'warranty'} %>" attribute="warranty">
 	<img src="<%= &subs::icon_for('/images/decipherable/gallery.png') %>" hint="Gallery" class="medium_thumb gallery_open">
-	<div id="thumbnail_gallery" height="100px;
+	<div id="thumbnail_gallery" height="100px;">
 	<% foreach my $ap ( @{$appts->{$app}->{'list'}} ) { %>hi
 		<% foreach my $f ( @{$ap->{'files'}} ) { %>
 			<% if ($f->{'type'} eq 'image') { %>
@@ -30,4 +30,5 @@
 
 
 
+</div>
 </div>

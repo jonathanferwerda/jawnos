@@ -25,8 +25,8 @@
 					<td><b><u class="hover budget_account" account="total" colour="black">Total</u></b></td>
 					<td><u><%= &subs::price_formatter($total_balance) %></u></td>
 					<td><u><%= &subs::price_formatter($total_available) %></u></td>
-					<td><u><%= &subs::price_formatter($total_minimum) %></td>
-					<td><u><%= &subs::price_formatter($total_delta) %></td>
+					<td><u><%= &subs::price_formatter($total_minimum) %></u></td>
+					<td><u><%= &subs::price_formatter($total_delta) %></u></td>
 				</tr>
 			</tbody>
 		</table>
@@ -267,7 +267,7 @@
 			<span id="budget_payable_message"></span>
 		</div>
 		<datalist id="budget_payable_apps">
-			<% foreach my $pa ( @{$payable_apps || []} ) { %><option value="<%= $pa %>"><% } %>
+			<% foreach my $pa ( @{$payable_apps || []} ) { %><option value="<%= $pa %>"></option><% } %>
 		</datalist>
 		<h3 style="margin-bottom:4px;"><%= &subs::ui('Scheduled bills') %></h3>
 		<% if (scalar @{$schedules || []}) { %>
@@ -442,7 +442,7 @@
 						<% } %>
 					<% } %>
 					<tr style="font-size:24px;">
-						<td><b>Total <%= &subs::format_name($d) %></u></b></td>
+						<td><b>Total <%= &subs::format_name($d) %></b></td>
 						<% foreach my $col ( @{$columns} ) { %>
 							<% unless ($col eq 'app') { %>
 								<td><b><u>
@@ -457,8 +457,9 @@
 					</tr>
 				</tbody>
 				<% } %>
+				<tbody>
 					<tr style="font-size:26px;">
-						<td><b>Total</u></b></td>
+						<td><b>Total</b></td>
 						<% foreach my $col ( @{$columns} ) { %>
 							<% unless ($col eq 'app') { %>
 								<td style="border-bottom: 3px double;">

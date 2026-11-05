@@ -95,7 +95,7 @@
 			<% } %>
 		</div>
 		<% if ($task->{'subsidiaries'}) { %>
-			<b><%= &subs::format_name($task->{'task'}) %>
+			<b><%= &subs::format_name($task->{'task'}) %></b>
 			<%= $task->{'subsidiaries'}->{'html'} %>
 		<% } %>
 	<% } %>

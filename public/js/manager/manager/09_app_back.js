@@ -313,7 +313,7 @@ function centreViewWriter(response) {
 function appointmentGrabber(app,timestamp,source) {
 	var waiter = 0;
 	if (timestamp == '') {
-		timestamp = Date.now();
+		timestamp = jawnosWindowTimestamp();
 	}
 	if (source == 'onchange') {
 		waiter = 500;

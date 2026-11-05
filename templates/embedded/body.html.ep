@@ -184,7 +184,7 @@
 				<img class="little_thumb" id="embedded_ota_uploader_wait" style="display:none;" src="<%= &subs::icon_for('/images/make believe/delay_button.png') %>" hint="Delay">
 				<img class="little_thumb" id="embedded_ota_uploader_success" style="display:none;" src="<%= &subs::icon_for('/images/make believe/good.png') %>" hint="Good">
 				<img class="little_thumb" id="embedded_ota_uploader_fail" style="display:none;" src="<%= &subs::icon_for('/images/make believe/bad.png') %>" hint="Bad">
-				<b<span id="embedded_ota_uploader_percentage" style="vertical-align:top;font-size:26px;"></span></b>
+				<b><span id="embedded_ota_uploader_percentage" style="vertical-align:top;font-size:26px;"></span></b>
 			<% } else { %>
 				<!-- esp32 boards: OTA streams a picked .bin over wifi, or USB has the manager
 				     run the PlatformIO upload on the machine the board is plugged into -->
@@ -202,6 +202,7 @@
 				<% foreach my $m ( keys %{$embedded->{'mac_addresses'}} ) { %>
 					<tr><td><%= &subs::format_name($m) %></td><td><%= $embedded->{'mac_addresses'}->{$m} %></td></tr>
 				<% } %>
+				</tbody></table>
 			<% } %>
 		<% } elsif ($view eq 'pins') { %>
 			<br>

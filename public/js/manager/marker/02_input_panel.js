@@ -357,7 +357,7 @@ function markerInfoGrabber() {
 	var marker = {
 		tool: localStorage.getItem('marker_tool'),
 		transparency: $('#marker_transparency').val() || 1,
-		colour: $('#marker_colour').val() || 'navy',
+		colour: $('.marker_colour').first().val() || 'navy',
 		size: $('#marker_size').val(),
 		flipbook_interval: $('#flipbook_interval').val()
 	};

@@ -475,7 +475,7 @@ $(document).on('click', '#studio_prev, #studio_next', function() {
 	studioTimeDisplay()
 });
 
-$(document).on('click', '#studio_config_toggle', function() {
+$(document).on('click', '#studio_config_toggle, .studio_config_toggle_close', function() {
 	var config = $('#studio_config');
 	var controls = $('#studio_controls');
 	var mixer = $('#studio_mixer');

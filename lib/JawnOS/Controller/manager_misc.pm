@@ -159,8 +159,11 @@ sub action_875 {
 
 	unless ($claimed) { $c->render(json => { ok => 0, error => 'none of those files are unclaimed' }); return; }
 	&subs::db_update('appointments', { file => encode_json(\@target_files), server_time => &subs::rightNow() }, { app => $app, uuid => $uuid });
-	&centre_view_grabber({ c => $c, app => $app, timestamp => &subs::rightNow(), cached => 'no' });
-	&centre_view_grabber({ c => $c, app => 'camera', timestamp => &subs::rightNow(), cached => 'no' });
+	# Two new windows from one request: their timestamps are their ids, and
+	# rightNow() is second-precision, so the second must not repeat the first.
+	my $win_stamp = &subs::rightNow();
+	&centre_view_grabber({ c => $c, app => $app, timestamp => $win_stamp, cached => 'no' });
+	&centre_view_grabber({ c => $c, app => 'camera', timestamp => $win_stamp + 1, cached => 'no' });
 	$c->render(json => { ok => 1, claimed => $claimed });
 }
 

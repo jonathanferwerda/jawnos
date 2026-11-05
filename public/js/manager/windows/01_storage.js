@@ -144,7 +144,6 @@ function windowRetriever() {
 	$.each(storage, function(i,v) {
 		if (v.type == 'window') {
 			var app = JSON.stringify({ name: i });
-			var timestamp = Date.now();
 			appWindowLoader(i,v);
 		}
 		else if (v.type == 'keyboard') {
@@ -201,7 +200,7 @@ function appWindowLoader(i,v) {
 	var json_storage = storage || sessionStorage.getItem('window_storage');
 	var storage = JSON.parse(json_storage) ? JSON.parse(json_storage) : {};
 	if (!v) { v = storage[i] };
-	appWindowOpener(i, Date.now(), v);
+	appWindowOpener(i, jawnosWindowTimestamp(), v);
 }
 
 // Load (or reload) a window the right way for its app: some apps have bespoke
@@ -214,6 +213,7 @@ function appWindowOpener(i,timestamp,v) {
 	if (!i) {
 		return;
 	}
+	timestamp = jawnosWindowTimestamp(timestamp);
 	if (typeof jawnosLoadApp === 'function') {
 		jawnosLoadApp(i, function () { appWindowOpenerNow(i, timestamp, v); });
 		return;
@@ -226,7 +226,7 @@ function appWindowOpenerNow(i,timestamp,v) {
 		return;
 	}
 	v = v || {};
-	timestamp = timestamp || Date.now();
+	timestamp = timestamp || jawnosWindowTimestamp();
 	// Every window the guide opens is one it may want to look over: if the app's
 	// name does not match its part of speech, the guide sets the right one. The
 	// server marks what it has seen, so this is a no-op after the first time and

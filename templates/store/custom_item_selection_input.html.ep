@@ -34,6 +34,7 @@
 		<tr>
 			<td><b>Save To Item</b></td>
 			<td><input type="checkbox" class="custom_item_attribute" att="save_to_item"></td>
+		</tr>
 	</tbody>
 </table>
 <img src="<%= &subs::icon_for('/images/decipherable/diskette.png') %>" hint="<%= &subs::lang('common.save') %>" class="little_thumb hover custom_item_selection_save">

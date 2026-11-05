@@ -17,7 +17,7 @@
 		<% foreach my $proj ( @{$projects} ) { %>
 			<% my $p_appts = &subs::db_select('appointments', undef, { app => $proj->{'app'} })->hashes; %>
 			<tr>
-				<td onclick="appointmentGrabber('<%= $proj->{'app'} %>');"><b><%= &subs::format_name($proj->{'app'}) %></td>
+				<td onclick="appointmentGrabber('<%= $proj->{'app'} %>');"><b><%= &subs::format_name($proj->{'app'}) %></b></td>
 				<td><%= scalar @{$p_appts} %></td>
 				<td>
 					<select class="app_setting" attribute="t_project" style="max-width=50%;">

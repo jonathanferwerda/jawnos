@@ -8,6 +8,25 @@
    [[/js-split]] */
 
 var windows = [];
+
+// A window's identity is its timestamp: window_<timestamp>,
+// window_contents_<timestamp>, little_window_<timestamp>. Date.now() alone is
+// not enough - a restore opens the whole desk in one pass, so several windows
+// would mint the same millisecond and share one id, and closeWindow() (which
+// addresses a window by id) could then take the wrong one down with it. This
+// hands out a stamp no window on this page has used.
+// [[window-timestamp]]
+var jawnosLastWindowStamp = 0;
+function jawnosWindowTimestamp(requested) {
+	var stamp = parseInt(requested, 10);
+	if (isNaN(stamp) || stamp <= 0) { stamp = Date.now(); }
+	if (stamp <= jawnosLastWindowStamp) { stamp = jawnosLastWindowStamp + 1; }
+	while (document.getElementById('window_' + stamp)) { stamp++; }
+	jawnosLastWindowStamp = stamp;
+	return stamp;
+}
+// [[/window-timestamp]]
+
 var appt_containers = {
 	're_details': 'det',
 	'inventory_details': 'inventory',
