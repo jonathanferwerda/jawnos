@@ -238,6 +238,16 @@ while (1) {
 	refuse("the branch does not rebase onto origin/$opt{'trunk'}:\n$rout");
 }
 
+# --- nothing to land is a refusal, not an empty bump -----------------------
+# Re-running the gate on a branch already merged would otherwise rebase to zero
+# commits, bump VERSION and amend *trunk's* tip - a duplicate version on a commit
+# that was not this agent's. An agent told to "just land again" must get a clear
+# no, not a rewritten trunk.
+my ($nrc, $ahead) = git('rev-list', '--count', "origin/$opt{'trunk'}..HEAD");
+refuse("nothing to land: $branch has no commits ahead of origin/$opt{'trunk'} "
+	. '(it is already merged)')
+	if $nrc == 0 && ($ahead // '') eq '0';
+
 # --- the suite is the gate ------------------------------------------------
 
 say_step("running the suite (--jobs $opt{'jobs'})");

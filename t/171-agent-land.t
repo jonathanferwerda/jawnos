@@ -302,4 +302,20 @@ subtest 'a landing can drop its worktree' => sub {
 	isnt($code, 0, 'and its branch is deleted');
 };
 
+subtest 're-running the gate on an already-merged branch refuses' => sub {
+	my $f = fixture();
+	commit_in_worktree($f, 'note.txt', "a\n", 'v0.1.1 - add a note');
+
+	my ($first) = land($f);
+	is($first, 0, 'the first landing succeeds');
+
+	my ($rc, $out) = land($f);
+	is($rc, 1, 'the second run refuses') or diag($out);
+	like($out, qr/nothing to land/, 'because the branch is already merged');
+
+	my (undef, $count) = git($f->{'primary'}, 'rev-list', '--count', 'origin/main');
+	is($count, 2, 'and trunk did not grow a duplicate commit');
+	is(read_file("$f->{'primary'}/VERSION"), "0.1.2\n", 'nor a duplicate version');
+};
+
 done_testing();
