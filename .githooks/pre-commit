@@ -1,14 +1,48 @@
 #!/bin/sh
 # pre-commit - keep the baked Coding-agent protocols in step with AGENTS.md.
 #
-# AGENTS.md is gitignored (it carries fixtures and a login-token path), so it
-# cannot ride the repo. Its protocol sections are baked into a tracked file the
-# Coding agent reads on every machine; this regenerates that file whenever
-# AGENTS.md changes and stages it, so the commit carries the update.
+# It also refuses a commit made in the primary checkout while any worktree
+# exists: agent work belongs in a worktree, and the lander cannot move the
+# primary onto a commit made in it. The refusal prints the move recipe;
+# JAWNOS_ALLOW_PRIMARY_COMMIT=1 is the deliberate single-agent override.
 #
 # Enable once per clone:   git config core.hooksPath .githooks
 # Bypass for a moment:     git commit --no-verify
 cd "$(git rev-parse --show-toplevel)" || exit 0
+
+# The primary checkout is the first worktree git lists. A linked worktree is a
+# place to work; the primary is the place the dev server runs, and a commit
+# there cannot be landed by the gate (it moves the primary, it does not replay
+# a commit from it). One worktree is the single-agent case and stays allowed.
+if [ "${JAWNOS_ALLOW_PRIMARY_COMMIT:-0}" != "1" ]; then
+	primary=""
+	count=0
+	while IFS= read -r line; do
+		case "$line" in
+			"worktree "*) count=$((count + 1)); [ -n "$primary" ] || primary=${line#worktree } ;;
+		esac
+	done <<EOF
+$(git worktree list --porcelain 2>/dev/null)
+EOF
+	current=$(git rev-parse --show-toplevel 2>/dev/null)
+	if [ "$count" -gt 1 ] && [ -n "$primary" ] && [ "$primary" = "$current" ]; then
+		cat >&2 <<MSG
+commit refused: this is the primary checkout at $primary.
+
+Agent work belongs in a worktree. Move what is staged and unstaged:
+    git stash push --include-untracked -m "move to worktree"
+    git worktree add .worktrees/<task> -b agent/<task> origin/main
+    cd .worktrees/<task> && git stash pop
+
+Then land from the worktree with:
+    perl ~/jawnos/scripts/agent_land.pl
+
+On purpose, working alone? Set JAWNOS_ALLOW_PRIMARY_COMMIT=1.
+MSG
+		exit 1
+	fi
+fi
+
 command -v perl >/dev/null 2>&1 || exit 0
 
 # The repository index is generated from the tree and read by the nightly agent.

@@ -113,7 +113,20 @@ rebase immediately before running the gate:
   while someone is mid-task. It also deletes `origin/agent/*` backup branches whose work is on the
   trunk (`--remote-only` for just that), which is what keeps GitHub's branch list clean. A worktree
   whose directory is gone is reclaimed with `git worktree prune` (the sweep does that too).
-- `config.json` is tracked with fixed ports (3000/3001). Do not run a server from a worktree, and do
-  not run server-binding tests in parallel with another agent.
-- `database/` is empty there. Seed a test database; never point one at `database/jawnos.db`.
+- `config.json` is **not tracked** (it is gitignored), so a worktree has none and a script that
+  boots the app will stop asking for it. Copy the primary checkout's file: `cp ../../config.json .`.
+  The ports stay fixed (3000/3001/3001). Do not run a server from a worktree, and do not run
+  server-binding tests in parallel with another agent.
+- `database/` is empty there. Build a test database from the shipped schema, which carries every
+  table (the factory seed can predate one):
+  `rm -f database/jawnos.db && sqlite3 database/jawnos.db < database/schema.sql`.
+  Never point a worktree at the live `database/jawnos.db`.
 - `perl/` and `lib/` are reached by cwd-relative `require`, so run commands from the worktree root.
+- Land from here with `perl ~/jawnos/scripts/agent_land.pl`, the **primary checkout's** copy: a
+  worktree's own copy can be behind. The gate refuses while the primary checkout has tracked changes,
+  so keep that checkout clean.
+- Enable the shared hooks once per clone: `git config core.hooksPath .githooks`. The pre-commit
+  hook refuses a commit in the primary checkout while any worktree exists and prints the
+  `stash` → `worktree add` → `stash pop` recipe. It moves no files by itself; the deliberate
+  single-agent override is `JAWNOS_ALLOW_PRIMARY_COMMIT=1`.
+- `.worktrees/` is gitignored, so a worktree never shows in the primary checkout's `git status`.

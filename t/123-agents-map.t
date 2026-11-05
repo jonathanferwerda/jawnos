@@ -1,14 +1,17 @@
-# tests-for: AGENTS.md docs/ lib/JawnOS/Domain/Records.pm lib/JawnOS/Controller/manager_configure5.pm scripts/records_audit.pl scripts/records_recover.pl
+# tests-for: AGENTS.md .gitignore docs/ lib/JawnOS/Domain/Records.pm lib/JawnOS/Controller/manager_configure5.pm scripts/records_audit.pl scripts/records_recover.pl
 # covers:    the per-request map stays a map - a hard size budget, every
 #           reference doc it points at exists, and the two safety rules keep
-#           their command and pointer. The records rationale also sits at the
-#           point of use, so an agent editing the repair path meets it without
-#           the map.
+#           their command and pointer. The concurrency on-ramp (worktree, test
+#           setup, primary lander) is pinned too, so an agent cannot be handed a
+#           doc that no longer says how to work here. The records rationale also
+#           sits at the point of use, so an agent editing the repair path meets
+#           it without the map.
 
 use strict;
 use warnings;
 
 use FindBin;
+use File::Slurp qw(read_file);
 use Test::More;
 
 my $root = "$FindBin::Bin/..";
@@ -57,5 +60,22 @@ for my $file (qw(
 	close $src;
 	like($code, qr{docs/AGENTS-records\.md}, "$file carries the records pointer");
 }
+
+# --- the concurrency on-ramp an agent has to find --------------------------
+like($text, qr/Worktree per task/, 'the map names the worktree-per-task rule');
+like($text, qr{perl ~/jawnos/scripts/agent_land\.pl},
+	'the map names the primary checkout lander, not the worktree copy');
+
+my $concurrency = read_file("$root/docs/AGENTS-concurrency.md");
+like($concurrency, qr/config\.json` is \*\*not tracked\*\*/,
+	'the worktree doc says config.json is not tracked');
+like($concurrency, qr/cp \.\.\/\.\.\/config\.json \./,
+	'and gives the copy that lets the suite boot');
+like($concurrency, qr/sqlite3 database\/jawnos\.db < database\/schema\.sql/,
+	'the worktree doc builds a test database from the schema');
+like($concurrency, qr{perl ~/jawnos/scripts/agent_land\.pl},
+	'the worktree doc lands through the primary checkout\'s lander');
+like(read_file("$root/.gitignore"), qr{^/\.worktrees/$}m,
+	'.worktrees is ignored, so a worktree cannot dirty the primary checkout');
 
 done_testing();
