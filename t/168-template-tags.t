@@ -43,6 +43,7 @@ my %auto_close = (
 my @self_contained = qw(
 	templates/appointment_wrapper.html.ep
 	templates/configure/appointment_list.html.ep
+	templates/configure/crypto_setting_list.html.ep
 	templates/apps/inventory.html.ep
 	templates/apps/account.html.ep
 	templates/apps/project.html.ep
@@ -52,6 +53,10 @@ my @self_contained = qw(
 	templates/apps/app_measure_details.html.ep
 	templates/budget/statement.html.ep
 	templates/budget_reconcile.html.ep
+	templates/embedded/body.html.ep
+	templates/embedded/embedded.html.ep
+	templates/terminal/body.html.ep
+	templates/terminal/terminal.html.ep
 	templates/homepage.html.ep
 	templates/manager.html.ep
 	templates/keyboard.html.ep
@@ -71,15 +76,9 @@ my @self_contained = qw(
 	templates/layouts/library.html.ep
 );
 
-# Named exceptions, each closed by another file rather than by itself:
-#   embedded/embedded.html.ep opens #embedded; embedded/body.html.ep closes it.
-#   terminal/body.html.ep opens the terminal root; terminal/terminal.html.ep closes it.
-#   configure/crypto_setting_list.html.ep opens one div in an if/else, closed once.
-my %closed_by_parent = map { $_ => 1 } qw(
-	templates/embedded/embedded.html.ep
-	templates/terminal/body.html.ep
-	templates/configure/crypto_setting_list.html.ep
-);
+# No template is allowed to leave an element for another file to close: the
+# embedded page and the terminal page used to do that, and the crypto panel
+# opened its div in both halves of an if/else. All three now stand on their own.
 
 sub line_at {
 	my ($text, $offset) = @_;
@@ -198,8 +197,8 @@ for my $rel (@self_contained) {
 is_deeply( \@imbalance, [], 'the self-contained templates open and close the same elements' )
 	or diag( join "\n", @imbalance );
 
-for my $rel ( sort keys %closed_by_parent ) {
-	ok( -f "$root/$rel", "$rel still exists and is still a deliberate open partial" );
+for my $rel ( @self_contained ) {
+	ok( -f "$root/$rel", "$rel is still a template" );
 }
 
 # The shapes that were wrong, pinned in the on-screen markup.

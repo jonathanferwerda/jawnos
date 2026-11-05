@@ -8,3 +8,4 @@
 	    (--panel/--panel-2/--line/--ink) and so follow the light and dark themes. %>
 	<%= include 'embedded/style' %>
 	<%= include 'embedded/body', destinations => $destinations %>
+</div>

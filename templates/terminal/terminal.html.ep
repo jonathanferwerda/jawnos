@@ -13,4 +13,3 @@
 %>
 
 <%= include 'terminal/body', active_shell => $active_shell, active_view => $active_view, error_count => $error_count, errors_shown => $errors_shown, log_count => $log_count, logs_shown => $logs_shown, machine_list => $machine_list, me => $me, session_rows => $session_rows %>
-</div>

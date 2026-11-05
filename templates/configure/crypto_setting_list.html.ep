@@ -32,12 +32,8 @@
 		$rate_of{ $a->{'code'} } = (defined $v && defined $to_base && $to_base > 0) ? $v / $to_base : undef;
 	}
 %>
-<% if ($pay_section) { %>
-<div class="crypto_panel" style="max-width:none;padding:0;">
-<% } else { %>
-<div class="cfg crypto_panel" style="max-width:none;padding:0;">
-	<h2>Crypto</h2>
-<% } %>
+<div class="<% if (!$pay_section) { %>cfg <% } %>crypto_panel" style="max-width:none;padding:0;">
+<% unless ($pay_section) { %><h2>Crypto</h2><% } %>
 	<p class="cfg-note">A wallet is an account that holds a coin. JawnOS keeps its public address and reads what it holds at the shared rate — it never holds a key, cannot spend, and will refuse anything that looks like a seed phrase. Every conversion in the app (including a currency measure typed as <b>x USD to CAD</b>) reads the same live snapshot below.</p>
 
 	<div class="cfg-card">

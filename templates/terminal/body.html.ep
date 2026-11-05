@@ -200,3 +200,4 @@
 	</div>
 
 	<%= include 'apps/coding_chat', mount => ('terminal_' . $terminal_id), label => 'Coding agent (terminal)' %>
+</div>
