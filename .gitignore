@@ -67,3 +67,6 @@ database/.jawnos_signatorial_id
 # --- The SCO gateway helper: built per machine by scripts/build_sco.pl ---
 # --- (it links the local BlueZ), so the source is tracked and the binary is not. ---
 perl/sco/sco_helper
+
+# Agent worktrees: one per task, never tracked (docs/AGENTS-concurrency.md).
+/.worktrees/

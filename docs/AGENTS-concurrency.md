@@ -40,16 +40,27 @@ cannot reach the server should not be pushed as though it did.
 3. `git fetch origin`, then rebase onto `origin/main`. A `VERSION`-only conflict is taken from the
    trunk (the bump below moves it past trunk's number); any other conflict aborts the rebase and
    names the file.
-4. Run the suite (`--jobs 2` by default). A failure refuses the landing; nothing is pushed.
+4. Run the suite **once** (`--jobs 2` by default) and export `JAWNOS_SUITE_ALREADY_RUN=1`
+   for the push, so the pre-push hook does not run it a second time. A failure refuses the landing;
+   nothing is pushed.
 5. Bump `VERSION`, rewrite the tip subject to `v<new> - <summary>` (an existing prefix is replaced,
    never stacked), amend. The body is preserved.
-6. `git push origin HEAD:refs/heads/main` — fast-forward only, and the lock is why it stays one.
+6. `git push origin HEAD:refs/heads/main` — fast-forward only, and the lock is why it stays one. The
+   hook still runs its parse guard and help audit; only the duplicate suite is skipped.
 7. Fast-forward the primary checkout, then `scripts/restart.pl --reason "v<new> - <summary>"`.
 
 Exit codes: **0** landed — **1** refused, nothing pushed — **2** bad usage — **4** another landing held
 the lock past `--wait` — **5** pushed, but the dev server is not on it (primary checkout dirty or
 diverged, or the restart was refused). Exit 5 means the work is safe on `origin`; fix the checkout and
 restart.
+
+## A refusal ends the attempt
+
+The lander is the last step, not a loop. When it exits non-zero, the run is over: report the refusal
+with its reason and stop. Do not re-run it hoping the lock or a flaky test has cleared, and do not fall
+back to `git push` and `restart.pl` by hand — that is how two agents resume sweeping each other's work.
+A landing takes a minute or two (rebase, one suite, push, restart); it is not hung, and its progress
+lines go to stderr, so a wrapper that pipes stdout shows nothing until it ends.
 
 ## Hot files
 

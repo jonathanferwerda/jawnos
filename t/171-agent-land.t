@@ -104,10 +104,22 @@ sub fixture {
 	write_file("$primary/scripts/restart.pl",   $RESTART);
 	write_file("$primary/scripts/agent_land.pl", read_file($real));
 
+	# A pre-push hook that records the flag the lander sets. The landing under
+	# test must reach it (not --no-verify) and must tell it the suite already ran.
+	make_path("$primary/.git-hooks");
+	write_file("$primary/.git-hooks/pre-push", <<'SH');
+#!/bin/sh
+printf 'HOOK-RAN JAWNOS_SUITE_ALREADY_RUN=%s\n' "${JAWNOS_SUITE_ALREADY_RUN:-unset}" >> "$AGENT_LAND_TEST_DIR/hook"
+exit 0
+SH
+	chmod 0755, "$primary/.git-hooks/pre-push" or die "chmod hook: $!";
+
 	git($primary, 'add', '.');
 	git($primary, 'commit', '-m', 'v0.1.1 - base');
 	git($primary, 'remote', 'add', 'origin', $origin);
 	git($primary, 'push', '-u', 'origin', 'main');
+	# Only now, so the setup push above does not run it.
+	git($primary, 'config', 'core.hooksPath', '.git-hooks');
 	git($primary, 'worktree', 'add', $wt, '-b', 'agent/task');
 
 	return {
@@ -229,6 +241,8 @@ subtest 'a clean branch lands, bumps, pushes and updates the primary' => sub {
 
 	like(read_file("$f->{'marker'}/restart"), qr/--reason v0\.1\.2 - add a note/,
 		'the restart names the landed version');
+	like(read_file("$f->{'marker'}/hook"), qr/HOOK-RAN JAWNOS_SUITE_ALREADY_RUN=1/,
+		'the push reaches the hook and tells it the suite already ran');
 	ok(-e "$f->{'primary'}/.git/jawnos-land.lock", 'the lock lives in the shared common dir');
 };
 

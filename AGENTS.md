@@ -187,11 +187,10 @@ translatable in the same change:
   `lib/JawnOS/Domain/Loader.pm` (`t/91`), a route action its row in `lib/JawnOS/Routes/` (`t/58`), and
   a new app page a help topic with `app => <name>` (`t/11`).
 - **Cap parallel jobs on this shared box:** `pio run -j 4`, `gradle --max-workers=4`, `make -j4`.
-- **Land, never restart by hand.** Every task ends by landing, without being asked: commit in your
-  worktree (staging only your own hunks, `git add -p`), then `perl scripts/agent_land.pl` — it bumps
-  `VERSION`, runs the suite, pushes and restarts, so the dev server is always newest. Worktree per task,
-  one lander, hot files first: `docs/AGENTS-concurrency.md`. Alone, `version_bump.pl` → commit
-  `v<version> - <summary>` → `git push` → `restart.pl` is the same gate by hand.
+- **Land once, then stop.** Every task ends by landing: commit in your worktree (`git add -p`), then
+  `perl scripts/agent_land.pl` — bumps `VERSION`, tests once, pushes, restarts. A refusal ends the
+  attempt: report it, never retry in a loop. Hot files and worktrees: `docs/AGENTS-concurrency.md`.
+  Alone: `version_bump.pl` → commit `v<version> - <summary>` → `git push` → `restart.pl`.
 
 ---
 

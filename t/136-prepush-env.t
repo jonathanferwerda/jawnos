@@ -112,6 +112,14 @@ sub run_hook {
 	copy($hook, "$repo/.githooks/pre-push") or die "copy: $!";
 	copy($helper, "$repo/scripts/perl_env.sh") or die "copy: $!" unless $opt{no_helper};
 
+	# A tree the hook will actually run the suite in: the suite block is skipped
+	# when t/ is absent, so the skip flag can only be tested with one present.
+	if ($opt{suite}) {
+		make_path("$repo/t");
+		&write_text("$repo/t/probe.t", "1;\n");
+		&write_text("$repo/scripts/run_tests.pl", "print \"SUITE-RAN\\n\"; exit 1;\n");
+	}
+
 	&git($repo, 'git init -q');
 	&git($repo, 'git config user.email test@example.invalid');
 	&git($repo, 'git config user.name Test');
@@ -140,6 +148,7 @@ sub run_hook {
 	my @env = ("HOME=" . &sq($opt{home}));
 	push @env, defined $opt{perl5lib} ? "PERL5LIB=" . &sq($opt{perl5lib}) : 'env -u PERL5LIB';
 	push @env, 'PATH=' . &sq($path) if defined $path;
+	push @env, 'JAWNOS_SUITE_ALREADY_RUN=1' if $opt{already_run};
 
 	my $line = qq{"refs/heads/main $tip refs/heads/main $base"};
 	my $out = `cd @{[ &sq($repo) ]} && printf '%s\\n' $line | @env /bin/sh .githooks/pre-push origin https://example.invalid/repo.git 2>&1`;
@@ -188,6 +197,28 @@ like($out, qr/syntax error/i, 'and the failure says syntax');
 );
 isnt($code, 0, 'a genuinely missing module still blocks the push');
 like($out, qr/JawnProbe/, 'and the report names it');
+
+# 6. the suite blocks a push that has not already run it
+($code, $out) = &run_hook(
+	home => tempdir(CLEANUP => 1),
+	probe => "1;\n",
+	suite => 1,
+);
+isnt($code, 0, 'a failing suite blocks a hand push');
+like($out, qr/SUITE-RAN/, 'and the suite really ran');
+like($out, qr/the regression suite failed/, 'and the refusal names it');
+
+# 7. the lander's flag skips that one run and nothing else: the push is not
+#    bypassed, it just does not pay for the suite twice.
+($code, $out) = &run_hook(
+	home => tempdir(CLEANUP => 1),
+	probe => "1;\n",
+	suite => 1,
+	already_run => 1,
+);
+is($code, 0, "the lander's flag lets the push through") or diag($out);
+like($out, qr/not running it twice/, 'and says why');
+unlike($out, qr/SUITE-RAN/, 'without running the suite again');
 
 # 6. no perl: say so and block, never pass quietly
 ($code, $out) = &run_hook(

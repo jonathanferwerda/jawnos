@@ -14,10 +14,11 @@
 #
 # It takes a lock shared through the git common dir (so every worktree of this
 # repo contends for it), rebases the branch onto origin/main, resolves the shared
-# VERSION hunk in trunk's favour, runs the suite, bumps VERSION on the rebased
-# tip, rewrites that subject to v<new> - <summary>, pushes fast-forward only,
-# fast-forwards the *primary* checkout (the master does not pull on restart) and
-# restarts, so the dev server is always on what was just landed.
+# VERSION hunk in trunk's favour, runs the suite ONCE (the pre-push hook is told
+# not to repeat it), bumps VERSION on the rebased tip, rewrites that subject to
+# v<new> - <summary>, pushes fast-forward only, fast-forwards the *primary*
+# checkout (the master does not pull on restart) and restarts, so the dev server
+# is always on what was just landed.
 #
 #   perl scripts/agent_land.pl                  land the current branch
 #   perl scripts/agent_land.pl --branch agent/pen
@@ -89,11 +90,17 @@ sub git {
 	return ($code, $out);
 }
 
-sub say_step { print 'agent_land: ', $_[0], "\n" }
+sub say_step {
+	# stderr, so a wrapper that pipes stdout (| tail -40) still shows progress while
+	# the landing runs; an agent that sees nothing for two minutes drives again.
+	print STDERR 'agent_land: ', $_[0], "\n";
+}
 
 sub refuse {
 	my ($why) = @_;
 	print STDERR "agent_land: refused: $why\n";
+	print STDERR 'agent_land: a refusal ends the attempt - fix it and run the gate again deliberately, '
+		. "or report it; do not retry in a loop.\n";
 	exit 1;
 }
 
@@ -124,7 +131,8 @@ if (!defined $branch) {
 	refuse("cannot read the current branch\n$b") if $brc != 0;
 	$branch = $b;
 }
-refuse("$branch is the trunk; land a branch, not $opt{'trunk'}") if $branch eq $opt{'trunk'};
+refuse("$branch is the trunk; work in a worktree "
+	. "(git worktree add .worktrees/<task> -b agent/<task> origin/main) and land that") if $branch eq $opt{'trunk'};
 
 my $lock_path = "$common/jawnos-land.lock";
 
@@ -237,7 +245,12 @@ unlink $msg_path;
 # --- push, then move the primary checkout ---------------------------------
 
 say_step("pushing HEAD:refs/heads/$opt{'trunk'}");
+# The suite just ran above, under the landing lock. Tell the pre-push hook, or it
+# runs it a second time - which doubles every landing and flakes the timing tests
+# at the hook's default parallelism.
+$ENV{'JAWNOS_SUITE_ALREADY_RUN'} = 1;
 my ($pusc, $puso) = git('push', 'origin', "HEAD:refs/heads/$opt{'trunk'}");
+delete $ENV{'JAWNOS_SUITE_ALREADY_RUN'};
 refuse("the push was refused (rebase and land again):\n$puso") if $pusc != 0;
 
 say_step("fast-forwarding the primary checkout at $primary");
