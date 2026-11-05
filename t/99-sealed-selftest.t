@@ -1,4 +1,4 @@
-# tests-for: scripts/sealed_selftest.pl
+# tests-for: scripts/sealed_selftest.pl lib/JawnOS/Domain/Note.pm
 # covers:    the sealed-file self-test - every offered standard round-trips, and
 #           a failure is reported as one
 
@@ -64,6 +64,33 @@ sub selftest {
 	my @ok = $out =~ /^ok\s+(\S+)$/mg;
 	cmp_ok(scalar @ok, '>=', 10, 'across the whole catalogue (' . scalar(@ok) . ' standards)');
 	unlike($out, qr/^FAIL/m, 'with nothing failing');
+}
+
+# --- a known defect: what counts as proof a credential opened the file -----
+# sealed_file_probe (Note.pm:454) takes the first credential whose decrypted
+# bytes pass plaintext_verdict. The house's own magic table is strong, but the
+# File::Type fallback at the end of the verdict has one- and two-byte
+# signatures ("MZ", "II", ...), so a wrong key's random output is sometimes
+# classified as an executable or an image. The wrong-credential walk above has
+# caught it about once in fifteen runs under load, on a different cipher each
+# time. The right behaviour is that a two-byte magic alone is not proof; this
+# asserts that and is expected to fail until the verdict is tightened.
+TODO: {
+	local $TODO = "a wrong credential can match a weak File::Type signature (Note.pm:460)";
+	my $root = "$FindBin::Bin/../";
+	my $code = 'chdir "' . $root . '" or die;'
+		. ' require "./perl/gb.pl"; require "./perl/subroutines.pl";'
+		. ' my $g = "MZ" . join "", map { chr(($_ * 91 + 7) & 255) } 1 .. 200;'
+		. ' exit(&subs::plaintext_verdict($g) ? 0 : 1)';
+	my $errh = gensym;
+	my $pid = open3(my $in, my $out, $errh, $^X, '-e', $code);
+	close $in;
+	my $ignored_out = do { local $/; <$out> };
+	my $ignored_err = do { local $/; <$errh> };
+	close $out;
+	close $errh;
+	waitpid($pid, 0);
+	is($? >> 8, 1, 'a two-byte magic is not proof that a credential opened the file');
 }
 
 done_testing();
