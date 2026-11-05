@@ -1,4 +1,4 @@
-# tests-for: lib/JawnOS/Domain/Remote.pm lib/JawnOS/Controller/manager_configure2.pm lib/JawnOS/Routes/manager_configure2.pm qa/installers/run.sh qa/nightly_build.sh qa/android/run.sh scripts/qa_report.pl scripts/jawnos_deps.pl templates/configure/qa_panel.html.ep public/js/manager/configure/07_qa_nightly.js perl/help/topics_configure.pl
+# tests-for: lib/JawnOS/Domain/Remote.pm lib/JawnOS/Domain/Crypt.pm lib/JawnOS/Controller/manager_configure2.pm lib/JawnOS/Routes/manager_configure2.pm perl/hooks.pl qa/installers/run.sh qa/nightly_build.sh qa/android/run.sh scripts/qa_report.pl scripts/jawnos_deps.pl templates/configure/qa_panel.html.ep public/js/manager/configure/07_qa_nightly.js perl/help/topics_configure.pl
 # covers:    Configure -> Plat -> QA shows the last 14 days of QA runs: the
 #           installer check (nightly), the weekly build and the emulator run,
 #           each an accordion labelled with its cadence and a table per section.
@@ -156,8 +156,51 @@ like( $loader, qr/qa_reports_for/, 'the domain sub is registered in the loader' 
 my $remote = read_file("$root/lib/JawnOS/Domain/Remote.pm");
 like( $remote, qr/sub qa_reports_for/, 'the domain sub exists' );
 like( $remote, qr/qa_reports\?signatorial=/, 'it hops to the chosen machine over the signed rail' );
+like( $remote, qr/sub qa_hop_answer\b/, 'a refused hop is told apart from a silent one' );
+like( $remote, qr/qa_hop_answer\(\$res, 'that machine did not answer the report request'/,
+	'the reports hop uses it' );
 like( $remote, qr/qa_nightly_is_off/, 'Off stands the panel down as every other QA card does' );
 like( $remote, qr/sub qa_report_kinds/, 'the kinds it lists are named in one place' );
+
+# --- the peer lookup the QA reads share ---------------------------------------
+# Dev learns the Laptop through the hub's mirror blob, not as a direct roster
+# row. The reports, readiness and schedule routes must find it there, and a
+# mirror with no key must not become an unsigned first contact.
+
+my $hub = { signatorial => 'hub', mirrors => encode_json([
+	{ signatorial => 'laptop', pubkey => 'MIRROR KEY' },
+	{ signatorial => 'keyless' },
+]) };
+my $direct_same = { signatorial => 'laptop', pubkey => 'DIRECT KEY' };
+
+is( subs::peer_roster_row_in('laptop', [ $direct_same, $hub ])->{'pubkey'}, 'DIRECT KEY',
+	'a direct roster row wins over a mirror' );
+is( subs::peer_roster_row_in('laptop', [ $hub ])->{'pubkey'}, 'MIRROR KEY',
+	'a mirror the hub listed is a usable peer' );
+ok( !defined subs::peer_roster_row_in('keyless', [ $hub ]),
+	'a mirror with no key is not proof and is refused' );
+my $keyless_direct = { signatorial => 'laptop' };
+is( subs::peer_roster_row_in('laptop', [ $keyless_direct, $hub ])->{'pubkey'}, 'MIRROR KEY',
+	'a direct row that lost its key takes the hub copy' );
+ok( !defined subs::peer_roster_row_in('nobody', [ $hub ]), 'an unknown caller still resolves to nothing' );
+ok( !defined subs::peer_roster_row_in('laptop', [ { signatorial => 'hub', mirrors => 'not json' } ]),
+	'a broken mirror blob is ignored, not fatal' );
+
+# A Gate page is a refusal, not a timeout: the panel must name the pairing fix.
+{
+	package QAAnswerFake;
+	sub new { my ($class, $body) = @_; return bless { body => $body }, $class; }
+	sub body { return $_[0]->{'body'}; }
+}
+is( subs::qa_hop_answer(QAAnswerFake->new('{"ok":1,"reports":[]}'), 'fallback', 'dev')->{'ok'}, 1,
+	'a JSON answer is returned as it came' );
+is( subs::qa_hop_answer(QAAnswerFake->new('{"ok":0,"error":"not signed in"}'), 'fallback', 'dev')->{'error'}, 'not signed in',
+	'a JSON refusal keeps the reason the peer gave' );
+my $gate = subs::qa_hop_answer(QAAnswerFake->new('<title>Gate</title>'), 'that machine did not answer the report request', 'dev');
+is( $gate->{'ok'}, 0, 'a Gate page is a refusal' );
+like( $gate->{'error'}, qr/not paired/, 'and says the machine has to be paired, not that it did not answer' );
+is( subs::qa_hop_answer(undef, 'that machine did not answer the report request', 'dev')->{'error'},
+	'that machine did not answer the report request', 'a real no-answer keeps the action wording' );
 
 # --- the card ----------------------------------------------------------------
 

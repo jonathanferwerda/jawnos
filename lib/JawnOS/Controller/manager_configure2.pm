@@ -750,7 +750,9 @@ sub action_50001 {
 	my $caller = $c->param('signatorial');
 	my $peer_ok = 0;
 	if (defined $caller && length $caller) {
-		my $rm = &subs::db_select('remote_machines', undef, { signatorial => $caller })->hashes->[0];
+		# A direct roster row, or a machine the hub listed in its mirrors;
+		# both are proven by the same pinned key.
+		my $rm = &subs::peer_roster_row($caller);
 		$peer_ok = ($rm && &subs::peer_verify($c, $rm)) ? 1 : 0;
 	}
 	unless ($c->session('authentication') eq 'approved' || $peer_ok) {
@@ -770,7 +772,9 @@ sub action_50008 {
 	my $caller = $c->param('signatorial');
 	my $peer_ok = 0;
 	if (defined $caller && length $caller) {
-		my $rm = &subs::db_select('remote_machines', undef, { signatorial => $caller })->hashes->[0];
+		# A direct roster row, or a machine the hub listed in its mirrors;
+		# both are proven by the same pinned key.
+		my $rm = &subs::peer_roster_row($caller);
 		$peer_ok = ($rm && &subs::peer_verify($c, $rm)) ? 1 : 0;
 	}
 	unless ($c->session('authentication') eq 'approved' || $peer_ok) {
@@ -846,7 +850,9 @@ sub action_50004 {
 	my $caller = $c->param('signatorial');
 	my $peer_ok = 0;
 	if (defined $caller && length $caller) {
-		my $rm = &subs::db_select('remote_machines', undef, { signatorial => $caller })->hashes->[0];
+		# A direct roster row, or a machine the hub listed in its mirrors;
+		# both are proven by the same pinned key.
+		my $rm = &subs::peer_roster_row($caller);
 		$peer_ok = ($rm && &subs::peer_verify($c, $rm)) ? 1 : 0;
 	}
 	unless ($c->session('authentication') eq 'approved' || $peer_ok) {

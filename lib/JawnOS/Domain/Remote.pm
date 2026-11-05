@@ -703,6 +703,22 @@ sub qa_reports_list {
 	return [];
 }
 
+sub qa_hop_answer {
+	my ($res, $fallback, $target) = @_;
+	# A peer that is not signed in answers JSON (403); a peer the gate does not
+	# know answers the Gate page (HTML 200). Both are refusals, and calling them
+	# "did not answer" hides the fix - the caller has to be paired. A real
+	# no-answer (timeout, no route) keeps the caller's own wording.
+	my $body = $res ? eval { decode_json $res->body } : undef;
+	return $body if ref $body eq 'HASH';
+	return { ok => 0, error => $fallback, target => $target } unless $res;
+	return {
+		ok => 0,
+		error => &subs::ui('that machine refused the request: this machine is not paired with it as a peer'),
+		target => $target,
+	};
+}
+
 sub qa_reports_for {
 	my ($signatorial, $opts) = @_;
 	$opts ||= {};
@@ -727,9 +743,7 @@ sub qa_reports_for {
 		unless $hop && $hop->{'ua'} && $hop->{'manager'};
 	my $url = $hop->{'manager'} . '/manager/configure/qa_reports?signatorial=' . &subs::signatorial_designer();
 	my $res = eval { $hop->{'ua'}->inactivity_timeout(30)->get($url)->result };
-	my $body = ($res && $res->is_success) ? eval { decode_json $res->body } : undef;
-	return $body if ref $body eq 'HASH';
-	return { ok => 0, error => 'that machine did not answer the report request', target => $target->{'signatorial'} };
+	return &qa_hop_answer($res, 'that machine did not answer the report request', $target->{'signatorial'});
 }
 
 sub qa_readiness_for {
@@ -758,9 +772,7 @@ sub qa_readiness_for {
 	return { ok => 0, error => 'no route to that machine', target => $target->{'signatorial'} } unless $hop && $hop->{'ua'} && $hop->{'manager'};
 	my $url = $hop->{'manager'} . '/manager/configure/qa_device_ready?signatorial=' . &subs::signatorial_designer();
 	my $res = eval { $hop->{'ua'}->inactivity_timeout(25)->get($url)->result };
-	my $body = ($res && $res->is_success) ? eval { decode_json $res->body } : undef;
-	return $body if ref $body eq 'HASH';
-	return { ok => 0, error => 'that machine did not answer the readiness check', target => $target->{'signatorial'} };
+	return &qa_hop_answer($res, 'that machine did not answer the readiness check', $target->{'signatorial'});
 }
 
 # --- install -----------------------------------------------------------------
@@ -1309,9 +1321,7 @@ sub qa_schedule_for {
 		unless $hop && $hop->{'ua'} && $hop->{'manager'};
 	my $url = $hop->{'manager'} . '/manager/configure/qa_schedule?signatorial=' . &subs::signatorial_designer();
 	my $res = eval { $hop->{'ua'}->inactivity_timeout(25)->get($url)->result };
-	my $body = ( $res && $res->is_success ) ? eval { decode_json $res->body } : undef;
-	return $body if ref $body eq 'HASH';
-	return { ok => 0, error => 'that machine did not answer the schedule check', target => $target->{'signatorial'} };
+	return &qa_hop_answer($res, 'that machine did not answer the schedule check', $target->{'signatorial'});
 }
 
 # Start one run on this machine now. `systemctl is-active` is the first guard

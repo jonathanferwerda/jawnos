@@ -463,6 +463,55 @@ sub peer_verify {
 	return 1;
 }
 
+# Find the row a caller names, whether it is a direct roster row or a machine a
+# trusted peer's hub listed in its `mirrors` blob. A machine that is not the hub
+# only learns the other peers that way (the Laptop is a mirror on Dev, not a
+# direct row), and the hub hands the list over the signed peer rail, so a
+# signature from the key it published proves the same caller a direct row would.
+# A mirror without a key is not proof and is refused: peer_verify's unsigned
+# first contact is for a direct row we chose to enrol, not for a name we only
+# heard about. A direct row wins, but takes a missing key from the hub's copy.
+sub peer_roster_row_in {
+	my ($signatorial, $rows) = @_;
+	return undef unless defined $signatorial && length $signatorial;
+	$rows = [] unless ref $rows eq 'ARRAY';
+	my ($direct, @mirrors);
+	for my $rm ( @{$rows} ) {
+		next unless ref $rm eq 'HASH';
+		$direct = $rm if ($rm->{'signatorial'} || '') eq $signatorial;
+		next unless $rm->{'mirrors'};
+		my $list = eval { decode_json $rm->{'mirrors'} } || [];
+		next unless ref $list eq 'ARRAY';
+		for my $mirror ( @{$list} ) {
+			next unless ref $mirror eq 'HASH';
+			push @mirrors, $mirror if ($mirror->{'signatorial'} || '') eq $signatorial;
+		}
+	}
+	if ($direct) {
+		# A restore or an older sync can leave the row without its key; the hub's
+		# copy still carries it, and the signature is what decides anyway.
+		if (!length($direct->{'pubkey'} || '')) {
+			for my $mirror (@mirrors) {
+				next unless length($mirror->{'pubkey'} || '');
+				$direct->{'pubkey'} = $mirror->{'pubkey'};
+				last;
+			}
+		}
+		return $direct;
+	}
+	for my $mirror (@mirrors) {
+		return $mirror if length($mirror->{'pubkey'} || '');
+	}
+	return undef;
+}
+
+sub peer_roster_row {
+	my ($signatorial) = @_;
+	return undef unless defined $signatorial && length $signatorial;
+	my $rows = eval { &db_select('remote_machines')->hashes } || [];
+	return &peer_roster_row_in($signatorial, $rows);
+}
+
 # A login must prove the name it claims. peer_verify's unsigned path exists for
 # a keyless row's first contact; a session that names a machine already on the
 # roster is never allowed to use it.

@@ -64,18 +64,22 @@ close $hf;
 like($hook, qr{\$path eq '/manager/configure/remote_upgrade'}, 'the pull-now lever is exempt from the app gate');
 like($hook, qr{\$path eq '/manager/self_deploy'}, 'the deploy lever is exempt from the app gate');
 like($hook, qr{\$path eq '/manager/president'}, 'the peer restart rail is exempt from the app gate');
-# A remote QA readiness or schedule read carries no cookie on purpose, so the
-# signed rail is its only proof. Missing these two entries made every machine in
-# the picker answer with the Gate page, which the JSON read reports as "did not
-# answer the readiness check".
+# A remote QA readiness, schedule or reports read carries no cookie on purpose,
+# so the signed rail is its only proof. Missing any of these entries made every
+# machine in the picker answer with the Gate page, which the JSON read reports as
+# "did not answer" even though the machine was up and holding the run.
 like($hook, qr{\$path eq '/manager/configure/qa_device_ready'},
 	'the QA readiness read is exempt from the app gate');
 like($hook, qr{\$path eq '/manager/configure/qa_schedule'},
 	'the QA schedule read is exempt from the app gate');
+like($hook, qr{\$path eq '/manager/configure/qa_reports'},
+	'the QA reports read is exempt from the app gate');
 like($text, qr{GET /manager/configure/qa_device_ready\nsub action_\d+ \{.*?peer_verify}ms,
 	'qa_device_ready peer_verifies the caller');
 like($text, qr{GET /manager/configure/qa_schedule\nsub action_\d+ \{.*?peer_verify}ms,
 	'qa_schedule peer_verifies the caller');
+like($text, qr{GET /manager/configure/qa_reports.*?sub action_\d+ \{.*?peer_verify}ms,
+	'qa_reports peer_verifies the caller');
 # universal.js is an index plus public/js/universal/ parts; the gate and the
 # public layouts load them with no session, so the whole folder must pass the
 # allowlist or the login gate eats the script.
