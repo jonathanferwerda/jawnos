@@ -30,6 +30,8 @@ Run from the repo root, or with an explicit path. `sh` tools run under
 | `android-battery-log.sh` | Android battery/power/wakefulness and top CPU consumers over adb | `./scripts/tools/android-battery-log.sh SERIAL 40 15` | read |
 | `wav-stat.pl` | Is this clip silence, a tone or speech, and where does it start? (RMS, peak, zero crossings per window) | `./scripts/tools/wav-stat.pl /tmp/call.wav --window 100` | read |
 | `audio-watch.sh` | Which PipeWire sink/source/card profile is a call using, and when does it change? | `./scripts/tools/audio-watch.sh 2 30` | read |
+| `audio-pipe-test.sh` | Does a tone into the call sink reach its monitor, and into the prompt sink reach the virtual mic? (no phone call) | `./scripts/tools/audio-pipe-test.sh` | plays a 0.5 s tone; writes temp raw files |
+| `mixer-test.pl` | Which handset commands would be used, and which device is the call's pair on? | `./scripts/tools/mixer-test.pl --mac AA:BB:CC:DD:EE:FF` | read; `--ensure` creates the virtual handset |
 | `json-stress.pl` | How long does JSON::PP take on a large escape/nesting shape, and does it refuse it? | `./scripts/tools/json-stress.pl uesc 4` | read |
 
 ## Notes
@@ -50,6 +52,11 @@ Run from the repo root, or with an explicit path. `sh` tools run under
   `wavstat.pl`/`probe_wav.pl` and `json_escape.pl`/`json_patho.pl`; both now take
   their input and size as arguments. `audio-watch.sh` is the house's
   `pw_watch.sh` with the interval and count as arguments.
+- `audio-pipe-test.sh` takes the three device names as optional arguments (the
+  house defaults are `jawn_call_in`, `jawn_prompt`, `jawn_ivr_mic`) and writes
+  only under its own `mktemp -d`; it plays a 0.5 s tone, so it is not silent.
+- `mixer-test.pl` reads `lib/JawnOS/Sco/Mixer.pm`; without `--ensure` it loads no
+  modules and only prints the commands and the streams' devices.
 
 ## Adding a tool
 
@@ -113,6 +120,8 @@ so the drift is visible instead of silent.
 - `probe_wav.pl`, `wavstat.pl` — the two source reports merged into `wav-stat.pl`.
 - `json_escape.pl`, `json_patho.pl` — the two source benchmarks merged into `json-stress.pl`.
 - `pw_watch.sh` — became `audio-watch.sh` with the interval and count as arguments.
+- `pipe_test.sh`, `mixer_test.pl` — became `audio-pipe-test.sh` and `mixer-test.pl`
+  (device names and MAC as arguments; `ensure` is opt-in).
 - `vad_probe.sh`, `resample_probe.sh`, `upsample_probe.sh`, `call_probe.sh`, `pw_call.sh`,
   `sco_watch.sh`, `sco_drive.pl`, `sco_arm_tone.pl` — live-call fixtures with a kept caller
   WAV or a hardcoded device MAC; `wav-stat.pl` and `audio-watch.sh` are the portable parts.

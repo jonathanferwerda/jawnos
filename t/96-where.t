@@ -352,6 +352,7 @@ PM
 		'one line per probe, with its answer');
 	like($list, qr{^tool::wav-stat\t}m, 'including a Perl probe');
 	like($list, qr{^tool::audio-watch\t}m, 'including a shell probe');
+	like($list, qr{^tool::mixer-test\t}m, 'including the handset probe');
 
 	(undef, $list) = where('--tools', 'audio');
 	like($list, qr{^tool::audio-watch\t}m, 'a pattern narrows the shelf');

@@ -1,4 +1,4 @@
-# tests-for: scripts/tools/wav-stat.pl scripts/tools/json-stress.pl
+# tests-for: scripts/tools/wav-stat.pl scripts/tools/json-stress.pl scripts/tools/mixer-test.pl scripts/tools/audio-pipe-test.sh
 # covers:    the portable probes answer on a generated fixture, not a house file
 
 use strict;
@@ -13,16 +13,20 @@ use Test::More;
 
 my $root = "$FindBin::Bin/..";
 
-sub run_tool {
+sub run_cmd {
 	my (@args) = @_;
 	my $err  = gensym;
-	my $pid  = open3(my $in, my $out, $err, $^X, @args);
+	my $pid  = open3(my $in, my $out, $err, @args);
 	close $in;
 	local $/;
 	my $stdout = <$out> // '';
 	my $stderr = <$err> // '';
 	waitpid($pid, 0);
 	return ($? >> 8, $stdout, $stderr);
+}
+
+sub run_tool {
+	return run_cmd($^X, @_);
 }
 
 # --- wav-stat: a 100 ms tone then 100 ms of silence ----------------------
@@ -57,6 +61,21 @@ sub run_tool {
 
 	my (undef, $bad) = run_tool("$root/scripts/tools/json-stress.pl", 'unterminated', 1);
 	like($bad, qr/^decode died in [\d.]+s err=\S/m, 'an unterminated string is refused');
+}
+
+# --- the handset tools: read-only contract and dry run --------------------
+{
+	my ($code, $out) = run_cmd('sh', "$root/scripts/tools/audio-pipe-test.sh", '--help');
+	is($code, 0, 'audio-pipe-test prints usage');
+	like($out, qr/^usage: audio-pipe-test\.sh \[CALL_IN/m, 'with its three arguments');
+
+	my ($mac_code, $mac_out, $mac_err) = run_tool("$root/scripts/tools/mixer-test.pl");
+	is($mac_code, 0, 'mixer-test runs without loading modules') or diag $mac_err;
+	like($mac_out, qr{^capture: parec .*jawn_call_in\.monitor$}m,
+		'it prints the capture command');
+	like($mac_out, qr{^playback: pacat .*jawn_prompt$}m,
+		'and the playback command');
+	unlike($mac_out, qr/^ensure:/m, 'no module is loaded unless --ensure is asked for');
 }
 
 done_testing();
