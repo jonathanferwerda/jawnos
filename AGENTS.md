@@ -248,7 +248,7 @@ on a normal task:
 
 ## Facts that save a search
 
-Data model, journal, maps and chat: `docs/AGENTS-facts.md`. Schema: `database/schema.sql`.
+Data model, journal, maps, chat: `docs/AGENTS-facts.md`. Schema: `database/schema.sql`. Person reads Eastern; box/DB UTC.
 
 ## Token economy
 
