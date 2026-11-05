@@ -124,6 +124,7 @@ like($panel_js, qr/\$\(function \(\) \{/, 'and a window that loads mid-call asks
 my $ws = read_file("$repo/public/js/manager/websocket/01_message_handler.js");
 like($ws, qr/sco_rtc/, 'the websocket dispatcher knows the bridge event');
 like($ws, qr/sco_screen/, 'and the screening announcement');
+like($ws, qr/jawnScreenPoll\(\)/, 'a reconnecting window asks whether a call is up');
 my $bundle = read_file("$repo/lib/JawnOS/Manager/Core1_tables_hooks.pm");
 like($bundle, qr{/js/manager/screening\.js}, 'the panel loads on every page, not only in the Phone app');
 my $tpl = read_file("$repo/templates/apps/phone.html.ep");

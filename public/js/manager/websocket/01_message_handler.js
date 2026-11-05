@@ -84,6 +84,9 @@ function wsMessageDispatch(raw) {
 		// outage - is what re-fetches the open media windows. The first stamp of
 		// a page load only records; a reconnect in the same boot re-lists nothing.
 		if (data['boot']) {
+			// A window that slept through the screening's start push asks again
+			// on every connect: the boot stamp is what a reconnect carries.
+			if (typeof jawnScreenPoll === 'function') { jawnScreenPoll(); }
 			var boot = window.jawnosMediaBoot;
 			window.jawnosMediaBoot = data['boot'];
 			if (boot && boot !== data['boot'] && typeof jawnosMediaRefresh === 'function') {
