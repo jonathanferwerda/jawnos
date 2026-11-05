@@ -38,8 +38,8 @@ sub log_reader {
 	my $data = $_[0] || {};
 	my ($db,$database,$sql) = &subs::database_grabber();
 	my $chosen_app = $data->{'app'};
-	my $scope = $data->{'scope'};
-	my $timestamp = $data->{'timestamp'};
+	my $scope = $data->{'scope'} || '';
+	my $timestamp = $data->{'timestamp'} || 0;
 	my $timeshift_max = $data->{'timeshift_max'};
 	my $search = $data->{'search'};
 	my $stats = $data->{'stats'};

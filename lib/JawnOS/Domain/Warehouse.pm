@@ -293,7 +293,8 @@ sub task_writer {
 				my $settings = &subs::settings_grabber({ app => $task->{'task'} });
 				my $duration;
 				if ($task->{'duration'} && $task->{'duration'} =~ /[0-9]/gi) {
-					$duration = abs &subs::time_abbrev_translator($settings->{'duration'});
+					my $dur_text = $settings->{'duration'};
+					$duration = defined $dur_text ? abs &subs::time_abbrev_translator($dur_text) : 0;
 				}
 				elsif ($settings->{'duration'} && $settings->{'duration'} =~ /[0-9]/gi) {
 					$duration = abs &subs::time_abbrev_translator($settings->{'duration'});

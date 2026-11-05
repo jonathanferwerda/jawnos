@@ -127,7 +127,7 @@ sub remote_relay_request($c, $extra_params = {}) {
 					$extra_params->{'uuid'} = $uuid;
 					$extra_params->{'remote_uuid'} = $remote_uuid unless $path eq '/file_open' ;
 					foreach my $ep ( keys %{$extra_params} ) {
-						$params .= '&' . $ep . '=' . $extra_params->{$ep};
+						$params .= '&' . $ep . '=' . ($extra_params->{$ep} || '');
 					}
 
 
@@ -170,7 +170,7 @@ sub remote_relay_request($c, $extra_params = {}) {
 					$extra_params->{'uuid'} = $uuid;
 					$extra_params->{'remote_uuid'} = $remote_uuid unless $path eq '/file_open' ;
 					foreach my $ep ( keys %{$extra_params} ) {
-						$params .= '&' . $ep . '=' . $extra_params->{$ep};
+						$params .= '&' . $ep . '=' . ($extra_params->{$ep} || '');
 					}
 
 					my $url = $rm->{'manager'} . $path . '?' . $params;

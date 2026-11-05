@@ -1,4 +1,4 @@
-# tests-for: lib/JawnOS/Domain/Log.pm lib/JawnOS/Controller/manager_misc3.pm lib/JawnOS/Domain/Remote.pm lib/JawnOS/Domain/Calendar.pm lib/JawnOS/Domain/Budget.pm lib/JawnOS/Domain/Headless.pm lib/JawnOS/Domain/Name.pm lib/JawnOS/Domain/Appointment.pm lib/JawnOS/Domain/Generate.pm lib/JawnOS/Domain/File.pm lib/JawnOS/Controller/Root_misc.pm public/js/manager/websocket/03_watchdog.js
+# tests-for: lib/JawnOS/Domain/Log.pm lib/JawnOS/Controller/manager_misc3.pm lib/JawnOS/Domain/Remote.pm lib/JawnOS/Domain/Calendar.pm lib/JawnOS/Domain/Budget.pm lib/JawnOS/Domain/Headless.pm lib/JawnOS/Domain/Name.pm lib/JawnOS/Domain/Appointment.pm lib/JawnOS/Domain/Generate.pm lib/JawnOS/Domain/File.pm lib/JawnOS/Controller/Root_misc.pm lib/JawnOS/Domain/Warehouse.pm public/js/manager/websocket/03_watchdog.js
 # covers:    every optional row field these warnings came from is compared
 #            with a defined default. A row that lacks the column used to write
 #            a warning per call (26,662 in one phone log); the comparison now
@@ -30,6 +30,7 @@ foreach my $f (qw(
 	lib/JawnOS/Domain/Generate.pm
 	lib/JawnOS/Domain/File.pm
 	lib/JawnOS/Controller/Root_misc.pm
+	lib/JawnOS/Domain/Warehouse.pm
 	public/js/manager/websocket/03_watchdog.js
 )) {
 	$src{$f} = read_file("$root/$f");
@@ -112,5 +113,19 @@ ok(has($watch, 'var wsWatchdogProbeWait = 8000;'), 'a probe waits longer for its
 ok(has($watch, "socket['probeCount'] = 1;"), 'the first unanswered probe is counted');
 ok(has($watch, "if ((socket['probeCount'] || 1) < 2) {"), 'a second probe is sent, not a rebuild');
 ok(has($watch, "delete ws[app]['probeCount'];"), 'any heard frame clears the count');
+
+# Log's reader is called without a scope or a timestamp too
+ok(has('lib/JawnOS/Domain/Log.pm', "my \$scope = \$data->{'scope'} || '';"),
+	'a log read with no scope names the empty scope');
+ok(has('lib/JawnOS/Domain/Log.pm', "my \$timestamp = \$data->{'timestamp'} || 0;"),
+	'a log read with no timestamp compares against zero');
+
+# Remote: a relay parameter with no value
+ok(has('lib/JawnOS/Domain/Remote.pm', "(\$extra_params->{\$ep} || '')"),
+	'an empty relay parameter is the empty string');
+
+# Warehouse: a task duration with no settings row
+ok(has('lib/JawnOS/Domain/Warehouse.pm', 'defined $dur_text ? abs &subs::time_abbrev_translator($dur_text) : 0'),
+	'a task with no settings duration is zero, not a warning');
 
 done_testing();
