@@ -599,6 +599,59 @@ sub remote_upgrade_marker_reapable {
 	return $up->{'busy'} ? 0 : 1;
 }
 
+# Restart a sync rail that has stalled. Three things can hold it: a pull marker
+# whose process died (cleared at once when no live owner holds it), a pull job
+# row left running by a killed fork, and a per-peer backoff after a failed pull.
+# A fourth pins the whole house: a saved hub the reconnector now marks inactive,
+# which keeps every non-server in hub mode while the live peers are never
+# dialled. Clear all of those and nudge the ordinary remote_machine_sync pass -
+# it still owns last_run, so the panel's dot and effect line stay truthful.
+# Returns one short line for the utility controller.
+sub sync_kick {
+	my ($opts) = @_;
+	$opts ||= {};
+	my $now = &rightNow();
+	my @did;
+
+	my $up = &remote_upgrade_lock_state();
+	if (length($up->{'value'} || '') && &remote_upgrade_marker_reapable($up)) {
+		&setting_setter({ app => '__president', setting => 'remote_upgrade', value => '' });
+		push @did, 'pull marker cleared';
+	}
+
+	my $reaped = &sync_jobs_reap(600000, 'pull', 'sync kick: no pull owned it');
+	push @did, $reaped . ' pull job(s) reaped' if $reaped;
+
+	my $peers = &db_select('remote_machines')->hashes || [];
+	my $cleared = 0;
+	foreach my $rm ( @{$peers} ) {
+		next unless $rm->{'signatorial'};
+		# A failing peer's backoff is a brake, not a bug: leave an inactive peer
+		# to the reconnector, and only drop the brake on one that is up.
+		next unless (($rm->{'connection'} || '') eq 'active');
+		&sync_backoff_clear($rm->{'signatorial'});
+		$cleared++;
+	}
+	push @did, 'backoff cleared for ' . $cleared . ' active peer(s)' if $cleared;
+
+	my $saved = &setting_grabber({ app => '__president', setting => 'sync_hub' }) || '';
+	if ($saved) {
+		my ($hub) = grep { ($_->{'signatorial'} || '') eq $saved } @{$peers};
+		if (!$hub || ($hub->{'connection'} || '') ne 'active') {
+			&setting_setter({ app => '__president', setting => 'sync_hub', value => '' });
+			push @did, 'inactive hub released';
+		}
+	}
+
+	# The next utility tick reads this as a peer's "new rows" nudge and runs the
+	# ordinary pass now; resetting the reconnect timer makes that pass probe the
+	# peers instead of waiting for its ten-second guard.
+	&setting_setter({ app => '__president', setting => 'remote_connect_timer', value => 0 });
+	&cache_set({ app => '__president', context => 'remote_nudge', subcontext => 'pending' }, $now) unless $opts->{'no_nudge'};
+
+	return scalar(@did) ? join('; ', @did) : 'nothing was holding it';
+}
+
 # --- durable deletion tombstones -------------------------------------------
 # A deletion is permanent for any machine that has not yet seen it. Each
 # tombstone carries a monotonic id; a machine only drops a tombstone once every

@@ -609,6 +609,12 @@ sub sync_topology_get {
 sub sync_hub_status {
 	my ($hub) = @_;
 	return 0 unless $hub && $hub->{'signatorial'};
+	# `connection` is the reconnector's live verdict - it only reads active after
+	# a successful handshake. The row's server_time can be refreshed by the very
+	# sync that is stuck (a mirror or a pull carries it), so freshness alone is
+	# not proof the address answers. A hub the reconnector marked inactive is not
+	# a hub: the caller falls back to the mesh instead of dialling it forever.
+	return 0 if (($hub->{'connection'} || '') ne 'active');
 	return 0 if (&subs::rightNow() - int($hub->{'server_time'} || 0)) > 6 * 60 * 1000;
 	if (($hub->{'tunnel'} || '') eq 'yes') {
 		my $age = eval { &Tunnel::alive_age($hub->{'manager'}) };
@@ -621,14 +627,22 @@ sub sync_hub_status {
 sub sync_hub_pick {
 	my ($machines, $is_hub) = @_;
 	return &subs::signatorial_designer() if $is_hub;
+	$machines ||= [];
 	my $saved = &subs::setting_grabber({ app => '__president', setting => 'sync_hub' }) || '';
-	my @servers = grep { ($_->{'device'} || '') eq 'server' && ($_->{'signatorial'} || '') } @{ $machines || [] };
-	return $saved unless scalar @servers;
+	my ($saved_row) = grep { ($_->{'signatorial'} || '') eq $saved } @{$machines};
+	# An explicitly saved hub is kept only while it is a live address (the
+	# reconnector's verdict) and recently heard. A saved row that has gone
+	# inactive must not pin the whole house to an address nobody answers.
+	my $saved_live = $saved_row
+		&& (($saved_row->{'connection'} || '') eq 'active')
+		&& (&subs::rightNow() - int($saved_row->{'server_time'} || 0)) < 30 * 60 * 1000;
+	return $saved if $saved && $saved_live;
+	# Only an active server can be chosen as a hub. With none, '' means "walk
+	# the mesh": the pass then dials every known peer instead of one dead hub.
+	my @servers = grep { ($_->{'device'} || '') eq 'server' && ($_->{'signatorial'} || '') && ($_->{'connection'} || '') eq 'active' } @{$machines};
+	return '' unless scalar @servers;
 	my ($best) = sort { int($b->{'server_time'} || 0) <=> int($a->{'server_time'} || 0) } @servers;
-	return $saved unless $best;
-	my ($saved_row) = grep { ($_->{'signatorial'} || '') eq $saved } @{ $machines || [] };
-	my $saved_fresh = $saved_row && (&subs::rightNow() - int($saved_row->{'server_time'} || 0)) < 30 * 60 * 1000;
-	return $saved if $saved && $saved_fresh;
+	return '' unless $best;
 	if (($best->{'signatorial'} || '') ne $saved) {
 		&subs::setting_setter({ app => '__president', setting => 'sync_hub', value => $best->{'signatorial'} });
 	}

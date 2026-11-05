@@ -85,6 +85,10 @@ our $timeouts = {
 	# in a configured house runs it; the pass still starts at most one pull and is
 	# held by the peer's marker, so the pace is the cheap handshake's, not a copy.
 	'remote_machine_sync' => { interval => (2 * 60), interval_divider => 10, last_run => &subs::rightNow(), toggle => 'on', timeout => 1000, group => 'fast' },
+	# A kick for a sync that has stalled: clear a pull marker nobody owns, reap
+	# an orphaned pull job, drop an inactive hub and nudge the ordinary pass.
+	# It is not another copy; the pass still stamps its own last_run.
+	'sync_kick' => { interval => 5 * 60, toggle => 'on', timeout => 120, group => 'fast' },
 	'navigation' => { interval => 4 * 60, interval_divider => 10, last_run => &subs::rightNow(), toggle => 'off', timeout => 90, group => 'navigation' },
 	'sms' => { interval => 30 * 10, toggle => 'off', timeout => 90, group => 'fast' },
 	'backups' => { interval => 1 * 60 * 60, toggle => 'on', timeout => 360, group => 'daily' },
