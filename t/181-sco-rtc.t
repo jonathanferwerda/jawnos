@@ -109,6 +109,9 @@ like($js, qr/echoCancellation: true/, 'with the browser echo canceller on, which
 like($js, qr/iceServers: \[\]/, 'and no public relay: the tailnet owns the path');
 like($js, qr/action: 'start'/, 'telling the gateway to start');
 like($js, qr/function jawnPhoneRtcPushed/, 'and applying the answer that comes back on the socket');
+like($js, qr/connect=me/, 'the face opens the page with the connect query');
+like($js, qr/jawnPhoneConnectMeWanted/, 'and the page presses Connect me once a call is up');
+like($js, qr/history\.replaceState/, 'stripping the query so a reload does not connect a second time');
 my $ws = read_file("$repo/public/js/manager/websocket/01_message_handler.js");
 like($ws, qr/sco_rtc/, 'the websocket dispatcher knows the bridge event');
 my $tpl = read_file("$repo/templates/apps/phone.html.ep");

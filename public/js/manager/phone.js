@@ -5,6 +5,15 @@
 // and writes a call appointment as the call happens.
 var jawnPhoneApp = { number: '' };
 
+// The screening face's Connect me opens this page with ?connect=me. The page is
+// the WebRTC peer, so all that is left here is to press the button once the
+// gateway says a call is up. The query is stripped straight away: a reload must
+// not silently connect a device again.
+var jawnPhoneConnectMeWanted = /[?&]connect=me(?:&|$)/.test(window.location.search || '');
+if (jawnPhoneConnectMeWanted) {
+	try { window.history.replaceState({}, '', window.location.pathname); } catch (e) { }
+}
+
 function jawnPhoneAppStatus(text) {
 	$('#phone_app #phone_app_status').text(text || 'Idle');
 }
@@ -655,6 +664,10 @@ function jawnPhoneGatewayState() {
 			}
 			$('#phone_app #phone_ivr_gateway_state').text(label);
 			jawnPhoneTranscriptSync(res && res.call_id, res && res.transcript, res && res.partial, res && res.transcript_note);
+			if (jawnPhoneConnectMeWanted && (state === 'in_call' || state === 'done')) {
+				jawnPhoneConnectMeWanted = false;
+				jawnPhoneRtcConnect();
+			}
 		},
 		error: function () { $('#phone_app #phone_ivr_gateway_state').text('Gateway: not answering'); }
 	});
@@ -688,4 +701,16 @@ $(document).on('click', '#phone_app #phone_ivr_arm', function (e) {
 		},
 		error: function () { label.text('Gateway: not answering'); }
 	});
+});
+
+// A face button lands on the Phone app with a pane to open; without this the
+// status poll only starts on an IVR-tab click, and the auto-connect above would
+// never see a call.
+$(function () {
+	if (!jawnPhoneConnectMeWanted) { return; }
+	setTimeout(function () {
+		if ($('#phone_app').length) {
+			$('#phone_app .phone_app_tab[pane="ivr"]').trigger('click');
+		}
+	}, 400);
 });

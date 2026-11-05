@@ -174,10 +174,15 @@ cannot talk over them.
 4. The button toggles: a second press stops the bridge, and so does the call
 ending.
 
-It lives in the Phone app's IVR pane today, which is where a second device
-(tablet, laptop) already has the house's session. The Android face still offers
-only **Connect phone** and **Disconnect**; a native WebRTC button there is the
-follow-up.
+The Phone app's IVR pane is where a second device (tablet, laptop) already has
+the house's session. The screening face's **Connect me** opens the same page on
+the device it was pressed on with `?connect=me`, and the page presses the button
+itself once the gateway reports a call - so the WebRTC stack lives in one place,
+the page, and the face carries a button rather than a second copy of it. The
+page strips the query at load, so a reload does not connect the device again.
+
+The tablet still only sees the call if it is looking at the house: a screening
+pushed to other devices' faces is the next step.
 
 ## The plan
 
