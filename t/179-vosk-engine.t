@@ -102,6 +102,8 @@ like($deps, qr{id => 'vosk'}, 'the installer offers Vosk as an optional applicat
 like($deps, qr{sub install_vosk}, 'and has an installer for it');
 like($deps, qr{vosk-model-small-en-us-0\.15}, 'which brings one small model');
 like($deps, qr{Termux \(Bionic\) has no Vosk wheel}, 'and says why Termux cannot run it');
+like($deps, qr{'pip', '--version'}, 'a venv with no pip is checked, not trusted');
+like($deps, qr{remove_tree\("\$vosk_dir/venv"\)}, 'and rebuilt rather than reused');
 
 # ------------------------------------------------------------ the Plat page
 my $plat = read_file("$repo/templates/configure/plat_setting_list.html.ep");

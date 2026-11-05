@@ -104,6 +104,9 @@ like($tpl, qr/id="phone_transcript_lines"/, 'the Phone app has a transcript box'
 like($tpl, qr/Live transcript/, 'labelled as such');
 
 # --------------------------------------------------------- the streamer's arithmetic
+my $stream = read_file("$repo/scripts/vosk_stream.py");
+like($stream, qr/args\.rate \* 2 == 16000/,
+	'the 8 kHz call is doubled in this process, not through a second program');
 my ($py3) = grep { -x } map { "$_/python3" } split /:/, ($ENV{'PATH'} || '');
 SKIP: {
 	skip 'no python3 on PATH', 2 unless $py3;
@@ -121,6 +124,12 @@ seg = m.Segmenter(object(), object(), 0.7, 0.4, 20)
 assert seg.pause_windows == 7, "0.7 s is seven 100 ms windows"
 assert seg.min_windows == 4, "0.4 s is four"
 assert seg.ceiling_windows == 200, "20 s is two hundred"
+up = m.upsample2((1000).to_bytes(2, 'little', signed=True) * 4)
+import array
+samples = array.array('h')
+samples.frombytes(up)
+assert len(samples) == 8, "8 kHz samples double"
+assert list(samples) == [1000] * 8, "a level stays its level"
 print("ok")
 PY
 	my $out = qx{'$py3' '$probe' '$repo/scripts/vosk_stream.py' 2>&1};

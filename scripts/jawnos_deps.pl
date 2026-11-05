@@ -63,6 +63,7 @@ use JSON::PP ();
 use FindBin;
 use Cwd qw(abs_path);
 use File::Copy qw(copy);
+use File::Path qw(remove_tree);
 use lib "$FindBin::Bin/../lib";
 use JawnOS::Packages;
 
@@ -414,7 +415,12 @@ sub install_vosk {
 	}
 	system('mkdir', '-p', vosk_models_dir());
 	my $venv_py = "$vosk_dir/venv/bin/python3";
-	unless (-x $venv_py) {
+	# A venv made before python3-venv was installed has the interpreter but no
+	# pip, and reusing it would fail at the install every time. Check the pip,
+	# not just the interpreter, and rebuild the venv when it is missing.
+	my $has_pip = -x $venv_py && system($venv_py, '-m', 'pip', '--version') == 0;
+	unless ($has_pip) {
+		remove_tree("$vosk_dir/venv") if -d "$vosk_dir/venv";
 		if (run($py, '-m', 'venv', "$vosk_dir/venv") != 0) {
 			print "  vosk: could not make a virtual environment (install python3-venv); skipping.\n";
 			return;
@@ -422,6 +428,10 @@ sub install_vosk {
 	}
 	unless (-x $venv_py) {
 		print "  vosk: the venv has no python3; skipping.\n";
+		return;
+	}
+	if (!$has_pip && system($venv_py, '-m', 'pip', '--version') != 0) {
+		print "  vosk: the venv still has no pip (install python3-venv); skipping.\n";
 		return;
 	}
 	if (run($venv_py, '-m', 'pip', 'install', '--disable-pip-version-check', 'vosk') != 0) {

@@ -53,6 +53,24 @@ def rms16(buf):
     return math.sqrt(total / len(samples))
 
 
+def upsample2(buf):
+    """8 kHz s16le to 16 kHz s16le, a sample between each pair.
+
+    The SCO link is 8 kHz and Vosk's model wants 16 kHz; linear interpolation is
+    enough for speech here and keeps the resample in this process, where a
+    second pipe would add a few milliseconds to every line.
+    """
+    src = array.array("h")
+    src.frombytes(buf[: len(buf) - (len(buf) % 2)])
+    count = len(src)
+    out = array.array("h", bytes(4 * count))
+    for i in range(count):
+        value = src[i]
+        out[2 * i] = value
+        out[2 * i + 1] = value if i + 1 >= count else (value + src[i + 1]) // 2
+    return out.tobytes()
+
+
 def load_model(path):
     try:
         from vosk import Model, KaldiRecognizer, SetLogLevel
@@ -226,12 +244,15 @@ def main():
     if model is None:
         return 2
 
-    # Resample before segmenting: the model is 16 kHz and a 8 kHz stream fed to
-    # it unchanged is read at half speed. ffmpeg writes as it reads, so this is
-    # a few milliseconds of pipe, not a buffer that waits for the call.
-    if args.rate == 16000:
-        filt = subprocess.Popen(["cat"], stdin=subprocess.PIPE, stdout=subprocess.PIPE)
-    else:
+    # Resample before segmenting: the model is 16 kHz and 8 kHz fed to it
+    # unchanged is read at half speed. The SCO link is 8 kHz, so the doubling is
+    # done here, in the same loop: no second process and no pipe in the middle of
+    # a live call. Any other rate still goes through ffmpeg.
+    direct = None
+    if args.rate == 16000 or args.rate * 2 == 16000:
+        direct = args.rate
+    filt = None
+    if direct is None:
         try:
             filt = subprocess.Popen(
                 [
@@ -243,7 +264,7 @@ def main():
                 stdout=subprocess.PIPE,
             )
         except Exception as exc:  # noqa: BLE001
-            emit({"error": "ffmpeg is needed to resample the call: %s" % exc})
+            emit({"error": "ffmpeg is needed to resample a %d Hz call: %s" % (args.rate, exc)})
             return 4
 
     try:
@@ -252,35 +273,51 @@ def main():
         emit({"error": "could not open %s: %s" % (args.fifo, exc)})
         return 3
 
-    threading.Thread(target=pump, args=(fifo, filt.stdin), daemon=True).start()
+    if filt is not None:
+        threading.Thread(target=pump, args=(fifo, filt.stdin), daemon=True).start()
     emit({"event": "ready"})
 
     seg = Segmenter(model, Kaldi, args.pause, args.min, args.ceiling)
     window_bytes = int(16000 * WINDOW_SECONDS) * 2
-    pending = b""
     try:
-        while True:
-            data = filt.stdout.read(4096)
-            if not data:
-                break
-            pending += data
-            while len(pending) >= window_bytes:
-                window = pending[:window_bytes]
-                pending = pending[window_bytes:]
-                seg.feed(window, rms16(window))
+        if direct is not None:
+            raw_bytes = int(direct * WINDOW_SECONDS) * 2
+            pending = b""
+            while True:
+                data = os.read(fifo, 8192)
+                if not data:
+                    break
+                pending += data
+                while len(pending) >= raw_bytes:
+                    raw = pending[:raw_bytes]
+                    pending = pending[raw_bytes:]
+                    window = raw if direct == 16000 else upsample2(raw)
+                    seg.feed(window, rms16(raw))
+        else:
+            pending = b""
+            while True:
+                data = filt.stdout.read(4096)
+                if not data:
+                    break
+                pending += data
+                while len(pending) >= window_bytes:
+                    window = pending[:window_bytes]
+                    pending = pending[window_bytes:]
+                    seg.feed(window, rms16(window))
     finally:
         seg.finish("end")
         try:
             os.close(fifo)
         except Exception:
             pass
-        try:
-            filt.wait(timeout=2)
-        except Exception:
+        if filt is not None:
             try:
-                filt.kill()
+                filt.wait(timeout=2)
             except Exception:
-                pass
+                try:
+                    filt.kill()
+                except Exception:
+                    pass
     return 0
 
 
