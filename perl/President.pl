@@ -1059,14 +1059,26 @@ sub utility_runner() {
 			my $u = $gb::timeouts->{$t};
 			next unless ref $u eq 'HASH';
 			my $pool = &subs::batch_interval($gb::timeouts, $t);
+			my $span = (defined $pool ? $pool : ($u->{'interval'} || 0)) * 1000;
+			my $anchor = $u->{'last_run'} || 0;
+			$anchor = $u->{'last_attempt'} if ($u->{'last_attempt'} || 0) > $anchor;
+			my $now_at = &subs::rightNow();
+			my $due = ($anchor && $span) ? (int($anchor / $span) + 1) * $span : $now_at;
 			$log->info('utility runner: ' . $t . ' toggle=' . ($u->{'toggle'} || '-')
 				. ' interval=' . ($u->{'interval'} || '-')
 				. ' pool=' . (defined $pool ? $pool : '-')
 				. ' last_run=' . ($u->{'last_run'} || '-')
 				. ' last_attempt=' . ($u->{'last_attempt'} || '-')
+				. ' due=' . $due . ' now=' . $now_at . ' overdue=' . (($due <= $now_at) ? 'yes' : 'no')
 				. ' subroutine=' . ($u->{'subroutine'} ? 'yes' : 'no'));
 		}
 	}
+	# A short trace of the tick itself: whether the runner is being called at all,
+	# and which slots it finds due. A job that starts is logged by its own effect;
+	# a tick that starts nothing has no voice, and the house cannot tell a quiet
+	# schedule from a dead one.
+	$gb::utility_tick_n = ($gb::utility_tick_n || 0) + 1;
+	my $trace = $gb::utility_tick_n <= 12;
 	# The app's scheduled wake wants to know when the due work is done so it can
 	# release the CPU before its 45s backstop. It is written only after a tick
 	# that ran nothing, and removed as soon as a job starts, so a reader can tell
@@ -1144,6 +1156,7 @@ sub utility_runner() {
 			$next_due = $slot->{'due'} if !defined $next_due || $slot->{'due'} < $next_due;
 			next;
 		}
+		$log->info('utility tick ' . $gb::utility_tick_n . ': ' . $t . ' due (interval ' . $interval . ', started ' . $started . ')') if $trace;
 		# This one stays due for the next tick, not this pass: the backlog is
 		# drained a couple of jobs at a time (see $utility_pass_cap).
 		if ($started >= $utility_pass_cap) {
@@ -1200,6 +1213,7 @@ sub utility_runner() {
 		my $done = &subs::rightNow();
 		$slot->{'due'} = (int($done / $period) + 1) * $period;
 	}
+	$log->info('utility tick ' . $gb::utility_tick_n . ': ' . scalar(keys %{$gb::timeouts}) . ' slot(s), started ' . $started . ', ran ' . $ran) if $trace;
 	# A new beat is also this machine's few seconds of availability. If the rows
 	# have moved since the last beat, tell the peers, so they can run their delta
 	# pull while we are up. The hold keeps utility_idle unwritten until they have
