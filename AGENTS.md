@@ -15,9 +15,10 @@ Two commands read the tree's test-checked indexes. **Reach for them before `grep
 
 - `perl scripts/where.pl <name>` — one line, `file:line`: a Manager helper, a domain sub, a route
 action (`action_7408`), a route path (`/manager/pen`), a help topic by name, a JavaScript, firmware,
-`perl/` or `scripts/` declaration, or a file (its topics). A name nothing declares prints the mention lines **with their text**, so a miss is still judgeable
-without opening the file. A single JS/firmware declaration comes with its body (`--body`, capped); `--outline FILE`
-lists a file's declarations as `line<TAB>kind name`, so read the range, not the file.
+`perl/` or `scripts/` declaration, or a file (its topics). A miss still prints its mention lines with
+their text, so it is judgeable without opening the file. A JS/firmware declaration comes with its body
+(`--body`); `--outline FILE`
+lists declarations as `line<TAB>kind name`, so read the range, not the file.
 `--topics`/`--tools` list the help registry/probe shelf (PATTERN narrows), `--tech <app>` prints the technical brief
 (routes compressed as `/a{b,c}`; `--routes` expands them). After you act on a hit,
 report it: `where.pl --report <name> right --at path:line`; if it was wrong,
@@ -39,9 +40,9 @@ The indexes are pinned by `t/54` (helpers), `t/58` (routes), `t/91` (domain subs
 
 ## Credentials
 
-SSH host/user/password pairs live in `.secrets/ssh.txt` (gitignored, `chmod 600`). Passwordless key
-auth (`~/.ssh/id_ed25519`) is installed on all four hosts; they listen on port **8022**, not 22. Prefer
-the key — passwords are fallback only. Never copy credentials into a commit, a log, or a tracked file.
+SSH host/user/password pairs live in `.secrets/ssh.txt` (gitignored, `chmod 600`). Key auth
+(`~/.ssh/id_ed25519`) works on all four hosts on port **8022**, not 22. Prefer the key; passwords are
+fallback only. Never copy credentials into a commit, a log, or a tracked file.
 
 ---
 
@@ -80,9 +81,12 @@ user for the exact file/folder/name. A wrong guess costs far more tokens than a 
 
 ## Many agents at once
 
-Worktree per task (`git worktree add .worktrees/<task> -b agent/<task> origin/main`), never the primary
-checkout; land with `perl ~/jawnos/scripts/agent_land.pl` (the newest lander, whatever your worktree has)
-from the worktree root, never push or restart by hand. `docs/AGENTS-concurrency.md`.
+**Worktree per task: every source write — edit, new file, delete — happens in a worktree.** No
+exceptions: not a one-line fix, not a probe, not a file you mean to revert. The primary checkout is
+read-only for agents: a dirty one makes the lander refuse every landing. Create it
+(`git worktree add .worktrees/<task> -b agent/<task> origin/main`), then land from the worktree root
+with `perl ~/jawnos/scripts/agent_land.pl` (the primary copy), never push or restart by hand.
+`docs/AGENTS-concurrency.md`.
 
 ## Crash-resilient agent work
 
@@ -102,9 +106,9 @@ The Zed panel keeps every byte it is shown; zram + earlyoom only slow the crash.
 
 ## Web interface
 
-- **Test the WebUI, not a Chromium-only path.** The desktop app is WebKitGTK; Chromium is for headless
-  DOM/route checks only. An engine-dependent feature (CSS `filter: url(#…)`, `canvas.toBlob`,
-  `createImageBitmap`, WebCodecs) is not proven by headless Chromium — say so and check the real engine.
+- **Test the WebUI, not a Chromium-only path.** Desktop is WebKitGTK; Chromium is for headless DOM/route
+  checks only. An engine-dependent feature (CSS `filter: url(#…)`, `canvas.toBlob`, WebCodecs) is not
+  proven by headless Chromium — say so and check the real engine.
 - Log in with a ticket URL: `https://127.0.0.1:3000/box_office/<uuid>?s=<token>`. The live token is in
   `.shots/ticket.txt` (gitignored). It mints the `president` cookie and redirects to
   `https://127.0.0.1:<working_port>/manager` (`working_port` from `config.json`).
@@ -114,8 +118,8 @@ The Zed panel keeps every byte it is shown; zram + earlyoom only slow the crash.
 
 Built APKs are staged in `releases/` (gitignored). `perl scripts/app_build.pl` bumps the app repo's
 versionCode/versionName and stages the next one; `perl scripts/app_publish.pl` uploads the newest staged
-APK **and** a matching `app_release.json` — **a build that is only staged never reaches GitHub**, so
-always build **and** publish. Bump `versionCode` per release in `~/jawnos-app/termux-app/AGENTS.md`.
+APK **and** a matching `app_release.json` — **a staged build never reaches GitHub** — so build **and**
+publish. Bump `versionCode` per release in `~/jawnos-app/termux-app/AGENTS.md`.
 Staging names, the `GET /manager/app_release` bytes and the sync: `docs/AGENTS-app-releases.md`.
 
 ## Firmware / OTA (stage every build)
@@ -130,10 +134,9 @@ ESP32 boards take the `.bin` picked from `.pio/build/<env>/`. Hardwired paths, `
 ## Phone reception (screened calls)
 
 A screened call is answered by the app and carried over Bluetooth to a gateway
-machine that plays the house's prompts and records the caller's name. The audio
-setup that works (PipeWire's virtual handset, its settings and its limits) is in
-`docs/reception.md`; the code is `lib/JawnOS/Sco/`, `perl/Sco.pl`,
-`perl/Reception.pl` and `perl/sco/sco_helper.c`.
+machine that plays the house's prompts and records the caller's name. Working audio setup (PipeWire's
+virtual handset, settings, limits): `docs/reception.md`; code: `lib/JawnOS/Sco/`, `perl/Sco.pl`,
+`perl/Reception.pl`, `perl/sco/sco_helper.c`.
 
 ## Languages and translation
 
@@ -210,8 +213,7 @@ translatable in the same change:
 - The folder table, the eager/lazy part notes and the Lite history: `docs/AGENTS-layout.md`.
   Never read or edit generated `.pio/`/`build/`.
 
-**Searching:** start in the most specific folder above; if a file is not on this map and 3 attempts
-fail, invoke RULE 1.
+**Searching:** start in the most specific folder above; after 3 misses, invoke RULE 1.
 
 ---
 
@@ -250,5 +252,5 @@ Data model, journal, maps and chat: `docs/AGENTS-facts.md`. Schema: `database/sc
 
 ## Token economy
 
-Ask for the hunk, keep the context prefix stable, and ask the locator. Full rules: `docs/AGENTS-agent-work.md`.
-The four local agents (Guide, Coding, Evaluation, Pen) and how a new app is added: `docs/AGENTS-agents.md`.
+Ask for the hunk, keep the prefix stable, ask the locator: `docs/AGENTS-agent-work.md`. The four local
+agents (Guide, Coding, Evaluation, Pen) and adding an app: `docs/AGENTS-agents.md`.

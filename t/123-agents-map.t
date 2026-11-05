@@ -63,10 +63,16 @@ for my $file (qw(
 
 # --- the concurrency on-ramp an agent has to find --------------------------
 like($text, qr/Worktree per task/, 'the map names the worktree-per-task rule');
+like($text, qr/every source write .* happens in a worktree/,
+	'the map says any write at all belongs in a worktree, not just the commit');
+like($text, qr/primary checkout is\s+read-only for agents/s,
+	'and that the primary checkout is read-only, not merely the place to land from');
 like($text, qr{perl ~/jawnos/scripts/agent_land\.pl},
 	'the map names the primary checkout lander, not the worktree copy');
 
 my $concurrency = read_file("$root/docs/AGENTS-concurrency.md");
+like($concurrency, qr/before your first edit/,
+	'the worktree doc says create it before the first edit');
 like($concurrency, qr/config\.json` is \*\*not tracked\*\*/,
 	'the worktree doc says config.json is not tracked');
 like($concurrency, qr/cp \.\.\/\.\.\/config\.json \./,

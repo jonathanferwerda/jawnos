@@ -42,9 +42,12 @@ user for the exact file/folder/name. A wrong guess costs far more tokens than a 
 
 ## Many agents at once
 
-Worktree per task (`git worktree add .worktrees/<task> -b agent/<task> origin/main`), never the primary
-checkout; land with `perl ~/jawnos/scripts/agent_land.pl` (the newest lander, whatever your worktree has)
-from the worktree root, never push or restart by hand. `docs/AGENTS-concurrency.md`.
+**Worktree per task: every source write — edit, new file, delete — happens in a worktree.** No
+exceptions: not a one-line fix, not a probe, not a file you mean to revert. The primary checkout is
+read-only for agents: a dirty one makes the lander refuse every landing. Create it
+(`git worktree add .worktrees/<task> -b agent/<task> origin/main`), then land from the worktree root
+with `perl ~/jawnos/scripts/agent_land.pl` (the primary copy), never push or restart by hand.
+`docs/AGENTS-concurrency.md`.
 
 
 ## Crash-resilient agent work

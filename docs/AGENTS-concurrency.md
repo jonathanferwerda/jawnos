@@ -117,7 +117,10 @@ rebase immediately before running the gate:
 
 ## In a worktree
 
-- `git worktree add .worktrees/<task> -b agent/<task> origin/main`, and work only there.
+- `git worktree add .worktrees/<task> -b agent/<task> origin/main` **before your first edit**, and
+  work only there. The primary checkout is read-only for agents: a source write left in it makes
+  `agent_land.pl` refuse every landing, not just yours. Generated artifacts that scripts stage in
+  place — `releases/`, firmware `build/`, `.shots/` — are gitignored and are not source writes.
 - A worktree is a **checkout, not a clone**: it shares the one object store (`.git` stays one copy)
   and adds a full checkout of the tracked files — about 170 MB here, with the firmware fonts and
   images. History is never duplicated.
