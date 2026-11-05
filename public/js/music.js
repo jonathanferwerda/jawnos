@@ -2440,6 +2440,10 @@ async function musicInit(method) {
 
 	if (!musicPhoneLayout()) {
 		$('#music_artists, #music_albums').resizable({
+			// height only: the shelves are halves of the window's width, and an east
+			// drag would pin a pixel width that no longer fits once the window is
+			// made slimmer
+			handles: 's',
 			start: function(p) {
 			},
 			resize: function(p,j) {
