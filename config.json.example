@@ -8,6 +8,7 @@
 	"ssh_port": "8022",
 	"email": "me@email.com",
 	"port": "3000",
+	"board_port": "3000",
 	"open_browser": "yes",
 	"ws_port": "3001",
 	"main_workers": 0,

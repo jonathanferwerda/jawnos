@@ -187,10 +187,6 @@ sub remote_machine_reconnector($c) {
 					my $peer_watermark = &subs::db_query('select server_time from backups where reason=? and signatorial=? and recipient=? order by server_time DESC LIMIT 1', 'remote_upgraded', $rm->{'signatorial'}, $signatorial)->hashes->[0];
 					my $my_digest = &subs::sync_digest_map();
 					$rm = &remote_useragent_maker({ signatorial => $rm->{'signatorial'}, rm => $rm, auth_test => 'yes', tombstone_cursor => ($rm->{'sync_cursor'} || 0), since => ($peer_watermark->{'server_time'} || 0), digest => $my_digest });
-					my $manager = $rm->{'manager'};
-					my $port = $rm->{'port'};
-					my $port_dock = $rm->{'dock_port'};
-					$manager =~ s/:$port/:$port_dock/gi;
 					if (!$rm->{'res'}) {
 						$ping_test = 'no';
 					}

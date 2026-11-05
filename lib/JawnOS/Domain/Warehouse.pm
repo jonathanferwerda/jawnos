@@ -649,7 +649,9 @@ sub remote_machine_tunnel_processor {
 		my $tailnet = &subs::tailnet_address($rm);
 		if ($tailnet) {
 			$rm->{'tailnet_ip'} = $tailnet;
-			my $port = $rm->{'dock_port'} || $rm->{'port_dock'} || 3000;
+			# A tailnet address is the peer's own door, so it takes the peer's own
+			# entry port first; the dock fields are only what older rows still carry.
+			my $port = $rm->{'port'} || $rm->{'dock_port'} || $rm->{'port_dock'} || 3000;
 			$rm->{'tailnet_manager'} = 'https://' . $tailnet . ':' . $port . '/manager';
 			my ($host) = ($rm->{'manager'} || '') =~ m{^https?://([^/:]+)};
 			my $resolved = 0;

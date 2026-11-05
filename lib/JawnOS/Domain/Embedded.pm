@@ -54,7 +54,10 @@ sub embedded_levels_scan {
 	my $now = &rightNow();
 	my %seen;
 	my @found;
-	my $default_port = $ENV{'PORT_DOCK'} || 3000;
+	# A board answers /device_query on its own firmware port, not on our entry
+	# port: PORT_BOARD is the firmware's 3000, so moving PORT_DOCK to PORT_AHOY
+	# no longer sends every board probe to a door that does not exist.
+	my $default_board_port = $ENV{'PORT_BOARD'} || 3000;
 	my $device_rows = &db_select('devices')->hashes || [];
 	# The bridge's own sighting is the freshest thing we have for a board off
 	# its WiFi; keep it beside the neighbour rows so a phone that holds the
@@ -180,7 +183,7 @@ sub embedded_levels_scan {
 				my $bt = $n->{'mac_addresses'}->{'bluetooth'} || $n->{'mac'} || '';
 				my ($battery, $mv, $status, $online, $seen_at, $link) = (undef, undef, undef, 0, 0, '');
 				if ($ip) {
-					my $port = $n->{'PORT_DOCK'} || $default_port;
+					my $port = $n->{'PORT_DOCK'} || $default_board_port;
 					my $ua = Mojo::UserAgent->new;
 					my $res = eval { $ua->connect_timeout(2)->inactivity_timeout(3)->get("http://$ip:$port/device_query")->result };
 					if ($res && $res->is_success) {

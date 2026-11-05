@@ -211,7 +211,7 @@ sub embedded_grabber($c,$timestamp) {
 }
 
 sub embedded_device_query($embedded) {
-	my $manager = 'http://' . $embedded->{'ip'} . ':' . ($embedded->{'PORT_DOCK'} || $ENV{PORT_DOCK}) .  '/device_query';
+	my $manager = 'http://' . $embedded->{'ip'} . ':' . ($embedded->{'PORT_DOCK'} || $ENV{PORT_BOARD} || 3000) .  '/device_query';
 	my $ua = Mojo::UserAgent->new();
 	my $res = eval { $ua->insecure(1)->get($manager) };
 	if (eval { $res->result->body }) {

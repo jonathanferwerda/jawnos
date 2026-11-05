@@ -77,13 +77,14 @@ sub remote_device_connect($rdata) {
 	# password marks the machine citizen; remote_machine_reauth passes nothing,
 	# so a re-auth preserves whatever privilege the row already carries.
 	my $privilege = $rdata->{'privilege'};
-	my $port = $rdata->{'port'} || $ENV{PORT_DOCK};
+	# The peer's own entry port. /sesh_check is in the gate's public list, so every
+	# listener answers it: the row's `port` (PORT_AHOY) is the door, and there is
+	# no hidden dock port to switch to any more.
+	my $port = $rdata->{'port'} || $ENV{PORT_AHOY};
 	my $signatorial = &subs::signatorial_designer();
-	my $dock_port = $rdata->{'port_dock'} || 3000;
 	my $tuns = {};
 	if ($tunnel eq 'yes') {
 		$tuns = &subs::tunnel_port_mapper({ signatorial => $rdata->{'signatorial'} });
-		$dock_port = $tuns->{'PORT_DOCK'};
 		$port = $tuns->{'PORT_AHOY'};
 		$manager = 'https://127.0.0.1:' . $port . '/manager';
 		$vip = '127.0.0.1';
@@ -93,7 +94,6 @@ sub remote_device_connect($rdata) {
 	my $returner = {};
 	$manager =~ s/\/manager$//gi;
 
-	$manager =~ s/:$port/:$dock_port/gi;
 	my $bti;
 	my $ua = Mojo::UserAgent->new();
 	# The login names this machine, so it must sign it: the receiver pins the
@@ -111,9 +111,14 @@ sub remote_device_connect($rdata) {
 	my $res = eval { return $ua->insecure(1)->post($url => form => $login)->result };
 
 	$returner->{'body'} = eval { return decode_json $res->body };
-	$port = $tuns->{'PORT_AHOY'} || $returner->{'body'}->{'port'};
-	$manager =~ s/:$dock_port/:$port/gi;
-	$manager =~ s/:6100/:$port/gi;
+	# Adopt the port the peer says it serves on - that is the authority every later
+	# call rides, and it is how a row entered on an old LAN port moves to the
+	# entry port. A failed answer announces nothing, so the typed port is kept.
+	my $announced = $tuns->{'PORT_AHOY'} || $returner->{'body'}->{'port'};
+	if (defined $announced && $announced =~ /^\d+$/) {
+		$manager = &subs::peer_entry_url($manager, $announced);
+		$port = $announced;
+	}
 	if ($returner->{'body'}->{'fqdn'} && $ip !~ /[a-zA-Z]/ && $returner->{'body'}->{'signatorial'} ne $signatorial) {
 
 		$returner->{'body'}->{'ip_address'} = $ip;

@@ -288,6 +288,17 @@ sub peer_ticket_port {
 	return 3000;
 }
 
+# Point a peer's manager url at the port it says it serves on. The login is the
+# one call that must find the peer's own door, and a row entered on an old LAN
+# port has to move to the announced one here - never to a hidden dock port.
+sub peer_entry_url {
+	my ($manager, $port) = @_;
+	return $manager unless defined $manager && length $manager;
+	return $manager unless defined $port && $port ne '' && $port =~ /^[0-9]{1,5}$/;
+	$manager =~ s{^(https?://(?:\[[^\]]+\]|[^/:]+)):\d+}{$1:$port}i;
+	return $manager;
+}
+
 # Whether a Go request came from the installed app. app_device is the proof an
 # app_login left; a remote manager window opened by the app may instead carry a
 # ticket session, so the app's own bridge flags (desktop + bridge, injected only

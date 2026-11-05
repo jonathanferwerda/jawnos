@@ -263,7 +263,6 @@ sub remote_useragent_maker($data) {
 		$rm = &subs::remote_machine_tunnel_processor($rm);
 	}
 	my $remote_address = $rm->{'ip'};
-	my $port_dock = $rm->{'port_dock'} || 3000;
 	my $port = $rm->{'port'};
 
 	my $manager = $rm->{'manager'};

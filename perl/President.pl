@@ -238,6 +238,10 @@ sub manager_starter() {
 	$ENV{PORT_BELL} = $alarm_port;
 	$ENV{PORT_BESTOW} = $tty_port;
 	$ENV{PORT_DOCK} = $dock_port;
+	# The port a board's own firmware serves on, not a door of ours. The sketches
+	# in jp/, jt/ and jw/ hardcode 3000, so this is 3000 unless config.json says
+	# otherwise - and it stays 3000 when PORT_DOCK moves off the entry port.
+	$ENV{PORT_BOARD} = $config->{'board_port'} || 3000;
 	$ENV{PORT_COMS} = $ws_tty_port;
 	$ENV{PORT_ARM} = $watch_port;
 	$ENV{PORT_ENV} = $config->{'environment'};

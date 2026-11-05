@@ -70,6 +70,23 @@ is(subs::peer_ticket_port({}),
 is(subs::peer_ticket_port({ manager => 'https://hub.example:45545', dock_port => 3000 }),
 	45545, 'a row with no port field takes the port from its manager url');
 
+# The login is the one peer call that must reach the peer's own door. A row
+# entered on the old LAN port moves to the port the peer announces; a hidden
+# dock port is never named again.
+is(subs::peer_entry_url('https://10.0.0.5:3000', 45545),
+	'https://10.0.0.5:45545', 'the announced port replaces the old LAN port');
+is(subs::peer_entry_url('http://10.0.0.5:3000', 45545),
+	'http://10.0.0.5:45545', 'the scheme is kept');
+is(subs::peer_entry_url('https://[::1]:6100', 45545),
+	'https://[::1]:45545', 'a bracketed address keeps its brackets');
+is(subs::peer_entry_url('https://10.0.0.5', 45545),
+	'https://10.0.0.5', 'a url with no port is left alone');
+is(subs::peer_entry_url('https://10.0.0.5:3000', ''),
+	'https://10.0.0.5:3000', 'no announced port leaves the url alone');
+is(subs::peer_entry_url('https://10.0.0.5:3000', 'x'),
+	'https://10.0.0.5:3000', 'a non-numeric announcement is ignored');
+is(subs::peer_entry_url(undef, 45545), undef, 'nothing to rewrite, nothing returned');
+
 # A Go request from the installed app may be a ticket session rather than an
 # app_login, but the app's own bridge flags are still its proof. A plain browser
 # sends neither and must not mint.
