@@ -180,7 +180,11 @@ sub merge_table_rows {
 								&subs::sync_job_step($sync_job, 'merge:' . $q, \%progress);
 								$job_alert = &subs::rightNow();
 							}
-							if ($r->{'timestamp'}) {
+							# Not every synced table has a `timestamp` column: `people` does not,
+							# and gating the whole write path on it read every people row, reported
+							# the table merged and silently dropped them (2026-11-05). The sync
+							# requires `server_time`, not `timestamp`, so merge unconditionally.
+							if (1) {
 								if ($percentage >= $last_percent && $results_size > 1 && &subs::rightNow() >= ($last_alert + 250)) {
 									my $speed = abs sprintf("%.2f", $n / ($start_time - &subs::rightNow()) * 1000);
 									my $remaining = &subs::duration_sayer(((&subs::rightNow() - $start_time) / $percentage) * (100 - $percentage) / 1000);
