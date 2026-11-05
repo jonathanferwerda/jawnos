@@ -708,7 +708,6 @@ static int pcm_mode_main(void) {
 	unsigned char chunk[CHUNK_BYTES];
 	fcntl(STDIN_FILENO, F_SETFL, fcntl(STDIN_FILENO, F_GETFL, 0) | O_NONBLOCK);
 	emit("{\"event\":\"listening\",\"local\":\"pcm\"}");
-	int quiet_polls = 0;
 	long long first_frame_at = 0;
 	long long opened_at = 0;
 	long long last_frame_at = 0;
@@ -746,7 +745,6 @@ static int pcm_mode_main(void) {
 				pcm_close_pair();
 				opened_at = 0;
 				first_frame_at = 0;
-				quiet_polls = 0;
 			}
 			int cap_ok, play_ok;
 			if (pipe_mode) {
@@ -782,7 +780,6 @@ static int pcm_mode_main(void) {
 						continue;
 					}
 					have_accepted = 1;
-					quiet_polls = 0;
 					emit("{\"event\":\"accepted\",\"peer\":\"pcm\"}");
 				}
 				else {
@@ -822,20 +819,23 @@ static int pcm_mode_main(void) {
 			continue;
 		}
 		if (n > 0) {
-			quiet_polls = 0;
 			last_frame_at = now_ns();
 			downlink_chunk(chunk, (size_t) n);
 		}
-		else if (n == 0 && have_accepted && ++quiet_polls > 40) {
-			/* the transport stays open between calls; two seconds of nothing is
-			 * the end of one */
+		else if (n == 0 && have_accepted && last_frame_at
+			&& now_ns() - last_frame_at > 2000000000LL) {
+			/* The transport stays open between calls; two seconds without a
+			 * frame is the end of one. This is wall time, not a count of
+			 * polls: the loop below sleeps half a millisecond, so forty polls
+			 * was twenty milliseconds, and a buffer arriving a little late
+			 * ended a live call in the middle of the greeting. */
 			emit("{\"event\":\"closed\",\"reason\":\"pcm idle\"}");
 			if (rec_active) record_close(1, "link");
 			if (pipe_mode) { if (pipe_in) { pclose(pipe_in); pipe_in = NULL; } if (pipe_out) { pclose(pipe_out); pipe_out = NULL; } }
 			else pcm_close_pair();
 			have_accepted = 0;
-			quiet_polls = 0;
 			first_frame_at = 0;
+			last_frame_at = 0;
 		}
 
 		long long t = now_ns();
@@ -851,6 +851,13 @@ static int pcm_mode_main(void) {
 		usleep(500);
 	}
 	if (rec_active) record_close(1, "quit");
+	/* Close the audio children with us. A helper that is put down mid-greeting
+	 * leaves its pacat writing the rest of the clip into the prompt sink, and
+	 * the next plan's greeting lands on top of it - the caller hears the same
+	 * sentence twice. Closing the pipes ends them: pacat sees its stdin close
+	 * and parec its reader. */
+	if (pipe_in) { pclose(pipe_in); pipe_in = NULL; }
+	if (pipe_out) { pclose(pipe_out); pipe_out = NULL; }
 	pcm_close_pair();
 	return 0;
 }

@@ -318,9 +318,9 @@ SKIP: {
 }
 
 # A link that hands the gateway nothing but digital silence is not a call yet:
-# our own sink produces frames whether or not the phone's audio path is up, and
-# speaking then speaks into nothing. The plan waits for a frame that carries
-# something; a stream that never does is taken as a call after eight seconds.
+# the phone's gateway nodes keep feeding our sink with silence between calls,
+# and speaking then speaks into nothing. The plan waits for a frame that
+# carries something.
 SKIP: {
 	skip 'the SCO helper is not built on this machine', 2 unless -x $helper;
 	require IPC::Open2;
@@ -352,6 +352,48 @@ SKIP: {
 	};
 	ok(!$accepted_within->('cat /dev/zero', 3), 'a link of pure silence is not answered yet');
 	ok($accepted_within->('yes', 4), 'a link that carries audio is answered');
+}
+
+# Two seconds without a frame is the end of a call, and it is measured in wall
+# time. Counting polls instead measured twenty milliseconds, and a buffer that
+# arrived a little late ended a live call in the middle of the greeting.
+SKIP: {
+	skip 'the SCO helper is not built on this machine', 2 unless -x $helper;
+	require IPC::Open2;
+	my $feeder = "$dir/feeder.pl";
+	write_file($feeder, <<'FEED');
+#!/usr/bin/perl
+# like parec: 20 ms of audio every 20 ms for two seconds, then silence with the
+# pipe still open
+for (1 .. 100) { print pack('s<', 6000) x 160; select(undef, undef, undef, 0.02); }
+select(undef, undef, undef, 2.5);
+FEED
+	chmod 0755, $feeder;
+	my ($out, $in);
+	my $pid = IPC::Open2::open2($out, $in, $helper,
+		'--pipe-in', $feeder, '--pipe-out', 'cat > /dev/null');
+	$in->autoflush(1);
+	my $start = time;
+	my ($accepted_at, $closed_at);
+	my $buffer = '';
+	while (time - $start < 7) {
+		my $rin = '';
+		vec($rin, fileno($out), 1) = 1;
+		my $rout = $rin;
+		next unless select($rout, undef, undef, 0.5);
+		my $got = sysread($out, my $chunk, 4096);
+		last unless $got;
+		$buffer .= $chunk;
+		$accepted_at = time - $start if !$accepted_at && $buffer =~ /"event":"accepted"/;
+		if ($buffer =~ /"event":"closed"/) { $closed_at = time - $start; last; }
+	}
+	print {$in} '{"cmd":"quit"}' . "\n";
+	close $in;
+	close $out;
+	waitpid($pid, 0);
+	ok($accepted_at, 'a paced stream is answered');
+	ok($closed_at && $closed_at - $accepted_at >= 2,
+		'a quiet line ends the call after two seconds, not after forty polls');
 }
 
 done_testing();
