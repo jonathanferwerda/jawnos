@@ -103,9 +103,10 @@ our $SECRET_VALUE = qr{
 # history that explains them, then the suite the change has to pass. When the
 # generated repository index exists it replaces the QA README (see assemble).
 our @DOCUMENTS = (
-	{ rel => 'AGENTS.md',             label => 'project rules' },
-	{ rel => 'docs/AGENTS-notes.md',  label => 'deep notes (data model, flows, history)' },
-	{ rel => 'qa/README.md',          label => 'the QA suite' },
+	{ rel => 'AGENTS.md',                    label => 'project rules' },
+	{ rel => 'docs/AGENTS-concurrency.md',   label => 'concurrent agents: worktrees, the one lander' },
+	{ rel => 'docs/AGENTS-notes.md',         label => 'deep notes (data model, flows, history)' },
+	{ rel => 'qa/README.md',                 label => 'the QA suite' },
 );
 
 # Absolute home paths in the documentation are rewritten before the model sees

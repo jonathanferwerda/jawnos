@@ -59,6 +59,8 @@ sub fixture_context {
 		. "- RULE 1 - Stop and ask after 3 attempts.\n"
 		. "- Every behaviour change ships with a test.\n");
 	write_file("$dir/docs/AGENTS-notes.md", $a{'notes'} // $NOTES);
+	write_file("$dir/docs/AGENTS-concurrency.md",
+		"# Concurrent agents\n\nWorktree per task; land through `scripts/agent_land.pl`.\n");
 	write_file("$dir/qa/README.md", "# QA suite\n\nRun the suite from this file.\n");
 	write_file("$dir/database/schema.sql",
 		"CREATE TABLE notes (id INTEGER PRIMARY KEY);\n"
@@ -118,6 +120,11 @@ my $note = 'the notes table and sync are out of step; the soft keyboard covers t
 my $ctx = CodingContext::assemble(context_dir => $dir, note_text => $note);
 my $notes_doc = doc_named($ctx, 'docs/AGENTS-notes.md');
 ok($notes_doc, 'the deep notes are in the assembled context');
+my $conc_doc = doc_named($ctx, 'docs/AGENTS-concurrency.md');
+ok($conc_doc, 'the concurrent-agent protocol is in the assembled context');
+like($conc_doc->{'text'}, qr/scripts\/agent_land\.pl/,
+	'and names the lander a coding agent has to use');
+is($conc_doc->{'truncated'}, 0, 'and is small enough to send whole');
 my @titles = map { $_->{'title'} } @{ $notes_doc->{'sections'} || [] };
 ok(grep({ $_ eq 'Data model' } @titles), 'a note naming the notes table gets the data model');
 ok(grep({ $_ eq 'Sync' } @titles), 'a note naming sync gets the sync section');
