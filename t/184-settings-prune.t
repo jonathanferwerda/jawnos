@@ -102,8 +102,11 @@ like($out, qr/nothing written/, 'and says so');
 is($rows->("length(app) > 100"), 1, 'a dry run deletes nothing');
 is($rows->("app like '__orphan%'"), 1, 'not even the orphans');
 
+my $before_bytes = -s $dbfile;
 ($rc, $out) = quietly(sub { main('--apply') });
 is($rc, 0, 'apply succeeds') or diag($out);
+like($out, qr/file \d+ MB -> \d+ MB/, 'the report names the file sizes');
+ok((-s $dbfile) <= $before_bytes, 'the vacuum did not grow the file');
 is($rows->("length(app) > 100"), 0, 'the payload key is gone');
 is($rows->("app like '__orphan%'"), 0, 'the orphan rows are gone');
 my $cards = $db->query("select value from settings where app = 'cards'")->hash;

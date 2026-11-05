@@ -51,7 +51,7 @@ sub main {
 	my (@argv) = @_;
 	my $apply = grep { $_ eq '--apply' } @argv;
 	my $json  = grep { $_ eq '--json' } @argv;
-	my ($db) = &subs::database_grabber();
+	my ($db, $database) = &subs::database_grabber();
 	unless ($db) {
 		print "settings_prune: no database to read\n";
 		return 1;
@@ -108,9 +108,13 @@ sub main {
 	foreach my $r ( @rewrites ) {
 		$db->query('update settings set value = ?, server_time = ? where id = ?', $r->[1], $now, $r->[0]);
 	}
-	# VACUUM cannot run inside a transaction; DBD::SQLite is in autocommit here.
-	$db->query('vacuum');
-	print "settings_prune: deleted $deleted row(s), rewrote $stripped, vacuumed\n" unless $json;
+	# VACUUM must go through the raw handle: Mojo::SQLite's query path leaves it
+	# unrun (the phone's file stayed at 1.06 GB until the sqlite3 CLI ran it).
+	my $before = (defined $database && -e $database) ? -s $database : 0;
+	$db->dbh->do('vacuum');
+	my $after = (defined $database && -e $database) ? -s $database : 0;
+	printf("settings_prune: deleted %d row(s), rewrote %d, file %.0f MB -> %.0f MB\n",
+		$deleted, $stripped, $before / 1048576, $after / 1048576) unless $json;
 	return 0;
 }
 
