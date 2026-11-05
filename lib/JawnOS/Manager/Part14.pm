@@ -112,6 +112,20 @@ sub manager_reset($c) {
 			$c->param('uuid' => $uuid);
 		}
 	}
+	# A stop names one row before it is relayed, resolved here on the machine
+	# that received the press. Relaying an empty uuid made every peer fall back
+	# to its own copy of the database, so one press closed two different open
+	# sessions (the same app open on two machines, or a stale row beside the
+	# current one). The oldest open start/record is the target, and that uuid is
+	# what travels, so a peer either closes that one row or nothing.
+	if ($type eq 'stop' && !$target_uuid) {
+		my $resolved = &subs::stop_target_row($app, '', $timestamp);
+		if ($resolved && $resolved->{'uuid'}) {
+			$target_uuid = $resolved->{'uuid'};
+			$uuid = $target_uuid;
+			$c->param('uuid' => $uuid);
+		}
+	}
 	my $returner = { app => $app, timestamp => $timestamp, server_time => $server_time, init => $init, uuid => $uuid };
 	# A media press names the machine that does the work (the camera, scan and
 	# record dropdowns carry its signatorial). The request is relayed to that

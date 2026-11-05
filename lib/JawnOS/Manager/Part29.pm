@@ -169,7 +169,9 @@ sub guide_open_target($app, $app_uuid) {
 	$app = &subs::unformat_name($app || '');
 	my ($id_where, $id_args) = &guide_appointment_identity($app, $app_uuid);
 	return undef unless length $app || @{$id_args} > 1;
-	my $rows = &subs::db_query("select * from appointments where $id_where and uuid is not null and type in (?,?,?,?,?) and timestamp <= ? and stop_seen is null order by timestamp desc limit 1", @{$id_args}, 'start','record','video','audio','screen', &subs::rightNow())->hashes;
+	# the same rule as open_session_uuid: the oldest running session, so "stop it"
+	# clears a session a missing stop left open instead of naming a newer one.
+	my $rows = &subs::db_query("select * from appointments where $id_where and uuid is not null and type in (?,?,?,?,?) and timestamp <= ? and stop_seen is null order by timestamp asc limit 1", @{$id_args}, 'start','record','video','audio','screen', &subs::rightNow())->hashes;
 	return $rows->[0];
 }
 
