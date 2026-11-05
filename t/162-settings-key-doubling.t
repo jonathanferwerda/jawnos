@@ -105,4 +105,20 @@ is(scalar @{ $db->query("select app from settings where setting = 'toggle'")->ha
 my $synced = $db->query("select app from settings where setting = 'toggle'")->hashes->[0]->{'app'};
 is($synced, $name, 'a character-string write round-trips unchanged');
 
+# A settings key is a name, not a payload. A row whose `app` grew to a whole
+# document was copied into all five indexes (the phone's table reached 1.06 GB
+# with an average key of 2 KB), so a key over 100 characters is refused at the
+# one place every settings write meets.
+my $count = sub { scalar @{ $db->query('select id from settings where setting = ?', $_[0])->hashes } };
+my $huge = 'x' x 5000;
+&subs::setting_setter({ app => $huge, setting => 'probe', value => 'on', source => 'test' });
+is($count->('probe'), 0, 'a 5000-character app name is not written');
+&subs::setting_setter({ app => 'x' x 101, setting => 'probe', value => 'on', source => 'test' });
+is($count->('probe'), 0, 'a name one character over the limit is not written');
+&subs::setting_setter({ app => 'x' x 100, setting => 'probe', value => 'on', source => 'test' });
+is($count->('probe'), 1, 'a name at the limit still writes');
+&subs::setting_setter({ app => 'fine', setting => 'p' . ('x' x 100), value => 'on', source => 'test' });
+is(scalar @{ $db->query("select id from settings where setting like 'p%' and app = 'fine'")->hashes }, 0,
+	'an over-long setting name is refused too');
+
 done_testing();

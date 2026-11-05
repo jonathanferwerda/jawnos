@@ -227,6 +227,18 @@ sub setting_setter {
 	my $setting = $settings->{'setting'};
 	my $subsetting = defined $settings->{'subsetting'} ? &subs::text_chars($settings->{'subsetting'}) : undef;
 	my $value = $settings->{'value'};
+	# A settings key is a name, not a payload: five indexes copy it, and one row
+	# whose `app` was a whole document (6.3 MB, found 2026-11) grew the table's
+	# indexes to ~800 MB and turned every setting_grabber into a flash read.
+	# Refuse a key that long here, where every settings write meets, and say what
+	# was refused so the caller can be found.
+	if ((defined $app && length($app) > 100) || (defined $setting && length($setting) > 100)) {
+		&subs::log_writer('setting_setter refused a name over 100 characters: app='
+			. (defined $app ? length($app) : 'undef')
+			. ' setting=' . (defined $setting ? substr($setting, 0, 40) : 'undef')
+			. ' value=' . (defined $value ? length($value) : 'undef'));
+		return;
+	}
 	my $timestamp = $settings->{'timestamp'} || &rightNow();
 	my $browser_tab_id = $settings->{'browser_tab_id'};
 	my $dev = $settings->{'device'} || &device_setter();
