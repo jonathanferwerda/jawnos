@@ -148,7 +148,7 @@ is(subs::device_call('ping'), undef, 'no token file means no bridge');
 	unlike($src, qr/system\(\$client/, 'no BLE client is executed by its shebang');
 	unlike($src, qr/'\|-', \$client/, 'no pipe runs the client by its shebang');
 	like($src, qr/program => \$\^X, program_args => \[ \$client, 'listen' \]/, 'the listener runs the client through the current perl');
-	like($src, qr/timeout 25 &shell_quote\(\$\^X\)/, 'the scan runs through the current perl');
+	like($src, qr/'timeout 25 ' \. &shell_quote\(\$\^X\)/, 'the scan builds its command through the current perl');
 }
 
 done_testing();

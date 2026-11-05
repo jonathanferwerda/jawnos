@@ -132,7 +132,13 @@ sub ble_adopt_scan {
 			$known{ &ble_link_key($c->{'bluetooth'}) } = 1 if $c->{'bluetooth'};
 		}
 	}
-	my $out = `timeout 25 &shell_quote($^X) &shell_quote($client) scan 8 2>/dev/null`;
+	# The command is built, then run: a function call written inside backticks is a
+	# literal, not a call, so the shell received the text '&shell_quote(...)' and
+	# failed with "syntax error near unexpected token" - the scan never ran on a
+	# machine with a Bluetooth bridge, so a fresh board on the desk was never
+	# discovered and could not introduce itself.
+	my $scan = 'timeout 25 ' . &shell_quote($^X) . ' ' . &shell_quote($client) . ' scan 8 2>/dev/null';
+	my $out = `$scan`;
 	my @found;
 	my %seen;
 	foreach my $line (split "\n", $out) {
