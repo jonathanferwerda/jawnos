@@ -1,3 +1,71 @@
+// A keyboard panel floats over the desk. A fresh one opens centred, with its
+// top under the clothesline; panels already open step down and across so the
+// newest does not land exactly on the one before it. Nothing may start above
+// the viewport (or above the clothesline) or run off an edge.
+function keyboardPanelDefaultCSS(panel) {
+	panel = $(panel);
+	var vw = $(window).width();
+	var vh = $(window).height();
+	var limit = (typeof panelTopLimit === 'function') ? panelTopLimit() : 0;
+	var bar = (typeof jawnosTaskbarHeight === 'function') ? jawnosTaskbarHeight() : 0;
+	// measure the panel as the floating box it is about to become
+	panel.css({ 'position': 'fixed', 'left': '0px', 'top': '0px', 'right': 'auto', 'bottom': 'auto' });
+	var width = panel.outerWidth() || 0;
+	var height = panel.outerHeight() || 0;
+	var step = $('.keyboard:visible').not(panel).length * 18;
+	var left = Math.round((vw - width) / 2 + step);
+	var top = Math.round(limit + 18 + step);
+	left = Math.max(0, Math.min(left, Math.max(0, vw - width)));
+	top = Math.max(limit, Math.min(top, Math.max(limit, vh - height - bar - 8)));
+	return {
+		'position': 'fixed',
+		'left': left + 'px',
+		'top': top + 'px',
+		'right': 'auto',
+		'bottom': 'auto',
+		'max-height': Math.max(120, vh - limit - bar - 16) + 'px',
+		'max-width': Math.max(220, vw - 16) + 'px',
+		'overflow': 'auto'
+	};
+}
+
+// A saved spot is re-checked against this screen before it is painted: a panel
+// left high on a larger screen must not start above the viewport, and its size
+// is capped to the room left under the clothesline.
+function keyboardPanelClamp(panel, css) {
+	panel = $(panel);
+	if (!css) { return css; }
+	// An older save could leave a panel in the page's flow (a drag used to make
+	// it position:relative). A keyboard panel always floats now, so a saved spot
+	// is read as a fixed one rather than bringing the missing frame back.
+	if (css['position'] != 'fixed') { css['position'] = 'fixed'; }
+	var vw = $(window).width();
+	var vh = $(window).height();
+	var limit = (typeof panelTopLimit === 'function') ? panelTopLimit() : 0;
+	var bar = (typeof jawnosTaskbarHeight === 'function') ? jawnosTaskbarHeight() : 0;
+	var top = (css['top'] != null && css['top'] !== 'auto') ? parseFloat(css['top']) : NaN;
+	if (isFinite(top) && top < limit) { css['top'] = limit + 'px'; }
+	var width = panel.length ? (panel.outerWidth() || 0) : 0;
+	var left = (css['left'] != null && css['left'] !== 'auto') ? parseFloat(css['left']) : NaN;
+	var right = (css['right'] != null && css['right'] !== 'auto') ? parseFloat(css['right']) : NaN;
+	if (isFinite(left) && !isFinite(right)) {
+		left = Math.max(0, Math.min(left, Math.max(0, vw - width)));
+		css['left'] = left + 'px';
+	}
+	css['max-height'] = Math.max(120, vh - limit - bar - 16) + 'px';
+	css['max-width'] = Math.max(220, vw - 16) + 'px';
+	css['overflow'] = 'auto';
+	return css;
+}
+
+// A panel still wearing its default spot follows a reshaped screen; one the
+// person has moved keeps the spot it was given.
+$(window).on('resize', function() {
+	$('.keyboard[default_placed="yes"]:visible').each(function() {
+		$(this).css(keyboardPanelDefaultCSS(this));
+	});
+});
+
 async function keyboardMaker(data) {
 	var toggle = data['toggle'];
 	var state = data['state'];
@@ -10,8 +78,10 @@ async function keyboardMaker(data) {
 	var t = $('#' + toggle);
 	var h = $(window).height();
 	var w = $(window).width();
-	var o = pseudonym.offset();
-	var d = Number(numeral(pseudonym.width()).format()) * 1.07;
+	// A panel can also be opened without a dock face (a machine's card on the
+	// System page): there is no icon to measure, so it opens at its default.
+	var o = pseudonym.length ? pseudonym.offset() : null;
+	if (!o) { o = { top: h, left: 0 }; }
 	var bottom = h - o.top;
 
 	var av = [];
@@ -68,12 +138,9 @@ async function keyboardMaker(data) {
 		}
 	}
 	if (css) {
-		// A panel restored from its saved spot can be above the clothesline; the
-		// drag clamps a moved one, so clamp the first paint too.
-		if (css.position == 'fixed' && css.top != null) {
-			var top = parseFloat(css.top);
-			if (isFinite(top) && top < panelTopLimit()) { css.top = panelTopLimit() + 'px'; }
-		}
+		// A panel restored from its saved spot can be above the clothesline or off
+		// the screen; the drag clamps a moved one, so clamp the first paint too.
+		css = keyboardPanelClamp($('#' + toggle), css);
 		$('#' + toggle).css(css);
 	}
 	if (!t.is(':visible') && !t.hasClass('keyboard') || state == 'on') {
@@ -95,8 +162,13 @@ async function keyboardMaker(data) {
 				if (toggle == 'remote_control') {
 					// keep the picker on the machine that was just chosen, and take
 					// the Manager button with it (the setting POST can land after this
-					// render, so the server's selected option may still be the old one)
-					if (typeof remote_uuid === 'string') { $('#remote_control_machine_select').val(remote_uuid); }
+					// render, so the server's selected option may still be the old one).
+					// A machine can be named by its signatorial (a System card does),
+					// which is not an option value: then the server's own selection is
+					// already right, so leave it alone.
+					if (typeof remote_uuid === 'string' && $('#remote_control_machine_select option').filter(function() { return this.value === remote_uuid; }).length) {
+						$('#remote_control_machine_select').val(remote_uuid);
+					}
 					keyboardManagerButton();
 					jawnosVpnRefresh();
 					if (typeof jawnosPublicIpRefresh == 'function') { jawnosPublicIpRefresh(); }
@@ -112,10 +184,18 @@ async function keyboardMaker(data) {
 				// a re-rendered panel starts on the markup's idle text; ask once
 				musicReceiverRefresh();
 				if (css) {
+					t.removeAttr('default_placed');
 					// a saved width is the one the person resized to; only a panel that
 					// has never been sized takes its own default here
 					if (css['width'] == null || css['width'] === '') { css['width'] = t.width(); }
-					t.css(css);
+					t.css(keyboardPanelClamp(t, css));
+				}
+				else {
+					// A panel that has never been moved still needs a frame: it opens
+					// in the desk's default spot rather than in the page's flow, and
+					// keeps that spot when the screen changes shape until it is moved.
+					t.attr('default_placed', 'yes');
+					t.css(keyboardPanelDefaultCSS(t));
 				}
 				t.attr('claimed', 'yes');
 				keyboardDragBarMaker(t);
@@ -124,7 +204,12 @@ async function keyboardMaker(data) {
 	}
 	else if (!t.is(':visible')) {
 		$('#' + toggle).show();
-		$('#' + toggle).css(css);
+		if (css) {
+			$('#' + toggle).removeAttr('default_placed').css(keyboardPanelClamp($('#' + toggle), css));
+		}
+		else {
+			$('#' + toggle).attr('default_placed', 'yes').css(keyboardPanelDefaultCSS($('#' + toggle)));
+		}
 		$('#' + toggle).attr('claimed', 'yes');
 		keyboardDragBarMaker($('#' + toggle));
 	}

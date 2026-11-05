@@ -164,6 +164,20 @@ $(document).on('click', '.jonathan, .start_menu_list', function() {
 	}
 });
 
+// A machine's card on the System page opens the Assistant's remote_control
+// panel on that machine: the picker's value rides the render, and the setting
+// is saved so the panel opens on the same peer next time. The card names the
+// peer by its signatorial, which the panel resolves like a uuid or an ip.
+$(document).on('click', '.remote_control_open', function() {
+	var machine = $(this).attr('machine') || '';
+	if (typeof keyboardMaker !== 'function') { return; }
+	if (typeof settingSetter === 'function') {
+		settingSetter({ 'app': 'me', 'setting': 'remote_control_machine', 'value': machine });
+	}
+	if ($('#start_menu').is(':visible')) { startMenuToggle(); }
+	keyboardMaker({ toggle: 'remote_control', state: 'on', remote_uuid: machine });
+});
+
 function startMenuToggle(data) {
 	if (typeof data == 'undefined') { data = {}; }
 	var source = data['source'];

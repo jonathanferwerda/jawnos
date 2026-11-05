@@ -96,14 +96,24 @@ function keyboardDragBarMaker(k) {
 			cancel: '.keyboard_closer',
 			start: function(p) {
 				var panel = $(this);
+				// the panel now owns its spot, so a reshaped screen must not move it
+				panel.removeAttr('default_placed');
 				pseudonyms[panel.attr('id')] = Date.now();
 				keyboardIntervals = Date.now();
 			},
 			drag: function(p, ui) {
 				keyboardIntervals = Date.now();
-				// a floating panel stops at the clothesline, like a window does
+				// a floating panel stops at the clothesline, like a window does, and
+				// stays on the screen on every other edge
 				if ($(this).css('position') == 'fixed') {
-					ui.position.top = Math.max(panelTopLimit(), ui.position.top);
+					var panel = $(this);
+					var width = panel.outerWidth();
+					var height = panel.outerHeight();
+					var bar = (typeof jawnosTaskbarHeight == 'function') ? jawnosTaskbarHeight() : 0;
+					var vw = $(window).width();
+					var vh = $(window).height();
+					ui.position.top = Math.max(panelTopLimit(), Math.min(ui.position.top, vh - height - bar));
+					ui.position.left = Math.max(0, Math.min(ui.position.left, vw - width));
 				}
 			},
 			stop: function(p) {
@@ -137,12 +147,18 @@ function keyboardPanelSave(panel) {
 	if (!panel || !panel.length) { return; }
 	var id = panel.attr('id');
 	if (!id) { return; }
+	panel.removeAttr('default_placed');
 	// the computed style is the only record of where the panel sits
 	// once it has been moved, so keep the lot (minus the claim border)
 	if (panel.css('position') == 'fixed') {
 		var top = parseFloat(panel.css('top'));
 		if (!isNaN(top) && top < panelTopLimit()) {
 			panel.css({ 'top': panelTopLimit() + 'px' });
+		}
+		var left = parseFloat(panel.css('left'));
+		var width = panel.outerWidth();
+		if (!isNaN(left) && left > $(window).width() - width) {
+			panel.css({ 'left': Math.max(0, $(window).width() - width) + 'px' });
 		}
 	}
 	var css = {};

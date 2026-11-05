@@ -677,7 +677,7 @@ function softKbFloatApply(dock) {
 	if (!floating) {
 		if (dock.hasClass('ui-draggable')) { dock.draggable('destroy'); }
 		if (dock.hasClass('ui-resizable')) { dock.resizable('destroy'); }
-		dock.removeClass('soft_kb_dragging').css({ left: '', top: '', bottom: '', width: '', height: '' });
+		dock.removeClass('soft_kb_dragging').css({ left: '', top: '', bottom: '', width: '', height: '', 'max-height': '' });
 		return;
 	}
 	if (!dock.hasClass('ui-draggable') || !dock.hasClass('ui-resizable')) { softKbFloatDraggable(dock); }
@@ -689,12 +689,16 @@ function softKbFloatApply(dock) {
 function softKbFloatRestore(dock) {
 	var saved = null;
 	try { saved = JSON.parse(localStorage.getItem('jawn_soft_place') || 'null'); } catch (err) { saved = null; }
+	var vw = $(window).width();
+	var vh = $(window).height();
+	var limit = (typeof panelTopLimit == 'function') ? panelTopLimit() : 0;
+	var bar = (typeof jawnosTaskbarHeight == 'function') ? jawnosTaskbarHeight() : 0;
+	// the panel never grows past the room under the clothesline
+	dock.css('max-height', Math.max(180, vh - limit - bar - 16) + 'px');
 	if (!saved) {
 		dock.css({ left: '', top: '', bottom: '', width: '', height: '' });
 		return;
 	}
-	var vw = $(window).width();
-	var vh = $(window).height();
 	if (isFinite(saved.width) && saved.width > 0) {
 		dock.css('width', Math.min(saved.width, Math.max(320, vw - 8)) + 'px');
 	}
@@ -710,17 +714,21 @@ function softKbFloatRestore(dock) {
 	if (!(width > 0)) { width = Math.min(760, vw - 24); }
 	if (!(height > 0)) { height = 300; }
 	var left = Math.max(0, Math.min(saved.left, Math.max(0, vw - width)));
-	var top = Math.max(0, Math.min(saved.top, Math.max(0, vh - height)));
+	// the same ceiling every floating panel obeys: never above the clothesline and
+	// never pushed off the foot of the screen
+	var top = Math.max(limit, Math.min(saved.top, Math.max(limit, vh - height - bar)));
 	dock.css({ left: left + 'px', top: top + 'px', bottom: 'auto' });
 }
 
 function softKbFloatSave(panel) {
 	var width = panel.outerWidth() || 0;
 	var height = panel.outerHeight() || 0;
+	var limit = (typeof panelTopLimit == 'function') ? panelTopLimit() : 0;
+	var bar = (typeof jawnosTaskbarHeight == 'function') ? jawnosTaskbarHeight() : 0;
 	var left = parseFloat(panel.css('left')) || 0;
 	var top = parseFloat(panel.css('top')) || 0;
 	left = Math.max(0, Math.min(left, Math.max(0, $(window).width() - width)));
-	top = Math.max(0, Math.min(top, Math.max(0, $(window).height() - height)));
+	top = Math.max(limit, Math.min(top, Math.max(limit, $(window).height() - height - bar)));
 	panel.css({ left: left + 'px', top: top + 'px' });
 	var box = { left: Math.round(left), top: Math.round(top) };
 	// only a size the person set by resizing is kept: a page that was merely
@@ -748,6 +756,19 @@ function softKbFloatDraggable(dock) {
 				panel.css({ 'left': rect.left + 'px', 'top': rect.top + 'px', 'bottom': 'auto' });
 			}
 			panel.addClass('soft_kb_dragging');
+		},
+		drag: function (e, ui) {
+			// the keyboard and the calculator obey the same ceiling as a window:
+			// the clothesline above, the screen and the taskbar on every other edge
+			var panel = $(this);
+			var width = panel.outerWidth() || 0;
+			var height = panel.outerHeight() || 0;
+			var limit = (typeof panelTopLimit == 'function') ? panelTopLimit() : 0;
+			var bar = (typeof jawnosTaskbarHeight == 'function') ? jawnosTaskbarHeight() : 0;
+			var vw = $(window).width();
+			var vh = $(window).height();
+			ui.position.left = Math.max(0, Math.min(ui.position.left, Math.max(0, vw - width)));
+			ui.position.top = Math.max(limit, Math.min(ui.position.top, Math.max(limit, vh - height - bar)));
 		},
 		stop: function () {
 			softKbFloatSave($(this).removeClass('soft_kb_dragging'));

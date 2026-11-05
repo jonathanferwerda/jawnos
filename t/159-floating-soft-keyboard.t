@@ -40,6 +40,10 @@ like($kb, qr/function softKbFloatRestore\(dock\)/, 'the place is restored on the
 like($kb, qr/localStorage\.getItem\('jawn_soft_place'\)/, 'from the same device setting');
 like($kb, qr/Math\.min\(saved\.left, Math\.max\(0, vw - width\)\)/,
 	'a saved place is kept inside the screen');
+like($kb, qr/var top = Math\.max\(limit, Math\.min\(saved\.top, Math\.max\(limit, vh - height - bar\)\)\);/,
+	'a saved place never starts above the clothesline');
+like($kb, qr/ui\.position\.top = Math\.max\(limit, Math\.min\(ui\.position\.top/,
+	'a drag is held under the same ceiling');
 like($kb, qr/if \(typeof softKbReserve == 'function'\) \{ softKbReserve\(\); \}/,
 	'the field reserve follows the moved panel');
 
@@ -58,8 +62,9 @@ ok(defined $float && length $float, 'the floating rule exists');
 like($float, qr/width: min\(760px, calc\(100vw - 24px\)\)/, 'the panel has a fixed width, not the screen width');
 like($float, qr/left: max\(12px, calc\(50% - 380px\)\)/, 'it opens centred, clear of both edges');
 like($float, qr/right: auto;/, 'the full-width right anchor is released');
-like($float, qr/border: 1px solid var\(--line\)/, 'the panel has its own frame');
-like($float, qr/border-radius: var\(--jawnos-corner, 12px\)/, 'and the house corner');
+like($float, qr/border: var\(--window_border, 3px\) solid var\(--window_border_colour, var\(--line\)\)/,
+	'the panel wears the same frame as every window');
+like($float, qr/border-radius: var\(--window_radius, var\(--jawnos-corner, 12px\)\)/, 'and the house corner');
 like($float, qr/box-shadow:/, 'and a floating shadow');
 like($css, qr/\.soft_kb\.soft_kb_floating \.soft_kb_bar \{ cursor: move; \}/, 'the bar reads as the move handle');
 

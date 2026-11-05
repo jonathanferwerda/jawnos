@@ -196,7 +196,9 @@ elsif ($sp->{'known'} && defined $sp->{'age'} && $sp->{'age'} < 300) {
 	<% foreach my $m ( @peers ) { %>
 		<% my $b = $m->{'battery'} || {}; %>
 		<% my $pct = $b->{'percentage'}; %>
-		<div class="level_tile<% if ($m->{'stale'}) { %> level_stale<% } %>">
+		<%# a machine's card is its door: the press opens the Assistant's
+		    remote_control panel already pointed at that peer %>
+		<div class="level_tile remote_control_open hover<% if ($m->{'stale'}) { %> level_stale<% } %>" machine="<%= $m->{'signatorial'} %>" hint="<%= &subs::ui('Open Remote control for this machine') %>">
 			<div class="level_top">
 				<span class="level_name"><%= $m->{'hostname'} || &subs::ui('machine') %></span>
 				<% if (defined $pct) { %><span class="level_pct <%= $level_class->($pct) %>"><%= sprintf('%.0f%%', $pct) %></span>

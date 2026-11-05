@@ -1061,6 +1061,12 @@ body.dark_theme .top_navbar .name_text { color: var(--ink) !important; }
 #mouse_shadow { z-index:1; width: 100%; position:fixed; left: 0px; bottom: 0px; display:none;}
 #keyboard_container { z-index: 9100; }
 .keyboard { z-index: 9100; border:solid;border-radius:var(--jawnos-corner, 10px);border-width:3px; }
+/* A keyboard panel wears the same frame as every window: the Window Border's
+   width and colour, the house corner and a floating shadow. It is a block, not
+   an inline strip, so its contents stay inside the frame wherever it is put.
+   Scoped to the panel container: the dock's pseudonym icons also wear
+   .keyboard, and they keep their own thin tile edge. */
+#keyboard_container .keyboard { display:block; box-sizing:border-box; border-style:solid; border-width:var(--window_border, 3px); border-color:var(--window_border_colour, var(--line)); border-radius:var(--window_radius, var(--jawnos-corner, 10px)); box-shadow:0 18px 44px rgba(0,0,0,.26), 0 2px 8px rgba(0,0,0,.12); }
 #ticket { 
 	width: 95%; 
 	text-align: center;

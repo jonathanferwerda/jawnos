@@ -46,9 +46,11 @@
 	right: auto;
 	width: min(760px, calc(100vw - 24px));
 	bottom: calc(var(--taskbar_bottom_h, 0px) + 12px);
-	border: 1px solid var(--line);
-	border-radius: var(--jawnos-corner, 12px);
-	box-shadow: 0 12px 40px rgba(0, 0, 0, .32);
+	/* the same frame every window and keyboard panel wears: the Window Border's
+	   width and colour, the house corner and a floating shadow */
+	border: var(--window_border, 3px) solid var(--window_border_colour, var(--line));
+	border-radius: var(--window_radius, var(--jawnos-corner, 12px));
+	box-shadow: 0 18px 44px rgba(0, 0, 0, .32), 0 2px 8px rgba(0, 0, 0, .18);
 	overflow: hidden;
 	/* a floating panel fades and steps aside rather than sliding the whole
 	   screen-height down from the foot */
