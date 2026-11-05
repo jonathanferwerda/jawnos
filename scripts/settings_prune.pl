@@ -47,6 +47,29 @@ sub strip_card_streams {
 	return ($json, $saved);
 }
 
+# VACUUM through the sqlite3 binary. Both in-process routes (Mojo::SQLite's
+# query and the raw dbh do) returned success without doing anything: the phone's
+# file stayed at 1.06 GB and the tablet's at 231 MB until the CLI ran the same
+# statement. The binary is in the runtime on every machine; fall back to the
+# handle when it is not, and report the sizes either way.
+sub vacuum_file {
+	my ($db, $database) = @_;
+	my $size = sub { (defined $database && -e $database) ? -s $database : 0 };
+	my $before = $size->();
+	my $tool = `command -v sqlite3 2>/dev/null`;
+	chomp $tool;
+	my $ok = 0;
+	if (length $tool && defined $database) {
+		$ok = 1 if system($tool, $database, 'pragma busy_timeout=30000; vacuum;') == 0;
+	}
+	unless ($ok) {
+		$ok = eval { $db->dbh->do('vacuum'); 1 } ? 1 : 0;
+	}
+	my $after = $size->();
+	$ok = 0 if $after > $before;
+	return ($ok, $before, $after);
+}
+
 sub main {
 	my (@argv) = @_;
 	my $apply = grep { $_ eq '--apply' } @argv;
@@ -108,13 +131,10 @@ sub main {
 	foreach my $r ( @rewrites ) {
 		$db->query('update settings set value = ?, server_time = ? where id = ?', $r->[1], $now, $r->[0]);
 	}
-	# VACUUM must go through the raw handle: Mojo::SQLite's query path leaves it
-	# unrun (the phone's file stayed at 1.06 GB until the sqlite3 CLI ran it).
-	my $before = (defined $database && -e $database) ? -s $database : 0;
-	$db->dbh->do('vacuum');
-	my $after = (defined $database && -e $database) ? -s $database : 0;
-	printf("settings_prune: deleted %d row(s), rewrote %d, file %.0f MB -> %.0f MB\n",
-		$deleted, $stripped, $before / 1048576, $after / 1048576) unless $json;
+	my ($vacuumed, $before, $after) = &vacuum_file($db, $database);
+	printf("settings_prune: deleted %d row(s), rewrote %d, file %.0f MB -> %.0f MB%s\n",
+		$deleted, $stripped, $before / 1048576, $after / 1048576,
+		$vacuumed ? '' : ' (vacuum did not run - stop the tree and retry)') unless $json;
 	return 0;
 }
 
