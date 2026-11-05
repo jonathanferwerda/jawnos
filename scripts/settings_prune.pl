@@ -64,10 +64,14 @@ sub vacuum_file {
 	chomp $tool;
 	my $ok = 0;
 	if (length $tool && defined $database) {
+		# This script's own connection makes VACUUM's exclusive lock wait: the
+		# laptop's file stayed at 1002 MB until the same statement ran in a
+		# process that had no handle open. Close this one first.
+		eval { $db->dbh->disconnect } if $db && $db->dbh;
 		# .timeout is the CLI's dot-command; the pragma form prints its value.
 		$ok = 1 if system($tool, '-cmd', '.timeout 30000', $database, 'vacuum') == 0;
 	}
-	unless ($ok) {
+	else {
 		$ok = eval { $db->dbh->do('vacuum'); 1 } ? 1 : 0;
 	}
 	my $after = $size->();
