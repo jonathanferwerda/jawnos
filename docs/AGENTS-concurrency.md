@@ -34,20 +34,22 @@ cannot reach the server should not be pushed as though it did.
 
 `perl scripts/agent_land.pl` runs from the agent's worktree:
 
-1. Take `jawnos-land.lock` in the git common dir (shared by every worktree); wait `--wait` seconds,
-   then exit 4.
-2. Refuse a dirty worktree, or a dirty primary checkout — both are someone's unswept work.
-3. `git fetch origin`, then rebase onto `origin/main`. A `VERSION`-only conflict is taken from the
+1. Refuse a dirty worktree, or a dirty primary checkout — both are someone's unswept work.
+2. **Back the branch up to `origin/<branch>`** (`--force-with-lease`, `--no-verify`). This needs no
+   lock and collides with nobody, so a queue at the gate can never cost the work.
+3. Take `jawnos-land.lock` in the git common dir; wait `--wait` seconds (default **300**), then exit 4
+   naming the holder — with the branch already safe on origin, a timeout is a pause, not a loss.
+4. `git fetch origin`, then rebase onto `origin/main`. A `VERSION`-only conflict is taken from the
    trunk (the bump below moves it past trunk's number); any other conflict aborts the rebase and
    names the file.
-4. Run the suite **once** (`--jobs 2` by default) and export `JAWNOS_SUITE_ALREADY_RUN=1`
+5. Run the suite **once** (`--jobs 2` by default) and export `JAWNOS_SUITE_ALREADY_RUN=1`
    for the push, so the pre-push hook does not run it a second time. A failure refuses the landing;
    nothing is pushed.
-5. Bump `VERSION`, rewrite the tip subject to `v<new> - <summary>` (an existing prefix is replaced,
+6. Bump `VERSION`, rewrite the tip subject to `v<new> - <summary>` (an existing prefix is replaced,
    never stacked), amend. The body is preserved.
-6. `git push origin HEAD:refs/heads/main` — fast-forward only, and the lock is why it stays one. The
+7. `git push origin HEAD:refs/heads/main` — fast-forward only, and the lock is why it stays one. The
    hook still runs its parse guard and help audit; only the duplicate suite is skipped.
-7. Fast-forward the primary checkout, then `scripts/restart.pl --reason "v<new> - <summary>"`.
+8. Fast-forward the primary checkout, then `scripts/restart.pl --reason "v<new> - <summary>"`.
 
 Exit codes: **0** landed — **1** refused, nothing pushed — **2** bad usage — **4** another landing held
 the lock past `--wait` — **5** pushed, but the dev server is not on it (primary checkout dirty or
@@ -75,6 +77,12 @@ rebase immediately before running the gate:
 ## In a worktree
 
 - `git worktree add .worktrees/<task> -b agent/<task> origin/main`, and work only there.
+- A worktree is a **checkout, not a clone**: it shares the one object store (`.git` stays one copy)
+  and adds a full checkout of the tracked files — about 170 MB here, with the firmware fonts and
+  images. History is never duplicated.
+- **Nothing removes them.** `agent_land.pl --remove` drops the worktree and its merged branch after a
+  successful landing; without it the lander prints the two commands. A worktree whose directory is
+  gone (a killed run, a fixture) is reclaimed with `git worktree prune`.
 - `config.json` is tracked with fixed ports (3000/3001). Do not run a server from a worktree, and do
   not run server-binding tests in parallel with another agent.
 - `database/` is empty there. Seed a test database; never point one at `database/jawnos.db`.

@@ -160,6 +160,8 @@ subtest 'a dry run reports the plan and touches nothing' => sub {
 	my ($rc, $out) = land($f, '--dry-run');
 	is($rc, 0, 'the dry run exits cleanly');
 	like($out, qr/would run: .*run_tests\.pl --jobs 2/, 'it names the suite and the shared job cap');
+	like($out, qr/would back up agent\/task to origin\/agent\/task/,
+		'it backs the branch up before it waits for the gate');
 	like($out, qr/would fast-forward the primary checkout/, 'and the primary checkout step');
 	ok(!-e "$f->{'marker'}/suite",   'no suite ran');
 	ok(!-e "$f->{'marker'}/restart", 'nothing restarted');
@@ -243,6 +245,10 @@ subtest 'a clean branch lands, bumps, pushes and updates the primary' => sub {
 		'the restart names the landed version');
 	like(read_file("$f->{'marker'}/hook"), qr/HOOK-RAN JAWNOS_SUITE_ALREADY_RUN=1/,
 		'the push reaches the hook and tells it the suite already ran');
+	like($out, qr/backing up agent\/task to origin\/agent\/task/,
+		'the branch is backed up to origin before the gate is taken');
+	my ($brev, $bout) = git($f->{'origin'}, 'rev-parse', '--verify', 'refs/heads/agent/task');
+	is($brev, 0, "and origin really has the branch ($bout)");
 	ok(-e "$f->{'primary'}/.git/jawnos-land.lock", 'the lock lives in the shared common dir');
 };
 
@@ -278,10 +284,22 @@ subtest 'a second landing waits for the lock and then gives up' => sub {
 
 	my ($rc, $out) = land($f, '--wait', '0');
 	is($rc, 4, 'the second landing reports the held lock');
-	like($out, qr/another landing held the lock/, 'and says why');
+	like($out, qr/the gate is busy/, 'and says why');
+	like($out, qr/already on origin\/agent\/task/, 'and that the work is already safe');
 	ok(!-e "$f->{'marker'}/suite", 'it ran no suite');
 
 	close($hold);
+};
+
+subtest 'a landing can drop its worktree' => sub {
+	my $f = fixture();
+	commit_in_worktree($f, 'note.txt', "a\n", 'v0.1.1 - add a note');
+
+	my ($rc, $out) = land($f, '--remove');
+	is($rc, 0, 'the landing exits cleanly') or diag($out);
+	ok(!-d $f->{'wt'}, 'the worktree directory is gone');
+	my ($code) = git($f->{'primary'}, 'rev-parse', '--verify', 'refs/heads/agent/task');
+	isnt($code, 0, 'and its branch is deleted');
 };
 
 done_testing();

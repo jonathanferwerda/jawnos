@@ -26,7 +26,11 @@
 #   perl scripts/agent_land.pl --no-restart
 #   perl scripts/agent_land.pl --jobs 4         suite job count (default 2:
 #                                               other agents share the cores)
-#   perl scripts/agent_land.pl --wait 60        seconds to wait for the lock
+#   perl scripts/agent_land.pl --wait 60        seconds for the gate (default
+#                                               300; the branch is pushed to
+#                                               origin before the wait starts,
+#                                               so a timeout never loses work)
+#   perl scripts/agent_land.pl --remove         delete the worktree afterwards
 #   perl scripts/agent_land.pl --reason "..."   restart reason (default: the
 #                                               landed subject)
 #
@@ -51,8 +55,9 @@ use IO::Handle ();
 my %opt = (
 	'trunk'   => 'main',
 	'jobs'    => 2,
-	'wait'    => 900,
+	'wait'    => 300,
 	'restart' => 1,
+	'remove'  => 0,
 );
 GetOptions(
 	'branch=s'   => \$opt{'branch'},
@@ -61,6 +66,7 @@ GetOptions(
 	'jobs=s'     => \$opt{'jobs'},
 	'wait=s'     => \$opt{'wait'},
 	'no-restart' => sub { $opt{'restart'} = 0 },
+	'remove'     => \$opt{'remove'},
 	'dry-run'    => \$opt{'dry'},
 	'help'       => \$opt{'help'},
 ) or usage(2);
@@ -141,35 +147,16 @@ my $lock_path = "$common/jawnos-land.lock";
 my $reason = $opt{'reason'};
 
 if ($opt{'dry'}) {
+	say_step("would back up $branch to origin/$branch (so the work survives a busy gate)");
 	say_step("would lock $lock_path");
 	say_step("would fetch origin and rebase $branch onto origin/$opt{'trunk'}");
 	say_step("would run: $^X scripts/run_tests.pl --jobs $opt{'jobs'}");
 	say_step("would bump VERSION, rewrite the tip subject, and push HEAD:refs/heads/$opt{'trunk'}");
 	say_step("would fast-forward the primary checkout at $primary");
 	say_step($opt{'restart'} ? 'would restart the dev server' : 'would not restart (--no-restart)');
+	say_step($opt{'remove'} ? 'would remove this worktree afterwards' : 'would leave the worktree in place');
 	exit 0;
 }
-
-# --- the lock: one landing at a time, across every worktree ---------------
-
-my $lock;
-open($lock, '>>', $lock_path) or refuse("cannot open $lock_path: $!");
-$lock->autoflush(1);
-
-my $deadline = time + $opt{'wait'};
-my $waited   = 0;
-while (!flock($lock, LOCK_EX | LOCK_NB)) {
-	if (time >= $deadline) {
-		print STDERR "agent_land: another landing held the lock for $waited s; "
-			. "waited $opt{'wait'} s, giving up ($lock_path)\n";
-		exit 4;
-	}
-	$waited++;
-	sleep 1;
-}
-seek($lock, 0, 0);
-truncate($lock, 0);
-print $lock "$$ $branch\n";
 
 # --- refuse before anything moves -----------------------------------------
 
@@ -181,6 +168,48 @@ if ($prc != 0 || length $pdirty) {
 	refuse("the primary checkout at $primary has uncommitted changes; "
 		. "commit or stash them, or the dev server cannot take this landing:\n$pdirty");
 }
+
+# --- back the branch up before waiting ------------------------------------
+# The gate serializes landings, and a queue can outlast an agent's patience.
+# Pushing the branch itself needs no lock and collides with nobody, so the work
+# is on origin whether or not this run gets the gate. --no-verify: the gate's
+# suite is the authority, not a backup push of a branch nobody has merged.
+say_step("backing up $branch to origin/$branch");
+my ($bkrc, $bkout) = git('push', '--no-verify', '--force-with-lease',
+		'origin', "HEAD:refs/heads/$branch");
+say_step("the branch backup did not go through; the gate still can:\n$bkout") if $bkrc != 0;
+
+# --- the lock: one landing at a time, across every worktree ---------------
+
+sub lock_holder {
+	open(my $fh, '<', $lock_path) or return '';
+	my $line = <$fh>;
+	close $fh;
+	return defined $line ? $line : '';
+}
+
+my $lock;
+open($lock, '>>', $lock_path) or refuse("cannot open $lock_path: $!");
+$lock->autoflush(1);
+
+my $deadline = time + $opt{'wait'};
+my $waited   = 0;
+while (!flock($lock, LOCK_EX | LOCK_NB)) {
+	if (time >= $deadline) {
+		my $holder = lock_holder();
+		$holder =~ s/\s+$//;
+		print STDERR "agent_land: the gate is busy"
+			. ($holder =~ /^(\d+)\s*(.*)$/ && $2 ne '' ? " (pid $1 on $2)" : '')
+			. "; waited $opt{'wait'} s. This branch is already on origin/$branch, so "
+			. "the work is safe — land again later rather than retrying in a loop.\n";
+		exit 4;
+	}
+	$waited++;
+	sleep 1;
+}
+seek($lock, 0, 0);
+truncate($lock, 0);
+print $lock "$$ $branch\n";
 
 # --- fetch, rebase --------------------------------------------------------
 
@@ -271,6 +300,7 @@ if ($mrc != 0) {
 
 if (!$opt{'restart'}) {
 	say_step("landed v$new (not restarting: --no-restart)");
+	remove_worktree();
 	exit 0;
 }
 
@@ -285,14 +315,34 @@ if ($rrc != 0) {
 }
 
 say_step("landed v$new and restarted");
+remove_worktree();
 exit 0;
+
+# A worktree is scratch: its files are on origin and on the trunk now. Never
+# remove it silently - an agent's shell may still be sitting in it - but say the
+# command, and do it only when asked.
+sub remove_worktree {
+	if (!$opt{'remove'}) {
+		say_step("worktree kept: git worktree remove '$root' && git branch -d $branch");
+		return;
+	}
+	my ($wrc, $wout) = capture('git', '-C', $primary, 'worktree', 'remove', '--force', $root);
+	if ($wrc != 0) {
+		print STDERR "agent_land: the landing is safe, but the worktree could not be removed:\n$wout\n"
+			. "agent_land: git -C '$primary' worktree remove '$root'\n";
+		return;
+	}
+	my ($brc, $bout) = capture('git', '-C', $primary, 'branch', '-d', $branch);
+	print STDERR "agent_land: the worktree is gone; the branch was not deleted:\n$bout\n" if $brc != 0;
+	say_step("removed the worktree at $root");
+}
 
 sub usage {
 	my ($code) = @_;
 	print STDERR <<'USAGE';
 agent_land.pl - land one agent's branch onto the trunk, once, behind a lock
-  perl scripts/agent_land.pl [--branch B] [--trunk main] [--jobs 2] [--wait 900]
-                             [--dry-run] [--no-restart] [--reason TEXT]
+  perl scripts/agent_land.pl [--branch B] [--trunk main] [--jobs 2] [--wait 300]
+                             [--dry-run] [--no-restart] [--remove] [--reason TEXT]
 USAGE
 	exit $code;
 }
