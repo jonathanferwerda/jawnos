@@ -47,7 +47,10 @@ cannot reach the server should not be pushed as though it did.
 
 ## The gate, step by step
 
-`perl scripts/agent_land.pl` runs from the agent's worktree:
+`perl ~/jawnos/scripts/agent_land.pl`, run **from the worktree root**, lands it. Run the primary
+checkout's copy, not the worktree's: a worktree holds its own checkout of the lander, so an agent whose
+worktree is behind runs an older lander — the one before backup branches were deleted, or before the
+bare-repo guard. The path is only how the script is found; it still works on the checkout you are in.
 
 1. Refuse a dirty worktree, or a dirty primary checkout — both are someone's unswept work.
 2. **Back the branch up to `origin/<branch>`** (`--force-with-lease`, `--no-verify`). This needs no

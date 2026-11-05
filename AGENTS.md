@@ -81,7 +81,8 @@ user for the exact file/folder/name. A wrong guess costs far more tokens than a 
 ## Many agents at once
 
 Worktree per task (`git worktree add .worktrees/<task> -b agent/<task> origin/main`), never the primary
-checkout; land with `perl scripts/agent_land.pl`, never push or restart by hand. `docs/AGENTS-concurrency.md`.
+checkout; land with `perl ~/jawnos/scripts/agent_land.pl` (the newest lander, whatever your worktree has)
+from the worktree root, never push or restart by hand. `docs/AGENTS-concurrency.md`.
 
 ## Crash-resilient agent work
 
@@ -188,7 +189,7 @@ translatable in the same change:
   a new app page a help topic with `app => <name>` (`t/11`).
 - **Cap parallel jobs on this shared box:** `pio run -j 4`, `gradle --max-workers=4`, `make -j4`.
 - **Land once, then stop.** Every task ends by landing: commit in your worktree (`git add -p`), then
-  `perl scripts/agent_land.pl` — bumps `VERSION`, tests once, pushes, restarts. A refusal ends the
+  `perl ~/jawnos/scripts/agent_land.pl` — bumps `VERSION`, tests once, pushes, restarts. A refusal ends the
   attempt: report it, never retry in a loop. Hot files and worktrees: `docs/AGENTS-concurrency.md`.
   Alone: `version_bump.pl` → commit `v<version> - <summary>` → `git push` → `restart.pl`.
 
