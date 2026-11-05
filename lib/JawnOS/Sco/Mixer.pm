@@ -178,14 +178,26 @@ sub call_active {
 }
 
 # The two commands the audio helper runs.
+#
+# Both carry a name of their own, never the bare `pacat`/`parec`. WirePlumber
+# remembers the last device per application name in stream-properties and
+# restores it when the stream starts, so an ordinary `pacat` that once played
+# into jawn_call_in during a test was moved off the prompt sink the moment a
+# real prompt began: the caller heard one word, the rest of the greeting (and
+# the beep) went into jawn_call_in and was recorded as if the caller had said
+# it. A named stream has no saved route to inherit, and --device steers it.
 sub capture_command {
 	my ($self) = @_;
-	return 'parec --raw --format=s16le --rate=8000 --channels=1 --latency-msec=20 --device=' . $SINK_IN . '.monitor';
+	return 'parec --client-name=jawn-sco-caller --stream-name=jawn-sco-caller'
+		. ' --raw --format=s16le --rate=8000 --channels=1 --latency-msec=20 --device='
+		. $SINK_IN . '.monitor';
 }
 
 sub playback_command {
 	my ($self) = @_;
-	return 'pacat --raw --format=s16le --rate=8000 --channels=1 --latency-msec=20 --playback --device=' . $SINK_OUT;
+	return 'pacat --client-name=jawn-sco-prompt --stream-name=jawn-sco-prompt'
+		. ' --raw --format=s16le --rate=8000 --channels=1 --latency-msec=20 --playback --device='
+		. $SINK_OUT;
 }
 
 1;

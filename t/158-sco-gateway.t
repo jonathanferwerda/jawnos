@@ -136,6 +136,14 @@ isnt(JawnOS::Sco::Render::key('hello', 'piper-a'), JawnOS::Sco::Render::key('hel
 	like($mixer->capture_command(), qr/jawn_call_in\.monitor/, 'capture reads the call sink monitor');
 	like($mixer->playback_command(), qr/jawn_prompt/, 'playback writes the prompt sink');
 	like($mixer->playback_command(), qr/latency-msec=20/, 'and asks for a small buffer');
+	# WirePlumber restores the last device per application name, so a stream
+	# called plain `pacat`/`parec` can be pulled off our sinks by a route some
+	# earlier run left behind (measured: the prompt was moved to jawn_call_in
+	# at the first word). The helper's streams carry names of their own.
+	like($mixer->playback_command(), qr/--client-name=jawn-sco-prompt/,
+		'the prompt playback is its own client, not a bare pacat');
+	like($mixer->capture_command(), qr/--client-name=jawn-sco-caller/,
+		'and the caller capture is its own client, not a bare parec');
 	is_deeply($mixer->call_streams(''), { sink_input => undef, source_output => undef },
 		'no address means no streams');
 }
