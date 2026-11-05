@@ -266,6 +266,12 @@ refuse("nothing to land: $branch has no commits ahead of origin/$opt{'trunk'} "
 
 # --- the suite is the gate ------------------------------------------------
 
+# The trunk in the primary checkout must not move while the suite runs: the gate
+# holds the lock, so no other agent can be landing, and a move is a fixture
+# commit from a test. Record it, then check it after the suite.
+my (undef, $trunk_before) = git('-C', $primary, 'rev-parse', "refs/heads/$opt{'trunk'}");
+$trunk_before = '' unless defined $trunk_before;
+
 say_step("running the suite (--jobs $opt{'jobs'})");
 my ($src, $sout) = capture($^X, 'scripts/run_tests.pl', '--jobs', $opt{'jobs'});
 if ($src != 0) {
@@ -277,6 +283,19 @@ if (repo_is_bare()) {
 	refuse('the suite left the repository bare (core.bare=true). It has been reset to '
 		. 'false and nothing was pushed - this is the test-corruption bug, not this branch. '
 		. 'Report it, and land again once it is fixed.');
+}
+
+my (undef, $trunk_after) = git('-C', $primary, 'rev-parse', "refs/heads/$opt{'trunk'}");
+$trunk_after = '' unless defined $trunk_after;
+if (length $trunk_before && length $trunk_after && $trunk_after ne $trunk_before) {
+	my (undef, $who) = capture('git', '-C', $primary, 'log', '-1', '--format=%ae %ce', $trunk_after);
+	if (($who // '') =~ /\@example\.(?:invalid|test)\b|\@jawnos\.invalid\b/) {
+		git('-C', $primary, 'reset', '--mixed', $trunk_before);
+		refuse("the suite moved $opt{'trunk'} in the primary checkout to a fixture commit "
+			. "($trunk_before -> $trunk_after). It has been put back; nothing was pushed.");
+	}
+	refuse("$opt{'trunk'} moved in the primary checkout during the suite "
+		. "($trunk_before -> $trunk_after); nothing was pushed. Commit or revert it by hand, then land again.");
 }
 
 # --- bump, rewrite the tip subject ---------------------------------------
@@ -313,6 +332,13 @@ $ENV{'JAWNOS_SUITE_ALREADY_RUN'} = 1;
 my ($pusc, $puso) = git('push', 'origin', "HEAD:refs/heads/$opt{'trunk'}");
 delete $ENV{'JAWNOS_SUITE_ALREADY_RUN'};
 refuse("the push was refused (rebase and land again):\n$puso") if $pusc != 0;
+
+# The backup branch has done its job: its work is on the trunk now, and leaving
+# it on origin is what puts every finished task in GitHub's "Compare & pull
+# request" list. Best effort - a failed delete is not a failed landing.
+say_step("deleting the backup branch origin/$branch");
+my ($delrc, $delout) = git('push', 'origin', '--delete', $branch);
+say_step("origin/$branch was not deleted (remove it by hand): $delout") if $delrc != 0;
 
 say_step("fast-forwarding the primary checkout at $primary");
 my ($pfrc, $pfout) = capture('git', '-C', $primary, 'fetch', 'origin', '--quiet');

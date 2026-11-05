@@ -32,12 +32,14 @@ use warnings;
 
 use Getopt::Long qw(GetOptions);
 
-my %opt = (trunk => 'main', 'older-than' => 24, fetch => 1, apply => 0);
+my %opt = (trunk => 'main', 'older-than' => 24, fetch => 1, apply => 0, remote => 1, 'remote-only' => 0);
 GetOptions(
 	'trunk=s'       => \$opt{'trunk'},
 	'older-than=s'  => \$opt{'older-than'},
 	'apply'         => \$opt{'apply'},
 	'no-fetch'      => sub { $opt{'fetch'} = 0 },
+	'no-remote'     => sub { $opt{'remote'} = 0 },
+	'remote-only'   => \$opt{'remote-only'},
 	'help'          => \$opt{'help'},
 ) or usage(2);
 usage(0) if $opt{'help'};
@@ -112,9 +114,25 @@ sub in_use {
 	return 0;
 }
 
-my ($removed, $kept, $pruned) = (0, 0, 0);
+my ($removed, $kept, $pruned, $remotes) = (0, 0, 0, 0);
 
-for my $w (@records) {
+# A landed branch is rebased and re-versioned by the gate, so its patch id is not
+# the trunk's and merge-base cannot see it. The subject survives both, and that
+# is what says the work is on the trunk.
+sub remote_landed {
+	my ($sha, $ref) = @_;
+	my ($mrc) = git('merge-base', '--is-ancestor', $sha, $trunk_ref);
+	return 1 if $mrc == 0;
+	my ($src, $subject) = capture('git', 'log', '-1', '--format=%s', $ref);
+	return 0 unless $src == 0 && (defined $subject && length $subject);
+	$subject =~ s/^\s*v\d+\.\d+\.\d+\s+-\s+//;
+	$subject =~ s/\s+$//;
+	return 0 unless length $subject;
+	my (undef, $subjects) = capture('git', 'log', $trunk_ref, '--format=%s');
+	return (defined $subjects && index($subjects, $subject) >= 0) ? 1 : 0;
+}
+
+for my $w ($opt{'remote-only'} ? () : @records) {
 	my $path = $w->{'path'};
 
 	if ($w->{'prunable'} || !-d $path) {
@@ -221,6 +239,10 @@ for my $w (@records) {
 	if (length $branch) {
 		my ($brc, $bout) = git('branch', '-d', $branch);
 		say_line("        branch $branch not deleted: $bout") if $brc != 0;
+		if ($opt{'remote'}) {
+			my ($rrc, $rout) = capture('git', 'push', 'origin', '--delete', $branch);
+			say_line("        origin/$branch not deleted: $rout") if $rrc != 0;
+		}
 	}
 	say_line("removed $path [$name]");
 	$removed++;
@@ -231,8 +253,44 @@ if ($pruned) {
 	say_line("# pruned $pruned dead registration(s)");
 }
 
+# --- backup branches on origin --------------------------------------------
+# agent_land backs a branch up to origin before it waits for the gate. After the
+# landing the branch is redundant, and every one left behind is a "Compare & pull
+# request" banner in GitHub. Only the agent/ namespace is touched: any other
+# remote branch may be someone's deliberate work.
+if ($opt{'remote'}) {
+	my ($rls, $heads) = capture('git', 'ls-remote', '--heads', 'origin', 'refs/heads/agent/*');
+	if ($rls != 0) {
+		say_line('# could not list origin branches; skipped the remote sweep');
+	}
+	else {
+		for my $line (split /\n/, $heads // '') {
+			my ($sha, $ref) = split /\s+/, $line;
+			next unless defined $ref && $ref =~ m{^refs/heads/(agent/.+)$};
+			my $name = $1;
+			if (!remote_landed($sha, "origin/$name")) {
+				say_line("wip     origin/$name (its work is not on $trunk_ref)");
+				$kept++;
+				next;
+			}
+			if (!$opt{'apply'}) {
+				say_line("would   remove origin/$name");
+				$remotes++;
+				next;
+			}
+			my ($drc, $dout) = capture('git', 'push', 'origin', '--delete', $name);
+			if ($drc != 0) {
+				say_line("keep    origin/$name (delete failed: $dout)");
+				next;
+			}
+			say_line("removed origin/$name");
+			$remotes++;
+		}
+	}
+}
+
 my $verb = $opt{'apply'} ? 'removed' : 'would remove';
-say_line("# $verb $removed worktree(s); kept $kept");
+say_line("# $verb $removed worktree(s) and $remotes origin branch(es); kept $kept");
 exit 0;
 
 sub usage {
@@ -240,8 +298,10 @@ sub usage {
 	print STDERR <<'USAGE';
 worktree_gc.pl - sweep agent worktrees whose work is landed and idle
   perl scripts/worktree_gc.pl [--apply] [--older-than HOURS] [--trunk main] [--no-fetch]
-  report only unless --apply; a worktree is safe only when its branch is merged
-  into origin/<trunk>, its tree is clean, no process is in it, and it is idle.
+                              [--remote-only] [--no-remote]
+  report only unless --apply; a worktree is safe only when its work is landed,
+  its tree is clean, nothing is open or waiting in it, and it is idle.
+  The remote sweep deletes merged origin/agent/* branches (the lander's backups).
 USAGE
 	exit $code;
 }

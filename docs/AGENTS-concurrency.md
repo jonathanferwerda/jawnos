@@ -21,6 +21,21 @@ every landing touches:
   150-second wait for a verdict; ten agents asking at once queue, time out and report failures for
   work that was fine. Only the lander restarts.
 
+## The gate also closes the corruption
+
+Two failures have made agents spin after their work was done, and the gate now refuses
+both instead of pushing out of a broken repo:
+
+- **A bare repository.** `core.bare=true` stops every git command in the primary. The gate checks it
+  before it starts and again after the suite, resets the flag, and refuses with the words "the suite
+  left the repository bare". The corruption is named, not mistaken for a branch problem.
+- **A trunk that moved during the suite.** The gate holds the lock, so no other agent can be landing;
+  a move is a fixture commit from a test. If the new commit carries a fixture identity
+  (`@example.invalid`, `@example.test`, `@jawnos.invalid`), the gate puts the trunk back and refuses.
+  Anything else is left alone and reported — a human commit is never reverted.
+
+Both are refusals: nothing is pushed, and the agent is told to report it rather than retry.
+
 ## Why the lander moves the primary checkout
 
 `scripts/restart.pl` restarts whatever the master is already running. The primary checkout advances
@@ -49,7 +64,9 @@ cannot reach the server should not be pushed as though it did.
    never stacked), amend. The body is preserved.
 7. `git push origin HEAD:refs/heads/main` — fast-forward only, and the lock is why it stays one. The
    hook still runs its parse guard and help audit; only the duplicate suite is skipped.
-8. Fast-forward the primary checkout, then `scripts/restart.pl --reason "v<new> - <summary>"`.
+8. Delete the backup branch on origin. Its work is on the trunk now, and a branch left behind is a
+   "Compare & pull request" banner in GitHub for every finished task.
+9. Fast-forward the primary checkout, then `scripts/restart.pl --reason "v<new> - <summary>"`.
 
 Exit codes: **0** landed — **1** refused, nothing pushed — **2** bad usage — **4** another landing held
 the lock past `--wait` — **5** pushed, but the dev server is not on it (primary checkout dirty or
@@ -90,8 +107,9 @@ rebase immediately before running the gate:
   and keeps it: an unmerged branch or detached commit, a dirty tree, a waiting
   stash, an open `.shots/AGENT-CHECKPOINT.md`, a process standing in the worktree,
   or anything touched within the threshold. That is what makes it safe to run
-  while someone is mid-task. A worktree whose directory is gone is reclaimed with
-  `git worktree prune` (the sweep does that too).
+  while someone is mid-task. It also deletes `origin/agent/*` backup branches whose work is on the
+  trunk (`--remote-only` for just that), which is what keeps GitHub's branch list clean. A worktree
+  whose directory is gone is reclaimed with `git worktree prune` (the sweep does that too).
 - `config.json` is tracked with fixed ports (3000/3001). Do not run a server from a worktree, and do
   not run server-binding tests in parallel with another agent.
 - `database/` is empty there. Seed a test database; never point one at `database/jawnos.db`.

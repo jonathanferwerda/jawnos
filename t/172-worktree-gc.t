@@ -164,8 +164,28 @@ git($wt_stash, 'stash', 'push', '-q', '-m', 'wip');
 ($rc, $out) = gc($primary, '--older-than', '0', '--apply');
 like($out, qr/wip\s+\Q$wt_stash\E .*\(a stash is waiting in this repo\)/,
 	'the stash alone stops the sweep');
-ok(-d $wt_stash, 'the worktree with a stash survives --apply');
-ok(-d $wt_check, 'the worktree with an open checkpoint survives --apply');
-ok(-d $wt_det, 'the detached worktree with unmerged work survives --apply');
+	ok(-d $wt_stash, 'the worktree with a stash survives --apply');
+	ok(-d $wt_check, 'the worktree with an open checkpoint survives --apply');
+	ok(-d $wt_det, 'the detached worktree with unmerged work survives --apply');
+
+# --- backup branches on origin -------------------------------------------
+# The lander pushes a branch to origin before it waits for the gate. After the
+# landing that branch is redundant, and every one left behind is a "Compare &
+# pull request" banner. Only agent/* is touched, and only when the work is on
+# the trunk.
+subtest 'the remote sweep deletes landed backup branches only' => sub {
+	git($primary, 'push', '-q', 'origin', 'agent/stash');
+	git($primary, 'push', '-q', 'origin', 'agent/unmerged');
+
+	my ($rc, $out) = gc($primary, '--remote-only', '--apply');
+	is($rc, 0, 'the remote sweep exits cleanly') or diag($out);
+	like($out, qr/removed origin\/agent\/stash/, 'a landed backup branch is deleted');
+	like($out, qr/wip\s+origin\/agent\/unmerged/, 'an unlanded one is kept');
+
+	my ($gc1) = git($origin, 'rev-parse', '--verify', 'refs/heads/agent/stash');
+	isnt($gc1, 0, 'the landed one is gone from origin');
+	my ($gc2) = git($origin, 'rev-parse', '--verify', 'refs/heads/agent/unmerged');
+	is($gc2, 0, 'the unlanded one is still on origin');
+};
 
 done_testing();

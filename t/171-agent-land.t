@@ -31,6 +31,13 @@ open(my $fh, '>>', "$dir/suite") or die $!;
 print $fh "@ARGV\n";
 close $fh;
 system('git', 'config', 'core.bare', 'true') if -e "$dir/bare";
+if (-e "$dir/moved") {
+	my $list = `git worktree list --porcelain`;
+	my ($p) = $list =~ /^worktree (.+)$/m;
+	chomp $p;
+	system('git', '-C', $p, '-c', 'user.email=qa-test@example.invalid',
+		'-c', 'user.name=qa-test', 'commit', '--allow-empty', '-q', '-m', 'initial');
+}
 print "suite ran\n";
 exit(-e "$dir/fail" ? 1 : 0);
 PL
@@ -255,8 +262,8 @@ subtest 'a clean branch lands, bumps, pushes and updates the primary' => sub {
 		'the push reaches the hook and tells it the suite already ran');
 	like($out, qr/backing up agent\/task to origin\/agent\/task/,
 		'the branch is backed up to origin before the gate is taken');
-	my ($brev, $bout) = git($f->{'origin'}, 'rev-parse', '--verify', 'refs/heads/agent/task');
-	is($brev, 0, "and origin really has the branch ($bout)");
+	my ($brev) = git($f->{'origin'}, 'rev-parse', '--verify', 'refs/heads/agent/task');
+	isnt($brev, 0, 'and the backup branch is deleted once the work is on the trunk');
 	ok(-e "$f->{'primary'}/.git/jawnos-land.lock", 'the lock lives in the shared common dir');
 };
 
@@ -341,6 +348,21 @@ subtest 'a suite that leaves the repo bare refuses the landing' => sub {
 	my (undef, $origin) = git($f->{'primary'}, 'rev-parse', 'origin/main');
 	my (undef, $base)   = git($f->{'primary'}, 'rev-parse', 'main');
 	is($origin, $base, 'nothing was pushed');
+};
+
+subtest 'a suite that moves the trunk is put back and refuses' => sub {
+	my $f = fixture();
+	commit_in_worktree($f, 'note.txt', "a\n", 'v0.1.1 - add a note');
+	write_file("$f->{'marker'}/moved", "1\n");
+
+	my ($rc, $out) = land($f);
+	is($rc, 1, 'the lander refuses') or diag($out);
+	like($out, qr/fixture commit/, 'and names it as a fixture commit');
+
+	my (undef, $head)   = git($f->{'primary'}, 'rev-parse', 'main');
+	my (undef, $origin) = git($f->{'primary'}, 'rev-parse', 'origin/main');
+	is($head, $origin, 'the trunk was put back where it was');
+	ok(!-e "$f->{'marker'}/restart", 'nothing restarted');
 };
 
 done_testing();
