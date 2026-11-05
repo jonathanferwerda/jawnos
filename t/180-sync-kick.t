@@ -120,6 +120,7 @@ like($loader, qr/JawnOS::Domain::Sync' for qw\([^)]*\bsync_kick\b/s,
 my $script = read_file("$root/scripts/sync_kick.pl");
 like($script, qr/subs::sync_kick\(\)/, 'the CLI runs the same sub');
 like($script, qr/sync pass nudged/, 'and says the pass was nudged for the running manager');
+like($script, qr/perl5\/lib\/perl5/, 'the CLI finds the local::lib tree a plain shell lacks');
 unlike($script, qr/remote_machine_negotiator/, 'it does not try to build a controller in a bare shell');
 
 my $help = read_file("$root/perl/help/topics_features.pl");
