@@ -71,9 +71,14 @@ Settings, per machine (`app = misc`):
 | `sco_peer` | the phone's Bluetooth address, e.g. `00:2B:70:E9:7E:B2` |
 | `sco_pcm` | empty — this is the BlueALSA backend, not used with `sco_pipe` |
 
-The phone side picks its own adapter by name: the IVR pane's *Gateway Bluetooth
-name* (default `jawn-gateway`). It matches against the SCO devices the phone
-can see, so a second headset connected to the phone does not steal the call.
+The phone side resolves that name to the gateway's **bonded address**: the IVR
+pane's *Gateway Bluetooth name* (default `jawn-gateway`) names the device, and
+only a Hands-Free candidate with that address is chosen. Another headset
+connected at the same time is never used - when the framework offers only that
+headset, no communication device is set and the call stays on Telecom's route
+to the gateway. (It used to fall back to "the first SCO device": with a JBL
+Tune 520BT connected, a measured call went to the headset and the caller heard
+silence while the gateway recorded 20 s of digital zeros.)
 
 Nothing needs a systemd unit of its own: `President.pl` starts `perl/Sco.pl`
 and `perl/Reception.pl` when `perl/sco/sco_helper` exists (build it with
