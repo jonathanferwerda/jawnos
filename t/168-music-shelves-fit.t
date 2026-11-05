@@ -2,8 +2,9 @@
 # covers:    The artists and albums shelves are the two halves of the Music
 #            window. They used to be 50% content-box boxes, so their padding and
 #            borders pushed the album shelf past the right edge once the window
-#            was made slimmer; a narrow window now stacks them full width, and
-#            the saved band is never read back from a stacked shelf.
+#              was made slimmer; a narrow window now stacks them full width,
+#              each shelf keeping the saved band until the window is short, and
+#              the save never reads back a stacked shelf's shorter box.
 
 use strict;
 use warnings;
@@ -27,6 +28,12 @@ use RepoSource;
 # The shelf resizable call offers only the south handle for the same reason: an
 # east drag would pin a pixel width that goes off the side when the window is
 # made slimmer again.
+#
+# Below 440px the shelves stack, each at the saved band until the window is
+# too short for the track list; then the band is capped so the list keeps about
+# 100px. The handles are hidden because one band cannot be both shelves' height
+# at once, and the band itself is carried as a custom property so a stacked
+# shelf's shorter box is never what a save or a reopen remembers.
 
 my $root = repo_root();
 my $tpl  = read_file("$root/templates/apps/music/music.html.ep");
@@ -69,8 +76,10 @@ like($css, qr/\@container \(max-width: 440px\) \{/,
     'a narrow Music container has its own draw');
 like($css, qr/#music:not\(\[phone_layout="yes"\]\) #music_artists,\s*\n\s*#music:not\(\[phone_layout="yes"\]\) #music_albums \{[^}]*left: 0 !important;[^}]*right: 0 !important;[^}]*height: var\(--music-stack-shelf\) !important;/s,
     'both shelves take the full width and the split height');
-like($css, qr/--music-stack-shelf: max\(90px, calc\(\(var\(--music-shelf-height, 125px\) - 6px\) \/ 2\)\);/,
-    'the band is split with a floor so neither shelf is a single row');
+like($css, qr/\.wind\[app="music"\] \{ container-type: size; \}/,
+    'the music window is a size container, so 100cqh is its own height');
+like($css, qr/--music-stack-shelf: clamp\(60px, calc\(\(100cqh - 316px\) \/ 2\), var\(--music-shelf-height, 125px\)\);/,
+    'the saved band is capped by the window height, leaving the list its room');
 like($css, qr/#music:not\(\[phone_layout="yes"\]\) #music_albums \{\s*\n\s*top: calc\(100px \+ var\(--music-stack-shelf\) \+ 6px\) !important;/,
     'the albums sit under the artists');
 like($css, qr/#music:not\(\[phone_layout="yes"\]\) #music_files \{[^}]*top: calc\(100px \+ var\(--music-stack-shelf\) \+ 6px \+ var\(--music-stack-shelf\)\) !important;[^}]*height: auto !important;/s,

@@ -157,7 +157,7 @@ html, body {
 /* the window is the query container for the player bar, so its icon sizes follow
    the window's own width (a viewport media query cannot: the window is a small
    panel on a large screen) */
-.wind[app="music"] { container-type: inline-size; }
+.wind[app="music"] { container-type: size; }
 
 /* fullscreen: the player itself fills the screen (musicPlayerFullscreen). The
    library has no place there - the picture and the two bars do - so it is put
@@ -447,14 +447,16 @@ body.dark_theme .music_cfg_drawer {
 #music_artists br, #music_albums br { display: none; }
 /* A narrow Music window stacks the shelves: two half-width columns leave a
    sliver for each name, so each shelf takes the whole width and the track list
-   moves down under the pair. The shelf band keeps its saved height as the
-   measure and is split between the two, with a floor so neither becomes a
-   single row; the drag handles are put away because one band height cannot be
-   both shelves' height at once. The list's height is left to its top and foot
-   so the extra shelf does not run under the player. */
+   moves down under the pair. Each shelf keeps the full saved band while the
+   window is tall enough; on a short window the band is capped so the track list
+   keeps about 100px (the top 100, the 6px gap, the 110px player and that list
+   are taken out of the window's own height). The drag handles are put away
+   because one band height cannot be both shelves' height at once. The list's
+   height is left to its top and foot so the extra shelf does not run under the
+   player. */
 @container (max-width: 440px) {
 	#music:not([phone_layout="yes"]) {
-		--music-stack-shelf: max(90px, calc((var(--music-shelf-height, 125px) - 6px) / 2));
+		--music-stack-shelf: clamp(60px, calc((100cqh - 316px) / 2), var(--music-shelf-height, 125px));
 	}
 	#music:not([phone_layout="yes"]) #music_artists,
 	#music:not([phone_layout="yes"]) #music_albums {
