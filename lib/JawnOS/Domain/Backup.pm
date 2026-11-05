@@ -63,12 +63,40 @@ sub backup_sealed_ok($path) {
 	return 1;
 }
 
+# Backups build a plaintext scratch database in ~/.president/ (see backup_now).
+# The normal exits shred it, but a worker killed mid-build - the tree restarts
+# on memory pressure, and a full disk kills it the same way - leaves the copy
+# behind for good. Sixteen of them (4.5G) had accumulated on the house server
+# and filled its disk, which wedged the master: the app could not write its own
+# log, so nothing told the person and no restart request could be answered.
+# Sweep anything clearly abandoned before the next build. No live build is
+# three hours old - a local one takes a minute and a peer export is bounded by
+# the ten-minute lock - so this cannot touch a copy still in use.
+sub backup_scratch_tidy {
+	my $dir = &subs::home('~/.president/');
+	return 0 unless -d $dir;
+	my $cutoff = time - (3 * 60 * 60);
+	my $gone = 0;
+	foreach my $f ( glob($dir . '*.sql'), glob($dir . '*.sql-journal') ) {
+		my @st = stat $f;
+		next unless @st && -f _;
+		next unless $st[9] < $cutoff;
+		unlink $f;
+		$gone++ unless -e $f;
+	}
+	&subs::log_writer('backup scratch tidy: discarded ' . $gone . ' leftover copy(ies)') if $gone;
+	return $gone;
+}
+
 sub backup_now {
 	my $c = shift;
 	my $start_time = &subs::rightNow();
 	my $uuid = &subs::random_string_creator(25);
 	my $auuid = &subs::random_string_creator(12);
 	my $reason = $c->param('reason') || 'unknown';
+	# A busy or crashed run must not leave its copy to the next one; this is
+	# also the only place an abandoned copy is ever reached on a live machine.
+	&backup_scratch_tidy();
 	unless ($reason eq 'remote_update') {
 		my $html = '<h2>Doing backup</h2>';
 		&Websocket::send('tab', { yellow => $html, uuid => $auuid });
