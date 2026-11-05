@@ -42,6 +42,10 @@ sub new {
 		last_event => '',
 		last_error => '',
 		recordings => [],
+		transcript => [],
+		partial => '',
+		transcript_engine => '',
+		transcript_note => '',
 		buffer => '',
 		pid => 0,
 	}, $class;
@@ -164,6 +168,12 @@ sub status {
 		last_error => $self->{'last_error'},
 		helper => ($self->helper_command() ? 1 : 0),
 		recordings => $self->{'recordings'},
+		# the caller's words while the call is up, and the sentence being said:
+		# the Phone pane and the card draw these, and the Chat app keeps them
+		transcript => $self->{'transcript'} || [],
+		partial => $self->{'partial'} || '',
+		transcript_engine => $self->{'transcript_engine'} || '',
+		transcript_note => $self->{'transcript_note'} || '',
 		plan => [ map { $_->{'key'} || ($_->{'tone'} ? 'tone' : 'step') } @{ $self->{'steps'} || [] } ],
 		local => $self->{'local'} || '',
 		# where the call's own two streams were on the last look: the pane and a
@@ -263,6 +273,7 @@ sub arm {
 		$self->{'mixer'} = JawnOS::Sco::Mixer->new();
 		$self->{'peer'} = $args{'peer'} || $self->peer_address();
 		$self->{'call_id'} = $args{'call_id'} || &call_id();
+		$self->_start_transcript();
 		# A pair that is already up when we arm belongs to a call that has
 		# already had its plan. The phone's Hands-Free streams outlive the plan,
 		# and Reception arms again as soon as a finished plan lets go of its
@@ -283,6 +294,7 @@ sub arm {
 	}
 	$self->{'peer'} = $args{'peer'} || '';
 	$self->{'call_id'} = $args{'call_id'} || &call_id();
+	$self->_start_transcript();
 	$self->{'last_error'} = '';
 	$self->{'last_event'} = '';
 	$self->{'state'} = 'starting';
@@ -395,6 +407,7 @@ sub end_call {
 	$self->{'last_event'} = $why || 'line idle';
 	$self->_send(cmd => 'quit');
 	$self->_reap();
+	$self->_stop_transcript();
 	$self->write_status();
 	return 1;
 }
@@ -430,6 +443,7 @@ sub stop_watch {
 
 sub _spawn {
 	my ($self, @cmd) = @_;
+	push @cmd, '--tee', $self->{'tee'} if $self->{'tee'};
 	my $out;
 	my $in;
 	my $pid = eval { IPC::Open2::open2($out, $in, @cmd) };
@@ -468,6 +482,186 @@ sub _spawn {
 		$self->{'last_error'} = "stream: $@";
 		$self->_reap();
 		return 0;
+	}
+	return 1;
+}
+
+# ---- the live transcript ------------------------------------------------
+#
+# The caller's words are the other half of a screening, and a person watching
+# the Phone pane should read them while the call is up, not after. The helper
+# copies every frame of the caller's voice into a FIFO (--tee); a Python child
+# segments it and asks Vosk for a sentence at a time. This side only routes:
+# it keeps the lines in the status (so a pane that opens late catches up), in a
+# JSONL file beside the gateway (so the Chat app can file them later), and on
+# the phone's websocket (so the bubbles appear as they are said).
+#
+# A transcript is never required for a call: no Vosk, no model, or a streamer
+# that dies leaves the plan running and the pane saying why there is no text.
+
+sub _start_transcript {
+	my ($self) = @_;
+	$self->{'transcript'} = [];
+	$self->{'partial'} = '';
+	$self->{'transcript_engine'} = '';
+	$self->{'transcript_note'} = '';
+	unless (eval { &subs::vosk_available() }) {
+		$self->{'transcript_note'} = 'Vosk is not installed on this machine';
+		return 0;
+	}
+	my $python   = eval { &subs::vosk_python() } || '';
+	my $model    = eval { &subs::vosk_model_dir() } || '';
+	my $streamer = eval { &subs::vosk_streamer() } || '';
+	unless (-x $python && length $model && -f $streamer) {
+		$self->{'transcript_note'} = 'Vosk is installed but its streamer or model is missing';
+		return 0;
+	}
+	my $dir = $self->{'dir'} . '/transcripts';
+	make_path($dir) unless -d $dir;
+	my $fifo = $dir . '/' . $self->{'call_id'} . '.fifo';
+	unlink $fifo;
+	my $made = POSIX::mkfifo($fifo, 0600);
+	if ($made != 0) {
+		$self->{'transcript_note'} = "could not make the transcript FIFO: $!";
+		return 0;
+	}
+	$self->{'tee'} = $fifo;
+	$self->{'transcript_file'} = $dir . '/' . $self->{'call_id'} . '.jsonl';
+	return 1 if $self->_spawn_transcript(
+		$python, $streamer, '--fifo', $fifo, '--model', $model, '--rate', 8000
+	);
+	unlink $fifo;
+	delete $self->{'tee'};
+	return 0;
+}
+
+sub _spawn_transcript {
+	my ($self, @cmd) = @_;
+	my ($out, $in);
+	my $pid = eval { IPC::Open2::open2($out, $in, @cmd) };
+	unless ($pid) {
+		$self->{'transcript_note'} = 'the transcript reader would not start';
+		return 0;
+	}
+	$self->{'transcript_pid'} = $pid;
+	$self->{'transcript_in'} = $in;
+	$self->{'transcript_out'} = $out;
+	$self->{'transcript_buffer'} = '';
+	$in->autoflush(1);
+	my $ok = eval {
+		$out->blocking(0);
+		my $stream = Mojo::IOLoop::Stream->new($out)->timeout(0);
+		$stream->on(read => sub {
+			my ($stream, $bytes) = @_;
+			$self->{'transcript_buffer'} .= $bytes;
+			while ($self->{'transcript_buffer'} =~ s/^(.*?)\n//) {
+				my $line = $1;
+				next unless $line =~ /\S/;
+				my $event = eval { decode_json($line) };
+				next unless ref $event eq 'HASH';
+				$self->_transcript_event($event);
+			}
+		});
+		$stream->on(close => sub { delete $self->{'transcript_stream'} });
+		$stream->start;
+		$self->{'transcript_stream'} = $stream;
+		1;
+	};
+	unless ($ok) {
+		$self->{'transcript_note'} = "the transcript reader could not be read: $@";
+		$self->_stop_transcript();
+		return 0;
+	}
+	return 1;
+}
+
+sub _transcript_event {
+	my ($self, $event) = @_;
+	my $name = $event->{'event'} || '';
+	if ($name eq 'ready') {
+		$self->{'transcript_engine'} = 'vosk';
+		$self->write_status();
+		return 1;
+	}
+	if ($name eq 'partial') {
+		my $text = $event->{'text'} || '';
+		return 1 unless length $text;
+		$self->{'partial'} = $text;
+		$self->write_status();
+		$self->_push_transcript({ partial => $text });
+		return 1;
+	}
+	if ($name eq 'line') {
+		my $text = $event->{'text'} || '';
+		return 1 unless length $text;
+		$self->{'partial'} = '';
+		my $line = {
+			who => 'caller',
+			text => $text,
+			at => time,
+			ms => 0 + ($event->{'ms'} || 0),
+		};
+		push @{ $self->{'transcript'} }, $line;
+		shift @{ $self->{'transcript'} } while @{ $self->{'transcript'} } > 200;
+		$self->_write_transcript_line($line);
+		$self->write_status();
+		$self->_push_transcript({ line => $line });
+		return 1;
+	}
+	if ($name eq 'error') {
+		$self->{'transcript_note'} = $event->{'message'} || 'the transcript reader failed';
+		$self->write_status();
+	}
+	return 1;
+}
+
+sub _write_transcript_line {
+	my ($self, $line) = @_;
+	my $file = $self->{'transcript_file'} or return 0;
+	my $ok = eval {
+		open(my $fh, '>>', $file) or die "open $file: $!";
+		print {$fh} encode_json($line) . "\n";
+		close $fh;
+		1;
+	};
+	$self->{'transcript_note'} = "could not save the transcript: $@" unless $ok;
+	return $ok ? 1 : 0;
+}
+
+sub _push_transcript {
+	my ($self, $what) = @_;
+	return 0 unless defined &Websocket::send;
+	my $msg = {
+		type => 'sco_transcript',
+		call_id => $self->{'call_id'},
+		peer => $self->{'peer'},
+		%{ $what || {} },
+	};
+	eval { &Websocket::send('phone', $msg) };
+	return 1;
+}
+
+sub _stop_transcript {
+	my ($self) = @_;
+	my $pid = delete $self->{'transcript_pid'};
+	foreach my $key (qw(transcript_stream transcript_in transcript_out)) {
+		my $thing = delete $self->{$key};
+		next unless $thing;
+		eval { $thing->close };
+	}
+	$self->{'transcript_buffer'} = '';
+	if (my $fifo = delete $self->{'tee'}) { unlink $fifo; }
+	return 1 unless $pid;
+	my $tries = 0;
+	my $gone = 0;
+	while ($tries++ < 10) {
+		my $done = waitpid($pid, WNOHANG);
+		if ($done == $pid) { $gone = 1; last; }
+		select(undef, undef, undef, 0.02);
+	}
+	unless ($gone) {
+		kill 'TERM', $pid;
+		waitpid($pid, 0);
 	}
 	return 1;
 }
@@ -570,6 +764,7 @@ sub event {
 		$self->{'state'} = $self->{'state'} eq 'done' ? 'done' : 'idle';
 		$self->{'since'} = time;
 		$self->_reap();
+		$self->_stop_transcript();
 		$self->write_status();
 	}
 	elsif ($name eq 'error') {
@@ -600,6 +795,7 @@ sub cancel {
 	return { ok => 1, state => $self->{'state'} } if $self->{'state'} eq 'idle';
 	$self->_send(cmd => 'quit');
 	$self->_reap();
+	$self->_stop_transcript();
 	$self->{'state'} = 'idle';
 	$self->{'since'} = time;
 	$self->{'last_event'} = 'cancelled';

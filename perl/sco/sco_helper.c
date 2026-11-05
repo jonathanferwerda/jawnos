@@ -165,6 +165,44 @@ static long rec_bytes = 0, rec_total_ms = 0;
 static long rec_want_ms = 0, rec_silence_ms = 1800, rec_min_ms = 400;
 static int rec_id = 0, rec_active = 0, rec_quiet = 0;
 
+/* ---- the transcript tap --------------------------------------------------
+ * Every frame of the caller's voice is copied to a FIFO (--tee) before the
+ * recorder's gate, so the live transcript hears the whole call, not only the
+ * name. The reader is a separate process; a reader that is slow or gone must
+ * never stall the audio, so the write is non-blocking and a missing reader is
+ * retried at most once a second rather than on every 7.5 ms frame. */
+static const char *tee_path = NULL;
+static int tee_fd = -1;
+static long long tee_next_try = 0;
+
+static void tee_open(void) {
+	if (tee_fd >= 0 || !tee_path) return;
+	long long t = now_ns();
+	if (t < tee_next_try) return;
+	tee_fd = open(tee_path, O_WRONLY | O_NONBLOCK);
+	if (tee_fd < 0) {
+		/* ENXIO: the reader has not opened the FIFO yet, which is normal at
+		 * the start of a call. Any other error is treated the same way. */
+		tee_fd = -1;
+		tee_next_try = t + 1000000000LL;
+	}
+}
+
+static void tee_chunk(const unsigned char *buf, size_t len) {
+	if (tee_fd < 0) tee_open();
+	if (tee_fd < 0) return;
+	ssize_t n = write(tee_fd, buf, len);
+	if (n < 0 && (errno == EPIPE || errno == ENXIO || errno == EBADF)) {
+		close(tee_fd);
+		tee_fd = -1;
+		tee_next_try = now_ns() + 1000000000LL;
+	}
+}
+
+static void tee_close(void) {
+	if (tee_fd >= 0) { close(tee_fd); tee_fd = -1; }
+}
+
 /* ---- the room reader ----------------------------------------------------
  * A caller's name is recorded the way the keyboard's dictation records a
  * phrase: the room is read first, speech has to hold before it counts, and the
@@ -401,6 +439,8 @@ static void record_window(double rms) {
  * room is being read is lost. */
 static void downlink_chunk(const unsigned char *buf, size_t len) {
 	if (len > CHUNK_BYTES) len = CHUNK_BYTES;
+	/* the transcript hears the whole call; the recorder below only the name */
+	tee_chunk(buf, len);
 	if (!rec_active) return;
 	fwrite(buf, 1, len, rec_file);
 	rec_bytes += (long) len;
@@ -885,6 +925,7 @@ static int pcm_mode_main(void) {
 	 * and parec its reader. */
 	if (pipe_in) { pclose(pipe_in); pipe_in = NULL; }
 	if (pipe_out) { pclose(pipe_out); pipe_out = NULL; }
+	tee_close();
 	pcm_close_pair();
 	return 0;
 }
@@ -898,13 +939,15 @@ int main(int argc, char **argv) {
 		else if (!strcmp(argv[i], "--pcm") && i + 1 < argc) pcm_dev = argv[++i];
 		else if (!strcmp(argv[i], "--pipe-in") && i + 1 < argc) pipe_in_cmd = argv[++i];
 		else if (!strcmp(argv[i], "--pipe-out") && i + 1 < argc) pipe_out_cmd = argv[++i];
+		else if (!strcmp(argv[i], "--tee") && i + 1 < argc) tee_path = argv[++i];
 		else if (!strcmp(argv[i], "--fast")) fast = 1;
 		else if (!strcmp(argv[i], "--silence-level") && i + 1 < argc) silence_level = atoi(argv[++i]);
 		else if (!strcmp(argv[i], "--transparent")) voice = BT_VOICE_TRANSPARENT;
 		else {
 			fprintf(stderr,
 				"usage: %s [--local BDADDR] [--peer BDADDR] [--silence-level RMS]\n"
-				"          [--loopback DOWNLINK.raw [--loopback-uplink UPLINK.raw] [--fast]]\n", argv[0]);
+				"          [--loopback DOWNLINK.raw [--loopback-uplink UPLINK.raw] [--fast]]\n"
+				"          [--tee FIFO]\n", argv[0]);
 			return 2;
 		}
 	}

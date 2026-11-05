@@ -220,6 +220,15 @@ sub vosk_root {
 	return &subs::home('~/.local/share/jawnos/vosk');
 }
 
+# The live reader sits beside the one-shot runner and takes the same model.
+sub vosk_streamer {
+	my $streamer = $ENV{'JAWNOS_VOSK_STREAMER'};
+	return $streamer if defined $streamer && length $streamer;
+	my $runner = &vosk_runner();
+	$runner =~ s{[^/]+$}{vosk_stream.py};
+	return $runner;
+}
+
 sub vosk_python {
 	my $venv = &vosk_root() . '/venv/bin/python3';
 	return $venv if -x $venv;

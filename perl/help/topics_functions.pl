@@ -161,7 +161,7 @@ $topic{'platform'} = {
 		title => 'Platform (AI providers)', category => 'functions',
 		templates => [ 'templates/configure/plat_setting_list.html.ep' ],
 		summary => 'Choose the model each assistant uses, add provider keys, and teach the Guide runtime commands.',
-		verified => '2026-11-03',
+		verified => '2026-11-05',
 		body => [
 			'Configure → Plat gathers every AI choice in one place: which model each assistant uses, and the key or account each provider needs. On this machine {{live:models}} assistant roles have a model set, and the local Ollama is {{live:ollama}}.',
 			'Providers include the local Ollama, Cloudflare Workers AI, OpenAI, Anthropic (Claude), Google (Gemini), xAI (Grok), DeepSeek, Mistral, Groq and OpenRouter. A model is addressed as provider:model — a bare name goes to Ollama, and @cf/… to Cloudflare.',

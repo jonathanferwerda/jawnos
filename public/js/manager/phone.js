@@ -449,6 +449,83 @@ $(document).on('click', '#phone_app .phone_route_choice', function () {
 
 // ---- the gateway's own state, on the IVR pane ---------------------------
 
+// ---- the caller's words, live, on the IVR pane -----------------------------
+// The gateway pushes a line as the caller finishes it and the sentence being
+// said as it is recognised, on the phone's websocket. The same lines are in
+// /manager/sco/status, so a pane opened in the middle of a call fills in what it
+// missed - the push is the fast path, never the only one.
+var jawnPhoneTranscriptSeen = 0;
+var jawnPhoneTranscriptCall = '';
+
+function jawnPhoneTranscriptClear() {
+	jawnPhoneTranscriptSeen = 0;
+	$('#phone_app #phone_transcript_lines').empty();
+}
+
+function jawnPhoneTranscriptLine(line) {
+	if (!line || !line.text) { return; }
+	var box = $('#phone_app #phone_transcript_lines');
+	if (!box.length) { return; }
+	$('<div class="phone_transcript_bubble"></div>')
+		.attr('who', line.who || 'caller')
+		.text(line.text)
+		.appendTo(box);
+	jawnPhoneTranscriptSeen++;
+	$('#phone_app #phone_transcript').prop('hidden', false);
+	box.scrollTop(box[0].scrollHeight);
+}
+
+function jawnPhoneTranscriptPartial(text) {
+	var box = $('#phone_app #phone_transcript_lines');
+	if (!box.length) { return; }
+	var partial = box.find('.phone_transcript_bubble.phone_transcript_partial');
+	if (!text) { partial.remove(); return; }
+	if (!partial.length) {
+		partial = $('<div class="phone_transcript_bubble phone_transcript_partial"></div>').appendTo(box);
+	}
+	partial.text(text);
+	$('#phone_app #phone_transcript').prop('hidden', false);
+	box.scrollTop(box[0].scrollHeight);
+}
+
+// The poll repeats every two seconds; only the lines it has not drawn yet are
+// added, and a new call starts the bubbles over.
+function jawnPhoneTranscriptSync(callId, lines, partial, note) {
+	if ((callId || '') !== jawnPhoneTranscriptCall) {
+		jawnPhoneTranscriptCall = callId || '';
+		jawnPhoneTranscriptClear();
+	}
+	$.each((lines || []).slice(jawnPhoneTranscriptSeen), function (i, line) {
+		jawnPhoneTranscriptLine(line);
+	});
+	jawnPhoneTranscriptPartial(partial || '');
+	$('#phone_app #phone_transcript_note').text(note || '');
+	$('#phone_app #phone_transcript').prop('hidden',
+		!(jawnPhoneTranscriptSeen || partial) && !note);
+}
+
+// A push arrives from another window/machine; the pane only draws it when it is
+// on the IVR tab, and the status poll fills in whatever came before it opened.
+function jawnPhoneTranscriptPushed(data) {
+	if (!data) { return; }
+	if (data.call_id && jawnPhoneTranscriptCall && data.call_id !== jawnPhoneTranscriptCall) {
+		jawnPhoneTranscriptCall = data.call_id;
+		jawnPhoneTranscriptClear();
+	}
+	if (data.line) { jawnPhoneTranscriptLine(data.line); }
+	else if (typeof data.partial === 'string') { jawnPhoneTranscriptPartial(data.partial); }
+}
+
+var jawnPhoneGatewayTimer = null;
+
+function jawnPhoneGatewayPoll(on) {
+	if (jawnPhoneGatewayTimer) {
+		clearInterval(jawnPhoneGatewayTimer);
+		jawnPhoneGatewayTimer = null;
+	}
+	if (on) { jawnPhoneGatewayTimer = setInterval(jawnPhoneGatewayState, 2000); }
+}
+
 function jawnPhoneGatewayState() {
 	$.ajax({
 		url: '/manager/sco/status',
@@ -467,13 +544,16 @@ function jawnPhoneGatewayState() {
 				label = label + ' - ' + jawnosT('this machine is on 2.4 GHz WiFi, so the caller will break up');
 			}
 			$('#phone_app #phone_ivr_gateway_state').text(label);
+			jawnPhoneTranscriptSync(res && res.call_id, res && res.transcript, res && res.partial, res && res.transcript_note);
 		},
 		error: function () { $('#phone_app #phone_ivr_gateway_state').text('Gateway: not answering'); }
 	});
 }
 
-$(document).on('click', '#phone_app .phone_app_tab[pane="ivr"]', function () {
-	jawnPhoneGatewayState();
+$(document).on('click', '#phone_app .phone_app_tab', function () {
+	var pane = $(this).attr('pane');
+	jawnPhoneGatewayPoll(pane === 'ivr');
+	if (pane === 'ivr') { jawnPhoneGatewayState(); }
 });
 
 $(document).on('click', '#phone_app #phone_ivr_arm', function (e) {

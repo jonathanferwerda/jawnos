@@ -187,6 +187,16 @@
 				<span class="phone_app_ivr_flow_label" id="phone_ivr_gateway_state">Gateway idle</span>
 				<button class="phone_app_ivr_save" id="phone_ivr_arm" hint="Arm the gateway">Arm the gateway</button>
 			</div>
+			<%# The caller's words while the call is up. The gateway pushes each line on
+			    the phone's websocket and /manager/sco/status carries the ones already
+			    said, so a pane opened mid-call catches up. %>
+			<div class="phone_transcript" id="phone_transcript" hidden>
+				<div class="phone_transcript_head">
+					<span class="phone_transcript_title"><%= &subs::ui('Live transcript') %></span>
+					<span class="phone_transcript_note" id="phone_transcript_note"></span>
+				</div>
+				<div class="phone_transcript_lines" id="phone_transcript_lines"></div>
+			</div>
 			<label>Call routing
 				<div class="phone_app_ivr_flows">
 					<% my @flow_buckets = (

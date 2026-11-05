@@ -250,6 +250,9 @@ sub action_24636 {
 			$closing{'type'} = 'cancel';
 		}
 		&subs::db_update('appointments', \%closing, { uuid => $wrote->{'uuid'} });
+		# the reception's own words for this call, into the number's Chat thread.
+		# A screened call is answered, so only those carry a transcript.
+		&subs::phone_call_transcript_note($number, $started, $ended) if $answered;
 		$c->render(json => { ok => 1, app => $app, uuid => $wrote->{'uuid'} });
 		return;
 	}

@@ -63,6 +63,12 @@ function wsMessageDispatch(raw) {
 		if (data['coding_run'] && typeof jawnosCodingRunPushed === 'function') {
 			jawnosCodingRunPushed(data['coding_run'], data['coding_conversation']);
 		}
+		// The reception's live transcript: the sentence being recognised, then the
+		// finished line. Pushed on the phone's channel, so only the Phone pane
+		// draws it; a pane that missed the push catches up from the status poll.
+		if (data['type'] === 'sco_transcript' && typeof jawnPhoneTranscriptPushed === 'function') {
+			jawnPhoneTranscriptPushed(data);
+		}
 		// Every connect carries the tree's boot stamp. A new boot is the one
 		// event that drops a media grant, so that - not the length of a socket
 		// outage - is what re-fetches the open media windows. The first stamp of

@@ -10,6 +10,8 @@ package subs;
 # the older per-device rows still answering as a fallback.
 use strict;
 use warnings;
+use Data::UUID;
+use File::Slurp qw(read_file);
 use Mojo::JSON qw(decode_json);
 
 sub phone_ivr_defaults {
@@ -89,6 +91,99 @@ sub phone_ivr_settings {
 	my $flows = eval { decode_json($stored_flows) } if length $stored_flows;
 	$settings->{'flows'} = &subs::phone_ivr_flow_clean($flows, $settings->{'route'});
 	return $settings;
+}
+
+# A screened call's transcript, filed into the Chat thread for the number.
+#
+# The gateway writes one JSONL file per call under ~/.president/sco/transcripts,
+# but it never learns the caller's number: the number is the phone's, and the
+# phone tells the house when it files the call. So the filing happens here, when
+# the call appointment is written, and a transcript is spent once (a renamed
+# .filed marker), so a retried call log cannot file the same words twice.
+#
+# The call window picks the file: the gateway and the phone are the same house
+# and a call is one at a time, but a transcript from minutes later belongs to a
+# different call and is left alone. '' when there is nothing to file.
+sub phone_call_transcript_note {
+	my ($number, $started_ms, $ended_ms) = @_;
+	my $digits = defined $number ? $number : '';
+	$digits =~ s/\D+//g;
+	$digits =~ s/^1//;
+	return 0 unless length $digits;
+	my ($file, $said) = &phone_call_transcript_lines($ended_ms);
+	return 0 unless length $file && @{$said};
+	my $body = join(' ', @{$said});
+	$body = substr($body, 0, 4000);
+	# A message the house cannot read again is not written: the key is missing
+	# (a sandbox, a half-restored machine), and the transcript is left in place
+	# for the next attempt.
+	my $sealed = eval { &subs::note_encrypter(&subs::suds_grabber(), $body) };
+	return 0 unless defined $sealed && length $sealed;
+	my $msg = {
+		uuid => Data::UUID->new->create_str(),
+		timestamp => &phone_call_epoch($ended_ms) * 1000,
+		server_time => &subs::rightNow(),
+		body => $sealed,
+		manager_file => '',
+		status => 'sent',
+		contact => eval { &subs::phone_number_app($digits) } || '',
+		phone => $digits,
+		email => undef,
+		conversation_uuid => undef,
+		attachments => undef,
+	};
+	my $ok = eval { &subs::db_insert('mailbox', $msg); 1 };
+	return 0 unless $ok;
+	rename $file, "$file.filed";
+	return 1;
+}
+
+# The transcript file for a call that ended at $ended_ms, and the words in it.
+# The gateway and the phone are the same house and a call is one at a time, but
+# a transcript from minutes later belongs to a different call and is left alone.
+# A spent transcript is renamed .filed, so a retried call log cannot file it
+# twice. Returns () when there is nothing to file.
+sub phone_call_transcript_lines {
+	my ($ended_ms) = @_;
+	my $dir = $ENV{'JAWNOS_SCO_DIR'}
+		? $ENV{'JAWNOS_SCO_DIR'} . '/transcripts'
+		: &subs::home('~/.president/sco/transcripts');
+	return () unless -d $dir;
+	opendir(my $dh, $dir) or return ();
+	my @files = sort grep { /\.jsonl$/ && -s "$dir/$_" } readdir $dh;
+	closedir $dh;
+	return () unless @files;
+
+	my $ended = &phone_call_epoch($ended_ms);
+	my ($pick, $best) = ('', undef);
+	foreach my $name (@files) {
+		my $mtime = (stat("$dir/$name"))[9] || 0;
+		my $delta = abs($mtime - $ended);
+		next if $delta > 300;   # another call's words
+		if (!defined $best || $delta < $best) { $best = $delta; $pick = $name; }
+	}
+	return () unless length $pick;
+
+	my @said;
+	foreach my $line ( split /\n/, read_file("$dir/$pick") ) {
+		next unless $line =~ /\S/;
+		my $row = eval { decode_json($line) };
+		next unless ref $row eq 'HASH';
+		my $text = $row->{'text'} // '';
+		$text =~ s/^\s+|\s+$//g;
+		push @said, $text if length $text;
+	}
+	return () unless @said;
+	return ("$dir/$pick", \@said);
+}
+
+# A call's stamp arrives in milliseconds (the app's Date.now); an older caller
+# may still send seconds. Either way, seconds out.
+sub phone_call_epoch {
+	my ($stamp) = @_;
+	return time unless defined $stamp && $stamp =~ /^\d+(?:\.\d+)?$/ && $stamp > 0;
+	return int($stamp / 1000) if $stamp > 100000000000;
+	return int($stamp);
 }
 
 1;

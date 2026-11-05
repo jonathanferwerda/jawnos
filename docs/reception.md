@@ -21,6 +21,7 @@ adapter.
 | `lib/JawnOS/Sco/Render.pm` | gateway | Piper → raw 8 kHz s16le, cached by words and voice |
 | `perl/sco/sco_helper.c` | gateway | the audio half: `--pcm` (BlueALSA) or `--pipe` (`parec`/`pacat`), one JSON line per event |
 | `perl/Reception.pl` | gateway | keeps the gateway armed from the phone's settings, and keeps the names a call left in `~/.president/sco/kept/` |
+| `scripts/vosk_stream.py` | gateway | reads the helper's `--tee` FIFO, segments the caller's voice and asks Vosk for one sentence at a time |
 
 ## Why a virtual handset
 
@@ -85,6 +86,36 @@ and `perl/Reception.pl` when `perl/sco/sco_helper` exists (build it with
 `perl scripts/build_sco.pl`), and `Mixer::ensure` creates the virtual devices
 the first time a call needs them.
 
+## The live transcript
+
+A person watching the Phone pane should read the caller's words while the call
+is up. The helper copies **every frame** of the caller's voice to a FIFO
+(`--tee`), above the recorder's gate, so the transcript hears the greeting-side
+silence and the conversation rather than only the name. The write is
+non-blocking and a missing reader is retried once a second: a transcript must
+never stall the audio.
+
+`scripts/vosk_stream.py` reads the FIFO, resamples 8 kHz to the 16 kHz Vosk
+wants, learns the room's level, and emits one sentence per pause (0.7 s) with
+partials while it is being said. `Gateway.pm` keeps the lines in `sco.json`,
+writes `~/.president/sco/transcripts/<call_id>.jsonl`, and pushes each one on
+the phone's websocket so the pane draws it as a bubble.
+
+Vosk must be installed on the gateway machine (Configure → Plat → AI →
+Transcription, `local:vosk`; `scripts/jawnos_deps.pl --extras-only --install`
+puts it under `~/.local/share/jawnos/vosk`). Without it the call is unchanged
+and the pane says why there is no text. **Termux cannot run Vosk** (Bionic, no
+wheel), so the phone does not transcribe its own screened call - the audio is
+on the gateway anyway.
+
+When the call ends, the phone files the call appointment, and that is the
+moment the transcript reaches Chat: `phone_call_transcript_note` picks the
+spent transcript whose mtime is within five minutes of the call, writes one
+message into the number's Chat thread, and renames the file `.filed` so a
+retried call log cannot file it twice. The gateway never learns the caller's
+number - the phone knows it - which is why the filing lives on the phone's call
+log rather than on the gateway.
+
 ## The plan
 
 1. The phone answers; PipeWire's gateway streams appear within a second or two.
@@ -131,6 +162,14 @@ the first time a call needs them.
   the flow to the gateway at ring time.
 - **The kept recordings stay on the gateway machine.** Nothing moves a name into
   the house's own records yet.
+- **The transcript is filed by the phone's call log**, so the gateway machine and
+  the manager that handles that phone's call log must be the same house. A
+  gateway on a different machine would need the transcript fetched over the
+  peer rail before it can be filed.
+- **Vosk's model is per language.** The installer brings English; another
+  language is a model directory dropped under `~/.local/share/jawnos/vosk/models`.
+  A language with no model leaves the transcript empty (whisper.cpp is the
+  fallback for a *clip*, not for the stream).
 - A screened call is answered even if the gateway is not ready; the phone's
   watchdog closes it (40 s for a name, 120 s for a message) so the line is
   never left open.
