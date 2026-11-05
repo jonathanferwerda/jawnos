@@ -30,6 +30,11 @@ use warnings;
 # test that checks the row turns this off for itself and uses a fixture database.
 $ENV{'JAWNOS_WHERE_LOG_OFF'} = 1;
 
+# A pre-push hook exports GIT_DIR (and friends) to the suite. Every test that
+# builds a throwaway git repo would inherit it, and `git -C <temp>` would act on
+# this checkout. Start every run with the git environment cleared.
+delete @ENV{qw(GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_COMMON_DIR)};
+
 my $MAX_JOBS = 8;
 
 my ($jobs, $serial, $dry, $jobs_given, $prove);

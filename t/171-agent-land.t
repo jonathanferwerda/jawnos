@@ -69,6 +69,13 @@ exit 0;
 PL
 
 sub sh {
+	# Git exports GIT_DIR to the pre-push hook that runs this suite. Without this
+	# clear, `git -C <temp>` still acts on the live checkout.
+	delete local $ENV{'GIT_DIR'};
+	delete local $ENV{'GIT_WORK_TREE'};
+	delete local $ENV{'GIT_INDEX_FILE'};
+	delete local $ENV{'GIT_OBJECT_DIRECTORY'};
+	delete local $ENV{'GIT_COMMON_DIR'};
 	my @cmd = @_;
 	my $err = gensym;
 	my $pid = open3(my $in, my $out, $err, @cmd);
@@ -104,6 +111,8 @@ sub fixture {
 
 	git($primary, 'config', 'user.email', 'agent_land@example.test');
 	git($primary, 'config', 'user.name',  'agent_land test');
+my ($trc, $fixture_top) = git($primary, 'rev-parse', '--show-toplevel');
+die "fixture repo is not isolated: $fixture_top\n" unless $trc == 0 && defined $fixture_top && $fixture_top eq $primary;
 
 	write_file("$primary/VERSION",              "0.1.1\n");
 	write_file("$primary/README",               "base\n");

@@ -90,6 +90,11 @@ if [ -f scripts/help_audit.pl ] && [ -f help.pl ]; then
 fi
 
 # --- the regression suite must pass (t/) ---
+# Git exports GIT_DIR (and friends) to this hook. The suite builds throwaway git
+# repos of its own; with those inherited, a `git -C <temp>` still acts on this
+# checkout, which is how a fixture test once moved the live refs. Clear the git
+# environment for the suite only - the guard above already used it.
+unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_COMMON_DIR
 # scripts/agent_land.pl already ran the suite at its own job cap before it pushed,
 # and it holds the landing lock while it does, so no other agent is changing the
 # tree. Running it again here doubles every landing - and at this hook's default

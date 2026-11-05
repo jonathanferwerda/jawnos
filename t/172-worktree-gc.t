@@ -18,6 +18,13 @@ use Test::More;
 my $script = "$FindBin::Bin/../scripts/worktree_gc.pl";
 
 sub sh {
+	# Git exports GIT_DIR to the pre-push hook that runs this suite. Without this
+	# clear, `git -C <temp>` still acts on the live checkout.
+	delete local $ENV{'GIT_DIR'};
+	delete local $ENV{'GIT_WORK_TREE'};
+	delete local $ENV{'GIT_INDEX_FILE'};
+	delete local $ENV{'GIT_OBJECT_DIRECTORY'};
+	delete local $ENV{'GIT_COMMON_DIR'};
 	my @cmd = @_;
 	my $err = gensym;
 	my $pid = open3(my $in, my $out, $err, @cmd);
@@ -56,6 +63,8 @@ die "bare origin\n" if $ic != 0;
 die "primary\n" if $ic != 0;
 git($primary, 'config', 'user.email', 'gc@example.test');
 git($primary, 'config', 'user.name',  'gc test');
+my ($trc, $fixture_top) = git($primary, 'rev-parse', '--show-toplevel');
+die "fixture repo is not isolated: $fixture_top\n" unless $trc == 0 && defined $fixture_top && $fixture_top eq $primary;
 write_file("$primary/README", "base\n");
 git($primary, 'add', '.');
 git($primary, 'commit', '-q', '-m', 'base');
@@ -108,6 +117,17 @@ sub merged_branch {
 
 merged_branch('stash');
 merged_branch('check');
+
+# The pre-push hook exports GIT_DIR; the helper must clear it. A decoy bare
+# repo proves a leaked GIT_DIR cannot point the sweep at the live checkout.
+my $decoy = "$dir/decoy.git";
+sh('git', 'init', '--bare', '-q', $decoy);
+{
+	local $ENV{'GIT_DIR'} = $decoy;
+	my ($dc, $do) = gc($primary, '--older-than', '0');
+	like($do, qr/keep\s+\Q$primary\E \(the primary checkout\)/,
+		'a hook GIT_DIR cannot redirect the fixture');
+}
 
 # --- report only changes nothing ------------------------------------------
 my ($rc, $out) = gc($primary, '--older-than', '0');

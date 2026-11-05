@@ -56,6 +56,8 @@ like($hook_text, qr/"\$PERL" scripts\/run_tests\.pl/, 'and the test suite');
 unlike($hook_text, qr/^[^#\n]*[^"\w]perl scripts\/verify_change\.pl/m,
 	'no call to the guard falls back to PATH perl');
 like($hook_text, qr/PERL_ENV_OK/, 'the hook checks whether the helper could run');
+like($hook_text, qr/^unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_COMMON_DIR$/m,
+	'the suite runs with the hook git environment cleared');
 like($hook_text, qr/perl_env\.sh is missing/, 'and blocks loudly when the helper is missing');
 like($hook_text, qr/blocking \(not passing\)/, 'a guard it cannot run blocks the push');
 
