@@ -54,6 +54,68 @@ ok( !exists $guarded->{'ai_jobs'},  'and neither does the other carry-only ledge
 is_deeply( [ keys %{ subs::sync_plan_step($guarded, 1) } ], ['appointments'],
 	'the mobile cap gives its one slot to the real divergence' );
 
+# An unchanged peer picture is not a reconciliation when our table still
+# differs. Entries written before the completion check have no `seen_at`; they
+# must be re-examined once, which is what heals the fleet after the update.
+# A verified entry (`seen_at`) may be skipped. (The equal case is skipped at the
+# top of sync_plan, before this branch is reached.)
+my $stale = { appointments => { count => 12, sum => 1500, max => 1200, full => 1 } };
+my $still = subs::sync_plan($mine, $theirs, {}, $stale, 1);
+ok( exists $still->{'appointments'},
+	'an unproven baseline does not hide a local gap' );
+my $proven = { appointments => { count => 12, sum => 1500, max => 1200, full => 1, seen_at => 1 } };
+my $settled = subs::sync_plan($mine, $theirs, {}, $proven, 1);
+ok( !exists $settled->{'appointments'},
+	'a completed baseline whose peer has not moved is skipped' );
+
+# The cap must rotate: a constantly-written table (the phone's measures) would
+# otherwise take the single mobile slot on every pass. The table reconciled
+# longest ago goes first, and settings rotate through their durable key.
+my $rotation = subs::sync_plan_step(
+	{ appointments => 0, notes => 0 },
+	1,
+	{ appointments => { seen_at => 200 }, notes => { seen_at => 100 } },
+);
+is_deeply( [ keys %{$rotation} ], ['notes'],
+	'the cap rotates to the table reconciled longest ago' );
+my $settings_rotation = subs::sync_plan_step(
+	{ appointments => 0, settings => 0 },
+	1,
+	{ appointments => { seen_at => 2 }, settings_durable => { seen_at => 1 } },
+);
+is_deeply( [ keys %{$settings_rotation} ], ['settings'],
+	'settings rotate through their durable seen_at' );
+
+# A pull may claim `full` only when we hold every row the peer's band map
+# names. A peer that is merely behind does not make the pull incomplete (that
+# would re-read its bands forever), while a row it holds and we missed does.
+{
+	local *subs::sync_table_digest = sub { return { count => 3, sum => 6, max => 3 } };
+	ok( subs::sync_table_complete('notes', { count => 3, sum => 6, max => 3 }),
+		'a matching table is complete' );
+	ok( !subs::sync_table_complete('notes', { count => 4, sum => 9, max => 4 }),
+		'a whole-table read that is still behind is not complete' );
+}
+{
+	local *subs::sync_table_buckets = sub {
+		my ($table, $band) = @_;
+		return { band => $band, buckets => {
+			1 => { count => 5, sum => 50, max => 50 },
+			2 => { count => 5, sum => 50, max => 50 },
+		} };
+	};
+	ok( subs::sync_bands_complete('notes', { band => 100, buckets => {
+		1 => { count => 5, sum => 50, max => 50 },
+		2 => { count => 4, sum => 40, max => 40 },
+	}}), 'a peer that is behind is still fully held' );
+	ok( !subs::sync_bands_complete('notes', { band => 100, buckets => {
+		2 => { count => 6, sum => 60, max => 60 },
+	}}), 'a peer row we do not hold is named' );
+	ok( !subs::sync_bands_complete('notes', { band => 100, buckets => {
+		1 => { count => 5, sum => 55, max => 55 },
+	}}), 'the same count with a different picture is not complete' );
+}
+
 # The bridge client waits for the radio to acknowledge the write, and a watch
 # that has slept suspends its link: the wait runs to the link-supervision
 # timeout. subprocessor() runs inline when another job is already running, so
@@ -76,6 +138,6 @@ like( $part35, qr/name => 'now me push', fork => 1/, 'the Now Me push rides a ch
 my $part36 = read_file("$root/lib/JawnOS/Manager/Part36.pm");
 like( $part36, qr/\$plan_pull && !\$gimme && \(&subs::device_setter\(\) eq 'mobile' \|\| \$mobile_peer\)/,
 	'a mobile pull caps the plan, and so does a pull from a mobile peer' );
-like( $part36, qr/sync_plan_step\(\$plan, 1\)/, 'the mobile cap is one table per pass' );
+like( $part36, qr/sync_plan_step\(\$plan, 1, \$seen\)/, 'the mobile cap is one table per pass, rotated by seen_at' );
 
 done_testing();

@@ -360,7 +360,7 @@ sub remote_machine_reconnector($c) {
 							# and its tunnel at 100%.
 							my $mobile_peer = (($rm->{'data'}->{'device'} || '') eq 'mobile') ? 1 : 0;
 							if ($plan_pull && !$gimme && (&subs::device_setter() eq 'mobile' || $mobile_peer)) {
-								my $capped = &subs::sync_plan_step($plan, 1);
+								my $capped = &subs::sync_plan_step($plan, 1, $seen);
 								my $before = scalar keys %{$plan};
 								my $after = scalar keys %{$capped};
 								if ($after < $before) {

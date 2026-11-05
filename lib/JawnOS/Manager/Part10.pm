@@ -506,6 +506,9 @@ our ($APP, $ws_live_window, $encoder, $decoder, $tuuid, $thread_uuid, $universal
 								my $pk = ($t eq 'settings_durable') ? 'settings' : $t;
 								my $cut = $plan->{$pk};
 								my $full = (defined $cut && $cut == 0) ? 1 : ((ref $prior->{$t} eq 'HASH' && $prior->{$t}->{'full'}) ? 1 : 0);
+								# A whole/banded snapshot is reconciled only when the merge left our
+								# table matching the peer's. A short merge must not claim the picture.
+								$full = 0 if $full && (defined $cut && $cut == 0) && !&subs::sync_table_complete($t, $d);
 								$seen{$t} = { %{$d}, full => $full };
 							}
 							&subs::sync_seen_set($remote_machine->{'signatorial'}, \%seen);

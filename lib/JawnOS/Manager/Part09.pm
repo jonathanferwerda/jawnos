@@ -179,13 +179,23 @@ sub sync_rows_pull {
 		my $map_table = ($table eq 'settings') ? 'settings_durable' : $table;
 		my $base = (ref $prior_seen->{$map_table} eq 'HASH') ? $prior_seen->{$map_table} : undef;
 		my $settings_empty = ($table eq 'settings' && !$settings_count) ? 1 : 0;
+		# A baseline that already equals the peer's current picture cannot be the
+		# picture we reconciled: if we had, our table would match and the planner
+		# would not have asked. It is the stale baseline of a short pull, so read
+		# against our own table instead of re-confirming it.
+		my $peer_pic = (ref $params->{'remote_digest'} eq 'HASH') ? $params->{'remote_digest'}->{$map_table} : undef;
+		my $base_is_peer = (ref $base eq 'HASH' && ref $peer_pic eq 'HASH'
+			&& (($base->{'count'} || 0) + 0) == (($peer_pic->{'count'} || 0) + 0)
+			&& (($base->{'sum'} || 0) + 0) == (($peer_pic->{'sum'} || 0) + 0)
+			&& (($base->{'max'} || 0) + 0) == (($peer_pic->{'max'} || 0) + 0)) ? 1 : 0;
 		# The last reconciled map is the exact baseline: it names the blocks this
 		# peer changed. With no baseline yet (the first divergence after this code,
 		# or after a whole-table read), this machine's own picture is the reference
 		# instead - it localises just as well, and the same request learns the
 		# peer's map for every later tick.
 		my $have_base = (ref $base eq 'HASH' && $base->{'full'}
-			&& ref $base->{'buckets'} eq 'HASH' && scalar keys %{ $base->{'buckets'} }) ? 1 : 0;
+			&& ref $base->{'buckets'} eq 'HASH' && scalar keys %{ $base->{'buckets'} }
+			&& !$base_is_peer) ? 1 : 0;
 		if ($cut == 0 && !$settings_empty) {
 			my $band = &subs::sync_bucket_normalize($have_base ? $base->{'band'} : $subs::sync_bucket_band);
 			my ($bmap, $berr) = &sync_buckets_batch($remote, $signatorial, $secret, $map_table, $band);
@@ -408,22 +418,39 @@ sub sync_rows_pull {
 		if (ref $params->{'remote_digest'} eq 'HASH') {
 			my $prior = $prior_seen;
 			my %seen_map;
+			# Only the tables this pull examined may move their picture forward. A
+			# table the plan did not include was not read; recording the peer's
+			# digest for it is how a divergence stayed invisible (2026-11-05).
+			my $has_plan = (scalar keys %{$plan}) ? 1 : 0;
 			foreach my $t ( keys %{$params->{'remote_digest'}} ) {
 				my $d = $params->{'remote_digest'}->{$t};
 				next unless ref $d eq 'HASH';
 				my $pk = ($t eq 'settings_durable') ? 'settings' : $t;
+				next if $has_plan && !exists $plan->{$pk};
 				my $cut = $plan->{$pk};
 				my $full = (defined $cut && $cut == 0) ? 1 : ((ref $prior->{$t} eq 'HASH' && $prior->{$t}->{'full'}) ? 1 : 0);
-				$seen_map{$t} = { %{$d}, full => $full };
-				my $bm = $bucket_maps->{$t};
 				# A settings pull records its map under the durable key, which is the
 				# one the planner compares.
-				$bm = $bucket_maps->{'settings'} if $t eq 'settings_durable' && ref $bm ne 'HASH';
-				if (ref $bm eq 'HASH' && ref $bm->{'buckets'} eq 'HASH') {
+				my $bm = $bucket_maps->{$pk};
+				# A whole/banded read is reconciled only when we hold every row the
+				# peer's map names. Leave `full` false otherwise: the planner asks
+				# again and the next pull localises against our own table, not a
+				# stale map. Settings are exempt (their durable count differs by
+				# device class on purpose).
+				if ($full && defined $cut && $cut == 0 && $t ne 'settings_durable') {
+					if (ref $bm eq 'HASH' && ref $bm->{'buckets'} eq 'HASH') {
+						$full = 0 unless &subs::sync_bands_complete($t, $bm);
+					}
+					else {
+						$full = 0 unless &subs::sync_table_complete($t, $d);
+					}
+				}
+				$seen_map{$t} = { %{$d}, full => $full };
+				if ($full && ref $bm eq 'HASH' && ref $bm->{'buckets'} eq 'HASH') {
 					$seen_map{$t}->{'band'} = $bm->{'band'};
 					$seen_map{$t}->{'buckets'} = $bm->{'buckets'};
 				}
-				elsif (ref $prior->{$t} eq 'HASH' && ref $prior->{$t}->{'buckets'} eq 'HASH') {
+				elsif ($full && ref $prior->{$t} eq 'HASH' && ref $prior->{$t}->{'buckets'} eq 'HASH') {
 					# Keep the map we already held: it is an older picture of this peer,
 					# so a later diff may re-read a band a delta already covered, but it
 					# never misses one.

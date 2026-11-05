@@ -85,7 +85,7 @@ sub sync_plan {
 		# them either suppressed a real change or asked for the whole table. Judge
 		# this table only against the peer's own last reconciled picture.
 		if ($t eq 'settings_durable') {
-			next if ref $s eq 'HASH' && $seen_full
+			next if ref $s eq 'HASH' && $seen_full && $s->{'seen_at'}
 				&& $seen_count == $bc
 				&& $seen_sum == $bs
 				&& $seen_max == $bm;
@@ -113,7 +113,13 @@ sub sync_plan {
 			$plan{'settings'} = $since;
 			next;
 		}
-		next if ref $s eq 'HASH' && $seen_full
+		# Skip an unchanged picture only when the pull that recorded it proved it
+		# held every peer row (`seen_at` marks an entry written by the completion
+		# check). An older entry has no such proof: it may be the stale baseline of
+		# a short pull, and skipping it is how a gap in `people` stayed invisible
+		# for days (2026-11-05). Re-examine it once; the completion check then
+		# either repairs it or stamps the proof.
+		next if ref $s eq 'HASH' && $seen_full && $s->{'seen_at'}
 			&& $seen_count == $bc
 			&& $seen_sum == $bs
 			&& $seen_max == $bm;
@@ -185,10 +191,21 @@ sub sync_plan_step {
 	# handed a nine-table plan merged all nine in one request and held the gauge
 	# hot for most of a minute. The digests are recomputed on the next handshake,
 	# so a table left out here is deferred, not lost; the pass stays short.
-	my ($plan, $max) = @_;
+	#
+	# Deferred is not starved: when a table is written to constantly (the phone's
+	# appointment measures), alphabetical order would hand it the slot on every
+	# pass and every other table would wait forever. Rotate by the oldest
+	# reconciled picture instead (`seen_at`), so each divergent table gets its
+	# turn. A plan with no history keeps the stable alphabetical order.
+	my ($plan, $max, $seen) = @_;
 	return {} unless ref $plan eq 'HASH';
 	return $plan unless defined $max && $max > 0;
-	my @tables = sort keys %{$plan};
+	my $stamp = sub {
+		my ($t) = @_;
+		my $k = ($t eq 'settings') ? 'settings_durable' : $t;
+		return (ref $seen eq 'HASH' && ref $seen->{$k} eq 'HASH') ? ($seen->{$k}->{'seen_at'} || 0) : 0;
+	};
+	my @tables = sort { $stamp->($a) <=> $stamp->($b) || $a cmp $b } keys %{$plan};
 	return $plan if @tables <= $max;
 	my %step;
 	$step{$_} = $plan->{$_} for @tables[0 .. $max - 1];
@@ -412,6 +429,17 @@ sub sync_seen_set {
 	my ($peer, $digest) = @_;
 	return unless $peer && ref $digest eq 'HASH';
 	my $dev = &device_setter();
+	my $now = &rightNow();
+	# Merge, do not replace. A caller hands over only the tables this pull
+	# actually examined; every other table keeps the picture (and the
+	# `seen_at` that drives the cap rotation) it already had. Stamping all of
+	# them would make a table that was never read look freshly reconciled.
+	my $prior = &sync_seen_get($peer);
+	my %merged = map { $_ => $prior->{$_} } grep { ref $prior->{$_} eq 'HASH' } keys %{$prior};
+	foreach my $t ( keys %{$digest} ) {
+		next unless ref $digest->{$t} eq 'HASH';
+		$merged{$t} = { %{ $digest->{$t} }, seen_at => $now };
+	}
 	# JSON, not Sereal: `cache_set` would encode a Sereal blob whose header has a
 	# NUL at byte 5, and the older DBD on this box binds that at the NUL - the map
 	# arrived as a 5-byte header and the planner lost its baseline every tick.
@@ -420,13 +448,52 @@ sub sync_seen_set {
 		app => '__president',
 		context => 'sync_seen',
 		subcontext => $peer,
-		data => encode_json($digest),
-		timestamp => &rightNow(),
-		server_time => &rightNow(),
-		warranty => &ago_calc('-10d', &rightNow()),
+		data => encode_json(\%merged),
+		timestamp => $now,
+		server_time => $now,
+		warranty => &ago_calc('-10d', $now),
 		device => $dev,
 		uuid => &random_string_creator(25)
 	});
+}
+
+# Do we hold every row the peer's band map names? A peer that is merely behind
+# us has no band we lack; a peer holding a row we missed names it. Equality is
+# too strict here - after a pull we may hold the union (the peer is behind)
+# without having missed anything, and re-reading its bands every tick is the
+# CPU burn the band walk was built to avoid. So compare per band, in the
+# direction that matters: the peer's rows must all be present, and its newest
+# must not be above ours.
+sub sync_bands_complete {
+	my ($table, $map) = @_;
+	return 1 unless ref $map eq 'HASH' && ref $map->{'buckets'} eq 'HASH';
+	my $local = eval { &sync_table_buckets($table, $map->{'band'}) } || {};
+	my $lb = (ref $local eq 'HASH' && ref $local->{'buckets'} eq 'HASH') ? $local->{'buckets'} : {};
+	foreach my $b ( keys %{ $map->{'buckets'} } ) {
+		my $p = $map->{'buckets'}->{$b};
+		next unless ref $p eq 'HASH';
+		my $l = $lb->{$b};
+		return 0 unless ref $l eq 'HASH';
+		my ($pc, $lc) = (($p->{'count'} || 0) + 0, ($l->{'count'} || 0) + 0);
+		my ($ps, $ls) = (($p->{'sum'} || 0) + 0, ($l->{'sum'} || 0) + 0);
+		my ($pm, $lm) = (($p->{'max'} || 0) + 0, ($l->{'max'} || 0) + 0);
+		return 0 if $pc > $lc;                              # a peer row we do not hold
+		return 0 if $pm > $lm;                              # ...or only an older one
+		return 0 if $pc == $lc && ($ps != $ls || $pm != $lm); # different rows, same count
+		return 0 if $ps > $ls;                              # the peer's rows are newer
+	}
+	return 1;
+}
+
+# The whole-table fallback, for a read that had no band map to compare (the map
+# request failed and the table was read whole): then equality is the test.
+sub sync_table_complete {
+	my ($table, $peer) = @_;
+	return 1 unless ref $peer eq 'HASH';
+	my $local = eval { &sync_table_digest($table) } || {};
+	return (($local->{'count'} || 0) + 0) == (($peer->{'count'} || 0) + 0)
+		&& (($local->{'sum'} || 0) + 0) == (($peer->{'sum'} || 0) + 0)
+		&& (($local->{'max'} || 0) + 0) == (($peer->{'max'} || 0) + 0) ? 1 : 0;
 }
 
 # A peer that told us it was busy gets a short rest instead of being asked again
