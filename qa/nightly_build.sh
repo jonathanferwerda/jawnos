@@ -31,6 +31,10 @@ esac
 
 mkdir -p "$LOGS"
 STAMP=$(date -u +%Y%m%dT%H%M%SZ)
+STEP_TSV="$LOGS/$STAMP-steps.tsv"
+RAN=0
+SDK_DOWNLOAD=0
+printf 'Step\tResult\tTime\tLog\n' > "$STEP_TSV"
 RC=0
 
 run() {
@@ -38,13 +42,19 @@ run() {
 	shift
 	log="$LOGS/$STAMP-$name.log"
 	echo "$name: $log"
+	RAN=$((RAN + 1))
+	started=$(date +%s)
+	state=ok
 	if ! "$@" > "$log" 2>&1; then
 		echo "qa-build: $name failed; tail of $log:" >&2
 		tail -20 "$log" >&2
 		RC=1
-		return 1
+		state=failed
 	fi
-	return 0
+	seconds=$(( $(date +%s) - started ))
+	printf '%s\t%s\t%dm %02ds\t%s\n' "$name" "$state" \
+		"$((seconds / 60))" "$((seconds % 60))" "${log##*/}" >> "$STEP_TSV"
+	[ "$state" = ok ]
 }
 
 # One build at a time: a second start while the first is running would race for
@@ -77,6 +87,7 @@ if [ "$WHAT" = all ] || [ "$WHAT" = android ]; then
 		if grep -q 'Installing Android SDK' "$ANDROID_LOG" 2>/dev/null; then
 			echo "qa-build: the Android build had to download an SDK component:" >&2
 			grep 'Installing Android SDK' "$ANDROID_LOG" | sed 's/^/  /' >&2
+			SDK_DOWNLOAD=1
 			RC=1
 		fi
 	fi
@@ -88,4 +99,18 @@ if [ "$RC" -eq 0 ]; then
 else
 	echo "qa-build: $WHAT had failures" >&2
 fi
+
+# The panel's report: one row per step, with the time it took, so a weekly run
+# that quietly stopped compiling is visible as the step it was. The cadence is
+# stamped on it, which is how the accordion says this one was the weekly.
+STATUS=ok
+if [ "$RC" -ne 0 ]; then STATUS=failed; fi
+NOTE="$RAN step(s)"
+# `set -e` aborts on a false test in an && list, so these stay if statements.
+if [ "$SDK_DOWNLOAD" -eq 1 ]; then NOTE="the Android build downloaded an SDK component"; fi
+perl "$REPO/scripts/qa_report.pl" --kind=build --schedule=weekly --status "$STATUS" \
+	--title 'Weekly build' --note "$NOTE" --stamp "$STAMP" \
+	--table "Steps:$STEP_TSV" --root "$QA_ROOT" > /dev/null 2>&1 \
+	|| echo "qa-build: could not write the report" >&2
+
 exit "$RC"

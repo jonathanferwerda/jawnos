@@ -82,7 +82,7 @@
 		</div>
 	</div>
 	<p class="cfg-note" style="margin:6px 0 8px;">
-		<%= &subs::ui('The last 14 days of the nightly installer check, newest first, as the machine that ran it recorded. Open a run for a table per section: the Perl modules, the Debian and Arch packages, and the Android SDK. A run that found nothing missing upstream says so; one that could not read a repository says that instead. The reports stay on the machine that ran the check, so this list is the same from any machine you open the panel on.') %>
+		<%= &subs::ui('The last 14 days of QA runs, newest first: the nightly installer check, the weekly build and the emulator run. Each drawer says which cadence it was and opens to a table per section - the Perl modules, the Debian and Arch packages, the Android SDK, the build steps, the emulator measurements. A run that found nothing wrong says so; one that stopped early says where. The reports stay on the machine that ran the job, so this list is the same from any machine you open the panel on.') %>
 	</p>
 	<div id="qa_reports" class="qa_reports"><%= &subs::ui('Loading…') %></div>
 </div>

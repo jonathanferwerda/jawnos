@@ -336,6 +336,9 @@ like($run_src, qr/\$run->\{'context_sections'\}/, 'the run report records the pe
 	like($baked, qr{scripts/where\.pl}, 'the baked protocol file names the locator');
 	like($baked, qr{scripts/agent_help\.pl}, 'and the technical brief');
 	like($baked, qr/Look it up before grepping/, 'as a rule, not a footnote');
+	like($baked, qr/^## Many agents at once$/m,
+		'and the concurrent-agent landing protocol travels to a fresh clone');
+	like($baked, qr{scripts/agent_land\.pl}, 'naming the one lander');
 }
 
 # --- the nightly does not pay for commands it cannot run -------------------
@@ -351,6 +354,7 @@ like($run_src, qr/\$run->\{'context_sections'\}/, 'the run report records the pe
 	unlike($agents->{'text'}, qr/^## App releases/m, 'the APK store is dropped');
 	unlike($agents->{'text'}, qr/^## Firmware \/ OTA/m, 'so is firmware staging');
 	unlike($agents->{'text'}, qr/^## Run & restart/m, 'and the restart protocol');
+	unlike($agents->{'text'}, qr/^## Many agents at once/m, 'and the landing protocol');
 	like($agents->{'text'}, qr/^## Rules$/m, 'while the Rules survive whole');
 	like($agents->{'text'}, qr/Every behaviour change ships with a test/,
 		'including the rule the nightly is judged on');

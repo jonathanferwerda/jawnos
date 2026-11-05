@@ -85,8 +85,36 @@ finding() { # <ok|warn|skip|fail> <area> <text>
 }
 fail() {
 	printf 'FAIL %s\n' "$*" >> "$RESULT"
+	qa_report failed "$*"
 	printf 'qa-android: FAIL - %s\n' "$*" >&2
 	exit 1
+}
+
+# The panel's report (Configure -> Plat -> QA -> Nightly reports). Only the
+# numbers this run actually produced are listed, so a failure early in the run
+# still leaves a truthful entry instead of a table of blanks.
+qa_report() {
+	status=$1
+	note=$2
+	tsv="$OUT/.qa-report.tsv"
+	{
+		printf 'Check\tValue\n'
+		if [ -n "${COLD_MS:-}" ]; then printf 'cold start\t%s s\n' "$(awk -v m="$COLD_MS" 'BEGIN{printf "%.1f", m/1000}')"; fi
+		if [ -n "${WARM_MS:-}" ]; then printf 'warm start\t%s s\n' "$(awk -v m="$WARM_MS" 'BEGIN{printf "%.1f", m/1000}')"; fi
+		if [ -n "${COLD_PSS_MB:-}" ]; then printf 'memory (PSS)\t%s MB\n' "$COLD_PSS_MB"; fi
+		if [ -n "${JANK3:-}" ]; then printf 'jank (3rd run)\t%s%%\n' "$JANK3"; fi
+		if [ -n "${ROT_OK:-}" ]; then if [ "$ROT_OK" = 1 ]; then printf 'rotation\tok\n'; else printf 'rotation\tfailed\n'; fi; fi
+		if [ -n "${OFFLINE_ALIVE:-}" ]; then if [ "$OFFLINE_ALIVE" = 1 ]; then printf 'offline relaunch\tok\n'; else printf 'offline relaunch\tfailed\n'; fi; fi
+		if [ -n "${CDP_STATUS:-}" ]; then printf 'webview (CDP)\t%s\n' "$CDP_STATUS"; fi
+		if [ -n "${CRASH:-}" ]; then printf 'crash\t%s\n' "$CRASH"; fi
+		if [ -n "${ANR:-}" ]; then printf 'ANR\t%s\n' "$ANR"; fi
+	} > "$tsv" 2>/dev/null || :
+	metrics=
+	if [ -n "${DEVJSON:-}" ] && [ -f "${DEVJSON:-}" ]; then metrics="--metrics=$DEVJSON"; fi
+	perl "$DIR/../../scripts/qa_report.pl" --kind=emulator --schedule=manual \
+		--status "$status" --title 'Emulator run' --note "$note" \
+		--table "Checks:$tsv" $metrics \
+		--root "${QA_ROOT:-$HOME/jawnos-qa}" >/dev/null 2>&1 || :
 }
 
 # ---------------------------------------------------------------------------
@@ -816,6 +844,7 @@ printf 'PASS cold=%ss warm=%ss pss=%sMB jank=%s%% (run1 %s run2 %s run3 %s) cdp=
 	"$(ms_to_s "$COLD_MS")" "$(ms_to_s "$WARM_MS")" "${COLD_PSS_MB:-?}" "${JANK3:-?}" \
 	"${JANK1:-?}" "${JANK2:-?}" "${JANK3:-?}" "$CDP_STATUS" "$ROT_OK" "$OFFLINE_ALIVE"
 printf 'PASS\n' >> "$RESULT"
+qa_report ok 'rotation, offline relaunch and the WebView all passed'
 say "metrics $DEVJSON"
 say "record $OUT/android.txt"
 exit 0

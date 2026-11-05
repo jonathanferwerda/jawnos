@@ -50,6 +50,7 @@ REPO=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
 QA_ROOT=${QA_ROOT:-$HOME/jawnos-qa}
 STAMP=$(date -u +%Y%m%dT%H%M%SZ)
 RUN_DIR="$QA_ROOT/installers/$STAMP"
+REPORT_DIR="$QA_ROOT/reports/installers/$STAMP"
 TREE="$RUN_DIR/tree"
 LOG="$RUN_DIR/freshness.log"
 KEEP_DAYS=14
@@ -60,9 +61,18 @@ QA_SOURCE=${QA_SOURCE:-head}
 
 note() { printf '%s\n' "$*"; }
 
+# The panel's copy of the report: the check's own document, stamped with the
+# kind and the cadence so the card can label it. It writes status.txt too.
+publish_report() {
+	perl "$REPO/scripts/qa_report.pl" --kind=installers --schedule=nightly \
+		--status "$1" --title 'Installer check' --stamp "$STAMP" \
+		--base "$RUN_DIR/report.json" --root "$QA_ROOT" >/dev/null 2>&1 \
+		|| set_status "$1"
+}
+
 # What the panel shows for a run that never got as far as writing a report.
 set_status() {
-	printf '%s\n' "$1" > "$RUN_DIR/status.txt" 2>/dev/null || :
+	printf '%s\n' "$1" > "$REPORT_DIR/status.txt" 2>/dev/null || :
 }
 
 # One metadata request per repository: the same size as one row of the report.
@@ -113,10 +123,10 @@ main() {
 	[ "$ANDROID_UPDATE" = 1 ] && args+=(--android-update)
 	if ! perl "$TREE/scripts/jawnos_deps.pl" "${args[@]}"; then
 		note "FAIL: an installer's package is gone upstream, or every lookup failed"
-		set_status failed
+		publish_report failed
 		return 1
 	fi
-	set_status ok
+	publish_report ok
 	note "PASS: every installer package is still offered upstream"
 	[ "$STRICT" = 1 ] || note "PASS is not a freshness verdict: outdated rows are informational here (STRICT=1 fails them)"
 	return 0
@@ -127,13 +137,18 @@ cleanup() {
 	trap - EXIT
 	set +e
 	rm -rf "$TREE"
-	# Keep 14 days of reports (the panel shows them) and, defensively, no more
-	# than $MAX_RUNS extras if something ran far more often than nightly.
+	# Keep 14 days of logs and, defensively, no more than $MAX_RUNS extras if
+	# something ran far more often than nightly. The panel's reports age out
+	# through qa_report.pl, on the same 14 days.
 	find "$QA_ROOT/installers" -mindepth 1 -maxdepth 1 -type d -mtime +"$KEEP_DAYS" \
 		-exec rm -rf {} + 2>/dev/null || :
 	ls -1dt "$QA_ROOT"/installers/*/ 2>/dev/null \
 		| awk -v keep="$MAX_RUNS" 'NR > keep' \
 		| while IFS= read -r old; do rm -rf "$old"; done
+	if [ -f "$REPO/scripts/qa_report.pl" ]; then
+		perl "$REPO/scripts/qa_report.pl" --kind=installers --prune-only \
+			--root "$QA_ROOT" >/dev/null 2>&1 || :
+	fi
 	exit "$rc"
 }
 trap cleanup EXIT
@@ -147,7 +162,7 @@ if ! flock -n 9; then
 	exit 0
 fi
 
-mkdir -p "$RUN_DIR"
+mkdir -p "$RUN_DIR" "$REPORT_DIR"
 
 # main runs in this shell (no pipeline), so the EXIT trap still sees $TREE.
 rc=0

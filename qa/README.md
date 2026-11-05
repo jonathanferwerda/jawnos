@@ -732,10 +732,16 @@ working tree for a run before committing. Logs are in
 Each run also writes `report.json` (what `--json` prints) and `status.txt`
 beside the log, and **Configure -> Plat -> QA -> Nightly reports** shows the last
 14 days of them, newest first, one accordion per run and a table per section.
+The card carries every QA job that reports: the nightly installer check
+(`reports/installers`, cadence `nightly`), the weekly build (`reports/build`,
+`weekly`, one row per step with its time) and the emulator run
+(`reports/emulator`, `manual`, the measurements it took). `scripts/qa_report.pl`
+writes the `report.json`/`status.txt` pair for the jobs that do not carry their
+own document, and prunes each kind to 14 days.
 The panel reads the directory on the machine that ran the job and hops there
 over the same signed rail readiness uses, so the list is the same from any
 machine - a laptop shows the QA box's own reports and nothing is copied into a
-database. Retention is by age (`-mtime +14`), not a count of runs.
+database.
 
 ### Weekly artefact build (Sunday 03:00)
 

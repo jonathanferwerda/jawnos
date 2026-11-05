@@ -663,6 +663,7 @@ sub assemble {
 # document is capped, costs it rules it can act on.
 our @SHELL_ONLY_SECTIONS = (
 	'Run & restart',
+	'Many agents at once',
 	'Web interface',
 	'App releases (the APK store)',
 	'Firmware / OTA (stage every build)',

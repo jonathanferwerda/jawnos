@@ -640,7 +640,14 @@ sub qa_readiness {
 # uses, so no report has to be synced into this database and a run that failed
 # to write one still appears with the status it managed.
 sub qa_reports_root {
-	return &subs::home('~/jawnos-qa') . '/installers';
+	return &subs::home('~/jawnos-qa') . '/reports';
+}
+
+# Every kind a job can leave: the installer check (nightly), the weekly build
+# and the emulator run (manual). The order is the card's order when two runs
+# share a stamp.
+sub qa_report_kinds {
+	return qw(installers build emulator);
 }
 
 sub qa_reports_list {
@@ -649,36 +656,51 @@ sub qa_reports_list {
 	my $root = (defined $opts->{'root'} && length $opts->{'root'}) ? $opts->{'root'} : &qa_reports_root();
 	my $limit = defined $opts->{'limit'} ? $opts->{'limit'} + 0 : 20;
 	my @reports;
-	opendir(my $dh, $root) or return \@reports;
-	my @stamps = grep { /^\d{8}T\d{6}Z$/ } readdir $dh;
-	closedir $dh;
-	for my $stamp (sort { $b cmp $a } @stamps) {
-		last if @reports >= $limit;
-		my $dir = "$root/$stamp";
-		next unless -d $dir;
-		my $status = '';
-		if (open(my $sh, '<', "$dir/status.txt")) {
-			$status = <$sh> // '';
-			close $sh;
-			$status =~ s/\s+//g;
-		}
-		my $report;
-		if (open(my $fh, '<', "$dir/report.json")) {
-			local $/;
-			my $text = <$fh>;
-			close $fh;
-			my $decoded = undef;
-			if (defined $text && length $text) {
-				$decoded = eval { decode_json($text) };
+	for my $kind ( &qa_report_kinds() ) {
+		my $kind_dir = "$root/$kind";
+		opendir(my $dh, $kind_dir) or next;
+		my @stamps = grep { /^\d{8}T\d{6}Z$/ && -d "$kind_dir/$_" } readdir $dh;
+		closedir $dh;
+		for my $stamp (@stamps) {
+			my $dir = "$kind_dir/$stamp";
+			my $status = '';
+			if (open(my $sh, '<', "$dir/status.txt")) {
+				$status = <$sh> // '';
+				close $sh;
+				$status =~ s/\s+//g;
 			}
-			$report = $decoded if ref $decoded eq 'HASH';
+			my $report;
+			if (open(my $fh, '<', "$dir/report.json")) {
+				local $/;
+				my $text = <$fh>;
+				close $fh;
+				my $decoded = undef;
+				if (defined $text && length $text) {
+					$decoded = eval { decode_json($text) };
+				}
+				$report = $decoded if ref $decoded eq 'HASH';
+			}
+			if (!length $status) {
+				$status = !$report ? 'unknown' : ($report->{'ok'} ? 'ok' : 'failed');
+			}
+			push @reports, {
+				kind => $kind,
+				stamp => $stamp,
+				status => $status,
+				report => $report,
+			};
 		}
-		if (!length $status) {
-			$status = !$report ? 'unknown' : ($report->{'ok'} ? 'ok' : 'failed');
-		}
-		push @reports, { stamp => $stamp, status => $status, report => $report };
 	}
-	return \@reports;
+	# Newest first, and the kind breaks a tie so the order is stable.
+	my @order = (&qa_report_kinds());
+	my %rank;
+	$rank{ $order[$_] } = $_ for 0 .. $#order;
+	my @sorted = sort {
+		($b->{'stamp'} cmp $a->{'stamp'})
+			|| ($rank{ $a->{'kind'} } <=> $rank{ $b->{'kind'} })
+	} @reports;
+	return [ @sorted[0 .. (@sorted < $limit ? $#sorted : $limit - 1)] ] if @sorted;
+	return [];
 }
 
 sub qa_reports_for {

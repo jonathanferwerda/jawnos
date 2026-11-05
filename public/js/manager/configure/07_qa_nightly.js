@@ -347,20 +347,37 @@ function qaReportRun(entry) {
 	var report = entry.report || {};
 	var summary = report.summary || {};
 	var bits = [];
+	if (report.note) { bits.push(report.note); }
 	if (summary.missing) { bits.push(summary.missing + ' ' + qaT('missing upstream')); }
 	if (summary.android_missing) { bits.push(summary.android_missing + ' ' + qaT('Android components missing')); }
 	if (summary.outdated || summary.android_outdated) {
 		bits.push((summary.outdated + (summary.android_outdated || 0)) + ' ' + qaT('behind upstream'));
 	}
-	if (!bits.length) { bits.push(qaT('nothing missing upstream')); }
+	if (!bits.length && entry.report) { bits.push(qaT('nothing missing upstream')); }
 	var tone = qaReportTone(entry.status);
-	var html = '<details class="qa_report" data-status="' + qaReportEscape(entry.status) + '">'
+	var title = report.title || entry.kind || '';
+	var schedule = report.schedule || '';
+	var html = '<details class="qa_report" data-status="' + qaReportEscape(entry.status) + '"'
+		+ ' data-schedule="' + qaReportEscape(schedule) + '">'
 		+ '<summary><span class="qa_report_stamp">' + qaReportEscape(qaReportStamp(entry.stamp)) + '</span>'
+		+ '<span class="qa_report_kind">' + qaReportEscape(title) + '</span>'
+		+ (schedule ? '<span class="qa_report_schedule">' + qaReportEscape(schedule) + '</span>' : '')
 		+ '<span class="qa_report_state qa_report_' + qaReportEscape(tone) + '">' + qaReportEscape(entry.status) + '</span>'
 		+ '<span class="qa_report_bits">' + qaReportEscape(bits.join(' · ')) + '</span></summary>';
 	if (!entry.report) {
 		html += '<p class="cfg-note">' + qaT('This run wrote no report (it stopped before the check).') + '</p>';
 		return html + '</details>';
+	}
+	// A job that writes its own sections (the weekly build, the emulator run)
+	// says what it measured; the installer check has the row shapes below.
+	(report.sections || []).forEach(function(section) {
+		html += qaReportTable(section.title, section.columns || [], section.rows || []);
+	});
+	if (report.metrics) {
+		var metricRows = Object.keys(report.metrics).sort().map(function(key) {
+			return [key, String(report.metrics[key])];
+		});
+		html += qaReportTable(qaT('Measurements'), [qaT('Metric'), qaT('Value')], metricRows);
 	}
 	var modules = (report.modules || []).map(function(row) {
 		return [row.name, row.installed || '-', row.latest || '-', { text: row.status, tone: qaReportTone(row.status) }];

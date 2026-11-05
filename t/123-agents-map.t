@@ -35,7 +35,7 @@ is_deeply(\@missing, [], 'every referenced doc exists')
 	or diag("missing: @missing");
 like($text, qr{The notes are \*\*gitignored[^*]*\*\*}, 'the map says the deep notes are not tracked');
 
-for my $doc (qw(AGENTS-translation AGENTS-agent-work AGENTS-web AGENTS-records AGENTS-facts)) {
+for my $doc (qw(AGENTS-translation AGENTS-agent-work AGENTS-web AGENTS-records AGENTS-facts AGENTS-concurrency)) {
 	like($text, qr{\Qdocs/$doc.md\E}, "$doc is referenced from the map");
 }
 

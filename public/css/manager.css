@@ -3436,3 +3436,14 @@ body.dark_theme .inventory_details {
 }
 .qa_report_table thead th { font-weight: 600; opacity: .75; }
 .qa_report_state { font-weight: 600; }
+.qa_report_kind { font-weight: 600; }
+.qa_report_schedule {
+	font-size: 11px;
+	line-height: 1.4;
+	padding: 0 6px;
+	border: 1px solid currentColor;
+	border-radius: 999px;
+	opacity: .7;
+	white-space: nowrap;
+}
+.qa_report[data-schedule="weekly"] .qa_report_schedule { opacity: 1; font-weight: 600; }
