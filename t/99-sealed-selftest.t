@@ -67,14 +67,14 @@ sub selftest {
 }
 
 # --- a known defect: what counts as proof a credential opened the file -----
-# sealed_file_probe (Note.pm:454) takes the first credential whose decrypted
-# bytes pass plaintext_verdict. The house's own magic table is strong, but the
-# File::Type fallback at the end of the verdict has one- and two-byte
-# signatures ("MZ", "II", ...), so a wrong key's random output is sometimes
-# classified as an executable or an image. The wrong-credential walk above has
-# caught it about once in fifteen runs under load, on a different cipher each
-# time. The right behaviour is that a two-byte magic alone is not proof; this
-# asserts that and is expected to fail until the verdict is tightened.
+# sealed_file_probe now tries a strong verdict first (a four-byte signature or a
+# structural check) and only falls back to the loose one for a file whose type
+# the house cannot name, which is what stopped the wrong-credential walk failing
+# about once in fifteen runs under load. The loose verdict itself still says yes
+# to a two-byte coincidence through File::Type, so a file of an unknown type can
+# still be opened with a wrong credential. The right behaviour is that a
+# two-byte magic alone is never proof; this asserts it and is expected to fail
+# until the loose verdict is tightened too.
 TODO: {
 	local $TODO = "a wrong credential can match a weak File::Type signature (Note.pm:460)";
 	my $root = "$FindBin::Bin/../";

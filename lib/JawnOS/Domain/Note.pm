@@ -264,7 +264,7 @@ sub ole_container_verdict {
 }
 
 sub plaintext_verdict {
-	my ($head) = @_;
+	my ($head, $strict) = @_;
 	return undef unless defined $head && length $head;
 	# a zip is only the wrapper; decide what it holds before the generic table
 	if (substr($head, 0, 4) eq "PK\x03\x04" || substr($head, 0, 4) eq "PK\x05\x06") {
@@ -340,6 +340,10 @@ sub plaintext_verdict {
 		[ "\x00\x00\x01\xb3", 'video/mpeg' ],
 	);
 	foreach my $pair ( @exact ) {
+		# A strict pass is picking a credential, not naming a file: a two- or
+		# three-byte coincidence is how a wrong key was read as a file in the
+		# sealed-file self-test, so only four bytes or a structural check counts.
+		next if $strict && length($pair->[0]) < 4;
 		return $pair->[1] if substr($head, 0, length $pair->[0]) eq $pair->[0];
 	}
 	# RIFF / FORM containers name their flavour in the first 12 bytes
@@ -367,8 +371,9 @@ sub plaintext_verdict {
 	if (substr($head, 0, 2) eq 'BM' && length($head) >= 26 && substr($head, 6, 4) eq "\0\0\0\0") {
 		return 'image/bmp';
 	}
-	# a DOS/PE executable: 'MZ' and binary content
-	if (substr($head, 0, 2) eq 'MZ' && length($head) >= 64 && index($head, "\0") >= 0) {
+	# a DOS/PE executable: 'MZ' alone is two bytes, and two bytes is what a
+	# wrong key can match by accident. The PE header is the proof.
+	if (substr($head, 0, 2) eq 'MZ' && length($head) >= 64 && index($head, "PE\0\0") >= 0) {
 		return 'application/x-dosexec';
 	}
 	# MPEG transport stream: sync bytes 188 apart
@@ -376,7 +381,7 @@ sub plaintext_verdict {
 		return 'video/mp2t';
 	}
 	# MPEG audio / ADTS frame sync
-	if (length($head) >= 4 && substr($head, 0, 1) eq "\xff") {
+	if (!$strict && length($head) >= 4 && substr($head, 0, 1) eq "\xff") {
 		my $b2 = ord(substr($head, 1, 1));
 		return 'audio/aac' if ($b2 & 0xF6) == 0xF0;
 		return 'audio/mpeg' if ($b2 & 0xE0) == 0xE0;
@@ -409,6 +414,8 @@ sub plaintext_verdict {
 	return 'video/x-matroska' if index($doc, 'matroska') >= 0;
 	return 'video/webm' if index($doc, 'webm') >= 0;
 	return 'text/plain' if &plaintext_looks_text($head);
+	# A guessed type is enough to name a file, never to choose a credential.
+	return undef if $strict;
 	$plaintext_ft ||= File::Type->new();
 	my $fd = eval { $plaintext_ft->checktype_contents($head) };
 	return (defined $fd && $fd ne 'application/octet-stream') ? $fd : undef;
@@ -453,22 +460,35 @@ sub sealed_file_identity {
 # it looks like the file wanted. Returns the winner without the body bytes.
 sub sealed_file_probe {
 	my ($container, $secrets, $standards, $inspect) = @_;
-	foreach my $secret (@{$secrets || []}) {
-		next unless defined $secret && length $secret;
-		foreach my $standard (@{$standards || []}) {
-			next unless defined $standard && length $standard;
-			my $probe = &note_open_container($container, $secret, $standard, 1, $SEALED_PROBE_BYTES);
-			next unless defined $probe && length $probe;
-			my $verdict = $inspect ? eval { $inspect->($probe) } : 1;
-			next unless $verdict;
-			# An openssl-only standard has no prefix mode, so the "probe" above
-			# already decrypted the whole stream. Hand it back rather than making
-			# the caller decrypt it a second time.
-			my $full = &note_cipher_spec($standard) ? undef : $probe;
-			return { secret => $secret, standard => $standard, verdict => $verdict, full => $full };
+	# Two passes. The first takes only a credential whose plaintext carries a
+	# signature strong enough to be proof; the second is the old one, for a file
+	# whose type the house cannot name. Without the first, a wrong key whose
+	# random bytes happened to look like a file was accepted - the sealed-file
+	# self-test's wrong-credential walk caught it about once in fifteen runs.
+	foreach my $strict (1, 0) {
+		foreach my $secret (@{$secrets || []}) {
+			next unless defined $secret && length $secret;
+			foreach my $standard (@{$standards || []}) {
+				next unless defined $standard && length $standard;
+				my $probe = &note_open_container($container, $secret, $standard, 1, $SEALED_PROBE_BYTES);
+				next unless defined $probe && length $probe;
+				my $verdict = $inspect ? eval { $inspect->($probe) } : 1;
+				next unless $verdict;
+				next if $strict && !&plaintext_strong($probe);
+				# An openssl-only standard has no prefix mode, so the "probe" above
+				# already decrypted the whole stream. Hand it back rather than making
+				# the caller decrypt it a second time.
+				my $full = &note_cipher_spec($standard) ? undef : $probe;
+				return { secret => $secret, standard => $standard, verdict => $verdict, full => $full };
+			}
 		}
 	}
 	return undef;
+}
+
+# The verdict a credential has to earn: a real signature, not a guess.
+sub plaintext_strong {
+	return &plaintext_verdict($_[0], 1);
 }
 
 # Advance a CTR IV by whole blocks (big-endian, which is what openssl's EVP
