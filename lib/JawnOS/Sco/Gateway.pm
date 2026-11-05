@@ -315,6 +315,10 @@ sub watch_streams {
 			$self->{'last_error'} = 'the audio helper would not start';
 			return;
 		}
+		# the pair is the call: say so, so the plan can start before the
+		# caller speaks (the helper's own gate waits for a frame that carries
+		# signal, which someone waiting to be greeted never sends)
+		$self->_send({ cmd => 'line' });
 		$self->{'last_event'} = 'attached';
 		$self->{'state'} = 'armed';
 		$self->{'since'} = time;

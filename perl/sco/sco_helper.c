@@ -73,6 +73,12 @@ static int loopback = 0, fast = 0;
 static const char *pcm_dev = NULL;
 static const char *pipe_in_cmd = NULL, *pipe_out_cmd = NULL;
 static FILE *pipe_in = NULL, *pipe_out = NULL;
+/* The gateway can see the phone's two Hands-Free streams, so it knows the
+ * call is up before a frame arrives, and says so ("line"). Without it the
+ * plan waited for a frame that carries signal - which a caller waiting to be
+ * greeted never sends - so a silent caller heard nothing, and a caller who
+ * spoke was greeted 1.2 s late, on top of their own words. */
+static int line_up = 0;
 static int pipe_mode = 0;
 static int pipe_open_pair(void);
 static int pipe_read_chunk(unsigned char *buf, size_t cap);
@@ -552,6 +558,8 @@ static void command(const char *line) {
 		if (clip_active) { clip_active = 0; emit("{\"event\":\"stopped\",\"id\":%d}", clip_id); }
 		if (rec_active) { record_close(1, "stopped"); }
 		else if (!was_rec) emit("{\"event\":\"stopped\",\"id\":0}");
+	} else if (!strcmp(cmd, "line")) {
+		line_up = 1;
 	} else if (!strcmp(cmd, "quit")) {
 		running = 0;
 	} else if (!strcmp(cmd, "ping")) {
@@ -771,7 +779,7 @@ static int pcm_mode_main(void) {
 					 * of zeros is not a call at all. Wait for one that carries
 					 * something; a dead line ends when the phone's own watchdog
 					 * hangs up and the streams go. */
-					if (!chunk_has_signal(chunk, (size_t) first)) {
+					if (!line_up && !chunk_has_signal(chunk, (size_t) first)) {
 						usleep(20000);
 						continue;
 					}

@@ -12,6 +12,7 @@ use File::Path qw(make_path);
 use File::Slurp qw(read_file write_file);
 use IO::Socket::UNIX;
 use IO::Socket::INET;
+use IPC::Open2 ();
 use JSON::PP;
 use Mojo::IOLoop;
 
@@ -202,6 +203,7 @@ is(JawnOS::Sco::Gateway::wifi_band_of(undef), '', 'and neither has one with no w
 my $gateway_src = read_file("$repo/lib/JawnOS/Sco/Gateway.pm");
 like($gateway_src, qr/wifi => \$wifi,/, 'the status carries the band');
 like($gateway_src, qr/wifi eq '2\.4'/, 'and warns when it is the crowded one');
+like($gateway_src, qr/cmd => 'line'/, 'the gateway tells a new line it is up');
 like(read_file("$repo/public/js/manager/phone.js"), qr/res\.wifi === '2\.4'/,
 	'the pane says so on the IVR tab');
 
@@ -347,7 +349,7 @@ $pipeway->cancel();
 # and a caller who says nothing at all.
 my $helper = "$repo/perl/sco/sco_helper";
 SKIP: {
-	skip 'the SCO helper is not built on this machine', 6 unless -x $helper;
+	skip 'the SCO helper is not built on this machine', 8 unless -x $helper;
 	my $voice = sub {
 		my ($ms) = @_;
 		return join('', map { pack('s<', int(sin(2 * 3.14159 * 440 * $_ / 8000) * 8000)) } 0 .. int(8 * $ms) - 1);
@@ -408,8 +410,28 @@ SKIP: {
 	# nobody spoke: the ceiling ends it, and the clip is marked as silent
 	my $none = $record->('none', $quiet->(3000), ms => 1500);
 	ok($none >= 16000 && $none <= 24000, 'a silent caller is ended by the ceiling');
-	like($last_events, qr/"silence":true/,
-		'and a caller who never spoke is');
+	# The gateway can see the phone's two Hands-Free streams, so it knows the
+	# call is up before a frame arrives and says so. Without that word a line
+	# of zeros is not a call, and a caller waiting to be greeted is never
+	# greeted at all.
+	my $pipe_run = sub {
+		my ($with_line) = @_;
+		my ($out, $in);
+		my $pid = IPC::Open2::open2($out, $in, $helper,
+			'--pipe-in', 'cat /dev/zero', '--pipe-out', 'cat > /dev/null');
+		print {$in} JSON::PP->new->encode({ cmd => 'line' }) . "\n" if $with_line;
+		$in->flush;
+		select(undef, undef, undef, 2.6);
+		close $in;
+		my $said = do { local $/; <$out> // '' };
+		close $out;
+		waitpid($pid, 0);
+		return $said;
+	};
+	like($pipe_run->(1), qr/"event":"accepted"/,
+		'a silent line the gateway says is up is greeted anyway');
+	unlike($pipe_run->(0), qr/"event":"accepted"/,
+		'and a line of zeros with no word from the gateway is not a call');
 }
 
 # A link that hands the gateway nothing but digital silence is not a call yet:
