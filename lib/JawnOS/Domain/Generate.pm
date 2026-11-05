@@ -479,10 +479,16 @@ sub code_revision {
 	# windows), the shell or the server (reload / nothing) - before deciding how
 	# to update itself. (See jawnosRevisionArrived in websocket.js.)
 	my %part_canon = ( js => '', css => '', views => '', shell => '', server => '' );
+	# Directories that are not the code this process runs. A worktree holds a
+	# second copy of the tree, so an agent's edit there used to move the
+	# revision a connected tab follows (a re-render, or a reload) and made
+	# every fresh worker read tens of megabytes it never serves. Firmware
+	# builds, staged releases and runtime state are the same kind of thing.
+	my $not_running = qr{(?:^|/)(?:\.git|\.worktrees|node_modules|\.pio|build|releases|\.shots)(?:/|$)};
 	find({ no_chdir => 1, wanted => sub {
 		my $n = $File::Find::name;
 		return unless -f $n;
-		return if $n =~ m{(^|/)\.git/} || $n =~ m{node_modules};
+		return if $n =~ $not_running;
 		push @files, $n if $n =~ /\.(pl|pm|ep|js|css)$/ || $n =~ m{(^|/)jawn$};
 	} }, '.');
 	@files = sort @files;

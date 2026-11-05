@@ -33,6 +33,7 @@ Run from the repo root, or with an explicit path. `sh` tools run under
 | `audio-pipe-test.sh` | Does a tone into the call sink reach its monitor, and into the prompt sink reach the virtual mic? (no phone call) | `./scripts/tools/audio-pipe-test.sh` | plays a 0.5 s tone; writes temp raw files |
 | `mixer-test.pl` | Which handset commands would be used, and which device is the call's pair on? | `./scripts/tools/mixer-test.pl --mac AA:BB:CC:DD:EE:FF` | read; `--ensure` creates the virtual handset |
 | `json-stress.pl` | How long does JSON::PP take on a large escape/nesting shape, and does it refuse it? | `./scripts/tools/json-stress.pl uesc 4` | read |
+| `refresh-probe.pl` | Why did the WebUI reload? The browser half (`refresh-probe.js`) posts hide/wake/socket/reload events; this half tails the manager log and the code tree beside them | `./scripts/tools/refresh-probe.pl --port 45997`, then `--report` | read; `--out FILE` writes |
 
 ## Notes
 
