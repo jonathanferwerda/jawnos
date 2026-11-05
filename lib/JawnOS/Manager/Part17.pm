@@ -283,17 +283,20 @@ sub merge_table_rows {
 											$protected = 1;
 										}
 									}
-									# A house-wide row (`device = 'all'`) is not local by definition -
-									# every machine reads the same row - so it merges even when its app is
-									# otherwise protected. The tarot draw lists are one: the app's own
-									# settings stay per-device, but a draw is a house fact and must reach
-									# every machine (the same exception the durable digest already makes).
-									# The named local churn stays out even when it claims to be house-wide.
-									my $setting_name = $r->{'setting'} // '';
-									my $house_wide = (($r->{'device'} // '') eq 'all'
-										&& !&subs::local_setting($setting_name)) ? 1 : 0;
+									# `cards` is protected because its banks and file-browser state are
+									# per-device, but the tarot mode/variant and the draw lists are house
+									# facts the person expects on every device. Let only those named rows
+									# through; every other cards setting stays local, as does every other
+									# protected app (`__president` and `utility_controller` included).
+									my $cards_setting = (($r->{'app'} // '') eq 'cards') ? ($r->{'setting'} // '') : '';
+									my $cards_shared = $cards_setting =~ /^(?:mode|variant|day|week|month|year|free|cycle|spread|all)$/ ? 1 : 0;
+									# A draw list lives on the house row (`device = 'all'`); keep it one on
+									# arrival so cards_list reads it. Mode and variant are per-device and
+									# join this device's class as usual.
+									my $house_wide = ($cards_shared && $cards_setting =~ /^(?:day|week|month|year|free|cycle|spread|all)$/
+										&& ($r->{'device'} // '') eq 'all') ? 1 : 0;
 									#next if $protected == 1;
-									unless ($universal_settings->{$r->{'app'}}->{'unique'} eq 'checked' || ($protected == 1 && !$house_wide)) {
+									unless ($universal_settings->{$r->{'app'}}->{'unique'} eq 'checked' || ($protected == 1 && !$cards_shared)) {
 										# A row we already hold at the peer's own server_time counts as present:
 										# the write below copies the peer's server_time verbatim, so with a strict
 										# '>' the test was false again on the very next sync and every one of

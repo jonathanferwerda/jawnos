@@ -3,9 +3,10 @@
 #            read falls back to a device row until the house row exists, a
 #            spread is three deck files not a stored montage, names with spaces
 #            are unescaped and percent-encoded, the page renders with every
-#            stash key its routes pass, a peer's house row merges even though
-#            cards is a protected app, and a period deal's reply carries the
-#            draw it just stored.
+#            stash key its routes pass, the allowed cards rows (mode, variant,
+#            draws) merge while a protected app's house row and the app's local
+#            state do not, and a period deal's reply carries the draw it just
+#            stored.
 
 use strict;
 use warnings;
@@ -181,9 +182,10 @@ is_deeply(&subs::cards_list('free'), [
 ], 'and every device reads one house list, newest first, with no draw lost');
 
 # --------------------------------------------------- the draws ride the sync
-# `cards` is a protected app, so its own settings stay local. A draw list is a
-# house-wide row (device 'all'), and a house row is not local: the merge must
-# take it - and keep it a house row - or a peer's draws never arrive.
+# `cards` is a protected app, so its banks and file-browser state stay local,
+# but the tarot mode/variant and the draw lists are house facts. A draw list is
+# a house-wide row (device 'all'), and the merge must keep it one or a peer's
+# draws never arrive.
 my $card_part17 = root() . '/lib/JawnOS/Manager/Part17.pm';
 require $card_part17;
 my $sync_device = &subs::device_setter();
@@ -218,29 +220,51 @@ is($peer_house->[0]->{'device'}, 'all', 'and stays a house row, not a local devi
 is_deeply(&subs::cards_list('day'), [ { title => 'The Star', timestamp => 7 } ],
 	'so every machine reads the draw from the house list');
 
+# The tarot mode and variant are the cards choices that do sync; they join
+# this device's own row, the way every other per-device setting does.
 merge_peer_setting({
 	uuid => 'cards-mode-peer', app => 'cards', setting => 'mode', device => $sync_device,
-	value => 'year', timestamp => $peer_time + 1, server_time => $peer_time + 1,
+	value => 'day', timestamp => $peer_time + 1, server_time => $peer_time + 1,
 });
-my $peer_local = $cdb->query("select 1 from settings where app='cards' and setting='mode'")->hashes;
-is(scalar @{$peer_local}, 0, 'a per-device cards setting still stays local');
+my $peer_mode = $cdb->query("select value, device from settings where app='cards' and setting='mode'")->hashes;
+is(scalar @{$peer_mode}, 1, 'the tarot mode rides the sync');
+is($peer_mode->[0]->{'device'}, $sync_device, 'stored on this device, so setting_grabber reads it');
 
 merge_peer_setting({
+	uuid => 'cards-variant-peer', app => 'cards', setting => 'variant', device => $sync_device,
+	value => 'solitaire', timestamp => $peer_time + 2, server_time => $peer_time + 2,
+});
+my $peer_variant = $cdb->query("select value from settings where app='cards' and setting='variant'")->hashes;
+is($peer_variant->[0]->{'value'}, 'solitaire', 'and so does the chosen deck');
+
+# The app's local state still never merges, even as a house row, and neither
+# does a protected app's house row.
+merge_peer_setting({
 	uuid => 'cards-errors-peer', app => 'cards', setting => 'errors', device => 'all',
-	value => 'peer errors', timestamp => $peer_time + 2, server_time => $peer_time + 2,
+	value => 'peer errors', timestamp => $peer_time + 3, server_time => $peer_time + 3,
 });
 my $peer_errors = $cdb->query("select 1 from settings where app='cards' and setting='errors'")->hashes;
 is(scalar @{$peer_errors}, 0, 'local churn stays out even when it claims to be a house row');
+
+merge_peer_setting({
+	uuid => 'cards-bank-peer', app => 'cards', setting => 'solitaire_bank', device => $sync_device,
+	value => '999', timestamp => $peer_time + 4, server_time => $peer_time + 4,
+});
+my $peer_bank = $cdb->query("select 1 from settings where app='cards' and setting='solitaire_bank'")->hashes;
+is(scalar @{$peer_bank}, 0, 'the game banks stay machine-local');
+
+merge_peer_setting({
+	uuid => 'pres-qanight-peer', app => '__president', setting => 'qa_nightly_device', device => 'all',
+	value => 'peer', timestamp => $peer_time + 5, server_time => $peer_time + 5,
+});
+my $pres_row = $cdb->query("select 1 from settings where app='__president' and setting='qa_nightly_device'")->hashes;
+is(scalar @{$pres_row}, 0, "a protected app's house row still does not carry over");
 
 # ------------------------------------------------- a deal refreshes the rail
 # The day/week/month/year writer stores the new draw itself, after the route has
 # read the history it renders. It must read that list again, or the draw appears
 # in the rail only when the person clicks a second time.
 &subs::cards_list_write('day', [ { title => 'The Moon', timestamp => $now + 3000 } ]);
-&subs::db_insert('settings', {
-	app => 'cards', setting => 'mode', value => 'day', device => $sync_device,
-	timestamp => $now, server_time => $now, uuid => 'cards-mode-row',
-});
 my $cards_controller = root() . '/lib/JawnOS/Controller/manager_misc9.pm';
 require $cards_controller;
 

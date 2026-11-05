@@ -15,13 +15,26 @@ use FindBin;
 use lib "$FindBin::Bin/../lib", "$FindBin::Bin/lib", "t/lib";
 use Test::More;
 use File::Temp qw(tempdir);
+use File::Slurp qw(read_file);
 use DBI;
+
+# The protected list lives in perl/gb/01_state_and_defaults.pl, which needs the
+# whole app to load. Read just the list so this standalone test sees the same
+# app exclusion the manager does (cards among them).
+my $gb_source = read_file("$FindBin::Bin/../perl/gb/01_state_and_defaults.pl");
+my (undef, $protected_list) = $gb_source =~ /our \@protected = qw(.)([^\n]*?)\1/;
+{
+	no warnings 'once';
+	@gb::protected = split ' ', ($protected_list // '');
+}
 
 require JawnOS::Domain::Backup;
 
 my $where = subs::durable_settings_where();
 like($where, qr/device = 'all'/, 'the durable WHERE admits house-wide rows');
 like($where, qr/app not in/, 'the per-device app exclusion is still there');
+like($where, qr/app = 'cards' and setting in \('mode','variant'\)/,
+	'the cards mode/variant rows are triggers on a protected app');
 
 my $dir = tempdir(CLEANUP => 1);
 my $db  = "$dir/jawnos.db";
@@ -41,6 +54,12 @@ my @rows = (
 	# named local churn stays out even when it claims to be house-wide
 	[ '__president', 'remote_backup_lock', 'all',  'x',   '1000' ],
 	[ '__president', 'open_tabs',          'all',  'x',   '1000' ],
+	# the cards choices that are allowed to sync, and the app's local state
+	[ 'cards',       'mode',               'phone', 'day', '1000' ],
+	[ 'cards',       'variant',            'phone', 'solitaire', '1000' ],
+	[ 'cards',       'day',                'all',   '[]',  '1000' ],
+	[ 'cards',       'errors',             'phone', 'x',   '1000' ],
+	[ 'cards',       'solitaire_bank',     'phone', '500', '1000' ],
 );
 for my $r (@rows) {
 	$dbh->do('insert into settings (app, setting, device, value, server_time) values (?,?,?,?,?)', undef, @{$r});
@@ -58,7 +77,7 @@ sub digest {
 	return join ':', map { $row->{$_} } qw(c s m);
 }
 
-is(count_where($where), 4, 'the house rows count and the local rows do not');
+is(count_where($where), 7, 'the house rows and the allowed cards rows count, the local rows do not');
 
 my $house = 'app = \'__president\' and setting = \'qa_nightly_device\' and device = \'all\'';
 my $local = 'app = \'__president\' and setting = \'qa_nightly_device\' and device = \'phone\'';
@@ -74,6 +93,18 @@ is(digest($where), $before, 'a per-device copy alone does not start a pull');
 
 $dbh->do("update settings set server_time = '4000' where app = '__president' and setting = 'remote_backup_lock'");
 is(digest($where), $before, 'a named local row stays out of the trigger');
+
+$before = digest($where);
+$dbh->do("update settings set server_time = '5000' where app = 'cards' and setting = 'mode'");
+isnt(digest($where), $before, 'changing the cards mode starts a pull');
+
+$before = digest($where);
+$dbh->do("update settings set server_time = '6000' where app = 'cards' and setting = 'errors'");
+is(digest($where), $before, 'cards errors stay out of the trigger');
+
+$before = digest($where);
+$dbh->do("update settings set server_time = '7000' where app = 'cards' and setting = 'solitaire_bank'");
+is(digest($where), $before, 'the cards bank stays out of the trigger');
 
 $dbh->disconnect;
 done_testing();
