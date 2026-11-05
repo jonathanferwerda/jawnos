@@ -639,6 +639,20 @@ sub utility_row_needs_adoption {
 	return (($row_lc || 0) > ($runtime_lc || 0)) ? 1 : 0;
 }
 
+# How many due jobs one tick may start.
+#
+# The variable is declared after the utility child is forked, so the child
+# inherits it *undefined*. `$started >= undef` is true in Perl (undef numifies
+# to 0), and the cap check then skips every due job, every tick, in silence -
+# the tree looked alive while nothing synced and no job ever started. The value
+# is never meaningfully zero, so an absent, zero or non-numeric cap means the
+# default.
+sub utility_pass_cap_value {
+	my $value = shift;
+	return ($value + 0) if defined $value && $value =~ /^\d+$/ && $value > 0;
+	return 2;
+}
+
 # Jobs in a runtime table that have no callable attached.
 #
 # The definer that attaches them runs from the controller, once, on the first

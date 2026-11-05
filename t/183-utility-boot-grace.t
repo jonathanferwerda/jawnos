@@ -1,5 +1,6 @@
 # tests-for: perl/President.pl
-# covers:    A tree that just started does not run its whole past-due utility backlog in one tick.
+# covers:    A tree that just started does not run its whole past-due utility backlog in one tick,
+#           and the cap is never the undefined a forked child would inherit.
 
 use strict;
 use warnings;
@@ -35,14 +36,15 @@ like($runner, qr/return if \$utility_boot_at && &subs::rightNow\(\) - \$utility_
 	'the first twenty seconds after boot run no job');
 
 like($src, qr/our \$utility_pass_cap = 2;/, 'one pass starts at most two jobs');
+like($runner, qr/my \$pass_cap = &subs::utility_pass_cap_value\(\$utility_pass_cap\);/, 'the cap is resolved: the forked child inherits it undefined, and 0 >= undef is true');
 
-my $cap_at = index($runner, 'if ($started >= $utility_pass_cap)');
+my $cap_at = index($runner, 'if ($started >= $pass_cap)');
 my $stamp_at = index($runner, q{$u->{'last_attempt'} = $now;});
 ok($cap_at >= 0, 'the pass checks its count before starting a job');
 ok($stamp_at > $cap_at,
 	'a job held back by the cap is not stamped as attempted');
 
-like($runner, qr/if \(\$started >= \$utility_pass_cap\) \{\s*\$pending = 1;.*?\bnext;/s,
+like($runner, qr/if \(\$started >= \$pass_cap\) \{\s*\$pending = 1;.*?\bnext;/s,
 	'a job over the cap waits for the next tick');
 like($runner, qr/if \(!\$ran && !\$pending &&/,
 	'a pass that still has work due does not write the idle marker');

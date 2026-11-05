@@ -1093,6 +1093,10 @@ sub utility_runner() {
 	my $next_due;
 	my $started = 0;
 	my $pending = 0;
+	# The cap is declared after this child is forked, so it arrives here
+	# undefined; `$started >= undef` is true in Perl, and the cap check then
+	# skipped every due job on every tick, in silence. Resolve it once.
+	my $pass_cap = &subs::utility_pass_cap_value($utility_pass_cap);
 	# A job's next slot only ever moves by its interval. The old check measured
 	# the interval from the last completion, so every run started its interval
 	# late by its own duration plus the tick: a five-minute job slipped about
@@ -1159,7 +1163,7 @@ sub utility_runner() {
 		$log->info('utility tick ' . $gb::utility_tick_n . ': ' . $t . ' due (interval ' . $interval . ', started ' . $started . ')') if $trace;
 		# This one stays due for the next tick, not this pass: the backlog is
 		# drained a couple of jobs at a time (see $utility_pass_cap).
-		if ($started >= $utility_pass_cap) {
+		if ($started >= $pass_cap) {
 			$pending = 1;
 			$next_due = $now if !defined $next_due || $now < $next_due;
 			next;
@@ -1256,6 +1260,9 @@ sub utility_runner() {
 sub utility_functions() {
 
 	$gb::utility_functions_watcher = 1;
+	# The cap is assigned after this child is forked, so its own copy is undef;
+	# pin it here too, so nothing in this process can read an undefined cap.
+	$utility_pass_cap = &subs::utility_pass_cap_value($utility_pass_cap);
 	$utility_boot_at = &subs::rightNow();
 	print "Starting Alarm Clock\n";
 
