@@ -30,6 +30,13 @@ that into a slow patch instead of a frozen machine. Protect the work, not the ch
   at the same time, so **identify yourself** — put an agent id/model and a timestamp on your section,
   re-read before you write, and only replace your own entry. Never overwrite another agent's section or
   delete the file while someone else's work is still in it; if you are unsure who owns a line, leave it.
+- **Leave the tool, not the ticket.** A probe you had to build in `.shots/` and would want again belongs
+  in `scripts/tools/`, with a row in its `README.md`. Make it argument-driven (a PID, host, port, MAC or
+  file the call provides), keep the default read-only, and leave out anything that identifies the house:
+  a ticket URL, token, cookie, phone number, MAC, signatorial, person's path, fixture row or timestamp.
+  `.shots/` is gitignored scratch — the shelf is what another machine inherits. `perl scripts/where.pl
+  --tools` lists it and `perl scripts/where.pl cpuspy` prints a tool's catalog row, so write the row for
+  the next agent, not for yourself.
 
 ## Token economy
 
@@ -39,5 +46,6 @@ The bill is generated text, not stored context. **Ask for the hunk**, and for th
 (caching only pays when the top of the context does not move); **one thread plus narrow sub-agents**
 returning `file:line`, never raw logs; **cap the loop** — plan → approve → execute, paste the failing
 lines, `sed -n` a range instead of reading the file. **Ask the locator, not the map:**
-`perl scripts/where.pl <name>`; `--tech <app>` prints the technical brief. The four local agents
+`perl scripts/where.pl <name>`; `--tech <app>` prints the technical brief; `--tools` lists the
+shareable probes. The four local agents
 (Guide, Coding, Evaluation, Pen), the creative apps and how a new app is added: `docs/AGENTS-agents.md`.

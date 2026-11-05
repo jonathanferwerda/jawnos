@@ -15,10 +15,10 @@ Two commands read the tree's test-checked indexes. **Reach for them before `grep
 
 - `perl scripts/where.pl <name>` — one line, `file:line`: a Manager helper, a domain sub, a route
 action (`action_7408`), a route path (`/manager/pen`), a help topic by name, a JavaScript, firmware,
-`perl/` or `scripts/` declaration, or a file (which topics cover it). A name nothing declares prints the mention lines **with their text**, so a miss is still judgeable
+`perl/` or `scripts/` declaration, or a file (its topics). A name nothing declares prints the mention lines **with their text**, so a miss is still judgeable
 without opening the file. A single JS/firmware declaration comes with its body (`--body`, capped); `--outline FILE`
-lists a file's declarations as `line<TAB>kind name`, so read the range, not the file. `--topics`
-lists the help registry (`--topics PATTERN` narrows it), `--tech <app>` prints the technical brief
+lists a file's declarations as `line<TAB>kind name`, so read the range, not the file.
+`--topics`/`--tools` list the help registry/probe shelf (PATTERN narrows), `--tech <app>` prints the technical brief
 (routes compressed as `/a{b,c}`; `--routes` expands them). After you act on a hit,
 report it: `where.pl --report <name> right --at path:line`; if it was wrong,
 `wrong --at path:line --found path:line`; if it missed, `miss --found path:line` (a report must say

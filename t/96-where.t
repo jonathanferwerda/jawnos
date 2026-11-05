@@ -327,6 +327,37 @@ PM
 	like($out, qr{^coding_prompt\tperl/help\.pl:\d+$}m, 'to the file that defines it');
 }
 
+# --- the shareable tool shelf ----------------------------------------------
+{
+	my ($code, $out) = where('cpuspy');
+	is($code, 0, 'a probe resolves by its bare name');
+	like($out, qr{^cpuspy\tscripts/tools/cpuspy\.py:1$}m, 'to its script');
+	like($out, qr{^  answers: .*burning a core}m, 'with what the catalog says it answers');
+	like($out, qr{^  example: \./scripts/tools/cpuspy\.py 3 15$}m,
+		'and how to run it');
+
+	(undef, $out) = where('pid-io.py');
+	like($out, qr{^pid-io\tscripts/tools/pid-io\.py:1$}m, 'an extension is optional');
+
+	(undef, $out) = where('scripts/tools/wav-stat.pl');
+	like($out, qr{^wav-stat\tscripts/tools/wav-stat\.pl:1$}m,
+		'a path resolves to the same row');
+
+	(undef, $out) = where('--terse', 'cpuspy');
+	is($out, "scripts/tools/cpuspy.py:1\n", '--terse keeps only file:line');
+
+	my ($list_code, $list) = where('--tools');
+	is($list_code, 0, '--tools lists the shelf');
+	like($list, qr{^tool::cpuspy\tscripts/tools/cpuspy\.py:1\t.*core}m,
+		'one line per probe, with its answer');
+	like($list, qr{^tool::wav-stat\t}m, 'including a Perl probe');
+	like($list, qr{^tool::audio-watch\t}m, 'including a shell probe');
+
+	(undef, $list) = where('--tools', 'audio');
+	like($list, qr{^tool::audio-watch\t}m, 'a pattern narrows the shelf');
+	unlike($list, qr{^tool::cpuspy\t}m, 'and leaves the rest out');
+}
+
 # --- --outline lists a file's declarations ---------------------------------
 {
 	my ($code, $out) = where('--outline', 'lib/JawnOS/Domain/Format.pm');

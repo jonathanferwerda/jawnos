@@ -8,6 +8,8 @@
 #   perl scripts/where.pl /js/manager/app.js
 #   perl scripts/where.pl budget                     # a help topic
 #   perl scripts/where.pl templates/apps/gallery.html.ep   # which topic covers it
+#   perl scripts/where.pl cpuspy                     # a shareable probe, and what it answers
+#   perl scripts/where.pl --tools                    # the scripts/tools shelf
 #   perl scripts/where.pl --topics                   # the whole help registry
 #   perl scripts/where.pl --context 6 guide_find_target
 #   perl scripts/where.pl --terse path_name
@@ -18,9 +20,11 @@
 # Routes are read from lib/JawnOS/Routes/*.pm and help topics from
 # perl/help/topics_*.pl, so nothing boots the app. A name neither map knows is
 # searched for as a sub across the parts, the domain modules, perl/ and scripts/,
-# then as a help topic, then as a declaration in a controller, a JavaScript file
-# or a firmware sketch (jp/, jw/, jt/), then as a mention that prints the matching
-# line itself (capped by --limit). A single JavaScript or firmware declaration
+# then as a shareable tool in scripts/tools/ (the README catalog says what it
+# answers and how to run it), then as a help topic, then as a declaration in a
+# controller, a JavaScript file or a firmware sketch (jp/, jw/, jt/), then as a
+# mention that prints the matching line itself (capped by --limit). A single
+# JavaScript or firmware declaration
 # arrives with its body (--body), because a location still costs a second read.
 # When a map names a file that does not define the sub, the hit prints where it
 # really is and says the map drifted - that is the audit, for free.
@@ -57,6 +61,7 @@ my $report_found;
 my $report_note;
 my $tech_name;
 my $list_topics = 0;
+my $list_tools = 0;
 my $help       = 0;
 
 GetOptions(
@@ -74,6 +79,7 @@ GetOptions(
 	'note=s'       => \$report_note,
 	'tech=s'       => \$tech_name,
 	'topics'       => \$list_topics,
+	'tools'        => \$list_tools,
 	'root=s'       => \$root,
 	'help'         => \$help,
 ) or usage(2);
@@ -129,13 +135,61 @@ if (defined $tech_name) {
 	exit $status;
 }
 
-usage(2) unless $list_topics || @ARGV;
+usage(2) unless $list_topics || $list_tools || @ARGV;
 
 my @manager_files = grep { -f $_ } map { glob "$root/lib/JawnOS/Manager/$_" }
 	qw(Manager.pm Core1_tables_hooks.pm Core2_worker_boot.pm Part*.pm);
 my @domain_files     = grep { -f $_ } glob "$root/lib/JawnOS/Domain/*.pm";
 my @controller_files = grep { -f $_ } glob "$root/lib/JawnOS/Controller/*.pm";
 my @route_files      = grep { -f $_ } glob "$root/lib/JawnOS/Routes/*.pm";
+
+# --- the shareable tool shelf ------------------------------------------------
+#
+# scripts/tools/ holds the probes an agent may run instead of writing a throwaway:
+# each takes arguments and carries no ticket, token, cookie, phone number, MAC,
+# signatorial or person's path. The catalog is the README's table, so a bare name
+# answers with its purpose and example, and --tools lists the shelf. A file with
+# no row still resolves and says so - the catalog is checked, not trusted.
+my @tool_files = sort grep { m{/scripts/tools/[^/]+\.(?:sh|py|pl)\z} }
+	grep { -f $_ } glob "$root/scripts/tools/*";
+my %tool_path;    # basename or stem (lower-case) -> path
+my %tool_catalog; # the same keys -> { name, file, answers, example, mode }
+{
+	for my $path (@tool_files) {
+		my ($base) = $path =~ m{([^/]+)\z} or next;
+		my ($stem) = $base =~ /^(.+?)\.[^.]+$/ or next;
+		$tool_path{ lc $base } = $path;
+		$tool_path{ lc $stem } = $path;
+	}
+
+	my $text = slurp("$root/scripts/tools/README.md") // '';
+	for my $line (split /\n/, $text, -1) {
+		next unless $line =~ /^\s*\|/;
+		my @cell = split /\|/, $line, -1;
+		shift @cell;
+		pop @cell;
+		next unless @cell == 4;
+		my ($file) = $cell[0] =~ /`([^`]+\.(?:sh|py|pl))`/i or next;
+		my ($stem) = $file =~ /^(.+?)\.[^.]+$/;
+		my $row = {
+			'name'    => $stem,
+			'file'    => $file,
+			'answers' => catalog_cell($cell[1]),
+			'example' => catalog_cell($cell[2]),
+			'mode'    => catalog_cell($cell[3]),
+		};
+		$tool_catalog{ lc $file } = $row;
+		$tool_catalog{ lc $stem } = $row;
+	}
+}
+
+sub catalog_cell {
+	my ($text) = @_;
+	$text = '' unless defined $text;
+	$text =~ s/^\s+|\s+$//g;
+	$text =~ s/^`|`$//g;
+	return $text;
+}
 
 # --- source groups the locator can search -----------------------------------
 #
@@ -221,6 +275,29 @@ if ($list_topics) {
 	}
 	print $out;
 	where_log('--topics', ($matched ? 1 : 0), 'topics', length $out);
+	exit 0;
+}
+
+if ($list_tools) {
+	# Like --topics: an optional pattern arrives in @ARGV and matches the tool's
+	# name or the symptom it answers. The line is the catalog row, so listing the
+	# shelf and looking one tool up print the same words.
+	my @wanted = grep { length } map { lc($_) } @ARGV;
+	my $out = '';
+	my $matched = 0;
+	for my $path (@tool_files) {
+		my ($base) = $path =~ m{([^/]+)\z} or next;
+		my ($stem) = $base =~ /^(.+?)\.[^.]+$/ or next;
+		my $row = $tool_catalog{ lc $base } // $tool_catalog{ lc $stem };
+		my $answers = $row ? $row->{'answers'} : '(no row in scripts/tools/README.md)';
+		next if @wanted && !grep {
+			index(lc($stem), $_) >= 0 || index(lc($answers), $_) >= 0
+		} @wanted;
+		$out .= 'tool::' . $stem . "\t" . rel($path) . ":1\t" . $answers . "\n";
+		$matched++;
+	}
+	print $out;
+	where_log('--tools', ($matched ? 1 : 0), 'tools', length $out);
 	exit 0;
 }
 
@@ -319,6 +396,12 @@ sub lookup {
 	# Neither map knows it: look for the declaration itself, then for a help
 	# topic that answers to the name, then for a mention.
 	#
+	# A shareable probe is a name worth spending a lookup on before the generic
+	# declaration search: scripts/tools/ is the curated shelf, and the catalog
+	# row is the answer an agent actually wanted.
+	my $tool = tool_lookup($name);
+	return $tool if $tool;
+
 	# Perl first, because the two maps only cover lib/ and a part is still the
 	# most likely home. A help topic keeps its priority over a same-named JS
 	# function, the way help() resolves it. Then the declaration in a controller,
@@ -502,6 +585,32 @@ sub topic_lookup {
 	return scalar @hits;
 }
 
+# A shareable probe from scripts/tools/, by bare name or file name. The catalog
+# row carries the purpose and an example, which is the whole answer; a probe with
+# no row still resolves, so a missing catalog row is visible instead of silent.
+sub tool_lookup {
+	my ($name) = @_;
+	my $key = lc($name // '');
+	$key =~ s/^\s+|\s+$//g;
+	my $path = $tool_path{$key} or return 0;
+
+	my ($base) = $path =~ m{([^/]+)\z} or return 0;
+	my ($stem) = $base =~ /^(.+?)\.[^.]+$/ or return 0;
+	my $row = $tool_catalog{ lc $base } // $tool_catalog{ lc $stem };
+
+	print $terse ? rel($path) . ":1\n" : "$stem\t" . rel($path) . ":1\n";
+	return 1 if $terse;
+	if ($row) {
+		print "  answers: $row->{'answers'}\n" if length $row->{'answers'};
+		print "  example: $row->{'example'}\n" if length $row->{'example'};
+		print "  mode:    $row->{'mode'}\n"    if length $row->{'mode'};
+	}
+	else {
+		print "  (no row in scripts/tools/README.md)\n";
+	}
+	return 1;
+}
+
 # A file's place in the tree: the help topics that name it, plus the topic that
 # explains its app. The convention is help::inventory's - an app's page is
 # templates/apps/<app>.html.ep, its script public/js/manager/<app>.js - so this
@@ -512,6 +621,12 @@ sub file_lookup {
 	my $prefix = $root;
 	$prefix =~ s{/+$}{};
 	$rel =~ s{^\Q$prefix\E/+}{};
+
+	# A shareable probe is already catalogued; answer with that row rather than
+	# the empty "no help topic" line a script would otherwise get.
+	if ($rel =~ m{^scripts/tools/([^/]+)\z} && $tool_path{ lc $1 }) {
+		return tool_lookup($1);
+	}
 
 	my @hits;
 	for my $t (@{ topics() }) {
@@ -1145,17 +1260,20 @@ usage: perl scripts/where.pl [options] NAME... | --outline FILE...
 
   NAME   a Manager helper (app_release_sync), a domain sub (subs::path_name or
          path_name), a route action (action_7408), a route path (/manager/pen),
-         a function in perl/ or scripts/, a help topic (budget), or a file
+         a function in perl/ or scripts/, a shareable probe in scripts/tools/
+         (cpuspy), a help topic (budget), or a file
          (templates/apps/gallery.html.ep, which reports the help topics
          covering it). Several names may be given.
 
 Prints file:line for each. A name the maps do not know is searched for as a
-sub in lib/, perl/ or scripts/, then as a help topic, then as a declaration in a
-controller, a JavaScript file or a firmware sketch (jp/, jw/, jt/), then as a
-mention: file:line plus the matching line, at most --limit lines. --context N
-adds N lines after any hit, --terse prints only file:line, --topics lists every
-help topic with the line it is defined on (PATTERN... narrows it by id, app or
-summary). Exits 0 if anything was found.
+sub in lib/, perl/ or scripts/, then as a probe in scripts/tools/ (with its
+catalog row), then as a help topic, then as a declaration in a controller, a
+JavaScript file or a firmware sketch (jp/, jw/, jt/), then as a mention:
+file:line plus the matching line, at most --limit lines. --context N adds N
+lines after any hit, --terse prints only file:line, --topics lists every help
+topic with the line it is defined on, and --tools lists the shareable probes
+with what they answer (PATTERN... narrows either list). Exits 0 if anything was
+found.
 
   --body        print the declaration and its body, stopping at the closing
                 brace (or the dedent of a Python def), at most --body-lines
@@ -1166,6 +1284,8 @@ summary). Exits 0 if anything was found.
   --context N   the plain N-line form; it wins over --body when both are given.
   --topics [PATTERN...]  list the help registry in one line each; a pattern
                 matches an id, an app or a summary (case-insensitive).
+  --tools [PATTERN...]   list the scripts/tools/ shelf in one line each; a
+                pattern matches a tool name or the symptom it answers.
   --outline     for each FILE, print "line<TAB>kind name" for every declaration
                 in it, so an agent can read a range instead of the whole file.
                 A .ep template lists its ids, hint labels and included partials.

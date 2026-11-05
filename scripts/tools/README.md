@@ -28,6 +28,9 @@ Run from the repo root, or with an explicit path. `sh` tools run under
 | `fix-toggle-keys.sh` | Which `toggle` settings rows carry a doubled (mojibake) app key, and can they be removed? | `./scripts/tools/fix-toggle-keys.sh [--apply]` | read; `--apply` deletes through `subs::setting_deleter` after a row backup |
 | `serial-watch.py` | What is the bridge board printing, with timestamps? (DTR-aware) | `./scripts/tools/serial-watch.py /dev/ttyACM0 30 reset` | read; `reset` reboots the board |
 | `android-battery-log.sh` | Android battery/power/wakefulness and top CPU consumers over adb | `./scripts/tools/android-battery-log.sh SERIAL 40 15` | read |
+| `wav-stat.pl` | Is this clip silence, a tone or speech, and where does it start? (RMS, peak, zero crossings per window) | `./scripts/tools/wav-stat.pl /tmp/call.wav --window 100` | read |
+| `audio-watch.sh` | Which PipeWire sink/source/card profile is a call using, and when does it change? | `./scripts/tools/audio-watch.sh 2 30` | read |
+| `json-stress.pl` | How long does JSON::PP take on a large escape/nesting shape, and does it refuse it? | `./scripts/tools/json-stress.pl uesc 4` | read |
 
 ## Notes
 
@@ -43,6 +46,30 @@ Run from the repo root, or with an explicit path. `sh` tools run under
   appends, per the `# WRITES:` header).
 - `android-battery-log.sh` shells out to `adb`; it never uses a credential and
   runs only `dumpsys`/`settings get`/`ps`.
+- `wav-stat.pl` and `json-stress.pl` are the collected halves of the scratch
+  `wavstat.pl`/`probe_wav.pl` and `json_escape.pl`/`json_patho.pl`; both now take
+  their input and size as arguments. `audio-watch.sh` is the house's
+  `pw_watch.sh` with the interval and count as arguments.
+
+## Adding a tool
+
+A probe that earned its keep in `.shots/` belongs here, so the next agent runs it
+instead of writing it again. `.shots/` is gitignored scratch; nothing in it
+reaches another machine.
+
+1. Copy it in with the header comments (`Answers:` / `Usage:` / `Example:` and
+   either `Read-only:` or `WRITES:`), and take arguments instead of hardcoded
+   hosts, PIDs, ports or fixture rows. Never carry a ticket URL, token, cookie,
+   phone number, MAC, signatorial, person's path or timestamp.
+2. Add its row to the table above; that table is the catalog `--tools` reads.
+3. `perl scripts/where.pl <tool>` must resolve it by the file's stem (for
+   example `cpuspy` or `wav-stat`).
+4. Keep the default read-only. A tool that writes says so in its row and prints
+   what it changes.
+
+`perl scripts/where.pl --tools` lists the shelf (a pattern narrows it). A file
+with no catalog row still resolves, with `(no row in scripts/tools/README.md)`,
+so the drift is visible instead of silent.
 
 ## Deliberately left behind
 
@@ -79,5 +106,16 @@ Run from the repo root, or with an explicit path. `sh` tools run under
   `qa_health.pl`, `cdp_*.mjs` — UI, QEMU or browser-debugging probes outside
   the CPU/process/BLE/network/sync brief.
 - `watch_serial.py` — superseded by `serial-watch.py`.
-- `tiltlog_*.py` — post-processing of an already captured tilt log, not a live
-  probe.
+- `scan_adb.py` — a fixed-host port sweep; `port-scan.py` takes the host and range.
+- `adb_dbstate.sh` — the phone's fixed Termux paths; `db-state.sh` takes the DB path.
+- `drain_bench.pl`, `select_probe.pl` — synthetic reproductions of the listener's old read path;
+  `ble-bridge-probe.py` exercises the real shape.
+- `probe_wav.pl`, `wavstat.pl` — the two source reports merged into `wav-stat.pl`.
+- `json_escape.pl`, `json_patho.pl` — the two source benchmarks merged into `json-stress.pl`.
+- `pw_watch.sh` — became `audio-watch.sh` with the interval and count as arguments.
+- `vad_probe.sh`, `resample_probe.sh`, `upsample_probe.sh`, `call_probe.sh`, `pw_call.sh`,
+  `sco_watch.sh`, `sco_drive.pl`, `sco_arm_tone.pl` — live-call fixtures with a kept caller
+  WAV or a hardcoded device MAC; `wav-stat.pl` and `audio-watch.sh` are the portable parts.
+- `resolve.pl` — resolves a git conflict by dropping the upstream side; too blunt to offer as a
+  default for another tree.
+- `tiltlog_*.py` — post-processing of an already captured tilt log, not a live probe.
