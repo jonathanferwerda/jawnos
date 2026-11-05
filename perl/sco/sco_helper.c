@@ -853,10 +853,23 @@ static int pcm_mode_main(void) {
 		}
 
 		long long t = now_ns();
-		if (clip_active && t >= clip_start_at) {
+		/* Keep the line fed, including the gaps between the plan's prompts. A
+		 * source that goes quiet lets the phone's own buffer drain, and the
+		 * tail it still holds is lost - a caller heard the end of the greeting
+		 * and the end of the name prompt cut off. A real headset sends silence
+		 * between words, so the gateway does too: one 7.5 ms frame of it per
+		 * frame of wall time, never a burst. */
+		if ((have_accepted || clip_active) && t >= next_write) {
 			int steps = 0;
-			while (t >= next_write && clip_active && steps++ < 8) {
-				uplink_step(-1);
+			while (t >= next_write && steps++ < 8) {
+				if (clip_active && t >= clip_start_at) {
+					uplink_step(-1);
+				}
+				else {
+					unsigned char silence[CHUNK_BYTES];
+					memset(silence, 0, sizeof(silence));
+					backend_write(silence, sizeof(silence));
+				}
 				next_write += CHUNK_NS;
 			}
 			/* a long stall must not be paid back as a burst: resync the clock */

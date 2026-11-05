@@ -581,4 +581,35 @@ FEED
 		'a quiet line ends the call after two seconds, not after forty polls');
 }
 
+# The line is kept fed between prompts, not only while a clip plays. A source
+# that goes quiet lets the phone's own buffer drain, and the tail it still holds
+# is lost - measured: the end of the greeting and of the name prompt were cut
+# off. A real headset sends silence between words, so the helper does too.
+SKIP: {
+	skip 'the SCO helper is not built on this machine', 3 unless -x $helper;
+	require IPC::Open2;
+	my $fed = "$dir/pipe-fed.raw";
+	unlink $fed;
+	my $clip = "$dir/pipe-clip.raw";
+	my $pattern = join '', map { pack('s<', 8000) } 1 .. 600;   # 1200 bytes, no zeros
+	write_file($clip, $pattern);
+	my ($out, $in);
+	my $pid = IPC::Open2::open2($out, $in, $helper,
+		'--pipe-in', 'cat /dev/zero', '--pipe-out', "cat > $fed");
+	$in->autoflush(1);
+	print {$in} '{"cmd":"line"}' . "\n";
+	select(undef, undef, undef, 2.6);   # the settle runs from the first frame
+	print {$in} '{"cmd":"play","id":1,"file":"' . $clip . '"}' . "\n";
+	select(undef, undef, undef, 1.0);
+	print {$in} '{"cmd":"quit"}' . "\n";
+	close $in;
+	close $out;
+	waitpid($pid, 0);
+	my $raw = '';
+	if (open(my $rf, '<:raw', $fed)) { local $/; $raw = <$rf> // ''; close $rf; }
+	ok(length $raw > 4000, 'the line is fed with silence around a clip, so it never idles');
+	ok(index($raw, $pattern) >= 0, 'and the clip itself is delivered whole');
+	ok(-s $fed > 4000, 'the feed is what the playback command receives');
+}
+
 done_testing();
