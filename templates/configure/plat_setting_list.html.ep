@@ -114,10 +114,17 @@
 					push @role_models, { %{$m}, group => $provider->{'label'} };
 				}
 			}
-			# whisper.cpp on this machine is a transcription choice like any other:
-			# it answers locally (warm when the server is running) and costs nothing,
-			# so it belongs in both the model and fallback lists.
-			if ($setting eq 'transcription_assistant' && -x &subs::home('~/whisper.cpp/build/bin/whisper-cli')) {
+			# A local engine on this machine is a transcription choice like any
+			# other: it answers offline and costs nothing, so it belongs in both
+			# the model and fallback lists. Vosk is tried first when installed
+			# (a word comes back in well under a second); whisper.cpp stays here
+			# as the fallback for the languages its models cover.
+			my $whisper_here = $setting eq 'transcription_assistant' && -x &subs::home('~/whisper.cpp/build/bin/whisper-cli');
+			my $vosk_here    = $setting eq 'transcription_assistant' && &subs::vosk_available();
+			if ($vosk_here) {
+				push @role_models, { value => 'local:vosk', name => 'Vosk', paid => 0, group => 'This machine', caps => ['audio'] };
+			}
+			if ($whisper_here) {
 				push @role_models, { value => 'local:whisper.cpp', name => 'whisper.cpp', paid => 0, group => 'This machine', caps => ['audio'] };
 			}
 		%>
@@ -142,9 +149,14 @@
 								<% } %>
 							</optgroup>
 						<% } %>
-						<% if ($setting eq 'transcription_assistant' && -x &subs::home('~/whisper.cpp/build/bin/whisper-cli')) { %>
+						<% if ($vosk_here || $whisper_here) { %>
 							<optgroup label="This machine">
-								<option value="local:whisper.cpp" data-thinks="0" <% if ($current eq 'local:whisper.cpp') { %>selected="selected"<% $shown = 1; } %>>whisper.cpp · this machine · free</option>
+								<% if ($vosk_here) { %>
+									<option value="local:vosk" data-thinks="0" <% if ($current eq 'local:vosk') { %>selected="selected"<% $shown = 1; } %>>Vosk · this machine · free</option>
+								<% } %>
+								<% if ($whisper_here) { %>
+									<option value="local:whisper.cpp" data-thinks="0" <% if ($current eq 'local:whisper.cpp') { %>selected="selected"<% $shown = 1; } %>>whisper.cpp · this machine · free</option>
+								<% } %>
 							</optgroup>
 						<% } %>
 						<%# a model already chosen that does not fit, or is paid and stood down, is kept so it is not silently dropped %>

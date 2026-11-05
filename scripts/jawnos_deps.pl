@@ -143,8 +143,10 @@ if ($install && -f $runtime_marker) {
 # runs, so a new version's new app lands without a hand.
 my $home = $ENV{'HOME'} || (getpwuid $<)[7] || '';
 my $piper_dir = "$home/.local/share/jawnos/piper";
+my $vosk_dir  = "$home/.local/share/jawnos/vosk";
 my @extras = (
 	{ id => 'piper', label => 'Piper TTS (natural voice)', check => \&have_piper, install => \&install_piper },
+	{ id => 'vosk',  label => 'Vosk speech-to-text (offline)', check => \&have_vosk, install => \&install_vosk },
 );
 
 if ($extras_only) {
@@ -379,6 +381,75 @@ sub install_piper {
 	piper_offer();
 	print "  piper: installed to $piper_dir\n" if -x "$piper_dir/piper";
 	print "  piper: installed (no binary produced?)\n" unless -x "$piper_dir/piper";
+}
+
+# --- Vosk: the offline recogniser -------------------------------------------
+# Vosk's Python package has glibc wheels only, so it cannot run under Termux;
+# the gateway machine (desktop or laptop) is where it belongs. The venv keeps it
+# out of the system Python and survives a PEP 668 "externally managed" system.
+# One small English model comes down with it; another language is a directory
+# dropped under models/ and found by subs::vosk_model_dir.
+sub vosk_model_name { return 'vosk-model-small-en-us-0.15'; }
+sub vosk_model_url  { return 'https://alphacephei.com/vosk/models/' . vosk_model_name() . '.zip'; }
+sub vosk_models_dir { return "$vosk_dir/models"; }
+sub vosk_model_path { return "$vosk_dir/models/" . vosk_model_name(); }
+
+sub have_vosk {
+	my $py = "$vosk_dir/venv/bin/python3";
+	return 0 unless -x $py;
+	return 0 unless -d vosk_model_path();
+	# the directory alone is not proof: an interrupted pip leaves the venv
+	return system($py, '-c', 'import vosk') == 0 ? 1 : 0;
+}
+
+sub install_vosk {
+	if ($platform eq 'termux') {
+		print "  vosk: Termux (Bionic) has no Vosk wheel; the gateway machine runs it.\n";
+		return;
+	}
+	my $py = which('python3') || which('python');
+	if (!$py) {
+		print "  vosk: python3 is not installed; skipping (transcription falls back to whisper.cpp).\n";
+		return;
+	}
+	system('mkdir', '-p', vosk_models_dir());
+	my $venv_py = "$vosk_dir/venv/bin/python3";
+	unless (-x $venv_py) {
+		if (run($py, '-m', 'venv', "$vosk_dir/venv") != 0) {
+			print "  vosk: could not make a virtual environment (install python3-venv); skipping.\n";
+			return;
+		}
+	}
+	unless (-x $venv_py) {
+		print "  vosk: the venv has no python3; skipping.\n";
+		return;
+	}
+	if (run($venv_py, '-m', 'pip', 'install', '--disable-pip-version-check', 'vosk') != 0) {
+		print "  vosk: pip could not install the package; leaving the fallback in place.\n";
+		return;
+	}
+	unless (-d vosk_model_path()) {
+		my $tmp_dir = ($ENV{'TMPDIR'} && -d $ENV{'TMPDIR'} && -w $ENV{'TMPDIR'}) ? $ENV{'TMPDIR'} : '/tmp';
+		$tmp_dir = $vosk_dir unless -w $tmp_dir;
+		my $zip = "$tmp_dir/jawnos_vosk_$$.zip";
+		if (run('curl', '-L', '--fail', '-o', $zip, vosk_model_url()) != 0) {
+			print "  vosk: model download failed; the package is installed but has no model.\n";
+			return;
+		}
+		# python3 -m zipfile needs nothing else installed, and Termux is not a
+		# path here anyway; unzip is only preferred because it is quicker.
+		my $unzip = which('unzip');
+		my $ok = $unzip
+			? run($unzip, '-q', '-o', $zip, '-d', vosk_models_dir()) == 0
+			: run($py, '-m', 'zipfile', '-e', $zip, vosk_models_dir()) == 0;
+		unlink $zip;
+		unless ($ok && -d vosk_model_path()) {
+			print "  vosk: model extract failed.\n";
+			return;
+		}
+	}
+	print "  vosk: installed to $vosk_dir\n" if have_vosk();
+	print "  vosk: installed, but the import probe failed\n" unless have_vosk();
 }
 
 # --- desktop extra probes ----------------------------------------------------

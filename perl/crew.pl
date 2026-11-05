@@ -94,6 +94,12 @@ our %KINDS = (
 		needs   => ['whisper'],
 		cost    => 'heavy',
 	},
+	'vosk.transcribe' => {
+		handler => \&_job_vosk_transcribe,
+		timeout => 300,
+		needs   => ['vosk'],
+		cost    => 'heavy',
+	},
 );
 
 # The kind's registry row, or undef. The name is validated before lookup so a
@@ -178,6 +184,7 @@ sub _compute_abilities {
 		ffmpeg    => _which('ffmpeg') ? 1 : 0,
 		tesseract => _which('tesseract') ? 1 : 0,
 		whisper   => _whisper_binary() ? 1 : 0,
+		vosk      => (eval { &subs::vosk_available() }) ? 1 : 0,
 		perl      => _which('perl') ? 1 : 0,
 		node      => _which('node') ? 1 : 0,
 		git       => _which('git') ? 1 : 0,
@@ -919,7 +926,8 @@ sub _job_ai_evaluate {
 	return { text => $text, role => $role, model => ($subs::ai_last_model // '') };
 }
 
-sub _job_whisper_transcribe {
+sub _payload_audio {
+	# A job's audio is either base64 (the wire's safe form) or raw bytes.
 	my ($payload) = @_;
 	my $raw;
 	if (defined $payload->{'audio_b64'} && length $payload->{'audio_b64'}) {
@@ -928,11 +936,30 @@ sub _job_whisper_transcribe {
 	elsif (defined $payload->{'audio'} && length $payload->{'audio'} && !ref $payload->{'audio'}) {
 		$raw = $payload->{'audio'};
 	}
+	return $raw;
+}
+
+sub _job_whisper_transcribe {
+	my ($payload) = @_;
+	my $raw = _payload_audio($payload);
 	die "whisper.transcribe needs audio\n" unless defined $raw && length $raw;
 	my $lang = $payload->{'lang'} // 'auto';
 	my $text = &subs::whisper_transcribe($raw, $lang);
 	die "no transcript\n" unless defined $text && length $text;
 	return { text => $text, lang => $lang };
+}
+
+sub _job_vosk_transcribe {
+	# Vosk on whatever machine holds the model. The caller still gets the same
+	# shape as whisper.transcribe, so a device can switch engines without
+	# learning a second reply.
+	my ($payload) = @_;
+	my $raw = _payload_audio($payload);
+	die "vosk.transcribe needs audio\n" unless defined $raw && length $raw;
+	my $lang = $payload->{'lang'} // 'auto';
+	my $text = &subs::vosk_transcribe($raw, $lang);
+	die "no transcript\n" unless defined $text && length $text;
+	return { text => $text, lang => $lang, engine => 'vosk' };
 }
 
 1;

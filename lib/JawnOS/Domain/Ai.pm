@@ -201,39 +201,179 @@ sub whisper_cli_transcribe {
 	return $text;
 }
 
+# --- Vosk: the free, offline recogniser ------------------------------------
+# Vosk's Python package ships glibc wheels only, so it cannot run under Termux
+# (Bionic); the gateway/laptop is where it lives. scripts/jawnos_deps.pl puts a
+# venv and the small English model under ~/.local/share/jawnos/vosk. The runner
+# is a JSON-lines helper because it is also the live stream the screening
+# transcript reads (--raw --stream).
+sub vosk_runner {
+	# JAWNOS_VOSK_RUNNER and JAWNOS_VOSK_DIR exist for a worktree or a machine
+	# that keeps the model on a bigger disk; the defaults are the installed tree.
+	my $runner = $ENV{'JAWNOS_VOSK_RUNNER'};
+	return $runner if defined $runner && length $runner;
+	return &subs::home('~/jawnos/scripts/vosk_transcribe.py');
+}
+sub vosk_root {
+	my $dir = $ENV{'JAWNOS_VOSK_DIR'};
+	return $dir if defined $dir && length $dir;
+	return &subs::home('~/.local/share/jawnos/vosk');
+}
+
+sub vosk_python {
+	my $venv = &vosk_root() . '/venv/bin/python3';
+	return $venv if -x $venv;
+	foreach my $dir ( split /:/, ($ENV{'PATH'} // '') ) {
+		next unless defined $dir && length $dir;
+		my $py = "$dir/python3";
+		return $py if -x $py;
+	}
+	return '';
+}
+
+# A model is a directory named for its language (vosk-model-small-en-us-0.15,
+# or a hand-made `fr`). A language asked for but not installed answers '', so
+# the caller falls back to whisper rather than reading French with an English
+# model; 'auto' takes English when it exists and the first model otherwise.
+sub vosk_model_dir {
+	my ($lang) = @_;
+	$lang = lc($lang // '');
+	$lang = '' unless $lang =~ /^[a-z]{2,3}$/;
+	my $root = &vosk_root() . '/models';
+	return '' unless -d $root;
+	opendir(my $dh, $root) or return '';
+	my @names = sort grep { !/^\./ && -d "$root/$_" } readdir $dh;
+	closedir $dh;
+	return '' unless @names;
+	if (length $lang) {
+		foreach my $n (@names) {
+			return "$root/$n" if $n eq $lang || $n =~ /-$lang-/ || $n =~ /-$lang$/;
+		}
+		return '';
+	}
+	foreach my $n (@names) {
+		return "$root/$n" if $n =~ /-en-/ || $n =~ /-en$/;
+	}
+	return "$root/$names[0]";
+}
+
+sub _python_has_vosk {
+	# A venv with the wheel installed, or a system interpreter that already has
+	# it. The import is the only proof: a bare python3 is not an install.
+	my ($python) = @_;
+	return 0 unless $python;
+	require IPC::Open3;
+	require Symbol;
+	my ($in, $out, $err);
+	$err = Symbol::gensym();
+	my $pid = eval { IPC::Open3::open3($in, $out, $err, $python, '-c', 'import vosk') };
+	return 0 unless $pid;
+	close $in;
+	do { local $/; <$out> };
+	close $out;
+	do { local $/; <$err> };
+	close $err;
+	waitpid($pid, 0);
+	return $? == 0 ? 1 : 0;
+}
+
+# The Plat page and the Crew abilities both ask this; one probe a minute is
+# enough, and it keeps a page render from forking Python for every role.
+our $vosk_probe;
+sub vosk_available {
+	my $now = time;
+	return $vosk_probe->{'ok'} if $vosk_probe && $now - $vosk_probe->{'at'} < 60;
+	my $ok = 0;
+	if (-f &vosk_runner() && length &vosk_model_dir()) {
+		$ok = &_python_has_vosk(&vosk_python());
+	}
+	$vosk_probe = { at => $now, ok => $ok };
+	return $ok;
+}
+
+sub vosk_transcribe {
+	# A whole clip through Vosk. Raw audio bytes in (any container ffmpeg reads),
+	# the transcript out; '' when Vosk is not installed, its model for this
+	# language is missing, or it heard nothing.
+	my ($raw, $lang) = @_;
+	return '' unless defined $raw && length $raw;
+	my $runner = &vosk_runner();
+	my $python = &vosk_python();
+	my $model  = &vosk_model_dir($lang);
+	return '' unless -f $runner && $python && length $model;
+	require IPC::Open3;
+	require Symbol;
+	my ($in, $out, $err);
+	$err = Symbol::gensym();
+	my $pid = eval {
+		IPC::Open3::open3($in, $out, $err, $python, $runner,
+			'--model', $model, '--lang', (defined $lang ? $lang : ''));
+	};
+	return '' unless $pid;
+	binmode($in);
+	print {$in} $raw;
+	close($in);
+	my $output = do { local $/; <$out> // '' };
+	close($out);
+	close($err);
+	waitpid($pid, 0);
+	my ($line) = split /\n/, $output;
+	my $d = eval { decode_json($line) } || {};
+	return '' if $d->{'error'};
+	my $text = $d->{'text'} // '';
+	$text =~ s/\r//g;
+	$text =~ s/^\s+|\s+$//g;
+	$text =~ s/\n+/ /g;
+	return $text;
+}
+
+sub whisper_local_transcribe {
+	# whisper.cpp alone: the warm server first (the model is already loaded),
+	# then the one-shot CLI. A stock silence line is not a transcript.
+	my ($raw, $lang) = @_;
+	my $text = &whisper_server_transcribe($raw, $lang);
+	$text = &whisper_cli_transcribe($raw, $lang) unless length $text;
+	return '' unless length $text;
+	if (&subs::voice_silence_hallucination($text)) {
+		$log->info('voice: dropping a stock silence transcript ("' . $text . '")') if $log;
+		return '';
+	}
+	return $text;
+}
+
+sub transcribe_local_engine {
+	# The local engine a role value names, as a coderef, or undef for a cloud
+	# model. A new engine is one more line here and its own option on the Plat
+	# page (templates/configure/plat_setting_list.html.ep).
+	my ($value) = @_;
+	return \&vosk_transcribe          if ($value // '') eq 'local:vosk';
+	return \&whisper_local_transcribe if ($value // '') eq 'local:whisper.cpp';
+	return undef;
+}
+
 sub whisper_transcribe {
-	# Speech -> text. When the transcription role names whisper.cpp on this
-	# machine, the warm server (or the CLI) answers first and the chosen cloud
-	# model is only the fallback; with a cloud model chosen, the order is
-	# unchanged and the local path is the last resort. Raw audio bytes in (any
-	# container ffmpeg reads), the transcript out. '' on any failure or on a
-	# stock silence line, so a caller only has to check for text. $lang is the
-	# keyboard layout's language ('fr', 'hi', ...); 'auto' lets whisper decide.
+	# Speech -> text. The transcription role names a primary and a fallback,
+	# tried in that order; either may be a local engine (Vosk, whisper.cpp) or a
+	# cloud model. whisper.cpp is always the last resort when it is not already
+	# in the list, so a role that names only Vosk still has a free path when the
+	# Vosk model for the language is missing. Raw audio bytes in (any container
+	# ffmpeg reads), the transcript out. '' on any failure or on a stock silence
+	# line, so a caller only has to check for text. $lang is the keyboard
+	# layout's language ('fr', 'hi', ...); 'auto' lets the engine decide.
 	my ($raw, $lang) = @_;
 	return '' unless $raw;
 	my ($primary, $fallback) = &ai_role_models('transcription_assistant');
-	my $local_chosen = scalar( grep { ($_ // '') eq 'local:whisper.cpp' } ($primary, $fallback) );
-	my $local_text = sub {
-		my $text = &whisper_server_transcribe($raw, $lang);
-		$text = &whisper_cli_transcribe($raw, $lang) unless length $text;
-		return '' unless length $text;
-		if (&subs::voice_silence_hallucination($text)) {
-			$log->info('voice: dropping a stock silence transcript ("' . $text . '")') if $log;
-			return '';
-		}
-		return $text;
-	};
-	if ($local_chosen) {
-		my $text = $local_text->();
-		return $text if length $text;
-	}
-	foreach my $m ( grep { $_ && $_ ne 'local:whisper.cpp' } ($primary, $fallback) ) {
-		my $text = &ai_transcribe_cloud($m, $raw, $lang);
+	my @order = grep { defined && length } ($primary, $fallback);
+	my %seen;
+	foreach my $m (@order) {
+		next if $seen{$m}++;
+		my $local = &transcribe_local_engine($m);
+		my $text = $local ? $local->($raw, $lang) : &ai_transcribe_cloud($m, $raw, $lang);
 		next if $text && &subs::voice_silence_hallucination($text);
 		return $text if $text;
 	}
-	return $local_text->() unless $local_chosen;
-	return '';
+	return '' if grep { $_ eq 'local:whisper.cpp' } @order;
+	return &whisper_local_transcribe($raw, $lang);
 }
 
 sub whisper_name_transcribe {
