@@ -1052,6 +1052,20 @@ sub utility_runner() {
 			&utility_definer();
 			$log->info('utility runner: attached ' . scalar(@{$bare}) . ' job(s) the controller never reached');
 		}
+		# Name the numbers that decide the three jobs the house rides on, once per
+		# boot: the last silence had every slot populated and every routine attached,
+		# so the reason was in these values and nowhere in the logs.
+		foreach my $t ( 'remote_machine_sync', 'sync_kick', 'remote_relay' ) {
+			my $u = $gb::timeouts->{$t};
+			next unless ref $u eq 'HASH';
+			my $pool = &subs::batch_interval($gb::timeouts, $t);
+			$log->info('utility runner: ' . $t . ' toggle=' . ($u->{'toggle'} || '-')
+				. ' interval=' . ($u->{'interval'} || '-')
+				. ' pool=' . (defined $pool ? $pool : '-')
+				. ' last_run=' . ($u->{'last_run'} || '-')
+				. ' last_attempt=' . ($u->{'last_attempt'} || '-')
+				. ' subroutine=' . ($u->{'subroutine'} ? 'yes' : 'no'));
+		}
 	}
 	# The app's scheduled wake wants to know when the due work is done so it can
 	# release the CPU before its 45s backstop. It is written only after a tick
