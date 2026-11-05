@@ -232,6 +232,14 @@ my $version = 'unknown';
 if (open(my $vf, '<', "$root/VERSION")) { $version = <$vf> // 'unknown'; close $vf; $version =~ s/\s+//g }
 $version = $version_override if defined $version_override && length $version_override;
 $min_core ||= $version;
+
+# The x86_64 pin has no optional parts (the shipped app is arm64-only), so its
+# monolithic core keeps the video pair the 0.1.1702 archive carried. On aarch64
+# the pair rides in the video part.
+if ($part eq 'core' && $abi eq 'x86_64') {
+	push @{ $PART{'core'}{'tools'} }, 'ffmpeg', 'ffprobe';
+}
+
 my $part_spec = $PART{$part};
 my $default_name = $part eq 'core'
 	? "jawnrt-$abi-$version.zip"

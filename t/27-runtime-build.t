@@ -68,6 +68,8 @@ write_file_at("$src/bin/perl", "#!/bin/sh\n", 0755);
 write_file_at("$src/bin/rm", "#!/bin/sh\n", 0755);
 write_file_at("$src/bin/pkg", "#!/bin/sh\n", 0755);
 write_file_at("$src/bin/node", "#!/bin/sh\n", 0755);
+write_file_at("$src/bin/ffmpeg", "#!/bin/sh\n", 0755);
+write_file_at("$src/bin/ffprobe", "#!/bin/sh\n", 0755);
 write_file_at("$src/lib/perl5/5.42.0/aarch64-android/CORE/libperl.so", "ELF\n", 0755);
 write_file_at("$src/lib/perl5/5.42.0/Foo.pm", "package Foo; 1;\n", 0644);
 write_file_at("$src/lib/perl5/5.42.0/Foo.pod", "=head1 Foo\n", 0644);
@@ -92,6 +94,15 @@ ok(!$listed{'lib/perl5/pod/perlfunc.pod'}, 'perls own pods are pruned');
 ok($listed{'lib/libssl.so.3'}, 'a library an XS module names in its DT_NEEDED ships');
 ok(!$listed{'lib/libLLVM.so'}, 'and a heavy library nothing in the diet names does not');
 ok($listed{'share/terminfo/x/xterm'}, 'terminfo ships');
+ok(!$listed{'bin/ffmpeg'}, 'the aarch64 core leaves video to its part');
+
+# x86_64 has no optional parts in the pin, so its core must keep the pair the
+# old monolithic archive carried.
+my $xlisting = qx{"$^X" "$build" --from "$src" --abi x86_64 --list 2>&1};
+is($? >> 8, 0, 'the packer lists an x86_64 core') or diag($xlisting);
+my %xlisted = map { $_ => 1 } split /\n/, $xlisting;
+ok($xlisted{'bin/ffmpeg'}, 'the x86_64 core keeps ffmpeg');
+ok($xlisted{'bin/ffprobe'}, 'and ffprobe');
 
 # An incomplete prefix is refused, named, and non-zero - the runtime is not
 # something to ship half of.
