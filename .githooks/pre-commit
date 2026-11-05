@@ -43,6 +43,46 @@ MSG
 	fi
 fi
 
+# --- publish as the house, never as the agent -------------------------------
+# GitHub, the release feeds and every mirror speak as the house identity, so a
+# commit carrying only the agent's own name rewrites who the project is. Two
+# shapes have reached the trunk: an agent naming itself on the command line
+# (git -c user.name=Zed -c user.email=zed@jawnos.local commit) and a QA lane
+# leaving a fixture identity in the environment. Git resolves the identity
+# before this hook runs and --author, -c user.name and GIT_AUTHOR_* all show up
+# in GIT_AUTHOR_*/GIT_COMMITTER_*, so compare what git is about to write with
+# the house. Only the house tree claims the rule: the throwaway repos t/ builds
+# have neither AGENTS.md nor scripts/agent_land.pl and keep their own fixtures.
+if [ "${JAWNOS_ALLOW_FOREIGN_COMMIT:-0}" != "1" ] &&
+   [ -f AGENTS.md ] && [ -f scripts/agent_land.pl ]; then
+	house_name='Jonathan Ferwerda'
+	house_mail='jonathan.ferwerda@outlook.com'
+	foreign=''
+	for ident in "$(git var GIT_AUTHOR_IDENT 2>/dev/null)" \
+	             "$(git var GIT_COMMITTER_IDENT 2>/dev/null)"; do
+		[ -n "$ident" ] || continue
+		ident_name=${ident%% <*}
+		ident_mail=${ident#*<}
+		ident_mail=${ident_mail%%>*}
+		if [ "$ident_name" != "$house_name" ] || [ "$ident_mail" != "$house_mail" ]; then
+			foreign=$ident
+		fi
+	done
+	if [ -n "$foreign" ]; then
+		cat >&2 <<MSG
+commit refused: git would record
+    $foreign
+but this checkout publishes as $house_name <$house_mail>.
+
+JawnOS is always published as Jonathan. Drop any -c user.name=... and
+-c user.email=... from the command, and any GIT_AUTHOR_*/GIT_COMMITTER_* from
+the environment: a plain git commit uses the house identity.
+Importing somebody else's patch on purpose? Set JAWNOS_ALLOW_FOREIGN_COMMIT=1.
+MSG
+		exit 1
+	fi
+fi
+
 command -v perl >/dev/null 2>&1 || exit 0
 
 # The repository index is generated from the tree and read by the nightly agent.

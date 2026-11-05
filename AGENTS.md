@@ -190,8 +190,9 @@ translatable in the same change:
 - **Cap parallel jobs on this shared box:** `pio run -j 4`, `gradle --max-workers=4`, `make -j4`.
 - **Land once, then stop.** Every task ends by landing: commit in your worktree (`git add -p`), then
   `perl ~/jawnos/scripts/agent_land.pl` — bumps `VERSION`, tests once, pushes, restarts. A refusal ends the
-  attempt: report it, never retry in a loop. Hot files and worktrees: `docs/AGENTS-concurrency.md`.
-  Alone: `version_bump.pl` → commit `v<version> - <summary>` → `git push` → `restart.pl`.
+  attempt: report it, never retry in a loop. Hot files, worktrees and the commit identity:
+  `docs/AGENTS-concurrency.md`. Alone: `version_bump.pl` → commit `v<version> - <summary>` → `git push`
+  → `restart.pl`.
 
 ---
 

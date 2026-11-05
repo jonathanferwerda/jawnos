@@ -21,6 +21,27 @@ every landing touches:
   150-second wait for a verdict; ten agents asking at once queue, time out and report failures for
   work that was fine. Only the lander restarts.
 
+## The commit identity
+
+Every commit in this tree is authored **and** committed as
+`Jonathan Ferwerda <jonathan.ferwerda@outlook.com>`. GitHub, the release feeds and every mirror speak
+as that identity; a commit carrying an agent's own name puts a stranger on the project's history.
+
+Two shapes have reached the trunk: an agent naming itself on the command line
+(`git -c user.name=Zed -c user.email=zed@jawnos.local commit`) and a QA lane carrying a fixture
+identity out of a test (`JawnOS test <test@jawnos.invalid>`). Both are refused by
+`.githooks/pre-commit` before the commit exists: it compares the identity git resolved — from `-c`,
+`--author`, or `GIT_AUTHOR_*`/`GIT_COMMITTER_*` — with the house identity and stops anything else.
+The fix is a plain `git commit`: never pass `-c user.name`, `-c user.email` or `--author`. The
+checkout's own config is the house identity; a fresh clone sets it once with
+`git config user.name 'Jonathan Ferwerda'` and
+`git config user.email 'jonathan.ferwerda@outlook.com'`.
+
+The refusal names `JAWNOS_ALLOW_FOREIGN_COMMIT=1`, the escape for importing somebody else's patch
+on purpose. It is not for an agent's own work. The rule is claimed only by the house tree (it needs
+`AGENTS.md` and `scripts/agent_land.pl`), so the throwaway repos `t/` builds still commit as their
+own fixtures.
+
 ## The gate also closes the corruption
 
 Two failures have made agents spin after their work was done, and the gate now refuses
