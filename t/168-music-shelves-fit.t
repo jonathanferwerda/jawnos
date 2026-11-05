@@ -1,9 +1,9 @@
-# tests-for: templates/apps/music/music.html.ep public/js/music.js
+# tests-for: templates/apps/music/music.html.ep public/js/music.js public/css/music.css
 # covers:    The artists and albums shelves are the two halves of the Music
 #            window. They used to be 50% content-box boxes, so their padding and
 #            borders pushed the album shelf past the right edge once the window
-#            was made slimmer; the two shelves are now pinned by left/right and
-#            may only be resized in height.
+#            was made slimmer; a narrow window now stacks them full width, and
+#            the saved band is never read back from a stacked shelf.
 
 use strict;
 use warnings;
@@ -31,6 +31,7 @@ use RepoSource;
 my $root = repo_root();
 my $tpl  = read_file("$root/templates/apps/music/music.html.ep");
 my $js   = js_source('public/js/music.js');
+my $css  = read_file("$root/public/css/music.css");
 
 my ($artists) = $tpl =~ /^(.*id="music_artists".*)$/m;
 my ($albums)  = $tpl =~ /^(.*id="music_albums".*)$/m;
@@ -60,5 +61,31 @@ like($resizable, qr/\$\('#music_albums'\)\.height\(j\.size\.height\);/,
 	'a vertical drag still keeps the two shelves the same height');
 like($resizable, qr/var newTop = \(\$\('#music_albums'\)\.height\(\) \+ 100\) \+ 'px';/,
 	'and still moves the track list under them');
+
+# --- a narrow window stacks the shelves ------------------------------------
+like($tpl, qr/--music-shelf-height:<%= \$shelf_height %>px;/,
+    'the window carries the shelf band as a custom property');
+like($css, qr/\@container \(max-width: 440px\) \{/,
+    'a narrow Music container has its own draw');
+like($css, qr/#music:not\(\[phone_layout="yes"\]\) #music_artists,\s*\n\s*#music:not\(\[phone_layout="yes"\]\) #music_albums \{[^}]*left: 0 !important;[^}]*right: 0 !important;[^}]*height: var\(--music-stack-shelf\) !important;/s,
+    'both shelves take the full width and the split height');
+like($css, qr/--music-stack-shelf: max\(90px, calc\(\(var\(--music-shelf-height, 125px\) - 6px\) \/ 2\)\);/,
+    'the band is split with a floor so neither shelf is a single row');
+like($css, qr/#music:not\(\[phone_layout="yes"\]\) #music_albums \{\s*\n\s*top: calc\(100px \+ var\(--music-stack-shelf\) \+ 6px\) !important;/,
+    'the albums sit under the artists');
+like($css, qr/#music:not\(\[phone_layout="yes"\]\) #music_files \{[^}]*top: calc\(100px \+ var\(--music-stack-shelf\) \+ 6px \+ var\(--music-stack-shelf\)\) !important;[^}]*height: auto !important;/s,
+    'the list starts under both shelves and lets its foot decide its height');
+like($css, qr/#music:not\(\[phone_layout="yes"\]\) #music_artists \.ui-resizable-handle,\s*\n\s*#music:not\(\[phone_layout="yes"\]\) #music_albums \.ui-resizable-handle \{ display: none; \}/,
+    'the shelf handles are put away while stacked');
+
+# --- and the stacked boxes are never what the band remembers --------------
+like($js, qr/function musicShelfBand\(\) \{/,
+    'the band has its own reader');
+like($js, qr/getComputedStyle\(el\)\.getPropertyValue\('--music-shelf-height'\)/,
+    'it reads the measured band, not a stacked box');
+like($js, qr/music_albums: \{ bottom: \$\('#music_albums'\)\.css\('top'\), height: musicShelfBand\(\) \}/,
+    'the player cache saves the band');
+like($js, qr/music_albums: \{ bottom: \$\('#music_albums'\)\.css\('top'\), height: band, scrollTop:/,
+    'the search save records the band');
 
 done_testing();

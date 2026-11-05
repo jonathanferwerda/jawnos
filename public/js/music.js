@@ -2164,6 +2164,18 @@ function musicConfigDraggable() {
 function musicPhoneLayout() {
 	return $('#music').attr('phone_layout') == 'yes';
 }
+// The shelf band is the height the two shelves share when side by side. A
+// narrow window splits that band between them, so the boxes there are shorter
+// than the band and must not be what a save or a reopen remembers.
+function musicShelfBand() {
+	var band = 0;
+	var el = $('#music')[0];
+	if (el) {
+		try { band = parseFloat(getComputedStyle(el).getPropertyValue('--music-shelf-height')); } catch (e) { band = 0; }
+	}
+	if (!(band > 0)) { band = parseFloat($('#music_albums').height()) || 125; }
+	return band;
+}
 // A phone's WebView is paused by the app when its activity goes to the
 // background (the screen turning off, the app being switched away from), and
 // that pause takes the player's timers - and the next track - with it. The
@@ -2411,15 +2423,19 @@ async function musicInit(method) {
 			tree.sound.pause();
 		}
 		if (pd.resizes && !musicPhoneLayout()) {
+			// the saved height is the shelf band, not the box a stacked shelf wears:
+			// a narrow window splits that band between the two shelves and the
+			// container query owns their boxes, so take the measure from the save
+			var band = parseFloat(pd.resizes.music_albums.height) || musicShelfBand();
 			$('#music_albums').height(pd.resizes.music_albums.height);
 			$('#music_albums').scrollTop(pd.resizes.music_albums.scrollTop);
 			$('#music_artists').height(pd.resizes.music_artists.height);
 			$('#music_albums').scrollTop(pd.resizes.music_albums.scrollTop);
-			$('#music_files').css({ 'top': ($('#music_albums').height() + 100) + 'px' });
+			$('#music').css('--music-shelf-height', band + 'px');
+			$('#music_files').css({ 'top': (band + 100) + 'px' });
 			var i = $('#interface').height();
 			var mc = $('#music').find('.media_controls').height();
-			var mm = $('#music_albums').height();
-			$('#music_files').height($('#music').height() - (mm + mc + i));
+			$('#music_files').height($('#music').height() - (band + mc + i));
 		}
 		playerCacheSaver();
 		musicVisualApply();
@@ -2453,6 +2469,8 @@ async function musicInit(method) {
 				else if (p.target.id == 'music_albums') {
 					$('#music_artists').height(j.size.height);
 				}
+				// the new band width is what a narrow window will split
+				$('#music').css('--music-shelf-height', $('#music_albums').height() + 'px');
 				var newTop = ($('#music_albums').height() + 100) + 'px';
 				$('#music_files').css({ 'top': newTop });
 				var i = $('#interface').height();
@@ -2503,8 +2521,8 @@ function playerCacheSaver(type, force) {
 			theatre_mode: $('#video').attr('theatre_mode'), 
 			unlocked: unlocked,
 			resizes: {
-				music_albums: { bottom: $('#music_albums').css('top'), height: $('#music_albums').height() },
-				music_artists: { bottom: $('#music_artists').css('top'), height: $('#music_albums').height() },
+				music_albums: { bottom: $('#music_albums').css('top'), height: musicShelfBand() },
+				music_artists: { bottom: $('#music_artists').css('top'), height: musicShelfBand() },
 				music_files: { top: $('#music_files').css('top'), height: $('#music_files').height() }
 			},
 			type: $('#video').attr('type'),
@@ -3399,10 +3417,11 @@ function musicInformation(file) {
 }
 
 function musicWindowResizes() {
+	var band = musicShelfBand();
 	var resizes = {
-		music_albums: { bottom: $('#music_albums').css('top'), height: $('#music_albums').height(), scrollTop: $('#music_albums').scrollTop() },
-		music_artists: { bottom: $('#music_artists').css('top'), height: $('#music_albums').height(), scrollTop: $('#music_artists').scrollTop() },
-		music_files: { top: $('#music_files').css('top'), height: $('#music_files').height(), scrollTop: $('#music_files').scrollTop() }
+		music_albums: { bottom: $('#music_albums').css('top'), height: band, scrollTop: $('#music_albums').scrollTop() },
+		music_artists: { bottom: $('#music_artists').css('top'), height: band, scrollTop: $('#music_artists').scrollTop() },
+		music_files: { top: $('#music_files').css('top'), height: $('#music_files').height() },
 	};
 	return resizes;
 }
@@ -3851,6 +3870,9 @@ function searchMusic(data) {
 			$('#music_albums').scrollTop(albumScroll.top).scrollLeft(albumScroll.left);
 			$('#music_artists').scrollTop(artistScroll.top).scrollLeft(artistScroll.left);
 			musicInit('search');
+			// the search just sent the shelf band; the replaced shelves cannot be
+			// trusted for it while a narrow window has them stacked
+			$('#music').css('--music-shelf-height', (parseFloat(resizes.music_albums.height) || 125) + 'px');
 
 			if (configOpen == true) {
 				musicConfigShow($('#music_configuration'));

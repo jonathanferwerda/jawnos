@@ -40,6 +40,12 @@ user for the exact file/folder/name. A wrong guess costs far more tokens than a 
 - Master plumbing, verify manifest, restart record, socket rules: `docs/AGENTS-restart.md`.
 
 
+## Many agents at once
+
+Worktree per task (`git worktree add .worktrees/<task> -b agent/<task> origin/main`), never the primary
+checkout; land with `perl scripts/agent_land.pl`, never push or restart by hand. `docs/AGENTS-concurrency.md`.
+
+
 ## Crash-resilient agent work
 
 The Zed panel keeps every byte it is shown; zram + earlyoom only slow the crash. Protect the work, not the chat.
@@ -94,12 +100,10 @@ The Zed panel keeps every byte it is shown; zram + earlyoom only slow the crash.
   `lib/JawnOS/Domain/Loader.pm` (`t/91`), a route action its row in `lib/JawnOS/Routes/` (`t/58`), and
   a new app page a help topic with `app => <name>` (`t/11`).
 - **Cap parallel jobs on this shared box:** `pio run -j 4`, `gradle --max-workers=4`, `make -j4`.
-- **Bump the version on every push.** Run `perl scripts/version_bump.pl` and prefix the commit subject
-  with it: `v<version> - <summary>`. Verify with `cat VERSION` before `git push`.
-- **Commit as you go**, staging only your own hunks (`git add -p`).
-- **Finishing routine — ALWAYS run it: bump → commit → push → restart.** Every piece of work ends this
-  way, without being asked: `perl scripts/version_bump.pl`, stage only your own hunks, commit as
-  `v<version> - <summary>`, `git push`, then `perl scripts/restart.pl --reason "v<version> - <summary>"`.
-  Do it at the end of every task unless the user explicitly says not to.
+- **Land, never restart by hand.** Every task ends by landing, without being asked: commit in your
+  worktree (staging only your own hunks, `git add -p`), then `perl scripts/agent_land.pl` — it bumps
+  `VERSION`, runs the suite, pushes and restarts, so the dev server is always newest. Worktree per task,
+  one lander, hot files first: `docs/AGENTS-concurrency.md`. Alone, `version_bump.pl` → commit
+  `v<version> - <summary>` → `git push` → `restart.pl` is the same gate by hand.
 
 ---

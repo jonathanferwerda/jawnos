@@ -445,6 +445,37 @@ body.dark_theme .music_cfg_drawer {
 	box-shadow: var(--music-shadow);
 }
 #music_artists br, #music_albums br { display: none; }
+/* A narrow Music window stacks the shelves: two half-width columns leave a
+   sliver for each name, so each shelf takes the whole width and the track list
+   moves down under the pair. The shelf band keeps its saved height as the
+   measure and is split between the two, with a floor so neither becomes a
+   single row; the drag handles are put away because one band height cannot be
+   both shelves' height at once. The list's height is left to its top and foot
+   so the extra shelf does not run under the player. */
+@container (max-width: 440px) {
+	#music:not([phone_layout="yes"]) {
+		--music-stack-shelf: max(90px, calc((var(--music-shelf-height, 125px) - 6px) / 2));
+	}
+	#music:not([phone_layout="yes"]) #music_artists,
+	#music:not([phone_layout="yes"]) #music_albums {
+		left: 0 !important;
+		right: 0 !important;
+		box-sizing: border-box;
+		height: var(--music-stack-shelf) !important;
+	}
+	#music:not([phone_layout="yes"]) #music_artists {
+		top: 100px !important;
+	}
+	#music:not([phone_layout="yes"]) #music_albums {
+		top: calc(100px + var(--music-stack-shelf) + 6px) !important;
+	}
+	#music:not([phone_layout="yes"]) #music_files {
+		top: calc(100px + var(--music-stack-shelf) + 6px + var(--music-stack-shelf)) !important;
+		height: auto !important;
+	}
+	#music:not([phone_layout="yes"]) #music_artists .ui-resizable-handle,
+	#music:not([phone_layout="yes"]) #music_albums .ui-resizable-handle { display: none; }
+}
 #music .music_artist,
 #music .music_album {
 	display: block;
