@@ -286,17 +286,28 @@ sub suds_grabber {
 			&vault_seed($suds, 1);
 		}
 		else {
-			# nothing local validates: a linked machine can hand the key over
-			# (sealed to a one-time secret, over the signed peer rail)
-			my $pulled = eval { &vault_pull_from_peer() };
-			if ($pulled && &suds_current($pulled)) {
-				$suds = $pulled;
+			# A live image writes its unlock code beside the house on first
+			# boot. The live-local session never passes through login_gate, so
+			# this file is the only thing that can seed the vault there; the
+			# canary judges it, and a stale or wrong file falls through.
+			my $local = &local_code_suds();
+			if ($local) {
+				$suds = $local;
 				&vault_seed($suds, 1);
 			}
-			elsif ($vault || $legacy) {
-				# no canary to judge by: keep the best thing this machine has
-				$suds = $vault || $legacy;
-				&vault_seed($suds, 1) unless $vault;
+			else {
+				# nothing local validates: a linked machine can hand the key over
+				# (sealed to a one-time secret, over the signed peer rail)
+				my $pulled = eval { &vault_pull_from_peer() };
+				if ($pulled && &suds_current($pulled)) {
+					$suds = $pulled;
+					&vault_seed($suds, 1);
+				}
+				elsif ($vault || $legacy) {
+					# no canary to judge by: keep the best thing this machine has
+					$suds = $vault || $legacy;
+					&vault_seed($suds, 1) unless $vault;
+				}
 			}
 		}
 		if ($suds) {

@@ -745,6 +745,23 @@ sub legacy_suds {
 	return ($suds, $ticket->{'server_time'});
 }
 
+# The live image's own key. firstboot writes the unlock code beside the house
+# (~/UNLOCK-CODE.txt, mode 0600) so the machine opens without a gate; the code
+# is the level-1 canary's own secret. The live-local session never passes
+# through login_gate, so unless this is read the vault is never seeded there and
+# every sealed write - the Exit backup above all - has no secret. suds_current
+# judges the candidate, so a stale or wrong file is never a key.
+sub local_code_suds {
+	my $path = &home('~/UNLOCK-CODE.txt');
+	return undef unless -e $path;
+	my $code = eval { read_file($path) };
+	return undef unless defined $code && length $code;
+	$code =~ s/\s+//g;
+	return undef unless $code =~ /\A[0-9]{4,12}\z/;
+	return undef unless &suds_current($code);
+	return $code;
+}
+
 # The suds, resolved server-side. Sessions carry only suds_id now; nothing a
 # client holds can produce the key.
 sub session_suds {
