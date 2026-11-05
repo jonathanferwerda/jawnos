@@ -244,7 +244,7 @@ my @bins = @{ $meta->{'bins'} || [] };
 ok((grep { $_ eq 'bin/magick' } @bins), 'part manifest names its executable');
 my $z = Archive::Zip->new;
 is($z->read($part_out), AZ_OK, 'the part archive reads back');
-my %in_zip = map { ('usr/' . $_->fileName) => 1 } grep { !$_->isDirectory } $z->members;
+my %in_zip = map { ('usr/' . $_->fileName) => 1 } grep { !$_->isDirectory && $_->fileName !~ m{^licenses/} } $z->members;
 my %in_meta = map { $_ => 1 } @{ $meta->{'provides'} || [] };
 is_deeply([ sort keys %in_meta ], [ sort keys %in_zip ], 'provides is exactly the archive');
 

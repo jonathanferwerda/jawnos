@@ -61,6 +61,8 @@ use warnings;
 use Getopt::Long qw(GetOptions);
 use JSON::PP ();
 use FindBin;
+use Cwd qw(abs_path);
+use File::Copy qw(copy);
 use lib "$FindBin::Bin/../lib";
 use JawnOS::Packages;
 
@@ -304,10 +306,36 @@ sub have_command {
 }
 
 # --- extras: checks and installers ------------------------------------------
+sub piper_offer {
+	# The bundled Piper carries espeak-ng (GPL-3.0-or-later), so the source
+	# offer and the GPL text travel with the binary, not only in the repo.
+	# Idempotent and non-fatal: a read-only install keeps working without it.
+	return unless -d $piper_dir;
+	my $source = "$piper_dir/SOURCE.txt";
+	unless (-f $source) {
+		if (open(my $fh, '>', $source)) {
+			my @offer = (
+				'Piper 1.2.0 and the libraries bundled with it come from:',
+				'  https://github.com/rhasspy/piper/releases/tag/2023.11.14-2',
+				'',
+				'That release also carries espeak-ng 1.52.0, which is GPL-3.0-or-later.',
+				'Its source is:',
+				'  https://github.com/espeak-ng/espeak-ng/tree/1.52.0',
+				'',
+				'The GPL-3.0 text is in COPYING beside this file.',
+			);
+			print $fh join("\n", @offer), "\n";
+			close $fh;
+		}
+	}
+	my $gpl = "$FindBin::Bin/../docs/licenses/runtime/GPL-3.0.txt";
+	copy($gpl, "$piper_dir/COPYING") if -f $gpl && !-f "$piper_dir/COPYING";
+}
+
 sub have_piper {
-	return 1 if which('piper');
-	return 1 if -x "$piper_dir/piper";
-	return 0;
+	my $have = (which('piper') || -x "$piper_dir/piper") ? 1 : 0;
+	piper_offer() if $have;
+	return $have;
 }
 
 sub piper_arch {
@@ -348,6 +376,7 @@ sub install_piper {
 		return;
 	}
 	unlink $tmp;
+	piper_offer();
 	print "  piper: installed to $piper_dir\n" if -x "$piper_dir/piper";
 	print "  piper: installed (no binary produced?)\n" unless -x "$piper_dir/piper";
 }

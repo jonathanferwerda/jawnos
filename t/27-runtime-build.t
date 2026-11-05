@@ -10,6 +10,7 @@ use Test::More;
 use File::Temp qw(tempdir);
 use File::Path qw(make_path);
 use IO::Uncompress::Unzip qw($UnzipError);
+use File::Slurp qw(read_file);
 
 # M3 (docs/roadmap-handoff.md): the runtime a clean install unpacks instead of
 # the Termux bootstrap. scripts/runtime_build.pl decides what ships and
@@ -165,6 +166,18 @@ is($modes->{'bin/perl'}, 0100755, 'an executable keeps its mode (100755)');
 is($modes->{'lib/perl5/5.42.0/Foo.pm'}, 0100644, 'a module keeps its mode (100644)');
 ok(!$modes->{'bin/pkg'}, 'the archive carries no package manager');
 ok(!$modes->{'lib/perl5/pod/perlfunc.pod'}, 'the archive carries no pods');
+
+# The runtime prefix has no share/doc, so the packer injects the notices from
+# the tree: a device that downloads the archive gets the licences with it.
+ok($modes->{'licenses/NOTICE.md'}, 'the archive carries the runtime notices');
+ok($modes->{'licenses/GPL-3.0.txt'}, 'and the GPL text');
+
+# The installed Piper bundle carries the espeak-ng source offer for the same
+# reason: the binary is redistributed, the offer must travel with it.
+my $deps_src = read_file("$root/scripts/jawnos_deps.pl");
+like($deps_src, qr/sub piper_offer/, 'the piper installer has a source-offer step');
+like($deps_src, qr/SOURCE\.txt/, 'it writes SOURCE.txt');
+like($deps_src, qr/COPYING/, 'and a COPYING');
 
 # --- symlinks ---------------------------------------------------------------
 my $links = tempdir(CLEANUP => 1);

@@ -1,0 +1,14 @@
+Firmware model notices
+
+`jw/vad_model.h` is the `vad.tflite` model from the ESPHome micro_wake_word
+model collection (v2):
+  https://github.com/esphome/micro-wake-word-models
+Copyright 2024-2026 Open Home Foundation. Licensed under the Apache License,
+Version 2.0; see `jw/Apache-2.0.txt`.
+
+`jw/hey_jawn_model.h` and `jw/jawn_do_model.h` are JawnOS-trained models (the
+recipe is `docs/jawn_do_colab.ipynb`), first-party under the BSD-2-Clause
+licence in the tree's `LICENSE`.
+
+The training framework (microWakeWord) and the on-device runtime (TensorFlow
+Lite Micro) are Apache-2.0.

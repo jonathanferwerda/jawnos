@@ -16,6 +16,8 @@ use strict;
 use warnings;
 use IO::Compress::Zip qw($ZipError);
 use File::Find ();
+use FindBin;
+use Cwd qw(abs_path);
 
 my ($stage, $out, $rewrite) = @ARGV;
 die "usage: runtime_zip.pl <stage dir> <out.zip> [old=new]\n" unless defined $stage && defined $out;
@@ -46,6 +48,22 @@ File::Find::find({
 		push @entries, $rel;
 	},
 }, $stage);
+
+# The runtime is a stripped Termux prefix, so it carries no share/doc of its
+# own. The notices and the licence texts travel with the archive instead, from
+# the tree's docs/licenses/runtime/ directory. A build run outside a checkout
+# (a bare stage directory) simply gets no notices, which the caller can see.
+my %extra;
+my $licence_dir = abs_path("$FindBin::Bin/../docs/licenses/runtime");
+if (defined $licence_dir && -d $licence_dir) {
+	foreach my $f (sort glob("$licence_dir/*")) {
+		next unless -f $f;
+		(my $base = $f) =~ s{.*/}{};
+		$extra{"licenses/$base"} = $f;
+	}
+}
+my %seen = map { $_ => 1 } @entries;
+push @entries, sort grep { !$seen{$_} } keys %extra;
 @entries = sort @entries;
 die "runtime_zip: nothing to pack in $stage\n" unless @entries;
 
@@ -64,7 +82,7 @@ sub mode_of {
 my $zip;
 my $count = 0;
 foreach my $rel (@entries) {
-	my $path = "$stage/$rel";
+	my $path = $extra{$rel} || "$stage/$rel";
 	my $mode = mode_of($path);
 	my $time = (lstat $path)[9] || $FLOOR;
 	$time = $FLOOR if $time < $FLOOR;

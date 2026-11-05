@@ -38,12 +38,12 @@ runtime archives carry their own licences (see 2.15).
 | 2.1c | ↳ piper-phonemize 1.2.0 | https://github.com/rhasspy/piper-phonemize | **MIT** | `voices/piper/libpiper_phonemize.so.1.2.0`, `piper_phonemize` |
 | 2.1d | ↳ libtashkeel diacritization model | https://github.com/mush42/libtashkeel | **MIT** (model artifact — see note) | `voices/piper/libtashkeel_model.ort` |
 | 2.2 | Piper voice models `.onnx` (+ `.onnx.json`) | https://huggingface.co/rhasspy/piper-voices | **MIT** (repo-level; per-voice notes below) | `voices/*.onnx` (blob store) |
-| 2.3 | Noto Sans Bold webfonts (C headers) | https://github.com/notofonts/noto-fonts | **OFL-1.1** | `jt/NotoSansBold15.h`, `jt/NotoSansBold36.h` |
-| 2.4 | Montserrat clock digits (C source) | https://github.com/JulietaUla/Montserrat | **OFL-1.1** | `jw/fonts/clock_font_72.c` |
-| 2.5 | Montserrat fonts in LVGL | https://github.com/JulietaUla/Montserrat | **OFL-1.1** (LVGL itself is MIT) | used via `lv_font_montserrat_*` in `jw/jw.ino` |
-| 2.6 | "Final Frontier" display font | unknown | **unverified** | `jt/Final_Frontier_28.h` |
-| 2.7 | "Latin + Hiragana" font | unknown | **unverified** | `jt/Latin_Hiragana_24.h` |
-| 2.8 | "Unicode Test" font | unknown | **unverified** | `jt/Unicode_Test_72.h` |
+| 2.3 | Noto Sans Bold webfonts (C headers) | https://github.com/notofonts/noto-fonts | **OFL-1.1** | `jt/NotoSansBold15.h`, `jt/NotoSansBold36.h`; text in `jt/OFL-NotoSans.txt` |
+| 2.4 | Montserrat clock digits (C source) | https://github.com/JulietaUla/Montserrat | **OFL-1.1** | `jw/fonts/clock_font_72.c`; text in `jw/OFL-Montserrat.txt` |
+| 2.5 | Montserrat fonts in LVGL | https://github.com/JulietaUla/Montserrat | **OFL-1.1** (LVGL itself is MIT) | used via `lv_font_montserrat_*` in `jw/jw.ino`; text in `jw/OFL-Montserrat.txt` |
+| 2.6 | Final_Frontier_28 (TFT_eSPI smooth font) | https://github.com/Bodmer/TFT_eSPI (`examples/Smooth Fonts/FLASH_Array/Unicode_test`) | **BSD-2-Clause** (FreeBSD) | `jt/Final_Frontier_28.h`; text in `jt/TFT_eSPI-LICENSE.txt` |
+| 2.7 | Latin_Hiragana_24 (TFT_eSPI smooth font) | same TFT_eSPI example | **BSD-2-Clause** (FreeBSD) | `jt/Latin_Hiragana_24.h`; text in `jt/TFT_eSPI-LICENSE.txt` |
+| 2.8 | Unicode_Test_72 (TFT_eSPI smooth font) | same TFT_eSPI example | **BSD-2-Clause** (FreeBSD) | `jt/Unicode_Test_72.h`; text in `jt/TFT_eSPI-LICENSE.txt` |
 | 2.9 | jQuery 3.6.1 | https://jquery.com | **MIT** | `public/js/jquery.js` |
 | 2.10 | jQuery UI 1.13.2 | https://jqueryui.com | **MIT** | `public/js/jquery-ui.js`, `public/css/jquery-ui.css`, `public/css/images/ui-icons_*.png` |
 | 2.11 | jQuery UI Touch Punch 0.2.3 | https://github.com/furf/jquery-ui-touch-punch | **MIT** or **GPL-2.0** (dual) | `public/js/jquery.ui.touch-punch.min.js` |
@@ -70,10 +70,11 @@ corresponds to the `rhasspy/piper` release asset
   MIT.
 - The binary and its library/data files are carried as blobs (like the APKs), not committed
   to git; only `say_piper_binary()` in `subroutines.pl` and the sync loop reference them.
-- Because espeak-ng is **GPL-3.0-or-later**, a distributor of this bundle must also make
-  its source available. The version is 1.52.0:
-  https://github.com/espeak-ng/espeak-ng/tree/1.52.0. Carry that offer, and the GPL text,
-  with the blob.
+- Because espeak-ng is **GPL-3.0-or-later**, the source offer travels with the
+  bundle: `scripts/jawnos_deps.pl` writes `SOURCE.txt` and a `COPYING` (the
+  GPL-3.0 text) beside the installed piper binary (`piper_offer()`), and the
+  same text is in `docs/licenses/runtime/GPL-3.0.txt`. The source is espeak-ng
+  1.52.0: https://github.com/espeak-ng/espeak-ng/tree/1.52.0.
 
 ### 2.2 Piper voice models
 
@@ -98,6 +99,10 @@ never NC or ND). Two earlier voices were dropped for exactly this reason:
 non-commercial). A voice removed from `say_voices()` is deleted from `voices/` and pruned
 from every device by `voice_sync`.
 
+The two CC BY 4.0 voices require attribution: the dataset, author, and licence
+are recorded in `docs/voice-attribution.md`, and `voice_sync` writes the same
+notice to `~/jawnos/voices/ATTRIBUTION.md` on every device.
+
 ### 2.3–2.5 Fonts
 
 - `jt/NotoSansBold15.h` and `jt/NotoSansBold36.h` are the Noto Sans family (Bold),
@@ -109,19 +114,15 @@ from every device by `voice_sync`.
   OFL-1.1**; the LVGL library that bundles the converted tables is **MIT** and is fetched
   by the PlatformIO build (see the dependency note below).
 
-### 2.6–2.8 Unverified fonts
+### 2.6–2.8 TFT_eSPI smooth fonts
 
-`jt/Final_Frontier_28.h`, `jt/Latin_Hiragana_24.h` and `jt/Unicode_Test_72.h` are bitmap
-font tables in the same converted-header format, but their headers contain **only generic
-conversion instructions** (a pointer to the tomeko.net hex tool) — no font name, author or
-licence. They cannot be attributed confidently from the repo contents alone:
-
-- `Final_Frontier_28.h` — a display font named "Final Frontier"; source/licence **unknown**.
-- `Latin_Hiragana_24.h` — a font covering Latin + Hiragana; source/licence **unknown**.
-- `Unicode_Test_72.h` — a broad-coverage test font; source/licence **unknown**.
-
-**Action:** trace where each was obtained (they came in with the initial commit) and replace
-this with the real licence, or replace the font with a clearly-licensed one.
+The three smooth-font headers are **byte-identical** to the fonts in TFT_eSPI's
+`examples/Smooth Fonts/FLASH_Array/Unicode_test/` example (the md5s match
+upstream): `Final_Frontier_28.h`, `Latin_Hiragana_24.h` and
+`Unicode_Test_72.h`. TFT_eSPI is **BSD-2-Clause** (its “FreeBSD License”),
+Copyright (c) Bodmer; the text travels with the sketch as
+`jt/TFT_eSPI-LICENSE.txt`. The headers' own comments name only the vlw-to-array
+tool, which is why they looked unattributed.
 ### 2.9–2.13 JavaScript libraries
 
 These are loaded by `templates/layouts/manager.html.ep:13,205-209`; the gate,
@@ -162,13 +163,13 @@ Each file's copyright line, followed by the shared MIT text:
 The watch firmware also embeds model weights as C headers, generated from `.tflite` files
 under `~/jawnos-fw/models/`:
 
-- `jw/vad_model.h`, `jw/hey_jawn_model.h`, `jw/jawn_do_model.h` — microWakeWord-format
-  models. The **microWakeWord** framework (https://github.com/kahrendt/microWakeWord) is
-  **Apache-2.0**, and the on-device runtime, TensorFlow Lite Micro
-  (https://github.com/tensorflow/tflite-micro), is **Apache-2.0**. `hey_jawn` / `jawn_do`
-  are JawnOS-trained (recipe in `docs/training-hey-jawn.md`). The **licence of the model
-  artifacts themselves is unverified here** — flag for review if this document is meant to
-  be exhaustive.
+- `jw/vad_model.h` — the `vad.tflite` model from
+  https://github.com/esphome/micro-wake-word-models (v2), **Apache-2.0**; the text is
+  `jw/Apache-2.0.txt`, and the attribution is `jw/NOTICE.txt`.
+- `jw/hey_jawn_model.h`, `jw/jawn_do_model.h` — **JawnOS-trained** models (the Colab
+  recipe is `docs/jawn_do_colab.ipynb`), first-party under BSD-2. The training framework,
+  microWakeWord (https://github.com/kahrendt/microWakeWord), and the on-device runtime,
+  TensorFlow Lite Micro (https://github.com/tensorflow/tflite-micro), are **Apache-2.0**.
 
 ### 2.14 JawnOS Android host app (GPL-3.0-only)
 
@@ -212,6 +213,11 @@ release at the version named in the pin
 archive is only compliant while its exact versions can be rebuilt from those
 recipes.
 
+Every archive built by `scripts/runtime_zip.pl` copies
+`docs/licenses/runtime/` into `licenses/` at the archive root, because the
+runtime is a stripped Termux prefix with no `share/doc` of its own. The notice
+there names each component and the text to read.
+
 ### 2.16 First-party assets recorded for review
 
 These are JawnOS's own works (BSD-2), listed because they are the assets most
@@ -229,26 +235,21 @@ often mistaken for third-party material:
   `public/images/palette/*`, `public/images/jonathans/*` — original hand-drawn
   artwork.
 
-### 2.17 Open licence actions
+### 2.17 Residual notes
 
-- `voices/piper/` redistributes espeak-ng (GPL-3.0-or-later) as a blob: make the
-  1.52.0 source available with it (see 2.1).
-- `jawnrt-*.zip` carries no licence texts. Add a `licenses/` directory to the
-  archive (the list is in 2.15) so a device that downloads the runtime has the
-  notices, not only the APK.
-- `jt/Final_Frontier_28.h`, `jt/Latin_Hiragana_24.h` and `jt/Unicode_Test_72.h`
-  have no traceable licence (2.6–2.8): replace them or record the source.
-- Noto Sans and Montserrat are OFL-1.1; the firmware should ship the OFL text and
-  the fonts' copyright notices next to the generated headers.
-- `en_US-libritts_r-medium` and `en_GB-alba-medium` are CC BY 4.0: keep the
-  attribution (dataset, author, licence URL) with the voice blobs and in the
-  About/credits, not only in this file.
-- `app/dev_keystore.jks` is tracked in the public app repo. It is the standard
-  debug keystore, not the release key, but it should be untracked and ignored;
-  the release key lives in `.secrets/jawnos-release.jks` and is gitignored.
-- The currently published APK (0.118.282) predates the `sourceCommit` field; its
-  exact source is only the `jawnos` branch, not a pinned commit. Republish the
-  newest build (0.118.285) to close it.
+- The runtime archives published before this change have no `licenses/`
+  directory; the next runtime build carries it. Their components and licences
+  are listed in the APK's `assets/licenses/NOTICE.md` and in 2.15.
+- The three TFT_eSPI smooth fonts are covered by TFT_eSPI's FreeBSD licence, but
+  the typefaces they were converted from are not named upstream. If you want to
+  remove even that ambiguity, regenerate `Final_Frontier_28` from Montserrat
+  (OFL-1.1); the other two are used only by the Unicode test screen.
+- `app/dev_keystore.jks` in the app repo is the **debug** signing key, not the
+  release key, and `app/build.gradle` uses it for the debug build. It is public
+  by design; the release key is `.secrets/jawnos-release.jks` and stays
+  gitignored.
+- Publishing from a dirty app tree still warns rather than refusing, so commit
+  `~/jawnos-app/termux-app` before a publish to keep `sourceCommit` exact.
 
 ---
 
@@ -262,9 +263,13 @@ command-line tools (Perl, OpenSSL, SQLite, curl, FFmpeg, ImageMagick, Tesseract,
 espeak, …), the desktop extras (WebKitGTK, GStreamer), and the Perl modules
 (Mojolicious, Minion, CryptX, …).
 
-Likewise, the firmware's PlatformIO-managed libraries (LVGL, TFT_eSPI, TinyGPS++,
-tflite-micro, etc.) are fetched by the build rather than committed here; only the headers
-enumerated in section 2 are actually redistributed.
+The exception is the desktop image built by `desktop/mkosi`: it installs Debian
+packages and redistributes them inside the image. Each package carries its own
+`/usr/share/doc/<pkg>/copyright` in the image, and the image also carries this
+file and `docs/licenses/`. The firmware's PlatformIO-managed libraries (LVGL,
+TFT_eSPI, TinyGPS++, tflite-micro, etc.) are fetched by the build rather than
+committed here; only the headers and models enumerated in section 2 are
+actually redistributed.
 
 ---
 
@@ -301,5 +306,6 @@ curl -s https://api.github.com/repos/JulietaUla/Montserrat  | grep '"spdx_id"'  
 curl -s https://api.github.com/repos/kahrendt/microWakeWord | grep '"spdx_id"'   # Apache-2.0
 ```
 
-For the three unverified headers in 2.6–2.8, verification requires locating their original
-`.vlw`/`.ttf` sources — they are not recoverable from the committed C arrays.
+The three smooth-font headers in 2.6–2.8 are byte-identical to TFT_eSPI's
+`Unicode_test` example; re-verify with
+`https://github.com/Bodmer/TFT_eSPI/tree/master/examples/Smooth%20Fonts/FLASH_Array/Unicode_test`.

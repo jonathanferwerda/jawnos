@@ -371,6 +371,31 @@ sub app_release_sync {
 sub voice_sync {
 my $dir = &subs::home('~/jawnos/voices');
 mkdir $dir unless -d $dir;
+
+	# The CC BY voices need their attribution with the models, not only in the
+	# repository docs. The prune pass below only touches *.onnx, so this file
+	# stays on every device that holds the voices.
+	my $attribution = "$dir/ATTRIBUTION.md";
+	unless (-f $attribution) {
+		my @attrib = (
+			'# Voice model attribution',
+			'',
+			'This directory carries Piper voice models. Two are fine-tuned from',
+			'datasets licensed CC BY 4.0, which requires attribution:',
+			'',
+			'- en_US-libritts_r-medium: LibriTTS-R (OpenSLR 141), CC BY 4.0.',
+			'  http://www.openslr.org/141/',
+			'  https://creativecommons.org/licenses/by/4.0/',
+			'- en_GB-alba-medium: Alba (Edinburgh DataShare 10283/3270), CC BY 4.0.',
+			'  https://datashare.ed.ac.uk/handle/10283/3270',
+			'  https://creativecommons.org/licenses/by/4.0/',
+			'- en_US-ljspeech-medium: LJSpeech, public domain.',
+			'  https://keithito.com/LJ-Speech-Dataset/',
+			'',
+			'See docs/voice-attribution.md in the JawnOS tree for the full notice.',
+		);
+		write_file($attribution, join("\n", @attrib) . "\n");
+	}
 my $me = &subs::signatorial_designer();
 	my %local;
 	foreach my $f ( glob("$dir/*.onnx"), glob("$dir/*.onnx.json") ) {
