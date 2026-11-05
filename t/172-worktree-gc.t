@@ -1,0 +1,127 @@
+# tests-for: scripts/worktree_gc.pl
+# covers:    the sweep - it removes only a merged, clean, idle worktree, and it
+#           never touches the primary, unmerged work, or uncommitted files
+
+use strict;
+use warnings;
+
+use Cwd qw(getcwd);
+use FindBin;
+use lib "$FindBin::Bin/lib", "t/lib";
+use File::Path qw(make_path);
+use File::Slurp qw(write_file);
+use File::Temp qw(tempdir);
+use IPC::Open3 qw(open3);
+use Symbol qw(gensym);
+use Test::More;
+
+my $script = "$FindBin::Bin/../scripts/worktree_gc.pl";
+
+sub sh {
+	my @cmd = @_;
+	my $err = gensym;
+	my $pid = open3(my $in, my $out, $err, @cmd);
+	close $in;
+	local $/;
+	my $o = <$out> // '';
+	my $e = <$err> // '';
+	waitpid($pid, 0);
+	return ($? >> 8, $o . $e);
+}
+
+sub git {
+	my $dir = shift;
+	my ($code, $out) = sh('git', '-C', $dir, @_);
+	$out =~ s/\s+$//;
+	return ($code, $out);
+}
+
+sub gc {
+	my ($primary, @args) = @_;
+	my $cwd = getcwd();
+	chdir $primary or die "chdir: $!";
+	my ($code, $out) = sh($^X, $script, '--no-fetch', @args);
+	chdir $cwd or die "chdir back: $!";
+	return ($code, $out);
+}
+
+my $dir     = tempdir(CLEANUP => 1);
+my $origin  = "$dir/origin.git";
+my $primary = "$dir/primary";
+make_path($primary);
+
+my ($ic) = sh('git', 'init', '--bare', '-b', 'main', $origin);
+die "bare origin\n" if $ic != 0;
+($ic) = sh('git', 'init', '-b', 'main', $primary);
+die "primary\n" if $ic != 0;
+git($primary, 'config', 'user.email', 'gc@example.test');
+git($primary, 'config', 'user.name',  'gc test');
+write_file("$primary/README", "base\n");
+git($primary, 'add', '.');
+git($primary, 'commit', '-q', '-m', 'base');
+git($primary, 'remote', 'add', 'origin', $origin);
+git($primary, 'push', '-q', '-u', 'origin', 'main');
+
+# A merged branch: commit on it, merge it into main, push both.
+git($primary, 'checkout', '-q', '-b', 'agent/merged');
+write_file("$primary/merged.txt", "merged\n");
+git($primary, 'add', '.');
+git($primary, 'commit', '-q', '-m', 'merged work');
+git($primary, 'checkout', '-q', 'main');
+git($primary, 'merge', '-q', '--ff-only', 'agent/merged');
+git($primary, 'push', '-q', 'origin', 'main');
+
+# An unmerged branch with real work on it.
+git($primary, 'checkout', '-q', '-b', 'agent/unmerged');
+write_file("$primary/unmerged.txt", "unmerged\n");
+git($primary, 'add', '.');
+git($primary, 'commit', '-q', '-m', 'unmerged work');
+git($primary, 'checkout', '-q', 'main');
+
+# A merged branch, but with an uncommitted file in its worktree.
+git($primary, 'checkout', '-q', '-b', 'agent/dirty');
+write_file("$primary/dirty.txt", "dirty\n");
+git($primary, 'add', '.');
+git($primary, 'commit', '-q', '-m', 'dirty work');
+git($primary, 'checkout', '-q', 'main');
+git($primary, 'merge', '-q', '--ff-only', 'agent/dirty');
+git($primary, 'push', '-q', 'origin', 'main');
+
+my $wt_merged   = "$dir/wt-merged";
+my $wt_unmerged = "$dir/wt-unmerged";
+my $wt_dirty    = "$dir/wt-dirty";
+git($primary, 'worktree', 'add', '-q', $wt_merged,   'agent/merged');
+git($primary, 'worktree', 'add', '-q', $wt_unmerged, 'agent/unmerged');
+git($primary, 'worktree', 'add', '-q', $wt_dirty,    'agent/dirty');
+write_file("$wt_dirty/loose.txt", "not committed\n");
+
+# --- report only changes nothing ------------------------------------------
+my ($rc, $out) = gc($primary, '--older-than', '0');
+is($rc, 0, 'the report exits cleanly');
+like($out, qr/would\s+remove \Q$wt_merged\E/, 'a merged, clean worktree is a candidate');
+like($out, qr/keep\s+\Q$wt_unmerged\E \[agent\/unmerged\] \(not merged/, 'an unmerged branch is kept');
+like($out, qr/keep\s+\Q$wt_dirty\E \[agent\/dirty\] \(uncommitted/, 'uncommitted work is kept');
+like($out, qr/keep\s+\Q$primary\E \(the primary checkout\)/, 'the primary is never a candidate');
+ok(-d $wt_merged, 'report-only removed nothing');
+
+# --- the idle threshold keeps a fresh worktree ----------------------------
+($rc, $out) = gc($primary, '--apply');
+like($out, qr/keep\s+\Q$wt_merged\E \[agent\/merged\] \(younger than 24 h/,
+	'a fresh worktree is kept by the default threshold');
+ok(-d $wt_merged, 'and it is still there');
+
+# --- apply removes exactly the safe one -----------------------------------
+($rc, $out) = gc($primary, '--apply', '--older-than', '0');
+is($rc, 0, 'the sweep exits cleanly') or diag($out);
+like($out, qr/removed \Q$wt_merged\E/, 'the merged, clean, idle worktree is removed');
+ok(!-d $wt_merged, 'its directory is gone');
+ok(-d $wt_unmerged, 'the unmerged worktree survives');
+ok(-d $wt_dirty, 'the worktree with uncommitted work survives');
+ok(-d $primary, 'the primary checkout survives');
+
+my ($brc) = git($primary, 'rev-parse', '--verify', 'refs/heads/agent/merged');
+isnt($brc, 0, 'the landed branch is deleted with it');
+($brc) = git($primary, 'rev-parse', '--verify', 'refs/heads/agent/unmerged');
+is($brc, 0, 'the unmerged branch is untouched');
+
+done_testing();

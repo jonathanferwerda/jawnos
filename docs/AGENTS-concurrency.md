@@ -81,8 +81,12 @@ rebase immediately before running the gate:
   and adds a full checkout of the tracked files — about 170 MB here, with the firmware fonts and
   images. History is never duplicated.
 - **Nothing removes them.** `agent_land.pl --remove` drops the worktree and its merged branch after a
-  successful landing; without it the lander prints the two commands. A worktree whose directory is
-  gone (a killed run, a fixture) is reclaimed with `git worktree prune`.
+  successful landing; without it the lander prints the two commands. `scripts/worktree_gc.pl` is the
+  sweep: report-only by default, `--apply` to act, and it removes a worktree only when its branch is
+  an ancestor of `origin/main`, its tree is clean, no process has its cwd in it, and the directory is
+  older than `--older-than` hours (default 24). Run nightly as
+  `perl scripts/worktree_gc.pl --apply`. A worktree whose directory is gone is reclaimed with
+  `git worktree prune` (the sweep does that too).
 - `config.json` is tracked with fixed ports (3000/3001). Do not run a server from a worktree, and do
   not run server-binding tests in parallel with another agent.
 - `database/` is empty there. Seed a test database; never point one at `database/jawnos.db`.
