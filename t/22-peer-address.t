@@ -181,6 +181,14 @@ like($manager_source, qr/sub remote_machine_online\b[^{]*\{.*?peer_presence_prob
 unlike($manager_source, qr/next unless \$ping && \$ping =~ \/ttl\//,
 	'the presence probe no longer drops a candidate on a failed ping');
 
+# The snapshot download must keep the route that was proved, exactly as the
+# tunnel processor does. A mirror row still carries the hub's `tunnel` flag, so
+# rewriting it to 127.0.0.1:<the hub's port> made every windowed deep pull from
+# a mirrored phone, tablet or laptop fail with Connection refused (2026-11-05).
+like($manager_source,
+	qr/\$remote_machine->\{'tunnel'\} \|\| ''\) eq 'yes' && !\$remote_machine->\{'manager_verified'\}/,
+	'a snapshot download does not overwrite the manager a probe proved');
+
 # `sync_peer_order` fixes the starvation: a pass starts one pull, so the peer
 # with the oldest confirmed watermark must go first.
 my $peers = [

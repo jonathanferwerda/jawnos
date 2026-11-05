@@ -297,7 +297,16 @@ our ($APP, $ws_live_window, $encoder, $decoder, $tuuid, $thread_uuid, $universal
 					}
 					`mkdir -p $temp_folder` unless -e "$temp_folder";
 					my $temporary_file = $temp_folder . '/tmpman_' . &subs::random_string_creator(4) . '.enc';
-					if ($remote_machine->{'tunnel'} eq 'yes') {
+					# A route the caller proved (or a probe that just answered) is the
+					# route to fetch over. Rewriting it to the tunnel loopback defeated
+					# that: on a machine that is not the hub, a peer reaches us as a
+					# mirror whose `tunnel` flag belongs to the hub, so the download
+					# went to 127.0.0.1:<the hub's port> and every windowed deep pull
+					# for the phone, tablet and laptop failed with Connection refused
+					# (2026-11-05), leaving their old appointment rows unreconciled.
+					# `remote_machine_tunnel_processor` already keeps a verified
+					# manager; the snapshot download must do the same.
+					if (($remote_machine->{'tunnel'} || '') eq 'yes' && !$remote_machine->{'manager_verified'}) {
 						my $tun = &subs::tunnel_port_mapper({ signatorial => $remote_signatorial });
 						$vip = '127.0.0.1';
 						$remote_machine->{'manager'} = 'https://127.0.0.1:' . $tun->{'PORT_AHOY'};

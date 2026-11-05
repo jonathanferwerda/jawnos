@@ -52,7 +52,15 @@ sub sync_plan {
 	return undef unless ref $mine eq 'HASH' && ref $theirs eq 'HASH';
 	$seen ||= {};
 	my %plan;
+	# These streams are carry-only (see docs/sync-transport.md): they ride along
+	# with any pull but never start one. Leaving them in the trigger set is not
+	# harmless - a machine's own `ai_house` row differs from every peer's by
+	# design, so it stayed divergent forever, and a capped mobile pass takes the
+	# first table in sorted order: ai_house claimed the single slot on every pass
+	# and appointments never got a turn (2026-11-05).
+	my %carry_only = map { $_ => 1 } qw(continent ai_budget ai_jobs ai_house notifications);
 	foreach my $t ( keys %{$theirs} ) {
+		next if $carry_only{$t};
 		my $a = $mine->{$t} || {};
 		my $b = $theirs->{$t} || {};
 		my ($ac, $bc) = (($a->{'count'} || 0) + 0, ($b->{'count'} || 0) + 0);

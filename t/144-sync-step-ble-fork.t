@@ -33,6 +33,27 @@ is_deeply( subs::sync_plan_step({}, 1), {}, 'an empty plan stays empty' );
 is_deeply( subs::sync_plan_step($plan, 0), $plan, 'a non-positive cap means no cap' );
 is_deeply( subs::sync_plan_step(undef, 1), {}, 'a missing plan is an empty plan' );
 
+# Carry-only streams never start a pull. A machine's own ai_house row differs
+# from every peer's by design, so it stayed divergent forever; because a capped
+# mobile pass takes the first table in sorted order, ai_house claimed the one
+# slot on every pass and appointments never got a turn (2026-11-05).
+my $mine = {
+	appointments => { count => 10, sum => 1000, max => 900 },
+	ai_house     => { count => 1,  sum => 100,  max => 100 },
+	ai_jobs      => { count => 0,  sum => 0,    max => 0 },
+};
+my $theirs = {
+	appointments => { count => 12, sum => 1500, max => 1200 },
+	ai_house     => { count => 2,  sum => 300,  max => 200 },
+	ai_jobs      => { count => 31, sum => 5000, max => 3000 },
+};
+my $guarded = subs::sync_plan($mine, $theirs, {}, {}, 1);
+ok( exists $guarded->{'appointments'}, 'a real divergence still triggers its table' );
+ok( !exists $guarded->{'ai_house'}, 'a carry-only table does not trigger a pull' );
+ok( !exists $guarded->{'ai_jobs'},  'and neither does the other carry-only ledger' );
+is_deeply( [ keys %{ subs::sync_plan_step($guarded, 1) } ], ['appointments'],
+	'the mobile cap gives its one slot to the real divergence' );
+
 # The bridge client waits for the radio to acknowledge the write, and a watch
 # that has slept suspends its link: the wait runs to the link-supervision
 # timeout. subprocessor() runs inline when another job is already running, so
