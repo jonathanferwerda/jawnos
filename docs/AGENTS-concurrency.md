@@ -84,8 +84,13 @@ rebase immediately before running the gate:
   successful landing; without it the lander prints the two commands. `scripts/worktree_gc.pl` is the
   sweep: report-only by default, `--apply` to act, and it removes a worktree only when its branch is
   an ancestor of `origin/main`, its tree is clean, no process has its cwd in it, and the directory is
-  older than `--older-than` hours (default 24). Run nightly as
-  `perl scripts/worktree_gc.pl --apply`. A worktree whose directory is gone is reclaimed with
+  older than `--older-than` hours (default 24). It is the `worktree_gc` utility job
+  (daily pool, on by default), so a machine sweeps itself; run it by hand with
+  `perl scripts/worktree_gc.pl --apply`. It reports anything unfinished as `wip`
+  and keeps it: an unmerged branch or detached commit, a dirty tree, a waiting
+  stash, an open `.shots/AGENT-CHECKPOINT.md`, a process standing in the worktree,
+  or anything touched within the threshold. That is what makes it safe to run
+  while someone is mid-task. A worktree whose directory is gone is reclaimed with
   `git worktree prune` (the sweep does that too).
 - `config.json` is tracked with fixed ports (3000/3001). Do not run a server from a worktree, and do
   not run server-binding tests in parallel with another agent.

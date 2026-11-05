@@ -96,6 +96,10 @@ our $timeouts = {
 	'remote_relay' => { interval => 60, toggle => 'on', timeout => 120, group => 'fast' },
 	'htop' => { interval => 40, toggle => 'off', timeout => 360, group => 'fast' },
 	'git_sync' => { interval => 30 * 60, toggle => 'on', timeout => 180, group => 'slow' },
+	# Agent worktrees are scratch once their work is on the trunk; nothing else
+	# removes them. The sweep keeps anything unfinished (see worktree_gc.pl), so
+	# it is safe on a machine where someone is mid-task.
+	'worktree_gc' => { interval => 24 * 60 * 60, toggle => 'on', timeout => 120, group => 'daily' },
 	'manager' => { interval => 15, last_run => &subs::rightNow(), toggle => 'off', timeout => 20, group => 'slow' }
 };
 

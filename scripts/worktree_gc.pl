@@ -14,11 +14,15 @@
 #
 # A worktree is removed only when ALL of these hold:
 #   1. it is not the primary checkout and not the worktree you are standing in;
-#   2. its branch is an ancestor of origin/<trunk> (the work is on the trunk);
-#   3. `git status --porcelain` there is empty (no modified or untracked file);
-#   4. no process has its cwd inside it (an agent may still be working);
-#   5. its directory is older than --older-than hours (default 24; 0 ignores).
-# Dead registrations (the directory is already gone) are pruned in either mode:
+#   2. its commit (branch or detached head) is an ancestor of origin/<trunk>;
+#   3. no stash is waiting in it and no .shots/AGENT-CHECKPOINT.md is open;
+#   4. `git status --porcelain` there is empty (no modified or untracked file);
+#   5. no process has its cwd inside it (an agent may still be working);
+#   6. it has been idle for --older-than hours (default 24; 0 ignores). Idle is
+#      the newer of the directory and the last commit.
+# Anything with unfinished work is reported `wip` and kept, whatever its age:
+# that is what makes this safe to run while someone is working. Dead
+# registrations (the directory is already gone) are pruned in either mode:
 # that is bookkeeping, not deletion.
 #
 # Exit: 0 always unless the repo cannot be read - the report is the product.
@@ -132,6 +136,7 @@ for my $w (@records) {
 	my $branch = $w->{'branch'} // '';
 	$branch =~ s{^refs/heads/}{};
 	my $name = length $branch ? $branch : '(detached)';
+	my $head = $w->{'head'} // '';
 
 	if (length $branch && $branch eq $opt{'trunk'}) {
 		say_line("keep    $path [$name] (the trunk is checked out here)");
@@ -139,38 +144,63 @@ for my $w (@records) {
 		next;
 	}
 
-	my $ahead = $w->{'head'} // '';
-	if (length $branch && length $ahead) {
-		my ($mrc) = git('merge-base', '--is-ancestor', $ahead, $trunk_ref);
-		if ($mrc != 0) {
-			say_line("keep    $path [$name] (not merged into $trunk_ref)");
-			$kept++;
-			next;
-		}
+	# WIP is decided before age: a worktree with any unfinished work is never a
+	# candidate, however long it has sat there. A detached head is judged by its
+	# commit, not skipped - an unmerged commit is work like any other.
+	my $wip = '';
+	if (!length $head) {
+		$wip = 'no commit to compare';
 	}
-	elsif (length $branch) {
-		say_line("keep    $path [$name] (no commit to compare)");
+	else {
+		my ($mrc) = git('merge-base', '--is-ancestor', $head, $trunk_ref);
+		$wip = length $branch ? "not merged into $trunk_ref"
+			: "detached at a commit not on $trunk_ref" if $mrc != 0;
+	}
+	if (length $wip) {
+		say_line("wip     $path [$name] ($wip)");
+		$kept++;
+		next;
+	}
+
+	# Work that is not a commit still counts as WIP: a stash, or the checkpoint
+	# an agent leaves while its task is open. Both live outside the tree git
+	# status sees, so neither would stop a sweep on its own.
+	my (undef, $stash) = git('-C', $path, 'stash', 'list');
+	if (length $stash) {
+		say_line("wip     $path [$name] (a stash is waiting in this repo)");
+		$kept++;
+		next;
+	}
+	if (-e "$path/.shots/AGENT-CHECKPOINT.md") {
+		say_line("wip     $path [$name] (an agent checkpoint is open)");
 		$kept++;
 		next;
 	}
 
 	my (undef, $dirty) = capture('git', '-C', $path, 'status', '--porcelain');
 	if (length $dirty) {
-		say_line("keep    $path [$name] (uncommitted work)");
+		say_line("wip     $path [$name] (uncommitted work)");
 		$kept++;
 		next;
 	}
 
 	if (in_use($path)) {
-		say_line("keep    $path [$name] (a process is working in it)");
+		say_line("wip     $path [$name] (a process is working in it)");
 		$kept++;
 		next;
 	}
 
+	# Activity is the newer of the directory and the last commit: an agent that
+	# only edited files moves the directory, one that only committed moves %ct.
 	if ($opt{'older-than'} > 0) {
 		my $age_h = -M $path;
+		my ($crc, $ct) = capture('git', '-C', $path, 'log', '-1', '--format=%ct');
+		if ($crc == 0 && (defined $ct) && $ct =~ /^\s*(\d+)/) {
+			my $commit_age = (time - $1) / 3600;
+			$age_h = $commit_age if !defined $age_h || $commit_age < $age_h;
+		}
 		if (!defined $age_h || $age_h * 24 < $opt{'older-than'}) {
-			say_line("keep    $path [$name] (younger than $opt{'older-than'} h)");
+			say_line("idle    $path [$name] (younger than $opt{'older-than'} h)");
 			$kept++;
 			next;
 		}

@@ -159,6 +159,22 @@ if ($opt{'dry'}) {
 }
 
 # --- refuse before anything moves -----------------------------------------
+# A test that leaves the live repo bare takes every git command with it, and the
+# lander would otherwise push out of a repo whose refs a fixture has moved. This
+# is the corruption we have seen, not a branch problem, so name it as such.
+sub repo_is_bare {
+	my ($code, $out) = capture('git', '-C', $primary, 'config', '--get', 'core.bare');
+	return ($out // '') =~ /^\s*true\s*$/ ? 1 : 0;
+}
+sub heal_bare {
+	git('-C', $primary, 'config', 'core.bare', 'false');
+}
+
+if (repo_is_bare()) {
+	heal_bare();
+	refuse('the repository was bare (core.bare=true), which stops every git command. '
+		. 'It has been reset to false; nothing was landed. Re-run the gate deliberately.');
+}
 
 my ($drc, $dirty) = git('status', '--porcelain');
 refuse("the worktree has uncommitted work; commit it first:\n$dirty") if length $dirty;
@@ -255,6 +271,12 @@ my ($src, $sout) = capture($^X, 'scripts/run_tests.pl', '--jobs', $opt{'jobs'});
 if ($src != 0) {
 	print STDERR $sout unless length $sout > 20000;
 	refuse('the suite failed; fix it and land again');
+}
+if (repo_is_bare()) {
+	heal_bare();
+	refuse('the suite left the repository bare (core.bare=true). It has been reset to '
+		. 'false and nothing was pushed - this is the test-corruption bug, not this branch. '
+		. 'Report it, and land again once it is fixed.');
 }
 
 # --- bump, rewrite the tip subject ---------------------------------------

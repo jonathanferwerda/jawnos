@@ -1634,6 +1634,19 @@ sub utility_functions() {
 			return undef;
 		};
 
+		# Retire agent worktrees whose work is landed and idle. The sweep is
+		# conservative on purpose: an unmerged branch, a dirty tree, a stash, an
+		# open .shots checkpoint, a process standing in the worktree, or anything
+		# younger than a day is reported WIP and kept, so this is safe to run while
+		# someone is mid-task. --apply is required or it would only ever report.
+		$gb::timeouts->{'worktree_gc'}->{'subroutine'} = sub {
+			my $repo = &subs::home('~/jawnos');
+			return undef unless -d "$repo/.git" && -f "$repo/scripts/worktree_gc.pl";
+			my $out = qx{cd "$repo" && $^X scripts/worktree_gc.pl --apply 2>&1};
+			my ($summary) = $out =~ /^(# (?:removed|would remove).*)$/m;
+			return $summary;
+		};
+
 		$gb::timeouts->{'manager'}->{'subroutine'} = sub {
 
 		};

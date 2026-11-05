@@ -95,19 +95,33 @@ git($primary, 'worktree', 'add', '-q', $wt_unmerged, 'agent/unmerged');
 git($primary, 'worktree', 'add', '-q', $wt_dirty,    'agent/dirty');
 write_file("$wt_dirty/loose.txt", "not committed\n");
 
+sub merged_branch {
+	my ($name) = @_;
+	git($primary, 'checkout', '-q', '-b', "agent/$name");
+	write_file("$primary/$name.txt", "$name\n");
+	git($primary, 'add', '.');
+	git($primary, 'commit', '-q', '-m', "$name work");
+	git($primary, 'checkout', '-q', 'main');
+	git($primary, 'merge', '-q', '--ff-only', "agent/$name");
+	git($primary, 'push', '-q', 'origin', 'main');
+}
+
+merged_branch('stash');
+merged_branch('check');
+
 # --- report only changes nothing ------------------------------------------
 my ($rc, $out) = gc($primary, '--older-than', '0');
 is($rc, 0, 'the report exits cleanly');
 like($out, qr/would\s+remove \Q$wt_merged\E/, 'a merged, clean worktree is a candidate');
-like($out, qr/keep\s+\Q$wt_unmerged\E \[agent\/unmerged\] \(not merged/, 'an unmerged branch is kept');
-like($out, qr/keep\s+\Q$wt_dirty\E \[agent\/dirty\] \(uncommitted/, 'uncommitted work is kept');
+	like($out, qr/wip\s+\Q$wt_unmerged\E \[agent\/unmerged\] \(not merged/, 'an unmerged branch is WIP');
+	like($out, qr/wip\s+\Q$wt_dirty\E \[agent\/dirty\] \(uncommitted/, 'uncommitted work is WIP');
 like($out, qr/keep\s+\Q$primary\E \(the primary checkout\)/, 'the primary is never a candidate');
 ok(-d $wt_merged, 'report-only removed nothing');
 
 # --- the idle threshold keeps a fresh worktree ----------------------------
 ($rc, $out) = gc($primary, '--apply');
-like($out, qr/keep\s+\Q$wt_merged\E \[agent\/merged\] \(younger than 24 h/,
-	'a fresh worktree is kept by the default threshold');
+	like($out, qr/idle\s+\Q$wt_merged\E \[agent\/merged\] \(younger than 24 h/,
+	'a fresh worktree is idle, not done');
 ok(-d $wt_merged, 'and it is still there');
 
 # --- apply removes exactly the safe one -----------------------------------
@@ -115,13 +129,43 @@ ok(-d $wt_merged, 'and it is still there');
 is($rc, 0, 'the sweep exits cleanly') or diag($out);
 like($out, qr/removed \Q$wt_merged\E/, 'the merged, clean, idle worktree is removed');
 ok(!-d $wt_merged, 'its directory is gone');
-ok(-d $wt_unmerged, 'the unmerged worktree survives');
-ok(-d $wt_dirty, 'the worktree with uncommitted work survives');
+	ok(-d $wt_unmerged, 'the unmerged worktree survives');
+	ok(-d $wt_dirty, 'the worktree with uncommitted work survives');
 ok(-d $primary, 'the primary checkout survives');
 
 my ($brc) = git($primary, 'rev-parse', '--verify', 'refs/heads/agent/merged');
 isnt($brc, 0, 'the landed branch is deleted with it');
 ($brc) = git($primary, 'rev-parse', '--verify', 'refs/heads/agent/unmerged');
 is($brc, 0, 'the unmerged branch is untouched');
+
+# --- WIP that git status does not see is still WIP ------------------------
+# A stash is shared by every worktree (refs/stash is one ref), so it is checked
+# last and only here: while any stash waits, the sweep touches nothing.
+my $wt_stash = "$dir/wt-stash";
+my $wt_check = "$dir/wt-check";
+my $wt_det   = "$dir/wt-detached";
+git($primary, 'worktree', 'add', '-q', $wt_stash, 'agent/stash');
+git($primary, 'worktree', 'add', '-q', $wt_check, 'agent/check');
+git($primary, 'worktree', 'add', '-q', '--detach', $wt_det, 'agent/unmerged');
+
+make_path("$wt_check/.shots");
+write_file("$wt_check/.shots/AGENT-CHECKPOINT.md", "goal: still open\n");
+
+($rc, $out) = gc($primary, '--older-than', '0');
+like($out, qr/wip\s+\Q$wt_check\E \[agent\/check\] \(an agent checkpoint is open\)/,
+	'an open agent checkpoint is WIP');
+	like($out, qr/wip\s+\Q$wt_det\E \[\(detached\)\] \(detached at a commit not on origin\/main\)/,
+	'a detached head with an unmerged commit is WIP');
+
+# and it really is a stash: the clean tree alone would have looked finished
+write_file("$wt_stash/stashed.txt", "not committed\n");
+git($wt_stash, 'add', '.');
+git($wt_stash, 'stash', 'push', '-q', '-m', 'wip');
+($rc, $out) = gc($primary, '--older-than', '0', '--apply');
+like($out, qr/wip\s+\Q$wt_stash\E .*\(a stash is waiting in this repo\)/,
+	'the stash alone stops the sweep');
+ok(-d $wt_stash, 'the worktree with a stash survives --apply');
+ok(-d $wt_check, 'the worktree with an open checkpoint survives --apply');
+ok(-d $wt_det, 'the detached worktree with unmerged work survives --apply');
 
 done_testing();

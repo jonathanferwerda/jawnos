@@ -30,6 +30,7 @@ my $dir = $ENV{'AGENT_LAND_TEST_DIR'} || die "no AGENT_LAND_TEST_DIR\n";
 open(my $fh, '>>', "$dir/suite") or die $!;
 print $fh "@ARGV\n";
 close $fh;
+system('git', 'config', 'core.bare', 'true') if -e "$dir/bare";
 print "suite ran\n";
 exit(-e "$dir/fail" ? 1 : 0);
 PL
@@ -323,6 +324,23 @@ subtest 're-running the gate on an already-merged branch refuses' => sub {
 	my (undef, $count) = git($f->{'primary'}, 'rev-list', '--count', 'origin/main');
 	is($count, 2, 'and trunk did not grow a duplicate commit');
 	is(read_file("$f->{'primary'}/VERSION"), "0.1.2\n", 'nor a duplicate version');
+};
+
+subtest 'a suite that leaves the repo bare refuses the landing' => sub {
+	my $f = fixture();
+	commit_in_worktree($f, 'note.txt', "a\n", 'v0.1.1 - add a note');
+	write_file("$f->{'marker'}/bare", "1\n");
+
+	my ($rc, $out) = land($f);
+	is($rc, 1, 'the lander refuses') or diag($out);
+	like($out, qr/left the repository bare/, 'and names the corruption');
+	ok(!-e "$f->{'marker'}/restart", 'it never restarts');
+
+	my (undef, $bare) = git($f->{'primary'}, 'config', '--get', 'core.bare');
+	is($bare, 'false', 'and it healed the flag so the next run can work');
+	my (undef, $origin) = git($f->{'primary'}, 'rev-parse', 'origin/main');
+	my (undef, $base)   = git($f->{'primary'}, 'rev-parse', 'main');
+	is($origin, $base, 'nothing was pushed');
 };
 
 done_testing();

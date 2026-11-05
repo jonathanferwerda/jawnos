@@ -31,6 +31,17 @@ ok(($sync->{'timeout'} || 0) >= 900, 'its slot is long enough for a full snapsho
 # An unrelated switch keeps its old default; this change is scoped to sync.
 is($gb::timeouts->{'navigation'}->{'toggle'}, 'off', 'navigation still starts off');
 
+# The worktree sweep is housekeeping, not a test: it runs daily and it is on by
+# default, because nothing else ever removes an agent worktree.
+my $gc = $gb::timeouts->{'worktree_gc'};
+ok(ref $gc eq 'HASH', 'the worktree sweep is a declared utility');
+is($gc->{'toggle'}, 'on', 'the sweep starts on: a landed worktree is scratch');
+is($gc->{'group'}, 'daily', 'the sweep runs in the daily pool');
+my ($gc_task) = read_file("$root/perl/President.pl") =~ /(\$gb::timeouts->\{'worktree_gc'\}->\{'subroutine'\} = sub \{.*?\n\t\t\};)/s;
+ok(defined $gc_task && length $gc_task, 'the sweep task is declared in President');
+like($gc_task // '', qr/worktree_gc\.pl/, 'it runs the sweep script');
+like($gc_task // '', qr/--apply/, 'in apply mode, not report-only');
+
 # utility_runner decides when a slot is due. A second gate inside the task on
 # `lasted_run` looked equivalent, but adoption stamps that marker to "now" for a
 # fresh process, so the first slot after every restart was skipped - and a box
