@@ -139,8 +139,9 @@ rebase immediately before running the gate:
   whose directory is gone is reclaimed with `git worktree prune` (the sweep does that too).
 - `config.json` is **not tracked** (it is gitignored), so a worktree has none and a script that
   boots the app will stop asking for it. Copy the primary checkout's file: `cp ../../config.json .`.
-  The ports stay fixed (3000/3001/3001). Do not run a server from a worktree, and do not run
-  server-binding tests in parallel with another agent.
+  The copy changes nothing in git and cannot dirty the checkout; it only lets the suite and the
+  scripts that boot the app run. The ports stay fixed (3000/3001/3001). Do not run a server from a
+  worktree, and do not run server-binding tests in parallel with another agent.
 - `database/` is empty there. Build a test database from the shipped schema, which carries every
   table (the factory seed can predate one):
   `rm -f database/jawnos.db && sqlite3 database/jawnos.db < database/schema.sql`.
@@ -150,7 +151,9 @@ rebase immediately before running the gate:
   worktree's own copy can be behind. The gate refuses while the primary checkout has tracked changes,
   so keep that checkout clean.
 - Enable the shared hooks once per clone: `git config core.hooksPath .githooks`. The pre-commit
-  hook refuses a commit in the primary checkout while any worktree exists and prints the
-  `stash` → `worktree add` → `stash pop` recipe. It moves no files by itself; the deliberate
-  single-agent override is `JAWNOS_ALLOW_PRIMARY_COMMIT=1`.
+  hook refuses a commit in the primary checkout while any worktree exists, and refuses a commit in a
+  worktree while the primary has uncommitted tracked changes — listing the files, so the write is
+  caught where it can still be moved instead of at somebody else's landing. Untracked files are not
+  that write. It moves no files by itself; the deliberate escapes are `JAWNOS_ALLOW_PRIMARY_COMMIT=1`
+  and `JAWNOS_ALLOW_DIRTY_PRIMARY=1`.
 - `.worktrees/` is gitignored, so a worktree never shows in the primary checkout's `git status`.

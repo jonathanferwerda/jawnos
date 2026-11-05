@@ -2,7 +2,10 @@
 # covers:    A commit made in the primary checkout while any worktree exists is
 #            refused, with the move recipe printed and a named single-agent
 #            escape; a commit in a linked worktree, or in a lone checkout, is
-#            allowed.
+#            allowed. A commit from a worktree is refused while the primary has
+#            uncommitted tracked changes (the write an agent left behind),
+#            naming the files; untracked files such as config.json are not that
+#            write.
 
 use strict;
 use warnings;
@@ -33,6 +36,11 @@ like($hook_text, qr/git stash push --include-untracked/, 'and prints the stash s
 like($hook_text, qr/git worktree add \.worktrees\//, 'the worktree step');
 like($hook_text, qr/cd \.worktrees\/<task> && git stash pop/, 'and the pop step');
 like($hook_text, qr{perl ~/jawnos/scripts/agent_land\.pl}, 'and the primary lander');
+like($hook_text, qr/unset GIT_DIR GIT_WORK_TREE/, 'it drops the hook\'s GIT_DIR before reading the primary');
+like($hook_text, qr/git status --porcelain --untracked-files=no/,
+	'it reads the primary for tracked changes only');
+like($hook_text, qr/JAWNOS_ALLOW_DIRTY_PRIMARY/, 'and names the dirty-primary escape');
+like($hook_text, qr/do not revert it/, 'and says the writer is not to be reverted by the next agent');
 unlike($hook_text, qr/\[\[/, 'the hook stays POSIX sh (no [[ ]])');
 my $syntax = `sh -n '$hook' 2>&1`;
 is($? >> 8, 0, 'the hook parses under sh') or diag($syntax);
@@ -42,6 +50,9 @@ my $doc = read_file("$root/docs/AGENTS-concurrency.md");
 like($doc, qr/git config core\.hooksPath \.githooks/, 'the doc says how to enable the hooks');
 like($doc, qr/refuses a commit in the primary/, 'and what the pre-commit hook refuses');
 like($doc, qr/JAWNOS_ALLOW_PRIMARY_COMMIT=1/, 'and names the override');
+like($doc, qr/uncommitted tracked changes/, 'the doc names the primary-write refusal too');
+like($doc, qr/JAWNOS_ALLOW_DIRTY_PRIMARY=1/, 'and its escape');
+like($doc, qr/only lets the suite and the\s+scripts/, 'and says a copied config.json changes nothing in git');
 
 # --- run the real hook in a throwaway repo ---------------------------------
 sub quote { my $s = shift; $s =~ s/'/'\\''/g; return "'$s'" }
@@ -102,6 +113,48 @@ write_file("$repo/wt/wt.txt", "wt\n");
 &git("$repo/wt", 'add', 'wt.txt');
 ($rc, $out) = &git("$repo/wt", 'commit', '-m', 'worktree');
 is($rc, 0, 'a linked worktree may commit') or diag($out);
+
+# --- the write an agent left behind in the primary ---------------------------
+# Untracked is not that write: config.json is copied in by design and only lets
+# the suite boot, so it can never dirty the checkout or reach a commit.
+write_file("$repo/config.json", "{}\n");
+write_file("$repo/wt/wt.txt", "wt with config\n");
+&git("$repo/wt", 'add', 'wt.txt');
+($rc, $out) = &git("$repo/wt", 'commit', '-m', 'untracked primary');
+is($rc, 0, 'an untracked config.json in the primary is not a source write') or diag($out);
+unlink "$repo/config.json";
+
+# A tracked edit there is the failure: the lander refuses every landing until it
+# is gone, and by then the writer may be long done.
+write_file("$repo/base.txt", "left behind\n");
+&git($repo, 'add', 'base.txt');
+my $wt_head = (&git("$repo/wt", 'rev-parse', 'HEAD'))[1];
+write_file("$repo/wt/wt.txt", "wt blocked\n");
+&git("$repo/wt", 'add', 'wt.txt');
+($rc, $out) = &git("$repo/wt", 'commit', '-m', 'blocked');
+isnt($rc, 0, 'a commit from a worktree is refused while the primary has tracked changes');
+like($out, qr/uncommitted tracked changes/, 'the refusal names the failure');
+like($out, qr/base\.txt/, 'and lists the file left in the primary');
+like($out, qr/primary is read-only for agents/, 'and says why it is refused');
+like($out, qr/git stash push -m "move to worktree"/, 'and how to move it out');
+like($out, qr/do not revert it/, 'and not to revert somebody else\'s work');
+like($out, qr/JAWNOS_ALLOW_DIRTY_PRIMARY=1/, 'and names the escape');
+is((&git("$repo/wt", 'rev-parse', 'HEAD'))[1], $wt_head, 'the refused commit never happened');
+
+# Unstaged is the same failure as staged.
+&git($repo, 'reset', '--quiet');
+($rc, $out) = &git("$repo/wt", 'commit', '-m', 'blocked again');
+isnt($rc, 0, 'an unstaged edit in the primary refuses the commit too');
+like($out, qr/base\.txt/, 'naming the same file');
+
+# The escape is deliberate; a clean primary lets the commit through.
+($rc, $out) = &git_with_env("$repo/wt", 'JAWNOS_ALLOW_DIRTY_PRIMARY=1', 'commit', '-m', 'escaped');
+is($rc, 0, 'the named escape lets the worktree commit through') or diag($out);
+&git($repo, 'checkout', '--', 'base.txt');
+write_file("$repo/wt/wt.txt", "wt after clean\n");
+&git("$repo/wt", 'add', 'wt.txt');
+($rc, $out) = &git("$repo/wt", 'commit', '-m', 'clean primary again');
+is($rc, 0, 'a clean primary lets the worktree commit again') or diag($out);
 
 # With the worktree gone, a lone checkout is the single-agent case again.
 ($rc, $out) = &git($repo, 'worktree', 'remove', '--force', "$repo/wt");

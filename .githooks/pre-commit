@@ -1,10 +1,12 @@
 #!/bin/sh
-# pre-commit - keep the baked Coding-agent protocols in step with AGENTS.md.
+# pre-commit - keep agent work in a worktree and the baked protocols in step.
 #
-# It also refuses a commit made in the primary checkout while any worktree
-# exists: agent work belongs in a worktree, and the lander cannot move the
-# primary onto a commit made in it. The refusal prints the move recipe;
-# JAWNOS_ALLOW_PRIMARY_COMMIT=1 is the deliberate single-agent override.
+# It refuses a commit made in the primary checkout while any worktree exists:
+# agent work belongs in a worktree, and the lander cannot move the primary onto
+# a commit made in it. It also refuses a commit from a worktree while the
+# primary has uncommitted tracked changes - the write an agent left behind -
+# naming the files before they can block somebody else's landing. Each refusal
+# prints its move recipe and a named, deliberate escape.
 #
 # Enable once per clone:   git config core.hooksPath .githooks
 # Bypass for a moment:     git commit --no-verify
@@ -14,17 +16,18 @@ cd "$(git rev-parse --show-toplevel)" || exit 0
 # place to work; the primary is the place the dev server runs, and a commit
 # there cannot be landed by the gate (it moves the primary, it does not replay
 # a commit from it). One worktree is the single-agent case and stays allowed.
-if [ "${JAWNOS_ALLOW_PRIMARY_COMMIT:-0}" != "1" ]; then
-	primary=""
-	count=0
-	while IFS= read -r line; do
-		case "$line" in
-			"worktree "*) count=$((count + 1)); [ -n "$primary" ] || primary=${line#worktree } ;;
-		esac
-	done <<EOF
+primary=""
+count=0
+while IFS= read -r line; do
+	case "$line" in
+		"worktree "*) count=$((count + 1)); [ -n "$primary" ] || primary=${line#worktree } ;;
+	esac
+done <<EOF
 $(git worktree list --porcelain 2>/dev/null)
 EOF
-	current=$(git rev-parse --show-toplevel 2>/dev/null)
+current=$(git rev-parse --show-toplevel 2>/dev/null)
+
+if [ "${JAWNOS_ALLOW_PRIMARY_COMMIT:-0}" != "1" ]; then
 	if [ "$count" -gt 1 ] && [ -n "$primary" ] && [ "$primary" = "$current" ]; then
 		cat >&2 <<MSG
 commit refused: this is the primary checkout at $primary.
@@ -38,6 +41,39 @@ Then land from the worktree with:
     perl ~/jawnos/scripts/agent_land.pl
 
 On purpose, working alone? Set JAWNOS_ALLOW_PRIMARY_COMMIT=1.
+MSG
+		exit 1
+	fi
+fi
+
+# --- the primary is read-only for agents ------------------------------------
+# An edit left in the primary is invisible until the lander refuses a landing,
+# and then it blocks every agent, not the one who wrote it. Name it at the
+# commit that would have to land over it. Untracked files are not this guard:
+# the generated artifacts and a copied config.json belong there and are
+# gitignored. Somebody else's work is named here, never reverted. Git exports
+# GIT_DIR/GIT_WORK_TREE to hooks, so they are dropped before reading the other
+# checkout or the worktree's index answers for the primary's tree.
+if [ "${JAWNOS_ALLOW_DIRTY_PRIMARY:-0}" != "1" ] && [ "$count" -gt 1 ] &&
+   [ -n "$primary" ] && [ "$primary" != "$current" ]; then
+	dirty=$(
+		unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR GIT_PREFIX
+		cd "$primary" 2>/dev/null || exit 0
+		git status --porcelain --untracked-files=no 2>/dev/null
+	)
+	if [ -n "$dirty" ]; then
+		cat >&2 <<MSG
+commit refused: the primary checkout at $primary has uncommitted tracked changes:
+$(printf '%s\n' "$dirty" | sed 's/^/    /')
+
+The primary is read-only for agents, so the lander cannot move it onto this
+commit. If the change is yours, move it out and work in your worktree:
+    cd "$primary" && git stash push -m "move to worktree"
+    cd "$current" && git stash pop
+
+If it is another agent's or a person's, do not revert it: report it with the
+files above. On purpose (working alone, or after that report)? Set
+JAWNOS_ALLOW_DIRTY_PRIMARY=1.
 MSG
 		exit 1
 	fi
