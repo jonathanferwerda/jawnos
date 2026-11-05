@@ -193,6 +193,10 @@ is(JawnOS::Sco::Gateway::wifi_band_of("Connected to aa:bb\n\tfreq: 2462.0\n"), '
 	'a 2.4 GHz association is named');
 is(JawnOS::Sco::Gateway::wifi_band_of("Connected to aa:bb\n\tfreq: 5180.0\n"), '5',
 	'and a 5 GHz one');
+is_deeply(
+	[ JawnOS::Sco::Gateway::wifi_interfaces_of("\tInterface wlo1\n\t\tifindex 3\n\tInterface wlp0s20f0u4i2\n") ],
+	[ 'wlo1', 'wlp0s20f0u4i2' ],
+	'iw indents the interface list, and both interfaces are found');
 is(JawnOS::Sco::Gateway::wifi_band_of('Not connected.'), '', 'a machine on a wire has no band');
 is(JawnOS::Sco::Gateway::wifi_band_of(undef), '', 'and neither has one with no wireless');
 my $gateway_src = read_file("$repo/lib/JawnOS/Sco/Gateway.pm");

@@ -105,6 +105,15 @@ sub wifi_band_of {
 	return ($mhz >= 2400 && $mhz < 2500) ? '2.4' : '5';
 }
 
+# `iw dev` indents its lines - the interface name sits under a tab - so an
+# anchored parse that expects column zero finds nothing and the pane reports no
+# band on a machine that is plainly on WiFi.
+sub wifi_interfaces_of {
+	my ($list) = @_;
+	return () unless defined $list;
+	return ($list =~ /^[ \t]*Interface[ \t]+(\S+)/mg);
+}
+
 # '' when this machine has no wireless or is not associated: a machine on a wire
 # has no band to warn about.
 sub wifi_band {
@@ -119,7 +128,7 @@ sub wifi_band {
 		$list = <$iw> // '';
 		close $iw;
 	}
-	foreach my $if ($list =~ /^Interface\s+(\S+)/mg) {
+	foreach my $if (&wifi_interfaces_of($list)) {
 		next unless $if =~ /^[A-Za-z0-9_.-]+$/;
 		my $link = '';
 		if (open(my $lh, '-|', 'iw', 'dev', $if, 'link')) {
