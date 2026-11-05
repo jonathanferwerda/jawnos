@@ -54,13 +54,18 @@ sub strip_card_streams {
 # handle when it is not, and report the sizes either way.
 sub vacuum_file {
 	my ($db, $database) = @_;
-	my $size = sub { (defined $database && -e $database) ? -s $database : 0 };
+	my $size = sub {
+		return 0 unless defined $database && -e $database;
+		my @st = stat($database);   # a fresh stat: -s can answer from a cached one
+		return $st[7] || 0;
+	};
 	my $before = $size->();
 	my $tool = `command -v sqlite3 2>/dev/null`;
 	chomp $tool;
 	my $ok = 0;
 	if (length $tool && defined $database) {
-		$ok = 1 if system($tool, $database, 'pragma busy_timeout=30000; vacuum;') == 0;
+		# .timeout is the CLI's dot-command; the pragma form prints its value.
+		$ok = 1 if system($tool, '-cmd', '.timeout 30000', $database, 'vacuum') == 0;
 	}
 	unless ($ok) {
 		$ok = eval { $db->dbh->do('vacuum'); 1 } ? 1 : 0;
