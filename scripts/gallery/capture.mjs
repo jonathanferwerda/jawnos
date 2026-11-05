@@ -85,7 +85,10 @@ const getJson = (p) => new Promise((resolve, reject) => {
   };
   const windowRect = () => ev("(function(){var w=$('.wind').last(); if(!w.length) return null; var r=w[0].getBoundingClientRect(); return [Math.round(r.x),Math.round(r.y),Math.round(r.width),Math.round(r.height)];})()");
 
-  const ready = "typeof response === 'object' && response && response.appts && response.appts.__specs";
+  // A fresh profile first opens on the desk layout, which draws no appointment
+  // view and so never fills `response`; the manager is still ready once the
+  // shell and its desktop files are up. The Gate page carries neither.
+  const ready = "(function(){ if (typeof jQuery !== 'function' || !document.querySelector('#taskbar')) return false; if (typeof response === 'object' && response && response.appts && response.appts.__specs) return true; return !!document.querySelector('#desk_layer .folders_file'); })()";
   const prep = async (opts = {}) => {
     const settings = {
       scope: opts.scope || 'day',

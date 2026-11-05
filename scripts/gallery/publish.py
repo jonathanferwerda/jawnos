@@ -178,9 +178,11 @@ def main():
 
     index.write_text(pattern.sub(replacement, text, count=1), encoding="utf-8")
 
-    # Remove only gallery WebP files this run did not produce.
+    # Remove only gallery WebP files this run did not produce. The phone
+    # screenshots share this directory and are written by android.sh, so they
+    # are never part of the desktop sweep.
     for stale in gallery.glob("*.webp"):
-        if stale.name not in written:
+        if stale.name not in written and not stale.name.startswith("android-"):
             stale.unlink()
 
     total = sum((gallery / name).stat().st_size for name in written)

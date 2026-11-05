@@ -39,7 +39,7 @@
         "crop": "window",
         "title": "Handbook",
         "description": "Today at a glance: money, the state of life, the day's records and what they predict.",
-        "alt": "The JawnOS Handbook for Tuesday, 27 October 2026, showing money spent, state of life, the day's records and what the records predict."
+        "alt": "The JawnOS Handbook for the day, showing money spent, state of life, the day's records and what the records predict."
       }
     },
     {
@@ -211,6 +211,37 @@
         "title": "Wallpaper",
         "description": "A photograph behind the windows, with the palette to match.",
         "alt": "The JawnOS desktop over a soft, blurred photographic wallpaper, with the Files window open."
+      }
+    },
+    {
+      "id": "22-travel",
+      "kind": "app",
+      "app": "travel",
+      "settle": 4000,
+      "after": "(async function(){ var t=0; while((!(window.travelMap && travelMap.maps().length)) && t<15000){ await new Promise(function(r){ setTimeout(r,250); }); t+=250; } if(!window.travelMap){ return 'ERR: the travel map did not open'; } $('#travel_config').css('display','flex').attr('status','visible'); var sel=$('.travel_provider'); if(!sel.length){ return 'ERR: no Map picker'; } sel.val('esri').trigger('change'); travelMap.fitToMaps(); return 'ok'; })()",
+      "after_settle": 8000,
+      "site": {
+        "include": true,
+        "slug": "travel",
+        "crop": "window",
+        "title": "Travel",
+        "description": "Your measured maps laid over an Esri satellite basemap, each one in its true place.",
+        "alt": "The JawnOS Travel window showing an Esri satellite basemap, with two hand-measured maps of Harbourfront and Ravine Park laid in their real places."
+      }
+    },
+    {
+      "id": "23-cards-mahjong",
+      "kind": "app",
+      "app": "cards",
+      "after": "(typeof cardsShowVariant === 'function') ? (cardsShowVariant('mahjong', true), 'ok') : 'ERR: the Cards app did not load'",
+      "after_settle": 1800,
+      "site": {
+        "include": true,
+        "slug": "cards-mahjong",
+        "crop": "window",
+        "title": "Cards",
+        "description": "Four decks on one table: mahjong, solitaire, tarot and blackjack.",
+        "alt": "The JawnOS Cards app showing a five-layer mahjong turtle of ivory tiles, with the timer, tiles left and moves above the board."
       }
     }
   ]
