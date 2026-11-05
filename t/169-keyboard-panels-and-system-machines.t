@@ -27,6 +27,8 @@ my $features_help = help_source();
 my $functions_help = read_file($root . '/perl/help/topics_functions.pl');
 
 # --- a machine's card opens remote_control on that machine -------------------
+like($htop, qr/class="level_tile level_you remote_control_open hover" machine=""/,
+	'this machine\'s card opens the Me view too');
 like($htop, qr/class="level_tile remote_control_open hover/,
 	'a peer card is the remote-control opener');
 like($htop, qr/machine="<%= \$m->\{'signatorial'\} %>"/,
@@ -107,7 +109,11 @@ like($soft, qr/top = Math\.max\(limit, Math\.min\(top, Math\.max\(limit, \$\(win
 # --- the guide says so ------------------------------------------------------
 like($features_help, qr/A press on a peer\\'s card opens the Assistant\\'s remote_control panel already pointed at that machine/,
 	'the start-menu topic names the door');
+like($features_help, qr/a press on this machine\\'s own card opens its Me view/,
+	'the start-menu topic names this machine\'s own door');
 like($functions_help, qr/a press on a peer\\'s card on the start menu\\'s System page opens it already pointed at that machine/,
 	'the remote_control topic names the door');
+like($functions_help, qr/or on this machine\\'s card for its Me view/,
+	'the remote_control topic names the Me view');
 
 done_testing();
