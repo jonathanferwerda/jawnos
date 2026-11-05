@@ -145,6 +145,11 @@ is $writes[9]->{'setting'}, 'ivr_flows', 'the flow matrix is written as one row'
 
 # ---------------------------------------------------------------- machines
 {
+	# a machine with the helper built offers itself first (Part12::phone_ivr_machines
+	# probes ./perl/sco/sco_helper). This block is about the remote rows, so the
+	# local entry is taken out of the picture: without this the test passes on a
+	# desktop and fails on every machine that can actually be a gateway.
+	local *Manager::phone_self_signatorial = sub { return '' };
 	local *subs::db_select = sub { return FakeRows->new([ $sleepy, $gateway ]) };
 	my $machines = Manager::phone_ivr_machines();
 	is scalar @{$machines}, 2, 'every remote machine is offered';
