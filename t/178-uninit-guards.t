@@ -1,4 +1,4 @@
-# tests-for: lib/JawnOS/Domain/Log.pm lib/JawnOS/Controller/manager_misc3.pm lib/JawnOS/Domain/Remote.pm lib/JawnOS/Domain/Calendar.pm lib/JawnOS/Domain/Budget.pm lib/JawnOS/Domain/Headless.pm lib/JawnOS/Domain/Name.pm lib/JawnOS/Domain/Appointment.pm lib/JawnOS/Domain/Generate.pm lib/JawnOS/Domain/File.pm lib/JawnOS/Controller/Root_misc.pm lib/JawnOS/Controller/manager_ws.pm lib/JawnOS/Domain/Warehouse.pm public/js/manager/websocket/03_watchdog.js
+# tests-for: lib/JawnOS/Domain/Log.pm lib/JawnOS/Controller/manager_misc3.pm lib/JawnOS/Domain/Remote.pm lib/JawnOS/Domain/Calendar.pm lib/JawnOS/Domain/Budget.pm lib/JawnOS/Domain/Headless.pm lib/JawnOS/Domain/Name.pm lib/JawnOS/Domain/Appointment.pm lib/JawnOS/Domain/Generate.pm lib/JawnOS/Domain/File.pm lib/JawnOS/Controller/Root_misc.pm lib/JawnOS/Controller/manager_ws.pm lib/JawnOS/Controller/manager_misc6.pm lib/JawnOS/Domain/Warehouse.pm public/js/manager/websocket/03_watchdog.js
 # covers:    every optional row field these warnings came from is compared
 #            with a defined default. A row that lacks the column used to write
 #            a warning per call (26,662 in one phone log); the comparison now
@@ -31,6 +31,7 @@ foreach my $f (qw(
 	lib/JawnOS/Domain/File.pm
 	lib/JawnOS/Controller/Root_misc.pm
 	lib/JawnOS/Controller/manager_ws.pm
+	lib/JawnOS/Controller/manager_misc6.pm
 	lib/JawnOS/Domain/Warehouse.pm
 	public/js/manager/websocket/03_watchdog.js
 )) {
@@ -132,5 +133,13 @@ ok(has('lib/JawnOS/Domain/Warehouse.pm', 'defined $dur_text ? abs &subs::time_ab
 # The websocket controller's log_me setting may be absent
 ok(has('lib/JawnOS/Controller/manager_ws.pm', "my \$log_me = \$me_settings->{'log_me'} || '';"),
 	'a missing log_me setting is the empty string');
+
+# The log reader's toggle, a duration that is not a number, and a background flag
+ok(has('lib/JawnOS/Domain/Log.pm', "my \$appt_toggle = \$data->{'appt_view_toggle'} || '';"),
+	'a missing appt_view_toggle is the empty string');
+ok(has('lib/JawnOS/Domain/Log.pm', "if ((\$a->{'duration'} || '') !~ /[0-9]/)"),
+	'a missing duration is tested as empty, not undef');
+ok(has('lib/JawnOS/Controller/manager_misc6.pm', "(\$c->param('background_images') || '') eq 'on'"),
+	'a missing background_images flag is the empty string');
 
 done_testing();

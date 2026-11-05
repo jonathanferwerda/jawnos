@@ -571,7 +571,7 @@ sub action_25183 {
 	}
 	$appts->{'__specs'}->{'pseudonyms'} = &pseudonym_maker('viewer','');
 	my $clothesline = eval { return decode_json &subs::setting_grabber({ app => '__president', setting => 'clothesline' }) } || [];
-	if ($c->param('background_images') eq 'on') {
+	if (($c->param('background_images') || '') eq 'on') {
 		$appts->{'__specs'}->{'backgrounds'} = eval { return decode_json &subs::setting_grabber({ app => 'marker', setting => 'backgrounds' }) } || [];
 		$appts->{'__specs'}->{'background'} = $appts->{'__specs'}->{'backgrounds'}->[rand(scalar @{$appts->{'__specs'}->{'backgrounds'}})];
 	}

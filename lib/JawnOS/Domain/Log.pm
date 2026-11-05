@@ -45,7 +45,7 @@ sub log_reader {
 	my $stats = $data->{'stats'};
 	#my $misc_settings = &misc_setting_list();
 	my $open_appts = $data->{'appts'};
-	my $appt_toggle = $data->{'appt_view_toggle'};
+	my $appt_toggle = $data->{'appt_view_toggle'} || '';
 	my $sorts = $data->{'sorts'};
 	my $account = $data->{'account'};
 	my $project = $data->{'project'};
@@ -543,7 +543,7 @@ sub log_reader {
 			}
 		}
 
-		if ($a->{'duration'} !~ /[0-9]/) { $a->{'duration'} = 0; }
+		if (($a->{'duration'} || '') !~ /[0-9]/) { $a->{'duration'} = 0; }
 		$appts->{$a->{'app'}}->{'timestamp'} = $a->{'timestamp'};
 		$appts->{$a->{'app'}}->{'name'} = $uname->($a->{'app'});
 		$appts->{$a->{'app'}}->{'html_name'} = $hname->($a->{'app'});
