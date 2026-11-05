@@ -122,6 +122,13 @@ SH
 	git($primary, 'config', 'core.hooksPath', '.git-hooks');
 	git($primary, 'worktree', 'add', $wt, '-b', 'agent/task');
 
+	# Isolation guard: this test has leaked a worktree registration into the live
+	# repo under parallel runs. If the fixture repo did not get it, fail here rather
+	# than leave the house repo holding an agent/task branch.
+	my (undef, $wlist) = git($primary, 'worktree', 'list', '--porcelain');
+	die "the fixture worktree did not register in the fixture repo\n"
+		unless defined $wlist && index($wlist, $wt) >= 0;
+
 	return {
 		dir     => $dir,
 		origin  => $origin,
