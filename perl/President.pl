@@ -1037,6 +1037,22 @@ sub utility_runner() {
 	# Give the servers and the WebView their few seconds first: a tree that has
 	# just started should not also be starting work.
 	return if $utility_boot_at && &subs::rightNow() - $utility_boot_at < 20000;
+	# The definer runs from the controller, once. If that call was skipped (the
+	# database busy under a land or a backup), every job is left without a
+	# subroutine and the loop below then skips all of them in silence: the tree
+	# looks alive, nothing syncs, and no line says why. Attach what is missing on
+	# the first tick, and say how the tree looked, so the state is healed or at
+	# least visible.
+	unless ($gb::utility_bare_checked) {
+		$gb::utility_bare_checked = 1;
+		my $bare = &subs::utility_bare_jobs($gb::timeouts);
+		$log->info('utility runner: first tick, ' . scalar(keys %{$gb::timeouts}) . ' slot(s), '
+			. scalar(@{$bare}) . ' without a subroutine');
+		if (scalar @{$bare}) {
+			&utility_definer();
+			$log->info('utility runner: attached ' . scalar(@{$bare}) . ' job(s) the controller never reached');
+		}
+	}
 	# The app's scheduled wake wants to know when the due work is done so it can
 	# release the CPU before its 45s backstop. It is written only after a tick
 	# that ran nothing, and removed as soon as a job starts, so a reader can tell

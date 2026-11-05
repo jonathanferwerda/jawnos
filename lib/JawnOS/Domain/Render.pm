@@ -639,6 +639,20 @@ sub utility_row_needs_adoption {
 	return (($row_lc || 0) > ($runtime_lc || 0)) ? 1 : 0;
 }
 
+# Jobs in a runtime table that have no callable attached.
+#
+# The definer that attaches them runs from the controller, once, on the first
+# call that reaches it. A boot whose first controller call was skipped (the
+# database busy under a land or a backup) leaves the whole table bare, and
+# utility_runner then skips every job in silence: the tree looks alive, no job
+# runs, and no line says why. The runner asks this, attaches what is missing,
+# and names it once - so the state is either healed or visible.
+sub utility_bare_jobs {
+	my $row = shift;
+	return [] unless ref $row eq 'HASH';
+	return [ grep { !/^__/ && ref $row->{$_} eq 'HASH' && !$row->{$_}->{'subroutine'} } sort keys %{$row} ];
+}
+
 # Record on the runtime the last_change it just persisted, so the next tick's
 # comparison sees the row it wrote rather than a newer stranger's.
 sub utility_runtime_stamped {
