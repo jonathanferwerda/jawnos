@@ -1,11 +1,12 @@
 #!/usr/bin/env perl
 # sync_kick.pl - clear what has stalled this machine's sync and nudge a pass.
 #
-#   perl scripts/sync_kick.pl          # clear markers/backoff/hub, nudge the pass
-#   perl scripts/sync_kick.pl --now    # also run the sync pass in this process
+#   perl scripts/sync_kick.pl
 #
-# The utility controller runs the same subs::sync_kick as the "Sync kick" job,
-# so a stuck box can be recovered from a shell or from Configure -> Sys.
+# It clears the three brakes and drops an inactive hub, then nudges the ordinary
+# remote_machine_sync pass; the running manager runs that pass on its next
+# utility tick. The utility controller runs the same subs::sync_kick as the
+# "Sync kick" job, so a stuck box can be recovered from a shell too.
 use strict;
 use warnings;
 use FindBin;
@@ -13,10 +14,6 @@ use FindBin;
 chdir "$FindBin::Bin/.." or die "cannot find the jawnos root: $!";
 require './perl/subroutines.pl';
 
-my $now = grep { $_ eq '--now' } @ARGV;
 my $note = &subs::sync_kick();
 print $note, "\n";
-if ($now) {
-	&subs::remote_machine_negotiator({});
-	print "sync pass started\n";
-}
+print "sync pass nudged\n";
