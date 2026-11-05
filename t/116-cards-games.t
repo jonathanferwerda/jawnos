@@ -1,4 +1,4 @@
-# tests-for: public/js/manager/manager/12_cards.js templates/cards.html.ep templates/cards/style.html.ep templates/cards/chooser.html.ep templates/cards/tarot.html.ep templates/cards/solitaire.html.ep templates/cards/mahjong.html.ep templates/cards/blackjack.html.ep
+# tests-for: public/js/manager/manager/12_cards.js templates/cards.html.ep templates/cards/style.html.ep templates/cards/chooser.html.ep templates/cards/tarot.html.ep templates/cards/solitaire.html.ep templates/cards/mahjong.html.ep templates/cards/blackjack.html.ep perl/help/topics_people.pl
 # covers:    The Cards app's four decks. The template offers the choice
 #            (tarot, solitaire, mahjong, blackjack), the tarot spread is three
 #            pictures side by side, and the solitaire, mahjong and blackjack
@@ -40,6 +40,22 @@ foreach my $page (@pages) {
 	my $src = read_file("$root/$file");
 	like($src, $pattern, $label);
 }
+
+# The solitaire table is the house's own, not a Windows 3.1 reproduction: the
+# blue card back, the grey chrome and the Windows font stack must not come back.
+my $style = read_file("$root/templates/cards/style.html.ep");
+unlike($style, qr/sol31|Windows 3\.1|MS Sans Serif/, 'the Windows 3.1 skin is gone');
+unlike($style, qr/#008000|#c0c0c0|#000080|#d0d0d0/, 'and its colours are gone');
+like($style, qr/radial-gradient\(circle at 50% 42%, #164e3a, #0a2a1f 72%\)/, 'the card back is the house lattice');
+
+my $solitaire = read_file("$root/templates/cards/solitaire.html.ep");
+unlike($solitaire, qr/sol31/, 'the solitaire pane carries no Windows class');
+
+# Twirl is a falling-block game; the guide says so rather than calling it a toy.
+my $people_help = read_file("$root/perl/help/topics_people.pl");
+like($people_help, qr/A falling-block puzzle in a ten-by-twenty well/, 'Twirl is documented as a falling-block puzzle');
+unlike($people_help, qr/reflective toy/, 'and not as a reflective toy');
+unlike($people_help, qr/Windows 3\.1/, 'the cards help names the house table, not Windows');
 
 # The rules are plain functions at the top of 12_cards.js. Load the file in a
 # bare context: nothing top-level may need the DOM or jQuery for this to work.

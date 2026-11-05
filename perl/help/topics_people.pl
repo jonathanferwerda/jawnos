@@ -178,7 +178,7 @@ $topic{'cards'} = {
 		body => [
 			'Cards opens on a chooser with four decks. The table remembers the one you picked; press Cards in the top left to bring the chooser back.',
 			'Tarot is the deck of Jawn: a daily card, a weekly card, or a three-card spread drawn from your own appointments and measures. Press Deal, or click a card, to draw; a spread shows its three cards side by side. The draw lists belong to the house, so every device shows the same recent draws, and the card, table and controls fit a narrow phone screen too.',
-			'Solitaire is Klondike with a three-card deal and a Windows 3.1 table. Click a card, then the column or foundation to move it, or drag the card where it belongs; double-click sends a card to its foundation. The stock is top left and the four foundations stack at the top right. Auto sends the cards that are safe to go up, Undo takes a move back, and Bank keeps a running casino score across rounds.',
+			'Solitaire is Klondike with a three-card deal and a felt table in the house\'s own colours. Click a card, then the column or foundation to move it, or drag the card where it belongs; double-click sends a card to its foundation. The stock is top left and the four foundations stack at the top right. Auto sends the cards that are safe to go up, Undo takes a move back, and Bank keeps a running casino score across rounds.',
 			'Mahjong is a five-layer turtle: pair two matching tiles that are free, which means nothing is stacked on top of them and nothing sits immediately left or right. Clear the upper layers to free the ones below. Shuffle rearranges what is left; the timer starts with your first pick.',
 			'Blackjack is the casino table. Pick a chip, press Deal, then Hit or Stand; Double doubles the stake and draws one card. The dealer stands on seventeen, blackjack pays three to two, and Bank carries across rounds. Reset bank starts it at five hundred again.'
 		],
@@ -186,9 +186,12 @@ $topic{'cards'} = {
 	};
 $topic{'twirl'} = {
 		title => 'Twirl', category => 'apps', app => 'twirl',
-		summary => 'A small, playful reflective toy.',
+		verified => '2026-11-05',
+		templates => [ 'templates/twirl.html.ep', 'public/js/manager/twirl.js' ],
+		summary => 'A falling-block puzzle in a ten-by-twenty well.',
 		body => [
-			'Twirl is one of the softer corners of the catalogue: a small interactive toy that lives in a window and asks nothing of you.'
+			'Seven shapes fall one square at a time into a ten-by-twenty well. The left and right arrows slide a shape, the down arrow nudges it, the up arrow turns it, and the space bar drops it to the bottom. A full row clears and everything above it sinks. Ten cleared lines raise the level and the fall quickens.',
+			'The Next window shows the shape after this one, and Best keeps the five highest scores with three initials each. Escape pauses the game, C clears the saved scores, and Enter deals again after a game over. The shapes, the brick wall and the table are drawn in the house\'s own colours.'
 		],
 		related => [ 'cards' ]
 	};

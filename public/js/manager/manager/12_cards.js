@@ -1,7 +1,7 @@
 // The Cards app: four decks on one table.
 //
 // Tarot is the old deck of Jawn, drawn from the person's own days. Solitaire is
-// Klondike with a three-card deal, a Windows 3.1 table and a bank that carries
+// Klondike with a three-card deal, the house's felt table and a bank that carries
 // across rounds. Mahjong is a multi-layer turtle of paired tiles. Blackjack is
 // the casino table with chips and a running bank.
 //

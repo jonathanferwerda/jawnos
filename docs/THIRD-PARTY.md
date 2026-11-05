@@ -21,8 +21,10 @@ through JawnOS's own blob-sync mechanism rather than committed to git.
 | JawnOS | **BSD-2-Clause** | `LICENSE` |
 
 `LICENSE` is the BSD 2-Clause License, Copyright (c) 2026, Jonathan Ferwerda. Everything
-first-party in this repository (the Perl services, templates, `public/` assets, firmware,
-and the `releases/` APKs JawnOS builds) is under that licence unless a file says otherwise.
+first-party in this repository (the Perl services, templates, `public/` assets and firmware)
+is under that licence unless a file says otherwise. The `releases/` APKs are **not** covered
+by it: the Android host app is a GPL-3.0-only derivative of Termux (see 2.14), and the
+runtime archives carry their own licences (see 2.15).
 
 ---
 
@@ -42,6 +44,13 @@ and the `releases/` APKs JawnOS builds) is under that licence unless a file says
 | 2.6 | "Final Frontier" display font | unknown | **unverified** | `jt/Final_Frontier_28.h` |
 | 2.7 | "Latin + Hiragana" font | unknown | **unverified** | `jt/Latin_Hiragana_24.h` |
 | 2.8 | "Unicode Test" font | unknown | **unverified** | `jt/Unicode_Test_72.h` |
+| 2.9 | jQuery 3.6.1 | https://jquery.com | **MIT** | `public/js/jquery.js` |
+| 2.10 | jQuery UI 1.13.2 | https://jqueryui.com | **MIT** | `public/js/jquery-ui.js`, `public/css/jquery-ui.css`, `public/css/images/ui-icons_*.png` |
+| 2.11 | jQuery UI Touch Punch 0.2.3 | https://github.com/furf/jquery-ui-touch-punch | **MIT** or **GPL-2.0** (dual) | `public/js/jquery.ui.touch-punch.min.js` |
+| 2.12 | numeral.js 2.0.6 | https://github.com/adamwdraper/Numeral-js | **MIT** | `public/js/numeral.min.js` |
+| 2.13 | Moment.js 2.29.4 | https://momentjs.com | **MIT** | `public/js/moment.js` |
+| 2.14 | JawnOS Android host app | https://github.com/jonathanferwerda/termux-app (fork of `termux/termux-app`) | **GPL-3.0-only** | `releases/jawnos-app-*.apk` (blob store) |
+| 2.15 | JawnOS runtime archives | built from `termux/termux-packages` recipes | **mixed** (GPL-3.0, GPL-2.0, LGPL-2.1+, MIT, BSD, Apache-2.0, Artistic-1.0, public domain) | `releases/jawnrt-*.zip` (blob store) |
 
 ### 2.1 Piper TTS engine
 
@@ -61,6 +70,10 @@ corresponds to the `rhasspy/piper` release asset
   MIT.
 - The binary and its library/data files are carried as blobs (like the APKs), not committed
   to git; only `say_piper_binary()` in `subroutines.pl` and the sync loop reference them.
+- Because espeak-ng is **GPL-3.0-or-later**, a distributor of this bundle must also make
+  its source available. The version is 1.52.0:
+  https://github.com/espeak-ng/espeak-ng/tree/1.52.0. Carry that offer, and the GPL text,
+  with the blob.
 
 ### 2.2 Piper voice models
 
@@ -109,6 +122,40 @@ licence. They cannot be attributed confidently from the repo contents alone:
 
 **Action:** trace where each was obtained (they came in with the initial commit) and replace
 this with the real licence, or replace the font with a clearly-licensed one.
+### 2.9–2.13 JavaScript libraries
+
+These are loaded by `templates/layouts/manager.html.ep:13,205-209`; the gate,
+homepage and locked layouts load jQuery and numeral too. All are unmodified
+except for the minified Touch Punch build.
+
+Each file's copyright line, followed by the shared MIT text:
+
+- **jQuery 3.6.1** — Copyright OpenJS Foundation and other contributors, https://openjsf.org/
+- **jQuery UI 1.13.2** — Copyright jQuery Foundation and other contributors, https://jquery.org/
+  (includes the Smoothness theme images under `public/css/images/`)
+- **numeral.js 2.0.6** — Copyright (c) 2012 Adam Draper
+- **Moment.js 2.29.4** — Copyright (c) JS Foundation and other contributors
+- **jQuery UI Touch Punch 0.2.3** — Copyright 2011–2014, Dave Furfero
+  (dual MIT / GPL-2.0; used here under MIT)
+
+> Permission is hereby granted, free of charge, to any person obtaining a copy of
+> this software and associated documentation files (the "Software"), to deal in
+> the Software without restriction, including without limitation the rights to
+> use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies
+> of the Software, and to permit persons to whom the Software is furnished to do
+> so, subject to the following conditions:
+>
+> The above copyright notice and this permission notice shall be included in all
+> copies or substantial portions of the Software.
+>
+> THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+> IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+> FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+> AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+> LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+> OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+> SOFTWARE.
+
 
 ### Firmware assets bundled as C headers (outside the font scope)
 
@@ -122,6 +169,86 @@ under `~/jawnos-fw/models/`:
   are JawnOS-trained (recipe in `docs/training-hey-jawn.md`). The **licence of the model
   artifacts themselves is unverified here** — flag for review if this document is meant to
   be exhaustive.
+
+### 2.14 JawnOS Android host app (GPL-3.0-only)
+
+The APK is a fork of Termux's `termux-app` (base tag `v0.118.3`) and still contains
+code derived from it, so the **binary is GPL-3.0-only** even though `jawnos-shared`
+has been rewritten as BSD-2 and the app package was renamed. Three app source files
+still show 52–67% similarity to upstream (`JawnInstaller`, `UserAction`,
+`CrashUtils`) and six resource files are byte-identical. A BSD-2 relicense needs
+those rewritten and a clean-room review — it cannot be done by changing the label,
+because the upstream copyright holders' GPL-3.0-only grant still applies.
+
+- Source: https://github.com/jonathanferwerda/termux-app (branch `jawnos`).
+  `scripts/app_publish.pl` records the exact commit a build came from in
+  `releases/app_release.json` and `server/downloads.json` (`sourceCommit`), and a
+  commit archive is available at
+  `https://github.com/jonathanferwerda/termux-app/archive/<sourceCommit>.tar.gz`.
+- Licence text: `app/src/main/assets/licenses/GPL-3.0.txt`, also inside the APK
+  under `assets/licenses/`.
+- Notices: `app/src/main/assets/licenses/NOTICE.md` lists the Apache-2.0
+  components (`terminal-view`, `terminal-emulator`, AndroidX, Guava, Markwon,
+  android-smsmms), the BSD-3-Clause `libtailscale`, and the runtime licences.
+
+### 2.15 Runtime archives (mixed licences)
+
+`jawnrt-*.zip` are built by `scripts/runtime_build.pl` and `runtime_zip.pl` from
+Termux packages and are redistributed as release assets; the app downloads the
+archive pinned in `app/src/main/assets/jawnrt.json`. They aggregate separate
+programs, each under its own licence:
+
+- bash, coreutils, findutils, sed, grep, gawk, rsync — **GPL-3.0**
+- git — **GPL-2.0-only**
+- ffmpeg — **LGPL-2.1-or-later**, or GPL if the build enables GPL-only codecs
+- perl — **Artistic-1.0 or GPL**
+- openssl — **Apache-2.0**; sqlite3 — **public domain**; curl — **curl licence**
+- OpenSSH — **BSD**; zip — **Info-ZIP**; xz — **public domain**; zstd — **BSD**
+- ImageMagick — **ImageMagick licence**
+
+The corresponding source for each program is the Termux recipe and the upstream
+release at the version named in the pin
+(https://github.com/termux/termux-packages). Keep the pin with the archive: the
+archive is only compliant while its exact versions can be rebuilt from those
+recipes.
+
+### 2.16 First-party assets recorded for review
+
+These are JawnOS's own works (BSD-2), listed because they are the assets most
+often mistaken for third-party material:
+
+- `public/images/cards/*.png` — the “Deck of Jawn!” tarot deck, hand-drawn in
+  pencil crayon and scanned by Jonathan Ferwerda. No third-party deck art is used.
+- `public/sounds/alarms/*.mp3` and `public/sounds/notifications/*.mp3` — written
+  and recorded by Jonathan Ferwerda.
+- `public/js/manager/twirl/*.js` — an original falling-block implementation with
+  original art (the brick wall and the house palette). The genre's rules are not
+  copyrightable and no Tetris art, palette or naming is used.
+- `public/images/make believe/*`, `public/images/decipherable/*`,
+  `public/images/jbuttons/*`, `public/images/studio/*`,
+  `public/images/palette/*`, `public/images/jonathans/*` — original hand-drawn
+  artwork.
+
+### 2.17 Open licence actions
+
+- `voices/piper/` redistributes espeak-ng (GPL-3.0-or-later) as a blob: make the
+  1.52.0 source available with it (see 2.1).
+- `jawnrt-*.zip` carries no licence texts. Add a `licenses/` directory to the
+  archive (the list is in 2.15) so a device that downloads the runtime has the
+  notices, not only the APK.
+- `jt/Final_Frontier_28.h`, `jt/Latin_Hiragana_24.h` and `jt/Unicode_Test_72.h`
+  have no traceable licence (2.6–2.8): replace them or record the source.
+- Noto Sans and Montserrat are OFL-1.1; the firmware should ship the OFL text and
+  the fonts' copyright notices next to the generated headers.
+- `en_US-libritts_r-medium` and `en_GB-alba-medium` are CC BY 4.0: keep the
+  attribution (dataset, author, licence URL) with the voice blobs and in the
+  About/credits, not only in this file.
+- `app/dev_keystore.jks` is tracked in the public app repo. It is the standard
+  debug keystore, not the release key, but it should be untracked and ignored;
+  the release key lives in `.secrets/jawnos-release.jks` and is gitignored.
+- The currently published APK (0.118.282) predates the `sourceCommit` field; its
+  exact source is only the `jawnos` branch, not a pinned commit. Republish the
+  newest build (0.118.285) to close it.
 
 ---
 

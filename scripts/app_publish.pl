@@ -66,6 +66,27 @@ die "usage: app_publish.pl [--repo OWNER/NAME] [--tag TAG] [--apk FILE] [--dir D
 	. "                      [--app-repo DIR] [--runtime] [--no-runtime] [--dry-run]\n"
 	unless $repo =~ m{^[^/\s]+/[^/\s]+\z} && $tag && $tag =~ /^[0-9A-Za-z._-]+\z/;
 
+# The app source a build came from. The APK is a GPL-3.0-only Termux fork, so the
+# release has to name the corresponding source: the commit is recorded in
+# app_release.json and downloads.json, and GitHub serves that tree as
+# archive/<commit>.tar.gz. A dirty tree or a version mismatch is recorded and
+# reported rather than hidden; the binary cannot vouch for uncommitted source.
+sub app_source {
+	return () unless defined $app_repo && -d $app_repo;
+	my $commit = `git -C "$app_repo" rev-parse HEAD 2>/dev/null`;
+	chomp $commit if defined $commit;
+	my $dirty = `git -C "$app_repo" status --porcelain 2>/dev/null`;
+	my $version = '';
+	my $gradle = "$app_repo/app/build.gradle";
+	if (-f $gradle) {
+		my $text = eval { read_file($gradle) };
+		($version) = $text =~ /versionName\s+"([^"]+)"/ if defined $text;
+	}
+	return ($commit || '', $version || '', (defined $dirty && length $dirty) ? 1 : 0);
+}
+
+my ($source_commit, $source_version, $source_dirty) = app_source();
+
 # The newest staged app, or the one --apk names.
 my @jobs;
 {
@@ -85,12 +106,19 @@ my @jobs;
 	my $sha = sha256_hex(read_file($file));
 	my $size = -s $file;
 	my $manifest = encode_json({
-		product     => $product,
-		versionCode => $vc + 0,
-		versionName => $vn,
-		filename    => $filename,
-		size        => $size + 0,
-		sha256      => $sha,
+		product       => $product,
+		versionCode   => $vc + 0,
+		versionName   => $vn,
+		filename      => $filename,
+		size          => $size + 0,
+		sha256        => $sha,
+		source        => 'https://github.com/jonathanferwerda/termux-app',
+		sourceCommit  => $source_commit,
+		sourceVersion => $source_version,
+		sourceDirty   => $source_dirty ? 1 : 0,
+		sourceArchive => $source_commit
+			? "https://github.com/jonathanferwerda/termux-app/archive/$source_commit.tar.gz"
+			: '',
 	});
 	push @jobs, {
 		product  => $product,
@@ -101,6 +129,9 @@ my @jobs;
 		sha      => $sha,
 		size     => $size,
 		manifest => $manifest,
+		source_commit  => $source_commit,
+		source_version => $source_version,
+		source_dirty   => $source_dirty,
 		path     => "$dir/app_release.json",
 	};
 }
@@ -177,6 +208,18 @@ if ($runtime_mode ne 'off') {
 foreach my $j (@jobs) {
 	printf "publishing %s\n  versionCode %s / %s\n  %d bytes\n  sha256 %s\n  manifest %s\n",
 		$j->{'filename'}, $j->{'vc'}, $j->{'vn'}, $j->{'size'}, $j->{'sha'}, $j->{'path'};
+}
+foreach my $j (@jobs) {
+	if (!$j->{'source_commit'}) {
+		warn "app_publish.pl: the app repo is not available; this build has no recorded source commit\n";
+		next;
+	}
+	print "  source $j->{'source_commit'}";
+	print " (app version $j->{'source_version'})" if $j->{'source_version'};
+	print " — WARNING: the app repo has uncommitted changes" if $j->{'source_dirty'};
+	print "\n";
+	print "  WARNING: the APK is $j->{'vn'} but the app repo is $j->{'source_version'}; the recorded commit may not be the built tree\n"
+		if $j->{'source_version'} && $j->{'source_version'} ne $j->{'vn'};
 }
 print "  repo $repo, tag $tag\n";
 foreach my $r (@runtime) {
@@ -272,7 +315,11 @@ sub update_downloads_json {
 		'versionCode' => $j->{'vc'} + 0,
 		'size' => $j->{'size'} + 0,
 		'sha256' => $j->{'sha'},
-		'source' => 'https://github.com/jonathanferwerda/termux-app',
+		'source' => $j->{'source_commit'}
+			? "https://github.com/jonathanferwerda/termux-app/tree/$j->{'source_commit'}"
+			: 'https://github.com/jonathanferwerda/termux-app',
+		'sourceCommit' => $j->{'source_commit'} || '',
+		'sourceVersion' => $j->{'source_version'} || '',
 		'license' => 'GPL-3.0',
 	};
 	write_file($path, encode_json($data));

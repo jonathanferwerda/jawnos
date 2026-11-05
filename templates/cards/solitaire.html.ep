@@ -1,4 +1,4 @@
-<section id="cards_solitaire" class="cards_pane sol31<% if ($active) { %> active<% } %>" data-bank="<%= defined $bank && length $bank ? $bank : 0 %>">
+<section id="cards_solitaire" class="cards_pane<% if ($active) { %> active<% } %>" data-bank="<%= defined $bank && length $bank ? $bank : 0 %>">
 	<div class="sol_hud">
 		<div class="sol_stat"><span><%= &subs::ui('Bank') %></span><b id="sol_bank">0</b></div>
 		<div class="sol_stat"><span><%= &subs::ui('Moves') %></span><b id="sol_moves">0</b></div>
