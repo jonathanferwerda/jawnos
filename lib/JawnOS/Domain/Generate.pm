@@ -224,7 +224,7 @@ sub usual_appointment_maker {
 		$jmodel = encode_json $model;
 	}
 
-	if ($m->{'save_app'} eq 'on' && $model->{'uuid'}) {
+	if (($m->{'save_app'} || '') eq 'on' && $model->{'uuid'}) {
 		$data->{'seen'} = 'yes';
 		&source_appt_writer($m,$data,'model');
 	}
@@ -413,7 +413,7 @@ sub source_appt_writer {
 	}
 
 	foreach my $ch ( @{$char} ) {
-		if ($ch->{'save_appt'} eq 'on') {
+		if (($ch->{'save_appt'} || '') eq 'on') {
 			$datas->{'app'} = &subs::unformat_name($ch->{'name'});
 			$datas->{'source_uuid'} = $returner->{'uuid'};
 			$datas->{'quantity'} = $ch->{'value'};
@@ -484,7 +484,7 @@ sub code_revision {
 	# revision a connected tab follows (a re-render, or a reload) and made
 	# every fresh worker read tens of megabytes it never serves. Firmware
 	# builds, staged releases and runtime state are the same kind of thing.
-	my $not_running = qr{(?:^|/)(?:\.git|\.worktrees|node_modules|\.pio|build|releases|\.shots)(?:/|$)};
+	my $not_running = qr{(?:^|/)(?:\.git|\.worktrees|node_modules|\.pio|build|releases|\.shots|jawnos-test-[^/]+)(?:/|$)};
 	find({ no_chdir => 1, wanted => sub {
 		my $n = $File::Find::name;
 		return unless -f $n;

@@ -40,8 +40,8 @@ my $handler = read_file("$root/public/js/manager/websocket/01_message_handler.js
 
 like($watch, qr/var wsWatchdogPeriod = 1000;/,
 	'the watch looks at the sockets once a second');
-like($watch, qr/var wsWatchdogProbeWait = 2500;/,
-	'a probe gets a short grace before it is called unanswered');
+like($watch, qr/var wsWatchdogProbeWait = 8000;/,
+	'a probe gets a longer grace before it is called unanswered');
 like($watch, qr/var wsWatchdogConnectGrace = 8000;/,
 	'a handshake that never finishes is retired');
 like($watch, qr/function wsWatchdogStart\(\) \{.*?wsWatchdogTimer = setInterval\(wsWatchdogTick, wsWatchdogPeriod\);/s,
@@ -66,8 +66,10 @@ like($watch, qr/if \(age > stayingAliveInterval \* 2\) \{ rebuild = 1; continue;
 	'two silent beats is a dead socket');
 like($watch, qr/if \(age > stayingAliveInterval\) \{.*?socket\['probedAt'\] = now;\s*heartbeatSend\(app\);/s,
 	'one late beat is probed immediately instead of waiting');
-like($watch, qr/else if \(now - socket\['probedAt'\] > wsWatchdogProbeWait\) \{\s*rebuild = 1;/s,
-	'an unanswered probe rebuilds');
+like($watch, qr/else if \(now - socket\['probedAt'\] > wsWatchdogProbeWait\) \{.*?probeCount.*?< 2.*?heartbeatSend\(app\);.*?else \{\s*rebuild = 1;/s,
+	'a second unanswered probe - not the first - rebuilds');
+like($watch, qr/delete ws\[app\]\['probeCount'\];/,
+	'a heard frame clears the probe count');
 like($watch, qr/if \(now - socket\['connectingAt'\] > wsWatchdogConnectGrace\) \{ rebuild = 1; \}/,
 	'a stuck handshake is retired too');
 like($watch, qr/function wsTouched\(app\) \{.*?ws\[app\]\['ackAt'\] = Date\.now\(\);\s*delete ws\[app\]\['probedAt'\];/s,

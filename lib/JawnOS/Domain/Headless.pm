@@ -233,7 +233,7 @@ sub navigation_information {
 		my @new_location = (deg2rad($cl->{'longitude'}), deg2rad(90 - $cl->{'latitude'}));
 		my $distance = sprintf("%.3f", great_circle_distance(@old_location, @new_location, $gb::planet_radius));
 
-		if ($distance < .020 || ($data->{'cache'} eq 'yes' && $cache->{'__location'}->{'latitude'}) ) {
+		if ($distance < .020 || (($data->{'cache'} || '') eq 'yes' && $cache->{'__location'}->{'latitude'}) ) {
 			$navigation_information->{$cl->{'signatorial'}} = $cache;
 			next;
 		}
@@ -295,7 +295,7 @@ sub navigation_information {
 					#		current_location => $returner,
 					#		coordinates => $home_plate
 						};
-						if ($hp->{'placement'} eq 'within') {
+						if (($hp->{'placement'} || '') eq 'within') {
 							if ($distance <= $hp->{'distance'}) {
 								push @{$navigation_information->{$returner->{'signatorial'}}->{'within'}}, $ndata;
 								push @{$navigation_information->{$returner->{'signatorial'}}->{'site_types'}}, $hset->{'site_type'} || 'public';
@@ -303,7 +303,7 @@ sub navigation_information {
 								push @{$navigation_information->{$returner->{'signatorial'}}->{'other'}}, $ndata;
 							}
 						}
-						elsif ($hp->{'placement'} eq 'without') {
+						elsif (($hp->{'placement'} || '') eq 'without') {
 							if ($distance > $hp->{'distance'}) {
 								push @{$navigation_information->{$returner->{'signatorial'}}->{'without'}}, $ndata;
 							} else {

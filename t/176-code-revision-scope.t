@@ -51,12 +51,14 @@ make_path(
 	"$dir/.worktrees/agent-one/public/js",
 	"$dir/.pio/build",
 	"$dir/releases",
+	"$dir/jawnos-test-abc123/public/js",
 );
 put("$dir/lib/thing.pm", "package thing; 1;\n");
 put("$dir/public/js/app.js", "var app = 1;\n");
 put("$dir/.worktrees/agent-one/public/js/app.js", "var app = 1;\n");
 put("$dir/.pio/build/firmware.js", "var fw = 1;\n");
 put("$dir/releases/staged.js", "var r = 1;\n");
+put("$dir/jawnos-test-abc123/public/js/app.js", "var t = 1;\n");
 
 my $before = revision_in($dir);
 is(scalar(keys %{ $before->{'parts'} }), 5, 'the revision still reports its five parts');
@@ -65,9 +67,10 @@ ok($before->{'fingerprint'}, 'and has a fingerprint');
 put("$dir/.worktrees/agent-one/public/js/app.js", "var app = 'changed in a worktree';\n");
 put("$dir/.pio/build/firmware.js", "var fw = 2;\n");
 put("$dir/releases/staged.js", "var r = 2;\n");
+put("$dir/jawnos-test-abc123/public/js/app.js", "var t = 2;\n");
 my $after_worktree = revision_in($dir);
 is($after_worktree->{'fingerprint'}, $before->{'fingerprint'},
-	'a worktree, firmware build or release edit does not move the fingerprint');
+	'a worktree, build, release or test-sandbox edit does not move the fingerprint');
 is($after_worktree->{'parts'}{'js'}, $before->{'parts'}{'js'},
 	'and the js part the tab follows stays put');
 

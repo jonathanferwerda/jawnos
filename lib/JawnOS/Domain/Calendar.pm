@@ -176,9 +176,9 @@ sub next_appointment_time {
 	foreach my $next_appt ( @{$next_appts} ) {
 
 		push @seen_uuids, $next_appt->{'uuid'};
-		push @{$next_values}, { app => $next_appt->{'app'}, uuid => $next_appt->{'uuid'}, timestamp => $next_appt->{'timestamp'} } if $next_appt->{'timestamp'} >= $last_moment;
-		push @{$next_values}, { app => $next_appt->{'app'}, uuid => $next_appt->{'uuid'}, timestamp => $next_appt->{'stop_timestamp'} } if $next_appt->{'stop_timestamp'} >= $last_moment;
-		push @{$next_values}, { app => $next_appt->{'app'}, uuid => $next_appt->{'uuid'}, timestamp => $next_appt->{'next_duty'} } if $next_appt->{'next_duty'} >= $last_moment;
+		push @{$next_values}, { app => $next_appt->{'app'}, uuid => $next_appt->{'uuid'}, timestamp => $next_appt->{'timestamp'} } if defined $next_appt->{'timestamp'} && $next_appt->{'timestamp'} >= $last_moment;
+		push @{$next_values}, { app => $next_appt->{'app'}, uuid => $next_appt->{'uuid'}, timestamp => $next_appt->{'stop_timestamp'} } if defined $next_appt->{'stop_timestamp'} && $next_appt->{'stop_timestamp'} >= $last_moment;
+		push @{$next_values}, { app => $next_appt->{'app'}, uuid => $next_appt->{'uuid'}, timestamp => $next_appt->{'next_duty'} } if defined $next_appt->{'next_duty'} && $next_appt->{'next_duty'} >= $last_moment;
 	}
 
 	@{$next_values} = grep { $_->{'timestamp'} >= $last_moment } @{$next_values};

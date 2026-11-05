@@ -23,7 +23,7 @@ our $log;
 our $logfile;
 
 sub remote_relay_request($c, $extra_params = {}) {
-	unless ($c->param('remoted') eq 'yes') {
+	unless (($c->param('remoted') || '') eq 'yes') {
 		my $remote_uuid = $c->param('remote_uuid') || $extra_params->{'remote_uuid'};
 		my $signatorial = &subs::signatorial_designer();
 		if (1 == 1) {
@@ -72,7 +72,7 @@ sub remote_relay_request($c, $extra_params = {}) {
 				$rm = &remote_useragent_maker({ ip => $rm->{'ip'}, signatorial => $rm->{'signatorial'}, rm => $rm });
 				my $method = lc $c->req->method;
 				my $res;
-				if ($extra_params->{'override'} eq 'manual') {
+				if (($extra_params->{'override'} || '') eq 'manual') {
 	#				&remote_relay_request($c, { dissemination => 'yes', url => $url, params => $app, type => 'post', override => 'manual' });
 					my $params = $extra_params->{'params'};
 					if ($extra_params->{'dissemination'} || &subs::device_setter() eq 'server') {
@@ -245,7 +245,7 @@ sub remote_useragent_maker($data) {
 	my $signatorial = $data->{'signatorial'};
 	my $rm = $data->{'rm'};
 	my $uuid = $data->{'uuid'};
-	my $auth_test = $data->{'auth_test'};
+	my $auth_test = $data->{'auth_test'} || '';
 	my $ua = Mojo::UserAgent->new();
 	$ua = $ua->max_response_size(0);
 	# every request on the peer rail names this machine and carries a signature

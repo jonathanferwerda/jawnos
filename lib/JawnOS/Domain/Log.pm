@@ -51,7 +51,7 @@ sub log_reader {
 	my $project = $data->{'project'};
 	my $timestamp_selector = $data->{'sorts'} || 'timestamp';
 	$timestamp_selector = 'timestamp' if $timestamp_selector eq 'occurrences';
-	if ($sorts eq 'server_time') {
+	if (($sorts || '') eq 'server_time') {
 		$timestamp_selector = 'server_time';
 	}
 	my $time_definition = &subs::rightNow();
@@ -571,7 +571,7 @@ sub log_reader {
 		}
 		$appts->{$a->{'app'}}->{'duration'} = $a->{'duration'};
 
-		$a->{'formatted_duration'} = $dsay->(abs $a->{'duration'} / 1000);
+		$a->{'formatted_duration'} = $dsay->(abs(($a->{'duration'} || 0)) / 1000);
 		$a->{'warranty'} = $a->{'warranty'} || $appts->{$a->{'app'}}->{'setting'}->{'warranty'};
 		$appts->{$a->{'app'}}->{'formatted_duration'} = $dsay->($a->{'duration'});
 		$appts->{$a->{'app'}}->{'formatted_duration'} = $dsay->((time()  - $a->{'timestamp'})) unless $a->{'duration'};
@@ -636,7 +636,7 @@ sub log_reader {
 			$appts->{$a->{'app'}}->{'invs'} += $json->{'inv'};
 			$appts->{$a->{'app'}}->{'inv'} = $appts->{$a->{'app'}}->{'resets'} ;
 		}
-		$a->{'duration'} = '' if $a->{'duration'} eq 'NaN';
+		$a->{'duration'} = '' if ($a->{'duration'} || '') eq 'NaN';
 		if ($a->{'type'} =~ /start|record/) {
 			$appts->{$a->{'app'}}->{'formatted_start_time'} = $a->{'formatted_time'};
 			$appts->{$a->{'app'}}->{'formatted_end_time'} = &subs::formatted_time($a->{'timestamp'} + ($a->{'duration'} || 0));

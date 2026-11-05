@@ -396,7 +396,7 @@ sub navigation_automation {
 	return unless (($provider || '') eq 'gps');
 
 	my $cache = &subs::cache_get({ app => '__president', context => 'navigation_automation', subcontext => $signatorial });
-	return if $cache->{'timestamp'} + 5000 > &subs::rightNow();
+	return if $cache && ($cache->{'timestamp'} || 0) + 5000 > &subs::rightNow();
 	&subs::cache_set({ app => '__president', context => 'navigation_automation', subcontext => $signatorial }, { timestamp => &subs::rightNow() });
 
 
@@ -442,12 +442,12 @@ sub navigation_automation {
 						subtype => 'navigation',
 						uuid => &subs::random_string_creator(22)
 					};
-					if ($hp->{'placement'} eq 'within') {
+					if (($hp->{'placement'} || '') eq 'within') {
 						if ($distance <= $hp->{'distance'}) {
-							if ($hset->{'site_type'} eq 'dangerous') {
+							if (($hset->{'site_type'} || '') eq 'dangerous') {
 							#	&subs::leave();
 							}
-							elsif ($tog ne 'on') {
+							elsif (($tog || '') ne 'on') {
 								# A return within fifteen minutes of a navigation stop is the
 								# same visit, so reopen that session rather than starting a new
 								# one. A leave farther than three radii was certain, so its
@@ -530,9 +530,9 @@ sub navigation_automation {
 							}
 						}
 					}
-					if ($hp->{'placement'} eq 'without') {
+					if (($hp->{'placement'} || '') eq 'without') {
 						if ($distance >= $hp->{'distance'}) {
-							if ($tog ne 'on') {
+							if (($tog || '') ne 'on') {
 								$actable = 1;
 								$cactable = 1;
 							}

@@ -324,10 +324,11 @@ sub cache_get {
 	my ($params) = @_;
 	$params->{'device'} = $device;
 	my $returner;
-	my $results = &subs::db_select_simple('cache', ['data'], $params)->hashes;
+	my $query = &subs::db_select_simple('cache', ['data'], $params);
+	my $results = $query ? $query->hashes : [];
 	my $result = $results->[0];
-	my $json_data = $result->{'data'};
-	if ($result->{'data'}) {
+	my $json_data = $result ? $result->{'data'} : undef;
+	if ($json_data) {
 		$returner = eval { return decode_sereal $json_data };
 		return $returner if $returner;
 	}

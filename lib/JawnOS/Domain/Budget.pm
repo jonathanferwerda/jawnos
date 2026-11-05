@@ -453,8 +453,8 @@ sub father_time($data) {
 	# A window is only good for the timestamp it was built from: handing the
 	# same one to a later request is what put January's month on screen just
 	# after midnight on the first.
-	if ($gb::father_time->{$scope}->{$ts}->{$lock}->{$periods}->{'timestamp'} == $timestamp &&
-		$gb::father_time->{$scope}->{$ts}->{$lock}->{$periods}->{'st'} > $start_time - 10000) {
+	if (($gb::father_time->{$scope}->{$ts}->{$lock}->{$periods}->{'timestamp'} || 0) == $timestamp &&
+		($gb::father_time->{$scope}->{$ts}->{$lock}->{$periods}->{'st'} || 0) > $start_time - 10000) {
 		$bt = $gb::father_time->{$scope}->{$ts}->{$lock}->{$periods}->{'bt'};
 		$temp_timestamp = $gb::father_time->{$scope}->{$ts}->{$lock}->{$periods}->{'tt'};
 		$gb::father_time->{$scope}->{$ts}->{$lock}->{$periods}->{'st'} = $start_time;

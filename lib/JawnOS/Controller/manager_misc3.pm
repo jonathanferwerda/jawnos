@@ -253,7 +253,7 @@ sub action_10322 {
 # POST /manager/app_release_sync
 sub action_10345 {
 	my $c = shift;
-	unless ($c->session('authentication') eq 'approved') {
+	unless (($c->session('authentication') || '') eq 'approved') {
 		$c->rendered(403);
 		return;
 	}
@@ -399,7 +399,7 @@ sub action_10415 {
 # POST /manager/crew/advertise
 sub action_10477 {
 	my $c = shift;
-	unless ($c->session('authentication') eq 'approved') { $c->rendered(403); return; }
+	unless (($c->session('authentication') || '') eq 'approved') { $c->rendered(403); return; }
 	my $abilities = &crew::tick();
 	&subs::subprocessor(sub {
 		eval { &crew::advert_sync(); };
@@ -450,7 +450,7 @@ sub action_11014 {
 	my $c = shift;
 	my $signatorial = $c->param('signatorial');
 	my $rm = ($signatorial && &subs::db_select('remote_machines', undef, { signatorial => $signatorial })->hashes->[0]);
-	unless ($c->session('authentication') eq 'approved' || ($rm && &subs::peer_verify($c, $rm))) {
+	unless (($c->session('authentication') || '') eq 'approved' || ($rm && &subs::peer_verify($c, $rm))) {
 		$c->rendered(403);
 		return;
 	}
@@ -534,7 +534,7 @@ sub action_11091 {
 	my $c = shift;
 	my $signatorial = $c->param('signatorial');
 	my $rm = ($signatorial && &subs::db_select('remote_machines', undef, { signatorial => $signatorial })->hashes->[0]);
-	unless ($c->session('authentication') eq 'approved' || ($rm && &subs::peer_verify($c, $rm))) {
+	unless (($c->session('authentication') || '') eq 'approved' || ($rm && &subs::peer_verify($c, $rm))) {
 		$c->rendered(403);
 		return;
 	}
@@ -556,7 +556,7 @@ sub action_11111 {
 	my $c = shift;
 	my $signatorial = $c->param('signatorial');
 	my $rm = ($signatorial && &subs::db_select('remote_machines', undef, { signatorial => $signatorial })->hashes->[0]);
-	unless ($c->session('authentication') eq 'approved' || ($rm && &subs::peer_verify($c, $rm))) {
+	unless (($c->session('authentication') || '') eq 'approved' || ($rm && &subs::peer_verify($c, $rm))) {
 		$c->rendered(403);
 		return;
 	}
@@ -608,7 +608,7 @@ sub action_11638 {
 	# signature (the caller names itself in `signatorial`).
 	my $signatorial = $c->param('signatorial');
 	my $rm = ($signatorial && &subs::db_select('remote_machines', undef, { signatorial => $signatorial })->hashes->[0]);
-	unless ($c->session('authentication') eq 'approved' || ($rm && &subs::peer_verify($c, $rm))) {
+	unless (($c->session('authentication') || '') eq 'approved' || ($rm && &subs::peer_verify($c, $rm))) {
 		$c->rendered(403);
 		return;
 	}

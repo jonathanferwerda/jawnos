@@ -72,7 +72,7 @@ sub action_2998 {
 	if ($c->param('signatorial')) {
 		my $rs = &subs::decrypter(&subs::shorthand_name(&subs::rightNow(), 5) . &subs::shorthand_name($signatorial, 5), $remote_signatorial);
 
-		if ($rs eq $signatorial) {
+		if (defined $rs && $rs eq $signatorial) {
 			$homepage = $signatorial;
 		} else {
 			$homepage = 'dunno';

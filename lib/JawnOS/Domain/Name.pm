@@ -324,7 +324,7 @@ sub setting_setter {
 		# The Relational board reads the settings rows directly; there is no
 		# rendered bucket to drop here any more.
 	}
-	if ($setting eq 'toggle' && $settings->{'source'} eq 'panel' && !$sync) {
+	if ($setting eq 'toggle' && ($settings->{'source'} || '') eq 'panel' && !$sync) {
 		# The panel has already written the new value. Pass it through: with no
 		# state, embedded_toggle treats each output as a fresh toggle, reads the
 		# value back and inverts it, so one click flipped the app (and every
@@ -737,6 +737,7 @@ sub settings_grabber {
 		@{$list} = grep { $_->{'subsetting'} eq $settings->{'subsetting'} } @{$list};
 	}
 	foreach my $s ( @{$list } ) {
+		next unless defined $s->{'setting'};
 		$returner->{$s->{'setting'}} = $s->{'value'};
 	}
 	# A warranty is one value for the house (warranty_device): the house row wins

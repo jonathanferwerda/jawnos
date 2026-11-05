@@ -16,7 +16,7 @@
 // do not.
 
 var wsWatchdogPeriod = 1000;
-var wsWatchdogProbeWait = 2500;
+var wsWatchdogProbeWait = 8000;
 var wsWatchdogConnectGrace = 8000;
 var wsWatchdogTimer = 0;
 var wsWatchdogLast = 0;
@@ -74,13 +74,25 @@ function wsWatchdogTick() {
 		var age = now - heard;
 		if (age > stayingAliveInterval * 2) { rebuild = 1; continue; }
 		if (age > stayingAliveInterval) {
-			// a beat is late: probe now, once. Any inbound frame clears probedAt.
+			// A beat is late: probe now, and once more before calling the socket
+			// dead. A tree that is restarting, or a worker under load, answers
+			// late; one unanswered probe must not tear down every socket and
+			// make the page pay a full reconnect for a transient delay.
+			// Any inbound frame clears probedAt and probeCount (wsTouched).
 			if (!socket['probedAt']) {
 				socket['probedAt'] = now;
+				socket['probeCount'] = 1;
 				heartbeatSend(app);
 			}
 			else if (now - socket['probedAt'] > wsWatchdogProbeWait) {
-				rebuild = 1;
+				if ((socket['probeCount'] || 1) < 2) {
+					socket['probeCount'] = (socket['probeCount'] || 1) + 1;
+					socket['probedAt'] = now;
+					heartbeatSend(app);
+				}
+				else {
+					rebuild = 1;
+				}
 			}
 		}
 	}
@@ -93,6 +105,7 @@ function wsTouched(app) {
 	if (!ws[app]) { return; }
 	ws[app]['ackAt'] = Date.now();
 	delete ws[app]['probedAt'];
+	delete ws[app]['probeCount'];
 	delete ws[app]['connectingAt'];
 }
 
