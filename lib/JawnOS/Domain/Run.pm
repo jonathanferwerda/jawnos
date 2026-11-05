@@ -223,7 +223,7 @@ my $rollback_refused = sub {
 sub git_worktree_tree {
 	my ($repo) = @_;
 	my $git = &subs::git_binary();
-	my $stash = `cd "$repo" && "$git" -c user.name=jawnos -c user.email=jawnos\@localhost stash create 2>/dev/null`;
+	my $stash = `cd "$repo" && "$git" -c 'user.name=Jonathan Ferwerda' -c user.email=jonathan.ferwerda\@outlook.com stash create 2>/dev/null`;
 	chomp $stash;
 	return undef unless $stash =~ /^[0-9a-f]{7,40}$/;
 	my $tree = `cd "$repo" && "$git" rev-parse "$stash^{tree}" 2>/dev/null`;
@@ -284,7 +284,10 @@ sub git_checkout_normalize {
 	}
 	my $version = &subs::jawn_version();
 	my $out = `cd "$repo" && "$git" add -A 2>&1`;
-	$out .= `cd "$repo" && "$git" -c user.name=JawnOS -c user.email=jawnos\@localhost commit --no-verify -m "code sync: $label ($version)" 2>&1`;
+	# The repair commit is published as the house, not as a machine: if this
+	# checkout ever travels (a peer pulls it), it must not put a hostname identity
+	# on the project's history.
+	$out .= `cd "$repo" && "$git" -c 'user.name=Jonathan Ferwerda' -c user.email=jonathan.ferwerda\@outlook.com commit --no-verify -m "code sync: $label ($version)" 2>&1`;
 	return (($? == 0) ? 'committed' : 'dirty', $out);
 }
 

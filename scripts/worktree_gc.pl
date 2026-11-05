@@ -14,7 +14,8 @@
 #
 # A worktree is removed only when ALL of these hold:
 #   1. it is not the primary checkout and not the worktree you are standing in;
-#   2. its commit (branch or detached head) is an ancestor of origin/<trunk>;
+#   2. its work is on origin/<trunk> - by ancestry, or by the subject a rebase
+#      and a metadata-only rewrite both preserve;
 #   3. no stash is waiting in it and no .shots/AGENT-CHECKPOINT.md is open;
 #   4. `git status --porcelain` there is empty (no modified or untracked file);
 #   5. no process has its cwd inside it (an agent may still be working);
@@ -116,9 +117,10 @@ sub in_use {
 
 my ($removed, $kept, $pruned, $remotes) = (0, 0, 0, 0);
 
-# A landed branch is rebased and re-versioned by the gate, so its patch id is not
-# the trunk's and merge-base cannot see it. The subject survives both, and that
-# is what says the work is on the trunk.
+# A landed branch's commit is often not an ancestor of the trunk: the gate
+# rebases and re-versions it, and a metadata-only rewrite changes every hash
+# while keeping the patch. The subject survives all of them, and that is what
+# says the work is on the trunk.
 sub remote_landed {
 	my ($sha, $ref) = @_;
 	my ($mrc) = git('merge-base', '--is-ancestor', $sha, $trunk_ref);
@@ -170,9 +172,9 @@ for my $w ($opt{'remote-only'} ? () : @records) {
 		$wip = 'no commit to compare';
 	}
 	else {
-		my ($mrc) = git('merge-base', '--is-ancestor', $head, $trunk_ref);
+		my $landed = remote_landed($head, length $branch ? $branch : $head);
 		$wip = length $branch ? "not merged into $trunk_ref"
-			: "detached at a commit not on $trunk_ref" if $mrc != 0;
+			: "detached at a commit not on $trunk_ref" unless $landed;
 	}
 	if (length $wip) {
 		say_line("wip     $path [$name] ($wip)");
@@ -237,7 +239,7 @@ for my $w ($opt{'remote-only'} ? () : @records) {
 		next;
 	}
 	if (length $branch) {
-		my ($brc, $bout) = git('branch', '-d', $branch);
+		my ($brc, $bout) = git('branch', '-D', $branch);
 		say_line("        branch $branch not deleted: $bout") if $brc != 0;
 		if ($opt{'remote'}) {
 			my ($rrc, $rout) = capture('git', 'push', 'origin', '--delete', $branch);

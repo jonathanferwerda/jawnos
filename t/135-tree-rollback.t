@@ -160,6 +160,19 @@ my $v6 = do {
 		'and the refusal is logged with the reason');
 }
 
+# ---- a synced tree that is genuinely local work is committed as the house ---
+# The code-sync repair is a synthetic commit; if the checkout ever travels it
+# must carry the project identity, never a machine's default.
+{
+	write_file("$dev/code.txt", "local work\n");
+	my ($status, $out) = &subs::git_checkout_normalize({ repo => $dev, label => 'identity test' });
+	is($status, 'committed', 'a tree origin does not have is committed, not discarded');
+	is(capture($dev, 'log', '-1', '--format=%an,%ae,%cn,%ce'),
+		'Jonathan Ferwerda,jonathan.ferwerda@outlook.com,Jonathan Ferwerda,jonathan.ferwerda@outlook.com',
+		'and the synthetic commit is published as the house, not a machine name');
+	run($dev, 'reset', '--hard', '-q', 'HEAD^');
+}
+
 # ---- a peer bundle is fetched into FETCH_HEAD, never origin/main ----------
 {
 	package FakePeerResponse;

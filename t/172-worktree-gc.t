@@ -117,6 +117,16 @@ sub merged_branch {
 
 merged_branch('stash');
 merged_branch('check');
+# A metadata-only rewrite of the trunk keeps the work but changes every hash.
+# The branch is no longer an ancestor, and it is still landed by its patch id.
+merged_branch('rewritten');
+my $wt_rewritten = "$dir/wt-rewritten";
+my ($rwc) = git($primary, 'commit', '--amend', '--no-edit', '--date=2001-01-01T00:00:00+0000');
+die "amend failed\n" if $rwc != 0;
+my ($rpc) = git($primary, 'push', '-q', '--force', 'origin', 'main');
+die "force push failed\n" if $rpc != 0;
+git($primary, 'worktree', 'add', '-q', $wt_rewritten, 'agent/rewritten');
+
 
 # The pre-push hook exports GIT_DIR; the helper must clear it. A decoy bare
 # repo proves a leaked GIT_DIR cannot point the sweep at the live checkout.
@@ -133,6 +143,7 @@ sh('git', 'init', '--bare', '-q', $decoy);
 my ($rc, $out) = gc($primary, '--older-than', '0');
 is($rc, 0, 'the report exits cleanly');
 like($out, qr/would\s+remove \Q$wt_merged\E/, 'a merged, clean worktree is a candidate');
+like($out, qr/would\s+remove \Q$wt_rewritten\E/, 'a rewritten trunk still counts its work as landed');
 	like($out, qr/wip\s+\Q$wt_unmerged\E \[agent\/unmerged\] \(not merged/, 'an unmerged branch is WIP');
 	like($out, qr/wip\s+\Q$wt_dirty\E \[agent\/dirty\] \(uncommitted/, 'uncommitted work is WIP');
 like($out, qr/keep\s+\Q$primary\E \(the primary checkout\)/, 'the primary is never a candidate');
@@ -149,12 +160,15 @@ ok(-d $wt_merged, 'and it is still there');
 is($rc, 0, 'the sweep exits cleanly') or diag($out);
 like($out, qr/removed \Q$wt_merged\E/, 'the merged, clean, idle worktree is removed');
 ok(!-d $wt_merged, 'its directory is gone');
+ok(!-d $wt_rewritten, 'the rewritten-trunk worktree is removed');
 	ok(-d $wt_unmerged, 'the unmerged worktree survives');
 	ok(-d $wt_dirty, 'the worktree with uncommitted work survives');
 ok(-d $primary, 'the primary checkout survives');
 
 my ($brc) = git($primary, 'rev-parse', '--verify', 'refs/heads/agent/merged');
 isnt($brc, 0, 'the landed branch is deleted with it');
+my ($rbrc) = git($primary, 'rev-parse', '--verify', 'refs/heads/agent/rewritten');
+isnt($rbrc, 0, 'the rewritten-trunk branch is deleted too');
 ($brc) = git($primary, 'rev-parse', '--verify', 'refs/heads/agent/unmerged');
 is($brc, 0, 'the unmerged branch is untouched');
 
