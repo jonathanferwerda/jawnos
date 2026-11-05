@@ -29,6 +29,7 @@ use Mojo::IOLoop;
 use Mojo::JSON qw(decode_json encode_json);
 use Mojo::Util qw/md5_sum xml_escape html_unescape term_escape quote unquote secure_compare url_escape url_unescape network_contains punycode_decode punycode_encode b64_decode b64_encode/;
 use POSIX ();   # mktime: a local-time epoch that still predates 1970
+use Scalar::Util qw(reftype);
 use Text::Unidecode;
 use Time::Duration;
 use Time::HiRes qw(gettimeofday time);
@@ -474,7 +475,7 @@ sub peer_verify {
 sub peer_roster_row_in {
 	my ($signatorial, $rows) = @_;
 	return undef unless defined $signatorial && length $signatorial;
-	$rows = [] unless ref $rows eq 'ARRAY';
+	$rows = [] unless ref($rows) && reftype($rows) eq 'ARRAY';
 	my ($direct, @mirrors);
 	for my $rm ( @{$rows} ) {
 		next unless ref $rm eq 'HASH';

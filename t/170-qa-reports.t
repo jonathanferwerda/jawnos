@@ -17,6 +17,7 @@ use File::Path qw(make_path remove_tree);
 use File::Slurp qw(read_file write_file);
 use File::Temp ();
 use JSON::PP;
+use Mojo::Collection;
 use Test::More;
 
 use lib "$FindBin::Bin/../lib";
@@ -183,6 +184,9 @@ my $keyless_direct = { signatorial => 'laptop' };
 is( subs::peer_roster_row_in('laptop', [ $keyless_direct, $hub ])->{'pubkey'}, 'MIRROR KEY',
 	'a direct row that lost its key takes the hub copy' );
 ok( !defined subs::peer_roster_row_in('nobody', [ $hub ]), 'an unknown caller still resolves to nothing' );
+my $collection = Mojo::Collection->new($hub);
+is( subs::peer_roster_row_in('laptop', $collection)->{'pubkey'}, 'MIRROR KEY',
+	'a blessed collection from db_select->hashes is accepted' );
 ok( !defined subs::peer_roster_row_in('laptop', [ { signatorial => 'hub', mirrors => 'not json' } ]),
 	'a broken mirror blob is ignored, not fatal' );
 
