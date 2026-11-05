@@ -156,9 +156,11 @@ isnt(JawnOS::Sco::Render::key('hello', 'piper-a'), JawnOS::Sco::Render::key('hel
 	my $moves = '';
 	my $sink_on = 3472;
 	my $source_on = 3473;
+	my $prompt_on = 0;
 	my %name = (
 		3472 => 'alsa_output.pci-0000_00_1f.3.analog-stereo',
 		3657 => 'jawn_call_in',
+		3664 => 'jawn_prompt',
 		3473 => 'alsa_input.pci-0000_00_1f.3.analog-stereo',
 		3672 => 'jawn_ivr_mic',
 	);
@@ -172,7 +174,10 @@ isnt(JawnOS::Sco::Render::key('hello', 'piper-a'), JawnOS::Sco::Render::key('hel
 			return join '', map { "$_\t$name{$_}\tPipeWire\ts16 2ch\tRUNNING\n" } sort keys %name;
 		}
 		if ($line eq 'list sink-inputs') {
-			return "Sink Input #41\n\tSink: $sink_on\n\tProperties:\n\t\tdevice.string = \"00:2B:70:E9:7E:B2\"\n\n";
+			my $out = "Sink Input #41\n\tSink: $sink_on\n\tProperties:\n\t\tdevice.string = \"00:2B:70:E9:7E:B2\"\n\n";
+			$out .= "Sink Input #43\n\tSink: $prompt_on\n\tProperties:\n\t\tapplication.name = \"jawn-sco-prompt\"\n\n"
+				if $prompt_on;
+			return $out;
 		}
 		if ($line eq 'list source-outputs') {
 			return "Source Output #42\n\tSource: $source_on\n\tProperties:\n\t\tdevice.string = \"00:2B:70:E9:7E:B2\"\n\n";
@@ -191,6 +196,19 @@ isnt(JawnOS::Sco::Render::key('hello', 'piper-a'), JawnOS::Sco::Render::key('hel
 	my $second = $mixer->attach('00:2B:70:E9:7E:B2');
 	is_deeply($second->{'moved'}, [], 'streams already on our devices are left alone');
 	is($moves, '', 'and nothing is re-linked');
+	# The session manager has been seen to move the prompt player onto
+	# jawn_call_in mid-greeting (the caller hears one word and the rest is
+	# recorded); the gateway puts it back on the sink the phone reads.
+	$moves = '';
+	$prompt_on = 3657;
+	my $third = $mixer->attach('00:2B:70:E9:7E:B2');
+	is_deeply($third->{'moved'}, [ 'prompt' ], 'a prompt player on the wrong sink is moved back');
+	like($moves, qr/move-sink-input 43 jawn_prompt/, 'and that is the move it makes');
+	$moves = '';
+	$prompt_on = 3664;
+	my $fourth = $mixer->attach('00:2B:70:E9:7E:B2');
+	is_deeply($fourth->{'moved'}, [], 'a prompt player already on jawn_prompt is left alone');
+	is($moves, '', 'with no move');
 }
 
 JawnOS::Sco::Render::prune();

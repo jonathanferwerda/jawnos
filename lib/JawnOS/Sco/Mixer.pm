@@ -124,6 +124,26 @@ sub call_streams {
 	};
 }
 
+# The prompt player the helper owns, found by the name it gives its stream.
+#
+# WirePlumber keeps a target per application name and applies it when a stream
+# starts; on this stack the prompt has been seen to land on - or be moved to -
+# jawn_call_in mid-greeting, so the caller heard one word and the rest was
+# recorded as if the caller had said it. Naming our streams stopped one route
+# but not the session manager's own choice, so the sink is re-asserted instead.
+sub prompt_stream {
+	my ($self) = @_;
+	foreach my $block ( &_blocks(&pactl('list', 'sink-inputs')) ) {
+		next unless $block =~ /application\.name = "jawn-sco-prompt"/;
+		my ($id) = $block =~ /Sink Input #(\d+)/;
+		next unless $id;
+		my ($sid) = $block =~ /^\s*Sink:\s*(\d+)/m;
+		my $sink = $sid ? { &_device_names('sinks') }->{$sid} : undef;
+		return { id => $id, sink => $sink };
+	}
+	return undef;
+}
+
 # Move the call's streams onto our devices - but only the ones that are not
 # there already. The caller's voice comes to jawn_call_in, and the phone's
 # input reads jawn_ivr_mic.
@@ -139,6 +159,12 @@ sub attach {
 	if ($streams->{'source_output'} && ($streams->{'source'} // '') ne $SOURCE) {
 		&pactl('move-source-output', $streams->{'source_output'}, $SOURCE);
 		push @moved, 'source-output';
+	}
+	# The prompt is ours, not the caller's: put it back if it was moved away.
+	my $prompt = $self->prompt_stream();
+	if ($prompt && ($prompt->{'sink'} // '') ne $SINK_OUT) {
+		&pactl('move-sink-input', $prompt->{'id'}, $SINK_OUT);
+		push @moved, 'prompt';
 	}
 	$self->{'attached'} = $streams;
 	$self->{'moved'} = \@moved;
