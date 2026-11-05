@@ -283,18 +283,31 @@ sub merge_table_rows {
 											$protected = 1;
 										}
 									}
+									# A house-wide row (`device = 'all'`) is not local by definition -
+									# every machine reads the same row - so it merges even when its app is
+									# otherwise protected. The tarot draw lists are one: the app's own
+									# settings stay per-device, but a draw is a house fact and must reach
+									# every machine (the same exception the durable digest already makes).
+									# The named local churn stays out even when it claims to be house-wide.
+									my $setting_name = $r->{'setting'} // '';
+									my $house_wide = (($r->{'device'} // '') eq 'all'
+										&& !&subs::local_setting($setting_name)) ? 1 : 0;
 									#next if $protected == 1;
-									unless ($universal_settings->{$r->{'app'}}->{'unique'} eq 'checked' || $protected == 1) {
+									unless ($universal_settings->{$r->{'app'}}->{'unique'} eq 'checked' || ($protected == 1 && !$house_wide)) {
 										# A row we already hold at the peer's own server_time counts as present:
 										# the write below copies the peer's server_time verbatim, so with a strict
 										# '>' the test was false again on the very next sync and every one of
 										# the ~29k settings rows was deleted and reinserted, every sync, forever
 										# (the 'Now merging N settings' that looked stuck). '>=' skips the row we
 										# already hold, and still lets a genuinely newer peer value land.
-										my $time_check = $r->{'subsetting'} ? &subs::db_query('select app,setting,value from settings where app=? and setting=? and subsetting = ? and server_time >= ?',
-												$r->{'app'}, $r->{'setting'}, $r->{'subsetting'}, $r->{'server_time'})->hashes :
-											&subs::db_query('select app,setting,value from settings where app=? and setting=? and server_time >= ?',
-												$r->{'app'}, $r->{'setting'}, $r->{'server_time'})->hashes;
+										# A house-wide row is compared with the house row only: a per-device
+										# copy of the same setting must not hide it.
+										my $device_clause = $house_wide ? ' and device = ?' : '';
+										my @device_args = $house_wide ? ('all') : ();
+										my $time_check = $r->{'subsetting'} ? &subs::db_query('select app,setting,value from settings where app=? and setting=? and subsetting = ? and server_time >= ?' . $device_clause,
+												$r->{'app'}, $r->{'setting'}, $r->{'subsetting'}, $r->{'server_time'}, @device_args)->hashes :
+											&subs::db_query('select app,setting,value from settings where app=? and setting=? and server_time >= ?' . $device_clause,
+												$r->{'app'}, $r->{'setting'}, $r->{'server_time'}, @device_args)->hashes;
 										if (scalar @{$time_check} == 0) {
 											eval {
 												&subs::setting_setter({
@@ -303,7 +316,7 @@ sub merge_table_rows {
 													value => $r->{'value'},
 													server_time => $r->{'server_time'},
 													uuid => &subs::random_string_creator(20),
-													device => $device,
+													device => $house_wide ? 'all' : $device,
 													subsetting => $r->{'subsetting'},
 													sync => 1
 												});

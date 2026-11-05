@@ -1,9 +1,11 @@
-# tests-for: lib/JawnOS/Controller/manager_misc9.pm lib/JawnOS/Domain/Name.pm lib/JawnOS/Manager/Part23.pm scripts/cards_spread_files.pl templates/cards.html.ep templates/cards/tarot.html.ep public/js/manager/manager/12_cards.js
+# tests-for: lib/JawnOS/Controller/manager_misc9.pm lib/JawnOS/Domain/Name.pm lib/JawnOS/Manager/Part23.pm lib/JawnOS/Manager/Part17.pm scripts/cards_spread_files.pl templates/cards.html.ep templates/cards/tarot.html.ep public/js/manager/manager/12_cards.js
 # covers:    the tarot draw lists are one list for the house (device 'all'), a
 #            read falls back to a device row until the house row exists, a
 #            spread is three deck files not a stored montage, names with spaces
-#            are unescaped and percent-encoded, and the page renders with every
-#            stash key its routes pass.
+#            are unescaped and percent-encoded, the page renders with every
+#            stash key its routes pass, a peer's house row merges even though
+#            cards is a protected app, and a period deal's reply carries the
+#            draw it just stored.
 
 use strict;
 use warnings;
@@ -137,6 +139,9 @@ my $cdb = $csql->db;
 $cdb->query('create table settings (setting text, value text, timestamp text, '
 	. 'id integer primary key autoincrement, app text, server_time text, device text, '
 	. 'browser_tab_id text, uuid text, ost text, subsetting text)');
+$cdb->query('create table sync_log (id integer primary key autoincrement, '
+	. 'server_time text, signatorial text, tbl text, app text, uuid text, '
+	. 'scope text, additional text, ost text)');
 my @cst = stat($carddb);
 $gb::database_holder = {
 	server_time => &subs::rightNow(),
@@ -174,5 +179,103 @@ is_deeply(&subs::cards_list('free'), [
 	{ title => 'The Star', timestamp => 6 },
 	{ title => 'The Fool', timestamp => 5, cards => [ 'the fool.png' ] },
 ], 'and every device reads one house list, newest first, with no draw lost');
+
+# --------------------------------------------------- the draws ride the sync
+# `cards` is a protected app, so its own settings stay local. A draw list is a
+# house-wide row (device 'all'), and a house row is not local: the merge must
+# take it - and keep it a house row - or a peer's draws never arrive.
+my $card_part17 = root() . '/lib/JawnOS/Manager/Part17.pm';
+require $card_part17;
+my $sync_device = &subs::device_setter();
+
+sub merge_peer_setting {
+	my ($row) = @_;
+	my $served = 0;
+	my $next = sub { return $served++ ? undef : $row; };
+	my $ctx = {
+		configuration      => {},
+		misc_settings      => {},
+		device             => $sync_device,
+		deletions          => [],
+		universal_settings => {},
+		updateables        => [],
+		sync_job           => undef,
+		auuid              => 'test-auuid',
+		colour             => '#000000',
+	};
+	return Manager::merge_table_rows($ctx, 'settings', $next, 1, 1, 1);
+}
+
+my $peer_time = $now + 2000;
+merge_peer_setting({
+	uuid => 'cards-day-peer', app => 'cards', setting => 'day', device => 'all',
+	value => $json->encode([ { title => 'The Star', timestamp => 7 } ]),
+	timestamp => $peer_time, server_time => $peer_time,
+});
+my $peer_house = $cdb->query("select value, device from settings where app='cards' and setting='day'")->hashes;
+is(scalar @{$peer_house}, 1, 'a house-wide cards draw from a peer merges');
+is($peer_house->[0]->{'device'}, 'all', 'and stays a house row, not a local device copy');
+is_deeply(&subs::cards_list('day'), [ { title => 'The Star', timestamp => 7 } ],
+	'so every machine reads the draw from the house list');
+
+merge_peer_setting({
+	uuid => 'cards-mode-peer', app => 'cards', setting => 'mode', device => $sync_device,
+	value => 'year', timestamp => $peer_time + 1, server_time => $peer_time + 1,
+});
+my $peer_local = $cdb->query("select 1 from settings where app='cards' and setting='mode'")->hashes;
+is(scalar @{$peer_local}, 0, 'a per-device cards setting still stays local');
+
+merge_peer_setting({
+	uuid => 'cards-errors-peer', app => 'cards', setting => 'errors', device => 'all',
+	value => 'peer errors', timestamp => $peer_time + 2, server_time => $peer_time + 2,
+});
+my $peer_errors = $cdb->query("select 1 from settings where app='cards' and setting='errors'")->hashes;
+is(scalar @{$peer_errors}, 0, 'local churn stays out even when it claims to be a house row');
+
+# ------------------------------------------------- a deal refreshes the rail
+# The day/week/month/year writer stores the new draw itself, after the route has
+# read the history it renders. It must read that list again, or the draw appears
+# in the rail only when the person clicks a second time.
+&subs::cards_list_write('day', [ { title => 'The Moon', timestamp => $now + 3000 } ]);
+&subs::db_insert('settings', {
+	app => 'cards', setting => 'mode', value => 'day', device => $sync_device,
+	timestamp => $now, server_time => $now, uuid => 'cards-mode-row',
+});
+my $cards_controller = root() . '/lib/JawnOS/Controller/manager_misc9.pm';
+require $cards_controller;
+
+my $captured;
+{
+	package CardsTestController;
+	sub new { bless {}, shift }
+	sub param {
+		my ($self, $key) = @_;
+		return 'new' if $key eq 'new_card';
+		return '';
+	}
+	sub render_to_string { return '<div id="deck_history"></div>'; }
+	sub render {
+		my ($self, @args) = @_;
+		$captured = { @args };
+		return 1;
+	}
+}
+{
+	no warnings 'redefine';
+	local *Manager::card_of_the_day = sub {
+		&subs::cards_list_write('day', [
+			{ title => 'The Star', timestamp => $now + 4000 },
+			@{ &subs::cards_list('day') },
+		]);
+		return 'the star.png';
+	};
+	local *subs::inventory_grabber = sub { return {}; };
+	Manager::action_28170(CardsTestController->new());
+}
+my $reply = $captured->{'json'};
+ok(ref $reply eq 'HASH', 'the deal answered with a JSON reply');
+is($reply->{'history'}->[0]->{'title'}, 'The Star',
+	'the deal reply carries the draw it just stored, in the same click');
+is($reply->{'history'}->[1]->{'title'}, 'The Moon', 'with the older draws behind it');
 
 done_testing();

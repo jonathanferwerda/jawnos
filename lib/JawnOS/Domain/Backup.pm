@@ -556,6 +556,30 @@ sub appointments_since {
 # arrived by different paths; a machine that was offline and is missing an old
 # row has a different count (or sum) and is caught. /remote_auth_test exchanges
 # this map, and the caller plans a per-table pull from the difference.
+# Settings that stay on the machine that wrote them even when they claim to be
+# house-wide (`device = 'all'`): window and tab state, timers and locks, the
+# local log and errors. The durable digest leaves them out (so they cannot
+# start a pull) and a peer's house-row merge leaves them out (so importing one
+# cannot move a window or take a lock). One list for both, or the two disagree
+# and a row that moves the digest is the row the merge refuses to take.
+our @local_settings = qw(
+	open_tabs scrollTop jopen dimensions utility_controller remote_connect_timer
+	remote_upgrade remote_backup_lock remote_auth_probe_timer ws_pa chip_chyea
+	settings_sync_timer remote_sync_state log schema_version toggle ci errors email_config
+);
+our %local_setting = map { $_ => 1 } @local_settings;
+
+sub local_settings { return @local_settings }
+
+# Is this setting machine-local even when it claims `device = 'all'`? The
+# remote_* family is local by name, not only by the list above.
+sub local_setting {
+	my $setting = shift;
+	return 0 unless defined $setting && length $setting;
+	return 1 if $local_setting{$setting};
+	return $setting =~ /^remote_/ ? 1 : 0;
+}
+
 sub durable_settings_where {
 	# Settings churn constantly (window geometry, open tabs, timers, remote_*
 	# state). Only app configuration may trigger a sync; the export still carries
@@ -584,8 +608,11 @@ sub durable_settings_where {
 	# the digest, so a deck whose pair had just been re-issued was denied by a
 	# peer that was otherwise live. Including it makes every Now Me rotate the
 	# digest and the peers pull the new row on the next tick.
+	# The local churn list is shared with the merge, so a row that can move the
+	# digest is a row a peer's house-row merge will take.
+	my $setting_list = join ',', map { "'$_'" } &local_settings();
 	return "(app not in ($app_list) or device = 'all')"
-		. " and setting not in ('open_tabs','scrollTop','jopen','dimensions','utility_controller','remote_connect_timer','remote_upgrade','remote_backup_lock','remote_auth_probe_timer','ws_pa','chip_chyea','settings_sync_timer','remote_sync_state','log','schema_version','toggle','ci','errors','email_config')"
+		. " and setting not in ($setting_list)"
 		. " and setting not like 'remote\\_%' escape '\\'";
 }
 

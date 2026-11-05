@@ -426,6 +426,10 @@ sub action_28170 {
 			$title = $card;
 			$title =~ s/.png$//gi;
 		}
+		# The day/week/month/year writers store the draw themselves, after the
+		# history above was read. Read it again so this reply's rail carries the
+		# new draw now, instead of showing it only on the next click.
+		$history = &subs::cards_list($mode) if ($mode // '') =~ /^(?:day|week|month|year)$/;
 	}
 	else {
 		my $latest = (ref $history->[0] eq 'HASH') ? $history->[0] : undef;
