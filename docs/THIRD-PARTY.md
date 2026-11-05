@@ -237,10 +237,10 @@ often mistaken for third-party material:
 
 ### 2.17 Residual notes
 
-- The core runtime (aarch64 0.1.1751) now carries `licenses/`. The optional
-  parts (0.1.1750) and the x86_64 archive (0.1.1702) predate the injection and
-  will carry it on their next build; the same texts are attached to the release
-  as `jawnrt-licenses.tar.gz` until then.
+- Both core runtimes (aarch64 and x86_64 0.1.1751) now carry `licenses/`. The
+  optional parts (0.1.1750) predate the injection and will carry it on their
+  next build; the same texts are attached to the release as
+  `jawnrt-licenses.tar.gz` until then.
 - The three TFT_eSPI smooth fonts are covered by TFT_eSPI's FreeBSD licence, but
   the typefaces they were converted from are not named upstream. If you want to
   remove even that ambiguity, regenerate `Final_Frontier_28` from Montserrat
