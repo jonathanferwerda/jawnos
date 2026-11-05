@@ -348,7 +348,13 @@ sub action_12771 {
 # POST /manager/leave
 sub action_12791 {
 	my $c = shift;
-	&leave($c);
+	my $left = &leave($c);
+	# A failed seal is not a leave: keep the session and the database, and
+	# tell the dialog why nothing happened instead of drawing the gate over a
+	# house that is still open.
+	if (ref $left eq 'HASH' && !$left->{'ok'}) {
+		return $c->render(status => 500, json => { ok => 0, error => ($left->{'error'} || 'Could not seal the database; it was kept.') });
+	}
 	my ($db,$database,$sql) = &subs::database_grabber();
 	my $restore_list;
 	unless (-e $database && -s $database > 5000) {

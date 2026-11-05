@@ -27,7 +27,6 @@ sub leave($c) {
 	}
 	my ($db,$database,$sql) = &subs::database_grabber();
 	&subs::say_it('leave');
-	&remote_relay_request($c, { mode => 'emergency' });
 	my $timestamp = $c->param('timestamp') || &subs::rightNow();
 	$c->param('reason' => 'leave');
 	my $server_time = &subs::rightNow();
@@ -52,7 +51,18 @@ sub leave($c) {
 	}
 	my $warranty = &subs::ago_calc(&subs::setting_grabber({ app => 'customs', setting => 'warranty' }) || &subs::setting_grabber({ app => 'me', setting => 'warranty' }) || '-10d', $timestamp);
 	&subs::db_insert('appointments', { warranty => $warranty, uuid => &subs::random_string_creator(40), app => "customs", type => "depart", timestamp => $timestamp, server_time => $server_time });
-	&subs::backup_now($c);
+	# Never shred the only copy of the house on a backup that did not seal.
+	# backup_now now verifies the ciphertext; this is the second lock, because
+	# the cost of being wrong is the whole database. Both the timestamped
+	# archive and the stable jawnos.enc must hold real ciphertext.
+	my $backup = &subs::backup_now($c);
+	unless (ref $backup eq 'HASH'
+		&& &subs::backup_sealed_ok($backup->{'archive_path'})
+		&& &subs::backup_sealed_ok($backup->{'path'})) {
+		&subs::say_it('leave refused: no sealed backup');
+		return { ok => 0, error => 'Could not seal the database; it was kept.' };
+	}
+	&remote_relay_request($c, { mode => 'emergency' });
 	`shred -u $database`;
 	`shred -u $database-shm`;
 	`shred -u $database-wal`;
@@ -69,6 +79,7 @@ sub leave($c) {
 	$gb::database_holder = undef;
 	&subs::say_it('Goodbye');
 	$sql = undef;
+	return { ok => 1 };
 }
 
 # The power choices the Leave menu may offer. A phone's app cannot power the

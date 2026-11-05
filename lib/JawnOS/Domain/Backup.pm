@@ -52,6 +52,17 @@ our $universal_splitter;
 # delta between peers runs the v3 row stream (`Manager::sync_rows_pull` and the
 # `/manager/sync_rows` route), which shares merge_table_rows/merge_finish and never
 # builds this temporary database.
+#
+# A sealed backup is the ciphertext plus its split footer, never the footer
+# alone. A failed `openssl enc` used to leave a 96-byte header, which leave()
+# then treated as a backup and shredded the database behind it. The restore
+# path already refuses a database under 5001 bytes; use the same floor here.
+sub backup_sealed_ok($path) {
+	return 0 unless defined $path && length $path;
+	return 0 unless -e $path && -s $path > 5000;
+	return 1;
+}
+
 sub backup_now {
 	my $c = shift;
 	my $start_time = &subs::rightNow();
@@ -395,13 +406,42 @@ sub backup_now {
 	&subs::backup_registry_prune();
 
 	my $archive_path = $path . '_' . $timestamp;
-	my $encrypt = &openssl_file_crypt('e', $encryption_standard, $secret, $temporary_path, $archive_path . '.enc', 0, 1);
-	chmod 0600, $archive_path . '.enc' if -e $archive_path . '.enc';
+	my $archive_enc = $archive_path . '.enc';
+	my $encrypt = &openssl_file_crypt('e', $encryption_standard, $secret, $temporary_path, $archive_enc, 0, 1);
+	# Do not append the split footer to a ciphertext that is not there. A bare
+	# footer is 96 bytes, which the old code then copied over jawnos.enc and
+	# treated as a backup - leave() shredded the only copy of the house behind
+	# it. A failed seal keeps the plaintext temporary database until the shred
+	# below, and the caller is told not to destroy the live database.
+	unless ($encrypt && &backup_sealed_ok($archive_enc)) {
+		unlink $archive_enc;
+		`shred -u $temporary_path*`;
+		$log->error('backup: could not seal ' . ($databaser || $database || 'the database') . '; nothing was archived') if $log;
+		return { status => 'failed', error => 'could not seal the database' };
+	}
+	chmod 0600, $archive_enc;
 	my $stat_path = `stat $temporary_path`;
-	`echo "$appendage" >> $archive_path.enc`;
+	`echo "$appendage" >> $archive_enc`;
 
 	unless ($reason eq 'remote_update') {
-		my $archive_encrypt = `cp -v $archive_path.enc $enc_file`;
+		# Stage the stable copy and rename it into place only after its size
+		# matches the archive, so a failed copy cannot leave an older
+		# jawnos.enc looking like the backup this leave just made.
+		my $staged = $enc_file . '.new.' . $$;
+		`cp -v $archive_enc $staged`;
+		unless (-e $staged && (stat($staged))[7] == (stat($archive_enc))[7]) {
+			unlink $staged;
+			`shred -u $temporary_path*`;
+			$log->error('backup: could not stage the sealed copy at ' . $enc_file) if $log;
+			return { status => 'failed', error => 'could not copy the sealed backup' };
+		}
+		chmod 0600, $staged;
+		unless (rename $staged, $enc_file) {
+			unlink $staged;
+			`shred -u $temporary_path*`;
+			$log->error('backup: could not replace the sealed copy at ' . $enc_file) if $log;
+			return { status => 'failed', error => 'could not copy the sealed backup' };
+		}
 		chmod 0600, $enc_file if -e $enc_file;
 	}
 	&subs::subprocessor(sub {

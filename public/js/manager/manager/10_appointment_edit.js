@@ -536,7 +536,14 @@ function leave() {
 //			$('body').replaceWith(response);
 			location.reload();
 		},
-		error: function(err) { console.log('Error', err); }
+		error: function(xhr) {
+			// A failed seal keeps the database. Say so and leave the session
+			// where it is; the old handler only logged and the page looked dead.
+			var msg = (xhr && xhr.responseJSON && xhr.responseJSON.error)
+				? xhr.responseJSON.error
+				: 'Could not seal the database; it was kept.';
+			jawnosAlert('<p>' + jawnosT(msg) + '</p>', { title: jawnosT('power_leave') });
+		}
 	});
 }
 
