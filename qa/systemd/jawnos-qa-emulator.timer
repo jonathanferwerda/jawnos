@@ -1,0 +1,16 @@
+[Unit]
+Description=Weekly JawnOS emulator run (testing only)
+
+[Timer]
+# Sunday 07:00: after the 03:00 artefact build (20-40 min), the 04:30 Docker
+# smoke and the 06:00 coding night, so a weekly run never races the jobs that
+# share this box's cores. Weekly on purpose, like the artefact build: the l4
+# checks boot an AVD and take minutes, and a tree that has not moved produces
+# the same result.
+OnCalendar=Sun *-*-* 07:00:00
+Persistent=true
+RandomizedDelaySec=20m
+Unit=jawnos-qa-emulator.service
+
+[Install]
+WantedBy=timers.target

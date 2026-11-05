@@ -131,7 +131,8 @@ like( $weekly, qr/STEP_TSV/, 'and records one row per step' );
 like( $weekly, qr/Installing Android SDK/, 'a component the build had to download fails the run' );
 
 my $emulator = read_file("$root/qa/android/run.sh");
-like( $emulator, qr/--kind=emulator --schedule=manual/, 'the emulator run reports itself' );
+like( $emulator, qr/--kind=emulator --schedule="\$\{QA_SCHEDULE:-manual\}"/,
+	'the emulator run reports itself, with the cadence it was started on' );
 like( $emulator, qr/qa_report failed "\$\*"/, 'and reports a failure, not only a pass' );
 
 my $deps = read_file("$root/scripts/jawnos_deps.pl");

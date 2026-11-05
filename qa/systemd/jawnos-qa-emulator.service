@@ -1,0 +1,31 @@
+[Unit]
+Description=JawnOS weekly emulator run (testing only)
+Documentation=file:/home/jawn/jawnos/qa/README.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=jawn
+WorkingDirectory=/home/jawn/jawnos
+Environment=HOME=/home/jawn
+Environment=QA_ROOT=/home/jawn/jawnos-qa
+ExecStart=/bin/sh /home/jawn/jawnos/qa/android/weekly.sh
+
+# The AVD belongs on the machine with the SDK and KVM -- table -- exactly as the
+# weekly artefact build belongs where mkosi and qemu are, so this unit carries
+# no Configure -> Plat -> QA device gate. On a machine without the emulator the
+# script writes a `skipped` report and succeeds.
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+MemoryMax=6G
+CPUQuota=300%
+# A cold AVD boot, an install, three jank runs, rotation, an offline relaunch
+# and the WebView probe: minutes, but a slow host is still a host.
+TimeoutStartSec=45min
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

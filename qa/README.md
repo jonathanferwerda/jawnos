@@ -804,10 +804,34 @@ just skip their run.
 There are five nightly units. The Configure choice applies to the suite at
 **05:00**, the UX loop at **05:30**, and the coding night at **06:00**. The
 Docker compose smoke at **04:30**, the installer package freshness at **03:45**
-and the weekly artefact build (`jawnos-qa-build.timer`, Sunday 03:00)
+and the two weekly units - the artefact build (`jawnos-qa-build.timer`, Sunday
+03:00) and the emulator run (`jawnos-qa-emulator.timer`, Sunday 07:00) -
 deliberately do **not** carry the condition: each belongs where its toolchain
 is (Docker; a package manager reading its own repo lists; mkosi, qemu and a
-full JDK), not on the machine that happens to run the route/database suite.
+full JDK; an AVD and KVM), not on the machine that happens to run the
+route/database suite.
+
+### Weekly emulator run (Sunday 07:00)
+
+`qa/android/weekly.sh` (`jawnos-qa-emulator.timer`) builds the APK from the app
+repo's HEAD and then runs `qa/android/run.sh` on it - the same l4 checks a
+person runs by hand: cold and warm start, memory, repeated jank, rotation, an
+offline relaunch and the WebView probe. It reports as `emulator` with cadence
+`weekly`, so the card shows it beside the nightly checks.
+
+It belongs on the machine with the SDK, the AVD and KVM (table), like the
+artefact build belongs where mkosi and qemu are. On a machine without the
+emulator, the AVD or `/dev/kvm` it writes a `skipped` report and exits 0 - the
+unit must not go red for a toolchain that is deliberately elsewhere, and the
+panel says which piece was missing. Nothing is published and no `versionCode`
+is bumped.
+
+```sh
+sudo cp qa/systemd/jawnos-qa-emulator.service qa/systemd/jawnos-qa-emulator.timer /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now jawnos-qa-emulator.timer
+systemctl list-timers jawnos-qa-emulator.timer
+```
 
 The panel's readiness card asks the chosen machine what it has: the checkout,
 `perl` and `prove`, `sqlite3`, `unshare` (the fence) are required for the

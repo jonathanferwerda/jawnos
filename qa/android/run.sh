@@ -111,7 +111,7 @@ qa_report() {
 	} > "$tsv" 2>/dev/null || :
 	metrics=
 	if [ -n "${DEVJSON:-}" ] && [ -f "${DEVJSON:-}" ]; then metrics="--metrics=$DEVJSON"; fi
-	perl "$DIR/../../scripts/qa_report.pl" --kind=emulator --schedule=manual \
+	perl "$DIR/../../scripts/qa_report.pl" --kind=emulator --schedule="${QA_SCHEDULE:-manual}" \
 		--status "$status" --title 'Emulator run' --note "$note" \
 		--table "Checks:$tsv" $metrics \
 		--root "${QA_ROOT:-$HOME/jawnos-qa}" >/dev/null 2>&1 || :

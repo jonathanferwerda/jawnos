@@ -1,4 +1,4 @@
-# tests-for: qa/android/build.sh qa/android/run.sh qa/qemu/build.sh qa/qemu/run.sh qa/nightly_build.sh scripts/verify_change.pl
+# tests-for: qa/android/build.sh qa/android/run.sh qa/android/weekly.sh qa/qemu/build.sh qa/qemu/run.sh qa/nightly_build.sh qa/systemd/jawnos-qa-emulator.service qa/systemd/jawnos-qa-emulator.timer scripts/verify_change.pl
 # covers:    The device layers are shell scripts, which verify_change.pl does not look at.
 
 use strict;
@@ -36,6 +36,27 @@ for my $script (qw(android/build.sh android/run.sh qemu/build.sh qemu/run.sh)) {
 	like($build, qr/CLEAN/, 'a clean build can be asked for');
 	like($build, qr/gradlew[^\n]*clean[^\n]*:app:assembleDebug/,
 		'a clean run compiles from scratch rather than reusing incremental state');
+}
+
+# --- the weekly emulator run --------------------------------------------------
+{
+	my $weekly = read_file("$qa/android/weekly.sh");
+	ok( -f "$qa/android/weekly.sh", 'the weekly emulator job exists' );
+	ok( -x "$qa/android/weekly.sh", 'and is executable' );
+	is( system('sh', '-n', "$qa/android/weekly.sh"), 0, 'it parses under sh' );
+	like( $weekly, qr{qa/android/build\.sh}, 'it builds the APK before booting anything' );
+	like( $weekly, qr{qa/android/run\.sh}, 'and runs the same l4 checks a person runs' );
+	like( $weekly, qr/QA_SCHEDULE=weekly/, 'labelling the report weekly, not manual' );
+	like( $weekly, qr/^skip\(\)/m, 'a machine without the emulator skips' );
+	like( $weekly, qr/--status "\$1"|--status \$1/, 'and leaves the skipped status for the panel' );
+	unlike( $weekly, qr{app_publish\.pl|app_build\.pl}, 'it never publishes or bumps a release' );
+
+	my $service = read_file("$qa/systemd/jawnos-qa-emulator.service");
+	my $timer   = read_file("$qa/systemd/jawnos-qa-emulator.timer");
+	like( $service, qr{ExecStart=/bin/sh \S+/qa/android/weekly\.sh}, 'the unit runs the weekly job' );
+	like( $timer, qr/OnCalendar=Sun \*-\*-\* 07:00:00/, 'Sunday 07:00, after the build and the coding night' );
+	unlike( $service, qr/device_target/, 'no device gate: it belongs where the AVD is' );
+	like( $service, qr/TimeoutStartSec=45min/, 'a booted AVD is given room' );
 }
 
 # --- the weekly artefact build ------------------------------------------------
