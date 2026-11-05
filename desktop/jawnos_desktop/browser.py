@@ -19,6 +19,10 @@ What this window does:
   is active. Spans are posted through the desktop app's stored ticket by
   :class:`jawnos_desktop.usage.ManagerClient`, which this module subclasses
   without changing;
+* an ad blocker: a small baseline of ad-serving hosts and cosmetic selectors
+  (a declarative :class:`WebKit2.UserContentFilter`), plus bug mode -- a
+  picker that hides the element a person taps and remembers that selector for
+  the site in ``adblock.json``;
 * ``--mode measure``: a message-only element picker that posts the clicked
   element's document to ``/manager/web/measure/live`` and shows the returned
   candidates in a GTK dialog. The returned confirmation HTML is never loaded
@@ -26,8 +30,12 @@ What this window does:
 
 Safety rules (see ``docs/internet-contract.md``):
 
-* the browse view carries no ``JawnBrowse`` bridge -- only the picker handler,
-  and only in measure mode;
+* the browse view carries no ``JawnBrowse`` bridge. Its only message handlers
+  are the measure picker (measure mode) and the ad-block picker (browse mode);
+  the latter writes a selector to the local block list and never reaches the
+  manager;
+* the ad-block picker runs in its own isolated WebKit world, so a page cannot
+  see or call it;
 * TLS errors are never ignored for external sites;
 * navigation to loopback, link-local and other private addresses is refused
   unless ``JAWNOS_BROWSE_ALLOW_PRIVATE=1``.
@@ -40,6 +48,7 @@ import ipaddress
 import json
 import logging
 import os
+import re
 import sys
 import threading
 import urllib.parse
@@ -58,6 +67,161 @@ MAX_PENDING = 1000
 # The live document is capped at 1.5 MB before it leaves the page. The manager
 # caps it at 2 MB again; this keeps a huge page from being copied twice.
 MAX_MEASURE_HTML = 1572864
+
+# --------------------------------------------------------------------------
+# The ad-block standard
+# --------------------------------------------------------------------------
+# ``adblock.json`` in the browse data directory holds the person's own list:
+#
+#   {"version": 1, "enabled": true,
+#    "sites": {"example.com": {"selectors": ["..."]}}}
+#
+# The baseline below ships with the window. It is deliberately small and
+# readable: it blocks the hosts that serve display/video ads and hides the
+# containers they leave behind. It is not an EasyList mirror; bug mode is the
+# part that learns a site's own shapes.
+ADBLOCK_FILE = "adblock.json"
+ADBLOCK_VERSION = 1
+ADBLOCK_FILTER_ID = "jawnos-adblock-v1"
+ADBLOCK_WORLD = "jawnos_adblock"
+MAX_SELECTOR_CHARS = 512
+MAX_SELECTORS_PER_SITE = 500
+
+# Hosts that serve advertisements. A subdomain matches too
+# (``securepubads.g.doubleclick.net``). Keep this list to ad serving, not
+# general analytics: an analytics request can be load-bearing for a page.
+BASELINE_AD_HOSTS = (
+    "2o7.net", "33across.com", "adform.net", "adnxs.com", "adroll.com",
+    "ads.tubi.io", "adsafeprotected.com", "adsrvr.org", "advertising.com",
+    "agkn.com", "amazon-adsystem.com", "bidswitch.net",
+    "casalemedia.com", "criteo.com", "criteo.net", "demdex.net",
+    "district-m.net", "doubleclick.net", "everesttech.net",
+    "flashtalking.com", "freewheel.tv", "fwmrm.net",
+    "googleadservices.com", "googlesyndication.com", "gumgum.com",
+    "imrworldwide.com", "indexww.com", "innovid.com", "lijit.com",
+    "mathtag.com", "media.net", "moatads.com", "omtrdc.net",
+    "openx.net", "outbrain.com", "pubmatic.com", "quantserve.com",
+    "rubiconproject.com", "scorecardresearch.com", "serving-sys.com",
+    "sharethrough.com", "smartadserver.com", "sovrn.com",
+    "spotxchange.com", "taboola.com", "tapad.com", "teads.tv",
+    "tremorhub.com", "turn.com", "undertone.com", "yieldlab.net",
+    "yieldmo.com", "zedo.com",
+)
+
+# Common containers an ad host leaves behind. These are specific names, not
+# ``[class*="ad"]`` (which would also match "shadow" and "header") and not
+# ``[class^="ad-"]`` (which would hide an "ad-free" page state).
+BASELINE_COSMETIC_SELECTORS = (
+    "ins.adsbygoogle",
+    "[data-ad]",
+    "[data-ads]",
+    "[data-ad-slot]",
+    "[data-ad-unit]",
+    "[data-advertisement]",
+    "[data-google-query-id]",
+    "[id^='google_ads']",
+    "[id^='div-gpt-ad']",
+    "[id^='ad-slot']",
+    "[id^='ad_slot']",
+    "[id*='taboola']",
+    "[id*='outbrain']",
+    "[class~='ad']",
+    "[class~='ads']",
+    "[class~='advert']",
+    "[class~='advertisement']",
+    "[class~='adsbygoogle']",
+    "[class~='sponsored']",
+    "[class~='sponsor']",
+    "[class*='ad-slot']",
+    "[class*='ad-container']",
+    "[class*='ad-wrapper']",
+    "[class*='ad-banner']",
+    "[class*='ad-unit']",
+    "[class*='ad-placement']",
+    "[class*='ad-zone']",
+    "[class*='advertisement']",
+    "[class*='sponsored']",
+    "[class*='sponsor-']",
+    "[class*='google-ad']",
+    "[class*='gpt-ad']",
+    "[class*='dfp-ad']",
+    "[id*='ad-slot']",
+    "[id*='ad-container']",
+    "[id*='ad-banner']",
+    "[id*='google_ads']",
+    "[id*='div-gpt-ad']",
+    "[aria-label='Advertisement']",
+    "[aria-label='Advertisements']",
+) + tuple(
+    "%s[src*='//%s']" % (tag, host)
+    for host in BASELINE_AD_HOSTS
+    for tag in ("iframe", "img")
+)
+
+
+def _is_ip_domain(domain):
+    try:
+        ipaddress.ip_address(domain)
+        return True
+    except ValueError:
+        return False
+
+
+def _ad_host_url_filter(host):
+    """The declarative-filter regex that matches one baseline ad host.
+
+    WebKit's URL-filter engine is a restricted regex: it has no disjunction
+    (``|``) operator, so the baseline is one rule per host rather than one
+    alternation. The pattern anchors at the scheme, allows subdomains, and
+    requires the host to end there (not ``doubleclick.net.example``).
+    """
+    return (r"^https?://([^/]+\.)?%s(:[0-9]+)?([:/?#].*)?$"
+            % host.replace(".", r"\."))
+
+
+def adblock_rules(user_sites=None):
+    """The WebKit declarative content-blocker rules for the baseline.
+
+    One network rule per ad host; the cosmetic rules hide the containers those
+    hosts leave behind, including inside cross-origin frames (a document
+    stylesheet cannot reach those). ``user_sites`` adds the person's own picks,
+    scoped to their registrable domain: a page with a strict ``style-src`` CSP
+    blocks a later sheet update, but not a declarative rule.
+    """
+    rules = []
+    for host in BASELINE_AD_HOSTS:
+        rules.append({
+            "trigger": {
+                "url-filter": _ad_host_url_filter(host),
+                "url-filter-is-case-sensitive": False,
+                "load-type": ["third-party"],
+            },
+            "action": {"type": "block"},
+        })
+    for selector in BASELINE_COSMETIC_SELECTORS:
+        rules.append({
+            "trigger": {"url-filter": "^https?://"},
+            "action": {"type": "css-display-none", "selector": selector},
+        })
+    if isinstance(user_sites, dict):
+        for domain, selectors in user_sites.items():
+            if not isinstance(domain, str) or not domain \
+                    or _is_ip_domain(domain) or not isinstance(selectors, list):
+                continue
+            for selector in selectors:
+                selector = _valid_selector(selector)
+                if not selector:
+                    continue
+                rules.append({
+                    "trigger": {
+                        "url-filter": "^https?://",
+                        "if-domain": [domain, "*" + domain],
+                    },
+                    "action": {"type": "css-display-none",
+                               "selector": selector},
+                })
+    return rules
+
 
 # External schemes this browser is willing to hand to the desktop. A page may
 # link to anything; only these well-known handlers are delegated, so a
@@ -170,21 +334,21 @@ def _load_gtk():
         gi.require_version("Gdk", "3.0")
         gi.require_version("Pango", "1.0")
         gi.require_version("WebKit2", "4.1")
-        from gi.repository import Gdk, Gio, GLib, Gtk, Pango, WebKit2
-        return (Gdk, Gio, GLib, Gtk, Pango, WebKit2), None
+        from gi.repository import Gdk, GdkPixbuf, Gio, GLib, Gtk, Pango, WebKit2
+        return (Gdk, GdkPixbuf, Gio, GLib, Gtk, Pango, WebKit2), None
     except Exception as exc:  # pragma: no cover
         return None, exc
 
 
 _GTK, _GTK_ERROR = _load_gtk()
 if _GTK is not None:
-    Gdk, Gio, GLib, Gtk, Pango, WebKit2 = _GTK
+    Gdk, GdkPixbuf, Gio, GLib, Gtk, Pango, WebKit2 = _GTK
     _WindowBase = Gtk.Window
     _BoxBase = Gtk.Box
     _VBox = Gtk.Orientation.VERTICAL
     _HBox = Gtk.Orientation.HORIZONTAL
 else:  # pragma: no cover - only when WebKitGTK is not installed
-    Gdk = Gio = GLib = Gtk = Pango = WebKit2 = None
+    Gdk = GdkPixbuf = Gio = GLib = Gtk = Pango = WebKit2 = None
     _WindowBase = object
     _BoxBase = object
     _VBox = _HBox = None
@@ -543,6 +707,479 @@ class History:
 
 
 # --------------------------------------------------------------------------
+# The person's block list
+# --------------------------------------------------------------------------
+
+def _valid_selector(selector):
+    """A selector fit to write into the block sheet, or ``""``.
+
+    The list is injected as CSS text, so braces, semicolons, @rules and
+    selector-list commas could smuggle extra rules. The picker never produces
+    them; a forged message might try.
+    """
+    if not isinstance(selector, str):
+        return ""
+    selector = selector.strip()
+    if not selector or len(selector) > MAX_SELECTOR_CHARS:
+        return ""
+    if any(ch in selector for ch in "{};@,\r\n\0"):
+        return ""
+    if "/*" in selector or "*/" in selector:
+        return ""
+    return selector
+
+
+_DOMAIN_RE = re.compile(r"^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$")
+
+
+class AdBlockStore:
+    """The person's blocked-element list, one selector set per site.
+
+    The key is the registrable domain, so a rule learned on
+    ``www.tubitv.com`` also applies to ``tubitv.com``. Writes are atomic
+    (a temp file then ``os.replace``): a crash never leaves a half-written
+    list that the next start cannot read.
+    """
+
+    def __init__(self, path, logger=None):
+        self.path = path
+        self.log = logger or LOG
+        self.enabled = True
+        self._sites = {}
+        self._lock = threading.Lock()
+        self._load()
+
+    def _load(self):
+        try:
+            with open(self.path, "r", encoding="utf-8") as handle:
+                data = json.load(handle)
+        except FileNotFoundError:
+            return
+        except (OSError, ValueError) as exc:
+            self.log.warning("could not read the block list: %s", exc)
+            return
+        if not isinstance(data, dict):
+            return
+        self.enabled = data.get("enabled") is not False
+        sites = data.get("sites")
+        if not isinstance(sites, dict):
+            return
+        for domain, entry in sites.items():
+            if not isinstance(domain, str) or not _DOMAIN_RE.match(domain):
+                continue
+            raw = entry.get("selectors") if isinstance(entry, dict) else entry
+            if not isinstance(raw, list):
+                continue
+            selectors = []
+            for item in raw:
+                selector = _valid_selector(item)
+                if selector and selector not in selectors:
+                    selectors.append(selector)
+                if len(selectors) >= MAX_SELECTORS_PER_SITE:
+                    break
+            if selectors:
+                self._sites[domain] = selectors
+
+    def _save_locked(self):
+        data = {
+            "version": ADBLOCK_VERSION,
+            "enabled": bool(self.enabled),
+            "sites": {
+                domain: {"selectors": list(selectors)}
+                for domain, selectors in self._sites.items() if selectors
+            },
+        }
+        tmp = self.path + ".tmp"
+        try:
+            folder = os.path.dirname(self.path)
+            if folder:
+                os.makedirs(folder, exist_ok=True)
+            with open(tmp, "w", encoding="utf-8") as handle:
+                json.dump(data, handle, ensure_ascii=False, indent=2,
+                          sort_keys=True)
+                handle.write("\n")
+            os.replace(tmp, self.path)
+        except OSError as exc:
+            self.log.warning("could not save the block list: %s", exc)
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+
+    def set_enabled(self, enabled):
+        with self._lock:
+            self.enabled = bool(enabled)
+            self._save_locked()
+
+    def site_selectors(self, uri):
+        """The person's selectors for the site that ``uri`` belongs to."""
+        domain = registrable_domain(uri)
+        if not domain:
+            return []
+        with self._lock:
+            return list(self._sites.get(domain, []))
+
+    def site_entries(self):
+        """A copy of every site's selectors, for the declarative filter."""
+        with self._lock:
+            return {domain: list(selectors)
+                    for domain, selectors in self._sites.items() if selectors}
+
+    def add(self, uri, selector):
+        """Add one selector; the site's new list, or ``None`` if refused."""
+        selector = _valid_selector(selector)
+        domain = registrable_domain(uri)
+        if not selector or not domain:
+            return None
+        with self._lock:
+            selectors = self._sites.setdefault(domain, [])
+            if selector not in selectors:
+                if len(selectors) >= MAX_SELECTORS_PER_SITE:
+                    return None
+                selectors.append(selector)
+            self._save_locked()
+            return list(selectors)
+
+    def remove(self, uri, selector):
+        """Remove one selector; the site's new list (possibly empty)."""
+        domain = registrable_domain(uri)
+        if not domain:
+            return None
+        with self._lock:
+            selectors = self._sites.get(domain)
+            if selectors is None:
+                return []
+            if selector in selectors:
+                selectors.remove(selector)
+            if not selectors:
+                self._sites.pop(domain, None)
+            self._save_locked()
+            return list(selectors)
+
+    def clear(self, uri):
+        """Forget everything learned for the site."""
+        domain = registrable_domain(uri)
+        if not domain:
+            return None
+        with self._lock:
+            self._sites.pop(domain, None)
+            self._save_locked()
+            return []
+
+
+# --------------------------------------------------------------------------
+# The in-page half: baseline sheet, per-site sheet and the bug picker
+# --------------------------------------------------------------------------
+
+_ADBLOCK_JS_TEMPLATE = r"""
+(function () {
+    if (window.__jawnosAdblock) { return; }
+    var BASELINE = __JAWNOS_BASELINE__;
+    var STYLE_ID = '__jawnos_adblock_style';
+    var AD_NAME = /(^|[\s_-])(ad|ads|advert|advertisement|sponsor|sponsored|promo|promotion|banner)([\s_-]|$)/i;
+    var site = [];
+    var enabled = true;
+    var armed = false;
+    var overlay = null;
+    var hovered = null;
+    var savedOutline = null;
+    var savedOffset = null;
+    var savedCursor = null;
+
+    function post(payload) {
+        try {
+            window.webkit.messageHandlers.jawnos_adblock.postMessage(
+                JSON.stringify(payload));
+            return true;
+        } catch (e) {
+            return false;
+        }
+    }
+
+    function cssEscape(value) {
+        if (window.CSS && CSS.escape) { return CSS.escape(value); }
+        return String(value).replace(/([^a-zA-Z0-9_-])/g, '\\$1');
+    }
+
+    function inDocument(selector) {
+        try { return document.querySelectorAll(selector).length; }
+        catch (e) { return 0; }
+    }
+
+    function selectorFor(el) {
+        if (!el || el.nodeType !== 1) { return ''; }
+        if (el === document.documentElement) { return 'html'; }
+        if (el.id) {
+            var byId = '#' + cssEscape(el.id);
+            if (inDocument(byId) === 1) { return byId; }
+        }
+        var parts = [];
+        var node = el;
+        while (node && node.nodeType === 1 &&
+               node !== document.documentElement) {
+            var tag = node.tagName.toLowerCase();
+            var nth = 1;
+            var sib = node;
+            while (sib && sib.previousElementSibling) {
+                sib = sib.previousElementSibling;
+                if (sib.tagName === node.tagName) { nth++; }
+            }
+            parts.unshift(tag + ':nth-of-type(' + nth + ')');
+            node = node.parentNode;
+        }
+        parts.unshift('html');
+        return parts.join(' > ');
+    }
+
+    function stableClasses(el) {
+        var out = [];
+        var raw = (el.getAttribute('class') || '').split(/\s+/);
+        for (var i = 0; i < raw.length && out.length < 3; i++) {
+            var name = raw[i];
+            if (!name || name.length > 40) { continue; }
+            if (/^\d/.test(name)) { continue; }
+            if (/(^|[-_])(css|sc|jsx|svelte)-?[a-z0-9]{4,}$/i.test(name)) {
+                continue;
+            }
+            if (/[0-9a-f]{8,}/i.test(name)) { continue; }
+            out.push(name);
+        }
+        return out;
+    }
+
+    function classSelector(el) {
+        if (!el || el.nodeType !== 1) { return ''; }
+        if (el === document.documentElement) { return 'html'; }
+        var tag = el.tagName.toLowerCase();
+        if (el.id) {
+            var byId = '#' + cssEscape(el.id);
+            if (inDocument(byId) === 1) { return byId; }
+        }
+        var names = stableClasses(el);
+        // An ad-named class is meant to match every slot with that name, so a
+        // multi-match selector is right here.
+        for (var i = 0; i < names.length; i++) {
+            if (!AD_NAME.test(names[i])) { continue; }
+            var byTag = tag + '.' + cssEscape(names[i]);
+            if (inDocument(byTag)) { return byTag; }
+            var byClass = '.' + cssEscape(names[i]);
+            if (inDocument(byClass)) { return byClass; }
+        }
+        if (names.length) {
+            var combo = tag + '.' + names.map(cssEscape).join('.');
+            if (inDocument(combo) === 1) { return combo; }
+            for (var j = 0; j < names.length; j++) {
+                var one = '.' + cssEscape(names[j]);
+                if (inDocument(one) === 1) { return one; }
+            }
+        }
+        return '';
+    }
+
+    function targetFor(el) {
+        // The clicked thing is often a span inside a slot; walk up a little to
+        // a container that names itself as an ad, so one tap removes the block.
+        var node = el;
+        for (var depth = 0; node && depth < 4; depth++) {
+            if (node === document.body || node === document.documentElement) {
+                break;
+            }
+            var name = (node.id || '') + ' ' +
+                       (node.getAttribute('class') || '');
+            if (AD_NAME.test(name)) { return node; }
+            node = node.parentElement;
+        }
+        return el;
+    }
+
+    function styleNode() {
+        var node = document.getElementById(STYLE_ID);
+        if (!node) {
+            node = document.createElement('style');
+            node.id = STYLE_ID;
+            node.type = 'text/css';
+            var root = document.head || document.documentElement;
+            if (!root) { return null; }
+            root.appendChild(node);
+        }
+        return node;
+    }
+
+    function render() {
+        var node = styleNode();
+        if (!node) { return; }
+        if (!enabled) { node.textContent = ''; return; }
+        var list = BASELINE.concat(site);
+        node.textContent = list.length ?
+            list.join(',') + '{display:none !important;}' : '';
+    }
+
+    function apply(list) {
+        site = Array.isArray(list) ? list.slice() : [];
+        render();
+    }
+
+    function setEnabled(on) {
+        enabled = !!on;
+        render();
+    }
+
+    function add(selector) {
+        if (!selector) { return; }
+        if (site.indexOf(selector) === -1) { site.push(selector); }
+        render();
+    }
+
+    function remove(selector) {
+        var at = site.indexOf(selector);
+        if (at !== -1) { site.splice(at, 1); }
+        render();
+    }
+
+    function ensureOverlay() {
+        if (overlay) { return overlay; }
+        overlay = document.createElement('div');
+        overlay.id = '__jawnos_bug_overlay';
+        overlay.setAttribute('aria-hidden', 'true');
+        overlay.style.cssText = 'position:fixed;top:0;right:0;bottom:0;' +
+            'left:0;z-index:2147483647;background:transparent;' +
+            'cursor:crosshair;margin:0;padding:0;border:0;';
+        overlay.addEventListener('mousemove', onMove, true);
+        overlay.addEventListener('click', onClick, true);
+        overlay.addEventListener('wheel', onWheel, {passive: false});
+        document.documentElement.appendChild(overlay);
+        return overlay;
+    }
+
+    function underPoint(x, y) {
+        var list = [];
+        try { list = document.elementsFromPoint(x, y) || []; } catch (e) {}
+        for (var i = 0; i < list.length; i++) {
+            var el = list[i];
+            if (el === overlay || el.id === STYLE_ID) { continue; }
+            return el;
+        }
+        // Older WebKit has no elementsFromPoint; drop the overlay out of hit
+        // testing for the one lookup.
+        var was = null;
+        try {
+            if (overlay) {
+                was = overlay.style.pointerEvents;
+                overlay.style.pointerEvents = 'none';
+            }
+        } catch (e) {}
+        var found = null;
+        try { found = document.elementFromPoint(x, y); } catch (e) {}
+        try {
+            if (overlay) { overlay.style.pointerEvents = was || ''; }
+        } catch (e) {}
+        if (found && found.id === STYLE_ID) { return null; }
+        return found;
+    }
+
+    function restore() {
+        if (hovered && savedOutline !== null) {
+            hovered.style.outline = savedOutline;
+            hovered.style.outlineOffset = savedOffset;
+        }
+        hovered = null;
+        savedOutline = null;
+        savedOffset = null;
+    }
+
+    function highlight(el) {
+        if (hovered === el) { return; }
+        restore();
+        if (!el || !el.style) { return; }
+        hovered = el;
+        savedOutline = el.style.outline;
+        savedOffset = el.style.outlineOffset;
+        el.style.outline = '2px solid #ffcc00';
+        el.style.outlineOffset = '-2px';
+    }
+
+    function onMove(ev) {
+        if (!armed) { return; }
+        var el = underPoint(ev.clientX, ev.clientY);
+        highlight(el ? targetFor(el) : null);
+    }
+
+    function onClick(ev) {
+        if (!armed) { return; }
+        ev.preventDefault();
+        ev.stopPropagation();
+        if (ev.stopImmediatePropagation) { ev.stopImmediatePropagation(); }
+        var el = underPoint(ev.clientX, ev.clientY);
+        if (!el || el.nodeType !== 1) { return; }
+        var target = targetFor(el);
+        var selector = classSelector(target) || selectorFor(target);
+        if (!selector) { return; }
+        add(selector);
+        restore();
+        post({action: 'block', selector: selector,
+              url: location.href, title: document.title || ''});
+    }
+
+    function onWheel(ev) {
+        // The overlay is above the page, so it must forward the wheel or the
+        // person cannot scroll to the thing they want to block.
+        try { window.scrollBy(ev.deltaX || 0, ev.deltaY || 0); } catch (e) {}
+        ev.preventDefault();
+    }
+
+    function onKey(ev) {
+        if (armed && ev.key === 'Escape') {
+            ev.preventDefault();
+            ev.stopPropagation();
+            arm(false);
+            post({action: 'exit'});
+        }
+    }
+
+    function setCursor(on) {
+        var root = document.documentElement;
+        if (!root) { return; }
+        if (on) {
+            if (savedCursor === null) {
+                savedCursor = root.style.cursor || '';
+            }
+            root.style.cursor = 'crosshair';
+        } else if (savedCursor !== null) {
+            root.style.cursor = savedCursor;
+            savedCursor = null;
+        }
+    }
+
+    function arm(on) {
+        armed = !!on;
+        if (armed) {
+            ensureOverlay().style.display = 'block';
+        } else {
+            restore();
+            if (overlay) { overlay.style.display = 'none'; }
+        }
+        setCursor(armed);
+    }
+
+    document.addEventListener('keydown', onKey, true);
+    window.__jawnosAdblock = {
+        apply: apply,
+        add: add,
+        remove: remove,
+        setEnabled: setEnabled,
+        arm: arm,
+        armed: function () { return armed; },
+        selectors: function () { return BASELINE.concat(site); }
+    };
+    try { render(); } catch (e) {}
+})();
+"""
+
+_ADBLOCK_JS = _ADBLOCK_JS_TEMPLATE.replace(
+    "__JAWNOS_BASELINE__", json.dumps(list(BASELINE_COSMETIC_SELECTORS)))
+
+
+# --------------------------------------------------------------------------
 # Pages the browser draws itself
 # --------------------------------------------------------------------------
 
@@ -873,8 +1510,14 @@ class BrowserWindow(_WindowBase):
         except OSError as exc:
             LOG.warning("could not create the browse data directory: %s", exc)
         self.history = History(os.path.join(self.data_dir, "history.jsonl"))
+        self.adblock = AdBlockStore(
+            os.path.join(self.data_dir, ADBLOCK_FILE), logger=LOG)
         self.client = BrowseClient(manager=self.manager, logger=LOG)
         self.usage = SiteUsage(self.client, logger=LOG)
+        self._bug_tab = None
+        self._ad_filter = None
+        self._ad_filter_generation = 0
+        self._chrome_before_page_fullscreen = None
 
         self._build_context()
         self._build_ui()
@@ -934,6 +1577,28 @@ class BrowserWindow(_WindowBase):
             pass
 
         self.content_manager = WebKit2.UserContentManager()
+        # The ad-block script runs in its own world: it may touch the DOM (the
+        # block sheet and the picker overlay) but a page cannot see or call it.
+        try:
+            self.content_manager.add_script(WebKit2.UserScript.new_for_world(
+                _ADBLOCK_JS,
+                WebKit2.UserContentInjectedFrames.TOP_FRAME,
+                WebKit2.UserScriptInjectionTime.START,
+                ADBLOCK_WORLD,
+                None, None,
+            ))
+        except Exception:
+            LOG.exception("could not install the ad-block script")
+        if self.mode != "measure":
+            try:
+                self.content_manager.register_script_message_handler_in_world(
+                    "jawnos_adblock", ADBLOCK_WORLD)
+                self.content_manager.connect(
+                    "script-message-received::jawnos_adblock",
+                    self.on_adblock_message)
+            except Exception:
+                LOG.exception("could not install the block picker bridge")
+        self._install_ad_filter()
         if self.mode == "measure":
             try:
                 self.content_manager.register_script_message_handler("jawnos_measure")
@@ -955,12 +1620,67 @@ class BrowserWindow(_WindowBase):
             except Exception:
                 LOG.exception("could not install the measure picker")
 
+    def _install_ad_filter(self, include_user=True):
+        """Save the rules and attach them to this content manager.
+
+        ``UserContentFilterStore.save`` is asynchronous. The generation counter
+        keeps a save that finishes after an on/off toggle from re-adding the
+        filter the person just turned off.
+        """
+        self._ad_filter_generation += 1
+        generation = self._ad_filter_generation
+        if self.check_mode or WebKit2 is None or GLib is None:
+            return
+        if not self.adblock.enabled:
+            self._remove_ad_filter()
+            return
+        try:
+            store_dir = os.path.join(self.data_dir, "filters")
+            os.makedirs(store_dir, exist_ok=True)
+            store = WebKit2.UserContentFilterStore.new(store_dir)
+            sites = self.adblock.site_entries() if include_user else None
+            source = GLib.Bytes.new(json.dumps(
+                adblock_rules(sites), ensure_ascii=True).encode("utf-8"))
+            store.save(ADBLOCK_FILTER_ID, source, None,
+                       self._after_ad_filter_saved, (generation, include_user))
+        except Exception:
+            LOG.exception("could not build the ad-block filter")
+
+    def _after_ad_filter_saved(self, store, result, data):
+        generation, include_user = data
+        if generation != self._ad_filter_generation or self._closing:
+            return
+        try:
+            ad_filter = store.save_finish(result)
+        except Exception as exc:
+            LOG.warning("could not save the ad-block filter: %s", exc)
+            # One malformed stored selector must not cost the whole baseline.
+            if include_user and not self._closing:
+                self._install_ad_filter(include_user=False)
+            return
+        if not self.adblock.enabled:
+            return
+        try:
+            self.content_manager.remove_all_filters()
+            self.content_manager.add_filter(ad_filter)
+            self._ad_filter = ad_filter
+        except Exception:
+            LOG.exception("could not attach the ad-block filter")
+
+    def _remove_ad_filter(self):
+        self._ad_filter = None
+        try:
+            self.content_manager.remove_all_filters()
+        except Exception:
+            pass
+
     def _build_ui(self):
         header = Gtk.HeaderBar()
         header.set_show_close_button(True)
         header.set_title("JawnOS Browse")
         header.set_subtitle("Measure mode" if self.mode == "measure" else "")
         self.set_titlebar(header)
+        self.header = header
 
         self.back_button = self._tool_button(
             "go-previous-symbolic", "Back", self.go_back)
@@ -1002,6 +1722,28 @@ class BrowserWindow(_WindowBase):
         self.notebook.connect("switch-page", self.on_switch_page)
         root.pack_start(self.notebook, True, True, 0)
 
+        # The bug controls sit at the end of the tab row, where the person is
+        # already looking when a page misbehaves.
+        self.bug_button = Gtk.ToggleButton()
+        self.bug_button.set_image(self._bug_image())
+        self.bug_button.set_relief(Gtk.ReliefStyle.NONE)
+        self.bug_button.set_focus_on_click(False)
+        self.bug_button.set_tooltip_text("Block page elements (bug mode)")
+        self.bug_button.connect("toggled", self.on_bug_toggled)
+        self.block_list_button = Gtk.MenuButton()
+        self.block_list_button.set_image(Gtk.Image.new_from_icon_name(
+            "view-list-symbolic", Gtk.IconSize.LARGE_TOOLBAR))
+        self.block_list_button.set_tooltip_text(
+            "Blocked elements on this site")
+        self.block_list_button.set_popover(self._build_block_list_popover())
+        tab_actions = Gtk.Box(orientation=_HBox, spacing=2)
+        tab_actions.pack_start(self.bug_button, False, False, 0)
+        tab_actions.pack_start(self.block_list_button, False, False, 0)
+        tab_actions.show_all()
+        tab_actions.set_no_show_all(True)
+        tab_actions.set_visible(self.mode != "measure")
+        self.notebook.set_action_widget(tab_actions, Gtk.PackType.END)
+
         status_bar = Gtk.Box(orientation=_HBox, spacing=6)
         status_bar.set_border_width(4)
         self.status_label = Gtk.Label(label="")
@@ -1013,6 +1755,7 @@ class BrowserWindow(_WindowBase):
         status_bar.pack_start(self.status_label, True, True, 0)
         status_bar.pack_start(self.progress_bar, False, False, 0)
         root.pack_start(status_bar, False, False, 0)
+        self.status_bar = status_bar
 
         self.add(root)
 
@@ -1022,6 +1765,19 @@ class BrowserWindow(_WindowBase):
         button.set_tooltip_text(tooltip)
         button.connect("clicked", callback)
         return button
+
+    def _bug_image(self):
+        # The bug glyph ships beside this module; a system without the SVG
+        # loader still gets a visible mode button.
+        path = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            "icons", "jawnos-bug.svg")
+        try:
+            pixbuf = GdkPixbuf.Pixbuf.new_from_file_at_size(path, 18, 18)
+            return Gtk.Image.new_from_pixbuf(pixbuf)
+        except Exception:
+            return Gtk.Image.new_from_icon_name(
+                "dialog-warning-symbolic", Gtk.IconSize.LARGE_TOOLBAR)
 
     def _build_find_bar(self):
         revealer = Gtk.Revealer()
@@ -1066,6 +1822,232 @@ class BrowserWindow(_WindowBase):
         self.history_popover.connect("show", lambda *_: self.reload_history())
         return self.history_popover
 
+    def _build_block_list_popover(self):
+        self.block_list_popover = Gtk.Popover()
+        box = Gtk.Box(orientation=_VBox, spacing=8)
+        box.set_border_width(10)
+        heading = Gtk.Label(label="Blocked elements")
+        heading.set_xalign(0)
+        box.pack_start(heading, False, False, 0)
+        self.block_site_label = Gtk.Label(label="")
+        self.block_site_label.set_xalign(0)
+        self.block_site_label.get_style_context().add_class("dim-label")
+        box.pack_start(self.block_site_label, False, False, 0)
+
+        switch_row = Gtk.Box(orientation=_HBox, spacing=8)
+        switch_label = Gtk.Label(label="Block ads")
+        switch_label.set_xalign(0)
+        self.block_enabled_switch = Gtk.Switch()
+        self.block_enabled_switch.set_active(self.adblock.enabled)
+        self.block_enabled_switch.connect(
+            "notify::active", self.on_block_enabled)
+        switch_row.pack_start(switch_label, True, True, 0)
+        switch_row.pack_start(self.block_enabled_switch, False, False, 0)
+        box.pack_start(switch_row, False, False, 0)
+
+        scrolled = Gtk.ScrolledWindow()
+        scrolled.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        scrolled.set_min_content_width(440)
+        scrolled.set_min_content_height(300)
+        self.block_list = Gtk.ListBox()
+        self.block_list.set_selection_mode(Gtk.SelectionMode.NONE)
+        scrolled.add(self.block_list)
+        box.pack_start(scrolled, True, True, 0)
+
+        self.block_clear_button = Gtk.Button(label="Clear this site")
+        self.block_clear_button.connect("clicked", self.on_block_clear)
+        box.pack_start(self.block_clear_button, False, False, 0)
+        box.show_all()
+        self.block_list_popover.add(box)
+        self.block_list_popover.connect("show", lambda *_: self.reload_block_list())
+        return self.block_list_popover
+
+    def reload_block_list(self):
+        for child in self.block_list.get_children():
+            self.block_list.remove(child)
+        tab = self.current_tab()
+        try:
+            uri = tab.view.get_uri() if tab is not None else ""
+        except Exception:
+            uri = ""
+        domain = registrable_domain(uri) if uri else ""
+        self.block_site_label.set_text(domain or "No site open")
+        selectors = self.adblock.site_selectors(uri) if domain else []
+        self.block_clear_button.set_sensitive(bool(selectors))
+        self.block_enabled_switch.set_active(self.adblock.enabled)
+        if not selectors:
+            row = Gtk.ListBoxRow()
+            label = Gtk.Label(label=(
+                "Nothing blocked on this site yet. Turn on bug mode, then tap "
+                "what you do not want to see."))
+            label.set_xalign(0)
+            label.set_line_wrap(True)
+            label.set_max_width_chars(52)
+            row.add(label)
+            self.block_list.add(row)
+        else:
+            for selector in selectors:
+                row = Gtk.ListBoxRow()
+                line = Gtk.Box(orientation=_HBox, spacing=6)
+                line.set_border_width(6)
+                text = Gtk.Label(label=selector)
+                text.set_xalign(0)
+                text.set_ellipsize(Pango.EllipsizeMode.END)
+                text.set_tooltip_text(selector)
+                remove = Gtk.Button.new_from_icon_name(
+                    "window-close-symbolic", Gtk.IconSize.MENU)
+                remove.set_relief(Gtk.ReliefStyle.NONE)
+                remove.set_tooltip_text("Stop blocking this")
+                remove.connect(
+                    "clicked", lambda *_a, s=selector: self.on_block_remove(s))
+                line.pack_start(text, True, True, 0)
+                line.pack_start(remove, False, False, 0)
+                row.add(line)
+                self.block_list.add(row)
+        self.block_list.show_all()
+
+    # ---- blocking --------------------------------------------------------
+
+    def on_bug_toggled(self, button):
+        active = bool(button.get_active())
+        if active and not self.adblock.enabled:
+            button.set_active(False)
+            self._set_status("Turn ad blocking on first.")
+            return
+        if active:
+            self._bug_tab = self.current_tab()
+            self._apply_adblock(self._bug_tab)
+            self._arm_bug_picker(self._bug_tab, True)
+            self._set_status(
+                "Bug mode: tap what you do not want to see. Esc to stop.")
+        else:
+            self._arm_bug_picker(self._bug_tab or self.current_tab(), False)
+            self._bug_tab = None
+            self._set_status("")
+
+    def _arm_bug_picker(self, tab, on):
+        if not isinstance(tab, BrowserTab):
+            return
+        script = ("window.__jawnosAdblock && window.__jawnosAdblock.arm(%s);"
+                  % ("true" if on else "false"))
+        try:
+            tab.view.evaluate_javascript(
+                script, -1, ADBLOCK_WORLD, None, None, None, None)
+        except Exception:
+            pass
+
+    def _apply_adblock(self, tab):
+        """Push the site's saved selectors and the on/off state into a tab."""
+        if not isinstance(tab, BrowserTab):
+            return
+        try:
+            uri = tab.view.get_uri() or ""
+        except Exception:
+            uri = ""
+        selectors = self.adblock.site_selectors(uri) if uri else []
+        script = (
+            "(function(){var a=window.__jawnosAdblock;if(!a){return;}"
+            "a.setEnabled(%s);a.apply(%s);})()"
+            % ("true" if self.adblock.enabled else "false",
+               json.dumps(selectors, ensure_ascii=True)))
+        try:
+            tab.view.evaluate_javascript(
+                script, -1, ADBLOCK_WORLD, None, None, None, None)
+        except Exception:
+            pass
+
+    def on_adblock_message(self, _content, result):
+        raw = _js_text(result)
+        if not raw or len(raw) > 4096:
+            return False
+        try:
+            payload = json.loads(raw)
+        except (ValueError, TypeError):
+            return False
+        if not isinstance(payload, dict) or self.mode != "browse":
+            return False
+        tab = self.current_tab()
+        if tab is None:
+            return False
+        action = payload.get("action")
+        if action == "exit":
+            if self.bug_button.get_active():
+                self.bug_button.set_active(False)
+            return False
+        if action != "block" or not self.bug_button.get_active():
+            return False
+        selector = _valid_selector(payload.get("selector"))
+        if not selector:
+            return False
+        try:
+            uri = tab.view.get_uri() or ""
+        except Exception:
+            uri = ""
+        if not uri.startswith(("http://", "https://")):
+            return False
+        # Key on the view's own URI, never on the message's ``url``: a page can
+        # lie in the payload, and the handler writes a persistent list.
+        selectors = self.adblock.add(uri, selector)
+        if selectors is None:
+            self._set_status("That element could not be blocked.")
+            return False
+        # The per-site rule lives in the declarative filter too: a strict CSP
+        # can reject a later update to the document's sheet.
+        self._install_ad_filter()
+        self._set_status("Blocked %d element%s on %s." % (
+            len(selectors), "" if len(selectors) == 1 else "s",
+            registrable_domain(uri)))
+        return False
+
+    def on_block_remove(self, selector):
+        tab = self.current_tab()
+        try:
+            uri = tab.view.get_uri() if tab is not None else ""
+        except Exception:
+            uri = ""
+        if not uri:
+            return
+        selectors = self.adblock.remove(uri, selector)
+        if selectors is None:
+            return
+        self._install_ad_filter()
+        self._apply_adblock(tab)
+        self.reload_block_list()
+        self._set_status("No longer blocking that element.")
+
+    def on_block_clear(self, *_):
+        tab = self.current_tab()
+        try:
+            uri = tab.view.get_uri() if tab is not None else ""
+        except Exception:
+            uri = ""
+        if not uri:
+            return
+        selectors = self.adblock.clear(uri)
+        if selectors is None:
+            return
+        self._install_ad_filter()
+        self._apply_adblock(tab)
+        self.reload_block_list()
+        self._set_status("Cleared this site's blocked elements.")
+
+    def on_block_enabled(self, switch, _pspec):
+        enabled = bool(switch.get_active())
+        if enabled == self.adblock.enabled:
+            return
+        self.adblock.set_enabled(enabled)
+        if enabled:
+            self._install_ad_filter()
+        else:
+            self._remove_ad_filter()
+        for index in range(self.notebook.get_n_pages()):
+            tab = self.notebook.get_nth_page(index)
+            if isinstance(tab, BrowserTab):
+                self._apply_adblock(tab)
+        if not enabled and self.bug_button.get_active():
+            self.bug_button.set_active(False)
+        self._set_status("Ad blocking on." if enabled else "Ad blocking off.")
+
     # ---- tabs ------------------------------------------------------------
 
     def current_tab(self):
@@ -1105,6 +2087,8 @@ class BrowserWindow(_WindowBase):
         except Exception:
             pass
         self.notebook.remove_page(page)
+        if self._bug_tab is tab:
+            self._bug_tab = None
         try:
             tab.tab_label.destroy()
         except Exception:
@@ -1165,6 +2149,9 @@ class BrowserWindow(_WindowBase):
             self.back_button.set_sensitive(False)
             self.forward_button.set_sensitive(False)
             self._set_loading(False)
+            if getattr(self, "bug_button", None):
+                self.bug_button.set_sensitive(False)
+                self.block_list_button.set_sensitive(False)
             return
         try:
             self.back_button.set_sensitive(tab.view.can_go_back())
@@ -1173,6 +2160,9 @@ class BrowserWindow(_WindowBase):
         except Exception:
             loading = False
         self._set_loading(loading)
+        if getattr(self, "bug_button", None):
+            self.bug_button.set_sensitive(True)
+            self.block_list_button.set_sensitive(True)
         self._update_url_bar(tab)
 
     def _set_loading(self, loading):
@@ -1237,6 +2227,11 @@ class BrowserWindow(_WindowBase):
                     self._sync_toolbar()
                 return
             if event in (WebKit2.LoadEvent.COMMITTED, WebKit2.LoadEvent.REDIRECTED):
+                self._apply_adblock(tab)
+                if tab is self.current_tab() and not tab.internal \
+                        and getattr(self, "bug_button", None) \
+                        and self.bug_button.get_active():
+                    self._arm_bug_picker(tab, True)
                 if tab is self.current_tab():
                     self._sync_toolbar()
                 return
@@ -1245,6 +2240,11 @@ class BrowserWindow(_WindowBase):
         except Exception:
             return
         tab.update_label()
+        self._apply_adblock(tab)
+        if tab is self.current_tab() and not tab.internal \
+                and getattr(self, "bug_button", None) \
+                and self.bug_button.get_active():
+            self._arm_bug_picker(tab, True)
         if tab is self.current_tab():
             self.set_title("%s — JawnOS Browse" % tab.current_title())
             self._sync_toolbar()
@@ -1400,6 +2400,7 @@ class BrowserWindow(_WindowBase):
         return True
 
     def on_enter_fullscreen(self, view, tab):
+        self._set_fullscreen_chrome(True)
         try:
             self.fullscreen()
         except Exception:
@@ -1411,7 +2412,40 @@ class BrowserWindow(_WindowBase):
             self.unfullscreen()
         except Exception:
             pass
+        self._set_fullscreen_chrome(False)
         return False
+
+    def _set_fullscreen_chrome(self, on):
+        """Take the window's own bars out of a page's fullscreen.
+
+        A video that asks for fullscreen must fill the screen: the title bar,
+        the tab strip and the status line are exactly the bars a person sees at
+        the top and bottom of the picture. Restoring puts back the tab strip and
+        a find bar that was open, not a new one.
+        """
+        try:
+            if on:
+                self._chrome_before_page_fullscreen = (
+                    self.notebook.get_show_tabs(),
+                    self.find_bar.get_reveal_child(),
+                )
+                self.set_titlebar(None)
+                self.status_bar.set_visible(False)
+                self.notebook.set_show_tabs(False)
+                self.find_bar.set_reveal_child(False)
+            else:
+                self.status_bar.set_visible(True)
+                if self.get_titlebar() is None:
+                    self.set_titlebar(self.header)
+                    self.header.show_all()
+                show_tabs, find_open = self._chrome_before_page_fullscreen \
+                    or (True, False)
+                self.notebook.set_show_tabs(show_tabs)
+                if find_open:
+                    self.find_bar.set_reveal_child(True)
+                self._chrome_before_page_fullscreen = None
+        except Exception:
+            LOG.exception("could not toggle the fullscreen chrome")
 
     def _on_active_changed(self, *_):
         self._sync_site()
@@ -1445,6 +2479,11 @@ class BrowserWindow(_WindowBase):
     def on_switch_page(self, notebook, page, page_num):
         if not isinstance(page, BrowserTab):
             return
+        if getattr(self, "bug_button", None) and self.bug_button.get_active():
+            self._apply_adblock(page)
+            if not page.internal:
+                self._arm_bug_picker(page, True)
+            self._bug_tab = page
         self._update_url_bar(page, force=True)
         self._sync_toolbar()
         if page is self.current_tab():
@@ -1568,6 +2607,10 @@ class BrowserWindow(_WindowBase):
             self.go_forward()
             return True
         if key == Gdk.KEY_Escape:
+            if getattr(self, "bug_button", None) \
+                    and self.bug_button.get_active():
+                self.bug_button.set_active(False)
+                return True
             if self.find_bar.get_reveal_child():
                 self.close_find()
                 return True

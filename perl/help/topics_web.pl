@@ -7,7 +7,7 @@ our %topic;
 $topic{'internet'} = {
 		title => 'Internet', category => 'apps', app => 'internet',
 		templates => [ 'templates/internet/internet.html.ep', 'templates/web/web.html.ep', 'public/js/manager/internet.js', 'public/js/manager/page_agent.js' ],
-		verified => '2026-10-29',
+		verified => '2026-11-04',
 		summary => 'Web and Browse: saved pages with measures, and a real browser that counts site time.',
 		body => [
 			'Internet has two components. Web holds the pages the house fetched; each can be opened, or measured with the Measures tool. Browse opens a real browser in its own window on a computer (or its own screen on a phone), because a live page cannot run inside the manager window. The tab you used last is the tab Internet opens, so Web and Browse do not keep switching places.',
@@ -15,6 +15,7 @@ $topic{'internet'} = {
 			'A domain you assigned opens two ways: its link opens the browser at the saved address, and the app name beside it opens that app in the manager exactly as its own window. The Browse tab shows today\'s site time beside each domain, and the time is kept per machine so the phone and the laptop do not blur together.',
 			'To measure a live page, open a saved page from the Web tab with the measure icon. The browser opens with the picker on; click the value you want. JawnOS offers the shapes it can read and saves the one you pick, exactly as the Measures tool does for a fetched page.',
 			'The browser is a separate surface on purpose: it has its own cookies and history, keeps the manager\'s bridges away from the pages you visit, and cannot reach the house\'s local address.',
+			'The JawnOS browser blocks a baseline of ad servers and the boxes they leave behind. Press the bug button at the right of the tab row to enter bug mode, then press anything on the page you do not want to see: it disappears at once, and the browser remembers the shape for that site, so it stays gone on the next visit. Press the bug button again (or press Esc) to leave bug mode. The list button beside it shows everything blocked on the current site; each entry can be removed, or the whole site cleared. The switch there turns ad blocking off for every site. A video that asks for fullscreen fills the screen: the browser\'s own bars step out of the way and return when you leave fullscreen.',
 			'The Internet window\'s title bar carries the Guide\'s page-agent button in place of the question mark: press it and the Guide is attached to this window, able to read and fill its fields — the address in Browse, the app box beside a domain — from what you discussed, from your own records, or from another field. Closing the panel detaches it. Help for this window is still a press of F1 away, and every other window keeps its question mark.'
 		],
 		steps => [
@@ -23,6 +24,7 @@ $topic{'internet'} = {
 			'Browse takes an address and opens the JawnOS browser; time on each site appears under Site time today.',
 			'To make a domain count toward an app, type the app name in its row and pick it; type a dash to clear it. Press the domain to open it, or the app name to open that app.',
 			'A page opened in another browser is not counted; the count is per machine.',
+			'To remove something from a page, press the bug button at the right of the tab row, press the element, then press the bug button again. The list button beside it shows what is blocked on this site; the switch there turns ad blocking off.',
 			'Press the page-agent button in the title bar to have the Guide fill the address or the app box for you; close the panel to detach it.'
 		],
 		related => [ 'web' ]

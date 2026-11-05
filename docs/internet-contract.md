@@ -32,6 +32,9 @@ The manager page calls, in order:
 2. Fallback: `window.open(url, '_blank')` if `JawnBrowse` is absent.
 
 **Never** attach `JawnBrowse` (or any other bridge) to the browser WebView.
+The desktop Browse window's only message handlers are `jawnos_measure` (measure
+mode) and `jawnos_adblock` (browse mode, in its own isolated WebKit world);
+neither can reach the manager.
 
 ## 3. Usage sessions
 
@@ -155,10 +158,37 @@ is therefore offline and independent of the manager. It filters
   ready, captures the WebView to a Bitmap and pushes it through RemoteViews.
   Update every 30 minutes; tap opens the manager.
 
-## 10. Out of scope for this slice
+## 10. Ad blocking in Browse
+
+- **Baseline.** The window ships a curated list of ad-serving hosts (one
+  declarative block rule each, third-party) and the containers those hosts
+  leave behind (`css-display-none` rules). It is a starter, not an EasyList
+  mirror; keep it to ad serving, not general analytics.
+- **Bug mode.** The bug button at the end of the tab row arms a picker in the
+  page. A tap hides the element under the pointer (preferring a nearby
+  ad-named container) and posts its CSS selector to `jawnos_adblock`.
+- **Storage.** The handler keys the selector on the view's own registrable
+  domain, never on the message's `url`, and writes
+  `~/.local/share/jawnos/browser/adblock.json` atomically. The list button
+  beside the bug shows and removes what is blocked on the current site; the
+  switch turns blocking off for every site.
+- **CSP.** A strict `style-src` CSP rejects a later update to the document's
+  sheet, so the person's selectors are also compiled into the declarative
+  filter with `if-domain`. The sheet is the instant (optimistic) copy; the
+  filter is the one that survives a strict site and reaches cross-origin
+  frames.
+- **Isolation.** The picker script runs in the isolated `jawnos_adblock`
+  world, so a page cannot see or call it. The handler accepts messages only in
+  browse mode and only while bug mode is armed.
+- **Limit.** Blocking removes client-side ad requests and containers. It
+  cannot remove ads stitched into a video stream by the server, and a player
+  that refuses to start without its ad SDK may need blocking turned off.
+
+## 11. Out of scope for this slice
 
 - Android `UsageStatsManager` app-time (separate permission path).
-- Enforcement/blocking (overlay or device-owner).
+- Enforcement/blocking of apps (an overlay or device-owner policy), as distinct
+  from the ad blocking described in section 10.
 - Replacing Android recents.
 - Widevine/DRM on desktop.
 - Syncing raw URLs across the mesh.
