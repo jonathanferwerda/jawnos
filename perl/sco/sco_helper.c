@@ -60,8 +60,6 @@
 #define CHUNK_NS 7500000LL
 /* how long the call audio must be flowing before a prompt starts */
 #define SETTLE_NS 1200000000LL
-/* how long a silent link is waited on before it is treated as a call anyway */
-#define SETTLE_WAIT_NS 8000000000LL
 
 static volatile sig_atomic_t running = 1;
 static int sco_fd = -1, listen_fd = -1;
@@ -768,12 +766,12 @@ static int pcm_mode_main(void) {
 					last_frame_at = now_ns();
 					/* The link carries frames a moment before the phone's own
 					 * audio path is fully up, and a prompt that starts then loses
-					 * its first words. A frame of digital silence says the path is
-					 * not up at all, so wait for one that carries something - but
-					 * not forever, or a line that is genuinely quiet is never
-					 * greeted. */
-					if (!chunk_has_signal(chunk, (size_t) first)
-						&& now_ns() - opened_at < SETTLE_WAIT_NS) {
+					 * its first words. Between calls the phone's gateway nodes
+					 * keep feeding our sink - with digital silence - so a frame
+					 * of zeros is not a call at all. Wait for one that carries
+					 * something; a dead line ends when the phone's own watchdog
+					 * hangs up and the streams go. */
+					if (!chunk_has_signal(chunk, (size_t) first)) {
 						usleep(20000);
 						continue;
 					}

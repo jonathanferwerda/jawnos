@@ -207,6 +207,8 @@ sub arm {
 		$self->{'last_error'} = '';
 		$self->{'last_event'} = 'waiting for a call';
 		$self->{'state'} = 'waiting';
+		$self->{'gone'} = 0;
+		$self->{'accepted_at'} = 0;
 		$self->write_status();
 		$self->watch_streams();
 		$self->watch_call();
@@ -267,7 +269,7 @@ sub watch_streams {
 # it). When a *finished* plan's line stops being fed, the call is over: the
 # helper is put down and the gateway goes idle, which is what lets Reception
 # arm for the next call without ever speaking a second plan into a dying one.
-sub watch_call {
+	sub watch_call {
 	my ($self) = @_;
 	return if $self->{'call_watcher'};
 	$self->{'call_watcher'} = Mojo::IOLoop->recurring(1 => sub {
@@ -275,20 +277,25 @@ sub watch_call {
 		return unless $state eq 'armed' || $state eq 'in_call' || $state eq 'done';
 		my $mixer = $self->{'mixer'} or return;
 		my $streams = $mixer->call_streams($self->{'peer'});
-		return $self->end_call('streams gone')
-			unless $streams->{'sink_input'} && $streams->{'source_output'};
+		if (!$streams->{'sink_input'} || !$streams->{'source_output'}) {
+			# a call that re-routes its Bluetooth audio drops the pair for a
+			# moment, so only a gap that lasts is the end of the call
+			$self->{'gone'} = ($self->{'gone'} || 0) + 1;
+			$self->end_call('streams gone') if $self->{'gone'} >= 3;
+			return;
+		}
+		$self->{'gone'} = 0;
 		# The pair arrives in pieces - the phone's capture before its playback,
 		# or a stream re-created when the link re-establishes - so move again
 		# every second rather than trusting the one move made at attach.
 		$mixer->attach($self->{'peer'});
-		# only a finished plan ends here, and only when the line stops feeding
+		# The phone holds a screened call up to its own 40 s limit and hangs up
+		# then. A finished plan therefore keeps its line until the streams go or
+		# that limit passes - arming over it spoke a second plan into the same
+		# call, which the caller heard as the greeting starting again.
 		return unless $state eq 'done';
-		if ($mixer->call_active()) {
-			$self->{'quiet'} = 0;
-			return;
-		}
-		$self->{'quiet'} = ($self->{'quiet'} || 0) + 1;
-		$self->end_call('line idle') if $self->{'quiet'} >= 3;
+		my $since = $self->{'accepted_at'} || $self->{'since'} || time;
+		$self->end_call('call limit') if time - $since >= 42;
 	});
 	return 1;
 }
@@ -297,6 +304,8 @@ sub watch_call {
 sub end_call {
 	my ($self, $why) = @_;
 	$self->{'quiet'} = 0;
+	$self->{'gone'} = 0;
+	$self->{'accepted_at'} = 0;
 	$self->{'steps'} = [];
 	$self->{'step_at'} = 0;
 	return 1 if $self->{'state'} eq 'idle';
@@ -425,6 +434,7 @@ sub event {
 	elsif ($name eq 'accepted') {
 		$self->{'state'} = 'in_call';
 		$self->{'since'} = time;
+		$self->{'accepted_at'} = time;
 		$self->{'peer'} = $event->{'peer'} || $self->{'peer'};
 		$self->{'step_at'} = -1;
 		$self->_advance();

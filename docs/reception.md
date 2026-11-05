@@ -100,19 +100,20 @@ the first time a call needs them.
    onto our devices at every arm and again once a second while the call is being
    fed. A pair left on the laptop's own sink and microphone is the room on the
    caller's ear and silence in our recording.
-7. A finished plan (`done`) keeps its line until the call sink stops being fed
-   (the phone's stream is what makes `jawn_call_in` RUNNING). Then the helper is
-   put down and the gateway is idle; Reception arms only from
-   `idle`/`armed`/`waiting`, so a line that is still breathing is never served a
-   second plan.
+7. A finished plan (`done`) keeps its line until the phone's streams go (three
+   seconds of absence, because a re-route drops them for a moment) or its own
+   40 s call limit passes - the phone answers a screened call and only hangs up
+   on that limit or the caller. Then the helper is put down and the gateway is
+   idle; Reception arms only from `idle`/`armed`/`waiting`, so a line that is
+   still breathing is never served a second plan.
 
 ## Known limits
 
-- The helper waits for a frame that carries something before it speaks: our own
-  sink produces frames whether or not the phone's audio path is up, and a link
-  that only hands us digital silence used to be greeted into nothing. Eight
-  seconds of silence is taken as a call anyway, so a genuinely quiet line is
-  still greeted.
+- The helper waits for a frame that carries something before it speaks. The
+  phone's gateway nodes outlive a call and keep feeding our sink with digital
+  silence between calls, so a frame of zeros is not a call. A line that never
+  carries anything ends when the phone's 40 s limit hangs it up and the streams
+  go - the caller is not greeted into nothing.
 - The **voicemail greeting is not used yet**: the phone decides the flow at
   ring time, but the gateway is armed before it knows which caller arrived, so
   every screened call gets the same plan. Splitting them needs the phone to send
@@ -138,8 +139,8 @@ the first time a call needs them.
   `jawn_call_in`, and `pactl list short source-outputs` its capture on
   `jawn_ivr_mic`. On the laptop's own sink and microphone instead, the caller
   hears the room and nothing is recorded.
-- `pactl list short sinks | grep jawn_call_in` is `RUNNING` while a call is
-  carried and `SUSPENDED`/`IDLE` when it is not; that is how the gateway knows a
-  call is over.
+- `pactl list short sinks | grep jawn_call_in` is `RUNNING` even between calls
+  (the phone's gateway nodes keep feeding it with silence), so it does not mark
+  a call; the helper's own silence gate does.
 - The helper logs `waiting for call audio` every few seconds while it waits; a
   `pcm open failed` means the PCM device name is wrong (BlueALSA only).
