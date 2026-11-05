@@ -655,18 +655,23 @@ sub manager_starter() {
 	}
 	elsif ($config->{'environment'} eq 'production') {
 
-		&subs::subprocessor(sub {
-		 # $SIG{'KILL'} = sub { threads->exit(); };
-			print "Starting Pro Locker Server on port " . $dock_port . "\n";
-			$ENV{MOJO_LISTEN} = 'https://*:' . $dock_port . $certs;
-			$ENV{PURPOSE} = 'locker';
-			my $prefork = &prefork_tune(Mojo::Server::Prefork->new(listen => [ $ENV{MOJO_LISTEN} ]));
-			$prefork->heartbeat_timeout(200);
-			$prefork->load_app('./perl/Manager.pl');
-			$prefork->workers(1);
-			$prefork->run;
-			$log->info('after locker server');
-		}, { name => 'Pro Locker Server' });
+		# A handheld has no boards and no guest at its LAN door: nothing dials 3000 on
+		# a phone, and since v0.1.2168 a peer reaches it on the entry port instead.
+		# The listener was a whole extra app (manager + worker) for no caller.
+		if ($device ne 'mobile') {
+			&subs::subprocessor(sub {
+			 # $SIG{'KILL'} = sub { threads->exit(); };
+				print "Starting Pro Locker Server on port " . $dock_port . "\n";
+				$ENV{MOJO_LISTEN} = 'https://*:' . $dock_port . $certs;
+				$ENV{PURPOSE} = 'locker';
+				my $prefork = &prefork_tune(Mojo::Server::Prefork->new(listen => [ $ENV{MOJO_LISTEN} ]));
+				$prefork->heartbeat_timeout(200);
+				$prefork->load_app('./perl/Manager.pl');
+				$prefork->workers(1);
+				$prefork->run;
+				$log->info('after locker server');
+			}, { name => 'Pro Locker Server' });
+		}
 
 		&subs::subprocessor(sub {
 		#  $SIG{'KILL'} = sub { threads->exit(); };
@@ -696,17 +701,17 @@ sub manager_starter() {
 			# a phone the single worker was busy for 30-60s every couple of minutes
 			# (the log's autoscale lines), which queued the whole panel behind it:
 			# the "Manager is frozen" after picking the phone up. Two resting workers
-			# mean one slow request never holds the screen, and the pool grows to four
-			# only while both are busy, so the fork-and-retire churn a one-worker pool
-			# paid every few minutes is gone. A desktop rests at three and a server at
-			# four, each growing by two. `main_workers` in config.json overrides the
-			# resting count when a machine wants another (a phone short on RAM can ask
-			# for one).
+			# mean one slow request never holds the screen. Unlike a desktop, a phone
+			# does not grow the pool: every extra worker was a fork of a 100 MB+
+			# process, and that spike is what Android's killer reaped the tree for.
+			# A burst waits behind the two instead; a desktop rests at three and a
+			# server at four, each growing by two. `main_workers` in config.json
+			# overrides the resting count when a machine wants another.
 			my $configured_workers = (defined $config->{'main_workers'} && $config->{'main_workers'} =~ /^\d+$/ && $config->{'main_workers'} > 0)
 				? int($config->{'main_workers'}) : 0;
 			my $main_workers = $configured_workers || ($device eq 'mobile' ? 2 : ($device eq 'server' ? 4 : 3));
 			$prefork->workers($main_workers);
-			&prefork_autoscale($prefork, min => $main_workers, max => $main_workers + 2);
+			&prefork_autoscale($prefork, min => $main_workers, max => $device eq 'mobile' ? $main_workers : $main_workers + 2);
 			$prefork->run;
 			$log->info('after main server');
 		}, { name => 'Pro Main Server' });
@@ -749,47 +754,52 @@ sub manager_starter() {
 			}
 		}, { name => 'Watch Server' });
 
-		&subs::subprocessor(sub {
-		 # $SIG{'KILL'} = sub { threads->exit(); };
-			$ENV{PURPOSE} = "teletype";
-			$ENV{MOJO_LISTEN} = 'https://*:' . $tty_port . $certs;
-			if ($config->{'environment'} eq 'development') {
-				print "Starting Development TTY Server on $tty_port\n";
-				my $morbo = Mojo::Server::Morbo->new;
-				$morbo = $morbo->daemon(Mojo::Server::Daemon->new);
-				$morbo->run('./perl/teletype.pl');
-			}
-			elsif ($config->{'environment'} eq 'production') {
-				print "Starting Pro TTY Server on port " . $tty_port . "\n";
-				my $prefork = &prefork_tune(Mojo::Server::Prefork->new(listen => [ $ENV{MOJO_LISTEN} ]), keep_alive => 1);
-				$prefork->heartbeat_timeout(200);
-				$prefork->load_app('./perl/teletype.pl');
-				$prefork->workers($device eq 'mobile' ? 1 : ($device eq 'server' ? 3 : 2));
-				$prefork->run;
-			}
-		}, { name => 'TTY Server' });
-		&subs::subprocessor(sub {
-		#  $SIG{'KILL'} = sub { threads->exit(); };
-			# The deck's control channel carries keystrokes, pointer movement and
-			# button presses, so it is TLS like every other listener. This is the
-			# wss port handed to a device as PORT_COMS / now_me's twshomebase.
-			$ENV{PURPOSE} = "teletype";
-			$ENV{MOJO_LISTEN} = 'https://*:' . $ws_tty_port . $certs;
-			if ($config->{'environment'} eq 'development') {
-				print "Starting Development TTYwss Server on $ws_tty_port\n";
-				my $morbo = Mojo::Server::Morbo->new;
-				$morbo = $morbo->daemon(Mojo::Server::Daemon->new);
-				$morbo->run('./perl/teletype.pl');
-			}
-			elsif ($config->{'environment'} eq 'production') {
-				print "Starting Pro TTYwss Server on port " . $ws_tty_port . "\n";
-				my $prefork = &prefork_tune(Mojo::Server::Prefork->new(listen => [ $ENV{MOJO_LISTEN} ]), keep_alive => 1);
-				$prefork->heartbeat_timeout(200);
-				$prefork->load_app('./perl/teletype.pl');
-				$prefork->workers(1);
-				$prefork->run;
-			}
-		}, { name => 'TTY WS Server' });
+		# A handheld is not a Linux deck: a teletype session needs a shell on the
+		# machine it runs on, and Android offers none. Both listeners were a whole
+		# app each for a door nothing on a phone opens.
+		if ($device ne 'mobile') {
+			&subs::subprocessor(sub {
+			 # $SIG{'KILL'} = sub { threads->exit(); };
+				$ENV{PURPOSE} = "teletype";
+				$ENV{MOJO_LISTEN} = 'https://*:' . $tty_port . $certs;
+				if ($config->{'environment'} eq 'development') {
+					print "Starting Development TTY Server on $tty_port\n";
+					my $morbo = Mojo::Server::Morbo->new;
+					$morbo = $morbo->daemon(Mojo::Server::Daemon->new);
+					$morbo->run('./perl/teletype.pl');
+				}
+				elsif ($config->{'environment'} eq 'production') {
+					print "Starting Pro TTY Server on port " . $tty_port . "\n";
+					my $prefork = &prefork_tune(Mojo::Server::Prefork->new(listen => [ $ENV{MOJO_LISTEN} ]), keep_alive => 1);
+					$prefork->heartbeat_timeout(200);
+					$prefork->load_app('./perl/teletype.pl');
+					$prefork->workers($device eq 'mobile' ? 1 : ($device eq 'server' ? 3 : 2));
+					$prefork->run;
+				}
+			}, { name => 'TTY Server' });
+			&subs::subprocessor(sub {
+			#  $SIG{'KILL'} = sub { threads->exit(); };
+				# The deck's control channel carries keystrokes, pointer movement and
+				# button presses, so it is TLS like every other listener. This is the
+				# wss port handed to a device as PORT_COMS / now_me's twshomebase.
+				$ENV{PURPOSE} = "teletype";
+				$ENV{MOJO_LISTEN} = 'https://*:' . $ws_tty_port . $certs;
+				if ($config->{'environment'} eq 'development') {
+					print "Starting Development TTYwss Server on $ws_tty_port\n";
+					my $morbo = Mojo::Server::Morbo->new;
+					$morbo = $morbo->daemon(Mojo::Server::Daemon->new);
+					$morbo->run('./perl/teletype.pl');
+				}
+				elsif ($config->{'environment'} eq 'production') {
+					print "Starting Pro TTYwss Server on port " . $ws_tty_port . "\n";
+					my $prefork = &prefork_tune(Mojo::Server::Prefork->new(listen => [ $ENV{MOJO_LISTEN} ]), keep_alive => 1);
+					$prefork->heartbeat_timeout(200);
+					$prefork->load_app('./perl/teletype.pl');
+					$prefork->workers(1);
+					$prefork->run;
+				}
+			}, { name => 'TTY WS Server' });
+		}
 	}
 
 
