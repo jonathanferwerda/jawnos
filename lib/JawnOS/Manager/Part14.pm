@@ -890,7 +890,10 @@ elsif ($type eq 'delay') {
 				next if $so_seen{ $so->{'uuid'} }++;
 				push @{$sources}, @{&subs::db_select('appointments', undef, { source_uuid => $so->{'uuid'} })->hashes};
 				if ( $so->{'type'} eq 'stop' || $so->{'type'} eq 'cancel' ) {
-					&subs::db_update('appointments', { type => 'start', server_time => $server_time }, { source_uuid => $so->{'source_uuid'}, uuid => $so->{'uuid'}, app => $so->{'app'} });
+					# Reopen the child completely. The type alone left stop_seen and the
+					# old stop_timestamp behind, so a resumed session's children read as
+					# running yet closed - the half-reopened state a Renew produced.
+					&subs::db_update('appointments', { type => 'start', stop_seen => undef, stop_timestamp => undef, server_time => $server_time }, { source_uuid => $so->{'source_uuid'}, uuid => $so->{'uuid'}, app => $so->{'app'} });
 					$child_apps{ $so->{'app'} } = 1;
 					&budget_runner($so->{'app'});
 					&subs::intelligent_automation_toggle({ appt_uuid => $so->{'uuid'}, app => $so->{'app'}, 'state' => 'on', timestamp => $so->{'timestamp'} });
