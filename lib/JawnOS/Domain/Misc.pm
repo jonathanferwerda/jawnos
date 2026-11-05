@@ -63,10 +63,19 @@ sub leave($c) {
 		return { ok => 0, error => 'Could not seal the database; it was kept.' };
 	}
 	&remote_relay_request($c, { mode => 'emergency' });
-	`shred -u $database`;
-	`shred -u $database-shm`;
-	`shred -u $database-wal`;
-	`shred -u $logfile`;
+	# The answer is the gate, and the worker that draws it still reads the house:
+	# its theme, its passkeys, the sealed copies it lists. Shredding here took
+	# the database out from under that render, the port went silent and the
+	# browser was told the seal had failed. The shred is its own process a
+	# moment behind the response, so the gate is written first and the file is
+	# gone before anyone could reach for it.
+	&subs::subprocessor(sub {
+		select undef, undef, undef, 2;
+		`shred -u $database` if $database;
+		`shred -u $database-shm` if $database;
+		`shred -u $database-wal` if $database;
+		`shred -u $logfile` if $logfile;
+	}, { name => 'leave shredder', fork => 1 });
 	delete $c->session->{'authentication'};
 	delete $c->session->{'database'};
 	delete $c->session->{'suds_id'};

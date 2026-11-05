@@ -195,7 +195,9 @@ sub say_it {
 		$safe =~ s/"/\\"/g;
 		my $voice = $spec->{'voice'} || 'en-us';
 		`espeak -a70 -v $voice "$safe" 2>/dev/null`;
-	}, { name => 'say it' });
+	# A request may call this (Leave says goodbye): an inline run resets the
+	# request worker's event loop and the reply never leaves. Always a child.
+	}, { name => 'say it', fork => 1 });
 }
 
 # Is the device on WiFi and reachable? Its own web server on port 3000 is the

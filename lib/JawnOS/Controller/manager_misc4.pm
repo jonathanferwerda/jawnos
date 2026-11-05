@@ -348,6 +348,11 @@ sub action_12771 {
 # POST /manager/leave
 sub action_12791 {
 	my $c = shift;
+	# The gate is drawn from the house this request is about to close. leave()
+	# takes the database away, so what the template reads from it is read here,
+	# while it is still there - the passkey list above all. Reading it after the
+	# shred killed the render, and with it the reply, on the live image.
+	my $webauthn_available = (scalar @{ &webauthn::credentials() } ? 1 : 0);
 	my $left = &leave($c);
 	# A failed seal is not a leave: keep the session and the database, and
 	# tell the dialog why nothing happened instead of drawing the gate over a
@@ -355,28 +360,20 @@ sub action_12791 {
 	if (ref $left eq 'HASH' && !$left->{'ok'}) {
 		return $c->render(status => 500, json => { ok => 0, error => ($left->{'error'} || 'Could not seal the database; it was kept.') });
 	}
-	my ($db,$database,$sql) = &subs::database_grabber();
-	my $restore_list;
-	unless (-e $database && -s $database > 5000) {
-		$restore_list = &subs::restore_list();
-	}
-	$database = '';
-	unless (-e $database) {
-		if ($c->param('restore_list')) {
-			my $list = $c->param('restore_list');
-			$restore_list = &subs::restore_list($list);
-			@{$restore_list} = grep { $_->{'filename'} =~ /enc$/gi } @{$restore_list};
-		}
+	# leave() shredded the live database; the gate lists the sealed copies the
+	# seal just wrote, and opening the house again here only made a 0-byte file.
+	my $restore_list = &subs::restore_list();
+	if ($c->param('restore_list')) {
+		my $list = $c->param('restore_list');
+		$restore_list = &subs::restore_list($list);
+		@{$restore_list} = grep { $_->{'filename'} =~ /enc$/gi } @{$restore_list};
 	}
 
 	$c->render(
 		template => 'gate',
 		layout => 'gate',
 		restore_list => $restore_list,
-		# the template asks this: a machine with no passkey enrolled has no
-		# WebAuthn button, and a render that leaves it out is a 500 under strict
-		# (that is what /gate and /manager/leave were doing)
-		webauthn_available => (scalar @{ &webauthn::credentials() } ? 1 : 0),
+		webauthn_available => $webauthn_available,
 		# the gate carries no home path: it is shown before anyone has signed in, and
 		# a field prefilled with the person's own directory hands a visitor their name
 		start_dir => '',

@@ -265,6 +265,10 @@ sub backups_dir {
 # gate on before there is a way in would lock it out - a paper recovery code or
 # an already-paired phone is that way in.
 sub padlock_seed_default {
+	# No database: a house that was just closed still has to reach its gate,
+	# and this is the first boot call to read a row. Without the guard the
+	# restart after Exit died here and the launcher restarted it forever.
+	return unless &subs::database_grabber();
 	# An app padlock never survives a restart. The token lives in one window;
 	# a tree that has just come up has no such window, and a grant left behind
 	# would let a reopened gallery, music or folders window list the sealed

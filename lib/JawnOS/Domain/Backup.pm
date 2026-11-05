@@ -444,10 +444,12 @@ sub backup_now {
 		}
 		chmod 0600, $enc_file if -e $enc_file;
 	}
+	# Leave calls the backup, and its answer is rendered after this: an inline
+	# run would reset the request worker's loop and take the gate reply with it.
 	&subs::subprocessor(sub {
     Mojo::IOLoop->reset;
 		`shred -u $temporary_path*`;
-	}, { name => 'backup shredder' });
+	}, { name => 'backup shredder', fork => 1 });
 
 
 	&Websocket::send('tab', { type => 'event', timestamp => $timestamp });

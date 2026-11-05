@@ -1,4 +1,4 @@
-# tests-for: lib/JawnOS/Domain/Backup.pm lib/JawnOS/Domain/Misc.pm lib/JawnOS/Controller/manager_misc4.pm public/js/manager/manager/10_appointment_edit.js perl/help/topics_features.pl lib/JawnOS/Domain/Loader.pm
+# tests-for: lib/JawnOS/Domain/Backup.pm lib/JawnOS/Domain/Misc.pm lib/JawnOS/Domain/Say.pm lib/JawnOS/Domain/Key.pm lib/JawnOS/Controller/manager_misc4.pm lib/JawnOS/Manager/Part30.pm public/js/manager/manager/10_appointment_edit.js perl/help/topics_features.pl lib/JawnOS/Domain/Loader.pm
 # covers:    Exit keeps the database when the backup did not seal; a failed encryption must never leave a footer-only file that leave() then trusts.
 
 use strict;
@@ -72,5 +72,38 @@ like($js, qr/Could not seal the database; it was kept\./, 'the dialog says why t
 my $help = read_file("$root/perl/help/topics_features.pl");
 like($help, qr/Exit refuses and keeps the house open/,
 	'the help topic warns that a failed seal keeps the house open');
+
+# --- the reply outlives the house -------------------------------------------
+# The live image answered the Exit POST with nothing. Two causes: the leave
+# path ran say_it and the backup shredder through subprocessor without
+# fork => 1, so the inline branch reset the request worker's event loop; and
+# the route read the passkey list from the database leave had just shredded.
+my $say = read_file("$root/lib/JawnOS/Domain/Say.pm");
+like($say, qr/\{ name => 'say it', fork => 1 \}/,
+	'say_it is always its own process, so a request can speak and still answer');
+like($backup, qr/\{ name => 'backup shredder', fork => 1 \}/,
+	'the backup shredder is always its own process');
+
+my ($leave_action) = $controller =~ /^(sub action_12791 \{.*?\n\})/sm;
+ok($leave_action, 'the leave action is readable');
+like($leave_action, qr/webauthn_available = .*?&webauthn::credentials.*?my \$left = &leave\(\$c\);/s,
+	'the passkey list is read before leave takes the database away');
+unlike($leave_action, qr/database_grabber/,
+	'and the route does not reopen the database it was told is gone');
+
+my ($shredder) = $misc =~ /(&subs::subprocessor\(sub \{.*?name => 'leave shredder', fork => 1 \}\);)/s;
+ok($shredder, 'the leave shredder is its own process');
+like($shredder, qr/`shred -u \$database`/,
+	'and carries the shred that used to run inside the request');
+like($js, qr/document\.write\(response\)/,
+	'the dialog shows the gate the server drew instead of reloading into a closing tree');
+
+my $part30 = read_file("$root/lib/JawnOS/Manager/Part30.pm");
+like($part30, qr/sub app_schema_ensure \{.*?return unless &subs::database_grabber\(\);/s,
+	'the schema pass leaves a house with no database alone instead of dying on it');
+
+my $key = read_file("$root/lib/JawnOS/Domain/Key.pm");
+like($key, qr/sub padlock_seed_default \{.*?return unless &subs::database_grabber\(\);/s,
+	'the boot padlock seed leaves a house with no database alone, so its gate can be served');
 
 done_testing();

@@ -426,6 +426,10 @@ sub app_signature_ok {
 
 sub app_schema_ensure {
 	return if $app_schema_done;
+	# No database yet: the gate is served without one after Exit, and the restored
+	# house still needs this pass. Letting the pragma read below die on a missing
+	# handle took the gate down on the first request a fresh worker took after it.
+	return unless &subs::database_grabber();
 	$app_schema_done = 1;
 	foreach my $spec (
 		[ 'paired_devices', 'app_pubkey', 'LONGTEXT' ],

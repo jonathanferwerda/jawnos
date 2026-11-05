@@ -533,8 +533,17 @@ function leave() {
 		data: { timestamp: timestamp, debriefer: d },
 		success: function(response) {
 			localStorage.clear();
-//			$('body').replaceWith(response);
-			location.reload();
+			// The reply already is the gate. Reloading asked the tree for it again
+			// at the exact moment the house closed; using the reply means the
+			// screen the person gets is the one the server drew.
+			if (response && response.indexOf('<html') >= 0) {
+				document.open();
+				document.write(response);
+				document.close();
+			}
+			else {
+				location.reload();
+			}
 		},
 		error: function(xhr) {
 			// A failed seal keeps the database. Say so and leave the session
