@@ -325,6 +325,48 @@ is($gateway->recording_path('.hidden'), '', 'a dot file is not served');
 my $cancelled = $gateway->cancel();
 is($cancelled->{'state'}, 'idle', 'cancel puts the gateway down');
 
+# The phone's Hands-Free pair outlives the plan, and Reception arms again as
+# soon as a finished plan lets go of its line. So a pair that is already up at
+# arm time is the call that has just heard its plan, not a new caller: it is
+# held until it goes, and nothing is spoken into it. (The `line` word greets a
+# silent caller the moment the pair appears, so the helper's old wait-for-audio
+# guard cannot do this any more - measured: a second greeting went into a call
+# still holding its line.)
+{
+	require JawnOS::Sco::Mixer;
+	local *JawnOS::Sco::Mixer::pactl = sub {
+		my $line = join ' ', @_;
+		return "3657\tjawn_call_in\tPipeWire\ts16 2ch\tRUNNING\n3664\tjawn_prompt\tPipeWire\ts16 2ch\tRUNNING\n"
+			if $line eq 'list short sinks';
+		return "3672\tjawn_ivr_mic\tPipeWire\ts16 2ch\tRUNNING\n"
+			if $line eq 'list short sources';
+		return "Sink Input #41\n\tSink: 3657\n\tProperties:\n\t\tdevice.string = \"00:2B:70:E9:7E:B2\"\n\n"
+			if $line eq 'list sink-inputs';
+		return "Source Output #42\n\tSource: 3672\n\tProperties:\n\t\tdevice.string = \"00:2B:70:E9:7E:B2\"\n\n"
+			if $line eq 'list source-outputs';
+		return '';
+	};
+	my $heldway = JawnOS::Sco::Gateway->new(
+		dir => "$dir/sco-held",
+		helper => $fake,
+		status_path => "$dir/sco-held.json",
+		pipe => 1,
+	);
+	my $held_armed = $heldway->arm(
+		peer => '00:2B:70:E9:7E:B2',
+		clips => { greeting => $clip, prompt => $clip, thanks => $clip },
+	);
+	is($held_armed->{'state'}, 'waiting', 'pipe mode still waits for the call');
+	is($heldway->{'held'}, 1, 'a pair already up at arm time is the finished call');
+	my $spoke = 0;
+	Mojo::IOLoop->timer(0.5 => sub { $spoke = 1 if $heldway->{'pid'} });
+	Mojo::IOLoop->timer(0.7 => sub { Mojo::IOLoop->stop });
+	Mojo::IOLoop->start;
+	is($heldway->{'state'}, 'waiting', 'and no second plan is spoken into it');
+	ok(!$spoke, 'no helper is started for a pair that has had its plan');
+	$heldway->cancel();
+}
+
 # Pipe mode returns before the adapter branch, and used to leave the record
 # options unset: a screened call then ran the helper's 30 s / 1.8 s defaults
 # instead of the 20 s / 2 s the phone asked for.

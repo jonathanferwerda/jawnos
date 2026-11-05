@@ -263,6 +263,13 @@ sub arm {
 		$self->{'mixer'} = JawnOS::Sco::Mixer->new();
 		$self->{'peer'} = $args{'peer'} || $self->peer_address();
 		$self->{'call_id'} = $args{'call_id'} || &call_id();
+		# A pair that is already up when we arm belongs to a call that has
+		# already had its plan. The phone's Hands-Free streams outlive the plan,
+		# and Reception arms again as soon as a finished plan lets go of its
+		# line - so the pair this arm sees is the call that just heard its
+		# thanks, not a new caller. Hold it until it goes.
+		my $up = $self->{'mixer'}->call_streams($self->{'peer'});
+		$self->{'held'} = ($up->{'sink_input'} && $up->{'source_output'}) ? 1 : 0;
 		$self->{'last_error'} = '';
 		$self->{'last_event'} = 'waiting for a call';
 		$self->{'state'} = 'waiting';
@@ -307,7 +314,16 @@ sub watch_streams {
 		return unless $self->{'state'} eq 'waiting';
 		my $mixer = $self->{'mixer'} or return;
 		my $streams = $mixer->call_streams($self->{'peer'});
-		return unless $streams->{'sink_input'} && $streams->{'source_output'};
+		unless ($streams->{'sink_input'} && $streams->{'source_output'}) {
+			# the pair has gone: what appears next is a new call
+			$self->{'held'} = 0;
+			return;
+		}
+		# ...and a pair that was already there when we armed has had its plan,
+		# so it is not greeted again. The `line` word speaks to a silent caller
+		# the moment the pair appears, so waiting for audio is no longer a
+		# guard against a second plan.
+		return if $self->{'held'};
 		$mixer->attach($self->{'peer'});
 		my @cmd = ( $self->helper_command(), '--pipe-in', $mixer->capture_command(),
 			'--pipe-out', $mixer->playback_command() );
@@ -368,6 +384,7 @@ sub end_call {
 	my ($self, $why) = @_;
 	$self->{'quiet'} = 0;
 	$self->{'gone'} = 0;
+	$self->{'held'} = 0;
 	$self->{'accepted_at'} = 0;
 	$self->{'done_at'} = 0;
 	$self->{'steps'} = [];
@@ -389,7 +406,9 @@ sub end_call {
 ## seconds later. It used to wait for that limit, and a call arriving in the
 ## three-quarters of a minute that followed found a gateway still busy - the
 ## caller heard silence until the next arm. Arming over the finished call cannot
-## greet it twice: a fresh helper speaks only once a frame carries audio.
+## greet it twice: a pair that is already up when the gateway arms is held (see
+## arm/watch_streams), because the `line` word greets a silent caller as soon as
+## the pair appears and the helper no longer waits for audio.
 sub call_over {
 	my ($state, $since_done, $since_accepted) = @_;
 	return 'plan done' if $state eq 'done'
@@ -584,6 +603,7 @@ sub cancel {
 	$self->{'state'} = 'idle';
 	$self->{'since'} = time;
 	$self->{'last_event'} = 'cancelled';
+	$self->{'held'} = 0;
 	$self->write_status();
 	return { ok => 1, state => $self->{'state'} };
 }

@@ -110,8 +110,8 @@ the first time a call needs them.
    on a busy gateway. A step that never ends is bounded at 42 s, and a pair of
    streams that stay away for three seconds ends it sooner. Then the helper is
    put down and the gateway is idle; Reception arms only from
-   `idle`/`armed`/`waiting`, and a fresh helper speaks only once a frame carries
-   audio, so the finished call cannot be greeted twice.
+   `idle`/`armed`/`waiting`, and that arm holds a pair that is already up, so
+   the call that just heard its plan is not greeted a second time.
 
 ## Known limits
 
