@@ -118,6 +118,9 @@ like($panel_js, qr/function jawnScreenRtcPushed/, 'and applying the answer that 
 like($panel_js, qr/function jawnScreenPushed/, 'the screening announcement opens a panel');
 like($panel_js, qr/jawn_screening_lines/, 'with the transcript as bubbles');
 like($panel_js, qr#/manager/sco/status#, 'polled while it is up');
+like($panel_js, qr/state !== 'in_call' && state !== 'done'/,
+	'an armed gateway does not open the panel by itself');
+like($panel_js, qr/\$\(function \(\) \{/, 'and a window that loads mid-call asks once');
 my $ws = read_file("$repo/public/js/manager/websocket/01_message_handler.js");
 like($ws, qr/sco_rtc/, 'the websocket dispatcher knows the bridge event');
 like($ws, qr/sco_screen/, 'and the screening announcement');

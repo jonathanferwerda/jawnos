@@ -186,16 +186,23 @@ function jawnScreenPoll() {
 				jawnScreenEnd();
 				return;
 			}
+			// A window opened or reloaded while the line is up never sees the
+			// start push; the poll is what puts the panel there. An armed gateway
+			// is not a screening, so it opens nothing by itself.
+			if (!$('#jawn_screening').length) {
+				if (state !== 'in_call' && state !== 'done') { return; }
+				jawnScreenPanelOpen();
+				// the Phone app's IVR pane is showing it instead
+				if (!$('#jawn_screening').length) { return; }
+			}
+			if (!jawnScreen.timer) { jawnScreen.timer = setInterval(jawnScreenPoll, 1500); }
 			jawnScreenPanelPaint(res);
 		}
 	});
 }
 
 function jawnScreenStart() {
-	jawnScreenPanelOpen();
-	if (jawnScreen.timer) { return; }
 	jawnScreenPoll();
-	jawnScreen.timer = setInterval(jawnScreenPoll, 1500);
 }
 
 function jawnScreenEnd() {
@@ -224,4 +231,10 @@ $(document).on('click', '#jawn_screening #jawn_screening_phone', function (e) {
 $(document).on('click', '#jawn_screening .jawn_screening_close', function (e) {
 	e.preventDefault();
 	jawnScreenEnd();
+});
+
+// A page that loads during a screening asks once, so a late window is not blind
+// until the next call.
+$(function () {
+	if (typeof jawnScreenPoll === 'function') { jawnScreenPoll(); }
 });
