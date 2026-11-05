@@ -761,6 +761,25 @@ sub action_50001 {
 	$c->render(json => $result);
 }
 
+# GET /manager/configure/qa_reports
+# The finished nightly runs the panel shows. The chosen machine answers for its
+# own disk; a peer asks the owner of the data, never a copy kept here, so the
+# laptop sees the run the QA box actually did.
+sub action_50008 {
+	my $c = shift;
+	my $caller = $c->param('signatorial');
+	my $peer_ok = 0;
+	if (defined $caller && length $caller) {
+		my $rm = &subs::db_select('remote_machines', undef, { signatorial => $caller })->hashes->[0];
+		$peer_ok = ($rm && &subs::peer_verify($c, $rm)) ? 1 : 0;
+	}
+	unless ($c->session('authentication') eq 'approved' || $peer_ok) {
+		$c->render(json => { ok => 0, error => 'not signed in' }, status => 403);
+		return;
+	}
+	$c->render(json => &subs::qa_reports_for($c->param('target') // ''));
+}
+
 # POST /manager/configure/qa_device_target
 sub action_50002 {
 	my $c = shift;

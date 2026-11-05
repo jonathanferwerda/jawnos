@@ -633,6 +633,83 @@ sub qa_readiness {
 # Ask the chosen machine. The local fallback answers here; a remote row is
 # asked over the signed peer rail, which is how every other peer call in the
 # app authenticates - there is no unauthenticated path for it.
+# --- QA reports --------------------------------------------------------------
+# A nightly job leaves one finished run per directory under $QA_ROOT (report.json
+# and status.txt beside its log). The panel shows those, from any machine: a
+# laptop asks the machine that ran the job over the same signed hop readiness
+# uses, so no report has to be synced into this database and a run that failed
+# to write one still appears with the status it managed.
+sub qa_reports_root {
+	return &subs::home('~/jawnos-qa') . '/installers';
+}
+
+sub qa_reports_list {
+	my ($opts) = @_;
+	$opts ||= {};
+	my $root = (defined $opts->{'root'} && length $opts->{'root'}) ? $opts->{'root'} : &qa_reports_root();
+	my $limit = defined $opts->{'limit'} ? $opts->{'limit'} + 0 : 20;
+	my @reports;
+	opendir(my $dh, $root) or return \@reports;
+	my @stamps = grep { /^\d{8}T\d{6}Z$/ } readdir $dh;
+	closedir $dh;
+	for my $stamp (sort { $b cmp $a } @stamps) {
+		last if @reports >= $limit;
+		my $dir = "$root/$stamp";
+		next unless -d $dir;
+		my $status = '';
+		if (open(my $sh, '<', "$dir/status.txt")) {
+			$status = <$sh> // '';
+			close $sh;
+			$status =~ s/\s+//g;
+		}
+		my $report;
+		if (open(my $fh, '<', "$dir/report.json")) {
+			local $/;
+			my $text = <$fh>;
+			close $fh;
+			my $decoded = undef;
+			if (defined $text && length $text) {
+				$decoded = eval { decode_json($text) };
+			}
+			$report = $decoded if ref $decoded eq 'HASH';
+		}
+		if (!length $status) {
+			$status = !$report ? 'unknown' : ($report->{'ok'} ? 'ok' : 'failed');
+		}
+		push @reports, { stamp => $stamp, status => $status, report => $report };
+	}
+	return \@reports;
+}
+
+sub qa_reports_for {
+	my ($signatorial, $opts) = @_;
+	$opts ||= {};
+	return { ok => 1, off => 1, reports => [] } if &qa_nightly_is_off($signatorial);
+	my $guard = &qa_install_guard($signatorial, $opts);
+	return { ok => 0, error => $guard->{'error'} } unless $guard->{'ok'};
+	my $target = $guard->{'target'};
+	if ($target->{'local'}) {
+		return {
+			ok => 1,
+			local => 1,
+			target => $target->{'signatorial'} || '',
+			reports => &qa_reports_list($opts),
+		};
+	}
+	# The peer hop readiness takes, for the same reason: the report lives on the
+	# machine that ran the job, and only that machine can list its own files.
+	my $hop_row = { %{$target} };
+	delete $hop_row->{'cookie'};
+	my $hop = eval { &remote_useragent_maker({ signatorial => $target->{'signatorial'}, rm => $hop_row }) };
+	return { ok => 0, error => 'no route to that machine', target => $target->{'signatorial'} }
+		unless $hop && $hop->{'ua'} && $hop->{'manager'};
+	my $url = $hop->{'manager'} . '/manager/configure/qa_reports?signatorial=' . &subs::signatorial_designer();
+	my $res = eval { $hop->{'ua'}->inactivity_timeout(30)->get($url)->result };
+	my $body = ($res && $res->is_success) ? eval { decode_json $res->body } : undef;
+	return $body if ref $body eq 'HASH';
+	return { ok => 0, error => 'that machine did not answer the report request', target => $target->{'signatorial'} };
+}
+
 sub qa_readiness_for {
 	my ($signatorial, $opts) = @_;
 	$opts ||= {};

@@ -729,6 +729,14 @@ half-edited installer list is not judged; `QA_SOURCE=worktree` checks the
 working tree for a run before committing. Logs are in
 `$QA_ROOT/installers/<stamp>/freshness.log`; the last 14 runs are kept.
 
+Each run also writes `report.json` (what `--json` prints) and `status.txt`
+beside the log, and **Configure -> Plat -> QA -> Nightly reports** shows the last
+14 days of them, newest first, one accordion per run and a table per section.
+The panel reads the directory on the machine that ran the job and hops there
+over the same signed rail readiness uses, so the list is the same from any
+machine - a laptop shows the QA box's own reports and nothing is copied into a
+database. Retention is by age (`-mtime +14`), not a count of runs.
+
 ### Weekly artefact build (Sunday 03:00)
 
 `qa/nightly_build.sh` (`jawnos-qa-build.timer`) builds the two artefacts a person

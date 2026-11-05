@@ -27,6 +27,9 @@
 #                                                    # app's packages
 #   perl scripts/jawnos_deps.pl --freshness --strict # also fail on outdated
 #   perl scripts/jawnos_deps.pl --freshness --json   # machine-readable
+#   perl scripts/jawnos_deps.pl --freshness --report-file=PATH  # the same JSON,
+#                                                    # beside the text report
+#                                                    # (the QA panel reads it)
 #   perl scripts/jawnos_deps.pl --freshness --only=NAME  # one name (repeatable)
 #   perl scripts/jawnos_deps.pl --freshness --fixtures=DIR  # offline, canned
 #   perl scripts/jawnos_deps.pl --freshness --android      # also the Android
@@ -61,7 +64,7 @@ use FindBin;
 use lib "$FindBin::Bin/../lib";
 use JawnOS::Packages;
 
-my ($report_only, $json, $sh, $install, $yes, $desktop, $extras_only, $no_extras, $local_lib, $freshness, $strict, $fixtures, $android, $android_update, $android_keep);
+my ($report_only, $json, $sh, $install, $yes, $desktop, $extras_only, $no_extras, $local_lib, $freshness, $strict, $fixtures, $android, $android_update, $android_keep, $report_file);
 my @only;
 GetOptions(
 	'report'      => \$report_only,
@@ -79,6 +82,7 @@ GetOptions(
 	'android'     => \$android,
 	'android-update' => \$android_update,
 	'android-keep=i' => \$android_keep,
+	'report-file=s' => \$report_file,
 	'only=s@'     => \@only,
 ) or die "bad options\n";
 
@@ -645,6 +649,7 @@ sub freshness_report {
 	my $android = $opt{'android'};
 	my $android_update = $opt{'android_update'};
 	my $android_keep = $opt{'android_keep'} || 2;
+	my $report_file = $opt{'report_file'};
 	my $platform = $opt{'platform'} || 'unknown';
 	my @only = @{ $opt{'only'} || [] };
 	my %only = map { $_ => 1 } @only;
@@ -910,19 +915,22 @@ sub freshness_report {
 	$ok = 0 if $summary{'checked'} && $summary{'unknown'} == $summary{'checked'};
 	$ok = 0 if $curl_missing;
 
+	my $document = {
+		ok => $ok,
+		metadata_only => 1,
+		generated => time,
+		summary => \%summary,
+		modules => \@module_rows,
+		debian => \@debian_rows,
+		arch => \@arch_rows,
+		android => \@android_rows,
+		toolchain => \@toolchain_rows,
+		curl_missing => $curl_missing ? 1 : 0,
+		strict => $strict ? 1 : 0,
+	};
+
 	if ($json_out) {
-		print JSON::PP->new->canonical->pretty->encode({
-			ok => $ok,
-			metadata_only => 1,
-			summary => \%summary,
-			modules => \@module_rows,
-			debian => \@debian_rows,
-			arch => \@arch_rows,
-			android => \@android_rows,
-			toolchain => \@toolchain_rows,
-			curl_missing => $curl_missing ? 1 : 0,
-			strict => $strict ? 1 : 0,
-		});
+		print JSON::PP->new->canonical->pretty->encode($document);
 		return $ok ? 0 : 1;
 	}
 
@@ -992,6 +1000,19 @@ sub freshness_report {
 			grep { defined $_->{'update'} && ($_->{'status'} || '') eq 'outdated' } @toolchain_rows;
 		$ok = 0 if !android_update(@todo);
 		android_prune($android_keep);
+	}
+
+	# The same document --json prints, for the QA panel to read off disk. Written
+	# last so it carries the verdict the check reached, not a guess made earlier.
+	if (defined $report_file && length $report_file) {
+		$document->{'ok'} = $ok;
+		if (open(my $rf, '>', $report_file)) {
+			print {$rf} JSON::PP->new->canonical->pretty->encode($document);
+			close $rf;
+		}
+		else {
+			print "freshness: could not write the report file ($report_file: $!)\n";
+		}
 	}
 	return $ok ? 0 : 1;
 }
@@ -1145,6 +1166,7 @@ if ($freshness) {
 		android  => $android,
 		android_update => $android_update,
 		android_keep => $android_keep,
+		report_file => $report_file,
 	);
 }
 

@@ -35,6 +35,11 @@
 # Runs are logged under $QA_ROOT/installers/<stamp>/freshness.log; the last 14
 # are kept. Driven by qa/systemd/jawnos-qa-installers.timer (03:45, nightly).
 #
+# Each run also leaves `report.json` (the same document --json prints) and a
+# one-word `status.txt` beside the log. Those two files are what Configure ->
+# Plat -> QA shows, so the panel reads a finished run instead of re-running the
+# check; a report is kept for 14 days.
+#
 # It checks the committed tree (git archive HEAD), like the Docker smoke, so a
 # half-edited installer list is not judged. QA_SOURCE=worktree checks the
 # working tree instead, for a manual run before committing.
@@ -47,12 +52,18 @@ STAMP=$(date -u +%Y%m%dT%H%M%SZ)
 RUN_DIR="$QA_ROOT/installers/$STAMP"
 TREE="$RUN_DIR/tree"
 LOG="$RUN_DIR/freshness.log"
-KEEP=14
+KEEP_DAYS=14
+MAX_RUNS=60
 STRICT=${STRICT:-0}
 ANDROID_UPDATE=${ANDROID_UPDATE:-1}
 QA_SOURCE=${QA_SOURCE:-head}
 
 note() { printf '%s\n' "$*"; }
+
+# What the panel shows for a run that never got as far as writing a report.
+set_status() {
+	printf '%s\n' "$1" > "$RUN_DIR/status.txt" 2>/dev/null || :
+}
 
 # One metadata request per repository: the same size as one row of the report.
 probe() {
@@ -73,6 +84,7 @@ probe() {
 main() {
 	if ! command -v curl >/dev/null 2>&1; then
 		note "SKIP: curl is not installed; freshness needs it to read package metadata"
+		set_status skipped
 		return 0
 	fi
 
@@ -80,6 +92,7 @@ main() {
 		&& ! probe debian 'https://api.ftp-master.debian.org/madison?package=cpanminus&table=all' \
 		&& ! probe arch 'https://archlinux.org/packages/search/json/?name=cpanminus'; then
 		note "SKIP: no package repository is reachable from here"
+		set_status skipped
 		return 0
 	fi
 
@@ -95,13 +108,15 @@ main() {
 
 	note "installer freshness: $(git -C "$REPO" rev-parse --short HEAD) ($(cat "$REPO/VERSION" 2>/dev/null || echo v?))"
 
-	local args=(--freshness --desktop --android)
+	local args=(--freshness --desktop --android --report-file "$RUN_DIR/report.json")
 	[ "$STRICT" = 1 ] && args+=(--strict)
 	[ "$ANDROID_UPDATE" = 1 ] && args+=(--android-update)
 	if ! perl "$TREE/scripts/jawnos_deps.pl" "${args[@]}"; then
 		note "FAIL: an installer's package is gone upstream, or every lookup failed"
+		set_status failed
 		return 1
 	fi
+	set_status ok
 	note "PASS: every installer package is still offered upstream"
 	[ "$STRICT" = 1 ] || note "PASS is not a freshness verdict: outdated rows are informational here (STRICT=1 fails them)"
 	return 0
@@ -112,9 +127,12 @@ cleanup() {
 	trap - EXIT
 	set +e
 	rm -rf "$TREE"
-	# keep the newest $KEEP run directories
+	# Keep 14 days of reports (the panel shows them) and, defensively, no more
+	# than $MAX_RUNS extras if something ran far more often than nightly.
+	find "$QA_ROOT/installers" -mindepth 1 -maxdepth 1 -type d -mtime +"$KEEP_DAYS" \
+		-exec rm -rf {} + 2>/dev/null || :
 	ls -1dt "$QA_ROOT"/installers/*/ 2>/dev/null \
-		| awk -v keep="$KEEP" 'NR > keep' \
+		| awk -v keep="$MAX_RUNS" 'NR > keep' \
 		| while IFS= read -r old; do rm -rf "$old"; done
 	exit "$rc"
 }

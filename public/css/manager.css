@@ -3392,3 +3392,47 @@ body.dark_theme .inventory_details {
 .inventory_details .statistic_entry.inv_status_achievable { background-color: var(--inv-achievable-bg); color: var(--inv-achievable-ink); }
 .inventory_details .statistic_entry.inv_status_neglected { background-color: var(--inv-neglected-bg); color: var(--inv-neglected-ink); }
 .inventory_details .statistic_entry.inv_status_abandoned { background-color: var(--inv-abandoned-bg); color: var(--inv-abandoned-ink); }
+
+/* Configure -> Plat -> QA: the nightly reports. One accordion per run, a table
+   per section inside it. The tables are narrow enough for the card, and a wide
+   one scrolls inside its own box instead of stretching the panel. */
+.qa_reports { font-size: 13px; }
+.qa_report {
+	margin: 0 0 8px;
+	border: 1px solid var(--line, rgba(127,127,127,.28));
+	border-radius: var(--jawnos-corner, 12px);
+	overflow: hidden;
+}
+.qa_report > summary {
+	display: flex;
+	gap: 10px;
+	align-items: baseline;
+	padding: 7px 10px;
+	cursor: pointer;
+	background: var(--panel, transparent);
+}
+.qa_report[open] > summary { border-bottom: 1px solid var(--line, rgba(127,127,127,.28)); }
+.qa_report_stamp { font-variant-numeric: tabular-nums; }
+.qa_report_state { font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; }
+.qa_report_bits { opacity: .8; }
+.qa_report_ok { color: var(--accent, #3b7ddd); }
+.qa_report_note { color: var(--muted, #6b7280); }
+.qa_report_warn { color: var(--warn, #b7791f); }
+.qa_report_bad { color: var(--danger, #c53030); }
+.qa_report_table {
+	width: calc(100% - 20px);
+	margin: 6px 10px 10px;
+	border-collapse: collapse;
+	font-size: 12px;
+	display: block;
+	overflow-x: auto;
+}
+.qa_report_table caption { text-align: left; font-weight: 600; padding: 4px 0; }
+.qa_report_table th, .qa_report_table td {
+	text-align: left;
+	padding: 3px 10px 3px 0;
+	border-bottom: 1px solid rgba(127,127,127,.16);
+	white-space: nowrap;
+}
+.qa_report_table thead th { font-weight: 600; opacity: .75; }
+.qa_report_state { font-weight: 600; }

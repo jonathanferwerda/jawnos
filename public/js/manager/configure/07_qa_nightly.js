@@ -180,6 +180,7 @@ $(document).on('change', '#qa_nightly_device', function() {
 		}
 		qaRefresh();
 		qaScheduleRefresh();
+		qaReportsRefresh();
 	}).fail(function() {
 		$('#qa_readiness').text(qaT('Could not save the choice.'));
 	});
@@ -289,7 +290,130 @@ $(document).on('click', '#qa_install', function() {
 $(document).on('click', '#plat_setting_list .cfg_tab_toggle[tab="plat_qa"]', function() {
 	qaRefresh();
 	qaScheduleRefresh();
+	qaReportsRefresh();
 });
 $(function() {
-	if ($('#plat_qa').length && $('#plat_qa').is(':visible')) { qaRefresh(); qaScheduleRefresh(); }
+	if ($('#plat_qa').length && $('#plat_qa').is(':visible')) { qaRefresh(); qaScheduleRefresh(); qaReportsRefresh(); }
+});
+
+// ---- nightly reports -------------------------------------------------------
+// The last 14 days of the installer-freshness run, as the machine that ran it
+// recorded: one accordion per run, a table per section inside. The panel only
+// reads -- the run happened on the timer, and the report is a file on that
+// machine, which is why every machine asks for it the same way.
+function qaReportEscape(value) {
+	if (value === null || value === undefined) { return ''; }
+	return String(value)
+		.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+		.replace(/"/g, '&quot;');
+}
+
+function qaReportStamp(stamp) {
+	var m = /^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z$/.exec(stamp || '');
+	if (!m) { return stamp || ''; }
+	return m[1] + '-' + m[2] + '-' + m[3] + ' ' + m[4] + ':' + m[5] + ' UTC';
+}
+
+function qaReportTone(status) {
+	switch (status) {
+		case 'current': case 'offered': case 'ok': return 'ok';
+		case 'available': return 'note';
+		case 'outdated': return 'warn';
+		case 'missing': case 'failed': return 'bad';
+		default: return 'warn';
+	}
+}
+
+// cells: strings, or { text, tone } in the last column
+function qaReportTable(title, head, rows) {
+	if (!rows || !rows.length) { return ''; }
+	var html = '<table class="qa_report_table"><caption>' + qaReportEscape(title) + '</caption><thead><tr>';
+	head.forEach(function(h) { html += '<th>' + qaReportEscape(h) + '</th>'; });
+	html += '</tr></thead><tbody>';
+	rows.forEach(function(cells) {
+		html += '<tr>';
+		cells.forEach(function(cell) {
+			var text = (cell && typeof cell === 'object') ? cell.text : cell;
+			var tone = (cell && typeof cell === 'object') ? cell.tone : '';
+			html += '<td' + (tone ? ' class="qa_report_state qa_report_' + qaReportEscape(tone) + '"' : '') + '>'
+				+ qaReportEscape(text) + '</td>';
+		});
+		html += '</tr>';
+	});
+	return html + '</tbody></table>';
+}
+
+function qaReportRun(entry) {
+	var report = entry.report || {};
+	var summary = report.summary || {};
+	var bits = [];
+	if (summary.missing) { bits.push(summary.missing + ' ' + qaT('missing upstream')); }
+	if (summary.android_missing) { bits.push(summary.android_missing + ' ' + qaT('Android components missing')); }
+	if (summary.outdated || summary.android_outdated) {
+		bits.push((summary.outdated + (summary.android_outdated || 0)) + ' ' + qaT('behind upstream'));
+	}
+	if (!bits.length) { bits.push(qaT('nothing missing upstream')); }
+	var tone = qaReportTone(entry.status);
+	var html = '<details class="qa_report" data-status="' + qaReportEscape(entry.status) + '">'
+		+ '<summary><span class="qa_report_stamp">' + qaReportEscape(qaReportStamp(entry.stamp)) + '</span>'
+		+ '<span class="qa_report_state qa_report_' + qaReportEscape(tone) + '">' + qaReportEscape(entry.status) + '</span>'
+		+ '<span class="qa_report_bits">' + qaReportEscape(bits.join(' · ')) + '</span></summary>';
+	if (!entry.report) {
+		html += '<p class="cfg-note">' + qaT('This run wrote no report (it stopped before the check).') + '</p>';
+		return html + '</details>';
+	}
+	var modules = (report.modules || []).map(function(row) {
+		return [row.name, row.installed || '-', row.latest || '-', { text: row.status, tone: qaReportTone(row.status) }];
+	});
+	html += qaReportTable(qaT('Perl modules (CPAN)'), [qaT('Module'), qaT('Installed'), qaT('Candidate'), qaT('Status')], modules);
+	var debian = (report.debian || []).map(function(row) {
+		var tone = qaReportTone(row.status);
+		return [row.package, row.installed || '-', (row.latest || '-') + (row.suite ? ' (' + row.suite + ')' : ''), { text: row.status, tone: tone }];
+	});
+	html += qaReportTable(qaT('Debian packages'), [qaT('Package'), qaT('Installed'), qaT('Candidate'), qaT('Status')], debian);
+	var arch = (report.arch || []).map(function(row) {
+		return [row.package, row.installed || '-', (row.latest || '-') + (row.repo ? ' (' + row.repo + ')' : ''), { text: row.status, tone: qaReportTone(row.status) }];
+	});
+	html += qaReportTable(qaT('Arch packages'), [qaT('Package'), qaT('Installed'), qaT('Latest'), qaT('Status')], arch);
+	var android = (report.android || []).map(function(row) {
+		return [row.component, row.installed ? qaT('installed here') : '-', '', { text: row.status, tone: qaReportTone(row.status) }];
+	});
+	html += qaReportTable(qaT('Android SDK components'), [qaT('Component'), qaT('This machine'), '', qaT('Status')], android);
+	var toolchain = (report.toolchain || []).map(function(row) {
+		return [row.tool, row.installed || '-', row.latest || '-', { text: row.status, tone: qaReportTone(row.status) }];
+	});
+	html += qaReportTable(qaT('Android toolchain'), [qaT('Tool'), qaT('Installed'), qaT('Offered'), qaT('Status')], toolchain);
+	return html + '</details>';
+}
+
+function qaReportsRender(r) {
+	var box = $('#qa_reports');
+	if (!box.length) { return; }
+	if (!r || !r.ok) {
+		box.text((r && r.error) ? r.error : qaT('No report from that machine.'));
+		return;
+	}
+	if (r.off) {
+		box.text(qaT('Off') + ' — ' + qaT('No nightly runs on any machine.'));
+		return;
+	}
+	var list = r.reports || [];
+	if (!list.length) {
+		box.text(qaT('No reports yet. The first nightly run writes one.'));
+		return;
+	}
+	box.html(list.map(qaReportRun).join(''));
+}
+
+function qaReportsRefresh() {
+	var box = $('#qa_reports');
+	if (!box.length) { return; }
+	$.getJSON('/manager/configure/qa_reports', { target: qaTarget() })
+		.done(qaReportsRender)
+		.fail(function() { qaReportsRender({ ok: 0, error: qaT('No report from that machine.') }); });
+}
+
+$(document).on('click', '#qa_reports_refresh', function() {
+	$('#qa_reports').text(qaT('Loading…'));
+	qaReportsRefresh();
 });

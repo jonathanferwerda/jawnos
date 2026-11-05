@@ -76,6 +76,18 @@
 </div>
 <div class="cfg-card">
 	<div class="cfg-row" style="justify-content:space-between;">
+		<h3 style="margin:0;"><%= &subs::ui('Nightly reports') %></h3>
+		<div class="cfg-actions" style="margin:0;">
+			<button type="button" id="qa_reports_refresh" class="button"><%= &subs::ui('Refresh') %></button>
+		</div>
+	</div>
+	<p class="cfg-note" style="margin:6px 0 8px;">
+		<%= &subs::ui('The last 14 days of the nightly installer check, newest first, as the machine that ran it recorded. Open a run for a table per section: the Perl modules, the Debian and Arch packages, and the Android SDK. A run that found nothing missing upstream says so; one that could not read a repository says that instead. The reports stay on the machine that ran the check, so this list is the same from any machine you open the panel on.') %>
+	</p>
+	<div id="qa_reports" class="qa_reports"><%= &subs::ui('Loading…') %></div>
+</div>
+<div class="cfg-card">
+	<div class="cfg-row" style="justify-content:space-between;">
 		<h3 style="margin:0;"><%= &subs::lang('configure.qa_ready') %></h3>
 		<div class="cfg-actions" style="margin:0;">
 			<button type="button" id="qa_refresh" class="button"><%= &subs::lang('configure.qa_check') %></button>
