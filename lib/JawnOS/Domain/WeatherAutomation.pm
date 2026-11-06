@@ -518,17 +518,19 @@ sub weather_automation_state() {
 	my $last = eval { &cache_get({ app => 'weather', context => 'observe', subcontext => 'last' }) } || {};
 	my $locations = &weather_location_options();
 	my %location_label = map { $_->{'key'} => $_->{'label'} } @{$locations};
-	my $app_rows = eval {
-		&subs::db_query("select distinct app from settings where app is not null and app != '' order by app")->hashes;
-	} || [];
+	# A person starts an app by name, so suggest the house's app catalog and the
+	# apps its rules already name. The settings table also holds one-off names
+	# (shopping items, photo files); offering its 2,000 rows would bury the app
+	# they want and bloat every refresh of this tab.
 	my (%seen_app, @app_options);
 	my $add_app = sub {
 		my $name = shift // '';
 		return unless length $name && $name !~ /^__/ && !$seen_app{$name}++;
 		push @app_options, { key => $name, label => &subs::format_name($name) };
 	};
-	$add_app->($_->{'app'}) for @{$app_rows};
 	$add_app->($_) for sort keys %{ $gb::known_appts || {} };
+	$add_app->($_->{'app'}) for grep { ref $_ eq 'HASH' } @{$rules};
+	$add_app->($_->{'app'}) for grep { ref $_ eq 'HASH' } @{$measure_rules};
 	@app_options = sort { $a->{'label'} cmp $b->{'label'} } @app_options;
 	return {
 		app => $app,

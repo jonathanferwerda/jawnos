@@ -363,6 +363,8 @@ is(scalar @{ subs::weather_automation_matches($rules, 'Partly Cloudy') }, 0, 'a 
 	my ($raining_app) = grep { ($_->{'key'} || '') eq 'raining' } @{ $state->{'apps'} || [] };
 	ok($raining_app, 'the app field suggests the known apps');
 	is($raining_app->{'label'}, 'Raining', 'and shows a formatted name');
+	my ($foggy_app) = grep { ($_->{'key'} || '') eq 'foggy' } @{ $state->{'apps'} || [] };
+	ok($foggy_app, 'an app named by a rule is suggested even when it is not in the catalog');
 	is($state->{'locations'}[0]{'key'}, '', 'the location picker starts with any location');
 	is($state->{'locations'}[1]{'label'}, 'This device', 'and offers this device');
 	ok($store{'setting|weather_station|app_measures'}, 'the station app gets the rules');
