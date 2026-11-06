@@ -22,7 +22,7 @@
 	#configuration_container .app_block_meta .theme_field select { width:auto; max-width:190px; min-height:0; height:28px; padding:1px 6px; border:1px solid var(--line); border-radius:6px; background:var(--panel-2, var(--panel)); color:var(--ink); font-size:13px; }
 	#configuration_container .cfg-row > span { flex:1 1 220px; min-width:0; display:flex; }
 	#configuration_container .cfg-row > span > select,
-	#configuration_container .cfg-row > span > input { flex:1 1 auto; width:100%; min-width:0; box-sizing:border-box; padding:7px 9px; border-radius:7px; border:1px solid var(--line); background:var(--panel); color:var(--ink); font:inherit; }
+	#configuration_container .cfg-row > span > input:not([type=checkbox]):not([type=radio]) { flex:1 1 auto; width:100%; min-width:0; box-sizing:border-box; padding:7px 9px; border-radius:7px; border:1px solid var(--line); background:var(--panel); color:var(--ink); font:inherit; }
 	#configuration_container .cfg-row > span > input.colour,
 	#configuration_container .cfg-row > span:has(> input.colour) { flex:0 0 auto; }
 	#configuration_container .cfg-row > span > input.colour { width:auto; }
