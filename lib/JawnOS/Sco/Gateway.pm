@@ -1082,6 +1082,15 @@ sub event {
 	}
 	elsif ($name eq 'closed' || $name eq 'stopped') {
 		$self->{'last_event'} = $name;
+		# A stopped clip while somebody is bridged is the plan getting out of the
+		# person's way - rtc() sends the stop before it joins, and that is exactly
+		# how the hold music steps aside. The call is not over: taking the gateway
+		# idle would let Reception arm again and cancel the helper under a live
+		# call. Only a closed line ends a bridged call.
+		if ($name eq 'stopped' && $self->{'rtc_up'}) {
+			$self->write_status();
+			return 1;
+		}
 		$self->{'state'} = $self->{'state'} eq 'done' ? 'done' : 'idle';
 		$self->_push_screen('ended');
 		$self->{'since'} = time;

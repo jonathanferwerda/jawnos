@@ -661,6 +661,29 @@ is(JawnOS::Sco::Gateway::call_over('in_call', undef, 100, 0), 'call limit',
 my $hold_status = $held->status;
 is(scalar @{ $hold_status->{'hold_tracks'} || [] }, 2,
 	'the status names the tracks the pane offers');
+
+# Connect me during the hold: rtc() stops the clip so the person is not talked
+# over, and that stop must not take the gateway idle - Reception would arm
+# again and cancel the helper under a live, bridged call.
+my $bridged = JawnOS::Sco::Gateway->new(
+	dir => "$dir/bridged-sco",
+	helper => $hold_fake,
+	status_path => "$dir/bridged.json",
+);
+$bridged->{'state'} = 'in_call';
+$bridged->{'holding'} = 1;
+$bridged->{'rtc_up'} = 1;
+$bridged->event({ event => 'stopped' });
+is($bridged->{'state'}, 'in_call', 'a stopped clip while somebody is bridged leaves the call up');
+is($bridged->{'rtc_up'}, 1, 'and the bridge is left alone');
+my $other = JawnOS::Sco::Gateway->new(
+	dir => "$dir/plain-sco",
+	helper => $hold_fake,
+	status_path => "$dir/plain.json",
+);
+$other->{'state'} = 'in_call';
+$other->event({ event => 'stopped' });
+is($other->{'state'}, 'idle', 'an unbridged stop still ends the plan');
 $held->end_call('test over');
 
 # The call a plan was just spoken into is still up for a moment after the
