@@ -110,4 +110,30 @@ is probe::serving($hang_port, 'timeout' => $timeout), 0,
 	'an open port that never answers is not serving - exactly what a bare connect() called healthy';
 stop_stub($hang_pid);
 
+# ---- which ports a machine must answer on --------------------------------
+# The phone regression: its working_port answered and its dock (3000) did not,
+# because a handheld binds no dock listener. Requiring both called a healthy
+# tree dead and the boot watch restarted it every 90 seconds.
+is_deeply([ probe::required_ports({ device => 'computer', port => 3000, working_port => 45545 }) ],
+	[3000, 45545], 'a computer answers for its dock and its manager');
+is_deeply([ probe::required_ports({ device => 'mobile', port => 3000, working_port => 45545 }) ],
+	[45545], 'a handheld answers for its manager, and not a dock it never binds');
+is_deeply([ probe::required_ports({ device => 'mobile', port => 3000 }) ],
+	[3000], 'a handheld that names no working_port still probes the one port it has');
+is_deeply([ probe::required_ports({ device => 'computer', port => 3000, working_port => 3000 }) ],
+	[3000], 'a port named twice is asked once');
+is_deeply([ probe::required_ports({}) ], [], 'no ports named, none required');
+
+# End to end over real sockets: a mobile tree whose manager answers but whose
+# dock is closed is serving; the same pair on a computer is not.
+my ($serving_pid, $serving_port) = start_stub('ok');
+my $closed_port = free_port();
+ok $serving_port && $closed_port, 'found a live stub and a closed port';
+my @mobile_ports = probe::required_ports({ device => 'mobile', port => $closed_port, working_port => $serving_port });
+is_deeply(\@mobile_ports, [ $serving_port ], 'the handheld list is the manager alone');
+ok(!grep({ !probe::serving($_, 'timeout' => 1) } @mobile_ports), 'every required handheld port answers');
+my @desktop_ports = probe::required_ports({ device => 'computer', port => $closed_port, working_port => $serving_port });
+ok(scalar(grep({ !probe::serving($_, 'timeout' => $timeout) } @desktop_ports)), 'a computer with a closed dock is not serving');
+stop_stub($serving_pid);
+
 done_testing();
