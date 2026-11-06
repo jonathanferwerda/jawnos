@@ -249,14 +249,30 @@ sub embedded_toggle($data) {
 	# resume its relays before it has rejoined WiFi.
 	if ($chip_id && ($component eq 'led' || $component eq 'relay' || $component eq 'servo')) {
 		my $number_state = $state eq 'on' ? 1 : ($state eq 'off' ? 0 : $state);
-		# A bridge connect waits for the link (the client gives it 30 seconds), so
-		# the send must never run in the request. The worker picks the road: the
-		# bridge when the device is BLE or has no LAN address, the HTTP send when
-		# it has one and the bridge did not answer.
+		# A board with a live LAN address answers its own route at once. The
+		# bridge can spend the client's full connect timeout when its link is
+		# asleep, which is the 20-second delay on a relay press. Try HTTP first;
+		# keep the bridge for a device with no address or a failed HTTP send.
 		&subs::subprocessor(sub {
 			Mojo::IOLoop->reset;
 			my $watch = &subs::device_lister($timestamp, $edt, undef, $chip_id);
 			my $watch_ip = (ref $watch eq 'HASH' && $watch->{'ip'}) ? $watch->{'ip'} : $ip;
+			if ($watch_ip) {
+				my $http_ok = eval {
+					my $watch_home = 'http://' . $watch_ip . ':' . $config->{'port'} . '/' . $component . '?appt_uuid=' . $appt_uuid . '&uuid=' . $uuid . '&when=' . $when . '&pin=' . $pin . '&state=' . $state . '&component=' . $component . '&authorization=' . $op_d->{'__specs'}->{'authorization'} . '&timestamp=' . $timestamp . '&measure=' . $measure;
+					my $ua = Mojo::UserAgent->new(connect_timeout => 2, inactivity_timeout => 3);
+					my $res = $ua->insecure(1)->get($watch_home)->result;
+					my $body = eval { $res->result->body };
+					my $rb = $body ? eval { decode_json($body) } : undef;
+					if (ref $rb eq 'HASH') {
+						$state = $rb->{'state'} if defined $rb->{'state'};
+						$pin = $rb->{'pin'} if defined $rb->{'pin'};
+						1;
+					}
+					else { 0; }
+				};
+				return if $http_ok;
+			}
 			if (ref $watch eq 'HASH' && ($watch->{'ble'} || !$watch->{'ip'})) {
 				my $sent = eval {
 					&subs::bluetooth_sender({
@@ -272,20 +288,6 @@ sub embedded_toggle($data) {
 				};
 				return if $sent || !$watch_ip;
 			}
-			return unless $watch_ip;
-			eval {
-				my $watch_home = 'http://' . $watch_ip . ':' . $config->{'port'} . '/' . $component . '?appt_uuid=' . $appt_uuid . '&uuid=' . $uuid . '&when=' . $when . '&pin=' . $pin . '&state=' . $state . '&component=' . $component . '&authorization=' . $op_d->{'__specs'}->{'authorization'} . '&timestamp=' . $timestamp . '&measure=' . $measure;
-				my $ua = Mojo::UserAgent->new();
-
-				my $res = $ua->insecure(1)->get($watch_home)->result;
-				if (eval { $res->result->body }) {
-					if (eval { decode_json $res->result->body }) {
-						my $rb = decode_json $res->result->body;
-						$state = $rb->{'state'};
-						$pin = $rb->{'pin'};
-					}
-				}
-			};
 		}, { name => 'embedded toggle sender', fork => 1 });
 		return { state => $number_state, formatted_state => $state };
 	}

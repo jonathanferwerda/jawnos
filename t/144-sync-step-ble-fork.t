@@ -124,9 +124,15 @@ my $ble = read_file("$root/lib/JawnOS/Domain/Ble.pm");
 like( $ble, qr/name => 'embedded toggle push', fork => 1/, 'the toggle push rides a child' );
 like( $ble, qr/foreach my \$edt \( qw\/microcontroller watch teletype\/ \)/,
 	'the board is written first, so a sleeping watch cannot delay its relay' );
+like( $ble, qr/\$found->\{'ip'\} = \$data->\{'ip'\}/,
+	'the sighting keeps the board LAN address' );
+like( $ble, qr/ip => \(\$chip->\{'ip'\} \|\| ''\)/,
+	'and the device row carries it' );
 like( $ble, qr/name => 'ble send', fork => 1/,             'the async BLE send rides a child' );
 
 my $notify = read_file("$root/lib/JawnOS/Domain/Notify.pm");
+like( $notify, qr/if \(\$watch_ip\) \{.*?return if \$http_ok;/s,
+	'a board with a LAN address takes the HTTP route before the bridge' );
 my @notify = ( $notify =~ /name => 'embedded toggle sender', fork => 1/g );
 is( scalar @notify, 2, 'both embedded toggle senders ride a child' );
 

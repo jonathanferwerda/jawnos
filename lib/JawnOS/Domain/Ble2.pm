@@ -108,7 +108,8 @@ sub ble_message_processor {
 			chip_id => $seen_chip,
 			edt => $seen_edt || 'watch',
 			name => $msg->{'name'},
-			mac => $mac || $gb::ble_primary_mac
+			mac => $mac || $gb::ble_primary_mac,
+			ip => $msg->{'ip'}
 		});
 	}
 	# A battery reply to ble_battery_poll: cache it for the levels scan. The

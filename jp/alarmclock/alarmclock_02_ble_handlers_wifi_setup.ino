@@ -81,9 +81,13 @@ static void ble_loop() {
     ble_state_requested = true;
     String chip = String(rp2040.getChipID());
     JSONVar req;
-    req["type"] = "state_request";
-    req["chip_id"] = chip;
-    req["edt"] = "microcontroller";
+	    req["type"] = "state_request";
+	    req["chip_id"] = chip;
+	    req["edt"] = "microcontroller";
+	    // The LAN address the board actually holds. The manager can use it for the
+	    // HTTP rail (and record it), instead of falling back to a BLE reconnect
+	    // when the stored address is stale.
+	    req["ip"] = WiFi.localIP().toString();
     // Omit an empty homebase: this JSONVar build serializes an empty String as
     // an empty token, which made the whole message unparseable at the manager.
     if (homebaseIP != "") { req["homebase"] = homebaseIP; }
@@ -131,7 +135,7 @@ static void usb_config_loop() {
           else { types += k + ":" + JSON.typeof(rawj[rk[i]]) + " "; }
         }
         Serial.println("JAWNCFG TYPES " + types);
-        Serial.println("JAWNCFG MORE ssid=" + ssid + " ap_ssid=" + ap_ssid + " wifi=" + wifiState + " homebaseIP=" + homebaseIP);
+        Serial.println("JAWNCFG MORE ssid=" + ssid + " ap_ssid=" + ap_ssid + " wifi=" + wifiState + " ip=" + WiFi.localIP().toString() + " homebaseIP=" + homebaseIP);
         Serial.println("JAWNCFG EVENTS " + event_ring_dump());
       }
       else if (line == "JAWNREBOOT") {

@@ -51,6 +51,9 @@ like($join_done, qr/WiFi\.softAPdisconnect\(true\);/, 'it still drops the provis
 # --- /wifi_update refuses an empty or unreadable answer ----------------------
 my ($update) = $handlers =~ /(server\.on\("\/wifi_update".*?\n  \}\);)/s;
 ok($update, 'the /wifi_update route is still one handler');
+like($handlers, qr/req\["ip"\] = WiFi\.localIP\(\)\.toString\(\)/,
+	'the state request carries the board\'s own LAN address');
+like($handlers, qr/JAWNCFG MORE[^\n]*ip=/, 'and the diagnostic reads it back');
 like($update, qr/JSON\.typeof\(info\) != "object"/,
 	'an unreadable answer is refused before anything is applied');
 like($update, qr/next_ssid == "" \|\| next_password == ""/,

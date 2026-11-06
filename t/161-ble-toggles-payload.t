@@ -27,6 +27,7 @@ my $src = do { local $/; <$fh> };
 close $fh;
 like( $src, qr/JawnOS::Ble::Payload/, 'state_request loads the payload module' );
 like( $src, qr/toggle_map\(\$rows\)/, 'the toggle map is built through the guard' );
+like( $src, qr/ip => \$msg->\{'ip'\}/, 'state_request records the board LAN address' );
 like( $src, qr/toggle_chunks\(\$toggles/, 'the reply is chunked before it is sent' );
 like( $src, qr/foreach my \$chunk \( \@\{\$chunks\} \)/, 'one blocking send per chunk in one child' );
 unlike( $src, qr/message => \{ type => 'toggles', data => \$toggles \}/,

@@ -274,6 +274,17 @@ sub ble_device_record {
 	$found->{'name'} = $name if $name;
 	$found->{'purpose'} = $edt;
 	$found->{'bluetooth'} = $data->{'mac'} if $data->{'mac'};
+	# The board's own state_request carries the address it just got. Keep it on
+	# the sighting so the relay can use the LAN route without waiting for a
+	# bridge connect; a board off WiFi reports 0.0.0.0, which clears it again.
+	if (defined $data->{'ip'}) {
+		if ($data->{'ip'} =~ /^\d{1,3}(?:\.\d{1,3}){3}$/ && $data->{'ip'} ne '0.0.0.0') {
+			$found->{'ip'} = $data->{'ip'};
+		}
+		else {
+			delete $found->{'ip'};
+		}
+	}
 	$found->{'ble'} = 1;
 	$found->{'ble_seen'} = $now;
 	$found->{'server_time'} = $now;
@@ -375,9 +386,11 @@ sub ble_device_from_chip {
 		purpose => $chip->{'purpose'} || $load_type,
 		edt => $chip->{'purpose'} || $load_type,
 		ble => 1,
-		# no address of its own: a Bluetooth-only device has none, and leaving ip
-		# empty is also what makes now_me skip the LAN ping and take the bridge
-		# (homebase still names this machine, where the bridge lives).
+		# A Bluetooth-only device has no address of its own; one that names its
+		# LAN address in state_request keeps it here, so the relay can take the
+		# HTTP route instead of a bridge connect. Homebase still names this
+		# machine, where the bridge lives.
+		ip => ($chip->{'ip'} || ''),
 		homebase => $my_ip,
 		mac => $chip->{'bluetooth'},
 		mac_addresses => { bluetooth => $chip->{'bluetooth'} },
