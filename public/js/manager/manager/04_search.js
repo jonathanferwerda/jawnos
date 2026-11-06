@@ -230,14 +230,24 @@ function jawnosSearchResultsPlace() {
 	var width = Math.max(0, rect.width);
 	var left = Math.max(4, Math.min(rect.left, vw - width - 4));
 	var content = $('#manager_search_results').outerHeight() || 0;
+	// The dock's own body is not free page: with the dock on the bottom edge the
+	// search rides its top and the pseudonym row (or the box's own backing) sits
+	// below it, so a list placed below the box would be laid across the dock.
+	// The room above is the page's, so a bottom dock always opens upward.
+	var in_dock = $('#search_entanglement').closest('#pseudonym_home').length > 0;
+	var dock_bottom = in_dock
+		&& !(typeof jawnosDockTop == 'function' && jawnosDockTop())
+		&& !(typeof jawnosSideDock == 'function' && jawnosSideDock())
+		&& !(typeof jawnosDockHidden == 'function' && jawnosDockHidden());
 	// A box that rides the dock's foot can itself be behind the platform
 	// keyboard. There is no room beside it then, so the list hooks onto the
 	// keyboard's top edge instead of running under it.
 	var input_visible = rect.top < view_bottom;
 	var below = view_bottom - rect.bottom - gap;
 	var above = (input_visible ? rect.top : view_bottom) - view_top - gap;
-	// below is the natural side; go above only when it has more room
-	var place_below = input_visible && (below >= Math.min(content, 80) || below >= above);
+	// below is the natural side; go above only when it has more room, or when the
+	// dock owns the space below the box
+	var place_below = input_visible && !dock_bottom && (below >= Math.min(content, 80) || below >= above);
 	var height = Math.max(0, Math.min(content, place_below ? below : above));
 	var drop = {
 		'position': 'fixed',

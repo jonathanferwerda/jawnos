@@ -96,6 +96,12 @@ like($viewer, qr/\$time_machine_stationary = 1 if abs\(\$later - \$time_machine_
 like($viewer, qr/\$appts->\{'__specs'\}->\{'time_machine_stationary'\} = \$time_machine_stationary;/,
 	'and the flag travels with the payload');
 
+# --- the dock's strip, not the background, calls it back ---------------------
+like($header, qr/typeof pseudonymDockPointOnDock == 'function'/,
+	'a background tap asks whether it landed on the dock');
+like($header, qr/pseudonymDockPointOnDock\(e\.clientX, e\.clientY\)/,
+	'and only the strip the tucked dock keeps on screen brings it back');
+
 # --- the scripts still parse ------------------------------------------------
 my $node = `command -v node 2>/dev/null`;
 chomp $node if defined $node;

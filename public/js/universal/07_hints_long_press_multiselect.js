@@ -174,12 +174,17 @@ $(document).on('touchend touchcancel touchmove', function () {
 		'.ms-native { position:absolute !important; width:1px !important; height:1px !important; opacity:0 !important; pointer-events:none !important; left:-9999px !important; }',
 		'.ms-trigger { font:inherit; text-align:left; cursor:pointer; padding:3px 24px 3px 8px; border:1px solid var(--line, rgba(0,0,0,.35)); border-radius:5px; background:var(--panel, #fff); color:var(--ink, #111); position:relative; max-width:280px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; vertical-align:top; }',
 		'.ms-trigger:after { content:"\\25be"; position:absolute; right:8px; top:50%; transform:translateY(-50%); opacity:.55; }',
-		'.ms-popup { position:fixed; z-index:100000; background:var(--panel, #fff); color:var(--ink, #111); border:1px solid var(--line, rgba(0,0,0,.4)); border-radius:8px; box-shadow:0 12px 44px rgba(0,0,0,.35); display:flex; flex-direction:column; min-width:200px; max-width:min(420px,92vw); }',
+		'.ms-popup { box-sizing:border-box; position:fixed; z-index:100000; background:var(--panel, #fff); color:var(--ink, #111); border:1px solid var(--line, rgba(0,0,0,.4)); border-radius:8px; box-shadow:0 12px 44px rgba(0,0,0,.35); display:flex; flex-direction:column; min-width:200px; max-width:min(420px,92vw); }',
 		'.ms-head { padding:9px 14px; font-weight:700; border-bottom:1px solid var(--line, rgba(0,0,0,.15)); }',
 		'.ms-body { overflow:auto; padding:6px 0; }',
 		'.ms-option { display:flex; align-items:center; gap:10px; padding:8px 14px; cursor:pointer; white-space:nowrap; }',
 		'.ms-option:hover { background:var(--panel-2, rgba(0,0,0,.06)); }',
 		'.ms-option input { width:18px; height:18px; accent-color:var(--accent, #0d47a1); }',
+		'.ms-option.ms-selected { background:var(--accent-soft, #e6effb); font-weight:600; }',
+		'.ms-option.ms-disabled { opacity:.5; cursor:default; }',
+		'.ms-group { padding:8px 14px 2px; font-size:12px; opacity:.6; text-transform:uppercase; letter-spacing:.05em; }',
+		'.jawnos_select_popup .ms-option { white-space:normal; overflow-wrap:anywhere; }',
+		'.jawnos_select_popup .ms-body { overscroll-behavior:contain; }',
 		'.ms-foot { border-top:1px solid var(--line, rgba(0,0,0,.15)); padding:6px 12px; text-align:right; }',
 		'.ms-foot button { font:inherit; padding:4px 18px; border-radius:5px; border:1px solid var(--line, rgba(0,0,0,.3)); background:var(--panel-2, #f2f2f2); color:var(--ink, #111); cursor:pointer; }'
 	].join('\n');
@@ -265,6 +270,188 @@ function multiselectSweep() {
 }
 $(document).ready(function () { multiselectUpgrade(document.body); });
 new MutationObserver(multiselectSweep).observe(document.documentElement, { childList: true, subtree: true });
+
+// ---- a single select's list, kept on the screen ------------------------------
+// The browser draws a <select>'s own list. An engine that opens it downward puts
+// most of the options past the foot of the page when the box sits low, so where
+// the list does not fit below the box the press is taken and the list is drawn
+// here instead - above the box when that is where the room is. The real select
+// keeps the value and fires its change, so every existing handler still runs.
+var jawnos_select_menu = null;
+var jawnos_select_menu_sel = null;
+var jawnos_select_menu_rows = [];
+var jawnos_select_menu_at = 0;
+
+function jawnosSelectMenuHeight(sel) {
+	var rows = $(sel).find('option').length + $(sel).find('optgroup').length;
+	return Math.min(480, (rows * 30) + 10);
+}
+
+// The press is taken only when the browser's own list would not fit below the
+// box. A list that does fit keeps the native menu, so a short select in the
+// middle of a page behaves exactly as it always has.
+function jawnosSelectMenuNeeds(sel) {
+	if (!sel || sel.disabled) { return false; }
+	// a list box (size > 1) is already a list on the page; it has no menu to place
+	if (sel.size > 1) { return false; }
+	var rect = sel.getBoundingClientRect();
+	if (!(rect.width > 0 && rect.height > 0)) { return false; }
+	var vh = window.innerHeight || $(window).height();
+	var floor = vh;
+	if (window.visualViewport && window.visualViewport.height) {
+		floor = Math.min(floor, (window.visualViewport.offsetTop || 0) + window.visualViewport.height);
+	}
+	return (floor - rect.bottom - 6) < jawnosSelectMenuHeight(sel);
+}
+
+function jawnosSelectMenuClose() {
+	if (jawnos_select_menu) { jawnos_select_menu.remove(); }
+	jawnos_select_menu = null;
+	jawnos_select_menu_sel = null;
+	jawnos_select_menu_rows = [];
+	jawnos_select_menu_at = 0;
+}
+
+function jawnosSelectMenuPaint() {
+	$.each(jawnos_select_menu_rows, function (i, row) {
+		row.toggleClass('ms-selected', i === jawnos_select_menu_at);
+	});
+	var chosen = jawnos_select_menu_rows[jawnos_select_menu_at];
+	if (chosen && chosen.length && chosen[0].scrollIntoView) {
+		chosen[0].scrollIntoView({ block: 'nearest' });
+	}
+}
+
+function jawnosSelectMenuChoose(i) {
+	var row = jawnos_select_menu_rows[i];
+	if (!row || !row.length || row.hasClass('ms-disabled')) { return; }
+	var option = row.data('option');
+	var sel = jawnos_select_menu_sel;
+	if (!option || !sel) { return; }
+	jawnosSelectMenuClose();
+	option.selected = true;
+	sel.dispatchEvent(new Event('change', { bubbles: true }));
+}
+
+function jawnosSelectMenuStep(delta) {
+	var n = jawnos_select_menu_rows.length;
+	if (!n) { return; }
+	var i = jawnos_select_menu_at;
+	for (var k = 0; k < n; k++) {
+		i = (i + delta + n) % n;
+		if (jawnos_select_menu_rows[i] && !jawnos_select_menu_rows[i].hasClass('ms-disabled')) {
+			jawnos_select_menu_at = i;
+			jawnosSelectMenuPaint();
+			return;
+		}
+	}
+}
+
+function jawnosSelectMenuOpen(sel) {
+	jawnosSelectMenuClose();
+	var s = $(sel);
+	if (!s.length) { return; }
+	var rect = sel.getBoundingClientRect();
+	var vw = window.innerWidth || $(window).width();
+	var vh = window.innerHeight || $(window).height();
+	var top_edge = 0;
+	var floor = vh;
+	if (window.visualViewport && window.visualViewport.height) {
+		top_edge = Math.max(0, window.visualViewport.offsetTop || 0);
+		floor = Math.min(floor, top_edge + window.visualViewport.height);
+	}
+	var pop = $('<div class="ms-popup jawnos_select_popup"></div>');
+	var body = $('<div class="ms-body"></div>');
+	jawnos_select_menu_rows = [];
+	var selected_at = 0;
+	var add = function (option) {
+		var o = $(option);
+		var row = $('<div class="ms-option"></div>').text(o.text() || '(none)');
+		row.data('option', option);
+		row.data('index', jawnos_select_menu_rows.length);
+		var group = o.closest('optgroup');
+		if (o.prop('disabled') || (group.length && group.prop('disabled'))) { row.addClass('ms-disabled'); }
+		if (o.is(':selected')) { selected_at = jawnos_select_menu_rows.length; }
+		body.append(row);
+		jawnos_select_menu_rows.push(row);
+	};
+	s.children().each(function () {
+		if (this.tagName == 'OPTGROUP') {
+			body.append($('<div class="ms-group"></div>').text($(this).attr('label') || ''));
+			$(this).children('option').each(function () { add(this); });
+		}
+		else if (this.tagName == 'OPTION') {
+			add(this);
+		}
+	});
+	if (!jawnos_select_menu_rows.length) { return; }
+	pop.append(body);
+	$('body').append(pop);
+	// the side with more room takes the list; either way it is never taller than
+	// the room it has, so it scrolls rather than runs off the page
+	var gap = 6;
+	var need = jawnosSelectMenuHeight(sel);
+	var below = floor - rect.bottom - gap;
+	var above = rect.top - top_edge - gap;
+	var place_below = below >= above;
+	var height = Math.max(60, Math.min(need, Math.max(below, above)));
+	var top = place_below ? (rect.bottom + gap) : (rect.top - gap - height);
+	top = Math.max(top_edge + 4, Math.min(top, floor - height - 4));
+	var width = Math.min(Math.max(rect.width, 220), vw - 8, 420);
+	var left = Math.max(4, Math.min(rect.left, vw - width - 4));
+	var drop = {
+		'position': 'fixed',
+		'left': left + 'px',
+		'top': top + 'px',
+		'bottom': 'auto',
+		'width': width + 'px',
+		'max-height': height + 'px',
+		'z-index': 100001
+	};
+	pop.css(drop);
+	body.css({ 'max-height': Math.max(40, height - 12) + 'px', 'overflow': 'auto' });
+	jawnos_select_menu = pop;
+	jawnos_select_menu_sel = sel;
+	jawnos_select_menu_at = selected_at;
+	jawnosSelectMenuPaint();
+}
+
+$(document).on('mousedown', 'select:not([multiple])', function (e) {
+	if (e.which && e.which != 1) { return; }
+	if (jawnos_select_menu && jawnos_select_menu_sel === this) {
+		e.preventDefault();
+		jawnosSelectMenuClose();
+		return;
+	}
+	if (!jawnosSelectMenuNeeds(this)) { return; }
+	e.preventDefault();
+	jawnosSelectMenuOpen(this);
+});
+$(document).on('click', '.jawnos_select_popup .ms-option', function (e) {
+	e.preventDefault();
+	jawnosSelectMenuChoose($(this).data('index'));
+});
+$(document).on('mousedown touchstart', function (e) {
+	if (!jawnos_select_menu) { return; }
+	if (e.target === jawnos_select_menu_sel) { return; }
+	if ($(e.target).closest('.jawnos_select_popup').length) { return; }
+	jawnosSelectMenuClose();
+});
+$(document).on('keydown', function (e) {
+	if (!jawnos_select_menu) { return; }
+	if (e.key === 'Escape') { e.preventDefault(); jawnosSelectMenuClose(); }
+	else if (e.key === 'ArrowDown' || e.key === 'Down') { e.preventDefault(); jawnosSelectMenuStep(1); }
+	else if (e.key === 'ArrowUp' || e.key === 'Up') { e.preventDefault(); jawnosSelectMenuStep(-1); }
+	else if (e.key === 'Home') { e.preventDefault(); jawnos_select_menu_at = -1; jawnosSelectMenuStep(1); }
+	else if (e.key === 'End') { e.preventDefault(); jawnos_select_menu_at = jawnos_select_menu_rows.length; jawnosSelectMenuStep(-1); }
+	else if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); jawnosSelectMenuChoose(jawnos_select_menu_at); }
+});
+$(window).on('resize', jawnosSelectMenuClose);
+document.addEventListener('scroll', function (e) {
+	if (!jawnos_select_menu) { return; }
+	if (e.target && e.target.closest && e.target.closest('.jawnos_select_popup')) { return; }
+	jawnosSelectMenuClose();
+}, true);
 
 // Fatal JavaScript errors report themselves to the error watch (the same
 // staging area the tree's own log feeds), so the Coding agent can propose a

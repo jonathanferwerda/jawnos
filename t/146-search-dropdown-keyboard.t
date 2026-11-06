@@ -45,6 +45,12 @@ like($search, qr/visualViewport\.addEventListener\('resize', jawnosSearchResults
 like($search, qr/visualViewport\.addEventListener\('scroll', jawnosSearchResultsReposition\)/,
 	'and follows a panned visual viewport');
 
+# --- a bottom dock owns the room below the box -------------------------------
+like($search, qr/var dock_bottom = in_dock/,
+	'the placement knows when the box rides a bottom dock');
+like($search, qr/place_below = input_visible && !dock_bottom &&/,
+	'a bottom dock never answers with a list drawn across its own row');
+
 # --- an input method types without keyup -------------------------------------
 like($search, qr/\$\(document\)\.on\('input keyup click', '#search'/,
 	'the box draws the list from `input` as well as `keyup`');
