@@ -362,13 +362,19 @@ isnt(JawnOS::Sco::Render::key('hello!', 'piper-a'), JawnOS::Sco::Render::key('he
 
 # The other HFP role. The Table's Intel card comes up as `audio-gateway`: the
 # gateway machine is the AG and the phone is the HF. Then the phone's speaker
-# stream is the prompt and its microphone stream is the caller, so the mixer
-# plays the prompt to jawn_prompt and captures the caller from the phone's own
-# source instead of moving the source-output away.
+# stream is the prompt and its microphone stream is the caller. The caller
+# stream belongs on this machine's default source, which the phone's HF
+# microphone feeds; an earlier call - or this mixer when it ran in `hf` mode -
+# may have left it on jawn_ivr_mic, where it would hear our own prompt instead.
 {
 	require JawnOS::Sco::Mixer;
 	my $mixer = JawnOS::Sco::Mixer->new();
 	my @calls;
+	my $source_on = 672;
+	my %source_name = (
+		631 => 'bluez_input.00_2B_70_E9_7E_B2',
+		672 => 'jawn_ivr_mic',
+	);
 	local *JawnOS::Sco::Mixer::pactl = sub {
 		my @arg = @_;
 		my $line = join ' ', @arg;
@@ -379,29 +385,38 @@ isnt(JawnOS::Sco::Render::key('hello!', 'piper-a'), JawnOS::Sco::Render::key('he
 			return "608\tjawn_call_in\tPipeWire\ts16 2ch\tIDLE\n615\tjawn_prompt\tPipeWire\ts16 2ch\tIDLE\n";
 		}
 		if ($line eq 'list short sources') {
-			return "631\tbluez_input.00_2B_70_E9_7E_B2\tPipeWire\ts16 1ch\tRUNNING\n";
+			return join '', map { "$_\t$source_name{$_}\tPipeWire\ts16 1ch\tRUNNING\n" } sort keys %source_name;
 		}
 		if ($line eq 'list sink-inputs') {
 			return "Sink Input #41\n\tSink: 608\n\tProperties:\n\t\tdevice.string = \"00:2B:70:E9:7E:B2\"\n\n";
 		}
 		if ($line eq 'list source-outputs') {
-			return "Source Output #42\n\tSource: 631\n\tProperties:\n\t\tdevice.string = \"00:2B:70:E9:7E:B2\"\n\n";
+			return "Source Output #42\n\tSource: $source_on\n\tProperties:\n\t\tdevice.string = \"00:2B:70:E9:7E:B2\"\n\n";
+		}
+		if ($line eq 'get-default-source') {
+			return "bluez_input.00_2B_70_E9_7E_B2\n";
 		}
 		push @calls, $line;
 		return '';
 	};
 	my $streams = $mixer->call_streams('00:2B:70:E9:7E:B2');
 	is($streams->{'mode'}, 'ag', 'an audio-gateway card is the AG mode');
-	is($streams->{'source'}, 'bluez_input.00_2B_70_E9_7E_B2', 'and the phone microphone is the caller source');
-	like($mixer->capture_command(), qr/--device=bluez_input\.00_2B_70_E9_7E_B2/,
-		'the caller is captured from the phone source');
 	like($mixer->playback_command(), qr/--device=jawn_prompt/, 'the prompt plays to jawn_prompt');
 	$mixer->attach('00:2B:70:E9:7E:B2');
 	ok(grep { $_ eq 'move-sink-input 41 jawn_prompt' } @calls,
 		'the phone speaker stream is the prompt, moved to jawn_prompt');
+	like(join("\n", @calls), qr/^move-source-output 42 bluez_input\.00_2B_70_E9_7E_B2$/m,
+		'a caller stream left on jawn_ivr_mic is put back on the default source');
+	like($mixer->capture_command(), qr/--device=bluez_input\.00_2B_70_E9_7E_B2/,
+		'and the caller is captured from there, not from the prompt');
+	ok($mixer->call_active(), 'the attached pair means the line is up');
+	# The stream the phone made itself, already on the default source, is not
+	# re-linked - a move drops a word of the greeting.
+	@calls = ();
+	$source_on = 631;
+	$mixer->attach('00:2B:70:E9:7E:B2');
 	ok(!grep { /^move-source-output/ } @calls,
-		'the caller source-output is left where the phone made it');
-	ok($mixer->call_active(), 'the phone source running means the line is up');
+		'a caller stream already on the default source is left alone');
 }
 
 JawnOS::Sco::Render::prune();

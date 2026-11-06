@@ -58,8 +58,11 @@ is the caller and its microphone stream is the prompt, and `Mixer::attach` uses
 `jawn_call_in`/`jawn_ivr_mic`. The Table's Intel card comes up as
 `audio-gateway` (the machine is the AG, the phone the HF); there the phone's
 speaker stream is the prompt and its microphone stream is the caller, so the
-mixer moves the speaker stream to `jawn_prompt` and captures the caller from the
-phone's own source, leaving the source-output where the phone made it. Both roles
+mixer moves the speaker stream to `jawn_prompt` and returns the caller's
+source-output to this machine's default source (where the phone's HF microphone
+feeds it) and captures that source. The caller stream is put back there rather
+than left alone because an earlier call, or this mixer in the other role, can
+leave it on `jawn_ivr_mic` - from which it would hear our own prompt. Both roles
 are supported; the card's `Active Profile` selects one.
 
 ### Setup on the gateway machine

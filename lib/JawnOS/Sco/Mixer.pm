@@ -199,10 +199,21 @@ sub attach {
 		&pactl('move-sink-input', $streams->{'sink_input'}, $sink_target);
 		push @moved, 'sink-input';
 	}
-	# In the AG mode the phone's source-output IS the caller; leave it on the
-	# phone's own microphone so the helper can capture that source. Moving it
-	# to jawn_ivr_mic would replace the caller with the prompt.
-	if (!$ag && $streams->{'source_output'} && ($streams->{'source'} // '') ne $SOURCE) {
+	if ($ag) {
+		# The caller is the phone's HF microphone stream, which lives on this
+		# machine's default source. Put it back there (an older call may have
+		# moved it to jawn_ivr_mic, where it would read the prompt) and capture
+		# that source.
+		my $default_source = &pactl('get-default-source');
+		$default_source =~ s/\s+//g;
+		if ($streams->{'source_output'} && length($default_source)
+			&& ($streams->{'source'} // '') ne $default_source) {
+			&pactl('move-source-output', $streams->{'source_output'}, $default_source);
+			push @moved, 'source-output';
+		}
+		$self->{'capture_source'} = $default_source if length $default_source;
+	}
+	elsif ($streams->{'source_output'} && ($streams->{'source'} // '') ne $SOURCE) {
 		&pactl('move-source-output', $streams->{'source_output'}, $SOURCE);
 		push @moved, 'source-output';
 	}
@@ -246,14 +257,11 @@ sub detach {
 # the last one.
 sub call_active {
 	my ($self) = @_;
-	if (($self->{'mode'} // '') eq 'ag' && length($self->{'capture_source'} // '')) {
-		my $want = $self->{'capture_source'};
-		foreach my $line ( split /\n/, &pactl('list', 'short', 'sources') ) {
-			my @field = split /\t/, $line;
-			next unless @field > 4 && $field[1] eq $want;
-			return $field[4] =~ /^RUNNING$/i ? 1 : 0;
-		}
-		return 0;
+	if (($self->{'mode'} // '') eq 'ag') {
+		# The phone's HF streams outlive the call, so their presence is the
+		# line; the default source is RUNNING even when nobody is on it.
+		my $attached = $self->{'attached'} || {};
+		return ($attached->{'sink_input'} && $attached->{'source_output'}) ? 1 : 0;
 	}
 	foreach my $line ( split /\n/, &pactl('list', 'short', 'sinks') ) {
 		my @field = split /\t/, $line;
