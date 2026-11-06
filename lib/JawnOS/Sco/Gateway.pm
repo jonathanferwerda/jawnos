@@ -970,7 +970,13 @@ sub event {
 		$self->{'state'} = 'in_call';
 		$self->{'since'} = time;
 		$self->{'accepted_at'} = time;
-		$self->{'peer'} = $event->{'peer'} || $self->{'peer'};
+		# The helper's pipe mode labels its transport "pcm" and sends that as
+		# the peer. Taking it replaced the phone's address, so every later mixer
+		# lookup searched for a stream called "pcm" - and every block contains
+		# `Format: pcm`, so the caller capture was moved onto our own prompt.
+		# Only an address may replace the address the arm pinned.
+		my $peer = $event->{'peer'} || '';
+		$self->{'peer'} = $peer if $peer =~ /^[0-9a-f]{2}(?::[0-9a-f]{2}){5}$/i;
 		$self->_push_screen('started');
 		$self->{'step_at'} = -1;
 		$self->_advance();

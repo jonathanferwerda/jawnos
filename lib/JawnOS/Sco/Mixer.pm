@@ -112,11 +112,32 @@ sub _device_names {
 sub call_streams {
 	my ($self, $address) = @_;
 	my $want = $address ? lc $address : '';
-	return { sink_input => undef, source_output => undef } unless $want;
+	# Only a Bluetooth address names the phone's streams. Anything else - the
+	# helper reports its transport as "pcm" in pipe mode - used to match every
+	# block, because each one contains `Format: pcm`; the mixer then moved our
+	# own prompt player into jawn_call_in and our capture onto jawn_ivr_mic, so
+	# the "caller" recorded was the greeting (or digital silence).
+	return { sink_input => undef, source_output => undef }
+		unless $want =~ /^[0-9a-f]{2}(?::[0-9a-f]{2}){5}$/;
+	my $spelled = join('[:_]', split /:/, $want);
+	my $belongs = sub {
+		my ($block) = @_;
+		return 0 unless lc($block) =~ /\Q$want\E|$spelled/;
+		# never our own helper streams, whatever their saved route says
+		return 0 if $block =~ /application\.name = "jawn-sco-/;
+		return 1;
+	};
+	# The HFP stream carries its codec in media.name; prefer it over an A2DP
+	# stream that also names the phone's address.
+	my $pick = sub {
+		my ($kind) = @_;
+		my @hit = grep { $belongs->($_) } &_blocks(&pactl('list', $kind));
+		my ($block) = grep { /media\.name = ".*\(codec / } @hit;
+		return $block || $hit[0];
+	};
 	my ($sink_name, $source_name);
 	my ($sink_input, $source_output, $sink, $source);
-	foreach my $block ( &_blocks(&pactl('list', 'sink-inputs')) ) {
-		next unless lc($block) =~ /\Q$want\E/;
+	if (my $block = $pick->('sink-inputs')) {
 		($sink_input) = $block =~ /Sink Input #(\d+)/;
 		my ($id) = $block =~ /^\s*Sink:\s*(\d+)/m;
 		if ($id) {
@@ -124,8 +145,7 @@ sub call_streams {
 			$sink = $sink_name->{$id};
 		}
 	}
-	foreach my $block ( &_blocks(&pactl('list', 'source-outputs')) ) {
-		next unless lc($block) =~ /\Q$want\E/;
+	if (my $block = $pick->('source-outputs')) {
 		($source_output) = $block =~ /Source Output #(\d+)/;
 		my ($id) = $block =~ /^\s*Source:\s*(\d+)/m;
 		if ($id) {
@@ -157,6 +177,23 @@ sub prompt_stream {
 		my ($sid) = $block =~ /^\s*Sink:\s*(\d+)/m;
 		my $sink = $sid ? { &_device_names('sinks') }->{$sid} : undef;
 		return { id => $id, sink => $sink };
+	}
+	return undef;
+}
+
+# Our own capture stream, found the way the prompt player is. WirePlumber has
+# been seen to restore the saved route for `jawn-sco-caller` onto jawn_ivr_mic,
+# which is our own prompt: the "caller" then records the greeting. Nothing else
+# re-asserts it, so attach does.
+sub caller_stream {
+	my ($self) = @_;
+	foreach my $block ( &_blocks(&pactl('list', 'source-outputs')) ) {
+		next unless $block =~ /application\.name = "jawn-sco-caller"/;
+		my ($id) = $block =~ /Source Output #(\d+)/;
+		next unless $id;
+		my ($sid) = $block =~ /^\s*Source:\s*(\d+)/m;
+		my $source = $sid ? { &_device_names('sources') }->{$sid} : undef;
+		return { id => $id, source => $source };
 	}
 	return undef;
 }
@@ -193,6 +230,13 @@ sub attach {
 	if ($prompt && ($prompt->{'sink'} // '') ne $SINK_OUT) {
 		&pactl('move-sink-input', $prompt->{'id'}, $SINK_OUT);
 		push @moved, 'prompt';
+	}
+	# Our own capture is the other half of the same trap: a saved route can put
+	# it on jawn_ivr_mic, where it records the prompt instead of the caller.
+	my $caller = $self->caller_stream();
+	if ($caller && defined $caller->{'source'} && $caller->{'source'} ne $SINK_IN . '.monitor') {
+		&pactl('move-source-output', $caller->{'id'}, $SINK_IN . '.monitor');
+		push @moved, 'caller';
 	}
 	$self->{'attached'} = $streams;
 	$self->{'moved'} = \@moved;

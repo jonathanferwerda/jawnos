@@ -295,6 +295,12 @@ isnt(JawnOS::Sco::Render::key('hello!', 'piper-a'), JawnOS::Sco::Render::key('he
 		'and the caller capture is its own client, not a bare parec');
 	is_deeply($mixer->call_streams(''), { sink_input => undef, source_output => undef },
 		'no address means no streams');
+	# The helper's pipe mode calls its transport "pcm", and every pulse-compat
+	# block contains `Format: pcm`: matching on that moved our own prompt into
+	# the caller sink and recorded the greeting. Only an address identifies a
+	# stream.
+	is_deeply($mixer->call_streams('pcm'), { sink_input => undef, source_output => undef },
+		'a transport label is not an address, so it matches no stream');
 }
 
 # Moving a stream that is already ours re-links it and drops a word of the
@@ -306,12 +312,14 @@ isnt(JawnOS::Sco::Render::key('hello!', 'piper-a'), JawnOS::Sco::Render::key('he
 	my $sink_on = 3472;
 	my $source_on = 3473;
 	my $prompt_on = 0;
+	my $caller_on = 0;
 	my %name = (
 		3472 => 'alsa_output.pci-0000_00_1f.3.analog-stereo',
 		3657 => 'jawn_call_in',
 		3664 => 'jawn_prompt',
 		3473 => 'alsa_input.pci-0000_00_1f.3.analog-stereo',
 		3672 => 'jawn_ivr_mic',
+		3675 => 'jawn_call_in.monitor',
 	);
 	local *JawnOS::Sco::Mixer::pactl = sub {
 		my @arg = @_;
@@ -329,7 +337,10 @@ isnt(JawnOS::Sco::Render::key('hello!', 'piper-a'), JawnOS::Sco::Render::key('he
 			return $out;
 		}
 		if ($line eq 'list source-outputs') {
-			return "Source Output #42\n\tSource: $source_on\n\tProperties:\n\t\tdevice.string = \"00:2B:70:E9:7E:B2\"\n\n";
+			my $out = "Source Output #42\n\tSource: $source_on\n\tProperties:\n\t\tdevice.string = \"00:2B:70:E9:7E:B2\"\n\n";
+			$out .= "Source Output #44\n\tSource: $caller_on\n\tProperties:\n\t\tapplication.name = \"jawn-sco-caller\"\n\n"
+				if $caller_on;
+			return $out;
 		}
 		$moves .= "$line\n" if $arg[0] =~ /^move-/;
 		return '';
@@ -358,6 +369,19 @@ isnt(JawnOS::Sco::Render::key('hello!', 'piper-a'), JawnOS::Sco::Render::key('he
 	my $fourth = $mixer->attach('00:2B:70:E9:7E:B2');
 	is_deeply($fourth->{'moved'}, [], 'a prompt player already on jawn_prompt is left alone');
 	is($moves, '', 'with no move');
+	# Our capture is the other half: a saved route can park it on jawn_ivr_mic,
+	# which is our own prompt, and the "caller" records the greeting.
+	$moves = '';
+	$caller_on = 3672;
+	my $fifth = $mixer->attach('00:2B:70:E9:7E:B2');
+	is_deeply($fifth->{'moved'}, [ 'caller' ], 'a capture left on the prompt source is moved back');
+	like($moves, qr/move-source-output 44 jawn_call_in\.monitor/, 'and that is the move it makes');
+	$moves = '';
+	$caller_on = 3675;
+	my $sixth = $mixer->attach('00:2B:70:E9:7E:B2');
+	is_deeply($sixth->{'moved'}, [], 'a capture already on the call sink is left alone');
+	is($moves, '', 'with no move');
+	$caller_on = 0;
 }
 
 # The card's profile name does not decide the direction. The Table's Intel card
@@ -447,7 +471,7 @@ if ($ENV{FAKE_ARGV}) {
 $| = 1;
 say_line({ event => 'listening', local => 'fake' });
 select(undef, undef, undef, 0.05);
-say_line({ event => 'accepted', peer => '00:11:22:33:44:55' });
+say_line({ event => 'accepted', peer => ($ENV{FAKE_PEER} || '00:11:22:33:44:55') });
 while (my $line = <STDIN>) {
 	my $cmd = eval { $json->decode($line) } || {};
 	my $id = $cmd->{id} || 0;
@@ -544,6 +568,32 @@ is($gateway->recording_path('.hidden'), '', 'a dot file is not served');
 
 my $cancelled = $gateway->cancel();
 is($cancelled->{'state'}, 'idle', 'cancel puts the gateway down');
+
+# The helper's pipe transport is labelled "pcm" and sent as the peer. Taking it
+# replaced the phone's address, and the mixer then searched for a stream called
+# "pcm" - which every block satisfies because each says `Format: pcm`. A
+# non-address peer must never replace the address the arm pinned.
+{
+	local $ENV{'FAKE_PEER'} = 'pcm';
+	my $pinned = JawnOS::Sco::Gateway->new(
+		dir => "$dir/sco-peer",
+		helper => $fake,
+		status_path => "$dir/sco-peer.json",
+	);
+	my $peer_armed = $pinned->arm(
+		local => 'E0:E1:A9:3D:4B:B8',
+		peer => '00:2B:70:E9:7E:B2',
+		clips => { greeting => $clip, prompt => $clip, thanks => $clip },
+		record => { ms => 5000 },
+		call_id => 'peer-call',
+	);
+	is($peer_armed->{'ok'}, 1, 'a pinned peer arms');
+	Mojo::IOLoop->timer(1.5 => sub { Mojo::IOLoop->stop });
+	Mojo::IOLoop->start;
+	is($pinned->{'peer'}, '00:2B:70:E9:7E:B2',
+		'the transport label never replaces the phone address');
+	$pinned->cancel();
+}
 
 # The phone's Hands-Free pair outlives the plan, and Reception arms again as
 # soon as a finished plan lets go of its line. So a pair that is already up at
