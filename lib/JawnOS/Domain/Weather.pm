@@ -657,7 +657,7 @@ sub weather_device_fixes($window_ms) {
 	my $rows = eval {
 		&db_query(
 			"select c.signatorial, c.latitude, c.longitude, c.accuracy, c.server_time, "
-			. "coalesce(rm.hostname, rm.name, rm.device, '') as label, rm.device "
+			. "coalesce(rm.hostname, rm.device, '') as label, rm.device "
 			. "from continent c left join remote_machines rm on rm.signatorial = c.signatorial "
 			. "where c.type = 'temporary' and c.latitude is not null and c.latitude != '' "
 			. "and cast(c.server_time as integer) > ? "

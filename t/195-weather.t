@@ -12,6 +12,7 @@ use Test::More;
 use File::Slurp qw(read_file);
 use RepoSource;
 use Mojo::JSON;
+use DBI;
 use Time::Piece;
 
 my $root = repo_root();
@@ -202,6 +203,36 @@ is(subs::weather_wmo_text(0), 'Clear sky', 'WMO 0 is clear');
 is(subs::weather_wmo_text(95), 'Thunderstorm', 'WMO 95 is a thunderstorm');
 cmp_ok(subs::weather_distance_km(43.45, -80.49, 43.65, -79.38), '>', 50, 'Kitchener to Toronto is a real distance');
 cmp_ok(subs::weather_distance_km(43.45, -80.49, 43.65, -79.38), '<', 150, 'and not an absurd one');
+
+# --- the fix list reads the real schema --------------------------------------
+# weather_device_fixes joined remote_machines on a column the table does not
+# have, so every caller's eval saw an empty list and the scheduled observer
+# said "no fix" without a word. Run the query against schema.sql itself.
+{
+	my $sql = read_file("$root/database/schema.sql");
+	my $dbh = DBI->connect('dbi:SQLite:dbname=:memory:', '', '',
+		{ RaiseError => 1, PrintError => 0 });
+	$dbh->do($_) for grep { /\S/ } split /;[ \t]*\n/, $sql;
+	$dbh->do("insert into continent (signatorial, type, latitude, longitude, accuracy, server_time) values ('sig-one', 'temporary', '43.45', '-80.49', '5', '1794000000000')");
+	$dbh->do("insert into remote_machines (signatorial, hostname) values ('sig-one', 'table')");
+	no warnings 'redefine';
+	local *subs::db_query = sub {
+		my ($query, @bind) = @_;
+		my $sth = $dbh->prepare($query);
+		$sth->execute(@bind);
+		return bless { rows => $sth->fetchall_arrayref({}) }, 'FakeResult';
+	};
+	local *subs::signatorial_designer = sub { 'me' };
+	local *subs::rightNow = sub { 1794000100000 };
+	my $fixes = subs::weather_device_fixes(24 * 60 * 60 * 1000);
+	is(scalar @{$fixes}, 1, 'a GPS fix joins the machine that sent it');
+	is($fixes->[0]{'label'}, 'table', 'the machine name labels the fix');
+}
+
+{
+	package FakeResult;
+	sub hashes { return $_[0]->{'rows'} }
+}
 
 # --- the app is wired into the menu, routes and help ------------------------
 my $loader = read_file("$root/lib/JawnOS/Domain/Loader.pm");
