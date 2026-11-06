@@ -749,11 +749,13 @@ is(subs::weather_name_is_coordinate(''), 0, 'an empty name is not a coordinate e
 	};
 	local *subs::weather_provider_for = sub { 'openmeteo' };
 	local *subs::rightNow = sub { 1000000 };
-	is(subs::weather_place_lookup(38.74, 0.22), '', 'a provider with no cheap name answers empty');
-	is_deeply(subs::weather_place_misses(), {}, 'and does not mark the place as failed');
-	is(subs::weather_place_miss_remember(38.74, 0.22), 1, 'a failed lookup is remembered for that place');
+	local *subs::weather_reverse_geocode = sub { '' };
+	is(subs::weather_place_lookup(38.74, 0.22), '', 'a place the geocoder cannot name stays empty');
+	is_deeply([ sort keys %{ subs::weather_place_misses() } ], ['38.74,0.22'], 'and the miss is remembered for that place');
 	is(subs::weather_place_lookup(38.74, 0.22), '', 'so the same place is not asked again');
-	is_deeply([ sort keys %{ subs::weather_place_misses() } ], ['38.74,0.22'], 'and another place is still tried');
+	local *subs::weather_reverse_geocode = sub { 'Jávea' };
+	is(subs::weather_place_lookup(46.23, -63.10), 'Jávea', 'another place is still tried and named by the geocoder');
+	is(subs::weather_place_name(46.23, -63.10), 'Jávea', 'and the name is kept');
 }
 
 {
@@ -778,6 +780,46 @@ is(subs::weather_name_is_coordinate(''), 0, 'an empty name is not a coordinate e
 	is($groups->[0]{'devices_text'}, 'This device, Laptop', 'the tooltip lists the machines in it');
 	is($groups->[0]{'seen'}, 100, 'the group keeps the newest fix');
 	is($groups->[1]{'signatorial'}, 'cabin', 'a machine elsewhere is its own entry');
+}
+
+{
+	no warnings 'redefine';
+	local *subs::signatorial_designer = sub { 'phone' };
+	local *subs::setting_grabber = sub { return undef };
+	my $groups = subs::weather_place_groups([
+		{ signatorial => 'phone', label => 'Phone', lat => 43.4500, lon => -80.4900, seen => 100 },
+		{ signatorial => 'laptop', label => 'Laptop', lat => 43.4860, lon => -80.4900, seen => 90 },
+		{ signatorial => 'cabin', label => 'Cabin', lat => 43.4500, lon => -80.4000, seen => 80 },
+	]);
+	is(scalar @{$groups}, 2, 'a machine within five kilometres shares the place');
+	is($groups->[0]{'devices_text'}, 'This device, Laptop', 'and is one entry, not two');
+	is($groups->[1]{'signatorial'}, 'cabin', 'a machine seven kilometres away is its own place');
+}
+
+# --- fourteen days and a reverse geocoder ------------------------------------
+{
+	my @week = map { { date => sprintf('2026-11-%02d', $_), high => $_ } } (1 .. 7);
+	my @fortnight = map { { date => sprintf('2026-11-%02d', $_), high => 100 + $_ } } (1 .. 14);
+	my $merged = subs::weather_daily_extend(\@week, \@fortnight);
+	is(scalar @{$merged}, 14, 'the week is filled out to a fortnight');
+	is($merged->[0]{'high'}, 1, 'a national day is kept');
+	is($merged->[7]{'high'}, 108, 'the eighth day comes from the fallback');
+	ok($merged->[7]{'extended'}, 'and is marked as extended');
+	is(scalar @{ subs::weather_daily_extend(\@fortnight, \@week) }, 14, 'a full fortnight is not duplicated');
+}
+
+{
+	no warnings 'redefine';
+	local *subs::weather_http_get = sub {
+		my ($url) = @_;
+		return ({ city => 'Jávea', locality => 'Xàbia', principalSubdivision => 'Valencia' }, undef)
+			if $url =~ /latitude=38\.74/;
+		return ({ city => '', locality => 'Somewhere' }, undef);
+	};
+	is(subs::weather_reverse_geocode(38.74, 0.22), 'Jávea', 'a coordinate outside the national services is named');
+	is(subs::weather_reverse_geocode(10, 10), 'Somewhere', 'the locality is the fallback when there is no city');
+	local *subs::weather_http_get = sub { return ({}, undef) };
+	is(subs::weather_reverse_geocode(10, 10), '', 'an answer with no name is no name');
 }
 
 {
@@ -975,6 +1017,12 @@ unlike($map_js, qr/toFixed\(4\)/, 'the map does not fill a coordinate as the nam
 like($map_js, qr/response\.labels/, 'the map uses the named place after a save');
 like($loader_auto, qr/weather_place_groups/, 'the domain loader maps the place groups');
 like($loader_auto, qr/weather_location_labels/, 'and the saved-place labels');
+my $now_partial = read_file("$root/templates/apps/weather/now.html.ep");
+like($now_partial, qr/14-day forecast/, 'the Now tab promises fourteen days');
+like($now_partial, qr/Next 24 hours/, 'and names the hourly strip');
+like($weather_js, qr/i < 14/, 'the script draws fourteen days');
+like($loader, qr/weather_reverse_geocode/, 'the domain loader maps the reverse geocoder');
+like($loader, qr/weather_daily_extend/, 'and the daily extension');
 
 # --- the tab's own style is inside a <style> tag -----------------------------
 my $weather_style = read_file("$root/templates/apps/weather/style.html.ep");

@@ -659,10 +659,11 @@ sub weather_place_lookup($lat, $lon, $opts = {}) {
 	return '' unless defined $lat && defined $lon;
 	my $known = &weather_place_name($lat, $lon);
 	return $known if length $known;
-	# A place that failed is not asked again for six hours, so the page-render
-	# path never waits twice. The miss is per place: a saved point in a country
-	# without a cheap name lookup must not close the door on the others.
-	unless ($opts->{'fetch'}) {
+	# A place that failed is not asked again for six hours, so a page render or an
+	# observation never waits twice. Only a save the person is waiting on retries.
+	# The miss is per place: a saved point in a country without a cheap name
+	# lookup must not close the door on the others.
+	unless ($opts->{'retry'}) {
 		my $misses = &weather_place_misses();
 		my $miss = $misses->{ sprintf('%.2f,%.2f', $lat, $lon) } || 0;
 		return '' if $miss && $miss > &rightNow() - 6 * 3600 * 1000;
@@ -675,14 +676,24 @@ sub weather_place_lookup($lat, $lon, $opts = {}) {
 		my $city = eval { &subs::weather_ec_find_city($lat, $lon, $ua) };
 		$name = ($city && $city->{'name'}) ? $city->{'name'} : '';
 		$log->info("weather place: no city for $lat,$lon") if $log && !length $name;
-		&weather_place_miss_remember($lat, $lon) unless length $name;
 	}
 	elsif ($opts->{'fetch'}) {
+		# The National Weather Service names its city in the forecast; anywhere
+		# else Open-Meteo names nothing, so ask a reverse geocoder.
 		my $weather = eval { &subs::weather_fetch($lat, $lon) };
 		$name = ($weather && !$weather->{'error'}) ? ($weather->{'location_name'} // '') : '';
+		$name = &subs::weather_reverse_geocode($lat, $lon) unless length $name;
+	}
+	else {
+		$name = &subs::weather_reverse_geocode($lat, $lon);
 	}
 	$name =~ s/^\s+|\s+$//g;
-	&weather_place_name_remember($lat, $lon, $name) if length $name;
+	if (length $name) {
+		&weather_place_name_remember($lat, $lon, $name);
+	}
+	else {
+		&weather_place_miss_remember($lat, $lon);
+	}
 	return $name;
 }
 
@@ -692,22 +703,27 @@ sub weather_place_lookup($lat, $lon, $opts = {}) {
 # the group's `devices_text` for the tooltip.
 sub weather_place_groups($fixes) {
 	my $me = &subs::signatorial_designer();
-	my (@groups, %by_key);
+	my @groups;
 	foreach my $fix (@{ ref $fixes eq 'ARRAY' ? $fixes : [] }) {
 		next unless ref $fix eq 'HASH';
 		my $sig = $fix->{'signatorial'} // '';
 		next unless $sig =~ /^[A-Za-z0-9_-]+$/;
 		my ($lat, $lon) = ($fix->{'lat'}, $fix->{'lon'});
 		next unless defined $lat && defined $lon;
-		my $key = sprintf('%.3f,%.3f', $lat, $lon);
-		my $group = $by_key{$key};
+		# Five kilometres is one place to the weather: a phone in the yard and a
+		# laptop indoors share the forecast, while the cottage does not.
+		my $group;
+		foreach my $candidate (@groups) {
+			next unless &subs::weather_distance_km($lat, $lon, $candidate->{'lat'}, $candidate->{'lon'}) <= 5;
+			$group = $candidate;
+			last;
+		}
 		if (!$group) {
 			$group = {
-				key => $key, lat => $lat, lon => $lon,
+				key => sprintf('%.3f,%.3f', $lat, $lon), lat => $lat, lon => $lon,
 				signatorial => $sig, seen => 0, me => 0, devices => [],
 			};
 			push @groups, $group;
-			$by_key{$key} = $group;
 		}
 		my $label = $sig eq $me ? &subs::ui('This device') : &subs::format_name($fix->{'label'} || $sig);
 		push @{$group->{'devices'}}, { signatorial => $sig, label => $label };
@@ -859,6 +875,8 @@ sub weather_observe_record($weather, $opts) {
 	my $condition = $weather->{'current'}{'condition'};
 	my $location = &weather_rule_location_normalize($opts->{'location'});
 	my $place_name = $weather->{'location_name'} // '';
+	$place_name = &weather_place_lookup($weather->{'lat'}, $weather->{'lon'}, { fetch => 1 })
+		unless length $place_name;
 	if (length $place_name) {
 		&weather_place_name_remember($weather->{'lat'}, $weather->{'lon'}, $place_name);
 		# A place saved from the map without a name stored its coordinate. Now

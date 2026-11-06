@@ -127,6 +127,25 @@ sub weather_condition_class($text) {
 	return 'other';
 }
 
+# A national service forecasts about a week. Keep its days and take the rest from
+# Open-Meteo; a day the service named is never replaced by the fallback.
+sub weather_daily_extend($primary, $extra) {
+	my @out = map { { %{$_} } } grep {
+		ref $_ eq 'HASH' && ($_->{'date'} // '') =~ /^\d{4}-\d{2}-\d{2}$/
+	} @{ ref $primary eq 'ARRAY' ? $primary : [] };
+	my %have = map { $_->{'date'} => 1 } @out;
+	foreach my $d (@{ ref $extra eq 'ARRAY' ? $extra : [] }) {
+		next unless ref $d eq 'HASH';
+		my $date = $d->{'date'} // '';
+		next unless $date =~ /^\d{4}-\d{2}-\d{2}$/;
+		next if $have{$date}++;
+		my %copy = %{$d};
+		$copy{'extended'} = 1;
+		push @out, \%copy;
+	}
+	return [ sort { ($a->{'date'} // '') cmp ($b->{'date'} // '') } @out ];
+}
+
 sub weather_daily_merge($daily) {
 	my %by;
 	my @order;
@@ -498,7 +517,7 @@ sub weather_openmeteo_fetch($lat, $lon, $ua) {
 		. '&current=temperature_2m,relative_humidity_2m,apparent_temperature,is_day,precipitation,weather_code,cloud_cover,pressure_msl,wind_speed_10m,wind_direction_10m,wind_gusts_10m,dew_point_2m'
 		. '&hourly=temperature_2m,precipitation_probability,weather_code,wind_speed_10m,wind_direction_10m'
 		. '&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max,wind_speed_10m_max,uv_index_max,sunrise,sunset'
-		. '&timezone=auto&forecast_days=7&temperature_unit=celsius&wind_speed_unit=kmh&precipitation_unit=mm';
+		. '&timezone=auto&forecast_days=14&temperature_unit=celsius&wind_speed_unit=kmh&precipitation_unit=mm';
 	my ($json, $error) = &weather_http_get($url, $ua);
 	return { error => $error || 'Open-Meteo did not answer.' } unless $json;
 	return &weather_openmeteo_normalize($json);
@@ -613,6 +632,24 @@ sub weather_nws_fetch($lat, $lon, $ua) {
 }
 
 # ---- one fetch, one cache ---------------------------------------------------
+# A place name for a coordinate the national services do not cover. Open-Meteo
+# names no place, so ask this free service and let the caller keep the answer.
+sub weather_reverse_geocode($lat, $lon) {
+	return '' unless defined $lat && defined $lon;
+	my $ua = Mojo::UserAgent->new(connect_timeout => 4, inactivity_timeout => 5, request_timeout => 6);
+	$ua->insecure(1);
+	my $url = 'https://api.bigdatacloud.net/data/reverse-geocode-client'
+		. "?latitude=$lat&longitude=$lon&localityLanguage=en";
+	my ($json) = &weather_http_get($url, $ua);
+	return '' unless ref $json eq 'HASH';
+	foreach my $key (qw(city locality principalSubdivision)) {
+		my $value = $json->{$key} // '';
+		$value =~ s/^\s+|\s+$//g;
+		return $value if length $value && $value ne 'null';
+	}
+	return '';
+}
+
 sub weather_http_get($url, $ua) {
 	return (undef, 'no address') unless defined $url && length $url;
 	my $res = eval {
@@ -634,7 +671,9 @@ sub weather_fetch($lat, $lon, $opts) {
 	my $key = sprintf('%.2f_%.2f_%s', $lat, $lon, $provider);
 	my $cached = eval { &cache_get({ app => 'weather', context => 'forecast', subcontext => $key }) };
 	if (!$opts->{'force'} && ref $cached eq 'HASH' && !$cached->{'error'} && ($cached->{'fetched_at'} || 0) > &rightNow() - 600000
-		&& (($provider eq 'openmeteo') || @{ $cached->{'hourly'} || [] })) {
+		&& (($provider eq 'openmeteo')
+			|| (@{ $cached->{'hourly'} || [] }
+				&& (@{ $cached->{'daily'} || [] } >= 14 || $cached->{'daily_short'})))) {
 		return $cached;
 	}
 	my $ua = Mojo::UserAgent->new(connect_timeout => 6, inactivity_timeout => 10, request_timeout => 15);
@@ -653,14 +692,29 @@ sub weather_fetch($lat, $lon, $opts) {
 	}
 	return { error => 'Weather is unavailable right now.' } unless $out && !$out->{'error'};
 	$out->{'daily'} = &weather_daily_merge($out->{'daily'});
-	if (!@{ $out->{'hourly'} || [] } && $provider ne 'openmeteo') {
-		my $hourly_fallback = eval { &weather_openmeteo_fetch($lat, $lon, $ua) };
-		if ($hourly_fallback && !$hourly_fallback->{'error'} && @{ $hourly_fallback->{'hourly'} || [] }) {
-			$out->{'hourly'} = $hourly_fallback->{'hourly'};
-			$out->{'hourly_provider'} = 'openmeteo';
-			$out->{'hourly_provider_label'} = &weather_provider_label('openmeteo');
+	if ($provider ne 'openmeteo'
+		&& (!@{ $out->{'hourly'} || [] } || @{ $out->{'daily'} || [] } < 14)) {
+		my $fallback = eval { &weather_openmeteo_fetch($lat, $lon, $ua) };
+		if ($fallback && !$fallback->{'error'}) {
+			if (!@{ $out->{'hourly'} || [] } && @{ $fallback->{'hourly'} || [] }) {
+				$out->{'hourly'} = $fallback->{'hourly'};
+				$out->{'hourly_provider'} = 'openmeteo';
+				$out->{'hourly_provider_label'} = &weather_provider_label('openmeteo');
+			}
+			if (@{ $out->{'daily'} || [] } < 14 && @{ $fallback->{'daily'} || [] }) {
+				my $before = scalar @{ $out->{'daily'} || [] };
+				$out->{'daily'} = &weather_daily_extend($out->{'daily'}, $fallback->{'daily'});
+				$out->{'daily'} = [ @{ $out->{'daily'} }[0 .. 13] ] if @{ $out->{'daily'} } > 14;
+				if (@{ $out->{'daily'} } > $before) {
+					$out->{'daily_provider'} = 'openmeteo';
+					$out->{'daily_provider_label'} = &weather_provider_label('openmeteo');
+				}
+			}
 		}
 	}
+	# A short list after the extension is the service's real horizon, so the
+	# cache may serve it; otherwise every request would pay for the fallback.
+	$out->{'daily_short'} = 1 if @{ $out->{'daily'} || [] } < 14;
 	$out->{'provider'} = $provider if ($out->{'fallback_from'} // '') eq '';
 	$out->{'lat'} = $lat;
 	$out->{'lon'} = $lon;

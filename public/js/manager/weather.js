@@ -175,6 +175,7 @@ function weatherRender(data) {
 	if (data.location_distance_km) { status += ' · ' + Math.round(data.location_distance_km) + ' km'; }
 	status += ' · ' + jawnosT('Updated') + ' ' + weatherTime(data.fetched_at || Date.now());
 	if (data.hourly_provider) { status += ' · ' + jawnosT('Hourly from') + ' ' + (data.hourly_provider_label || data.hourly_provider); }
+	if (data.daily_provider) { status += ' · ' + jawnosT('Later days from') + ' ' + (data.daily_provider_label || data.daily_provider); }
 	$w.find('#weather_status').text(status);
 }
 
@@ -211,7 +212,7 @@ function weatherHours(hours) {
 function weatherDays(days) {
 	var $w = $('.wind[app="weather"]');
 	var html = '';
-	for (var i = 0; i < days.length && i < 7; i++) {
+	for (var i = 0; i < days.length && i < 14; i++) {
 		var d = days[i] || {};
 		var label = d.label || (d.date ? weatherDayLabel(d.date) : '');
 		var temps = (d.high !== undefined && d.high !== null ? weatherTemp(d.high) : '—')

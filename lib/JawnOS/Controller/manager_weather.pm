@@ -103,6 +103,8 @@ sub action_52011 {
 		});
 		return;
 	}
+	$log->info("weather data: no hourly for $location_key from " . ($weather->{'provider'} // ''))
+		if $log && !@{ $weather->{'hourly'} || [] };
 	$weather->{'source'} = $label;
 	$weather->{'source_at'} = $seen_at;
 	$weather->{'source_device'} = $device;
@@ -204,7 +206,7 @@ sub action_52018 {
 	# a full lookup is allowed here; if it fails, storage keeps the coordinate
 	# and the picker shows a numbered "Saved location" instead.
 	if (!length($name) || &subs::weather_name_is_coordinate($name)) {
-		my $found = eval { &subs::weather_place_lookup($lat, $lon, { fetch => 1 }) } || '';
+		my $found = eval { &subs::weather_place_lookup($lat, $lon, { fetch => 1, retry => 1 }) } || '';
 		$name = $found if length $found;
 	}
 	my $saved = eval {
