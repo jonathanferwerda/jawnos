@@ -686,6 +686,24 @@ $other->event({ event => 'stopped' });
 is($other->{'state'}, 'idle', 'an unbridged stop still ends the plan');
 $held->end_call('test over');
 
+# A call whose line drops ends through `closed`, which does not pass through
+# end_call: the flag used to survive into `waiting`, where the next call would
+# be excused the 42 s limit without any music at all.
+{
+	my $dropped = JawnOS::Sco::Gateway->new(
+		dir => "$dir/dropped-sco",
+		helper => $hold_fake,
+		status_path => "$dir/dropped.json",
+	);
+	$dropped->{'state'} = 'in_call';
+	$dropped->{'holding'} = 1;
+	$dropped->event({ event => 'closed', reason => 'link' });
+	ok(!$dropped->{'holding'}, 'a dropped line clears the hold');
+	$dropped->{'holding'} = 1;
+	$dropped->arm(clips => { greeting => $clip }, hold => 'shuffle', call_id => 'next-call');
+	ok(!$dropped->{'holding'}, 'and so does the next arm');
+}
+
 # The call a plan was just spoken into is still up for a moment after the
 # thanks, so the gateway must not serve it a second plan. A finished plan is put
 # down when its line stops being fed, and only then can Reception arm again.

@@ -332,7 +332,7 @@ sub piper_offer {
 }
 
 sub have_piper {
-	my $have = (which('piper') || -x "$piper_dir/piper") ? 1 : 0;
+	my $have = (which('piper') || -x "$piper_dir/piper" || -x &piper_venv_bin()) ? 1 : 0;
 	piper_offer() if $have;
 	return $have;
 }
@@ -342,6 +342,38 @@ sub piper_arch {
 	return 'x86_64'  if $m =~ /^(x86_64|amd64)$/;
 	return 'aarch64' if $m =~ /^(aarch64|arm64)$/;
 	return '';
+}
+
+sub piper_venv_bin { return "$home/.local/share/jawnos/piper18/venv/bin/piper" }
+
+# The wrapper the app runs. It is a file rather than a symlink so the reason it
+# exists (and where the old bundle went) travels with the machine.
+sub piper_wrapper {
+	my $text = <<'WRAP';
+#!/bin/sh
+# Piper from the pip wheel (piper1-gpl), in its own venv. It reads the newer
+# config format (multi-codepoint phonemes) that the current voices use; the
+# 2023 bundle is kept at ../piper-2023 for a Termux host and as a rescue.
+exec "$HOME/.local/share/jawnos/piper18/venv/bin/piper" "$@"
+WRAP
+	return $text;
+}
+
+# The pip wheel, which is what every desktop voice now needs. The 2023 bundle
+# reads a phoneme as one codepoint; the voices that ship use multi-codepoint
+# phonemes ("aɪ"), so it answers every phrase with "Phonemes must be one
+# codepoint" and the gateway speaks nothing at all. Installing this again
+# upgrades it, so a machine that ran an older installer is fixed by re-running
+# the installer rather than by hand.
+sub install_piper_wheel {
+	my $venv = "$home/.local/share/jawnos/piper18/venv";
+	run('python3', '-m', 'venv', $venv) unless -x "$venv/bin/python3";
+	if (!-x "$venv/bin/pip") {
+		print "  piper: no pip in the venv; cannot install the wheel.\n";
+		return 0;
+	}
+	run("$venv/bin/pip", 'install', '--quiet', '--disable-pip-version-check', '--upgrade', 'piper-tts');
+	return -x &piper_venv_bin() ? 1 : 0;
 }
 
 sub install_piper {
@@ -356,7 +388,34 @@ sub install_piper {
 		# Python piper-tts builds but ships without its espeakbridge extension there.
 		run('pkg', 'install', '-y', 'glibc-repo');
 		run('pkg', 'install', '-y', 'glibc-runner');
+		install_piper_bundle($arch);
+		return;
 	}
+	if (&install_piper_wheel()) {
+		# the 2023 bundle is kept beside the wrapper: a Termux host sharing this
+		# machine still needs it, and it is the rescue when the venv is gone
+		if (-d "$piper_dir/espeak-ng-data" && !-e "$piper_dir-2023") {
+			rename $piper_dir, "$piper_dir-2023";
+		}
+		system('mkdir', '-p', $piper_dir);
+		if (open(my $w, '>', "$piper_dir/piper")) {
+			print {$w} &piper_wrapper();
+			close $w;
+			chmod 0755, "$piper_dir/piper";
+		}
+		foreach my $f (qw(COPYING SOURCE.txt)) {
+			next unless -e "$piper_dir-2023/$f";
+			run('cp', "$piper_dir-2023/$f", "$piper_dir/$f");
+		}
+		print "  piper: installed from the pip wheel to " . &piper_venv_bin() . "\n";
+		return;
+	}
+	print "  piper: the wheel did not install; falling back to the 2023 bundle.\n";
+	install_piper_bundle($arch);
+}
+
+sub install_piper_bundle {
+	my $arch = shift;
 	system('mkdir', '-p', $piper_dir);
 	my $url = "https://github.com/rhasspy/piper/releases/download/2023.11.14-2/piper_linux_$arch.tar.gz";
 	# a writable scratch dir: /tmp is not writable on a Termux/Android host, where

@@ -305,6 +305,18 @@ like( $deps, qr{dl\.google\.com/android/repository/repository2-3\.xml},
 	'the Android SDK index is pinned in the source' );
 like( $deps, qr/android-keep/, 'and the NDK keep count is a flag' );
 
+# Piper: the 2023 bundle reads a phoneme as one codepoint and the voices that
+# ship use multi-codepoint ones ("aɪ"), so every phrase failed with "Phonemes
+# must be one codepoint" and the gateway spoke nothing. A desktop installs the
+# pip wheel in its own venv and runs it through a wrapper; Termux keeps the
+# glibc bundle, which is why that path stays.
+like( $deps, qr/sub install_piper_wheel/, 'a desktop installs the pip wheel' );
+like( $deps, qr/'--upgrade', 'piper-tts/, 'and re-running the installer upgrades it' );
+like( $deps, qr{jawnos/piper18/venv}, 'in its own venv' );
+like( $deps, qr/sub piper_wrapper/, 'behind a wrapper the app can run' );
+like( $deps, qr{\$piper_dir-2023}, 'the 2023 bundle is kept beside it' );
+like( $deps, qr/install_piper_bundle\(\$arch\)/, 'and Termux still takes the bundle' );
+
 my $service = read_file("$root/qa/systemd/jawnos-qa-installers.service");
 my $timer   = read_file("$root/qa/systemd/jawnos-qa-installers.timer");
 like( $service, qr{ExecStart=/bin/bash \S+/qa/installers/run\.sh}, 'the unit runs the job' );

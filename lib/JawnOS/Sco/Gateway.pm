@@ -262,6 +262,10 @@ sub arm {
 	return { ok => 1, state => 'starting' } if $self->{'state'} eq 'starting';
 	$self->cancel() if $self->{'state'} ne 'idle' || $self->{'pid'};
 	$self->{'caller'} = {};
+	# a call whose line dropped ends through the `closed` event, which does not
+	# pass through end_call; the next arm must not inherit its hold
+	$self->{'holding'} = 0;
+	$self->{'hold_at'} = 0;
 	my @cmd = $self->helper_command();
 	return { ok => 0, error => 'the SCO helper is not built on this machine' } unless @cmd;
 	# A Hands-Free stack (BlueALSA) owning the link leaves us as a plain audio
@@ -1092,6 +1096,8 @@ sub event {
 			return 1;
 		}
 		$self->{'state'} = $self->{'state'} eq 'done' ? 'done' : 'idle';
+		$self->{'holding'} = 0;
+		$self->{'hold_at'} = 0;
 		$self->_push_screen('ended');
 		$self->{'since'} = time;
 		$self->_reap();
