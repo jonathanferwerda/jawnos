@@ -24,7 +24,10 @@ our $SOURCE = 'jawn_ivr_mic';
 
 sub new {
 	my ($class) = @_;
-	return bless { loaded => [], moved => [], attached => undef }, $class;
+	return bless {
+		loaded => [], moved => [], attached => undef,
+		mode => '', capture_source => '', original_sink => '', original_source => '',
+	}, $class;
 }
 
 sub pactl {
@@ -89,6 +92,26 @@ sub _device_names {
 	return %name;
 }
 
+# Which HFP role the phone's card took. The laptop usually comes up as the
+# Hands-Free unit (the phone is the Audio Gateway): its speaker stream is the
+# caller and its microphone stream is the prompt. The Table's card comes up as
+# `audio-gateway` - the gateway machine is the AG and the phone is the HF - and
+# then the two streams are the other way round: the phone's speaker stream is
+# the prompt, and its microphone stream is the caller. One mixer serves both.
+sub card_profile {
+	my ($self, $address) = @_;
+	my $want = lc($address // '');
+	return '' unless length $want;
+	my $under = $want;
+	$under =~ s/:/_/g;
+	foreach my $block ( &_blocks(&pactl('list', 'cards')) ) {
+		next unless lc($block) =~ /\Q$want\E/ || lc($block) =~ /\Q$under\E/;
+		my ($profile) = $block =~ /^\s*Active Profile:\s*(\S+)/m;
+		return $profile // '';
+	}
+	return '';
+}
+
 # The two streams a call owns, with the device each one is on right now: the id
 # alone says nothing about whether it still needs moving, and moving a stream
 # that is already ours re-links it and drops a word of the greeting.
@@ -116,11 +139,18 @@ sub call_streams {
 			$source = $source_name->{$id};
 		}
 	}
+	unless (length $self->{'mode'}) {
+		my $profile = $self->card_profile($address);
+		$self->{'mode'} = ($profile =~ /audio-gateway/) ? 'ag' : 'hf';
+	}
+	$self->{'capture_source'} = $source
+		if $self->{'mode'} eq 'ag' && defined $source && length $source;
 	return {
 		sink_input => $sink_input,
 		source_output => $source_output,
 		sink => $sink,
 		source => $source,
+		mode => $self->{'mode'},
 	};
 }
 
@@ -151,12 +181,28 @@ sub attach {
 	my ($self, $address) = @_;
 	$self->ensure();
 	my $streams = $self->call_streams($address);
+	my $ag = (($streams->{'mode'} // '') eq 'ag');
+	my $sink_target = $ag ? $SINK_OUT : $SINK_IN;
+	# Remember the phone's own devices before the first move, so a teardown can
+	# put the pair back where the phone had it rather than on this machine's
+	# default sink/source.
+	if (!length $self->{'original_sink'} && defined $streams->{'sink'} && length $streams->{'sink'}
+		&& $streams->{'sink'} ne $SINK_IN && $streams->{'sink'} ne $SINK_OUT) {
+		$self->{'original_sink'} = $streams->{'sink'};
+	}
+	if (!length $self->{'original_source'} && defined $streams->{'source'} && length $streams->{'source'}
+		&& $streams->{'source'} ne $SOURCE) {
+		$self->{'original_source'} = $streams->{'source'};
+	}
 	my @moved;
-	if ($streams->{'sink_input'} && ($streams->{'sink'} // '') ne $SINK_IN) {
-		&pactl('move-sink-input', $streams->{'sink_input'}, $SINK_IN);
+	if ($streams->{'sink_input'} && ($streams->{'sink'} // '') ne $sink_target) {
+		&pactl('move-sink-input', $streams->{'sink_input'}, $sink_target);
 		push @moved, 'sink-input';
 	}
-	if ($streams->{'source_output'} && ($streams->{'source'} // '') ne $SOURCE) {
+	# In the AG mode the phone's source-output IS the caller; leave it on the
+	# phone's own microphone so the helper can capture that source. Moving it
+	# to jawn_ivr_mic would replace the caller with the prompt.
+	if (!$ag && $streams->{'source_output'} && ($streams->{'source'} // '') ne $SOURCE) {
 		&pactl('move-source-output', $streams->{'source_output'}, $SOURCE);
 		push @moved, 'source-output';
 	}
@@ -175,16 +221,21 @@ sub attach {
 sub detach {
 	my ($self) = @_;
 	my $streams = $self->{'attached'} || {};
-	my $sink = &pactl('get-default-sink');
-	my $source = &pactl('get-default-source');
+	my $ag = (($streams->{'mode'} // '') eq 'ag');
+	my $sink = $self->{'original_sink'} || &pactl('get-default-sink');
+	my $source = $self->{'original_source'} || &pactl('get-default-source');
 	$sink =~ s/\s+//g;
 	$source =~ s/\s+//g;
 	&pactl('move-sink-input', $streams->{'sink_input'}, $sink)
 		if $streams->{'sink_input'} && $sink;
 	&pactl('move-source-output', $streams->{'source_output'}, $source)
-		if $streams->{'source_output'} && $source;
+		if !$ag && $streams->{'source_output'} && $source;
 	$self->{'attached'} = undef;
 	$self->{'moved'} = [];
+	$self->{'mode'} = '';
+	$self->{'capture_source'} = '';
+	$self->{'original_sink'} = '';
+	$self->{'original_source'} = '';
 	return 1;
 }
 
@@ -195,6 +246,15 @@ sub detach {
 # the last one.
 sub call_active {
 	my ($self) = @_;
+	if (($self->{'mode'} // '') eq 'ag' && length($self->{'capture_source'} // '')) {
+		my $want = $self->{'capture_source'};
+		foreach my $line ( split /\n/, &pactl('list', 'short', 'sources') ) {
+			my @field = split /\t/, $line;
+			next unless @field > 4 && $field[1] eq $want;
+			return $field[4] =~ /^RUNNING$/i ? 1 : 0;
+		}
+		return 0;
+	}
 	foreach my $line ( split /\n/, &pactl('list', 'short', 'sinks') ) {
 		my @field = split /\t/, $line;
 		next unless @field > 4 && $field[1] eq $SINK_IN;
@@ -214,9 +274,12 @@ sub call_active {
 # it. A named stream has no saved route to inherit, and --device steers it.
 sub capture_command {
 	my ($self) = @_;
+	my $device = (($self->{'mode'} // '') eq 'ag' && length($self->{'capture_source'} // ''))
+		? $self->{'capture_source'}
+		: $SINK_IN . '.monitor';
 	return 'parec --client-name=jawn-sco-caller --stream-name=jawn-sco-caller'
 		. ' --raw --format=s16le --rate=8000 --channels=1 --latency-msec=20 --device='
-		. $SINK_IN . '.monitor';
+		. $device;
 }
 
 sub playback_command {
@@ -232,9 +295,12 @@ sub playback_command {
 # speaks; PipeWire resamples the 8 kHz SCO link at the edges.
 sub bridge_capture_command {
 	my ($self) = @_;
+	my $device = (($self->{'mode'} // '') eq 'ag' && length($self->{'capture_source'} // ''))
+		? $self->{'capture_source'}
+		: $SINK_IN . '.monitor';
 	return 'parec --client-name=jawn-sco-bridge --stream-name=jawn-sco-bridge'
 		. ' --raw --format=s16le --rate=48000 --channels=1 --latency-msec=20 --device='
-		. $SINK_IN . '.monitor';
+		. $device;
 }
 
 sub bridge_playback_command {

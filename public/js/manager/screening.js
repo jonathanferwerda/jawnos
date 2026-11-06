@@ -128,6 +128,18 @@ function jawnScreenPanelOpen() {
 		.append($('<button id="jawn_screening_connect" hint="Connect me">Connect me</button>'))
 		.append($('<button id="jawn_screening_phone" hint="Open the Phone app">Open Phone</button>')));
 	$('body').append(box);
+	// The phone's dock sits at the bottom of the window. Measure it and lift
+	// the panel (and its Connect me / Open Phone buttons) clear of it instead
+	// of letting the dock cover them. A dock at the top needs no offset.
+	var dock = document.getElementById('dock');
+	if (dock) {
+		var rect = dock.getBoundingClientRect();
+		var view = window.innerHeight || document.documentElement.clientHeight || 0;
+		if (rect && rect.height && rect.top >= view - rect.height - 4) {
+			box.css('bottom', (Math.ceil(rect.height) + 16) + 'px');
+			box.css('max-height', 'calc(100vh - ' + Math.ceil(rect.height + 32) + 'px)');
+		}
+	}
 }
 
 function jawnScreenPanelClose() {

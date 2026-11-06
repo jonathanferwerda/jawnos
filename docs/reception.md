@@ -52,6 +52,16 @@ sink and never reaches the caller; nothing in the machine's defaults changes, so
 nothing has to be restored if the gateway dies (the streams fall back on their
 own when they vanish).
 
+The card's HFP role decides which stream is which. A laptop usually comes up as
+the Hands-Free unit (the phone is the Audio Gateway): the phone's speaker stream
+is the caller and its microphone stream is the prompt, and `Mixer::attach` uses
+`jawn_call_in`/`jawn_ivr_mic`. The Table's Intel card comes up as
+`audio-gateway` (the machine is the AG, the phone the HF); there the phone's
+speaker stream is the prompt and its microphone stream is the caller, so the
+mixer moves the speaker stream to `jawn_prompt` and captures the caller from the
+phone's own source, leaving the source-output where the phone made it. Both roles
+are supported; the card's `Active Profile` selects one.
+
 ### Setup on the gateway machine
 
 ```

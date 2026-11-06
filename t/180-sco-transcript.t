@@ -209,6 +209,8 @@ like($js, qr/Call from:/, 'and names the caller when the status carries one');
 my $screening = read_file("$repo/public/js/manager/screening.js");
 like($screening, qr/incomingNumber/, 'the floating panel asks the phone for the caller');
 like($screening, qr/Call from:/, 'and its header names the caller too');
+like($screening, qr/getBoundingClientRect/, 'the panel measures the dock');
+like($screening, qr/calc\(100vh/, 'and keeps its buttons above it');
 my $ws = read_file("$repo/public/js/manager/websocket/01_message_handler.js");
 like($ws, qr/sco_transcript/, 'the websocket dispatcher knows the transcript event');
 my $tpl = read_file("$repo/templates/apps/phone.html.ep");
