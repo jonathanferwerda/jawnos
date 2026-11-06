@@ -15,6 +15,7 @@
  *   out  {"event":"listening","local":"..:.."}
  *   out  {"event":"accepted","peer":"..:.."}
  *   out  {"event":"played","id":7,"ms":420}
+ *   out  {"event":"digit","digit":"5"}
  *   out  {"event":"recorded","id":9,"file":"...","ms":3120,"silence":true}
  *   out  {"event":"stopped","id":9}
  *   out  {"event":"closed","reason":".."}
@@ -444,11 +445,166 @@ static void record_window(double rms) {
 	}
 }
 
+/* ---- keypad digits ------------------------------------------------------
+ * A plan's menu ("press 1 to leave a message") is only a menu if the digit the
+ * caller presses reaches the daemon. The phone's own keypad never crosses a
+ * Hands-Free link, but the phone does forward the tones it hears in the call,
+ * and every one of those frames passes here. So the reader sits in front of
+ * the recorder's gate and listens for the length of the call, not only while
+ * a name is being recorded.
+ *
+ * Goertzel at the eight DTMF frequencies over the last 45 ms (six 7.5 ms frames,
+ * looked at again on every frame). Six frames is the shortest window that tells
+ * 697 Hz from 770 Hz - one frame resolves 133 Hz and cannot - and sliding that
+ * window by one frame is what makes a 60 ms press certain to contain a whole
+ * one, whatever moment the caller starts it. Reading the window costs one
+ * multiply per sample for its energy; the eight Goertzels run only when the
+ * window is loud enough to hold a tone, so an idle line pays almost nothing
+ * and a busy one is finished long before the next frame is due.
+ *
+ * A press is two tones of comparable strength (a keypad's own twist is a few
+ * dB at most), together owning most of the window's energy, and each at least
+ * twice the amplitude of every other candidate. That is what keeps speech and
+ * line noise out: speech spreads its energy across the band and owns no pair,
+ * and a lone tone owns the window but has no partner of comparable strength.
+ * The pair is reported once; after that the reader stays quiet until it has
+ * seen no pair for eleven frames (82.5 ms), so a key held down is one digit
+ * and the next press needs the tone to stop first.
+ *
+ * Measured on the helper's loopback (t/190): a 60 ms pair fills 1.00 of its
+ * window's pair energy with its nearest rival 12.7x below in amplitude; a
+ * 440 Hz tone fills 0.001 and is thrown out; a lone 770 Hz tone fills the
+ * window but its partner is 74x weaker in power, past the twist limit; and
+ * the window stops reading as a pair 22 ms after a press ends, so the quiet
+ * that releases the next digit begins almost at once. Half a window rather
+ * than more leaves a keypad whose pair sits a little off nominal (0.5% costs
+ * 18% of the pair's power) still readable, while speech, at 0.001, is nowhere
+ * near it.
+ */
+#define DTMF_WINDOW_CHUNKS 6
+#define DTMF_WINDOW_SAMPLES (DTMF_WINDOW_CHUNKS * CHUNK_SAMPLES)
+#define DTMF_MIN_RMS 120.0             /* 0.004 of the 16-bit scale: room, not a tone */
+#define DTMF_FILL_MIN 0.50             /* the pair owns half the window */
+#define DTMF_TWIST_MAX 10.0            /* power: one tone 10 dB under its partner */
+#define DTMF_MARGIN 2.0                /* amplitude over every other candidate */
+#define DTMF_RELEASE_CHUNKS 11         /* 82.5 ms without a pair releases the press */
+
+static const int dtmf_row_hz[4] = { 697, 770, 852, 941 };
+static const int dtmf_col_hz[4] = { 1209, 1336, 1477, 1633 };
+/* 697/770/852/941 across 1209/1336/1477 is 1-9, *, 0, #. The fourth column is
+ * the A-D band: a plan cannot offer those, so a pair that lands there is read
+ * (it must still beat the rivals) and then dropped. */
+static const char dtmf_digit[4][3] = {
+	{ '1', '2', '3' },
+	{ '4', '5', '6' },
+	{ '7', '8', '9' },
+	{ '*', '0', '#' },
+};
+
+static short dtmf_hist[DTMF_WINDOW_SAMPLES];   /* the last 45 ms, oldest first */
+static short dtmf_pending[CHUNK_SAMPLES];      /* samples of the frame being read */
+static int dtmf_have = 0;                      /* samples in dtmf_hist */
+static int dtmf_pending_n = 0;
+static int dtmf_quiet = 0;                     /* frames since the last pair */
+static int dtmf_latched = 0;                   /* this press was already reported */
+static double dtmf_coeff[8];                   /* 2 cos(2 pi f / rate) */
+static int dtmf_coeff_ready = 0;
+
+static double dtmf_power(const short *x, int n, double coeff) {
+	double s1 = 0, s2 = 0;
+	for (int i = 0; i < n; i++) {
+		double s0 = (double) x[i] + coeff * s1 - s2;
+		s2 = s1;
+		s1 = s0;
+	}
+	return s1 * s1 + s2 * s2 - coeff * s1 * s2;
+}
+
+/* The digit the window holds, or 0 when it holds no pair. */
+static char dtmf_scan(void) {
+	double energy = 0, prow[4], pcol[4], pr, pc, r2 = 0, c2 = 0, weak, strong, rival;
+	int rb = 0, cb = 0, i;
+
+	if (dtmf_have < DTMF_WINDOW_SAMPLES) return 0;
+	for (i = 0; i < DTMF_WINDOW_SAMPLES; i++) energy += (double) dtmf_hist[i] * dtmf_hist[i];
+	if (energy <= 0) return 0;
+	if (sqrt(energy / DTMF_WINDOW_SAMPLES) < DTMF_MIN_RMS) return 0;
+	if (!dtmf_coeff_ready) {
+		for (i = 0; i < 4; i++) {
+			dtmf_coeff[i] = 2.0 * cos(2.0 * 3.141592653589793 * dtmf_row_hz[i] / RATE);
+			dtmf_coeff[4 + i] = 2.0 * cos(2.0 * 3.141592653589793 * dtmf_col_hz[i] / RATE);
+		}
+		dtmf_coeff_ready = 1;
+	}
+	for (i = 0; i < 4; i++) prow[i] = dtmf_power(dtmf_hist, DTMF_WINDOW_SAMPLES, dtmf_coeff[i]);
+	for (i = 0; i < 4; i++) pcol[i] = dtmf_power(dtmf_hist, DTMF_WINDOW_SAMPLES, dtmf_coeff[4 + i]);
+	for (i = 1; i < 4; i++) {
+		if (prow[i] > prow[rb]) rb = i;
+		if (pcol[i] > pcol[cb]) cb = i;
+	}
+	pr = prow[rb];
+	pc = pcol[cb];
+	for (i = 0; i < 4; i++) {
+		if (i != rb && prow[i] > r2) r2 = prow[i];
+		if (i != cb && pcol[i] > c2) c2 = pcol[i];
+	}
+	weak = pr < pc ? pr : pc;
+	strong = pr < pc ? pc : pr;
+	rival = r2 > c2 ? r2 : c2;
+	/* The pair has to own the window. A single tone owns it too, but then one
+	 * of the two is leakage and the twist test below throws it out; speech owns
+	 * no pair at all, so this is also what the band's own noise fails. */
+	if (pr + pc < DTMF_FILL_MIN * (DTMF_WINDOW_SAMPLES * energy / 2.0)) return 0;
+	if (weak * DTMF_TWIST_MAX < strong) return 0;
+	/* squared: DTMF_MARGIN is an amplitude, and both tones must clear it */
+	if (weak < DTMF_MARGIN * DTMF_MARGIN * rival) return 0;
+	if (cb >= 3) return 0;
+	return dtmf_digit[rb][cb];
+}
+
+/* One frame of the caller's voice into the window, and the verdict when the
+ * window has slid a whole frame. The release is counted in frames, not wall
+ * time: the frames are the link's own clock and cannot drift from it. */
+static void dtmf_chunk(const unsigned char *buf, size_t len) {
+	int n = (int) (len / 2);
+	char digit;
+	for (int i = 0; i < n; i++) {
+		dtmf_pending[dtmf_pending_n++] = (short) (buf[i * 2] | (buf[i * 2 + 1] << 8));
+		if (dtmf_pending_n < CHUNK_SAMPLES) continue;
+		if (dtmf_have < DTMF_WINDOW_SAMPLES) {
+			int take = DTMF_WINDOW_SAMPLES - dtmf_have;
+			if (take > CHUNK_SAMPLES) take = CHUNK_SAMPLES;
+			memcpy(dtmf_hist + dtmf_have, dtmf_pending, (size_t) take * sizeof(short));
+			dtmf_have += take;
+		}
+		else {
+			memmove(dtmf_hist, dtmf_hist + CHUNK_SAMPLES,
+				(DTMF_WINDOW_SAMPLES - CHUNK_SAMPLES) * sizeof(short));
+			memcpy(dtmf_hist + DTMF_WINDOW_SAMPLES - CHUNK_SAMPLES, dtmf_pending,
+				CHUNK_SAMPLES * sizeof(short));
+		}
+		dtmf_pending_n = 0;
+		if (dtmf_have < DTMF_WINDOW_SAMPLES) continue;
+		digit = dtmf_scan();
+		if (!digit) {
+			if (dtmf_quiet < DTMF_RELEASE_CHUNKS) dtmf_quiet++;
+			if (dtmf_latched && dtmf_quiet >= DTMF_RELEASE_CHUNKS) dtmf_latched = 0;
+			continue;
+		}
+		dtmf_quiet = 0;
+		if (dtmf_latched) continue;
+		dtmf_latched = 1;
+		emit("{\"event\":\"digit\",\"digit\":\"%c\"}", digit);
+	}
+}
+
 /* Write one 7.5 ms chunk of the caller's voice, and decide when the clip has
  * ended. The audio is kept from the first frame, so nothing said while the
  * room is being read is lost. */
 static void downlink_chunk(const unsigned char *buf, size_t len) {
 	if (len > CHUNK_BYTES) len = CHUNK_BYTES;
+	/* the keypad reader sees every frame, record or not: a menu waits on it */
+	dtmf_chunk(buf, len);
 	/* the transcript hears the whole call; the recorder below only the name */
 	tee_chunk(buf, len);
 	if (!rec_active) return;
