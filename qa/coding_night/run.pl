@@ -92,11 +92,14 @@ my %opt = (
 	suite_timeout => 3600,
 	repair_attempts => 2,
 	ignore_device => 0,
+	lanes         => undef,
 );
 my @argv = @ARGV;
 while (my $arg = shift @argv) {
 	if ($arg eq '--dry-run')      { $opt{'dry_run'} = 1; next }
 	if ($arg eq '--ignore-device'){ $opt{'ignore_device'} = 1; next }
+	if ($arg eq '--lanes')        { $opt{'lanes'} = shift @argv; next }
+	if ($arg =~ /^--lanes=(.*)$/) { $opt{'lanes'} = $1; next }
 	if ($arg eq '--limit')        { $opt{'limit'} = shift @argv; next }
 	if ($arg =~ /^--limit=(.*)$/) { $opt{'limit'} = $1; next }
 	if ($arg eq '--repo')         { $opt{'repo'} = shift @argv; next }
@@ -171,6 +174,13 @@ my $limit = defined $opt{'limit'}
 	? QaSetting::clamp_note_limit($opt{'limit'})
 	: QaSetting::read_note_limit($db);
 
+# The lanes are read after the gate too: an unchosen machine does no work.
+# The panel and this reader share one rule (QaSetting), so a hand-made POST
+# cannot add a source this runner does not know.
+my @lanes = defined $opt{'lanes'}
+	? QaSetting::clamp_coding_lanes($opt{'lanes'})
+	: QaSetting::read_coding_lanes($db);
+
 # --- the agent hook ---------------------------------------------------------
 my $agent_line = defined $opt{'agent'} ? $opt{'agent'} : $ENV{'JAWNOS_CODING_AGENT'};
 # The in-tree agent is the default hook, so a configured model is enough.
@@ -180,29 +190,33 @@ $agent_line = QaSetting::read_coding_agent($db)
 my $agent = CodingNight::agent_command($agent_line);
 
 # --- the plan ---------------------------------------------------------------
-my $notes = eval { CodingNight::select_notes($db, limit => $limit) };
+my $queue = eval {
+	CodingNight::select_queue($db,
+		lanes => \@lanes, limit => $limit, qa_root => $root, lane_max => 2);
+};
 my $note_error = $@;
-$notes = [] unless ref $notes eq 'ARRAY';
+$queue = [] unless ref $queue eq 'ARRAY';
 
 if ($opt{'dry_run'}) {
 	print "qa/coding_night dry run - nothing is fetched, created, pushed or posted\n";
 	print "  repo: $repo\n";
 	print "  database: $db (read-only)\n";
 	print "  notes per night: $limit\n";
+	print '  lanes: ' . join(',', @lanes) . "\n";
 	print "  agent: " . (($agent_line // '') =~ /\S/ ? $agent_line : 'NONE - the 06:00 run would exit 3') . "\n";
 	if ($note_error) {
 		print "  queue: could not be read: $note_error";
 		exit 0;
 	}
-	print '  queue: ' . scalar(@{$notes}) . " note(s)\n";
+	print '  queue: ' . scalar(@{$queue}) . " item(s)\n";
 	my $n = 0;
-	for my $note ( @{$notes} ) {
+	for my $note ( @{$queue} ) {
 		$n++;
-		my $app   = CodingNight::is_app_note($note);
+		my $app   = (($note->{'source'} || 'notes') eq 'notes') && CodingNight::is_app_note($note);
 		my $paths = $app
 			? CodingNight::plan_app_paths($root, $stamp, $n)
 			: CodingNight::plan_paths($root, $stamp, $n);
-		print '    ' . $n . '. [' . $note->{'id'} . '] ' . $note->{'title'} . "\n";
+		print '    ' . $n . '. [' . $note->{'id'} . '] (' . ($note->{'source'} || 'notes') . ') ' . $note->{'title'} . "\n";
 		print '       lane:     ' . ($app ? 'app (' . CodingNight::app_repo_dir() . ')' : 'repo') . "\n";
 		print '       worktree: ' . $paths->{'worktree'} . "\n";
 		print '       branch:   ' . $paths->{'branch'} . "\n";
@@ -242,7 +256,9 @@ my $report = {
 	limit     => $limit,
 	agent     => ($agent_line // ''),
 	dry_run   => 0,
-	notes     => scalar @{$notes},
+	notes     => scalar(@{$queue}),
+	lanes     => [ @lanes ],
+	sources   => { map { my $lane = $_; ($lane => scalar(grep { ($_->{'source'} || 'notes') eq $lane } @{$queue})) } @lanes },
 	rollback_tag    => '',
 	rollback_script => "$report_dir/rollback.sh",
 	runs      => [],
@@ -257,12 +273,14 @@ my $report = {
 	};
 }
 
-print 'JawnOS coding nightly ' . $stamp . ' - ' . scalar(@{$notes}) . " note(s), limit $limit\n";
+print 'JawnOS coding nightly ' . $stamp . ' - ' . scalar(@{$queue}) . ' item(s) ['
+	. join(',', @lanes) . "], limit $limit\n";
 
 my $failed = 0;
 my $n = 0;
-for my $note ( @{$notes} ) {
+for my $note ( @{$queue} ) {
 	$n++;
+	my $is_note = (($note->{'source'} || 'notes') eq 'notes');
 	my $paths = CodingNight::plan_paths($root, $stamp, $n);
 	my $worktree = $paths->{'worktree'};
 	my $branch   = $paths->{'branch'};
@@ -270,6 +288,7 @@ for my $note ( @{$notes} ) {
 	my %run = (
 		n         => $n,
 		note_id   => $note->{'id'},
+		source    => ($note->{'source'} || 'notes'),
 		title     => $note->{'title'},
 		branch    => $branch,
 		worktree  => $worktree,
@@ -301,7 +320,7 @@ for my $note ( @{$notes} ) {
 	# restart. The app checkout itself may hold another agent's WIP, so every
 	# write happens in the worktree and the checkout is only fast-forwarded when
 	# it is clean and already on the base branch.
-	if (CodingNight::is_app_note($note)) {
+	if ($is_note && CodingNight::is_app_note($note)) {
 		my $app = CodingNight::app_repo_dir();
 		my $app_paths = CodingNight::plan_app_paths($root, $stamp, $n);
 		$worktree = $app_paths->{'worktree'};
@@ -947,21 +966,29 @@ for my $note ( @{$notes} ) {
 	}
 	$run{'health_ok'} = 1;
 
-	# 6. only now: the app's own route marks the note completed
-	my $res = eval {
-		mark_note_completed(
-			note_id => $note->{'id'},
-			live_url => live_url($repo, $opt{'live_url'}),
-			ticket   => ticket_url($repo, $opt{'ticket'}),
-		);
-	};
-	if (!$res) {
-		$run{'status'} = 'mark_failed';
-		$run{'error'} = 'the code shipped but the note could not be marked completed: ' . ($@ || 'unknown');
-		$failed = 1;
-		last;
+	# 6. only now: the app's own route marks the note completed. A report-derived
+	# item (security, installers) has no note row: the next report is what says
+	# whether it is still there.
+	if ($is_note) {
+		my $res = eval {
+			mark_note_completed(
+				note_id => $note->{'id'},
+				live_url => live_url($repo, $opt{'live_url'}),
+				ticket   => ticket_url($repo, $opt{'ticket'}),
+			);
+		};
+		if (!$res) {
+			$run{'status'} = 'mark_failed';
+			$run{'error'} = 'the code shipped but the note could not be marked completed: ' . ($@ || 'unknown');
+			$failed = 1;
+			last;
+		}
+		$run{'marked_completed'} = 1;
 	}
-	$run{'marked_completed'} = 1;
+	else {
+		$run{'marked_completed'} = 0;
+		$run{'completed_by'} = 'report';
+	}
 	$run{'status'} = 'green';
 
 	# A report note is a journal note, not a JawnOS note: the queue must never
@@ -1041,6 +1068,7 @@ qa/coding_night/run.pl - the 06:00 coding nightly
 
   --dry-run         print the plan; fetch, create, push and post nothing
   --limit N         notes this night (clamped 1..25; default the QA panel setting)
+  --lanes LIST      what to work on: notes,security,installers (default the QA panel setting)
   --repo DIR        the checkout (default this file's repo)
   --root DIR        QA root (default ~/jawnos-qa)
   --db PATH         live database, read with mode=ro (default <repo>/database/jawnos.db)
@@ -1345,7 +1373,9 @@ sub failure_note_text {
 	if (@failing) {
 		$text .= "\nFailing test lines:\n" . join("\n", @failing) . "\n";
 	}
-	$text .= "\nThe original note is still open.\n";
+	$text .= ($run->{'source'} || 'notes') eq 'notes'
+		? "\nThe original note is still open.\n"
+		: "\nThe report will offer this item again on its next run.\n";
 	return $text;
 }
 

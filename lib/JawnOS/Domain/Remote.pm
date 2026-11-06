@@ -567,6 +567,62 @@ sub qa_note_limit_save {
 	};
 }
 
+# ---------------------------------------------------------------------------
+# What the coding night works on
+# ---------------------------------------------------------------------------
+# `__president/qa_coding_lanes`, device 'all': the sources the 06:00 night draws
+# work from. `notes` is the original queue; `security` takes the new high
+# findings from the nightly security audit and `installers` takes the packages
+# the installer check reports missing. qa/lib/QaSetting.pm holds the identical
+# rule for the fenced runner, and t/88 asks both. An empty choice is refused:
+# a night with no source would silently do nothing.
+
+sub qa_coding_lanes_known { return qw(notes security installers) }
+sub qa_coding_lanes_default { return 'notes' }
+
+sub qa_coding_lanes_clamp {
+	my ($value) = @_;
+	my @asked = ref $value eq 'ARRAY'
+		? @{$value}
+		: split /[\s,]+/, (defined $value ? $value : '');
+	my %on = map { $_ => 1 } @asked;
+	my @out = grep { $on{$_} } &qa_coding_lanes_known();
+	return @out ? @out : (&qa_coding_lanes_default());
+}
+
+sub qa_coding_lanes {
+	my $opts = shift || {};
+	my $grab = $opts->{'grabber'};
+	unless ($grab) {
+		$grab = sub {
+			my $v = &subs::setting_grabber({ app => '__president', setting => 'qa_coding_lanes', device => 'all' });
+			$v = &subs::setting_grabber({ app => '__president', setting => 'qa_coding_lanes' }) unless defined $v && length $v;
+			return $v;
+		};
+	}
+	return &qa_coding_lanes_clamp( $grab->() );
+}
+
+sub qa_coding_lanes_save {
+	my ($value, $opts) = @_;
+	$opts ||= {};
+	my @asked = ref $value eq 'ARRAY'
+		? @{$value}
+		: split /[\s,]+/, (defined $value ? $value : '');
+	unless (grep { length } @asked) {
+		return { ok => 0, error => 'Choose at least one thing the coding night works on.' };
+	}
+	my @lanes = &qa_coding_lanes_clamp($value);
+	my $set = $opts->{'setter'};
+	unless ($set) {
+		$set = sub {
+			&subs::setting_setter({ app => '__president', setting => 'qa_coding_lanes', device => 'all', value => $_[0] });
+		};
+	}
+	$set->(join ',', @lanes);
+	return { ok => 1, lanes => \@lanes };
+}
+
 # The tools the suite and its artefact layers need. `required` is the nightly
 # (l0-l2 plus the fence); the rest are the build/device layers, named so the
 # panel can say what is missing without calling them failures of tonight's run.

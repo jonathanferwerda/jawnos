@@ -15,6 +15,7 @@ use warnings;
 use File::Copy qw(copy);
 use File::Path qw(make_path);
 use File::Spec;
+use JSON::PP ();
 use Text::ParseWords qw(shellwords);
 
 require QaSetting;
@@ -93,6 +94,168 @@ sub select_notes {
 		};
 	}
 	return \@out;
+}
+
+# --- what the night works on ------------------------------------------------
+# The queue is built from the lanes the house checked in Configure -> Plat -> QA
+# (qa/lib/QaSetting.pm reads the same setting for this fenced runner).
+#
+#   notes       the top open JawnOS notes, exactly as before
+#   security    new findings at or above `high` in the newest nightly audit's
+#               report ($QA_ROOT/reports/security/<stamp>/report.json)
+#   installers  the packages the newest installer check reports `missing`
+#               ($QA_ROOT/reports/installers/<stamp>/report.json)
+#
+# A report-derived item is a task, not a row the app owns: it has no note uuid
+# to mark completed, so the next report is what decides whether it is still
+# there. The cap keeps one bad night from turning into twenty landings.
+
+our $LANE_ITEM_MAX = 3;
+
+our %SEVERITY_RANK = (critical => 4, high => 3, medium => 2, low => 1, info => 0);
+
+sub lane_ids { return qw(notes security installers) }
+
+# The newest finished run of a kind, newest by its UTC stamp. '' when the job
+# has not run on this machine (or has not written a report yet).
+sub newest_report_file {
+	my ($qa_root, $kind) = @_;
+	return '' unless defined $qa_root && length $qa_root && defined $kind && length $kind;
+	my $dir = File::Spec->catdir($qa_root, 'reports', $kind);
+	opendir(my $dh, $dir) or return '';
+	my @stamps = sort { $b cmp $a }
+		grep { /^\d{8}T\d{6}Z$/ && -d "$dir/$_" } readdir $dh;
+	closedir $dh;
+	return '' unless @stamps;
+	my $file = "$dir/$stamps[0]/report.json";
+	return -f $file ? $file : '';
+}
+
+sub read_report {
+	my ($path) = @_;
+	return undef unless defined $path && length $path && -f $path;
+	open(my $fh, '<', $path) or return undef;
+	local $/;
+	my $text = <$fh>;
+	close $fh;
+	my $doc = eval { JSON::PP::decode_json($text) };
+	return ref $doc eq 'HASH' ? $doc : undef;
+}
+
+sub _lanes_cap {
+	my ($opt) = @_;
+	my $max = $opt->{'max'};
+	$max = $LANE_ITEM_MAX unless defined $max && $max =~ /^\d+$/;
+	return $max;
+}
+
+sub security_items {
+	my ($qa_root, %opt) = @_;
+	my $doc = read_report( newest_report_file($qa_root, 'security') );
+	return [] unless $doc && ref $doc->{'findings'} eq 'ARRAY';
+	my $max = _lanes_cap(\%opt);
+	my $floor = $SEVERITY_RANK{ $opt{'floor'} // 'high' } // $SEVERITY_RANK{'high'};
+	my @rows = sort {
+		($SEVERITY_RANK{ $b->{'severity'} // 'info' } // 0) <=> ($SEVERITY_RANK{ $a->{'severity'} // 'info' } // 0)
+			|| ($a->{'id'} // '') cmp ($b->{'id'} // '')
+			|| ($a->{'path'} // '') cmp ($b->{'path'} // '')
+	} grep {
+		!$_->{'known'}
+			&& ($SEVERITY_RANK{ $_->{'severity'} // 'info' } // 0) >= $floor
+	} @{ $doc->{'findings'} };
+	my @out;
+	for my $f ( @rows ) {
+		last if @out >= $max;
+		my $where = ($f->{'path'} // '') . (($f->{'line'} // 0) ? ':' . $f->{'line'} : '');
+		my $id = ($f->{'id'} // 'finding') . ':' . ($where || '?');
+		push @out, {
+			id        => 'security:' . $id,
+			source    => 'security',
+			title     => 'Security: ' . ($f->{'title'} // $f->{'id'} // 'finding'),
+			text      => join("\n",
+				'The nightly security audit reports this finding:',
+				'',
+				'- id: ' . ($f->{'id'} // ''),
+				'- severity: ' . ($f->{'severity'} // ''),
+				'- area: ' . ($f->{'area'} // ''),
+				'- where: ' . ($where || '(not named)'),
+				'- evidence: ' . (($f->{'evidence'} // '') =~ /\S/ ? $f->{'evidence'} : '(none)'),
+				'- suggested fix: ' . (($f->{'fix'} // '') =~ /\S/ ? $f->{'fix'} : '(none)'),
+				'',
+				'Fix it at the root cause. Add or update the test that would have caught it.',
+				'`perl scripts/security_audit.pl --check` must stay clean for this finding:',
+				'do not weaken the check and do not add an allowlist entry.',
+			),
+			timestamp => '',
+			category  => 'security',
+			status    => 'open',
+		};
+	}
+	return \@out;
+}
+
+our @INSTALLER_SETS = (
+	[ 'Perl module',      'modules',   'name' ],
+	[ 'Debian package',   'debian',    'package' ],
+	[ 'Arch package',     'arch',      'package' ],
+	[ 'Android component','android',   'component' ],
+	[ 'Android tool',     'toolchain', 'tool' ],
+);
+
+sub installer_items {
+	my ($qa_root, %opt) = @_;
+	my $doc = read_report( newest_report_file($qa_root, 'installers') );
+	return [] unless $doc;
+	my $max = _lanes_cap(\%opt);
+	my @out;
+	for my $set ( @INSTALLER_SETS ) {
+		my ($kind, $key, $name_key) = @{$set};
+		for my $row ( @{ ref $doc->{$key} eq 'ARRAY' ? $doc->{$key} : [] } ) {
+			last if @out >= $max;
+			next unless ($row->{'status'} // '') eq 'missing';
+			my $name = $row->{$name_key} // '';
+			next unless length $name;
+			push @out, {
+				id        => 'installers:' . $key . ':' . $name,
+				source    => 'installers',
+				title     => 'Installer: ' . $name . ' is missing upstream',
+				text      => join("\n",
+					'The nightly installer check reports that ' . lc($kind) . ' ' . $name
+						. ' is no longer offered upstream, so a fresh install would fail.',
+					'',
+					'- reported as: ' . $kind,
+					'- name: ' . $name,
+					'- installed here: ' . (($row->{'installed'} // '') =~ /\S/ ? $row->{'installed'} : '(not installed)'),
+					'- latest offered: ' . (($row->{'latest'} // '') =~ /\S/ ? $row->{'latest'} : '(none)'),
+					'',
+					'Update the installer list or the version pin to one the repository still offers,',
+					'then run `perl scripts/jawnos_deps.pl --freshness` and make sure this row is gone.',
+					'Change only the pin or list entry: do not silently skip the package.',
+				),
+				timestamp => '',
+				category  => 'installers',
+				status    => 'open',
+			};
+		}
+		last if @out >= $max;
+	}
+	return \@out;
+}
+
+# The night's whole queue, in the order it is worked: notes first, then the
+# security findings, then the installer gaps.
+sub select_queue {
+	my ($db, %opt) = @_;
+	my @lanes = @{ ref $opt{'lanes'} eq 'ARRAY' ? $opt{'lanes'} : [] };
+	my %on = map { $_ => 1 } @lanes;
+	my @queue;
+	if ($on{'notes'}) {
+		my $notes = select_notes($db, limit => $opt{'limit'});
+		push @queue, map { { %{$_}, source => 'notes' } } @{$notes};
+	}
+	push @queue, @{ security_items($opt{'qa_root'}, max => $opt{'lane_max'}) } if $on{'security'};
+	push @queue, @{ installer_items($opt{'qa_root'}, max => $opt{'lane_max'}) } if $on{'installers'};
+	return \@queue;
 }
 
 # --- the two lanes ----------------------------------------------------------

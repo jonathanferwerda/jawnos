@@ -568,6 +568,17 @@ JAWNOS_NOTE_ID=demo JAWNOS_NOTE_TITLE="a note" JAWNOS_NOTE_TEXT="the task" \
   perl qa/coding_night/agent.pl --dry-run
 ```
 
+### What it works on
+
+`__president/qa_coding_lanes` (Configure -> Plat -> QA, "What the coding night
+works on") is a comma list of `notes`, `security` and `installers`; the default
+is `notes`, which is the queue above. `security` takes the new high findings in
+the newest `$QA_ROOT/reports/security/<stamp>/report.json`; `installers` takes
+the packages the newest installer report calls `missing`. Each report source is
+capped at two items a night, and such an item has no note row to close - the
+next report decides whether it is still there. The panel refuses an empty
+choice, so a night never silently has nothing to do.
+
 ### Schedule it
 
 ```sh

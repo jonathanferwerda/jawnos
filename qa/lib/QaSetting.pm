@@ -101,6 +101,34 @@ sub read_coding_agent {
 	return read_setting($db, 'qa_coding_agent');
 }
 
+# --- what the coding night works on ----------------------------------------
+# `__president/qa_coding_lanes`: a comma list of the sources the 06:00 night
+# draws work from. `notes` is the original queue; `security` takes the new
+# high findings from the nightly audit's report and `installers` takes the
+# packages the installer check reports missing. Canonical order, unknown names
+# dropped, and an empty value reads as the default (notes) - the panel refuses
+# to store an empty choice, so a night never silently has nothing to do.
+our @CODING_LANES = qw(notes security installers);
+
+sub coding_lanes { return @CODING_LANES }
+sub coding_lanes_default { return 'notes' }
+
+sub clamp_coding_lanes {
+	my ($value) = @_;
+	my @asked = ref $value eq 'ARRAY'
+		? @{$value}
+		: split /[\s,]+/, (defined $value ? $value : '');
+	# keep the canonical order, not the order the caller sent
+	my %on = map { $_ => 1 } @asked;
+	my @out = grep { $on{$_} } @CODING_LANES;
+	return @out ? @out : (coding_lanes_default());
+}
+
+sub read_coding_lanes {
+	my ($db) = @_;
+	return clamp_coding_lanes( read_setting($db, 'qa_coding_lanes') );
+}
+
 # The three nightly times, in HH:MM. They are house settings (device 'all') and
 # the panel validates them; this reader is the fenced copy, so a script that has
 # no app can still answer with the same rules. Anything that is not 00:00-23:59

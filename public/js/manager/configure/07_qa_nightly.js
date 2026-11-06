@@ -206,6 +206,33 @@ $(document).on('change', '#qa_note_limit', function() {
 	});
 });
 
+$(document).on('change', '.qa_coding_lane', function() {
+	var box = $('#qa_coding_lanes_status');
+	var lanes = $('.qa_coding_lane:checked').map(function() { return this.value; }).get();
+	box.text('');
+	// The server refuses an empty choice; put the box the person just cleared
+	// back rather than leaving the panel showing a set the house did not keep.
+	if (!lanes.length) {
+		$(this).prop('checked', true);
+		box.text(qaT('Choose at least one.'));
+		return;
+	}
+	$.post('/manager/configure/qa_device_target', { field: 'lanes', lanes: lanes.join(',') }, function(res) {
+		if (!res || !res.ok) {
+			box.text((res && res.error) || qaT('Could not save the choice.'));
+			return;
+		}
+		var kept = res.lanes || [];
+		$('.qa_coding_lane').each(function() {
+			$(this).prop('checked', kept.indexOf(this.value) >= 0);
+		});
+		box.text(qaT('Saved.'));
+		setTimeout(function() { box.text(''); }, 2000);
+	}).fail(function() {
+		box.text(qaT('Could not save the choice.'));
+	});
+});
+
 $(document).on('click', '#qa_schedule_save', function() {
 	var button = $(this);
 	var status = $('#qa_schedule_status');

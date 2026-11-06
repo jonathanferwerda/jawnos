@@ -122,6 +122,81 @@ $sdbh->do("delete from settings");
 $sdbh->disconnect;
 is(QaSetting::read_note_limit($sdb), 3, 'no saved row reads as the default');
 
+# --- what the coding night works on ----------------------------------------
+# The panel and the fenced runner share one rule for the lanes, like the note
+# limit, and the queue is built from the reports the two nightly jobs leave.
+
+my @lane_cases = (
+	[ undef,                     [ 'notes' ] ],
+	[ '',                        [ 'notes' ] ],
+	[ 'notes',                   [ 'notes' ] ],
+	[ 'security',                [ 'security' ] ],
+	[ 'security,notes',          [ 'notes', 'security' ] ],
+	[ ' installers , security ', [ 'security', 'installers' ] ],
+	[ 'bogus,notes',             [ 'notes' ] ],
+	[ 'bogus',                   [ 'notes' ] ],
+	[ [ 'installers', 'notes', 'installers' ], [ 'notes', 'installers' ] ],
+);
+for my $case (@lane_cases) {
+	my ($in, $want) = @{$case};
+	is_deeply([ QaSetting::clamp_coding_lanes($in) ], $want,
+		'QaSetting lanes for ' . (ref $in ? 'an array' : (defined $in ? "'$in'" : 'undef')));
+	is_deeply([ subs::qa_coding_lanes_clamp($in) ], $want, 'and the panel helper agrees');
+}
+
+my %lane_store;
+my $lane_set = sub { $lane_store{'value'} = $_[0] };
+my $lane_saved = subs::qa_coding_lanes_save('security,notes', { setter => $lane_set });
+ok($lane_saved->{'ok'}, 'a lane list saves');
+is($lane_store{'value'}, 'notes,security', 'and is stored in canonical order');
+is_deeply($lane_saved->{'lanes'}, [ 'notes', 'security' ], 'the response says what was kept');
+my $lane_empty = subs::qa_coding_lanes_save('', { setter => $lane_set });
+ok(!$lane_empty->{'ok'}, 'an empty choice is refused');
+is($lane_store{'value'}, 'notes,security', 'and nothing is overwritten');
+
+# A QA root holding the two reports the night reads.
+my $qa_night = tempdir(CLEANUP => 1);
+make_path("$qa_night/reports/security/20261106T044500Z", "$qa_night/reports/installers/20261106T034500Z");
+write_file("$qa_night/reports/security/20261106T044500Z/report.json", encode_json({
+	findings => [
+		{ id => 'x.high',   severity => 'high',     known => 0, title => 'high one', path => 'lib/A.pm', line => 3, area => 'rce', evidence => 'e', fix => 'f' },
+		{ id => 'x.known',  severity => 'critical', known => 1, title => 'known',    path => 'lib/B.pm', line => 4 },
+		{ id => 'x.medium', severity => 'medium',   known => 0, title => 'medium',   path => 'lib/C.pm', line => 5 },
+		{ id => 'x.crit',   severity => 'critical', known => 0, title => 'crit',     path => 'lib/D.pm', line => 6 },
+	],
+}));
+write_file("$qa_night/reports/installers/20261106T034500Z/report.json", encode_json({
+	modules   => [ { name => 'Gone::Module', status => 'missing', installed => '1.0' },
+				   { name => 'Fine',        status => 'current', installed => '2.0' } ],
+	debian    => [ { package => 'gone-pkg', status => 'missing', installed => '1' } ],
+	arch      => [ { package => 'old-pkg', status => 'outdated', installed => '1', latest => '2' } ],
+	android   => [],
+	toolchain => [],
+}));
+
+my $sec = CodingNight::security_items($qa_night);
+is_deeply([ map { $_->{'title'} } @{$sec} ], [ 'Security: crit', 'Security: high one' ],
+	'only new findings at or above high are queued, worst first');
+is(CodingNight::security_items($qa_night, max => 1)->[0]->{'title'}, 'Security: crit',
+	'the cap keeps the worst one');
+like($sec->[0]->{'text'}, qr/security_audit\.pl --check/, 'the task names the check that must stay clean');
+is_deeply([ map { $_->{'id'} } @{ CodingNight::installer_items($qa_night) } ],
+	[ 'installers:modules:Gone::Module', 'installers:debian:gone-pkg' ],
+	'only installer rows reported missing are queued');
+
+my $all_lanes = CodingNight::select_queue($qdb,
+	lanes => [ 'notes', 'security', 'installers' ], limit => 25, qa_root => $qa_night);
+is_deeply([ map { $_->{'source'} } @{$all_lanes} ],
+	[ 'notes', 'notes', 'security', 'security', 'installers', 'installers' ],
+	'the queue carries the lanes in order, notes first');
+my $notes_only = CodingNight::select_queue($qdb, lanes => [ 'notes' ], limit => 25, qa_root => $qa_night);
+is(scalar @{$notes_only}, 2, 'notes only leaves the reports unread');
+my $sec_only = CodingNight::select_queue($qdb, lanes => [ 'security' ], limit => 25, qa_root => $qa_night);
+is_deeply([ map { $_->{'source'} } @{$sec_only} ], [ 'security', 'security' ],
+	'a security-only night has no notes');
+is_deeply(CodingNight::select_queue($qdb, lanes => [ 'security' ], limit => 25,
+	qa_root => tempdir(CLEANUP => 1)), [], 'a machine that wrote no report has no work');
+
 # --- naming and layers ------------------------------------------------------
 my $paths = CodingNight::plan_paths('/qa/root', '20261102-060000', 3);
 is($paths->{'branch'}, 'qa/nightly-20261102-060000-3', 'the branch naming is <stamp>-<n>');

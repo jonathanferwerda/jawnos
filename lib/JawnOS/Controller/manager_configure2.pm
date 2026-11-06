@@ -805,6 +805,12 @@ sub action_50002 {
 		$c->render(json => &subs::qa_note_limit_save($c->param('note_limit')));
 		return;
 	}
+	# `field=lanes` saves which sources the coding night draws from. The list is
+	# canonicalised here, and an empty choice is refused rather than stored.
+	if (($c->param('field') // '') eq 'lanes') {
+		$c->render(json => &subs::qa_coding_lanes_save($c->param('lanes')));
+		return;
+	}
 	# The value is a signatorial, the literal 'none' (the whole nightly system
 	# off), or '' for this machine. A phone or tablet is refused here as well as
 	# at install, so a hand-made POST cannot pin the nightly to a device that
