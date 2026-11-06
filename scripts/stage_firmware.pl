@@ -126,13 +126,16 @@ if ($verify) {
 			$bad++;
 			next;
 		}
+		# A local build is only a hint: most machines do not build firmware, and
+		# one that built during an earlier version keeps .pio on disk forever. The
+		# sidecar is what proves the image, so a differing build is a note, not a
+		# refusal - otherwise every machine that is not the one that built would
+		# report itself stale.
 		my $src = "$root/$t->{'source'}";
 		if (-s $src) {
 			my $build_sha = sha256_hex(scalar read_file($src, binmode => ':raw'));
 			if ($build_sha ne $sha) {
-				print "STALE  $label: the staged image is not the current build - run this again without --verify\n";
-				$bad++;
-				next;
+				print "NOTE   $label: this checkout's own build differs from the staged image\n";
 			}
 		}
 		print "OK     $label: v$meta->{'version'} sha256 " . substr($sha, 0, 12) . "\n";

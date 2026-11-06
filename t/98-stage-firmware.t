@@ -128,12 +128,15 @@ sub stage {
 	is($trc, 1, 'an image whose bytes moved is stale');
 	like($tout, qr/do not match their sidecar/, 'and says the bytes moved');
 
-	# --- a build newer than the staged copy is stale ------------------------
+	# --- a differing local build is a note, not a refusal -------------------
+	# Most machines never build firmware; one that built at an earlier version
+	# keeps .pio on disk, and its build must not make the machine report itself
+	# stale. The sidecar is what proves the image.
 	stage('--root', $tree);
 	write_file("$tree/jp/alarmclock/.pio/build/pico2w/firmware.bin", "v999 firmware rebuilt\n");
 	my ($brc, $bout) = stage('--root', $tree, '--verify');
-	is($brc, 1, 'a staged copy behind the build is stale');
-	like($bout, qr/not the current build/, 'and names the fix');
+	is($brc, 0, 'a differing local build is still current');
+	like($bout, qr/NOTE\s+alarmclock.*build differs from the staged image/, 'and says the build differs');
 }
 
 # --- a re-stage refreshes the sidecar with it -------------------------------
