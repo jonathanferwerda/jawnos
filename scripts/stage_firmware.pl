@@ -12,8 +12,9 @@
 #   perl scripts/stage_firmware.pl --root DIR # stage into another tree (a test,
 #                                             # or a copy of the checkout)
 #
-# Each copy is accompanied by <dest>.json: the VERSION it was built from, the
-# sha256 of the bytes, the size and when it was staged. A machine that serves an
+# Each copy is accompanied by <dest>.json: the version it was built from (the
+# firmware project's own VERSION), the sha256 of the bytes, the size and when it
+# was staged. A machine that serves an
 # OTA with no sidecar, a sidecar that does not match the file, or a sidecar
 # naming another version is serving stale firmware - which is how the Table
 # shipped v0.1.2224 through two later versions. The manager refuses that now
@@ -49,6 +50,7 @@ for my $i (0 .. $#ARGV) {
 my @targets = (
 	{
 		name    => 'alarmclock (Pico 2 W)',
+		board   => 'alarmclock',
 		project => 'jp/alarmclock',
 		files   => qr/\.(?:ino|h|hpp|c|cpp|csv|ini)$/,
 		source  => 'jp/alarmclock/.pio/build/pico2w/firmware.bin',
@@ -56,6 +58,7 @@ my @targets = (
 	},
 	{
 		name    => 'deck (ESP32-S3)',
+		board   => 'deck',
 		project => 'jt',
 		files   => qr/\.(?:ino|h|hpp|c|cpp|csv|ini)$/,
 		source  => 'jt/.pio/build/deck/firmware.bin',
@@ -63,6 +66,7 @@ my @targets = (
 	},
 	{
 		name    => 'watch (ESP32-S3)',
+		board   => 'watch',
 		project => 'jw',
 		files   => qr/\.(?:ino|h|hpp|c|cpp|csv|ini)$/,
 		source  => 'jw/.pio/build/watch/firmware.bin',
@@ -70,9 +74,23 @@ my @targets = (
 	},
 );
 
-my $version = eval { read_file("$root/VERSION") } || '';
-$version =~ s/\s+//g;
-$version ||= 'unknown';
+# A board carries its own version: jt/VERSION for the deck, jw/VERSION for the
+# watch, jp/alarmclock/VERSION for the Pico. It moves when that board's firmware
+# changes, not when the house does, so the panel can say the watch is behind
+# without the deck's number moving with it. A project with no VERSION falls back
+# to the checkout's, which is what an older tree (and a test tree) still has.
+sub target_version {
+	my ($tree, $target) = @_;
+	my $project = $target->{'project'} || '';
+	foreach my $file (($project ? "$tree/$project/VERSION" : ()), "$tree/VERSION") {
+		next unless -f $file;
+		my $v = eval { read_file($file) } || '';
+		$v =~ s/\s+//g;
+		$v =~ s/[^0-9A-Za-z._+-]//g;
+		return $v if length $v;
+	}
+	return 'unknown';
+}
 
 sub sources_digest {
 	# What the image is actually made of: the project's own sources plus the
@@ -115,7 +133,7 @@ sub written_meta {
 	my $target = shift;
 	my $tree = shift;
 	return {
-		version   => $version,
+		version   => target_version($tree, $target),
 		sha256    => sha256_hex(scalar read_file($dst, binmode => ':raw')),
 		size      => -s $dst,
 		source    => $target->{'source'},
@@ -206,6 +224,15 @@ foreach my $t (@targets) {
 	make_path(dirname($dst));
 	copy($src, $dst) or die "$t->{'name'}: copy failed: $!\n";
 	my $meta = written_meta($dst, $t, $root);
+	# A board's number is what the panel compares the device against, so a build
+	# that changed without a bump would ship silently: the device would report the
+	# new image under the old number and read as up to date for ever.
+	my $prev = staged_meta($dst);
+	if ($prev && ($prev->{'sources'} || '') ne $meta->{'sources'}
+	    && ($prev->{'version'} || '') eq $meta->{'version'}) {
+		print "WARN   $t->{'name'}: the firmware changed but its version did not"
+			. " - bump $t->{'project'}/VERSION (perl scripts/fw_bump.pl $t->{'board'})\n";
+	}
 	write_sidecar($dst, $meta);
 	printf "%s: %s -> %s (%d bytes, v%s)\n", $t->{'name'}, $t->{'source'}, $t->{'dest'}, -s $dst, $meta->{'version'};
 	$staged++;

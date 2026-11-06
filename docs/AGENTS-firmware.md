@@ -12,6 +12,14 @@ unstaged build means an OTA sends the previous firmware.
   `jp/alarmclock`, run `perl scripts/stage_firmware.pl` (or `--build` to build first). It copies
   `.pio/build/pico2w/firmware.bin` onto that path; add an entry to its `@targets` when another
   device gains a hardwired OTA path.
+- **Versions are per board.** Each firmware project carries its own `VERSION` — `jt/VERSION` (deck),
+  `jw/VERSION` (watch), `jp/alarmclock/VERSION` (Pico). `scripts/fw_version.py` stamps the nearest one
+  into the build, and `scripts/stage_firmware.pl` writes it into the sidecar the manager reads, so a
+  board is only "behind" relative to its own number: the house moving on does not make every device
+  look stale. **A change to a board's firmware bumps that board's version in the same commit** —
+  `perl scripts/fw_bump.pl deck|watch|alarmclock` (patch bump; `--list` shows all three) — then build
+  and stage. Staging warns when an image's firmware sources changed but its version did not: the device
+  would otherwise report the new image under the old number and read as up to date for ever.
 - **OTA needs a LittleFS partition.** `jp/alarmclock/platformio.ini` sets
   `board_build.filesystem_size = 2M` (2 MB sketch + 2 MB filesystem). The default 0 MB filesystem
   leaves the uploaded image nowhere to live and the new firmware boots without `config.txt`, so

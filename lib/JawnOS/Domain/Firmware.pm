@@ -64,6 +64,23 @@ sub firmware_house_version() {
 	return $version;
 }
 
+sub firmware_target_version($target) {
+	# A board's own version: its project's VERSION (jt/VERSION, jw/VERSION,
+	# jp/alarmclock/VERSION), which moves when that board's firmware changes and
+	# not when the house does. The checkout's VERSION is the fallback for a tree
+	# that predates the split; scripts/fw_version.py stamps the same value into
+	# the build, and scripts/stage_firmware.pl writes it into the sidecar.
+	my $project = (ref $target eq 'HASH' ? ($target->{'project'} || '') : '');
+	foreach my $file (($project ? "./$project/VERSION" : ()), './VERSION') {
+		next unless -f $file;
+		my $version = eval { read_file($file) } || '';
+		$version =~ s/\s+//g;
+		$version =~ s/[^0-9A-Za-z._+-]//g;
+		return $version if length $version;
+	}
+	return '';
+}
+
 sub firmware_source_digest($target) {
 	# What a staged image is made of: the project's own sources plus the script
 	# that stamps the version. A house VERSION bump that touches no firmware must
@@ -107,7 +124,7 @@ sub firmware_staged($edt) {
 		edt     => $edt,
 		name    => ($target ? $target->{'name'} : ''),
 		path    => '',
-		version => firmware_house_version(),
+		version => ($target ? firmware_target_version($target) : firmware_house_version()),
 		exists  => 0,
 		sidecar => 0,
 		current => 0,
