@@ -1629,6 +1629,10 @@ sub utility_functions() {
 			eval { &subs::headless_browser(); };
 		};
 
+		$gb::timeouts->{'weather_observe'}->{'subroutine'} = sub {
+			eval { &subs::weather_observe_tick(); };
+		};
+
 		$gb::timeouts->{'telephone_check'}->{'subroutine'} = sub {
 			return 'telephone: not a mobile' unless $device eq 'mobile';
 			my ($contacts, $calls) = (0, 0);

@@ -630,6 +630,7 @@ our @manager_bundle_files = qw(
 	/js/manager/notes.js
 	/js/manager/weather.js
 	/js/manager/weather_history.js
+	/js/manager/weather_automation.js
 	/js/manager/clock.js
 	/js/manager/help.js
 	/js/manager/page_agent.js
@@ -667,7 +668,7 @@ our %manager_app_scripts = (
 	phone           => [qw(/js/manager/phone.js)],
 	people          => [qw(/js/manager/people.js)],
 	notes           => [qw(/js/manager/notes.js)],
-	weather         => [qw(/js/manager/weather.js /js/manager/weather_history.js)],
+	weather         => [qw(/js/manager/weather.js /js/manager/weather_history.js /js/manager/weather_automation.js)],
 	search          => [qw(/js/manager/search.js)],
 	ide             => [qw(/js/manager/ide.js /js/manager/ide_code.js)],
 	store           => [qw(/js/store.js)],

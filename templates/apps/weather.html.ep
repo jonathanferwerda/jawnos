@@ -30,10 +30,12 @@
 		<button type="button" class="weather_tab active" data-tab="now"><%= &subs::ui('Now') %></button>
 		<button type="button" class="weather_tab" data-tab="history"><%= &subs::ui('History') %></button>
 		<button type="button" class="weather_tab" data-tab="accuracy"><%= &subs::ui('Accuracy') %></button>
+		<button type="button" class="weather_tab" data-tab="automations"><%= &subs::ui('Automations') %></button>
 	</div>
 	<div id="weather_now_panel" class="weather_panel active">
 		<%= include 'apps/weather/now' %>
 	</div>
 	<%= include 'apps/weather/history' %>
 	<%= include 'apps/weather/accuracy' %>
+	<%= include 'apps/weather/automations' %>
 </div>

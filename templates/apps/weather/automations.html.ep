@@ -1,0 +1,25 @@
+<div id="weather_automations_panel" class="weather_panel" style="display:none;">
+	<div class="weather_controls">
+		<label><%= &subs::ui('Condition') %></label>
+		<span id="weather_automation_condition" class="weather_muted"></span>
+		<button type="button" id="weather_automation_check"><%= &subs::ui('Check now') %></button>
+		<button type="button" id="weather_automation_add"><%= &subs::ui('Add automation') %></button>
+		<span id="weather_automation_status" class="weather_muted"></span>
+	</div>
+	<div id="weather_automation_list"></div>
+	<div id="weather_automation_form" class="weather_controls" style="display:none;">
+		<label for="weather_automation_match"><%= &subs::ui('When the condition contains') %></label>
+		<input id="weather_automation_match" list="weather_automation_match_options" placeholder="rain" autocomplete="off">
+		<datalist id="weather_automation_match_options"></datalist>
+		<label for="weather_automation_app"><%= &subs::ui('Start') %></label>
+		<input id="weather_automation_app" placeholder="raining" autocomplete="off">
+		<select id="weather_automation_action">
+			<option value="start"><%= &subs::ui('Start the app') %></option>
+			<option value="record"><%= &subs::ui('Record it') %></option>
+		</select>
+		<button type="button" id="weather_automation_save"><%= &subs::ui('Save') %></button>
+		<button type="button" id="weather_automation_cancel"><%= &subs::ui('Cancel') %></button>
+		<input type="hidden" id="weather_automation_uuid" value="">
+	</div>
+	<div class="weather_muted"><%= &subs::ui('The house records the condition it sees here. A rule starts its app when the condition contains the word, and stops the app when the condition no longer does. The rain, snow, fog, sun and thunder rules from the old weather app are carried over.') %></div>
+</div>

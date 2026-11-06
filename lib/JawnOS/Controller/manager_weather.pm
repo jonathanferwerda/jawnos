@@ -78,6 +78,9 @@ sub action_52011 {
 	$weather->{'source'} = $label;
 	$weather->{'source_at'} = $seen_at;
 	$weather->{'source_device'} = $device;
+	# The condition the person is looking at is the one the house acts on.
+	# The write is throttled and the rules run through appt_measure_writer.
+	eval { &subs::weather_observe_record($weather, {}) };
 	$c->render(json => $weather);
 }
 
@@ -121,6 +124,42 @@ sub action_52014 {
 		lon => $c->param('lon'),
 	}) };
 	$c->render(json => $result || { error => &subs::ui('Accuracy is unavailable.') });
+}
+
+# GET /manager/weather/automations
+sub action_52015 {
+	my $c = shift;
+	my $state = eval { &subs::weather_automation_state() };
+	$c->render(json => $state || { error => &subs::ui('Automations are unavailable.') });
+}
+
+# POST /manager/weather/automation
+sub action_52016 {
+	my $c = shift;
+	my $result = eval { &subs::weather_automation_save({
+		uuid => $c->param('uuid') || '',
+		match => $c->param('match') || '',
+		app => $c->param('app') || '',
+		action => $c->param('action') || 'start',
+		remove => ($c->param('remove') ? 1 : 0),
+	}) };
+	$c->render(json => $result || { error => &subs::ui('The automation was not saved.') });
+}
+
+# POST /manager/weather/observe
+sub action_52017 {
+	my $c = shift;
+	my $lat = $c->param('lat');
+	my $lon = $c->param('lon');
+	my $opts = { force => 1 };
+	if (defined $lat && defined $lon
+		&& $lat =~ /^-?\d+(?:\.\d+)?$/ && $lon =~ /^-?\d+(?:\.\d+)?$/
+		&& $lat >= -90 && $lat <= 90 && $lon >= -180 && $lon <= 180) {
+		$opts->{'lat'} = 0 + $lat;
+		$opts->{'lon'} = 0 + $lon;
+	}
+	my $result = eval { &subs::weather_observe_now($opts) };
+	$c->render(json => $result || { error => &subs::ui('The weather could not be checked.') });
 }
 
 

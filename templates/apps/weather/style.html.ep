@@ -1,4 +1,4 @@
-
+<style>
 .wind[app="weather"] #weather {
 	box-sizing: border-box;
 	width: 100%;
@@ -147,3 +147,17 @@
 .wind[app="weather"] .weather_match { color: #2e7d32; font-weight: 600; }
 .wind[app="weather"] .weather_miss { color: var(--danger, #c0392b); font-weight: 600; }
 .wind[app="weather"] .weather_warn { color: var(--danger, #c0392b); }
+.wind[app="weather"] .weather_automation_rule {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 8px;
+	border-top: 1px solid var(--line);
+	padding: 6px 2px;
+	font-size: 13px;
+}
+.wind[app="weather"] .weather_automation_rule:first-child { border-top: 0; }
+.wind[app="weather"] .weather_automation_rule .weather_automation_text { flex: 1 1 220px; min-width: 0; }
+.wind[app="weather"] .weather_automation_rule .weather_automation_actions { display: flex; gap: 4px; }
+.wind[app="weather"] #weather_automation_form { border: 1px dashed var(--line); border-radius: 9px; padding: 8px; }
+</style>

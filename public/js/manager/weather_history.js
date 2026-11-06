@@ -7,6 +7,7 @@ function weatherShowTab(name) {
 	$w.find('#weather_' + name + '_panel').show();
 	if (name === 'history' && !weatherHistoryLoaded) { weatherHistoryLoad(); }
 	if (name === 'accuracy' && !weatherAccuracyLoaded) { weatherAccuracyLoad(); }
+	if (name === 'automations' && !weatherAutomationLoaded) { weatherAutomationLoad(); }
 }
 
 // ---- history ----------------------------------------------------------------

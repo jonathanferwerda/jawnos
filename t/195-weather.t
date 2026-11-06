@@ -1,4 +1,4 @@
-# tests-for: lib/JawnOS/Domain/Weather.pm lib/JawnOS/Domain/WeatherHistory.pm lib/JawnOS/Controller/manager_weather.pm lib/JawnOS/Routes/manager_weather.pm templates/apps/weather.html.ep public/js/manager/weather.js
+# tests-for: lib/JawnOS/Domain/Weather.pm lib/JawnOS/Domain/WeatherHistory.pm lib/JawnOS/Domain/WeatherAutomation.pm lib/JawnOS/Controller/manager_weather.pm lib/JawnOS/Routes/manager_weather.pm templates/apps/weather.html.ep templates/apps/weather/automations.html.ep public/js/manager/weather.js public/js/manager/weather_history.js public/js/manager/weather_automation.js
 # covers:    The Weather app's pure parsers for Environment Canada and Open-Meteo,
 #            the country-to-provider choice, and the app's route/menu/help wiring.
 
@@ -17,6 +17,8 @@ use Time::Piece;
 my $root = repo_root();
 require "$root/lib/JawnOS/Domain/Weather.pm";
 require "$root/lib/JawnOS/Domain/WeatherHistory.pm";
+require "$root/lib/JawnOS/Domain/Format.pm";
+require "$root/lib/JawnOS/Domain/WeatherAutomation.pm";
 
 # --- Environment Canada: the nested {value}{en} shape ------------------------
 my $ec = {
@@ -227,5 +229,145 @@ like($core, qr/weather\s*=>\s*\[qw\(weatherMaker\)\]/, 'the entry function is st
 my $help = read_file("$root/perl/help/topics_apps.pl");
 like($help, qr/\$topic\{'weather'\}\s*=\s*\{/, 'the help topic exists');
 like($help, qr/app\s*=>\s*'weather'/, 'the topic names the app');
+like($help, qr/automations\.html\.ep/, 'the help topic claims the Automations tab');
+
+# --- weather automations -----------------------------------------------------
+my $source_am = {
+	condition => {
+		type => 'text',
+		value => 'cloudy',
+		cm => [
+			{ uuid => 'rule-rain', type => 'match', match => 'Rain', app => 'raining', action => 'start' },
+			{ uuid => 'rule-fog', type => 'match', match => 'fog', app => 'foggy', action => 'start' },
+			{ uuid => 'rule-snow', type => 'match', match => 'snow', app => 'snowing', action => 'start' },
+			{ uuid => 'blank', type => '', match => '', app => '', action => '' },
+		],
+	},
+};
+my $source_json = Mojo::JSON::encode_json($source_am);
+
+my $rules = subs::weather_automation_rules($source_am);
+is(scalar @{$rules}, 3, 'the blank configure row is not a rule');
+is($rules->[0]{'uuid'}, 'rule-rain', 'rules keep their uuid');
+
+my $clean = subs::weather_automation_normalize({ uuid => 'rule-clean', match => ' Rain ', app => 'Raining', action => '' });
+is($clean->{'match'}, 'rain', 'a match is trimmed and read as the stored state');
+is($clean->{'app'}, 'raining', 'an app name is unformatted');
+is($clean->{'action'}, 'start', 'an empty action starts the app');
+ok(!subs::weather_automation_normalize({ match => 'rain', app => '' }), 'a rule without an app is refused');
+is(subs::weather_automation_normalize({ uuid => 'rule-words', match => 'light rain', app => 'raining' })->{'match'}, 'light_rain', 'a two-word match reads as the stored state');
+
+my $added = subs::weather_automation_apply($rules, { uuid => 'rule-thunder', match => 'thunder', app => 'thunderstorm', action => 'start' });
+is(scalar @{$added}, 4, 'a new rule is appended');
+my $edited = subs::weather_automation_apply($added, { uuid => 'rule-rain', match => 'shower', app => 'raining', action => 'start' });
+is(scalar @{$edited}, 4, 'an edit by uuid replaces in place');
+my ($rain) = grep { $_->{'uuid'} eq 'rule-rain' } @{$edited};
+is($rain->{'match'}, 'shower', 'the edit replaced the match');
+my $removed = subs::weather_automation_apply($edited, { uuid => 'rule-fog', remove => 1 });
+is(scalar @{$removed}, 3, 'a remove drops its uuid');
+
+my $matches = subs::weather_automation_matches($rules, 'Light Rain');
+is(scalar @{$matches}, 1, 'a condition matches a substring rule');
+is($matches->[0]{'app'}, 'raining', 'and names the app');
+is(scalar @{ subs::weather_automation_matches($rules, 'Partly Cloudy') }, 0, 'a condition with no match wakes nothing');
+
+# --- the rules' home and the observation -------------------------------------
+{
+	my %store;
+	my $now = 1794000000000;
+	my @written;
+	no warnings 'redefine';
+	local *subs::rightNow = sub { $now };
+	local *subs::random_string_creator = sub { 'newrule' . scalar(@written) . 'xx' };
+	local *subs::cache_get = sub {
+		my ($q) = @_;
+		return $store{ join('|', $q->{'app'}, $q->{'context'}, $q->{'subcontext'} // '') };
+	};
+	local *subs::cache_set = sub {
+		my ($q, $value) = @_;
+		$store{ join('|', $q->{'app'}, $q->{'context'}, $q->{'subcontext'} // '') } = $value;
+		return 1;
+	};
+	local *subs::setting_grabber = sub {
+		my ($q) = @_;
+		return $source_json if $q->{'app'} eq 'weather' && $q->{'setting'} eq 'app_measures';
+		return '[\"rain\",\"snow\"]' if $q->{'app'} eq 'weather' && $q->{'setting'} eq 'seen_measures';
+		return $store{ 'setting|' . $q->{'app'} . '|' . $q->{'setting'} };
+	};
+	local *subs::setting_setter = sub {
+		my ($q) = @_;
+		$store{ 'setting|' . $q->{'app'} . '|' . $q->{'setting'} } = $q->{'value'};
+		push @written, $q;
+		return 1;
+	};
+	local *subs::controller_builder = sub { return bless {}, 'FakeController' };
+	local *Manager::appt_measure_writer = sub {
+		my ($c, $data) = @_;
+		$store{'measure'} = $data;
+		return 'measure-uuid';
+	};
+
+	my $state = subs::weather_automation_state();
+	is($state->{'app'}, 'weather_station', 'the rules live on the weather station app');
+	is(scalar @{$state->{'rules'}}, 3, 'the old rules are carried over');
+	is($state->{'condition_text'}, 'Cloudy', 'the last condition is shown as words');
+	ok($store{'setting|weather_station|app_measures'}, 'the station app gets the rules');
+	my $old = Mojo::JSON::decode_json($store{'setting|weather|app_measures'});
+	is(scalar @{$old->{'condition'}{'cm'}}, 0, 'the old London app no longer drives automations');
+
+	my $first = subs::weather_observe_record({ current => { condition => 'Light Rain' } }, {});
+	is($first->{'ok'}, 1, 'a condition is recorded');
+	is($store{'measure'}{'value'}, 'Light Rain', 'the raw condition is handed to the measure writer');
+	is($first->{'matched'}[0]{'app'}, 'raining', 'the matching rule is reported');
+
+	my $again = subs::weather_observe_record({ current => { condition => 'Light Rain' } }, {});
+	is($again->{'skipped'}, 'waiting', 'the same condition is not written again inside the window');
+
+	$now += 31 * 60 * 1000;
+	my $later = subs::weather_observe_record({ current => { condition => 'Light Rain' } }, {});
+	is($later->{'ok'}, 1, 'the same condition is written again after the window');
+
+	my $changed = subs::weather_observe_record({ current => { condition => 'Snow' } }, {});
+	is($changed->{'ok'}, 1, 'a changed condition is written at once');
+	is($changed->{'matched'}[0]{'app'}, 'snowing', 'the snow rule answers');
+
+	local *subs::weather_observe_now = sub { return { ok => 1, condition => 'Snow' } };
+	$store{'weather|observe|lock'} = { at => $now - 5 * 60 * 1000 };
+	is(subs::weather_observe_tick()->{'skipped'}, 'held', 'the lock holds a second machine');
+	delete $store{'weather|observe|lock'};
+	is(subs::weather_observe_tick()->{'ok'}, 1, 'the lock expires and the pass runs');
+}
+
+# --- the automation tab is wired into the app --------------------------------
+my $routes_auto = read_file("$root/lib/JawnOS/Routes/manager_weather.pm");
+like($routes_auto, qr{/manager/weather/automations\b}, 'the automation state route exists');
+like($routes_auto, qr{/manager/weather/automation\b}, 'the automation save route exists');
+like($routes_auto, qr{/manager/weather/observe\b}, 'the observe-now route exists');
+my $controller_auto = read_file("$root/lib/JawnOS/Controller/manager_weather.pm");
+like($controller_auto, qr/sub action_52015\b/, 'the automation state action exists');
+like($controller_auto, qr/sub action_52016\b/, 'the automation save action exists');
+like($controller_auto, qr/sub action_52017\b/, 'the observe-now action exists');
+like($controller_auto, qr/weather_observe_record/, 'the data route records the condition');
+
+my $page = read_file("$root/templates/apps/weather.html.ep");
+like($page, qr/data-tab="automations"/, 'the page has an Automations tab');
+like($page, qr{apps/weather/automations}, 'the page includes the Automations panel');
+my $auto_partial = read_file("$root/templates/apps/weather/automations.html.ep");
+like($auto_partial, qr/id="weather_automation_list"/, 'the panel has a rule list');
+like($auto_partial, qr/id="weather_automation_check"/, 'the panel can check now');
+my $core_auto = read_file("$root/lib/JawnOS/Manager/Core1_tables_hooks.pm");
+like($core_auto, qr{/js/manager/weather_automation\.js}, 'the lazy app loads the automation script');
+like($core_auto, qr{weather\s*=>\s*\[qw\(/js/manager/weather\.js /js/manager/weather_history\.js /js/manager/weather_automation\.js\)\]}, 'the automation script is in the Weather chunk');
+my $loader_auto = read_file("$root/lib/JawnOS/Domain/Loader.pm");
+like($loader_auto, qr/JawnOS::Domain::WeatherAutomation' for qw\([^)]*weather_observe_record/, 'the domain loader maps the observer');
+my $president = read_file("$root/perl/President.pl");
+like($president, qr/weather_observe_tick/, 'the utility attaches the weather observer');
+my $defaults = read_file("$root/perl/gb/01_state_and_defaults.pl");
+like($defaults, qr/'weather_observe'\s*=>\s*\{/, 'the observer has a scheduled slot');
+
+# --- the tab's own style is inside a <style> tag -----------------------------
+my $weather_style = read_file("$root/templates/apps/weather/style.html.ep");
+like($weather_style, qr/^<style>/m, 'the style partial opens a style element');
+like($weather_style, qr{</style>\s*$}m, 'and closes it, so the page does not print CSS');
 
 done_testing();

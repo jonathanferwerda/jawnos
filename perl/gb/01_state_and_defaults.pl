@@ -93,6 +93,10 @@ our $timeouts = {
 	'sms' => { interval => 30 * 10, toggle => 'off', timeout => 90, group => 'fast' },
 	'backups' => { interval => 1 * 60 * 60, toggle => 'on', timeout => 360, group => 'daily' },
 	'headless_browser' => { interval => 10 * 60, toggle => 'off', timeout => 370, group => 'fast' },
+	# The Weather app's automations need a condition even when nobody has the app
+	# open. Its own interval (not a pool): the old page was hourly, and half an
+	# hour is the shortest sensible ask of a public forecast service.
+	'weather_observe' => { interval => 30 * 60, toggle => 'on', timeout => 240 },
 	'telephone_check' => { interval => 1 * 60 * 5, toggle => 'off', timeout => 90, group => 'fast' },
 	'email_sender' => { interval => 1 * 30, toggle => 'off', timeout => 90, group => 'fast' },
 	'email_receiver' => { interval => 5 * 60, toggle => 'off', timeout => 390, group => 'fast' },

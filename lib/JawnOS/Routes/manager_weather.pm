@@ -10,6 +10,9 @@ sub routes {
 		[52012, 'get', '/manager/weather/history', 'action_52012'],
 		[52013, 'post', '/manager/weather/backfill', 'action_52013'],
 		[52014, 'get', '/manager/weather/accuracy', 'action_52014'],
+		[52015, 'get', '/manager/weather/automations', 'action_52015'],
+		[52016, 'post', '/manager/weather/automation', 'action_52016'],
+		[52017, 'post', '/manager/weather/observe', 'action_52017'],
 	);
 }
 

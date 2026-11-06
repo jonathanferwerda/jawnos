@@ -277,7 +277,7 @@ $topic{'ide'} = {
 
 $topic{'weather'} = {
 		title => 'Weather', category => 'apps', app => 'weather',
-		templates => [ 'templates/apps/weather.html.ep', 'templates/apps/weather/style.html.ep', 'templates/apps/weather/now.html.ep', 'templates/apps/weather/history.html.ep', 'templates/apps/weather/accuracy.html.ep', 'public/js/manager/weather.js', 'public/js/manager/weather_history.js' ],
+		templates => [ 'templates/apps/weather.html.ep', 'templates/apps/weather/style.html.ep', 'templates/apps/weather/now.html.ep', 'templates/apps/weather/history.html.ep', 'templates/apps/weather/accuracy.html.ep', 'templates/apps/weather/automations.html.ep', 'public/js/manager/weather.js', 'public/js/manager/weather_history.js', 'public/js/manager/weather_automation.js' ],
 		verified => '2026-11-06',
 		summary => 'Current conditions and a seven-day forecast for the phone, tablet or machine you choose.',
 		body => [
@@ -287,6 +287,7 @@ $topic{'weather'} = {
 			'The provider follows the coordinate. To force one, set the misc setting weather_provider to ec, nws or openmeteo; leave it empty for automatic.',
 			'The History tab reads the two old weather appointments back to the start of the house\'s records, folding the readings into one row per day with the high, low, mean, condition, wind and forecast humidity the old app logged. History source picks which of them to read; the app chooses the one whose city matches the forecast. Backfill history rebuilds that view. Actual high and low are the extremes of the readings the house kept, so they are sampled rather than a station daily extreme.',
 			'The Accuracy tab compares each daily forecast the Weather app recorded, made one to seven days before the date, with what the house actually measured. The summary gives the mean absolute error for the high and low and the condition match for each lead day; the detail table shows the selected lead. Forecast snapshots begin when this app first loads, because the old app kept only seven raw pages, not its forecasts. Choose the history source that matches the forecast city for a fair comparison.',
+			'The Automations tab keeps the rules that turn the weather into an app. A rule names a word the condition must contain, the app to start, and whether to start it or only record it. When the condition no longer contains the word, the app is stopped. The rain, snow, fog, sun and thunder rules from the old weather app are carried over the first time this tab or the Now tab reads a condition; the old page keeps its hourly readings but stops driving apps, so the rules follow the house rather than a city an hour away. The house checks on its own about every half hour, and Check now asks the provider immediately and runs the rules for the location on screen.',
 		],
 		steps => [
 			'Open Weather from the start menu.',
@@ -295,6 +296,7 @@ $topic{'weather'} = {
 			'Press Use browser location for a one-off coordinate, or Refresh to ask the provider again.',
 			'Open History to see the last eleven months of readings; press Backfill history if the view is empty.',
 			'Open Accuracy, choose a lead day and compare the forecast high, low and condition with the measured day.',
+			'Open Automations to see the rules carried over from the old weather app. Add a rule with the word to match, the app to start and Start the app, or press Check now to run the rules at once.',
 		],
 		related => [ 'configure', 'travel' ]
 	};
