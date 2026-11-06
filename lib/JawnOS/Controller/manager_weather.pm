@@ -14,17 +14,20 @@ our $log;
 # GET /manager/weather
 sub action_52010 {
 	my $c = shift;
-	my $me = &subs::signatorial_designer();
+	# A place saved from the map with no name stored a coordinate. Name it now,
+	# before the picker is built; the lookup is one request and then cached.
+	eval { &subs::weather_location_name_repair() };
 	my $fixes = eval { &subs::weather_device_fixes(24 * 60 * 60 * 1000) } || [];
-	my ($me_fix) = grep { ($_->{'signatorial'} || '') eq $me } @{$fixes};
-	my @others = grep { ($_->{'signatorial'} || '') ne $me } @{$fixes};
-	my $default = $me_fix ? 'me' : (@others ? $others[0]->{'signatorial'} : 'me');
+	my $places = eval { &subs::weather_place_groups($fixes) } || [];
 	my $locations = eval { &subs::weather_locations() } || [];
+	my $location_labels = eval { &subs::weather_location_labels() } || {};
+	my ($me_group) = grep { $_->{'me'} } @{$places};
+	my $default = $me_group ? 'me' : (@{$places} ? $places->[0]{'signatorial'} : 'me');
 	my $content = $c->render_to_string(
 		template => 'apps/weather',
-		me_fix => $me_fix,
-		devices => \@others,
+		places => $places,
 		locations => $locations,
+		location_labels => $location_labels,
 		default_device => $default,
 	);
 	my $contents = &window_maker({
@@ -192,9 +195,26 @@ sub action_52017 {
 # POST /manager/weather/location
 sub action_52018 {
 	my $c = shift;
+	my $lat = $c->param('lat');
+	my $lon = $c->param('lon');
+	my $name = $c->param('name') // '';
+	$name =~ s/^\s+|\s+$//g;
+	# A place with no name (or only the coordinate the map filled in) is named
+	# after what the weather service calls it. The person is waiting on Save, so
+	# a full lookup is allowed here; if it fails, storage keeps the coordinate
+	# and the picker shows a numbered "Saved location" instead.
+	if (!length($name) || &subs::weather_name_is_coordinate($name)) {
+		my $found = eval { &subs::weather_place_lookup($lat, $lon, { fetch => 1 }) } || '';
+		$name = $found if length $found;
+	}
 	my $saved = eval {
-		&subs::weather_location_save($c->param('name'), $c->param('lat'), $c->param('lon'));
+		&subs::weather_location_save($name, $lat, $lon);
 	};
+	if (ref $saved eq 'HASH') {
+		my $labels = eval { &subs::weather_location_labels() } || {};
+		$saved->{'labels'} = $labels;
+		$saved->{'name'} = $labels->{ $saved->{'uuid'} } // '';
+	}
 	$c->render(json => $saved || { error => &subs::ui('The location was not saved.') });
 }
 

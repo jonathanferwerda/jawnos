@@ -113,12 +113,12 @@ function weatherAutomationLocations(data) {
 // A rule can name a place the picker no longer lists (the device has not
 // reported a fix lately). Keep that value selectable so saving an edit does
 // not silently move the rule back to "Any location".
-function weatherAutomationLocationSet(selector, value) {
+function weatherAutomationLocationSet(selector, value, label) {
 	var $w = $('.wind[app="weather"]').last();
 	var $select = $w.find(selector);
 	value = value || '';
 	if (value && $select.find('option').filter(function() { return this.value === value; }).length === 0) {
-		$select.append($('<option>').val(value).text(value));
+		$select.append($('<option>').val(value).text(label || value));
 	}
 	$select.val(value);
 }
@@ -126,7 +126,7 @@ function weatherAutomationLocationSet(selector, value) {
 function weatherAutomationFormOpen(rule) {
 	var $w = $('.wind[app="weather"]').last();
 	$w.find('#weather_automation_uuid').val(rule ? (rule.uuid || '') : '');
-	weatherAutomationLocationSet('#weather_automation_location', rule ? (rule.location || '') : '');
+	weatherAutomationLocationSet('#weather_automation_location', rule ? (rule.location || '') : '', rule ? (rule.location_label || '') : '');
 	$w.find('#weather_automation_match').val(rule ? (rule.match || '') : '');
 	$w.find('#weather_automation_app').val(rule ? (rule.app || '') : '');
 	$w.find('#weather_automation_action').val(rule && rule.action === 'record' ? 'record' : 'start');
@@ -374,7 +374,7 @@ function weatherMeasureSentence(rule) {
 function weatherMeasureFormOpen(rule) {
 	var $w = $('.wind[app="weather"]').last();
 	$w.find('#weather_measure_uuid').val(rule ? (rule.uuid || '') : '');
-	weatherAutomationLocationSet('#weather_measure_location', rule ? (rule.location || '') : '');
+	weatherAutomationLocationSet('#weather_measure_location', rule ? (rule.location || '') : '', rule ? (rule.location_label || '') : '');
 	$w.find('#weather_measure_name').val(rule ? (rule.name || '') : '');
 	var forMs = rule ? (rule.for_ms || 0) : 0;
 	if (forMs && forMs % 3600000 === 0) {

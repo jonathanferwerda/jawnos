@@ -104,6 +104,20 @@ function weatherBrowser() {
 	}, { enableHighAccuracy: true, timeout: 15000, maximumAge: 60000 });
 }
 
+// The provider names the place it read for. Put that name in the picker so the
+// house reads places, not devices: a saved place the person named keeps its
+// name, while a group shown as "This device" becomes its city once we know it.
+function weatherPlaceLabel(data) {
+	var $w = $('.wind[app="weather"]').last();
+	if (!data || !data.location_name) { return; }
+	var $option = $w.find('#weather_device option:selected');
+	if (!$option.length) { return; }
+	var value = $option.val() || '';
+	if (value.indexOf('loc:') === 0) { return; }
+	var seen = $option.attr('data-seen') || '';
+	$option.text(data.location_name + (seen ? ' — ' + seen : ''));
+}
+
 function weatherRender(data) {
 	var $w = $('.wind[app="weather"]');
 	if (!data || data.error) {
@@ -118,6 +132,7 @@ function weatherRender(data) {
 	var place = data.location_name || '';
 	if (data.source) { place = place ? (place + ' · ' + data.source) : data.source; }
 	$w.find('#weather_place').text(place);
+	weatherPlaceLabel(data);
 	$w.find('#weather_temp').text(weatherTemp(cur.temperature));
 	$w.find('#weather_cond').text(cur.condition || '');
 	$w.find('#weather_glyph').text(cur.glyph || '🌡️');

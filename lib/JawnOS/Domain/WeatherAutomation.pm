@@ -24,6 +24,7 @@ no warnings 'experimental::args_array_with_signatures';
 no warnings 'once';
 
 use Mojo::JSON qw(decode_json encode_json);
+use Mojo::UserAgent;
 
 our $log;
 
@@ -517,7 +518,7 @@ sub weather_automation_state() {
 	my @conditions = grep { !$compass{$_} } @{ ref $seen eq 'ARRAY' ? $seen : [] };
 	my $last = eval { &cache_get({ app => 'weather', context => 'observe', subcontext => 'last' }) } || {};
 	my $locations = &weather_location_options();
-	my %location_label = map { $_->{'key'} => $_->{'label'} } @{$locations};
+	my $location_label = &weather_location_label_map();
 	# A person starts an app by name, so suggest the house's app catalog and the
 	# apps its rules already name. The settings table also holds one-off names
 	# (shopping items, photo files); offering its 2,000 rows would bury the app
@@ -545,7 +546,7 @@ sub weather_automation_state() {
 			map {
 				my $loc = $_->{'location'} // '';
 				+{ %{$_}, app_label => &subs::format_name($_->{'app'}),
-					location_label => (length $loc ? ($location_label{$loc} || $loc) : '') }
+					location_label => (length $loc ? ($location_label->{$loc} || $loc) : '') }
 			} @{$rules}
 		],
 		measures => &weather_measure_catalog(),
@@ -555,7 +556,7 @@ sub weather_automation_state() {
 				my %r = %{$_};
 				my $loc = $_->{'location'} // '';
 				$r{'app_label'} = &subs::format_name($_->{'app'}) if length($_->{'app'} // '');
-				$r{'location_label'} = length $loc ? ($location_label{$loc} || $loc) : '';
+				$r{'location_label'} = length $loc ? ($location_label->{$loc} || $loc) : '';
 				\%r;
 			} @{$measure_rules}
 		],
@@ -590,22 +591,179 @@ sub weather_rule_location_normalize($value) {
 
 sub weather_location_options() {
 	my @out = ({ key => '', label => 'Any location' });
-	my $me = &subs::signatorial_designer();
 	my $fixes = eval { &subs::weather_device_fixes(24 * 60 * 60 * 1000) } || [];
-	my %seen;
-	foreach my $fix (@{$fixes}) {
-		my $sig = $fix->{'signatorial'} // '';
-		next unless $sig =~ /^[A-Za-z0-9_-]+$/;
-		next if $seen{"dev:$sig"}++;
-		my $label = $fix->{'label'} || $sig;
-		push @out, { key => "dev:$sig", label => ($sig eq $me ? 'This device' : &subs::format_name($label)) };
+	foreach my $group (@{ &weather_place_groups($fixes) }) {
+		push @out, { key => 'dev:' . $group->{'signatorial'}, label => $group->{'label'} };
 	}
+	my $labels = &weather_location_labels();
 	foreach my $loc (@{ &weather_locations() }) {
 		my $uuid = $loc->{'uuid'} // '';
 		next unless $uuid =~ /^[A-Za-z0-9_-]+$/;
-		push @out, { key => "loc:$uuid", label => &subs::format_name($loc->{'name'} || $uuid) };
+		push @out, { key => "loc:$uuid", label => $labels->{$uuid} };
 	}
 	return \@out;
+}
+
+# ---- place names ------------------------------------------------------------
+# A coordinate is not a name. The weather provider answers with the city it is
+# reading for, so keep those answers: the picker and the rule sentences show
+# `Kitchener`, not 43.4500, -80.4900. The cache is by hundredth of a degree,
+# the same ground the forecast cache covers.
+sub weather_name_is_coordinate($name) {
+	return 0 unless defined $name && length $name;
+	return $name =~ /-?\d+\.\d+\s*,\s*-?\d+\.\d+\s*$/ ? 1 : 0;
+}
+
+sub weather_place_names() {
+	my $raw = eval { decode_json(&subs::setting_grabber({ app => 'weather', setting => 'place_names' }) // '') };
+	return ref $raw eq 'HASH' ? $raw : {};
+}
+
+sub weather_place_name($lat, $lon) {
+	return '' unless defined $lat && defined $lon;
+	my $names = &weather_place_names();
+	return $names->{ sprintf('%.2f,%.2f', $lat, $lon) } // '';
+}
+
+sub weather_place_name_remember($lat, $lon, $name) {
+	return 0 unless defined $lat && defined $lon && defined $name;
+	$name = "$name";
+	$name =~ s/^\s+|\s+$//g;
+	return 0 unless length $name && length $name <= 80;
+	return 0 if &weather_name_is_coordinate($name);
+	my $names = &weather_place_names();
+	my $key = sprintf('%.2f,%.2f', $lat, $lon);
+	return 0 if ($names->{$key} // '') eq $name;
+	$names->{$key} = $name;
+	&subs::setting_setter({ app => 'weather', setting => 'place_names', value => encode_json $names });
+	return 1;
+}
+
+# Ask the provider what the place is called. Environment Canada has a cheap city
+# search, so that is the page-render path; the other services only name the place
+# in a full forecast, which `fetch` allows for a save the person is waiting on.
+sub weather_place_lookup($lat, $lon, $opts = {}) {
+	return '' unless defined $lat && defined $lon;
+	my $known = &weather_place_name($lat, $lon);
+	return $known if length $known;
+	# The page-render path must not hang on a missing network. One miss buys six
+	# hours of quiet; a save the person waits on may always try.
+	unless ($opts->{'fetch'}) {
+		my $miss = eval { &subs::setting_grabber({ app => 'weather', setting => 'place_lookup_miss' }) } || 0;
+		return '' if $miss && $miss > &rightNow() - 6 * 3600 * 1000;
+	}
+	my $name = '';
+	my $provider = eval { &subs::weather_provider_for($lat, $lon) } || '';
+	if ($provider eq 'ec') {
+		my $ua = Mojo::UserAgent->new(connect_timeout => 3, inactivity_timeout => 4, request_timeout => 5);
+		$ua->insecure(1);
+		my $city = eval { &subs::weather_ec_find_city($lat, $lon, $ua) };
+		$name = ($city && $city->{'name'}) ? $city->{'name'} : '';
+	}
+	elsif ($opts->{'fetch'}) {
+		my $weather = eval { &subs::weather_fetch($lat, $lon) };
+		$name = ($weather && !$weather->{'error'}) ? ($weather->{'location_name'} // '') : '';
+	}
+	$name =~ s/^\s+|\s+$//g;
+	if (length $name) {
+		&weather_place_name_remember($lat, $lon, $name);
+	}
+	elsif (!$opts->{'fetch'}) {
+		eval { &subs::setting_setter({ app => 'weather', setting => 'place_lookup_miss', value => &rightNow() }) };
+	}
+	return $name;
+}
+
+# Machines at one place are one entry in the picker: they see the same weather.
+# A group keeps the current machine first (the fixes are sorted that way), so the
+# key is stable for the house's own device, and every device in it is listed by
+# the group's `devices_text` for the tooltip.
+sub weather_place_groups($fixes) {
+	my $me = &subs::signatorial_designer();
+	my (@groups, %by_key);
+	foreach my $fix (@{ ref $fixes eq 'ARRAY' ? $fixes : [] }) {
+		next unless ref $fix eq 'HASH';
+		my $sig = $fix->{'signatorial'} // '';
+		next unless $sig =~ /^[A-Za-z0-9_-]+$/;
+		my ($lat, $lon) = ($fix->{'lat'}, $fix->{'lon'});
+		next unless defined $lat && defined $lon;
+		my $key = sprintf('%.3f,%.3f', $lat, $lon);
+		my $group = $by_key{$key};
+		if (!$group) {
+			$group = {
+				key => $key, lat => $lat, lon => $lon,
+				signatorial => $sig, seen => 0, me => 0, devices => [],
+			};
+			push @groups, $group;
+			$by_key{$key} = $group;
+		}
+		my $label = $sig eq $me ? &subs::ui('This device') : &subs::format_name($fix->{'label'} || $sig);
+		push @{$group->{'devices'}}, { signatorial => $sig, label => $label };
+		$group->{'me'} = 1 if $sig eq $me;
+		$group->{'seen'} = $fix->{'seen'} if ($fix->{'seen'} || 0) > ($group->{'seen'} || 0);
+		$group->{'primary_label'} //= $label;
+	}
+	foreach my $group (@groups) {
+		my $place = &weather_place_name($group->{'lat'}, $group->{'lon'});
+		$group->{'place'} = $place;
+		$group->{'label'} = length $place
+			? $place
+			: ($group->{'me'} ? &subs::ui('This device') : $group->{'primary_label'});
+		$group->{'devices_text'} = join(', ', map { $_->{'label'} } @{$group->{'devices'}});
+	}
+	return \@groups;
+}
+
+# The display name of each saved place. A place saved without a name keeps a
+# coordinate in storage (so a second save on the same ground still finds it), but
+# nobody should read that: use the provider's name, and number the nameless.
+sub weather_location_labels() {
+	my (%out, $n);
+	$n = 0;
+	foreach my $loc (@{ &weather_locations() }) {
+		my $uuid = $loc->{'uuid'} // '';
+		next unless length $uuid;
+		my $name = $loc->{'name'} // '';
+		if (&weather_name_is_coordinate($name)) {
+			$name = &weather_place_name($loc->{'lat'}, $loc->{'lon'});
+		}
+		$name = &subs::format_name($name) if length $name;
+		if (!length $name) {
+			$n++;
+			$name = &subs::ui('Saved location') . ' ' . $n;
+		}
+		$out{$uuid} = $name;
+	}
+	return \%out;
+}
+
+# Every key a rule can hold, so a rule pinned to a device that is no longer the
+# group's first still reads as its place.
+sub weather_location_label_map() {
+	my %out;
+	my $fixes = eval { &subs::weather_device_fixes(24 * 60 * 60 * 1000) } || [];
+	foreach my $group (@{ &weather_place_groups($fixes) }) {
+		$out{ 'dev:' . $_->{'signatorial'} } = $group->{'label'} foreach @{$group->{'devices'}};
+	}
+	my $labels = &weather_location_labels();
+	$out{"loc:$_"} = $labels->{$_} for keys %{$labels};
+	return \%out;
+}
+
+# Name a saved place whose stored name is only a coordinate. Run once when the
+# page opens: Environment Canada answers in one request and the answer is kept,
+# so this is silent after the first time.
+sub weather_location_name_repair() {
+	my $fixed = 0;
+	foreach my $loc (@{ &weather_locations() }) {
+		next unless &weather_name_is_coordinate($loc->{'name'} // '');
+		my $known = &weather_place_name($loc->{'lat'}, $loc->{'lon'});
+		$known = &weather_place_lookup($loc->{'lat'}, $loc->{'lon'}) unless length $known;
+		next unless length $known;
+		&weather_location_save($known, $loc->{'lat'}, $loc->{'lon'});
+		$fixed++;
+	}
+	return $fixed;
 }
 
 # Every place a rule names, plus the newest fix when a global rule still exists.
@@ -688,6 +846,17 @@ sub weather_observe_record($weather, $opts) {
 		unless ref $weather eq 'HASH' && length($weather->{'current'}{'condition'} // '');
 	my $condition = $weather->{'current'}{'condition'};
 	my $location = &weather_rule_location_normalize($opts->{'location'});
+	my $place_name = $weather->{'location_name'} // '';
+	if (length $place_name) {
+		&weather_place_name_remember($weather->{'lat'}, $weather->{'lon'}, $place_name);
+		# A place saved from the map without a name stored its coordinate. Now
+		# that the provider has named it, keep the name instead.
+		if ($location =~ /^loc:(.+)$/) {
+			my $saved = &weather_location_find($1);
+			&weather_location_save($place_name, $saved->{'lat'}, $saved->{'lon'})
+				if $saved && &weather_name_is_coordinate($saved->{'name'} // '');
+		}
+	}
 	my $values = &weather_measure_values($weather);
 	my $am = &weather_observe_prepare();
 	my $condition_rules = &weather_automation_rules($am);

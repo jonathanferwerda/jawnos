@@ -61,9 +61,6 @@ function weatherPickerBuild($w, start) {
 			weatherPickerPicked = { lat: lat, lon: lon };
 			var $w = $('.wind[app="weather"]').last();
 			$w.find('#weather_map_save').prop('disabled', false);
-			if (!$.trim($w.find('#weather_map_name').val() || '')) {
-				$w.find('#weather_map_name').val(jawnosT('Location') + ' ' + lat.toFixed(4) + ', ' + lon.toFixed(4));
-			}
 			weatherPickerMap.draw();
 		});
 		weatherPickerMap.onDraw(weatherPickerFlag);
@@ -141,7 +138,7 @@ function weatherPickerSave() {
 				button.prop('disabled', false);
 				return;
 			}
-			weatherLocationOptions($w, response.locations || []);
+			weatherLocationOptions($w, response.locations || [], response.labels || {});
 			weatherPickerClose();
 			$w.find('#weather_status').text(jawnosT('Location saved.'));
 		},
@@ -152,7 +149,8 @@ function weatherPickerSave() {
 	});
 }
 
-function weatherLocationOptions($w, locations) {
+function weatherLocationOptions($w, locations, labels) {
+	labels = labels || {};
 	var select = $w.find('#weather_device');
 	var current = select.val();
 	var group = select.find('optgroup[data-weather-locations="1"]');
@@ -171,7 +169,7 @@ function weatherLocationOptions($w, locations) {
 			.val('loc:' + (loc.uuid || ''))
 			.attr('data-lat', loc.lat)
 			.attr('data-lon', loc.lon)
-			.text(loc.name || ''));
+			.text(labels[loc.uuid] || loc.name || ''));
 	}
 	if (current) { select.val(current); }
 }

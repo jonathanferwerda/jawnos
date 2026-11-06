@@ -21,6 +21,11 @@ require "$root/lib/JawnOS/Domain/WeatherHistory.pm";
 require "$root/lib/JawnOS/Domain/Format.pm";
 require "$root/lib/JawnOS/Domain/WeatherAutomation.pm";
 
+# The domain layer reads its user-facing labels through subs::ui, which the real
+# manager answers from language.pl. This test only needs the English it passes in.
+no warnings 'redefine';
+*subs::ui = sub { return defined $_[0] ? "$_[0]" : ''; };
+
 # --- Environment Canada: the nested {value}{en} shape ------------------------
 my $ec = {
 	properties => {
@@ -706,6 +711,125 @@ is(subs::weather_rule_location_normalize(undef), '', 'no location is the old glo
 	ok(!subs::weather_location_save('Nowhere', 200, 10), 'an impossible latitude is refused');
 }
 
+# --- a place reads as a name, and machines at one place are one entry --------
+is(subs::weather_name_is_coordinate('Location 46.2260, -63.0998'), 1, 'the map\'s coordinate fill is not a name');
+is(subs::weather_name_is_coordinate('46.2260, -63.0998'), 1, 'a bare coordinate is not a name');
+is(subs::weather_name_is_coordinate('Cottage'), 0, 'a real name is a name');
+is(subs::weather_name_is_coordinate(''), 0, 'an empty name is not a coordinate either');
+
+{
+	my %store;
+	no warnings 'redefine';
+	local *subs::setting_grabber = sub {
+		my ($q) = @_;
+		return $store{ 'setting|' . $q->{'app'} . '|' . $q->{'setting'} };
+	};
+	local *subs::setting_setter = sub {
+		my ($q) = @_;
+		$store{ 'setting|' . $q->{'app'} . '|' . $q->{'setting'} } = $q->{'value'};
+		return 1;
+	};
+	is(subs::weather_place_name(43.45, -80.49), '', 'a place has no name until one is learned');
+	is(subs::weather_place_name_remember(43.45, -80.49, ' Kitchener '), 1, 'the provider name is remembered');
+	is(subs::weather_place_name(43.451, -80.492), 'Kitchener', 'a coordinate near it shares the name');
+	is(subs::weather_place_name_remember(43.45, -80.49, 'Location 43.4500, -80.4900'), 0, 'a coordinate is never stored as a name');
+}
+
+{
+	no warnings 'redefine';
+	local *subs::signatorial_designer = sub { 'phone' };
+	local *subs::setting_grabber = sub { return undef };
+	my $groups = subs::weather_place_groups([
+		{ signatorial => 'phone', label => 'Phone', lat => 43.4500, lon => -80.4900, seen => 100 },
+		{ signatorial => 'laptop', label => 'Laptop', lat => 43.4502, lon => -80.4901, seen => 90 },
+		{ signatorial => 'cabin', label => 'Cabin phone', lat => 45.0000, lon => -79.0000, seen => 80 },
+	]);
+	is(scalar @{$groups}, 2, 'machines at one place are one entry');
+	is($groups->[0]{'signatorial'}, 'phone', 'this device keys its group');
+	ok($groups->[0]{'me'}, 'and the group knows it is this device');
+	is($groups->[0]{'label'}, 'This device', 'with no name it reads as this device');
+	is($groups->[0]{'devices_text'}, 'This device, Laptop', 'the tooltip lists the machines in it');
+	is($groups->[0]{'seen'}, 100, 'the group keeps the newest fix');
+	is($groups->[1]{'signatorial'}, 'cabin', 'a machine elsewhere is its own entry');
+}
+
+{
+	no warnings 'redefine';
+	local *subs::signatorial_designer = sub { 'phone' };
+	local *subs::setting_grabber = sub {
+		my ($q) = @_;
+		return Mojo::JSON::encode_json({ '43.45,-80.49' => 'Kitchener' }) if $q->{'setting'} eq 'place_names';
+		return undef;
+	};
+	my $groups = subs::weather_place_groups([
+		{ signatorial => 'phone', label => 'Phone', lat => 43.4500, lon => -80.4900, seen => 100 },
+	]);
+	is($groups->[0]{'label'}, 'Kitchener', 'a learned place shows its name instead of the device');
+}
+
+{
+	my $locs = Mojo::JSON::encode_json([
+		{ uuid => 'a', name => 'Cottage', lat => 45, lon => -79 },
+		{ uuid => 'b', name => '46.2260, -63.0998', lat => 46.226, lon => -63.0998 },
+		{ uuid => 'c', name => 'Location 44.0000, -80.0000', lat => 44, lon => -80 },
+	]);
+	no warnings 'redefine';
+	local *subs::setting_grabber = sub {
+		my ($q) = @_;
+		return $locs if $q->{'app'} eq 'weather' && $q->{'setting'} eq 'locations';
+		return Mojo::JSON::encode_json({ '46.23,-63.10' => 'Charlottetown' }) if $q->{'setting'} eq 'place_names';
+		return undef;
+	};
+	my $labels = subs::weather_location_labels();
+	is($labels->{'a'}, 'Cottage', 'a place the person named keeps that name');
+	is($labels->{'b'}, 'Charlottetown', 'a coordinate name reads as the provider place');
+	is($labels->{'c'}, 'Saved location 1', 'a nameless place is numbered, never a coordinate');
+}
+
+# --- recording a place names it, and renames a saved coordinate --------------
+{
+	my %store;
+	my %cache;
+	my $now = 1794010000000;
+	$store{'setting|weather|locations'} = Mojo::JSON::encode_json([
+		{ uuid => 'abc', name => '43.4500, -80.4900', lat => 43.45, lon => -80.49 },
+	]);
+	no warnings 'redefine';
+	local *subs::rightNow = sub { $now };
+	local *subs::random_string_creator = sub { 'newrule' };
+	local *subs::setting_grabber = sub {
+		my ($q) = @_;
+		return $store{ 'setting|' . $q->{'app'} . '|' . $q->{'setting'} };
+	};
+	local *subs::setting_setter = sub {
+		my ($q) = @_;
+		$store{ 'setting|' . $q->{'app'} . '|' . $q->{'setting'} } = $q->{'value'};
+		return 1;
+	};
+	local *subs::cache_get = sub {
+		my ($q) = @_;
+		return $cache{ join('|', $q->{'app'}, $q->{'context'}, $q->{'subcontext'} // '') };
+	};
+	local *subs::cache_set = sub {
+		my ($q, $value) = @_;
+		$cache{ join('|', $q->{'app'}, $q->{'context'}, $q->{'subcontext'} // '') } = $value;
+		return 1;
+	};
+	local *subs::controller_builder = sub { return bless {}, 'FakeController' };
+	local *Manager::appt_measure_writer = sub { return 'measure-uuid' };
+	my $result = subs::weather_observe_record({
+		current => { condition => 'Rain' },
+		location_name => 'Kitchener',
+		lat => 43.45, lon => -80.49,
+	}, { location => 'loc:abc' });
+	is($result->{'ok'}, 1, 'the observation is recorded');
+	my $names = Mojo::JSON::decode_json($store{'setting|weather|place_names'} // '{}');
+	is($names->{'43.45,-80.49'}, 'Kitchener', 'the reading names its place');
+	my $locs = Mojo::JSON::decode_json($store{'setting|weather|locations'});
+	is($locs->[0]{'name'}, 'Kitchener', 'and a coordinate-named saved place takes the name');
+	is($locs->[0]{'uuid'}, 'abc', 'keeping its uuid');
+}
+
 # --- the one-day history reads hourly ----------------------------------------
 {
 	my $now = 1794010000000;
@@ -812,6 +936,18 @@ like($auto_js, qr/data\.apps/, 'and the app suggestions');
 like($auto_js, qr/location_label/, 'a saved rule shows its place in the sentence');
 like($loader_auto, qr/weather_rule_location_normalize/, 'the domain loader maps the place normaliser');
 like($loader_auto, qr/weather_rule_locations/, 'and the places the tick covers');
+
+# --- the picker reads places, not coordinates --------------------------------
+like($page, qr/\$places/, 'the page is handed place groups');
+like($page, qr/data-seen=/, 'an option keeps the fix time for the place label');
+like($page, qr/devices_text/, 'and names the machines in a group for the tooltip');
+like($page, qr/location_labels/, 'a saved place is shown by its label');
+my $weather_js = read_file("$root/public/js/manager/weather.js");
+like($weather_js, qr/weatherPlaceLabel/, 'the app names the selected place from the provider');
+unlike($map_js, qr/toFixed\(4\)/, 'the map does not fill a coordinate as the name');
+like($map_js, qr/response\.labels/, 'the map uses the named place after a save');
+like($loader_auto, qr/weather_place_groups/, 'the domain loader maps the place groups');
+like($loader_auto, qr/weather_location_labels/, 'and the saved-place labels');
 
 # --- the tab's own style is inside a <style> tag -----------------------------
 my $weather_style = read_file("$root/templates/apps/weather/style.html.ep");

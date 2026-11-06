@@ -1,27 +1,27 @@
 <%
-	my $dev = $devices || [];
+	my $places = $places || [];
 	my $locs = $locations || [];
+	my $labels = $location_labels || {};
 	my $default = $default_device || 'me';
-	my $me_seen = ($me_fix && $me_fix->{'seen'}) ? &subs::weather_stamp_text($me_fix->{'seen'}) : '';
+	my $has_me = grep { $_->{'me'} } @{$places};
 %>
 <%= include 'apps/weather/style' %>
 <div id="weather">
 	<div id="weather_toolbar">
 		<label for="weather_device"><%= &subs::ui('Location') %></label>
 		<select id="weather_device">
-			<option value="me" data-lat="<%= $me_fix ? $me_fix->{'lat'} : '' %>" data-lon="<%= $me_fix ? $me_fix->{'lon'} : '' %>" <% if ($default eq 'me') { %>selected<% } %>>
-				<%= &subs::ui('This device') %><% if (length $me_seen) { %> — <%= $me_seen %><% } %>
-			</option>
-			<% foreach my $d ( @{$dev} ) { %>
-				<% my $seen = $d->{'seen'} ? &subs::weather_stamp_text($d->{'seen'}) : ''; %>
-				<option value="<%= $d->{'signatorial'} %>" data-lat="<%= $d->{'lat'} %>" data-lon="<%= $d->{'lon'} %>" <% if ($default eq $d->{'signatorial'}) { %>selected<% } %>>
-					<%= $d->{'label'} %><% if (length $seen) { %> — <%= $seen %><% } %>
-				</option>
+			<% if (!$has_me) { %>
+				<option value="me" data-lat="" data-lon="" <% if ($default eq 'me') { %>selected<% } %>><%= &subs::ui('This device') %></option>
+			<% } %>
+			<% foreach my $g ( @{$places} ) { %>
+				<% my $value = $g->{'me'} ? 'me' : $g->{'signatorial'}; %>
+				<% my $seen = $g->{'seen'} ? &subs::weather_stamp_text($g->{'seen'}) : ''; %>
+				<option value="<%= $value %>" data-lat="<%= $g->{'lat'} %>" data-lon="<%= $g->{'lon'} %>" data-seen="<%= $seen %>" title="<%= $g->{'devices_text'} %>" <% if ($default eq $value) { %>selected<% } %>><%= $g->{'label'} %><% if (length $seen) { %> — <%= $seen %><% } %></option>
 			<% } %>
 			<% if (@{$locs}) { %>
 				<optgroup label="<%= &subs::ui('Saved locations') %>" data-weather-locations="1">
 					<% foreach my $loc ( @{$locs} ) { %>
-						<option value="loc:<%= $loc->{'uuid'} %>" data-lat="<%= $loc->{'lat'} %>" data-lon="<%= $loc->{'lon'} %>"><%= $loc->{'name'} %></option>
+						<option value="loc:<%= $loc->{'uuid'} %>" data-lat="<%= $loc->{'lat'} %>" data-lon="<%= $loc->{'lon'} %>"><%= $labels->{ $loc->{'uuid'} } // $loc->{'name'} %></option>
 					<% } %>
 				</optgroup>
 			<% } %>
