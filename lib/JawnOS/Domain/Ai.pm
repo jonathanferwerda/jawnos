@@ -423,7 +423,7 @@ sub name_from_transcript {
 	my $name = $text;
 	$name =~ s/^\s*[-\x{2013}\x{2014}]\s*//;
 	$name =~ s/^\s*(?:well|okay|ok|hi|hello),?\s+//i;
-	$name =~ s/^\s*(?:this is|that'?s|it'?s|i'?m|i am|my name is|you'?re speaking (?:to|with)|speaking to|here is|call me)\s+//i;
+	$name =~ s/^\s*(?:this is|the is|that'?s|it'?s|i'?m|i am|my name is|you'?re speaking (?:to|with)|speaking to|here is|call me)\s+//i;
 	$name =~ s/\s+(?:speaking|here|on the line)[\s.,!?;:]*$//i;
 	$name =~ s/[\s.,!?;:]+$//;
 	$name =~ s/^\s+//;

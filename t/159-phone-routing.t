@@ -110,6 +110,10 @@ is(&subs::name_from_transcript("It's Jon speaking."), 'Jon',
 	'and a caller who says it that way');
 is(&subs::name_from_transcript('My name is Ada Lovelace'), 'Ada Lovelace',
 	'a full name keeps both words');
+# a narrowband link turns "this is" into "the is" often enough that a real
+# screened call filed the caller as "the is john"
+is(&subs::name_from_transcript('the is john'), 'john',
+	'and the narrowband mishearing of the same sentence');
 is(&subs::name_from_transcript('Smith'), 'Smith', 'a bare name is left alone');
 is(&subs::name_from_transcript(''), '', 'nothing said is no name');
 like($reception, qr/whisper_name_transcribe/,
