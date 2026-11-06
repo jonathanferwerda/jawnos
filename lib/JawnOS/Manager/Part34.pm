@@ -156,13 +156,15 @@ sub embedded_grabber($c,$timestamp) {
 				threshold => $op_d->{$syl . $n}->{'threshold'},
 				named_measure => $op_d->{$syl . $n}->{'named_measure'},
 				comparison => $op_d->{$syl . $n}->{'comparison'},
-				name => $op_d->{$syl . $n}->{'name'}
+				name => $op_d->{$syl . $n}->{'name'},
+				media_kind => $op_d->{$syl . $n}->{'media_kind'},
+				media_machine => $op_d->{$syl . $n}->{'media_machine'}
 			};
 		}
 	}
 
 	my $movements = {};
-	foreach my $m ( qw/usual command kill record start toggle measure/ ) {
+	foreach my $m ( qw/usual command kill record start toggle measure video audio/ ) {
 		$movements->{$m} = {
 			formatted_name => &subs::format_name($m),
 			mov => $m
@@ -287,7 +289,7 @@ sub embedded_pin_grabber($data) {
 	my $destinations = [ grep { $_->{'hostname'} && ($_->{'connection'} || 'active') eq 'active' } @{ &subs::remote_machine_lister({}) || [] } ];
 	my $settings;
 	my $movements;
-	foreach my $m ( qw/usual command kill record start toggle measure/ ) {
+	foreach my $m ( qw/usual command kill record start toggle measure video audio/ ) {
 		$movements->{$m} = {
 			formatted_name => &subs::format_name($m),
 			mov => $m
@@ -321,7 +323,9 @@ sub embedded_pin_grabber($data) {
 			threshold => $op_d->{$syl . $n}->{'threshold'},
 			named_measure => $op_d->{$syl . $n}->{'named_measure'},
 			comparison => $op_d->{$syl . $n}->{'comparison'},
-			name => $op_d->{$syl . $n}->{'name'}
+			name => $op_d->{$syl . $n}->{'name'},
+			media_kind => $op_d->{$syl . $n}->{'media_kind'},
+			media_machine => $op_d->{$syl . $n}->{'media_machine'}
 		};
 
 		my $c = &subs::controller_builder();

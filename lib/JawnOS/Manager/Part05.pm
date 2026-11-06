@@ -89,18 +89,47 @@ sub appointment_writer($c,$app) {
 	my $timestamp = $app->{'timestamp'};
 	my $server_time = $app->{'server_time'};
 	$app->{'device'} = $device;
+	# A media press names the source and the machine that captures on the press
+	# itself. They are not appointment columns: keep them out of the insert and
+	# update below (like remote_address and source_chip_id) and let the record
+	# branch write them into the row's data JSON, where the Alarm loop reads them.
+	my $pressed_recorder = delete $app->{'recorder'};
+	my $pressed_machine = delete $app->{'machine'};
+	my $pressed_camera = delete $app->{'camera'};
 	# a stop that names its session (managerReset sends the open session's uuid) is
 	# remembered before the uuid is minted, so the stop closes exactly that row
 	my $stop_target = $app->{'uuid'};
 	$app->{'uuid'} = $app->{'uuid'} || &subs::random_string_creator(90);
-	if ($app->{'timestamp'} <= $app->{'server_time'} + 1000) {
-		$app->{'seen'} = 'yes';
-	}
 	my ($db,$database,$sql) = &subs::database_grabber();
 	my $init = &subs::setting_initializer($app->{'app'},$app->{'timestamp'});
 	$app->{'app'} = $init->{'app'};
 	($app->{'app'},undef) = &subs::typesetter($app->{'app'});
 	my $settings = &subs::settings_grabber({ app => $app->{'app'} });
+	# A capture row belongs to the Alarm loop: the machine named in its data claims
+	# it and starts the recorder. Stamped seen here it would never be claimed, so
+	# video/audio/screen rows stay unseen; a press that names system audio stays
+	# unseen too, so the chosen machine's Alarm runs record_audio there. A plain
+	# record press that merely follows the app's setting keeps the inline start.
+	my $named_source = &record_source_param($pressed_recorder);
+	my $capture_source = (($app->{'type'} || '') eq 'record')
+		? ($named_source || $settings->{'record'} || '')
+		: '';
+	if ($capture_source =~ /^(?:video|video_front|audio|screen)$/
+		|| ($named_source && $named_source eq 'system')) {
+		$app->{'seen'} = undef;
+	}
+	elsif ($app->{'timestamp'} <= $app->{'server_time'} + 1000) {
+		$app->{'seen'} = 'yes';
+	}
+	# Write the row complete. A media row that syncs before its data is set would
+	# reach another machine with no machine/recorder in it, and that machine's
+	# Alarm would claim the capture too. The press's own source and machine go on
+	# the row before the insert; the record branch below writes the same value.
+	if (($app->{'type'} || '') eq 'record' && $named_source) {
+		my $preset = { recorder => $named_source, machine => ($pressed_machine || '') };
+		$preset->{'camera'} = $pressed_camera if defined $pressed_camera && $named_source =~ /^video/;
+		$app->{'data'} = encode_json $preset;
+	}
 	if ($app->{'type'} eq 'usual' || $app->{'type'} eq 'start' || $app->{'type'} eq 'record') {
 		&subs::db_insert('appointments', $app);
 		$appt_header = &subs::appt_header_printer({ app => $app->{'app'}, timestamp => $app->{'timestamp'} });
@@ -124,21 +153,24 @@ sub appointment_writer($c,$app) {
 	if ($app->{'type'} eq 'record') {
 		# a press may name the source on the row itself (see manager_reset); a
 		# scheduled or synced record keeps the app's setting
-		my $recording_type = &record_source_param($app->{'recorder'})
+		my $recording_type = &record_source_param($pressed_recorder)
 			|| &subs::setting_grabber({ app => $app->{'app'}, setting => 'record' })
 			|| 'system';
-		my $dat = { recorder => $recording_type };
+		my $dat = { recorder => $recording_type, machine => ($pressed_machine || '') };
 
 		if ($recording_type eq 'video') {
 			$app->{'seen'} = undef;
-		#	$dat->{'camera'} = $camera;
-
+			$dat->{'camera'} = $pressed_camera if defined $pressed_camera;
 		}
 		elsif ($recording_type eq 'audio') {
 			$app->{'seen'} = undef;
 		}
 		elsif ($recording_type eq 'screen') {
 			$app->{'seen'} = undef;
+		}
+		elsif ($recording_type eq 'video_front') {
+			$app->{'seen'} = undef;
+			$dat->{'camera'} = defined $pressed_camera ? $pressed_camera : 1;
 		}
 		elsif ($recording_type eq 'security') {
 			&record_video({ app => $app->{'app'}, uuid => $app->{'uuid'}, timestamp => $app->{'timestamp'} }) if $app->{'seen'} eq 'yes';
@@ -192,28 +224,49 @@ sub appointment_writer($c,$app) {
 			$app->{'type'} = 'stop';
 			$app->{'duration'} = $appt->{'timestamp'} - $app->{'timestamp'};
 			$app->{'uuid'} = $appt->{'uuid'};
+			# A capture that ran on another machine is stopped there, not here. The
+			# stop is relayed before the row is closed below, so the named machine
+			# still finds its own copy open and sends its own stop. The row's data
+			# names both the recorder and the machine (see the record branch above).
+			my $stop_data = ($appt->{'type'} || '') eq 'record'
+				? (eval { return decode_json $appt->{'data'} } || {})
+				: {};
+			my $capture_machine = $stop_data->{'machine'} || '';
+			my $stop_remote = ($capture_machine ne '' && $capture_machine ne &subs::signatorial_designer()) ? 1 : 0;
+			if ($stop_remote) {
+				&subs::destination_relay({
+					destination => $capture_machine,
+					app => $app->{'app'},
+					movement => 'stop',
+					timestamp => $app->{'timestamp'},
+					uuid => $appt->{'uuid'},
+					recorder => $stop_data->{'recorder'} || '',
+					camera => $stop_data->{'camera'},
+					machine => $capture_machine
+				});
+			}
 			&subs::db_update('appointments', { stop_timestamp => $app->{'timestamp'}, stop_seen => 'yes', duration => $app->{'duration'}, type => $app->{'type'}, server_time => &subs::rightNow() }, { uuid => $appt->{'uuid'}, app => $app->{'app'} });
 			$db_written = 1;
 			$appt_header = &subs::appt_header_printer({ app => $app->{'app'}, timestamp => $app->{'timestamp'} });
 			my $recording_type = &subs::setting_grabber({ app => $app->{'app'}, setting => 'record' }) || 'system';
 			if ($appt->{'type'} eq 'record') {
-				my $dat = eval { return decode_json $appt->{'data'} } || {};
+				my $dat = $stop_data;
 
 				if ($dat->{'recorder'} eq 'security') {
 					if ($app->{'seen'} eq 'yes') {
-						&record_video_stop({ app => $app->{'app'}, timestamp => $appt->{'timestamp'}, uuid => $appt->{'uuid'} }) if $appt->{'uuid'};
+						&record_video_stop({ app => $app->{'app'}, timestamp => $appt->{'timestamp'}, uuid => $appt->{'uuid'} }) if $appt->{'uuid'} && !$stop_remote;
 						next;
 					}
 					else { $app->{'type'} = 'record'; };
 				}
 				elsif ($dat->{'recorder'} eq 'system') {
 					if ($app->{'seen'} eq 'yes') {
-						&record_audio_stop({ app => $appt->{'app'}, timestamp => $appt->{'timestamp'}, uuid => $appt->{'uuid'} }) if $appt->{'uuid'};
+						&record_audio_stop({ app => $appt->{'app'}, timestamp => $appt->{'timestamp'}, uuid => $appt->{'uuid'} }) if $appt->{'uuid'} && !$stop_remote;
 						next;
 					}
 					else { $a->{'type'} = 'record'; };
 				}
-				else {
+				elsif (!$stop_remote) {
 					&Websocket::send('music', { console => 'jpStop(\'' . $appt->{'app'} . '\',\'' . $dat->{'recorder'} . '\',\'' . $appt->{'uuid'} . '\');' });
 				}
 			}
@@ -297,11 +350,13 @@ sub appointment_writer($c,$app) {
 			if ($app->{'type'} eq 'record') {
 				my $jdata;
 
-				my $recording_type = &subs::setting_grabber({ app => $app->{'app'}, setting => 'record' }) || 'system';
-				my $dat = { recorder => $recording_type };
+				my $recording_type = &record_source_param($pressed_recorder)
+					|| &subs::setting_grabber({ app => $app->{'app'}, setting => 'record' })
+					|| 'system';
+				my $dat = { recorder => $recording_type, machine => ($pressed_machine || '') };
 				if ($recording_type eq 'video') {
 					$app->{'seen'} = undef;
-					#$dat->{'camera'} = $camera;
+					$dat->{'camera'} = $pressed_camera if defined $pressed_camera;
 				}
 				elsif ($recording_type eq 'audio') {
 					$app->{'seen'} = undef;
@@ -310,7 +365,8 @@ sub appointment_writer($c,$app) {
 					$app->{'seen'} = undef;
 				}
 				elsif ($recording_type eq 'video_front') {
-				#	$dat->{'camera'} = $camera;
+					$app->{'seen'} = undef;
+					$dat->{'camera'} = defined $pressed_camera ? $pressed_camera : 1;
 				}
 				elsif ($recording_type eq 'security') {
 					&record_video({ app => $app->{'app'}, uuid => $app->{'uuid'}, timestamp => $app->{'timestamp'} }) if $app->{'seen'} eq 'yes';

@@ -310,6 +310,12 @@ sub manager_reset($c) {
 		# person watching the header cannot.
 		($appt_header, $header_appts) = &subs::appt_header_printer({ app => $app, timestamp => $timestamp, skip_toggle => ($seen eq 'yes' ? 1 : 0) });
 		$seg->('hdr');
+		# The relay/toggle and the automation are driven here, inline: they schedule
+		# hardware jobs on this process's loop, and a forked child has no live loop to
+		# run them on - the press started the appointment but never threw the switch.
+		&subs::setting_setter({ app => $app, setting => 'toggle', value => 'on' }) if $seen eq 'yes';
+		&subs::intelligent_automation_toggle({ appt_uuid => $uuid, app => $app, 'state' => 'on', timestamp => $timestamp });
+		&subs::intelligent_automation_toggle({ appt_uuid => $uuid, app => $app, 'state' => 'off', timestamp => $stop_timestamp }) if $stop_timestamp;
 		# The row and its header are out. The default model/option sessions can start
 		# (or stop) a chain of child appointments and take seconds; they run in their
 		# own process so the reply and this worker are free.
@@ -324,12 +330,8 @@ sub manager_reset($c) {
 		my $fork_unit = $unit;
 		my $fork_quantity = $quantity;
 		my $fork_manufacturer = $manufacturer;
-		my $fork_stop_timestamp = $stop_timestamp;
-		my $fork_seen = $seen;
 		&subs::subprocessor(sub {
 			Mojo::IOLoop->reset;
-			&subs::setting_setter({ app => $fork_app, setting => 'toggle', value => 'on' }) if $fork_seen eq 'yes';
-			&subs::intelligent_automation_toggle({ appt_uuid => $fork_uuid, app => $fork_app, 'state' => 'on', timestamp => $fork_timestamp });
 			my ($model,$options,$jmodel,$joptions) = &subs::usual_appointment_maker({
 				app => $fork_app,
 				uuid => $fork_uuid,
@@ -359,9 +361,6 @@ sub manager_reset($c) {
 			}
 			&subs::db_update('appointments', { server_time => &subs::rightNow(), model => $jmodel, options => $joptions, unit => $fork_unit, quantity => $fork_quantity, manufacturer => $fork_manufacturer }, { uuid => $fork_uuid, app => $fork_app });
 			&appointment_stock_movement($fork_c, $fork_app, $fork_type, $fork_quantity, $fork_unit, $fork_timestamp, $fork_uuid) if $fork_type eq 'record';
-			if ($fork_stop_timestamp) {
-				&subs::intelligent_automation_toggle({ appt_uuid => $fork_uuid, app => $fork_app, 'state' => 'off', timestamp => $fork_stop_timestamp });
-			}
 		}, { name => 'appointment models' });
 		$seg->('models');
 

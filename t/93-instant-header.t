@@ -62,6 +62,27 @@ ok($start_insert >= 0 && $start_header > $start_insert,
 	'the start header follows the row write');
 ok($start_header < $start_toggle && $start_header < $start_models,
 	'and precedes the toggle write and the default model/option sessions');
+
+# The relay/toggle and the automation schedule hardware jobs on this worker's
+# loop. They ran inside the "appointment models" fork, whose Mojo::IOLoop is
+# reset and never runs a job again, so a Start started the appointment but never
+# threw the switch - the physical switch did. Both now run inline, after the
+# header and before the fork; only the model/option sessions stay forked.
+my $start_automation = index($start_branch, 'intelligent_automation_toggle');
+my $start_fork = index($start_branch, 'subprocessor');
+ok($start_automation > $start_header && $start_fork > $start_automation,
+	'the automation is driven inline, after the header and before the fork');
+ok($start_toggle > $start_header && $start_fork > $start_toggle,
+	'and so is the toggle write');
+like($start_branch, qr/\$uuid, app => \$app, 'state' => 'off', timestamp => \$stop_timestamp \}\) if \$stop_timestamp;/,
+	'a timed stop timer is armed inline too, guarded by the stop time');
+
+my ($models_fork) = $start_branch =~ /(&subs::subprocessor\(sub \{.*?\}, \{ name => 'appointment models' \}\);)/s;
+ok($models_fork, 'the default model/option sessions still run in their own subprocessor');
+unlike($models_fork, qr/intelligent_automation_toggle/,
+	'the fork never tries to drive the timer: its loop would drop the job');
+unlike($models_fork, qr/setting => 'toggle'/,
+	'and never writes the toggle from the child either');
 like($start_branch, qr/skip_toggle => \(\$seen eq 'yes' \? 1 : 0\)\s*\}\);/,
 	'a live start does not repeat the toggle write in the header');
 unlike($start_branch, qr/defer/,

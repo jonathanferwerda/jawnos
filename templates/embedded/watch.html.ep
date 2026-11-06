@@ -1,6 +1,6 @@
 
 <div id="embedded_device" style="overflow:scroll;text-align:center;background-color:var(--panel);height:100%;width:100%;">
-	<select id="embedded_device_picker">
+	<select id="embedded_device_picker" hint="<%= &subs::ui('Choose a watch or deck') %>">
 		<% foreach my $dt ( qw/watch teletype/ ) { %>
 			<option value="<%= $dt %>"><%= &subs::format_name($dt) %></option>
 		<% } %>
@@ -50,17 +50,20 @@
 		</div>
 		<div id="teletype_wifi" style="background-color:blue">
 			<b>AP SSID</b>
-			<input type="text" class="teletype_wifi_config" id="teletype_wifi_ap_ssid" value="<%= $wifi->{'ap_ssid'} %>" field="ap_ssid"><br>
+			<input type="text" class="teletype_wifi_config" id="teletype_wifi_ap_ssid" value="<%= $wifi->{'ap_ssid'} %>" field="ap_ssid" placeholder="<%= &subs::ui('the board\'s own network name') %>" hint="<%= &subs::ui('The network the device offers when it cannot join your WiFi') %>"><br>
 			<b>AP Password</b>
-			<input type="password" class="teletype_wifi_config" id="teletype_wifi_ap_password" value="<%= $wifi->{'ap_password'} %>" field="ap_password"><br>
+			<input type="password" class="teletype_wifi_config" id="teletype_wifi_ap_password" value="" data-set="<%= length($wifi->{'ap_password'} || '') ? 1 : 0 %>" placeholder="<%= &subs::ui(length($wifi->{'ap_password'} || '') ? '••• set — type to replace' : 'not set') %>" field="ap_password" hint="<%= &subs::ui('Leave it blank to keep the password it already has') %>"><br>
 		</div>
 		<div id="teletype_router" style="background-color:red">
 			<b>SSID</b>
-			<input type="text" class="teletype_wifi_config" id="teletype_wifi_ssid" value="<%= $wifi->{'ssid'} %>" field="ssid"><br>
+			<input type="text" class="teletype_wifi_config" id="teletype_wifi_ssid" list="teletype_wifi_ssids" value="<%= $wifi->{'ssid'} %>" field="ssid" placeholder="<%= &subs::ui('your WiFi network name') %>" hint="<%= &subs::ui('Type the name or press Scan and pick one') %>">
+			<datalist id="teletype_wifi_ssids"></datalist><br>
 			<b>Password</b>
-			<input type="password" class="teletype_wifi_config" id="teletype_wifi_password" value="<%= $wifi->{'password'} %>" field="password"></br>
+			<input type="password" class="teletype_wifi_config" id="teletype_wifi_password" value="" data-set="<%= length($wifi->{'password'} || '') ? 1 : 0 %>" placeholder="<%= &subs::ui(length($wifi->{'password'} || '') ? '••• set — type to replace' : 'not set') %>" field="password" hint="<%= &subs::ui('Leave it blank to keep the password it already has') %>"></br>
 		</div>
-		<button id="teletype_wifi_update">Update</button>
+		<button id="teletype_wifi_scan" hint="<%= &subs::ui('Look for nearby WiFi networks to pick from') %>"><%= &subs::ui('Scan') %></button>
+		<button id="teletype_wifi_update" hint="<%= &subs::ui('Send the stored WiFi name and password to the device') %>"><%= &subs::ui('Update WiFi') %></button>
+		<div id="teletype_wifi_result" style="font-size:14px;min-height:1.2em;"></div>
 	</div>
 </div>
 

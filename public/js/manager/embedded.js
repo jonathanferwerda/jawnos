@@ -47,8 +47,16 @@ function embeddedDevicesOpener() {
 			windowMaker(response.html);
 			localStorage.setItem('embedded_chip_id', response.chip_id);
 			localStorage.setItem('embedded_device_type', response.edt);
+			// the panel is in the page now, so the scan has somewhere to write
+			embeddedWifiScan();
 		}
 	});
+}
+
+// The rendered picker wins over the remembered one: after a redraw the select
+// is the device the person is actually looking at.
+function embeddedChipId() {
+	return $('#embedded_device_chip_id').val() || localStorage.getItem('embedded_chip_id') || '';
 }
 
 $(document).on('click', '.embedded_detail', function() {
@@ -532,22 +540,65 @@ $(document).on('change', '.teletype_appearance', function() {
 		}
 	});
 });
+// The Networks app already scans the manager's own radio; reuse that answer
+// rather than adding a second scan path for the embedded panel.
+function embeddedWifiText(text) {
+	return (typeof jawnosT === 'function') ? jawnosT(text) : text;
+}
+function embeddedWifiScan() {
+	var list = $('#teletype_wifi_ssids');
+	if (!list.length || list.children().length) { return; }
+	$('#teletype_wifi_result').text(embeddedWifiText('Scanning for networks...'));
+	$.ajax({
+		url: '/manager/network/wifi_scan',
+		type: 'POST',
+		dataType: 'json',
+		data: {}
+	}).done(function(response) {
+		var networks = (response && response.networks) || [];
+		var seen = 0;
+		for (var i = 0; i < networks.length; i++) {
+			var ssid = networks[i] && networks[i].ssid;
+			if (!ssid) { continue; }
+			list.append($('<option>').attr('value', ssid));
+			seen++;
+		}
+		$('#teletype_wifi_result').text(seen
+			? seen + ' ' + embeddedWifiText('network(s) found; type a name or pick one')
+			: embeddedWifiText('No networks found; type the name instead.'));
+	}).fail(function() {
+		// A failed scan leaves the stored name typable; saving is never blocked.
+		$('#teletype_wifi_result').text(embeddedWifiText('Scan failed; type the name instead.'));
+	});
+}
+
+$(document).on('click', '#teletype_wifi_scan', function() {
+	$('#teletype_wifi_ssids').empty();
+	embeddedWifiScan();
+});
+
 $(document).on('click', '#teletype_wifi_update', function() {
 	var timestamp = Date.now();
-	var chip_id = localStorage.getItem('embedded_chip_id') || '';
+	var chip_id = embeddedChipId();
 	var edt = localStorage.getItem('embedded_device_type') || 'watch';
 	$.ajax({
 		url: '/manager/teletype/wifi_update',
 		type: 'POST',
 		data: { timestamp: timestamp, edt: edt, chip_id:chip_id },
 		success: function(response) {
+			var text = (typeof response === 'string') ? response : ((response && response.error) || 'sent');
+			$('#teletype_wifi_result').text(text);
+		},
+		error: function(xhr) {
+			var why = (xhr && (xhr.responseText || xhr.statusText)) || '';
+			$('#teletype_wifi_result').text(embeddedWifiText('Update failed') + (why ? ': ' + why : ''));
 		}
 	});
 });
 
 $(document).on('click', '#teletype_usb_update', function() {
 	var timestamp = Date.now();
-	var chip_id = localStorage.getItem('embedded_chip_id') || '';
+	var chip_id = embeddedChipId();
 	var edt = localStorage.getItem('embedded_device_type') || 'watch';
 	$.ajax({
 		url: '/manager/teletype/wifi_update',
@@ -577,7 +628,7 @@ $(document).on('change', '.teletype_wifi_config', function() {
 	if (/password/.test(field) && !val) { return; }
 	var timestamp = Date.now();
 	var edt = localStorage.getItem('embedded_device_type') || 'watch';
-	var chip_id = localStorage.getItem('embedded_chip_id') || '';
+	var chip_id = embeddedChipId();
 	$.ajax({
 		url: '/manager/teletype/wifi_config',
 		type: 'POST',

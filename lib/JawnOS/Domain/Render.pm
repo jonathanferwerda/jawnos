@@ -411,12 +411,25 @@ sub destination_relay {
 		# inactivity timeout (3000 s), which is far too long to hold a tap.
 		$hop->{'ua'}->connect_timeout(4)->inactivity_timeout(12);
 		my $res = eval {
-			$hop->{'ua'}->insecure(1)->post($hop->{'manager'} . '/manager/reset' => form => {
+			# A media stop names the row it closes and the source it records, so
+			# the machine that owns the capture stops that same row rather than
+			# whatever it happens to find open; those fields ride only when the
+			# caller supplied them (a command relay carries none).
+			my $form = {
 				app => $app,
 				type => $movement,
 				timestamp => $timestamp,
 				notes => 'sent from ' . $me
-			})->result;
+			};
+			# Only a media relay has a capture machine to name; a command relay is
+			# unchanged (it runs the command on the peer, not on a chosen recorder).
+			$form->{'remote_signatorial'} = $destination
+				if $destination && $destination ne 'all' && ($data->{'recorder'} || $data->{'machine'});
+			foreach my $field ( qw/uuid recorder camera machine/ ) {
+				next unless defined $data->{$field} && ($data->{$field} ne '' || $field eq 'camera');
+				$form->{$field} = $data->{$field};
+			}
+			$hop->{'ua'}->insecure(1)->post($hop->{'manager'} . '/manager/reset' => form => $form)->result;
 		};
 		if ($res && eval { $res->is_success }) {
 			$sent++;

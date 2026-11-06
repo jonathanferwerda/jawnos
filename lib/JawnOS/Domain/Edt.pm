@@ -72,7 +72,7 @@ sub edt_button_presser {
 	my $duration = &subs::time_abbrev_translator($settings->{'duration'});
 	$log->info('edt press: ' . ($app || '?') . ' ' . $component . ' saved=' . ($saved_toggle // '-') . ' toggler=' . (defined $toggler ? $toggler : '-') . ' movement=' . ($movement // '-')) if $log;
 
-	if (($movement eq 'start' || $movement eq 'record') && ($saved_toggle eq 'on' || $toggler eq 'on' || $saved_toggle == 1)) {
+	if (($movement eq 'start' || $movement eq 'record' || $movement eq 'video' || $movement eq 'audio') && ($saved_toggle eq 'on' || $toggler eq 'on' || $saved_toggle == 1)) {
 		$movement = 'stop';
 		$toggle = 'off';
 	}
@@ -97,6 +97,30 @@ sub edt_button_presser {
 	else {
 		$b->{'toggle'} = 1;
 		$toggle = 'on';
+	}
+
+	# A video/audio movement is a record press whose source and machine are
+	# chosen in the pin editor. The pin's own kind wins, but only within its
+	# family: a stored kind left over from the other movement falls back to the
+	# movement's default. The row carries the source and machine so the Alarm
+	# loop claims it on the machine that must capture, not on whichever wakes
+	# first (Part05 writes them into the row's data, not as columns).
+	if ($movement eq 'video' || $movement eq 'audio') {
+		my $video = $movement eq 'video' ? 1 : 0;
+		my $default_kind = $video ? 'video' : 'audio';
+		my $kind = $b->{'media_kind'} || $default_kind;
+		$kind = $default_kind
+			unless $video ? ($kind =~ /^(?:video|video_front)$/) : ($kind =~ /^(?:audio|system)$/);
+		$db_data->{'type'} = 'record';
+		$db_data->{'recorder'} = &Manager::record_source_param($kind) || $default_kind;
+		$db_data->{'machine'} = $b->{'media_machine'} || &subs::signatorial_designer();
+		$db_data->{'camera'} = $kind eq 'video_front' ? 1 : 0 if $kind =~ /^video/;
+	}
+	elsif ($movement eq 'stop') {
+		# A stop names the session it closes; this press has none in hand, and
+		# the uuid minted above names no row. Dropping it lets the writer fall
+		# back to the oldest open session instead of resolving nothing.
+		delete $db_data->{'uuid'};
 	}
 
 	if ($movement eq 'command' || $movement eq 'kill') {

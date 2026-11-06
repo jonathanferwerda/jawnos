@@ -180,19 +180,25 @@ $topic{'handbook'} = {
 $topic{'embedded'} = {
 		title => 'Embedded', category => 'apps', app => 'embedded',
 		templates => [ 'templates/embedded/embedded.html.ep', 'templates/embedded/component.html.ep' ],
-		verified => '2026-10-30',
+		verified => '2026-11-05',
 		summary => 'The device fleet, from the desktop.',
 		body => [
 			'Embedded is the fleet view: it lists the JawnOS devices on your network, their purposes and models, and lets you query one, send a room to a watch, deck or board, and set how a device behaves.',
 			'A watch or board that is off its network but bridged over Bluetooth still appears, and stays listed while the bridge holds it: its row reads Bluetooth in place of an address, its buttons are shown so they can be changed, and its Now Me and settings go out over that bridge. The bridge holds four radios by default, and a machine with a capable adapter can be set to hold more (up to 25), so a whole desk of watches, decks and boards can stay linked together.',
 			'A board that crashed into its provisioning AP can be recovered without joining it: plug it in over USB and press Restore over USB on its row. The manager writes the stored WiFi, name and token into the board\'s config file - the USB link is too narrow to carry the whole role - the board acknowledges and reboots onto its network. Its role arrives as a compact board config over the Bluetooth bridge or the watch channel, so a board on the bridge resumes with its switches and relays already set before it has any network at all.',
-			'Picking a device shows its controls: its name, Now Me (send it a fresh copy of its settings and screens) and Query (ask a board what it is). A watch or t-deck row also carries the Voice select, which chooses how the device listens (see Voice and wake words), and the Noise floor select, which sets how quiet the room has to go before a recorded command is taken to have ended. A watch or t-deck row carries its room count and screen timeout, and the Audio replies toggle, which decides whether the guide associate answers a spoken request out loud on the device or only on its screen.'
+			'Picking a device shows its controls: its name, Now Me (send it a fresh copy of its settings and screens) and Query (ask a board what it is). A watch or t-deck row also carries the Voice select, which chooses how the device listens (see Voice and wake words), and the Noise floor select, which sets how quiet the room has to go before a recorded command is taken to have ended. A watch or t-deck row carries its room count and screen timeout, and the Audio replies toggle, which decides whether the guide associate answers a spoken request out loud on the device or only on its screen.',
+			'The WiFi card sets the network a watch, deck or board joins. Type the network name or press Scan to fill the list from this machine\'s radio, enter its password, then press Update WiFi. A password box that reads set already holds one: leave it blank to keep it, and type a new password only to replace it. The AP fields name the network the device offers when it cannot join yours. If the device is not on the network, the update goes over Bluetooth; a board wired in over USB can be written with Update USB instead.',
+			'A pin can record instead of running a command: choose Video or Audio under Movement, then pick the source - Camera (rear), Camera (front), Microphone or System audio - and the machine that records. The first press starts the recording on that machine; the next press stops it. This machine records on the computer, phone or server that serves the board.'
 		],
 		steps => [
 			'Open Embedded to list the devices on your network.',
 			'Choose a device from the chip list, then press Query to ask a board what it is.',
 			'Set the room\'s buttons, then press Now Me to send that room to a watch or deck.',
 			'On a watch or t-deck row, set the Voice select to choose what it listens for, then press Now Me to push the change.',
+			'On a device row, type the WiFi name or press Scan to pick a nearby network.',
+			'On an input pin, choose Video or Audio under Movement, pick the camera or microphone kind and the machine that records, then press the pin once to start and again to stop.',
+			'Leave a password box blank to keep the password already stored; type a new one to replace it, then press Update WiFi.',
+			'On a board that will not join, plug it in over USB and press Update USB to write the WiFi name and password over the cable.',
 			'On a board row, plug the board in over USB and press Restore over USB to rewrite its stored WiFi and role, then let it reboot.',
 			'Leave Noise floor on Auto; pin one of its numbers only if a noisy room keeps cutting a command short.'
 		],

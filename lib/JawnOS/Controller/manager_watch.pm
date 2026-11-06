@@ -99,7 +99,9 @@ sub action_43926 {
 		direction => $gb::embedded_components->{$component}->{'direction'},
 		component => $component,
 		uuid => &subs::random_string_creator(),
-		name => $op_d->{$syl . $numero}->{'name'}
+		name => $op_d->{$syl . $numero}->{'name'},
+		media_kind => $op_d->{$syl . $numero}->{'media_kind'},
+		media_machine => $op_d->{$syl . $numero}->{'media_machine'}
 	};
 	if ($app eq '') {
 		delete $op_d->{$syl . $numero};
@@ -117,7 +119,9 @@ sub action_43926 {
 		edt => $edt,
 		pin => $numero,
 		direction => $gb::embedded_components->{$component}->{'direction'},
-		component => $component
+		component => $component,
+		media_kind => $op_d->{$syl . $numero}->{'media_kind'},
+		media_machine => $op_d->{$syl . $numero}->{'media_machine'}
 	};
 	my $jia = encode_json $ia;
 	&subs::setting_setter({ app => $app, setting => 'ia', value => $jia });

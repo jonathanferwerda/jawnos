@@ -511,9 +511,21 @@ void jawn_setup() {
     String req = "https://" + homebaseIP + "/manager/teletype/wifi_update?";
     String wifi_update = https_request(req);
     
+    // An empty or unparsable answer must not look like a change to a blank
+    // network: that cleared the saved pair, stopped the server and rebooted
+    // into AP mode. Keep what we have unless the answer is an object with a
+    // complete pair in it.
     JSONVar info = JSON.parse(wifi_update);
-    String next_ssid = String((const char *)info["ssid"]);
-    String next_password = String((const char *)info["password"]);
+    if (JSON.typeof(info) != "object") {
+      Serial.println("wifi_update: unreadable answer, keeping the current network");
+      return;
+    }
+    String next_ssid = jstr(info["ssid"]);
+    String next_password = jstr(info["password"]);
+    if (next_ssid == "" || next_password == "") {
+      Serial.println("wifi_update: no complete pair, keeping the current network");
+      return;
+    }
     if (ssid != next_ssid || password != next_password) {
       ssid = next_ssid;
       password = next_password;
@@ -581,6 +593,10 @@ void wifi_start() {
   WiFi.softAPdisconnect(true);
   delay(100);  
   WiFi.mode(WIFI_STA);
+  // WiFiMulti keeps every AP it was ever given and tries them in order, so a
+  // rejoin after a BLE apply could land on the network the user just replaced.
+  // Only the configured pair may remain.
+  multi.clearAPList();
   if (config["ssid"] != "" && config["password"] != "") {
     Serial.println("Got the goods");
     ssid = String((const char *)config["ssid"]);

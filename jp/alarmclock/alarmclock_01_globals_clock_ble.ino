@@ -578,7 +578,9 @@ static void ble_apply_wifi(JSONVar data) {
     config["ssid"] = s; config["password"] = p;
   }
   config_writer();
-  if (s != "") {
+  // Only a complete pair is a join: an SSID on its own would drop the current
+  // network for a password that is not there.
+  if (s != "" && p != "") {
     WiFi.disconnect();
     delay(100);
     wifi_start();

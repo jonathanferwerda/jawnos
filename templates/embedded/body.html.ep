@@ -3,13 +3,13 @@
 			<option value="<%= $v %>" <% if ($v eq $view) { %>selected<% } %>><%= &subs::format_name($v) %></option>
 		<% } %>
 	</select>
-	<select id="embedded_device_picker" value="<%= $device_type %>">
+	<select id="embedded_device_picker" value="<%= $device_type %>" hint="<%= &subs::ui('Choose a watch, deck or board') %>">
 		<% foreach my $dt ( qw/watch teletype microcontroller/ ) { %>
 			<option <% if ($dt eq $device_type) { %>selected <% } %> value="<%= $dt %>"><%= &subs::format_name($dt) %></option>
 		<% } %>
 	</select>
-	<select id="embedded_device_chip_id" value="<%= $chip_id %>">
-		<option value=""></option>
+	<select id="embedded_device_chip_id" value="<%= $chip_id %>" hint="<%= &subs::ui('Choose the device to control') %>">
+		<option value=""><%= &subs::ui('Choose a device') %></option>
 		<% foreach my $chip ( @{$chip_ids} ) { %>
 			<option value="<%= $chip->{'id'} %>" <% if ($chip_id eq $chip->{'id'}) { %>selected<% } %>><%= $chip->{'name'} || $chip->{'id'} %></option>
 		<% } %>
@@ -156,18 +156,21 @@
 			<div id="teletype" style="text-align:center;background-color:var(--panel);">
 				<div id="teletype_wifi" class="teletype_card">
 					<b>AP SSID</b>
-					<input type="text" id="teletype_wifi_ap_ssid" value="<%= $wifi->{'ap_ssid'} %>" class="teletype_wifi_config" field="ap_ssid"><br>
+					<input type="text" id="teletype_wifi_ap_ssid" value="<%= $wifi->{'ap_ssid'} %>" class="teletype_wifi_config" field="ap_ssid" placeholder="<%= &subs::ui('the board\'s own network name') %>" hint="<%= &subs::ui('The network the board offers when it cannot join your WiFi') %>"><br>
 					<b>AP Password</b>
-					<input type="password" class="teletype_wifi_config" id="teletype_wifi_ap_password" value="" data-set="<%= length($wifi->{'ap_password'} || '') ? 1 : 0 %>" placeholder="<%= length($wifi->{'ap_password'} || '') ? '••• set — type to replace' : 'not set' %>" field="ap_password"><br>
+					<input type="password" class="teletype_wifi_config" id="teletype_wifi_ap_password" value="" data-set="<%= length($wifi->{'ap_password'} || '') ? 1 : 0 %>" placeholder="<%= &subs::ui(length($wifi->{'ap_password'} || '') ? '••• set — type to replace' : 'not set') %>" field="ap_password" hint="<%= &subs::ui('Leave it blank to keep the password it already has') %>"><br>
 				</div>
 				<div id="teletype_router" class="teletype_card">
 					<b>SSID</b>
-					<input type="text" class="teletype_wifi_config" id="teletype_wifi_ssid" value="<%= $wifi->{'ssid'} %>" field="ssid"><br>
+					<input type="text" class="teletype_wifi_config" id="teletype_wifi_ssid" list="teletype_wifi_ssids" value="<%= $wifi->{'ssid'} %>" field="ssid" placeholder="<%= &subs::ui('your WiFi network name') %>" hint="<%= &subs::ui('Type the name or press Scan and pick one') %>">
+					<datalist id="teletype_wifi_ssids"></datalist><br>
 					<b>Password</b>
-					<input type="password" class="teletype_wifi_config" id="teletype_wifi_password" value="" data-set="<%= length($wifi->{'password'} || '') ? 1 : 0 %>" placeholder="<%= length($wifi->{'password'} || '') ? '••• set — type to replace' : 'not set' %>" field="password"></br>
+					<input type="password" class="teletype_wifi_config" id="teletype_wifi_password" value="" data-set="<%= length($wifi->{'password'} || '') ? 1 : 0 %>" placeholder="<%= &subs::ui(length($wifi->{'password'} || '') ? '••• set — type to replace' : 'not set') %>" field="password" hint="<%= &subs::ui('Leave it blank to keep the password it already has') %>"></br>
 				</div>
-				<button id="teletype_wifi_update">Update Wifi</button>
-				<button id="teletype_usb_update">Update USB</button>
+				<button id="teletype_wifi_scan" hint="<%= &subs::ui('Look for nearby WiFi networks to pick from') %>"><%= &subs::ui('Scan') %></button>
+				<button id="teletype_wifi_update" hint="<%= &subs::ui('Send the stored WiFi name and password to the device') %>"><%= &subs::ui('Update WiFi') %></button>
+				<button id="teletype_usb_update" hint="<%= &subs::ui('Write the stored WiFi name and password over USB') %>"><%= &subs::ui('Update USB') %></button>
+				<div id="teletype_wifi_result" style="font-size:14px;min-height:1.2em;color:var(--ink);"></div>
 			</div>
 
 			<% if ($device_type eq 'teletype') { %>
