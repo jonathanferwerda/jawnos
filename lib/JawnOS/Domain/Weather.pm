@@ -248,7 +248,7 @@ sub weather_provider_default($lat, $lon) {
 	return 'openmeteo';
 }
 
-sub weather_provider_for($lat, $lon, $override) {
+sub weather_provider_for($lat, $lon, $override = undef) {
 	if (!defined $override) {
 		$override = eval { &setting_grabber({ app => 'misc', setting => 'weather_provider' }) } || '';
 	}

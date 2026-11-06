@@ -758,6 +758,12 @@ is(subs::weather_name_is_coordinate(''), 0, 'an empty name is not a coordinate e
 
 {
 	no warnings 'redefine';
+	local *subs::setting_grabber = sub { return undef };
+	is(subs::weather_provider_for(46.226, -63.0998), 'ec', 'a Canadian coordinate reads its provider without an override');
+}
+
+{
+	no warnings 'redefine';
 	local *subs::signatorial_designer = sub { 'phone' };
 	local *subs::setting_grabber = sub { return undef };
 	my $groups = subs::weather_place_groups([
