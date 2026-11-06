@@ -135,6 +135,9 @@ function jawnScreenPanelOpen() {
 	// shown only after a typed message, when the line is left to the caller
 	buttons.append($('<button id="jawn_screening_hold" hint="Back on hold" style="display:none"></button>')
 		.text(jawnosT('Back on hold')));
+	// the caller goes to the house's voicemail now, whatever the flow was doing
+	buttons.append($('<button id="jawn_screening_voicemail" hint="Send to voicemail"></button>')
+		.text(jawnosT('Send to voicemail')));
 	box.append(buttons);
 	// Type to a caller who is waiting: the gateway speaks it and the answer
 	// arrives in the same transcript.
@@ -336,6 +339,22 @@ $(document).on('click', '#jawn_screening_say_send', function (e) {
 			}
 		},
 		error: function () { $('#jawn_screening_note').text(jawnosT('The message did not go through.')); }
+	});
+});
+
+$(document).on('click', '#jawn_screening_voicemail', function (e) {
+	e.preventDefault();
+	$.ajax({
+		url: '/manager/sco/voicemail',
+		type: 'POST',
+		dataType: 'json',
+		data: { timestamp: Date.now() },
+		success: function (res) {
+			if (!res || !res.ok) {
+				$('#jawn_screening_note').text((res && res.error) || jawnosT('The caller could not be sent to voicemail.'));
+			}
+		},
+		error: function () { $('#jawn_screening_note').text(jawnosT('The caller could not be sent to voicemail.')); }
 	});
 });
 

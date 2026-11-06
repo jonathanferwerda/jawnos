@@ -237,10 +237,12 @@ like($controller, qr/words => \\%words/, 'an arm carries the words');
 like($controller, qr/\$client->remote\(\)/,
 	'and only a local arm renders its clips here');
 my $reception_src = read_file("$repo/perl/Reception.pl");
-like($reception_src, qr/words => \{ map/,
-	'Reception sends words too, for a gateway on another machine');
-like($reception_src, qr/unless \(\$client->remote\(\)\)/,
-	'and renders clips only when the gateway is this one');
+# Reception names the flows, not one set of words: the gateway (which has the
+# voice) renders each flow's words itself, so there is no local clip pass.
+like($reception_src, qr/flows => \\%flows/,
+	'Reception arms every flow the house saved');
+like($reception_src, qr/default_flow => \$unknown/,
+	'with the unknown bucket as the one a caller nobody named follows');
 like($reception_src, qr/\$not_the_gateway/, 'a helper box that is not the gateway does not arm it');
 like($daemon, qr/note_caller/, 'a status poll carries the caller to the gateway');
 like($controller, qr/param\('number'\)/, 'the status route passes the caller number');
@@ -784,6 +786,14 @@ require JawnOS::Sco::Reconnect;
 is(JawnOS::Sco::Reconnect->new(peer => '')->tick(1000), '', 'with no address there is nobody to ask');
 like(read_file("$repo/perl/Reception.pl"), qr/keep_bluetooth_ready/,
 	'the worker that keeps the gateway armed keeps the link up too');
+# The arm carries every flow and the unknown bucket's default, so the phone can
+# name one and the gateway can run it.
+{
+	my $reception = read_file("$repo/perl/Reception.pl");
+	like($reception, qr/flows => \\%flows/, 'reception arms every flow');
+	like($reception, qr/default_flow => \$unknown/, 'and names the unknown bucket as the default');
+	like($reception, qr/\$unknown = '' if \$unknown =~ /, 'ring and reject arm no flow at all');
+}
 my $hold_status = $held->status;
 is(scalar @{ $hold_status->{'hold_tracks'} || [] }, 2,
 	'the status names the tracks the pane offers');

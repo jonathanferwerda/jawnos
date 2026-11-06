@@ -159,11 +159,27 @@ sub tick {
 	}
 	# a machine without the helper has no admission to give
 	return unless -x $helper;
-	my $voice = $settings->{'voice'} || '';
-	my @text = map { $settings->{$_} || '' } qw(greeting prompt thanks voicemail);
-	# the hold music and what follows the thanks are part of what the gateway
-	# was armed with: changing either re-arms the same way a prompt does
-	my $from = join("\x00", $voice, @text, $settings->{'hold'} || '', $settings->{'after'} || 'hold');
+	# Every flow the house saved, so the phone can name the caller's own flow
+	# when it answers; the gateway runs that one and keeps the rest ready.
+	my $defs = $settings->{'flow_defs'} || {};
+	my %flows;
+	foreach my $key ( sort keys %{$defs} ) {
+		my $def = $defs->{$key};
+		next unless ref $def eq 'HASH';
+		my %flow = map { $_ => (defined $def->{$_} ? $def->{$_} : '') }
+			qw(name voice greeting prompt voicemail thanks hold after);
+		$flow{'steps'} = $def->{'steps'} if ref $def->{'steps'} eq 'ARRAY' && @{ $def->{'steps'} };
+		$flows{$key} = \%flow;
+	}
+	# A caller nobody named follows the unknown bucket. Ring and Reject are not
+	# flows at all: the phone never sends the call here, and '' keeps that so.
+	my $unknown = $settings->{'flows'}->{'unknown'} || 'receptionist';
+	$unknown = 'receptionist' if $unknown eq 'ivr';
+	$unknown = '' if $unknown =~ /^(?:ring|reject)$/;
+	$unknown = '' unless $flows{$unknown};
+	# every flow, its words and the default are what the gateway was armed with:
+	# changing any of them re-arms the same way changing a prompt does
+	my $from = encode_json({ flows => \%flows, default => $unknown });
 	# A pipe gateway waits in `waiting` (the phone has not called yet) and an
 	# adapter gateway listens in `armed`; both are ready. Re-arming tears the
 	# watcher down, so a ready gateway is left alone while its prompts stand.
@@ -171,26 +187,12 @@ sub tick {
 	return if ($state eq 'armed' || $state eq 'waiting')
 		&& $from eq $armed_from
 		&& time - $armed_at < 300;
-	my %clips;
-	# A remote gateway renders the words itself: a path rendered here does not
-	# exist there. A local one keeps the clips this machine already cached.
-	unless ($client->remote()) {
-		foreach my $key (qw(greeting prompt thanks voicemail)) {
-			my $text = $settings->{$key} || '';
-			next unless length $text;
-			my $raw = &JawnOS::Sco::Render::render($text, $voice);
-			$clips{$key} = $raw if $raw;
-		}
-	}
+	# The gateway renders every flow's words itself (it is the machine with the
+	# voice), so a path rendered here would only be one more thing to keep.
 	my $armed = $client->call({
 		cmd => 'arm',
-		words => { map { $_ => ($settings->{$_} || '') } qw(greeting prompt thanks voicemail) },
-		voice => $voice,
-		clips => \%clips,
-		# the caller waits through music on the gateway after the thanks
-		hold => $settings->{'hold'} || '',
-		# ...or leaves a message, when the flow says so
-		after => $settings->{'after'} || 'hold',
+		flows => \%flows,
+		default_flow => $unknown,
 		# the helper keeps the clip open until it hears a name and then a pause
 		record => { ms => 20000, silence_ms => 2000, min_ms => 400 },
 	});
