@@ -658,6 +658,49 @@ is(JawnOS::Sco::Gateway::call_over('in_call', undef, 661, 1), 'hold limit',
 	'a hold nobody answers still ends');
 is(JawnOS::Sco::Gateway::call_over('in_call', undef, 100, 0), 'call limit',
 	'an unheld call keeps the old limit');
+
+# ---------------------------------------------------------- the phone's link
+# A phone that walked out of range comes back with its Bluetooth link gone and
+# nothing retries the dropped ACL, so the next call has no audio. The gateway
+# asks it to connect again, on a backoff.
+require JawnOS::Sco::Reconnect;
+{
+	my @cmds;
+	my $up = 0;
+	my $r = JawnOS::Sco::Reconnect->new(
+		peer => '00:2B:70:E9:7E:B2',
+		wait => 30,
+		run => sub {
+			push @cmds, [@_];
+			return $_[0] eq 'info'
+				? ($up ? "Connected: yes\n" : "Connected: no\n")
+				: do { $up = 1; "Connection successful\n" };
+		},
+	);
+	is($r->tick(1000), 'reconnected', 'a phone that came back is asked to reconnect');
+	is_deeply(\@cmds, [ [ 'info', '00:2B:70:E9:7E:B2' ], [ 'connect', '00:2B:70:E9:7E:B2' ] ],
+		'it looks first, then asks');
+	is($r->tick(1010), 'connected', 'and the next look finds the link up');
+	is(scalar(grep { ($_->[0] || '') eq 'connect' } @cmds), 1, 'so it is never asked twice');
+}
+{
+	my $up = JawnOS::Sco::Reconnect->new(peer => 'AA:BB:CC:DD:EE:FF', run => sub { "Connected: yes\n" });
+	is($up->tick(1000), 'connected', 'a link that is already up is left alone');
+
+	my @tries;
+	my $away = JawnOS::Sco::Reconnect->new(
+		peer => 'AA:BB:CC:DD:EE:FF',
+		wait => 30,
+		run => sub { push @tries, $_[0]; return "Failed to connect: org.bluez.Error.Failed\n" },
+	);
+	is($away->tick(1000), 'unreachable', 'a phone still away is unreachable');
+	is($away->tick(1020), 'too soon', 'the first retry waits');
+	is($away->tick(1031), 'unreachable', 'then it asks again after the backoff');
+	is(scalar(grep { $_ eq 'connect' } @tries), 2, 'one attempt per backoff, not one per tick');
+}
+is(JawnOS::Sco::Reconnect->new(peer => '')->tick(1000), '', 'with no address there is nobody to ask');
+like(read_file("$repo/perl/Reception.pl"), qr/keep_bluetooth_ready/,
+	'the worker that keeps the gateway armed keeps the link up too');
 my $hold_status = $held->status;
 is(scalar @{ $hold_status->{'hold_tracks'} || [] }, 2,
 	'the status names the tracks the pane offers');
@@ -1042,6 +1085,43 @@ SKIP: {
 	ok(length $raw > 4000, 'the line is fed with silence around a clip, so it never idles');
 	ok(index($raw, $pattern) >= 0, 'and the clip itself is delivered whole');
 	ok(-s $fed > 4000, 'the feed is what the playback command receives');
+}
+
+# The transcript taps the caller, not the plan. The hold music is one long clip,
+# and the caller talking over it has to still be heard: the tee is written from
+# every downlink frame, whatever the uplink is doing.
+SKIP: {
+	skip 'the SCO helper is not built on this machine', 2 unless -x $helper;
+	require IPC::Open2;
+	my $tee = "$dir/tee-while-playing.raw";
+	my $music = "$dir/tee-music.raw";
+	write_file($music, join '', map { pack('s<', 7000) } 1 .. 32000);   # 4 s of music
+	my $feeder = "$dir/tee-feeder.pl";
+	write_file($feeder, <<'FEED2');
+#!/usr/bin/perl
+# the caller's side, in real time: a second of room, then speech, then room,
+# while the gateway is busy playing the music
+for (1 .. 50)  { print pack('s<', 0)    x 160; select(undef, undef, undef, 0.02); }
+for (1 .. 75)  { print pack('s<', 9000) x 160; select(undef, undef, undef, 0.02); }
+for (1 .. 100) { print pack('s<', 0)    x 160; select(undef, undef, undef, 0.02); }
+FEED2
+	chmod 0755, $feeder;
+	my ($out, $in);
+	my $pid = IPC::Open2::open2($out, $in, $helper,
+		'--pipe-in', $feeder, '--pipe-out', 'cat > /dev/null', '--tee', $tee);
+	$in->autoflush(1);
+	print {$in} '{"cmd":"line"}' . "\n";
+	select(undef, undef, undef, 0.4);
+	print {$in} '{"cmd":"play","id":1,"file":"' . $music . '"}' . "\n";
+	select(undef, undef, undef, 3.0);
+	print {$in} '{"cmd":"quit"}' . "\n";
+	close $in;
+	close $out;
+	waitpid($pid, 0);
+	my $raw = '';
+	if (open(my $tf, '<:raw', $tee)) { local $/; $raw = <$tf> // ''; close $tf; }
+	ok(length $raw > 8000, 'the caller is tapped while a clip is playing');
+	ok(index($raw, pack('s<', 9000) x 400) >= 0, 'and the words said over it arrive');
 }
 
 done_testing();

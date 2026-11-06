@@ -23,6 +23,7 @@ use File::Slurp qw(read_file);
 require './perl/subroutines.pl';
 require JawnOS::Sco::Client;
 require JawnOS::Sco::Render;
+require JawnOS::Sco::Reconnect;
 
 my $config = -e './config.json' ? eval { decode_json(read_file('./config.json')) } : {};
 my $log = Mojo::Log->new(path => &subs::home(($config && $config->{'logfile'}) || '~/manager.log'));
@@ -30,6 +31,31 @@ my $client = JawnOS::Sco::Client->new();
 my $helper = './perl/sco/sco_helper';
 my $armed_at = 0;
 my $armed_from = '';
+# the phone's link, and the last thing that was said about it
+my $reconnect;
+my $reconnect_said = '';
+# The phone's own Bluetooth link is what carries the call. A phone that walked
+# out of range comes back without it, and nothing on a quiet table retries the
+# dropped ACL: the next call then has no Hands-Free audio at all. While the
+# gateway waits for a call, ask the phone to connect again.
+sub keep_bluetooth_ready {
+	unless ($reconnect) {
+		my $peer = eval { &subs::misc_setting('sco_peer') } || '';
+		return '' unless $peer;
+		$reconnect = JawnOS::Sco::Reconnect->new(peer => $peer);
+	}
+	my $verdict = $reconnect->tick();
+	return $verdict if !length $verdict || $verdict eq 'too soon';
+	# one line per change: a phone that is still away is asked on a backoff and
+	# must not fill the log every half minute
+	if ($verdict ne $reconnect_said) {
+		$reconnect_said = $verdict;
+		$log->info('reception: bluetooth ' . $verdict . ' (' . $reconnect->peer . ')')
+			if $verdict eq 'reconnected' || $verdict eq 'unreachable';
+	}
+	return $verdict;
+}
+
 # The chosen gateway is another machine's: this one must not arm it as well, or
 # two Receivers cancel and re-spawn the same plan every few minutes. An explicit
 # sco_gateway is the older arrangement and names no machine, so it still arms.
@@ -122,6 +148,7 @@ sub tick {
 	# that call down itself when the line goes quiet, and only then is there a
 	# gateway to arm again. Arming into a dying line spoke a second plan into it.
 	return if $state eq 'in_call' || $state eq 'done';
+	&keep_bluetooth_ready();
 	# the same settings the Phone app saves, defaults included
 	my $settings = &subs::phone_ivr_settings();
 	if (($settings->{'enabled'} || 'no') ne 'yes') {
