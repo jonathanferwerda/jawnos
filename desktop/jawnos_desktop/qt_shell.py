@@ -14,14 +14,18 @@ It is a prototype behind a flag, not the default:
 
 The login is the same ticket the WebKit shell uses: loading the ticket URL
 mints the cookie and redirects to the Manager, and the profile keeps that
-cookie across launches. Certificate errors are accepted because the house
+cookie across launches. The first run also copies the GTK shell's page layout
+out of WebKit's per-origin SQLite store, and the window geometry comes from
+``~/.config/jawnos/desktop.json``, saved back on close. Certificate errors are accepted because the house
 serves its own self-signed certificate on its own port (the same exception the
 WebKit shell makes).
 """
 
 import argparse
+import glob
 import json
 import os
+import sqlite3
 import sys
 from urllib.parse import urlparse
 
@@ -78,6 +82,88 @@ def profile_dir():
 
 
 # --------------------------------------------------------------------------
+# the GTK shell's layout, moved into the Qt profile
+# --------------------------------------------------------------------------
+
+# Keys that belong to a live session or a device identity, not to the layout:
+# a copied tab id makes two windows claim one tab, and the padlock's
+# device_uuid is a credential, not a preference.
+_SKIP_KEYS = frozenset((
+    "browser_tab", "device_uuid", "jawnos_media_lock", "jawn_app_until",
+    "lastSearchTime",
+))
+
+
+def webkit_localstorage(host, port, base=None):
+    """The WebKitGTK localStorage for one origin, as ``{key: value}``.
+
+    The GTK shell keeps the page's layout in WebKit's per-origin SQLite store
+    (``~/.local/share/<app>/localstorage/https_<host>_<port>.localstorage``):
+    ``layout``, ``background_images``, ``background_images_opacity``, the
+    ``dock_apps`` family, the soft-keyboard layout. Qt WebEngine uses
+    Chromium's LevelDB store, so the keys have to be copied once.
+
+    ``base`` exists so the reader can be tested against a fixture; the default
+    is the XDG data directory the installed desktop app writes to.
+    """
+    base = base or os.path.expanduser("~/.local/share")
+    name = "https_%s_%s.localstorage" % (host, port)
+    candidates = []
+    for pattern in ("*/localstorage/" + name, "*/*/localstorage/" + name):
+        candidates.extend(glob.glob(os.path.join(base, pattern)))
+    files = []
+    for path in candidates:
+        try:
+            files.append((os.path.getmtime(path), path))
+        except OSError:
+            pass
+    for _mtime, path in sorted(files, reverse=True):
+        try:
+            con = sqlite3.connect("file:%s?mode=ro" % path, uri=True)
+            tables = [row[0] for row in con.execute(
+                "select name from sqlite_master where type='table'")]
+            table = "ItemTable" if "ItemTable" in tables else (tables[0] if tables else "")
+            rows = con.execute("select key, value from %s" % table).fetchall() if table else []
+            con.close()
+        except sqlite3.Error:
+            continue
+        out = {}
+        for key, value in rows:
+            if str(key) in _SKIP_KEYS:
+                continue
+            if isinstance(value, bytes):
+                try:
+                    text = value.decode("utf-16-le")
+                except UnicodeDecodeError:
+                    text = value.decode("utf-8", "replace")
+            else:
+                text = str(value)
+            out[str(key)] = text
+        if out:
+            return path, out
+    return None, {}
+
+
+# Sets every migrated key, once, then marks the profile so a later Qt run does
+# not overwrite what the person changed here.
+_MIGRATE_JS = """
+(function () {
+  try {
+    if (localStorage.getItem('__jawn_qt_migrated')) { return 'already'; }
+    var data = %s;
+    for (var k in data) {
+      if (Object.prototype.hasOwnProperty.call(data, k)) {
+        try { localStorage.setItem(k, data[k]); } catch (e) {}
+      }
+    }
+    localStorage.setItem('__jawn_qt_migrated', '1');
+    return 'migrated';
+  } catch (e) { return 'error: ' + e; }
+})()
+"""
+
+
+# --------------------------------------------------------------------------
 # the WebRTC probe
 # --------------------------------------------------------------------------
 
@@ -93,6 +179,9 @@ _PROBE_JS = r"""
     links: document.querySelectorAll('link[rel="stylesheet"]').length,
     title: document.title,
     taskbar: !!document.getElementById('taskbar'),
+    layout: (function () {
+      try { return localStorage.getItem('layout') || ''; } catch (e) { return ''; }
+    })(),
     url: location.href
   };
   window.__jawn_qt_probe = JSON.stringify(out);
@@ -245,11 +334,45 @@ def main(argv=None):
     profile.setPersistentCookiesPolicy(
         QWebEngineProfile.PersistentCookiesPolicy.ForcePersistentCookies)
 
-    view = QWebEngineView()
+    settings = core.load_settings()
+
+    class JawnView(QWebEngineView):
+        """The view, and the window state the GTK shell also keeps in desktop.json."""
+
+        def __init__(self, shell_settings, save_state):
+            super().__init__()
+            self._shell_settings = shell_settings
+            self._save_state = save_state
+
+        def closeEvent(self, event):
+            if self._save_state:
+                state = dict(self._shell_settings)
+                state["fullscreen"] = bool(self.isFullScreen())
+                state["maximized"] = bool(self.isMaximized())
+                if not state["fullscreen"] and not state["maximized"]:
+                    state["window_width"] = self.width()
+                    state["window_height"] = self.height()
+                    state["window_x"] = self.x()
+                    state["window_y"] = self.y()
+                try:
+                    core.save_settings(state)
+                except Exception:
+                    pass
+            super().closeEvent(event)
+
+    view = JawnView(settings, not args.probe)
     page = QWebEnginePage(profile, view)
     view.setPage(page)
     view.setWindowTitle("JawnOS")
-    view.resize(1100, 820)
+    width = int(settings.get("window_width") or 0)
+    height = int(settings.get("window_height") or 0)
+    if width >= 400 and height >= 300:
+        view.resize(width, height)
+    else:
+        view.resize(1100, 820)
+    left, top = settings.get("window_x"), settings.get("window_y")
+    if isinstance(left, int) and isinstance(top, int):
+        view.move(left, top)
 
     page.certificateError.connect(_accept_certificate)
     _feature_permission(page, qt)
@@ -258,11 +381,17 @@ def main(argv=None):
     page_settings.setAttribute(
         QWebEngineSettings.WebAttribute.PlaybackRequiresUserGesture, False)
 
-    settings = core.load_settings()
     ticket = None if args.url else ticket_url()
     manager = None if args.url else manager_url(settings["jawn_dir"], ticket)
     login_pending = bool(ticket)
     kick = None
+    host = port = None
+    if manager:
+        parsed = urlparse(manager)
+        host = parsed.hostname or "127.0.0.1"
+        port = parsed.port or 443
+    migration_pending = bool(manager)
+    reloaded = {"done": False}
 
     if args.probe:
         def _timeout():
@@ -270,10 +399,9 @@ def main(argv=None):
             app.exit(1)
         QTimer.singleShot(25000, _timeout)
         kick = _probe(page, app, qt)
-        view.resize(800, 600)
 
     def on_load(_ok):
-        nonlocal login_pending
+        nonlocal login_pending, migration_pending
         if os.environ.get("JAWNOS_QT_DEBUG"):
             sys.stderr.write("qt-load ok=%s title=%r manager=%s pending=%s\n" % (
                 _ok, view.title(), view.url().toString().endswith("/manager"), login_pending))
@@ -283,6 +411,19 @@ def main(argv=None):
             # ticket's own host (where the cookie is scoped).
             login_pending = False
             QTimer.singleShot(1500, lambda: view.setUrl(QUrl(manager)))
+            return
+        current = urlparse(view.url().toString())
+        on_manager = (manager and current.hostname == host
+                      and (current.port or 443) == port)
+        if migration_pending and on_manager:
+            migration_pending = False
+            _path, data = webkit_localstorage(host, port)
+            if data:
+                def migrated(result):
+                    if str(result) == "migrated" and not reloaded["done"]:
+                        reloaded["done"] = True
+                        QTimer.singleShot(250, view.reload)
+                page.runJavaScript(_MIGRATE_JS % json.dumps(data), migrated)
             return
         if kick is not None:
             QTimer.singleShot(1200, kick)
@@ -298,7 +439,15 @@ def main(argv=None):
     else:
         url = manager
     view.setUrl(QUrl(url))
-    view.show()
+    if args.probe:
+        view.resize(800, 600)
+        view.show()
+    elif settings.get("fullscreen"):
+        view.showFullScreen()
+    elif settings.get("maximized"):
+        view.showMaximized()
+    else:
+        view.show()
     return app.exec()
 
 

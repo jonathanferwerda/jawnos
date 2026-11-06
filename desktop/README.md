@@ -416,6 +416,14 @@ microphone/camera requests are granted to the page. `--probe` is also the
 regression check in `t/185-desktop-qt-shell.t`, which skips on a machine
 without the PySide6 package.
 
+On the first Qt run it copies the GTK shell's page layout out of WebKit's
+per-origin store (`~/.local/share/jawnos-desktop/localstorage/https_<host>_<port>.localstorage`)
+into the Qt profile - `layout`, `background_images`, `dock_icons`,
+`window_places` and the rest - once, marked so later Qt changes are kept. Live
+identities (the tab id and the padlock's `device_uuid`) are deliberately not
+copied. The window geometry, maximized and fullscreen state come from
+`~/.config/jawnos/desktop.json` and are written back on close.
+
 The shell is not the default yet: a fresh profile lands on the padlock Gate
 (the WebKit shell does too), and the tray, supervision and BLE controls are
 not ported.

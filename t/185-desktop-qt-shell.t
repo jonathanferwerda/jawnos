@@ -10,6 +10,8 @@ use warnings;
 use FindBin;
 use lib "$FindBin::Bin/lib", "t/lib";
 use Test::More;
+use File::Temp qw(tempdir);
+use File::Path qw(make_path);
 use File::Slurp qw(read_file);
 
 my $root = "$FindBin::Bin/..";
@@ -35,6 +37,38 @@ like($entry, qr/--engine/, 'and by flag');
 like($entry, qr/from jawnos_desktop\.ui import main/, 'WebKitGTK stays the default');
 like($entry, qr/from jawnos_desktop\.qt_shell import main/, 'Qt is the opt-in branch');
 ok(-x $launcher, 'jawnos-qt is directly runnable');
+
+like($qt, qr/def webkit_localstorage/, 'the shell can read the GTK localStorage store');
+like($qt, qr/__jawn_qt_migrated/, 'the migration is marked, so later Qt changes are kept');
+like($qt, qr/background_images/, 'the layout family it copies is the one the page reads');
+like($qt, qr/window_width/, 'the window geometry is restored from desktop.json');
+like($qt, qr/showMaximized/, 'including maximized');
+like($qt, qr/core\.save_settings/, 'and saved back on close');
+
+# The reader, against a fixture in WebKit's shape: an ItemTable whose values
+# are UTF-16LE blobs, under <base>/<app>/localstorage/https_<host>_<port>.
+{
+	my $tmp = tempdir(CLEANUP => 1);
+	my $dir = "$tmp/base/jawnos-desktop/localstorage";
+	make_path($dir);
+	my $db = "$dir/https_127.0.0.1_45545.localstorage";
+	my $fixture = "$tmp/fixture.py";
+	open(my $fh, '>', $fixture) or die "$fixture: $!";
+	print {$fh} <<'PYINNER';
+import sqlite3, sys
+c = sqlite3.connect(sys.argv[1])
+c.execute("create table ItemTable (key TEXT UNIQUE ON CONFLICT REPLACE, value BLOB NOT NULL ON CONFLICT FAIL)")
+for key, value in (("layout", "desk"), ("background_images", '["one"]'), ("device_uuid", "not-a-preference")):
+    c.execute("insert into ItemTable (key, value) values (?, ?)", (key, value.encode("utf-16-le")))
+c.commit()
+PYINNER
+	close $fh;
+	system("python3", $fixture, $db) == 0 or die "fixture failed";
+	my $out = `cd "$root" && PYTHONPATH=desktop python3 -c 'import json,sys; from jawnos_desktop.qt_shell import webkit_localstorage; p,d = webkit_localstorage("127.0.0.1", 45545, base=sys.argv[1]); print(json.dumps(d))' "$tmp/base" 2>&1`;
+	like($out, qr/"layout": "desk"/, 'the reader returns the GTK layout key');
+	like($out, qr/background_images/, 'and the background list');
+	unlike($out, qr/device_uuid/, 'but not the padlock device identity');
+}
 
 # The real engine, when this machine has it. A machine without the PySide6
 # QtWebEngine package skips: the source pins above still run everywhere.
