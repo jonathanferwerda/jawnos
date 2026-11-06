@@ -257,7 +257,7 @@ Manager::app->routes->get('/play' => sub($c) {
 	my $mao = eval { return decode_json &subs::setting_grabber({ app => 'music', setting => 'mao' }) } || {};
 	# the query is already decoded by Mojo; decoding again would corrupt a name
 	# with a literal %xx in it (see Manager::rock_and_roll)
-	my $track = &subs::terminal_name($c->param('track'));
+	my $track_name = $c->param('track') // '';
 	my $data;
 
 	# The ahead tap is an <audio> element reading the same file. Without a Range
@@ -276,12 +276,13 @@ Manager::app->routes->get('/play' => sub($c) {
 	if ($mao->{'srv'} eq 'on' && $c->param('ahead') ne '1' && $c->param('clone') ne '1') {
 		&subs::subprocessor(sub {
 
+			# List form: the track name is request data, and terminal_name
+			# escapes for a terminal, not for a shell (no ; | $ ` or newline).
 			if ($music_device eq 'computer') {
-				my $t = term_escape $track;
-				`vlc $track`;
+				system('vlc', $track_name);
 			}
 			elsif ($music_device eq 'mobile') {
-				`play $track`;
+				system('play', $track_name);
 			}
 		}, { name => 'music play' });
 		$c->render(text => 'play');

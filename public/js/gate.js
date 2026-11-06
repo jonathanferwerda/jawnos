@@ -125,7 +125,9 @@ function gateKeeper(response) {
 	$('#message').text(response['message']).show();
 	if (response.authentication == 'approved') {
 		if (isJson(response.debriefer)) {
-			var d = eval(JSON.parse(response.debriefer));
+			// parse only: eval here executed a debriefer that was itself a JSON
+			// string, and a client can write that setting (manager_ws debriefer).
+			var d = JSON.parse(response.debriefer);
 			// a ticket minted without a debriefer parses to null; guard it or this
 			// throws and the caller (the box office splash) never redirects
 			if (d && typeof d === 'object') {

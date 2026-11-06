@@ -238,7 +238,9 @@ sub action_14382 {
 	my $access = { server_time => $server_time, status => 'denial', ip => $ip };
 
 	my $v = $ticket->{'verification'};
-	my $ver = url_unescape `echo "$secret" | base64 --decode`;
+	# Decode in Perl: the ticket token is request data, and a shell would
+	# expand $(...) inside the double quotes before the signature is checked.
+	my $ver = url_unescape decode_base64($secret // '');
 	my $verification = &subs::note_decrypter($ticket->{'password'}, $ver) ;
 	my $vrai = eval { return decode_json $verification } || {};
 	unless ($vrai->{'p'}) {

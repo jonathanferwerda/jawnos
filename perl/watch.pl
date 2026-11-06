@@ -424,7 +424,13 @@ get '/watch/chat_grabber' => sub($c) {
 	my $chip_id = $c->param('chip_id');
 	my $wat_set = &subs::embedded_operator_door($c->param('edt') || 'watch', $chip_id);
 	my $op_d = eval { return decode_json $wat_set } || {};
-	my $s = `(echo $secret) | base64 --decode`;
+	# Decode in Perl, never through a shell: this route runs before
+	# embeddedAuthorizer, so `$secret` is attacker-controlled on every call.
+	my $s = '';
+	if (defined $secret && length $secret) {
+		require MIME::Base64;
+		$s = MIME::Base64::decode_base64($secret) // '';
+	}
 	if (my $watch_settings = &embeddedAuthorizer($c)) {
 		my $pass = &subs::note_decrypter($op_d->{'__shutup'}->{'patience'},$s);
 		my ($db,$database,$sql) = &subs::database_grabber();

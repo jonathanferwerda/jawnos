@@ -79,12 +79,19 @@ sub action_9562 {
 		return;
 	}
 	if ($ip) {
+		# Only an address, a range or a comma list may reach the shell. The
+		# derived addresses are interpolated into ping below; this keeps a
+		# request such as 1.1.1.$(id) out of it.
+		unless ($ip =~ /\A[0-9., ]+\z/) {
+			$c->render(json => { saved => 0, host => $ip, error => 'not an address' });
+			return;
+		}
 
 		my @ip = split '\.', $ip;
 		if (scalar @ip == 4) {
 
 			$returner->{$ip}->{'ip'} = $ip;
-			$returner->{$ip}->{'result'} = `timeout $timeout ping -c 1 $ip`;
+			$returner->{$ip}->{'result'} = `timeout $timeout ping -c 1 ` . quote($ip);
 		}
 		else {
 			my @ifconfig = split "\n\n", `ifconfig`;
@@ -111,7 +118,7 @@ sub action_9562 {
 								push @gw, $csv;
 								my $ip_address = join '.', @gw;
 								$returner->{$ip_address}->{ip} = $ip_address;
-								$returner->{$ip_address}->{'result'} = `timeout $timeout ping -c 1 $ip_address`;
+								$returner->{$ip_address}->{'result'} = `timeout $timeout ping -c 1 ` . quote($ip_address);
 							}
 						}
 						elsif ($sip eq '..' ) {
@@ -124,7 +131,7 @@ sub action_9562 {
 								my $ip_address = join '.', @gw;
 
 								$returner->{$ip_address}->{ip} = $ip_address;
-								$returner->{$ip_address}->{'result'} = `timeout $timeout ping -c 1 $ip_address`;
+								$returner->{$ip_address}->{'result'} = `timeout $timeout ping -c 1 ` . quote($ip_address);
 							}
 						}
 						else {
@@ -132,7 +139,7 @@ sub action_9562 {
 							push @gw, $ip;
 							my $ip_address = join '.', @gw;
 							$returner->{$ip_address}->{ip} = $ip_address;
-							$returner->{$ip_address}->{'result'} = `timeout $timeout ping -c 1 $ip_address`;
+							$returner->{$ip_address}->{'result'} = `timeout $timeout ping -c 1 ` . quote($ip_address);
 						}
 					}
 				}
