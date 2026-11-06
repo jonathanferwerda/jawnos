@@ -30,6 +30,14 @@ my $client = JawnOS::Sco::Client->new();
 my $helper = './perl/sco/sco_helper';
 my $armed_at = 0;
 my $armed_from = '';
+# The chosen gateway is another machine's: this one must not arm it as well, or
+# two Receivers cancel and re-spawn the same plan every few minutes. An explicit
+# sco_gateway is the older arrangement and names no machine, so it still arms.
+my $not_the_gateway = $client->remote()
+	&& length($client->machine())
+	&& $client->machine() ne (eval { &subs::signatorial_designer() } || '');
+$log->info('reception: the gateway is another machine (' . $client->machine() . '); this one will not arm it')
+	if $not_the_gateway;
 
 # Keep the names a screened call left, where the house can find them after the
 # call is over: the gateway's own recordings directory is pruned, and the index
@@ -106,6 +114,7 @@ sub keep_new_recordings {
 }
 
 sub tick {
+	return if $not_the_gateway;
 	&keep_new_recordings();
 	my $status = $client->call({ cmd => 'status' });
 	my $state = ($status && $status->{'ok'}) ? ($status->{'state'} || 'idle') : '';
@@ -132,14 +141,20 @@ sub tick {
 		&& $from eq $armed_from
 		&& time - $armed_at < 300;
 	my %clips;
-	foreach my $key (qw(greeting prompt thanks)) {
-		my $text = $settings->{$key} || '';
-		next unless length $text;
-		my $raw = &JawnOS::Sco::Render::render($text, $voice);
-		$clips{$key} = $raw if $raw;
+	# A remote gateway renders the words itself: a path rendered here does not
+	# exist there. A local one keeps the clips this machine already cached.
+	unless ($client->remote()) {
+		foreach my $key (qw(greeting prompt thanks)) {
+			my $text = $settings->{$key} || '';
+			next unless length $text;
+			my $raw = &JawnOS::Sco::Render::render($text, $voice);
+			$clips{$key} = $raw if $raw;
+		}
 	}
 	my $armed = $client->call({
 		cmd => 'arm',
+		words => { map { $_ => ($settings->{$_} || '') } qw(greeting prompt thanks) },
+		voice => $voice,
 		clips => \%clips,
 		# the helper keeps the clip open until it hears a name and then a pause
 		record => { ms => 20000, silence_ms => 2000, min_ms => 400 },

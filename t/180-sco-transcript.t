@@ -2,7 +2,9 @@
 # covers:    A screened call's live transcript: the helper's non-blocking tap
 #           above the recorder's gate, the gateway keeping a sentence in the
 #           status and on disk, the partial that is not yet a line, a bounded
-#           history, the Phone pane's bubbles, and the streamer's segmentation
+#           history, the Phone pane's bubbles, the caller's name header on the
+#           filed message, a remote gateway's live status filing the words
+#           when no local file exists, and the streamer's segmentation
 #           arithmetic without Vosk installed.
 use strict;
 use warnings;
@@ -13,12 +15,14 @@ use Test::More;
 use File::Temp qw(tempdir);
 use File::Slurp qw(read_file write_file);
 use JSON::PP;
+use Mojo::SQLite;
 
 use RepoSource;
 use JawnOSTest;
 
 use lib repo_root() . '/lib';
 use JawnOS::Sco::Gateway;
+use JawnOS::Sco::Client;
 
 my $repo = root();
 my $dir  = tempdir(CLEANUP => 1);
@@ -78,18 +82,121 @@ write_file("$tr/old.jsonl", encode_json({ who => 'caller', text => 'another call
 utime($now - 3600, $now - 3600, "$tr/old.jsonl");
 local $ENV{'JAWNOS_SCO_DIR'} = $sco;
 
+# The caller's name comes from the house's contact rows, the way the phone's
+# directory sees them. A throwaway database keeps the seeding - and the row
+# phone_number_app writes for an unknown number - off the live house.
+my $contact_db = "$sco/test.db";
+my $contact_sql = Mojo::SQLite->new('sqlite:' . $contact_db);
+my $contact = $contact_sql->db;
+$contact->query('create table settings (setting text, value text, timestamp text, '
+	. 'id integer primary key autoincrement, app text, server_time text, device text, '
+	. 'browser_tab_id text, uuid text, ost text, subsetting text)');
+my @contact_stat = stat($contact_db);
+$gb::database_holder = {
+	server_time => &subs::rightNow(), database => $contact_db,
+	db => $contact, dbh => $contact->dbh, sql => $contact_sql,
+	pid => $$, dev => $contact_stat[0], ino => $contact_stat[1],
+};
+my $seeded = &subs::rightNow();
+&subs::db_insert('settings', {
+	uuid => 'known-phone', app => 'john_smith', setting => 'phone',
+	value => '5555550101', device => 'all',
+	timestamp => $seeded, server_time => $seeded,
+});
+
 my ($picked, $said) = subs::phone_call_transcript_lines($now * 1000);
 like($picked, qr{/one\.jsonl$}, 'the transcript of this call is the one picked, not an older call\'s');
 is_deeply($said, ['may i ask whose calling', 'this is john'], 'and its lines are the caller\'s words');
 
-my @gone = subs::phone_call_transcript_lines(($now - 7200) * 1000);
-is(scalar @gone, 0, 'a call whose words are long gone files nothing');
+{
+	no warnings 'redefine';
+	local *JawnOS::Sco::Client::call = sub { return { ok => 0, error => 'no gateway in tests' } };
+	my @gone = subs::phone_call_transcript_lines(($now - 7200) * 1000);
+	is(scalar @gone, 0, 'a call whose words are long gone files nothing');
+}
 
 # A house with no key cannot seal a message, so nothing is written and the
 # transcript is left for the next attempt rather than being lost or stored open.
 is(subs::phone_call_transcript_note('+1 (555) 123-4567', 0, $now * 1000), 0,
 	'no key means no message');
 ok(-e "$tr/one.jsonl", 'and the transcript is kept, not spent');
+rename "$tr/one.jsonl", "$tr/one.jsonl.filed";
+
+# --------------------------------------------------------- the caller's name
+{
+	my @msgs;
+	no warnings 'redefine';
+	local *subs::note_encrypter = sub { $_[1] };
+	local *subs::db_insert = sub {
+		my ($table, $row) = @_;
+		push @msgs, $row if $table eq 'mailbox';
+		return { rows => 1 };
+	};
+
+	write_file("$tr/known.jsonl", encode_json({ who => 'caller', text => 'may i ask whose calling', at => $now, ms => 2400 }) . "\n");
+	utime($now, $now, "$tr/known.jsonl");
+	is(&subs::phone_call_transcript_note('+1 (555) 555-0101', 0, $now * 1000), 1,
+		'a known caller files one message');
+	is(scalar @msgs, 1, 'exactly one message');
+	like($msgs[0]->{'body'}, qr/\ACall from: John Smith\n\nmay i ask whose calling/,
+		'the header names the caller and the words follow');
+	is($msgs[0]->{'contact'}, 'john_smith', 'and the message still reaches their thread');
+	ok(-e "$tr/known.jsonl.filed", 'the local transcript is spent');
+	ok(!-e "$tr/known.jsonl", 'so it cannot be filed twice');
+
+	write_file("$tr/stranger.jsonl", encode_json({ who => 'caller', text => 'hello there', at => $now }) . "\n");
+	utime($now, $now, "$tr/stranger.jsonl");
+	is(&subs::phone_call_transcript_note('+1 (555) 555-0199', 0, $now * 1000), 1,
+		'an unknown caller still files their words');
+	like($msgs[1]->{'body'}, qr/\ACall from: \+1 \(555\) 555-0199\n\nhello there/,
+		'and the header is the number as the phone received it');
+
+	# Remote gateway: no local .jsonl, but the live status holds the lines.
+	{
+		no warnings 'redefine';
+		local *JawnOS::Sco::Client::call = sub {
+			return {
+				ok => 1, call_id => 'remote-call-7', since => $now - 5,
+				transcript => [
+					{ who => 'caller', text => 'this is john', at => $now, ms => 900 },
+					{ who => 'caller', text => 'from an old call', at => $now - 600, ms => 900 },
+				],
+			};
+		};
+		is(&subs::phone_call_transcript_note('+1 (555) 555-0101', 0, $now * 1000), 1,
+			"the gateway's live lines are filed when no transcript is local");
+		is(scalar @msgs, 3, 'one remote message');
+		like($msgs[-1]->{'body'}, qr/\ACall from: John Smith\n\nthis is john\z/,
+			"the remote header and this call's words, not another call's");
+	}
+	{
+		no warnings 'redefine';
+		local *JawnOS::Sco::Client::call = sub {
+			return { ok => 1, call_id => 'old-call', since => $now - 3600,
+				transcript => [ { who => 'caller', text => 'long ago', at => $now - 3600, ms => 1 } ] };
+		};
+		is(&subs::phone_call_transcript_note('+1 (555) 555-0101', 0, $now * 1000), 0,
+			'a status older than the window is not this call');
+		is(scalar @msgs, 3, 'and files nothing');
+	}
+	{
+		no warnings 'redefine';
+		local *JawnOS::Sco::Client::call = sub {
+			return { ok => 1, call_id => 'next-call', since => $now + 30,
+				transcript => [ { who => 'caller', text => 'the next caller', at => $now + 20, ms => 1 } ] };
+		};
+		is(&subs::phone_call_transcript_note('+1 (555) 555-0101', 0, $now * 1000), 0,
+			"a status from the next call is not this one's");
+		is(scalar @msgs, 3, 'and files nothing');
+	}
+	{
+		no warnings 'redefine';
+		local *JawnOS::Sco::Client::call = sub { return { ok => 0, error => 'no gateway socket' } };
+		is(&subs::phone_call_transcript_note('+1 (555) 555-0101', 0, $now * 1000), 0,
+			'no gateway is an ordinary answer, not a failure');
+		is(scalar @msgs, 3, 'so nothing is written');
+	}
+}
 
 # --------------------------------------------------------- the pane and the socket
 my $js = read_file("$repo/public/js/manager/phone.js");

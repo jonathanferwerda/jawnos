@@ -87,6 +87,44 @@ and `perl/Reception.pl` when `perl/sco/sco_helper` exists (build it with
 `perl scripts/build_sco.pl`), and `Mixer::ensure` creates the virtual devices
 the first time a call needs them.
 
+### When the gateway is another machine
+
+A phone has no adapter, no helper and no local socket, so the house lets it use
+another machine's. Phone → IVR → *Gateway machine* writes `phone.ivr_machine`
+(the laptop's signatorial) as one row for the house. On the phone,
+`JawnOS::Sco::Client` reads that row, finds the machine in `remote_machines`
+(by signatorial, then by IP), and dials `<ip>:<sco_port>` instead of
+`~/.president/sco.sock`.
+
+That read is the house's mesh roster: the laptop must be a peer in
+`remote_machines` with an IP address for the phone to find it. A machine the
+roster cannot place falls back to the local socket, and the route says which
+machine it could not place rather than only "no gateway socket".
+
+The prompts travel as **words**, not paths: the gateway renders them where
+Piper is and sends the audio down the link. A path rendered on the phone would
+not exist on the laptop, and a phone has no voice engine to make one.
+
+On the machine with the helper, `President.pl` mints a house `sco_token`
+(`app = misc`) when there is none, then starts
+`Sco.pl --listen 0.0.0.0:<sco_port> --token <token>`. `sco_port` defaults to
+**45700**; open it on the gateway's firewall and keep it on the house's own
+network (the tailnet), because the token is the only door on it. The local Unix
+socket is unchanged and needs no token, and a line on the network face without
+the token is refused.
+
+`sco_gateway` (`host:port`) still wins over `ivr_machine`; leave it empty unless
+every machine should be pinned to that one address. The gateway reads its
+arguments at start, so after changing `sco_port` restart the house on the
+gateway machine. The token is a house row, so the phone reads it without a
+restart.
+
+Only the machine named by `ivr_machine` listens on the network face and runs
+`Reception.pl`; another helper box in the same house stays out of the way, so
+there is one token, one listener and one armer. Moving the gateway to a
+different machine is therefore a restart on both the old and the new one (the
+phone needs no restart: it re-reads `ivr_machine` on every request).
+
 ## The live transcript
 
 A person watching the Phone pane should read the caller's words while the call

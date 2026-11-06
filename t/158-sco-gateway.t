@@ -1,4 +1,4 @@
-# tests-for: perl/Sco.pl lib/JawnOS/Sco/ scripts/build_sco.pl perl/sco/ lib/JawnOS/Routes/manager_sco.pm lib/JawnOS/Controller/manager_sco.pm perl/President.pl public/js/manager/phone.js
+# tests-for: perl/Sco.pl lib/JawnOS/Sco/ scripts/build_sco.pl perl/sco/ lib/JawnOS/Routes/manager_sco.pm lib/JawnOS/Controller/manager_sco.pm perl/President.pl perl/Reception.pl public/js/manager/phone.js
 # covers:    The SCO gateway's socket client, prompt cache, one-call plan and
 #            the routes that arm it; the helper's loopback mode when built.
 use strict;
@@ -23,6 +23,11 @@ use lib repo_root() . '/lib';
 use JawnOS::Sco::Client;
 use JawnOS::Sco::Render;
 use JawnOS::Sco::Gateway;
+
+{ package ScoRows;
+  sub new { my ($class, $rows) = @_; return bless { rows => $rows || [] }, $class; }
+  sub hashes { return $_[0]->{'rows'}; }
+}
 
 my $repo = root();
 
@@ -116,18 +121,140 @@ my $unreachable = JawnOS::Sco::Client->new(
 is($unreachable->{'ok'}, 0, 'a puck that is not there is an ordinary answer');
 like($unreachable->{'error'}, qr/unreachable/, 'and the error names the address');
 
+# ------------------------------------- which gateway the house points at
+# A phone has no helper and no socket: it reads the IVR pane's machine, finds
+# that machine in the roster, and dials its sco_port with the house token.
+# Resolution is a settings read and one roster read - no fork, no network - so
+# it can happen inside a page route.
+{
+	local *subs::misc_setting = sub { return undef };
+	local *subs::signatorial_designer = sub { return 'self-sig' };
+	local *subs::home = sub {
+		my $path = shift;
+		$path =~ s{^~}{$dir};
+		return $path;
+	};
+	my %setting = (sco_port => '45701', sco_token => 'house-token');
+	local *subs::setting_grabber = sub {
+		my $request = shift;
+		return $setting{ $request->{'setting'} };
+	};
+	my @rows = (
+		{ signatorial => 'gw-sig', ip => '10.0.0.5', connection => 'active' },
+		{ signatorial => '10.0.0.9', ip => '10.0.0.9', connection => 'active' },
+	);
+	local *subs::db_select = sub {
+		my ($table, $columns, $where) = @_;
+		my @match = grep {
+			my $ok = 1;
+			foreach my $key ( keys %{ $where || {} } ) {
+				$ok = 0 if (($$_{$key} // '') ne ($where->{$key} // ''));
+			}
+			$ok;
+		} @rows;
+		return ScoRows->new(\@match);
+	};
+
+	# (a) the machine in front of you - and no machine named at all - is local
+	local *subs::phone_ivr_grab = sub { return 'self-sig' };
+	my $here = JawnOS::Sco::Client->new();
+	ok(!$here->remote(), 'the machine in front of you is the local socket');
+	is($here->path(), "$dir/.president/sco.sock", 'and its path is the gateway socket');
+	local *subs::phone_ivr_grab = sub { return '' };
+	ok(!JawnOS::Sco::Client->new()->remote(), 'no machine named is the local socket');
+
+	# (b) another machine is found by its signatorial, then dialled
+	local *subs::phone_ivr_grab = sub { return 'gw-sig' };
+	my $remote = JawnOS::Sco::Client->new();
+	ok($remote->remote(), 'a named machine makes the gateway remote');
+	is($remote->where(), '10.0.0.5:45701', 'the roster address and the house port are dialled');
+	is($remote->{'token'}, 'house-token', 'and a line carries the house token');
+	is($remote->machine(), 'gw-sig', 'the named machine is kept for the log');
+	# the pane keys a machine by signatorial, but an older key is the ip
+	local *subs::phone_ivr_grab = sub { return '10.0.0.9' };
+	is(JawnOS::Sco::Client->new()->where(), '10.0.0.9:45701',
+		'a machine named by its ip resolves through the roster');
+	# no sco_port row: the daemon's documented default
+	delete $setting{'sco_port'};
+	is(JawnOS::Sco::Client->new()->where(), '10.0.0.9:45700',
+		'a house with no sco_port uses 45700');
+	$setting{'sco_port'} = '45701';
+
+	# (c) an address named outright still wins
+	$setting{'sco_gateway'} = '10.9.9.9:45999';
+	local *subs::phone_ivr_grab = sub { return 'gw-sig' };
+	my $named = JawnOS::Sco::Client->new();
+	is($named->where(), '10.9.9.9:45999', 'sco_gateway wins over the machine named in the app');
+	is($named->{'token'}, 'house-token', 'and it still carries the house token');
+	delete $setting{'sco_gateway'};
+
+	# a machine the roster cannot place: local, and the reason names it
+	local *subs::db_select = sub { return ScoRows->new([]) };
+	local *subs::phone_ivr_grab = sub { return 'gone-sig' };
+	my $lost = JawnOS::Sco::Client->new();
+	ok(!$lost->remote(), 'a machine with no roster row falls back to the local socket');
+	my $reason = $lost->call({ cmd => 'status' });
+	is($reason->{'ok'}, 0, 'and that call is an ordinary answer');
+	like($reason->{'error'}, qr/gone-sig.*no address/, 'which names the machine it could not place');
+}
+
+my $president = read_file("$repo/perl/President.pl");
+like($president, qr/'--listen',\s*'0\.0\.0\.0:'/,
+	'the master puts the gateway on the network face');
+like($president, qr/sco_token/, 'with the house token, minted when it is missing');
+like($president, qr/local \@ARGV/, 'handed to the gateway child, not to the master');
+like($president, qr/'--token'/, 'and the token travels as an argument');
+like($president, qr/\$is_gateway/, 'only the machine the house names as the gateway listens');
+like($president, qr/if \(\$is_gateway\)/, 'and only it starts the Reception armer');
+
 my $daemon = read_file("$repo/perl/Sco.pl");
 like($daemon, qr/--listen/, 'the daemon can listen on the tailnet');
 like($daemon, qr/--listen needs --token/, 'and refuses to listen without a token');
 like($daemon, qr/bad token/, 'a line without the token is refused');
+like($daemon, qr/merge_clips/, 'the daemon renders the words a phone sends');
+like($controller, qr/words => \\%words/, 'an arm carries the words');
+like($controller, qr/\$client->remote\(\)/,
+	'and only a local arm renders its clips here');
+my $reception_src = read_file("$repo/perl/Reception.pl");
+like($reception_src, qr/words => \{ map/,
+	'Reception sends words too, for a gateway on another machine');
+like($reception_src, qr/unless \(\$client->remote\(\)\)/,
+	'and renders clips only when the gateway is this one');
+like($reception_src, qr/\$not_the_gateway/, 'a helper box that is not the gateway does not arm it');
 
 # ------------------------------------------------------------- the clips
 is(JawnOS::Sco::Render::key('hello', 'piper-a'), JawnOS::Sco::Render::key('hello', 'piper-a'),
 	'the same words and voice make the same cache key');
 isnt(JawnOS::Sco::Render::key('hello', 'piper-a'), JawnOS::Sco::Render::key('hello', 'piper-b'),
 	'a different voice is a different clip');
-isnt(JawnOS::Sco::Render::key('hello', 'piper-a'), JawnOS::Sco::Render::key('hello!', 'piper-a'),
+isnt(JawnOS::Sco::Render::key('hello!', 'piper-a'), JawnOS::Sco::Render::key('hello', 'piper-a'),
 	'editing the prompt makes a new clip');
+# The gateway fills in the clips a phone could not render: paths from another
+# machine are not clips, and a phone has no Piper to make them.
+{
+	local *JawnOS::Sco::Render::render = sub {
+		my ($text, $voice) = @_;
+		return '' unless defined $text && length $text;
+		return "/rendered/$text-$voice.raw";
+	};
+	my $existing = "$dir/existing.raw";
+	write_file($existing, 'x');
+	my $merged = JawnOS::Sco::Render::merge_clips(
+		{ greeting => $existing, prompt => '/phone/never.raw' },
+		{ greeting => 'Hello', prompt => 'Who is this?', thanks => 'Thanks' },
+		'piper-john',
+	);
+	is($merged->{'greeting'}, $existing, 'a clip this machine can see is kept');
+	is($merged->{'prompt'}, '/rendered/Who is this?-piper-john.raw',
+		'a path from the phone is rendered from its words');
+	is($merged->{'thanks'}, '/rendered/Thanks-piper-john.raw',
+		'a missing clip is rendered from its words too');
+}
+{
+	local *JawnOS::Sco::Render::render = sub { return '' };
+	is_deeply(JawnOS::Sco::Render::merge_clips({}, {}, ''), {},
+		'nothing to speak leaves no clip behind');
+}
 # The virtual handset's commands and its stream matching.
 {
 	require JawnOS::Sco::Mixer;

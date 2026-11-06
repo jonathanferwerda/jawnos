@@ -813,16 +813,53 @@ sub manager_starter() {
 	# now, the Odroid Go in a bag later) also has an adapter to hold the link;
 	# one that does not pays nothing and answers "not built" on the routes.
 	if (-x './perl/sco/sco_helper') {
+		# Only the machine the house named as the gateway listens on the
+		# network and arms the phone's calls. Another helper box in the same
+		# house (a dev machine, a spare laptop) would otherwise mint a second
+		# sco_token and re-arm the same plan every few minutes. A machine named
+		# in ivr_machine is the gateway; no name means this one, and an explicit
+		# sco_gateway keeps the older remote-puck arrangement.
+		my $ivr_machine = eval { &subs::phone_ivr_grab('ivr_machine') } || '';
+		my $self_sig = eval { &subs::signatorial_designer() } || '';
+		my $sco_named = eval { &subs::setting_grabber({ app => 'misc', setting => 'sco_gateway', device => 'all', benign => 1 }) } || '';
+		my $is_gateway = !length($ivr_machine) || (length($self_sig) && $ivr_machine eq $self_sig) || length($sco_named);
+		# The network face is what lets a phone with no helper of its own use
+		# this machine's adapter. The port is the house's; the secret is one
+		# value for the house, minted once here, and never logged. Sco.pl
+		# refuses a line on that face without it.
+		my $sco_port = eval { &subs::setting_grabber({ app => 'misc', setting => 'sco_port', device => 'all', benign => 1 }) } || '';
+		$sco_port = 45700 unless $sco_port =~ /^\d{1,5}$/ && $sco_port > 0 && $sco_port < 65536;
+		my $sco_token = eval { &subs::setting_grabber({ app => 'misc', setting => 'sco_token', device => 'all', benign => 1 }) } || '';
+		unless (length $sco_token || !$is_gateway) {
+			$sco_token = eval {
+				require Crypt::PRNG;
+				Crypt::PRNG::random_bytes_hex(16);
+			} || &subs::random_string_creator(32);
+			eval { &subs::setting_setter({ app => 'misc', setting => 'sco_token', value => $sco_token, device => 'all' }) };
+		}
+		# A token no device can read would expose a face nobody can use.
+		my $stored_token = eval { &subs::setting_grabber({ app => 'misc', setting => 'sco_token', device => 'all', benign => 1 }) } || '';
+		my @sco_face = ($is_gateway && length($sco_token) && $stored_token eq $sco_token)
+			? ('--listen', '0.0.0.0:' . $sco_port, '--token', $sco_token)
+			: ();
+		$log->error('sco gateway: could not store the house sco_token; the network face is off')
+			unless @sco_face || !$is_gateway;
 		&subs::subprocessor(sub {
 			$ENV{PURPOSE} = 'sco';
+			# Sco.pl reads @ARGV, so the face is handed to it in its own
+			# child; the master's arguments belong to ./jawn.
+			local @ARGV = @sco_face;
 			require './perl/Sco.pl';
 		}, { name => 'SCO Gateway' });
 		# Reception keeps that gateway armed from the phone's own settings, so a
-		# caller is answered even when no page is open anywhere.
-		&subs::subprocessor(sub {
-			$ENV{PURPOSE} = 'reception';
-			require './perl/Reception.pl';
-		}, { name => 'Phone Reception' });
+		# caller is answered even when no page is open anywhere. It runs only
+		# on the gateway, so one plan has one armer.
+		if ($is_gateway) {
+			&subs::subprocessor(sub {
+				$ENV{PURPOSE} = 'reception';
+				require './perl/Reception.pl';
+			}, { name => 'Phone Reception' });
+		}
 	}
 	my $f_status = read_file($status_file);
 	my $socket_watch = &socket_watch($dump_dir . '/memory');

@@ -55,6 +55,27 @@ sub render {
 	return $raw;
 }
 
+# The clips a plan will play, filled in on the machine that owns the adapter.
+#
+# A phone sends words, not paths: a clip rendered on the phone does not exist on
+# the laptop, and a phone has no Piper anyway. A local arm still sends paths and
+# they win - only a missing or empty entry is rendered from the words here.
+# Entries nothing can speak are dropped, so the plan skips them instead of
+# handing the helper a path that does not exist.
+sub merge_clips {
+	my ($clips, $words, $voice) = @_;
+	my %out = ref $clips eq 'HASH' ? %{$clips} : ();
+	my $text = ref $words eq 'HASH' ? $words : {};
+	foreach my $key (qw(greeting prompt thanks)) {
+		my $path = $out{$key};
+		next if defined $path && length $path && -s $path;
+		delete $out{$key};
+		my $raw = &render($text->{$key}, $voice);
+		$out{$key} = $raw if $raw;
+	}
+	return \%out;
+}
+
 # Clips are small (about 16 KB a second) but a house edits prompts rarely and
 # calls for years: drop anything untouched for a fortnight, and never keep
 # more than 128.

@@ -101,6 +101,11 @@ sub phone_ivr_settings {
 # the call appointment is written, and a transcript is spent once (a renamed
 # .filed marker), so a retried call log cannot file the same words twice.
 #
+# When the gateway is another machine there is no local file; the live lines are
+# still in its status, so the phone asks it for them instead. The header names
+# the caller from this house's contact rows, because that is the half the
+# gateway never sees.
+#
 # The call window picks the file: the gateway and the phone are the same house
 # and a call is one at a time, but a transcript from minutes later belongs to a
 # different call and is left alone. '' when there is nothing to file.
@@ -112,7 +117,14 @@ sub phone_call_transcript_note {
 	return 0 unless length $digits;
 	my ($file, $said) = &phone_call_transcript_lines($ended_ms);
 	return 0 unless length $file && @{$said};
-	my $body = join(' ', @{$said});
+	# The number is the phone's, not the gateway's, so the header names the
+	# caller from the house's own contact rows. An unknown number reads as the
+	# number the phone received, not the digits the matching works on.
+	my $app = eval { &subs::phone_number_app($digits) } || '';
+	my $caller = (length $app && $app ne $digits) ? &subs::format_name($app) : '';
+	$caller = $number if !length $caller && defined $number && length $number;
+	$caller = $digits unless length $caller;
+	my $body = 'Call from: ' . $caller . "\n\n" . join(' ', @{$said});
 	$body = substr($body, 0, 4000);
 	# A message the house cannot read again is not written: the key is missing
 	# (a sandbox, a half-restored machine), and the transcript is left in place
@@ -126,7 +138,7 @@ sub phone_call_transcript_note {
 		body => $sealed,
 		manager_file => '',
 		status => 'sent',
-		contact => eval { &subs::phone_number_app($digits) } || '',
+		contact => $app,
 		phone => $digits,
 		email => undef,
 		conversation_uuid => undef,
@@ -134,47 +146,83 @@ sub phone_call_transcript_note {
 	};
 	my $ok = eval { &subs::db_insert('mailbox', $msg); 1 };
 	return 0 unless $ok;
-	rename $file, "$file.filed";
+	# Only a local transcript has a file to spend. A remote status names its
+	# call instead, and the next log (or a retry) asks the gateway again.
+	rename $file, "$file.filed" if -f $file && $file =~ /\.jsonl$/;
 	return 1;
 }
 
 # The transcript file for a call that ended at $ended_ms, and the words in it.
-# The gateway and the phone are the same house and a call is one at a time, but
-# a transcript from minutes later belongs to a different call and is left alone.
-# A spent transcript is renamed .filed, so a retried call log cannot file it
-# twice. Returns () when there is nothing to file.
+# A local .jsonl the gateway wrote wins; with none, the gateway's live status is
+# asked, because the gateway may be another machine. Its lines carry their own
+# timestamps, and a transcript from minutes later belongs to a different call
+# and is left alone. A spent local transcript is renamed .filed, so a retried
+# call log cannot file it twice. Returns () when there is nothing to file.
 sub phone_call_transcript_lines {
 	my ($ended_ms) = @_;
 	my $dir = $ENV{'JAWNOS_SCO_DIR'}
 		? $ENV{'JAWNOS_SCO_DIR'} . '/transcripts'
 		: &subs::home('~/.president/sco/transcripts');
-	return () unless -d $dir;
-	opendir(my $dh, $dir) or return ();
-	my @files = sort grep { /\.jsonl$/ && -s "$dir/$_" } readdir $dh;
-	closedir $dh;
-	return () unless @files;
-
 	my $ended = &phone_call_epoch($ended_ms);
-	my ($pick, $best) = ('', undef);
-	foreach my $name (@files) {
-		my $mtime = (stat("$dir/$name"))[9] || 0;
-		my $delta = abs($mtime - $ended);
-		next if $delta > 300;   # another call's words
-		if (!defined $best || $delta < $best) { $best = $delta; $pick = $name; }
-	}
-	return () unless length $pick;
 
-	my @said;
-	foreach my $line ( split /\n/, read_file("$dir/$pick") ) {
-		next unless $line =~ /\S/;
-		my $row = eval { decode_json($line) };
+	if (-d $dir) {
+		opendir(my $dh, $dir);
+		if ($dh) {
+			my @files = sort grep { /\.jsonl$/ && -s "$dir/$_" } readdir $dh;
+			closedir $dh;
+			my ($pick, $best) = ('', undef);
+			foreach my $name (@files) {
+				my $mtime = (stat("$dir/$name"))[9] || 0;
+				my $delta = abs($mtime - $ended);
+				next if $delta > 300;   # another call's words
+				if (!defined $best || $delta < $best) { $best = $delta; $pick = $name; }
+			}
+			if (length $pick) {
+				my @said;
+				foreach my $line ( split /\n/, read_file("$dir/$pick") ) {
+					next unless $line =~ /\S/;
+					my $row = eval { decode_json($line) };
+					next unless ref $row eq 'HASH';
+					my $text = $row->{'text'} // '';
+					$text =~ s/^\s+|\s+$//g;
+					push @said, $text if length $text;
+				}
+				return ("$dir/$pick", \@said) if @said;
+				return ();
+			}
+		}
+	}
+
+	# No local transcript: the gateway is another machine's, but the phone still
+	# knows when the call ended. Ask it for the lines it is holding. A missing
+	# gateway (the ordinary desktop) answers { ok => 0 }, which is not an error.
+	my $status = eval {
+		require JawnOS::Sco::Client;
+		JawnOS::Sco::Client->new()->call({ cmd => 'status' });
+	};
+	return () unless ref $status eq 'HASH' && $status->{'ok'};
+
+	# A status whose call began after this one ended belongs to the next call.
+	my $since = $status->{'since'};
+	return () if defined $since && $since =~ /^\d+$/ && $since > $ended + 5;
+
+	my @remote;
+	my $rows = $status->{'transcript'};
+	$rows = [] unless ref $rows eq 'ARRAY';
+	foreach my $row ( @{$rows} ) {
 		next unless ref $row eq 'HASH';
+		my $at = $row->{'at'};
+		next unless defined $at && $at =~ /^\d+$/;
+		next if abs($at - $ended) > 300;   # another call's words
 		my $text = $row->{'text'} // '';
 		$text =~ s/^\s+|\s+$//g;
-		push @said, $text if length $text;
+		push @remote, $text if length $text;
 	}
-	return () unless @said;
-	return ("$dir/$pick", \@said);
+	return () unless @remote;
+	my $call_id = $status->{'call_id'} // '';
+	# Not a path to a local file: the caller can tell this came from the
+	# gateway's live status, and the note leaves it alone rather than renaming.
+	return (length $call_id ? $call_id : 'remote', \@remote);
 }
 
 # A call's stamp arrives in milliseconds (the app's Date.now); an older caller

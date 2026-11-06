@@ -17,7 +17,11 @@
 #
 #   {"cmd":"status"}                     -> the state, the last recording, ...
 #   {"cmd":"arm","peer":"..:..","clips":{"greeting":"/..raw", ...},
+#    "words":{"greeting":"...", ...},"voice":"piper-a",
 #    "record":{"ms":20000}}              -> spawn the helper and listen
+#
+# A phone has no clips to send, so it sends the words and the voice: this side
+# renders only the entries it was not given a playable file for.
 #   {"cmd":"cancel"}                     -> drop the link and forget the plan
 #   {"cmd":"ping"}                       -> {"ok":1,"pong":<time>}
 use strict;
@@ -31,6 +35,7 @@ use File::Slurp qw(read_file);
 
 require './perl/subroutines.pl';
 require JawnOS::Sco::Gateway;
+require JawnOS::Sco::Render;
 
 my $config_file = './config.json';
 my $config = -e $config_file ? eval { decode_json(read_file($config_file)) } : {};
@@ -73,6 +78,10 @@ sub answer {
 	if ($cmd eq 'arm') {
 		my %args = %{$request};
 		delete $args{'cmd'};
+		# the paths a local manager rendered win; the words fill in what a
+		# phone could not render, on the machine that owns the voice
+		$args{'clips'} = &JawnOS::Sco::Render::merge_clips(
+			$args{'clips'}, $args{'words'}, $args{'voice'});
 		return $gateway->arm(%args);
 	}
 	if ($cmd eq 'cancel') {

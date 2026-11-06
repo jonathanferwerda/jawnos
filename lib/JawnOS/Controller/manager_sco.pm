@@ -31,19 +31,26 @@ sub action_52001 {
 
 # POST /manager/sco/arm
 #
-# The prompts are rendered here, on the machine that owns the gateway, not on
-# the phone: the phone sends words, the gateway sends 8 kHz PCM down the link.
-# Rendering is cached by the words and the voice, so the second caller waits
-# on nothing.
+# The prompts are rendered on the machine that owns the gateway, not on the
+# phone. A local arm renders here and sends the paths, as it always has; a
+# remote one sends the words and the voice, because a path from this machine
+# does not exist on the gateway (and a phone has no Piper either). Rendering is
+# cached by the words and the voice, so the second caller waits on nothing.
 sub action_52002 {
 	my $c = shift;
 	my $voice = $c->param('voice') || '';
-	my %clips;
+	my %words;
 	foreach my $key (qw(greeting prompt thanks)) {
-		my $text = $c->param($key) || '';
-		next unless length $text;
-		my $raw = &sco_render()->render($text, $voice);
-		$clips{$key} = $raw if $raw;
+		$words{$key} = $c->param($key) || '';
+	}
+	my $client = &sco_client();
+	my %clips;
+	unless ($client->remote()) {
+		foreach my $key (keys %words) {
+			next unless length $words{$key};
+			my $raw = &sco_render()->render($words{$key}, $voice);
+			$clips{$key} = $raw if $raw;
+		}
 	}
 	my $ms = $c->param('ms');
 	my %record = (
@@ -52,13 +59,15 @@ sub action_52002 {
 		silence_ms => 2000,
 		min_ms => 400,
 	);
-	$c->render(json => &sco_client()->call({
+	$c->render(json => $client->call({
 		cmd => 'arm',
 		peer => $c->param('peer') || '',
 		# the adapter to listen on: the gateway machine's own setting is the
 		# default, and a caller that knows better can name it
 		local => $c->param('local') || '',
 		call_id => $c->param('call_id') || '',
+		words => \%words,
+		voice => $voice,
 		clips => \%clips,
 		record => \%record,
 	}));
