@@ -42,6 +42,9 @@ foreach my $row (
 	[52005, 'get', '/manager/sco/recording'],
 	[52007, 'post', '/manager/sco/say'],
 	[52008, 'post', '/manager/sco/hold'],
+	[52009, 'post', '/manager/sco/flow'],
+	[52010, 'post', '/manager/sco/voicemail'],
+	[52011, 'post', '/manager/sco/hangup'],
 ) {
 	my ($idx, $method, $path) = @{$row};
 	like($routes, qr/\[\s*$idx\s*,\s*'$method'\s*,\s*'$path'\s*,\s*'action_$idx'\s*\]/,
@@ -1205,6 +1208,279 @@ FEED2
 	if (open(my $tf, '<:raw', $tee)) { local $/; $raw = <$tf> // ''; close $tf; }
 	ok(length $raw > 8000, 'the caller is tapped while a clip is playing');
 	ok(index($raw, pack('s<', 9000) x 400) >= 0, 'and the words said over it arrive');
+}
+
+# ------------------------------------------------- the caller's own flow
+# The flow defs the pane edits are what the gateway runs now: one step list per
+# flow, and the phone says which flow the caller belongs to as it answers. A
+# flow may carry a menu, a timed hold and a voicemail tail; a press jumps to
+# another flow.
+my $sleeper = "$dir/sleeper-helper";
+write_file($sleeper, "#!/bin/sh\nexec sleep 60\n");
+chmod 0755, $sleeper;
+
+my $flow_clip = "$dir/flow-clip.raw";
+write_file($flow_clip, "\0" x 160);
+
+my %flow_defs = (
+	receptionist => {
+		name => 'Receptionist',
+		voice => 'piper-test',
+		greeting => 'Hello',
+		prompt => 'Who is this?',
+		thanks => 'Thanks',
+		hold => '',
+		after => 'end',
+		clips => { greeting => $clip, prompt => $clip, thanks => $clip },
+	},
+	night => {
+		name => 'Night',
+		voice => 'piper-test',
+		clips => {
+			greeting => $flow_clip,
+			thanks => $flow_clip,
+			'keypad:1' => $flow_clip,
+		},
+		steps => [
+			{ type => 'say', text_key => 'greeting' },
+			{ type => 'keypad', text => 'Press 1 for the desk', timeout_ms => 5000,
+				digits => { '1' => 'receptionist' } },
+			{ type => 'say', text_key => 'thanks' },
+		],
+	},
+);
+
+# The legacy sequence, derived when a flow carries no steps of its own.
+{
+	my $legacy = JawnOS::Sco::Gateway::flow_steps({
+		clips => { greeting => $clip, prompt => $clip, thanks => $clip },
+		hold => '', after => 'end',
+	});
+	is_deeply([ map { $_->{'key'} } @{$legacy} ],
+		[ 'greeting', 'prompt', 'cue', 'name', 'thanks' ],
+		'a flow with no steps derives greeting, ask, thanks (and no after step)');
+	is_deeply([ map { $_->{'type'} } @{$legacy} ],
+		[ 'say', 'ask', 'ask', 'ask', 'say' ],
+		'and the steps carry their type for the status');
+}
+
+# A menu jump: the press chooses the flow, which starts from its first step.
+{
+	my $g = JawnOS::Sco::Gateway->new(
+		dir => "$dir/flow-menu", helper => $sleeper, status_path => "$dir/flow-menu.json");
+	my @sent;
+	local *JawnOS::Sco::Gateway::_send = sub {
+		my ($self, %cmd) = @_;
+		push @sent, { %cmd };
+		return 1;
+	};
+	my $armed = $g->arm(
+		flows => \%flow_defs,
+		default_flow => 'night',
+		record => { ms => 20000, silence_ms => 2000, min_ms => 400 },
+		call_id => 'menu-call',
+	);
+	is($armed->{'ok'}, 1, 'a gateway arms every flow the phone sent');
+	my $at_arm = $g->status;
+	is($at_arm->{'flow'}, 'night', 'the default flow is the one the arm named');
+	is($at_arm->{'step_index'}, -1, 'and no step has run before the call');
+	ok((grep { $_ eq 'keypad' } @{ $at_arm->{'plan'} }), 'the menu is in the plan');
+	$g->event({ event => 'accepted', peer => '00:11:22:33:44:55' });
+	is($g->status->{'flow'}, 'night', 'the accepted call runs the default flow');
+	is($g->status->{'step_index'}, 0, 'from its first step');
+	is($g->status->{'step_type'}, 'say', 'which is a spoken line');
+	$g->event({ event => 'played', id => $g->{'step_id'} });
+	is($g->status->{'step_type'}, 'keypad', 'then the menu');
+	ok((grep { ($_->{'cmd'} || '') eq 'play' && ($_->{'file'} || '') eq $flow_clip } @sent),
+		'and the menu is spoken by the flow itself');
+	$g->event({ event => 'digit', digit => '1' });
+	is($g->status->{'flow'}, 'receptionist', 'a mapped digit jumps to its flow');
+	is($g->status->{'step_index'}, 0, 'which restarts its steps');
+	is($g->status->{'step_type'}, 'say', 'at its greeting');
+	ok((grep { ($_->{'cmd'} || '') eq 'play' && ($_->{'file'} || '') eq $clip } @sent),
+		'and the greeting is the other flow\'s own clip');
+	my $pressed = $g->status->{'transcript'}->[-1] || {};
+	is($pressed->{'text'}, 'pressed 1', 'the press still joins the transcript');
+	$g->cancel();
+}
+
+# A digit the menu does not map only moves the plan on.
+{
+	my %defs = (
+		menu => {
+			clips => { thanks => $clip },
+			steps => [
+				{ type => 'keypad', text => 'Press 1', timeout_ms => 5000, digits => { '1' => 'menu' } },
+				{ type => 'say', text_key => 'thanks' },
+			],
+		},
+	);
+	my $g = JawnOS::Sco::Gateway->new(
+		dir => "$dir/flow-unmapped", helper => $sleeper, status_path => "$dir/flow-unmapped.json");
+	local *JawnOS::Sco::Gateway::_send = sub { return 1 };
+	$g->arm(flows => \%defs, default_flow => 'menu', call_id => 'unmapped-call');
+	$g->event({ event => 'accepted' });
+	is($g->status->{'step_type'}, 'keypad', 'the call is at the menu');
+	$g->event({ event => 'digit', digit => '2' });
+	is($g->status->{'flow'}, 'menu', 'an unmapped digit does not leave the flow');
+	is($g->status->{'step_type'}, 'say', 'and only advances the menu');
+	$g->cancel();
+}
+
+# No press within the menu's timeout advances too.
+{
+	my %defs = (
+		quiet => {
+			clips => { thanks => $clip },
+			steps => [
+				{ type => 'keypad', text => 'Press 1', timeout_ms => 300, digits => { '1' => 'quiet' } },
+				{ type => 'say', text_key => 'thanks' },
+			],
+		},
+	);
+	my $g = JawnOS::Sco::Gateway->new(
+		dir => "$dir/flow-timeout", helper => $sleeper, status_path => "$dir/flow-timeout.json");
+	local *JawnOS::Sco::Gateway::_send = sub { return 1 };
+	$g->arm(flows => \%defs, default_flow => 'quiet', call_id => 'timeout-call');
+	$g->event({ event => 'accepted' });
+	is($g->status->{'step_type'}, 'keypad', 'a menu with no words opens at once');
+	Mojo::IOLoop->timer(0.7 => sub { Mojo::IOLoop->stop });
+	Mojo::IOLoop->start;
+	is($g->status->{'step_type'}, 'say', 'no digit within the timeout advances the plan');
+	$g->cancel();
+}
+
+# A timed hold: the music lasts the seconds the step says, then the plan moves
+# on, and the status says how long is left.
+{
+	my %defs = (
+		holdflow => {
+			hold => 'shuffle',
+			clips => { thanks => $clip },
+			steps => [
+				{ type => 'hold', seconds => 1 },
+				{ type => 'say', text_key => 'thanks' },
+			],
+		},
+	);
+	my $g = JawnOS::Sco::Gateway->new(
+		dir => "$dir/flow-hold", helper => $sleeper, status_path => "$dir/flow-hold.json");
+	my @sent;
+	local *JawnOS::Sco::Gateway::_send = sub {
+		my ($self, %cmd) = @_;
+		push @sent, { %cmd };
+		return 1;
+	};
+	$g->arm(flows => \%defs, default_flow => 'holdflow', call_id => 'hold-flow-call');
+	$g->event({ event => 'accepted' });
+	is($g->status->{'step_type'}, 'hold', 'the call reaches the timed hold');
+	ok($g->status->{'hold'}, 'and the music is playing');
+	ok($g->status->{'hold_seconds_left'} >= 1, 'the status says how long is left');
+	Mojo::IOLoop->timer(1.4 => sub { Mojo::IOLoop->stop });
+	Mojo::IOLoop->start;
+	ok(!$g->status->{'hold'}, 'the music stops when its time is up');
+	is($g->status->{'hold_seconds_left'}, 0, 'and no time is left');
+	is($g->status->{'step_type'}, 'say', 'the plan takes its next step');
+	ok((grep { ($_->{'cmd'} || '') eq 'stop' } @sent), 'the music is stopped, not left playing');
+	$g->cancel();
+}
+
+# Which flow a call belongs to: named before the link, defaulted when it is
+# not, honoured when it arrives late, ignored once the plan has started.
+{
+	my $g = JawnOS::Sco::Gateway->new(
+		dir => "$dir/flow-late", helper => $sleeper, status_path => "$dir/flow-late.json");
+	local *JawnOS::Sco::Gateway::_send = sub { return 1 };
+	$g->arm(flows => \%flow_defs, default_flow => '', call_id => 'late-call');
+	is($g->status->{'flow'}, '', 'a bucket that is not a flow leaves no plan');
+	$g->event({ event => 'accepted' });
+	is($g->status->{'flow'}, '', 'the call is up with no plan to speak');
+	is($g->status->{'step_index'}, -1, 'and no step has run');
+	my $late = $g->set_flow('night');
+	is($late->{'ok'}, 1, 'a late flow is accepted while nothing has been said');
+	is($g->status->{'flow'}, 'night', 'and the plan starts in that flow');
+	is($g->status->{'step_index'}, 0, 'from its first step');
+	my $after = $g->set_flow('receptionist');
+	is($after->{'flow'}, 'night', 'once a step has run the flow does not change');
+	like($after->{'ignored'} || '', qr/started/, 'and the answer says why');
+	$g->cancel();
+}
+# Named before the link is accepted, a flow is what the call runs.
+{
+	my $g = JawnOS::Sco::Gateway->new(
+		dir => "$dir/flow-pending", helper => $sleeper, status_path => "$dir/flow-pending.json");
+	local *JawnOS::Sco::Gateway::_send = sub { return 1 };
+	$g->arm(flows => \%flow_defs, call_id => 'pending-call');
+	is($g->status->{'flow'}, 'receptionist',
+		'with two flows and no default, the receptionist is the plan');
+	$g->set_flow('night');
+	$g->event({ event => 'accepted' });
+	is($g->status->{'flow'}, 'night', 'the flow named before answering is the one that runs');
+	$g->cancel();
+}
+
+# The panel's Send to voicemail: stop the music, play the greeting, record now.
+{
+	my $g = JawnOS::Sco::Gateway->new(
+		dir => "$dir/flow-vm", helper => $sleeper, status_path => "$dir/flow-vm.json");
+	my @sent;
+	local *JawnOS::Sco::Gateway::_send = sub {
+		my ($self, %cmd) = @_;
+		push @sent, { %cmd };
+		return 1;
+	};
+	local *JawnOS::Sco::Render::render = sub { return "$dir/spoken.raw" };
+	$g->arm(flows => \%flow_defs, default_flow => 'night', call_id => 'vm-now-call');
+	$g->event({ event => 'accepted' });
+	$g->{'holding'} = 1;
+	my $now = $g->to_voicemail(text => 'Please leave a message after the tone');
+	is($now->{'ok'}, 1, 'a call can be sent to voicemail at any point');
+	ok((grep { ($_->{'cmd'} || '') eq 'stop' } @sent), 'the music is stopped');
+	my $steps = $g->{'steps'};
+	is($steps->[0]->{'key'}, 'voicemail', 'the greeting comes first');
+	is($steps->[0]->{'play'}, "$dir/spoken.raw", 'with the words the panel typed');
+	is($steps->[1]->{'key'}, 'message', 'then a message is recorded');
+	is($steps->[1]->{'opts'}->{'ms'}, 300000, 'with the long voicemail ceiling');
+	is($steps->[1]->{'opts'}->{'silence_ms'}, 3000, 'and the longer pause that ends it');
+	is($steps->[1]->{'opts'}->{'min_ms'}, 1000, 'and a message\'s own speech floor');
+	$g->event({ event => 'played', id => $g->{'step_id'} });
+	is($g->status->{'step_type'}, 'voicemail', 'the message step is next');
+	$g->event({ event => 'recorded', id => $g->{'step_id'}, file => "$dir/message.wav" });
+	is($g->{'recordings'}->[0]->{'kind'}, 'voicemail', 'the message is filed as a voicemail');
+	$g->cancel();
+}
+
+# Hang up ends the plan and the call; with no call there is nothing to end.
+{
+	my $g = JawnOS::Sco::Gateway->new(
+		dir => "$dir/flow-hangup", helper => $sleeper, status_path => "$dir/flow-hangup.json");
+	is($g->hangup()->{'ok'}, 0, 'a gateway with no call cannot hang one up');
+	local *JawnOS::Sco::Gateway::_send = sub { return 1 };
+	$g->arm(flows => \%flow_defs, default_flow => 'night', call_id => 'hangup-call');
+	$g->event({ event => 'accepted' });
+	is($g->{'state'}, 'in_call', 'the call is up');
+	my $hung = $g->hangup();
+	is($hung->{'ok'}, 1, 'hang up answers');
+	is($g->{'state'}, 'idle', 'and the call is over');
+	is(scalar @{ $g->status->{'plan'} }, 0, 'with no plan left behind');
+}
+
+# The daemon wires the new verbs, and the status carries the flow's position.
+{
+	my $daemon_src = read_file("$repo/perl/Sco.pl");
+	my $gateway_pm = read_file("$repo/lib/JawnOS/Sco/Gateway.pm");
+	like($daemon_src, qr/cmd eq 'flow'/, 'the daemon answers a flow word');
+	like($daemon_src, qr/phone_ivr_flow_for_bucket/, 'resolving the caller\'s bucket to a flow');
+	like($daemon_src, qr/to_voicemail/, 'and carries the panel\'s voicemail request');
+	like($daemon_src, qr/\$gateway->hangup/, 'and its hang up');
+	like($daemon_src, qr/\$flow\{'clips'\}/, 'merging each flow\'s clips on the speaking machine');
+	like($controller, qr/cmd => 'flow'/, 'the flow route reaches the daemon');
+	like($controller, qr/cmd => 'voicemail'/, 'the voicemail route too');
+	like($controller, qr/cmd => 'hangup'/, 'and hang up');
+	like($controller, qr/param\('flows'\)/, 'an arm can carry whole flows');
+	like($gateway_pm, qr/hold_seconds_left/, 'the status names the time left on a timed hold');
+	like($gateway_pm, qr/step_type/, 'and the step the flow is on');
+	like($gateway_pm, qr/sub set_flow/, 'a flow can be chosen before the link');
 }
 
 done_testing();

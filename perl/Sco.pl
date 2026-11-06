@@ -13,17 +13,26 @@
 # still needs no secret, and the audio never crosses the network.
 #
 # The socket answers the shape ~/.president/control uses - one JSON object per
-# line - with the five verbs the manager needs:
+# line - with the verbs the manager needs:
 #
 #   {"cmd":"status"}                     -> the state, the last recording, ...
 #   {"cmd":"arm","peer":"..:..","clips":{"greeting":"/..raw", ...},
 #    "words":{"greeting":"...", ...},"voice":"piper-a",
 #    "record":{"ms":20000}}              -> spawn the helper and listen
-#
-# A phone has no clips to send, so it sends the words and the voice: this side
-# renders only the entries it was not given a playable file for.
+#   {"cmd":"arm","flows":{"receptionist":{...},"night":{...}}}
+#                                        -> one step list per flow; the call's
+#                                           flow is chosen when it is answered
+#   {"cmd":"flow","bucket":"unknown"}   -> which flow this call belongs to
+#    or {"cmd":"flow","flow":"night"}      (settable before the link is up)
+#   {"cmd":"voicemail","text":"..."}    -> send the call to voicemail now
+#   {"cmd":"hangup"}                     -> end the plan and the call
 #   {"cmd":"cancel"}                     -> drop the link and forget the plan
 #   {"cmd":"ping"}                       -> {"ok":1,"pong":<time>}
+#
+# A phone has no clips to send, so it sends the words and the voice: this side
+# renders only the entries it was not given a playable file for. A flow that
+# carries `steps` gets the same treatment per flow, from its own words and
+# clips.
 use strict;
 use warnings;
 use lib './lib';
@@ -82,11 +91,72 @@ sub answer {
 	if ($cmd eq 'arm') {
 		my %args = %{$request};
 		delete $args{'cmd'};
-		# the paths a local manager rendered win; the words fill in what a
-		# phone could not render, on the machine that owns the voice
-		$args{'clips'} = &JawnOS::Sco::Render::merge_clips(
-			$args{'clips'}, $args{'words'}, $args{'voice'});
+		# Every flow gets its clips filled in here, on the machine that owns the
+		# voice: a phone sends words, not paths, and a path rendered on the phone
+		# does not exist on the gateway. A local manager's paths win.
+		my $flows = $args{'flows'};
+		if (ref $flows eq 'HASH' && %{$flows}) {
+			my %built;
+			foreach my $key (keys %{$flows}) {
+				next unless defined $key && $key =~ /^[a-z0-9_]{1,30}$/;
+				my $def = $flows->{$key};
+				next unless ref $def eq 'HASH';
+				my %flow = %{$def};
+				my %words = map { $_ => ($flow{$_} // '') } qw(greeting prompt thanks voicemail);
+				my $voice = $flow{'voice'} || '';
+				$flow{'clips'} = &JawnOS::Sco::Render::merge_clips(
+					(ref $flow{'clips'} eq 'HASH' ? $flow{'clips'} : {}),
+					\%words, $voice);
+				# merge_clips carries the three words the older plan spoke; a flow
+				# may also use its voicemail greeting in its own steps
+				my $vm = $flow{'clips'}->{'voicemail'} || '';
+				unless (length $vm && -s $vm) {
+					my $raw = &JawnOS::Sco::Render::render($words{'voicemail'}, $voice);
+					$flow{'clips'}->{'voicemail'} = $raw if $raw;
+				}
+				$built{$key} = \%flow;
+			}
+			$args{'flows'} = \%built;
+			# What a call with no word from the phone hears: the unknown
+			# bucket's flow, which may be ring/reject (then there is no plan).
+			unless (exists $args{'default_flow'}) {
+				my $resolved = eval { &subs::phone_ivr_flow_for_bucket('unknown') };
+				# a settings read that failed is not the same as `ring`: leave the
+				# gateway's own default rather than deciding no plan runs
+				$args{'default_flow'} = $resolved if defined $resolved;
+			}
+		}
+		else {
+			delete $args{'flows'};
+			$args{'clips'} = &JawnOS::Sco::Render::merge_clips(
+				$args{'clips'}, $args{'words'}, $args{'voice'});
+		}
 		return $gateway->arm(%args);
+	}
+	if ($cmd eq 'flow') {
+		# Which flow this call belongs to. The phone knows the caller's kind (a
+		# bucket) or names a flow outright; the socket holds it until the link
+		# is accepted.
+		my %args = ref $request eq 'HASH' ? %{$request} : ();
+		my $key = defined $args{'flow'} ? $args{'flow'} : undef;
+		unless (defined $key) {
+			my $bucket = $args{'bucket'};
+			$bucket = 'unknown'
+				unless defined $bucket && $bucket =~ /^(?:unknown|blacklisted|self|friend|stranger|enemy)$/;
+			my $resolved = eval { &subs::phone_ivr_flow_for_bucket($bucket) };
+			return { ok => 0, error => 'cannot resolve the caller\'s flow' }
+				unless defined $resolved;
+			$key = $resolved;
+		}
+		return $gateway->set_flow($key);
+	}
+	if ($cmd eq 'voicemail') {
+		my %args = ref $request eq 'HASH' ? %{$request} : ();
+		delete $args{'cmd'};
+		return $gateway->to_voicemail(%args);
+	}
+	if ($cmd eq 'hangup') {
+		return $gateway->hangup();
 	}
 	if ($cmd eq 'hold') {
 		my %args = %{$request};

@@ -1,7 +1,8 @@
 package Manager;
 
-# The SCO gateway's four faces: what it is doing, arm it for the next call,
-# put it down, and the name a caller left.
+# The SCO gateway's five faces: what it is doing, arm it for the next call,
+# put it down, and the name a caller left - plus which flow the call belongs
+# to, sending it to voicemail now, and hanging it up.
 #
 # Nothing here touches Bluetooth. Each action is one line to the daemon on
 # ~/.president/sco.sock (perl/Sco.pl), which owns the helper; a machine with
@@ -62,7 +63,19 @@ sub action_52002 {
 		silence_ms => 2000,
 		min_ms => 400,
 	);
-	$c->render(json => $client->call({
+	# One step list per flow, when the pane previews a house's flows: the daemon
+	# merges each flow's words and clips on the machine with the voice, so this
+	# route only carries the JSON through.
+	my $flows_json = $c->param('flows') || '';
+	my $flows;
+	if (!ref $flows_json && length $flows_json) {
+		require Mojo::JSON;
+		$flows = eval { Mojo::JSON::decode_json($flows_json) };
+	}
+	elsif (ref $flows_json eq 'HASH') {
+		$flows = $flows_json;
+	}
+	my %request = (
 		cmd => 'arm',
 		peer => $c->param('peer') || '',
 		# the adapter to listen on: the gateway machine's own setting is the
@@ -76,7 +89,44 @@ sub action_52002 {
 		# the music the caller waits through after the thanks; an arm that names
 		# none keeps the saved choice
 		hold => defined $c->param('hold') ? $c->param('hold') : &subs::phone_ivr_settings()->{'hold'},
-	}));
+	);
+	$request{'flows'} = $flows if ref $flows eq 'HASH' && %{$flows};
+	$c->render(json => $client->call(\%request));
+}
+
+# POST /manager/sco/flow
+#
+# Which flow this call belongs to. The phone knows the caller's kind and posts
+# the bucket just before it answers; a flow key may be named instead. The daemon
+# holds it until the link is accepted, and ignores it once the plan has started.
+sub action_52009 {
+	my $c = shift;
+	my %request = (cmd => 'flow');
+	my $bucket = $c->param('bucket') || '';
+	my $flow = $c->param('flow') || '';
+	$request{'bucket'} = $bucket if length $bucket;
+	$request{'flow'} = $flow if length $flow;
+	$c->render(json => &sco_client()->call(\%request));
+}
+
+# POST /manager/sco/voicemail
+#
+# The panel's Send to voicemail: the greeting plays and the message is recorded
+# now, instead of after the rest of the flow.
+sub action_52010 {
+	my $c = shift;
+	my %request = (cmd => 'voicemail');
+	my $text = $c->param('text') || '';
+	$request{'text'} = $text if length $text;
+	$c->render(json => &sco_client()->call(\%request));
+}
+
+# POST /manager/sco/hangup
+#
+# The panel's hang up: the plan and the call are over.
+sub action_52011 {
+	my $c = shift;
+	$c->render(json => &sco_client()->call({ cmd => 'hangup' }));
 }
 
 # POST /manager/sco/hold

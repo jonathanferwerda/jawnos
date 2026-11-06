@@ -39,6 +39,12 @@ sub new {
 		call_id => '',
 		steps => [],
 		step_at => 0,
+		flows => {},
+		flow => '',
+		flow_started => 0,
+		default_flow => '',
+		hold_until => 0,
+		keypad_open => 0,
 		next_id => 1,
 		last_event => '',
 		last_error => '',
@@ -181,6 +187,26 @@ sub status {
 		transcript_note => $self->{'transcript_note'} || '',
 		# who the phone says is calling; this side only sees the Bluetooth link
 		caller => $self->{'caller'} || {},
+		# the flow this call belongs to, and where in it the plan has got to: a
+		# menu jumps to another flow, so both the key and the step are the plan's
+		# own answer, not something the pane can work out for itself
+		flow => $self->{'flow'} || '',
+		step_index => (defined $self->{'step_at'} && $self->{'step_at'} >= 0) ? $self->{'step_at'} : -1,
+		step_type => do {
+			my $at = $self->{'step_at'};
+			my $step = (defined $at && $at >= 0) ? ($self->{'steps'} || [])->[$at] : undef;
+			($step && $step->{'type'}) ? $step->{'type'} : '';
+		},
+		# a timed hold says how long the caller waits on the music
+		hold_seconds_left => do {
+			my $until = $self->{'hold_until'} || 0;
+			my $left = 0;
+			if ($self->{'holding'} && $until) {
+				$left = int($until - time + 0.999);
+				$left = 0 if $left < 0;
+			}
+			$left;
+		},
 		# the WebRTC bridge, when someone pressed Connect me
 		rtc => $self->{'rtc'} || { state => 'idle', error => '' },
 		plan => [ map { $_->{'key'} || ($_->{'tone'} ? 'tone' : 'step') } @{ $self->{'steps'} || [] } ],
@@ -250,14 +276,182 @@ sub write_status {
 
 # ---- arming -------------------------------------------------------------
 
-# %args: peer => BDADDR (optional pin), greeting/prompt/voicemail/thanks =>
-# clip text or '' (voicemail replaced the old one and is not played here),
-# record => { ms, silence_ms, min_ms }, clips => { key => raw path }.
+# One flow's authored steps, in the engine's shape.
+#
+# A flow def carries `steps` (an array) or the legacy words; when it carries
+# neither, the old plan is derived from them so a house that never opened the
+# flow editor keeps the sequence it always had: greeting, ask for a name,
+# thanks, and then whatever `after` says.
+#
+# The result is a flat list of steps, because the engine only ever needs to know
+# what to do next: `say` is one clip, `ask` is a prompt, a cue and a recording,
+# `voicemail` is a greeting and a recording. A keypad step keeps its digits so a
+# press can jump to another flow, and a hold step keeps its seconds so a timed
+# hold can end on its own.
+sub flow_steps {
+	my ($def) = @_;
+	$def ||= {};
+	my $clips = ref $def->{'clips'} eq 'HASH' ? $def->{'clips'} : {};
+	my $voice = defined $def->{'voice'} ? $def->{'voice'} : '';
+	my $hold = defined $def->{'hold'} ? $def->{'hold'} : '';
+	my $after = lc(defined $def->{'after'} ? $def->{'after'} : 'hold');
+	my @authored;
+	if (ref $def->{'steps'} eq 'ARRAY' && @{ $def->{'steps'} }) {
+		@authored = @{ $def->{'steps'} };
+	}
+	else {
+		@authored = (
+			{ type => 'say', text_key => 'greeting' },
+			{ type => 'ask' },
+			{ type => 'say', text_key => 'thanks' },
+			{ type => 'after' },
+		);
+	}
+	my @steps;
+	for my $i (0 .. $#authored) {
+		my $raw = $authored[$i];
+		next unless ref $raw eq 'HASH';
+		my $type = lc($raw->{'type'} || '');
+		$type = 'say' unless length $type || !defined $raw->{'text_key'};
+		if ($type eq 'say') {
+			my $key = $raw->{'text_key'} || '';
+			next unless $key =~ /^(?:greeting|prompt|thanks|voicemail)$/;
+			my $path = $clips->{$key} || '';
+			# a line with no words is not spoken, and not a step either
+			next unless length $path;
+			push @steps, { type => 'say', key => $key, play => $path };
+		}
+		elsif ($type eq 'ask') {
+			# The prompt says "after the tone", so there is one. A flow with no
+			# prompt asked nothing: it neither beeps nor records a name, which is
+			# what a flow seeded before the editor existed has always done.
+			my $path = $clips->{'prompt'} || '';
+			next unless length $path;
+			push @steps, { type => 'ask', key => 'prompt', play => $path };
+			push @steps, { type => 'ask', key => 'cue', tone => 1, hz => 660, ms => 400 };
+			push @steps, { type => 'ask', key => 'name', record => 1 };
+		}
+		elsif ($type eq 'keypad') {
+			my $text = defined $raw->{'text'} ? $raw->{'text'} : '';
+			$text =~ s/^\s+|\s+$//g;
+			$text = substr($text, 0, 400);
+			# the machine with the voice renders the menu, once, at arm time
+			my $path = $clips->{ 'keypad:' . $i } || '';
+			if (!length $path && length $text) {
+				$path = eval {
+					require JawnOS::Sco::Render;
+					&JawnOS::Sco::Render::render($text, $voice);
+				} || '';
+			}
+			my %digits;
+			if (ref $raw->{'digits'} eq 'HASH') {
+				foreach my $digit (keys %{ $raw->{'digits'} }) {
+					next unless defined $digit && $digit =~ /^[0-9*#]$/;
+					my $target = $raw->{'digits'}->{$digit};
+					next unless defined $target && $target =~ /^[a-z0-9_]{1,30}$/;
+					$digits{$digit} = $target;
+				}
+			}
+			my $timeout = $raw->{'timeout_ms'};
+			$timeout = 5000
+				unless defined $timeout && $timeout =~ /^\d+$/ && $timeout >= 200 && $timeout <= 60000;
+			push @steps, {
+				type => 'keypad',
+				key => 'keypad',
+				play => $path,
+				text => $text,
+				timeout_ms => int($timeout),
+				digits => \%digits,
+			};
+		}
+		elsif ($type eq 'hold') {
+			my $seconds = $raw->{'seconds'};
+			$seconds = (defined $seconds && $seconds =~ /^\d+$/) ? int($seconds) : 0;
+			my $step = &_hold_step($hold, $seconds);
+			push @steps, $step if $step;
+		}
+		elsif ($type eq 'voicemail') {
+			push @steps, &_voicemail_steps($clips->{'voicemail'} || '');
+		}
+		elsif ($type eq 'after') {
+			# the legacy tail: the music, the house's voicemail, or nothing
+			if ($after eq 'voicemail') {
+				push @steps, &_voicemail_steps($clips->{'voicemail'} || '');
+			}
+			elsif ($after eq 'hold') {
+				my $step = &_hold_step($hold, 0);
+				push @steps, $step if $step;
+			}
+		}
+	}
+	return \@steps;
+}
+
+# A hold step, or nothing when the house has music to play. A timed hold with
+# no music is still a hold: the caller waits the seconds it says and the plan
+# moves on, rather than skipping the wait.
+sub _hold_step {
+	my ($choice, $seconds) = @_;
+	$seconds ||= 0;
+	return unless defined $choice && length $choice && lc($choice) ne 'none';
+	require JawnOS::Sco::Hold;
+	my $list = &JawnOS::Sco::Hold::playlist($choice);
+	return unless @{$list} || $seconds > 0;
+	return {
+		type => 'hold',
+		key => 'hold',
+		hold => 1,
+		list => $list,
+		shuffle => (lc($choice) eq 'shuffle' ? 1 : 0),
+		seconds => $seconds,
+	};
+}
+
+# The greeting (when the flow has one) and a recorded message. A message is
+# longer than a name: five minutes at most, ended by a pause, and it does not
+# need a name's short speech floor.
+sub _voicemail_steps {
+	my ($greeting) = @_;
+	my @out;
+	push @out, { type => 'voicemail', key => 'voicemail', play => $greeting }
+		if defined $greeting && length $greeting;
+	push @out, {
+		type => 'voicemail',
+		key => 'message',
+		record => 1,
+		kind => 'voicemail',
+		opts => { ms => 300000, silence_ms => 3000, min_ms => 1000 },
+	};
+	return @out;
+}
+
+# One flow, ready to run: its words resolved to clips, its steps compiled.
+sub _flow {
+	my ($key, $def, $prefix) = @_;
+	my %flow = (
+		key => $key,
+		name => (defined $def->{'name'} && length $def->{'name'}) ? $def->{'name'} : $key,
+		voice => (defined $def->{'voice'} ? $def->{'voice'} : ''),
+		hold => (defined $def->{'hold'} ? $def->{'hold'} : ''),
+		after => lc(defined $def->{'after'} ? $def->{'after'} : 'hold'),
+		clips => (ref $def->{'clips'} eq 'HASH' ? { %{ $def->{'clips'} } } : {}),
+	);
+	$flow{'steps'} = [
+		(ref $prefix eq 'ARRAY' ? @{$prefix} : ()),
+		@{ &flow_steps({ %flow, steps => $def->{'steps'} }) },
+	];
+	return \%flow;
+}
+
+# %args: peer => BDADDR (optional pin), flows => { key => def }, words/clips/
+# voice/hold/after for the older single-flow arm, record => { ms,
+# silence_ms, min_ms }.
 # `ms` is the ceiling for the whole clip (including the wait for the caller), and
 # the helper keeps the clip open until it hears a name and then a pause;
 # `min_ms` is how much speech has to have been heard before a pause may end it.
-# The plan is greeting, name prompt, record the name, thanks, then the hold
-# music while somebody decides to pick up - in that order.
+# The legacy plan is greeting, name prompt, record the name, thanks, then the
+# hold music while somebody decides to pick up - in that order; a flow with
+# `steps` says what it wants in its own words.
 sub arm {
 	my ($self, %args) = @_;
 	return { ok => 0, error => 'a call is already up' }
@@ -290,65 +484,73 @@ sub arm {
 	}
 
 	my $clips = $args{'clips'} || {};
-	my @steps;
 	# a diagnostic tone: proof that the uplink reaches the caller, with nothing
 	# else in the way
+	my @prefix;
 	my $tone = $args{'tone'};
 	if (ref $tone eq 'HASH') {
-		push @steps, {
+		push @prefix, {
 			tone => 1,
 			hz => ($tone->{'hz'} && $tone->{'hz'} =~ /^\d+$/) ? int($tone->{'hz'}) : 660,
 			ms => ($tone->{'ms'} && $tone->{'ms'} =~ /^\d+$/) ? int($tone->{'ms'}) : 1200,
 		};
 	}
-	foreach my $key (qw(greeting prompt)) {
-		my $path = $clips->{$key} || '';
-		push @steps, { play => $path, key => $key } if $path;
-	}
-	# the prompt says "after the tone", so there is one: a cue the caller can
-	# hear, which also marks the moment the recording opens. A flow with no
-	# name prompt asked nothing, so it neither beeps nor records a name.
-	if ($clips->{'prompt'}) {
-		push @steps, { tone => 1, hz => 660, ms => 400, key => 'cue' };
-		push @steps, { record => 1, key => 'name' };
-	}
-	my $thanks = $clips->{'thanks'} || '';
-	push @steps, { play => $thanks, key => 'thanks' } if $thanks;
-	# After the thanks the house keeps the line instead of hanging up: the caller
-	# waits through music while somebody decides to pick up. The phone sends a
-	# choice, not a path - the tracks are this machine's own files - so the list
-	# is resolved and converted here, at arm time, and never mid-call.
-	# What follows the thanks: the music, or the house's voicemail greeting and
-	# a recorded message. A flow left on `hold` keeps the old behaviour.
-	my $after = lc($args{'after'} || 'hold');
-	if ($after eq 'voicemail') {
-		my $greeting = $clips->{'voicemail'} || '';
-		push @steps, { play => $greeting, key => 'voicemail' } if $greeting;
-		# a message is longer than a name: five minutes at most, ended by a
-		# pause, and it does not need a name's short floor
-		push @steps, {
-			record => 1,
-			key => 'message',
-			kind => 'voicemail',
-			opts => { ms => 300000, silence_ms => 3000, min_ms => 1000 },
-		};
-	}
-	my $hold = defined $args{'hold'} ? $args{'hold'} : '';
-	if ($after eq 'hold' && length $hold && lc($hold) ne 'none') {
-		require JawnOS::Sco::Hold;
-		my $list = &JawnOS::Sco::Hold::playlist($hold);
-		if (@{$list}) {
-			push @steps, {
-				hold => 1,
-				key => 'hold',
-				list => $list,
-				shuffle => (lc($hold) eq 'shuffle' ? 1 : 0),
-			};
+
+	# One step list per flow. The caller's flow is chosen when the link is
+	# accepted (a `flow` line names it); the default here is what a call with no
+	# word from the phone hears.
+	my %flows;
+	my $given = (ref $args{'flows'} eq 'HASH' && %{ $args{'flows'} }) ? $args{'flows'} : undef;
+	if ($given) {
+		foreach my $key (sort keys %{$given}) {
+			next unless defined $key && $key =~ /^[a-z0-9_]{1,30}$/;
+			my $def = $given->{$key};
+			next unless ref $def eq 'HASH';
+			$flows{$key} = &_flow($key, $def, \@prefix);
 		}
 	}
+	if (!%flows) {
+		# the older arm: one plan spoken from the words it was given
+		my $words = ref $args{'words'} eq 'HASH' ? $args{'words'} : {};
+		my %def = (
+			name => 'Receptionist',
+			voice => $args{'voice'} || '',
+			steps => $args{'steps'},
+			clips => $clips,
+			hold => (defined $args{'hold'} ? $args{'hold'} : ''),
+			after => (defined $args{'after'} ? $args{'after'} : 'hold'),
+			map { $_ => ($words->{$_} || '') } qw(greeting prompt thanks voicemail),
+		);
+		$flows{'receptionist'} = &_flow('receptionist', \%def, \@prefix);
+	}
 
-	$self->{'steps'} = \@steps;
-	$self->{'step_at'} = 0;
+	# Which flow a call that names none belongs to. The phone resolves the
+	# caller's bucket to a flow key and says so; when it could not, the gateway
+	# falls back to what it has, preferring the unknown bucket's flow.
+	my $default;
+	if (exists $args{'default_flow'} || defined $args{'flow'}) {
+		$default = exists $args{'default_flow'} ? $args{'default_flow'} : $args{'flow'};
+		$default = '' unless defined $default;
+		# a house that named a flow it did not arm still hears the receptionist
+		$default = ($flows{'receptionist'} ? 'receptionist' : '')
+			if length $default && !$flows{$default};
+	}
+	else {
+		$default = $flows{'unknown'} ? 'unknown'
+			: $flows{'receptionist'} ? 'receptionist'
+			: ((sort keys %flows)[0] || '');
+	}
+
+	$self->{'flows'} = \%flows;
+	$self->{'default_flow'} = $default;
+	$self->{'flow'} = $default;
+	$self->{'flow_started'} = 0;
+	$self->{'steps'} = $default ? [ map { { %$_ } } @{ $flows{$default}->{'steps'} } ] : [];
+	$self->{'step_at'} = -1;
+	$self->{'hold_until'} = 0;
+	$self->{'keypad_open'} = 0;
+	$self->_clear_keypad_timer();
+	$self->_clear_hold_timer();
 	# the record options belong to the plan, not to one transport: pipe mode
 	# returns below, and used to leave them unset, so a screened call ran the
 	# helper's 30 s / 1.8 s defaults instead of what the phone asked for
@@ -394,6 +596,128 @@ sub arm {
 sub call_id {
 	my ($self) = @_;
 	return sprintf('%d-%04x', time, int(rand(65536)));
+}
+
+# ---- which flow this call belongs to ------------------------------------
+#
+# The phone knows the caller (a contact, a stranger, a blocked number) and the
+# house maps that to a flow; this side only hears the result. The word can
+# arrive before the link is accepted - the phone posts it just before it
+# answers - so it is held as pending and consumed at `accepted`. A word that
+# arrives after the plan has started changes nothing, because a caller is
+# halfway through the old flow and starting again would repeat a greeting; a
+# late one still picks the flow if no step has run yet.
+sub set_flow {
+	my ($self, $key) = @_;
+	$key = defined $key ? $key : '';
+	$key =~ s/^\s+|\s+$//g;
+	$key = '' unless $key =~ /^[a-z0-9_]{1,30}$/;
+	if (($self->{'state'} || '') eq 'in_call' && $self->{'flow_started'}) {
+		return { ok => 1, flow => $self->{'flow'}, ignored => 'the plan has started' };
+	}
+	$self->{'pending_flow'} = $key;
+	# a call that is up with no plan yet (no flow was armed for it) can still
+	# be given the flow the phone means
+	$self->start_flow($key)
+		if ($self->{'state'} || '') eq 'in_call' && !$self->{'flow_started'};
+	$self->write_status();
+	return { ok => 1, flow => $key, state => $self->{'state'} || 'idle' };
+}
+
+# Start (or restart) a flow: its steps from the top, and no timers left over
+# from the one the call was in. An empty or unknown key runs no plan at all,
+# which is what a bucket mapped to `ring` or `reject` means.
+sub start_flow {
+	my ($self, $key) = @_;
+	$key = '' unless defined $key;
+	my $flow = length $key ? $self->{'flows'}->{$key} : undef;
+	$self->_clear_keypad_timer();
+	$self->_clear_hold_timer();
+	$self->{'keypad_open'} = 0;
+	$self->{'flow'} = $flow ? $key : '';
+	$self->{'flow_started'} = 0;
+	$self->{'steps'} = $flow ? [ map { { %$_ } } @{ $flow->{'steps'} } ] : [];
+	$self->{'step_at'} = -1;
+	$self->{'holding'} = 0;
+	$self->{'hold_at'} = 0;
+	$self->{'hold_until'} = 0;
+	$self->{'hold_paused'} = 0;
+	$self->{'stopping_hold'} = 0;
+	$self->write_status();
+	$self->_advance() if @{ $self->{'steps'} };
+	return $flow ? 1 : 0;
+}
+
+# `{cmd:'voicemail'}` - the panel's Send to voicemail. The music stops, the
+# flow's greeting (or the words the person typed) plays, and the message is
+# recorded now instead of after the rest of the flow.
+sub to_voicemail {
+	my ($self, %args) = @_;
+	return { ok => 0, error => 'no call is up' } unless ($self->{'state'} || '') eq 'in_call';
+	my $flow = length($self->{'flow'} || '') ? $self->{'flows'}->{ $self->{'flow'} } : undef;
+	my $greeting = ($flow && $flow->{'clips'}) ? ($flow->{'clips'}->{'voicemail'} || '') : '';
+	my $text = defined $args{'text'} ? $args{'text'} : '';
+	$text =~ s/^\s+|\s+$//g;
+	if (length $text) {
+		$text = substr($text, 0, 400);
+		my $raw = eval {
+			require JawnOS::Sco::Render;
+			&JawnOS::Sco::Render::render($text, ($flow && $flow->{'voice'}) || '');
+		} || '';
+		$greeting = $raw if $raw;
+	}
+	# the words are the house's, so they join the transcript both sides read
+	if (length $text) {
+		my $line = { who => 'house', text => $text, at => time, ms => 0 };
+		push @{ $self->{'transcript'} }, $line;
+		shift @{ $self->{'transcript'} } while @{ $self->{'transcript'} } > 200;
+		$self->_write_transcript_line($line);
+		$self->_push_transcript({ line => $line });
+	}
+	$self->_clear_keypad_timer();
+	$self->_clear_hold_timer();
+	$self->{'keypad_open'} = 0;
+	if ($self->{'holding'}) {
+		# a stop the house asked for is not the end of the call
+		$self->{'stopping_hold'} = 1;
+		$self->_send(cmd => 'stop');
+	}
+	$self->{'holding'} = 0;
+	$self->{'hold_at'} = 0;
+	$self->{'hold_until'} = 0;
+	$self->{'hold_paused'} = 0;
+	$self->{'steps'} = [ &_voicemail_steps($greeting) ];
+	$self->{'step_at'} = -1;
+	$self->{'flow_started'} = 0;
+	$self->{'last_event'} = 'voicemail';
+	$self->write_status();
+	$self->_advance();
+	return { ok => 1, flow => $self->{'flow'}, step => 'voicemail' };
+}
+
+# `{cmd:'hangup'}` - the plan and the call are over.
+sub hangup {
+	my ($self) = @_;
+	return { ok => 0, error => 'no call is up' } if ($self->{'state'} || '') eq 'idle';
+	my $call = $self->{'call_id'};
+	$self->end_call('hung up');
+	return { ok => 1, call_id => $call };
+}
+
+sub _clear_keypad_timer {
+	my ($self) = @_;
+	if (my $timer = delete $self->{'keypad_timer'}) {
+		eval { Mojo::IOLoop->remove($timer) };
+	}
+	return 1;
+}
+
+sub _clear_hold_timer {
+	my ($self) = @_;
+	if (my $timer = delete $self->{'hold_timer'}) {
+		eval { Mojo::IOLoop->remove($timer) };
+	}
+	return 1;
 }
 
 # Wait until the gateway's own two streams appear (the call has started), move
@@ -479,7 +803,7 @@ sub watch_streams {
 }
 
 # The plan is over and the line it was spoken into is quiet: end the call.
-sub end_call {
+	sub end_call {
 	my ($self, $why) = @_;
 	$self->{'quiet'} = 0;
 	$self->{'gone'} = 0;
@@ -488,10 +812,16 @@ sub end_call {
 	$self->{'hold_at'} = 0;
 	$self->{'hold_paused'} = 0;
 	$self->{'stopping_hold'} = 0;
+	$self->{'hold_until'} = 0;
 	$self->{'accepted_at'} = 0;
 	$self->{'done_at'} = 0;
 	$self->{'steps'} = [];
-	$self->{'step_at'} = 0;
+	$self->{'step_at'} = -1;
+	$self->{'flow'} = '';
+	$self->{'flow_started'} = 0;
+	$self->{'keypad_open'} = 0;
+	$self->_clear_keypad_timer();
+	$self->_clear_hold_timer();
 	return 1 if $self->{'state'} eq 'idle';
 	$self->{'state'} = 'idle';
 	$self->{'since'} = time;
@@ -1084,12 +1414,21 @@ sub _advance {
 	$self->{'step_at'}++;
 	my $step = $steps->[ $self->{'step_at'} ];
 	unless ($step) {
+		# the flow is over; a timed hold's clock and a menu's wait go with it
+		$self->{'flow_started'} = 1;
+		$self->{'keypad_open'} = 0;
+		$self->_clear_keypad_timer();
+		$self->_clear_hold_timer();
+		$self->{'holding'} = 0;
+		$self->{'hold_until'} = 0;
 		$self->{'state'} = 'done';
 		$self->{'since'} = time;
 		$self->{'done_at'} = time;
 		$self->write_status();
 		return;
 	}
+	# a step has been dispatched: a late `flow` may no longer change the plan
+	$self->{'flow_started'} = 1;
 	if ($step->{'tone'}) {
 		$self->_send(cmd => 'tone', id => $self->{'next_id'}, hz => $step->{'hz'}, ms => $step->{'ms'});
 	}
@@ -1110,12 +1449,38 @@ sub _advance {
 		);
 	}
 	elsif ($step->{'hold'}) {
-		# the hold never advances: it plays one track and, when the helper says
-		# that one is done, plays the next. The plan stays in_call while it does,
-		# so the caller hears music rather than the end of the plan.
+		# The hold plays one track and, when the helper says that one is done,
+		# plays the next. A timed hold also has a clock: when it runs out the plan
+		# moves on and the music is stopped. An untimed one never advances, which
+		# is the house holding the line for a person.
+		my $seconds = $step->{'seconds'} || 0;
 		$self->{'holding'} = 1;
 		$self->{'hold_at'} = 0;
+		$self->{'hold_paused'} = 0;
+		$self->{'hold_until'} = $seconds > 0 ? time + $seconds : 0;
+		$self->_clear_hold_timer();
+		if ($seconds > 0) {
+			$self->{'hold_timer'} = Mojo::IOLoop->timer($seconds => sub {
+				return unless $self->{'holding'};
+				$self->_hold_finish();
+			});
+		}
 		$self->_hold_play_next();
+		return;
+	}
+	elsif (($step->{'type'} || '') eq 'keypad') {
+		# The menu is spoken and the keypad is open from now until the timeout:
+		# a caller may press while the menu is still playing, so the press is
+		# taken at once and only the clock waits for the words.
+		$self->_clear_keypad_timer();
+		$self->{'keypad_open'} = 1;
+		if ($step->{'play'}) {
+			$self->_send(cmd => 'play', id => $self->{'next_id'}, file => $step->{'play'});
+		}
+		$self->{'step_id'} = $self->{'next_id'}++;
+		$self->{'last_event'} = 'step:keypad';
+		$self->write_status();
+		$self->_keypad_listen() unless $step->{'play'};
 		return;
 	}
 	else {
@@ -1133,8 +1498,12 @@ sub _hold_play_next {
 	my $step = $self->{'steps'}->[ $self->{'step_at'} ] || {};
 	my $list = $step->{'list'} || [];
 	unless (@{$list}) {
-		$self->{'holding'} = 0;
-		$self->_advance();
+		# no music: an untimed hold is over, a timed one waits out its clock in
+		# silence and the timer moves the plan on
+		unless ($step->{'seconds'} || 0) {
+			$self->{'holding'} = 0;
+			$self->_advance();
+		}
 		return;
 	}
 	my $at = $self->{'hold_at'} || 0;
@@ -1150,6 +1519,44 @@ sub _hold_play_next {
 	$self->{'step_id'} = $self->{'next_id'}++;
 	$self->{'last_event'} = 'step:hold';
 	$self->write_status();
+}
+
+# A timed hold reaching its end: the music goes, and the plan takes its next
+# step. The stop is ours, so the helper's `stopped` must not end the call.
+sub _hold_finish {
+	my ($self) = @_;
+	$self->_clear_hold_timer();
+	$self->{'holding'} = 0;
+	$self->{'hold_at'} = 0;
+	$self->{'hold_until'} = 0;
+	$self->{'hold_paused'} = 0;
+	$self->{'stopping_hold'} = 1;
+	$self->_send(cmd => 'stop');
+	$self->_advance();
+	return 1;
+}
+
+# Listen for a menu digit. The clock starts when the menu has finished being
+# spoken (the play's own `played`), or at once when the flow has no words for
+# it. Any press made meanwhile arrives as a `digit` event.
+sub _keypad_listen {
+	my ($self) = @_;
+	$self->_clear_keypad_timer();
+	my $step = $self->{'steps'}->[ $self->{'step_at'} ] || {};
+	return 0 unless ($step->{'type'} || '') eq 'keypad';
+	my $at = $self->{'step_at'};
+	my $ms = $step->{'timeout_ms'} || 5000;
+	$self->{'keypad_open'} = 1;
+	$self->{'keypad_timer'} = Mojo::IOLoop->timer($ms / 1000 => sub {
+		delete $self->{'keypad_timer'};
+		return unless $self->{'keypad_open'};
+		my $now = defined $self->{'step_at'} ? $self->{'step_at'} : -1;
+		return unless $now == $at;
+		$self->{'keypad_open'} = 0;
+		$self->_advance();
+	});
+	$self->write_status();
+	return 1;
 }
 
 # ---- helper events ------------------------------------------------------
@@ -1176,7 +1583,17 @@ sub event {
 		$self->{'peer'} = $peer if $peer =~ /^[0-9a-f]{2}(?::[0-9a-f]{2}){5}$/i;
 		$self->_push_screen('started');
 		$self->{'step_at'} = -1;
-		$self->_advance();
+		# The flow the phone named while answering; with no word from it, the
+		# default the arm resolved (the unknown bucket's flow). A key naming no
+		# armed flow runs no plan.
+		my $key;
+		if (exists $self->{'pending_flow'}) {
+			$key = delete $self->{'pending_flow'};
+		}
+		else {
+			$key = $self->{'default_flow'};
+		}
+		$self->start_flow($key);
 	}
 	elsif ($name eq 'played' || $name eq 'recorded') {
 		if ($name eq 'recorded' && $self->{'pending_record'}) {
@@ -1201,11 +1618,21 @@ sub event {
 			last next_step if defined $event->{'id'}
 				&& $self->{'step_id'}
 				&& $event->{'id'} != $self->{'step_id'};
-			my $step = $self->{'steps'}->[ $self->{'step_at'} ] || {};
-			if ($step->{'hold'}) {
-				# a pause is the caller's turn: no track follows until the pane
-				# asks for the music again
-				$self->_hold_play_next() unless $self->{'hold_paused'};
+			my $at = $self->{'step_at'};
+			my $step = (defined $at && $at >= 0) ? ($self->{'steps'}->[$at] || {}) : {};
+			if (($step->{'type'} || '') eq 'keypad') {
+				# the menu has been spoken, now the caller's keypad is open
+				$self->_keypad_listen();
+			}
+			elsif ($step->{'hold'}) {
+				if ($self->{'hold_until'} && time >= $self->{'hold_until'}) {
+					$self->_hold_finish();
+				}
+				elsif ($self->{'hold_paused'}) {
+					# a pause is the caller's turn: no track follows until the
+					# pane asks for the music again
+				}
+				else { $self->_hold_play_next(); }
 			}
 			else { $self->_advance(); }
 		}
@@ -1220,6 +1647,20 @@ sub event {
 			$self->_write_transcript_line($line);
 			$self->write_status();
 			$self->_push_transcript({ line => $line });
+			# a menu is waiting for this press: a mapped digit jumps to its
+			# flow from the top, an unmapped one just moves the menu on
+			my $at = $self->{'step_at'};
+			my $step = (defined $at && $at >= 0) ? ($self->{'steps'}->[$at] || {}) : {};
+			if ($self->{'keypad_open'} && ($step->{'type'} || '') eq 'keypad') {
+				$self->{'keypad_open'} = 0;
+				$self->_clear_keypad_timer();
+				my $target = $step->{'digits'} ? ($step->{'digits'}->{$d} || '') : '';
+				if (length $target && $self->{'flows'}->{$target}) {
+					$self->{'last_event'} = 'digit:' . $d;
+					$self->start_flow($target);
+				}
+				else { $self->_advance(); }
+			}
 		}
 	}
 	elsif ($name eq 'closed' || $name eq 'stopped') {
@@ -1264,6 +1705,16 @@ sub cancel {
 	my ($self) = @_;
 	$self->{'caller'} = {};
 	$self->stop_watch();
+	# a plan that is put down takes its timers (a menu's wait, a timed hold's
+	# clock) and the flow it was in with it
+	$self->{'flow'} = '';
+	$self->{'flow_started'} = 0;
+	$self->{'steps'} = [];
+	$self->{'step_at'} = -1;
+	$self->{'hold_until'} = 0;
+	$self->{'keypad_open'} = 0;
+	$self->_clear_keypad_timer();
+	$self->_clear_hold_timer();
 	# Put the call's streams back only when no call is up. Cancelling also
 	# happens at every re-arm, while the line is still breathing, and moving a
 	# live call to the laptop's own sink and microphone is exactly what made
