@@ -184,7 +184,7 @@ Two certificates already exist, and they already split along this line:
 
 | Cert | Covers | Renewed by | Expires |
 |---|---|---|---|
-| `*.jonathanferwerda.com` | any subdomain — the house manager and hub today | **`jawnos-tls.timer` on the laptop** (`scripts/tls_issue.pl --renew`), with the older `certbot-renew.timer` still running beside it | 2027-01-31 |
+| `*.jonathanferwerda.com` | any subdomain — the house manager and hub today | **`jawnos-tls.timer` on the `house` container** (`scripts/tls_issue.pl --renew`) | 2027-02-01 |
 | `thejunderground.com` | apex + `www` | **certbot on ks5** (standalone `:80`, deploy hook into headscale) | 2027-02-01 |
 
 So the tailnet does **not** need the apex, and it does **not** need a certificate of its own: point
@@ -207,6 +207,14 @@ So the KS-5 is not self-sufficient until one of these is true:
 The first is better: the DNS credentials live in the `dns` settings app, sealed with the house key,
 so they **ride the mesh** to the `house` container — the off-mesh `dev` container never gets them.
 Hard date: **2027-01-31** (the wildcard was reissued on 2026-11-02).
+
+**Correction, 2026-11-06.** The wildcard now renews on the **`house` container** through its own
+weekly system `jawnos-tls.timer` and a `tls_issue.pl` lineage under `~/.jawnos_tls` (reissued
+2026-11-03, expires 2027-02-01). The laptop no longer holds it: both `/etc/letsencrypt` lineages were
+deleted and `certbot-renew.timer` disabled. `dev` renews its **own** host certificate
+(`dev.jonathanferwerda.com`, lineage `host-dev.jonathanferwerda.com`), and the laptop and table serve
+a **house-CA leaf** (valid to 2029) instead of a copied public certificate. The wildcard private key
+therefore exists on the `house` container only.
 
 **D9 was not implementable (found during P5, 2026-11-02).** Headscale v0.29.5 refuses a
 `server_url` that sits inside `base_domain` while MagicDNS is on — MagicDNS could shadow the
@@ -539,8 +547,8 @@ record moved instead.
   every node re-registers.
 - **The one easy own-goal** is a broken bridge or a closed 3478/udp on a host with no console.
   Snapshot first, keep the old SSH session open, and confirm the ports before repointing DNS.
-- **The one dated risk** is the wildcard: it expires **2027-01-31**. The laptop renews it through
-  `jawnos-tls.timer` (installed 2026-11-02), and the `house` container needs the same timer in P6.
+- **The one dated risk** is the wildcard: it expires **2027-02-01**. The `house` container renews it
+  itself through `jawnos-tls.timer` (in place since 2026-11-03); no other machine holds the key.
   **The apex pair was reissued on ks5 on 2026-11-02 and expires 2027-02-01**, renewed by
   `certbot.timer` there with the deploy hook; the VPS's HTTP-01 renewal is no longer used.
 - **The open certificate risk** was the house's wildcard renewal: the moved GoDaddy credential
@@ -700,9 +708,9 @@ Notes:
 - Verify later with `systemctl --user list-timers` and
   `journalctl --user -u jawnos-tls.service`; a renewal logs either *"installed a new certificate
   … restart requested"* or *"is current (nothing to install)"*.
-- Keep the laptop's existing `certbot-renew.timer` for now. Two issuers of the same name is
-  harmless while one of them is not yet proven; retire it once the KS-5 has renewed once on its own.
-- Hard date: **2027-01-31**.
+- **Retired 2026-11-06:** the laptop's `certbot-renew.timer` is disabled and its two
+  `/etc/letsencrypt` lineages deleted; only the `house` container issues this name now.
+- Hard date: **2027-02-01**.
 
 ---
 
