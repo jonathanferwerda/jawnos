@@ -1,5 +1,12 @@
 #!/usr/bin/env python3
-"""jawnos-desktop -- the JawnOS dashboard window."""
+"""jawnos-desktop -- the JawnOS dashboard window.
+
+The default shell is the WebKitGTK view. The Qt WebEngine shell (Chromium,
+with WebRTC) is a prototype behind a flag:
+
+    JAWNOS_DESKTOP_ENGINE=qt ./jawnos-desktop
+    ./jawnos-desktop --engine qt
+"""
 import os
 import sys
 
@@ -7,7 +14,29 @@ _here = os.path.dirname(os.path.realpath(__file__))
 if _here not in sys.path:
     sys.path.insert(0, _here)
 
-from jawnos_desktop.ui import main  # noqa: E402
+
+def _engine(argv):
+    """The requested shell engine, and argv with --engine removed."""
+    engine = (os.environ.get("JAWNOS_DESKTOP_ENGINE") or "").strip().lower()
+    args = list(argv)
+    if "--engine" in args:
+        index = args.index("--engine")
+        try:
+            engine = args[index + 1].strip().lower()
+            del args[index:index + 2]
+        except IndexError:
+            del args[index:index + 1]
+    return engine, args
+
+
+def main(argv=None):
+    engine, args = _engine(sys.argv[1:] if argv is None else argv)
+    if engine == "qt":
+        from jawnos_desktop.qt_shell import main as qt_main  # noqa: E402
+        return qt_main(args)
+    from jawnos_desktop.ui import main as ui_main  # noqa: E402
+    return ui_main(args)
+
 
 if __name__ == "__main__":
     sys.exit(main())

@@ -396,6 +396,30 @@ allocation, but no guest-side code can make a host-window drag change the page
 viewport. mkosi 27 boots the image with `-device virtio-vga` (EDID on by
 default) and `-display sdl,gl=on`.
 
+## Qt WebEngine shell (prototype)
+
+The default desktop shell is WebKitGTK. On Debian that build is compiled
+without WebRTC (`RTCPeerConnection` is absent), so the chat and the screening's
+Connect me cannot run in it. This prototype loads the same Manager page in Qt
+WebEngine (Chromium), the engine family Android's WebView already uses:
+
+    sudo apt install python3-pyside6.qtwebenginewidgets   # Debian 13
+    JAWNOS_DESKTOP_ENGINE=qt ./jawnos-desktop
+    ./desktop/jawnos-qt --url https://<house>:3000/manager
+    ./desktop/jawnos-qt --probe     # prints the engine's media/WebRTC support
+
+It uses the same stored ticket as the WebKit shell: loading the ticket URL
+mints the session cookie, and the shell then loads the Manager on that host.
+The profile (`~/.config/jawnos/qt-webengine`) keeps the cookie across launches.
+Certificate errors are accepted for the house's self-signed certificate, and
+microphone/camera requests are granted to the page. `--probe` is also the
+regression check in `t/185-desktop-qt-shell.t`, which skips on a machine
+without the PySide6 package.
+
+The shell is not the default yet: a fresh profile lands on the padlock Gate
+(the WebKit shell does too), and the tray, supervision and BLE controls are
+not ported.
+
 ## Windows
 
 The supervisor in `jawnos_desktop/core.py` is deliberately written to be
