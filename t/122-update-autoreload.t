@@ -54,4 +54,18 @@ like($help, qr/Auto-reload on update, in Misc, is per device and off by default/
 	'the Configure help names the setting exactly as the panel does');
 like($help, qr/Off is pill only/, 'the help explains the off state');
 
+# --- the stylesheet swap is guarded ----------------------------------------
+# A revision arrives after a reconnect, and the deploy that made it may have
+# landed while a worker was restarting. Re-pointing every sheet and dropping
+# the old one on a failed fetch left the Manager with no CSS at all: icons at
+# their intrinsic size and a dead layout until the app was reopened.
+like($reload, qr/if \(version && what\.css\) \{/,
+	'only a stylesheet move re-points the sheets');
+like($reload, qr/one\('load', function \(\) \{ \$\(old\)\.remove\(\); \}\)/,
+	'the parsed sheet is dropped only after its replacement loads');
+like($reload, qr/one\('error'/, 'a failed fetch keeps the old sheet');
+like($reload, qr/retry=/, 'and retries once for a restart blip');
+unlike($reload, qr/bust\('script\[src\]'/, 'a running page never re-points a script src');
+unlike($reload, qr/\$\(this\)\.attr\(attr, url\.replace/, 'the blind href rewrite is gone');
+
 done_testing();

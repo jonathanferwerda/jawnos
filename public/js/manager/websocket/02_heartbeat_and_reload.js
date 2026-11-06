@@ -383,23 +383,41 @@ function jawnosRevisionArrived(parts, version, was) {
 	if (what.css || what.views || what.server) { jawnosUpdateInPlace(version, what); }
 }
 
-// The stylesheet links and the record of each script tag point at the new build;
-// the windows re-render themselves. Nothing here reloads the page.
+// The stylesheet links move to the new build, losslessly; the windows re-render
+// themselves. Nothing here reloads the page.
 function jawnosUpdateInPlace(version, what) {
 	// the Configure bar carries the number, so it moves with the code it names
 	if (version && typeof jawnosConfigureVersion === 'function') { jawnosConfigureVersion(version); }
-	if (version) {
-		var bust = function (sel, attr) {
-			$(sel).each(function () {
-				var url = String($(this).attr(attr) || '');
-				if (url.indexOf('string=') < 0) { return; }
-				$(this).attr(attr, url.replace(/([?&]string=)[^&]*/, '$1' + encodeURIComponent(version)));
-			});
-		};
-		bust('link[rel="stylesheet"]', 'href');
-		// a script element that has already run does not re-run on a new src; this
-		// keeps the page's own record honest for whatever reads it next
-		bust('script[src]', 'src');
+	// Only a stylesheet move re-points the sheets. A views/server move used to
+	// rewrite every href too, so every deploy re-downloaded all eight sheets on
+	// the next reconnect - and a changed href discards the parsed sheet, so one
+	// failed fetch (a worker restarting, a dropped connection) left the page
+	// with no CSS at all: intrinsic-size icons the size of the window and a
+	// dead layout until the app was reopened.
+	if (version && what.css) {
+		$('link[rel="stylesheet"]').each(function () {
+			var old = this;
+			var url = String($(old).attr('href') || '');
+			if (url.indexOf('string=') < 0) { return; }
+			var next = url.replace(/([?&]string=)[^&]*/, '$1' + encodeURIComponent(version));
+			if (next === url) { return; }
+			var swap = function (href, tries) {
+				var fresh = document.createElement('link');
+				fresh.rel = 'stylesheet';
+				fresh.href = href;
+				// the old sheet stays parsed until the new one is in: an error
+				// costs the new styles, never the page's layout
+				$(fresh).one('load', function () { $(old).remove(); });
+				$(fresh).one('error', function () {
+					$(fresh).remove();
+					if (tries > 0) {
+						swap(href + (href.indexOf('?') < 0 ? '?' : '&') + 'retry=' + tries, tries - 1);
+					}
+				});
+				document.head.appendChild(fresh);
+			};
+			swap(next, 1);
+		});
 	}
 	if (what.views || what.server || what.css) { jawnosUpdateWindows(); }
 	jawnosUpdateNote('updated live');
