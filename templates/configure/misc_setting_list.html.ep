@@ -485,6 +485,11 @@
 
 		<% my @locations = &subs::location_types(); %>
 		<% my $remote_machines = &subs::remote_machine_lister({ archive => 'yes' }); %>
+		<%# the archive machine's own drive is not in its peer list (remote_machines
+		    holds the other machines), so a person on the archive machine could not
+		    pick it here. Add this machine when it owns one. %>
+		<% my $self_archive = &subs::archive_self_machine(); %>
+		<% push @{$remote_machines}, $self_archive if $self_archive; %>
 		<details class="cfg-acc cfg-acc-sub" data-acc="misc-<%= &subs::html_name($dt) %>-locations">
 			<summary><%= &subs::lang('configure.locations') %></summary>
 			<div class="cfg-grid misc_grid">
@@ -519,9 +524,15 @@
 			<summary><%= &subs::lang('configure.archive_root') %></summary>
 			<div class="cfg-row">
 			<label><b>archive_dir</b></label>
-			<% my $current_archive_dir = $settings->{$dt}->{'archive_dir'} || ''; %>
+			<%# the effective root is config.json's archive_dir when no tab has chosen
+			    one. The old list held config.json's folders only, so a mounted drive
+			    outside that list (a /mnt path) showed as blank. %>
+			<% my $effective_archive_dir = &subs::archive_root() || ''; %>
+			<% my $current_archive_dir = $settings->{$dt}->{'archive_dir'} || $effective_archive_dir; %>
+			<% my @archive_dirs = @{$folders}; %>
+			<% push @archive_dirs, $effective_archive_dir if (length $effective_archive_dir && !grep { $_ eq $effective_archive_dir } @archive_dirs); %>
 			<select id="archive_dir" class="misc_setting" device="<%= $dt %>" setting="archive_dir">
-				<% foreach my $s ( '', @{$folders} ) { %>
+				<% foreach my $s ( '', @archive_dirs ) { %>
 					<option <% if ($current_archive_dir eq $s) { %>selected="selected"<% } %>><%= $s %></option>
 				<% } %>
 			</select>

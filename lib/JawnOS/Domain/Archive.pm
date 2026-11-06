@@ -456,8 +456,202 @@ sub archive_send_file {
 	return ($sent, undef, { size => $total, sha256 => $last_sha, resumed => $start > 0 });
 }
 
+# A transfer whose destination is this machine: the same job the queue shows,
+# but the bytes are copied locally instead of posted to a peer. It keeps the
+# partial/resume rule and the delete-original guard the remote path uses, and
+# appends to the same manifest, so the queue reads the same either way.
+sub archive_local_transfer_job {
+	my ($job, $data) = @_;
+	my $location = $data->{'location'};
+	my @files;
+	if ($data->{'folder'}) {
+		@files = sort &dir_listing([$data->{'path'}], 1);
+	}
+	else { @files = ( $data->{'path'} ) }
+
+	my $files_count = scalar @files;
+	my $bytes_total = 0;
+	foreach my $file ( @files ) {
+		my $size = -s $file;
+		$bytes_total += $size if defined $size;
+	}
+	my $delete_source = $data->{'delete_source'} ? 1 : 0;
+	my ($sent, $skipped, $bytes, $count) = (0, 0, 0, 0);
+	my ($deleted, $resumed_files) = (0, 0);
+	my $bytes_done = 0;
+	my (@errors, @rows);
+
+	my $note_progress = sub {
+		my ($state, %extra) = @_;
+		$job->note(archive => &archive_progress_view({
+			state => $state,
+			files => $files_count,
+			bytes_done => $bytes_done,
+			bytes_total => $bytes_total,
+			delete_source => $delete_source,
+			%extra,
+		}));
+	};
+	$note_progress->('copying', bytes_done => 0);
+
+	my $root = &archive_root();
+	foreach my $file ( @files ) {
+		$count++;
+		my $relative = $data->{'relative'};
+		if ($data->{'folder'}) {
+			my $tail = substr($file, length($data->{'path'}));
+			$tail =~ s{^/+}{};
+			$relative = length $relative ? $relative . '/' . $tail : $tail;
+		}
+		my $size = -s $file;
+		my $mtime = (stat($file))[9];
+
+		if (($job->info->{'notes'} || {})->{'cancel'}) {
+			$note_progress->('cancelled', file => $relative, index => $count, file_bytes_done => 0, file_bytes_total => $size);
+			$job->finish({ sent => $sent, skipped => $skipped, bytes => $bytes, files => $files_count, cancelled => 1, deleted => $deleted, resumed => $resumed_files });
+			return;
+		}
+
+		my $dest = &archive_destination({ location => $location, path => $relative, root => $root });
+		if ($dest->{'error'}) {
+			push @errors, ($relative || $file) . ': ' . $dest->{'error'};
+			next;
+		}
+		# a file already on the archive drive needs no copy, but the listing is
+		# still kept in step (a rescan and a re-run both reach this)
+		if ($root && $file =~ m{^\Q$root\E/}) {
+			push @rows, &archive_manifest_row({ path => $file, relative => $relative });
+			$skipped++;
+			$bytes_done += $size if defined $size;
+			next;
+		}
+
+		my $exists = -e $dest->{'path'} ? 1 : 0;
+		my $dest_size = $exists ? -s $dest->{'path'} : undef;
+		my $dest_mtime = $exists ? (stat($dest->{'path'}))[9] : undef;
+		my $same = ($exists && defined $dest_size && defined $size && $dest_size == $size
+			&& (!defined $dest_mtime || !defined $mtime || $dest_mtime == $mtime));
+		if ($same && !$delete_source) {
+			$skipped++;
+			$bytes_done += $size if defined $size;
+			next;
+		}
+		if ($same && $delete_source) {
+			my $local_sha = &archive_file_digest($file);
+			my $dest_sha = &archive_file_digest($dest->{'path'});
+			if (defined $local_sha && defined $dest_sha && $local_sha eq $dest_sha) {
+				my $removed = &archive_delete_source({ source => $file, verified => 1, dest_size => $dest_size, dest_sha256 => $dest_sha });
+				if ($removed->{'deleted'}) { $deleted++; }
+				else { push @errors, ($relative || $file) . ': ' . ($removed->{'error'} || 'the original was not removed'); }
+				$skipped++;
+				$bytes_done += $size if defined $size;
+				next;
+			}
+		}
+
+		File::Path::make_path($dest->{'parent'});
+		my $part = &archive_partial_path($dest->{'path'});
+		my $meta_path = &archive_partial_meta_path($dest->{'path'});
+		my $resume = &archive_resume_offset({
+			file => $file,
+			total => $size,
+			mtime => $mtime,
+			partial => &archive_partial_state({ path => $dest->{'path'} }),
+		});
+		my $start = $resume->{'offset'} || 0;
+		if ($start == 0) {
+			&archive_partial_meta_write($dest->{'path'}, {
+				source => $relative,
+				total => 0 + ($size || 0),
+				mtime => $mtime,
+				started => &rightNow()
+			});
+		}
+		my $start_bytes = $bytes_done;
+		my $copied = eval {
+			my ($in, $out);
+			open($in, '<:raw', $file) or die "cannot read $file: $!";
+			open($out, ($start > 0 ? '+<' : '>'), $part) or die "cannot write $part: $!";
+			binmode $out;
+			seek($out, $start, 0) if $start > 0;
+			seek($in, $start, 0) if $start > 0;
+			my $buf;
+			my $read = 0;
+			while (my $n = read($in, $buf, 1024 * 1024)) {
+				print $out $buf;
+				$read += $n;
+				if ($read >= 8 * 1024 * 1024 || $start + $read >= ($size || 0)) {
+					$note_progress->('copying',
+						file => $relative, index => $count,
+						file_bytes_done => $start + $read, file_bytes_total => $size,
+						bytes_done => $start_bytes + $start + $read,
+						resumable => ($start > 0 ? 1 : 0), resume_reason => $resume->{'reason'});
+					$read = 0;
+				}
+			}
+			close $in;
+			close $out;
+			1;
+		};
+		unless ($copied) {
+			push @errors, ($relative || $file) . ': ' . ($@ || 'the copy failed');
+			next;
+		}
+		my $part_size = -s $part;
+		if (!defined $part_size || !defined $size || $part_size != $size) {
+			push @errors, ($relative || $file) . ': the copy is incomplete';
+			next;
+		}
+		$note_progress->('verifying', file => $relative, index => $count, file_bytes_done => $part_size, file_bytes_total => $size, bytes_done => $start_bytes + $part_size);
+		my $sha = &archive_file_digest($part);
+		unless (defined $sha && rename($part, $dest->{'path'})) {
+			push @errors, ($relative || $file) . ': the verified copy could not be moved into place';
+			next;
+		}
+		unlink $meta_path if ($meta_path && -e $meta_path);
+		utime $mtime, $mtime, $dest->{'path'} if ($mtime && $mtime =~ /^\d+$/);
+		$sent++;
+		$bytes += $part_size;
+		$bytes_done = $start_bytes + $part_size;
+		$resumed_files++ if $start > 0;
+		if ($delete_source) {
+			my $removed = &archive_delete_source({ source => $file, verified => 1, dest_size => $part_size, dest_sha256 => $sha });
+			if ($removed->{'deleted'}) { $deleted++; }
+			else { push @errors, ($relative || $file) . ': ' . ($removed->{'error'} || 'the original was not removed'); }
+		}
+		push @rows, &archive_manifest_row({ path => $dest->{'path'}, relative => $relative });
+	}
+
+	my $appended = 0;
+	if (scalar @rows) {
+		my $batch_size = 500;
+		for (my $n = 0; $n < scalar @rows; $n += $batch_size) {
+			my $last = ($n + $batch_size - 1 > $#rows) ? $#rows : $n + $batch_size - 1;
+			my $res = &archive_manifest_append({ location => $location, rows => [ @rows[$n .. $last] ] });
+			if ($res->{'error'}) { push @errors, 'manifest: ' . $res->{'error'}; last; }
+			$appended += $res->{'rows'} || 0;
+		}
+	}
+
+	my $result = {
+		sent => $sent,
+		skipped => $skipped,
+		bytes => $bytes,
+		files => $files_count,
+		resumed => $resumed_files,
+		deleted => $deleted,
+		manifest_rows => $appended,
+		archive_host => &machine_name(),
+		location => $location
+	};
+	$result->{'errors'} = \@errors if scalar @errors;
+	$note_progress->('done', bytes_done => $bytes_total);
+	$job->finish($result);
+}
+
 sub archive_transfer_job {
 	my ($job, $data) = @_;
+	return &archive_local_transfer_job($job, $data) if $data->{'local'};
 	my $agent = &remote_agent_for($data->{'remote_uuid'});
 	if ($agent->{'error'}) {
 		$job->note(archive => &archive_progress_view({ state => 'failed', delete_source => $data->{'delete_source'} }));
@@ -671,9 +865,12 @@ sub archive_transfer_job {
 }
 
 # The type an archive row carries, in the same words the folders app uses for a
-# file, so a listing built from a manifest reads like a local one.
+# file, so a listing built from a manifest reads like a local one. A sealed
+# name keeps its original extension under the .enc tail, so that tail is
+# dropped first: a sealed photo is a photo for the gallery and the listing.
 sub archive_media_type {
 	my $path = shift || '';
+	$path =~ s/\.enc$//i;
 	return 'image' if $path =~ /\.(jpe?g|png|bmp|tiff?|xcf|webp|gif|heic)$/i;
 	return 'audio' if $path =~ /\.(wav|mp3|aiff|weba|m4a|flac|aac|ogg|opus)$/i;
 	return 'video' if $path =~ /\.(mp4|avi|mov|webm|mkv|m4v|wmv)$/i;
@@ -681,6 +878,17 @@ sub archive_media_type {
 	return 'document' if $path =~ /\.(docx?|xlsx?|pptx?|txt|rtf|odt)$/i;
 	return 'subtitles' if $path =~ /\.(vtt|srt)$/i;
 	return 'other';
+}
+
+# A manifest row's type. Rows written before sealed names were read through
+# their .enc tail carry `other` for a photo or a track, so a caller that has to
+# know what a row is derives it from the name when the stored word is not a
+# media type. A rescan writes the right word from now on.
+sub archive_row_type {
+	my $row = shift || {};
+	my $stored = $row->{'type'} || '';
+	return $stored if $stored =~ /^(?:image|audio|video|pdf|document|subtitles)$/;
+	return &archive_media_type($row->{'relative'} || '');
 }
 
 # One manifest row for a file: what it is and where it sits inside its location
@@ -697,7 +905,9 @@ sub archive_manifest_row {
 		mtime => (stat($path))[9],
 		type => $type
 	};
-	if ($type eq 'image' || $type eq 'audio' || $type eq 'video') {
+	# a sealed file's type comes from the name it was sealed from, but its bytes
+	# are ciphertext: probing them would only ask ffmpeg to read noise
+	if (($type eq 'image' || $type eq 'audio' || $type eq 'video') && $path !~ /\.enc$/i) {
 		my $file_data = &file_media_information({ f => $path, type => $type });
 		$row->{'info'} = $file_data->{'info'} if $file_data->{'info'};
 	}
@@ -834,6 +1044,181 @@ sub archive_manifest_cached {
 	return $manifest;
 }
 
+# A manifest for a resolved archive machine, local or on a peer. The machine
+# holding the drive reads its own folder directly; every other machine asks it
+# over the peer rail. One shape either way, so a caller never branches on which
+# machine it turned out to be.
+sub archive_manifest_for {
+	my $data = shift;
+	my $rm = $data->{'rm'} || {};
+	my $location = $data->{'location'};
+	return { error => 'no archive machine' } unless (ref $rm eq 'HASH' && ($rm->{'self'} || $rm->{'uuid'}));
+	if ($rm->{'self'}) {
+		my $dest = &archive_destination({ location => $location, path => '', root => $rm->{'archive_dir'} });
+		return { error => $dest->{'error'} } if $dest->{'error'};
+		my $manifest = &archive_manifest_read({ dir => $dest->{'folder'} });
+		return {
+			status => 'ok',
+			location => $location,
+			folder => $dest->{'folder'},
+			rows => $manifest->{'rows'},
+			journal_lines => $manifest->{'journal_lines'},
+			hostname => $rm->{'hostname'} || &machine_name()
+		};
+	}
+	return &archive_manifest_cached({
+		remote_uuid => $rm->{'uuid'},
+		location => $location,
+		(defined $data->{'timeout'} ? (timeout => $data->{'timeout'}) : ())
+	});
+}
+
+# Put finished rows into a location's listing. An append is one line, so a
+# transfer never rewrites the listing; the journal is folded into the compacted
+# manifest only when it has piled up. The rows are resolved the way a receive
+# would resolve them, so nothing can point outside the location folder. Used by
+# the peer route and by a transfer that runs on this machine itself.
+sub archive_manifest_append {
+	my $data = shift;
+	my $location = $data->{'location'};
+	my $rows = $data->{'rows'} || [];
+	my $dest = &archive_destination({ location => $location, path => '' });
+	return { error => $dest->{'error'} } if $dest->{'error'};
+	my @clean;
+	foreach my $row ( @{$rows} ) {
+		next unless (ref $row && defined $row->{'relative'} && length $row->{'relative'});
+		my $into = &archive_destination({ location => $location, path => $row->{'relative'} });
+		next if $into->{'error'};
+		push @clean, { %{$row}, relative => $into->{'relative'} };
+	}
+	File::Path::make_path($dest->{'folder'});
+	write_file($dest->{'folder'} . '/manifest.jsonl', { append => 1 }, encode_json(\@clean) . "\n") if scalar @clean;
+	my $manifest = &archive_manifest_read({ dir => $dest->{'folder'} });
+	my $compacted = 0;
+	if ($manifest->{'journal_lines'} > 200) {
+		&archive_manifest_write({ dir => $dest->{'folder'}, rows => $manifest->{'rows'} });
+		$compacted = 1;
+	}
+	return { rows => scalar @clean, compacted => $compacted, folder => $dest->{'folder'} };
+}
+
+# Where a file that is no longer on this machine can be found: the location
+# whose folder holds it, the archive machine that location archives to, and the
+# path inside that machine's archive. `locate` answers one path at a time. The
+# local machine is a candidate (it may hold the drive), and its rows are read
+# from the drive directly instead of the machine asking itself over the rail.
+sub archive_file_lookup {
+	my $data = shift;
+	my $misc = $data->{'misc_settings'} || &subs::misc_setting_list();
+	my $device = &subs::device_setter();
+	my $settings = $data->{'settings'} || $misc->{$device} || {};
+	my $location = $data->{'location'};
+	my $base = $data->{'base'};
+	if (!$location) {
+		($location, $base) = &archive_location_for($data->{'path'}, $settings);
+	}
+	elsif (!defined $base) {
+		my $b = $settings->{$location . '_location'};
+		$b = &home($b) if (defined $b && length $b);
+		$b =~ s{/+$}{} if defined $b;
+		$base = $b;
+	}
+	return {} unless ($location && defined $base && length $base);
+	$base =~ s{/+$}{};
+	my $machines = $data->{'machines'} || &subs::archive_machines();
+	my $rm = &archive_machine_for($location, $settings, $machines);
+	return {} unless ($rm && ($rm->{'self'} || $rm->{'uuid'}));
+	my $manifest = &archive_manifest_for({
+		rm => $rm,
+		location => $location,
+		timeout => (defined $data->{'timeout'} ? $data->{'timeout'} : 6)
+	});
+	return {} if $manifest->{'error'};
+	my $folder = $manifest->{'folder'} || '';
+	my %rows = map { $_->{'relative'} => $_ } @{$manifest->{'rows'} || []};
+	my $types = $data->{'types'};
+	my $locate = sub {
+		my $path = shift;
+		return undef unless (defined $path && length $path);
+		my $relative;
+		if ($path eq $base) { $relative = ''; }
+		elsif ($path =~ m{^\Q$base\E/}) { $relative = substr($path, length($base) + 1); }
+		else { return undef; }
+		my $row = $rows{$relative};
+		return undef unless $row;
+		my $type = &archive_row_type($row);
+		if ($types && ref $types eq 'ARRAY') {
+			return undef unless grep { $_ eq $type } @{$types};
+		}
+		return {
+			path => (length $folder ? $folder . '/' . $relative : $relative),
+			relative => $relative,
+			type => $type,
+			size => $row->{'size'},
+			mtime => $row->{'mtime'},
+			remote_uuid => ($rm->{'self'} ? '' : $rm->{'uuid'}),
+			remote_hostname => $manifest->{'hostname'} || ''
+		};
+	};
+	return {
+		locate => $locate,
+		location => $location,
+		base => $base,
+		folder => $folder,
+		remote_uuid => ($rm->{'self'} ? '' : $rm->{'uuid'}),
+		hostname => $manifest->{'hostname'} || ''
+	};
+}
+
+# Attach the archive copy to the file entries an appointment carries: a file
+# whose local path is gone is looked up once per location, and the entry learns
+# where the bytes are and which machine holds them. A file that is present is
+# left exactly as it is.
+sub archive_file_attach {
+	my ($files, $data) = @_;
+	return unless (ref $files eq 'ARRAY' && scalar @{$files});
+	$data ||= {};
+	my $cache = $data->{'cache'} ||= {};
+	my $lookups = $cache->{'lookups'} ||= {};
+	foreach my $file ( @{$files} ) {
+		next unless (ref $file eq 'HASH');
+		my $path = $file->{'file'};
+		next unless (defined $path && length $path);
+		next if ($file->{'remote_uuid'} || -e $path);
+		# only a missing file pays for the settings and peer reads
+		my $misc = $cache->{'misc'} ||= ($data->{'misc_settings'} || &subs::misc_setting_list());
+		my $machines = $cache->{'machines'} ||= ($data->{'machines'} || &subs::archive_machines());
+		# an appointment row synced from another machine keeps that machine's
+		# path (a phone's /sdcard/DCIM seen on a computer), so the location is
+		# matched against every device's folders, longest base first
+		my ($location, $base, $settings);
+		foreach my $device_settings ( values %{$misc} ) {
+			next unless ref $device_settings eq 'HASH';
+			my ($loc, $b) = &archive_location_for($path, $device_settings);
+			next unless $loc;
+			if (!defined $base || length($b) > length($base)) {
+				($location, $base, $settings) = ($loc, $b, $device_settings);
+			}
+		}
+		next unless $location;
+		my $key = $location . '|' . $base;
+		$lookups->{$key} ||= &archive_file_lookup({
+			misc_settings => $misc,
+			settings => $settings,
+			location => $location,
+			base => $base,
+			machines => $machines
+		});
+		my $found = $lookups->{$key}->{'locate'} ? $lookups->{$key}->{'locate'}->($path) : undef;
+		next unless $found;
+		$file->{'file'} = $found->{'path'};
+		$file->{'remote_uuid'} = $found->{'remote_uuid'} if length($found->{'remote_uuid'} || '');
+		$file->{'remote_hostname'} = $found->{'remote_hostname'} if length($found->{'remote_hostname'} || '');
+		$file->{'archived'} = 1;
+	}
+	return $files;
+}
+
 # Where a photo that has left this disk can still be found. The archive machine
 # holding photo_location is asked for its manifest once, and `locate` then
 # answers for one path at a time, by the path's place inside the location. Only
@@ -846,30 +1231,15 @@ sub archive_image_lookup {
 	my $device = &subs::device_setter();
 	my $here = $misc->{$device}->{'photo_location'};
 	return {} unless $here;
-	my $machines = &subs::remote_machine_lister({ self => 'no' });
-	my $rm = &archive_machine_for('photo', $misc->{$device} || {}, $machines);
-	return {} unless ($rm && $rm->{'uuid'});
-	my $manifest = &archive_manifest_fetch({ remote_uuid => $rm->{'uuid'}, location => 'photo' });
-	return {} if $manifest->{'error'};
-	my $folder = $manifest->{'folder'} || '';
 	my $base = &home($here);
 	$base =~ s{/+$}{};
-	my %rows = map { $_->{'relative'} => $_ } @{$manifest->{'rows'} || []};
-	my $locate = sub {
-		my $path = shift;
-		return undef unless (defined $path && length $path);
-		return undef unless $path =~ m{^\Q$base\E/};
-		my $relative = substr($path, length($base) + 1);
-		my $row = $rows{$relative};
-		return undef unless ($row && ($row->{'type'} || '') eq 'image');
-		return {
-			path => (length $folder ? $folder . '/' . $relative : $relative),
-			relative => $relative,
-			remote_uuid => $rm->{'uuid'},
-			remote_hostname => $manifest->{'hostname'} || ''
-		};
-	};
-	return { locate => $locate, folder => $folder, remote_uuid => $rm->{'uuid'}, hostname => $manifest->{'hostname'} || '' };
+	return &archive_file_lookup({
+		misc_settings => $misc,
+		location => 'photo',
+		base => $base,
+		types => ['image'],
+		timeout => 6
+	});
 }
 
 # Where a fetched item lands here: the same place inside this machine's own

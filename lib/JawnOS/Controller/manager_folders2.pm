@@ -143,7 +143,7 @@ sub action_30392 {
 	}
 	my $misc = &Manager::misc_setting_list();
 	my $device = &subs::device_setter();
-	my $machines = &subs::remote_machine_lister({ self => 'no' });
+	my $machines = &subs::archive_machines();
 	my @locations;
 	foreach my $location ( &subs::location_types() ) {
 		my $where = $misc->{$device}->{$location . '_location'};
@@ -152,7 +152,7 @@ sub action_30392 {
 		push @locations, {
 			location => $location,
 			where => $where,
-			remote_uuid => $rm->{'uuid'} || '',
+			remote_uuid => ($rm->{'self'} ? '' : ($rm->{'uuid'} || '')),
 			remote_hostname => $rm->{'hostname'} || ''
 		};
 	}
@@ -170,32 +170,13 @@ sub action_30436 {
 	}
 	my $location = $c->param('location');
 	my $rows = eval { return decode_json $c->param('rows') } || [];
-	my $dest = &subs::archive_destination({ location => $location, path => '' });
-	if ($dest->{'error'}) {
-		$c->render(json => { status => 'error', error => $dest->{'error'} });
+	my $appended = &subs::archive_manifest_append({ location => $location, rows => $rows });
+	if ($appended->{'error'}) {
+		$c->render(json => { status => 'error', error => $appended->{'error'} });
 		return;
 	}
-	my @clean;
-	foreach my $row ( @{$rows} ) {
-		next unless (ref $row && defined $row->{'relative'} && length $row->{'relative'});
-		# resolved the way a receive would resolve it, so what is listed is what
-		# would be written and nothing can point outside the location folder
-		my $into = &subs::archive_destination({ location => $location, path => $row->{'relative'} });
-		next if $into->{'error'};
-		push @clean, { %{$row}, relative => $into->{'relative'} };
-	}
-	Mojo::File->new($dest->{'folder'})->make_path;
-	write_file($dest->{'folder'} . '/manifest.jsonl', { append => 1 }, encode_json(\@clean) . "\n") if scalar @clean;
-	# fold the journal into the listing once it has piled up, so a read is not a
-	# hundred lines to walk through every time
-	my $manifest = &subs::archive_manifest_read({ dir => $dest->{'folder'} });
-	my $compacted = 0;
-	if ($manifest->{'journal_lines'} > 200) {
-		&subs::archive_manifest_write({ dir => $dest->{'folder'}, rows => $manifest->{'rows'} });
-		$compacted = 1;
-	}
-	$log->info('archive: manifest for ' . $location . ' +' . scalar(@clean) . ' row(s)' . ($compacted ? ', compacted' : ''));
-	$c->render(json => { status => 'ok', rows => scalar @clean, compacted => $compacted });
+	$log->info('archive: manifest for ' . ($location || '(nothing)') . ' +' . ($appended->{'rows'} || 0) . ' row(s)' . ($appended->{'compacted'} ? ', compacted' : ''));
+	$c->render(json => { status => 'ok', rows => $appended->{'rows'} || 0, compacted => $appended->{'compacted'} ? 1 : 0 });
 }
 
 # What an archive holds for a location: relative paths, sizes, times and the

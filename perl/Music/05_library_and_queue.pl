@@ -58,13 +58,13 @@ sub music_archive_entries($data) {
 	my $picked = $data->{'picked'} || [];
 	my $misc = $data->{'misc_settings'} || &Manager::misc_setting_list();
 	my $device = &subs::device_setter();
-	my $machines = &subs::remote_machine_lister({ self => 'no' });
+	my $machines = &subs::archive_machines();
 	my @lookups;
 	foreach my $pick ( @{$picked} ) {
 		if ($pick->{'location'}) {
 			my $rm = &subs::archive_machine_for($pick->{'location'}, $misc->{$device} || {}, $machines);
-			next unless ($rm && $rm->{'uuid'});
-			push @lookups, { location => $pick->{'location'}, remote_uuid => $rm->{'uuid'}, prefix => '' };
+			next unless ($rm && ($rm->{'self'} || $rm->{'uuid'}));
+			push @lookups, { location => $pick->{'location'}, rm => $rm, remote_uuid => ($rm->{'self'} ? '' : $rm->{'uuid'}), prefix => '' };
 		}
 		else {
 			my $plan = &subs::archive_plan({
@@ -73,24 +73,27 @@ sub music_archive_entries($data) {
 				machines => $machines
 			});
 			foreach my $job ( @{$plan->{'jobs'}} ) {
-				push @lookups, { location => $job->{'location'}, remote_uuid => $job->{'remote_uuid'}, prefix => $job->{'relative'} };
+				my $rm = $job->{'local'}
+					? { self => 1, archive_dir => &subs::archive_root(), hostname => $job->{'remote_hostname'} }
+					: { uuid => $job->{'remote_uuid'}, hostname => $job->{'remote_hostname'} };
+				push @lookups, { location => $job->{'location'}, rm => $rm, remote_uuid => ($job->{'local'} ? '' : $job->{'remote_uuid'}), prefix => $job->{'relative'} };
 			}
 		}
 	}
 	my (@entries, %fetched);
 	foreach my $lookup ( @lookups ) {
-		my $key = $lookup->{'location'} . '|' . $lookup->{'remote_uuid'};
+		my $key = $lookup->{'location'} . '|' . ($lookup->{'remote_uuid'} || 'self');
 		my $manifest = $fetched{$key};
 		unless (defined $manifest) {
 			# the listing is an errand, not a transfer: a sleeping archive machine
 			# must not hold the worker (and the window) for the long default
-			$manifest = &subs::archive_manifest_fetch({ remote_uuid => $lookup->{'remote_uuid'}, location => $lookup->{'location'}, timeout => 6 });
+			$manifest = &subs::archive_manifest_for({ rm => $lookup->{'rm'}, location => $lookup->{'location'}, timeout => 6 });
 			$fetched{$key} = $manifest;
 		}
 		next if $manifest->{'error'};
 		my $folder = $manifest->{'folder'} || '';
 		foreach my $row ( @{$manifest->{'rows'} || []} ) {
-			my $type = $row->{'type'} || '';
+			my $type = &subs::archive_row_type($row);
 			next unless ($type eq 'audio' || $type eq 'video');
 			my $relative = $row->{'relative'} || '';
 			next unless length $relative;

@@ -573,27 +573,12 @@ sub folders_archive_index($folder) {
 	my $misc = &misc_setting_list();
 	my $device = &subs::device_setter();
 	my $settings = $misc->{$device} || {};
-	my $machines = &subs::remote_machine_lister({ self => 'no' });
-	my ($match, $base);
-	foreach my $location ( &subs::location_types() ) {
-		my $b = $settings->{$location . '_location'};
-		next unless defined $b && length $b;
-		$b = &subs::home($b);
-		$b =~ s{/+$}{};
-		next unless ($folder eq $b || $folder =~ m{^\Q$b\E/});
-		if (!defined $base || length($b) > length($base)) {
-			$match = $location;
-			$base = $b;
-		}
-	}
+	my $machines = &subs::archive_machines();
+	my ($match, $base) = &subs::archive_location_for($folder, $settings);
 	return {} unless $match;
 	my $rm = &subs::archive_machine_for($match, $settings, $machines);
-	return {} unless ($rm && $rm->{'uuid'} && ($rm->{'connection'} || '') eq 'active');
-	my $manifest = &subs::archive_manifest_cached({
-		remote_uuid => $rm->{'uuid'},
-		location => $match,
-		timeout => 5
-	});
+	return {} unless ($rm && ($rm->{'self'} || (($rm->{'connection'} || '') eq 'active')));
+	my $manifest = &subs::archive_manifest_for({ rm => $rm, location => $match, timeout => 5 });
 	return {} if $manifest->{'error'};
 	my %rows = map { $_->{'relative'} => 1 }
 		grep { defined $_->{'relative'} && length $_->{'relative'} } @{$manifest->{'rows'} || []};

@@ -399,7 +399,14 @@ $(document).on('click', '.folders_sidebar_place', function () {
 	var root = $(this).closest('.folders_app');
 	foldersActivate(root);
 	var path = $(this).attr('path');
-	if (path) { foldersOpener({ folder: path }); }
+	var remote = $(this).attr('remote_uuid') || '';
+	if (path) {
+		var data = { folder: path };
+		// an Archive place on a machine without the drive names the machine
+		// that holds it; a local place leaves the current machine alone
+		if (remote) { data.remote_uuid = remote; }
+		foldersOpener(data);
+	}
 });
 
 // ---- drawers ---------------------------------------------------------------
@@ -419,8 +426,11 @@ $(document).on('click', '#folders_bookmarks_toggle', function () {
 $(document).on('click', '.folders_bookmark', function () {
 	foldersActivateFrom(this);
 	var path = $(this).attr('path');
+	var remote = $(this).attr('remote_uuid') || '';
 	$('#folders_bookmarks').hide();
-	foldersOpener({ folder: path });
+	var data = { folder: path };
+	if (remote) { data.remote_uuid = remote; }
+	foldersOpener(data);
 });
 
 $(document).on('click', '#folders_archive_toggle', function () {

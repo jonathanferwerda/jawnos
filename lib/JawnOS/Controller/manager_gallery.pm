@@ -167,7 +167,7 @@ sub action_27855 {
 			return undef if !$app_visible && $path =~ /\.enc$/i && (!$permissive || &subs::lockdown_active());
 		}
 		if (!-e $path && !$f->{'remote_uuid'}) {
-			return undef unless ($settings->{'archive'} || '') eq 'on';
+			return undef unless (($settings->{'archive'} // 'on') ne 'off');
 			$archive_lookup = &subs::archive_image_lookup({}) unless $archive_lookup;
 			my $archived = ($archive_lookup && $archive_lookup->{'locate'}) ? $archive_lookup->{'locate'}->($path) : undef;
 			return undef unless $archived;

@@ -691,6 +691,36 @@ sub archive_location_folder {
 	return $folder;
 }
 
+# This machine as an archive row, when it owns a drive. remote_machines holds
+# the other machines only, and every archive lookup asks peers, so the one
+# machine that cannot name its own drive is the machine holding it. The row
+# carries the fields a peer advertises, so callers resolve the drive with the
+# same path they already use and only fetch locally when `self` is set.
+sub archive_self_machine {
+	my $root = &archive_root();
+	return undef unless $root;
+	return {
+		self => 1,
+		uuid => 'self',
+		signatorial => &subs::signatorial_designer(),
+		hostname => scalar eval { &subs::machine_name() },
+		connection => 'active',
+		archive_dir => $root,
+		archive => { dir => $root }
+	};
+}
+
+# The machines an archive question may ask: every peer, plus this machine when
+# it owns a drive. A caller that would relay must check `self` first; this list
+# only makes the drive resolvable.
+sub archive_machines {
+	my $machines = eval { &subs::remote_machine_lister({ self => 'no' }) } || [];
+	my @all = @{$machines};
+	my $self = &archive_self_machine();
+	push @all, $self if ($self && !grep { $_->{'self'} } @all);
+	return \@all;
+}
+
 # The machines that advertise an archive drive, once each however many rows or
 # mirrors name them.
 sub archive_machine_candidates {
@@ -736,6 +766,51 @@ sub archive_machine_for {
 		? 'several machines have an archive drive; choose one in Configure'
 		: 'its location has no archive machine';
 	return wantarray ? (undef, $why) : undef;
+}
+
+# The house's archive machine when the choice is not tied to one location:
+# the only candidate, or the first location's explicit choice when several
+# drives exist. Undef when the house has no archive at all.
+sub archive_house_machine {
+	my ($machines, $settings) = @_;
+	$machines ||= &archive_machines();
+	$settings ||= {};
+	my @candidates = &archive_machine_candidates($machines);
+	return $candidates[0] if scalar @candidates == 1;
+	foreach my $location ( &location_types() ) {
+		my $chosen = $settings->{$location . '_archive'};
+		next unless (defined $chosen && length $chosen);
+		foreach my $rm ( @{$machines} ) {
+			next unless ref $rm eq 'HASH';
+			foreach my $id ( $rm->{'signatorial'}, $rm->{'uuid'} ) {
+				return $rm if (defined $id && length $id && $id eq $chosen);
+			}
+		}
+	}
+	return $candidates[0] if scalar @candidates;
+	return undef;
+}
+
+# Which location folder a path sits in, longest match wins. A directory of a
+# location and anything under it match; the base returned is the tidied
+# folder, so a caller can cut a relative path out of it.
+sub archive_location_for {
+	my ($path, $settings) = @_;
+	$settings ||= {};
+	return unless (defined $path && length $path);
+	my ($match, $base);
+	foreach my $location ( &location_types() ) {
+		my $b = $settings->{$location . '_location'};
+		next unless (defined $b && length $b);
+		$b = &home($b);
+		$b =~ s{/+$}{};
+		next unless ($path eq $b || $path =~ m{^\Q$b\E/});
+		if (!defined $base || length($b) > length($base)) {
+			$match = $location;
+			$base = $b;
+		}
+	}
+	return wantarray ? ($match, $base) : $match;
 }
 
 # The archive root of this machine: the configure panel's pick first — it is a
@@ -852,8 +927,9 @@ sub archive_plan {
 			relative => $relative,
 			folder => (($item->{'type'} || '') eq 'folder' || -d $path) ? 1 : 0,
 			delete_after => $delete_after,
-			remote_uuid => $rm->{'uuid'},
-			remote_hostname => $rm->{'hostname'}
+			remote_uuid => ($rm->{'self'} ? '' : $rm->{'uuid'}),
+			remote_hostname => $rm->{'hostname'},
+			local => ($rm->{'self'} ? 1 : 0)
 		};
 	}
 	return { jobs => \@jobs, refused => \@refused };

@@ -248,8 +248,12 @@ sub action_7519 {
 				$js->{'mirrors'} = $mirrors;
 			}
 			my $archive;
-			if ($config->{'archive_dir'}) {
-				my $formatted_folder = &subs::home($config->{'archive_dir'});
+			# the effective root, not config.json alone: the configure panel may have
+			# chosen another drive, and a peer must send files where this machine
+			# actually reads them
+			my $archive_root = &subs::archive_root();
+			if ($archive_root) {
+				my $formatted_folder = $archive_root;
 				$js->{'archive_dir'} = $formatted_folder;
 				my $df = `df -h $formatted_folder`;
 				my @df = split /\n/, $df;
@@ -260,7 +264,7 @@ sub action_7519 {
 					$disk->{$first_line[$n]} = $data_line[$n];
 				}
 				$js->{'archive'} = {
-					dir => $config->{'archive_dir'},
+					dir => $archive_root,
 					disk => $disk
 				};
 				$log->info(Dumper $js->{'archive'});

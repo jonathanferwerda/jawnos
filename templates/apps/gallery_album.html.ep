@@ -45,7 +45,7 @@
 		$f->{'count'} = $count; $count++;
 		# a photo whose local copy is gone may still be in the archive, in which
 		# case it is shown from there instead of counted missing
-		if (!-e $f->{'f'} && ($settings->{'archive'} || '') eq 'on') {
+		if (!-e $f->{'f'} && (($settings->{'archive'} // 'on') ne 'off')) {
 			$archive_lookup = &subs::archive_image_lookup({}) unless $archive_lookup;
 			my $archived = ($archive_lookup && $archive_lookup->{'locate'}) ? $archive_lookup->{'locate'}->($f->{'f'}) : undef;
 			if ($archived) {

@@ -638,7 +638,7 @@ sub action_30229 {
 		items => $items,
 		delete_after => $delete_after,
 		settings => $misc->{$device} || {},
-		machines => &subs::remote_machine_lister({})
+		machines => &subs::archive_machines()
 	});
 	my $minion = &subs::minion_grabber();
 	my @queued;

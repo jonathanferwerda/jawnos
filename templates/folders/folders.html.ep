@@ -99,16 +99,27 @@
 		<% push @sidebar, { name => $label, path => $full, icon => $place_icons{$location} || $place_icons{'document'} }; %>
 		<% push @bookmarks, { name => $label, path => $full }; %>
 	<% } %>
+	<% my $archive_place; %>
 	<% my $archive_root = &subs::archive_root(); %>
 	<% if ($archive_root && -d $archive_root) { %>
-		<% push @bookmarks, { name => &subs::ui('Archive'), path => $archive_root }; %>
-		<% push @sidebar, { name => &subs::ui('Archive'), path => $archive_root, icon => $place_icons{'archive'} }; %>
+		<% $archive_place = { name => &subs::ui('Archive'), path => $archive_root, remote_uuid => '' }; %>
+	<% } else { %>
+		<%# this machine has no drive of its own: reach the house's archive over
+		    the machine picker, so the Archive place exists on every screen %>
+		<% my $archive_machine = &subs::archive_house_machine(undef, $misc->{$dev} || {}); %>
+		<% if ($archive_machine && !$archive_machine->{'self'} && defined $archive_machine->{'archive_dir'} && length $archive_machine->{'archive_dir'} && lc($archive_machine->{'archive_dir'}) ne 'null') { %>
+			<% $archive_place = { name => &subs::ui('Archive'), path => $archive_machine->{'archive_dir'}, remote_uuid => ($archive_machine->{'uuid'} || '') }; %>
+		<% } %>
+	<% } %>
+	<% if ($archive_place) { %>
+		<% push @bookmarks, { name => $archive_place->{'name'}, path => $archive_place->{'path'}, remote_uuid => $archive_place->{'remote_uuid'} }; %>
+		<% push @sidebar, { name => $archive_place->{'name'}, path => $archive_place->{'path'}, icon => $place_icons{'archive'}, remote_uuid => $archive_place->{'remote_uuid'} }; %>
 	<% } %>
 	<% my $trash_dir = &Manager::folders_trash_files_dir(); %>
 	<% push @sidebar, { name => &subs::ui('Recycle Bin'), path => $trash_dir, icon => $place_icons{'trash'} }; %>
 	<div id="folders_bookmarks" class="folders_drawer folders_bookmarks" style="display:none;">
 		<% foreach my $b ( @bookmarks ) { %>
-			<button type="button" class="hover folders_bookmark" path="<%= $b->{'path'} %>"><%= $b->{'name'} %></button>
+			<button type="button" class="hover folders_bookmark" path="<%= $b->{'path'} %>"<% if (length($b->{'remote_uuid'} || '')) { %> remote_uuid="<%= $b->{'remote_uuid'} %>"<% } %>><%= $b->{'name'} %></button>
 		<% } %>
 	</div>
 	<div id="folders_archive_queue" class="folders_drawer folders_archive_queue" style="display:none;width:min(430px, 60%);right:2px;font-size:15px;padding:4px;"></div>
@@ -116,7 +127,7 @@
 		<aside id="folders_sidebar" class="folders_sidebar">
 			<div class="folders_sidebar_title"><%= &subs::ui('Places') %></div>
 			<% foreach my $p ( @sidebar ) { %>
-				<button type="button" class="folders_sidebar_place hover<% if (($p->{'path'} || '') eq $folder) { %> current<% } %>" path="<%= $p->{'path'} %>" title="<%= $p->{'path'} %>">
+				<button type="button" class="folders_sidebar_place hover<% if (($p->{'path'} || '') eq $folder) { %> current<% } %>" path="<%= $p->{'path'} %>"<% if (length($p->{'remote_uuid'} || '')) { %> remote_uuid="<%= $p->{'remote_uuid'} %>"<% } %> title="<%= $p->{'path'} %>">
 					<img src="<%= &subs::icon_for($p->{'icon'}) %>" alt="">
 					<span><%= $p->{'name'} %></span>
 				</button>

@@ -1,7 +1,11 @@
 <% foreach my $f (@{$l->{'files'}}) { %>
 	<% my $display = ($f->{'preview'} && -e $f->{'preview'}) ? $f->{'preview'} : $f->{'file'}; %>
+	<% my $preview_local = ($f->{'preview'} && -e $f->{'preview'}) ? 1 : 0; %>
+	<%# a local preview is served here even when the original is on the archive: %>
+	<%# only the archived original needs the relay %>
+	<% my $display_remote = $preview_local ? '' : ($f->{'remote_uuid'} || ''); %>
 
-	<% unless ( -e $f->{'file'} || $l->{'type'} eq 'snapshot' ) {
+	<% unless ( -e $f->{'file'} || $f->{'remote_uuid'} || $l->{'type'} eq 'snapshot' ) {
 		next;
 	} %>
 	<span class="app_file_toolbox" style="display:none;" uuid="<%= $f->{'uuid'} %>">
@@ -12,7 +16,7 @@
 			</span>
 		<!--	<button class="file_toggle" timestamp="<%= $l->{'timestamp'} %>" file="<%= $l->{'file'} %>?action=start"><%= $l->{'type'} %> <%= $f->{'file_type'} %></button><br> -->
 			<br><%= $f->{'file'} %><br>
-			<audio controls src="/file_open?app=<%= $l->{'app'} %>&file=<%= $f->{'file'} %>&timestamp=<%= $l->{'server_time'} %>"></audio>
+			<audio controls src="/file_open?app=<%= $l->{'app'} %>&file=<%= $f->{'file'} %>&timestamp=<%= $l->{'server_time'} %><% if ($f->{'remote_uuid'}) { %>&remote_uuid=<%= $f->{'remote_uuid'} %><% } %>"></audio>
 		<% }  elsif ($f->{'file_type'} eq 'img') { %>
 				<select class="image_function_selection" uuid="<%= $f->{'uuid'} %>" value="<%= $f->{'function'} %>" style="vertical-align:top;">
 					<% foreach my $func ( qw/image background diagram map receipt signatorial/ ) { %>
@@ -58,18 +62,18 @@
 					src="<%= $l->{'file'} %>" type="snapshot"
 				<% } else { %>
 					file="<%= $f->{'file'} %>"
-					src="/file_open?app=<%= $l->{'app'} %>&file=<%= $display %>&timestamp=<%= $l->{'server_time'} %>"
+					src="/file_open?app=<%= $l->{'app'} %>&file=<%= $display %>&timestamp=<%= $l->{'server_time'} %><% if ($display_remote) { %>&remote_uuid=<%= $display_remote %><% } %>"
 				<% } %> timestamp="<%= $l->{'server_time'} %>" 
 				style="height:90%;width:95%" app_uuid="<%= $l->{'uuid'} %>" file_uuid="<%= $f->{'uuid'} %>" id="<%= $l->{'uuid'} %>_<%= $f->{'uuid'} %>"
 					
 			/>
 	<% } elsif ($f->{'file_type'} eq 'vid') { %>
 		</span>
-		<video controls loop src="/file_open?app=<%= $l->{'app'} %>&file=<%= $f->{'file'} %>&timestamp=<%= $l->{'server_time'} %>" style="height:90%;width:95%;"></video>
+		<video controls loop src="/file_open?app=<%= $l->{'app'} %>&file=<%= $f->{'file'} %>&timestamp=<%= $l->{'server_time'} %><% if ($f->{'remote_uuid'}) { %>&remote_uuid=<%= $f->{'remote_uuid'} %><% } %>" style="height:90%;width:95%;"></video>
 	<% } elsif ($f->{'file_type'} eq 'pdf') { %>
 		</span>
 		<% my $embed_string = &subs::random_string_creator(25); %>
-		<iframe class="resizable" type="application/pdf" src="/file_open?app=<%= $l->{'app'} %>&file=<%= $f->{'file'} %>&timestamp=<%= $l->{'server_time'} %>" style="height:500px;width:95%;" id="<%= $embed_string %>">
+		<iframe class="resizable" type="application/pdf" src="/file_open?app=<%= $l->{'app'} %>&file=<%= $f->{'file'} %>&timestamp=<%= $l->{'server_time'} %><% if ($f->{'remote_uuid'}) { %>&remote_uuid=<%= $f->{'remote_uuid'} %><% } %>" style="height:500px;width:95%;" id="<%= $embed_string %>">
 
 		</iframe>
 	<% } %>

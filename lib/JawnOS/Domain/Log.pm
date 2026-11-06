@@ -476,6 +476,10 @@ sub log_reader {
 		push @{ $settings_by_app{$s->{'app'}} }, $s;
 	}
 
+	# one archive scan for the whole view: the settings, the machine list and
+	# each location's manifest are shared by every row's files
+	my $archive_cache = {};
+
 	foreach my $a (@{$appointments}) {
 		next unless $a->{'app'};
 	#	$a->{'file'} = undef if $data->{'view'} eq 'appointment_viewer';
@@ -588,6 +592,12 @@ sub log_reader {
 				foreach my $file (@{$files}) {
 					push @{$a->{'files'}}, &subs::log_reader_file_preparer($file);
 				}
+			}
+			# A file whose local copy has gone may still be on the archive
+			# drive. Only this view shows the file itself, so only it pays for
+			# the lookup; a listing never waits on an archive machine.
+			if (($data->{'view'} || '') eq 'appointment_details' && $a->{'files'} && scalar @{$a->{'files'}}) {
+				&subs::archive_file_attach($a->{'files'}, { cache => $archive_cache });
 			}
 		}
 
