@@ -368,6 +368,15 @@ static bool pin_is_switch_driven(int pin) {
   return false;
 }
 
+// Which road a switch/button report takes. The LAN is the reliable one: a
+// Bluetooth link can still read as up after its listener closed, and the event
+// then disappears (the relay moves, the Manager never hears the stop). Use
+// Bluetooth only when the board has no working network to report over - the
+// crash, the fresh board, or the provisioning AP that cannot reach the house.
+static bool lan_report_ready() {
+  return wifiState == "connected" && homebaseIP != "" && homebaseOnline != 0;
+}
+
 // At boot or a role reload, put every switch-driven output at the position the
 // switch is actually in. Otherwise the relay is restored from the app's toggle
 // and the first scan fights it.
@@ -412,7 +421,7 @@ static void local_input_scanner() {
       String state = ((r ^ in.inverted) ? "on" : "off");
       event_log(in.pin, r, 0);
       local_apply(i, state);
-      if (ble_up && ble_notify_enabled) {
+      if (!lan_report_ready() && ble_up && ble_notify_enabled) {
         JSONVar sm;
         sm["type"] = "switch";
         sm["chip_id"] = String(rp2040.getChipID());
@@ -447,7 +456,7 @@ static void local_input_scanner() {
         if (in.out_n > 0) { nstate = (digitalRead(in.out_pin[0]) == HIGH) ? "off" : "on"; }
         local_apply(i, nstate);
         String toggle = (nstate == "on") ? "1" : "0";
-        if (ble_up && ble_notify_enabled) {
+        if (!lan_report_ready() && ble_up && ble_notify_enabled) {
           JSONVar bm;
           bm["type"] = "button";
           bm["chip_id"] = String(rp2040.getChipID());

@@ -6,7 +6,7 @@
 #            The board stamps the pins a physical switch drove, so a delayed
 #            command minted before the flip is dropped instead of re-energising
 #            the relay; both sides carry milliseconds so a same-second race is
-#            still decided.
+#            still decided. A switch/button report also takes the LAN when the board is online, because a Bluetooth link can read as up after its listener closed and the stop never reaches the Manager.
 
 use strict;
 use warnings;
@@ -152,5 +152,9 @@ like($local, qr/command_mark_pin\(op, ev\)/,
 like($g3, qr/sd\["timestamp_ms"\] = event_timestamp_ms\(\)/, 'a BLE switch carries the millisecond stamp');
 like($g3, qr{/watch/switch\?room=1.{0,300}?&timestamp_ms=}s, 'the HTTP switch fallback carries the millisecond stamp');
 like($g3, qr{/watch/button\?room=1.{0,300}?&timestamp_ms=}s, 'the HTTP button fallback carries the millisecond stamp');
+
+like($g3, qr/static bool lan_report_ready\(\)/, 'the board knows when the LAN can carry a report');
+my $lan_pref = () = $g3 =~ /if \(!lan_report_ready\(\) && ble_up && ble_notify_enabled\)/g;
+is($lan_pref, 2, 'a switch and a button both prefer the LAN while it is up');
 
 done_testing();
