@@ -195,6 +195,7 @@ sub weather_observe_record($weather, $opts) {
 			timestamp => $now,
 		});
 	};
+	$log->warn('weather observe: the measure writer did not answer: ' . ($@ || 'no uuid')) if $log && !$uuid;
 	return { error => &subs::ui('The observation was not recorded.'), condition => $condition }
 		unless $uuid;
 	&cache_set({ app => 'weather', context => 'observe', subcontext => 'last', warranty => '-1d' }, {
@@ -218,13 +219,16 @@ sub weather_observe_now($opts) {
 	if (!defined $lat || !defined $lon) {
 		my $fixes = eval { &subs::weather_device_fixes(24 * 60 * 60 * 1000) } || [];
 		my ($fix) = @{$fixes};
+		$log->info('weather observe: no GPS fix in the last day') if $log && !$fix;
 		return { skipped => 'no fix' } unless $fix;
 		$lat = $fix->{'lat'};
 		$lon = $fix->{'lon'};
 	}
 	my $weather = eval { &subs::weather_fetch($lat, $lon, { force => ($opts->{'force'} ? 1 : 0) }) };
 	unless (ref $weather eq 'HASH' && !$weather->{'error'}) {
-		return { error => ((ref $weather eq 'HASH' && $weather->{'error'}) || &subs::ui('Weather is unavailable right now.')) };
+		my $why = (ref $weather eq 'HASH' && $weather->{'error'}) || &subs::ui('Weather is unavailable right now.');
+		$log->warn("weather observe: fetch for $lat,$lon failed: $why") if $log;
+		return { error => $why };
 	}
 	my $result = &weather_observe_record($weather, $opts);
 	$result->{'lat'} = $lat;
@@ -244,7 +248,15 @@ sub weather_observe_tick() {
 	return { skipped => 'held', at => $lock->{'at'} }
 		if ($lock->{'at'} || 0) > $now - 20 * 60 * 1000;
 	&cache_set({ app => 'weather', context => 'observe', subcontext => 'lock', warranty => '-1d' }, { at => $now });
-	return &weather_observe_now({});
+	my $result = &weather_observe_now({});
+	if ($log) {
+		$log->info('weather observe: ' . encode_json({
+			map { $_ => $result->{$_} }
+			grep { defined $result->{$_} }
+			qw(ok skipped error condition changed)
+		}));
+	}
+	return $result;
 }
 
 1;
