@@ -188,6 +188,7 @@ sub phone_ivr_flow_steps;
 sub phone_ivr_steps_clean;
 sub phone_ivr_settings;
 sub phone_ivr_save;
+sub phone_voicemail_transcript;
 sub phone_ivr_machines;
 sub phone_ivr_machine;
 sub phone_relationships;

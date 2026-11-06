@@ -45,6 +45,7 @@ foreach my $row (
 	[52009, 'post', '/manager/sco/flow'],
 	[52010, 'post', '/manager/sco/voicemail'],
 	[52011, 'post', '/manager/sco/hangup'],
+	[52012, 'get', '/manager/sco/transcript'],
 ) {
 	my ($idx, $method, $path) = @{$row};
 	like($routes, qr/\[\s*$idx\s*,\s*'$method'\s*,\s*'$path'\s*,\s*'action_$idx'\s*\]/,
@@ -53,6 +54,7 @@ foreach my $row (
 }
 like(read_file("$repo/lib/JawnOS/Routes.pm"), qr/\bmanager_sco\b/, 'the route group is loaded');
 like($controller, qr/content_type\('audio\/wav'\)/, 'a recording is served as a WAV');
+like($controller, qr/phone_voicemail_transcript/, 'the voicemail transcript is read by its note');
 like($controller, qr/\^\[A-Za-z0-9\._-\]\+\\\.wav\$/, 'the recording name is a bare file name');
 like(read_file("$repo/perl/President.pl"), qr/perl\/sco\/sco_helper/, 'the master starts the gateway when the helper is built');
 like(read_file("$repo/jawn"), qr/\bsco\.sock\b/, 'the boot wipe keeps the gateway socket');
@@ -711,11 +713,12 @@ is(JawnOS::Sco::Gateway::call_over('in_call', undef, 100, 0), 'call limit',
 	write_file("$kdir/index.jsonl",
 		'{"at":1,"call_id":"a","file":"/x/message-a.wav","kind":"voicemail","ms":4000}' . "\n"
 		. '{"at":2,"call_id":"b","file":"/x/name-b.wav","kind":"name","ms":900}' . "\n"
-		. '{"at":3,"call_id":"c","file":"/x/message-c.wav","kind":"voicemail","ms":7000}' . "\n");
+		. '{"at":3,"call_id":"c","file":"/x/message-c.wav","kind":"voicemail","ms":7000,"note_uuid":"note-c","appt_uuid":"appt-c"}' . "\n");
 	my $list = $vm->voicemail_list();
 	is(scalar @{$list}, 2, 'only the messages are listed');
 	is($list->[0]->{'name'}, 'message-c.wav', 'newest first');
 	is($list->[0]->{'ms'}, 7000, 'with the length the caller spoke');
+	is($list->[0]->{'note_uuid'}, 'note-c', 'and the Chat note its words were filed into');
 	$vm->end_call('test over');
 }
 
@@ -1457,6 +1460,47 @@ my %flow_defs = (
 	is($g->status->{'step_type'}, 'voicemail', 'the message step is next');
 	$g->event({ event => 'recorded', id => $g->{'step_id'}, file => "$dir/message.wav" });
 	is($g->{'recordings'}->[0]->{'kind'}, 'voicemail', 'the message is filed as a voicemail');
+	$g->cancel();
+}
+
+# Each flow sets how long its message may run. The number travels in the flow
+# def the phone arms the gateway with, and both the authored voicemail step and
+# the panel's Send to voicemail read it from there.
+{
+	is(JawnOS::Sco::Gateway::_voicemail_seconds(5), 15, 'a message shorter than the floor is raised');
+	is(JawnOS::Sco::Gateway::_voicemail_seconds(5000), 1800, 'a message longer than the ceiling is capped');
+	is(JawnOS::Sco::Gateway::_voicemail_seconds('nope'), 300, 'a value that is not a number keeps five minutes');
+	is(JawnOS::Sco::Gateway::_voicemail_seconds(45), 45, 'a flow\'s own length is kept');
+
+	my $tail = JawnOS::Sco::Gateway::flow_steps({
+		clips => { voicemail => $flow_clip },
+		after => 'voicemail', voicemail_seconds => 60,
+	});
+	my ($tail_message) = grep { ($_->{'key'} || '') eq 'message' } @{$tail};
+	is($tail_message->{'opts'}->{'ms'}, 60000,
+		'the legacy after=voicemail tail uses the flow\'s length');
+
+	my %defs = %flow_defs;
+	$defs{'voicemail'} = {
+		name => 'Voicemail',
+		voice => 'piper-test',
+		clips => { voicemail => $flow_clip },
+		steps => [ { type => 'voicemail' } ],
+		voicemail_seconds => 45,
+		after => 'end',
+	};
+	my $g = JawnOS::Sco::Gateway->new(
+		dir => "$dir/flow-vm-length", helper => $sleeper, status_path => "$dir/flow-vm-length.json");
+	local *JawnOS::Sco::Gateway::_send = sub { return 1 };
+	$g->arm(flows => \%defs, default_flow => 'voicemail', call_id => 'vm-length-call');
+	my ($compiled) = grep { ($_->{'key'} || '') eq 'message' }
+		@{ $g->{'flows'}->{'voicemail'}->{'steps'} };
+	is($compiled->{'opts'}->{'ms'}, 45000, 'the flow length reaches the compiled voicemail step');
+	$g->event({ event => 'accepted' });
+	my $now = $g->to_voicemail();
+	is($now->{'ok'}, 1, 'the panel can still send the call to voicemail');
+	my ($now_message) = grep { ($_->{'key'} || '') eq 'message' } @{ $g->{'steps'} };
+	is($now_message->{'opts'}->{'ms'}, 45000, 'and Send to voicemail uses the same flow length');
 	$g->cancel();
 }
 

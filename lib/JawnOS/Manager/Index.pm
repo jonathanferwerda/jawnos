@@ -447,6 +447,7 @@ our %SUB = (
 	'phone_ivr_steps_clean'                  => 'JawnOS/Manager/Part12.pm',
 	'phone_ivr_settings'                     => 'JawnOS/Manager/Part12.pm',
 	'phone_ivr_save'                         => 'JawnOS/Manager/Part12.pm',
+	'phone_voicemail_transcript'             => 'JawnOS/Manager/Part12.pm',
 	'phone_ivr_machines'                     => 'JawnOS/Manager/Part12.pm',
 	'phone_ivr_machine'                      => 'JawnOS/Manager/Part12.pm',
 	'phone_relationships'                    => 'JawnOS/Manager/Part12.pm',

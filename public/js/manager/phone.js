@@ -271,6 +271,7 @@ function jawnPhoneVoicemail(res) {
 	if (!list.length) { box.append($('<div class="phone_app_ivr_vm_row"></div>').text(jawnosT('No messages yet.'))); return; }
 	$.each(list, function (i, m) {
 		var when = m.at ? new Date(m.at * 1000).toLocaleString() : '';
+		var item = $('<div class="phone_app_ivr_vm_item"></div>');
 		var row = $('<div class="phone_app_ivr_vm_row"></div>');
 		row.append($('<span class="phone_app_ivr_vm_when"></span>').text(when));
 		row.append($('<span class="phone_app_ivr_vm_ms"></span>').text(Math.round((m.ms || 0) / 1000) + 's'));
@@ -279,9 +280,48 @@ function jawnPhoneVoicemail(res) {
 			.attr('target', '_blank')
 			.attr('rel', 'noopener')
 			.text(jawnosT('Play')));
-		box.append(row);
+		if (m.note_uuid) {
+			row.append($('<a class="phone_app_ivr_vm_transcript" hint="Transcript"></a>')
+				.attr('href', '#')
+				.attr('data-note', m.note_uuid)
+				.text(jawnosT('Transcript')));
+		}
+		item.append(row);
+		if (m.note_uuid) {
+			item.append($('<div class="phone_app_ivr_vm_words" hidden></div>'));
+		}
+		box.append(item);
 	});
 }
+
+// A message's transcript is one expanding row, fetched by the note's uuid from
+// the mailbox when it is first opened. It is not copied into the index: the
+// Chat app owns the words, and the voicemail only points at them.
+$(document).on('click', '#phone_app .phone_app_ivr_vm_transcript', function (e) {
+	e.preventDefault();
+	var link = $(this);
+	var words = link.closest('.phone_app_ivr_vm_item').find('.phone_app_ivr_vm_words');
+	if (!words.length) { return; }
+	if (!words.prop('hidden')) { words.prop('hidden', true); return; }
+	words.prop('hidden', false);
+	if (words.attr('data-loaded') === 'yes') { return; }
+	words.text(jawnosT('Opening…'));
+	$.ajax({
+		url: '/manager/sco/transcript',
+		type: 'GET',
+		dataType: 'json',
+		data: { uuid: link.attr('data-note'), timestamp: Date.now() },
+		success: function (res) {
+			if (res && res.ok) {
+				words.text(res.text || '');
+				words.attr('data-loaded', 'yes');
+			} else {
+				words.text(jawnosT('The transcript is not available.'));
+			}
+		},
+		error: function () { words.text(jawnosT('The transcript is not available.')); }
+	});
+});
 
 // The hold dropdown lists what the gateway can actually play: none, the whole
 // library shuffled, or one track. A stored track the gateway cannot see right
@@ -519,6 +559,7 @@ function jawnPhoneFlowItem(key, flow) {
 		+ '<label>' + jawnosT('Greeting') + '<textarea rows="2" field="greeting"></textarea></label>'
 		+ '<label>' + jawnosT('Name prompt') + '<textarea rows="2" field="prompt"></textarea></label>'
 		+ '<label>' + jawnosT('Voicemail greeting') + '<textarea rows="2" field="voicemail"></textarea></label>'
+		+ '<label>' + jawnosT('Voicemail length (seconds)') + '<input type="number" field="voicemail_seconds" min="15" max="1800" step="1" hint="Voicemail length"></label>'
 		+ '<label>' + jawnosT('Thanks') + '<textarea rows="1" field="thanks"></textarea></label>'
 		+ '<label>' + jawnosT('Hold music') + '<select field="hold" hint="Hold music"></select></label>'
 		+ '<label>' + jawnosT('After') + '<select field="after" hint="After">'
@@ -545,6 +586,7 @@ function jawnPhoneFlowItem(key, flow) {
 	edit.find('[field="greeting"]').val(flow.greeting || '');
 	edit.find('[field="prompt"]').val(flow.prompt || '');
 	edit.find('[field="voicemail"]').val(flow.voicemail || '');
+	edit.find('[field="voicemail_seconds"]').val(flow.voicemail_seconds || 300);
 	edit.find('[field="thanks"]').val(flow.thanks || '');
 	edit.find('[field="after"]').val(flow.after || 'hold');
 
@@ -688,6 +730,7 @@ $(document).on('click', '#phone_app #phone_ivr_flow_add', function (e) {
 		greeting: source.greeting || '',
 		prompt: source.prompt || '',
 		voicemail: source.voicemail || '',
+		voicemail_seconds: source.voicemail_seconds || 300,
 		thanks: source.thanks || '',
 		hold: source.hold || '',
 		after: source.after || 'hold',

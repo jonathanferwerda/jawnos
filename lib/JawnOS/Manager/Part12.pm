@@ -550,6 +550,25 @@ sub phone_ivr_save($params) {
 	return $next;
 }
 
+# The Chat note a voicemail points at: the pane asks for the words by the uuid
+# the kept index stored, never by a path or a number. The body is sealed with
+# the house key, so this is the one place the Phone pane can read it.
+sub phone_voicemail_transcript($uuid) {
+	$uuid = defined $uuid ? $uuid : '';
+	return { ok => 0, error => 'no transcript' }
+		unless $uuid =~ /^[A-Za-z0-9_-]{1,80}$/;
+	my $row = &subs::db_select('mailbox', undef, { uuid => $uuid })->hashes->[0];
+	return { ok => 0, error => 'no transcript' } unless $row;
+	my $text = eval { &subs::note_decrypter(&subs::suds_grabber(), $row->{'body'} || '', $row->{'ost'}) };
+	$text = '' unless defined $text;
+	return {
+		ok => 1,
+		uuid => $uuid,
+		text => $text,
+		timestamp => $row->{'timestamp'} || 0,
+	};
+}
+
 # The machines the IVR pane can offer, online first. A machine is available when
 # the mesh's own remote_machines row says it is connected; the pane shows the
 # difference rather than hiding an offline choice the person may still want.

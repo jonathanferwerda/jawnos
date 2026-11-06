@@ -11,6 +11,7 @@ package subs;
 use strict;
 use warnings;
 use Data::UUID;
+use File::Path qw(make_path);
 use File::Slurp qw(read_file);
 use Mojo::JSON qw(decode_json);
 
@@ -77,6 +78,12 @@ my @PHONE_IVR_FLOW_AFTER = qw(hold voicemail end);
 my @PHONE_IVR_STEP_TYPES = qw(say ask keypad hold voicemail after);
 my @PHONE_IVR_STEP_TEXT_KEYS = qw(greeting prompt thanks voicemail);
 my $PHONE_IVR_STEP_MAX = 20;
+# A message is five minutes by default. The floor keeps a caller from being cut
+# off before they start and the ceiling keeps one call from holding the house's
+# line for half an hour.
+my $PHONE_VOICEMAIL_SECONDS_DEFAULT = 300;
+my $PHONE_VOICEMAIL_SECONDS_MIN = 15;
+my $PHONE_VOICEMAIL_SECONDS_MAX = 1800;
 my $step_clamp = sub {
 	my ($value, $min, $max, $default) = @_;
 	return $default unless defined $value && $value =~ /^\d+$/;
@@ -167,6 +174,7 @@ sub phone_ivr_flow_seed {
 			thanks    => $legacy->{'thanks'},
 			hold      => $legacy->{'hold'},
 			after     => 'hold',
+			voicemail_seconds => $PHONE_VOICEMAIL_SECONDS_DEFAULT,
 			builtin   => 1,
 		},
 		voicemail => {
@@ -178,6 +186,7 @@ sub phone_ivr_flow_seed {
 			thanks    => '',
 			hold      => '',
 			after     => 'end',
+			voicemail_seconds => $PHONE_VOICEMAIL_SECONDS_DEFAULT,
 			# the one seed that is not the legacy order: the flow named for a
 			# voicemail takes one, instead of asking for a name it has no prompt for
 			steps     => [ { type => 'voicemail' } ],
@@ -201,6 +210,7 @@ sub phone_ivr_flow_def_clean {
 		thanks    => '',
 		hold      => '',
 		after     => 'hold',
+		voicemail_seconds => $PHONE_VOICEMAIL_SECONDS_DEFAULT,
 		steps     => [],
 		builtin   => 0,
 	);
@@ -233,6 +243,14 @@ sub phone_ivr_flow_def_clean {
 	if (defined $row->{'after'} && grep { $_ eq $row->{'after'} } @PHONE_IVR_FLOW_AFTER) {
 		$out{'after'} = $row->{'after'};
 	}
+	if (defined $row->{'voicemail_seconds'}) {
+		$out{'voicemail_seconds'} = $step_clamp->($row->{'voicemail_seconds'},
+			$PHONE_VOICEMAIL_SECONDS_MIN, $PHONE_VOICEMAIL_SECONDS_MAX, $out{'voicemail_seconds'});
+	}
+	# A base saved before this field existed has no number at all, and a payload
+	# that arrives with a word keeps the flow's own length rather than losing it.
+	$out{'voicemail_seconds'} = $step_clamp->($out{'voicemail_seconds'},
+		$PHONE_VOICEMAIL_SECONDS_MIN, $PHONE_VOICEMAIL_SECONDS_MAX, $PHONE_VOICEMAIL_SECONDS_DEFAULT);
 	# An empty list is the legacy sequence, so an edited-away list falls back to
 	# it rather than resurrecting the base's steps.
 	if (ref $row->{'steps'} eq 'ARRAY') {
@@ -515,6 +533,73 @@ sub phone_call_epoch {
 	return time unless defined $stamp && $stamp =~ /^\d+(?:\.\d+)?$/ && $stamp > 0;
 	return int($stamp / 1000) if $stamp > 100000000000;
 	return int($stamp);
+}
+
+# A voicemail is filed the way a capture is: the WAV is written beside the
+# app's own pictures and the appointment carries one more file entry. The entry
+# is the capture shape without a thumb or OCR, `type` audio, and the uuid of the
+# Chat note that holds the call's words so the pane can show them together.
+#
+# $source is the kept WAV's path, or the bytes themselves when it is not a path.
+# The caller pushes the returned hashref into the appointment's `file` column
+# (and seals the tree with file_encrypter), exactly as take_picture does.
+sub voicemail_file {
+	my ($source, %args) = @_;
+	return undef unless defined $source && length $source;
+	my $bytes;
+	if (-f $source) {
+		open(my $in, '<', $source) or return undef;
+		binmode $in;
+		{
+			local $/;
+			$bytes = <$in>;
+		}
+		close $in;
+	}
+	else {
+		$bytes = $source;
+	}
+	return undef unless defined $bytes && length $bytes;
+	my $app = (defined $args{'app'} && length $args{'app'}) ? &subs::unformat_name($args{'app'}) : 'phone';
+	my $app_path = &subs::path_name($app);
+	my $timestamp = (defined $args{'timestamp'} && length $args{'timestamp'}) ? $args{'timestamp'} : &subs::rightNow();
+	my $folder = &subs::home(&subs::setting_grabber({ app => 'misc', setting => 'photo_location' }) || 'Pictures');
+	my $dir = $folder . '/' . $app_path;
+	make_path($dir) unless -d $dir;
+	my $file = $dir . '/' . $app_path . '_' . $timestamp . '.wav';
+	open(my $out, '>', $file) or return undef;
+	binmode $out;
+	print {$out} $bytes;
+	close $out;
+	my %entry = (
+		server_time => &subs::rightNow(),
+		f => $file,
+		uuid => &subs::random_string_creator(9),
+		type => 'audio',
+	);
+	$entry{'note_uuid'} = $args{'note_uuid'}
+		if defined $args{'note_uuid'} && length $args{'note_uuid'};
+	return \%entry;
+}
+
+# The Chat note a screened call left for a number, by the call's end: the phone
+# files the words when it logs the call, minutes after the gateway kept the WAV,
+# so the voicemail finds its note by number and moment rather than by a pointer
+# that does not exist yet. '' when no note is there (a call with no transcript).
+sub voicemail_note_uuid {
+	my ($number, $ended_ms) = @_;
+	my $digits = defined $number ? $number : '';
+	$digits =~ s/\D+//g;
+	$digits =~ s/^1//;
+	return '' unless length $digits;
+	return '' unless defined $ended_ms && $ended_ms =~ /^\d+$/ && $ended_ms > 0;
+	my $ended = &phone_call_epoch($ended_ms) * 1000;
+	return '' unless $ended > 0;
+	my $row = &subs::db_query(
+		'select uuid from mailbox where phone=? and timestamp >= ? and timestamp <= ? order by timestamp desc limit 1',
+		$digits, $ended - 600000, $ended + 600000,
+	)->hashes->[0];
+	return ($row && defined $row->{'uuid'} && length $row->{'uuid'}) ? $row->{'uuid'} : '';
 }
 
 1;

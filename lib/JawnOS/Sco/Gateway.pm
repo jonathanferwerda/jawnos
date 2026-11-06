@@ -295,6 +295,7 @@ sub flow_steps {
 	my $voice = defined $def->{'voice'} ? $def->{'voice'} : '';
 	my $hold = defined $def->{'hold'} ? $def->{'hold'} : '';
 	my $after = lc(defined $def->{'after'} ? $def->{'after'} : 'hold');
+	my $voicemail_seconds = &_voicemail_seconds($def->{'voicemail_seconds'});
 	my @authored;
 	if (ref $def->{'steps'} eq 'ARRAY' && @{ $def->{'steps'} }) {
 		@authored = @{ $def->{'steps'} };
@@ -371,12 +372,12 @@ sub flow_steps {
 			push @steps, $step if $step;
 		}
 		elsif ($type eq 'voicemail') {
-			push @steps, &_voicemail_steps($clips->{'voicemail'} || '');
+			push @steps, &_voicemail_steps($clips->{'voicemail'} || '', $voicemail_seconds);
 		}
 		elsif ($type eq 'after') {
 			# the legacy tail: the music, the house's voicemail, or nothing
 			if ($after eq 'voicemail') {
-				push @steps, &_voicemail_steps($clips->{'voicemail'} || '');
+				push @steps, &_voicemail_steps($clips->{'voicemail'} || '', $voicemail_seconds);
 			}
 			elsif ($after eq 'hold') {
 				my $step = &_hold_step($hold, 0);
@@ -408,10 +409,20 @@ sub _hold_step {
 }
 
 # The greeting (when the flow has one) and a recorded message. A message is
-# longer than a name: five minutes at most, ended by a pause, and it does not
-# need a name's short speech floor.
+# longer than a name: the flow's own length (five minutes unless it says
+# otherwise), ended by a pause, and it does not need a name's short speech floor.
+sub _voicemail_seconds {
+	my ($value) = @_;
+	return 300 unless defined $value && $value =~ /^\d+$/;
+	$value = int($value);
+	return 15 if $value < 15;
+	return 1800 if $value > 1800;
+	return $value;
+}
+
 sub _voicemail_steps {
-	my ($greeting) = @_;
+	my ($greeting, $seconds) = @_;
+	$seconds = &_voicemail_seconds($seconds);
 	my @out;
 	push @out, { type => 'voicemail', key => 'voicemail', play => $greeting }
 		if defined $greeting && length $greeting;
@@ -420,7 +431,7 @@ sub _voicemail_steps {
 		key => 'message',
 		record => 1,
 		kind => 'voicemail',
-		opts => { ms => 300000, silence_ms => 3000, min_ms => 1000 },
+		opts => { ms => $seconds * 1000, silence_ms => 3000, min_ms => 1000 },
 	};
 	return @out;
 }
@@ -434,6 +445,7 @@ sub _flow {
 		voice => (defined $def->{'voice'} ? $def->{'voice'} : ''),
 		hold => (defined $def->{'hold'} ? $def->{'hold'} : ''),
 		after => lc(defined $def->{'after'} ? $def->{'after'} : 'hold'),
+		voicemail_seconds => &_voicemail_seconds($def->{'voicemail_seconds'}),
 		clips => (ref $def->{'clips'} eq 'HASH' ? { %{ $def->{'clips'} } } : {}),
 	);
 	$flow{'steps'} = [
@@ -686,7 +698,7 @@ sub to_voicemail {
 	$self->{'hold_at'} = 0;
 	$self->{'hold_until'} = 0;
 	$self->{'hold_paused'} = 0;
-	$self->{'steps'} = [ &_voicemail_steps($greeting) ];
+	$self->{'steps'} = [ &_voicemail_steps($greeting, ($flow ? $flow->{'voicemail_seconds'} : undef)) ];
 	$self->{'step_at'} = -1;
 	$self->{'flow_started'} = 0;
 	$self->{'last_event'} = 'voicemail';
@@ -1323,6 +1335,10 @@ sub voicemail_list {
 				file => $e->{'file'},
 				name => ($e->{'file'} =~ m{([^/]+)$} ? $1 : $e->{'file'}),
 				call_id => $e->{'call_id'} || '',
+				# the Chat note the call's words were filed into, so the pane can
+				# open the transcript beside the recording
+				note_uuid => $e->{'note_uuid'} || '',
+				appt_uuid => $e->{'appt_uuid'} || '',
 			};
 		}
 		close $fh;

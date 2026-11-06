@@ -9,6 +9,8 @@ use lib "$FindBin::Bin/lib", "t/lib";
 use Test::More;
 use Mojo::JSON qw(decode_json encode_json);
 use Mojo::Template;
+use File::Temp qw(tempdir);
+use File::Slurp qw(read_file write_file);
 use RepoSource;
 use JawnOSTest;
 
@@ -340,6 +342,7 @@ is $defaults->{'flows'}->{'enemy'}, 'reject', 'an enemy is rejected by default';
 					{ type => 'ask' },
 					{ type => 'hold', seconds => 10 },
 				],
+				voicemail_seconds => 45,
 			},
 			night => { name => 'Night', steps => [ { type => 'say', text_key => 'greeting' } ] },
 		}),
@@ -354,6 +357,21 @@ is $defaults->{'flows'}->{'enemy'}, 'reject', 'an enemy is rejected by default';
 		{ type => 'ask' },
 		{ type => 'hold', seconds => 10 },
 	], 'the stored JSON keeps the step order and the keypad digit map';
+	is $stored->{'receptionist'}->{'voicemail_seconds'}, 45,
+		'and the flow\'s own voicemail length travels in the same save';
+}
+
+{
+	# The Chat note a message points at is read by uuid, through the house key.
+	local *subs::suds_grabber = sub { return 'secret' };
+	local *subs::db_select = sub {
+		return FakeRows->new([ { uuid => 'note-1', body => 'sealed', timestamp => '100', ost => undef } ]);
+	};
+	local *subs::note_decrypter = sub { return 'Call from: Ada' };
+	my $one = Manager::phone_voicemail_transcript('note-1');
+	is $one->{'ok'}, 1, 'the pane can open a voicemail\'s transcript';
+	is $one->{'text'}, 'Call from: Ada', 'and gets the words back, not the sealed body';
+	is Manager::phone_voicemail_transcript('bad note!')->{'ok'}, 0, 'only a uuid is asked for';
 }
 
 # ---------------------------------------------------------------- relationships
@@ -468,6 +486,71 @@ is $defaults->{'flows'}->{'enemy'}, 'reject', 'an enemy is rejected by default';
 		'deleting a flow drops every digit that pointed at it';
 }
 
+# ---------------------------------------------------------------- voicemail length
+{
+	local *subs::setting_grabber = sub { return undef };
+	my $defs = &subs::phone_ivr_flow_defs_clean({
+		receptionist => { name => 'Receptionist', voicemail_seconds => '5' },
+		night => { name => 'Night', voicemail_seconds => '5000' },
+		noon => { name => 'Noon', voicemail_seconds => 'not a number' },
+		quiet => { name => 'Quiet', voicemail_seconds => '45' },
+	});
+	is $defs->{'receptionist'}->{'voicemail_seconds'}, 15,
+		'a message shorter than 15 seconds is raised to the floor';
+	is $defs->{'night'}->{'voicemail_seconds'}, 1800,
+		'a message longer than half an hour is capped';
+	is $defs->{'noon'}->{'voicemail_seconds'}, 300,
+		'a value that is not a number keeps the five-minute default';
+	is $defs->{'quiet'}->{'voicemail_seconds'}, 45, 'a valid length is kept';
+	is $defs->{'voicemail'}->{'voicemail_seconds'}, 300,
+		'the seeded voicemail flow defaults to five minutes';
+}
+
+# ---------------------------------------------------------------- the filed message
+# A voicemail is filed the way a capture is: one entry in the appointment's file
+# column, type audio, pointing at the Chat note that holds the words.
+{
+	my $root = tempdir(CLEANUP => 1);
+	local *subs::setting_grabber = sub { return $root };
+	local *subs::rightNow = sub { return 1700000000000 };
+	my $source = "$root/source.wav";
+	write_file($source, 'RIFF-voicemail-bytes');
+	my $entry = &subs::voicemail_file($source,
+		app => 'phone', timestamp => '1700000000', note_uuid => 'note-1');
+	ok $entry && ref $entry eq 'HASH', 'a voicemail becomes one file entry';
+	is $entry->{'type'}, 'audio', 'the entry is an audio file';
+	is $entry->{'note_uuid'}, 'note-1', 'it points at the words already in Chat';
+	ok !exists $entry->{'thumb'}, 'a voicemail has no thumbnail';
+	ok !exists $entry->{'ocr'}, 'and nothing to read out of it';
+	ok -f $entry->{'f'}, 'the WAV is written into the app folder';
+	like $entry->{'f'}, qr{/phone/phone_1700000000\.wav$}, 'named the way a capture is';
+	is read_file($entry->{'f'}), 'RIFF-voicemail-bytes', 'and carries the recording';
+}
+{
+	# bytes may be handed over directly, for a gateway that is another machine
+	my $root = tempdir(CLEANUP => 1);
+	local *subs::setting_grabber = sub { return $root };
+	local *subs::rightNow = sub { return 1700000000000 };
+	my $entry = &subs::voicemail_file('RIFF-bytes', app => 'phone', timestamp => '7');
+	ok $entry && -f $entry->{'f'}, 'bytes are written too';
+	is read_file($entry->{'f'}), 'RIFF-bytes', 'without a source file';
+	ok !exists $entry->{'note_uuid'}, 'and no note reference when there was none';
+}
+{
+	local *subs::db_query = sub {
+		my ($sql, @args) = @_;
+		is $args[0], '5555550100', 'the note is looked up by the call\'s number';
+		return FakeRows->new([ { uuid => 'note-uuid' } ]);
+	};
+	is &subs::voicemail_note_uuid('+1 (555) 555-0100', 1700000000000), 'note-uuid',
+		'a voicemail references the newest Chat note for the call';
+}
+{
+	local *subs::db_query = sub { return FakeRows->new([]) };
+	is &subs::voicemail_note_uuid('5550100', 1700000000000), '',
+		'a call with no transcript has no note to reference';
+}
+
 # ---------------------------------------------------------------- wiring
 my $manager = manager_source();
 like $manager, qr{/manager/phone/ivr}, 'the IVR route is registered';
@@ -487,6 +570,7 @@ like $template, qr{phone_ivr_flows_editor}, 'the pane has the flows editor';
 like $template, qr{phone_ivr_flow_list}, 'the pane has a list to draw the flows into';
 like $template, qr{phone_ivr_flow_add}, 'the pane can add a flow';
 like $template, qr{phone_app_row_call}, 'a recent call carries a phone icon';
+like $template, qr{id="phone_ivr_voicemail"}, 'the pane has a voicemail list';
 
 my $js = js_source('public/js/manager/phone.js');
 like $js, qr{/manager/phone/ivr}, 'the pane saves through its route';
@@ -506,6 +590,11 @@ like $js, qr{hint="Add step"}, 'a step can be added';
 like $js, qr{hint="Remove step"}, 'a step can be removed';
 like $js, qr{jawnPhoneFlowDigitSelect}, 'a keypad offers a digit menu';
 like $js, qr{jawnPhoneFlowDigitsDrop}, 'deleting a flow drops its digit references';
+like $js, qr{voicemail_seconds}, 'the flow editor carries the voicemail length';
+like $js, qr{/manager/sco/transcript}, 'the voicemail list fetches the transcript by note';
+like $js, qr{hint="Transcript"}, 'the transcript is a named control';
+like $js, qr{hint="Voicemail length"}, 'the voicemail length is a named control';
+like $js, qr{phone_app_ivr_vm_words}, 'a message opens its transcript beside it';
 
 my $sync = js_source('public/js/manager/manager.js');
 like $sync, qr{ivr:\s*\(response && response\.ivr\)}, 'the sync blob carries the IVR policy';
@@ -518,6 +607,8 @@ like $help, qr/A flow is one voice/, 'the help topic says what a flow is';
 like $help, qr/Drag a step/, 'the help topic explains reordering';
 like $help, qr/Keypad menu/, 'the help topic explains the keypad step';
 like $help, qr/no steps still speaks the old order/, 'the help topic explains the legacy order';
+like $help, qr/Voicemail length/, 'the help topic names the per-flow message length';
+like $help, qr/Transcript/, 'the help topic explains the voicemail transcript row';
 
 # The pane has to render with the settings the controller passes, not only match
 # a source grep. Empty call/list data keeps the rest of the page quiet.

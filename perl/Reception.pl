@@ -72,7 +72,16 @@ sub keep_new_recordings {
 	my $status = $client->call({ cmd => 'status' });
 	return unless $status && $status->{'ok'};
 	my ($newest) = @{ $status->{'recordings'} || [] };
-	return unless $newest && $newest->{'file'} && -s $newest->{'file'};
+	&keep_recording($newest) if $newest && $newest->{'file'} && -s $newest->{'file'};
+	# A message is filed onto the appointment the phone writes for the call, and
+	# the phone logs the call a little after the gateway finishes recording. So
+	# every pass also picks up a message that is already in the kept index.
+	&file_pending_voicemails();
+	return 1;
+}
+
+sub keep_recording {
+	my ($newest) = @_;
 	my $dir = &subs::home('~/.president/sco/kept');
 	mkdir $dir unless -d $dir;
 	my $id = $newest->{'call_id'} || 'call';
@@ -141,6 +150,102 @@ sub keep_new_recordings {
 	return 1;
 }
 
+# File a kept message onto the call's appointment, the way a capture is filed:
+# one entry appended to the appointment's `file` column, the tree sealed, and
+# the note's uuid written back so the pane can open the words beside the clip.
+# The appointment is found by its moment - the phone writes the row after the
+# call ends, and its account is the caller's number.
+sub file_kept_voicemail {
+	my ($e) = @_;
+	my $at = $e->{'at'} || 0;
+	my $file = $e->{'file'} || '';
+	return unless $at && length $file && -f $file;
+	# `at` is the moment the recording finished, so it is the call's end for
+	# the note the phone writes when it logs the call.
+	my $ended_ms = $at * 1000;
+	# A gateway call is one at a time, so the phone appointment that started
+	# before this recording and had not stopped before it is the call.
+	my $rows = &subs::db_query(
+		'select uuid, app, account, timestamp, stop_timestamp, server_time, file from appointments where subtype=? and server_time >= ? order by server_time desc limit 80',
+		'phone', ($at - 3600) * 1000,
+	)->hashes || [];
+	my ($pick, $best);
+	foreach my $row ( @{$rows} ) {
+		my $started = &subs::phone_call_epoch($row->{'timestamp'});
+		next unless $started && $started <= $at + 5;
+		next if $at - $started > 3600;
+		my $stopped = &subs::phone_call_epoch($row->{'stop_timestamp'});
+		next if $stopped && $stopped + 5 < $at;
+		if (!defined $best || $started > $best) { $best = $started; $pick = $row; }
+	}
+	return unless $pick;
+	my $app = $pick->{'app'} || 'phone';
+	my $note_uuid = eval { &subs::voicemail_note_uuid($pick->{'account'} || '', $ended_ms) } || '';
+	# The transcript is written by the same request that writes the appointment;
+	# if the row is only a moment old the note may still be on its way, and the
+	# next pass (three seconds) catches it.
+	if (!length $note_uuid
+		&& ($pick->{'server_time'} || 0) > &subs::rightNow() - 60000) {
+		return;
+	}
+	my $entry = &subs::voicemail_file($file, app => $app, note_uuid => $note_uuid, timestamp => $at);
+	return unless $entry;
+	my $appt = &subs::db_select('appointments', undef, { uuid => $pick->{'uuid'} })->hashes->[0];
+	return unless $appt;
+	my $files = eval { decode_json($appt->{'file'}) } || [];
+	$files = [$files] if ref $files eq 'HASH';
+	push @{$files}, $entry;
+	&subs::db_update('appointments', {
+		encryption_standard => undef,
+		file => encode_json($files),
+		server_time => &subs::rightNow(),
+	}, { uuid => $pick->{'uuid'} });
+	eval { &subs::file_encrypter({ app => $app }) };
+	my %mark = (
+		appt_uuid => $pick->{'uuid'},
+		filed_file => $entry->{'f'},
+		filed_at => &subs::rightNow(),
+	);
+	$mark{'note_uuid'} = $note_uuid if length $note_uuid;
+	$log->info('reception: filed voicemail ' . $file . (length $note_uuid ? " (note $note_uuid)" : ''));
+	return \%mark;
+}
+
+# The kept index outlives this process, so a message kept while the phone had
+# not logged its call yet is filed here, by whoever asks next. A line carries
+# `appt_uuid` once it is filed; the rewrite is atomic so a half-written index
+# cannot lose the messages beside it.
+sub file_pending_voicemails {
+	my $index = &subs::home('~/.president/sco/kept/index.jsonl');
+	return unless -s $index;
+	my @lines;
+	my $changed = 0;
+	if (open(my $in, '<', $index)) {
+		while (my $line = <$in>) {
+			my $e = eval { decode_json($line) };
+			my $touched = 0;
+			if (ref $e eq 'HASH' && ($e->{'kind'} || '') eq 'voicemail'
+				&& !$e->{'appt_uuid'} && length($e->{'file'} || '') && -f $e->{'file'}) {
+				my $mark = &file_kept_voicemail($e);
+				if ($mark) {
+					$e->{$_} = $mark->{$_} for keys %{$mark};
+					$touched = 1;
+					$changed = 1;
+				}
+			}
+			push @lines, $touched ? encode_json($e) . "\n" : $line;
+		}
+		close $in;
+	}
+	return unless $changed;
+	my $tmp = $index . '.tmp';
+	if (open(my $out, '>', $tmp)) {
+		print {$out} @lines;
+		close $out;
+		rename $tmp, $index or unlink $tmp;
+	}
+}
+
 sub tick {
 	return if $not_the_gateway;
 	&keep_new_recordings();
@@ -167,7 +272,7 @@ sub tick {
 		my $def = $defs->{$key};
 		next unless ref $def eq 'HASH';
 		my %flow = map { $_ => (defined $def->{$_} ? $def->{$_} : '') }
-			qw(name voice greeting prompt voicemail thanks hold after);
+			qw(name voice greeting prompt voicemail thanks hold after voicemail_seconds);
 		$flow{'steps'} = $def->{'steps'} if ref $def->{'steps'} eq 'ARRAY' && @{ $def->{'steps'} };
 		$flows{$key} = \%flow;
 	}

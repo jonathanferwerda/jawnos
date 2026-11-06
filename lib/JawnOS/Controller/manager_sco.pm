@@ -207,6 +207,15 @@ sub action_52005 {
 }
 
 
+# GET /manager/sco/transcript
+#
+# The words a voicemail points at: the Chat note the phone filed when the call
+# ended, by the uuid the kept index stored. The pane opens it beside the clip.
+sub action_52012 {
+	my $c = shift;
+	$c->render(json => &phone_voicemail_transcript($c->param('uuid') || ''));
+}
+
 # POST /manager/sco/rtc
 #
 # The "Connect me" signalling hop. The browser's offer, its ICE candidates and
