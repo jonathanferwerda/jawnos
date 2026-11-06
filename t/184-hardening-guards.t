@@ -1,4 +1,4 @@
-# tests-for: lib/JawnOS/Domain/Format.pm lib/JawnOS/Domain/Crypt.pm lib/JawnOS/Domain/Sent.pm lib/JawnOS/Manager/Part04.pm lib/JawnOS/Manager/Part05.pm lib/JawnOS/Manager/Part13.pm lib/JawnOS/Manager/Part17.pm lib/JawnOS/Controller/manager_configure.pm lib/JawnOS/Controller/manager_configure3.pm lib/JawnOS/Controller/manager_configure4.pm lib/JawnOS/Controller/manager_configure5.pm lib/JawnOS/Controller/manager_embedded.pm lib/JawnOS/Controller/manager_misc.pm lib/JawnOS/Controller/manager_misc5.pm lib/JawnOS/Controller/manager_misc6.pm lib/JawnOS/Controller/manager_misc12.pm lib/JawnOS/Controller/manager_misc14.pm lib/JawnOS/Controller/manager_mail.pm lib/JawnOS/Controller/mail_ws.pm qa/coding_night/run.pl qa/systemd/jawnos-qa-coding.service desktop/install-wallet.sh jp/alarmclock/alarmclock_02_ble_handlers_wifi_setup.ino jp/alarmclock/alarmclock_03_loop_house_inputs_jobs.ino jt/jt_01_globals_ble_house.ino jt/jt_02_lorawan_radio_gps.ino jt/jt_03_setup.ino jw/jw_01_globals.ino jw/jw_03_setup.ino public/js/manager/embedded/01_ota_nowme.js templates/embedded/body.html.ep
+# tests-for: lib/JawnOS/Domain/Format.pm lib/JawnOS/Domain/Crypto.pm lib/JawnOS/Domain/Crypt.pm lib/JawnOS/Domain/Sent.pm lib/JawnOS/Manager/Part04.pm lib/JawnOS/Manager/Part05.pm lib/JawnOS/Manager/Part13.pm lib/JawnOS/Manager/Part17.pm lib/JawnOS/Controller/manager_configure.pm lib/JawnOS/Controller/manager_configure3.pm lib/JawnOS/Controller/manager_configure4.pm lib/JawnOS/Controller/manager_configure5.pm lib/JawnOS/Controller/manager_embedded.pm lib/JawnOS/Controller/manager_misc.pm lib/JawnOS/Controller/manager_misc5.pm lib/JawnOS/Controller/manager_misc6.pm lib/JawnOS/Controller/manager_misc12.pm lib/JawnOS/Controller/manager_misc14.pm lib/JawnOS/Controller/manager_mail.pm lib/JawnOS/Controller/mail_ws.pm qa/coding_night/run.pl qa/systemd/jawnos-qa-coding.service desktop/install-wallet.sh jp/alarmclock/alarmclock_02_ble_handlers_wifi_setup.ino jp/alarmclock/alarmclock_03_loop_house_inputs_jobs.ino jt/jt_01_globals_ble_house.ino jt/jt_02_lorawan_radio_gps.ino jt/jt_03_setup.ino jw/jw_01_globals.ino jw/jw_03_setup.ino public/js/manager/embedded/01_ota_nowme.js templates/embedded/body.html.ep
 # covers:    The second audit pass: file reads stay inside a root, peer proof is
 #           signed, the console channel escapes its data, and OTA needs a token.
 
@@ -81,6 +81,13 @@ unlike($crypt, qr/return \(\$stored \? 0 : 1\)/, 'peer_verify has no unsigned fi
 my $embedded = source('lib/JawnOS/Controller/manager_embedded.pm');
 like($embedded, qr{/update\?authorization=}, 'the ESP32 OTA sends its token');
 like($embedded, qr/authorization => \$auth/, 'the ESP32 OTA sends the token as a header');
+
+# The exchange-rate fetch talks to two public hosts with real certificates, so
+# turning verification off there bought nothing and hid a tampered rate.
+my $crypto = source('lib/JawnOS/Domain/Crypto.pm');
+my ($rates_sub) = $crypto =~ /(sub crypto_rates_refresh \{.*?\n\}\n)/s;
+like($rates_sub, qr{https://api\.coinbase\.com}, 'the rates come from Coinbase over TLS');
+unlike($rates_sub, qr/insecure/, 'and that fetch verifies the certificate');
 
 my $sent = source('lib/JawnOS/Domain/Sent.pm');
 like($sent, qr/html_text\(\$text\)/, 'streamed assistant text is HTML-escaped');

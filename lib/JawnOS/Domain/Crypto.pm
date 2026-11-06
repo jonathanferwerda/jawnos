@@ -241,7 +241,9 @@ sub crypto_rates_refresh {
 	return { ok => 0, error => 'crypto is off' } unless &crypto_enabled || $opts->{'force'};
 	require Mojo::UserAgent;
 	my $base = &crypto_report_currency();
-	my $ua = Mojo::UserAgent->new(insecure => 1, connect_timeout => 8, inactivity_timeout => 12, request_timeout => 20);
+	# Coinbase and open.er-api.com both serve a public CA certificate: there is
+	# nothing self-signed to accept here, so verification stays on.
+	my $ua = Mojo::UserAgent->new(connect_timeout => 8, inactivity_timeout => 12, request_timeout => 20);
 	my (%rates, $source);
 	my $res = eval { $ua->get('https://api.coinbase.com/v2/exchange-rates?currency=' . $base)->result };
 	if ($res && $res->is_success) {
