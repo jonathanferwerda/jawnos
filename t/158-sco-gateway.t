@@ -40,6 +40,7 @@ foreach my $row (
 	[52003, 'post', '/manager/sco/cancel'],
 	[52004, 'get', '/manager/sco/result'],
 	[52005, 'get', '/manager/sco/recording'],
+	[52007, 'post', '/manager/sco/say'],
 ) {
 	my ($idx, $method, $path) = @{$row};
 	like($routes, qr/\[\s*$idx\s*,\s*'$method'\s*,\s*'$path'\s*,\s*'action_$idx'\s*\]/,
@@ -659,6 +660,19 @@ is(JawnOS::Sco::Gateway::call_over('in_call', undef, 661, 1), 'hold limit',
 is(JawnOS::Sco::Gateway::call_over('in_call', undef, 100, 0), 'call limit',
 	'an unheld call keeps the old limit');
 
+# A person watching a screening can type to the caller. The gateway answers for
+# what it cannot do, and the words join the transcript.
+{
+	my $say = JawnOS::Sco::Gateway->new(dir => "$dir/say-sco", helper => $hold_fake, status_path => "$dir/say.json");
+	is($say->say_to_caller(text => '  ')->{'ok'}, 0, 'an empty message is not spoken');
+	is($say->say_to_caller(text => 'hello')->{'ok'}, 0, 'and neither is one with no call up');
+	my $src = read_file("$repo/lib/JawnOS/Sco/Gateway.pm");
+	like($src, qr/sub say_to_caller/, 'the gateway can speak to the caller');
+	like($src, qr/\$self->\{'step_id'\} = \$id/, 'the message takes the step, so the hold resumes after it');
+	like(read_file("$repo/public/js/manager/screening.js"), qr{/manager/sco/say},
+		'and the panel posts to it');
+}
+
 # ---------------------------------------------------------- the phone's link
 # A phone that walked out of range comes back with its Bluetooth link gone and
 # nothing retries the dropped ACL, so the next call has no audio. The gateway
@@ -1099,6 +1113,9 @@ SKIP: {
 	skip 'the SCO helper is not built on this machine', 2 unless -x $helper;
 	require IPC::Open2;
 	my $tee = "$dir/tee-while-playing.raw";
+	# the helper opens the tee path without O_CREAT (the gateway makes a FIFO
+	# there first), so the probe has to bring its own file
+	write_file($tee, '');
 	my $music = "$dir/tee-music.raw";
 	write_file($music, join '', map { pack('s<', 7000) } 1 .. 32000);   # 4 s of music
 	my $feeder = "$dir/tee-feeder.pl";

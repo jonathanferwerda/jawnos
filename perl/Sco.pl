@@ -88,6 +88,11 @@ sub answer {
 			$args{'clips'}, $args{'words'}, $args{'voice'});
 		return $gateway->arm(%args);
 	}
+	if ($cmd eq 'say') {
+		my %args = %{$request};
+		delete $args{'cmd'};
+		return $gateway->say_to_caller(%args);
+	}
 	if ($cmd eq 'cancel') {
 		return $gateway->cancel();
 	}

@@ -124,9 +124,21 @@ function jawnScreenPanelOpen() {
 	box.append($('<div class="jawn_screening_peer" id="jawn_screening_peer"></div>'));
 	box.append($('<div class="jawn_screening_lines" id="jawn_screening_lines"></div>'));
 	box.append($('<div class="jawn_screening_note" id="jawn_screening_note"></div>'));
-	box.append($('<div class="jawn_screening_buttons"></div>')
-		.append($('<button id="jawn_screening_connect" hint="Connect me">Connect me</button>'))
-		.append($('<button id="jawn_screening_phone" hint="Open the Phone app">Open Phone</button>')));
+	// The phone carrying the call has the app's own call screen (hang up,
+	// speaker, WebRTC); a second Connect me here opened the Phone page over it
+	// with its layout broken, and nobody needs both.
+	var buttons = $('<div class="jawn_screening_buttons"></div>');
+	if (!window.JawnPhone) {
+		buttons.append($('<button id="jawn_screening_connect" hint="Connect me">Connect me</button>'));
+	}
+	buttons.append($('<button id="jawn_screening_phone" hint="Open the Phone app">Open Phone</button>'));
+	box.append(buttons);
+	// Type to a caller who is waiting: the gateway speaks it and the answer
+	// arrives in the same transcript.
+	box.append($('<div class="jawn_screening_say_row"></div>')
+		.append($('<input type="text" id="jawn_screening_say" hint="Message the caller" maxlength="400" autocomplete="off">')
+			.attr('placeholder', jawnosT('Message the caller')))
+		.append($('<button id="jawn_screening_say_send" hint="Send"></button>').text(jawnosT('Send'))));
 	$('body').append(box);
 	// The panel hangs from the top edge, like the app's own screening face. The
 	// taskbar offset is in the CSS; a dock on the top edge sits below it and is
@@ -299,6 +311,33 @@ function jawnScreenPushed(data) {
 $(document).on('click', '#jawn_screening #jawn_screening_connect', function (e) {
 	e.preventDefault();
 	if (jawnScreenRtc.pc) { jawnScreenRtcStop(); } else { jawnScreenRtcConnect(jawnScreen.call); }
+});
+
+// One message, spoken by the gateway on the machine that has the voice.
+$(document).on('click', '#jawn_screening_say_send', function (e) {
+	e.preventDefault();
+	var input = $('#jawn_screening_say');
+	var text = (input.val() || '').replace(/^\s+|\s+$/g, '');
+	if (!text) { return; }
+	input.val('');
+	$.ajax({
+		url: '/manager/sco/say',
+		type: 'POST',
+		dataType: 'json',
+		data: { timestamp: Date.now(), text: text },
+		success: function (res) {
+			if (!res || !res.ok) {
+				$('#jawn_screening_note').text((res && res.error) || jawnosT('The message did not go through.'));
+			}
+		},
+		error: function () { $('#jawn_screening_note').text(jawnosT('The message did not go through.')); }
+	});
+});
+
+$(document).on('keydown', '#jawn_screening_say', function (e) {
+	if (e.key !== 'Enter') { return; }
+	e.preventDefault();
+	$('#jawn_screening_say_send').trigger('click');
 });
 
 $(document).on('click', '#jawn_screening #jawn_screening_phone', function (e) {

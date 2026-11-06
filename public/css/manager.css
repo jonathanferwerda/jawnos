@@ -3599,3 +3599,30 @@ body.dark_theme .inventory_details {
 	cursor: pointer;
 }
 .jawn_screening_buttons #jawn_screening_connect.on { font-weight: 600; border-color: #7fd2a8; }
+/* the house talking back: what a person typed, on the right like a sent bubble */
+.jawn_screening_bubble[who="house"] {
+	align-self: flex-end;
+	background: rgba(127, 210, 168, .22);
+}
+.jawn_screening_say_row { display: flex; gap: 6px; margin-top: 8px; }
+.jawn_screening_say_row input {
+	flex: 1 1 auto;
+	min-width: 0;
+	font: inherit;
+	font-size: 12px;
+	padding: 6px 10px;
+	border-radius: 999px;
+	border: 1px solid rgba(127, 140, 155, .55);
+	background: transparent;
+	color: inherit;
+}
+.jawn_screening_say_row button {
+	flex: 0 0 auto;
+	font-size: 12px;
+	padding: 6px 12px;
+	border-radius: 999px;
+	border: 1px solid rgba(127, 140, 155, .55);
+	background: transparent;
+	color: inherit;
+	cursor: pointer;
+}

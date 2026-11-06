@@ -11,6 +11,7 @@ sub routes {
 	[52004, 'get',  '/manager/sco/result',    'action_52004'],
 	[52005, 'get',  '/manager/sco/recording', 'action_52005'],
 	[52006, 'post', '/manager/sco/rtc',       'action_52006'],
+	[52007, 'post', '/manager/sco/say',       'action_52007'],
 	);
 }
 

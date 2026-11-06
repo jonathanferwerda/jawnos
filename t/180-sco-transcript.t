@@ -232,6 +232,13 @@ like($screening, qr/#jawn_screening_pill'/, 'the pill takes the panel back');
 # A device opened, woken or reconnected mid-call must ask for the screening: it
 # was not there for the start push.
 like($screening, qr/on\('visibilitychange'/, 'a wake asks again');
+# Typing to a caller who is waiting: the gateway speaks it and the answer lands
+# in the same transcript. On the phone carrying the call the panel offers no
+# second Connect me - that phone has the app's own call screen.
+like($screening, qr/jawn_screening_say/, 'the panel can type a message to the caller');
+like($screening, qr{/manager/sco/say}, 'and posts it to the gateway');
+like($screening, qr/if \(!window\.JawnPhone\)/,
+	'the phone carrying the call is not offered a redundant Connect me');
 like(read_file("$repo/public/js/manager/websocket/03_watchdog.js"), qr/jawnScreenPoll\(\);.*?wsResync\(\);/s,
 	'and so does a socket that came back');
 my $css = read_file("$repo/public/css/manager.css");

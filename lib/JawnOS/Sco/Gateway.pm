@@ -946,6 +946,37 @@ sub _stop_rtc {
 	return 1;
 }
 
+# ---- the house speaks to the caller -------------------------------------
+# A person watching a screening can type while the caller waits on the music.
+# The message is rendered here (this is the machine with the voice) and plays
+# over whatever was playing; its own `played` makes the hold move on, so the
+# music resumes by itself. The words join the transcript, so both sides see
+# what was said.
+sub say_to_caller {
+	my ($self, %args) = @_;
+	my $text = $args{'text'} || '';
+	$text =~ s/^\s+|\s+$//g;
+	return { ok => 0, error => 'nothing to say' } unless length $text;
+	$text = substr($text, 0, 400);
+	return { ok => 0, error => 'no call is up' } unless ($self->{'state'} || '') eq 'in_call';
+	require JawnOS::Sco::Render;
+	my $raw = &JawnOS::Sco::Render::render($text, $args{'voice'} || '');
+	return { ok => 0, error => 'this machine cannot speak' } unless $raw;
+	my $id = $self->{'next_id'}++;
+	$self->_send(cmd => 'play', id => $id, file => $raw);
+	# the clip that was playing is replaced, so its `played` never arrives; this
+	# message's id is the step the guard must accept
+	$self->{'step_id'} = $id;
+	$self->{'last_event'} = 'said';
+	my $line = { who => 'house', text => $text, at => time, ms => 0 };
+	push @{ $self->{'transcript'} }, $line;
+	shift @{ $self->{'transcript'} } while @{ $self->{'transcript'} } > 200;
+	$self->_write_transcript_line($line);
+	$self->write_status();
+	$self->_push_transcript({ line => $line });
+	return { ok => 1, said => $text };
+}
+
 # ---- the plan -----------------------------------------------------------
 
 
@@ -1082,6 +1113,18 @@ sub event {
 			my $step = $self->{'steps'}->[ $self->{'step_at'} ] || {};
 			if ($step->{'hold'}) { $self->_hold_play_next(); }
 			else { $self->_advance(); }
+		}
+	}
+	elsif ($name eq 'digit') {
+		# the caller's keypad, from the helper's tone reader: one line per press
+		my $d = $event->{'digit'} || '';
+		if ($d =~ /^[0-9*#]$/) {
+			my $line = { who => 'caller', text => 'pressed ' . $d, at => time, ms => 0 + ($event->{'ms'} || 0), digit => $d };
+			push @{ $self->{'transcript'} }, $line;
+			shift @{ $self->{'transcript'} } while @{ $self->{'transcript'} } > 200;
+			$self->_write_transcript_line($line);
+			$self->write_status();
+			$self->_push_transcript({ line => $line });
 		}
 	}
 	elsif ($name eq 'closed' || $name eq 'stopped') {

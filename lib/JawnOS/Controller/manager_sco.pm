@@ -79,6 +79,16 @@ sub action_52002 {
 	}));
 }
 
+# POST /manager/sco/say
+#
+# A person watching a screening types to the caller: the words are spoken on the
+# gateway (the machine with the voice) and join the same transcript the caller's
+# answer is read into.
+sub action_52007 {
+	my $c = shift;
+	$c->render(json => &sco_client()->call({ cmd => 'say', text => $c->param('text') || '' }));
+}
+
 # POST /manager/sco/cancel
 sub action_52003 {
 	my $c = shift;
