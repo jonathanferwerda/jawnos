@@ -690,6 +690,16 @@ is(JawnOS::Sco::Gateway::call_over('in_call', undef, 100, 0), 'call limit',
 	ok((grep { $_ eq 'voicemail' } @{$vm_plan}), 'the voicemail greeting is in the plan');
 	ok((grep { $_ eq 'message' } @{$vm_plan}), 'and a message is recorded after it');
 	ok(!(grep { $_ eq 'hold' } @{$vm_plan}), 'a voicemail flow plays no hold music');
+	{
+		# a flow with no name prompt never asks, so it neither beeps nor records
+		my $quiet = JawnOS::Sco::Gateway->new(dir => "$dir/quiet-sco", helper => $hold_fake, status_path => "$dir/quiet.json");
+		$quiet->arm(clips => { greeting => $clip, thanks => $clip, voicemail => $clip },
+			record => { ms => 5000 }, after => 'voicemail', call_id => 'quiet-call');
+		my $qp = $quiet->status()->{'plan'};
+		ok(!(grep { $_ eq 'cue' } @{$qp}), 'no name prompt means no tone');
+		ok(!(grep { $_ eq 'name' } @{$qp}), 'and no name recording');
+		$quiet->end_call('test over');
+	}
 	# the durable list the pane asks for
 	my $kdir = "$dir/vm-sco/kept";
 	make_path($kdir);

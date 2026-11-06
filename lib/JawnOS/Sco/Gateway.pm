@@ -306,9 +306,12 @@ sub arm {
 		push @steps, { play => $path, key => $key } if $path;
 	}
 	# the prompt says "after the tone", so there is one: a cue the caller can
-	# hear, which also marks the moment the recording opens
-	push @steps, { tone => 1, hz => 660, ms => 400, key => 'cue' };
-	push @steps, { record => 1, key => 'name' };
+	# hear, which also marks the moment the recording opens. A flow with no
+	# name prompt asked nothing, so it neither beeps nor records a name.
+	if ($clips->{'prompt'}) {
+		push @steps, { tone => 1, hz => 660, ms => 400, key => 'cue' };
+		push @steps, { record => 1, key => 'name' };
+	}
 	my $thanks = $clips->{'thanks'} || '';
 	push @steps, { play => $thanks, key => 'thanks' } if $thanks;
 	# After the thanks the house keeps the line instead of hanging up: the caller
