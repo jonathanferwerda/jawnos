@@ -1,12 +1,12 @@
 #!/bin/sh
 # pre-commit - keep agent work in a worktree and the baked protocols in step.
 #
-# It refuses a commit made in the primary checkout while any worktree exists:
-# agent work belongs in a worktree, and the lander cannot move the primary onto
-# a commit made in it. It also refuses a commit from a worktree while the
-# primary has uncommitted tracked changes - the write an agent left behind -
-# naming the files before they can block somebody else's landing. Each refusal
-# prints its move recipe and a named, deliberate escape.
+# It refuses a commit made in the primary checkout, with or without a linked
+# worktree: agent work belongs in a worktree, and the lander cannot move the
+# primary onto a commit made in it. It also refuses a commit from a worktree
+# while the primary has uncommitted tracked changes - the write an agent left
+# behind - naming the files before they can block somebody else's landing. Each
+# refusal prints its move recipe and a named, deliberate escape.
 #
 # Enable once per clone:   git config core.hooksPath .githooks
 # Bypass for a moment:     git commit --no-verify
@@ -15,7 +15,7 @@ cd "$(git rev-parse --show-toplevel)" || exit 0
 # The primary checkout is the first worktree git lists. A linked worktree is a
 # place to work; the primary is the place the dev server runs, and a commit
 # there cannot be landed by the gate (it moves the primary, it does not replay
-# a commit from it). One worktree is the single-agent case and stays allowed.
+# a commit from it). A lone checkout is refused too; the escape names it.
 primary=""
 count=0
 while IFS= read -r line; do
@@ -28,7 +28,7 @@ EOF
 current=$(git rev-parse --show-toplevel 2>/dev/null)
 
 if [ "${JAWNOS_ALLOW_PRIMARY_COMMIT:-0}" != "1" ]; then
-	if [ "$count" -gt 1 ] && [ -n "$primary" ] && [ "$primary" = "$current" ]; then
+	if [ -n "$primary" ] && [ "$primary" = "$current" ]; then
 		cat >&2 <<MSG
 commit refused: this is the primary checkout at $primary.
 

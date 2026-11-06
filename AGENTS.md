@@ -81,9 +81,9 @@ user for the exact file/folder/name. A wrong guess costs far more tokens than a 
 
 ## Many agents at once
 
-The primary checkout is read-only for agents: a dirty one makes the lander refuse every landing.
-Land from the worktree root with `perl ~/jawnos/scripts/agent_land.pl` (the primary copy); never
-push or restart by hand.
+The primary checkout is read-only for agents: a dirty one blocks every landing. Land from the
+worktree root with `perl ~/jawnos/scripts/agent_land.pl` (the primary copy); never push or restart by
+hand.
 
 ## Crash-resilient agent work
 
@@ -154,8 +154,8 @@ translatable in the same change:
 ## Rules
 
 - **Worktree per task: every source write — edit, new file, delete — happens in a worktree.** Read
-  in the primary; host configuration and other out-of-repo writes are not source writes. If no
-  worktree exists yet, create one before the first edit (`docs/AGENTS-concurrency.md`).
+  in the primary; host config and out-of-repo writes are not source writes. Create one before the
+  first edit if none exists (`docs/AGENTS-concurrency.md`).
 - **Maintain the locator from its ledger.** Before changing `scripts/where.pl` or its maps, run
   `perl scripts/where_audit.pl --prompt` and fix what it names: misses, wrong reports, map drift.
   Confirm each case in the source, add a test for each new shape, and report a hit you acted on.
@@ -194,8 +194,8 @@ translatable in the same change:
 - **Land once, then stop.** Every task ends by landing: commit in your worktree (`git add -p`), then
   `perl ~/jawnos/scripts/agent_land.pl` — bumps `VERSION`, tests once, pushes, restarts. A refusal ends the
   attempt: report it, never retry in a loop. Hot files, worktrees and the commit identity:
-  `docs/AGENTS-concurrency.md`. Alone: `version_bump.pl` → commit `v<version> - <summary>` → `git push`
-  → `restart.pl`.
+  `docs/AGENTS-concurrency.md`. Alone: `version_bump.pl` → commit with
+  `JAWNOS_ALLOW_PRIMARY_COMMIT=1` → `git push` → `restart.pl`.
 
 ---
 

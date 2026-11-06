@@ -1,8 +1,8 @@
 # tests-for: .githooks/pre-commit docs/AGENTS-concurrency.md
-# covers:    A commit made in the primary checkout while any worktree exists is
-#            refused, with the move recipe printed and a named single-agent
-#            escape; a commit in a linked worktree, or in a lone checkout, is
-#            allowed. A commit from a worktree is refused while the primary has
+# covers:    A commit made in the primary checkout is refused whether or not a
+#            linked worktree exists, with the move recipe printed and a named
+#            lone-checkout escape; a commit in a linked worktree is allowed. A
+#            commit from a worktree is refused while the primary has
 #            uncommitted tracked changes (the write an agent left behind),
 #            naming the files; untracked files such as config.json are not that
 #            write.
@@ -23,14 +23,16 @@ use File::Temp qw(tempdir);
 # pre-commit hook stops it at the first commit: the primary is the place the dev
 # server runs, a linked worktree is the place to work. A warning would be easy to
 # ignore, so this is a refusal with the stash -> worktree -> pop recipe. It moves
-# no files itself; the deliberate single-agent escape is named.
+# no files itself; the deliberate lone-checkout escape is named. The guard does
+# not wait for a linked worktree to exist, so a fresh lone checkout is caught on
+# its first commit.
 
 my $root = "$FindBin::Bin/..";
 my $hook = "$root/.githooks/pre-commit";
 my $hook_text = read_file($hook);
 
 # --- the hook's shape --------------------------------------------------------
-like($hook_text, qr/JAWNOS_ALLOW_PRIMARY_COMMIT/, 'the hook names the single-agent escape');
+like($hook_text, qr/JAWNOS_ALLOW_PRIMARY_COMMIT/, 'the hook names the lone-checkout escape');
 like($hook_text, qr/git worktree list --porcelain/, 'it reads the worktree list');
 like($hook_text, qr/git stash push --include-untracked/, 'and prints the stash step');
 like($hook_text, qr/git worktree add \.worktrees\//, 'the worktree step');
@@ -49,6 +51,7 @@ is($? >> 8, 0, 'the hook parses under sh') or diag($syntax);
 my $doc = read_file("$root/docs/AGENTS-concurrency.md");
 like($doc, qr/git config core\.hooksPath \.githooks/, 'the doc says how to enable the hooks');
 like($doc, qr/refuses a commit in the primary/, 'and what the pre-commit hook refuses');
+like($doc, qr/even when no linked worktree exists/, 'the refusal does not need a linked worktree');
 like($doc, qr/JAWNOS_ALLOW_PRIMARY_COMMIT=1/, 'and names the override');
 like($doc, qr/uncommitted tracked changes/, 'the doc names the primary-write refusal too');
 like($doc, qr/JAWNOS_ALLOW_DIRTY_PRIMARY=1/, 'and its escape');
@@ -88,7 +91,11 @@ is($rc, 0, 'a throwaway repo starts') or diag($out);
 write_file("$repo/base.txt", "base\n");
 &git($repo, 'add', 'base.txt');
 ($rc, $out) = &git($repo, 'commit', '-m', 'base');
-is($rc, 0, 'a lone checkout may commit') or diag($out);
+isnt($rc, 0, 'a lone checkout is refused, not only a shared one');
+like($out, qr/commit refused: this is the primary checkout/, 'the lone refusal names the primary');
+like($out, qr/JAWNOS_ALLOW_PRIMARY_COMMIT=1/, 'and names the escape');
+($rc, $out) = &git_with_env($repo, 'JAWNOS_ALLOW_PRIMARY_COMMIT=1', 'commit', '-m', 'base');
+is($rc, 0, 'the named escape seeds the base commit') or diag($out);
 
 # A linked worktree makes this a shared checkout: the primary must not commit.
 ($rc, $out) = &git($repo, 'worktree', 'add', "$repo/wt", '-b', 'agent/test');
@@ -156,12 +163,16 @@ write_file("$repo/wt/wt.txt", "wt after clean\n");
 ($rc, $out) = &git("$repo/wt", 'commit', '-m', 'clean primary again');
 is($rc, 0, 'a clean primary lets the worktree commit again') or diag($out);
 
-# With the worktree gone, a lone checkout is the single-agent case again.
+# With the worktree gone, the guard still refuses: it no longer depends on a
+# linked worktree existing.
 ($rc, $out) = &git($repo, 'worktree', 'remove', '--force', "$repo/wt");
 is($rc, 0, 'the worktree is removed') or diag($out);
 write_file("$repo/lone.txt", "lone\n");
 &git($repo, 'add', 'lone.txt');
 ($rc, $out) = &git($repo, 'commit', '-m', 'lone');
-is($rc, 0, 'a lone checkout may commit again') or diag($out);
+isnt($rc, 0, 'a lone checkout is refused again');
+like($out, qr/JAWNOS_ALLOW_PRIMARY_COMMIT=1/, 'and names the escape');
+($rc, $out) = &git_with_env($repo, 'JAWNOS_ALLOW_PRIMARY_COMMIT=1', 'commit', '-m', 'lone');
+is($rc, 0, 'the escape commits in the lone checkout') or diag($out);
 
 done_testing();

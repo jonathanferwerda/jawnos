@@ -151,9 +151,9 @@ rebase immediately before running the gate:
   worktree's own copy can be behind. The gate refuses while the primary checkout has tracked changes,
   so keep that checkout clean.
 - Enable the shared hooks once per clone: `git config core.hooksPath .githooks`. The pre-commit
-  hook refuses a commit in the primary checkout while any worktree exists, and refuses a commit in a
-  worktree while the primary has uncommitted tracked changes — listing the files, so the write is
-  caught where it can still be moved instead of at somebody else's landing. Untracked files are not
-  that write. It moves no files by itself; the deliberate escapes are `JAWNOS_ALLOW_PRIMARY_COMMIT=1`
-  and `JAWNOS_ALLOW_DIRTY_PRIMARY=1`.
+  hook refuses a commit in the primary checkout — even when no linked worktree exists — and refuses
+  a commit in a worktree while the primary has uncommitted tracked changes — listing the files, so
+  the write is caught where it can still be moved instead of at somebody else's landing. Untracked
+  files are not that write. It moves no files by itself; the deliberate escapes are
+  `JAWNOS_ALLOW_PRIMARY_COMMIT=1` (a lone checkout, on purpose) and `JAWNOS_ALLOW_DIRTY_PRIMARY=1`.
 - `.worktrees/` is gitignored, so a worktree never shows in the primary checkout's `git status`.

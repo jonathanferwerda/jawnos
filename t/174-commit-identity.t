@@ -22,6 +22,10 @@ my $hook       = "$root/.githooks/pre-commit";
 my $house_name = 'Jonathan Ferwerda';
 my $house_mail = 'jonathan.ferwerda@outlook.com';
 
+# t/172 owns the primary-checkout refusal. These throwaway repos are lone
+# checkouts, so take its escape to reach the identity check that is under test.
+$ENV{'JAWNOS_ALLOW_PRIMARY_COMMIT'} = '1';
+
 # --- the hook's shape --------------------------------------------------------
 my $hook_text = read_file($hook);
 like($hook_text, qr/JAWNOS_ALLOW_FOREIGN_COMMIT/, 'the hook names the deliberate escape');
