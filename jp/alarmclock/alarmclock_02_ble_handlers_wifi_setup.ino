@@ -101,7 +101,14 @@ static void ble_loop() {
       ble_rx_frame += (char)b;
     }
   }
-  if (ble_up && ble_notify_enabled && !ble_state_requested && ble_connected_at && (millis() - ble_connected_at) > 3000) {
+  // A clockless board asks at once. The bridge connects on demand, writes and
+  // drops, so a link that lasts less than the old three-second settle never
+  // carried a state_request: the house kept the board's stale address and build,
+  // and the toggles reply that carries the clock never went out. A board that
+  // has a clock can still wait for the link to settle.
+  uint32_t state_settle = time_defined ? 3000 : 0;
+  if (ble_up && ble_notify_enabled && !ble_state_requested && ble_connected_at
+      && (millis() - ble_connected_at) > state_settle) {
     ble_state_requested = true;
     String chip = String(rp2040.getChipID());
     JSONVar req;

@@ -54,6 +54,13 @@ my ($toggle) = $g2 =~ /(else if \(type == "toggle"\) \{.*?\n  \})/s;
 ok($toggle, 'the toggle branch is still one block');
 like($toggle, qr/ble_learn_time\(msg\)/, 'so does a toggle push');
 
+# A link from the bridge is short-lived; a board with no clock must ask before it
+# is gone, or it never gets one and never corrects its stale address/build.
+like($g2, qr/uint32_t state_settle = time_defined \? 3000 : 0;/,
+	'a clockless board asks at once instead of waiting for the link to settle');
+like($g2, qr/\(millis\(\) - ble_connected_at\) > state_settle/,
+	'and the gate uses that delay');
+
 # --- every ingress point sanitises ---------------------------------------
 my $watch = $read->('perl/watch.pl');
 my ($switch) = $watch =~ /(get '\/watch\/switch' => sub\(\$c\) \{.*?\n\};)/s;
