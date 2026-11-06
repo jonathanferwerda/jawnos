@@ -5,6 +5,19 @@ this file, adds the release date and the version codes that are actually
 staged, and writes it back to the release. Keep the newest release at the top
 under a dated heading; older sections stay as history.
 
+## 2026-11-06 — a refused call holds a silent line, then ends
+
+- **A refused call is answered and held for four seconds before it is ended.**
+  The `reject` flow used to answer and hang up in the same breath, which some
+  carriers read as a call that never connected and sent the caller to
+  voicemail anyway. `JawnInCallService.refuseAtNetwork` now answers the call,
+  keeps it up for four seconds, and disconnects; the caller hears nothing in
+  that window because the phone's microphone is muted for the whole hold and
+  the call is never routed to the Bluetooth gateway. A different call answered
+  during the window cancels the pending disconnect, and the refused call is
+  still filed as ignored, never as answered. The `voicemail` flow and the
+  manual Decline button are unchanged.
+
 ## 2026-11-06 — the screening face names the caller, and the app installs again
 
 - **The screening face says who is calling.** The gateway's status now carries
