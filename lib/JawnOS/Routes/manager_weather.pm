@@ -13,6 +13,8 @@ sub routes {
 		[52015, 'get', '/manager/weather/automations', 'action_52015'],
 		[52016, 'post', '/manager/weather/automation', 'action_52016'],
 		[52017, 'post', '/manager/weather/observe', 'action_52017'],
+		[52018, 'post', '/manager/weather/location', 'action_52018'],
+		[52019, 'post', '/manager/weather/measure_rule', 'action_52019'],
 	);
 }
 

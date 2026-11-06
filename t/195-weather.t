@@ -1,4 +1,4 @@
-# tests-for: lib/JawnOS/Domain/Weather.pm lib/JawnOS/Domain/WeatherHistory.pm lib/JawnOS/Domain/WeatherAutomation.pm lib/JawnOS/Controller/manager_weather.pm lib/JawnOS/Routes/manager_weather.pm templates/apps/weather.html.ep templates/apps/weather/automations.html.ep public/js/manager/weather.js public/js/manager/weather_history.js public/js/manager/weather_automation.js
+# tests-for: lib/JawnOS/Domain/Weather.pm lib/JawnOS/Domain/WeatherHistory.pm lib/JawnOS/Domain/WeatherAutomation.pm lib/JawnOS/Controller/manager_weather.pm lib/JawnOS/Routes/manager_weather.pm lib/JawnOS/Manager/Core1_tables_hooks.pm templates/apps/weather.html.ep templates/apps/weather/automations.html.ep templates/apps/weather/map.html.ep public/js/manager/weather.js public/js/manager/weather_history.js public/js/manager/weather_automation.js public/js/manager/weather_map.js public/js/manager/mapengine/01_engine.js
 # covers:    The Weather app's pure parsers for Environment Canada and Open-Meteo,
 #            the country-to-provider choice, and the app's route/menu/help wiring.
 
@@ -261,6 +261,9 @@ my $help = read_file("$root/perl/help/topics_apps.pl");
 like($help, qr/\$topic\{'weather'\}\s*=\s*\{/, 'the help topic exists');
 like($help, qr/app\s*=>\s*'weather'/, 'the topic names the app');
 like($help, qr/automations\.html\.ep/, 'the help topic claims the Automations tab');
+like($help, qr/map\.html\.ep/, 'the help topic claims the location map');
+like($help, qr/Measurement automations/, 'the help topic explains measurement rules');
+like($help, qr/1 day \(hourly\)/, 'the help topic explains the hourly day');
 
 # --- weather automations -----------------------------------------------------
 my $source_am = {
@@ -348,7 +351,7 @@ is(scalar @{ subs::weather_automation_matches($rules, 'Partly Cloudy') }, 0, 'a 
 
 	my $first = subs::weather_observe_record({ current => { condition => 'Light Rain' } }, {});
 	is($first->{'ok'}, 1, 'a condition is recorded');
-	is($store{'measure'}{'value'}, 'Light Rain', 'the raw condition is handed to the measure writer');
+	is($store{'measure'}{'value'}, 'light_rain', 'the condition is handed to the measure writer in its stored key');
 	is($first->{'matched'}[0]{'app'}, 'raining', 'the matching rule is reported');
 
 	my $again = subs::weather_observe_record({ current => { condition => 'Light Rain' } }, {});
@@ -372,6 +375,204 @@ is(scalar @{ subs::weather_automation_matches($rules, 'Partly Cloudy') }, 0, 'a 
 	is(subs::weather_observe_tick()->{'ok'}, 1, 'the lock expires and the pass runs');
 }
 
+# --- the new helpers ---------------------------------------------------------
+my $stamp = subs::weather_stamp_text(1794000104000);
+like($stamp, qr{^\d{2}/\d{2}/\d{4} \d{1,2}:\d{2}:\d{2}(am|pm)$}, 'the picker stamp is MM/DD/YYYY h:mm:ssam/pm');
+is(subs::weather_stamp_text(undef), '', 'no stamp without a time');
+is(subs::weather_pressure_kpa(1012, 'hPa'), 101.2, 'hPa pressure reads as kPa');
+is(subs::weather_pressure_kpa(101.2, 'kPa'), 101.2, 'kPa pressure is left alone');
+
+my $measured = subs::weather_measure_values({ current => {
+	temperature => 5, condition => 'Light Rain', wind_gust => 25,
+	wind_direction => 'NNE', pressure => 1012, pressure_unit => 'hPa',
+} });
+is($measured->{'temperature'}, 5, 'the observer reads the temperature');
+is($measured->{'wind_gust'}, 25, 'the observer reads the gust');
+is($measured->{'wind_direction'}, 'nne', 'the observer reads the direction as the stored key');
+is($measured->{'pressure'}, 101.2, 'the observer reads pressure in kPa');
+is($measured->{'condition'}, 'light_rain', 'the observer reads the condition as the stored key');
+
+my $gust_rule = subs::weather_measure_rule_normalize({
+	uuid => 'gust-rule', name => 'Gusty north wind',
+	when => [
+		{ measure => 'wind_gust', op => '>=', value => 20 },
+		{ measure => 'wind_direction', op => 'from', value => 'N' },
+	],
+	action => 'start', app => 'gusty',
+});
+is(scalar @{ $gust_rule->{'when'} }, 2, 'a measurement rule keeps both conditions');
+is($gust_rule->{'when'}[1]{'value'}, 'n', 'a direction is stored as the compass key');
+is($gust_rule->{'for_ms'}, 0, 'no duration means immediately');
+
+my $long_rule = subs::weather_measure_rule_normalize({
+	uuid => 'long-rule',
+	when => [{ measure => 'pressure', op => '<', value => 101.2 }],
+	for_ms => 6 * 3600000, action => 'run', command => 'echo hi',
+});
+is($long_rule->{'for_ms'}, 6 * 3600000, 'a six-hour rule keeps its window');
+is($long_rule->{'action'}, 'run', 'a rule can run a command');
+ok(!subs::weather_measure_rule_normalize({ when => [{ measure => 'pressure', op => '<', value => 101 }], action => 'run' }), 'a run rule needs a command');
+ok(!subs::weather_measure_rule_normalize({ when => [], action => 'start', app => 'x' }), 'a rule needs at least one condition');
+ok(!subs::weather_measure_rule_normalize({ when => [{ measure => 'nonsense', op => '>', value => 1 }], action => 'start', app => 'x' }), 'an unknown measure is refused');
+
+is(subs::weather_rule_condition_match({ measure => 'wind_gust', op => '>', value => 20 }, { wind_gust => 25 }), 1, 'a gust above the threshold matches');
+is(subs::weather_rule_condition_match({ measure => 'wind_gust', op => '>', value => 20 }, { wind_gust => 15 }), 0, 'a gust below it does not');
+is(subs::weather_rule_condition_match({ measure => 'wind_direction', op => 'from', value => 'n' }, { wind_direction => 'nne' }), 1, 'a north sector includes NNE');
+is(subs::weather_rule_condition_match({ measure => 'wind_direction', op => 'from', value => 'n' }, { wind_direction => 's' }), 0, 'a north sector excludes south');
+is(subs::weather_rule_condition_match({ measure => 'condition', op => 'contains', value => 'rain' }, { condition => 'light_rain' }), 1, 'a condition word matches its stored key');
+
+{
+	my $now = 1794010000000;
+	my $pressure = { measure => 'pressure', op => '<', value => 101.2 };
+	my $held = [
+		{ ts => $now - 6 * 3600000, values => { pressure => 100 } },
+		{ ts => $now - 3 * 3600000, values => { pressure => 101 } },
+		{ ts => $now, values => { pressure => 99 } },
+	];
+	is(subs::weather_rule_held($held, $pressure, 6 * 3600000, $now), 1, 'a rule holds when every reading covers the window');
+	$held->[1]{'values'}{'pressure'} = 102;
+	is(subs::weather_rule_held($held, $pressure, 6 * 3600000, $now), 0, 'one reading above the line breaks the hold');
+	my $short = [
+		{ ts => $now - 5 * 3600000, values => { pressure => 100 } },
+		{ ts => $now, values => { pressure => 100 } },
+	];
+	is(subs::weather_rule_held($short, $pressure, 6 * 3600000, $now), 0, 'a window with no reading at its start waits');
+}
+
+{
+	my $now = 1794010000000;
+	my $rows = [
+		{ timestamp => $now - 7200000, measures => Mojo::JSON::encode_json([
+			{ ts => '' . ($now - 7200000), wind_gust => '25', wind_direction => 'nne' },
+			{ ts => '' . ($now - 7200000), pressure => '100' },
+		]) },
+		{ timestamp => $now, measures => Mojo::JSON::encode_json([
+			{ ts => '' . $now, wind_gust => '10', wind_direction => 's' },
+		]) },
+	];
+	no warnings 'redefine';
+	local *subs::db_query = sub { return bless { rows => $rows }, 'FakeResult' };
+	my $series = subs::weather_observation_series('weather_station', $now - 86400000, $now);
+	is(scalar @{$series}, 2, 'the series merges the measures written at one timestamp');
+is($series->[0]{'values'}{'wind_gust'}, '25', 'the series keeps the gust');
+is($series->[0]{'values'}{'pressure'}, '100', 'the series keeps the pressure');
+}
+
+# --- a measurement rule acts on its edge -------------------------------------
+{
+	my %store;
+	my @appointments;
+	my @runs;
+	my $now = 1794010000000;
+	my $rules_json = Mojo::JSON::encode_json([{
+		uuid => 'g1', name => 'Gusty north wind',
+		when => [
+			{ measure => 'wind_gust', op => '>', value => 20 },
+			{ measure => 'wind_direction', op => 'from', value => 'n' },
+		],
+		for_ms => 0, action => 'start', app => 'gusty',
+	}]);
+	no warnings 'redefine';
+	local *subs::rightNow = sub { $now };
+	local *subs::cache_get = sub {
+		my ($q) = @_;
+		return $store{ join('|', $q->{'app'}, $q->{'context'}, $q->{'subcontext'} // '') };
+	};
+	local *subs::cache_set = sub {
+		my ($q, $value) = @_;
+		$store{ join('|', $q->{'app'}, $q->{'context'}, $q->{'subcontext'} // '') } = $value;
+		return 1;
+	};
+	local *subs::setting_grabber = sub {
+		my ($q) = @_;
+		return $rules_json if $q->{'app'} eq 'weather_station' && $q->{'setting'} eq 'weather_rules';
+		return $store{ 'setting|' . $q->{'app'} . '|' . $q->{'setting'} };
+	};
+	local *subs::setting_setter = sub {
+		my ($q) = @_;
+		$store{ 'setting|' . $q->{'app'} . '|' . $q->{'setting'} } = $q->{'value'};
+		return 1;
+	};
+	local *Manager::appointment_writer = sub {
+		my ($c, $data) = @_;
+		push @appointments, $data;
+		return $data;
+	};
+	local *subs::run_command = sub {
+		my ($app, $command) = @_;
+		push @runs, $command;
+		return 1;
+	};
+	my $values = { wind_gust => 25, wind_direction => 'nne' };
+	my $fired = subs::weather_measure_rule_evaluate($values, [], 'appt-1', $now);
+	is(scalar @{$fired}, 1, 'a matching measurement rule fires');
+	is($fired->[0]{'action'}, 'start', 'and starts an app');
+	is($store{'setting|gusty|toggle'}, 'on', 'the target app is switched on');
+	my ($start) = grep { ($_->{'type'} // '') eq 'start' } @appointments;
+	ok($start, 'a start appointment is written');
+	is($start->{'app'}, 'gusty', 'for the target app');
+	is(scalar @{ subs::weather_measure_rule_evaluate($values, [], 'appt-1', $now) }, 0, 'a rule acts on its rising edge only');
+	my $fall = subs::weather_measure_rule_evaluate({ wind_gust => 10, wind_direction => 'nne' }, [], 'appt-1', $now);
+	is($fall->[0]{'action'}, 'stop', 'the falling edge stops the app');
+	is($store{'setting|gusty|toggle'}, 'off', 'and switches it off');
+
+	# the same engine can run a command instead
+	delete $store{'weather|rules|state'};
+	$rules_json = Mojo::JSON::encode_json([{
+		uuid => 'r1', name => 'Low pressure',
+		when => [{ measure => 'pressure', op => '<', value => 101.2 }],
+		for_ms => 0, action => 'run', command => 'echo hi',
+	}]);
+	my $run = subs::weather_measure_rule_evaluate({ pressure => 100 }, [], 'appt-1', $now);
+	is($run->[0]{'action'}, 'run', 'a run rule fires');
+	is_deeply(\@runs, ['echo hi'], 'the command is run once');
+	is(scalar @{ subs::weather_measure_rule_evaluate({ pressure => 100 }, [], 'appt-1', $now) }, 0, 'and not again while the condition holds');
+}
+
+# --- saved locations ---------------------------------------------------------
+{
+	my %store;
+	no warnings 'redefine';
+	local *subs::setting_grabber = sub {
+		my ($q) = @_;
+		return $store{ 'setting|' . $q->{'app'} . '|' . $q->{'setting'} };
+	};
+	local *subs::setting_setter = sub {
+		my ($q) = @_;
+		$store{ 'setting|' . $q->{'app'} . '|' . $q->{'setting'} } = $q->{'value'};
+		return 1;
+	};
+	local *subs::random_string_creator = sub { 'locuuid1234' };
+	my $saved = subs::weather_location_save('Cottage', 43.45, -80.49);
+	is($saved->{'uuid'}, 'locuuid1234', 'a saved location gets a uuid');
+	is(subs::weather_location_find('locuuid1234')->{'name'}, 'Cottage', 'and can be found by it');
+	my $renamed = subs::weather_location_save('The cottage', 43.45, -80.49);
+	is($renamed->{'uuid'}, 'locuuid1234', 'the same ground keeps its uuid');
+	is(scalar @{ $renamed->{'locations'} }, 1, 'and is not duplicated');
+	is($renamed->{'locations'}[0]{'name'}, 'The cottage', 'the new name wins');
+	my $blank = subs::weather_location_save('', 44.0, -80.0);
+	like($blank->{'locations'}[1]{'name'}, qr/^44\.0000, -80\.0000$/, 'a nameless point is named by its coordinate');
+	ok(!subs::weather_location_save('Nowhere', 200, 10), 'an impossible latitude is refused');
+}
+
+# --- the one-day history reads hourly ----------------------------------------
+{
+	my $now = 1794010000000;
+	my $rows = [
+		{ timestamp => $now - 7200000, measures => Mojo::JSON::encode_json([{ ts => '' . ($now - 7200000), temperature => '10' }]) },
+		{ timestamp => $now - 7200000, measures => Mojo::JSON::encode_json([{ ts => '' . ($now - 7200000), condition => 'light_rain' }]) },
+		{ timestamp => $now - 3600000, measures => Mojo::JSON::encode_json([{ ts => '' . ($now - 3600000), temperature => '14' }]) },
+	];
+	no warnings 'redefine';
+	local *subs::rightNow = sub { $now };
+	local *subs::db_query = sub { return bless { rows => $rows }, 'FakeResult' };
+	my $hours = subs::weather_history_hourly('weather', 24);
+	is(scalar @{$hours}, 2, 'the last day folds into one row per hour');
+	is($hours->[0]{'temperature'}, 10, 'the first hour averages its readings');
+	is($hours->[0]{'condition'}, 'Light rain', 'and keeps the condition its readings named');
+	is($hours->[1]{'temperature'}, 14, 'the next hour has its own temperature');
+}
+
 # --- the automation tab is wired into the app --------------------------------
 my $routes_auto = read_file("$root/lib/JawnOS/Routes/manager_weather.pm");
 like($routes_auto, qr{/manager/weather/automations\b}, 'the automation state route exists');
@@ -391,13 +592,48 @@ like($auto_partial, qr/id="weather_automation_list"/, 'the panel has a rule list
 like($auto_partial, qr/id="weather_automation_check"/, 'the panel can check now');
 my $core_auto = read_file("$root/lib/JawnOS/Manager/Core1_tables_hooks.pm");
 like($core_auto, qr{/js/manager/weather_automation\.js}, 'the lazy app loads the automation script');
-like($core_auto, qr{weather\s*=>\s*\[qw\(/js/manager/weather\.js /js/manager/weather_history\.js /js/manager/weather_automation\.js\)\]}, 'the automation script is in the Weather chunk');
+like($core_auto, qr{weather\s*=>\s*\[qw\(/js/manager/weather\.js /js/manager/weather_history\.js /js/manager/weather_automation\.js /js/manager/weather_map\.js\)\]}, 'the automation and map scripts are in the Weather chunk');
 my $loader_auto = read_file("$root/lib/JawnOS/Domain/Loader.pm");
 like($loader_auto, qr/JawnOS::Domain::WeatherAutomation' for qw\([^)]*weather_observe_record/, 'the domain loader maps the observer');
 my $president = read_file("$root/perl/President.pl");
 like($president, qr/weather_observe_tick/, 'the utility attaches the weather observer');
 my $defaults = read_file("$root/perl/gb/01_state_and_defaults.pl");
 like($defaults, qr/'weather_observe'\s*=>\s*\{/, 'the observer has a scheduled slot');
+
+# --- the location picker and the hourly history are wired --------------------
+like($routes_auto, qr{/manager/weather/location\b}, 'the saved-location route exists');
+like($routes_auto, qr{/manager/weather/measure_rule\b}, 'the measurement-rule route exists');
+like($controller_auto, qr/sub action_52018\b/, 'the saved-location action exists');
+like($controller_auto, qr/sub action_52019\b/, 'the measurement-rule action exists');
+like($controller_auto, qr/weather_location_save/, 'the page saves a location through the domain');
+like($page, qr/id="weather_location_add"/, 'the location dropdown has an Add button');
+like($page, qr/weather_stamp_text/, 'the dropdown uses the new date stamp');
+like($page, qr{apps/weather/map}, 'the page includes the map view');
+my $map_partial = read_file("$root/templates/apps/weather/map.html.ep");
+like($map_partial, qr/id="weather_map_canvas"/, 'the map view has a canvas');
+like($map_partial, qr/id="weather_map_save" disabled/, 'Save waits for a position');
+like($map_partial, qr/id="weather_map_cancel"/, 'the map can be cancelled');
+my $map_js = read_file("$root/public/js/manager/weather_map.js");
+like($map_js, qr{/manager/travel/continent}, 'the picker uses the Travel map data');
+like($map_js, qr{/manager/weather/location}, 'the picker saves the location');
+like($map_js, qr/weatherPickerFlag/, 'the picker draws a flag');
+my $engine_js = read_file("$root/public/js/manager/mapengine/01_engine.js");
+like($engine_js, qr/project:\s*function/, 'the map engine can project the flag position');
+like($core_auto, qr{/js/manager/weather_map\.js}, 'the lazy app loads the map script');
+
+my $history_partial = read_file("$root/templates/apps/weather/history.html.ep");
+like($history_partial, qr/<option value="1"/, 'the history range has a one-day option');
+my $history_js = read_file("$root/public/js/manager/weather_history.js");
+like($history_js, qr/weatherHistoryHourChart/, 'the history draws an hourly chart');
+like($history_js, qr/weatherHistoryHourTable/, 'the history lists hourly readings');
+like($loader_auto, qr/weather_history_hourly/, 'the domain loader maps the hourly reader');
+like($loader_auto, qr/weather_location_save/, 'the domain loader maps the location writer');
+like($loader_auto, qr/weather_measure_rule_save/, 'the domain loader maps the measurement rule writer');
+
+like($auto_partial, qr/id="weather_measure_list"/, 'the Automations tab lists measurement rules');
+like($auto_partial, qr/id="weather_measure_form"/, 'the Automations tab has a measurement form');
+like($auto_partial, qr/id="weather_measure_condition_add"/, 'a rule can hold more than one condition');
+like($auto_partial, qr/id="weather_measure_command"/, 'a rule can run a command');
 
 # --- the tab's own style is inside a <style> tag -----------------------------
 my $weather_style = read_file("$root/templates/apps/weather/style.html.ep");

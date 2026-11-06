@@ -1,23 +1,32 @@
 <%
 	my $dev = $devices || [];
+	my $locs = $locations || [];
 	my $default = $default_device || 'me';
-	my $me_seen = ($me_fix && $me_fix->{'seen'}) ? &subs::formatted_time($me_fix->{'seen'}) : '';
+	my $me_seen = ($me_fix && $me_fix->{'seen'}) ? &subs::weather_stamp_text($me_fix->{'seen'}) : '';
 %>
 <%= include 'apps/weather/style' %>
 <div id="weather">
 	<div id="weather_toolbar">
 		<label for="weather_device"><%= &subs::ui('Location') %></label>
 		<select id="weather_device">
-			<option value="me" <% if ($default eq 'me') { %>selected<% } %>>
+			<option value="me" data-lat="<%= $me_fix ? $me_fix->{'lat'} : '' %>" data-lon="<%= $me_fix ? $me_fix->{'lon'} : '' %>" <% if ($default eq 'me') { %>selected<% } %>>
 				<%= &subs::ui('This device') %><% if (length $me_seen) { %> — <%= $me_seen %><% } %>
 			</option>
 			<% foreach my $d ( @{$dev} ) { %>
-				<% my $seen = $d->{'seen'} ? &subs::formatted_time($d->{'seen'}) : ''; %>
-				<option value="<%= $d->{'signatorial'} %>" <% if ($default eq $d->{'signatorial'}) { %>selected<% } %>>
+				<% my $seen = $d->{'seen'} ? &subs::weather_stamp_text($d->{'seen'}) : ''; %>
+				<option value="<%= $d->{'signatorial'} %>" data-lat="<%= $d->{'lat'} %>" data-lon="<%= $d->{'lon'} %>" <% if ($default eq $d->{'signatorial'}) { %>selected<% } %>>
 					<%= $d->{'label'} %><% if (length $seen) { %> — <%= $seen %><% } %>
 				</option>
 			<% } %>
+			<% if (@{$locs}) { %>
+				<optgroup label="<%= &subs::ui('Saved locations') %>" data-weather-locations="1">
+					<% foreach my $loc ( @{$locs} ) { %>
+						<option value="loc:<%= $loc->{'uuid'} %>" data-lat="<%= $loc->{'lat'} %>" data-lon="<%= $loc->{'lon'} %>"><%= $loc->{'name'} %></option>
+					<% } %>
+				</optgroup>
+			<% } %>
 		</select>
+		<button type="button" id="weather_location_add"><%= &subs::ui('Add') %></button>
 		<button type="button" id="weather_refresh"><%= &subs::ui('Refresh') %></button>
 		<button type="button" id="weather_browser"><%= &subs::ui('Use browser location') %></button>
 		<span id="weather_status"></span>
@@ -38,4 +47,5 @@
 	<%= include 'apps/weather/history' %>
 	<%= include 'apps/weather/accuracy' %>
 	<%= include 'apps/weather/automations' %>
+	<%= include 'apps/weather/map' %>
 </div>

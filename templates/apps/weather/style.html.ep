@@ -160,4 +160,20 @@
 .wind[app="weather"] .weather_automation_rule .weather_automation_text { flex: 1 1 220px; min-width: 0; }
 .wind[app="weather"] .weather_automation_rule .weather_automation_actions { display: flex; gap: 4px; }
 .wind[app="weather"] #weather_automation_form { border: 1px dashed var(--line); border-radius: 9px; padding: 8px; }
+.wind[app="weather"] #weather.weather_choosing > :not(#weather_map_view) { display: none; }
+.wind[app="weather"] #weather_map_view { display: none; flex-direction: column; gap: 8px; flex: 1 1 auto; min-height: 0; }
+.wind[app="weather"] #weather_map_view.open { display: flex; }
+.wind[app="weather"] #weather_map_canvas {
+	width: 100%;
+	flex: 1 1 auto;
+	min-height: 320px;
+	border: 1px solid var(--line);
+	border-radius: 10px;
+}
+.wind[app="weather"] #weather_map_name { flex: 1 1 180px; min-width: 120px; }
+.wind[app="weather"] #weather_map_save[disabled] { opacity: .45; }
+.wind[app="weather"] #weather_measure_section { display: flex; flex-direction: column; gap: 9px; border-top: 1px solid var(--line); padding-top: 9px; }
+.wind[app="weather"] #weather_measure_form { border: 1px dashed var(--line); border-radius: 9px; padding: 8px; display: flex; flex-direction: column; gap: 7px; }
+.wind[app="weather"] .weather_measure_condition { display: flex; flex-wrap: wrap; gap: 5px; align-items: center; }
+.wind[app="weather"] .weather_measure_condition select, .wind[app="weather"] .weather_measure_condition input { max-width: 170px; }
 </style>

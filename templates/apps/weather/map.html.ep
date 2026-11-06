@@ -1,0 +1,11 @@
+<div id="weather_map_view">
+	<div id="weather_map_header" class="weather_controls">
+		<label for="weather_map_name"><%= &subs::ui('Name') %></label>
+		<input id="weather_map_name" placeholder="<%= &subs::ui('Location name') %>" autocomplete="off">
+		<button type="button" id="weather_map_save" disabled><%= &subs::ui('Save') %></button>
+		<button type="button" id="weather_map_cancel"><%= &subs::ui('Cancel') %></button>
+		<span id="weather_map_status" class="weather_muted"></span>
+	</div>
+	<canvas id="weather_map_canvas"></canvas>
+	<div class="weather_muted"><%= &subs::ui('Tap the map to place the flag; tap again to move it. Save adds it to the location list.') %></div>
+</div>

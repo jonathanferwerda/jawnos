@@ -4,6 +4,7 @@
 		<select id="weather_history_source"></select>
 		<label for="weather_history_range"><%= &subs::ui('Range') %></label>
 		<select id="weather_history_range">
+			<option value="1"><%= &subs::ui('1 day (hourly)') %></option>
 			<option value="7"><%= &subs::ui('7 days') %></option>
 			<option value="30" selected><%= &subs::ui('30 days') %></option>
 			<option value="90"><%= &subs::ui('90 days') %></option>

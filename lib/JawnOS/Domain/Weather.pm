@@ -77,6 +77,26 @@ sub weather_distance_km($lat1, $lon1, $lat2, $lon2) {
 	return $r * 2 * atan2(sqrt($a), sqrt(1 - $a));
 }
 
+# A rule states pressure in kPa (the unit Environment Canada sends); the US and
+# Open-Meteo send hPa. Keep one unit so a rule reads the same under every
+# provider.
+sub weather_pressure_kpa($value, $unit) {
+	my $n = &weather_number($value);
+	return undef unless defined $n;
+	my $u = lc($unit // '');
+	return $n / 10 if $u =~ /^(?:hpa|mb|mbar)$/;
+	return $n / 1000 if $u =~ /^pa$/;
+	return $n;
+}
+
+# The picker's stamp: 11/06/2026 3:01:44pm. The house reads Eastern; the box and
+# the database stay UTC, and this formats in the server's local time like the
+# rest of the panel.
+sub weather_stamp_text($ms) {
+	return '' unless defined $ms && "$ms" =~ /^\d+$/;
+	return localtime(int($ms / 1000))->strftime('%m/%d/%Y %-I:%M:%S%P');
+}
+
 # ---- dates and daily merging ------------------------------------------------
 # The providers do not all carry a date on a forecast period: EC names the
 # period (Today, Tonight, Tomorrow, Saturday night) and NWS names the day. The

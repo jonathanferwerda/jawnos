@@ -76,6 +76,7 @@ function weatherAutomationRender(data, message) {
 		$seen.append($('<option>').val(weatherAutomationKey(text)).text(text));
 	}
 	$w.find('#weather_automation_status').text(message || (rules.length + ' ' + jawnosT('automations')));
+	weatherMeasurementRender(data);
 }
 
 function weatherAutomationError(message) {
@@ -202,6 +203,16 @@ function weatherAutomationCheck() {
 			} else {
 				message = text ? (text + ' — ' + jawnosT('no rule matched.')) : jawnosT('Checked.');
 			}
+			var fired = response.rules || [];
+			if (fired.length) {
+				var done = [];
+				for (var k = 0; k < fired.length; k++) {
+					var f = fired[k] || {};
+					var verb = f.action === 'run' ? jawnosT('ran') : (f.action === 'stop' ? jawnosT('stopped') : jawnosT('started'));
+					done.push(verb + ' ' + (f.name || weatherAutomationWords(f.app || '')));
+				}
+				message = (text ? (text + ' — ') : '') + done.join(', ');
+			}
 			weatherAutomationLoad(message);
 		},
 		error: function() { weatherAutomationError(jawnosT('The weather could not be checked.')); },
@@ -219,4 +230,272 @@ function weatherAutomationWords(text) {
 
 function weatherAutomationKey(text) {
 	return String(text || '').toLowerCase().replace(/\s+/g, '_');
+}
+
+// ---- measurement rules ------------------------------------------------------
+var weatherMeasurementData = null;
+
+$(document).on('click', '#weather_measure_add', function() { weatherMeasureFormOpen(); });
+$(document).on('click', '#weather_measure_condition_add', function() { weatherMeasureConditionAdd(null); });
+$(document).on('click', '#weather_measure_save', function() { weatherMeasureSave(); });
+$(document).on('click', '#weather_measure_cancel', function() { weatherMeasureFormClose(); });
+$(document).on('change', '#weather_measure_action', function() { weatherMeasureActionFields(); });
+$(document).on('click', '.weather_measure_edit', function() { weatherMeasureEdit($(this).attr('data-uuid')); });
+$(document).on('click', '.weather_measure_remove', function() { weatherMeasureRemove($(this).attr('data-uuid')); });
+
+function weatherMeasurementRender(data) {
+	var $w = $('.wind[app="weather"]').last();
+	weatherMeasurementData = data;
+	var values = data.values || {};
+	var catalog = data.measures || [];
+	var parts = [];
+	for (var i = 0; i < catalog.length && parts.length < 4; i++) {
+		var def = catalog[i] || {};
+		if (values[def.key] === undefined || values[def.key] === null) { continue; }
+		var value = values[def.key];
+		if (def.type === 'number') { value = weatherNum(value); }
+		else if (def.type === 'direction') { value = String(value).toUpperCase(); }
+		else { value = weatherAutomationWords(value); }
+		parts.push(jawnosT(def.label) + ' ' + value + (def.unit ? ' ' + def.unit : ''));
+	}
+	$w.find('#weather_now_values').text(parts.length ? (jawnosT('Now') + ': ' + parts.join(' · ')) : '');
+	var $list = $w.find('#weather_measure_list').empty();
+	var rules = data.measure_rules || [];
+	if (!rules.length) {
+		$list.html('<div class="weather_muted" style="padding:8px;">' + weatherEsc(jawnosT('No measurement rules yet.')) + '</div>');
+	}
+	else {
+		for (var j = 0; j < rules.length; j++) {
+			var rule = rules[j] || {};
+			var html = '<div class="weather_automation_rule">'
+				+ '<span class="weather_automation_text">' + weatherEsc(weatherMeasureSentence(rule)) + '</span>'
+				+ '<span class="weather_automation_actions">'
+				+ '<button type="button" class="weather_measure_edit" data-uuid="' + weatherEsc(rule.uuid || '') + '">' + jawnosT('Edit') + '</button>'
+				+ '<button type="button" class="weather_measure_remove" data-uuid="' + weatherEsc(rule.uuid || '') + '">' + jawnosT('Remove') + '</button>'
+				+ '</span></div>';
+			$list.append(html);
+		}
+	}
+	$w.find('#weather_measure_status').text(rules.length + ' ' + jawnosT('measurement rules'));
+}
+
+function weatherMeasureDef(key) {
+	var catalog = (weatherMeasurementData && weatherMeasurementData.measures) || [];
+	for (var i = 0; i < catalog.length; i++) {
+		if ((catalog[i].key || '') === key) { return catalog[i]; }
+	}
+	return null;
+}
+
+function weatherMeasureOpText(op) {
+	return ({ '>=': '≥', '<=': '≤', '==': '=', '!=': '≠' })[op] || op;
+}
+
+function weatherMeasureValueText(value, def) {
+	if (!def) { return String(value === undefined || value === null ? '' : value); }
+	if (def.type === 'direction') { return String(value || '').toUpperCase(); }
+	if (def.type === 'number') { return weatherNum(value) + (def.unit ? ' ' + def.unit : ''); }
+	return weatherAutomationWords(value);
+}
+
+function weatherMeasureDurationText(ms) {
+	if (!ms) { return ''; }
+	if (ms % 3600000 === 0) { return (ms / 3600000) + ' ' + jawnosT('hours'); }
+	return Math.round(ms / 60000) + ' ' + jawnosT('minutes');
+}
+
+function weatherMeasureSentence(rule) {
+	var when = rule.when || [];
+	var parts = [];
+	for (var i = 0; i < when.length; i++) {
+		var condition = when[i] || {};
+		var def = weatherMeasureDef(condition.measure);
+		var label = def ? jawnosT(def.label) : (condition.measure || '');
+		var op = condition.op === 'from' || condition.op === 'is' || condition.op === 'contains' ? jawnosT(condition.op) : weatherMeasureOpText(condition.op);
+		parts.push(label + ' ' + op + ' ' + weatherMeasureValueText(condition.value, def));
+	}
+	var sentence = jawnosT('When') + ' ' + parts.join(' ' + jawnosT('and') + ' ');
+	if (rule.for_ms) { sentence += ' ' + jawnosT('for') + ' ' + weatherMeasureDurationText(rule.for_ms); }
+	if (rule.action === 'run') {
+		sentence += ', ' + jawnosT('run') + ' ' + (rule.command || '');
+	}
+	else if (rule.action === 'stop') {
+		sentence += ', ' + jawnosT('stop') + ' ' + weatherAutomationWords(rule.app_label || rule.app || '');
+	}
+	else {
+		sentence += ', ' + jawnosT('start') + ' ' + weatherAutomationWords(rule.app_label || rule.app || '');
+	}
+	return (rule.name ? (rule.name + ': ') : '') + sentence + '.';
+}
+
+function weatherMeasureFormOpen(rule) {
+	var $w = $('.wind[app="weather"]').last();
+	$w.find('#weather_measure_uuid').val(rule ? (rule.uuid || '') : '');
+	$w.find('#weather_measure_name').val(rule ? (rule.name || '') : '');
+	var forMs = rule ? (rule.for_ms || 0) : 0;
+	if (forMs && forMs % 3600000 === 0) {
+		$w.find('#weather_measure_for').val(forMs / 3600000);
+		$w.find('#weather_measure_for_unit').val('3600000');
+	}
+	else if (forMs) {
+		$w.find('#weather_measure_for').val(Math.round(forMs / 60000));
+		$w.find('#weather_measure_for_unit').val('60000');
+	}
+	else {
+		$w.find('#weather_measure_for').val('0');
+		$w.find('#weather_measure_for_unit').val('3600000');
+	}
+	$w.find('#weather_measure_action').val(rule ? (rule.action || 'start') : 'start');
+	$w.find('#weather_measure_app').val(rule ? (rule.app || '') : '');
+	$w.find('#weather_measure_command').val(rule ? (rule.command || '') : '');
+	$w.find('#weather_measure_conditions').empty();
+	var conditions = rule && rule.when ? rule.when : [null];
+	for (var i = 0; i < conditions.length; i++) { weatherMeasureConditionAdd(conditions[i]); }
+	weatherMeasureActionFields();
+	$w.find('#weather_measure_form').show();
+	document.getElementById('weather_measure_form').scrollIntoView({ block: 'nearest' });
+}
+
+function weatherMeasureFormClose() {
+	var $w = $('.wind[app="weather"]').last();
+	$w.find('#weather_measure_form').hide();
+	$w.find('#weather_measure_conditions').empty();
+}
+
+function weatherMeasureEdit(uuid) {
+	var rules = (weatherMeasurementData && weatherMeasurementData.measure_rules) || [];
+	for (var i = 0; i < rules.length; i++) {
+		if ((rules[i].uuid || '') === uuid) { weatherMeasureFormOpen(rules[i]); return; }
+	}
+}
+
+function weatherMeasureConditionAdd(condition) {
+	var $w = $('.wind[app="weather"]').last();
+	var catalog = (weatherMeasurementData && weatherMeasurementData.measures) || [];
+	var $row = $('<div class="weather_measure_condition"></div>');
+	var $measure = $('<select class="weather_measure_measure"></select>');
+	for (var i = 0; i < catalog.length; i++) {
+		$measure.append($('<option>').val(catalog[i].key).text(jawnosT(catalog[i].label)));
+	}
+	var $op = $('<select class="weather_measure_op"></select>');
+	var $value = $('<input class="weather_measure_value" type="number" step="any">');
+	var $direction = $('<select class="weather_measure_direction" style="display:none;"></select>');
+	var $unit = $('<span class="weather_measure_unit weather_muted"></span>');
+	var $remove = $('<button type="button" class="weather_measure_condition_remove" title="' + weatherEsc(jawnosT('Remove')) + '">×</button>');
+	$row.append($measure).append($op).append($value).append($direction).append($unit).append($remove);
+	$w.find('#weather_measure_conditions').append($row);
+	if (condition && condition.measure) { $measure.val(condition.measure); }
+	weatherMeasureConditionSync($row, condition);
+	$measure.on('change', function() { weatherMeasureConditionSync($row, null); });
+	$remove.on('click', function() { $row.remove(); });
+}
+
+function weatherMeasureConditionSync($row, condition) {
+	var def = weatherMeasureDef($row.find('.weather_measure_measure').val());
+	var $op = $row.find('.weather_measure_op').empty();
+	var ops = def ? (def.ops || []) : [];
+	for (var i = 0; i < ops.length; i++) { $op.append($('<option>').val(ops[i]).text(weatherMeasureOpText(ops[i]))); }
+	var $value = $row.find('.weather_measure_value');
+	var $direction = $row.find('.weather_measure_direction');
+	$row.find('.weather_measure_unit').text(def && def.unit ? def.unit : '');
+	var type = def ? def.type : 'number';
+	if (type === 'direction') {
+		$value.hide();
+		$direction.show().empty();
+		var points = def.points || [];
+		for (var j = 0; j < points.length; j++) { $direction.append($('<option>').val(points[j]).text(points[j])); }
+		if (condition && condition.value) { $direction.val(String(condition.value).toUpperCase()); }
+	}
+	else {
+		$direction.hide();
+		$value.show().attr('type', type === 'number' ? 'number' : 'text');
+		if (type === 'number') { $value.attr('step', 'any'); } else { $value.removeAttr('step'); }
+		if (condition && condition.value !== undefined) { $value.val(condition.value); }
+	}
+	if (condition && condition.op) { $op.val(condition.op); }
+}
+
+function weatherMeasureActionFields() {
+	var $w = $('.wind[app="weather"]').last();
+	var run = ($w.find('#weather_measure_action').val() || 'start') === 'run';
+	$w.find('#weather_measure_command').toggle(run);
+	$w.find('#weather_measure_app').toggle(!run);
+}
+
+function weatherMeasureSave() {
+	var $w = $('.wind[app="weather"]').last();
+	var conditions = [];
+	$w.find('.weather_measure_condition').each(function() {
+		var key = $(this).find('.weather_measure_measure').val();
+		var op = $(this).find('.weather_measure_op').val();
+		var def = weatherMeasureDef(key);
+		var value;
+		if (def && def.type === 'direction') { value = $(this).find('.weather_measure_direction').val(); }
+		else { value = $.trim($(this).find('.weather_measure_value').val() || ''); }
+		if (!key || !op || value === undefined || value === '') { return; }
+		conditions.push({ measure: key, op: op, value: value });
+	});
+	if (!conditions.length) {
+		$w.find('#weather_measure_status').text(jawnosT('A measurement rule needs at least one complete condition.'));
+		return;
+	}
+	var forValue = parseFloat($w.find('#weather_measure_for').val());
+	var unit = parseInt($w.find('#weather_measure_for_unit').val(), 10) || 3600000;
+	var forMs = (isFinite(forValue) && forValue > 0) ? Math.round(forValue * unit) : 0;
+	var action = $w.find('#weather_measure_action').val() || 'start';
+	var app = $.trim($w.find('#weather_measure_app').val() || '');
+	var command = $.trim($w.find('#weather_measure_command').val() || '');
+	if (action === 'run' && !command) {
+		$w.find('#weather_measure_status').text(jawnosT('Type the command to run.'));
+		return;
+	}
+	if (action !== 'run' && !app) {
+		$w.find('#weather_measure_status').text(jawnosT('Type the app to start or stop.'));
+		return;
+	}
+	$w.find('#weather_measure_status').text(jawnosT('Saving…'));
+	$.ajax({
+		url: '/manager/weather/measure_rule',
+		type: 'POST',
+		data: {
+			uuid: $w.find('#weather_measure_uuid').val() || '',
+			name: $w.find('#weather_measure_name').val() || '',
+			when: JSON.stringify(conditions),
+			for_ms: forMs,
+			action: action,
+			app: app,
+			command: command,
+			timestamp: Date.now()
+		},
+		dataType: 'json',
+		success: function(response) {
+			if (!response || response.error) {
+				$w.find('#weather_measure_status').text((response && response.error) || jawnosT('The measurement rule was not saved.'));
+				return;
+			}
+			weatherMeasureFormClose();
+			weatherAutomationRender(response, jawnosT('Saved.'));
+		},
+		error: function() { $w.find('#weather_measure_status').text(jawnosT('The measurement rule was not saved.')); }
+	});
+}
+
+function weatherMeasureRemove(uuid) {
+	if (!uuid) { return; }
+	var $w = $('.wind[app="weather"]').last();
+	$w.find('#weather_measure_status').text(jawnosT('Removing…'));
+	$.ajax({
+		url: '/manager/weather/measure_rule',
+		type: 'POST',
+		data: { uuid: uuid, remove: 1, timestamp: Date.now() },
+		dataType: 'json',
+		success: function(response) {
+			if (!response || response.error) {
+				$w.find('#weather_measure_status').text((response && response.error) || jawnosT('The measurement rule was not removed.'));
+				return;
+			}
+			weatherAutomationRender(response, jawnosT('Removed.'));
+		},
+		error: function() { $w.find('#weather_measure_status').text(jawnosT('The measurement rule was not removed.')); }
+	});
 }

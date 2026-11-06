@@ -785,6 +785,13 @@ window.jawnosMap = (function () {
 			onMapContext: function (fn) { contextHandler = fn; },
 			onDraw: function (fn) { drawHooks.push(fn); },
 			onChange: function (fn) { changing.push(fn); },
+			// A page that paints its own furniture (a flag, a crosshair) needs the
+			// same projection the engine uses for its markers.
+			project: function (lat, lon) {
+				var dim = size();
+				var o = originFor(view, dim.w, dim.h);
+				return screenFor(lat, lon, o, view.z);
+			},
 			view: function () { return view; }
 		};
 		return api;

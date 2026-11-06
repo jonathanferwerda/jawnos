@@ -66,6 +66,29 @@ sub weather_history_sources {
 			to => &weather_day_key($counts->{'to_ts'}),
 		};
 	}
+	# The app's own station readings are the ground the person is on now, so they
+	# come first: a one-day hourly view and the accuracy comparison both want the
+	# nearest source, and the two old pages stay selectable below it.
+	my $station = eval {
+		&db_query(
+			"select count(*) as n, min(timestamp) as from_ts, max(timestamp) as to_ts "
+			. "from appointments where app = 'weather_station' and measures is not null"
+		)->hashes->[0];
+	} || {};
+	if (($station->{'n'} || 0) > 0) {
+		my $last = eval { &cache_get({ app => 'weather', context => 'observe', subcontext => 'last' }) } || {};
+		unshift @sources, {
+			app => 'weather_station',
+			label => 'Weather station',
+			city => ($last->{'place'} // ''),
+			region => '',
+			url => '',
+			id => '',
+			readings => $station->{'n'} || 0,
+			from => &weather_day_key($station->{'from_ts'}),
+			to => &weather_day_key($station->{'to_ts'}),
+		};
+	}
 	return \@sources;
 }
 
@@ -253,10 +276,67 @@ sub weather_history_build($opts) {
 		built_at => &rightNow(),
 		sources => \@sources,
 		days => \%by_source,
-		note => &subs::ui('History comes from the old weather appointments. Temperature and condition are observations; humidity is the forecast value that app logged, not an observation. High and low are the extremes of the readings the house kept, so they are sampled rather than a station daily extreme.'),
+		note => &subs::ui('History comes from the old weather appointments and the Weather station. Temperature and condition are observations; humidity is the forecast value the old app logged, not an observation. High and low are the extremes of the readings the house kept, so they are sampled rather than a station daily extreme.'),
 	};
-	eval { &cache_set({ app => 'weather', context => 'history', subcontext => 'v1', warranty => '-1d' }, $out) };
+	eval { &cache_set({ app => 'weather', context => 'history', subcontext => 'v2', warranty => '-1d' }, $out) };
 	return $out;
+}
+
+# A one-day read is hourly, not daily: the last 24 hours of one source's
+# temperature, averaged into the hour it was taken in. The old apps logged one
+# reading an hour (Cambridge every three), and the Weather station every half
+# hour, so the strip has more points on the source the house owns.
+sub weather_history_hourly($app, $hours) {
+	$hours ||= 24;
+	my $now = &rightNow();
+	my $from = $now - $hours * 3600000;
+	my $rows = eval {
+		&db_query(
+			'select timestamp, measures from appointments '
+			. 'where app = ? and measures is not null and cast(timestamp as integer) >= ? '
+			. 'order by cast(timestamp as integer) asc',
+			$app, $from
+		)->hashes;
+	} || [];
+	my %bucket;
+	foreach my $row (@{$rows}) {
+		my $base = $row->{'timestamp'};
+		my $list = eval { decode_json($row->{'measures'} // '[]') } || [];
+		next unless ref $list eq 'ARRAY';
+		foreach my $measure (@{$list}) {
+			next unless ref $measure eq 'HASH';
+			my $ts = $measure->{'ts'} || $base;
+			next unless defined $ts && "$ts" =~ /^\d+$/ && $ts >= $from;
+			my $hour = int($ts / 3600000) * 3600000;
+			$bucket{$hour}{'ts'} = $hour;
+			if (defined $measure->{'temperature'}) {
+				my $n = &weather_number($measure->{'temperature'});
+				push @{ $bucket{$hour}{'temps'} }, $n if defined $n;
+			}
+			if (defined $measure->{'condition'}) {
+				my $text = &weather_history_condition_text($measure->{'condition'});
+				$bucket{$hour}{'conditions'}{$text}++ if length $text;
+			}
+		}
+	}
+	my @out;
+	foreach my $hour (sort { $a <=> $b } keys %bucket) {
+		my $b = $bucket{$hour};
+		my @temps = @{ $b->{'temps'} || [] };
+		my $temperature;
+		if (@temps) {
+			my $sum = 0;
+			$sum += $_ for @temps;
+			$temperature = $sum / scalar @temps;
+		}
+		push @out, {
+			ts => $hour,
+			temperature => $temperature,
+			condition => &weather_history_top_text($b->{'conditions'} || {}),
+			readings => scalar @temps,
+		};
+	}
+	return \@out;
 }
 
 sub weather_history_pick_source($sources, $city, $region) {
@@ -278,7 +358,7 @@ sub weather_history_pick_source($sources, $city, $region) {
 
 sub weather_history_read($opts) {
 	$opts ||= {};
-	my $history = eval { &cache_get({ app => 'weather', context => 'history', subcontext => 'v1' }) };
+	my $history = eval { &cache_get({ app => 'weather', context => 'history', subcontext => 'v2' }) };
 	if (!$history || ref $history ne 'HASH' || !$history->{'built_at'}
 		|| $opts->{'force'} || $history->{'built_at'} < &rightNow() - 6 * 60 * 60 * 1000) {
 		$history = &weather_history_build($opts);
@@ -290,6 +370,7 @@ sub weather_history_read($opts) {
 		my $from = &weather_day_key(&rightNow() - $range * 86400000);
 		@days = grep { ($_->{'date'} // '') ge $from } @days;
 	}
+	my $hours = ($range eq '1') ? &weather_history_hourly($source, 24) : undef;
 	my ($source_meta) = grep { ($_->{'app'} || '') eq $source } @{ $history->{'sources'} || [] };
 	return {
 		built_at => $history->{'built_at'},
@@ -299,6 +380,7 @@ sub weather_history_read($opts) {
 		source_city => $source_meta ? ($source_meta->{'city'} || '') : '',
 		source_region => $source_meta ? ($source_meta->{'region'} || '') : '',
 		days => \@days,
+		(defined $hours ? (hours => $hours) : ()),
 		from => @days ? $days[0]->{'date'} : '',
 		to => @days ? $days[-1]->{'date'} : '',
 		note => $history->{'note'} || '',

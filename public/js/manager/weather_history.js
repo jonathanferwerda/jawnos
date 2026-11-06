@@ -47,12 +47,18 @@ function weatherHistoryRender(data) {
 	weatherHistoryData = data;
 	var days = data.days || [];
 	weatherHistorySourceOptions($w, '#weather_history_source', data.sources || [], data.source || '');
-	var status = days.length + ' ' + jawnosT('days');
+	var status = data.hours ? (data.hours.length + ' ' + jawnosT('hours')) : (days.length + ' ' + jawnosT('days'));
 	if (data.built_at) { status += ' · ' + jawnosT('Built') + ' ' + weatherTime(data.built_at); }
 	$w.find('#weather_history_status').text(status);
 	$w.find('#weather_history_note').text(data.note || '').removeClass('weather_warn');
-	weatherHistoryChart(days);
-	weatherHistoryTable(days);
+	if (data.hours) {
+		weatherHistoryHourChart(data.hours);
+		weatherHistoryHourTable(data.hours);
+	}
+	else {
+		weatherHistoryChart(days);
+		weatherHistoryTable(days);
+	}
 }
 
 function weatherHistorySourceOptions($w, selector, sources, selected) {
@@ -136,6 +142,72 @@ function weatherHistoryTable(days) {
 			+ '<td title="' + weatherEsc(detail) + '">' + weatherEsc(condition) + '</td>'
 			+ '<td>' + (d.humidity_forecast !== undefined && d.humidity_forecast !== null ? weatherNum(d.humidity_forecast) + '%' : '—') + '</td>'
 			+ '<td>' + (d.wind !== undefined && d.wind !== null ? weatherNum(d.wind) + ' km/h' : '—') + '</td>'
+			+ '</tr>';
+	}
+	html += '</tbody></table>';
+	$table.html(html);
+}
+
+function weatherHistoryHourChart(hours) {
+	var $w = $('.wind[app="weather"]').last();
+	var $chart = $w.find('#weather_history_chart');
+	if (!hours || hours.length < 2) {
+		$chart.html('<div class="weather_muted" style="padding:8px;">' + weatherEsc(jawnosT('No hourly readings in the last day.')) + '</div>');
+		return;
+	}
+	var values = [];
+	for (var i = 0; i < hours.length; i++) {
+		if (hours[i].temperature !== undefined && hours[i].temperature !== null) { values.push(Number(hours[i].temperature)); }
+	}
+	if (!values.length) {
+		$chart.html('<div class="weather_muted" style="padding:8px;">' + weatherEsc(jawnosT('No temperature readings in the last day.')) + '</div>');
+		return;
+	}
+	var min = Math.min.apply(null, values);
+	var max = Math.max.apply(null, values);
+	var pad = Math.max(1, (max - min) * 0.15);
+	min -= pad;
+	max += pad;
+	var W = 600, H = 170, L = 40, R = 10, T = 14, B = 24;
+	var plotW = W - L - R, plotH = H - T - B;
+	function x(i) { return L + (hours.length <= 1 ? plotW / 2 : plotW * i / (hours.length - 1)); }
+	function y(v) { return T + (max - v) / (max - min) * plotH; }
+	var points = [], dots = '';
+	for (var j = 0; j < hours.length; j++) {
+		var value = hours[j].temperature;
+		if (value === undefined || value === null) { continue; }
+		var sx = x(j), sy = y(Number(value));
+		points.push(sx + ',' + sy);
+		dots += '<circle cx="' + sx + '" cy="' + sy + '" r="2.5" fill="#4a90d9"/>';
+	}
+	var svg = '<svg viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="' + weatherEsc(jawnosT('Hourly temperature, last 24 hours')) + '">';
+	svg += '<line x1="' + L + '" y1="' + T + '" x2="' + L + '" y2="' + (T + plotH) + '" stroke="currentColor" opacity=".22"/>';
+	svg += '<line x1="' + L + '" y1="' + (T + plotH) + '" x2="' + (W - R) + '" y2="' + (T + plotH) + '" stroke="currentColor" opacity=".12"/>';
+	svg += '<text x="' + (L - 4) + '" y="' + (y(max) + 4) + '" text-anchor="end" font-size="10" fill="currentColor" opacity=".6">' + Math.round(max) + '°</text>';
+	svg += '<text x="' + (L - 4) + '" y="' + (y(min) + 4) + '" text-anchor="end" font-size="10" fill="currentColor" opacity=".6">' + Math.round(min) + '°</text>';
+	svg += '<polyline fill="none" stroke="#4a90d9" stroke-width="2" points="' + points.join(' ') + '"/>';
+	svg += dots;
+	svg += '<text x="' + L + '" y="' + (H - 5) + '" font-size="10" fill="currentColor" opacity=".6">' + weatherEsc(weatherTime(hours[0].ts)) + '</text>';
+	svg += '<text x="' + (W - R) + '" y="' + (H - 5) + '" text-anchor="end" font-size="10" fill="currentColor" opacity=".6">' + weatherEsc(weatherTime(hours[hours.length - 1].ts)) + '</text>';
+	svg += '<text x="' + L + '" y="9" font-size="10" fill="#4a90d9">' + jawnosT('Temperature') + '</text>';
+	svg += '</svg>';
+	$chart.html(svg);
+}
+
+function weatherHistoryHourTable(hours) {
+	var $w = $('.wind[app="weather"]').last();
+	var $table = $w.find('#weather_history_table');
+	if (!hours || !hours.length) {
+		$table.html('<div class="weather_muted" style="padding:8px;">' + weatherEsc(jawnosT('No hourly readings in the last day.')) + '</div>');
+		return;
+	}
+	var html = '<table><thead><tr><th>' + jawnosT('Time') + '</th><th>' + jawnosT('Temperature') + '</th><th>' + jawnosT('Condition') + '</th></tr></thead><tbody>';
+	for (var i = 0; i < hours.length; i++) {
+		var h = hours[i] || {};
+		html += '<tr>'
+			+ '<td>' + weatherEsc(weatherTime(h.ts)) + '</td>'
+			+ '<td>' + weatherTemp(h.temperature) + '</td>'
+			+ '<td>' + weatherEsc(h.condition || '') + '</td>'
 			+ '</tr>';
 	}
 	html += '</tbody></table>';

@@ -22,4 +22,49 @@
 		<input type="hidden" id="weather_automation_uuid" value="">
 	</div>
 	<div class="weather_muted"><%= &subs::ui('The house records the condition it sees here. A rule starts its app when the condition contains the word, and stops the app when the condition no longer does. The rain, snow, fog, sun and thunder rules from the old weather app are carried over.') %></div>
+	<div id="weather_measure_section">
+		<div class="weather_controls">
+			<b><%= &subs::ui('Measurement automations') %></b>
+			<button type="button" id="weather_measure_add"><%= &subs::ui('Add measurement rule') %></button>
+			<span id="weather_measure_status" class="weather_muted"></span>
+		</div>
+		<div id="weather_now_values" class="weather_muted"></div>
+		<div id="weather_measure_list"></div>
+		<div id="weather_measure_form" style="display:none;">
+			<div class="weather_controls">
+				<label for="weather_measure_name"><%= &subs::ui('Name') %></label>
+				<input id="weather_measure_name" placeholder="<%= &subs::ui('Gusty north wind') %>" autocomplete="off">
+			</div>
+			<div id="weather_measure_conditions"></div>
+			<div class="weather_controls">
+				<button type="button" id="weather_measure_condition_add"><%= &subs::ui('Add condition') %></button>
+				<span class="weather_muted"><%= &subs::ui('All conditions must be true.') %></span>
+			</div>
+			<div class="weather_controls">
+				<label for="weather_measure_for"><%= &subs::ui('For at least') %></label>
+				<input id="weather_measure_for" type="number" min="0" step="1" value="0">
+				<select id="weather_measure_for_unit">
+					<option value="60000"><%= &subs::ui('minutes') %></option>
+					<option value="3600000"><%= &subs::ui('hours') %></option>
+				</select>
+				<span class="weather_muted"><%= &subs::ui('0 means as soon as it happens. A duration starts counting from the first reading the house keeps.') %></span>
+			</div>
+			<div class="weather_controls">
+				<label for="weather_measure_action"><%= &subs::ui('Then') %></label>
+				<select id="weather_measure_action">
+					<option value="start"><%= &subs::ui('Start an app') %></option>
+					<option value="stop"><%= &subs::ui('Stop an app') %></option>
+					<option value="run"><%= &subs::ui('Run a command') %></option>
+				</select>
+				<input id="weather_measure_app" placeholder="<%= &subs::ui('app name') %>" autocomplete="off">
+				<input id="weather_measure_command" placeholder="<%= &subs::ui('command') %>" autocomplete="off" style="display:none;">
+			</div>
+			<div class="weather_controls">
+				<button type="button" id="weather_measure_save"><%= &subs::ui('Save') %></button>
+				<button type="button" id="weather_measure_cancel"><%= &subs::ui('Cancel') %></button>
+				<input type="hidden" id="weather_measure_uuid" value="">
+			</div>
+		</div>
+		<div class="weather_muted"><%= &subs::ui('A measurement rule reads the last observation. A rule with a duration waits until the house has kept enough readings to prove it, so a six-hour rule begins six hours after the first reading.') %></div>
+	</div>
 </div>

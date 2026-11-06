@@ -17,10 +17,12 @@ sub action_52010 {
 	my ($me_fix) = grep { ($_->{'signatorial'} || '') eq $me } @{$fixes};
 	my @others = grep { ($_->{'signatorial'} || '') ne $me } @{$fixes};
 	my $default = $me_fix ? 'me' : (@others ? $others[0]->{'signatorial'} : 'me');
+	my $locations = eval { &subs::weather_locations() } || [];
 	my $content = $c->render_to_string(
 		template => 'apps/weather',
 		me_fix => $me_fix,
 		devices => \@others,
+		locations => $locations,
 		default_device => $default,
 	);
 	my $contents = &window_maker({
@@ -47,6 +49,20 @@ sub action_52011 {
 		$use_lat = 0 + $lat;
 		$use_lon = 0 + $lon;
 		$label = $c->param('source') || &subs::ui('Browser location');
+		$seen_at = &subs::rightNow();
+	}
+	elsif ($device =~ /^loc:([A-Za-z0-9_-]+)$/) {
+		my $saved = eval { &subs::weather_location_find($1) };
+		unless ($saved) {
+			$c->render(json => {
+				error => &subs::ui('That saved location is gone.'),
+				devices => $fixes,
+			});
+			return;
+		}
+		$use_lat = $saved->{'lat'};
+		$use_lon = $saved->{'lon'};
+		$label = $saved->{'name'};
 		$seen_at = &subs::rightNow();
 	}
 	else {
@@ -160,6 +176,34 @@ sub action_52017 {
 	}
 	my $result = eval { &subs::weather_observe_now($opts) };
 	$c->render(json => $result || { error => &subs::ui('The weather could not be checked.') });
+}
+
+# POST /manager/weather/location
+sub action_52018 {
+	my $c = shift;
+	my $saved = eval {
+		&subs::weather_location_save($c->param('name'), $c->param('lat'), $c->param('lon'));
+	};
+	$c->render(json => $saved || { error => &subs::ui('The location was not saved.') });
+}
+
+# POST /manager/weather/measure_rule
+sub action_52019 {
+	my $c = shift;
+	my $conditions = eval { decode_json($c->param('when') // '[]') } || [];
+	my $result = eval {
+		&subs::weather_measure_rule_save({
+			uuid => $c->param('uuid') || '',
+			name => $c->param('name') || '',
+			when => $conditions,
+			for_ms => $c->param('for_ms') || 0,
+			action => $c->param('action') || 'start',
+			app => $c->param('app') || '',
+			command => $c->param('command') || '',
+			remove => ($c->param('remove') ? 1 : 0),
+		});
+	};
+	$c->render(json => $result || { error => &subs::ui('The measurement rule was not saved.') });
 }
 
 
