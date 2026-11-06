@@ -61,7 +61,8 @@ sub music_video_source_uri($rm) {
 	}
 	return unless $host;
 	my $port = $rm->{'ws_port'} || $music_config->{'ws_port'} || '';
-	return 'wss://' . $host . ($port ? ':' . $port : '') . '/manager/music/video';
+	my $uri = 'wss://' . $host . ($port ? ':' . $port : '') . '/manager/music/video';
+	return &subs::peer_secure_url($rm, $uri);
 }
 
 sub music_video_source_retry($st, $key) {
@@ -85,9 +86,10 @@ sub music_video_source_client_open($c, $st, $key) {
 		return;
 	}
 	return if (($rm->{'device'} || '') eq 'server');
-	my $url = &music_video_source_uri($rm);
+	my ($url, $source_verified) = &music_video_source_uri($rm);
 	return unless $url;
-	my $ua = Mojo::UserAgent->new()->insecure(1)->connect_timeout(5)->request_timeout(0)->inactivity_timeout(0);
+	my $ua = Mojo::UserAgent->new()->connect_timeout(5)->request_timeout(0)->inactivity_timeout(0);
+	if ($source_verified) { &subs::peer_tls_verify($ua) } else { $ua->insecure(1) }
 	$ua->on(start => sub { my ($ua, $tx) = @_; &subs::peer_sign_request($tx->req); });
 	my $cl = { key => $key, rm => $rm, ua => $ua, up => 0, ready => 0 };
 	$st->{'clients'}->{$key} = $cl;

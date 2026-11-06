@@ -276,7 +276,10 @@ sub music_source_uri($rm) {
 	}
 	return unless $host;
 	my $port = $rm->{'ws_port'} || $music_config->{'ws_port'} || '';
-	return 'wss://' . $host . ($port ? ':' . $port : '') . '/manager/music/stream';
+	my $uri = 'wss://' . $host . ($port ? ':' . $port : '') . '/manager/music/stream';
+	# The peer listener carries the house-CA leaf; a peer that has not been
+	# issued one answers on its main wss port and keeps the signed rail.
+	return &subs::peer_secure_url($rm, $uri);
 }
 
 sub music_source_client_close($st, $key) {
@@ -311,13 +314,14 @@ sub music_source_client_open($c, $st, $key, $channel) {
 		$c->tx->send({text => encode_json({ type => 'error', key => $key, error => 'no audio' })});
 		return;
 	}
-	my $url = &music_source_uri($rm);
+	my ($url, $source_verified) = &music_source_uri($rm);
 	unless ($url) {
 		&music_sync_log('link', $key, { type => 'link', state => 'unreachable', error => 'no address' });
 		$c->tx->send({text => encode_json({ type => 'error', key => $key, error => 'no address' })});
 		return;
 	}
-	my $ua = Mojo::UserAgent->new()->insecure(1)->connect_timeout(5)->request_timeout(0)->inactivity_timeout(0);
+	my $ua = Mojo::UserAgent->new()->connect_timeout(5)->request_timeout(0)->inactivity_timeout(0);
+	if ($source_verified) { &subs::peer_tls_verify($ua) } else { $ua->insecure(1) }
 	# every request on the peer rail names this machine and carries a signature
 	$ua->on(start => sub { my ($ua, $tx) = @_; &subs::peer_sign_request($tx->req); });
 	my $cl = { key => $key, rm => $rm, ua => $ua, up => 0, rtt => 0, channel => $channel };

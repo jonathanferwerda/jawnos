@@ -152,6 +152,8 @@ sub peer_useragent {
 	# while looking perfectly reachable in a browser.
 	$rm->{'manager'} = &peer_live_manager($rm);
 	$rm = &subs::remote_machine_tunnel_processor($rm);
+	my ($secure_manager, $peer_verified) = &subs::peer_secure_url($rm, $rm->{'manager'});
+	$rm->{'manager'} = $secure_manager if $peer_verified;
 	my $jar = eval { decode_json $rm->{'cookie'} };
 	return (undef, $rm) unless $jar && ref $jar eq 'ARRAY';
 	require Mojo::Cookie::Response;
@@ -166,7 +168,7 @@ sub peer_useragent {
 			path   => $c->{'path'} || '/',
 		));
 	}
-	$ua->insecure(1);
+	if (!$peer_verified) { $ua->insecure(1) }
 	# ride the same signed rail every other peer call rides: once a key is
 	# pinned, an unsigned request is refused, and this UA serves the git bundle,
 	# the APK sync and the voice sync - all peer_verify routes. (Unsigned was

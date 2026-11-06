@@ -177,6 +177,15 @@ my $ws_port = $port + 1;
 my $dock_port = $config->{'port'};
 my $tty_port = $port + 3;
 my $alarm_port = $port + 5;
+# The peer listener carries the house-CA leaf (scripts/house_ca.pl). It is a
+# second listener, not a second certificate on the main one: a listener presents
+# one certificate, and the main port must keep the public wildcard for browsers.
+my $peer_port = $port + 4;
+$peer_port -= 8 if $peer_port > 65535;
+my $peer_certs = "";
+if (-e './server/peer-fullchain.pem' && -e './server/peer-privkey.pem') {
+	$peer_certs = "?cert=./server/peer-fullchain.pem&key=./server/peer-privkey.pem";
+}
 if ($config->{'environment'} eq 'development') {
 	$ws_port = $port;
 	$alarm_port = $port;
@@ -244,6 +253,7 @@ sub manager_starter() {
 	$ENV{PORT_BOARD} = $config->{'board_port'} || 3000;
 	$ENV{PORT_COMS} = $ws_tty_port;
 	$ENV{PORT_ARM} = $watch_port;
+	$ENV{PORT_PEER} = $peer_port if $peer_certs ne '';
 	$ENV{PORT_ENV} = $config->{'environment'};
 	$ENV{cookie_name} = 'president';
 
@@ -645,7 +655,8 @@ sub manager_starter() {
 		&subs::subprocessor(sub {
 		#  $SIG{'KILL'} = sub { threads->exit(); };
 			print "Starting Main Server on port " . $port . "\n";
-			$ENV{MOJO_LISTEN} = 'https://*:' . $port . $certs;
+			$ENV{MOJO_LISTEN} = join ',', ('https://*:' . $port . $certs),
+				($peer_certs ne '' ? ('https://*:' . $peer_port . $peer_certs) : ());
 			$ENV{PURPOSE} = 'main';
 			my $morbo = Mojo::Server::Morbo->new;
 			$morbo = $morbo->daemon(Mojo::Server::Daemon->new);
@@ -678,9 +689,13 @@ sub manager_starter() {
 		&subs::subprocessor(sub {
 		#  $SIG{'KILL'} = sub { threads->exit(); };
 			print "Starting Pro WS Server on port " . $ws_port . "\n";
-			$ENV{MOJO_LISTEN} = 'https://*:' . $ws_port . $certs;
-			$ENV{PURPOSE} = 'websocket';
 			my @ws_listeners = ( 'https://*:' . $ws_port . $certs, 'http://127.0.0.1:' . $ws_plain_port );
+			# The peer listener lives on the socket server in production: it is
+			# the worker that already holds long-lived connections, and the same
+			# app answers the peer routes there.
+			push @ws_listeners, 'https://*:' . $peer_port . $peer_certs if $peer_certs ne '';
+			$ENV{MOJO_LISTEN} = join ',', @ws_listeners;
+			$ENV{PURPOSE} = 'websocket';
 			my $prefork = &prefork_tune(Mojo::Server::Prefork->new(listen => \@ws_listeners), keep_alive => 1);
 			$prefork->heartbeat_timeout(200);
 			$prefork->load_app('./perl/Manager.pl');

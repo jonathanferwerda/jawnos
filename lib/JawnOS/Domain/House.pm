@@ -737,6 +737,8 @@ sub peer_presence_probe {
 		$port = $rm->{'port'} if (!defined $port || $port !~ /^[0-9]+$/);
 		$port ||= 45545;
 		my $base = &peer_manager_url($rm, $host, $port);
+		my ($secure_base, $verified) = &subs::peer_secure_url($rm, $base);
+		$base = $secure_base if $verified;
 		my $url = $base . '/?signatorial=' . url_escape $rs;
 		my $body = '';
 		if (ref $fetch eq 'CODE') {
@@ -745,7 +747,7 @@ sub peer_presence_probe {
 		else {
 			my $ua = Mojo::UserAgent->new;
 			$ua = $ua->max_response_size(0);
-			$ua->insecure(1);
+			if ($verified) { &subs::peer_tls_verify($ua) } else { $ua->insecure(1) }
 			$ua->connect_timeout($alive ? 5 : 3);
 			$ua->inactivity_timeout($alive ? 15 : 6);
 			$ua->request_timeout($alive ? 20 : 8);

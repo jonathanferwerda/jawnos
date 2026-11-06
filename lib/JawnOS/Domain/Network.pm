@@ -428,6 +428,8 @@ sub house_advertise_command {
 	# peer's remote_machines row instead of guessing from a hostname.
 	push @txt, 'signatorial=' . &subs::signatorial_designer();
 	push @txt, 'arm=' . $ENV{PORT_ARM} if $ENV{PORT_ARM};
+	# The listener with the house-CA leaf; a peer that wants verified TLS dials it.
+	push @txt, 'peer=' . $ENV{PORT_PEER} if $ENV{PORT_PEER};
 	push @txt, 'coms=' . $ENV{PORT_COMS} if $ENV{PORT_COMS};
 	push @txt, 'bestow=' . $ENV{PORT_BESTOW} if $ENV{PORT_BESTOW};
 	push @txt, 'dock=' . $ENV{PORT_DOCK} if $ENV{PORT_DOCK};

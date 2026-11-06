@@ -239,9 +239,11 @@ sub legacy_reseal_peer_one {
 	my $manager = $rm->{'manager'};
 	$manager = 'https://' . $rm->{'ip'} . ':' . ($rm->{'port'} || '45545') unless $manager;
 	return unless $manager;
+	my ($secure_manager, $verified) = &subs::peer_secure_url($rm, $manager);
+	$manager = $secure_manager if $verified;
 	my $ua = Mojo::UserAgent->new();
 	$ua->max_response_size(0);
-	$ua->insecure(1);
+	if ($verified) { &subs::peer_tls_verify($ua) } else { $ua->insecure(1) }
 	$ua->on(start => sub { my ($ua, $tx) = @_; &peer_sign_request($tx->req); });
 	my $url = $manager . '/manager/legacy_reseal?signatorial=' . &signatorial_designer();
 	my $res = eval { $ua->inactivity_timeout(15)->get($url)->result };

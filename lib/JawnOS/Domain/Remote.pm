@@ -240,6 +240,102 @@ sub peer_ticket_fetch {
 	return eval { $fresh->insecure(1)->inactivity_timeout(15)->get($url)->result };
 }
 
+# ---------------------------------------------------------------------------
+# The house CA and the peer listener
+# ---------------------------------------------------------------------------
+# The main listener keeps the public wildcard, because a browser or the app
+# reaches it by name and must not be asked to trust a private CA. Peers dial a
+# literal IP on purpose (a peer's name is only usable while the tailnet's DNS
+# answers), and no public wildcard covers an IP. President.pl therefore also
+# listens on main port + 4 with a leaf issued by scripts/house_ca.pl; every
+# enrolled machine trusts server/house-ca.pem.
+#
+# A machine with no CA file, or a peer with no leaf yet, keeps the old insecure
+# rail: the signed requests still authenticate the caller, and the probe below
+# is what stops a half-rolled-out fleet from breaking.
+
+sub peer_port_offset { return 4 }
+
+sub peer_port_for {
+	my ($rm) = @_;
+	my $port = ref $rm eq 'HASH' ? ($rm->{'port'} // '') : ($rm // '');
+	$port = 45545 unless defined $port && $port =~ /^\d+$/ && $port > 0;
+	my $peer = $port + &peer_port_offset();
+	$peer -= 2 * &peer_port_offset() if $peer > 65535;
+	return $peer;
+}
+
+sub peer_ca_file {
+	for my $candidate (
+		($ENV{'JAWNOS_ROOT'} ? $ENV{'JAWNOS_ROOT'} . '/server/house-ca.pem' : ()),
+		'server/house-ca.pem',
+		'./server/house-ca.pem',
+	) {
+		return $candidate if -s $candidate;
+	}
+	return '';
+}
+
+# Point a user agent at the house CA. Returns 1 when the CA is present, so the
+# caller must not also call insecure(1): that would switch verification back off.
+sub peer_tls_verify {
+	my ($ua, $opts) = @_;
+	return 0 unless $ua;
+	my $ca = ($opts && $opts->{'ca'}) || &peer_ca_file();
+	return 0 unless length $ca;
+	$ua->tls_options({ SSL_ca_file => $ca });
+	return 1;
+}
+
+my %peer_tls_probe;
+
+# The peer listener's port when the peer answers there and this machine holds
+# the CA; 0 otherwise. A short TCP probe, cached for five minutes per host, is
+# cheaper than a TLS failure on every clock hop, and it is what lets an enrolled
+# house talk to a peer that has not been issued a leaf yet.
+sub peer_tls_port {
+	my ($rm, $opts) = @_;
+	$opts ||= {};
+	return 0 unless length &peer_ca_file();
+	my $host = $opts->{'host'} // ($rm->{'ip'} // '');
+	return 0 unless defined $host && length $host;
+	my $port = &peer_port_for($rm);
+	my $key = $host . ':' . $port;
+	my $now = time;
+	if (my $cached = $peer_tls_probe{$key}) {
+		return $cached->[1] if $now - $cached->[0] < 300;
+	}
+	require IO::Socket::INET;
+	my $sock = IO::Socket::INET->new(
+		PeerAddr => $host, PeerPort => $port, Proto => 'tcp', Timeout => 1);
+	my $ok = $sock ? 1 : 0;
+	close $sock if $sock;
+	$peer_tls_probe{$key} = [ $now, $ok ? $port : 0 ];
+	return $ok ? $port : 0;
+}
+
+# Rewrite a peer url to the peer listener when that peer answers there and this
+# machine holds the CA. Returns ($url, $verified). A tunnel row is a loopback
+# route and is left exactly as it is.
+sub peer_secure_url {
+	my ($rm, $url) = @_;
+	return ($url, 0) unless ref $rm eq 'HASH' && defined $url && length $url;
+	return ($url, 0) if ($rm->{'tunnel'} || '') eq 'yes';
+	my ($scheme, $host);
+	if ($url =~ m{^(https?)://(\[[^\]]+\]|[^/:]+)}) { ($scheme, $host) = ($1, $2) }
+	elsif ($url =~ m{^(wss?)://(\[[^\]]+\]|[^/:]+)}) { ($scheme, $host) = ($1, $2) }
+	return ($url, 0) unless defined $host;
+	my $row_host = $rm->{'ip'} // '';
+	my $row_fqdn = $rm->{'fqdn'} // '';
+	return ($url, 0) unless $host eq $row_host || ($row_fqdn ne '' && $host eq $row_fqdn);
+	my $peer = &peer_tls_port($rm, { host => $host });
+	return ($url, 0) unless $peer;
+	my $base = ($scheme eq 'http' || $scheme eq 'https') ? 'https' : 'wss';
+	my $secure = $url;
+	$secure =~ s{^(?:https?|wss?)://(\[[^\]]+\]|[^/:]+)(?::\d+)?}{$base . '://' . $1 . ':' . $peer}e;
+	return ($secure, 1);
+}
+
 sub remote_useragent_maker($data) {
 	my $ip = $data->{'ip'};
 	my $signatorial = $data->{'signatorial'};
@@ -273,6 +369,15 @@ sub remote_useragent_maker($data) {
 		$manager = $live_manager;
 		$rm->{'manager'} = $manager;
 	}
+	# The peer listener (main port + 4) is where the house-CA leaf lives. Only
+	# switch to it when the peer answers there; the signed rail still carries
+	# the caller's proof either way.
+	my ($secure_manager, $manager_verified) = &subs::peer_secure_url($rm, $manager);
+	if ($manager_verified) {
+		$manager = $secure_manager;
+		$rm->{'manager'} = $manager;
+		&subs::peer_tls_verify($ua);
+	}
 	if ($rm->{'cookie'}) {
 		my $cookie_jar = decode_json $rm->{'cookie'};
 		# The cookie was stored with the address the peer was reached on (often a
@@ -292,7 +397,7 @@ sub remote_useragent_maker($data) {
 		}
 		$rm->{'ua'} = $ua;
 		$rm->{'ua'}->inactivity_timeout(3000);
-		$rm->{'ua'}->insecure(1);
+		$rm->{'ua'}->insecure(1) unless $manager_verified;
 		my $domain = $config->{'domain'} || $ip;
 		if ($auth_test eq 'yes' || $data->{'chip_chyea'}) {
 			my $url = $rm->{'manager'} . '/manager/remote_auth_test?signatorial=' . &subs::signatorial_designer() . '&auth_test=' . $auth_test;
@@ -317,7 +422,7 @@ sub remote_useragent_maker($data) {
 			# requests that need it.
 			my $long_timeout = $rm->{'ua'}->inactivity_timeout;
 			$rm->{'ua'}->inactivity_timeout(15);
-			my $res = eval { return $rm->{'ua'}->insecure(1)->get($url => {Accept => '*/*'} => 'Content!')->result };
+			my $res = eval { return $rm->{'ua'}->get($url => {Accept => '*/*'} => 'Content!')->result };
 			$rm->{'ua'}->inactivity_timeout($long_timeout);
 			if (eval { $res->is_success }) {
 				$rm->{'res'} = $res;
@@ -333,7 +438,7 @@ sub remote_useragent_maker($data) {
 		# the destination relay among them - treat the peer as unreachable and
 		# silently do the work here instead of there.
 		$rm->{'ua'} = $ua;
-		$rm->{'ua'}->insecure(1);
+		$rm->{'ua'}->insecure(1) unless $manager_verified;
 		$rm->{'ua'}->inactivity_timeout(60);
 	}
 	$rm->{'data'} = eval { return decode_json $rm->{'data'} };

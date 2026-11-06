@@ -96,9 +96,11 @@ sub remote_agent_for {
 	my $rm = &remote_machine_lister({ uuid => $remote_uuid, limit => 1 });
 	return { error => 'no machine is registered for ' . ($remote_uuid || '(nothing)') } unless (ref $rm && $rm->{'manager'});
 	$rm = &remote_machine_tunnel_processor($rm);
+	my ($secure_manager, $verified) = &subs::peer_secure_url($rm, $rm->{'manager'});
+	$rm->{'manager'} = $secure_manager if $verified;
 	my $ua = Mojo::UserAgent->new;
 	$ua->max_response_size(0);
-	$ua->insecure(1);
+	if ($verified) { &subs::peer_tls_verify($ua) } else { $ua->insecure(1) }
 	$ua->inactivity_timeout(3000);
 	# A machine-to-machine archive request proves itself with the same pinned
 	# peer signature the rest of the rail uses. The stored session cookie alone

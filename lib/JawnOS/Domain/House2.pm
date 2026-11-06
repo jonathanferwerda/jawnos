@@ -785,9 +785,11 @@ sub vault_pull_one {
 	my $manager = $rm->{'manager'};
 	$manager = 'https://' . $rm->{'ip'} . ':' . ($rm->{'port'} || '45545') unless $manager;
 	return unless $manager;
+	my ($secure_manager, $verified) = &subs::peer_secure_url($rm, $manager);
+	$manager = $secure_manager if $verified;
 	my $ua = Mojo::UserAgent->new();
 	$ua->max_response_size(0);
-	$ua->insecure(1);
+	if ($verified) { &subs::peer_tls_verify($ua) } else { $ua->insecure(1) }
 	# every request on the peer rail names this machine and carries a signature
 	$ua->on(start => sub { my ($ua, $tx) = @_; &peer_sign_request($tx->req); });
 	my $url = $manager . '/manager/vault_share?signatorial=' . &signatorial_designer() . '&seal=' . url_escape($seal);
