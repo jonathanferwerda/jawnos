@@ -247,6 +247,13 @@ sub appointment_writer($c,$app) {
 			}
 			&subs::db_update('appointments', { stop_timestamp => $app->{'timestamp'}, stop_seen => 'yes', duration => $app->{'duration'}, type => $app->{'type'}, server_time => &subs::rightNow() }, { uuid => $appt->{'uuid'}, app => $app->{'app'} });
 			$db_written = 1;
+			# The start armed a scheduled stop job on the boards for this
+			# session. An early stop - or a stop followed by a renewal that
+			# starts a new session - must cancel it, or the abandoned job turns
+			# the board off at a time the person no longer meant. The deleter
+			# matches a board's jobs by the session uuid. It runs before the
+			# record branches, which may `next`.
+			&embedded_app_deleter({ appt_uuid => $appt->{'uuid'} });
 			$appt_header = &subs::appt_header_printer({ app => $app->{'app'}, timestamp => $app->{'timestamp'} });
 			my $recording_type = &subs::setting_grabber({ app => $app->{'app'}, setting => 'record' }) || 'system';
 			if ($appt->{'type'} eq 'record') {
