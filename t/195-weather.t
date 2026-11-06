@@ -290,6 +290,8 @@ is($clean->{'app'}, 'raining', 'an app name is unformatted');
 is($clean->{'action'}, 'start', 'an empty action starts the app');
 ok(!subs::weather_automation_normalize({ match => 'rain', app => '' }), 'a rule without an app is refused');
 is(subs::weather_automation_normalize({ uuid => 'rule-words', match => 'light rain', app => 'raining' })->{'match'}, 'light_rain', 'a two-word match reads as the stored state');
+is(subs::weather_automation_normalize({ uuid => 'rule-place', match => 'rain', app => 'raining', location => 'loc:cottage' })->{'location'}, 'loc:cottage', 'a condition rule can name its place');
+is(subs::weather_automation_normalize({ uuid => 'rule-place', match => 'rain', app => 'raining', location => 'browser' })->{'location'}, '', 'a place that is not a device or a saved point is dropped');
 
 my $added = subs::weather_automation_apply($rules, { uuid => 'rule-thunder', match => 'thunder', app => 'thunderstorm', action => 'start' });
 is(scalar @{$added}, 4, 'a new rule is appended');
@@ -312,6 +314,17 @@ is(scalar @{ subs::weather_automation_matches($rules, 'Partly Cloudy') }, 0, 'a 
 	my @written;
 	no warnings 'redefine';
 	local *subs::rightNow = sub { $now };
+	local *subs::signatorial_designer = sub { 'sig-one' };
+	local *subs::db_query = sub {
+		my ($query, @bind) = @_;
+		if (($query // '') =~ /from continent/) {
+			return bless { rows => [ {
+				signatorial => 'sig-one', latitude => '43.45', longitude => '-80.49',
+				accuracy => '5', server_time => '' . $now,
+			} ] }, 'FakeResult';
+		}
+		return bless { rows => [] }, 'FakeResult';
+	};
 	local *subs::random_string_creator = sub { 'newrule' . scalar(@written) . 'xx' };
 	local *subs::cache_get = sub {
 		my ($q) = @_;
@@ -340,11 +353,18 @@ is(scalar @{ subs::weather_automation_matches($rules, 'Partly Cloudy') }, 0, 'a 
 		$store{'measure'} = $data;
 		return 'measure-uuid';
 	};
+	local $gb::known_appts = { raining => {}, snowing => {} };
 
 	my $state = subs::weather_automation_state();
 	is($state->{'app'}, 'weather_station', 'the rules live on the weather station app');
 	is(scalar @{$state->{'rules'}}, 3, 'the old rules are carried over');
+	is($state->{'rules'}[0]{'location_label'}, '', 'a rule with no place is not shown as anywhere in particular');
 	is($state->{'condition_text'}, 'Cloudy', 'the last condition is shown as words');
+	my ($raining_app) = grep { ($_->{'key'} || '') eq 'raining' } @{ $state->{'apps'} || [] };
+	ok($raining_app, 'the app field suggests the known apps');
+	is($raining_app->{'label'}, 'Raining', 'and shows a formatted name');
+	is($state->{'locations'}[0]{'key'}, '', 'the location picker starts with any location');
+	is($state->{'locations'}[1]{'label'}, 'This device', 'and offers this device');
 	ok($store{'setting|weather_station|app_measures'}, 'the station app gets the rules');
 	my $old = Mojo::JSON::decode_json($store{'setting|weather|app_measures'});
 	is(scalar @{$old->{'condition'}{'cm'}}, 0, 'the old London app no longer drives automations');
@@ -403,6 +423,12 @@ my $gust_rule = subs::weather_measure_rule_normalize({
 is(scalar @{ $gust_rule->{'when'} }, 2, 'a measurement rule keeps both conditions');
 is($gust_rule->{'when'}[1]{'value'}, 'n', 'a direction is stored as the compass key');
 is($gust_rule->{'for_ms'}, 0, 'no duration means immediately');
+is($gust_rule->{'location'}, '', 'a measurement rule with no place applies anywhere');
+is(subs::weather_measure_rule_normalize({
+	uuid => 'cabin-gust',
+	when => [{ measure => 'wind_gust', op => '>', value => 20 }],
+	action => 'start', app => 'gusty', location => 'loc:cabin',
+})->{'location'}, 'loc:cabin', 'a measurement rule can name its place');
 
 my $long_rule = subs::weather_measure_rule_normalize({
 	uuid => 'long-rule',
@@ -529,6 +555,129 @@ is($series->[0]{'values'}{'pressure'}, '100', 'the series keeps the pressure');
 	is(scalar @{ subs::weather_measure_rule_evaluate({ pressure => 100 }, [], 'appt-1', $now) }, 0, 'and not again while the condition holds');
 }
 
+# --- a rule names its own place ----------------------------------------------
+is(subs::weather_rule_location_normalize('dev:abc123'), 'dev:abc123', 'a device fix is a location');
+is(subs::weather_rule_location_normalize('loc:abc123'), 'loc:abc123', 'a saved place is a location');
+is(subs::weather_rule_location_normalize('browser'), '', 'a one-off browser reading is not a rule location');
+is(subs::weather_rule_location_normalize('nowhere'), '', 'a bare word is refused');
+is(subs::weather_rule_location_normalize(undef), '', 'no location is the old global rule');
+
+{
+	my $place_rules = [
+		{ uuid => 'r-cottage', match => 'rain', app => 'cottage_raining', action => 'start', location => 'loc:cottage' },
+		{ uuid => 'r-cabin', match => 'rain', app => 'cabin_raining', action => 'start', location => 'loc:cabin' },
+		{ uuid => 'r-global', match => 'rain', app => 'raining', action => 'start' },
+	];
+	my $at_cottage = subs::weather_automation_matches($place_rules, 'Light Rain', 'loc:cottage');
+	is(scalar @{$at_cottage}, 2, 'the cottage reading wakes its rule and the global one');
+	is_deeply([ sort map { $_->{'app'} } @{$at_cottage} ], [qw(cottage_raining raining)], 'and not the cabin rule');
+	my $at_cabin = subs::weather_automation_matches($place_rules, 'Light Rain', 'loc:cabin');
+	is(scalar @{$at_cabin}, 2, 'the cabin reading wakes its own rule');
+	is_deeply([ sort map { $_->{'app'} } @{$at_cabin} ], [qw(cabin_raining raining)], 'and not the cottage rule');
+	is(scalar @{ subs::weather_automation_matches($place_rules, 'Light Rain', '') }, 1, 'a reading with no place wakes only the global rule');
+}
+
+{
+	my $now = 1794010000000;
+	my $cm = Mojo::JSON::encode_json({ condition => { type => 'text', cm => [
+		{ uuid => 'a', match => 'rain', app => 'raining', location => 'loc:cottage' },
+		{ uuid => 'b', match => 'snow', app => 'snowing' },
+	] } });
+	my $wr = Mojo::JSON::encode_json([
+		{ uuid => 'm1', when => [{ measure => 'wind_gust', op => '>', value => 20 }], action => 'start', app => 'gusty', location => 'loc:cabin' },
+	]);
+	no warnings 'redefine';
+	local *subs::setting_grabber = sub {
+		my ($q) = @_;
+		return $cm if $q->{'app'} eq 'weather_station' && $q->{'setting'} eq 'app_measures';
+		return $wr if $q->{'app'} eq 'weather_station' && $q->{'setting'} eq 'weather_rules';
+		return undef;
+	};
+	local *subs::setting_setter = sub { 1 };
+	local *subs::rightNow = sub { $now };
+	local *subs::signatorial_designer = sub { 'phone' };
+	local *subs::db_query = sub {
+		return bless { rows => [ {
+			signatorial => 'phone', latitude => '43.45', longitude => '-80.49',
+			accuracy => '5', server_time => '' . $now, label => 'Phone',
+		} ] }, 'FakeResult';
+	};
+	my $keys = subs::weather_rule_locations();
+	is_deeply($keys, ['loc:cottage', 'loc:cabin', 'dev:phone'],
+		'the tick covers every rule place, and the newest fix for a rule that applies anywhere');
+}
+
+{
+	my $now = 1794010000000;
+	no warnings 'redefine';
+	local *subs::signatorial_designer = sub { 'phone' };
+	local *subs::rightNow = sub { $now };
+	local *subs::db_query = sub {
+		return bless { rows => [
+			{ signatorial => 'phone', latitude => '43.45', longitude => '-80.49', accuracy => '5', server_time => '' . $now, label => 'Phone' },
+			{ signatorial => 'table', latitude => '43.50', longitude => '-80.40', accuracy => '9', server_time => '' . ($now - 1000), label => 'table' },
+		] }, 'FakeResult';
+	};
+	local *subs::setting_grabber = sub {
+		my ($q) = @_;
+		return Mojo::JSON::encode_json([{ uuid => 'cottage', name => 'cottage', lat => 45, lon => -79 }])
+			if $q->{'app'} eq 'weather' && $q->{'setting'} eq 'locations';
+		return undef;
+	};
+	my $options = subs::weather_location_options();
+	is($options->[0]{'key'}, '', 'any location comes first in the picker');
+	is($options->[0]{'label'}, 'Any location', 'and says so');
+	is($options->[1]{'key'}, 'dev:phone', 'the current device is offered');
+	is($options->[1]{'label'}, 'This device', 'and is called this device');
+	is($options->[2]{'key'}, 'dev:table', 'another machine with a fix is offered');
+	is($options->[3]{'key'}, 'loc:cottage', 'a saved place is offered');
+	is($options->[3]{'label'}, 'Cottage', 'and shown by its name');
+}
+
+{
+	my %store;
+	my @appointments;
+	my $now = 1794010000000;
+	my $rules_json = Mojo::JSON::encode_json([{
+		uuid => 'cabin-gust', name => 'Cabin gust',
+		when => [{ measure => 'wind_gust', op => '>', value => 20 }],
+		for_ms => 0, action => 'start', app => 'gusty', location => 'loc:cabin',
+	}]);
+	no warnings 'redefine';
+	local *subs::rightNow = sub { $now };
+	local *subs::cache_get = sub {
+		my ($q) = @_;
+		return $store{ join('|', $q->{'app'}, $q->{'context'}, $q->{'subcontext'} // '') };
+	};
+	local *subs::cache_set = sub {
+		my ($q, $value) = @_;
+		$store{ join('|', $q->{'app'}, $q->{'context'}, $q->{'subcontext'} // '') } = $value;
+		return 1;
+	};
+	local *subs::setting_grabber = sub {
+		my ($q) = @_;
+		return $rules_json if $q->{'app'} eq 'weather_station' && $q->{'setting'} eq 'weather_rules';
+		return $store{ 'setting|' . $q->{'app'} . '|' . $q->{'setting'} };
+	};
+	local *subs::setting_setter = sub {
+		my ($q) = @_;
+		$store{ 'setting|' . $q->{'app'} . '|' . $q->{'setting'} } = $q->{'value'};
+		return 1;
+	};
+	local *Manager::appointment_writer = sub {
+		my ($c, $data) = @_;
+		push @appointments, $data;
+		return $data;
+	};
+	my $values = { wind_gust => 25 };
+	is(scalar @{ subs::weather_measure_rule_evaluate($values, [], 'appt-1', $now, 'dev:phone') }, 0,
+		'the phone reading does not fire the cabin rule');
+	is($store{'setting|gusty|toggle'}, undef, 'and the target app stays off');
+	my $fired = subs::weather_measure_rule_evaluate($values, [], 'appt-1', $now, 'loc:cabin');
+	is(scalar @{$fired}, 1, 'the cabin reading runs it');
+	is($store{'setting|gusty|toggle'}, 'on', 'and switches the app on');
+}
+
 # --- saved locations ---------------------------------------------------------
 {
 	my %store;
@@ -571,6 +720,20 @@ is($series->[0]{'values'}{'pressure'}, '100', 'the series keeps the pressure');
 	is($hours->[0]{'temperature'}, 10, 'the first hour averages its readings');
 	is($hours->[0]{'condition'}, 'Light rain', 'and keeps the condition its readings named');
 	is($hours->[1]{'temperature'}, 14, 'the next hour has its own temperature');
+
+	my $place_rows = [
+		{ timestamp => $now - 3600000, measures => Mojo::JSON::encode_json([{ ts => '' . ($now - 3600000), temperature => '10', location => 'dev:phone' }]) },
+		{ timestamp => $now - 3600000, measures => Mojo::JSON::encode_json([{ ts => '' . ($now - 3600000), temperature => '2', location => 'loc:cabin' }]) },
+		{ timestamp => $now - 7200000, measures => Mojo::JSON::encode_json([{ ts => '' . ($now - 7200000), temperature => '9' }]) },
+	];
+	$rows = $place_rows;
+	my $phone_hours = subs::weather_history_hourly('weather_station', 24, 'dev:phone');
+	is(scalar @{$phone_hours}, 2, 'the phone day skips the cabin reading');
+	is($phone_hours->[0]{'temperature'}, 9, 'a reading from before places were recorded is kept');
+	is($phone_hours->[1]{'temperature'}, 10, 'and the phone hour is its own');
+	my $cabin_hours = subs::weather_history_hourly('weather_station', 24, 'loc:cabin');
+	is(scalar @{$cabin_hours}, 2, 'the cabin day skips the phone reading');
+	is($cabin_hours->[1]{'temperature'}, 2, 'and keeps only its own hour');
 }
 
 # --- the automation tab is wired into the app --------------------------------
@@ -634,6 +797,19 @@ like($auto_partial, qr/id="weather_measure_list"/, 'the Automations tab lists me
 like($auto_partial, qr/id="weather_measure_form"/, 'the Automations tab has a measurement form');
 like($auto_partial, qr/id="weather_measure_condition_add"/, 'a rule can hold more than one condition');
 like($auto_partial, qr/id="weather_measure_command"/, 'a rule can run a command');
+
+# --- a rule can be scoped to a place, and the app field suggests apps -------
+like($auto_partial, qr/id="weather_automation_location"/, 'the condition form picks the place a rule is about');
+like($auto_partial, qr/id="weather_measure_location"/, 'the measurement form picks the place too');
+like($auto_partial, qr/id="weather_automation_app" list="weather_app_options"/, 'the app field suggests existing apps');
+like($auto_partial, qr/id="weather_measure_app" list="weather_app_options"/, 'and so does the measurement form');
+like($auto_partial, qr/<datalist id="weather_app_options"><\/datalist>/, 'the suggestions have a datalist');
+my $auto_js = read_file("$root/public/js/manager/weather_automation.js");
+like($auto_js, qr/weatherAutomationLocations/, 'the script fills the place pickers');
+like($auto_js, qr/data\.apps/, 'and the app suggestions');
+like($auto_js, qr/location_label/, 'a saved rule shows its place in the sentence');
+like($loader_auto, qr/weather_rule_location_normalize/, 'the domain loader maps the place normaliser');
+like($loader_auto, qr/weather_rule_locations/, 'and the places the tick covers');
 
 # --- the tab's own style is inside a <style> tag -----------------------------
 my $weather_style = read_file("$root/templates/apps/weather/style.html.ep");

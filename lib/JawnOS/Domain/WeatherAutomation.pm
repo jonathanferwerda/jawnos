@@ -21,6 +21,7 @@ use utf8;
 use feature 'signatures';
 no warnings 'experimental::signatures';
 no warnings 'experimental::args_array_with_signatures';
+no warnings 'once';
 
 use Mojo::JSON qw(decode_json encode_json);
 
@@ -65,6 +66,7 @@ sub weather_automation_normalize($rule) {
 		match => $match,
 		app => $app,
 		action => $action,
+		location => &weather_rule_location_normalize($rule->{'location'}),
 	};
 }
 
@@ -93,11 +95,14 @@ sub weather_automation_apply($rules, $rule) {
 # Which condition rules the condition wakes. appt_measure_writer stores a text
 # measure through unformat_name ("Light Rain" -> "light_rain"), so match the
 # same shape here; the engine's own test is a case-insensitive substring.
-sub weather_automation_matches($rules, $condition) {
+sub weather_automation_matches($rules, $condition, $location = '') {
 	my $state = lc(&subs::unformat_name($condition // ''));
+	my $want_location = $location // '';
 	my @hit;
 	foreach my $r (@{ ref $rules eq 'ARRAY' ? $rules : [] }) {
 		next unless ref $r eq 'HASH';
+		my $rule_location = $r->{'location'} // '';
+		next if length $rule_location && $rule_location ne $want_location;
 		my $match = lc($r->{'match'} // '');
 		next unless length $match && index($state, $match) >= 0;
 		push @hit, { app => $r->{'app'}, action => $r->{'action'} || 'start' };
@@ -224,6 +229,7 @@ sub weather_measure_rule_normalize($rule) {
 		action => $action,
 		app => $app,
 		command => $command,
+		location => &weather_rule_location_normalize($rule->{'location'}),
 	};
 }
 
@@ -346,7 +352,8 @@ sub weather_rule_matches($rule, $values, $series, $now) {
 # appointment with rightNow() while the rest carry the observation's timestamp.
 # A minute is finer than the half-hour cadence and always keeps one observation
 # together.
-sub weather_observation_series($app, $from, $to) {
+sub weather_observation_series($app, $from, $to, $location = '') {
+	my $want_location = $location // '';
 	my $rows = eval {
 		&subs::db_query(
 			'select timestamp, measures from appointments '
@@ -362,13 +369,14 @@ sub weather_observation_series($app, $from, $to) {
 		next unless ref $list eq 'ARRAY';
 		foreach my $measure (@{$list}) {
 			next unless ref $measure eq 'HASH';
+			next if length($want_location) && ($measure->{'location'} // '') ne $want_location;
 			my $ts = $measure->{'ts'} || $base;
 			next unless defined $ts && "$ts" =~ /^\d+$/;
 			next if $to && $ts > $to + 60_000;
 			my $bucket = int($ts / 60000);
 			$by{$bucket}{'__ts'} = $ts + 0;
 			foreach my $key (keys %{$measure}) {
-				next if $key eq 'ts' || $key eq 'uuid';
+				next if $key eq 'ts' || $key eq 'uuid' || $key eq 'location';
 				$by{$bucket}{$key} = $measure->{$key};
 			}
 		}
@@ -420,14 +428,17 @@ sub weather_rule_app_switch($app, $on, $source_uuid, $timestamp) {
 # A rule acts on its rising edge. A start rule also stops its app on the falling
 # edge, which is what makes "rain -> raining" start and stop; a run rule fires
 # once and waits for the condition to clear before it can fire again.
-sub weather_measure_rule_evaluate($values, $series, $uuid, $now) {
+sub weather_measure_rule_evaluate($values, $series, $uuid, $now, $location = '') {
 	my $rules = &weather_measure_rules();
 	return [] unless @{$rules};
+	my $want_location = $location // '';
 	my $state = eval { &cache_get({ app => 'weather', context => 'rules', subcontext => 'state' }) } || {};
 	my %live = map { ($_->{'uuid'} // '') => 1 } @{$rules};
 	my @fired;
 	foreach my $rule (@{$rules}) {
 		next unless ref $rule eq 'HASH';
+		my $rule_location = &weather_rule_location_normalize($rule->{'location'});
+		next if length($rule_location) && $rule_location ne $want_location;
 		my $id = $rule->{'uuid'} // '';
 		next unless length $id;
 		my $matched = &weather_rule_matches($rule, $values, $series, $now) ? 1 : 0;
@@ -505,6 +516,20 @@ sub weather_automation_state() {
 	my %compass = map { $_ => 1 } qw(n nne ne ene e ese se sse s ssw sw wsw w wnw nw nnw);
 	my @conditions = grep { !$compass{$_} } @{ ref $seen eq 'ARRAY' ? $seen : [] };
 	my $last = eval { &cache_get({ app => 'weather', context => 'observe', subcontext => 'last' }) } || {};
+	my $locations = &weather_location_options();
+	my %location_label = map { $_->{'key'} => $_->{'label'} } @{$locations};
+	my $app_rows = eval {
+		&subs::db_query("select distinct app from settings where app is not null and app != '' order by app")->hashes;
+	} || [];
+	my (%seen_app, @app_options);
+	my $add_app = sub {
+		my $name = shift // '';
+		return unless length $name && $name !~ /^__/ && !$seen_app{$name}++;
+		push @app_options, { key => $name, label => &subs::format_name($name) };
+	};
+	$add_app->($_->{'app'}) for @{$app_rows};
+	$add_app->($_) for sort keys %{ $gb::known_appts || {} };
+	@app_options = sort { $a->{'label'} cmp $b->{'label'} } @app_options;
 	return {
 		app => $app,
 		condition => ($am->{'condition'}->{'value'} // ''),
@@ -512,17 +537,28 @@ sub weather_automation_state() {
 		condition_at => $last->{'at'},
 		condition_changed_at => $last->{'changed_at'},
 		condition_place => $last->{'place'} // '',
+		condition_location => $last->{'location'} // '',
 		seen => [ sort @conditions ],
-		rules => [ map { { %{$_}, app_label => &subs::format_name($_->{'app'}) } } @{$rules} ],
+		rules => [
+			map {
+				my $loc = $_->{'location'} // '';
+				+{ %{$_}, app_label => &subs::format_name($_->{'app'}),
+					location_label => (length $loc ? ($location_label{$loc} || $loc) : '') }
+			} @{$rules}
+		],
 		measures => &weather_measure_catalog(),
 		values => ($last->{'values'} || {}),
 		measure_rules => [
 			map {
 				my %r = %{$_};
+				my $loc = $_->{'location'} // '';
 				$r{'app_label'} = &subs::format_name($_->{'app'}) if length($_->{'app'} // '');
+				$r{'location_label'} = length $loc ? ($location_label{$loc} || $loc) : '';
 				\%r;
 			} @{$measure_rules}
 		],
+		locations => $locations,
+		apps => \@app_options,
 	};
 }
 
@@ -537,6 +573,64 @@ sub weather_automation_save($rule) {
 		value => encode_json $am,
 	});
 	return &weather_automation_state();
+}
+
+# ---- locations --------------------------------------------------------------
+# A rule names where it applies: the phone, another machine, or a saved place.
+# `dev:<signatorial>` is a machine's own GPS fix; `loc:<uuid>` is a saved point.
+# An empty location is the old app's global rule and evaluates anywhere.
+sub weather_rule_location_normalize($value) {
+	$value = '' unless defined $value;
+	return '' unless length $value;
+	return $value if $value =~ /^(?:dev|loc):[A-Za-z0-9_-]+$/;
+	return '';
+}
+
+sub weather_location_options() {
+	my @out = ({ key => '', label => 'Any location' });
+	my $me = &subs::signatorial_designer();
+	my $fixes = eval { &subs::weather_device_fixes(24 * 60 * 60 * 1000) } || [];
+	my %seen;
+	foreach my $fix (@{$fixes}) {
+		my $sig = $fix->{'signatorial'} // '';
+		next unless $sig =~ /^[A-Za-z0-9_-]+$/;
+		next if $seen{"dev:$sig"}++;
+		my $label = $fix->{'label'} || $sig;
+		push @out, { key => "dev:$sig", label => ($sig eq $me ? 'This device' : &subs::format_name($label)) };
+	}
+	foreach my $loc (@{ &weather_locations() }) {
+		my $uuid = $loc->{'uuid'} // '';
+		next unless $uuid =~ /^[A-Za-z0-9_-]+$/;
+		push @out, { key => "loc:$uuid", label => &subs::format_name($loc->{'name'} || $uuid) };
+	}
+	return \@out;
+}
+
+# Every place a rule names, plus the newest fix when a global rule still exists.
+sub weather_rule_locations() {
+	my (@keys, %seen);
+	my $global = 0;
+	my $am = &weather_observe_prepare();
+	foreach my $rule (@{ &weather_automation_rules($am) }) {
+		my $location = &weather_rule_location_normalize($rule->{'location'});
+		if (length $location) { push @keys, $location unless $seen{$location}++; }
+		else { $global = 1; }
+	}
+	foreach my $rule (@{ &weather_measure_rules() }) {
+		my $location = &weather_rule_location_normalize($rule->{'location'});
+		if (length $location) { push @keys, $location unless $seen{$location}++; }
+		else { $global = 1; }
+	}
+	if ($global) {
+		my $fixes = eval { &subs::weather_device_fixes(24 * 60 * 60 * 1000) } || [];
+		my ($fix) = @{$fixes};
+		my $sig = $fix ? ($fix->{'signatorial'} // '') : '';
+		if ($sig =~ /^[A-Za-z0-9_-]+$/) {
+			my $key = "dev:$sig";
+			push @keys, $key unless $seen{$key}++;
+		}
+	}
+	return \@keys;
 }
 
 # ---- saved locations --------------------------------------------------------
@@ -591,13 +685,14 @@ sub weather_observe_record($weather, $opts) {
 	return { skipped => 'no condition' }
 		unless ref $weather eq 'HASH' && length($weather->{'current'}{'condition'} // '');
 	my $condition = $weather->{'current'}{'condition'};
+	my $location = &weather_rule_location_normalize($opts->{'location'});
 	my $values = &weather_measure_values($weather);
 	my $am = &weather_observe_prepare();
 	my $condition_rules = &weather_automation_rules($am);
 	my $measure_rules = &weather_measure_rules();
 	my $last = eval { &cache_get({ app => 'weather', context => 'observe', subcontext => 'last' }) } || {};
 	my $now = &rightNow();
-	my $signature = join('|', map { $_ . '=' . $values->{$_} } sort keys %{$values});
+	my $signature = $location . '|' . join('|', map { $_ . '=' . $values->{$_} } sort keys %{$values});
 	my $changed = (($last->{'signature'} // '') ne $signature);
 	my $due = !$last->{'at'} || $now - $last->{'at'} >= 30 * 60 * 1000;
 	return {
@@ -617,6 +712,7 @@ sub weather_observe_record($weather, $opts) {
 				measure => $measure,
 				value => $values->{$measure},
 				timestamp => $now,
+				location => $location,
 				(defined $uuid ? (uuid => $uuid) : ()),
 			});
 		};
@@ -635,12 +731,12 @@ sub weather_observe_record($weather, $opts) {
 			$longest = $rule->{'for_ms'} if ($rule->{'for_ms'} || 0) > $longest;
 		}
 		my $from = $now - $longest - 2 * 60 * 60 * 1000;
-		$series = &weather_observation_series(&weather_automation_app(), $from, $now);
+		$series = &weather_observation_series(&weather_automation_app(), $from, $now, $location);
 		push @{$series}, { ts => $now, values => { %{$values} } }
 			unless @{$series} && ($series->[-1]{'ts'} || 0) >= $now - 60_000;
 	}
-	my $fired = &weather_measure_rule_evaluate($values, $series, $uuid, $now);
-	my $matched = &weather_automation_matches($condition_rules, $condition);
+	my $fired = &weather_measure_rule_evaluate($values, $series, $uuid, $now, $location);
+	my $matched = &weather_automation_matches($condition_rules, $condition, $location);
 	&cache_set({ app => 'weather', context => 'observe', subcontext => 'last', warranty => '-1d' }, {
 		signature => $signature,
 		values => $values,
@@ -648,6 +744,7 @@ sub weather_observe_record($weather, $opts) {
 		at => $now,
 		changed_at => $changed ? $now : ($last->{'changed_at'} || $now),
 		place => ($weather->{'location_name'} // ''),
+		location => $location,
 	});
 	return {
 		ok => 1,
@@ -656,6 +753,7 @@ sub weather_observe_record($weather, $opts) {
 		matched => $matched,
 		rules => $fired,
 		values => $values,
+		location => $location,
 		at => $now,
 		uuid => $uuid,
 	};
@@ -671,6 +769,7 @@ sub weather_observe_now($opts) {
 		return { skipped => 'no fix' } unless $fix;
 		$lat = $fix->{'lat'};
 		$lon = $fix->{'lon'};
+		$opts->{'location'} ||= 'dev:' . $fix->{'signatorial'} if ($fix->{'signatorial'} // '') =~ /^[A-Za-z0-9_-]+$/;
 	}
 	my $weather = eval { &subs::weather_fetch($lat, $lon, { force => ($opts->{'force'} ? 1 : 0) }) };
 	unless (ref $weather eq 'HASH' && !$weather->{'error'}) {
@@ -689,24 +788,51 @@ sub weather_observe_now($opts) {
 # machines run the utility; a condition that changed still writes at once, so
 # the lock is a ceiling on the fetch, not on the rules.
 sub weather_observe_tick() {
-	my $am = &weather_observe_prepare();
-	my $condition_rules = &weather_automation_rules($am);
-	my $measure_rules = &weather_measure_rules();
-	return { skipped => 'no rules' } unless @{$condition_rules} || @{$measure_rules};
 	my $now = &rightNow();
+	my $am = &weather_observe_prepare();
+	my $has_rules = @{ &weather_automation_rules($am) } || @{ &weather_measure_rules() };
+	return { skipped => 'no rules' } unless $has_rules;
+	my $keys = &weather_rule_locations();
+	return { skipped => 'no fix' } unless @{$keys};
 	my $lock = eval { &cache_get({ app => 'weather', context => 'observe', subcontext => 'lock' }) } || {};
 	return { skipped => 'held', at => $lock->{'at'} }
 		if ($lock->{'at'} || 0) > $now - 20 * 60 * 1000;
 	&cache_set({ app => 'weather', context => 'observe', subcontext => 'lock', warranty => '-1d' }, { at => $now });
-	my $result = &weather_observe_now({ force => 1 });
-	if ($log) {
-		$log->info('weather observe: ' . encode_json({
-			map { $_ => $result->{$_} }
-			grep { defined $result->{$_} }
-			qw(ok skipped error condition changed)
-		}));
+	my @results;
+	foreach my $key (@{$keys}) {
+		my ($lat, $lon);
+		if ($key =~ /^dev:(.+)$/) {
+			my $fix = eval { &subs::weather_device_fix($1) };
+			unless ($fix) {
+				$log->info("weather observe: $key has no recent GPS fix") if $log;
+				next;
+			}
+			$lat = $fix->{'lat'};
+			$lon = $fix->{'lon'};
+		}
+		elsif ($key =~ /^loc:(.+)$/) {
+			my $location = &weather_location_find($1);
+			unless ($location) {
+				$log->info("weather observe: $key is gone") if $log;
+				next;
+			}
+			$lat = $location->{'lat'};
+			$lon = $location->{'lon'};
+		}
+		else { next; }
+		my $result = &weather_observe_now({ lat => $lat, lon => $lon, location => $key, force => 1 });
+		$result->{'location'} = $key;
+		push @results, $result;
+		if ($log) {
+			$log->info("weather observe $key: " . encode_json({
+				map { $_ => $result->{$_} }
+				grep { defined $result->{$_} }
+				qw(ok skipped error condition changed)
+			}));
+		}
 	}
-	return $result;
+	return { skipped => 'no fix', results => \@results } unless @results;
+	return { ok => 1, results => \@results };
 }
 
 1;

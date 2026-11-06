@@ -47,6 +47,7 @@ function weatherAutomationRender(data, message) {
 	var $w = $('.wind[app="weather"]').last();
 	weatherAutomationLoaded = true;
 	weatherAutomationData = data;
+	weatherAutomationLocations(data);
 	var condition = data.condition_text || weatherAutomationWords(data.condition || '');
 	var at = data.condition_at ? ' · ' + jawnosT('checked') + ' ' + weatherTime(data.condition_at) : '';
 	$w.find('#weather_automation_condition').text(condition ? (condition + at) : jawnosT('No reading yet.'));
@@ -59,8 +60,9 @@ function weatherAutomationRender(data, message) {
 			var r = rules[i] || {};
 			var label = r.app_label || weatherAutomationWords(r.app || '');
 			var verb = (r.action === 'record') ? jawnosT('record') : jawnosT('start');
+			var where = r.location_label ? (' ' + jawnosT('at') + ' ' + r.location_label) : '';
 			var html = '<div class="weather_automation_rule">'
-				+ '<span class="weather_automation_text">' + weatherEsc(jawnosT('When the condition contains') + ' “' + (r.match || '') + '”, ' + verb + ' ') + '<b>' + weatherEsc(label) + '</b></span>'
+				+ '<span class="weather_automation_text">' + weatherEsc(jawnosT('When the condition contains') + ' “' + (r.match || '') + '”' + where + ', ' + verb + ' ') + '<b>' + weatherEsc(label) + '</b></span>'
 				+ '<span class="weather_automation_actions">'
 				+ '<button type="button" class="weather_automation_edit" data-uuid="' + weatherEsc(r.uuid || '') + '">' + jawnosT('Edit') + '</button>'
 				+ '<button type="button" class="weather_automation_remove" data-uuid="' + weatherEsc(r.uuid || '') + '">' + jawnosT('Remove') + '</button>'
@@ -84,9 +86,47 @@ function weatherAutomationError(message) {
 	$w.find('#weather_automation_status').text(message || '');
 }
 
+// The location picker and the app suggestions are the same for both rule forms.
+function weatherAutomationLocations(data) {
+	var $w = $('.wind[app="weather"]').last();
+	var locations = data.locations || [];
+	function fill(selector) {
+		var $select = $w.find(selector);
+		var current = $select.val();
+		$select.empty();
+		for (var i = 0; i < locations.length; i++) {
+			var location = locations[i] || {};
+			$select.append($('<option>').val(location.key || '').text(jawnosT(location.label || location.key || '')));
+		}
+		if (current !== undefined && current !== null) { $select.val(current); }
+	}
+	fill('#weather_automation_location');
+	fill('#weather_measure_location');
+	var $options = $w.find('#weather_app_options').empty();
+	var apps = data.apps || [];
+	for (var j = 0; j < apps.length; j++) {
+		var app = apps[j] || {};
+		$options.append($('<option>').val(app.key || '').attr('label', app.label || app.key || ''));
+	}
+}
+
+// A rule can name a place the picker no longer lists (the device has not
+// reported a fix lately). Keep that value selectable so saving an edit does
+// not silently move the rule back to "Any location".
+function weatherAutomationLocationSet(selector, value) {
+	var $w = $('.wind[app="weather"]').last();
+	var $select = $w.find(selector);
+	value = value || '';
+	if (value && $select.find('option').filter(function() { return this.value === value; }).length === 0) {
+		$select.append($('<option>').val(value).text(value));
+	}
+	$select.val(value);
+}
+
 function weatherAutomationFormOpen(rule) {
 	var $w = $('.wind[app="weather"]').last();
 	$w.find('#weather_automation_uuid').val(rule ? (rule.uuid || '') : '');
+	weatherAutomationLocationSet('#weather_automation_location', rule ? (rule.location || '') : '');
 	$w.find('#weather_automation_match').val(rule ? (rule.match || '') : '');
 	$w.find('#weather_automation_app').val(rule ? (rule.app || '') : '');
 	$w.find('#weather_automation_action').val(rule && rule.action === 'record' ? 'record' : 'start');
@@ -124,6 +164,7 @@ function weatherAutomationSave() {
 		type: 'POST',
 		data: {
 			uuid: $w.find('#weather_automation_uuid').val() || '',
+			location: $w.find('#weather_automation_location').val() || '',
 			match: match,
 			app: app,
 			action: $w.find('#weather_automation_action').val() || 'start',
@@ -175,6 +216,7 @@ function weatherAutomationCheck() {
 		data.lat = weatherLastLocation.lat;
 		data.lon = weatherLastLocation.lon;
 	}
+	if (weatherLastLocation && weatherLastLocation.location) { data.location = weatherLastLocation.location; }
 	$.ajax({
 		url: '/manager/weather/observe',
 		type: 'POST',
@@ -325,12 +367,14 @@ function weatherMeasureSentence(rule) {
 	else {
 		sentence += ', ' + jawnosT('start') + ' ' + weatherAutomationWords(rule.app_label || rule.app || '');
 	}
-	return (rule.name ? (rule.name + ': ') : '') + sentence + '.';
+	var where = rule.location_label ? (jawnosT('At') + ' ' + rule.location_label + ': ') : '';
+	return where + (rule.name ? (rule.name + ': ') : '') + sentence + '.';
 }
 
 function weatherMeasureFormOpen(rule) {
 	var $w = $('.wind[app="weather"]').last();
 	$w.find('#weather_measure_uuid').val(rule ? (rule.uuid || '') : '');
+	weatherAutomationLocationSet('#weather_measure_location', rule ? (rule.location || '') : '');
 	$w.find('#weather_measure_name').val(rule ? (rule.name || '') : '');
 	var forMs = rule ? (rule.for_ms || 0) : 0;
 	if (forMs && forMs % 3600000 === 0) {
@@ -460,6 +504,7 @@ function weatherMeasureSave() {
 		data: {
 			uuid: $w.find('#weather_measure_uuid').val() || '',
 			name: $w.find('#weather_measure_name').val() || '',
+			location: $w.find('#weather_measure_location').val() || '',
 			when: JSON.stringify(conditions),
 			for_ms: forMs,
 			action: action,

@@ -84,6 +84,7 @@ sub weather_history_sources {
 			region => '',
 			url => '',
 			id => '',
+			location => ($last->{'location'} // ''),
 			readings => $station->{'n'} || 0,
 			from => &weather_day_key($station->{'from_ts'}),
 			to => &weather_day_key($station->{'to_ts'}),
@@ -124,7 +125,10 @@ sub weather_history_top_text($counts) {
 	return $best // '';
 }
 
-sub weather_history_aggregate($rows) {
+sub weather_history_aggregate($rows, $opts = {}) {
+	$opts ||= {};
+	my $want_location = $opts->{'location'} // '';
+	my $location_app = $opts->{'location_app'} // 'weather_station';
 	my (%days, %seen, %sources);
 	foreach my $row (@{ ref $rows eq 'ARRAY' ? $rows : [] }) {
 		next unless ref $row eq 'HASH';
@@ -138,6 +142,10 @@ sub weather_history_aggregate($rows) {
 		$sources{$app} ||= { app => $app, readings => 0, days => {} };
 		foreach my $m (@{$measures}) {
 			next unless ref $m eq 'HASH';
+			# A reading with no location predates per-location observations: keep it
+			# (the house's history) instead of hiding it behind the newest fix.
+			next if $want_location && $app eq $location_app
+				&& length($m->{'location'} // '') && ($m->{'location'} // '') ne $want_location;
 			my $ts = $m->{'ts'} || $base_ts;
 			my $day = &weather_day_key($ts);
 			next unless length $day;
@@ -145,7 +153,7 @@ sub weather_history_aggregate($rows) {
 			# the key - {"temperature":"-4","ts":"...","uuid":"..."} - so `ts`
 			# and `uuid` ride along and every other key is a reading.
 			foreach my $field (sort keys %{$m}) {
-				next if $field eq 'ts' || $field eq 'uuid';
+				next if $field eq 'ts' || $field eq 'uuid' || $field eq 'location';
 				my $name = lc $field;
 				my $value = $m->{$field};
 				next if ref $value || !defined $value || !length "$value";
@@ -236,6 +244,7 @@ sub weather_history_aggregate($rows) {
 
 sub weather_history_build($opts) {
 	$opts ||= {};
+	my $station_location = $opts->{'location'} // '';
 	my $meta_list = &weather_history_sources();
 	my @apps = @{$meta_list} ? map { $_->{'app'} } @{$meta_list} : qw(weather cambridge_weather);
 	my @rows;
@@ -249,7 +258,7 @@ sub weather_history_build($opts) {
 		} || [];
 		push @rows, @{$r};
 	}
-	my $agg = &weather_history_aggregate(\@rows);
+	my $agg = &weather_history_aggregate(\@rows, { location => $station_location });
 	my %meta = map { ($_->{'app'} || '') => $_ } @{$meta_list};
 	my @sources;
 	foreach my $app (@apps) {
@@ -262,6 +271,7 @@ sub weather_history_build($opts) {
 			region => $m->{'region'} || '',
 			url => $m->{'url'} || '',
 			id => $m->{'id'} || '',
+			location => $m->{'location'} || '',
 			readings => $s->{'readings'} || $m->{'readings'} || 0,
 			days => $s->{'day_count'} || 0,
 			from => $s->{'from'} || $m->{'from'} || '',
@@ -278,16 +288,23 @@ sub weather_history_build($opts) {
 		days => \%by_source,
 		note => &subs::ui('History comes from the old weather appointments and the Weather station. Temperature and condition are observations; humidity is the forecast value the old app logged, not an observation. High and low are the extremes of the readings the house kept, so they are sampled rather than a station daily extreme.'),
 	};
-	eval { &cache_set({ app => 'weather', context => 'history', subcontext => 'v2', warranty => '-1d' }, $out) };
+	eval { &cache_set({ app => 'weather', context => 'history', subcontext => &weather_history_cache_key($station_location), warranty => '-1d' }, $out) };
 	return $out;
+}
+
+sub weather_history_cache_key($station_location) {
+	my $suffix = $station_location // '';
+	$suffix =~ s/[^A-Za-z0-9_-]//g;
+	return 'v3' . (length $suffix ? '_' . $suffix : '');
 }
 
 # A one-day read is hourly, not daily: the last 24 hours of one source's
 # temperature, averaged into the hour it was taken in. The old apps logged one
 # reading an hour (Cambridge every three), and the Weather station every half
 # hour, so the strip has more points on the source the house owns.
-sub weather_history_hourly($app, $hours) {
+sub weather_history_hourly($app, $hours, $location = '') {
 	$hours ||= 24;
+	my $want_location = $location // '';
 	my $now = &rightNow();
 	my $from = $now - $hours * 3600000;
 	my $rows = eval {
@@ -305,6 +322,8 @@ sub weather_history_hourly($app, $hours) {
 		next unless ref $list eq 'ARRAY';
 		foreach my $measure (@{$list}) {
 			next unless ref $measure eq 'HASH';
+			next if $want_location && $app eq 'weather_station'
+				&& length($measure->{'location'} // '') && ($measure->{'location'} // '') ne $want_location;
 			my $ts = $measure->{'ts'} || $base;
 			next unless defined $ts && "$ts" =~ /^\d+$/ && $ts >= $from;
 			my $hour = int($ts / 3600000) * 3600000;
@@ -358,10 +377,13 @@ sub weather_history_pick_source($sources, $city, $region) {
 
 sub weather_history_read($opts) {
 	$opts ||= {};
-	my $history = eval { &cache_get({ app => 'weather', context => 'history', subcontext => 'v2' }) };
+	my $last = eval { &cache_get({ app => 'weather', context => 'observe', subcontext => 'last' }) } || {};
+	my $station_location = $last->{'location'} // '';
+	my $cache_key = &weather_history_cache_key($station_location);
+	my $history = eval { &cache_get({ app => 'weather', context => 'history', subcontext => $cache_key }) };
 	if (!$history || ref $history ne 'HASH' || !$history->{'built_at'}
 		|| $opts->{'force'} || $history->{'built_at'} < &rightNow() - 6 * 60 * 60 * 1000) {
-		$history = &weather_history_build($opts);
+		$history = &weather_history_build({ %{$opts}, location => $station_location });
 	}
 	my $source = $opts->{'source'} || &weather_history_pick_source($history->{'sources'}, $opts->{'city'}, $opts->{'region'});
 	my @days = @{ $history->{'days'}->{$source} || [] };
@@ -370,7 +392,9 @@ sub weather_history_read($opts) {
 		my $from = &weather_day_key(&rightNow() - $range * 86400000);
 		@days = grep { ($_->{'date'} // '') ge $from } @days;
 	}
-	my $hours = ($range eq '1') ? &weather_history_hourly($source, 24) : undef;
+	my $hours = ($range eq '1')
+		? &weather_history_hourly($source, 24, $source eq 'weather_station' ? $station_location : '')
+		: undef;
 	my ($source_meta) = grep { ($_->{'app'} || '') eq $source } @{ $history->{'sources'} || [] };
 	return {
 		built_at => $history->{'built_at'},
@@ -379,6 +403,7 @@ sub weather_history_read($opts) {
 		source_label => $source_meta ? $source_meta->{'label'} : $source,
 		source_city => $source_meta ? ($source_meta->{'city'} || '') : '',
 		source_region => $source_meta ? ($source_meta->{'region'} || '') : '',
+		source_location => $source eq 'weather_station' ? $station_location : '',
 		days => \@days,
 		(defined $hours ? (hours => $hours) : ()),
 		from => @days ? $days[0]->{'date'} : '',

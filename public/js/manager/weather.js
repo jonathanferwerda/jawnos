@@ -52,6 +52,8 @@ function weatherBind() {
 		$w.find('#weather_lat').val('');
 		$w.find('#weather_lon').val('');
 		$w.find('#weather_source').val('');
+		weatherHistoryLoaded = false;
+		weatherAccuracyLoaded = false;
 		weatherLoad(true);
 	});
 	$w.on('click', '#weather_refresh', function() { weatherLoad(true); });
@@ -111,7 +113,7 @@ function weatherRender(data) {
 	$w.find('#weather_error').hide();
 	var cur = data.current || {};
 	if (data.lat !== undefined && data.lon !== undefined) {
-		weatherLastLocation = { lat: data.lat, lon: data.lon, city: data.location_name || '', region: data.location_region || data.region || '' };
+		weatherLastLocation = { lat: data.lat, lon: data.lon, city: data.location_name || '', region: data.location_region || data.region || '', location: data.source_location || '' };
 	}
 	var place = data.location_name || '';
 	if (data.source) { place = place ? (place + ' · ' + data.source) : data.source; }

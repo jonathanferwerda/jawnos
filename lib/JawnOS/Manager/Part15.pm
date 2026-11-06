@@ -68,6 +68,7 @@ sub appt_measure_writer($c,$data) {
 	my $measure = $data->{'measure'};
 	my $value = $data->{'value'};
 	my $remote_address = $data->{'remote_address'};
+	my $location = $data->{'location'};
 	my $setting_only = $c->param('setting_only');
 	my $uuid = $data->{'uuid'};
 	my $measure_uuid = md5_sum ($app . '-' . $timestamp) . '-' . md5_sum $timestamp . $app . $measure . $value . $uuid;
@@ -108,6 +109,7 @@ sub appt_measure_writer($c,$data) {
 			$value = $normalized if defined $normalized;
 		}
 		$app_measure = { $measure => $value, ts => $timestamp };
+		$app_measure->{'location'} = $location if defined $location && length $location;
 
 		$appt_measure->{$measure}->{'value'} = $value;
 
@@ -131,6 +133,7 @@ sub appt_measure_writer($c,$data) {
 			}
 			$app_measure->{'uuid'} = $measure_uuid;
 			$app_measure->{'ts'} = $timestamp || &subs::rightNow();
+			$app_measure->{'location'} = $location if defined $location && length $location;
 			my $ca = &subs::db_select('appointments', undef, { uuid => $uuid, app => $app })->hashes->[0];
 			my $car = eval { return decode_json $ca->{'measures'} } || [];
 			push @{$car}, $app_measure;
@@ -140,6 +143,7 @@ sub appt_measure_writer($c,$data) {
 		else {
 			$app_measure->{'uuid'} = $measure_uuid;
 			$app_measure->{'ts'} = &subs::rightNow();
+			$app_measure->{'location'} = $location if defined $location && length $location;
 			my $car = [];
 			push @{$car}, $app_measure;
 			my $jcar = encode_json $car;
@@ -164,9 +168,9 @@ sub appt_measure_writer($c,$data) {
 		if ($data->{'source'} eq 'embedded') {
 			&Websocket::send('tab', { console => &Websocket::console_command('setMeasure', $app, $measure, $app_measure->{$measure})});
 		}
-		my $adata = { appt_uuid => $uuid, app => $app, type => $appt_measure->{$measure}->{'type'}, 'state' => $state, measurement => $app_measure->{$measure}, measure => $measure, timestamp => $timestamp, remote_address => $remote_address };
+		my $adata = { appt_uuid => $uuid, app => $app, type => $appt_measure->{$measure}->{'type'}, 'state' => $state, measurement => $app_measure->{$measure}, measure => $measure, timestamp => $timestamp, remote_address => $remote_address, location => $location };
 		&subs::intelligent_automation_toggle($adata);
-		&appt_measure_action({ appt_uuid => $uuid, uuid => $app_measure->{'uuid'}, appt_measure => $appt_measure->{$measure}, value => $value, 'state' => $state, measure => $measure, timestamp => $timestamp });
+		&appt_measure_action({ appt_uuid => $uuid, uuid => $app_measure->{'uuid'}, appt_measure => $appt_measure->{$measure}, value => $value, 'state' => $state, measure => $measure, timestamp => $timestamp, location => $location });
 		&Websocket::send('tab', { console => &Websocket::console_command('appointmentDetailGrabber', $app, $uuid)});
 		&Websocket::send('tab', { console => &Websocket::console_command('continentRecord', { uuid => $uuid, app => $app, purpose => 'app', timestamp => $timestamp, navigation => 'once' })});
 		&global_appt_measure_writer({
@@ -194,8 +198,14 @@ sub global_appt_measure_writer($data) {
 
 sub appt_measure_action($data) {
 	my $amcm = $data->{'appt_measure'}->{'cm'} || [];
+	my $location = $data->{'location'} // '';
 	foreach my $cm ( @{$amcm} ) {
 #		next unless $cm->{'match'} && $cm->{'action'};
+		# A condition rule can name the place it is about. An empty rule location is
+		# the old app's global rule; a rule for the cottage must not fire on the
+		# phone's reading.
+		my $want_location = $cm->{'location'} // '';
+		next if length($want_location) && $want_location ne $location;
 		my $actable = 0;
 		my $chk = $cm->{'match'};
 		if ($cm->{'type'} eq 'match') {

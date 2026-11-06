@@ -8,11 +8,13 @@
 	</div>
 	<div id="weather_automation_list"></div>
 	<div id="weather_automation_form" class="weather_controls" style="display:none;">
+		<label for="weather_automation_location"><%= &subs::ui('At') %></label>
+		<select id="weather_automation_location"></select>
 		<label for="weather_automation_match"><%= &subs::ui('When the condition contains') %></label>
 		<input id="weather_automation_match" list="weather_automation_match_options" placeholder="rain" autocomplete="off">
 		<datalist id="weather_automation_match_options"></datalist>
 		<label for="weather_automation_app"><%= &subs::ui('Start') %></label>
-		<input id="weather_automation_app" placeholder="raining" autocomplete="off">
+		<input id="weather_automation_app" list="weather_app_options" placeholder="raining" autocomplete="off">
 		<select id="weather_automation_action">
 			<option value="start"><%= &subs::ui('Start the app') %></option>
 			<option value="record"><%= &subs::ui('Record it') %></option>
@@ -32,6 +34,8 @@
 		<div id="weather_measure_list"></div>
 		<div id="weather_measure_form" style="display:none;">
 			<div class="weather_controls">
+				<label for="weather_measure_location"><%= &subs::ui('At') %></label>
+				<select id="weather_measure_location"></select>
 				<label for="weather_measure_name"><%= &subs::ui('Name') %></label>
 				<input id="weather_measure_name" placeholder="<%= &subs::ui('Gusty north wind') %>" autocomplete="off">
 			</div>
@@ -56,7 +60,7 @@
 					<option value="stop"><%= &subs::ui('Stop an app') %></option>
 					<option value="run"><%= &subs::ui('Run a command') %></option>
 				</select>
-				<input id="weather_measure_app" placeholder="<%= &subs::ui('app name') %>" autocomplete="off">
+				<input id="weather_measure_app" list="weather_app_options" placeholder="<%= &subs::ui('app name') %>" autocomplete="off">
 				<input id="weather_measure_command" placeholder="<%= &subs::ui('command') %>" autocomplete="off" style="display:none;">
 			</div>
 			<div class="weather_controls">
@@ -67,4 +71,5 @@
 		</div>
 		<div class="weather_muted"><%= &subs::ui('A measurement rule reads the last observation. A rule with a duration waits until the house has kept enough readings to prove it, so a six-hour rule begins six hours after the first reading.') %></div>
 	</div>
+	<datalist id="weather_app_options"></datalist>
 </div>
