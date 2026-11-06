@@ -9,7 +9,8 @@
 # Arch/Manjaro uses the AUR (sparrow-wallet + ledger-udev). Debian/Ubuntu and
 # Fedora fetch the release package from GitHub. Anything else gets the official
 # tarball under ~/.local/opt/sparrow. A release asset's SHA-256 is checked
-# against the published manifest before it is installed.
+# against a digest pinned in this file (SPARROW_PINNED_VERSION), not against a
+# manifest from the same release; a new release needs a new pin here.
 #
 # Non-fatal by design: when a step cannot run it prints the exact commands to
 # finish by hand, so a desktop install never fails because of the wallet.
@@ -56,8 +57,23 @@ case "$machine" in
 esac
 
 # --- release helpers --------------------------------------------------------
-api="https://api.github.com/repos/sparrowwallet/sparrow/releases/latest"
+SPARROW_PINNED_VERSION=2.5.6
+api="https://api.github.com/repos/sparrowwallet/sparrow/releases/tags/$SPARROW_PINNED_VERSION"
 latest=""
+
+# The trust anchor: digests for the pinned release, in this file. Update
+# both the version and this table together.
+pinned_sha256() {
+	case "$1" in
+		sparrowwallet_2.5.6-1_amd64.deb) printf '%s\n' 341f89bb74f14503368357ce9e0311bb695c8402045e9c8cd1c0f555f2d12b43 ;;
+		sparrowwallet_2.5.6-1_arm64.deb) printf '%s\n' beae5ec57c87b04bf5dfd93223bce7262f82705b26ba246fb22f4530aa37ed1e ;;
+		sparrowwallet-2.5.6-1.x86_64.rpm) printf '%s\n' b941ff7814110fae347a29ba6ff34fc8be15dc616366a9ac1d2552db153f7a44 ;;
+		sparrowwallet-2.5.6-1.aarch64.rpm) printf '%s\n' fdee8cf63a97e6e452b4e3405f02cbf4ea053b9d153d7cf920a78f8f4592d039 ;;
+		sparrowwallet-2.5.6-x86_64.tar.gz) printf '%s\n' 6085a16a86feb48a637fa69f0ec4a92e1b0c1f0edb4ba76d677a0a158984ef15 ;;
+		sparrowwallet-2.5.6-aarch64.tar.gz) printf '%s\n' bd2a403ec5a039437f0ff39e96b1e296e4a5a038f958693686c9043c83f5ce4b ;;
+		*) return 1 ;;
+	esac
+}
 release_url() {
 	[ -n "$latest" ] || return 1
 	curl -fsSL --max-time 30 "$api" 2>/dev/null \
@@ -70,17 +86,15 @@ release_url() {
 verify_asset() {
 	file=$1
 	name=$2
-	[ -n "$latest" ] || { say "  no release tag to verify against; refusing"; return 1; }
-	manifest="https://github.com/sparrowwallet/sparrow/releases/download/$latest/sparrow-$latest-manifest.txt"
-	want=$(curl -fsSL --max-time 30 "$manifest" 2>/dev/null | awk -v n="$name" '$2 == "*" n { print $1 }' | head -n 1 || true)
-	[ -n "$want" ] || { say "  no checksum in the manifest; refusing to install $name"; return 1; }
+	want=$(pinned_sha256 "$name" || true)
+	[ -n "$want" ] || { say "  no in-tree digest for $name; refusing to install it"; return 1; }
 	if command -v sha256sum >/dev/null 2>&1; then
 		got=$(sha256sum "$file" | awk '{ print $1 }')
 	else
 		got=$(shasum -a 256 "$file" | awk '{ print $1 }')
 	fi
 	if [ "$got" = "$want" ]; then
-		say "  sha256 ok"
+		say "  sha256 ok (pinned $SPARROW_PINNED_VERSION)"
 		return 0
 	fi
 	say "  sha256 MISMATCH for $name (expected $want, got $got)"
@@ -95,35 +109,8 @@ if [ "$WITH_SPARROW" -eq 1 ]; then
 		say "Sparrow: no prebuilt package for $(uname -m); download it from https://sparrowwallet.com/"
 	else
 		case "$os_id" in
-			*arch*|*manjaro*)
-				if command -v yay >/dev/null 2>&1; then
-					say "Sparrow: installing the AUR package sparrow-wallet"
-					if try yay -S --needed --noconfirm sparrow-wallet; then
-						note "Sparrow: installed"
-					else
-						say "Sparrow: the AUR install did not finish; run: yay -S sparrow-wallet"
-					fi
-				elif command -v paru >/dev/null 2>&1; then
-					say "Sparrow: installing the AUR package sparrow-wallet"
-					if try paru -S --needed --noconfirm sparrow-wallet; then
-						note "Sparrow: installed"
-					else
-						say "Sparrow: the AUR install did not finish; run: paru -S sparrow-wallet"
-					fi
-				elif command -v pamac >/dev/null 2>&1; then
-					say "Sparrow: building the AUR package sparrow-wallet"
-					if try pamac build --no-confirm sparrow-wallet; then
-						note "Sparrow: installed"
-					else
-						say "Sparrow: the build did not finish; run: pamac build sparrow-wallet"
-					fi
-				else
-					say "Sparrow: no AUR helper found. Install it with:"
-					say "  yay -S sparrow-wallet ledger-udev"
-				fi
-				;;
 			*debian*|*ubuntu*)
-				latest=$(curl -fsSL --max-time 30 "$api" 2>/dev/null | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' | head -n 1 || true)
+				latest="$SPARROW_PINNED_VERSION"
 				url=$(release_url "_${deb_arch}\\.deb\$" || true)
 				if [ -z "$url" ]; then
 					say "Sparrow: no .deb found for $deb_arch; download it from https://sparrowwallet.com/"
@@ -146,7 +133,7 @@ if [ "$WITH_SPARROW" -eq 1 ]; then
 				fi
 				;;
 			*fedora*|*rhel*)
-				latest=$(curl -fsSL --max-time 30 "$api" 2>/dev/null | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' | head -n 1 || true)
+				latest="$SPARROW_PINNED_VERSION"
 				url=$(release_url "${arch}\\.rpm\$" || true)
 				if [ -z "$url" ]; then
 					say "Sparrow: no .rpm found for $arch; download it from https://sparrowwallet.com/"
@@ -169,7 +156,7 @@ if [ "$WITH_SPARROW" -eq 1 ]; then
 				fi
 				;;
 			*)
-				latest=$(curl -fsSL --max-time 30 "$api" 2>/dev/null | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' | head -n 1 || true)
+				latest="$SPARROW_PINNED_VERSION"
 				url=$(release_url "${arch}\\.tar\\.gz\$" || true)
 				if [ -z "$url" ]; then
 					say "Sparrow: no tarball found for $arch; download it from https://sparrowwallet.com/"

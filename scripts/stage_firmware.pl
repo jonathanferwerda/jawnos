@@ -38,6 +38,18 @@ my @targets = (
 		source  => 'jp/alarmclock/.pio/build/pico2w/firmware.bin',
 		dest    => 'jp/alarmclock/build/rp2040.rp2040.rpipico2w/alarmclock.ino.bin',
 	},
+	{
+		name    => 'deck (ESP32-S3)',
+		project => 'jt',
+		source  => 'jt/.pio/build/deck/firmware.bin',
+		dest    => 'jt/build/deck/firmware.bin',
+	},
+	{
+		name    => 'watch (ESP32-S3)',
+		project => 'jw',
+		source  => 'jw/.pio/build/watch/firmware.bin',
+		dest    => 'jw/build/watch/firmware.bin',
+	},
 );
 
 if ($build) {

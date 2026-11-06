@@ -43,6 +43,14 @@ my $home_file = &subs::home('~/') . '.president/ws_watcher';
 # house-wide pl_time can expire while that screen stays open - and the manager
 # would paint its server-rendered dock and then freeze: no connect frame, no
 # window, header or appointment push ever reaches the page.
+# A console command is data, not source: the browser routes the name through
+# its table (public/js/manager/websocket/00_console_router.js) and refuses
+# anything else. The terminal's deliberate JS line is the only exception.
+sub console_command {
+	my ($cmd, @args) = @_;
+	return { cmd => $cmd, args => \@args };
+}
+
 sub send() {
 	my ($app,$msg) = @_;
 	my ($db,$database,$sql) = &subs::database_grabber();

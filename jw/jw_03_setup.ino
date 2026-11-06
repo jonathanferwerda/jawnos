@@ -49,7 +49,8 @@ static void voice_trigger_apply() {
 }
 
 void jawn_setup() {
-  server.collectHeaders("authorization");
+  const char *jawn_ota_headers[] = { "authorization" };
+  server.collectHeaders(jawn_ota_headers, 1);
   Serial.begin(921600);
   // Never let the console block the UI. The USB-Serial/JTAG CDC write waits up
   // to 20 x 100 ms (2 s) per call when the host is not reading -- which is

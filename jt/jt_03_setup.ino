@@ -1,5 +1,6 @@
 void jawn_setup() {
-  server.collectHeaders("authorization");
+  const char *jawn_ota_headers[] = { "authorization" };
+  server.collectHeaders(jawn_ota_headers, 1);
   Serial.begin(115200);
   // mbedTLS allocates its ~16 KB handshake buffers from internal RAM only,
   // and this board's internal heap (46 KB free, 31 KB largest block) cannot

@@ -517,7 +517,9 @@ sub run_command {
 
 			&Websocket::send('server', $json);
 			sleep(.3);
-			my $msg = { app => $app, whoami => $whoami, hostname => $hostname, uuid => &subs::random_string_creator(25), console => $command };
+			# The terminal is a JS console the person is using deliberately; this
+			# is the one named command that runs the line they typed.
+			my $msg = { app => $app, whoami => $whoami, hostname => $hostname, uuid => &subs::random_string_creator(25), console => &Websocket::console_command('terminalJs', $command) };
 			&Websocket::send('server', $msg);
 		}
 		return 'done';

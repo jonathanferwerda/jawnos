@@ -1,5 +1,6 @@
 /* [[js-split]]
    websocket.js is part 1. The rest live in websocket/ in name order:
+     00_console_router.js  - jawnosConsoleRun, the command router
      01_message_handler.js  - wsMessageHandler, the incoming message dispatcher
      02_heartbeat_and_reload.js  - heartbeat settle, media/neighbour handlers, stop/lock and in-place reload
      03_watchdog.js  - local liveness watch, wake-by-clock-jump, reconnect resync

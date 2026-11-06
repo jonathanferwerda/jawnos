@@ -88,16 +88,21 @@ sub action_7519 {
 	my $t = localtime;
 	my $db_exists = 0;
 	$backup = &subs::home($backup);
+	# The backup is named by the request; keep it inside the house or refuse.
+	unless (length $backup && &subs::path_is_within($backup, &subs::home('~'))) {
+		$c->render(json => { authentication => 'denied', error => 'not a house backup' });
+		return;
+	}
 	my $computer = $c->param('computer');
 	my $local_address = $c->tx->local_address;
 	my $remote_address = $c->tx->remote_address;
 	my $encryption_standard = &subs::setting_grabber({ app => 'misc', setting => 'encryption_standard' } ) || "aes-256-ctr";
-	if ($backup =~ /enc$/gi) {
+	if ($backup =~ /\.enc\z/i) {
 		my $backup_file = $backup;
-		$backup_file =~ s/.enc$//gi;
+		$backup_file =~ s/\.enc\z//i;
 		$database = $backup_file . '.db';
 		unless (-e $database && -s $database > 5000) {
-			my $data = `tail $backup`;
+			my $data = `tail ` . quote($backup);
 			my @split_data = split $universal_splitter, $data;
 			$encryption_standard = &subs::decrypter($secret, $split_data[1]);
 			&subs::openssl_file_crypt('d', $encryption_standard, $secret, $backup, $database, 0, 1);
@@ -109,7 +114,7 @@ sub action_7519 {
 				$db_exists = 1;
 			}
 			else {
-				`shred -u $database`;
+				system('shred', '-u', $database);
 				$db_exists = 0;
 			}
 		}

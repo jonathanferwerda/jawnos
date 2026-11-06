@@ -434,31 +434,26 @@ sub padlock_time_extender($c) {
 }
 
 sub sms_send_command($digits, $message) {
-	# json_chars hands back characters, not UTF-8 bytes: the console string is
-	# concatenated with character literals and then JSON-encoded again for the
-	# socket, so bytes here would be read as Latin-1 and an emoji would reach the
-	# bridge as mojibake (or be refused).
-	my $d = &subs::json_chars($digits);
-	my $m = &subs::json_chars($message);
-	return 'typeof jawnSmsSend === "function" ? jawnSmsSend(' . $d . ',' . $m . ')'
-		. ' : (window.JawnSms && window.JawnSms.send ? (window.JawnSms.send(' . $d . ',' . $m . '), "bridge")'
-		. ' : (function(){ $.post("/manager/sms/termux_fallback", {digits: ' . $d . ', message: ' . $m . '}); return "termux"; })())';
+	# A command object, not source: the browser router runs jawnSmsSend (or the
+	# bridge/termux fallback) from its table.
+	return {
+		cmd => 'smsSend',
+		args => [ &subs::json_chars($digits), &subs::json_chars($message) ]
+	};
 }
 
 sub sms_mms_command($digits, $text, $parts, $jawn_uuid) {
-	my $d = &subs::json_chars($digits);
-	my $t = &subs::json_chars($text);
-	my $p = &subs::json_chars($parts);
-	my $u = &subs::json_chars($jawn_uuid || '');
-	my $call = 'jawnSmsMms(' . $d . ',' . $t . ',' . $p . ',' . $u . ')';
-	# The command names its own outcome in the phone's log: 'ok' means the page
-	# had the bridge and called it, 'no bridge' means the app page is old or this
-	# is not the JawnOS app. The bridge then posts its own result (via mms/share),
-	# including the system MMS row it filed (its id, date and thread) so the
-	# house row can wear the same identity instead of standing beside it.
-	return '(function(){ try { var r = (typeof jawnSmsMms === "function") ? ' . $call . ' : "no bridge";'
-		. ' if (typeof window.__jawnSmsResult === "function") { window.__jawnSmsResult({ ok: (r === "ok" ? 1 : 0), via: "mms_command", error: (r === "ok" ? "" : r) }); }'
-		. ' return r; } catch (e) { if (typeof window.__jawnSmsResult === "function") { window.__jawnSmsResult({ ok: 0, via: "mms_command", error: String(e) }); } return "error"; } })()';
+	# The browser router calls jawnSmsMms and reports its own outcome through
+	# window.__jawnSmsResult (see 00_console_router.js).
+	return {
+		cmd => 'smsMms',
+		args => [
+			&subs::json_chars($digits),
+			&subs::json_chars($text),
+			&subs::json_chars($parts),
+			&subs::json_chars($jawn_uuid || '')
+		]
+	};
 }
 
 sub telephony_status() {

@@ -97,7 +97,7 @@ like($wallet, qr/refusing to install/, 'a missing wallet checksum is a hard fail
 
 my $jt = source('jt/jt_02_lorawan_radio_gps.ino') . source('jt/jt_03_setup.ino');
 like($jt, qr/ota_refused = true/, 'the ESP32 OTA refuses an unauthorized upload');
-like($jt, qr/collectHeaders\("authorization"\)/, 'and collects the authorization header');
+like($jt, qr/collectHeaders\(jawn_ota_headers, 1\)/, 'and collects the authorization header');
 
 my $jw = source('jw/jw_03_setup.ino');
 like($jw, qr/ota_refused = true/, 'the second ESP32 sketch refuses an unauthorized upload');

@@ -1,0 +1,28 @@
+[Unit]
+Description=JawnOS nightly security audit (tree + host)
+Documentation=file:/home/jawn/jawnos/docs/AGENTS.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+WorkingDirectory=/home/jawn/jawnos
+Environment=HOME=/root
+Environment=JAWNOS_NODE=/home/jawn/.local/opt/node/bin/node
+ExecStart=/usr/bin/perl /home/jawn/jawnos/scripts/security_audit.pl --write-report
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+MemoryMax=512M
+CPUQuota=50%
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/root/.presidency
+NoNewPrivileges=yes
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

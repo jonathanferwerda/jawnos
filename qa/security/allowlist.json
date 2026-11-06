@@ -1,0 +1,12 @@
+[
+	{
+		"id": "perl.eval.string",
+		"path": "lib/JawnOS/Manager/Part32.pm",
+		"reason": "The unit calculator evaluates a numeric formula built from gb measures; it is not request text."
+	},
+	{
+		"id": "js.eval",
+		"path": "public/js/manager/websocket/00_console_router.js",
+		"reason": "The explicit terminalJs command: the terminal is a JS console the person is using deliberately. Every other frame is routed, never evaluated."
+	}
+]
