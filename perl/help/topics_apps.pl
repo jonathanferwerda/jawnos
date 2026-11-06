@@ -97,21 +97,21 @@ $topic{'clock'} = {
 $topic{'gallery'} = {
 		'title' => 'Gallery', category => 'apps', app => 'gallery',
 		templates => [ 'templates/apps/gallery.html.ep', 'public/js/images.js' ],
-		controls => [ 'Albums', 'All photos', 'Search', 'Newest first', 'Oldest first', 'Archives', 'Lock', 'Unlock', 'Previous', 'Next', 'Close', 'Full screen', 'File information', 'Set as main image', 'Fetch home', 'Delete' ],
+		controls => [ 'Albums', 'All photos', 'Search', 'Configure', 'Order', 'Archives', 'Lock', 'Unlock', 'Previous', 'Next', 'Close', 'Full screen', 'File information', 'Set as main image', 'Fetch home', 'Delete' ],
 		verified => '2026-11-05',
 		summary => 'Browse your photos and videos by album, in a grid, or one at a time.',
 		body => [
 			'Gallery is the photo browser. It opens on **Albums**: one cover per app that has photos or videos, with the number of items in each. Tap an album to see its photos in a grid, or tap **All photos** to see everything.',
 			'Tap any photo to open the viewer: the photo or video fills the window, Previous and Next (or a swipe, a trackpad\'s sideways swipe, or the arrow keys) move through the set, and Close returns to the grid. The bar under the photo offers File information, Set as main image (the cover the app uses), Fetch home and Delete. Fetch home appears only for a photo that lives on another machine: it brings that photo back to this one.',
 			'A picture opened from Folders arrives in the viewer straight away, with the rest of that folder\'s pictures as the grid behind it - Close leaves you on the folder, not the album list. A picture opened from Travel\'s Nearby strip is the same: the whole mapped ground\'s pictures are the set behind it, so pressing the Nearby count and then one picture keeps the rest of that view a swipe away.',
-			'Which photos appear is decided by the apps whose visibility shows them: a private album is hidden everywhere, even at home, and never appears on the timeline. It can only be found in a private place with no Enemy present, and even then it waits for the gallery lock. The search box finds photos by app or file name, and the sort button flips the order between newest and oldest first. A photo whose local copy has left this machine is shown from the house\'s archive drive when there is one - on any machine, including the machine holding it - so an album that was archived still browses. Archives, in the header, is that choice: it is on by default, and pressing it shows only what is on this machine; press it again to bring the archived photos back.',
+			'Which photos appear is decided by the apps whose visibility shows them: a private album is hidden everywhere, even at home, and never appears on the timeline. It can only be found in a private place with no Enemy present, and even then it waits for the gallery lock. The search box finds photos by app or file name. The gear opens the Gallery configuration: Order chooses newest or oldest first, and Archives includes photos kept on the house\'s archive drive when their local copy is gone - on any machine, including the machine holding it. Both choices are remembered on this machine, so a reopened gallery keeps them.',
 			'A photo is dated by the appointment that holds it — the moment it was taken or filed — not by when its record reached this machine, so the day headings, the viewer and File information all agree.',
 			'An album that is Public or Dangerous opens straight away, sealed photos and all. A private album stays out of the grid until the gallery is unlocked: press **Lock** to open the padlock view and unlock it with this phone or computer\'s fingerprint, or with the recovery code. Outside a private place - or with an Enemy present - no unlock brings it back. The unlock is for that screen and that window only, and the padlock shuts again as soon as the Gallery window closes, the screen goes away, or the house restarts.'
 		],
 		steps => [
 			'Open Gallery from the start menu (the photo icon). It lands on Albums, one cover per app.',
 			'Tap an album to see its photos, or All photos for every app; the grid loads more as you scroll.',
-			'Use the search box to find photos by app or file name, and the sort button to switch between newest and oldest first.',
+			'Use the search box to find photos by app or file name, or the gear to choose the order and whether archived photos are included.',
 			'Tap a photo to open it full-screen. Swipe or use Previous and Next; Close returns to the grid. The square button beside Close gives the gallery the whole screen, over the taskbar, and takes it back again.',
 			'The viewer bar gives File information, Set as main image, Fetch home and Delete.',
 			'Press Lock to unlock the album the visibility rule hides; the albums it shows never need it.'

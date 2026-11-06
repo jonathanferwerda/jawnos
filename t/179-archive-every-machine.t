@@ -175,8 +175,12 @@ like($configure, qr/subs::archive_self_machine/, 'Configure offers the local dri
 like($configure, qr/effective_archive_dir/, 'and shows the effective root even outside config folders');
 like($folders_js, qr/data\.remote_uuid = remote/, 'a place click switches to the machine that holds it');
 like($gallery_routes, qr{/manager/gallery/archive_toggle}, 'the Gallery has its own Archives switch route');
-like($gallery_page, qr/id="gallery_archive"/, 'the Gallery header carries the Archives switch');
+like($gallery_routes, qr{/manager/gallery/sort}, 'and a route that keeps its order');
+like($gallery_page, qr/id="gallery_configuration"/, 'the gear opens a Gallery configuration panel');
+like($gallery_page, qr/id="gallery_archive"/, 'the panel carries the Archives switch');
+like($gallery_page, qr/id="gallery_sort_select"/, 'and the order choice moved in with it');
 like($images_js, qr{/manager/gallery/archive_toggle}, 'and the switch stores the choice');
+like($images_js, qr{/manager/gallery/sort}, 'the order is stored too');
 like($download, qr/subs::remote_agent_for\(\$c->param\('remote_uuid'\)\)/, 'a download is relayed to the machine holding the file');
 like($app_file, qr/class="little_thumb archive_file hover"/, 'an appointment file can be sent to the archive');
 like($appointment_js, qr/'click', '\.archive_file'/, 'the archive action is wired in the appointment part');

@@ -9,8 +9,18 @@
 #gallery_header { display:flex; align-items:center; gap:6px; padding:7px 8px; flex-wrap:wrap; background:#151519; border-bottom:1px solid #2a2a30; flex:0 0 auto; }
 #gallery_header .gallery_tab { font-size:13px; line-height:1; padding:8px 11px; border:1px solid #34343c; border-radius:8px; background:#1d1d23; color:#ddd; cursor:pointer; }
 #gallery_header .gallery_tab.active { background:#3a3a44; border-color:#5a5a68; color:#fff; }
-#gallery_header .gallery_lock { margin-left:auto; }
-#gallery_archive[status="on"] { background:#233a4a; border-color:#3a6a8a; color:#cfe8ff; }
+.gallery_header_right { margin-left:auto; display:flex; align-items:center; gap:6px; }
+#gallery_header .gallery_config_toggle img { width:16px; height:16px; display:block; }
+#gallery_configuration { flex:0 0 auto; background:#151519; border-bottom:1px solid #2a2a30; padding:8px 10px; }
+.gallery_cfg_bar { display:flex; align-items:center; gap:8px; font-size:12px; color:#cfcfd6; margin-bottom:4px; }
+.gallery_cfg_bar span { font-weight:600; }
+.gallery_cfg_close { margin-left:auto; background:transparent; border:0; color:#eee; font-size:18px; line-height:1; cursor:pointer; }
+.gallery_cfg_row { display:flex; align-items:center; gap:8px; flex-wrap:wrap; padding:4px 0; }
+.gallery_cfg_label { font-size:12px; color:#9a9aa6; min-width:56px; }
+.gallery_cfg_toggle { font-size:12px; padding:6px 9px; border:1px solid #444; border-radius:8px; background:#191919; color:#eee; cursor:pointer; }
+.gallery_cfg_toggle[status="on"] { background:#233a4a; border-color:#3a6a8a; color:#cfe8ff; }
+.gallery_cfg_note { font-size:11px; color:#9a9aa6; flex:1 1 220px; }
+#gallery_sort_select { font-size:12px; padding:6px 8px; border:1px solid #444; border-radius:8px; background:#191919; color:#eee; }
 #gallery_search { flex:1 1 120px; min-width:100px; font-size:14px; padding:8px 10px; border-radius:8px; border:1px solid #34343c; background:#101014; color:#eee; outline:none; }
 #gallery_search:focus { border-color:#6a6a7a; }
 #gallery_body { flex:1 1 auto; min-height:0; overflow-y:auto; overflow-x:hidden; position:relative; }
@@ -60,16 +70,34 @@
 #gallery_lock .padlock_frame { position:relative !important; inset:auto !important; transform:none !important; margin:auto; }
 #gallery_lock .padlock_frame.padlock_compact { margin:8px auto 0 !important; }
 </style>
-<div id="gallery" unlock="<%= $unlock %>" padlock="<%= scalar @{$padlock_sighting} ? 1 : 0 %>" archive="<%= (($settings->{'archive'} // 'on') ne 'off') ? 'on' : 'off' %>">
+<div id="gallery" unlock="<%= $unlock %>" padlock="<%= scalar @{$padlock_sighting} ? 1 : 0 %>" archive="<%= (($settings->{'archive'} // 'on') ne 'off') ? 'on' : 'off' %>" sort="<%= ($settings->{'sort'} || 'desc') eq 'asc' ? 'asc' : 'desc' %>">
 	<div id="gallery_header">
 		<button type="button" id="gallery_home_tab" class="gallery_tab active" hint="Albums"><%= &subs::ui('Albums') %></button>
 		<button type="button" id="gallery_all_tab" class="gallery_tab" hint="All photos"><%= &subs::ui('All photos') %></button>
 		<input id="gallery_search" type="search" autocomplete="off" hint="Search" placeholder="<%= &subs::lang('common.search') %>">
-		<button type="button" id="gallery_sort" class="gallery_tab" hint="Newest first"><%= &subs::ui('Newest first') %></button>
-		<button type="button" id="gallery_archive" class="gallery_tab gallery_archive" status="<%= (($settings->{'archive'} // 'on') ne 'off') ? 'on' : 'off' %>" hint="Archives"><%= &subs::ui('Archives') %></button>
-		<%# shown by the client when the padlock covers the gallery or when an album
-		    is hidden by the visibility rule, whichever comes first %>
-		<button type="button" id="gallery_lock_button" class="gallery_tab gallery_lock" hint="Unlock" style="display:none;"><%= &subs::ui('Unlock') %></button>
+		<span class="gallery_header_right">
+			<button type="button" id="gallery_configuration_toggle" class="gallery_tab gallery_config_toggle" hint="Configure"><img src="<%= &subs::icon_path('gear', '/images/decipherable/gear.png') %>" alt=""></button>
+			<%# shown by the client when the padlock covers the gallery or when an album
+			    is hidden by the visibility rule, whichever comes first %>
+			<button type="button" id="gallery_lock_button" class="gallery_tab gallery_lock" hint="Unlock" style="display:none;"><%= &subs::ui('Unlock') %></button>
+		</span>
+	</div>
+	<div id="gallery_configuration" style="display:none;">
+		<div class="gallery_cfg_bar">
+			<span><%= &subs::ui('Configuration') %></span>
+			<button type="button" id="gallery_configuration_close" class="gallery_cfg_close" hint="Close" aria-label="<%= &subs::ui('Close') %>">&times;</button>
+		</div>
+		<div class="gallery_cfg_row">
+			<button type="button" id="gallery_archive" class="gallery_cfg_toggle" status="<%= (($settings->{'archive'} // 'on') ne 'off') ? 'on' : 'off' %>" hint="Archives"><%= &subs::ui('Archives') %></button>
+			<span class="gallery_cfg_note"><%= &subs::ui('Show photos kept on the archive drive when their local copy is gone.') %></span>
+		</div>
+		<div class="gallery_cfg_row">
+			<label class="gallery_cfg_label" for="gallery_sort_select"><%= &subs::ui('Order') %></label>
+			<select id="gallery_sort_select" hint="Order">
+				<option value="desc"><%= &subs::ui('Newest first') %></option>
+				<option value="asc"><%= &subs::ui('Oldest first') %></option>
+			</select>
+		</div>
 	</div>
 	<div id="gallery_body">
 		<div id="gallery_albums"></div>

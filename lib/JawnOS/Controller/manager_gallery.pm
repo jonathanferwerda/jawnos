@@ -345,4 +345,20 @@ sub action_28080 {
 	$c->render(text => (&subs::setting_grabber({ app => 'gallery', setting => 'archive' }) // $status));
 }
 
+# The gallery's configured order. The data route already sorts by the request's
+# `sort`; this keeps the choice for the next window.
+# POST /manager/gallery/sort
+sub action_28081 {
+	my $c = shift;
+	my $sort = lc($c->param('sort') || '');
+	$sort = ($sort eq 'asc') ? 'asc' : 'desc';
+	&subs::setting_setter({
+		app => 'gallery',
+		setting => 'sort',
+		value => $sort,
+		timestamp => $c->param('timestamp')
+	});
+	$c->render(text => (&subs::setting_grabber({ app => 'gallery', setting => 'sort' }) // $sort));
+}
+
 1;

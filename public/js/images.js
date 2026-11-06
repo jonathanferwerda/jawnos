@@ -131,7 +131,7 @@ $(document).ready(function() {
 function galleryApplyChrome() {
 	$('#gallery_home_tab').toggleClass('active', gallery.view == 'albums');
 	$('#gallery_all_tab').toggleClass('active', gallery.view == 'grid' && !gallery.app);
-	$('#gallery_sort').text(gallery.sort == 'asc' ? jawnosT('Oldest first') : jawnosT('Newest first'));
+	$('#gallery_sort_select').val(gallery.sort == 'asc' ? 'asc' : 'desc');
 	// Archives says whether a photo whose local copy is gone is looked for on the
 	// archive drive; the server draws the first state and the toggle keeps it.
 	$('#gallery_archive').attr('status', gallery.archive == 'off' ? 'off' : 'on');
@@ -152,6 +152,7 @@ function galleryInitWindow(response) {
 		: attr;
 	gallery.padlock = $('#gallery').attr('padlock') == '1' ? 1 : 0;
 	gallery.archive = $('#gallery').attr('archive') == 'off' ? 'off' : 'on';
+	gallery.sort = $('#gallery').attr('sort') == 'asc' ? 'asc' : 'desc';
 	if (attr) { galleryUnlockRemember(attr); }
 	// A visible album is theirs to browse without a print; the gate opens when
 	// they ask for the hidden ones (the Lock button), not on every open.
@@ -587,8 +588,23 @@ $(document).on('click', '#gallery_all_tab', function() {
 	$('#gallery_body').scrollTop(0);
 });
 
-$(document).on('click', '#gallery_sort', function() {
-	gallery.sort = gallery.sort == 'asc' ? 'desc' : 'asc';
+// The gear opens the gallery's own configuration: Archives and Order. Both are
+// stored on this machine, so a reopened gallery keeps them.
+$(document).on('click', '#gallery_configuration_toggle', function() {
+	$('#gallery_configuration').toggle();
+});
+$(document).on('click', '#gallery_configuration_close', function() {
+	$('#gallery_configuration').hide();
+});
+
+$(document).on('change', '#gallery_sort_select', function() {
+	gallery.sort = $(this).val() == 'asc' ? 'asc' : 'desc';
+	$.ajax({
+		url: '/manager/gallery/sort',
+		type: 'POST',
+		data: { sort: gallery.sort, timestamp: Date.now() }
+	});
+	gallery.files = null;
 	galleryFetch(true);
 });
 
