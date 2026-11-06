@@ -93,4 +93,33 @@ TODO: {
 	is($? >> 8, 1, 'a two-byte magic is not proof that a credential opened the file');
 }
 
+# --- a short random block is not a text verdict -----------------------------
+# A wrong key's output is free of NUL and control bytes often enough over 32
+# bytes (about two runs in a hundred) that the wrong-credential walk above used
+# to fail about once in twenty. The verdict has to read utf8::decode's answer,
+# and it must keep calling real text text.
+{
+	my $root = "$FindBin::Bin/../";
+	my $code = 'chdir "' . $root . '" or die;'
+		. ' require "./perl/gb.pl"; require "./perl/subroutines.pl";'
+		. ' my $b = pack("H*", "5274eae4217991c08ad97afe7c48a5a38da1cb66afa96d5b77ad8eb4664f48a2");'
+		. ' print "random=", (defined &subs::plaintext_verdict($b, 1) ? "yes" : "no"), "\\n";'
+		. ' print "ascii=", (defined &subs::plaintext_verdict("a plain ascii sentence for the note, with a newline\\n", 1) ? "yes" : "no"), "\\n";'
+		. ' my $u = "caf" . pack("H*", "c3a9") . " and a longer line of words here.\\n";'
+		. ' print "utf8=", (defined &subs::plaintext_verdict($u, 1) ? "yes" : "no"), "\\n";';
+	my $errh = gensym;
+	my $pid = open3(my $in, my $out, $errh, $^X, '-e', $code);
+	close $in;
+	local $/;
+	my $stdout = <$out> // '';
+	my $stderr = <$errh> // '';
+	close $out;
+	close $errh;
+	waitpid($pid, 0);
+	is($? >> 8, 0, 'the verdict can be asked from a child');
+	like($stdout, qr/^random=no$/m, 'a 32-byte window of a wrong key is not text');
+	like($stdout, qr/^ascii=yes$/m, 'plain ASCII is still text');
+	like($stdout, qr/^utf8=yes$/m, 'valid UTF-8 is still text');
+}
+
 done_testing();

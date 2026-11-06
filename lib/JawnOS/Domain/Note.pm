@@ -431,8 +431,13 @@ sub plaintext_looks_text {
 	# bytes that short can pass by accident
 	return 0 if length($head) < 32;
 	return 0 if index($head, "\0") >= 0;
+	# The decode itself is the test. high bytes that are not valid UTF-8 are a
+	# wrong key's output far more often than they are text, so they have to
+	# clear the printable check below; reading the decode's answer is what
+	# stopped a 32-byte window of random bytes being taken as text about once
+	# in twenty runs.
 	my $copy = $head;
-	if (eval { utf8::decode($copy); 1 }) {
+	if (eval { utf8::decode($copy) }) {
 		my $control = ($copy =~ tr/\x00-\x08\x0b\x0c\x0e-\x1f\x7f//);
 		return 1 if $control == 0;
 	}
