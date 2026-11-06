@@ -655,23 +655,25 @@ sub manager_starter() {
 	}
 	elsif ($config->{'environment'} eq 'production') {
 
-		# A handheld has no boards and no guest at its LAN door: nothing dials 3000 on
-		# a phone, and since v0.1.2168 a peer reaches it on the entry port instead.
-		# The listener was a whole extra app (manager + worker) for no caller.
-		if ($device ne 'mobile') {
-			&subs::subprocessor(sub {
-			 # $SIG{'KILL'} = sub { threads->exit(); };
-				print "Starting Pro Locker Server on port " . $dock_port . "\n";
-				$ENV{MOJO_LISTEN} = 'https://*:' . $dock_port . $certs;
-				$ENV{PURPOSE} = 'locker';
-				my $prefork = &prefork_tune(Mojo::Server::Prefork->new(listen => [ $ENV{MOJO_LISTEN} ]));
-				$prefork->heartbeat_timeout(200);
-				$prefork->load_app('./perl/Manager.pl');
-				$prefork->workers(1);
-				$prefork->run;
-				$log->info('after locker server');
-			}, { name => 'Pro Locker Server' });
-		}
+		# The locker is the local ticket desk: app_ticket.pl mints the forever
+		# ticket on this port (config.json's `port`), the app opens
+		# .shots/ticket.txt on it, and JawnFirstRun waits for it, so a handheld
+		# needs it exactly as a desktop does. v0.1.2169 removed it with the tty
+		# servers and the phone could no longer sign in; the master's watchdog,
+		# which asks every configured port, then restarted the healthy tree
+		# every 90 seconds.
+		&subs::subprocessor(sub {
+		 # $SIG{'KILL'} = sub { threads->exit(); };
+			print "Starting Pro Locker Server on port " . $dock_port . "\n";
+			$ENV{MOJO_LISTEN} = 'https://*:' . $dock_port . $certs;
+			$ENV{PURPOSE} = 'locker';
+			my $prefork = &prefork_tune(Mojo::Server::Prefork->new(listen => [ $ENV{MOJO_LISTEN} ]));
+			$prefork->heartbeat_timeout(200);
+			$prefork->load_app('./perl/Manager.pl');
+			$prefork->workers(1);
+			$prefork->run;
+			$log->info('after locker server');
+		}, { name => 'Pro Locker Server' });
 
 		&subs::subprocessor(sub {
 		#  $SIG{'KILL'} = sub { threads->exit(); };

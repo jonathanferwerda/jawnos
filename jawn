@@ -1099,19 +1099,12 @@ sub reap_own_children {
 # leftover listener still answers the dock; probing only the dock called that
 # "serving" and neither the boot watch nor the watchdog ever recovered the
 # screen the app was opening (2026-10-29: the phone's 45545 stayed dead while
-# 3000 answered, and the app sat black). A handheld binds no dock listener at
-# all since v0.1.2169, so it owes an answer on the manager alone; the probe
-# decides that (probe::required_ports) and this only reads the config.
+# 3000 answered, and the app sat black).
 sub config_ports {
 	my $file = -e './config.json' ? './config.json' : '';
 	return () unless $file;
 	my $cfg = eval { return decode_json scalar read_file($file) };
 	return () unless $cfg && ref $cfg eq 'HASH';
-	# Which ports this machine owes an answer on is the probe's question: the
-	# manager always, the dock only where one is bound. A handheld binds no dock
-	# since v0.1.2169, and requiring it restarted the phone every 90 seconds.
-	eval { require './perl/probe.pl' };
-	return probe::required_ports($cfg) if defined &probe::required_ports;
 	my @ports;
 	foreach my $key ( 'port', 'working_port' ) {
 		my $p = eval { $cfg->{$key} } || 0;

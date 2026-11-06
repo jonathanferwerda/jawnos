@@ -55,48 +55,4 @@ sub serving {
 	return 0;
 }
 
-
-# The ports a tree is required to answer on. The manager (`working_port`) is
-# the one the app opens and must always answer. The dock (`port`) is a second
-# listener only a machine with a LAN door binds: since v0.1.2169 a handheld
-# binds none (no board and no guest at 3000), so requiring it made the boot
-# watch call a healthy phone dead and restart it every ninety seconds.
-# A handheld asks for the manager alone; if it names no working_port, the dock
-# is still the only port there is.
-sub required_ports {
-	my ($cfg) = @_;
-	return () unless $cfg && ref $cfg eq 'HASH';
-	my $dock = &_port($cfg->{'port'});
-	my $work = &_port($cfg->{'working_port'});
-	if (&is_mobile($cfg)) {
-		return $work ? ($work) : $dock ? ($dock) : ();
-	}
-	my @ports;
-	push @ports, $dock if $dock;
-	push @ports, $work if $work && $work != $dock;
-	return @ports;
-}
-
-sub _port {
-	my $port = shift;
-	return 0 unless defined $port && $port =~ /^[0-9]+$/ && $port > 0;
-	return $port + 0;
-}
-
-# Whether this config belongs to a handheld. An explicit `device` wins, so a
-# test (or a config copied between machines) is read as it says; only a config
-# that names no device falls back to the system image. `$^O` is 'linux' on
-# Android too, so the image, ANDROID_ROOT and the app's own package variable are
-# the signals - the same ones House.pm's sshd_platform uses.
-sub is_mobile {
-	my ($cfg) = @_;
-	my $device = ($cfg && ref $cfg eq 'HASH' && defined $cfg->{'device'}) ? lc($cfg->{'device'}) : '';
-	return 1 if $device eq 'mobile';
-	return 0 if length $device;
-	return 1 if defined $ENV{'ANDROID_ROOT'} && length $ENV{'ANDROID_ROOT'};
-	return 1 if defined $ENV{'JAWNOS_APP_PACKAGE'} && length $ENV{'JAWNOS_APP_PACKAGE'};
-	return 1 if -e '/system/bin/init';
-	return 0;
-}
-
 1;
