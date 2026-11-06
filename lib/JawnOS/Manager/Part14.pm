@@ -313,7 +313,7 @@ sub manager_reset($c) {
 		# The relay/toggle and the automation are driven here, inline: they schedule
 		# hardware jobs on this process's loop, and a forked child has no live loop to
 		# run them on - the press started the appointment but never threw the switch.
-		&subs::setting_setter({ app => $app, setting => 'toggle', value => 'on' }) if $seen eq 'yes';
+		&subs::setting_setter({ app => $app, setting => 'toggle', value => 'on', timestamp => $timestamp }) if $seen eq 'yes';
 		&subs::intelligent_automation_toggle({ appt_uuid => $uuid, app => $app, 'state' => 'on', timestamp => $timestamp });
 		&subs::intelligent_automation_toggle({ appt_uuid => $uuid, app => $app, 'state' => 'off', timestamp => $stop_timestamp }) if $stop_timestamp;
 		# The row and its header are out. The default model/option sessions can start
@@ -511,7 +511,7 @@ sub manager_reset($c) {
 			# that here would paint the session over while it still runs, so only a
 			# stop that lands now does the work at the press.
 			unless ($scheduled_stop) {
-				&subs::setting_setter({ app => $app, setting => 'toggle', value => 'off' }) if $seen eq 'yes';
+				&subs::setting_setter({ app => $app, setting => 'toggle', value => 'off', timestamp => $timestamp }) if $seen eq 'yes';
 				# a start carries the amount; this stop is when the session is finished,
 				# so it is the one movement the session makes. A record moved at creation
 				# and is not moved again here.

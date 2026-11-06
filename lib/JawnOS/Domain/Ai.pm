@@ -515,7 +515,7 @@ sub voice_command_apply {
 	my ($app, $want, $meta) = @_;
 	my $now = &subs::rightNow();
 	my $settings = &subs::settings_grabber({ app => $app }) || {};
-	&subs::setting_setter({ app => $app, setting => 'toggle', value => $want });
+	&subs::setting_setter({ app => $app, setting => 'toggle', value => $want, timestamp => ($meta->{'ts'} || $now) });
 	my $db_data = {
 		app => $app,
 		server_time => $now,

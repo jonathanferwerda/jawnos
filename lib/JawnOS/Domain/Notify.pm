@@ -178,6 +178,14 @@ sub embedded_toggle($data) {
 	my $edt = $data->{'edt'};
 	my $state = $data->{'state'};
 	my $timestamp = $data->{'timestamp'} || &subs::rightNow();
+	# A command that names an older moment than the toggle already holds is a
+	# delayed copy: the panel pressed start, the switch was thrown after it, and
+	# this relay command is only now arriving. Drop it instead of turning the
+	# hardware back on; the caller gets the state that actually holds.
+	if (&subs::toggle_event_is_older($app, $timestamp)) {
+		my $cur = &subs::setting_grabber({ app => $app, setting => 'toggle' });
+		return { state => ($cur eq 'on' ? 1 : 0), formatted_state => $cur };
+	}
 	my $component = $data->{'component'};
 	my $uuid = $data->{'uuid'} || &subs::random_string_creator();
 	my $appt_uuid = $data->{'appt_uuid'};
@@ -241,7 +249,7 @@ sub embedded_toggle($data) {
 		&Websocket::send('tab', { console => '$(\'.appointment[app="' . $app . '"]\').find(\'.enabler[type="toggle"\').attr(\'status\',\'' .$save_state . '\').attr(\'src\', \'' . $toggle_src . '\');' });
 		# The direct command already drove the board we are addressing, so the
 		# toggle fan-out must not echo that same state back to it over BLE.
-		&subs::setting_setter({ app => $app, setting => 'toggle', value => $save_state, source => 'toggle', source_chip_id => $chip_id }) if $data->{'counted'} == 0 || !$data->{'counted'};
+		&subs::setting_setter({ app => $app, setting => 'toggle', value => $save_state, source => 'toggle', source_chip_id => $chip_id, timestamp => $timestamp }) if $data->{'counted'} == 0 || !$data->{'counted'};
 	}
 
 	# A board on the bridge - or one with no LAN address at all - takes the

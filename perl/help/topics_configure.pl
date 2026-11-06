@@ -180,7 +180,7 @@ $topic{'handbook'} = {
 $topic{'embedded'} = {
 		title => 'Embedded', category => 'apps', app => 'embedded',
 		templates => [ 'templates/embedded/embedded.html.ep', 'templates/embedded/component.html.ep' ],
-		verified => '2026-11-05',
+		verified => '2026-11-06',
 		summary => 'The device fleet, from the desktop.',
 		body => [
 			'Embedded is the fleet view: it lists the JawnOS devices on your network, their purposes and models, and lets you query one, send a room to a watch, deck or board, and set how a device behaves.',
@@ -188,6 +188,7 @@ $topic{'embedded'} = {
 			'A board that crashed into its provisioning AP can be recovered without joining it: plug it in over USB and press Restore over USB on its row. The manager writes the stored WiFi, name and token into the board\'s config file - the USB link is too narrow to carry the whole role - the board acknowledges and reboots onto its network. Its role arrives as a compact board config over the Bluetooth bridge or the watch channel, so a board on the bridge resumes with its switches and relays already set before it has any network at all.',
 			'Picking a device shows its controls: its name, Now Me (send it a fresh copy of its settings and screens) and Query (ask a board what it is). A watch or t-deck row also carries the Voice select, which chooses how the device listens (see Voice and wake words), and the Noise floor select, which sets how quiet the room has to go before a recorded command is taken to have ended. A watch or t-deck row carries its room count and screen timeout, and the Audio replies toggle, which decides whether the guide associate answers a spoken request out loud on the device or only on its screen.',
 			'The WiFi card sets the network a watch, deck or board joins. Type the network name or press Scan to fill the list from this machine\'s radio, enter its password, then press Update WiFi. A password box that reads set already holds one: leave it blank to keep it, and type a new password only to replace it. The AP fields name the network the device offers when it cannot join yours. If the device is not on the network, the update goes over Bluetooth; a board wired in over USB can be written with Update USB instead.',
+			'A switch on a board is the newest word: it moves its relay at once and the panel follows it. The board keeps the moment of the flip, so a command minted before it - a start pressed on the panel a moment earlier - is dropped instead of turning the relay back on.',
 			'A pin can record instead of running a command: choose Video or Audio under Movement, then pick the source - Camera (rear), Camera (front), Microphone or System audio - and the machine that records. The first press starts the recording on that machine; the next press stops it. This machine records on the computer, phone or server that serves the board.'
 		],
 		steps => [

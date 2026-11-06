@@ -336,6 +336,11 @@ void wifi_supervise() {
 
 static void local_apply(int idx, const String &state) {
   local_in_t &in = local_ins[idx];
+  // The switch just moved, so it is the newest word on these pins. Stamp them
+  // with the event time the manager's commands are ordered by; a relay command
+  // that was minted before this flip and arrives late is then dropped instead
+  // of turning the relay back on.
+  int64_t ev = event_ms();
   for (int o = 0; o < in.out_n; o++) {
     int op = in.out_pin[o];
     String st = state;
@@ -344,6 +349,7 @@ static void local_apply(int idx, const String &state) {
     digitalWrite(op, st == "on" ? HIGH : LOW);
     if (in.out_comp[o] == "relay") { config["relay"][String(op)] = st; }
     else if (in.out_comp[o] == "led") { config["led"][String(op)] = st; }
+    command_mark_pin(op, ev);
     event_log(op, st == "on", 1);
     local_out_changed_at = millis();
   }
@@ -416,6 +422,7 @@ static void local_input_scanner() {
         sd["switch"] = String(in.pin);
         sd["state"] = state;
         sd["timestamp"] = event_timestamp();
+        sd["timestamp_ms"] = event_timestamp_ms();
         sd["ms"] = String(millis());
         sm["data"] = sd;
         ble_send_json(JSON.stringify(sm));
@@ -425,7 +432,8 @@ static void local_input_scanner() {
         coreJobs[jobTime]["type"] = "https";
         coreJobs[jobTime]["url"] = "https://" + homebaseIP +
           "/watch/switch?room=1&switch=" + String(in.pin) + "&state=" + state +
-          "&chip_id=" + String(rp2040.getChipID());
+          "&chip_id=" + String(rp2040.getChipID()) +
+          "&timestamp=" + event_timestamp() + "&timestamp_ms=" + event_timestamp_ms();
         coreJobs[jobTime]["response"] = "switch";
       }
       config_dirty = true;
@@ -449,6 +457,7 @@ static void local_input_scanner() {
           bp["button"] = String(in.pin);
           bp["toggle"] = toggle;
           bp["timestamp"] = event_timestamp();
+          bp["timestamp_ms"] = event_timestamp_ms();
           bp["ms"] = String(millis());
           bm["payload"] = bp;
           ble_send_json(JSON.stringify(bm));
@@ -458,7 +467,8 @@ static void local_input_scanner() {
           coreJobs[jobTime]["type"] = "https";
           coreJobs[jobTime]["url"] = "https://" + homebaseIP +
             "/watch/button?room=1&button=" + String(in.pin) + "&toggle=" + toggle +
-            "&chip_id=" + String(rp2040.getChipID());
+            "&chip_id=" + String(rp2040.getChipID()) +
+            "&timestamp=" + event_timestamp() + "&timestamp_ms=" + event_timestamp_ms();
           coreJobs[jobTime]["response"] = "button";
         }
         config_dirty = true;

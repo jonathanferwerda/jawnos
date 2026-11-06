@@ -340,13 +340,17 @@ sub ble_message_processor {
 			return;
 		}
 		my $tog = (($payload->{'toggle'} || 0) == 1) ? 'off' : 'on';
+		# The board's own clock, milliseconds kept: the settings layer orders toggle
+		# writes by this stamp, and a seconds-only stamp loses the race the person
+		# just watched (a start and a switch flipped a moment later).
+		my $press_ms = $payload->{'timestamp_ms'} || (($payload->{'timestamp'} || 0) * 1000) || &subs::rightNow();
 		# Write the pre-press state without a push before edt_button_presser
 		# flips it, exactly like /watch/button. Without this the press flips
 		# whatever the app happened to hold (one flip per output, and the
 		# board's own relay clicked), instead of landing on the tap's state.
 		my $btn_syl = ($edt eq 'microcontroller') ? 10 : 1;
 		my $btn_b = $ws->{ &subs::shorthand_name('button', $btn_syl) . $payload->{'button'} } || {};
-		&subs::setting_setter({ app => $btn_b->{'app'}, setting => 'toggle', value => $tog, sync => 1, source_chip_id => $chip_id }) if $btn_b->{'app'};
+		&subs::setting_setter({ app => $btn_b->{'app'}, setting => 'toggle', value => $tog, sync => 1, source_chip_id => $chip_id, timestamp => $press_ms }) if $btn_b->{'app'};
 		# Applying a tap reaches the network (a command relayed to another machine)
 		# and the database. On the listener's own reader that held up every message
 		# behind it, so the next tap was not even logged until the relay returned -
@@ -358,7 +362,7 @@ sub ble_message_processor {
 		&subs::subprocessor(sub {
 			my $returner = eval {
 				&subs::edt_button_presser({
-					timestamp => (($press_payload->{'timestamp'} || 0) * 1000) || &subs::rightNow(),
+					timestamp => $press_ms,
 					room => $press_payload->{'room'},
 					watch_settings => $press_ws,
 					button => $press_payload->{'button'},
@@ -406,6 +410,7 @@ sub ble_message_processor {
 		my $syl_count = ($edt eq 'microcontroller') ? 10 : 1;
 		my $b = $ws->{ &subs::shorthand_name('switch', $syl_count) . $button } || {};
 		my $toggle = ($state eq 'on') ? 'off' : 'on';
+		my $sw_ms = $payload->{'timestamp_ms'} || (($payload->{'timestamp'} || 0) * 1000) || &subs::rightNow();
 		$log->info('BLE switch for ' . ($chip_id || '?') . ': switch ' . $button . ' -> ' . $toggle . ' @' . ($payload->{'ms'} // '?'));
 		# Same reason as a button: the movement can relay a command or run one.
 		my ($sw_edt, $sw_chip, $sw_ws, $sw_button, $sw_b, $sw_payload, $sw_toggle)
@@ -415,10 +420,10 @@ sub ble_message_processor {
 			# state without a push and with this chip excluded, exactly like
 			# /watch/switch. Pushing the intermediate state back was a second relay
 			# command (pin -1, or a visible click) and the flash the person saw.
-			&subs::setting_setter({ app => $sw_b->{'app'}, setting => 'toggle', value => $sw_toggle, sync => 1, source_chip_id => $sw_chip }) if $sw_b->{'app'};
+			&subs::setting_setter({ app => $sw_b->{'app'}, setting => 'toggle', value => $sw_toggle, sync => 1, source_chip_id => $sw_chip, timestamp => $sw_ms }) if $sw_b->{'app'};
 			eval {
 				&subs::edt_button_presser({
-					timestamp => (($sw_payload->{'timestamp'} || 0) * 1000) || &subs::rightNow(),
+					timestamp => $sw_ms,
 					room => $sw_payload->{'room'},
 					watch_settings => $sw_ws,
 					button => $sw_button,

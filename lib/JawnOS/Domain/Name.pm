@@ -207,6 +207,31 @@ sub name_change_history_apply_plan {
 	return $dropped;
 }
 
+sub toggle_event_is_older {
+	# Whether this toggle event names an earlier moment than the state already
+	# stored. A panel press, a slow HTTP relay and a queued appointment all reach
+	# the settings layer at their own pace; the event's own timestamp, not its
+	# arrival, is the last word. Compared on the row setting_setter replaces, so
+	# a device-specific row is judged against itself. A seconds stamp is read as
+	# seconds (an older board or caller), and an unstamped call is "now", never
+	# older.
+	my ($app, $timestamp, $dev, $subsetting) = @_;
+	return 0 unless defined $app && defined $timestamp;
+	return 0 unless $timestamp =~ /^\s*\d+(?:\.\d+)?\s*$/;
+	my $event = $timestamp + 0;
+	$event *= 1000 if $event > 0 && $event < 100000000000;
+	return 0 unless $event > 0;
+	$dev = &device_setter() unless defined $dev;
+	my $prior = eval {
+		&db_query('select timestamp from settings where app is ? and setting = ? and device is ? and subsetting is ? order by server_time desc limit 1', $app, 'toggle', $dev, $subsetting)->hashes->[0]
+	};
+	return 0 unless $prior && defined $prior->{'timestamp'};
+	return 0 unless $prior->{'timestamp'} =~ /^\s*\d+(?:\.\d+)?\s*$/;
+	my $stored = $prior->{'timestamp'} + 0;
+	$stored *= 1000 if $stored > 0 && $stored < 100000000000;
+	return $event < $stored ? 1 : 0;
+}
+
 sub setting_setter {
 	%setting_memo = ();
 	my $settings = shift;
@@ -256,6 +281,24 @@ sub setting_setter {
 	$dev = &warranty_device() if !$sync && (($setting // '') eq 'warranty');
 	my ($db,$database) = &database_grabber();
 	my $server_time = $settings->{'server_time'} || &rightNow();
+	if (($setting // '') eq 'toggle') {
+		# Store the event on the manager's clock so the next comparison is honest;
+		# a seconds stamp from an older caller is not a 1970 event.
+		if ($timestamp =~ /^\s*\d+(?:\.\d+)?\s*$/ && $timestamp > 0 && $timestamp < 100000000000) {
+			$timestamp = $timestamp * 1000;
+		}
+		# The newest event wins. Writers reach this gate late (a slow HTTP relay,
+		# a queued appointment, an older peer snapshot), and applying an older one
+		# flips the panel and the relay back to a state the person already left.
+		# An equal stamp is allowed, so one movement's pre-press and its final
+		# write both land. A peer replay ($sync) is left to the sync layer, which
+		# already orders rows by server_time.
+		if (!$sync && defined $settings->{'timestamp'} && &toggle_event_is_older($app, $timestamp, $dev, $subsetting)) {
+			&subs::log_writer('toggle write refused as older: ' . $app . ' ' . $value . ' @' . $timestamp);
+			return { app => $app, timestamp => $timestamp, setting => $setting, value => $value,
+				device => $dev, browser_tab_id => $browser_tab_id, refused => 1 };
+		}
+	}
 	if ($setting eq 'name_change') {
 		$value = &subs::unformat_name($value);
 		&db_update('appointments', { account => $value, server_time => $server_time }, { account => $app });

@@ -74,16 +74,33 @@ String event_timestamp() {
   return String((double)((now_ms() / 1000) - off), 0);
 }
 
-void set_epoch_seconds(int64_t seconds) {
-  epoch_ms = seconds * 1000LL;
+// The same event on the manager's clock, with the milliseconds kept. The
+// setting layer orders toggle writes by this stamp: a slow HTTP relay or a
+// queued appointment that names an older moment must not win over a switch the
+// person already moved. Zero still means "no clock yet".
+static int64_t event_ms() {
+  if (!time_defined) { return 0; }
+  int64_t off = offset_sane(offset) ? offset : 0;
+  return now_ms() - off * 1000;
+}
+String event_timestamp_ms() {
+  return String((double)event_ms(), 0);
+}
+
+void set_epoch_ms(int64_t ms) {
+  epoch_ms = ms;
   epoch_ref = millis();
   time_defined = true;
   if (TIME_T_IS_64) {
     struct timeval tv;
-    tv.tv_sec = (time_t)seconds;
-    tv.tv_usec = 0;
+    tv.tv_sec = (time_t)(ms / 1000);
+    tv.tv_usec = (long)((ms % 1000) * 1000);
     settimeofday(&tv, nullptr);
   }
+}
+
+void set_epoch_seconds(int64_t seconds) {
+  set_epoch_ms(seconds * 1000LL);
 }
 
 Servo myservo;
@@ -262,7 +279,11 @@ static bool config_reload_pending = false;
 // The stamp is part of the rebuilt id on purpose: type|app|state alone would
 // swallow a legitimate later repeat of the same state.
 #define APPLIED_CMD_MAX 12
-#define CMD_STALE_GRACE_MS 1500
+// The board's clock is set from /watch/time in milliseconds, and a command
+// minted before a physical switch must lose to it. This grace only covers the
+// sync's own one-way delay and a browser clock that is a little off; it must
+// stay well under the "a moment later" a person means when they flip a switch.
+#define CMD_STALE_GRACE_MS 250
 struct applied_cmd_t {
   String id;      // uuid when the road carries one
   String type;    // relay / led / servo / set / toggle

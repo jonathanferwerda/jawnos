@@ -26,11 +26,18 @@ void handle_jobs() {
         JSONVar timers = JSON.parse(response);
 
         int64_t timestamp = jint64(timers["timestamp"]);
+        int64_t timestamp_ms = jint64(timers["timestamp_ms"]);
         int64_t offset_s = jint64(timers["offset"]);
         // A denial page or a dead homebase is not a clock. Applying an empty
         // answer used to set offset to INT64_MIN and every later switch event
-        // carried a timestamp near -9.2e18.
-        if (timestamp > 1600000000 && timestamp < 4102444800 && offset_sane(offset_s)) {
+        // carried a timestamp near -9.2e18. The millisecond copy keeps the
+        // board's event stamps in the same sub-second frame as the manager's
+        // commands; an older manager only sends seconds and is still accepted.
+        if (timestamp_ms > 1600000000000 && timestamp_ms < 4102444800000 && offset_sane(offset_s)) {
+          offset = offset_s;
+          set_epoch_ms(timestamp_ms + offset_s * 1000LL);
+        }
+        else if (timestamp > 1600000000 && timestamp < 4102444800 && offset_sane(offset_s)) {
           // Keep the offset, not just the adjusted epoch: a switch/button event
           // must subtract it to send UTC, while the LCD keeps showing local time.
           offset = offset_s;

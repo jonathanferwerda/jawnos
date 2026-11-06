@@ -156,7 +156,7 @@ sub edt_button_presser {
 		}
 
 	}
-	&subs::setting_setter({ app => $app, setting => 'toggle', value => $toggle, source_chip_id => $chip_id });
+	&subs::setting_setter({ app => $app, setting => 'toggle', value => $toggle, source_chip_id => $chip_id, timestamp => $timestamp });
 	$db_data->{'seen'} = 'yes';
 	my $c = &subs::controller_builder();
 	my $returner;

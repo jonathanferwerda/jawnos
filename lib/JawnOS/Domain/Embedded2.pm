@@ -156,6 +156,14 @@ sub intelligent_automation_toggle {
 	my $source_chip_id = $data->{'source_chip_id'} || '';
 	$log->info('ia toggle: ' . ($app || '?') . ' state=' . (defined $data->{'state'} ? $data->{'state'} : '-') .
 		' source_chip=' . ($source_chip_id || '-') . ' remote=' . ($remote_address || '-'));
+	# An event the settings layer has already superseded must not drive relays
+	# and LEDs. The panel's start and a switch thrown a moment later are exactly
+	# this: the start arrives late, and applying it here turned the hardware back
+	# on after the person had switched it off.
+	if (&subs::toggle_event_is_older($app, $timestamp)) {
+		$log->info('ia toggle: ' . ($app || '?') . ' @' . $timestamp . ' is older than the stored toggle, outputs left alone');
+		return;
+	}
 	my $asets = &subs::settings_grabber({ app => $app, settings => ['ia','toggle'] });
 	my $jia = $asets->{'ia'};
 	my $ia = eval { return decode_json $jia } || {};

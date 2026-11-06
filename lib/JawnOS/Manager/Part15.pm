@@ -245,7 +245,7 @@ sub appt_measure_action($data) {
 				uuid => $data->{'appt_uuid'} . '-' . $data->{'timestamp'} . '-' . md5_sum $cm->{'app'} . $data->{'timestamp'} . $cm->{'action'}
 			};
 			if ($tog eq 'off') {
-				&subs::setting_setter({ app => $cm->{'app'}, setting => 'toggle', value => 'on' });
+				&subs::setting_setter({ app => $cm->{'app'}, setting => 'toggle', value => 'on', timestamp => $data->{'timestamp'} });
 				&appointment_writer(undef, $awdata);
 			}
 		}
@@ -259,7 +259,7 @@ sub appt_measure_action($data) {
 				};
 				if ($tog eq 'on') {
 					&appointment_writer(undef, $awdata);
-					&subs::setting_setter({ app => $cm->{'app'}, setting => 'toggle', value => 'off' });
+					&subs::setting_setter({ app => $cm->{'app'}, setting => 'toggle', value => 'off', timestamp => $data->{'timestamp'} });
 				}
 			}
 		}

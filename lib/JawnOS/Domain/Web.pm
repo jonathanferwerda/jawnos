@@ -504,7 +504,13 @@ sub appt_toggle_checker {
 	# rewriting an unchanged toggle cost two writes and a websocket message on
 	# every header render
 	my $current = &subs::setting_grabber({ app => $app, setting => 'toggle' });
-	&subs::setting_setter({ app => $app, setting => 'toggle', value => $toggle }) unless defined $current && $current eq $toggle;
+	if (!(defined $current && $current eq $toggle)) {
+		my %tog_write = (app => $app, setting => 'toggle', value => $toggle);
+		# the open session names the moment this derived state belongs to, so a
+		# late check cannot repaint a toggle a newer switch event already set
+		$tog_write{'timestamp'} = $open->{'timestamp'} if $open;
+		&subs::setting_setter(\%tog_write);
+	}
 	return $toggle;
 }
 

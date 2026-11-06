@@ -64,7 +64,7 @@ get '/watch/time' => sub($c) {
 		# see now_me() in Manager.pl: $offset already carries DST, and the old
 		# winter branch added a millisecond-hour (1000*3600) to a seconds epoch
 		my $offset = timegm(@t) - timelocal(@t);
-		my $returner = encode_json { timestamp => $server_time, offset => $offset };
+		my $returner = encode_json { timestamp => $server_time, timestamp_ms => &subs::rightNow(), offset => $offset };
 		$c->render(text => $returner);
 	}
 	else {
@@ -202,7 +202,7 @@ get '/watch/button' => sub($c) {
 	my $remote_address = $c->tx->remote_address;
 	if (my $watch_settings = &embeddedAuthorizer($c)) {
 		my $button = $c->param('button');
-		my $timestamp = $c->param('timestamp') * 1000 || &subs::rightNow();
+		my $timestamp = $c->param('timestamp_ms') || (($c->param('timestamp') || 0) * 1000) || &subs::rightNow();
 		my $room = $c->param('room');
 		my $toggle = $c->param('toggle');
 		# A board that delivered this tap twice must not flip twice.
@@ -223,7 +223,7 @@ get '/watch/button' => sub($c) {
 		my $b = $watch_settings->{&subs::shorthand_name('button', $syl_count) . $button} || {};
 		# The pre-press state, written without a push; edt_button_presser writes
 		# the final toggle once and excludes the originating chip below.
-		&subs::setting_setter({ app => $b->{'app'}, setting => 'toggle', value => $toggle, sync => 1, source_chip_id => $chip_id });
+		&subs::setting_setter({ app => $b->{'app'}, setting => 'toggle', value => $toggle, sync => 1, source_chip_id => $chip_id, timestamp => $timestamp });
 
 		my $returner = &subs::edt_button_presser({
 			timestamp => $timestamp,
@@ -262,7 +262,7 @@ get '/watch/switch' => sub($c) {
 		my $button = $c->param('switch');
 		my $state = $c->param('state');
 		my $toggle = $c->param('toggle');
-		my $timestamp = $c->param('timestamp') * 1000 || &subs::rightNow();
+		my $timestamp = $c->param('timestamp_ms') || (($c->param('timestamp') || 0) * 1000) || &subs::rightNow();
 		my $room = $c->param('room');
 		# A board that delivered this movement twice must not flip twice.
 		if (&subs::event_duplicate(join('|', 'switch', $chip_id // '', $button // '', $state // ''))) {
@@ -280,7 +280,7 @@ get '/watch/switch' => sub($c) {
 		# This is the state before the switch moved; edt_button_presser reads it
 		# to decide start/stop. Write it without pushing it: pushing the inverted
 		# intermediate is what made the relay click twice and the toggle flash.
-		&subs::setting_setter({ app => $b->{'app'}, setting => 'toggle', value => $state, sync => 1, source_chip_id => $chip_id });
+		&subs::setting_setter({ app => $b->{'app'}, setting => 'toggle', value => $state, sync => 1, source_chip_id => $chip_id, timestamp => $timestamp });
 		my $data = {
 			timestamp => $timestamp,
 			room => $room,
