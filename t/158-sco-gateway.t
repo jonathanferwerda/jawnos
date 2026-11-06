@@ -41,6 +41,7 @@ foreach my $row (
 	[52004, 'get', '/manager/sco/result'],
 	[52005, 'get', '/manager/sco/recording'],
 	[52007, 'post', '/manager/sco/say'],
+	[52008, 'post', '/manager/sco/hold'],
 ) {
 	my ($idx, $method, $path) = @{$row};
 	like($routes, qr/\[\s*$idx\s*,\s*'$method'\s*,\s*'$path'\s*,\s*'action_$idx'\s*\]/,
@@ -671,6 +672,26 @@ is(JawnOS::Sco::Gateway::call_over('in_call', undef, 100, 0), 'call limit',
 	like($src, qr/\$self->\{'step_id'\} = \$id/, 'the message takes the step, so the hold resumes after it');
 	like(read_file("$repo/public/js/manager/screening.js"), qr{/manager/sco/say},
 		'and the panel posts to it');
+}
+
+# The app's Hold button: on and off, and a stop the house asked for is not the
+# end of the call.
+{
+	my $h = JawnOS::Sco::Gateway->new(dir => "$dir/hold-sco", helper => $hold_fake, status_path => "$dir/hold-only.json");
+	is($h->set_hold(on => 1)->{'ok'}, 0, 'a hold cannot start with no call up');
+	$h->{'state'} = 'in_call';
+	is($h->set_hold(on => 1)->{'ok'}, 0, 'and not on a call whose plan has no music');
+	# a plan that does have a hold step
+	$h->{'steps'} = [ { hold => 1, key => 'hold', list => [ $clip ] } ];
+	$h->{'step_at'} = 0;
+	my $on = $h->set_hold(on => 1);
+	is($on->{'ok'}, 1, 'the music starts on demand');
+	ok($h->{'holding'}, 'and the call is a held call');
+	my $off = $h->set_hold(on => 0);
+	is($off->{'ok'}, 1, 'the same button stops it');
+	ok($h->{'hold_paused'}, 'leaving the caller the line');
+	$h->event({ event => 'stopped' });
+	is($h->{'state'}, 'in_call', 'a stop the house asked for does not end the call');
 }
 
 # ---------------------------------------------------------- the phone's link

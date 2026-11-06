@@ -88,6 +88,10 @@ sub answer {
 			$args{'clips'}, $args{'words'}, $args{'voice'});
 		return $gateway->arm(%args);
 	}
+	if ($cmd eq 'hold') {
+		my %args = %{$request};
+		return $gateway->set_hold(on => ($args{'action'} || '') eq 'start' ? 1 : 0);
+	}
 	if ($cmd eq 'say') {
 		my %args = %{$request};
 		delete $args{'cmd'};

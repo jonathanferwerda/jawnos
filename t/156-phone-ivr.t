@@ -234,6 +234,12 @@ is $defaults->{'flows'}->{'enemy'}, 'reject', 'an enemy is rejected by default';
 	is $saved->{'greeting'}, 'Hello', 'the prompt text is trimmed';
 	is $saved->{'thanks'}, 'Thanks', 'the thanks prompt is kept';
 	is $saved->{'hold'}, 'shuffle', 'the hold music choice is kept';
+# the flow list folds to one open at a time
+{
+	my $phone_js = '';
+	if (open(my $pf, '<', root() . '/public/js/manager/phone.js')) { local $/; $phone_js = <$pf>; close $pf; }
+	like($phone_js, qr/opening one flow folds the others/, 'the flows editor is an accordion');
+}
 	is $saved->{'flows'}->{'unknown'}, 'reject', 'the unknown flow is saved';
 	is $saved->{'flows'}->{'blacklisted'}, 'voicemail', 'the blacklist flow is saved';
 	is $saved->{'flows'}->{'friend'}, 'ivr', 'the friend flow is saved';

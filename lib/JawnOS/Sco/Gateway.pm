@@ -184,6 +184,9 @@ sub status {
 		# the hold: whether the caller is waiting on music, and the tracks this
 		# gateway can play, which is what the IVR pane's dropdown offers
 		hold => $self->{'holding'} ? 1 : 0,
+		# the caller was left listening after a typed message: the music is
+		# stopped on purpose, and the pane offers to put them back on it
+		hold_paused => $self->{'hold_paused'} ? 1 : 0,
 		hold_tracks => do {
 			require JawnOS::Sco::Hold;
 			[ map { { id => $_, label => &JawnOS::Sco::Hold::label($_) } } @{ &JawnOS::Sco::Hold::tracks() } ]
@@ -266,6 +269,8 @@ sub arm {
 	# pass through end_call; the next arm must not inherit its hold
 	$self->{'holding'} = 0;
 	$self->{'hold_at'} = 0;
+	$self->{'hold_paused'} = 0;
+	$self->{'stopping_hold'} = 0;
 	my @cmd = $self->helper_command();
 	return { ok => 0, error => 'the SCO helper is not built on this machine' } unless @cmd;
 	# A Hands-Free stack (BlueALSA) owning the link leaves us as a plain audio
@@ -460,6 +465,8 @@ sub end_call {
 	$self->{'held'} = 0;
 	$self->{'holding'} = 0;
 	$self->{'hold_at'} = 0;
+	$self->{'hold_paused'} = 0;
+	$self->{'stopping_hold'} = 0;
 	$self->{'accepted_at'} = 0;
 	$self->{'done_at'} = 0;
 	$self->{'steps'} = [];
@@ -946,6 +953,33 @@ sub _stop_rtc {
 	return 1;
 }
 
+# ---- the hold, on demand -------------------------------------------------
+# The app's call screen has a Hold button: the caller hears the house's music
+# while the person does something else, and the same button takes them off it.
+# A stop the house asked for is not the end of the call (the helper's `stopped`
+# is read that way elsewhere), and the call stays a held call so the plan's own
+# limit does not end it while the person is thinking.
+sub set_hold {
+	my ($self, %args) = @_;
+	return { ok => 0, error => 'no call is up' } unless ($self->{'state'} || '') eq 'in_call';
+	my $on = $args{'on'} ? 1 : 0;
+	unless ($on) {
+		$self->{'hold_paused'} = 1;
+		if ($self->{'holding'}) { $self->{'stopping_hold'} = 1; $self->_send(cmd => 'stop'); }
+		$self->{'last_event'} = 'hold off';
+		$self->write_status();
+		return { ok => 1, hold => 0 };
+	}
+	my $step = $self->{'steps'}->[ $self->{'step_at'} ] || {};
+	my $list = $step->{'hold'} ? ($step->{'list'} || []) : [];
+	return { ok => 0, error => 'this call has no hold music' } unless @{$list};
+	$self->{'holding'} = 1;
+	$self->{'hold_paused'} = 0;
+	$self->{'hold_at'} = 0;
+	$self->_hold_play_next();
+	return { ok => 1, hold => 1 };
+}
+
 # ---- the house speaks to the caller -------------------------------------
 # A person watching a screening can type while the caller waits on the music.
 # The message is rendered here (this is the machine with the voice) and plays
@@ -964,6 +998,10 @@ sub say_to_caller {
 	return { ok => 0, error => 'this machine cannot speak' } unless $raw;
 	my $id = $self->{'next_id'}++;
 	$self->_send(cmd => 'play', id => $id, file => $raw);
+	# After the words, leave the line to the caller: they may answer. The music
+	# does not resume by itself - the pane offers Back on hold - and the call
+	# stays a held call, so the plan's own limit does not end it.
+	$self->{'hold_paused'} = 1 if $self->{'holding'};
 	# the clip that was playing is replaced, so its `played` never arrives; this
 	# message's id is the step the guard must accept
 	$self->{'step_id'} = $id;
@@ -1111,7 +1149,11 @@ sub event {
 				&& $self->{'step_id'}
 				&& $event->{'id'} != $self->{'step_id'};
 			my $step = $self->{'steps'}->[ $self->{'step_at'} ] || {};
-			if ($step->{'hold'}) { $self->_hold_play_next(); }
+			if ($step->{'hold'}) {
+				# a pause is the caller's turn: no track follows until the pane
+				# asks for the music again
+				$self->_hold_play_next() unless $self->{'hold_paused'};
+			}
 			else { $self->_advance(); }
 		}
 	}
@@ -1134,7 +1176,9 @@ sub event {
 		# how the hold music steps aside. The call is not over: taking the gateway
 		# idle would let Reception arm again and cancel the helper under a live
 		# call. Only a closed line ends a bridged call.
-		if ($name eq 'stopped' && $self->{'rtc_up'}) {
+		if ($name eq 'stopped' && ($self->{'rtc_up'} || $self->{'stopping_hold'})) {
+			# the stop we asked for: the music off, the call still up
+			$self->{'stopping_hold'} = 0;
 			$self->write_status();
 			return 1;
 		}

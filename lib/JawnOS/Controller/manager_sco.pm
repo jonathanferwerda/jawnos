@@ -79,6 +79,16 @@ sub action_52002 {
 	}));
 }
 
+# POST /manager/sco/hold
+#
+# The app's call screen puts the caller on the house's music and takes them off
+# it. `action=start|stop`; anything else counts as stop.
+sub action_52008 {
+	my $c = shift;
+	my $action = ($c->param('action') || '') eq 'start' ? 'start' : 'stop';
+	$c->render(json => &sco_client()->call({ cmd => 'hold', action => $action }));
+}
+
 # POST /manager/sco/say
 #
 # A person watching a screening types to the caller: the words are spoken on the

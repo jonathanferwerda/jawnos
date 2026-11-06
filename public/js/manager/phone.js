@@ -424,6 +424,16 @@ $(document).on('click', '#phone_app .phone_app_ivr_flow_head', function () {
 	var key = item.attr('flow');
 	var edit = item.find('.phone_app_ivr_flow_edit');
 	var open = edit.prop('hidden');
+	// an accordion: opening one flow folds the others, so the list stays short
+	if (open) {
+		$('#phone_app .phone_app_ivr_flow_item').each(function () {
+			var other = $(this);
+			if (other.is(item)) { return; }
+			other.find('.phone_app_ivr_flow_edit').prop('hidden', true);
+			other.find('.phone_app_ivr_flow_head').removeClass('on');
+			jawnPhoneFlowOpen[other.attr('flow')] = false;
+		});
+	}
 	jawnPhoneFlowOpen[key] = open;
 	$(this).toggleClass('on', open);
 	edit.prop('hidden', !open);

@@ -132,6 +132,9 @@ function jawnScreenPanelOpen() {
 		buttons.append($('<button id="jawn_screening_connect" hint="Connect me">Connect me</button>'));
 	}
 	buttons.append($('<button id="jawn_screening_phone" hint="Open the Phone app">Open Phone</button>'));
+	// shown only after a typed message, when the line is left to the caller
+	buttons.append($('<button id="jawn_screening_hold" hint="Back on hold" style="display:none"></button>')
+		.text(jawnosT('Back on hold')));
 	box.append(buttons);
 	// Type to a caller who is waiting: the gateway speaks it and the answer
 	// arrives in the same transcript.
@@ -245,6 +248,8 @@ function jawnScreenPanelPaint(res) {
 		? (jawnosT('Call from: ') + who)
 		: (res.peer ? jawnosT('Caller line') + ': ' + res.peer : ''));
 	$('#jawn_screening_note').text(res.transcript_note || '');
+	// a message was spoken and the caller has the line: offer the music back
+	$('#jawn_screening_hold').toggle(!!res.hold_paused);
 }
 
 // The caller's number lives on the phone's bridge; a browser without the app
@@ -331,6 +336,22 @@ $(document).on('click', '#jawn_screening_say_send', function (e) {
 			}
 		},
 		error: function () { $('#jawn_screening_note').text(jawnosT('The message did not go through.')); }
+	});
+});
+
+$(document).on('click', '#jawn_screening_hold', function (e) {
+	e.preventDefault();
+	$.ajax({
+		url: '/manager/sco/hold',
+		type: 'POST',
+		dataType: 'json',
+		data: { timestamp: Date.now(), action: 'start' },
+		success: function (res) {
+			if (!res || !res.ok) {
+				$('#jawn_screening_note').text((res && res.error) || jawnosT('The caller could not be put back on hold.'));
+			}
+		},
+		error: function () { $('#jawn_screening_note').text(jawnosT('The caller could not be put back on hold.')); }
 	});
 });
 
