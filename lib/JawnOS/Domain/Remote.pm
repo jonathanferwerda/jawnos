@@ -226,6 +226,25 @@ sub remote_relay_request($c, $extra_params = {}) {
 	}
 }
 
+# The agent the ticket retry uses. It carries the caller's transport policy:
+# when the peer rail verifies against the house CA, the fresh agent verifies
+# too, because dropping the cookie must never also drop the certificate check.
+# Only a rail with no CA (a peer that has not been issued a leaf yet) keeps the
+# old lenient call, so an unenrolled fleet still mints tickets.
+sub peer_retry_useragent {
+	my ($ua) = @_;
+	my $fresh = Mojo::UserAgent->new;
+	$fresh->on(start => sub { my ($fresh_ua, $tx) = @_; &subs::peer_sign_request($tx->req); });
+	my $tls = (ref $ua && $ua->tls_options) ? $ua->tls_options : {};
+	if ($tls->{'SSL_ca_file'}) {
+		$fresh->tls_options({ %{$tls} });
+	}
+	else {
+		$fresh->insecure(1);
+	}
+	return $fresh;
+}
+
 # Fetch a peer ticket. The stored peer session cookie can be stale (the peer
 # then answers its Gate's denial with 403), while the same request freshly
 # signed needs no cookie: the peer's ticket desk verifies the pinned key. Try
@@ -235,9 +254,8 @@ sub peer_ticket_fetch {
 	return undef unless $url && ref $ua;
 	my $res = eval { $ua->inactivity_timeout(15)->get($url)->result };
 	return $res if $res && $res->is_success;
-	my $fresh = Mojo::UserAgent->new;
-	$fresh->on(start => sub { my ($fresh_ua, $tx) = @_; &subs::peer_sign_request($tx->req); });
-	return eval { $fresh->insecure(1)->inactivity_timeout(15)->get($url)->result };
+	my $fresh = &peer_retry_useragent($ua);
+	return eval { $fresh->inactivity_timeout(15)->get($url)->result };
 }
 
 # ---------------------------------------------------------------------------

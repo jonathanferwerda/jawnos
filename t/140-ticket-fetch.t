@@ -70,6 +70,19 @@ ok($res, 'the helper returns a response');
 is($res->code, 200, 'a stale-session 403 is retried without the cookie');
 like($res->body, qr/box_office/, 'and the retry carries the ticket body');
 
+# Retrying without the cookie must not also drop the certificate check. A caller
+# whose rail verifies against the house CA hands that CA to the fresh agent; a
+# rail with no CA keeps the old lenient call, so an unenrolled peer still mints.
+my $verifying = Mojo::UserAgent->new;
+$verifying->tls_options({ SSL_ca_file => '/tmp/house-ca-for-test.pem' });
+my $secure = subs::peer_retry_useragent($verifying);
+isa_ok($secure, 'Mojo::UserAgent', 'the retry agent');
+ok(!$secure->insecure, 'the retry keeps verification when the caller had a CA');
+is($secure->tls_options->{'SSL_ca_file'}, '/tmp/house-ca-for-test.pem', 'and carries the same CA file');
+
+my $legacy = subs::peer_retry_useragent(Mojo::UserAgent->new);
+ok($legacy->insecure, 'a rail with no CA keeps the lenient retry');
+
 kill 'TERM', $pid;
 waitpid($pid, 0);
 
