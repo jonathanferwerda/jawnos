@@ -3497,8 +3497,11 @@ body.dark_theme .inventory_details {
 /* ---- the screening panel, on every window ------------------------------- */
 .jawn_screening {
 	position: fixed;
-	right: 16px;
-	bottom: 16px;
+	left: 50%;
+	right: auto;
+	transform: translateX(-50%);
+	top: calc(var(--taskbar_top_h, 0px) + 16px);
+	bottom: auto;
 	width: min(360px, 92vw);
 	max-height: 62vh;
 	display: flex;

@@ -1,4 +1,4 @@
-# tests-for: lib/JawnOS/Sco/Gateway.pm lib/JawnOS/Domain/Phone.pm lib/JawnOS/Controller/manager_phone.pm perl/sco/sco_helper.c scripts/vosk_stream.py public/js/manager/phone.js public/js/manager/screening.js templates/apps/phone.html.ep public/js/manager/websocket/01_message_handler.js
+# tests-for: lib/JawnOS/Sco/Gateway.pm lib/JawnOS/Domain/Phone.pm lib/JawnOS/Controller/manager_phone.pm perl/sco/sco_helper.c scripts/vosk_stream.py public/js/manager/phone.js public/js/manager/screening.js public/css/manager.css templates/apps/phone.html.ep public/js/manager/websocket/01_message_handler.js
 # covers:    A screened call's live transcript: the helper's non-blocking tap
 #           above the recorder's gate, the gateway keeping a sentence in the
 #           status and on disk, the partial that is not yet a line, a bounded
@@ -209,8 +209,19 @@ like($js, qr/Call from:/, 'and names the caller when the status carries one');
 my $screening = read_file("$repo/public/js/manager/screening.js");
 like($screening, qr/incomingNumber/, 'the floating panel asks the phone for the caller');
 like($screening, qr/Call from:/, 'and its header names the caller too');
-like($screening, qr/getBoundingClientRect/, 'the panel measures the dock');
-like($screening, qr/calc\(100vh/, 'and keeps its buttons above it');
+# The panel belongs at the top, like the app's own screening face: at the foot
+# the dock and taskbar painted over it, and the lift code measured `#dock`, the
+# store's customer ribbon, which no Manager page has.
+like($screening, qr/function jawnScreenTopOffset/, 'the panel measures the top edge before it opens');
+like($screening, qr/getElementById\('pseudonym_home'\)/, 'and the dock it clears is the real #pseudonym_home');
+like($screening, qr/getAttribute\('position'\) === 'top'/, 'only a dock on the top edge offsets it');
+unlike($screening, qr/getElementById\('dock'\)/, 'the lookup for an id no Manager page has is gone');
+like($screening, qr/min\(62vh/, 'and the panel still stops above the foot on a short window');
+my $css = read_file("$repo/public/css/manager.css");
+like($css, qr/\.jawn_screening\s*\{[^}]*top:\s*calc\(var\(--taskbar_top_h,\s*0px\)\s*\+\s*16px\)/s,
+	'the panel hangs from the top, below a top taskbar');
+unlike($css, qr/\.jawn_screening\s*\{[^}]*bottom:\s*16px/s,
+	'it never sits at the foot where the bars cover it');
 my $ws = read_file("$repo/public/js/manager/websocket/01_message_handler.js");
 like($ws, qr/sco_transcript/, 'the websocket dispatcher knows the transcript event');
 my $tpl = read_file("$repo/templates/apps/phone.html.ep");
