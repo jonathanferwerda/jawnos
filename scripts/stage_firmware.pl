@@ -226,9 +226,11 @@ foreach my $t (@targets) {
 	my $meta = written_meta($dst, $t, $root);
 	# A board's number is what the panel compares the device against, so a build
 	# that changed without a bump would ship silently: the device would report the
-	# new image under the old number and read as up to date for ever.
+	# new image under the old number and read as up to date for ever. Compare the
+	# bytes, not the source digest - editing the stamping script moves the digest
+	# without changing a byte of any image, and that needs no version bump.
 	my $prev = staged_meta($dst);
-	if ($prev && ($prev->{'sources'} || '') ne $meta->{'sources'}
+	if ($prev && ($prev->{'sha256'} || '') ne $meta->{'sha256'}
 	    && ($prev->{'version'} || '') eq $meta->{'version'}) {
 		print "WARN   $t->{'name'}: the firmware changed but its version did not"
 			. " - bump $t->{'project'}/VERSION (perl scripts/fw_bump.pl $t->{'board'})\n";

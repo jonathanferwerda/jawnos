@@ -109,16 +109,28 @@ is($deck_meta->{'version'}, '9.9.9', 'a project with no VERSION still stages, un
 write_file("$tree/jt/VERSION", "2.0.0\n");
 run($stage, '--root', $tree);
 write_file("$tree/jt/jt_99_extra.ino", "// one more line of deck firmware\n");
+write_file("$tree/jt/.pio/build/deck/firmware.bin", "deck rebuilt\n");
 my (undef, $warn_out) = run($stage, '--root', $tree);
 like($warn_out, qr/WARN\s+deck.*bump jt\/VERSION \(perl scripts\/fw_bump\.pl deck\)/,
-	'a build that changed without a bump is named');
+	'a new build that kept its number is named');
 
 # A bump in the same change silences it: the image really is a new version.
 write_file("$tree/jt/VERSION", "2.0.1\n");
+write_file("$tree/jt/.pio/build/deck/firmware.bin", "deck rebuilt, bumped\n");
 my (undef, $quiet_out) = run($stage, '--root', $tree);
 unlike($quiet_out, qr/WARN/, 'and a bumped build stages quietly');
 is(JSON::PP->new->decode(scalar read_file("$tree/jt/build/deck/firmware.bin.json"))->{'version'},
 	'2.0.1', 'with the new version in its sidecar');
+
+# --- the stamping script alone is not a firmware change ---------------------
+# scripts/fw_version.py is part of the source digest, so editing it moves every
+# board's digest. No image byte changed, so no board's number has to.
+make_path("$tree/scripts");
+write_file("$tree/scripts/fw_version.py", "# stamp, first cut\n");
+run($stage, '--root', $tree);
+write_file("$tree/scripts/fw_version.py", "# stamp, second cut\n");
+my (undef, $stamp_out) = run($stage, '--root', $tree);
+unlike($stamp_out, qr/WARN/, 'a change to the stamping script alone needs no version bump');
 
 # --- the bumper moves one board and no other --------------------------------
 my ($lrc, $lout) = run($bump, '--root', $tree, '--list');
