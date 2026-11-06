@@ -53,6 +53,10 @@ usage: perl scripts/house_ca.pl <command>
         --dns NAME            a name the peer may be dialled by (repeatable)
         --out DIR             where to write the leaf (default: server)
         --force               replace an existing leaf
+  peer --host NAME          issue the leaf for one remote_machines row
+       --all                 issue every row (the local machine is skipped)
+       --db PATH             the house database (default <root>/database/jawnos.db)
+       --out DIR             staging directory (default server/peers)
   verify --cert FILE        check a leaf against the house CA and show its SANs
   show                      print the CA and the installed leaf
 
@@ -150,35 +154,59 @@ sub cmd_init {
 	return 0;
 }
 
-sub cmd_issue {
-	my @ip = ();
-	my @dns = ();
-	my $name = '';
-	my $out = $SERVER;
-	my $force = 0;
-	my @argv = @ARGV;
-	while (my $arg = shift @argv) {
-		if ($arg eq '--name') { $name = shift @argv // ''; next }
-		if ($arg =~ /^--name=(.*)$/) { $name = $1; next }
-		if ($arg eq '--ip') { push @ip, shift @argv // ''; next }
-		if ($arg =~ /^--ip=(.*)$/) { push @ip, $1; next }
-		if ($arg eq '--dns') { push @dns, shift @argv // ''; next }
-		if ($arg =~ /^--dns=(.*)$/) { push @dns, $1; next }
-		if ($arg eq '--out') { $out = shift @argv // $SERVER; next }
-		if ($arg =~ /^--out=(.*)$/) { $out = $1; next }
-		if ($arg eq '--force') { $force = 1; next }
+# The SANs of a peer come from the row the house already talks to it by: the
+# address it dials, the tailnet address, the manager host, the fqdn and the
+# hostname. Loopback is included so a tunnel route still verifies.
+sub peer_row_ips {
+	my ($row) = @_;
+	my %seen;
+	my @ips;
+	for my $value ( $row->{'ip'}, $row->{'tailnet_ip'}, '127.0.0.1' ) {
+		next unless valid_ip($value) && !$seen{$value}++;
+		push @ips, $value;
 	}
+	my $manager = $row->{'manager'} // '';
+	if ($manager =~ m{^https?://(\[[^\]]+\]|[^/:]+)}) {
+		(my $host = $1) =~ s/^\[|\]$//g;
+		push @ips, $host if valid_ip($host) && !$seen{$host}++;
+	}
+	return @ips;
+}
+
+sub peer_row_dns {
+	my ($row) = @_;
+	my %seen;
+	my @dns;
+	for my $value ( $row->{'fqdn'}, $row->{'hostname'} ) {
+		next unless valid_dns($value) && !$seen{lc $value}++;
+		push @dns, $value;
+	}
+	return @dns;
+}
+
+sub issue_one {
+	my (%a) = @_;
+	my $name = $a{'name'} // '';
+	my @ip  = @{ ref $a{'ip'}  eq 'ARRAY' ? $a{'ip'}  : [] };
+	my @dns = @{ ref $a{'dns'} eq 'ARRAY' ? $a{'dns'} : [] };
+	my $out = $a{'out'} // $SERVER;
+	my $force = $a{'force'} ? 1 : 0;
 	fail('--name is required') unless length $name;
 	fail("'$name' is not a usable name") unless $name =~ /^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$/;
 	fail('the CA is not initialised; run init first') unless ca_ready();
+	for my $raw ( @ip ) { fail("'$raw' is not an IP address") unless valid_ip($raw) }
+	for my $raw ( @dns ) { fail("'$raw' is not a DNS name") unless valid_dns($raw) }
+	my %ip_seen;
+	@ip = grep { !$ip_seen{$_}++ } @ip;
+	my %dns_seen;
+	@dns = grep { !$dns_seen{lc $_}++ } grep { lc($_) ne lc($name) } @dns;
 	fail('give at least one --ip or --dns') unless @ip || @dns;
-	for my $ip ( @ip ) { fail("'$ip' is not an IP address") unless valid_ip($ip) }
-	for my $dns ( @dns ) { fail("'$dns' is not a DNS name") unless valid_dns($dns) }
 
 	my $cert_out = "$out/peer-fullchain.pem";
 	my $key_out  = "$out/peer-privkey.pem";
 	if ((-e $cert_out || -e $key_out) && !$force) {
-		fail("a peer leaf already exists in $out (use --force to replace it)");
+		print "house_ca: a peer leaf already exists in $out; kept (use --force to replace it)\n";
+		return 0;
 	}
 	make_path($out);
 
@@ -227,6 +255,79 @@ sub cmd_issue {
 	print '  sans   ', join(' ', @sans), "\n";
 	print "  serial $serial\n";
 	print "  install $key_out beside it, mode 0600, then restart the tree\n";
+	return 1;
+}
+
+sub cmd_issue {
+	my @ip = ();
+	my @dns = ();
+	my $name = '';
+	my $out = $SERVER;
+	my $force = 0;
+	my @argv = @ARGV;
+	while (my $arg = shift @argv) {
+		if ($arg eq '--name') { $name = shift @argv // ''; next }
+		if ($arg =~ /^--name=(.*)$/) { $name = $1; next }
+		if ($arg eq '--ip') { push @ip, shift @argv // ''; next }
+		if ($arg =~ /^--ip=(.*)$/) { push @ip, $1; next }
+		if ($arg eq '--dns') { push @dns, shift @argv // ''; next }
+		if ($arg =~ /^--dns=(.*)$/) { push @dns, $1; next }
+		if ($arg eq '--out') { $out = shift @argv // $SERVER; next }
+		if ($arg =~ /^--out=(.*)$/) { $out = $1; next }
+		if ($arg eq '--force') { $force = 1; next }
+	}
+	my $issued = issue_one(name => $name, ip => \@ip, dns => \@dns, out => $out, force => $force);
+	fail("a peer leaf already exists in $out (use --force to replace it)") unless $issued;
+	return 0;
+}
+
+# Issue a leaf for one machine the house already knows, or for the whole roster.
+# This is the repeatable form of the rollout: the addresses come from the
+# remote_machines row, so a peer moves house and the next run covers the new
+# address. The local machine is skipped by --all; its own leaf is server/peer-*.
+sub cmd_peer {
+	my $host = '';
+	my $all = 0;
+	my $out = "$SERVER/peers";
+	my $db = "$root/database/jawnos.db";
+	my $force = 0;
+	my @argv = @ARGV;
+	while (my $arg = shift @argv) {
+		if ($arg eq '--host') { $host = shift @argv // ''; next }
+		if ($arg =~ /^--host=(.*)$/) { $host = $1; next }
+		if ($arg eq '--all') { $all = 1; next }
+		if ($arg eq '--out') { $out = shift @argv // $out; next }
+		if ($arg =~ /^--out=(.*)$/) { $out = $1; next }
+		if ($arg eq '--db') { $db = shift @argv // $db; next }
+		if ($arg =~ /^--db=(.*)$/) { $db = $1; next }
+		if ($arg eq '--force') { $force = 1; next }
+	}
+	usage() unless $all || length $host;
+	fail('the CA is not initialised; run init first') unless ca_ready();
+	fail("no database at $db") unless -f $db;
+	require DBI;
+	my $dbh = DBI->connect("dbi:SQLite:dbname=$db", '', '', { RaiseError => 1, PrintError => 0 })
+		or fail("cannot open $db");
+	my $rows = $all
+		? $dbh->selectall_arrayref('select * from remote_machines', { Slice => {} })
+		: $dbh->selectall_arrayref('select * from remote_machines where lower(hostname) = lower(?)', { Slice => {} }, $host);
+	$dbh->disconnect;
+	my @rows = @{ $rows || [] };
+	fail('no remote_machines row matches') unless @rows;
+	my $local = `hostname`;
+	chomp $local;
+	my $n = 0;
+	for my $row ( @rows ) {
+		my $name = $row->{'hostname'} // '';
+		next unless length $name;
+		next if $all && lc($name) eq lc($local);
+		my @ip = peer_row_ips($row);
+		my @dns = peer_row_dns($row);
+		print "peer $name: ", join(' ', (map { "IP:$_" } @ip), (map { "DNS:$_" } @dns)), "\n";
+		issue_one(name => $name, ip => \@ip, dns => \@dns, out => "$out/$name", force => $force);
+		$n++;
+	}
+	print "house_ca: $n peer leaf(s) under $out\n";
 	return 0;
 }
 
@@ -278,6 +379,7 @@ sub cmd_show {
 my $command = shift @ARGV // '';
 if ($command eq 'init')   { exit cmd_init() }
 if ($command eq 'issue')  { exit cmd_issue() }
+if ($command eq 'peer')   { exit cmd_peer() }
 if ($command eq 'verify') { exit cmd_verify() }
 if ($command eq 'show')   { exit cmd_show() }
 usage();

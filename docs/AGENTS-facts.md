@@ -15,6 +15,10 @@ that listener only when the peer answers there (a five-minute TCP probe) and oth
 old `insecure` rail, which the signed requests still authenticate. The repo root is the certificate
 root: `server/fullchain.pem` + `privkey.pem` (public), `server/peer-fullchain.pem` +
 `peer-privkey.pem` (house CA), `server/house-ca.pem` (public CA cert; the `.key` stays on the house).
+**Never copy `server/privkey.pem` to another machine**: a wildcard key on every box lets any one of them
+impersonate the whole domain. Give each machine its own with `scripts/tls_issue.pl --host --domain <fqdn>`
+(still DNS-01, its own certbot lineage); `scripts/house_ca.pl peer --all --out DIR` stages a peer leaf per
+`remote_machines` row, with its IPs, tailnet address and fqdn in the SAN.
 
 **Journal is a use case, not a table** — `notes` plus the Handbook, no `journal` table or template.
 **Maps are measured images** — `public/js/manager/mapengine.js` places a scan by a `home_plate` pixel +

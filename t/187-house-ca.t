@@ -140,6 +140,45 @@ SKIP: {
 	is(slurp("$tmp/server/house-ca.pem"), $before, 'and never replaces the house CA');
 }
 
+# --- enrolling the roster from remote_machines ------------------------------
+SKIP: {
+	skip 'openssl is not installed', 9 unless $openssl && length $openssl && -x $openssl;
+	my $tmp = tempdir(CLEANUP => 1);
+	make_path("$tmp/scripts");
+	copy("$root/scripts/house_ca.pl", "$tmp/scripts/house_ca.pl") or die $!;
+	`cd '$tmp' && $perl scripts/house_ca.pl init >/dev/null 2>&1`;
+
+	my $db = "$tmp/jawnos.db";
+	require DBI;
+	my $dbh = DBI->connect("dbi:SQLite:dbname=$db", '', '', { RaiseError => 1, PrintError => 0 });
+	$dbh->do('create table remote_machines (hostname text, ip text, tailnet_ip text, fqdn text, manager text)');
+	$dbh->do("insert into remote_machines values ('Laptop','192.168.1.123','100.64.0.3','laptop.example.com','https://192.168.1.123:45545')");
+	$dbh->do("insert into remote_machines values ('Phone','192.168.2.4','100.64.0.9','phone.example.com','https://127.0.0.1:60877')");
+	my $local = `hostname`;
+	chomp $local;
+	$dbh->do('insert into remote_machines values (?,?,?,?,?)', undef, $local, '10.0.0.9', '', "$local.example.com", '');
+	$dbh->disconnect;
+
+	my $run = `cd '$tmp' && $perl scripts/house_ca.pl peer --all --db '$db' --out fleet 2>&1`;
+	is($? >> 8, 0, 'peer --all issues the roster') or diag($run);
+	ok(-s "$tmp/fleet/Laptop/peer-fullchain.pem", 'the laptop leaf is written');
+	ok(-s "$tmp/fleet/Phone/peer-fullchain.pem", 'the phone leaf is written');
+	ok(!-e "$tmp/fleet/$local/peer-fullchain.pem", 'the local machine is skipped by --all');
+
+	my $text = slurp("$tmp/fleet/Laptop/peer-fullchain.pem");
+	my ($first) = $text =~ /(-----BEGIN CERTIFICATE-----.*?-----END CERTIFICATE-----)/s;
+	write_file("$tmp/laptop.pem", $first);
+	my $sans = `$openssl x509 -in '$tmp/laptop.pem' -noout -ext subjectAltName 2>&1`;
+	like($sans, qr/IP Address:192\.168\.1\.123/, 'the row LAN address is a SAN');
+	like($sans, qr/IP Address:100\.64\.0\.3/, 'the tailnet address is a SAN');
+	like($sans, qr/IP Address:127\.0\.0\.1/, 'loopback is a SAN');
+	like($sans, qr/DNS:laptop\.example\.com/, 'the fqdn is a SAN');
+
+	my $again = `cd '$tmp' && $perl scripts/house_ca.pl peer --host Laptop --db '$db' --out fleet 2>&1`;
+	is($? >> 8, 0, 'a second run keeps the existing leaf');
+	like($again, qr/already exists/, 'and says it kept it');
+}
+
 # --- the peer port and the URL rewrite --------------------------------------
 is(subs::peer_port_for({ port => 45545 }), 45551, 'the peer port is the main port plus six');
 is(subs::peer_port_for({ port => 3001 }), 3007, 'and follows a working_port too');
