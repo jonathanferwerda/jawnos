@@ -525,7 +525,13 @@ get '/watch/ota_status' => sub($c) {
 		my $file = './jp/alarmclock/build/rp2040.rp2040.rpipico2w/alarmclock.ino.bin';
 		my $total_size = -s $file;
 
-		my $percentage = sprintf("%.2f", $c->param('current_size') / $total_size * 100 ) . '%';
+		# The board reports the bytes it has written; the staged file is the
+		# denominator. A padded image can report slightly over the file size, so
+		# clamp instead of printing 103%.
+		my $current = $c->param('current_size') || 0;
+		my $percentage = $total_size ? sprintf("%.0f", $current / $total_size * 100) : '0';
+		$percentage = 100 if $percentage > 100;
+		$percentage .= '%';
 		$c->render(text => $total_size);
 		&Websocket::send('tab', { console => &Websocket::console_command('otaUploaderPercent', &subs::format_name($c->param('status')), $percentage), browser_tab_id => $c->param('browser_tab_id') });
 	}

@@ -168,7 +168,10 @@ static void usb_config_loop() {
           authorization = jstr(config["authorization"]);
           offset = jint(config["offset"]);
           int64_t ts = jint(config["timestamp"]);
-          config_writer();
+          if (!config_writer()) {
+            Serial.println("JAWNCFG ERR write failed");
+            return;
+          }
           config_init();
           if (ts > 0) { set_epoch_seconds(ts + offset); }
           Serial.println("JAWNCFG OK");
@@ -266,6 +269,9 @@ void jawn_setup() {
   digitalWrite(led,HIGH);
   delay(200);
   LittleFS.begin();
+  // The OTA shim has programmed the staged image before this application runs;
+  // keep its space for the next upload instead of carrying a stale copy.
+  LittleFS.remove("/alarmclock.bin");
   pinMode(0, OUTPUT);
 
   digitalWrite(0, HIGH);
@@ -343,7 +349,7 @@ void jawn_setup() {
       ap_ssid = t_ap_ssid;
       config["ap_password"] = ap_password;
       config["ap_ssid"] = ap_ssid;
-      config_writer();
+      if (!config_writer()) { Serial.println("[cfg] ap pair not saved"); }
     }
     if (t_ssid != "" && t_password != "") {
       Serial.println("Saving SSID and Password");
@@ -352,7 +358,7 @@ void jawn_setup() {
       password = t_password;
       config["ssid"] = ssid;
       config["password"] = password;
-      config_writer();
+      if (!config_writer()) { Serial.println("[cfg] wifi not saved"); }
       WiFi.disconnect();
       delay(400);
       wifi_start();
@@ -601,9 +607,10 @@ void jawn_setup() {
   });
   
   // The raw upload path cannot see query arguments, so the OTA authorization
-  // must arrive as a header; collect it before requests are handled.
-  static const char *authorization_headers[] = { "authorization" };
-  server.collectHeaders(authorization_headers, 1);
+  // must arrive as a header; collect it before requests are handled. The
+  // single-name form is the one this core's collectHeaders overloads accept
+  // (the array form resolves to the variadic template and does not compile).
+  server.collectHeaders("authorization");
   server.on(UriRegex("/upload/(.*)"), HTTP_POST, handleCreate, handleCreateProcess);
   server.begin();
   Serial.println("Server began");

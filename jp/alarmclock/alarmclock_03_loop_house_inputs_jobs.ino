@@ -1,8 +1,33 @@
+// The OTA staging state. The upload handler cannot answer the request itself
+// (the WebServer sends the response in handleCreate after the body), so a
+// failure is named here and sent there.
+static bool ota_failed = false;
+static String ota_error;
+static int ota_error_code = 0;
+static size_t ota_received = 0;
+
 void handleCreate() {
+  if (ota_failed) {
+    int code = ota_error_code ? ota_error_code : 500;
+    server.send(code, "text/plain", ota_error);
+    ota_failed = false;
+    ota_error_code = 0;
+    ota_error = "";
+    return;
+  }
   server.send(200, "text/plain", "");
 }
 unsigned long lastOTAMillis = millis();
 unsigned long lastOTASendMillis = millis();
+
+// Report the upload inline. A queued coreJobs entry waits behind this very
+// upload (handle_jobs does not run until the request ends), which is why the
+// panel showed nothing until the burst at the end.
+static void ota_status_send(size_t received, const char *status) {
+  https_request("https://" + homebaseIP +
+    "/watch/ota_status?current_size=" + String((unsigned long)received) +
+    "&status=" + status);
+}
 void ledFlasher(int interval, int duration) {
   pinMode(led, OUTPUT);
   unsigned long end_time = millis() + duration;
@@ -33,14 +58,46 @@ void handleCreateProcess() {
     HTTPRaw& raw = server.raw();
     
     if (raw.status == RAW_START) {
+      ota_received = 0;
+      ota_failed = false;
       if (LittleFS.exists((char *)path.c_str())) {
         LittleFS.remove((char *)path.c_str());
       }
+      // The image lives in LittleFS until the shim reads it after the reboot.
+      // A write with no room used to wedge the board and leave the relay dark;
+      // refuse it up front and tell the manager instead.
+      fs::FSInfo fi;
+      size_t room = 0;
+      if (LittleFS.info(fi)) { room = (size_t)(fi.totalBytes - fi.usedBytes); }
+      size_t need = (size_t)raw.totalSize + 4096;
+      if (raw.totalSize > 0 && room < need) {
+        ota_failed = true;
+        ota_error = "no room in LittleFS";
+        ota_error_code = 507;
+        Serial.println("[ota] no room: " + String((unsigned long)room) + " < " + String((unsigned long)need));
+        return;
+      }
       rawFile = LittleFS.open(path.c_str(), "w");
-      
+      if (!rawFile) {
+        ota_failed = true;
+        ota_error = "cannot open the image";
+        ota_error_code = 507;
+        Serial.println("[ota] cannot open " + path);
+        return;
+      }
     } else if (raw.status == RAW_WRITE) {
-      if (rawFile) {
-        rawFile.write(raw.buf, raw.currentSize);
+      if (rawFile && !ota_failed) {
+        size_t wrote = rawFile.write(raw.buf, raw.currentSize);
+        if (wrote != raw.currentSize) {
+          ota_failed = true;
+          ota_error = "short write: LittleFS is full";
+          ota_error_code = 507;
+          Serial.println("[ota] short write " + String((unsigned long)wrote) + "/" + String((unsigned long)raw.currentSize));
+          rawFile.close();
+          LittleFS.remove((char *)path.c_str());
+          return;
+        }
+        ota_received += raw.currentSize;
       }
       if ((unsigned long)(millis() - lastOTAMillis) > 20) {
         lastOTAMillis = millis();
@@ -51,50 +108,60 @@ void handleCreateProcess() {
           digitalWrite(led, HIGH);
         }
       }
-      if ((unsigned long)(millis() - lastOTASendMillis) > 3000) {
+      if (!ota_failed && (unsigned long)(millis() - lastOTASendMillis) > 2500) {
         lastOTASendMillis = millis();
-        String current_size = String(raw.totalSize);
-        String jobTime = String(millis());
-        coreJobs[jobTime]["type"] = "https";
-        coreJobs[jobTime]["url"] = "https://" + homebaseIP +
-          "/watch/ota_status?current_size=" + current_size +
-          "&status=uploading";
-        
+        ota_status_send(ota_received, "uploading");
       }
     } else if (raw.status == RAW_END) {
+      if (ota_failed) {
+        if (rawFile) { rawFile.close(); }
+        return;
+      }
       if (rawFile) {
         // The OTA shim programs whole 4 KB pages; an image that ends mid-page
         // would carry whatever followed it in the read buffer into the last
         // page. Pad with erased-flash bytes so the tail is harmless.
-        size_t pad = (4096 - (raw.totalSize % 4096)) % 4096;
+        size_t pad = (4096 - (ota_received % 4096)) % 4096;
         uint8_t fill[256];
         memset(fill, 0xFF, sizeof(fill));
         while (pad) {
           size_t n = pad < sizeof(fill) ? pad : sizeof(fill);
-          rawFile.write(fill, n);
+          size_t wrote = rawFile.write(fill, n);
+          if (wrote != n) {
+            ota_failed = true;
+            ota_error = "short write while padding";
+            ota_error_code = 507;
+            break;
+          }
           pad -= n;
         }
         rawFile.close();
+        if (ota_failed) {
+          LittleFS.remove((char *)path.c_str());
+          Serial.println("[ota] short pad write");
+          return;
+        }
+        // What the shim will read must be the whole image; a short file would
+        // be flashed as a truncated firmware and boot dark.
+        File check = LittleFS.open(path.c_str(), "r");
+        size_t got = check ? check.size() : 0;
+        if (check) { check.close(); }
+        if (got < ota_received) {
+          ota_failed = true;
+          ota_error = "staged image is short";
+          ota_error_code = 507;
+          LittleFS.remove((char *)path.c_str());
+          Serial.println("[ota] staged " + String((unsigned long)got) + " < " + String((unsigned long)ota_received));
+          return;
+        }
       }
-      String current_size = String(raw.totalSize);
-
-      String jobTime = String(millis());
-      coreJobs[jobTime]["type"] = "https";
-      coreJobs[jobTime]["url"] = "https://" + homebaseIP +
-        "/watch/ota_status?current_size=" + current_size +
-        "&status=updating";
-
+      ota_status_send(ota_received, "updating");
       picoOTA.begin();
       picoOTA.addFile(path.c_str());
       picoOTA.commit();
       // The shim reads this file from LittleFS after the reboot, so it must
-      // stay until then. Removing it here left the command page pointing at
-      // nothing; the next upload replaces it at RAW_START.
-      String https = https_request(
-        "https://" + homebaseIP +
-        "/watch/ota_status?current_size=" + current_size +
-        "&status=complete"
-      );
+      // stay until then. The next boot removes it once the shim has run.
+      ota_status_send(ota_received, "complete");
       delay(1000);
       rebooting = 1;
     }

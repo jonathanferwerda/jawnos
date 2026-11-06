@@ -106,7 +106,7 @@ void read_time() {
 
 // The writer's body. Every caller is on core 0 now (see the note at the top of
 // the local map), so there is no concurrent writer to serialize.
-void config_writer() {
+bool config_writer() {
   config_ensure();
   String jconfig = JSON.stringify(config);
   // Replace, do not overwrite in place: LittleFS's "w" was leaving the old
@@ -114,12 +114,18 @@ void config_writer() {
   // long file and JSON.parse saw the stale object.
   LittleFS.remove("config.txt");
   File f = LittleFS.open("config.txt", "w");
-  if (f) {
-    f.truncate(0);
-    f.print(jconfig);
-    f.close();
+  if (!f) {
+    Serial.println("[cfg] write open failed");
+    return false;
   }
-//  Serial.println(jconfig);
+  f.truncate(0);
+  size_t wrote = f.print(jconfig);
+  f.close();
+  if (wrote != jconfig.length()) {
+    Serial.println("[cfg] short write " + String((unsigned long)wrote) + "/" + String((unsigned long)jconfig.length()));
+    return false;
+  }
+  return true;
 }
 
 static void local_jobs_load() {

@@ -121,7 +121,7 @@ struct jawn_time;
 String led_toggle(int pin, String state, bool persist = true);
 String relay_toggle(int pin, String state, bool persist = true, int src = 2);
 String servo_toggle(int pin, String state);
-void config_writer();
+bool config_writer();
 void config_init();
 void run_local_jobs();
 static bool pin_is_switch_driven(int pin);
@@ -682,7 +682,9 @@ static void ble_apply_wifi(JSONVar data) {
     ssid = s; password = p;
     config["ssid"] = s; config["password"] = p;
   }
-  config_writer();
+  // The persisted pair is what the next boot joins with; say so when the
+  // filesystem refused it instead of pretending the update stuck.
+  if (!config_writer()) { Serial.println("[cfg] wifi apply not saved"); }
   // Only a complete pair is a join: an SSID on its own would drop the current
   // network for a password that is not there.
   if (s != "" && p != "") {

@@ -38,7 +38,7 @@ like($upload, qr/server\.arg\(\s*"authorization"\s*\)/,
 	'and falls back to the query copy for an older manager');
 
 # A collected header has to be registered before the server handles the upload.
-like($handlers, qr/collectHeaders\(\s*authorization_headers\s*,\s*1\s*\)/,
+like($handlers, qr/collectHeaders\(\s*"authorization"\s*\)/,
 	'the authorization header is collected in setup');
 my $collect_at = index($handlers, 'collectHeaders');
 my $upload_at  = index($handlers, 'server.on(UriRegex("/upload/');
@@ -53,7 +53,11 @@ my $end = $end_at >= 0 ? substr($upload, $end_at) : '';
 like($end, qr/4096/, 'the image is padded to the OTA shim page size');
 like($end, qr/0xFF/, 'with erased-flash bytes, not zeroes');
 unlike($end, qr/LittleFS\.end\(\)/, 'the filesystem is not unmounted before the reboot');
-unlike($end, qr/LittleFS\.remove\(/, 'the image is not removed before the shim reads it');
+# A failed staging removes its partial file (that is how the space comes
+# back), but a successful one must survive until the shim has read it.
+my $commit_at = index($end, 'picoOTA.commit()');
+my $success = $commit_at >= 0 ? substr($end, $commit_at) : '';
+unlike($success, qr/LittleFS\.remove\(/, 'the successful image survives until the shim reads it');
 like($end, qr/picoOTA\.commit\(\)/, 'the OTA command is still committed');
 like($end, qr/rebooting\s*=\s*1/, 'and the board still reboots');
 
