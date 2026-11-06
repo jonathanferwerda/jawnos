@@ -75,11 +75,12 @@ my $ble = $read->('lib/JawnOS/Domain/Ble.pm');
 like($ble, qr/\$found->\{'version'\}\s*=\s*\$data->\{'version'\}/, 'the sighting stores the version');
 like($ble, qr/\$found->\{'version_seen'\}/, 'and when it was seen');
 like($ble, qr/version\s*=>\s*\(\$chip->\{'version'\}\s*\|\|/, 'a device row carries it');
+like($ble2, qr/&subs::firmware_version_note\(\{/, 'the bridge also records it where the panel reads it');
 
 # --- the manager records a version learned over HTTP -----------------------
 my $part34 = $read->('lib/JawnOS/Manager/Part34.pm');
 like($part34, qr/&subs::firmware_version_note\(/, 'a device query records the build it answered with');
-like($part34, qr/my \$firmware = &subs::firmware_status\(\$edt, \$chip_id\)/, 'the panel is given the firmware status');
+like($part34, qr/my \$firmware = &subs::firmware_status\(\$edt, \$chip_id, \$embedded\)/, 'the panel is given the firmware status, with the live row');
 like($part34, qr/firmware => \$firmware/, 'and renders with it');
 
 # --- the staged image is only trusted with a sidecar -----------------------
@@ -91,6 +92,8 @@ like($firmware, qr/sub firmware_staged/, 'firmware_staged answers what would be 
 like($firmware, qr/no sidecar/, 'an image with no sidecar is refused');
 like($firmware, qr/does not match its sidecar/, 'an image whose bytes moved is refused');
 like($firmware, qr/firmware sources changed since this image was staged/, 'an image whose sources moved is refused');
+like($firmware, qr/\$row->\{'version'\}/, 'the panel falls back to the live device row');
+like($part34, qr/&subs::firmware_status\(\$edt, \$chip_id, \$embedded\)/, 'and passes that row to the status');
 
 my $loader = $read->('lib/JawnOS/Domain/Loader.pm');
 like($loader, qr/JawnOS::Domain::Firmware' for qw\([^)]*\bfirmware_staged\b/, 'the loader maps the firmware helpers');

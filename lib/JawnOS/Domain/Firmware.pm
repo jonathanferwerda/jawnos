@@ -176,15 +176,18 @@ sub firmware_version_note($data) {
 	return $version;
 }
 
-sub firmware_status($edt, $chip_id) {
+sub firmware_status($edt, $chip_id, $row) {
 	# What the panel draws: the build the device reports, the build this machine
 	# holds, whether they agree, and whether the person asked for automatic
-	# updates.
+	# updates. The settings row is written whenever a version arrives; the live
+	# device row is the fallback for a sighting recorded before that (or by a
+	# machine that only has the bridge's copy).
 	my $staged = firmware_staged($edt);
 	my $od = $chip_id ? &setting_grabber({ app => $edt, setting => 'operator_door', subsetting => $chip_id }) : '';
 	my $op_d = eval { decode_json $od } || {};
 	my $specs = $op_d->{'__specs'} || {};
 	my $device = $specs->{'fw_version'} || '';
+	$device ||= $row->{'version'} if ref $row eq 'HASH' && ($row->{'version'} || '') ne '';
 	my $latest = $staged->{'staged_version'} || '';
 	return {
 		target      => $staged->{'name'} || '',

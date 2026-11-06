@@ -187,7 +187,7 @@ sub embedded_grabber($c,$timestamp) {
 
 	# The build the device reports, the build this machine would send, and
 	# whether the person asked for automatic updates (see Domain::Firmware).
-	my $firmware = &subs::firmware_status($edt, $chip_id);
+	my $firmware = &subs::firmware_status($edt, $chip_id, $embedded);
 	my $returner = {
 		template => 'embedded/embedded',
 		embedded => $embedded,

@@ -113,6 +113,15 @@ sub ble_message_processor {
 			# The build it is running, when the firmware reports one.
 			version => $msg->{'version'}
 		});
+		# The sighting carries the build for the device list; the device's own
+		# operator_door row is what the Embedded panel reads, so record it there
+		# too. Without this the panel showed "v?" for a board that had just told
+		# the bridge exactly which build it was running.
+		&subs::firmware_version_note({
+			chip_id => $seen_chip,
+			edt => $seen_edt || 'watch',
+			version => $msg->{'version'}
+		}) if $msg->{'version'};
 	}
 	# A battery reply to ble_battery_poll: cache it for the levels scan. The
 	# device may be linked to this machine alone, so this reply is what the
