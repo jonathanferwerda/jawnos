@@ -328,4 +328,21 @@ sub action_28066 {
 	$c->render(json => $returner);
 }
 
+# Whether a photo whose local copy is gone is looked for on the archive drive.
+# The server defaults it on when the drive exists; a person turns it off here,
+# and the choice is stored on this machine like the rest of the gallery settings.
+# POST /manager/gallery/archive_toggle
+sub action_28080 {
+	my $c = shift;
+	my $status = lc($c->param('status') || '');
+	$status = ($status eq 'on') ? 'on' : 'off';
+	&subs::setting_setter({
+		app => 'gallery',
+		setting => 'archive',
+		value => $status,
+		timestamp => $c->param('timestamp')
+	});
+	$c->render(text => (&subs::setting_grabber({ app => 'gallery', setting => 'archive' }) // $status));
+}
+
 1;

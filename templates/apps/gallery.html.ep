@@ -10,6 +10,7 @@
 #gallery_header .gallery_tab { font-size:13px; line-height:1; padding:8px 11px; border:1px solid #34343c; border-radius:8px; background:#1d1d23; color:#ddd; cursor:pointer; }
 #gallery_header .gallery_tab.active { background:#3a3a44; border-color:#5a5a68; color:#fff; }
 #gallery_header .gallery_lock { margin-left:auto; }
+#gallery_archive[status="on"] { background:#233a4a; border-color:#3a6a8a; color:#cfe8ff; }
 #gallery_search { flex:1 1 120px; min-width:100px; font-size:14px; padding:8px 10px; border-radius:8px; border:1px solid #34343c; background:#101014; color:#eee; outline:none; }
 #gallery_search:focus { border-color:#6a6a7a; }
 #gallery_body { flex:1 1 auto; min-height:0; overflow-y:auto; overflow-x:hidden; position:relative; }
@@ -59,12 +60,13 @@
 #gallery_lock .padlock_frame { position:relative !important; inset:auto !important; transform:none !important; margin:auto; }
 #gallery_lock .padlock_frame.padlock_compact { margin:8px auto 0 !important; }
 </style>
-<div id="gallery" unlock="<%= $unlock %>" padlock="<%= scalar @{$padlock_sighting} ? 1 : 0 %>">
+<div id="gallery" unlock="<%= $unlock %>" padlock="<%= scalar @{$padlock_sighting} ? 1 : 0 %>" archive="<%= (($settings->{'archive'} // 'on') ne 'off') ? 'on' : 'off' %>">
 	<div id="gallery_header">
 		<button type="button" id="gallery_home_tab" class="gallery_tab active" hint="Albums"><%= &subs::ui('Albums') %></button>
 		<button type="button" id="gallery_all_tab" class="gallery_tab" hint="All photos"><%= &subs::ui('All photos') %></button>
 		<input id="gallery_search" type="search" autocomplete="off" hint="Search" placeholder="<%= &subs::lang('common.search') %>">
 		<button type="button" id="gallery_sort" class="gallery_tab" hint="Newest first"><%= &subs::ui('Newest first') %></button>
+		<button type="button" id="gallery_archive" class="gallery_tab gallery_archive" status="<%= (($settings->{'archive'} // 'on') ne 'off') ? 'on' : 'off' %>" hint="Archives"><%= &subs::ui('Archives') %></button>
 		<%# shown by the client when the padlock covers the gallery or when an album
 		    is hidden by the visibility rule, whichever comes first %>
 		<button type="button" id="gallery_lock_button" class="gallery_tab gallery_lock" hint="Unlock" style="display:none;"><%= &subs::ui('Unlock') %></button>

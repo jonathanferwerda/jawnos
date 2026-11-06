@@ -10,7 +10,12 @@
 	} %>
 	<span class="app_file_toolbox" style="display:none;" uuid="<%= $f->{'uuid'} %>">
 		<img style="float:left;" src="<%= &subs::icon_for('/icons/trash.png') %>" hint="Delete" class="little_thumb delete delete_file hover" timestamp="<%= $l->{'timestamp'} %>" app="<%= $l->{'app'} %>" app_uuid="<%= $l->{'uuid'} %>" file_uuid="<%= $f->{'uuid'} %>">
-		<img src="<%= &subs::icon_for('/images/icons/download.png') %>" hint="Download" class="little_thumb download hover" timestamp="<%= $l->{'timestamp'} %>" uuid="<%= $l->{'uuid'} %>" server_time="<%= $l->{'server_time'} %>" app="<%= $l->{'app'} %>" file="<%= $f->{'file'} %>">
+		<img src="<%= &subs::icon_for('/images/icons/download.png') %>" hint="Download" class="little_thumb download hover" timestamp="<%= $l->{'timestamp'} %>" uuid="<%= $l->{'uuid'} %>" server_time="<%= $l->{'server_time'} %>" app="<%= $l->{'app'} %>" file="<%= $f->{'file'} %>"<% if ($f->{'remote_uuid'}) { %> remote_uuid="<%= $f->{'remote_uuid'} %>"<% } %>>
+		<%# an archived-only file is already on the drive; this is for a copy that
+		    is still here, so the archive action has bytes to send %>
+		<% if (!$f->{'remote_uuid'} && !$f->{'archived'} && -e $f->{'file'}) { %>
+			<img src="<%= &subs::icon_for('/images/decipherable/diskette.png') %>" hint="<%= &subs::ui('Archive') %>" class="little_thumb archive_file hover" file="<%= $f->{'file'} %>" app="<%= $l->{'app'} %>" app_uuid="<%= $l->{'uuid'} %>" timestamp="<%= $l->{'timestamp'} %>" server_time="<%= $l->{'server_time'} %>">
+		<% } %>
 		<img src="<%= &subs::icon_for('/icons/lymeboard/I.png') %>" hint="Information" class="tiny_thumb file_information_grabber hover" app_uuid="<%= $l->{'uuid'} %>" file_uuid="<%= $f->{'uuid'} %>" file="<%= $f->{'file'} %>" app="<%= $l->{'app'} %>">						
 		<% if ($f->{'file_type'} eq 'snd' || $l->{'type'} eq 'audio') { %>
 			</span>

@@ -30,6 +30,7 @@ var gallery = {
 	locked: 0,
 	padlock: 0,
 	hidden: 0,
+	archive: 'on',
 	viewerIndex: -1
 };
 
@@ -131,6 +132,9 @@ function galleryApplyChrome() {
 	$('#gallery_home_tab').toggleClass('active', gallery.view == 'albums');
 	$('#gallery_all_tab').toggleClass('active', gallery.view == 'grid' && !gallery.app);
 	$('#gallery_sort').text(gallery.sort == 'asc' ? jawnosT('Oldest first') : jawnosT('Newest first'));
+	// Archives says whether a photo whose local copy is gone is looked for on the
+	// archive drive; the server draws the first state and the toggle keeps it.
+	$('#gallery_archive').attr('status', gallery.archive == 'off' ? 'off' : 'on');
 	var shut = !(gallery.unlock || '');
 	// an album hidden by the visibility rule needs a way in even when this
 	// device's padlock context list does not name the gallery
@@ -147,6 +151,7 @@ function galleryInitWindow(response) {
 		? response.unlock
 		: attr;
 	gallery.padlock = $('#gallery').attr('padlock') == '1' ? 1 : 0;
+	gallery.archive = $('#gallery').attr('archive') == 'off' ? 'off' : 'on';
 	if (attr) { galleryUnlockRemember(attr); }
 	// A visible album is theirs to browse without a print; the gate opens when
 	// they ask for the hidden ones (the Lock button), not on every open.
@@ -585,6 +590,25 @@ $(document).on('click', '#gallery_all_tab', function() {
 $(document).on('click', '#gallery_sort', function() {
 	gallery.sort = gallery.sort == 'asc' ? 'desc' : 'asc';
 	galleryFetch(true);
+});
+
+// Archives includes what the drive holds for photos whose local copy is gone.
+// The choice is stored on this machine (like Music's Archives), so a reopened
+// gallery keeps it; the next fetch redraws with or without the archived rows.
+$(document).on('click', '#gallery_archive', function() {
+	var status = gallery.archive == 'off' ? 'on' : 'off';
+	$.ajax({
+		url: '/manager/gallery/archive_toggle',
+		type: 'POST',
+		data: { status: status, timestamp: Date.now() },
+		success: function(response) {
+			gallery.archive = ('' + response).replace(/\s+/g, '') == 'off' ? 'off' : 'on';
+			$('#gallery').attr('archive', gallery.archive);
+			galleryApplyChrome();
+			gallery.files = null;
+			galleryFetch(true);
+		}
+	});
 });
 
 $(document).on('input', '#gallery_search', function() {

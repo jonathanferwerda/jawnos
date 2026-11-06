@@ -70,6 +70,33 @@ sub action_14716 {
 	my $uuid = $c->param('uuid');
 	my $timestamp = $c->param('timestamp');
 	my $server_time = $c->param('server_time');
+	# A file that lives on the archive machine is downloaded through it: the
+	# request here has this machine's session, and the archive machine is asked
+	# with the peer cookie and signature the archive rail already uses.
+	if ($c->param('remote_uuid') && ($c->param('remoted') || '') ne 'yes') {
+		my $agent = &subs::remote_agent_for($c->param('remote_uuid'));
+		if ($agent->{'error'} || !$agent->{'manager'}) {
+			$c->render(text => 'Not Found');
+			return;
+		}
+		my $url = Mojo::URL->new($agent->{'manager'} . '/manager/download_file');
+		my $params = $c->req->query_params->to_hash;
+		delete @{$params}{qw/remote_uuid/};
+		$params->{'remoted'} = 'yes';
+		$url->query($params);
+		my $tx = eval { $agent->{'ua'}->get($url) };
+		my $res = $tx ? $tx->res : undef;
+		if ($res && !$res->error && $res->code == 200) {
+			my $disposition = $res->headers->header('Content-Disposition') || '';
+			my $type = $res->headers->content_type || 'application/octet-stream';
+			$c->res->headers->content_type($type);
+			$c->res->headers->header('Content-Disposition' => $disposition) if length $disposition;
+			$c->render(data => $res->body);
+			return;
+		}
+		$c->render(text => 'Not Found');
+		return;
+	}
 	my ($db,$database,$sql) = &subs::database_grabber();
 	my $appt = &subs::db_query('select * from appointments where app = ? and uuid = ?', $app, $uuid)->hashes->[0];
 	my $encryption_standard = $appt->{'encryption_standard'};

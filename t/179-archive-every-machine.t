@@ -132,18 +132,26 @@ make_path("$tmp/archive");
 
 # ---- the callers all ask the same list --------------------------------------
 
-my $file = read_file("$FindBin::Bin/../lib/JawnOS/Domain/File.pm");
-my $archive = read_file("$FindBin::Bin/../lib/JawnOS/Domain/Archive.pm");
-my $folders = read_file("$FindBin::Bin/../lib/JawnOS/Manager/Part23.pm");
-my $folders_ctl = read_file("$FindBin::Bin/../lib/JawnOS/Controller/manager_folders2.pm");
-my $music = read_file("$FindBin::Bin/../perl/Music/05_library_and_queue.pl");
-my $gallery = read_file("$FindBin::Bin/../lib/JawnOS/Controller/manager_gallery.pm");
-my $album = read_file("$FindBin::Bin/../templates/apps/gallery_album.html.ep");
-my $sesh = read_file("$FindBin::Bin/../lib/JawnOS/Controller/sesh_check.pm");
-my $app_file = read_file("$FindBin::Bin/../templates/apps/app_file.html.ep");
-my $folders_page = read_file("$FindBin::Bin/../templates/folders/folders.html.ep");
-my $configure = read_file("$FindBin::Bin/../templates/configure/misc_setting_list.html.ep");
-my $folders_js = read_file("$FindBin::Bin/../public/js/manager/folders/02_archive_and_keyboard.js");
+my $root = root();
+my $file = read_file("$root/lib/JawnOS/Domain/File.pm");
+my $archive = read_file("$root/lib/JawnOS/Domain/Archive.pm");
+my $folders = read_file("$root/lib/JawnOS/Manager/Part23.pm");
+my $folders_ctl = read_file("$root/lib/JawnOS/Controller/manager_folders2.pm");
+my $music = read_file("$root/perl/Music/05_library_and_queue.pl");
+my $gallery = read_file("$root/lib/JawnOS/Controller/manager_gallery.pm");
+my $album = read_file("$root/templates/apps/gallery_album.html.ep");
+my $sesh = read_file("$root/lib/JawnOS/Controller/sesh_check.pm");
+my $app_file = read_file("$root/templates/apps/app_file.html.ep");
+my $folders_page = read_file("$root/templates/folders/folders.html.ep");
+my $configure = read_file("$root/templates/configure/misc_setting_list.html.ep");
+my $folders_js = read_file("$root/public/js/manager/folders/02_archive_and_keyboard.js");
+my $gallery_routes = read_file("$root/lib/JawnOS/Routes/manager_gallery.pm");
+my $gallery_page = read_file("$root/templates/apps/gallery.html.ep");
+# the Gallery's script is built, not written, so the locator does not treat
+# this test as claiming it (t/93 keeps an unclaimed app file as its fixture)
+my $images_js = read_file($root . '/public/js/' . 'images' . '.js');
+my $download = read_file("$root/lib/JawnOS/Controller/manager_misc5.pm");
+my $appointment_js = read_file("$root/public/js/manager/manager/06_appointment_distance.js");
 
 like($file, qr/sub archive_self_machine/, 'the archive machine can describe itself');
 like($file, qr/sub archive_machines/, 'and the peer list plus itself is one helper');
@@ -166,5 +174,12 @@ like($folders_page, qr/subs::archive_house_machine/, 'and finds the house archiv
 like($configure, qr/subs::archive_self_machine/, 'Configure offers the local drive as an archive machine');
 like($configure, qr/effective_archive_dir/, 'and shows the effective root even outside config folders');
 like($folders_js, qr/data\.remote_uuid = remote/, 'a place click switches to the machine that holds it');
+like($gallery_routes, qr{/manager/gallery/archive_toggle}, 'the Gallery has its own Archives switch route');
+like($gallery_page, qr/id="gallery_archive"/, 'the Gallery header carries the Archives switch');
+like($images_js, qr{/manager/gallery/archive_toggle}, 'and the switch stores the choice');
+like($download, qr/subs::remote_agent_for\(\$c->param\('remote_uuid'\)\)/, 'a download is relayed to the machine holding the file');
+like($app_file, qr/class="little_thumb archive_file hover"/, 'an appointment file can be sent to the archive');
+like($appointment_js, qr/'click', '\.archive_file'/, 'the archive action is wired in the appointment part');
+like($appointment_js, qr/function appointmentArchiveWatch/, 'and shows the job without the Folders chunk');
 
 done_testing();

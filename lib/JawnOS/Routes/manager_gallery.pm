@@ -8,6 +8,7 @@ sub routes {
 	[27838, 'get', '/manager/gallery', 'action_27838'],
 	[27855, 'get', '/manager/gallery/data', 'action_27855'],
 	[28066, 'get', '/manager/gallery/scroll', 'action_28066'],
+	[28080, 'post', '/manager/gallery/archive_toggle', 'action_28080'],
 	);
 }
 

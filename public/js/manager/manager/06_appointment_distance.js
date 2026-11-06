@@ -325,8 +325,84 @@ $(document).on('click', '.download', function() {
 	var app = d.attr('app');
 	var server_time = d.attr('server_time');
 	var timestamp = d.attr('timestamp');
+	var remote = d.attr('remote_uuid') || '';
 	var uri = encodeURIComponent(app);
-	window.location='/manager/download_file?app=' + uri + '&uuid=' + uuid + '&timestamp=' + timestamp + '&server_time=' + server_time + '&file=' + file;
+	window.location='/manager/download_file?app=' + uri + '&uuid=' + uuid + '&timestamp=' + timestamp + '&server_time=' + server_time + '&file=' + file + (remote ? '&remote_uuid=' + encodeURIComponent(remote) : '');
+});
+
+// Queue one appointment file for the archive. The Folders archive route picks
+// the location and the machine; the reply is the same dialog and job the
+// Folders app shows, so the bar and Stop work here too.
+$(document).on('click', '.archive_file', function() {
+	var d = $(this);
+	var file = d.attr('file');
+	if (!file) { return; }
+	$('body').css({ 'cursor': 'progress' });
+	$.ajax({
+		url: '/manager/folders/archive',
+		type: 'POST',
+		data: { folders: JSON.stringify({ selected: [ { path: file, type: 'file' } ], folder: file }) },
+		success: function(response) {
+			$('body').css({ 'cursor': 'auto' });
+			if (!response || !response.dialog) { return; }
+			if (typeof foldersJobWatcher === 'function') {
+				$('#dialog_boxes').append(response.dialog);
+				foldersJobWatcher();
+				return;
+			}
+			var box = $(response.dialog).addClass('appointment_archive_dialog');
+			$('#dialog_boxes').append(box);
+			appointmentArchiveWatch(box);
+		},
+		error: function() { $('body').css({ 'cursor': 'auto' }); }
+	});
+});
+
+// The Folders app's watcher is part of its lazy chunk; an appointment opened on
+// its own still needs the job line to move and Stop to work.
+function appointmentArchiveWatch(box) {
+	var id = box.attr('job');
+	if (!id) { return; }
+	var timer = setInterval(function() {
+		if (!box.closest('body').length || !box.attr('job')) { clearInterval(timer); return; }
+		$.ajax({
+			url: '/manager/folders/job',
+			type: 'GET',
+			data: { id: id },
+			success: function(job) {
+				if (!job || job['status'] != 'ok') {
+					box.removeAttr('job').find('.job_progress').text('that job is gone');
+					clearInterval(timer);
+					return;
+				}
+				var word = job['progress'] || job['state'];
+				if (job['archive']) {
+					var a = job['archive'];
+					word = (a['state'] || '') + ' ' + (a['percent'] || 0) + '%';
+					if (a['file']) { word += ' - ' + a['file']; }
+					if (a['resumable']) { word += ' - resumes where it stopped'; }
+				}
+				if (job['errors'] && job['errors'].length) { word += ' ' + job['errors'].join('; '); }
+				var target = box.find('.job_progress .job_line');
+				if (target.length) { target.text(word); } else { box.find('.job_progress').text(word); }
+				var bar = box.find('.job_progress .job_bar');
+				if (bar.length && job['archive']) { bar.show().find('span').css({ 'width': Math.max(0, Math.min(100, job['archive']['percent'] || 0)) + '%' }); }
+				if (job['state'] == 'finished' || job['state'] == 'failed') {
+					box.removeAttr('job');
+					box.find('.job_stop').remove();
+					clearInterval(timer);
+				}
+			}
+		});
+	}, 1000);
+}
+
+$(document).on('click', '.appointment_archive_dialog .job_stop', function() {
+	// the Folders chunk's own job_stop handler covers this when it is loaded
+	if (typeof foldersJobWatcher === 'function') { return; }
+	var b = $(this);
+	b.closest('.dialog_box').find('.job_progress').text('stopping...');
+	$.ajax({ url: '/manager/folders/job/cancel', type: 'POST', data: { id: b.attr('job') } });
 });
 
 $(document).on('click', '.take_picture', function() {
