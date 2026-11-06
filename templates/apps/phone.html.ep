@@ -192,7 +192,7 @@
 			    said, so a pane opened mid-call catches up. %>
 			<div class="phone_transcript" id="phone_transcript" hidden>
 				<div class="phone_transcript_head">
-					<span class="phone_transcript_title"><%= &subs::ui('Live transcript') %></span>
+					<span class="phone_transcript_title" id="phone_transcript_title"><%= &subs::ui('Live transcript') %></span>
 					<span class="phone_transcript_note" id="phone_transcript_note"></span>
 					<button class="phone_transcript_connect" id="phone_transcript_connect" hint="Connect me">Connect me</button>
 				</div>

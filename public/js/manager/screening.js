@@ -170,8 +170,23 @@ function jawnScreenPanelPaint(res) {
 	var lines = res.transcript || [];
 	for (var i = jawnScreen.seen; i < lines.length; i++) { jawnScreenPanelLine(lines[i]); }
 	jawnScreenPanelPartial(res.partial || '');
-	$('#jawn_screening_peer').text(res.peer ? jawnosT('Caller line') + ': ' + res.peer : '');
+	var caller = res.caller || {};
+	var who = caller.name || caller.number || '';
+	$('#jawn_screening_peer').text(who
+		? (jawnosT('Call from: ') + who)
+		: (res.peer ? jawnosT('Caller line') + ': ' + res.peer : ''));
 	$('#jawn_screening_note').text(res.transcript_note || '');
+}
+
+// The caller's number lives on the phone's bridge; a browser without the app
+// has none, and the gateway keeps the last number it was told.
+function jawnScreenCallerNumber() {
+	try {
+		if (window.JawnContacts && typeof window.JawnContacts.incomingNumber === 'function') {
+			return window.JawnContacts.incomingNumber() || '';
+		}
+	} catch (e) { }
+	return '';
 }
 
 function jawnScreenPoll() {
@@ -179,7 +194,7 @@ function jawnScreenPoll() {
 		url: '/manager/sco/status',
 		type: 'GET',
 		dataType: 'json',
-		data: { timestamp: Date.now() },
+		data: { timestamp: Date.now(), number: jawnScreenCallerNumber() },
 		success: function (res) {
 			var state = (res && res.state) || 'idle';
 			if (state !== 'in_call' && state !== 'done' && state !== 'armed' && state !== 'waiting') {

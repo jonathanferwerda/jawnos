@@ -499,7 +499,7 @@ function jawnPhoneTranscriptPartial(text) {
 
 // The poll repeats every two seconds; only the lines it has not drawn yet are
 // added, and a new call starts the bubbles over.
-function jawnPhoneTranscriptSync(callId, lines, partial, note) {
+function jawnPhoneTranscriptSync(callId, lines, partial, note, caller) {
 	if ((callId || '') !== jawnPhoneTranscriptCall) {
 		// a new call (or none) is not the one this device was listening to
 		if (jawnScreenRtc.pc) { jawnPhoneRtcStop(); }
@@ -511,6 +511,8 @@ function jawnPhoneTranscriptSync(callId, lines, partial, note) {
 	});
 	jawnPhoneTranscriptPartial(partial || '');
 	$('#phone_app #phone_transcript_note').text(note || '');
+	var who = caller && (caller.name || caller.number) ? (caller.name || caller.number) : '';
+	$('#phone_app #phone_transcript_title').text(who ? (jawnosT('Call from: ') + who) : jawnosT('Live transcript'));
 	$('#phone_app #phone_transcript').prop('hidden',
 		!(jawnPhoneTranscriptSeen || partial) && !note);
 }
@@ -549,7 +551,7 @@ function jawnPhoneGatewayState() {
 		url: '/manager/sco/status',
 		type: 'GET',
 		dataType: 'json',
-		data: { timestamp: Date.now() },
+		data: { timestamp: Date.now(), number: jawnPhoneAppNumber() },
 		success: function (res) {
 			var state = (res && res.state) || 'unavailable';
 			var label = 'Gateway: ' + state;
@@ -562,7 +564,7 @@ function jawnPhoneGatewayState() {
 				label = label + ' - ' + jawnosT('this machine is on 2.4 GHz WiFi, so the caller will break up');
 			}
 			$('#phone_app #phone_ivr_gateway_state').text(label);
-			jawnPhoneTranscriptSync(res && res.call_id, res && res.transcript, res && res.partial, res && res.transcript_note);
+			jawnPhoneTranscriptSync(res && res.call_id, res && res.transcript, res && res.partial, res && res.transcript_note, res && res.caller);
 			if (jawnPhoneConnectMeWanted && (state === 'in_call' || state === 'done')) {
 				jawnPhoneConnectMeWanted = false;
 				jawnPhoneRtcConnect();

@@ -221,6 +221,8 @@ like($reception_src, qr/words => \{ map/,
 like($reception_src, qr/unless \(\$client->remote\(\)\)/,
 	'and renders clips only when the gateway is this one');
 like($reception_src, qr/\$not_the_gateway/, 'a helper box that is not the gateway does not arm it');
+like($daemon, qr/note_caller/, 'a status poll carries the caller to the gateway');
+like($controller, qr/param\('number'\)/, 'the status route passes the caller number');
 
 # ------------------------------------------------------------- the clips
 is(JawnOS::Sco::Render::key('hello', 'piper-a'), JawnOS::Sco::Render::key('hello', 'piper-a'),
@@ -254,6 +256,26 @@ isnt(JawnOS::Sco::Render::key('hello!', 'piper-a'), JawnOS::Sco::Render::key('he
 	local *JawnOS::Sco::Render::render = sub { return '' };
 	is_deeply(JawnOS::Sco::Render::merge_clips({}, {}, ''), {},
 		'nothing to speak leaves no clip behind');
+}
+
+# The caller is the phone's fact, not the Bluetooth link's: its status poll
+# carries the number, and the gateway resolves the house's name for it.
+{
+	local *subs::phone_number_app = sub { return 'john_smith' };
+	local *subs::format_name = sub { return 'John Smith' };
+	my $cg = JawnOS::Sco::Gateway->new(
+		dir => $dir, helper => ['/bin/false'], status_path => "$dir/sco-caller.json", pipe => 1);
+	ok($cg->note_caller('+1 (555) 555-0101'), 'a status poll names the caller');
+	is($cg->status->{'caller'}->{'name'}, 'John Smith', 'and the house resolves their name');
+	is($cg->status->{'caller'}->{'number'}, '+1 (555) 555-0101', 'while keeping the number as it arrived');
+	local *subs::phone_number_app = sub { return '5555550199' };
+	$cg->note_caller('+1 (555) 555-0199');
+	is($cg->status->{'caller'}->{'name'}, '', 'a number the house does not know has no name');
+	ok(!$cg->note_caller(''), 'an empty poll is not a caller');
+	is($cg->status->{'caller'}->{'number'}, '+1 (555) 555-0199',
+		'and the last caller is kept when the phone id goes stale');
+	$cg->cancel();
+	is_deeply($cg->status->{'caller'}, {}, 'cancelling forgets the caller');
 }
 # The virtual handset's commands and its stream matching.
 {

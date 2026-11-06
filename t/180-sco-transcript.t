@@ -1,4 +1,4 @@
-# tests-for: lib/JawnOS/Sco/Gateway.pm lib/JawnOS/Domain/Phone.pm lib/JawnOS/Controller/manager_phone.pm perl/sco/sco_helper.c scripts/vosk_stream.py public/js/manager/phone.js templates/apps/phone.html.ep public/js/manager/websocket/01_message_handler.js
+# tests-for: lib/JawnOS/Sco/Gateway.pm lib/JawnOS/Domain/Phone.pm lib/JawnOS/Controller/manager_phone.pm perl/sco/sco_helper.c scripts/vosk_stream.py public/js/manager/phone.js public/js/manager/screening.js templates/apps/phone.html.ep public/js/manager/websocket/01_message_handler.js
 # covers:    A screened call's live transcript: the helper's non-blocking tap
 #           above the recorder's gate, the gateway keeping a sentence in the
 #           status and on disk, the partial that is not yet a line, a bounded
@@ -204,10 +204,16 @@ like($js, qr/function jawnPhoneTranscriptLine/, 'the Phone pane draws a finished
 like($js, qr/phone_transcript_partial/, 'and the sentence being said, dimmed');
 like($js, qr/slice\(jawnPhoneTranscriptSeen\)/, 'a poll adds only the lines it has not drawn');
 like($js, qr/function jawnPhoneTranscriptPushed/, 'a pushed line reaches the pane');
+like($js, qr/phone_transcript_title/, 'the transcript header is its own element');
+like($js, qr/Call from:/, 'and names the caller when the status carries one');
+my $screening = read_file("$repo/public/js/manager/screening.js");
+like($screening, qr/incomingNumber/, 'the floating panel asks the phone for the caller');
+like($screening, qr/Call from:/, 'and its header names the caller too');
 my $ws = read_file("$repo/public/js/manager/websocket/01_message_handler.js");
 like($ws, qr/sco_transcript/, 'the websocket dispatcher knows the transcript event');
 my $tpl = read_file("$repo/templates/apps/phone.html.ep");
 like($tpl, qr/id="phone_transcript_lines"/, 'the Phone app has a transcript box');
+like($tpl, qr/id="phone_transcript_title"/, 'with its own header');
 like($tpl, qr/Live transcript/, 'labelled as such');
 
 # --------------------------------------------------------- the streamer's arithmetic

@@ -46,6 +46,7 @@ sub new {
 		partial => '',
 		transcript_engine => '',
 		transcript_note => '',
+		caller => {},
 		buffer => '',
 		pid => 0,
 	}, $class;
@@ -174,6 +175,8 @@ sub status {
 		partial => $self->{'partial'} || '',
 		transcript_engine => $self->{'transcript_engine'} || '',
 		transcript_note => $self->{'transcript_note'} || '',
+		# who the phone says is calling; this side only sees the Bluetooth link
+		caller => $self->{'caller'} || {},
 		# the WebRTC bridge, when someone pressed Connect me
 		rtc => $self->{'rtc'} || { state => 'idle', error => '' },
 		plan => [ map { $_->{'key'} || ($_->{'tone'} ? 'tone' : 'step') } @{ $self->{'steps'} || [] } ],
@@ -184,6 +187,29 @@ sub status {
 		wifi => $wifi,
 		warning => $warning,
 	};
+}
+
+# The phone knows who is calling; the gateway only sees the Bluetooth link.
+# Its status poll carries the number while the phone's caller id is fresh, and
+# this side resolves the house's name for it. A number the house does not know
+# is shown as the number the phone received.
+sub note_caller {
+	my ($self, $number) = @_;
+	$number = '' unless defined $number;
+	# an empty poll keeps the last caller: the phone's caller id goes stale
+	# after fifteen seconds, and clearing here would erase the header
+	return 0 unless length $number;
+	my $was = $self->{'caller'} || {};
+	return 1 if ($was->{'number'} // '') eq $number;
+	my $digits = $number;
+	$digits =~ s/\D+//g;
+	$digits =~ s/^1//;
+	return 0 unless length $digits;
+	my $app = eval { &subs::phone_number_app($digits) } || '';
+	my $name = (length $app && $app ne $digits) ? (eval { &subs::format_name($app) } || '') : '';
+	$self->{'caller'} = { number => $number, name => $name, at => time };
+	$self->write_status();
+	return 1;
 }
 
 sub write_status {
@@ -226,6 +252,7 @@ sub arm {
 	# the next call finds a gateway that only looks armed
 	return { ok => 1, state => 'starting' } if $self->{'state'} eq 'starting';
 	$self->cancel() if $self->{'state'} ne 'idle' || $self->{'pid'};
+	$self->{'caller'} = {};
 	my @cmd = $self->helper_command();
 	return { ok => 0, error => 'the SCO helper is not built on this machine' } unless @cmd;
 	# A Hands-Free stack (BlueALSA) owning the link leaves us as a plain audio
@@ -645,6 +672,7 @@ sub _push_screen {
 		state => $state,
 		call_id => $self->{'call_id'},
 		peer => $self->{'peer'},
+		caller => $self->{'caller'} || {},
 	}) };
 	return 1;
 }
@@ -999,6 +1027,7 @@ sub event {
 
 sub cancel {
 	my ($self) = @_;
+	$self->{'caller'} = {};
 	$self->stop_watch();
 	# Put the call's streams back only when no call is up. Cancelling also
 	# happens at every re-arm, while the line is still breathing, and moving a

@@ -26,7 +26,10 @@ sub sco_render {
 # GET /manager/sco/status
 sub action_52001 {
 	my $c = shift;
-	$c->render(json => &sco_client()->call({ cmd => 'status' }));
+	my %request = (cmd => 'status');
+	my $number = $c->param('number') || '';
+	$request{'number'} = $number if length $number;
+	$c->render(json => &sco_client()->call(\%request));
 }
 
 # POST /manager/sco/arm

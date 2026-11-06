@@ -73,6 +73,10 @@ sub answer {
 	my ($request) = @_;
 	my $cmd = ref $request eq 'HASH' ? ($request->{'cmd'} || '') : '';
 	if ($cmd eq 'status') {
+		# The phone's caller id is the only place the number exists; its status
+		# poll carries it while it is fresh. An empty poll keeps the last one.
+		my $number = ref $request eq 'HASH' ? ($request->{'number'} // '') : '';
+		$gateway->note_caller($number) if length $number;
 		return $gateway->status();
 	}
 	if ($cmd eq 'arm') {
