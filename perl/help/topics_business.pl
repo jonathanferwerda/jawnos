@@ -6,7 +6,7 @@ our %topic;
 
 $topic{'store'} = {
 		title => 'Store', category => 'apps', app => 'store',
-		verified => '2026-11-01',
+		verified => '2026-11-06',
 		templates => [ 'templates/store/store.html.ep', 'templates/store/category.html.ep', 'templates/store/item.html.ep', 'templates/store/item_selection.html.ep', 'templates/store/list.html.ep', 'templates/store/register.html.ep', 'templates/store/journal.html.ep', 'templates/store/correspondence.html.ep', 'templates/store/customer.html.ep', 'templates/store/printer/header.html.ep', 'public/css/store.css', 'public/js/store.js', 'public/js/store/register.js' ],
 		summary => 'Items, models, options, quotes, invoices and a cash register.',
 		body => [
@@ -15,6 +15,7 @@ $topic{'store'} = {
 			'Choosing an item opens its details in a pane beside the grid rather than over it, so the shelves stay in view; Back to items (or the close button) returns to them. The price summary stays pinned to the foot of that pane while the models and options scroll, and it can be tapped to edit a price.',
 			'With a customer loaded, the foot of the window carries four labelled actions. Quotes and Invoices list the documents themselves. Register is the customer\'s sales journal: every invoice or sale for that customer with its total, amount paid and balance, and each payment indented beneath the document it settled. Correspondence is the other journal: the emails and chats the house and that customer exchanged, newest first, showing the channel, direction, subject and a readable preview.',
 			'Register in the toolbar is the cash till, and it is always available: a person who is not in the customer list is simply Customer. Choosing items from its search adds them to the open order, the quantity buttons change how many, and the line can be removed. Several customers can stand at the counter at once: each order is its own tab with its own total, New order starts another, and Void gives one up without recording a sale or disturbing the others. The payment method is Cash, Credit, Interac, Bitcoin or Cheque; Cash offers $5, $10, $20, $50 and $100 buttons (and coins) that add what was handed over, shows the change to give back and the notes and coins that make it. Complete sale writes the sale, prints a receipt, and leaves a Receipt button to open it again. A card or other method is charged the total; a cash payment that does not cover the total is refused rather than recorded short.',
+			'The Print button opens the sheet with a printer bar. A default printer chosen in Dev prints at once; with no default the bar asks which CUPS queue, and Save to PDF makes the same sheet as a file. The register\'s Receipt button uses the same bar.',
 			'The movement dropdown uses the house\'s own words: Selling (an income movement) is what this house has available, and Buying (an expense movement) is a purchase the house makes. The stored movement values are unchanged, so existing quotes, invoices and reports keep working.',
 			'Recording a payment against a document updates its balance and closes it when the balance reaches zero. A document row also carries a wallet icon when the house has a crypto wallet: it opens the crypto payment panel, which shows the coin, the amount for the balance, the invoice\'s own receiving address and a QR (see Crypto wallets and rates).',
 			'A visitor who asks for a ticket sees the privacy notice before the form and must acknowledge it; the acknowledgement is stored with the request. The store and the public homepage both link to the full privacy policy, which names the controller, the data processed, the legal basis, retention, the cookies and local storage used, and how to exercise a data right.'
@@ -25,6 +26,7 @@ $topic{'store'} = {
 			'Build a quote from those items and options; the totals are worked out as you go.',
 			'When the quote is accepted, move it to an invoice — it converts and the quote is consumed.',
 			'Email the invoice to the customer, or print it to the house-styled sheet.',
+			'Press Print on a quote or invoice (or Receipt in the register) to print to the default CUPS printer, choose another, or save the sheet as a PDF.',
 			'For a walk-in sale, open Register in the toolbar, search for an item, add it and set the quantity. Choose the payment method, press the cash buttons for what the customer handed over, check the change, then press Complete sale and hand over the receipt.',
 			'Record a payment against it; the balance falls and it closes at zero.'
 		],

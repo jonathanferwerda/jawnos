@@ -507,6 +507,23 @@ $(document).on('click', '#store_register_receipt_close', function() {
 });
 
 $(document).on('click', '#store_register_print', function() {
+	var last = storeRegisterData.last || storeRegisterLastReceipt();
+	if (last && last.uuid) {
+		$.ajax({
+			url: '/manager/store/register/receipt',
+			type: 'GET',
+			data: { uuid: last.uuid, app: last.app || '', timestamp: Date.now() },
+			success: function(html) {
+				if (typeof storePrintPrepare === 'function') {
+					storePrintPrepare(html, { type: 'sale', uuid: last.uuid, customer_app: last.app || '' });
+				} else {
+					$('#printer_view').html(html).show();
+					$('#everything').hide();
+				}
+			}
+		});
+		return;
+	}
 	if ($('#store_register_receipt_paper').html()) {
 		$('#printer_view').html($('#store_register_receipt_paper').html()).show();
 		$('#everything').hide();

@@ -514,3 +514,48 @@ $(document).on('click', '.neighbour_filepicker', function() {
 	});
 });
 
+
+// ---- printers --------------------------------------------------------------
+// The Dev panel lists this machine's CUPS queues. Finding printers is explicit:
+// the button runs ippfind and adds the missing queues, so a printer that is off
+// never slows the rest of the panel. The Store reads the same default.
+$(document).on('change', '.default_printer_select', function() {
+	var printer = $(this).val();
+	$.ajax({
+		url: '/manager/configure/printer_default',
+		type: 'POST',
+		data: { printer: printer, timestamp: Date.now() },
+		dataType: 'json',
+		success: function(response) {
+			$('#printer_status').text(response && response.ok ? 'Saved.' : ((response && response.error) || 'Could not save.'));
+		},
+		error: function() { $('#printer_status').text('Could not save.'); }
+	});
+});
+
+$(document).on('click', '.printer_sync', function() {
+	var button = $(this);
+	if (button.prop('disabled')) { return; }
+	button.prop('disabled', true);
+	$('#printer_status').text('Looking for printers…');
+	$.ajax({
+		url: '/manager/configure/printer_sync',
+		type: 'POST',
+		data: { timestamp: Date.now() },
+		dataType: 'json',
+		success: function(response) {
+			if (!response || !response.ok) {
+				$('#printer_status').text((response && response.error) || 'Could not look for printers.');
+				return;
+			}
+			var added = (response.added || []).length;
+			var errors = (response.errors || []).length;
+			var message = added ? ('Added ' + added + ' printer' + (added === 1 ? '' : 's') + '.') : 'No new printers found.';
+			if (errors) { message += ' ' + errors + ' could not be added.'; }
+			$('#printer_status').text(message);
+			if (added) { setTimeout(function() { deviceLister(); }, 1200); }
+		},
+		error: function() { $('#printer_status').text('Could not look for printers.'); },
+		complete: function() { button.prop('disabled', false); }
+	});
+});

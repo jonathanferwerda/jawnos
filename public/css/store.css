@@ -1115,3 +1115,26 @@ input.pi.price_edit {
 	.store_register_remove { grid-column: 1; grid-row: 2; justify-self: end; }
 	.store_register_title { font-size: 22px; }
 }
+
+/* The print bar sits above the receipt, never on the paper. */
+#store_print_bar {
+	position: sticky;
+	top: 0;
+	z-index: 20;
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 8px;
+	padding: 8px 10px;
+	background: #fff;
+	color: #111;
+	border-bottom: 1px solid #bbb;
+	font: 14px sans-serif;
+}
+#store_print_bar label { font-weight: 600; }
+#store_print_bar select { max-width: 100%; }
+#store_print_bar button { cursor: pointer; }
+#store_print_bar #store_print_status { opacity: .72; }
+@media print {
+	#store_print_bar { display: none !important; }
+}

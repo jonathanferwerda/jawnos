@@ -256,6 +256,8 @@ sub action_7789 {
 	my $ble_devices = &subs::ble_device_listing();
 	my $routers = &subs::router_list();
 	my $ping = &subs::setting_grabber({ app => 'misc', setting => 'ping' });
+	my $printers = &subs::cups_printers();
+	my $default_printer = &subs::printer_default_get();
 
 	$c->render(
 		template => 'configure/device_lister',
@@ -264,6 +266,8 @@ sub action_7789 {
 		remote_machines => $remote_machines,
 		ble_devices => $ble_devices,
 		routers => $routers,
+		printers => $printers,
+		default_printer => $default_printer,
 		ping => $ping,
 		ping_scan => $ping_scan,
 		ip => $ip,
@@ -278,6 +282,28 @@ sub action_7789 {
 sub action_7966 {
 	my $c = shift;
 	$c->render(json => &subs::printer_ink_levels($c->param('ip')));
+}
+
+# GET /manager/configure/printer_list
+sub action_52020 {
+	my $c = shift;
+	$c->render(json => {
+		printers => &subs::cups_printers(),
+		default => &subs::printer_default_get(),
+		discovered => &subs::cups_discovered_printers(),
+	});
+}
+
+# POST /manager/configure/printer_default
+sub action_52021 {
+	my $c = shift;
+	$c->render(json => &subs::printer_default_set($c->param('printer')));
+}
+
+# POST /manager/configure/printer_sync
+sub action_52022 {
+	my $c = shift;
+	$c->render(json => &subs::cups_sync_printers());
 }
 
 # POST /manager/configure/device_purpose

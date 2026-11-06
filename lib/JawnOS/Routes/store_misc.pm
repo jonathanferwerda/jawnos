@@ -14,6 +14,9 @@ sub routes {
 	[6143, 'post', '/store/quote/move', 'action_6143'],
 	[6192, 'get', '/store/quote/load', 'action_6192'],
 	[6205, 'get', '/store/print', 'action_6205'],
+	[52030, 'get', '/store/print/printers', 'action_52030'],
+	[52031, 'post', '/store/print/send', 'action_52031'],
+	[52032, 'get', '/store/print/pdf', 'action_52032'],
 	[31938, 'get', '/store/email', 'action_31938'],
 	);
 }

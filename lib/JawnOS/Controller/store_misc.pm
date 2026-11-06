@@ -420,6 +420,63 @@ sub action_6205 {
 	$c->render(text => $header);
 }
 
+# GET /store/print/printers
+sub action_52030 {
+	my $c = shift;
+	my $printers = &subs::cups_printers();
+	$c->render(json => {
+		printers => $printers,
+		default => &subs::printer_default_get(),
+		# only look at the network when this machine has no queue at all; an
+		# explicit Find printers in the Dev panel is what adds it
+		discovered => (scalar @{$printers} ? [] : &subs::cups_discovered_printers()),
+	});
+}
+
+# POST /store/print/send
+sub action_52031 {
+	my $c = shift;
+	my $printer = $c->param('printer') || &subs::printer_default_get();
+	return $c->render(json => { ok => 0, error => 'No printer is selected.' }) unless length $printer;
+	my $customer_app = $c->param('customer_app');
+	$customer_app = &subs::printer_customer_app($c->param('uuid'), $c->param('type')) unless defined $customer_app && length $customer_app;
+	my $paper = &store_printer({
+		type => $c->param('type'),
+		cx_uuid => $c->param('cx_uuid'),
+		uuid => $c->param('uuid'),
+		customer_app => $customer_app,
+	});
+	my $html = $c->render_to_string(%{$paper});
+	my ($pdf, $error) = &subs::printer_pdf_from_html($html);
+	return $c->render(json => { ok => 0, error => $error }) unless $pdf;
+	my $result = &subs::printer_cups_send($printer, $pdf);
+	unlink $pdf;
+	$c->render(json => $result);
+}
+
+# GET /store/print/pdf
+sub action_52032 {
+	my $c = shift;
+	my $customer_app = $c->param('customer_app');
+	$customer_app = &subs::printer_customer_app($c->param('uuid'), $c->param('type')) unless defined $customer_app && length $customer_app;
+	my $paper = &store_printer({
+		type => $c->param('type'),
+		cx_uuid => $c->param('cx_uuid'),
+		uuid => $c->param('uuid'),
+		customer_app => $customer_app,
+	});
+	my $html = $c->render_to_string(%{$paper});
+	my ($pdf, $error) = &subs::printer_pdf_from_html($html);
+	return $c->render(text => $error || 'could not make the PDF', status => 500) unless $pdf;
+	my $bytes = read_file($pdf, binmode => ':raw');
+	unlink $pdf;
+	return $c->render(text => 'could not read the PDF', status => 500) unless defined $bytes && length $bytes;
+	my $name = 'receipt-' . &subs::rightNow() . '.pdf';
+	$c->res->headers->content_type('application/pdf');
+	$c->res->headers->content_disposition('attachment; filename="' . $name . '"');
+	$c->render(data => $bytes);
+}
+
 # GET /store/email
 sub action_31938 {
 	my $c = shift;

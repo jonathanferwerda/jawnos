@@ -702,8 +702,7 @@ $(document).on('click', '.print', function() {
 			cx_uuid: cx_uuid 
 		},
 		success: function(response) {
-			$('#printer_view').html(response).show();
-			$('#everything').hide();
+			storePrintPrepare(response, { type: type, uuid: uuid, cx_uuid: cx_uuid });
 			if ($('#printer_title').length > 0) {
 				$('title').text($('#printer_title').text());
 			}
@@ -1358,4 +1357,102 @@ $(document).on('click', '#crypto_pay_crest_copy', function() {
 	var input = $('<input>').val(text).appendTo('body').trigger('select');
 	try { document.execCommand('copy'); } catch (e) {}
 	input.remove();
+});
+
+// ---- printing ---------------------------------------------------------------
+// The receipt is paper in the browser. A default printer prints at once; with
+// no default the bar asks which queue. Save to PDF always uses the same sheet,
+// so the file and the ink are the same document.
+function storePrintT(text) {
+	return (typeof jawnosT === 'function') ? jawnosT(text) : text;
+}
+
+function storePrintPrepare(html, meta) {
+	var bar = '<div id="store_print_bar">'
+		+ '<label for="store_print_printer">' + storePrintT('Printer') + '</label>'
+		+ '<select id="store_print_printer"></select>'
+		+ '<button type="button" id="store_print_send">' + storePrintT('Print') + '</button>'
+		+ '<button type="button" id="store_print_pdf">' + storePrintT('Save to PDF') + '</button>'
+		+ '<button type="button" id="store_print_close">' + storePrintT('Close') + '</button>'
+		+ '<span id="store_print_status"></span>'
+		+ '</div>';
+	$('#printer_view').html(bar + html).show();
+	$('#printer_view').data('print_meta', meta || {});
+	$('#everything').hide();
+	storePrintFill();
+}
+
+function storePrintFill() {
+	$.ajax({
+		url: '/store/print/printers',
+		type: 'GET',
+		data: { timestamp: Date.now() },
+		dataType: 'json',
+		success: function(response) {
+			var printers = (response && response.printers) || [];
+			var fallback = (response && response.default) || '';
+			var select = $('#store_print_printer').empty();
+			if (!printers.length) {
+				select.append($('<option>').val('').text(storePrintT('No CUPS printers')));
+				$('#store_print_send').prop('disabled', true);
+				var found = (response && response.discovered) || [];
+				$('#store_print_status').text(found.length
+					? storePrintT('A printer is on the network but not in CUPS. Add it in Dev Configuration.')
+					: storePrintT('Save to PDF instead, or add a printer in Dev Configuration.'));
+				return;
+			}
+			select.append($('<option>').val('').text(storePrintT('Choose a printer')));
+			for (var i = 0; i < printers.length; i++) {
+				var p = printers[i] || {};
+				var label = p.name + (p.state && p.state !== 'idle' ? ' (' + p.state + ')' : '');
+				select.append($('<option>').val(p.name).text(label));
+			}
+			if (fallback) {
+				select.val(fallback);
+				$('#store_print_status').text(storePrintT('Printing to') + ' ' + fallback + '…');
+				storePrintSend();
+			} else {
+				select.val('');
+			}
+		},
+		error: function() { $('#store_print_status').text(storePrintT('Could not read the printers.')); }
+	});
+}
+
+function storePrintSend() {
+	var meta = $('#printer_view').data('print_meta') || {};
+	var printer = $('#store_print_printer').val() || '';
+	if (!printer) {
+		$('#store_print_status').text(storePrintT('Choose a printer first.'));
+		return;
+	}
+	var button = $('#store_print_send').prop('disabled', true);
+	$('#store_print_status').text(storePrintT('Printing…'));
+	$.ajax({
+		url: '/store/print/send',
+		type: 'POST',
+		data: $.extend({}, meta, { printer: printer, timestamp: Date.now() }),
+		dataType: 'json',
+		success: function(response) {
+			if (response && response.ok) {
+				$('#store_print_status').text(storePrintT('Sent to') + ' ' + (response.printer || printer) + '.');
+			} else {
+				$('#store_print_status').text((response && response.error) || storePrintT('The printer did not take it.'));
+			}
+		},
+		error: function() { $('#store_print_status').text(storePrintT('The printer did not take it.')); },
+		complete: function() { button.prop('disabled', false); }
+	});
+}
+
+function storePrintPdf() {
+	var meta = $('#printer_view').data('print_meta') || {};
+	window.open('/store/print/pdf?' + $.param($.extend({}, meta, { timestamp: Date.now() })), '_blank');
+}
+
+$(document).on('click', '#store_print_send', storePrintSend);
+$(document).on('click', '#store_print_pdf', storePrintPdf);
+$(document).on('click', '#store_print_close', function() {
+	$('#printer_view').hide().empty();
+	$('#everything').show();
 });
