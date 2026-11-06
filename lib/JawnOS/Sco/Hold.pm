@@ -22,8 +22,7 @@ use List::Util qw(shuffle);
 # elsewhere) can point at its own folder without touching the code.
 sub music_root {
 	return $ENV{'JAWNOS_HOLD_MUSIC'} if defined $ENV{'JAWNOS_HOLD_MUSIC'} && length $ENV{'JAWNOS_HOLD_MUSIC'};
-	my $dir = &subs::home('~/Music/Jon Ferwerda');
-	return '';
+	return &subs::home('~/Music/Jon Ferwerda');
 }
 
 sub cache_dir {

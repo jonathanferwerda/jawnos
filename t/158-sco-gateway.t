@@ -564,6 +564,14 @@ is($gateway->recording_path('.hidden'), '', 'a dot file is not served');
 # decides to pick up. A track is a file on the gateway machine, chosen by the
 # phone as a relative path; nothing may name its way out of the library.
 require JawnOS::Sco::Hold;
+# The house's own library is the fallback when nothing overrides it: the first
+# build returned '' here, and only the tests (which set the override) passed.
+{
+	local $ENV{'JAWNOS_HOLD_MUSIC'};
+	delete $ENV{'JAWNOS_HOLD_MUSIC'};
+	like(JawnOS::Sco::Hold::music_root(), qr{/Music/Jon Ferwerda$},
+		'the library is ~/Music/Jon Ferwerda when nothing points it elsewhere');
+}
 is_deeply(JawnOS::Sco::Hold::tracks(1), [ 'One.wav', 'Two.wav' ],
 	'the library lists the tracks it can play');
 is(JawnOS::Sco::Hold::label('Two.wav'), 'Two', 'a track is named by its file, without the extension');
