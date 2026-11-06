@@ -7,6 +7,28 @@ $(document).on('click', '#weather_toggle', function() {
 	weatherMaker();
 });
 
+var weatherLastLocation = null;
+var weatherHistoryData = null;
+var weatherAccuracyData = null;
+var weatherHistoryLoaded = false;
+var weatherAccuracyLoaded = false;
+
+$(document).on('click', '.weather_tab', function() {
+	weatherShowTab($(this).attr('data-tab'));
+});
+$(document).on('change', '#weather_history_source, #weather_history_range', function() {
+	weatherHistoryLoad();
+});
+$(document).on('click', '#weather_history_backfill', function() {
+	weatherHistoryBackfill();
+});
+$(document).on('change', '#weather_accuracy_source, #weather_accuracy_range', function() {
+	weatherAccuracyLoad(true);
+});
+$(document).on('change', '#weather_accuracy_lead', function() {
+	if (weatherAccuracyData) { weatherAccuracyDetailRender(weatherAccuracyData); }
+});
+
 function weatherMaker(timestamp) {
 	if (!timestamp) { timestamp = Date.now(); }
 	$.ajax({
@@ -88,6 +110,9 @@ function weatherRender(data) {
 	}
 	$w.find('#weather_error').hide();
 	var cur = data.current || {};
+	if (data.lat !== undefined && data.lon !== undefined) {
+		weatherLastLocation = { lat: data.lat, lon: data.lon, city: data.location_name || '', region: data.location_region || data.region || '' };
+	}
 	var place = data.location_name || '';
 	if (data.source) { place = place ? (place + ' · ' + data.source) : data.source; }
 	$w.find('#weather_place').text(place);
@@ -132,6 +157,7 @@ function weatherRender(data) {
 	var status = data.provider_label || '';
 	if (data.location_distance_km) { status += ' · ' + Math.round(data.location_distance_km) + ' km'; }
 	status += ' · ' + jawnosT('Updated') + ' ' + weatherTime(data.fetched_at || Date.now());
+	if (data.hourly_provider) { status += ' · ' + jawnosT('Hourly from') + ' ' + (data.hourly_provider_label || data.hourly_provider); }
 	$w.find('#weather_status').text(status);
 }
 
@@ -148,6 +174,10 @@ function weatherAlerts(alerts) {
 function weatherHours(hours) {
 	var $w = $('.wind[app="weather"]');
 	var html = '';
+	if (!hours.length) {
+		$w.find('#weather_hourly').html('<span class="weather_muted">' + weatherEsc(jawnosT('Hourly forecast is unavailable for this location.')) + '</span>');
+		return;
+	}
 	for (var i = 0; i < hours.length && i < 24; i++) {
 		var h = hours[i] || {};
 		var label = h.time_text ? weatherHourLabel(h.time_text) : weatherTime(h.time);

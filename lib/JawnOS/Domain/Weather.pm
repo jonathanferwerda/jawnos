@@ -19,6 +19,7 @@ use Math::Trig qw(deg2rad);
 use Mojo::JSON qw(decode_json encode_json);
 use Mojo::UserAgent;
 use Time::Local qw(timegm);
+use Time::Piece;
 
 our $device;
 our $gb;
@@ -47,7 +48,9 @@ sub weather_number($v) {
 		return &weather_number($v->{'value'}) if exists $v->{'value'};
 	}
 	return undef if ref $v;
-	return undef unless "$v" =~ /^-?\d+(?:\.\d+)?$/;
+	# The old weather page trimmed a leading zero, so its readings include
+	# "-.1" and ".5" as well as ordinary decimals.
+	return undef unless "$v" =~ /^-?(?:\d+(?:\.\d*)?|\.\d+)$/;
 	return 0 + $v;
 }
 
@@ -72,6 +75,77 @@ sub weather_distance_km($lat1, $lon1, $lat2, $lon2) {
 	my $dlon = deg2rad($lon2 - $lon1);
 	my $a = sin($dlat / 2) ** 2 + cos(deg2rad($lat1)) * cos(deg2rad($lat2)) * sin($dlon / 2) ** 2;
 	return $r * 2 * atan2(sqrt($a), sqrt(1 - $a));
+}
+
+# ---- dates and daily merging ------------------------------------------------
+# The providers do not all carry a date on a forecast period: EC names the
+# period (Today, Tonight, Tomorrow, Saturday night) and NWS names the day. The
+# app needs one row per calendar day for the history comparison, so every
+# normalizer gives each period a date and these two helpers merge day/night
+# pairs into the day they belong to.
+sub weather_day_key($ms) {
+	return '' unless defined $ms && "$ms" =~ /^-?\d+(?:\.\d+)?$/;
+	return Time::Piece->new(int($ms / 1000))->strftime('%Y-%m-%d');
+}
+
+sub weather_days_between($from, $to) {
+	return undef unless defined $from && defined $to
+		&& $from =~ /^\d{4}-\d{2}-\d{2}$/ && $to =~ /^\d{4}-\d{2}-\d{2}$/;
+	my $a = eval { Time::Piece->strptime($from, '%Y-%m-%d') } or return undef;
+	my $b = eval { Time::Piece->strptime($to, '%Y-%m-%d') } or return undef;
+	return int(($b->epoch - $a->epoch) / 86400);
+}
+
+sub weather_condition_class($text) {
+	my $t = lc($text // '');
+	return 'thunder' if $t =~ /thunder|storm/;
+	return 'snow' if $t =~ /snow|flurr|blizzard|ice/;
+	return 'rain' if $t =~ /rain|shower|drizzle/;
+	return 'fog' if $t =~ /fog|mist|haze/;
+	return 'cloud' if $t =~ /cloud|overcast/;
+	return 'clear' if $t =~ /clear|sunny|sun/;
+	return 'other';
+}
+
+sub weather_daily_merge($daily) {
+	my %by;
+	my @order;
+	foreach my $d (@{ ref $daily eq 'ARRAY' ? $daily : [] }) {
+		next unless ref $d eq 'HASH';
+		my $date = $d->{'date'} // '';
+		next unless $date =~ /^\d{4}-\d{2}-\d{2}$/;
+		if (!$by{$date}) {
+			$by{$date} = {
+				date => $date,
+				label => $d->{'label'} // '',
+				high => $d->{'high'},
+				low => $d->{'low'},
+				condition => $d->{'condition'} // '',
+				text => $d->{'text'} // '',
+				glyph => $d->{'glyph'} // '',
+				precip_prob => $d->{'precip_prob'},
+				wind_speed => $d->{'wind_speed'},
+				uv => $d->{'uv'},
+				periods => [],
+			};
+			push @order, $date;
+		}
+		my $m = $by{$date};
+		$m->{'high'} = $d->{'high'} if defined $d->{'high'} && (!defined $m->{'high'} || $d->{'high'} > $m->{'high'});
+		$m->{'low'} = $d->{'low'} if defined $d->{'low'} && (!defined $m->{'low'} || $d->{'low'} < $m->{'low'});
+		$m->{'condition'} = $d->{'condition'} if !length $m->{'condition'} && defined $d->{'condition'} && length $d->{'condition'};
+		$m->{'text'} = $d->{'text'} if !length $m->{'text'} && defined $d->{'text'} && length $d->{'text'};
+		$m->{'glyph'} = $d->{'glyph'} if !length $m->{'glyph'} && defined $d->{'glyph'} && length $d->{'glyph'};
+		$m->{'precip_prob'} = $d->{'precip_prob'} if defined $d->{'precip_prob'} && (!defined $m->{'precip_prob'} || $d->{'precip_prob'} > $m->{'precip_prob'});
+		$m->{'wind_speed'} = $d->{'wind_speed'} if defined $d->{'wind_speed'} && (!defined $m->{'wind_speed'} || $d->{'wind_speed'} > $m->{'wind_speed'});
+		$m->{'uv'} = $d->{'uv'} if !defined $m->{'uv'} && defined $d->{'uv'};
+		push @{$m->{'periods'}}, {
+			label => $d->{'label'} // '',
+			text => $d->{'text'} // '',
+			condition => $d->{'condition'} // '',
+		};
+	}
+	return [ map { $by{$_} } @order ];
 }
 
 # ---- condition words and glyphs --------------------------------------------
@@ -236,6 +310,15 @@ sub weather_ec_normalize($feature) {
 			wind_direction => defined $bearing ? &weather_compass($bearing) : '',
 			uv => &weather_text($f->{'uv'}->{'index'}),
 		};
+	}
+	my $today = Time::Piece->new()->strftime('%Y-%m-%d');
+	my $cursor = Time::Piece->strptime($today, '%Y-%m-%d');
+	for my $i (0 .. $#daily) {
+		my $label = lc($daily[$i]->{'label'} // '');
+		if ($i == 0) { $daily[$i]->{'date'} = $cursor->strftime('%Y-%m-%d'); next; }
+		if ($label =~ /night|evening|overnight/) { $daily[$i]->{'date'} = $daily[$i - 1]->{'date'}; next; }
+		$cursor = Time::Piece->new($cursor->epoch + 86400);
+		$daily[$i]->{'date'} = $cursor->strftime('%Y-%m-%d');
 	}
 	$cur->{'high'} = $daily[0]->{'high'} if @daily;
 	$cur->{'low'} = $daily[0]->{'low'} if @daily;
@@ -462,6 +545,7 @@ sub weather_nws_normalize($obs, $hourly, $daily, $points) {
 		my $low;
 		$low = &weather_nws_temp($periods[$i + 1]) if $i + 1 < @periods && !$periods[$i + 1]->{'isDaytime'};
 		push @daily, {
+			date => substr($p->{'startTime'} // '', 0, 10),
 			label => $p->{'name'} // '',
 			high => &weather_nws_temp($p),
 			low => $low,
@@ -529,7 +613,8 @@ sub weather_fetch($lat, $lon, $opts) {
 	my $provider = &weather_provider_for($lat, $lon, $opts->{'provider'});
 	my $key = sprintf('%.2f_%.2f_%s', $lat, $lon, $provider);
 	my $cached = eval { &cache_get({ app => 'weather', context => 'forecast', subcontext => $key }) };
-	if (!$opts->{'force'} && ref $cached eq 'HASH' && !$cached->{'error'} && ($cached->{'fetched_at'} || 0) > &rightNow() - 600000) {
+	if (!$opts->{'force'} && ref $cached eq 'HASH' && !$cached->{'error'} && ($cached->{'fetched_at'} || 0) > &rightNow() - 600000
+		&& (($provider eq 'openmeteo') || @{ $cached->{'hourly'} || [] })) {
 		return $cached;
 	}
 	my $ua = Mojo::UserAgent->new(connect_timeout => 6, inactivity_timeout => 10, request_timeout => 15);
@@ -547,10 +632,20 @@ sub weather_fetch($lat, $lon, $opts) {
 		}
 	}
 	return { error => 'Weather is unavailable right now.' } unless $out && !$out->{'error'};
+	$out->{'daily'} = &weather_daily_merge($out->{'daily'});
+	if (!@{ $out->{'hourly'} || [] } && $provider ne 'openmeteo') {
+		my $hourly_fallback = eval { &weather_openmeteo_fetch($lat, $lon, $ua) };
+		if ($hourly_fallback && !$hourly_fallback->{'error'} && @{ $hourly_fallback->{'hourly'} || [] }) {
+			$out->{'hourly'} = $hourly_fallback->{'hourly'};
+			$out->{'hourly_provider'} = 'openmeteo';
+			$out->{'hourly_provider_label'} = &weather_provider_label('openmeteo');
+		}
+	}
 	$out->{'provider'} = $provider if ($out->{'fallback_from'} // '') eq '';
 	$out->{'lat'} = $lat;
 	$out->{'lon'} = $lon;
 	$out->{'fetched_at'} = &rightNow();
+	eval { &weather_forecast_snapshot_save($out, $lat, $lon) };
 	eval { &cache_set({ app => 'weather', context => 'forecast', subcontext => $key, warranty => '-10m' }, $out) };
 	return $out;
 }

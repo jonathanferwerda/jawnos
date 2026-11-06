@@ -1,0 +1,14 @@
+<div id="weather_alerts" style="display:none;"></div>
+<div id="weather_now" class="weather_card">
+	<div id="weather_now_main">
+		<div id="weather_place"></div>
+		<div id="weather_temp">—</div>
+		<div id="weather_cond"><%= &subs::ui('Loading…') %></div>
+	</div>
+	<div id="weather_glyph">🌡️</div>
+	<div id="weather_stats"></div>
+</div>
+<div id="weather_hourly_title"><%= &subs::ui('Hourly') %></div>
+<div id="weather_hourly"><span class="weather_muted"><%= &subs::ui('Hourly forecast will appear here.') %></span></div>
+<div id="weather_daily_title"><%= &subs::ui('7-day forecast') %></div>
+<div id="weather_daily"></div>

@@ -1,4 +1,4 @@
-# tests-for: lib/JawnOS/Domain/Weather.pm lib/JawnOS/Controller/manager_weather.pm lib/JawnOS/Routes/manager_weather.pm templates/apps/weather.html.ep public/js/manager/weather.js
+# tests-for: lib/JawnOS/Domain/Weather.pm lib/JawnOS/Domain/WeatherHistory.pm lib/JawnOS/Controller/manager_weather.pm lib/JawnOS/Routes/manager_weather.pm templates/apps/weather.html.ep public/js/manager/weather.js
 # covers:    The Weather app's pure parsers for Environment Canada and Open-Meteo,
 #            the country-to-provider choice, and the app's route/menu/help wiring.
 
@@ -11,9 +11,12 @@ use lib "$FindBin::Bin/lib", "t/lib";
 use Test::More;
 use File::Slurp qw(read_file);
 use RepoSource;
+use Mojo::JSON;
+use Time::Piece;
 
 my $root = repo_root();
 require "$root/lib/JawnOS/Domain/Weather.pm";
+require "$root/lib/JawnOS/Domain/WeatherHistory.pm";
 
 # --- Environment Canada: the nested {value}{en} shape ------------------------
 my $ec = {
@@ -126,6 +129,63 @@ is($mo->{'current'}{'glyph'}, '☁️', 'Open-Meteo maps the WMO code to a glyph
 is(scalar @{$mo->{'hourly'}}, 2, 'Open-Meteo reads the hourly arrays');
 is(scalar @{$mo->{'daily'}}, 2, 'Open-Meteo reads the daily arrays');
 is($mo->{'daily'}[0]{'high'}, 11, 'Open-Meteo reads the high');
+
+# --- a cached payload without hourly periods is not trusted -------------------
+{
+	my %store;
+	my $now = Time::Piece::gmtime()->epoch * 1000;
+	no warnings 'redefine';
+	local *subs::rightNow = sub { $now };
+	local *subs::cache_get = sub {
+		my ($q) = @_;
+		return $store{ join('|', $q->{'app'}, $q->{'context'}, $q->{'subcontext'} // '') };
+	};
+	local *subs::cache_set = sub {
+		my ($q, $value) = @_;
+		$store{ join('|', $q->{'app'}, $q->{'context'}, $q->{'subcontext'} // '') } = $value;
+		return 1;
+	};
+	# The Weather app once cached an EC city page before it read the hourly
+	# periods, so the strip stayed empty for the whole cache window.
+	$store{'weather|forecast|43.45_-80.49_ec'} = {
+		fetched_at => $now, provider => 'ec',
+		current => {}, hourly => [], daily => [],
+	};
+	my $ec_live = Mojo::JSON::decode_json(Mojo::JSON::encode_json($ec));
+	$ec_live->{'properties'}{'lastUpdated'} = Time::Piece::gmtime()->strftime('%Y-%m-%dT%H:%M:%SZ');
+	push @{ $ec_live->{'properties'}{'forecastGroup'}{'forecasts'} }, {
+		period => { textForecastName => { en => 'Tomorrow' } },
+		temperatures => { temperature => [
+			{ class => { en => 'high' }, value => { en => 6 } },
+			{ class => { en => 'low' }, value => { en => 0 } },
+		] },
+		abbreviatedForecast => { textSummary => { en => 'Rain' }, icon => { value => 12 } },
+		cloudPrecip => { en => 'Rain.' },
+	};
+	my %seen_url;
+	local *subs::weather_http_get = sub {
+		my ($url) = @_;
+		$seen_url{$url}++;
+		if ($url =~ m{/items\?}) {
+			return ({ features => [ {
+				geometry => { coordinates => [-80.49, 43.45] },
+				properties => { identifier => 'on-82', name => 'Kitchener-Waterloo', region => 'Waterloo' },
+			} ] }, undef);
+		}
+		return ($ec_live, undef) if $url =~ m{/items/on-82\?};
+		return (undef, 'unexpected URL');
+	};
+	my $fetched = subs::weather_fetch(43.45, -80.49, {});
+	is($fetched->{'error'}, undef, 'the fetch answers');
+	is(scalar @{ $fetched->{'hourly'} || [] }, 1, 'a cached payload with no hourly periods is fetched again');
+	is(scalar @{ $fetched->{'daily'} || [] }, 2, 'day and night merge into one calendar day');
+	my $tomorrow = &subs::weather_day_key($now + 86400000);
+	my $snap = $store{'weather|forecast_history|43.45_-80.49'} || {};
+	ok($snap->{$tomorrow}{1}, 'the forecast is kept for the day it is about');
+	is($snap->{$tomorrow}{1}{'high'}, 6, 'the snapshot keeps the forecast high');
+	ok($store{'weather|forecast|43.45_-80.49_ec'}{'fetched_at'}, 'the fresh answer is cached');
+	ok(!$snap->{ &subs::weather_day_key($now) }, 'today has no lead time to score');
+}
 
 # --- provider choice ---------------------------------------------------------
 is(subs::weather_provider_default(43.5, -80.5), 'ec', 'Canada uses Environment Canada');

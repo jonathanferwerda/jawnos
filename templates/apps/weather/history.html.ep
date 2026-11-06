@@ -1,0 +1,19 @@
+<div id="weather_history_panel" class="weather_panel" style="display:none;">
+	<div class="weather_controls">
+		<label for="weather_history_source"><%= &subs::ui('History source') %></label>
+		<select id="weather_history_source"></select>
+		<label for="weather_history_range"><%= &subs::ui('Range') %></label>
+		<select id="weather_history_range">
+			<option value="7"><%= &subs::ui('7 days') %></option>
+			<option value="30" selected><%= &subs::ui('30 days') %></option>
+			<option value="90"><%= &subs::ui('90 days') %></option>
+			<option value="365"><%= &subs::ui('1 year') %></option>
+			<option value="all"><%= &subs::ui('All') %></option>
+		</select>
+		<button type="button" id="weather_history_backfill"><%= &subs::ui('Backfill history') %></button>
+		<span id="weather_history_status" class="weather_muted"></span>
+	</div>
+	<div id="weather_history_note" class="weather_muted"></div>
+	<div id="weather_history_chart" class="weather_card"></div>
+	<div id="weather_history_table" class="weather_table_wrap"></div>
+</div>

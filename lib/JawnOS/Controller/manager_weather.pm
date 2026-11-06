@@ -81,4 +81,47 @@ sub action_52011 {
 	$c->render(json => $weather);
 }
 
+# GET /manager/weather/history
+sub action_52012 {
+	my $c = shift;
+	my $result = eval { &subs::weather_history_read({
+		source => $c->param('source') || '',
+		range => $c->param('range') || '30',
+		city => $c->param('city') || '',
+		region => $c->param('region') || '',
+		force => ($c->param('force') ? 1 : 0),
+	}) };
+	$c->render(json => $result || { error => &subs::ui('History is unavailable.') });
+}
+
+# POST /manager/weather/backfill
+sub action_52013 {
+	my $c = shift;
+	my $result = eval { &subs::weather_history_build({ force => 1 }) };
+	unless ($result) {
+		$c->render(json => { ok => 0, error => &subs::ui('The backfill failed.') });
+		return;
+	}
+	$c->render(json => {
+		ok => 1,
+		built_at => $result->{'built_at'},
+		sources => $result->{'sources'} || [],
+	});
+}
+
+# GET /manager/weather/accuracy
+sub action_52014 {
+	my $c = shift;
+	my $result = eval { &subs::weather_accuracy_build({
+		source => $c->param('source') || '',
+		range => $c->param('range') || '30',
+		city => $c->param('city') || '',
+		region => $c->param('region') || '',
+		lat => $c->param('lat'),
+		lon => $c->param('lon'),
+	}) };
+	$c->render(json => $result || { error => &subs::ui('Accuracy is unavailable.') });
+}
+
+
 1;

@@ -3,98 +3,7 @@
 	my $default = $default_device || 'me';
 	my $me_seen = ($me_fix && $me_fix->{'seen'}) ? &subs::formatted_time($me_fix->{'seen'}) : '';
 %>
-<style>
-.wind[app="weather"] #weather {
-	box-sizing: border-box;
-	width: 100%;
-	height: 100%;
-	display: flex;
-	flex-direction: column;
-	gap: 9px;
-	padding: 9px;
-	background-color: var(--panel);
-	overflow-y: auto;
-}
-.wind[app="weather"] #weather_toolbar {
-	display: flex;
-	flex-wrap: wrap;
-	align-items: center;
-	gap: 7px;
-	font-size: 14px;
-}
-.wind[app="weather"] #weather_toolbar label { opacity: .75; }
-.wind[app="weather"] #weather_device { max-width: 100%; }
-.wind[app="weather"] #weather_status { opacity: .68; font-size: 12px; }
-.wind[app="weather"] .weather_card {
-	border: 1px solid var(--line);
-	border-radius: 10px;
-	padding: 10px;
-	background-color: var(--panel);
-}
-.wind[app="weather"] #weather_now {
-	display: flex;
-	flex-wrap: wrap;
-	align-items: flex-start;
-	gap: 12px;
-}
-.wind[app="weather"] #weather_now_main { flex: 1 1 240px; min-width: 0; }
-.wind[app="weather"] #weather_place { font-size: 15px; opacity: .78; }
-.wind[app="weather"] #weather_temp { font-size: 54px; font-weight: 700; line-height: 1; margin: 2px 0; }
-.wind[app="weather"] #weather_cond { font-size: 18px; }
-.wind[app="weather"] #weather_glyph { font-size: 58px; line-height: 1; }
-.wind[app="weather"] #weather_stats {
-	flex: 1 1 240px;
-	display: grid;
-	grid-template-columns: repeat(auto-fit, minmax(105px, 1fr));
-	gap: 5px 12px;
-	font-size: 13px;
-}
-.wind[app="weather"] .weather_stat b { display: block; font-size: 11px; font-weight: 500; opacity: .58; text-transform: uppercase; letter-spacing: .04em; }
-.wind[app="weather"] #weather_hourly_title, .wind[app="weather"] #weather_daily_title {
-	font-size: 12px;
-	text-transform: uppercase;
-	letter-spacing: .06em;
-	opacity: .62;
-	padding-top: 2px;
-}
-.wind[app="weather"] #weather_hourly {
-	display: flex;
-	gap: 6px;
-	overflow-x: auto;
-	padding-bottom: 3px;
-}
-.wind[app="weather"] .weather_hour {
-	flex: 0 0 auto;
-	min-width: 62px;
-	text-align: center;
-	border: 1px solid var(--line);
-	border-radius: 9px;
-	padding: 6px 4px;
-	font-size: 12px;
-}
-.wind[app="weather"] .weather_hour .weather_hour_glyph { font-size: 24px; line-height: 1.1; }
-.wind[app="weather"] .weather_hour .weather_hour_temp { font-size: 15px; font-weight: 600; }
-.wind[app="weather"] .weather_hour .weather_hour_precip { opacity: .62; font-size: 11px; }
-.wind[app="weather"] #weather_daily { display: flex; flex-direction: column; gap: 4px; }
-.wind[app="weather"] .weather_day {
-	display: grid;
-	grid-template-columns: minmax(74px, 1.1fr) 30px minmax(62px, .7fr) 1fr;
-	align-items: center;
-	gap: 8px;
-	border-top: 1px solid var(--line);
-	padding: 6px 2px;
-	font-size: 13px;
-}
-.wind[app="weather"] .weather_day:first-child { border-top: 0; }
-.wind[app="weather"] .weather_day .weather_day_glyph { font-size: 22px; text-align: center; }
-.wind[app="weather"] .weather_day .weather_day_temps { font-weight: 600; white-space: nowrap; }
-.wind[app="weather"] .weather_day .weather_day_text { opacity: .72; min-width: 0; }
-.wind[app="weather"] #weather_alerts { display: flex; flex-direction: column; gap: 4px; }
-.wind[app="weather"] .weather_alert { border: 1px solid var(--danger, #c0392b); border-radius: 8px; padding: 7px 9px; font-size: 13px; }
-.wind[app="weather"] .weather_alert b { display: block; margin-bottom: 2px; }
-.wind[app="weather"] #weather_error { border: 1px solid var(--line); border-radius: 9px; padding: 10px; opacity: .82; }
-.wind[app="weather"] .weather_muted { opacity: .6; font-size: 12px; }
-</style>
+<%= include 'apps/weather/style' %>
 <div id="weather">
 	<div id="weather_toolbar">
 		<label for="weather_device"><%= &subs::ui('Location') %></label>
@@ -116,19 +25,15 @@
 	<input type="hidden" id="weather_lat" value="">
 	<input type="hidden" id="weather_lon" value="">
 	<input type="hidden" id="weather_source" value="">
-	<div id="weather_alerts" style="display:none;"></div>
 	<div id="weather_error" style="display:none;"></div>
-	<div id="weather_now" class="weather_card">
-		<div id="weather_now_main">
-			<div id="weather_place"></div>
-			<div id="weather_temp">—</div>
-			<div id="weather_cond"><%= &subs::ui('Loading…') %></div>
-		</div>
-		<div id="weather_glyph">🌡️</div>
-		<div id="weather_stats"></div>
+	<div id="weather_tabs">
+		<button type="button" class="weather_tab active" data-tab="now"><%= &subs::ui('Now') %></button>
+		<button type="button" class="weather_tab" data-tab="history"><%= &subs::ui('History') %></button>
+		<button type="button" class="weather_tab" data-tab="accuracy"><%= &subs::ui('Accuracy') %></button>
 	</div>
-	<div id="weather_hourly_title"><%= &subs::ui('Hourly') %></div>
-	<div id="weather_hourly"></div>
-	<div id="weather_daily_title"><%= &subs::ui('7-day forecast') %></div>
-	<div id="weather_daily"></div>
+	<div id="weather_now_panel" class="weather_panel active">
+		<%= include 'apps/weather/now' %>
+	</div>
+	<%= include 'apps/weather/history' %>
+	<%= include 'apps/weather/accuracy' %>
 </div>

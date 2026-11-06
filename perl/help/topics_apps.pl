@@ -277,20 +277,24 @@ $topic{'ide'} = {
 
 $topic{'weather'} = {
 		title => 'Weather', category => 'apps', app => 'weather',
-		templates => [ 'templates/apps/weather.html.ep', 'public/js/manager/weather.js' ],
+		templates => [ 'templates/apps/weather.html.ep', 'templates/apps/weather/style.html.ep', 'templates/apps/weather/now.html.ep', 'templates/apps/weather/history.html.ep', 'templates/apps/weather/accuracy.html.ep', 'public/js/manager/weather.js', 'public/js/manager/weather_history.js' ],
 		verified => '2026-11-06',
 		summary => 'Current conditions and a seven-day forecast for the phone, tablet or machine you choose.',
 		body => [
 			'Weather reads the house\'s own GPS fixes, not a fixed city page. The picker lists This device and every machine with a fix in the last day. Choosing one asks Environment Canada for the nearest city when the fix is in Canada, the US National Weather Service when it is in the United States, and Open-Meteo anywhere else. A Canadian fix therefore names the nearest Environment Canada city instead of an hour-away city page.',
 			'The current card shows the temperature, condition, feels like, high and low, wind and gusts, humidity, pressure, dew point, visibility and UV. Below it are the next 24 hours and a seven-day forecast, with an alert banner when the provider has one. The foot names the provider, the distance to the city when Environment Canada was used, and when the reading was fetched.',
 			'Use browser location asks the browser for a one-off coordinate; it is not written to the GPS record. Refresh asks the provider again instead of using the ten-minute cache. A device with no fresh fix says so and leaves the other machines in the picker.',
-			'The provider follows the coordinate. To force one, set the misc setting weather_provider to ec, nws or openmeteo; leave it empty for automatic.'
+			'The provider follows the coordinate. To force one, set the misc setting weather_provider to ec, nws or openmeteo; leave it empty for automatic.',
+			'The History tab reads the two old weather appointments back to the start of the house\'s records, folding the readings into one row per day with the high, low, mean, condition, wind and forecast humidity the old app logged. History source picks which of them to read; the app chooses the one whose city matches the forecast. Backfill history rebuilds that view. Actual high and low are the extremes of the readings the house kept, so they are sampled rather than a station daily extreme.',
+			'The Accuracy tab compares each daily forecast the Weather app recorded, made one to seven days before the date, with what the house actually measured. The summary gives the mean absolute error for the high and low and the condition match for each lead day; the detail table shows the selected lead. Forecast snapshots begin when this app first loads, because the old app kept only seven raw pages, not its forecasts. Choose the history source that matches the forecast city for a fair comparison.',
 		],
 		steps => [
 			'Open Weather from the start menu.',
 			'Choose This device, or another phone, tablet or machine with a recent GPS fix.',
 			'Read the current card, the next 24 hours and the seven-day forecast.',
-			'Press Use browser location for a one-off coordinate, or Refresh to ask the provider again.'
+			'Press Use browser location for a one-off coordinate, or Refresh to ask the provider again.',
+			'Open History to see the last eleven months of readings; press Backfill history if the view is empty.',
+			'Open Accuracy, choose a lead day and compare the forecast high, low and condition with the measured day.',
 		],
 		related => [ 'configure', 'travel' ]
 	};
