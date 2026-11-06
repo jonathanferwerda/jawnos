@@ -172,6 +172,7 @@ our $known_appts = {
 	notes => { icon => '/images/decipherable/list.png' },
 	phone => { icon => '/images/decipherable/phone.png' },
 	clock => { icon => '/icons/clock.svg' },
+	weather => { icon => "/images/make believe/new sun.png" },
 	people => { icon => '/images/make believe/people.png' },
 	email => { icon => '/images/decipherable/envelope.png' },
 	chat => { icon => "/images/make believe/phone_sms.png" },

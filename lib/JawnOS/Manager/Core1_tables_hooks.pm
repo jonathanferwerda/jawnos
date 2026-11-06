@@ -628,6 +628,7 @@ our @manager_bundle_files = qw(
 	/js/manager/folders.js
 	/js/manager/desk.js
 	/js/manager/notes.js
+	/js/manager/weather.js
 	/js/manager/clock.js
 	/js/manager/help.js
 	/js/manager/page_agent.js
@@ -665,6 +666,7 @@ our %manager_app_scripts = (
 	phone           => [qw(/js/manager/phone.js)],
 	people          => [qw(/js/manager/people.js)],
 	notes           => [qw(/js/manager/notes.js)],
+	weather         => [qw(/js/manager/weather.js)],
 	search          => [qw(/js/manager/search.js)],
 	ide             => [qw(/js/manager/ide.js /js/manager/ide_code.js)],
 	store           => [qw(/js/store.js)],
@@ -693,6 +695,7 @@ our %manager_app_entry = (
 	ide             => [qw(ideTabPopulator)],
 	store           => [qw(storeOpener)],
 	email           => [qw(emailReaderOpen emailReaderClose)],
+	weather         => [qw(weatherMaker)],
 );
 
 # The start-menu icons are drawn by the server, but each app used to register
@@ -709,6 +712,7 @@ our %manager_toggle_apps = (
 	budget => 'budget', warehouse_toggle => 'warehouse', measures_toggle => 'measures',
 	market_toggle => 'market', process_monitor_toggle => 'process_monitor',
 	store_toggle => 'store', email_toggle => 'email',
+	weather_toggle => 'weather',
 );
 
 # The one bundle the page loads up front: everything an app chunk names is gone

@@ -274,4 +274,25 @@ $topic{'ide'} = {
 		],
 		related => [ 'editor', 'terminal' ]
 	};
+
+$topic{'weather'} = {
+		title => 'Weather', category => 'apps', app => 'weather',
+		templates => [ 'templates/apps/weather.html.ep', 'public/js/manager/weather.js' ],
+		verified => '2026-11-06',
+		summary => 'Current conditions and a seven-day forecast for the phone, tablet or machine you choose.',
+		body => [
+			'Weather reads the house\'s own GPS fixes, not a fixed city page. The picker lists This device and every machine with a fix in the last day. Choosing one asks Environment Canada for the nearest city when the fix is in Canada, the US National Weather Service when it is in the United States, and Open-Meteo anywhere else. A Canadian fix therefore names the nearest Environment Canada city instead of an hour-away city page.',
+			'The current card shows the temperature, condition, feels like, high and low, wind and gusts, humidity, pressure, dew point, visibility and UV. Below it are the next 24 hours and a seven-day forecast, with an alert banner when the provider has one. The foot names the provider, the distance to the city when Environment Canada was used, and when the reading was fetched.',
+			'Use browser location asks the browser for a one-off coordinate; it is not written to the GPS record. Refresh asks the provider again instead of using the ten-minute cache. A device with no fresh fix says so and leaves the other machines in the picker.',
+			'The provider follows the coordinate. To force one, set the misc setting weather_provider to ec, nws or openmeteo; leave it empty for automatic.'
+		],
+		steps => [
+			'Open Weather from the start menu.',
+			'Choose This device, or another phone, tablet or machine with a recent GPS fix.',
+			'Read the current card, the next 24 hours and the seven-day forecast.',
+			'Press Use browser location for a one-off coordinate, or Refresh to ask the provider again.'
+		],
+		related => [ 'configure', 'travel' ]
+	};
+
 1;
