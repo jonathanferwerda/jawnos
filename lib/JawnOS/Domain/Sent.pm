@@ -487,11 +487,11 @@ sub pen_message {
 									mail_contact => 'pen'
 								});
 							} else {
+								$text = &subs::html_text($text);
 								$text =~ s/\n/<br>/gi;
-								$text =~ s/'/\\'/gi;
 								$response_text .= $text;
 								&Websocket::send('tab', {
-									console => '$(\'.assistant_content[uuid="' . $data->{'uuid'} . '"]\').html(\'' . $response_text . '\');'
+									console => '$(\'.assistant_content[uuid=' . encode_json($data->{'uuid'}) . ']\').html(' . encode_json($response_text) . ');'
 								});
 							}
 		          *STDOUT->flush;
@@ -551,9 +551,10 @@ sub pen_message {
 			});
 	    $attachments = $attachment if $attachment;
 	    if ($media_url) {
+        my $safe_url = &subs::html_text($media_url);
         my $html = ($generating_kind eq 'image')
-					? '<img src="' . $media_url . '" class="chat-generated-img" style="width:100%;"/><br>'
-					: '<a href="' . $media_url . '" class="chat-generated-file">' . $generating_kind . '</a><br>';
+					? '<img src="' . $safe_url . '" class="chat-generated-img" style="width:100%;"/><br>'
+					: '<a href="' . $safe_url . '" class="chat-generated-file">' . &subs::html_text($generating_kind) . '</a><br>';
         $accumulated_text = $html;
 				$response_text = $html;
 				unless ($data->{'type'} eq 'assistant') {
@@ -564,10 +565,8 @@ sub pen_message {
 						mail_contact => 'pen'
 					});
 				} else {
-					$accumulated_text =~ s/'/\\'/gi;
-
 					&Websocket::send('tab', {
-						console => '$(\.assistant_content[uuid="' . $data->{'uuid'} . '"]\)\.html(\'' . $accumulated_text . '\');'
+						console => '$(\'.assistant_content[uuid=' . encode_json($data->{'uuid'}) . ']\').html(' . encode_json($accumulated_text) . ');'
 					});
 				}
 	    }

@@ -70,12 +70,13 @@ sub action_19406 {
 	my $timestamp = $c->param('timestamp');
 	$c->param('reason' => 'new_database');
 	$c->render(text => $database) unless $c->param('credential');
-	my $president = $c->param('president');
-	$president = &subs::home($president);
+	# A database name is one filesystem component, never a path or a shell word.
+	my $president = &subs::path_name($c->param('president') // '');
 	my $old_db = $database;
 	my $download_location = &subs::home('~/.president');
 	my $temp_folder = &subs::home($download_location . '/' . &subs::random_string_creator(10)) . '/';
-	`mkdir -p $temp_folder` unless -e "$temp_folder";
+	require File::Path;
+	File::Path::make_path($temp_folder) unless -e "$temp_folder";
 
 	$database = $temp_folder . $president . '.db';
 	my $enc_file = $temp_folder . $president . '.enc';
@@ -83,14 +84,17 @@ sub action_19406 {
 	my $credential = &subs::session_suds($c);
 	my $misc_setting_list = &misc_setting_list();
 	my $server_time = &subs::rightNow();
-	`touch $database`;
+	open(my $touch, '>>', $database) or die "touch $database: $!";
+	close $touch;
 	my $schema_file = $temp_folder . 'schema.sql';
 	# the statistics and sequence tables are internal: replaying their CREATE is
 	# a parse error ("object name reserved for internal use: sqlite_sequence"),
 	# and SQLite builds them again where they are wanted
-	`sqlite3 $old_db .schema | grep -vE 'sqlite_stat|sqlite_sequence' > $schema_file`;
-	my $command = `sqlite3 $database < $schema_file`;
-	`shred -u $schema_file`;
+	my $schema_dump = 'sqlite3 ' . quote($old_db) . q{ .schema | grep -vE 'sqlite_stat|sqlite_sequence' > } . quote($schema_file);
+	my $schema_load = 'sqlite3 ' . quote($database) . ' < ' . quote($schema_file);
+	`$schema_dump`;
+	`$schema_load`;
+	system('shred', '-u', $schema_file);
 	$sql = Mojo::SQLite->new('sqlite:' . $database);
 	$db = $sql->db;
 	$db->query('PRAGMA cache_size = -200000');
@@ -126,20 +130,22 @@ sub action_19406 {
 	});
 	$db->insert('tickets', $data);
 
-	my $backup = `sqlite3 $database ".backup '$database.1.db'"`;
+	my $backup = `sqlite3 ` . quote($database) . ` ".backup '$database.1.db'"`;
 	my $encryption_standard = &subs::setting_grabber({ app => 'misc', setting => 'encryption_standard' } ) || "aes-256-ctr";
 	my $encrypt = &subs::openssl_file_crypt('e', $encryption_standard, $secret, $database . '.1.db', $enc_file, 0, 1);
 	my $appendage = $universal_splitter . &subs::encrypter($secret,$encryption_standard);
-	`echo "$appendage" >> $enc_file`;
+	open(my $append_fh, '>>', $enc_file) or die "append $enc_file: $!";
+	print $append_fh $appendage;
+	close $append_fh;
 #	my $devices = &subs::device_lister($timestamp);
 
 #	&subs::backup_now($c);
-	`shred -u $database`;
-#	`shred -u $database.1.db`;
-	`shred -u $database-shm`;
-	`shred -u $database-wal`;
+	system('shred', '-u', $database);
+#	system('shred', '-u', $database . '.1.db');
+	system('shred', '-u', $database . '-shm');
+	system('shred', '-u', $database . '-wal');
 	my $new_enc_file = &subs::database_dir() . '/' . $president . '.enc';
-	`mv -v $enc_file $new_enc_file`;
+	rename($enc_file, $new_enc_file) or $log->error("new database: rename $enc_file: $!");
 #	`rm -R $temp_folder`;
 #	$database = $old_db;
 	&subs::say_it('New Database ' . $c->param('president'));
@@ -152,8 +158,12 @@ sub action_19406 {
 # incident and the repair: docs/AGENTS-records.md.
 sub action_19489 {
 	my $c = shift;
-	my $filename = $c->param('filename');
+	my $filename = $c->param('filename') // '';
 	my $path = $filename;
+	unless (&subs::path_is_within($path, &subs::backups_dir())) {
+		$c->render(json => { status => 'fail', error => 'not a backup file' });
+		return;
+	}
 	$c->param('reason' => 'restore_database');
 	my ($db) = &subs::database_grabber();
 	my $credentials = &subs::db_select('security', ['level','credential'], {  });
@@ -164,20 +174,20 @@ sub action_19489 {
 	my $encryption_standard = &subs::setting_grabber({ app => 'misc', setting => 'encryption_standard' } ) || "aes-256-ctr";
 	foreach my $cred ( @{$creds} ) {
 		my $cr = &subs::decrypter(&subs::session_suds($c),$cred->{'credential'});
-		if ($path =~ /enc$/gi) {
-			$filename =~ s/.enc$//gi;
+		if ($path =~ /\.enc\z/i) {
+			$filename =~ s/\.enc\z//i;
 			my $t_database = &subs::database_path() . '.restoring';
 #			my $scrypt = `printf "$cr" | scrypt dec -P $path $t_database`;
-			my $data = `tail $path`;
+			my $data = `tail ` . quote($path);
 			my @split_data = split $universal_splitter, $data;
 			$encryption_standard = &subs::decrypter($cr, $split_data[1]);
 			my $scrypt = &subs::openssl_file_crypt('d', $encryption_standard, $cr, $path, $t_database, 0, 1);
 			if (-s $t_database > 5000) {
 				&subs::backup_now($c);
-				`shred -u $database`;
-				`shred -u $database-shm`;
-				`shred -u $database-wal`;
-				`mv -v $t_database $database`;
+				system('shred', '-u', $database);
+				system('shred', '-u', $database . '-shm');
+				system('shred', '-u', $database . '-wal');
+				rename($t_database, $database) or $log->error("restore: rename $t_database: $!");
 				$sql = Mojo::SQLite->new('sqlite:' . $database);
 				my $db = $sql->db;
 
@@ -381,8 +391,12 @@ sub action_19713 {
 sub action_19724 {
 	my $c = shift;
 
-	my $filename = $c->param('filename');
+	my $filename = $c->param('filename') // '';
 	my $action = $c->param('action');
+	unless (&subs::path_is_within($filename, &subs::backups_dir())) {
+		$c->render(json => { status => 'fail', error => 'not a backup file' });
+		return;
+	}
 	&subs::subprocessor(sub {
     Mojo::IOLoop->reset;
 		my $configuration = {
@@ -475,9 +489,13 @@ sub action_25152 {
 sub action_25173 {
 	my $c = shift;
 
-	my $backup = $c->param('filename');
-	if (-e $backup) {
-		`shred -u $backup`;
+	my $backup = $c->param('filename') // '';
+	unless (&subs::path_is_within($backup, &subs::backups_dir())) {
+		$c->render(text => 'not a backup file', status => 403);
+		return;
+	}
+	if (-f $backup) {
+		system('shred', '-u', $backup);
 	}
 	$c->render(text => 'backup deleted');
 }

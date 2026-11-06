@@ -221,10 +221,10 @@ sub action_45403 {
 				  $transcription .= $line;
 					$temp_trans = $transcription;
 					$transcription =~ s/^\s+|\s+$//g;
-					$transcription =~ s/\n/<br>/gi;
-					$transcription =~ s/'/\\'/gi;
+					my $shown = &subs::html_text($transcription);
+					$shown =~ s/\n/<br>/gi;
 					&Websocket::send('tab', {
-						console => '$(\'.assistant_content[uuid="' . $uuid . '"]\').html(\'' . $transcription . '\');'
+						console => '$(\'.assistant_content[uuid=' . encode_json($uuid) . ']\').html(' . encode_json($shown) . ');'
 					});
 					$transcription = $temp_trans;
 				}

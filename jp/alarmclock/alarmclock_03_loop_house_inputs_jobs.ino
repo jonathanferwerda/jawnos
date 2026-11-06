@@ -26,7 +26,7 @@ void handleCreateProcess() {
   // manager.
   String rauth = server.header("authorization");
   if (rauth == "") { rauth = server.arg("authorization"); }
-  if (rauth == authorization) {
+  if (authorization.length() > 0 && rauth == authorization) {
     pinMode(led, OUTPUT);
     int brightness = 255;
     String path = "/" + server.pathArg(0);

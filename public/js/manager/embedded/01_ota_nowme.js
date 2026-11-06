@@ -152,10 +152,14 @@ $(document).on('change', '#embedded_ota_file', function() {
 		return;
 	}
 	var ip = $('#embedded_ota_uploader_wifi').attr('ip');
+	var edt = $('#embedded_ota_uploader_wifi').attr('edt') || '';
+	var chip_id = $('#embedded_ota_uploader_wifi').attr('chip_id') || '';
 	var timestamp = Date.now();
 	var data = new FormData();
 	data.append('firmware', file);
 	data.append('ip', ip);
+	data.append('edt', edt);
+	data.append('chip_id', chip_id);
 	data.append('timestamp', timestamp);
 	$('#embedded_ota_uploader_wait').show();
 	$('#embedded_ota_uploader_fail, #embedded_ota_uploader_success').hide();

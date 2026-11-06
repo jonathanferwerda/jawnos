@@ -593,8 +593,8 @@ sub merge_database($c,$configuration) {
 		my $html = '<h3>Testing Keys</h3>';
 
 		&Websocket::send('tab', { yellow => $html, uuid => $auuid, colour => $colour });
-		if ($path =~ /enc$/gi) {
-			my $data = `tail $path`;
+		if ($path =~ /\.enc\z/i) {
+			my $data = `tail ` . quote($path);
 
 			my @split_data = split $universal_splitter, $data;
 

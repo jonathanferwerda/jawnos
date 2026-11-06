@@ -183,21 +183,24 @@ sub action_6704 {
 			$folder = &subs::setting_grabber( { app => 'misc', setting => 'download_location', device => $device } );
 			$location = &subs::home($folder) . '/' . $app_path;
 		}
-		`mkdir -p $location` unless -e $location;
-		my $filename = $location . '/' . $upload->{'filename'};
+		require File::Path;
+		File::Path::make_path($location) unless -e $location;
+		# The browser picks the upload name; it is one component, never a path.
+		my $safe_name = &subs::path_name($upload->{'filename'});
+		my $filename = $location . '/' . $safe_name;
 		$u->move_to($filename);
-		$linux_file .= `file $filename`;
+		$linux_file .= `file ` . quote($filename);
 
-		if ($upload->{'filename'} =~ /avi$/gi) {
+		if ($safe_name =~ /\.avi\z/i) {
 			my $old_filename = $filename;
-			$filename =~ s/avi$|mkv$/mp4/;
-			my $tn_o = &subs::terminal_name($old_filename);
-			my $tn_f = &subs::terminal_name($filename);
+			my $new_filename = $filename;
+			$new_filename =~ s/\.(?:avi|mkv)\z/.mp4/i;
 			&subs::subprocessor(sub {
-				`ffmpeg -i $tn_o $tn_f & exit /b`;
-				`shred -u $tn_o`;
+				system('ffmpeg', '-i', $old_filename, $new_filename);
+				system('shred', '-u', $old_filename);
 				&subs::file_encrypter({ app => $app });
 			}, { name => "Video file converter" });
+			$filename = $new_filename;
 		}
 		my $filing = { f => $filename, att => $attribute, att_uuid => $uuid, uuid => &subs::random_string_creator(18), type => $upload_type, server_time => &subs::rightNow() };
 		push @{$returner}, $filing;

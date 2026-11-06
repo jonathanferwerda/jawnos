@@ -321,6 +321,9 @@ sub run_runner {
 	my $pid = open(my $fh, '-|');
 	defined $pid or die "fork: $!";
 	if (!$pid) {
+		# These cases exercise the landing path; the nightly's own
+		# default is branch-only until an operator opts in.
+		$ENV{'JAWNOS_QA_AUTO_MERGE'} = '1';
 		for my $key (keys %{ $env || {} }) {
 			if (defined $env->{$key}) { $ENV{$key} = $env->{$key} }
 			else { delete $ENV{$key} }

@@ -123,7 +123,8 @@ sub action_45571 {
 				&subs::db_delete('mailbox', { uuid => $m->{'msg'}->{'uuid'} });
 				my $message = &subs::db_select('mailbox', undef, { uuid => $m->{'msg'}->{'uuid'} })->hashes->[0];
 				&deletion_registration({ table => 'mailbox', uuid => $message->{'uuid'}, scope => 'single', server_time => $message->{'server_time'} });
-				&Websocket::send('tab', { console => '$(\'.email_message[uuid="' . $m->{'msg'}->{'uuid'} . '"]\').remove();$(\'.mailbox_message[uuid="' . $m->{'msg'}->{'uuid'} . '\').remove();' });
+				my $gone = $m->{'msg'}->{'uuid'};
+				&Websocket::send('tab', { console => '$(\'.email_message[uuid=' . encode_json($gone) . ']\').remove();$(\'.mailbox_message[uuid=' . encode_json($gone) . ']\').remove();' });
 			}
 		}
 		elsif ($m->{'type'} eq 'message') {

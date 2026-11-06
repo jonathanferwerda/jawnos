@@ -133,6 +133,13 @@ bool checkKb()
 void ota_upload() {
   HTTPUpload &upload = server.upload();
   if (upload.status == UPLOAD_FILE_START) {
+    String rauth = server.header("authorization");
+    if (rauth == "") { rauth = server.arg("authorization"); }
+    if (authorization.length() == 0 || rauth != authorization) {
+      ota_refused = true;
+      Serial.println("ota: refused (authorization)");
+      return;
+    }
     Serial.println("ota: " + upload.filename);
     if (!Update.begin(UPDATE_SIZE_UNKNOWN)) {
       Update.printError(Serial);

@@ -10,6 +10,7 @@ no warnings 'experimental::signatures';
 no warnings 'experimental::args_array_with_signatures';
 
 use Clone qw(clone);
+use Cwd qw(abs_path);
 use Data::Dumper;
 use Date::Parse;
 use Digest::SHA qw(sha256_hex);
@@ -149,6 +150,21 @@ sub unformat_name {
 # mark, number or one of . _ -. Letters of any script stay as themselves, so an
 # existing café/中文 folder keeps its name. The encoding is injective, so two
 # distinct keys never share a folder.
+# Is a path really inside a directory? Both sides are resolved (symlinks and
+# .. included) before the comparison, so a link inside the root cannot point
+# out of it and a missing path is never accepted. Used by the routes that read
+# or restore a file named by a caller.
+sub path_is_within {
+	my ($path, $root) = @_;
+	return 0 unless defined $path && defined $root && length $path && length $root;
+	return 0 unless -e $path;
+	my $real = abs_path($path);
+	my $base = abs_path($root);
+	return 0 unless defined $real && defined $base;
+	return 1 if $real eq $base;
+	return index($real, $base . '/') == 0 ? 1 : 0;
+}
+
 sub path_name {
 	my $name = shift;
 	$name = '' unless defined $name;

@@ -160,6 +160,7 @@ void settingSensor();
 void settingPMU();
 uint16_t t_x = 0, t_y = 0;
 String authorization;
+bool ota_refused = false;
 String authorization_json;
 WebServer server(3000);
 WiFiClientSecure *connexion = new WiFiClientSecure;

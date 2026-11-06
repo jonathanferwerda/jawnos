@@ -17,8 +17,9 @@
 #           run with cwd = the worktree and JAWNOS_NOTE_ID/TITLE/TEXT in its env
 #   suite   qa/run.pl --source worktree --root <root>/nightly --layers l0,l1
 #           (+ l2,l3 when the change touches templates, JS or perl routes)
-#   green   version bump, one commit, push the branch, ff-only merge into main,
-#           push main, restart, require HTTP 200 from /manager/health, then mark
+#   green   version bump, one commit, push the branch; then, only with
+#           JAWNOS_QA_AUTO_MERGE=1, ff-only merge into main, push main,
+#           restart, require HTTP 200 from /manager/health, then mark
 #           the note completed through POST /manager/note_save and file a
 #           Handbook report note (category journal).
 #
@@ -896,6 +897,16 @@ for my $note ( @{$notes} ) {
 		last;
 	}
 	$run{'pushed'} = 1;
+
+	# The branch is safe on the remote. Landing it on main (and restarting the
+	# live house) is opt-in: a note or a source file can carry a prompt
+	# injection, and an unattended push to main runs it as the house. Set
+	# JAWNOS_QA_AUTO_MERGE=1 on the unit to restore automatic landing.
+	unless (($ENV{'JAWNOS_QA_AUTO_MERGE'} || '') eq '1') {
+		$run{'status'} = 'branch_pushed';
+		$run{'merged'} = 0;
+		last;
+	}
 
 	my ($merge_rc) = run_cmd(cmd => ['git', 'merge', '--ff-only', $branch], cwd => $repo, log => $log->('merge'));
 	if ($merge_rc != 0) {

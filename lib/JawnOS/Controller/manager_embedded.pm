@@ -300,10 +300,21 @@ sub action_43620 {
 	my $c = shift;
 	my $timestamp = $c->param('timestamp');
 	my $ip = $c->param('ip');
+	my $edt = $c->param('edt') || '';
+	my $chip_id = $c->param('chip_id') || '';
 	my $firmware = $c->req->upload('firmware');
 
 	if (!$ip || !$firmware) {
 		return $c->render(json => { success => 0, result => 'needs a board ip and a .bin' });
+	}
+
+	# The board refuses /update without its own Now Me token, and the manager is
+	# the machine that holds that token in operator_door.
+	my $od = ($edt && $chip_id) ? &subs::setting_grabber({ app => $edt, setting => 'operator_door', device => $device, subsetting => $chip_id }) : '';
+	my $op_d = eval { decode_json $od } || {};
+	my $auth = $op_d->{'__specs'}->{'authorization'} || '';
+	unless ($auth) {
+		return $c->render(json => { success => 0, result => 'no authorization on record - run Now Me first' });
 	}
 
 	my $image = $firmware->slurp;
@@ -316,7 +327,7 @@ sub action_43620 {
 
 	my $ua = Mojo::UserAgent->new();
 	$ua->inactivity_timeout(180000);
-	my $res = $ua->post('http://' . $ip . '/update' => { 'Content-Type' => "multipart/form-data; boundary=$boundary" } => $body)->result;
+	my $res = $ua->post('http://' . $ip . '/update?authorization=' . url_escape($auth) => { 'Content-Type' => "multipart/form-data; boundary=$boundary", authorization => $auth } => $body)->result;
 	my $result = $res->is_success ? $res->body : ($res->error ? $res->error->{message} : 'board said ' . $res->code);
 
 	$c->render(json => { success => $res->is_success ? 1 : 0, code => $res->code, result => $result });

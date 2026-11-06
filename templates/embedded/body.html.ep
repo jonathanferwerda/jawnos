@@ -191,7 +191,7 @@
 			<% } else { %>
 				<!-- esp32 boards: OTA streams a picked .bin over wifi, or USB has the manager
 				     run the PlatformIO upload on the machine the board is plugged into -->
-				<button id="embedded_ota_uploader_wifi" ip="<%= $embedded->{'ip'} %>" style="vertical-align:top;display:<%= $embedded->{'ble'} ? 'none' : 'inline-block' %>;">OTA</button>
+				<button id="embedded_ota_uploader_wifi" ip="<%= $embedded->{'ip'} %>" edt="<%= $edt %>" chip_id="<%= $chip_id %>" style="vertical-align:top;display:<%= $embedded->{'ble'} ? 'none' : 'inline-block' %>;">OTA</button>
 				<button id="embedded_usb_uploader" style="vertical-align:top;">USB</button>
 				<select id="embedded_usb_port" style="display:none;"></select>
 				<input type="file" id="embedded_ota_file" accept=".bin" style="display:none;">

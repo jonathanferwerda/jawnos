@@ -5,6 +5,13 @@
 void ota_upload() {
   HTTPUpload &upload = server.upload();
   if (upload.status == UPLOAD_FILE_START) {
+    String rauth = server.header("authorization");
+    if (rauth == "") { rauth = server.arg("authorization"); }
+    if (authorization.length() == 0 || rauth != authorization) {
+      ota_refused = true;
+      Serial.println("ota: refused (authorization)");
+      return;
+    }
     Serial.println("ota: " + upload.filename);
     if (!Update.begin(UPDATE_SIZE_UNKNOWN)) {
       Update.printError(Serial);
@@ -42,6 +49,7 @@ static void voice_trigger_apply() {
 }
 
 void jawn_setup() {
+  server.collectHeaders("authorization");
   Serial.begin(921600);
   // Never let the console block the UI. The USB-Serial/JTAG CDC write waits up
   // to 20 x 100 ms (2 s) per call when the host is not reading -- which is
@@ -367,6 +375,11 @@ void jawn_setup() {
 
   server.on("/update", HTTP_POST, []() {
     server.sendHeader("Connection", "close");
+    if (ota_refused) {
+      ota_refused = false;
+      server.send(403, "text/plain", "no");
+      return;
+    }
     server.send(200, "text/plain", Update.hasError() ? "failed" : "ok");
     delay(500);
     ESP.restart();

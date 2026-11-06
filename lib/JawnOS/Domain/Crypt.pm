@@ -432,9 +432,11 @@ sub peer_verify {
 	my $nonce = $c->req->headers->header('X-Peer-Nonce');
 	my $b64sig = $c->req->headers->header('X-Peer-Signature');
 	my $b64key = $c->req->headers->header('X-Peer-Key');
-	# unsigned: fine only while this peer has no key on file yet
-	return ($stored ? 0 : 1) unless $ts || $nonce || $b64sig;
-	return 0 unless $ts && $ts =~ /^\d+$/ && abs(time() - $ts) <= 600;
+	# A signature is mandatory. A first contact may offer its own key in
+	# X-Peer-Key (pinned below on success), so a keyless row can still enrol,
+	# but an unsigned request is never proof of anything.
+	return 0 unless $ts && $nonce && $b64sig;
+	return 0 unless $ts =~ /^\d+$/ && abs(time() - $ts) <= 600;
 	return 0 unless $nonce && $nonce =~ /^[A-Za-z0-9]{8,64}$/;
 	my $pubkey = $stored;
 	$pubkey = eval { decode_base64 $b64key } if (!$pubkey && $b64key);

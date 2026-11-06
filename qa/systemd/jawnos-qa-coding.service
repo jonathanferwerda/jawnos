@@ -17,11 +17,15 @@ ExecCondition=/usr/bin/perl /home/jawn/jawnos/qa/device_target.pl
 ExecStart=/usr/bin/perl /home/jawn/jawnos/qa/coding_night/run.pl
 
 # This is the one nightly that writes the house: the agent edits a worktree of
-# the repo and a green night commits, merges and pushes main. Its home is
-# therefore writable, unlike the 05:00 suite's read-only fence, and both the
+# the repo and a green night commits and pushes its branch. Landing that branch
+# on main is opt-in (JAWNOS_QA_AUTO_MERGE=1) because a note or source file can
+# carry a prompt injection and an unattended push runs it as the house. Its home
+# is therefore writable, unlike the 05:00 suite's read-only fence, and both the
 # checkout and the QA root are named in ReadWritePaths. ProtectSystem=strict
 # still pins /usr and the rest. It needs real networking: git fetch/push, the
 # agent's model, and the live health route on loopback.
+# Uncomment to restore automatic landing:
+#Environment=JAWNOS_QA_AUTO_MERGE=1
 Nice=10
 IOSchedulingClass=best-effort
 IOSchedulingPriority=7

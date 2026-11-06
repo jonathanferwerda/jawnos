@@ -325,13 +325,13 @@ sub continent_record($c) {
 		# home-plate automation that would duplicate this machine's start.
 		&subs::navigation_share_fix($returner) if $returner->{'latitude'};
 		if ($purpose eq 'proxy_load' && $scope) {
-			&Websocket::send('server', { console => 'listProxy(' . $timestamp . ',"' . $uuid . '");' });
+			&Websocket::send('server', { console => 'listProxy(' . $timestamp . ',' . encode_json($uuid) . ');' });
 		}
 		elsif ($purpose eq 'proxy_set' && $scope) {
-			&Websocket::send('server', { console => 'setProxy(' . $timestamp . ',"' . $uuid . '");' });
+			&Websocket::send('server', { console => 'setProxy(' . $timestamp . ',' . encode_json($uuid) . ');' });
 		}
 		elsif ($purpose eq 'travel_viewer' && $scope) {
-			&Websocket::send('server', { console => 'travelViewer(' . $timestamp . ',"' . $uuid . '");' });
+			&Websocket::send('server', { console => 'travelViewer(' . $timestamp . ',' . encode_json($uuid) . ');' });
 		}
 		elsif ($purpose eq 'home_plate') {
 			my $json = encode_json $returner;

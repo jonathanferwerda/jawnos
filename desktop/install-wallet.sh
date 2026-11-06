@@ -70,10 +70,10 @@ release_url() {
 verify_asset() {
 	file=$1
 	name=$2
-	[ -n "$latest" ] || return 0
+	[ -n "$latest" ] || { say "  no release tag to verify against; refusing"; return 1; }
 	manifest="https://github.com/sparrowwallet/sparrow/releases/download/$latest/sparrow-$latest-manifest.txt"
 	want=$(curl -fsSL --max-time 30 "$manifest" 2>/dev/null | awk -v n="$name" '$2 == "*" n { print $1 }' | head -n 1 || true)
-	[ -n "$want" ] || { say "  no checksum in the manifest; skipping verification"; return 0; }
+	[ -n "$want" ] || { say "  no checksum in the manifest; refusing to install $name"; return 1; }
 	if command -v sha256sum >/dev/null 2>&1; then
 		got=$(sha256sum "$file" | awk '{ print $1 }')
 	else

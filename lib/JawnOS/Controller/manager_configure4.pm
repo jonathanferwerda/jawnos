@@ -426,7 +426,7 @@ sub action_19033 {
 		$value = &subs::time_abbrev_translator($value, $timestamp);
 	}
 
-	&Websocket::send($app, { console => '$(\'.appointment[app="' . $app . '"]\').attr(\'' . $setting . '\', \'' . $value . '\');' });
+	&Websocket::send($app, { console => '$(\'.appointment[app=' . encode_json($app) . ']\').attr(' . encode_json($setting) . ', ' . encode_json($value) . ');' });
 	if ($source eq 'panel') {
 
 		my $window = &centre_view_grabber({ c => $c, app => $c->param('app'), timestamp => $timestamp, cached => 'no' });

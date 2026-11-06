@@ -289,7 +289,7 @@ sub action_14764 {
 			uuid => $uuid,
 			app => $app
 		});
-		&Websocket::send($app, { console => 'appointmentDetailGrabber(\'' . $app . '\',\'' . $uuid .'\');' });
+		&Websocket::send($app, { console => 'appointmentDetailGrabber(' . encode_json($app) . ',' . encode_json($uuid) . ');' });
 	}
 	else {
 		my $write = {
@@ -528,20 +528,20 @@ sub action_15618 {
 		}
 
 		if ($purpose eq 'proxy_load' && $scope) {
-			&Websocket::send('server', { console => 'listProxy(' . $timestamp . ',"' . $uuid . '");' });
+			&Websocket::send('server', { console => 'listProxy(' . $timestamp . ',' . encode_json($uuid) . ');' });
 		}
 		elsif ($purpose eq 'proxy_set' && $scope) {
-			&Websocket::send('server', { console => 'setProxy(' . $timestamp . ',"' . $uuid . '");' });
+			&Websocket::send('server', { console => 'setProxy(' . $timestamp . ',' . encode_json($uuid) . ');' });
 		}
 		elsif ($purpose eq 'travel_viewer' && $scope) {
-			&Websocket::send('server', { console => 'travelViewer(' . $timestamp . ',"' . $uuid . '");' });
+			&Websocket::send('server', { console => 'travelViewer(' . $timestamp . ',' . encode_json($uuid) . ');' });
 		}
 		elsif ($purpose eq 'home_plate') {
 			my $json = encode_json $returner;
 			&subs::setting_setter({ app => 'me', setting => 'home_plate', value => $json });
 		}
 
-		&Websocket::send('tab', { console => 'appointmentDetailGrabber(\'' . $app . '\',\'' . $pre_uuid .'\');' });
+		&Websocket::send('tab', { console => 'appointmentDetailGrabber(' . encode_json($app) . ',' . encode_json($pre_uuid) . ');' });
 
 		&subs::navigation_automation($returner, $fix_provider) if $returner->{'latitude'};
 	}, { name => 'continent record anyway' });
@@ -609,12 +609,12 @@ sub action_17621 {
 	if (scalar @{$running_appts} > 0) {
 		foreach my $ra ( @{$running_appts} ) {
 			&appt_measure_writer($c,{ app => $app, uuid => $ra->{'uuid'}, measure => $measure, value => $value, timestamp => $timestamp });
-			&Websocket::send('tab', { console => '$(\'.appointment[app="' . $app . '"]\').find(\'.app_measure[measure="' . $measure . '"]\').val(\'' . $value . '\');' }) if $setting_only ne 'yes';
+			&Websocket::send('tab', { console => '$(\'.appointment[app=' . encode_json($app) . ']\').find(\'.app_measure[measure=' . encode_json($measure) . ']\').val(' . encode_json($value) . ');' }) if $setting_only ne 'yes';
 		}
 	}
 	else {
 		&appt_measure_writer($c, { app => $app, measure => $measure, value => $value, timestamp => $timestamp });
-		&Websocket::send('tab', { console => '$(\'.appointment[app="' . $app . '"]\').find(\'.app_measure[measure="' . $measure . '"]\').val(\'' . $value . '\');' }) if $setting_only ne 'yes';
+		&Websocket::send('tab', { console => '$(\'.appointment[app=' . encode_json($app) . ']\').find(\'.app_measure[measure=' . encode_json($measure) . ']\').val(' . encode_json($value) . ');' }) if $setting_only ne 'yes';
 	}
 
 	$c->render(json => { measures => $measures });
@@ -665,7 +665,7 @@ sub action_17807 {
 	my $jam = encode_json $am;
 	&subs::db_update('appointments', { measures => $jam, server_time => &subs::rightNow() }, { uuid => $app_uuid, app => $app });
 
-	&Websocket::send('tab', { console => 'appointmentDetailGrabber(\'' . $app . '\',\'' . $app_uuid .'\');'});
+	&Websocket::send('tab', { console => 'appointmentDetailGrabber(' . encode_json($app) . ',' . encode_json($app_uuid) . ');'});
 	$c->render('text' => 'ok');
 }
 

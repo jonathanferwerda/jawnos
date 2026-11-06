@@ -311,7 +311,7 @@ sub action_41468 {
 	my $cv = &centre_view_grabber({ c => $c, app => $app, timestamp => ($sdata->{'timestamp'} // $appt->{'timestamp'}), cached => 'no' });
 	&budget_runner($app);
 	&padlock_time_extender($c);
-	&Websocket::send('tab', { console => 'appointmentDetailGrabber(\'' . $app . '\',\'' . $uuid .'\');'});
+	&Websocket::send('tab', { console => 'appointmentDetailGrabber(' . encode_json($app) . ',' . encode_json($uuid) . ');'});
 	$c->render(text => 'ok');
 }
 

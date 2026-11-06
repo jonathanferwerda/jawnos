@@ -413,8 +413,8 @@ sub appointment_writer($c,$app) {
 	# screen at once - they stay for a quiet child too. A press then forks the
 	# window once, not once per child, and still shows every child immediately.
 	&Websocket::send('tab', { console => 'calculator();' });
-	&Websocket::send('tab', { console => 'appointmentDetailGrabber("' . $app->{'app'} . '","' . $app->{'uuid'} .'");' });
-	&Websocket::send('tab', { console => 'continent_record({\'uuid\':\'' . $app->{'uuid'} . '\', \'app\':\'' . $app->{'app'} .'\',\'purpose\':\'app\',\'timestamp\':\'' . $app->{'timestamp'} . '\',\'navigation\':"once" });' });
+	&Websocket::send('tab', { console => 'appointmentDetailGrabber(' . encode_json($app->{'app'}) . ',' . encode_json($app->{'uuid'}) . ');' });
+	&Websocket::send('tab', { console => 'continent_record({"uuid":' . encode_json($app->{'uuid'}) . ',"app":' . encode_json($app->{'app'}) . ',"purpose":"app","timestamp":' . encode_json($app->{'timestamp'}) . ',"navigation":"once"});' });
 	# The header went out as soon as the row was written. The window render is the
 	# slow half; fork it so the writer - and the default model and option sessions
 	# it starts - does not wait for a full redraw.

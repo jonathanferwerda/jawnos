@@ -1,4 +1,5 @@
 void jawn_setup() {
+  server.collectHeaders("authorization");
   Serial.begin(115200);
   // mbedTLS allocates its ~16 KB handshake buffers from internal RAM only,
   // and this board's internal heap (46 KB free, 31 KB largest block) cannot
@@ -464,6 +465,11 @@ void jawn_setup() {
   });
   server.on("/update", HTTP_POST, []() {
     server.sendHeader("Connection", "close");
+    if (ota_refused) {
+      ota_refused = false;
+      server.send(403, "text/plain", "no");
+      return;
+    }
     server.send(200, "text/plain", Update.hasError() ? "failed" : "ok");
     delay(500);
     ESP.restart();

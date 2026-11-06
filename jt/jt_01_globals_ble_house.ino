@@ -418,6 +418,7 @@ static RTC_DATA_ATTR int fontSize = 4;
 String fontSelect = "";
 JSONVar authorization_json;
 String authorization;
+bool ota_refused = false;
 String homebase;
 String homebaseIP;
 String thomebaseIP;

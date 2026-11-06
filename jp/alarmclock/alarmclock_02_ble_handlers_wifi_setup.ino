@@ -327,6 +327,11 @@ void jawn_setup() {
     server.send(200, "text/html", html);
   });
   server.on("/initial_config", []() {
+    String rauth = server.arg("authorization");
+    if (authorization.length() > 0 && rauth != authorization) {
+      server.send(403, "text/plain", "no");
+      return;
+    }
     String t_ssid = server.arg("wifi_ssid");
     String t_password = server.arg("wifi_password");
     String t_ap_ssid = server.arg("ap_ssid");
@@ -379,11 +384,13 @@ void jawn_setup() {
 
   server.on("/jobs", []() {
     String auth = server.arg("authorization");
-   // if (auth == authorization) {
-      String jobs = JSON.stringify(config["jobs"]);
-      Serial.println(jobs);
-      server.send(200, "text/plain", jobs);
-   // }
+    if (authorization.length() > 0 && auth != authorization) {
+      server.send(403, "text/plain", "no");
+      return;
+    }
+    String jobs = JSON.stringify(config["jobs"]);
+    Serial.println(jobs);
+    server.send(200, "text/plain", jobs);
 
   });
 
@@ -440,6 +447,11 @@ void jawn_setup() {
   });
   server.on("/led", []() {
     homebaseChecked();
+    String rauth = server.arg("authorization");
+    if (authorization.length() > 0 && rauth != authorization) {
+      server.send(403, "text/plain", "no");
+      return;
+    }
     String component = server.arg("component");
     String spin = server.arg("pin");
     int pin = server.arg("pin").toInt();
@@ -475,6 +487,11 @@ void jawn_setup() {
   });
   server.on("/relay", []() {
     homebaseChecked();
+    String rauth = server.arg("authorization");
+    if (authorization.length() > 0 && rauth != authorization) {
+      server.send(403, "text/plain", "no");
+      return;
+    }
     String component = server.arg("component");
     String spin = server.arg("pin");
     int pin = server.arg("pin").toInt();
@@ -505,6 +522,11 @@ void jawn_setup() {
   });
   server.on("/servo", []() {
     homebaseChecked();
+    String rauth = server.arg("authorization");
+    if (authorization.length() > 0 && rauth != authorization) {
+      server.send(403, "text/plain", "no");
+      return;
+    }
     String component = server.arg("component");
     String spin = server.arg("pin");
     int pin = server.arg("pin").toInt();

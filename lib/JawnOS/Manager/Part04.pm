@@ -173,13 +173,21 @@ sub rock_and_roll($c) {
 		my $filename = $file;
 	#	return 'no' unless -e &subs::terminal_name($file);
 
-		if ($c->param('as_is') && -e $file) {
-			my $data = read_file($file);
-			$data = encode_base64 $data;
-			$data ? $c->render(data => $data) : $c->render(text => 'none');
-			return;
-		}
-		elsif ($c->param('as_is')) {
+		# as_is returns a file's bytes as-is. It is a relay for the app's own
+		# files, not a general file reader: resolve the path and keep it inside
+		# the app home (or the temp dir) or it is refused.
+		if ($c->param('as_is')) {
+			my @roots = grep { defined && length } (&subs::home('~'), $gb::tmp_dir);
+			my $within = 0;
+			for my $root (@roots) {
+				$within = 1 if &subs::path_is_within($file, $root);
+			}
+			if ($within && -f $file) {
+				my $data = read_file($file);
+				$data = encode_base64 $data;
+				$data ? $c->render(data => $data) : $c->render(text => 'none');
+				return;
+			}
 			$c->render(text => 'not found');
 			return;
 		}
