@@ -11,8 +11,12 @@ Moved out of `AGENTS.md` (a per-task reference, not an every-request map).
   `aapt`) and copies it in, replacing older builds of the same product. It prints a note when a build
   does not out-number the staged one (devices would not see an update).
 - **Build the next one:** `perl scripts/app_build.pl` bumps the app repo's versionCode and the
-  versionName patch, builds the debug APK and stages it — so the next release is always the current
-  number + 1 (1258 shipped; the next is 1259). `--no-build` stops after the bump.
+  versionName patch, builds the signed **release** APK and stages it — so the next release is always
+  the current number + 1 (1294 staged; the next is 1295). The release variant is the default whenever
+  the app repo carries `keystore.properties` (which names `.secrets/jawnos-release.jks`); before
+  staging, the script compares the APK's certificate with that keystore and refuses anything else. A
+  debug-signed APK is a valid APK and still cannot install over a release-signed app, so `--debug` is
+  only for developing against the app and says so. `--no-build` stops after the bump.
 - **Publish it (don't skip this):** `perl scripts/app_publish.pl` (needs an authenticated `gh`) uploads
   the newest staged APK **and** a matching `app_release.json` manifest to the GitHub `releases`
   release, so a device can pull it from github.com as well as from a peer. **A build that is only

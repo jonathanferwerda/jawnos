@@ -1,21 +1,28 @@
 #!/usr/bin/perl
 # Bump the JawnOS Android app and build+stage the next APK, in one step.
 #
-#   perl scripts/app_build.pl [--repo DIR] [--no-build] [--release]
+#   perl scripts/app_build.pl [--repo DIR] [--no-build] [--debug]
 #
 # It:
 # 1. bumps versionCode (+1) and the patch segment of versionName in
 #    app/build.gradle,
 # 2. makes sure local.properties points at an Android SDK,
-# 3. builds the debug APK (one universal file), or the signed release APK
-#    with --release (needs the tree's .secrets/jawnos-release.jks, named by
-#    the app repo's gitignored keystore.properties),
+# 3. builds the signed release APK (the default whenever the app repo carries
+#    keystore.properties, which names the tree's .secrets/jawnos-release.jks),
+#    or a debug APK with --debug,
 # 4. stages it with scripts/app_release.pl, replacing the old build so every
 #    peer's next app_release_sync carries it.
 #
 # The bump is what makes the in-app updater offer the build: it compares the
 # staged APK's versionCode against the installed one, so a rebuild must be
 # numbered above the last release. --no-build stops after the bump.
+#
+# The signing key is the app's identity. A device that already runs a
+# release-signed build refuses a debug-signed APK with SIGNATURE_MISMATCH, and
+# the in-app updater cannot fall back: 0.118.296 went out that way on
+# 2026-11-06 - correctly numbered, published, and uninstallable everywhere. So a
+# release build is the default and its certificate is compared against the
+# keystore's before anything is staged.
 #
 # The repo is left dirty on purpose: this script only builds and stages.
 # Commit app/build.gradle afterwards.
@@ -35,17 +42,26 @@ my $root = abs_path("$FindBin::Bin/..");
 my $home = $ENV{'HOME'};
 my $dir = "$home/jawnos-app/termux-app";
 my $build = 1;
-my $release = 0;
+my $release;    # undef means: decide from the key, below
 while ( defined(my $arg = shift @ARGV) ) {
 	if ($arg eq '--repo')     { $dir = shift @ARGV; next; }
 	if ($arg eq '--no-build') { $build = 0; next; }
 	if ($arg eq '--release')  { $release = 1; next; }
-	die "usage: app_build.pl [--repo DIR] [--no-build] [--release]\n";
+	if ($arg eq '--debug')    { $release = 0; next; }
+	die "usage: app_build.pl [--repo DIR] [--no-build] [--debug]\n";
 }
+die "$dir: no such directory\n" unless -d $dir;
+
+# The APK a phone installs is always the signed release build. Build it
+# whenever this tree holds the key; --debug is the deliberate dev escape, and
+# it says out loud what the artifact cannot do.
+$release = -f "$dir/keystore.properties" ? 1 : 0 unless defined $release;
 if ($release && !-f "$dir/keystore.properties") {
 	die "$dir/keystore.properties is missing; the release build would be unsigned\n";
 }
-die "$dir: no such directory\n" unless -d $dir;
+if (!$release && $build) {
+	print "app: building the debug variant; this APK cannot install over a release-signed app\n";
+}
 my $gradle = "$dir/app/build.gradle";
 die "$gradle: missing\n" unless -f $gradle;
 
@@ -148,6 +164,84 @@ if ($release) {
 			. "a release without the runtime cannot start. Not staging it.\n";
 	}
 }
+# The signature is the identity, not just "signed". A debug-signed build is a
+# valid APK and still cannot install over the release build on every phone, so
+# the certificate the artifact carries must be the one in the configured
+# keystore. Checked before staging so a wrong-identity build never rides the
+# mesh or GitHub.
+if ($release) {
+	my ($apk_digest, $apk_why) = apk_signer_sha256($apk);
+	die "app: $apk_why; not staging $apk\n" unless $apk_digest;
+	my ($key_digest, $key_why) = keystore_signer_sha256($dir, $java);
+	die "app: $key_why\n" unless $key_digest;
+	die "app: $apk is signed by $apk_digest, not the release key $key_digest. "
+		. "A device running a release build refuses that APK (SIGNATURE_MISMATCH). Not staging it.\n"
+		if $apk_digest ne $key_digest;
+	print "app: signed with the release key (" . substr($apk_digest, 0, 16) . ")\n";
+}
 system('perl', "$root/scripts/app_release.pl", $apk) == 0 or die "app: app_release.pl failed\n";
 
 print "next: commit the bumped app/build.gradle, then run perl scripts/app_publish.pl\n";
+
+# The SDK tool of that name, newest build-tools first; undef when the SDK does
+# not have one.
+sub sdk_tool {
+	my ($name) = @_;
+	my $sdk = $ENV{'ANDROID_SDK_ROOT'};
+	return undef unless $sdk;
+	my @found;
+	foreach my $p ( glob("$sdk/build-tools/*/$name") ) {
+		next unless -x $p;
+		my ($v) = $p =~ m{/build-tools/([^/]+)/};
+		my @n = split /\./, ( $v || '0' );
+		push @found, [ ($n[0] || 0) * 1_000_000 + ($n[1] || 0) * 1_000 + ($n[2] || 0), $p ];
+	}
+	return undef unless @found;
+	@found = sort { $b->[0] <=> $a->[0] } @found;
+	return $found[0][1];
+}
+
+# The APK's signer as lowercase hex, or the reason it could not be read.
+sub apk_signer_sha256 {
+	my ($apk) = @_;
+	my $apksigner = sdk_tool('apksigner');
+	return (undef, 'no apksigner in the Android SDK build-tools')
+		unless $apksigner;
+	my $out = `"$apksigner" verify --print-certs "$apk" 2>&1`;
+	return (undef, 'apksigner does not verify the APK as signed') if $? != 0;
+	my ($hex) = $out =~ /certificate SHA-256 digest:\s*([0-9a-fA-F]+)/;
+	return (undef, 'apksigner printed no signer certificate') unless $hex;
+	$hex = lc $hex;
+	$hex =~ s/[^0-9a-f]//g;
+	return ($hex);
+}
+
+# The release key's certificate as lowercase hex, or the reason it could not be
+# read. keystore.properties is gitignored and names the store, password and
+# alias the gradle release signingConfig uses.
+sub keystore_signer_sha256 {
+	my ($repo, $java) = @_;
+	my $props = "$repo/keystore.properties";
+	my %p;
+	foreach my $line (split /\n/, read_file($props)) {
+		next unless $line =~ /^\s*([^=:#\s]+)\s*[=:]\s*(.*?)\s*$/;
+		$p{$1} = $2;
+	}
+	return (undef, "$props names no storeFile") unless length($p{'storeFile'} || '');
+	my $store = $p{'storeFile'};
+	$store = "$repo/$store" unless $store =~ m{^/};
+	return (undef, "$store: no such keystore") unless -f $store;
+	my $keytool = "$java/bin/keytool";
+	return (undef, "$keytool: no keytool in the JDK") unless -x $keytool;
+	my @args = ($keytool, '-list', '-v', '-keystore', $store, '-storepass', $p{'storePassword'} || '');
+	push @args, ('-alias', $p{'keyAlias'}) if length($p{'keyAlias'} || '');
+	open(my $fh, '-|', @args) or return (undef, "could not run $keytool: $!");
+	my $out = do { local $/; <$fh> };
+	close $fh;
+	my ($hex) = $out =~ /SHA256:\s*([0-9A-Fa-f:]+)/;
+	return (undef, "$store: could not read the certificate for " . ($p{'keyAlias'} || 'the key'))
+		unless $hex;
+	$hex = lc $hex;
+	$hex =~ s/[^0-9a-f]//g;
+	return ($hex);
+}

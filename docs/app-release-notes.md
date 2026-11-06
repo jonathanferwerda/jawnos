@@ -5,6 +5,19 @@ this file, adds the release date and the version codes that are actually
 staged, and writes it back to the release. Keep the newest release at the top
 under a dated heading; older sections stay as history.
 
+## 2026-11-06 — the screening face names the caller, and the app installs again
+
+- **The screening face says who is calling.** The gateway's status now carries
+  the phone's caller id, and the face paints *Call from: <name or number>*
+  above the live transcript. A caller in the house's records is named; anyone
+  else shows as their number.
+- **The build in the store installs over the one on the phone.** 0.118.296 was
+  built with the development keystore: correctly numbered, published, and
+  refused by every phone already running a release build (`SIGNATURE_MISMATCH`).
+  0.118.297 is the same code signed with the house's release key. The build
+  script now defaults to that key and checks the artifact's certificate before
+  staging, so a wrong-identity build cannot ride the mesh or GitHub again.
+
 ## 2026-11-04 — Back puts the keyboard away first
 
 - **Back hides the manager's keyboard before it leaves the screen.** The
