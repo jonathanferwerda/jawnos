@@ -177,7 +177,7 @@ sub embedded_toggle($data) {
 	my $ip = $data->{'ip'};
 	my $edt = $data->{'edt'};
 	my $state = $data->{'state'};
-	my $timestamp = $data->{'timestamp'} || &subs::rightNow();
+	my $timestamp = &subs::event_time_ms($data->{'timestamp'}) || &subs::rightNow();
 	# A command that names an older moment than the toggle already holds is a
 	# delayed copy: the panel pressed start, the switch was thrown after it, and
 	# this relay command is only now arriving. Drop it instead of turning the

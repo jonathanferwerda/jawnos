@@ -232,6 +232,21 @@ sub toggle_event_is_older {
 	return $event < $stored ? 1 : 0;
 }
 
+sub event_time_ms {
+	# A device's event stamp in milliseconds, or undef when it is not a moment.
+	# A clockless board used to send " 0" (the Arduino String(double) pads to
+	# width 2): a truthy string that survived every `||` fallback and wrote
+	# appointments at 1970. Anything that is not a positive epoch is not a time;
+	# the caller decides what "now" means. A seconds stamp is read as seconds,
+	# like toggle_event_is_older.
+	my ($value) = @_;
+	return undef unless defined $value && $value =~ /^\s*\d+(?:\.\d+)?\s*$/;
+	my $event = $value + 0;
+	$event *= 1000 if $event > 0 && $event < 100000000000;
+	return undef unless $event > 0;
+	return $event;
+}
+
 sub setting_setter {
 	%setting_memo = ();
 	my $settings = shift;

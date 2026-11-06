@@ -202,7 +202,7 @@ get '/watch/button' => sub($c) {
 	my $remote_address = $c->tx->remote_address;
 	if (my $watch_settings = &embeddedAuthorizer($c)) {
 		my $button = $c->param('button');
-		my $timestamp = $c->param('timestamp_ms') || (($c->param('timestamp') || 0) * 1000) || &subs::rightNow();
+		my $timestamp = &subs::event_time_ms($c->param('timestamp_ms') || $c->param('timestamp'), &subs::rightNow());
 		my $room = $c->param('room');
 		my $toggle = $c->param('toggle');
 		my $press_id = $c->param('id') || '';
@@ -323,7 +323,7 @@ get '/watch/switch' => sub($c) {
 		my $button = $c->param('switch');
 		my $state = $c->param('state');
 		my $toggle = $c->param('toggle');
-		my $timestamp = $c->param('timestamp_ms') || (($c->param('timestamp') || 0) * 1000) || &subs::rightNow();
+		my $timestamp = &subs::event_time_ms($c->param('timestamp_ms') || $c->param('timestamp'), &subs::rightNow());
 		my $room = $c->param('room');
 		# A board that delivered this movement twice must not flip twice.
 		if (&subs::event_duplicate(join('|', 'switch', $chip_id // '', $button // '', $state // ''))) {

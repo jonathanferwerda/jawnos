@@ -90,6 +90,11 @@ static int64_t event_ms() {
   return now_ms() - off * 1000;
 }
 String event_timestamp_ms() {
+  // String(double, 0) pads the integer part to width 2, so a clockless board
+  // sent " 0" - a truthy string that survived every "zero means no clock" check
+  // and wrote appointments at 1970 ("56y 10M ago"). Say "0" plainly, the same
+  // as event_timestamp().
+  if (!time_defined) { return "0"; }
   return String((double)event_ms(), 0);
 }
 

@@ -659,8 +659,14 @@ sub watch_toggle_pusher {
 				# it locally; pushing it back is a second flash write and a
 				# second relay command for the same hardware.
 				next if $exclude_chip && $w->{'chip_id'} eq $exclude_chip;
-				next if $seen{ $edt . '|' . $w->{'chip_id'} }++;
-				push @targets, { chip_id => $w->{'chip_id'}, edt => $edt };
+				# One push per chip, labelled with what the device actually is.
+				# The Bluetooth fallback in device_lister answers every sighted chip
+				# for every purpose we ask, so keying on the loop's type pushed the
+				# same board twice - once as "watch" (a bridge connect) and once as
+				# "microcontroller" - for every toggle.
+				my $dev_edt = $w->{'edt'} || $w->{'purpose'} || $edt;
+				next if $seen{ $w->{'chip_id'} }++;
+				push @targets, { chip_id => $w->{'chip_id'}, edt => $dev_edt };
 			}
 		}
 		return unless scalar @targets;

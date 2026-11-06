@@ -200,7 +200,7 @@ sub ble_message_processor {
 				intent => 'com.jawn.president.bt.connect',
 				chip_id => $chip_id,
 				edt => $edt,
-				message => { type => 'toggles', data => $chunks->[0] }
+				message => { type => 'toggles', data => $chunks->[0], timestamp_ms => &subs::rightNow() }
 			});
 		}
 		else {
@@ -215,7 +215,7 @@ sub ble_message_processor {
 						intent => 'com.jawn.president.bt.connect',
 						chip_id => $chip_id,
 						edt => $edt,
-						message => { type => 'toggles', data => $chunk }
+						message => { type => 'toggles', data => $chunk, timestamp_ms => &subs::rightNow() }
 					});
 				}
 			}, { name => 'ble toggles page', warranty => '120s', fork => 1 });
@@ -371,7 +371,7 @@ sub ble_message_processor {
 		# The board's own clock, milliseconds kept: the settings layer orders toggle
 		# writes by this stamp, and a seconds-only stamp loses the race the person
 		# just watched (a start and a switch flipped a moment later).
-		my $press_ms = $payload->{'timestamp_ms'} || (($payload->{'timestamp'} || 0) * 1000) || &subs::rightNow();
+		my $press_ms = &subs::event_time_ms($payload->{'timestamp_ms'} || $payload->{'timestamp'}, &subs::rightNow());
 		# Write the pre-press state without a push before edt_button_presser
 		# flips it, exactly like /watch/button. Without this the press flips
 		# whatever the app happened to hold (one flip per output, and the
@@ -438,7 +438,7 @@ sub ble_message_processor {
 		my $syl_count = ($edt eq 'microcontroller') ? 10 : 1;
 		my $b = $ws->{ &subs::shorthand_name('switch', $syl_count) . $button } || {};
 		my $toggle = ($state eq 'on') ? 'off' : 'on';
-		my $sw_ms = $payload->{'timestamp_ms'} || (($payload->{'timestamp'} || 0) * 1000) || &subs::rightNow();
+		my $sw_ms = &subs::event_time_ms($payload->{'timestamp_ms'} || $payload->{'timestamp'}, &subs::rightNow());
 		$log->info('BLE switch for ' . ($chip_id || '?') . ': switch ' . $button . ' -> ' . $toggle . ' @' . ($payload->{'ms'} // '?'));
 		# Same reason as a button: the movement can relay a command or run one.
 		my ($sw_edt, $sw_chip, $sw_ws, $sw_button, $sw_b, $sw_payload, $sw_toggle)

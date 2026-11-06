@@ -68,7 +68,16 @@ sub appointment_writer($c,$app) {
 	my $theme_movement = $app->{'type'};
 #	&subs::cache_delete({ app => $app->{'app'}, context => 'template' });
 	$app->{'server_time'} = $app->{'server_time'} || $c->param('server_time') || &subs::rightNow();
-	$app->{'timestamp'} = $app->{'server_time'} unless $app->{'timestamp'};
+	# A timestamp is a positive epoch or it is nothing. A clockless board used to
+	# send " 0" (the Arduino String(double) pads to width 2): a truthy string
+	# that survived the old `unless` and wrote the appointment at 1970, where it
+	# read as "56y 10M ago". Do not convert the value here - some callers still
+	# pass seconds - only refuse one that is not a moment.
+	{
+		my $given = $app->{'timestamp'};
+		$given = undef unless defined $given && $given =~ /^\s*\d+(?:\.\d+)?\s*$/ && $given + 0 > 0;
+		$app->{'timestamp'} = $given || $app->{'server_time'};
+	}
 	$app->{'browser_tab_id'} = $c->param('browser_tab_id') if $c->param('browser_tab_id') && !$app->{'browser_tab_id'};
 	my $remote_address = $app->{'remote_address'};
 	delete $app->{'remote_address'};

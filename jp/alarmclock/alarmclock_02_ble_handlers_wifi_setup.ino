@@ -1,3 +1,17 @@
+// The house's clock, carried on any message that has one. A board that is only
+// on the bridge never reaches /watch/time, and a clockless board cannot stamp
+// its switch/button events (see event_timestamp_ms).
+static void ble_learn_time(JSONVar msg) {
+  int64_t ts = jint64(msg["timestamp_ms"]);
+  if (!(ts > 1600000000000LL && ts < 4102444800000LL)) {
+    JSONVar d = msg["data"];
+    ts = jint64(d["timestamp"]);
+  }
+  if (ts > 1600000000000LL && ts < 4102444800000LL) {
+    set_epoch_ms(ts + (int64_t)offset * 1000LL);
+  }
+}
+
 static void ble_handle_json(String json) {
   JSONVar msg = JSON.parse(json);
   if (JSON.typeof(msg) != "object") { return; }
@@ -25,11 +39,13 @@ static void ble_handle_json(String json) {
   else if (type == "board_config") { ble_apply_board_config(msg["data"]); }
   else if (type == "room") { ble_apply_board_config(msg["data"]["payload"]); }
   else if (type == "toggles") {
+    ble_learn_time(msg);
     JSONVar d = msg["data"];
     JSONVar k = d.keys();
     for (int i = 0; i < k.length(); i++) { ble_apply_app_state(String(k[i]), jstr(d[k[i]])); }
   }
   else if (type == "toggle") {
+    ble_learn_time(msg);
     JSONVar d = msg["data"];
     ble_apply_app_state(jstr(d["app"]), jstr(d["state"]), jstr(d["uuid"]), jint64(d["timestamp"]));
   }
