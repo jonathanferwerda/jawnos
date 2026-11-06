@@ -29,6 +29,7 @@ use File::Path qw(make_path);
 use File::Basename qw(dirname);
 use Cwd qw(abs_path);
 use Digest::SHA qw(sha256_hex);
+use File::Find qw(find);
 use File::Slurp qw(read_file);
 use JSON::PP ();
 
@@ -49,18 +50,21 @@ my @targets = (
 	{
 		name    => 'alarmclock (Pico 2 W)',
 		project => 'jp/alarmclock',
+		files   => qr/\.(?:ino|h|hpp|c|cpp|csv|ini)$/,
 		source  => 'jp/alarmclock/.pio/build/pico2w/firmware.bin',
 		dest    => 'jp/alarmclock/build/rp2040.rp2040.rpipico2w/alarmclock.ino.bin',
 	},
 	{
 		name    => 'deck (ESP32-S3)',
 		project => 'jt',
+		files   => qr/\.(?:ino|h|hpp|c|cpp|csv|ini)$/,
 		source  => 'jt/.pio/build/deck/firmware.bin',
 		dest    => 'jt/build/deck/firmware.bin',
 	},
 	{
 		name    => 'watch (ESP32-S3)',
 		project => 'jw',
+		files   => qr/\.(?:ino|h|hpp|c|cpp|csv|ini)$/,
 		source  => 'jw/.pio/build/watch/firmware.bin',
 		dest    => 'jw/build/watch/firmware.bin',
 	},
@@ -69,6 +73,34 @@ my @targets = (
 my $version = eval { read_file("$root/VERSION") } || '';
 $version =~ s/\s+//g;
 $version ||= 'unknown';
+
+sub sources_digest {
+	# What the image is actually made of: the project's own sources plus the
+	# version script. A house VERSION bump that touches no firmware must not make
+	# the staged image stale - every unrelated commit would otherwise demand a
+	# seven-minute rebuild. Both this script and lib/JawnOS/Domain/Firmware.pm
+	# compute it; t/98 fails if the two ever disagree.
+	my ($tree, $target) = @_;
+	my @files;
+	find({
+		no_chdir => 1,
+		wanted => sub {
+			my $path = $File::Find::name;
+			return unless -f $path;
+			my $rel = $path;
+			$rel =~ s{^\Q$tree\E/?}{};
+			return unless $rel =~ $target->{'files'};
+			return if $rel =~ m{/(?:\.pio|build)/};
+			push @files, $rel;
+		},
+	}, "$tree/$target->{'project'}");
+	push @files, 'scripts/fw_version.py' if -f "$tree/scripts/fw_version.py";
+	my $joined = '';
+	foreach my $rel ( sort @files ) {
+		$joined .= $rel . "\0" . sha256_hex(scalar read_file("$tree/$rel", binmode => ':raw')) . "\0";
+	}
+	return sha256_hex($joined);
+}
 
 sub staged_meta {
 	my $dst = shift;
@@ -81,11 +113,13 @@ sub staged_meta {
 sub written_meta {
 	my $dst = shift;
 	my $target = shift;
+	my $tree = shift;
 	return {
 		version   => $version,
 		sha256    => sha256_hex(scalar read_file($dst, binmode => ':raw')),
 		size      => -s $dst,
 		source    => $target->{'source'},
+		sources   => sources_digest($tree, $target),
 		staged_at => time,
 	};
 }
@@ -121,8 +155,9 @@ if ($verify) {
 			$bad++;
 			next;
 		}
-		if (($meta->{'version'} || '') ne $version) {
-			print "STALE  $label: staged for v$meta->{'version'}, this checkout is v$version\n";
+		my $digest = sources_digest($root, $t);
+		if (($meta->{'sources'} || '') ne $digest) {
+			print "STALE  $label: the firmware sources changed since this image was staged\n";
 			$bad++;
 			next;
 		}
@@ -138,7 +173,7 @@ if ($verify) {
 				print "NOTE   $label: this checkout's own build differs from the staged image\n";
 			}
 		}
-		print "OK     $label: v$meta->{'version'} sha256 " . substr($sha, 0, 12) . "\n";
+		print "OK     $label: built from v$meta->{'version'}, sha256 " . substr($sha, 0, 12) . "\n";
 	}
 	print "\n", ($bad ? "$bad firmware target(s) stale" : 'every firmware target is current'), "\n";
 	exit($bad ? 1 : 0);
@@ -170,7 +205,7 @@ foreach my $t (@targets) {
 	}
 	make_path(dirname($dst));
 	copy($src, $dst) or die "$t->{'name'}: copy failed: $!\n";
-	my $meta = written_meta($dst, $t);
+	my $meta = written_meta($dst, $t, $root);
 	write_sidecar($dst, $meta);
 	printf "%s: %s -> %s (%d bytes, v%s)\n", $t->{'name'}, $t->{'source'}, $t->{'dest'}, -s $dst, $meta->{'version'};
 	$staged++;

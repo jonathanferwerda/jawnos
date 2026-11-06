@@ -241,10 +241,11 @@ sub action_43561 {
 	if ($edt eq 'microcontroller') {
 		# The manager serves firmware from a hardwired path, not .pio/build.
 		# scripts/stage_firmware.pl copies the newest build there and leaves a
-		# sidecar naming the version and the sha256. A file without a matching
-		# sidecar, or one staged for another version, is the previous firmware -
-		# sending it rolls the board back with nobody asking. Refuse it and name
-		# the fix. `force` is for a person who really means to send that image.
+		# sidecar naming the version, the sha256 and the digest of the sources it
+		# came from. A file with no sidecar, one whose bytes moved, or one built
+		# from older firmware is the previous image - sending it rolls the board
+		# back with nobody asking. Refuse it and name the fix. `force` is for a
+		# person who really means to send that image.
 		my $staged = &subs::firmware_staged('microcontroller');
 		unless ($staged->{'exists'}) {
 			return $c->render(json => { success => 0, result => $staged->{'reason'} });

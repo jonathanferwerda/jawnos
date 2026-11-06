@@ -114,19 +114,29 @@ sub stage {
 	is($nrc, 1, 'an image with no sidecar is stale');
 	like($nout, qr/no sidecar/, 'and says so');
 
-	# --- a sidecar for another version is stale -----------------------------
-	write_file("$ota.json", JSON::PP->new->encode($meta));
-	write_file("$tree/VERSION", "9.9.10\n");
-	my ($mrc, $mout) = stage('--root', $tree, '--verify');
-	is($mrc, 1, 'an image staged for another version is stale');
-	like($mout, qr/staged for v9\.9\.9, this checkout is v9\.9\.10/, 'and names both versions');
-	write_file("$tree/VERSION", "9.9.9\n");
-
 	# --- bytes that do not match the sidecar are stale ----------------------
+	write_file("$ota.json", JSON::PP->new->encode($meta));
 	write_file($ota, "tampered\n");
 	my ($trc, $tout) = stage('--root', $tree, '--verify');
 	is($trc, 1, 'an image whose bytes moved is stale');
 	like($tout, qr/do not match their sidecar/, 'and says the bytes moved');
+
+	# --- a house version bump alone is not staleness ------------------------
+	# The image is made of the firmware sources, not of VERSION: an unrelated
+	# commit must not demand a full rebuild and re-stage.
+	stage('--root', $tree);
+	write_file("$tree/VERSION", "9.9.10\n");
+	my ($vrc, $vout) = stage('--root', $tree, '--verify');
+	is($vrc, 0, 'a VERSION bump that touches no firmware leaves the image current');
+	like($vout, qr/OK\s+alarmclock.*built from v9\.9\.9/, 'and still names the build it holds');
+	write_file("$tree/VERSION", "9.9.9\n");
+
+	# --- a changed firmware source is staleness -----------------------------
+	write_file("$tree/jp/alarmclock/alarmclock_99_extra.ino", "// one more line of firmware\n");
+	my ($src_rc, $src_out) = stage('--root', $tree, '--verify');
+	is($src_rc, 1, 'a changed firmware source makes the image stale');
+	like($src_out, qr/firmware sources changed/, 'and says the sources moved');
+	unlink "$tree/jp/alarmclock/alarmclock_99_extra.ino";
 
 	# --- a differing local build is a note, not a refusal -------------------
 	# Most machines never build firmware; one that built at an earlier version

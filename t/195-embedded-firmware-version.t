@@ -18,6 +18,8 @@ use File::Slurp qw(read_file write_file);
 use File::Temp qw(tempdir);
 use Digest::SHA qw(sha256_hex);
 use Cwd ();
+use IPC::Open3 qw(open3);
+use Symbol qw(gensym);
 use JSON::PP ();
 use RepoSource;
 
@@ -88,7 +90,7 @@ like($firmware, qr/watch\s*=>\s*\{\s*name\s*=>\s*'watch'/, 'and the watch');
 like($firmware, qr/sub firmware_staged/, 'firmware_staged answers what would be sent');
 like($firmware, qr/no sidecar/, 'an image with no sidecar is refused');
 like($firmware, qr/does not match its sidecar/, 'an image whose bytes moved is refused');
-like($firmware, qr/staged image is v.*this checkout is v/s, 'an image for another version is refused');
+like($firmware, qr/firmware sources changed since this image was staged/, 'an image whose sources moved is refused');
 
 my $loader = $read->('lib/JawnOS/Domain/Loader.pm');
 like($loader, qr/JawnOS::Domain::Firmware' for qw\([^)]*\bfirmware_staged\b/, 'the loader maps the firmware helpers');
@@ -128,6 +130,7 @@ like($president, qr/\$gb::timeouts->\{'firmware_auto_ota'\}->\{'subroutine'\}/, 
 like($firmware, qr/'auto_ota'.*?eq 'on'/s, 'it only touches a device that opted in');
 like($firmware, qr/eq \$latest/, 'it compares the reported build with the staged one');
 like($firmware, qr/fw_attempt_version/, 'and stamps an attempt so a failing board is not hammered');
+like($firmware, qr/my \$latest = \$staged->\{'staged_version'\}/, 'the latest build is the one inside the image, not the house counter');
 
 # --- runtime: firmware_staged tells current from stale --------------------
 my $cwd = Cwd::getcwd();
@@ -141,6 +144,7 @@ eval {
 
 	require JawnOS::Domain::Firmware;
 	my $staged = subs::firmware_target_for('microcontroller');
+	my $target;
 	is($staged->{'name'}, 'alarmclock', 'the microcontroller target is the pico build');
 	is(subs::firmware_target_for('nonesuch'), undef, 'an unknown purpose has no target');
 
@@ -148,22 +152,29 @@ eval {
 	is($s->{'current'}, 0, 'no sidecar is not current');
 	like($s->{'reason'}, qr/no sidecar/, 'and says why');
 
+	$target = subs::firmware_target_for('microcontroller');
 	write_file("$img.json", JSON::PP->new->encode({
 		version => '7.7.7',
 		sha256 => sha256_hex(scalar read_file($img, binmode => ':raw')),
 		size => -s $img,
+		sources => subs::firmware_source_digest($target),
 		staged_at => time,
 	}));
 	$s = subs::firmware_staged('microcontroller');
 	is($s->{'current'}, 1, 'a matching sidecar is current');
-	is($s->{'version'}, '7.7.7', 'and names the house version');
+	is($s->{'staged_version'}, '7.7.7', 'and names the build it holds');
 
 	write_file('VERSION', "7.7.8\n");
 	$s = subs::firmware_staged('microcontroller');
-	is($s->{'current'}, 0, 'a newer checkout makes the old image stale');
-	like($s->{'reason'}, qr/staged image is v7\.7\.7, this checkout is v7\.7\.8/, 'and names both versions');
+	is($s->{'current'}, 1, 'a house version bump alone leaves the image current');
 
+	write_file('jp/alarmclock/alarmclock_extra.ino', "// one more line\n");
+	$s = subs::firmware_staged('microcontroller');
+	is($s->{'current'}, 0, 'a changed firmware source makes it stale');
+	like($s->{'reason'}, qr/firmware sources changed/, 'and says the sources moved');
+	unlink 'jp/alarmclock/alarmclock_extra.ino';
 	write_file('VERSION', "7.7.7\n");
+
 	write_file($img, "different bytes\n");
 	$s = subs::firmware_staged('microcontroller');
 	is($s->{'current'}, 0, 'bytes that moved are stale');
@@ -172,5 +183,32 @@ eval {
 my $error = $@;
 chdir $cwd;
 is($error, '', 'the staged-image checks ran without error') or diag($error);
+
+# --- the stager and the manager must compute the same source digest --------
+{
+	my $tree = tempdir(CLEANUP => 1);
+	make_path("$tree/jp/alarmclock/.pio/build/pico2w");
+	make_path("$tree/scripts");
+	write_file("$tree/VERSION", "5.0.0\n");
+	write_file("$tree/jp/alarmclock/platformio.ini", "[env:pico2w]\n");
+	write_file("$tree/jp/alarmclock/alarmclock_01.ino", "// firmware\n");
+	write_file("$tree/scripts/fw_version.py", "# stamps the version\n");
+	write_file("$tree/jp/alarmclock/.pio/build/pico2w/firmware.bin", "built\n");
+	my $err = gensym;
+	my $pid = open3(my $in, my $out, $err, $^X, "$root/scripts/stage_firmware.pl", '--root', $tree);
+	close $in;
+	local $/;
+	my $out_text = <$out>;
+	close $out;
+	close $err;
+	waitpid($pid, 0);
+	my $ota = "$tree/jp/alarmclock/build/rp2040.rp2040.rpipico2w/alarmclock.ino.bin";
+	ok(-f "$ota.json", 'the stager wrote a sidecar');
+	chdir $tree or die "chdir: $!\n";
+	my $seen = subs::firmware_staged('microcontroller');
+	chdir $cwd;
+	is($seen->{'current'}, 1, 'and the manager computes the same source digest')
+		or diag($seen->{'reason'});
+}
 
 done_testing();

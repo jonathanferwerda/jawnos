@@ -19,6 +19,7 @@ no warnings 'experimental::signatures';
 no warnings 'uninitialized';
 
 use Digest::SHA ();
+use File::Find qw(find);
 use File::Slurp qw(read_file);
 use Mojo::Asset::File;
 use Mojo::JSON qw(decode_json encode_json);
@@ -30,9 +31,24 @@ our $config;
 # The paths scripts/stage_firmware.pl stages to, keyed by the purpose the
 # Embedded app uses. @targets in that script must name the same destinations.
 our %FIRMWARE_TARGET = (
-	microcontroller => { name => 'alarmclock', path => 'jp/alarmclock/build/rp2040.rp2040.rpipico2w/alarmclock.ino.bin' },
-	teletype        => { name => 'deck',       path => 'jt/build/deck/firmware.bin' },
-	watch           => { name => 'watch',      path => 'jw/build/watch/firmware.bin' },
+	microcontroller => {
+		name => 'alarmclock',
+		project => 'jp/alarmclock',
+		files => qr/\.(?:ino|h|hpp|c|cpp|csv|ini)$/,
+		path => 'jp/alarmclock/build/rp2040.rp2040.rpipico2w/alarmclock.ino.bin',
+	},
+	teletype => {
+		name => 'deck',
+		project => 'jt',
+		files => qr/\.(?:ino|h|hpp|c|cpp|csv|ini)$/,
+		path => 'jt/build/deck/firmware.bin',
+	},
+	watch => {
+		name => 'watch',
+		project => 'jw',
+		files => qr/\.(?:ino|h|hpp|c|cpp|csv|ini)$/,
+		path => 'jw/build/watch/firmware.bin',
+	},
 );
 
 sub firmware_board_port() {
@@ -46,6 +62,34 @@ sub firmware_house_version() {
 	$version =~ s/\s+//g;
 	$version =~ s/[^0-9A-Za-z._+-]//g;
 	return $version;
+}
+
+sub firmware_source_digest($target) {
+	# What a staged image is made of: the project's own sources plus the script
+	# that stamps the version. A house VERSION bump that touches no firmware must
+	# not make the image stale - otherwise every unrelated commit demands a
+	# rebuild. scripts/stage_firmware.pl computes the same digest; t/98 fails if
+	# the two ever disagree.
+	my $project = $target->{'project'} or return '';
+	my @files;
+	find({
+		no_chdir => 1,
+		wanted => sub {
+			my $path = $File::Find::name;
+			return unless -f $path;
+			my $rel = $path;
+			$rel =~ s{^\./}{};
+			return unless $rel =~ $target->{'files'};
+			return if $rel =~ m{/(?:\.pio|build)/};
+			push @files, $rel;
+		},
+	}, "./$project");
+	push @files, 'scripts/fw_version.py' if -f './scripts/fw_version.py';
+	my $joined = '';
+	foreach my $rel ( sort @files ) {
+		$joined .= $rel . "\0" . (eval { Digest::SHA->new(256)->addfile("./$rel", 'b')->hexdigest } || '') . "\0";
+	}
+	return Digest::SHA::sha256_hex($joined);
 }
 
 sub firmware_target_for($edt) {
@@ -92,9 +136,18 @@ sub firmware_staged($edt) {
 		$staged->{'reason'} = 'the staged image does not match its sidecar - run perl scripts/stage_firmware.pl';
 		return $staged;
 	}
-	if (($meta->{'version'} || '') ne ($staged->{'version'} || '')) {
-		$staged->{'reason'} = 'the staged image is v' . $meta->{'version'}
-			. ', this checkout is v' . $staged->{'version'} . ' - run perl scripts/stage_firmware.pl';
+	# The house version is a record of the build, not the test: a commit that
+	# touches no firmware must leave the staged image current. What matters is
+	# whether the tree the image was built from is still this tree.
+	my $digest = firmware_source_digest($target);
+	$staged->{'sources'} = $meta->{'sources'} || '';
+	$staged->{'sources_now'} = $digest;
+	if (!$meta->{'sources'}) {
+		$staged->{'reason'} = 'the staged image predates source tracking - run perl scripts/stage_firmware.pl';
+		return $staged;
+	}
+	if ($meta->{'sources'} ne $digest) {
+		$staged->{'reason'} = 'the firmware sources changed since this image was staged - run perl scripts/stage_firmware.pl';
 		return $staged;
 	}
 	$staged->{'current'} = 1;
@@ -132,7 +185,7 @@ sub firmware_status($edt, $chip_id) {
 	my $op_d = eval { decode_json $od } || {};
 	my $specs = $op_d->{'__specs'} || {};
 	my $device = $specs->{'fw_version'} || '';
-	my $latest = $staged->{'version'} || '';
+	my $latest = $staged->{'staged_version'} || '';
 	return {
 		target      => $staged->{'name'} || '',
 		device      => $device,
@@ -234,7 +287,7 @@ sub firmware_push($data) {
 		success => $ok,
 		code    => ($res ? $res->code : 0),
 		result  => $ok ? ($res->body || 'accepted') : ($res && $res->error ? $res->error->{message} : 'no answer'),
-		version => $staged->{'version'},
+		version => $staged->{'staged_version'},
 	};
 }
 
@@ -264,7 +317,7 @@ sub firmware_auto_ota() {
 			push @lines, $edt . ': ' . ($staged->{'reason'} || 'not staged');
 			next;
 		}
-		my $latest = $staged->{'version'};
+		my $latest = $staged->{'staged_version'};
 		foreach my $pair ( @opted ) {
 			my ($chip_id, $op_d) = @{$pair};
 			my $specs = $op_d->{'__specs'};
