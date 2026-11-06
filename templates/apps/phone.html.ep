@@ -228,6 +228,16 @@
 			<label>Name prompt<textarea id="phone_ivr_prompt" rows="2"><%= $ivr->{'prompt'} %></textarea></label>
 			<label>Voicemail greeting<textarea id="phone_ivr_voicemail" rows="2"><%= $ivr->{'voicemail'} %></textarea></label>
 			<label>Thanks<textarea id="phone_ivr_thanks" rows="1"><%= $ivr->{'thanks'} %></textarea></label>
+			<label>Hold music
+				<% my $hold_now = $ivr->{'hold'} || ''; %>
+				<select id="phone_ivr_hold" hint="Hold music">
+					<option value="">None</option>
+					<option value="shuffle" <%= ($hold_now eq 'shuffle') ? 'selected' : '' %>>Shuffle all</option>
+					<% if (length $hold_now && $hold_now ne 'shuffle') { %>
+						<option value="<%= $hold_now %>" selected="selected"><%= $hold_now =~ m{([^/]+)\.[A-Za-z0-9]+$} ? $1 : $hold_now %></option>
+					<% } %>
+				</select>
+			</label>
 			<button class="phone_app_ivr_save" id="phone_ivr_save" hint="Save">Save</button>
 			<div class="phone_app_ivr_status" id="phone_ivr_status"></div>
 		</div>

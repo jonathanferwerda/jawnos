@@ -26,6 +26,9 @@ sub phone_ivr_defaults {
 		prompt    => &subs::ui('Please say your name after the tone.'),
 		voicemail => &subs::ui('Please leave a message after the tone.'),
 		thanks    => &subs::ui('Thank you.'),
+		# what the caller hears after the thanks while somebody decides to pick
+		# up: '' (none), 'shuffle' for the whole library, or one track's path
+		hold      => '',
 		flows     => &subs::phone_ivr_flow_defaults('unknown'),
 	};
 }

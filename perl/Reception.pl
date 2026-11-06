@@ -132,7 +132,9 @@ sub tick {
 	return unless -x $helper;
 	my $voice = $settings->{'voice'} || '';
 	my @text = map { $settings->{$_} || '' } qw(greeting prompt thanks);
-	my $from = join("\x00", $voice, @text);
+	# the hold music is part of what the gateway was armed with: changing the
+	# dropdown re-arms the same way changing a prompt does
+	my $from = join("\x00", $voice, @text, $settings->{'hold'} || '');
 	# A pipe gateway waits in `waiting` (the phone has not called yet) and an
 	# adapter gateway listens in `armed`; both are ready. Re-arming tears the
 	# watcher down, so a ready gateway is left alone while its prompts stand.
@@ -156,6 +158,8 @@ sub tick {
 		words => { map { $_ => ($settings->{$_} || '') } qw(greeting prompt thanks) },
 		voice => $voice,
 		clips => \%clips,
+		# the caller waits through music on the gateway after the thanks
+		hold => $settings->{'hold'} || '',
 		# the helper keeps the clip open until it hears a name and then a pause
 		record => { ms => 20000, silence_ms => 2000, min_ms => 400 },
 	});

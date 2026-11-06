@@ -73,6 +73,9 @@ sub action_52002 {
 		voice => $voice,
 		clips => \%clips,
 		record => \%record,
+		# the music the caller waits through after the thanks; an arm that names
+		# none keeps the saved choice
+		hold => defined $c->param('hold') ? $c->param('hold') : &subs::phone_ivr_settings()->{'hold'},
 	}));
 }
 

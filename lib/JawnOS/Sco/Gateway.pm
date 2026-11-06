@@ -20,6 +20,7 @@ use Mojo::JSON qw(decode_json encode_json);
 use File::Path qw(make_path);
 use POSIX qw(:sys_wait_h);
 use IPC::Open2 ();
+use List::Util qw(shuffle);
 
 my $KEEP_RECORDINGS = 40;
 
@@ -180,6 +181,13 @@ sub status {
 		# the WebRTC bridge, when someone pressed Connect me
 		rtc => $self->{'rtc'} || { state => 'idle', error => '' },
 		plan => [ map { $_->{'key'} || ($_->{'tone'} ? 'tone' : 'step') } @{ $self->{'steps'} || [] } ],
+		# the hold: whether the caller is waiting on music, and the tracks this
+		# gateway can play, which is what the IVR pane's dropdown offers
+		hold => $self->{'holding'} ? 1 : 0,
+		hold_tracks => do {
+			require JawnOS::Sco::Hold;
+			[ map { { id => $_, label => &JawnOS::Sco::Hold::label($_) } } @{ &JawnOS::Sco::Hold::tracks() } ]
+		},
 		local => $self->{'local'} || '',
 		# where the call's own two streams were on the last look: the pane and a
 		# person debugging a silent call both need to know whether they are ours
@@ -242,7 +250,8 @@ sub write_status {
 # `ms` is the ceiling for the whole clip (including the wait for the caller), and
 # the helper keeps the clip open until it hears a name and then a pause;
 # `min_ms` is how much speech has to have been heard before a pause may end it.
-# The plan is greeting, name prompt, record the name, thanks - in that order.
+# The plan is greeting, name prompt, record the name, thanks, then the hold
+# music while somebody decides to pick up - in that order.
 sub arm {
 	my ($self, %args) = @_;
 	return { ok => 0, error => 'a call is already up' }
@@ -290,6 +299,23 @@ sub arm {
 	push @steps, { record => 1, key => 'name' };
 	my $thanks = $clips->{'thanks'} || '';
 	push @steps, { play => $thanks, key => 'thanks' } if $thanks;
+	# After the thanks the house keeps the line instead of hanging up: the caller
+	# waits through music while somebody decides to pick up. The phone sends a
+	# choice, not a path - the tracks are this machine's own files - so the list
+	# is resolved and converted here, at arm time, and never mid-call.
+	my $hold = defined $args{'hold'} ? $args{'hold'} : '';
+	if (length $hold && lc($hold) ne 'none') {
+		require JawnOS::Sco::Hold;
+		my $list = &JawnOS::Sco::Hold::playlist($hold);
+		if (@{$list}) {
+			push @steps, {
+				hold => 1,
+				key => 'hold',
+				list => $list,
+				shuffle => (lc($hold) eq 'shuffle' ? 1 : 0),
+			};
+		}
+	}
 
 	$self->{'steps'} = \@steps;
 	$self->{'step_at'} = 0;
@@ -414,6 +440,7 @@ sub watch_streams {
 			$state,
 			($self->{'done_at'} ? time - $self->{'done_at'} : undef),
 			($self->{'accepted_at'} ? time - $self->{'accepted_at'} : undef),
+			$self->{'holding'},
 		);
 		# a bridged call belongs to the person, not to the plan's timer
 		$self->end_call($why) if length $why && !$self->{'rtc_up'};
@@ -427,6 +454,8 @@ sub end_call {
 	$self->{'quiet'} = 0;
 	$self->{'gone'} = 0;
 	$self->{'held'} = 0;
+	$self->{'holding'} = 0;
+	$self->{'hold_at'} = 0;
 	$self->{'accepted_at'} = 0;
 	$self->{'done_at'} = 0;
 	$self->{'steps'} = [];
@@ -455,9 +484,17 @@ sub end_call {
 ## arm/watch_streams), because the `line` word greets a silent caller as soon as
 ## the pair appears and the helper no longer waits for audio.
 sub call_over {
-	my ($state, $since_done, $since_accepted) = @_;
+	my ($state, $since_done, $since_accepted, $holding) = @_;
 	return 'plan done' if $state eq 'done'
 		&& defined $since_done && $since_done >= 4;
+	if ($holding) {
+		# The house's own music keeps the line up while somebody decides. The
+		# phone's limit is what ends a hold nobody answers; this is the backstop
+		# for a phone that never lets go, so a stuck line cannot hold forever.
+		# the phone's own limit ends a hold nobody answers; this only outlives it
+		return 'hold limit' if defined $since_accepted && $since_accepted >= 660;
+		return '';
+	}
 	# a step that never ends must not hold the line forever either
 	return 'call limit' if defined $since_accepted && $since_accepted >= 42;
 	return '';
@@ -947,11 +984,46 @@ sub _advance {
 			min_ms => $opts->{'min_ms'} || 400,
 		);
 	}
+	elsif ($step->{'hold'}) {
+		# the hold never advances: it plays one track and, when the helper says
+		# that one is done, plays the next. The plan stays in_call while it does,
+		# so the caller hears music rather than the end of the plan.
+		$self->{'holding'} = 1;
+		$self->{'hold_at'} = 0;
+		$self->_hold_play_next();
+		return;
+	}
 	else {
 		$self->_send(cmd => 'play', id => $self->{'next_id'}, file => $step->{'play'});
 	}
 	$self->{'step_id'} = $self->{'next_id'}++;
 	$self->{'last_event'} = 'step:' . ($step->{'key'} || 'play');
+	$self->write_status();
+}
+
+# The hold's next track. A shuffled list is reshuffled when it is used up, so a
+# long wait is not the same rotation twice; a single chosen track simply repeats.
+sub _hold_play_next {
+	my ($self) = @_;
+	my $step = $self->{'steps'}->[ $self->{'step_at'} ] || {};
+	my $list = $step->{'list'} || [];
+	unless (@{$list}) {
+		$self->{'holding'} = 0;
+		$self->_advance();
+		return;
+	}
+	my $at = $self->{'hold_at'} || 0;
+	if ($at >= @{$list}) {
+		$list = [ shuffle(@{$list}) ] if $step->{'shuffle'};
+		$step->{'list'} = $list;
+		$self->{'steps'}->[ $self->{'step_at'} ] = $step;
+		$at = 0;
+	}
+	my $path = $list->[$at];
+	$self->{'hold_at'} = $at + 1;
+	$self->_send(cmd => 'play', id => $self->{'next_id'}, file => $path);
+	$self->{'step_id'} = $self->{'next_id'}++;
+	$self->{'last_event'} = 'step:hold';
 	$self->write_status();
 }
 
@@ -1003,7 +1075,9 @@ sub event {
 			last next_step if defined $event->{'id'}
 				&& $self->{'step_id'}
 				&& $event->{'id'} != $self->{'step_id'};
-			$self->_advance();
+			my $step = $self->{'steps'}->[ $self->{'step_at'} ] || {};
+			if ($step->{'hold'}) { $self->_hold_play_next(); }
+			else { $self->_advance(); }
 		}
 	}
 	elsif ($name eq 'closed' || $name eq 'stopped') {

@@ -467,7 +467,7 @@ sub phone_ivr_settings {
 
 sub phone_ivr_save($params) {
 	my $next = &phone_ivr_settings();
-	foreach my $key (qw(enabled machine route voice bluetooth greeting prompt voicemail thanks)) {
+	foreach my $key (qw(enabled machine route voice bluetooth greeting prompt voicemail thanks hold)) {
 		next unless exists $params->{$key};
 		my $value = defined $params->{$key} ? $params->{$key} : '';
 		$value =~ s/^\s+|\s+$//g;
@@ -498,9 +498,14 @@ sub phone_ivr_save($params) {
 	foreach my $key (qw(greeting prompt voicemail thanks)) {
 		$next->{$key} = substr($next->{$key}, 0, 1000);
 	}
+	# a hold choice is '' (none), 'shuffle', or a track's path inside the
+	# gateway's library; never a path out of it
+	require JawnOS::Sco::Hold;
+	$next->{'hold'} = &JawnOS::Sco::Hold::in_library($next->{'hold'});
+	$next->{'hold'} = lc($next->{'hold'}) if lc($next->{'hold'}) eq 'shuffle';
 	# the reception is the house's, not the device's: the phone turns it on and
 	# the gateway machine plays it, so both read the same row
-	foreach my $key (qw(enabled machine route voice bluetooth greeting prompt voicemail thanks)) {
+	foreach my $key (qw(enabled machine route voice bluetooth greeting prompt voicemail thanks hold)) {
 		&subs::setting_setter({ app => 'phone', setting => 'ivr_' . $key, value => $next->{$key}, device => 'all' });
 	}
 	&subs::setting_setter({ app => 'phone', setting => 'ivr_flows', value => encode_json($next->{'flows'}), device => 'all' });

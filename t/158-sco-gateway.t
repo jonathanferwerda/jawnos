@@ -54,6 +54,22 @@ like(read_file("$repo/jawn"), qr/\bsco\.sock\b/, 'the boot wipe keeps the gatewa
 
 # ------------------------------------------------------------- the client
 my $dir = tempdir(CLEANUP => 1);
+# The hold music library, in a temp folder: the gateway resolves a chosen track
+# on its own machine, so the test gives it two short WAVs to convert.
+my $music_dir = "$dir/music";
+make_path($music_dir);
+my $tiny_wav = sub {
+	my ($secs) = @_;
+	my $n = 8000 * $secs;
+	my $data = join '', map { pack('s<', int(sin(2 * 3.14159 * 440 * $_ / 8000) * 6000)) } 0 .. $n - 1;
+	return 'RIFF' . pack('V', 36 + length $data)
+		. 'WAVEfmt ' . pack('VvvVVvv', 16, 1, 1, 8000, 16000, 2, 16)
+		. 'data' . pack('V', length $data) . $data;
+};
+write_file("$music_dir/One.wav", $tiny_wav->(1));
+write_file("$music_dir/Two.wav", $tiny_wav->(1));
+$ENV{'JAWNOS_HOLD_MUSIC'} = $music_dir;
+$ENV{'JAWNOS_HOLD_CACHE'} = "$dir/hold-cache";
 my $sock_path = "$dir/test.sock";
 my $server = IO::Socket::UNIX->new(Local => $sock_path, Listen => 1, Type => SOCK_STREAM);
 ok($server, 'a stub gateway socket was created');
@@ -511,15 +527,19 @@ is($armed->{'ok'}, 1, 'the gateway arms');
 is($gateway->{'state'}, 'armed', 'and waits for the link');
 
 my $stopped = 0;
-Mojo::IOLoop->recurring(0.05 => sub {
+my $rest_watch = Mojo::IOLoop->recurring(0.05 => sub {
 	my $state = $gateway->{'state'} || '';
 	return unless $state eq 'done' || $state eq 'idle';
 	$stopped = 1;
 	Mojo::IOLoop->stop;
 });
 # a plan that never finishes must fail the test, not hang the suite
-Mojo::IOLoop->timer(6 => sub { Mojo::IOLoop->stop });
+my $rest_bell = Mojo::IOLoop->timer(6 => sub { Mojo::IOLoop->stop });
 Mojo::IOLoop->start;
+# both of those belong to this gateway: left armed, they would stop the loop
+# the hold test below starts
+Mojo::IOLoop->remove($rest_watch);
+Mojo::IOLoop->remove($rest_bell);
 ok($stopped, 'the gateway reached a resting state on its own');
 
 is($gateway->{'state'}, 'done', 'the plan runs to the end');
@@ -538,6 +558,102 @@ is($status->{'last_error'}, '', 'and no error is carried');
 ok($gateway->recording_path('name-test-call.wav'), 'a recording by bare name is served');
 is($gateway->recording_path('../../etc/passwd'), '', 'a path is not a name');
 is($gateway->recording_path('.hidden'), '', 'a dot file is not served');
+
+# ---------------------------------------------------------------- hold music
+# After the thanks the caller waits through the house's music while somebody
+# decides to pick up. A track is a file on the gateway machine, chosen by the
+# phone as a relative path; nothing may name its way out of the library.
+require JawnOS::Sco::Hold;
+is_deeply(JawnOS::Sco::Hold::tracks(1), [ 'One.wav', 'Two.wav' ],
+	'the library lists the tracks it can play');
+is(JawnOS::Sco::Hold::label('Two.wav'), 'Two', 'a track is named by its file, without the extension');
+is_deeply(JawnOS::Sco::Hold::playlist('none'), [], 'none is no music');
+is_deeply(JawnOS::Sco::Hold::playlist(''), [], 'so is an empty choice');
+is(JawnOS::Sco::Hold::in_library('../../etc/passwd'), '', 'a choice cannot leave the library');
+is_deeply(JawnOS::Sco::Hold::playlist('../secret.mp3'), [], 'and one that tries plays nothing');
+SKIP: {
+	skip 'ffmpeg is not installed, so no track can be converted', 4
+		unless system('sh', '-c', 'command -v ffmpeg >/dev/null 2>&1') == 0;
+	my $all = JawnOS::Sco::Hold::playlist('shuffle');
+	is(scalar @{$all}, 2, 'shuffle offers every track');
+	ok(!(grep { !-s $_ } @{$all}), 'and each is converted to a raw clip the helper can play');
+	my $one = JawnOS::Sco::Hold::playlist('One.wav');
+	is(scalar @{$one}, 1, 'one chosen track is one clip');
+	ok(-s $one->[0], 'and it is converted too');
+}
+
+# A held call: the plan does not run to its end, it plays the next track when
+# the helper finishes one, and the state stays in_call.
+my $hold_fake = "$dir/hold-helper";
+$ENV{'HOLD_PLAYS'} = "$dir/hold-plays";
+write_file($hold_fake, <<'HOLDHELPER');
+#!/usr/bin/perl
+use strict;
+use warnings;
+use JSON::PP;
+my $json = JSON::PP->new;
+sub say_line { print $json->encode(shift), "\n"; $| = 1; }
+$| = 1;
+say_line({ event => 'listening', local => 'fake' });
+say_line({ event => 'accepted', peer => '00:11:22:33:44:55' });
+my $plays = 0;
+while (my $line = <STDIN>) {
+	my $cmd = eval { $json->decode($line) } || {};
+	my $id = $cmd->{id} || 0;
+	my $verb = $cmd->{cmd} || '';
+	if ($verb eq 'play' || $verb eq 'tone') {
+		select(undef, undef, undef, 0.06);
+		say_line({ event => 'played', id => $id, ms => 60 });
+		$plays++;
+		if ($ENV{HOLD_PLAYS}) {
+			open(my $pf, '>', $ENV{HOLD_PLAYS}) or next;
+			print {$pf} $plays;
+			close $pf;
+		}
+	}
+	elsif ($verb eq 'record') {
+		open(my $fh, '>', $cmd->{file}) or next;
+		print {$fh} 'RIFF' . ('x' x 40);
+		close $fh;
+		say_line({ event => 'recorded', id => $id, file => $cmd->{file}, ms => 100, silence => JSON::PP::false });
+	}
+	elsif ($verb eq 'quit') { last; }
+}
+exit 0;
+HOLDHELPER
+chmod 0755, $hold_fake;
+
+my $held = JawnOS::Sco::Gateway->new(
+	dir => "$dir/hold-sco",
+	helper => $hold_fake,
+	status_path => "$dir/hold-sco.json",
+);
+my $hold_armed = $held->arm(
+	local => 'E0:E1:A9:3D:4B:B8',
+	clips => { greeting => $clip, prompt => $clip, thanks => $clip },
+	record => { ms => 5000 },
+	hold => 'shuffle',
+	call_id => 'hold-call',
+);
+is($hold_armed->{'ok'}, 1, 'a gateway arms with hold music');
+ok((grep { $_ eq 'hold' } @{ $held->status()->{'plan'} }),
+	'and the plan ends with the hold instead of stopping at the thanks');
+Mojo::IOLoop->timer(1.6 => sub { Mojo::IOLoop->stop });
+Mojo::IOLoop->start;
+is($held->{'state'}, 'in_call', 'a held call stays up instead of running to the end of the plan');
+ok($held->{'holding'}, 'the gateway knows the caller is on the music');
+my $hold_plays = -e $ENV{'HOLD_PLAYS'} ? read_file($ENV{'HOLD_PLAYS'}) : 0;
+ok($hold_plays >= 2, 'one track follows another while the hold lasts');
+is(JawnOS::Sco::Gateway::call_over('in_call', undef, 100, 1), '',
+	'a held call is not ended by the 42 s plan limit');
+is(JawnOS::Sco::Gateway::call_over('in_call', undef, 661, 1), 'hold limit',
+	'a hold nobody answers still ends');
+is(JawnOS::Sco::Gateway::call_over('in_call', undef, 100, 0), 'call limit',
+	'an unheld call keeps the old limit');
+my $hold_status = $held->status;
+is(scalar @{ $hold_status->{'hold_tracks'} || [] }, 2,
+	'the status names the tracks the pane offers');
+$held->end_call('test over');
 
 # The call a plan was just spoken into is still up for a moment after the
 # thanks, so the gateway must not serve it a second plan. A finished plan is put

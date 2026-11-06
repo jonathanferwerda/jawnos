@@ -183,6 +183,7 @@ $(document).on('click', '#phone_app #phone_ivr_save', function (e) {
 			prompt: $('#phone_app #phone_ivr_prompt').val() || '',
 			voicemail: $('#phone_app #phone_ivr_voicemail').val() || '',
 			thanks: $('#phone_app #phone_ivr_thanks').val() || '',
+			hold: $('#phone_app #phone_ivr_hold').val() || '',
 			flows: JSON.stringify(flows)
 		},
 		success: function (res) {
@@ -564,6 +565,9 @@ function jawnPhoneGatewayState() {
 				label = label + ' - ' + jawnosT('this machine is on 2.4 GHz WiFi, so the caller will break up');
 			}
 			$('#phone_app #phone_ivr_gateway_state').text(label);
+			// the gateway owns the music library, so it is the one that says
+			// which tracks the dropdown may offer
+			jawnPhoneHoldTracks(res && res.hold_tracks);
 			jawnPhoneTranscriptSync(res && res.call_id, res && res.transcript, res && res.partial, res && res.transcript_note, res && res.caller);
 			if (jawnPhoneConnectMeWanted && (state === 'in_call' || state === 'done')) {
 				jawnPhoneConnectMeWanted = false;
@@ -572,6 +576,26 @@ function jawnPhoneGatewayState() {
 		},
 		error: function () { $('#phone_app #phone_ivr_gateway_state').text('Gateway: not answering'); }
 	});
+}
+
+// The hold dropdown lists what the gateway can actually play: none, the whole
+// library shuffled, or one track. The list is rebuilt only when it changes, so
+// a choice being made is not yanked out from under the person.
+function jawnPhoneHoldTracks(tracks) {
+	var sel = $('#phone_app #phone_ivr_hold');
+	if (!sel.length || !tracks) { return; }
+	var key = JSON.stringify(tracks);
+	if (sel.attr('data-tracks') === key) { return; }
+	var current = sel.val() || '';
+	sel.attr('data-tracks', key);
+	sel.empty();
+	sel.append($('<option>').val('').text(jawnosT('None')));
+	sel.append($('<option>').val('shuffle').text(jawnosT('Shuffle all')));
+	$.each(tracks, function (i, t) {
+		if (!t || !t.id) { return; }
+		sel.append($('<option>').val(t.id).text(t.label || t.id));
+	});
+	sel.val(current);
 }
 
 $(document).on('click', '#phone_app .phone_app_tab', function () {
@@ -594,7 +618,8 @@ $(document).on('click', '#phone_app #phone_ivr_arm', function (e) {
 			bluetooth: $('#phone_app #phone_ivr_bluetooth').val() || '',
 			greeting: $('#phone_app #phone_ivr_greeting').val() || '',
 			prompt: $('#phone_app #phone_ivr_prompt').val() || '',
-			thanks: $('#phone_app #phone_ivr_thanks').val() || ''
+			thanks: $('#phone_app #phone_ivr_thanks').val() || '',
+			hold: $('#phone_app #phone_ivr_hold').val() || ''
 		},
 		success: function (res) {
 			if (res && res.ok) { jawnPhoneGatewayState(); }

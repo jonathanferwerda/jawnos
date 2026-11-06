@@ -101,6 +101,7 @@ is $defaults->{'flows'}->{'enemy'}, 'reject', 'an enemy is rejected by default';
 		enabled => 'yes', machine => 'gw-sig', route => 'all',
 		voice => 'piper-john', bluetooth => 'jawn-gateway', greeting => '  Hello  ',
 		prompt => 'Name?', voicemail => 'Leave it', thanks => 'Thanks',
+		hold => 'shuffle',
 		flows => '{"unknown":"reject","blacklisted":"voicemail","friend":"ivr"}',
 	});
 	is $saved->{'enabled'}, 'yes', 'saving normalises enabled to yes';
@@ -109,23 +110,26 @@ is $defaults->{'flows'}->{'enemy'}, 'reject', 'an enemy is rejected by default';
 	is $saved->{'voice'}, 'piper-john', 'a known voice is kept';
 	is $saved->{'greeting'}, 'Hello', 'the prompt text is trimmed';
 	is $saved->{'thanks'}, 'Thanks', 'the thanks prompt is kept';
+	is $saved->{'hold'}, 'shuffle', 'the hold music choice is kept';
 	is $saved->{'flows'}->{'unknown'}, 'reject', 'the unknown flow is saved';
 	is $saved->{'flows'}->{'blacklisted'}, 'voicemail', 'the blacklist flow is saved';
 	is $saved->{'flows'}->{'friend'}, 'ivr', 'the friend flow is saved';
 	is $saved->{'flows'}->{'enemy'}, 'reject', 'a missing flow keeps its default';
-	is scalar @writes, 10, 'every IVR setting is written';
+	is scalar @writes, 11, 'every IVR setting is written';
 	is $writes[0]->{'app'}, 'phone', 'the settings belong to the phone app';
 	like $writes[0]->{'setting'}, qr/^ivr_/, 'the settings carry the ivr_ prefix';
-is $writes[9]->{'setting'}, 'ivr_flows', 'the flow matrix is written as one row';
-	like $writes[9]->{'value'}, qr/"unknown":"reject"/, 'the flow row is JSON';
+is $writes[9]->{'setting'}, 'ivr_hold', 'the hold music is one more house row';
+is $writes[10]->{'setting'}, 'ivr_flows', 'the flow matrix is written as one row';
+	like $writes[10]->{'value'}, qr/"unknown":"reject"/, 'the flow row is JSON';
 }
 {
 	local *subs::setting_grabber = sub { return undef };
 	local *subs::db_select = sub { return FakeRows->new([]) };
 	my @writes;
 	local *subs::setting_setter = sub { push @writes, { %{ $_[0] } } };
-	my $saved = Manager::phone_ivr_save({ machine => 'not-a-machine', prompt => 'x' x 2000 });
+	my $saved = Manager::phone_ivr_save({ machine => 'not-a-machine', prompt => 'x' x 2000, hold => '../../etc/passwd' });
 	is $saved->{'machine'}, '', 'a machine that is not in remote_machines is dropped';
+	is $saved->{'hold'}, '', 'and a hold choice cannot name its way out of the music library';
 	is length($saved->{'prompt'}), 1000, 'a prompt is capped at 1000 characters';
 }
 
