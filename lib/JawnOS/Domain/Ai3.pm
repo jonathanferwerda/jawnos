@@ -701,30 +701,142 @@ sub ai_balance_sparkline {
 		. '</svg>';
 }
 
+# One period's end. Offset 0 is the window ending now; -1 the one before it;
+# +1 the first period after now, which the chart draws as a projection rather
+# than a reading.
+sub ai_balance_period_end {
+	my ($window, $offset, $now) = @_;
+	$now = &subs::rightNow() unless defined $now;
+	$offset = 0 unless defined $offset && $offset =~ /^-?\d+$/;
+	return $now + ($offset + 0) * &ai_window_span_ms($window, $now);
+}
+
+# The burn rate a projection should use: this window's own rate where it has
+# one, otherwise the next wider window that does. A quiet hour should not turn
+# a future day into a flat line when the day itself is still spending.
+sub ai_balance_projection_rate {
+	my ($lines, $window) = @_;
+	my @order = ($window);
+	push @order, grep { $_ ne $window } qw(1d 1w 1m 1h);
+	foreach my $w ( @order ) {
+		next unless ref $lines->{$w} eq 'HASH';
+		my $rate = $lines->{$w}->{'per_hour'};
+		return $rate if defined $rate && $rate > 0;
+	}
+	return undef;
+}
+
+# A future period drawn from the last real balance and a historical rate. No
+# sample can exist yet, so the line is a runway: it starts where the balance
+# would be at the period's edge and stops at zero. `$start` and `$end` are that
+# period's own edges, and `$now` is the last instant a real reading can hold.
+sub ai_balance_projection {
+	my ($points, $window, $start, $end, $rate, $now) = @_;
+	$window = '1d' unless defined $window && $BALANCE_BUCKET_MS{$window};
+	$now = &subs::rightNow() unless defined $now;
+	$rate = 0 unless defined $rate && $rate > 0;
+	my @all = sort { $a->{'t'} <=> $b->{'t'} }
+		grep { ref $_ eq 'HASH' && defined $_->{'t'} && defined $_->{'v'} && $_->{'t'} <= $now }
+		@{ ref $points eq 'ARRAY' ? $points : [] };
+	my $last = @all ? $all[-1] : undef;
+	my $span = $end - $start;
+	$span = 1 unless $span > 0;
+	my $span_h = $span / 3600000;
+	my $balance_now = $last ? $last->{'v'} : undef;
+	# carried forward from now to the period's own edge at the historical rate
+	my $balance = defined $balance_now ? $balance_now - $rate * (($start - $now) / 3600000) : undef;
+	$balance = 0 if defined $balance && $balance < 0;
+	my @draw;
+	if (defined $balance) {
+		my $steps = 60;
+		for my $i ( 0 .. $steps ) {
+			my $t = $start + ($span * $i / $steps);
+			my $v = $balance - $rate * (($t - $start) / 3600000);
+			$v = 0 if $v < 0;
+			push @draw, { t => $t, v => $v };
+		}
+	}
+	my $consumption = $rate * $span_h;
+	my $runway_hours = ($rate > 0 && defined $balance) ? $balance / $rate : undef;
+	return {
+		window => $window, span => $span, start => $start, now => $end,
+		points => \@draw, first => $draw[0], last => $draw[-1],
+		hours => $span_h, change => $consumption, consumption => $consumption,
+		per_hour => ($rate > 0 ? $rate : undef),
+		per_day => ($rate > 0 ? $rate * 24 : undef),
+		balance => $balance,
+		runway_hours => $runway_hours,
+		runway_days => (defined $runway_hours ? $runway_hours / 24 : undef),
+		expense_day => ($rate > 0 ? $rate * 24 : undef),
+		expense_week => ($rate > 0 ? $rate * 168 : undef),
+		expense_month => ($rate > 0 ? $rate * 24 * 30 : undef),
+		topups => [], projected => 1,
+		zero_at => (defined $runway_hours ? $start + $runway_hours * 3600000 : undef),
+	};
+}
+
+# What the nav line above the chart says. Offset 0 is now; a past or future
+# offset names the span it drew, and a future one says it is a projection.
+sub ai_balance_period_label {
+	my ($window, $offset, $start, $end) = @_;
+	$offset = 0 unless defined $offset && $offset =~ /^-?\d+$/;
+	$offset += 0;
+	return &subs::ui('Now') if $offset == 0;
+	my $format = ($window eq '1w' || $window eq '1m') ? '%b %d' : '%b %d %H:%M';
+	my $t0 = localtime(int(($start || 0) / 1000));
+	my $t1 = localtime(int(($end || 0) / 1000));
+	my $text = (ref $t0 ? $t0->strftime($format) : '') . ' – ' . (ref $t1 ? $t1->strftime($format) : '');
+	return ($offset > 0 ? &subs::ui('Projected') . ' · ' : '') . $text;
+}
+
+# A minute key for the ledger's SQL, from an epoch ms instant in this machine's
+# own clock, because the ledger's `minute` column is local wall-clock time.
+sub ai_minute_key {
+	my ($ms) = @_;
+	my $t = localtime(int(($ms || 0) / 1000));
+	return ref $t ? $t->strftime('%Y-%m-%d %H:%M') : '';
+}
+
 # The Sys panel's chart, assembled from the cached read. No provider call and no
 # database write happen here: the route has already loaded the same report, and
 # the only read is the spend ledger that puts tokens beside an hour's fall. The
 # balances and the pace are shown in the house's reporting currency, converted
 # at the rate snapshot the rest of the app uses; a provider whose rate is not
 # loaded keeps its own currency rather than a wrong number.
+#
+# `$offset` steps away from now: a negative one draws an earlier period from the
+# stored samples, and a positive one projects the runway forward. Both read the
+# same ledger, bounded to the period drawn, so a past window is not filled with
+# traffic spent after it.
 sub ai_balance_chart {
-	my ($report, $now) = @_;
+	my ($report, $now, $offset) = @_;
 	$report = &ai_balance_report() unless ref $report eq 'HASH';
 	$now = &subs::rightNow() unless defined $now;
+	$offset = 0 unless defined $offset && $offset =~ /^-?\d+$/;
+	$offset += 0;
 	my $history = (ref $report->{'history'} eq 'HASH') ? $report->{'history'} : {};
 	my $base = &crypto_report_currency();
 	# The spend ledger, read once per window for every provider at once. Its keys
 	# are the same local clock units the bars use, and the earliest row is what
 	# tells a bar before the ledger began apart from a bar that spent nothing. A
-	# provider nobody has called yet is simply absent.
+	# provider nobody has called yet is simply absent. A future period has no
+	# ledger rows to ask for.
 	my $ledger_since = &ai_spend_since();
 	my (%spend_by_window, %roles_by_window, %sessions_by_window);
 	foreach my $window ( @BALANCE_WINDOWS ) {
-		my $edges = &ai_balance_edges($window, $now);
+		if ($offset > 0) {
+			$spend_by_window{$window} = {};
+			$roles_by_window{$window} = {};
+			$sessions_by_window{$window} = {};
+			next;
+		}
+		my $end = &ai_balance_period_end($window, $offset, $now);
+		my $edges = &ai_balance_edges($window, $end);
 		my $since_key = @{$edges} ? $edges->[0]->{'key'} : '';
-		$spend_by_window{$window} = &ai_spend_buckets($BALANCE_GRANULARITY{$window}, $since_key);
-		$roles_by_window{$window} = &ai_spend_roles($since_key);
-		$sessions_by_window{$window} = &ai_spend_sessions($since_key);
+		my $until_key = @{$edges} ? &ai_minute_key($edges->[-1]->{'end'}) : '';
+		$spend_by_window{$window} = &ai_spend_buckets($BALANCE_GRANULARITY{$window}, $since_key, $until_key);
+		$roles_by_window{$window} = &ai_spend_roles($since_key, $until_key);
+		$sessions_by_window{$window} = &ai_spend_sessions($since_key, undef, $until_key);
 	}
 	# Everything the house spent in tokens, whichever account served it. A
 	# balance can fall with no token count beside it - the traffic went to a
@@ -764,10 +876,39 @@ sub ai_balance_chart {
 			@scaled = @{$points};
 			push @unconverted, $from unless $seen_unconverted{$from}++;
 		}
+		my @valid = sort { $a->{'t'} <=> $b->{'t'} }
+			grep { ref $_ eq 'HASH' && defined $_->{'t'} && defined $_->{'v'} } @scaled;
+		my $earliest = @valid ? $valid[0]{'t'} : undef;
+		my $balance_now;
+		for ( my $i = $#valid; $i >= 0; $i-- ) {
+			next unless $valid[$i]{'t'} <= $now;
+			$balance_now = $valid[$i]{'v'};
+			last;
+		}
+		# The current period's lines, for a future period's rate. Offset 0 builds
+		# them in the loop below and reads them back afterwards instead.
+		my %hist_lines;
+		if ($offset > 0) {
+			foreach my $w ( @BALANCE_WINDOWS ) { $hist_lines{$w} = &ai_balance_window(\@scaled, $w, $now); }
+		}
 		my %windows;
 		foreach my $window ( @BALANCE_WINDOWS ) {
-			my $line = &ai_balance_window(\@scaled, $window, $now);
-			my $bars = &ai_balance_buckets(\@scaled, $window, $now, $spend_by_window{$window}->{$provider} || {}, $ledger_since);
+			my $end = &ai_balance_period_end($window, $offset, $now);
+			my $projected = ($offset > 0) ? 1 : 0;
+			my ($line, $bars);
+			if ($projected) {
+				my $rate = &ai_balance_projection_rate(\%hist_lines, $window);
+				$line = &ai_balance_projection(\@scaled, $window, $end - &ai_window_span_ms($window, $now), $end, $rate, $now);
+				# No bars: the projection is a line, and a bar carrying a forecast
+				# would read as a reading of something that has not happened.
+				$bars = { window => $window, granularity => $BALANCE_GRANULARITY{$window},
+					count => 0, start => $end, end => $end, now => $end, buckets => [],
+					samples => 0, total => 0, max => 0, peak => undef, tokens => 0, ledger_since => $ledger_since };
+			}
+			else {
+				$line = &ai_balance_window(\@scaled, $window, $end);
+				$bars = &ai_balance_buckets(\@scaled, $window, $end, $spend_by_window{$window}->{$provider} || {}, $ledger_since);
+			}
 			my $role_tokens = $roles_by_window{$window}->{$provider} || {};
 			my $role_total = 0;
 			$role_total += $_ for values %{$role_tokens};
@@ -821,7 +962,29 @@ sub ai_balance_chart {
 				active_ms => $active_ms, sessions => ($active->{'sessions'} || 0),
 				per_active_hour => $per_active_hour, tokens_per_hour => $tokens_per_hour,
 				house_active_ms => $sessions_by_window{$window}->{'all'}->{'active_ms'} || 0,
+				projected => $projected,
 			};
+		}
+		# What the arrows can do. Back is bounded by the oldest stored reading;
+		# forward is bounded by the runway, so the arrows stop when the balance
+		# would already be spent before the period starts.
+		my %rate_lines;
+		if ($offset > 0) { %rate_lines = %hist_lines; }
+		else { foreach my $w ( @BALANCE_WINDOWS ) { $rate_lines{$w} = $windows{$w}{'line'}; } }
+		foreach my $window ( @BALANCE_WINDOWS ) {
+			my $wd = $windows{$window};
+			my $span = &ai_window_span_ms($window, $now);
+			my $span_h = $span / 3600000;
+			my $rate = &ai_balance_projection_rate(\%rate_lines, $window);
+			my $max_future = (defined $rate && $rate > 0 && defined $balance_now && $balance_now > 0)
+				? int(($balance_now / $rate) / $span_h + 0.999999)
+				: 0;
+			$wd->{'projection_rate'} = $rate;
+			$wd->{'offset'} = $offset;
+			$wd->{'can_prev'} = (defined $earliest && $earliest < $now + ($offset - 1) * $span) ? 1 : 0;
+			$wd->{'can_next'} = ($offset < 0) ? 1
+				: ($offset == 0 ? (($max_future >= 1) ? 1 : 0) : (($offset < $max_future) ? 1 : 0));
+			$wd->{'period_label'} = &ai_balance_period_label($window, $offset, $wd->{ 'line' }{ 'start' }, $wd->{ 'line' }{ 'now' });
 		}
 		push @series, {
 			provider        => $provider,
@@ -857,6 +1020,7 @@ sub ai_balance_chart {
 		tz          => $tz,
 		converted   => ($converted_any ? 1 : 0),
 		unconverted => \@unconverted,
+		offset      => $offset,
 		windows     => [ @BALANCE_WINDOWS ],
 		series      => \@series,
 	};

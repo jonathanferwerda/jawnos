@@ -82,6 +82,14 @@
 	.cfg .balance_window[status="active"] { background:var(--accent, var(--line)); border-color:var(--accent-line, var(--accent, var(--line))); color:var(--accent-ink, #fff); font-weight:bold; }
 	.balance_series { margin:0 0 12px; }
 	.balance_series_head { display:flex; gap:10px; align-items:baseline; flex-wrap:wrap; font-size:13px; margin-bottom:2px; }
+	.balance_series_amount { display:inline-flex; gap:10px; align-items:baseline; flex-wrap:wrap; }
+	/* The period arrows sit on the balance's own line, at its right edge. The label
+	   between them is wide enough that stepping does not shift the controls. */
+	.balance_period_nav { display:inline-flex; gap:6px; align-items:center; margin-left:auto; }
+	.cfg .balance_period_nav button { padding:1px 7px; font-size:13px; line-height:1.25; }
+	.cfg .balance_period_nav button:disabled { opacity:.35; cursor:default; }
+	.balance_period_label { font-variant-numeric:tabular-nums; opacity:.75; min-width:6.5em; text-align:center; }
+	.balance_projected { margin:4px 0 0; }
 	.balance_currency_note { margin:0; font-size:11.5px; opacity:.65; }
 	/* One amount and the picker that names its currency. The value is tabular so
 	   a changing number does not shift the control beside it. */

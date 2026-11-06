@@ -7,6 +7,9 @@ use warnings;
 use FindBin;
 use lib "$FindBin::Bin/lib", "t/lib";
 use Test::More;
+use Time::Piece;
+use Mojo::Template;
+use File::Slurp qw(read_file);
 use JawnOSTest;
 
 # The domain layer is lazy: load the real definitions before the local *subs::
@@ -418,12 +421,139 @@ is_deeply [ &subs::ai_usage_tokens({ prompt_eval_count => 40, eval_count => 9 })
 is_deeply [ &subs::ai_usage_tokens({ message => { content => 'x' } }) ],
 	[ undef, undef ], 'a reply with no counts is unmetered, not free';
 
-# ---- the assembled chart ----------------------------------------------------
 my $report = {
 	at => $now,
 	rows => [ { provider => 'deepseek', label => 'DeepSeek', available => 70, currency => 'USD' } ],
 	history => { deepseek => \@points, openrouter => \@points },
 };
+
+# ---- stepping away from now -------------------------------------------------
+# A future period cannot be read, so it is projected from the last real balance
+# and the recent burn. The line starts where the balance would be at the
+# period's edge and stops at zero.
+my $future = &subs::ai_balance_projection(\@points, '1d', $now, $now + 24 * $H, 1, $now);
+is scalar @{ $future->{'points'} }, 61, 'a projected day is drawn from sixty-one samples';
+is $future->{'points'}->[0]{'t'}, $now, 'starting where the future period starts';
+is $future->{'points'}->[-1]{'t'}, $now + 24 * $H, 'and ending where it ends';
+cmp_ok abs($future->{'points'}->[0]{'v'} - 70), '<', 0.001, 'at the balance left now';
+cmp_ok abs($future->{'points'}->[-1]{'v'} - 46), '<', 0.001, 'falling at the rate for the span';
+ok $future->{'projected'}, 'and marked as a projection';
+cmp_ok abs($future->{'runway_hours'} - 70), '<', 0.001, 'its runway is what is left over the rate';
+cmp_ok abs($future->{'per_day'} - 24), '<', 0.001, 'with the pace carried to the day';
+
+my $late = &subs::ai_balance_projection(\@points, '1h', $now + 12 * $H, $now + 13 * $H, 20, $now);
+is $late->{'points'}->[0]{'v'}, 0, 'a period after the balance ran out starts at zero';
+is $late->{'points'}->[-1]{'v'}, 0, 'and stays there';
+
+is &subs::ai_balance_projection_rate({ '1h' => { per_hour => undef }, '1d' => { per_hour => 2 } }, '1h'), 2,
+	'a quiet hour borrows the day\'s rate for a projection';
+is &subs::ai_balance_projection_rate({ '1h' => { per_hour => 3 }, '1d' => { per_hour => 2 } }, '1h'), 3,
+	'and a busy hour keeps its own';
+ok !defined &subs::ai_balance_projection_rate({ '1h' => { per_hour => 0 } }, '1h'),
+	'a balance that is not falling has no rate to project';
+
+is &subs::ai_balance_period_label('1d', 0, $now, $now), 'Now', 'the current period reads as now';
+like &subs::ai_balance_period_label('1d', -1, $now - 2 * 24 * $H, $now - 24 * $H), qr/\d\d:\d\d/,
+	'a past period names the span it drew';
+like &subs::ai_balance_period_label('1d', 1, $now, $now + 24 * $H), qr/^Projected/,
+	'a future period says it is projected';
+is &subs::ai_minute_key($aligned), localtime(int($aligned / 1000))->strftime('%Y-%m-%d %H:%M'),
+	'a minute key is the local clock reading';
+
+# The chart's arrows: a past offset draws that period's samples and bounds the
+# ledger to it; a future offset projects and has no bars to press.
+{
+	local *subs::crypto_report_currency = sub { 'USD' };
+	local *subs::ai_spend_since = sub { undef };
+	my @ledger;
+	local *subs::ai_spend_buckets = sub { push @ledger, [@_]; {} };
+	local *subs::ai_spend_roles = sub { {} };
+	local *subs::ai_spend_sessions = sub { {} };
+	my $past = &subs::ai_balance_chart($report, $now, -1);
+	my $past_day = $past->{'series'}->[0]->{'windows'}->{'1d'};
+	is $past->{'offset'}, -1, 'the chart records the period it drew';
+	is $past_day->{'offset'}, -1, 'and so does its window';
+	is $past_day->{'line'}->{'now'}, $now - 24 * $H, 'the past day ends a day ago';
+	ok $past_day->{'can_next'}, 'it can step forward toward now';
+	ok !$past_day->{'can_prev'}, 'but not further back than the oldest sample';
+	is scalar @ledger, 4, 'the ledger is read once for each of the four windows';
+	ok defined $ledger[0]->[2], 'bounded at the period\'s own end';
+	like $ledger[0]->[2], qr/^\d{4}-\d\d-\d\d \d\d:\d\d$/, 'with a minute key';
+
+	my $older = &subs::ai_balance_chart($report, $now, -3);
+	my $older_day = $older->{'series'}->[0]->{'windows'}->{'1d'};
+	is scalar @{ $older_day->{'line'}->{'points'} }, 0, 'a period older than the samples draws nothing';
+	ok !$older_day->{'can_prev'}, 'and has nothing further back to show';
+
+	my $forward = &subs::ai_balance_chart($report, $now, 1);
+	my $forward_day = $forward->{'series'}->[0]->{'windows'}->{'1d'};
+	ok $forward_day->{'projected'}, 'a future day is marked projected';
+	ok $forward_day->{'line'}->{'projected'}, 'and so is its line';
+	cmp_ok abs($forward_day->{'line'}->{'points'}->[0]{'v'} - 70), '<', 0.001,
+		'it starts at the balance left now';
+	cmp_ok abs($forward_day->{'line'}->{'points'}->[-1]{'v'} - (70 - $forward_day->{'line'}->{'per_hour'} * 24)), '<', 0.001,
+		'and falls at the recent rate';
+	is $forward_day->{'bars'}->{'count'}, 0, 'a projection has no bars to press';
+	is scalar @{ $forward_day->{'roles'} }, 0, 'and no roles to attribute';
+	ok $forward_day->{'can_next'}, 'the arrows may step further into the runway';
+	ok $forward_day->{'can_prev'}, 'and back toward now';
+}
+
+# ---- the period markup ------------------------------------------------------
+# The arrows replace the whole plot with one the route rendered, so the period's
+# label and what the arrows may do travel on the element. A projected period
+# draws its runway and no bars, because there is nothing to press.
+{
+	my $mt = Mojo::Template->new(vars => 1, auto_escape => 1, namespace => 'BalanceRenderTest');
+	my $src = read_file("$FindBin::Bin/../templates/configure/balance_plot.html.ep");
+	my $render = sub {
+		my ($wd) = @_;
+		return $mt->render($src, {
+			series => { provider => 'deepseek', currency => 'USD' },
+			window => '1d',
+			wd => $wd,
+			series_currency => 'USD',
+			window_label => { '1d' => 'configure.last_day' },
+			hidden => 0,
+		});
+	};
+	my $line = &subs::ai_balance_window(\@points, '1d', $now);
+	my $bars = &subs::ai_balance_buckets(\@points, '1d', $now, {});
+	my $now_html = $render->({
+		line => $line, bars => $bars, roles => [], per_k => undef, house_tokens => 0,
+		offset => 0, period_label => 'Now', can_prev => 1, can_next => 1, projected => 0,
+	});
+	is $@, '', 'the current period renders';
+	like $now_html, qr/class="balance_plot" window="1d"/, 'the plot names its window';
+	like $now_html, qr/data-offset="0"/, 'and its period offset';
+	like $now_html, qr/data-label="Now"/, 'with the label the arrows show';
+	like $now_html, qr/data-can-prev="1"/, 'and both steps enabled';
+	like $now_html, qr/data-can-next="1"/, 'as the chart reported';
+	like $now_html, qr/class="balance_spark"/, 'the line is drawn';
+	like $now_html, qr/class="balance_hours"/, 'with the bars beneath it';
+
+	my $fwd_html = $render->({
+		line => &subs::ai_balance_projection(\@points, '1d', $now, $now + 24 * $H, 1, $now),
+		bars => { buckets => [], count => 0, samples => 0, total => 0 },
+		roles => [], per_k => undef, house_tokens => 0,
+		offset => 1, period_label => 'Projected \x{b7} Nov 15', can_prev => 1, can_next => 1, projected => 1,
+	});
+	like $fwd_html, qr/data-projected="1"/, 'a future period says it is projected';
+	like $fwd_html, qr/Projected forward/, 'with the words to match';
+	like $fwd_html, qr/class="balance_spark"/, 'it still draws its runway';
+	unlike $fwd_html, qr/class="balance_hours"/, 'and has no bars to press';
+
+	my $past_html = $render->({
+		line => { points => [], start => $now - 48 * $H, now => $now - 24 * $H, hours => 24 },
+		bars => { buckets => [], count => 0, samples => 0, total => 0 },
+		roles => [], per_k => undef, house_tokens => 0,
+		offset => -2, period_label => 'Nov 12 \x{b7} Nov 13', can_prev => 0, can_next => 1, projected => 0,
+	});
+	like $past_html, qr/No readings in this period/, 'an empty past period says so';
+	unlike $past_html, qr/Collecting samples/, 'rather than reading as a live window';
+	like $past_html, qr/data-can-prev="0"/, 'and its back arrow is off';
+}
+
 {
 	local *subs::crypto_report_currency = sub { 'CAD' };
 	local *subs::exchange_rate = sub { return ($_[0] eq 'USD' && $_[1] eq 'CAD') ? 1.5 : undef };

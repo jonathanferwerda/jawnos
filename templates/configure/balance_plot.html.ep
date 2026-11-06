@@ -1,0 +1,125 @@
+<%# One period of one provider's balance line and bars. The whole plot is
+   replaced by the arrows on the balance line, so its period label and what the
+   arrows may do travel on the element itself. A future period is a runway
+   projected from the recent burn rate and has no bars to press. %>
+<% my $line = $wd->{'line'}; %>
+<% my $bars = $wd->{'bars'}; %>
+<% my $projected = $line->{'projected'} ? 1 : 0; %>
+<% my $past = (($wd->{'offset'} || 0) != 0) ? 1 : 0; %>
+<div class="balance_plot" window="<%= $window %>"
+     data-offset="<%= $wd->{'offset'} || 0 %>"
+     data-label="<%= $wd->{'period_label'} || '' %>"
+     data-can-prev="<%= $wd->{'can_prev'} ? 1 : 0 %>"
+     data-can-next="<%= $wd->{'can_next'} ? 1 : 0 %>"
+     data-projected="<%= $projected %>"<% if ($hidden) { %> style="display:none;"<% } %>>
+	<% if ($projected) { %>
+		<% if (!defined $line->{'per_day'} || $line->{'per_day'} <= 0) { %>
+			<p class="cfg-note"><%= &subs::ui('No recent burn to project from') %></p>
+		<% } elsif (!$line->{'points'} || scalar @{ $line->{'points'} } < 2) { %>
+			<p class="cfg-note"><%= &subs::ui('No readings to project from') %></p>
+		<% } else { %>
+			<p class="cfg-note balance_projected"><%= &subs::ui('Projected forward at the recent burn rate') %></p>
+			<%== &subs::ai_balance_sparkline($line->{'points'}, $line->{'start'}, $line->{'now'}, 320, 80) %>
+			<% my $span = &subs::ai_balance_span_label($line->{'hours'}); %>
+			<% my $rate_template = &subs::lang('configure.drop_per_day', '{0}'); %>
+			<% my $rate_money = &subs::currency_money($line->{'per_day'}) . ' ' . $series_currency; %>
+			<% my $rate_text = $rate_template; %>
+			<% $rate_text =~ s/\{0\}/$rate_money/; %>
+			<% $rate_text .= ' · ' . $span; %>
+			<p class="cfg-note balance_rate" data-base-per-day="<%= sprintf('%.6f', $line->{'per_day'}) %>" data-template="<%= $rate_template %>" data-span="<%= $span %>"><%= $rate_text %></p>
+			<% if (defined $line->{'runway_hours'} && $line->{'runway_hours'} > 0) { %>
+				<p class="cfg-note balance_runway"><%= &subs::lang('configure.balance_runway', &subs::ai_balance_span_label($line->{'runway_hours'})) %></p>
+			<% } else { %>
+				<p class="cfg-note balance_spent"><%= &subs::ui('The balance is spent by this period') %></p>
+			<% } %>
+		<% } %>
+	<% } else { %>
+		<% if (!$line->{'points'} || scalar @{ $line->{'points'} } < 2) { %>
+			<p class="cfg-note"><%= $past ? &subs::ui('No readings in this period') : &subs::lang('configure.balance_collecting') %></p>
+		<% } else { %>
+			<%== &subs::ai_balance_sparkline($line->{'points'}, $line->{'start'}, $line->{'now'}, 320, 80) %>
+			<% my $span = &subs::ai_balance_span_label($line->{'hours'}); %>
+			<% my ($rate_template, $rate_money);
+			   # per_day is consumption-based, so a top-up inside the window cannot
+			   # turn this line into a "rise" or hide the spending.
+			   if (defined $line->{'per_day'} && $line->{'per_day'} > 0.005) {
+			       $rate_template = &subs::lang('configure.drop_per_day', '{0}');
+			       $rate_money = &subs::currency_money($line->{'per_day'}) . ' ' . $series_currency;
+			   } else {
+			       $rate_template = &subs::lang('configure.balance_flat');
+			   }
+			   my $rate_text = $rate_template;
+			   $rate_text =~ s/\{0\}/$rate_money/ if defined $rate_money;
+			   $rate_text .= ' · ' . $span;
+			%>
+			<p class="cfg-note balance_rate" data-base-per-day="<%= defined $line->{'per_day'} ? sprintf('%.6f', $line->{'per_day'}) : '' %>" data-template="<%= $rate_template %>" data-span="<%= $span %>"><%= $rate_text %></p>
+			<%# Time actually spent with the agents, and what that hour cost. The
+			   span is built from the call ledger's sessions, not the calendar, so
+			   a quiet week does not dilute the rate into a meaningless number. %>
+			<%== &subs::ai_balance_active_html($wd, $series_currency) %>
+			<%# The same burn read two ways: how long the balance lasts at this
+			   rate, and what that rate costs. Both carry their own data so the
+			   currency picker can convert them in place, like the rate line. %>
+			<%# A balance that is not falling never runs out, and an already spent
+			   one has no time left to report, so the line is absent in both cases
+			   rather than reading "0 min". %>
+			<% if (defined $line->{'runway_hours'} && $line->{'runway_hours'} > 0) { %>
+				<% my $runway = &subs::ai_balance_span_label($line->{'runway_hours'}); %>
+				<p class="cfg-note balance_runway"><%= &subs::lang('configure.balance_runway', $runway) %></p>
+			<% } %>
+			<% if (defined $line->{'expense_day'} && $line->{'expense_day'} > 0.005) { %>
+				<% my $expense_template = &subs::lang('configure.balance_expense', '{0}', '{1}', '{2}'); %>
+				<p class="cfg-note balance_expense" data-base-per-day="<%= sprintf('%.6f', $line->{'expense_day'}) %>" data-template="<%= $expense_template %>"><%= &subs::lang('configure.balance_expense', &subs::currency_money($line->{'expense_day'}) . ' ' . $series_currency, &subs::currency_money($line->{'expense_week'}) . ' ' . $series_currency, &subs::currency_money($line->{'expense_month'}) . ' ' . $series_currency) %></p>
+			<% } %>
+			<%# What the traffic behind that fall cost per thousand tokens,
+			   when the ledger has counted any. %>
+			<% if (defined $wd->{'per_k'} && $wd->{'per_k'} > 0) { %>
+				<p class="cfg-note balance_per_k" data-base-amount="<%= sprintf('%.6f', $wd->{'per_k'}) %>" data-template="<%= &subs::lang('configure.cost_per_1k', '{0}') %>"><%= &subs::lang('configure.cost_per_1k', &subs::currency_money($wd->{'per_k'}) . ' ' . $series_currency) %></p>
+			<% } %>
+			<% if (@{ $line->{'topups'} || [] }) { %>
+				<p class="cfg-note balance_topups"><% my $n = 0; %><% foreach my $topup ( @{ $line->{'topups'} } ) { %><% if ($n++) { %> · <% } %><span class="balance_topup" data-base-amount="<%= sprintf('%.6f', $topup->{'amount'}) %>" data-time="<%= $topup->{'label'} %>" data-template="<%= &subs::lang('configure.topup_marker', '{0}', '{1}') %>"><%= &subs::lang('configure.topup_marker', &subs::currency_money($topup->{'amount'}) . ' ' . $series_currency, $topup->{'label'}) %></span><% } %></p>
+			<% } %>
+		<% } %>
+		<%# The same samples as bars: one per clock unit of this window,
+		   pressed for the drop, the share, the tokens and the roles. %>
+		<div class="balance_hours">
+			<div class="balance_hours_head">
+				<b><%= &subs::lang($window_label->{$window} || 'configure.last_day') %></b>
+				<% if (($bars->{'samples'} || 0) >= 2 && ($bars->{'total'} || 0) > 0.005) { %>
+					<span class="cfg-note"><%= &subs::lang('configure.period_hint') %></span>
+				<% } %>
+			</div>
+			<% if (($bars->{'samples'} || 0) < 2) { %>
+				<p class="cfg-note"><%= $past ? &subs::ui('No readings in this period') : &subs::lang('configure.balance_collecting') %></p>
+			<% } elsif (($bars->{'total'} || 0) <= 0.005) { %>
+				<p class="cfg-note"><%= &subs::lang('configure.balance_flat_period') %></p>
+			<% } else { %>
+				<%== &subs::ai_balance_bars($bars, 320, 48, {
+					detail    => &subs::lang('configure.bucket_detail', '{0}', '{1}', '{2}', '{3}', '{4}'),
+					untracked => &subs::lang('configure.bucket_detail_untracked', '{0}', '{1}', '{2}'),
+					model     => &subs::lang('configure.bucket_model', '{0}'),
+					models    => &subs::lang('configure.bucket_models', '{0}'),
+				}) %>
+				<p class="cfg-note balance_bucket_detail" style="display:none;"></p>
+				<% my $peak = $bars->{'peak'}; %>
+				<% if ($peak) { %>
+					<p class="cfg-note balance_bucket_peak"
+					   data-base-amount="<%= sprintf('%.6f', $peak->{'spend'}) %>"
+					   data-label="<%= $peak->{'label'} %>"
+					   data-template="<%= &subs::lang('configure.balance_peak', '{0}', '{1}') %>"><%= &subs::lang('configure.balance_peak', $peak->{'label'}, &subs::currency_money($peak->{'spend'}) . ' ' . $series_currency) %></p>
+				<% } %>
+			<% } %>
+			<%== &subs::ai_balance_roles_html($wd, $series_currency) %>
+			<% if (($wd->{'house_tokens'} || 0) > 0) { %>
+				<p class="cfg-note balance_house_tokens"><%= &subs::lang('configure.house_tokens', $wd->{'house_tokens'}) %></p>
+			<% } %>
+			<%# The same window for every account, side by side. Two balances
+			   with different sizes share no useful axis, so the comparison is
+			   each one's pace rather than two lines drawn over each other. %>
+			<% my @compare = grep { defined $_->{'per_day'} && $_->{'per_day'} > 0.005 } @{ $wd->{'compare'} || [] }; %>
+			<% if (scalar @compare > 1) { %>
+				<p class="cfg-note balance_compare"><%= join(' · ', map { &subs::lang('configure.provider_pace', $_->{'label'}, &subs::currency_money($_->{'per_day'}) . ' ' . ($_->{'currency'} || '')) } @compare) %></p>
+			<% } %>
+		</div>
+	<% } %>
+</div>

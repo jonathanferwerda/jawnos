@@ -14,7 +14,7 @@ use JSON::PP ();
 
 # The domain layer is lazy: load the real definitions before the local *subs::
 # stubs below, or a later module load would replace them.
-subs::preload($_) for qw(ai_spend_minute_key ai_spend_note where_lookup_stats where_audit_uuid where_audit_bank where_audit_enabled where_audit_cadence where_audit_interval where_audit_report where_audit_next where_audit_due where_audit_run where_audit_tick ai_spend_buckets ai_spend_roles ai_spend_prune);
+subs::preload($_) for qw(ai_spend_minute_key ai_spend_note where_lookup_stats where_audit_uuid where_audit_bank where_audit_enabled where_audit_cadence where_audit_interval where_audit_report where_audit_next where_audit_due where_audit_run where_audit_tick ai_spend_buckets ai_spend_roles ai_spend_sessions ai_spend_prune);
 
 my $root = "$FindBin::Bin/..";
 
@@ -116,6 +116,25 @@ package main;
 
 	&subs::ai_spend_buckets('week', '');
 	like $seen_sql, qr/substr\(minute, 1, 13\) as k/, 'an unknown granularity falls back to hour';
+}
+
+# A past period's read stops at its own end as well as its start: without the
+# upper bound, a window months old would carry the present's traffic.
+{
+	no warnings 'redefine';
+	my ($seen_sql, @seen_args);
+	local *subs::db_query = sub {
+		my ($sql, @args) = @_;
+		($seen_sql, @seen_args) = ($sql, @args);
+		return FakeRowSet->new([]);
+	};
+	&subs::ai_spend_buckets('hour', '2026-11-02 09:00', '2026-11-02 10:00');
+	like $seen_sql, qr/minute >= \? and minute < \?/, 'the bucket read can be bounded at both edges';
+	is_deeply \@seen_args, [ '2026-11-02 09:00', '2026-11-02 10:00' ], 'with the since and until keys';
+	&subs::ai_spend_roles('2026-11-02 09:00', '2026-11-02 10:00');
+	like $seen_sql, qr/minute >= \? and minute < \?/, 'the role read carries the same upper bound';
+	&subs::ai_spend_sessions('2026-11-02 09:00', undef, '2026-11-02 10:00');
+	like $seen_sql, qr/minute >= \? and minute < \?/, 'and the session read stops at the period end too';
 }
 
 # The hour and day grouping itself, with keys SQLite would return.

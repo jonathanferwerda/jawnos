@@ -700,6 +700,9 @@ function jawnosBalanceWindowPick(scope, win) {
 	$(scope).find('.balance_plot').each(function () {
 		$(this).css('display', ($(this).attr('window') || '') === win ? '' : 'none');
 	});
+	$(scope).find('.balance_series').each(function () {
+		jawnosBalanceNavSync(this);
+	});
 }
 function jawnosBalanceWindowRestore(root) {
 	var win = '1d';
@@ -719,6 +722,68 @@ $(document).on('click', '.balance_window', function() {
 	var win = button.attr('window') || '1d';
 	jawnosBalanceWindowPick(chart, win);
 	try { localStorage.setItem('jawnos:balance_window', win); } catch (e) {}
+});
+
+// The arrows on the balance line step the chart one period at a time. The
+// window that is showing decides what a step is: an hour, a day, a week or a
+// month. Left reads further back through the stored samples; right past now is
+// the runway projected from the recent burn, so it stops when the balance would
+// already be spent. The server draws the period and sends back its plot, label
+// and what the arrows may do next.
+function jawnosBalanceNavPlot(series) {
+	// The window pick sets the inline display; checking that rather than the
+	// computed style keeps a hidden provider's own nav in step too.
+	return series.find('.balance_plot').filter(function () {
+		return this.style.display !== 'none';
+	}).first();
+}
+function jawnosBalanceNavSync(series) {
+	series = (series && series.jquery) ? series : $(series);
+	var plot = jawnosBalanceNavPlot(series);
+	if (!plot.length) { return; }
+	series.find('.balance_period_label').text(plot.attr('data-label') || '');
+	series.find('.balance_period_prev').prop('disabled', plot.attr('data-can-prev') !== '1');
+	series.find('.balance_period_next').prop('disabled', plot.attr('data-can-next') !== '1');
+}
+$(document).on('click', '.balance_period_prev, .balance_period_next', function() {
+	var button = $(this);
+	if (button.prop('disabled')) { return; }
+	var series = button.closest('.balance_series');
+	var plot = jawnosBalanceNavPlot(series);
+	if (!plot.length) { return; }
+	var win = plot.attr('window') || '1d';
+	var offset = parseInt(plot.attr('data-offset'), 10);
+	if (!isFinite(offset)) { offset = 0; }
+	offset += button.hasClass('balance_period_next') ? 1 : -1;
+	button.closest('.balance_period_nav').find('button').prop('disabled', true);
+	$.ajax({
+		url: '/manager/configure/balance_period',
+		type: 'GET',
+		data: {
+			provider: series.attr('data-provider') || '',
+			window: win,
+			offset: offset
+		},
+		success: function(response) {
+			if (!response || !response.ok || !response.html) {
+				jawnosBalanceNavSync(series);
+				return;
+			}
+			var fresh = $(response.html);
+			fresh.attr('data-offset', response.offset);
+			fresh.attr('data-label', response.label || '');
+			fresh.attr('data-can-prev', response.can_prev ? '1' : '0');
+			fresh.attr('data-can-next', response.can_next ? '1' : '0');
+			fresh.css('display', '');
+			plot.replaceWith(fresh);
+			var picker = series.find('.currency_picker')[0];
+			if (picker && typeof jawnosCurrencyApply === 'function') { jawnosCurrencyApply(picker); }
+			jawnosBalanceNavSync(series);
+		},
+		error: function() {
+			jawnosBalanceNavSync(series);
+		}
+	});
 });
 
 // Pressing a bar opens that bar's line under the chart - its drop, its share of

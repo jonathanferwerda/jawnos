@@ -493,6 +493,48 @@ sub action_19179 {
 	);
 }
 
+# GET /manager/configure/balance_period
+# One period of the Balance drop chart, drawn when its arrows step away from
+# now. A past period comes from the stored samples; a future one is projected
+# from the same history's burn rate, so it is a runway rather than a reading.
+# The plot HTML is rendered from the same partial the panel includes, so the
+# arrows change the period without duplicating the chart's markup.
+sub action_19411 {
+	my $c = shift;
+	my $provider = $c->param('provider') // '';
+	my $window = $c->param('window') // '1d';
+	my $offset = $c->param('offset');
+	$offset = 0 unless defined $offset && $offset =~ /^-?\d+$/;
+	$offset = -400 if $offset < -400;
+	$offset = 400 if $offset > 400;
+	$offset += 0;
+	my $chart = &subs::ai_balance_chart(&subs::ai_balance_report(), undef, $offset);
+	my ($series) = grep { ($_->{'provider'} || '') eq $provider } @{ $chart->{'series'} || [] };
+	return $c->render(json => { ok => 0, error => 'provider not charted' }) unless $series;
+	my $wd = $series->{'windows'}->{$window};
+	return $c->render(json => { ok => 0, error => 'window not charted' }) unless $wd;
+	my $html = $c->render_to_string(
+		template => 'configure/balance_plot',
+		series => $series,
+		window => $window,
+		wd => $wd,
+		series_currency => ($series->{'currency'} || $chart->{'base'} || ''),
+		window_label => { '1h' => 'configure.last_hour', '1d' => 'configure.last_day', '1w' => 'configure.last_week', '1m' => 'configure.last_month' },
+		hidden => 0,
+	);
+	$c->render(json => {
+		ok => 1,
+		provider => $provider,
+		window => $window,
+		offset => $offset,
+		label => ($wd->{'period_label'} || ''),
+		projected => ($wd->{'projected'} ? 1 : 0),
+		can_prev => ($wd->{'can_prev'} ? 1 : 0),
+		can_next => ($wd->{'can_next'} ? 1 : 0),
+		html => $html,
+	});
+}
+
 # POST /manager/configure/sys_setting
 sub action_19216 {
 	my $c = shift;

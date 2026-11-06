@@ -1275,20 +1275,24 @@ sub where_audit_run {
 
 # The ledger summed per provider in the granularity the caller asks for: '2m'
 # (an even-minute bucket, folded here), 'hour' or 'day' (a prefix of the minute
-# key, grouped by SQLite). `$since_key` is the earliest minute key to count;
-# everything older is left out. The shape is
+# key, grouped by SQLite). `$since_key` is the earliest minute key to count and
+# `$until_key`, when given, the first minute key to leave out, so a past period
+# stops where it ends instead of running on into the present. The shape is
 # provider -> bucket -> { tokens, calls, models -> { model -> tokens } }. An
 # absent table (a database that has not migrated yet) reads as no tokens rather
 # than taking the panel down.
 sub ai_spend_buckets {
-	my ($granularity, $since_key) = @_;
+	my ($granularity, $since_key, $until_key) = @_;
 	$granularity = 'hour' unless defined $granularity && $granularity =~ /^(?:2m|hour|day)$/;
 	$since_key = '' unless defined $since_key;
 	my $key_sql = $granularity eq '2m' ? 'minute as k'
 		: $granularity eq 'day' ? 'substr(minute, 1, 10) as k'
 		: 'substr(minute, 1, 13) as k';
+	my $where = 'minute >= ?';
+	my @bind = ($since_key);
+	if (defined $until_key && length $until_key) { $where .= ' and minute < ?'; push @bind, $until_key; }
 	my $rows = eval {
-		&subs::db_query('select provider, model, ' . $key_sql . ', sum(tokens_in + tokens_out) as tokens, count(*) as calls from ai_spend where minute >= ? group by provider, model, k', $since_key)->hashes;
+		&subs::db_query('select provider, model, ' . $key_sql . ', sum(tokens_in + tokens_out) as tokens, count(*) as calls from ai_spend where ' . $where . ' group by provider, model, k', @bind)->hashes;
 	} || [];
 	my %map;
 	foreach my $r ( @{$rows} ) {
@@ -1313,12 +1317,16 @@ sub ai_spend_buckets {
 
 # The ledger's tokens split by provider and role, so the chart can say who spent
 # them. A role that was never named is its own '' bucket. The same eval guard as
-# ai_spend_buckets keeps a pre-migration database from taking the panel down.
+# ai_spend_buckets keeps a pre-migration database from taking the panel down, and
+# the same optional upper bound keeps a past period from counting later traffic.
 sub ai_spend_roles {
-	my ($since_key) = @_;
+	my ($since_key, $until_key) = @_;
 	$since_key = '' unless defined $since_key;
+	my $where = 'minute >= ?';
+	my @bind = ($since_key);
+	if (defined $until_key && length $until_key) { $where .= ' and minute < ?'; push @bind, $until_key; }
 	my $rows = eval {
-		&subs::db_query('select provider, role, sum(tokens_in + tokens_out) as tokens from ai_spend where minute >= ? group by provider, role', $since_key)->hashes;
+		&subs::db_query('select provider, role, sum(tokens_in + tokens_out) as tokens from ai_spend where ' . $where . ' group by provider, role', @bind)->hashes;
 	} || [];
 	my %map;
 	foreach my $r ( @{$rows} ) {
@@ -1364,11 +1372,16 @@ our $AI_SPEND_SESSION_GAP_MS = 15 * 60 * 1000;
 # same shape }, plus `all` for every provider's minutes together. An absent
 # table (a database that has not migrated yet) reads as no sessions.
 sub ai_spend_sessions {
-	my ($since_key, $gap_ms) = @_;
+	my ($since_key, $gap_ms, $until_key) = @_;
 	$since_key = '' unless defined $since_key;
 	$gap_ms = $AI_SPEND_SESSION_GAP_MS unless defined $gap_ms && $gap_ms =~ /^\d+$/ && $gap_ms > 0;
+	my $where = 'minute >= ?';
+	my @bind = ($since_key);
+	# A past window stops at its own edge; the default (no upper bound) is the
+	# live window, whose only future rows would be a clock skew that never happens.
+	if (defined $until_key && length $until_key) { $where .= ' and minute < ?'; push @bind, $until_key; }
 	my $rows = eval {
-		&subs::db_query('select provider, role, minute, sum(tokens_in + tokens_out) as tokens, count(*) as calls from ai_spend where minute >= ? group by provider, role, minute', $since_key)->hashes;
+		&subs::db_query('select provider, role, minute, sum(tokens_in + tokens_out) as tokens, count(*) as calls from ai_spend where ' . $where . ' group by provider, role, minute', @bind)->hashes;
 	} || [];
 	my (%providers, %all_minutes);
 	foreach my $r ( @{$rows} ) {
