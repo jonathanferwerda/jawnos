@@ -122,6 +122,8 @@ is_deeply( [ keys %{$settings_rotation} ], ['settings'],
 # every caller that can reach bluetooth_sender must ask for a real child.
 my $ble = read_file("$root/lib/JawnOS/Domain/Ble.pm");
 like( $ble, qr/name => 'embedded toggle push', fork => 1/, 'the toggle push rides a child' );
+like( $ble, qr/foreach my \$edt \( qw\/microcontroller watch teletype\/ \)/,
+	'the board is written first, so a sleeping watch cannot delay its relay' );
 like( $ble, qr/name => 'ble send', fork => 1/,             'the async BLE send rides a child' );
 
 my $notify = read_file("$root/lib/JawnOS/Domain/Notify.pm");

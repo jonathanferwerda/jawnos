@@ -624,10 +624,12 @@ sub watch_toggle_pusher {
 		# the watch/deck light their button, and a board applies the app's new
 		# state to the relays/LEDs wired to it. The bridge can carry several links
 		# now, so this used to stop at the first device; keep one target per
-		# (edt, chip).
+		# (edt, chip). The board goes first: the relay is the hardware the person
+		# is watching, and a sleeping watch/deck must not spend its link timeout
+		# before the board is even written.
 		my @targets;
 		my %seen;
-		foreach my $edt ( qw/watch teletype microcontroller/ ) {
+		foreach my $edt ( qw/microcontroller watch teletype/ ) {
 			my $devices = &subs::device_lister(&subs::rightNow(), $edt, undef, 'all');
 			next unless ref $devices eq 'ARRAY';
 			foreach my $w ( @{$devices} ) {
