@@ -1,4 +1,4 @@
-# tests-for: perl/help/topics_configure.pl public/js/manager/configure/03_platform_misc.js public/js/manager/websocket/02_heartbeat_and_reload.js templates/configure/misc_setting_list.html.ep
+# tests-for: perl/help/topics_configure.pl public/js/manager/configure/03_platform_misc.js public/js/manager/websocket/02_heartbeat_and_reload.js templates/configure/misc_setting_list.html.ep templates/layouts/manager.html.ep
 # covers:    Auto-reload on update is a per-device choice, off by default. Off
 #            means pill only: a shipped script change waits for a press instead
 #            of reloading a hidden tab on its own. On restores the auto-reload.
@@ -18,6 +18,7 @@ my $reload = read_file("$root/public/js/manager/websocket/02_heartbeat_and_reloa
 my $misc   = read_file("$root/public/js/manager/configure/03_platform_misc.js");
 my $tpl    = read_file("$root/templates/configure/misc_setting_list.html.ep");
 my $help   = read_file("$root/perl/help/topics_configure.pl");
+my $layout = read_file("$root/templates/layouts/manager.html.ep");
 
 # --- the switch is read from localStorage, per device -----------------------
 like($reload, qr/function jawnosUpdateAutoReload\(\)/,
@@ -67,5 +68,22 @@ like($reload, qr/one\('error'/, 'a failed fetch keeps the old sheet');
 like($reload, qr/retry=/, 'and retries once for a restart blip');
 unlike($reload, qr/bust\('script\[src\]'/, 'a running page never re-points a script src');
 unlike($reload, qr/\$\(this\)\.attr\(attr, url\.replace/, 'the blind href rewrite is gone');
+
+# --- a sheet that fails while the page itself loads ------------------------
+# The in-place swap above only helps a page that is already up. A page that
+# LOADS while a worker restarts can lose a sheet on its first fetch, and with
+# no retry it stays unstyled: icons at their intrinsic size and a dead layout.
+like($layout, qr/document\.addEventListener\('error'/,
+	'the layout listens for a stylesheet that fails to load');
+like($layout, qr/link\.tagName !== 'LINK' \|\| link\.rel !== 'stylesheet'/,
+	'only a stylesheet is retried, not every failed element');
+like($layout, qr/retry=1/, 'the retry is marked in the URL, so one failure cannot loop');
+like($layout, qr/\.test\(href\)/, 'the marker is checked before any re-fetch');
+like($layout, qr/\}, true\);/, 'the listener is registered in the capture phase (a link error does not bubble)');
+# armed before the links, or it would miss the very failure it exists for
+my $listen_at = index($layout, "document.addEventListener('error'");
+my $first_css = index($layout, 'rel="stylesheet" href="/css/keyboard.css');
+ok($listen_at >= 0 && $first_css > $listen_at,
+	'the listener is armed before the first stylesheet link');
 
 done_testing();

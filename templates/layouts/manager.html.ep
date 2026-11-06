@@ -145,6 +145,21 @@
 			// the server rendered
 			var jawnos_colour_windows = <%== encode_json({ map { lc($subs::colour_schemes{$_}->[2]) => $subs::colour_schemes{$_}->[3] } @subs::colour_scheme_order }) %>;
 		</script>
+		<%# A sheet that fails to load while a worker restarts used to leave the
+		     page with no CSS at all - icons at their intrinsic size and a dead
+		     layout until the app was reopened. The listener is registered before
+		     the links below, so it is armed before any of them can fail; one
+		     retry, marked in the URL, re-fetches the same sheet and a second
+		     failure is left alone rather than looping. %>
+		<script>
+			document.addEventListener('error', function (event) {
+				var link = event.target;
+				if (!link || link.tagName !== 'LINK' || link.rel !== 'stylesheet') { return; }
+				var href = link.getAttribute('href') || '';
+				if (!href || /[?&]retry=/.test(href)) { return; }
+				link.setAttribute('href', href + (href.indexOf('?') < 0 ? '?' : '&') + 'retry=1');
+			}, true);
+		</script>
 		<!-- the manager's scripts load at the foot of the body, so the desktop can
 		     paint before the parser waits on them; see the bundle there -->
 		<link rel="stylesheet" href="/css/keyboard.css?string=<%= $string %>" />

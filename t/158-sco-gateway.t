@@ -661,7 +661,7 @@ $pipeway->cancel();
 # and a caller who says nothing at all.
 my $helper = "$repo/perl/sco/sco_helper";
 SKIP: {
-	skip 'the SCO helper is not built on this machine', 8 unless -x $helper;
+	skip 'the SCO helper is not built on this machine', 9 unless -x $helper;
 	my $voice = sub {
 		my ($ms) = @_;
 		return join('', map { pack('s<', int(sin(2 * 3.14159 * 440 * $_ / 8000) * 8000)) } 0 .. int(8 * $ms) - 1);
@@ -719,6 +719,29 @@ SKIP: {
 	my $blip = $record->('blip', $quiet->(1200) . $voice->(20) . $quiet->(800)
 		. $voice->(600) . $quiet->(1500));
 	ok($blip > 38400, 'a single tick does not open the clip or cut the name short');
+	# The narrowband shape a real screened call leaves (clips 1793986149-4312 and
+	# 1793986224-ac0f): the line's own floor is near-digital, and the name arrives
+	# as bursts whose quieter windows sit well under the old 0.015 margin. The
+	# measured windows were 246, 1986, 1391, 157, 103, 115, 1209, 211, 528, 1343,
+	# 487, 200 RMS - at 0.015 every one under 750 was invisible, so the clip ran
+	# to its ceiling and was filed as silence after the caller had spoken.
+	my $room = sub { my ($ms) = @_; return pack('s<', 15) x (8 * $ms) };
+	my $speech = sub {
+		my ($ms, $rms) = @_;
+		my $amp = int(($rms || 500) * 1.4142);
+		return join('', map { pack('s<', int(sin(2 * 3.14159 * 220 * $_ / 8000) * $amp)) }
+			0 .. int(8 * $ms) - 1);
+	};
+	# the ceiling sits under the clip, so a missed name reports silence instead
+	# of simply running to the end of the file
+	my $narrow = $record->('narrow',
+		$room->(500) . $room->(1500)
+			. $speech->(300) . $room->(120) . $speech->(400) . $room->(6000),
+		ms => 8000, silence_ms => 2000, min_ms => 400);
+	ok($narrow > 60000 && $narrow < 96000,
+		'a quiet narrowband name is recorded and ends on its pause, not the ceiling');
+	like($last_events, qr/"silence":false/,
+		'and the clip that ends on the pause after it is a name');
 	# nobody spoke: the ceiling ends it, and the clip is marked as silent
 	my $none = $record->('none', $quiet->(3000), ms => 1500);
 	ok($none >= 16000 && $none <= 24000, 'a silent caller is ended by the ceiling');

@@ -211,12 +211,22 @@ static void tee_close(void) {
  * any threshold that reads as silence, so the first noisy frame used to count
  * as the name and 1.2 s of line noise then closed a clip the caller had not
  * begun. (The keyboard's copy is public/js/manager/soft_keyboard/01_scroll_dictate.js.)
+ *
+ * The numbers are measured against real screened calls, not guessed. The phone's
+ * eSCO link hands us near-digital silence (floor 10-15 RMS) and a name arrives
+ * as 100-300 ms bursts at 200-3300 RMS with deep dips between the words, so a
+ * 300 ms onset never completed and the 491 margin (0.015) hid every quiet
+ * window: two names were filed as silent after the caller had plainly spoken.
+ * Two windows and 0.006 open the clip on that link; the line-noise case in
+ * t/158 (a lone 20 ms tick) still reports silence, and the pause margin stays
+ * wide enough that room jitter never ends a name. Measured on clips
+ * 1793986149-4312 and 1793986224-ac0f; the silent-caller cases stay silent.
  */
 #define VAD_WINDOW_MS 100                 /* one judged window of the call */
 #define VAD_READ_WINDOWS 5                /* half a second to read the room */
-#define VAD_ONSET_WINDOWS 3               /* speech has to hold this long */
+#define VAD_ONSET_WINDOWS 2               /* speech has to hold this long */
 #define VAD_ROOM_FALLBACK 655.0           /* 0.02 of the 16-bit scale */
-#define VAD_ROOM_MARGIN 491.0             /* 0.015 */
+#define VAD_ROOM_MARGIN 200.0             /* 0.006 of the 16-bit scale */
 #define VAD_ROOM_SCALE 0.5
 #define VAD_ROOM_ONSET_SCALE 1.5
 #define VAD_ROOM_PEAK_RATIO 3.5
