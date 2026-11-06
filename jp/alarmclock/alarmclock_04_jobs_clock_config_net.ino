@@ -46,6 +46,42 @@ void handle_jobs() {
       }
 
     }
+    else if (String(coreJobs[coreKeys[i]]["type"]) == "relay_post") {
+      // A watch/deck message the BLE handler queued. Run it here, off the BLE
+      // and loop path, with the bounded retry the queue promised.
+      unsigned long next_at = strtoul(String(coreJobs[coreKeys[i]]["next_at"]).c_str(), nullptr, 10);
+      if ((long)(millis() - next_at) < 0) { continue; }   // not due yet; keep it
+      String path = String(coreJobs[coreKeys[i]]["path"]);
+      String body = String(coreJobs[coreKeys[i]]["body"]);
+      String kind = String(coreJobs[coreKeys[i]]["kind"]);
+      int tries = String(coreJobs[coreKeys[i]]["tries"]).toInt();
+      String answer;
+      int code = https_post(path, body, answer);
+      if (code == HTTP_CODE_OK) {
+        Serial.println("[relay] delivered " + path);
+        // Hand the manager's small result back over the same BLE link, so the
+        // watch can show that the house heard the tap.
+        if (kind == "volume" && answer.length() > 1 && answer.length() < 512) {
+          String reply = "{\"type\":\"volume_result\",\"from\":\"" + String(rp2040.getChipID()) + "\",\"data\":" + answer + "}";
+          ble_send_json(reply);
+        }
+        relay_out_pending--;
+        if (relay_out_pending < 0) { relay_out_pending = 0; }
+        coreJobs[coreKeys[i]] = undefined;
+        continue;
+      }
+      tries++;
+      if (tries >= 3) {
+        Serial.println("[relay] gave up " + path + " code " + String(code));
+        relay_out_pending--;
+        if (relay_out_pending < 0) { relay_out_pending = 0; }
+        coreJobs[coreKeys[i]] = undefined;
+        continue;
+      }
+      coreJobs[coreKeys[i]]["tries"] = String(tries);
+      coreJobs[coreKeys[i]]["next_at"] = String((unsigned long)(millis() + 2000UL * tries));
+      continue;
+    }
     coreJobs[coreKeys[i]] = undefined;
   }
 }
@@ -354,6 +390,33 @@ String https_request(String url) {
   }
   homebaseOnline = 0;
   return "failure";
+}
+
+// POST a small JSON body to the house and return the HTTP status (or -1). Same
+// client and authorization as https_request: url_maker appends the Now Me pair
+// the manager's embedded_authorizer reads, so the relay introduces no second
+// auth scheme. The answer is handed back for the volume result the watch uses.
+int https_post(const String &path, const String &body, String &answer) {
+  if (homebaseOnline == 0 || homebaseIP == "") { return -1; }
+  String url = url_maker("https://" + homebaseIP + path + "?");
+  connexion -> setInsecure();
+  if (!connexion || !https.begin(*connexion, url)) {
+    homebaseOnline = 0;
+    return -1;
+  }
+  https.setTimeout(6000);
+  https.addHeader("Content-Type", "application/json");
+  int httpCode = https.POST(body);
+  if (httpCode > 0) {
+    homebaseOnline = millis();
+    if (httpCode == HTTP_CODE_OK) { answer = https.getString(); }
+  }
+  else {
+    Serial.printf("HTTPS POST FAILED error: %s\n", https.errorToString(httpCode).c_str());
+    homebaseOnline = 0;
+  }
+  https.end();
+  return httpCode;
 }
 
 void call_the_president() {

@@ -198,6 +198,21 @@ void when_i_get_in(JSONVar wigi_item, String url) {
   }
   Serial.print("Defice connected: ");
   Serial.println(deviceConnected);
+  // Vol+/Vol- belong to the house's own sink, not this watch's speaker. Send
+  // the house volume tap instead of a button press: the manager applies it on
+  // this machine and on every machine (Pico, then WiFi, when the watch is out
+  // of its homebase's range). No central means no relay; the ordinary tap
+  // below still reaches the homebase over WiFi.
+  {
+    const char *tapped_c = (const char *)buttonski["app"];
+    String tapped = tapped_c ? String(tapped_c) : String("");
+    int house_delta = (tapped == "vol_+") ? 2 : ((tapped == "vol_-") ? -2 : 0);
+    if (house_delta != 0 && ble_link_ready()) {
+      if (house_volume_tap(house_delta, "all")) {
+        return;
+      }
+    }
+  }
   if (ble_link_ready()) {
     // a local envelope: btMessages was shared with loop2 on core 0, and staging
     // a tap into it from here raced with that reader until resetting it from
@@ -256,6 +271,35 @@ String generateRandomString(int length) {
   }
 
   return randomString;
+}
+
+// ---- house volume (relay) ---------------------------------------------------
+// The watch's Vol+/- is meant for the house's own sink, not this watch's
+// speaker (the Configure slider is the local one). A tap rides the BLE link
+// like a button tap: the central - a Pico, or the phone bridge - hands it to
+// the manager, which applies it on the machines the message names and answers
+// with a volume_result the face can read (house_volume_last). Returns false
+// when no central is attached, so a caller can fall back to its own speaker.
+static bool house_volume_tap(int delta, const char *target) {
+  if (!ble_link_ready()) {
+    return false;
+  }
+  JSONVar msg = JSON.parse("{}");
+  msg["type"] = "volume";
+  msg["to"] = target;
+  msg["id"] = generateRandomString(18);
+  msg["chip_id"] = chip_id_maker();
+  msg["edt"] = "watch";
+  JSONVar data = JSON.parse("{}");
+  data["delta"] = delta;
+  msg["data"] = data;
+  String payload = JSON.stringify(msg);
+  if (payload.length() > 480) {
+    return false;      // one notify only: a truncated message is a lost tap
+  }
+  ble_notify_payload(payload);
+  Serial.printf("[vol] %+d -> %s\n", delta, target);
+  return true;
 }
 
 // Taps made while no central was attached sit in wigi until the webapp's WIGI

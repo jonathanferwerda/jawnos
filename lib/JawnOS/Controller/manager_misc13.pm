@@ -249,6 +249,27 @@ sub action_43851 {
 	$c->render(json => { ok => $ok ? 1 : 0 });
 }
 
+# A peer machine hands over one volume tap (a watch or deck out of its
+# homebase's range reached it through a Pico). It is applied here and never
+# fanned out again (relayed), so one tap cannot loop around the mesh. The route
+# sits on the peer rail: the signed request proves the caller, exactly as the
+# BLE relay route beside it relies on the peer rail.
+# POST /manager/volume
+sub action_45410 {
+	my $c = shift;
+	my $peer_sig = $c->param('signatorial') || '';
+	my $peer_rm = $peer_sig ? &subs::db_select('remote_machines', undef, { signatorial => $peer_sig })->hash : undef;
+	unless (($peer_rm && &subs::peer_verify($c, $peer_rm)) || &app_peer_ok($c)) {
+		return $c->rendered(403);
+	}
+	my $result = &subs::volume_relay({
+		id => $c->param('id'),
+		to => $c->param('target'),
+		data => { volume => $c->param('volume'), delta => $c->param('delta') },
+	}, { relayed => 1 });
+	$c->render(json => $result);
+}
+
 # GET /manager/past_life_recall
 sub action_44615 {
 	my $c = shift;

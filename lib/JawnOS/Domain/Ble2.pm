@@ -134,6 +134,23 @@ sub ble_message_processor {
 		&subs::ble_relay_route($msg, {});
 		return;
 	}
+	if ($type && $type eq 'volume') {
+		# A watch/deck volume tap that came over the bridge rather than through a
+		# Pico relay. Apply it here and send the small result back so the device
+		# can show that the house heard the tap.
+		my $chip_id = $msg->{'chip_id'} || $seen_chip;
+		my $edt = $msg->{'edt'} || $seen_edt || 'watch';
+		my $result = &subs::volume_relay($msg, { from_chip => $chip_id });
+		if ($chip_id) {
+			&subs::bluetooth_sender_async({
+				intent => 'com.jawn.president.bt.connect',
+				chip_id => $chip_id,
+				edt => $edt,
+				message => { type => 'volume_result', data => $result }
+			});
+		}
+		return;
+	}
 	if ($type && $type eq 'state_request') {
 		my $chip_id = $msg->{'chip_id'};
 		my $edt = $msg->{'edt'} || 'watch';

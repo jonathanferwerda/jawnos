@@ -266,6 +266,55 @@ get '/watch/button' => sub($c) {
 	else { $c->render("text" => "failure" ); }
 };
 
+post '/watch/volume' => sub($c) {
+	# A Pico (or a phone bridge standing in for one) heard a watch/deck volume
+	# tap and hands the message over here. The body is the device's own JSON;
+	# the authorization rides the query, exactly as the board's other calls do.
+	unless (&embeddedAuthorizer($c)) {
+		return $c->render(json => { ok => 0, error => 'unauthorized' });
+	}
+	my $raw = $c->req->body || $c->param('payload') || '';
+	my $msg = eval { decode_json $raw };
+	unless (ref $msg eq 'HASH') {
+		return $c->render(json => { ok => 0, error => 'bad payload' });
+	}
+	my $result = &subs::volume_relay($msg, { from_chip => $c->param('chip_id') });
+	$c->render(json => $result);
+};
+
+post '/watch/ble_relay' => sub($c) {
+	# A Pico heard a message from a watch/deck that is addressed to another
+	# chip - a relay envelope, or a bare command carrying `to`. It cannot reach
+	# the target itself, so it hands the message to the house, which applies the
+	# ordinary homebase rule and routes it (or fans it to the peers).
+	unless (&embeddedAuthorizer($c)) {
+		return $c->render(json => { ok => 0, error => 'unauthorized' });
+	}
+	my $chip_id = $c->param('chip_id') || '';
+	my $raw = $c->req->body || $c->param('payload') || '';
+	my $msg = eval { decode_json $raw };
+	unless (ref $msg eq 'HASH') {
+		return $c->render(json => { ok => 0, error => 'bad payload' });
+	}
+	my $relay;
+	if (($msg->{'type'} || '') eq 'relay') {
+		$relay = $msg;
+	}
+	elsif (($msg->{'to'} || '') ne '') {
+		# A bare command that names its chip: wrap it in the envelope the relay
+		# router reads, using the sender's own id when the message carries one.
+		$relay = {
+			type => 'relay',
+			to => $msg->{'to'},
+			from => $msg->{'chip_id'} || $chip_id,
+			id => $msg->{'id'} || &subs::random_string_creator(18),
+			message => $msg,
+		};
+	}
+	my $ok = $relay ? &subs::ble_relay_route($relay, {}) : 0;
+	$c->render(json => { ok => $ok ? 1 : 0 });
+};
+
 get '/watch/switch' => sub($c) {
 	my $edt = $c->param('edt');
 	my $chip_id = $c->param('chip_id');

@@ -684,6 +684,113 @@ sub clock_system_volume_set {
 	return $rc == 0 ? 1 : 0;
 }
 
+# ---- a tap's Volume for the whole house --------------------------------------
+# A watch or deck tap that is out of its homebase's range reaches the house
+# through a Pico relay. The message the manager receives is:
+#   { type:"volume", to:"all"|"self"|<signatorial>, id:"<unique>",
+#     data:{delta:N} | data:{volume:N} }
+# Apply it on this machine and carry it to the peers that should hear the same
+# tap. A peer that receives the forwarded copy (relayed => 1) applies it and
+# does not fan it out again, so one tap cannot loop around the mesh. The unique
+# id makes the Pico's bounded retry a no-op when the first copy did land; the
+# claim is a cache row, not a lexical, because the BLE bridge and the HTTP rail
+# are different workers and one tap may arrive on both.
+sub volume_relay {
+	my ($msg, $opts) = @_;
+	$opts ||= {};
+	$msg = {} unless ref $msg eq 'HASH';
+	my $data = ref $msg->{'data'} eq 'HASH' ? $msg->{'data'} : $msg;
+	my $target = $msg->{'to'} || $msg->{'target'} || 'self';
+	$target = 'self' unless defined $target && length $target;
+	my $id = $msg->{'id'} || '';
+	my $result = { ok => 0, target => $target };
+	# delta is read against the level the room is on now, before anything moves
+	my $current = &clock_system_volume_get();
+	my $level;
+	if (defined $data->{'volume'} && "$data->{'volume'}" =~ /^\d+$/) {
+		$level = int($data->{'volume'});
+	}
+	elsif (defined $data->{'delta'} && "$data->{'delta'}" =~ /^-?\d+$/) {
+		unless (defined $current) {
+			$result->{'error'} = 'no mixer';
+			return $result;
+		}
+		$level = int($current) + int($data->{'delta'});
+	}
+	else {
+		$result->{'error'} = 'no volume';
+		return $result;
+	}
+	$level = 5 if $level < 5;
+	$level = 100 if $level > 100;
+	$result->{'volume'} = $level;
+	if (length $id) {
+		my $now = &rightNow();
+		eval {
+			&db_query('insert or ignore into cache (uuid, context, app, server_time, timestamp, device) values (?,?,?,?,?,?)',
+				$id, 'volume_relay', '__president', $now, $now, 'relay');
+		};
+		# changes() is 0 when the unique uuid was already claimed: the same tap
+		# arrived again (the Pico retried, or the bridge and the relay both
+		# heard it), so it must not move the sink a second time.
+		my ($db) = &database_grabber();
+		my $changes = $db ? eval { $db->dbh->selectrow_array('select changes()') } : undef;
+		if (defined $changes && "$changes" eq '0') {
+			$result->{'ok'} = 1;
+			$result->{'duplicate'} = 1;
+			return $result;
+		}
+	}
+	my $me = &signatorial_designer() || '';
+	my $named = ($target ne 'all' && $target ne 'self' && $target ne $me) ? $target : '';
+	my $local = ($target eq 'all' || $target eq 'self' || ($me && $target eq $me)) ? 1 : 0;
+	my $applied = 0;
+	if ($local) {
+		$applied = &clock_system_volume_set($level) ? 1 : 0;
+		$result->{'local'} = $applied;
+	}
+	my @peers;
+	unless ($opts->{'relayed'}) {
+		my $rms = $named
+			? &remote_machine_lister({ signatorial => $named })
+			: ($target eq 'all' ? &remote_machine_lister({ connection => 'active' }) : []);
+		foreach my $rm ( @{ ref $rms eq 'ARRAY' ? $rms : [] } ) {
+			next unless ref $rm eq 'HASH';
+			my $sig = $rm->{'signatorial'} || '';
+			next if !$sig || $sig eq $me;
+			next unless $rm->{'manager'};
+			push @peers, $rm;
+		}
+	}
+	if (@peers) {
+		my %form = (
+			id => $id,
+			target => $target,
+			volume => $level,
+			relayed => 'yes',
+			signatorial => $me,
+		);
+		$result->{'forwarded'} = [ map { $_->{'signatorial'} } @peers ];
+		# A tap waits on this response, so the fan-out is its own process: the
+		# watch worker (one process on a phone) must not sit on a slow peer.
+		eval {
+			&subprocessor(sub {
+				foreach my $rm (@peers) {
+					eval {
+						my $hop = &subs::remote_useragent_maker({ rm => $rm, signatorial => $rm->{'signatorial'} });
+						next unless $hop && $hop->{'ua'} && $hop->{'manager'};
+						$hop->{'ua'}->insecure(1)->connect_timeout(3)->inactivity_timeout(6)
+							->post($hop->{'manager'} . '/manager/volume' => form => \%form)->result;
+					};
+				}
+			}, { name => 'volume relay', warranty => '30s' });
+		};
+	}
+	$result->{'ok'} = 1 if $applied || (!$local && @peers);
+	$result->{'error'} = 'no mixer' if $local && !$applied && !@peers;
+	return $result;
+}
+
 sub clock_alarm_volume_file {
 	my $uuid = shift || 'x';
 	$uuid =~ s/[^A-Za-z0-9_\-]//g;

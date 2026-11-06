@@ -281,6 +281,11 @@ static void crumbs_dump() {
 }
 int vibrateLevel = 50;
 int volumeLevel = 50;
+// The house's answer to the last Vol+/- tap sent over BLE (see
+// house_volume_tap in jw_10_playback.ino). -1 until one arrives, then the
+// level the manager set, so a face can show it without a second round trip.
+static int house_volume_last = -1;
+static bool house_volume_ok = false;
 void lowPowerEnergyHandler();
 static bool accel_sample(float &x, float &y, float &z);
 static void tilt_serial_poll();

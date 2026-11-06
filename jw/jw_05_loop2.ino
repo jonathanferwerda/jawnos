@@ -241,6 +241,17 @@ void loop2(void * pvParameters) {
             ble_send(reply);
             Serial.printf("[bt] battery %d%% (%d mV)\n", bp, bmv);
           }
+          if (btMsg.hasOwnProperty("type") && String((const char *)btMsg["type"]) == "volume_result") {
+            // The house applied a Vol+/- tap sent over this link (the Pico
+            // forwarded it, or the bridge did). Keep the level the manager
+            // reports so a face can show it without asking again.
+            JSONVar d = btMsg["data"];
+            if (JSON.typeof(d) == "object") {
+              house_volume_ok = ((int)d["ok"]) ? true : false;
+              if (d.hasOwnProperty("volume")) { house_volume_last = (int)d["volume"]; }
+              Serial.printf("[vol] house %d%% ok=%d\n", house_volume_last, (int)house_volume_ok);
+            }
+          }
           if (btMsg.hasOwnProperty("type") && String((const char *)btMsg["type"]) == "now_me") {
             // the phone pushes the whole picture over BLE: the homebase, the
             // authorization (freshly rotated), the clock offset and the room

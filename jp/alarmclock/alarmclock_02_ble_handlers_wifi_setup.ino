@@ -2,18 +2,25 @@ static void ble_handle_json(String json) {
   JSONVar msg = JSON.parse(json);
   if (JSON.typeof(msg) != "object") { return; }
   String type = jstr(msg["type"]);
+  String to = jstr(msg["to"]);
+  String mine = String(rp2040.getChipID());
   // A relay envelope from the house (or from a peer bridge). Unwrap it only when
   // it names this chip; the manager has already routed it, so anything else is
-  // a stale copy.
+  // either a stale copy or a message this board is relaying for a watch that is
+  // out of its homebase's range.
   if (type == "relay") {
-    String to = jstr(msg["to"]);
-    String mine = String(rp2040.getChipID());
-    if (to != "" && to != mine) { return; }
+    if (to != "" && to != mine) { relay_out_forward(msg, json, "/watch/ble_relay", "relay"); return; }
     JSONVar inner = msg["message"];
     if (JSON.typeof(inner) != "object") { return; }
     msg = inner;
     type = jstr(msg["type"]);
   }
+  // A volume tap names the house (all, self or a machine), never this board. It
+  // is forwarded even when it carries no `to`, so a bare Vol+ step still lands.
+  if (type == "volume") { relay_out_forward(msg, json, "/watch/volume", "volume"); return; }
+  // Any other command that names a chip other than this one is a message the
+  // sender meant for the house; hand it over instead of dropping it.
+  if (to != "" && to != mine) { relay_out_forward(msg, json, "/watch/ble_relay", "relay"); return; }
   if (type == "now_me") { ble_apply_now_me(msg["data"]); }
   else if (type == "board_config") { ble_apply_board_config(msg["data"]); }
   else if (type == "room") { ble_apply_board_config(msg["data"]["payload"]); }

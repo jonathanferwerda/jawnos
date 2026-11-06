@@ -225,6 +225,54 @@ static int64_t jint64(JSONVar v) {
 
 static bool offset_sane(int64_t off) { return off > -50400 && off < 50400; }
 
+// ---- the relay's outbound queue ---------------------------------------------
+// A watch or deck out of its homebase's range can still reach this board over
+// BLE. Its message is not ours (another chip, or a house-wide volume tap), so
+// it is queued here and handed to the manager by handle_jobs() on core 1. The
+// queue is bounded and every entry has a bounded retry: a dead homebase must
+// not grow the map or hold the BLE/loop path, which never does HTTP itself.
+#define RELAY_OUT_MAX 6
+static volatile int relay_out_pending = 0;
+static int relay_out_seq = 0;
+
+static void relay_out_enqueue(const String &path, const String &body, const String &kind) {
+  if (homebaseIP == "" || authorization == "") {
+    Serial.println("[relay] no homebase yet; dropped");
+    return;
+  }
+  if (relay_out_pending >= RELAY_OUT_MAX) {
+    Serial.println("[relay] queue full; dropped");
+    return;
+  }
+  relay_out_pending++;
+  String key = "out" + String((long)millis()) + "_" + String(relay_out_seq++);
+  coreJobs[key]["type"] = "relay_post";
+  coreJobs[key]["path"] = path;
+  coreJobs[key]["body"] = body;
+  coreJobs[key]["kind"] = kind;
+  coreJobs[key]["tries"] = "0";
+  coreJobs[key]["next_at"] = "0";
+  Serial.println("[relay] queued " + path + " " + String((unsigned)body.length()) + " bytes");
+}
+
+// Forward one message the watch/deck meant for the house. A message that names
+// no id gets one spliced into the raw text, so the manager's bounded retry of
+// the same tap is a no-op instead of a second volume step. The body is never
+// re-stringified: this JSONVar build writes some numeric values as empty
+// tokens (the internal_jobs map is split for that reason), and "delta":5 must
+// reach the manager as-is.
+static void relay_out_forward(JSONVar msg, const String &json, const String &path, const String &kind) {
+  String body = json;
+  if (jstr(msg["id"]) == "") {
+    String id = "pico" + String(rp2040.getChipID()) + "-" + String((long)millis()) + "-" + String(relay_out_seq);
+    int brace = body.indexOf('{');
+    if (brace >= 0) {
+      body = body.substring(0, brace + 1) + "\"id\":\"" + id + "\"," + body.substring(brace + 1);
+    }
+  }
+  relay_out_enqueue(path, body, kind);
+}
+
 // The local switch/relay map. JSONVar drops both nested assignments and object
 // assignments into config, so the pins the board actually reads and drives live
 // in plain arrays rebuilt from the manager's internal_jobs string.

@@ -97,6 +97,15 @@ static void tilt_serial_command(String line) {
                   (int)tiltWake, (int)tiltDbg, (int)wrist_armed, (int)wrist_rose,
                   (int)wrist_have, wrist_lz, wrist_sz);
   }
+  else if (line == "vol+" || line == "vol up" || line == "vol-" || line == "vol down") {
+    // The watch has no Vol+/- key of its own yet (the Configure slider is this
+    // watch's speaker), so this is the hook a key or a face calls. It sends the
+    // house volume tap over BLE; the Pico or the bridge carries it to the
+    // manager and the volume_result arrives on loop2.
+    int delta = (line.endsWith("+") || line == "vol up") ? 5 : -5;
+    bool sent = house_volume_tap(delta, "all");
+    Serial.println(sent ? "[vol] sent over BLE" : "[vol] no BLE link");
+  }
   else if (line == "crown") {
     // press the crown, then run this: does the PMU latch the event at all?
     uint64_t status = watch.pmic.irq().readStatus();
