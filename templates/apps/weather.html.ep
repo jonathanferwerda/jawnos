@@ -27,6 +27,7 @@
 			<% } %>
 		</select>
 		<button type="button" id="weather_location_add"><%= &subs::ui('Add') %></button>
+		<button type="button" id="weather_location_delete" disabled><%= &subs::ui('Delete') %></button>
 		<button type="button" id="weather_refresh"><%= &subs::ui('Refresh') %></button>
 		<button type="button" id="weather_browser"><%= &subs::ui('Use browser location') %></button>
 		<span id="weather_status"></span>

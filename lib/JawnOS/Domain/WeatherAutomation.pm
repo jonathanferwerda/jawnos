@@ -546,7 +546,7 @@ sub weather_automation_state() {
 			map {
 				my $loc = $_->{'location'} // '';
 				+{ %{$_}, app_label => &subs::format_name($_->{'app'}),
-					location_label => (length $loc ? ($location_label->{$loc} || $loc) : '') }
+					location_label => (length $loc ? ($location_label->{$loc} || ($loc =~ /^loc:/ ? &subs::ui('Deleted place') : $loc)) : '') }
 			} @{$rules}
 		],
 		measures => &weather_measure_catalog(),
@@ -556,7 +556,7 @@ sub weather_automation_state() {
 				my %r = %{$_};
 				my $loc = $_->{'location'} // '';
 				$r{'app_label'} = &subs::format_name($_->{'app'}) if length($_->{'app'} // '');
-				$r{'location_label'} = length $loc ? ($location_label->{$loc} || $loc) : '';
+				$r{'location_label'} = length $loc ? ($location_label->{$loc} || ($loc =~ /^loc:/ ? &subs::ui('Deleted place') : $loc)) : '';
 				\%r;
 			} @{$measure_rules}
 		],
@@ -863,6 +863,19 @@ sub weather_location_save($name, $lat, $lon) {
 	return { uuid => $uuid, locations => $locations };
 }
 
+# Delete a saved place. A rule that named it keeps its key so nothing silently
+# widens to "Any location"; the Automations tab labels that key as a deleted
+# place, and the person can choose the new one.
+sub weather_location_delete($uuid) {
+	return undef unless defined $uuid && $uuid =~ /^[A-Za-z0-9_-]+$/;
+	my $locations = &weather_locations();
+	return undef unless grep { ($_->{'uuid'} // '') eq $uuid } @{$locations};
+	my @kept = grep { ($_->{'uuid'} // '') ne $uuid } @{$locations};
+	&subs::setting_setter({ app => 'weather', setting => 'locations', value => encode_json \@kept });
+	my $labels = &weather_location_labels();
+	return { uuid => $uuid, locations => \@kept, labels => $labels };
+}
+
 # ---- the observation --------------------------------------------------------
 # Record what the app fetched. Every measure goes into the same appointment, so
 # one observation is one row of values; appt_measure_writer also runs the old
@@ -988,12 +1001,34 @@ sub weather_observe_now($opts) {
 # The scheduled pass. The lock keeps the house to one fetch even when several
 # machines run the utility; a condition that changed still writes at once, so
 # the lock is a ceiling on the fetch, not on the rules.
+# One pass per household. The house server records the weather; a phone, tablet
+# or laptop only reads what it kept. A household with no server row yet keeps
+# the old behaviour, so a single machine still checks its own rules.
+sub weather_observe_leader() {
+	my $row = eval {
+		&subs::db_query(
+			"select signatorial from remote_machines "
+			. "where device = 'server' and signatorial is not null and signatorial != '' "
+			. "order by server_time desc limit 1"
+		)->hashes->[0];
+	};
+	my $server = $row ? ($row->{'signatorial'} // '') : '';
+	return 1 unless length $server;
+	return ((&subs::signatorial_designer() // '') eq $server) ? 1 : 0;
+}
+
 sub weather_observe_tick() {
+	return { skipped => 'not the house' } unless &weather_observe_leader();
 	my $now = &rightNow();
-	my $am = &weather_observe_prepare();
-	my $has_rules = @{ &weather_automation_rules($am) } || @{ &weather_measure_rules() };
-	return { skipped => 'no rules' } unless $has_rules;
 	my $keys = &weather_rule_locations();
+	if (!@{$keys}) {
+		# No rule names a place: keep the house's own place current so History
+		# and Accuracy have a reading every hour.
+		my $fixes = eval { &subs::weather_device_fixes(24 * 60 * 60 * 1000) } || [];
+		my ($fix) = @{$fixes};
+		my $sig = $fix ? ($fix->{'signatorial'} // '') : '';
+		push @{$keys}, 'dev:' . $sig if $sig =~ /^[A-Za-z0-9_-]+$/;
+	}
 	return { skipped => 'no fix' } unless @{$keys};
 	my $lock = eval { &cache_get({ app => 'weather', context => 'observe', subcontext => 'lock' }) } || {};
 	return { skipped => 'held', at => $lock->{'at'} }

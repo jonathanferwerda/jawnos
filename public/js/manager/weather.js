@@ -12,6 +12,7 @@ var weatherHistoryData = null;
 var weatherAccuracyData = null;
 var weatherHistoryLoaded = false;
 var weatherAccuracyLoaded = false;
+var weatherLoading = false;
 
 $(document).on('click', '.weather_tab', function() {
 	weatherShowTab($(this).attr('data-tab'));
@@ -54,15 +55,90 @@ function weatherBind() {
 		$w.find('#weather_source').val('');
 		weatherHistoryLoaded = false;
 		weatherAccuracyLoaded = false;
+		weatherDeleteState();
 		weatherLoad(true);
+	});
+	$w.on('click', '#weather_location_delete', function() {
+		weatherLocationDelete($w.find('#weather_device').val(), this, '#weather_status');
 	});
 	$w.on('click', '#weather_refresh', function() { weatherLoad(true); });
 	$w.on('click', '#weather_browser', function() { weatherBrowser(); });
 }
 
+// Delete a saved place, twice: the first press asks, the second removes it. A
+// rule that named it keeps the key, and the Automations tab calls it a deleted
+// place rather than quietly widening to anywhere.
+function weatherLocationDeleteConfirm(button, action) {
+	var $b = $(button);
+	if ($b.data('weather_delete_confirm')) {
+		clearTimeout($b.data('weather_delete_timer'));
+		$b.removeData('weather_delete_confirm').text(jawnosT('Delete'));
+		action();
+		return;
+	}
+	$b.data('weather_delete_confirm', 1).text(jawnosT('Delete?'));
+	$b.data('weather_delete_timer', setTimeout(function() {
+		$b.removeData('weather_delete_confirm').text(jawnosT('Delete'));
+	}, 5000));
+}
+
+function weatherLocationDelete(uuid, button, statusSelector) {
+	var $w = $('.wind[app="weather"]').last();
+	uuid = uuid || '';
+	statusSelector = statusSelector || '#weather_status';
+	if (uuid.indexOf('loc:') !== 0) {
+		$w.find(statusSelector).text(jawnosT('Choose a saved place to delete.'));
+		return;
+	}
+	weatherLocationDeleteConfirm(button, function() {
+		$.ajax({
+			url: '/manager/weather/location/delete',
+			type: 'POST',
+			data: { uuid: uuid.slice(4) },
+			dataType: 'json',
+			success: function(response) {
+				if (!response || response.error) {
+					$w.find(statusSelector).text((response && response.error) || jawnosT('The location was not deleted.'));
+					return;
+				}
+				if (typeof weatherLocationOptions === 'function') {
+					weatherLocationOptions($w, response.locations || [], response.labels || {});
+				}
+				if (typeof weatherAutomationLoad === 'function' && $w.find('#weather_automation_list').length) {
+					weatherAutomationLoad();
+				}
+				if (!($w.find('#weather_device').val() || '')) {
+					$w.find('#weather_device option').first().prop('selected', true);
+					weatherLoad(true);
+				}
+				weatherDeleteState();
+				$w.find(statusSelector).text(jawnosT('Location deleted.'));
+			},
+			error: function() {
+				$w.find(statusSelector).text(jawnosT('The location was not deleted.'));
+			}
+		});
+	});
+}
+
+function weatherDeleteState() {
+	var $w = $('.wind[app="weather"]').last();
+	var value = $w.find('#weather_device').val() || '';
+	$w.find('#weather_location_delete').prop('disabled', value.indexOf('loc:') !== 0);
+	$w.find('#weather_automation_location, #weather_measure_location').each(function() {
+		var id = $(this).attr('id');
+		var chosen = $(this).val() || '';
+		$w.find('.weather_location_delete[data-target="' + id + '"]').prop('disabled', chosen.indexOf('loc:') !== 0);
+	});
+}
+
 function weatherLoad(force) {
 	var $w = $('.wind[app="weather"]');
 	if (!$w.length) { return; }
+	// A refresh and the window manager can both ask at once; the second is the
+	// same reading, so let the first finish. A stuck request times out.
+	if (weatherLoading) { return; }
+	weatherLoading = true;
 	var data = {
 		device: $w.find('#weather_device').val() || 'me',
 		timestamp: Date.now()
@@ -82,8 +158,9 @@ function weatherLoad(force) {
 		type: 'GET',
 		data: data,
 		dataType: 'json',
-		success: function(response) { weatherRender(response); },
-		error: function() { weatherError(jawnosT('Weather is unavailable right now.')); }
+		timeout: 20000,
+		success: function(response) { weatherLoading = false; weatherRender(response); },
+		error: function() { weatherLoading = false; weatherError(jawnosT('Weather is unavailable right now.')); }
 	});
 }
 
@@ -214,13 +291,15 @@ function weatherDays(days) {
 	var html = '';
 	for (var i = 0; i < days.length && i < 14; i++) {
 		var d = days[i] || {};
-		var label = d.label || (d.date ? weatherDayLabel(d.date) : '');
+		var label = d.date ? weatherDayName(d.date) : (d.label || '');
+		var stamp = d.date ? weatherDateStamp(d.date) : '';
 		var temps = (d.high !== undefined && d.high !== null ? weatherTemp(d.high) : '—')
 			+ (d.low !== undefined && d.low !== null ? ' / ' + weatherTemp(d.low) : '');
 		var text = d.condition || d.text || '';
 		if (d.precip_prob !== undefined && d.precip_prob !== null) { text += (text ? ' · ' : '') + weatherNum(d.precip_prob) + '%'; }
 		html += '<div class="weather_day">'
-			+ '<div>' + weatherEsc(label) + '</div>'
+			+ '<div class="weather_day_label"><span>' + weatherEsc(label) + '</span>'
+			+ (stamp ? '<span class="weather_day_stamp">' + weatherEsc(stamp) + '</span>' : '') + '</div>'
 			+ '<div class="weather_day_glyph">' + weatherEsc(d.glyph || '•') + '</div>'
 			+ '<div class="weather_day_temps">' + weatherEsc(temps) + '</div>'
 			+ '<div class="weather_day_text">' + weatherEsc(text) + '</div>'
@@ -272,10 +351,21 @@ function weatherHourLabel(text) {
 	return h + ':' + m[2] + ' ' + suffix;
 }
 
-function weatherDayLabel(date) {
+function weatherDayName(date) {
 	var d = new Date(String(date) + 'T12:00:00');
-	if (isNaN(d.getTime())) { return date; }
-	return d.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' });
+	if (isNaN(d.getTime())) { return String(date); }
+	var name = d.toLocaleDateString([], { weekday: 'long' });
+	var today = new Date();
+	today.setHours(12, 0, 0, 0);
+	var days = Math.round((d.getTime() - today.getTime()) / 86400000);
+	if (days >= 7) { return jawnosT('Next') + ' ' + name; }
+	return name;
+}
+
+function weatherDateStamp(date) {
+	var parts = String(date).match(/^(\d{4})-(\d{2})-(\d{2})$/);
+	if (!parts) { return ''; }
+	return parts[2] + '/' + parts[3] + '/' + parts[1];
 }
 
 function weatherEsc(s) {

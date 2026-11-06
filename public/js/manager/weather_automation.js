@@ -23,6 +23,16 @@ $(document).on('click', '.weather_automation_edit', function() {
 $(document).on('click', '.weather_automation_remove', function() {
 	weatherAutomationRemove($(this).attr('data-uuid'));
 });
+$(document).on('click', '.weather_location_delete', function() {
+	var $w = $('.wind[app="weather"]').last();
+	var target = $(this).attr('data-target') || '';
+	var uuid = $w.find('#' + target).val() || '';
+	var status = target === 'weather_measure_location' ? '#weather_measure_status' : '#weather_automation_status';
+	weatherLocationDelete(uuid, this, status);
+});
+$(document).on('change', '#weather_automation_location, #weather_measure_location', function() {
+	if (typeof weatherDeleteState === 'function') { weatherDeleteState(); }
+});
 
 function weatherAutomationLoad(message) {
 	var $w = $('.wind[app="weather"]').last();
@@ -48,6 +58,7 @@ function weatherAutomationRender(data, message) {
 	weatherAutomationLoaded = true;
 	weatherAutomationData = data;
 	weatherAutomationLocations(data);
+	if (typeof weatherDeleteState === 'function') { weatherDeleteState(); }
 	var condition = data.condition_text || weatherAutomationWords(data.condition || '');
 	var at = data.condition_at ? ' · ' + jawnosT('checked') + ' ' + weatherTime(data.condition_at) : '';
 	$w.find('#weather_automation_condition').text(condition ? (condition + at) : jawnosT('No reading yet.'));
@@ -127,6 +138,7 @@ function weatherAutomationFormOpen(rule) {
 	var $w = $('.wind[app="weather"]').last();
 	$w.find('#weather_automation_uuid').val(rule ? (rule.uuid || '') : '');
 	weatherAutomationLocationSet('#weather_automation_location', rule ? (rule.location || '') : '', rule ? (rule.location_label || '') : '');
+	if (typeof weatherDeleteState === 'function') { weatherDeleteState(); }
 	$w.find('#weather_automation_match').val(rule ? (rule.match || '') : '');
 	$w.find('#weather_automation_app').val(rule ? (rule.app || '') : '');
 	$w.find('#weather_automation_action').val(rule && rule.action === 'record' ? 'record' : 'start');
@@ -375,6 +387,7 @@ function weatherMeasureFormOpen(rule) {
 	var $w = $('.wind[app="weather"]').last();
 	$w.find('#weather_measure_uuid').val(rule ? (rule.uuid || '') : '');
 	weatherAutomationLocationSet('#weather_measure_location', rule ? (rule.location || '') : '', rule ? (rule.location_label || '') : '');
+	if (typeof weatherDeleteState === 'function') { weatherDeleteState(); }
 	$w.find('#weather_measure_name').val(rule ? (rule.name || '') : '');
 	var forMs = rule ? (rule.for_ms || 0) : 0;
 	if (forMs && forMs % 3600000 === 0) {

@@ -172,4 +172,5 @@ function weatherLocationOptions($w, locations, labels) {
 			.text(labels[loc.uuid] || loc.name || ''));
 	}
 	if (current) { select.val(current); }
+	if (typeof weatherDeleteState === 'function') { weatherDeleteState(); }
 }

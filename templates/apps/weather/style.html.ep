@@ -52,11 +52,16 @@
 	opacity: .62;
 	padding-top: 2px;
 }
+.wind[app="weather"] #weather > * { flex: 0 0 auto; }
 .wind[app="weather"] #weather_hourly {
 	display: flex;
 	gap: 6px;
 	overflow-x: auto;
-	padding-bottom: 3px;
+	overscroll-behavior-x: contain;
+	-webkit-overflow-scrolling: touch;
+	scrollbar-width: thin;
+	min-height: 96px;
+	padding-bottom: 5px;
 }
 .wind[app="weather"] .weather_hour {
 	flex: 0 0 auto;
@@ -73,7 +78,7 @@
 .wind[app="weather"] #weather_daily { display: flex; flex-direction: column; gap: 4px; }
 .wind[app="weather"] .weather_day {
 	display: grid;
-	grid-template-columns: minmax(74px, 1.1fr) 30px minmax(62px, .7fr) 1fr;
+	grid-template-columns: minmax(94px, 1.1fr) 30px minmax(62px, .7fr) 1fr;
 	align-items: center;
 	gap: 8px;
 	border-top: 1px solid var(--line);
@@ -81,6 +86,8 @@
 	font-size: 13px;
 }
 .wind[app="weather"] .weather_day:first-child { border-top: 0; }
+.wind[app="weather"] .weather_day .weather_day_label { display: flex; flex-direction: column; line-height: 1.15; min-width: 0; }
+.wind[app="weather"] .weather_day .weather_day_stamp { font-size: 11px; opacity: .62; font-variant-numeric: tabular-nums; }
 .wind[app="weather"] .weather_day .weather_day_glyph { font-size: 22px; text-align: center; }
 .wind[app="weather"] .weather_day .weather_day_temps { font-weight: 600; white-space: nowrap; }
 .wind[app="weather"] .weather_day .weather_day_text { opacity: .72; min-width: 0; }

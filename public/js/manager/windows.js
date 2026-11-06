@@ -480,6 +480,13 @@ function windowMaker(response, fragment) {
 		}
 		jws = undefined;
 		if (carry_on == 1) {
+			// A Weather window re-rendered by a background refresh lost its
+			// reading with the old markup; ask for it again. Its own opener does
+			// the same on a restore, and weatherLoad drops the duplicate.
+			if (app == 'weather' && matches == 1 && typeof weatherLoad === 'function') {
+				weatherBind();
+				weatherLoad();
+			}
 			if (!windowPhoneChecker() && !$('#window_id').hasClass('ui-draggable')) {
 
 			}

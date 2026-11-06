@@ -326,6 +326,11 @@ function appWindowOpenerNow(i,timestamp,v) {
 		else if (i == 'process_monitor') {
 			monitorOpener();
 		}
+		// Weather is a shell until its opener asks for a reading; a restore that
+		// took the generic path left it blank. Its own opener is the one path.
+		else if (i == 'weather') {
+			if (typeof weatherMaker === 'function') { weatherMaker(timestamp); }
+		}
 		else {
 			$.ajax({
 				url: '/manager/' + i,

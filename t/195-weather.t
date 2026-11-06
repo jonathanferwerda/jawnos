@@ -711,6 +711,66 @@ is(subs::weather_rule_location_normalize(undef), '', 'no location is the old glo
 	ok(!subs::weather_location_save('Nowhere', 200, 10), 'an impossible latitude is refused');
 }
 
+# --- deleting a saved place --------------------------------------------------
+{
+	my %store;
+	my $n = 0;
+	no warnings 'redefine';
+	local *subs::setting_grabber = sub {
+		my ($q) = @_;
+		return $store{ 'setting|' . $q->{'app'} . '|' . $q->{'setting'} };
+	};
+	local *subs::setting_setter = sub {
+		my ($q) = @_;
+		$store{ 'setting|' . $q->{'app'} . '|' . $q->{'setting'} } = $q->{'value'};
+		return 1;
+	};
+	local *subs::random_string_creator = sub { 'locuuid' . (++$n) };
+	subs::weather_location_save('Cottage', 45, -79);
+	subs::weather_location_save('Camp', 46, -80);
+	my $deleted = subs::weather_location_delete('locuuid1');
+	ok($deleted, 'a saved place can be deleted');
+	is(scalar @{ $deleted->{'locations'} }, 1, 'the list keeps the other place');
+	is($deleted->{'locations'}[0]{'name'}, 'Camp', 'and it is the one not deleted');
+	ok(!subs::weather_location_delete('locuuid1'), 'deleting it again is refused');
+	ok(!subs::weather_location_delete('nonsense!'), 'an impossible uuid is refused');
+}
+
+# --- one weather pass per household ------------------------------------------
+{
+	no warnings 'redefine';
+	local *subs::signatorial_designer = sub { 'me123' };
+	local *subs::db_query = sub {
+		my ($query) = @_;
+		return bless { rows => [ { signatorial => 'server1' } ] }, 'FakeResult'
+			if ($query // '') =~ /from remote_machines/;
+		return bless { rows => [] }, 'FakeResult';
+	};
+	is(subs::weather_observe_leader(), 0, 'a machine that is not the house server lets it check');
+	local *subs::signatorial_designer = sub { 'server1' };
+	is(subs::weather_observe_leader(), 1, 'the house server runs the pass');
+	local *subs::db_query = sub { return bless { rows => [] }, 'FakeResult' };
+	is(subs::weather_observe_leader(), 1, 'a household with no server row still checks');
+}
+
+{
+	no warnings 'redefine';
+	local *subs::weather_observe_leader = sub { 0 };
+	is(subs::weather_observe_tick()->{'skipped'}, 'not the house', 'only the house holds the hourly pass');
+	local *subs::weather_observe_leader = sub { 1 };
+	local *subs::rightNow = sub { 1794010000000 };
+	local *subs::weather_observe_prepare = sub { {} };
+	local *subs::weather_rule_locations = sub { [] };
+	local *subs::weather_device_fixes = sub { [ { signatorial => 'phone', lat => 1, lon => 2, seen => 1 } ] };
+	local *subs::weather_device_fix = sub { { lat => 1, lon => 2 } };
+	local *subs::weather_observe_now = sub { my ($o) = @_; return { ok => 1 } };
+	local *subs::cache_get = sub { {} };
+	local *subs::cache_set = sub { 1 };
+	my $tick = subs::weather_observe_tick();
+	is($tick->{'ok'}, 1, 'with no rules the house still records its own place');
+	is($tick->{'results'}[0]{'location'}, 'dev:phone', 'once, at the newest fix');
+}
+
 # --- a place reads as a name, and machines at one place are one entry --------
 is(subs::weather_name_is_coordinate('Location 46.2260, -63.0998'), 1, 'the map\'s coordinate fill is not a name');
 is(subs::weather_name_is_coordinate('46.2260, -63.0998'), 1, 'a bare coordinate is not a name');
@@ -1028,5 +1088,24 @@ like($loader, qr/weather_daily_extend/, 'and the daily extension');
 my $weather_style = read_file("$root/templates/apps/weather/style.html.ep");
 like($weather_style, qr/^<style>/m, 'the style partial opens a style element');
 like($weather_style, qr{</style>\s*$}m, 'and closes it, so the page does not print CSS');
+
+# --- saving, restoring and the strip ----------------------------------------
+like($routes_auto, qr{/manager/weather/location/delete\b}, 'the delete route exists');
+like($controller_auto, qr/sub action_52020\b/, 'and its action');
+like($auto_partial, qr/class="weather_location_delete"/, 'the rule forms offer Delete beside At');
+like($page, qr/id="weather_location_delete"/, 'the toolbar offers Delete too');
+like($weather_js, qr/weatherLocationDelete/, 'the script deletes a saved place');
+like($weather_js, qr/weatherDateStamp/, 'the day rows carry a month/day/year stamp');
+like($weather_js, qr/weatherDayName/, 'and a weekday name');
+like($weather_js, qr/weatherLoading/, 'the app asks once at a time');
+like($weather_style, qr/overscroll-behavior-x/, 'the hourly strip scrolls sideways');
+my $windows_storage = read_file("$root/public/js/manager/windows/01_storage.js");
+like($windows_storage, qr/i == 'weather'/, 'a restored Weather window uses its opener');
+my $windows_js = read_file("$root/public/js/manager/windows.js");
+like($windows_js, qr/weatherLoad\(\)/, 'a refreshed Weather window asks again');
+my $defaults_t = read_file("$root/perl/gb/01_state_and_defaults.pl");
+like($defaults_t, qr/'weather_observe'\s*=>\s*\{\s*interval\s*=>\s*60 \* 60/, 'the observer runs every hour');
+like($loader, qr/weather_location_delete/, 'the domain loader maps the delete');
+like($loader, qr/weather_observe_leader/, 'and the household leader');
 
 done_testing();

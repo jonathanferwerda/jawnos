@@ -240,5 +240,12 @@ sub action_52019 {
 	$c->render(json => $result || { error => &subs::ui('The measurement rule was not saved.') });
 }
 
+# POST /manager/weather/location/delete
+sub action_52020 {
+	my $c = shift;
+	my $deleted = eval { &subs::weather_location_delete($c->param('uuid') // '') };
+	$c->render(json => $deleted || { error => &subs::ui('That saved location is gone.') });
+}
+
 
 1;
