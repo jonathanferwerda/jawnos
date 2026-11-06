@@ -50,7 +50,8 @@
 	   width and colour, the house corner and a floating shadow */
 	border: var(--window_border, 3px) solid var(--window_border_colour, var(--line));
 	border-radius: var(--window_radius, var(--jawnos-corner, 12px));
-	box-shadow: 0 18px 44px rgba(0, 0, 0, .32), 0 2px 8px rgba(0, 0, 0, .18);
+	--soft-kb-shadow: 0 18px 44px rgba(0, 0, 0, .32), 0 2px 8px rgba(0, 0, 0, .18);
+	box-shadow: var(--soft-kb-shadow);
 	overflow: hidden;
 	/* a floating panel fades and steps aside rather than sliding the whole
 	   screen-height down from the foot */
@@ -76,11 +77,12 @@
 #jawn_soft_keyboard:focus { outline: none; }
 
 /* While the calculator owns the keypad - a press on it or a focused key - the
-   panel wears the accent ring, so the next hardware key's home is in sight. A
-   field being typed in has the focus instead, so the ring is off. */
+   panel wears a soft accent glow, so the next hardware key's home is in sight
+   without a hard outline. A field being typed in has the focus instead, so the
+   glow is off. */
 #jawn_soft_keyboard.soft_kb_calc.soft_kb_floating:focus-within {
-	outline: 3px solid var(--accent, #3b7ddd);
-	outline-offset: 2px;
+	box-shadow: 0 0 0 2px var(--accent-soft, rgba(59, 125, 221, .24)), var(--soft-kb-shadow);
+	box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent, #3b7ddd) 40%, transparent), var(--soft-kb-shadow);
 }
 
 .soft_kb[hidden] {

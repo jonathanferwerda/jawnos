@@ -81,6 +81,8 @@ like($dock, qr/ui\.position\.left = Math\.max\(0, Math\.min\(ui\.position\.left,
 	'a dragged panel stays on the screen sideways');
 like($dock, qr/panel\.removeAttr\('default_placed'\);/,
 	'taking hold of a panel claims its spot');
+like($dock, qr/\$\( "\.pseudonym" \)\.draggable\(\{\s*distance: 4,/,
+	'a dock face waits for a real move before it drags, so its first click opens it');
 
 # --- a panel wears the window frame ----------------------------------------
 like($manager_css, qr/#keyboard_container \.keyboard \{[^}]*border-width:var\(--window_border, 3px\)/s,

@@ -414,6 +414,9 @@ function pseudonymHomeHider(interval) {
 
 function pseudonymDraggableInitializer() {
   $( ".pseudonym" ).draggable({
+    distance: 4,
+    // a click is not a drag: a fingertip or a settling hand moves a pixel or
+    // two, and a zero-distance drag swallowed the first press before its click
     start: function(p) {
 			var id = p.target.id;
 			var timestamp = Date.now();

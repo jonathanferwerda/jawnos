@@ -128,9 +128,11 @@ like($kb, qr/dock\.toggleClass\('soft_kb_calc', mode == 'calc'\);/,
 	'the dock marks the calculator mode');
 like($css, qr/#jawn_soft_keyboard:focus \{ outline: none; \}/,
 	'the dock does not draw the browser\'s default focus box');
-like($css, qr/#jawn_soft_keyboard\.soft_kb_calc\.soft_kb_floating:focus-within \{[^}]*outline: 3px solid var\(--accent/,
-	'the calculator wears a focus ring while it owns the keypad');
-like($help, qr/wears the accent ring while it owns the keypad/,
+like($css, qr/#jawn_soft_keyboard\.soft_kb_calc\.soft_kb_floating:focus-within \{[^}]*box-shadow: 0 0 0 2px color-mix\(in srgb, var\(--accent, #3b7ddd\) 40%, transparent\), var\(--soft-kb-shadow\);/,
+	'the calculator wears a soft accent glow while it owns the keypad');
+like($css, qr/--soft-kb-shadow: 0 18px 44px rgba\(0, 0, 0, \.32\), 0 2px 8px rgba\(0, 0, 0, \.18\);/,
+	'the floating shadow is kept under the glow');
+like($help, qr/wears a soft accent glow while it owns the keypad/,
 	'and the keyboard topic says so');
 
 # --- the bar can actually start a drag ---------------------------------------
