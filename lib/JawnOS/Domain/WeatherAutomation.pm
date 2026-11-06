@@ -172,12 +172,16 @@ sub weather_observe_record($weather, $opts) {
 	return { skipped => 'no condition' }
 		unless ref $weather eq 'HASH' && length($weather->{'current'}{'condition'} // '');
 	my $condition = $weather->{'current'}{'condition'};
+	# The measure engine stores text through unformat_name; remember the same
+	# shape, or a provider that says Cloudy once and cloudy the next time reads
+	# as a change and writes (and re-runs the rules) on every load.
+	my $state = &subs::unformat_name($condition);
 	my $am = &weather_observe_prepare();
 	my $rules = &weather_automation_rules($am);
 	return { skipped => 'no rules', condition => $condition } unless @{$rules};
 	my $last = eval { &cache_get({ app => 'weather', context => 'observe', subcontext => 'last' }) } || {};
 	my $now = &rightNow();
-	my $changed = (($last->{'condition'} // '') ne $condition);
+	my $changed = (($last->{'condition'} // '') ne $state);
 	my $due = !$last->{'at'} || $now - $last->{'at'} >= 30 * 60 * 1000;
 	return {
 		skipped => 'waiting',
@@ -199,7 +203,7 @@ sub weather_observe_record($weather, $opts) {
 	return { error => &subs::ui('The observation was not recorded.'), condition => $condition }
 		unless $uuid;
 	&cache_set({ app => 'weather', context => 'observe', subcontext => 'last', warranty => '-1d' }, {
-		condition => $condition,
+		condition => $state,
 		at => $now,
 		changed_at => $changed ? $now : ($last->{'changed_at'} || $now),
 	});

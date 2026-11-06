@@ -354,6 +354,9 @@ is(scalar @{ subs::weather_automation_matches($rules, 'Partly Cloudy') }, 0, 'a 
 	my $again = subs::weather_observe_record({ current => { condition => 'Light Rain' } }, {});
 	is($again->{'skipped'}, 'waiting', 'the same condition is not written again inside the window');
 
+	my $case = subs::weather_observe_record({ current => { condition => 'LIGHT RAIN' } }, {});
+	is($case->{'skipped'}, 'waiting', 'a case change is not a new condition');
+
 	$now += 31 * 60 * 1000;
 	my $later = subs::weather_observe_record({ current => { condition => 'Light Rain' } }, {});
 	is($later->{'ok'}, 1, 'the same condition is written again after the window');
