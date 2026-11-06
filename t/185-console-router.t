@@ -8,6 +8,7 @@ use FindBin;
 use lib "$FindBin::Bin/lib", "t/lib";
 use Test::More;
 use Cwd qw(abs_path);
+use File::Find qw(find);
 
 my $root = abs_path("$FindBin::Bin/..");
 
@@ -43,6 +44,31 @@ like($part31, qr/cmd => 'smsMms'/, 'sms mms is a command object');
 
 my $render = source('lib/JawnOS/Domain/Render.pm');
 like($render, qr/console_command\('terminalJs', \$command\)/, 'the terminal is the named JS command');
+
+# Every console send is a command object now. A string literal in `console =>`
+# is the legacy shape the router only just tolerates, so it must not come back.
+my (@console_strings, %used_commands);
+find({ no_chdir => 1, wanted => sub {
+	return unless /\.(?:pm|pl)$/;
+	open(my $fh, '<', $_) or return;
+	while (my $line = <$fh>) {
+		next if $line =~ /^\s*#/;
+		push @console_strings, "$File::Find::name: $line"
+			if $line =~ /console\s*=>\s*(\S)/ && index('&${(', $1) < 0;
+		while ($line =~ /console_command\(\s*'([A-Za-z][A-Za-z0-9_]*)'/g) {
+			$used_commands{$1} = 1;
+		}
+	}
+	close $fh;
+}}, "$root/lib", "$root/perl");
+
+is(scalar @console_strings, 0, 'no console send carries a JS string any more')
+	or diag(@console_strings[0 .. ($#console_strings > 4 ? 4 : $#console_strings)]);
+
+my %table = map { /^\t([A-Za-z_][A-Za-z0-9_]*):\s*function/ ? ($1 => 1) : () } split /\n/, $router;
+my @missing = sort grep { !$table{$_} } keys %used_commands;
+is(scalar @missing, 0, 'every console command sent by the server is in the router table')
+	or diag("missing from the table: @missing");
 
 # The matrix runs only where node is available; the suite stays runnable without it.
 my $node = $ENV{'JAWNOS_NODE'} || '';

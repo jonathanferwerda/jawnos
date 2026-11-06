@@ -173,7 +173,7 @@ sub delete_app($app,$uuid,$server_time,$reason,$silent = 0) {
 	# on its way past, so a result read after it comes back empty. Fetched late,
 	# this sub only ever removed the appointment from the page, never the table.
 	my $appts = &subs::db_select('appointments', undef, { uuid => $uuid, app => $app })->hashes;
-	&Websocket::send($app, { console => '$(\'appointment_detail[app="' . $app . '"][uuid="' . $uuid . '"]\').remove();'});
+	&Websocket::send($app, { console => &Websocket::console_command('removeAppointmentDetail', $app, $uuid)});
 	my $status = '';
 	if (scalar @{$appts} > 0) {
 
@@ -199,7 +199,7 @@ sub delete_app($app,$uuid,$server_time,$reason,$silent = 0) {
 						$log->info('got the mail_uuid ' . $f->{'mail_uuid'});
 
 						&subs::db_delete('mailbox', { uuid => $f->{'mail_uuid'} });
-						&Websocket::send('tab', { console => '$(\'.mailbox_message[uuid="' . $f->{'mail_uuid'} . '"]\').remove();' });
+						&Websocket::send('tab', { console => &Websocket::console_command('removeMailbox', $f->{'mail_uuid'})});
 					#	&subs::deletion_registration({ table => 'mailbox', uuid => $f->{'mail_uuid'}, scope => 'single', server_time => $f->{'server_time'} });
 					}
 				}
@@ -229,7 +229,7 @@ sub delete_app($app,$uuid,$server_time,$reason,$silent = 0) {
 			next if $so_seen{ $so->{'uuid'} }++;
 			&delete_app($so->{'app'},$so->{'uuid'},$so->{'server_time'},'late source deletion');
 		}
-		&Websocket::send('tab', { console => '$(\'.appointment_detail[app="' . $app . '"][uuid="' . $uuid . '"]\').remove();'});
+		&Websocket::send('tab', { console => &Websocket::console_command('removeAppointmentDetail', $app, $uuid)});
 		&deletion_registration({ table => 'appointments', app => $app, uuid => $uuid, scope => 'single', server_time => $server_time });
 		&subs::vacuum($app) unless $silent;
 		&subs::log_writer('deletion ' . $app . ' '  . $reason);
@@ -273,7 +273,7 @@ sub invoice_payment_deleter($uuid) {
 		# balance was restored without the document reopening.
 		&subs::db_update('appointments', { data => encode_json($data), status => $inv_status, server_time => &subs::rightNow() }, { app => $inv->{'app'}, uuid => $inv->{'uuid'} });
 		$log->info('payment of ' . $reversed . ' reversed on ' . $inv->{'app'} . ' ' . $inv->{'uuid'} . ' (deleted ' . $uuid . ')');
-		&Websocket::send('server', { console => 'appointmentDetailGrabber(\'' . $inv->{'app'} . '\',\'' . $inv->{'uuid'} .'\');' });
+		&Websocket::send('server', { console => &Websocket::console_command('appointmentDetailGrabber', $inv->{'app'}, $inv->{'uuid'})});
 	}
 }
 
@@ -380,7 +380,7 @@ sub delete_file($data) {
 		&delete_app($app,$app_uuid,$appt->{'server_time'},'file deletion');
 	}
 	&subs::db_update('appointments', { server_time => &subs::rightNow(), file => $jfiles }, { app => $app, uuid => $app_uuid });
-	&Websocket::send('tab', { console => 'appointmentDetailGrabber(\'' . $app . '\',\'' . $app_uuid .'\');'});
+	&Websocket::send('tab', { console => &Websocket::console_command('appointmentDetailGrabber', $app, $app_uuid)});
 	&deletion_registration({ table => 'appointments', app => $app, uuid => $app_uuid, file_uuid => $file_uuid, scope => 'file', server_time => $appt->{'server_time'} });
 }
 

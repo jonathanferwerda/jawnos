@@ -415,7 +415,7 @@ sub manager_reset($c) {
 					else { $type = 'record'; };
 				}
 				elsif ($seen eq 'yes' && !$schedules_stop) {
-					&Websocket::send('music', { console => 'jpStop(\'' . $o->{'app'} . '\',\'' . $data->{'recorder'} . '\',\'' . $o->{'uuid'} . '\');' });
+					&Websocket::send('music', { console => &Websocket::console_command('jpStop', $o->{'app'}, $data->{'recorder'}, $o->{'uuid'})});
 				}
 			}
 			# The phone sends its remembered duration field on every press, so a live
@@ -561,13 +561,13 @@ sub manager_reset($c) {
 						&budget_runner($so->{'app'});
 
 						&subs::intelligent_automation_toggle({ appt_uuid => $so->{'uuid'}, app => $so->{'app'}, 'state' => 'off', timestamp => $ts });
-						&Websocket::send('tab', { console => 'appointmentDetailGrabber(\'' . $so->{'app'} . '\',\'' . $so->{'uuid'} .'\');'});
+						&Websocket::send('tab', { console => &Websocket::console_command('appointmentDetailGrabber', $so->{'app'}, $so->{'uuid'})});
 					}
 				}
 				&subs::source_header_printer([ keys %child_apps ], $timestamp);
 			}
 
-			&Websocket::send('server', { console => 'appointmentDetailGrabber(\'' . $app . '\',\'' . $o->{'uuid'} . '\');' });
+			&Websocket::send('server', { console => &Websocket::console_command('appointmentDetailGrabber', $app, $o->{'uuid'})});
 		}
 
 		# A stop names one row, but a replayed start may have left an open twin
@@ -638,7 +638,7 @@ sub manager_reset($c) {
 				$child_apps{ $so->{'app'} } = 1;
 				&budget_runner($so->{'app'});
 				&subs::intelligent_automation_toggle({ appt_uuid => $so->{'uuid'}, app => $so->{'app'}, 'state' => 'off', timestamp => $so->{'timestamp'} });
-				&Websocket::send('tab', { console => 'appointmentDetailGrabber(\'' . $so->{'app'} . '\',\'' . $so->{'uuid'} .'\');'});
+				&Websocket::send('tab', { console => &Websocket::console_command('appointmentDetailGrabber', $so->{'app'}, $so->{'uuid'})});
 			}
 		}
 		&subs::source_header_printer([ keys %child_apps ], $timestamp);
@@ -770,7 +770,7 @@ sub manager_reset($c) {
 			my $websockets = &subs::db_query('select * from websockets where windows like ? and server_time > ? and windows is not null order by timestamp DESC',
 				'%app":"' . $app . '%', $server_time - 5000)->hashes;
 			if (scalar @{$websockets} > 0) {
-				&Websocket::send('server', { console => 'appointmentDetailGrabber(\'' . $app . '\',\'' . $same->{'uuid'} .'\');'});
+				&Websocket::send('server', { console => &Websocket::console_command('appointmentDetailGrabber', $app, $same->{'uuid'})});
 			}
 		}
 	}
@@ -814,7 +814,7 @@ elsif ($type eq 'delay') {
 				&subs::db_update('appointments', { type => 'start', timestamp => $timestamp, duration => $duration, server_time => $server_time }, { source_uuid => $so->{'source_uuid'}, uuid => $so->{'uuid'}, app => $so->{'app'} });
 				$child_apps{ $so->{'app'} } = 1;
 				&budget_runner($so->{'app'});
-				&Websocket::send('tab', { console => 'appointmentDetailGrabber(\'' . $so->{'app'} . '\',\'' . $so->{'uuid'} .'\');'});
+				&Websocket::send('tab', { console => &Websocket::console_command('appointmentDetailGrabber', $so->{'app'}, $so->{'uuid'})});
 			}
 		}
 		&subs::source_header_printer([ keys %child_apps ], $timestamp);
@@ -850,7 +850,7 @@ elsif ($type eq 'delay') {
 			push @{$sources}, @{&subs::db_select('appointments', undef, { source_uuid => $so->{'uuid'} })->hashes};
 			&subs::db_update('appointments', { type => 'pause', status => 'paused', timestamp => $timestamp, duration => $duration, server_time => $server_time }, { source_uuid => $so->{'source_uuid'}, uuid => $so->{'uuid'}, app => $so->{'app'} });
 			$child_apps{ $so->{'app'} } = 1;
-			&Websocket::send('tab', { console => 'appointmentDetailGrabber(\'' . $so->{'app'} . '\',\'' . $so->{'uuid'} .'\');'});
+			&Websocket::send('tab', { console => &Websocket::console_command('appointmentDetailGrabber', $so->{'app'}, $so->{'uuid'})});
 		}
 		&subs::source_header_printer([ keys %child_apps ], $timestamp);
 	}
@@ -907,7 +907,7 @@ elsif ($type eq 'delay') {
 					$child_apps{ $so->{'app'} } = 1;
 					&budget_runner($so->{'app'});
 					&subs::intelligent_automation_toggle({ appt_uuid => $so->{'uuid'}, app => $so->{'app'}, 'state' => 'on', timestamp => $so->{'timestamp'} });
-					&Websocket::send('tab', { console => 'appointmentDetailGrabber(\'' . $so->{'app'} . '\',\'' . $so->{'uuid'} .'\');'});
+					&Websocket::send('tab', { console => &Websocket::console_command('appointmentDetailGrabber', $so->{'app'}, $so->{'uuid'})});
 				}
 			}
 			&subs::source_header_printer([ keys %child_apps ], $timestamp);
@@ -1077,7 +1077,7 @@ elsif ($type eq 'delay') {
 	if ($measure_is_open eq 'true' && ($type eq 'start' || $type eq 'usual')) {
 		&appt_measure_writer($c,{ app => $app, uuid => $uuid, timestamp => $timestamp });
 	}
-	&Websocket::send('tab', { console => 'appointmentDetailGrabber(\'' . $app . '\',\'' . $uuid .'\');'});
+	&Websocket::send('tab', { console => &Websocket::console_command('appointmentDetailGrabber', $app, $uuid)});
 
 	# The header is already on the wire. A schedule the press typed itself answers
 	# in the reply (it may need a clarifying question); the app's usual schedule

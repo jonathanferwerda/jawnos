@@ -1,4 +1,4 @@
-# tests-for: lib/JawnOS/Controller/js_misc.pm lib/JawnOS/Controller/manager_misc7.pm lib/JawnOS/Domain/Calendar.pm lib/JawnOS/Manager/Part21.pm
+# tests-for: lib/JawnOS/Controller/js_misc.pm lib/JawnOS/Controller/manager_misc7.pm lib/JawnOS/Domain/Calendar.pm lib/JawnOS/Manager/Part21.pm public/js/manager/websocket/00_console_router.js
 # covers:    source=ws is the headless/automation read.
 
 use strict;
@@ -23,8 +23,11 @@ my $js_misc = read_file("$root/lib/JawnOS/Controller/js_misc.pm");
 
 like($route, qr/source => \$c->param\('source'\)/,
 	'the centre view hands its source to the grabber');
-like($route, qr/if \(!document\.hidden\) \{ appointmentGrabber/,
-	'a hidden tab is not made to fetch and render the mirror');
+like($route, qr/console_command\('appointmentGrabberIfVisible'/,
+	'a hidden tab is sent the visible-only command');
+my $router = read_file("$root/public/js/manager/websocket/00_console_router.js");
+like($router, qr/appointmentGrabberIfVisible: function \(a\) \{\s*if \(!document\.hidden/,
+	'and that command refuses a hidden tab');
 like($part21, qr/broadcast => \(\(\$data->\{'source'\} \/\/ ''\) eq 'ws' \? 'no' : 'yes'\)/,
 	'the header printer is told whether to broadcast');
 like($calendar, qr/unless \(\(\$data->\{'broadcast'\} \/\/ ''\) eq 'no' \|\| \(\$data->\{'source'\} \/\/ ''\) eq 'ws'\)/,

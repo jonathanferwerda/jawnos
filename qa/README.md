@@ -605,6 +605,26 @@ deliberately not in the nightly set while the JavaScript refactor is in flight.
 The UX loop (`l6`) has its own timer at 05:30 - do not add it to this unit, or a
 20-minute UX run can hold the route/database layers.
 
+### Security audit (04:45)
+
+`scripts/security_audit.pl` reads the tree and the machine and fails on a new
+finding at or above high. It runs as its own unit in the same lane:
+
+```sh
+sudo cp qa/systemd/jawnos-security-audit.service qa/systemd/jawnos-security-audit.timer /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now jawnos-security-audit.timer
+systemctl list-timers jawnos-security-audit.timer
+```
+
+Like the suite, it is gated by `qa/device_target.pl`, runs as `jawn` with the
+repo read-only, and writes `$JAWNOS_QA_ROOT/reports/security/<stamp>/` for
+Configure -> Plat -> QA. Because it is not root, host probes that need root
+(iptables, `/root`, `sshd -T`) are skipped rather than failed; run
+`perl scripts/security_audit.pl` as root to see those. The tree checks always
+run; they cover command execution, injection, path traversal, TLS, secrets,
+firmware OTA and any console send that has gone back to a JS string.
+
 ### Docker compose smoke (04:30)
 
 `qa/docker/smoke.sh` is the nightly test of the container image. It is

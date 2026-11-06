@@ -32,7 +32,7 @@ like($writer, qr/&budget_runner\(\$app->\{'app'\}\) unless \$quiet_child;/,
 	'the budget still runs for a plain call');
 like($writer, qr/&subs::evaluation_run_trigger\(\$app->\{'app'\}, \$app\) unless \$quiet_child;/,
 	'the evaluation trigger still fires for a plain call');
-like($writer, qr/&Websocket::send\('tab', \{ console => 'calculator\(\);' \}\);/,
+like($writer, qr/&Websocket::send\('tab', \{ console => &Websocket::console_command\('calculator'\)\}\);/,
 	'the tab pushes are still there for a plain call');
 unlike($writer, qr/QuietChild|quiet_child\s*=>\s*1/,
 	'the default is not quiet: the flag is opt-in, never set here');
@@ -47,9 +47,9 @@ like($writer, qr/my \$quiet_child = \$app->\{'quiet_child'\};/,
 # appear on screen at once, so a quiet child keeps them. Only the fork and the
 # bookkeeping are skipped (measured on the phone: suppressing the pushes made a
 # started app's options and models look like they never arrived).
-like($writer, qr/\&Websocket::send\('tab', \{ console => 'calculator\(\);' \}\);\s*\n\s*\&Websocket::send\('tab', \{ console => 'appointmentDetailGrabber/,
+like($writer, qr/\&Websocket::send\('tab', \{ console => &Websocket::console_command\('calculator'\)\}\);\s*\n\s*\&Websocket::send\('tab', \{ console => &Websocket::console_command\('appointmentDetailGrabber/,
 	'a quiet child still pushes its own detail redraw');
-unlike($writer, qr/unless \(\$quiet_child\) \{\s*&Websocket::send\('tab', \{ console => 'calculator\(\);' \}\);/,
+unlike($writer, qr/unless \(\$quiet_child\) \{\s*&Websocket::send\('tab', \{ console => &Websocket::console_command\('calculator'\)\}\);/,
 	'the tab pushes are not behind the quiet guard');
 my $row_start = index($writer, "if (\$app->{'type'} eq 'usual'");
 my $fork_at   = index($writer, "{ name => 'centre view' }");

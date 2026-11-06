@@ -1,26 +1,41 @@
 [Unit]
-Description=JawnOS nightly security audit (tree + host)
+Description=JawnOS nightly security audit (tree + host, read-only)
 Documentation=file:/home/jawn/jawnos/docs/AGENTS.md
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=oneshot
-User=root
+User=jawn
 WorkingDirectory=/home/jawn/jawnos
-Environment=HOME=/root
+Environment=HOME=/home/jawn
+# The report lands where Configure -> Plat -> QA reads it.
+Environment=JAWNOS_QA_ROOT=/home/jawn/jawnos-qa
 Environment=JAWNOS_NODE=/home/jawn/.local/opt/node/bin/node
+# The audit only reads git's index; keep it from refreshing a read-only checkout.
+Environment=GIT_OPTIONAL_LOCKS=0
+# The house's nightly work runs on the machine chosen in Configure -> Plat -> QA.
+# The helper exits 0 for the chosen machine (or when no choice is saved, or when
+# this machine cannot read its own identity) and 1 for every other, which skips
+# this unit without marking it failed.
+ExecCondition=/usr/bin/perl /home/jawn/jawnos/qa/device_target.pl
 ExecStart=/usr/bin/perl /home/jawn/jawnos/scripts/security_audit.pl --write-report
+
+# Read the tree and the machine; write only the QA root. Host probes that need
+# root (iptables, /root, sshd -T) are skipped rather than failed, so the nightly
+# run reports what a normal user can see and an operator can rerun it as root.
 Nice=10
 IOSchedulingClass=best-effort
 IOSchedulingPriority=7
 MemoryMax=512M
-CPUQuota=50%
+CPUQuota=100%
 PrivateTmp=yes
 ProtectSystem=strict
 ProtectHome=read-only
-ReadWritePaths=/root/.presidency
+ReadWritePaths=/home/jawn/jawnos-qa
 NoNewPrivileges=yes
+IPAddressDeny=any
+IPAddressAllow=localhost
 StandardOutput=journal
 StandardError=journal
 

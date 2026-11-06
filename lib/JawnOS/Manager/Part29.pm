@@ -251,7 +251,7 @@ sub guide_undo_pop() {
 
 sub guide_refresh_app($app, $uuid) {
 	&subs::appt_header_printer({ app => $app, timestamp => &subs::rightNow() });
-	my $js = 'appointmentDetailGrabber(' . encode_json($app) . ',' . encode_json($uuid) . ');';
+	my $js = &Websocket::console_command('appointmentDetailGrabber', $app, $uuid);
 	&Websocket::send('tab', { console => $js });
 	&Websocket::send('server', { console => $js });
 }
@@ -377,7 +377,7 @@ sub guide_verb_execute($c, $action) {
 	if ($prim eq 'open_app') {
 		my $app = $p{'app'} // '';
 		return 'no app named' unless length $app;
-		my $js = 'if (typeof appWindowOpener === "function") { appWindowOpener(' . encode_json($app) . ', Date.now(), {}); }';
+		my $js = &Websocket::console_command('appWindowOpener', $app);
 		&Websocket::send('server', { console => $js });
 		return 'opened the ' . $app . ' window';
 	}
@@ -426,7 +426,7 @@ sub guide_verb_execute($c, $action) {
 		my $r = help_music_file($c, $p{'query'}, $p{'shuffle'});
 		return 'found nothing to play' unless $r->{'found'};
 		my $list = ($r->{'files'} && scalar @{$r->{'files'}}) ? $r->{'files'} : [ $r->{'file'} ];
-		my $js = 'if (typeof musicToggle === "function") { musicToggle(' . encode_json($list) . ', ' . ($r->{'same_order'} ? 1 : 0) . '); }';
+		my $js = &Websocket::console_command('musicToggle', $list, ($r->{'same_order'} ? 1 : 0));
 		&Websocket::send('server', { console => $js });
 		return scalar(@{$list}) > 1 ? ('now playing ' . scalar(@{$list}) . ' matches') : ('now playing ' . $r->{'title'});
 	}

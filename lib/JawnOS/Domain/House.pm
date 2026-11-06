@@ -992,7 +992,7 @@ sub lan_presence_accept {
 	# remote_machines row; put the new address and version there too and refresh
 	# an open panel in place.
 	my $dev_changed = &lan_presence_note_device($msg, $peer_ip, $mac, $port);
-	eval { &Websocket::send('server', { console => 'deviceLister()' }) } if $changed || $dev_changed;
+	eval { &Websocket::send('server', { console => &Websocket::console_command('deviceLister')}) } if $changed || $dev_changed;
 	# A unicast reply teaches the sender our address too. Android/Termux filters
 	# broadcast reception on Wi-Fi, so the sender's sweep may be the only thing we
 	# heard; the reply is the other half that lets both ends learn each other.

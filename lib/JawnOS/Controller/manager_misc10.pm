@@ -608,7 +608,7 @@ sub action_34548 {
 			day => POSIX::strftime('%Y-%m-%d', localtime($target / 1000)),
 		};
 	}
-	&Websocket::send('tab', { console => 'calculator();' }) if scalar @made;
+	&Websocket::send('tab', { console => &Websocket::console_command('calculator')}) if scalar @made;
 	$c->render(json => { ok => 1, planted => \@made, skipped => $skipped });
 }
 

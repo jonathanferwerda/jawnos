@@ -181,7 +181,7 @@ sub clock_tick {
 		}
 		warn 'clock action: ' . $@ if $@;
 	}
-	&clock_send_console('jawnosClockRefresh();') if $changed;
+	&clock_send_console(&Websocket::console_command('jawnosClockRefresh')) if $changed;
 	return $next;
 }
 

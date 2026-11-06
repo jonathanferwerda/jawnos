@@ -359,7 +359,7 @@ sub remote_command_execute($c, $action) {
 	# a runtime (learned) verb runs through the same primitive executor
 	return guide_verb_execute($c, $action) if grep { $_->{'name'} eq ($a // '') } @{ &help::learned_verbs() };
 	if ($a eq 'open_app' && $action->{'app'}) {
-		my $js = 'if (typeof appWindowOpener === "function") { appWindowOpener(' . encode_json($action->{'app'}) . ', Date.now(), {}); }';
+		my $js = &Websocket::console_command('appWindowOpener', $action->{'app'});
 		&Websocket::send('server', { console => $js });
 		return 'opened the ' . $action->{'app'} . ' window';
 	}
@@ -367,7 +367,7 @@ sub remote_command_execute($c, $action) {
 		my $r = help_music_file($c, $action->{'query'}, $action->{'shuffle'});
 		return 'found nothing to play for "' . $action->{'query'} . '"' unless $r->{'found'};
 		my $list = ($r->{'files'} && scalar @{$r->{'files'}}) ? $r->{'files'} : [ $r->{'file'} ];
-		my $js = 'if (typeof musicToggle === "function") { musicToggle(' . encode_json($list) . ', ' . ($r->{'same_order'} ? 1 : 0) . '); }';
+		my $js = &Websocket::console_command('musicToggle', $list, ($r->{'same_order'} ? 1 : 0));
 		&Websocket::send('server', { console => $js });
 		return scalar(@{$list}) > 1 ? ('now playing ' . scalar(@{$list}) . ' matches') : ('now playing ' . $r->{'title'});
 	}

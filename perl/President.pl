@@ -1732,7 +1732,7 @@ sub utility_functions() {
 						my $sample = &subs::battery_sample();
 						my $cpu = { timestamp => &subs::rightNow(), battery => $sample };
 						&subs::cache_set({ app => '__president', context => 'htop', subcontext => 'current', warranty => '-1d' }, { current => $cpu });
-						&Websocket::send('server', { console => 'htopViewer();' });
+						&Websocket::send('server', { console => &Websocket::console_command('htopViewer')});
 					}
 				}
 			};

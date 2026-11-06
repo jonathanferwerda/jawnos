@@ -55,10 +55,7 @@ sub clock_alarm_cmd {
 		app => $alarm->{'app'},
 		fired_at => $fire_at,
 	};
-	my $json = encode_json($payload);
-	$json =~ s/\x{2028}/\\u2028/g;
-	$json =~ s/\x{2029}/\\u2029/g;
-	&clock_send_console('jawnosClockAlarmRing(' . $json . ');');
+	&clock_send_console(&Websocket::console_command('jawnosClockAlarmRing', $payload));
 	return $payload;
 }
 
@@ -157,10 +154,7 @@ sub clock_timer_finish {
 		seconds => $timer->{'seconds'},
 		ended_at => $timer->{'ends_at'},
 	};
-	my $json = encode_json($payload);
-	$json =~ s/\x{2028}/\\u2028/g;
-	$json =~ s/\x{2029}/\\u2029/g;
-	&clock_send_console('jawnosClockTimerDone(' . $json . ');');
+	&clock_send_console(&Websocket::console_command('jawnosClockTimerDone', $payload));
 
 	my $sound_path = &clock_valid_timer_sound($timer->{'sound'});
 	my $sound = $sound_path;
@@ -512,7 +506,7 @@ sub clock_apply_remote_alarm {
 		&clock_device_dismissed($uuid) if ($op eq 'delete' || !$kept || !$kept->{'ringing'});
 		&clock_write_device_alarm($alarms, $now);
 		&clock_poke($now);
-		&clock_send_console('jawnosClockRefresh();');
+		&clock_send_console(&Websocket::console_command('jawnosClockRefresh'));
 	}
 	return $changed;
 }
@@ -599,7 +593,7 @@ sub clock_control_apply {
 	if ($action eq 'stop_all') { foreach my $a (@{$alarms}) { &clock_alarm_stop_sound($a->{'uuid'}); } }
 	else { &clock_alarm_stop_sound($uuid); }
 	&clock_write_device_alarm($alarms, $now);
-	&clock_send_console('jawnosClockAlarmStop();');
+	&clock_send_console(&Websocket::console_command('jawnosClockAlarmStop'));
 	&clock_device_dismissed($action eq 'stop_all' ? '' : $uuid);
 	&clock_relay($action eq 'snooze' ? 'snooze' : 'dismiss', ($action eq 'stop_all' ? '' : $uuid), $relay_machines,
 		($action eq 'snooze' ? (minutes => $data->{'minutes'} || 5) : ()));

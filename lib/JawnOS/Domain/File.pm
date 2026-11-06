@@ -132,7 +132,7 @@ sub file_encrypter {
 			#&subs::db_query('update appointments set server_time = ?, file = ?, encryption_standard = ? where app= ? and uuid = ?',
 			#	&subs::rightNow(), $file_join, $encryption_standard, $app, $filing->{'uuid'});
 			&subs::db_update('appointments', { server_time => &subs::rightNow(), file => $file_join, encryption_standard => $encryption_standard }, { app => $app, uuid => $filing->{'uuid'} });
-			&Websocket::send('tab', { console => 'appointmentDetailGrabber(\'' . $app . '\',\'' . $filing->{'uuid'} .'\');'});
+			&Websocket::send('tab', { console => &Websocket::console_command('appointmentDetailGrabber', $app, $filing->{'uuid'})});
 		}
 
 	}
@@ -215,7 +215,7 @@ sub file_decrypter {
 		}
 #		&subs::db_query('update appointments set server_time = ?, file = ?, encryption_standard = ? where app= ? and uuid = ?',
 #			&subs::rightNow(), $file_join, undef, $app, $filing->{'uuid'}) if $success == 1;
-		&Websocket::send('tab', { console => 'appointmentDetailGrabber(\'' . $app . '\',\'' . $filing->{'uuid'} .'\');'});
+		&Websocket::send('tab', { console => &Websocket::console_command('appointmentDetailGrabber', $app, $filing->{'uuid'})});
 	}
 }
 
@@ -224,7 +224,7 @@ sub window_closer {
 	my $browser_tab_id = shift;
 	my $timestamp = &subs::rightNow();
 
-	&Websocket::send('server', { browser_tab_id => $browser_tab_id, not_me => 1, console => '$(".' . &subs::html_name($app) . '_close_button").trigger("click");', timestamp => $timestamp });
+	&Websocket::send('server', { browser_tab_id => $browser_tab_id, not_me => 1, console => &Websocket::console_command('closeButton', &subs::html_name($app)), timestamp => $timestamp });
 	undef $gb::ws->{$app}->{$browser_tab_id};
 }
 
@@ -653,7 +653,7 @@ sub vacuum {
 	my $app_q = &db_query('select * from appointments where app=?',$app);
 	my $appts = $app_q->hashes;
 	if (scalar @{$appts} == 0 && &setting_grabber({ app => $app, setting => 'permanent' }) ne 'checked') {
-		&Websocket::send('server', { console => '$(".' . &subs::html_name($app) . '_close_button").trigger("click");', timestamp => $timestamp });
+		&Websocket::send('server', { console => &Websocket::console_command('closeButton', &subs::html_name($app)), timestamp => $timestamp });
 
 		foreach my $t ( qw/appointments tickets settings continent websites tickets cache subcategory option model option_category mailbox websockets/) {
 			&db_query('delete from ' . $t . ' where app=?',$app);
@@ -677,7 +677,7 @@ sub vacuum_app {
 			}
 		}
 	}
-	&Websocket::send('server', { console => '$(".' . &subs::html_name($app) . '_close_button").trigger("click");', timestamp => $timestamp });
+	&Websocket::send('server', { console => &Websocket::console_command('closeButton', &subs::html_name($app)), timestamp => $timestamp });
 	sleep 1;
 	foreach my $t ( qw/appointments tickets settings continent websites tickets cache subcategory option model option_category mailbox websockets/) {
 		&db_query('delete from ' . $t . ' where app=?',$app);

@@ -322,8 +322,9 @@ sub music_video_pump_sync($st, $time, $playing) {
 # always-open `server` channel rather than `music`, so a machine that is not
 # showing the Music window still opens its screen.
 sub music_video_receiver_command($id, $info, $open) {
-	my $cmd = ($open ? 'musicVideoReceiverOpen(' : 'musicVideoReceiverClose(')
-		. encode_json($id) . ($open ? ',' . encode_json($info) : '') . ');';
+	my $cmd = $open
+		? &Websocket::console_command('musicVideoReceiverOpen', $id, $info)
+		: &Websocket::console_command('musicVideoReceiverClose', $id);
 	&Websocket::send('server', { console => $cmd, timestamp => &subs::rightNow() });
 }
 

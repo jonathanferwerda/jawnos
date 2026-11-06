@@ -290,7 +290,7 @@ sub device_mdns_sync {
 	&subs::db_update('devices', { address => encode_json $address, timestamp => $now, server_time => $now }, { hostname => $hostname });
 	# A machine that just joined a network repaints an open Dev panel at once; the
 	# peer beacons handle their own rows in lan_presence_accept.
-	eval { &Websocket::send('server', { console => 'deviceLister()' }) } if $net_changed;
+	eval { &Websocket::send('server', { console => &Websocket::console_command('deviceLister')}) } if $net_changed;
 }
 
 # An address and its netmask as a CIDR: 192.168.2.3 + 255.255.255.0 ->

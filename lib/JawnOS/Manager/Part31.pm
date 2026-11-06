@@ -345,15 +345,7 @@ sub padlock_mark_unlocked {
 		if ($hosted && length $device) {
 			my $token = &media_unlock_store($mode, $device, $tab);
 			if (length $token) {
-				my $js = ($mode eq 'gallery')
-					? '$("#gallery").attr("unlock", "' . $token . '"); imageViewer({ "view":"home" });'
-					: ($mode eq 'music')
-					? '$("#music").attr("unlock", "' . $token . '"); $("#music").show(); $("#music_padlock").hide(); if (typeof searchMusic === "function") { searchMusic(); }'
-					: ($mode eq 'security')
-					? 'if (typeof jawnosSecurityGrant === "function") { jawnosSecurityGrant("' . $token . '"); }'
-					: ($mode eq 'private')
-					? '$("#security_private_padlock").hide(); if (typeof jawnosPrivateRefresh === "function") { jawnosPrivateRefresh(1); }'
-					: '$("#folders").attr("unlock", "' . $token . '"); if (typeof foldersOpener === "function") { foldersOpener(); }';
+				my $js = &Websocket::console_command('mediaUnlock', $mode, $token);
 				# one window's message, so another tab of the same screen stays
 				# shut and no peer is told to drop a token it never held
 				&Websocket::send('server', { console => $js, browser_tab_id => $tab }) if length $tab;
@@ -364,7 +356,7 @@ sub padlock_mark_unlocked {
 		&Websocket::send('server', { padlock_open => 1, mode => $mode, target => $target, timestamp => &subs::rightNow() });
 		# a targeted open is the phone's message to one screen; the console form
 		# would run on every tab, so it is only used for a whole-house open
-		&Websocket::send('server', { console => '$("#padlock_frame").html(""); $("#padlock_frame").hide();$("#everything").show();' }) unless $target;
+		&Websocket::send('server', { console => &Websocket::console_command('padlockFrame')}) unless $target;
 	}
 	# this request has been answered; a device that wakes later must not ask
 	# the person to confirm an unlock that already happened

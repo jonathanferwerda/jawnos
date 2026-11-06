@@ -142,7 +142,7 @@ sub action_6978 {
 		my $joptions = encode_json $options;
 		&subs::db_update('appointments', { options => $joptions, server_time => $server_time }, { app => $app, uuid => $appt_uuid });
 	#}
-	&Websocket::send($app, { console => 'appointmentDetailGrabber(\'' . $appt->{'app'} . '\',\'' . $appt->{'uuid'} .'\');' });
+	&Websocket::send($app, { console => &Websocket::console_command('appointmentDetailGrabber', $appt->{'app'}, $appt->{'uuid'})});
 	$c->render(json => $options);
 
 }
@@ -337,7 +337,7 @@ sub action_8308 {
 	$data->{'numbers'}->{'balance'} = $new_balance;
 	my $status = $new_balance <= 0 ? 'completed' : 'open';
 	&subs::db_update('appointments', { data => encode_json($data), status => $status, server_time => $server_time }, { uuid => $uuid, app => $app });
-	&Websocket::send('server', { console => "appointmentDetailGrabber('" . $app . "','" . $uuid . "');" });
+	&Websocket::send('server', { console => &Websocket::console_command('appointmentDetailGrabber', $app, $uuid)});
 	$c->render(json => {
 		ok => 1,
 		payment => { %{$payment}, proof => undef },

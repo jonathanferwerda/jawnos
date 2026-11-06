@@ -261,7 +261,7 @@ sub lan_navigation_accept {
 		warranty => &subs::navigation_hold_warranty({ timestamp => $fix_time, server_time => $now }),
 	});
 	&subs::cache_delete({ app => 'travel', context => 'navigation_information', subcontext => $me });
-	eval { &Websocket::send('tab', { console => 'jawnosContinentAt = 0; if (typeof startMenuHtmlFlush == "function") { startMenuHtmlFlush(); }' }) };
+	eval { &Websocket::send('tab', { console => &Websocket::console_command('startMenuRefresh')}) };
 	our %navigation_share_seen;
 	if (($navigation_share_seen{$sig} || 0) < $now - 300000) {
 		$navigation_share_seen{$sig} = $now;
@@ -726,7 +726,7 @@ sub tunnel_starter {
 		}
 	}
 	sleep 1;
-	&Websocket::send('server', { console => 'tunnelLister()' });
+	&Websocket::send('server', { console => &Websocket::console_command('tunnelLister')});
 }
 
 sub tunnel_stopper {
@@ -763,7 +763,7 @@ sub tunnel_stopper {
 	}
 	my $c = &subs::controller_builder();
 	my $tl = $c->render_to_string(template => 'configure/tunnel_list');
-	&Websocket::send('server', { console => 'tunnelLister()' });
+	&Websocket::send('server', { console => &Websocket::console_command('tunnelLister')});
 }
 
 1;

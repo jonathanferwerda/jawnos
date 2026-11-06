@@ -663,7 +663,7 @@ sub email_receiver {
 						}
 						&subs::file_encrypter({ app => $ca->{'app'}, timestamp => $timestamp, suds => &subs::suds_grabber() });
 						&subs::appt_header_printer({ app => $ca->{'app'} });
-						&Websocket::send('server', { console => 'appointmentDetailGrabber(\'' . $ca->{'app'} . '\',\'' . $app_uuid .'\');'});
+						&Websocket::send('server', { console => &Websocket::console_command('appointmentDetailGrabber', $ca->{'app'}, $app_uuid)});
 						$entity->purge;
 
 					}

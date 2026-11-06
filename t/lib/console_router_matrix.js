@@ -39,7 +39,14 @@ const cases = [
  ["$('#embedded_ota_uploader_wait').show()", 'show', ['embedded_ota_uploader_wait']],
  ["jawnosMediaLockdown(\"private\")", 'jawnosMediaLockdown', ['private']],
  ["appWindowOpener(\"music\", 123, {})", 'appWindowOpener', ['music',123,{}]],
- ["musicToggle([\"a\",\"b\"], 1)", 'musicToggle', [['a','b'],1]]
+ ["musicToggle([\"a\",\"b\"], 1)", 'musicToggle', [['a','b'],1]],
+ [{cmd:'appointmentGrabber', args:['house','123']}, 'appointmentGrabber', ['house','123']],
+ [{cmd:'appointmentDetailGrabber', args:['house','u1']}, 'appointmentDetailGrabber', ['house','u1']],
+ [{cmd:'mediaUnlock', args:['music','tok']}, 'mediaUnlock', ['music','tok']],
+ [{cmd:'setAppointmentAttr', args:['house','status','on']}, 'setAppointmentAttr', ['house','status','on']],
+ [{cmd:'otaUploaderPercent', args:['uploading','42%']}, 'otaUploaderPercent', ['uploading','42%']],
+ [{cmd:'jawnosClockAlarmRing', args:[{uuid:'a1'}]}, 'jawnosClockAlarmRing', [{uuid:'a1'}]],
+ [{cmd:'ticketList', args:[]}, 'ticketList', []]
 ];
 let fail=0;
 for (const [s,cmd,args] of cases) {
@@ -47,9 +54,9 @@ for (const [s,cmd,args] of cases) {
   try { assert(r.ok, 'not accepted: '+s); assert.strictEqual(r.calls[0][0], cmd, 'cmd for '+s); assert.deepStrictEqual(r.calls[0][1], args, 'args for '+s); }
   catch(e){ fail++; console.log('FAIL', e.message, '=>', JSON.stringify(r)); }
 }
-for (const bad of ['alert(1);', "$('body').remove();", 'eval("x")', 'constructor()']) {
+for (const bad of ['alert(1);', "$('body').remove();", 'eval("x")', 'constructor()', {cmd:'alert', args:['1']}, {cmd:'constructor', args:[]}]) {
   const r=run(bad);
-  if (r.ok) { fail++; console.log('FAIL accepted bad:', bad); }
+  if (r.ok) { fail++; console.log('FAIL accepted bad:', JSON.stringify(bad)); }
 }
 console.log(fail ? ('FAILURES '+fail) : 'router-ok '+cases.length);
 process.exit(fail?1:0);

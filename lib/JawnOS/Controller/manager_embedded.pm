@@ -262,9 +262,9 @@ sub action_43561 {
     $ua->transactor->add_generator(stream => sub ($transactor, $tx, $path) {
       $tx->req->content->asset(Mojo::Asset::File->new(path => $file));
     });
-		&Websocket::send('tab', { console => '$(\'#embedded_ota_uploader_wait\').show()', browser_tab_id => $c->param('browser_tab_id') });
-		&Websocket::send('tab', { console => '$(\'#embedded_ota_uploader_fail\').hide()', browser_tab_id => $c->param('browser_tab_id') });
-		&Websocket::send('tab', { console => '$(\'#embedded_ota_uploader_success\').hide()', browser_tab_id => $c->param('browser_tab_id') });
+		&Websocket::send('tab', { console => &Websocket::console_command('show', 'embedded_ota_uploader_wait'), browser_tab_id => $c->param('browser_tab_id') });
+		&Websocket::send('tab', { console => &Websocket::console_command('hide', 'embedded_ota_uploader_fail'), browser_tab_id => $c->param('browser_tab_id') });
+		&Websocket::send('tab', { console => &Websocket::console_command('hide', 'embedded_ota_uploader_success'), browser_tab_id => $c->param('browser_tab_id') });
 		$ua->inactivity_timeout(120000);
 			# The board's raw upload path does not parse query arguments, so the
 			# authorization must also ride a header the board collects. A board on
@@ -272,12 +272,12 @@ sub action_43561 {
 			my $res = $ua->insecure(1)->post($watch_home => { authorization => $auth } => stream => $file)->result;
 
 		if ($res->is_success) {
-			&Websocket::send('tab', { console => '$(\'#embedded_ota_uploader_wait\').hide()', browser_tab_id => $c->param('browser_tab_id') });
-			&Websocket::send('tab', { console => '$(\'#embedded_ota_uploader_success\').show()', browser_tab_id => $c->param('browser_tab_id') });
+			&Websocket::send('tab', { console => &Websocket::console_command('hide', 'embedded_ota_uploader_wait'), browser_tab_id => $c->param('browser_tab_id') });
+			&Websocket::send('tab', { console => &Websocket::console_command('show', 'embedded_ota_uploader_success'), browser_tab_id => $c->param('browser_tab_id') });
 		}
 		else {
-			&Websocket::send('tab', { console => '$(\'#embedded_ota_uploader_wait\').hide()', browser_tab_id => $c->param('browser_tab_id') });
-			&Websocket::send('tab', { console => '$(\'#embedded_ota_uploader_fail\').show()', browser_tab_id => $c->param('browser_tab_id') });
+			&Websocket::send('tab', { console => &Websocket::console_command('hide', 'embedded_ota_uploader_wait'), browser_tab_id => $c->param('browser_tab_id') });
+			&Websocket::send('tab', { console => &Websocket::console_command('show', 'embedded_ota_uploader_fail'), browser_tab_id => $c->param('browser_tab_id') });
 		}
 
 

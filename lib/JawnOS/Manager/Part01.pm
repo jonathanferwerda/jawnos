@@ -152,7 +152,7 @@ sub record_video_stop($data) {
 			uuid => $uuid
 		});
 		sleep 2;
-		&Websocket::send('server', { console => 'appointmentDetailGrabber(\'' . $app . '\',\'' . $uuid .'\');'});
+		&Websocket::send('server', { console => &Websocket::console_command('appointmentDetailGrabber', $app, $uuid)});
 		&subs::file_encrypter({ app => $app });
 	}
 	return $filename;
@@ -205,7 +205,7 @@ sub record_audio_stop($data) {
 			app => $app,
 			uuid => $uuid
 		});
-		&Websocket::send('server', { console => 'appointmentDetailGrabber(\'' . $app . '\',\'' . $uuid .'\');'});
+		&Websocket::send('server', { console => &Websocket::console_command('appointmentDetailGrabber', $app, $uuid)});
 		&subs::file_encrypter({ app => $app });
 	}
 	return $filename;

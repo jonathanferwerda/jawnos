@@ -642,11 +642,11 @@ sub qa_reports_root {
 	return &subs::home('~/jawnos-qa') . '/reports';
 }
 
-# Every kind a job can leave: the installer check (nightly), the weekly build
-# and the emulator run (manual). The order is the card's order when two runs
-# share a stamp.
+# Every kind a job can leave: the installer check, the security audit and the
+# full suite (nightly), the weekly build and the emulator run (manual). The
+# order is the card's order when two runs share a stamp.
 sub qa_report_kinds {
-	return qw(installers build emulator);
+	return qw(installers security build emulator);
 }
 
 sub qa_reports_list {

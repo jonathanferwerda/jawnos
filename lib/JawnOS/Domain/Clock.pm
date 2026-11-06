@@ -663,9 +663,9 @@ sub clock_state {
 }
 
 sub clock_send_console {
-	my $script = shift;
-	return unless defined $script && length $script;
-	eval { &Websocket::send('tab', { console => $script, timestamp => &rightNow() }); };
+	my $console = shift;
+	return unless ref $console eq 'HASH';
+	eval { &Websocket::send('tab', { console => $console, timestamp => &rightNow() }); };
 	return 1;
 }
 

@@ -162,13 +162,13 @@ sub appt_measure_writer($c,$data) {
 		}
 
 		if ($data->{'source'} eq 'embedded') {
-			&Websocket::send('tab', { console => '$(\'.appointment[app="' . $app . '"]\').find(\'.app_measure[measure="' . $measure . '"]\').val(\'' . $app_measure->{$measure} . '\');' });
+			&Websocket::send('tab', { console => &Websocket::console_command('setMeasure', $app, $measure, $app_measure->{$measure})});
 		}
 		my $adata = { appt_uuid => $uuid, app => $app, type => $appt_measure->{$measure}->{'type'}, 'state' => $state, measurement => $app_measure->{$measure}, measure => $measure, timestamp => $timestamp, remote_address => $remote_address };
 		&subs::intelligent_automation_toggle($adata);
 		&appt_measure_action({ appt_uuid => $uuid, uuid => $app_measure->{'uuid'}, appt_measure => $appt_measure->{$measure}, value => $value, 'state' => $state, measure => $measure, timestamp => $timestamp });
-		&Websocket::send('tab', { console => 'appointmentDetailGrabber(\'' . $app . '\',\'' . $uuid .'\');'});
-		&Websocket::send('tab', { console => 'continent_record({\'uuid\':\'' . $uuid . '\', \'app\':\'' . $app .'\',\'purpose\':\'app\',\'timestamp\':\'' . $timestamp . '\',\'navigation\':"once" });' });
+		&Websocket::send('tab', { console => &Websocket::console_command('appointmentDetailGrabber', $app, $uuid)});
+		&Websocket::send('tab', { console => &Websocket::console_command('continentRecord', { uuid => $uuid, app => $app, purpose => 'app', timestamp => $timestamp, navigation => 'once' })});
 		&global_appt_measure_writer({
 			app => $app,
 			measure => $measure,
@@ -184,7 +184,7 @@ sub global_appt_measure_writer($data) {
 		if ($measures->{$m}->{'app'} eq $data->{'app'}) {
 			if ($measures->{$m}->{'app_measure'} eq $data->{'measure'}) {
 				$measures->{$m}->{'pv'} = $data->{'value'};
-				&Websocket::send('tab', { console => '$(\'.measures_pv[app="' . $data->{'app'} . '"][measure="' . $data->{'measure'} . '"]\').text(\'' . $data->{'value'} . '\');' });
+				&Websocket::send('tab', { console => &Websocket::console_command('setMeasuresPv', $data->{'app'}, $data->{'measure'}, $data->{'value'})});
 			}
 		}
 	}

@@ -372,7 +372,7 @@ sub action_25772 {
 		},
 		{ uuid => $uuid, app => $app });
 		&subs::file_encrypter({ app => $app, timestamp => $timestamp, suds => &subs::session_suds($c) });
-		&Websocket::send('tab', { console => 'appointmentDetailGrabber(\'' . $app . '\',\'' . $uuid .'\');'});
+		&Websocket::send('tab', { console => &Websocket::console_command('appointmentDetailGrabber', $app, $uuid)});
 	}
 	if ($duty eq 'save') {
 		my $data = read_file($sd);
@@ -407,7 +407,7 @@ sub action_25772 {
 		},
 		{ uuid => $uuid, app => $app });
 		&subs::file_encrypter({ app => $app, timestamp => $timestamp, suds => &subs::session_suds($c) });
-		&Websocket::send('tab', { console => 'appointmentDetailGrabber(\'' . $app . '\',\'' . $uuid .'\');'});
+		&Websocket::send('tab', { console => &Websocket::console_command('appointmentDetailGrabber', $app, $uuid)});
 	}
 	else {
 		$returner->{'image'} = 'data:' . $job->{'fd'} . ';base64,' . encode_base64 read_file($sd);
@@ -480,7 +480,7 @@ sub action_25928 {
 			# 40-49 KB fetch and render that stole the main thread from the tab
 			# the person is actually using. Visible windows (including a second
 			# monitor) still mirror.
-			&Websocket::send('tab', { browser_tab_id => $c->param('browser_tab_id'), not_me => 1, console => 'if (!document.hidden) { appointmentGrabber(\'' . $app->{'name'} . '\',\'' . $timestamp .'\',\'ws\'); }' });
+			&Websocket::send('tab', { browser_tab_id => $c->param('browser_tab_id'), not_me => 1, console => &Websocket::console_command('appointmentGrabberIfVisible', $app->{'name'}, $timestamp)});
 		}
 	#	&Websocket::send('tab', { browser_tab_id => $c->stash('browser_tab_id'), app => $app, window => $window, timestamp => $timestamp, not_me => 1 });
 		$c->render(text => $window);

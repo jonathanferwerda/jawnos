@@ -184,7 +184,7 @@ sub action_47050 {
 							&subs::db_update('appointments', { server_time => &subs::rightNow(), type => 'start', stop_seen => undef, stop_timestamp => undef }, { uuid => $appt->{'uuid'}, app => $appt->{'app'} });
 							&subs::intelligent_automation_toggle({ appt_uuid => $appt->{'uuid'}, app => $appt->{'app'}, 'state' => 'on', timestamp => $timestamp });
 							&subs::appt_header_printer({ app => $appt->{'app'} });
-							&Websocket::send('server', { console => 'appointmentDetailGrabber(\'' . $appt->{'app'} . '\',\'' . $appt->{'uuid'} .'\');'});
+							&Websocket::send('server', { console => &Websocket::console_command('appointmentDetailGrabber', $appt->{'app'}, $appt->{'uuid'})});
 							my $sources = &subs::db_select('appointments', undef, { source_uuid => $appt->{'uuid'} })->hashes;
 							my %so_seen;
 							my %child_apps;
@@ -197,7 +197,7 @@ sub action_47050 {
 									$child_apps{ $so->{'app'} } = 1;
 									&budget_runner($so->{'app'});
 									&subs::intelligent_automation_toggle({ appt_uuid => $so->{'uuid'}, app => $so->{'app'}, 'state' => 'on', timestamp => $timestamp });
-									&Websocket::send('tab', { console => 'appointmentDetailGrabber(\'' . $so->{'app'} . '\',\'' . $so->{'uuid'} .'\');'});
+									&Websocket::send('tab', { console => &Websocket::console_command('appointmentDetailGrabber', $so->{'app'}, $so->{'uuid'})});
 								}
 							}
 							&subs::source_header_printer([ keys %child_apps ], $timestamp);
@@ -485,7 +485,7 @@ sub action_47050 {
 			my $lockdown_key = ($browser_tab_id || '') . "\x1f" . ($uuid || '');
 			if (!defined $ws_lockdown_state{$lockdown_key} || $ws_lockdown_state{$lockdown_key} != $lockdown) {
 				$ws_lockdown_state{$lockdown_key} = $lockdown;
-				&Websocket::send('server', { console => '$("#start_menu").toggleClass("lockdown", ' . ($lockdown ? 'true' : 'false') . ');', browser_tab_id => $browser_tab_id });
+				&Websocket::send('server', { console => &Websocket::console_command('toggleLockdown', ($lockdown ? 1 : 0)), browser_tab_id => $browser_tab_id });
 				if ($lockdown) {
 					$ws_lockdown_swept{$lockdown_key} = $server_time;
 					eval { &subs::lockdown_sweep({ browser_tab_id => $browser_tab_id, force => 1 }) };
@@ -687,7 +687,7 @@ sub action_47050 {
 							app => $appt->{'app'}
 						});
 						&subs::appt_header_printer({ app => $appt->{'app'} });
-						&Websocket::send('server', { console => 'appointmentDetailGrabber(\'' . $appt->{'app'} . '\',\'' . $appt->{'uuid'} .'\');'});
+						&Websocket::send('server', { console => &Websocket::console_command('appointmentDetailGrabber', $appt->{'app'}, $appt->{'uuid'})});
 					}
 				}
 			}

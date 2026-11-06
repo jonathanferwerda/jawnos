@@ -242,7 +242,7 @@ sub action_16986 {
 					$inv->{'status'} = 'completed';
 				}
 				&subs::db_update('appointments', $inv, { uuid => $inv->{'uuid'}, app => $inv->{'app'} });
-				&Websocket::send('server', { console => 'appointmentDetailGrabber(\'' . $vendor . '\',\'' . $inv->{'uuid'} .'\');'});
+				&Websocket::send('server', { console => &Websocket::console_command('appointmentDetailGrabber', $vendor, $inv->{'uuid'})});
 			}
 		}
 		if ($vendor && $record_vendor eq 'on') {
@@ -498,7 +498,7 @@ sub action_16986 {
 #	&Websocket::send('tab', { app => $app, window => $cv, timestamp => $timestamp });
 	&budget_runner($app);
 
-	&Websocket::send('server', { console => 'appointmentDetailGrabber(\'' . $app . '\',\'' . $uuid .'\');'});
+	&Websocket::send('server', { console => &Websocket::console_command('appointmentDetailGrabber', $app, $uuid)});
 	$returner->{'cv'} = '';#&window_maker({ user_agent => $c->param('user_agent'), app => $app, contents => $content }, $timestamp);
 
 	# a press that starts, stops, records, resumes, pauses or delays can change

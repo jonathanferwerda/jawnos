@@ -558,7 +558,7 @@ sub private_relock {
 			&subs::window_closer($open_app, $tab);
 		}
 	}
-	&Websocket::send('server', { console => 'jawnosPrivateRefresh(0);', browser_tab_id => $tab }) if length $tab;
+	&Websocket::send('server', { console => &Websocket::console_command('jawnosPrivateRefresh', 0), browser_tab_id => $tab }) if length $tab;
 	return 1;
 }
 

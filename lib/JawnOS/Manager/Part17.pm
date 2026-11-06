@@ -527,7 +527,7 @@ sub merge_finish {
 		next unless ref $u eq 'HASH' && $u->{'app'};
 		&budget_runner($u->{'app'});
 		&subs::appt_header_printer({ app => $u->{'app'}, timestamp => &subs::rightNow() });
-		&Websocket::send('tab', { console => 'appointmentDetailGrabber(\'' . $u->{'app'} . '\',\'' . $u->{'uuid'} .'\');' });
+		&Websocket::send('tab', { console => &Websocket::console_command('appointmentDetailGrabber', $u->{'app'}, $u->{'uuid'})});
 		$percentage = sprintf("%.2f", $n / $results_size * 100);
 		$percentage = .0000001 if $percentage == 0;
 		if ($percentage >= $last_percent && $results_size > 1 && &subs::rightNow() >= ($last_alert + 250)) {

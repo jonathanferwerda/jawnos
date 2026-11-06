@@ -347,15 +347,15 @@ sub scan($c,$scandata) {
 
 			&subs::db_update('appointments' , { server_time => &subs::rightNow(), duration => $duration, file => $filenames, encryption_standard => undef }, { app => $app, uuid => $uuid });
 
-			&Websocket::send('server', { console => 'appointmentDetailGrabber(\'' . $app . '\',\'' . $uuid .'\');'});
+			&Websocket::send('server', { console => &Websocket::console_command('appointmentDetailGrabber', $app, $uuid)});
 		}
 		elsif ( scalar @filenames == 0 && $source ne 'existing' ) {
 			&subs::db_delete('appointments', { uuid => $uuid });
-			&Websocket::send('server', { console => '$(\'appointment_detail[app="' . $app . '"][uuid="' . $uuid . '"]\').remove();'});
+			&Websocket::send('server', { console => &Websocket::console_command('removeAppointmentDetail', $app, $uuid)});
 		}
 		&subs::file_encrypter({ app => $app });
 	}, { name => 'document scanner' });
-	&Websocket::send('server', { console => 'appointmentDetailGrabber(\'' . $app . '\',\'' . $uuid .'\');'});
+	&Websocket::send('server', { console => &Websocket::console_command('appointmentDetailGrabber', $app, $uuid)});
 	return encode_json [{ f => $image_file }];
 }
 

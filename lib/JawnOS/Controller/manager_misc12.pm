@@ -311,7 +311,7 @@ sub action_41468 {
 	my $cv = &centre_view_grabber({ c => $c, app => $app, timestamp => ($sdata->{'timestamp'} // $appt->{'timestamp'}), cached => 'no' });
 	&budget_runner($app);
 	&padlock_time_extender($c);
-	&Websocket::send('tab', { console => 'appointmentDetailGrabber(' . encode_json($app) . ',' . encode_json($uuid) . ');'});
+	&Websocket::send('tab', { console => &Websocket::console_command('appointmentDetailGrabber', $app, $uuid)});
 	$c->render(text => 'ok');
 }
 
@@ -409,7 +409,7 @@ sub action_41622 {
 		$tombstoned++;
 	}
 	&subs::db_query('delete from warehouse where item = ? or data like ?', $app, '%"source":"' . $app . '"%');
-	&Websocket::send('server', { console => '$(".' . &subs::html_name($app) . '_close_button").trigger("click");', timestamp => &subs::rightNow() });
+	&Websocket::send('server', { console => &Websocket::console_command('closeButton', &subs::html_name($app)), timestamp => &subs::rightNow() });
 	&subs::log_writer('deletion app ' . $app);
 	$c->render(json => { ok => 1, app => $app, appointments => scalar @{$appts}, tombstones => $tombstoned });
 }

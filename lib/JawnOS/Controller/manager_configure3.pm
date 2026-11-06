@@ -675,7 +675,7 @@ sub action_17694 {
 				if ($app_changed == 1) {
 					my $jam = encode_json $meas;
 					&subs::db_update('appointments', { server_time => &subs::rightNow(), measures => $jam }, { uuid => $apps->{'uuid'}, app => $apps->{'app'} });
-					&Websocket::send('tab', { console => 'appointmentDetailGrabber(' . encode_json($app) . ',' . encode_json($apps->{'uuid'}) . ');'});
+					&Websocket::send('tab', { console => &Websocket::console_command('appointmentDetailGrabber', $app, $apps->{'uuid'})});
 				}
 			}
 		}

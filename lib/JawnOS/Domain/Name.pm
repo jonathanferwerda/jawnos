@@ -327,8 +327,8 @@ sub setting_setter {
 			}
 		}
 		unless ($sync) {
-			&Websocket::send('server', { console => '$(".' . &subs::html_name($app) . '_close_button").trigger("click");', timestamp => $timestamp });
-			&Websocket::send('server', { console => 'appointmentGrabber(\'' . $value . '\',\'' . $timestamp .'\',\'ws\');'});
+			&Websocket::send('server', { console => &Websocket::console_command('closeButton', &subs::html_name($app)), timestamp => $timestamp });
+			&Websocket::send('server', { console => &Websocket::console_command('appointmentGrabber', $value, $timestamp, 'ws')});
 		}
 		$app = $value;
 	}
@@ -362,17 +362,17 @@ sub setting_setter {
 		}
 	}
 	if (($setting eq 'pos' || $setting eq 'mab') && !$sync) {
-		&Websocket::send('tab', { console => 'configurationReloader(\'' . $app . '\');' });
+		&Websocket::send('tab', { console => &Websocket::console_command('configurationReloader', $app)});
 	}
 	if ($setting eq 'phone') {
 		$value =~ s/\D+//gi;
 	}
 	if ($setting eq 'web' && !$sync) {
 		if ($value =~ /[0-9A-Za-z]/) {
-			&Websocket::send('server', { console => '$(\'.app_act[app="' . $app . '"][type="web"]\').attr(\'web\', \'' . $value . '\').show();' });
+			&Websocket::send('server', { console => &Websocket::console_command('setAppAct', $app, $value)});
 		}
 		else {
-			&Websocket::send('server', { console => '$(\'.app_act[app="' . $app . '"][type="web"]\').attr(\'web\', \'\').hide();' });
+			&Websocket::send('server', { console => &Websocket::console_command('setAppAct', $app, '')});
 		}
 	}
 	if ($setting eq 'colour' || $setting eq 'name_change' || $setting eq 'mab') {
@@ -397,7 +397,7 @@ sub setting_setter {
 		my $toggle_style = ($value eq 'on')
 			? 'background-color:green;border-color:green;box-shadow:0 0 8px 2px green;'
 			: 'background-color:#555555;border-color:#555555;opacity:0.45;filter:grayscale(1);';
-		&Websocket::send('tab', { console => '$(\'.appointment[app="' . $app . '"]\').find(\'.enabler[type="toggle"\').attr(\'status\',\'' . $value . '\').attr(\'src\', \'' . $toggle_src . '\').attr(\'style\', \'' . $toggle_style . '\');' });
+		&Websocket::send('tab', { console => &Websocket::console_command('setToggle', $app, $value, $toggle_src, $toggle_style)});
 		&subs::watch_toggle_pusher({ app => $app, value => $value, exclude_chip => $settings->{'source_chip_id'} });
 	}
 	if ($setting eq 'site_type') {
@@ -441,14 +441,14 @@ sub setting_setter {
 			}
 		}
 		unless ($settings->{'silent'} eq 'yes') {
-			&Websocket::send('server', { console => 'jawnosApptColourSet(' . encode_json($app) . ',' . encode_json($value) . ',' . encode_json($dark_colour) . ');' }) unless $sync;
+			&Websocket::send('server', { console => &Websocket::console_command('jawnosApptColourSet', $app, $value, $dark_colour)}) unless $sync;
 			# refresh the stored clothesline so the manager view picks up the new colour
 			&hang_to_dry();
 		}
 	}
 	elsif ($setting eq 'dark_colour') {
 		unless ($settings->{'silent'} eq 'yes') {
-			&Websocket::send('server', { console => 'jawnosApptDarkColourSet(' . encode_json($app) . ',' . encode_json($value) . ');' }) unless $sync;
+			&Websocket::send('server', { console => &Websocket::console_command('jawnosApptDarkColourSet', $app, $value)}) unless $sync;
 			&hang_to_dry();
 		}
 	}
@@ -459,7 +459,7 @@ sub setting_setter {
 		&cache_delete({ app => 'me', context => 'pseudonyms' });
 		&cache_delete({ context => 'template' });
 		&cache_delete({ context => 'header' });
-		&Websocket::send('server', { console => 'jawnosReloadIcons();' }) unless $sync;
+		&Websocket::send('server', { console => &Websocket::console_command('jawnosReloadIcons')}) unless $sync;
 	}
 	elsif ($setting eq 'manager_background_colour') {
 		# the desktop's dark/light line moved, and with it which cut of the icon

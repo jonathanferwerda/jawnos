@@ -562,7 +562,7 @@ sub handbook_journal_write {
 		uuid => $uuid,
 		device => &subs::device_setter(),
 	});
-	&Websocket::send('tab', { console => 'calculator();' });
+	&Websocket::send('tab', { console => &Websocket::console_command('calculator')});
 	return { uuid => $uuid, timestamp => $timestamp };
 }
 

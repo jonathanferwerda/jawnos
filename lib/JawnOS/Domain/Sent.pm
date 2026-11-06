@@ -491,7 +491,7 @@ sub pen_message {
 								$text =~ s/\n/<br>/gi;
 								$response_text .= $text;
 								&Websocket::send('tab', {
-									console => '$(\'.assistant_content[uuid=' . encode_json($data->{'uuid'}) . ']\').html(' . encode_json($response_text) . ');'
+									console => &Websocket::console_command('setHtml', $data->{'uuid'}, $response_text)
 								});
 							}
 		          *STDOUT->flush;
@@ -526,8 +526,7 @@ sub pen_message {
 				. '<style>@keyframes ai_generating_spin{to{transform:rotate(360deg)}}</style>'
 				. '</span>';
 			if ($data->{'type'} eq 'assistant') {
-				my $js = '$(' . encode_json('.assistant_content[uuid="' . $data->{'uuid'} . '"]') . ').html(' . encode_json($gen_note) . ');';
-				&Websocket::send('tab', { console => $js });
+				&Websocket::send('tab', { console => &Websocket::console_command('setHtml', $data->{'uuid'}, $gen_note) });
 			}
 			else {
 				&Websocket::mail_send({
@@ -566,7 +565,7 @@ sub pen_message {
 					});
 				} else {
 					&Websocket::send('tab', {
-						console => '$(\'.assistant_content[uuid=' . encode_json($data->{'uuid'}) . ']\').html(' . encode_json($accumulated_text) . ');'
+						console => &Websocket::console_command('setHtml', $data->{'uuid'}, $accumulated_text)
 					});
 				}
 	    }

@@ -211,7 +211,7 @@ sub tunnel_checker {
 			next if $has_tunnel{ $rm->{'signatorial'} };
 			next unless ($rm->{'connection'} || '') eq 'active';
 			&subs::db_update('remote_machines', { connection => 'inactive', server_time => &subs::rightNow() }, { signatorial => $rm->{'signatorial'} });
-			&Websocket::send('server', { console => 'deviceLister()' });
+			&Websocket::send('server', { console => &Websocket::console_command('deviceLister')});
 		}
 		foreach my $td ( @{$tunnel_duties} ) {
 			my $tun = &subs::tunnel_port_mapper({ signatorial => $td->{'signatorial'}  });
@@ -363,7 +363,7 @@ sub tunnel_checker {
 					}
 				}
 			}
-		&Websocket::send('server', { console => 'tunnelLister()' });
+		&Websocket::send('server', { console => &Websocket::console_command('tunnelLister')});
 	}
 
 sub tunnel_port_mapper {
@@ -501,7 +501,7 @@ sub tunnel_peer_enrol {
 	$enrollee = &subs::tunnel_peer_connect($signatorial, $filename) if $need_connect;
 	$changed = 1 if $enrollee;
 	# let the Dev panel show the peer appear (or its row fill in) live
-	&Websocket::send('server', { console => 'deviceLister()' }) if $changed;
+	&Websocket::send('server', { console => &Websocket::console_command('deviceLister')}) if $changed;
 	return $enrollee;
 }
 

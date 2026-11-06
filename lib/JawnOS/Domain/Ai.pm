@@ -532,7 +532,7 @@ sub voice_command_apply {
 		seen => 'yes'
 	};
 	&Manager::appointment_writer(&subs::controller_builder(), $db_data);
-	&Websocket::send('tab', { console => 'appointmentDetailGrabber(\'' . $app . '\',\'' . $db_data->{'uuid'} . '\');' });
+	&Websocket::send('tab', { console => &Websocket::console_command('appointmentDetailGrabber', $app, $db_data->{'uuid'})});
 	return $db_data;
 }
 
@@ -640,7 +640,7 @@ sub guide_set_message {
 	my ($text, $meta) = @_;
 	return unless defined $text && length $text;
 	&Websocket::send('tab', {
-		console => 'if (window.helpChatIngest) { helpChatIngest(' . encode_json($text) . '); }',
+		console => &Websocket::console_command('helpChatIngest', $text),
 	});
 	return 1;
 }
@@ -859,7 +859,7 @@ sub voice_ingest {
 		if ($addressed && &subs::voice_note_store($text, $meta->{'ts'})) {
 			# a note landed: refresh any open Notes window at once, and let the
 			# watch drop its local copy of the clip
-			&Websocket::send('tab', { console => 'notesReload();' });
+			&Websocket::send('tab', { console => &Websocket::console_command('notesReload')});
 			&subs::voice_clip_ack($meta);
 		}
 		return $cmd;

@@ -158,7 +158,7 @@ sub action_18883 {
 	# the desk top and the stored clothesline both paint from caches, so rebuild them
 	# the same way a single colour change does before telling the browsers to redraw
 	&subs::hang_to_dry() if $updated;
-	&Websocket::send('server', { console => 'if (typeof calculator === "function") { calculator(); }' }) if $updated;
+	&Websocket::send('server', { console => &Websocket::console_command('calculator')}) if $updated;
 	$c->render(json => { updated => $updated, device => $device });
 }
 
@@ -426,7 +426,7 @@ sub action_19033 {
 		$value = &subs::time_abbrev_translator($value, $timestamp);
 	}
 
-	&Websocket::send($app, { console => '$(\'.appointment[app=' . encode_json($app) . ']\').attr(' . encode_json($setting) . ', ' . encode_json($value) . ');' });
+	&Websocket::send($app, { console => &Websocket::console_command('setAppointmentAttr', $app, $setting, $value)});
 	if ($source eq 'panel') {
 
 		my $window = &centre_view_grabber({ c => $c, app => $c->param('app'), timestamp => $timestamp, cached => 'no' });

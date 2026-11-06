@@ -4,7 +4,11 @@
 #   perl scripts/security_audit.pl                 # tree + host
 #   perl scripts/security_audit.pl --check         # tree only (fast, no host probes)
 #   perl scripts/security_audit.pl --json          # machine-readable report
-#   perl scripts/security_audit.pl --write-report  # also ~/.presidency/security/<stamp>/
+#   perl scripts/security_audit.pl --write-report  # also writes a report the QA panel reads
+#
+# --write-report leaves $JAWNOS_QA_ROOT/reports/security/<stamp>/ (report.json and
+# status.txt) when the QA root is set, which is what Configure -> Plat -> QA reads;
+# otherwise it falls back to ~/.presidency/security/<stamp>/.
 #
 # Exit 0 when no *new* finding at or above --fail-on (default high); 1 otherwise.
 # A finding listed in qa/security/allowlist.json is reported as known and does
@@ -141,6 +145,18 @@ for my $hit ( grep_tree('eval\(data\[', 'public/js') ) {
 	finding('critical', 'js.console.eval', 'xss/rce',
 		'a websocket frame is evaluated', path => $hit->[0], line => $hit->[1],
 		evidence => redact($hit->[2]), fix => 'send {cmd,args}; route it in 00_console_router.js');
+}
+
+# The console channel carries command objects now ({cmd,args}). A JS string in
+# `console =>` is the legacy shape the router only tolerates for the old static
+# instructions, so a new one is a regression, not a style choice.
+for my $hit ( grep_tree('console\\s*=>\\s*["\x27]', 'lib', 'perl') ) {
+	my ($path, $line, $text) = @{$hit};
+	next if $text =~ /^\s*#/;
+	finding('high', 'perl.console.string', 'rce',
+		'a console send is still a JS string', path => $path, line => $line,
+		evidence => redact($text),
+		fix => 'send &Websocket::console_command(\'name\', ...args) and add the name to 00_console_router.js');
 }
 
 for my $hit ( grep_tree('innerHTML\s*=\s*[^"\x27]', 'public/js') ) {
@@ -323,14 +339,53 @@ my $report = {
 };
 
 if ($opt{'write-report'}) {
-	my $dir = File::Spec->catdir($ENV{'HOME'} // '/tmp', '.presidency', 'security', strftime('%Y%m%d-%H%M%S', localtime));
+	my $qa_root = $ENV{'JAWNOS_QA_ROOT'} || $ENV{'QA_ROOT'} || '';
+	my $stamp = strftime('%Y%m%dT%H%M%SZ', gmtime);
+	my $status = @new ? 'failed' : 'ok';
+	my $dir = length $qa_root
+		? File::Spec->catdir($qa_root, 'reports', 'security', $stamp)
+		: File::Spec->catdir($ENV{'HOME'} // '/tmp', '.presidency', 'security', $stamp);
 	make_path($dir);
+	# The same document is both the machine-readable audit and the run the QA
+	# panel renders: a title, a status, and one table of findings.
+	my @rows = map {
+		[ $_->{'severity'}, $_->{'area'}, $_->{'title'},
+		  ($_->{'path'} || '') . ($_->{'line'} ? ":$_->{'line'}" : ''),
+		  { text => ($_->{'known'} ? 'known' : 'new'), tone => ($_->{'known'} ? 'note' : 'bad') } ]
+	} sort { $rank{$b->{'severity'}} <=> $rank{$a->{'severity'}} || $a->{'id'} cmp $b->{'id'} } @findings;
+	my $doc = {
+		%$report,
+		kind => 'security',
+		schedule => 'nightly',
+		status => $status,
+		ok => (@new ? 0 : 1),
+		stamp => $stamp,
+		generated => time,
+		title => 'Security audit',
+		note => scalar(@findings) . ' findings, ' . $count{known} . ' known, ' . scalar(@new) . ' new',
+		sections => [ { title => 'Findings', columns => [ 'Severity', 'Area', 'Finding', 'Where', 'State' ], rows => \@rows } ],
+	};
 	open(my $fh, '>', "$dir/report.json") or die "security_audit: $dir/report.json: $!\n";
-	print $fh JSON::PP->new->canonical->pretty->encode($report);
+	print $fh JSON::PP->new->canonical->pretty->encode($doc);
 	close $fh;
 	open(my $st, '>', "$dir/status.txt") or die "security_audit: $dir/status.txt: $!\n";
-	print $st (@new ? 'findings' : 'ok'), "\n";
+	print $st "$status\n";
 	close $st;
+	# keep the last 14 days, the same window every other QA kind keeps
+	if (length $qa_root) {
+		my $kind_dir = File::Spec->catdir($qa_root, 'reports', 'security');
+		if (opendir(my $dh, $kind_dir)) {
+			my $cutoff = time - 14 * 24 * 60 * 60;
+			for my $old ( grep { /^\d{8}T\d{6}Z$/ && -d "$kind_dir/$_" } readdir $dh ) {
+				my ($y, $mo, $d, $h, $mi, $se) = $old =~ /^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z$/;
+				my $epoch = eval { require Time::Local; Time::Local::timegm($se, $mi, $h, $d, $mo - 1, $y) };
+				next unless defined $epoch;
+				require File::Path;
+				File::Path::remove_tree("$kind_dir/$old") if $epoch < $cutoff;
+			}
+			closedir $dh;
+		}
+	}
 	$report->{'report_dir'} = $dir;
 }
 

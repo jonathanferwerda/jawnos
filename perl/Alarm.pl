@@ -131,7 +131,7 @@ sub alarm_clock() {
 								&Manager::record_audio_stop({ app => $a->{'app'}, uuid => $a->{'uuid'}, timestamp => $a->{'timestamp'} });
 							}
 							else {
-								&Websocket::send('music', { console => 'jpStop(\'' . $a->{'app'} . '\',\'' . $data->{'recorder'} . '\',\'' . $a->{'uuid'} . '\');' });
+								&Websocket::send('music', { console => &Websocket::console_command('jpStop', $a->{'app'}, $data->{'recorder'}, $a->{'uuid'})});
 							}
 						}
 	#					&subs::db_query('update appointments set seen = ?,type=?, stop_seen=? where uuid=?', 'yes','stop', 'yes',$a->{'uuid'});
@@ -154,7 +154,7 @@ sub alarm_clock() {
 								&subs::db_update('appointments', { stop_seen => 'yes', type => 'stop', duration => $dur }, { source_uuid => $so->{'source_uuid'}, uuid => $so->{'uuid'}, app => $so->{'app'} });
 								&Manager::budget_runner($so->{'app'});
 								&subs::intelligent_automation_toggle({ appt_uuid => $so->{'uuid'}, app => $so->{'app'}, 'state' => 'off', timestamp => $timestamp });
-								&Websocket::send('tab', { console => 'appointmentDetailGrabber(\'' . $so->{'app'} . '\',\'' . $so->{'uuid'} .'\');'});
+								&Websocket::send('tab', { console => &Websocket::console_command('appointmentDetailGrabber', $so->{'app'}, $so->{'uuid'})});
 							}
 						}
 						
@@ -163,7 +163,7 @@ sub alarm_clock() {
 #						&subs::db_query('update appointments set seen = ?, stop_seen=? where uuid=?', 'yes', 'yes',$a->{'uuid'});
 						&subs::db_update('appointments', { seen => 'yes', stop_seen => 'yes' }, { app => $a->{'app'}, uuid => $a->{'uuid'} });
 					}
-					&Websocket::send('tab', { console => 'appointmentDetailGrabber("' . $a->{'app'} . '","' . $a->{'uuid'} .'");' });
+					&Websocket::send('tab', { console => &Websocket::console_command('appointmentDetailGrabber', $a->{'app'}, $a->{'uuid'})});
 
 				}
 				elsif ($a->{'type'} eq 'start' || $a->{'type'} eq 'record') {
@@ -180,7 +180,7 @@ sub alarm_clock() {
 							&subs::db_update('appointments', { seen => 'yes' }, { source_uuid => $so->{'source_uuid'}, uuid => $so->{'uuid'}, app => $so->{'app'} });
 							&budget_runner($so->{'app'});
 							&subs::intelligent_automation_toggle({ appt_uuid => $so->{'uuid'}, app => $so->{'app'}, 'state' => 'on', timestamp => $timestamp });
-							&Websocket::send('tab', { console => 'appointmentDetailGrabber(\'' . $so->{'app'} . '\',\'' . $so->{'uuid'} .'\');'});
+							&Websocket::send('tab', { console => &Websocket::console_command('appointmentDetailGrabber', $so->{'app'}, $so->{'uuid'})});
 						}
 					}	
 					if ($a->{'type'} eq 'record') {
@@ -192,10 +192,10 @@ sub alarm_clock() {
 							&Manager::record_audio({ app => $a->{'app'}, uuid => $a->{'uuid'}, timestamp => $a->{'timestamp'} });
 						}
 						elsif ($data->{'recorder'} eq 'screen') {
-							&Websocket::send('music', { console => 'jpScreen(\'' . $a->{'app'} . '\',\'' . $a->{'uuid'} . '\');' });
+							&Websocket::send('music', { console => &Websocket::console_command('jpScreen', $a->{'app'}, $a->{'uuid'})});
 						}
 						else {
-							&Websocket::send('music', { console => 'jpStart(\'' . $a->{'app'} . '\',\'' . $data->{'recorder'} . '\',\'' . $a->{'uuid'} . '\');' });
+							&Websocket::send('music', { console => &Websocket::console_command('jpStart', $a->{'app'}, $data->{'recorder'}, $a->{'uuid'})});
 						}
 					}
 
@@ -284,7 +284,7 @@ sub alarm_haircut() {
 	my $t_count = $ticket_query->text;
 	if ($t_count > 0) {
 		my $ticket_update_query = &subs::db_query('update tickets set status = ? where status = ? and cast(warranty as integer) < cast(? as integer)', 'expired', 'active', $timestamp);
-		my $msg = { app => 'box_office', console => 'ticket_list()' };
+		my $msg = { app => 'box_office', console => &Websocket::console_command('ticketList')};
 		my $server_time = &subs::rightNow();
 		&Websocket::send('server', $msg);
 	}

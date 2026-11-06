@@ -131,7 +131,7 @@ sub action_5969 {
 		}
 	}
 
-	&Websocket::send('tab', { console => 'registerGrabber(\'' . $item . '\')' });
+	&Websocket::send('tab', { console => &Websocket::console_command('registerGrabber', $item)});
 	$c->render(json => $custom);
 }
 
@@ -842,7 +842,7 @@ sub action_6919 {
 
 #		&subs::db_query('update appointments set server_time = ?, model=?, manufacturer=?, quantity=?, unit=? where uuid=?',$server_time,$model,$manufacturer,$quantity,$unit,$appt_uuid);
 		&subs::db_update('appointments', { server_time => &subs::rightNow(), model => $model, manufacturer => $manufacturer, quantity => $quantity, unit => $unit }, { uuid => $appt_uuid, app => $appt->{'app'} });
-		&Websocket::send($app, { console => 'appointmentDetailGrabber(\'' . $appt->{'app'} . '\',\'' . $appt->{'uuid'} .'\');' });
+		&Websocket::send($app, { console => &Websocket::console_command('appointmentDetailGrabber', $appt->{'app'}, $appt->{'uuid'})});
 	}
 	$c->render(json => $model);
 }

@@ -675,7 +675,7 @@ sub action_38766 {
 	# Keyed the same way the visibility rule reads it (subs::device_setter), so
 	# app_hidden_now finds the grant without a request's session uuid.
 	my $until = &subs::lockdown_reveal_store();
-	&Websocket::send('server', { console => 'if (typeof calculator === "function") { calculator(); }' });
+	&Websocket::send('server', { console => &Websocket::console_command('calculator')});
 	$c->render(json => { ok => 1, until => $until, apps => [ sort keys %{$enemies} ] });
 }
 
@@ -761,8 +761,8 @@ sub action_39683 {
 	else {
 		my @apps = $app ? ($app) : (@media_unlock_apps, 'private');
 		foreach my $a ( @apps ) {
-			my $js = ($a eq 'private') ? 'jawnosPrivateRefresh(0);' : 'jawnosMediaLockdown("' . $a . '")';
-			&Websocket::send('server', { console => $js, browser_tab_id => $tab }) if length $tab;
+			my $cmd = ($a eq 'private') ? &Websocket::console_command('jawnosPrivateRefresh', 0) : &Websocket::console_command('jawnosMediaLockdown', $a);
+			&Websocket::send('server', { console => $cmd, browser_tab_id => $tab }) if length $tab;
 		}
 	}
 	$c->render(json => { ok => 1, app => $app, device => $device });

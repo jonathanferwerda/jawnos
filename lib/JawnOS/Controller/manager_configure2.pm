@@ -726,10 +726,10 @@ sub action_12334 {
 
 		&subs::setting_setter({ app => '__president', setting => 'tunnel_duties', value => $jtd });
 	}
-	&Websocket::send('server', { console => 'tunnelLister()' });
+	&Websocket::send('server', { console => &Websocket::console_command('tunnelLister')});
 	# and the Dev panel: a tunnel coming up adds the peer to this hub's addresses,
 	# so refresh it live rather than wait for a manual Scan
-	&Websocket::send('server', { console => 'deviceLister()' });
+	&Websocket::send('server', { console => &Websocket::console_command('deviceLister')});
 	$c->render(json => $returner);
 }
 
@@ -741,8 +741,8 @@ sub action_12364 {
 	my $signatorial = $c->param('signatorial');
 	my $status = $c->param('status');
 	&subs::db_update('tunnels', { server_time => &subs::rightNow(), status => 'closed' }, { uuid => $tunnel->{'uuid'}, signatorial => $tunnel->{'signatorial'} });
-	&Websocket::send('server', { console => 'tunnelLister()' });
-	&Websocket::send('server', { console => 'deviceLister()' });
+	&Websocket::send('server', { console => &Websocket::console_command('tunnelLister')});
+	&Websocket::send('server', { console => &Websocket::console_command('deviceLister')});
 
 	$c->render(json => { tunnel => $tunnel, signatorial => $signatorial, status => $status });
 

@@ -390,7 +390,7 @@ sub action_3781 {
 		$opts->{'origin_name'} = $row ? ($row->{'room'} || '') : '';
 	}
 	&Websocket::send('server', {
-		console => ($pass{'stop'} ? 'marketPhoneScanStop();' : 'marketPhoneCamera(' . encode_json($opts) . ');'),
+		console => ($pass{'stop'} ? &Websocket::console_command('marketPhoneScanStop') : &Websocket::console_command('marketPhoneCamera', $opts)),
 		destination => $bti,
 		timestamp => $c->param('timestamp') || &subs::rightNow()
 	});
@@ -660,7 +660,7 @@ sub action_4317 {
 	if ($origin ne '') {
 		&Websocket::send('server', {
 			destination => $origin,
-			console => 'marketScanArrived();',
+			console => &Websocket::console_command('marketScanArrived'),
 			timestamp => &subs::rightNow()
 		});
 	}

@@ -178,8 +178,8 @@ sub edt_button_presser {
 		$c->param('value', $measure);
 
 		&Manager::appt_measure_writer($c,{ app => $app, measure => $b->{'measure'}, value => $measure, timestamp => $timestamp, remote_address => $remote_address });
-		&Websocket::send('tab', { console => '$(\'.appointment[app="' . $app . '"]\').find(\'.app_measure[measure="' . $b->{'measure'} . '"]\').val(\'' . $measure . '\');' });
-		&Websocket::send('tab', { console => '$(\'.appointment[app="' . $app . '"]\').find(\'.app_measure_display[measure="' . $b->{'measure'} . '"]\').text(\'' . $measure . '\');' });
+		&Websocket::send('tab', { console => &Websocket::console_command('setMeasure', $app, $b->{'measure'}, $measure)});
+		&Websocket::send('tab', { console => &Websocket::console_command('setMeasureText', $app, $b->{'measure'}, $measure)});
 	}
 	else {
 		$returner = {
@@ -205,7 +205,7 @@ sub edt_button_presser {
 
 		my $insert = &Manager::appointment_writer($c,$db_data);
 	}
-	&Websocket::send('tab', { console => 'appointmentDetailGrabber(\'' . $app . '\',\'' . $uuid . '\');' });
+	&Websocket::send('tab', { console => &Websocket::console_command('appointmentDetailGrabber', $app, $uuid)});
 	# embeddedAuthorizer hands the settings over with __shutup (the patience
 	# half of the authorization pair) deliberately blanked, and this write-back
 	# used to store that blanked copy: it destroyed the device's patience with

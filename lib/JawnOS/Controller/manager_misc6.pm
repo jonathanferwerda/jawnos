@@ -192,7 +192,7 @@ sub action_24875 {
 	my $fresh = !($row && $row->{'uuid'});
 	if ($text =~ /^\s*$/ || $text eq '<br>') {
 		&subs::db_update('notes', { text => '', server_time => $now }, { uuid => $uuid }) if !$fresh;
-		&Websocket::send('tab', { console => 'notesReload();' }) if !$fresh;
+		&Websocket::send('tab', { console => &Websocket::console_command('notesReload')}) if !$fresh;
 		return $c->render(json => { ok => 1, cleared => 1 });
 	}
 	if (!$fresh) {
@@ -207,7 +207,7 @@ sub action_24875 {
 			server_time => $now,
 			device => &subs::device_setter()
 		});
-		&Websocket::send('tab', { console => 'notesReload();' });
+		&Websocket::send('tab', { console => &Websocket::console_command('notesReload')});
 	}
 	$c->render(json => { ok => 1, uuid => $uuid, server_time => $now });
 }
@@ -250,7 +250,7 @@ sub action_24915 {
 		});
 		$added++;
 	}
-	&Websocket::send('tab', { console => 'notesReload();' }) if $added;
+	&Websocket::send('tab', { console => &Websocket::console_command('notesReload')}) if $added;
 	$c->render(json => { ok => 1, added => $added, kept => $kept });
 }
 
@@ -297,7 +297,7 @@ sub action_24950 {
 		});
 		$created = 1;
 	}
-	&Websocket::send('tab', { console => 'notesReload();' });
+	&Websocket::send('tab', { console => &Websocket::console_command('notesReload')});
 	$c->render(json => { uuid => $uuid, text => $text, category => $category, status => $status, created => $created });
 }
 
@@ -310,7 +310,7 @@ sub action_24980 {
 	# hides the marker everywhere.
 	my $uuid = $c->param('uuid');
 	my $tombstoned = &subs::notes_tombstone($uuid);
-	&Websocket::send('tab', { console => 'notesReload();' });
+	&Websocket::send('tab', { console => &Websocket::console_command('notesReload')});
 	$c->render(json => { uuid => $uuid, tombstoned => $tombstoned });
 }
 
@@ -336,7 +336,7 @@ sub action_24989 {
 		my $existing = $appt->{'notes'} ? &subs::note_decrypter($suds, $appt->{'notes'}, $appt->{'server_time'}) : '';
 		$existing .= "\n" if $existing =~ /\S/;
 		&subs::db_update('appointments', { notes => &subs::note_encrypter($suds, $existing . $text), server_time => $now }, { uuid => $appt->{'uuid'} });
-		&Websocket::send('tab', { console => 'appointmentDetailGrabber(' . encode_json($app) . ',' . encode_json($appt->{'uuid'}) . ');' });
+		&Websocket::send('tab', { console => &Websocket::console_command('appointmentDetailGrabber', $app, $appt->{'uuid'})});
 		return $c->render(json => { app => $app, uuid => $appt->{'uuid'}, created => 0 });
 	}
 	my $new_uuid = &subs::random_string_creator(21);
@@ -350,7 +350,7 @@ sub action_24989 {
 		uuid => $new_uuid,
 		seen => 'yes'
 	});
-	&Websocket::send('tab', { console => 'appointmentDetailGrabber(' . encode_json($app) . ',' . encode_json($new_uuid) . ');' });
+	&Websocket::send('tab', { console => &Websocket::console_command('appointmentDetailGrabber', $app, $new_uuid)});
 	$c->render(json => { app => $app, uuid => $new_uuid, created => 1 });
 }
 

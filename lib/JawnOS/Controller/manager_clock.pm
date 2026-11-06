@@ -369,7 +369,7 @@ sub action_22744 {
 	if (!$rings_stopped && ($action eq 'toggle' || $action eq 'save') && defined $c->param('enabled') && !$c->param('enabled')) {
 		$rings_stopped = 1;
 	}
-	&subs::clock_send_console('jawnosClockAlarmStop();') if $rings_stopped;
+	&subs::clock_send_console(&Websocket::console_command('jawnosClockAlarmStop')) if $rings_stopped;
 	&subs::clock_device_dismissed($action eq 'stop_all' ? '' : ($c->param('uuid') || '')) if $rings_stopped;
 	# The shared settings row carries the stop to every machine in time; this
 	# relay is what ends the sound now rather than at the next sync. A request

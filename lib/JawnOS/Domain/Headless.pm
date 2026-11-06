@@ -649,7 +649,7 @@ sub lockdown_sweep {
 	$lockdown_sweep_at{$key} = $now;
 	my $revealed = &lockdown_revealed($device);
 	my $enemies = &lockdown_enemy_apps();
-	&Websocket::send('server', { console => '$("#start_menu").addClass("lockdown");', browser_tab_id => $tab });
+	&Websocket::send('server', { console => &Websocket::console_command('toggleLockdown', 1), browser_tab_id => $tab });
 	my $rows = eval {
 		&db_query("select distinct app, browser_tab_id from websockets where type = 'stayingAlive'")->hashes;
 	} || [];

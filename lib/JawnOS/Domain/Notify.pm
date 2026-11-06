@@ -246,7 +246,7 @@ sub embedded_toggle($data) {
 		# the enabler is drawn through icon_path in the wrapper; use the set's own
 		# glyph here too rather than the hand-drawn fallback
 		my $toggle_src = &subs::icon_path($save_state, '/images/decipherable/' . $save_state . '.png');
-		&Websocket::send('tab', { console => '$(\'.appointment[app="' . $app . '"]\').find(\'.enabler[type="toggle"\').attr(\'status\',\'' .$save_state . '\').attr(\'src\', \'' . $toggle_src . '\');' });
+		&Websocket::send('tab', { console => &Websocket::console_command('setToggle', $app, $save_state, $toggle_src)});
 		# The direct command already drove the board we are addressing, so the
 		# toggle fan-out must not echo that same state back to it over BLE.
 		&subs::setting_setter({ app => $app, setting => 'toggle', value => $save_state, source => 'toggle', source_chip_id => $chip_id, timestamp => $timestamp }) if $data->{'counted'} == 0 || !$data->{'counted'};

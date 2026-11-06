@@ -93,7 +93,7 @@ get '/teletype/information' => sub($c) {
 			uuid => &subs::random_string_creator(40)
 		});
 		$c->render(json => $auth_check);
-		my $msg = { app => $app, console => 'appointmentGrabber("' . $app . '",' . $timestamp . ')' };
+		my $msg = { app => $app, console => &Websocket::console_command('appointmentGrabber', $app, $timestamp)};
 		&Websocket::send('server', $msg);
 	}
 	else {

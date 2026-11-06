@@ -184,7 +184,7 @@ sub action_14274 {
 	&subs::db_delete('tickets', { uuid => $uuid });
 	&subs::db_insert('tickets', $minted);
 	&subs::db_update('tickets', { crest_uuid => $request->{'crest_uuid'} }, { uuid => $minted->{'uuid'} }) if $request->{'crest_uuid'};
-	&Websocket::send('server', { console => 'typeof ticket_list == "function" && ticket_list();' });
+	&Websocket::send('server', { console => &Websocket::console_command('ticketList')});
 	$c->render(json => { ticket => $minted->{'uuid'}, url => $minted->{'url'} });
 }
 

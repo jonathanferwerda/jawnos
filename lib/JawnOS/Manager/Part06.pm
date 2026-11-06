@@ -328,7 +328,7 @@ sub market_scan_device_send {
 	return 0 unless $bti ne '';
 	&Websocket::send('server', {
 		destination => $bti,
-		console => ($stop ? 'marketPhoneScanStop();' : 'marketPhoneCamera(' . encode_json(\%opts) . ');'),
+		console => ($stop ? &Websocket::console_command('marketPhoneScanStop') : &Websocket::console_command('marketPhoneCamera', \%opts)),
 		timestamp => &subs::rightNow()
 	});
 	return 1;

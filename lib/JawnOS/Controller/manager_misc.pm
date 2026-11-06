@@ -100,7 +100,7 @@ sub action_832 {
 	else {
 		($file,$ocr) = &take_picture($c,$data);
 	}
-	&Websocket::send('server', { console => 'appointmentDetailGrabber(' . encode_json($app) . ',' . encode_json($data->{'uuid'} || $uuid) . ');'});
+	&Websocket::send('server', { console => &Websocket::console_command('appointmentDetailGrabber', $app, $data->{'uuid'} || $uuid)});
 	$c->render(json => { files => $file, ocr => $ocr, uuid => $data->{'uuid'} || $uuid });
 }
 
@@ -245,7 +245,7 @@ sub action_1141 {
 	}
 
 
-	&Websocket::send('server', { console => 'appointmentDetailGrabber(' . encode_json($app) . ',' . encode_json($uuid) . ');'});
+	&Websocket::send('server', { console => &Websocket::console_command('appointmentDetailGrabber', $app, $uuid)});
 	$c->render(json => { files => $file });
 }
 

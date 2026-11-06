@@ -243,7 +243,7 @@ sub pay_record_payment {
 	$data->{'numbers'}->{'balance'} = $new_balance;
 	my $status = $new_balance <= 0 ? 'completed' : 'open';
 	&db_update('appointments', { data => encode_json($data), status => $status, server_time => $server_time }, { uuid => $uuid, app => $inv->{'app'} });
-	&Websocket::send('server', { console => 'appointmentDetailGrabber(' . encode_json($inv->{'app'}) . ',' . encode_json($uuid) . ');' });
+	&Websocket::send('server', { console => &Websocket::console_command('appointmentDetailGrabber', $inv->{'app'}, $uuid)});
 	&pay_session_forget($provider, $uuid);
 	return {
 		ok => 1,

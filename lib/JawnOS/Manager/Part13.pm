@@ -325,19 +325,19 @@ sub continent_record($c) {
 		# home-plate automation that would duplicate this machine's start.
 		&subs::navigation_share_fix($returner) if $returner->{'latitude'};
 		if ($purpose eq 'proxy_load' && $scope) {
-			&Websocket::send('server', { console => 'listProxy(' . $timestamp . ',' . encode_json($uuid) . ');' });
+			&Websocket::send('server', { console => &Websocket::console_command('listProxy', $timestamp, $uuid)});
 		}
 		elsif ($purpose eq 'proxy_set' && $scope) {
-			&Websocket::send('server', { console => 'setProxy(' . $timestamp . ',' . encode_json($uuid) . ');' });
+			&Websocket::send('server', { console => &Websocket::console_command('setProxy', $timestamp, $uuid)});
 		}
 		elsif ($purpose eq 'travel_viewer' && $scope) {
-			&Websocket::send('server', { console => 'travelViewer(' . $timestamp . ',' . encode_json($uuid) . ');' });
+			&Websocket::send('server', { console => &Websocket::console_command('travelViewer', $timestamp, $uuid)});
 		}
 		elsif ($purpose eq 'home_plate') {
 			my $json = encode_json $returner;
 			&subs::setting_setter({ app => 'me', device => $device, setting => 'home_plate', value => $json });
 		}
-		&Websocket::send('tab', { console => 'appointmentDetailGrabber(\'' . $app . '\',\'' . $pre_uuid . '\');' }) unless $purpose eq 'navigation';
+		&Websocket::send('tab', { console => &Websocket::console_command('appointmentDetailGrabber', $app, $pre_uuid)}) unless $purpose eq 'navigation';
 		&subs::navigation_automation($returner, $provider) if $returner->{'latitude'};
 		# a manual navigation answers with the place it has just settled on, so
 		# the start menu's site-type picture follows the fresh fix at once

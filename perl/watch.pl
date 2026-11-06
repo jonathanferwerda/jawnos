@@ -138,7 +138,7 @@ get '/watch' => sub($c) {
 		$watch_settings->{'__specs'}->{'component_count'} = scalar(grep { !/^__/ } keys %{$watch_settings});
 	#	$log->info(Dumper $watch_settings);
 		$c->render('json' => $watch_settings);
-		&Websocket::send('tab', { console => 'nowMeSuccess(\'' . $edt . '\',\'' . $chip_id . '\')', browser_tab_id => $c->param('browser_tab_id') });
+		&Websocket::send('tab', { console => &Websocket::console_command('nowMeSuccess', $edt, $chip_id), browser_tab_id => $c->param('browser_tab_id') });
 	}
 	else { 
 		$c->render('text' => "failure"); 
@@ -164,7 +164,7 @@ get '/watch/telephone_msg' => sub($c) {
 		data => &subs::format_name($message),
 		uuid => &subs::random_string_creator(40),
 	});
-	my $msg = { app => $app, uuid => &subs::random_string_creator(6), console => 'appointmentGrabber("' . $app . '",' . $timestamp . ')' };
+	my $msg = { app => $app, uuid => &subs::random_string_creator(6), console => &Websocket::console_command('appointmentGrabber', $app, $timestamp)};
 	&Websocket::send('server', $msg );
 
 	$c->render('json' => { 'msg' => $message });
@@ -527,7 +527,7 @@ get '/watch/ota_status' => sub($c) {
 
 		my $percentage = sprintf("%.2f", $c->param('current_size') / $total_size * 100 ) . '%';
 		$c->render(text => $total_size);
-		&Websocket::send('tab', { console => '$(\'#embedded_ota_uploader_percentage\').text(\'' . &subs::format_name($c->param('status')) . ' ' . $percentage . '\').show()', browser_tab_id => $c->param('browser_tab_id') });
+		&Websocket::send('tab', { console => &Websocket::console_command('otaUploaderPercent', &subs::format_name($c->param('status')), $percentage), browser_tab_id => $c->param('browser_tab_id') });
 	}
 	else {
 		$c->render(text => 'no');

@@ -24,6 +24,12 @@ var jawnosConsoleCommands = {
 	jpStop: function (a) {
 		if (typeof jpStop === 'function') { jpStop(String(a[0]), String(a[1]), String(a[2])); }
 	},
+	jpScreen: function (a) {
+		if (typeof jpScreen === 'function') { jpScreen(String(a[0]), String(a[1])); }
+	},
+	jpStart: function (a) {
+		if (typeof jpStart === 'function') { jpStart(String(a[0]), String(a[1]), String(a[2])); }
+	},
 	configurationReloader: function (a) {
 		if (typeof configurationReloader === 'function') { configurationReloader(a[0]); }
 	},
@@ -57,6 +63,21 @@ var jawnosConsoleCommands = {
 	deviceLister: function () {
 		if (typeof deviceLister === 'function') { deviceLister(); }
 	},
+	htopViewer: function () {
+		if (typeof htopViewer === 'function') { htopViewer(); }
+	},
+	nowMeSuccess: function (a) {
+		if (typeof nowMeSuccess === 'function') { nowMeSuccess(String(a[0]), String(a[1])); }
+	},
+	otaUploaderPercent: function (a) {
+		$('#embedded_ota_uploader_percentage').text(String(a[0] || '') + ' ' + String(a[1] || '')).show();
+	},
+	registerGrabber: function (a) {
+		if (typeof registerGrabber === 'function') { registerGrabber(String(a[0])); }
+	},
+	marketReload: function () {
+		if (typeof marketReload === 'function') { marketReload(); }
+	},
 	calculator: function () {
 		if (typeof calculator === 'function') { calculator(); }
 	},
@@ -87,6 +108,30 @@ var jawnosConsoleCommands = {
 	},
 	marketScanArrived: function () {
 		if (typeof marketScanArrived === 'function') { marketScanArrived(); }
+	},
+	jawnosThemeBundleApply: function (a) {
+		if (typeof jawnosThemeBundleApply === 'function') { jawnosThemeBundleApply(a[0], a[1]); }
+	},
+	helpChatIngest: function (a) {
+		if (typeof helpChatIngest === 'function') { helpChatIngest(String(a[0] || '')); }
+	},
+	jawnosClockAlarmRing: function (a) {
+		if (typeof jawnosClockAlarmRing === 'function') { jawnosClockAlarmRing(a[0] || {}); }
+	},
+	jawnosClockTimerDone: function (a) {
+		if (typeof jawnosClockTimerDone === 'function') { jawnosClockTimerDone(a[0] || {}); }
+	},
+	jawnosClockRefresh: function (a) {
+		if (typeof jawnosClockRefresh === 'function') { jawnosClockRefresh(a[0]); }
+	},
+	jawnosClockAlarmStop: function () {
+		if (typeof jawnosClockAlarmStop === 'function') { jawnosClockAlarmStop(); }
+	},
+	musicVideoReceiverOpen: function (a) {
+		if (typeof musicVideoReceiverOpen === 'function') { musicVideoReceiverOpen(String(a[0] || ''), a[1] || {}); }
+	},
+	musicVideoReceiverClose: function (a) {
+		if (typeof musicVideoReceiverClose === 'function') { musicVideoReceiverClose(a[0]); }
 	},
 	boxOffice: function () {
 		if ($('#box_office').is(':visible') && typeof boxOffice === 'function') { boxOffice(); }
@@ -135,7 +180,7 @@ var jawnosConsoleCommands = {
 	},
 	removeEmail: function (a) {
 		jawnosConsoleByAttr('.email_message', 'uuid', a[0]).remove();
-		jawnosConsoleByAttr('.mailbox_message', 'uuid', a[0]).remove();
+		jawnosConsoleByAttr('.mailbox_message', 'uuid', a[1] !== undefined ? a[1] : a[0]).remove();
 	},
 	removeMailbox: function (a) {
 		jawnosConsoleByAttr('.mailbox_message', 'uuid', a[0]).remove();
@@ -157,7 +202,41 @@ var jawnosConsoleCommands = {
 		if (/^[A-Za-z0-9_-]+$/.test(id)) { $('#' + id).hide(); }
 	},
 	toggleLockdown: function (a) {
-		$('#start_menu').toggleClass('lockdown', !!a[0]);
+		// a command carries a real boolean or 1/0; the string '0' must not read as on
+		var on = (a[0] === true || a[0] === 1 || a[0] === '1' || a[0] === 'true');
+		$('#start_menu').toggleClass('lockdown', on);
+	},
+	setAppointmentAttr: function (a) {
+		var name = String(a[1] || ''), value = String(a[2] === undefined ? '' : a[2]);
+		// settings travel as attributes on the appointment card; never let one
+		// install an event handler or a navigable URL
+		if (!/^[a-z][a-z0-9_-]*$/.test(name) || /^on/.test(name)) { return; }
+		if (name === 'style' || name === 'href' || name === 'src' || name === 'srcdoc' || name === 'formaction') { return; }
+		jawnosConsoleByAttr('.appointment', 'app', a[0]).attr(name, value);
+	},
+	mediaUnlock: function (a) {
+		var mode = String(a[0] || ''), token = String(a[1] || '');
+		if (mode === 'gallery') {
+			$('#gallery').attr('unlock', token);
+			if (typeof imageViewer === 'function') { imageViewer({ view: 'home' }); }
+		}
+		else if (mode === 'music') {
+			$('#music').attr('unlock', token);
+			$('#music').show();
+			$('#music_padlock').hide();
+			if (typeof searchMusic === 'function') { searchMusic(); }
+		}
+		else if (mode === 'security') {
+			if (typeof jawnosSecurityGrant === 'function') { jawnosSecurityGrant(token); }
+		}
+		else if (mode === 'private') {
+			$('#security_private_padlock').hide();
+			if (typeof jawnosPrivateRefresh === 'function') { jawnosPrivateRefresh(1); }
+		}
+		else if (mode === 'folders') {
+			$('#folders').attr('unlock', token);
+			if (typeof foldersOpener === 'function') { foldersOpener(); }
+		}
 	},
 	padlockFrame: function () {
 		$('#padlock_frame').html('');

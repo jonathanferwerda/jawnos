@@ -433,7 +433,7 @@ sub remote_machine_reconnector($c) {
 								app => $appt->{'app'}
 							});
 							&subs::appt_header_printer({ app => $appt->{'app'} });
-							&Websocket::send('server', { console => 'appointmentDetailGrabber(\'' . $appt->{'app'} . '\',\'' . $appt->{'uuid'} .'\');'});
+							&Websocket::send('server', { console => &Websocket::console_command('appointmentDetailGrabber', $appt->{'app'}, $appt->{'uuid'})});
 						}
 					}
 					$rm->{'connection'} = 'inactive';

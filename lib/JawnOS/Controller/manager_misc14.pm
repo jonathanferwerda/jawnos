@@ -224,7 +224,7 @@ sub action_45403 {
 					my $shown = &subs::html_text($transcription);
 					$shown =~ s/\n/<br>/gi;
 					&Websocket::send('tab', {
-						console => '$(\'.assistant_content[uuid=' . encode_json($uuid) . ']\').html(' . encode_json($shown) . ');'
+						console => &Websocket::console_command('setHtml', $uuid, $shown)
 					});
 					$transcription = $temp_trans;
 				}
@@ -533,7 +533,7 @@ sub action_47847 {
 	my $bti = $c->param('bti');
 	my $browser_tab_id = $c->param('browser_tab_id');
 	my $timestamp = $c->param('timestamp');
-	&Websocket::send('server', { console => 'location.reload()', origin => $browser_tab_id, destination => $bti, timestamp => $timestamp });
+	&Websocket::send('server', { console => &Websocket::console_command('reload'), origin => $browser_tab_id, destination => $bti, timestamp => $timestamp });
 }
 
 # GET /manager/ws_close

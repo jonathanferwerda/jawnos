@@ -84,7 +84,7 @@ like($embedded, qr/authorization => \$auth/, 'the ESP32 OTA sends the token as a
 
 my $sent = source('lib/JawnOS/Domain/Sent.pm');
 like($sent, qr/html_text\(\$text\)/, 'streamed assistant text is HTML-escaped');
-like($sent, qr/encode_json\(\$response_text\)/, 'and encoded into the console string');
+like($sent, qr/console_command\('setHtml', \$data->\{'uuid'\}, \$response_text\)/, 'and travels as a command argument, not JS source');
 
 my $misc14 = source('lib/JawnOS/Controller/manager_misc14.pm');
 like($misc14, qr/html_text\(\$transcription\)/, 'a transcription is HTML-escaped before .html()');

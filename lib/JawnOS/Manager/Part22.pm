@@ -412,8 +412,8 @@ sub website_grabber($data) {
 					my $esc = defined $measure ? $measure : '';
 					$esc =~ s/\\/\\\\/g;
 					$esc =~ s/'/\\'/g;
-					&Websocket::send('tab', { console => '$(\'.appointment[app="' . $app . '"]\').find(\'.app_measure[measure="' . $wm->{'subsetting'} . '"]\').val(\'' . $esc . '\');' });
-					&Websocket::send('tab', { console => '$(\'.appointment[app="' . $app . '"]\').find(\'.app_measure_display[measure="' . $wm->{'subsetting'} . '"]\').text(\'' . $esc . '\');' });
+					&Websocket::send('tab', { console => &Websocket::console_command('setMeasure', $app, $wm->{'subsetting'}, $esc)});
+					&Websocket::send('tab', { console => &Websocket::console_command('setMeasureText', $app, $wm->{'subsetting'}, $esc)});
 				}
 			}
 		}

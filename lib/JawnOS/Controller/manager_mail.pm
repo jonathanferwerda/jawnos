@@ -424,7 +424,7 @@ sub action_31463 {
 			});
 
 		}
-		&Websocket::send('tab', { console => '$(\'.wind[app=' . encode_json($message->{'app'}) . ']\').find(\'.email_compose_form\').attr(\'uuid\', ' . encode_json($message->{'uuid'}) . ')' });
+		&Websocket::send('tab', { console => &Websocket::console_command('setEmailForm', $message->{'app'}, $message->{'uuid'})});
 	}
 	$c->render(json => $message);
 }

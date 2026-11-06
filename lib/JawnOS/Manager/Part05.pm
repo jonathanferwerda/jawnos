@@ -274,7 +274,7 @@ sub appointment_writer($c,$app) {
 					else { $a->{'type'} = 'record'; };
 				}
 				elsif (!$stop_remote) {
-					&Websocket::send('music', { console => 'jpStop(\'' . $appt->{'app'} . '\',\'' . $dat->{'recorder'} . '\',\'' . $appt->{'uuid'} . '\');' });
+					&Websocket::send('music', { console => &Websocket::console_command('jpStop', $appt->{'app'}, $dat->{'recorder'}, $appt->{'uuid'})});
 				}
 			}
 
@@ -320,7 +320,7 @@ sub appointment_writer($c,$app) {
 					$child_apps{ $so->{'app'} } = 1;
 					&budget_runner($so->{'app'});
 					&subs::intelligent_automation_toggle({ appt_uuid => $so->{'uuid'}, app => $so->{'app'}, 'state' => 'off', timestamp => $ts, remote_address => $remote_address, source_chip_id => $source_chip_id });
-					&Websocket::send('tab', { console => 'appointmentDetailGrabber(\'' . $so->{'app'} . '\',\'' . $so->{'uuid'} .'\');'});
+					&Websocket::send('tab', { console => &Websocket::console_command('appointmentDetailGrabber', $so->{'app'}, $so->{'uuid'})});
 				}
 			}
 			&subs::source_header_printer([ keys %child_apps ], $timestamp);
@@ -412,9 +412,9 @@ sub appointment_writer($c,$app) {
 	# writes, not renders, and they are what makes the new child appear on the
 	# screen at once - they stay for a quiet child too. A press then forks the
 	# window once, not once per child, and still shows every child immediately.
-	&Websocket::send('tab', { console => 'calculator();' });
-	&Websocket::send('tab', { console => 'appointmentDetailGrabber(' . encode_json($app->{'app'}) . ',' . encode_json($app->{'uuid'}) . ');' });
-	&Websocket::send('tab', { console => 'continent_record({"uuid":' . encode_json($app->{'uuid'}) . ',"app":' . encode_json($app->{'app'}) . ',"purpose":"app","timestamp":' . encode_json($app->{'timestamp'}) . ',"navigation":"once"});' });
+	&Websocket::send('tab', { console => &Websocket::console_command('calculator')});
+	&Websocket::send('tab', { console => &Websocket::console_command('appointmentDetailGrabber', $app->{'app'}, $app->{'uuid'})});
+	&Websocket::send('tab', { console => &Websocket::console_command('continentRecord', { uuid => $app->{'uuid'}, app => $app->{'app'}, purpose => 'app', timestamp => $app->{'timestamp'}, navigation => 'once' })});
 	# The header went out as soon as the row was written. The window render is the
 	# slow half; fork it so the writer - and the default model and option sessions
 	# it starts - does not wait for a full redraw.
@@ -677,7 +677,7 @@ sub market_list {
 sub market_save_list {
 	my ($list) = @_;
 	&subs::setting_setter({ app => 'market', setting => 'shopping_list', value => encode_json($list) });
-	&Websocket::send('tab', { console => 'marketReload();' });
+	&Websocket::send('tab', { console => &Websocket::console_command('marketReload')});
 }
 
 sub market_upgrade_need {

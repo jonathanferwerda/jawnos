@@ -543,7 +543,7 @@ sub appointment_theme_push {
 	# already read - the settings table. One house-wide row, and only when it
 	# changes, so a stop/start on the same theme does not churn sync.
 	&native_theme_record({ %send, theme => $bundle->{'slug'} // '' });
-	&Websocket::send('server', { console => 'jawnosThemeBundleApply(' . encode_json(\%send) . ');' });
+	&Websocket::send('server', { console => &Websocket::console_command('jawnosThemeBundleApply', \%send)});
 }
 
 # The native surfaces (the launcher and the lock screen) wear the desk's paint.

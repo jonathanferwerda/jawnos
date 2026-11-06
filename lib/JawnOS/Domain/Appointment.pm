@@ -249,7 +249,7 @@ sub internet_site_appointment_tick {
 			server_time => $now,
 		}, { uuid => $uuid, app => $app });
 		&intelligent_automation_toggle({ appt_uuid => $uuid, app => $app, 'state' => 'off', timestamp => $stop_at });
-		&Websocket::send('tab', { console => 'appointmentDetailGrabber(\'' . $app . '\',\'' . $uuid . '\');' });
+		&Websocket::send('tab', { console => &Websocket::console_command('appointmentDetailGrabber', $app, $uuid)});
 	}
 	# Sessions to start: a mapped site that is still being reported and has no
 	# session of any kind running for its app.
@@ -296,7 +296,7 @@ sub internet_site_appointment_tick {
 		&db_update('appointments', { model => $row->{'model'}, options => $row->{'options'}, unit => $row->{'unit'}, quantity => $row->{'quantity'} }, { uuid => $uuid, app => $name })
 			if $row->{'model'} || $row->{'options'} || $row->{'unit'} || $row->{'quantity'};
 		&intelligent_automation_toggle({ appt_uuid => $uuid, app => $name, 'state' => 'on', timestamp => $start_at });
-		&Websocket::send('tab', { console => 'appointmentDetailGrabber(\'' . $name . '\',\'' . $uuid . '\');' });
+		&Websocket::send('tab', { console => &Websocket::console_command('appointmentDetailGrabber', $name, $uuid)});
 	}
 	return 1;
 }
