@@ -4,6 +4,9 @@
 #   perl scripts/tls_issue.pl            # issue, or renew if due
 #   perl scripts/tls_issue.pl --renew    # the timer's run (same thing, quieter)
 #   perl scripts/tls_issue.pl --domain example.com --email me@example.com
+#   perl scripts/tls_issue.pl --host --domain dev.example.com
+#                                                # this machine's own certificate,
+#                                                # no wildcard and no shared key
 #   perl scripts/tls_issue.pl --client <uuid>    # pick a DNS entry explicitly
 #   perl scripts/tls_issue.pl hook auth|cleanup # certbot's manual hook (internal)
 #
@@ -88,11 +91,15 @@ my $domain = '';
 my $email = '';
 my $client_uuid = '';
 my $manual_ok = 0;
+my $host_mode = 0;
+my $out_dir = 'server';
 for (my $i = 0; $i < @ARGV; $i++) {
 	$domain = $ARGV[$i + 1] if $ARGV[$i] eq '--domain' && defined $ARGV[$i + 1];
 	$email = $ARGV[$i + 1] if $ARGV[$i] eq '--email' && defined $ARGV[$i + 1];
 	$client_uuid = $ARGV[$i + 1] if $ARGV[$i] eq '--client' && defined $ARGV[$i + 1];
+	$out_dir = $ARGV[$i + 1] if $ARGV[$i] eq '--out' && defined $ARGV[$i + 1];
 	$manual_ok = 1 if $ARGV[$i] eq '--manual';
+	$host_mode = 1 if $ARGV[$i] eq '--host';
 }
 
 my $config = eval { &subs::config_reader() } || {};
@@ -101,6 +108,10 @@ $domain = &subs::house_domain() unless length $domain;
 $domain = $config->{'domain'} || '' unless length $domain;
 $email = $config->{'email'} || '' unless length $email;
 
+if ($host_mode && !length $domain) {
+	&say_status(0, '--host needs a --domain naming this machine (for example dev.example.com)');
+	exit 1;
+}
 if (!length $domain || $domain =~ /^(?:127\.|localhost$|\[|::)/i) {
 	&say_status(0, 'config.json has no real domain (it reads "' . ($domain || '') . '")');
 	exit 1;
@@ -129,16 +140,28 @@ flock($lock, LOCK_EX | LOCK_NB) or do {
 };
 
 make_path("$base/certbot", "$base/work", "$base/log");
-&say_status(0, 'issuing for ' . $domain . ' via ' . ($client->{'provider'} || '?'));
+# One certificate per machine is the point of --host: a wildcard key copied to
+# every machine means any one of them can impersonate the whole domain. The
+# lineage name is its own too, so a host run can never rotate the house's
+# wildcard by accident.
+my $cert_name = 'jawnos';
+if ($host_mode) {
+	(my $slug = lc $domain) =~ s/[^a-z0-9.-]+/-/g;
+	$cert_name = 'host-' . $slug;
+}
+
+&say_status(0, 'issuing '
+	. ($host_mode ? "a host certificate for $domain" : "the wildcard for $domain")
+	. ' via ' . ($client->{'provider'} || '?'));
 
 my @cmd = (
 	$certbot, 'certonly',
 	'--config-dir', "$base/certbot",
 	'--work-dir',   "$base/work",
 	'--logs-dir',   "$base/log",
-	'--cert-name',  'jawnos',
+	'--cert-name',  $cert_name,
 	'-d', $domain,
-	'-d', '*.' . $domain,
+	($host_mode ? () : ('-d', '*.' . $domain)),
 	'--email', $email,
 	'--agree-tos',
 	'--non-interactive',
@@ -168,7 +191,7 @@ if ($rc != 0) {
 
 # Install the pair where jawn reads it. Copy rather than link: the live/
 # symlinks point into an archive that a future renewal will rotate.
-my $live = "$base/certbot/live/jawnos";
+my $live = "$base/certbot/live/$cert_name";
 my $full = "$live/fullchain.pem";
 my $priv = "$live/privkey.pem";
 if (!-e $full || !-e $priv) {
@@ -176,28 +199,28 @@ if (!-e $full || !-e $priv) {
 	exit 1;
 }
 
-make_path('server');
+make_path($out_dir);
 my $before = '';
-if (-e 'server/fullchain.pem') {
-	open my $bf, '<', 'server/fullchain.pem';
+if (-e "$out_dir/fullchain.pem") {
+	open my $bf, '<', "$out_dir/fullchain.pem";
 	local $/;
 	$before = <$bf> // '';
 	close $bf;
 }
-copy($full, 'server/fullchain.pem') or do { &say_status(0, "cannot copy fullchain: $!"); exit 1; };
-copy($priv, 'server/privkey.pem')  or do { &say_status(0, "cannot copy privkey: $!"); exit 1; };
-chmod 0600, 'server/fullchain.pem', 'server/privkey.pem';
+copy($full, "$out_dir/fullchain.pem") or do { &say_status(0, "cannot copy fullchain: $!"); exit 1; };
+copy($priv, "$out_dir/privkey.pem")  or do { &say_status(0, "cannot copy privkey: $!"); exit 1; };
+chmod 0600, "$out_dir/fullchain.pem", "$out_dir/privkey.pem";
 
 # A mismatched pair would take every listener down on the next start, so check
 # before asking for the restart.
-my $pub_cert = `openssl x509 -in server/fullchain.pem -noout -pubkey 2>/dev/null`;
-my $pub_key  = `openssl pkey -in server/privkey.pem -pubout 2>/dev/null`;
+my $pub_cert = `openssl x509 -in "$out_dir/fullchain.pem" -noout -pubkey 2>/dev/null`;
+my $pub_key  = `openssl pkey -in "$out_dir/privkey.pem" -pubout 2>/dev/null`;
 if (!length $pub_cert || $pub_cert ne $pub_key) {
 	&say_status(0, 'the installed certificate and key do not match; the old pair is still on disk');
 	exit 1;
 }
 
-open my $af, '<', 'server/fullchain.pem';
+open my $af, '<', "$out_dir/fullchain.pem";
 local $/;
 my $after = <$af> // '';
 close $af;
@@ -205,7 +228,10 @@ close $af;
 if ($after ne $before) {
 	my $status = "$ENV{'HOME'}/.president/status";
 	my $reason = 'installed a new TLS certificate for ' . $domain;
-	if (open my $sf, '>', $status) {
+	if ($out_dir ne 'server') {
+		&say_status(1, 'installed a new certificate for ' . $domain . ' in ' . $out_dir);
+	}
+	elsif (open my $sf, '>', $status) {
 		print $sf 'restart: ' . $reason;
 		close $sf;
 		&say_status(1, 'installed a new certificate for ' . $domain . '; restart requested');
