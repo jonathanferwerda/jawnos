@@ -190,7 +190,7 @@ sub run_read {
 # iwd's D-Bus policy differs between distributions: reading is usually allowed
 # for a normal user, but where it is not, a passwordless sudo answers the same
 # question without changing anything.
-sub run_iwctl_read {
+sub run_privileged_read {
 	my (@command) = @_;
 	my ($stdout, $stderr, $status) = run_read(@command);
 	if ($status == 0 || $> == 0) {
@@ -323,7 +323,7 @@ sub adapter_report {
 	my $report = { present => 0, adapters => [], powered => 0 };
 	return $report unless find_command('iwctl');
 	$report->{'present'} = 1;
-	my ($stdout, $stderr, $status) = run_iwctl_read('iwctl', 'adapter', 'list');
+	my ($stdout, $stderr, $status) = run_privileged_read('iwctl', 'adapter', 'list');
 	return $report unless $status == 0;
 	my @adapters;
 	foreach my $line ( split /\n/, $stdout ) {
@@ -347,7 +347,7 @@ sub station_report {
 	my ($interface) = @_;
 	my %info;
 	return \%info unless find_command('iwctl');
-	my ($stdout, $stderr, $status) = run_iwctl_read('iwctl', 'station', $interface, 'show');
+	my ($stdout, $stderr, $status) = run_privileged_read('iwctl', 'station', $interface, 'show');
 	return \%info unless $status == 0;
 	foreach my $line ( split /\n/, $stdout ) {
 		next if $line =~ /^\s*Station:/;
@@ -360,7 +360,7 @@ sub station_report {
 
 sub saved_networks {
 	return [] unless find_command('iwctl');
-	my ($stdout, $stderr, $status) = run_iwctl_read('iwctl', 'known-networks', 'list');
+	my ($stdout, $stderr, $status) = run_privileged_read('iwctl', 'known-networks', 'list');
 	return [] unless $status == 0;
 	my @saved;
 	foreach my $line ( split /\n/, $stdout ) {
@@ -401,12 +401,22 @@ sub wifi_status {
 
 sub wifi_scan {
 	my ($interface) = @_;
-	return { ok => 0, error => 'No wireless interface found.' } unless find_command('iwctl');
 	$interface = first_wireless() unless valid_interface($interface);
 	return { ok => 0, error => 'No wireless interface found.' } unless valid_interface($interface);
-	run_iwctl_read('iwctl', 'station', $interface, 'scan');
+	# iwd first: it is the stack this house configures. A machine on NetworkManager
+	# (the Table, a laptop) has no iwctl at all, and the old early return answered
+	# "No wireless interface found." on a machine with a perfectly good radio - so
+	# Scan showed no networks and the name had to be typed by hand.
+	return wifi_scan_iwd($interface) if find_command('iwctl');
+	return wifi_scan_nmcli($interface) if find_command('nmcli');
+	return { ok => 0, error => 'No WiFi tool is installed (iwctl or nmcli).' };
+}
+
+sub wifi_scan_iwd {
+	my ($interface) = @_;
+	run_privileged_read('iwctl', 'station', $interface, 'scan');
 	select(undef, undef, undef, 2);
-	my ($stdout, $stderr, $status) = run_iwctl_read('iwctl', 'station', $interface, 'get-networks');
+	my ($stdout, $stderr, $status) = run_privileged_read('iwctl', 'station', $interface, 'get-networks');
 	return { ok => 0, error => clean($stderr) || clean($stdout) || 'The scan failed.' } unless $status == 0;
 	my @networks;
 	foreach my $line ( split /\n/, $stdout ) {
@@ -428,6 +438,62 @@ sub wifi_scan {
 			security => $security,
 			secure   => ($security =~ /open/i ? 0 : 1),
 			signal   => $bars * 25,
+			bars     => $bars,
+		};
+	}
+	@networks = sort { $b->{'signal'} <=> $a->{'signal'} || lc($a->{'ssid'}) cmp lc($b->{'ssid'}) } @networks;
+	return { ok => 1, interface => $interface, networks => \@networks };
+}
+
+# nmcli writes a run of `:`-separated fields, and a network name can contain a
+# colon, which it escapes. Split from the right - signal and security are the
+# last two fields - and put the name back together.
+sub nmcli_unescape {
+	my ($text) = @_;
+	$text = '' unless defined $text;
+	$text =~ s/\\(.)/$1/g;
+	return $text;
+}
+
+sub wifi_scan_nmcli {
+	my ($interface) = @_;
+	my ($stdout, $stderr, $status) = run_privileged_read(
+		'nmcli', '--terse', '--escape', 'yes', '--fields', 'SSID,SECURITY,SIGNAL',
+		'device', 'wifi', 'list', 'ifname', $interface, '--rescan', 'yes'
+	);
+	unless ($status == 0) {
+		# A rescan can be refused while the radio is busy; the cached list is
+		# still worth showing, and is better than no answer at all.
+		($stdout, $stderr, $status) = run_privileged_read(
+			'nmcli', '--terse', '--escape', 'yes', '--fields', 'SSID,SECURITY,SIGNAL',
+			'device', 'wifi', 'list', 'ifname', $interface
+		);
+	}
+	return { ok => 0, error => clean($stderr) || clean($stdout) || 'The scan failed.' } unless $status == 0;
+	my %seen;
+	my @networks;
+	foreach my $line ( split /\n/, $stdout ) {
+		next unless length $line;
+		my @fields = split /(?<!\\):/, $line;
+		next unless @fields >= 3;
+		my $signal = pop @fields;
+		my $security = pop @fields;
+		my $ssid = nmcli_unescape(join(':', @fields));
+		next unless valid_ssid($ssid);
+		next if $seen{$ssid}++;
+		# nmcli spells "no security" as an empty field, `--`, or `none`.
+		my $secure = 1;
+		$secure = 0 if !defined $security || $security eq '' || $security =~ /^(?:--|none|open)$/i;
+		$security = 'open' unless $secure;
+		$signal = 0 unless defined $signal && $signal =~ /^\d+$/;
+		my $bars = int($signal / 25);
+		$bars = 0 if $bars < 0;
+		$bars = 4 if $bars > 4;
+		push @networks, {
+			ssid     => $ssid,
+			security => $security,
+			secure   => $secure,
+			signal   => $signal,
 			bars     => $bars,
 		};
 	}

@@ -143,7 +143,7 @@ expect_error('No such VPN configuration.', 'vpn_unit naming a config that is not
 	args => ['vpn_unit', 'start', 'wg', 'jawnos-test-no-such-vpn-4f2']);
 
 # --- a source that is not installed ------------------------------------------
-expect_error('No wireless interface found.', 'wifi_scan with no iwctl',
+expect_error('No WiFi tool is installed (iwctl or nmcli).', 'wifi_scan with no WiFi tool',
 	args => ['wifi_scan', 'wlan0']);
 expect_error('iwd is not installed.', 'wifi_connect with no iwctl',
 	args => ['wifi_connect', 'wlan0', 'jawn-test-net'], stdin => "correcthorse\n");
@@ -209,6 +209,40 @@ like(( run_net('args' => ['interface', 'up', 'wlan0']) )[1],
 		'an open network: two bars, not secure');
 	is_deeply([ sort keys %{ $nets->[0] } ], [qw(bars secure security signal ssid)],
 		'a network row is the documented five fields');
+}
+
+{
+	# A machine on NetworkManager has no iwctl at all: the Table is one, and Scan
+	# used to answer "No wireless interface found." there, which is why a network
+	# name with a space had to be typed by hand.
+	my $nm = "$scratch/nm";
+	mkdir $nm or die "cannot make $nm: $!";
+	write_exe("$nm/ip", q{exit 0});
+	write_exe("$nm/nmcli", <<'FAKE_NMCLI');
+case "$*" in
+	*"--fields SSID,SECURITY,SIGNAL"*)
+		printf 'jawn-test-net:WPA2:80\ntest net with space:WPA2:60\nopen-test-net::40\ncolon\\:name:WPA2:20\n' ;;
+	*) exit 1 ;;
+esac
+FAKE_NMCLI
+
+	my ($rc, $out) = run_net(path => $nm, args => [qw(wifi_scan wlan0)]);
+	my $data = answer($rc, $out, '', 'wifi_scan on a NetworkManager machine');
+	is($data->{'ok'}, 1, 'the nmcli fallback scans');
+	is($data->{'interface'}, 'wlan0', 'and names the interface');
+	my $nets = $data->{'networks'};
+	is(scalar @{$nets}, 4, 'every advertised network is read');
+	my %by_ssid = map { $_->{'ssid'} => $_ } @{$nets};
+	ok($by_ssid{'test net with space'}, 'a name with a space survives intact')
+		or diag(join(', ', sort keys %by_ssid));
+	is($by_ssid{'test net with space'}->{'signal'}, 60, 'with its signal');
+	is($by_ssid{'colon:name'}->{'ssid'}, 'colon:name', 'an escaped colon in the name is unescaped');
+	is($by_ssid{'open-test-net'}->{'secure'}, 0, 'an empty security field is an open network');
+	is($by_ssid{'open-test-net'}->{'security'}, 'open', 'and says open');
+	is($by_ssid{'jawn-test-net'}->{'secure'}, 1, 'a named security is a secured network');
+	is_deeply([ sort keys %{ $nets->[0] } ], [qw(bars secure security signal ssid)],
+		'the fallback answers the same five fields');
+	is($nets->[0]->{'signal'}, 80, 'and sorts by signal');
 }
 
 {
