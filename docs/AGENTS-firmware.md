@@ -16,10 +16,19 @@ unstaged build means an OTA sends the previous firmware.
   `jw/VERSION` (watch), `jp/alarmclock/VERSION` (Pico). `scripts/fw_version.py` stamps the nearest one
   into the build, and `scripts/stage_firmware.pl` writes it into the sidecar the manager reads, so a
   board is only "behind" relative to its own number: the house moving on does not make every device
-  look stale. **A change to a board's firmware bumps that board's version in the same commit** —
-  `perl scripts/fw_bump.pl deck|watch|alarmclock` (patch bump; `--list` shows all three) — then build
-  and stage. Staging warns when an image's firmware sources changed but its version did not: the device
-  would otherwise report the new image under the old number and read as up to date for ever.
+  look stale. **A board's patch moves when its firmware changes and nothing else moves it**; the
+  lander does this for you (`scripts/fw_bump.pl --sync`, run from `agent_land.pl`): a landing that
+  touched a board's firmware sources bumps that board's patch, unless the branch already bumped it by
+  hand. Then build and stage. `perl scripts/fw_bump.pl deck|watch|alarmclock` bumps one by hand and
+  `--list` shows all three.
+- **The major.minor follows the house.** The house counter is `scripts/version_bump.pl` (`--minor`,
+  `--major`, patch by default; the lander runs it without arguments). A board on an older major.minor
+  is moved to `<house major>.<house minor>.0` — at the next landing, or immediately with
+  `perl scripts/fw_bump.pl --sync` — so 0.1.x → 0.2.x takes every board to 0.2.0 while the house's own
+  patch keeps running. A hand-made minor/major move lands on its own (the lander owns the patch
+  counter and discards `VERSION` hunks), which is why the sync belongs in that same change.
+- **Staging warns** when an image's bytes changed but its version did not: the device would otherwise
+  report the new image under the old number and read as up to date for ever.
 - **OTA needs a LittleFS partition.** `jp/alarmclock/platformio.ini` sets
   `board_build.filesystem_size = 2M` (2 MB sketch + 2 MB filesystem). The default 0 MB filesystem
   leaves the uploaded image nowhere to live and the new firmware boots without `config.txt`, so

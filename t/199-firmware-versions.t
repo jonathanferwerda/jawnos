@@ -1,4 +1,4 @@
-# tests-for: scripts/fw_version.py scripts/fw_bump.pl scripts/stage_firmware.pl lib/JawnOS/Domain/Firmware.pm lib/JawnOS/Domain/Loader.pm
+# tests-for: scripts/fw_version.py scripts/fw_bump.pl scripts/version_bump.pl scripts/stage_firmware.pl lib/JawnOS/Domain/Firmware.pm lib/JawnOS/Domain/Loader.pm
 # covers:    Each board carries its own firmware version. The deck, the watch and
 #            the Pico each keep a VERSION in their own project, the build stamps
 #            that one, and the staged sidecar names it - so the panel can say one
@@ -45,6 +45,23 @@ my %BOARD = (
 );
 
 my $semver = qr/^\d+\.\d+\.\d+$/;
+my $bump_script = "$root/scripts/fw_bump.pl";
+my $house_bump  = "$root/scripts/version_bump.pl";
+
+sub git {
+	my ($dir, @args) = @_;
+	# the pre-push hook exports GIT_DIR; without this clear, `git -C <temp>` acts
+	# on the live checkout instead of the fixture
+	delete local @ENV{qw(GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_COMMON_DIR)};
+	my $err = gensym;
+	my $pid = open3(my $in, my $out, $err, 'git', '-C', $dir, @args);
+	close $in;
+	local $/;
+	my $stdout = <$out> // '';
+	my $stderr = <$err> // '';
+	waitpid($pid, 0);
+	return ($? >> 8, $stdout . $stderr);
+}
 
 sub run {
 	my ($script, @args) = @_;
@@ -175,6 +192,98 @@ like(read_file("$root/lib/JawnOS/Domain/Loader.pm"), qr/\bfirmware_target_versio
 	is(eval { subs::firmware_target_version({ project => 'jw' }) }, '9.9.9',
 		'and the checkout\'s when the board has none');
 	chdir $cwd or die "cannot chdir back to $cwd: $!";
+}
+
+# --- the sync the lander runs ----------------------------------------------
+# A board's patch moves when that board's firmware changed in the landing; its
+# major.minor follows the house. Both are decided from the tree and the ref, so
+# they are testable in a throwaway repo.
+{
+	my $repo = tempdir(CLEANUP => 1);
+	make_path("$repo/jt", "$repo/jw", "$repo/jp/alarmclock", "$repo/scripts");
+	write_file("$repo/VERSION", "0.1.5\n");
+	write_file("$repo/jt/VERSION", "0.1.3\n");
+	write_file("$repo/jw/VERSION", "0.1.9\n");
+	write_file("$repo/jp/alarmclock/VERSION", "0.1.1\n");
+	write_file("$repo/jt/jt_01_globals.ino", "// deck\n");
+	write_file("$repo/jw/jw_01_globals.ino", "// watch\n");
+	git($repo, 'init', '-q');
+	git($repo, 'config', 'user.email', 'qa-test@example.invalid');
+	git($repo, 'config', 'user.name', 'qa test');
+	git($repo, 'add', '.');
+	git($repo, 'commit', '-qm', 'base');
+
+	# a deck-only firmware change
+	write_file("$repo/jt/jt_02_loop.ino", "// more deck\n");
+	git($repo, 'add', '.');
+	git($repo, 'commit', '-qm', 'deck changed');
+	my ($rc, $out) = run($bump_script, '--root', $repo, '--sync',
+		'--from', 'HEAD~1', '--house', '0.1.6');
+	is($rc, 0, 'sync runs');
+	like($out, qr/deck 0\.1\.3 -> 0\.1\.4 \(jt firmware changed\)/,
+		'the board whose firmware changed takes a patch bump');
+	unlike($out, qr/watch/, 'a board that did not change is left alone');
+	unlike($out, qr/alarmclock/, 'nor the Pico');
+	is(read_file("$repo/jt/VERSION"), "0.1.4\n", 'and the deck file moved');
+	is(read_file("$repo/jw/VERSION"), "0.1.9\n", 'the watch did not');
+
+	# the branch already bumped it: the landing must not bump it a second time
+	write_file("$repo/jt/jt_03_ui.ino", "// more deck\n");
+	write_file("$repo/jt/VERSION", "0.1.7\n");
+	git($repo, 'add', '.');
+	git($repo, 'commit', '-qm', 'deck, bumped by hand');
+	my ($brc, $bout) = run($bump_script, '--root', $repo, '--sync',
+		'--from', 'HEAD~1', '--house', '0.1.8');
+	is($brc, 0, 'sync runs on a hand-bumped board');
+	unlike($bout, qr/deck/, 'and leaves the number the person chose');
+	is(read_file("$repo/jt/VERSION"), "0.1.7\n", 'exactly as written');
+
+	# the house moves a minor: every board follows the scheme, changed or not
+	my ($src, $sout) = run($bump_script, '--root', $repo, '--sync', '--house', '0.2.0');
+	is($src, 0, 'the scheme sync runs');
+	like($sout, qr/deck 0\.1\.7 -> 0\.2\.0 \(follows house 0\.2\)/, 'the deck follows the house');
+	like($sout, qr/watch 0\.1\.9 -> 0\.2\.0 \(follows house 0\.2\)/, 'so does the watch');
+	like($sout, qr/alarmclock 0\.1\.1 -> 0\.2\.0 \(follows house 0\.2\)/, 'and the Pico');
+	is(read_file("$repo/VERSION"), "0.1.5\n", 'the house counter itself is not touched');
+
+	my (undef, $major_out) = run($bump_script, '--root', $repo, '--sync', '--house', '1.0.0');
+	like($major_out, qr/watch 0\.2\.0 -> 1\.0\.0 \(follows house 1\.0\)/, 'a major move takes them too');
+
+	# a board with no VERSION is not invented
+	unlink "$repo/jp/alarmclock/VERSION";
+	my ($mrc, $mout) = run($bump_script, '--root', $repo, '--sync', '--house', '0.3.0');
+	is($mrc, 0, 'a tree missing one board still syncs');
+	like($mout, qr/deck 1\.0\.0 -> 0\.3\.0/, 'the boards it knows move');
+	unlike($mout, qr/alarmclock/, 'the one it does not know is left alone');
+	ok(!-e "$repo/jp/alarmclock/VERSION", 'and no version is invented for it');
+
+	my ($brc2) = run($bump_script, '--root', $repo, '--sync', '--house', 'banana');
+	isnt($brc2, 0, 'an unreadable house version is refused');
+}
+
+# --- the house can move a minor or a major ----------------------------------
+{
+	my $dir = tempdir(CLEANUP => 1);
+	my $cwd = getcwd();
+	chdir $dir or die "cannot chdir to $dir: $!";
+	write_file("$dir/VERSION", "0.1.7\n");
+
+	my ($prc, $pout) = run($house_bump);
+	chdir $cwd;
+	is($prc, 0, 'the patch bump still runs');
+	is($pout, "0.1.8\n", 'and is the default');
+
+	chdir $dir or die $!;
+	write_file("$dir/VERSION", "0.1.7\n");
+	my ($mrc, $mout) = run($house_bump, '--minor');
+	chdir $dir or die $!;
+	write_file("$dir/VERSION", "0.1.7\n");
+	my ($jrc, $jout) = run($house_bump, '--major');
+	chdir $cwd;
+	is($mrc, 0, 'a minor bump runs');
+	is($mout, "0.2.0\n", 'and lands on the next minor');
+	is($jrc, 0, 'a major bump runs');
+	is($jout, "1.0.0\n", 'and lands on the next major');
 }
 
 done_testing();

@@ -1,7 +1,15 @@
 #!/usr/bin/perl
 
-# Bump the JawnOS patch version in ./VERSION (e.g. 0.1.1 -> 0.1.2).
-# Run this before each commit until 0.2, when the minor bump becomes manual.
+# Bump the JawnOS version in ./VERSION (patch by default: 0.1.1 -> 0.1.2).
+#
+#   perl scripts/version_bump.pl            # patch
+#   perl scripts/version_bump.pl --minor    # 0.1.2281 -> 0.2.0
+#   perl scripts/version_bump.pl --major    # 0.2.4    -> 1.0.0
+#
+# The lander runs this without arguments on every landing, which is why the
+# patch counter is its job. A minor or major move is a deliberate one: make it,
+# then run `perl scripts/fw_bump.pl --sync` so every board follows the new
+# scheme (<major>.<minor>.0), and land.
 
 use strict;
 use warnings;
@@ -35,13 +43,21 @@ if (length $common) {
 	}
 }
 
+my $level = 'patch';
+foreach my $arg (@ARGV) {
+	$level = 'minor' if $arg eq '--minor';
+	$level = 'major' if $arg eq '--major';
+}
+
 my $file = './VERSION';
 my $v = eval { read_file($file) } || '0.1.0';
 $v =~ s/\s+$//;
 $v = '0.1.0' unless $v =~ /^\d+\.\d+\.\d+$/;
 
 my ($major, $minor, $patch) = split /\./, $v;
-$v = "$major.$minor." . ($patch + 1);
+if    ($level eq 'major') { $v = ($major + 1) . '.0.0' }
+elsif ($level eq 'minor') { $v = "$major." . ($minor + 1) . '.0' }
+else                      { $v = "$major.$minor." . ($patch + 1) }
 write_file($file, "$v\n");
 
 if ($lock) {

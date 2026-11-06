@@ -97,6 +97,7 @@ sub git {
 # A bare origin, a primary checkout on main, and one agent worktree on
 # agent/task - the shape the lander expects to find.
 sub fixture {
+	my (%arg) = @_;
 	my $dir     = tempdir(CLEANUP => 1);
 	my $origin  = "$dir/origin.git";
 	my $primary = "$dir/primary";
@@ -120,6 +121,15 @@ die "fixture repo is not isolated: $fixture_top\n" unless $trc == 0 && defined $
 	write_file("$primary/scripts/version_bump.pl", $BUMP);
 	write_file("$primary/scripts/restart.pl",   $RESTART);
 	write_file("$primary/scripts/agent_land.pl", read_file($real));
+	# Only the tests that land a firmware change need the board files; without
+	# them the lander skips the firmware step, which is what every other fixture
+	# here relies on.
+	if ($arg{'firmware'}) {
+		make_path("$primary/jt");
+		write_file("$primary/jt/VERSION", "0.1.0\n");
+		write_file("$primary/scripts/fw_bump.pl",
+			read_file("$FindBin::Bin/../scripts/fw_bump.pl"));
+	}
 
 	# A pre-push hook that records the flag the lander sets. The landing under
 	# test must reach it (not --no-verify) and must tell it the suite already ran.
@@ -372,6 +382,47 @@ subtest 'a suite that moves the trunk is put back and refuses' => sub {
 	my (undef, $origin) = git($f->{'primary'}, 'rev-parse', 'origin/main');
 	is($head, $origin, 'the trunk was put back where it was');
 	ok(!-e "$f->{'marker'}/restart", 'nothing restarted');
+};
+
+# --- a firmware change takes the board's own number with it -----------------
+subtest 'the lander bumps the board whose firmware it changed' => sub {
+	my $f = fixture(firmware => 1);
+	write_file("$f->{'wt'}/jt/jt_99_extra.ino", "// one more line of deck firmware\n");
+	git($f->{'wt'}, 'add', '--', 'jt/jt_99_extra.ino');
+	my ($cc, $co) = git($f->{'wt'}, 'commit', '-m', 'deck: one more line');
+	die "commit: $co" if $cc != 0;
+
+	my ($rc, $out) = land($f);
+	is($rc, 0, 'the landing goes through');
+	like($out, qr/deck 0\.1\.0 -> 0\.1\.1/, 'the deck takes a patch bump');
+
+	my (undef, $jt) = git($f->{'primary'}, 'show', 'main:jt/VERSION');
+	is($jt, '0.1.1', 'and the tip commit carries it');
+	my (undef, $house) = git($f->{'primary'}, 'show', 'main:VERSION');
+	is($house, '0.1.2', 'the house counter still moves on its own');
+};
+
+# --- the scheme follows the house -------------------------------------------
+subtest 'a board on an older major.minor follows the house' => sub {
+	my $f = fixture(firmware => 1);
+	# the house moves a minor the way a person does it: by hand, then pushed
+	write_file("$f->{'primary'}/VERSION", "0.2.0\n");
+	git($f->{'primary'}, 'add', '--', 'VERSION');
+	my ($cc, $co) = git($f->{'primary'}, 'commit', '-m', 'v0.2.0 - a new scheme');
+	die "commit: $co" if $cc != 0;
+	my ($pc, $po) = git($f->{'primary'}, 'push', '--no-verify', 'origin', 'main');
+	die "push: $po" if $pc != 0;
+
+	commit_in_worktree($f, 'note.txt', "a\n", 'a note');
+	my ($rc, $out) = land($f);
+	is($rc, 0, 'the landing goes through');
+	like($out, qr/deck 0\.1\.0 -> 0\.2\.0 \(follows house 0\.2\)/,
+		'the deck moves onto the house scheme, though its firmware did not change');
+
+	my (undef, $jt) = git($f->{'primary'}, 'show', 'main:jt/VERSION');
+	is($jt, '0.2.0', 'and the tip commit carries it');
+	my (undef, $house) = git($f->{'primary'}, 'show', 'main:VERSION');
+	is($house, '0.2.1', 'while the house counter moves on its own');
 };
 
 done_testing();

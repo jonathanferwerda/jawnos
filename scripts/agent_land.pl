@@ -152,6 +152,7 @@ if ($opt{'dry'}) {
 	say_step("would fetch origin and rebase $branch onto origin/$opt{'trunk'}");
 	say_step("would run: $^X scripts/run_tests.pl --jobs $opt{'jobs'}");
 	say_step("would bump VERSION, rewrite the tip subject, and push HEAD:refs/heads/$opt{'trunk'}");
+	say_step("would bump the firmware version of every board this landing changed");
 	say_step("would fast-forward the primary checkout at $primary");
 	say_step($opt{'restart'} ? 'would restart the dev server' : 'would not restart (--no-restart)');
 	say_step($opt{'remove'} ? 'would remove this worktree afterwards' : 'would leave the worktree in place');
@@ -306,6 +307,20 @@ refuse("version_bump.pl failed:\n$new") if $brc != 0;
 $new =~ s/\s+$//;
 refuse("version_bump.pl printed no version:\n$new") unless $new =~ /^\d+\.\d+\.\d+$/;
 
+# A board's firmware version is its own, but the landing owns the bookkeeping:
+# a board whose firmware this landing changed takes a patch bump, and a board
+# still on the old major.minor follows the house's scheme. Both go into the tip
+# commit, so the number in the tree is the number the next image carries.
+say_step('bumping the firmware versions this landing touched');
+my @fw_version_files = grep { -f $_ } qw(jt/VERSION jw/VERSION jp/alarmclock/VERSION);
+if (-f 'scripts/fw_bump.pl' && @fw_version_files) {
+	my ($fwrc, $fwout) = capture($^X, 'scripts/fw_bump.pl', '--sync',
+		'--from', "origin/$opt{'trunk'}", '--house', $new);
+	refuse("fw_bump.pl failed:\n$fwout") if $fwrc != 0;
+	$fwout =~ s/\s+$//;
+	say_step($fwout) if length $fwout;
+}
+
 my (undef, $subject) = git('log', '-1', '--format=%s');
 my (undef, $body)    = git('log', '-1', '--format=%b');
 $subject =~ s/^\s*v\d+\.\d+\.\d+\s+-\s+//;   # never stack two version prefixes
@@ -314,7 +329,7 @@ refuse('the branch tip has no commit') unless length $subject;
 $body =~ s/\s+$//;
 my $message = "v$new - $subject" . (length $body ? "\n\n$body" : '');
 
-git('add', '--', 'VERSION');
+git('add', '--', 'VERSION', @fw_version_files);
 my ($fh, $msg_path) = tempfile(UNLINK => 1, SUFFIX => '.msg');
 print $fh $message;
 close $fh;
