@@ -42,12 +42,9 @@ user for the exact file/folder/name. A wrong guess costs far more tokens than a 
 
 ## Many agents at once
 
-**Worktree per task: every source write — edit, new file, delete — happens in a worktree.** No
-exceptions: not a one-line fix, not a probe, not a file you mean to revert. The primary checkout is
-read-only for agents: a dirty one makes the lander refuse every landing. Create it
-(`git worktree add .worktrees/<task> -b agent/<task> origin/main`), then land from the worktree root
-with `perl ~/jawnos/scripts/agent_land.pl` (the primary copy), never push or restart by hand.
-`docs/AGENTS-concurrency.md`.
+The primary checkout is read-only for agents: a dirty one makes the lander refuse every landing.
+Land from the worktree root with `perl ~/jawnos/scripts/agent_land.pl` (the primary copy); never
+push or restart by hand.
 
 
 ## Crash-resilient agent work
@@ -69,6 +66,9 @@ The Zed panel keeps every byte it is shown; zram + earlyoom only slow the crash.
 
 ## Rules
 
+- **Worktree per task: every source write — edit, new file, delete — happens in a worktree.** Read
+  in the primary; host configuration and other out-of-repo writes are not source writes. If no
+  worktree exists yet, create one before the first edit (`docs/AGENTS-concurrency.md`).
 - **Maintain the locator from its ledger.** Before changing `scripts/where.pl` or its maps, run
   `perl scripts/where_audit.pl --prompt` and fix what it names: misses, wrong reports, map drift.
   Confirm each case in the source, add a test for each new shape, and report a hit you acted on.
