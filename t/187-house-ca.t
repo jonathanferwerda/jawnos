@@ -119,6 +119,27 @@ SKIP: {
 	}
 }
 
+# --- a client machine: the certificate without the signing key -------------
+SKIP: {
+	skip 'openssl is not installed', 5 unless $openssl && length $openssl && -x $openssl;
+	my $tmp = tempdir(CLEANUP => 1);
+	make_path("$tmp/scripts");
+	copy("$root/scripts/house_ca.pl", "$tmp/scripts/house_ca.pl") or die $!;
+	`cd '$tmp' && $perl scripts/house_ca.pl init >/dev/null 2>&1`;
+	`cd '$tmp' && $perl scripts/house_ca.pl issue --name client --ip 127.0.0.1 >/dev/null 2>&1`;
+	my $before = slurp("$tmp/server/house-ca.pem");
+	unlink "$tmp/server/house-ca.key";
+	my $verify = `cd '$tmp' && $perl scripts/house_ca.pl verify 2>&1`;
+	is($? >> 8, 0, 'a client can verify without the signing key') or diag($verify);
+	my $show = `cd '$tmp' && $perl scripts/house_ca.pl show 2>&1`;
+	is($? >> 8, 0, 'and show still works');
+	like($show, qr/absent \(this machine is a client\)/, 'show says this machine is a client');
+
+	my $init = `cd '$tmp' && $perl scripts/house_ca.pl init 2>&1`;
+	is($? >> 8, 0, 'init on a client is a no-op');
+	is(slurp("$tmp/server/house-ca.pem"), $before, 'and never replaces the house CA');
+}
+
 # --- the peer port and the URL rewrite --------------------------------------
 is(subs::peer_port_for({ port => 45545 }), 45549, 'the peer port is the main port plus four');
 is(subs::peer_port_for({ port => 3001 }), 3005, 'and follows a working_port too');

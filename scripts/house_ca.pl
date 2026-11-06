@@ -100,8 +100,15 @@ sub valid_dns {
 	return $name =~ /^(?:\*\.)?[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?$/ ? 1 : 0;
 }
 
+# The key is what lets a machine sign; every other machine only needs the
+# certificate to verify the leaves. Keep the two apart: a client must be able to
+# run verify and show without holding the house's signing key.
 sub ca_ready {
 	return -s $CA_KEY && -s $CA_CERT;
+}
+
+sub ca_cert_ready {
+	return -s $CA_CERT;
 }
 
 sub ca_fingerprint {
@@ -115,8 +122,10 @@ sub ca_fingerprint {
 sub cmd_init {
 	my $force = grep { $_ eq '--force' } @ARGV;
 	make_path($SERVER);
-	if (ca_ready() && !$force) {
-		print "house_ca: the CA already exists at $CA_CERT (use --force to replace it)\n";
+	# A client holds only the certificate; init there must not quietly mint a
+	# second CA and overwrite the one the house signs with.
+	if ((-s $CA_CERT || -s $CA_KEY) && !$force) {
+		print "house_ca: a CA already exists at $CA_CERT (use --force to replace it)\n";
 		return 0;
 	}
 	my $tmp = tempdir(CLEANUP => 1);
@@ -229,7 +238,7 @@ sub cmd_verify {
 		if ($arg =~ /^--cert=(.*)$/) { $file = $1; next }
 	}
 	return 1 unless -s $file;
-	fail('the CA is not initialised; run init first') unless ca_ready();
+	fail("the CA certificate is missing at $CA_CERT") unless ca_cert_ready();
 	my $text = do { local $/; open(my $fh, '<', $file) or fail("cannot read $file: $!"); <$fh> };
 	my ($first) = $text =~ /(-----BEGIN CERTIFICATE-----.*?-----END CERTIFICATE-----)/s;
 	fail("$file holds no certificate") unless $first;
@@ -251,12 +260,13 @@ sub cmd_verify {
 }
 
 sub cmd_show {
-	unless (ca_ready()) {
-		print "house_ca: no CA yet ($CA_CERT)\n";
+	unless (ca_cert_ready()) {
+		print "house_ca: no CA certificate yet ($CA_CERT)\n";
 		return 1;
 	}
 	print "CA   $CA_CERT\n";
 	print '     sha256 ', ca_fingerprint(), "\n";
+	print 'key  ', (-s $CA_KEY ? 'present (this machine can issue)' : 'absent (this machine is a client)'), "\n";
 	for my $file ( $LEAF_CERT, $LEAF_KEY ) {
 		my $state = -e $file ? 'present' : 'missing';
 		printf "leaf %-30s %s%s\n", $file, $state,
