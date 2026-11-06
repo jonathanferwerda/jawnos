@@ -106,4 +106,13 @@ like($help, qr/instead of putting the dock away/,
 like($help, qr/the numeric keypad\\'s digits/,
 	'and names the numeric keypad it feeds');
 
+
+# --- the bar can actually start a drag ---------------------------------------
+like($kb, qr/if \(\$\(e\.target\)\.closest\('\.soft_kb_bar, button, \.soft_kb_convert_rows'\)\.length\) \{ return; \}/,
+	'the keys\' pointerdown stands down on the drag bar');
+like($kb, qr/dock\.css\('position', 'fixed'\);/,
+	'the floating panel is pinned fixed before the draggable reads it');
+like($kb, qr/css\(\{ position: '', left: '', top: '', bottom: '', width: '', height: '', 'max-height': '' \}\)/,
+	'a phone dock drops the fixed pin again');
+
 done_testing();

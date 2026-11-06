@@ -236,7 +236,10 @@ $(document).on('click', '#jawn_soft_keyboard button', function () {
 	softKbPress($(this));
 });
 $(document).on('pointerdown', '#jawn_soft_keyboard', function (e) {
-	if (!$(e.target).closest('button').length && !$(e.target).closest('.soft_kb_convert_rows').length) { e.preventDefault(); }
+	// the bar above the keys is the panel's handle: its press must reach the
+	// draggable, or cancelling it here stops the panel from ever moving
+	if ($(e.target).closest('.soft_kb_bar, button, .soft_kb_convert_rows').length) { return; }
+	e.preventDefault();
 });
 
 // ---- attaching to fields ---------------------------------------------------

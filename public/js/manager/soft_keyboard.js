@@ -684,9 +684,14 @@ function softKbFloatApply(dock) {
 	if (!floating) {
 		if (dock.hasClass('ui-draggable')) { dock.draggable('destroy'); }
 		if (dock.hasClass('ui-resizable')) { dock.resizable('destroy'); }
-		dock.removeClass('soft_kb_dragging').css({ left: '', top: '', bottom: '', width: '', height: '', 'max-height': '' });
+		dock.removeClass('soft_kb_dragging').css({ position: '', left: '', top: '', bottom: '', width: '', height: '', 'max-height': '' });
 		return;
 	}
+	// The floating panel is fixed. jQuery UI's draggable turns a box it reads as
+	// static into position:relative, which would lay the panel out at the top of
+	// the document instead of hanging from its floating corner; pin it first so
+	// the widget sees the fixed box.
+	dock.css('position', 'fixed');
 	if (!dock.hasClass('ui-draggable') || !dock.hasClass('ui-resizable')) { softKbFloatDraggable(dock); }
 	softKbFloatRestore(dock);
 }
