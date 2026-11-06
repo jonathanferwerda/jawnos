@@ -3,10 +3,11 @@ package JawnOS::Sco::Mixer;
 # The virtual handset: two null sinks and a remapped microphone that stand in
 # for the laptop's speaker and mic while a screened call is up.
 #
-# The Bluetooth gateway profile plays the caller to the default sink and takes
-# its input from the default source - which is why the caller heard the room.
-# We do not change the defaults (music would land in the call): we move the
-# call's own two streams onto devices we own, and leave everything else alone.
+# The gateway machine is the Hands-Free unit (the phone keeps the call and is
+# the Audio Gateway), so the caller arrives on one of the phone's streams and
+# our prompt leaves on the other. We do not change the machine's defaults
+# (music would land in the call): we move the call's own two streams onto
+# devices we own, and leave everything else alone.
 #
 #   jawn_call_in   - the caller's voice lands here; the gateway captures its
 #                    monitor.
@@ -14,6 +15,15 @@ package JawnOS::Sco::Mixer;
 #                    jawn_ivr_mic.
 #   jawn_ivr_mic   - remap of jawn_prompt.monitor, presented as the "microphone"
 #                    the gateway reads.
+#
+# The card's profile name is not a guide to the direction: a card that reports
+# `audio-gateway` still carries the caller's voice as a sink-input and our
+# prompt as a source-output, exactly like a `headset-head-unit` card. What
+# actually decides who hears the prompt is the HFP role the two ends
+# negotiated (the phone must be the AG); if the phone ends up as the HF it
+# plays our prompt into its own earpiece and the caller never hears it. That
+# is a host setting on the gateway (WirePlumber's `bluez5.roles`), not
+# something this mixer can route around.
 use strict;
 use warnings;
 use Mojo::JSON qw(decode_json);
@@ -26,7 +36,7 @@ sub new {
 	my ($class) = @_;
 	return bless {
 		loaded => [], moved => [], attached => undef,
-		mode => '', capture_source => '', original_sink => '', original_source => '',
+		original_sink => '', original_source => '',
 	}, $class;
 }
 
@@ -92,29 +102,13 @@ sub _device_names {
 	return %name;
 }
 
-# Which HFP role the phone's card took. The laptop usually comes up as the
-# Hands-Free unit (the phone is the Audio Gateway): its speaker stream is the
-# caller and its microphone stream is the prompt. The Table's card comes up as
-# `audio-gateway` - the gateway machine is the AG and the phone is the HF - and
-# then the two streams are the other way round: the phone's speaker stream is
-# the prompt, and its microphone stream is the caller. One mixer serves both.
-sub card_profile {
-	my ($self, $address) = @_;
-	my $want = lc($address // '');
-	return '' unless length $want;
-	my $under = $want;
-	$under =~ s/:/_/g;
-	foreach my $block ( &_blocks(&pactl('list', 'cards')) ) {
-		next unless lc($block) =~ /\Q$want\E/ || lc($block) =~ /\Q$under\E/;
-		my ($profile) = $block =~ /^\s*Active Profile:\s*(\S+)/m;
-		return $profile // '';
-	}
-	return '';
-}
-
-# The two streams a call owns, with the device each one is on right now: the id
-# alone says nothing about whether it still needs moving, and moving a stream
-# that is already ours re-links it and drops a word of the greeting.
+# Which HFP role the phone's card took does not change the two streams' shape.
+# On the gateway machine the caller's voice is always the sink-input (the SCO
+# source feeding a sink here) and our prompt is always the source-output (the
+# SCO sink taking from one of our sources). The old code trusted the card's
+# `Active Profile`, which says `audio-gateway` even when the phone is the AG
+# and the direction is the ordinary one - reading it as a cue to swap the two
+# broke the prompt and recorded the room.
 sub call_streams {
 	my ($self, $address) = @_;
 	my $want = $address ? lc $address : '';
@@ -139,18 +133,11 @@ sub call_streams {
 			$source = $source_name->{$id};
 		}
 	}
-	unless (length $self->{'mode'}) {
-		my $profile = $self->card_profile($address);
-		$self->{'mode'} = ($profile =~ /audio-gateway/) ? 'ag' : 'hf';
-	}
-	$self->{'capture_source'} = $source
-		if $self->{'mode'} eq 'ag' && defined $source && length $source;
 	return {
 		sink_input => $sink_input,
 		source_output => $source_output,
 		sink => $sink,
 		source => $source,
-		mode => $self->{'mode'},
 	};
 }
 
@@ -181,8 +168,6 @@ sub attach {
 	my ($self, $address) = @_;
 	$self->ensure();
 	my $streams = $self->call_streams($address);
-	my $ag = (($streams->{'mode'} // '') eq 'ag');
-	my $sink_target = $ag ? $SINK_OUT : $SINK_IN;
 	# Remember the phone's own devices before the first move, so a teardown can
 	# put the pair back where the phone had it rather than on this machine's
 	# default sink/source.
@@ -195,25 +180,11 @@ sub attach {
 		$self->{'original_source'} = $streams->{'source'};
 	}
 	my @moved;
-	if ($streams->{'sink_input'} && ($streams->{'sink'} // '') ne $sink_target) {
-		&pactl('move-sink-input', $streams->{'sink_input'}, $sink_target);
+	if ($streams->{'sink_input'} && ($streams->{'sink'} // '') ne $SINK_IN) {
+		&pactl('move-sink-input', $streams->{'sink_input'}, $SINK_IN);
 		push @moved, 'sink-input';
 	}
-	if ($ag) {
-		# The caller is the phone's HF microphone stream, which lives on this
-		# machine's default source. Put it back there (an older call may have
-		# moved it to jawn_ivr_mic, where it would read the prompt) and capture
-		# that source.
-		my $default_source = &pactl('get-default-source');
-		$default_source =~ s/\s+//g;
-		if ($streams->{'source_output'} && length($default_source)
-			&& ($streams->{'source'} // '') ne $default_source) {
-			&pactl('move-source-output', $streams->{'source_output'}, $default_source);
-			push @moved, 'source-output';
-		}
-		$self->{'capture_source'} = $default_source if length $default_source;
-	}
-	elsif ($streams->{'source_output'} && ($streams->{'source'} // '') ne $SOURCE) {
+	if ($streams->{'source_output'} && ($streams->{'source'} // '') ne $SOURCE) {
 		&pactl('move-source-output', $streams->{'source_output'}, $SOURCE);
 		push @moved, 'source-output';
 	}
@@ -232,7 +203,6 @@ sub attach {
 sub detach {
 	my ($self) = @_;
 	my $streams = $self->{'attached'} || {};
-	my $ag = (($streams->{'mode'} // '') eq 'ag');
 	my $sink = $self->{'original_sink'} || &pactl('get-default-sink');
 	my $source = $self->{'original_source'} || &pactl('get-default-source');
 	$sink =~ s/\s+//g;
@@ -240,11 +210,9 @@ sub detach {
 	&pactl('move-sink-input', $streams->{'sink_input'}, $sink)
 		if $streams->{'sink_input'} && $sink;
 	&pactl('move-source-output', $streams->{'source_output'}, $source)
-		if !$ag && $streams->{'source_output'} && $source;
+		if $streams->{'source_output'} && $source;
 	$self->{'attached'} = undef;
 	$self->{'moved'} = [];
-	$self->{'mode'} = '';
-	$self->{'capture_source'} = '';
 	$self->{'original_sink'} = '';
 	$self->{'original_source'} = '';
 	return 1;
@@ -257,12 +225,6 @@ sub detach {
 # the last one.
 sub call_active {
 	my ($self) = @_;
-	if (($self->{'mode'} // '') eq 'ag') {
-		# The phone's HF streams outlive the call, so their presence is the
-		# line; the default source is RUNNING even when nobody is on it.
-		my $attached = $self->{'attached'} || {};
-		return ($attached->{'sink_input'} && $attached->{'source_output'}) ? 1 : 0;
-	}
 	foreach my $line ( split /\n/, &pactl('list', 'short', 'sinks') ) {
 		my @field = split /\t/, $line;
 		next unless @field > 4 && $field[1] eq $SINK_IN;
@@ -282,12 +244,9 @@ sub call_active {
 # it. A named stream has no saved route to inherit, and --device steers it.
 sub capture_command {
 	my ($self) = @_;
-	my $device = (($self->{'mode'} // '') eq 'ag' && length($self->{'capture_source'} // ''))
-		? $self->{'capture_source'}
-		: $SINK_IN . '.monitor';
 	return 'parec --client-name=jawn-sco-caller --stream-name=jawn-sco-caller'
 		. ' --raw --format=s16le --rate=8000 --channels=1 --latency-msec=20 --device='
-		. $device;
+		. $SINK_IN . '.monitor';
 }
 
 sub playback_command {
@@ -303,12 +262,9 @@ sub playback_command {
 # speaks; PipeWire resamples the 8 kHz SCO link at the edges.
 sub bridge_capture_command {
 	my ($self) = @_;
-	my $device = (($self->{'mode'} // '') eq 'ag' && length($self->{'capture_source'} // ''))
-		? $self->{'capture_source'}
-		: $SINK_IN . '.monitor';
 	return 'parec --client-name=jawn-sco-bridge --stream-name=jawn-sco-bridge'
 		. ' --raw --format=s16le --rate=48000 --channels=1 --latency-msec=20 --device='
-		. $device;
+		. $SINK_IN . '.monitor';
 }
 
 sub bridge_playback_command {

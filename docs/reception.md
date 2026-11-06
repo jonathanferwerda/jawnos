@@ -52,26 +52,39 @@ sink and never reaches the caller; nothing in the machine's defaults changes, so
 nothing has to be restored if the gateway dies (the streams fall back on their
 own when they vanish).
 
-The card's HFP role decides which stream is which. A laptop usually comes up as
-the Hands-Free unit (the phone is the Audio Gateway): the phone's speaker stream
-is the caller and its microphone stream is the prompt, and `Mixer::attach` uses
-`jawn_call_in`/`jawn_ivr_mic`. The Table's Intel card comes up as
-`audio-gateway` (the machine is the AG, the phone the HF); there the phone's
-speaker stream is the prompt and its microphone stream is the caller, so the
-mixer moves the speaker stream to `jawn_prompt` and returns the caller's
-source-output to this machine's default source (where the phone's HF microphone
-feeds it) and captures that source. The caller stream is put back there rather
-than left alone because an earlier call, or this mixer in the other role, can
-leave it on `jawn_ivr_mic` - from which it would hear our own prompt. Both roles
-are supported; the card's `Active Profile` selects one.
+The phone must hold the call: it is the HFP **Audio Gateway** and the machine is
+its **Hands-Free** unit. Then the caller's voice arrives as a sink-input on this
+machine and our prompt leaves as a source-output - the shape `Mixer::attach`
+uses, whether the card calls its profile `headset-head-unit` or
+`audio-gateway`. The profile name is not a guide to the direction; the mixer no
+longer reads it.
+
+Who hears the prompt is decided by the role the two ends negotiated, not by the
+mixer. If the machine offers only the **Audio-Gateway** role, the phone takes
+the Hands-Free side and the call never reaches the gateway: our prompt plays
+into the phone's own earpiece, its microphone sends the room back (so the
+transcript is the greeting echoing), and the caller hears nothing. Make the
+machine offer `hfp_hf` (below). The phone's `ivr_bluetooth` setting names the
+adapter; with several machines around, give each adapter a name of its own
+(`jawnos-table`, `jawnos-vivotop`) so the phone cannot pick the wrong one.
 
 ### Setup on the gateway machine
 
 ```
 # BlueZ + PipeWire (Manjaro: installed; no extra packages)
 sudo systemctl enable --now bluetooth
-# the phone paired with the machine's adapter; PipeWire puts its card on the
-# "audio-gateway" profile
+# the Hands-Free role has to be offered, or the phone becomes the headset and
+# the caller never hears the gateway (WirePlumber 0.5, per user):
+mkdir -p ~/.config/wireplumber/wireplumber.conf.d
+cat > ~/.config/wireplumber/wireplumber.conf.d/51-jawn-hfp.conf <<'EOF'
+monitor.bluez.properties = {
+  bluez5.roles = [ hfp_ag hfp_hf a2dp_sink a2dp_source ]
+}
+EOF
+systemctl --user restart wireplumber
+# then reconnect the phone: bluetoothctl disconnect <phone>; bluetoothctl connect <phone>
+# the adapter should now advertise both roles:
+#   bluetoothctl show | grep 'UUID: Handsfree'
 # and keep this machine off 2.4 GHz while it is the gateway: on a combo card the
 # Bluetooth and WiFi radios share one antenna, and the caller's voice then
 # arrives as "corrupted SCO packet". The dev box on 2.4 GHz logged 367 of them in
