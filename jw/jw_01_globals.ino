@@ -417,6 +417,7 @@ static volatile int button_flash_key = 0;
 static volatile uint32_t button_flash_colour = 0;
 static volatile uint32_t button_flash_until = 0;
 static void button_feedback_tick();
+static void button_feedback_forget();
 static void button_flash_from_result(int key, JSONVar result);
 // "blestop on": stop asking the bridge for state after a connect, which is what
 // makes the phone push the big room payload back. A debugging switch for the

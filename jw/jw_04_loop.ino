@@ -295,7 +295,9 @@ void jawn_loop() {
   if (ble_toggle_refresh) {
     ble_toggle_refresh = false;
     if (jw_room == "room") {
-      presidents_buttons();
+      // paint the buttons that changed; a toggle is not a reason to rebuild (and
+      // re-render) the whole room
+      room_repaint();
       full_refresh();
     }
   }

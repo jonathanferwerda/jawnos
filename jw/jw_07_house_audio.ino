@@ -348,13 +348,23 @@ static void button_face_from_before(int key) {
   button_face_apply(b, face);
 }
 
+// The widget a flash is painting right now. File scope so a room rebuild - which
+// deletes the buttons - can forget it before they go: painting a deleted widget
+// was a crash, not a wasted frame.
+static int painted_key = 0;
+static lv_obj_t *painted_obj = nullptr;
+static bool painted = false;
+
+static void button_feedback_forget() {
+  painted = false;
+  painted_key = 0;
+  painted_obj = nullptr;
+}
+
 // The press's answer arrives on the BLE task; this runs from loop() so LVGL is
 // touched on its own core. A flash paints over the button for two seconds, then
 // the normal face (yellow ring included) comes back.
 static void button_feedback_tick() {
-  static int painted_key = 0;
-  static lv_obj_t *painted_obj = nullptr;
-  static bool painted = false;
   uint32_t now = millis();
   bool live = (button_flash_until != 0 && (int32_t)(now - button_flash_until) < 0);
   if (live) {
@@ -409,8 +419,18 @@ void presidents_buttons() {
   Serial.println("after before me parsing");
   Serial.printf("[heap] draw free=%u max=%u\n", (unsigned)ESP.getFreeHeap(), (unsigned)ESP.getMaxAllocHeap());
   if (room > room_count) { room = 1; }  
-  // the widgets are rebuilt below; the press feedback must not hold the old ones
-  for (int i = 0; i < ROOM_BUTTON_SLOTS; i++) { room_button_obj[i] = nullptr; }
+  // Rebuild, do not stack. This used to run on every toggle the bridge pushed -
+  // a held volume key sends a run of them - and it left the previous six buttons
+  // and their labels on the screen, so the redraw and the heap grew with every
+  // press. The pointers are only live while the screen still holds the widgets:
+  // display_exit() clears them when it wipes the screen.
+  button_feedback_forget();
+  for (int i = 0; i < ROOM_BUTTON_SLOTS; i++) {
+    if (room_button_obj[i]) {
+      lv_obj_delete(room_button_obj[i]);
+      room_button_obj[i] = nullptr;
+    }
+  }
   int sb = ((room - 1) * 6) + 1;
 
   // Serial.println(room);
@@ -500,6 +520,22 @@ void presidents_buttons() {
   crumb("d9 drawn");
 }
 
+// Repaint the room's buttons from the picture a toggle just updated. A toggle
+// arrives for every change in the house - a held volume key sends a run of them -
+// so paint the buttons instead of rebuilding the room for each one. A button
+// under a live flash is left to the flash tick, which puts its face back.
+static void room_repaint() {
+  if (!buttoned_before || before_me.length() < 3) { return; }
+  bool flashing = (button_flash_until != 0 && (int32_t)(millis() - button_flash_until) < 0);
+  JSONVar bm = JSON.parse(before_me);
+  for (int i = 0; i < ROOM_BUTTON_SLOTS; i++) {
+    if (!room_button_obj[i]) { continue; }
+    if (flashing && i == button_flash_key) { continue; }
+    JSONVar face = bm["b" + String(i)];
+    if (face.hasOwnProperty("rgb")) { button_face_apply(room_button_obj[i], face); }
+  }
+}
+
 // Is this room's first button in the payload? A string search, not a parse:
 // a second full JSON tree for the same payload ran the heap too close to the
 // edge (a 25 KB push aborted the watch on 2026-10-09).
@@ -585,7 +621,6 @@ void remote_room() {
     }
   }
   presidents_buttons();
-  button_writer();
   full_refresh();
   crumb("r9 room done");
   if (millis() - draw_started > 80) {

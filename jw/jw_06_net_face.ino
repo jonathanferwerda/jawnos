@@ -390,6 +390,10 @@ void display_exit( void ) {
   lv_obj_invalidate( lv_scr_act() ); // Invalidate objects for redraw.
   face_forget();
   wigi_count_label = nullptr;   // the Wigi button died with lv_obj_clean
+  // ... and so did the bottom row and the room's buttons
+  btn1 = btn2 = btn3 = btn4 = btn5 = btn6 = nullptr;
+  for (int i = 0; i < ROOM_BUTTON_SLOTS; i++) { room_button_obj[i] = nullptr; }
+  button_feedback_forget();
   ble_room_requested_at = 0;    // leaving the room: cancel an unanswered request
   button_writer();
 //  time_writer("now");
@@ -528,6 +532,10 @@ void ip_writer() {
 }
 
 void button_writer() {
+  // Built once per screen: remote_room() used to call this after display_exit()
+  // had already built the row, leaving a second set of buttons and labels behind
+  // on every room entry.
+  if (btn1) { return; }
   watch_face_maker();
 
   btn1 = lv_btn_create(lv_scr_act());
@@ -585,8 +593,6 @@ void button_writer() {
   l6 = lv_label_create(btn6);
   lv_label_set_text(l6, "Net");
   lv_obj_center(l6);
-
-  lv_task_handler();
 }
 
 
