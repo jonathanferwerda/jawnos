@@ -59,6 +59,8 @@ is $defaults->{'flows'}->{'enemy'}, 'reject', 'an enemy is rejected by default';
 	is $defs->{'voicemail'}->{'name'}, 'Voicemail', 'the voicemail flow is named';
 	is $defs->{'voicemail'}->{'builtin'}, 1, 'the voicemail flow is built in';
 	is $defs->{'voicemail'}->{'after'}, 'end', 'the voicemail flow ends after its message';
+	is_deeply $defs->{'voicemail'}->{'steps'}, [ { type => 'voicemail' } ],
+		'the voicemail flow takes a message instead of speaking the legacy order';
 	like $defs->{'voicemail'}->{'voicemail'}, qr/message/i, 'the voicemail flow leaves a message';
 	is $defs->{'receptionist'}->{'voice'}, &subs::say_default_voice(), 'the seed speaks in the house voice';
 }
@@ -320,6 +322,40 @@ is $defaults->{'flows'}->{'enemy'}, 'reject', 'an enemy is rejected by default';
 	is $again->{'flow_defs'}->{'night'}->{'name'}, 'Night', 'a save with no flows at all keeps them';
 }
 
+{
+	# The pane posts the whole flow set; the stored row must keep the step order
+	# and a keypad's digit map so the gateway reads exactly what the person built.
+	local *subs::setting_grabber = sub { return undef };
+	local *subs::db_select = sub { return FakeRows->new([ $gateway ]) };
+	my @writes;
+	local *subs::setting_setter = sub { push @writes, { %{ $_[0] } } };
+	my $saved = Manager::phone_ivr_save({
+		enabled => 'yes', machine => 'gw-sig', route => 'unknown',
+		flow_defs => encode_json({
+			receptionist => {
+				name => 'Receptionist',
+				steps => [
+					{ type => 'keypad', text => 'Press 1 for the night line', timeout_ms => 4000, digits => { '1' => 'night' } },
+					{ type => 'say', text_key => 'greeting' },
+					{ type => 'ask' },
+					{ type => 'hold', seconds => 10 },
+				],
+			},
+			night => { name => 'Night', steps => [ { type => 'say', text_key => 'greeting' } ] },
+		}),
+	});
+	my ($row) = grep { $_->{'setting'} eq 'ivr_flow_defs' } @writes;
+	ok $row, 'the flow set is written as one house row';
+	my $stored = eval { decode_json($row->{'value'}) };
+	is ref $stored, 'HASH', 'the stored flow row is JSON';
+	is_deeply $stored->{'receptionist'}->{'steps'}, [
+		{ type => 'keypad', text => 'Press 1 for the night line', timeout_ms => 4000, digits => { '1' => 'night' } },
+		{ type => 'say', text_key => 'greeting' },
+		{ type => 'ask' },
+		{ type => 'hold', seconds => 10 },
+	], 'the stored JSON keeps the step order and the keypad digit map';
+}
+
 # ---------------------------------------------------------------- relationships
 {
 	local *Manager::phone_names = sub {
@@ -348,6 +384,88 @@ is $defaults->{'flows'}->{'enemy'}, 'reject', 'an enemy is rejected by default';
 	is $machines->[0]->{'available'}, 1, 'the online machine is available';
 	is $machines->[1]->{'key'}, '10.0.0.9', 'a machine with no signatorial keys on its IP';
 	is $machines->[1]->{'available'}, 0, 'the offline machine is not available';
+}
+
+# ---------------------------------------------------------------- steps
+{
+	local *subs::setting_grabber = sub { return undef };
+	my $flow = { name => 'Plain', greeting => 'Hi', prompt => 'Name?', thanks => 'Thanks', after => 'hold' };
+	my $legacy = &subs::phone_ivr_flow_steps($flow);
+	is_deeply $legacy, [
+		{ type => 'say', text_key => 'greeting' },
+		{ type => 'ask' },
+		{ type => 'say', text_key => 'thanks' },
+		{ type => 'after' },
+	], 'a flow with no steps speaks the legacy order: greeting, ask, thanks, after';
+	is_deeply &subs::phone_ivr_flow_steps({ steps => [] }), $legacy,
+		'an empty step list means the same legacy order';
+	my $defs = &subs::phone_ivr_flow_defs_clean({ receptionist => { name => 'Receptionist' } });
+	is_deeply $defs->{'receptionist'}->{'steps'}, [],
+		'a legacy flow keeps an empty list, so the def never pretends to have steps';
+	is_deeply &subs::phone_ivr_flow_steps($defs->{'receptionist'}), $legacy,
+		'and reads back as the legacy order';
+}
+{
+	my $steps = &subs::phone_ivr_steps_clean([
+		{ type => 'keypad', text => '  Press 1  ', timeout_ms => '4000', digits => {
+			'1' => 'night', 'A' => 'night', '2' => 'ring', '3' => 'reject', '4' => 'bad key!',
+		} },
+		{ type => 'say', text_key => 'prompt' },
+		{ type => 'say', text_key => 'nope' },
+		{ type => 'hold', seconds => '9999' },
+		{ type => 'explode' },
+		{ type => 'after' },
+	]);
+	is scalar @{$steps}, 4, 'an unknown step type and an unknown say text are dropped';
+	is $steps->[0]->{'type'}, 'keypad', 'the list keeps the order it was given';
+	is $steps->[0]->{'text'}, 'Press 1', 'the keypad text is trimmed';
+	is $steps->[0]->{'timeout_ms'}, 4000, 'the keypad timeout is kept';
+	is_deeply $steps->[0]->{'digits'}, { '1' => 'night', '2' => 'ring', '3' => 'reject' },
+		'a digit is one keypad character naming a slug';
+	is $steps->[1]->{'text_key'}, 'prompt', 'a say names one of the flow texts';
+	is $steps->[2]->{'type'}, 'hold', 'the hold step is still in its place';
+	is $steps->[2]->{'seconds'}, 600, 'a hold is capped at 600 seconds';
+	is $steps->[3]->{'type'}, 'after', 'and the after step still follows';
+	my $defaults = &subs::phone_ivr_steps_clean([{ type => 'keypad', digits => {} }]);
+	is $defaults->[0]->{'timeout_ms'}, 5000, 'a keypad without a timeout waits five seconds';
+}
+{
+	my @many = map { { type => ($_ % 2 ? 'say' : 'hold'), text_key => 'greeting', seconds => 1 } } 1 .. 25;
+	my $capped = &subs::phone_ivr_steps_clean(\@many);
+	is scalar @{$capped}, 20, 'a step list is capped at 20';
+}
+{
+	local *subs::setting_grabber = sub { return undef };
+	my $defs = &subs::phone_ivr_flow_defs_clean({
+		receptionist => {
+			name => 'Receptionist',
+			steps => [
+				{ type => 'keypad', text => 'Press 1', timeout_ms => 5000, digits => {
+					'1' => 'night', '2' => 'ring', '3' => 'gone', '4' => 'voicemail',
+				} },
+				{ type => 'hold', seconds => 5 },
+				{ type => 'say', text_key => 'thanks' },
+			],
+		},
+		night => { name => 'Night', steps => [ { type => 'say', text_key => 'greeting' } ] },
+	});
+	is_deeply $defs->{'receptionist'}->{'steps'}->[0]->{'digits'},
+		{ '1' => 'night', '2' => 'ring', '4' => 'voicemail' },
+		'a digit naming a flow the set does not have is dropped; Ring and a real flow stay';
+	is $defs->{'receptionist'}->{'steps'}->[1]->{'type'}, 'hold', 'the step order survives cleaning';
+	is $defs->{'receptionist'}->{'steps'}->[2]->{'type'}, 'say', 'down to the last step';
+}
+{
+	local *subs::setting_grabber = sub { return undef };
+	# night is absent from this save, so the receptionist menu must forget it
+	my $defs = &subs::phone_ivr_flow_defs_clean({
+		receptionist => {
+			name => 'Receptionist',
+			steps => [ { type => 'keypad', text => 'Press 1', digits => { '1' => 'night' } } ],
+		},
+	});
+	ok !exists $defs->{'receptionist'}->{'steps'}->[0]->{'digits'}->{'1'},
+		'deleting a flow drops every digit that pointed at it';
 }
 
 # ---------------------------------------------------------------- wiring
@@ -380,6 +498,14 @@ like $js, qr{phone_ivr_flow_list}, 'the pane draws the flow list';
 like $js, qr{hint="Rename flow"}, 'a flow can be renamed';
 like $js, qr{hint="Delete flow"}, 'a flow can be deleted';
 like $js, qr{thanks}, 'the pane saves the thanks prompt';
+like $js, qr{\.sortable\(}, 'the steps use the house drag helper (jQuery UI sortable)';
+like $js, qr{handle: '\.phone_app_ivr_step_handle'}, 'only the step handle drags';
+like $js, qr{jawnPhoneFlowStepsRead}, 'the editor reads the steps back in DOM order';
+like $js, qr{hint="Drag to reorder"}, 'the drag handle is named for the stylus and the mouse';
+like $js, qr{hint="Add step"}, 'a step can be added';
+like $js, qr{hint="Remove step"}, 'a step can be removed';
+like $js, qr{jawnPhoneFlowDigitSelect}, 'a keypad offers a digit menu';
+like $js, qr{jawnPhoneFlowDigitsDrop}, 'deleting a flow drops its digit references';
 
 my $sync = js_source('public/js/manager/manager.js');
 like $sync, qr{ivr:\s*\(response && response\.ivr\)}, 'the sync blob carries the IVR policy';
@@ -389,6 +515,9 @@ my $help = help_source();
 like $help, qr/IVR is the reception page/, 'the help topic explains the IVR pane';
 like $help, qr/Add flow/, 'the help topic names the flows editor';
 like $help, qr/A flow is one voice/, 'the help topic says what a flow is';
+like $help, qr/Drag a step/, 'the help topic explains reordering';
+like $help, qr/Keypad menu/, 'the help topic explains the keypad step';
+like $help, qr/no steps still speaks the old order/, 'the help topic explains the legacy order';
 
 # The pane has to render with the settings the controller passes, not only match
 # a source grep. Empty call/list data keeps the rest of the page quiet.

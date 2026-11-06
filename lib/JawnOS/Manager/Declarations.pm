@@ -184,6 +184,8 @@ sub phone_recent_unblocked;
 sub phone_ivr_defaults;
 sub phone_ivr_flow_defaults;
 sub phone_ivr_flow_clean;
+sub phone_ivr_flow_steps;
+sub phone_ivr_steps_clean;
 sub phone_ivr_settings;
 sub phone_ivr_save;
 sub phone_ivr_machines;

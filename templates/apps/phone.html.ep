@@ -78,6 +78,35 @@
 	.phone_app_ivr_flow_actions button { padding:6px 14px; border-radius:999px; border:1px solid var(--line);
 		background:var(--panel); color:inherit; cursor:pointer; font:inherit; }
 	.phone_app_ivr_flow_actions button[armed="yes"] { background:#b0342e; color:#fff; border-color:transparent; }
+	/* the steps: an ordered list the person can drag into the order the gateway
+	   speaks. The handle is the only draggable part, so the fields inside a step
+	   stay clickable on a stylus or a finger. */
+	.phone_app_ivr_steps_wrap { display:flex; flex-direction:column; gap:6px; }
+	.phone_app_ivr_steps_title { font-size:13px; font-weight:600; }
+	.phone_app_ivr_steps { display:flex; flex-direction:column; gap:6px; }
+	.phone_app_ivr_step { border:1px solid var(--line); border-radius:8px; background:var(--panel); }
+	.phone_app_ivr_step_head { display:flex; align-items:center; gap:6px; padding:6px 8px; }
+	.phone_app_ivr_step_handle { cursor:grab; touch-action:none; user-select:none; -webkit-user-select:none;
+		padding:2px 8px; border-radius:6px; color:var(--muted,#8e8e8e); font-size:15px; line-height:1; }
+	.phone_app_ivr_step_handle:active { cursor:grabbing; background:var(--line); }
+	.phone_app_ivr_step_type { flex:1 1 auto; font-size:13px; font-weight:600; }
+	.phone_app_ivr_step_remove { flex:0 0 auto; padding:2px 10px; border-radius:999px; border:1px solid var(--line);
+		background:transparent; color:inherit; cursor:pointer; font:inherit; font-size:12px; }
+	.phone_app_ivr_step_fields { padding:0 8px 8px; display:flex; flex-direction:column; gap:6px; }
+	.phone_app_ivr_step_fields label { display:flex; flex-direction:column; gap:3px; font-size:12px; }
+	.phone_app_ivr_step_hint { font-size:12px; color:var(--muted,#8e8e8e); }
+	.phone_app_ivr_digits { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:6px; }
+	.phone_app_ivr_digit { display:flex; align-items:center; gap:4px; font-size:12px; }
+	.phone_app_ivr_step_fields label.phone_app_ivr_digit { flex-direction:row; align-items:center; gap:4px; }
+	.phone_app_ivr_digit span { flex:0 0 auto; min-width:12px; text-align:center; font-weight:600; }
+	.phone_app_ivr_digit select { flex:1 1 auto; min-width:0; padding:4px; }
+	.phone_app_ivr_step_add { display:flex; gap:8px; align-items:center; }
+	.phone_app_ivr_step_add select { flex:1 1 auto; }
+	.phone_app_ivr_step_add button { flex:0 0 auto; padding:6px 12px; border-radius:999px; border:1px solid var(--line);
+		background:var(--panel); color:inherit; cursor:pointer; font:inherit; font-size:12px; }
+	.phone_app_ivr_step_placeholder { border:1px dashed var(--line); border-radius:8px; height:44px; background:transparent; }
+	.phone_app_ivr_steps_dragging .phone_app_ivr_step { opacity:.75; }
+	.phone_app_ivr_steps_dragging .phone_app_ivr_step_handle { cursor:grabbing; }
 	.phone_app_stranger .phone_app_name { font-variant-numeric:tabular-nums; letter-spacing:1px; }
 	.phone_app_stranger .phone_app_avatar { opacity:0.6; }
 	.phone_app_unblock { flex:0 0 auto; font-size:12px; padding:3px 10px; border-radius:999px;

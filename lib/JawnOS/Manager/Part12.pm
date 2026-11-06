@@ -461,6 +461,17 @@ sub phone_ivr_flow_clean {
 	return &subs::phone_ivr_flow_clean(@_);
 }
 
+# The ordered steps a flow speaks, and the cleaner a save runs them through.
+# The gateway reads the same shape from the house's row, so both sides agree on
+# what a step is without loading the panel.
+sub phone_ivr_flow_steps {
+	return &subs::phone_ivr_flow_steps(@_);
+}
+
+sub phone_ivr_steps_clean {
+	return &subs::phone_ivr_steps_clean(@_);
+}
+
 sub phone_ivr_settings {
 	return &subs::phone_ivr_settings();
 }

@@ -70,6 +70,88 @@ sub phone_ivr_flow_defaults {
 my @PHONE_IVR_FLOW_TEXTS = qw(greeting prompt voicemail thanks);
 my @PHONE_IVR_FLOW_AFTER = qw(hold voicemail end);
 
+# A flow is spoken as an ordered list of steps. Before steps existed every flow
+# spoke the same sequence - greeting, ask for a name, thanks, then whatever the
+# after choice says - and a flow with no steps still does. The list is capped so
+# a payload from a browser or a peer cannot make the gateway speak forever.
+my @PHONE_IVR_STEP_TYPES = qw(say ask keypad hold voicemail after);
+my @PHONE_IVR_STEP_TEXT_KEYS = qw(greeting prompt thanks voicemail);
+my $PHONE_IVR_STEP_MAX = 20;
+my $step_clamp = sub {
+	my ($value, $min, $max, $default) = @_;
+	return $default unless defined $value && $value =~ /^\d+$/;
+	$value = int($value);
+	return $min if $value < $min;
+	return $max if $value > $max;
+	return $value;
+};
+
+# The sequence a flow really speaks: its own steps when it has any, else the
+# legacy order. A copy, so a caller may reorder it without editing the def.
+sub phone_ivr_flow_steps {
+	my ($flow) = @_;
+	my $steps = ref $flow eq 'HASH' ? $flow->{'steps'} : undef;
+	my @copy;
+	if (ref $steps eq 'ARRAY') {
+		foreach my $step ( @{$steps} ) {
+			next unless ref $step eq 'HASH';
+			my %one = %{$step};
+			$one{'digits'} = { %{ $step->{'digits'} } } if ref $step->{'digits'} eq 'HASH';
+			push @copy, \%one;
+		}
+	}
+	return \@copy if @copy;
+	return [
+		{ type => 'say', text_key => 'greeting' },
+		{ type => 'ask' },
+		{ type => 'say', text_key => 'thanks' },
+		{ type => 'after' },
+	];
+}
+
+# One step list, cleaned. A step is data from a browser or a peer, so its type
+# must be one the gateway knows, a say names one of the flow's own texts, a
+# keypad's digits are single keypad characters naming a slug (whether that flow
+# exists is checked once the whole set is known), and a hold is 0-600 seconds.
+# An unknown step is dropped rather than salvaged.
+sub phone_ivr_steps_clean {
+	my ($steps) = @_;
+	return [] unless ref $steps eq 'ARRAY';
+	my @out;
+	foreach my $row ( @{$steps} ) {
+		last if @out >= $PHONE_IVR_STEP_MAX;
+		next unless ref $row eq 'HASH';
+		my $type = defined $row->{'type'} ? $row->{'type'} : '';
+		next unless grep { $_ eq $type } @PHONE_IVR_STEP_TYPES;
+		my %step = (type => $type);
+		if ($type eq 'say') {
+			my $key = defined $row->{'text_key'} ? $row->{'text_key'} : '';
+			next unless grep { $_ eq $key } @PHONE_IVR_STEP_TEXT_KEYS;
+			$step{'text_key'} = $key;
+		}
+		elsif ($type eq 'keypad') {
+			my $text = defined $row->{'text'} ? $row->{'text'} : '';
+			$text =~ s/^\s+|\s+$//g;
+			$step{'text'} = substr($text, 0, 300);
+			$step{'timeout_ms'} = $step_clamp->($row->{'timeout_ms'}, 500, 30000, 5000);
+			my $given = ref $row->{'digits'} eq 'HASH' ? $row->{'digits'} : {};
+			my %digits;
+			foreach my $digit ( keys %{$given} ) {
+				next unless defined $digit && $digit =~ /^[0-9*#]$/;
+				my $target = $given->{$digit};
+				next unless defined $target && $target =~ /^[a-z0-9_]{1,30}$/;
+				$digits{$digit} = $target;
+			}
+			$step{'digits'} = \%digits;
+		}
+		elsif ($type eq 'hold') {
+			$step{'seconds'} = $step_clamp->($row->{'seconds'}, 0, 600, 0);
+		}
+		push @out, \%step;
+	}
+	return \@out;
+}
+
 # The words a house without saved flows speaks, taken from the legacy rows so a
 # house that never opened the flow editor keeps its own voice and prompts.
 sub phone_ivr_flow_seed {
@@ -96,6 +178,9 @@ sub phone_ivr_flow_seed {
 			thanks    => '',
 			hold      => '',
 			after     => 'end',
+			# the one seed that is not the legacy order: the flow named for a
+			# voicemail takes one, instead of asking for a name it has no prompt for
+			steps     => [ { type => 'voicemail' } ],
 			builtin   => 1,
 		},
 	};
@@ -116,6 +201,7 @@ sub phone_ivr_flow_def_clean {
 		thanks    => '',
 		hold      => '',
 		after     => 'hold',
+		steps     => [],
 		builtin   => 0,
 	);
 	%out = (%out, %{$base}) if ref $base eq 'HASH';
@@ -147,6 +233,11 @@ sub phone_ivr_flow_def_clean {
 	if (defined $row->{'after'} && grep { $_ eq $row->{'after'} } @PHONE_IVR_FLOW_AFTER) {
 		$out{'after'} = $row->{'after'};
 	}
+	# An empty list is the legacy sequence, so an edited-away list falls back to
+	# it rather than resurrecting the base's steps.
+	if (ref $row->{'steps'} eq 'ARRAY') {
+		$out{'steps'} = &subs::phone_ivr_steps_clean($row->{'steps'});
+	}
 	return \%out;
 }
 
@@ -165,6 +256,22 @@ sub phone_ivr_flow_defs_clean {
 		}
 	}
 	$clean{$_}->{'builtin'} = 1 for keys %{$seed};
+	# A keypad may jump to a flow this house still has, or to Ring/Reject. A flow
+	# removed from this same save takes every digit that named it with it, so a
+	# stale menu cannot point at a flow nobody answers.
+	foreach my $key ( keys %clean ) {
+		my $flow = $clean{$key};
+		next unless ref $flow->{'steps'} eq 'ARRAY';
+		foreach my $step ( @{$flow->{'steps'}} ) {
+			next unless ref $step eq 'HASH' && ($step->{'type'} || '') eq 'keypad';
+			my $digits = ref $step->{'digits'} eq 'HASH' ? $step->{'digits'} : {};
+			foreach my $digit ( keys %{$digits} ) {
+				my $target = $digits->{$digit};
+				delete $digits->{$digit}
+					unless defined $target && ($target eq 'ring' || $target eq 'reject' || $clean{$target});
+			}
+		}
+	}
 	return \%clean;
 }
 

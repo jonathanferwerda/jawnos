@@ -312,6 +312,194 @@ function jawnPhoneFlowHoldFill(sel, tracks, current) {
 	sel.val(value || '');
 }
 
+// ---- the steps ------------------------------------------------------------
+// A flow is an ordered list of steps. The old fixed sequence - greeting, ask
+// for a name, thanks, then the after choice - is what a flow with no steps
+// means, so a house that never opened the editor keeps speaking it. Order is
+// the array's order; the DOM is the array (a drag moves the rows, a read takes
+// them in the order they are left in).
+function jawnPhoneFlowStepLabel(type) {
+	var labels = {
+		say: jawnosT('Say'),
+		ask: jawnosT('Ask for a name'),
+		keypad: jawnosT('Keypad menu'),
+		hold: jawnosT('Hold music'),
+		voicemail: jawnosT('Voicemail'),
+		after: jawnosT('After')
+	};
+	return labels[type] || type;
+}
+
+function jawnPhoneFlowStepTypes() {
+	return ['say', 'ask', 'keypad', 'hold', 'voicemail', 'after'];
+}
+
+// What a flow with no steps speaks. Kept beside the perl cleaner and the
+// gateway so all three agree on the legacy order.
+function jawnPhoneFlowStepLegacy() {
+	return [
+		{ type: 'say', text_key: 'greeting' },
+		{ type: 'ask' },
+		{ type: 'say', text_key: 'thanks' },
+		{ type: 'after' }
+	];
+}
+
+function jawnPhoneFlowStepsOf(flow) {
+	var steps = (flow && $.isArray(flow.steps)) ? flow.steps : [];
+	if (steps.length) { return steps; }
+	return jawnPhoneFlowStepLegacy();
+}
+
+function jawnPhoneFlowStepDefault(type) {
+	if (type === 'say') { return { type: 'say', text_key: 'greeting' }; }
+	if (type === 'keypad') { return { type: 'keypad', text: '', timeout_ms: 5000, digits: {} }; }
+	if (type === 'hold') { return { type: 'hold', seconds: 0 }; }
+	return { type: type };
+}
+
+// One digit's menu: Ring, Reject and every flow. A digit left on Nothing is
+// unmapped, so it carries on to the next step.
+function jawnPhoneFlowDigitSelect(digit, value) {
+	var sel = $('<select step-field="digit"></select>').attr('digit', digit);
+	sel.append($('<option></option>').val('').text(jawnosT('Nothing')));
+	sel.append($('<option></option>').val('ring').text(jawnosT('Ring')));
+	sel.append($('<option></option>').val('reject').text(jawnosT('Reject')));
+	$.each(jawnPhoneFlowKeys(), function (i, key) {
+		sel.append($('<option></option>').val(key).text(jawnPhoneFlowLabel((jawnPhoneFlowDefs || {})[key] || {})));
+	});
+	sel.val(value || '');
+	return sel;
+}
+
+function jawnPhoneFlowStepRow(step) {
+	step = step || {};
+	var type = step.type || 'say';
+	var row = $('<div class="phone_app_ivr_step"></div>').attr('step-type', type);
+	var head = $('<div class="phone_app_ivr_step_head"></div>');
+	head.append($('<span class="phone_app_ivr_step_handle" hint="Drag to reorder" title="Drag to reorder"></span>').text('⋮⋮'));
+	head.append($('<span class="phone_app_ivr_step_type"></span>').text(jawnPhoneFlowStepLabel(type)));
+	head.append($('<button type="button" class="phone_app_ivr_step_remove" hint="Remove step"></button>').text(jawnosT('Remove')));
+	row.append(head);
+
+	var fields = $('<div class="phone_app_ivr_step_fields"></div>');
+	if (type === 'say') {
+		var sayLabel = $('<label></label>').text(jawnosT('Text'));
+		var saySel = $('<select step-field="text_key"></select>');
+		$.each([['greeting', jawnosT('Greeting')], ['prompt', jawnosT('Name prompt')], ['thanks', jawnosT('Thanks')], ['voicemail', jawnosT('Voicemail greeting')]], function (i, pair) {
+			saySel.append($('<option></option>').val(pair[0]).text(pair[1]));
+		});
+		saySel.val(step.text_key || 'greeting');
+		sayLabel.append(saySel);
+		fields.append(sayLabel);
+	}
+	else if (type === 'keypad') {
+		var textLabel = $('<label></label>').text(jawnosT('Spoken text'));
+		textLabel.append($('<input type="text" step-field="text" maxlength="300">').val(step.text || ''));
+		fields.append(textLabel);
+		var timeoutLabel = $('<label></label>').text(jawnosT('Timeout (seconds)'));
+		var timeout = (step.timeout_ms || 5000) / 1000;
+		timeoutLabel.append($('<input type="number" step-field="timeout_s" min="1" max="30" step="1">').val(timeout));
+		fields.append(timeoutLabel);
+		fields.append($('<div class="phone_app_ivr_step_hint"></div>').text(jawnosT('A mapped digit jumps to its choice; any other digit, or no digit in time, carries on to the next step.')));
+		var grid = $('<div class="phone_app_ivr_digits"></div>');
+		$.each(['1', '2', '3', '4', '5', '6', '7', '8', '9', '*', '0', '#'], function (i, digit) {
+			var cell = $('<label class="phone_app_ivr_digit"></label>');
+			cell.append($('<span></span>').text(digit));
+			cell.append(jawnPhoneFlowDigitSelect(digit, (step.digits || {})[digit] || ''));
+			grid.append(cell);
+		});
+		fields.append(grid);
+	}
+	else if (type === 'hold') {
+		var secondsLabel = $('<label></label>').text(jawnosT('Seconds'));
+		secondsLabel.append($('<input type="number" step-field="seconds" min="0" max="600" step="1">').val(step.seconds || 0));
+		fields.append(secondsLabel);
+		fields.append($('<div class="phone_app_ivr_step_hint"></div>').text(jawnosT('0 plays this flow\'s hold music until the caller leaves.')));
+	}
+	else if (type === 'ask') {
+		fields.append($('<div class="phone_app_ivr_step_hint"></div>').text(jawnosT('Plays the name prompt, beeps, and records the caller\'s name.')));
+	}
+	else if (type === 'voicemail') {
+		fields.append($('<div class="phone_app_ivr_step_hint"></div>').text(jawnosT('Plays the voicemail greeting, then records a message.')));
+	}
+	else if (type === 'after') {
+		fields.append($('<div class="phone_app_ivr_step_hint"></div>').text(jawnosT('Uses the After choice: hold, voicemail or end.')));
+	}
+	row.append(fields);
+	return row;
+}
+
+// The rows in the order they were left in. jQuery UI sortable moves the DOM
+// node on drop, so the list order is the array order.
+function jawnPhoneFlowStepsRead(item) {
+	var steps = [];
+	item.find('.phone_app_ivr_steps > .phone_app_ivr_step').each(function () {
+		var row = $(this);
+		var type = row.attr('step-type') || '';
+		var step = { type: type };
+		if (type === 'say') {
+			step.text_key = row.find('[step-field="text_key"]').val() || 'greeting';
+		}
+		else if (type === 'keypad') {
+			step.text = row.find('[step-field="text"]').val() || '';
+			var seconds = parseFloat(row.find('[step-field="timeout_s"]').val());
+			step.timeout_ms = isFinite(seconds) ? Math.round(seconds * 1000) : 5000;
+			step.digits = {};
+			row.find('[step-field="digit"]').each(function () {
+				var digit = $(this).attr('digit');
+				var target = $(this).val() || '';
+				if (target) { step.digits[digit] = target; }
+			});
+		}
+		else if (type === 'hold') {
+			var hold = parseInt(row.find('[step-field="seconds"]').val(), 10);
+			step.seconds = isFinite(hold) ? hold : 0;
+		}
+		steps.push(step);
+	});
+	return steps;
+}
+
+// The house drag helper is jQuery UI sortable (the taskbar's window order uses
+// it, and the manager layout loads the touch punch), so a stylus or a finger
+// drags the same handle a mouse does.
+function jawnPhoneFlowStepsDragInit(scope) {
+	$(scope || '#phone_app').find('.phone_app_ivr_steps').each(function () {
+		var box = $(this);
+		if (!box.length || box.hasClass('ui-sortable') || typeof box.sortable !== 'function') { return; }
+		box.sortable({
+			items: '> .phone_app_ivr_step',
+			handle: '.phone_app_ivr_step_handle',
+			axis: 'y',
+			distance: 4,
+			tolerance: 'pointer',
+			placeholder: 'phone_app_ivr_step_placeholder',
+			forcePlaceholderSize: true,
+			start: function () { box.addClass('phone_app_ivr_steps_dragging'); },
+			stop: function () {
+				box.removeClass('phone_app_ivr_steps_dragging');
+				// the DOM is the new order; read it back so a later render keeps it
+				jawnPhoneFlowsSync();
+			}
+		});
+	});
+}
+
+// A flow that is deleted takes every digit that named it with it, so no menu
+// is left pointing at a reception nobody answers.
+function jawnPhoneFlowDigitsDrop(key) {
+	$.each(jawnPhoneFlowDefs || {}, function (i, flow) {
+		if (!flow || !$.isArray(flow.steps)) { return; }
+		$.each(flow.steps, function (j, step) {
+			if (!step || step.type !== 'keypad' || !step.digits) { return; }
+			$.each(step.digits, function (digit, target) {
+				if (target === key) { delete step.digits[digit]; }
+			});
+		});
+	});
+}
+
 function jawnPhoneFlowItem(key, flow) {
 	var item = $('<div class="phone_app_ivr_flow_item"></div>').attr('flow', key);
 	var head = $('<div class="phone_app_ivr_flow_head" hint="Edit flow"></div>');
@@ -320,6 +508,10 @@ function jawnPhoneFlowItem(key, flow) {
 	head.append($('<span class="phone_app_ivr_flow_more"></span>').text('▾'));
 	item.append(head);
 
+	var typeOptions = '';
+	$.each(jawnPhoneFlowStepTypes(), function (i, t) {
+		typeOptions += '<option value="' + t + '">' + jawnPhoneFlowStepLabel(t) + '</option>';
+	});
 	var edit = $(
 		'<div class="phone_app_ivr_flow_edit" hidden>'
 		+ '<label>' + jawnosT('Name') + '<input type="text" field="name"></label>'
@@ -334,6 +526,13 @@ function jawnPhoneFlowItem(key, flow) {
 		+ '<option value="voicemail">' + jawnosT('Voicemail') + '</option>'
 		+ '<option value="end">' + jawnosT('End') + '</option>'
 		+ '</select></label>'
+		+ '<div class="phone_app_ivr_steps_wrap">'
+		+ '<div class="phone_app_ivr_steps_title">' + jawnosT('Steps') + '</div>'
+		+ '<div class="phone_app_ivr_steps"></div>'
+		+ '<div class="phone_app_ivr_step_add">'
+		+ '<select class="phone_app_ivr_step_type_new" hint="Step type">' + typeOptions + '</select>'
+		+ '<button type="button" class="phone_app_ivr_step_add_btn" hint="Add step">' + jawnosT('Add step') + '</button>'
+		+ '</div></div>'
 		+ '<div class="phone_app_ivr_flow_actions">'
 		+ '<button type="button" class="phone_app_ivr_flow_rename" hint="Rename flow">' + jawnosT('Rename') + '</button>'
 		+ (flow.builtin ? '' : '<button type="button" class="phone_app_ivr_flow_delete" hint="Delete flow">' + jawnosT('Delete') + '</button>')
@@ -358,6 +557,12 @@ function jawnPhoneFlowItem(key, flow) {
 
 	jawnPhoneFlowHoldFill(edit.find('[field="hold"]'), jawnPhoneHoldLibrary, flow.hold || '');
 
+	var steps = jawnPhoneFlowStepsOf(flow);
+	var stepsBox = edit.find('.phone_app_ivr_steps');
+	$.each(steps, function (i, step) {
+		stepsBox.append(jawnPhoneFlowStepRow(step));
+	});
+
 	if (jawnPhoneFlowOpen[key]) { head.addClass('on'); edit.prop('hidden', false); }
 	return item;
 }
@@ -373,6 +578,8 @@ function jawnPhoneFlowsSync() {
 		$(this).find('[field]').each(function () {
 			flow[$(this).attr('field')] = $(this).val() || '';
 		});
+		// the steps are their own fields, and their DOM order is the order
+		flow.steps = jawnPhoneFlowStepsRead($(this));
 		jawnPhoneFlowDefs[key] = flow;
 	});
 	return jawnPhoneFlowDefs;
@@ -429,6 +636,7 @@ function jawnPhoneFlowsRender() {
 	$.each(jawnPhoneFlowKeys(), function (i, key) {
 		list.append(jawnPhoneFlowItem(key, jawnPhoneFlowDefs[key]));
 	});
+	jawnPhoneFlowStepsDragInit(list);
 	jawnPhoneFlowsBucketsRender();
 	jawnPhoneFlowCountsRefresh();
 }
@@ -520,8 +728,46 @@ $(document).on('click', '#phone_app .phone_app_ivr_flow_delete', function (e) {
 		}, 3000);
 		return;
 	}
+	jawnPhoneFlowDigitsDrop(key);
 	delete jawnPhoneFlowDefs[key];
 	delete jawnPhoneFlowOpen[key];
+	jawnPhoneFlowsRender();
+});
+
+// Add step: choose the kind first, then the row appears with its own fields.
+$(document).on('click', '#phone_app .phone_app_ivr_step_add_btn', function (e) {
+	e.preventDefault();
+	e.stopPropagation();
+	var item = $(this).closest('.phone_app_ivr_flow_item');
+	var key = item.attr('flow');
+	jawnPhoneFlowsSync();
+	var flow = jawnPhoneFlowDefs[key];
+	if (!flow) { return; }
+	flow.steps = jawnPhoneFlowStepsOf(flow);
+	if (flow.steps.length >= 20) {
+		window.alert(jawnosT('A flow can have at most 20 steps.'));
+		return;
+	}
+	var type = item.find('.phone_app_ivr_step_type_new').val() || 'say';
+	flow.steps.push(jawnPhoneFlowStepDefault(type));
+	jawnPhoneFlowOpen[key] = true;
+	jawnPhoneFlowsRender();
+});
+
+// Remove one step. The rest keep their order.
+$(document).on('click', '#phone_app .phone_app_ivr_step_remove', function (e) {
+	e.preventDefault();
+	e.stopPropagation();
+	var row = $(this).closest('.phone_app_ivr_step');
+	var item = row.closest('.phone_app_ivr_flow_item');
+	var key = item.attr('flow');
+	jawnPhoneFlowsSync();
+	var flow = jawnPhoneFlowDefs[key];
+	if (!flow) { return; }
+	var index = item.find('.phone_app_ivr_steps > .phone_app_ivr_step').index(row);
+	flow.steps = jawnPhoneFlowStepsOf(flow);
+	if (index >= 0) { flow.steps.splice(index, 1); }
+	jawnPhoneFlowOpen[key] = true;
 	jawnPhoneFlowsRender();
 });
 
