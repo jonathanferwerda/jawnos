@@ -268,11 +268,13 @@ void request_time() {
   lastTimeSync = millis();
 }
 
-// A successful join: drop the provisioning AP, go back to station-only, and
-// bring mDNS and the clock up on the network we just rejoined.
+// A successful join: drop the provisioning AP and bring mDNS and the clock up
+// on the network we just rejoined. Do not switch to WIFI_STA here: the join
+// often happens in AP_STA after the provisioning AP came up, and changing the
+// mode at that moment drops the station it just established. The AP is off;
+// leaving the mode as it is keeps the link.
 void wifi_join_done() {
   WiFi.softAPdisconnect(true);
-  WiFi.mode(WIFI_STA);
   wifiState = "connected";
   wifiDownTicks = 0;
   president_loaded = false;

@@ -1,4 +1,4 @@
-# tests-for: jp/alarmclock/alarmclock_01_globals_clock_ble.ino jp/alarmclock/alarmclock_02_ble_handlers_wifi_setup.ino templates/embedded/body.html.ep templates/embedded/watch.html.ep public/js/manager/embedded.js perl/help/topics_configure.pl
+# tests-for: jp/alarmclock/alarmclock_01_globals_clock_ble.ino jp/alarmclock/alarmclock_02_ble_handlers_wifi_setup.ino jp/alarmclock/alarmclock_03_loop_house_inputs_jobs.ino templates/embedded/body.html.ep templates/embedded/watch.html.ep public/js/manager/embedded.js perl/help/topics_configure.pl
 # covers:    A board re-joining its WiFi kept every AP it had ever been given:
 #            WiFiMulti only ever adds, so the BLE apply could still land on the
 #            network the person had just replaced. Only the configured pair may
@@ -19,6 +19,7 @@ use RepoSource;
 my $root = repo_root();
 my $globals  = read_file("$root/jp/alarmclock/alarmclock_01_globals_clock_ble.ino");
 my $handlers = read_file("$root/jp/alarmclock/alarmclock_02_ble_handlers_wifi_setup.ino");
+my $loop     = read_file("$root/jp/alarmclock/alarmclock_03_loop_house_inputs_jobs.ino");
 my $body     = read_file("$root/templates/embedded/body.html.ep");
 my $watch    = read_file("$root/templates/embedded/watch.html.ep");
 my $js       = read_file("$root/public/js/manager/embedded.js");
@@ -39,6 +40,13 @@ my $clear = index($start, 'multi.clearAPList();');
 my $add   = index($start, 'multi.addAP(');
 ok($clear >= 0, 'wifi_start clears the multi list');
 ok($add > $clear, 'before it adds the configured pair (the list only ever grew)');
+
+# --- a rejoin must not switch the mode after the station is up --------------
+my ($join_done) = $loop =~ /(void wifi_join_done\(\) \{.*?\n\})/s;
+ok($join_done, 'wifi_join_done is still one function');
+unlike($join_done, qr/WiFi\.mode\(WIFI_STA\)/,
+	'the rejoin does not switch to WIFI_STA after the station is up (that dropped it)');
+like($join_done, qr/WiFi\.softAPdisconnect\(true\);/, 'it still drops the provisioning AP');
 
 # --- /wifi_update refuses an empty or unreadable answer ----------------------
 my ($update) = $handlers =~ /(server\.on\("\/wifi_update".*?\n  \}\);)/s;
