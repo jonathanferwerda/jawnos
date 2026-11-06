@@ -21,6 +21,12 @@
 		<% } else { %>
 			<span style="font-size:23px;"><b><%= $embedded->{'ip'} %></b> <%= $embedded->{'mac'} %></span>
 		<% } %>
+		<% if ($bridge && length($bridge->{'ip'} || '')) { %>
+			<div id="embedded_bridge" style="font-size:19px;margin-top:2px;" hint="<%= &subs::ui('The machine this device is paired to') %>">
+				<%= &subs::ui('Connected to') %>: <b><%= &subs::format_name($bridge->{'name'}) %></b>
+				<span style="font-size:14px;">(<%= $bridge->{'ip'} %>)</span>
+			</div>
+		<% } %>
 		<div id="teletype_homebase" class="teletype_card">
 			<% if ($device_type eq 'teletype') { %>
 				<%# input authority is the Now Me pair, not a separate password: the
@@ -163,7 +169,8 @@
 				<div id="teletype_router" class="teletype_card">
 					<b>SSID</b>
 					<input type="text" class="teletype_wifi_config" id="teletype_wifi_ssid" list="teletype_wifi_ssids" value="<%= $wifi->{'ssid'} %>" field="ssid" placeholder="<%= &subs::ui('your WiFi network name') %>" hint="<%= &subs::ui('Type the name or press Scan and pick one') %>">
-					<datalist id="teletype_wifi_ssids"></datalist><br>
+					<datalist id="teletype_wifi_ssids"></datalist>
+					<div id="teletype_wifi_picks" style="font-size:15px;text-align:left;"></div><br>
 					<b>Password</b>
 					<input type="password" class="teletype_wifi_config" id="teletype_wifi_password" value="" data-set="<%= length($wifi->{'password'} || '') ? 1 : 0 %>" placeholder="<%= &subs::ui(length($wifi->{'password'} || '') ? '••• set — type to replace' : 'not set') %>" field="password" hint="<%= &subs::ui('Leave it blank to keep the password it already has') %>"></br>
 				</div>

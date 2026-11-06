@@ -556,11 +556,20 @@ function embeddedWifiScan() {
 		data: {}
 	}).done(function(response) {
 		var networks = (response && response.networks) || [];
+		// A datalist does not open on its own in every engine this desktop runs
+		// on, so the scan also draws each network as a button: press one and the
+		// name is filled in (and saved) without typing it - which is how a space
+		// in a network name gets lost.
+		var picks = $('#teletype_wifi_picks').empty();
 		var seen = 0;
 		for (var i = 0; i < networks.length; i++) {
 			var ssid = networks[i] && networks[i].ssid;
 			if (!ssid) { continue; }
 			list.append($('<option>').attr('value', ssid));
+			picks.append($('<button>').addClass('teletype_wifi_pick')
+				.attr('data-ssid', ssid)
+				.css({ 'margin': '2px 6px 2px 0', 'font-size': '15px' })
+				.text(ssid));
 			seen++;
 		}
 		$('#teletype_wifi_result').text(seen
@@ -574,7 +583,16 @@ function embeddedWifiScan() {
 
 $(document).on('click', '#teletype_wifi_scan', function() {
 	$('#teletype_wifi_ssids').empty();
+	$('#teletype_wifi_picks').empty();
 	embeddedWifiScan();
+});
+
+// Picking a scanned network fills the name in and saves it, exactly as typing it
+// would; the password stays a separate field.
+$(document).on('click', '.teletype_wifi_pick', function() {
+	var ssid = $(this).attr('data-ssid');
+	$('#teletype_wifi_ssid').val(ssid).trigger('change');
+	$('#teletype_wifi_result').text(embeddedWifiText('Chosen') + ': ' + ssid);
 });
 
 $(document).on('click', '#teletype_wifi_update', function() {

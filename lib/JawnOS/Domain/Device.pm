@@ -486,6 +486,26 @@ sub ensure_self_device {
 	return &subs::db_select('devices', undef, { hostname => $hostname })->hashes->[0];
 }
 
+sub machine_name_for_ip {
+	# The name of the machine behind an address, for a panel that has to say what
+	# a device is connected to without the person remembering. Every machine's
+	# own row carries its hostname and an address map (one entry per NIC), so a
+	# match is exact; an address nobody claims comes back as itself, which is
+	# still better than an empty line.
+	my ($ip) = @_;
+	return '' unless defined $ip && $ip =~ /^\d{1,3}(?:\.\d{1,3}){3}$/;
+	foreach my $d ( @{ &db_select('devices')->hashes } ) {
+		my $address = eval { decode_json($d->{'address'} || '') } || {};
+		next unless ref $address eq 'HASH';
+		foreach my $nic ( keys %{$address} ) {
+			my $a = $address->{$nic};
+			next unless ref $a eq 'HASH';
+			return $d->{'hostname'} if ($a->{'ip'} || '') eq $ip && $d->{'hostname'};
+		}
+	}
+	return $ip;
+}
+
 sub device_lister {
 	my ($timestamp,$load_type,$ip_range,$chip_id) = @_;
 	my ($dev,$devices);

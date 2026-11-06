@@ -188,10 +188,20 @@ sub embedded_grabber($c,$timestamp) {
 	# The build the device reports, the build this machine would send, and
 	# whether the person asked for automatic updates (see Domain::Firmware).
 	my $firmware = &subs::firmware_status($edt, $chip_id, $embedded);
+	# Which machine the device is paired to, by name: the board's own row names
+	# its homebase as ip:port, and a person should not have to remember that
+	# 192.168.1.147 is the Table.
+	my $homebase = $op_d->{'__specs'}->{'homebase'} || '';
+	$homebase =~ s{:\d+$}{};
+	my $bridge = {
+		ip => $homebase,
+		name => ($homebase ne '' ? &subs::machine_name_for_ip($homebase) : ''),
+	};
 	my $returner = {
 		template => 'embedded/embedded',
 		embedded => $embedded,
 		firmware => $firmware,
+		bridge => $bridge,
 		window_maker => 'yes',
 		settings => $settings,
 		movements => $movements,

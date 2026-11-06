@@ -57,7 +57,8 @@
 		<div id="teletype_router" style="background-color:red">
 			<b>SSID</b>
 			<input type="text" class="teletype_wifi_config" id="teletype_wifi_ssid" list="teletype_wifi_ssids" value="<%= $wifi->{'ssid'} %>" field="ssid" placeholder="<%= &subs::ui('your WiFi network name') %>" hint="<%= &subs::ui('Type the name or press Scan and pick one') %>">
-			<datalist id="teletype_wifi_ssids"></datalist><br>
+			<datalist id="teletype_wifi_ssids"></datalist>
+			<div id="teletype_wifi_picks" style="font-size:15px;text-align:left;"></div><br>
 			<b>Password</b>
 			<input type="password" class="teletype_wifi_config" id="teletype_wifi_password" value="" data-set="<%= length($wifi->{'password'} || '') ? 1 : 0 %>" placeholder="<%= &subs::ui(length($wifi->{'password'} || '') ? '••• set — type to replace' : 'not set') %>" field="password" hint="<%= &subs::ui('Leave it blank to keep the password it already has') %>"></br>
 		</div>
