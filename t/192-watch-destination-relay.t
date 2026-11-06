@@ -294,4 +294,78 @@ like($watch, qr/command_id => \$press_id/,
 like($watch, qr/context => 'button_press'/,
 	'a repeated fetch of the same press is not written again');
 
+# --- an every-machine command runs on the machine that received it ----------
+# destination_relay never sends a fan-out back to this machine, so skipping the
+# local copy made a press do nothing when no peer was reachable (the live
+# "no active machine matches all" miss). The local copy is one of "every
+# machine"; the press id guard keeps a copy relayed back from a second homebase
+# from running it twice.
+subs::preload('edt_button_presser');
+{
+	my @ran;
+	my %cache;
+	my $now = 1_800_000_000_000;
+	my $relay_result = { ok => 0, all => 1, sent => 0, expected => 0, queued => 0 };
+	no warnings 'redefine';
+	local *subs::rightNow              = sub { $now };
+	local *subs::random_string_creator = sub { 'r' x 20 };
+	local *subs::shorthand_name        = sub { 'b' };
+	local *subs::settings_grabber      = sub { { toggle => 'off', command => 'echo hi', duration => '1m' } };
+	local *subs::time_abbrev_translator = sub { 60 };
+	local *subs::ago_calc              = sub { '' };
+	local *subs::setting_grabber       = sub { 'off' };
+	local *subs::signatorial_designer  = sub { 'me-sig' };
+	local *subs::destination_relay     = sub { return { %{$relay_result} } };
+	local *subs::run_command           = sub { push @ran, [ @_ ]; return 1 };
+	local *subs::runner_label          = sub { 'me' };
+	local *subs::command_already_applied = sub { my ($id) = @_; return $cache{$id} ? 1 : 0 };
+	local *subs::command_mark_applied    = sub { my ($id) = @_; $cache{$id} = 1; return 1 };
+	local *subs::database_grabber      = sub { return (undef, undef) };
+	local *subs::setting_setter        = sub { return 1 };
+	local *subs::controller_builder    = sub { return bless {}, 'FakeController' };
+	local *subs::embedded_operator_door = sub { return '{}' };
+	local *Manager::appointment_writer = sub { return 1 };
+	local *Websocket::send             = sub { return 1 };
+	local *Websocket::console_command  = sub { return '' };
+	local $subs::log = undef;
+
+	my $settings = {
+		b1 => { app => 'play', movement => 'command', numero => 1, shorthand_name => 'Play', toggle => 0 },
+		__specs => { room_count => 1, room_max => 8 },
+	};
+	my $press = sub {
+		my ($id) = @_;
+		return subs::edt_button_presser({
+			remote_address => 'bluetooth', timestamp => $now, room => 1,
+			watch_settings => $settings, button => 1, edt => 'watch',
+			chip_id => 'chip-1', toggle => 'on', command_id => $id,
+		});
+	};
+
+	my $r = $press->('press-1');
+	is(scalar @ran, 1, 'a fan-out with no reachable peer still runs the command here');
+	is($ran[0][0], 'play', 'the local copy is the button app');
+	is($ran[0][1], 'echo hi', 'and runs its command');
+	is($r->{'relay_ok'}, 1, 'the press reports a landed command');
+	is($r->{'relay_all'}, 1, 'as an every-machine press');
+	is($r->{'relay_sent'}, 1, 'counting this machine as reached');
+	is($r->{'relay_expected'}, 1, 'out of the one machine here');
+
+	# The same press arrives again (a second homebase relayed it back): it is
+	# reported as landed but the command must not run a second time.
+	$relay_result = { ok => 0, all => 1, sent => 0, expected => 0, queued => 0 };
+	my $again = $press->('press-1');
+	is(scalar @ran, 1, 'a repeated press id is not run twice');
+	is($again->{'relay_ok'}, 1, 'and still reports that it landed');
+
+	# A named machine that took the movement through the queue is not run here.
+	@ran = ();
+	$settings->{'b1'}->{'destination'} = $PEER_SIG;
+	$relay_result = { ok => 1, all => 0, sent => 0, expected => 1, queued => 1 };
+	my $named = $press->('press-2');
+	is(scalar @ran, 0, 'a named miss queued for its machine does not run locally');
+	is($named->{'relay_queued'}, 1, 'and the device is told it was queued');
+}
+
+
 done_testing();

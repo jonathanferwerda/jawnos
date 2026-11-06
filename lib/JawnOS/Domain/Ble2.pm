@@ -351,13 +351,21 @@ sub ble_message_processor {
 			$chip_id ||= $c;
 			$edt = $e if $e && !$msg->{'edt'};
 		}
+		# The press's own id rides the url the firmware built (press_id). Carry
+		# it as the command id, exactly as /watch/button does, so a tap heard by
+		# two homebases runs once instead of twice and the local copy can be
+		# guarded by the same id.
+		my $press_id = $msg->{'id'};
+		if ((!defined $press_id || $press_id eq '') && $msg->{'url'}) {
+			($press_id) = $msg->{'url'} =~ /[?&]id=([^&]+)/;
+		}
 		# Say so on arrival: the tap is otherwise applied silently, so a tap that
 		# never lands (or lands with no chip) is invisible in the log. This is the
 		# one line that tells the two apart.
 		$log->info('BLE button for ' . ($chip_id || '?') . ': room ' . ($payload->{'room'} || '?') . ', button ' . ($payload->{'button'} || '?'));
 		# The same tap can arrive twice (two bridge radios, or an older board
 		# that scanned its buttons twice). Apply it once.
-		my $ekey = join('|', 'button', $chip_id // '', $payload->{'button'} // '', $payload->{'toggle'} // '', $payload->{'timestamp'} // '');
+		my $ekey = join('|', 'button', $chip_id // '', $payload->{'button'} // '', $payload->{'toggle'} // '', $press_id // $payload->{'timestamp'} // '');
 		if (&subs::event_duplicate($ekey)) {
 			$log->info('BLE button for ' . ($chip_id || '?') . ': duplicate tap ignored');
 			return;
@@ -397,7 +405,8 @@ sub ble_message_processor {
 					edt => $press_edt,
 					chip_id => $press_chip,
 					remote_address => 'bluetooth',
-					toggle => $press_tog
+					toggle => $press_tog,
+					command_id => $press_id
 				});
 			};
 			$log->error('BLE button press failed: ' . $@) if $@;

@@ -135,18 +135,19 @@ sub edt_button_presser {
 		}
 		# The button can name the machine the command belongs to (a signatorial
 		# from the remote machine list); blank means every machine runs its own
-		# copy. A named machine that cannot be reached is handed to the relay
-		# queue by destination_relay; only when even that cannot be queued does
-		# the press run here, as the last resort.
+		# copy, this one included. A named machine that cannot be reached is
+		# handed to the relay queue by destination_relay; only when even that
+		# cannot be queued does the press run here instead.
 		my $destination = $b->{'destination'} || '';
 		my $me = &subs::signatorial_designer();
 		my $ran_away = 0;
 		if (!$destination) {
 			$relay_outcome = &subs::destination_relay({ destination => 'all', app => $app, movement => $movement, timestamp => $server_time, command_id => $command_id });
 			$db_data->{'data'} = 'every machine';
-			# A fan-out never runs here, even when a machine missed it: the
-			# watch shows the miss instead of the command running twice.
-			$ran_away = 1;
+			# This machine is one of "every machine": destination_relay never
+			# sends the movement back here, so run our own copy below. The press
+			# id guard makes that safe when the same tap reached two homebases and
+			# each one relays to the other.
 		}
 		elsif ($destination ne $me) {
 			$relay_outcome = &subs::destination_relay({ destination => $destination, app => $app, movement => $movement, timestamp => $server_time, command_id => $command_id });
@@ -161,10 +162,23 @@ sub edt_button_presser {
 		}
 		unless ($ran_away) {
 			# no destination set, it is this machine, or the named peer could
-			# not even be queued: run here
-			my $resulter = &subs::run_command($app,$settings->{$movement});
-			$db_data->{'data'} = &subs::runner_label() unless $db_data->{'data'};
+			# not even be queued: run here. A press that already ran here (the
+			# same tap reached a second homebase, which relayed it back) is not
+			# run again; this is the same id guard manager_reset uses.
+			my $already = $command_id && &subs::command_already_applied($command_id);
+			unless ($already) {
+				&subs::command_mark_applied($command_id) if $command_id;
+				my $resulter = &subs::run_command($app,$settings->{$movement});
+				$db_data->{'data'} = &subs::runner_label() unless $db_data->{'data'};
+			}
 			$relay_outcome ||= { ok => 1, all => 0, sent => 1, expected => 1, queued => 0 };
+			# Count this machine in an every-machine press's outcome, so the
+			# device's green/red flash reflects the whole house.
+			if ($relay_outcome->{'all'}) {
+				$relay_outcome->{'sent'} = ($relay_outcome->{'sent'} || 0) + 1;
+				$relay_outcome->{'expected'} = ($relay_outcome->{'expected'} || 0) + 1;
+				$relay_outcome->{'ok'} = ($relay_outcome->{'sent'} >= $relay_outcome->{'expected'}) ? 1 : 0;
+			}
 		}
 
 	}

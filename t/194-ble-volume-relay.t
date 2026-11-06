@@ -231,4 +231,12 @@ like($jw_play, qr/tapped == "vol_\+".*?house_volume_tap\(house_delta, "all"\)/s,
 	'a Vol+ face sends the house message instead of a local button press');
 like($jw_loop2, qr/"volume_result"/, 'the watch reads the manager result back');
 
+# A BLE button tap carries its own press id in the url; the bridge path must
+# hand it to edt_button_presser so two homebases hearing one tap run it once.
+like($ble2, qr/\(\$press_id\) = \$msg->\{'url'\} =~ \/\[\?&\]id=\(\[\^&\]\+\)\//,
+	'the bridge reads the press id from the button tap\'s url');
+like($ble2, qr/command_id => \$press_id/,
+	'and hands it to the press as the command id');
+
+
 done_testing();
