@@ -12,7 +12,7 @@
 # to trust a private CA. Peers, however, dial a literal IP on purpose - the
 # peer's name is only usable while the tailnet's DNS answers - and a public
 # wildcard covers no IP address. So the peer listener (President.pl, main port +
-# 4) carries a leaf issued here, with every address the peer may be dialled by
+# 6) carries a leaf issued here, with every address the peer may be dialled by
 # in its SAN, and every enrolled machine trusts `server/house-ca.pem`.
 #
 # The CA key never leaves the house and is written 0600. A leaf is issued for a

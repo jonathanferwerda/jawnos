@@ -180,8 +180,9 @@ my $alarm_port = $port + 5;
 # The peer listener carries the house-CA leaf (scripts/house_ca.pl). It is a
 # second listener, not a second certificate on the main one: a listener presents
 # one certificate, and the main port must keep the public wildcard for browsers.
-my $peer_port = $port + 4;
-$peer_port -= 8 if $peer_port > 65535;
+# The offset skips +1 (ws), +2 (watch), +3 (tty), +4 (tty ws) and +5 (alarm).
+my $peer_port = $port + 6;
+$peer_port -= 12 if $peer_port > 65535;
 my $peer_certs = "";
 if (-e './server/peer-fullchain.pem' && -e './server/peer-privkey.pem') {
 	$peer_certs = "?cert=./server/peer-fullchain.pem&key=./server/peer-privkey.pem";

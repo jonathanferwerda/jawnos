@@ -247,14 +247,15 @@ sub peer_ticket_fetch {
 # reaches it by name and must not be asked to trust a private CA. Peers dial a
 # literal IP on purpose (a peer's name is only usable while the tailnet's DNS
 # answers), and no public wildcard covers an IP. President.pl therefore also
-# listens on main port + 4 with a leaf issued by scripts/house_ca.pl; every
+# listens on a free offset beside the main port (+6: +1 is ws, +2 watch, +3 tty,
+# +4 tty ws and +5 alarm) with a leaf issued by scripts/house_ca.pl; every
 # enrolled machine trusts server/house-ca.pem.
 #
 # A machine with no CA file, or a peer with no leaf yet, keeps the old insecure
 # rail: the signed requests still authenticate the caller, and the probe below
 # is what stops a half-rolled-out fleet from breaking.
 
-sub peer_port_offset { return 4 }
+sub peer_port_offset { return 6 }
 
 sub peer_port_for {
 	my ($rm) = @_;
@@ -369,7 +370,7 @@ sub remote_useragent_maker($data) {
 		$manager = $live_manager;
 		$rm->{'manager'} = $manager;
 	}
-	# The peer listener (main port + 4) is where the house-CA leaf lives. Only
+	# The peer listener (main port + 6) is where the house-CA leaf lives. Only
 	# switch to it when the peer answers there; the signed rail still carries
 	# the caller's proof either way.
 	my ($secure_manager, $manager_verified) = &subs::peer_secure_url($rm, $manager);

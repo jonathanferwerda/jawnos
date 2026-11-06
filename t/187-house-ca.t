@@ -141,10 +141,10 @@ SKIP: {
 }
 
 # --- the peer port and the URL rewrite --------------------------------------
-is(subs::peer_port_for({ port => 45545 }), 45549, 'the peer port is the main port plus four');
-is(subs::peer_port_for({ port => 3001 }), 3005, 'and follows a working_port too');
-is(subs::peer_port_for({}), 45549, 'a row with no port falls back to the house port');
-is(subs::peer_port_for(65534), 65530, 'a port that would overflow wraps down');
+is(subs::peer_port_for({ port => 45545 }), 45551, 'the peer port is the main port plus six');
+is(subs::peer_port_for({ port => 3001 }), 3007, 'and follows a working_port too');
+is(subs::peer_port_for({}), 45551, 'a row with no port falls back to the house port');
+is(subs::peer_port_for(65534), 65528, 'a port that would overflow wraps down');
 
 my $tmp = tempdir(CLEANUP => 1);
 make_path("$tmp/server");
@@ -164,7 +164,7 @@ my $listener = IO::Socket::INET->new(
 SKIP: {
 	skip 'could not open a loopback listener', 5 unless $listener;
 	my $peer_port = $listener->sockport;
-	my $rm = { ip => '127.0.0.1', port => $peer_port - 4, tunnel => 'no' };
+	my $rm = { ip => '127.0.0.1', port => $peer_port - 6, tunnel => 'no' };
 	my ($url, $verified) = subs::peer_secure_url($rm, "https://127.0.0.1:$peer_port/manager/vault_share?x=1");
 	is($verified, 1, 'the peer listener is chosen when it answers');
 	like($url, qr{^https://127\.0\.0\.1:[0-9]+/manager/vault_share\?x=1$}, 'the path and query survive');
@@ -181,7 +181,7 @@ SKIP: {
 
 # --- the listener and the advertisement -------------------------------------
 my $president = read_file("$root/perl/President.pl");
-like($president, qr/my \$peer_port = \$port \+ 4;/, 'President derives the peer port');
+like($president, qr/my \$peer_port = \$port \+ 6;/, 'President derives the peer port');
 like($president, qr/\$ENV\{PORT_PEER\} = \$peer_port/, 'and exports it for the advertisement');
 like($president, qr/peer-fullchain\.pem.*peer-privkey\.pem/s, 'the peer listener uses the house-CA leaf');
 like($president, qr/push \@ws_listeners, 'https:\/\/\*:' \. \$peer_port/, 'the socket server carries the peer listener');

@@ -8,7 +8,7 @@ Read this when a question is about the data model, the journal, maps or chat.
 and `server_time` or the rail skips it. Schema: `database/schema.sql`; deep notes: `docs/AGENTS-notes.md`.
 
 **Peers have two TLS listeners.** The main port keeps the public wildcard (a browser by name
-must not be asked to trust a private CA); the peer listener on **main port + 4** carries a leaf from
+must not be asked to trust a private CA); the peer listener on **main port + 6** carries a leaf from
 the house CA (`scripts/house_ca.pl`), with every IP and name that machine may be dialled by in its
 SAN. Enrolled machines trust `server/house-ca.pem`; `subs::peer_secure_url` rewrites a peer URL to
 that listener only when the peer answers there (a five-minute TCP probe) and otherwise leaves the
