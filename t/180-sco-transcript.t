@@ -217,6 +217,23 @@ like($screening, qr/getElementById\('pseudonym_home'\)/, 'and the dock it clears
 like($screening, qr/getAttribute\('position'\) === 'top'/, 'only a dock on the top edge offsets it');
 unlike($screening, qr/getElementById\('dock'\)/, 'the lookup for an id no Manager page has is gone');
 like($screening, qr/min\(62vh/, 'and the panel still stops above the foot on a short window');
+# Hide is a tuck, not an end: the panel folds to a pill on the same edge and a
+# call this device is carrying keeps its audio. It used to call jawnScreenEnd,
+# which stopped the WebRTC bridge.
+like($screening, qr/function jawnScreenHide\(\)/, 'the panel can be hidden');
+like($screening, qr/class="jawn_screening_close" hint="Hide"/, 'and the button says Hide');
+like($screening, qr/jawn_screening_pill/, 'a hidden panel leaves a pill behind');
+{
+	my ($hide) = $screening =~ /function jawnScreenHide\(\) \{(.*?)\n\}/s;
+	ok($hide, 'the hide handler is a block');
+	unlike($hide, qr/RtcStop/, 'hiding does not drop a call this device is carrying');
+}
+like($screening, qr/#jawn_screening_pill'/, 'the pill takes the panel back');
+# A device opened, woken or reconnected mid-call must ask for the screening: it
+# was not there for the start push.
+like($screening, qr/on\('visibilitychange'/, 'a wake asks again');
+like(read_file("$repo/public/js/manager/websocket/03_watchdog.js"), qr/jawnScreenPoll\(\);.*?wsResync\(\);/s,
+	'and so does a socket that came back');
 my $css = read_file("$repo/public/css/manager.css");
 like($css, qr/\.jawn_screening\s*\{[^}]*top:\s*calc\(var\(--taskbar_top_h,\s*0px\)\s*\+\s*16px\)/s,
 	'the panel hangs from the top, below a top taskbar');

@@ -118,6 +118,10 @@ function wsResyncSoon() {
 	if (wsResyncTimer) { clearTimeout(wsResyncTimer); }
 	wsResyncTimer = setTimeout(function () {
 		wsResyncTimer = 0;
+		// A laptop that woke missed the frames a screening sent while it slept;
+		// the panel asks the gateway for the call's state before it re-lists the
+		// windows, so Connect me is there on the device just opened.
+		if (typeof jawnScreenPoll === 'function') { jawnScreenPoll(); }
 		wsResync();
 	}, 400);
 }

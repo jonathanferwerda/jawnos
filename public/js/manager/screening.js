@@ -110,7 +110,7 @@ function jawnScreenRtcPushed(data) {
 
 // ---- the floating panel ---------------------------------------------------
 
-var jawnScreen = { call: '', timer: null, seen: 0 };
+var jawnScreen = { call: '', timer: null, seen: 0, hidden: false, top: 0, last: null };
 
 function jawnScreenPanelOpen() {
 	if ($('#jawn_screening').length) { return; }
@@ -120,7 +120,7 @@ function jawnScreenPanelOpen() {
 	var box = $('<div id="jawn_screening" class="jawn_screening"></div>');
 	box.append($('<div class="jawn_screening_head"></div>')
 		.append($('<span class="jawn_screening_title"></span>').text(jawnosT('Screened call')))
-		.append($('<button class="jawn_screening_close" hint="Dismiss">&times;</button>')));
+		.append($('<button class="jawn_screening_close" hint="Hide"></button>').text(jawnosT('Hide'))));
 	box.append($('<div class="jawn_screening_peer" id="jawn_screening_peer"></div>'));
 	box.append($('<div class="jawn_screening_lines" id="jawn_screening_lines"></div>'));
 	box.append($('<div class="jawn_screening_note" id="jawn_screening_note"></div>'));
@@ -132,6 +132,7 @@ function jawnScreenPanelOpen() {
 	// taskbar offset is in the CSS; a dock on the top edge sits below it and is
 	// tucked, so the bottom of its visible strip is where the panel must start.
 	var top = jawnScreenTopOffset(box);
+	jawnScreen.top = top;
 	box.css('top', top + 'px');
 	box.css('max-height', 'min(62vh, calc(100vh - ' + Math.ceil(top + 16) + 'px))');
 }
@@ -151,7 +152,44 @@ function jawnScreenTopOffset(box) {
 
 function jawnScreenPanelClose() {
 	$('#jawn_screening').remove();
-	jawnScreen = { call: '', timer: null, seen: 0 };
+	$('#jawn_screening_pill').remove();
+	jawnScreen = { call: '', timer: null, seen: 0, hidden: false, top: 0, last: null };
+}
+
+// Hide is a tuck, not an end: the panel folds into a pill on the same edge. A
+// call this device is carrying over WebRTC keeps its audio - hiding is about
+// the window, not the call - and a device that hid the panel is not asked to
+// reopen it until the next screening.
+function jawnScreenHide() {
+	$('#jawn_screening').remove();
+	jawnScreen.hidden = true;
+	jawnScreenPillOpen();
+}
+
+function jawnScreenPillOpen() {
+	if ($('#jawn_screening_pill').length) { return; }
+	var pill = $('<button id="jawn_screening_pill" class="jawn_screening_pill" hint="Show the screened call"></button>');
+	pill.css('top', (jawnScreen.top || 16) + 'px');
+	$('body').append(pill);
+	jawnScreenPillPaint();
+}
+
+function jawnScreenPillPaint() {
+	var pill = $('#jawn_screening_pill');
+	if (!pill.length) { return; }
+	var res = jawnScreen.last || {};
+	var caller = res.caller || {};
+	var who = caller.name || caller.number || '';
+	pill.text(who ? (jawnosT('Screened call') + ' \u00b7 ' + who) : jawnosT('Screened call'));
+}
+
+function jawnScreenShow() {
+	jawnScreen.hidden = false;
+	jawnScreenPanelOpen();
+	if (jawnScreen.last) { jawnScreenPanelPaint(jawnScreen.last); }
+	// the Phone app's IVR pane can own the view instead; then the pill stays,
+	// because this person has not been given the panel back
+	if ($('#jawn_screening').length) { $('#jawn_screening_pill').remove(); }
 }
 
 function jawnScreenPanelLine(line) {
@@ -220,16 +258,22 @@ function jawnScreenPoll() {
 				jawnScreenEnd();
 				return;
 			}
-			// A window opened or reloaded while the line is up never sees the
-			// start push; the poll is what puts the panel there. An armed gateway
-			// is not a screening, so it opens nothing by itself.
-			if (!$('#jawn_screening').length) {
-				if (state !== 'in_call' && state !== 'done') { return; }
+			var live = (state === 'in_call' || state === 'done');
+			// An armed gateway is not a screening, so nothing hunts the screen for
+			// one. A device that hid the panel keeps polling so the pill can name
+			// the caller and go away when the line is free.
+			if (!live && !$('#jawn_screening').length && !$('#jawn_screening_pill').length) { return; }
+			jawnScreen.last = res;
+			if (!jawnScreen.timer) { jawnScreen.timer = setInterval(jawnScreenPoll, 1500); }
+			// A window opened, reloaded or woken while the line is up never saw the
+			// start push; the poll is what puts the panel there. A hidden panel
+			// stays hidden until the person takes it back from the pill.
+			if (live && !jawnScreen.hidden && !$('#jawn_screening').length) {
 				jawnScreenPanelOpen();
 				// the Phone app's IVR pane is showing it instead
 				if (!$('#jawn_screening').length) { return; }
 			}
-			if (!jawnScreen.timer) { jawnScreen.timer = setInterval(jawnScreenPoll, 1500); }
+			if (jawnScreen.hidden) { jawnScreenPillPaint(); }
 			jawnScreenPanelPaint(res);
 		}
 	});
@@ -264,11 +308,22 @@ $(document).on('click', '#jawn_screening #jawn_screening_phone', function (e) {
 
 $(document).on('click', '#jawn_screening .jawn_screening_close', function (e) {
 	e.preventDefault();
-	jawnScreenEnd();
+	jawnScreenHide();
+});
+
+$(document).on('click', '#jawn_screening_pill', function (e) {
+	e.preventDefault();
+	jawnScreenShow();
+	jawnScreenPoll();
 });
 
 // A page that loads during a screening asks once, so a late window is not blind
-// until the next call.
+// until the next call; a laptop that wakes asks again, because its socket was
+// away when the screening was announced.
 $(function () {
 	if (typeof jawnScreenPoll === 'function') { jawnScreenPoll(); }
+});
+
+$(document).on('visibilitychange', function () {
+	if (!document.hidden && typeof jawnScreenPoll === 'function') { jawnScreenPoll(); }
 });

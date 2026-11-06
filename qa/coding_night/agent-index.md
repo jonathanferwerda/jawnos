@@ -39,7 +39,7 @@ Counts only: `perl scripts/agent_help.pl <app>` names every file, route, table, 
 - notes (topic notes): 2 file(s), 1 route(s)
 - pen (topic pen): 2 file(s), 1 route(s)
 - people (topic people): 5 file(s), 18 route(s)
-- phone (topic phone): 2 file(s), 8 route(s)
+- phone (topic phone): 3 file(s), 8 route(s)
 - process_monitor (topic process_monitor): 2 file(s), 2 route(s)
 - relational (topic relational): 2 file(s), 9 route(s)
 - search (topic search): 2 file(s), 14 route(s)

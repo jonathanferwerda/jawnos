@@ -3526,10 +3526,46 @@ body.dark_theme .inventory_details {
 	border: 0;
 	background: transparent;
 	color: inherit;
-	font-size: 18px;
+	font-size: 12px;
 	line-height: 1;
 	cursor: pointer;
 	opacity: .7;
+	padding: 3px 7px;
+	border-radius: 999px;
+}
+/* The panel tucked away: same edge, same colour, only a pill, so the person can
+   get it back without answering the call twice. */
+.jawn_screening_pill {
+	position: fixed;
+	left: 50%;
+	right: auto;
+	transform: translateX(-50%);
+	top: calc(var(--taskbar_top_h, 0px) + 16px);
+	bottom: auto;
+	z-index: 9000;
+	display: flex;
+	align-items: center;
+	gap: 7px;
+	max-width: min(360px, 92vw);
+	padding: 6px 13px;
+	border: 1px solid rgba(127, 140, 155, .4);
+	border-radius: 999px;
+	background: rgba(24, 33, 44, .97);
+	color: #eaf1f8;
+	font-size: 12px;
+	box-shadow: 0 8px 24px rgba(0, 0, 0, .35);
+	cursor: pointer;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+.jawn_screening_pill::before {
+	content: '';
+	width: 8px;
+	height: 8px;
+	border-radius: 50%;
+	background: #7fd2a8;
+	flex: 0 0 auto;
 }
 .jawn_screening_peer { font-size: 11px; opacity: .65; margin-bottom: 6px; }
 .jawn_screening_lines {
