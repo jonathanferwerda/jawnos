@@ -578,6 +578,9 @@ void jawn_setup() {
     }
   });
   
+  // The raw upload path cannot see query arguments, so the OTA authorization
+  // must arrive as a header; collect it before requests are handled.
+  server.collectHeaders("authorization");
   server.on(UriRegex("/upload/(.*)"), HTTP_POST, handleCreate, handleCreateProcess);
   server.begin();
   Serial.println("Server began");

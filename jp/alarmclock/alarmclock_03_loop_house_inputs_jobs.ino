@@ -20,7 +20,12 @@ void ledFlasher(int interval, int duration) {
 
 
 void handleCreateProcess() {
-  String rauth = server.arg("authorization");
+  // A raw upload never goes through the WebServer's query-argument parser, so
+  // server.arg() is empty there. The manager sends the device authorization as
+  // a collected header; keep the query fallback for a plain upload or an older
+  // manager.
+  String rauth = server.header("authorization");
+  if (rauth == "") { rauth = server.arg("authorization"); }
   if (rauth == authorization) {
     pinMode(led, OUTPUT);
     int brightness = 255;
@@ -58,6 +63,17 @@ void handleCreateProcess() {
       }
     } else if (raw.status == RAW_END) {
       if (rawFile) {
+        // The OTA shim programs whole 4 KB pages; an image that ends mid-page
+        // would carry whatever followed it in the read buffer into the last
+        // page. Pad with erased-flash bytes so the tail is harmless.
+        size_t pad = (4096 - (raw.totalSize % 4096)) % 4096;
+        uint8_t fill[256];
+        memset(fill, 0xFF, sizeof(fill));
+        while (pad) {
+          size_t n = pad < sizeof(fill) ? pad : sizeof(fill);
+          rawFile.write(fill, n);
+          pad -= n;
+        }
         rawFile.close();
       }
       String current_size = String(raw.totalSize);
@@ -71,9 +87,9 @@ void handleCreateProcess() {
       picoOTA.begin();
       picoOTA.addFile(path.c_str());
       picoOTA.commit();
-      LittleFS.end();
-      LittleFS.remove((char *)path.c_str());
-      
+      // The shim reads this file from LittleFS after the reboot, so it must
+      // stay until then. Removing it here left the command page pointing at
+      // nothing; the next upload replaces it at RAW_START.
       String https = https_request(
         "https://" + homebaseIP +
         "/watch/ota_status?current_size=" + current_size +

@@ -266,7 +266,10 @@ sub action_43561 {
 		&Websocket::send('tab', { console => '$(\'#embedded_ota_uploader_fail\').hide()', browser_tab_id => $c->param('browser_tab_id') });
 		&Websocket::send('tab', { console => '$(\'#embedded_ota_uploader_success\').hide()', browser_tab_id => $c->param('browser_tab_id') });
 		$ua->inactivity_timeout(120000);
-    my $res = $ua->insecure(1)->post($watch_home  => stream => $file )->result;
+			# The board's raw upload path does not parse query arguments, so the
+			# authorization must also ride a header the board collects. A board on
+			# older firmware still gets the query copy above.
+			my $res = $ua->insecure(1)->post($watch_home => { authorization => $auth } => stream => $file)->result;
 
 		if ($res->is_success) {
 			&Websocket::send('tab', { console => '$(\'#embedded_ota_uploader_wait\').hide()', browser_tab_id => $c->param('browser_tab_id') });
