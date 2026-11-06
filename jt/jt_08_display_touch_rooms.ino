@@ -166,7 +166,18 @@ void scanDevices(TwoWire * w)
 }
 
 
+// The bottom row belongs to the screen that was just built, so a rebuild has to
+// say the pointers went with it before button_writer() may run again.
+static void deck_nav_row_reset() {
+  btn1 = btn2 = btn3 = btn4 = btn5 = btn6 = nullptr;
+}
+
 void button_writer() {
+  // Built once per screen. The room's touch branch used to call this on every
+  // touch (and display_exit() before it), adding six buttons and six labels
+  // each time: a finger held on the panel leaked thousands of widgets, the
+  // redraw slowed with each one, and the deck froze and then crashed.
+  if (btn1) { return; }
   btn1 = lv_btn_create(lv_scr_act());
   lv_obj_add_event_cb(btn1, touch_button1, LV_EVENT_CLICKED, NULL);
   lv_obj_set_pos(btn1, 10, 200 );
@@ -251,8 +262,6 @@ void button_writer() {
   l6 = lv_label_create(btn6);
   lv_label_set_text(l6, "Net");
   lv_obj_center(l6);
-
-  lv_task_handler();
 }
 
 void call_the_president() {
@@ -325,12 +334,22 @@ static void deck_button_face_from_before(int key) {
   deck_button_face(b, face);
 }
 
+// The widget a flash is painting right now. It is file scope so a room rebuild -
+// which deletes every button - can forget it before the widgets go; painting a
+// freed object was a crash, not just a wasted frame.
+static int painted_key = 0;
+static lv_obj_t *painted_obj = nullptr;
+static bool painted = false;
+
+static void button_feedback_forget() {
+  painted = false;
+  painted_key = 0;
+  painted_obj = nullptr;
+}
+
 // The press's answer arrives in jawn_loop(); a flash paints over the button for
 // two seconds, then the normal face (yellow ring included) comes back.
 static void button_feedback_tick() {
-  static int painted_key = 0;
-  static lv_obj_t *painted_obj = nullptr;
-  static bool painted = false;
   uint32_t now = millis();
   bool live = (button_flash_until != 0 && (int32_t)(now - button_flash_until) < 0);
   if (live) {
@@ -379,6 +398,16 @@ static void button_flash_from_result(int key, JSONVar result) {
 
 void presidents_buttons() {
   JSONVar result;
+  // Every room and every toggle pushed by the bridge lands here. Throw the
+  // previous set away first: without this each push stacked another ten widgets
+  // on the screen, so the redraw grew with every button pressed elsewhere until
+  // the deck froze and ran out of memory. A flash still on screen holds a widget
+  // pointer, so it is forgotten before those widgets are deleted.
+  button_feedback_forget();
+  lv_obj_clean(lv_scr_act());
+  for (int i = 0; i < ROOM_BUTTON_SLOTS; i++) { room_button_obj[i] = nullptr; }
+  deck_nav_row_reset();
+  button_writer();   // the room's bottom row: Rom / Clk / Set / Cht / Pen / Net
   lv_obj_t * led1  = lv_led_create(lv_scr_act());
   lv_obj_set_pos(led1, 90, 160 );
   lv_led_set_color(led1, lv_palette_main(LV_PALETTE_RED));
@@ -640,8 +669,9 @@ void presidents_buttons() {
   room_button_obj[base + 6] = b6; deck_button_face(b6, result["b" + String(base + 6)]);
   room_button_obj[base + 7] = b7; deck_button_face(b7, result["b" + String(base + 7)]);
   room_button_obj[base + 8] = b8; deck_button_face(b8, result["b" + String(base + 8)]);
-  lv_task_handler();
-
+  // No lv_task_handler() here: loop() renders right after, and end-of-frame
+  // rendering from a click handler (when_i_get_in) re-entered LVGL, which is
+  // not reentrant.
 }
 
 static void touch_button1(lv_event_t *e) {
@@ -693,7 +723,10 @@ void when_i_get_in(JSONVar wigi_item, String url) {
       bm["b" + roomings]["toggle"] = 1;
     }
     before_me = JSON.stringify(bm);
-    presidents_buttons();
+    // Repaint this one button, do not rebuild the room: this runs from a button's
+    // click handler, and a rebuild deletes the widget whose event is on the stack.
+    lv_obj_t *b = (rooming > 0 && rooming < ROOM_BUTTON_SLOTS) ? room_button_obj[rooming] : nullptr;
+    if (b) { deck_button_face(b, bm["b" + roomings]); }
   }
 
   if (ble_link_ready()) {

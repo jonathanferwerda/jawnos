@@ -272,17 +272,39 @@ void jawn_loop() {
           }
           JSONVar bm = JSON.parse(before_me);
           JSONVar keys = bm.keys();
+          String changed;
           for (int i = 0; i < keys.length(); i++) {
             String k = keys[i];
             String app = (const char *)bm[k]["app"];
             if (app.length() > 0 && updates.hasOwnProperty(app.c_str())) {
               String state = (const char *)updates[app.c_str()];
-              bm[k]["toggle"] = (state == "on") ? 1 : 0;
+              int tog = (state == "on") ? 1 : 0;
+              if (tog != (int)bm[k]["toggle"]) {
+                bm[k]["toggle"] = tog;
+                changed += k.substring(1) + ",";
+              }
             }
           }
           before_me = JSON.stringify(bm);
-          if (jw_room == "room") {
-            presidents_buttons();
+          // A toggle changes one face, not the room: rebuilding every widget on
+          // a push from the panel or a watch press is what made a busy room
+          // crawl. The button under a live flash is left alone - the tick puts
+          // its face back when the flash ends.
+          if (jw_room == "room" && changed.length()) {
+            bool flashing = (button_flash_until != 0
+                             && (int32_t)(millis() - button_flash_until) < 0);
+            int at = 0;
+            while (at < (int)changed.length()) {
+              int comma = changed.indexOf(',', at);
+              if (comma < 0) { break; }
+              int key = changed.substring(at, comma).toInt();
+              if (key > 0 && key < ROOM_BUTTON_SLOTS
+                  && !(flashing && key == button_flash_key)) {
+                lv_obj_t *b = room_button_obj[key];
+                if (b) { deck_button_face(b, bm["b" + String(key)]); }
+              }
+              at = comma + 1;
+            }
           }
           deckLog("[bt] toggles applied");
         }
@@ -500,12 +522,10 @@ void jawn_loop() {
       touching = 0;
     }
   }
-  if (troom != "typewriter") {
+  // One render pass per loop: this pair used to run twice whenever neither room
+  // was the typewriter, and every pass walks and flushes the whole screen.
+  if (troom != "typewriter" || jw_room != "typewriter") {
     lv_task_handler();
-  }
-  if (jw_room != "typewriter") {
-    lv_task_handler();
-
   }
   if (jw_room == "watch") {
     time_writer("loop");

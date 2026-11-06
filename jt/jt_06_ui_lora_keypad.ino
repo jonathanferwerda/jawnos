@@ -60,6 +60,7 @@ void readRadio() {
 }
 void display_exit( void ) {
   lv_obj_clean ( lv_scr_act() ); // Clean objects from current screen.
+  deck_nav_row_reset();            // the bottom row went with them
   lv_obj_invalidate( lv_scr_act() ); // Invalidate objects for redraw.
   // the chat/pen log and input lived on the screen that was just cleaned
   room_log = NULL;
