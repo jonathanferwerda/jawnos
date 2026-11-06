@@ -394,6 +394,19 @@ static lv_obj_t *face_bt = nullptr;
 // set from a gesture or a page button; loop() does the redraw, because the
 // screen cannot be rebuilt while its own event is running
 static volatile bool room_redraw = false;
+// Room buttons by their house-wide button number, for press feedback. The BLE
+// task only sets the key and colour; loop() paints the button, because LVGL
+// lives on the other core. A failed relay flashes red, an every-machine command
+// that reached every machine flashes green, both for two seconds.
+#define ROOM_BUTTON_SLOTS 64
+static lv_obj_t *room_button_obj[ROOM_BUTTON_SLOTS] = {0};
+static volatile int button_face_key = 0;        // a press result arrived for this key
+static volatile bool button_face_dirty = false;
+static volatile int button_flash_key = 0;
+static volatile uint32_t button_flash_colour = 0;
+static volatile uint32_t button_flash_until = 0;
+static void button_feedback_tick();
+static void button_flash_from_result(int key, JSONVar result);
 // "blestop on": stop asking the bridge for state after a connect, which is what
 // makes the phone push the big room payload back. A debugging switch for the
 // 25 KB push panic (2026-10-09), while the fix is worked out.

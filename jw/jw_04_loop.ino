@@ -289,6 +289,9 @@ void jawn_loop() {
     room = 1;
     remote_room();
   }
+  // a press's relay outcome (or a toggle result) paints its button for two
+  // seconds; the BLE task only leaves the key, the paint happens here
+  button_feedback_tick();
   if (ble_toggle_refresh) {
     ble_toggle_refresh = false;
     if (jw_room == "room") {

@@ -202,6 +202,14 @@ void loop2(void * pvParameters) {
                 bm[buttonKey] = btMsg["data"];
                 before_me = JSON.stringify(bm);
 
+                // The press's outcome. A named command that did not land, or an
+                // every-machine command that missed a machine, flashes red; an
+                // every-machine command that reached all of them flashes green.
+                // loop() paints it - LVGL lives on the other core.
+                button_face_key = button;
+                button_face_dirty = true;
+                button_flash_from_result(button, btMsg["data"]);
+
                 // not the map itself: the console drowns in 25 KB
                 Serial.printf("[ble] %s updated (%u bytes)\n", buttonKey.c_str(), (unsigned)before_me.length());
               }

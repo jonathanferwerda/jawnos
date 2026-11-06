@@ -36,6 +36,8 @@ void mb1(lv_event_t *e) {
   }
   lv_obj_set_style_text_color(b, t, LV_PART_MAIN);
   lv_obj_set_style_bg_color(b, c, LV_PART_MAIN);
+  deck_button_face(b, result);
+  button_flash_from_result((int)result["button"], result);
   JSONVar bm = JSON.parse(before_me);
   bm["b" + String(((room - 1 ) * room_max) + 1)] = result;
   before_me = JSON.stringify(bm);
@@ -77,6 +79,8 @@ void mb2(lv_event_t *e) {
   }
   lv_obj_set_style_text_color(b, t, LV_PART_MAIN);
   lv_obj_set_style_bg_color(b, c, LV_PART_MAIN);
+  deck_button_face(b, result);
+  button_flash_from_result((int)result["button"], result);
   JSONVar bm = JSON.parse(before_me);
   bm["b" + String(((room - 1 ) * room_max) + 2)] = result;
   before_me = JSON.stringify(bm);
@@ -119,6 +123,8 @@ void mb3(lv_event_t *e) {
   }
   lv_obj_set_style_text_color(b, t, LV_PART_MAIN);
   lv_obj_set_style_bg_color(b, c, LV_PART_MAIN);
+  deck_button_face(b, result);
+  button_flash_from_result((int)result["button"], result);
   JSONVar bm = JSON.parse(before_me);
   bm["b" + String(((room - 1 ) * room_max) + 3)] = result;
   before_me = JSON.stringify(bm);
@@ -159,6 +165,8 @@ void mb4(lv_event_t *e) {
   }
   lv_obj_set_style_text_color(b, t, LV_PART_MAIN);
   lv_obj_set_style_bg_color(b, c, LV_PART_MAIN);
+  deck_button_face(b, result);
+  button_flash_from_result((int)result["button"], result);
   JSONVar bm = JSON.parse(before_me);
   bm["b" + String(((room - 1 ) * room_max) + 4)] = result;
   before_me = JSON.stringify(bm);
@@ -199,6 +207,8 @@ void mb5(lv_event_t *e) {
   }
   lv_obj_set_style_text_color(b, t, LV_PART_MAIN);
   lv_obj_set_style_bg_color(b, c, LV_PART_MAIN);
+  deck_button_face(b, result);
+  button_flash_from_result((int)result["button"], result);
   JSONVar bm = JSON.parse(before_me);
   bm["b" + String(((room - 1 ) * room_max) + 5)] = result;
   before_me = JSON.stringify(bm);
@@ -239,6 +249,8 @@ void mb6(lv_event_t *e) {
   }
   lv_obj_set_style_text_color(b, t, LV_PART_MAIN);
   lv_obj_set_style_bg_color(b, c, LV_PART_MAIN);
+  deck_button_face(b, result);
+  button_flash_from_result((int)result["button"], result);
   JSONVar bm = JSON.parse(before_me);
   bm["b" + String(((room - 1 ) * room_max) + 8)] = result;
   before_me = JSON.stringify(bm);
@@ -279,6 +291,8 @@ void mb7(lv_event_t *e) {
   }
   lv_obj_set_style_text_color(b, t, LV_PART_MAIN);
   lv_obj_set_style_bg_color(b, c, LV_PART_MAIN);
+  deck_button_face(b, result);
+  button_flash_from_result((int)result["button"], result);
   JSONVar bm = JSON.parse(before_me);
   bm["b" + String(((room - 1 ) * room_max) + 7)] = result;
   before_me = JSON.stringify(bm);
@@ -319,6 +333,8 @@ void mb8(lv_event_t *e) {
   }
   lv_obj_set_style_text_color(b, t, LV_PART_MAIN);
   lv_obj_set_style_bg_color(b, c, LV_PART_MAIN);
+  deck_button_face(b, result);
+  button_flash_from_result((int)result["button"], result);
   JSONVar bm = JSON.parse(before_me);
   bm["b" + String(((room - 1 ) * room_max) + 8)] = result;
   before_me = JSON.stringify(bm);

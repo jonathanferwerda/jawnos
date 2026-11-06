@@ -305,6 +305,78 @@ void presidents_title() {
   tft.drawString(homebaseIP, 180, 2);
 }
 
+// A room button's face: the app's own colour, white label, and - when its toggle
+// is on - a thick yellow ring. The ring replaced a full yellow fill, so the
+// app's colour stays visible.
+static void deck_button_face(lv_obj_t *b, JSONVar face) {
+  if (!b) { return; }
+  lv_obj_set_style_bg_color(b, lv_color_make(face["rgb"][0], face["rgb"][1], face["rgb"][2]), LV_PART_MAIN);
+  lv_obj_set_style_text_color(b, lv_color_make(255, 255, 255), LV_PART_MAIN);
+  int tog = face["toggle"];
+  lv_obj_set_style_border_width(b, tog == 1 ? 5 : 0, LV_PART_MAIN);
+  lv_obj_set_style_border_color(b, lv_color_make(255, 255, 0), LV_PART_MAIN);
+}
+
+static void deck_button_face_from_before(int key) {
+  lv_obj_t *b = (key > 0 && key < ROOM_BUTTON_SLOTS) ? room_button_obj[key] : nullptr;
+  if (!b) { return; }
+  JSONVar bm = JSON.parse(before_me);
+  JSONVar face = bm["b" + String(key)];
+  deck_button_face(b, face);
+}
+
+// The press's answer arrives in jawn_loop(); a flash paints over the button for
+// two seconds, then the normal face (yellow ring included) comes back.
+static void button_feedback_tick() {
+  static int painted_key = 0;
+  static lv_obj_t *painted_obj = nullptr;
+  static bool painted = false;
+  uint32_t now = millis();
+  bool live = (button_flash_until != 0 && (int32_t)(now - button_flash_until) < 0);
+  if (live) {
+    int key = button_flash_key;
+    lv_obj_t *b = (key > 0 && key < ROOM_BUTTON_SLOTS) ? room_button_obj[key] : nullptr;
+    if (b && (!painted || key != painted_key || b != painted_obj)) {
+      lv_obj_set_style_bg_color(b, lv_color_hex(button_flash_colour), LV_PART_MAIN);
+      lv_obj_set_style_text_color(b, lv_color_make(255, 255, 255), LV_PART_MAIN);
+      painted_key = key;
+      painted_obj = b;
+      painted = true;
+    }
+    return;
+  }
+  if (!painted) {
+    if (button_face_dirty) {
+      deck_button_face_from_before(button_face_key);
+      button_face_dirty = false;
+    }
+    return;
+  }
+  deck_button_face_from_before(painted_key);
+  if (button_face_dirty && button_face_key != painted_key) {
+    deck_button_face_from_before(button_face_key);
+  }
+  button_face_dirty = false;
+  painted = false;
+  painted_key = 0;
+  painted_obj = nullptr;
+  button_flash_until = 0;
+}
+
+// A press result carries its relay outcome; a named command that did not land,
+// or an every-machine command that missed a machine, flashes red; an
+// every-machine command that reached all of them flashes green.
+static void button_flash_from_result(int key, JSONVar result) {
+  if (!result.hasOwnProperty("relay_ok")) { return; }
+  int ok = (int)result["relay_ok"];
+  int all = result.hasOwnProperty("relay_all") ? (int)result["relay_all"] : 0;
+  if (!ok || all) {
+    button_flash_key = key;
+    button_flash_colour = ok ? 0x27de16 : 0xde2716;
+    button_flash_until = millis() + 2000;
+  }
+}
+
 void presidents_buttons() {
   JSONVar result;
   lv_obj_t * led1  = lv_led_create(lv_scr_act());
@@ -556,6 +628,18 @@ void presidents_buttons() {
   lv_label_set_text(l8, result["b" + String(sb)]["shorthand_name"]);
   lv_label_set_long_mode(l8, LV_LABEL_LONG_WRAP);
   lv_obj_center(l8);
+  // The yellow ring, not a yellow fill, marks a running toggle; keep the widget
+  // pointers so a press result can paint its button. This runs after the inline
+  // faces above so it wins even where the old fill was set.
+  int base = ((room - 1) * 8);
+  room_button_obj[base + 1] = b1; deck_button_face(b1, result["b" + String(base + 1)]);
+  room_button_obj[base + 2] = b2; deck_button_face(b2, result["b" + String(base + 2)]);
+  room_button_obj[base + 3] = b3; deck_button_face(b3, result["b" + String(base + 3)]);
+  room_button_obj[base + 4] = b4; deck_button_face(b4, result["b" + String(base + 4)]);
+  room_button_obj[base + 5] = b5; deck_button_face(b5, result["b" + String(base + 5)]);
+  room_button_obj[base + 6] = b6; deck_button_face(b6, result["b" + String(base + 6)]);
+  room_button_obj[base + 7] = b7; deck_button_face(b7, result["b" + String(base + 7)]);
+  room_button_obj[base + 8] = b8; deck_button_face(b8, result["b" + String(base + 8)]);
   lv_task_handler();
 
 }

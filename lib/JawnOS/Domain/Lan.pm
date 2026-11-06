@@ -523,20 +523,66 @@ sub relay_headless {
 	return &subs::remote_relay_request($c, $data->{'extra'} || {});
 }
 
+# Leave a relay for the utility to drain. The queue is the headless rail: a
+# watch press (or any job with no browser) can hand a change on and have it
+# retried while the peer it names is away. Returns 1 when the item was queued.
+sub remote_relay_queue_push {
+	my ($item) = @_;
+	return 0 unless ref $item eq 'HASH' && $item->{'path'};
+	my $raw = &subs::setting_grabber({ app => '__president', setting => 'remote_relay_queue' });
+	my $queue = eval { decode_json $raw } || [];
+	$queue = [] unless ref $queue eq 'ARRAY';
+	# A runaway producer must not grow the setting without bound.
+	return 0 if scalar @{$queue} >= 200;
+	my $copy = { %{$item} };
+	$copy->{'attempts'} = 0 + ($copy->{'attempts'} || 0);
+	$copy->{'expires'} ||= &subs::rightNow() + 30 * 60 * 1000;
+	$copy->{'queued_at'} = &subs::rightNow();
+	push @{$queue}, $copy;
+	&subs::setting_setter({ app => '__president', setting => 'remote_relay_queue', value => encode_json($queue) });
+	return 1;
+}
+
 # Drain the headless relay queue: a JSON list of relay_headless calls left by a
-# job or a CLI with no browser to drive. Each entry is relayed once and the queue
-# is cleared, so a machine that has been away does not replay a stale backlog on
-# every tick.
+# job or a CLI with no browser to drive. The queue is cleared first, so a machine
+# that has been away does not replay a stale backlog on every tick. A targeted
+# item that did not land is put back with its attempt count: a peer that is only
+# briefly away is reached when it returns, and one that stays away expires (or
+# stops after thirty tries) instead of growing the queue forever. A broadcast is
+# never retried - replaying a flood would run the movement everywhere twice.
 sub remote_relay_queue_run {
 	my $raw = &subs::setting_grabber({ app => '__president', setting => 'remote_relay_queue' });
 	my $queue = eval { decode_json $raw } || [];
 	return 0 unless ref $queue eq 'ARRAY' && scalar @{$queue};
 	&subs::setting_setter({ app => '__president', setting => 'remote_relay_queue', value => '[]' });
+	my $now = &subs::rightNow();
+	my @keep;
 	my $n = 0;
 	foreach my $item ( @{$queue} ) {
 		next unless ref $item eq 'HASH' && $item->{'path'};
-		eval { &subs::relay_headless($item); $n++; };
+		my $result;
+		my $ran = eval { $result = &subs::relay_headless($item); 1 };
+		my $delivered = 0;
+		if ($ran) {
+			if ($item->{'expect_json'}) {
+				# /manager/reset answers JSON; an HTML body is the Gate page, so
+				# the peer did not take the request.
+				$delivered = (defined $result && $result =~ /^\s*\{/) ? 1 : 0;
+			}
+			else {
+				$delivered = 1;
+			}
+		}
+		if ($delivered) { $n++; next; }
+		next unless $item->{'remote_uuid'};
+		my $attempts = ($item->{'attempts'} || 0) + 1;
+		my $expires = $item->{'expires'} || ($now + 30 * 60 * 1000);
+		next if $attempts > 30 || $expires <= $now;
+		$item->{'attempts'} = $attempts;
+		$item->{'expires'} = $expires;
+		push @keep, $item;
 	}
+	&subs::setting_setter({ app => '__president', setting => 'remote_relay_queue', value => encode_json(\@keep) }) if scalar @keep;
 	return $n;
 }
 

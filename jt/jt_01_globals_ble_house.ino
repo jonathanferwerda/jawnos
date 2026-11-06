@@ -407,6 +407,18 @@ String base_ap_password = ap_password;
 int tauth_watch = 0;
 int tauth_count = 0;
 int b1_toggle, b2_toggle, b3_toggle, b4_toggle, b5_toggle, b6_toggle, b7_toggle, b8_toggle = 0;
+// Room buttons by their house-wide button number, for press feedback. A failed
+// relay flashes red, an every-machine command that reached every machine
+// flashes green, both for two seconds; jawn_loop() paints them.
+#define ROOM_BUTTON_SLOTS 64
+static lv_obj_t *room_button_obj[ROOM_BUTTON_SLOTS] = {0};
+static volatile int button_face_key = 0;
+static volatile bool button_face_dirty = false;
+static volatile int button_flash_key = 0;
+static volatile uint32_t button_flash_colour = 0;
+static volatile uint32_t button_flash_until = 0;
+static void button_feedback_tick();
+static void button_flash_from_result(int key, JSONVar result);
 int last_x, last_y = 0;
 int room = 1;
 int room_count = 1;

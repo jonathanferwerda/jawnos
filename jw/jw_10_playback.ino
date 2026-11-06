@@ -386,19 +386,8 @@ void mb1(lv_event_t *e) {
   b1_toggle = result["toggle"];
   
   lv_obj_t * b = lv_event_get_target_obj(e);
-  lv_color_t c;
-  lv_color_t t;
-  if (b1_toggle == 1) {
-   c = lv_color_make(255, 255, 0);
-   t = lv_color_make(0,0,0);
-
-  }
-  else {
-    c = lv_color_make(result["rgb"][0], result["rgb"][1], result["rgb"][2]);
-    t = lv_color_make(255,255,255);
-  }
-  lv_obj_set_style_text_color(b, t, LV_PART_MAIN);
-  lv_obj_set_style_bg_color(b, c, LV_PART_MAIN);  
+  button_face_apply(b, result);
+  button_flash_from_result((int)result["button"], result);  
   JSONVar bm = JSON.parse(before_me);
   bm["b" + String(((room - 1 ) * room_max) + 1)] = result;
   before_me = JSON.stringify(bm);
@@ -427,19 +416,9 @@ void mb2(lv_event_t *e) {
   }
   JSONVar result = JSON.parse(https);
   b2_toggle = result["toggle"];
-  lv_color_t c;
-  lv_color_t t;
   lv_obj_t * b = lv_event_get_target_obj(e);
-  if (b2_toggle == 1) {
-   c = lv_color_make(255, 255, 0);
-   t = lv_color_make(0,0,0);  
-  }
-  else {
-    c = lv_color_make(result["rgb"][0], result["rgb"][1], result["rgb"][2]);
-    t = lv_color_make(255,255,255);
-  }
-  lv_obj_set_style_text_color(b, t, LV_PART_MAIN);   
-  lv_obj_set_style_bg_color(b, c, LV_PART_MAIN);                 
+  button_face_apply(b, result);
+  button_flash_from_result((int)result["button"], result);                 
   JSONVar bm = JSON.parse(before_me);
   bm["b" + String(((room - 1 ) * room_max) + 2)] = result;
   before_me = JSON.stringify(bm);
@@ -469,19 +448,8 @@ void mb3(lv_event_t *e) {
   b3_toggle = result["toggle"];
   // Serial.println(b3_toggle);
   lv_obj_t * b = lv_event_get_target_obj(e);
-  lv_color_t c;
-  lv_color_t t;
-  if (b3_toggle == 1) {
-    c = lv_color_make(255, 255, 0);
-    t = lv_color_make(0,0,0);
-   
-  }
-  else {
-    c = lv_color_make(result["rgb"][0], result["rgb"][1], result["rgb"][2]);
-    t = lv_color_make(255,255,255);
-  }
-  lv_obj_set_style_text_color(b, t, LV_PART_MAIN);
-  lv_obj_set_style_bg_color(b, c, LV_PART_MAIN);
+  button_face_apply(b, result);
+  button_flash_from_result((int)result["button"], result);
   JSONVar bm = JSON.parse(before_me);
   bm["b" + String(((room - 1 ) * room_max) + 3)] = result;
   before_me = JSON.stringify(bm);
@@ -509,19 +477,9 @@ void mb4(lv_event_t *e) {
   }
   JSONVar result = JSON.parse(https);
   b4_toggle = result["toggle"];
-  lv_color_t c;
-  lv_color_t t;
   lv_obj_t * b = lv_event_get_target_obj(e);
-  if (b4_toggle == 1) {
-   c = lv_color_make(255, 255, 0);
-   t = lv_color_make(0,0,0);
-  }
-  else {
-    c = lv_color_make(result["rgb"][0], result["rgb"][1], result["rgb"][2]);
-    t = lv_color_make(255,255,255);
-  }
-  lv_obj_set_style_text_color(b, t, LV_PART_MAIN);
-  lv_obj_set_style_bg_color(b, c, LV_PART_MAIN);  
+  button_face_apply(b, result);
+  button_flash_from_result((int)result["button"], result);  
   JSONVar bm = JSON.parse(before_me);
   bm["b" + String(((room - 1 ) * room_max) + 4)] = result;
   before_me = JSON.stringify(bm);
@@ -550,19 +508,8 @@ void mb5(lv_event_t *e) {
   }
   JSONVar result = JSON.parse(https);
   lv_obj_t * b = lv_event_get_target_obj(e);
-  lv_color_t c;
-  lv_color_t t;
-  if (b5_toggle == 1) {
-   c = lv_color_make(255, 255, 0);
-   t = lv_color_make(0,0,0);
-
-  }
-  else {
-    c = lv_color_make(result["rgb"][0], result["rgb"][1], result["rgb"][2]);
-    t = lv_color_make(255,255,255);
-  }
- lv_obj_set_style_text_color(b, t, LV_PART_MAIN);
- lv_obj_set_style_bg_color(b, c, LV_PART_MAIN);  
+  button_face_apply(b, result);
+  button_flash_from_result((int)result["button"], result);  
   JSONVar bm = JSON.parse(before_me);
   bm["b" + String(((room - 1 ) * room_max) + 5)] = result;
   before_me = JSON.stringify(bm);
@@ -591,18 +538,8 @@ void mb6(lv_event_t *e) {
   JSONVar result = JSON.parse(https);
   b6_toggle = result["toggle"];
   lv_obj_t * b = lv_event_get_target_obj(e);
-  lv_color_t c;
-  lv_color_t t;
-  if (b6_toggle == 1) {
-   c = lv_color_make(255, 255, 0);
-   t = lv_color_make(0,0,0);
-  }
-  else {
-    c = lv_color_make(result["rgb"][0], result["rgb"][1], result["rgb"][2]);
-    t = lv_color_make(255,255,255);
-  }
- lv_obj_set_style_text_color(b, t, LV_PART_MAIN);
- lv_obj_set_style_bg_color(b, c, LV_PART_MAIN);  
+  button_face_apply(b, result);
+  button_flash_from_result((int)result["button"], result);  
   JSONVar bm = JSON.parse(before_me);
   bm["b" + String(((room - 1 ) * room_max) + 6)] = result;
   before_me = JSON.stringify(bm);

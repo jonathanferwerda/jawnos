@@ -10,6 +10,7 @@ $topic{'watch'} = {
 		summary => 'A wrist clock, notifications and app buttons.',
 		body => [
 			'The T-Watch is the wearable: a clock that also shows notification lines and screens of app buttons, logs steps, wakes when you raise your wrist to look at it, and can listen for a voice command. A button you press on it runs that app\'s movement in JawnOS, and a command button runs on every machine unless it names one.',
+			'A button whose toggle is running wears a yellow ring rather than a yellow fill, so the app\'s own colour stays visible. A command reports its outcome on the button that was pressed: an every-machine command flashes green for two seconds when every machine took it and red when one did not; a command naming a machine flashes red only when it could not be handed over at all. When the named machine is away, the house relay keeps the press and delivers it there once that machine is back.',
 			'Its listening mode - off, any speech, or a wake word such as Hey Jawn or Jawn Do - is set from the watch row in the Embedded panel; see Voice and wake words.',
 			'Its status bar carries the battery (with the time in its place whenever the clock is not the screen you are on) and, hard against the right edge, the name of the machine it is talking to - its homebase - in place of an address.',
 			'An answer to a request the guide associate handles arrives on the watch itself: the words on screen, and the voice over its speaker unless the Audio replies toggle on its Embedded row is off.',
@@ -27,6 +28,7 @@ $topic{'tdeck'} = {
 			'Its Set room is grouped into Screen, Radio and System tabs. Screen carries brightness, volume and the typewriter font, Radio carries the LoRa broadcast and receive toggles and the AP and WiFi credential sends, and System carries Sleep, Save, Restore, Clear Text and Delete.',
 			'Sleep is the battery saver. The button is a toggle: when it is lit, the deck turns off WiFi, Bluetooth, LoRa receive and the microphone after the screen has gone dark, and spends the idle time in light sleep. A touch, a key or a move of the trackball wakes it and the screen comes back. A deck on USB keeps its radios up, since the cable is supplying the power.',
 			'Recordings, voice clips and the generated chimes are written to the SD card when one is mounted; without a card they fall back to the deck\'s internal storage. Config stays on internal storage either way.',
+			'Its room buttons behave like the watch\'s: a running toggle wears a yellow ring rather than a yellow fill, and a command reports its outcome on the button - green for two seconds when every machine took an every-machine command, red when one missed it or a command naming a machine could not be handed over.',
 		],
 		verified => '2026-10-19',
 		related => [ 'watch', 'pico', 'ble_bridge', 'voice' ]

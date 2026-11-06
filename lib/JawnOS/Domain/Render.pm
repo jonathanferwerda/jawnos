@@ -373,8 +373,10 @@ sub destination_relay {
 	# /manager/reset, which runs that machine's own command for the app and
 	# records its own appointment (exactly what a press there does). The
 	# destination is a signatorial from the remote machine list; 'all' fans out
-	# to every active machine. Returns a label for the machine that took it, or
-	# undef when nobody did.
+	# to every active machine. A named machine that cannot be reached directly is
+	# handed to the headless relay queue, which keeps trying through the mesh.
+	# Returns { ok, all, sent, expected, queued, label, uuid } so the caller can
+	# tell the device whether the movement landed.
 	my $data = shift;
 	my $destination = $data->{'destination'};
 	my $app = $data->{'app'};
@@ -401,14 +403,32 @@ sub destination_relay {
 		} @{$rms} ] if ref $rms eq 'ARRAY';
 	}
 	$rms = [] unless ref $rms eq 'ARRAY';
+	# The movement every machine gets. Built once: the direct POST and the relay
+	# queue's later copy must carry exactly the same request.
+	my $form = {
+		app => $app,
+		type => $movement,
+		timestamp => $timestamp,
+		notes => 'sent from ' . $me
+	};
+	# Only a media relay has a capture machine to name; a command relay is
+	# unchanged (it runs the command on the peer, not on a chosen recorder).
+	$form->{'remote_signatorial'} = $destination
+		if $named && ($data->{'recorder'} || $data->{'machine'});
+	foreach my $field ( qw/uuid recorder camera machine/ ) {
+		next unless defined $data->{$field} && ($data->{$field} ne '' || $field eq 'camera');
+		$form->{$field} = $data->{$field};
+	}
 	my $sent = 0;
 	my $label;
 	my $considered = 0;
+	my $target_uuid;
 	foreach my $rm ( @{$rms} ) {
 		next unless ref $rm eq 'HASH';
 		my $sig = $rm->{'signatorial'};
 		next unless $sig && $sig ne $me;   # this machine's own copy is run by the caller
 		$considered++;
+		$target_uuid ||= $rm->{'uuid'} if $rm->{'uuid'};
 		unless ($rm->{'ip'}) {
 			$log->error('destination relay to ' . $sig . ' skipped: no address on its row') if $log;
 			next;
@@ -418,29 +438,11 @@ sub destination_relay {
 			$log->error('destination relay to ' . $sig . ' skipped: no signed agent for ' . ($rm->{'manager'} || '?')) if $log;
 			next;
 		}
-		# A button press is waiting on this, and an unreachable machine must fall
-		# back to running here promptly: the peer agent carries the long snapshot
+		# A button press is waiting on this, and an unreachable machine must be
+		# handed over promptly: the peer agent carries the long snapshot
 		# inactivity timeout (3000 s), which is far too long to hold a tap.
 		$hop->{'ua'}->connect_timeout(4)->inactivity_timeout(12);
 		my $res = eval {
-			# A media stop names the row it closes and the source it records, so
-			# the machine that owns the capture stops that same row rather than
-			# whatever it happens to find open; those fields ride only when the
-			# caller supplied them (a command relay carries none).
-			my $form = {
-				app => $app,
-				type => $movement,
-				timestamp => $timestamp,
-				notes => 'sent from ' . $me
-			};
-			# Only a media relay has a capture machine to name; a command relay is
-			# unchanged (it runs the command on the peer, not on a chosen recorder).
-			$form->{'remote_signatorial'} = $destination
-				if $destination && $destination ne 'all' && ($data->{'recorder'} || $data->{'machine'});
-			foreach my $field ( qw/uuid recorder camera machine/ ) {
-				next unless defined $data->{$field} && ($data->{$field} ne '' || $field eq 'camera');
-				$form->{$field} = $data->{$field};
-			}
 			$hop->{'ua'}->insecure(1)->post($hop->{'manager'} . '/manager/reset' => form => $form)->result;
 		};
 		if ($res && eval { $res->is_success }) {
@@ -456,10 +458,36 @@ sub destination_relay {
 	unless ($considered) {
 		$log->error('destination relay: no ' . ($named ? 'machine' : 'active machine') . ' matches ' . ($destination || 'all')) if $log;
 	}
-	if (!$destination || $destination eq 'all') {
-		return $sent ? 'every machine (' . $sent . ')' : undef;
+	# A named machine that did not take the movement directly is left with the
+	# headless relay: the utility drains the queue through the mesh (often via
+	# the hub) and keeps trying while the peer is away. Running the command on
+	# the machine holding the watch would be the wrong machine.
+	my $queued = 0;
+	if ($named && !$sent && $target_uuid) {
+		$queued = &subs::remote_relay_queue_push({
+			path => '/manager/reset',
+			method => 'post',
+			remote_uuid => $target_uuid,
+			params => $form,
+			expect_json => 1,
+			expires => &subs::rightNow() + 30 * 60 * 1000,
+			attempts => 0,
+		});
 	}
-	return $label;
+	# A queued named movement is not a failure: the relay will deliver it. An
+	# every-machine movement needs every active target to have taken it.
+	my $ok = $named
+		? (($sent > 0 || $queued) ? 1 : 0)
+		: (($considered > 0 && $sent >= $considered) ? 1 : 0);
+	return {
+		ok => $ok,
+		all => $named ? 0 : 1,
+		sent => $sent,
+		expected => $considered,
+		queued => $queued,
+		label => $label,
+		uuid => $target_uuid,
+	};
 }
 
 sub run_command {

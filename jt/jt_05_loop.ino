@@ -2,6 +2,8 @@ void jawn_loop() {
   // The UI has been answering keystrokes and roller clicks late, so the loop
   // times itself and names the slow section instead of us guessing.
   uint32_t loopStart = millis();
+  // a press's relay outcome paints its button for two seconds
+  button_feedback_tick();
   static uint32_t lastKbProbe = 0;
   char keyValue = 0;
   // Only poll a live socket: a stopped TLS client can block in its read path
@@ -124,6 +126,12 @@ void jawn_loop() {
             String buttonKey = "b" + String(button);
             bm[buttonKey] = btMsg["data"];
             before_me = JSON.stringify(bm);
+            // The press's outcome: a named command that did not land, or an
+            // every-machine command that missed a machine, flashes red; an
+            // every-machine command that reached all of them flashes green.
+            button_face_key = button;
+            button_face_dirty = true;
+            button_flash_from_result(button, btMsg["data"]);
           }
         }
         else if (mtype == "hello") {

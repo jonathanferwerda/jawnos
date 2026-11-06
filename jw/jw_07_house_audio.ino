@@ -311,14 +311,82 @@ void apply_president_payload() {
 // A room button's face: the app's own colour, white label, and - when its toggle
 // is on - a thick yellow ring. The ring replaced a full yellow fill, which hid
 // which app the button belonged to.
-static void button_finish(lv_obj_t *b, JSONVar &result, int sb) {
-  lv_obj_set_style_bg_color(b, lv_color_make(result["b" + String(sb)]["rgb"][0],
-                                             result["b" + String(sb)]["rgb"][1],
-                                             result["b" + String(sb)]["rgb"][2]), LV_PART_MAIN);
+static void button_face_apply(lv_obj_t *b, JSONVar &face) {
+  if (!b) { return; }
+  lv_obj_set_style_bg_color(b, lv_color_make(face["rgb"][0], face["rgb"][1], face["rgb"][2]), LV_PART_MAIN);
   lv_obj_set_style_text_color(b, lv_color_make(255, 255, 255), LV_PART_MAIN);
-  int tog = result["b" + String(sb)]["toggle"];
+  int tog = face["toggle"];
   lv_obj_set_style_border_width(b, tog == 1 ? 5 : 0, LV_PART_MAIN);
   lv_obj_set_style_border_color(b, lv_color_make(255, 255, 0), LV_PART_MAIN);
+}
+
+// A press result carries its relay outcome; a named command that did not land,
+// or an every-machine command that missed a machine, flashes red; an
+// every-machine command that reached all of them flashes green.
+static void button_flash_from_result(int key, JSONVar result) {
+  if (!result.hasOwnProperty("relay_ok")) { return; }
+  int ok = (int)result["relay_ok"];
+  int all = result.hasOwnProperty("relay_all") ? (int)result["relay_all"] : 0;
+  if (!ok || all) {
+    button_flash_key = key;
+    button_flash_colour = ok ? 0x27de16 : 0xde2716;
+    button_flash_until = millis() + 2000;
+  }
+}
+
+static void button_finish(lv_obj_t *b, JSONVar &result, int sb) {
+  JSONVar face = result["b" + String(sb)];
+  button_face_apply(b, face);
+}
+
+// Paint one button from the room picture, by its house-wide key.
+static void button_face_from_before(int key) {
+  lv_obj_t *b = (key > 0 && key < ROOM_BUTTON_SLOTS) ? room_button_obj[key] : nullptr;
+  if (!b) { return; }
+  JSONVar bm = JSON.parse(before_me);
+  JSONVar face = bm["b" + String(key)];
+  button_face_apply(b, face);
+}
+
+// The press's answer arrives on the BLE task; this runs from loop() so LVGL is
+// touched on its own core. A flash paints over the button for two seconds, then
+// the normal face (yellow ring included) comes back.
+static void button_feedback_tick() {
+  static int painted_key = 0;
+  static lv_obj_t *painted_obj = nullptr;
+  static bool painted = false;
+  uint32_t now = millis();
+  bool live = (button_flash_until != 0 && (int32_t)(now - button_flash_until) < 0);
+  if (live) {
+    int key = button_flash_key;
+    lv_obj_t *b = (key > 0 && key < ROOM_BUTTON_SLOTS) ? room_button_obj[key] : nullptr;
+    if (b && (!painted || key != painted_key || b != painted_obj)) {
+      lv_obj_set_style_bg_color(b, lv_color_hex(button_flash_colour), LV_PART_MAIN);
+      lv_obj_set_style_text_color(b, lv_color_make(255, 255, 255), LV_PART_MAIN);
+      painted_key = key;
+      painted_obj = b;
+      painted = true;
+    }
+    return;
+  }
+  if (!painted) {
+    if (button_face_dirty) {
+      button_face_from_before(button_face_key);
+      button_face_dirty = false;
+    }
+    return;
+  }
+  // Take the flash off and put the real face back; a result that arrived while
+  // the flash was up may name a different button.
+  button_face_from_before(painted_key);
+  if (button_face_dirty && button_face_key != painted_key) {
+    button_face_from_before(button_face_key);
+  }
+  button_face_dirty = false;
+  painted = false;
+  painted_key = 0;
+  painted_obj = nullptr;
+  button_flash_until = 0;
 }
 
 void presidents_buttons() {
@@ -341,6 +409,8 @@ void presidents_buttons() {
   Serial.println("after before me parsing");
   Serial.printf("[heap] draw free=%u max=%u\n", (unsigned)ESP.getFreeHeap(), (unsigned)ESP.getMaxAllocHeap());
   if (room > room_count) { room = 1; }  
+  // the widgets are rebuilt below; the press feedback must not hold the old ones
+  for (int i = 0; i < ROOM_BUTTON_SLOTS; i++) { room_button_obj[i] = nullptr; }
   int sb = ((room - 1) * 6) + 1;
 
   // Serial.println(room);
@@ -351,6 +421,7 @@ void presidents_buttons() {
   lv_obj_add_event_cb(b1, mb1, LV_EVENT_CLICKED, NULL);
   lv_obj_set_pos(b1, 10, 26 );
   lv_obj_set_size(b1, 60, 60 );
+  room_button_obj[sb] = b1;
   button_finish(b1, result, sb);
   lv_obj_t *l1;
   l1 = lv_label_create(b1);
@@ -363,6 +434,7 @@ void presidents_buttons() {
   lv_obj_add_event_cb(b2, mb2, LV_EVENT_CLICKED, NULL);
   lv_obj_set_pos(b2, 90, 26 );
   lv_obj_set_size(b2, 60, 60 );
+  room_button_obj[sb] = b2;
   button_finish(b2, result, sb);
   lv_obj_t *l2;
   l2 = lv_label_create(b2);
@@ -375,6 +447,7 @@ void presidents_buttons() {
   lv_obj_add_event_cb(b3, mb3, LV_EVENT_CLICKED, NULL);
   lv_obj_set_pos(b3, 170, 26 );
   lv_obj_set_size(b3, 60, 60 );
+  room_button_obj[sb] = b3;
   button_finish(b3, result, sb);
   lv_obj_t *l3;
   l3 = lv_label_create(b3);
@@ -387,6 +460,7 @@ void presidents_buttons() {
   lv_obj_add_event_cb(b4, mb4, LV_EVENT_CLICKED, NULL);
   lv_obj_set_pos(b4, 10, 106 );
   lv_obj_set_size(b4, 60, 60 );
+  room_button_obj[sb] = b4;
   button_finish(b4, result, sb);
   lv_obj_t *l4;
   l4 = lv_label_create(b4);
@@ -399,6 +473,7 @@ void presidents_buttons() {
   lv_obj_add_event_cb(b5, mb5, LV_EVENT_CLICKED, NULL);
   lv_obj_set_pos(b5, 90, 106 );
   lv_obj_set_size(b5, 60, 60 );
+  room_button_obj[sb] = b5;
   button_finish(b5, result, sb);
   lv_obj_t *l5;
   l5 = lv_label_create(b5);
@@ -412,6 +487,7 @@ void presidents_buttons() {
   lv_obj_add_event_cb(b6, mb6, LV_EVENT_CLICKED, NULL);
   lv_obj_set_pos(b6, 170, 106 );
   lv_obj_set_size(b6, 60, 60 );
+  room_button_obj[sb] = b6;
   // Serial.println(result["b" + String(sb)]["toggle"]);
   button_finish(b6, result, sb);
   

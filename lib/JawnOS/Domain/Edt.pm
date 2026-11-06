@@ -123,6 +123,7 @@ sub edt_button_presser {
 		delete $db_data->{'uuid'};
 	}
 
+	my $relay_outcome;
 	if ($movement eq 'command' || $movement eq 'kill') {
 		if ($settings->{'command'} && $settings->{'kill'}) {
 
@@ -133,26 +134,36 @@ sub edt_button_presser {
 		}
 		# The button can name the machine the command belongs to (a signatorial
 		# from the remote machine list); blank means every machine runs its own
-		# copy, and an unreachable destination falls back to running here.
+		# copy. A named machine that cannot be reached is handed to the relay
+		# queue by destination_relay; only when even that cannot be queued does
+		# the press run here, as the last resort.
 		my $destination = $b->{'destination'} || '';
 		my $me = &subs::signatorial_designer();
 		my $ran_away = 0;
 		if (!$destination) {
-			&subs::destination_relay({ destination => 'all', app => $app, movement => $movement, timestamp => $server_time });
+			$relay_outcome = &subs::destination_relay({ destination => 'all', app => $app, movement => $movement, timestamp => $server_time });
 			$db_data->{'data'} = 'every machine';
+			# A fan-out never runs here, even when a machine missed it: the
+			# watch shows the miss instead of the command running twice.
+			$ran_away = 1;
 		}
 		elsif ($destination ne $me) {
-			my $to = &subs::destination_relay({ destination => $destination, app => $app, movement => $movement, timestamp => $server_time });
-			if ($to) {
+			$relay_outcome = &subs::destination_relay({ destination => $destination, app => $app, movement => $movement, timestamp => $server_time });
+			if ($relay_outcome->{'sent'}) {
 				$ran_away = 1;
-				$db_data->{'data'} = $to;
+				$db_data->{'data'} = $relay_outcome->{'label'};
+			}
+			elsif ($relay_outcome->{'queued'}) {
+				$ran_away = 1;
+				$db_data->{'data'} = 'queued for ' . ($relay_outcome->{'label'} || $destination);
 			}
 		}
 		unless ($ran_away) {
-			# no destination set, it is this machine, or the destination could
-			# not be reached: run here
+			# no destination set, it is this machine, or the named peer could
+			# not even be queued: run here
 			my $resulter = &subs::run_command($app,$settings->{$movement});
 			$db_data->{'data'} = &subs::runner_label() unless $db_data->{'data'};
+			$relay_outcome ||= { ok => 1, all => 0, sent => 1, expected => 1, queued => 0 };
 		}
 
 	}
@@ -180,6 +191,16 @@ sub edt_button_presser {
 			colour => $b->{'colour'},
 			rgb => $b->{'rgb'},
 		};
+		# The device paints the press's outcome from these: red when a named
+		# command did not land or an every-machine command missed a machine,
+		# green when every machine took it.
+		if ($relay_outcome) {
+			$returner->{'relay_ok'} = $relay_outcome->{'ok'} ? 1 : 0;
+			$returner->{'relay_all'} = $relay_outcome->{'all'} ? 1 : 0;
+			$returner->{'relay_sent'} = 0 + ($relay_outcome->{'sent'} || 0);
+			$returner->{'relay_expected'} = 0 + ($relay_outcome->{'expected'} || 0);
+			$returner->{'relay_queued'} = $relay_outcome->{'queued'} ? 1 : 0;
+		}
 
 		my $insert = &Manager::appointment_writer($c,$db_data);
 	}
