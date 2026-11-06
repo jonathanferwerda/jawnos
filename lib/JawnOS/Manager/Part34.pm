@@ -185,9 +185,13 @@ sub embedded_grabber($c,$timestamp) {
 		}
 	}
 
+	# The build the device reports, the build this machine would send, and
+	# whether the person asked for automatic updates (see Domain::Firmware).
+	my $firmware = &subs::firmware_status($edt, $chip_id);
 	my $returner = {
 		template => 'embedded/embedded',
 		embedded => $embedded,
+		firmware => $firmware,
 		window_maker => 'yes',
 		settings => $settings,
 		movements => $movements,
@@ -256,6 +260,13 @@ sub embedded_device_query($embedded) {
 					}
 				}
 			}
+			# The reply is the freshest thing we know about the device, including
+			# which build it is running. Record it before the purpose is formatted.
+			&subs::firmware_version_note({
+				edt => $rb->{'purpose'},
+				chip_id => $rb->{'chip_id'},
+				version => $rb->{'version'}
+			});
 			$rb->{'uptime'} = &subs::duration_sayer($rb->{'uptime'} / 1000);
 			$rb->{'purpose'} = &subs::format_name($rb->{'purpose'});
 			return $rb;

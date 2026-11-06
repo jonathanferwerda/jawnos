@@ -1,3 +1,9 @@
+// The house version this image was built from. scripts/fw_version.py passes it
+// from the checkout's VERSION; the fallback keeps an IDE build compiling.
+#ifndef JAWN_FW_VERSION
+#define JAWN_FW_VERSION "unknown"
+#endif
+
 // Civil-date struct for the 64-bit clock display. Declared before any function
 // so the Arduino-generated prototypes can see the return type.
 struct jawn_time {

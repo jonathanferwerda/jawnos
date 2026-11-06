@@ -96,6 +96,10 @@ static void ble_loop() {
 	    // HTTP rail (and record it), instead of falling back to a BLE reconnect
 	    // when the stored address is stale.
 	    req["ip"] = WiFi.localIP().toString();
+	    // Which build this is. The manager compares it with the image it has
+	    // staged, so the Embedded panel can say "update available" and the
+	    // auto-OTA sweep knows whether a push is needed.
+	    req["version"] = JAWN_FW_VERSION;
     // Omit an empty homebase: this JSONVar build serializes an empty String as
     // an empty token, which made the whole message unparseable at the manager.
     if (homebaseIP != "") { req["homebase"] = homebaseIP; }
@@ -382,6 +386,7 @@ void jawn_setup() {
     config["purpose"] = "microcontroller";
     config["model"] = "Raspberry Pi Pico 2W";
     config["pins"] = "28";
+    config["version"] = JAWN_FW_VERSION;
     JSONVar jonfig = config;
     // uptime is for the reply only, and as a string so JSONVar never mangles it.
     jonfig["uptime"] = String(millis());

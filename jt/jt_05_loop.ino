@@ -402,6 +402,7 @@ void jawn_loop() {
     req["type"] = "state_request";
     req["chip_id"] = chip_id_maker();
     req["edt"] = "teletype";
+    req["version"] = JAWN_FW_VERSION;
     ble_send(req);
     deckLog("[bt] state requested");
   }

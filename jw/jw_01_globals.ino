@@ -1,3 +1,9 @@
+// The house version this image was built from. scripts/fw_version.py passes it
+// from the checkout's VERSION; the fallback keeps an IDE build compiling.
+#ifndef JAWN_FW_VERSION
+#define JAWN_FW_VERSION "unknown"
+#endif
+
 
 // The file helpers at the bottom of this sketch; PlatformIO's .ino preprocessor
 // does not inject prototypes for them, the Arduino IDE does.

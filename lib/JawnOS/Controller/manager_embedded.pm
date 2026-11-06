@@ -239,51 +239,50 @@ sub action_43561 {
 	my $chip_id = $c->param('chip_id');
 
 	if ($edt eq 'microcontroller') {
-		my $watch = &subs::device_lister($timestamp, $edt, undef, $chip_id);
 		# The manager serves firmware from a hardwired path, not .pio/build.
-		# scripts/stage_firmware.pl copies the newest build here; a stale file
-		# here means the OTA ships the previous firmware.
-		my $file = './jp/alarmclock/build/rp2040.rp2040.rpipico2w/alarmclock.ino.bin';
-		my $total_size = -s $file;
-		unless ($total_size) {
-			return $c->render(json => { success => 0, result => 'firmware not staged - run perl scripts/stage_firmware.pl' });
+		# scripts/stage_firmware.pl copies the newest build there and leaves a
+		# sidecar naming the version and the sha256. A file without a matching
+		# sidecar, or one staged for another version, is the previous firmware -
+		# sending it rolls the board back with nobody asking. Refuse it and name
+		# the fix. `force` is for a person who really means to send that image.
+		my $staged = &subs::firmware_staged('microcontroller');
+		unless ($staged->{'exists'}) {
+			return $c->render(json => { success => 0, result => $staged->{'reason'} });
 		}
-		# The device's own Now Me token: handleCreateProcess refuses an upload
-		# without it, and this route used to omit it entirely.
-		my $od = &subs::setting_grabber({ app => $edt, setting => 'operator_door', device => $device, subsetting => $chip_id });
-		my $op_d = eval { decode_json $od } || {};
-		my $auth = $op_d->{'__specs'}->{'authorization'} || '';
-		unless ($auth) {
-			return $c->render(json => { success => 0, result => 'no authorization on record - run Now Me first' });
+		unless ($staged->{'current'} || $c->param('force')) {
+			$log->info('OTA refused: ' . $staged->{'reason'});
+			return $c->render(json => { success => 0, result => $staged->{'reason'} });
 		}
 
-		my $watch_home = 'http://' . $watch->{'ip'} . ':' . $config->{'port'} . '/upload/alarmclock.bin?total_size=' . $total_size . '&authorization=' . url_escape($auth);
-		my $ua = Mojo::UserAgent->new();
-    $ua->transactor->add_generator(stream => sub ($transactor, $tx, $path) {
-      $tx->req->content->asset(Mojo::Asset::File->new(path => $file));
-    });
 		&Websocket::send('tab', { console => &Websocket::console_command('show', 'embedded_ota_uploader_wait'), browser_tab_id => $c->param('browser_tab_id') });
 		&Websocket::send('tab', { console => &Websocket::console_command('hide', 'embedded_ota_uploader_fail'), browser_tab_id => $c->param('browser_tab_id') });
 		&Websocket::send('tab', { console => &Websocket::console_command('hide', 'embedded_ota_uploader_success'), browser_tab_id => $c->param('browser_tab_id') });
-		$ua->inactivity_timeout(120000);
-			# The board's raw upload path does not parse query arguments, so the
-			# authorization must also ride a header the board collects. A board on
-			# older firmware still gets the query copy above.
-			my $res = $ua->insecure(1)->post($watch_home => { authorization => $auth } => stream => $file)->result;
 
-		if ($res->is_success) {
+		# The device's own Now Me token, the header the board collects, and the
+		# streamed body all live in firmware_push: the panel button and the
+		# auto-OTA sweep must send an image the same way.
+		my $result = &subs::firmware_push({
+			edt => $edt,
+			chip_id => $chip_id,
+			force => ($c->param('force') ? 1 : 0)
+		});
+
+		if ($result->{'success'}) {
 			&Websocket::send('tab', { console => &Websocket::console_command('hide', 'embedded_ota_uploader_wait'), browser_tab_id => $c->param('browser_tab_id') });
 			&Websocket::send('tab', { console => &Websocket::console_command('show', 'embedded_ota_uploader_success'), browser_tab_id => $c->param('browser_tab_id') });
 		}
 		else {
 			&Websocket::send('tab', { console => &Websocket::console_command('hide', 'embedded_ota_uploader_wait'), browser_tab_id => $c->param('browser_tab_id') });
 			&Websocket::send('tab', { console => &Websocket::console_command('show', 'embedded_ota_uploader_fail'), browser_tab_id => $c->param('browser_tab_id') });
+			$log->info('OTA failed: ' . ($result->{'result'} || 'no answer'));
 		}
 
-
-
-
-		$c->render(text => 'yes');
+		$c->render(json => {
+			success => $result->{'success'},
+			code => $result->{'code'},
+			result => $result->{'result'},
+			version => $result->{'version'}
+		});
 	}
 	else {
 		$c->render(text => 'no');

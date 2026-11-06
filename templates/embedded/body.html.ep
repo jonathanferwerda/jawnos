@@ -200,6 +200,24 @@
 				<img class="little_thumb" id="embedded_ota_uploader_fail" style="display:none;" src="<%= &subs::icon_for('/images/make believe/bad.png') %>" hint="Bad">
 				<b><span id="embedded_ota_uploader_percentage" style="vertical-align:top;font-size:26px;"></span></b>
 			<% } %>
+			<%# What the device says it is running and what this machine would send,
+			    plus the switch that lets the house push the difference by itself. %>
+			<div id="embedded_firmware_row" style="margin-top:6px;font-size:18px;">
+				<span id="embedded_firmware_version" hint="<%= &subs::ui('The build the device reports, and the build this machine would send') %>">
+					<b><%= &subs::ui('Firmware') %></b>
+					<span id="embedded_firmware_device" latest="<%= $firmware->{'latest'} %>">v<%= length($firmware->{'device'} || '') ? $firmware->{'device'} : '?' %></span>
+					→ <span id="embedded_firmware_latest">v<%= length($firmware->{'latest'} || '') ? $firmware->{'latest'} : '?' %></span>
+				</span>
+				<label style="margin-left:14px;" hint="<%= &subs::ui('Send the staged firmware by itself when the device is behind') %>">
+					<input type="checkbox" class="embedded_setting" setting="auto_ota" edt="<%= $edt %>" chip_id="<%= $chip_id %>" <% if (($firmware->{'auto'} || 'off') eq 'on') { %>checked<% } %>>
+					<%= &subs::ui('Auto OTA') %>
+				</label>
+				<span id="embedded_firmware_note" style="font-size:14px;">
+					<% if ($firmware->{'up_to_date'}) { %><%= &subs::ui('up to date') %><% }
+					   elsif (length($firmware->{'reason'} || '')) { %><%= $firmware->{'reason'} %><% }
+					   elsif (length($firmware->{'latest'} || '')) { %><%= &subs::ui('update available') %><% } %>
+				</span>
+			</div>
 			<% if ( $embedded->{'mac_addresses'} ) { %>
 				<table style="width:100%;"><tbody>
 				<% foreach my $m ( keys %{$embedded->{'mac_addresses'}} ) { %>

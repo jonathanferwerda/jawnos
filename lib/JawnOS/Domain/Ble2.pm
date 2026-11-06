@@ -109,7 +109,9 @@ sub ble_message_processor {
 			edt => $seen_edt || 'watch',
 			name => $msg->{'name'},
 			mac => $mac || $gb::ble_primary_mac,
-			ip => $msg->{'ip'}
+			ip => $msg->{'ip'},
+			# The build it is running, when the firmware reports one.
+			version => $msg->{'version'}
 		});
 	}
 	# A battery reply to ble_battery_poll: cache it for the levels scan. The

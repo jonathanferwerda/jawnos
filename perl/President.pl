@@ -1618,6 +1618,13 @@ sub utility_functions() {
 		};
 
 
+		# The auto-OTA sweep. It no-ops unless a device's own Auto OTA box is
+		# ticked, and it only pushes a build the staged image can prove it is.
+		$gb::timeouts->{'firmware_auto_ota'}->{'subroutine'} = sub {
+			my $line = eval { &subs::firmware_auto_ota() };
+			return $@ ? 'firmware: sweep failed: ' . $@ : $line;
+		};
+
 		$gb::timeouts->{'headless_browser'}->{'subroutine'} = sub {
 			eval { &subs::headless_browser(); };
 		};

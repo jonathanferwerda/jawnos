@@ -1,3 +1,9 @@
+// The house version this image was built from. scripts/fw_version.py passes it
+// from the checkout's VERSION; the fallback keeps an IDE build compiling.
+#ifndef JAWN_FW_VERSION
+#define JAWN_FW_VERSION "unknown"
+#endif
+
 // Bulk files (recordings, voice clips, chimes, the speaker tone) go to the SD
 // card when one is mounted and to FFat otherwise. Config and the boot report
 // always stay on FFat: they must be readable before the SD is mounted.

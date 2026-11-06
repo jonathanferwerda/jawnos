@@ -503,6 +503,7 @@ void loop2(void * pvParameters) {
       // where the watch currently believes jawn is: the bridge that hears this
       // can re-home it to itself when they differ
       req["homebase"] = homebaseIP;
+      req["version"] = JAWN_FW_VERSION;
       ble_send(req);
       Serial.println("[ble] state requested");
     }

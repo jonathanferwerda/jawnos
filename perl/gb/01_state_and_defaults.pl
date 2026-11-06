@@ -104,7 +104,12 @@ our $timeouts = {
 	# removes them. The sweep keeps anything unfinished (see worktree_gc.pl), so
 	# it is safe on a machine where someone is mid-task.
 	'worktree_gc' => { interval => 24 * 60 * 60, toggle => 'on', timeout => 120, group => 'daily' },
-	'manager' => { interval => 15, last_run => &subs::rightNow(), toggle => 'off', timeout => 20, group => 'slow' }
+	'manager' => { interval => 15, last_run => &subs::rightNow(), toggle => 'off', timeout => 20, group => 'slow' },
+	# The auto-OTA sweep: for every embedded device whose Auto OTA box is
+	# ticked, compare the build it reports with the image this machine staged,
+	# and push the difference. The per-device setting is the real switch; this
+	# job being on just lets the house look.
+	'firmware_auto_ota' => { interval => 10 * 60, toggle => 'on', timeout => 300, group => 'slow' }
 };
 
 $gb::alarm_running = 0;

@@ -191,7 +191,8 @@ $topic{'embedded'} = {
 			'Picking a device shows its controls: its name, Now Me (send it a fresh copy of its settings and screens) and Query (ask a board what it is). A watch or t-deck row also carries the Voice select, which chooses how the device listens (see Voice and wake words), and the Noise floor select, which sets how quiet the room has to go before a recorded command is taken to have ended. A watch or t-deck row carries its room count and screen timeout, and the Audio replies toggle, which decides whether the guide associate answers a spoken request out loud on the device or only on its screen.',
 			'The WiFi card sets the network a watch, deck or board joins. Type the network name or press Scan to fill the list from this machine\'s radio, enter its password, then press Update WiFi. A password box that reads set already holds one: leave it blank to keep it, and type a new password only to replace it. The AP fields name the network the device offers when it cannot join yours. If the device is not on the network, the update goes over Bluetooth; a board wired in over USB can be written with Update USB instead.',
 			'A switch on a board is the newest word: it moves its relay at once and the panel follows it. The board keeps the moment of the flip, so a command minted before it - a start pressed on the panel a moment earlier - is dropped instead of turning the relay back on.',
-			'A pin can record instead of running a command: choose Video or Audio under Movement, then pick the source - Camera (rear), Camera (front), Microphone or System audio - and the machine that records. The first press starts the recording on that machine; the next press stops it. This machine records on the computer, phone or server that serves the board.'
+			'A pin can record instead of running a command: choose Video or Audio under Movement, then pick the source - Camera (rear), Camera (front), Microphone or System audio - and the machine that records. The first press starts the recording on that machine; the next press stops it. This machine records on the computer, phone or server that serves the board.',
+			'Every device reports the build it is running, and the Firmware line beside the OTA button shows both that build and the one this machine holds. Press OTA and the stored image goes to the board; if this machine is holding an image for another version, the press is refused and says so, so a board is never quietly rolled back. Tick Auto OTA and the house sends the stored image by itself whenever the device reports an older build.'
 		],
 		steps => [
 			'Open Embedded to list the devices on your network.',
@@ -203,6 +204,7 @@ $topic{'embedded'} = {
 			'Leave a password box blank to keep the password already stored; type a new one to replace it, then press Update WiFi.',
 			'On a board that will not join, plug it in over USB and press Update USB to write the WiFi name and password over the cable.',
 			'On a board row, plug the board in over USB and press Restore over USB to rewrite its stored WiFi and role, then let it reboot.',
+			'Read the Firmware line to see whether a device is behind, then press OTA to send the stored image or tick Auto OTA to let the house send it.',
 			'Leave Noise floor on Auto; pin one of its numbers only if a noisy room keeps cutting a command short.'
 		],
 		related => [ 'watch', 'tdeck', 'pico', 'ble_bridge', 'voice' ]

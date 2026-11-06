@@ -9,6 +9,8 @@ use lib "$FindBin::Bin/lib", "t/lib";
 use File::Path qw(make_path);
 use File::Slurp qw(read_file write_file);
 use File::Temp qw(tempdir);
+use Digest::SHA qw(sha256_hex);
+use JSON::PP ();
 use IPC::Open3 qw(open3);
 use Symbol qw(gensym);
 use Test::More;
@@ -77,6 +79,78 @@ sub stage {
 	my ($rc) = stage('--root', $tree);
 	is($rc, 0, 'the second run stages');
 	is(read_file($ota), "new\n", 'and replaces what OTA would send');
+}
+
+# --- the sidecar is what makes "stale" provable -----------------------------
+{
+	my $tree = tempdir(CLEANUP => 1);
+	make_path("$tree/jp/alarmclock/.pio/build/pico2w");
+	make_path("$tree/jt/.pio/build/deck");
+	make_path("$tree/jw/.pio/build/watch");
+	write_file("$tree/VERSION", "9.9.9\n");
+	write_file("$tree/jp/alarmclock/.pio/build/pico2w/firmware.bin", "v999 firmware\n");
+	write_file("$tree/jt/.pio/build/deck/firmware.bin", "deck v999\n");
+	write_file("$tree/jw/.pio/build/watch/firmware.bin", "watch v999\n");
+
+	my ($rc, $out) = stage('--root', $tree);
+	is($rc, 0, 'the build stages');
+	like($out, qr/v9\.9\.9/, 'and the run names the version it staged');
+
+	my $ota = "$tree/jp/alarmclock/build/rp2040.rp2040.rpipico2w/alarmclock.ino.bin";
+	ok(-f "$ota.json", 'a sidecar lands beside the image');
+	my $meta = JSON::PP->new->decode(scalar read_file("$ota.json"));
+	is($meta->{'version'}, '9.9.9', 'the sidecar names the checkout\'s version');
+	is($meta->{'size'}, -s $ota, 'and the staged size');
+	is($meta->{'sha256'}, sha256_hex(scalar read_file($ota, binmode => ':raw')), 'and the sha256 of the bytes');
+
+	# --- --verify passes on exactly this ------------------------------------
+	my ($vrc, $vout) = stage('--root', $tree, '--verify');
+	is($vrc, 0, '--verify is happy with a fresh stage');
+	like($vout, qr/OK\s+alarmclock.*v9\.9\.9/, 'and says which build it would serve');
+
+	# --- a missing sidecar is stale -----------------------------------------
+	unlink "$ota.json";
+	my ($nrc, $nout) = stage('--root', $tree, '--verify');
+	is($nrc, 1, 'an image with no sidecar is stale');
+	like($nout, qr/no sidecar/, 'and says so');
+
+	# --- a sidecar for another version is stale -----------------------------
+	write_file("$ota.json", JSON::PP->new->encode($meta));
+	write_file("$tree/VERSION", "9.9.10\n");
+	my ($mrc, $mout) = stage('--root', $tree, '--verify');
+	is($mrc, 1, 'an image staged for another version is stale');
+	like($mout, qr/staged for v9\.9\.9, this checkout is v9\.9\.10/, 'and names both versions');
+	write_file("$tree/VERSION", "9.9.9\n");
+
+	# --- bytes that do not match the sidecar are stale ----------------------
+	write_file($ota, "tampered\n");
+	my ($trc, $tout) = stage('--root', $tree, '--verify');
+	is($trc, 1, 'an image whose bytes moved is stale');
+	like($tout, qr/do not match their sidecar/, 'and says the bytes moved');
+
+	# --- a build newer than the staged copy is stale ------------------------
+	stage('--root', $tree);
+	write_file("$tree/jp/alarmclock/.pio/build/pico2w/firmware.bin", "v999 firmware rebuilt\n");
+	my ($brc, $bout) = stage('--root', $tree, '--verify');
+	is($brc, 1, 'a staged copy behind the build is stale');
+	like($bout, qr/not the current build/, 'and names the fix');
+}
+
+# --- a re-stage refreshes the sidecar with it -------------------------------
+{
+	my $tree = tempdir(CLEANUP => 1);
+	make_path("$tree/jp/alarmclock/.pio/build/pico2w");
+	write_file("$tree/VERSION", "1.0.0\n");
+	write_file("$tree/jp/alarmclock/.pio/build/pico2w/firmware.bin", "one\n");
+	stage('--root', $tree);
+	write_file("$tree/VERSION", "1.0.1\n");
+	write_file("$tree/jp/alarmclock/.pio/build/pico2w/firmware.bin", "two\n");
+	stage('--root', $tree);
+	my $ota = "$tree/jp/alarmclock/build/rp2040.rp2040.rpipico2w/alarmclock.ino.bin";
+	my $meta = JSON::PP->new->decode(scalar read_file("$ota.json"));
+	is($meta->{'version'}, '1.0.1', 'the sidecar follows the version');
+	is($meta->{'sha256'}, sha256_hex(scalar read_file($ota, binmode => ':raw')), 'and the bytes it names');
+	is(read_file($ota), "two\n", 'as does the image itself');
 }
 
 done_testing();

@@ -390,6 +390,7 @@ void jawn_setup() {
     g["chip_id"] = chip_id;
     g["purpose"] = "teletype";
     g["name"] = name;
+    g["version"] = JAWN_FW_VERSION;
     // the radio addresses (and the NUS uuids) so the server can bridge this deck:
     // bluetooth_sender connects the daemon to mac_addresses->bluetooth
     g["mac_addresses"] = printAllMacAddresses();

@@ -1,4 +1,4 @@
-# tests-for: lib/JawnOS/Controller/manager_embedded.pm jp/alarmclock/alarmclock_02_ble_handlers_wifi_setup.ino jp/alarmclock/alarmclock_03_loop_house_inputs_jobs.ino
+# tests-for: lib/JawnOS/Controller/manager_embedded.pm lib/JawnOS/Domain/Firmware.pm jp/alarmclock/alarmclock_02_ble_handlers_wifi_setup.ino jp/alarmclock/alarmclock_03_loop_house_inputs_jobs.ino
 # covers:    The Pico's raw OTA upload never parses query arguments, so the
 #            manager sends the device authorization as a header the board
 #            collects, and the board falls back to the query copy for an older
@@ -17,6 +17,7 @@ use RepoSource;
 
 my $root = repo_root();
 my $controller = read_file("$root/lib/JawnOS/Controller/manager_embedded.pm");
+my $firmware   = read_file("$root/lib/JawnOS/Domain/Firmware.pm");
 my $handlers   = read_file("$root/jp/alarmclock/alarmclock_02_ble_handlers_wifi_setup.ino");
 my $loop       = read_file("$root/jp/alarmclock/alarmclock_03_loop_house_inputs_jobs.ino");
 
@@ -24,9 +25,14 @@ my $loop       = read_file("$root/jp/alarmclock/alarmclock_03_loop_house_inputs_
 
 my ($ota) = $controller =~ /(sub action_43561 \{.*?\n\})/s;
 ok($ota, 'the pico OTA route is still one action');
-like($ota, qr/post\([^{;]*\{[^}]*authorization\s*=>\s*\$auth[^}]*\}[^;]*stream\s*=>\s*\$file/s,
+like($ota, qr/&subs::firmware_push\(/, 'the route sends through the one push path');
+# The header and the streamed body moved into firmware_push, so the panel button
+# and the auto-OTA sweep cannot drift into sending an image differently.
+my ($push) = $firmware =~ /(sub firmware_push\(.*?\n\})/s;
+ok($push, 'firmware_push is still one function');
+like($push, qr/post\([^{;]*\{[^}]*authorization\s*=>\s*\$auth[^}]*\}[^;]*stream\s*=>\s*\$file/s,
 	'the streamed upload carries the authorization as a header');
-like($ota, qr/stream\s*=>\s*\$file/, 'and still streams the staged file');
+like($push, qr/stream\s*=>\s*\$file/, 'and still streams the staged file');
 
 # --- the board reads that header --------------------------------------------
 

@@ -61,6 +61,12 @@ $(document).on('click', '.embedded_device_query', function() {
 				console.log(response);
 				info.html(response.html);
 				info.show();
+				// The device just told us which build it runs; say so beside the
+				// OTA button instead of waiting for the next page load.
+				if (response.query && response.query.version) {
+					$('#embedded_firmware_device').text('v' + response.query.version);
+					$('#embedded_firmware_note').text('');
+				}
 			}
 		});
 	}

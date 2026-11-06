@@ -285,6 +285,12 @@ sub ble_device_record {
 			delete $found->{'ip'};
 		}
 	}
+	# The build the device reports (see Domain::Firmware). A version is a token,
+	# not free text: refuse anything that is not shaped like one.
+	if (defined $data->{'version'} && $data->{'version'} =~ /^[0-9A-Za-z][0-9A-Za-z._+-]{0,31}$/) {
+		$found->{'version'} = $data->{'version'};
+		$found->{'version_seen'} = $now;
+	}
 	$found->{'ble'} = 1;
 	$found->{'ble_seen'} = $now;
 	$found->{'server_time'} = $now;
@@ -391,6 +397,8 @@ sub ble_device_from_chip {
 		# HTTP route instead of a bridge connect. Homebase still names this
 		# machine, where the bridge lives.
 		ip => ($chip->{'ip'} || ''),
+		version => ($chip->{'version'} || ''),
+		version_seen => ($chip->{'version_seen'} || 0),
 		homebase => $my_ip,
 		mac => $chip->{'bluetooth'},
 		mac_addresses => { bluetooth => $chip->{'bluetooth'} },
