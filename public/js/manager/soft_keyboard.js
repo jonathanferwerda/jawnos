@@ -392,18 +392,25 @@ function softKbOn() {
 	return /Android|iPhone|iPad|iPod|Tablet|Mobile/i.test(navigator.userAgent || '');
 }
 
-// A desk, as far as the page can tell: not a phone by the manager's own test,
-// and a fine pointer that hovers (a mouse or trackpad). A touch laptop still
-// counts as a desk - its screen is not what the dock is for.
+// A desk, as far as the page can tell: not a phone or tablet, and the device
+// the house runs on is a computer or a server. The server's answer is the honest
+// one: a touch laptop has a coarse pointer beside its trackpad and used to lose
+// its floating frame and drag, even though it is a desk. The media query is only
+// the fallback for a page without the device name.
 function softKbDesk() {
+	if (jawnSoftIme) { return false; }
 	if (typeof windowPhoneChecker == 'function' && windowPhoneChecker()) { return false; }
 	// An Android or iPad tablet is a touch device even when it reports a
 	// hovering S Pen or a keyboard case; the dock is the keyboard it should get.
 	if (/Android|iPad|Tablet/i.test(navigator.userAgent || '')) { return false; }
+	if (typeof device != 'undefined' && device) {
+		if (device == 'mobile') { return false; }
+		return true;
+	}
 	try {
 		if (window.matchMedia) {
-			if (window.matchMedia('(any-pointer: coarse)').matches) { return false; }
-			return window.matchMedia('(hover: hover) and (any-pointer: fine)').matches;
+			if (window.matchMedia('(hover: hover)').matches) { return true; }
+			return window.matchMedia('(any-pointer: fine)').matches;
 		}
 	} catch (err) {}
 	return false;

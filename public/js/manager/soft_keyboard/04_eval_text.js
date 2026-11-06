@@ -406,6 +406,21 @@ document.addEventListener('touchstart', function (e) {
 	if (softKbOn() && (softKbEditable(el) || (el.isContentEditable))) { softKbSuppress(el); }
 }, true);
 
+// A key from a real keyboard while the dock holds the input. In calculator mode
+// the keypad always belongs to the calculator (a numeric field is updated by its
+// own sync, and a text field gets the answer at its caret on =); every other key
+// goes to whatever has focus. Returns true when the dock took the key.
+function softKbHardwareKey(e) {
+	if (jawnSoftIme || jawnSoftMode != 'calc') { return false; }
+	var key = e.key || '';
+	if (!key || e.ctrlKey || e.metaKey || e.altKey) { return false; }
+	var map = { 'Enter': '=', '=': '=', 'Backspace': 'backspace', 'Delete': 'clear', 'Escape': 'clear', ',': '.' };
+	if (/^[0-9]$/.test(key) || key == '.') { softKbCalcKey(key); return true; }
+	if (key.length == 1 && '+-*/%()'.indexOf(key) >= 0) { softKbCalcKey(key); return true; }
+	if (Object.prototype.hasOwnProperty.call(map, key)) { softKbCalcKey(map[key]); return true; }
+	return false;
+}
+
 // The only honest test for a real keyboard is a real key: the page may not
 // enumerate input devices, but a trusted key press is proof enough. It puts the
 // dock away at once and keeps it away, so a desk never has to dismiss it twice.
@@ -416,10 +431,18 @@ document.addEventListener('keydown', function (e) {
 	if (e.ctrlKey || e.metaKey || e.altKey) { return; }
 	var k = e.key || '';
 	if (!k) { return; }
-	if (k == 'Escape') { jawnMeasureHide(); return; }
+	if (k == 'Escape') { jawnMeasureHide(); }
 	if (k == 'Shift' || k == 'Alt' || k == 'Control' || k == 'Meta' || k == 'CapsLock' || k == 'Tab') { return; }
 	var target = e.target;
 	if (target && target.closest && target.closest('#jawn_soft_keyboard, #jawn_measure_pop')) { return; }
+	// The dock was asked for on a desk, and while it is up it holds the input the
+	// way a window does: a real key is the field's or the calculator's, never a
+	// reason to put it away. A phone with a keyboard keeps the old rule.
+	if (softKbVisible() && (jawnSoftSticky || jawnSoftForced) && softKbDesk()) {
+		if (softKbHardwareKey(e)) { e.preventDefault(); }
+		return;
+	}
+	if (k == 'Escape') { return; }
 	softKbHardwareMark();
 }, true);
 

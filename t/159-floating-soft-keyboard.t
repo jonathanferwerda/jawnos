@@ -74,4 +74,36 @@ like($tpl, qr/class="soft_kb_bar" hint="<%=\s*&subs::ui\('Drag here to move the 
 like($help, qr/On a desk the dock is a floating panel: drag the bar above the keys/,
 	'the keyboard topic explains the floating panel');
 
+
+# --- a desk is the device, not the pointer ----------------------------------
+like($kb, qr/if \(typeof device != 'undefined' && device\) \{/,
+	'the house\'s own device name decides what a desk is');
+like($kb, qr/if \(device == 'mobile'\) \{ return false; \}/,
+	'a phone or tablet keeps the full-width dock');
+like($kb, qr/if \(window\.matchMedia\('\(hover: hover\)'\)\.matches\) \{ return true; \}/,
+	'a page without the device name falls back to a hovering pointer');
+unlike($kb, qr/\(any-pointer: coarse\)'\)\.matches\) \{ return false; \}/,
+	'a coarse pointer beside a trackpad no longer disqualifies a desk');
+
+# --- a desk's dock keeps the input, and the keypad feeds the calculator -----
+like($kb, qr/function softKbHardwareKey\(e\)/, 'a real key while the dock is up is routed to it');
+like($kb, qr/if \(jawnSoftIme \|\| jawnSoftMode != 'calc'\) \{ return false; \}/,
+	'the calculator is the page that reads the keypad');
+unlike($kb, qr/if \(softKbEditable\(e\.target\)\) \{ return false; \}/,
+	'the calculator keeps the keypad even while a field has focus');
+like($kb, qr/if \(\/\^\[0-9\]\$\/\.test\(key\) \|\| key == '\.'\) \{ softKbCalcKey\(key\); return true; \}/,
+	'the numeric keypad types into the calculator');
+like($kb, qr/var map = \{ 'Enter': '=', '=': '=', 'Backspace': 'backspace', 'Delete': 'clear', 'Escape': 'clear', ',': '\.' \};/,
+	'Enter, backspace, escape and the decimal comma are mapped');
+like($kb, qr/if \(softKbVisible\(\) && \(jawnSoftSticky \|\| jawnSoftForced\) && softKbDesk\(\)\) \{/,
+	'an explicitly opened desk dock holds the input');
+like($kb, qr/if \(softKbHardwareKey\(e\)\) \{ e\.preventDefault\(\); \}/,
+	'and the calculator key does not reach the page');
+
+# --- the guide says the dock keeps the keys ----------------------------------
+like($help, qr/instead of putting the dock away/,
+	'the keyboard topic says a real key no longer puts the dock away');
+like($help, qr/the numeric keypad\\'s digits/,
+	'and names the numeric keypad it feeds');
+
 done_testing();
