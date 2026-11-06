@@ -415,6 +415,7 @@ sub destination_relay {
 	# unchanged (it runs the command on the peer, not on a chosen recorder).
 	$form->{'remote_signatorial'} = $destination
 		if $named && ($data->{'recorder'} || $data->{'machine'});
+	$form->{'command_id'} = $data->{'command_id'} if defined $data->{'command_id'} && $data->{'command_id'} ne '';
 	foreach my $field ( qw/uuid recorder camera machine/ ) {
 		next unless defined $data->{$field} && ($data->{$field} ne '' || $field eq 'camera');
 		$form->{$field} = $data->{$field};

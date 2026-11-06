@@ -60,6 +60,7 @@ sub edt_button_presser {
 	my $server_time = &subs::rightNow();
 	my $measure = $data->{'measure'};
 	my $uuid = &subs::random_string_creator(21);
+	my $command_id = $data->{'command_id'} || $uuid;
 	my ($db,$database) = &subs::database_grabber();
 	my $syl_count = 10;
 	$syl_count = 1 unless $edt eq 'microcontroller';
@@ -141,14 +142,14 @@ sub edt_button_presser {
 		my $me = &subs::signatorial_designer();
 		my $ran_away = 0;
 		if (!$destination) {
-			$relay_outcome = &subs::destination_relay({ destination => 'all', app => $app, movement => $movement, timestamp => $server_time });
+			$relay_outcome = &subs::destination_relay({ destination => 'all', app => $app, movement => $movement, timestamp => $server_time, command_id => $command_id });
 			$db_data->{'data'} = 'every machine';
 			# A fan-out never runs here, even when a machine missed it: the
 			# watch shows the miss instead of the command running twice.
 			$ran_away = 1;
 		}
 		elsif ($destination ne $me) {
-			$relay_outcome = &subs::destination_relay({ destination => $destination, app => $app, movement => $movement, timestamp => $server_time });
+			$relay_outcome = &subs::destination_relay({ destination => $destination, app => $app, movement => $movement, timestamp => $server_time, command_id => $command_id });
 			if ($relay_outcome->{'sent'}) {
 				$ran_away = 1;
 				$db_data->{'data'} = $relay_outcome->{'label'};

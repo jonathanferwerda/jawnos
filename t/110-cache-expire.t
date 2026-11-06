@@ -28,10 +28,10 @@ my @calls;
 
 	# The first write of a fresh worker does the sweep.
 	is(&subs::cache_expire_stale($NOW), 1, 'the first call prunes');
-	is(scalar(@calls), 3, 'the three minute-lived contexts are swept');
+	is(scalar(@calls), 5, 'the minute-lived contexts are swept');
 	my %contexts = map { $_->[1] => $_->[2] } @calls;
-	is_deeply([ sort keys %contexts ], [ qw(app_challenge padlock_challenge peer_nonce) ],
-		'the sweep names the nonce and challenge contexts');
+	is_deeply([ sort keys %contexts ], [ qw(app_challenge button_press command_applied padlock_challenge peer_nonce) ],
+		'the sweep names the nonce, challenge, command and press contexts');
 	is($contexts{'peer_nonce'}, $NOW - 15 * 60 * 1000,
 		'a row must be a quarter of an hour old before it goes: the verifier already refuses after ten');
 	like($calls[0]->[0], qr/delete from cache where context = \? and server_time < \?/,
@@ -44,7 +44,7 @@ my @calls;
 
 	# Once the window has passed it runs again.
 	is(&subs::cache_expire_stale($NOW + 600_001), 1, 'the sweep runs again after ten minutes');
-	is(scalar(@calls), 3, 'and issues the three deletes again');
+	is(scalar(@calls), 5, 'and issues the deletes again');
 }
 
 done_testing();

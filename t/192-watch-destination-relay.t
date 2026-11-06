@@ -102,6 +102,7 @@ my @queued;
 		app         => 'vol_+',
 		movement    => 'command',
 		timestamp   => 1,
+		command_id  => 'press-1',
 	});
 
 	is($relay->{'ok'}, 1, 'a named destination relays even when the roster says inactive');
@@ -117,6 +118,7 @@ my @queued;
 		'the relay posts to the peer\'s reset route');
 	is($ua->{'posted'}[0]->{'form'}{'type'}, 'command', 'the movement rides the relay');
 	is($ua->{'posted'}[0]->{'form'}{'app'}, 'vol_+', 'and the app it belongs to');
+	is($ua->{'posted'}[0]->{'form'}{'command_id'}, 'press-1', 'the press id travels with the command');
 
 	# --- a named miss is handed to the relay, not run on the homebase ---------
 	$ua = FakeUA->new(ok => 0);
@@ -126,6 +128,7 @@ my @queued;
 		app         => 'vol_-',
 		movement    => 'command',
 		timestamp   => 2,
+		command_id  => 'press-2',
 	});
 	is($relay->{'sent'}, 0, 'the direct attempt failed');
 	is($relay->{'queued'}, 1, 'the named miss is handed to the headless relay');
@@ -136,6 +139,7 @@ my @queued;
 	ok($queued[0]->{'expect_json'}, 'the item expects the route\'s JSON answer');
 	is($queued[0]->{'params'}{'app'}, 'vol_-', 'the app rides the queued copy');
 	is($queued[0]->{'params'}{'type'}, 'command', 'and the movement');
+	is($queued[0]->{'params'}{'command_id'}, 'press-2', 'the queued copy carries the same press id');
 
 	# --- every machine: red when one missed, green only when all took it ------
 	@roster = (
@@ -243,6 +247,24 @@ subs::preload('setting_grabber');
 	}
 }
 
+# --- the machine that runs a command drops a second copy of the same press ---
+subs::preload('command_already_applied');
+{
+	my %cache;
+	my $now = 1_800_000_000_000;
+	no warnings 'redefine';
+	local *subs::rightNow = sub { return $now };
+	local *subs::cache_get = sub { my ($a) = @_; return $cache{ $a->{'subcontext'} }; };
+	local *subs::cache_set = sub { my ($a, $v) = @_; $cache{ $a->{'subcontext'} } = $v; return 1; };
+
+	is(subs::command_already_applied('press-1'), 0, 'an unseen press is allowed');
+	subs::command_mark_applied('press-1');
+	is(subs::command_already_applied('press-1'), 1, 'the same press is now a duplicate');
+	is(subs::command_already_applied('press-2'), 0, 'a different press is still allowed');
+	$now += 600001;
+	is(subs::command_already_applied('press-1'), 0, 'the guard forgets after ten minutes');
+}
+
 # --- the press hands its pin's destination over ------------------------------
 my $root = repo_root();
 my $edt = read_file("$root/lib/JawnOS/Domain/Edt.pm");
@@ -258,5 +280,18 @@ like($press, qr/relay_ok.*relay_all.*relay_sent.*relay_expected/s,
 	'the device is told the outcome for its red or green flash');
 like($press, qr/unless \(\$ran_away\) \{.*?run_command\(/s,
 	'the local run is only the last resort');
+
+my $part14 = read_file("$root/lib/JawnOS/Manager/Part14.pm");
+like($part14, qr/command_already_applied\(\$command_id\)/,
+	'the machine that runs a command checks its id');
+like($part14, qr/command_mark_applied\(\$command_id\)/,
+	'and remembers it so a second copy is dropped');
+my $watch = read_file("$root/perl/watch.pl");
+like($watch, qr/my \$press_id = \$c->param\('id'\)/,
+	'the watch button route reads the press id');
+like($watch, qr/command_id => \$press_id/,
+	'and hands it to the press');
+like($watch, qr/context => 'button_press'/,
+	'a repeated fetch of the same press is not written again');
 
 done_testing();

@@ -38,7 +38,7 @@ like($upload, qr/server\.arg\(\s*"authorization"\s*\)/,
 	'and falls back to the query copy for an older manager');
 
 # A collected header has to be registered before the server handles the upload.
-like($handlers, qr/collectHeaders\(\s*"authorization"\s*\)/,
+like($handlers, qr/collectHeaders\(\s*authorization_headers\s*,\s*1\s*\)/,
 	'the authorization header is collected in setup');
 my $collect_at = index($handlers, 'collectHeaders');
 my $upload_at  = index($handlers, 'server.on(UriRegex("/upload/');

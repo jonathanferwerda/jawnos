@@ -1,3 +1,9 @@
+// One press, one id: a delayed second delivery of the same tap is dropped by
+// the house (the command guard), while a real second press gets a new one.
+static String press_id(int button) {
+  return chip_id_maker() + "-" + String(button) + "-" + String((unsigned long)millis());
+}
+
 void mb1(lv_event_t *e) {
   if (b1_toggle == 0) {
     b1_toggle = 1;
@@ -6,7 +12,7 @@ void mb1(lv_event_t *e) {
   }
   String r = "https://" + homebaseIP +
     "/watch/button?room=" + room +
-    "&button=1&toggle=" + b1_toggle;
+    "&button=1&toggle=" + b1_toggle + "&id=" + press_id(1);
   if (tap_over_ble(1, b1_toggle, r)) {
     return;   // the bridge carries the tap; no blocking TLS round trip
   }
@@ -51,7 +57,7 @@ void mb2(lv_event_t *e) {
   }
   String r = "https://" + homebaseIP +
     "/watch/button?room=" + room +
-    "&button=2&toggle=" + b2_toggle;
+    "&button=2&toggle=" + b2_toggle + "&id=" + press_id(2);
   if (tap_over_ble(2, b2_toggle, r)) {
     return;
   }
@@ -93,7 +99,7 @@ void mb3(lv_event_t *e) {
   }
   String r = "https://" + homebaseIP +
     "/watch/button?room=" + room +
-    "&button=3&toggle=" + b3_toggle;
+    "&button=3&toggle=" + b3_toggle + "&id=" + press_id(3);
   if (tap_over_ble(3, b3_toggle, r)) {
     return;
   }
@@ -137,7 +143,7 @@ void mb4(lv_event_t *e) {
   }
   String r = "https://" + homebaseIP +
     "/watch/button?room=" + room +
-    "&button=4&toggle=" + b4_toggle;
+    "&button=4&toggle=" + b4_toggle + "&id=" + press_id(4);
   if (tap_over_ble(4, b4_toggle, r)) {
     return;
   }
@@ -180,7 +186,7 @@ void mb5(lv_event_t *e) {
   }
   String r = "https://" + homebaseIP +
     "/watch/button?room=" + room +
-    "&button=5&toggle=" + b5_toggle;
+    "&button=5&toggle=" + b5_toggle + "&id=" + press_id(5);
   if (tap_over_ble(5, b5_toggle, r)) {
     return;
   }
@@ -221,7 +227,7 @@ void mb6(lv_event_t *e) {
   }
   String r = "https://" + homebaseIP +
     "/watch/button?room=" + room +
-    "&button=6&toggle=" + b6_toggle;
+    "&button=6&toggle=" + b6_toggle + "&id=" + press_id(6);
   if (tap_over_ble(6, b6_toggle, r)) {
     return;
   }
@@ -263,7 +269,7 @@ void mb7(lv_event_t *e) {
   }
   String r = "https://" + homebaseIP +
     "/watch/button?room=" + room +
-    "&button=7&toggle=" + b7_toggle;
+    "&button=7&toggle=" + b7_toggle + "&id=" + press_id(7);
   if (tap_over_ble(7, b7_toggle, r)) {
     return;
   }
@@ -305,7 +311,7 @@ void mb8(lv_event_t *e) {
   }
   String r = "https://" + homebaseIP +
     "/watch/button?room=" + room +
-    "&button=8&toggle=" + b8_toggle;
+    "&button=8&toggle=" + b8_toggle + "&id=" + press_id(8);
   if (tap_over_ble(8, b8_toggle, r)) {
     return;
   }

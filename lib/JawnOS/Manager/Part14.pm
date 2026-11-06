@@ -74,6 +74,17 @@ sub manager_reset($c) {
 	my $server_time = $c->param('server_time') || &subs::rightNow() || $timestamp;
 	$c->param('server_time' => $server_time);
 	my $type = $c->param('type');
+
+	# A command carries the press's id from the watch/deck; a second copy (the
+	# direct relay and the queued one, or two machines draining the queue) must
+	# not run it again or write a second row. The cache is local.
+	my $command_id = $c->param('command_id') || '';
+	if ($command_id && (($type || '') eq 'command' || ($type || '') eq 'kill')) {
+		if (&subs::command_already_applied($command_id)) {
+			return { app => $app, cv => 'duplicate', command_id => $command_id };
+		}
+		&subs::command_mark_applied($command_id);
+	}
 	# the type the request named, before the branches below rewrite $type: a
 	# start/stop moves which appointment owns the desktop theme, and the push at
 	# the foot of this sub repaints every open manager at once

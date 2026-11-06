@@ -75,4 +75,12 @@ is(scalar @deck_faces, 8, 'every deck room button uses the shared face');
 my @deck_flash = $jt_press =~ /button_flash_from_result\(\(int\)result\["button"\], result\)/g;
 is(scalar @deck_flash, 8, 'and reports its outcome too');
 
+# A press carries its own id so a delayed second delivery is not run twice.
+like($jw_press, qr/static String press_id\(int button\)/, 'the watch names each press');
+like($jt_press, qr/static String press_id\(int button\)/, 'the deck names each press');
+my @watch_ids = $jw_press =~ /"&id=" \+ press_id\(\d\)/g;
+is(scalar @watch_ids, 6, 'every watch button tap carries the id');
+my @deck_ids = $jt_press =~ /"&id=" \+ press_id\(\d\)/g;
+is(scalar @deck_ids, 8, 'every deck button tap carries the id');
+
 done_testing();

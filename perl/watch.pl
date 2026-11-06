@@ -205,9 +205,20 @@ get '/watch/button' => sub($c) {
 		my $timestamp = $c->param('timestamp_ms') || (($c->param('timestamp') || 0) * 1000) || &subs::rightNow();
 		my $room = $c->param('room');
 		my $toggle = $c->param('toggle');
+		my $press_id = $c->param('id') || '';
 		# A board that delivered this tap twice must not flip twice.
 		if (&subs::event_duplicate(join('|', 'button', $chip_id // '', $button // '', $toggle // ''))) {
 			return $c->render(text => 'ok');
+		}
+		# The same press fetched again later (a bridge retry, a queued tap) must
+		# not write a second row either. The id is the press's own; the cache is
+		# local, and the destination machine has its own command guard.
+		if ($press_id) {
+			my $seen_key = ($chip_id || '') . '-' . $press_id;
+			if (&subs::cache_get({ app => '__president', context => 'button_press', subcontext => $seen_key })) {
+				return $c->render(text => 'ok');
+			}
+			&subs::cache_set({ app => '__president', context => 'button_press', subcontext => $seen_key, warranty => '-10m' }, 1);
 		}
 		if ($toggle == 1) {
 			$toggle = 'off'
@@ -233,7 +244,8 @@ get '/watch/button' => sub($c) {
 			edt => $edt,
 			chip_id => $chip_id,
 			remote_address => $remote_address,
-			toggle => $toggle
+			toggle => $toggle,
+			command_id => $press_id
 		});
 		$c->render('json' => $returner);
 

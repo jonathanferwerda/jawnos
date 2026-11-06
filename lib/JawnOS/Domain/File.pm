@@ -334,6 +334,26 @@ sub cache_get {
 	}
 }
 
+# A command that reached another machine twice (the direct relay and the queue,
+# or two machines draining the queue) must run once. The id comes from the
+# watch/deck press; the machine that runs it remembers the id locally for ten
+# minutes. The cache is local and unsynced, so one machine remembering does not
+# tell another to skip its own legitimate copy.
+sub command_already_applied {
+	my ($id) = @_;
+	return 0 unless defined $id && length $id;
+	my $seen = &cache_get({ app => '__president', context => 'command_applied', subcontext => $id });
+	my $at = ref $seen eq 'HASH' ? ($seen->{'at'} || 0) : 0;
+	return ($at && $at > &rightNow() - 600000) ? 1 : 0;
+}
+
+sub command_mark_applied {
+	my ($id) = @_;
+	return 0 unless defined $id && length $id;
+	&cache_set({ app => '__president', context => 'command_applied', subcontext => $id, warranty => '-10m' }, { at => &rightNow() });
+	return 1;
+}
+
 # Some cache rows are claims that only hold for minutes. A peer nonce is written
 # on every verified contact and deleted when the matching request returns, so a
 # peer that never answers leaves its row behind; hundreds of thousands had piled
@@ -348,7 +368,7 @@ sub cache_expire_stale {
 	return 0 if defined $cache_pruned_at && ($now - $cache_pruned_at) < 600000;
 	$cache_pruned_at = $now;
 	my $cutoff = $now - 15 * 60 * 1000;
-	foreach my $context ( qw(peer_nonce app_challenge padlock_challenge) ) {
+	foreach my $context ( qw(peer_nonce app_challenge padlock_challenge command_applied button_press) ) {
 		&subs::db_query('delete from cache where context = ? and server_time < ?', $context, $cutoff);
 	}
 	return 1;
