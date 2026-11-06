@@ -457,8 +457,8 @@ sub phone_ivr_flow_defaults($route) {
 	return &subs::phone_ivr_flow_defaults($route);
 }
 
-sub phone_ivr_flow_clean($flows, $route) {
-	return &subs::phone_ivr_flow_clean($flows, $route);
+sub phone_ivr_flow_clean {
+	return &subs::phone_ivr_flow_clean(@_);
 }
 
 sub phone_ivr_settings {
@@ -473,10 +473,36 @@ sub phone_ivr_save($params) {
 		$value =~ s/^\s+|\s+$//g;
 		$next->{$key} = $value;
 	}
-	if (exists $params->{'flows'}) {
-		my $flows = $params->{'flows'};
-		$flows = eval { decode_json($flows) } if defined $flows && !ref $flows;
-		$next->{'flows'} = &phone_ivr_flow_clean($flows, $next->{'route'});
+	# The flows first: a bucket in this same save may name a flow this save adds.
+	my $defs = $next->{'flow_defs'};
+	$defs = &subs::phone_ivr_flow_defs() unless ref $defs eq 'HASH';
+	if (defined $params->{'flow_defs'} && (ref $params->{'flow_defs'} || length $params->{'flow_defs'})) {
+		my $raw = $params->{'flow_defs'};
+		$raw = eval { decode_json($raw) } if !ref $raw;
+		# a payload that does not parse leaves the saved flows alone
+		$defs = &subs::phone_ivr_flow_defs_clean($raw) if ref $raw eq 'HASH';
+	}
+	# The older prompt rows edit the receptionist flow, so a client that does not
+	# know about flows (and an older machine speaking from those rows) changes the
+	# same words the pane shows.
+	my $receptionist = $defs->{'receptionist'};
+	if (ref $receptionist eq 'HASH') {
+		my %edit;
+		foreach my $key (qw(voice greeting prompt voicemail thanks hold)) {
+			$edit{$key} = $next->{$key} if exists $params->{$key};
+		}
+		$defs->{'receptionist'} = &subs::phone_ivr_flow_def_clean(\%edit, $receptionist) if %edit;
+	}
+	$next->{'flow_defs'} = $defs;
+	my $flows = (exists $params->{'flows'} && defined $params->{'flows'}) ? $params->{'flows'} : $next->{'flows'};
+	$flows = eval { decode_json($flows) } if defined $flows && !ref $flows;
+	$next->{'flows'} = &phone_ivr_flow_clean($flows, $next->{'route'}, $defs);
+	# the top-level rows follow the receptionist flow, so the two cannot drift
+	my $top = $defs->{'receptionist'};
+	if (ref $top eq 'HASH') {
+		foreach my $key (qw(voice greeting prompt voicemail thanks hold)) {
+			$next->{$key} = $top->{$key};
+		}
 	}
 	$next->{'enabled'} = ($next->{'enabled'} eq 'yes' || $next->{'enabled'} eq '1' || $next->{'enabled'} eq 'on') ? 'yes' : 'no';
 	$next->{'route'} = 'unknown' unless $next->{'route'} =~ /^(?:unknown|all|off)$/;
@@ -509,6 +535,7 @@ sub phone_ivr_save($params) {
 		&subs::setting_setter({ app => 'phone', setting => 'ivr_' . $key, value => $next->{$key}, device => 'all' });
 	}
 	&subs::setting_setter({ app => 'phone', setting => 'ivr_flows', value => encode_json($next->{'flows'}), device => 'all' });
+	&subs::setting_setter({ app => 'phone', setting => 'ivr_flow_defs', value => encode_json($next->{'flow_defs'}), device => 'all' });
 	return $next;
 }
 

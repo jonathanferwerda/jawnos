@@ -55,18 +55,176 @@ sub phone_ivr_flow_defaults {
 	return \%flow;
 }
 
+# ---- named flows -----------------------------------------------------------
+#
+# A house may keep several named receptions instead of one set of prompts: a
+# receptionist, a plain voicemail line, and any of its own. Each flow carries
+# its own voice and words, its own hold music, and what happens after the
+# thanks. A caller bucket names one of them, so two kinds of caller can hear two
+# different receptions.
+#
+# The flows are one house-wide JSON setting so the phone and the gateway read
+# the same words. The older ivr_greeting/prompt/... rows stay written and read:
+# an older build on another machine still speaks from them, and the
+# receptionist flow is what those rows mean.
+my @PHONE_IVR_FLOW_TEXTS = qw(greeting prompt voicemail thanks);
+my @PHONE_IVR_FLOW_AFTER = qw(hold voicemail end);
+
+# The words a house without saved flows speaks, taken from the legacy rows so a
+# house that never opened the flow editor keeps its own voice and prompts.
+sub phone_ivr_flow_seed {
+	my $legacy = &subs::phone_ivr_legacy_settings();
+	my $voice = $legacy->{'voice'};
+	return {
+		receptionist => {
+			name      => 'Receptionist',
+			voice     => $voice,
+			greeting  => $legacy->{'greeting'},
+			prompt    => $legacy->{'prompt'},
+			voicemail => $legacy->{'voicemail'},
+			thanks    => $legacy->{'thanks'},
+			hold      => $legacy->{'hold'},
+			after     => 'hold',
+			builtin   => 1,
+		},
+		voicemail => {
+			name      => 'Voicemail',
+			voice     => $voice,
+			greeting  => '',
+			prompt    => '',
+			voicemail => $legacy->{'voicemail'},
+			thanks    => '',
+			hold      => '',
+			after     => 'end',
+			builtin   => 1,
+		},
+	};
+}
+
+# One flow, cleaned against the flow it is allowed to fall back to. A saved row
+# is data from a browser or a peer, so every field is checked here: a key is a
+# slug, a voice is one the house offers, a hold choice stays in the library and
+# an after step is one of the three.
+sub phone_ivr_flow_def_clean {
+	my ($row, $base) = @_;
+	my %out = (
+		name      => '',
+		voice     => &subs::say_default_voice(),
+		greeting  => '',
+		prompt    => '',
+		voicemail => '',
+		thanks    => '',
+		hold      => '',
+		after     => 'hold',
+		builtin   => 0,
+	);
+	%out = (%out, %{$base}) if ref $base eq 'HASH';
+	$row = {} unless ref $row eq 'HASH';
+
+	if (defined $row->{'name'}) {
+		my $name = $row->{'name'};
+		$name =~ s/^\s+|\s+$//g;
+		$name = substr($name, 0, 60);
+		$out{'name'} = $name if length $name;
+	}
+	my %voices = map { $_->{'value'} => 1 } &subs::say_voices();
+	if (defined $row->{'voice'} && $voices{ $row->{'voice'} }) {
+		$out{'voice'} = $row->{'voice'};
+	}
+	$out{'voice'} = &subs::say_default_voice() unless $voices{ $out{'voice'} || '' };
+	foreach my $key (@PHONE_IVR_FLOW_TEXTS) {
+		next unless defined $row->{$key};
+		my $text = $row->{$key};
+		$text =~ s/^\s+|\s+$//g;
+		$out{$key} = substr($text, 0, 1000);
+	}
+	if (defined $row->{'hold'}) {
+		require JawnOS::Sco::Hold;
+		my $hold = &JawnOS::Sco::Hold::in_library($row->{'hold'});
+		$hold = lc($hold) if lc($hold) eq 'shuffle';
+		$out{'hold'} = $hold;
+	}
+	if (defined $row->{'after'} && grep { $_ eq $row->{'after'} } @PHONE_IVR_FLOW_AFTER) {
+		$out{'after'} = $row->{'after'};
+	}
+	return \%out;
+}
+
+# The whole set. The two built-ins are always there - a built-in may be edited
+# but not deleted - and a key that is not a slug is not a flow at all.
+sub phone_ivr_flow_defs_clean {
+	my ($defs) = @_;
+	my $seed = &subs::phone_ivr_flow_seed();
+	my %clean = %{$seed};
+	if (ref $defs eq 'HASH') {
+		foreach my $key ( keys %{$defs} ) {
+			next unless defined $key && $key =~ /^[a-z0-9_]{1,30}$/;
+			my $row = $defs->{$key};
+			next unless ref $row eq 'HASH';
+			$clean{$key} = &subs::phone_ivr_flow_def_clean($row, $clean{$key});
+		}
+	}
+	$clean{$_}->{'builtin'} = 1 for keys %{$seed};
+	return \%clean;
+}
+
+sub phone_ivr_flow_defs {
+	my $stored = &subs::phone_ivr_grab('ivr_flow_defs');
+	my $defs = length $stored ? eval { decode_json($stored) } : undef;
+	return &subs::phone_ivr_flow_defs_clean($defs);
+}
+
+# The bucket matrix, resolved to its answers. A bucket may name one of the
+# flows or the older three answers; 'ivr' still means the receptionist and
+# 'voicemail' still means the voicemail flow.
+sub phone_ivr_flows {
+	return &subs::phone_ivr_settings()->{'flows'};
+}
+
 sub phone_ivr_flow_clean {
-	my ($flows, $route) = @_;
+	my ($flows, $route, $defs) = @_;
 	my $base = &subs::phone_ivr_flow_defaults($route);
 	my %clean = %{$base};
+	$defs = &subs::phone_ivr_flow_defs() unless ref $defs eq 'HASH';
 	if (ref $flows eq 'HASH') {
 		foreach my $bucket (qw(unknown blacklisted self friend stranger enemy)) {
 			my $action = $flows->{$bucket};
-			next unless defined $action && $action =~ /^(?:ring|ivr|voicemail|reject)$/;
+			next unless defined $action && length $action;
+			# the three older answers, or a flow this house still has
+			next unless $action =~ /^(?:ring|ivr|voicemail|reject)$/ || $defs->{$action};
 			$clean{$bucket} = $action;
 		}
 	}
 	return \%clean;
+}
+
+# What a bucket resolves to, for the gateway: a flow hashref, or '' when the
+# bucket is not answered at all (ring or reject). A bucket naming a flow that
+# no longer exists answers the way the bucket would with nothing saved for it.
+sub phone_ivr_flow_for_bucket {
+	my ($bucket) = @_;
+	return '' unless defined $bucket && $bucket =~ /^(?:unknown|blacklisted|self|friend|stranger|enemy)$/;
+	my $settings = &subs::phone_ivr_settings();
+	my $defs = $settings->{'flow_defs'};
+	$defs = &subs::phone_ivr_flow_defs() unless ref $defs eq 'HASH';
+	my $action = $settings->{'flows'}->{$bucket};
+	$action = 'ring' unless defined $action && length $action;
+	my $flow = &subs::phone_ivr_flow_resolve($action, $defs);
+	return $flow if defined $flow;
+	my $fallback = &subs::phone_ivr_flow_defaults($settings->{'route'})->{$bucket} || 'ring';
+	my $again = &subs::phone_ivr_flow_resolve($fallback, $defs);
+	return defined $again ? $again : '';
+}
+
+# The action a bucket value names: '' for ring/reject, undef for a name no flow
+# owns. Kept apart from the resolution above so the fallback can reuse it.
+sub phone_ivr_flow_resolve {
+	my ($action, $defs) = @_;
+	return undef unless defined $action && length $action;
+	return '' if $action eq 'ring' || $action eq 'reject';
+	my $key = $action eq 'ivr' ? 'receptionist' : $action;
+	my $flow = $defs->{$key};
+	return ref $flow eq 'HASH' ? $flow : undef;
 }
 
 # One setting, the house row first and this device's older row second.
@@ -79,7 +237,8 @@ sub phone_ivr_grab {
 	return defined $value ? $value : '';
 }
 
-sub phone_ivr_settings {
+# The older top-level rows, before the flows are overlaid on them.
+sub phone_ivr_legacy_settings {
 	my $settings = &subs::phone_ivr_defaults();
 	foreach my $key ( keys %{$settings} ) {
 		next if $key eq 'flows';
@@ -91,8 +250,22 @@ sub phone_ivr_settings {
 	my %voices = map { $_->{'value'} => 1 } &subs::say_voices();
 	$settings->{'voice'} = &subs::say_default_voice() unless $voices{ $settings->{'voice'} };
 	my $stored_flows = &subs::phone_ivr_grab('ivr_flows');
-	my $flows = eval { decode_json($stored_flows) } if length $stored_flows;
-	$settings->{'flows'} = &subs::phone_ivr_flow_clean($flows, $settings->{'route'});
+	$settings->{'flows'} = length $stored_flows ? eval { decode_json($stored_flows) } : undef;
+	return $settings;
+}
+
+sub phone_ivr_settings {
+	my $settings = &subs::phone_ivr_legacy_settings();
+	my $defs = &subs::phone_ivr_flow_defs();
+	$settings->{'flows'} = &subs::phone_ivr_flow_clean($settings->{'flows'}, $settings->{'route'}, $defs);
+	# the legacy rows are the receptionist's words, so the two cannot disagree
+	my $receptionist = $defs->{'receptionist'};
+	if (ref $receptionist eq 'HASH') {
+		foreach my $key (qw(voice greeting prompt voicemail thanks hold)) {
+			$settings->{$key} = $receptionist->{$key};
+		}
+	}
+	$settings->{'flow_defs'} = $defs;
 	return $settings;
 }
 

@@ -294,6 +294,7 @@ sub action_24760 {
 		thanks    => $c->param('thanks'),
 		hold      => $c->param('hold'),
 		flows     => $c->param('flows'),
+		flow_defs => $c->param('flow_defs'),
 	});
 	# The reception is the house's: hand the same save to the peers now, so the
 	# gateway machine and the phone hold it immediately instead of waiting for

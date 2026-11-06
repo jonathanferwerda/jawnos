@@ -161,7 +161,9 @@ $(document).on('click', '#phone_app .phone_app_row_call', function (e) {
 });
 
 // The IVR pane's save: the settings are the phone's own setting rows, and the
-// machine is the remote_machines signatorial (or IP) the gateway runs on.
+// machine is the remote_machines signatorial (or IP) the gateway runs on. The
+// named flows ride in one JSON string; the older top-level prompt fields follow
+// the receptionist flow, so a machine speaking from those rows agrees.
 $(document).on('click', '#phone_app #phone_ivr_save', function (e) {
 	e.preventDefault();
 	var status = $('#phone_app #phone_ivr_status');
@@ -170,6 +172,8 @@ $(document).on('click', '#phone_app #phone_ivr_save', function (e) {
 	$('#phone_app .phone_app_ivr_flow').each(function() {
 		flows[$(this).attr('bucket')] = $(this).val();
 	});
+	var defs = jawnPhoneFlowsSync();
+	var receptionist = defs.receptionist || {};
 	$.ajax({
 		url: '/manager/phone/ivr',
 		type: 'POST',
@@ -177,14 +181,15 @@ $(document).on('click', '#phone_app #phone_ivr_save', function (e) {
 			timestamp: Date.now(),
 			enabled: $('#phone_app #phone_ivr_enabled').is(':checked') ? 'yes' : 'no',
 			machine: $('#phone_app #phone_ivr_machine').val() || '',
-			voice: $('#phone_app #phone_ivr_voice').val() || '',
+			voice: receptionist.voice || '',
 			bluetooth: $('#phone_app #phone_ivr_bluetooth').val() || '',
-			greeting: $('#phone_app #phone_ivr_greeting').val() || '',
-			prompt: $('#phone_app #phone_ivr_prompt').val() || '',
-			voicemail: $('#phone_app #phone_ivr_voicemail').val() || '',
-			thanks: $('#phone_app #phone_ivr_thanks').val() || '',
-			hold: $('#phone_app #phone_ivr_hold').val() || '',
-			flows: JSON.stringify(flows)
+			greeting: receptionist.greeting || '',
+			prompt: receptionist.prompt || '',
+			voicemail: receptionist.voicemail || '',
+			thanks: receptionist.thanks || '',
+			hold: receptionist.hold || '',
+			flows: JSON.stringify(flows),
+			flow_defs: JSON.stringify(defs)
 		},
 		success: function (res) {
 			if (res && res.ok) {
@@ -196,6 +201,297 @@ $(document).on('click', '#phone_app #phone_ivr_save', function (e) {
 		},
 		error: function () { status.text(jawnosT('Could not save IVR.')); }
 	});
+});
+
+// ---- named flows ----------------------------------------------------------
+// A flow is one voice and one set of words the gateway speaks, its own hold
+// music, and what happens after the thanks. The list is drawn from the JSON the
+// template embeds, so adding, renaming and deleting share the render path.
+
+var jawnPhoneFlowDefs = null;
+var jawnPhoneFlowOpen = {};
+var jawnPhoneHoldLibrary = null;
+
+function jawnPhoneFlowsEditor() { return $('#phone_app #phone_ivr_flows_editor'); }
+
+function jawnPhoneFlowsInit() {
+	var box = jawnPhoneFlowsEditor();
+	if (!box.length || jawnPhoneFlowDefs) { return; }
+	try { jawnPhoneFlowDefs = JSON.parse(box.attr('data-flow-defs') || '{}'); } catch (e) { jawnPhoneFlowDefs = {}; }
+	jawnPhoneFlowsRender();
+}
+
+function jawnPhoneFlowVoices() {
+	try { return JSON.parse(jawnPhoneFlowsEditor().attr('data-flow-voices') || '[]'); } catch (e) { return []; }
+}
+
+function jawnPhoneFlowDefaults() {
+	try { return JSON.parse(jawnPhoneFlowsEditor().attr('data-flow-defaults') || '{}'); } catch (e) { return {}; }
+}
+
+function jawnPhoneFlowLabel(flow) {
+	flow = flow || {};
+	return flow.builtin ? jawnosT(flow.name || '') : (flow.name || '');
+}
+
+// The count beside a flow's name: how many of the six caller buckets it answers.
+// An older save still says ivr for the receptionist, so that counts too.
+function jawnPhoneFlowCount(key) {
+	var count = 0;
+	$('#phone_app .phone_app_ivr_flow').each(function () {
+		var action = $(this).val();
+		if (action === key) { count++; }
+		else if (key === 'receptionist' && action === 'ivr') { count++; }
+	});
+	return count;
+}
+
+function jawnPhoneFlowCountText(count) {
+	if (count === 1) { return jawnosT('1 caller'); }
+	return count + ' ' + jawnosT('callers');
+}
+
+function jawnPhoneFlowCountsRefresh() {
+	$('#phone_app .phone_app_ivr_flow_count').each(function () {
+		var span = $(this);
+		span.text(jawnPhoneFlowCountText(jawnPhoneFlowCount(span.attr('data-flow'))));
+	});
+}
+
+// The hold dropdown lists what the gateway can actually play: none, the whole
+// library shuffled, or one track. A stored track the gateway cannot see right
+// now stays a choice, so opening a flow does not silently drop it.
+function jawnPhoneFlowHoldFill(sel, tracks, current) {
+	if (!sel || !sel.length) { return; }
+	tracks = tracks || [];
+	var value = (current !== undefined && current !== null) ? current : (sel.val() || '');
+	var key = JSON.stringify(tracks);
+	if (sel.attr('data-tracks') !== key) {
+		sel.attr('data-tracks', key);
+		sel.empty();
+		sel.append($('<option>').val('').text(jawnosT('None')));
+		sel.append($('<option>').val('shuffle').text(jawnosT('Shuffle all')));
+		$.each(tracks, function (i, t) {
+			if (!t || !t.id) { return; }
+			sel.append($('<option>').val(t.id).text(t.label || t.id));
+		});
+	}
+	if (value && value !== 'shuffle') {
+		var known = false;
+		sel.find('option').each(function () { if ($(this).val() === value) { known = true; } });
+		if (!known) {
+			var label = value.replace(/^.*\//, '').replace(/\.[A-Za-z0-9]+$/, '');
+			sel.append($('<option>').val(value).text(label));
+		}
+	}
+	sel.val(value || '');
+}
+
+function jawnPhoneFlowItem(key, flow) {
+	var item = $('<div class="phone_app_ivr_flow_item"></div>').attr('flow', key);
+	var head = $('<div class="phone_app_ivr_flow_head" hint="Edit flow"></div>');
+	head.append($('<span class="phone_app_ivr_flow_item_name"></span>').text(jawnPhoneFlowLabel(flow)));
+	head.append($('<span class="phone_app_ivr_flow_count"></span>').attr('data-flow', key));
+	head.append($('<span class="phone_app_ivr_flow_more"></span>').text('▾'));
+	item.append(head);
+
+	var edit = $(
+		'<div class="phone_app_ivr_flow_edit" hidden>'
+		+ '<label>' + jawnosT('Name') + '<input type="text" field="name"></label>'
+		+ '<label>' + jawnosT('Voice') + '<select field="voice"></select></label>'
+		+ '<label>' + jawnosT('Greeting') + '<textarea rows="2" field="greeting"></textarea></label>'
+		+ '<label>' + jawnosT('Name prompt') + '<textarea rows="2" field="prompt"></textarea></label>'
+		+ '<label>' + jawnosT('Voicemail greeting') + '<textarea rows="2" field="voicemail"></textarea></label>'
+		+ '<label>' + jawnosT('Thanks') + '<textarea rows="1" field="thanks"></textarea></label>'
+		+ '<label>' + jawnosT('Hold music') + '<select field="hold" hint="Hold music"></select></label>'
+		+ '<label>' + jawnosT('After') + '<select field="after" hint="After">'
+		+ '<option value="hold">' + jawnosT('Hold') + '</option>'
+		+ '<option value="voicemail">' + jawnosT('Voicemail') + '</option>'
+		+ '<option value="end">' + jawnosT('End') + '</option>'
+		+ '</select></label>'
+		+ '<div class="phone_app_ivr_flow_actions">'
+		+ '<button type="button" class="phone_app_ivr_flow_rename" hint="Rename flow">' + jawnosT('Rename') + '</button>'
+		+ (flow.builtin ? '' : '<button type="button" class="phone_app_ivr_flow_delete" hint="Delete flow">' + jawnosT('Delete') + '</button>')
+		+ '</div>'
+		+ '</div>'
+	);
+	item.append(edit);
+
+	edit.find('[field="name"]').val(flow.name || '');
+	edit.find('[field="greeting"]').val(flow.greeting || '');
+	edit.find('[field="prompt"]').val(flow.prompt || '');
+	edit.find('[field="voicemail"]').val(flow.voicemail || '');
+	edit.find('[field="thanks"]').val(flow.thanks || '');
+	edit.find('[field="after"]').val(flow.after || 'hold');
+
+	var voices = jawnPhoneFlowVoices();
+	var voice = edit.find('[field="voice"]');
+	$.each(voices, function (i, v) {
+		voice.append($('<option>').val(v.value).text(v.label || v.value));
+	});
+	voice.val(flow.voice || ((voices[0] || {}).value || ''));
+
+	jawnPhoneFlowHoldFill(edit.find('[field="hold"]'), jawnPhoneHoldLibrary, flow.hold || '');
+
+	if (jawnPhoneFlowOpen[key]) { head.addClass('on'); edit.prop('hidden', false); }
+	return item;
+}
+
+// Read the editors back into the object, so a re-render (add, rename, delete)
+// does not throw away edits made in the other open flows.
+function jawnPhoneFlowsSync() {
+	if (!jawnPhoneFlowDefs) { jawnPhoneFlowDefs = {}; }
+	$('#phone_app .phone_app_ivr_flow_item').each(function () {
+		var key = $(this).attr('flow');
+		if (!key) { return; }
+		var flow = jawnPhoneFlowDefs[key] || {};
+		$(this).find('[field]').each(function () {
+			flow[$(this).attr('field')] = $(this).val() || '';
+		});
+		jawnPhoneFlowDefs[key] = flow;
+	});
+	return jawnPhoneFlowDefs;
+}
+
+function jawnPhoneFlowKeys() {
+	var keys = [];
+	$.each(jawnPhoneFlowDefs || {}, function (key) { keys.push(key); });
+	keys.sort(function (a, b) {
+		var ba = jawnPhoneFlowDefs[a].builtin ? 0 : 1;
+		var bb = jawnPhoneFlowDefs[b].builtin ? 0 : 1;
+		if (ba !== bb) { return ba - bb; }
+		return a < b ? -1 : (a > b ? 1 : 0);
+	});
+	return keys;
+}
+
+function jawnPhoneFlowValues(key) {
+	var values = {};
+	$('#phone_app .phone_app_ivr_flow_item').filter(function () { return $(this).attr('flow') === key; }).find('[field]').each(function () {
+		values[$(this).attr('field')] = $(this).val() || '';
+	});
+	return values;
+}
+
+// The bucket selects offer Ring, Reject and every flow. A bucket pointing at a
+// flow that has just been deleted falls back to what the bucket answers with
+// when nothing is saved for it, which the server computed for the route.
+function jawnPhoneFlowsBucketsRender() {
+	var defs = jawnPhoneFlowDefs || {};
+	var keys = jawnPhoneFlowKeys();
+	var fallback = jawnPhoneFlowDefaults();
+	$('#phone_app .phone_app_ivr_flow').each(function () {
+		var sel = $(this);
+		var current = sel.val();
+		if (!current || (current !== 'ring' && current !== 'reject' && !defs[current])) {
+			current = fallback[sel.attr('bucket')] || 'ring';
+		}
+		sel.empty();
+		sel.append($('<option>').val('ring').text(jawnosT('Ring')));
+		sel.append($('<option>').val('reject').text(jawnosT('Reject')));
+		$.each(keys, function (i, key) {
+			sel.append($('<option>').val(key).text(jawnPhoneFlowLabel(defs[key])));
+		});
+		sel.val(current);
+	});
+}
+
+function jawnPhoneFlowsRender() {
+	var list = $('#phone_app #phone_ivr_flow_list');
+	if (!list.length) { return; }
+	jawnPhoneFlowsSync();
+	list.empty();
+	$.each(jawnPhoneFlowKeys(), function (i, key) {
+		list.append(jawnPhoneFlowItem(key, jawnPhoneFlowDefs[key]));
+	});
+	jawnPhoneFlowsBucketsRender();
+	jawnPhoneFlowCountsRefresh();
+}
+
+function jawnPhoneFlowSlug(name) {
+	var slug = (name || '').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '').substr(0, 30);
+	if (!slug) { slug = 'flow'; }
+	var key = slug, n = 1;
+	while ((jawnPhoneFlowDefs || {})[key]) {
+		n++;
+		key = slug.substr(0, 27) + '_' + n;
+	}
+	return key;
+}
+
+$(document).on('click', '#phone_app .phone_app_ivr_flow_head', function () {
+	var item = $(this).closest('.phone_app_ivr_flow_item');
+	var key = item.attr('flow');
+	var edit = item.find('.phone_app_ivr_flow_edit');
+	var open = edit.prop('hidden');
+	jawnPhoneFlowOpen[key] = open;
+	$(this).toggleClass('on', open);
+	edit.prop('hidden', !open);
+});
+
+$(document).on('click', '#phone_app #phone_ivr_flow_add', function (e) {
+	e.preventDefault();
+	jawnPhoneFlowsInit();
+	jawnPhoneFlowsSync();
+	var name = window.prompt(jawnosT('Name this flow'), jawnosT('New flow'));
+	if (name === null) { return; }
+	name = (name || '').replace(/^\s+|\s+$/g, '');
+	if (!name) { return; }
+	var key = jawnPhoneFlowSlug(name);
+	var source = jawnPhoneFlowDefs.receptionist || {};
+	jawnPhoneFlowDefs[key] = {
+		name: name,
+		voice: source.voice || '',
+		greeting: source.greeting || '',
+		prompt: source.prompt || '',
+		voicemail: source.voicemail || '',
+		thanks: source.thanks || '',
+		hold: source.hold || '',
+		after: source.after || 'hold',
+		builtin: 0
+	};
+	jawnPhoneFlowOpen[key] = true;
+	jawnPhoneFlowsRender();
+});
+
+$(document).on('click', '#phone_app .phone_app_ivr_flow_rename', function (e) {
+	e.stopPropagation();
+	var item = $(this).closest('.phone_app_ivr_flow_item');
+	var key = item.attr('flow');
+	jawnPhoneFlowsSync();
+	var flow = jawnPhoneFlowDefs[key];
+	if (!flow) { return; }
+	var name = window.prompt(jawnosT('Name this flow'), flow.name || '');
+	if (name === null) { return; }
+	name = (name || '').replace(/^\s+|\s+$/g, '');
+	if (!name) { return; }
+	flow.name = name;
+	jawnPhoneFlowOpen[key] = true;
+	jawnPhoneFlowsRender();
+});
+
+// Deleting a flow is the house's two-press rule, like blocking a number.
+$(document).on('click', '#phone_app .phone_app_ivr_flow_delete', function (e) {
+	e.stopPropagation();
+	var button = $(this);
+	var item = button.closest('.phone_app_ivr_flow_item');
+	var key = item.attr('flow');
+	jawnPhoneFlowsSync();
+	if (!jawnPhoneFlowDefs[key] || jawnPhoneFlowDefs[key].builtin) { return; }
+	if (button.attr('armed') !== 'yes') {
+		button.attr('armed', 'yes').data('label', button.text()).text(jawnosT('Press again to delete'));
+		setTimeout(function () {
+			button.attr('armed', 'no').text(button.data('label') || jawnosT('Delete'));
+		}, 3000);
+		return;
+	}
+	delete jawnPhoneFlowDefs[key];
+	delete jawnPhoneFlowOpen[key];
+	jawnPhoneFlowsRender();
+});
+
+$(document).on('change', '#phone_app .phone_app_ivr_flow', function () {
+	jawnPhoneFlowCountsRefresh();
 });
 
 // dial pad
@@ -578,24 +874,15 @@ function jawnPhoneGatewayState() {
 	});
 }
 
-// The hold dropdown lists what the gateway can actually play: none, the whole
+// The hold dropdowns list what the gateway can actually play: none, the whole
 // library shuffled, or one track. The list is rebuilt only when it changes, so
 // a choice being made is not yanked out from under the person.
 function jawnPhoneHoldTracks(tracks) {
-	var sel = $('#phone_app #phone_ivr_hold');
-	if (!sel.length || !tracks) { return; }
-	var key = JSON.stringify(tracks);
-	if (sel.attr('data-tracks') === key) { return; }
-	var current = sel.val() || '';
-	sel.attr('data-tracks', key);
-	sel.empty();
-	sel.append($('<option>').val('').text(jawnosT('None')));
-	sel.append($('<option>').val('shuffle').text(jawnosT('Shuffle all')));
-	$.each(tracks, function (i, t) {
-		if (!t || !t.id) { return; }
-		sel.append($('<option>').val(t.id).text(t.label || t.id));
+	if (!tracks) { return; }
+	jawnPhoneHoldLibrary = tracks;
+	$('#phone_app .phone_app_ivr_flow_edit [field="hold"]').each(function () {
+		jawnPhoneFlowHoldFill($(this), tracks);
 	});
-	sel.val(current);
 }
 
 $(document).on('click', '#phone_app .phone_app_tab', function () {
@@ -607,19 +894,23 @@ $(document).on('click', '#phone_app .phone_app_tab', function () {
 $(document).on('click', '#phone_app #phone_ivr_arm', function (e) {
 	e.preventDefault();
 	var label = $('#phone_app #phone_ivr_gateway_state');
-	label.text('Arming…');
+	label.text(jawnosT('Arming…'));
+	jawnPhoneFlowsInit();
+	// The gateway is armed with the receptionist flow: that is what the older
+	// top-level prompt rows mean, and the bucket matrix picks a flow per caller.
+	var receptionist = jawnPhoneFlowValues('receptionist');
 	$.ajax({
 		url: '/manager/sco/arm',
 		type: 'POST',
 		dataType: 'json',
 		data: {
 			timestamp: Date.now(),
-			voice: $('#phone_app #phone_ivr_voice').val() || '',
+			voice: receptionist.voice || '',
 			bluetooth: $('#phone_app #phone_ivr_bluetooth').val() || '',
-			greeting: $('#phone_app #phone_ivr_greeting').val() || '',
-			prompt: $('#phone_app #phone_ivr_prompt').val() || '',
-			thanks: $('#phone_app #phone_ivr_thanks').val() || '',
-			hold: $('#phone_app #phone_ivr_hold').val() || ''
+			greeting: receptionist.greeting || '',
+			prompt: receptionist.prompt || '',
+			thanks: receptionist.thanks || '',
+			hold: receptionist.hold || ''
 		},
 		success: function (res) {
 			if (res && res.ok) { jawnPhoneGatewayState(); }
@@ -639,4 +930,10 @@ $(function () {
 			$('#phone_app .phone_app_tab[pane="ivr"]').trigger('click');
 		}
 	}, 400);
+});
+
+// The flow list is drawn from the JSON the template embeds, so it is ready as
+// soon as the pane is.
+$(function () {
+	jawnPhoneFlowsInit();
 });
