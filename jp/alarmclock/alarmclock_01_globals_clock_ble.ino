@@ -254,6 +254,79 @@ static bool config_dirty = false;
 static uint32_t config_dirty_at = 0;
 static bool config_reload_pending = false;
 
+// The same logical command reaches this board on more than one road: the
+// manager's HTTP GET, its BLE `set` fallback, an app `toggle` push, and a
+// scheduled job. When the first road acts and its answer is lost, the second
+// applies it again and the user hears an echoed click. So keep what has been
+// applied - by uuid, or by type|app|state|stamp when the road carries no uuid.
+// The stamp is part of the rebuilt id on purpose: type|app|state alone would
+// swallow a legitimate later repeat of the same state.
+#define APPLIED_CMD_MAX 12
+#define CMD_STALE_GRACE_MS 1500
+struct applied_cmd_t {
+  String id;      // uuid when the road carries one
+  String type;    // relay / led / servo / set / toggle
+  String app;
+  int64_t ms;     // the command's epoch-ms timestamp, 0 when absent
+};
+static applied_cmd_t applied_cmds[APPLIED_CMD_MAX];
+static int applied_cmd_next = 0;
+static int64_t out_cmd_ms[30];   // last command time applied to each pin
+
+static String command_id(String uuid, String type, String app, String state, int64_t ms) {
+  if (uuid != "") { return uuid; }
+  if (app == "" || ms == 0) { return String(""); }
+  return type + "|" + app + "|" + state + "|" + String((double)ms, 0);
+}
+
+static bool command_seen(String id) {
+  if (id == "") { return false; }
+  for (int i = 0; i < APPLIED_CMD_MAX; i++) {
+    if (applied_cmds[i].id == id) { return true; }
+  }
+  return false;
+}
+
+static void command_remember(String id, String type, String app, int64_t ms) {
+  if (id == "") { return; }
+  applied_cmd_t &c = applied_cmds[applied_cmd_next];
+  c.id = id;
+  c.type = type;
+  c.app = app;
+  c.ms = ms;
+  applied_cmd_next = (applied_cmd_next + 1) % APPLIED_CMD_MAX;
+}
+
+// A command stamped before the one already applied to this pin is a delayed
+// copy from a slower road, not a new intent.
+static bool command_is_stale(int pin, int64_t ms) {
+  if (!pin_ok(pin) || ms == 0) { return false; }
+  return out_cmd_ms[pin] != 0 && ms + CMD_STALE_GRACE_MS < out_cmd_ms[pin];
+}
+
+static void command_mark_pin(int pin, int64_t ms) {
+  if (pin_ok(pin) && ms > out_cmd_ms[pin]) { out_cmd_ms[pin] = ms; }
+}
+
+static String output_state(int pin, String comp) {
+  if (comp == "relay") { return jstr(config["relay"][String(pin)]); }
+  if (comp == "led") { return jstr(config["led"][String(pin)]); }
+  if (comp == "servo") { return jstr(config["servo"][String(pin)]); }
+  return String("");
+}
+
+// True when the command must not move the pin. An ack still has to report the
+// real state, so `state` is replaced with what the pin holds.
+static bool command_redundant(String id, int pin, String comp, String &state, int64_t ms) {
+  if (command_seen(id) || command_is_stale(pin, ms)) {
+    String cur = output_state(pin, comp);
+    if (cur != "") { state = cur; }
+    return true;
+  }
+  if (output_state(pin, comp) == state) { return true; }
+  return false;
+}
+
 // A small ring of pin events, dumped by JAWNCFG? - a relay that clicks on its
 // own has three possible authors (the local switch map, a manager `set`, or an
 // app `toggle` push) and this says which one, with the board's own millis().
@@ -448,7 +521,7 @@ static void local_outputs_load() {
   }
 }
 
-static void ble_apply_app_state(String app, String state) {
+static void ble_apply_app_state(String app, String state, String id = "", int64_t ms = 0) {
   if (app == "") { return; }
   for (int i = 0; i < local_out_count; i++) {
     local_out_t &o = local_outs[i];
@@ -458,9 +531,12 @@ static void ble_apply_app_state(String app, String state) {
     if (pin_is_switch_driven(o.pin)) { continue; }
     String phys = state;
     if (o.inv == 1) { phys = (phys == "on") ? "off" : "on"; }
+    if (command_redundant(id, o.pin, o.comp, phys, ms)) { continue; }
     if (o.comp == "relay") { relay_toggle(o.pin, phys, true, 3); }
     else if (o.comp == "led") { led_toggle(o.pin, phys); }
+    command_mark_pin(o.pin, ms);
   }
+  command_remember(id, "toggle", app, ms);
 }
 
 static void ble_apply_board_config(JSONVar ctp) {
@@ -551,9 +627,17 @@ static void ble_apply_set(JSONVar data) {
   String comp = jstr(data["component"]);
   int pin = jpin(data["pin"]);
   String state = jstr(data["state"]);
-  if (comp == "relay") { state = relay_toggle(pin, state); }
-  else if (comp == "led") { state = led_toggle(pin, state); }
-  else if (comp == "servo") { state = servo_toggle(pin, state); }
+  String uuid = jstr(data["uuid"]);
+  String app = jstr(data["app"]);
+  int64_t ms = jint64(data["timestamp"]);
+  String cid = command_id(uuid, "set", app, state, ms);
+  if (!command_redundant(cid, pin, comp, state, ms)) {
+    if (comp == "relay") { state = relay_toggle(pin, state); }
+    else if (comp == "led") { state = led_toggle(pin, state); }
+    else if (comp == "servo") { state = servo_toggle(pin, state); }
+  }
+  command_mark_pin(pin, ms);
+  command_remember(cid, "set", app, ms);
   JSONVar ack;
   ack["type"] = "state";
   ack["chip_id"] = String(rp2040.getChipID());

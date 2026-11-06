@@ -408,7 +408,8 @@ static void local_input_scanner() {
         String jobTime = String(millis());
         coreJobs[jobTime]["type"] = "https";
         coreJobs[jobTime]["url"] = "https://" + homebaseIP +
-          "/watch/switch?room=1&switch=" + String(in.pin) + "&state=" + state;
+          "/watch/switch?room=1&switch=" + String(in.pin) + "&state=" + state +
+          "&chip_id=" + String(rp2040.getChipID());
         coreJobs[jobTime]["response"] = "switch";
       }
       config_dirty = true;
@@ -440,7 +441,8 @@ static void local_input_scanner() {
           String jobTime = String(millis());
           coreJobs[jobTime]["type"] = "https";
           coreJobs[jobTime]["url"] = "https://" + homebaseIP +
-            "/watch/button?room=1&button=" + String(in.pin) + "&toggle=" + toggle;
+            "/watch/button?room=1&button=" + String(in.pin) + "&toggle=" + toggle +
+            "&chip_id=" + String(rp2040.getChipID());
           coreJobs[jobTime]["response"] = "button";
         }
         config_dirty = true;
@@ -659,19 +661,26 @@ void run_local_jobs() {
         String uuid = config["jobs"][jobKeys[i]]["uuid"];
 
         int pin = spin.toInt();
-        if (component == "relay") {
-          state = relay_toggle(pin,state,false,5);
-          config_dirty = true;
-          config_dirty_at = millis();
+        String cid = command_id(uuid, component, "", state, ts);
+        // A delay pushed this job after another road already carried the same
+        // command; it has already been applied, so do not click again.
+        if (!command_redundant(cid, pin, component, state, ts)) {
+          if (component == "relay") {
+            state = relay_toggle(pin,state,false,5);
+            config_dirty = true;
+            config_dirty_at = millis();
+          }
+          else if (component == "led") {
+            state = led_toggle(pin,state,false);
+            config_dirty = true;
+            config_dirty_at = millis();
+          }
+          else if (component == "servo") {
+            state = servo_toggle(pin,state);
+          }
         }
-        else if (component == "led") {
-          state = led_toggle(pin,state,false);
-          config_dirty = true;
-          config_dirty_at = millis();
-        }
-        else if (component == "servo") {
-          state = servo_toggle(pin,state);
-        }
+        command_mark_pin(pin, ts);
+        command_remember(cid, component, "", ts);
 
         config["jobs"][uuid] = undefined;
       }

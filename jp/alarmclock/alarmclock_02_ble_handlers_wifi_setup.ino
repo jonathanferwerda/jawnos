@@ -23,7 +23,8 @@ static void ble_handle_json(String json) {
     for (int i = 0; i < k.length(); i++) { ble_apply_app_state(String(k[i]), jstr(d[k[i]])); }
   }
   else if (type == "toggle") {
-    ble_apply_app_state(jstr(msg["data"]["app"]), jstr(msg["data"]["state"]));
+    JSONVar d = msg["data"];
+    ble_apply_app_state(jstr(d["app"]), jstr(d["state"]), jstr(d["uuid"]), jint64(d["timestamp"]));
   }
   else if (type == "set") { ble_apply_set(msg["data"]); }
   else if (type == "wifi") { ble_apply_wifi(msg["data"]); }
@@ -448,7 +449,16 @@ void jawn_setup() {
     String when = server.arg("when");
     String appt_uuid = server.arg("appt_uuid");
     if (when == "now") {
-      state = led_toggle(pin,state);
+      // The manager's HTTP request and its BLE fallback can both deliver this
+      // one command; the second must not click the pin again.
+      int64_t ms = (int64_t)strtoll(server.arg("timestamp").c_str(), nullptr, 10);
+      String comp = (component != "") ? component : String("led");
+      String cid = command_id(uuid, comp, "", state, ms);
+      if (!command_redundant(cid, pin, comp, state, ms)) {
+        state = led_toggle(pin,state);
+      }
+      command_mark_pin(pin, ms);
+      command_remember(cid, comp, "", ms);
     }
     else {
       push_job(component,pin,state,timestamp,uuid, appt_uuid);
@@ -474,7 +484,14 @@ void jawn_setup() {
     String uuid = server.arg("uuid");
     String appt_uuid = server.arg("appt_uuid");
     if (when == "now") {
-      state = relay_toggle(pin,state,true,4);
+      int64_t ms = (int64_t)strtoll(server.arg("timestamp").c_str(), nullptr, 10);
+      String comp = (component != "") ? component : String("relay");
+      String cid = command_id(uuid, comp, "", state, ms);
+      if (!command_redundant(cid, pin, comp, state, ms)) {
+        state = relay_toggle(pin,state,true,4);
+      }
+      command_mark_pin(pin, ms);
+      command_remember(cid, comp, "", ms);
     }
     else {
       push_job(component,pin,state,timestamp,uuid, appt_uuid);
@@ -498,7 +515,14 @@ void jawn_setup() {
     String appt_uuid = server.arg("appt_uuid");
     Serial.println(component + " " + spin + " " + state);
     if (when == "now") {
-      state = servo_toggle(pin,state);
+      int64_t ms = (int64_t)strtoll(server.arg("timestamp").c_str(), nullptr, 10);
+      String comp = (component != "") ? component : String("servo");
+      String cid = command_id(uuid, comp, "", state, ms);
+      if (!command_redundant(cid, pin, comp, state, ms)) {
+        state = servo_toggle(pin,state);
+      }
+      command_mark_pin(pin, ms);
+      command_remember(cid, comp, "", ms);
     }
     else {
       push_job(component,pin,state,timestamp,uuid, appt_uuid);

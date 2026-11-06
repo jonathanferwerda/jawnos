@@ -239,7 +239,9 @@ sub embedded_toggle($data) {
 		# glyph here too rather than the hand-drawn fallback
 		my $toggle_src = &subs::icon_path($save_state, '/images/decipherable/' . $save_state . '.png');
 		&Websocket::send('tab', { console => '$(\'.appointment[app="' . $app . '"]\').find(\'.enabler[type="toggle"\').attr(\'status\',\'' .$save_state . '\').attr(\'src\', \'' . $toggle_src . '\');' });
-		&subs::setting_setter({ app => $app, setting => 'toggle', value => $save_state, source => 'toggle' }) if $data->{'counted'} == 0 || !$data->{'counted'};
+		# The direct command already drove the board we are addressing, so the
+		# toggle fan-out must not echo that same state back to it over BLE.
+		&subs::setting_setter({ app => $app, setting => 'toggle', value => $save_state, source => 'toggle', source_chip_id => $chip_id }) if $data->{'counted'} == 0 || !$data->{'counted'};
 	}
 
 	# A board on the bridge - or one with no LAN address at all - takes the

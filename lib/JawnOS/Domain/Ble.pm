@@ -656,13 +656,19 @@ sub watch_toggle_pusher {
 			}
 		}
 		return unless scalar @targets;
+		# The board keeps a small manifest of the commands it has already run: the
+		# same movement can also arrive as a fast HTTP relay (or a BLE `set`), and a
+		# second application clicks the relay again. One id for every target of this
+		# movement, plus its time, lets a board drop the copy it already ran.
+		my $push_id = &subs::random_string_creator(21);
+		my $push_at = &subs::rightNow();
 		foreach my $t ( @targets ) {
 			$log->info('toggle push send: ' . $t->{'chip_id'} . ' (' . $t->{'edt'} . ') ' . $app . ' -> ' . $state);
 			&subs::bluetooth_sender({
 				intent => 'com.jawn.president.bt.connect',
 				chip_id => $t->{'chip_id'},
 				edt => $t->{'edt'},
-				message => { type => 'toggle', data => { app => $app, state => $state } }
+				message => { type => 'toggle', data => { app => $app, state => $state, uuid => $push_id, timestamp => $push_at } }
 			});
 		}
 	}, { name => 'embedded toggle push', fork => 1 });
