@@ -642,35 +642,47 @@ sub weather_place_name_remember($lat, $lon, $name) {
 # Ask the provider what the place is called. Environment Canada has a cheap city
 # search, so that is the page-render path; the other services only name the place
 # in a full forecast, which `fetch` allows for a save the person is waiting on.
+sub weather_place_misses() {
+	my $raw = eval { decode_json(&subs::setting_grabber({ app => 'weather', setting => 'place_misses' }) // '') };
+	return ref $raw eq 'HASH' ? $raw : {};
+}
+
+sub weather_place_miss_remember($lat, $lon) {
+	return 0 unless defined $lat && defined $lon;
+	my $misses = &weather_place_misses();
+	$misses->{ sprintf('%.2f,%.2f', $lat, $lon) } = &rightNow();
+	&subs::setting_setter({ app => 'weather', setting => 'place_misses', value => encode_json $misses });
+	return 1;
+}
+
 sub weather_place_lookup($lat, $lon, $opts = {}) {
 	return '' unless defined $lat && defined $lon;
 	my $known = &weather_place_name($lat, $lon);
 	return $known if length $known;
-	# The page-render path must not hang on a missing network. One miss buys six
-	# hours of quiet; a save the person waits on may always try.
+	# A place that failed is not asked again for six hours, so the page-render
+	# path never waits twice. The miss is per place: a saved point in a country
+	# without a cheap name lookup must not close the door on the others.
 	unless ($opts->{'fetch'}) {
-		my $miss = eval { &subs::setting_grabber({ app => 'weather', setting => 'place_lookup_miss' }) } || 0;
+		my $misses = &weather_place_misses();
+		my $miss = $misses->{ sprintf('%.2f,%.2f', $lat, $lon) } || 0;
 		return '' if $miss && $miss > &rightNow() - 6 * 3600 * 1000;
 	}
 	my $name = '';
 	my $provider = eval { &subs::weather_provider_for($lat, $lon) } || '';
 	if ($provider eq 'ec') {
-		my $ua = Mojo::UserAgent->new(connect_timeout => 3, inactivity_timeout => 4, request_timeout => 5);
+		my $ua = Mojo::UserAgent->new(connect_timeout => 4, inactivity_timeout => 6, request_timeout => 8);
 		$ua->insecure(1);
 		my $city = eval { &subs::weather_ec_find_city($lat, $lon, $ua) };
 		$name = ($city && $city->{'name'}) ? $city->{'name'} : '';
+		$log->info("weather place: no city for $lat,$lon") if $log && !length $name;
+		&weather_place_miss_remember($lat, $lon) unless length $name;
 	}
 	elsif ($opts->{'fetch'}) {
 		my $weather = eval { &subs::weather_fetch($lat, $lon) };
 		$name = ($weather && !$weather->{'error'}) ? ($weather->{'location_name'} // '') : '';
 	}
 	$name =~ s/^\s+|\s+$//g;
-	if (length $name) {
-		&weather_place_name_remember($lat, $lon, $name);
-	}
-	elsif (!$opts->{'fetch'}) {
-		eval { &subs::setting_setter({ app => 'weather', setting => 'place_lookup_miss', value => &rightNow() }) };
-	}
+	&weather_place_name_remember($lat, $lon, $name) if length $name;
 	return $name;
 }
 

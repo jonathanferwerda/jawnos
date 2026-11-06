@@ -736,6 +736,27 @@ is(subs::weather_name_is_coordinate(''), 0, 'an empty name is not a coordinate e
 }
 
 {
+	my %store;
+	no warnings 'redefine';
+	local *subs::setting_grabber = sub {
+		my ($q) = @_;
+		return $store{ 'setting|' . $q->{'app'} . '|' . $q->{'setting'} };
+	};
+	local *subs::setting_setter = sub {
+		my ($q) = @_;
+		$store{ 'setting|' . $q->{'app'} . '|' . $q->{'setting'} } = $q->{'value'};
+		return 1;
+	};
+	local *subs::weather_provider_for = sub { 'openmeteo' };
+	local *subs::rightNow = sub { 1000000 };
+	is(subs::weather_place_lookup(38.74, 0.22), '', 'a provider with no cheap name answers empty');
+	is_deeply(subs::weather_place_misses(), {}, 'and does not mark the place as failed');
+	is(subs::weather_place_miss_remember(38.74, 0.22), 1, 'a failed lookup is remembered for that place');
+	is(subs::weather_place_lookup(38.74, 0.22), '', 'so the same place is not asked again');
+	is_deeply([ sort keys %{ subs::weather_place_misses() } ], ['38.74,0.22'], 'and another place is still tried');
+}
+
+{
 	no warnings 'redefine';
 	local *subs::signatorial_designer = sub { 'phone' };
 	local *subs::setting_grabber = sub { return undef };
