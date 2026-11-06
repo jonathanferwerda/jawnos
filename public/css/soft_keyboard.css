@@ -71,6 +71,18 @@
    dock is closed. */
 #jawn_soft_keyboard.soft_kb_sticky { z-index: 100000; }
 
+/* The dock itself can take focus so a press returns the keypad to it; the
+   browser's default box is not the ring the calculator wears. */
+#jawn_soft_keyboard:focus { outline: none; }
+
+/* While the calculator owns the keypad - a press on it or a focused key - the
+   panel wears the accent ring, so the next hardware key's home is in sight. A
+   field being typed in has the focus instead, so the ring is off. */
+#jawn_soft_keyboard.soft_kb_calc.soft_kb_floating:focus-within {
+	outline: 3px solid var(--accent, #3b7ddd);
+	outline-offset: 2px;
+}
+
 .soft_kb[hidden] {
 	display: none;
 }

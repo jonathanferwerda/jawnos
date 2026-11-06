@@ -105,7 +105,7 @@ like($help, qr/instead of putting the dock away/,
 	'the keyboard topic says a real key no longer puts the dock away');
 like($help, qr/the numeric keypad\\'s digits/,
 	'and names the numeric keypad it feeds');
-like($help, qr/press the calculator\\'s display or frame to take them back/,
+like($help, qr/press the calculator\\'s display or frame/,
 	'and says how to take the keypad back after typing in a field');
 
 # --- pressing the calculator takes the keypad back ---------------------------
@@ -122,6 +122,16 @@ like($kb, qr/if \(key == 'Enter' && e\.target && e\.target\.closest && e\.target
 like($kb, qr/if \(on_dock\) \{ return; \}/,
 	'a phone key on the keys does not dismiss them');
 
+
+# --- the calculator shows where the next hardware key will go ----------------
+like($kb, qr/dock\.toggleClass\('soft_kb_calc', mode == 'calc'\);/,
+	'the dock marks the calculator mode');
+like($css, qr/#jawn_soft_keyboard:focus \{ outline: none; \}/,
+	'the dock does not draw the browser\'s default focus box');
+like($css, qr/#jawn_soft_keyboard\.soft_kb_calc\.soft_kb_floating:focus-within \{[^}]*outline: 3px solid var\(--accent/,
+	'the calculator wears a focus ring while it owns the keypad');
+like($help, qr/wears the accent ring while it owns the keypad/,
+	'and the keyboard topic says so');
 
 # --- the bar can actually start a drag ---------------------------------------
 like($kb, qr/if \(\$\(e\.target\)\.closest\('\.soft_kb_bar, button, \.soft_kb_convert_rows'\)\.length\) \{ return; \}/,

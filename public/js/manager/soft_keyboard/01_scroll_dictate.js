@@ -29,6 +29,7 @@ function softKbModeSet(mode) {
 	if (jawnSoftNumeric && mode == 'letters') { mode = 'calc'; }
 	jawnSoftMode = mode;
 	var dock = $('#jawn_soft_keyboard');
+	dock.toggleClass('soft_kb_calc', mode == 'calc');
 	dock.find('.soft_kb_mode').removeClass('active').filter('[data-kb_mode="' + mode + '"]').addClass('active');
 	dock.find('.soft_kb_panel').prop('hidden', true).filter('[data-kb_panel="' + mode + '"]').prop('hidden', false);
 	dock.find('.soft_kb_mode[data-kb_mode="letters"]').prop('hidden', jawnSoftNumeric);
