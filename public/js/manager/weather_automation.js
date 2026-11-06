@@ -247,6 +247,10 @@ function weatherAutomationCheck() {
 				$w.find('#weather_automation_status').text(jawnosT('No recent GPS fix for this device.'));
 				return;
 			}
+			if (response.leader === 0) {
+				weatherAutomationLoad(jawnosT('Recorded here. The house server runs the automations.'));
+				return;
+			}
 			var text = response.condition ? weatherAutomationWords(response.condition) : '';
 			var matched = response.matched || [];
 			var message;

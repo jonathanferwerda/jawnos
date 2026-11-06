@@ -1,4 +1,4 @@
-# tests-for: lib/JawnOS/Domain/Weather.pm lib/JawnOS/Domain/WeatherHistory.pm lib/JawnOS/Domain/WeatherAutomation.pm lib/JawnOS/Controller/manager_weather.pm lib/JawnOS/Routes/manager_weather.pm lib/JawnOS/Manager/Core1_tables_hooks.pm templates/apps/weather.html.ep templates/apps/weather/automations.html.ep templates/apps/weather/map.html.ep public/js/manager/weather.js public/js/manager/weather_history.js public/js/manager/weather_automation.js public/js/manager/weather_map.js public/js/manager/mapengine/01_engine.js
+# tests-for: lib/JawnOS/Domain/Weather.pm lib/JawnOS/Domain/WeatherHistory.pm lib/JawnOS/Domain/WeatherAutomation.pm lib/JawnOS/Controller/manager_weather.pm lib/JawnOS/Routes/manager_weather.pm lib/JawnOS/Manager/Core1_tables_hooks.pm lib/JawnOS/Manager/Part15.pm templates/apps/weather.html.ep templates/apps/weather/automations.html.ep templates/apps/weather/map.html.ep public/js/manager/weather.js public/js/manager/weather_history.js public/js/manager/weather_automation.js public/js/manager/weather_map.js public/js/manager/mapengine/01_engine.js
 # covers:    The Weather app's pure parsers for Environment Canada and Open-Meteo,
 #            the country-to-provider choice, and the app's route/menu/help wiring.
 
@@ -20,6 +20,7 @@ require "$root/lib/JawnOS/Domain/Weather.pm";
 require "$root/lib/JawnOS/Domain/WeatherHistory.pm";
 require "$root/lib/JawnOS/Domain/Format.pm";
 require "$root/lib/JawnOS/Domain/WeatherAutomation.pm";
+require "$root/lib/JawnOS/Manager/Part15.pm";
 
 # The domain layer reads its user-facing labels through subs::ui, which the real
 # manager answers from language.pl. This test only needs the English it passes in.
@@ -400,6 +401,174 @@ is(scalar @{ subs::weather_automation_matches($rules, 'Partly Cloudy') }, 0, 'a 
 	is(subs::weather_observe_tick()->{'skipped'}, 'held', 'the lock holds a second machine');
 	delete $store{'weather|observe|lock'};
 	is(subs::weather_observe_tick()->{'ok'}, 1, 'the lock expires and the pass runs');
+}
+
+# --- one actor for the house, however many screens record a reading ----------
+{
+	my %store;
+	my $now = 1794020000000;
+	my @written;
+	my @evaluated;
+	no warnings 'redefine';
+	local *subs::rightNow = sub { $now };
+	local *subs::weather_observe_leader = sub { 0 };
+	local *subs::weather_observe_prepare = sub {
+		return { condition => { type => 'text', value => 'rain', cm => [
+			{ uuid => 'r1', match => 'rain', app => 'raining', action => 'start' },
+		] } };
+	};
+	local *subs::setting_grabber = sub {
+		my ($q) = @_;
+		return Mojo::JSON::encode_json([{ uuid => 'm1', when => [{ measure => 'wind_gust', op => '>', value => 20 }], for_ms => 0, action => 'start', app => 'gusty' }])
+			if $q->{'app'} eq 'weather_station' && $q->{'setting'} eq 'weather_rules';
+		return $store{ 'setting|' . $q->{'app'} . '|' . $q->{'setting'} };
+	};
+	local *subs::setting_setter = sub {
+		my ($q) = @_;
+		$store{ 'setting|' . $q->{'app'} . '|' . $q->{'setting'} } = $q->{'value'};
+		return 1;
+	};
+	local *subs::cache_get = sub { {} };
+	local *subs::cache_set = sub { 1 };
+	local *subs::db_query = sub { bless { rows => [] }, 'FakeResult' };
+	local *subs::db_select = sub { bless { rows => [] }, 'FakeResult' };
+	local *subs::controller_builder = sub { bless {}, 'FakeController' };
+	local *Manager::appt_measure_writer = sub {
+		my ($c, $data) = @_;
+		push @written, $data;
+		return 'measure-uuid';
+	};
+	local *subs::weather_measure_rule_evaluate = sub {
+		my (@args) = @_;
+		push @evaluated, \@args;
+		return [];
+	};
+	my $result = subs::weather_observe_record({ current => { condition => 'Rain' } }, { force => 1, location => 'dev:phone' });
+	is($result->{'ok'}, 1, 'a machine that is not the house server still records the reading');
+	is($result->{'leader'}, 0, 'and says the house server is the actor');
+	ok((grep { $_->{'skip_actions'} } @written), 'the measure writer is told not to run the rules there');
+	is(scalar @evaluated, 0, 'and the measurement rules are not evaluated there');
+}
+
+{
+	my %store;
+	my $now = 1794020000000;
+	my @written;
+	my @evaluated;
+	no warnings 'redefine';
+	local *subs::rightNow = sub { $now };
+	local *subs::weather_observe_leader = sub { 1 };
+	local *subs::weather_observe_prepare = sub {
+		return { condition => { type => 'text', value => 'rain', cm => [
+			{ uuid => 'r1', match => 'rain', app => 'raining', action => 'start' },
+		] } };
+	};
+	local *subs::setting_grabber = sub {
+		my ($q) = @_;
+		return Mojo::JSON::encode_json([{ uuid => 'm1', when => [{ measure => 'wind_gust', op => '>', value => 20 }], for_ms => 0, action => 'start', app => 'gusty' }])
+			if $q->{'app'} eq 'weather_station' && $q->{'setting'} eq 'weather_rules';
+		return $store{ 'setting|' . $q->{'app'} . '|' . $q->{'setting'} };
+	};
+	local *subs::setting_setter = sub {
+		my ($q) = @_;
+		$store{ 'setting|' . $q->{'app'} . '|' . $q->{'setting'} } = $q->{'value'};
+		return 1;
+	};
+	local *subs::cache_get = sub { {} };
+	local *subs::cache_set = sub { 1 };
+	local *subs::db_query = sub { bless { rows => [] }, 'FakeResult' };
+	local *subs::db_select = sub { bless { rows => [ { warranty => '2109000000000' } ] }, 'FakeResult' };
+	local *subs::controller_builder = sub { bless {}, 'FakeController' };
+	local *Manager::appt_measure_writer = sub {
+		my ($c, $data) = @_;
+		push @written, $data;
+		return 'measure-uuid';
+	};
+	local *subs::weather_measure_rule_evaluate = sub {
+		my (@args) = @_;
+		push @evaluated, \@args;
+		return [];
+	};
+	my $result = subs::weather_observe_record({ current => { condition => 'Rain' } }, { force => 1, location => 'dev:phone' });
+	is($result->{'leader'}, 1, 'the house server is the actor');
+	ok(!(grep { $_->{'skip_actions'} } @written), 'so the measure writer runs the rules');
+	is(scalar @evaluated, 1, 'and the measurement rules are evaluated');
+	is($evaluated[0][5], '2109000000000', 'with the reading warranty to give the app it starts');
+}
+
+# --- one start for the house, and it carries the reading's warranty ----------
+{
+	my %store;
+	my @appointments;
+	my $now = 1794020000000;
+	no warnings 'redefine';
+	local *subs::rightNow = sub { $now };
+	local *subs::setting_grabber = sub {
+		my ($q) = @_;
+		return $store{ 'setting|' . $q->{'app'} . '|' . $q->{'setting'} };
+	};
+	local *subs::setting_setter = sub {
+		my ($q) = @_;
+		$store{ 'setting|' . $q->{'app'} . '|' . $q->{'setting'} } = $q->{'value'};
+		return 1;
+	};
+	local *Manager::appointment_writer = sub {
+		my ($c, $data) = @_;
+		push @appointments, $data;
+		return $data;
+	};
+	local *subs::open_session_uuid = sub { '' };
+	is(subs::weather_rule_app_switch('raining', 1, 'appt-1', $now, '2109000000000'), 1, 'a measurement rule starts its app');
+	is($store{'setting|raining|toggle'}, 'on', 'and switches it on');
+	is($appointments[0]{'warranty'}, '2109000000000', 'the start carries the reading warranty');
+
+	$store{'setting|raining|toggle'} = 'off';
+	@appointments = ();
+	local *subs::open_session_uuid = sub { 'open-uuid' };
+	is(subs::weather_rule_app_switch('raining', 1, 'appt-2', $now, ''), 1, 'a second reading reports the app as on');
+	is($store{'setting|raining|toggle'}, 'on', 'and repairs the toggle');
+	is(scalar @appointments, 0, 'but does not write a second start');
+}
+
+{
+	my %store = ( 'setting|raining|toggle' => 'off' );
+	my @appointments;
+	my $now = 1794020000000;
+	no warnings 'redefine';
+	local *subs::setting_grabber = sub {
+		my ($q) = @_;
+		return $store{ 'setting|' . $q->{'app'} . '|' . $q->{'setting'} };
+	};
+	local *subs::setting_setter = sub {
+		my ($q) = @_;
+		$store{ 'setting|' . $q->{'app'} . '|' . $q->{'setting'} } = $q->{'value'};
+		return 1;
+	};
+	local *Manager::appointment_writer = sub {
+		my ($c, $data) = @_;
+		push @appointments, $data;
+		return $data;
+	};
+	local *subs::open_session_uuid = sub { '' };
+	my $rule = { type => 'match', match => 'rain', app => 'raining', action => 'start' };
+	Manager::appt_measure_action({
+		appt_uuid => 'appt-1', appt_measure => { cm => [ $rule ] },
+		value => 'light_rain', 'state' => 'light_rain', measure => 'condition',
+		timestamp => $now, location => 'dev:phone', warranty => '2109000000000',
+	});
+	is($store{'setting|raining|toggle'}, 'on', 'a matching condition starts its app');
+	is($appointments[0]{'warranty'}, '2109000000000', 'and the appointment carries the reading warranty');
+
+	@appointments = ();
+	$store{'setting|raining|toggle'} = 'off';
+	local *subs::open_session_uuid = sub { 'open-uuid' };
+	Manager::appt_measure_action({
+		appt_uuid => 'appt-2', appt_measure => { cm => [ $rule ] },
+		value => 'light_rain', 'state' => 'light_rain', measure => 'condition',
+		timestamp => $now, location => 'dev:phone', warranty => '2109000000000',
+	});
+	is(scalar @appointments, 0, 'an app that is already running is not started again');
+	is($store{'setting|raining|toggle'}, 'on', 'the toggle follows the running app');
 }
 
 # --- the new helpers ---------------------------------------------------------

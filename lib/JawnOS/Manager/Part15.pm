@@ -127,6 +127,7 @@ sub appt_measure_writer($c,$data) {
 				$uuid = $appt->{'uuid'};
 			}
 		}
+		my $source_warranty = '';
 		if ($uuid) {
 			foreach my $am ( keys %{$app_measure} ) {
 				$app_measure->{$am} = $appt_measure->{$am}->{'value'};
@@ -135,6 +136,7 @@ sub appt_measure_writer($c,$data) {
 			$app_measure->{'ts'} = $timestamp || &subs::rightNow();
 			$app_measure->{'location'} = $location if defined $location && length $location;
 			my $ca = &subs::db_select('appointments', undef, { uuid => $uuid, app => $app })->hashes->[0];
+			$source_warranty = $ca->{'warranty'} if $ca && defined $ca->{'warranty'} && length $ca->{'warranty'};
 			my $car = eval { return decode_json $ca->{'measures'} } || [];
 			push @{$car}, $app_measure;
 			my $jcar = encode_json $car;
@@ -157,6 +159,7 @@ sub appt_measure_writer($c,$data) {
 			};
 			my $appt = &appointment_writer($c,$data);
 			$uuid = $appt->{'uuid'};
+			$source_warranty = $appt->{'warranty'} if $appt && defined $appt->{'warranty'} && length $appt->{'warranty'};
 		}
 		my $state = $app_measure->{$measure};
 		if ($appt_measure->{$measure}->{'min'} && $appt_measure->{$measure}->{'max'}) {
@@ -170,7 +173,8 @@ sub appt_measure_writer($c,$data) {
 		}
 		my $adata = { appt_uuid => $uuid, app => $app, type => $appt_measure->{$measure}->{'type'}, 'state' => $state, measurement => $app_measure->{$measure}, measure => $measure, timestamp => $timestamp, remote_address => $remote_address, location => $location };
 		&subs::intelligent_automation_toggle($adata);
-		&appt_measure_action({ appt_uuid => $uuid, uuid => $app_measure->{'uuid'}, appt_measure => $appt_measure->{$measure}, value => $value, 'state' => $state, measure => $measure, timestamp => $timestamp, location => $location });
+		&appt_measure_action({ appt_uuid => $uuid, uuid => $app_measure->{'uuid'}, appt_measure => $appt_measure->{$measure}, value => $value, 'state' => $state, measure => $measure, timestamp => $timestamp, location => $location, warranty => $source_warranty })
+			unless $data->{'skip_actions'};
 		&Websocket::send('tab', { console => &Websocket::console_command('appointmentDetailGrabber', $app, $uuid)});
 		&Websocket::send('tab', { console => &Websocket::console_command('continentRecord', { uuid => $uuid, app => $app, purpose => 'app', timestamp => $timestamp, navigation => 'once' })});
 		&global_appt_measure_writer({
@@ -199,6 +203,7 @@ sub global_appt_measure_writer($data) {
 sub appt_measure_action($data) {
 	my $amcm = $data->{'appt_measure'}->{'cm'} || [];
 	my $location = $data->{'location'} // '';
+	my $warranty = $data->{'warranty'} // '';
 	foreach my $cm ( @{$amcm} ) {
 #		next unless $cm->{'match'} && $cm->{'action'};
 		# A condition rule can name the place it is about. An empty rule location is
@@ -252,11 +257,15 @@ sub appt_measure_action($data) {
 				type => $cm->{'action'},
 				source_uuid => $data->{'appt_uuid'},
 				subtype => 'measure',
+				(length $warranty ? (warranty => $warranty) : ()),
 				uuid => $data->{'appt_uuid'} . '-' . $data->{'timestamp'} . '-' . md5_sum $cm->{'app'} . $data->{'timestamp'} . $cm->{'action'}
 			};
 			if ($tog eq 'off') {
 				&subs::setting_setter({ app => $cm->{'app'}, setting => 'toggle', value => 'on', timestamp => $data->{'timestamp'} });
-				&appointment_writer(undef, $awdata);
+				# The toggle is per machine, but the open session is the house's.
+				# A second reading must not start what is already running.
+				my $open = eval { &subs::open_session_uuid($cm->{'app'}) } || '';
+				&appointment_writer(undef, $awdata) unless $open;
 			}
 		}
 		else {
@@ -266,6 +275,7 @@ sub appt_measure_action($data) {
 					type => 'stop',
 					source_uuid => $data->{'appt_uuid'},
 					subtype => 'measure',
+					(length $warranty ? (warranty => $warranty) : ()),
 				};
 				if ($tog eq 'on') {
 					&appointment_writer(undef, $awdata);

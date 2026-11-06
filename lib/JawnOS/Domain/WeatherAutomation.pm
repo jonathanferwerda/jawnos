@@ -390,23 +390,31 @@ sub weather_observation_series($app, $from, $to, $location = '') {
 }
 
 # ---- acting on a measurement rule ------------------------------------------
-sub weather_rule_app_switch($app, $on, $source_uuid, $timestamp) {
+sub weather_rule_app_switch($app, $on, $source_uuid, $timestamp, $warranty = '') {
 	return 0 unless defined $app && length $app;
 	$timestamp ||= &rightNow();
+	$warranty = '' unless defined $warranty;
 	my $toggle = &subs::setting_grabber({ app => $app, setting => 'toggle' });
 	$toggle = 'off' unless defined $toggle && length $toggle;
 	if ($on && $toggle ne 'on') {
 		&subs::setting_setter({ app => $app, setting => 'toggle', value => 'on', timestamp => $timestamp });
-		eval {
-			&Manager::appointment_writer(undef, {
-				app => $app,
-				timestamp => $timestamp,
-				type => 'start',
-				source_uuid => $source_uuid,
-				subtype => 'measure',
-			});
-		};
-		$log->warn('weather rule: could not start ' . $app . ': ' . $@) if $log && $@;
+		# The toggle is a setting per machine, but the appointments are the house's
+		# one record. A second weather screen must not start an app that is already
+		# running here, so a start also waits for no open session for the app.
+		my $open = eval { &subs::open_session_uuid($app) } || '';
+		unless ($open) {
+			eval {
+				&Manager::appointment_writer(undef, {
+					app => $app,
+					timestamp => $timestamp,
+					type => 'start',
+					source_uuid => $source_uuid,
+					subtype => 'measure',
+					(length $warranty ? (warranty => $warranty) : ()),
+				});
+			};
+			$log->warn('weather rule: could not start ' . $app . ': ' . $@) if $log && $@;
+		}
 		return 1;
 	}
 	if (!$on && $toggle eq 'on') {
@@ -417,6 +425,7 @@ sub weather_rule_app_switch($app, $on, $source_uuid, $timestamp) {
 				type => 'stop',
 				source_uuid => $source_uuid,
 				subtype => 'measure',
+				(length $warranty ? (warranty => $warranty) : ()),
 			});
 		};
 		&subs::setting_setter({ app => $app, setting => 'toggle', value => 'off', timestamp => $timestamp });
@@ -429,7 +438,7 @@ sub weather_rule_app_switch($app, $on, $source_uuid, $timestamp) {
 # A rule acts on its rising edge. A start rule also stops its app on the falling
 # edge, which is what makes "rain -> raining" start and stop; a run rule fires
 # once and waits for the condition to clear before it can fire again.
-sub weather_measure_rule_evaluate($values, $series, $uuid, $now, $location = '') {
+sub weather_measure_rule_evaluate($values, $series, $uuid, $now, $location = '', $warranty = '') {
 	my $rules = &weather_measure_rules();
 	return [] unless @{$rules};
 	my $want_location = $location // '';
@@ -452,14 +461,14 @@ sub weather_measure_rule_evaluate($values, $series, $uuid, $now, $location = '')
 				push @fired, { uuid => $id, name => $rule->{'name'} || '', action => 'run', ok => $ok ? 1 : 0 };
 			}
 			elsif ($action eq 'stop') {
-				push @fired, { uuid => $id, name => $rule->{'name'} || '', action => 'stop', app => $rule->{'app'}, ok => &weather_rule_app_switch($rule->{'app'}, 0, $uuid, $now) };
+				push @fired, { uuid => $id, name => $rule->{'name'} || '', action => 'stop', app => $rule->{'app'}, ok => &weather_rule_app_switch($rule->{'app'}, 0, $uuid, $now, $warranty) };
 			}
 			else {
-				push @fired, { uuid => $id, name => $rule->{'name'} || '', action => 'start', app => $rule->{'app'}, ok => &weather_rule_app_switch($rule->{'app'}, 1, $uuid, $now) };
+				push @fired, { uuid => $id, name => $rule->{'name'} || '', action => 'start', app => $rule->{'app'}, ok => &weather_rule_app_switch($rule->{'app'}, 1, $uuid, $now, $warranty) };
 			}
 		}
 		elsif (!$matched && $previous && $action eq 'start') {
-			push @fired, { uuid => $id, name => $rule->{'name'} || '', action => 'stop', app => $rule->{'app'}, ok => &weather_rule_app_switch($rule->{'app'}, 0, $uuid, $now) };
+			push @fired, { uuid => $id, name => $rule->{'name'} || '', action => 'stop', app => $rule->{'app'}, ok => &weather_rule_app_switch($rule->{'app'}, 0, $uuid, $now, $warranty) };
 		}
 		$state->{$id} = { matched => $matched, at => $now };
 	}
@@ -916,6 +925,10 @@ sub weather_observe_record($weather, $opts) {
 		at => $last->{'at'},
 	} unless $opts->{'force'} || $changed || $due;
 	my $c = &subs::controller_builder();
+	# One house, one actor. The toggle is a setting per machine, so every screen
+	# that refreshed the weather started its own copy of the app; the house server
+	# is the one that acts, and the other machines still keep the reading they saw.
+	my $leader = &weather_observe_leader() ? 1 : 0;
 	my $uuid;
 	my @order = qw(condition temperature feels_like humidity wind wind_gust wind_direction pressure visibility dew_point uv);
 	foreach my $measure (@order) {
@@ -928,6 +941,7 @@ sub weather_observe_record($weather, $opts) {
 				timestamp => $now,
 				location => $location,
 				(defined $uuid ? (uuid => $uuid) : ()),
+				skip_actions => ($leader ? 0 : 1),
 			});
 		};
 		if (!$written) {
@@ -938,6 +952,13 @@ sub weather_observe_record($weather, $opts) {
 	}
 	return { error => &subs::ui('The observation was not recorded.'), condition => $condition }
 		unless $uuid;
+	# The appointment an automation writes carries the warranty of the observation
+	# that woke it, so the house's record reads as one event with one warranty.
+	my $warranty = '';
+	{
+		my $source = eval { &subs::db_select('appointments', ['warranty'], { uuid => $uuid })->hashes->[0] };
+		$warranty = $source->{'warranty'} if $source && defined $source->{'warranty'} && length $source->{'warranty'};
+	}
 	my $series = [];
 	if (@{$measure_rules}) {
 		my $longest = 0;
@@ -949,7 +970,7 @@ sub weather_observe_record($weather, $opts) {
 		push @{$series}, { ts => $now, values => { %{$values} } }
 			unless @{$series} && ($series->[-1]{'ts'} || 0) >= $now - 60_000;
 	}
-	my $fired = &weather_measure_rule_evaluate($values, $series, $uuid, $now, $location);
+	my $fired = $leader ? &weather_measure_rule_evaluate($values, $series, $uuid, $now, $location, $warranty) : [];
 	my $matched = &weather_automation_matches($condition_rules, $condition, $location);
 	&cache_set({ app => 'weather', context => 'observe', subcontext => 'last', warranty => '-1d' }, {
 		signature => $signature,
@@ -970,6 +991,7 @@ sub weather_observe_record($weather, $opts) {
 		location => $location,
 		at => $now,
 		uuid => $uuid,
+		leader => $leader,
 	};
 }
 
