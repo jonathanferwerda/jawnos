@@ -682,6 +682,11 @@ require JawnOS::Sco::Reconnect;
 		'it looks first, then asks');
 	is($r->tick(1010), 'connected', 'and the next look finds the link up');
 	is(scalar(grep { ($_->[0] || '') eq 'connect' } @cmds), 1, 'so it is never asked twice');
+	# walking back to the table must not wait five minutes for the next look
+	my $far = JawnOS::Sco::Reconnect->new(peer => 'AA:BB:CC:DD:EE:FF', run => sub { "Failed to connect\n" });
+	$far->tick(1000);
+	for my $at (1030, 1090, 1150, 1210, 1270, 1330) { $far->tick($at); }
+	ok($far->{'backoff'} <= 60, 'the retry never waits more than a minute');
 }
 {
 	my $up = JawnOS::Sco::Reconnect->new(peer => 'AA:BB:CC:DD:EE:FF', run => sub { "Connected: yes\n" });

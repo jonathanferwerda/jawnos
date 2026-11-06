@@ -18,7 +18,8 @@ sub new {
 		peer => $args{'peer'} || '',
 		run => $args{'run'} || \&bluetoothctl,
 		wait => $args{'wait'} || 30,
-		max_wait => $args{'max_wait'} || 300,
+		# a minute is the ceiling: walking back to the table should not wait five
+		max_wait => $args{'max_wait'} || 60,
 		last => 0,
 		backoff => 0,
 		tries => 0,
