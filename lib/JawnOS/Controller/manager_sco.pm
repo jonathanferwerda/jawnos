@@ -131,9 +131,19 @@ sub action_52005 {
 		$c->rendered(404);
 		return;
 	}
-	my $file = &subs::home('~/.president/sco') . '/' . $name;
+	my $file = &subs::home('~/.president/sco/kept') . '/' . $name;
+	$file = &subs::home('~/.president/sco') . '/' . $name unless -s $file;
+	# a pane on another machine asks the gateway, which holds the file
 	unless (-s $file) {
-		$c->rendered(404);
+		my $answer = &sco_client()->call({ cmd => 'recording', name => $name });
+		unless ($answer && $answer->{'ok'} && length($answer->{'wav'} || '')) {
+			$c->rendered(404);
+			return;
+		}
+		require MIME::Base64;
+		my $bytes = MIME::Base64::decode_base64($answer->{'wav'});
+		$c->res->headers->content_type('audio/wav');
+		$c->render(data => $bytes);
 		return;
 	}
 	open(my $fh, '<', $file) or do { $c->rendered(404); return; };

@@ -674,6 +674,36 @@ is(JawnOS::Sco::Gateway::call_over('in_call', undef, 100, 0), 'call limit',
 		'and the panel posts to it');
 }
 
+# A voicemail flow: after the thanks the house's greeting plays and a message
+# is recorded, instead of the music.
+{
+	my $vm = JawnOS::Sco::Gateway->new(dir => "$dir/vm-sco", helper => $hold_fake, status_path => "$dir/vm.json");
+	my $armed_vm = $vm->arm(
+		clips => { greeting => $clip, prompt => $clip, thanks => $clip, voicemail => $clip },
+		record => { ms => 5000 },
+		after => 'voicemail',
+		hold => 'shuffle',
+		call_id => 'vm-call',
+	);
+	is($armed_vm->{'ok'}, 1, 'a voicemail flow arms');
+	my $vm_plan = $vm->status()->{'plan'};
+	ok((grep { $_ eq 'voicemail' } @{$vm_plan}), 'the voicemail greeting is in the plan');
+	ok((grep { $_ eq 'message' } @{$vm_plan}), 'and a message is recorded after it');
+	ok(!(grep { $_ eq 'hold' } @{$vm_plan}), 'a voicemail flow plays no hold music');
+	# the durable list the pane asks for
+	my $kdir = "$dir/vm-sco/kept";
+	make_path($kdir);
+	write_file("$kdir/index.jsonl",
+		'{"at":1,"call_id":"a","file":"/x/message-a.wav","kind":"voicemail","ms":4000}' . "\n"
+		. '{"at":2,"call_id":"b","file":"/x/name-b.wav","kind":"name","ms":900}' . "\n"
+		. '{"at":3,"call_id":"c","file":"/x/message-c.wav","kind":"voicemail","ms":7000}' . "\n");
+	my $list = $vm->voicemail_list();
+	is(scalar @{$list}, 2, 'only the messages are listed');
+	is($list->[0]->{'name'}, 'message-c.wav', 'newest first');
+	is($list->[0]->{'ms'}, 7000, 'with the length the caller spoke');
+	$vm->end_call('test over');
+}
+
 # The app's Hold button: on and off, and a stop the house asked for is not the
 # end of the call.
 {

@@ -170,6 +170,9 @@ sub status {
 		last_error => $self->{'last_error'},
 		helper => ($self->helper_command() ? 1 : 0),
 		recordings => $self->{'recordings'},
+		# the messages a voicemail flow left, newest first: the kept index is
+		# the durable list, the recordings above are this process's own
+		voicemail => $self->voicemail_list(),
 		# the caller's words while the call is up, and the sentence being said:
 		# the Phone pane and the card draw these, and the Chat app keeps them
 		transcript => $self->{'transcript'} || [],
@@ -312,8 +315,23 @@ sub arm {
 	# waits through music while somebody decides to pick up. The phone sends a
 	# choice, not a path - the tracks are this machine's own files - so the list
 	# is resolved and converted here, at arm time, and never mid-call.
+	# What follows the thanks: the music, or the house's voicemail greeting and
+	# a recorded message. A flow left on `hold` keeps the old behaviour.
+	my $after = lc($args{'after'} || 'hold');
+	if ($after eq 'voicemail') {
+		my $greeting = $clips->{'voicemail'} || '';
+		push @steps, { play => $greeting, key => 'voicemail' } if $greeting;
+		# a message is longer than a name: five minutes at most, ended by a
+		# pause, and it does not need a name's short floor
+		push @steps, {
+			record => 1,
+			key => 'message',
+			kind => 'voicemail',
+			opts => { ms => 300000, silence_ms => 3000, min_ms => 1000 },
+		};
+	}
 	my $hold = defined $args{'hold'} ? $args{'hold'} : '';
-	if (length $hold && lc($hold) ne 'none') {
+	if ($after eq 'hold' && length $hold && lc($hold) ne 'none') {
 		require JawnOS::Sco::Hold;
 		my $list = &JawnOS::Sco::Hold::playlist($hold);
 		if (@{$list}) {
@@ -953,6 +971,34 @@ sub _stop_rtc {
 	return 1;
 }
 
+# ---- the messages a voicemail flow left ----------------------------------
+# The index beside the kept recordings is the list that outlives a restart; the
+# pane asks the gateway for it, because the files are on this machine.
+sub voicemail_list {
+	my ($self) = @_;
+	my $index = $self->{'dir'} . '/kept/index.jsonl';
+	return [] unless -s $index;
+	my @out;
+	if (open(my $fh, '<', $index)) {
+		while (my $line = <$fh>) {
+			my $e = eval { decode_json($line) };
+			next unless ref $e eq 'HASH' && ($e->{'kind'} || '') eq 'voicemail';
+			next unless length($e->{'file'} || '');
+			push @out, {
+				at => $e->{'at'} || 0,
+				ms => $e->{'ms'} || 0,
+				file => $e->{'file'},
+				name => ($e->{'file'} =~ m{([^/]+)$} ? $1 : $e->{'file'}),
+				call_id => $e->{'call_id'} || '',
+			};
+		}
+		close $fh;
+	}
+	@out = sort { ($b->{'at'} || 0) <=> ($a->{'at'} || 0) } @out;
+	splice(@out, 30) if @out > 30;
+	return \@out;
+}
+
 # ---- the hold, on demand -------------------------------------------------
 # The app's call screen has a Hold button: the caller hears the house's music
 # while the person does something else, and the same button takes them off it.
@@ -1045,9 +1091,12 @@ sub _advance {
 		$self->_send(cmd => 'tone', id => $self->{'next_id'}, hz => $step->{'hz'}, ms => $step->{'ms'});
 	}
 	elsif ($step->{'record'}) {
-		my $opts = $self->{'record_opts'} || {};
-		my $file = $self->{'dir'} . '/name-' . $self->{'call_id'} . '.wav';
+		my $opts = $step->{'opts'} || $self->{'record_opts'} || {};
+		my $kind = $step->{'kind'} || 'name';
+		my $prefix = $kind eq 'voicemail' ? 'message-' : 'name-';
+		my $file = $self->{'dir'} . '/' . $prefix . $self->{'call_id'} . '.wav';
 		$self->{'pending_record'} = $file;
+		$self->{'pending_kind'} = $kind;
 		$self->_send(
 			cmd => 'record',
 			id => $self->{'next_id'},
@@ -1131,6 +1180,7 @@ sub event {
 			my $file = $event->{'file'} || $self->{'pending_record'};
 			$self->{'pending_record'} = '';
 			my %recording = (
+				kind => ($self->{'pending_kind'} || 'name'),
 				file => $file,
 				ms => $event->{'ms'} || 0,
 				silence => $event->{'silence'} ? 1 : 0,

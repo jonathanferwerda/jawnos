@@ -258,6 +258,31 @@ function jawnPhoneFlowCountsRefresh() {
 	});
 }
 
+// The messages a voicemail flow left. The list is the gateway's (the files are
+// on that machine); Play is a link to the recording route, which asks the
+// gateway for the bytes when the file is not on this one.
+function jawnPhoneVoicemail(res) {
+	var box = $('#phone_app #phone_ivr_voicemail');
+	if (!box.length) { return; }
+	var list = (res && res.voicemail) || [];
+	var key = JSON.stringify($.map(list, function (m) { return (m.name || '') + ':' + (m.at || 0); }));
+	if (box.attr('data-vm') === key) { return; }
+	box.attr('data-vm', key).empty();
+	if (!list.length) { box.append($('<div class="phone_app_ivr_vm_row"></div>').text(jawnosT('No messages yet.'))); return; }
+	$.each(list, function (i, m) {
+		var when = m.at ? new Date(m.at * 1000).toLocaleString() : '';
+		var row = $('<div class="phone_app_ivr_vm_row"></div>');
+		row.append($('<span class="phone_app_ivr_vm_when"></span>').text(when));
+		row.append($('<span class="phone_app_ivr_vm_ms"></span>').text(Math.round((m.ms || 0) / 1000) + 's'));
+		row.append($('<a class="phone_app_ivr_vm_play" hint="Play"></a>')
+			.attr('href', '/manager/sco/recording?name=' + encodeURIComponent(m.name || ''))
+			.attr('target', '_blank')
+			.attr('rel', 'noopener')
+			.text(jawnosT('Play')));
+		box.append(row);
+	});
+}
+
 // The hold dropdown lists what the gateway can actually play: none, the whole
 // library shuffled, or one track. A stored track the gateway cannot see right
 // now stays a choice, so opening a flow does not silently drop it.
@@ -874,6 +899,7 @@ function jawnPhoneGatewayState() {
 			// the gateway owns the music library, so it is the one that says
 			// which tracks the dropdown may offer
 			jawnPhoneHoldTracks(res && res.hold_tracks);
+			jawnPhoneVoicemail(res);
 			jawnPhoneTranscriptSync(res && res.call_id, res && res.transcript, res && res.partial, res && res.transcript_note, res && res.caller);
 			if (jawnPhoneConnectMeWanted && (state === 'in_call' || state === 'done')) {
 				jawnPhoneConnectMeWanted = false;

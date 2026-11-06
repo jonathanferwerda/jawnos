@@ -92,6 +92,24 @@ sub answer {
 		my %args = %{$request};
 		return $gateway->set_hold(on => ($args{'action'} || '') eq 'start' ? 1 : 0);
 	}
+	if ($cmd eq 'recording') {
+		# the pane may be on another machine; the WAV lives here
+		my %args = %{$request};
+		my $name = $args{'name'} || '';
+		return { ok => 0, error => 'bad name' }
+			unless $name =~ /^[A-Za-z0-9._-]+\.wav$/ && $name !~ /^\./;
+		my $dir = &subs::home('~/.president/sco');
+		my $file = "$dir/kept/$name";
+		$file = "$dir/$name" unless -s $file;
+		return { ok => 0, error => 'no such recording' } unless -s $file;
+		open(my $fh, '<', $file) or return { ok => 0, error => 'cannot open the recording' };
+		binmode $fh;
+		local $/;
+		my $bytes = <$fh>;
+		close $fh;
+		require MIME::Base64;
+		return { ok => 1, wav => MIME::Base64::encode_base64($bytes, '') };
+	}
 	if ($cmd eq 'say') {
 		my %args = %{$request};
 		delete $args{'cmd'};

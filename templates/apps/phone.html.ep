@@ -60,6 +60,11 @@
 	.phone_app_ivr_flow_head:hover { background:var(--line); }
 	.phone_app_ivr_flow_item_name { flex:1 1 auto; font-weight:600; }
 	.phone_app_ivr_flow_more { transition: transform .15s; }
+	.phone_app_ivr_voicemail_box { display:flex; flex-direction:column; gap:6px; }
+	.phone_app_ivr_vm_row { display:flex; align-items:center; gap:8px; font-size:12px; }
+	.phone_app_ivr_vm_when { flex:1 1 auto; }
+	.phone_app_ivr_vm_ms { opacity:.6; }
+	.phone_app_ivr_vm_play { padding:3px 10px; border-radius:999px; border:1px solid var(--line); text-decoration:none; color:inherit; }
 	.phone_app_ivr_flow_head.on .phone_app_ivr_flow_more { transform: rotate(180deg); }
 	.phone_app_ivr_flow_edit { padding:0 10px 10px; display:flex; flex-direction:column; gap:8px; }
 	.phone_app_ivr_flow_count { flex:0 0 auto; color:var(--muted,#8e8e8e); font-size:12px; }
@@ -235,6 +240,12 @@
 				<div class="phone_app_ivr_flows_title"><%= &subs::ui('Flows') %></div>
 				<div class="phone_app_ivr_flow_list" id="phone_ivr_flow_list"></div>
 				<button type="button" class="phone_app_ivr_save" id="phone_ivr_flow_add" hint="Add flow"><%= &subs::ui('Add flow') %></button>
+			</div>
+			<%# The messages a voicemail flow left. The files are on the gateway, so
+			    the list comes from its status and Play asks it for the bytes. %>
+			<div class="phone_app_ivr_voicemail_box">
+				<div class="phone_app_ivr_flows_title"><%= &subs::ui('Voicemail') %></div>
+				<div class="phone_app_ivr_vm" id="phone_ivr_voicemail"></div>
 			</div>
 			<%# What each kind of caller hears. Ring through and Reject are not flows
 			    at all; the rest of the choices are the flows above. %>

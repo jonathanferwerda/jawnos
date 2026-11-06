@@ -78,7 +78,8 @@ sub keep_new_recordings {
 	my $id = $newest->{'call_id'} || 'call';
 	$id =~ s/[^A-Za-z0-9_-]//g;
 	return unless length $id;
-	my $kept = "$dir/$id.wav";
+	my $kind = ($newest->{'kind'} || 'name') eq 'voicemail' ? 'voicemail' : 'name';
+	my $kept = "$dir/" . ($kind eq 'voicemail' ? 'message-' : '') . "$id.wav";
 	my $index = "$dir/index.jsonl";
 	return if -e $kept;
 	my $copy = eval {
@@ -104,7 +105,7 @@ sub keep_new_recordings {
 		$bytes = <$rf> // '';
 		close $rf;
 	}
-	if (length $bytes) {
+	if (length $bytes && $kind eq 'name') {
 		$heard = eval { &subs::whisper_name_transcribe($bytes, 'auto') } || '';
 		$heard =~ s/^\s+|\s+$//g;
 		$name = &subs::name_from_transcript($heard);
@@ -115,6 +116,7 @@ sub keep_new_recordings {
 	if (open(my $fh, '>>', $index)) {
 		print {$fh} encode_json({
 			call_id => $id,
+			kind => $kind,
 			at => $newest->{'at'} || time,
 			ms => $newest->{'ms'} || 0,
 			peer => $newest->{'peer'} || '',
@@ -158,10 +160,10 @@ sub tick {
 	# a machine without the helper has no admission to give
 	return unless -x $helper;
 	my $voice = $settings->{'voice'} || '';
-	my @text = map { $settings->{$_} || '' } qw(greeting prompt thanks);
-	# the hold music is part of what the gateway was armed with: changing the
-	# dropdown re-arms the same way changing a prompt does
-	my $from = join("\x00", $voice, @text, $settings->{'hold'} || '');
+	my @text = map { $settings->{$_} || '' } qw(greeting prompt thanks voicemail);
+	# the hold music and what follows the thanks are part of what the gateway
+	# was armed with: changing either re-arms the same way a prompt does
+	my $from = join("\x00", $voice, @text, $settings->{'hold'} || '', $settings->{'after'} || 'hold');
 	# A pipe gateway waits in `waiting` (the phone has not called yet) and an
 	# adapter gateway listens in `armed`; both are ready. Re-arming tears the
 	# watcher down, so a ready gateway is left alone while its prompts stand.
@@ -173,7 +175,7 @@ sub tick {
 	# A remote gateway renders the words itself: a path rendered here does not
 	# exist there. A local one keeps the clips this machine already cached.
 	unless ($client->remote()) {
-		foreach my $key (qw(greeting prompt thanks)) {
+		foreach my $key (qw(greeting prompt thanks voicemail)) {
 			my $text = $settings->{$key} || '';
 			next unless length $text;
 			my $raw = &JawnOS::Sco::Render::render($text, $voice);
@@ -182,11 +184,13 @@ sub tick {
 	}
 	my $armed = $client->call({
 		cmd => 'arm',
-		words => { map { $_ => ($settings->{$_} || '') } qw(greeting prompt thanks) },
+		words => { map { $_ => ($settings->{$_} || '') } qw(greeting prompt thanks voicemail) },
 		voice => $voice,
 		clips => \%clips,
 		# the caller waits through music on the gateway after the thanks
 		hold => $settings->{'hold'} || '',
+		# ...or leaves a message, when the flow says so
+		after => $settings->{'after'} || 'hold',
 		# the helper keeps the clip open until it hears a name and then a pause
 		record => { ms => 20000, silence_ms => 2000, min_ms => 400 },
 	});

@@ -261,7 +261,7 @@ sub phone_ivr_settings {
 	# the legacy rows are the receptionist's words, so the two cannot disagree
 	my $receptionist = $defs->{'receptionist'};
 	if (ref $receptionist eq 'HASH') {
-		foreach my $key (qw(voice greeting prompt voicemail thanks hold)) {
+		foreach my $key (qw(voice greeting prompt voicemail thanks hold after)) {
 			$settings->{$key} = $receptionist->{$key};
 		}
 	}
