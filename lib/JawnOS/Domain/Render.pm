@@ -382,11 +382,23 @@ sub destination_relay {
 	my $timestamp = $data->{'timestamp'} || &subs::rightNow();
 	my $me = &subs::signatorial_designer();
 	my $rms;
-	if (!$destination || $destination eq 'all') {
+	my $named = ($destination && $destination ne 'all') ? 1 : 0;
+	if (!$named) {
 		$rms = &subs::remote_machine_lister({ connection => 'active' });
 	}
 	else {
-		$rms = &subs::remote_machine_lister({ signatorial => $destination, connection => 'active' });
+		# A named destination is an instruction, not a hint. Its row's
+		# `connection` is only this machine's last guess at reachability - a
+		# phone hears no LAN beacons, and the reconnector may not have run since
+		# the peer rebooted - so an explicit target is still dialled while the
+		# roster calls it inactive. Gating on that flag made a watch press run on
+		# the machine holding the watch and never reach the machine it named.
+		$rms = &subs::remote_machine_lister({ signatorial => $destination });
+		# Prefer a row the roster believes is up; a mirror or a stale copy of the
+		# same machine may sit beside it.
+		$rms = [ sort {
+			(($b->{'connection'} || '') eq 'active') <=> (($a->{'connection'} || '') eq 'active')
+		} @{$rms} ] if ref $rms eq 'ARRAY';
 	}
 	$rms = [] unless ref $rms eq 'ARRAY';
 	my $sent = 0;
@@ -442,7 +454,7 @@ sub destination_relay {
 		}
 	}
 	unless ($considered) {
-		$log->error('destination relay: no active machine matches ' . ($destination || 'all')) if $log;
+		$log->error('destination relay: no ' . ($named ? 'machine' : 'active machine') . ' matches ' . ($destination || 'all')) if $log;
 	}
 	if (!$destination || $destination eq 'all') {
 		return $sent ? 'every machine (' . $sent . ')' : undef;
