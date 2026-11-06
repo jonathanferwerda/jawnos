@@ -51,7 +51,7 @@ my $root = abs_path("$FindBin::Bin/..");
 # source prefix; libc/libm come from the device (the SYSMAP list) and are not
 # packed. scripts/jawnos_deps.pl names Termux's libqrencode for a hand build.
 my %TOOL = map { $_ => 1 } qw(
-	perl openssl sqlite3 argon2 curl ssh sshpass rsync git zip unzip tar gzip xz zstd
+	perl openssl sqlite3 argon2 curl ssh rsync git zip unzip tar gzip xz zstd
 	bash sh env sed awk grep egrep fgrep cut tr head tail sort uniq wc
 	cat ls cp mv rm mkdir rmdir ln chmod chown touch date sleep find xargs
 	basename dirname readlink stat id whoami uname hostname printf echo test [

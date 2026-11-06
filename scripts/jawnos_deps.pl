@@ -175,18 +175,14 @@ my @tools = (
 	{ cmd => 'argon2',    apt => 'argon2',           pacman => 'argon2',         termux => 'argon2',           label => 'argon2 (recovery KDF)' },
 	{ cmd => 'curl',      apt => 'curl',             pacman => 'curl',           termux => 'curl',             label => 'curl' },
 	{ cmd => 'ssh',       apt => 'openssh-client',   pacman => 'openssh',        termux => 'openssh',          label => 'OpenSSH' },
-	{ cmd => 'sshpass',   apt => 'sshpass',          pacman => 'sshpass',        termux => 'sshpass',          label => 'sshpass' },
-	{ cmd => 'autossh',   apt => 'autossh',          pacman => 'autossh',        termux => 'autossh',          label => 'autossh' },
 	{ cmd => 'rsync',     apt => 'rsync',            pacman => 'rsync',          termux => 'rsync',            label => 'rsync' },
 	{ cmd => 'ffmpeg',    apt => 'ffmpeg',           pacman => 'ffmpeg',         termux => 'ffmpeg',           label => 'FFmpeg' },
 	{ cmd => 'convert',   apt => 'imagemagick',      pacman => 'imagemagick',    termux => 'imagemagick',      label => 'ImageMagick' },
 	{ cmd => 'tesseract', apt => 'tesseract-ocr',    pacman => 'tesseract',      termux => 'tesseract',        label => 'Tesseract OCR' },
 	{ cmd => 'qrencode',  apt => 'qrencode',         pacman => 'qrencode',       termux => 'libqrencode',      label => 'qrencode' },
-	{ cmd => 'zbarimg',   apt => 'zbar-tools',       pacman => 'zbar',           termux => 'zbar',             label => 'zbar' },
 	{ cmd => 'espeak',    apt => 'espeak',           pacman => 'espeak-ng',      termux => 'espeak',           label => 'espeak', alt => 'espeak-ng' },
 	{ cmd => 'sox',       apt => 'sox',              pacman => 'sox',            termux => 'sox',              label => 'SoX' },
 	{ cmd => 'zip',       apt => 'zip',              pacman => 'zip',            termux => 'zip',              label => 'zip' },
-	{ cmd => 'tmux',      apt => 'tmux',             pacman => 'tmux',           termux => 'tmux',             label => 'tmux' },
 	{ cmd => 'cpanm',     apt => 'cpanminus',        pacman => 'cpanminus',      termux => 'perl',             label => 'cpanminus', cpanm => 'App::cpanminus' },
 	{ cmd => 'git',       apt => 'git',              pacman => 'git',            termux => 'git',              label => 'git' },
 	{ cmd => 'node',      apt => 'nodejs',           pacman => 'nodejs',         termux => 'nodejs',           label => 'Node.js', alt => 'nodejs' },
@@ -211,7 +207,6 @@ my @modules = qw(
 	Digest::SHA
 	Math::BigInt
 	Net::SSLeay
-	WWW::Mechanize
 	Time::Piece
 	Time::Duration
 	Date::Parse

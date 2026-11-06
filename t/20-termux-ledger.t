@@ -66,6 +66,13 @@ my $report = qx{"$^X" "$ledger" 2>&1};
 unlike($report, qr{JawnOS/Manager/Declarations\.pm|JawnOS/Manager/Index\.pm},
 	'bookkeeping lines are not counted as pty touch points');
 
+# A declared tool that nothing spawns makes every fresh machine install a
+# package the app never runs. The ledger names that case "no spawn"; the list
+# must stay empty (sshpass, autossh, zbarimg and tmux were removed for it).
+my @unused = $report =~ /^\|\s*([^|\s]+)\s*\|\s*no spawn;/mg;
+is_deeply(\@unused, [], 'every declared tool is spawned somewhere in the tree')
+	or diag('unused: ' . join(', ', @unused));
+
 # M1 exit: the app's bridge answers every command and the shell fallback is
 # gone. No termux-* command remains, so the ledger's command list is empty.
 my $record = qx{"$^X" "$ledger" --record 2>&1};

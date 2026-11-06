@@ -96,8 +96,6 @@ my %TOOL_INTENT = (
 	'argon2'    => 'bundle, or OpenSSL 3.2+ KDF (M3)',
 	'curl'      => 'bundle (M3)',
 	'ssh'       => 'bundle (M3)',
-	'sshpass'   => 'bundle (M3)',
-	'autossh'   => 'drop? confirm: nothing in the tree spawns it (M3)',
 	'rsync'     => 'bundle (M3)',
 	'zip'       => 'bundle (M3)',
 	'git'       => 'drop if the first run ships an asset, else bundle (M3)',
@@ -106,9 +104,7 @@ my %TOOL_INTENT = (
 	'tesseract' => 'replace with ML Kit (M3)',
 	'espeak'    => 'replace with TextToSpeech (M3)',
 	'sox'       => 'replace with MediaCodec (M3)',
-	'tmux'      => 'drop? confirm: nothing in the tree spawns it (M3)',
 	'qrencode'  => 'bundle: the QR share spawns it (M3)',
-	'zbarimg'   => 'drop? confirm: nothing in the tree spawns it (M3)',
 	'node'      => 'drop from the runtime: only dev scripts spawn it (M3)',
 	'cpanm'     => 'drop; the runtime ships built modules (M3)',
 );
@@ -144,12 +140,12 @@ my %BASELINE = (
 	'exempt' => 0,
 	'logical' => 0,
 	'commands' => 0,
-	'tools' => 21,
-	'modules' => 39,
+	'tools' => 17,
+	'modules' => 38,
 	'pty' => 7,
 	'command_list' => '',
-	'tool_list' => 'argon2 autossh convert cpanm curl espeak ffmpeg git node openssl perl qrencode rsync sox sqlite3 ssh sshpass tesseract tmux zbarimg zip',
-	'module_list' => 'Authen::SASL Crypt::AuthEnc::GCM Crypt::KeyDerivation Crypt::PK::Ed25519 Crypt::PK::X25519 Crypt::PRNG Crypt::Simple CryptX DBD::SQLite Data::UUID Date::Parse Digest::SHA Email::Stuffer Encode File::Slurp File::Type HTML::Strip Hash::Merge LWP::Protocol::https LWP::UserAgent MIME::Parser Math::BigInt Minion Minion::Backend::SQLite Mojo::IOLoop::ReadWriteFork Mojo::SQLite Mojolicious::Lite Mojolicious::Plugin::RenderFile Net::IMAP::Client Net::SSLeay Number::Format SQL::Abstract Sereal::Decoder Sereal::Encoder Time::Duration Time::Piece URI::Encode URI::Escape WWW::Mechanize',
+	'tool_list' => 'argon2 convert cpanm curl espeak ffmpeg git node openssl perl qrencode rsync sox sqlite3 ssh tesseract zip',
+	'module_list' => 'Authen::SASL Crypt::AuthEnc::GCM Crypt::KeyDerivation Crypt::PK::Ed25519 Crypt::PK::X25519 Crypt::PRNG Crypt::Simple CryptX DBD::SQLite Data::UUID Date::Parse Digest::SHA Email::Stuffer Encode File::Slurp File::Type HTML::Strip Hash::Merge LWP::Protocol::https LWP::UserAgent MIME::Parser Math::BigInt Minion Minion::Backend::SQLite Mojo::IOLoop::ReadWriteFork Mojo::SQLite Mojolicious::Lite Mojolicious::Plugin::RenderFile Net::IMAP::Client Net::SSLeay Number::Format SQL::Abstract Sereal::Decoder Sereal::Encoder Time::Duration Time::Piece URI::Encode URI::Escape',
 );
 
 # --- scanning ---------------------------------------------------------------

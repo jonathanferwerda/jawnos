@@ -1,1 +1,0 @@
-zbar-tools | 0.23.93-1 | stable | amd64

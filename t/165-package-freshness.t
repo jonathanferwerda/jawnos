@@ -187,11 +187,11 @@ is( $rc, 1, 'a module upstream no longer offers fails the check' );
 like( $out, qr/Email::Stuffer\s+-\s+->\s+-\s+missing/, 'the row is marked missing' );
 like( $out, qr/missing upstream: Email::Stuffer/, 'and it is named in the summary' );
 
-($rc, $out) = freshness('--only=zbar');
+($rc, $out) = freshness('--only=sox');
 is( $rc, 1, 'a package Arch dropped fails even when Debian still has it' );
-like( $out, qr/zbar-tools\s+-\s+->\s+0\.23\.93-1\s+available/,
+like( $out, qr/sox\s+-\s+->\s+14\.4\.2\+git20190427-5\s+available/,
 	'the Debian row still reports the candidate' );
-like( $out, qr/missing upstream: zbar/, 'and the missing Arch name is reported' );
+like( $out, qr/missing upstream: sox/, 'and the missing Arch name is reported' );
 
 ($rc, $out) = freshness('--only=noto-fonts-emoji');
 is( $rc, 0, 'a package that is merely behind is informational' );
