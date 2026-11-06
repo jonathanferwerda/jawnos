@@ -89,8 +89,8 @@ unlike($kb, qr/\(any-pointer: coarse\)'\)\.matches\) \{ return false; \}/,
 like($kb, qr/function softKbHardwareKey\(e\)/, 'a real key while the dock is up is routed to it');
 like($kb, qr/if \(jawnSoftIme \|\| jawnSoftMode != 'calc'\) \{ return false; \}/,
 	'the calculator is the page that reads the keypad');
-unlike($kb, qr/if \(softKbEditable\(e\.target\)\) \{ return false; \}/,
-	'the calculator keeps the keypad even while a field has focus');
+like($kb, qr/if \(softKbEditable\(e\.target\)\) \{ return false; \}/,
+	'a focused field keeps the keypad until the calculator is pressed');
 like($kb, qr/if \(\/\^\[0-9\]\$\/\.test\(key\) \|\| key == '\.'\) \{ softKbCalcKey\(key\); return true; \}/,
 	'the numeric keypad types into the calculator');
 like($kb, qr/var map = \{ 'Enter': '=', '=': '=', 'Backspace': 'backspace', 'Delete': 'clear', 'Escape': 'clear', ',': '\.' \};/,
@@ -105,6 +105,22 @@ like($help, qr/instead of putting the dock away/,
 	'the keyboard topic says a real key no longer puts the dock away');
 like($help, qr/the numeric keypad\\'s digits/,
 	'and names the numeric keypad it feeds');
+like($help, qr/press the calculator\\'s display or frame to take them back/,
+	'and says how to take the keypad back after typing in a field');
+
+# --- pressing the calculator takes the keypad back ---------------------------
+like($kb, qr/if \(jawnSoftMode == 'calc' && softKbDesk\(\) && document\.activeElement !== this\) \{/,
+	'pressing the calculator takes the keypad back from a field');
+like($kb, qr/this\.focus\(\{ preventScroll: true \}\)/,
+	'by focusing the dock itself');
+like($tpl, qr/id="jawn_soft_keyboard"[^>]*tabindex="-1"/,
+	'the dock is focusable so it can take the keypad back');
+like($kb, qr/var on_dock = !!\(target && target\.closest && target\.closest\('#jawn_soft_keyboard, #jawn_measure_pop'\)\);/,
+	'the keydown knows when the keys themselves have focus');
+like($kb, qr/if \(key == 'Enter' && e\.target && e\.target\.closest && e\.target\.closest\('#jawn_soft_keyboard button'\)\) \{ return false; \}/,
+	'a focused on-screen key keeps the Enter that presses it');
+like($kb, qr/if \(on_dock\) \{ return; \}/,
+	'a phone key on the keys does not dismiss them');
 
 
 # --- the bar can actually start a drag ---------------------------------------

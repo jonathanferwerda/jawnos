@@ -72,7 +72,7 @@
 	'←','→','↑','↓','↔','⇒','⇐','⇔',
 	'©','®','™','✓','✗','★','☆','♥','♦','♣','♠','♪','☀','☾','♀','♂','½','¼','¾','⅓','⅔',
 ); %>
-<div id="jawn_soft_keyboard" class="soft_kb" hidden aria-hidden="true">
+<div id="jawn_soft_keyboard" class="soft_kb" hidden aria-hidden="true" tabindex="-1">
 	<div class="soft_kb_bar" hint="<%= &subs::ui('Drag here to move the keyboard') %>">
 		<button type="button" class="soft_kb_mode active" data-kb_mode="letters">abc</button>
 		<button type="button" class="soft_kb_mode" data-kb_mode="calc">123</button>

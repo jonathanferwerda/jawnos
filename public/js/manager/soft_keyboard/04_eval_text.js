@@ -236,6 +236,12 @@ $(document).on('click', '#jawn_soft_keyboard button', function () {
 	softKbPress($(this));
 });
 $(document).on('pointerdown', '#jawn_soft_keyboard', function (e) {
+	// On a desk the calculator is a window of its own: a press anywhere on it
+	// takes the keypad back from the field that was being typed in. The letters
+	// page keeps the field's focus, which is where its keys type.
+	if (jawnSoftMode == 'calc' && softKbDesk() && document.activeElement !== this) {
+		try { this.focus({ preventScroll: true }); } catch (err) { this.focus(); }
+	}
 	// the bar above the keys is the panel's handle: its press must reach the
 	// draggable, or cancelling it here stops the panel from ever moving
 	if ($(e.target).closest('.soft_kb_bar, button, .soft_kb_convert_rows').length) { return; }
@@ -410,13 +416,17 @@ document.addEventListener('touchstart', function (e) {
 }, true);
 
 // A key from a real keyboard while the dock holds the input. In calculator mode
-// the keypad always belongs to the calculator (a numeric field is updated by its
-// own sync, and a text field gets the answer at its caret on =); every other key
-// goes to whatever has focus. Returns true when the dock took the key.
+// the keypad belongs to the calculator when it has the focus; a field being
+// typed in keeps the key (the calculator follows it through the field's input),
+// and pressing the calculator takes the keypad back. Returns true when the dock
+// took the key.
 function softKbHardwareKey(e) {
 	if (jawnSoftIme || jawnSoftMode != 'calc') { return false; }
+	if (softKbEditable(e.target)) { return false; }
 	var key = e.key || '';
 	if (!key || e.ctrlKey || e.metaKey || e.altKey) { return false; }
+	// a focused on-screen key keeps the Enter that presses it
+	if (key == 'Enter' && e.target && e.target.closest && e.target.closest('#jawn_soft_keyboard button')) { return false; }
 	var map = { 'Enter': '=', '=': '=', 'Backspace': 'backspace', 'Delete': 'clear', 'Escape': 'clear', ',': '.' };
 	if (/^[0-9]$/.test(key) || key == '.') { softKbCalcKey(key); return true; }
 	if (key.length == 1 && '+-*/%()'.indexOf(key) >= 0) { softKbCalcKey(key); return true; }
@@ -437,7 +447,7 @@ document.addEventListener('keydown', function (e) {
 	if (k == 'Escape') { jawnMeasureHide(); }
 	if (k == 'Shift' || k == 'Alt' || k == 'Control' || k == 'Meta' || k == 'CapsLock' || k == 'Tab') { return; }
 	var target = e.target;
-	if (target && target.closest && target.closest('#jawn_soft_keyboard, #jawn_measure_pop')) { return; }
+	var on_dock = !!(target && target.closest && target.closest('#jawn_soft_keyboard, #jawn_measure_pop'));
 	// The dock was asked for on a desk, and while it is up it holds the input the
 	// way a window does: a real key is the field's or the calculator's, never a
 	// reason to put it away. A phone with a keyboard keeps the old rule.
@@ -445,6 +455,9 @@ document.addEventListener('keydown', function (e) {
 		if (softKbHardwareKey(e)) { e.preventDefault(); }
 		return;
 	}
+	// A key pressed while the keys themselves have focus is still the
+	// calculator's (a button keeps its own Enter and Space).
+	if (on_dock) { return; }
 	if (k == 'Escape') { return; }
 	softKbHardwareMark();
 }, true);
