@@ -724,14 +724,15 @@ sub ble_rehome_check {
 	# because now_me's own choice trusts the watch's LAN, where every machine
 	# here shares a /24 and cannot be told apart.
 	my $addrs = &subs::network_interface_reporter();
-	my @ips = grep { $_ && $_ !~ /^127\./ } map { $addrs->{$_}->{'ip'} } keys %{$addrs};
-	return unless scalar @ips;
 	# A board on the house WiFi cannot route to the Tailscale (100.64/10)
-	# address, so handing it that one over BLE "works" until its next /watch,
-	# which then fails and leaves it on the radio alone. Prefer a real LAN
-	# address; fall back to the Tailscale one only when that is all we have.
-	my @lan = grep { $_ !~ /^100\.(?:6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./ } @ips;
-	my @usable = @lan ? @lan : @ips;
+	# address, nor to a p2p/tun address in 192.0.0.0/24 that a phone may report
+	# (USB tethering, a VPN). Handing one over BLE "works" until the next
+	# /watch, which then fails and leaves the board on the radio alone. If this
+	# machine has no real LAN address, leave the device's homebase untouched: a
+	# stale address it may still reach is better than one it never can.
+	my @usable = grep { &subs::lan_address_ok($_) }
+		map { $addrs->{$_}->{'ip'} } keys %{$addrs};
+	return unless @usable;
 	my ($mine_ip) = grep { $stored_host && &subs::same_net_test($_, $stored_host, '127.0.0.1') eq 'yes' } @usable;
 	$mine_ip ||= $usable[0];
 	return if defined $stored_host && $stored_host eq $mine_ip;

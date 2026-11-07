@@ -342,6 +342,22 @@ sub ble_device_specs {
 	return $specs;
 }
 
+# An embedded device reaches only this LAN. Host the fallback list and every
+# re-home on addresses it can actually route to: never loopback, link-local,
+# Tailscale/CGNAT, or the IETF 192.0.0.0/24 block (Android p2p/tun NICs and some
+# VPNs sit there, and a board handed one goes silent). These are exactly the
+# addresses that appear and vanish with a DHCP lease.
+sub lan_address_ok {
+	my ($ip) = @_;
+	return 0 unless defined $ip && $ip =~ /^\d{1,3}(?:\.\d{1,3}){3}$/;
+	return 0 if $ip =~ /^(?:0|127)\./;
+	return 0 if $ip =~ /^169\.254\./;                                  # link-local
+	return 0 if $ip =~ /^192\.0\.0\./;                                  # IETF protocol / p2p / tun
+	return 0 if $ip =~ /^100\.(?:6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./;   # CGNAT / Tailscale
+	return 0 if $ip eq '255.255.255.255';
+	return 1;
+}
+
 sub house_nodes_list {
 	# The House machines an embedded device may fall back to: this machine and
 	# every peer with a LAN address, each with the manager ports a device dials.
@@ -358,8 +374,8 @@ sub house_nodes_list {
 	my (%seen, @nodes);
 	my $add = sub {
 		my ($ip, $port, $arm, $coms, $bestow, $name, $computer) = @_;
-		return unless $ip && $ip =~ /^\d{1,3}(?:\.\d{1,3}){3}$/;
-		return if $ip =~ /^127\./ || $seen{$ip}++;
+		return unless &subs::lan_address_ok($ip);
+		return if $seen{$ip}++;
 		if ($want_net) {
 			my $net = $ip;
 			$net =~ s/\.\d+$//;
