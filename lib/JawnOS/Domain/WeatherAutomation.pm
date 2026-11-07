@@ -804,20 +804,44 @@ sub weather_location_name_repair() {
 	return $fixed;
 }
 
-# Every place a rule names, plus the newest fix when a global rule still exists.
+# The house's home plate: the ground the hourly pass keeps. The home app's
+# plate is the house itself; a house with none uses the place the person
+# anchored, so one anchored place is still always checked.
+sub weather_home_plate() {
+	my $row = eval {
+		&subs::db_query(
+			"select value from settings where app = 'home' and setting = 'home_plate' "
+			. "and value is not null and value != '' order by cast(server_time as integer) desc limit 1"
+		)->hashes->[0];
+	};
+	my $plate = $row ? eval { decode_json($row->{'value'} // '') } : undef;
+	if (ref $plate eq 'HASH') {
+		my $lat = &subs::weather_number($plate->{'latitude'});
+		my $lon = &subs::weather_number($plate->{'longitude'});
+		return { lat => $lat, lon => $lon, from => 'home' } if defined $lat && defined $lon;
+	}
+	foreach my $loc (@{ &weather_locations() }) {
+		next unless $loc->{'anchor'};
+		next unless defined $loc->{'lat'} && defined $loc->{'lon'};
+		return { lat => 0 + $loc->{'lat'}, lon => 0 + $loc->{'lon'}, uuid => $loc->{'uuid'}, from => 'anchor' };
+	}
+	return undef;
+}
+
+# The places the scheduled pass records. A rule's own place and every anchored
+# place are stations, and so is the home plate: the house keeps reading its own
+# ground when the phones leave. A device's fix is not a station here - the pass
+# does not follow the person; the page offers one check where they are instead.
 sub weather_rule_locations() {
 	my (@keys, %seen);
-	my $global = 0;
 	my $am = &weather_observe_prepare();
 	foreach my $rule (@{ &weather_automation_rules($am) }) {
 		my $location = &weather_rule_location_normalize($rule->{'location'});
-		if (length $location) { push @keys, $location unless $seen{$location}++; }
-		else { $global = 1; }
+		push @keys, $location if length $location && !$seen{$location}++;
 	}
 	foreach my $rule (@{ &weather_measure_rules() }) {
 		my $location = &weather_rule_location_normalize($rule->{'location'});
-		if (length $location) { push @keys, $location unless $seen{$location}++; }
-		else { $global = 1; }
+		push @keys, $location if length $location && !$seen{$location}++;
 	}
 	# An anchored place is a station the house keeps, wherever the phones are.
 	foreach my $loc (@{ &weather_locations() }) {
@@ -826,17 +850,14 @@ sub weather_rule_locations() {
 		my $key = 'loc:' . $uuid;
 		push @keys, $key unless $seen{$key}++;
 	}
-	if ($global) {
-		my $fixes = eval { &subs::weather_device_fixes(24 * 60 * 60 * 1000) } || [];
-		my ($fix) = @{$fixes};
-		my $sig = $fix ? ($fix->{'signatorial'} // '') : '';
-		if ($sig =~ /^[A-Za-z0-9_-]+$/) {
-			my $key = "dev:$sig";
-			# A device standing at an anchored (or rule-named) place is already
-			# read by that place; recording the device too would duplicate it.
-			my $place = &weather_location_for_fix($fix->{'lat'}, $fix->{'lon'}, '', { create => 0 });
-			my $covered = $place && $seen{'loc:' . ($place->{'uuid'} // '')};
-			push @keys, $key unless $covered || $seen{$key}++;
+	# The home plate is always a station. Find the place at the plate (or make
+	# one there) so its readings, History and Delete all name one place.
+	my $home = &weather_home_plate();
+	if ($home) {
+		my $place = &weather_location_for_fix($home->{'lat'}, $home->{'lon'}, '', { create => 1 });
+		if ($place && ($place->{'uuid'} // '') =~ /^[A-Za-z0-9_-]+$/) {
+			my $key = 'loc:' . $place->{'uuid'};
+			push @keys, $key unless $seen{$key}++;
 		}
 	}
 	return \@keys;
@@ -870,14 +891,32 @@ sub weather_place_auto_uuid($lat, $lon) {
 	return 'p' . substr(md5_sum(sprintf('%.2f,%.2f', $lat, $lon)), 0, 20);
 }
 
-# The place a fix belongs to. A saved place within five kilometres is that
+# The ground a fix and a saved place share. Thirty kilometres covers a town
+# and its nearer neighbours, so a drive to the next town does not become a
+# second place.
+sub weather_place_match_km() { return 30; }
+
+# How far a coordinate is from the nearest saved place, in kilometres. Undef
+# when the house has saved none.
+sub weather_saved_place_km($lat, $lon) {
+	return undef unless defined $lat && defined $lon;
+	my $nearest;
+	foreach my $saved (@{ &weather_locations() }) {
+		next unless defined $saved->{'lat'} && defined $saved->{'lon'};
+		my $km = eval { &subs::weather_distance_km($lat, $lon, $saved->{'lat'}, $saved->{'lon'}) };
+		$nearest = $km if defined $km && (!defined $nearest || $km < $nearest);
+	}
+	return $nearest;
+}
+
+# The place a fix belongs to. A saved place within the match radius is that
 # place; a new fix can create one, which is what makes a stay somewhere a place
 # the person can later find in the picker and delete. An anchored place keeps
 # its name and its readings even when the phone leaves.
 sub weather_location_for_fix($lat, $lon, $name = '', $opts = {}) {
 	$opts ||= {};
 	return undef unless defined $lat && defined $lon;
-	my $limit = $opts->{'km'} || 5;
+	my $limit = $opts->{'km'} || &weather_place_match_km();
 	my $locations = &weather_locations();
 	my ($best, $best_km);
 	foreach my $loc (@{$locations}) {
@@ -1405,14 +1444,6 @@ sub weather_observe_tick() {
 		}
 	}
 	my $keys = &weather_rule_locations();
-	if (!@{$keys}) {
-		# No rule names a place: keep the house's own place current so History
-		# and Accuracy have a reading every hour.
-		my $fixes = eval { &subs::weather_device_fixes(24 * 60 * 60 * 1000) } || [];
-		my ($fix) = @{$fixes};
-		my $sig = $fix ? ($fix->{'signatorial'} // '') : '';
-		push @{$keys}, 'dev:' . $sig if $sig =~ /^[A-Za-z0-9_-]+$/;
-	}
 	return { skipped => 'no fix', (defined $reconcile ? (reconcile => $reconcile) : ()) } unless @{$keys};
 	my $lock = eval { &cache_get({ app => 'weather', context => 'observe', subcontext => 'lock' }) } || {};
 	return { skipped => 'held', at => $lock->{'at'}, (defined $reconcile ? (reconcile => $reconcile) : ()) }

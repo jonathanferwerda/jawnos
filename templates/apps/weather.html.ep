@@ -31,6 +31,7 @@
 		<button type="button" id="weather_location_anchor" disabled><%= &subs::ui('Anchor') %></button>
 		<button type="button" id="weather_refresh"><%= &subs::ui('Refresh') %></button>
 		<button type="button" id="weather_browser"><%= &subs::ui('Use browser location') %></button>
+		<button type="button" id="weather_check_here" style="display:none;"><%= &subs::ui('Check weather here') %></button>
 		<span id="weather_status"></span>
 	</div>
 	<input type="hidden" id="weather_lat" value="">

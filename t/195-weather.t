@@ -397,6 +397,7 @@ is(scalar @{ subs::weather_automation_matches($rules, 'Partly Cloudy') }, 0, 'a 
 	is($changed->{'matched'}[0]{'app'}, 'snowing', 'the snow rule answers');
 
 	local *subs::weather_observe_now = sub { return { ok => 1, condition => 'Snow' } };
+	local *subs::weather_locations = sub { [ { uuid => 'warwick', name => 'Warwick', lat => 43.0023, lon => -81.9419, anchor => 1 } ] };
 	$store{'weather|observe|lock'} = { at => $now - 5 * 60 * 1000 };
 	is(subs::weather_observe_tick()->{'skipped'}, 'held', 'the lock holds a second machine');
 	delete $store{'weather|observe|lock'};
@@ -785,8 +786,8 @@ is(subs::weather_rule_location_normalize(undef), '', 'no location is the old glo
 		} ] }, 'FakeResult';
 	};
 	my $keys = subs::weather_rule_locations();
-	is_deeply($keys, ['loc:cottage', 'loc:cabin', 'dev:phone'],
-		'the tick covers every rule place, and the newest fix for a rule that applies anywhere');
+	is_deeply($keys, ['loc:cottage', 'loc:cabin'],
+		'the tick covers every rule place, and does not follow a fix that applies anywhere');
 }
 
 {
@@ -1070,8 +1071,7 @@ is(subs::weather_rule_location_normalize(undef), '', 'no location is the old glo
 	local *subs::cache_get = sub { {} };
 	local *subs::cache_set = sub { 1 };
 	my $tick = subs::weather_observe_tick();
-	is($tick->{'ok'}, 1, 'with no rules the house still records its own place');
-	is($tick->{'results'}[0]{'location'}, 'dev:phone', 'once, at the newest fix');
+	is($tick->{'skipped'}, 'no fix', 'the pass does not follow the newest fix when no place is a station');
 }
 
 # --- a place reads as a name, and machines at one place are one entry --------
@@ -1301,6 +1301,9 @@ is(subs::weather_name_is_coordinate(''), 0, 'an empty name is not a coordinate e
 	is($place->{'name'}, 'Lambton Shores', 'named by the provider');
 	is($place->{'auto'}, 1, 'marked automatic');
 	is($place->{'anchor'}, 0, 'and not anchored');
+	is(subs::weather_place_match_km(), 30, 'a saved place is matched within thirty kilometres');
+	my $near_km = subs::weather_saved_place_km(43.2023, -81.9419);
+	ok(defined $near_km && $near_km > 20 && $near_km < 25, 'a nearby fix measures its distance to the saved place');
 	my $again = subs::weather_location_for_fix(43.0030, -81.9425, 'Lambton Shores', { create => 1 });
 	is($again->{'uuid'}, $place->{'uuid'}, 'the same ground keeps one place');
 	my $saved = subs::weather_location_save('Warwick', 43.0024, -81.9418, { anchor => 1, auto => 0 });
@@ -1314,6 +1317,41 @@ is(subs::weather_name_is_coordinate(''), 0, 'an empty name is not a coordinate e
 	my $toggled = subs::weather_location_anchor($place->{'uuid'}, 0);
 	is($toggled->{'anchor'}, 0, 'the anchor can be turned off again');
 	is(scalar @{ $toggled->{'locations'} }, 1, 'and the place is still listed');
+	my $near = subs::weather_location_for_fix(43.2023, -81.9419, 'Nearby', { create => 0 });
+	is($near->{'uuid'}, $place->{'uuid'}, 'a fix within thirty kilometres is the same place');
+	my $far = subs::weather_location_for_fix(43.6023, -81.9419, 'Faraway', { create => 1 });
+	isnt($far->{'uuid'}, $place->{'uuid'}, 'a fix beyond thirty kilometres is a new place');
+}
+
+# --- the home plate is the house's own station -------------------------------
+{
+	my %store;
+	no warnings 'redefine';
+	local *subs::db_query = sub {
+		my ($q) = @_;
+		return bless { rows => [ { value => $store{'home_plate'} } ] }, 'FakeResult'
+			if ($q // '') =~ /setting = 'home_plate'/ && $store{'home_plate'};
+		return bless { rows => [ { value => $store{'locations'} } ] }, 'FakeResult'
+			if ($q // '') =~ /setting = 'locations'/ && $store{'locations'};
+		return bless { rows => [] }, 'FakeResult';
+	};
+	$store{'home_plate'} = Mojo::JSON::encode_json({ latitude => '43.0024', longitude => '-81.9419' });
+	$store{'locations'} = Mojo::JSON::encode_json([
+		{ uuid => 'warwick', name => 'Warwick', lat => 43.0023, lon => -81.9419, anchor => 1 },
+	]);
+	my $plate = subs::weather_home_plate();
+	is($plate->{'from'}, 'home', 'the home app plate is the house');
+	is($plate->{'lat'}, 43.0024, 'and carries its latitude');
+	$store{'home_plate'} = '';
+	$plate = subs::weather_home_plate();
+	is($plate->{'from'}, 'anchor', 'without a plate the anchored place is the house');
+	is($plate->{'uuid'}, 'warwick', 'and names that place');
+}
+
+{
+	no warnings 'redefine';
+	local *subs::weather_locations = sub { [] };
+	is(subs::weather_saved_place_km(43.0023, -81.9419), undef, 'no saved place has no distance');
 }
 
 # --- the scheduled pass keeps an anchored place, not its covered phone -------
@@ -1328,7 +1366,7 @@ is(subs::weather_name_is_coordinate(''), 0, 'an empty name is not a coordinate e
 	is_deeply($keys, ['loc:warwick'], 'the anchored place keeps its pass and the covered phone is not doubled');
 	local *subs::weather_device_fixes = sub { [ { signatorial => 'phone', lat => 42.97, lon => -82.40 } ] };
 	$keys = subs::weather_rule_locations();
-	is_deeply($keys, ['loc:warwick', 'dev:phone'], 'a phone away from the anchor records its own place');
+	is_deeply($keys, ['loc:warwick'], 'a phone away from the anchor is not a station of its own');
 }
 
 # --- a reading carries the place, and an anchored place is written as itself -
@@ -1477,11 +1515,14 @@ my $controller_auto = read_file("$root/lib/JawnOS/Controller/manager_weather.pm"
 like($controller_auto, qr/sub action_52015\b/, 'the automation state action exists');
 like($controller_auto, qr/sub action_52016\b/, 'the automation save action exists');
 like($controller_auto, qr/sub action_52017\b/, 'the observe-now action exists');
-like($controller_auto, qr/weather_observe_record/, 'the data route records the condition');
+unlike($controller_auto, qr/weather_observe_record/, 'looking at a place does not record it');
 
 my $page = read_file("$root/templates/apps/weather.html.ep");
 like($page, qr/data-tab="automations"/, 'the page has an Automations tab');
 like($page, qr{apps/weather/automations}, 'the page includes the Automations panel');
+like($page, qr/id="weather_check_here"/, 'the page offers one check where you are');
+my $weather_script = read_file("$root/public/js/manager/weather.js");
+like($weather_script, qr/weatherCheckHere/, 'and the script keeps that reading');
 my $auto_partial = read_file("$root/templates/apps/weather/automations.html.ep");
 like($auto_partial, qr/id="weather_automation_list"/, 'the panel has a rule list');
 like($auto_partial, qr/id="weather_automation_check"/, 'the panel can check now');

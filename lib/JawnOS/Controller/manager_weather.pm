@@ -109,9 +109,14 @@ sub action_52011 {
 	$weather->{'source_at'} = $seen_at;
 	$weather->{'source_device'} = $device;
 	$weather->{'source_location'} = $location_key;
-	# The condition the person is looking at is the one the house acts on.
-	# The write is throttled and the rules run through appt_measure_writer.
-	eval { &subs::weather_observe_record($weather, { location => $location_key }) };
+	# The pass keeps the home plate; looking at a place must not quietly save a
+	# new one. Away from every saved place the page offers "Check weather here",
+	# which records through /manager/weather/observe.
+	if (($location_key // '') !~ /^loc:/) {
+		my $nearest = &subs::weather_saved_place_km($use_lat, $use_lon);
+		$weather->{'saved_place_km'} = defined $nearest ? 0 + sprintf('%.1f', $nearest) : undef;
+		$weather->{'needs_place'} = (!defined $nearest || $nearest > &subs::weather_place_match_km()) ? 1 : 0;
+	}
 	$c->render(json => $weather);
 }
 
@@ -183,14 +188,22 @@ sub action_52017 {
 	my $c = shift;
 	my $lat = $c->param('lat');
 	my $lon = $c->param('lon');
-	my $opts = { force => 1, location => ($c->param('location') || '') };
+	my $location = &subs::weather_rule_location_normalize($c->param('location') || '');
+	my $opts = { force => 1, location => $location };
 	if (defined $lat && defined $lon
 		&& $lat =~ /^-?\d+(?:\.\d+)?$/ && $lon =~ /^-?\d+(?:\.\d+)?$/
 		&& $lat >= -90 && $lat <= 90 && $lon >= -180 && $lon <= 180) {
 		$opts->{'lat'} = 0 + $lat;
 		$opts->{'lon'} = 0 + $lon;
+		# A browser's own location is still this machine's place: give the
+		# reading a device key so the place can be found, anchored and deleted.
+		$opts->{'location'} = 'dev:' . &subs::signatorial_designer() unless length $location;
 	}
 	my $result = eval { &subs::weather_observe_now($opts) };
+	if (ref $result eq 'HASH' && !$result->{'error'}) {
+		$result->{'locations'} = eval { &subs::weather_locations() } || [];
+		$result->{'labels'} = eval { &subs::weather_location_labels() } || {};
+	}
 	$c->render(json => $result || { error => &subs::ui('The weather could not be checked.') });
 }
 

@@ -67,6 +67,7 @@ function weatherBind() {
 	});
 	$w.on('click', '#weather_refresh', function() { weatherLoad(true); });
 	$w.on('click', '#weather_browser', function() { weatherBrowser(); });
+	$w.on('click', '#weather_check_here', function() { weatherCheckHere(); });
 }
 
 // Delete a saved place, twice: the first press asks, the second removes it. A
@@ -154,7 +155,7 @@ function weatherLocationAnchor(uuid, button, statusSelector) {
 			weatherDeleteState();
 			$w.find(statusSelector).text(response.anchor
 				? jawnosT('Recording here even when you leave.')
-				: jawnosT('Recording only while you are here.'));
+				: jawnosT('Only checked when you ask.'));
 		},
 		error: function() {
 			$w.find(statusSelector).text(jawnosT('The place was not anchored.'));
@@ -226,6 +227,53 @@ function weatherBrowser() {
 	}, { enableHighAccuracy: true, timeout: 15000, maximumAge: 60000 });
 }
 
+// The hourly pass keeps the home plate, not the phone. Away from every saved
+// place the page offers one check at the fix instead of quietly saving the
+// drive as a place; the reading is kept and the new place joins the picker.
+function weatherCheckHere() {
+	var $w = $('.wind[app="weather"]').last();
+	if (!$w.length) { return; }
+	var value = $w.find('#weather_device').val() || 'me';
+	var lat = $w.find('#weather_lat').val();
+	var lon = $w.find('#weather_lon').val();
+	var browser = !!(lat && lon);
+	if (!browser) {
+		var $opt = $w.find('#weather_device option:selected');
+		lat = $opt.attr('data-lat') || '';
+		lon = $opt.attr('data-lon') || '';
+	}
+	if (!lat || !lon) {
+		$w.find('#weather_status').text(jawnosT('No location to check.'));
+		return;
+	}
+	// A browser coordinate is this machine's place even when the picker still
+	// shows a saved place; a picked device keeps its own key.
+	var location = browser ? '' : (value.indexOf('loc:') === 0 ? value : (value === 'me' ? '' : 'dev:' + value));
+	$w.find('#weather_status').text(jawnosT('Checking…'));
+	$.ajax({
+		url: '/manager/weather/observe',
+		type: 'POST',
+		data: { lat: lat, lon: lon, location: location },
+		dataType: 'json',
+		success: function(response) {
+			if (!response || response.error) {
+				$w.find('#weather_status').text((response && response.error) || jawnosT('The weather could not be checked.'));
+				return;
+			}
+			if (response.locations && typeof weatherLocationOptions === 'function') {
+				weatherLocationOptions($w, response.locations, response.labels || {});
+				if (response.place_key) { $w.find('#weather_device').val(response.place_key); }
+			}
+			$w.find('#weather_check_here').hide();
+			$w.find('#weather_status').text(jawnosT('Reading kept.'));
+			weatherLoad(true);
+		},
+		error: function() {
+			$w.find('#weather_status').text(jawnosT('The weather could not be checked.'));
+		}
+	});
+}
+
 // The provider names the place it read for. Put that name in the picker so the
 // house reads places, not devices: a saved place the person named keeps its
 // name, while a group shown as "This device" becomes its city once we know it.
@@ -254,6 +302,7 @@ function weatherRender(data) {
 	var place = data.location_name || '';
 	if (data.source) { place = place ? (place + ' · ' + data.source) : data.source; }
 	$w.find('#weather_place').text(place);
+	$w.find('#weather_check_here').toggle(!!data.needs_place);
 	weatherPlaceLabel(data);
 	$w.find('#weather_temp').text(weatherTemp(cur.temperature));
 	$w.find('#weather_cond').text(cur.condition || '');
