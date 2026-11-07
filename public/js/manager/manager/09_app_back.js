@@ -325,10 +325,21 @@ function appointmentStatsShow(stats, stat) {
 
 function appointmentStatsOpen(stats, stat) {
 	var app = stats.attr('app') || '';
-	if (stat !== 'evaluation' && !stats.find('.appointment_stats_panel[stat="' + stat + '"]').length) {
-		// a second press while the first is in flight is remembered, so the panel
-		// the person last asked for is the one that opens
+	var holder = stats.find('.app_section_placeholder[section="stats"]').first();
+	if (holder.length && holder.attr('loading') === 'yes') {
+		// a press while a read is in flight does not ask again: the answer that
+		// lands reads this, so the panel the person last pressed is the one that
+		// opens
 		stats.attr('stats_wanted', stat);
+		appointmentStatsShow(stats, stat);
+		return;
+	}
+	if (stat !== 'evaluation' && !stats.find('.appointment_stats_panel[stat="' + stat + '"]').length) {
+		// the placeholder says it is loading (its CSS reads these words) and the
+		// answer replaces them with the panel
+		holder.attr('data-loading-text', (typeof jawnosT === 'function') ? jawnosT('Loading…') : 'Loading…');
+		stats.attr('stats_wanted', stat);
+		appointmentStatsShow(stats, stat);
 		appSectionGrabber(app, 'stats', stats, function() {
 			var wanted = stats.attr('stats_wanted') || stat;
 			stats.removeAttr('stats_wanted');

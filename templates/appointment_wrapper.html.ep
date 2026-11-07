@@ -300,4 +300,13 @@
 	.appointment_stats_table th { font-weight: normal; opacity: .7; }
 	.appointment_stats_calc { font-size: 85%; opacity: .6; }
 	.appointment_stats_empty { font-style: italic; opacity: .6; }
+	/* The readings are fetched on the first press: the placeholder says so while
+	   it waits, in the person's own language, and the answer replaces the words. */
+	.app_section_placeholder[section="stats"][loading="yes"]::before {
+		content: attr(data-loading-text);
+		display: block;
+		padding: 2px 3px;
+		font-style: italic;
+		opacity: .65;
+	}
 </style>

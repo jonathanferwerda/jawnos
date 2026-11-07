@@ -184,6 +184,23 @@ like($stats_reload, qr/appointmentStatsOpen\(stats, stat\)/,
 like($stats_reload, qr/if \(stat === 'evaluation' \|\| !stat\) \{ return; \}/,
 	'an evaluation view only drops the snapshot for the next press');
 
+my ($stats_open) = $app_back =~ /(function appointmentStatsOpen\(stats, stat\) \{.*?\n\})/s;
+ok($stats_open, 'the open helper is one function');
+like($stats_open, qr/holder\.attr\('loading'\) === 'yes'/,
+	'a press during a fetch does not start a second one');
+like($stats_open, qr/stats\.attr\('stats_wanted', stat\)/,
+	'the last pressed header is remembered for the answer');
+like($stats_open, qr/var wanted = stats\.attr\('stats_wanted'\) \|\| stat;/,
+	'the answer opens the last header pressed');
+like($stats_open, qr/jawnosT\('Loading…'\)/,
+	'the loading line is translated');
+like($stats_open, qr/appointmentStatsShow\(stats, stat\)/,
+	'the pressed header is selected while it loads');
+like($wrapper, qr/\[loading="yes"\]::before/,
+	'the placeholder shows a loading line');
+like($wrapper, qr/content: attr\(data-loading-text\)/,
+	'the line takes its words from the request');
+
 my $messages = read_file("$root/public/js/manager/websocket/01_message_handler.js");
 like($messages, qr/jawnosTimePreviewPaintApp\(app\)/,
 	'a pushed header asks the readings again, so start moves them to now');
