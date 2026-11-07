@@ -117,8 +117,14 @@ static bool dev_ws_handshake() {
               + "&edt=microcontroller&chip_id=" + dev_ws_escape(dev_ws_chip());
 
   dev_ws_tls.setInsecure();
-  dev_ws_tls.setTimeout(5);
-  if (!dev_ws_tls.connect(host.c_str(), dev_ws_port)) { return false; }
+  // setTimeout() is in milliseconds on the arduino-pico Stream API (the HTTP
+  // rail uses 8000/6000 for the same reason). 5 ms here timed out the TLS
+  // handshake before it could finish, so the board never registered.
+  dev_ws_tls.setTimeout(5000);
+  if (!dev_ws_tls.connect(host.c_str(), dev_ws_port)) {
+    Serial.println("JAWNDEVWS connect failed " + host + ":" + String(dev_ws_port));
+    return false;
+  }
   String req = "GET " + path + " HTTP/1.1\r\n";
   req += "Host: " + host + ":" + String(dev_ws_port) + "\r\n";
   req += "Upgrade: websocket\r\n";
@@ -141,8 +147,15 @@ static bool dev_ws_handshake() {
     if (!status.endsWith("\r\n\r\n")) { delay(2); }
   }
   (void)accept;
-  if (status.indexOf(" 101 ") < 0) { dev_ws_tls.stop(); return false; }
-  dev_ws_tls.setTimeout(2);
+  if (status.indexOf(" 101 ") < 0) {
+    Serial.println("JAWNDEVWS upgrade refused (" + String(status.length()) + " bytes)");
+    dev_ws_tls.stop();
+    return false;
+  }
+  // Keep a frame read short enough that a half-arrived frame cannot hold the
+  // core; available() gates the read, so this only bounds a partial frame.
+  dev_ws_tls.setTimeout(200);
+  Serial.println("JAWNDEVWS up " + host + ":" + String(dev_ws_port));
   return true;
 }
 
@@ -169,6 +182,8 @@ static void dev_ws_apply_cmd(JSONVar d) {
     }
     command_mark_pin(pin, ms);
     command_remember(id, comp, "", ms);
+    // A person's toggle is rare; one line is enough to follow the bus.
+    Serial.println("JAWNDEVWS cmd " + comp + " " + String(pin) + "=" + state);
     // Ack the pin's real state (command_redundant() folds it into `state`).
     String ack = "{\"t\":\"ack\",\"id\":\"" + id + "\",\"state\":\"" + state + "\"}";
     dev_ws_send_text(ack);

@@ -98,7 +98,12 @@ unlike($ws, qr/dev_ws_handle_text[\s\S]*?"snap"[\s\S]*?relay_toggle\(/,
 like($ws, qr/if\s*\(\s*wifiState != "connected" \|\| homebaseIP == "" \|\| authorization == ""\s*\)/,
 	'the poll does nothing without a link and a pair');
 like($ws, qr/dev_ws_backoff\s*<\s*30000/, 'a failed dial backs off');
-like($ws, qr/setTimeout\(2\)/, 'a frame read is bounded');
+like($ws, qr/dev_ws_tls\.setTimeout\(5000\)/, 'the handshake timeout is 5 s, not 5 ms');
+like($ws, qr/dev_ws_tls\.setTimeout\(200\)/, 'a frame read is bounded at 200 ms');
+unlike($ws, qr/setTimeout\([0-9]{1,2}\)/, 'no timeout is silently 5 ms (the Stream API is in milliseconds)');
+like($ws, qr/JAWNDEVWS up /, 'a successful attach is logged');
+like($ws, qr/JAWNDEVWS connect failed /, 'a failed dial is logged with its address');
+like($ws, qr/JAWNDEVWS cmd /, 'an applied command is logged');
 like($ws, qr/dev_ws_last_ping\)\s*>\s*30000/, 'it pings on an idle socket');
 
 done_testing();
