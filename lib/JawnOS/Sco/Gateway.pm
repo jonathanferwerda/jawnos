@@ -1387,8 +1387,22 @@ sub set_hold {
 		$self->write_status();
 		return { ok => 1, hold => 0 };
 	}
-	my $step = $self->{'steps'}->[ $self->{'step_at'} ] || {};
-	my $list = $step->{'hold'} ? ($step->{'list'} || []) : [];
+	# The music belongs to the flow, not to whatever step the plan is on: the
+	# person may press Hold during the greeting or after the thanks, and a flow
+	# that ends in voicemail has no hold step at all. Use the plan's own hold
+	# step when there is one, and otherwise give the call one from the flow's
+	# choice - a manual hold becomes the current step, so the engine's own
+	# "until the caller leaves (or the flow's seconds)" rule applies either way.
+	my ($step) = grep { ref $_ eq 'HASH' && $_->{'hold'} } @{ $self->{'steps'} || [] };
+	unless ($step) {
+		my $flow = $self->{'flows'}->{ $self->{'flow'} || '' } || {};
+		$step = &_hold_step($flow->{'hold'} || '', 0);
+		if ($step) {
+			push @{ $self->{'steps'} }, $step;
+			$self->{'step_at'} = $#{ $self->{'steps'} };
+		}
+	}
+	my $list = $step ? ($step->{'list'} || []) : [];
 	return { ok => 0, error => 'this call has no hold music' } unless @{$list};
 	$self->{'holding'} = 1;
 	$self->{'hold_paused'} = 0;

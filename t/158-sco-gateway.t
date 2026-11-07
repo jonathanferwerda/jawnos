@@ -814,6 +814,21 @@ is(JawnOS::Sco::Gateway::call_over('in_call', undef, 100, 0), 'call limit',
 	ok($h->{'hold_paused'}, 'leaving the caller the line');
 	$h->event({ event => 'stopped' });
 	is($h->{'state'}, 'in_call', 'a stop the house asked for does not end the call');
+	# A flow that ends in voicemail has no hold step, and the person may press
+	# Hold during the greeting: the music comes from the flow, not the step.
+	{
+		my $any = JawnOS::Sco::Gateway->new(dir => "$dir/hold-any", helper => $hold_fake, status_path => "$dir/hold-any.json");
+		$any->{'state'} = 'in_call';
+		$any->{'flow'} = 'night';
+		$any->{'flows'} = { night => { hold => 'shuffle', after => 'voicemail' } };
+		$any->{'steps'} = [ { type => 'say', key => 'greeting' } ];
+		$any->{'step_at'} = 0;
+		my $mid = $any->set_hold(on => 1);
+		is($mid->{'ok'}, 1, 'Hold works before the plan ever reaches a hold step');
+		ok($any->{'holding'}, 'and the caller is on the music');
+		is($any->{'steps'}->[ $any->{'step_at'} ]->{'type'}, 'hold', 'as the step the call is on');
+		$any->end_call('test over');
+	}
 }
 
 # ---------------------------------------------------------- the phone's link
