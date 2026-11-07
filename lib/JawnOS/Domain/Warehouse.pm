@@ -439,6 +439,47 @@ sub remote_machine_data_view {
 	return \%view;
 }
 
+# One pass over rows written before the two views above. It rewrites only
+# `data` and `mirrors`; server_time is the peer's freshness, not this write's
+# time, so it is deliberately left alone. A blob that is not the expected JSON
+# is left in place for the next handshake rather than destroyed.
+sub remote_machine_payload_backfill {
+	my $result = eval { &subs::db_query('select uuid, signatorial, data, mirrors from remote_machines') };
+	return 0 unless $result;
+	my $rows = $result->hashes || [];
+	my ($changed, $skipped, $failed) = (0, 0, 0);
+	foreach my $row ( @{$rows} ) {
+		my $key = (defined $row->{'uuid'} && $row->{'uuid'} ne '') ? 'uuid'
+			: (defined $row->{'signatorial'} && $row->{'signatorial'} ne '') ? 'signatorial' : '';
+		unless ($key) { $skipped++; next; }
+
+		my (@set, @args);
+		if (defined $row->{'data'} && $row->{'data'} =~ /^\s*\{/) {
+			my $data = eval { decode_json($row->{'data'}) };
+			if (ref $data eq 'HASH') {
+				my $view = encode_json &subs::remote_machine_data_view($data);
+				if ($view ne $row->{'data'}) { push @set, 'data = ?'; push @args, $view; }
+			}
+			else { $skipped++ }
+		}
+		if (defined $row->{'mirrors'} && $row->{'mirrors'} =~ /^\s*\[/) {
+			my $mirrors = eval { decode_json($row->{'mirrors'}) };
+			if (ref $mirrors eq 'ARRAY') {
+				my $view = encode_json [ grep { defined $_ } map { &subs::remote_machine_mirror_row($_) } @{$mirrors} ];
+				if ($view ne $row->{'mirrors'}) { push @set, 'mirrors = ?'; push @args, $view; }
+			}
+			else { $skipped++ }
+		}
+		next unless @set;
+		my $ok = eval { &subs::db_query('update remote_machines set ' . join(', ', @set) . ' where ' . $key . ' = ?', @args, $row->{$key}); 1 };
+		if ($ok) { $changed++ } else { $failed++ }
+	}
+	&subs::say_it('backfill remote_machine_payload_prune_v1: rewrote ' . $changed . ' row(s)'
+		. ($skipped ? ', skipped ' . $skipped : '')
+		. ($failed ? ', failed ' . $failed : ''));
+	return $failed ? 0 : 1;
+}
+
 sub remote_machine_lister {
 	my $data = shift;
 	my $remote_machines = &subs::db_select('remote_machines')->hashes || [];

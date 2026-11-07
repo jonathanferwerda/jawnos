@@ -718,6 +718,12 @@ sub guide_message_warranty {
 			&subs::say_it('backfill settings_dedupe_null_keys: collapsed ' . $sth->rows . ' duplicate settings row(s)');
 			return 1;
 		},
+		'remote_machine_payload_prune_v1' => sub {
+			# Rows written before the mirror/data views still carry the whole
+			# login body and each peer's full row. Rewrite them once; the live
+			# write paths now use the views, so only this at-rest copy is left.
+			return &subs::remote_machine_payload_backfill();
+		},
 	};
 }
 
