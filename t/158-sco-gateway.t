@@ -1648,6 +1648,270 @@ my %flow_defs = (
 	$g->cancel();
 }
 
+# Send to voicemail works at any point in any flow, including a flow that has
+# no voicemail step, a flow with no voicemail words, and a call with no flow at
+# all. The greeting falls back to the phone's own voicemail words, the message
+# keeps the flow's length, and the recording lands in the voicemail pipeline.
+{
+	my $recorded_raw = "$dir/recorded-greeting.raw";
+	write_file($recorded_raw, "\0" x 160);
+	local *JawnOS::Sco::Audio::raw = sub {
+		my ($value) = @_;
+		return $recorded_raw if defined $value && $value eq "$dir/recorded-greeting.wav";
+		return '';
+	};
+	my $with_recording = JawnOS::Sco::Gateway::_voicemail_greeting_for({
+		voice => 'piper-test',
+		voicemail_greeting => "$dir/recorded-greeting.wav",
+		clips => { voicemail => $flow_clip },
+	}, '');
+	is($with_recording->{'play'}, $recorded_raw, 'the flow\'s recorded greeting wins when it resolves');
+	is($with_recording->{'source'}, 'recorded', 'and says where it came from');
+	my $moved = JawnOS::Sco::Gateway::_voicemail_greeting_for({
+		voice => 'piper-test',
+		voicemail_greeting => "$dir/not-here.wav",
+		clips => { voicemail => $flow_clip },
+	}, '');
+	is($moved->{'play'}, $flow_clip, 'a recording that moved falls back to the flow\'s text clip');
+}
+
+# A flow with a voicemail step and one without behave the same: the panel's
+# press is the plan now, not a step the flow has to have written.
+for my $case (
+	[ 'with a voicemail step', [ { type => 'voicemail' } ] ],
+	[ 'without a voicemail step', [ { type => 'say', text_key => 'greeting' } ] ],
+) {
+	my ($label, $steps) = @{$case};
+	my $id = $label =~ /without/ ? 'vm-plain' : 'vm-step';
+	my $g = JawnOS::Sco::Gateway->new(
+		dir => "$dir/$id", helper => $sleeper, status_path => "$dir/$id.json");
+	my @sent;
+	local *JawnOS::Sco::Gateway::_send = sub {
+		my ($self, %cmd) = @_;
+		push @sent, { %cmd };
+		return 1;
+	};
+	$g->arm(
+		flows => { night => {
+			voice => 'piper-test',
+			clips => { greeting => $flow_clip, voicemail => $flow_clip },
+			steps => $steps,
+			voicemail_seconds => 45,
+		} },
+		default_flow => 'night', call_id => $id,
+	);
+	$g->event({ event => 'accepted' });
+	my $sent = $g->to_voicemail();
+	is($sent->{'ok'}, 1, "Send to voicemail works $label");
+	is($g->{'state'}, 'in_call', 'and leaves the call up');
+	my ($greeting) = grep { ($_->{'key'} || '') eq 'voicemail' } @{ $g->{'steps'} };
+	is($greeting->{'play'}, $flow_clip, 'the flow\'s voicemail greeting plays');
+	$g->event({ event => 'played', id => $g->{'step_id'} });
+	my ($record) = reverse grep { ($_->{'cmd'} || '') eq 'record' } @sent;
+	is($record->{'file'}, "$dir/$id/message-$id.wav",
+		'the message is the name the kept pipeline reads');
+	is($record->{'ms'}, 45000, 'with the flow\'s own length');
+	is($record->{'silence_ms'}, 3000, 'a three-second pause ends it');
+	is($record->{'min_ms'}, 1000, 'after a second of speech');
+	$g->event({ event => 'recorded', id => $record->{'id'}, file => $record->{'file'}, ms => 4200 });
+	my ($filed) = @{ $g->{'recordings'} };
+	is($filed->{'kind'}, 'voicemail', 'the recording is filed as a voicemail');
+	is($filed->{'file'}, $record->{'file'}, 'and points at the message file');
+	is($g->{'state'}, 'done', 'the message ends the plan, leaving the call to close itself');
+	$g->cancel();
+}
+
+# A flow with no voicemail words at all, and a call with no flow: the caller
+# hears the phone's own voicemail greeting rather than silence.
+{
+	my $house = "$dir/house-default.raw";
+	write_file($house, "\0" x 160);
+	my @asked;
+	local *JawnOS::Sco::Render::render = sub {
+		my ($text, $voice) = @_;
+		push @asked, $text;
+		return $house if defined $text && $text =~ /leave a message/i;
+		return '';
+	};
+	my $g = JawnOS::Sco::Gateway->new(
+		dir => "$dir/vm-house", helper => $sleeper, status_path => "$dir/vm-house.json");
+	my @sent;
+	local *JawnOS::Sco::Gateway::_send = sub {
+		my ($self, %cmd) = @_;
+		push @sent, { %cmd };
+		return 1;
+	};
+	$g->arm(
+		flows => { plain => {
+			voice => 'piper-test',
+			clips => { greeting => $flow_clip },
+			steps => [ { type => 'say', text_key => 'greeting' } ],
+		} },
+		default_flow => 'plain', call_id => 'vm-house',
+	);
+	$g->event({ event => 'accepted' });
+	my $sent = $g->to_voicemail();
+	is($sent->{'ok'}, 1, 'a flow with no voicemail text still sends the call to voicemail');
+	is($g->{'steps'}->[0]->{'play'}, $house, 'the phone\'s default greeting is rendered and played');
+	ok((grep { /leave a message/i } @asked), 'the house words are what was rendered');
+	$g->cancel();
+
+	# a call that has no flow at all (a late or missing flow word)
+	my $bare = JawnOS::Sco::Gateway->new(
+		dir => "$dir/vm-bare", helper => $sleeper, status_path => "$dir/vm-bare.json");
+	$bare->{'state'} = 'in_call';
+	$bare->{'call_id'} = 'vm-bare';
+	$bare->{'flows'} = {};
+	$bare->{'flow'} = '';
+	my $bare_sent = $bare->to_voicemail();
+	is($bare_sent->{'ok'}, 1, 'a call with no flow can still be sent to voicemail');
+	is($bare->{'steps'}->[0]->{'play'}, $house, 'and hears the default greeting too');
+}
+
+# A second press restarts the greeting and replaces the message in progress:
+# the old recording is never announced, so the pane lists one message.
+{
+	my $g = JawnOS::Sco::Gateway->new(
+		dir => "$dir/vm-twice", helper => $sleeper, status_path => "$dir/vm-twice.json");
+	my @sent;
+	local *JawnOS::Sco::Gateway::_send = sub {
+		my ($self, %cmd) = @_;
+		push @sent, { %cmd };
+		return 1;
+	};
+	$g->arm(
+		flows => { night => {
+			voice => 'piper-test', clips => { voicemail => $flow_clip },
+			steps => [ { type => 'voicemail' } ], voicemail_seconds => 45,
+		} },
+		default_flow => 'night', call_id => 'vm-twice',
+	);
+	$g->event({ event => 'accepted' });
+	$g->to_voicemail();
+	$g->event({ event => 'played', id => $g->{'step_id'} });
+	ok($g->{'pending_record'}, 'the first press is recording a message');
+	my $before = scalar @sent;
+	my $again = $g->to_voicemail();
+	is($again->{'ok'}, 1, 'a second press is accepted');
+	ok((grep { ($_->{'cmd'} || '') eq 'stop' } @sent[$before .. $#sent]),
+		'the message in progress is stopped');
+	is($g->{'pending_record'}, '', 'its file is forgotten, not stacked on the new press');
+	is($g->{'state'}, 'in_call', 'and the call stays up');
+	is(scalar(grep { ($_->{'key'} || '') eq 'message' } @{ $g->{'steps'} }), 1,
+		'there is one message step, not two');
+	# the abandoned recording's own event is not the new message
+	$g->event({ event => 'recorded', id => 1, file => "$dir/abandoned.wav", ms => 100 });
+	is(scalar @{ $g->{'recordings'} }, 0, 'the abandoned recording is not filed');
+	$g->event({ event => 'played', id => $g->{'step_id'} });
+	my ($record) = reverse grep { ($_->{'cmd'} || '') eq 'record' } @sent;
+	$g->event({ event => 'recorded', id => $record->{'id'}, file => $record->{'file'}, ms => 2200 });
+	is(scalar @{ $g->{'recordings'} }, 1, 'one message is listed after the second press');
+	is($g->{'recordings'}->[0]->{'kind'}, 'voicemail', 'and it is the voicemail');
+	$g->cancel();
+}
+
+# A refusal says which part failed: no call, no voice, or a file that cannot
+# be opened. Nothing falls through to a recording of silence.
+{
+	my $idle = JawnOS::Sco::Gateway->new(
+		dir => "$dir/vm-idle", helper => $sleeper, status_path => "$dir/vm-idle.json");
+	my $none = $idle->to_voicemail();
+	is($none->{'ok'}, 0, 'a gateway with no call refuses');
+	is($none->{'error'}, 'no call is up', 'and says there is no call');
+
+	local *JawnOS::Sco::Render::render = sub { return '' };
+	local *JawnOS::Sco::Audio::raw = sub { return '' };
+	my $mute = JawnOS::Sco::Gateway->new(
+		dir => "$dir/vm-mute", helper => $sleeper, status_path => "$dir/vm-mute.json");
+	$mute->{'state'} = 'in_call';
+	$mute->{'call_id'} = 'vm-mute';
+	$mute->{'flows'} = { night => { voice => 'piper-test', clips => {}, steps => [] } };
+	$mute->{'flow'} = 'night';
+	my $mute_sent = $mute->to_voicemail();
+	is($mute_sent->{'ok'}, 0, 'a machine that cannot speak refuses');
+	is($mute_sent->{'error'}, 'no voice engine on this machine', 'and says so exactly');
+}
+{
+	# A message path that cannot be opened (here, a directory with the
+	# message's name) is refused before the helper is told to record.
+	my $blocked = "$dir/vm-blocked";
+	make_path("$blocked/message-vm-blocked.wav");
+	my $g = JawnOS::Sco::Gateway->new(
+		dir => $blocked, helper => $sleeper, status_path => "$dir/vm-blocked.json");
+	$g->{'state'} = 'in_call';
+	$g->{'call_id'} = 'vm-blocked';
+	$g->{'flows'} = { night => { clips => { voicemail => $flow_clip }, steps => [] } };
+	$g->{'flow'} = 'night';
+	my $sent = $g->to_voicemail();
+	is($sent->{'ok'}, 0, 'a message file that cannot be opened refuses');
+	like($sent->{'error'}, qr/^cannot open the file .*message-vm-blocked\.wav$/,
+		'and names the file');
+}
+
+# A message is allowed to outlive the screening ceiling: 42 s was cutting off
+# five-minute messages, and a second press or a long call made that worse.
+{
+	is(JawnOS::Sco::Gateway::call_over('in_call', undef, 100, 0, 60), '',
+		'a message being left keeps the call up past the 42 s plan limit');
+	is(JawnOS::Sco::Gateway::call_over('in_call', undef, 100, 0, 0), 'call limit',
+		'and the ceiling returns once the message window is gone');
+	is(JawnOS::Sco::Gateway::call_over('done', 5, 100, 0, 60), 'plan done',
+		'a finished plan still closes itself while a message window lingers');
+	my $g = JawnOS::Sco::Gateway->new(
+		dir => "$dir/vm-clock", helper => $sleeper, status_path => "$dir/vm-clock.json");
+	$g->{'state'} = 'in_call';
+	$g->{'call_id'} = 'vm-clock';
+	$g->{'flows'} = { night => { clips => { voicemail => $flow_clip }, steps => [] } };
+	$g->{'flow'} = 'night';
+	local *JawnOS::Sco::Gateway::_send = sub { return 1 };
+	$g->to_voicemail();
+	$g->event({ event => 'played', id => $g->{'step_id'} });
+	ok(($g->{'voicemail_until'} || 0) > time + 250,
+		'the dispatched message tells the call watcher how long it may run');
+	$g->cancel();
+}
+
+# A call is up in `in_call`, in `done` while its line closes, and in pipe mode
+# in `armed` once its streams are attached; an armed gateway with nobody on it
+# is not a call.
+{
+	my $g = JawnOS::Sco::Gateway->new(
+		dir => "$dir/vm-up", helper => $sleeper, status_path => "$dir/vm-up.json");
+	for my $case (
+		[ idle => 0 ], [ starting => 0 ], [ waiting => 0 ], [ armed => 0 ],
+		[ in_call => 1 ], [ done => 1 ],
+	) {
+		$g->{'state'} = $case->[0];
+		$g->{'line_up'} = 0;
+		is(JawnOS::Sco::Gateway::_call_is_up($g), $case->[1],
+			"the gateway knows whether $case->[0] is a call");
+	}
+	$g->{'state'} = 'armed';
+	$g->{'line_up'} = 1;
+	is(JawnOS::Sco::Gateway::_call_is_up($g), 1,
+		'pipe mode is a call the moment its streams are attached');
+}
+
+# The gateway's live transcript is what every panel reads: a line reaches
+# status.transcript while it is arriving, and a line with text but ms 0 (a very
+# short utterance, or a streamer that omits the length) still lands.
+{
+	my $g = JawnOS::Sco::Gateway->new(
+		dir => "$dir/tr-live", helper => $sleeper, status_path => "$dir/tr-live.json");
+	$g->{'call_id'} = 'tr-live';
+	$g->_transcript_event({ event => 'line', text => 'this is the caller', ms => 0 });
+	my $status = $g->status;
+	is(scalar @{ $status->{'transcript'} }, 1, 'a live line is in the status as it arrives');
+	is($status->{'transcript'}->[0]->{'text'}, 'this is the caller', 'as the caller said it');
+	is($status->{'transcript'}->[0]->{'ms'}, 0, 'with a zero length kept, not dropped');
+	$g->_transcript_event({ event => 'line', text => 'and this is the second', ms => 1200 });
+	is(scalar @{ $g->{'transcript'} }, 2, 'the next line joins it');
+	my $file = eval { JSON::PP->new->decode(read_file("$dir/tr-live.json")) } || {};
+	is(scalar @{ $file->{'transcript'} || [] }, 2, 'and the status file a pane reads carries both');
+	is($file->{'transcript'}->[-1]->{'text'}, 'and this is the second',
+		'including the line most recently recognised');
+}
+
 # Hang up ends the plan and the call; with no call there is nothing to end.
 {
 	my $g = JawnOS::Sco::Gateway->new(

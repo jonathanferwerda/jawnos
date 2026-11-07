@@ -49,6 +49,13 @@ sub new {
 		last_event => '',
 		last_error => '',
 		recordings => [],
+		# a clip is playing until its `played`/`stopped`, and a voiced plan may
+		# outlive the screening ceiling while a message is being left
+		clip_out => 0,
+		voicemail_until => 0,
+		# pipe mode says `line` the moment the caller's streams are ours, which
+		# is before the first frame makes the link `in_call`
+		line_up => 0,
 		transcript => [],
 		partial => '',
 		transcript_engine => '',
@@ -467,6 +474,12 @@ sub _flow {
 		voicemail_greeting => (defined $def->{'voicemail_greeting'} ? $def->{'voicemail_greeting'} : ''),
 		voicemail_seconds => &_voicemail_seconds($def->{'voicemail_seconds'}),
 		clips => (ref $def->{'clips'} eq 'HASH' ? { %{ $def->{'clips'} } } : {}),
+		# The words the phone armed with, kept so Send to voicemail can render a
+		# greeting when this call's clip is missing or was never made.
+		words => {
+			map { $_ => (defined $def->{$_} ? $def->{$_} : '') }
+				qw(greeting prompt thanks voicemail)
+		},
 	);
 	$flow{'steps'} = [
 		(ref $prefix eq 'ARRAY' ? @{$prefix} : ()),
@@ -500,6 +513,9 @@ sub arm {
 	$self->{'hold_at'} = 0;
 	$self->{'hold_paused'} = 0;
 	$self->{'stopping_hold'} = 0;
+	$self->{'clip_out'} = 0;
+	$self->{'voicemail_until'} = 0;
+	$self->{'line_up'} = 0;
 	my @cmd = $self->helper_command();
 	return { ok => 0, error => 'the SCO helper is not built on this machine' } unless @cmd;
 	# A Hands-Free stack (BlueALSA) owning the link leaves us as a plain audio
@@ -668,6 +684,7 @@ sub start_flow {
 	$self->{'keypad_open'} = 0;
 	$self->{'flow'} = $flow ? $key : '';
 	$self->{'flow_started'} = 0;
+	$self->{'voicemail_until'} = 0;
 	$self->{'steps'} = $flow ? [ map { { %$_ } } @{ $flow->{'steps'} } ] : [];
 	$self->{'step_at'} = -1;
 	$self->{'holding'} = 0;
@@ -680,28 +697,38 @@ sub start_flow {
 	return $flow ? 1 : 0;
 }
 
-# `{cmd:'voicemail'}` - the panel's Send to voicemail. The music stops, the
-# flow's greeting (or the words the person typed) plays, and the message is
-# recorded now instead of after the rest of the flow.
+# `{cmd:'voicemail'}` - the panel's Send to voicemail.
+#
+# A person presses this when they want the caller to leave a message *now*. It
+# must work at any step of any flow, in a flow that has no voicemail step at
+# all, and in a call the house never gave a flow to. So the plan is replaced,
+# not edited: the music and whatever clip is playing stop, the greeting plays,
+# and a message is recorded with the flow's own length.
+#
+# The greeting, most specific first: the words the panel typed, the flow's
+# recorded greeting, the flow's voicemail clip, the flow's own voicemail words,
+# and the phone's default voicemail words. A caller always hears something
+# recognisable; only a machine that cannot make any of those into audio refuses.
 sub to_voicemail {
 	my ($self, %args) = @_;
-	return { ok => 0, error => 'no call is up' } unless ($self->{'state'} || '') eq 'in_call';
+	return { ok => 0, error => 'no call is up' } unless $self->_call_is_up();
 	my $flow = length($self->{'flow'} || '') ? $self->{'flows'}->{ $self->{'flow'} } : undef;
-	my $greeting = &_voicemail_greeting(
-		(($flow && $flow->{'clips'}) ? ($flow->{'clips'}->{'voicemail'} || '') : ''),
-		($flow ? ($flow->{'voicemail_greeting'} || '') : ''));
+	$flow ||= {};
 	my $text = defined $args{'text'} ? $args{'text'} : '';
 	$text =~ s/^\s+|\s+$//g;
-	if (length $text) {
-		$text = substr($text, 0, 400);
-		my $raw = eval {
-			require JawnOS::Sco::Render;
-			&JawnOS::Sco::Render::render($text, ($flow && $flow->{'voice'}) || '');
-		} || '';
-		$greeting = $raw if $raw;
+	$text = substr($text, 0, 400);
+	my $greeting = &_voicemail_greeting_for($flow, $text);
+	return { ok => 0, error => $greeting->{'error'} } if length($greeting->{'error'} || '');
+	# The helper writes the message; refuse before it is told to when this
+	# machine cannot open the file, and say which file.
+	my $message = $self->{'dir'} . '/message-' . $self->{'call_id'} . '.wav';
+	my $probe;
+	unless (open($probe, '>>', $message)) {
+		return { ok => 0, error => "cannot open the file $message" };
 	}
-	# the words are the house's, so they join the transcript both sides read
-	if (length $text) {
+	close $probe;
+	# The words are the house's, so they join the transcript both sides read.
+	if (length $text && ($greeting->{'source'} || '') eq 'typed') {
 		my $line = { who => 'house', text => $text, at => time, ms => 0 };
 		push @{ $self->{'transcript'} }, $line;
 		shift @{ $self->{'transcript'} } while @{ $self->{'transcript'} } > 200;
@@ -711,22 +738,120 @@ sub to_voicemail {
 	$self->_clear_keypad_timer();
 	$self->_clear_hold_timer();
 	$self->{'keypad_open'} = 0;
-	if ($self->{'holding'}) {
-		# a stop the house asked for is not the end of the call
-		$self->{'stopping_hold'} = 1;
+	# An unfinished name or message is not the one being asked for: forget it
+	# before the helper announces it, so a second press cannot stack recordings.
+	my $was_recording = $self->{'pending_record'} ? 1 : 0;
+	my $was_playing = $self->{'holding'} || $self->{'clip_out'};
+	if ($was_recording || $was_playing) {
+		$self->{'pending_record'} = '';
+		$self->{'pending_kind'} = '';
+		# A stop that answers with `stopped` is ours, not the caller leaving.
+		$self->{'stopping_hold'} = 1 if $was_playing;
 		$self->_send(cmd => 'stop');
 	}
 	$self->{'holding'} = 0;
 	$self->{'hold_at'} = 0;
 	$self->{'hold_until'} = 0;
 	$self->{'hold_paused'} = 0;
-	$self->{'steps'} = [ &_voicemail_steps($greeting, ($flow ? $flow->{'voicemail_seconds'} : undef)) ];
+	$self->{'voicemail_until'} = 0;
+	# The new plan is the call's clock now. A plan that had finished (`done`) is
+	# running again, and the screening's 42 s ceiling starts over so it cannot
+	# cut off the greeting. The message itself extends it (see _advance).
+	my $state = $self->{'state'} || '';
+	$self->{'state'} = 'in_call' if $state eq 'done' || ($state eq 'armed' && $self->{'line_up'});
+	$self->{'accepted_at'} = time;
+	$self->{'done_at'} = 0;
+	$self->{'steps'} = [ &_voicemail_steps($greeting->{'play'}, $flow->{'voicemail_seconds'}) ];
 	$self->{'step_at'} = -1;
-	$self->{'flow_started'} = 0;
+	$self->{'flow_started'} = 1;
 	$self->{'last_event'} = 'voicemail';
 	$self->write_status();
 	$self->_advance();
 	return { ok => 1, flow => $self->{'flow'}, step => 'voicemail' };
+}
+
+# A call that is up: the plan's own two words for it, and pipe mode's window
+# between the streams being attached and the first frame making the link
+# `in_call`. Everything else - idle, starting, waiting, armed with no line - is
+# a gateway with nobody on it.
+sub _call_is_up {
+	my ($self) = @_;
+	my $state = $self->{'state'} || '';
+	return 1 if $state eq 'in_call' || $state eq 'done';
+	return 1 if $state eq 'armed' && $self->{'line_up'};
+	return 0;
+}
+
+# The greeting and where it came from. `error` is set only when nothing can be
+# played, and carries the precise reason the caller would otherwise hear
+# silence.
+sub _voicemail_greeting_for {
+	my ($flow, $typed) = @_;
+	$flow = {} unless ref $flow eq 'HASH';
+	my $clips = ref $flow->{'clips'} eq 'HASH' ? $flow->{'clips'} : {};
+	my $words = ref $flow->{'words'} eq 'HASH' ? $flow->{'words'} : {};
+	my $voice = defined $flow->{'voice'} ? $flow->{'voice'} : '';
+	if (defined $typed && length $typed) {
+		my $raw = &_render_voicemail_words($typed, $voice);
+		return { play => $raw, source => 'typed' } if length $raw;
+	}
+	# The flow's own recording, when this machine can put it on the line; the
+	# text clip it was rendered from is the fallback when the file has moved.
+	my $recorded = defined $flow->{'voicemail_greeting'} ? $flow->{'voicemail_greeting'} : '';
+	if (length $recorded) {
+		my $raw = eval {
+			require JawnOS::Sco::Audio;
+			&JawnOS::Sco::Audio::raw($recorded);
+		} || '';
+		return { play => $raw, source => 'recorded' } if length $raw && -s $raw;
+	}
+	my $clip = $clips->{'voicemail'} || '';
+	return { play => $clip, source => 'clip' } if length $clip && -s $clip;
+	my $text = $words->{'voicemail'} || '';
+	my $house_voice = '';
+	unless (length $text) {
+		($text, $house_voice) = &_house_voicemail();
+	}
+	if (length $text) {
+		my $raw = &_render_voicemail_words($text, (length $voice ? $voice : $house_voice));
+		return { play => $raw, source => 'words' } if length $raw;
+		return { play => '', source => '', error => 'no voice engine on this machine' };
+	}
+	# Nothing to say at all. A recording that was named and is here but could
+	# not be read is the one thing left to blame.
+	my $error = (length $recorded && -e $recorded)
+		? "cannot open the file $recorded"
+		: 'no voicemail greeting is available';
+	return { play => '', source => '', error => $error };
+}
+
+# The phone's own voicemail words, and the voice it saves with them. The house
+# settings carry the receptionist's words; the built-in defaults answer when a
+# machine has no settings row at all.
+sub _house_voicemail {
+	my $settings = eval { &subs::phone_ivr_settings() };
+	$settings = eval { &subs::phone_ivr_defaults() } unless ref $settings eq 'HASH';
+	$settings = {} unless ref $settings eq 'HASH';
+	my $words = defined $settings->{'voicemail'} ? $settings->{'voicemail'} : '';
+	unless (length $words) {
+		my $defaults = eval { &subs::phone_ivr_defaults() };
+		$words = (ref $defaults eq 'HASH' && defined $defaults->{'voicemail'})
+			? $defaults->{'voicemail'} : '';
+	}
+	my $voice = defined $settings->{'voice'} ? $settings->{'voice'} : '';
+	return ($words, $voice);
+}
+
+# Render words to the one shape the helper plays. A machine with no voice (no
+# piper, no model) returns '' rather than a path to silence.
+sub _render_voicemail_words {
+	my ($text, $voice) = @_;
+	return '' unless defined $text && length $text;
+	my $raw = eval {
+		require JawnOS::Sco::Render;
+		&JawnOS::Sco::Render::render($text, $voice);
+	} || '';
+	return length $raw ? $raw : '';
 }
 
 # `{cmd:'hangup'}` - the plan and the call are over.
@@ -790,6 +915,7 @@ sub watch_streams {
 		# caller speaks (the helper's own gate waits for a frame that carries
 		# signal, which someone waiting to be greeted never sends)
 		$self->_send({ cmd => 'line' });
+		$self->{'line_up'} = 1;
 		$self->{'last_event'} = 'attached';
 		$self->{'state'} = 'armed';
 		$self->{'since'} = time;
@@ -829,6 +955,7 @@ sub watch_streams {
 			($self->{'done_at'} ? time - $self->{'done_at'} : undef),
 			($self->{'accepted_at'} ? time - $self->{'accepted_at'} : undef),
 			$self->{'holding'},
+			(($self->{'voicemail_until'} || 0) - time),
 		);
 		# a bridged call belongs to the person, not to the plan's timer
 		$self->end_call($why) if length $why && !$self->{'rtc_up'};
@@ -844,9 +971,12 @@ sub watch_streams {
 	$self->{'held'} = 0;
 	$self->{'holding'} = 0;
 	$self->{'hold_at'} = 0;
+	$self->{'hold_until'} = 0;
 	$self->{'hold_paused'} = 0;
 	$self->{'stopping_hold'} = 0;
-	$self->{'hold_until'} = 0;
+	$self->{'voicemail_until'} = 0;
+	$self->{'clip_out'} = 0;
+	$self->{'line_up'} = 0;
 	$self->{'accepted_at'} = 0;
 	$self->{'done_at'} = 0;
 	$self->{'steps'} = [];
@@ -880,7 +1010,7 @@ sub watch_streams {
 ## arm/watch_streams), because the `line` word greets a silent caller as soon as
 ## the pair appears and the helper no longer waits for audio.
 sub call_over {
-	my ($state, $since_done, $since_accepted, $holding) = @_;
+	my ($state, $since_done, $since_accepted, $holding, $voicemail_left) = @_;
 	return 'plan done' if $state eq 'done'
 		&& defined $since_done && $since_done >= 4;
 	if ($holding) {
@@ -891,6 +1021,10 @@ sub call_over {
 		return 'hold limit' if defined $since_accepted && $since_accepted >= 660;
 		return '';
 	}
+	# A caller leaving a message is doing what the plan asked: the message's own
+	# seconds are its clock, and the screening ceiling waits for it. Without
+	# this a five-minute message was cut at forty-two seconds.
+	return '' if defined $voicemail_left && $voicemail_left > 0;
 	# a step that never ends must not hold the line forever either
 	return 'call limit' if defined $since_accepted && $since_accepted >= 42;
 	return '';
@@ -1458,6 +1592,11 @@ sub _send {
 		$in->flush;
 		1;
 	};
+	if ($ok) {
+		my $cmd = $request{'cmd'} || '';
+		$self->{'clip_out'} = 1 if $cmd eq 'play' || $cmd eq 'tone';
+		$self->{'clip_out'} = 0 if $cmd eq 'stop';
+	}
 	return $ok ? 1 : 0;
 }
 
@@ -1492,6 +1631,11 @@ sub _advance {
 		my $file = $self->{'dir'} . '/' . $prefix . $self->{'call_id'} . '.wav';
 		$self->{'pending_record'} = $file;
 		$self->{'pending_kind'} = $kind;
+		# A message is the longest step a plan has: the flow's own seconds are
+		# its clock, so the call stays up past the screening ceiling while the
+		# caller is still speaking.
+		$self->{'voicemail_until'} = time + int(($opts->{'ms'} || 30000) / 1000) + 15
+			if $kind eq 'voicemail';
 		$self->_send(
 			cmd => 'record',
 			id => $self->{'next_id'},
@@ -1635,25 +1779,33 @@ sub event {
 		my $peer = $event->{'peer'} || '';
 		$self->{'peer'} = $peer if $peer =~ /^[0-9a-f]{2}(?::[0-9a-f]{2}){5}$/i;
 		$self->_push_screen('started');
-		$self->{'step_at'} = -1;
-		# The flow the phone named while answering; with no word from it, the
-		# default the arm resolved (the unknown bucket's flow). A key naming no
-		# armed flow runs no plan.
-		my $key;
-		if (exists $self->{'pending_flow'}) {
-			$key = delete $self->{'pending_flow'};
+		# A plan already under way (Send to voicemail was pressed before the first
+		# frame made the link `in_call`) is the call's plan: a second `accepted`
+		# must not speak a new greeting over it.
+		unless ($self->{'flow_started'}) {
+			$self->{'step_at'} = -1;
+			# The flow the phone named while answering; with no word from it, the
+			# default the arm resolved (the unknown bucket's flow). A key naming no
+			# armed flow runs no plan.
+			my $key;
+			if (exists $self->{'pending_flow'}) {
+				$key = delete $self->{'pending_flow'};
+			}
+			else {
+				$key = $self->{'default_flow'};
+			}
+			$self->start_flow($key);
 		}
-		else {
-			$key = $self->{'default_flow'};
-		}
-		$self->start_flow($key);
 	}
 	elsif ($name eq 'played' || $name eq 'recorded') {
+		$self->{'clip_out'} = 0 if $name eq 'played';
 		if ($name eq 'recorded' && $self->{'pending_record'}) {
 			my $file = $event->{'file'} || $self->{'pending_record'};
+			my $kind = $self->{'pending_kind'} || 'name';
 			$self->{'pending_record'} = '';
+			$self->{'pending_kind'} = '';
 			my %recording = (
-				kind => ($self->{'pending_kind'} || 'name'),
+				kind => $kind,
 				file => $file,
 				ms => $event->{'ms'} || 0,
 				silence => $event->{'silence'} ? 1 : 0,
@@ -1718,6 +1870,7 @@ sub event {
 	}
 	elsif ($name eq 'closed' || $name eq 'stopped') {
 		$self->{'last_event'} = $name;
+		$self->{'clip_out'} = 0 if $name eq 'stopped';
 		# A stopped clip while somebody is bridged is the plan getting out of the
 		# person's way - rtc() sends the stop before it joins, and that is exactly
 		# how the hold music steps aside. The call is not over: taking the gateway
@@ -1766,6 +1919,11 @@ sub cancel {
 	$self->{'step_at'} = -1;
 	$self->{'hold_until'} = 0;
 	$self->{'keypad_open'} = 0;
+	$self->{'voicemail_until'} = 0;
+	$self->{'clip_out'} = 0;
+	$self->{'line_up'} = 0;
+	$self->{'pending_record'} = '';
+	$self->{'pending_kind'} = '';
 	$self->_clear_keypad_timer();
 	$self->_clear_hold_timer();
 	# Put the call's streams back only when no call is up. Cancelling also
