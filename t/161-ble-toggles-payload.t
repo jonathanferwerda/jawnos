@@ -3,7 +3,9 @@
 #           `app` key doubled from 108 to 786,444 bytes and the whole map was
 #           1,626,591 bytes against a 64 KB bridge queue, so the reply was
 #           dropped and the watch asked again forever. The guard drops keys
-#           that cannot be names, and the map is paged into messages that fit.
+#           that cannot be names, the map is paged into messages that fit, and a
+#           device is sent only the apps its own placed components draw (the
+#           phone held 1281 toggles; this watch names 14).
 
 use strict;
 use warnings;
@@ -14,7 +16,7 @@ use FindBin;
 use lib "$FindBin::Bin/../lib";
 use JSON::PP ();
 use Test::More;
-use JawnOS::Ble::Payload qw(key_ok toggle_map toggle_chunks);
+use JawnOS::Ble::Payload qw(key_ok toggle_map toggle_wanted toggle_chunks);
 
 my $json = JSON::PP->new->utf8;
 my $encode = sub { $json->encode($_[0]) };
@@ -27,6 +29,9 @@ my $src = do { local $/; <$fh> };
 close $fh;
 like( $src, qr/JawnOS::Ble::Payload/, 'state_request loads the payload module' );
 like( $src, qr/toggle_map\(\$rows\)/, 'the toggle map is built through the guard' );
+like( $src, qr/toggle_wanted\(\$toggles, \$od\)/, 'the reply is narrowed to the apps the device draws' );
+like( $src, qr/\$edt eq 'microcontroller' \|\| \$edt eq 'watch' \|\| \$edt eq 'teletype'/,
+	'a watch and a deck get the filter a board has always had' );
 like( $src, qr/ip => \$msg->\{'ip'\}/, 'state_request records the board LAN address' );
 like( $src, qr/toggle_chunks\(\$toggles/, 'the reply is chunked before it is sent' );
 like( $src, qr/foreach my \$chunk \( \@\{\$chunks\} \)/, 'one blocking send per chunk in one child' );
@@ -99,6 +104,32 @@ is_deeply(
 );
 is_deeply( toggle_map([]), {}, 'no rows makes an empty map' );
 is_deeply( toggle_map(undef), {}, 'no rows at all is still an empty map' );
+
+# ---- toggle_wanted: only the apps the device draws --------------------------
+# The live phone carried 1281 toggles and the watch's own door named 14 of them;
+# sending all 1281 was a multi-page burst on every reconnect.
+my $house = { map { ( "app$_" => ( $_ % 2 ? 'on' : 'off' ) ) } 1 .. 1281 };
+$house->{'coffee'} = 'on';
+$house->{'vol_+'}  = 'on';
+$house->{'vol_-'}  = 'off';
+my $door = {
+	__specs  => { computer => 'x' },
+	__shutup => {},
+	button1  => { app => 'coffee' },
+	button3  => { app => 'vol_+' },
+	button6  => { app => 'vol_-' },
+	button7  => { app => 'not_a_toggle' },
+	button8  => { app => '' },
+	button9  => 'not a component',
+};
+my $fit = toggle_wanted($house, $door);
+is_deeply( [ sort keys %{$fit} ], [ 'coffee', 'vol_+', 'vol_-' ],
+	'only the apps the device draws survive the filter' );
+is( $fit->{'vol_+'}, 'on', 'and each keeps its current state' );
+is_deeply( toggle_wanted( {}, { button1 => { app => 'coffee' } } ), {},
+	'an app the house does not carry is not invented' );
+is_deeply( toggle_wanted( $house, undef ), {}, 'a device with no door gets nothing' );
+is_deeply( toggle_wanted( undef, $door ), {}, 'no map is no map' );
 
 # ---- toggle_chunks: shape and limits ---------------------------------------
 is_deeply( toggle_chunks({}), [], 'an empty map is no chunks' );

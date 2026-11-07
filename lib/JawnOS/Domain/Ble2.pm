@@ -23,7 +23,7 @@ use IPC::Open2;
 use JSON::PP ();
 use JawnOS::Ble::Drain qw(drain_new drain_feed);
 use JawnOS::Ble::Guard qw(cpu_ticks cpu_hog);
-use JawnOS::Ble::Payload qw(toggle_map toggle_chunks);
+use JawnOS::Ble::Payload qw(toggle_map toggle_wanted toggle_chunks);
 use JawnOS::Ble::Ring qw(ring_tail);
 use List::Util qw(shuffle);
 use MIME::Base64;
@@ -173,17 +173,13 @@ sub ble_message_processor {
 		# a name and must not reach a device. This is the only path that ships the
 		# whole map, so the guard lives with the builder it uses.
 		my $toggles = toggle_map($rows);
-		if ($edt eq 'microcontroller') {
-			# A board only needs the apps its own components name; the house can
-			# carry a thousand toggles, and sending them all would overflow a
-			# board's small receive queue for no benefit.
+		# A device lights only the buttons it draws; the house can carry a thousand
+		# toggles (the phone held 1281, this watch names 14). The filter keeps the
+		# reply to one message instead of a multi-page burst on every reconnect - a
+		# burst the watch cannot afford, and the reason its link never settled.
+		if ($edt eq 'microcontroller' || $edt eq 'watch' || $edt eq 'teletype') {
 			my $od = eval { decode_json &subs::embedded_operator_door($edt, $chip_id) } || {};
-			my %wanted;
-			foreach my $k ( keys %{$od} ) {
-				next if $k =~ /^__/;
-				$wanted{ $od->{$k}->{'app'} } = 1 if $od->{$k}->{'app'};
-			}
-			$toggles = { map { $_ => $toggles->{$_} } grep { $wanted{$_} } keys %{$toggles} };
+			$toggles = toggle_wanted($toggles, $od);
 		}
 		# The bridge holds writes in a 64 KB queue and sends plain UTF-8 (the
 		# compress flag is stored, not used), so the house's whole map does not fit

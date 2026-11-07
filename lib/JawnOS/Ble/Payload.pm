@@ -24,7 +24,7 @@ use Encode ();
 use Exporter 'import';
 use JSON::PP ();
 
-our @EXPORT_OK = qw(key_ok toggle_map toggle_chunks);
+our @EXPORT_OK = qw(key_ok toggle_map toggle_wanted toggle_chunks);
 
 # A name, not a payload. The measured keys are names like `12_grain_bread`,
 # `i'm_confident`, `a&w`, `2%_milk` and `__orphan_03afafd1bfe2`; the corrupt
@@ -91,6 +91,26 @@ sub toggle_map {
 		$map{$app} = (($row->{'value'} // '') eq 'on') ? 'on' : 'off';
 	}
 	return \%map;
+}
+
+# toggle_wanted(\%toggles, \%door) -> { app => 'on' | 'off' }
+# Keep only the apps the device's own placed components name. A board, a watch
+# or a deck lights the buttons it draws; the house can carry a thousand settings
+# (the phone held 1281, this watch names 14). Handing a watch all of them meant a
+# multi-page burst on every reconnect: the link never settled, and a tap queued
+# while it was down waited for the next connection to go out.
+# A door key starting `__` is a section (__specs, __shutup), not a component.
+sub toggle_wanted {
+	my ($toggles, $door) = @_;
+	my %wanted;
+	foreach my $k ( keys %{ ref $door eq 'HASH' ? $door : {} } ) {
+		next if $k =~ /^__/;
+		my $component = $door->{$k};
+		next unless ref $component eq 'HASH';
+		my $app = $component->{'app'};
+		$wanted{$app} = 1 if defined $app && $app ne '';
+	}
+	return { map { $_ => $toggles->{$_} } grep { $wanted{$_} } keys %{ ref $toggles eq 'HASH' ? $toggles : {} } };
 }
 
 my $DEFAULT_JSON = JSON::PP->new->utf8;
