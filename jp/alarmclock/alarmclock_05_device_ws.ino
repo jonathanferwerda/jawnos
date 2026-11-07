@@ -22,6 +22,13 @@ static uint32_t dev_ws_backoff = 2000;
 static uint32_t dev_ws_last_ping = 0;
 static String dev_ws_host;
 static uint16_t dev_ws_port = 0;
+// Diagnostics live in counters, not in Serial: a USB write on core 1 can block
+// (or grab the USB mutex) when no host is draining the CDC, which is exactly
+// how a board stops answering. usb_config_loop() prints these on JAWNCFG?,
+// where the host is reading.
+static uint32_t dev_ws_up_count = 0;
+static uint32_t dev_ws_fail_count = 0;
+static uint32_t dev_ws_cmd_count = 0;
 
 static String dev_ws_chip() { return String(rp2040.getChipID()); }
 
@@ -122,7 +129,7 @@ static bool dev_ws_handshake() {
   // handshake before it could finish, so the board never registered.
   dev_ws_tls.setTimeout(5000);
   if (!dev_ws_tls.connect(host.c_str(), dev_ws_port)) {
-    Serial.println("JAWNDEVWS connect failed " + host + ":" + String(dev_ws_port));
+    dev_ws_fail_count++;
     return false;
   }
   String req = "GET " + path + " HTTP/1.1\r\n";
@@ -148,14 +155,14 @@ static bool dev_ws_handshake() {
   }
   (void)accept;
   if (status.indexOf(" 101 ") < 0) {
-    Serial.println("JAWNDEVWS upgrade refused (" + String(status.length()) + " bytes)");
+    dev_ws_fail_count++;
     dev_ws_tls.stop();
     return false;
   }
   // Keep a frame read short enough that a half-arrived frame cannot hold the
   // core; available() gates the read, so this only bounds a partial frame.
   dev_ws_tls.setTimeout(200);
-  Serial.println("JAWNDEVWS up " + host + ":" + String(dev_ws_port));
+  dev_ws_up_count++;
   return true;
 }
 
@@ -182,8 +189,7 @@ static void dev_ws_apply_cmd(JSONVar d) {
     }
     command_mark_pin(pin, ms);
     command_remember(id, comp, "", ms);
-    // A person's toggle is rare; one line is enough to follow the bus.
-    Serial.println("JAWNDEVWS cmd " + comp + " " + String(pin) + "=" + state);
+    dev_ws_cmd_count++;
     // Ack the pin's real state (command_redundant() folds it into `state`).
     String ack = "{\"t\":\"ack\",\"id\":\"" + id + "\",\"state\":\"" + state + "\"}";
     dev_ws_send_text(ack);
@@ -265,12 +271,26 @@ static bool dev_ws_read_frame(String &text) {
   return false;
 }
 
+// Read by usb_config_loop() for JAWNCFG?. Safe to print there: the host that
+// asked is reading the CDC, which is the condition the counters exist for.
+String dev_ws_report() {
+  return "up=" + String(dev_ws_up_count) + " fail=" + String(dev_ws_fail_count)
+       + " cmd=" + String(dev_ws_cmd_count) + " live=" + String(dev_ws_up ? 1 : 0);
+}
+
 // Called on core 1 every pass. It never blocks on the socket for long: the
-// handshake is bounded, a frame read uses a 2s timeout, and a failed dial backs
-// off so a dead homebase cannot spin the loop.
+// handshake is bounded, a frame read uses a 200 ms timeout, and a failed dial
+// backs off so a dead homebase cannot spin the loop.
 void device_ws_poll() {
   static bool seeded = false;
-  if (!seeded) { randomSeed((uint32_t)(micros() ^ millis())); seeded = true; }
+  if (!seeded) {
+    randomSeed((uint32_t)(micros() ^ millis()));
+    // The TLS handshake uses a static 15 s timeout, not the per-object Stream
+    // timeout. Match the 8 s the HTTP rail asks for, so a dead homebase cannot
+    // hold core 1 for 15 s on every attempt.
+    WiFiClientSecure::setTLSConnectTimeout(8000);
+    seeded = true;
+  }
 
   if (wifiState != "connected" || homebaseIP == "" || authorization == "") {
     if (dev_ws_up) { dev_ws_close(); }

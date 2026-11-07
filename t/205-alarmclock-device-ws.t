@@ -1,4 +1,4 @@
-# tests-for: jp/alarmclock/alarmclock_05_device_ws.ino jp/alarmclock/alarmclock.ino jp/alarmclock/alarmclock_01_globals_clock_ble.ino jp/alarmclock/alarmclock_03_loop_house_inputs_jobs.ino
+# tests-for: jp/alarmclock/alarmclock_05_device_ws.ino jp/alarmclock/alarmclock.ino jp/alarmclock/alarmclock_01_globals_clock_ble.ino jp/alarmclock/alarmclock_02_ble_handlers_wifi_setup.ino jp/alarmclock/alarmclock_03_loop_house_inputs_jobs.ino
 # covers:    The Pico's /device/ws client: the RFC 6455 upgrade (SHA1 + base64
 #            with the published GUID), masked client frames, the port derived
 #            from the homebase's arm port, the hello/ack/pong frames the
@@ -22,6 +22,7 @@ my $read = sub { scalar read_file("$root/$_[0]") };
 my $ws      = $read->('jp/alarmclock/alarmclock_05_device_ws.ino');
 my $index   = $read->('jp/alarmclock/alarmclock.ino');
 my $globals = $read->('jp/alarmclock/alarmclock_01_globals_clock_ble.ino');
+my $boot    = $read->('jp/alarmclock/alarmclock_02_ble_handlers_wifi_setup.ino');
 my $loop    = $read->('jp/alarmclock/alarmclock_03_loop_house_inputs_jobs.ino');
 
 ok(length $ws > 2000, 'the device bus client exists');
@@ -101,9 +102,18 @@ like($ws, qr/dev_ws_backoff\s*<\s*30000/, 'a failed dial backs off');
 like($ws, qr/dev_ws_tls\.setTimeout\(5000\)/, 'the handshake timeout is 5 s, not 5 ms');
 like($ws, qr/dev_ws_tls\.setTimeout\(200\)/, 'a frame read is bounded at 200 ms');
 unlike($ws, qr/setTimeout\([0-9]{1,2}\)/, 'no timeout is silently 5 ms (the Stream API is in milliseconds)');
-like($ws, qr/JAWNDEVWS up /, 'a successful attach is logged');
-like($ws, qr/JAWNDEVWS connect failed /, 'a failed dial is logged with its address');
-like($ws, qr/JAWNDEVWS cmd /, 'an applied command is logged');
+like($ws, qr/WiFiClientSecure::setTLSConnectTimeout\(8000\)/,
+	'the static TLS handshake timeout is bounded too');
+# A Serial write on core 1 can hold the USB mutex when no host drains the CDC;
+# that is what wedged the board. Diagnostics are counters read on JAWNCFG?.
+unlike($ws, qr/Serial\./,
+	'the poll path never writes to Serial (a CDC write can wedge the board)');
+like($ws, qr/dev_ws_up_count\+\+/, 'a successful attach is counted');
+like($ws, qr/dev_ws_fail_count\+\+/, 'a failed dial is counted');
+like($ws, qr/dev_ws_cmd_count\+\+/, 'an applied command is counted');
+like($ws, qr/String dev_ws_report\(\)/, 'the counters are exposed by a report');
+like($globals, qr/^String dev_ws_report\(\);$/m, 'the report is forward-declared for the USB diagnostic');
+like($boot, qr/JAWNCFG WS " \+ dev_ws_report\(\)/, 'JAWNCFG? prints the device bus counters');
 like($ws, qr/dev_ws_last_ping\)\s*>\s*30000/, 'it pings on an idle socket');
 
 done_testing();

@@ -171,6 +171,10 @@ static void usb_config_loop() {
         }
         Serial.println("JAWNCFG TYPES " + types);
         Serial.println("JAWNCFG MORE ssid=" + ssid + " ap_ssid=" + ap_ssid + " wifi=" + wifiState + " ip=" + WiFi.localIP().toString() + " homebaseIP=" + homebaseIP);
+        // The device bus counters: a board that cannot reach its homebase still
+        // answers here, so the console can say whether the cause is the link or
+        // the upgrade without a Serial write in the loop.
+        Serial.println("JAWNCFG WS " + dev_ws_report());
         Serial.println("JAWNCFG EVENTS " + event_ring_dump());
       }
       else if (line == "JAWNREBOOT") {
