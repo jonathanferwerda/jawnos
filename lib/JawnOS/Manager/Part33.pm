@@ -238,19 +238,15 @@ sub keyboard_maker($c, $remote_pick) {
 }
 
 sub manager_file_maker($session_name = '') {
-	my ($my_name,$computer_name,$hostname,$hostnamer,$database_name);
-	my ($db,$database) = &subs::database_grabber();
+	my ($my_name,$hostname,$hostnamer,$database);
+	(undef,$database) = &subs::database_grabber();
 	$hostname = &subs::machine_hostname();
 	$hostnamer = eval { return &subs::db_select('devices', ['name'], { hostname => $hostname } )->hash->{name} };
 	$my_name = $session_name || &subs::setting_grabber({ app => 'me', setting => 'my_name' });
-	$computer_name = &subs::config_reader()->{'name'} || &subs::setting_grabber({ app => 'me', setting => 'computer_name' });
-	$database_name = $database;
-	$database_name =~ s/^database\///;
-	$database_name =~ s/.db$//gi;
-	my @database_name = split '/', $database_name;
-	$database_name = $database_name[-1];
-
-	return ($my_name || $hostnamer || $hostname) . '@' . $database_name . '.' . ($computer_name || $hostname);
+	# The computer segment is this machine's own name, never the mesh-synced
+	# me/computer_name: a shared setting made two machines answer to one durable
+	# id, so a device's stored homebase matched neither and nobody held its link.
+	return &subs::machine_file_from(($my_name || $hostnamer || ''), $database, &subs::machine_name(), $hostname);
 
 };
 

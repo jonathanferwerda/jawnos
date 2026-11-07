@@ -1,6 +1,8 @@
-# tests-for: lib/JawnOS/Domain/Resolve.pm lib/JawnOS/Domain/House.pm
+# tests-for: lib/JawnOS/Domain/Resolve.pm lib/JawnOS/Domain/House.pm lib/JawnOS/Domain/Generate.pm lib/JawnOS/Manager/Part33.pm
 # covers:    A phone must not be called localhost: Android has no hostname of its own, so the name a person reads
 #            comes from the machine's own config and house domain, and an unusable report heals from the fqdn.
+#            The same per-machine name is the computer segment of the durable id a device stores as its
+#            homebase, so a mesh-synced me/computer_name can never make two machines answer to one id.
 
 use strict;
 use warnings;
@@ -8,6 +10,7 @@ use warnings;
 use FindBin;
 use lib "$FindBin::Bin/lib", "t/lib";
 use Test::More;
+use File::Slurp qw(read_file);
 use RepoSource;
 use JawnOSTest;
 
@@ -49,5 +52,26 @@ is subs::machine_name_from_config({ domain => '127.0.0.1' }, 'localhost'),
 	'', 'a hostname of localhost is never the machine name';
 is subs::machine_name_from_config({ domain => '127.0.0.1' }, 'vivotop'),
 	'vivotop', 'a real OS hostname is still the last resort';
+
+# ------------------------------------------------------- machine_file_from
+is subs::machine_file_from('Jonathan Ferwerda', 'database/jawnos.db', 'Phone', 'localhost'),
+	'Jonathan Ferwerda@jawnos.Phone', 'the durable id names the machine the person paired it to';
+is subs::machine_file_from('Jonathan Ferwerda', 'homes/jawnos.db', 'Table', 'table'),
+	'Jonathan Ferwerda@jawnos.Table', 'a nested database path is reduced to its name';
+is subs::machine_file_from('Jonathan Ferwerda', 'database/jawnos.db', '', 'localhost'),
+	'Jonathan Ferwerda@jawnos.localhost', 'an unnamed machine falls back to its hostname';
+is subs::machine_file_from('', 'database/jawnos.db', 'Phone', 'vivotop'),
+	'vivotop@jawnos.Phone', 'a missing person falls back to the hostname too';
+
+# Both copies of manager_file_maker must build the id from machine_name: a
+# mesh-synced me/computer_name is shared, so it cannot name a machine.
+foreach my $file ('lib/JawnOS/Domain/Generate.pm', 'lib/JawnOS/Manager/Part33.pm') {
+	my $src = read_file(repo_root() . '/' . $file);
+	my ($maker) = $src =~ /(sub manager_file_maker\b.*?\n\};)/s;
+	ok(defined $maker && length $maker, "$file has a manager_file_maker");
+	like($maker, qr/machine_file_from\(/, "$file composes the durable id in one place");
+	like($maker, qr/&subs::machine_name\(\)/, "$file names the machine by its own name");
+	unlike($maker, qr/app => 'me', setting => 'computer_name'/, "$file does not read the synced computer_name");
+}
 
 done_testing();

@@ -605,6 +605,25 @@ sub machine_name {
 	return $h;
 }
 
+sub machine_file_from {
+	# '<who>@<mesh>.<computer>', the durable id a device stores as its homebase
+	# (ble_owns compares it). Both copies of manager_file_maker build it here, so
+	# the computer segment is always machine_name(): the per-machine name the app
+	# already shows. It used to be the mesh-synced `me/computer_name`, which let a
+	# phone answer as another machine's name - a device's stored homebase then
+	# matched no machine at all, and every homebase looked alive, so nobody held
+	# the link.
+	my ($who, $database, $computer, $hostname) = @_;
+	my $mesh = defined $database ? $database : '';
+	$mesh =~ s{^.*[\\/]}{};
+	$mesh =~ s/\.db$//i;
+	$who = defined $who ? $who : '';
+	$who = $hostname if $who eq '' && defined $hostname;
+	$computer = defined $computer ? $computer : '';
+	$computer = $hostname if $computer eq '' && defined $hostname;
+	return $who . '@' . $mesh . '.' . $computer;
+}
+
 # The name a machine shows when no setting names it: the config's own name, then
 # the first label of its house domain, then the OS hostname when that is a real
 # name. Kept apart from the settings read so the fallback order can be tested.
