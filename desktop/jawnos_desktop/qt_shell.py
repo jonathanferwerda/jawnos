@@ -115,11 +115,12 @@ def profile_dir():
 # the GTK shell's layout, moved into the Qt profile
 # --------------------------------------------------------------------------
 
-# Keys that belong to a live session or a device identity, not to the layout:
-# a copied tab id makes two windows claim one tab, and the padlock's
-# device_uuid is a credential, not a preference.
+# Keys that belong to a live session, not the layout: a copied tab id makes
+# two windows claim one tab. device_uuid is kept: it is this machine's own
+# device identity (the same one the app key is paired with), and the
+# app-required page needs it to sign in. The session timestamps stay behind.
 _SKIP_KEYS = frozenset((
-    "browser_tab", "device_uuid", "jawnos_media_lock", "jawn_app_until",
+    "browser_tab", "jawnos_media_lock", "jawn_app_until",
     "lastSearchTime",
 ))
 
@@ -172,6 +173,31 @@ def webkit_localstorage(host, port, base=None):
         if out:
             return path, out
     return None, {}
+
+
+# A Qt profile that was created by the old migration has the marker but no
+# device_uuid (the old skip list dropped it), so the app-required page had no
+# device to sign for. The seed below runs at document start, before the page's
+# scripts: it writes the WebKit desktop's identity once, then leaves it alone.
+# A profile that already has a device_uuid is overwritten once on purpose --
+# that value is this machine's device identity, the one the app key was paired
+# under.
+def device_seed_js(host, port, base=None):
+    """A document-start script that seeds the WebKit desktop's device_uuid.
+
+    Older Qt profiles were migrated without it (see _SKIP_KEYS); the app-key
+    login then has no device to name and lands on the app-required page. Only
+    run once per profile (the marker), and only when there is a value to use.
+    """
+    _path, data = webkit_localstorage(host, port, base=base)
+    value = data.get("device_uuid")
+    if not value:
+        return ""
+    return ("(function(){try{"
+            "if(localStorage.getItem('__jawn_device_seeded')){return;}"
+            "localStorage.setItem('device_uuid', %s);"
+            "localStorage.setItem('__jawn_device_seeded','1');"
+            "}catch(e){}})()" % json.dumps(value))
 
 
 # Sets every migrated key, once, then marks the profile so a later Qt run does
@@ -678,7 +704,7 @@ def main(argv=None):
 
         win.destroyed.connect(_forget)
 
-    def install_bridge(page_obj, view_obj, allowed_host, manager_base):
+    def install_bridge(page_obj, view_obj, allowed_host, manager_base, extra_js=""):
         if QWebChannel is not None:
             channel = QWebChannel(page_obj)
 
@@ -694,8 +720,10 @@ def main(argv=None):
             page_obj._jawn_handler = handler
 
         source = ""
+        if extra_js:
+            source = extra_js + "\n"
         if channel_js:
-            source = channel_js + "\n"
+            source += channel_js + "\n"
         source += (_BRIDGE_SHIM_JS + "\n" + bridge.DESKTOP_MARKER_JS + "\n" +
                    bridge.BROWSE_BRIDGE_JS + "\n" + bridge.MEDIA_MONITOR_JS)
         script = QWebEngineScript()
@@ -851,7 +879,8 @@ def main(argv=None):
     migration_pending = bool(manager)
     reloaded = {"done": False}
 
-    install_bridge(page, view, host or "", manager or args.url or "")
+    install_bridge(page, view, host or "", manager or args.url or "",
+                   device_seed_js(host, port) if manager else "")
 
     if args.probe:
         def _timeout():

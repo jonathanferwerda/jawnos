@@ -91,6 +91,8 @@ like($session, qr/--engine webkit/,
 	'the Sway session falls back to WebKitGTK if the Qt shell cannot start');
 
 like($qt, qr/def webkit_localstorage/, 'the shell can read the GTK localStorage store');
+like($qt, qr/def device_seed_js/, 'and carries the desktop device identity across');
+like($qt, qr/__jawn_device_seeded/, 'seeding it once per profile');
 like($qt, qr/__jawn_qt_migrated/, 'the migration is marked, so later Qt changes are kept');
 like($qt, qr/background_images/, 'the layout family it copies is the one the page reads');
 like($qt, qr/window_width/, 'the window geometry is restored from desktop.json');
@@ -110,7 +112,7 @@ like($qt, qr/core\.save_settings/, 'and saved back on close');
 import sqlite3, sys
 c = sqlite3.connect(sys.argv[1])
 c.execute("create table ItemTable (key TEXT UNIQUE ON CONFLICT REPLACE, value BLOB NOT NULL ON CONFLICT FAIL)")
-for key, value in (("layout", "desk"), ("background_images", '["one"]'), ("device_uuid", "not-a-preference")):
+for key, value in (("layout", "desk"), ("background_images", '["one"]'), ("device_uuid", "keep-me"), ("browser_tab", "tab-1")):
     c.execute("insert into ItemTable (key, value) values (?, ?)", (key, value.encode("utf-16-le")))
 c.commit()
 PYINNER
@@ -119,7 +121,11 @@ PYINNER
 	my $out = `cd "$root" && PYTHONPATH=desktop python3 -c 'import json,sys; from jawnos_desktop.qt_shell import webkit_localstorage; p,d = webkit_localstorage("127.0.0.1", 45545, base=sys.argv[1]); print(json.dumps(d))' "$tmp/base" 2>&1`;
 	like($out, qr/"layout": "desk"/, 'the reader returns the GTK layout key');
 	like($out, qr/background_images/, 'and the background list');
-	unlike($out, qr/device_uuid/, 'but not the padlock device identity');
+	like($out, qr/"device_uuid": "keep-me"/, 'and the desktop device identity');
+	unlike($out, qr/browser_tab/, 'but not the live tab id');
+	my $seed = `cd "$root" && PYTHONPATH=desktop python3 -c 'import sys; from jawnos_desktop.qt_shell import device_seed_js; print(device_seed_js("127.0.0.1", 45545, base=sys.argv[1]))' "$tmp/base" 2>&1`;
+	like($seed, qr/__jawn_device_seeded/, 'the seed runs only once');
+	like($seed, qr/keep-me/, 'and writes the WebKit device identity');
 }
 
 # The real engine, when this machine has it. A machine without the PySide6

@@ -457,10 +457,13 @@ unless those are already set.
 On the first Qt run it copies the GTK shell's page layout out of WebKit's
 per-origin store (`~/.local/share/jawnos-desktop/localstorage/https_<host>_<port>.localstorage`)
 into the Qt profile - `layout`, `background_images`, `dock_icons`,
-`window_places` and the rest - once, marked so later Qt changes are kept. Live
-identities (the tab id and the padlock's `device_uuid`) are deliberately not
-copied. The window geometry, maximized and fullscreen state come from
-`~/.config/jawnos/desktop.json` and are written back on close.
+`window_places` and the rest - once, marked so later Qt changes are kept. The
+live tab id is deliberately not copied. `device_uuid` is: it is this machine's
+own device identity, the one the app key is paired with, and the app-required
+page needs it to sign in. An older Qt profile that was migrated without it is
+seeded once at document start (`__jawn_device_seeded`). The window geometry,
+maximized and fullscreen state come from `~/.config/jawnos/desktop.json` and are
+written back on close.
 
 A fresh profile still lands on the padlock Gate (the WebKit shell does too).
 The GTK dashboard remains available with `--engine webkit` for the controls the
