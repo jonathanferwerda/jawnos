@@ -252,4 +252,61 @@ my $house_source = '';
 like($house_source, qr/\$update->\{'tailnet_ip'\}/,
 	'a LAN beacon stores the tailnet address too');
 
+# A mirror is a small address record, not the peer's whole row. The handshake
+# and the tunnel heartbeat used to ship `data` (the peer's login body), `cookie`
+# (a live session), the deletion log and the nested mirror blob to every machine;
+# nothing on the receiving side reads those for a mirror.
+my $full_row = {
+	uuid => 'u1', signatorial => 's1', pubkey => 'pk',
+	ip => '192.168.1.5', fqdn => 'laptop.example', port => 45545,
+	manager => 'https://laptop.example:45545', network => '{"lan":{"ip":"192.168.1.5"}}',
+	hostname => 'Laptop', buttons => '<button>Go</button>',
+	device => 'computer', connection => 'active', status => 'connected',
+	tunnel => 'no', archive => '{"dir":"/archive"}', archive_dir => '/archive', privilege => 'peer',
+	grant_scope => 'trusted', grant_expires => '0', server_time => '1700000000000',
+	data => '{"debriefer":"a lot of audit text"}',
+	cookie => '[{"name":"president"}]', deletions => '[]', log => 'noise',
+	additions => '[]', edits => '[]', mirrors => '[{"uuid":"nested"}]',
+};
+my $mirror = subs::remote_machine_mirror_row($full_row);
+for my $kept (qw(uuid signatorial pubkey ip fqdn port manager network hostname
+		buttons device connection status tunnel archive archive_dir privilege grant_scope
+		grant_expires server_time)) {
+	is($mirror->{$kept}, $full_row->{$kept}, "a mirror keeps $kept");
+}
+for my $dropped (qw(data cookie deletions log additions edits mirrors)) {
+	ok(!exists $mirror->{$dropped}, "a mirror does not carry $dropped");
+}
+
+# The column is the place a peer's login body is remembered. Only these fields
+# are read from it later; the debriefer and browser bookkeeping are not.
+my $stored_login = subs::remote_machine_data_view({
+	database => '/house.db', device => 'mobile', ssh_port => 8022,
+	manager_colour => '#123456', manager_file => 'face.html',
+	debriefer => 'a lot of audit text', browser_tab_id => 'tab',
+	pwd => '/home/peer', mirrors => [ { uuid => 'nested' } ],
+});
+is_deeply($stored_login, {
+	database => '/house.db', device => 'mobile', ssh_port => 8022,
+	manager_colour => '#123456', manager_file => 'face.html',
+}, 'the stored login body keeps only the fields a peer row reads');
+
+# Every peer rail that hands another machine this roster goes through the same
+# whitelist, so a field added to the table is not leaked by one route that
+# forgot to prune it.
+my $root = repo_root();
+for my $file (qw(
+	lib/JawnOS/Controller/sesh_check.pm
+	lib/JawnOS/Controller/manager_misc4.pm
+	lib/JawnOS/Manager/Part11.pm
+	lib/JawnOS/Domain/Tunnel.pm
+)) {
+	open(my $fh, '<', "$root/$file") or die "$file: $!";
+	local $/;
+	my $text = <$fh>;
+	close $fh;
+	like($text, qr/remote_machine_mirror_row/, "$file prunes a mirror payload");
+}
+like($manager_source, qr/remote_machine_data_view/, 'the handshake stores only the data fields a peer reads');
+
 done_testing();

@@ -331,17 +331,19 @@ sub tunnel_checker {
 							if ($res && $res->is_success) {
 								my $response = eval { decode_json $res->body } || {};
 								if ($response->{'mirrors'}) {
+									my @mirrors;
 									foreach my $mirror ( @{$response->{'mirrors'}} ) {
+										next unless ref $mirror eq 'HASH';
 										my $ip = $rm->{'ip'};
 										$mirror->{'manager'} =~ s/127\.0\.0\.1/$ip/gi;
 										$mirror->{'mirror'} = 'yes';
-										if ($mirror->{'network'}) {
+										if ($mirror->{'network'} && !ref $mirror->{'network'}) {
 											$mirror->{'network'} = decode_json $mirror->{'network'};
 										}
-
+										push @mirrors, &subs::remote_machine_mirror_row($mirror);
 									}
 
-									my $jmirror = encode_json $response->{'mirrors'};
+									my $jmirror = encode_json [ grep { defined $_ } @mirrors ];
 									&subs::db_update('remote_machines', { mirrors => $jmirror, server_time => &subs::rightNow() }, { signatorial => $rm->{'signatorial'} });
 								}
 							}

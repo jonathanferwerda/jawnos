@@ -249,7 +249,11 @@ sub action_7519 {
 				manager_colour => &subs::setting_grabber({ app => 'misc', setting => 'manager_background_colour', device => $signatorial }) || &subs::setting_grabber({ app => 'misc', setting => 'manager_background_colour' })
 			};
 			if (&subs::device_setter() eq 'server') {
-				my $mirrors = &subs::db_select('remote_machines')->hashes;
+				my $mirrors = [
+					grep { defined $_ }
+					map { &subs::remote_machine_mirror_row($_) }
+					@{ &subs::db_select('remote_machines')->hashes || [] }
+				];
 				$js->{'mirrors'} = $mirrors;
 			}
 			my $archive;

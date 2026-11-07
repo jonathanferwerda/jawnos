@@ -147,7 +147,11 @@ sub action_12416 {
 		$rm = &remote_useragent_maker($data);
 	}
 
-	$c->render(json => { chip_chyea => $chip_chyea, signatorial => $signatorial, mirrors => $remote_machines });
+	$c->render(json => {
+		chip_chyea => $chip_chyea,
+		signatorial => $signatorial,
+		mirrors => [ grep { defined $_ } map { &subs::remote_machine_mirror_row($_) } @{$remote_machines} ]
+	});
 }
 
 # POST /manager/neighbour_status
@@ -168,7 +172,9 @@ sub action_12483 {
 		$rm->{'status'} = 'mirror';
 	}
 	&subs::db_update('remote_machines', { status => $rm->{'status'} }, { ip => $ip });
-	$c->render(json => $rm);
+	# The panel reads only the toggled state; the rest of the row (including the
+	# peer's session cookie and login blob) has no business leaving this machine.
+	$c->render(json => { status => $rm->{'status'}, ip => $rm->{'ip'} });
 	my $remote_address = $c->tx->remote_address;
 	`timeout .5 ping -c 1 $remote_address`;
 }

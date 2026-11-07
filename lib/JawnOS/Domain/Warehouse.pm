@@ -399,16 +399,57 @@ sub media_file_type {
 	return $kind{$ext};
 }
 
+# The handshake and the tunnel heartbeat hand another machine a copy of this
+# roster. A full row also carries `data` (the peer's login body), `cookie` (a
+# live session), the deletion log and the mirror-of-mirrors blob; nothing on
+# the receiving side reads any of those for a mirror, so send the routing and
+# identity fields the picker, the roster proof and the LAN fallback use.
+my @REMOTE_MACHINE_MIRROR_FIELDS = qw(
+	uuid signatorial pubkey
+	ip hostname fqdn port manager ws_port dock_port nic
+	network tailnet_ip pseudonyms
+	tunnel device connection status mirror
+	buttons mac model capabilities purpose name domain
+	archive archive_dir privilege grant_scope grant_expires
+	server_time
+);
+
+sub remote_machine_mirror_row {
+	my ($rm) = @_;
+	return undef unless ref $rm eq 'HASH';
+	my %row;
+	foreach my $field (@REMOTE_MACHINE_MIRROR_FIELDS) {
+		$row{$field} = $rm->{$field} if defined $rm->{$field};
+	}
+	return \%row;
+}
+
+# The login body stored in `data` was kept whole, including the debriefer (a
+# multi-kilobyte audit log), the browser tab id and the password path. Callers
+# read only these fields, so keep those and let the rest go.
+my @REMOTE_MACHINE_DATA_FIELDS = qw(database device ssh_port manager_colour manager_file);
+
+sub remote_machine_data_view {
+	my ($body) = @_;
+	return {} unless ref $body eq 'HASH';
+	my %view;
+	foreach my $field (@REMOTE_MACHINE_DATA_FIELDS) {
+		$view{$field} = $body->{$field} if defined $body->{$field};
+	}
+	return \%view;
+}
+
 sub remote_machine_lister {
 	my $data = shift;
 	my $remote_machines = &subs::db_select('remote_machines')->hashes || [];
 
 	# A machine must never carry itself as a remote. A self row is poison: the
-	# reconnecter keeps a turn for it, and because the hub's own sesh_check hands
-	# out every remote row (with its own data blob) as `mirrors`, each self-touch
-	# nests the previous blob - the row grows without bound and the turn the real
-	# peers needed is spent decoding it. Drop the row here so a hub that grew one
-	# heals, and keep the current call clean too.
+	# reconnecter keeps a turn for it, and the hub used to hand every remote row
+	# back as `mirrors`, so a self-touch nested the previous copy - the row grew
+	# without bound and the turn the real peers needed was spent decoding it. The
+	# mirror payload is pruned now (remote_machine_mirror_row), but a self row
+	# still wastes a turn. Drop it here so a hub that grew one heals, and keep
+	# the current call clean too.
 	my $self_signatorial = &signatorial_designer();
 	if ($self_signatorial) {
 		my @self = grep { ($_->{'signatorial'} || '') eq $self_signatorial } @{$remote_machines};

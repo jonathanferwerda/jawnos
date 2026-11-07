@@ -222,7 +222,7 @@ sub remote_device_connect($rdata) {
 				#$ua->insecure(1)->get($manager . '/manager/say_it?words=' . &subs::setting_grabber({ app => 'me', setting => 'my_name' }) || $hs)->result;
 
 				my $json_buttons = encode_json $buttons;
-				my $remote_data = encode_json $returner->{'body'};
+				my $remote_data = encode_json &subs::remote_machine_data_view($returner->{'body'});
 				my $cookie_jar = $ua->cookie_jar;
 				my @cookies;
 				for my $cookie (@{$cookie_jar->find(Mojo::URL->new($manager))}) {
@@ -258,7 +258,12 @@ sub remote_device_connect($rdata) {
 					hostname => $peer_host,
 					version => $returner->{'body'}->{'version'},
 					tunnel => $tunnel,
-					mirrors => eval { return encode_json $returner->{'body'}->{'mirrors'} } || undef,
+					mirrors => do {
+						my $in = $returner->{'body'}->{'mirrors'};
+						(ref $in eq 'ARRAY')
+							? encode_json [ grep { defined $_ } map { &subs::remote_machine_mirror_row($_) } @{$in} ]
+							: undef;
+					},
 					archive => eval { return encode_json $returner->{'body'}->{'archive'} } || undef,
 					archive_dir => $returner->{'body'}->{'archive_dir'}
 				};
