@@ -83,4 +83,14 @@ is(scalar @watch_ids, 6, 'every watch button tap carries the id');
 my @deck_ids = $jt_press =~ /"&id=" \+ press_id\(\d\)/g;
 is(scalar @deck_ids, 8, 'every deck button tap carries the id');
 
+# A press must not block the LVGL event on a TLS round trip: https_request took
+# ~2.7 s and can hang in the handshake, which is the freeze a press caused. With
+# no bridge the tap is queued (when_i_get_in) and flushed when the link returns.
+my @deck_tls = ( $jt_press =~ /String https = https_request\(r\);/g );
+is(scalar @deck_tls, 0, 'no deck button press blocks on https_request');
+my @deck_queue = ( $jt_press =~ /String https = "failure";/g );
+is(scalar @deck_queue, 8, 'all eight buttons queue the tap instead');
+like($jt_press, qr/if \(https == "failure"\) \{.*?when_i_get_in\(updater, r\);/s,
+	'and the queued path is the one a press takes');
+
 done_testing();

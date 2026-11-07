@@ -16,7 +16,11 @@ void mb1(lv_event_t *e) {
   if (tap_over_ble(1, b1_toggle, r)) {
     return;   // the bridge carries the tap; no blocking TLS round trip
   }
-  String https = https_request(r);
+  // A press must not block this LVGL event on a TLS round trip: https_request
+  // took ~2.7 s and can hang in the handshake, which is the freeze a press
+  // caused. The queued tap is flushed when the bridge returns, or collected by
+  // the webapp.
+  String https = "failure";
   if (https == "failure") {
     JSONVar updater;
     updater["room"] = room;
@@ -61,7 +65,11 @@ void mb2(lv_event_t *e) {
   if (tap_over_ble(2, b2_toggle, r)) {
     return;
   }
-  String https = https_request(r);
+  // A press must not block this LVGL event on a TLS round trip: https_request
+  // took ~2.7 s and can hang in the handshake, which is the freeze a press
+  // caused. The queued tap is flushed when the bridge returns, or collected by
+  // the webapp.
+  String https = "failure";
   if (https == "failure") {
     JSONVar updater;
     updater["room"] = room;
@@ -103,7 +111,11 @@ void mb3(lv_event_t *e) {
   if (tap_over_ble(3, b3_toggle, r)) {
     return;
   }
-  String https = https_request(r);
+  // A press must not block this LVGL event on a TLS round trip: https_request
+  // took ~2.7 s and can hang in the handshake, which is the freeze a press
+  // caused. The queued tap is flushed when the bridge returns, or collected by
+  // the webapp.
+  String https = "failure";
   if (https == "failure") {
     JSONVar updater;
     updater["room"] = room;
@@ -147,7 +159,11 @@ void mb4(lv_event_t *e) {
   if (tap_over_ble(4, b4_toggle, r)) {
     return;
   }
-  String https = https_request(r);
+  // A press must not block this LVGL event on a TLS round trip: https_request
+  // took ~2.7 s and can hang in the handshake, which is the freeze a press
+  // caused. The queued tap is flushed when the bridge returns, or collected by
+  // the webapp.
+  String https = "failure";
   if (https == "failure") {
     JSONVar updater;
     updater["room"] = room;
@@ -190,7 +206,11 @@ void mb5(lv_event_t *e) {
   if (tap_over_ble(5, b5_toggle, r)) {
     return;
   }
-  String https = https_request(r);
+  // A press must not block this LVGL event on a TLS round trip: https_request
+  // took ~2.7 s and can hang in the handshake, which is the freeze a press
+  // caused. The queued tap is flushed when the bridge returns, or collected by
+  // the webapp.
+  String https = "failure";
   if (https == "failure") {
     JSONVar updater;
     updater["room"] = room;
@@ -231,7 +251,11 @@ void mb6(lv_event_t *e) {
   if (tap_over_ble(6, b6_toggle, r)) {
     return;
   }
-  String https = https_request(r);
+  // A press must not block this LVGL event on a TLS round trip: https_request
+  // took ~2.7 s and can hang in the handshake, which is the freeze a press
+  // caused. The queued tap is flushed when the bridge returns, or collected by
+  // the webapp.
+  String https = "failure";
   if (https == "failure") {
     JSONVar updater;
     updater["room"] = room;
@@ -273,7 +297,11 @@ void mb7(lv_event_t *e) {
   if (tap_over_ble(7, b7_toggle, r)) {
     return;
   }
-  String https = https_request(r);
+  // A press must not block this LVGL event on a TLS round trip: https_request
+  // took ~2.7 s and can hang in the handshake, which is the freeze a press
+  // caused. The queued tap is flushed when the bridge returns, or collected by
+  // the webapp.
+  String https = "failure";
   if (https == "failure") {
     JSONVar updater;
     updater["room"] = room;
@@ -315,7 +343,11 @@ void mb8(lv_event_t *e) {
   if (tap_over_ble(8, b8_toggle, r)) {
     return;
   }
-  String https = https_request(r);
+  // A press must not block this LVGL event on a TLS round trip: https_request
+  // took ~2.7 s and can hang in the handshake, which is the freeze a press
+  // caused. The queued tap is flushed when the bridge returns, or collected by
+  // the webapp.
+  String https = "failure";
   if (https == "failure") {
     JSONVar updater;
     updater["room"] = room;
