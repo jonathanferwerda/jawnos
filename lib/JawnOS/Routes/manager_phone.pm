@@ -12,6 +12,8 @@ sub routes {
 	[24760, 'post', '/manager/phone/ivr', 'action_24760'],
 	[24761, 'post', '/manager/phone/route', 'action_24761'],
 	[24762, 'get', '/manager/phone/route', 'action_24762'],
+	[24763, 'post', '/manager/phone/greeting', 'action_24763'],
+	[24764, 'get', '/manager/phone/greeting', 'action_24764'],
 	);
 }
 

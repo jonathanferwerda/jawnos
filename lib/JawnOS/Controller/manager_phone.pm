@@ -305,6 +305,87 @@ sub action_24760 {
 	$c->render(json => { ok => 1, ivr => $saved });
 }
 
+# POST /manager/phone/greeting
+#
+# A flow's voicemail greeting, recorded in the pane and uploaded as the bytes
+# the browser's recorder produced. It is converted once to a mono WAV and kept
+# in the house's media folder, sealed with the rest of that tree; the flow then
+# names the path. The body is the audio itself, so the size cap is checked
+# before and after reading it, and the type is one the house can play.
+sub action_24763 {
+	my $c = shift;
+	my $limit = 2 * 1024 * 1024;
+	my $length = $c->req->headers->content_length || 0;
+	if ($length > $limit) {
+		$c->render(json => { ok => 0, error => 'too large' });
+		return;
+	}
+	my $body = $c->req->body;
+	$body = $body->slurp if ref $body;
+	unless (defined $body && length $body) {
+		$c->render(json => { ok => 0, error => 'no audio' });
+		return;
+	}
+	if (length $body > $limit) {
+		$c->render(json => { ok => 0, error => 'too large' });
+		return;
+	}
+	my $type = lc($c->req->headers->content_type || '');
+	$type =~ s/\s*;.*$//;
+	unless (!length $type || $type =~ m{^audio/} || $type eq 'application/octet-stream') {
+		$c->render(json => { ok => 0, error => 'not audio' });
+		return;
+	}
+	my ($wav, $seconds) = &subs::phone_ivr_greeting_wav($body);
+	unless (defined $wav && length $wav) {
+		$c->render(json => { ok => 0, error => 'unreadable' });
+		return;
+	}
+	# a minute, with room for the encoder's tail
+	if ($seconds > 61) {
+		$c->render(json => { ok => 0, error => 'too long' });
+		return;
+	}
+	my $flow = $c->param('flow') || '';
+	$flow = '' unless $flow =~ /^[a-z0-9_]{1,30}$/;
+	my $timestamp = $c->param('timestamp') || &subs::rightNow();
+	my $path = &subs::phone_ivr_greeting_store($wav, timestamp => $timestamp);
+	unless (length $path) {
+		$c->render(json => { ok => 0, error => 'could not save' });
+		return;
+	}
+	$c->render(json => { ok => 1, path => $path, seconds => $seconds, flow => $flow });
+}
+
+# GET /manager/phone/greeting
+#
+# Play a recorded greeting. The bytes come from the path the flow names (or,
+# for a pane that has just recorded one and not saved yet, the path it holds),
+# opened from the house's own media tree and unsealed here when the tree is
+# sealed. Nothing outside that tree is readable through this route.
+sub action_24764 {
+	my $c = shift;
+	my $path = $c->param('path') || '';
+	if (!length $path) {
+		my $flow = $c->param('flow') || '';
+		$flow = '' unless $flow =~ /^[a-z0-9_]{1,30}$/;
+		if (length $flow) {
+			my $defs = &subs::phone_ivr_flow_defs();
+			my $def = $defs->{$flow};
+			$path = ref $def eq 'HASH' ? ($def->{'voicemail_greeting'} || '') : '';
+		}
+	}
+	require JawnOS::Sco::Audio;
+	my $bytes = length $path ? &JawnOS::Sco::Audio::bytes($path) : '';
+	unless (length $bytes) {
+		$c->rendered(404);
+		return;
+	}
+	$c->res->headers->content_type('audio/wav');
+	$c->res->headers->cache_control('no-store');
+	$c->render(data => $bytes);
+}
+
 # POST /manager/phone/route
 #
 # One number's own route, set from the routing sheet the Phone app opens. The

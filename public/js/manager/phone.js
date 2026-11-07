@@ -559,6 +559,16 @@ function jawnPhoneFlowItem(key, flow) {
 		+ '<label>' + jawnosT('Greeting') + '<textarea rows="2" field="greeting"></textarea></label>'
 		+ '<label>' + jawnosT('Name prompt') + '<textarea rows="2" field="prompt"></textarea></label>'
 		+ '<label>' + jawnosT('Voicemail greeting') + '<textarea rows="2" field="voicemail"></textarea></label>'
+		+ '<div class="phone_app_ivr_greeting">'
+		+ '<div class="phone_app_ivr_greeting_row">'
+		+ '<button type="button" class="phone_app_ivr_greeting_record" hint="Record greeting">' + jawnosT('Record') + '</button>'
+		+ '<button type="button" class="phone_app_ivr_greeting_stop" hint="Stop" hidden>' + jawnosT('Stop') + '</button>'
+		+ '<button type="button" class="phone_app_ivr_greeting_play" hint="Play greeting">' + jawnosT('Play') + '</button>'
+		+ '<button type="button" class="phone_app_ivr_greeting_remove" hint="Remove greeting">' + jawnosT('Remove') + '</button>'
+		+ '</div>'
+		+ '<input type="hidden" field="voicemail_greeting">'
+		+ '<div class="phone_app_ivr_greeting_note"></div>'
+		+ '</div>'
 		+ '<label>' + jawnosT('Voicemail length (seconds)') + '<input type="number" field="voicemail_seconds" min="15" max="1800" step="1" hint="Voicemail length"></label>'
 		+ '<label>' + jawnosT('Thanks') + '<textarea rows="1" field="thanks"></textarea></label>'
 		+ '<label>' + jawnosT('Hold music') + '<select field="hold" hint="Hold music"></select></label>'
@@ -586,6 +596,7 @@ function jawnPhoneFlowItem(key, flow) {
 	edit.find('[field="greeting"]').val(flow.greeting || '');
 	edit.find('[field="prompt"]').val(flow.prompt || '');
 	edit.find('[field="voicemail"]').val(flow.voicemail || '');
+	jawnPhoneFlowGreeting(edit, flow.voicemail_greeting || '');
 	edit.find('[field="voicemail_seconds"]').val(flow.voicemail_seconds || 300);
 	edit.find('[field="thanks"]').val(flow.thanks || '');
 	edit.find('[field="after"]').val(flow.after || 'hold');
@@ -730,6 +741,7 @@ $(document).on('click', '#phone_app #phone_ivr_flow_add', function (e) {
 		greeting: source.greeting || '',
 		prompt: source.prompt || '',
 		voicemail: source.voicemail || '',
+		voicemail_greeting: source.voicemail_greeting || '',
 		voicemail_seconds: source.voicemail_seconds || 300,
 		thanks: source.thanks || '',
 		hold: source.hold || '',
@@ -816,6 +828,148 @@ $(document).on('click', '#phone_app .phone_app_ivr_step_remove', function (e) {
 
 $(document).on('change', '#phone_app .phone_app_ivr_flow', function () {
 	jawnPhoneFlowCountsRefresh();
+});
+
+// ---- a flow's recorded voicemail greeting --------------------------------
+// The greeting is either the flow's typed text or one recorded WAV the house
+// holds. Record captures from the microphone with MediaRecorder, uploads the
+// bytes, and the route keeps a WAV and returns its path; Save is what puts
+// that path on the flow. Play asks the route for the file, and Remove goes
+// back to the spoken text. Everything a person sees goes through jawnosT.
+var jawnPhoneGreetingRecorder = null;
+var jawnPhoneGreetingStream = null;
+var jawnPhoneGreetingChunks = [];
+var jawnPhoneGreetingTimer = null;
+var jawnPhoneGreetingAudio = null;
+
+function jawnPhoneGreetingStatus(edit, text) {
+	$(edit).find('.phone_app_ivr_greeting_note').text(text || '');
+}
+
+function jawnPhoneFlowGreeting(edit, path) {
+	edit = $(edit);
+	path = path || '';
+	edit.find('[field="voicemail_greeting"]').val(path);
+	edit.find('.phone_app_ivr_greeting_play, .phone_app_ivr_greeting_remove').prop('disabled', !path);
+	jawnPhoneGreetingStatus(edit, path ? jawnosT('A recorded greeting is in use.') : jawnosT('The spoken text is used.'));
+}
+
+function jawnPhoneGreetingIdle() {
+	if (jawnPhoneGreetingTimer) { clearTimeout(jawnPhoneGreetingTimer); jawnPhoneGreetingTimer = null; }
+	if (jawnPhoneGreetingStream) {
+		jawnPhoneGreetingStream.getTracks().forEach(function (t) { try { t.stop(); } catch (e) {} });
+		jawnPhoneGreetingStream = null;
+	}
+	$('#phone_app .phone_app_ivr_greeting_record').prop('hidden', false);
+	$('#phone_app .phone_app_ivr_greeting_stop').prop('hidden', true);
+}
+
+function jawnPhoneGreetingStop() {
+	if (jawnPhoneGreetingTimer) { clearTimeout(jawnPhoneGreetingTimer); jawnPhoneGreetingTimer = null; }
+	var rec = jawnPhoneGreetingRecorder;
+	jawnPhoneGreetingRecorder = null;
+	// the recorder's own stop collects the last chunk; the stream and the
+	// buttons go back only once it has, in onstop
+	if (rec && rec.state !== 'inactive') {
+		try { rec.stop(); return; } catch (e) {}
+	}
+	jawnPhoneGreetingIdle();
+}
+
+function jawnPhoneGreetingUpload(edit, key, type) {
+	var blob = new Blob(jawnPhoneGreetingChunks, { type: type || 'audio/webm' });
+	jawnPhoneGreetingChunks = [];
+	if (!blob.size) { jawnPhoneGreetingStatus(edit, jawnosT('Nothing was recorded.')); return; }
+	if (blob.size > 2 * 1024 * 1024) { jawnPhoneGreetingStatus(edit, jawnosT('That recording is too long.')); return; }
+	jawnPhoneGreetingStatus(edit, jawnosT('Saving the recording…'));
+	$.ajax({
+		url: '/manager/phone/greeting?flow=' + encodeURIComponent(key || '') + '&timestamp=' + Date.now(),
+		type: 'POST',
+		processData: false,
+		contentType: blob.type || 'audio/webm',
+		data: blob,
+		dataType: 'json',
+		success: function (res) {
+			if (res && res.ok && res.path) {
+				jawnPhoneFlowGreeting(edit, res.path);
+				if (jawnPhoneFlowDefs && jawnPhoneFlowDefs[key]) { jawnPhoneFlowDefs[key].voicemail_greeting = res.path; }
+				jawnPhoneGreetingStatus(edit, jawnosT('Recorded. Press Save to keep it.'));
+			}
+			else if (res && res.error === 'too long') { jawnPhoneGreetingStatus(edit, jawnosT('The greeting must be a minute or less.')); }
+			else { jawnPhoneGreetingStatus(edit, jawnosT('Could not save the recording.')); }
+		},
+		error: function () { jawnPhoneGreetingStatus(edit, jawnosT('Could not save the recording.')); }
+	});
+}
+
+$(document).on('click', '#phone_app .phone_app_ivr_greeting_record', function (e) {
+	e.preventDefault();
+	e.stopPropagation();
+	if (jawnPhoneGreetingRecorder) { return; }
+	var button = $(this);
+	var edit = button.closest('.phone_app_ivr_flow_edit');
+	var key = button.closest('.phone_app_ivr_flow_item').attr('flow') || '';
+	if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || !window.MediaRecorder) {
+		jawnPhoneGreetingStatus(edit, jawnosT('This device cannot record audio.'));
+		return;
+	}
+	jawnPhoneGreetingStatus(edit, jawnosT('Recording… press Stop when you are done.'));
+	navigator.mediaDevices.getUserMedia({ audio: true }).then(function (stream) {
+		var rec = null;
+		try { rec = new MediaRecorder(stream); } catch (err) { rec = null; }
+		if (!rec) {
+			stream.getTracks().forEach(function (t) { try { t.stop(); } catch (err2) {} });
+			jawnPhoneGreetingStatus(edit, jawnosT('This device cannot record audio.'));
+			return;
+		}
+		jawnPhoneGreetingStream = stream;
+		jawnPhoneGreetingChunks = [];
+		jawnPhoneGreetingRecorder = rec;
+		rec.ondataavailable = function (ev) { if (ev.data && ev.data.size) { jawnPhoneGreetingChunks.push(ev.data); } };
+		rec.onstop = function () {
+			var kind = rec.mimeType || 'audio/webm';
+			jawnPhoneGreetingIdle();
+			jawnPhoneGreetingUpload(edit, key, kind);
+		};
+		rec.start();
+		button.prop('hidden', true);
+		edit.find('.phone_app_ivr_greeting_stop').prop('hidden', false);
+		// a greeting is a minute at most; the route refuses anything longer
+		jawnPhoneGreetingTimer = setTimeout(function () { jawnPhoneGreetingStop(); }, 60000);
+	}).catch(function () {
+		jawnPhoneGreetingIdle();
+		jawnPhoneGreetingStatus(edit, jawnosT('I could not reach the microphone.'));
+	});
+});
+
+$(document).on('click', '#phone_app .phone_app_ivr_greeting_stop', function (e) {
+	e.preventDefault();
+	e.stopPropagation();
+	jawnPhoneGreetingStop();
+});
+
+$(document).on('click', '#phone_app .phone_app_ivr_greeting_play', function (e) {
+	e.preventDefault();
+	e.stopPropagation();
+	var edit = $(this).closest('.phone_app_ivr_flow_edit');
+	var path = edit.find('[field="voicemail_greeting"]').val() || '';
+	if (!path) { jawnPhoneGreetingStatus(edit, jawnosT('There is no recorded greeting.')); return; }
+	try {
+		if (!jawnPhoneGreetingAudio) { jawnPhoneGreetingAudio = new Audio(); }
+		jawnPhoneGreetingAudio.src = '/manager/phone/greeting?path=' + encodeURIComponent(path) + '&timestamp=' + Date.now();
+		jawnPhoneGreetingAudio.play();
+	} catch (err) { jawnPhoneGreetingStatus(edit, jawnosT('The greeting could not be played.')); }
+});
+
+$(document).on('click', '#phone_app .phone_app_ivr_greeting_remove', function (e) {
+	e.preventDefault();
+	e.stopPropagation();
+	var button = $(this);
+	var edit = button.closest('.phone_app_ivr_flow_edit');
+	var key = button.closest('.phone_app_ivr_flow_item').attr('flow') || '';
+	jawnPhoneFlowGreeting(edit, '');
+	if (jawnPhoneFlowDefs && jawnPhoneFlowDefs[key]) { jawnPhoneFlowDefs[key].voicemail_greeting = ''; }
+	jawnPhoneGreetingStatus(edit, jawnosT('The spoken text is used. Press Save to keep it.'));
 });
 
 // dial pad

@@ -81,6 +81,15 @@
 	.phone_app_ivr_flow_actions button { padding:6px 14px; border-radius:999px; border:1px solid var(--line);
 		background:var(--panel); color:inherit; cursor:pointer; font:inherit; }
 	.phone_app_ivr_flow_actions button[armed="yes"] { background:#b0342e; color:#fff; border-color:transparent; }
+	/* a flow's voicemail greeting: the typed words, or one recording with its
+	   own Record, Play and Remove */
+	.phone_app_ivr_greeting { display:flex; flex-direction:column; gap:6px; }
+	.phone_app_ivr_greeting_row { display:flex; gap:8px; flex-wrap:wrap; }
+	.phone_app_ivr_greeting_row button { padding:5px 12px; border-radius:999px; border:1px solid var(--line);
+		background:var(--panel); color:inherit; cursor:pointer; font:inherit; font-size:12px; }
+	.phone_app_ivr_greeting_row button[armed="yes"] { background:#b0342e; color:#fff; border-color:transparent; }
+	.phone_app_ivr_greeting_row button:disabled { opacity:.5; cursor:default; }
+	.phone_app_ivr_greeting_note { font-size:12px; color:var(--muted,#8e8e8e); }
 	/* the steps: an ordered list the person can drag into the order the gateway
 	   speaks. The handle is the only draggable part, so the fields inside a step
 	   stay clickable on a stylus or a finger. */

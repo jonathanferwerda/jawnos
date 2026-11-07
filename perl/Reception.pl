@@ -272,7 +272,7 @@ sub tick {
 		my $def = $defs->{$key};
 		next unless ref $def eq 'HASH';
 		my %flow = map { $_ => (defined $def->{$_} ? $def->{$_} : '') }
-			qw(name voice greeting prompt voicemail thanks hold after voicemail_seconds);
+			qw(name voice greeting prompt voicemail voicemail_greeting thanks hold after voicemail_seconds);
 		$flow{'steps'} = $def->{'steps'} if ref $def->{'steps'} eq 'ARRAY' && @{ $def->{'steps'} };
 		$flows{$key} = \%flow;
 	}

@@ -13,7 +13,7 @@ use warnings;
 use Data::UUID;
 use File::Path qw(make_path);
 use File::Slurp qw(read_file);
-use Mojo::JSON qw(decode_json);
+use Mojo::JSON qw(decode_json encode_json);
 
 sub phone_ivr_defaults {
 	return {
@@ -171,6 +171,7 @@ sub phone_ivr_flow_seed {
 			greeting  => $legacy->{'greeting'},
 			prompt    => $legacy->{'prompt'},
 			voicemail => $legacy->{'voicemail'},
+			voicemail_greeting => '',
 			thanks    => $legacy->{'thanks'},
 			hold      => $legacy->{'hold'},
 			after     => 'hold',
@@ -183,6 +184,7 @@ sub phone_ivr_flow_seed {
 			greeting  => '',
 			prompt    => '',
 			voicemail => $legacy->{'voicemail'},
+			voicemail_greeting => '',
 			thanks    => '',
 			hold      => '',
 			after     => 'end',
@@ -207,6 +209,8 @@ sub phone_ivr_flow_def_clean {
 		greeting  => '',
 		prompt    => '',
 		voicemail => '',
+		# '' means the text above; otherwise a recorded WAV the house holds
+		voicemail_greeting => '',
 		thanks    => '',
 		hold      => '',
 		after     => 'hold',
@@ -233,6 +237,14 @@ sub phone_ivr_flow_def_clean {
 		my $text = $row->{$key};
 		$text =~ s/^\s+|\s+$//g;
 		$out{$key} = substr($text, 0, 1000);
+	}
+	# A recorded greeting is a house media file, never a path a browser chose.
+	# It must be in one of the media folders; the file itself may still be on its
+	# way to this machine, exactly as a hold choice may name the gateway's own
+	# library. The gateway falls back to the text when it is not there.
+	if (defined $row->{'voicemail_greeting'}) {
+		require JawnOS::Sco::Audio;
+		$out{'voicemail_greeting'} = &JawnOS::Sco::Audio::in_house($row->{'voicemail_greeting'});
 	}
 	if (defined $row->{'hold'}) {
 		require JawnOS::Sco::Hold;
@@ -533,6 +545,98 @@ sub phone_call_epoch {
 	return time unless defined $stamp && $stamp =~ /^\d+(?:\.\d+)?$/ && $stamp > 0;
 	return int($stamp / 1000) if $stamp > 100000000000;
 	return int($stamp);
+}
+
+# A recorded greeting arrives as whatever the browser recorded - webm/opus on
+# a desktop, mp4/aac on a phone - and is kept as one mono WAV. ffprobe names
+# its length so the route can refuse a long upload; a machine without ffprobe
+# answers 0, and the route then trusts its byte cap.
+sub phone_ivr_greeting_wav {
+	my ($bytes) = @_;
+	return (undef, 0) unless defined $bytes && length $bytes;
+	require File::Temp;
+	my ($in_fh, $in) = File::Temp::tempfile('jawn-greeting-XXXXXX', TMPDIR => 1, UNLINK => 0);
+	return (undef, 0) unless $in_fh;
+	binmode $in_fh;
+	print {$in_fh} $bytes;
+	close $in_fh;
+	my $out = $in . '.wav';
+	my $ran = system('ffmpeg', '-nostdin', '-loglevel', 'error', '-y',
+		'-i', $in, '-ac', '1', '-ar', '16000', '-f', 'wav', $out);
+	my $seconds = 0;
+	my $wav;
+	if ($ran == 0 && -s $out) {
+		my $probe = '';
+		if (open(my $ph, '-|', 'ffprobe', '-v', 'error', '-show_entries', 'format=duration',
+			'-of', 'default=nw=1:nk=1', $out)) {
+			local $/;
+			$probe = <$ph> // '';
+			close $ph;
+		}
+		$seconds = $1 + 0 if $probe =~ /^\s*(\d+(?:\.\d+)?)\s*$/;
+		$wav = eval { &read_file($out) };
+	}
+	unlink $in, $out;
+	return (defined $wav && length $wav ? $wav : undef, $seconds);
+}
+
+# Keep one recorded greeting: the WAV joins the app's own pictures, is filed on
+# an appointment the way voicemail_file files a message, and the media tree is
+# sealed with file_encrypter exactly as a capture is. The path returned is the
+# one now on disk (a .enc when the house has encryption on), so saving the flow
+# names the file the play route and the gateway will actually find.
+sub phone_ivr_greeting_store {
+	my ($bytes, %args) = @_;
+	return '' unless defined $bytes && length $bytes;
+	my $app = 'phone';
+	my $app_path = &subs::path_name($app);
+	my $timestamp = (defined $args{'timestamp'} && length $args{'timestamp'})
+		? $args{'timestamp'} : &subs::rightNow();
+	# a file name, not a path: a browser's timestamp may be anything
+	$timestamp =~ s/\D+//g;
+	$timestamp = substr($timestamp, 0, 20);
+	$timestamp = &subs::rightNow() unless length $timestamp;
+	my $folder = &subs::home(&subs::setting_grabber({ app => 'misc', setting => 'photo_location' }) || '~/Pictures');
+	my $dir = $folder . '/' . $app_path;
+	make_path($dir) unless -d $dir;
+	my $file = $dir . '/' . $app_path . '_greeting_' . $timestamp . '.wav';
+	open(my $out, '>', $file) or return '';
+	binmode $out;
+	print {$out} $bytes;
+	close $out or return '';
+	my $entry = {
+		server_time => &subs::rightNow(),
+		f => $file,
+		uuid => &subs::random_string_creator(9),
+		type => 'audio',
+	};
+	my $uuid = &subs::random_string_creator(20);
+	my $wrote = eval {
+		&subs::db_insert('appointments', {
+			app => $app,
+			type => 'audio',
+			subtype => 'ivr_greeting',
+			file => encode_json([ $entry ]),
+			timestamp => $timestamp,
+			server_time => &subs::rightNow(),
+			uuid => $uuid,
+			duration => 0,
+		});
+	};
+	# A machine with no row still holds a playable greeting; only the sealing
+	# step is skipped.
+	return $file unless $wrote;
+	eval { &subs::file_encrypter({ app => $app }) };
+	my $sealed = eval { &subs::db_select('appointments', undef, { uuid => $uuid })->hashes->[0] };
+	my $files = eval { decode_json($sealed->{'file'}) } || [];
+	foreach my $one (ref $files eq 'ARRAY' ? @{$files} : ($files)) {
+		next unless ref $one eq 'HASH' && ($one->{'uuid'} // '') eq $entry->{'uuid'};
+		my $path = $one->{'f'} || '';
+		return $path if length $path && -f $path;
+	}
+	# file_encrypter sealed the plaintext and something went wrong reading the
+	# row back: an absent path is better than a name for a file that is gone.
+	return -f $file ? $file : '';
 }
 
 # A voicemail is filed the way a capture is: the WAV is written beside the

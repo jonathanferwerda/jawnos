@@ -7,6 +7,7 @@ use warnings;
 use FindBin;
 use lib "$FindBin::Bin/lib", "t/lib";
 use Test::More;
+use Cwd qw(realpath);
 use File::Temp qw(tempdir);
 use File::Path qw(make_path);
 use File::Slurp qw(read_file write_file);
@@ -245,6 +246,8 @@ like($reception_src, qr/flows => \\%flows/,
 	'Reception arms every flow the house saved');
 like($reception_src, qr/default_flow => \$unknown/,
 	'with the unknown bucket as the one a caller nobody named follows');
+like($reception_src, qr/voicemail_greeting/,
+	'and a recorded greeting travels with its flow on arm');
 like($reception_src, qr/\$not_the_gateway/, 'a helper box that is not the gateway does not arm it');
 like($daemon, qr/note_caller/, 'a status poll carries the caller to the gateway');
 like($controller, qr/param\('number'\)/, 'the status route passes the caller number');
@@ -599,6 +602,35 @@ SKIP: {
 	ok(-s $one->[0], 'and it is converted too');
 }
 
+# A recorded greeting: one house media file, converted once and cached the way
+# the hold music is. A path outside the media folders, or one that moved, is
+# not a greeting at all - the flow speaks its words instead.
+my $greeting_dir = "$dir/greetings";
+make_path($greeting_dir);
+write_file("$greeting_dir/greeting.wav", $tiny_wav->(1));
+write_file("$dir/outside.wav", $tiny_wav->(1));
+$ENV{'JAWNOS_SCO_AUDIO_ROOTS'} = $greeting_dir;
+$ENV{'JAWNOS_SCO_AUDIO_CACHE'} = "$dir/audio-cache";
+require JawnOS::Sco::Audio;
+is(JawnOS::Sco::Audio::in_house('../../etc/passwd'), '',
+	'a greeting cannot name its way out of the media folders');
+is(JawnOS::Sco::Audio::in_house("$dir/outside.wav"), '',
+	'a file outside the media folders is not a greeting');
+is(JawnOS::Sco::Audio::in_house("$greeting_dir/greeting.wav"), realpath("$greeting_dir/greeting.wav"),
+	'the real path of a greeting in a media folder is what a flow stores');
+is(JawnOS::Sco::Audio::in_house("$greeting_dir/missing.wav"), "$greeting_dir/missing.wav",
+	'a greeting path survives until its file arrives');
+is(JawnOS::Sco::Audio::in_house("$greeting_dir/missing.wav", 1), '',
+	'but asking for the file itself says it is gone');
+SKIP: {
+	skip 'ffmpeg is not installed, so a greeting cannot be converted', 2
+		unless system('sh', '-c', 'command -v ffmpeg >/dev/null 2>&1') == 0;
+	my $raw = JawnOS::Sco::Audio::raw("$greeting_dir/greeting.wav");
+	ok(-s $raw, 'a recorded greeting is converted to a raw clip');
+	is(JawnOS::Sco::Audio::raw("$greeting_dir/missing.wav"), '',
+		'a missing greeting converts to nothing rather than a silent step');
+}
+
 # A held call: the plan does not run to its end, it plays the next track when
 # the helper finishes one, and the state stays in_call.
 my $hold_fake = "$dir/hold-helper";
@@ -667,6 +699,48 @@ is(JawnOS::Sco::Gateway::call_over('in_call', undef, 661, 1), 'hold limit',
 	'a hold nobody answers still ends');
 is(JawnOS::Sco::Gateway::call_over('in_call', undef, 100, 0), 'call limit',
 	'an unheld call keeps the old limit');
+
+# A recorded greeting is chosen by the flow and converted on first use; a flow
+# that names a file this gateway cannot see still speaks its words.
+{
+	my $recorded = "$greeting_dir/greeting.wav";
+	SKIP: {
+		skip 'ffmpeg is not installed, so a recording cannot be converted', 3
+			unless system('sh', '-c', 'command -v ffmpeg >/dev/null 2>&1') == 0;
+		my $steps = JawnOS::Sco::Gateway::flow_steps({
+			clips => { voicemail => $clip },
+			voicemail_greeting => $recorded,
+			steps => [ { type => 'voicemail' } ],
+		});
+		my ($vm) = grep { ($_->{'type'} || '') eq 'voicemail' && !$_->{'record'} } @{$steps};
+		ok($vm && length($vm->{'play'} || ''), 'a recorded greeting is in the plan');
+		like($vm->{'play'}, qr/\.raw$/, 'as a converted clip the helper can play');
+		isnt($vm->{'play'}, $clip, 'instead of the text clip');
+	}
+	my $steps = JawnOS::Sco::Gateway::flow_steps({
+		clips => { voicemail => $clip },
+		voicemail_greeting => "$greeting_dir/missing.wav",
+		steps => [ { type => 'voicemail' } ],
+	});
+	my ($vm) = grep { ($_->{'type'} || '') eq 'voicemail' && !$_->{'record'} } @{$steps};
+	is($vm->{'play'}, $clip, 'a greeting that moved falls back to the text');
+}
+{
+	my $gw = JawnOS::Sco::Gateway->new(
+		dir => "$dir/greet-vm-sco", helper => $hold_fake, status_path => "$dir/greet-vm.json");
+	$gw->{'state'} = 'in_call';
+	$gw->{'flow'} = 'night';
+	$gw->{'flows'} = { night => {
+		clips => { voicemail => $clip },
+		voicemail_greeting => "$greeting_dir/missing.wav",
+		voicemail_seconds => 30,
+	} };
+	my $sent = $gw->to_voicemail();
+	is($sent->{'ok'}, 1, 'a call can be sent to voicemail');
+	is($gw->{'steps'}->[0]->{'play'}, $clip,
+		'and a missing recording falls back to the text there too');
+	$gw->cancel();
+}
 
 # A person watching a screening can type to the caller. The gateway answers for
 # what it cannot do, and the words join the transcript.

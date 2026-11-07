@@ -296,6 +296,9 @@ sub flow_steps {
 	my $hold = defined $def->{'hold'} ? $def->{'hold'} : '';
 	my $after = lc(defined $def->{'after'} ? $def->{'after'} : 'hold');
 	my $voicemail_seconds = &_voicemail_seconds($def->{'voicemail_seconds'});
+	# A recorded greeting wins when this machine can play it; the text clip is
+	# what the caller hears when the file is gone or cannot be converted.
+	my $voicemail_greeting = &_voicemail_greeting($clips->{'voicemail'} || '', $def->{'voicemail_greeting'});
 	my @authored;
 	if (ref $def->{'steps'} eq 'ARRAY' && @{ $def->{'steps'} }) {
 		@authored = @{ $def->{'steps'} };
@@ -372,12 +375,12 @@ sub flow_steps {
 			push @steps, $step if $step;
 		}
 		elsif ($type eq 'voicemail') {
-			push @steps, &_voicemail_steps($clips->{'voicemail'} || '', $voicemail_seconds);
+			push @steps, &_voicemail_steps($voicemail_greeting, $voicemail_seconds);
 		}
 		elsif ($type eq 'after') {
 			# the legacy tail: the music, the house's voicemail, or nothing
 			if ($after eq 'voicemail') {
-				push @steps, &_voicemail_steps($clips->{'voicemail'} || '', $voicemail_seconds);
+				push @steps, &_voicemail_steps($voicemail_greeting, $voicemail_seconds);
 			}
 			elsif ($after eq 'hold') {
 				my $step = &_hold_step($hold, 0);
@@ -406,6 +409,22 @@ sub _hold_step {
 		shuffle => (lc($choice) eq 'shuffle' ? 1 : 0),
 		seconds => $seconds,
 	};
+}
+
+# The clip a caller hears before leaving a message: the flow's own recording
+# when it is here and can be played, else the text clip rendered from its
+# words. Converting is cached by path, size and mtime (JawnOS::Sco::Audio), so
+# this is a file read after the first arm; a missing or broken file is '', and
+# never a step that would leave the caller listening to silence.
+sub _voicemail_greeting {
+	my ($text_clip, $recorded) = @_;
+	$text_clip = defined $text_clip ? $text_clip : '';
+	return $text_clip unless defined $recorded && length $recorded;
+	my $raw = eval {
+		require JawnOS::Sco::Audio;
+		&JawnOS::Sco::Audio::raw($recorded);
+	} || '';
+	return length $raw ? $raw : $text_clip;
 }
 
 # The greeting (when the flow has one) and a recorded message. A message is
@@ -445,6 +464,7 @@ sub _flow {
 		voice => (defined $def->{'voice'} ? $def->{'voice'} : ''),
 		hold => (defined $def->{'hold'} ? $def->{'hold'} : ''),
 		after => lc(defined $def->{'after'} ? $def->{'after'} : 'hold'),
+		voicemail_greeting => (defined $def->{'voicemail_greeting'} ? $def->{'voicemail_greeting'} : ''),
 		voicemail_seconds => &_voicemail_seconds($def->{'voicemail_seconds'}),
 		clips => (ref $def->{'clips'} eq 'HASH' ? { %{ $def->{'clips'} } } : {}),
 	);
@@ -667,7 +687,9 @@ sub to_voicemail {
 	my ($self, %args) = @_;
 	return { ok => 0, error => 'no call is up' } unless ($self->{'state'} || '') eq 'in_call';
 	my $flow = length($self->{'flow'} || '') ? $self->{'flows'}->{ $self->{'flow'} } : undef;
-	my $greeting = ($flow && $flow->{'clips'}) ? ($flow->{'clips'}->{'voicemail'} || '') : '';
+	my $greeting = &_voicemail_greeting(
+		(($flow && $flow->{'clips'}) ? ($flow->{'clips'}->{'voicemail'} || '') : ''),
+		($flow ? ($flow->{'voicemail_greeting'} || '') : ''));
 	my $text = defined $args{'text'} ? $args{'text'} : '';
 	$text =~ s/^\s+|\s+$//g;
 	if (length $text) {

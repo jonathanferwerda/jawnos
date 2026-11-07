@@ -9,6 +9,8 @@ use lib "$FindBin::Bin/lib", "t/lib";
 use Test::More;
 use Mojo::JSON qw(decode_json encode_json);
 use Mojo::Template;
+use Cwd qw(realpath);
+use File::Path qw(make_path);
 use File::Temp qw(tempdir);
 use File::Slurp qw(read_file write_file);
 use RepoSource;
@@ -65,6 +67,7 @@ is $defaults->{'flows'}->{'enemy'}, 'reject', 'an enemy is rejected by default';
 		'the voicemail flow takes a message instead of speaking the legacy order';
 	like $defs->{'voicemail'}->{'voicemail'}, qr/message/i, 'the voicemail flow leaves a message';
 	is $defs->{'receptionist'}->{'voice'}, &subs::say_default_voice(), 'the seed speaks in the house voice';
+	is $defs->{'receptionist'}->{'voicemail_greeting'}, '', 'a flow starts on its spoken greeting';
 }
 {
 	# a house that never opened the flow editor keeps its own legacy words
@@ -205,6 +208,27 @@ is $defaults->{'flows'}->{'enemy'}, 'reject', 'an enemy is rejected by default';
 	local *subs::setting_grabber = sub { return undef };
 	my $defs = &subs::phone_ivr_flow_defs_clean({ 'shuffly' => { hold => 'SHUFFLE' } });
 	is $defs->{'shuffly'}->{'hold'}, 'shuffle', 'SHUFFLE is lowercased';
+}
+{
+	# A recorded greeting is a WAV in the house's media folders. The cleaner keeps
+	# one it can see and drops a path that is outside the house or no longer there.
+	my $root = realpath(tempdir(CLEANUP => 1));
+	make_path("$root/phone");
+	my $wav = "$root/phone/greeting.wav";
+	write_file($wav, 'RIFF-greeting');
+	local $ENV{'JAWNOS_SCO_AUDIO_ROOTS'} = $root;
+	local *subs::setting_grabber = sub { return undef };
+	my $defs = &subs::phone_ivr_flow_defs_clean({
+		night => { name => 'Night', voicemail_greeting => $wav },
+		noon  => { name => 'Noon', voicemail_greeting => '../../etc/passwd' },
+		gone  => { name => 'Gone', voicemail_greeting => "$root/phone/missing.wav" },
+	});
+	is $defs->{'night'}->{'voicemail_greeting'}, $wav,
+		'a recorded greeting the house holds is kept';
+	is $defs->{'noon'}->{'voicemail_greeting'}, '',
+		'a greeting cannot name its way out of the media folders';
+	is $defs->{'gone'}->{'voicemail_greeting'}, "$root/phone/missing.wav",
+		'a greeting named on another machine is kept as a house path';
 }
 
 # ---------------------------------------------------------------- saving
@@ -506,6 +530,29 @@ is $defaults->{'flows'}->{'enemy'}, 'reject', 'an enemy is rejected by default';
 		'the seeded voicemail flow defaults to five minutes';
 }
 
+# ---------------------------------------------------------------- recorded greeting save
+{
+	my $root = realpath(tempdir(CLEANUP => 1));
+	make_path("$root/phone");
+	my $wav = "$root/phone/greeting.wav";
+	write_file($wav, 'RIFF-greeting');
+	local $ENV{'JAWNOS_SCO_AUDIO_ROOTS'} = $root;
+	my @writes;
+	local *subs::setting_grabber = sub { return undef };
+	local *subs::setting_setter = sub { push @writes, { %{ $_[0] } } };
+	my $saved = Manager::phone_ivr_save({
+		flow_defs => encode_json({
+			receptionist => { name => 'Receptionist' },
+			night => { name => 'Night', voicemail_greeting => $wav },
+		}),
+	});
+	is $saved->{'flow_defs'}->{'night'}->{'voicemail_greeting'}, $wav,
+		'a recorded greeting survives the save';
+	my ($row) = grep { $_->{'setting'} eq 'ivr_flow_defs' } @writes;
+	like $row->{'value'}, qr/greeting\.wav/,
+		'and it is in the house row the gateway reads';
+}
+
 # ---------------------------------------------------------------- the filed message
 # A voicemail is filed the way a capture is: one entry in the appointment's file
 # column, type audio, pointing at the Chat note that holds the words.
@@ -551,6 +598,39 @@ is $defaults->{'flows'}->{'enemy'}, 'reject', 'an enemy is rejected by default';
 		'a call with no transcript has no note to reference';
 }
 
+# ---------------------------------------------------------------- keeping the recording
+# A recorded greeting is written the way a capture is: a WAV in the app's own
+# media folder, one appointment file entry, and the tree sealed through
+# file_encrypter. The path the flow names is the one left on disk.
+{
+	my $root = realpath(tempdir(CLEANUP => 1));
+	my $row;
+	local *subs::setting_grabber = sub { return $root };
+	local *subs::rightNow = sub { return 1700000000000 };
+	local *subs::db_insert = sub { my ($table, $data) = @_; $row = { %{$data} }; return 1; };
+	local *subs::db_select = sub { return FakeRows->new([ $row ]); };
+	local *subs::file_encrypter = sub { return };
+	my $path = &subs::phone_ivr_greeting_store('RIFF-greeting', timestamp => '1700000000');
+	is $path, "$root/phone/phone_greeting_1700000000.wav",
+		'a greeting is written under the app\'s media folder';
+	is read_file($path), 'RIFF-greeting', 'with the bytes it was given';
+	is $row->{'subtype'}, 'ivr_greeting', 'filed as an IVR greeting';
+	is $row->{'app'}, 'phone', 'on the Phone app';
+}
+SKIP: {
+	skip 'ffmpeg is not installed, so an upload cannot be converted', 3
+		unless system('sh', '-c', 'command -v ffmpeg >/dev/null 2>&1') == 0;
+	my $n = 8000;
+	my $data = join '', map { pack('s<', 0) } 1 .. $n;
+	my $tiny = 'RIFF' . pack('V', 36 + length $data)
+		. 'WAVEfmt ' . pack('VvvVVvv', 16, 1, 1, 8000, 16000, 2, 16)
+		. 'data' . pack('V', length $data) . $data;
+	my ($wav, $seconds) = &subs::phone_ivr_greeting_wav($tiny);
+	ok defined $wav && length $wav, 'an upload becomes a WAV the house can keep';
+	like $wav, qr/^RIFF/, 'and it is a real WAV';
+	cmp_ok $seconds, '<=', 2, 'with the length the recorder gave it';
+}
+
 # ---------------------------------------------------------------- wiring
 my $manager = manager_source();
 like $manager, qr{/manager/phone/ivr}, 'the IVR route is registered';
@@ -560,6 +640,9 @@ like $manager, qr/remote_relay_request\(\$c, \{ dissemination => 'yes' \}\)/,
 	'an IVR save is relayed to the peers';
 like $manager, qr{phone_ivr_save\(}, 'the action saves the IVR settings';
 like $manager, qr{flow_defs => \$c->param\('flow_defs'\)}, 'the action forwards the named flows';
+like $manager, qr{/manager/phone/greeting}, 'the greeting routes are registered';
+like $manager, qr{sub action_24763}, 'the recorded greeting has an upload action';
+like $manager, qr{sub action_24764}, 'and a route that plays it';
 like $manager, qr{ivr => \$ivr}, 'the sync blob carries the IVR policy';
 
 my $template = template_source('apps/phone');
@@ -574,6 +657,12 @@ like $template, qr{id="phone_ivr_voicemail"}, 'the pane has a voicemail list';
 
 my $js = js_source('public/js/manager/phone.js');
 like $js, qr{/manager/phone/ivr}, 'the pane saves through its route';
+like $js, qr{/manager/phone/greeting}, 'the pane records and plays greetings through its route';
+like $js, qr{MediaRecorder}, 'the pane records with the browser recorder';
+like $js, qr{voicemail_greeting}, 'the flow carries the recorded greeting field';
+like $js, qr{hint="Record greeting"}, 'the record control has its hint';
+like $js, qr{hint="Play greeting"}, 'the play control has its hint';
+like $js, qr{hint="Remove greeting"}, 'the remove control has its hint';
 like $js, qr{JawnPhone\.dial}, 'the recent icon asks the native bridge to dial';
 like $js, qr{phone_app_row_call}, 'the recent icon has a click handler';
 like $js, qr{phone_app_ivr_flow}, 'the pane collects the flow matrix';
