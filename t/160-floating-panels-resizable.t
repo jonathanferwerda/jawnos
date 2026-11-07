@@ -1,9 +1,11 @@
-# tests-for: public/js/manager/manager.js public/js/manager/agents.js public/js/manager/coding/02_panels.js public/js/manager/keyboard.js perl/help/topics_functions.pl perl/help/topics_features.pl
+# tests-for: public/js/manager/manager.js public/js/manager/agents.js public/js/manager/coding/02_panels.js public/js/manager/keyboard.js perl/help/topics_functions.pl perl/help/topics_features.pl templates/manager.html.ep public/css/manager.css
 # covers:    The floating panels - the dock's keyboard panels, the floating soft
 #            keyboard, the Guide associate, the Coding agent and the Agents list
 #            - are all sized by their edge or corner, and the size they were
 #            left at is remembered per device with their place. The dock panel
-#            restore no longer overwrites a saved width with the default.
+#            restore no longer overwrites a saved width with the default. The
+#            associate stands at the page's own level, not inside the button
+#            shelf, so its z-index and alignment are its own.
 
 use strict;
 use warnings;
@@ -12,12 +14,16 @@ use FindBin;
 use lib "$FindBin::Bin/lib", "t/lib";
 use Test::More;
 use RepoSource;
+use File::Slurp qw(read_file);
 
+my $root = repo_root();
 my $manager = js_source('public/js/manager/manager.js');
 my $agents = js_source('public/js/manager/agents.js');
 my $coding = js_source('public/js/manager/coding/02_panels.js');
 my $keyboard = js_source('public/js/manager/keyboard.js');
 my $kb_maker = js_source('public/js/manager/keyboard/02_keyboard_maker.js');
+my $template = template_source('manager');
+my $manager_css = read_file("$root/public/css/manager.css");
 my $help = help_source();
 
 # --- the shared chat-panel memory keeps the size ----------------------------
@@ -46,6 +52,15 @@ like($manager, qr/panel\.css\('max-height', Math\.max\(180, \$\(window\)\.height
 	'the associate is capped to the room under the ceiling');
 like($manager, qr/var top = Math\.max\(limit, Math\.min\(\$\(window\)\.height\(\) - h - 70, Math\.max\(limit, \$\(window\)\.height\(\) - h - bar - 6\)\)\);/,
 	'a fresh associate opens under the ceiling, with its header and close in reach');
+
+# --- the associate stands at the page's own level ---------------------------
+my ($shelf) = $template =~ m{<div id="top_right_buttons">(.*?)\n</div>}s;
+like($shelf // '', qr/start_menu_toggle/, 'the shelf still holds the corner buttons');
+unlike($shelf // '', qr/id="assistant_view"/, 'the associate does not sit inside the button shelf');
+like($template, qr{%>\n\t<div id="assistant_view"}, 'the associate follows the shelf, at the page level');
+unlike($manager_css, qr/#top_right_buttons #assistant_view/, 'the associate does not borrow the shelf for pointer events');
+like($manager_css, qr/\.assistant_view \{[^}]*text-align: left;/, 'the associate carries its own text alignment');
+like($manager, qr/var jawnos_assistant_top = 990000;/, 'the associate is raised by its own z-index, above the taskbar');
 
 # --- one resizable helper, by edge and corner -------------------------------
 like($manager, qr/function jawnosPanelResizable\(panel, keyOf\)/, 'the resizable helper exists');

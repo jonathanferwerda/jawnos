@@ -836,12 +836,11 @@ body.dark_theme #taskbar { background-image: linear-gradient(rgba(255,255,255,.0
 	top:2px;
 	z-index:6000;
 	/* the box is only a shelf: with the buttons riding the taskbar it holds
-	   nothing but its hidden assistant panel, and it must not swallow the
+	   the lock and start buttons, and it must not swallow the
 	   clicks of whatever a window has under it */
 	pointer-events: none;
 }
-#top_right_buttons img,
-#top_right_buttons #assistant_view { pointer-events: auto; }
+#top_right_buttons img { pointer-events: auto; }
 /* The row's own buttons are bare tiles: every picture sits on the same 40px
    square, and each button's border is counted around that square, never out of
    it, so the four buttons all land on 46px. Only the now button wears a tile -
@@ -2221,7 +2220,7 @@ body.dark_theme #ide {
    screen they keep the compact sizes. Every panel wears these classes, the
    mounted ones and the spawned clones alike, so their size lives here and not
    in each template. */
-.assistant_view { width: 320px; height: 360px; }
+.assistant_view { width: 320px; height: 360px; text-align: left; }
 .coding_chat { width: 360px; max-width: 92%; height: 340px; }
 .assistant_chat_log, .coding_chat_log { font-size: 13px; line-height: 1.35; }
 .chat_step { font-size: 11px; font-style: italic; opacity: .6; }

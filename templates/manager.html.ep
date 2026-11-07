@@ -66,6 +66,21 @@
 </div>
 
 <div id="top_right_buttons">
+	<% my $padlock_sighting = eval { return decode_json &subs::setting_grabber({app => '__president', setting => 'padlock_contexts' }) } || []; %>
+	<% my $house_gate = (scalar @{$padlock} > 0 && grep { $_ eq 'general' } @{$padlock_sighting}) ? 1 : 0; %>
+			<img id="lock_session" hint="Tap to lock this screen; double-tap to lock the house" style="<% unless ($house_gate) { %>display:none;<% } %>" class="jonathan little_thumb" src="<%= &subs::icon_for('/images/decipherable/padlock.png') %>" jawnos_icon="/images/decipherable/padlock.png"></img>
+
+
+		<%# the start button's own face: a misc setting picks the picture out of the
+		    jbuttons folder, and the active icon set may carry a variant of it - the
+		    jawnos_icon attribute is what jawnosReloadIcons() re-maps when the set
+		    changes %>
+		<% my $start_icon = &subs::misc_setting('start_menu_icon') || '/images/jbuttons/logo1.png'; %>
+		<img id="start_menu_toggle" hint="Start menu" class="jonathan little_thumb start" src="<%= &subs::icon_for($start_icon) %>" jawnos_icon="<%= $start_icon %>">
+</div>
+<%# The Guide's associate floats over the desk and the taskbar, so it stands at
+    the page's own level: inside the button shelf its own z-index would be capped
+    by the shelf's stacking context. Its drag, close and chat need no ancestor. %>
 	<div id="assistant_view" class="assistant_view" conversation="assistant" style="position:fixed;display:none;background-color:var(--panel);border:solid;border-radius:8px;box-shadow:0 8px 26px rgba(0,0,0,.35);overflow:hidden;">
 		<div class="assistant_header" hint="Drag here to move this associate" style="position:absolute;top:0;left:0;right:0;height:38px;display:flex;align-items:center;gap:6px;padding:0 6px;box-sizing:border-box;border-bottom:1px solid var(--line);">
 			<img src="<%= &subs::icon_for('/images/make believe/assistant.png') %>" jawnos_icon="/images/make believe/assistant.png" class="little_thumb assistant_anchor" hint="Drag me onto a picture or a control and the guide will look at it">
@@ -99,18 +114,6 @@
 		<span class="assistant_model" style="display:none;"><%= &subs::setting_grabber({ app => 'mail', setting => 'help_assistant' }) %></span>
 		<span class="assistant_trash_icon" style="display:none;"><%= &subs::icon_path('trash', '/icons/trash.png') %></span>
 	</div>
-	<% my $padlock_sighting = eval { return decode_json &subs::setting_grabber({app => '__president', setting => 'padlock_contexts' }) } || []; %>
-	<% my $house_gate = (scalar @{$padlock} > 0 && grep { $_ eq 'general' } @{$padlock_sighting}) ? 1 : 0; %>
-			<img id="lock_session" hint="Tap to lock this screen; double-tap to lock the house" style="<% unless ($house_gate) { %>display:none;<% } %>" class="jonathan little_thumb" src="<%= &subs::icon_for('/images/decipherable/padlock.png') %>" jawnos_icon="/images/decipherable/padlock.png"></img>
-
-
-		<%# the start button's own face: a misc setting picks the picture out of the
-		    jbuttons folder, and the active icon set may carry a variant of it - the
-		    jawnos_icon attribute is what jawnosReloadIcons() re-maps when the set
-		    changes %>
-		<% my $start_icon = &subs::misc_setting('start_menu_icon') || '/images/jbuttons/logo1.png'; %>
-		<img id="start_menu_toggle" hint="Start menu" class="jonathan little_thumb start" src="<%= &subs::icon_for($start_icon) %>" jawnos_icon="<%= $start_icon %>">
-</div>
 <!-- the menu hangs off the corner itself rather than out of the button box: it
      must stand over the dock and the taskbar, which the box it used to live in
      sits under -->
