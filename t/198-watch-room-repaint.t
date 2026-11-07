@@ -1,4 +1,4 @@
-# tests-for: jw/jw_01_globals.ino jw/jw_04_loop.ino jw/jw_06_net_face.ino jw/jw_07_house_audio.ino
+# tests-for: jw/jw_01_globals.ino jw/jw_04_loop.ino jw/jw_06_net_face.ino jw/jw_07_house_audio.ino jw/jw_13_serial_lowpower.ino
 # covers:    The watch's room is rebuilt, never stacked, and a toggle push repaints
 #            its buttons instead of rebuilding the room. The rebuild used to run on
 #            every toggle the bridge pushed (a held volume key sends a run of them)
@@ -19,6 +19,20 @@ my $root    = repo_root();
 my $jw_loop = read_file("$root/jw/jw_04_loop.ino");
 my $jw_ui   = read_file("$root/jw/jw_06_net_face.ino");
 my $jw_face = read_file("$root/jw/jw_07_house_audio.ino");
+my $jw_sleep = read_file("$root/jw/jw_13_serial_lowpower.ino");
+
+# --- a burst of taps rides one connection ------------------------------------
+# The real light sleep tears the radio down, and only the crown wakes the chip,
+# so a press after the screen went dark paid for a bring-up and a central
+# reconnect. With a central on the link the watch dozes instead, keeping it.
+like( $jw_sleep, qr/if \(lightSleep && !watch\.isUsbIn\(\) && !ble_link_ready\(\)\)/,
+	'a live central keeps the radio up through the doze' );
+like( $jw_sleep, qr/bridge connected, dozing to keep the link/,
+	'and the log says which of the two reasons kept it awake' );
+like( $jw_loop, qr/millis\(\) - ble_link_up_at > 250\)/,
+	'a queued tap flushes once the link is subscribed, not after 2.5 s' );
+unlike( $jw_loop, qr/millis\(\) - ble_link_up_at > 2500\)/,
+	'and no fixed 2.5 s beat holds the queue back' );
 
 # --- the room is rebuilt, not stacked ----------------------------------------
 my ($room) = $jw_face =~ /(void presidents_buttons\(\).*?\n\}\n)/s;

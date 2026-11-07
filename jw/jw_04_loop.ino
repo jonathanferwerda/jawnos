@@ -325,9 +325,11 @@ void jawn_loop() {
     Serial.println("[ble] room_request unanswered; fetching over http");
     xTaskCreatePinnedToCore(president_fetch_task, "PresTask", 12288, NULL, 1, NULL, 0);
   }
-  // taps queued while the link was down go out shortly after a fresh central
+  // taps queued while the link was down go out the moment a fresh central
   // arrives: notify() before its CCCD subscription lands is dropped, so wait
-  // for the subscription flag too, not just the connection
+  // for the subscription flag (ble_link_ready covers it), not a fixed beat. Two
+  // and a half seconds let a burst sit in the queue on a link that was already
+  // usable; the first press should ride the first connection.
   static bool ble_link_was_up = false;
   static uint32_t ble_link_up_at = 0;
   if (ble_link_ready() && !ble_link_was_up) {
@@ -337,7 +339,7 @@ void jawn_loop() {
   else if (!ble_link_ready()) {
     ble_link_was_up = false;
   }
-  if (ble_link_ready() && ble_link_up_at != 0 && millis() - ble_link_up_at > 2500) {
+  if (ble_link_ready() && ble_link_up_at != 0 && millis() - ble_link_up_at > 250) {
     ble_link_up_at = 0;
     ble_flush_wigi();
     ble_push_steps(false);   // recover the steps taken while the link was down

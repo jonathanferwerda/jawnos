@@ -367,7 +367,14 @@ void lowPowerEnergyHandler()
   wrist_look_watch = false;   // the glance ends with the screen
   wristPollReset();    // both sleep paths start their pose from scratch
 
-  if (lightSleep && !watch.isUsbIn()) {
+  // A burst of taps has to ride one connection. The real sleep below tears the
+  // radio down (stop_ble_transfer) and only the crown wakes the chip, so every
+  // press after the screen went dark paid for a fresh bring-up and a central
+  // reconnect - each tap landed on a different link. While a central is on the
+  // other end, doze at 80 MHz instead and keep the link; with no central the
+  // real sleep still runs, so the battery saving is only given up when the
+  // homebase is actually there.
+  if (lightSleep && !watch.isUsbIn() && !ble_link_ready()) {
     
     Serial.println("right before sleep");
     crumb("ls enter");
@@ -584,8 +591,14 @@ void lowPowerEnergyHandler()
   } else {
     if (lightSleep) {
       // an attached USB serial both refuses the light sleep and wakes the chip
-      // straight out of it, so doze properly until the cable is out
-      Serial.println("[sleep] USB is attached, dozing instead of light sleeping");
+      // straight out of it, so doze properly until the cable is out; a live
+      // bridge is the other reason to doze, and keeps the link for a burst
+      if (watch.isUsbIn()) {
+        Serial.println("[sleep] USB is attached, dozing instead of light sleeping");
+      }
+      else {
+        Serial.println("[sleep] bridge connected, dozing to keep the link");
+      }
     }
     doze_until_crown();
   }
