@@ -1020,28 +1020,184 @@ sub weather_observe_now($opts) {
 	return $result;
 }
 
+# How long the house server may be silent before another machine takes the pass.
+# remote_machine_sync refreshes a peer's row about every ten minutes; a server
+# that has not been heard from in fifteen is away, not merely between syncs.
+my $WEATHER_LEADER_GRACE_MS = 15 * 60 * 1000;
+
+# One pass per household. The house server records the weather; a phone, tablet
+# or laptop only reads what it kept. When the server is away, the live machines
+# elect the lowest signatorial among them as the stand-in, so the rules keep
+# running without every machine acting at once. A household with no server row
+# still checks its own rules, so a single machine is never left waiting.
+sub weather_observe_leader() {
+	my $me = &subs::signatorial_designer() // '';
+	my $now = &subs::rightNow();
+	my $rows = eval {
+		&subs::db_query(
+			"select signatorial, device, connection, server_time from remote_machines "
+			. "where signatorial is not null and signatorial != ''"
+		)->hashes;
+	} || [];
+	my (@servers, %live);
+	foreach my $row (@{$rows}) {
+		my $sig = $row->{'signatorial'} // '';
+		next unless length $sig;
+		$live{$sig} = 1
+			if (($row->{'connection'} || '') eq 'active')
+			&& int($row->{'server_time'} || 0) > $now - $WEATHER_LEADER_GRACE_MS;
+		push @servers, $row if (($row->{'device'} || '') eq 'server');
+	}
+	if (@servers) {
+		my @ordered = sort { int($b->{'server_time'} || 0) <=> int($a->{'server_time'} || 0) } @servers;
+		my ($server) = grep { $live{$_->{'signatorial'} // ''} } @ordered;
+		if ($server) {
+			my $sig = $server->{'signatorial'} // '';
+			return ($sig eq $me) ? 1 : 0;
+		}
+	}
+	$live{$me} = 1 if length $me;
+	return 0 unless %live;
+	my ($stand_in) = sort keys %live;
+	return ($stand_in eq $me) ? 1 : 0;
+}
+
+# The whole house is together when every machine heard from in the last day is
+# connected and has reported in inside the grace. That is the moment to fold the
+# duplicates a split produced: the rows from all machines have met in one table.
+# A machine gone for more than a day is not awaited; its rows sync when it
+# returns, and the next pass catches what they bring.
+sub weather_observe_house_together() {
+	my $now = &subs::rightNow();
+	my $rows = eval {
+		&subs::db_query(
+			"select signatorial, connection, server_time from remote_machines "
+			. "where signatorial is not null and signatorial != ''"
+		)->hashes;
+	} || [];
+	return 1 unless @{$rows};
+	my $recent = $now - 24 * 60 * 60 * 1000;
+	foreach my $row (@{$rows}) {
+		my $seen = int($row->{'server_time'} || 0);
+		next if $seen < $recent;
+		return 0 unless (($row->{'connection'} || '') eq 'active');
+		return 0 unless $seen > $now - $WEATHER_LEADER_GRACE_MS;
+	}
+	return 1;
+}
+
+# ---- putting the house back together ----------------------------------------
+# A split house records the same reading on more than one machine. Sync keeps
+# both rows because their uuids differ; the values, the place and the minute are
+# what make them one observation. Walk each place's readings in time order and
+# fold a run of identical readings inside the provider's own cache window (ten
+# minutes), so a value that changes and comes back is not mistaken for a
+# duplicate.
+sub weather_observe_row_signature($row) {
+	return undef unless ref $row eq 'HASH';
+	my $list = ref $row->{'measures'} eq 'ARRAY'
+		? $row->{'measures'}
+		: eval { decode_json($row->{'measures'} // '[]') };
+	return undef unless ref $list eq 'ARRAY' && @{$list};
+	my ($location, @parts);
+	foreach my $measure (@{$list}) {
+		next unless ref $measure eq 'HASH';
+		$location //= $measure->{'location'}
+			if defined $measure->{'location'} && length $measure->{'location'};
+		my @fields = sort grep { $_ ne 'ts' && $_ ne 'uuid' && $_ ne 'location' } keys %{$measure};
+		next unless @fields;
+		push @parts, join('&', map { $_ . '=' . (defined $measure->{$_} ? $measure->{$_} : '') } @fields);
+	}
+	return undef unless @parts;
+	return {
+		location => ($location // ''),
+		signature => join('|', sort @parts),
+	};
+}
+
+# A folded row leaves through the same door as any other deleted record, so a
+# peer that still holds it learns the deletion instead of handing it back.
+sub weather_observe_forget($uuid) {
+	return 0 unless defined $uuid && length $uuid;
+	my $ok = eval { &subs::records_tombstone('weather_station', $uuid); 1 };
+	return $ok ? 1 : 0;
+}
+
+sub weather_observe_reconcile($opts = {}) {
+	$opts ||= {};
+	my $window = $opts->{'window_ms'} || 10 * 60 * 1000;
+	my $days = $opts->{'days'} || 7;
+	my $now = &subs::rightNow();
+	my $rows = eval {
+		&subs::db_query(
+			"select uuid, timestamp, device, measures from appointments "
+			. "where app = 'weather_station' and type = 'measure' and measures is not null "
+			. "and cast(timestamp as integer) >= ? order by cast(timestamp as integer) asc",
+			$now - $days * 24 * 60 * 60 * 1000
+		)->hashes;
+	} || [];
+	my %by_location;
+	foreach my $row (@{$rows}) {
+		my $sig = &weather_observe_row_signature($row);
+		next unless $sig && length $sig->{'location'};
+		push @{ $by_location{$sig->{'location'}} }, { %{$row}, %{$sig} };
+	}
+	my (@removed, $checked);
+	$checked = 0;
+	foreach my $location (sort keys %by_location) {
+		my @burst;
+		my $fold = sub {
+			return unless @burst > 1;
+			# The house server's copy is the one the rules saw; keep it when it
+			# is in the run. Otherwise the earliest copy is the observation.
+			my ($keep) = grep { ($_->{'device'} // '') eq 'server' } @burst;
+			$keep ||= $burst[0];
+			foreach my $row (@burst) {
+				next if $row == $keep;
+				next unless &weather_observe_forget($row->{'uuid'} // '');
+				push @removed, $row->{'uuid'};
+			}
+			@burst = ();
+		};
+		foreach my $row (@{ $by_location{$location} }) {
+			$checked++;
+			my $last = @burst ? $burst[-1] : undef;
+			if ($last
+				&& ($row->{'signature'} // '') eq ($last->{'signature'} // '')
+				&& (int($row->{'timestamp'} || 0) - int($last->{'timestamp'} || 0)) <= $window) {
+				push @burst, $row;
+			}
+			else {
+				$fold->();
+				@burst = ($row);
+			}
+		}
+		$fold->();
+	}
+	my $out = { checked => $checked, removed => scalar @removed, uuids => \@removed };
+	eval { &subs::cache_set({ app => 'weather', context => 'observe', subcontext => 'reconcile', warranty => '-1d' }, { at => $now, removed => scalar @removed }) };
+	return $out;
+}
+
 # The scheduled pass. The lock keeps the house to one fetch even when several
 # machines run the utility; a condition that changed still writes at once, so
 # the lock is a ceiling on the fetch, not on the rules.
-# One pass per household. The house server records the weather; a phone, tablet
-# or laptop only reads what it kept. A household with no server row yet keeps
-# the old behaviour, so a single machine still checks its own rules.
-sub weather_observe_leader() {
-	my $row = eval {
-		&subs::db_query(
-			"select signatorial from remote_machines "
-			. "where device = 'server' and signatorial is not null and signatorial != '' "
-			. "order by server_time desc limit 1"
-		)->hashes->[0];
-	};
-	my $server = $row ? ($row->{'signatorial'} // '') : '';
-	return 1 unless length $server;
-	return ((&subs::signatorial_designer() // '') eq $server) ? 1 : 0;
-}
-
 sub weather_observe_tick() {
 	return { skipped => 'not the house' } unless &weather_observe_leader();
 	my $now = &rightNow();
+	# Fold the split's duplicates as soon as the house is whole again. This runs
+	# before the fetch as well as when there is no fix, because cleaning the
+	# record must not wait for a machine's GPS.
+	my $reconcile;
+	if (&weather_observe_house_together()) {
+		my $last_run = eval { &subs::cache_get({ app => 'weather', context => 'observe', subcontext => 'reconcile' }) } || {};
+		if (($last_run->{'at'} || 0) <= $now - 60 * 60 * 1000) {
+			$reconcile = eval { &weather_observe_reconcile() };
+			if ($log && $reconcile && $reconcile->{'removed'}) {
+				$log->info('weather reconcile: folded ' . $reconcile->{'removed'} . ' duplicate reading(s)');
+			}
+		}
+	}
 	my $keys = &weather_rule_locations();
 	if (!@{$keys}) {
 		# No rule names a place: keep the house's own place current so History
@@ -1051,9 +1207,9 @@ sub weather_observe_tick() {
 		my $sig = $fix ? ($fix->{'signatorial'} // '') : '';
 		push @{$keys}, 'dev:' . $sig if $sig =~ /^[A-Za-z0-9_-]+$/;
 	}
-	return { skipped => 'no fix' } unless @{$keys};
+	return { skipped => 'no fix', (defined $reconcile ? (reconcile => $reconcile) : ()) } unless @{$keys};
 	my $lock = eval { &cache_get({ app => 'weather', context => 'observe', subcontext => 'lock' }) } || {};
-	return { skipped => 'held', at => $lock->{'at'} }
+	return { skipped => 'held', at => $lock->{'at'}, (defined $reconcile ? (reconcile => $reconcile) : ()) }
 		if ($lock->{'at'} || 0) > $now - 20 * 60 * 1000;
 	&cache_set({ app => 'weather', context => 'observe', subcontext => 'lock', warranty => '-1d' }, { at => $now });
 	my @results;
@@ -1089,8 +1245,8 @@ sub weather_observe_tick() {
 			}));
 		}
 	}
-	return { skipped => 'no fix', results => \@results } unless @results;
-	return { ok => 1, results => \@results };
+	return { skipped => 'no fix', results => \@results, (defined $reconcile ? (reconcile => $reconcile) : ()) } unless @results;
+	return { ok => 1, results => \@results, (defined $reconcile ? (reconcile => $reconcile) : ()) };
 }
 
 1;

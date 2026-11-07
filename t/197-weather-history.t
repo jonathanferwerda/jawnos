@@ -17,6 +17,13 @@ my $root = repo_root();
 require "$root/lib/JawnOS/Domain/Weather.pm";
 require "$root/lib/JawnOS/Domain/WeatherHistory.pm";
 
+# A query result is only ever asked for its rows here; the history reader wraps
+# each query in eval, so a missing method would quietly look like "no rows".
+{
+	package FakeResult;
+	sub hashes { return $_[0]->{'rows'} || [] }
+}
+
 # --- the old measures fold into one row per day -----------------------------
 # The old app wrote one reading per entry, the measure name as the key.
 my @rows = (
@@ -113,9 +120,74 @@ is(subs::weather_condition_class('Thunderstorm'), 'thunder', 'storm words class 
 is(subs::weather_days_between('2026-11-06', '2026-11-07'), 1, 'one day between dates');
 ok(length subs::weather_day_key(1700000000000), 'a timestamp has a day key');
 
+# --- a history source reads as its place -------------------------------------
+{
+	no warnings 'redefine';
+	my $notice = 'Warwick Weather';
+	my @settings = (
+		{ app => 'cambridge_weather', value => 'https://api.weather.gc.ca/collections/citypageweather-realtime/items/on-82?f=json' },
+		{ app => 'weather', value => 'https://api.weather.gc.ca/collections/citypageweather-realtime/items/on-137?f=json' },
+	);
+	local *subs::db_query = sub {
+		my ($query, @args) = @_;
+		if (($query // '') =~ /setting = 'notification_text'/) {
+			my $value = ($args[0] // '') eq 'weather' ? $notice : 'Cambridge Weather';
+			return bless { rows => [ { value => $value } ] }, 'FakeResult';
+		}
+		return bless { rows => \@settings }, 'FakeResult' if ($query // '') =~ /from settings/;
+		return bless { rows => [ { n => 1, from_ts => 1700000000000, to_ts => 1700003600000 } ] }, 'FakeResult'
+			if ($query // '') =~ /app = 'weather_station'/;
+		return bless { rows => [ { n => 5, from_ts => 1700000000000, to_ts => 1700003600000 } ] }, 'FakeResult';
+	};
+	local *subs::weather_history_place = sub {
+		my ($id) = @_;
+		return { name => ($id eq 'on-137' ? 'London' : 'Cambridge'), region => '' };
+	};
+	local *subs::cache_get = sub {
+		my ($q) = @_;
+		return { place => 'Warwick', location => 'dev:phone' }
+			if ($q->{'context'} // '') eq 'observe' && ($q->{'subcontext'} // '') eq 'last';
+		return {};
+	};
+	local *subs::ui = sub { return defined $_[0] ? "$_[0]" : '' };
+	local *subs::format_name = sub {
+		my $n = shift // '';
+		$n =~ s/_/ /g;
+		return join ' ', map { ucfirst lc $_ } split /\s+/, $n;
+	};
+	my $sources = subs::weather_history_sources('dev:phone');
+	my ($station) = grep { ($_->{'app'} // '') eq 'weather_station' } @{$sources};
+	my ($weather) = grep { ($_->{'app'} // '') eq 'weather' } @{$sources};
+	my ($cambridge) = grep { ($_->{'app'} // '') eq 'cambridge_weather' } @{$sources};
+	is($station->{'label'}, 'Warwick Weather', 'the station source is named for its place');
+	is($weather->{'label'}, 'Warwick Weather', 'a named old source keeps the person\'s name');
+	is($cambridge->{'label'}, 'Cambridge Weather', 'and the other old source keeps its city');
+	is($weather->{'city'}, 'London', 'the provider city still rides along for matching');
+	is($station->{'show_city'}, 0, 'the station label already carries its place');
+	is($weather->{'show_city'}, 0, 'and an old source does too');
+
+	$notice = 'Weather';
+	my $generic = subs::weather_history_sources('dev:phone');
+	my ($plain) = grep { ($_->{'app'} // '') eq 'weather' } @{$generic};
+	is($plain->{'label'}, 'London Weather', 'a generic app name falls back to the provider city');
+
+	local *subs::weather_location_find = sub { { name => 'Javea', lat => 38.74, lon => 0.22 } };
+	local *subs::weather_name_is_coordinate = sub { 0 };
+	my $saved = subs::weather_history_sources('loc:javea');
+	my ($javea) = grep { ($_->{'app'} // '') eq 'weather_station' } @{$saved};
+	is($javea->{'label'}, 'Javea Weather', 'a saved place names the station source');
+
+	local *subs::weather_device_fix = sub { { lat => 46.23, lon => -63.10 } };
+	local *subs::weather_place_name = sub { 'Charlottetown' };
+	my $device = subs::weather_history_sources('dev:other');
+	my ($charlottetown) = grep { ($_->{'app'} // '') eq 'weather_station' } @{$device};
+	is($charlottetown->{'label'}, 'Charlottetown Weather', 'a device at a known place uses that place');
+}
+
 # --- wiring ------------------------------------------------------------------
 my $loader = read_file("$root/lib/JawnOS/Domain/Loader.pm");
 like($loader, qr/JawnOS::Domain::WeatherHistory' for qw\([^)]*weather_history_build/, 'the history module is mapped');
+like($loader, qr/weather_history_source_label/, 'the source naming is mapped');
 like($loader, qr/JawnOS::Domain::Weather' for qw\([^)]*weather_daily_merge/, 'the daily merge is mapped');
 my $controller = read_file("$root/lib/JawnOS/Controller/manager_weather.pm");
 like($controller, qr/sub action_52012\b/, 'the history route action exists');
@@ -134,6 +206,7 @@ my $js = read_file("$root/public/js/manager/weather_history.js");
 like($js, qr/function weatherHistoryLoad/, 'the history loads');
 like($js, qr/function weatherAccuracyRender/, 'the accuracy renders');
 like($js, qr/weatherHistoryChart/, 'the chart is drawn');
+like($js, qr/show_city/, 'the source list can hide the separate city');
 my $help = read_file("$root/perl/help/topics_apps.pl");
 like($help, qr{The History tab reads}, 'the help topic explains history');
 like($help, qr{The Accuracy tab compares}, 'and the accuracy comparison');

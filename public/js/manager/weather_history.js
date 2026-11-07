@@ -67,7 +67,7 @@ function weatherHistorySourceOptions($w, selector, sources, selected) {
 	for (var i = 0; i < sources.length; i++) {
 		var s = sources[i] || {};
 		var label = s.label || s.app || '';
-		if (s.city) { label += ' — ' + s.city; }
+		if (s.city && s.show_city !== 0) { label += ' — ' + s.city; }
 		if (s.days) { label += ' · ' + s.days + ' ' + jawnosT('days'); }
 		select.append($('<option>').val(s.app || '').text(label));
 	}
@@ -322,7 +322,7 @@ function weatherAccuracySourceOptions($w, sources, selected) {
 	for (var i = 0; i < sources.length; i++) {
 		var s = sources[i] || {};
 		var label = s.label || s.app || '';
-		if (s.city) { label += ' — ' + s.city; }
+		if (s.city && s.show_city !== 0) { label += ' — ' + s.city; }
 		select.append($('<option>').val(s.app || '').text(label));
 	}
 	if (selected) { select.val(selected); }

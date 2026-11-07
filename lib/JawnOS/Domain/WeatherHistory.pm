@@ -36,7 +36,70 @@ sub weather_history_place($id) {
 	return $out;
 }
 
-sub weather_history_sources {
+# A history source reads as the place it is about: "Warwick Weather",
+# "Charlottetown Weather". A saved place keeps the name the person gave it; a
+# device's place comes from the provider's answer, kept by the observer.
+sub weather_history_station_place($location = '', $last = {}) {
+	$last ||= {};
+	my $key = $location // '';
+	if (length $key && (($last->{'location'} // '') eq $key) && length($last->{'place'} // '')) {
+		return $last->{'place'};
+	}
+	if ($key =~ /^loc:(.+)$/) {
+		my $loc = eval { &weather_location_find($1) };
+		if ($loc) {
+			my $name = $loc->{'name'} // '';
+			return $name if length $name && !(eval { &weather_name_is_coordinate($name) });
+			my $place = eval { &weather_place_name($loc->{'lat'}, $loc->{'lon'}) } || '';
+			return $place if length $place;
+		}
+	}
+	elsif ($key =~ /^dev:(.+)$/) {
+		my $fix = eval { &weather_device_fix($1) };
+		if ($fix) {
+			my $place = eval { &weather_place_name($fix->{'lat'}, $fix->{'lon'}) } || '';
+			return $place if length $place;
+		}
+	}
+	return ($last->{'place'} // '') unless length $key;
+	return '';
+}
+
+# The old apps carry a configured display name (notification_text). When it is
+# still the generic app name, the provider's city is the better place; when the
+# person named it (Warwick Weather), that name wins. Either way the suffix is
+# Weather, so the source list reads as places, not internal app keys.
+sub weather_history_source_label($app, $meta = {}, $station_place = '') {
+	$meta ||= {};
+	my $name = '';
+	if (($app // '') eq 'weather_station') {
+		$name = $station_place // '';
+	}
+	else {
+		# The source's name is a house fact, not a per-machine one: ask for the
+		# newest notification_text any machine has stored for the app.
+		my $configured = '';
+		my $row = eval {
+			&db_query(
+				"select value from settings where app = ? and setting = 'notification_text' "
+				. "and value is not null and value != '' order by cast(server_time as integer) desc limit 1",
+				$app
+			)->hashes->[0];
+		};
+		$configured = $row ? ($row->{'value'} // '') : '';
+		$configured =~ s/^\s+|\s+$//g;
+		my $default = eval { &format_name($app) } || '';
+		$configured = '' if lc($configured) eq lc($default);
+		$name = length $configured ? $configured : ($meta->{'city'} // '');
+	}
+	$name =~ s/^\s+|\s+$//g;
+	return (eval { &ui('Weather station') } || 'Weather station') unless length $name;
+	return $name if $name =~ /(?:\bWeather)\s*$/i;
+	my $weather_word = eval { &ui('Weather') } || 'Weather';
+	return $name . ' ' . $weather_word;
+}
+
+sub weather_history_sources($station_location = '') {
 	my $rows = eval {
 		&db_query("select app, value from settings where app in ('weather', 'cambridge_weather') and setting = 'web' order by app")->hashes;
 	} || [];
@@ -56,12 +119,13 @@ sub weather_history_sources {
 		} || {};
 		push @sources, {
 			app => $app,
-			label => $app eq 'weather' ? 'Weather' : ($app eq 'cambridge_weather' ? 'Cambridge weather' : $app),
+			label => &weather_history_source_label($app, { city => ($place->{'name'} || ''), region => ($place->{'region'} || '') }, ''),
 			city => $place->{'name'} || '',
 			region => $place->{'region'} || '',
 			url => $url,
 			id => $id || '',
 			readings => $counts->{'n'} || 0,
+			show_city => 0,
 			from => &weather_day_key($counts->{'from_ts'}),
 			to => &weather_day_key($counts->{'to_ts'}),
 		};
@@ -77,15 +141,17 @@ sub weather_history_sources {
 	} || {};
 	if (($station->{'n'} || 0) > 0) {
 		my $last = eval { &cache_get({ app => 'weather', context => 'observe', subcontext => 'last' }) } || {};
+		my $place = &weather_history_station_place($station_location, $last);
 		unshift @sources, {
 			app => 'weather_station',
-			label => 'Weather station',
-			city => ($last->{'place'} // ''),
+			label => &weather_history_source_label('weather_station', {}, $place),
+			city => $place,
 			region => '',
 			url => '',
 			id => '',
 			location => ($last->{'location'} // ''),
 			readings => $station->{'n'} || 0,
+			show_city => 0,
 			from => &weather_day_key($station->{'from_ts'}),
 			to => &weather_day_key($station->{'to_ts'}),
 		};
@@ -245,7 +311,7 @@ sub weather_history_aggregate($rows, $opts = {}) {
 sub weather_history_build($opts) {
 	$opts ||= {};
 	my $station_location = $opts->{'location'} // '';
-	my $meta_list = &weather_history_sources();
+	my $meta_list = &weather_history_sources($station_location);
 	my @apps = @{$meta_list} ? map { $_->{'app'} } @{$meta_list} : qw(weather cambridge_weather);
 	my @rows;
 	foreach my $app (@apps) {
@@ -286,7 +352,7 @@ sub weather_history_build($opts) {
 		built_at => &rightNow(),
 		sources => \@sources,
 		days => \%by_source,
-		note => &subs::ui('History comes from the old weather appointments and the Weather station. Temperature and condition are observations; humidity is the forecast value the old app logged, not an observation. High and low are the extremes of the readings the house kept, so they are sampled rather than a station daily extreme.'),
+		note => &subs::ui('History comes from the old weather appointments and the app\'s own readings. Temperature and condition are observations; humidity is the forecast value the old app logged, not an observation. High and low are the extremes of the readings the house kept, so they are sampled rather than a station daily extreme.'),
 	};
 	eval { &cache_set({ app => 'weather', context => 'history', subcontext => &weather_history_cache_key($station_location), warranty => '-1d' }, $out) };
 	return $out;
@@ -295,7 +361,9 @@ sub weather_history_build($opts) {
 sub weather_history_cache_key($station_location) {
 	my $suffix = $station_location // '';
 	$suffix =~ s/[^A-Za-z0-9_-]//g;
-	return 'v3' . (length $suffix ? '_' . $suffix : '');
+	# v4: sources are named for their place, so a v3 entry would keep the old
+	# "Weather station" label until it expired.
+	return 'v4' . (length $suffix ? '_' . $suffix : '');
 }
 
 # A one-day read is hourly, not daily: the last 24 hours of one source's

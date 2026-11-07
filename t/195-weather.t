@@ -908,18 +908,119 @@ is(subs::weather_rule_location_normalize(undef), '', 'no location is the old glo
 # --- one weather pass per household ------------------------------------------
 {
 	no warnings 'redefine';
-	local *subs::signatorial_designer = sub { 'me123' };
+	my $now = 1794020000000;
+	my $me = 'me123';
+	my @rows;
+	local *subs::rightNow = sub { $now };
+	local *subs::signatorial_designer = sub { $me };
 	local *subs::db_query = sub {
 		my ($query) = @_;
-		return bless { rows => [ { signatorial => 'server1' } ] }, 'FakeResult'
+		return bless { rows => \@rows }, 'FakeResult'
 			if ($query // '') =~ /from remote_machines/;
 		return bless { rows => [] }, 'FakeResult';
 	};
-	is(subs::weather_observe_leader(), 0, 'a machine that is not the house server lets it check');
-	local *subs::signatorial_designer = sub { 'server1' };
+	@rows = (
+		{ signatorial => 'server1', device => 'server', connection => 'active', server_time => $now - 60000 },
+	);
+	is(subs::weather_observe_leader(), 0, 'a live house server leads');
+	$me = 'server1';
 	is(subs::weather_observe_leader(), 1, 'the house server runs the pass');
-	local *subs::db_query = sub { return bless { rows => [] }, 'FakeResult' };
+
+	# The server has gone quiet: the live machines elect the lowest signatorial.
+	@rows = (
+		{ signatorial => 'server1', device => 'server', connection => 'inactive', server_time => $now - 3600000 },
+		{ signatorial => 'aaa', device => 'computer', connection => 'active', server_time => $now - 60000 },
+		{ signatorial => 'zzz', device => 'phone', connection => 'active', server_time => $now - 60000 },
+	);
+	$me = 'zzz';
+	is(subs::weather_observe_leader(), 0, 'the stand-in is the lowest live machine, not every machine');
+	$me = 'aaa';
+	is(subs::weather_observe_leader(), 1, 'and that machine takes the pass while the server is away');
+	$me = 'me123';
+	is(subs::weather_observe_leader(), 0, 'a machine outside the election stays a reader');
+
+	@rows = ();
 	is(subs::weather_observe_leader(), 1, 'a household with no server row still checks');
+
+	@rows = (
+		{ signatorial => 'server1', device => 'server', connection => 'inactive', server_time => $now - 3600000 },
+	);
+	is(subs::weather_observe_leader(), 1, 'a lone live machine takes the pass while the server is away');
+}
+
+# --- the whole house is back together ----------------------------------------
+{
+	no warnings 'redefine';
+	my $now = 1794020000000;
+	my @rows;
+	local *subs::rightNow = sub { $now };
+	local *subs::db_query = sub {
+		my ($query) = @_;
+		return bless { rows => \@rows }, 'FakeResult'
+			if ($query // '') =~ /from remote_machines/;
+		return bless { rows => [] }, 'FakeResult';
+	};
+	@rows = (
+		{ signatorial => 'hub', device => 'server', connection => 'active', server_time => $now - 60000 },
+		{ signatorial => 'phone', device => 'mobile', connection => 'active', server_time => $now - 60000 },
+	);
+	is(subs::weather_observe_house_together(), 1, 'every machine is connected and heard from');
+	$rows[1]->{'connection'} = 'inactive';
+	is(subs::weather_observe_house_together(), 0, 'one machine away means the house is still apart');
+	$rows[1]->{'connection'} = 'active';
+	$rows[1]->{'server_time'} = $now - 3600000;
+	is(subs::weather_observe_house_together(), 0, 'a machine that has gone quiet is not together either');
+	@rows = ();
+	is(subs::weather_observe_house_together(), 1, 'a single machine is its own whole house');
+}
+
+# --- duplicates fold when the house is together ------------------------------
+{
+	no warnings 'redefine';
+	my $now = 1794020000000;
+	my $reading = sub {
+		my ($temp, $time, $place) = @_;
+		return Mojo::JSON::encode_json([
+			{ condition => 'cloudy', temperature => $temp, location => ($place || 'dev:phone'), ts => '' . $time, uuid => 'm' . $time },
+		]);
+	};
+	my @rows;
+	my @folded;
+	local *subs::rightNow = sub { $now };
+	local *subs::db_query = sub {
+		my ($query) = @_;
+		return bless { rows => \@rows }, 'FakeResult' if ($query // '') =~ /from appointments/;
+		return bless { rows => [] }, 'FakeResult';
+	};
+	local *subs::records_tombstone = sub {
+		my ($app, $uuid) = @_;
+		push @folded, $uuid;
+		return 1;
+	};
+	local *subs::cache_set = sub { 1 };
+	@rows = (
+		{ uuid => 'keep', timestamp => $now - 120000, device => 'Laptop', measures => $reading->('7.1', $now - 120000) },
+		{ uuid => 'dup', timestamp => $now - 60000, device => 'Phone', measures => $reading->('7.1', $now - 60000) },
+		{ uuid => 'changed', timestamp => $now - 30000, device => 'Phone', measures => $reading->('7.2', $now - 30000) },
+		{ uuid => 'back', timestamp => $now, device => 'Phone', measures => $reading->('7.1', $now) },
+		{ uuid => 'cabin', timestamp => $now - 60000, device => 'Phone', measures => $reading->('7.1', $now - 60000, 'loc:cabin') },
+	);
+	my $out = subs::weather_observe_reconcile({ days => 1 });
+	is($out->{'removed'}, 1, 'one duplicate reading is folded');
+	is_deeply(\@folded, ['dup'], 'and it is the later copy of the same reading');
+	is($out->{'checked'}, 5, 'every reading was considered');
+	ok(!grep { $_ eq 'back' } @folded, 'the value that returned is kept');
+	ok(!grep { $_ eq 'changed' } @folded, 'the changed value is kept');
+	ok(!grep { $_ eq 'cabin' } @folded, 'the same reading at another place is kept');
+
+	# The house server's copy is the one the rules saw; keep it in the run.
+	@rows = (
+		{ uuid => 'early', timestamp => $now - 120000, device => 'Laptop', measures => $reading->('9.0', $now - 120000) },
+		{ uuid => 'house', timestamp => $now - 60000, device => 'server', measures => $reading->('9.0', $now - 60000) },
+	);
+	@folded = ();
+	$out = subs::weather_observe_reconcile({ days => 1 });
+	is_deeply(\@folded, ['early'], 'the house server copy is kept when the run has one');
 }
 
 {
@@ -1114,6 +1215,7 @@ is(subs::weather_name_is_coordinate(''), 0, 'an empty name is not a coordinate e
 		return 1;
 	};
 	local *subs::controller_builder = sub { return bless {}, 'FakeController' };
+	local *subs::weather_observe_leader = sub { 1 };
 	local *Manager::appt_measure_writer = sub { return 'measure-uuid' };
 	my $result = subs::weather_observe_record({
 		current => { condition => 'Rain' },
