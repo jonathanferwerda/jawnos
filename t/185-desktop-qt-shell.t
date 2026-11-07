@@ -117,6 +117,11 @@ like($theme, qr/RED = \(0xFF, 0x45, 0x3A\)/, 'and the red is the same red');
 
 like($qt, qr/setDesktopFileName\("jawnos"\)/,
 	'the Wayland app id is the desktop entry, not python3');
+like($qt, qr/def black_page/, 'the empty engine is painted before the page loads');
+like($qt, qr/page_obj\.setBackgroundColor\(black\)/,
+	'with the page background, not a white default');
+like($qt, qr/black_page\(page, view\)/, 'applied to the main view');
+like($qt, qr/black_page\(other, win\)/, 'and to each peer Manager window');
 like($qt, qr/QSystemTrayIcon/, 'the shell keeps a tray');
 like($qt, qr/class Supervisor/, 'and supervises jawn');
 like($qt, qr/auto_update_available/, 'including the desktop self-update');
@@ -213,6 +218,25 @@ SKIP: {
 	skip 'the PySide6 panel cannot be built here', 1
 		if $panel_run =~ /No module named .PySide6|ModuleNotFoundError/;
 	like($panel_run, qr/panel-ok JawnOS\n/, 'the panel builds offscreen');
+}
+
+# The blank-page colour: the engine's own background plus the widget's palette
+# and stylesheet, so a launch never flashes white.
+my $black = `cd "$root" && QT_QPA_PLATFORM=offscreen PYTHONPATH=desktop python3 -c 'from PySide6.QtGui import QPalette; from jawnos_desktop.qt_shell import black_page
+class P:
+  def setBackgroundColor(self, c): self.c = c.name()
+class V:
+  def __init__(self): self.p = QPalette()
+  def palette(self): return self.p
+  def setPalette(self, p): self.p = p
+  def setAutoFillBackground(self, on): self.fill = on
+  def setStyleSheet(self, css): self.css = css
+p, v = P(), V(); black_page(p, v); print(p.c, v.fill, v.css, v.p.color(QPalette.ColorRole.Window).name())' 2>&1`;
+SKIP: {
+	skip 'PySide6 is not installed here', 1
+		if $black =~ /No module named .PySide6|ModuleNotFoundError/;
+	like($black, qr/^#000000 True background-color: #000000; #000000$/m,
+		'the page, view palette and stylesheet are all black');
 }
 
 # The status rule the panel and the tray share: red when down, amber while a

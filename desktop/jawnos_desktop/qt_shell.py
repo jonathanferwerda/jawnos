@@ -96,6 +96,34 @@ def tray_icon(icon_path, rgb):
     return icon
 
 
+def black_page(page_obj, view_obj):
+    """Paint the engine's empty page black instead of Chromium's white.
+
+    Until the Manager's first frame -- and on ``about:blank``, or after a
+    failed load -- the view shows the page's base colour. Chromium's default
+    is white: a flash on every launch, and a white window whenever there is
+    nothing to display. The page colour is what the engine composites; the
+    view's own palette and stylesheet cover the widget around it.
+
+    PySide6 is imported here for the same reason as in ``tray_icon``.
+    """
+    from PySide6.QtGui import QColor, QPalette
+
+    black = QColor(0, 0, 0)
+    try:
+        page_obj.setBackgroundColor(black)
+    except Exception:
+        pass
+    try:
+        palette = view_obj.palette()
+        palette.setColor(QPalette.ColorRole.Window, black)
+        view_obj.setPalette(palette)
+        view_obj.setAutoFillBackground(True)
+        view_obj.setStyleSheet("background-color: #000000;")
+    except Exception:
+        pass
+
+
 def prepare_wayland_env():
     """Point Qt and Chromium at Wayland when the session is Wayland.
 
@@ -711,6 +739,7 @@ def main(argv=None):
     view = JawnView(settings, not args.probe)
     page = QWebEnginePage(profile, view)
     view.setPage(page)
+    black_page(page, view)
     view.setWindowTitle("JawnOS")
     icon_path = os.path.join(DESKTOP_DIR, "icons", "jawnos.png")
     if os.path.exists(icon_path):
@@ -766,6 +795,7 @@ def main(argv=None):
         win = JawnView(settings, save_state=False)
         other = QWebEnginePage(profile, win)
         win.setPage(other)
+        black_page(other, win)
         win.setWindowTitle(title or "JawnOS Machine")
         win.resize(900, 700)
         other.certificateError.connect(_accept_certificate)
