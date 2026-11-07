@@ -42,9 +42,9 @@ sub weather_history_place($id) {
 sub weather_history_station_place($location = '', $last = {}) {
 	$last ||= {};
 	my $key = $location // '';
-	if (length $key && (($last->{'location'} // '') eq $key) && length($last->{'place'} // '')) {
-		return $last->{'place'};
-	}
+	# A place the person named (Warwick) beats the provider's name for the same
+	# ground (Lambton Shores); the provider's name still rides along as the
+	# region for matching the forecast.
 	if ($key =~ /^loc:(.+)$/) {
 		my $loc = eval { &weather_location_find($1) };
 		if ($loc) {
@@ -53,8 +53,13 @@ sub weather_history_station_place($location = '', $last = {}) {
 			my $place = eval { &weather_place_name($loc->{'lat'}, $loc->{'lon'}) } || '';
 			return $place if length $place;
 		}
+		return ($last->{'place'} // '') if (($last->{'location'} // '') eq $key);
+		return '';
 	}
-	elsif ($key =~ /^dev:(.+)$/) {
+	if (length $key && (($last->{'location'} // '') eq $key) && length($last->{'place'} // '')) {
+		return $last->{'place'};
+	}
+	if ($key =~ /^dev:(.+)$/) {
 		my $fix = eval { &weather_device_fix($1) };
 		if ($fix) {
 			my $place = eval { &weather_place_name($fix->{'lat'}, $fix->{'lon'}) } || '';

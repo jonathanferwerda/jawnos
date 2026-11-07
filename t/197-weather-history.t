@@ -176,6 +176,7 @@ ok(length subs::weather_day_key(1700000000000), 'a timestamp has a day key');
 	my $saved = subs::weather_history_sources('loc:javea');
 	my ($javea) = grep { ($_->{'app'} // '') eq 'weather_station' } @{$saved};
 	is($javea->{'label'}, 'Javea Weather', 'a saved place names the station source');
+	is(subs::weather_history_station_place('loc:javea', { location => 'loc:javea', place => 'Lambton Shores' }), 'Javea', 'the saved place name beats the provider name');
 
 	local *subs::weather_device_fix = sub { { lat => 46.23, lon => -63.10 } };
 	local *subs::weather_place_name = sub { 'Charlottetown' };
