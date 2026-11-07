@@ -709,4 +709,52 @@ sub action_47050 {
 	# websocketStart on the client; the dead builder is gone.
 }
 
+# WEBSOCKET /device/ws
+# The embedded devices' output bus: relay/led/servo commands from the manager,
+# a state snapshot on connect, and presence. A board authenticates with the
+# same rotated Now Me pair as /watch and /teletype/ws and holds the socket on
+# the websocket worker (the ws_port), whose keep-alive worker is where
+# %DEVICE_CONN lives. Inputs (buttons, switches, pots) stay on HTTP; this
+# socket carries outputs only.
+sub action_719 {
+	my $c = shift;
+	my $watch_settings = eval { &subs::embedded_authorizer($c) };
+	my $chip_id = $c->param('chip_id') || '';
+	unless ($watch_settings && length $chip_id) {
+		$c->rendered(403);
+		return;
+	}
+	my $edt = $c->param('edt') || '';
+	my $name = ($watch_settings->{'__specs'} || {})->{'name'} || $chip_id;
+	my $ip = $c->tx ? $c->tx->remote_address : '';
+	&subs::device_ws_attach({
+		chip_id => $chip_id,
+		edt => $edt,
+		ip => $ip,
+		name => $name,
+		ws => $c->tx,
+	});
+	# The same picture /watch and the BLE bridge build, so a socket connect and a
+	# Now Me cannot disagree.
+	$c->send(encode_json(&subs::device_ws_snapshot({ chip_id => $chip_id, edt => $edt })));
+	$c->on(message => sub ($ws, $msg) {
+		my $m = eval { decode_json $msg } || {};
+		my $t = $m->{'t'} || '';
+		if ($t eq 'ping') {
+			$ws->send(encode_json({ t => 'pong', timestamp => &subs::rightNow() }));
+		}
+		elsif ($t eq 'ack') {
+			&subs::device_ws_ack($chip_id, $m->{'id'});
+		}
+	});
+	$c->on(finish => sub ($ws, $code, $reason) {
+		&subs::device_ws_detach($chip_id, $ws);
+		# TODO: no embedded "mark offline" helper exists to call here. Presence
+		# is derived from sightings by subs::device_lister
+		# (lib/JawnOS/Domain/Device.pm:509) and the BLE presence window
+		# (lib/JawnOS/Domain/Ble.pm:657); do not invent a table for this.
+	});
+	return;
+}
+
 1;

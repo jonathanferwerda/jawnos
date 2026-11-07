@@ -11,7 +11,10 @@ our $gallery_thumbnails = 75;
 our $tmp_dir = &subs::home('~/.president');
 our $dump_dir = $tmp_dir;
 our $terminal_forker;
-our $ws_apps = [ 'music', 'server', 'tab' ];
+# 'device' is not a browser app: the websocket worker binds it so a manager or
+# watch worker can hand an embedded output frame to the socket holder
+# (/device/ws) through Websocket::send.
+our $ws_apps = [ 'music', 'server', 'tab', 'device' ];
 if (&subs::device_setter() ne 'mobile') {
 	$tmp_dir = '/tmp';
 }

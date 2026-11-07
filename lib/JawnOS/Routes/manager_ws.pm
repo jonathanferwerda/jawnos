@@ -5,6 +5,7 @@ use warnings;
 
 sub routes {
 	return (
+	[719, 'websocket', '/device/ws', 'action_719'],
 	[47050, 'websocket', '/manager/ws', 'action_47050'],
 	);
 }

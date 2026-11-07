@@ -1511,7 +1511,16 @@ if ($ENV{PURPOSE} && ($ENV{PURPOSE} eq 'websocket' || ($ENV{PORT_ENV} eq 'develo
                 warn "Worker $$: Failed to parse Sereal: $@";
                 next;
             }
-						&websocket_sender($wsm);
+						# The 'device' group is the embedded output bus, not a
+						# browser app: deliver to the socket the websocket worker
+						# holds for that chip. No chip connected means nothing goes
+						# out; the caller already chose its HTTP fallback.
+						if (($wsm->{'app'} || '') eq 'device') {
+							&subs::device_ws_deliver($wsm);
+						}
+						else {
+							&websocket_sender($wsm);
+						}
 
 
 

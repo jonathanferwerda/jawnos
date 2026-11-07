@@ -1,0 +1,206 @@
+package subs;
+
+# Devicews: the device output bus behind /device/ws. A board authenticates with
+# the same rotated Now Me pair as /watch and /teletype/ws, holds one WebSocket
+# open to the manager's websocket worker, and receives relay/led/servo frames
+# there instead of over HTTP. Inputs (buttons, switches, pots) stay on their
+# existing HTTP routes; this file carries outputs only.
+#
+# The registry is per process on purpose: the websocket worker is the one worker
+# that does not recycle (keep_alive), so the sockets it holds live exactly as
+# long as its registry does. %DEVICE_CONN is the authority for delivery.
+#
+# A main or watch worker has no socket of its own, so attach() mirrors the
+# connected chips into tiny presence files beside the ws sockets. That mirror is
+# what lets embedded_toggle() decide, without a live socket and without adding a
+# table, whether to use the bus or fall back to HTTP and then BLE.
+use strict;
+use warnings;
+use utf8;
+use feature 'signatures';
+no warnings 'experimental::signatures';
+no warnings 'uninitialized';
+no warnings 'once';
+
+use File::Slurp;
+use Mojo::JSON qw(decode_json encode_json);
+
+our $log;
+
+# chip_id => { chip_id, edt, ip, name, since, ws, last_ack }
+our %DEVICE_CONN;
+
+sub device_ws_registry {
+	return \%DEVICE_CONN;
+}
+
+sub device_ws_presence_file {
+	my ($chip_id) = @_;
+	return undef unless defined $chip_id && length $chip_id;
+	my $dir = ($gb::tmp_dir || '.') . '/device_ws';
+	return $dir . '/' . &path_name($chip_id) . '.json';
+}
+
+sub device_ws_attach {
+	my ($data) = @_;
+	$data = {} unless ref $data eq 'HASH';
+	my $chip_id = $data->{'chip_id'} || '';
+	return undef unless length $chip_id;
+	my $entry = {
+		chip_id => $chip_id,
+		edt     => $data->{'edt'} || '',
+		ip      => $data->{'ip'} || '',
+		name    => $data->{'name'} || '',
+		since   => time(),
+		ws      => $data->{'ws'},
+	};
+	# A reconnecting board replaces its old entry; the old socket's finish
+	# handler is guarded by the same ws reference so it cannot drop the new one.
+	$DEVICE_CONN{$chip_id} = $entry;
+	my $file = &device_ws_presence_file($chip_id);
+	if ($file) {
+		my $dir = $file;
+		$dir =~ s{/[^/]+$}{};
+		eval {
+			mkdir $dir unless -d $dir;
+			my %row = map { $_ => $entry->{$_} } qw(chip_id edt ip name since);
+			$row{'pid'} = $$;
+			write_file($file, encode_json(\%row));
+			1;
+		};
+	}
+	return $entry;
+}
+
+sub device_ws_detach {
+	my ($chip_id, $ws) = @_;
+	return 0 unless defined $chip_id && length $chip_id;
+	my $current = $DEVICE_CONN{$chip_id};
+	# A finish frame from a socket a reconnect already replaced must not remove
+	# the newer connection.
+	return 0 if $current && defined $ws && $current->{'ws'} && $current->{'ws'} != $ws;
+	delete $DEVICE_CONN{$chip_id};
+	my $file = &device_ws_presence_file($chip_id);
+	unlink $file if $file && -e $file;
+	return 1;
+}
+
+sub device_ws_peer {
+	my ($chip_id) = @_;
+	return undef unless defined $chip_id && length $chip_id;
+	return $DEVICE_CONN{$chip_id};
+}
+
+sub device_ws_connected {
+	# True when this process holds the socket, or when the websocket worker that
+	# holds it is still alive. The presence file names the worker's pid: a
+	# restarted (or crashed) worker leaves a file whose pid is gone, so a stale
+	# mirror cannot send a command to a socket that is not there.
+	my ($chip_id) = @_;
+	return 0 unless defined $chip_id && length $chip_id;
+	return 1 if $DEVICE_CONN{$chip_id};
+	my $file = &device_ws_presence_file($chip_id);
+	return 0 unless $file && -e $file;
+	my $row = eval { decode_json(scalar read_file($file)) } || {};
+	my $pid = $row->{'pid'} || 0;
+	return 0 unless $pid && kill(0, $pid);
+	return 1;
+}
+
+sub device_ws_command_frame {
+	# The same fields the device's HTTP output query carries, in a frame. The
+	# device's own Now Me token is deliberately absent: the socket was already
+	# authenticated, so no secret rides the wire again.
+	my ($data) = @_;
+	$data = {} unless ref $data eq 'HASH';
+	my $frame = { t => 'cmd' };
+	foreach my $field (qw(appt_uuid uuid when pin state component timestamp measure)) {
+		$frame->{$field} = $data->{$field} if defined $data->{$field};
+	}
+	return $frame;
+}
+
+sub device_ws_snapshot {
+	# The board's current picture, built by the same helper the /watch route and
+	# the BLE bridge use (watch_room_payload), so a socket connect cannot drift
+	# from a Now Me. Only the component entries leave here; __specs/__shutup are
+	# the manager's own bookkeeping.
+	my ($data) = @_;
+	$data = {} unless ref $data eq 'HASH';
+	my $chip_id = $data->{'chip_id'} || '';
+	my $edt = $data->{'edt'} || '';
+	my $role = eval { &watch_room_payload({ edt => $edt, chip_id => $chip_id }) } || {};
+	my @components;
+	foreach my $name (sort keys %{$role}) {
+		next if $name =~ /^__/;
+		my $entry = $role->{$name};
+		next unless ref $entry eq 'HASH';
+		push @components, { name => $name, %{$entry} };
+	}
+	return {
+		t          => 'snap',
+		chip       => $chip_id,
+		components => \@components,
+	};
+}
+
+sub device_ws_deliver {
+	# Called in the websocket worker for a Websocket::send('device', ...) frame.
+	# 1 when the chip had a socket and the frame went out, 0 when it did not: the
+	# caller's HTTP path then runs unchanged.
+	my ($wsm) = @_;
+	return 0 unless ref $wsm eq 'HASH';
+	my $message = eval { decode_json($wsm->{'message'} || '') } || {};
+	my $chip_id = $message->{'chip_id'} || '';
+	my $frame = $message->{'frame'};
+	return 0 unless length $chip_id && ref $frame eq 'HASH';
+	my $conn = $DEVICE_CONN{$chip_id} or return 0;
+	my $sent = eval { $conn->{'ws'}->send(encode_json($frame)); 1 };
+	unless ($sent) {
+		&device_ws_detach($chip_id);
+		return 0;
+	}
+	return 1;
+}
+
+sub device_ws_command {
+	# Hand one output command to a board if it holds a socket; 0 means the caller
+	# keeps its existing HTTP-then-BLE ordering. In the websocket worker the
+	# socket is local and is written directly (asking the fan-out socket from
+	# inside its own event loop would deadlock). Elsewhere the presence mirror
+	# says whether the worker that holds it is alive, and Websocket::send carries
+	# the frame to that worker.
+	my ($data) = @_;
+	$data = {} unless ref $data eq 'HASH';
+	my $chip_id = $data->{'chip_id'} || '';
+	return 0 unless length $chip_id;
+	my $frame = &device_ws_command_frame($data);
+	my $conn = &device_ws_peer($chip_id);
+	if ($conn) {
+		my $sent = eval { $conn->{'ws'}->send(encode_json($frame)); 1 };
+		return 1 if $sent;
+		&device_ws_detach($chip_id);
+		return 0;
+	}
+	return 0 unless &device_ws_connected($chip_id);
+	my $socket = ($gb::tmp_dir || '.') . '/ws/device';
+	return 0 unless -e $socket;
+	&Websocket::send('device', { chip_id => $chip_id, frame => $frame });
+	return 1;
+}
+
+sub device_ws_ack {
+	# An ack is a delivery receipt, not a state update: the board's own state is
+	# authoritative and the HTTP path never depended on this. Record it on the
+	# entry and leave a log line, so a person watching manager.log can tell a
+	# command that landed from one that only went out.
+	my ($chip_id, $id) = @_;
+	return 0 unless defined $chip_id && length $chip_id;
+	if (my $conn = $DEVICE_CONN{$chip_id}) {
+		$conn->{'last_ack'} = defined $id ? $id : '';
+	}
+	$log->info('device ws ack chip=' . $chip_id . ' id=' . (defined $id ? $id : '')) if $log;
+	return 1;
+}
+
+1;
