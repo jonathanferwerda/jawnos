@@ -451,7 +451,7 @@ app key, peer Manager windows, the native Browse window and media keep-awake
 working. The shell supervises jawn (start/stop/restart, the version restart and
 the desktop self-update), keeps a tray when the desktop provides one, and
 handles F11 and a page's own fullscreen request. On Sway it points Qt and
-Chromium at Wayland (`QT_QPA_PLATFORM=wayland`, `--ozone-platform=wayland`)
+Chromium at Wayland (`QT_QPA_PLATFORM=wayland`, `--ozone-platform-hint=auto`)
 unless those are already set.
 
 On the first Qt run it copies the GTK shell's page layout out of WebKit's

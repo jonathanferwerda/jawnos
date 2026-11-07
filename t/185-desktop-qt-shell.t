@@ -1,4 +1,4 @@
-# tests-for: desktop/jawnos_desktop/qt_shell.py desktop/jawnos_desktop/bridge.py desktop/jawnos-desktop desktop/jawnos-qt
+# tests-for: desktop/jawnos_desktop/qt_shell.py desktop/jawnos_desktop/bridge.py desktop/jawnos-desktop desktop/jawnos-qt desktop/wayland/jawnos-session
 # covers:    the Qt WebEngine desktop shell is the default: the same Manager page
 #           in Chromium, which is the engine with WebRTC (Debian's WebKitGTK is
 #           built without RTCPeerConnection), the ticket cookie kept on disk,
@@ -20,6 +20,7 @@ my $qt = read_file("$root/desktop/jawnos_desktop/qt_shell.py");
 my $bridge = read_file("$root/desktop/jawnos_desktop/bridge.py");
 my $webview = read_file("$root/desktop/jawnos_desktop/webview.py");
 my $entry = read_file("$root/desktop/jawnos-desktop");
+my $session = read_file("$root/desktop/wayland/jawnos-session");
 my $launcher = "$root/desktop/jawnos-qt";
 
 like($qt, qr/from PySide6\.QtWebEngineWidgets import QWebEngineView/,
@@ -33,6 +34,7 @@ like($qt, qr/typeof RTCPeerConnection/, 'the probe asks the engine for WebRTC');
 like($qt, qr/createOffer\(\)/, 'and proves it with a real offer');
 like($qt, qr/--probe/, 'the probe is a command-line mode');
 like($qt, qr/def ticket_url/, 'it reads the same stored ticket as the WebKit shell');
+like($qt, qr/def _probe_url/, 'the probe uses a real origin for the bridge');
 like($qt, qr/def manager_url/, 'and derives the manager URL from it');
 
 like($entry, qr/JAWNOS_DESKTOP_ENGINE/, 'the engine can be chosen by environment');
@@ -68,7 +70,10 @@ unlike($webview, qr/^def _app_public_pem/m,
 	'so the key is not defined twice');
 
 like($qt, qr/def prepare_wayland_env/, 'a Wayland session sets the Qt platform');
-like($qt, qr/--ozone-platform=wayland/, 'and Chromium follows it');
+like($qt, qr/--ozone-platform-hint=auto/,
+	'Chromium gets the Ozone hint (the Wayland platform is not in every build)');
+unlike($qt, qr/flags \+ " --ozone-platform=wayland"/,
+	'and never the explicit platform Arch\'s QtWebEngine lacks');
 like($qt, qr/setDesktopFileName\("jawnos"\)/,
 	'the Wayland app id is the desktop entry, not python3');
 like($qt, qr/QSystemTrayIcon/, 'the shell keeps a tray');
@@ -78,6 +83,8 @@ like($qt, qr/version_mismatch/, 'and the version restart');
 like($qt, qr/permissionRequested/, 'the newer permission signal is handled');
 like($qt, qr/PermissionType/, 'through QWebEnginePermission');
 like($qt, qr/featurePermissionRequested/, 'with the older signal kept as a fallback');
+like($session, qr/--engine webkit/,
+	'the Sway session falls back to WebKitGTK if the Qt shell cannot start');
 
 like($qt, qr/def webkit_localstorage/, 'the shell can read the GTK localStorage store');
 like($qt, qr/__jawn_qt_migrated/, 'the migration is marked, so later Qt changes are kept');
@@ -112,8 +119,15 @@ PYINNER
 }
 
 # The real engine, when this machine has it. A machine without the PySide6
-# QtWebEngine package skips: the source pins above still run everywhere.
-my $probe = `cd "$root" && timeout 45 xvfb-run -a env QTWEBENGINE_CHROMIUM_FLAGS='--disable-gpu --no-sandbox' python3 desktop/jawnos-qt --probe --url 'data:text/html,<html></html>' 2>&1`;
+# QtWebEngine package skips: the source pins above still run everywhere. The
+# probe page is a file:// URL: a data: page is an opaque origin, so the
+# QWebChannel transport is absent and bridge/ping would report false.
+my $probe_dir = tempdir(CLEANUP => 1);
+my $blank = "$probe_dir/blank.html";
+open(my $bfh, '>', $blank) or die "$blank: $!";
+print {$bfh} "<!doctype html><html><body>probe</body></html>\n";
+close $bfh;
+my $probe = `cd "$root" && timeout 45 xvfb-run -a env QTWEBENGINE_CHROMIUM_FLAGS='--disable-gpu --no-sandbox' python3 desktop/jawnos-qt --probe --url 'file://$blank' 2>&1`;
 SKIP: {
 	skip 'the Qt WebEngine package is not installed here', 5
 		if $probe =~ /needs PySide6|No module named .PySide6/ || $probe !~ /qt-probe /;

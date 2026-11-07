@@ -49,15 +49,21 @@ def prepare_wayland_env():
     is running, and Chromium's Ozone platform should follow the same choice.
     An explicit QT_QPA_PLATFORM (or ozone flag) always wins, and X11 sessions
     are untouched.
+
+    Chromium gets the *hint*, not `--ozone-platform=wayland`: Arch's
+    qt6-webengine is not built with the Wayland Ozone platform, and the
+    explicit platform aborts with "Invalid ozone platform: wayland" before the
+    window exists. The hint lets the build use Wayland when it has it and fall
+    back otherwise.
     """
     if not os.environ.get("WAYLAND_DISPLAY"):
         return
     if not os.environ.get("QT_QPA_PLATFORM"):
         os.environ["QT_QPA_PLATFORM"] = "wayland"
     flags = os.environ.get("QTWEBENGINE_CHROMIUM_FLAGS", "")
-    if "--ozone-platform" not in flags:
+    if "--ozone-platform" not in flags and "--ozone-platform-hint" not in flags:
         os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = (
-            flags + " --ozone-platform=wayland").strip()
+            flags + " --ozone-platform-hint=auto").strip()
 
 
 # --------------------------------------------------------------------------
@@ -315,6 +321,23 @@ _PROBE_JS = r"""
 """
 
 _BLANK = "data:text/html,<html><body style='font-family:sans-serif'>JawnOS Qt probe</body></html>"
+
+
+def _probe_url():
+    """A file:// page for --probe: the bridge needs a real origin.
+
+    A data: URL is an opaque origin, so QWebChannel's transport is absent:
+    bridge/ping report false even on a healthy engine (seen on Arch's Qt 6.12).
+    A tiny local file gives the probe a normal origin and the full result.
+    """
+    import tempfile
+    path = os.path.join(tempfile.gettempdir(), "jawnos-qt-probe.html")
+    try:
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write("<!doctype html><html><body>JawnOS Qt probe</body></html>")
+        return "file://" + path
+    except OSError:
+        return _BLANK
 
 
 def _probe(page, app, qt):
@@ -1138,7 +1161,7 @@ def main(argv=None):
     elif ticket:
         url = ticket
     elif args.probe:
-        url = _BLANK
+        url = _probe_url()
     else:
         url = manager
     view.setUrl(QUrl(url))

@@ -21,5 +21,10 @@ while [ "$i" -lt 30 ]; do
 	sleep 1
 done
 
-# The view on the JawnOS tab; Sway's window rule fullscreens it.
-exec "$JAWNOS_APP" --webview
+# The view on the JawnOS tab; Sway's window rule fullscreens it. If the Qt
+# shell cannot start (a missing package, or a Chromium/Qt fault), fall back to
+# the WebKitGTK view rather than leaving the session with no window at all.
+if ! "$JAWNOS_APP" --webview; then
+	echo "jawnos-session: the view exited; falling back to WebKitGTK" >&2
+	exec "$JAWNOS_APP" --engine webkit --webview
+fi
