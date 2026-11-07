@@ -351,8 +351,39 @@ exists.)
 If video is still not right in the WebKitGTK fallback (or Browse), the renderer
 can be tuned without touching code: write `KEY=VALUE` lines to
 `~/.config/jawnos/webkit.env` (WebKit reads them at startup — the real
-environment wins over the file). The Qt view has Chromium's own GPU path and
-does not read this file.
+environment wins over the file). The Qt view has Chromium's own GPU path, and
+reads only that file's non-`WEBKIT_*` keys (see below).
+
+### GPU on the Qt view
+
+The Qt shell keeps the card in the render path instead of working around it: the
+GTK Skylake/X11 software fallback above exists for a WebKitGTK bug and is
+deliberately not ported. Before the `QApplication` exists it sets
+
+```sh
+LIBVA_DRIVER_NAME=iHD
+QTWEBENGINE_CHROMIUM_FLAGS=... --ignore-gpu-blocklist --enable-gpu-rasterization
+```
+
+`LIBVA_DRIVER_NAME` is set only when an Intel card, a `/dev/dri/renderD*` node
+and the iHD driver are all present, and never over a value you already chose.
+The two Chromium flags keep an older Intel GPU off SwiftShader and the raster
+work on the card, which is what stays smooth when the machine is busy.
+`--probe` reports the WebGL renderer, so this is checkable rather than
+assumed:
+
+```sh
+./desktop/jawnos-qt --probe
+# ... "gpu":"Mesa Intel(R) HD Graphics 530 (SKL GT2) / Mesa Intel(R) HD Graphics 530 (SKL GT2)"
+```
+
+`~/.config/jawnos/qt.env` is the Qt escape hatch (`KEY=VALUE` per line, `#`
+comments; the real environment always wins). `JAWNOS_GPU=0` there asks for the
+software path (`--disable-gpu --disable-gpu-compositing`), and any extra
+Chromium flag can be added with `QTWEBENGINE_CHROMIUM_FLAGS=...`. `webkit.env`'s
+non-`WEBKIT_*` keys are honoured too, so `JAWNOS_GPU` and `LIBVA_DRIVER_NAME`
+carry across from the GTK shell; its `WEBKIT_*` switches mean nothing to
+Chromium and are skipped.
 
 ### Screen distortion on X11 (WebKitGTK fallback)
 
@@ -469,11 +500,16 @@ A fresh profile still lands on the padlock Gate (the WebKit shell does too).
 The **Qt control panel** is the admin window now: the tray's **Control panel**
 item, or the page's start-menu admin icon. It carries the GTK dashboard's
 controls (tailnet start/stop, the BLE autostart setting, ticket import, the
-app update, the log). `--engine webkit` still starts the old GTK dashboard as a
-fallback for one release; the remaining GTK-only programs are Browse, the
-session bar and the BLE daemon. The Arch live image installs `pyside6`,
-`qt6-webengine` and `qt6-wayland` (`desktop/mkosi/mkosi.conf`); WebKitGTK stays
-for the fallback and Browse.
+app update, the log) in the GTK dashboard's look — black ground, rounded cards
+with upper-case section headers, the jawn yellow for the primary action, and a
+coloured dot beside each live status line — so it reads like the Android
+dashboard. The tray badge carries the same state dot: green running, amber
+starting/restarting, red stopped. Its menu has no browser item; **Open in
+browser** stays a button in the panel's Open card. `--engine webkit` still
+starts the old GTK dashboard as a fallback for one release; the remaining
+GTK-only programs are Browse, the session bar and the BLE daemon. The Arch live
+image installs `pyside6`, `qt6-webengine` and `qt6-wayland`
+(`desktop/mkosi/mkosi.conf`); WebKitGTK stays for the fallback and Browse.
 
 ## Windows
 

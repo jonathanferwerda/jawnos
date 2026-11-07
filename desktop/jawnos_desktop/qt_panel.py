@@ -1,22 +1,28 @@
 """The Qt control panel: the desktop's supervisor in one window.
 
-This replaces the GTK dashboard's panel. It reads the same ``core`` supervisor
-and keeps the same controls: jawn start/stop/restart, the tailnet, the BLE
-bridge, the login ticket, the app update and the settings, with the live
-status line the GTK panel had. The Qt shell owns the window, the tray item and
-the web view; the page's admin icon opens this panel.
+This replaces the GTK dashboard's panel and keeps its look: a black ground, a
+column of rounded cards with upper-case section headers, the jawn yellow for the
+primary action, and a coloured dot beside each live status line. The card order
+and the words are the GTK panel's (which mirror the Android dashboard), so the
+two panels read the same.
+
+It reads the same ``core`` supervisor and keeps the same controls: jawn
+start/stop/restart, the tailnet, the BLE bridge, the login ticket, the app
+update and the settings, with the live status line the GTK panel had. The Qt
+shell owns the window, the tray item and the web view; the page's admin icon
+opens this panel.
 """
 
 import os
 import threading
 import time
 
-from PySide6.QtCore import QTimer, Qt, Signal, Slot
+from PySide6.QtCore import QSize, QTimer, Qt, Signal, Slot
+from PySide6.QtGui import QColor, QIcon, QPainter
 from PySide6.QtWidgets import (
     QCheckBox,
     QDialog,
-    QFormLayout,
-    QGroupBox,
+    QFrame,
     QHBoxLayout,
     QInputDialog,
     QLabel,
@@ -27,7 +33,32 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from . import core
+from . import DESKTOP_DIR, core, theme
+
+LOGO = os.path.join(DESKTOP_DIR, "icons", "jawnos.png")
+
+
+class StatusDot(QWidget):
+    """The small filled circle beside a status line, recoloured in place."""
+
+    def __init__(self, rgb=theme.DIM, parent=None):
+        super().__init__(parent)
+        self._rgb = tuple(rgb)
+        self.setFixedSize(13, 13)
+
+    def set_colour(self, rgb):
+        rgb = tuple(rgb)
+        if rgb != self._rgb:
+            self._rgb = rgb
+            self.update()
+
+    def paintEvent(self, _event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor(*self._rgb))
+        painter.drawEllipse(1, 1, self.width() - 2, self.height() - 2)
+        painter.end()
 
 
 class ControlPanel(QDialog):
@@ -39,13 +70,13 @@ class ControlPanel(QDialog):
         super().__init__(parent)
         self.settings = settings
         self.actions = actions
-        self.setWindowTitle("JawnOS control panel")
-        self.resize(780, 900)
+        self.setWindowTitle("JawnOS")
         self._busy = False
         self._status_busy = False
         self._tail = {}
         self._tail_at = 0.0
         self._build()
+        self.resize(*self._initial_size())
         self.status_ready.connect(self._render)
         self.note.connect(self._say)
         self.refreshed.connect(self.refresh)
@@ -55,120 +86,155 @@ class ControlPanel(QDialog):
 
     # ---- layout ----------------------------------------------------------
 
+    def _initial_size(self):
+        """Two-thirds of the screen, like the GTK dashboard's window."""
+        screen = self.screen()
+        if screen is None:
+            return 640, 860
+        geom = screen.availableGeometry()
+        return (max(480, int(geom.width() * 2 / 3)),
+                max(480, int(geom.height() * 2 / 3)))
+
     def _button(self, text, callback, primary=False):
         button = QPushButton(text)
         if primary:
-            button.setDefault(True)
+            button.setProperty("primary", True)
+        button.setCursor(Qt.CursorShape.PointingHandCursor)
         button.clicked.connect(callback)
         return button
 
-    def _group(self, title):
-        box = QGroupBox(title)
-        layout = QVBoxLayout(box)
-        layout.setContentsMargins(10, 12, 10, 10)
-        return box, layout
+    def _card(self, column, title):
+        """A rounded card with a section header; returns its layout."""
+        card = QFrame()
+        card.setObjectName("card")
+        layout = QVBoxLayout(card)
+        layout.setContentsMargins(14, 14, 14, 14)
+        layout.setSpacing(8)
+        header = QLabel(title.upper())
+        header.setObjectName("h")
+        layout.addWidget(header)
+        column.addWidget(card)
+        return layout
 
-    def _row(self, *buttons):
+    def _dim_label(self):
+        label = QLabel("")
+        label.setObjectName("dim")
+        label.setWordWrap(True)
+        return label
+
+    def _status_row(self, card):
+        """A coloured dot and a live label; returns both so the dot recolours."""
         row = QWidget()
-        layout = QHBoxLayout(row)
-        layout.setContentsMargins(0, 0, 0, 0)
+        box = QHBoxLayout(row)
+        box.setContentsMargins(0, 0, 0, 0)
+        box.setSpacing(10)
+        dot = StatusDot()
+        label = QLabel("")
+        label.setObjectName("state")
+        box.addWidget(dot)
+        box.addWidget(label, 1)
+        card.addWidget(row)
+        return dot, label
+
+    def _row(self, card, *buttons):
+        """Buttons side by side, each taking an equal share of the width."""
+        row = QWidget()
+        box = QHBoxLayout(row)
+        box.setContentsMargins(0, 0, 0, 0)
+        box.setSpacing(8)
         for button in buttons:
-            layout.addWidget(button)
-        layout.addStretch(1)
+            box.addWidget(button, 1)
+        card.addWidget(row)
         return row
 
     def _build(self):
+        self.setObjectName("panel")
+        self.setStyleSheet(theme.PANEL_CSS)
+
         outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
         scroller = QScrollArea()
         scroller.setWidgetResizable(True)
+        scroller.setFrameShape(QFrame.Shape.NoFrame)
         body = QWidget()
+        body.setObjectName("body")
         column = QVBoxLayout(body)
-        column.setSpacing(10)
+        column.setContentsMargins(20, 20, 20, 20)
+        column.setSpacing(12)
         scroller.setWidget(body)
-        outer.addWidget(scroller, 1)
+        outer.addWidget(scroller)
 
-        status, status_layout = self._group("Status")
-        form = QFormLayout()
-        self.jawn_state = QLabel("jawn - checking...")
-        self.ble_state = QLabel("BLE bridge - checking...")
-        self.tail_state = QLabel("Tailnet - checking...")
-        self.ticket_state = QLabel("login ticket - checking...")
-        form.addRow(self.jawn_state)
-        form.addRow(self.ble_state)
-        form.addRow(self.tail_state)
-        form.addRow(self.ticket_state)
-        status_layout.addLayout(form)
-        self.env_state = QLabel("")
-        self.env_state.setWordWrap(True)
-        status_layout.addWidget(self.env_state)
-        column.addWidget(status)
+        logo = QPushButton()
+        logo.setObjectName("logo")
+        logo.setFlat(True)
+        logo.setCursor(Qt.CursorShape.PointingHandCursor)
+        logo.setToolTip("Open the JawnOS view")
+        if os.path.exists(LOGO):
+            logo.setIcon(QIcon(LOGO))
+            logo.setIconSize(QSize(64, 64))
+            logo.setFixedSize(70, 70)
+        logo.clicked.connect(self._show_view)
+        column.addWidget(logo, 0, Qt.AlignmentFlag.AlignHCenter)
 
-        jawn, jawn_layout = self._group("Jawn")
-        jawn_layout.addWidget(self._row(
-            self._button("Start", self._start, primary=True),
-            self._button("Restart", self._restart),
-            self._button("Stop", self._stop),
-        ))
-        column.addWidget(jawn)
+        title = QLabel("JawnOS")
+        title.setObjectName("title")
+        title.setAlignment(Qt.AlignmentFlag.AlignHCenter)
+        column.addWidget(title)
 
-        tailnet, tailnet_layout = self._group("Tailnet")
-        tailnet_layout.addWidget(self._row(
-            self._button("Start VPN", self._tailnet_up, primary=True),
-            self._button("Stop VPN", self._tailnet_down),
-        ))
-        column.addWidget(tailnet)
+        status = self._card(column, "Status")
+        self.jawn_dot, self.jawn_state = self._status_row(status)
+        self.ble_dot, self.ble_state = self._status_row(status)
+        self.env_state = self._dim_label()
+        status.addWidget(self.env_state)
+        self.live = self._dim_label()
+        status.addWidget(self.live)
 
-        opn, open_layout = self._group("Open")
-        open_layout.addWidget(self._row(
-            self._button("JawnOS UI", self._show_view, primary=True),
-            self._button("In browser", self._open_browser),
-            self._button("Log", self._show_log),
-            self._button("Console", self._open_console),
-        ))
-        column.addWidget(opn)
+        jawn = self._card(column, "Jawn")
+        self._row(jawn,
+                  self._button("Start", self._start, primary=True),
+                  self._button("Restart", self._restart),
+                  self._button("Stop", self._stop))
 
-        login, login_layout = self._group("Login")
-        login_layout.addWidget(self._row(
-            self._button("Import ticket", self._import_ticket),
-            self._button("Forget ticket", self._forget_ticket),
-        ))
-        column.addWidget(login)
+        tailnet = self._card(column, "Tailnet")
+        self.tail_dot, self.tail_state = self._status_row(tailnet)
+        self._row(tailnet,
+                  self._button("Start VPN", self._tailnet_up, primary=True),
+                  self._button("Stop VPN", self._tailnet_down))
 
-        bluetooth, ble_layout = self._group("Bluetooth")
-        ble_layout.addWidget(self._row(
-            self._button("Start bridge", self._start_ble),
-            self._button("Stop bridge", self._stop_ble),
-        ))
-        column.addWidget(bluetooth)
+        opn = self._card(column, "Open")
+        opn.addWidget(self._button("JawnOS UI", self._show_view, primary=True))
+        self._row(opn,
+                  self._button("In browser", self._open_browser),
+                  self._button("Log", self._show_log),
+                  self._button("Console", self._open_console))
 
-        settings, settings_layout = self._group("Settings")
+        login = self._card(column, "Login")
+        self._row(login,
+                  self._button("Import ticket", self._import_ticket),
+                  self._button("Forget ticket", self._forget_ticket))
+
+        bluetooth = self._card(column, "Bluetooth")
+        self._row(bluetooth,
+                  self._button("Start bridge", self._start_ble),
+                  self._button("Stop bridge", self._stop_ble))
+
+        settings = self._card(column, "Settings")
         self.dir_entry = QLineEdit()
         self.dir_entry.setPlaceholderText("jawn folder (default ~/jawnos)")
         self.autostart = QCheckBox("Start the BLE bridge at login")
         self.ble_with_jawn = QCheckBox("Start/stop the BLE bridge with jawn")
-        settings_layout.addWidget(self.dir_entry)
-        settings_layout.addWidget(self.autostart)
-        settings_layout.addWidget(self.ble_with_jawn)
-        settings_layout.addWidget(self._row(
-            self._button("Save settings", self._save, primary=True),
-        ))
-        column.addWidget(settings)
+        settings.addWidget(self.dir_entry)
+        settings.addWidget(self.autostart)
+        settings.addWidget(self.ble_with_jawn)
+        settings.addWidget(self._button("Save settings", self._save, primary=True))
 
-        app, app_layout = self._group("App")
-        self.app_state = QLabel("")
-        self.app_state.setWordWrap(True)
-        app_layout.addWidget(self.app_state)
+        app = self._card(column, "App")
+        self.app_state = self._dim_label()
+        app.addWidget(self.app_state)
         self.update_button = self._button("Update app", self._update_app, primary=True)
-        app_layout.addWidget(self._row(self.update_button))
-        column.addWidget(app)
+        app.addWidget(self.update_button)
 
         column.addStretch(1)
-        self.live = QLabel("")
-        self.live.setWordWrap(True)
-        outer.addWidget(self.live)
-        hide = QPushButton("Hide")
-        hide.clicked.connect(self.hide)
-        outer.addWidget(hide, 1, Qt.AlignmentFlag.AlignRight)
 
     # ---- settings --------------------------------------------------------
 
@@ -314,6 +380,7 @@ class ControlPanel(QDialog):
             data = {}
             try:
                 jawn_dir = self._dir()
+                data["folder"] = jawn_dir
                 data["jawn"] = core.jawn_up(jawn_dir)
                 data["ble"] = core.ble_up()
                 if want_tail:
@@ -325,9 +392,7 @@ class ControlPanel(QDialog):
                     data["ticket"] = secrets.describe()
                 except Exception:
                     data["ticket"] = "?"
-                data["env"] = "folder: %s\nautostart: %s" % (
-                    jawn_dir,
-                    "enabled" if core.autostart_enabled() else "disabled")
+                data["autostart"] = core.autostart_enabled()
                 info = core.installed_info()
                 data["app"] = (info.get("versionName") or "?",
                                info.get("versionCode") or 0)
@@ -348,26 +413,41 @@ class ControlPanel(QDialog):
             self._say(data["error"])
             return
         jawn = bool(data.get("jawn"))
+        label, tone = core.jawn_status(jawn)
+        self.jawn_state.setText("jawn  \u2014  " + label)
+        self.jawn_dot.set_colour(theme.TONES[tone])
+
         ble = bool(data.get("ble"))
-        self.jawn_state.setText("jawn - " + ("running" if jawn else "not running"))
-        self.jawn_state.setStyleSheet(
-            "color: %s" % ("#4caf50" if jawn else "#e57373"))
         self.ble_state.setText(
-            "BLE bridge - " + ("running" if ble else "stopped"))
-        self.ble_state.setStyleSheet(
-            "color: %s" % ("#4caf50" if ble else "#999999"))
+            "BLE bridge  \u2014  " + ("running" if ble else "stopped"))
+        self.ble_dot.set_colour(theme.GREEN if ble else theme.DIM)
+
         tail = data.get("tail") or {}
         state = tail.get("state") or ("Running" if tail.get("running") else "Stopped")
-        label = {
+        tlabel = {
             "Running": "running", "Stopped": "stopped",
             "Starting": "starting", "NeedsLogin": "needs login",
             "NoState": "not installed",
         }.get(state, state.lower() or "stopped")
         if tail.get("error") and not tail.get("available"):
-            label = "unavailable"
-        self.tail_state.setText("Tailnet - " + label)
-        self.ticket_state.setText("login ticket - " + str(data.get("ticket") or "?"))
-        self.env_state.setText(str(data.get("env") or ""))
+            tlabel = "unavailable"
+        if tail.get("network_restart"):
+            tlabel += " \u00b7 " + tail.get("network_restart")
+        self.tail_state.setText("Tailnet  \u2014  " + tlabel)
+        if tail.get("running"):
+            ttone = "green"
+        elif state in ("Starting", "NeedsLogin"):
+            ttone = "amber"
+        else:
+            ttone = "dim"
+        self.tail_dot.set_colour(theme.TONES[ttone])
+
+        self.env_state.setText(
+            "folder: %s\nautostart: %s\nlogin ticket: %s" % (
+                data.get("folder", ""),
+                "enabled" if data.get("autostart") else "disabled",
+                str(data.get("ticket") or "?")))
+
         name, code = data.get("app") or ("?", 0)
         newer = data.get("newer")
         if newer:

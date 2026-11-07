@@ -441,6 +441,54 @@ def jawn_up(jawn_dir):
     return port_open(jawn_working_port(jawn_dir)) or port_open(DOCK_PORT)
 
 
+# --------------------------------------------------------------------------
+# a start request, while the tree is still coming up
+# --------------------------------------------------------------------------
+
+# start/restart return as soon as the tree is spawned; the port can take a
+# while to answer on a slow disk. The Qt panel, the tray badge and the GTK
+# dashboard all want to say "starting..." for that window rather than "not
+# running", and they share this clock so they always agree. It describes this
+# process's own request, so it is deliberately not persisted.
+STARTING_WINDOW = 150.0
+_start_requested_at = 0.0
+
+
+def mark_start_requested(now=None):
+    """Remember when a start or restart was asked for (monotonic seconds)."""
+    global _start_requested_at
+    _start_requested_at = time.monotonic() if now is None else float(now)
+    return _start_requested_at
+
+
+def start_requested_at():
+    return _start_requested_at
+
+
+def clear_start_requested():
+    global _start_requested_at
+    _start_requested_at = 0.0
+
+
+def jawn_status(jawn_up, now=None):
+    """``(label, tone)`` for jawn's status line and the tray badge.
+
+    ``tone`` is green, amber or red. Running is green; a start/restart this
+    process asked for and that is younger than ``STARTING_WINDOW`` is amber
+    with its age; anything else is red. This is the same three-way rule the
+    WebKitGTK dashboard used, kept here so both shells read the same.
+    """
+    if jawn_up:
+        clear_start_requested()
+        return "running", "green"
+    started = start_requested_at()
+    if started:
+        age = max(0, int((time.monotonic() if now is None else now) - started))
+        if age < STARTING_WINDOW:
+            return "starting... (%ds)" % age, "amber"
+    return "not running", "red"
+
+
 def jawn_health(jawn_dir, timeout=2.5):
     """Ask the app's own /manager/health over loopback. Returns a dict or None.
 
@@ -657,6 +705,7 @@ def start_jawn(jawn_dir):
     """Start jawn. Skips if it is already up, or a master is mid-restart."""
     # An explicit start ends a deliberate stop; the watcher may supervise again.
     set_held(False)
+    mark_start_requested()
     if jawn_up(jawn_dir):
         return True, "jawn is already running"
     if _jawn_master_pids():
@@ -675,6 +724,8 @@ def stop_jawn(jawn_dir, wait=12.0):
     # Remember the choice before the killer runs: a watcher tick during the stop
     # must not read the gap as a crash and start the tree again.
     set_held(True)
+    # A deliberate stop is not a slow start: no amber "starting..." window.
+    clear_start_requested()
     killer = os.path.join(jawn_dir, "scripts", "manager_killer.pl")
     if not os.path.exists(killer):
         return False, "no scripts/manager_killer.pl in %s" % jawn_dir

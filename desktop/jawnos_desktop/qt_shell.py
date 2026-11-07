@@ -35,7 +35,7 @@ import threading
 import time
 from urllib.parse import urljoin, urlparse
 
-from . import bridge, core
+from . import bridge, core, gpu, theme
 
 # desktop/, resolved the same way the other entry scripts do it.
 DESKTOP_DIR = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
@@ -48,6 +48,52 @@ def _qurl_host(url):
         return (url.host() or "").strip("[]").lower()
     except Exception:
         return ""
+
+
+_TRAY_ICONS = {}
+
+
+def tray_icon(icon_path, rgb):
+    """The jawnos mark with a state dot in its corner, cached per colour.
+
+    The GTK tray badge drew the same dot (green running, amber
+    starting/restarting, red stopped) because a tray icon has no room for a
+    separate label; a dark rim keeps it readable on a light or dark panel.
+
+    PySide6 is imported here, not at module level: the WebKitGTK fallback must
+    be able to import this module on a machine with no Qt at all.
+    """
+    from PySide6.QtCore import QPointF, Qt
+    from PySide6.QtGui import QColor, QIcon, QPainter, QPixmap
+
+    key = (icon_path, tuple(rgb))
+    cached = _TRAY_ICONS.get(key)
+    if cached is not None:
+        return cached
+    pixmap = QPixmap(icon_path) if icon_path and os.path.exists(icon_path) else QPixmap()
+    if pixmap.isNull():
+        pixmap = QIcon.fromTheme("jawnos").pixmap(64, 64)
+    if pixmap.isNull():
+        pixmap = QPixmap(64, 64)
+        pixmap.fill(Qt.GlobalColor.transparent)
+    pixmap = pixmap.scaled(
+        64, 64,
+        Qt.AspectRatioMode.KeepAspectRatio,
+        Qt.TransformationMode.SmoothTransformation)
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+    radius = max(3.0, pixmap.width() * 0.19)
+    centre = QPointF(pixmap.width() - radius - 1.0,
+                     pixmap.height() - radius - 1.0)
+    painter.setPen(Qt.PenStyle.NoPen)
+    painter.setBrush(QColor(0, 0, 0, 217))
+    painter.drawEllipse(centre, radius + 1.5, radius + 1.5)
+    painter.setBrush(QColor(*rgb))
+    painter.drawEllipse(centre, radius, radius)
+    painter.end()
+    icon = QIcon(pixmap)
+    _TRAY_ICONS[key] = icon
+    return icon
 
 
 def prepare_wayland_env():
@@ -310,6 +356,22 @@ _PROBE_JS = r"""
     layout: (function () {
       try { return localStorage.getItem('layout') || ''; } catch (e) { return ''; }
     })(),
+    // Which renderer is actually painting: software (SwiftShader/llvmpipe)
+    // means the blocklist or the driver, not the page. The GTK fixes were
+    // about this; here the answer should name the Intel card.
+    gpu: (function () {
+      try {
+        var canvas = document.createElement('canvas');
+        var gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
+        if (!gl) { return 'none'; }
+        var info = gl.getExtension('WEBGL_debug_renderer_info');
+        var renderer = info ? gl.getParameter(info.UNMASKED_RENDERER_WEBGL)
+                            : gl.getParameter(gl.RENDERER);
+        var vendor = info ? gl.getParameter(info.UNMASKED_VENDOR_WEBGL)
+                          : gl.getParameter(gl.VENDOR);
+        return String(vendor) + ' / ' + String(renderer);
+      } catch (e) { return 'error: ' + e; }
+    })(),
     url: location.href
   };
   window.__jawn_qt_probe = JSON.stringify(out);
@@ -511,6 +573,10 @@ def main(argv=None):
                         help="open the control panel")
     args = parser.parse_args(argv)
 
+    # Before QApplication: Qt WebEngine reads the VA-API driver and the Chromium
+    # flags when it initialises. The GPU flags go first so the Wayland ozone hint
+    # is appended to the same string.
+    gpu.prepare_env()
     prepare_wayland_env()
 
     try:
@@ -1027,13 +1093,14 @@ def main(argv=None):
     if args.panel:
         QTimer.singleShot(0, show_panel)
 
+    icon_path = os.path.join(DESKTOP_DIR, "icons", "jawnos.png")
+
     def make_tray():
         try:
             if not QSystemTrayIcon.isSystemTrayAvailable():
                 return None
         except Exception:
             return None
-        icon_path = os.path.join(DESKTOP_DIR, "icons", "jawnos.png")
         icon = QIcon(icon_path) if os.path.exists(icon_path) else QIcon.fromTheme("jawnos")
         tray = QSystemTrayIcon(icon, app)
         tray.setToolTip("JawnOS")
@@ -1047,7 +1114,6 @@ def main(argv=None):
                 settings["jawn_dir"], settings.get("ble_with_jawn", True)))),
             ("Restart jawn", lambda: call_core(lambda: core.restart_all(
                 settings["jawn_dir"], settings.get("ble_with_jawn", True)))),
-            ("Open in browser", lambda: core.open_ui(settings["jawn_dir"])),
             ("Log", show_log),
             ("Quit and stop jawn", quit_and_stop),
             ("Quit", quit_only),
@@ -1071,6 +1137,11 @@ def main(argv=None):
         tray.setToolTip("JawnOS - jawn %s, BLE %s" % (
             "running" if jawn_up else "stopped",
             "running" if ble_up else "stopped"))
+        _label, tone = core.jawn_status(jawn_up)
+        try:
+            tray.setIcon(tray_icon(icon_path, theme.TONES[tone]))
+        except Exception:
+            pass
 
     class LogWindow(QDialog):
         """A small tail of jawn's manager.log, refreshing every two seconds."""
@@ -1208,6 +1279,7 @@ def main(argv=None):
         def reload(self):
             QTimer.singleShot(6000, view.reload)
 
+    tray = None
     tray = None
     if not args.probe and not args.no_tray:
         tray = make_tray()
