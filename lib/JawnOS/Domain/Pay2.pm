@@ -785,7 +785,10 @@ sub volume_relay {
 			&subprocessor(sub {
 				foreach my $rm (@peers) {
 					eval {
-						my $hop = &subs::remote_useragent_maker({ rm => $rm, signatorial => $rm->{'signatorial'} });
+						# The tap's warranty is 30 s and the watch waits on the answer;
+					# probe-free here so one slow peer cannot hold the mixer peer
+					# behind it. The signed rail still authenticates the post.
+					my $hop = &subs::remote_useragent_maker({ rm => $rm, signatorial => $rm->{'signatorial'}, no_probe => 1 });
 						next unless $hop && $hop->{'ua'} && $hop->{'manager'};
 						$hop->{'ua'}->insecure(1)->connect_timeout(3)->inactivity_timeout(6)
 							->post($hop->{'manager'} . '/manager/volume' => form => \%form)->result;

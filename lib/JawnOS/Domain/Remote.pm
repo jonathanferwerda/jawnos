@@ -383,7 +383,13 @@ sub remote_useragent_maker($data) {
 	my $manager = $rm->{'manager'};
 	# A retired tunnel leaves 127.0.0.1 behind, and a name is the only route
 	# left. Resolve it before the cookie is scoped and every url is built.
-	my $live_manager = &subs::peer_live_manager($rm);
+	# A time-critical fan-out (a volume tap) must not spend its short warranty
+	# probing every peer's live and secure URL before it writes; the stored
+	# manager is the signed rail's normal address, and the signature still proves
+	# the caller. Callers that can wait keep the probes.
+	my $live_manager = $data->{'no_probe'}
+		? $manager
+		: &subs::peer_live_manager($rm);
 	if (($manager || '') ne $live_manager) {
 		$manager = $live_manager;
 		$rm->{'manager'} = $manager;
@@ -391,7 +397,9 @@ sub remote_useragent_maker($data) {
 	# The peer listener (main port + 6) is where the house-CA leaf lives. Only
 	# switch to it when the peer answers there; the signed rail still carries
 	# the caller's proof either way.
-	my ($secure_manager, $manager_verified) = &subs::peer_secure_url($rm, $manager);
+	my ($secure_manager, $manager_verified) = $data->{'no_probe'}
+		? ($manager, 0)
+		: &subs::peer_secure_url($rm, $manager);
 	if ($manager_verified) {
 		$manager = $secure_manager;
 		$rm->{'manager'} = $manager;

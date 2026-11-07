@@ -1,4 +1,4 @@
-# tests-for: lib/JawnOS/Domain/Pay2.pm lib/JawnOS/Domain/Loader.pm lib/JawnOS/Domain/Ble2.pm lib/JawnOS/Controller/manager_misc13.pm lib/JawnOS/Routes/manager_misc13.pm perl/watch.pl jp/alarmclock/alarmclock_01_globals_clock_ble.ino jp/alarmclock/alarmclock_02_ble_handlers_wifi_setup.ino jp/alarmclock/alarmclock_04_jobs_clock_config_net.ino jw/jw_10_playback.ino jw/jw_05_loop2.ino
+# tests-for: lib/JawnOS/Domain/Pay2.pm lib/JawnOS/Domain/Loader.pm lib/JawnOS/Domain/Ble2.pm lib/JawnOS/Domain/Remote.pm lib/JawnOS/Controller/manager_misc13.pm lib/JawnOS/Routes/manager_misc13.pm perl/watch.pl jp/alarmclock/alarmclock_01_globals_clock_ble.ino jp/alarmclock/alarmclock_02_ble_handlers_wifi_setup.ino jp/alarmclock/alarmclock_04_jobs_clock_config_net.ino jw/jw_10_playback.ino jw/jw_05_loop2.ino
 # covers:    A Vol+/- tap that reaches a Pico (the watch out of its homebase's
 #            range) is carried to the manager over WiFi; the manager applies the
 #            house volume locally, forwards it to every active peer or the named
@@ -74,6 +74,7 @@ subs::preload('volume_relay');
 my @set;
 my @lister_calls;
 my @roster;
+my @ua_args;
 my $ua;
 my $get_level = 40;
 my $set_ok = 1;
@@ -92,6 +93,8 @@ my $set_ok = 1;
 		return [ @rows ];
 	};
 	local *subs::remote_useragent_maker = sub {
+		my ($a) = @_;
+		push @ua_args, { %{$a} };
 		return { ua => $ua, manager => 'https://192.168.1.123:45545' };
 	};
 	# The real subprocessor forks; run the fan-out inline so the test can read
@@ -124,8 +127,11 @@ my $set_ok = 1;
 	);
 	$ua = FakeUA->new(ok => 1);
 	@lister_calls = ();
+	@ua_args = ();
 	$get_level = 40;
 	$r = subs::volume_relay({ id => 'all-1', to => 'all', data => { delta => 10 } }, {});
+	ok(@ua_args && !grep({ !$_->{'no_probe'} } @ua_args),
+		'a volume fan-out asks for the probe-free peer agent (one slow peer cannot hold the mixer)');
 	is_deeply(\@set, [50], 'a delta is read against the level the room is on now');
 	is($r->{'ok'}, 1, 'the local apply counts as success');
 	is_deeply($r->{'forwarded'}, [ 'peer-a', 'peer-b' ], 'every active peer is named; this machine is not');
@@ -214,6 +220,7 @@ my $root = repo_root();
 my $watch = read_file("$root/perl/watch.pl");
 my $ble2 = read_file("$root/lib/JawnOS/Domain/Ble2.pm");
 my $pay2 = read_file("$root/lib/JawnOS/Domain/Pay2.pm");
+my $remote = read_file("$root/lib/JawnOS/Domain/Remote.pm");
 my $controller = read_file("$root/lib/JawnOS/Controller/manager_misc13.pm");
 my $routes = read_file("$root/lib/JawnOS/Routes/manager_misc13.pm");
 my $pico_ble = read_file("$root/jp/alarmclock/alarmclock_02_ble_handlers_wifi_setup.ino");
@@ -238,6 +245,8 @@ like($ble2, qr/vol_app.*?volume_relay.*?volume_result/s,
 	'a Vol+/Vol- button flushed from the queue is routed as a volume tap');
 like($pay2, qr/\$form\{'delta'\} = \$delta/,
 	'a no-mixer homebase forwards the delta to a peer with a sink');
+like($remote, qr/\$data->\{'no_probe'\}.*?peer_live_manager/s,
+	'the peer agent can skip its live/secure probe for a timed fan-out');
 
 like($pico_ble, qr/type == "volume"\).*?relay_out_forward\(msg, json, "\/watch\/volume"/s,
 	'the Pico forwards a volume tap the manager can act on');
