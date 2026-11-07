@@ -1,4 +1,4 @@
-# tests-for: desktop/jawnos_desktop/qt_shell.py desktop/jawnos_desktop/bridge.py desktop/jawnos-desktop desktop/jawnos-qt desktop/wayland/jawnos-session
+# tests-for: desktop/jawnos_desktop/qt_shell.py desktop/jawnos_desktop/qt_panel.py desktop/jawnos_desktop/bridge.py desktop/jawnos_desktop/keepawake.py desktop/jawnos-desktop desktop/jawnos-qt desktop/wayland/jawnos-session
 # covers:    the Qt WebEngine desktop shell is the default: the same Manager page
 #           in Chromium, which is the engine with WebRTC (Debian's WebKitGTK is
 #           built without RTCPeerConnection), the ticket cookie kept on disk,
@@ -17,6 +17,8 @@ use File::Slurp qw(read_file);
 
 my $root = "$FindBin::Bin/..";
 my $qt = read_file("$root/desktop/jawnos_desktop/qt_shell.py");
+my $panel = read_file("$root/desktop/jawnos_desktop/qt_panel.py");
+my $keepawake = read_file("$root/desktop/jawnos_desktop/keepawake.py");
 my $bridge = read_file("$root/desktop/jawnos_desktop/bridge.py");
 my $webview = read_file("$root/desktop/jawnos_desktop/webview.py");
 my $entry = read_file("$root/desktop/jawnos-desktop");
@@ -89,6 +91,17 @@ like($qt, qr/PermissionType/, 'through QWebEnginePermission');
 like($qt, qr/featurePermissionRequested/, 'with the older signal kept as a fallback');
 like($session, qr/--engine webkit/,
 	'the Sway session falls back to WebKitGTK if the Qt shell cannot start');
+like($qt, qr/from \.qt_panel import ControlPanel/, 'the shell loads the Qt panel');
+like($qt, qr/\("Control panel", show_panel\)/, 'the tray opens it');
+like($qt, qr/admin_opener\["open"\] = show_panel/, 'and the page admin icon does too');
+like($panel, qr/class ControlPanel/, 'the panel is a Qt dialog');
+like($panel, qr/Import ticket/, 'with the login ticket controls');
+like($panel, qr/Start VPN/, 'the tailnet');
+like($panel, qr/Start bridge/, 'the BLE bridge');
+like($panel, qr/Start the BLE bridge at login/, 'the autostart setting');
+like($panel, qr/update_available/, 'and the app update');
+unlike($keepawake, qr/import gi|from gi\.repository/, 'the Qt keep-awake does not need PyGObject');
+like($keepawake, qr/systemd-inhibit/, 'it uses logind\'s idle inhibitor');
 
 like($qt, qr/def webkit_localstorage/, 'the shell can read the GTK localStorage store');
 like($qt, qr/def device_seed_js/, 'and carries the desktop device identity across');
@@ -149,6 +162,15 @@ SKIP: {
 	like($line, qr/"desktop":true/, 'and the page sees the desktop marker');
 	unlike($probe, qr/NameError|Traceback/,
 		'a real (origin-checked) action does not crash the handler');
+}
+
+# The panel itself, built without a display. It reads the same core as the
+# GTK dashboard; the controls are the panel's own.
+my $panel_run = `cd "$root" && QT_QPA_PLATFORM=offscreen PYTHONPATH=desktop python3 -c 'from PySide6.QtWidgets import QApplication; from jawnos_desktop.qt_panel import ControlPanel; app=QApplication([]); p=ControlPanel({"jawn_dir":"/tmp","ble_with_jawn":True},{"show_view":lambda:None,"show_log":lambda:None,"restart":lambda:None}); print("panel-ok", p.windowTitle())' 2>&1`;
+SKIP: {
+	skip 'the PySide6 panel cannot be built here', 1
+		if $panel_run =~ /No module named .PySide6|ModuleNotFoundError/;
+	like($panel_run, qr/panel-ok JawnOS control panel/, 'the panel builds offscreen');
 }
 
 done_testing();

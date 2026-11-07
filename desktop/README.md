@@ -466,12 +466,14 @@ maximized and fullscreen state come from `~/.config/jawnos/desktop.json` and are
 written back on close.
 
 A fresh profile still lands on the padlock Gate (the WebKit shell does too).
-The GTK dashboard remains available with `--engine webkit` for the controls the
-Qt shell does not have a panel for yet (tailnet start/stop, the BLE autostart
-setting, ticket import); the tray covers start/stop/restart, the log, Open in
-browser and quitting. The Arch live image installs `pyside6`, `qt6-webengine`
-and `qt6-wayland` (`desktop/mkosi/mkosi.conf`); WebKitGTK stays for the fallback
-and Browse.
+The **Qt control panel** is the admin window now: the tray's **Control panel**
+item, or the page's start-menu admin icon. It carries the GTK dashboard's
+controls (tailnet start/stop, the BLE autostart setting, ticket import, the
+app update, the log). `--engine webkit` still starts the old GTK dashboard as a
+fallback for one release; the remaining GTK-only programs are Browse, the
+session bar and the BLE daemon. The Arch live image installs `pyside6`,
+`qt6-webengine` and `qt6-wayland` (`desktop/mkosi/mkosi.conf`); WebKitGTK stays
+for the fallback and Browse.
 
 ## Windows
 

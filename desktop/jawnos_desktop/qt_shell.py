@@ -499,6 +499,8 @@ def main(argv=None):
                         help="no status-tray icon; closing the window quits")
     parser.add_argument("--no-start", action="store_true",
                         help="do not start jawn when the view opens")
+    parser.add_argument("--panel", action="store_true",
+                        help="open the control panel")
     args = parser.parse_args(argv)
 
     prepare_wayland_env()
@@ -551,6 +553,11 @@ def main(argv=None):
         "QWebEngineView": QWebEngineView,
         "QWebEnginePermission": QWebEnginePermission,
     }
+
+    try:
+        from .qt_panel import ControlPanel
+    except Exception:
+        ControlPanel = None
 
     app = QApplication([sys.argv[0]])
     app.setApplicationName("JawnOS")
@@ -679,6 +686,7 @@ def main(argv=None):
     # ---- the page <-> app bridge ------------------------------------------
     windows = []
     channel_js = _webchannel_js()
+    admin_opener = {"open": None}
 
     def open_manager_window(url, manager_override, title):
         win = JawnView(settings, save_state=False)
@@ -746,11 +754,16 @@ def main(argv=None):
         peer's), not the URL of whatever page is loaded: a public page has a
         different origin and must not borrow the app key.
         """
-        # The start menu's admin icon asks to come back to the app's window.
+        # The start menu's admin icon asks for the control panel. The panel is
+        # defined later; until then (or on a machine without it) raise the view.
         if "admin" in raw:
-            view_obj.showNormal()
-            view_obj.raise_()
-            view_obj.activateWindow()
+            opener = admin_opener.get("open")
+            if opener:
+                opener()
+            else:
+                view_obj.showNormal()
+                view_obj.raise_()
+                view_obj.activateWindow()
             return
         try:
             message = json.loads(raw)
@@ -958,6 +971,30 @@ def main(argv=None):
         win.destroyed.connect(_forget)
         win.show()
 
+    panel_holder = {"panel": None}
+
+    def show_panel():
+        if ControlPanel is None:
+            show_window()
+            return
+        if panel_holder["panel"] is None:
+            panel_holder["panel"] = ControlPanel(
+                settings,
+                {
+                    "show_view": show_window,
+                    "show_log": show_log,
+                    "restart": restart_self,
+                },
+                parent=view,
+            )
+        panel_holder["panel"].show()
+        panel_holder["panel"].raise_()
+        panel_holder["panel"].activateWindow()
+
+    admin_opener["open"] = show_panel
+    if args.panel:
+        QTimer.singleShot(0, show_panel)
+
     def make_tray():
         try:
             if not QSystemTrayIcon.isSystemTrayAvailable():
@@ -970,6 +1007,7 @@ def main(argv=None):
         tray.setToolTip("JawnOS")
         menu = QMenu()
         for label, callback in (
+            ("Control panel", show_panel),
             ("Show JawnOS", show_window),
             ("Start jawn", lambda: call_core(lambda: core.start_all(
                 settings["jawn_dir"], settings.get("ble_with_jawn", True)))),
