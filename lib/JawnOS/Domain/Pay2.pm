@@ -47,6 +47,7 @@ our %clock_long_alarm_files;
 # ---------------------------------------------------------------------------
 our @clock_sound_files;
 our $device;
+our $log;
 our %m;
 
 # The provider sends the customer back here. Nothing the browser says is
@@ -779,23 +780,33 @@ sub volume_relay {
 		if (defined $level) { $form{'volume'} = $level; }
 		else { $form{'delta'} = $delta; }
 		$result->{'forwarded'} = [ map { $_->{'signatorial'} } @peers ];
-		# A tap waits on this response, so the fan-out is its own process: the
-		# watch worker (one process on a phone) must not sit on a slow peer.
-		eval {
-			&subprocessor(sub {
-				foreach my $rm (@peers) {
-					eval {
-						# The tap's warranty is 30 s and the watch waits on the answer;
-					# probe-free here so one slow peer cannot hold the mixer peer
-					# behind it. The signed rail still authenticates the post.
+		$log->info('volume relay: target=' . $target . ' peers=' . join(',', map { $_->{'signatorial'} } @peers)) if $log;
+		my $fanout = sub {
+			foreach my $rm (@peers) {
+				eval {
+					# Probe-free and short-bound: the watch waits on this answer, and
+					# one slow peer must not hold the mixer peer behind it.
 					my $hop = &subs::remote_useragent_maker({ rm => $rm, signatorial => $rm->{'signatorial'}, no_probe => 1 });
-						next unless $hop && $hop->{'ua'} && $hop->{'manager'};
-						$hop->{'ua'}->insecure(1)->connect_timeout(3)->inactivity_timeout(6)
-							->post($hop->{'manager'} . '/manager/volume' => form => \%form)->result;
-					};
-				}
-			}, { name => 'volume relay', warranty => '30s' });
+					next unless $hop && $hop->{'ua'} && $hop->{'manager'};
+					my $res = $hop->{'ua'}->insecure(1)->connect_timeout(1)->inactivity_timeout(2)
+						->post($hop->{'manager'} . '/manager/volume' => form => \%form)->result;
+					$log->info('volume relay to ' . ($rm->{'signatorial'} || '?') . ': ' . ($res ? $res->code : 'no answer')) if $log;
+				};
+			}
 		};
+		if ($opts->{'inline'}) {
+			# The BLE listener cannot leave the tap to a forked child on the phone:
+			# the child was not reaching the mixer. Run it here, bounded.
+			eval { $fanout->() };
+			$log->error('volume relay: ' . ($@ =~ s/\s+/ /gr)) if $@ && $log;
+		}
+		else {
+			# A tap that waits on this response is its own process on a machine
+			# where the watch worker must not sit on a slow peer.
+			eval {
+				&subprocessor($fanout, { name => 'volume relay', warranty => '30s' });
+			};
+		}
 	}
 	$result->{'ok'} = 1 if $applied || @peers;
 	$result->{'error'} = 'no mixer' if $local && !$applied && !@peers;

@@ -75,6 +75,7 @@ my @set;
 my @lister_calls;
 my @roster;
 my @ua_args;
+my $subprocessor_calls = 0;
 my $ua;
 my $get_level = 40;
 my $set_ok = 1;
@@ -101,6 +102,7 @@ my $set_ok = 1;
 	# what each peer was told.
 	local *subs::subprocessor = sub {
 		my ($sub) = @_;
+		$subprocessor_calls++;
 		$sub->() if $sub;
 		return 1;
 	};
@@ -142,6 +144,15 @@ my $set_ok = 1;
 	is($ua->{'posted'}[0]->{'form'}{'target'}, 'all', 'and the target');
 	is($ua->{'posted'}[0]->{'form'}{'relayed'}, 'yes', 'a forwarded copy is marked relayed');
 	is($ua->{'posted'}[0]->{'form'}{'signatorial'}, 'me-sig', 'and names the machine it came from');
+
+	# The BLE listener cannot wait for a forked child on the phone; the volume
+	# fan-out runs inline with the short probe-free peer agent.
+	@ua_args = ();
+	my $before_sub = $subprocessor_calls;
+	$r = subs::volume_relay({ id => 'inline-1', to => 'all', data => { delta => 1 } }, { inline => 1 });
+	is($subprocessor_calls, $before_sub, 'an inline volume fan-out does not fork');
+	is(scalar @{$ua->{'posted'}}, 4, 'and still posts to both peers');
+	ok(@ua_args && !grep({ !$_->{'no_probe'} } @ua_args), 'with the probe-free agent');
 
 	# --- a named machine: no local apply, one dial ---------------------------
 	@set = ();
@@ -247,6 +258,8 @@ like($pay2, qr/\$form\{'delta'\} = \$delta/,
 	'a no-mixer homebase forwards the delta to a peer with a sink');
 like($remote, qr/\$data->\{'no_probe'\}.*?peer_live_manager/s,
 	'the peer agent can skip its live/secure probe for a timed fan-out');
+my @ble_inline = $ble2 =~ /inline => 1/g;
+is(scalar @ble_inline, 2, 'both BLE volume paths run the fan-out inline');
 
 like($pico_ble, qr/type == "volume"\).*?relay_out_forward\(msg, json, "\/watch\/volume"/s,
 	'the Pico forwards a volume tap the manager can act on');

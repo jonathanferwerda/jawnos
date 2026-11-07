@@ -151,7 +151,7 @@ sub ble_message_processor {
 		# can show that the house heard the tap.
 		my $chip_id = $msg->{'chip_id'} || $seen_chip;
 		my $edt = $msg->{'edt'} || $seen_edt || 'watch';
-		my $result = &subs::volume_relay($msg, { from_chip => $chip_id });
+		my $result = &subs::volume_relay($msg, { from_chip => $chip_id, inline => 1 });
 		if ($chip_id) {
 			&subs::bluetooth_sender_async({
 				intent => 'com.jawn.president.bt.connect',
@@ -397,7 +397,7 @@ sub ble_message_processor {
 				type => 'volume', to => 'all', id => $press_id,
 				chip_id => $chip_id, edt => $edt,
 				data => { delta => $vol_delta },
-			}, { from_chip => $chip_id });
+			}, { from_chip => $chip_id, inline => 1 });
 			if ($chip_id) {
 				&subs::bluetooth_sender_async({
 					intent => 'com.jawn.president.bt.connect',
