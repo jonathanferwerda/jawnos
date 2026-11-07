@@ -273,13 +273,83 @@ SKIP: {
 	my $tmp = tempdir(CLEANUP => 1);
 	write_file("$tmp/webkit.env", "WEBKIT_DMABUF_RENDERER_FORCE_SHM=1\nLIBVA_DRIVER_NAME=i965\n");
 	write_file("$tmp/qt.env", "QTWEBENGINE_CHROMIUM_FLAGS=--from-qt-env\n");
-	my $out = `cd "$root" && PYTHONPATH=desktop python3 -c 'import json; from jawnos_desktop import gpu; e={"QTWEBENGINE_CHROMIUM_FLAGS":"--from-real"}; a=gpu.prepare_env(e, config_dir="$tmp"); print(json.dumps([a, e]))' 2>&1`;
+	my $out = `cd "$root" && PYTHONPATH=desktop python3 -c 'import json; from jawnos_desktop import gpu; e={"QTWEBENGINE_CHROMIUM_FLAGS":"--from-real"}; a=gpu.prepare_env(e, config_dir="$tmp", cards=[("0x8086","0x1912")], render_nodes=["/dev/dri/renderD128"], drivers={"iHD"}); print(json.dumps([a, e]))' 2>&1`;
 	like($out, qr/"--from-real --ignore-gpu-blocklist --enable-gpu-rasterization"/,
 		'the real flags are kept and the GPU flags appended');
 	like($out, qr/"LIBVA_DRIVER_NAME": "i965"/,
 		'webkit.env\'s non-WebKit keys still reach Chromium');
 	unlike($out, qr/WEBKIT_DMABUF_RENDERER_FORCE_SHM|--from-qt-env/,
 		'but WebKit-only switches and a shadowed qt.env value do not');
+}
+
+# The vendor matrix, without the hardware: cards, render nodes and installed
+# VA-API drivers are injected. A real card with a render node keeps Chromium's
+# GPU path; a virtual display GPU or a machine with no render node gets the
+# software path instead of a failing GPU process.
+{
+	my $matrix = `cd "$root" && PYTHONPATH=desktop python3 -c '
+import json
+from jawnos_desktop import gpu
+cases = {
+    "intel": ([("0x8086", "0x1912")], ["/dev/dri/renderD128"], {"iHD", "i965"}, {}),
+    "intel_i965": ([("0x8086", "0x1912")], ["/dev/dri/renderD128"], {"i965"}, {}),
+    "intel_no_driver": ([("0x8086", "0x1912")], ["/dev/dri/renderD128"], set(), {}),
+    "amd": ([("0x1002", "0x73ff")], ["/dev/dri/renderD128"], {"radeonsi"}, {}),
+    "amd_no_driver": ([("0x1002", "0x73ff")], ["/dev/dri/renderD128"], set(), {}),
+    "nvidia": ([("0x10de", "0x1c82")], ["/dev/dri/renderD128"], {"nvidia"}, {}),
+    "nvidia_no_driver": ([("0x10de", "0x1c82")], ["/dev/dri/renderD128"], set(), {}),
+    "virtio": ([("0x1af4", "0x1050")], ["/dev/dri/renderD128"], set(), {}),
+    "bochs": ([("0x1234", "0x1111")], ["/dev/dri/renderD128"], set(), {}),
+    "vmware": ([("0x15ad", "0x0405")], ["/dev/dri/renderD128"], set(), {}),
+    "vbox": ([("0x80ee", "0xbeef")], ["/dev/dri/renderD128"], set(), {}),
+    "qxl": ([("0x1b36", "0x0100")], ["/dev/dri/renderD128"], set(), {}),
+    "no_node": ([("0x8086", "0x1912")], [], {"iHD"}, {}),
+    "force_virtual": ([("0x1af4", "0x1050")], ["/dev/dri/renderD128"], set(), {"JAWNOS_GPU": "1"}),
+    "gpu_zero": ([("0x8086", "0x1912")], ["/dev/dri/renderD128"], {"iHD"}, {"JAWNOS_GPU": "0"}),
+    "disable_gpu": ([("0x8086", "0x1912")], ["/dev/dri/renderD128"], {"iHD"}, {"QTWEBENGINE_CHROMIUM_FLAGS": "--disable-gpu --from-real"}),
+    "real_driver": ([("0x8086", "0x1912")], ["/dev/dri/renderD128"], {"iHD"}, {"LIBVA_DRIVER_NAME": "i965"}),
+    "unknown": ([("0x9999", "0x0001")], ["/dev/dri/renderD128"], {"iHD"}, {}),
+    "no_sysfs": ([], ["/dev/dri/renderD128"], set(), {}),
+}
+out = {}
+for name, (cards, nodes, drivers, env) in cases.items():
+    e = dict(env)
+    gpu.prepare_env(e, config_dir="/nonexistent", cards=cards, render_nodes=nodes, drivers=drivers)
+    out[name] = [e.get("LIBVA_DRIVER_NAME"), e.get("QTWEBENGINE_CHROMIUM_FLAGS")]
+print(json.dumps(out))
+' 2>&1`;
+	like($matrix, qr/"intel": \["iHD", "--ignore-gpu-blocklist --enable-gpu-rasterization"\]/,
+		'Intel Gen9+ picks iHD and keeps the GPU path');
+	like($matrix, qr/"intel_i965": \["i965", "--ignore-gpu-blocklist/,
+		'older Intel falls back to i965');
+	like($matrix, qr/"intel_no_driver": \[null, "--ignore-gpu-blocklist/,
+		'with no Intel VA driver the variable is left unset');
+	like($matrix, qr/"amd": \["radeonsi", "--ignore-gpu-blocklist/,
+		'AMD uses Mesa radeonsi');
+	like($matrix, qr/"amd_no_driver": \[null, "--ignore-gpu-blocklist/,
+		'and AMD without radeonsi_drv_video.so is not named');
+	like($matrix, qr/"nvidia": \["nvidia", "--ignore-gpu-blocklist/,
+		'NVIDIA uses libva-nvidia-driver');
+	like($matrix, qr/"nvidia_no_driver": \[null, "--ignore-gpu-blocklist/,
+		'and nouveau (no shim) is left unset');
+	for my $virt (qw(virtio bochs vmware vbox qxl)) {
+		like($matrix, qr/"$virt": \[null, "--disable-gpu --disable-gpu-compositing"\]/,
+			"a virtual $virt GPU gets the software path, not a failing GPU process");
+	}
+	like($matrix, qr/"no_node": \[null, "--disable-gpu --disable-gpu-compositing"\]/,
+		'no render node means software rendering');
+	like($matrix, qr/"force_virtual": \[null, "--ignore-gpu-blocklist/,
+		'JAWNOS_GPU=1 forces the GPU path even on a virtual card');
+	like($matrix, qr/"gpu_zero": \["iHD", "--disable-gpu --disable-gpu-compositing"\]/,
+		'JAWNOS_GPU=0 asks for software rendering');
+	like($matrix, qr/"disable_gpu": \["iHD", "--disable-gpu --from-real"\]/,
+		'an existing --disable-gpu is never touched');
+	like($matrix, qr/"real_driver": \["i965", "--ignore-gpu-blocklist/,
+		'a driver chosen by the real environment wins over auto-detection');
+	like($matrix, qr/"unknown": \[null, "--ignore-gpu-blocklist/,
+		'an unknown vendor is not guessed, but keeps the GPU path');
+	like($matrix, qr/"no_sysfs": \[null, "--ignore-gpu-blocklist/,
+		'a render node without sysfs still keeps the GPU path');
 }
 
 done_testing();

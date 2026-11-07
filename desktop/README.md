@@ -361,14 +361,38 @@ GTK Skylake/X11 software fallback above exists for a WebKitGTK bug and is
 deliberately not ported. Before the `QApplication` exists it sets
 
 ```sh
-LIBVA_DRIVER_NAME=iHD
+LIBVA_DRIVER_NAME=<the card's driver>
 QTWEBENGINE_CHROMIUM_FLAGS=... --ignore-gpu-blocklist --enable-gpu-rasterization
 ```
 
-`LIBVA_DRIVER_NAME` is set only when an Intel card, a `/dev/dri/renderD*` node
-and the iHD driver are all present, and never over a value you already chose.
-The two Chromium flags keep an older Intel GPU off SwiftShader and the raster
-work on the card, which is what stays smooth when the machine is busy.
+The VA-API driver follows the DRM vendor in
+`/sys/class/drm/card*/device/vendor`, and is named only when a
+`/dev/dri/renderD*` node exists and the matching `*_drv_video.so` is installed:
+
+| Card | Vendor ID | `LIBVA_DRIVER_NAME` | Installed by |
+| --- | --- | --- | --- |
+| Intel Gen9+ | `0x8086` | `iHD` | `intel-media-driver` |
+| Intel older | `0x8086` | `i965` (fallback) | `libva-intel-driver` |
+| AMD | `0x1002` | `radeonsi` | Mesa's VA-API driver |
+| NVIDIA | `0x10de` | `nvidia` | `libva-nvidia-driver`, or VA-API from the proprietary driver |
+| virtio, bochs, VMware, VirtualBox, qxl | `0x1af4`, `0x1234`, `0x15ad`, `0x80ee`, `0x1b36` | _(unset)_ | virtual GPUs have no VA-API |
+| NVIDIA via nouveau | `0x10de` | _(unset)_ | nouveau has no VA-API |
+
+A value you already exported (or put in `webkit.env`/`qt.env`) always wins: the
+shell never overrides `LIBVA_DRIVER_NAME`. NVIDIA needs the proprietary driver
+or `libva-nvidia-driver` for hardware decode; without one, video decodes on the
+CPU and the rest of the view still uses the card.
+
+With a render node and a real card, the two Chromium flags keep a blocklisted
+GPU off SwiftShader and the raster work on the card, which is what stays smooth
+when the machine is busy. A machine with **no render node**, or with **only a
+virtual display GPU**, gets the software path instead
+(`--disable-gpu --disable-gpu-compositing`), so Chromium does not spin a failing
+GPU process (the live image under QEMU otherwise logs ZINK/Vulkan and DRM
+errors); the page still renders. `JAWNOS_GPU=1` forces the GPU flags even on a
+virtual card, `JAWNOS_GPU=0` asks for software, and an existing `--disable-gpu`
+in the flags is never touched.
+
 `--probe` reports the WebGL renderer, so this is checkable rather than
 assumed:
 
