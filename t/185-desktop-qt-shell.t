@@ -58,6 +58,10 @@ like($qt, qr/__jawnQtBridge/, 'the page is given a Qt bridge object');
 like($qt, qr/QWebChannel/, 'over QWebChannel');
 like($qt, qr/messageHandlers\[name\]/, 'and the WebKit handler names the page checks');
 like($qt, qr/window\.JawnDesktop/, 'the desktop marker universal.js keys app login off');
+like($qt, qr/def handle_message\([^)]*allowed_host/,
+	'the handler receives the window\'s manager host');
+like($qt, qr/handle_message\(name, raw, page_obj, view_obj, allowed_host\)/,
+	'and the bridge passes it through');
 like($qt, qr/bridge\.app_public_pem|bridge\.app_sign_b64/,
 	'the app key is answered through the shared bridge');
 like($bridge, qr/def app_public_pem/, 'the app key lives in the toolkit-neutral module');
@@ -129,7 +133,7 @@ print {$bfh} "<!doctype html><html><body>probe</body></html>\n";
 close $bfh;
 my $probe = `cd "$root" && timeout 45 xvfb-run -a env QTWEBENGINE_CHROMIUM_FLAGS='--disable-gpu --no-sandbox' python3 desktop/jawnos-qt --probe --url 'file://$blank' 2>&1`;
 SKIP: {
-	skip 'the Qt WebEngine package is not installed here', 5
+	skip 'the Qt WebEngine package is not installed here', 6
 		if $probe =~ /needs PySide6|No module named .PySide6/ || $probe !~ /qt-probe /;
 	my ($line) = $probe =~ /^(qt-probe .*)$/m;
 	like($line, qr/"rtc":"function"/, 'the real engine has RTCPeerConnection');
@@ -137,6 +141,8 @@ SKIP: {
 	like($line, qr/"bridge":true/, 'the QWebChannel bridge connects');
 	like($line, qr/"ping":true/, 'a message round-trips through the bridge');
 	like($line, qr/"desktop":true/, 'and the page sees the desktop marker');
+	unlike($probe, qr/NameError|Traceback/,
+		'a real (origin-checked) action does not crash the handler');
 }
 
 done_testing();

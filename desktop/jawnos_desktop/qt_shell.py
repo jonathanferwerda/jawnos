@@ -294,6 +294,13 @@ _PROBE_JS = r"""
         action: 'ping', id: 'probe-ping'
       }));
     } catch (e) {}
+    try {
+      // Also exercise the origin-checked path (no reply): a handler that
+      // references a name it cannot see raises here, on any real page.
+      window.__jawnQtBridge.postMessage('jawnos', JSON.stringify({
+        action: 'media_state', audio: false, video: false
+      }));
+    } catch (e) {}
   }
   if (out.rtc !== 'function') { return; }
   try {
@@ -678,7 +685,7 @@ def main(argv=None):
             class PageBridge(QObject):
                 @Slot(str, str)
                 def postMessage(self, name, raw):
-                    handle_message(name, raw, page_obj, view_obj)
+                    handle_message(name, raw, page_obj, view_obj, allowed_host)
 
             handler = PageBridge(page_obj)
             channel.registerObject("jawnos", handler)
@@ -704,7 +711,13 @@ def main(argv=None):
         script.setRunsOnSubFrames(False)
         page_obj.scripts().insert(script)
 
-    def handle_message(name, raw, page_obj, view_obj):
+    def handle_message(name, raw, page_obj, view_obj, allowed_host):
+        """Handle one page message; allowed_host is this window's manager host.
+
+        It is the host the window's Manager belongs to (the primary's, or a
+        peer's), not the URL of whatever page is loaded: a public page has a
+        different origin and must not borrow the app key.
+        """
         # The start menu's admin icon asks to come back to the app's window.
         if "admin" in raw:
             view_obj.showNormal()
@@ -826,8 +839,8 @@ def main(argv=None):
         pass
 
     # ---- the launcher URL, and the bridge installation --------------------
-    ticket = None if args.url else ticket_url()
-    manager = None if args.url else manager_url(settings["jawn_dir"], ticket)
+    ticket = None if (args.url or args.probe) else ticket_url()
+    manager = None if (args.url or args.probe) else manager_url(settings["jawn_dir"], ticket)
     login_pending = bool(ticket)
     kick = None
     host = port = None
