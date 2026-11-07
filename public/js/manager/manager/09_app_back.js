@@ -305,6 +305,8 @@ function appClearer(app) {
 	// the readings under ago and warranty belong to the moment the press just
 	// wrote, so they are asked again rather than left on the old words
 	if (typeof jawnosTimePreviewPaintApp === 'function') { jawnosTimePreviewPaintApp(app); }
+	// and the period readings, if the person has them open, follow the same press
+	appointmentStatsReload(app);
 }
 
 // The bottom line is a row of headers with one panel open at a time. The
@@ -321,10 +323,7 @@ function appointmentStatsShow(stats, stat) {
 	});
 }
 
-$(document).on('click', '.appointment_stats_header', function() {
-	var header = $(this);
-	var stats = header.closest('.appointment_stats');
-	var stat = header.attr('stat') || '';
+function appointmentStatsOpen(stats, stat) {
 	var app = stats.attr('app') || '';
 	if (stat !== 'evaluation' && !stats.find('.appointment_stats_panel[stat="' + stat + '"]').length) {
 		// a second press while the first is in flight is remembered, so the panel
@@ -338,7 +337,26 @@ $(document).on('click', '.appointment_stats_header', function() {
 		return;
 	}
 	appointmentStatsShow(stats, stat);
+}
+
+$(document).on('click', '.appointment_stats_header', function() {
+	appointmentStatsOpen($(this).closest('.appointment_stats'), $(this).attr('stat') || '');
 });
+
+// A save can move the readings a Start or Stop just changed. A panel that is
+// showing is fetched again in place; one that is not showing drops its snapshot,
+// so the next press reads the new moment rather than the old one.
+function appointmentStatsReload(app) {
+	$('.appointment_stats[app="' + app + '"]').each(function() {
+		var stats = $(this);
+		var holder = stats.find('.app_section_placeholder[section="stats"]').first();
+		if (!holder.length || holder.attr('loaded') !== 'yes') { return; }
+		var stat = stats.find('.appointment_stats_header.selected').attr('stat') || '';
+		holder.removeAttr('loaded').empty();
+		if (stat === 'evaluation' || !stat) { return; }
+		appointmentStatsOpen(stats, stat);
+	});
+}
 
 function centreViewWriter(response) { 
 	// windowMaker decides for itself whether the app's window is already on the

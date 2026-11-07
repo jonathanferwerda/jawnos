@@ -171,6 +171,18 @@ like($app_back, qr/appSectionGrabber\(app, 'stats'/,
 	'the first press fetches the readings');
 like($app_back, qr/function appointmentStatsShow\(/,
 	'one helper turns the selected header and its panel');
+like($app_back, qr/function appointmentStatsReload\(/,
+	'a loaded panel has one reload path');
+like($app_back, qr/appointmentStatsReload\(app\);/,
+	'a save reloads the readings');
+my ($stats_reload) = $app_back =~ /(function appointmentStatsReload\(app\) \{.*?\n\})/s;
+ok($stats_reload, 'the reload helper is one function');
+like($stats_reload, qr/holder\.removeAttr\('loaded'\)\.empty\(\)/,
+	'the old snapshot is dropped before the new read');
+like($stats_reload, qr/appointmentStatsOpen\(stats, stat\)/,
+	'a panel that is showing is fetched again in place');
+like($stats_reload, qr/if \(stat === 'evaluation' \|\| !stat\) \{ return; \}/,
+	'an evaluation view only drops the snapshot for the next press');
 
 my $messages = read_file("$root/public/js/manager/websocket/01_message_handler.js");
 like($messages, qr/jawnosTimePreviewPaintApp\(app\)/,
