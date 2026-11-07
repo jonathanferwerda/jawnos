@@ -34,6 +34,10 @@ $db->query('create table sync_log (id integer primary key autoincrement, '
 	. 'scope text, additional text, ost text)');
 $db->query('create table notes (uuid text, app text, text text, timestamp text, '
 	. 'server_time text, ost text)');
+$db->query('create table appointments (uuid text, app text, timestamp text, '
+	. 'server_time text, ost text)');
+$db->query('create table continent (uuid text, app text, timestamp text, '
+	. 'server_time text, ost text)');
 my @st = stat($dbfile);
 $gb::database_holder = {
 	server_time => &subs::rightNow(),
@@ -279,5 +283,24 @@ $db->query('insert into notes (uuid, app, text, timestamp, server_time, ost) '
 Manager::deletion_performer(encode_json([ { table => 'notes', uuid => 'note-2' } ]));
 is(scalar @{ &subs::db_query("select * from notes where uuid = 'note-2'")->hashes }, 0,
 	'a legacy uuid/table deletion still removes the row');
+
+# ---------------------------------------- a readings-only app retirement
+# The old web Weather and the new Weather UI share an app key, so retiring the
+# old readings must not take the app's settings with them.
+$db->query('insert into appointments (uuid, app, timestamp, server_time) '
+	. 'values (?,?,?,?)', 'weather-old-1', 'weather', '100', '100');
+$db->query('insert into continent (uuid, app, timestamp, server_time) '
+	. 'values (?,?,?,?)', 'weather-old-1', 'weather', '100', '100');
+$db->query('insert into settings (app, setting, value, server_time, device) '
+	. 'values (?,?,?,?,?)', 'weather', 'locations', '[]', '300', $device);
+Manager::deletion_performer(encode_json([
+	{ table => 'appointments', app => 'weather', scope => 'appointments' },
+]));
+is(scalar @{ &subs::db_query("select * from appointments where app = 'weather'")->hashes }, 0,
+	'the old readings leave the app');
+is(scalar @{ &subs::db_query("select * from continent where app = 'weather'")->hashes }, 0,
+	'and their place rows');
+is(scalar @{ setting_rows('weather', 'locations') }, 1,
+	'while the app settings the new UI uses stay');
 
 done_testing();

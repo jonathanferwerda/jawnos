@@ -396,6 +396,16 @@ sub deletion_performer($json) {
 			elsif ( $deletion->{'scope'} eq 'vacuum' ) {
 				&subs::vacuum_app($deletion->{'app'});
 			}
+			elsif ( $deletion->{'scope'} eq 'appointments' ) {
+				# A readings-only retirement: the app's records go, its settings
+				# stay. The Weather app key also holds the new UI's places, so a
+				# vacuum would retire more than the old web readings.
+				my $app = $deletion->{'app'};
+				if (defined $app && length $app) {
+					&subs::db_query('delete from appointments where app = ?', $app);
+					&subs::db_query('delete from continent where app = ?', $app);
+				}
+			}
 			elsif ( $deletion->{'scope'} eq 'file' ) {
 				my $extra = eval { return decode_json $deletion->{'additional'} } || {};
 				my $file_uuid = $deletion->{'file_uuid'} || $extra->{'file_uuid'};
