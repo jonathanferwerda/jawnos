@@ -699,7 +699,11 @@ void wifi_start() {
     password = String((const char *)config["password"]);
     multi.addAP(ssid.c_str(), password.c_str());
   }
-  if (multi.run() == WL_CONNECTED && config["ssid"] != "" && config["password"] != "") {
+  // A bare association is not a usable link: DHCP may not have answered yet,
+  // and a board on 0.0.0.0 cannot reach the house. Keep the AP up and let
+  // wifi_supervise retry rather than claiming the network is up.
+  bool linked = (multi.run() == WL_CONNECTED && config["ssid"] != "" && config["password"] != "");
+  if (linked && wifi_addressed()) {
     server.begin();
     jawnos_mdns_start();
     Serial.println("WiFi connected");
@@ -729,6 +733,7 @@ void wifi_start() {
     }
   }
   else {
+    if (linked) { Serial.println("[wifi] associated but no IP address; DHCP did not complete"); }
     wifiState = "disconnected";
     Serial.println("no wifi connected");
     WiFi.mode(WIFI_AP);

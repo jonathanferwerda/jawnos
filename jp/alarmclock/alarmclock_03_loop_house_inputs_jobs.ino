@@ -351,12 +351,31 @@ void request_time() {
   lastTimeSync = millis();
 }
 
+// A joined link is only usable once DHCP has handed it an address. The CYW43
+// can report WL_CONNECTED while localIP() is still 0.0.0.0 - the association is
+// up, the lease is not - and treating that as a successful join dropped the
+// provisioning AP and then returned early on every later tick, so the board sat
+// on the network with no address and no way back in.
+bool wifi_addressed() {
+  return WiFi.status() == WL_CONNECTED && !(WiFi.localIP() == IPAddress(0, 0, 0, 0));
+}
+
+// How long an address-less association may persist before it is torn down so
+// DHCP runs again. wifi_supervise ticks every 10s, so six ticks is a minute.
+static const int DHCP_RETRY_TICKS = 6;
+
 // A successful join: drop the provisioning AP and bring mDNS and the clock up
 // on the network we just rejoined. Do not switch to WIFI_STA here: the join
 // often happens in AP_STA after the provisioning AP came up, and changing the
 // mode at that moment drops the station it just established. The AP is off;
 // leaving the mode as it is keeps the link.
 void wifi_join_done() {
+  if (!wifi_addressed()) {
+    // No lease, so nothing here can reach the house. Keep the AP up and stay
+    // disconnected so wifi_supervise keeps retrying.
+    wifiState = "disconnected";
+    return;
+  }
   WiFi.softAPdisconnect(true);
   wifiState = "connected";
   wifiDownTicks = 0;
@@ -375,7 +394,7 @@ void wifi_join_done() {
 void wifi_supervise() {
   bool has_creds = config["ssid"] != "" && config["password"] != "";
 
-  if (WiFi.status() == WL_CONNECTED) {
+  if (wifi_addressed()) {
     wifiDownTicks = 0;
     if (wifiState != "connected") { wifi_join_done(); }
     return;
@@ -396,8 +415,16 @@ void wifi_supervise() {
       Serial.println("[wifi] router away; AP up while retrying");
     }
   }
+  // Associated but still 0.0.0.0: the AP is up, so every DHCP_RETRY_TICKS
+  // tear the association down and let the join below run a fresh DHCP. A link
+  // with no address cannot dial the house, and without this the board held it
+  // forever.
+  if (WiFi.status() == WL_CONNECTED && (wifiDownTicks % DHCP_RETRY_TICKS) == 0) {
+    Serial.println("[wifi] associated but no address; rejoining for a lease");
+    WiFi.disconnect();
+  }
   if (wifiDownTicks >= 3 && (wifiDownTicks % 3 == 0)) {
-    if (multi.run() == WL_CONNECTED) { wifi_join_done(); }
+    if (multi.run() == WL_CONNECTED && wifi_addressed()) { wifi_join_done(); }
   }
 }
 
