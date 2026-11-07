@@ -49,6 +49,7 @@ function weatherBind() {
 	var $w = $('.wind[app="weather"]');
 	if (!$w.length || $w.data('weather_bound')) { return; }
 	$w.data('weather_bound', 1);
+	weatherDeleteState();
 	$w.on('change', '#weather_device', function() {
 		$w.find('#weather_lat').val('');
 		$w.find('#weather_lon').val('');
@@ -60,6 +61,9 @@ function weatherBind() {
 	});
 	$w.on('click', '#weather_location_delete', function() {
 		weatherLocationDelete($w.find('#weather_device').val(), this, '#weather_status');
+	});
+	$w.on('click', '#weather_location_anchor', function() {
+		weatherLocationAnchor($w.find('#weather_device').val(), this, '#weather_status');
 	});
 	$w.on('click', '#weather_refresh', function() { weatherLoad(true); });
 	$w.on('click', '#weather_browser', function() { weatherBrowser(); });
@@ -112,7 +116,10 @@ function weatherLocationDelete(uuid, button, statusSelector) {
 					weatherLoad(true);
 				}
 				weatherDeleteState();
-				$w.find(statusSelector).text(jawnosT('Location deleted.'));
+				var n = response.deleted_readings || 0;
+				$w.find(statusSelector).text(n
+					? jawnosT('Location and its readings deleted.')
+					: jawnosT('Location deleted.'));
 			},
 			error: function() {
 				$w.find(statusSelector).text(jawnosT('The location was not deleted.'));
@@ -121,10 +128,48 @@ function weatherLocationDelete(uuid, button, statusSelector) {
 	});
 }
 
+// Anchor keeps the place recording after the phone leaves. It is a fact on the
+// place record, so the scheduled pass reads it even when no device is there.
+function weatherLocationAnchor(uuid, button, statusSelector) {
+	var $w = $('.wind[app="weather"]').last();
+	uuid = uuid || '';
+	statusSelector = statusSelector || '#weather_status';
+	if (uuid.indexOf('loc:') !== 0) {
+		$w.find(statusSelector).text(jawnosT('Choose a place to anchor.'));
+		return;
+	}
+	var $opt = $w.find('#weather_device option:selected');
+	var anchor = $opt.attr('data-anchor') === '1' ? 0 : 1;
+	$.ajax({
+		url: '/manager/weather/location/anchor',
+		type: 'POST',
+		data: { uuid: uuid.slice(4), anchor: anchor },
+		dataType: 'json',
+		success: function(response) {
+			if (!response || response.error) {
+				$w.find(statusSelector).text((response && response.error) || jawnosT('The place was not anchored.'));
+				return;
+			}
+			$opt.attr('data-anchor', response.anchor ? 1 : 0);
+			weatherDeleteState();
+			$w.find(statusSelector).text(response.anchor
+				? jawnosT('Recording here even when you leave.')
+				: jawnosT('Recording only while you are here.'));
+		},
+		error: function() {
+			$w.find(statusSelector).text(jawnosT('The place was not anchored.'));
+		}
+	});
+}
+
 function weatherDeleteState() {
 	var $w = $('.wind[app="weather"]').last();
 	var value = $w.find('#weather_device').val() || '';
 	$w.find('#weather_location_delete').prop('disabled', value.indexOf('loc:') !== 0);
+	var anchor = $w.find('#weather_device option:selected').attr('data-anchor') === '1';
+	$w.find('#weather_location_anchor')
+		.prop('disabled', value.indexOf('loc:') !== 0)
+		.text(anchor ? jawnosT('Anchored') : jawnosT('Anchor'));
 	$w.find('#weather_automation_location, #weather_measure_location').each(function() {
 		var id = $(this).attr('id');
 		var chosen = $(this).val() || '';

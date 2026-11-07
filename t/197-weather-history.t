@@ -184,6 +184,29 @@ ok(length subs::weather_day_key(1700000000000), 'a timestamp has a day key');
 	is($charlottetown->{'label'}, 'Charlottetown Weather', 'a device at a known place uses that place');
 }
 
+# --- a place's readings are the ones tagged with it -------------------------
+{
+	my $now = 1794010000000;
+	my $rows = [
+		{ app => 'weather_station', timestamp => $now - 3600000, measures => Mojo::JSON::encode_json([{ ts => '' . ($now - 3600000), temperature => '10', place => 'loc:warwick', location => 'dev:phone' }]) },
+		{ app => 'weather_station', timestamp => $now - 3600000, measures => Mojo::JSON::encode_json([{ ts => '' . ($now - 3600000), temperature => '20', place => 'loc:sarnia', location => 'dev:phone' }]) },
+		{ app => 'weather_station', timestamp => $now - 3600000, measures => Mojo::JSON::encode_json([{ ts => '' . ($now - 3600000), temperature => '5' }]) },
+	];
+	no warnings 'redefine';
+	local *subs::rightNow = sub { $now };
+	local *subs::db_query = sub { return bless { rows => $rows }, 'FakeResult' };
+	my $warwick = subs::weather_history_hourly('weather_station', 24, 'loc:warwick');
+	is(scalar @{$warwick}, 1, 'one hour for the place');
+	is($warwick->[0]{'temperature'}, 7.5, 'the place keeps its reading and the place-less house reading');
+	is($warwick->[0]{'readings'}, 2, 'and not another place at the same moment');
+	my $sarnia = subs::weather_history_hourly('weather_station', 24, 'loc:sarnia');
+	is($sarnia->[0]{'temperature'}, 12.5, 'Sarnia keeps its own reading and the place-less one');
+	my $agg = subs::weather_history_aggregate($rows, { location => 'loc:sarnia' });
+	my ($day) = @{ $agg->{'days'} };
+	is($day->{'high'}, 20, 'the daily view reads only the place it was asked for');
+	is($day->{'count'}, 2, 'with the place-less house reading as the second temperature');
+}
+
 # --- wiring ------------------------------------------------------------------
 my $loader = read_file("$root/lib/JawnOS/Domain/Loader.pm");
 like($loader, qr/JawnOS::Domain::WeatherHistory' for qw\([^)]*weather_history_build/, 'the history module is mapped');

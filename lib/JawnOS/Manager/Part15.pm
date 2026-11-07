@@ -69,6 +69,10 @@ sub appt_measure_writer($c,$data) {
 	my $value = $data->{'value'};
 	my $remote_address = $data->{'remote_address'};
 	my $location = $data->{'location'};
+	# The observer tags a reading with the physical place it belongs to, so
+	# History and a place's deletion can find it even when the rule key is a
+	# device that travels.
+	my $place = $data->{'place'};
 	my $setting_only = $c->param('setting_only');
 	my $uuid = $data->{'uuid'};
 	my $measure_uuid = md5_sum ($app . '-' . $timestamp) . '-' . md5_sum $timestamp . $app . $measure . $value . $uuid;
@@ -110,6 +114,7 @@ sub appt_measure_writer($c,$data) {
 		}
 		$app_measure = { $measure => $value, ts => $timestamp };
 		$app_measure->{'location'} = $location if defined $location && length $location;
+		$app_measure->{'place'} = $place if defined $place && length $place;
 
 		$appt_measure->{$measure}->{'value'} = $value;
 
@@ -135,6 +140,7 @@ sub appt_measure_writer($c,$data) {
 			$app_measure->{'uuid'} = $measure_uuid;
 			$app_measure->{'ts'} = $timestamp || &subs::rightNow();
 			$app_measure->{'location'} = $location if defined $location && length $location;
+			$app_measure->{'place'} = $place if defined $place && length $place;
 			my $ca = &subs::db_select('appointments', undef, { uuid => $uuid, app => $app })->hashes->[0];
 			$source_warranty = $ca->{'warranty'} if $ca && defined $ca->{'warranty'} && length $ca->{'warranty'};
 			my $car = eval { return decode_json $ca->{'measures'} } || [];
@@ -146,6 +152,7 @@ sub appt_measure_writer($c,$data) {
 			$app_measure->{'uuid'} = $measure_uuid;
 			$app_measure->{'ts'} = &subs::rightNow();
 			$app_measure->{'location'} = $location if defined $location && length $location;
+			$app_measure->{'place'} = $place if defined $place && length $place;
 			my $car = [];
 			push @{$car}, $app_measure;
 			my $jcar = encode_json $car;

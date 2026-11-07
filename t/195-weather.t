@@ -432,6 +432,12 @@ is(scalar @{ subs::weather_automation_matches($rules, 'Partly Cloudy') }, 0, 'a 
 	local *subs::cache_set = sub { 1 };
 	local *subs::db_query = sub { bless { rows => [] }, 'FakeResult' };
 	local *subs::db_select = sub { bless { rows => [] }, 'FakeResult' };
+	local *subs::db_query = sub {
+		my ($q) = @_;
+		return bless { rows => [ { value => $store{'setting|weather|locations'} } ] }, 'FakeResult'
+			if ($q // '') =~ /setting = 'locations'/ && $store{'setting|weather|locations'};
+		return bless { rows => [] }, 'FakeResult';
+	};
 	local *subs::controller_builder = sub { bless {}, 'FakeController' };
 	local *Manager::appt_measure_writer = sub {
 		my ($c, $data) = @_;
@@ -789,6 +795,9 @@ is(subs::weather_rule_location_normalize(undef), '', 'no location is the old glo
 	local *subs::signatorial_designer = sub { 'phone' };
 	local *subs::rightNow = sub { $now };
 	local *subs::db_query = sub {
+		my ($q) = @_;
+		return bless { rows => [ { value => Mojo::JSON::encode_json([{ uuid => 'cottage', name => 'cottage', lat => 45, lon => -79 }]) } ] }, 'FakeResult'
+			if ($q // '') =~ /setting = 'locations'/;
 		return bless { rows => [
 			{ signatorial => 'phone', latitude => '43.45', longitude => '-80.49', accuracy => '5', server_time => '' . $now, label => 'Phone' },
 			{ signatorial => 'table', latitude => '43.50', longitude => '-80.40', accuracy => '9', server_time => '' . ($now - 1000), label => 'table' },
@@ -796,8 +805,6 @@ is(subs::weather_rule_location_normalize(undef), '', 'no location is the old glo
 	};
 	local *subs::setting_grabber = sub {
 		my ($q) = @_;
-		return Mojo::JSON::encode_json([{ uuid => 'cottage', name => 'cottage', lat => 45, lon => -79 }])
-			if $q->{'app'} eq 'weather' && $q->{'setting'} eq 'locations';
 		return undef;
 	};
 	my $options = subs::weather_location_options();
@@ -868,6 +875,12 @@ is(subs::weather_rule_location_normalize(undef), '', 'no location is the old glo
 		return 1;
 	};
 	local *subs::random_string_creator = sub { 'locuuid1234' };
+	local *subs::db_query = sub {
+		my ($q) = @_;
+		return bless { rows => [ { value => $store{'setting|weather|locations'} } ] }, 'FakeResult'
+			if ($q // '') =~ /setting = 'locations'/ && $store{'setting|weather|locations'};
+		return bless { rows => [] }, 'FakeResult';
+	};
 	my $saved = subs::weather_location_save('Cottage', 43.45, -80.49);
 	is($saved->{'uuid'}, 'locuuid1234', 'a saved location gets a uuid');
 	is(subs::weather_location_find('locuuid1234')->{'name'}, 'Cottage', 'and can be found by it');
@@ -895,6 +908,12 @@ is(subs::weather_rule_location_normalize(undef), '', 'no location is the old glo
 		return 1;
 	};
 	local *subs::random_string_creator = sub { 'locuuid' . (++$n) };
+	local *subs::db_query = sub {
+		my ($q) = @_;
+		return bless { rows => [ { value => $store{'setting|weather|locations'} } ] }, 'FakeResult'
+			if ($q // '') =~ /setting = 'locations'/ && $store{'setting|weather|locations'};
+		return bless { rows => [] }, 'FakeResult';
+	};
 	subs::weather_location_save('Cottage', 45, -79);
 	subs::weather_location_save('Camp', 46, -80);
 	my $deleted = subs::weather_location_delete('locuuid1');
@@ -1179,6 +1198,12 @@ is(subs::weather_name_is_coordinate(''), 0, 'an empty name is not a coordinate e
 		return Mojo::JSON::encode_json({ '46.23,-63.10' => 'Charlottetown' }) if $q->{'setting'} eq 'place_names';
 		return undef;
 	};
+	local *subs::db_query = sub {
+		my ($q) = @_;
+		return bless { rows => [ { value => $locs } ] }, 'FakeResult'
+			if ($q // '') =~ /setting = 'locations'/;
+		return bless { rows => [] }, 'FakeResult';
+	};
 	my $labels = subs::weather_location_labels();
 	is($labels->{'a'}, 'Cottage', 'a place the person named keeps that name');
 	is($labels->{'b'}, 'Charlottetown', 'a coordinate name reads as the provider place');
@@ -1196,6 +1221,12 @@ is(subs::weather_name_is_coordinate(''), 0, 'an empty name is not a coordinate e
 	no warnings 'redefine';
 	local *subs::rightNow = sub { $now };
 	local *subs::random_string_creator = sub { 'newrule' };
+	local *subs::db_query = sub {
+		my ($q) = @_;
+		return bless { rows => [ { value => $store{'setting|weather|locations'} } ] }, 'FakeResult'
+			if ($q // '') =~ /setting = 'locations'/ && $store{'setting|weather|locations'};
+		return bless { rows => [] }, 'FakeResult';
+	};
 	local *subs::setting_grabber = sub {
 		my ($q) = @_;
 		return $store{ 'setting|' . $q->{'app'} . '|' . $q->{'setting'} };
@@ -1228,6 +1259,167 @@ is(subs::weather_name_is_coordinate(''), 0, 'an empty name is not a coordinate e
 	my $locs = Mojo::JSON::decode_json($store{'setting|weather|locations'});
 	is($locs->[0]{'name'}, 'Kitchener', 'and a coordinate-named saved place takes the name');
 	is($locs->[0]{'uuid'}, 'abc', 'keeping its uuid');
+}
+
+# --- a fix becomes a place you can anchor or delete --------------------------
+{
+	my %store;
+	no warnings 'redefine';
+	local *subs::rightNow = sub { 1794020000000 };
+	local *subs::setting_grabber = sub {
+		my ($q) = @_;
+		return $store{ 'setting|' . $q->{'app'} . '|' . $q->{'setting'} };
+	};
+	local *subs::setting_setter = sub {
+		my ($q) = @_;
+		$store{ 'setting|' . $q->{'app'} . '|' . $q->{'setting'} } = $q->{'value'};
+		return 1;
+	};
+	local *subs::random_string_creator = sub { 'fallbackplace' };
+	local *subs::db_query = sub {
+		my ($q) = @_;
+		return bless { rows => [ { value => $store{'setting|weather|locations'} } ] }, 'FakeResult'
+			if ($q // '') =~ /setting = 'locations'/ && $store{'setting|weather|locations'};
+		return bless { rows => [] }, 'FakeResult';
+	};
+	my $place = subs::weather_location_for_fix(43.0023, -81.9419, 'Lambton Shores', { create => 1, seen => 1794020000000 });
+	ok($place, 'a fix becomes a place');
+	is($place->{'name'}, 'Lambton Shores', 'named by the provider');
+	is($place->{'auto'}, 1, 'marked automatic');
+	is($place->{'anchor'}, 0, 'and not anchored');
+	my $again = subs::weather_location_for_fix(43.0030, -81.9425, 'Lambton Shores', { create => 1 });
+	is($again->{'uuid'}, $place->{'uuid'}, 'the same ground keeps one place');
+	my $saved = subs::weather_location_save('Warwick', 43.0024, -81.9418, { anchor => 1, auto => 0 });
+	my $warwick = subs::weather_location_find($saved->{'uuid'});
+	is($warwick->{'uuid'}, $place->{'uuid'}, 'naming the ground reuses the auto place');
+	is($warwick->{'name'}, 'Warwick', 'and keeps the name the person gave it');
+	is($warwick->{'anchor'}, 1, 'the place is anchored');
+	my $found = subs::weather_location_for_fix(43.002356, -81.941971, 'Lambton Shores', { create => 0 });
+	is($found->{'uuid'}, $place->{'uuid'}, 'a later fix lands on the anchored place');
+	is($found->{'name'}, 'Warwick', 'and does not take the provider name back');
+	my $toggled = subs::weather_location_anchor($place->{'uuid'}, 0);
+	is($toggled->{'anchor'}, 0, 'the anchor can be turned off again');
+	is(scalar @{ $toggled->{'locations'} }, 1, 'and the place is still listed');
+}
+
+# --- the scheduled pass keeps an anchored place, not its covered phone -------
+{
+	no warnings 'redefine';
+	local *subs::weather_observe_prepare = sub { {} };
+	local *subs::weather_automation_rules = sub { [ { location => '' } ] };
+	local *subs::weather_measure_rules = sub { [] };
+	local *subs::weather_locations = sub { [ { uuid => 'warwick', name => 'Warwick', lat => 43.0023, lon => -81.9419, anchor => 1 } ] };
+	local *subs::weather_device_fixes = sub { [ { signatorial => 'phone', lat => 43.0023, lon => -81.9419 } ] };
+	my $keys = subs::weather_rule_locations();
+	is_deeply($keys, ['loc:warwick'], 'the anchored place keeps its pass and the covered phone is not doubled');
+	local *subs::weather_device_fixes = sub { [ { signatorial => 'phone', lat => 42.97, lon => -82.40 } ] };
+	$keys = subs::weather_rule_locations();
+	is_deeply($keys, ['loc:warwick', 'dev:phone'], 'a phone away from the anchor records its own place');
+}
+
+# --- a reading carries the place, and an anchored place is written as itself -
+{
+	my %store;
+	my %cache;
+	my @written;
+	no warnings 'redefine';
+	local *subs::rightNow = sub { 1794020000000 };
+	local *subs::weather_observe_leader = sub { 1 };
+	local *subs::weather_observe_prepare = sub { {} };
+	local *subs::weather_automation_rules = sub { [] };
+	local *subs::weather_measure_rules = sub { [] };
+	local *subs::setting_grabber = sub {
+		my ($q) = @_;
+		return $store{ 'setting|' . $q->{'app'} . '|' . $q->{'setting'} };
+	};
+	local *subs::setting_setter = sub {
+		my ($q) = @_;
+		$store{ 'setting|' . $q->{'app'} . '|' . $q->{'setting'} } = $q->{'value'};
+		return 1;
+	};
+	local *subs::cache_get = sub {
+		my ($q) = @_;
+		return $cache{ join('|', $q->{'app'}, $q->{'context'}, $q->{'subcontext'} // '') };
+	};
+	local *subs::cache_set = sub {
+		my ($q, $v) = @_;
+		$cache{ join('|', $q->{'app'}, $q->{'context'}, $q->{'subcontext'} // '') } = $v;
+		return 1;
+	};
+	local *subs::controller_builder = sub { bless {}, 'FakeController' };
+	local *Manager::appt_measure_writer = sub {
+		my ($c, $data) = @_;
+		push @written, { %{$data} };
+		return 'measure-uuid';
+	};
+	local *subs::db_select = sub { bless { rows => [] }, 'FakeResult' };
+	local *subs::db_query = sub {
+		my ($q) = @_;
+		return bless { rows => [ { value => $store{'setting|weather|locations'} } ] }, 'FakeResult'
+			if ($q // '') =~ /setting = 'locations'/ && $store{'setting|weather|locations'};
+		return bless { rows => [] }, 'FakeResult';
+	};
+	$store{'setting|weather|locations'} = Mojo::JSON::encode_json([
+		{ uuid => 'warwick', name => 'Warwick', lat => 43.0023, lon => -81.9419, anchor => 1, auto => 0 },
+	]);
+	my $r = subs::weather_observe_record({
+		current => { condition => 'Rain', temperature => 7 },
+		location_name => 'Lambton Shores', lat => 43.0023, lon => -81.9419,
+	}, { location => 'dev:phone', force => 1 });
+	is($r->{'ok'}, 1, 'the anchored reading is recorded');
+	is($written[0]{'place'}, 'loc:warwick', 'the reading carries the anchored place');
+	is($written[0]{'location'}, 'loc:warwick', 'and is written as the place, not the phone');
+	is($cache{'weather|observe|last'}{'place_key'}, 'loc:warwick', 'the last observation points History at the place');
+
+	$store{'setting|weather|locations'} = Mojo::JSON::encode_json([
+		{ uuid => 'sarnia', name => 'Sarnia', lat => 42.97, lon => -82.40, anchor => 0, auto => 1 },
+	]);
+	@written = ();
+	$r = subs::weather_observe_record({
+		current => { condition => 'Cloudy', temperature => 12 },
+		location_name => 'Sarnia', lat => 42.97, lon => -82.40,
+	}, { location => 'dev:phone', force => 1 });
+	is($r->{'ok'}, 1, 'the visiting reading is recorded');
+	is($written[0]{'place'}, 'loc:sarnia', 'it carries the place it was taken at');
+	is($written[0]{'location'}, 'dev:phone', 'the rule key stays the phone for a place that is not anchored');
+	is($cache{'weather|observe|last'}{'place_key'}, 'loc:sarnia', 'and History follows the visiting place');
+}
+
+# --- deleting a place takes its readings with it ----------------------------
+{
+	my %store;
+	my @tombstoned;
+	no warnings 'redefine';
+	local *subs::setting_grabber = sub {
+		my ($q) = @_;
+		return $store{ 'setting|' . $q->{'app'} . '|' . $q->{'setting'} };
+	};
+	local *subs::setting_setter = sub {
+		my ($q) = @_;
+		$store{ 'setting|' . $q->{'app'} . '|' . $q->{'setting'} } = $q->{'value'};
+		return 1;
+	};
+	$store{'setting|weather|locations'} = Mojo::JSON::encode_json([
+		{ uuid => 'sarnia', name => 'Sarnia', lat => 42.97, lon => -82.40, auto => 1 },
+	]);
+	local *subs::db_query = sub {
+		my ($q) = @_;
+		return bless { rows => [ { value => $store{'setting|weather|locations'} } ] }, 'FakeResult'
+			if ($q // '') =~ /setting = 'locations'/ && $store{'setting|weather|locations'};
+		return bless { rows => [
+			{ uuid => 'row1', measures => Mojo::JSON::encode_json([{ condition => 'Rain', place => 'loc:sarnia', location => 'dev:phone' }]) },
+			{ uuid => 'row2', measures => Mojo::JSON::encode_json([{ condition => 'Rain', location => 'loc:sarnia' }]) },
+			{ uuid => 'row3', measures => Mojo::JSON::encode_json([{ condition => 'Rain', place => 'loc:other' }]) },
+		] }, 'FakeResult' if ($q // '') =~ /from appointments/;
+		return bless { rows => [] }, 'FakeResult';
+	};
+	local *subs::records_tombstone = sub { push @tombstoned, $_[1]; return 1 };
+	local *subs::cache_get = sub { {} };
+	local *subs::cache_delete = sub { 1 };
+	my $out = subs::weather_location_delete('sarnia');
+	is($out->{'deleted_readings'}, 2, 'the place takes its readings with it');
+	is_deeply(\@tombstoned, ['row1', 'row2'], 'and tombstones each one');
+	is(scalar @{ $out->{'locations'} }, 0, 'the place is gone from the picker');
 }
 
 # --- the one-day history reads hourly ----------------------------------------
@@ -1294,6 +1486,8 @@ like($routes_auto, qr{/manager/weather/location\b}, 'the saved-location route ex
 like($routes_auto, qr{/manager/weather/measure_rule\b}, 'the measurement-rule route exists');
 like($controller_auto, qr/sub action_52018\b/, 'the saved-location action exists');
 like($controller_auto, qr/sub action_52019\b/, 'the measurement-rule action exists');
+like($routes_auto, qr{/manager/weather/location/anchor\b}, 'the anchor route exists');
+like($controller_auto, qr/sub action_52021\b/, 'and its action');
 like($controller_auto, qr/weather_location_save/, 'the page saves a location through the domain');
 like($page, qr/id="weather_location_add"/, 'the location dropdown has an Add button');
 like($page, qr/weather_stamp_text/, 'the dropdown uses the new date stamp');
@@ -1366,6 +1560,12 @@ like($controller_auto, qr/sub action_52020\b/, 'and its action');
 like($auto_partial, qr/class="weather_location_delete"/, 'the rule forms offer Delete beside At');
 like($page, qr/id="weather_location_delete"/, 'the toolbar offers Delete too');
 like($weather_js, qr/weatherLocationDelete/, 'the script deletes a saved place');
+like($page, qr/id="weather_location_anchor"/, 'the toolbar offers Anchor');
+like($weather_js, qr/weatherLocationAnchor/, 'the script toggles an anchor');
+like($map_partial, qr/id="weather_map_anchor"/, 'the map offers Keep recording here');
+like($map_js, qr/weather_map_anchor/, 'and sends it with the save');
+like($loader_auto, qr/weather_location_for_fix/, 'the domain loader maps the fix-to-place helper');
+like($loader_auto, qr/weather_location_anchor/, 'and the anchor writer');
 like($weather_js, qr/weatherDateStamp/, 'the day rows carry a month/day/year stamp');
 like($weather_js, qr/weatherDayName/, 'and a weekday name');
 like($weather_js, qr/weatherLoading/, 'the app asks once at a time');

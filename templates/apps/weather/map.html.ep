@@ -2,6 +2,7 @@
 	<div id="weather_map_header" class="weather_controls">
 		<label for="weather_map_name"><%= &subs::ui('Name') %></label>
 		<input id="weather_map_name" placeholder="<%= &subs::ui('Place name (optional)') %>" autocomplete="off">
+		<label class="weather_inline"><input type="checkbox" id="weather_map_anchor"> <%= &subs::ui('Keep recording here') %></label>
 		<button type="button" id="weather_map_save" disabled><%= &subs::ui('Save') %></button>
 		<button type="button" id="weather_map_cancel"><%= &subs::ui('Cancel') %></button>
 		<span id="weather_map_status" class="weather_muted"></span>

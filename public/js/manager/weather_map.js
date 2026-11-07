@@ -24,6 +24,7 @@ function weatherPickerOpen() {
 	}
 	weatherPickerPicked = null;
 	$w.find('#weather_map_name').val('');
+	$w.find('#weather_map_anchor').prop('checked', false);
 	$w.find('#weather_map_save').prop('disabled', true);
 	$w.find('#weather_map_status').text('');
 	$w.find('#weather').addClass('weather_choosing');
@@ -129,6 +130,7 @@ function weatherPickerSave() {
 			name: $.trim($w.find('#weather_map_name').val() || ''),
 			lat: weatherPickerPicked.lat,
 			lon: weatherPickerPicked.lon,
+			anchor: $w.find('#weather_map_anchor').prop('checked') ? 1 : '',
 			timestamp: Date.now()
 		},
 		dataType: 'json',
@@ -169,6 +171,7 @@ function weatherLocationOptions($w, locations, labels) {
 			.val('loc:' + (loc.uuid || ''))
 			.attr('data-lat', loc.lat)
 			.attr('data-lon', loc.lon)
+			.attr('data-anchor', loc.anchor ? 1 : 0)
 			.text(labels[loc.uuid] || loc.name || ''));
 	}
 	if (current) { select.val(current); }

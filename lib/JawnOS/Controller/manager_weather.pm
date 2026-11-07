@@ -209,8 +209,11 @@ sub action_52018 {
 		my $found = eval { &subs::weather_place_lookup($lat, $lon, { fetch => 1, retry => 1 }) } || '';
 		$name = $found if length $found;
 	}
+	my $save_opts = {};
+	$save_opts->{'anchor'} = $c->param('anchor') ? 1 : 0
+		if defined $c->param('anchor') && length $c->param('anchor');
 	my $saved = eval {
-		&subs::weather_location_save($name, $lat, $lon);
+		&subs::weather_location_save($name, $lat, $lon, $save_opts);
 	};
 	if (ref $saved eq 'HASH') {
 		my $labels = eval { &subs::weather_location_labels() } || {};
@@ -245,6 +248,15 @@ sub action_52020 {
 	my $c = shift;
 	my $deleted = eval { &subs::weather_location_delete($c->param('uuid') // '') };
 	$c->render(json => $deleted || { error => &subs::ui('That saved location is gone.') });
+}
+
+# POST /manager/weather/location/anchor
+sub action_52021 {
+	my $c = shift;
+	my $result = eval {
+		&subs::weather_location_anchor($c->param('uuid') // '', $c->param('anchor') ? 1 : 0);
+	};
+	$c->render(json => $result || { error => &subs::ui('That saved location is gone.') });
 }
 
 

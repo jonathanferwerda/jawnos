@@ -19,15 +19,16 @@
 				<option value="<%= $value %>" data-lat="<%= $g->{'lat'} %>" data-lon="<%= $g->{'lon'} %>" data-seen="<%= $seen %>" title="<%= $g->{'devices_text'} %>" <% if ($default eq $value) { %>selected<% } %>><%= $g->{'label'} %><% if (length $seen) { %> — <%= $seen %><% } %></option>
 			<% } %>
 			<% if (@{$locs}) { %>
-				<optgroup label="<%= &subs::ui('Saved locations') %>" data-weather-locations="1">
+				<optgroup label="<%= &subs::ui('Places') %>" data-weather-locations="1">
 					<% foreach my $loc ( @{$locs} ) { %>
-						<option value="loc:<%= $loc->{'uuid'} %>" data-lat="<%= $loc->{'lat'} %>" data-lon="<%= $loc->{'lon'} %>"><%= $labels->{ $loc->{'uuid'} } // $loc->{'name'} %></option>
+						<option value="loc:<%= $loc->{'uuid'} %>" data-lat="<%= $loc->{'lat'} %>" data-lon="<%= $loc->{'lon'} %>" data-anchor="<%= $loc->{'anchor'} ? 1 : 0 %>"><%= $labels->{ $loc->{'uuid'} } // $loc->{'name'} %></option>
 					<% } %>
 				</optgroup>
 			<% } %>
 		</select>
 		<button type="button" id="weather_location_add"><%= &subs::ui('Add') %></button>
 		<button type="button" id="weather_location_delete" disabled><%= &subs::ui('Delete') %></button>
+		<button type="button" id="weather_location_anchor" disabled><%= &subs::ui('Anchor') %></button>
 		<button type="button" id="weather_refresh"><%= &subs::ui('Refresh') %></button>
 		<button type="button" id="weather_browser"><%= &subs::ui('Use browser location') %></button>
 		<span id="weather_status"></span>

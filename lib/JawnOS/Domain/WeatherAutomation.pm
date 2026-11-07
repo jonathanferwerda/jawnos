@@ -25,6 +25,7 @@ no warnings 'once';
 
 use Mojo::JSON qw(decode_json encode_json);
 use Mojo::UserAgent;
+use Mojo::Util qw(md5_sum);
 
 our $log;
 
@@ -818,13 +819,24 @@ sub weather_rule_locations() {
 		if (length $location) { push @keys, $location unless $seen{$location}++; }
 		else { $global = 1; }
 	}
+	# An anchored place is a station the house keeps, wherever the phones are.
+	foreach my $loc (@{ &weather_locations() }) {
+		my $uuid = $loc->{'uuid'} // '';
+		next unless $loc->{'anchor'} && $uuid =~ /^[A-Za-z0-9_-]+$/;
+		my $key = 'loc:' . $uuid;
+		push @keys, $key unless $seen{$key}++;
+	}
 	if ($global) {
 		my $fixes = eval { &subs::weather_device_fixes(24 * 60 * 60 * 1000) } || [];
 		my ($fix) = @{$fixes};
 		my $sig = $fix ? ($fix->{'signatorial'} // '') : '';
 		if ($sig =~ /^[A-Za-z0-9_-]+$/) {
 			my $key = "dev:$sig";
-			push @keys, $key unless $seen{$key}++;
+			# A device standing at an anchored (or rule-named) place is already
+			# read by that place; recording the device too would duplicate it.
+			my $place = &weather_location_for_fix($fix->{'lat'}, $fix->{'lon'}, '', { create => 0 });
+			my $covered = $place && $seen{'loc:' . ($place->{'uuid'} // '')};
+			push @keys, $key unless $covered || $seen{$key}++;
 		}
 	}
 	return \@keys;
@@ -834,7 +846,15 @@ sub weather_rule_locations() {
 # A saved location is an app fact on the Weather app: the picker lists it beside
 # the machines with a GPS fix, and the data route resolves `loc:<uuid>`.
 sub weather_locations() {
-	my $raw = eval { decode_json(&subs::setting_grabber({ app => 'weather', setting => 'locations' }) // '') };
+	# Places are a house fact, not a machine's: read the newest list any
+	# machine stored, so the house server observes an anchor a phone added.
+	my $row = eval {
+		&subs::db_query(
+			"select value from settings where app = 'weather' and setting = 'locations' "
+			. "and value is not null and value != '' order by cast(server_time as integer) desc limit 1"
+		)->hashes->[0];
+	};
+	my $raw = eval { decode_json($row ? ($row->{'value'} // '') : '') };
 	return ref $raw eq 'ARRAY' ? [ grep { ref $_ eq 'HASH' } @{$raw} ] : [];
 }
 
@@ -844,7 +864,70 @@ sub weather_location_find($uuid) {
 	return $location;
 }
 
-sub weather_location_save($name, $lat, $lon) {
+# A place the observer creates from a fix gets a stable key: two machines that
+# arrive at the same ground name the same place instead of racing a random id.
+sub weather_place_auto_uuid($lat, $lon) {
+	return 'p' . substr(md5_sum(sprintf('%.2f,%.2f', $lat, $lon)), 0, 20);
+}
+
+# The place a fix belongs to. A saved place within five kilometres is that
+# place; a new fix can create one, which is what makes a stay somewhere a place
+# the person can later find in the picker and delete. An anchored place keeps
+# its name and its readings even when the phone leaves.
+sub weather_location_for_fix($lat, $lon, $name = '', $opts = {}) {
+	$opts ||= {};
+	return undef unless defined $lat && defined $lon;
+	my $limit = $opts->{'km'} || 5;
+	my $locations = &weather_locations();
+	my ($best, $best_km);
+	foreach my $loc (@{$locations}) {
+		next unless defined $loc->{'lat'} && defined $loc->{'lon'};
+		my $km = eval { &subs::weather_distance_km($lat, $lon, $loc->{'lat'}, $loc->{'lon'}) };
+		next unless defined $km;
+		if (!defined $best_km || $km < $best_km) {
+			$best = $loc;
+			$best_km = $km;
+		}
+	}
+	$name = '' unless defined $name;
+	$name =~ s/^\s+|\s+$//g;
+	if ($best && $best_km <= $limit) {
+		my $changed = 0;
+		# A place the person named stays named; an auto place takes the
+		# provider's newer name instead of the coordinate it started with.
+		if (length $name && $best->{'auto'}
+			&& (!length($best->{'name'} // '') || &weather_name_is_coordinate($best->{'name'} // ''))) {
+			$best->{'name'} = substr($name, 0, 80);
+			$changed = 1;
+		}
+		&subs::setting_setter({ app => 'weather', setting => 'locations', value => encode_json $locations })
+			if $changed;
+		return $best;
+	}
+	return undef unless $opts->{'create'};
+	$name = sprintf('%.4f, %.4f', $lat, $lon) unless length $name;
+	my $uuid = (defined $opts->{'uuid'} && $opts->{'uuid'} =~ /^[A-Za-z0-9_-]+$/)
+		? $opts->{'uuid'}
+		: &weather_place_auto_uuid($lat, $lon);
+	if (grep { ($_->{'uuid'} // '') eq $uuid } @{$locations}) {
+		$uuid = &subs::random_string_creator(22);
+	}
+	my $place = {
+		uuid => $uuid,
+		name => substr($name, 0, 80),
+		lat => 0 + $lat,
+		lon => 0 + $lon,
+		auto => 1,
+		anchor => 0,
+	};
+	$place->{'seen'} = 0 + $opts->{'seen'} if defined $opts->{'seen'};
+	push @{$locations}, $place;
+	&subs::setting_setter({ app => 'weather', setting => 'locations', value => encode_json $locations });
+	return $place;
+}
+
+sub weather_location_save($name, $lat, $lon, $opts = {}) {
+	$opts ||= {};
 	return undef unless defined $lat && defined $lon
 		&& "$lat" =~ /^-?\d+(?:\.\d+)?$/ && "$lon" =~ /^-?\d+(?:\.\d+)?$/
 		&& $lat >= -90 && $lat <= 90 && $lon >= -180 && $lon <= 180;
@@ -859,17 +942,61 @@ sub weather_location_save($name, $lat, $lon) {
 	my ($existing) = grep {
 		sprintf('%.4f,%.4f', $_->{'lat'} // 0, $_->{'lon'} // 0) eq $key
 	} @{$locations};
+	# A map tap a few metres from an auto-created place is that place: keep one
+	# record, so naming a place does not leave a second entry beside it.
+	unless ($existing) {
+		my ($near, $near_km);
+		foreach my $loc (@{$locations}) {
+			next unless defined $loc->{'lat'} && defined $loc->{'lon'};
+			my $km = eval { &subs::weather_distance_km($lat, $lon, $loc->{'lat'}, $loc->{'lon'}) };
+			next unless defined $km && $km <= 1;
+			if (!defined $near_km || $km < $near_km) {
+				$near = $loc;
+				$near_km = $km;
+			}
+		}
+		$existing = $near;
+	}
 	my $uuid;
 	if ($existing) {
 		$uuid = $existing->{'uuid'};
 		$existing->{'name'} = $name;
+		$existing->{'anchor'} = $opts->{'anchor'} ? 1 : 0 if exists $opts->{'anchor'};
+		$existing->{'auto'} = $opts->{'auto'} ? 1 : 0 if exists $opts->{'auto'};
+		$existing->{'seen'} = 0 + $opts->{'seen'} if defined $opts->{'seen'};
 	}
 	else {
-		$uuid = &subs::random_string_creator(22);
-		push @{$locations}, { uuid => $uuid, name => $name, lat => 0 + $lat, lon => 0 + $lon };
+		$uuid = (defined $opts->{'uuid'} && $opts->{'uuid'} =~ /^[A-Za-z0-9_-]+$/)
+			? $opts->{'uuid'}
+			: &subs::random_string_creator(22);
+		push @{$locations}, {
+			uuid => $uuid,
+			name => $name,
+			lat => 0 + $lat,
+			lon => 0 + $lon,
+			anchor => ($opts->{'anchor'} ? 1 : 0),
+			auto => ($opts->{'auto'} ? 1 : 0),
+			(defined $opts->{'seen'} ? (seen => 0 + $opts->{'seen'}) : ()),
+		};
 	}
 	&subs::setting_setter({ app => 'weather', setting => 'locations', value => encode_json $locations });
 	return { uuid => $uuid, locations => $locations };
+}
+
+sub weather_location_anchor($uuid, $anchor) {
+	return undef unless defined $uuid && $uuid =~ /^[A-Za-z0-9_-]+$/;
+	my $locations = &weather_locations();
+	my ($place) = grep { ($_->{'uuid'} // '') eq $uuid } @{$locations};
+	return undef unless $place;
+	$place->{'anchor'} = $anchor ? 1 : 0;
+	&subs::setting_setter({ app => 'weather', setting => 'locations', value => encode_json $locations });
+	my $labels = &weather_location_labels();
+	return {
+		uuid => $uuid,
+		anchor => $place->{'anchor'} ? 1 : 0,
+		locations => $locations,
+		labels => $labels,
+	};
 }
 
 # Delete a saved place. A rule that named it keeps its key so nothing silently
@@ -881,8 +1008,42 @@ sub weather_location_delete($uuid) {
 	return undef unless grep { ($_->{'uuid'} // '') eq $uuid } @{$locations};
 	my @kept = grep { ($_->{'uuid'} // '') ne $uuid } @{$locations};
 	&subs::setting_setter({ app => 'weather', setting => 'locations', value => encode_json \@kept });
+	# A place's readings leave with it. The observer tags each measure with
+	# `place`; readings recorded before places existed used `location`.
+	my $key = 'loc:' . $uuid;
+	my $rows = eval {
+		&subs::db_query(
+			"select uuid, measures from appointments where app = 'weather_station' "
+			. "and measures is not null and measures like ?",
+			'%' . $key . '%'
+		)->hashes;
+	} || [];
+	my $deleted = 0;
+	foreach my $row (@{$rows}) {
+		my $list = eval { decode_json($row->{'measures'} // '[]') } || [];
+		my $hit = 0;
+		foreach my $measure (@{$list}) {
+			next unless ref $measure eq 'HASH';
+			next unless (($measure->{'place'} // '') eq $key || ($measure->{'location'} // '') eq $key);
+			$hit = 1;
+			last;
+		}
+		next unless $hit;
+		$deleted++ if eval { &subs::records_tombstone('weather_station', $row->{'uuid'}); 1 };
+	}
+	# The last observation must not keep History pointed at a place that is gone.
+	my $last = eval { &subs::cache_get({ app => 'weather', context => 'observe', subcontext => 'last' }) } || {};
+	if (($last->{'place_key'} // '') eq $key) {
+		eval { &subs::cache_delete({ app => 'weather', context => 'observe', subcontext => 'last' }) };
+	}
+	eval { &subs::cache_delete({ app => 'weather', context => 'history' }) };
 	my $labels = &weather_location_labels();
-	return { uuid => $uuid, locations => \@kept, labels => $labels };
+	return {
+		uuid => $uuid,
+		locations => \@kept,
+		labels => $labels,
+		deleted_readings => $deleted,
+	};
 }
 
 # ---- the observation --------------------------------------------------------
@@ -915,7 +1076,38 @@ sub weather_observe_record($weather, $opts) {
 	my $measure_rules = &weather_measure_rules();
 	my $last = eval { &cache_get({ app => 'weather', context => 'observe', subcontext => 'last' }) } || {};
 	my $now = &rightNow();
-	my $signature = $location . '|' . join('|', map { $_ . '=' . $values->{$_} } sort keys %{$values});
+	# Tag the reading with the physical place it belongs to. A saved or anchored
+	# place is itself; a device's fix finds or creates the place it is standing
+	# on, so a stay somewhere becomes a place the person can see and delete.
+	my $place;
+	my $place_key = '';
+	if ($location =~ /^loc:([A-Za-z0-9_-]+)$/) {
+		$place = &weather_location_find($1);
+		$place_key = $place ? 'loc:' . $place->{'uuid'} : '';
+	}
+	elsif ($location =~ /^dev:([A-Za-z0-9_-]+)$/) {
+		my ($wlat, $wlon) = ($weather->{'lat'}, $weather->{'lon'});
+		if (!defined $wlat || !defined $wlon) {
+			my $fix = eval { &weather_device_fix($1) };
+			($wlat, $wlon) = ($fix->{'lat'}, $fix->{'lon'}) if $fix;
+		}
+		$place = &weather_location_for_fix($wlat, $wlon, $place_name, { create => 1, seen => $now });
+		$place_key = $place ? 'loc:' . $place->{'uuid'} : '';
+	}
+	# A place that is anchored, or that a rule names, is written as itself: its
+	# readings and its rules do not depend on which phone happens to be there.
+	my $place_rule = 0;
+	if (length $place_key) {
+		foreach my $rule (@{ $condition_rules || [] }, @{ $measure_rules || [] }) {
+			next unless ref $rule eq 'HASH';
+			if (&weather_rule_location_normalize($rule->{'location'}) eq $place_key) {
+				$place_rule = 1;
+				last;
+			}
+		}
+	}
+	$location = $place_key if length $place_key && ($place_rule || ($place && $place->{'anchor'}));
+	my $signature = $location . '|' . $place_key . '|' . join('|', map { $_ . '=' . $values->{$_} } sort keys %{$values});
 	my $changed = (($last->{'signature'} // '') ne $signature);
 	my $due = !$last->{'at'} || $now - $last->{'at'} >= 30 * 60 * 1000;
 	return {
@@ -940,6 +1132,7 @@ sub weather_observe_record($weather, $opts) {
 				value => $values->{$measure},
 				timestamp => $now,
 				location => $location,
+				(length $place_key ? (place => $place_key) : ()),
 				(defined $uuid ? (uuid => $uuid) : ()),
 				skip_actions => ($leader ? 0 : 1),
 			});
@@ -978,7 +1171,8 @@ sub weather_observe_record($weather, $opts) {
 		condition => ($values->{'condition'} // ''),
 		at => $now,
 		changed_at => $changed ? $now : ($last->{'changed_at'} || $now),
-		place => ($weather->{'location_name'} // ''),
+		place => ($place_name || $weather->{'location_name'} || ''),
+		place_key => $place_key,
 		location => $location,
 	});
 	return {
@@ -989,6 +1183,8 @@ sub weather_observe_record($weather, $opts) {
 		rules => $fired,
 		values => $values,
 		location => $location,
+		place => $place_name,
+		place_key => $place_key,
 		at => $now,
 		uuid => $uuid,
 		leader => $leader,
@@ -1099,9 +1295,11 @@ sub weather_observe_row_signature($row) {
 		? $row->{'measures'}
 		: eval { decode_json($row->{'measures'} // '[]') };
 	return undef unless ref $list eq 'ARRAY' && @{$list};
-	my ($location, @parts);
+	my ($location, $place, @parts);
 	foreach my $measure (@{$list}) {
 		next unless ref $measure eq 'HASH';
+		$place //= $measure->{'place'}
+			if defined $measure->{'place'} && length $measure->{'place'};
 		$location //= $measure->{'location'}
 			if defined $measure->{'location'} && length $measure->{'location'};
 		my @fields = sort grep { $_ ne 'ts' && $_ ne 'uuid' && $_ ne 'location' } keys %{$measure};
@@ -1109,8 +1307,10 @@ sub weather_observe_row_signature($row) {
 		push @parts, join('&', map { $_ . '=' . (defined $measure->{$_} ? $measure->{$_} : '') } @fields);
 	}
 	return undef unless @parts;
+	# Two machines at one place are one place even when their rule keys are
+	# different devices; the physical place is the group duplicates fold into.
 	return {
-		location => ($location // ''),
+		location => ($place || $location || ''),
 		signature => join('|', sort @parts),
 	};
 }

@@ -146,10 +146,12 @@ sub weather_history_sources($station_location = '') {
 			app => 'weather_station',
 			label => &weather_history_source_label('weather_station', {}, $place),
 			city => $place,
-			region => '',
+			# The provider still calls the ground Lambton Shores when the person
+			# calls it Warwick; keep that name for matching the forecast.
+			region => ($last->{'place'} // ''),
 			url => '',
 			id => '',
-			location => ($last->{'location'} // ''),
+			location => $station_location,
 			readings => $station->{'n'} || 0,
 			show_city => 0,
 			from => &weather_day_key($station->{'from_ts'}),
@@ -210,8 +212,14 @@ sub weather_history_aggregate($rows, $opts = {}) {
 			next unless ref $m eq 'HASH';
 			# A reading with no location predates per-location observations: keep it
 			# (the house's history) instead of hiding it behind the newest fix.
-			next if $want_location && $app eq $location_app
-				&& length($m->{'location'} // '') && ($m->{'location'} // '') ne $want_location;
+			if ($want_location && $app eq $location_app) {
+				my $place = $m->{'place'} // '';
+				my $loc = $m->{'location'} // '';
+				# A reading from before places were recorded belongs to the
+				# house's history, not to any one place.
+				next if (length $place || length $loc)
+					&& $place ne $want_location && $loc ne $want_location;
+			}
 			my $ts = $m->{'ts'} || $base_ts;
 			my $day = &weather_day_key($ts);
 			next unless length $day;
@@ -361,9 +369,9 @@ sub weather_history_build($opts) {
 sub weather_history_cache_key($station_location) {
 	my $suffix = $station_location // '';
 	$suffix =~ s/[^A-Za-z0-9_-]//g;
-	# v4: sources are named for their place, so a v3 entry would keep the old
-	# "Weather station" label until it expired.
-	return 'v4' . (length $suffix ? '_' . $suffix : '');
+	# v5: readings carry a physical place, so a v4 entry would keep the old
+	# per-device grouping and labels until it expired.
+	return 'v5' . (length $suffix ? '_' . $suffix : '');
 }
 
 # A one-day read is hourly, not daily: the last 24 hours of one source's
@@ -390,8 +398,12 @@ sub weather_history_hourly($app, $hours, $location = '') {
 		next unless ref $list eq 'ARRAY';
 		foreach my $measure (@{$list}) {
 			next unless ref $measure eq 'HASH';
-			next if $want_location && $app eq 'weather_station'
-				&& length($measure->{'location'} // '') && ($measure->{'location'} // '') ne $want_location;
+			if ($want_location && $app eq 'weather_station') {
+				my $place = $measure->{'place'} // '';
+				my $loc = $measure->{'location'} // '';
+				next if (length $place || length $loc)
+					&& $place ne $want_location && $loc ne $want_location;
+			}
 			my $ts = $measure->{'ts'} || $base;
 			next unless defined $ts && "$ts" =~ /^\d+$/ && $ts >= $from;
 			my $hour = int($ts / 3600000) * 3600000;
@@ -446,7 +458,7 @@ sub weather_history_pick_source($sources, $city, $region) {
 sub weather_history_read($opts) {
 	$opts ||= {};
 	my $last = eval { &cache_get({ app => 'weather', context => 'observe', subcontext => 'last' }) } || {};
-	my $station_location = $last->{'location'} // '';
+	my $station_location = $last->{'place_key'} || $last->{'location'} || '';
 	my $cache_key = &weather_history_cache_key($station_location);
 	my $history = eval { &cache_get({ app => 'weather', context => 'history', subcontext => $cache_key }) };
 	if (!$history || ref $history ne 'HASH' || !$history->{'built_at'}
