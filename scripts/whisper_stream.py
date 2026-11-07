@@ -224,7 +224,12 @@ class Segmenter:
 
     def margin(self):
         floor = self.floor if self.floor > 0 else 655.0
-        return max(floor * 0.5, 491.0)
+        # The phone's Hands-Free link is narrowband and its own silence sits at
+        # RMS 10-15, while a caller's words arrive at 200-3300 with dips between
+        # them: a 0.015 floor (491) never opened a segment, so a real call went
+        # untranscribed. 0.006 is the same margin the SCO helper's voice gate
+        # uses for this link.
+        return max(floor * 0.5, 200.0)
 
     def onset(self):
         return self.margin() * 1.5
