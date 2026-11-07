@@ -759,7 +759,11 @@ sub volume_relay {
 		my $rms = $named
 			? &remote_machine_lister({ signatorial => $named })
 			: ($target eq 'all' ? &remote_machine_lister({ connection => 'active' }) : []);
-		foreach my $rm ( @{ ref $rms eq 'ARRAY' ? $rms : [] } ) {
+		# remote_machine_lister hands back a Mojo::Collection when it reads the
+		# rows (db_select->hashes), not a plain arrayref. Guarding this with
+		# ref eq 'ARRAY' threw the whole roster away, so a machine with no mixer
+		# (the phone) found no peers and answered "no mixer" for every tap.
+		foreach my $rm ( ref $rms ? @{$rms} : () ) {
 			next unless ref $rm eq 'HASH';
 			my $sig = $rm->{'signatorial'} || '';
 			next if !$sig || $sig eq $me;

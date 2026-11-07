@@ -15,6 +15,7 @@ use Test::More;
 use File::Slurp qw(read_file);
 use File::Temp qw(tempfile);
 use Mojo::SQLite;
+use Mojo::Collection;
 use RepoSource;
 use JawnOSTest;
 
@@ -76,6 +77,7 @@ my @lister_calls;
 my @roster;
 my @ua_args;
 my $subprocessor_calls = 0;
+my $lister_as = 'array';
 my $ua;
 my $get_level = 40;
 my $set_ok = 1;
@@ -91,7 +93,9 @@ my $set_ok = 1;
 		my @rows = @roster;
 		@rows = grep { ($_->{'connection'} || '') eq $args->{'connection'} } @rows if $args->{'connection'};
 		@rows = grep { ($_->{'signatorial'} || '') eq $args->{'signatorial'} } @rows if $args->{'signatorial'};
-		return [ @rows ];
+		# Production returns db_select->hashes, a Mojo::Collection; the plain
+		# arrayref here is only the convenient case.
+		return $lister_as eq 'collection' ? Mojo::Collection->new(@rows) : [ @rows ];
 	};
 	local *subs::remote_useragent_maker = sub {
 		my ($a) = @_;
@@ -153,6 +157,25 @@ my $set_ok = 1;
 	is($subprocessor_calls, $before_sub, 'an inline volume fan-out does not fork');
 	is(scalar @{$ua->{'posted'}}, 4, 'and still posts to both peers');
 	ok(@ua_args && !grep({ !$_->{'no_probe'} } @ua_args), 'with the probe-free agent');
+
+	# --- the phone: no mixer, and the roster as a Mojo::Collection -----------
+	# remote_machine_lister returns db_select->hashes in production, which is a
+	# Mojo::Collection. A ref eq 'ARRAY' guard once discarded it, so the phone
+	# found no peers and every Vol tap stopped at "no mixer".
+	@set = ();
+	@ua_args = ();
+	$ua = FakeUA->new(ok => 1);
+	$get_level = undef;
+	$lister_as = 'collection';
+	$r = subs::volume_relay({ id => 'phone-1', to => 'all', data => { delta => 2 } }, { inline => 1 });
+	$lister_as = 'array';
+	$get_level = 40;
+	is_deeply($r->{'forwarded'}, [ 'peer-a', 'peer-b' ], 'a collection roster still names every peer');
+	is(scalar @{$ua->{'posted'}}, 2, 'and a machine with no mixer dials both of them');
+	is($r->{'ok'}, 1, 'so the tap is a success, not "no mixer"');
+	ok(!defined $r->{'error'}, 'and no error is reported to the watch');
+	is($ua->{'posted'}[0]->{'form'}{'delta'}, 2, 'the unresolved delta is forwarded as it came');
+	is_deeply(\@set, [], 'the machine without a mixer moves nothing locally');
 
 	# --- a named machine: no local apply, one dial ---------------------------
 	@set = ();
@@ -256,6 +279,8 @@ like($ble2, qr/vol_app.*?volume_relay.*?volume_result/s,
 	'a Vol+/Vol- button flushed from the queue is routed as a volume tap');
 like($pay2, qr/\$form\{'delta'\} = \$delta/,
 	'a no-mixer homebase forwards the delta to a peer with a sink');
+unlike($pay2, qr/ref \$rms eq 'ARRAY'/,
+	'the peer roster is not thrown away by a plain-array guard (the lister is a Mojo::Collection)');
 like($remote, qr/\$data->\{'no_probe'\}.*?peer_live_manager/s,
 	'the peer agent can skip its live/secure probe for a timed fan-out');
 my @ble_inline = $ble2 =~ /inline => 1/g;
