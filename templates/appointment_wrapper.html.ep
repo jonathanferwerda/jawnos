@@ -237,10 +237,10 @@
 
 			<% if ($from ne 'store') { %>
 			<%# the appointment's bottom line: the evaluation it last left, and the
-			    shelf and the day/week/month/year readings that sit beside it. The
-			    headers are one row; only the chosen panel is open, and the
-			    evaluation keeps the open panel it had %>
-			<% my $app_stats = &subs::appointment_statistics_for($a); %>
+			    shelf and the day/week/month/year readings behind the other headers.
+			    The headers are one row; only the chosen panel is open, the
+			    evaluation is drawn with the window, and the rest are fetched the
+			    first time a header asks for one %>
 			<% my $app_evaluation = &subs::evaluation_report_for($a); %>
 			<div class="appointment_stats" app="<%= $a %>">
 				<div class="appointment_stats_headers" role="tablist">
@@ -254,66 +254,7 @@
 				<div class="appointment_stats_panel appointment_evaluation_zone" stat="evaluation">
 					<%= include 'apps/evaluation', evaluation => $app_evaluation, app => $a, controls => 1 %>
 				</div>
-				<div class="appointment_stats_panel" stat="inv" style="display:none;">
-					<% my $inv = $app_stats->{'inventory'} || {}; %>
-					<% if (scalar @{ $inv->{'units'} || [] }) { %>
-						<table class="appointment_stats_table">
-							<tr>
-								<th><%= &subs::format_name($app_stats->{'item'} || $a) %></th>
-								<th><%= &subs::ui('In') %></th>
-								<th><%= &subs::ui('Out') %></th>
-								<th><%= &subs::ui('On hand') %></th>
-							</tr>
-							<% foreach my $u ( @{$inv->{'units'}} ) { %>
-								<tr>
-									<td><%= $u->{'unit'} || &subs::ui('each') %></td>
-									<td><%= &subs::numeric_formatter($u->{'in'}) %></td>
-									<td><%= &subs::numeric_formatter($u->{'out'}) %></td>
-									<td><%= &subs::numeric_formatter($u->{'on_hand'}) %></td>
-								</tr>
-							<% } %>
-						</table>
-					<% } else { %>
-						<div class="appointment_stats_empty"><%= &subs::ui('No stock') %></div>
-					<% } %>
-				</div>
-				<div class="appointment_stats_panel" stat="time" style="display:none;">
-					<table class="appointment_stats_table">
-						<tr><th></th><% foreach my $p ( @{$app_stats->{'periods'}} ) { %><th><%= $p->{'label'} %></th><% } %></tr>
-						<tr><td><%= &subs::ui('Duration') %></td><% foreach my $p ( @{$app_stats->{'periods'}} ) { %><td><%= &subs::duration_sayer(($p->{'duration'} || 0) / 1000) %></td><% } %></tr>
-					</table>
-				</div>
-				<div class="appointment_stats_panel" stat="count" style="display:none;">
-					<table class="appointment_stats_table">
-						<tr><th></th><% foreach my $p ( @{$app_stats->{'periods'}} ) { %><th><%= $p->{'label'} %></th><% } %></tr>
-						<tr><td><%= &subs::ui('Count') %></td><% foreach my $p ( @{$app_stats->{'periods'}} ) { %><td><%= &subs::numeric_formatter($p->{'count'}) %></td><% } %></tr>
-					</table>
-				</div>
-				<div class="appointment_stats_panel" stat="money" style="display:none;">
-					<table class="appointment_stats_table">
-						<tr><th></th><% foreach my $p ( @{$app_stats->{'periods'}} ) { %><th><%= $p->{'label'} %></th><% } %></tr>
-						<tr><td>$</td><% foreach my $p ( @{$app_stats->{'periods'}} ) { %><td><%= &subs::price_formatter($p->{'money'} || 0) %></td><% } %></tr>
-					</table>
-				</div>
-				<div class="appointment_stats_panel" stat="meas" style="display:none;">
-					<% my $measure_names = $app_stats->{'measure_names'} || []; %>
-					<% if (scalar @{$measure_names}) { %>
-						<table class="appointment_stats_table">
-							<tr><th></th><% foreach my $p ( @{$app_stats->{'periods'}} ) { %><th><%= $p->{'label'} %></th><% } %></tr>
-							<% foreach my $m ( @{$measure_names} ) { %>
-								<tr>
-									<td><%= &subs::format_name($m->{'name'}) %> <span class="appointment_stats_calc"><%= &subs::format_name($m->{'calc'}) %></span></td>
-									<% foreach my $p ( @{$app_stats->{'periods'}} ) { %>
-										<% my $reading = $p->{'measures'}->{$m->{'name'}}; %>
-										<td><% if ($reading) { %><%= &subs::numeric_formatter($reading->{'value'}) . ($m->{'unit'} ? ' ' . $m->{'unit'} : '') %><% } else { %>-<% } %></td>
-									<% } %>
-								</tr>
-							<% } %>
-						</table>
-					<% } else { %>
-						<div class="appointment_stats_empty"><%= &subs::ui('No measures') %></div>
-					<% } %>
-				</div>
+				<div class="app_section_placeholder" app="<%= $a %>" section="stats"></div>
 			</div>
 			<% } %>
 		</div>

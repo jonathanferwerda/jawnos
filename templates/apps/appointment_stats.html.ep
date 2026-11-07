@@ -1,0 +1,64 @@
+<%# The appointment window's readings, fetched by appSectionGrabber the first
+    time a header asks for one. The evaluation stays in the wrapper, because its
+    headline is what the window opens on. %>
+<% my $stats = $app_stats || {}; %>
+<div class="appointment_stats_panel" stat="inv" style="display:none;">
+	<% my $inv = $stats->{'inventory'} || {}; %>
+	<% if (scalar @{ $inv->{'units'} || [] }) { %>
+		<table class="appointment_stats_table">
+			<tr>
+				<th><%= &subs::format_name($stats->{'item'} || $app) %></th>
+				<th><%= &subs::ui('In') %></th>
+				<th><%= &subs::ui('Out') %></th>
+				<th><%= &subs::ui('On hand') %></th>
+			</tr>
+			<% foreach my $u ( @{$inv->{'units'}} ) { %>
+				<tr>
+					<td><%= $u->{'unit'} || &subs::ui('each') %></td>
+					<td><%= &subs::numeric_formatter($u->{'in'}) %></td>
+					<td><%= &subs::numeric_formatter($u->{'out'}) %></td>
+					<td><%= &subs::numeric_formatter($u->{'on_hand'}) %></td>
+				</tr>
+			<% } %>
+		</table>
+	<% } else { %>
+		<div class="appointment_stats_empty"><%= &subs::ui('No stock') %></div>
+	<% } %>
+</div>
+<div class="appointment_stats_panel" stat="time" style="display:none;">
+	<table class="appointment_stats_table">
+		<tr><th></th><% foreach my $p ( @{$stats->{'periods'} || []} ) { %><th><%= $p->{'label'} %></th><% } %></tr>
+		<tr><td><%= &subs::ui('Duration') %></td><% foreach my $p ( @{$stats->{'periods'} || []} ) { %><td><%= &subs::duration_sayer(($p->{'duration'} || 0) / 1000) %></td><% } %></tr>
+	</table>
+</div>
+<div class="appointment_stats_panel" stat="count" style="display:none;">
+	<table class="appointment_stats_table">
+		<tr><th></th><% foreach my $p ( @{$stats->{'periods'} || []} ) { %><th><%= $p->{'label'} %></th><% } %></tr>
+		<tr><td><%= &subs::ui('Count') %></td><% foreach my $p ( @{$stats->{'periods'} || []} ) { %><td><%= &subs::numeric_formatter($p->{'count'}) %></td><% } %></tr>
+	</table>
+</div>
+<div class="appointment_stats_panel" stat="money" style="display:none;">
+	<table class="appointment_stats_table">
+		<tr><th></th><% foreach my $p ( @{$stats->{'periods'} || []} ) { %><th><%= $p->{'label'} %></th><% } %></tr>
+		<tr><td>$</td><% foreach my $p ( @{$stats->{'periods'} || []} ) { %><td><%= &subs::price_formatter($p->{'money'} || 0) %></td><% } %></tr>
+	</table>
+</div>
+<div class="appointment_stats_panel" stat="meas" style="display:none;">
+	<% my $measure_names = $stats->{'measure_names'} || []; %>
+	<% if (scalar @{$measure_names}) { %>
+		<table class="appointment_stats_table">
+			<tr><th></th><% foreach my $p ( @{$stats->{'periods'} || []} ) { %><th><%= $p->{'label'} %></th><% } %></tr>
+			<% foreach my $m ( @{$measure_names} ) { %>
+				<tr>
+					<td><%= &subs::format_name($m->{'name'}) %> <span class="appointment_stats_calc"><%= &subs::format_name($m->{'calc'}) %></span></td>
+					<% foreach my $p ( @{$stats->{'periods'} || []} ) { %>
+						<% my $reading = $p->{'measures'}->{$m->{'name'}}; %>
+						<td><% if ($reading) { %><%= &subs::numeric_formatter($reading->{'value'}) . ($m->{'unit'} ? ' ' . $m->{'unit'} : '') %><% } else { %>-<% } %></td>
+					<% } %>
+				</tr>
+			<% } %>
+		</table>
+	<% } else { %>
+		<div class="appointment_stats_empty"><%= &subs::ui('No measures') %></div>
+	<% } %>
+</div>

@@ -77,7 +77,7 @@ ok(!defined help::get('definitely-not-a-topic'), 'an unknown topic does not reso
 my %known_gap = map { $_ => 1 } qw(
 	account coding_chat project
 	app_details app_file app_measure_details app_measures app_transaction
-	appointment_header budget_current_information edit_app evaluation_controls
+	appointment_header appointment_stats budget_current_information edit_app evaluation_controls
 	evaluation_report gallery_album gallery_home ide_files information
 	inventory_info people_person
 );

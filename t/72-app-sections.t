@@ -34,7 +34,9 @@ like($wrapper, qr/class="app_section_placeholder" app="<%= \$a %>" section="meas
 like($routes, qr{\[18101, 'get', '/manager/app_section', 'action_18101'\]},
 	'there is a route for one section');
 like($controller, qr/sub action_18101 \{/, 'the route has an action');
-like($controller, qr{\$section =~ /\^\(\?:details\|measures\)\$/}, 'only the two known sections are served');
+like($controller, qr{\$section =~ /\^\(\?:details\|measures\|stats\)\$/}, 'the known sections are served');
+like($controller, qr/template => 'apps\/appointment_stats'/, 'the stats section draws the bottom line');
+like($controller, qr/&subs::appointment_statistics_for\(\$app\)/, 'the stats section reads the app\'s numbers');
 like($controller, qr/template => 'apps\/app_details'/, 'the details section draws the form');
 like($controller, qr/template => 'apps\/app_measures'/, 'the measures section draws the measures');
 like($controller, qr/&appts_marker_builder\(\$appts\)/, 'the form is built from the same set the window reads');

@@ -1,4 +1,4 @@
-# tests-for: lib/JawnOS/Domain/Appointment2.pm lib/JawnOS/Domain/Loader.pm templates/appointment_wrapper.html.ep public/js/manager/manager/09_app_back.js public/js/manager/websocket/01_message_handler.js
+# tests-for: lib/JawnOS/Domain/Appointment2.pm lib/JawnOS/Domain/Loader.pm lib/JawnOS/Controller/manager_misc.pm templates/appointment_wrapper.html.ep templates/apps/appointment_stats.html.ep public/js/manager/manager/09_app_back.js public/js/manager/websocket/01_message_handler.js
 # covers:    the appointment's bottom line - shelf in/out, and time, count, money and measures for today/week/month/year
 
 use strict;
@@ -140,6 +140,18 @@ like($wrapper, qr/\.appointment_stats_headers \{[^}]*flex-wrap: nowrap/, 'the he
 like($wrapper, qr/class="appointment_stats_panel appointment_evaluation_zone"/,
 	'the evaluation moved into the bottom line');
 like($wrapper, qr/include 'apps\/evaluation'/, 'and it still draws the report');
+like($wrapper, qr/class="app_section_placeholder" app="<%= \$a %>" section="stats"/,
+	'the readings are left to a lazy placeholder');
+unlike($wrapper, qr/class="appointment_stats_panel" stat="inv"/,
+	'the wrapper does not draw the readings panels');
+
+my $stats_template = read_file("$root/templates/apps/appointment_stats.html.ep");
+foreach my $stat ( qw/inv time count money meas/ ) {
+	like($stats_template, qr/stat="\Q$stat\E"/, "the $stat panel is in the fetched partial");
+}
+my $section_controller = read_file("$root/lib/JawnOS/Controller/manager_misc.pm");
+like($section_controller, qr/template => 'apps\/appointment_stats'/,
+	'the app_section route draws the readings from the lazy partial');
 
 foreach my $pair ( [ 'Ago', 'ago' ], [ 'Duration', 'duration' ], [ 'Quantity', 'quantity' ], [ 'Warranty', 'warranty' ], [ 'Note', 'note' ] ) {
 	like($wrapper, qr/placeholder="<%= &subs::ui\('\Q$pair->[0]\E'\) %>"/,
@@ -155,6 +167,10 @@ like($app_back, qr/jawnosTimePreviewPaintApp\(app\)/,
 	'a save asks the ago and warranty readings again');
 like($app_back, qr/\.on\('click', '\.appointment_stats_header'/,
 	'a bottom-line header chooses its panel');
+like($app_back, qr/appSectionGrabber\(app, 'stats'/,
+	'the first press fetches the readings');
+like($app_back, qr/function appointmentStatsShow\(/,
+	'one helper turns the selected header and its panel');
 
 my $messages = read_file("$root/public/js/manager/websocket/01_message_handler.js");
 like($messages, qr/jawnosTimePreviewPaintApp\(app\)/,

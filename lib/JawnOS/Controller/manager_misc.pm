@@ -713,29 +713,38 @@ sub action_7071 {
 
 # GET /manager/app_section
 #
-# The two forms an appointment window carries but does not show - the details
-# (transaction) panel and the app's measures - used to be rendered into every
-# open and left hidden, which was 11 KB of the 42 KB a window costs for a form
-# nobody had asked to see. They are fetched here the first time a control shows
-# them. The set is read the same way the window reads it, markers and all, so the
-# form is the one the window would have drawn.
+# The parts an appointment window carries but does not show - the details
+# (transaction) panel, the app's measures, and the bottom line's shelf and period
+# readings - used to be rendered into every open and left hidden, which was 11 KB
+# of the 42 KB a window costs for a form nobody had asked to see. They are fetched
+# here the first time a control shows them. The details form and the measures are
+# read the same way the window reads them, markers and all, so the form is the one
+# the window would have drawn; the readings need only the app's own numbers.
 sub action_18101 {
 	my $c = shift;
 	my $app = &subs::unformat_name($c->param('app'));
 	my $section = $c->param('section') || '';
-	return $c->render(text => '', status => 400) unless length $app && $section =~ /^(?:details|measures)$/;
+	return $c->render(text => '', status => 400) unless length $app && $section =~ /^(?:details|measures|stats)$/;
 	return $c->render(text => '', status => 403) if &subs::app_hidden_now($app);
-	my $appts = &log_reader({ app => $app, view => 'centre_view' });
-	return $c->render(text => '') unless $appts->{$app};
-	my $markers = (ref $appts->{'__specs'} eq 'HASH') ? ($appts->{'__specs'}->{'markers'} || '') : '';
-	&appts_marker_builder($appts) if $markers ne 'yes';
-	$appts->{$app}->{'setting'}->{'app_measures'} = eval { return decode_json $appts->{$app}->{'setting'}->{'app_measures'} } || {};
 	my $html;
-	if ($section eq 'details') {
-		$html = $c->render_to_string(template => 'apps/app_details', appts => $appts, a => $app, app => {});
+	if ($section eq 'stats') {
+		# the readings do not need the window's appointment set: one pass over
+		# the app's rows and its shelf builds every period the header asked for
+		my $app_stats = &subs::appointment_statistics_for($app);
+		$html = $c->render_to_string(template => 'apps/appointment_stats', app_stats => $app_stats, app => $app);
 	}
 	else {
-		$html = $c->render_to_string(template => 'apps/app_measures', appts => $appts, settings => $appts->{$app}->{'setting'}, a => $app);
+		my $appts = &log_reader({ app => $app, view => 'centre_view' });
+		return $c->render(text => '') unless $appts->{$app};
+		my $markers = (ref $appts->{'__specs'} eq 'HASH') ? ($appts->{'__specs'}->{'markers'} || '') : '';
+		&appts_marker_builder($appts) if $markers ne 'yes';
+		$appts->{$app}->{'setting'}->{'app_measures'} = eval { return decode_json $appts->{$app}->{'setting'}->{'app_measures'} } || {};
+		if ($section eq 'details') {
+			$html = $c->render_to_string(template => 'apps/app_details', appts => $appts, a => $app, app => {});
+		}
+		else {
+			$html = $c->render_to_string(template => 'apps/app_measures', appts => $appts, settings => $appts->{$app}->{'setting'}, a => $app);
+		}
 	}
 	$c->render(text => $html);
 }

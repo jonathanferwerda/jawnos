@@ -55,7 +55,7 @@ Counts only: `perl scripts/agent_help.pl <app>` names every file, route, table, 
 - warehouse (topic warehouse): 1 file(s), 5 route(s)
 - weather (topic weather): 11 file(s), 12 route(s)
 - web (topic web): 2 file(s), 8 route(s)
-- other pages, no topic and no route: account, app_details, app_file, app_measure_details, app_transaction, appointment_header, budget_current_information, coding_chat, evaluation_controls, evaluation_report, gallery_album, gallery_home, ide_files, inventory_info, people_person, project
+- other pages, no topic and no route: account, app_details, app_file, app_measure_details, app_transaction, appointment_header, appointment_stats, budget_current_information, coding_chat, evaluation_controls, evaluation_report, gallery_album, gallery_home, ide_files, inventory_info, people_person, project
 
 ## tables
 

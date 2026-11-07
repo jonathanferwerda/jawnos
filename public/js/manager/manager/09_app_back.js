@@ -308,12 +308,10 @@ function appClearer(app) {
 }
 
 // The bottom line is a row of headers with one panel open at a time. The
-// evaluation is the panel the window opens on; the rest are asked for by their
-// own header.
-$(document).on('click', '.appointment_stats_header', function() {
-	var header = $(this);
-	var stats = header.closest('.appointment_stats');
-	var stat = header.attr('stat') || '';
+// evaluation comes with the window; the readings behind the other headers are
+// fetched the first time one is pressed, so a window nobody reads them from pays
+// nothing for them.
+function appointmentStatsShow(stats, stat) {
 	stats.find('.appointment_stats_header').each(function() {
 		var chosen = ($(this).attr('stat') || '') === stat;
 		$(this).toggleClass('selected', chosen).attr('aria-selected', chosen ? 'true' : 'false');
@@ -321,6 +319,25 @@ $(document).on('click', '.appointment_stats_header', function() {
 	stats.find('.appointment_stats_panel').each(function() {
 		$(this).toggle(($(this).attr('stat') || '') === stat);
 	});
+}
+
+$(document).on('click', '.appointment_stats_header', function() {
+	var header = $(this);
+	var stats = header.closest('.appointment_stats');
+	var stat = header.attr('stat') || '';
+	var app = stats.attr('app') || '';
+	if (stat !== 'evaluation' && !stats.find('.appointment_stats_panel[stat="' + stat + '"]').length) {
+		// a second press while the first is in flight is remembered, so the panel
+		// the person last asked for is the one that opens
+		stats.attr('stats_wanted', stat);
+		appSectionGrabber(app, 'stats', stats, function() {
+			var wanted = stats.attr('stats_wanted') || stat;
+			stats.removeAttr('stats_wanted');
+			appointmentStatsShow(stats, wanted);
+		});
+		return;
+	}
+	appointmentStatsShow(stats, stat);
 });
 
 function centreViewWriter(response) { 
