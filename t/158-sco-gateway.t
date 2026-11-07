@@ -60,6 +60,61 @@ like($controller, qr/\^\[A-Za-z0-9\._-\]\+\\\.wav\$/, 'the recording name is a b
 like(read_file("$repo/perl/President.pl"), qr/perl\/sco\/sco_helper/, 'the master starts the gateway when the helper is built');
 like(read_file("$repo/jawn"), qr/\bsco\.sock\b/, 'the boot wipe keeps the gateway socket');
 
+# The status answer's shape. When the gateway answers, its status is the answer,
+# lines and all; when this machine cannot reach it (no socket, an address that
+# does not dial, a token it refuses) the route must say so. It used to hand back
+# only { ok => 0, error => ... }: no `state`, so the panel read "idle", closed
+# itself, and its empty transcript read as "the caller said nothing".
+{
+	require "$repo/lib/JawnOS/Controller/manager_sco.pm";
+
+	{ package ScoStatusContext;
+	  sub new { return bless {}, shift }
+	  sub param { return undef }
+	  sub render { my ($self, %args) = @_; $self->{'json'} = $args{'json'}; return 1 }
+	}
+	{ package ScoStatusClient;
+	  sub new { my ($class, %args) = @_; return bless { %args }, $class }
+	  sub call { return $_[0]->{'answer'} }
+	  sub where { return $_[0]->{'where'} || '' }
+	}
+
+	my $answer = sub {
+		my ($reply, $where) = @_;
+		no warnings 'redefine';
+		local *Manager::sco_client = sub {
+			return ScoStatusClient->new(answer => $reply, where => $where || '');
+		};
+		my $c = ScoStatusContext->new();
+		Manager::action_52001($c);
+		return $c->{'json'};
+	};
+
+	my $live = {
+		ok => 1, state => 'in_call', call_id => 'call-9', peer => '00:11:22:33:44:55',
+		transcript => [ { who => 'caller', text => 'may i ask whose calling', at => 1, ms => 0 } ],
+		partial => '', transcript_note => '', caller => { name => 'John Smith' },
+	};
+	is_deeply($answer->($live), $live,
+		"the gateway's own status is passed through, lines and all");
+
+	my $bad = $answer->({ ok => 0, error => 'bad token' }, '100.64.0.5:45700');
+	is($bad->{'state'}, 'unreachable', 'a token the gateway refused is an unreachable gateway');
+	is_deeply($bad->{'transcript'}, [], 'with no lines to show');
+	like($bad->{'transcript_note'}, qr/did not answer.*bad token/,
+		'and a note that names the failure, which is what the panel shows');
+	is($bad->{'gateway'}, '100.64.0.5:45700', 'the answer names the gateway that was asked');
+
+	my $gone = $answer->({ ok => 0, error => 'gateway unreachable at 100.64.0.5:45700' }, '100.64.0.5:45700');
+	is($gone->{'state'}, 'unreachable', 'an address that does not dial is unreachable too');
+	like($gone->{'transcript_note'}, qr/unreachable at/, 'and says where it tried');
+
+	my $none = $answer->(undef);
+	is($none->{'state'}, 'unreachable', 'no answer at all is still an answer the panel can show');
+	is($none->{'ok'}, 0, 'and it is not a success');
+	is($none->{'transcript_note'}, 'The gateway did not answer.', 'with the plain sentence when there is no reason');
+}
+
 # ------------------------------------------------------------- the client
 my $dir = tempdir(CLEANUP => 1);
 # The hold music library, in a temp folder: the gateway resolves a chosen track

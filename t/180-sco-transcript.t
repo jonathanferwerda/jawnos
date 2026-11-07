@@ -67,6 +67,12 @@ like($gw->status->{'transcript_note'}, qr/model would not load/,
 	'a reader that fails says why, and the call carries on');
 is(scalar @{ $gw->status->{'transcript'} }, 1, 'an error does not disturb the lines already heard');
 
+# A line the reader timed at 0 ms is a word the caller said: it is kept, and it
+# is not something the panel may treat as "no line yet".
+$gw->_transcript_event({ event => 'line', text => 'mm', ms => 0 });
+is(scalar @{ $gw->status->{'transcript'} }, 2, 'a line timed at 0 ms is kept');
+is($gw->status->{'transcript'}->[1]->{'ms'}, 0, 'with its zero duration, not dropped as missing');
+
 for my $n (1 .. 205) {
 	$gw->_transcript_event({ event => 'line', text => "line $n" });
 }
@@ -246,6 +252,40 @@ like($screening, qr/if \(!window\.JawnPhone\)/,
 	'the phone carrying the call is not offered a redundant Connect me');
 like(read_file("$repo/public/js/manager/websocket/03_watchdog.js"), qr/jawnScreenPoll\(\);.*?wsResync\(\);/s,
 	'and so does a socket that came back');
+
+# The paint path itself, not just its shape. The panel's failures are ordering
+# failures - a line arrived while it was closed, a call ended and another began
+# while the window slept, the gateway's 200-line history dropped its front - and
+# each of them showed up as an empty panel, so source assertions alone would
+# pass while the laptop stayed blank. t/lib/screen_panel_paint.js runs the file's
+# own functions against a stand-in DOM.
+{
+	my $node = $ENV{'JAWNOS_NODE'} || '';
+	if (!$node) {
+		for my $c ('/home/jawn/.local/opt/node/bin/node', '/usr/bin/node', '/usr/local/bin/node') {
+			if (-x $c) { $node = $c; last; }
+		}
+	}
+	SKIP: {
+		skip 'node is not installed', 2 unless $node;
+		my $probe = "$repo/t/lib/screen_panel_paint.js";
+		my $out = `$node $probe $repo/public/js/manager/screening.js 2>&1`;
+		is($? >> 8, 0, 'the panel paints the lines the status holds, not an index it remembers')
+			or diag($out);
+		like($out, qr/^ok 0 failure\(s\)$/m, 'and every paint-path case ran') or diag($out);
+	}
+}
+
+# Without node, what a reader of the source can still check: the old index over
+# the status is gone, a line is identified by its own words (never by how long
+# the reader timed it), and an unreachable gateway has a state of its own.
+like($screening, qr/function jawnScreenLineKey/, 'a line is identified by who, when and what was said');
+unlike($screening, qr/\bline\.ms\b/, 'never by its duration: a line timed at 0 ms is still a line');
+unlike($screening, qr/jawnScreen\.seen/, 'nothing indexes the status by a count this panel remembers');
+like($screening, qr/state === 'unreachable'/,
+	'a gateway that did not answer is its own state, not an idle line');
+like($screening, qr/jawnScreen\.wanted/,
+	'and a screening push is what keeps the panel up for it');
 my $css = read_file("$repo/public/css/manager.css");
 like($css, qr/\.jawn_screening\s*\{[^}]*top:\s*calc\(var\(--taskbar_top_h,\s*0px\)\s*\+\s*16px\)/s,
 	'the panel hangs from the top, below a top taskbar');

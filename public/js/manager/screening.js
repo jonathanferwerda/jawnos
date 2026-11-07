@@ -110,7 +110,7 @@ function jawnScreenRtcPushed(data) {
 
 // ---- the floating panel ---------------------------------------------------
 
-var jawnScreen = { call: '', timer: null, seen: 0, hidden: false, top: 0, last: null };
+var jawnScreen = { call: '', timer: null, drawn: [], hidden: false, top: 0, last: null, wanted: false };
 
 function jawnScreenPanelOpen() {
 	if ($('#jawn_screening').length) { return; }
@@ -149,6 +149,11 @@ function jawnScreenPanelOpen() {
 			.attr('placeholder', jawnosT('Message the caller')))
 		.append($('<button id="jawn_screening_say_send" hint="Send"></button>').text(jawnosT('Send'))));
 	$('body').append(box);
+	// A new box holds no bubbles, whatever this window drew into the one it
+	// just lost (hidden, or the Phone pane owns the view): the next paint
+	// starts from the status's first line, so a transcript that grew while
+	// the panel was down is not skipped.
+	jawnScreen.drawn = [];
 	// The panel hangs from the top edge, like the app's own screening face. The
 	// taskbar offset is in the CSS; a dock on the top edge sits below it and is
 	// tucked, so the bottom of its visible strip is where the panel must start.
@@ -174,7 +179,7 @@ function jawnScreenTopOffset(box) {
 function jawnScreenPanelClose() {
 	$('#jawn_screening').remove();
 	$('#jawn_screening_pill').remove();
-	jawnScreen = { call: '', timer: null, seen: 0, hidden: false, top: 0, last: null };
+	jawnScreen = { call: '', timer: null, drawn: [], hidden: false, top: 0, last: null, wanted: false };
 }
 
 // Hide is a tuck, not an end: the panel folds into a pill on the same edge. A
@@ -214,14 +219,17 @@ function jawnScreenShow() {
 }
 
 function jawnScreenPanelLine(line) {
-	if (!line || !line.text) { return; }
+	if (!line) { return; }
 	var box = $('#jawn_screening_lines');
 	if (!box.length) { return; }
+	// recorded before the text test: a line with no words still holds its place
+	// in the status, and skipping it must not shift the lines after it
+	jawnScreen.drawn.push(jawnScreenLineKey(line));
+	if (!line.text) { return; }
 	$('<div class="jawn_screening_bubble"></div>')
 		.attr('who', line.who || 'caller')
 		.text(line.text)
 		.appendTo(box);
-	jawnScreen.seen++;
 	box.scrollTop(box[0].scrollHeight);
 }
 
@@ -237,23 +245,52 @@ function jawnScreenPanelPartial(text) {
 	box.scrollTop(box[0].scrollHeight);
 }
 
+// A line's own identity, for the prefix test in the paint below: who said it,
+// when, and the words. `ms` is deliberately not part of it - a line the reader
+// timed at 0 ms is still a line the caller said.
+function jawnScreenLineKey(line) {
+	if (!line) { return ''; }
+	return (line.who || 'caller') + '\u001f' + (line.at || 0) + '\u001f' + (line.text || '');
+}
+
 function jawnScreenPanelPaint(res) {
 	if (!res || !$('#jawn_screening').length) { return; }
 	var call = res.call_id || '';
-	if (call && call !== jawnScreen.call) {
+	var lines = res.transcript || [];
+	if (call !== jawnScreen.call) {
 		jawnScreen.call = call;
-		jawnScreen.seen = 0;
+		jawnScreen.drawn = [];
 		$('#jawn_screening_lines').empty();
 	}
-	var lines = res.transcript || [];
-	for (var i = jawnScreen.seen; i < lines.length; i++) { jawnScreenPanelLine(lines[i]); }
+	// What this panel has drawn is a list of the lines themselves, not an index
+	// into the status. The status is bounded at 200 lines and can be another
+	// machine's, so a bare index fell past the end when the oldest line dropped
+	// off the front, when a call ended and the next began while the window
+	// slept, and when an empty call_id kept the old count across two calls: the
+	// panel then drew nothing for the rest of the call. Compare the prefix and
+	// draw the rest.
+	var keep = 0;
+	while (keep < jawnScreen.drawn.length && keep < lines.length
+		&& jawnScreenLineKey(lines[keep]) === jawnScreen.drawn[keep]) { keep++; }
+	if (keep < jawnScreen.drawn.length) {
+		// not the list this panel drew (its front shifted, or another call kept
+		// the same id): start the box over rather than misalign it
+		jawnScreen.drawn = [];
+		keep = 0;
+		$('#jawn_screening_lines').empty();
+	}
+	for (var i = keep; i < lines.length; i++) { jawnScreenPanelLine(lines[i]); }
 	jawnScreenPanelPartial(res.partial || '');
 	var caller = res.caller || {};
 	var who = caller.name || caller.number || '';
 	$('#jawn_screening_peer').text(who
 		? (jawnosT('Call from: ') + who)
 		: (res.peer ? jawnosT('Caller line') + ': ' + res.peer : ''));
-	$('#jawn_screening_note').text(res.transcript_note || '');
+	// the route names the gateway's failure in the note; an empty note would
+	// read as "the caller said nothing"
+	var note = res.transcript_note || '';
+	if (!note && res.state === 'unreachable') { note = jawnosT('The gateway did not answer.'); }
+	$('#jawn_screening_note').text(note);
 	// a message was spoken and the caller has the line: offer the music back
 	$('#jawn_screening_hold').toggle(!!res.hold_paused);
 }
@@ -277,21 +314,30 @@ function jawnScreenPoll() {
 		data: { timestamp: Date.now(), number: jawnScreenCallerNumber() },
 		success: function (res) {
 			var state = (res && res.state) || 'idle';
-			if (state !== 'in_call' && state !== 'done' && state !== 'armed' && state !== 'waiting') {
+			// A gateway this machine could not reach has no state of its own; the
+			// status route names that 'unreachable'. It is not "the line is free": a
+			// panel this device was told to show stays up and says which gateway did
+			// not answer, and the poll keeps asking so the gateway's first real answer
+			// fills the transcript in.
+			var down = (state === 'unreachable');
+			if (!down && state !== 'in_call' && state !== 'done' && state !== 'armed' && state !== 'waiting') {
 				jawnScreenEnd();
 				return;
 			}
 			var live = (state === 'in_call' || state === 'done');
 			// An armed gateway is not a screening, so nothing hunts the screen for
 			// one. A device that hid the panel keeps polling so the pill can name
-			// the caller and go away when the line is free.
-			if (!live && !$('#jawn_screening').length && !$('#jawn_screening_pill').length) { return; }
+			// the caller and go away when the line is free. An unreachable gateway
+			// is chased only when a screening was announced to this device: a house
+			// with no SCO at all must not poll a socket that is not there.
+			if (!live && !$('#jawn_screening').length && !$('#jawn_screening_pill').length
+				&& !(down && jawnScreen.wanted)) { return; }
 			jawnScreen.last = res;
 			if (!jawnScreen.timer) { jawnScreen.timer = setInterval(jawnScreenPoll, 1500); }
 			// A window opened, reloaded or woken while the line is up never saw the
 			// start push; the poll is what puts the panel there. A hidden panel
 			// stays hidden until the person takes it back from the pill.
-			if (live && !jawnScreen.hidden && !$('#jawn_screening').length) {
+			if ((live || (down && jawnScreen.wanted)) && !jawnScreen.hidden && !$('#jawn_screening').length) {
 				jawnScreenPanelOpen();
 				// the Phone app's IVR pane is showing it instead
 				if (!$('#jawn_screening').length) { return; }
@@ -315,7 +361,11 @@ function jawnScreenEnd() {
 // The gateway's announcement: a screening began, or the line is free again.
 function jawnScreenPushed(data) {
 	if (!data) { return; }
-	if (data.state === 'ended') { jawnScreenEnd(); return; }
+	if (data.state === 'ended') { jawnScreen.wanted = false; jawnScreenEnd(); return; }
+	// This device was told a screening is on, even if it cannot reach the gateway
+	// to read it: that is what keeps the panel up (and says why it is empty)
+	// when the status comes back unreachable.
+	jawnScreen.wanted = true;
 	jawnScreenStart();
 }
 

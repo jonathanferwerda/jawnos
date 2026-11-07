@@ -25,12 +25,36 @@ sub sco_render {
 }
 
 # GET /manager/sco/status
+#
+# The gateway's own status, passed through untouched. The one answer this route
+# shapes itself is "no gateway": a client that could not reach its puck (no
+# socket, an address that does not dial, a token the gateway refused) returns
+# only { ok => 0, error => ... }, and a panel that read the missing `state` as
+# idle closed itself and drew no transcript - which reads as "the caller said
+# nothing" when what happened is that this machine could not ask. Naming the
+# failure keeps the panel up and says which machine did not answer.
 sub action_52001 {
 	my $c = shift;
 	my %request = (cmd => 'status');
 	my $number = $c->param('number') || '';
 	$request{'number'} = $number if length $number;
-	$c->render(json => &sco_client()->call(\%request));
+	my $client = &sco_client();
+	my $status = $client->call(\%request);
+	unless (ref $status eq 'HASH' && defined $status->{'state'}) {
+		my $why = ref $status eq 'HASH' ? ($status->{'error'} || '') : '';
+		$status = {
+			%{ ref $status eq 'HASH' ? $status : {} },
+			ok => 0,
+			state => 'unreachable',
+			# an unreachable gateway has no lines to show, and the panel says so
+			transcript => [],
+			partial => '',
+			gateway => $client->where(),
+			transcript_note => &subs::ui('The gateway did not answer')
+				. (length $why ? ': ' . $why : '.'),
+		};
+	}
+	$c->render(json => $status);
 }
 
 # POST /manager/sco/arm
