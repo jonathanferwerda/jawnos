@@ -531,11 +531,15 @@ sub bluetooth_sender {
 # and every later message queues behind it, so the freeze repeats. The homebase
 # checks are cheap; the client and its wait ride a child instead.
 sub bluetooth_sender_async {
-	my $data = shift;
+	my ($data, $opts) = @_;
+	$opts ||= {};
 	return 0 unless $data && $data->{'intent'} && $data->{'chip_id'} && $data->{'edt'};
 	# Already in a child forked for this work: send inline, so this message keeps
 	# its place in that child's run of messages (the words before the audio).
-	if ($gb::subprocessed) {
+	# A caller that passes `fork` wants no such order: a best-effort reply (a
+	# volume_result) must not sit on the BLE listener's read loop for the send
+	# timeout, because every tap behind it waits for the same link.
+	if ($gb::subprocessed && !$opts->{'fork'}) {
 		eval { &bluetooth_sender($data) };
 		return 1;
 	}

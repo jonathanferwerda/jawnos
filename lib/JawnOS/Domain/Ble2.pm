@@ -158,7 +158,7 @@ sub ble_message_processor {
 				chip_id => $chip_id,
 				edt => $edt,
 				message => { type => 'volume_result', data => $result }
-			});
+			}, { fork => 1 });
 		}
 		return;
 	}
@@ -400,7 +400,7 @@ sub ble_message_processor {
 					chip_id => $chip_id,
 					edt => $edt,
 					message => { type => 'volume_result', data => $result }
-				});
+				}, { fork => 1 });
 			}
 			return;
 		}

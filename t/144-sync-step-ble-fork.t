@@ -129,6 +129,14 @@ like( $ble, qr/\$found->\{'ip'\} = \$data->\{'ip'\}/,
 like( $ble, qr/ip => \(\$chip->\{'ip'\} \|\| ''\)/,
 	'and the device row carries it' );
 like( $ble, qr/name => 'ble send', fork => 1/,             'the async BLE send rides a child' );
+# A volume_result is best-effort. The listener runs inside a subprocessor child,
+# where the send used to go inline and wait out the link-supervision timeout:
+# one press every sixteen seconds, with every later tap queued behind it.
+like( $ble, qr/sub bluetooth_sender_async \{.*?\$opts->\{'fork'\}/s,
+	'the async send can be asked to fork even in a child' );
+my $ble2 = read_file("$root/lib/JawnOS/Domain/Ble2.pm");
+my @vol_ack = ( $ble2 =~ /type => 'volume_result'.*?\}, \{ fork => 1 \}\)/gs );
+is( scalar @vol_ack, 2, 'both volume_result replies ride their own child' );
 
 my $notify = read_file("$root/lib/JawnOS/Domain/Notify.pm");
 like( $notify, qr/if \(\$watch_ip\) \{.*?return if \$http_ok;/s,
@@ -147,5 +155,28 @@ my $part36 = read_file("$root/lib/JawnOS/Manager/Part36.pm");
 like( $part36, qr/\$plan_pull && !\$gimme && \(&subs::device_setter\(\) eq 'mobile' \|\| \$mobile_peer\)/,
 	'a mobile pull caps the plan, and so does a pull from a mobile peer' );
 like( $part36, qr/sync_plan_step\(\$plan, 1, \$seen\)/, 'the mobile cap is one table per pass, rotated by seen_at' );
+
+# ---- the fork option, behaviourally ---------------------------------------
+# In a subprocessor child the default is an inline send, to keep a run of
+# messages in order. { fork => 1 } opts out.
+subs::preload('bluetooth_sender_async');
+{
+	no warnings 'redefine';
+	my (@sent, @forked);
+	local *subs::bluetooth_sender = sub { push @sent, $_[0]->{'message'}->{'type'} };
+	local *subs::subprocessor = sub {
+		my ($sub, $params) = @_;
+		push @forked, $params->{'name'};
+		return 1;
+	};
+	local $gb::subprocessed = 1;
+	my $msg = { intent => 'x', chip_id => '1', edt => 'watch',
+		message => { type => 'volume_result' } };
+	subs::bluetooth_sender_async($msg, { fork => 1 });
+	is( scalar @sent, 0, 'a forced fork does not send inline in a child' );
+	is_deeply( \@forked, ['ble send'], 'it hands the send to its own child' );
+	subs::bluetooth_sender_async($msg);
+	is( scalar @sent, 1, 'and the default still sends inline to keep its place' );
+}
 
 done_testing();
