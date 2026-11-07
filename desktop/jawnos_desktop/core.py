@@ -336,7 +336,7 @@ def apply_update(settings):
                 shutil.copy2(os.path.join(dirpath, name), os.path.join(dest, name))
             except OSError:
                 pass
-    for tool in ("jawnosctl", "jawnos-desktop", "jawnos-bt-daemon"):
+    for tool in ("jawnosctl", "jawnos-desktop", "jawnos-qt", "jawnos-bt-daemon"):
         path = os.path.join(DESKTOP_DIR, tool)
         if os.path.exists(path):
             try:

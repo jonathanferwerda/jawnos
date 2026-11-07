@@ -1,7 +1,9 @@
 # WebKitGTK probe — why it failed and what the fence check found
 
-`webkit_probe.py` loads the QA manager in WebKitGTK 4.1, the engine the desktop
-app uses. The QA instance serves HTTPS with a self-signed certificate, so the
+`webkit_probe.py` loads the QA manager in WebKitGTK 4.1, the desktop's fallback
+engine. The default Qt WebEngine view is not driven by this probe yet; it has
+its own `--probe` in `desktop/jawnos-qt` (t/185). The QA instance serves HTTPS
+with a self-signed certificate, so the
 probe has to allow that certificate before the page will load.
 
 ## The bug (fixed)

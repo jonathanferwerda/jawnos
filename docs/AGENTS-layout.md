@@ -51,7 +51,7 @@ Plus `config.json(.example)`, `Makefile.PL`, `README.md`, `LICENSE`, `.gitignore
 | `releases/` | staged Android APKs (gitignored blob store; see App releases above) |
 | `lib/` | `JawnOS.pm` (the app), `JawnOS/Manager.pm` + `JawnOS/Manager/Part*.pm` (package `Manager`; parts lazy via `AUTOLOAD`), `JawnOS/Controller/*` (route actions), `JawnOS/Routes*` (the table), `JawnOS/Domain/*` (package `subs`, lazy via `Domain/Loader.pm`); on `@INC` via `use lib`/`prove -l` |
 | `database/` | `initial.enc`, `schema.sql` |
-| `desktop/` | Linux app: `jawnos_desktop/`, `icons/`, `systemd/`, `wayland/`, entry points `jawnosctl` / `jawnos-desktop` / `jawnos-bt-daemon` |
+| `desktop/` | Linux app: `jawnos_desktop/`, `icons/`, `systemd/`, `wayland/`, entry points `jawnosctl` / `jawnos-desktop` (Qt WebEngine; WebKitGTK fallback) / `jawnos-qt` / `jawnos-bt-daemon` |
 | `docs/` | docs + `screenshots/`; **`AGENTS-notes.md`** (deep notes) |
 | `jp/` | only `alarmclock/` (index + `alarmclock_NN_*.ino` parts) |
 | `jt/` | T-Deck firmware: `jt.ino` (index) + `jt_NN_*.ino` parts, `platformio.ini`, `lv_conf.h`, `utilities.h`, font headers, `boards/`, `data/` (`.pio/`, `build/` generated) |

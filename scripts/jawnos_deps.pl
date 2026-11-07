@@ -273,14 +273,16 @@ my @capabilities = (
 	}
 
 # --- desktop extras (opt-in: --desktop) -------------------------------------
-# The Linux desktop app's embedded view needs WebKitGTK, it decodes media
-# through system GStreamer (without a VA-API plugin, HD video is software-
-# decoded and choppy), and Chat draws SMS emoji with a colour emoji font. These
-# are optional -- a headless server or the phone does not need them -- so a
-# missing extra never fails the check. They are only checked where there is a
-# desktop and a package manager to install them.
+# The Linux desktop app's embedded view needs Qt WebEngine (PySide6), it
+# decodes media through Chromium (Arch) or system GStreamer (the WebKitGTK
+# fallback and the Browse window), and Chat draws SMS emoji with a colour emoji
+# font. These are optional -- a headless server or the phone does not need them
+# -- so a missing extra never fails the check. They are only checked where there
+# is a desktop and a package manager to install them.
 my @desktop = (
-	{ label => 'WebKitGTK 4.1 (embedded view)', check => \&have_webkit,
+	{ label => 'PySide6 Qt WebEngine (desktop view)', check => \&have_qt_webengine,
+	  apt => 'python3-pyside6.qtwebenginewidgets', pacman => 'pyside6 qt6-webengine qt6-wayland', termux => '' },
+	{ label => 'WebKitGTK 4.1 (fallback view and Browse)', check => \&have_webkit,
 	  apt => 'gir1.2-webkit2-4.1', pacman => 'webkit2gtk-4.1', termux => '' },
 	{ label => 'GStreamer VA-API plugin (GPU video decode)', check => \&have_gst_va,
 	  apt => 'gstreamer1.0-vaapi', pacman => 'gst-plugin-va', termux => '' },
@@ -585,6 +587,13 @@ sub have_webkit {
 	my $py = which('python3') || which('python');
 	return 0 unless $py;
 	my $code = 'import gi; gi.require_version("WebKit2", "4.1")';
+	return system("$py -c '$code' >/dev/null 2>&1") == 0 ? 1 : 0;
+}
+
+sub have_qt_webengine {
+	my $py = which('python3') || which('python');
+	return 0 unless $py;
+	my $code = 'import PySide6.QtWebEngineWidgets';
 	return system("$py -c '$code' >/dev/null 2>&1") == 0 ? 1 : 0;
 }
 
@@ -947,11 +956,11 @@ sub freshness_report {
 		push @deb_packages, [ $package, $tool->{'label'} || $tool->{'cmd'} ];
 	}
 	for my $extra (@desktop) {
-		my $package = $extra->{'apt'};
-		next unless defined $package && length $package;
-		next if $seen_deb{$package}++;
-		next unless $want->($extra->{'apt'}, $extra->{'pacman'}, $extra->{'label'});
-		push @deb_packages, [ $package, $extra->{'label'} ];
+		for my $package (split_pkgs($extra->{'apt'})) {
+			next if $seen_deb{$package}++;
+			next unless $want->($package, $extra->{'apt'}, $extra->{'pacman'}, $extra->{'label'});
+			push @deb_packages, [ $package, $extra->{'label'} ];
+		}
 	}
 
 	for my $entry (@deb_packages) {
@@ -1002,11 +1011,11 @@ sub freshness_report {
 		push @arch_packages, [ $package, $tool->{'label'} || $tool->{'cmd'} ];
 	}
 	for my $extra (@desktop) {
-		my $package = $extra->{'pacman'};
-		next unless defined $package && length $package;
-		next if $seen_arch{$package}++;
-		next unless $want->($extra->{'apt'}, $extra->{'pacman'}, $extra->{'label'});
-		push @arch_packages, [ $package, $extra->{'label'} ];
+		for my $package (split_pkgs($extra->{'pacman'})) {
+			next if $seen_arch{$package}++;
+			next unless $want->($package, $extra->{'apt'}, $extra->{'pacman'}, $extra->{'label'});
+			push @arch_packages, [ $package, $extra->{'label'} ];
+		}
 	}
 
 	for my $entry (@arch_packages) {
@@ -1467,8 +1476,8 @@ if ($desktop && ($platform eq 'arch' || $platform eq 'debian')) {
 		print "desktop extras: all present\n";
 	}
 	else {
-		print "desktop extras missing (optional -- the dashboard works without the view,\n";
-		print "video merely decodes in software, and emoji fall back to the system):\n";
+		print "desktop extras missing (optional -- without the Qt view the app falls\n";
+		print "back to WebKitGTK, video decodes in software, and emoji use the system):\n";
 		foreach my $d (@missing_desktop) {
 			printf "  - %-44s (%s)\n", $d->{'label'}, pkg_for($d);
 		}
@@ -1525,7 +1534,7 @@ sub sudo {
 
 {
 	# Core tools and any opted-in desktop extras in one transaction.
-	my @pkgs = grep { defined $_ && $_ ne '' } map { pkg_for($_) } (@missing_tools, @missing_desktop);
+	my @pkgs = split_pkgs(map { pkg_for($_) } (@missing_tools, @missing_desktop));
 	if (@pkgs && defined $local_lib && length $local_lib) {
 		print "Skipping system packages in --local-lib mode: " . join(' ', @pkgs) . "\n";
 	}
@@ -1592,6 +1601,12 @@ sub pkg_for {
 	return $t->{$key} || $t->{'apt'} || $t->{'cmd'};
 }
 
+# A package row may name more than one package (Arch's Qt view wants pyside6
+# and qt6-webengine); split those into separate arguments for pacman/apt.
+sub split_pkgs {
+	return map { split /\s+/, $_ } grep { defined $_ && length $_ } @_;
+}
+
 # The commands this script would run, as a copy/pasteable (or downloadable)
 # shell script. Used by --sh, and by the setup wizard's dependency step.
 sub install_script {
@@ -1601,7 +1616,7 @@ sub install_script {
 	push @lines, '# Generated by scripts/jawnos_deps.pl --sh';
 	push @lines, '';
 
-	my @pkgs = grep { defined $_ && $_ ne '' } map { pkg_for($_) } (@missing_tools, @missing_desktop);
+	my @pkgs = split_pkgs(map { pkg_for($_) } (@missing_tools, @missing_desktop));
 	if (@pkgs && defined $local_lib && length $local_lib) {
 		push @lines, '# system packages skipped: --local-lib installs for this user only';
 		push @lines, '';

@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
-"""jawnos-desktop -- the JawnOS dashboard window.
+"""jawnos-desktop -- the JawnOS desktop window.
 
-The default shell is the WebKitGTK view. The Qt WebEngine shell (Chromium,
-with WebRTC) is a prototype behind a flag:
+The default shell is Qt WebEngine (Chromium), which has WebRTC; WebKitGTK is
+the fallback when PySide6/Qt WebEngine is not installed (and remains the engine
+of the separate Browse window).
 
-    JAWNOS_DESKTOP_ENGINE=qt ./jawnos-desktop
-    ./jawnos-desktop --engine qt
+    ./jawnos-desktop                  # Qt WebEngine, WebKitGTK if Qt is absent
+    ./jawnos-desktop --engine webkit  # the GTK dashboard and its WebKit view
+    ./jawnos-desktop --engine qt      # require Qt (do not fall back)
 """
 import os
 import sys
@@ -13,6 +15,23 @@ import sys
 _here = os.path.dirname(os.path.realpath(__file__))
 if _here not in sys.path:
     sys.path.insert(0, _here)
+
+ENGINES = ("auto", "qt", "webkit")
+
+
+def _qt_available():
+    """True when PySide6 and its QtWebEngine bindings actually import.
+
+    find_spec() is too optimistic: the PySide6 module file can be present while
+    the matching Qt WebEngine library is not installed (Arch splits the binding
+    from qt6-webengine). Importing is safe without a display -- no QApplication
+    is created here -- and it is the same probe the dependency checker uses.
+    """
+    try:
+        import PySide6.QtWebEngineWidgets  # noqa: F401
+        return True
+    except Exception:
+        return False
 
 
 def _engine(argv):
@@ -29,12 +48,47 @@ def _engine(argv):
     return engine, args
 
 
+def choose_engine(requested):
+    """Resolve the engine name; '' and 'auto' prefer Qt, then WebKitGTK."""
+    name = (requested or "auto").strip().lower()
+    if name in ("", "auto", "default"):
+        return "qt" if _qt_available() else "webkit"
+    if name in ("qt", "webkit"):
+        return name
+    raise ValueError("unknown engine %r (use qt, webkit or auto)" % requested)
+
+
 def main(argv=None):
-    engine, args = _engine(sys.argv[1:] if argv is None else argv)
+    requested, args = _engine(sys.argv[1:] if argv is None else argv)
+    try:
+        engine = choose_engine(requested)
+    except ValueError as exc:
+        sys.stderr.write("jawnos-desktop: %s\n" % exc)
+        return 2
     if engine == "qt":
-        from jawnos_desktop.qt_shell import main as qt_main  # noqa: E402
+        if not _qt_available():
+            sys.stderr.write(
+                "jawnos-desktop: --engine qt needs PySide6 with Qt WebEngine "
+                "(Arch: pyside6 qt6-webengine; Debian: "
+                "python3-pyside6.qtwebenginewidgets). Use --engine webkit "
+                "for the WebKitGTK fallback.\n")
+            return 2
+        try:
+            from jawnos_desktop.qt_shell import main as qt_main  # noqa: E402
+        except Exception as exc:  # noqa: BLE001
+            sys.stderr.write("jawnos-desktop: could not start Qt WebEngine: %s\n" % exc)
+            return 2
         return qt_main(args)
-    from jawnos_desktop.ui import main as ui_main  # noqa: E402
+    try:
+        from jawnos_desktop.ui import main as ui_main  # noqa: E402
+    except Exception as exc:  # noqa: BLE001
+        sys.stderr.write(
+            "jawnos-desktop: the WebKitGTK fallback needs PyGObject and "
+            "WebKitGTK 4.1 (python3-gi, gir1.2-webkit2-4.1): %s\n" % exc)
+        return 2
+    # --no-start is a Qt-shell option; the GTK dashboard starts jawn from its
+    # own buttons and does not take it.
+    args = [arg for arg in args if arg != "--no-start"]
     return ui_main(args)
 
 

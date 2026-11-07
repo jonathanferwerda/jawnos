@@ -5,11 +5,14 @@ Perl tree, and a Bluetooth LE bridge for the watches. This package is the same
 two things on a desktop:
 
     jawnos_desktop.core   the supervisor (start/stop/restart, ports, settings)
+    jawnos_desktop.bridge the toolkit-neutral page bridge (app key, scripts)
     jawnos_desktop.ble    the BLE bridge (BlueZ over D-Bus)
     jawnos_desktop.cli    the ``jawnosctl`` command line
-    jawnos_desktop.ui     the ``jawnos-desktop`` GTK dashboard
+    jawnos_desktop.qt_shell  the default ``jawnos-desktop`` view (Qt WebEngine)
+    jawnos_desktop.ui     the WebKitGTK dashboard and fallback view
 
-Only ``core`` is meant to be portable; ``ble`` and ``ui`` are Linux-specific.
+Only ``core`` and ``bridge`` are meant to be portable; ``ble`` and ``ui`` are
+Linux-specific.
 """
 
 import os
@@ -21,4 +24,4 @@ PKG_DIR = os.path.dirname(os.path.abspath(__file__))
 # .../desktop/
 DESKTOP_DIR = os.path.dirname(PKG_DIR)
 
-__all__ = ["core", "ble", "cli", "ui", "__version__", "PKG_DIR", "DESKTOP_DIR"]
+__all__ = ["core", "bridge", "ble", "cli", "ui", "__version__", "PKG_DIR", "DESKTOP_DIR"]

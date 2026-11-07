@@ -66,11 +66,32 @@ if ! command -v bluetoothctl >/dev/null 2>&1; then
 fi
 fi
 
-# The embedded view (WebKitGTK 4.1) and smooth video (the GStreamer plugin set,
-# with a VA-API plugin for GPU decode) are distro packages. Warn with the exact
-# command; never fail -- the dashboard works without the view, and video merely
-# decodes in software.
+# The desktop view (Qt WebEngine, Chromium) and the WebKitGTK fallback/Browse
+# view are distro packages. Warn with the exact command; never fail -- the CLI
+# and the dashboard work without either, and video merely decodes in software.
 if [ "$WITH_HEADLESS" -eq 0 ]; then
+os_id=$( . /etc/os-release 2>/dev/null || true; echo "${ID:-}${ID_LIKE:-}" )
+with_qt=1
+"$PYTHON" -c 'import PySide6.QtWebEngineWidgets' 2>/dev/null || with_qt=0
+if [ "$with_qt" -eq 0 ]; then
+	echo "install.sh: the desktop view wants PySide6 Qt WebEngine (WebRTC)."
+	case "$os_id" in
+		*arch*|*manjaro*)
+			echo "  sudo pacman -S pyside6 qt6-webengine qt6-wayland"
+			;;
+		*debian*|*ubuntu*)
+			echo "  sudo apt install python3-pyside6.qtwebenginewidgets"
+			;;
+		*fedora*|*rhel*)
+			echo "  sudo dnf install python3-pyside6 qt6-qtwebengine qt6-qtwayland"
+			;;
+		*)
+			echo "  install PySide6 Qt WebEngine (and the Qt Wayland plugin) with"
+			echo "  your package manager; the app falls back to WebKitGTK without it"
+			echo "  (no WebRTC there)."
+			;;
+	esac
+fi
 with_view=1
 "$PYTHON" -c 'import gi; gi.require_version("WebKit2", "4.1")' 2>/dev/null || with_view=0
 with_va=0
@@ -85,10 +106,9 @@ if command -v gst-inspect-1.0 >/dev/null 2>&1; then
 		with_va=1
 	fi
 fi
-os_id=$( . /etc/os-release 2>/dev/null || true; echo "${ID:-}${ID_LIKE:-}" )
 if [ "$with_view" -eq 0 ] || [ "$with_va" -eq 0 ]; then
-	echo "install.sh: the embedded view / video want WebKitGTK 4.1 and the"
-	echo "  GStreamer plugins (including a VA-API plugin for GPU decode):"
+	echo "install.sh: the WebKitGTK fallback / Browse view and its video want"
+	echo "  WebKitGTK 4.1 and the GStreamer plugins (including a VA-API plugin):"
 	case "$os_id" in
 		*arch*|*manjaro*)
 			echo "  sudo pacman -S webkit2gtk-4.1 gst-plugins-base gst-plugins-good \\"
@@ -144,7 +164,7 @@ for entry in "$DESKTOP_SRC"/* "$DESKTOP_SRC"/.[!.]*; do
 done
 rm -rf "$DEST/mkosi"
 find "$DEST" -name '__pycache__' -type d -prune -exec rm -rf {} + 2>/dev/null || true
-chmod +x "$DEST/jawnosctl" "$DEST/jawnos-desktop" "$DEST/jawnos-bt-daemon" "$DEST/install-wallet.sh" "$DEST/jawnos-browse" "$DEST/jawnos-shell" "$DEST/jawnos-usage"
+chmod +x "$DEST/jawnosctl" "$DEST/jawnos-desktop" "$DEST/jawnos-qt" "$DEST/jawnos-bt-daemon" "$DEST/install-wallet.sh" "$DEST/jawnos-browse" "$DEST/jawnos-shell" "$DEST/jawnos-usage"
 # Record what was installed, so the app's own Update button offers only a newer
 # repo tree - a plain install is "up to date" from the start.
 "$PYTHON" -c "import sys; sys.path.insert(0, r'$DEST'); from jawnos_desktop import core; core.apply_update(dict(jawn_dir=r'$JAWN_DIR'))" >/dev/null 2>&1 || true
@@ -155,10 +175,10 @@ if [ "$WITH_HEADLESS" -eq 1 ]; then
 	ln -sf "$DEST/jawnosctl" "$BIN/jawnosctl"
 	echo "Linked jawnosctl into $BIN"
 else
-	for tool in jawnosctl jawnos-desktop jawnos-bt-daemon jawnos-browse jawnos-shell jawnos-usage; do
+	for tool in jawnosctl jawnos-desktop jawnos-qt jawnos-bt-daemon jawnos-browse jawnos-shell jawnos-usage; do
 		ln -sf "$DEST/$tool" "$BIN/$tool"
 	done
-	echo "Linked jawnosctl, jawnos-desktop, jawnos-bt-daemon, jawnos-browse, jawnos-shell, jawnos-usage into $BIN"
+	echo "Linked jawnosctl, jawnos-desktop, jawnos-qt, jawnos-bt-daemon, jawnos-browse, jawnos-shell, jawnos-usage into $BIN"
 fi
 
 # --- icon and desktop entry -------------------------------------------------

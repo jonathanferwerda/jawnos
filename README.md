@@ -83,12 +83,14 @@ furniture around them is largely user-defined:
 
 The phone's app has a Linux counterpart: a per-user dashboard that starts, stops and restarts
 jawn, opens its UI, tails the log and drives the Bluetooth bridge. It embeds the whole JawnOS UI
-in the same window through **WebKitGTK**, logging in with a ticket you import once (kept encrypted
-in your keyring), with camera and microphone access, F11 fullscreen and hardware-accelerated
-video. Its Bluetooth LE bridge is a real BlueZ central speaking the phone's protocol, so a watch
-links to whichever machine is in range. The app can come up as a kiosk session (a starting Sway
-configuration ships in `desktop/wayland/`) or sit in the tray, holds the machine awake while
-media plays, updates itself in place, and reports the house version it is running.
+in the same window through **Qt WebEngine** (Chromium), with **WebKitGTK** as the fallback;
+that is the engine with WebRTC, so the chat and the screening's Connect me work there too. It logs
+in with a ticket you import once (kept encrypted in your keyring), with camera and microphone
+access, F11 fullscreen and hardware-accelerated video. Its Bluetooth LE bridge is a real BlueZ
+central speaking the phone's protocol, so a watch links to whichever machine is in range. The app
+can come up as a kiosk session (a starting Sway configuration ships in `desktop/wayland/`) or sit
+in the tray, holds the machine awake while media plays, updates itself in place, and reports the
+house version it is running.
 
 From a checkout the user-facing commands are at the tree root — `./jawnos-desktop`,
 `./jawnosctl` and `./jawnos-bt-daemon` — with their implementation and installer in `desktop/`.
@@ -400,7 +402,7 @@ The bars can be moved, hidden or set to auto-hide, and the interface scales to t
 | `help.pl` | The built-in guide's topic registry, served by the Help app |
 | `templates/` | Embedded-Perl page templates: pages at the top level plus per-feature folders (`apps/`, `folders/`, `store/`, `mail/`, `configure/`, `travel/`, `handbook/`, …) |
 | `public/` | Front-end JavaScript, CSS and images (including the icon sets in `public/icons/sets/`) |
-| `desktop/` | The Linux app: the GTK dashboard, the CLI, the BlueZ BLE bridge and the embedded WebKitGTK view |
+| `desktop/` | The Linux app: the Qt WebEngine desktop view (WebKitGTK fallback and Browse), the GTK dashboard, the CLI and the BlueZ BLE bridge |
 | `jp/`, `jt/`, `jw/` | Device firmware (Pico 2W, T-Deck, T-Watch) |
 | `scripts/` | Supporting scripts — the dependency checker, the first-run wizard, firmware and app-release staging, the help and records audits, the BLE bridge and maintenance tools |
 | `database/` | `schema.sql` (used to build a fresh database) and a starting encrypted database |
@@ -418,12 +420,13 @@ The bars can be moved, hidden or set to auto-hide, and the interface scales to t
 - Optional, for the full feature set: Python `weasyprint` (PDF rendering), `ollama` (local AI
   models), and a `whisper.cpp` build with the base model (audio transcription).
 - Optional, for the Linux desktop app (`desktop/`, the phone's dashboard and BLE bridge on a
-  computer): `python3-gi`, `python3-dbus`, BlueZ, **WebKitGTK 4.1** (the embedded view), the
-  **GStreamer** plugin set with the **VA-API** decode plugin, a **colour emoji font** (Noto Color
-  Emoji) so Chat's SMS emoji draw, and — importantly — the **VA-API
-  driver for your GPU**. Without the driver the plugin exposes nothing and HD video falls back to
-  software decode (choppy, and heavy on the CPU). See
-  [`desktop/README.md`](desktop/README.md#media-and-video).
+  computer): `python3-gi`, `python3-dbus`, BlueZ, **PySide6 with Qt WebEngine** and the Qt
+  **Wayland** platform plugin (the default view, and the engine with WebRTC); **WebKitGTK 4.1**
+  and the **GStreamer** plugin set with the **VA-API** decode plugin for the fallback view and the
+  Browse window; a **colour emoji font** (Noto Color Emoji) so Chat's SMS emoji draw; and —
+  importantly — the **VA-API driver for your GPU**. Without the driver the plugin exposes nothing
+  and HD video in the WebKit fallback falls back to software decode (choppy, and heavy on the
+  CPU). See [`desktop/README.md`](desktop/README.md#media-and-video).
 
 You do not have to install any of this by hand. The first time you run `./jawn` it checks for
 every dependency and offers to install whatever is missing. The per-platform sections below are
@@ -442,9 +445,9 @@ To check (and optionally install) dependencies on their own:
 perl scripts/jawnos_deps.pl           # report, then offer to install
 perl scripts/jawnos_deps.pl --report  # report only; exits non-zero if anything is missing
 perl scripts/jawnos_deps.pl --sh      # print the install commands as a shell script
-perl scripts/jawnos_deps.pl --desktop # also check/install the desktop app's WebKitGTK
-                                      # and GStreamer media plugins, and the colour
-                                      # emoji font Chat's SMS emoji need (optional)
+perl scripts/jawnos_deps.pl --desktop # also check/install the desktop's Qt view, the
+                                      # WebKitGTK fallback/Browse, GStreamer media plugins,
+                                      # and the colour emoji font Chat's SMS emoji need
 ```
 
 ### Docker (a server)
@@ -533,13 +536,14 @@ perl tesseract-ocr imagemagick sqlite3 sshpass \
 ssh curl sox iproute2 qrencode rsync ffmpeg libbarcode-zbar-perl \
 tmux weasyprint autossh net-tools ollama
 
-# For the Linux desktop app (desktop/): the embedded view and smooth video.
-# gstreamer1.0-vaapi is the decode plugin; it ALSO needs the VA-API driver for
-# your GPU (pick one below), or HD video decodes in software and is choppy.
-sudo apt install python3-gi python3-dbus bluez gir1.2-webkit2-4.1 \
-gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-plugins-bad \
-gstreamer1.0-plugins-ugly gstreamer1.0-libav gstreamer1.0-vaapi vainfo \
-fonts-noto-color-emoji
+# For the Linux desktop app (desktop/): the Qt view (default), the WebKitGTK
+# fallback/Browse, and smooth video. gstreamer1.0-vaapi is the decode plugin; it
+# ALSO needs the VA-API driver for your GPU (pick one below), or HD video decodes
+# in software and is choppy.
+sudo apt install python3-gi python3-dbus bluez python3-pyside6.qtwebenginewidgets \
+gir1.2-webkit2-4.1 gstreamer1.0-plugins-base gstreamer1.0-plugins-good \
+gstreamer1.0-plugins-bad gstreamer1.0-plugins-ugly gstreamer1.0-libav \
+gstreamer1.0-vaapi vainfo fonts-noto-color-emoji
 #   Intel (Gen8+):  sudo apt install intel-media-va-driver-non-free
 #   Intel (older):  sudo apt install i965-va-driver
 #   AMD / Mesa:     sudo apt install mesa-va-drivers
@@ -595,12 +599,13 @@ imagemagick espeak-ng tesseract xsane sox \
 net-tools xdotool qrencode zbar fprintd python-weasyprint \
 autossh lm_sensors ollama cmake python-pip
 
-# For the Linux desktop app (desktop/): the embedded view and smooth video.
-# The VA-API plugin now ships inside gst-plugins-bad (older Arch had it as
-# gst-plugin-va); it ALSO needs the VA-API driver for your GPU (pick one below),
-# or HD video decodes in software and is choppy. Install the gst-* set together
-# -- they pin each other exactly.
-sudo pacman -S webkit2gtk-4.1 python-gobject python-dbus bluez bluez-utils \
+# For the Linux desktop app (desktop/): the Qt view (default), the WebKitGTK
+# fallback/Browse, and smooth video. The VA-API plugin now ships inside
+# gst-plugins-bad (older Arch had it as gst-plugin-va); it ALSO needs the VA-API
+# driver for your GPU (pick one below), or HD video decodes in software and is
+# choppy. Install the gst-* set together -- they pin each other exactly.
+sudo pacman -S pyside6 qt6-webengine qt6-wayland webkit2gtk-4.1 \
+python-gobject python-dbus bluez bluez-utils \
 gst-plugins-base gst-plugins-good gst-plugins-bad gst-plugins-ugly \
 gst-libav libva-utils noto-fonts-emoji
 #   Intel Gen8+:  sudo pacman -S intel-media-driver

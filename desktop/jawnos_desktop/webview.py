@@ -1,6 +1,9 @@
-"""Embed the JawnOS web UI inside the desktop app, using WebKitGTK.
+"""Embed the JawnOS web UI using WebKitGTK -- the desktop shell's fallback.
 
-Why WebKitGTK and not the things you may have read about:
+The default shell is ``qt_shell`` (Qt WebEngine / Chromium), which has WebRTC.
+Debian's WebKitGTK build does not, so this view is the fallback when PySide6/Qt
+WebEngine is absent, and it is the engine behind the separate Browse window.
+Why not the other embedded options:
 
 * **Chromium DevTools Protocol** (the "endpoint framework") does not embed a
   browser -- it drives a *separate* Chrome process over a socket. You can fake
@@ -8,10 +11,10 @@ Why WebKitGTK and not the things you may have read about:
   our app, and it drags a full Chromium around.
 * **CEF** (Chromium Embedded Framework) is a real embedded Chromium and is the
   most faithful, but it is a large bundled dependency and there is no binding
-  for this Python (3.14) on this machine.
-* **WebKitGTK** is the embeddable view that ships with GTK on Linux. It is
-  already installed here (2.52) and its ``WebView`` is a normal GTK widget we
-  drop into our own window.
+  for this Python (3.14) on this machine. Qt WebEngine gets the same engine
+  through a maintained Python binding.
+* **WebKitGTK** is the embeddable view that ships with GTK on Linux, and the
+  one this module uses.
 
 Camera, microphone and location all work in WebKitGTK, with two caveats: the
 features must be enabled and each origin must be granted permission (both done
@@ -22,15 +25,20 @@ with the ISP's coarse position, which the house disregards, so it is denied.
 If a site asks for something we do not recognise, we deny it by default.
 """
 
-import base64
 import glob
 import json
 import os
-import shutil
-import sys
 from urllib.parse import urljoin, urlparse
 
 from . import DESKTOP_DIR, core  # noqa: E402
+from .bridge import (  # noqa: E402
+    BROWSE_BRIDGE_JS as _BROWSE_BRIDGE_JS,
+    DESKTOP_MARKER_JS,
+    MEDIA_MONITOR_JS as _MEDIA_MONITOR_JS,
+    app_public_pem as _app_public_pem,
+    app_sign_b64 as _app_sign_b64,
+    browse_launcher,
+)
 
 # One shared context so the session cookie survives window closes and reloads.
 _context = None
@@ -65,70 +73,6 @@ _SOFTWARE_RENDERER_KEYS = (
 _GPU_WORKAROUND_KEYS = (
     "WEBKIT_DMABUF_RENDERER_FORCE_SHM",
 )
-
-
-# Report whether the page is playing audio or video. WebKit's
-# is-playing-audio only covers sound, so a muted video (or one with a silent
-# track) left the desktop's own power manager to blank the display while it
-# played. The page posts this to the same `jawnos` handler the key bridge uses;
-# _on_message reconciles it with WebKit's own audio flag.
-# The Internet app's Browse tab calls JawnBrowse.open(url, mode, app, uuid).
-# This shim is the desktop half of that contract: a real browser window is a
-# sibling process, so the manager page can only ask this app to start it. The
-# handler is separate from the `jawnos` channel, which is the app-key/window
-# bridge the manager already uses.
-_BROWSE_BRIDGE_JS = """
-(function () {
-    if (window.JawnBrowse) { return; }
-    window.JawnBrowse = {
-        open: function (url, mode, app, uuid) {
-            try {
-                window.webkit.messageHandlers.jawnos_browse.postMessage(JSON.stringify({
-                    action: 'browse',
-                    url: String(url || ''),
-                    mode: mode === 'measure' ? 'measure' : 'browse',
-                    app: String(app || ''),
-                    uuid: String(uuid || '')
-                }));
-            } catch (e) {}
-        }
-    };
-})();
-"""
-
-_MEDIA_MONITOR_JS = """
-(function () {
-    var last = '';
-    function mediaState() {
-        var audio = false, video = false;
-        var els = document.querySelectorAll('audio,video');
-        for (var i = 0; i < els.length; i++) {
-            var el = els[i];
-            if (el.paused || el.ended) { continue; }
-            if (el.tagName.toLowerCase() === 'video') { video = true; }
-            else { audio = true; }
-        }
-        return { audio: audio, video: video };
-    }
-    function report() {
-        var s = mediaState();
-        var key = (s.audio ? 'a' : '') + (s.video ? 'v' : '');
-        if (key === last) { return; }
-        last = key;
-        try {
-            window.webkit.messageHandlers.jawnos.postMessage(JSON.stringify({
-                action: 'media_state', audio: s.audio, video: s.video
-            }));
-        } catch (e) {}
-    }
-    setInterval(report, 2000);
-    ['play', 'playing', 'pause', 'ended', 'emptied'].forEach(function (ev) {
-        document.addEventListener(ev, report, true);
-    });
-    window.addEventListener('load', report);
-    report();
-})();
-"""
 
 
 def _is_skylake_x11():
@@ -318,87 +262,6 @@ def _js_string(result):
         return result.to_string()
     except Exception:
         return ""
-
-
-# ---- the app's own identity -------------------------------------------------
-# The manager is app-only: a browser has no key, so it cannot prove it is the
-# installed app. This view holds an Ed25519 key of its own (0600 in the config
-# dir) and signs the server's challenge with it. The key never leaves this
-# process except as a public half, so the page -- and any script running in it
-# -- can ask for a signature but cannot copy the key.
-
-def _app_key_path():
-    return os.path.join(core.config_dir(), "app_ed25519.pem")
-
-
-def _app_private_key():
-    """Load the desktop app key, creating it at 0600 the first time."""
-    from cryptography.hazmat.primitives import serialization
-    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
-
-    path = _app_key_path()
-    try:
-        with open(path, "rb") as fh:
-            data = fh.read()
-        key = serialization.load_pem_private_key(data, password=None)
-        if isinstance(key, Ed25519PrivateKey):
-            try:
-                os.chmod(path, 0o600)
-            except OSError:
-                pass
-            return key
-    except (OSError, ValueError, TypeError):
-        pass
-    key = Ed25519PrivateKey.generate()
-    data = key.private_bytes(
-        serialization.Encoding.PEM,
-        serialization.PrivateFormat.PKCS8,
-        serialization.NoEncryption(),
-    )
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    try:
-        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-    except FileExistsError:
-        # Another window won the race (or a left-over file is unreadable). Do
-        # not recurse: read that file once, and fail loudly if it is not a key.
-        with open(path, "rb") as fh:
-            return serialization.load_pem_private_key(fh.read(), password=None)
-    with os.fdopen(fd, "wb") as fh:
-        fh.write(data)
-    return key
-
-
-def _app_public_pem():
-    from cryptography.hazmat.primitives import serialization
-
-    return _app_private_key().public_key().public_bytes(
-        serialization.Encoding.PEM,
-        serialization.PublicFormat.SubjectPublicKeyInfo,
-    ).decode("ascii")
-
-
-def _app_sign_b64(message_b64):
-    """Sign the base64 message the page handed over; return base64(raw sig)."""
-    raw = base64.b64decode(message_b64 or "")
-    return base64.b64encode(_app_private_key().sign(raw)).decode("ascii")
-
-
-def browse_launcher():
-    """The jawnos-browse entry beside this package, or one on PATH.
-
-    A copy whose executable bit did not survive a copy is still runnable with
-    this interpreter, so an installed tree keeps working through an update."""
-    candidates = [
-        os.path.join(DESKTOP_DIR, "jawnos-browse"),
-        shutil.which("jawnos-browse"),
-    ]
-    for candidate in candidates:
-        if candidate and os.path.isfile(candidate) and os.access(candidate, os.X_OK):
-            return [candidate]
-    for candidate in candidates:
-        if candidate and os.path.isfile(candidate):
-            return [sys.executable or "python3", candidate]
-    return None
 
 
 def ticket_url():
@@ -659,7 +522,7 @@ class WebViewPanel(Gtk.Box):
             # desktop app. universal.js keys its app login off this, the same
             # way the phone keys off the Android bridge.
             content.add_script(WebKit2.UserScript.new(
-                "window.JawnDesktop = window.JawnDesktop || {};",
+                DESKTOP_MARKER_JS,
                 WebKit2.UserContentInjectedFrames.TOP_FRAME,
                 WebKit2.UserScriptInjectionTime.START,
                 None, None,

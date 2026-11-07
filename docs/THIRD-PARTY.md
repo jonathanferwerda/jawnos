@@ -261,8 +261,8 @@ The apt / pacman / Termux packages and the CPAN Perl modules listed in
 by the user from their own distribution's repositories (or from CPAN), under those
 projects' own licences, and are therefore out of scope for this file. This includes the
 command-line tools (Perl, OpenSSL, SQLite, curl, FFmpeg, ImageMagick, Tesseract, SoX,
-espeak, …), the desktop extras (WebKitGTK, GStreamer), and the Perl modules
-(Mojolicious, Minion, CryptX, …).
+espeak, …), the desktop extras (Qt WebEngine/PySide6, Qt Wayland, WebKitGTK,
+GStreamer), and the Perl modules (Mojolicious, Minion, CryptX, …).
 
 The exception is the desktop image built by `desktop/mkosi`: it installs Debian
 packages and redistributes them inside the image. Each package carries its own

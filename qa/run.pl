@@ -475,7 +475,7 @@ if ($want_l3) {
 		my @urls = map { $h->url_for($_) } @paths;
 		my $out = "$results/ui";
 
-		# The desktop app's engine runs first: a Chromium pass that trips a
+		# The WebKitGTK fallback runs first: a Chromium pass that trips a
 		# handler bug can take the tree down, and then WebKit would only record
 		# the connection refused that followed.
 		my $w = Ui->webkit(url => $h->url_for('/manager'), out => "$out/webkit.json");

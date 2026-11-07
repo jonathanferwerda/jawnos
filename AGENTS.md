@@ -103,9 +103,8 @@ The Zed panel keeps every byte it is shown; zram + earlyoom only slow the crash.
 
 ## Web interface
 
-- **Test the WebUI, not a Chromium-only path.** Desktop is WebKitGTK; Chromium is for headless DOM/route
-  checks only. An engine-dependent feature (CSS `filter: url(#…)`, `canvas.toBlob`, WebCodecs) is not
-  proven by headless Chromium — say so and check the real engine.
+- **Test the WebUI in the real desktop view.** Desktop is **Qt WebEngine (Chromium)**; WebKitGTK
+  is the fallback and Browse. Headless Chromium does not prove it. See `docs/AGENTS-web.md`.
 - Log in with a ticket URL: `https://127.0.0.1:3000/box_office/<uuid>?s=<token>`. The live token is in
   `.shots/ticket.txt` (gitignored). It mints the `president` cookie and redirects to
   `https://127.0.0.1:<working_port>/manager` (`working_port` from `config.json`).

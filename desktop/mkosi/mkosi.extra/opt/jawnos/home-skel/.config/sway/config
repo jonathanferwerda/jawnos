@@ -16,7 +16,7 @@ exec /usr/local/bin/jawnos-display --once
 # window resize, or an EDID change on virtio-gpu), and the app repaints and
 # re-fills the WebKit surface when GDK reports the change. No per-resolution
 # output stanza is needed.
-for_window [app_id="^jawnos-desktop$"] fullscreen enable
+for_window [app_id="^(jawnos|jawnos-desktop)$"] fullscreen enable
 for_window [app_id="^foot$"] floating enable, resize set 900 600
 
 bindsym $mod+Return exec foot

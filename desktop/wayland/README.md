@@ -9,7 +9,9 @@ as the top bar), and the bar names the app in front. Zed included. Read
 > config compile in this tree, but they have not been run on a Sway box here
 > (`sway` is not installed in this checkout). The app ids in `sway.conf`
 > (`jawnos-desktop`, `zed`, `foot`) come from the programs' own names — check
-> yours with `swaymsg -t get_tree` and adjust.
+> yours with `swaymsg -t get_tree` and adjust. The Qt shell pins its Wayland
+> app id to `jawnos` (the desktop entry) so a launch through `python3` does not
+> present as `python3`; accept both spellings in a window rule.
 
 ## Why Sway, and what it does and does not give you
 
@@ -58,7 +60,8 @@ sudo pacman -S playerctl
 # sudo pacman -S waybar
 
 # JawnOS's own deps (server + the desktop app's view and media)
-sudo pacman -S python-gobject python-dbus webkit2gtk-4.1 bluez bluez-utils
+sudo pacman -S python-gobject python-dbus pyside6 qt6-webengine qt6-wayland \
+  webkit2gtk-4.1 bluez bluez-utils
 # then:  perl scripts/jawnos_deps.pl --desktop
 
 # the editor
@@ -119,7 +122,7 @@ list in this tree, so idle lock/DPMS is a config comment in `sway.conf` until
 they are added. `waybar` is still in the image list but is no longer started.
 
 **The manager is no longer fullscreen.** `sway.conf` used to carry
-`for_window [app_id="^jawnos-desktop$"] fullscreen enable`, which made the
+`for_window [app_id="^(jawnos|jawnos-desktop)$"] fullscreen enable`, which made the
 manager pretend to be the whole desktop. It is now an ordinary tiled window;
 the bar owns the screen edge. A floating resize rule is documented in
 `sway.conf` but commented out, because tiled is the intended default.
@@ -193,7 +196,7 @@ Caveats specific to JawnOS:
   `airootfs/`.
 - With no baked-in config, the first run still needs the setup wizard — so a
   live ISO is best for a **demo of the shell**, not a daily driver.
-- Size: WebKitGTK + GStreamer + Zed put it around **2–4 GB**.
+- Size: Qt WebEngine + WebKitGTK + GStreamer + Zed put it around **3–5 GB**.
 
 ### Either way
 

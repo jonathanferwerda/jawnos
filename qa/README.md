@@ -151,8 +151,9 @@ stops it, then reads the database read-only through `sqlite3`:
 Chromium over CDP visits the manager, help, chat, people, clock, warehouse,
 configure and store, collecting console errors, failed requests, 4xx assets,
 unlabelled controls and horizontal overflow; screenshots land in
-`results/ui/shots` (WebP). WebKitGTK 4.1 - the desktop app's engine - loads the
-manager under Xvfb and runs the same probe, then clicks a synthetic
+`results/ui/shots` (WebP). WebKitGTK 4.1 — the desktop's fallback engine, still
+the one this probe drives — loads the manager under Xvfb and runs the same
+probe, then clicks a synthetic
 `.budget_light` on a page where the Budget app was never opened. An appointment
 view renders that light from core, so the click must reach
 `/manager/budget/current_information`; if `budgetLight()` is missing or bound in

@@ -4,11 +4,12 @@ package Ui;
 #
 # Chromium (CDP) is the breadth check: visit every page, collect console
 # errors, failed requests, 4xx assets, and a small accessibility/layout probe.
-# It is NOT the engine the desktop app uses.
+# It is not the Qt WebEngine view the desktop defaults to (different build and
+# flags); that view has its own --probe in desktop/jawnos-qt.
 #
-# WebKitGTK 4.1 is that engine (desktop/jawnos_desktop/webview.py), so the
-# manager page is also loaded there under Xvfb and probed. A page that only
-# works in Chromium is not proven.
+# WebKitGTK 4.1 is the desktop's fallback view (desktop/jawnos_desktop/webview.py),
+# so the manager page is also loaded there under Xvfb and probed. A page that
+# only works in Chromium is not proven in the fallback.
 
 use strict;
 use warnings;

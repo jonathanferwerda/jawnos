@@ -1,13 +1,16 @@
-"""``jawnos-desktop`` -- the GTK dashboard.
+"""``jawnos-desktop --engine webkit`` -- the GTK dashboard and fallback view.
 
 A desktop port of the Android app's ``JawnDashboardActivity``: the same groups
 (Jawn, Open, BLE bridge), a live status line, the jawn-folder setting, and the
 autostart / "BLE with jawn" checkboxes. Every action goes through
 :mod:`jawnos_desktop.core`, so it behaves exactly like ``jawnosctl``.
 
-The UI is GTK 3 on purpose: it is the one toolkit that is packaged on every
-distribution, and it can host the optional status-tray icon in the same
-process.
+The default ``jawnos-desktop`` is the Qt WebEngine shell
+(:mod:`jawnos_desktop.qt_shell`); this module is the WebKitGTK fallback when
+PySide6 is absent, and the full control panel reached with ``--engine webkit``.
+The UI is GTK 3 on purpose: it can host the optional status-tray icon in the
+same process, and it is the toolkit that carries the settings the Qt shell's
+tray does not expose yet.
 """
 
 import os

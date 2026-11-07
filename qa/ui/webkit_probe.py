@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""Load the QA manager in WebKitGTK, the engine the desktop app uses.
+"""Load the QA manager in WebKitGTK, the desktop's fallback view.
+
+The default Qt WebEngine view is not driven here; use
+``desktop/jawnos-qt --probe`` for that (t/185).
 
     xvfb-run -a python3 webkit_probe.py <url> <out.json>
 

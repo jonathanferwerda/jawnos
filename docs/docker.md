@@ -154,8 +154,9 @@ Install it from `qa/README.md`; logs land in `$QA_ROOT/docker/<stamp>/smoke.log`
 
 ## What is missing, and why
 
-- **The desktop app, WebKitGTK, GStreamer and the VA-API drivers** are not in
-  the image. Use the native app on the machine with the display.
+- **The desktop app, PySide6/Qt WebEngine, WebKitGTK, GStreamer and the VA-API
+  drivers** are not in the image. Use the native app on the machine with the
+  display.
 - **Firmware builds and APK releases** are not in the image (`jp/`, `jt/`,
   `jw/`, `desktop/` and PlatformIO/Gradle are excluded). Stage those on a build
   machine; the app can still serve a `releases/` volume if you fill one.

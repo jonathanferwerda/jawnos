@@ -1,24 +1,28 @@
-"""JawnOS in a Qt WebEngine view.
+"""JawnOS in a Qt WebEngine (Chromium) view -- the desktop shell's default.
 
-The default desktop shell is WebKitGTK. On Debian that build has no WebRTC
-(``RTCPeerConnection`` is absent), so the chat and the screening's Connect me
-cannot run in it. This shell is the same Manager page in Chromium: the
-reference WebRTC implementation, the same engine family Android's WebView
-uses, and a web engine that exists on Linux, Windows and macOS.
+The default desktop engine is Qt WebEngine: Chromium, with the reference
+WebRTC implementation, which the chat and the screening's Connect me need.
+Debian's WebKitGTK build has no ``RTCPeerConnection``, so it remains the
+fallback when PySide6/Qt WebEngine is not installed (and it is still the engine
+of the separate Browse window, which keeps its own cookie jar).
 
-It is a prototype behind a flag, not the default:
-
-    JAWNOS_DESKTOP_ENGINE=qt ./jawnos-desktop
     ./desktop/jawnos-qt --url https://house.example:3000/manager
-    ./desktop/jawnos-qt --probe            # media/WebRTC support, then exit
+    ./desktop/jawnos-qt --probe     # WebRTC, media and bridge support, then exit
 
 The login is the same ticket the WebKit shell uses: loading the ticket URL
 mints the cookie and redirects to the Manager, and the profile keeps that
 cookie across launches. The first run also copies the GTK shell's page layout
 out of WebKit's per-origin SQLite store, and the window geometry comes from
-``~/.config/jawnos/desktop.json``, saved back on close. Certificate errors are accepted because the house
-serves its own self-signed certificate on its own port (the same exception the
-WebKit shell makes).
+``~/.config/jawnos/desktop.json``, saved back on close. Certificate errors are
+accepted because the house serves its own self-signed certificate on its own
+port (the same exception the WebKit shell makes).
+
+The page bridge is the same contract the WebKit shell exposes: a shim turns
+``window.webkit.messageHandlers.jawnos`` into QWebChannel messages, so app
+signing, peer Manager windows, Browse and media keep-awake keep working.
+Supervision (start/stop/restart, the version restart, the desktop self-update)
+and the tray menu live here too, because a default launch opens only this
+window.
 """
 
 import argparse
@@ -27,17 +31,37 @@ import json
 import os
 import sqlite3
 import sys
-from urllib.parse import urlparse
+import threading
+import time
+from urllib.parse import urljoin, urlparse
 
-from . import core
+from . import bridge, core
 
 # desktop/, resolved the same way the other entry scripts do it.
 DESKTOP_DIR = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
 ROOT_DIR = os.path.dirname(DESKTOP_DIR)
 
 
+def prepare_wayland_env():
+    """Point Qt and Chromium at Wayland when the session is Wayland.
+
+    Qt 6 may still choose xcb; a Sway session has no X server unless XWayland
+    is running, and Chromium's Ozone platform should follow the same choice.
+    An explicit QT_QPA_PLATFORM (or ozone flag) always wins, and X11 sessions
+    are untouched.
+    """
+    if not os.environ.get("WAYLAND_DISPLAY"):
+        return
+    if not os.environ.get("QT_QPA_PLATFORM"):
+        os.environ["QT_QPA_PLATFORM"] = "wayland"
+    flags = os.environ.get("QTWEBENGINE_CHROMIUM_FLAGS", "")
+    if "--ozone-platform" not in flags:
+        os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = (
+            flags + " --ozone-platform=wayland").strip()
+
+
 # --------------------------------------------------------------------------
-# the same login the WebKit shell uses, without importing GK
+# the same login the WebKit shell uses, without importing GTK
 # --------------------------------------------------------------------------
 
 def ticket_url():
@@ -164,6 +188,67 @@ _MIGRATE_JS = """
 
 
 # --------------------------------------------------------------------------
+# the page <-> app bridge
+# --------------------------------------------------------------------------
+
+# Installed at document creation, after Qt's qwebchannel.js. It gives the page
+# the same handler names WebKitGTK exposes, forwards them through QWebChannel,
+# and marks the page as running inside the desktop app (universal.js keys its
+# app login off that marker). Messages that arrive before the channel is ready
+# are queued, not dropped.
+_BRIDGE_SHIM_JS = r"""
+(function () {
+  if (window.__jawnQtShim) { return; }
+  window.__jawnQtShim = true;
+  window.webkit = window.webkit || {};
+  window.webkit.messageHandlers = window.webkit.messageHandlers || {};
+  window.__jawnQtQueue = [];
+  window.__jawnQtPost = function (name, raw) {
+    if (window.__jawnQtBridge) {
+      try { window.__jawnQtBridge.postMessage(name, String(raw)); } catch (e) {}
+    } else {
+      window.__jawnQtQueue.push([name, String(raw)]);
+    }
+  };
+  ['jawnos', 'jawnos_browse'].forEach(function (name) {
+    window.webkit.messageHandlers[name] = {
+      postMessage: function (raw) { window.__jawnQtPost(name, raw); }
+    };
+  });
+  if (typeof QWebChannel !== 'function' || !window.qt ||
+      !window.qt.webChannelTransport) { return; }
+  try {
+    new QWebChannel(window.qt.webChannelTransport, function (channel) {
+      window.__jawnQtBridge = channel.objects.jawnos;
+      var queued = window.__jawnQtQueue || [];
+      window.__jawnQtQueue = [];
+      for (var i = 0; i < queued.length; i++) {
+        try {
+          window.__jawnQtBridge.postMessage(queued[i][0], queued[i][1]);
+        } catch (e) {}
+      }
+    });
+  } catch (e) {}
+})();
+"""
+
+
+def _webchannel_js():
+    """Qt's QWebChannel JavaScript, read from the resource the library ships."""
+    try:
+        from PySide6.QtCore import QFile, QIODevice
+    except Exception:
+        return ""
+    handle = QFile(":/qtwebchannel/qwebchannel.js")
+    if not handle.open(QIODevice.ReadOnly):
+        return ""
+    try:
+        return bytes(handle.readAll()).decode("utf-8")
+    finally:
+        handle.close()
+
+
+# --------------------------------------------------------------------------
 # the WebRTC probe
 # --------------------------------------------------------------------------
 
@@ -179,12 +264,31 @@ _PROBE_JS = r"""
     links: document.querySelectorAll('link[rel="stylesheet"]').length,
     title: document.title,
     taskbar: !!document.getElementById('taskbar'),
+    bridge: !!window.__jawnQtBridge,
+    ping: false,
+    desktop: !!window.JawnDesktop,
     layout: (function () {
       try { return localStorage.getItem('layout') || ''; } catch (e) { return ''; }
     })(),
     url: location.href
   };
   window.__jawn_qt_probe = JSON.stringify(out);
+  if (out.bridge) {
+    // Prove the page -> app -> page path, not only that an object exists.
+    window.__jawnAppResult = function (id, res) {
+      if (id !== 'probe-ping') { return; }
+      try {
+        var r = JSON.parse(window.__jawn_qt_probe);
+        r.ping = !!(res && res.ok && res.pong);
+        window.__jawn_qt_probe = JSON.stringify(r);
+      } catch (e) {}
+    };
+    try {
+      window.__jawnQtBridge.postMessage('jawnos', JSON.stringify({
+        action: 'ping', id: 'probe-ping'
+      }));
+    } catch (e) {}
+  }
   if (out.rtc !== 'function') { return; }
   try {
     var pc = new RTCPeerConnection({ iceServers: [] });
@@ -232,6 +336,11 @@ def _probe(page, app, qt):
             data = json.loads(text)
         except Exception:
             data = {}
+        # Let the asynchronous bridge ping land before reading the result.
+        if data.get("bridge") and not data.get("ping") and state["tries"] < 20:
+            state["tries"] += 1
+            QTimer.singleShot(250, read)
+            return
         # The ticket page mints the cookie and then redirects; probe the page
         # after it, not the ticket itself.
         if "/box_office/" in str(data.get("url") or ""):
@@ -272,7 +381,37 @@ def _accept_certificate(error):
 
 
 def _feature_permission(page, qt):
-    """Grant this page the microphone (and camera) it asks for."""
+    """Grant this page the microphone (and camera) it asks for.
+
+    Qt 6.8 moved web permissions from ``QWebEnginePage`` to
+    ``QWebEnginePermission``; newer builds (Arch ships 6.12) have only the new
+    signal. Keep the old path for a PySide6 older than that.
+    """
+    Permission = qt.get("QWebEnginePermission")
+    if Permission is not None and hasattr(page, "permissionRequested"):
+        enum = getattr(Permission, "PermissionType", None)
+        if enum is None:
+            enum = getattr(Permission, "Feature", Permission)
+        granted = set()
+        for name in ("MediaAudioCapture", "MediaVideoCapture",
+                     "MediaAudioVideoCapture"):
+            value = getattr(enum, name, None)
+            if value is not None:
+                granted.add(value)
+
+        def decide(permission):
+            try:
+                feature = permission.permissionType()
+                if feature in granted:
+                    permission.grant()
+                else:
+                    permission.deny()
+            except Exception:
+                pass
+
+        page.permissionRequested.connect(decide)
+        return
+
     QWebEnginePage = qt["QWebEnginePage"]
     granted = set()
     for name in ("MediaAudioCapture", "MediaVideoCapture", "MediaAudioVideoCapture"):
@@ -280,13 +419,13 @@ def _feature_permission(page, qt):
         if value is not None:
             granted.add(value)
 
-    def decide(origin, feature):
+    def decide_legacy(origin, feature):
         policy = (QWebEnginePage.PermissionPolicy.PermissionGrantedByUser
                   if feature in granted else
                   QWebEnginePage.PermissionPolicy.PermissionDeniedByUser)
         page.setFeaturePermission(origin, feature, policy)
 
-    page.featurePermissionRequested.connect(decide)
+    page.featurePermissionRequested.connect(decide_legacy)
 
 
 def main(argv=None):
@@ -295,22 +434,57 @@ def main(argv=None):
         description="JawnOS in a Qt WebEngine (Chromium) view")
     parser.add_argument("--url", help="load this URL instead of the stored ticket/manager")
     parser.add_argument("--probe", action="store_true",
-                        help="print WebRTC/media support and exit")
+                        help="print WebRTC/media/bridge support and exit")
+    parser.add_argument("--webview", action="store_true",
+                        help="(default) open the JawnOS view")
+    parser.add_argument("--tray", action="store_true",
+                        help="(default) keep a status-tray icon")
+    parser.add_argument("--no-tray", action="store_true",
+                        help="no status-tray icon; closing the window quits")
+    parser.add_argument("--no-start", action="store_true",
+                        help="do not start jawn when the view opens")
     args = parser.parse_args(argv)
 
+    prepare_wayland_env()
+
     try:
-        from PySide6.QtCore import QTimer, QUrl
-        from PySide6.QtWidgets import QApplication
+        from PySide6.QtCore import (
+            QObject,
+            QTimer,
+            QUrl,
+            Qt,
+            Signal,
+            Slot,
+        )
+        from PySide6.QtGui import QIcon
+        from PySide6.QtWidgets import (
+            QApplication,
+            QDialog,
+            QMenu,
+            QPlainTextEdit,
+            QSystemTrayIcon,
+            QVBoxLayout,
+        )
         from PySide6.QtWebEngineCore import (
             QWebEnginePage,
             QWebEngineProfile,
+            QWebEngineScript,
             QWebEngineSettings,
         )
         from PySide6.QtWebEngineWidgets import QWebEngineView
+        try:
+            from PySide6.QtWebEngineCore import QWebEnginePermission
+        except Exception:
+            QWebEnginePermission = None
+        try:
+            from PySide6.QtWebChannel import QWebChannel
+        except Exception:
+            QWebChannel = None
     except Exception as exc:  # noqa: BLE001
         sys.stderr.write(
             "jawnos-qt needs PySide6 with Qt WebEngine "
-            "(Debian: python3-pyside6.qtwebenginewidgets): %s\n" % exc)
+            "(Arch: pyside6 qt6-webengine; Debian: python3-pyside6.qtwebenginewidgets): %s\n"
+            % exc)
         return 2
 
     qt = {
@@ -319,11 +493,22 @@ def main(argv=None):
         "QWebEngineProfile": QWebEngineProfile,
         "QWebEngineSettings": QWebEngineSettings,
         "QWebEngineView": QWebEngineView,
+        "QWebEnginePermission": QWebEnginePermission,
     }
 
     app = QApplication([sys.argv[0]])
     app.setApplicationName("JawnOS")
+    app.setApplicationDisplayName("JawnOS")
     app.setOrganizationName("JawnOS")
+    # Wayland derives app_id from the executable name unless the desktop file is
+    # named. Running through `python3 jawnos-desktop` would otherwise present as
+    # "python3": Sway's fullscreen rule and the taskbar/icon no longer match.
+    # `jawnos` is the installed desktop entry (jawnos.desktop); the live image's
+    # rule also still accepts the GTK fallback's `jawnos-desktop`.
+    try:
+        app.setDesktopFileName("jawnos")
+    except Exception:
+        pass
 
     store = profile_dir()
     os.makedirs(os.path.join(store, "storage"), exist_ok=True)
@@ -342,28 +527,57 @@ def main(argv=None):
         def __init__(self, shell_settings, save_state):
             super().__init__()
             self._shell_settings = shell_settings
-            self._save_state = save_state
+            self._save_state_enabled = save_state
+            self._tray = None
+
+        def _save_state(self):
+            if not self._save_state_enabled:
+                return
+            state = dict(self._shell_settings)
+            state["fullscreen"] = bool(self.isFullScreen())
+            state["maximized"] = bool(self.isMaximized())
+            if not state["fullscreen"] and not state["maximized"]:
+                state["window_width"] = self.width()
+                state["window_height"] = self.height()
+                state["window_x"] = self.x()
+                state["window_y"] = self.y()
+            try:
+                core.save_settings(state)
+            except Exception:
+                pass
 
         def closeEvent(self, event):
-            if self._save_state:
-                state = dict(self._shell_settings)
-                state["fullscreen"] = bool(self.isFullScreen())
-                state["maximized"] = bool(self.isMaximized())
-                if not state["fullscreen"] and not state["maximized"]:
-                    state["window_width"] = self.width()
-                    state["window_height"] = self.height()
-                    state["window_x"] = self.x()
-                    state["window_y"] = self.y()
-                try:
-                    core.save_settings(state)
-                except Exception:
-                    pass
+            self._save_state()
+            # With a tray, closing hides the window and leaves the app (and
+            # jawn) running; the tray's Quit items are the way out.
+            if self._tray is not None and self._tray.isVisible():
+                self.hide()
+                event.ignore()
+                return
             super().closeEvent(event)
+
+        def keyPressEvent(self, event):
+            if event.key() == Qt.Key.Key_F11:
+                self._toggle_fullscreen()
+                return
+            super().keyPressEvent(event)
+
+        def _toggle_fullscreen(self):
+            if self.isFullScreen():
+                if self._shell_settings.get("maximized"):
+                    self.showMaximized()
+                else:
+                    self.showNormal()
+            else:
+                self.showFullScreen()
 
     view = JawnView(settings, not args.probe)
     page = QWebEnginePage(profile, view)
     view.setPage(page)
     view.setWindowTitle("JawnOS")
+    icon_path = os.path.join(DESKTOP_DIR, "icons", "jawnos.png")
+    if os.path.exists(icon_path):
+        view.setWindowIcon(QIcon(icon_path))
     width = int(settings.get("window_width") or 0)
     height = int(settings.get("window_height") or 0)
     if width >= 400 and height >= 300:
@@ -381,6 +595,214 @@ def main(argv=None):
     page_settings.setAttribute(
         QWebEngineSettings.WebAttribute.PlaybackRequiresUserGesture, False)
 
+    # ---- keep the screen awake while media plays ---------------------------
+    media = {"audio": False, "video": False}
+    engine_audio = {"on": False}
+    try:
+        from . import keepawake
+        inhibitor = keepawake.ScreensaverInhibitor()
+    except Exception:
+        inhibitor = None
+
+    def reconcile_media():
+        if inhibitor is None:
+            return
+        if media["audio"] or media["video"] or engine_audio["on"]:
+            inhibitor.inhibit("media playing")
+        else:
+            inhibitor.uninhibit()
+
+    try:
+        page.recentlyAudibleChanged.connect(
+            lambda on: (engine_audio.__setitem__("on", bool(on)),
+                        reconcile_media()))
+    except Exception:
+        pass
+    app.aboutToQuit.connect(lambda: inhibitor and inhibitor.uninhibit())
+
+    # ---- the page <-> app bridge ------------------------------------------
+    windows = []
+    channel_js = _webchannel_js()
+
+    def open_manager_window(url, manager_override, title):
+        win = JawnView(settings, save_state=False)
+        other = QWebEnginePage(profile, win)
+        win.setPage(other)
+        win.setWindowTitle(title or "JawnOS Machine")
+        win.resize(900, 700)
+        other.certificateError.connect(_accept_certificate)
+        _feature_permission(other, qt)
+        install_bridge(
+            other, win,
+            urlparse(manager_override).hostname or "",
+            manager_override)
+        win.setUrl(QUrl(url))
+        win.show()
+        windows.append(win)
+
+        def _forget(*_):
+            try:
+                windows.remove(win)
+            except ValueError:
+                pass
+
+        win.destroyed.connect(_forget)
+
+    def install_bridge(page_obj, view_obj, allowed_host, manager_base):
+        if QWebChannel is not None:
+            channel = QWebChannel(page_obj)
+
+            class PageBridge(QObject):
+                @Slot(str, str)
+                def postMessage(self, name, raw):
+                    handle_message(name, raw, page_obj, view_obj)
+
+            handler = PageBridge(page_obj)
+            channel.registerObject("jawnos", handler)
+            page_obj.setWebChannel(channel)
+            page_obj._jawn_channel = channel
+            page_obj._jawn_handler = handler
+
+        source = ""
+        if channel_js:
+            source = channel_js + "\n"
+        source += (_BRIDGE_SHIM_JS + "\n" + bridge.DESKTOP_MARKER_JS + "\n" +
+                   bridge.BROWSE_BRIDGE_JS + "\n" + bridge.MEDIA_MONITOR_JS)
+        script = QWebEngineScript()
+        script.setName("jawnos-bridge")
+        script.setSourceCode(source)
+        try:
+            script.setInjectionPoint(
+                QWebEngineScript.InjectionPoint.DocumentCreation)
+            script.setWorldId(QWebEngineScript.ScriptWorldId.MainWorld)
+        except Exception:
+            script.setInjectionPoint(QWebEngineScript.DocumentCreation)
+            script.setWorldId(QWebEngineScript.MainWorld)
+        script.setRunsOnSubFrames(False)
+        page_obj.scripts().insert(script)
+
+    def handle_message(name, raw, page_obj, view_obj):
+        # The start menu's admin icon asks to come back to the app's window.
+        if "admin" in raw:
+            view_obj.showNormal()
+            view_obj.raise_()
+            view_obj.activateWindow()
+            return
+        try:
+            message = json.loads(raw)
+        except (ValueError, TypeError):
+            return
+        if not isinstance(message, dict):
+            return
+        action = message.get("action")
+        if action == "ping":
+            # A health check for --probe: no secret, so any origin may ask.
+            msg_id = message.get("id") or ""
+            if msg_id:
+                page_obj.runJavaScript(
+                    "window.__jawnAppResult && window.__jawnAppResult(%s, %s);"
+                    % (json.dumps(msg_id),
+                       json.dumps({"ok": True, "pong": True})))
+            return
+        if action not in ("app_pubkey", "app_sign", "media_state",
+                          "open_manager", "browse"):
+            return
+        # Only the manager's own origin may use the bridge. A public page
+        # loaded in this view must not be able to borrow the app's key.
+        try:
+            host = page_obj.url().hostname() or ""
+        except Exception:
+            host = ""
+        allowed = {"127.0.0.1", "localhost", "::1"}
+        if allowed_host:
+            allowed.add(allowed_host)
+        if host not in allowed:
+            return
+        if action == "media_state":
+            media["audio"] = bool(message.get("audio"))
+            media["video"] = bool(message.get("video"))
+            reconcile_media()
+            return
+        msg_id = message.get("id") or ""
+        try:
+            if action == "app_pubkey":
+                reply = {"ok": True, "pubkey": bridge.app_public_pem(),
+                         "kind": "ed25519"}
+            elif action == "app_sign":
+                reply = {"ok": True,
+                         "signature": bridge.app_sign_b64(
+                             (message.get("args") or {}).get("message"))}
+            elif action == "open_manager":
+                args = message.get("args") or {}
+                url = args.get("url") or ""
+                manager = args.get("manager") or url
+                if url.startswith("/"):
+                    base = manager if urlparse(manager).scheme in ("http", "https") else (manager_base or url)
+                    url = urljoin(base, url)
+                parsed = urlparse(url)
+                if parsed.scheme not in ("https", "http") or not parsed.netloc:
+                    raise ValueError("not a manager url")
+                mparsed = urlparse(manager)
+                if mparsed.scheme not in ("https", "http") or not mparsed.netloc:
+                    manager = url
+                open_manager_window(url, manager,
+                                    args.get("name") or "JawnOS Machine")
+                reply = {"ok": True}
+            else:
+                args = message.get("args") or {}
+                url = args.get("url") or ""
+                parsed = urlparse(url)
+                if parsed.scheme not in ("http", "https") or not parsed.netloc:
+                    raise ValueError("not a browse url")
+                launcher = bridge.browse_launcher()
+                if not launcher:
+                    raise ValueError("no browse launcher")
+                mode = "measure" if args.get("mode") == "measure" else "browse"
+                argv = launcher + [
+                    "--manager", manager_base or "",
+                    "--url", url,
+                    "--mode", mode,
+                    "--app", str(args.get("app") or "")[:200],
+                    "--uuid", str(args.get("uuid") or "")[:200],
+                ]
+                core.spawn_detached(
+                    argv, DESKTOP_DIR,
+                    os.path.join(core.state_dir(), "browse.log"))
+                reply = {"ok": True}
+        except Exception:
+            # No cryptography on this machine, an unreadable key file, or a
+            # bad URL. The page falls back to its open-in-the-app explanation.
+            reply = {"ok": False, "error": "unavailable"}
+        if msg_id:
+            try:
+                page_obj.runJavaScript(
+                    "window.__jawnAppResult && window.__jawnAppResult(%s, %s);"
+                    % (json.dumps(msg_id), json.dumps(reply)))
+            except Exception:
+                pass
+
+    # ---- fullscreen asked for by the page (a video) ------------------------
+    def page_fullscreen(request):
+        try:
+            on = bool(request.toggleOn())
+            request.accept()
+        except Exception:
+            return
+        if on:
+            view.showFullScreen()
+        elif settings.get("maximized"):
+            view.showMaximized()
+        elif settings.get("fullscreen"):
+            view.showFullScreen()
+        else:
+            view.showNormal()
+
+    try:
+        page.fullScreenRequested.connect(page_fullscreen)
+    except Exception:
+        pass
+
+    # ---- the launcher URL, and the bridge installation --------------------
     ticket = None if args.url else ticket_url()
     manager = None if args.url else manager_url(settings["jawn_dir"], ticket)
     login_pending = bool(ticket)
@@ -393,6 +815,8 @@ def main(argv=None):
     migration_pending = bool(manager)
     reloaded = {"done": False}
 
+    install_bridge(page, view, host or "", manager or args.url or "")
+
     if args.probe:
         def _timeout():
             print("qt-probe " + json.dumps({"error": "timeout"}))
@@ -400,11 +824,290 @@ def main(argv=None):
         QTimer.singleShot(25000, _timeout)
         kick = _probe(page, app, qt)
 
+    # ---- supervision and the tray -----------------------------------------
+
+    def restart_self():
+        try:
+            view._save_state()
+            os.execv(sys.executable,
+                     [sys.executable, os.path.realpath(sys.argv[0])] + sys.argv[1:])
+        except Exception as exc:
+            sys.stderr.write(
+                "jawnos-qt: updated - close and reopen to run it (%s)\n" % exc)
+
+    def show_window():
+        if view.isMinimized():
+            view.showNormal()
+        else:
+            view.show()
+        view.raise_()
+        view.activateWindow()
+
+    def call_core(fn):
+        def runner():
+            try:
+                ok, message = fn()
+                if not ok:
+                    sys.stderr.write("jawnos-qt: %s\n" % message)
+            except Exception as exc:
+                sys.stderr.write("jawnos-qt: %s\n" % exc)
+
+        threading.Thread(target=runner, daemon=True).start()
+
+    class Quitter(QObject):
+        done = Signal()
+
+    quitter = Quitter()
+    quitter.done.connect(app.quit)
+
+    def quit_only():
+        view._save_state()
+        app.quit()
+
+    def quit_and_stop():
+        view._save_state()
+        view.hide()
+        with_ble = bool(settings.get("ble_with_jawn", True))
+
+        def runner():
+            try:
+                core.stop_all(settings["jawn_dir"], with_ble)
+            except Exception:
+                pass
+            quitter.done.emit()
+
+        threading.Thread(target=runner, daemon=True).start()
+
+    log_windows = []
+
+    def show_log():
+        win = LogWindow(core.jawn_log_path(settings["jawn_dir"]))
+        log_windows.append(win)
+
+        def _forget(*_):
+            try:
+                log_windows.remove(win)
+            except ValueError:
+                pass
+
+        win.destroyed.connect(_forget)
+        win.show()
+
+    def make_tray():
+        try:
+            if not QSystemTrayIcon.isSystemTrayAvailable():
+                return None
+        except Exception:
+            return None
+        icon_path = os.path.join(DESKTOP_DIR, "icons", "jawnos.png")
+        icon = QIcon(icon_path) if os.path.exists(icon_path) else QIcon.fromTheme("jawnos")
+        tray = QSystemTrayIcon(icon, app)
+        tray.setToolTip("JawnOS")
+        menu = QMenu()
+        for label, callback in (
+            ("Show JawnOS", show_window),
+            ("Start jawn", lambda: call_core(lambda: core.start_all(
+                settings["jawn_dir"], settings.get("ble_with_jawn", True)))),
+            ("Stop jawn", lambda: call_core(lambda: core.stop_all(
+                settings["jawn_dir"], settings.get("ble_with_jawn", True)))),
+            ("Restart jawn", lambda: call_core(lambda: core.restart_all(
+                settings["jawn_dir"], settings.get("ble_with_jawn", True)))),
+            ("Open in browser", lambda: core.open_ui(settings["jawn_dir"])),
+            ("Log", show_log),
+            ("Quit and stop jawn", quit_and_stop),
+            ("Quit", quit_only),
+        ):
+            action = menu.addAction(label)
+            action.triggered.connect(callback)
+        tray.setContextMenu(menu)
+        try:
+            trigger = QSystemTrayIcon.ActivationReason.Trigger
+        except AttributeError:
+            trigger = QSystemTrayIcon.Trigger
+        tray.activated.connect(
+            lambda reason: show_window() if reason == trigger else None)
+        tray._menu = menu  # QSystemTrayIcon does not own the menu
+        tray.show()
+        return tray
+
+    def tray_status(jawn_up, ble_up):
+        if tray is None:
+            return
+        tray.setToolTip("JawnOS - jawn %s, BLE %s" % (
+            "running" if jawn_up else "stopped",
+            "running" if ble_up else "stopped"))
+
+    class LogWindow(QDialog):
+        """A small tail of jawn's manager.log, refreshing every two seconds."""
+
+        def __init__(self, path):
+            super().__init__()
+            self.path = path
+            self.setWindowTitle("JawnOS log")
+            self.resize(900, 600)
+            self.text = QPlainTextEdit(self)
+            self.text.setReadOnly(True)
+            layout = QVBoxLayout(self)
+            layout.addWidget(self.text)
+            self.timer = QTimer(self)
+            self.timer.timeout.connect(self.reload)
+            self.timer.start(2000)
+            self.reload()
+
+        def reload(self):
+            try:
+                self.text.setPlainText(core.tail_log(self.path, 200))
+                bar = self.text.verticalScrollBar()
+                bar.setValue(bar.maximum())
+            except Exception:
+                pass
+
+    class Supervisor(QObject):
+        """The GTK dashboard's tick: liveness, restart, update, reload."""
+
+        status = Signal(bool, bool)
+        note = Signal(str)
+        reload = Signal()
+        updated = Signal(str)
+
+        def __init__(self, shell_settings, start_now):
+            super().__init__()
+            self._settings = shell_settings
+            self._start_now = start_now
+            self._busy = False
+            self._check_at = 0.0
+            self._restart_at = 0.0
+            self._update_pending = None
+            self._update_at = 0.0
+            self._version = self._manager_version()
+            self._timer = QTimer(self)
+            self._timer.timeout.connect(self.tick)
+
+        def start(self):
+            self._timer.start(2000)
+            QTimer.singleShot(800, self.tick)
+
+        def _manager_version(self):
+            try:
+                with open(os.path.join(self._settings["jawn_dir"], "VERSION"),
+                          encoding="utf-8") as fh:
+                    return fh.read().strip()
+            except OSError:
+                return ""
+
+        def tick(self):
+            if self._busy:
+                return
+            self._busy = True
+            threading.Thread(target=self._work, daemon=True).start()
+
+        def _work(self):
+            try:
+                shell_settings = self._settings
+                jawn_dir = shell_settings["jawn_dir"]
+                with_ble = bool(shell_settings.get("ble_with_jawn", True))
+                if self._start_now:
+                    self._start_now = False
+                    if not core.jawn_up(jawn_dir):
+                        core.start_all(jawn_dir, with_ble)
+                        self.note.emit("started jawn")
+                        # The ticket/Manager load can have run before the port
+                        # answered; load it again once the tree is up.
+                        self.reload.emit()
+                jawn = core.jawn_up(jawn_dir)
+                ble = core.ble_up()
+                self.status.emit(jawn, ble)
+                now = time.monotonic()
+                if now - self._check_at >= 60:
+                    self._check_at = now
+                    if jawn and now - self._restart_at >= 300:
+                        stale = core.version_mismatch(jawn_dir)
+                        if stale:
+                            running, disk = stale
+                            self._restart_at = now
+                            ok, message = core.restart_all(jawn_dir, with_ble)
+                            self.note.emit(
+                                ("restarted %s -> %s" % (running, disk))
+                                if ok else ("restart failed: %s" % message))
+                            if ok:
+                                self.reload.emit()
+                            jawn = core.jawn_up(jawn_dir)
+                    newer = core.auto_update_available(shell_settings)
+                    if newer:
+                        if (self._update_pending == newer
+                                and now - self._update_at >= 55):
+                            self._update_pending = None
+                            ok, name, _code = core.apply_update(shell_settings)
+                            if ok:
+                                self.updated.emit(name or "")
+                            else:
+                                self.note.emit("app update could not be applied")
+                        else:
+                            self._update_pending = newer
+                            self._update_at = now
+                    else:
+                        self._update_pending = None
+                    version = self._manager_version()
+                    if version and version != self._version:
+                        self._version = version
+                        self.reload.emit()
+            finally:
+                self._busy = False
+
+    class UiRelay(QObject):
+        """A main-thread landing point for signals emitted by the tick thread."""
+
+        @Slot(bool, bool)
+        def status(self, jawn_up, ble_up):
+            tray_status(jawn_up, ble_up)
+
+        @Slot(str)
+        def note(self, text):
+            sys.stderr.write("jawnos-qt: %s\n" % text)
+
+        @Slot(str)
+        def updated(self, _name):
+            restart_self()
+
+        @Slot()
+        def reload(self):
+            QTimer.singleShot(6000, view.reload)
+
+    tray = None
+    if not args.probe and not args.no_tray:
+        tray = make_tray()
+    app.setQuitOnLastWindowClosed(tray is None)
+    view._tray = tray
+
+    if not args.probe:
+        supervisor = Supervisor(
+            settings,
+            start_now=(not args.url and not args.no_start))
+        relay = UiRelay()
+        supervisor.reload.connect(relay.reload)
+        supervisor.updated.connect(relay.updated)
+        supervisor.note.connect(relay.note)
+        if tray is not None:
+            supervisor.status.connect(relay.status)
+        supervisor.start()
+
+    load_failures = {"n": 0}
+
     def on_load(_ok):
         nonlocal login_pending, migration_pending
         if os.environ.get("JAWNOS_QT_DEBUG"):
             sys.stderr.write("qt-load ok=%s title=%r manager=%s pending=%s\n" % (
                 _ok, view.title(), view.url().toString().endswith("/manager"), login_pending))
+        if not _ok:
+            # jawn may still be starting (the supervisor's first tick starts
+            # it). Retry the same URL, like the WebKit shell does, instead of
+            # leaving the window on a connection-refused page.
+            load_failures["n"] += 1
+            if load_failures["n"] <= 40 and not args.probe:
+                retry = view.url().toString() or url
+                QTimer.singleShot(1500, lambda: view.setUrl(QUrl(retry)))
+            return
+        load_failures["n"] = 0
         if login_pending:
             # The ticket page mints the session cookie; give it a moment, the
             # same 1.5 s the WebKit shell allows, then load the Manager on the

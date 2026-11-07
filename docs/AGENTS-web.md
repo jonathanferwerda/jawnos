@@ -2,11 +2,15 @@
 
 Read this when a change is visible in the WebUI.
 
-- **Test the WebUI, not a Chromium-only path.** The desktop app is WebKitGTK and that is the engine
-  people actually use; Chromium is for **headless automated checks only** (DOM smoke tests, route/JS
-  error capture). When a change is WebUI-visible, exercise it in the real JawnOS WebUI. A feature
-  that depends on an engine detail (CSS `filter: url(#…)`, `canvas.toBlob`, `createImageBitmap`,
-  WebCodecs) is not proven by headless Chromium alone — say so and check the real engine.
+- **Test the WebUI in the real desktop view.** The default desktop view is **Qt WebEngine
+  (Chromium)**; **WebKitGTK** is the fallback (`--engine webkit`) and the engine of the separate
+  Browse window. Headless Chromium is for **automated checks only** (DOM smoke tests, route/JS
+  error capture) — it is a different build with different flags from the Qt view, so it does not
+  prove the real one. When a change is WebUI-visible, exercise it in the real JawnOS WebUI. A
+  feature that depends on an engine detail (CSS `filter: url(#…)`, `canvas.toBlob`,
+  `createImageBitmap`, WebCodecs, WebRTC) is not proven by headless Chromium alone — say so and
+  check the real engine; a feature that must also work in the WebKitGTK fallback needs that check
+  too.
 - Log in with a ticket URL: `https://127.0.0.1:3000/box_office/<uuid>?s=<token>`. The live token is in
   `.shots/ticket.txt` (gitignored, a real credential).
 - It mints the `president` session cookie and redirects to

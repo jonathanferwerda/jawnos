@@ -1,8 +1,9 @@
-# tests-for: desktop/jawnos_desktop/qt_shell.py desktop/jawnos-desktop desktop/jawnos-qt
-# covers:    the Qt WebEngine desktop shell behind a flag: the same Manager page
+# tests-for: desktop/jawnos_desktop/qt_shell.py desktop/jawnos_desktop/bridge.py desktop/jawnos-desktop desktop/jawnos-qt
+# covers:    the Qt WebEngine desktop shell is the default: the same Manager page
 #           in Chromium, which is the engine with WebRTC (Debian's WebKitGTK is
 #           built without RTCPeerConnection), the ticket cookie kept on disk,
-#           microphone/camera grants, and the house's own certificate accepted.
+#           microphone/camera grants, the house's own certificate accepted, the
+#           page bridge, supervision, and the WebKitGTK fallback.
 
 use strict;
 use warnings;
@@ -16,6 +17,8 @@ use File::Slurp qw(read_file);
 
 my $root = "$FindBin::Bin/..";
 my $qt = read_file("$root/desktop/jawnos_desktop/qt_shell.py");
+my $bridge = read_file("$root/desktop/jawnos_desktop/bridge.py");
+my $webview = read_file("$root/desktop/jawnos_desktop/webview.py");
 my $entry = read_file("$root/desktop/jawnos-desktop");
 my $launcher = "$root/desktop/jawnos-qt";
 
@@ -34,9 +37,47 @@ like($qt, qr/def manager_url/, 'and derives the manager URL from it');
 
 like($entry, qr/JAWNOS_DESKTOP_ENGINE/, 'the engine can be chosen by environment');
 like($entry, qr/--engine/, 'and by flag');
-like($entry, qr/from jawnos_desktop\.ui import main/, 'WebKitGTK stays the default');
-like($entry, qr/from jawnos_desktop\.qt_shell import main/, 'Qt is the opt-in branch');
+like($entry, qr/return "qt" if _qt_available\(\) else "webkit"/,
+	'Qt is the default, WebKitGTK the fallback');
+like($entry, qr/from jawnos_desktop\.qt_shell import main/, 'Qt is the primary branch');
+like($entry, qr/from jawnos_desktop\.ui import main/, 'WebKitGTK stays reachable');
+like($entry, qr/import PySide6\.QtWebEngineWidgets/,
+	'and the choice is made by whether the engine imports');
 ok(-x $launcher, 'jawnos-qt is directly runnable');
+
+# The engine resolver, without starting a GUI. qt and webkit are deterministic;
+# auto depends on the machine's packages (pinned above in the source).
+my $choose = `cd "$root" && python3 -c 'import runpy; m=runpy.run_path("desktop/jawnos-desktop"); print(m["choose_engine"]("qt"), m["choose_engine"]("webkit"))' 2>&1`;
+like($choose, qr/^qt webkit$/m, 'the resolver honours an explicit engine');
+
+# The page bridge: the shim the Qt shell installs gives the page the same
+# handlers WebKitGTK registers, and the shared module holds the key and scripts.
+like($qt, qr/__jawnQtBridge/, 'the page is given a Qt bridge object');
+like($qt, qr/QWebChannel/, 'over QWebChannel');
+like($qt, qr/messageHandlers\[name\]/, 'and the WebKit handler names the page checks');
+like($qt, qr/window\.JawnDesktop/, 'the desktop marker universal.js keys app login off');
+like($qt, qr/bridge\.app_public_pem|bridge\.app_sign_b64/,
+	'the app key is answered through the shared bridge');
+like($bridge, qr/def app_public_pem/, 'the app key lives in the toolkit-neutral module');
+like($bridge, qr/def app_sign_b64/, 'with its signer');
+like($bridge, qr/def browse_launcher/, 'and the Browse launcher');
+like($bridge, qr/BROWSE_BRIDGE_JS/, 'the Browse shim');
+like($bridge, qr/MEDIA_MONITOR_JS/, 'and the media monitor the keep-awake uses');
+like($webview, qr/from \.bridge import/, 'the WebKitGTK shell uses the same bridge');
+unlike($webview, qr/^def _app_public_pem/m,
+	'so the key is not defined twice');
+
+like($qt, qr/def prepare_wayland_env/, 'a Wayland session sets the Qt platform');
+like($qt, qr/--ozone-platform=wayland/, 'and Chromium follows it');
+like($qt, qr/setDesktopFileName\("jawnos"\)/,
+	'the Wayland app id is the desktop entry, not python3');
+like($qt, qr/QSystemTrayIcon/, 'the shell keeps a tray');
+like($qt, qr/class Supervisor/, 'and supervises jawn');
+like($qt, qr/auto_update_available/, 'including the desktop self-update');
+like($qt, qr/version_mismatch/, 'and the version restart');
+like($qt, qr/permissionRequested/, 'the newer permission signal is handled');
+like($qt, qr/PermissionType/, 'through QWebEnginePermission');
+like($qt, qr/featurePermissionRequested/, 'with the older signal kept as a fallback');
 
 like($qt, qr/def webkit_localstorage/, 'the shell can read the GTK localStorage store');
 like($qt, qr/__jawn_qt_migrated/, 'the migration is marked, so later Qt changes are kept');
@@ -74,11 +115,14 @@ PYINNER
 # QtWebEngine package skips: the source pins above still run everywhere.
 my $probe = `cd "$root" && timeout 45 xvfb-run -a env QTWEBENGINE_CHROMIUM_FLAGS='--disable-gpu --no-sandbox' python3 desktop/jawnos-qt --probe --url 'data:text/html,<html></html>' 2>&1`;
 SKIP: {
-	skip 'the Qt WebEngine package is not installed here', 2
+	skip 'the Qt WebEngine package is not installed here', 5
 		if $probe =~ /needs PySide6|No module named .PySide6/ || $probe !~ /qt-probe /;
 	my ($line) = $probe =~ /^(qt-probe .*)$/m;
 	like($line, qr/"rtc":"function"/, 'the real engine has RTCPeerConnection');
 	like($line, qr/"offer":"offer"/, 'and it completes an offer on the spot');
+	like($line, qr/"bridge":true/, 'the QWebChannel bridge connects');
+	like($line, qr/"ping":true/, 'a message round-trips through the bridge');
+	like($line, qr/"desktop":true/, 'and the page sees the desktop marker');
 }
 
 done_testing();
