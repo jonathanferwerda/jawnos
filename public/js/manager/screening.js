@@ -138,6 +138,9 @@ function jawnScreenPanelOpen() {
 	// the caller goes to the house's voicemail now, whatever the flow was doing
 	buttons.append($('<button id="jawn_screening_voicemail" hint="Send to voicemail"></button>')
 		.text(jawnosT('Send to voicemail')));
+	// and the line can be put down from here, not only from the caller's side
+	buttons.append($('<button id="jawn_screening_hangup" hint="End the call"></button>')
+		.text(jawnosT('End the call')));
 	box.append(buttons);
 	// Type to a caller who is waiting: the gateway speaks it and the answer
 	// arrives in the same transcript.
@@ -339,6 +342,22 @@ $(document).on('click', '#jawn_screening_say_send', function (e) {
 			}
 		},
 		error: function () { $('#jawn_screening_note').text(jawnosT('The message did not go through.')); }
+	});
+});
+
+$(document).on('click', '#jawn_screening_hangup', function (e) {
+	e.preventDefault();
+	$.ajax({
+		url: '/manager/sco/hangup',
+		type: 'POST',
+		dataType: 'json',
+		data: { timestamp: Date.now() },
+		success: function (res) {
+			if (!res || !res.ok) {
+				$('#jawn_screening_note').text((res && res.error) || jawnosT('The call could not be ended.'));
+			}
+		},
+		error: function () { $('#jawn_screening_note').text(jawnosT('The call could not be ended.')); }
 	});
 });
 

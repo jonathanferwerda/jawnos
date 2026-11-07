@@ -241,6 +241,7 @@ like($screening, qr/on\('visibilitychange'/, 'a wake asks again');
 like($screening, qr/jawn_screening_say/, 'the panel can type a message to the caller');
 like($screening, qr{/manager/sco/say}, 'and posts it to the gateway');
 like($screening, qr{/manager/sco/voicemail}, 'the panel can send a caller to voicemail now');
+like($screening, qr{/manager/sco/hangup}, 'and end the call from the panel');
 like($screening, qr/if \(!window\.JawnPhone\)/,
 	'the phone carrying the call is not offered a redundant Connect me');
 like(read_file("$repo/public/js/manager/websocket/03_watchdog.js"), qr/jawnScreenPoll\(\);.*?wsResync\(\);/s,
