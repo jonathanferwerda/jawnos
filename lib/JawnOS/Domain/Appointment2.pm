@@ -788,4 +788,139 @@ sub device_labels {
 	return \%names;
 }
 
+# The appointment's own bottom line: what its shelf holds, and how much of it
+# there was today, this week, this month and this year. A row counts once in the
+# period its start falls in; time is the time spent inside the period, so a
+# session that crosses midnight gives each day its share; money is the total
+# column's magnitude; and a measure reads with its own calc - steps summed,
+# weight averaged - the same setting the inventory and the budget use.
+sub appointment_statistics_for {
+	my ($app, $now) = @_;
+	$now = &subs::rightNow() unless defined $now;
+	my $blank = { item => $app || '', inventory => { item => $app || '', units => [] }, periods => [], measure_names => [] };
+	return $blank unless defined $app && length $app;
+
+	my $settings = &subs::settings_grabber({ app => $app }) || {};
+	my @order = qw/today week month year/;
+	my %unit_for = ( today => 'day', week => 'week', month => 'month', year => 'year' );
+	my %label_for = ( today => 'Today', week => 'This week', month => 'This month', year => 'This year' );
+	my (%window, %period);
+	foreach my $key ( @order ) {
+		my ($begin, $end) = &subs::period_bounds($unit_for{$key}, $now, 1);
+		$window{$key} = { begin => $begin, end => $end };
+		$period{$key} = {
+			key => $key,
+			label => &subs::ui($label_for{$key}),
+			duration => 0,
+			count => 0,
+			money => 0,
+			measures => {},
+		};
+	}
+	# the year is the widest window, but a week that opens in the old year reaches
+	# back before it - ask for the earliest of the four so no period is half read
+	my $since = $window{'year'}->{'begin'};
+	foreach my $key ( @order ) {
+		$since = $window{$key}->{'begin'} if $window{$key}->{'begin'} < $since;
+	}
+
+	my $app_measures = eval { return decode_json($settings->{'app_measures'} || '') } || {};
+	my %measure_unit;
+	foreach my $name ( keys %{$app_measures} ) {
+		my $entry = $app_measures->{$name};
+		$measure_unit{$name} = (ref $entry eq 'HASH' && defined $entry->{'unit'}) ? $entry->{'unit'} : '';
+	}
+
+	my $rows = &subs::db_query(
+		"select timestamp, stop_timestamp, type, duration, total, measures from appointments where app = ? and (cast(timestamp as integer) >= ? or (type in ('start','record') and (stop_timestamp is null or stop_timestamp = ''))) order by cast(timestamp as integer)",
+		$app, $since)->hashes || [];
+
+	foreach my $row ( @{$rows} ) {
+		my $start = ($row->{'timestamp'} || 0) + 0;
+		my $stop = (defined $row->{'stop_timestamp'} && $row->{'stop_timestamp'} =~ /^-?[0-9]+$/ && $row->{'stop_timestamp'} + 0 > $start)
+			? $row->{'stop_timestamp'} + 0
+			: $start + abs($row->{'duration'} || 0);
+		# an open start/record has no end yet: it has been running until now
+		$stop = $now if $stop <= $start && (($row->{'type'} || '') eq 'start' || ($row->{'type'} || '') eq 'record');
+
+		foreach my $key ( @order ) {
+			my $begin = $window{$key}->{'begin'};
+			my $end = $window{$key}->{'end'};
+			if ($start >= $begin && $start < $end) {
+				$period{$key}->{'count'}++;
+				$period{$key}->{'money'} += abs($row->{'total'} || 0);
+			}
+			my $lo = $start > $begin ? $start : $begin;
+			my $hi = $stop < $end ? $stop : $end;
+			$period{$key}->{'duration'} += ($hi > $lo ? $hi - $lo : 0);
+		}
+
+		my $list = eval { return decode_json($row->{'measures'} || '') };
+		next unless ref $list eq 'ARRAY';
+		foreach my $entry ( @{$list} ) {
+			next unless ref $entry eq 'HASH';
+			my $when = (defined $entry->{'ts'} && $entry->{'ts'} =~ /^-?[0-9]+$/) ? $entry->{'ts'} + 0 : $start;
+			foreach my $name ( keys %{$entry} ) {
+				next if $name eq 'ts' || $name eq 'uuid';
+				my $value = $entry->{$name};
+				next unless defined $value && !ref $value && $value =~ /^-?[0-9]+(?:\.[0-9]+)?$/;
+				foreach my $key ( @order ) {
+					next unless $when >= $window{$key}->{'begin'} && $when < $window{$key}->{'end'};
+					my $m = $period{$key}->{'measures'}->{$name} ||= { sum => 0, count => 0 };
+					$m->{'sum'} += $value + 0;
+					$m->{'count'}++;
+					$m->{'min'} = $value + 0 if !defined $m->{'min'} || $value + 0 < $m->{'min'};
+					$m->{'max'} = $value + 0 if !defined $m->{'max'} || $value + 0 > $m->{'max'};
+				}
+			}
+		}
+	}
+
+	foreach my $key ( @order ) {
+		foreach my $name ( keys %{$period{$key}->{'measures'}} ) {
+			my $m = $period{$key}->{'measures'}->{$name};
+			my $calc = &subs::measure_calc_for($app, $name, $settings->{'s_calc'}) || 'sum';
+			$m->{'calc'} = $calc;
+			$m->{'value'} = $calc eq 'average' ? ($m->{'count'} ? $m->{'sum'} / $m->{'count'} : 0)
+				: $calc eq 'high' ? ($m->{'max'} || 0)
+				: $calc eq 'low' ? ($m->{'min'} || 0)
+				: $m->{'sum'};
+			$m->{'unit'} = $measure_unit{$name} || '';
+		}
+	}
+
+	# the shelf: what the item has taken in, given out, and holds now, per unit.
+	# The item is the one the app moves stock as (Stock Item, else its own name),
+	# the same resolution the consumption writer uses.
+	my $item = &subs::setting_grabber({ app => $app, setting => 'stock_item' });
+	$item = $app unless defined $item && $item =~ /\S/;
+	$item = &subs::unformat_name($item);
+	my $units = &subs::db_query(
+		"select unit,
+		        sum(case when cast(quantity as real) > 0 then cast(quantity as real) else 0 end) as in_qty,
+		        sum(case when cast(quantity as real) < 0 then -cast(quantity as real) else 0 end) as out_qty,
+		        sum(cast(quantity as real)) as level
+		   from warehouse
+		  where item = ? and coalesce(nullif(kind,''),'stock') = 'stock'
+		    and coalesce(type,'') != 'inventory' and coalesce(account,'') = ''
+		  group by unit order by unit",
+		$item)->hashes || [];
+	my @inventory = map {
+		{
+			unit => ($_->{'unit'} || 'each'),
+			in => ($_->{'in_qty'} || 0) + 0,
+			out => ($_->{'out_qty'} || 0) + 0,
+			on_hand => ($_->{'level'} || 0) + 0,
+		}
+	} @{$units};
+
+	return {
+		app => $app,
+		item => $item,
+		inventory => { item => $item, units => \@inventory },
+		periods => [ map { $period{$_} } @order ],
+		measure_names => [ map { { name => $_, unit => $measure_unit{$_} || '', calc => ($period{'year'}->{'measures'}->{$_}->{'calc'} || 'sum') } } sort keys %{ $period{'year'}->{'measures'} } ],
+	};
+}
+
 1;

@@ -20,6 +20,7 @@ function jawnosHeaderApply(app, html, timestamp) {
 	header = $('.wind[app="' + app + '"]').find('.appointment_header_background');
 	header.attr('last_updated', timestamp || Date.now());
 	if (typeof appointment_chron === 'function') { appointment_chron(); }
+	if (typeof jawnosTimePreviewPaintApp === 'function') { jawnosTimePreviewPaintApp(app); }
 }
 
 function wsMessageHandler(event) {

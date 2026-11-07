@@ -157,15 +157,15 @@
 			<% } %>
 			<div class="main_inputs_row" app="<%= $a %>">
 				<span class="main_input_field">
-					<input type="text" class="ago main_input" app="<%= $a %>" text="ago" placeholder="ago" />
+					<input type="text" class="ago main_input" app="<%= $a %>" text="ago" placeholder="<%= &subs::ui('Ago') %>" />
 					<span class="main_input_preview ago_preview" app="<%= $a %>"></span>
 				</span>
 				<span class="main_input_field">
-					<input type="text" class="duration main_input" app="<%= $a %>" text="duration" placeholder="duration" />
+					<input type="text" class="duration main_input" app="<%= $a %>" text="duration" placeholder="<%= &subs::ui('Duration') %>" />
 					<span class="main_input_preview duration_preview" app="<%= $a %>"></span>
 				</span>
 				<span class="main_input_field">
-					<input type="text" class="quantity main_input" app="<%= $a %>" text="quantity" placeholder="quantity">
+					<input type="text" class="quantity main_input" app="<%= $a %>" text="quantity" placeholder="<%= &subs::ui('Quantity') %>">
 					<span class="main_input_preview quantity_preview" app="<%= $a %>"></span>
 				</span>
 			</div>
@@ -175,12 +175,11 @@
 					<span class="main_input_preview schedule_preview" app="<%= $a %>"></span>
 				</span>
 				<span class="main_input_field">
-					<input type="text" class="warranty main_input" app="<%= $a %>" text="warranty" placeholder="warranty" />
+					<input type="text" class="warranty main_input" app="<%= $a %>" text="warranty" placeholder="<%= &subs::ui('Warranty') %>" />
 					<span class="main_input_preview warranty_preview" app="<%= $a %>"></span>
 				</span>
 			</div>
-			<br>
-			<textarea class="timed_input notes" rows="1" app="<%= $a %>" text="notes" placeholder="note" upgradeable="yes" magic_vars="appointment:<%= $a %>"></textarea>
+			<textarea class="timed_input notes" rows="1" app="<%= $a %>" text="notes" placeholder="<%= &subs::ui('Note') %>" upgradeable="yes" magic_vars="appointment:<%= $a %>"></textarea>
 			<br>
 			<div class="re_measures" app="<%= $a %>" style="display:none;vertical-align:top;width:100%">
 				<%# fetched by appSectionGrabber() the first time the measures are opened %>
@@ -214,35 +213,107 @@
 			<% if ($from ne 'store') { %>
 				<canvas id="visualizer_<%= $a %>" class="visualizer" app="<%= $a %>" style="display:none;"></canvas>
 				<span class="enablers">
-					<img class="public_button medium_thumb enabler" type="public" app="<%= $a %>" off_colour="black" on_colour="green" 
+					<img class="public_button little_thumb enabler" type="public" app="<%= $a %>" off_colour="black" on_colour="green" 
 						<% if ( $appts->{$a}->{'setting'}->{'public'} eq 'on' ) { %>status="on" style="background-color:green"<% } else { %>
 							status="off" style="background-color:black;" <% } %>
 						src="<%= &subs::icon_path('public', '/icons/public.png') %>" hint="Public"
 					/>
-					<img class="enc_button medium_thumb enabler" type="enc" app="<%= $a %>" off_colour="black" on_colour="red" 
+					<img class="enc_button little_thumb enabler" type="enc" app="<%= $a %>" off_colour="black" on_colour="red" 
 						<% if ( $appts->{$a}->{'setting'}->{'enc'} eq 'on' ) { %>status="on" style="background-color:red"<% } else { %>
 							status="off" style="background-color:black;" <% } %>
 						src="<%= &subs::icon_path('enc_button', '/icons/enc_button.png') %>" hint="Encrypt"
 					/>
-					<img app="<%= $a %>" class="app_act medium_thumb enabler" type="notification" dim="yes" off_colour="#555555" on_colour="green" 
+					<img app="<%= $a %>" class="app_act little_thumb enabler" type="notification" dim="yes" off_colour="#555555" on_colour="green" 
 						<% if ( $appts->{$a}->{'setting'}->{'notification'} eq 'on' ) { %>status="on" style="background-color:green;border-color:green;box-shadow:0 0 8px 2px green;"<% } else { %>
 							status="off" style="background-color:#555555;border-color:#555555;opacity:0.45;filter:grayscale(1);" <% } %>
 						 src="<%= &subs::icon_path('bell', '/images/decipherable/bell.png') %>" hint="Notifications" />
 
-					<img app="<%= $a %>" class="app_act medium_thumb enabler toggle" type="toggle" dim="yes" off_colour="#555555" on_colour="green" 
+					<img app="<%= $a %>" class="app_act little_thumb enabler toggle" type="toggle" dim="yes" off_colour="#555555" on_colour="green" 
 						<% if ( $appts->{$a}->{'setting'}->{'toggle'} eq 'on' ) { %>src="<%= &subs::icon_path('on', '/images/decipherable/on.png') %>" hint="Toggle" status="on" style="background-color:green;border-color:green;box-shadow:0 0 8px 2px green;"<% } else { %>
 							src="<%= &subs::icon_path('off', '/images/decipherable/off.png') %>" hint="Toggle" status="off" style="background-color:#555555;border-color:#555555;opacity:0.45;filter:grayscale(1);" <% } %> />
-					<img src="<%= &subs::icon_path('burger', '/images/make believe/burger.png') %>" hint="Lock" class="medium_thumb appointment_locking_mechanism">
+					<img src="<%= &subs::icon_path('burger', '/images/make believe/burger.png') %>" hint="Lock" class="little_thumb appointment_locking_mechanism">
 				</span><br>
 			<% } %>
 
 			<% if ($from ne 'store') { %>
-			<%# the evaluation lives at the foot of the app and nowhere else: the
-			    report keeps its headline, and the controls that ask for a run or set
-			    its cadence sit inside the report's own accordion %>
+			<%# the appointment's bottom line: the evaluation it last left, and the
+			    shelf and the day/week/month/year readings that sit beside it. The
+			    headers are one row; only the chosen panel is open, and the
+			    evaluation keeps the open panel it had %>
+			<% my $app_stats = &subs::appointment_statistics_for($a); %>
 			<% my $app_evaluation = &subs::evaluation_report_for($a); %>
-			<div class="appointment_evaluation_zone" app="<%= $a %>" style="margin-top:6px;">
-				<%= include 'apps/evaluation', evaluation => $app_evaluation, app => $a, controls => 1 %>
+			<div class="appointment_stats" app="<%= $a %>">
+				<div class="appointment_stats_headers" role="tablist">
+					<button type="button" class="appointment_stats_header selected" stat="evaluation" role="tab" aria-selected="true"><%= &subs::ui('Evaluation') %></button>
+					<button type="button" class="appointment_stats_header" stat="inv" role="tab" aria-selected="false"><%= &subs::ui('Inv') %></button>
+					<button type="button" class="appointment_stats_header" stat="time" role="tab" aria-selected="false"><%= &subs::ui('Time') %></button>
+					<button type="button" class="appointment_stats_header" stat="count" role="tab" aria-selected="false"><%= &subs::ui('Count') %></button>
+					<button type="button" class="appointment_stats_header" stat="money" role="tab" aria-selected="false">$</button>
+					<button type="button" class="appointment_stats_header" stat="meas" role="tab" aria-selected="false"><%= &subs::ui('Meas') %></button>
+				</div>
+				<div class="appointment_stats_panel appointment_evaluation_zone" stat="evaluation">
+					<%= include 'apps/evaluation', evaluation => $app_evaluation, app => $a, controls => 1 %>
+				</div>
+				<div class="appointment_stats_panel" stat="inv" style="display:none;">
+					<% my $inv = $app_stats->{'inventory'} || {}; %>
+					<% if (scalar @{ $inv->{'units'} || [] }) { %>
+						<table class="appointment_stats_table">
+							<tr>
+								<th><%= &subs::format_name($app_stats->{'item'} || $a) %></th>
+								<th><%= &subs::ui('In') %></th>
+								<th><%= &subs::ui('Out') %></th>
+								<th><%= &subs::ui('On hand') %></th>
+							</tr>
+							<% foreach my $u ( @{$inv->{'units'}} ) { %>
+								<tr>
+									<td><%= $u->{'unit'} || &subs::ui('each') %></td>
+									<td><%= &subs::numeric_formatter($u->{'in'}) %></td>
+									<td><%= &subs::numeric_formatter($u->{'out'}) %></td>
+									<td><%= &subs::numeric_formatter($u->{'on_hand'}) %></td>
+								</tr>
+							<% } %>
+						</table>
+					<% } else { %>
+						<div class="appointment_stats_empty"><%= &subs::ui('No stock') %></div>
+					<% } %>
+				</div>
+				<div class="appointment_stats_panel" stat="time" style="display:none;">
+					<table class="appointment_stats_table">
+						<tr><th></th><% foreach my $p ( @{$app_stats->{'periods'}} ) { %><th><%= $p->{'label'} %></th><% } %></tr>
+						<tr><td><%= &subs::ui('Duration') %></td><% foreach my $p ( @{$app_stats->{'periods'}} ) { %><td><%= &subs::duration_sayer(($p->{'duration'} || 0) / 1000) %></td><% } %></tr>
+					</table>
+				</div>
+				<div class="appointment_stats_panel" stat="count" style="display:none;">
+					<table class="appointment_stats_table">
+						<tr><th></th><% foreach my $p ( @{$app_stats->{'periods'}} ) { %><th><%= $p->{'label'} %></th><% } %></tr>
+						<tr><td><%= &subs::ui('Count') %></td><% foreach my $p ( @{$app_stats->{'periods'}} ) { %><td><%= &subs::numeric_formatter($p->{'count'}) %></td><% } %></tr>
+					</table>
+				</div>
+				<div class="appointment_stats_panel" stat="money" style="display:none;">
+					<table class="appointment_stats_table">
+						<tr><th></th><% foreach my $p ( @{$app_stats->{'periods'}} ) { %><th><%= $p->{'label'} %></th><% } %></tr>
+						<tr><td>$</td><% foreach my $p ( @{$app_stats->{'periods'}} ) { %><td><%= &subs::price_formatter($p->{'money'} || 0) %></td><% } %></tr>
+					</table>
+				</div>
+				<div class="appointment_stats_panel" stat="meas" style="display:none;">
+					<% my $measure_names = $app_stats->{'measure_names'} || []; %>
+					<% if (scalar @{$measure_names}) { %>
+						<table class="appointment_stats_table">
+							<tr><th></th><% foreach my $p ( @{$app_stats->{'periods'}} ) { %><th><%= $p->{'label'} %></th><% } %></tr>
+							<% foreach my $m ( @{$measure_names} ) { %>
+								<tr>
+									<td><%= &subs::format_name($m->{'name'}) %> <span class="appointment_stats_calc"><%= &subs::format_name($m->{'calc'}) %></span></td>
+									<% foreach my $p ( @{$app_stats->{'periods'}} ) { %>
+										<% my $reading = $p->{'measures'}->{$m->{'name'}}; %>
+										<td><% if ($reading) { %><%= &subs::numeric_formatter($reading->{'value'}) . ($m->{'unit'} ? ' ' . $m->{'unit'} : '') %><% } else { %>-<% } %></td>
+									<% } %>
+								</tr>
+							<% } %>
+						</table>
+					<% } else { %>
+						<div class="appointment_stats_empty"><%= &subs::ui('No measures') %></div>
+					<% } %>
+				</div>
 			</div>
 			<% } %>
 		</div>
@@ -273,4 +344,19 @@
 	.media_group_contents .media_machine { max-width: 100%; min-height: 0; height: 30px; padding: 2px 7px;
 		border: 1px solid var(--line); border-radius: 6px; background: var(--panel);
 		color: var(--ink); font: inherit; font-size: 13px; }
+	/* The bottom line's headers share one row: six equal columns that never wrap,
+	   each keeping its own word (the panel below is the room for detail). */
+	.appointment_stats { margin-top: 6px; width: 100%; text-align: left; }
+	.appointment_stats_headers { display: flex; flex-wrap: nowrap; gap: 2px; width: 100%; }
+	.appointment_stats_header { flex: 1 1 0; min-width: 0; padding: 2px 1px; font: inherit; font-size: 11px;
+		line-height: 1.3; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer;
+		border: 1px solid var(--line); border-radius: 6px; background: var(--panel-2, #ffffff); color: var(--ink); }
+	.appointment_stats_header.selected { background-color: var(--line); font-weight: bold; }
+	.appointment_stats_panel { margin-top: 3px; width: 100%; box-sizing: border-box; }
+	.appointment_stats_table { width: 100%; border-collapse: collapse; font-size: 90%; }
+	.appointment_stats_table th, .appointment_stats_table td { padding: 1px 3px; text-align: right; }
+	.appointment_stats_table th:first-child, .appointment_stats_table td:first-child { text-align: left; }
+	.appointment_stats_table th { font-weight: normal; opacity: .7; }
+	.appointment_stats_calc { font-size: 85%; opacity: .6; }
+	.appointment_stats_empty { font-style: italic; opacity: .6; }
 </style>

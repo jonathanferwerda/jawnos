@@ -302,7 +302,26 @@ function appClearer(app) {
 		container.find('.schedule').val('');
 		container.find('.text_editor').html('').trigger('change');
 	});
+	// the readings under ago and warranty belong to the moment the press just
+	// wrote, so they are asked again rather than left on the old words
+	if (typeof jawnosTimePreviewPaintApp === 'function') { jawnosTimePreviewPaintApp(app); }
 }
+
+// The bottom line is a row of headers with one panel open at a time. The
+// evaluation is the panel the window opens on; the rest are asked for by their
+// own header.
+$(document).on('click', '.appointment_stats_header', function() {
+	var header = $(this);
+	var stats = header.closest('.appointment_stats');
+	var stat = header.attr('stat') || '';
+	stats.find('.appointment_stats_header').each(function() {
+		var chosen = ($(this).attr('stat') || '') === stat;
+		$(this).toggleClass('selected', chosen).attr('aria-selected', chosen ? 'true' : 'false');
+	});
+	stats.find('.appointment_stats_panel').each(function() {
+		$(this).toggle(($(this).attr('stat') || '') === stat);
+	});
+});
 
 function centreViewWriter(response) { 
 	// windowMaker decides for itself whether the app's window is already on the
