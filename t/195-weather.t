@@ -967,6 +967,20 @@ is(subs::weather_rule_location_normalize(undef), '', 'no location is the old glo
 	is(subs::weather_observe_leader(), 1, 'a lone live machine takes the pass while the server is away');
 }
 
+# --- the house server leads even though its roster omits itself --------------
+{
+	no warnings 'redefine';
+	local *subs::device_setter = sub { 'server' };
+	local *subs::signatorial_designer = sub { 'hub' };
+	local *subs::rightNow = sub { 1794020000000 };
+	local *subs::db_query = sub {
+		return bless { rows => [
+			{ signatorial => 'phone', device => 'mobile', connection => 'active', server_time => 1794020000000 },
+		] }, 'FakeResult';
+	};
+	is(subs::weather_observe_leader(), 1, 'the house server leads its own house');
+}
+
 # --- the whole house is back together ----------------------------------------
 {
 	no warnings 'redefine';

@@ -1228,6 +1228,12 @@ my $WEATHER_LEADER_GRACE_MS = 15 * 60 * 1000;
 # still checks its own rules, so a single machine is never left waiting.
 sub weather_observe_leader() {
 	my $me = &subs::signatorial_designer() // '';
+	# The house server is the actor by definition. Its own roster does not
+	# contain itself, so a server with no `device='server'` row in
+	# remote_machines would otherwise fall into the stand-in election and lose
+	# the pass to the lowest peer.
+	my $is_server = (eval { &subs::device_setter() } || '') eq 'server';
+	return 1 if $is_server;
 	my $now = &subs::rightNow();
 	my $rows = eval {
 		&subs::db_query(
