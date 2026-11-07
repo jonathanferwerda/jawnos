@@ -3,40 +3,44 @@
 The Internet app has two halves. **Web** is the manager's saved-page and
 measure pipeline. **Browse** is a real browser, and a live page cannot run
 inside the manager's own WebView: it would share the manager's cookie jar and
-its script bridge. So Browse is a sibling process with a WebKitGTK view of its
-own, a data store of its own, and no bridge back into the manager.
+its script bridge. So Browse is a sibling process with a Qt WebEngine
+(Chromium) view of its own, a named on-disk profile of its own, and no app-key
+bridge back into the manager.
 
 What this window does:
 
-* tabs (a ``Gtk.Notebook`` with a close button per tab), an address bar,
-  back/forward/reload/stop, find-in-page, downloads, error pages and external
-  protocol delegation;
-* its own persistent :class:`WebKit2.WebsiteDataManager` under
-  ``~/.local/share/jawnos/browser`` -- never the manager view's store;
+* tabs, an address bar that also searches a phrase, back/forward/reload/stop,
+  home, find-in-page, downloads, error pages and external protocol
+  delegation;
+* its own persistent ``QWebEngineProfile("jawnos-browse")`` under
+  ``~/.config/jawnos/browse-webengine`` -- never the manager view's profile
+  (``jawnos``) and never WebKitGTK's store;
 * a local JSONL history;
 * site-time accounting: the focused tab's registrable domain is queued as a
   ``usage_sessions`` row (``kind=site``, ``source=browser``) while this window
   is active. Spans are posted through the desktop app's stored ticket by
   :class:`jawnos_desktop.usage.ManagerClient`, which this module subclasses
   without changing;
-* an ad blocker: a small baseline of ad-serving hosts and cosmetic selectors
-  (a declarative :class:`WebKit2.UserContentFilter`), plus bug mode -- a
-  picker that hides the element a person taps and remembers that selector for
-  the site in ``adblock.json``;
+* an ad blocker: a small baseline of ad-serving hosts enforced by a
+  ``QWebEngineUrlRequestInterceptor`` plus cosmetic selectors injected into an
+  isolated script world, and bug mode -- a picker that hides the element a
+  person taps and remembers that selector for the site in ``adblock.json``;
 * ``--mode measure``: a message-only element picker that posts the clicked
   element's document to ``/manager/web/measure/live`` and shows the returned
-  candidates in a GTK dialog. The returned confirmation HTML is never loaded
-  or evaluated.
+  candidates. The returned confirmation HTML is never loaded or evaluated.
 
 Safety rules (see ``docs/internet-contract.md``):
 
-* the browse view carries no ``JawnBrowse`` bridge. Its only message handlers
-  are the measure picker (measure mode) and the ad-block picker (browse mode);
-  the latter writes a selector to the local block list and never reaches the
-  manager;
-* the ad-block picker runs in its own isolated WebKit world, so a page cannot
-  see or call it;
-* TLS errors are never ignored for external sites;
+* the browse view carries no app-key bridge. The page-bridge channel it does
+  expose answers only media state, its own ``JawnBrowse`` tab request, the
+  local ad-block picker and (in measure mode) the measure picker; an
+  ``app_pubkey`` or ``open_manager`` request from a page is ignored;
+* the ad-block picker runs in an isolated Qt script world, so a page cannot
+  see or call it; its messages reach Python over a DOM event and are validated
+  again here;
+* TLS errors are accepted for the house's self-signed certificate, the same
+  exception the Qt shell makes; external ``file:`` and unknown schemes are
+  refused;
 * navigation to loopback, link-local and other private addresses is refused
   unless ``JAWNOS_BROWSE_ALLOW_PRIVATE=1``.
 """
@@ -53,7 +57,7 @@ import sys
 import threading
 import urllib.parse
 
-from . import core, usage
+from . import bridge, core, gpu, keepawake, usage
 
 LOG = logging.getLogger("jawnos.browser")
 
@@ -67,6 +71,17 @@ MAX_PENDING = 1000
 # The live document is capped at 1.5 MB before it leaves the page. The manager
 # caps it at 2 MB again; this keeps a huge page from being copied twice.
 MAX_MEASURE_HTML = 1572864
+
+# The Browse profile is named and on-disk, under the house config directory.
+# It is deliberately not the manager view's "jawnos" profile: the two stores
+# must not share a cookie jar.
+PROFILE_NAME = "jawnos-browse"
+PROFILE_DIR_NAME = "browse-webengine"
+
+# The address bar searches a phrase. DuckDuckGo is the house's own default
+# general engine (perl/gb/03_engines_and_tools.pl), so a phrase typed in Browse
+# lands somewhere the rest of the house already treats as neutral.
+SEARCH_PREFIX = "https://duckduckgo.com/?q="
 
 # --------------------------------------------------------------------------
 # The ad-block standard
@@ -82,8 +97,6 @@ MAX_MEASURE_HTML = 1572864
 # part that learns a site's own shapes.
 ADBLOCK_FILE = "adblock.json"
 ADBLOCK_VERSION = 1
-ADBLOCK_FILTER_ID = "jawnos-adblock-v1"
-ADBLOCK_WORLD = "jawnos_adblock"
 MAX_SELECTOR_CHARS = 512
 MAX_SELECTORS_PER_SITE = 500
 
@@ -159,68 +172,13 @@ BASELINE_COSMETIC_SELECTORS = (
 )
 
 
-def _is_ip_domain(domain):
-    try:
-        ipaddress.ip_address(domain)
-        return True
-    except ValueError:
+def is_ad_host(host):
+    """True when ``host`` is one of the baseline ad hosts or a subdomain."""
+    host = (host or "").strip().strip(".").lower()
+    if not host:
         return False
-
-
-def _ad_host_url_filter(host):
-    """The declarative-filter regex that matches one baseline ad host.
-
-    WebKit's URL-filter engine is a restricted regex: it has no disjunction
-    (``|``) operator, so the baseline is one rule per host rather than one
-    alternation. The pattern anchors at the scheme, allows subdomains, and
-    requires the host to end there (not ``doubleclick.net.example``).
-    """
-    return (r"^https?://([^/]+\.)?%s(:[0-9]+)?([:/?#].*)?$"
-            % host.replace(".", r"\."))
-
-
-def adblock_rules(user_sites=None):
-    """The WebKit declarative content-blocker rules for the baseline.
-
-    One network rule per ad host; the cosmetic rules hide the containers those
-    hosts leave behind, including inside cross-origin frames (a document
-    stylesheet cannot reach those). ``user_sites`` adds the person's own picks,
-    scoped to their registrable domain: a page with a strict ``style-src`` CSP
-    blocks a later sheet update, but not a declarative rule.
-    """
-    rules = []
-    for host in BASELINE_AD_HOSTS:
-        rules.append({
-            "trigger": {
-                "url-filter": _ad_host_url_filter(host),
-                "url-filter-is-case-sensitive": False,
-                "load-type": ["third-party"],
-            },
-            "action": {"type": "block"},
-        })
-    for selector in BASELINE_COSMETIC_SELECTORS:
-        rules.append({
-            "trigger": {"url-filter": "^https?://"},
-            "action": {"type": "css-display-none", "selector": selector},
-        })
-    if isinstance(user_sites, dict):
-        for domain, selectors in user_sites.items():
-            if not isinstance(domain, str) or not domain \
-                    or _is_ip_domain(domain) or not isinstance(selectors, list):
-                continue
-            for selector in selectors:
-                selector = _valid_selector(selector)
-                if not selector:
-                    continue
-                rules.append({
-                    "trigger": {
-                        "url-filter": "^https?://",
-                        "if-domain": [domain, "*" + domain],
-                    },
-                    "action": {"type": "css-display-none",
-                               "selector": selector},
-                })
-    return rules
+    return any(host == name or host.endswith("." + name)
+               for name in BASELINE_AD_HOSTS)
 
 
 # External schemes this browser is willing to hand to the desktop. A page may
@@ -313,49 +271,98 @@ com.vc net.vc org.vc edu.vc gov.vc
 """.split())
 
 # --------------------------------------------------------------------------
-# GTK / WebKit, loaded without making ``--help`` depend on a display
+# Qt WebEngine, loaded without making ``--help`` depend on a display
 # --------------------------------------------------------------------------
-
-# The manager view applies the same renderer switches (webkit.env plus the
-# Skylake/X11 fallback) before it imports WebKit. Importing it touches no
-# WebView context, and it is the one place those switches are maintained. A
-# machine without WebKit still gets a clean argparse error instead of a stack
-# trace, because the import is guarded.
-try:  # pragma: no cover - the import result depends on the installed typelibs
-    from . import webview as _manager_view  # noqa: F401
-except Exception:  # pragma: no cover
-    _manager_view = None
-
-
-def _load_gtk():
+# PySide6 is imported here so the module's own helpers can be tested on a
+# machine without Qt. The GUI entry point refuses cleanly when the import
+# failed; nothing in this module falls back to GTK.
+_QT_ERROR = None
+try:  # pragma: no cover - the import result depends on the installed packages
+    from PySide6.QtCore import (
+        QFile,
+        QIODevice,
+        QObject,
+        QStandardPaths,
+        QTimer,
+        QUrl,
+        Qt,
+        Signal,
+        Slot,
+    )
+    from PySide6.QtGui import (
+        QDesktopServices,
+        QIcon,
+        QKeySequence,
+        QShortcut,
+    )
+    from PySide6.QtWidgets import (
+        QApplication,
+        QButtonGroup,
+        QDialog,
+        QDialogButtonBox,
+        QFileDialog,
+        QHBoxLayout,
+        QLabel,
+        QLineEdit,
+        QMainWindow,
+        QMenu,
+        QMessageBox,
+        QProgressBar,
+        QRadioButton,
+        QScrollArea,
+        QStatusBar,
+        QTabWidget,
+        QToolBar,
+        QToolButton,
+        QVBoxLayout,
+        QWidget,
+    )
+    from PySide6.QtWebEngineCore import (
+        QWebEngineDownloadRequest,
+        QWebEnginePage,
+        QWebEngineProfile,
+        QWebEngineScript,
+        QWebEngineSettings,
+        QWebEngineUrlRequestInterceptor,
+    )
+    from PySide6.QtWebEngineWidgets import QWebEngineView
     try:
-        import gi
-        gi.require_version("Gtk", "3.0")
-        gi.require_version("Gdk", "3.0")
-        gi.require_version("Pango", "1.0")
-        gi.require_version("WebKit2", "4.1")
-        from gi.repository import Gdk, GdkPixbuf, Gio, GLib, Gtk, Pango, WebKit2
-        return (Gdk, GdkPixbuf, Gio, GLib, Gtk, Pango, WebKit2), None
-    except Exception as exc:  # pragma: no cover
-        return None, exc
+        from PySide6.QtWebEngineCore import QWebEnginePermission
+    except Exception:
+        QWebEnginePermission = None
+    try:
+        from PySide6.QtWebChannel import QWebChannel
+    except Exception:
+        QWebChannel = None
+    # The window painter and the one certificate rule live in qt_shell; both
+    # are toolkit code shared with the manager view, so they are imported
+    # rather than copied. qt_shell imports no toolkit at module level.
+    from .qt_shell import _accept_certificate, black_page, prepare_wayland_env
+    _QT_OK = True
+except Exception as _exc:  # pragma: no cover - only without PySide6/Qt WebEngine
+    _QT_OK = False
+    _QT_ERROR = _exc
+    QApplication = QWebEnginePage = QWebEngineProfile = None
+    QWebEngineScript = QWebEngineSettings = QWebEngineView = None
+    QWebEngineUrlRequestInterceptor = QWebEngineDownloadRequest = None
+    QWebEnginePermission = QWebChannel = None
+    QObject = QWidget = QMainWindow = QTabWidget = object
+    _accept_certificate = black_page = prepare_wayland_env = None
 
-
-_GTK, _GTK_ERROR = _load_gtk()
-if _GTK is not None:
-    Gdk, GdkPixbuf, Gio, GLib, Gtk, Pango, WebKit2 = _GTK
-    _WindowBase = Gtk.Window
-    _BoxBase = Gtk.Box
-    _VBox = Gtk.Orientation.VERTICAL
-    _HBox = Gtk.Orientation.HORIZONTAL
-else:  # pragma: no cover - only when WebKitGTK is not installed
-    Gdk = GdkPixbuf = Gio = GLib = Gtk = Pango = WebKit2 = None
-    _WindowBase = object
-    _BoxBase = object
-    _VBox = _HBox = None
+if _QT_OK:
+    _ObjectBase = QObject
+    _WidgetBase = QWidget
+    _MainWindowBase = QMainWindow
+    _PageBase = QWebEnginePage
+    _ViewBase = QWebEngineView
+    _InterceptorBase = QWebEngineUrlRequestInterceptor
+else:  # pragma: no cover
+    _ObjectBase = _WidgetBase = _MainWindowBase = object
+    _PageBase = _ViewBase = _InterceptorBase = object
 
 
 # --------------------------------------------------------------------------
-# Small pure helpers (importable without GTK)
+# Small pure helpers (importable without Qt)
 # --------------------------------------------------------------------------
 
 def browser_data_dir():
@@ -364,6 +371,11 @@ def browser_data_dir():
     if not base:
         base = os.path.join(os.path.expanduser("~"), ".local", "share")
     return os.path.join(base, "jawnos", "browser")
+
+
+def profile_store_dir():
+    """The Qt profile's on-disk store: ``~/.config/jawnos/browse-webengine``."""
+    return os.path.join(core.config_dir(), PROFILE_DIR_NAME)
 
 
 def allow_private():
@@ -433,7 +445,8 @@ def normalise_url(text):
     """An address from the URL bar, or None when it is not http(s).
 
     A bare host (``example.com``, ``example.com:8080``) becomes https. A phrase
-    or a non-http scheme is refused; there is no search engine to send it to.
+    or a non-http scheme is refused; :func:`address_url` is what the address
+    bar uses to turn a phrase into a search.
     """
     text = (text or "").strip()
     if not text:
@@ -463,6 +476,29 @@ def normalise_url(text):
     return "https://" + text
 
 
+_SCHEME_RE = re.compile(r"^[a-z][a-z0-9+.-]*:", re.IGNORECASE)
+
+
+def search_url(text):
+    """A search URL for a phrase, or None when the text names a scheme.
+
+    A phrase (spaces) or a bare word has no scheme, so it is a search. A
+    mistyped scheme such as ``ftp://host`` is left alone: the browser refuses
+    it instead of turning it into a query.
+    """
+    text = (text or "").strip()
+    if not text:
+        return None
+    if "://" in text or _SCHEME_RE.match(text):
+        return None
+    return SEARCH_PREFIX + urllib.parse.quote_plus(text)
+
+
+def address_url(text):
+    """What the address bar means: an http(s) URL, or a search for a phrase."""
+    return normalise_url(text) or search_url(text)
+
+
 def manager_base(url):
     """``https://host:port`` from a manager URL, or None."""
     try:
@@ -472,19 +508,6 @@ def manager_base(url):
     if parts.scheme not in ("http", "https") or not parts.netloc:
         return None
     return "%s://%s" % (parts.scheme, parts.netloc)
-
-
-def _js_text(result):
-    """The text a WebKit script-message handler received."""
-    for getter in ("get_js_value", "get_value"):
-        try:
-            return getattr(result, getter)().to_string()
-        except Exception:
-            continue
-    try:
-        return result.to_string()
-    except Exception:
-        return ""
 
 
 # --------------------------------------------------------------------------
@@ -820,7 +843,7 @@ class AdBlockStore:
             return list(self._sites.get(domain, []))
 
     def site_entries(self):
-        """A copy of every site's selectors, for the declarative filter."""
+        """A copy of every site's selectors, for the injected sheet."""
         with self._lock:
             return {domain: list(selectors)
                     for domain, selectors in self._sites.items() if selectors}
@@ -1195,7 +1218,7 @@ def _new_tab_html():
  p{margin:0;opacity:.65;font-size:15px;}
 </style></head>
 <body><div class="wrap"><h1>JawnOS Browse</h1>
-<p>Type an address above to begin.</p></div></body></html>"""
+<p>Type an address or a phrase above to begin.</p></div></body></html>"""
 
 
 def _error_html(uri, message):
@@ -1211,7 +1234,7 @@ def _error_html(uri, message):
     return """<!DOCTYPE html>
 <html><head><meta charset="utf-8"><title>Can't open this page</title>
 <style>
- html,body{height:100%;margin:0;background:#111;color:#ededed;
+ html,body{height:100%%;margin:0;background:#111;color:#ededed;
            font-family:system-ui,sans-serif;}
  .wrap{max-width:720px;margin:0 auto;padding:10vh 24px;}
  h1{font-size:26px;margin:0 0 12px;color:#ffcc00;}
@@ -1384,98 +1407,339 @@ _PICKER_JS = r"""
 
 
 # --------------------------------------------------------------------------
+# Qt page-world plumbing
+# --------------------------------------------------------------------------
+# Qt injects qwebchannel.js's transport into the main world only. The page
+# bridge therefore lives in the main world, and the ad-block picker -- which
+# must not be visible to a page -- lives in the isolated UserWorld and reaches
+# the bridge through a DOM event. Both directions are validated in Python.
+
+_BROWSE_SHIM_JS = r"""
+(function () {
+  if (window.__jawnBrowseQtShim) { return; }
+  window.__jawnBrowseQtShim = true;
+  window.webkit = window.webkit || {};
+  window.webkit.messageHandlers = window.webkit.messageHandlers || {};
+  window.__jawnBrowseQueue = [];
+  window.__jawnBrowsePost = function (name, raw) {
+    if (window.__jawnBrowseBridge) {
+      try { window.__jawnBrowseBridge.postMessage(name, String(raw)); } catch (e) {}
+    } else {
+      window.__jawnBrowseQueue.push([name, String(raw)]);
+    }
+  };
+  ['jawnos', 'jawnos_browse', 'jawnos_adblock', 'jawnos_measure']
+    .forEach(function (name) {
+      window.webkit.messageHandlers[name] = {
+        postMessage: function (raw) { window.__jawnBrowsePost(name, raw); }
+      };
+    });
+  document.addEventListener('__jawnos_adblock_message', function (ev) {
+    try { window.__jawnBrowsePost('jawnos_adblock', String(ev.detail)); }
+    catch (e) {}
+  });
+  if (typeof QWebChannel !== 'function' || !window.qt ||
+      !window.qt.webChannelTransport) { return; }
+  try {
+    new QWebChannel(window.qt.webChannelTransport, function (channel) {
+      window.__jawnBrowseBridge = channel.objects.jawnos;
+      var queued = window.__jawnBrowseQueue || [];
+      window.__jawnBrowseQueue = [];
+      for (var i = 0; i < queued.length; i++) {
+        try {
+          window.__jawnBrowseBridge.postMessage(queued[i][0], queued[i][1]);
+        } catch (e) {}
+      }
+    });
+  } catch (e) {}
+})();
+"""
+
+_USER_WORLD_SHIM_JS = r"""
+(function () {
+  if (window.__jawnAdblockShim) { return; }
+  window.__jawnAdblockShim = true;
+  window.webkit = window.webkit || {};
+  window.webkit.messageHandlers = window.webkit.messageHandlers || {};
+  window.webkit.messageHandlers.jawnos_adblock = {
+    postMessage: function (raw) {
+      try {
+        document.dispatchEvent(new CustomEvent('__jawnos_adblock_message',
+                                               { detail: String(raw) }));
+      } catch (e) {}
+    }
+  };
+})();
+"""
+
+_MEASURE_AUTO_JS = "window.__jawnosMeasureAuto = true;"
+
+
+def _webchannel_js():
+    """Qt's QWebChannel JavaScript, read from the resource the library ships."""
+    if not _QT_OK:
+        return ""
+    handle = QFile(":/qtwebchannel/qwebchannel.js")
+    if not handle.open(QIODevice.ReadOnly):
+        return ""
+    try:
+        return bytes(handle.readAll()).decode("utf-8")
+    finally:
+        handle.close()
+
+
+def grant_media_permissions(page):
+    """Grant this page the microphone and camera; deny everything else.
+
+    Qt 6.8 moved web permissions to ``QWebEnginePermission``; older bindings
+    use ``QWebEnginePage.featurePermissionRequested``. Both are handled, and
+    only capture features are granted -- geolocation, notifications and
+    clipboard stay denied.
+    """
+    granted_names = ("MediaAudioCapture", "MediaVideoCapture",
+                     "MediaAudioVideoCapture")
+    enum = getattr(QWebEnginePermission, "PermissionType", None) \
+        if QWebEnginePermission is not None else None
+    if enum is not None and hasattr(page, "permissionRequested"):
+        granted = {getattr(enum, name) for name in granted_names
+                   if hasattr(enum, name)}
+
+        def decide(permission):
+            try:
+                if permission.permissionType() in granted:
+                    permission.grant()
+                else:
+                    permission.deny()
+            except Exception:
+                pass
+
+        page.permissionRequested.connect(decide)
+        return
+
+    granted = set()
+    for name in granted_names:
+        value = getattr(QWebEnginePage.Feature, name, None)
+        if value is not None:
+            granted.add(value)
+
+    def decide_legacy(origin, feature):
+        policy = (QWebEnginePage.PermissionPolicy.PermissionGrantedByUser
+                  if feature in granted else
+                  QWebEnginePage.PermissionPolicy.PermissionDeniedByUser)
+        page.setFeaturePermission(origin, feature, policy)
+
+    page.featurePermissionRequested.connect(decide_legacy)
+
+
+class _AdInterceptor(_InterceptorBase):
+    """Block requests to the baseline ad hosts, third-party only.
+
+    A request from a page on the same registrable domain as the ad host is
+    left alone: a person who visits an ad host directly asked for it. The
+    interceptor runs on Chromium's IO thread, so it reads the store's flag and
+    nothing else.
+    """
+
+    def __init__(self, store, parent=None):
+        super().__init__(parent)
+        self._store = store
+
+    def interceptRequest(self, info):
+        try:
+            if not self._store.enabled:
+                return
+            host = (info.requestUrl().host() or "").strip(".").lower()
+            if not is_ad_host(host):
+                return
+            first = (info.firstPartyUrl().host() or "").strip(".").lower()
+            if first and (registrable_domain("https://" + first)
+                          == registrable_domain("https://" + host)):
+                return
+            info.block(True)
+        except Exception:
+            pass
+
+
+if _QT_OK:
+    class _BridgeRelay(QObject):
+        """One tab's page -> app channel (QWebChannel object ``jawnos``)."""
+
+        def __init__(self, window, tab, parent=None):
+            super().__init__(parent)
+            self._window = window
+            self._tab = tab
+
+        @Slot(str, str)
+        def postMessage(self, name, raw):
+            self._window.on_bridge_message(name, raw, self._tab)
+
+    class _Relay(QObject):
+        """Carry a worker thread's result onto the GUI thread."""
+
+        deliver = Signal(object)
+else:  # pragma: no cover - only without PySide6
+    _BridgeRelay = None
+    _Relay = None
+
+
+class BrowsePage(_PageBase):
+    """A Chromium page bound to one tab: policy, bridge and window creation."""
+
+    def __init__(self, profile, tab):
+        super().__init__(profile, tab)
+        self._tab = tab
+        self.certificateError.connect(_accept_certificate)
+        self._configure_settings()
+        grant_media_permissions(self)
+        self.loadStarted.connect(self._tab.on_load_started)
+        self.loadProgress.connect(self._tab.on_load_progress)
+        if hasattr(self, "loadingChanged"):
+            self.loadingChanged.connect(self._tab.on_loading_changed)
+        else:  # pragma: no cover - Qt older than 6.5
+            self.loadFinished.connect(self._tab.on_load_finished)
+        self.urlChanged.connect(self._tab.on_url_changed)
+        self.titleChanged.connect(self._tab.on_title_changed)
+        self.iconChanged.connect(self._tab.on_icon_changed)
+        self.fullScreenRequested.connect(self._tab.on_fullscreen_request)
+        if hasattr(self, "recentlyAudibleChanged"):
+            self.recentlyAudibleChanged.connect(self._tab.on_audible)
+        self._install_bridge()
+
+    def _configure_settings(self):
+        settings = self.settings()
+        wanted = (
+            ("JavascriptEnabled", True),
+            # A page's window.open becomes a tab in this window (the tab is
+            # the containment: we never create a top-level window for it).
+            ("JavascriptCanOpenWindows", True),
+            ("JavascriptCanAccessClipboard", False),
+            ("JavascriptCanPaste", False),
+            ("PlaybackRequiresUserGesture", False),
+            ("FullScreenSupportEnabled", True),
+            ("LocalStorageEnabled", True),
+            ("PluginsEnabled", False),
+            ("PdfViewerEnabled", True),
+            ("WebGLEnabled", True),
+            ("Accelerated2dCanvasEnabled", True),
+            ("ScrollAnimatorEnabled", True),
+            ("DnsPrefetchEnabled", True),
+            # Qt's own error page would replace the house's explanation.
+            ("ErrorPageEnabled", False),
+            ("AllowWindowActivationFromJavaScript", False),
+            ("HyperlinkAuditingEnabled", False),
+        )
+        for name, value in wanted:
+            attr = getattr(QWebEngineSettings.WebAttribute, name, None)
+            if attr is None:
+                continue
+            try:
+                settings.setAttribute(attr, value)
+            except Exception:
+                pass
+
+    def _install_bridge(self):
+        if QWebChannel is None:
+            LOG.warning("QtWebChannel is missing; the Browse bridge is inert")
+            return
+        channel = QWebChannel(self)
+        handler = _BridgeRelay(self._tab.window, self._tab, self)
+        channel.registerObject("jawnos", handler)
+        self.setWebChannel(channel)
+        self._jawn_channel = channel
+        self._jawn_handler = handler
+
+    def createWindow(self, _window_type):
+        """A popup or ``target=_blank`` becomes a tab in this same window.
+
+        Returning a page (rather than None or a new top-level view) makes Qt
+        load the requested URL into the tab we just created.
+        """
+        tab = self._tab.window.new_tab(uri=None, placeholder=False, switch=True)
+        return tab.page if tab is not None else None
+
+    def acceptNavigationRequest(self, url, nav_type, is_main_frame):
+        return self._tab.window.accept_navigation(
+            self._tab, url, nav_type, is_main_frame)
+
+
+class BrowseView(_ViewBase):
+    """The view, with Escape left to the page unless the window needs it."""
+
+    def __init__(self, window):
+        super().__init__()
+        self._window = window
+
+    def keyPressEvent(self, event):
+        if self._window.handle_escape():
+            event.accept()
+            return
+        super().keyPressEvent(event)
+
+
+class AddressEntry(QLineEdit):
+    """The address bar; Escape behaves like the window's Escape."""
+
+    def __init__(self, window):
+        super().__init__()
+        self._window = window
+
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key.Key_Escape and self._window.handle_escape():
+            event.accept()
+            return
+        super().keyPressEvent(event)
+
+
+# --------------------------------------------------------------------------
 # Widgets
 # --------------------------------------------------------------------------
 
-class BrowserTab(_BoxBase):
-    """One browser tab: a WebView and its notebook label."""
+class BrowserTab(_WidgetBase):
+    """One browser tab: a WebEngine view, its page, and its state."""
 
     def __init__(self, window):
-        super().__init__(orientation=_VBox)
+        super().__init__()
         self.window = window
         self.internal = False
         self.error_page = False
-        self.view = WebKit2.WebView(
-            web_context=window.context,
-            user_content_manager=window.content_manager,
-        )
-        self._configure()
-        self.pack_start(self.view, True, True, 0)
+        self.page = BrowsePage(window.profile, self)
+        self.view = BrowseView(window)
+        self.view.setPage(self.page)
+        black_page(self.page, self.view)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(self.view)
 
-        self.title_label = Gtk.Label(label="New tab")
-        self.title_label.set_ellipsize(Pango.EllipsizeMode.END)
-        self.title_label.set_max_width_chars(30)
-        self.title_label.set_xalign(0)
-        close = Gtk.Button.new_from_icon_name(
-            "window-close-symbolic", Gtk.IconSize.MENU)
-        close.set_relief(Gtk.ReliefStyle.NONE)
-        close.set_focus_on_click(False)
-        close.set_tooltip_text("Close tab")
-        close.connect("clicked", lambda *_: window.close_tab(self))
-        label = Gtk.Box(orientation=_HBox, spacing=6)
-        label.pack_start(self.title_label, True, True, 0)
-        label.pack_start(close, False, False, 0)
-        label.show_all()
-        self.tab_label = label
-        self.show_all()
-
-    def _configure(self):
-        view = self.view
-        settings = view.get_settings()
-        for prop, value in (
-            ("enable-smooth-scrolling", True),
-            ("enable-accelerated-2d-canvas", True),
-            ("enable-html5-local-storage", True),
-            ("enable-media", True),
-            ("enable-mediasource", True),
-            ("enable-webaudio", True),
-            # A page cannot open windows without a user gesture. A real click
-            # still reaches the notebook's ``create`` handler as a new tab.
-            ("javascript-can-open-windows-automatically", False),
-        ):
-            try:
-                settings.set_property(prop, value)
-            except Exception:
-                pass
-        view.connect("load-changed", self.window.on_load_changed, self)
-        view.connect("load-failed", self.window.on_load_failed, self)
-        view.connect("load-failed-with-tls-errors", self.window.on_tls_error, self)
-        view.connect("decide-policy", self.window.on_decide_policy, self)
-        view.connect("create", self.window.on_create, self)
-        view.connect("notify::uri", self.window.on_uri_changed, self)
-        view.connect("notify::title", self.window.on_title_changed, self)
-        view.connect("permission-request", self.window.on_permission, self)
-        view.connect("enter-fullscreen", self.window.on_enter_fullscreen, self)
-        view.connect("leave-fullscreen", self.window.on_leave_fullscreen, self)
-        try:
-            view.connect("key-press-event", self.window.on_key, self)
-        except Exception:
-            pass
+    # ---- loading ---------------------------------------------------------
 
     def load_uri(self, uri):
         self.internal = False
         self.error_page = False
-        self.view.load_uri(uri)
+        self.view.setUrl(QUrl(uri))
 
     def show_placeholder(self):
         self.internal = True
         self.error_page = False
-        self.view.load_html(_new_tab_html(), None)
+        self.view.setHtml(_new_tab_html())
 
     def show_error(self, uri, message):
         self.internal = True
         self.error_page = True
-        self.view.load_html(_error_html(uri, message), None)
+        # No base URL: the error page keeps about:blank, so internal/error
+        # state cannot be mistaken for a real navigation, exactly as the
+        # WebKit window's load_html(html, None) behaved. The Try again link
+        # in the page is absolute.
+        self.view.setHtml(_error_html(uri, message))
 
     def current_title(self):
         try:
-            title = self.view.get_title() or ""
+            title = self.page.title() or ""
         except Exception:
             title = ""
         if title:
             return title
         try:
-            uri = self.view.get_uri() or ""
+            uri = self.page.url().toString()
         except Exception:
             uri = ""
         host = urllib.parse.urlsplit(uri).hostname or ""
@@ -1483,16 +1747,90 @@ class BrowserTab(_BoxBase):
 
     def update_label(self):
         title = self.current_title()
-        self.title_label.set_text(title[:60])
-        self.title_label.set_tooltip_text(title)
+        self.window.set_tab_label(self, title)
+
+    # ---- page signals ----------------------------------------------------
+
+    def on_load_started(self):
+        self.window.on_load_started(self)
+
+    def on_load_progress(self, percent):
+        self.window.on_load_progress(self, percent)
+
+    def on_loading_changed(self, info):
+        try:
+            status = info.status()
+        except Exception:
+            return
+        names = QWebEngineLoadingInfoLoadStatus
+        if status == names.get("started"):
+            self.on_load_started()
+        elif status == names.get("succeeded"):
+            self.window.on_load_succeeded(self)
+        elif status == names.get("failed"):
+            self.window.on_load_failed(
+                self, info.url().toString(),
+                info.errorString() or "The page could not be loaded.")
+        elif status == names.get("stopped"):
+            self.window.on_load_stopped(self)
+
+    def on_load_finished(self, ok):  # pragma: no cover - Qt older than 6.5
+        if ok:
+            self.window.on_load_succeeded(self)
+        else:
+            self.window.on_load_failed(
+                self, self.page.url().toString(),
+                "The page could not be loaded.")
+
+    def on_url_changed(self, url):
+        uri = url.toString()
+        if uri and not uri.startswith(("about:", "data:")):
+            self.internal = False
+            self.error_page = False
+        self.window.on_url_changed(self)
+
+    def on_title_changed(self, _title):
+        if not self.internal:
+            self.update_label()
+        self.window.on_title_changed(self)
+
+    def on_icon_changed(self, icon):
+        self.window.on_icon_changed(self, icon)
+
+    def on_fullscreen_request(self, request):
+        self.window.on_fullscreen_request(request)
+
+    def on_audible(self, on):
+        self.window.set_engine_audio(self, bool(on))
 
 
-class BrowserWindow(_WindowBase):
+# Map the Qt 6.5+ loading status enum by name once, so a binding that renames
+# the members still works (the numeric ordering is documented as stable, but
+# the names are easier to read and check).
+if _QT_OK:
+    try:
+        from PySide6.QtWebEngineCore import QWebEngineLoadingInfo
+
+        _status = QWebEngineLoadingInfo.LoadStatus
+        QWebEngineLoadingInfoLoadStatus = {
+            "started": _status.LoadStartedStatus,
+            "succeeded": _status.LoadSucceededStatus,
+            "failed": _status.LoadFailedStatus,
+            "stopped": _status.LoadStoppedStatus,
+        }
+    except Exception:  # pragma: no cover - Qt older than 6.5
+        QWebEngineLoadingInfoLoadStatus = {}
+else:  # pragma: no cover
+    QWebEngineLoadingInfoLoadStatus = {}
+
+
+class BrowserWindow(_MainWindowBase):
     """The native browse window."""
 
     def __init__(self, args, check=False):
-        super().__init__(title="JawnOS Browse")
-        self.set_default_size(1200, 850)
+        super().__init__()
+        self.setWindowTitle("JawnOS Browse")
+        self.resize(1200, 850)
         self.args = args
         self.check_mode = check
         self.mode = "measure" if args.mode == "measure" else "browse"
@@ -1500,9 +1838,11 @@ class BrowserWindow(_WindowBase):
         self.uuid = (args.uuid or "")[:200]
         self.manager = args.manager or ""
         self._closing = False
-        self._main_running = False
-        self._flush_source = 0
         self._downloads = set()
+        self._bug_tab = None
+        self._chrome_before_page_fullscreen = None
+        self._media = {}
+        self._engine_audio = {}
 
         self.data_dir = browser_data_dir()
         try:
@@ -1514,407 +1854,275 @@ class BrowserWindow(_WindowBase):
             os.path.join(self.data_dir, ADBLOCK_FILE), logger=LOG)
         self.client = BrowseClient(manager=self.manager, logger=LOG)
         self.usage = SiteUsage(self.client, logger=LOG)
-        self._bug_tab = None
-        self._ad_filter = None
-        self._ad_filter_generation = 0
-        self._chrome_before_page_fullscreen = None
 
-        self._build_context()
+        self._inhibitor = keepawake.ScreensaverInhibitor()
+
+        self.profile = self._build_profile()
+        self._install_profile_scripts()
         self._build_ui()
-        self.connect("notify::is-active", self._on_active_changed)
-        self.connect("focus-in-event", self._on_active_changed)
-        self.connect("focus-out-event", self._on_active_changed)
-        self.connect("key-press-event", self.on_key)
-        self.url_entry.connect("key-press-event", self.on_key)
-        self.connect("destroy", self._on_destroy)
+
+        self._relay = _Relay(self)
+        self._relay.deliver.connect(self._deliver)
+
+        self._flush_timer = QTimer(self)
+        self._flush_timer.setInterval(FLUSH_SECONDS * 1000)
+        self._flush_timer.timeout.connect(self._on_flush_timer)
+        self._flush_timer.start()
+
+        app = QApplication.instance()
+        if app is not None:
+            try:
+                app.applicationStateChanged.connect(self._on_app_state)
+            except Exception:
+                pass
 
         uri = None
         if not check:
             uri = normalise_url(args.url)
-        tab = self.new_tab(uri=uri, placeholder=uri is None)
+        tab = self.new_tab(uri=uri, placeholder=uri is None and not check,
+                           switch=True)
         if not check:
             if uri is None and (args.url or "").strip():
                 self._set_status("Enter an http or https address.")
             if tab is not None and uri is None:
-                self.url_entry.grab_focus()
-            self._flush_source = GLib.timeout_add_seconds(
-                FLUSH_SECONDS, self._on_flush_timer)
+                self.url_entry.setFocus()
+        QTimer.singleShot(0, self._sync_site)
 
     # ---- construction ----------------------------------------------------
 
-    def _build_context(self):
-        data_path = os.path.join(self.data_dir, "data")
-        cache_path = os.path.join(self.data_dir, "cache")
-        context = None
+    def _build_profile(self):
+        store = profile_store_dir()
         try:
-            os.makedirs(data_path, exist_ok=True)
-            os.makedirs(cache_path, exist_ok=True)
-            manager = WebKit2.WebsiteDataManager(
-                base_data_directory=data_path,
-                base_cache_directory=cache_path,
-            )
-            context = WebKit2.WebContext.new_with_website_data_manager(manager)
-        except Exception as exc:
-            # Never fall back to the default context: it is the manager view's
-            # store. An ephemeral context is still a separate cookie jar.
-            LOG.warning("could not open the persistent browse store (%s); "
-                        "using an in-memory store", exc)
-            context = WebKit2.WebContext.new_ephemeral()
-        self.context = context
+            os.makedirs(os.path.join(store, "storage"), exist_ok=True)
+            os.makedirs(os.path.join(store, "cache"), exist_ok=True)
+        except OSError as exc:
+            LOG.warning("could not create the browse profile directory: %s", exc)
+        profile = QWebEngineProfile(PROFILE_NAME, self)
+        profile.setPersistentStoragePath(os.path.join(store, "storage"))
+        profile.setCachePath(os.path.join(store, "cache"))
+        profile.setPersistentCookiesPolicy(
+            QWebEngineProfile.PersistentCookiesPolicy.ForcePersistentCookies)
         try:
-            self.context.set_cache_model(WebKit2.CacheModel.DOCUMENT_BROWSER)
+            profile.setHttpCacheType(
+                QWebEngineProfile.HttpCacheType.DiskHttpCache)
         except Exception:
             pass
+        self._interceptor = _AdInterceptor(self.adblock, profile)
         try:
-            # Explicit, even though it is the default: no exception is ever
-            # added for an external site.
-            self.context.set_tls_errors_policy(WebKit2.TLSErrorsPolicy.FAIL)
+            profile.setUrlRequestInterceptor(self._interceptor)
         except Exception:
-            pass
+            LOG.exception("could not install the ad-request interceptor")
         try:
-            self.context.connect("download-started", self.on_download_started)
+            profile.downloadRequested.connect(self.on_download_requested)
         except Exception:
-            pass
+            LOG.exception("could not watch for downloads")
+        return profile
 
-        self.content_manager = WebKit2.UserContentManager()
-        # The ad-block script runs in its own world: it may touch the DOM (the
-        # block sheet and the picker overlay) but a page cannot see or call it.
+    def _profile_script(self, source, name, point, world=None):
+        script = QWebEngineScript()
+        script.setName(name)
+        script.setSourceCode(source)
         try:
-            self.content_manager.add_script(WebKit2.UserScript.new_for_world(
-                _ADBLOCK_JS,
-                WebKit2.UserContentInjectedFrames.TOP_FRAME,
-                WebKit2.UserScriptInjectionTime.START,
-                ADBLOCK_WORLD,
-                None, None,
-            ))
+            script.setInjectionPoint(point)
+            if world is not None:
+                script.setWorldId(world)
         except Exception:
-            LOG.exception("could not install the ad-block script")
-        if self.mode != "measure":
-            try:
-                self.content_manager.register_script_message_handler_in_world(
-                    "jawnos_adblock", ADBLOCK_WORLD)
-                self.content_manager.connect(
-                    "script-message-received::jawnos_adblock",
-                    self.on_adblock_message)
-            except Exception:
-                LOG.exception("could not install the block picker bridge")
-        self._install_ad_filter()
+            script.setInjectionPoint(QWebEngineScript.InjectionPoint.DocumentReady)
+        script.setRunsOnSubFrames(False)
+        self.profile.scripts().insert(script)
+
+    def _install_profile_scripts(self):
+        creation = QWebEngineScript.InjectionPoint.DocumentCreation
+        ready = QWebEngineScript.InjectionPoint.DocumentReady
+        main = QWebEngineScript.ScriptWorldId.MainWorld
+        user = QWebEngineScript.ScriptWorldId.UserWorld
+
+        source = ""
+        channel_js = _webchannel_js()
+        if channel_js:
+            source += channel_js + "\n"
+        source += _BROWSE_SHIM_JS + "\n" + bridge.BROWSE_BRIDGE_JS
+        self._profile_script(source, "jawnos-browse-bridge", creation, main)
+        self._profile_script(bridge.MEDIA_MONITOR_JS,
+                             "jawnos-browse-media", ready, main)
+
+        # The picker API is isolated from the page (UserWorld). Its messages
+        # cross to the main world as a DOM event, which the bridge forwards.
+        self._profile_script(_USER_WORLD_SHIM_JS + "\n" + _ADBLOCK_JS,
+                             "jawnos-browse-adblock", ready, user)
+
         if self.mode == "measure":
-            try:
-                self.content_manager.register_script_message_handler("jawnos_measure")
-                self.content_manager.connect(
-                    "script-message-received::jawnos_measure",
-                    self.on_measure_message)
-                self.content_manager.add_script(WebKit2.UserScript.new(
-                    "window.__jawnosMeasureAuto = true;",
-                    WebKit2.UserContentInjectedFrames.TOP_FRAME,
-                    WebKit2.UserScriptInjectionTime.START,
-                    None, None,
-                ))
-                self.content_manager.add_script(WebKit2.UserScript.new(
-                    _PICKER_JS,
-                    WebKit2.UserContentInjectedFrames.TOP_FRAME,
-                    WebKit2.UserScriptInjectionTime.END,
-                    None, None,
-                ))
-            except Exception:
-                LOG.exception("could not install the measure picker")
-
-    def _install_ad_filter(self, include_user=True):
-        """Save the rules and attach them to this content manager.
-
-        ``UserContentFilterStore.save`` is asynchronous. The generation counter
-        keeps a save that finishes after an on/off toggle from re-adding the
-        filter the person just turned off.
-        """
-        self._ad_filter_generation += 1
-        generation = self._ad_filter_generation
-        if self.check_mode or WebKit2 is None or GLib is None:
-            return
-        if not self.adblock.enabled:
-            self._remove_ad_filter()
-            return
-        try:
-            store_dir = os.path.join(self.data_dir, "filters")
-            os.makedirs(store_dir, exist_ok=True)
-            store = WebKit2.UserContentFilterStore.new(store_dir)
-            sites = self.adblock.site_entries() if include_user else None
-            source = GLib.Bytes.new(json.dumps(
-                adblock_rules(sites), ensure_ascii=True).encode("utf-8"))
-            store.save(ADBLOCK_FILTER_ID, source, None,
-                       self._after_ad_filter_saved, (generation, include_user))
-        except Exception:
-            LOG.exception("could not build the ad-block filter")
-
-    def _after_ad_filter_saved(self, store, result, data):
-        generation, include_user = data
-        if generation != self._ad_filter_generation or self._closing:
-            return
-        try:
-            ad_filter = store.save_finish(result)
-        except Exception as exc:
-            LOG.warning("could not save the ad-block filter: %s", exc)
-            # One malformed stored selector must not cost the whole baseline.
-            if include_user and not self._closing:
-                self._install_ad_filter(include_user=False)
-            return
-        if not self.adblock.enabled:
-            return
-        try:
-            self.content_manager.remove_all_filters()
-            self.content_manager.add_filter(ad_filter)
-            self._ad_filter = ad_filter
-        except Exception:
-            LOG.exception("could not attach the ad-block filter")
-
-    def _remove_ad_filter(self):
-        self._ad_filter = None
-        try:
-            self.content_manager.remove_all_filters()
-        except Exception:
-            pass
+            self._profile_script(_MEASURE_AUTO_JS, "jawnos-browse-measure-flag",
+                                 creation, main)
+            self._profile_script(_PICKER_JS, "jawnos-browse-picker", ready,
+                                 main)
 
     def _build_ui(self):
-        header = Gtk.HeaderBar()
-        header.set_show_close_button(True)
-        header.set_title("JawnOS Browse")
-        header.set_subtitle("Measure mode" if self.mode == "measure" else "")
-        self.set_titlebar(header)
-        self.header = header
+        self.toolbar = QToolBar("Browse", self)
+        self.toolbar.setMovable(False)
+        self.toolbar.setFloatable(False)
+        self.addToolBar(Qt.ToolBarArea.TopToolBarArea, self.toolbar)
 
         self.back_button = self._tool_button(
-            "go-previous-symbolic", "Back", self.go_back)
+            "go-previous", "Back", "Back", self.go_back)
         self.forward_button = self._tool_button(
-            "go-forward-symbolic", "Forward", self.go_forward)
+            "go-next", "Forward", "Forward", self.go_forward)
         self.reload_button = self._tool_button(
-            "view-refresh-symbolic", "Reload", self.reload_or_stop)
-        header.pack_start(self.back_button)
-        header.pack_start(self.forward_button)
-        header.pack_start(self.reload_button)
+            "view-refresh", "Reload", "Reload", self.reload_or_stop)
+        self.home_button = self._tool_button(
+            "go-home", "Home", "Home", self.go_home)
+        for button in (self.back_button, self.forward_button,
+                       self.reload_button, self.home_button):
+            self.toolbar.addWidget(button)
 
-        self.url_entry = Gtk.Entry()
-        self.url_entry.set_placeholder_text("Enter an address")
-        self.url_entry.set_width_chars(52)
-        self.url_entry.set_hexpand(True)
-        self.url_entry.connect("activate", self.on_url_activate)
-        header.set_custom_title(self.url_entry)
+        self.url_entry = AddressEntry(self)
+        self.url_entry.setPlaceholderText("Enter an address or search")
+        self.url_entry.setClearButtonEnabled(True)
+        self.url_entry.returnPressed.connect(self.on_url_activate)
+        self.toolbar.addWidget(self.url_entry)
 
         self.new_tab_button = self._tool_button(
-            "tab-new-symbolic", "New tab", lambda *_: self.new_tab())
+            "tab-new", "+", "New tab", lambda: self.new_tab())
         self.find_button = self._tool_button(
-            "edit-find-symbolic", "Find in page (Ctrl+F)", self.open_find)
-        self.history_button = Gtk.MenuButton()
-        self.history_button.set_image(Gtk.Image.new_from_icon_name(
-            "document-open-recent-symbolic", Gtk.IconSize.LARGE_TOOLBAR))
-        self.history_button.set_tooltip_text("History")
-        self.history_button.set_popover(self._build_history_popover())
-        header.pack_end(self.history_button)
-        header.pack_end(self.new_tab_button)
-        header.pack_end(self.find_button)
+            "edit-find", "Find", "Find in page (Ctrl+F)", self.open_find)
+        self.history_button = QToolButton()
+        self.history_button.setToolTip("History")
+        self.history_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        icon = QIcon.fromTheme("document-open-recent")
+        if not icon.isNull():
+            self.history_button.setIcon(icon)
+        else:
+            self.history_button.setText("History")
+        self.history_menu = QMenu(self)
+        self.history_menu.aboutToShow.connect(self.reload_history_menu)
+        self.history_button.setMenu(self.history_menu)
+        for button in (self.new_tab_button, self.find_button):
+            self.toolbar.addWidget(button)
+        self.toolbar.addWidget(self.history_button)
 
-        root = Gtk.Box(orientation=_VBox)
         self.find_bar = self._build_find_bar()
-        root.pack_start(self.find_bar, False, False, 0)
 
-        self.notebook = Gtk.Notebook()
-        self.notebook.set_scrollable(True)
-        self.notebook.set_show_border(False)
-        self.notebook.connect("switch-page", self.on_switch_page)
-        root.pack_start(self.notebook, True, True, 0)
+        self.tabs = QTabWidget()
+        self.tabs.setTabsClosable(True)
+        self.tabs.setMovable(True)
+        self.tabs.setDocumentMode(True)
+        self.tabs.currentChanged.connect(self.on_switch_page)
+        self.tabs.tabCloseRequested.connect(self.on_tab_close_requested)
 
         # The bug controls sit at the end of the tab row, where the person is
         # already looking when a page misbehaves.
-        self.bug_button = Gtk.ToggleButton()
-        self.bug_button.set_image(self._bug_image())
-        self.bug_button.set_relief(Gtk.ReliefStyle.NONE)
-        self.bug_button.set_focus_on_click(False)
-        self.bug_button.set_tooltip_text("Block page elements (bug mode)")
-        self.bug_button.connect("toggled", self.on_bug_toggled)
-        self.block_list_button = Gtk.MenuButton()
-        self.block_list_button.set_image(Gtk.Image.new_from_icon_name(
-            "view-list-symbolic", Gtk.IconSize.LARGE_TOOLBAR))
-        self.block_list_button.set_tooltip_text(
-            "Blocked elements on this site")
-        self.block_list_button.set_popover(self._build_block_list_popover())
-        tab_actions = Gtk.Box(orientation=_HBox, spacing=2)
-        tab_actions.pack_start(self.bug_button, False, False, 0)
-        tab_actions.pack_start(self.block_list_button, False, False, 0)
-        tab_actions.show_all()
-        tab_actions.set_no_show_all(True)
-        tab_actions.set_visible(self.mode != "measure")
-        self.notebook.set_action_widget(tab_actions, Gtk.PackType.END)
+        self.bug_button = QToolButton()
+        self.bug_button.setCheckable(True)
+        self.bug_button.setToolTip("Block page elements (bug mode)")
+        bug_icon = QIcon(os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            "icons", "jawnos-bug.svg"))
+        if not bug_icon.isNull():
+            self.bug_button.setIcon(bug_icon)
+        else:
+            self.bug_button.setText("Bug")
+        self.bug_button.toggled.connect(self.on_bug_toggled)
 
-        status_bar = Gtk.Box(orientation=_HBox, spacing=6)
-        status_bar.set_border_width(4)
-        self.status_label = Gtk.Label(label="")
-        self.status_label.set_xalign(0)
-        self.status_label.set_ellipsize(Pango.EllipsizeMode.END)
-        self.progress_bar = Gtk.ProgressBar()
-        self.progress_bar.set_no_show_all(True)
-        self.progress_bar.set_size_request(170, -1)
-        status_bar.pack_start(self.status_label, True, True, 0)
-        status_bar.pack_start(self.progress_bar, False, False, 0)
-        root.pack_start(status_bar, False, False, 0)
-        self.status_bar = status_bar
+        self.block_list_button = QToolButton()
+        self.block_list_button.setToolTip("Blocked elements on this site")
+        self.block_list_button.setPopupMode(
+            QToolButton.ToolButtonPopupMode.InstantPopup)
+        list_icon = QIcon.fromTheme("view-list")
+        if not list_icon.isNull():
+            self.block_list_button.setIcon(list_icon)
+        else:
+            self.block_list_button.setText("Blocked")
+        self.block_list_menu = QMenu(self)
+        self.block_list_menu.aboutToShow.connect(self.reload_block_list)
+        self.block_list_button.setMenu(self.block_list_menu)
 
-        self.add(root)
+        tab_actions = QWidget()
+        tab_actions_layout = QHBoxLayout(tab_actions)
+        tab_actions_layout.setContentsMargins(0, 0, 0, 0)
+        tab_actions_layout.setSpacing(2)
+        tab_actions_layout.addWidget(self.bug_button)
+        tab_actions_layout.addWidget(self.block_list_button)
+        self.tabs.setCornerWidget(tab_actions, Qt.Corner.TopRightCorner)
+        tab_actions.setVisible(self.mode != "measure")
 
-    def _tool_button(self, icon, tooltip, callback):
-        button = Gtk.Button.new_from_icon_name(icon, Gtk.IconSize.LARGE_TOOLBAR)
-        button.set_relief(Gtk.ReliefStyle.NONE)
-        button.set_tooltip_text(tooltip)
-        button.connect("clicked", callback)
+        central = QWidget()
+        layout = QVBoxLayout(central)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        layout.addWidget(self.find_bar)
+        layout.addWidget(self.tabs)
+        self.setCentralWidget(central)
+
+        status = QStatusBar(self)
+        self.status_label = QLabel("")
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setMaximumWidth(170)
+        self.progress_bar.setVisible(False)
+        status.addWidget(self.status_label, 1)
+        status.addPermanentWidget(self.progress_bar)
+        self.setStatusBar(status)
+
+        self._install_shortcuts()
+
+    def _tool_button(self, icon_name, fallback, tooltip, callback):
+        button = QToolButton()
+        button.setToolTip(tooltip)
+        button.setAutoRaise(True)
+        icon = QIcon.fromTheme(icon_name)
+        if not icon.isNull():
+            button.setIcon(icon)
+        else:
+            button.setText(fallback)
+        button.clicked.connect(lambda *_: callback())
         return button
 
-    def _bug_image(self):
-        # The bug glyph ships beside this module; a system without the SVG
-        # loader still gets a visible mode button.
-        path = os.path.join(
-            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-            "icons", "jawnos-bug.svg")
-        try:
-            pixbuf = GdkPixbuf.Pixbuf.new_from_file_at_size(path, 18, 18)
-            return Gtk.Image.new_from_pixbuf(pixbuf)
-        except Exception:
-            return Gtk.Image.new_from_icon_name(
-                "dialog-warning-symbolic", Gtk.IconSize.LARGE_TOOLBAR)
-
     def _build_find_bar(self):
-        revealer = Gtk.Revealer()
-        revealer.set_transition_type(Gtk.RevealerTransitionType.SLIDE_DOWN)
-        bar = Gtk.Box(orientation=_HBox, spacing=6)
-        bar.set_border_width(4)
-        self.find_entry = Gtk.SearchEntry()
-        self.find_entry.set_placeholder_text("Find in page")
-        self.find_entry.set_hexpand(True)
-        self.find_entry.connect("search-changed", self.on_find_changed)
-        self.find_entry.connect("activate", self.on_find_next)
-        bar.pack_start(self.find_entry, True, True, 0)
-        bar.pack_start(self._tool_button(
-            "go-up-symbolic", "Previous match", self.find_previous), False, False, 0)
-        bar.pack_start(self._tool_button(
-            "go-down-symbolic", "Next match", self.find_next), False, False, 0)
-        bar.pack_start(self._tool_button(
-            "window-close-symbolic", "Close find", self.close_find), False, False, 0)
-        bar.show_all()
-        revealer.add(bar)
-        revealer.set_reveal_child(False)
-        return revealer
+        bar = QWidget()
+        layout = QHBoxLayout(bar)
+        layout.setContentsMargins(4, 4, 4, 4)
+        layout.setSpacing(6)
+        self.find_entry = QLineEdit()
+        self.find_entry.setPlaceholderText("Find in page")
+        self.find_entry.setClearButtonEnabled(True)
+        self.find_entry.textChanged.connect(self.on_find_changed)
+        self.find_entry.returnPressed.connect(self.find_next)
+        layout.addWidget(self.find_entry, 1)
+        layout.addWidget(self._tool_button(
+            "go-up", "Previous", "Previous match", self.find_previous))
+        layout.addWidget(self._tool_button(
+            "go-down", "Next", "Next match", self.find_next))
+        layout.addWidget(self._tool_button(
+            "window-close", "Close", "Close find", self.close_find))
+        bar.setVisible(False)
+        return bar
 
-    def _build_history_popover(self):
-        self.history_popover = Gtk.Popover()
-        box = Gtk.Box(orientation=_VBox, spacing=6)
-        box.set_border_width(8)
-        heading = Gtk.Label(label="History")
-        heading.set_xalign(0)
-        box.pack_start(heading, False, False, 0)
-        scrolled = Gtk.ScrolledWindow()
-        scrolled.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-        scrolled.set_min_content_width(430)
-        scrolled.set_min_content_height(420)
-        self.history_list = Gtk.ListBox()
-        self.history_list.set_selection_mode(Gtk.SelectionMode.NONE)
-        self.history_list.connect("row-activated", self.on_history_row)
-        scrolled.add(self.history_list)
-        box.pack_start(scrolled, True, True, 0)
-        box.show_all()
-        self.history_popover.add(box)
-        self.history_popover.connect("show", lambda *_: self.reload_history())
-        return self.history_popover
-
-    def _build_block_list_popover(self):
-        self.block_list_popover = Gtk.Popover()
-        box = Gtk.Box(orientation=_VBox, spacing=8)
-        box.set_border_width(10)
-        heading = Gtk.Label(label="Blocked elements")
-        heading.set_xalign(0)
-        box.pack_start(heading, False, False, 0)
-        self.block_site_label = Gtk.Label(label="")
-        self.block_site_label.set_xalign(0)
-        self.block_site_label.get_style_context().add_class("dim-label")
-        box.pack_start(self.block_site_label, False, False, 0)
-
-        switch_row = Gtk.Box(orientation=_HBox, spacing=8)
-        switch_label = Gtk.Label(label="Block ads")
-        switch_label.set_xalign(0)
-        self.block_enabled_switch = Gtk.Switch()
-        self.block_enabled_switch.set_active(self.adblock.enabled)
-        self.block_enabled_switch.connect(
-            "notify::active", self.on_block_enabled)
-        switch_row.pack_start(switch_label, True, True, 0)
-        switch_row.pack_start(self.block_enabled_switch, False, False, 0)
-        box.pack_start(switch_row, False, False, 0)
-
-        scrolled = Gtk.ScrolledWindow()
-        scrolled.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-        scrolled.set_min_content_width(440)
-        scrolled.set_min_content_height(300)
-        self.block_list = Gtk.ListBox()
-        self.block_list.set_selection_mode(Gtk.SelectionMode.NONE)
-        scrolled.add(self.block_list)
-        box.pack_start(scrolled, True, True, 0)
-
-        self.block_clear_button = Gtk.Button(label="Clear this site")
-        self.block_clear_button.connect("clicked", self.on_block_clear)
-        box.pack_start(self.block_clear_button, False, False, 0)
-        box.show_all()
-        self.block_list_popover.add(box)
-        self.block_list_popover.connect("show", lambda *_: self.reload_block_list())
-        return self.block_list_popover
-
-    def reload_block_list(self):
-        for child in self.block_list.get_children():
-            self.block_list.remove(child)
-        tab = self.current_tab()
-        try:
-            uri = tab.view.get_uri() if tab is not None else ""
-        except Exception:
-            uri = ""
-        domain = registrable_domain(uri) if uri else ""
-        self.block_site_label.set_text(domain or "No site open")
-        selectors = self.adblock.site_selectors(uri) if domain else []
-        self.block_clear_button.set_sensitive(bool(selectors))
-        self.block_enabled_switch.set_active(self.adblock.enabled)
-        if not selectors:
-            row = Gtk.ListBoxRow()
-            label = Gtk.Label(label=(
-                "Nothing blocked on this site yet. Turn on bug mode, then tap "
-                "what you do not want to see."))
-            label.set_xalign(0)
-            label.set_line_wrap(True)
-            label.set_max_width_chars(52)
-            row.add(label)
-            self.block_list.add(row)
-        else:
-            for selector in selectors:
-                row = Gtk.ListBoxRow()
-                line = Gtk.Box(orientation=_HBox, spacing=6)
-                line.set_border_width(6)
-                text = Gtk.Label(label=selector)
-                text.set_xalign(0)
-                text.set_ellipsize(Pango.EllipsizeMode.END)
-                text.set_tooltip_text(selector)
-                remove = Gtk.Button.new_from_icon_name(
-                    "window-close-symbolic", Gtk.IconSize.MENU)
-                remove.set_relief(Gtk.ReliefStyle.NONE)
-                remove.set_tooltip_text("Stop blocking this")
-                remove.connect(
-                    "clicked", lambda *_a, s=selector: self.on_block_remove(s))
-                line.pack_start(text, True, True, 0)
-                line.pack_start(remove, False, False, 0)
-                row.add(line)
-                self.block_list.add(row)
-        self.block_list.show_all()
+    def _install_shortcuts(self):
+        pairs = (
+            ("Ctrl+L", self.focus_address),
+            ("Ctrl+T", lambda: self.new_tab()),
+            ("Ctrl+W", self.close_current_tab),
+            ("Ctrl+F", self.open_find),
+            ("Ctrl+G", self.find_next),
+            ("Ctrl+Shift+G", self.find_previous),
+            ("F5", self.reload_or_stop),
+            ("Ctrl+R", self.reload_or_stop),
+            ("Alt+Left", self.go_back),
+            ("Alt+Right", self.go_forward),
+            ("Alt+Home", self.go_home),
+        )
+        for sequence, callback in pairs:
+            shortcut = QShortcut(QKeySequence(sequence), self)
+            shortcut.setContext(Qt.ShortcutContext.WindowShortcut)
+            shortcut.activated.connect(lambda cb=callback: cb())
 
     # ---- blocking --------------------------------------------------------
 
-    def on_bug_toggled(self, button):
-        active = bool(button.get_active())
-        if active and not self.adblock.enabled:
-            button.set_active(False)
+    def on_bug_toggled(self, checked):
+        if checked and not self.adblock.enabled:
+            self.bug_button.setChecked(False)
             self._set_status("Turn ad blocking on first.")
             return
-        if active:
+        if checked:
             self._bug_tab = self.current_tab()
             self._apply_adblock(self._bug_tab)
             self._arm_bug_picker(self._bug_tab, True)
@@ -1930,145 +2138,159 @@ class BrowserWindow(_WindowBase):
             return
         script = ("window.__jawnosAdblock && window.__jawnosAdblock.arm(%s);"
                   % ("true" if on else "false"))
-        try:
-            tab.view.evaluate_javascript(
-                script, -1, ADBLOCK_WORLD, None, None, None, None)
-        except Exception:
-            pass
+        self._run_in_user_world(tab.page, script)
 
     def _apply_adblock(self, tab):
         """Push the site's saved selectors and the on/off state into a tab."""
         if not isinstance(tab, BrowserTab):
             return
-        try:
-            uri = tab.view.get_uri() or ""
-        except Exception:
-            uri = ""
+        uri = self._tab_uri(tab)
         selectors = self.adblock.site_selectors(uri) if uri else []
         script = (
             "(function(){var a=window.__jawnosAdblock;if(!a){return;}"
             "a.setEnabled(%s);a.apply(%s);})()"
             % ("true" if self.adblock.enabled else "false",
                json.dumps(selectors, ensure_ascii=True)))
+        self._run_in_user_world(tab.page, script)
+
+    def _run_in_user_world(self, page, script):
         try:
-            tab.view.evaluate_javascript(
-                script, -1, ADBLOCK_WORLD, None, None, None, None)
+            page.runJavaScript(
+                script, QWebEngineScript.ScriptWorldId.UserWorld)
+        except TypeError:  # pragma: no cover - Qt without a world argument
+            try:
+                page.runJavaScript(script)
+            except Exception:
+                pass
         except Exception:
             pass
 
-    def on_adblock_message(self, _content, result):
-        raw = _js_text(result)
+    def on_adblock_message(self, raw, tab):
         if not raw or len(raw) > 4096:
-            return False
+            return
         try:
             payload = json.loads(raw)
         except (ValueError, TypeError):
-            return False
+            return
         if not isinstance(payload, dict) or self.mode != "browse":
-            return False
-        tab = self.current_tab()
-        if tab is None:
-            return False
+            return
         action = payload.get("action")
         if action == "exit":
-            if self.bug_button.get_active():
-                self.bug_button.set_active(False)
-            return False
-        if action != "block" or not self.bug_button.get_active():
-            return False
+            if self.bug_button.isChecked():
+                self.bug_button.setChecked(False)
+            return
+        if action != "block" or not self.bug_button.isChecked():
+            return
         selector = _valid_selector(payload.get("selector"))
         if not selector:
-            return False
-        try:
-            uri = tab.view.get_uri() or ""
-        except Exception:
-            uri = ""
+            return
+        if tab is None:
+            tab = self.current_tab()
+        if tab is None:
+            return
+        uri = self._tab_uri(tab)
         if not uri.startswith(("http://", "https://")):
-            return False
-        # Key on the view's own URI, never on the message's ``url``: a page can
-        # lie in the payload, and the handler writes a persistent list.
+            return
+        # Key on the page's own URI, never on the message's ``url``: a page
+        # can lie in the payload, and the handler writes a persistent list.
         selectors = self.adblock.add(uri, selector)
         if selectors is None:
             self._set_status("That element could not be blocked.")
-            return False
-        # The per-site rule lives in the declarative filter too: a strict CSP
-        # can reject a later update to the document's sheet.
-        self._install_ad_filter()
+            return
         self._set_status("Blocked %d element%s on %s." % (
             len(selectors), "" if len(selectors) == 1 else "s",
             registrable_domain(uri)))
-        return False
 
     def on_block_remove(self, selector):
         tab = self.current_tab()
-        try:
-            uri = tab.view.get_uri() if tab is not None else ""
-        except Exception:
-            uri = ""
+        uri = self._tab_uri(tab)
         if not uri:
             return
         selectors = self.adblock.remove(uri, selector)
         if selectors is None:
             return
-        self._install_ad_filter()
         self._apply_adblock(tab)
         self.reload_block_list()
         self._set_status("No longer blocking that element.")
 
-    def on_block_clear(self, *_):
+    def on_block_clear(self):
         tab = self.current_tab()
-        try:
-            uri = tab.view.get_uri() if tab is not None else ""
-        except Exception:
-            uri = ""
+        uri = self._tab_uri(tab)
         if not uri:
             return
         selectors = self.adblock.clear(uri)
         if selectors is None:
             return
-        self._install_ad_filter()
         self._apply_adblock(tab)
         self.reload_block_list()
         self._set_status("Cleared this site's blocked elements.")
 
-    def on_block_enabled(self, switch, _pspec):
-        enabled = bool(switch.get_active())
+    def on_block_enabled(self, enabled):
+        enabled = bool(enabled)
         if enabled == self.adblock.enabled:
             return
         self.adblock.set_enabled(enabled)
-        if enabled:
-            self._install_ad_filter()
-        else:
-            self._remove_ad_filter()
-        for index in range(self.notebook.get_n_pages()):
-            tab = self.notebook.get_nth_page(index)
+        for index in range(self.tabs.count()):
+            tab = self.tabs.widget(index)
             if isinstance(tab, BrowserTab):
                 self._apply_adblock(tab)
-        if not enabled and self.bug_button.get_active():
-            self.bug_button.set_active(False)
+        if not enabled and self.bug_button.isChecked():
+            self.bug_button.setChecked(False)
         self._set_status("Ad blocking on." if enabled else "Ad blocking off.")
+
+    def reload_block_list(self):
+        menu = self.block_list_menu
+        menu.clear()
+        enabling = menu.addAction("Block ads")
+        enabling.setCheckable(True)
+        enabling.blockSignals(True)
+        enabling.setChecked(self.adblock.enabled)
+        enabling.blockSignals(False)
+        enabling.toggled.connect(self.on_block_enabled)
+        menu.addSeparator()
+
+        tab = self.current_tab()
+        uri = self._tab_uri(tab)
+        domain = registrable_domain(uri) if uri else ""
+        heading = menu.addAction(domain or "No site open")
+        heading.setEnabled(False)
+        selectors = self.adblock.site_selectors(uri) if domain else []
+        if not selectors:
+            empty = menu.addAction(
+                "Nothing blocked on this site yet. Turn on bug mode, then tap "
+                "what you do not want to see.")
+            empty.setEnabled(False)
+            return
+        for selector in selectors:
+            action = menu.addAction("Stop blocking %s" % selector)
+            action.setToolTip(selector)
+            action.triggered.connect(
+                lambda *_a, s=selector: self.on_block_remove(s))
+        menu.addSeparator()
+        clear = menu.addAction("Clear this site")
+        clear.triggered.connect(lambda *_: self.on_block_clear())
 
     # ---- tabs ------------------------------------------------------------
 
     def current_tab(self):
-        try:
-            page = self.notebook.get_nth_page(self.notebook.get_current_page())
-        except Exception:
-            page = None
-        return page if isinstance(page, BrowserTab) else None
+        widget = self.tabs.currentWidget()
+        return widget if isinstance(widget, BrowserTab) else None
+
+    def _tab_index(self, tab):
+        return self.tabs.indexOf(tab)
 
     def new_tab(self, uri=None, placeholder=True, switch=True):
         tab = BrowserTab(self)
-        page = self.notebook.append_page(tab, tab.tab_label)
-        self.notebook.show_all()
+        index = self.tabs.addTab(tab, "New tab")
+        self.tabs.setTabToolTip(index, "New tab")
         if switch:
-            self.notebook.set_current_page(page)
+            self.tabs.setCurrentIndex(index)
         if uri:
             self._navigate(uri, tab)
         elif placeholder:
             tab.show_placeholder()
         if switch and not self.check_mode and placeholder and not uri:
-            self.url_entry.grab_focus()
+            self.url_entry.setFocus()
         self._sync_toolbar()
         self._update_url_bar(tab, force=True)
         return tab
@@ -2076,26 +2298,47 @@ class BrowserWindow(_WindowBase):
     def close_tab(self, tab):
         if self._closing:
             return
-        page = self.notebook.page_num(tab)
-        if page < 0:
+        index = self._tab_index(tab)
+        if index < 0:
             return
-        if self.notebook.get_n_pages() <= 1:
+        if self.tabs.count() <= 1:
             self.close()
             return
         try:
-            tab.view.stop_loading()
+            tab.view.stop()
         except Exception:
             pass
-        self.notebook.remove_page(page)
+        self._media.pop(id(tab), None)
+        self._engine_audio.pop(id(tab), None)
+        self.tabs.removeTab(index)
         if self._bug_tab is tab:
             self._bug_tab = None
-        try:
-            tab.tab_label.destroy()
-        except Exception:
-            pass
-        tab.destroy()
+        tab.deleteLater()
+        self._reconcile_media()
         self._sync_site()
         self._sync_toolbar()
+
+    def on_tab_close_requested(self, index):
+        tab = self.tabs.widget(index)
+        if isinstance(tab, BrowserTab):
+            self.close_tab(tab)
+
+    def close_current_tab(self):
+        tab = self.current_tab()
+        if tab is not None:
+            self.close_tab(tab)
+
+    def set_tab_label(self, tab, title):
+        index = self._tab_index(tab)
+        if index < 0:
+            return
+        self.tabs.setTabText(index, (title or "New tab")[:60])
+        self.tabs.setTabToolTip(index, title or "")
+
+    def on_icon_changed(self, tab, icon):
+        index = self._tab_index(tab)
+        if index >= 0 and icon is not None and not icon.isNull():
+            self.tabs.setTabIcon(index, icon)
 
     # ---- navigation ------------------------------------------------------
 
@@ -2117,90 +2360,141 @@ class BrowserWindow(_WindowBase):
         tab.load_uri(uri)
         return True
 
-    def on_url_activate(self, entry):
-        uri = normalise_url(entry.get_text())
+    def accept_navigation(self, tab, url, nav_type, is_main_frame):
+        """Policy for every navigation request the engine asks about."""
+        uri = url.toString()
+        scheme = (url.scheme() or "").lower()
+        if not uri or uri == "about:blank":
+            return True
+        if scheme in ("http", "https"):
+            if blocked_host(uri) and not allow_private():
+                if is_main_frame:
+                    tab.show_error(
+                        uri,
+                        "Browse will not open this address because it is on a "
+                        "private network (loopback, link-local, or another "
+                        "local range).")
+                self._set_status("Blocked a private-network address.")
+                return False
+            return True
+        if scheme in ("about", "data", "blob"):
+            return True
+        if scheme == "file":
+            self._set_status("Browse does not open local files.")
+            return False
+        if scheme in EXTERNAL_SCHEMES \
+                and nav_type == QWebEnginePage.NavigationType.NavigationTypeLinkClicked:
+            self._launch_external(uri)
+            return False
+        self._set_status("Browse does not open this kind of link.")
+        return False
+
+    def on_url_activate(self):
+        uri = address_url(self.url_entry.text())
         if not uri:
             self._set_status("Enter an address like example.com.")
             return
         self._navigate(uri)
 
-    def go_back(self, *_):
-        tab = self.current_tab()
-        if tab and tab.view.can_go_back():
-            tab.view.go_back()
+    def focus_address(self):
+        self.url_entry.setFocus()
+        self.url_entry.selectAll()
 
-    def go_forward(self, *_):
+    def go_back(self):
         tab = self.current_tab()
-        if tab and tab.view.can_go_forward():
-            tab.view.go_forward()
-
-    def reload_or_stop(self, *_):
-        tab = self.current_tab()
-        if not tab:
+        if tab is None:
             return
-        if tab.view.is_loading():
-            tab.view.stop_loading()
+        history = tab.page.history()
+        if history.canGoBack():
+            history.back()
+
+    def go_forward(self):
+        tab = self.current_tab()
+        if tab is None:
+            return
+        history = tab.page.history()
+        if history.canGoForward():
+            history.forward()
+
+    def reload_or_stop(self):
+        tab = self.current_tab()
+        if tab is None:
+            return
+        if tab.page.isLoading():
+            tab.view.stop()
         else:
             tab.view.reload()
+
+    def go_home(self):
+        tab = self.current_tab()
+        if tab is None:
+            tab = self.new_tab()
+        if tab is not None:
+            tab.show_placeholder()
+            self._update_url_bar(tab, force=True)
+            self.url_entry.setFocus()
 
     def _sync_toolbar(self):
         tab = self.current_tab()
         if tab is None:
-            self.back_button.set_sensitive(False)
-            self.forward_button.set_sensitive(False)
+            self.back_button.setEnabled(False)
+            self.forward_button.setEnabled(False)
             self._set_loading(False)
             if getattr(self, "bug_button", None):
-                self.bug_button.set_sensitive(False)
-                self.block_list_button.set_sensitive(False)
+                self.bug_button.setEnabled(False)
+                self.block_list_button.setEnabled(False)
             return
-        try:
-            self.back_button.set_sensitive(tab.view.can_go_back())
-            self.forward_button.set_sensitive(tab.view.can_go_forward())
-            loading = tab.view.is_loading()
-        except Exception:
-            loading = False
-        self._set_loading(loading)
+        history = tab.page.history()
+        self.back_button.setEnabled(history.canGoBack())
+        self.forward_button.setEnabled(history.canGoForward())
+        self._set_loading(tab.page.isLoading())
         if getattr(self, "bug_button", None):
-            self.bug_button.set_sensitive(True)
-            self.block_list_button.set_sensitive(True)
+            self.bug_button.setEnabled(True)
+            self.block_list_button.setEnabled(True)
         self._update_url_bar(tab)
 
     def _set_loading(self, loading):
-        icon = "process-stop-symbolic" if loading else "view-refresh-symbolic"
-        self.reload_button.set_image(Gtk.Image.new_from_icon_name(
-            icon, Gtk.IconSize.LARGE_TOOLBAR))
-        self.reload_button.set_tooltip_text("Stop" if loading else "Reload")
+        icon = QIcon.fromTheme("process-stop" if loading else "view-refresh")
+        if icon.isNull():
+            self.reload_button.setIcon(QIcon())
+            self.reload_button.setText("Stop" if loading else "Reload")
+        else:
+            self.reload_button.setIcon(icon)
+            self.reload_button.setText("")
+        self.reload_button.setToolTip("Stop" if loading else "Reload")
 
     def _update_url_bar(self, tab, force=False):
         if tab is None:
             return
-        try:
-            uri = tab.view.get_uri() or ""
-        except Exception:
-            uri = ""
+        uri = self._tab_uri(tab)
         if tab.internal and (not uri or uri.startswith(("about:", "data:"))):
             text = ""
         else:
             text = uri
-        if force or not self.url_entry.has_focus():
-            self.url_entry.set_text(text)
-        self.url_entry.set_position(-1)
+        if force or not self.url_entry.hasFocus():
+            self.url_entry.setText(text)
+            self.url_entry.setCursorPosition(len(text))
+
+    def _tab_uri(self, tab):
+        if not isinstance(tab, BrowserTab):
+            return ""
+        try:
+            return tab.page.url().toString() or ""
+        except Exception:
+            return ""
 
     def _sync_site(self):
         if self._closing:
             return
         tab = self.current_tab()
         try:
-            active = bool(self.get_property("is-active"))
+            active = bool(self.isActiveWindow())
         except Exception:
             active = False
         if not active or tab is None:
             self.usage.idle()
             return
-        try:
-            uri = tab.view.get_uri() or ""
-        except Exception:
-            uri = ""
+        uri = self._tab_uri(tab)
         if tab.internal or not uri.startswith(("http://", "https://")):
             self.usage.idle()
             return
@@ -2212,77 +2506,76 @@ class BrowserWindow(_WindowBase):
             self.usage.idle()
             return
         try:
-            title = tab.view.get_title() or ""
+            title = tab.page.title() or ""
         except Exception:
             title = ""
         self.usage.visit(key, uri, title)
 
-    # ---- WebKit signals --------------------------------------------------
+    # ---- page signals ----------------------------------------------------
 
-    def on_load_changed(self, view, event, tab):
-        try:
-            if event == WebKit2.LoadEvent.STARTED:
-                if tab is self.current_tab():
-                    self._set_loading(True)
-                    self._sync_toolbar()
-                return
-            if event in (WebKit2.LoadEvent.COMMITTED, WebKit2.LoadEvent.REDIRECTED):
-                self._apply_adblock(tab)
-                if tab is self.current_tab() and not tab.internal \
-                        and getattr(self, "bug_button", None) \
-                        and self.bug_button.get_active():
-                    self._arm_bug_picker(tab, True)
-                if tab is self.current_tab():
-                    self._sync_toolbar()
-                return
-            if event != WebKit2.LoadEvent.FINISHED:
-                return
-        except Exception:
+    def on_load_started(self, tab):
+        if tab is self.current_tab():
+            self._set_loading(True)
+            self._sync_toolbar()
+
+    def on_load_progress(self, tab, percent):
+        if tab is not self.current_tab():
             return
+        if 0 <= percent < 100:
+            self.progress_bar.setValue(int(percent))
+            self.progress_bar.setVisible(True)
+        else:
+            self.progress_bar.setVisible(False)
+
+    def on_load_succeeded(self, tab):
         tab.update_label()
         self._apply_adblock(tab)
         if tab is self.current_tab() and not tab.internal \
-                and getattr(self, "bug_button", None) \
-                and self.bug_button.get_active():
+                and self.bug_button.isChecked():
             self._arm_bug_picker(tab, True)
         if tab is self.current_tab():
-            self.set_title("%s — JawnOS Browse" % tab.current_title())
+            self.setWindowTitle("%s — JawnOS Browse" % tab.current_title())
             self._sync_toolbar()
             self._set_status("")
-            self.url_entry.set_position(-1)
             self._sync_site()
-        try:
-            uri = view.get_uri() or ""
-        except Exception:
-            uri = ""
-        if not tab.internal and not tab.error_page and uri.startswith(("http://", "https://")):
-            self.history.add(uri, view.get_title() or "")
+            self.progress_bar.setVisible(False)
+        uri = self._tab_uri(tab)
+        if not tab.internal and not tab.error_page \
+                and uri.startswith(("http://", "https://")):
+            try:
+                title = tab.page.title() or ""
+            except Exception:
+                title = ""
+            self.history.add(uri, title)
         # A measure window re-arms itself through the injected start script,
         # but the first about:blank page never gets the flag. Arm only a real
         # page that finished loading.
         if self.mode == "measure" and tab is self.current_tab() \
-                and not tab.internal and uri.startswith(("http://", "https://")):
+                and not tab.internal \
+                and uri.startswith(("http://", "https://")):
             self._arm_picker()
 
-    def _arm_picker(self):
-        tab = self.current_tab()
-        if self.mode != "measure" or tab is None or tab.internal:
+    def on_load_failed(self, tab, failing_uri, message):
+        if failing_uri.startswith(("about:", "data:")):
             return
-        try:
-            tab.view.evaluate_javascript(
-                "window.__jawnosPicker && window.__jawnosPicker.arm(true);",
-                -1, None, None, None, None, None)
-        except Exception:
-            pass
+        if blocked_host(failing_uri) and not allow_private():
+            message = ("Browse will not open this address because it is on a "
+                       "private network (loopback, link-local, or another "
+                       "local range).")
+        tab.show_error(failing_uri, message)
+        if tab is self.current_tab():
+            self._set_status(message)
+            self.progress_bar.setVisible(False)
+            self._sync_toolbar()
+        self._sync_site()
 
-    def on_uri_changed(self, view, _pspec, tab):
-        try:
-            uri = view.get_uri() or ""
-        except Exception:
-            uri = ""
-        if uri and not uri.startswith(("about:", "data:")):
-            tab.internal = False
-            tab.error_page = False
+    def on_load_stopped(self, tab):
+        if tab is self.current_tab():
+            self._set_loading(False)
+            self.progress_bar.setVisible(False)
+            self._sync_toolbar()
+
+    def on_url_changed(self, tab):
         if tab is self.current_tab():
             self._update_url_bar(tab)
             self._sync_toolbar()
@@ -2290,172 +2583,204 @@ class BrowserWindow(_WindowBase):
         if not tab.internal:
             tab.update_label()
 
-    def on_title_changed(self, view, _pspec, tab):
-        tab.update_label()
+    def on_title_changed(self, tab):
         if tab is self.current_tab():
-            self.set_title("%s — JawnOS Browse" % tab.current_title())
+            self.setWindowTitle("%s — JawnOS Browse" % tab.current_title())
             self._sync_site()
 
-    def on_load_failed(self, view, load_event, failing_uri, error, tab):
-        code = None
-        try:
-            code = error.code
-        except Exception:
-            pass
-        try:
-            if code == WebKit2.NetworkError.CANCELLED:
-                return False
-        except Exception:
-            pass
-        if not failing_uri or failing_uri.startswith(("about:", "data:")):
-            return False
-        message = "The page could not be loaded."
-        try:
-            if error and error.message:
-                message = error.message
-        except Exception:
-            pass
-        if blocked_host(failing_uri) and not allow_private():
-            tab.show_error(
-                failing_uri,
-                "Browse will not open this address because it is on a private "
-                "network (loopback, link-local, or another local range).")
-        else:
-            tab.show_error(failing_uri, message)
-        if tab is self.current_tab():
-            self._set_status(message)
-            self._sync_toolbar()
+    def on_switch_page(self, _index):
+        tab = self.current_tab()
+        if tab is None:
+            return
+        if getattr(self, "bug_button", None) and self.bug_button.isChecked():
+            self._apply_adblock(tab)
+            if not tab.internal:
+                self._arm_bug_picker(tab, True)
+            self._bug_tab = tab
+        self._update_url_bar(tab, force=True)
+        self._sync_toolbar()
+        self.setWindowTitle("%s — JawnOS Browse" % tab.current_title())
         self._sync_site()
-        return True
+        if self.find_bar.isVisible():
+            self.on_find_changed(self.find_entry.text())
 
-    def on_tls_error(self, view, failing_uri, certificate, errors, tab):
-        # Returning False lets the load fail. Never call
-        # allow_tls_certificate_for_host here: that rule belongs to the
-        # manager's own HTTP client, not to a page from the internet.
-        self._set_status("The site's certificate could not be verified.")
-        return False
+    # ---- history ---------------------------------------------------------
 
-    def on_decide_policy(self, view, decision, decision_type, tab):
+    def on_history_row(self, uri):
+        if uri:
+            self._navigate(uri)
+
+    def reload_history_menu(self):
+        menu = self.history_menu
+        menu.clear()
+        entries = self.history.recent(100)
+        if not entries:
+            empty = menu.addAction("No history yet")
+            empty.setEnabled(False)
+            return
+        for entry in entries:
+            title = entry.get("title") or entry.get("url") or ""
+            url = entry.get("url") or ""
+            action = menu.addAction(
+                "%s — %s" % (title[:70], url[:90]))
+            action.setToolTip(url)
+            action.triggered.connect(
+                lambda *_a, u=url: self.on_history_row(u))
+
+    # ---- find ------------------------------------------------------------
+
+    def _find(self, text, backwards=False):
+        tab = self.current_tab()
+        if tab is None:
+            return
+        flags = QWebEnginePage.FindFlag(0)
+        if backwards:
+            flags |= QWebEnginePage.FindFlag.FindBackward
         try:
-            if decision_type == WebKit2.PolicyDecisionType.NAVIGATION_ACTION \
-                    or decision_type == WebKit2.PolicyDecisionType.NEW_WINDOW_ACTION:
-                action = decision.get_navigation_action()
-                uri = action.get_request().get_uri() or ""
-                if not uri or uri == "about:blank":
-                    decision.use()
-                    return True
-                parsed = urllib.parse.urlsplit(uri)
-                scheme = (parsed.scheme or "").lower()
-                if scheme in ("http", "https"):
-                    if blocked_host(uri) and not allow_private():
-                        decision.ignore()
-                        if decision_type == WebKit2.PolicyDecisionType.NAVIGATION_ACTION:
-                            tab.show_error(
-                                uri,
-                                "Browse will not open this address because it "
-                                "is on a private network (loopback, link-local, "
-                                "or another local range).")
-                        self._set_status("Blocked a private-network address.")
-                        return True
-                    decision.use()
-                    return True
-                if scheme in ("about", "data", "blob"):
-                    decision.use()
-                    return True
-                decision.ignore()
-                if scheme == "file":
-                    self._set_status("Browse does not open local files.")
-                elif scheme in EXTERNAL_SCHEMES and action.is_user_gesture():
-                    self._launch_external(uri)
-                else:
-                    self._set_status(
-                        "Browse does not open this kind of link.")
-                return True
-            decision.use()
-        except Exception:
-            try:
-                decision.ignore()
-            except Exception:
-                pass
-        return True
-
-    def on_create(self, view, navigation_action, tab):
-        try:
-            uri = navigation_action.get_request().get_uri() or ""
-        except Exception:
-            uri = ""
-        if uri and blocked_host(uri) and not allow_private():
-            self._set_status("Blocked a private-network address.")
-            return None
-        new_tab = self.new_tab(uri=None, placeholder=not uri, switch=True)
-        return new_tab.view if new_tab is not None else None
-
-    def on_permission(self, view, request, tab):
-        # Browse asks for nothing: no camera, microphone, location or
-        # notifications. Media playback itself is not a permission request.
-        try:
-            request.deny()
+            tab.page.findText(text or "", flags)
         except Exception:
             pass
-        return True
 
-    def on_enter_fullscreen(self, view, tab):
-        self._set_fullscreen_chrome(True)
-        try:
-            self.fullscreen()
-        except Exception:
-            pass
+    def on_find_changed(self, text):
+        self._find(text)
+
+    def on_find_next(self):
+        self._find(self.find_entry.text())
+
+    def find_next(self):
+        self._find(self.find_entry.text())
+
+    def find_previous(self):
+        self._find(self.find_entry.text(), backwards=True)
+
+    def open_find(self):
+        self.find_bar.setVisible(True)
+        self.find_entry.setFocus()
+        self.find_entry.selectAll()
+
+    def close_find(self):
+        self.find_bar.setVisible(False)
+        self.find_entry.setText("")
+        self._find("")
+
+    # ---- keyboard --------------------------------------------------------
+
+    def handle_escape(self):
+        """The behaviour the GTK window gave Escape, or False to pass it on."""
+        if getattr(self, "bug_button", None) and self.bug_button.isChecked():
+            self.bug_button.setChecked(False)
+            return True
+        if self.find_bar.isVisible():
+            self.close_find()
+            return True
+        tab = self.current_tab()
+        if tab is not None and tab.page.isLoading():
+            tab.view.stop()
+            return True
         return False
 
-    def on_leave_fullscreen(self, view, tab):
+    # ---- fullscreen ------------------------------------------------------
+
+    def on_fullscreen_request(self, request):
         try:
-            self.unfullscreen()
+            on = bool(request.toggleOn())
+            request.accept()
         except Exception:
-            pass
-        self._set_fullscreen_chrome(False)
-        return False
+            return
+        self._set_fullscreen_chrome(on)
 
     def _set_fullscreen_chrome(self, on):
         """Take the window's own bars out of a page's fullscreen.
 
-        A video that asks for fullscreen must fill the screen: the title bar,
+        A video that asks for fullscreen must fill the screen: the tool bar,
         the tab strip and the status line are exactly the bars a person sees at
-        the top and bottom of the picture. Restoring puts back the tab strip and
-        a find bar that was open, not a new one.
+        the top and bottom of the picture. Restoring puts back the tab strip
+        and a find bar that was open, not a new one.
         """
         try:
             if on:
                 self._chrome_before_page_fullscreen = (
-                    self.notebook.get_show_tabs(),
-                    self.find_bar.get_reveal_child(),
+                    self.toolbar.isVisible(),
+                    self.tabs.tabBar().isVisible(),
+                    self.find_bar.isVisible(),
                 )
-                self.set_titlebar(None)
-                self.status_bar.set_visible(False)
-                self.notebook.set_show_tabs(False)
-                self.find_bar.set_reveal_child(False)
+                self.toolbar.setVisible(False)
+                self.tabs.tabBar().setVisible(False)
+                self.statusBar().setVisible(False)
+                self.find_bar.setVisible(False)
+                self.showFullScreen()
             else:
-                self.status_bar.set_visible(True)
-                if self.get_titlebar() is None:
-                    self.set_titlebar(self.header)
-                    self.header.show_all()
-                show_tabs, find_open = self._chrome_before_page_fullscreen \
-                    or (True, False)
-                self.notebook.set_show_tabs(show_tabs)
-                if find_open:
-                    self.find_bar.set_reveal_child(True)
+                show_toolbar, show_tabs, find_open = \
+                    self._chrome_before_page_fullscreen or (True, True, False)
+                self.toolbar.setVisible(show_toolbar)
+                self.tabs.tabBar().setVisible(show_tabs)
+                self.statusBar().setVisible(True)
+                self.find_bar.setVisible(find_open)
                 self._chrome_before_page_fullscreen = None
+                self.showNormal()
         except Exception:
             LOG.exception("could not toggle the fullscreen chrome")
 
-    def _on_active_changed(self, *_):
-        self._sync_site()
+    # ---- downloads -------------------------------------------------------
 
-    def _on_flush_timer(self):
-        if self._closing:
-            return False
-        threading.Thread(target=self.usage.flush, kwargs={"roll": True},
-                         name="browse-flush", daemon=True).start()
-        return True
+    def on_download_requested(self, item):
+        suggested = (item.suggestedFileName() or "download").strip() or "download"
+        folder = QStandardPaths.writableLocation(
+            QStandardPaths.StandardLocation.DownloadLocation)
+        if not folder:
+            folder = os.path.expanduser("~")
+        path, _selected = QFileDialog.getSaveFileName(
+            self, "Save download", os.path.join(folder, suggested))
+        if not path:
+            try:
+                item.cancel()
+            except Exception:
+                pass
+            return
+        try:
+            item.setDownloadDirectory(os.path.dirname(path) or folder)
+            item.setDownloadFileName(os.path.basename(path))
+            item.receivedBytesChanged.connect(
+                lambda: self.on_download_progress(item))
+            item.stateChanged.connect(
+                lambda state: self.on_download_state(item, state))
+            item.accept()
+        except Exception as exc:
+            self._set_status("Could not start the download: %s" % exc)
+            return
+        self._downloads.add(item)
+        self._set_status("Downloading %s…" % os.path.basename(path))
+        self.progress_bar.setValue(0)
+        self.progress_bar.setVisible(True)
+
+    def on_download_progress(self, item):
+        try:
+            total = item.totalBytes()
+            if total > 0:
+                self.progress_bar.setValue(
+                    int(item.receivedBytes() * 100 / total))
+                self.progress_bar.setVisible(True)
+        except Exception:
+            pass
+
+    def on_download_state(self, item, state):
+        try:
+            if state == QWebEngineDownloadRequest.DownloadState.DownloadCompleted:
+                name = item.downloadFileName() or "file"
+                self._set_status("Downloaded %s" % name)
+                self._downloads.discard(item)
+            elif state in (
+                    QWebEngineDownloadRequest.DownloadState.DownloadInterrupted,
+                    QWebEngineDownloadRequest.DownloadState.DownloadCancelled):
+                reason = item.interruptReasonString() or "the download failed"
+                self._set_status("Download failed: %s" % reason)
+                self._downloads.discard(item)
+            if not self._downloads:
+                self.progress_bar.setVisible(False)
+        except Exception:
+            pass
+
+    # ---- external links / media -----------------------------------------
 
     def _launch_external(self, uri):
         scheme = urllib.parse.urlsplit(uri).scheme.lower()
@@ -2463,265 +2788,93 @@ class BrowserWindow(_WindowBase):
             self._set_status("Browse does not open this kind of link.")
             return
         try:
-            if Gtk.show_uri_on_window(self, uri, Gdk.CURRENT_TIME):
+            if QDesktopServices.openUrl(QUrl(uri)):
                 self._set_status("Opened in another app.")
                 return
         except Exception:
             pass
-        try:
-            Gio.AppInfo.launch_default_for_uri(uri, None)
-            self._set_status("Opened in another app.")
-        except Exception:
-            self._set_status("No app is registered for this link.")
+        self._set_status("No app is registered for this link.")
 
-    # ---- tabs / notebook -------------------------------------------------
+    def set_page_media(self, tab, audio, video):
+        self._media[id(tab)] = bool(audio) or bool(video)
+        self._reconcile_media()
 
-    def on_switch_page(self, notebook, page, page_num):
-        if not isinstance(page, BrowserTab):
+    def set_engine_audio(self, tab, on):
+        self._engine_audio[id(tab)] = bool(on)
+        self._reconcile_media()
+
+    def _reconcile_media(self):
+        if self._closing:
             return
-        if getattr(self, "bug_button", None) and self.bug_button.get_active():
-            self._apply_adblock(page)
-            if not page.internal:
-                self._arm_bug_picker(page, True)
-            self._bug_tab = page
-        self._update_url_bar(page, force=True)
-        self._sync_toolbar()
-        if page is self.current_tab():
-            self.set_title("%s — JawnOS Browse" % page.current_title())
-            self._sync_site()
-            if self.find_bar.get_reveal_child():
-                self.on_find_changed(self.find_entry)
-
-    def on_history_row(self, _listbox, row):
-        uri = getattr(row, "uri", "")
-        self.history_popover.popdown()
-        if uri:
-            self._navigate(uri)
-
-    def reload_history(self):
-        for child in self.history_list.get_children():
-            self.history_list.remove(child)
-        for entry in self.history.recent(200):
-            row = Gtk.ListBoxRow()
-            box = Gtk.Box(orientation=_VBox, spacing=2)
-            box.set_border_width(6)
-            title = Gtk.Label(label=(entry.get("title") or entry.get("url") or "")[:140])
-            title.set_xalign(0)
-            title.set_ellipsize(Pango.EllipsizeMode.END)
-            url = Gtk.Label(label=(entry.get("url") or "")[:180])
-            url.set_xalign(0)
-            url.set_ellipsize(Pango.EllipsizeMode.END)
-            url.get_style_context().add_class("dim-label")
-            box.pack_start(title, False, False, 0)
-            box.pack_start(url, False, False, 0)
-            row.add(box)
-            row.uri = entry.get("url") or ""
-            self.history_list.add(row)
-        self.history_list.show_all()
-
-    # ---- find ------------------------------------------------------------
-
-    def open_find(self, *_):
-        self.find_bar.set_reveal_child(True)
-        self.find_entry.grab_focus()
-        self.find_entry.select_region(0, -1)
-
-    def close_find(self, *_):
-        self.find_bar.set_reveal_child(False)
-        self.find_entry.set_text("")
-        tab = self.current_tab()
-        if tab:
-            try:
-                tab.view.get_find_controller().search(
-                    "", WebKit2.FindOptions.CASE_INSENSITIVE, 0)
-            except Exception:
-                pass
-
-    def _find(self, text, backwards=False):
-        tab = self.current_tab()
-        if not tab:
-            return
-        options = WebKit2.FindOptions.CASE_INSENSITIVE | WebKit2.FindOptions.WRAP_AROUND
-        if backwards:
-            options |= WebKit2.FindOptions.BACKWARDS
+        playing = any(self._media.values()) or any(self._engine_audio.values())
         try:
-            controller = tab.view.get_find_controller()
-            if text:
-                controller.search(text, options, 0)
+            if playing:
+                self._inhibitor.inhibit("media playing")
             else:
-                controller.search("", options, 0)
+                self._inhibitor.uninhibit()
         except Exception:
             pass
 
-    def on_find_changed(self, entry):
-        self._find(entry.get_text())
+    def on_bridge_message(self, name, raw, tab):
+        if name == "jawnos_adblock":
+            self.on_adblock_message(raw, tab)
+        elif name == "jawnos_measure":
+            self.on_measure_message(raw, tab)
+        elif name == "jawnos":
+            self.on_media_message(raw, tab)
+        elif name == "jawnos_browse":
+            self.on_browse_message(raw)
 
-    def on_find_next(self, entry):
-        self._find(entry.get_text())
-
-    def find_next(self, *_):
-        self._find(self.find_entry.get_text())
-
-    def find_previous(self, *_):
-        self._find(self.find_entry.get_text(), backwards=True)
-
-    # ---- keyboard --------------------------------------------------------
-
-    def on_key(self, _widget, event, _tab=None):
-        try:
-            key = event.keyval
-            state = event.state & Gtk.accelerator_get_default_mod_mask()
-            control = bool(state & Gdk.ModifierType.CONTROL_MASK)
-            alt = bool(state & Gdk.ModifierType.ALT_MASK)
-            shift = bool(state & Gdk.ModifierType.SHIFT_MASK)
-        except Exception:
-            return False
-        if control and key in (Gdk.KEY_l, Gdk.KEY_L):
-            self.url_entry.grab_focus()
-            self.url_entry.select_region(0, -1)
-            return True
-        if control and key in (Gdk.KEY_t, Gdk.KEY_T):
-            self.new_tab()
-            return True
-        if control and key in (Gdk.KEY_w, Gdk.KEY_W):
-            tab = self.current_tab()
-            if tab:
-                self.close_tab(tab)
-            return True
-        if control and key in (Gdk.KEY_f, Gdk.KEY_F):
-            self.open_find()
-            return True
-        if control and key in (Gdk.KEY_g, Gdk.KEY_G):
-            if shift:
-                self.find_previous()
-            else:
-                self.find_next()
-            return True
-        if key == Gdk.KEY_F5 or (control and key in (Gdk.KEY_r, Gdk.KEY_R)):
-            self.reload_or_stop()
-            return True
-        if alt and key == Gdk.KEY_Left:
-            self.go_back()
-            return True
-        if alt and key == Gdk.KEY_Right:
-            self.go_forward()
-            return True
-        if key == Gdk.KEY_Escape:
-            if getattr(self, "bug_button", None) \
-                    and self.bug_button.get_active():
-                self.bug_button.set_active(False)
-                return True
-            if self.find_bar.get_reveal_child():
-                self.close_find()
-                return True
-            tab = self.current_tab()
-            if tab and tab.view.is_loading():
-                tab.view.stop_loading()
-                return True
-        return False
-
-    # ---- downloads -------------------------------------------------------
-
-    def on_download_started(self, context, download):
-        try:
-            download.set_allow_overwrite(True)
-            download.connect("decide-destination", self.on_decide_destination)
-            download.connect("received-data", self.on_download_progress, download)
-            download.connect("finished", self.on_download_finished, download)
-            download.connect("failed", self.on_download_failed, download)
-            self._downloads.add(download)
-        except Exception:
-            LOG.exception("could not attach to the download")
-
-    def on_decide_destination(self, download, suggested_filename, _data):
-        suggested = (suggested_filename or "download").strip() or "download"
-        dialog = Gtk.FileChooserDialog(
-            title="Save download",
-            transient_for=self,
-            action=Gtk.FileChooserAction.SAVE,
-        )
-        dialog.add_button("Cancel", Gtk.ResponseType.CANCEL)
-        dialog.add_button("Save", Gtk.ResponseType.OK)
-        dialog.set_do_overwrite_confirmation(True)
-        dialog.set_current_name(suggested)
-        folder = GLib.get_user_special_dir(GLib.UserDirectory.DIRECTORY_DOWNLOAD)
-        if not folder:
-            folder = os.path.expanduser("~")
-        try:
-            dialog.set_current_folder(folder)
-        except Exception:
-            pass
-        response = dialog.run()
-        path = dialog.get_filename()
-        dialog.destroy()
-        if response != Gtk.ResponseType.OK or not path:
-            try:
-                download.cancel()
-            except Exception:
-                pass
-            return True
-        try:
-            download.set_destination(Gio.File.new_for_path(path).get_uri())
-            self._set_status("Downloading %s…" % os.path.basename(path))
-            self.progress_bar.set_fraction(0.0)
-            self.progress_bar.show()
-        except Exception as exc:
-            self._set_status("Could not start the download: %s" % exc)
-        return True
-
-    def on_download_progress(self, download, data_length, _data):
-        try:
-            fraction = download.get_estimated_progress()
-            if 0.0 <= fraction <= 1.0:
-                self.progress_bar.set_fraction(fraction)
-                self.progress_bar.show()
-        except Exception:
-            pass
-
-    def on_download_finished(self, download, _data):
-        self._downloads.discard(download)
-        name = "file"
-        try:
-            dest = download.get_destination() or ""
-            name = os.path.basename(urllib.parse.unquote(
-                urllib.parse.urlsplit(dest).path)) or "file"
-        except Exception:
-            pass
-        self._set_status("Downloaded %s" % name)
-        if not self._downloads:
-            self.progress_bar.hide()
-
-    def on_download_failed(self, download, error, _data):
-        self._downloads.discard(download)
-        message = getattr(error, "message", None) or "the download failed"
-        self._set_status("Download failed: %s" % message)
-        if not self._downloads:
-            self.progress_bar.hide()
-
-    # ---- measure ---------------------------------------------------------
-
-    def on_measure_message(self, _content, result):
-        raw = _js_text(result)
-        if not raw:
-            return False
-        # A message can only be a pick payload. Anything else is ignored; the
-        # user script is the only thing that sends this handler a message.
-        if len(raw) > MAX_MEASURE_HTML * 3:
-            return False
+    def on_media_message(self, raw, tab):
         try:
             payload = json.loads(raw)
         except (ValueError, TypeError):
-            return False
+            return
+        if not isinstance(payload, dict) or payload.get("action") != "media_state":
+            return
+        if tab is not None:
+            self.set_page_media(tab, payload.get("audio"), payload.get("video"))
+
+    def on_browse_message(self, raw):
+        """The page's ``JawnBrowse.open`` request becomes a tab in this window."""
+        try:
+            payload = json.loads(raw)
+        except (ValueError, TypeError):
+            return
+        if not isinstance(payload, dict) or payload.get("action") != "browse":
+            return
+        uri = payload.get("url") or ""
+        parsed = urllib.parse.urlsplit(str(uri))
+        if parsed.scheme not in ("http", "https") or not parsed.netloc:
+            return
+        self.new_tab(uri=None, placeholder=False, switch=True)
+        tab = self.current_tab()
+        self._navigate(str(uri), tab)
+
+    # ---- measure ---------------------------------------------------------
+
+    def on_measure_message(self, raw, tab):
+        if not raw:
+            return
+        # A message can only be a pick payload. Anything else is ignored; the
+        # injected user script is the only thing that sends this handler a
+        # message.
+        if len(raw) > MAX_MEASURE_HTML * 3:
+            return
+        try:
+            payload = json.loads(raw)
+        except (ValueError, TypeError):
+            return
         if not isinstance(payload, dict) or payload.get("action") != "pick":
-            return False
+            return
         if self.mode != "measure":
-            return False
+            return
         selector = payload.get("selector")
         document = payload.get("html")
         if not isinstance(selector, str) or not selector.strip():
-            return False
+            return
         if not isinstance(document, str) or not document:
-            return False
+            return
         index = payload.get("index")
         if not isinstance(index, int) or isinstance(index, bool) or index < 0:
             index = 0
@@ -2734,7 +2887,7 @@ class BrowserWindow(_WindowBase):
                 "Measuring needs an app",
                 "This window was opened without an app name. Open the saved "
                 "page from Internet and use its measure button.")
-            return False
+            return
         data = {
             "app": self.app,
             "uuid": self.uuid,
@@ -2747,22 +2900,31 @@ class BrowserWindow(_WindowBase):
         self._set_status("Measuring…")
         threading.Thread(target=self._measure_live, args=(data,),
                          name="browse-measure", daemon=True).start()
-        return False
+
+    def _arm_picker(self):
+        tab = self.current_tab()
+        if self.mode != "measure" or tab is None or tab.internal:
+            return
+        try:
+            tab.page.runJavaScript(
+                "window.__jawnosPicker && window.__jawnosPicker.arm(true);")
+        except Exception:
+            pass
 
     def _measure_live(self, data):
         answer = self.client.post_form("/manager/web/measure/live", data)
-        GLib.idle_add(self._after_measure_live, data, answer)
+        self._relay.deliver.emit((self._after_measure_live, (data, answer)))
 
     def _after_measure_live(self, data, answer):
         if self._closing:
-            return False
+            return
         if not isinstance(answer, dict) or not answer.get("ok"):
             self._set_status("The manager did not measure this page.")
             self._show_message(
                 "Could not measure",
                 "The manager did not answer the live-page request. Check that "
                 "it is running and that this app is signed in.")
-            return False
+            return
         candidates = answer.get("candidates")
         if not isinstance(candidates, list) or not candidates:
             self._set_status("")
@@ -2770,34 +2932,28 @@ class BrowserWindow(_WindowBase):
                 "Nothing to measure",
                 "Nothing on this page read as a value. Try clicking the "
                 "number itself.")
-            return False
+            return
         self._set_status("")
         self._show_candidates(data, answer, candidates)
-        return False
 
     def _show_candidates(self, data, answer, candidates):
-        dialog = Gtk.Dialog(
-            title="Choose what to measure",
-            transient_for=self,
-            modal=True,
-        )
-        dialog.add_button("Cancel", Gtk.ResponseType.CANCEL)
-        dialog.add_button("Save", Gtk.ResponseType.OK)
-        dialog.set_default_size(680, 500)
-        content = dialog.get_content_area()
-        intro = Gtk.Label(
-            label="Pick the shape that should be watched. Each one is tested "
-                  "against this page.")
-        intro.set_xalign(0)
-        intro.set_line_wrap(True)
-        content.pack_start(intro, False, False, 6)
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Choose what to measure")
+        dialog.resize(680, 500)
+        layout = QVBoxLayout(dialog)
+        intro = QLabel(
+            "Pick the shape that should be watched. Each one is tested "
+            "against this page.")
+        intro.setWordWrap(True)
+        layout.addWidget(intro)
 
-        scrolled = Gtk.ScrolledWindow()
-        scrolled.set_hexpand(True)
-        scrolled.set_vexpand(True)
-        rows = Gtk.Box(orientation=_VBox, spacing=8)
-        group = None
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        inner = QWidget()
+        inner_layout = QVBoxLayout(inner)
+        group = QButtonGroup(dialog)
         choices = []
+        first = None
         for candidate in candidates:
             if not isinstance(candidate, dict):
                 continue
@@ -2806,40 +2962,46 @@ class BrowserWindow(_WindowBase):
                 continue
             kind = str(candidate.get("kind") or "")
             value = str(candidate.get("value") or "")
-            radio = Gtk.RadioButton.new_with_label_from_widget(
-                group, "%s — %s" % (kind, value))
-            if group is None:
-                group = radio
+            radio = QRadioButton("%s — %s" % (kind, value))
             spec_text = json.dumps(spec, sort_keys=True, ensure_ascii=False)
-            radio.set_tooltip_text(spec_text)
-            row = Gtk.Box(orientation=_VBox, spacing=2)
-            row.pack_start(radio, False, False, 0)
-            spec_label = Gtk.Label(label=spec_text)
-            spec_label.set_xalign(0)
-            spec_label.set_line_wrap(True)
-            spec_label.set_selectable(True)
-            spec_label.get_style_context().add_class("dim-label")
-            row.pack_start(spec_label, False, False, 0)
-            rows.pack_start(row, False, False, 0)
+            radio.setToolTip(spec_text)
+            inner_layout.addWidget(radio)
+            spec_label = QLabel(spec_text)
+            spec_label.setWordWrap(True)
+            spec_label.setStyleSheet("color:#8e8e8e;")
+            inner_layout.addWidget(spec_label)
+            group.addButton(radio)
             choices.append((radio, spec))
-        scrolled.add(rows)
-        content.pack_start(scrolled, True, True, 0)
+            if first is None:
+                first = radio
+        if first is not None:
+            first.setChecked(True)
+        inner_layout.addStretch(1)
+        scroll.setWidget(inner)
+        layout.addWidget(scroll, 1)
+
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Save
+            | QDialogButtonBox.StandardButton.Cancel)
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        layout.addWidget(buttons)
+
         if not choices:
-            dialog.destroy()
+            dialog.deleteLater()
             self._show_message(
                 "Nothing to measure",
                 "Nothing on this page read as a value. Try clicking the "
                 "number itself.")
             return
-        dialog.show_all()
-        response = dialog.run()
+        accepted = dialog.exec() == QDialog.DialogCode.Accepted
         chosen = None
-        if response == Gtk.ResponseType.OK:
+        if accepted:
             for radio, spec in choices:
-                if radio.get_active():
+                if radio.isChecked():
                     chosen = spec
                     break
-        dialog.destroy()
+        dialog.deleteLater()
         if chosen is None:
             self._set_status("")
             return
@@ -2858,11 +3020,11 @@ class BrowserWindow(_WindowBase):
 
     def _measure_submit(self, submit):
         answer = self.client.post_form("/manager/web/measure/submit", submit)
-        GLib.idle_add(self._after_measure_submit, answer)
+        self._relay.deliver.emit((self._after_measure_submit, (answer,)))
 
     def _after_measure_submit(self, answer):
         if self._closing:
-            return False
+            return
         if isinstance(answer, dict):
             self._set_status("Measure saved.")
             self._show_message("Measure saved",
@@ -2872,13 +3034,19 @@ class BrowserWindow(_WindowBase):
             self._show_message(
                 "Not saved",
                 "The manager did not answer the save request.")
-        return False
+
+    def _deliver(self, payload):
+        callback, args = payload
+        try:
+            callback(*args)
+        except Exception:
+            LOG.exception("could not deliver a worker result")
 
     # ---- status / shutdown ----------------------------------------------
 
     def _set_status(self, text):
         try:
-            self.status_label.set_text(text or "")
+            self.status_label.setText(text or "")
         except Exception:
             pass
 
@@ -2886,41 +3054,69 @@ class BrowserWindow(_WindowBase):
         if self._closing:
             return
         try:
-            dialog = Gtk.MessageDialog(
-                transient_for=self,
-                modal=True,
-                message_type=Gtk.MessageType.INFO,
-                buttons=Gtk.ButtonsType.OK,
-                text=title,
-            )
-            dialog.format_secondary_text(body)
-            dialog.run()
-            dialog.destroy()
+            QMessageBox.information(self, title, body)
         except Exception:
             pass
+
+    def _on_app_state(self, _state):
+        self._sync_site()
+
+    def focusInEvent(self, event):
+        super().focusInEvent(event)
+        self._sync_site()
+
+    def focusOutEvent(self, event):
+        super().focusOutEvent(event)
+        self._sync_site()
+
+    def _on_flush_timer(self):
+        if self._closing:
+            return
+        threading.Thread(target=self.usage.flush, kwargs={"roll": True},
+                         name="browse-flush", daemon=True).start()
 
     def shutdown(self):
         if self._closing:
             return
         self._closing = True
-        if self._flush_source:
-            try:
-                GLib.source_remove(self._flush_source)
-            except Exception:
-                pass
-            self._flush_source = 0
+        try:
+            self._flush_timer.stop()
+        except Exception:
+            pass
+        try:
+            self._inhibitor.uninhibit()
+        except Exception:
+            pass
         try:
             self.usage.shutdown()
         except Exception:
             LOG.exception("could not flush site time")
 
-    def _on_destroy(self, *_):
+    def closeEvent(self, event):
         self.shutdown()
-        if self._main_running:
-            try:
-                Gtk.main_quit()
-            except Exception:
-                pass
+        self._close_pages()
+        super().closeEvent(event)
+
+    def _close_pages(self):
+        """Drop the pages before the profile goes, so Qt tears down cleanly."""
+        try:
+            if self.tabs is None:
+                return
+            while self.tabs.count():
+                tab = self.tabs.widget(0)
+                self.tabs.removeTab(0)
+                if isinstance(tab, BrowserTab):
+                    try:
+                        tab.view.stop()
+                    except Exception:
+                        pass
+                    try:
+                        tab.page.deleteLater()
+                    except Exception:
+                        pass
+                    tab.deleteLater()
+        except Exception:
+            pass
 
 
 # --------------------------------------------------------------------------
@@ -2930,7 +3126,7 @@ class BrowserWindow(_WindowBase):
 def _parser():
     parser = argparse.ArgumentParser(
         prog="jawnos-browse",
-        description="JawnOS Browse -- the native WebKitGTK browser window.",
+        description="JawnOS Browse -- the native Qt WebEngine browser window.",
         epilog="The window posts site-time spans and live page measures through "
                "the desktop app's stored manager ticket.",
     )
@@ -2954,27 +3150,34 @@ def main(argv=None):
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
-    if _GTK is None:
+    if not _QT_OK:
         sys.stderr.write(
-            "jawnos-browse: WebKitGTK 4.1 and PyGObject are required (%s)\n"
-            % _GTK_ERROR)
+            "jawnos-browse: PySide6 with Qt WebEngine is required (%s)\n"
+            % _QT_ERROR)
         return 2
-    ok, _argv = Gtk.init_check([])
-    if not ok:
-        sys.stderr.write("jawnos-browse: no display is available\n")
-        return 2
+    # Before QApplication: Qt WebEngine reads the VA-API driver and the
+    # Chromium flags when it initialises.
+    gpu.prepare_env()
+    prepare_wayland_env()
+
+    app = QApplication([sys.argv[0]])
+    app.setApplicationName("JawnOS Browse")
+    app.setApplicationDisplayName("JawnOS Browse")
+    app.setOrganizationName("JawnOS")
+    try:
+        app.setDesktopFileName("jawnos-browse")
+    except Exception:
+        pass
+
     window = BrowserWindow(args, check=args.check)
     if args.check:
-        window.destroy()
+        window.close()
+        QApplication.processEvents()
         print("jawnos-browse: window constructed")
         return 0
-    window._main_running = True
-    window.show_all()
-    window.present()
-    GLib.idle_add(window._sync_site)
-    Gtk.main()
-    window.shutdown()
-    return 0
+    window.show()
+    QTimer.singleShot(0, window._sync_site)
+    return app.exec()
 
 
 if __name__ == "__main__":  # pragma: no cover

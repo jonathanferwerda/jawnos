@@ -12,9 +12,9 @@ normal Linux desktop.
    against it with no changes.
 
 It runs on any distribution: the only requirements are `python3`, BlueZ, and —
-for the GUI — PySide6 with **Qt WebEngine** (Chromium: the default view, and
-the engine with WebRTC). The **WebKitGTK** fallback (used when PySide6 is not
-installed) and the separate Browse window also want WebKitGTK 4.1 and the
+for the GUI — PySide6 with **Qt WebEngine** (Chromium: the default view, the
+separate **Browse** window, and the engine with WebRTC). The **WebKitGTK**
+fallback (used when PySide6 is not installed) also wants WebKitGTK 4.1 and the
 GStreamer plugin set with a VA-API plugin; Chat's SMS emoji want a colour emoji
 font (Noto Color Emoji). The GTK dashboard uses GTK 3 (`python3-gi`).
 Everything is per-user; nothing needs root.
@@ -26,6 +26,7 @@ desktop/
   jawnosctl              the command line (start/stop/status/log/ble/…)
   jawnos-desktop         the desktop window (Qt WebEngine; WebKitGTK fallback)
   jawnos-qt              the Qt WebEngine view directly
+  jawnos-browse          the native Browse window (Qt WebEngine)
   jawnos-bt-daemon       the BLE bridge daemon (127.0.0.1:45999)
   jawnos_desktop/        the Python package behind the three tools
     core.py              the portable supervisor (ports, start/stop, settings)
@@ -33,6 +34,7 @@ desktop/
     ble.py               the BlueZ BLE bridge
     cli.py               jawnosctl
     qt_shell.py          the default JawnOS view (Qt WebEngine / Chromium)
+    browser.py           the Browse window (Qt WebEngine, own profile)
     ui.py                the GTK dashboard and WebKitGTK fallback view
     webview.py           the WebKitGTK view shared by the fallback
     secrets.py           encrypted storage for the login ticket
@@ -96,12 +98,11 @@ to fall back to. Without the Qt view the app starts the **WebKitGTK fallback**
 (no WebRTC) when that is installed, and `--engine webkit` selects it
 explicitly.
 
-The WebKitGTK fallback, and the Browse window (which still has its own
-WebKitGTK view and data store), also want WebKitGTK and GStreamer (the base
-table alone will not play video well in them — see
+The WebKitGTK fallback also wants WebKitGTK and GStreamer (the base table
+alone will not play video well in it — see
 [Media and video](#media-and-video)):
 
-| Distro | WebKitGTK fallback / Browse + media |
+| Distro | WebKitGTK fallback + media |
 |---|---|
 | Arch / Manjaro | `webkit2gtk-4.1` `gst-plugins-base` `gst-plugins-good` `gst-plugins-bad` `gst-plugins-ugly` `gst-libav` `libva-utils` |
 | Debian / Ubuntu | `gir1.2-webkit2-4.1` `gstreamer1.0-plugins-base` `gstreamer1.0-plugins-good` `gstreamer1.0-plugins-bad` `gstreamer1.0-plugins-ugly` `gstreamer1.0-libav` `gstreamer1.0-vaapi` `vainfo` |
@@ -317,9 +318,8 @@ behaviour is unchanged.
 
 The default Qt WebEngine view decodes media through **Chromium's** own media
 stack (FFmpeg + VA-API), so its video quality follows Chromium and the GPU
-driver rather than GStreamer. The **WebKitGTK fallback** and the separate
-**Browse** window still decode through system **GStreamer**; the rest of this
-section is for them:
+driver rather than GStreamer. The **WebKitGTK fallback** still decodes through
+system **GStreamer**; the rest of this section is for it:
 
 * Install the full plugin set listed above (`gst-plugins-base/good/bad/ugly` and
   `gst-libav`). Without them WebKit has only a software h264 decoder and HD video
@@ -348,7 +348,7 @@ sudo pacman -S gst-plugins-base gst-plugins-good gst-plugins-bad \
 (An older Arch split the plugin into a `gst-plugin-va` package; that no longer
 exists.)
 
-If video is still not right in the WebKitGTK fallback (or Browse), the renderer
+If video is still not right in the WebKitGTK fallback, the renderer
 can be tuned without touching code: write `KEY=VALUE` lines to
 `~/.config/jawnos/webkit.env` (WebKit reads them at startup — the real
 environment wins over the file). The Qt view has Chromium's own GPU path, and
@@ -531,9 +531,9 @@ dashboard. The tray badge carries the same state dot: green running, amber
 starting/restarting, red stopped. Its menu has no browser item; **Open in
 browser** stays a button in the panel's Open card. `--engine webkit` still
 starts the old GTK dashboard as a fallback for one release; the remaining
-GTK-only programs are Browse and the BLE daemon. The Arch live image installs
+GTK-only program is the BLE daemon. The Arch live image installs
 `pyside6`, `qt6-webengine`, `qt6-wayland` and `layer-shell-qt`
-(`desktop/mkosi/mkosi.conf`); WebKitGTK stays for the fallback and Browse.
+(`desktop/mkosi/mkosi.conf`); WebKitGTK stays for the fallback.
 
 The **session bar** (`desktop/jawnos-shell`, `jawnos_desktop/shell.py`) is Qt
 too. On Wayland it takes the same wlr-layer-shell top layer, top/left/right
@@ -547,6 +547,36 @@ floating minimum height when the bar is shorter than 50px). That overlays
 windows instead of reserving an exclusive zone, and a fullscreen window covers
 it. On the layer-shell path the GTK bar's exclusive zone is unchanged, so a
 fullscreen JawnOS window still has the bar over it, exactly as before.
+
+## Browse window
+
+The Internet app's **Browse** half is a native Qt WebEngine window, started
+with `./desktop/jawnos-browse` (the manager page reaches the same launcher
+through `JawnBrowse.open`). It is a real browser, not a manager view: tabs, an
+address bar that also searches a phrase, back/forward/reload/stop, home,
+find-in-page, downloads, a local history, new-window popups as tabs, and the
+same keyboard shortcuts as before (Ctrl+L/T/W/F/G, F5/Ctrl+R, Alt+Left/Right,
+Alt+Home; Esc leaves bug mode, closes find, or stops a load).
+
+It keeps a **separate, named profile** — `QWebEngineProfile("jawnos-browse")`
+under `~/.config/jawnos/browse-webengine` — so its cookies are never the
+manager view's (`jawnos`) or the GTK shell's. That is what makes Browse
+independent: signing into a site there does not touch the manager session. The
+window accepts the house's self-signed certificate (the same exception the Qt
+shell makes) and grants microphone/camera capture; other permissions are
+denied. It calls `gpu.prepare_env()` before the `QApplication` exists, so the
+same Chromium GPU flags apply.
+
+The page bridge (`window.webkit.messageHandlers.*`, forwarded over
+QWebChannel) carries media state for keep-awake, the local ad-block picker and
+(in measure mode) the measure picker. It deliberately has **no app-key or
+manager-window actions**: a public page loaded in Browse cannot borrow the
+desktop app's identity. The ad-block picker runs in an isolated Qt script
+world; it reaches Python through a DOM event and the selector is validated
+again there. Site visits still post `kind=site` usage spans through the stored
+ticket, as before. `--mode measure` is unchanged: pick an element, the live
+document goes to `/manager/web/measure/live`, and the returned candidates are
+shown in a dialog.
 
 ## Windows
 

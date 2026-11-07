@@ -1,5 +1,6 @@
 # tests-for: desktop/jawnos_desktop/webview.py desktop/jawnos_desktop/browser.py
-# covers:    A peer Manager window trusts its paired self-signed certificate; the general browser stays strict.
+# covers:    A peer Manager window trusts its paired self-signed certificate; the
+#            Browse window accepts the house certificate through the shared Qt helper.
 
 use strict;
 use warnings;
@@ -15,7 +16,10 @@ use RepoSource;
 # mismatch, so the peer window's load finished with an empty URI (a white
 # window) even though allow_tls_certificate_for_host had been called. A peer
 # Manager opened by a signed Go gets its own context with TLS errors ignored;
-# the local Manager and the Internet app's external browser keep FAIL.
+# the local Manager keeps FAIL. Browse is now Qt WebEngine: it accepts the
+# house's self-signed certificate through qt_shell's one helper (the same
+# exception the Qt manager view makes), and still never makes a per-host WebKit
+# allowance.
 
 my $root = repo_root();
 my $web = read_file("$root/desktop/jawnos_desktop/webview.py");
@@ -36,9 +40,13 @@ like($web, qr/self\._window_context\(manager_url_override\)/,
 like($web, qr/view\.get_context\(\)\.allow_tls_certificate_for_host/,
 	'the TLS allowance follows the view, not a hard-wired default context');
 
-like($browser, qr/TLSErrorsPolicy\.FAIL/,
-	'the general browser still fails TLS errors');
-unlike($browser, qr/TLSErrorsPolicy\.IGNORE/,
-	'and never turns that policy off');
+like($browser, qr/from \.qt_shell import _accept_certificate/,
+	'Browse borrows the Qt shell\'s certificate rule');
+like($browser, qr/certificateError\.connect\(_accept_certificate\)/,
+	'and accepts the house certificate on every page');
+unlike($browser, qr/TLSErrorsPolicy/,
+	'the WebKit TLS policy is gone from Browse');
+unlike($browser, qr/allow_tls_certificate_for_host/,
+	'and it never makes a per-host WebKit allowance');
 
 done_testing();

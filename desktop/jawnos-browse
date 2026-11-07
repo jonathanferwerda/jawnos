@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""jawnos-browse -- the JawnOS Internet app's native browser window."""
+"""jawnos-browse -- the JawnOS Internet app's native browser window (Qt WebEngine)."""
 import os
 import sys
 

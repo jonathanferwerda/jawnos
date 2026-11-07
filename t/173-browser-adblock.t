@@ -12,11 +12,11 @@ use File::Temp qw(tempdir);
 use File::Slurp qw(read_file write_file);
 use RepoSource;
 
-# The browser blocks a curated baseline of ad hosts (a declarative
-# WebKit2.UserContentFilter) and hides an element the person taps in bug mode.
-# The tapped selector is keyed by the view's own registrable domain and kept in
-# adblock.json. A page's fullscreen request must also take the title bar, tab
-# strip and status line off screen.
+# The browser blocks a curated baseline of ad hosts (a Qt request interceptor)
+# and hides an element the person taps in bug mode. The tapped selector is
+# keyed by the view's own registrable domain and kept in adblock.json. A page's
+# fullscreen request must also take the tool bar, tab strip and status line off
+# screen.
 
 my $root = repo_root();
 my $src = read_file("$root/desktop/jawnos_desktop/browser.py");
@@ -25,36 +25,39 @@ like($src, qr/class AdBlockStore/,
 	'the block list has its own store');
 like($src, qr/"doubleclick\.net"/,
 	'the baseline names the display-ad hosts');
-like($src, qr/def adblock_rules\(/,
-	'the baseline is built as declarative rules');
-like($src, qr/"if-domain"/,
-	'a site\'s own picks are scoped in the declarative filter too');
-like($src, qr/UserContentFilterStore/,
-	'and attached with a WebKit content filter');
-like($src, qr/register_script_message_handler_in_world\(\s*"jawnos_adblock",\s*ADBLOCK_WORLD\)/,
-	'the picker bridge lives in its own isolated world');
-like($src, qr/set_action_widget\(\s*tab_actions/,
+like($src, qr/def is_ad_host\(host\):/,
+	'the baseline host match is a checked helper');
+like($src, qr/class _AdInterceptor\(_InterceptorBase\)/,
+	'and is enforced by a Qt request interceptor');
+like($src, qr/info\.block\(True\)/,
+	'an ad request is actually blocked');
+like($src, qr/firstPartyUrl\(\)\.host\(\)/,
+	'the interceptor keeps the third-party rule');
+like($src, qr/ScriptWorldId\.UserWorld/,
+	'the picker runs in an isolated script world');
+like($src, qr/__jawnos_adblock_message/,
+	'and reaches the bridge over a DOM event');
+like($src, qr/setCornerWidget\(tab_actions, Qt\.Corner\.TopRightCorner\)/,
 	'the bug controls sit in the tab row');
-like($src, qr/def _set_fullscreen_chrome\(/,
+like($src, qr/def _set_fullscreen_chrome\(self, on\):/,
 	'a page fullscreen drives the window chrome');
-like($src, qr/self\.notebook\.set_show_tabs\(False\)/,
+like($src, qr/self\.tabs\.tabBar\(\)\.setVisible\(False\)/,
 	'and takes the tab strip off screen');
-like($src, qr/self\.set_titlebar\(None\)/,
-	'and the title bar with it');
+like($src, qr/self\.toolbar\.setVisible\(False\)/,
+	'and the tool bar with it');
 like($src, qr/ADBLOCK_FILE = "adblock\.json"/,
 	'the person\'s list has a stable file name');
-like($src, qr/Key on the view's own URI/,
+like($src, qr/Key on the page's own URI/,
 	'the write is keyed on the view, not on the page\'s claimed URL');
 
 my $python = qx{python3 --version 2>/dev/null};
 SKIP: {
-	skip 'python3 is not installed', 18 unless $python;
+	skip 'python3 is not installed', 20 unless $python;
 
 	my $dir = tempdir(CLEANUP => 1);
 	my $py = "$dir/probe.py";
 	write_file($py, <<'PY');
 import os
-import re
 import sys
 import tempfile
 
@@ -81,27 +84,14 @@ print('clear:' + str(len(reloaded.clear(uri))))
 reloaded.set_enabled(False)
 print('disabled:' + str(browser.AdBlockStore(path).enabled))
 
-rules = browser.adblock_rules()
-rule = next(r for r in rules
-            if 'doubleclick\\.net' in r['trigger']['url-filter'])
-pattern = rule['trigger']['url-filter']
-print('block:' + rule['action']['type'])
-print('hostmatch:' + str(bool(re.search(
-    pattern, 'https://securepubads.g.doubleclick.net/tag/js/gpt.js'))))
-print('hostnomatch:' + str(bool(re.search(
-    pattern, 'https://example.com/page'))))
-print('suffixnomatch:' + str(bool(re.search(
-    pattern, 'https://doubleclick.net.example.com/page'))))
-print('cosmetic:' + str(any(
-    rule['action']['type'] == 'css-display-none' for rule in rules)))
-site_rules = browser.adblock_rules({'tubitv.com': ['.ad-slot']})
-site_rule = next(rule for rule in site_rules
-                 if 'if-domain' in rule['trigger'])
-print('sitefilter:' + site_rule['trigger']['if-domain'][0] + ':' +
-      site_rule['action']['selector'])
-ip_rules = browser.adblock_rules({'127.0.0.1': ['.x']})
-print('ipfilter:' + str(any(
-    'if-domain' in rule['trigger'] for rule in ip_rules)))
+print('host1:' + str(browser.is_ad_host('doubleclick.net')))
+print('host2:' + str(browser.is_ad_host('securepubads.g.doubleclick.net')))
+print('host3:' + str(browser.is_ad_host('example.com')))
+print('host4:' + str(browser.is_ad_host('doubleclick.net.example.com')))
+print('host5:' + str(browser.is_ad_host('ads.tubi.io')))
+print('host6:' + str(browser.is_ad_host('notads.tubi.io')))
+print('empty:' + str(browser.is_ad_host('')))
+print('upper:' + str(browser.is_ad_host('SECUREPUBADS.G.DOUBLECLICK.NET')))
 PY
 
 	my $out = qx{python3 "$py" "$root" 2>&1};
@@ -118,16 +108,14 @@ PY
 	like($out, qr/^remove:1$/m, 'one entry can be removed');
 	like($out, qr/^clear:0$/m, 'and the site can be cleared');
 	like($out, qr/^disabled:False$/m, 'the global switch persists');
-	like($out, qr/^block:block$/m, 'the baseline has a blocking rule');
-	like($out, qr/^hostmatch:True$/m, 'an ad subdomain matches the filter');
-	like($out, qr/^hostnomatch:False$/m, 'an ordinary page does not');
-	like($out, qr/^suffixnomatch:False$/m,
-		'a look-alike suffix is not an ad host');
-	like($out, qr/^cosmetic:True$/m, 'and the baseline hides containers too');
-	like($out, qr/^sitefilter:tubitv\.com:\.ad-slot$/m,
-		'a picked selector is scoped to its site');
-	like($out, qr/^ipfilter:False$/m,
-		'an IP site stays out of the domain-scoped rules');
+	like($out, qr/^host1:True$/m, 'the ad root matches');
+	like($out, qr/^host2:True$/m, 'an ad subdomain matches');
+	like($out, qr/^host3:False$/m, 'an ordinary host does not');
+	like($out, qr/^host4:False$/m, 'a look-alike suffix is not an ad host');
+	like($out, qr/^host5:True$/m, 'a host whose name starts with ads matches');
+	like($out, qr/^host6:False$/m, 'but not one that merely contains "ads"');
+	like($out, qr/^empty:False$/m, 'an empty host is never an ad host');
+	like($out, qr/^upper:True$/m, 'and the match is case-insensitive');
 }
 
 done_testing();
