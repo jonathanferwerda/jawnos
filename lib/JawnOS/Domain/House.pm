@@ -736,13 +736,13 @@ sub peer_presence_probe {
 		my $port = $c->{'port'};
 		$port = $rm->{'port'} if (!defined $port || $port !~ /^[0-9]+$/);
 		$port ||= 45545;
-		my $base = &peer_manager_url($rm, $host, $port);
-		my ($secure_base, $verified) = &subs::peer_secure_url($rm, $base);
-		$base = $secure_base if $verified;
+		my $plain_base = &peer_manager_url($rm, $host, $port);
+		my ($secure_base, $verified) = &subs::peer_secure_url($rm, $plain_base);
+		my $base = $verified ? $secure_base : $plain_base;
 		my $url = $base . '/?signatorial=' . url_escape $rs;
 		my $body = '';
 		if (ref $fetch eq 'CODE') {
-			$body = eval { $fetch->({ host => $host, port => $port, base => $base, url => $url, literal => $literal, alive => $alive, why => $c->{'why'} }) } || '';
+			$body = eval { $fetch->({ host => $host, port => $port, base => $base, url => $url, literal => $literal, alive => $alive, why => $c->{'why'}, verified => $verified ? 1 : 0 }) } || '';
 		}
 		else {
 			my $ua = Mojo::UserAgent->new;
@@ -756,6 +756,32 @@ sub peer_presence_probe {
 		}
 		if (defined $body && $body eq $remote_signatorial) {
 			return { ok => 1, manager => $base, ip => $host, port => $port + 0, host => $host };
+		}
+		# The peer listener answered TCP, but its house-CA leaf may not name
+		# this address: a phone whose DHCP lease moved serves on the LAN while
+		# its leaf still carries the old address, so the verified fetch fails.
+		# The signed rail on the plain manager port authenticates by signature,
+		# not TLS, and the listener probe already proved the host is up, so one
+		# short unverified attempt is enough.
+		if ($verified) {
+			my $plain_url = $plain_base . '/?signatorial=' . url_escape $rs;
+			my $plain_body = '';
+			if (ref $fetch eq 'CODE') {
+				$plain_body = eval { $fetch->({ host => $host, port => $port, base => $plain_base, url => $plain_url, literal => $literal, alive => $alive, why => $c->{'why'}, verified => 0 }) } || '';
+			}
+			else {
+				my $ua = Mojo::UserAgent->new;
+				$ua = $ua->max_response_size(0);
+				$ua->insecure(1);
+				$ua->connect_timeout(2);
+				$ua->inactivity_timeout(4);
+				$ua->request_timeout(5);
+				my $tx = eval { $ua->get($plain_url => { user_agent => $remote_signatorial }) };
+				$plain_body = eval { $tx->result->body } || '';
+			}
+			if (defined $plain_body && $plain_body eq $remote_signatorial) {
+				return { ok => 1, manager => $plain_base, ip => $host, port => $port + 0, host => $host };
+			}
 		}
 	}
 	return { ok => 0 };
