@@ -222,7 +222,9 @@ like($states, qr/\('not running', 'red'\) \('starting\.\.\. \(\d+s\)', 'amber'\)
 	'start-up reads red -> amber (with its age) -> green');
 like($core, qr/STARTING_WINDOW = 150\.0/, 'the amber window is the dashboard\'s 150 s');
 like($core, qr/mark_start_requested\(\)/, 'a start marks the clock');
-like($core, qr/clear_start_requested\(\)/, 'and a deliberate stop clears it');
+like($core, qr/def restart_jawn[^\n]*\n(?:.*\n)*?\s+mark_start_requested\(\)/,
+	'and a restart marks it before the stop, so it never flashes red');
+like($core, qr/clear_start_requested\(\)/, 'a deliberate stop clears it');
 
 # The tray badge: one icon per tone, built and cached, distinct by colour.
 my $icons = `cd "$root" && QT_QPA_PLATFORM=offscreen PYTHONPATH=desktop python3 -c 'from PySide6.QtWidgets import QApplication; from jawnos_desktop.qt_shell import tray_icon; from jawnos_desktop import theme; app=QApplication([]); xs=[tray_icon("desktop/icons/jawnos.png", c) for c in (theme.GREEN, theme.AMBER, theme.RED)]; print("icons-ok", len(xs), xs[0] is tray_icon("desktop/icons/jawnos.png", theme.GREEN), all(not x.isNull() for x in xs))' 2>&1`;

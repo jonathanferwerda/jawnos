@@ -724,8 +724,6 @@ def stop_jawn(jawn_dir, wait=12.0):
     # Remember the choice before the killer runs: a watcher tick during the stop
     # must not read the gap as a crash and start the tree again.
     set_held(True)
-    # A deliberate stop is not a slow start: no amber "starting..." window.
-    clear_start_requested()
     killer = os.path.join(jawn_dir, "scripts", "manager_killer.pl")
     if not os.path.exists(killer):
         return False, "no scripts/manager_killer.pl in %s" % jawn_dir
@@ -750,6 +748,9 @@ def stop_jawn(jawn_dir, wait=12.0):
 def restart_jawn(jawn_dir):
     """A real restart: kill the master, start a fresh one, and wait for it to
     answer, so the caller can trust the result (no half-boot window)."""
+    # The whole restart reads as "starting...", the stop included. Marking it
+    # here means the tray does not drop through red on the way to amber.
+    mark_start_requested()
     stop_jawn(jawn_dir)
     ok, message = start_jawn(jawn_dir)
     if not ok:
@@ -856,6 +857,8 @@ def start_all(jawn_dir, with_ble=True):
 
 def stop_all(jawn_dir, with_ble=True, wait=12.0):
     message = ""
+    # A deliberate stop is not a slow start: no amber "starting..." window.
+    clear_start_requested()
     if with_ble:
         message = stop_ble()[1]
     ok, jawn_message = stop_jawn(jawn_dir, wait=wait)

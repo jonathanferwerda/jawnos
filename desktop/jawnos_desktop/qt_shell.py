@@ -1231,6 +1231,11 @@ def main(argv=None):
                         if stale:
                             running, disk = stale
                             self._restart_at = now
+                            # This tick blocks until the tree answers again, so
+                            # tell the tray now: amber for the restart, not the
+                            # green it last saw.
+                            core.mark_start_requested()
+                            self.status.emit(False, ble)
                             ok, message = core.restart_all(jawn_dir, with_ble)
                             self.note.emit(
                                 ("restarted %s -> %s" % (running, disk))
