@@ -184,6 +184,25 @@ my $set_ok = 1;
 	is($r->{'error'}, 'no mixer', 'and says why');
 	is_deeply(\@set, [], 'nothing is set');
 
+	# A homebase with no mixer still forwards the delta to the machines that
+	# have one: the phone is the watch's homebase, the laptop has the sink.
+	@set = ();
+	@roster = (
+		{ signatorial => 'peer-a', hostname => 'Laptop', connection => 'active',
+		  ip => '192.168.1.123', manager => 'https://192.168.1.123:45545' },
+	);
+	$ua = FakeUA->new(ok => 1);
+	$get_level = undef;
+	$set_ok = 0;
+	$r = subs::volume_relay({ id => 'nomixer-all', to => 'all', data => { delta => 5 } }, {});
+	is($r->{'ok'}, 1, 'a no-mixer homebase still forwards the tap');
+	is_deeply($r->{'forwarded'}, ['peer-a'], 'to the machine with a sink');
+	is_deeply(\@set, [], 'and does not touch a sink it does not have');
+	is($ua->{'posted'}[0]->{'form'}{'delta'}, 5, 'the peer gets the delta, not a guessed level');
+	ok(!exists $ua->{'posted'}[0]->{'form'}{'volume'}, 'and no absolute level');
+	$get_level = 40;
+	$set_ok = 1;
+
 	# --- a message without a level ------------------------------------------
 	$r = subs::volume_relay({ id => 'empty-1', to => 'self', data => {} }, {});
 	is($r->{'ok'}, 0, 'a message with no delta and no level fails');
@@ -194,6 +213,7 @@ my $set_ok = 1;
 my $root = repo_root();
 my $watch = read_file("$root/perl/watch.pl");
 my $ble2 = read_file("$root/lib/JawnOS/Domain/Ble2.pm");
+my $pay2 = read_file("$root/lib/JawnOS/Domain/Pay2.pm");
 my $controller = read_file("$root/lib/JawnOS/Controller/manager_misc13.pm");
 my $routes = read_file("$root/lib/JawnOS/Routes/manager_misc13.pm");
 my $pico_ble = read_file("$root/jp/alarmclock/alarmclock_02_ble_handlers_wifi_setup.ino");
@@ -214,6 +234,10 @@ like($controller, qr/sub action_45410 \{.*?peer_verify.*?volume_relay/s,
 like($controller, qr/relayed => 1/, 'a peer copy is applied without another fan-out');
 like($ble2, qr/eq 'volume'.*?volume_relay.*?volume_result/s,
 	'the bridge path applies a volume tap and answers the device');
+like($ble2, qr/vol_app.*?volume_relay.*?volume_result/s,
+	'a Vol+/Vol- button flushed from the queue is routed as a volume tap');
+like($pay2, qr/\$form\{'delta'\} = \$delta/,
+	'a no-mixer homebase forwards the delta to a peer with a sink');
 
 like($pico_ble, qr/type == "volume"\).*?relay_out_forward\(msg, json, "\/watch\/volume"/s,
 	'the Pico forwards a volume tap the manager can act on');

@@ -386,6 +386,28 @@ sub ble_message_processor {
 		# board's own relay clicked), instead of landing on the tap's state.
 		my $btn_syl = ($edt eq 'microcontroller') ? 10 : 1;
 		my $btn_b = $ws->{ &subs::shorthand_name('button', $btn_syl) . $payload->{'button'} } || {};
+		# A Vol+/Vol- button is the house volume, not the pin's command. It
+		# normally arrives as a type "volume" message; a tap queued while the
+		# link was down is flushed as a button, so route that one the same way
+		# instead of running the pin's (often stale) named destination.
+		my $vol_app = $btn_b->{'app'} || '';
+		my $vol_delta = $vol_app eq 'vol_+' ? 2 : ($vol_app eq 'vol_-' ? -2 : 0);
+		if ($vol_delta) {
+			my $result = &subs::volume_relay({
+				type => 'volume', to => 'all', id => $press_id,
+				chip_id => $chip_id, edt => $edt,
+				data => { delta => $vol_delta },
+			}, { from_chip => $chip_id });
+			if ($chip_id) {
+				&subs::bluetooth_sender_async({
+					intent => 'com.jawn.president.bt.connect',
+					chip_id => $chip_id,
+					edt => $edt,
+					message => { type => 'volume_result', data => $result }
+				});
+			}
+			return;
+		}
 		&subs::setting_setter({ app => $btn_b->{'app'}, setting => 'toggle', value => $tog, sync => 1, source_chip_id => $chip_id, timestamp => $press_ms }) if $btn_b->{'app'};
 		# Applying a tap reaches the network (a command relayed to another machine)
 		# and the database. On the listener's own reader that held up every message

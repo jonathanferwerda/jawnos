@@ -704,26 +704,30 @@ sub volume_relay {
 	$target = 'self' unless defined $target && length $target;
 	my $id = $msg->{'id'} || '';
 	my $result = { ok => 0, target => $target };
-	# delta is read against the level the room is on now, before anything moves
+	# delta is read against the level the room is on now, before anything moves.
+	# A machine with no mixer still has a house: it cannot resolve a delta, but
+	# it can forward the delta itself for a peer with a sink to apply. The phone
+	# was the watch's homebase and used to return "no mixer" before the fan-out,
+	# so a Vol+ never reached the laptop's mixer.
 	my $current = &clock_system_volume_get();
+	my $delta;
+	$delta = int($data->{'delta'}) if defined $data->{'delta'} && "$data->{'delta'}" =~ /^-?\d+$/;
 	my $level;
 	if (defined $data->{'volume'} && "$data->{'volume'}" =~ /^\d+$/) {
 		$level = int($data->{'volume'});
 	}
-	elsif (defined $data->{'delta'} && "$data->{'delta'}" =~ /^-?\d+$/) {
-		unless (defined $current) {
-			$result->{'error'} = 'no mixer';
-			return $result;
-		}
-		$level = int($current) + int($data->{'delta'});
+	elsif (defined $delta && defined $current) {
+		$level = int($current) + $delta;
 	}
-	else {
+	elsif (!defined $delta) {
 		$result->{'error'} = 'no volume';
 		return $result;
 	}
-	$level = 5 if $level < 5;
-	$level = 100 if $level > 100;
-	$result->{'volume'} = $level;
+	if (defined $level) {
+		$level = 5 if $level < 5;
+		$level = 100 if $level > 100;
+		$result->{'volume'} = $level;
+	}
 	if (length $id) {
 		my $now = &rightNow();
 		eval {
@@ -745,7 +749,7 @@ sub volume_relay {
 	my $named = ($target ne 'all' && $target ne 'self' && $target ne $me) ? $target : '';
 	my $local = ($target eq 'all' || $target eq 'self' || ($me && $target eq $me)) ? 1 : 0;
 	my $applied = 0;
-	if ($local) {
+	if ($local && defined $level) {
 		$applied = &clock_system_volume_set($level) ? 1 : 0;
 		$result->{'local'} = $applied;
 	}
@@ -766,10 +770,14 @@ sub volume_relay {
 		my %form = (
 			id => $id,
 			target => $target,
-			volume => $level,
 			relayed => 'yes',
 			signatorial => $me,
 		);
+		# A peer with a sink resolves its own level from the delta when this
+		# machine could not (no mixer); otherwise every machine moves to the
+		# level resolved here.
+		if (defined $level) { $form{'volume'} = $level; }
+		else { $form{'delta'} = $delta; }
 		$result->{'forwarded'} = [ map { $_->{'signatorial'} } @peers ];
 		# A tap waits on this response, so the fan-out is its own process: the
 		# watch worker (one process on a phone) must not sit on a slow peer.
@@ -786,7 +794,7 @@ sub volume_relay {
 			}, { name => 'volume relay', warranty => '30s' });
 		};
 	}
-	$result->{'ok'} = 1 if $applied || (!$local && @peers);
+	$result->{'ok'} = 1 if $applied || @peers;
 	$result->{'error'} = 'no mixer' if $local && !$applied && !@peers;
 	return $result;
 }
