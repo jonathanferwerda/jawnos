@@ -2,7 +2,7 @@
 # Grow the state partition (and its filesystem) to fill the disk we booted
 # from.
 #
-# The image is built at its minimum size (1G ESP + 5G root + 2G state). A stick
+# The image is built at its minimum size (1G ESP + 6.5G root + 2G state). A stick
 # or a QEMU disk is usually larger, and `mkosi vm --runtime-size` only makes the
 # file larger - it does not move the partition table with it. This service does
 # the useful half: it grows jawnos-state-img, which holds /home/jawn, into the

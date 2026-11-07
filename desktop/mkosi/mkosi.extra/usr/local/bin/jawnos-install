@@ -284,13 +284,13 @@ if [ -z "$LIVE_ROOT" ] || [ ! -b "$LIVE_ROOT" ]; then
 fi
 
 # The three partitions at their minimum sizes (see mkosi.repart), plus the
-# GPT/alignment overhead: the built image is ~8.1GiB. A nominal 8GB stick is
-# smaller than that once marketed capacities are rounded, so require 9GiB and
-# point people at 16GB.
+# GPT/alignment overhead: the built image is ~9.5GiB. A marketed 10GB stick is
+# smaller than that once capacities are rounded, so require 11GiB and point
+# people at 16GB.
 TARGET_BYTES=$(blockdev --getsize64 "$TARGET")
-MIN_BYTES=$(( 9 * 1024 * 1024 * 1024 ))
+MIN_BYTES=$(( 11 * 1024 * 1024 * 1024 ))
 if [ "$TARGET_BYTES" -lt "$MIN_BYTES" ]; then
-    echo "$TARGET is $((TARGET_BYTES / 1024 / 1024 / 1024 ))G; JawnOS needs at least 9G (16G recommended)" >&2
+    echo "$TARGET is $((TARGET_BYTES / 1024 / 1024 / 1024 ))G; JawnOS needs at least 11G (16G recommended)" >&2
     exit 1
 fi
 
@@ -507,7 +507,7 @@ install_plain() {
     dd if="$LIVE_ROOT" of="$TARGET_ROOT" bs=16M status=progress conv=fsync
 
     # A future image may allow a larger root than the one being copied; grow the
-    # filesystem offline when that is the case. (Today both are a fixed 5G.)
+    # filesystem offline when that is the case. (Today both are a fixed 6.5G.)
     if [ "$(blockdev --getsize64 "$TARGET_ROOT")" -gt "$(blockdev --getsize64 "$LIVE_ROOT")" ]; then
         e2fsck -fy "$TARGET_ROOT" >/dev/null 2>&1 || true
         resize2fs "$TARGET_ROOT" >/dev/null 2>&1 || true

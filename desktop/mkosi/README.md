@@ -26,8 +26,8 @@ sudo perl scripts/mkosi_build.pl --vm          # build, then boot it in QEMU (16
 sudo perl scripts/mkosi_build.pl --vm --disk-size 32   # the same, with a 32G disk
 ```
 
-The built artefact stays at its minimum size (1G ESP + 5G root + 2G state ≈
-8.1G) so the download stays small. `--disk-size` only affects the QEMU disk
+The built artefact stays at its minimum size (1G ESP + 6.5G root + 2G state ≈
+9.5G) so the download stays small. `--disk-size` only affects the QEMU disk
 (10–4096 GB, default 16): the image's `jawnos-grow` service expands the state
 partition into the extra space at boot. The build needs root (mkosi uses a
 container/chroot), network access to the Arch mirrors and to CPAN, and a few GB
@@ -103,7 +103,7 @@ sudo dd if=jawnos-live.raw of=/dev/sdX bs=16M status=progress conv=fsync
 # partition that appears as a small FAT drive
 ```
 
-A stick needs at least 9 GB (the built image is ~8.1 GiB, and marketed
+A stick needs at least 11 GB (the built image is ~9.5 GiB, and marketed
 capacities round down); 16 GB or more is comfortable. The built image is
 written at its minimum size, and the installer (or `jawnos-grow`, when the image
 is flashed directly) expands the state partition to fill the rest.
@@ -240,7 +240,7 @@ Both call `/usr/local/bin/jawnos-theme`, which accepts `theme=nord`, a bare
 | Partition | Size | Label | Holds |
 | --- | --- | --- | --- |
 | 1 | 1G fixed | `jawnos-esp` | one unified kernel image at `EFI/BOOT/BOOTX64.EFI` (kernel, initrd, command line); reads `jawnos-theme.txt` from its root when the person puts one there |
-| 2 | 5G fixed | `jawnos-root` | the system, read-only at boot |
+| 2 | 6.5G fixed | `jawnos-root` | the system, read-only at boot |
 | 3 | 2G min → disk | `jawnos-state-img` | `/home/jawn`: the checkout, `config.json`, the database. Ventoy can only read it; a real partition labelled `jawnos-state` (the Ventoy reserve) takes its place when present |
 
 The ESP and root are fixed sizes on purpose: every byte they do not take is a
@@ -286,7 +286,7 @@ sudo jawnos-install --yes --encrypt --filesystem btrfs /dev/sdX
 ```
 
 It creates a fresh partition table on the target from the same repart
-definitions the image was built with, sized to the whole device: 1G ESP, 5G
+definitions the image was built with, sized to the whole device: 1G ESP, 6.5G
 root, and a `jawnos-state-img` that takes everything left (the installed disk
 keeps the image label; `jawnos-state` is reserved for a Ventoy reserve). It then
 copies the ESP and root **partitions** byte for byte (the bootloader and kernel
@@ -297,7 +297,7 @@ step to get wrong.
 
 The installer refuses to write to the stick it is running from, needs `--yes`
 before it touches anything, refuses a disk with mounted filesystems on it, and
-refuses a target smaller than 9G. It copies only the two system partitions, not
+refuses a target smaller than 11G. It copies only the two system partitions, not
 the live stick's grown state partition, so installing from a 64G live stick to
 a 32G target is fine. The running system is found from the kernel's root=
 (through `jawnos-root`), not from `/home/jawn`, because on Ventoy the house may
@@ -433,10 +433,12 @@ Recorded honestly:
   Ventoy stick and a real second computer are still the missing proof; on
   Ventoy the boot stick's data partition is protected via the loop's
   `backing_file`, which cannot be resolved if Ventoy unmounts that partition.
-- The install path was exercised end to end on **loop devices** in a sandbox:
-  a 32G target was repartitioned to 1G/5G/26G, the ESP and root were copied,
-  the house was rsynced, the theme row landed, and the live flag was dropped.
-  A real USB install is still the missing proof.
+- The install path was exercised end to end on **loop devices** in a sandbox
+  (then on a blank 16G disk in QEMU): a 32G target was repartitioned to
+  1G/5G/26G, and the 16G one to 1G/6.5G/9.1G; the ESP and root were copied,
+  the house was rsynced, the theme row landed, the live flag was dropped, and
+  the installed 16G disk booted to a manager answering health 200. A real USB
+  install is still the missing proof.
 - `jawnos-grow` (partition growth + online `resize2fs`) was proven on a mounted
   loop-device state partition; the boot service itself has not been boot-tested.
   systemd-repart logs "GrowFileSystem=yes … not supported" for the generic state
