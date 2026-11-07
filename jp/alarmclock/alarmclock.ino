@@ -34,6 +34,7 @@ struct jawn_time;
 //   alarmclock_02_ble_handlers_wifi_setup.ino   BLE/USB handlers, setup, mDNS, WiFi
 //   alarmclock_03_loop_house_inputs_jobs.ino    loop/loop1, house, inputs, local jobs
 //   alarmclock_04_jobs_clock_config_net.ino     core jobs, clock display, config, network
+//   alarmclock_05_device_ws.ino                 /device/ws client (output bus)
 
 void setup() { jawn_setup(); }
 void loop() { jawn_loop(); }

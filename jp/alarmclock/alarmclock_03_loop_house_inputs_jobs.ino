@@ -225,6 +225,9 @@ void loop1() {
     call_the_president();
   }
   handle_jobs();
+  // The device bus: the manager pushes relay/led/servo commands here instead of
+  // dialing the board per command. Non-blocking, and it backs off on its own.
+  device_ws_poll();
 //  delay(10);
 }
 

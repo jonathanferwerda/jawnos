@@ -114,6 +114,6 @@ One helper: `perl scripts/where.pl app_release_sync`.
 
 ## firmware
 
-- jp/alarmclock: jp/alarmclock/alarmclock.ino, 4 part file(s), builds with `pio run -j 4`.
+- jp/alarmclock: jp/alarmclock/alarmclock.ino, 5 part file(s), builds with `pio run -j 4`.
 - jt: jt/jt.ino, 16 part file(s), builds with `pio run -j 4`.
 - jw: jw/jw.ino, 15 part file(s), builds with `pio run -j 4`.
