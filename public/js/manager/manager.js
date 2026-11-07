@@ -460,6 +460,9 @@ function jawnosPanelPosRestore(key, panel) {
 	try { s = JSON.parse(raw); } catch (e) { return false; }
 	if (!s || typeof s.left !== 'number' || typeof s.top !== 'number') { return false; }
 	var bar = (typeof jawnosTaskbarHeight == 'function') ? jawnosTaskbarHeight() : 0;
+	// a panel is held under the same ceiling its drag obeys, so a place saved on a
+	// larger screen cannot put its header behind a top taskbar or the clothesline
+	var limit = (typeof panelTopLimit == 'function') ? panelTopLimit() : 0;
 	// apply a remembered size before measuring, so the place is clamped against
 	// the box the panel will really wear
 	var saved_w = 0, saved_h = 0;
@@ -468,14 +471,14 @@ function jawnosPanelPosRestore(key, panel) {
 		panel.css('width', saved_w + 'px');
 	}
 	if (typeof s.height === 'number' && s.height > 0) {
-		saved_h = Math.min(s.height, Math.max(120, $(window).height() - bar - 8));
+		saved_h = Math.min(s.height, Math.max(120, $(window).height() - limit - bar - 8));
 		panel.css('height', saved_h + 'px');
 	}
 	// keep it on screen if the window has since shrunk; a hidden panel has no box
 	// to measure, and a zero width simply leaves the stored spot alone
 	var w = saved_w || panel.outerWidth() || 0, h = saved_h || panel.outerHeight() || 0;
 	var left = Math.max(0, Math.min(s.left, $(window).width() - w));
-	var top = Math.max(0, Math.min(s.top, $(window).height() - h - bar));
+	var top = Math.max(limit, Math.min(s.top, $(window).height() - h - bar));
 	panel.css({ left: left + 'px', top: top + 'px', right: 'auto', bottom: 'auto' });
 	return true;
 }
@@ -524,11 +527,18 @@ function assistantOpenPanel(panel) {
 		// measure behind visibility, not display: none - a hidden element has no
 		// box to measure, and the panel would land against a zero width
 		panel.css({ visibility: 'hidden', display: 'flex' });
+		var bar = (typeof jawnosTaskbarHeight == 'function') ? jawnosTaskbarHeight() : 0;
+		// The header is the panel's only handle and wears its close, so the panel
+		// starts under the ceiling a window and a keyboard panel obey (the taskbar
+		// when it rides the top edge, and the clothesline) and is capped to the
+		// room left below it. A short screen shortens the chat; it never hides the
+		// way to move or close the panel.
+		var limit = (typeof panelTopLimit == 'function') ? panelTopLimit() : 0;
+		panel.css('max-height', Math.max(180, $(window).height() - limit - bar - 16) + 'px');
 		if (!jawnosPanelPosRestore('guide:' + (panel.attr('conversation') || 'assistant'), panel)) {
 			var w = panel.outerWidth(), h = panel.outerHeight();
-			var bar = (typeof jawnosTaskbarHeight == 'function') ? jawnosTaskbarHeight() : 0;
 			var left = Math.max(6, Math.min($(window).width() - w - 16, $(window).width() - w - 16));
-			var top = Math.max(6, Math.min($(window).height() - h - 70, $(window).height() - h - bar - 6));
+			var top = Math.max(limit, Math.min($(window).height() - h - 70, Math.max(limit, $(window).height() - h - bar - 6)));
 			panel.css({ left: left + 'px', top: top + 'px', right: '', bottom: '' });
 		}
 		panel.css('visibility', '');

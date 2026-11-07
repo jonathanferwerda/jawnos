@@ -33,8 +33,19 @@ like($manager, qr/panel\.css\('width', saved_w \+ 'px'\)/, 'a saved width is app
 like($manager, qr/panel\.css\('height', saved_h \+ 'px'\)/, 'a saved height is applied');
 like($manager, qr/saved_w = Math\.min\(s\.width, Math\.max\(160, \$\(window\)\.width\(\) - 8\)\)/,
 	'a saved width is clamped to the screen');
-like($manager, qr/saved_h = Math\.min\(s\.height, Math\.max\(120, \$\(window\)\.height\(\) - bar - 8\)\)/,
-	'a saved height is clamped above the taskbar');
+like($manager, qr/saved_h = Math\.min\(s\.height, Math\.max\(120, \$\(window\)\.height\(\) - limit - bar - 8\)\)/,
+	'a saved height is clamped above the taskbar, under the ceiling');
+like($manager, qr/var limit = \(typeof panelTopLimit == 'function'\) \? panelTopLimit\(\) : 0;/,
+	'the panel place is held under the clothesline ceiling');
+like($manager, qr/var top = Math\.max\(limit, Math\.min\(s\.top, \$\(window\)\.height\(\) - h - bar\)\);/,
+	'a saved spot never puts the header behind a top taskbar or the clothesline');
+
+# --- a panel opened from the taskbar keeps its header in reach ---------------
+like($manager, qr/function assistantOpenPanel\(panel\)/, 'the associate opener exists');
+like($manager, qr/panel\.css\('max-height', Math\.max\(180, \$\(window\)\.height\(\) - limit - bar - 16\) \+ 'px'\);/,
+	'the associate is capped to the room under the ceiling');
+like($manager, qr/var top = Math\.max\(limit, Math\.min\(\$\(window\)\.height\(\) - h - 70, Math\.max\(limit, \$\(window\)\.height\(\) - h - bar - 6\)\)\);/,
+	'a fresh associate opens under the ceiling, with its header and close in reach');
 
 # --- one resizable helper, by edge and corner -------------------------------
 like($manager, qr/function jawnosPanelResizable\(panel, keyOf\)/, 'the resizable helper exists');
@@ -67,6 +78,7 @@ like($kb_maker, qr/if \(css\['width'\] == null \|\| css\['width'\] === ''\) \{ c
 
 # --- the guide explains it ---------------------------------------------------
 like($help, qr/Drag its edge or corner to size it/, 'the agents topic explains resizing');
+like($help, qr/It opens under the top edge/, 'the agents topic says a panel opens under the top edge');
 like($help, qr/resized by its edge or corner, and both its place and its size are remembered/,
 	'the dock topic explains the dock panels\' size memory');
 
