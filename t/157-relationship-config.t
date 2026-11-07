@@ -62,6 +62,17 @@ my $configure = slurp(root() . '/templates/configure/appointment_list.html.ep');
 like $configure, qr/configure_relationship/, 'the Configure person card has the relationship select';
 like $configure, qr/setting="relationship"/, 'it saves the direct relationship setting';
 
+# One configuration for the phone. The abilities grid used to offer both the
+# singular phone row and the phones list; the singular one now folds into the
+# list, which shows the main line as its first row. Both settings still read
+# and write, so no row is lost.
+like $configure, qr/next if \$b eq 'phone' && \$abilities->\{'phones'\}/,
+	'the singular phone ability is not offered beside the phones list';
+like $configure, qr/contact_row_primary/, 'the phones list shows the main line as a row of its own';
+like $configure, qr/setting="phone"/, 'the main line still writes the phone setting';
+like $configure, qr/&subs::ui\('Main line'\)/, 'the row is named for the person reading it';
+like $configure, qr/&subs::ui\('Calls and texts route here'\)/, 'and says what the main line is for';
+
 my $people_js = slurp(root() . '/public/js/manager/people/01_crest_tabs.js');
 like $people_js, qr{url:\s*'/manager/configure'}, 'the People card saves through the configuration route';
 like $people_js, qr/setting:\s*'relationship'/, 'the People card saves the relationship setting';

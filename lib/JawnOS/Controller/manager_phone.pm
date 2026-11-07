@@ -113,6 +113,7 @@ sub action_23201 {
 		ivr_machines => &phone_ivr_machines(),
 		routes => &phone_routes_read(),
 		ivr_voices => [ &subs::say_voices() ],
+		caller_choices => &phone_caller_choices(),
 	);
 	my $contents = &window_maker({ user_agent => $c->param('user_agent'), app => 'phone', title => 'Phone', contents => $content }, $c->param('timestamp'));
 	$c->render(text => $contents);
@@ -295,6 +296,7 @@ sub action_24760 {
 		hold      => $c->param('hold'),
 		flows     => $c->param('flows'),
 		flow_defs => $c->param('flow_defs'),
+		flow_order => $c->param('flow_order'),
 	});
 	# The reception is the house's: hand the same save to the peers now, so the
 	# gateway machine and the phone hold it immediately instead of waiting for
@@ -431,6 +433,10 @@ sub action_24755 {
 	$ivr->{'machine_host'} = $ivr_machine ? ($ivr_machine->{'hostname'} || $ivr_machine->{'ip'} || '') : '';
 	$ivr->{'machine_ip'} = $ivr_machine ? ($ivr_machine->{'ip'} || '') : '';
 	$ivr->{'machine_manager'} = $ivr_machine ? ($ivr_machine->{'manager'} || '') : '';
+	# The app resolves a caller's flow before it rings. It has the numbers and the
+	# names, never the house's settings rows, so each entry's lines are resolved
+	# here: number -> { flow, kind, label }. The flow keys ride the defs beside it.
+	$ivr->{'flow_callers'} = &subs::phone_ivr_caller_index($ivr->{'flow_defs'});
 	$c->render(json => {
 		blocked => &ticket_blacklist_numbers(),
 		names => \%names,

@@ -437,6 +437,7 @@ our %SUB = (
 	'phone_avatar_data'                      => 'JawnOS/Manager/Part12.pm',
 	'phone_avatar_thumb'                     => 'JawnOS/Manager/Part12.pm',
 	'phone_blocked'                          => 'JawnOS/Manager/Part12.pm',
+	'phone_caller_choices'                   => 'JawnOS/Manager/Part12.pm',
 	'phone_directory'                        => 'JawnOS/Manager/Part12.pm',
 	'phone_names'                            => 'JawnOS/Manager/Part12.pm',
 	'phone_recent_unblocked'                 => 'JawnOS/Manager/Part12.pm',

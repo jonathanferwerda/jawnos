@@ -86,6 +86,8 @@
 	#configuration_container .contact_row select.contact_field { flex:0 0 auto; min-width:110px; }
 	#configuration_container .contact_row .contact_value { flex:1 1 160px; min-width:0; }
 	#configuration_container .contact_row .contact_label { flex:0 0 auto; max-width:140px; }
+	#configuration_container .contact_row_primary .contact_primary_kind { flex:0 0 auto; min-width:110px; font-weight:600; }
+	#configuration_container .contact_row_primary .contact_primary_note { flex:0 0 auto; font-size:12px; opacity:.7; }
 	#configuration_container .contact_add { margin-top:6px; }
 	#configuration_container .app_web_measures { margin-top:8px; }
 	@media (max-width:640px) {

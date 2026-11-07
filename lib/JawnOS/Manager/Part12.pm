@@ -318,6 +318,30 @@ sub phone_directory() {
 	return { known => \@known, numbers => \@numbers };
 }
 
+# The bodies a flow's callers may name, for the Phone app's picker: every person,
+# vendor and corporation the house models as a pos/mab row. One entry per app,
+# keyed by that row's uuid - the identity a caller entry travels with - and
+# labelled the way the People app shows the name.
+sub phone_caller_choices {
+	my $rows = &subs::db_query("select uuid, app, setting, value from settings where setting in ('pos','mab') and value in ('person','vendor','corporation') order by value, app")->hashes;
+	my (@choices, %seen);
+	foreach my $row ( @{$rows} ) {
+		next unless ref $row eq 'HASH';
+		my $kind = $row->{'value'} || '';
+		my $app = $row->{'app'} || '';
+		my $uuid = $row->{'uuid'} || '';
+		next unless length $uuid && length $app;
+		next if $seen{ $kind . "\0" . $app }++;
+		push @choices, {
+			kind => $kind,
+			uuid => $uuid,
+			app => $app,
+			label => &subs::format_name($app),
+		};
+	}
+	return \@choices;
+}
+
 sub phone_blocked() {
 	my @blocked;
 	foreach my $b ( @{&ticket_blacklist()} ) {
@@ -426,7 +450,8 @@ sub phone_route_set {
 }
 
 # How a call from this number is handled: the number's own route first, then the
-# relationship it belongs to, then 'unknown' for a number the house cannot name.
+# flow that names the number or the body it belongs to, then the relationship it
+# falls under, then 'unknown' for a number the house cannot name.
 sub phone_route_for {
 	my ($number) = @_;
 	my $key = &ticket_contact_clean('phone', $number);
@@ -437,6 +462,16 @@ sub phone_route_for {
 	my $ivr = &phone_ivr_settings();
 	unless (($ivr->{'enabled'} || 'no') eq 'yes') {
 		return { flow => 'ring', source => 'off', number => $key };
+	}
+	# A flow may name its callers: an exact line, or a person/vendor/corporation
+	# whose own numbers include this one. That answer sits above the bucket.
+	my $caller = &subs::phone_ivr_flow_for_number($key, undef, $ivr->{'flow_defs'});
+	if (ref $caller eq 'HASH' && ($caller->{'key'} || '')) {
+		return {
+			flow => $caller->{'key'}, source => 'caller', number => $key,
+			kind => $caller->{'caller'}->{'kind'} || '',
+			label => $caller->{'caller'}->{'label'} || '',
+		};
 	}
 	my $bucket = 'unknown';
 	if ($key) {
@@ -487,11 +522,24 @@ sub phone_ivr_save($params) {
 	# The flows first: a bucket in this same save may name a flow this save adds.
 	my $defs = $next->{'flow_defs'};
 	$defs = &subs::phone_ivr_flow_defs() unless ref $defs eq 'HASH';
+	my @caller_warnings;
 	if (defined $params->{'flow_defs'} && (ref $params->{'flow_defs'} || length $params->{'flow_defs'})) {
 		my $raw = $params->{'flow_defs'};
 		$raw = eval { decode_json($raw) } if !ref $raw;
 		# a payload that does not parse leaves the saved flows alone
-		$defs = &subs::phone_ivr_flow_defs_clean($raw) if ref $raw eq 'HASH';
+		if (ref $raw eq 'HASH') {
+			my $order = $params->{'flow_order'};
+			$order = eval { decode_json($order) } if defined $order && !ref $order;
+			# The caller lists are verified on save: a person/vendor/corporation
+			# that no longer exists is dropped, a number has to look like one, and
+			# a number put in two flows stays with the later one - which says so.
+			$defs = &subs::phone_ivr_flow_defs_clean($raw, {
+				verify => 1,
+				previous => $defs,
+				order => $order,
+				warnings => \@caller_warnings,
+			});
+		}
 	}
 	# The older prompt rows edit the receptionist flow, so a client that does not
 	# know about flows (and an older machine speaking from those rows) changes the
@@ -547,6 +595,7 @@ sub phone_ivr_save($params) {
 	}
 	&subs::setting_setter({ app => 'phone', setting => 'ivr_flows', value => encode_json($next->{'flows'}), device => 'all' });
 	&subs::setting_setter({ app => 'phone', setting => 'ivr_flow_defs', value => encode_json($next->{'flow_defs'}), device => 'all' });
+	$next->{'caller_warnings'} = \@caller_warnings;
 	return $next;
 }
 

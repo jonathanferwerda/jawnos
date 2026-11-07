@@ -147,6 +147,11 @@
 					<div class="app_abilities">
 						<h4 class="app_abilities_title">Abilities</h4>
 						<% foreach my $b (sort keys %{$abilities}) { %>
+							<%# the singular phone row folds into Phones: one configuration that
+							    keeps the main line and every other line together, so the owner
+							    does not see two entries for the same thing. The row is still read
+							    and written - it stays the line calls and texts route on. %>
+							<% next if $b eq 'phone' && $abilities->{'phones'}; %>
 							<%# the tender type only means something on an account %>
 							<% next if $b eq 'payment_type' && !(($appts->{$a}->{'setting'}->{'pos'} || '') eq 'account' || ($appts->{$a}->{'setting'}->{'mab'} || '') eq 'account'); %>
 							<span class="configuration_ability_container" setting="<%= $b %>">
@@ -331,8 +336,18 @@
 										<% my $kind = $b eq 'phones' ? 'phone' : 'email'; %>
 										<% my $primary = $appts->{$a}->{'setting'}->{$kind}; %>
 										<div class="contact_list" list="<%= $b %>" kind="<%= $kind %>" app="<%= $a %>">
-											<p class="contact_hint"><% if ($kind eq 'phone') { %>The app's own <b>phone</b> row is the line calls and texts route on<% } else { %>The app's own <b>email</b> row is the address mail routes on<% } %><% if ($primary) { %> (<%= $primary %>)<% } %>. Any other number or address goes here, with a type.</p>
+											<p class="contact_hint"><% if ($kind eq 'phone') { %>The <b>main line</b> is the number calls and texts route on<% } else { %>The app's own <b>email</b> row is the address mail routes on<% } %><% if ($primary) { %> (<%= $primary %>)<% } %>. Any other number or address goes here, with a type.</p>
 											<div class="contact_rows">
+												<%# the main line: the app's own phone row, which calls and texts
+												    route on, shown with the other numbers so there is one place
+												    for the phone rather than a single-value entry beside a list %>
+												<% if ($kind eq 'phone') { %>
+													<div class="contact_row contact_row_primary">
+														<span class="contact_field contact_primary_kind"><%= &subs::ui('Main line') %></span>
+														<input class="contact_field contact_value configure_input" setting="phone" app="<%= $a %>" value="<%= $primary %>" placeholder="phone">
+														<span class="contact_primary_note"><%= &subs::ui('Calls and texts route here') %></span>
+													</div>
+												<% } %>
 												<% my $list = eval { decode_json $appts->{$a}->{'setting'}->{$b} } || []; %>
 												<% $list = [ $list ] if ref $list eq 'HASH'; %>
 												<% $list = [] unless ref $list eq 'ARRAY'; %>

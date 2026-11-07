@@ -189,11 +189,19 @@ $(document).on('click', '#phone_app #phone_ivr_save', function (e) {
 			thanks: receptionist.thanks || '',
 			hold: receptionist.hold || '',
 			flows: JSON.stringify(flows),
-			flow_defs: JSON.stringify(defs)
+			flow_defs: JSON.stringify(defs),
+			flow_order: JSON.stringify(jawnPhoneFlowSaveOrder())
 		},
 		success: function (res) {
 			if (res && res.ok) {
-				status.text(jawnosT('IVR saved.'));
+				var warnings = (res.ivr && res.ivr.caller_warnings) || [];
+				if (warnings.length) {
+					var moved = [];
+					$.each(warnings, function (i, w) { moved.push(w.number + ' (' + w.from + ' → ' + w.to + ')'); });
+					status.text(jawnosT('IVR saved.') + ' ' + jawnosT('A number belongs to one flow; the later save kept it:') + ' ' + moved.join(', '));
+				} else {
+					status.text(jawnosT('IVR saved.'));
+				}
 				if (typeof jawnPhoneSync === 'function') { jawnPhoneSync(); }
 			} else {
 				status.text(jawnosT('Could not save IVR.'));
@@ -584,6 +592,19 @@ function jawnPhoneFlowItem(key, flow) {
 		+ '<select class="phone_app_ivr_step_type_new" hint="Step type">' + typeOptions + '</select>'
 		+ '<button type="button" class="phone_app_ivr_step_add_btn" hint="Add step">' + jawnosT('Add step') + '</button>'
 		+ '</div></div>'
+		+ '<div class="phone_app_ivr_callers_wrap">'
+		+ '<div class="phone_app_ivr_callers_title">' + jawnosT('Callers') + '</div>'
+		+ '<div class="phone_app_ivr_callers"></div>'
+		+ '<div class="phone_app_ivr_caller_add">'
+		+ '<select class="phone_app_ivr_caller_pick" hint="Caller"></select>'
+		+ '<button type="button" class="phone_app_ivr_caller_add_btn" hint="Add caller">' + jawnosT('Add caller') + '</button>'
+		+ '</div>'
+		+ '<div class="phone_app_ivr_caller_add">'
+		+ '<input type="tel" class="phone_app_ivr_caller_number" hint="Caller number" placeholder="' + jawnosT('Telephone number') + '">'
+		+ '<button type="button" class="phone_app_ivr_caller_number_add" hint="Add number">' + jawnosT('Add number') + '</button>'
+		+ '</div>'
+		+ '<div class="phone_app_ivr_caller_help">' + jawnosT('A number, or a person, vendor or corporation, gets this flow before the call flow below decides.') + '</div>'
+		+ '</div>'
 		+ '<div class="phone_app_ivr_flow_actions">'
 		+ '<button type="button" class="phone_app_ivr_flow_rename" hint="Rename flow">' + jawnosT('Rename') + '</button>'
 		+ (flow.builtin ? '' : '<button type="button" class="phone_app_ivr_flow_delete" hint="Delete flow">' + jawnosT('Delete') + '</button>')
@@ -609,6 +630,7 @@ function jawnPhoneFlowItem(key, flow) {
 	voice.val(flow.voice || ((voices[0] || {}).value || ''));
 
 	jawnPhoneFlowHoldFill(edit.find('[field="hold"]'), jawnPhoneHoldLibrary, flow.hold || '');
+	jawnPhoneCallersRender(edit, flow);
 
 	var steps = jawnPhoneFlowStepsOf(flow);
 	var stepsBox = edit.find('.phone_app_ivr_steps');
@@ -650,12 +672,83 @@ function jawnPhoneFlowKeys() {
 	return keys;
 }
 
+// The order a save lists its flows in. The one opened last goes last, so a
+// number the person has just put in two flows stays with the one they edited -
+// the later save wins. The sort is stable, so the rest keeps its listed order.
+function jawnPhoneFlowSaveOrder() {
+	var keys = jawnPhoneFlowKeys();
+	keys.sort(function (a, b) { return (jawnPhoneFlowOpen[a] ? 1 : 0) - (jawnPhoneFlowOpen[b] ? 1 : 0); });
+	return keys;
+}
+
 function jawnPhoneFlowValues(key) {
 	var values = {};
 	$('#phone_app .phone_app_ivr_flow_item').filter(function () { return $(this).attr('flow') === key; }).find('[field]').each(function () {
 		values[$(this).attr('field')] = $(this).val() || '';
 	});
 	return values;
+}
+
+// ---- who a flow answers ---------------------------------------------------
+// A flow may name its callers, most specific first. An entry is a number, or a
+// person/vendor/corporation the house already models (a pos row under its app
+// name), so the lines that body keeps are resolved by the server rather than
+// typed twice here. The entries ride the flow's own JSON like its steps.
+function jawnPhoneCallerChoices() {
+	var box = jawnPhoneFlowsEditor();
+	try { return JSON.parse(box.attr('data-caller-choices') || '[]'); } catch (e) { return []; }
+}
+
+// The house's normal form, as contact_normalizer writes it: digits only, no
+// leading 1, and matching cut to the last ten.
+function jawnPhoneCallerKey(value) {
+	var digits = String(value || '').replace(/\D+/g, '').replace(/^1/, '');
+	if (!digits) { return ''; }
+	return digits.length >= 10 ? digits.slice(-10) : digits;
+}
+
+function jawnPhoneCallerKindLabel(kind) {
+	if (kind === 'person') { return jawnosT('Person'); }
+	if (kind === 'vendor') { return jawnosT('Vendor'); }
+	if (kind === 'corporation') { return jawnosT('Corporation'); }
+	return jawnosT('Number');
+}
+
+function jawnPhoneCallerLabel(caller) {
+	caller = caller || {};
+	if (caller.label) { return caller.label; }
+	if (caller.kind === 'number') { return caller.value || ''; }
+	var choices = jawnPhoneCallerChoices();
+	for (var i = 0; i < choices.length; i++) {
+		if (choices[i].kind === caller.kind && choices[i].uuid === caller.uuid) {
+			return choices[i].label || choices[i].app || '';
+		}
+	}
+	return caller.uuid || '';
+}
+
+function jawnPhoneCallerRow(caller, index) {
+	var row = $('<div class="phone_app_ivr_caller"></div>').attr('caller-index', index);
+	row.append($('<span class="phone_app_ivr_caller_kind"></span>').text(jawnPhoneCallerKindLabel(caller.kind || '')));
+	row.append($('<span class="phone_app_ivr_caller_label"></span>').text(jawnPhoneCallerLabel(caller)));
+	row.append($('<button type="button" class="phone_app_ivr_caller_remove" hint="Remove caller"></button>').text(jawnosT('Remove')));
+	return row;
+}
+
+function jawnPhoneCallersRender(item, flow) {
+	var list = item.find('.phone_app_ivr_callers');
+	list.empty();
+	$.each(flow.callers || [], function (i, caller) {
+		if (caller && caller.kind) { list.append(jawnPhoneCallerRow(caller, i)); }
+	});
+	var pick = item.find('.phone_app_ivr_caller_pick');
+	pick.empty();
+	pick.append($('<option value=""></option>').text(jawnosT('Pick a person, vendor or corporation')));
+	$.each(jawnPhoneCallerChoices(), function (i, choice) {
+		pick.append($('<option></option>')
+			.val((choice.kind || '') + ':' + (choice.uuid || ''))
+			.text(jawnPhoneCallerKindLabel(choice.kind || '') + ' · ' + (choice.label || choice.app || '')));
+	});
 }
 
 // The bucket selects offer Ring, Reject and every flow. A bucket pointing at a
@@ -746,6 +839,7 @@ $(document).on('click', '#phone_app #phone_ivr_flow_add', function (e) {
 		thanks: source.thanks || '',
 		hold: source.hold || '',
 		after: source.after || 'hold',
+		callers: [],
 		builtin: 0
 	};
 	jawnPhoneFlowOpen[key] = true;
@@ -786,6 +880,92 @@ $(document).on('click', '#phone_app .phone_app_ivr_flow_delete', function (e) {
 	jawnPhoneFlowDigitsDrop(key);
 	delete jawnPhoneFlowDefs[key];
 	delete jawnPhoneFlowOpen[key];
+	jawnPhoneFlowsRender();
+});
+
+// Adding a person/vendor/corporation: the picker names a settings row, so the
+// entry travels with its uuid and the label the house shows for it.
+$(document).on('click', '#phone_app .phone_app_ivr_caller_add_btn', function (e) {
+	e.preventDefault();
+	e.stopPropagation();
+	var item = $(this).closest('.phone_app_ivr_flow_item');
+	var key = item.attr('flow');
+	jawnPhoneFlowsSync();
+	var flow = jawnPhoneFlowDefs[key];
+	if (!flow) { return; }
+	var picked = item.find('.phone_app_ivr_caller_pick').val() || '';
+	if (!picked) { return; }
+	var parts = picked.split(':');
+	var kind = parts.shift() || '';
+	var uuid = parts.join(':');
+	if (!uuid || (kind !== 'person' && kind !== 'vendor' && kind !== 'corporation')) { return; }
+	flow.callers = $.isArray(flow.callers) ? flow.callers : [];
+	var already = false;
+	$.each(flow.callers, function (i, caller) {
+		if (caller && caller.kind === kind && caller.uuid === uuid) { already = true; }
+	});
+	if (already) { return; }
+	var choices = jawnPhoneCallerChoices();
+	var chosen = null;
+	$.each(choices, function (i, choice) {
+		if (choice.kind === kind && choice.uuid === uuid) { chosen = choice; }
+	});
+	flow.callers.push({ kind: kind, uuid: uuid, label: (chosen && (chosen.label || chosen.app)) || '' });
+	jawnPhoneFlowOpen[key] = true;
+	jawnPhoneFlowsRender();
+});
+
+// A number is typed and kept in the house's normal form. A number belongs to a
+// flow, not to several, so adding one takes it away from every other flow - the
+// later save wins - and the status line says which flow lost it.
+$(document).on('click', '#phone_app .phone_app_ivr_caller_number_add', function (e) {
+	e.preventDefault();
+	e.stopPropagation();
+	var item = $(this).closest('.phone_app_ivr_flow_item');
+	var key = item.attr('flow');
+	jawnPhoneFlowsSync();
+	var flow = jawnPhoneFlowDefs[key];
+	if (!flow) { return; }
+	var raw = (item.find('.phone_app_ivr_caller_number').val() || '').replace(/^\s+|\s+$/g, '');
+	var value = raw.replace(/\D+/g, '').replace(/^1/, '');
+	if (value.length < 7 || value.length > 15) {
+		window.alert(jawnosT('That does not look like a telephone number.'));
+		return;
+	}
+	var numberKey = jawnPhoneCallerKey(value);
+	var flowKey = '';
+	$.each(jawnPhoneFlowDefs, function (otherKey, otherFlow) {
+		if (otherKey === key || !otherFlow || !$.isArray(otherFlow.callers)) { return; }
+		otherFlow.callers = $.grep(otherFlow.callers, function (caller) {
+			if (!caller || caller.kind !== 'number' || jawnPhoneCallerKey(caller.value) !== numberKey) { return true; }
+			flowKey = jawnPhoneFlowLabel(otherFlow);
+			return false;
+		});
+	});
+	flow.callers = $.isArray(flow.callers) ? flow.callers : [];
+	flow.callers = $.grep(flow.callers, function (caller) {
+		return !(caller && caller.kind === 'number' && jawnPhoneCallerKey(caller.value) === numberKey);
+	});
+	flow.callers.push({ kind: 'number', value: value, label: raw });
+	if (flowKey) {
+		$('#phone_app #phone_ivr_status').text(jawnosT('A number belongs to one flow; the later save kept it:') + ' ' + value + ' → ' + jawnPhoneFlowLabel(flow));
+	}
+	jawnPhoneFlowOpen[key] = true;
+	jawnPhoneFlowsRender();
+});
+
+$(document).on('click', '#phone_app .phone_app_ivr_caller_remove', function (e) {
+	e.preventDefault();
+	e.stopPropagation();
+	var row = $(this).closest('.phone_app_ivr_caller');
+	var item = row.closest('.phone_app_ivr_flow_item');
+	var key = item.attr('flow');
+	jawnPhoneFlowsSync();
+	var flow = jawnPhoneFlowDefs[key];
+	if (!flow || !$.isArray(flow.callers)) { return; }
+	var index = parseInt(row.attr('caller-index'), 10);
+	if (index >= 0) { flow.callers.splice(index, 1); }
+	jawnPhoneFlowOpen[key] = true;
 	jawnPhoneFlowsRender();
 });
 
@@ -1177,6 +1357,7 @@ function jawnPhoneRouteOpen(number, app) {
 			var source = res.source || '';
 			var note = 'Now: ' + flow;
 			if (source === 'number') { note += ' — set for this number'; }
+			else if (source === 'caller') { note += ' — ' + jawnosT('named in a flow\'s Callers'); }
 			else if (source === 'off') { note += ' — the reception flow is off'; }
 			else if (source) { note += ' — from ' + source; }
 			$('#phone_app #phone_route_note').text(note);

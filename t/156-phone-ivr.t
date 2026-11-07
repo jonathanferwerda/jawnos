@@ -631,6 +631,193 @@ SKIP: {
 	cmp_ok $seconds, '<=', 2, 'with the length the recorder gave it';
 }
 
+# ---------------------------------------------------------------- callers
+# A flow may name the callers that get it. Resolution is: an exact number in a
+# flow's callers, then the person/vendor/corporation the number belongs to, then
+# the bucket matrix. The entries are validated here because they arrive from a
+# browser and name rows that may have been deleted since.
+{
+	local *subs::setting_grabber = sub { return undef };
+	my $callers = &subs::phone_ivr_callers_clean([
+		{ kind => 'number', value => '+1 (555) 123-4567', label => '  Ada  ' },
+		{ kind => 'number', value => '5551234567' },
+		{ kind => 'number', value => '12' },
+		{ kind => 'explode', uuid => 'x' },
+		{ kind => 'person', uuid => 'u-dad', label => 'Dad' },
+		{ kind => 'person', uuid => 'u-dad' },
+	]);
+	is scalar @{$callers}, 2, 'a caller list drops a bad number, a bad kind and a repeated entry';
+	is $callers->[0]->{'kind'}, 'number', 'the first entry is the number';
+	is $callers->[0]->{'value'}, '5551234567', 'a number is kept in the house normal form';
+	is $callers->[0]->{'label'}, 'Ada', 'the label is what the person typed, trimmed';
+	is $callers->[1]->{'uuid'}, 'u-dad', 'a person keeps the settings uuid it names';
+	is $callers->[1]->{'label'}, 'Dad', 'and the label the picker showed';
+}
+{
+	local *subs::db_query = sub {
+		my ($sql) = @_;
+		return FakeRows->new([ { uuid => 'u-dad', app => 'dad', setting => 'pos', value => 'person' } ])
+			if $sql =~ /setting in/;
+		return FakeRows->new([]);
+	};
+	my $kept = &subs::phone_ivr_callers_clean([ { kind => 'vendor', uuid => 'u-dad' } ], 1);
+	is scalar @{$kept}, 0, 'a body that is not that kind is dropped on save';
+	my $ok = &subs::phone_ivr_callers_clean([ { kind => 'person', uuid => 'u-dad' } ], 1);
+	is scalar @{$ok}, 1, 'a body the house really has is kept';
+	my $gone = &subs::phone_ivr_callers_clean([ { kind => 'vendor', uuid => 'u-gone' } ], 1);
+	is scalar @{$gone}, 0, 'a body that no longer exists is dropped on save';
+	my $shaped = &subs::phone_ivr_callers_clean([ { kind => 'vendor', uuid => 'u-gone' } ], 0);
+	is scalar @{$shaped}, 1, 'a read keeps the shape, so a body restored later still names it';
+}
+{
+	local *subs::setting_grabber = sub { return undef };
+	my @warnings;
+	my $defs = &subs::phone_ivr_flow_defs_clean({
+		receptionist => { name => 'Front desk', callers => [ { kind => 'number', value => '5551234567' } ] },
+		night => { name => 'Night', callers => [ { kind => 'number', value => '5551234567' } ] },
+	}, { order => [ 'receptionist', 'night' ], warnings => \@warnings });
+	my @numbers;
+	foreach my $key ( qw(receptionist night) ) {
+		push @numbers, "$key:$_->{'value'}" for @{ $defs->{$key}->{'callers'} };
+	}
+	is_deeply \@numbers, ['night:5551234567'], 'a number put in two flows stays with the later save';
+	is scalar @warnings, 1, 'and the losing flow says so';
+	is $warnings[0]->{'from'}, 'Front desk', 'the warning names the flow that lost the number';
+	is $warnings[0]->{'to'}, 'Night', 'and the flow that kept it';
+}
+{
+	local *subs::setting_grabber = sub { return undef };
+	my @warnings;
+	# night is where the number was; day is where the later save puts it
+	my $defs = &subs::phone_ivr_flow_defs_clean({
+		day => { name => 'Day', callers => [ { kind => 'number', value => '5551234567' } ] },
+		night => { name => 'Night', callers => [ { kind => 'number', value => '5551234567' } ] },
+	}, {
+		order => [ 'day', 'night' ],
+		previous => { night => { callers => [ { kind => 'number', value => '5551234567' } ] } },
+		warnings => \@warnings,
+	});
+	is $defs->{'day'}->{'callers'}->[0]->{'value'}, '5551234567',
+		'a number a save moves is in the flow it moved to, not the flow that had it';
+	is scalar @{ $defs->{'night'}->{'callers'} }, 0, 'the old owner lets it go';
+	is $warnings[0]->{'to'}, 'Day', 'and the warning names the new flow';
+}
+{
+	local *subs::setting_grabber = sub { return undef };
+	local *subs::db_query = sub {
+		my ($sql, @args) = @_;
+		if ($sql =~ /setting in \(\'pos\',\'mab\'\)/) {
+			return FakeRows->new([
+				{ uuid => 'u-dad', app => 'dad', setting => 'pos', value => 'person' },
+				{ uuid => 'u-bmo', app => 'bmo', setting => 'pos', value => 'vendor' },
+			]);
+		}
+		return FakeRows->new([ { app => 'dad', value => '5551234567' } ]) if ($args[0] || '') eq 'phone';
+		return FakeRows->new([]);
+	};
+	my $defs = {
+		receptionist => { name => 'Receptionist', callers => [ { kind => 'person', uuid => 'u-dad', label => 'Dad' } ] },
+		night => { name => 'Night', callers => [ { kind => 'number', value => '5551234567', label => 'Ada' } ] },
+	};
+	my $match = &subs::phone_ivr_caller_match('5551234567', $defs);
+	is $match->{'flow'}, 'night', 'an exact number beats the person the number belongs to';
+	is $match->{'kind'}, 'number', 'and the match says which entry decided it';
+	$match = &subs::phone_ivr_caller_match('+1 (555) 123-4567', $defs);
+	is $match->{'flow'}, 'night', 'a number is matched in the house normal form';
+	$defs->{'night'}->{'callers'} = [];
+	$match = &subs::phone_ivr_caller_match('5551234567', $defs);
+	is $match->{'flow'}, 'receptionist', 'the person the number belongs to claims it next';
+	is $match->{'uuid'}, 'u-dad', 'the match names the settings row';
+	is &subs::phone_ivr_caller_match('5559999999', $defs), undef, 'a number nobody names does not match';
+}
+{
+	local *subs::setting_grabber = sub { return undef };
+	local *subs::db_query = sub { return FakeRows->new([]) };
+	my $defs = { receptionist => { name => 'Receptionist', callers => [ { kind => 'number', value => '5551234567' } ] } };
+	my $flow = &subs::phone_ivr_flow_for_number('5551234567', 'unknown', $defs);
+	is ref($flow), 'HASH', 'a number named in a flow resolves to that flow';
+	is $flow->{'key'}, 'receptionist', 'the resolved flow carries its key for the phone';
+	is $flow->{'name'}, 'Receptionist', 'and its own words';
+	my $bucket = &subs::phone_ivr_flow_for_number('5550000000', 'unknown', $defs);
+	is $bucket->{'name'}, 'Receptionist', 'a number nobody names falls back to the bucket flow';
+	ok !exists $bucket->{'key'}, 'the bucket answer is not a caller match';
+	my $index = &subs::phone_ivr_caller_index($defs);
+	is $index->{'5551234567'}->{'flow'}, 'receptionist', 'the sync index resolves the number to its flow';
+}
+{
+	local *Manager::phone_routes_read = sub { return {} };
+	local *Manager::phone_relationships = sub { return {} };
+	local *Manager::phone_names = sub { return {} };
+	local *subs::db_query = sub { return FakeRows->new([]) };
+	my $defs = {
+		receptionist => { name => 'Receptionist' },
+		night => { name => 'Night', callers => [ { kind => 'number', value => '5551234567' } ] },
+	};
+	local *subs::setting_grabber = sub {
+		my $request = shift;
+		return 'yes' if $request->{'setting'} eq 'ivr_enabled';
+		return encode_json({ unknown => 'ivr', stranger => 'ivr' }) if $request->{'setting'} eq 'ivr_flows';
+		return encode_json($defs) if $request->{'setting'} eq 'ivr_flow_defs';
+		return undef;
+	};
+	my $route = Manager::phone_route_for('5551234567');
+	is $route->{'flow'}, 'night', 'the phone route reads a flow\'s callers';
+	is $route->{'source'}, 'caller', 'and says the caller list decided it';
+	is $route->{'kind'}, 'number', 'with the kind that claimed the number';
+	my $other = Manager::phone_route_for('5550000000');
+	is $other->{'flow'}, 'ivr', 'a number nobody names keeps the bucket matrix';
+	is $other->{'source'}, 'unknown', 'from the unknown bucket';
+}
+{
+	local *subs::setting_grabber = sub { return undef };
+	local *subs::db_select = sub { return FakeRows->new([]) };
+	local *subs::db_query = sub {
+		my ($sql) = @_;
+		return FakeRows->new([ { uuid => 'u-dad', app => 'dad', setting => 'pos', value => 'person' } ])
+			if $sql =~ /setting in/;
+		return FakeRows->new([]);
+	};
+	my @writes;
+	local *subs::setting_setter = sub { push @writes, { %{ $_[0] } } };
+	my $saved = Manager::phone_ivr_save({
+		enabled => 'yes',
+		flow_defs => encode_json({
+			receptionist => { name => 'Front desk', callers => [
+				{ kind => 'person', uuid => 'u-dad', label => 'Dad' },
+				{ kind => 'vendor', uuid => 'u-gone' },
+			] },
+			night => { name => 'Night', callers => [ { kind => 'number', value => '5551234567' } ] },
+			day => { name => 'Day', callers => [ { kind => 'number', value => '5551234567' } ] },
+		}),
+		flow_order => encode_json([ 'receptionist', 'night', 'day' ]),
+	});
+	is scalar @{ $saved->{'flow_defs'}->{'receptionist'}->{'callers'} }, 1,
+		'a body the house no longer has is dropped on save';
+	is $saved->{'flow_defs'}->{'receptionist'}->{'callers'}->[0]->{'uuid'}, 'u-dad', 'the real person stays';
+	is $saved->{'flow_defs'}->{'day'}->{'callers'}->[0]->{'value'}, '5551234567',
+		'the later save keeps the shared number';
+	is scalar @{ $saved->{'flow_defs'}->{'night'}->{'callers'} }, 0, 'and the earlier flow loses it';
+	is scalar @{ $saved->{'caller_warnings'} }, 1, 'the losing flow is named in a warning';
+	my ($row) = grep { $_->{'setting'} eq 'ivr_flow_defs' } @writes;
+	like $row->{'value'}, qr/"callers"/, 'the callers are written with the flows';
+}
+{
+	local *subs::db_query = sub {
+		my ($sql) = @_;
+		return FakeRows->new([
+			{ uuid => 'u-dad', app => 'dad', setting => 'pos', value => 'person' },
+			{ uuid => 'u-bmo', app => 'bmo', setting => 'pos', value => 'vendor' },
+			{ uuid => 'u-own', app => 'my_company', setting => 'pos', value => 'corporation' },
+		]) if $sql =~ /setting in/;
+		return FakeRows->new([]);
+	};
+	my $choices = Manager::phone_caller_choices();
+	is scalar @{$choices}, 3, 'the picker offers every person, vendor and corporation';
+	is $choices->[0]->{'kind'}, 'person', 'with the kind the entry travels as';
+	is $choices->[0]->{'uuid'}, 'u-dad', 'and the settings uuid';
+	is $choices->[0]->{'label'}, 'Dad', 'and the name the house shows';
+}
+
 # ---------------------------------------------------------------- wiring
 my $manager = manager_source();
 like $manager, qr{/manager/phone/ivr}, 'the IVR route is registered';
@@ -644,6 +831,12 @@ like $manager, qr{/manager/phone/greeting}, 'the greeting routes are registered'
 like $manager, qr{sub action_24763}, 'the recorded greeting has an upload action';
 like $manager, qr{sub action_24764}, 'and a route that plays it';
 like $manager, qr{ivr => \$ivr}, 'the sync blob carries the IVR policy';
+like $manager, qr{flow_callers}, 'the sync blob carries the resolved caller index';
+like $manager, qr{phone_ivr_caller_index}, 'built from the flow defs, so each entry\'s lines resolve';
+like $manager, qr{caller_choices}, 'the pane receives the picker choices';
+like $manager, qr{phone_ivr_flow_for_number}, 'the phone route resolves the number through a flow\'s callers';
+like $manager, qr{phone_ivr_save\(}, 'the action saves the IVR settings';
+like $manager, qr{flow_order}, 'the save forwards the flow order that decides a shared number';
 
 my $template = template_source('apps/phone');
 like $template, qr{pane="ivr"}, 'the Phone app has an IVR pane';
@@ -654,6 +847,7 @@ like $template, qr{phone_ivr_flow_list}, 'the pane has a list to draw the flows 
 like $template, qr{phone_ivr_flow_add}, 'the pane can add a flow';
 like $template, qr{phone_app_row_call}, 'a recent call carries a phone icon';
 like $template, qr{id="phone_ivr_voicemail"}, 'the pane has a voicemail list';
+like $template, qr{data-caller-choices}, 'the pane carries the picker choices for a flow\'s callers';
 
 my $js = js_source('public/js/manager/phone.js');
 like $js, qr{/manager/phone/ivr}, 'the pane saves through its route';
@@ -684,6 +878,12 @@ like $js, qr{/manager/sco/transcript}, 'the voicemail list fetches the transcrip
 like $js, qr{hint="Transcript"}, 'the transcript is a named control';
 like $js, qr{hint="Voicemail length"}, 'the voicemail length is a named control';
 like $js, qr{phone_app_ivr_vm_words}, 'a message opens its transcript beside it';
+like $js, qr{jawnPhoneCallerChoices}, 'the pane reads the caller choices';
+like $js, qr{hint="Add caller"}, 'a person, vendor or corporation can be added as a caller';
+like $js, qr{hint="Add number"}, 'a number can be added as a caller';
+like $js, qr{hint="Remove caller"}, 'a caller can be removed';
+like $js, qr{flow_order}, 'the pane tells the save which flow was later';
+like $js, qr{caller_warnings}, 'the pane shows a number that moved between flows';
 
 my $sync = js_source('public/js/manager/manager.js');
 like $sync, qr{ivr:\s*\(response && response\.ivr\)}, 'the sync blob carries the IVR policy';
@@ -698,6 +898,9 @@ like $help, qr/Keypad menu/, 'the help topic explains the keypad step';
 like $help, qr/no steps still speaks the old order/, 'the help topic explains the legacy order';
 like $help, qr/Voicemail length/, 'the help topic names the per-flow message length';
 like $help, qr/Transcript/, 'the help topic explains the voicemail transcript row';
+like $help, qr/Callers/, 'the help topic explains the callers list';
+like $help, qr/Add caller/, 'the help topic names the body picker';
+like $help, qr/Add number/, 'the help topic names the number control';
 
 # The pane has to render with the settings the controller passes, not only match
 # a source grep. Empty call/list data keeps the rest of the page quiet.
@@ -716,6 +919,7 @@ like $help, qr/Transcript/, 'the help topic explains the voicemail transcript ro
 				ivr => $ivr,
 				ivr_machines => [],
 				ivr_voices => [ &subs::say_voices() ],
+				caller_choices => [],
 			},
 		);
 	};
@@ -723,6 +927,7 @@ like $help, qr/Transcript/, 'the help topic explains the voicemail transcript ro
 	like $out, qr{id="phone_ivr_flows_editor"}, 'the rendered pane has the flows editor';
 	like $out, qr{id="phone_ivr_flow_list"}, 'the rendered pane has the flow list';
 	like $out, qr{data-flow-defs="[^"]*receptionist}, 'the rendered pane carries the flows as JSON';
+	like $out, qr{data-caller-choices}, 'the rendered pane carries the caller choices';
 	like $out, qr{pane="ivr"}, 'the rendered pane is present';
 }
 

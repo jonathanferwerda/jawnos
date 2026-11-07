@@ -177,6 +177,7 @@ sub ticket_blacklist;
 sub ticket_blacklist_save;
 sub ticket_blacklist_numbers;
 sub ticket_blacklist_block;
+sub phone_caller_choices;
 sub phone_names;
 sub phone_directory;
 sub phone_blocked;
