@@ -60,19 +60,26 @@
 	.phone_app_ivr_flow_head:hover { background:var(--line); }
 	.phone_app_ivr_flow_item_name { flex:1 1 auto; font-weight:600; }
 	.phone_app_ivr_flow_more { transition: transform .15s; }
-	.phone_app_ivr_voicemail_box { display:flex; flex-direction:column; gap:6px; }
-	.phone_app_ivr_vm_item { display:flex; flex-direction:column; gap:2px; }
-	.phone_app_ivr_vm_row { display:flex; align-items:center; gap:8px; font-size:12px; }
-	.phone_app_ivr_vm_when { flex:1 1 auto; }
-	.phone_app_ivr_vm_ms { opacity:.6; }
-	.phone_app_ivr_vm_play { padding:3px 10px; border-radius:999px; border:1px solid var(--line); text-decoration:none; color:inherit; }
-	.phone_app_ivr_vm_transcript { padding:3px 10px; border-radius:999px; border:1px solid var(--line); text-decoration:none; color:inherit; }
-	.phone_app_ivr_vm_words { padding:4px 8px 6px; font-size:12px; white-space:pre-wrap; color:var(--muted,#8e8e8e); }
+	/* the voicemail pane: the messages a flow left, newest first */
+	.phone_app_vm { display:flex; flex-direction:column; gap:6px; }
+	.phone_app_vm_item { display:flex; flex-direction:column; gap:2px; }
+	.phone_app_vm_row { display:flex; align-items:center; gap:8px; font-size:12px; }
+	.phone_app_vm_when { flex:1 1 auto; }
+	.phone_app_vm_ms { opacity:.6; }
+	.phone_app_vm_play { padding:3px 10px; border-radius:999px; border:1px solid var(--line); text-decoration:none; color:inherit; }
+	.phone_app_vm_transcript { padding:3px 10px; border-radius:999px; border:1px solid var(--line); text-decoration:none; color:inherit; }
+	.phone_app_vm_words { padding:4px 8px 6px; font-size:12px; white-space:pre-wrap; color:var(--muted,#8e8e8e); }
+	/* the IVR pane's one line back to the messages while the flows are edited */
+	.phone_app_ivr_vm_link { cursor:pointer; text-decoration:underline dotted; text-underline-offset:2px; }
+	.phone_app_ivr_vm_link:hover { color:var(--accent,#4a90d9); }
 	.phone_app_ivr_flow_head.on .phone_app_ivr_flow_more { transform: rotate(180deg); }
-	.phone_app_ivr_flow_edit { padding:0 10px 10px; display:flex; flex-direction:column; gap:8px; }
 	.phone_app_ivr_flow_count { flex:0 0 auto; color:var(--muted,#8e8e8e); font-size:12px; }
 	.phone_app_ivr_flow_more { flex:0 0 auto; color:var(--muted,#8e8e8e); }
 	.phone_app_ivr_flow_edit { display:flex; flex-direction:column; gap:10px; padding:10px; border-top:1px solid var(--line); }
+	/* a folded flow's editor is really hidden. The display above is an author
+	   rule, so it beats the browser's own [hidden] rule; without this a row
+	   could not close and every flow stayed open. */
+	.phone_app_ivr_flow_edit[hidden] { display:none; }
 	.phone_app_ivr_flow_edit label { display:flex; flex-direction:column; gap:4px; font-size:13px; }
 	.phone_app_ivr_flow_edit textarea, .phone_app_ivr_flow_edit select, .phone_app_ivr_flow_edit input { width:100%; box-sizing:border-box; font:inherit; padding:7px;
 		border:1px solid var(--line); border-radius:8px; background:var(--panel); color:inherit; }
@@ -173,6 +180,7 @@
 	<div class="phone_app_tabs">
 		<span class="phone_app_tab on" pane="known" hint="Known">Known</span>
 		<span class="phone_app_tab" pane="recent" hint="Recent">Recent</span>
+		<span class="phone_app_tab" pane="voicemail" hint="Voicemail"><%= &subs::ui('Voicemail') %></span>
 		<span class="phone_app_tab" pane="blocked" hint="Blocked">Blocked</span>
 		<span class="phone_app_tab" pane="ivr" hint="IVR">IVR</span>
 		<span class="phone_app_tab" pane="all" hint="All">All</span>
@@ -226,6 +234,16 @@
 		<% } else { %>
 			<div class="phone_app_empty">No calls yet.</div>
 		<% } %>
+	</div>
+
+	<%# Voicemail: the messages a flow left, newest first. The files are on the
+	    gateway, so the list comes from its status and the pane polls that while
+	    it is open; Play asks the gateway for the bytes and Transcript opens the
+	    Chat note beside the clip. %>
+	<div class="phone_app_pane" pane="voicemail">
+		<div class="phone_app_vm" id="phone_voicemail">
+			<div class="phone_app_empty"><%= &subs::ui('No voicemail messages yet.') %></div>
+		</div>
 	</div>
 
 	<%# Blocked: the desk's list, as calls. A number here never rings %>
@@ -300,12 +318,10 @@
 				<div class="phone_app_ivr_flow_list" id="phone_ivr_flow_list"></div>
 				<button type="button" class="phone_app_ivr_save" id="phone_ivr_flow_add" hint="Add flow"><%= &subs::ui('Add flow') %></button>
 			</div>
-			<%# The messages a voicemail flow left. The files are on the gateway, so
-			    the list comes from its status and Play asks it for the bytes; a
-			    message with a transcript opens the Chat note beside the clip. %>
-			<div class="phone_app_ivr_voicemail_box">
-				<div class="phone_app_ivr_flows_title"><%= &subs::ui('Voicemail') %></div>
-				<div class="phone_app_ivr_vm" id="phone_ivr_voicemail"></div>
+			<%# The messages live in the Voicemail pane; this line keeps them one
+			    press away while the flows are being edited, with their count. %>
+			<div class="phone_app_ivr_status">
+				<span class="phone_app_ivr_vm_link" hint="Voicemail"><%= &subs::ui('Voicemail') %> <span id="phone_ivr_voicemail_count"></span></span>
 			</div>
 			<%# What each kind of caller hears. Ring through and Reject are not flows
 			    at all; the rest of the choices are the flows above. %>

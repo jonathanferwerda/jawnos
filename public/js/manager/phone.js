@@ -266,37 +266,42 @@ function jawnPhoneFlowCountsRefresh() {
 	});
 }
 
-// The messages a voicemail flow left. The list is the gateway's (the files are
-// on that machine); Play is a link to the recording route, which asks the
-// gateway for the bytes when the file is not on this one.
+// The messages a voicemail flow left, newest first. The list is the gateway's
+// (the files are on that machine), so the Voicemail pane draws it from the
+// status the pane polls; Play is a link to the recording route, which asks the
+// gateway for the bytes when the file is not on this one. The IVR pane keeps a
+// one-line count back to them while the flows are being edited.
 function jawnPhoneVoicemail(res) {
-	var box = $('#phone_app #phone_ivr_voicemail');
-	if (!box.length) { return; }
 	var list = (res && res.voicemail) || [];
-	var key = JSON.stringify($.map(list, function (m) { return (m.name || '') + ':' + (m.at || 0); }));
+	var messages = $.map(list, function (m) { return m ? [m] : []; });
+	messages.sort(function (a, b) { return (b.at || 0) - (a.at || 0); });
+	$('#phone_app #phone_ivr_voicemail_count').text(messages.length ? '(' + messages.length + ')' : '');
+	var box = $('#phone_app #phone_voicemail');
+	if (!box.length) { return; }
+	var key = JSON.stringify($.map(messages, function (m) { return (m.name || '') + ':' + (m.at || 0); }));
 	if (box.attr('data-vm') === key) { return; }
 	box.attr('data-vm', key).empty();
-	if (!list.length) { box.append($('<div class="phone_app_ivr_vm_row"></div>').text(jawnosT('No messages yet.'))); return; }
-	$.each(list, function (i, m) {
+	if (!messages.length) { box.append($('<div class="phone_app_empty"></div>').text(jawnosT('No voicemail messages yet.'))); return; }
+	$.each(messages, function (i, m) {
 		var when = m.at ? new Date(m.at * 1000).toLocaleString() : '';
-		var item = $('<div class="phone_app_ivr_vm_item"></div>');
-		var row = $('<div class="phone_app_ivr_vm_row"></div>');
-		row.append($('<span class="phone_app_ivr_vm_when"></span>').text(when));
-		row.append($('<span class="phone_app_ivr_vm_ms"></span>').text(Math.round((m.ms || 0) / 1000) + 's'));
-		row.append($('<a class="phone_app_ivr_vm_play" hint="Play"></a>')
+		var item = $('<div class="phone_app_vm_item"></div>');
+		var row = $('<div class="phone_app_vm_row"></div>');
+		row.append($('<span class="phone_app_vm_when"></span>').text(when));
+		row.append($('<span class="phone_app_vm_ms"></span>').text(jawnPhoneAppHuman(m.ms)));
+		row.append($('<a class="phone_app_vm_play" hint="Play"></a>')
 			.attr('href', '/manager/sco/recording?name=' + encodeURIComponent(m.name || ''))
 			.attr('target', '_blank')
 			.attr('rel', 'noopener')
 			.text(jawnosT('Play')));
 		if (m.note_uuid) {
-			row.append($('<a class="phone_app_ivr_vm_transcript" hint="Transcript"></a>')
+			row.append($('<a class="phone_app_vm_transcript" hint="Transcript"></a>')
 				.attr('href', '#')
 				.attr('data-note', m.note_uuid)
 				.text(jawnosT('Transcript')));
 		}
 		item.append(row);
 		if (m.note_uuid) {
-			item.append($('<div class="phone_app_ivr_vm_words" hidden></div>'));
+			item.append($('<div class="phone_app_vm_words" hidden></div>'));
 		}
 		box.append(item);
 	});
@@ -305,10 +310,10 @@ function jawnPhoneVoicemail(res) {
 // A message's transcript is one expanding row, fetched by the note's uuid from
 // the mailbox when it is first opened. It is not copied into the index: the
 // Chat app owns the words, and the voicemail only points at them.
-$(document).on('click', '#phone_app .phone_app_ivr_vm_transcript', function (e) {
+$(document).on('click', '#phone_app .phone_app_vm_transcript', function (e) {
 	e.preventDefault();
 	var link = $(this);
-	var words = link.closest('.phone_app_ivr_vm_item').find('.phone_app_ivr_vm_words');
+	var words = link.closest('.phone_app_vm_item').find('.phone_app_vm_words');
 	if (!words.length) { return; }
 	if (!words.prop('hidden')) { words.prop('hidden', true); return; }
 	words.prop('hidden', false);
@@ -1412,7 +1417,7 @@ $(document).on('click', '#phone_app .phone_route_choice', function () {
 	});
 });
 
-// ---- the gateway's own state, on the IVR pane ---------------------------
+// ---- the gateway's own state, on the IVR and Voicemail panes -------------
 
 // ---- the caller's words, live, on the IVR pane -----------------------------
 // The gateway pushes a line as the caller finishes it and the sentence being
@@ -1545,10 +1550,18 @@ function jawnPhoneHoldTracks(tracks) {
 	});
 }
 
+// The IVR pane's one-line count opens the messages themselves.
+$(document).on('click', '#phone_app .phone_app_ivr_vm_link', function () {
+	$('#phone_app .phone_app_tab[pane="voicemail"]').trigger('click');
+});
+
 $(document).on('click', '#phone_app .phone_app_tab', function () {
 	var pane = $(this).attr('pane');
-	jawnPhoneGatewayPoll(pane === 'ivr');
-	if (pane === 'ivr') { jawnPhoneGatewayState(); }
+	// the voicemail list is in the same gateway status, so both panes poll
+	// while they are the one that is open
+	var polling = (pane === 'ivr' || pane === 'voicemail');
+	jawnPhoneGatewayPoll(polling);
+	if (polling) { jawnPhoneGatewayState(); }
 });
 
 $(document).on('click', '#phone_app #phone_ivr_arm', function (e) {
