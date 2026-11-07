@@ -1,28 +1,39 @@
-"""``jawnos-shell`` -- the JawnOS session bar for Sway.
+"""``jawnos-shell`` -- the JawnOS session bar for Sway, in Qt.
 
-A thin GTK 3 panel along the top of the screen, in the wlr-layer-shell
-"top" layer with an exclusive zone, so windows tile below it instead of under
-it. Left to right it shows:
+A thin PySide6 panel along the top of the screen. On a Wayland compositor it
+claims the wlr-layer-shell "top" layer with an exclusive zone, so windows tile
+below it instead of under it; on X11 (or when layer-shell is unavailable) it is
+a frameless, always-on-top window placed at the screen edge. Left to right it
+shows:
 
-* a launcher (fuzzel, or a plain GTK entry when fuzzel is not installed),
+* a launcher (fuzzel, or a Qt command dialog when fuzzel is not installed),
 * one button per Sway workspace (click switches; ``swaymsg workspace <name>``),
 * the focused app's icon and name (read from Sway's tree),
 * today's recorded app time (the manager's usage summary, every minute),
 * an optional now-playing line (``playerctl``, when present),
 * the clock and date.
 
-Nothing here blocks the GTK main loop: the Sway event subscription, the periodic
-Sway poll, the manager request and playerctl all run on daemon threads and hand
-their results back through ``GLib.idle_add``. Every optional tool is probed at
-startup and simply left out when it is missing, so a session with no swaymsg, no
-manager or no playerctl still gets a working bar.
+The GTK bar used ``gtk-layer-shell``. PySide6 has no layer-shell bindings and
+layer-shell-qt ships no C API, only C++ symbols, so :class:`_LayerShell` is a
+small ctypes shim over ``libLayerShellQtInterface.so``: it resolves
+``LayerShellQt::Window::get`` and the integer setters, hands the library the
+QWindow PySide6 created, and then shows the window. That gives the same top
+layer, anchors, exclusive zone and keyboard mode the GTK bar had. The package
+(``layer-shell-qt``) is optional: without it, or on a compositor that does not
+implement wlr-layer-shell, the bar falls back to a frameless always-on-top
+window. On Sway the fallback asks ``swaymsg`` to float it at 0,0, size it to the
+output and make it sticky -- it then overlays windows rather than reserving an
+exclusive zone, and a fullscreen window covers it.
 
-If the ``GtkLayerShell`` typelib is unavailable the bar falls back to an
-undecorated window (a dock on X11) and logs exactly why: an incorrect bar is
-better than a session that cannot start.
+Nothing here blocks the Qt main loop: the Sway event subscription, the periodic
+Sway poll, the manager request and playerctl all run on daemon threads and hand
+their results back through Qt signals (queued onto the GUI thread). Every
+optional tool is probed at startup and simply left out when it is missing, so a
+session with no swaymsg, no manager or no playerctl still gets a working bar.
 """
 
 import argparse
+import ctypes
 import datetime
 import json
 import logging
@@ -54,27 +65,168 @@ MUSIC_SECONDS = 5.0
 # Optional imports
 # --------------------------------------------------------------------------
 
-_GTK_ERROR = None
-Gtk = Gdk = GLib = Pango = GdkPixbuf = None
+_QT_ERROR = None
 try:
-    import gi
+    from PySide6.QtCore import QObject, Qt, QTimer, Signal
+    from PySide6.QtGui import QFontMetrics, QGuiApplication, QIcon
+    from PySide6.QtWidgets import (
+        QApplication,
+        QHBoxLayout,
+        QInputDialog,
+        QLabel,
+        QPushButton,
+        QStyle,
+        QVBoxLayout,
+        QWidget,
+    )
+except Exception as exc:  # ImportError, or a broken Qt installation
+    _QT_ERROR = exc
+    # Stand-ins so this module still imports and main() can report the reason.
+    QObject = QWidget = object
 
-    gi.require_version("Gtk", "3.0")
-    gi.require_version("Gdk", "3.0")
-    gi.require_version("Pango", "1.0")
-    gi.require_version("GdkPixbuf", "2.0")
-    from gi.repository import Gdk, GdkPixbuf, GLib, Gtk, Pango  # noqa: E402
-except Exception as exc:  # ImportError, ValueError from require_version
-    _GTK_ERROR = exc
+    def Signal(*_args, **_kwargs):
+        return None
 
-_LAYER_ERROR = None
-GtkLayerShell = None
-if _GTK_ERROR is None:
-    try:
-        gi.require_version("GtkLayerShell", "0.1")
-        from gi.repository import GtkLayerShell  # noqa: E402
-    except Exception as exc:
-        _LAYER_ERROR = exc
+    QApplication = QHBoxLayout = QInputDialog = QLabel = None
+    QPushButton = QStyle = QVBoxLayout = None
+    QFontMetrics = QGuiApplication = QIcon = None
+    Qt = QTimer = None
+
+
+# --------------------------------------------------------------------------
+# layer-shell-qt: a ctypes shim over the C++ interface
+# --------------------------------------------------------------------------
+
+class _LayerShell:
+    """Attach one QWindow to wlr-layer-shell through layer-shell-qt.
+
+    layer-shell-qt (the ``layer-shell-qt`` package) exposes
+    ``LayerShellQt::Window`` as C++ only, with no ``extern "C"`` wrapper. The
+    library is designed so that ``Window::get(QWindow *)`` installs an event
+    filter and, when the platform surface is created, replaces the window's
+    shell integration with a layer surface; the setters below then define the
+    layer, anchors, exclusive zone and keyboard mode. We resolve those exact
+    symbols and pass the QWindow pointer PySide6 already owns, so the library
+    does the Wayland work in-process, exactly as a C++ client would.
+
+    Every entry point is optional: if the library, a symbol or a wayland QWindow
+    is missing the caller falls back to an ordinary window. Only the integer
+    setters are used, which keeps the ABI simple (``QFlags<Anchor>`` and the
+    enums are all a C ``int`` on the wire); the scope keeps its default.
+    """
+
+    # LayerShellQt::Window::Anchor
+    ANCHOR_TOP = 1
+    ANCHOR_BOTTOM = 2
+    ANCHOR_LEFT = 4
+    ANCHOR_RIGHT = 8
+    # LayerShellQt::Window::LayerTop
+    LAYER_TOP = 2
+    # LayerShellQt::Window::KeyboardInteractivityNone
+    KEYBOARD_NONE = 0
+
+    # The mangled names are the stable Qt-style symbols from layer-shell-qt
+    # 6.x (checked on the 6.3 and 6.8 libraries).
+    _SYMBOLS = {
+        "get": "_ZN12LayerShellQt6Window3getEP7QWindow",
+        "anchors": "_ZN12LayerShellQt6Window10setAnchorsE6QFlagsINS0_6AnchorEE",
+        "zone": "_ZN12LayerShellQt6Window16setExclusiveZoneEi",
+        "layer": "_ZN12LayerShellQt6Window8setLayerENS0_5LayerE",
+        "keyboard": "_ZN12LayerShellQt6Window24setKeyboardInteractivityENS0_21KeyboardInteractivityE",
+    }
+
+    def __init__(self):
+        self._lib = None
+        self._funcs = {}
+        self._tried = False
+
+    def available(self):
+        self._load()
+        return self._lib is not None
+
+    def _load(self):
+        if self._lib is not None or self._tried:
+            return self._lib is not None
+        self._tried = True
+        try:
+            from ctypes.util import find_library
+            candidates = [
+                find_library("LayerShellQtInterface"),
+                "libLayerShellQtInterface.so.6",
+                "libLayerShellQtInterface.so",
+            ]
+        except Exception:
+            candidates = []
+
+        for name in candidates:
+            if not name:
+                continue
+            try:
+                lib = ctypes.CDLL(name)
+            except OSError as exc:
+                LOG.debug("layer-shell-qt %s would not load: %s", name, exc)
+                continue
+            funcs = {}
+            for key, symbol in self._SYMBOLS.items():
+                try:
+                    funcs[key] = getattr(lib, symbol)
+                except AttributeError:
+                    funcs = {}
+                    break
+            if not funcs:
+                LOG.debug("layer-shell-qt %s has no expected symbols", name)
+                continue
+            funcs["get"].restype = ctypes.c_void_p
+            funcs["get"].argtypes = [ctypes.c_void_p]
+            for key in ("anchors", "zone", "layer", "keyboard"):
+                funcs[key].restype = None
+                funcs[key].argtypes = [ctypes.c_void_p, ctypes.c_int]
+            self._lib = lib
+            self._funcs = funcs
+            LOG.info("using layer-shell-qt (%s)", name)
+            return True
+        return False
+
+    def claim(self, widget, height):
+        """Make ``widget`` a top-layer panel; False means use the fallback."""
+        if QGuiApplication is None:
+            return False
+        if QGuiApplication.platformName() != "wayland":
+            return False
+        if not self._load():
+            return False
+        try:
+            import shiboken6
+
+            # createWinId() gives us the QWindow but does not map it: the
+            # layer surface is created on show(), after the setters below.
+            widget.createWinId()
+            handle = widget.windowHandle()
+            if handle is None:
+                return False
+            pointer = shiboken6.getCppPointer(handle)
+            if isinstance(pointer, (tuple, list)):
+                pointer = pointer[0]
+            else:
+                pointer = int(pointer)
+
+            window = self._funcs["get"](ctypes.c_void_p(pointer))
+            if not window:
+                return False
+            ref = ctypes.c_void_p(window)
+            anchors = self.ANCHOR_TOP | self.ANCHOR_LEFT | self.ANCHOR_RIGHT
+            self._funcs["anchors"](ref, anchors)
+            self._funcs["layer"](ref, self.LAYER_TOP)
+            self._funcs["zone"](ref, int(height))
+            self._funcs["keyboard"](ref, self.KEYBOARD_NONE)
+            return True
+        except Exception as exc:
+            LOG.warning("layer-shell-qt could not claim the bar (%s); "
+                        "using a normal window", exc)
+            return False
+
+
+_LAYER_SHELL = _LayerShell()
 
 
 # --------------------------------------------------------------------------
@@ -82,26 +234,32 @@ if _GTK_ERROR is None:
 # --------------------------------------------------------------------------
 
 # The bar is the desktop's own chrome, so it uses the same near-black ground and
-# jawn yellow as the dashboard. All rules are scoped to `.jawnos-bar` so the
-# fallback launcher window keeps the desktop theme.
-_CSS = """
-.jawnos-bar { background-color: #0d0d0d; }
-.jawnos-bar label { color: #ededed; font-size: 12px; }
-.jawnos-bar label.dim { color: #8e8e8e; }
-.jawnos-bar label.offline { color: #6b6b6b; }
-.jawnos-bar label.time { font-weight: bold; }
-.jawnos-bar label.app-name { font-weight: bold; }
-.jawnos-bar button { background-image: none; background-color: transparent;
-         border: none; box-shadow: none; padding: 0 7px; border-radius: 6px;
-         color: #ededed; }
-.jawnos-bar button:hover { background-color: #262626; }
-.jawnos-bar button.ws { color: #8e8e8e; min-width: 18px; padding: 0 5px; }
-.jawnos-bar button.ws.active { background-color: #ffcc00; color: #0a0a0a;
-         font-weight: bold; }
-.jawnos-bar button.ws.urgent { color: #ff453a; }
-.jawnos-bar button.launcher { background-color: #ffcc00; color: #0a0a0a;
-         font-weight: bold; padding: 0 10px; }
-.jawnos-bar button.launcher:hover { background-color: #e6b800; }
+# jawn yellow as the dashboard. The selectors are scoped to #bar so only the bar
+# picks them up (the fallback launcher dialog keeps the desktop theme).
+_QSS = """
+QWidget#bar { background-color: #0d0d0d; }
+QWidget#bar QLabel { color: #ededed; font-size: 12px; }
+QWidget#bar QLabel[dim="true"] { color: #8e8e8e; }
+QWidget#bar QLabel[offline="true"] { color: #6b6b6b; }
+QWidget#bar QLabel#time { font-weight: bold; }
+QWidget#bar QLabel#app-name { font-weight: bold; }
+QWidget#bar QPushButton {
+    background-color: transparent; border: none; padding: 0 7px;
+    border-radius: 6px; color: #ededed;
+}
+QWidget#bar QPushButton:hover { background-color: #262626; }
+QWidget#bar QPushButton[ws="true"] {
+    color: #8e8e8e; min-width: 18px; padding: 0 5px;
+}
+QWidget#bar QPushButton[ws="true"][active="true"] {
+    background-color: #ffcc00; color: #0a0a0a; font-weight: bold;
+}
+QWidget#bar QPushButton[ws="true"][urgent="true"] { color: #ff453a; }
+QWidget#bar QPushButton#launcher {
+    background-color: #ffcc00; color: #0a0a0a; font-weight: bold;
+    padding: 0 10px;
+}
+QWidget#bar QPushButton#launcher:hover { background-color: #e6b800; }
 """
 
 # Friendly names for the app ids the session actually sees. Anything else falls
@@ -138,17 +296,6 @@ _APP_ICONS = {
 }
 
 
-def _apply_css():
-    if Gtk is None:
-        return
-    provider = Gtk.CssProvider()
-    provider.load_from_data(_CSS.encode("utf-8"))
-    screen = Gdk.Screen.get_default()
-    if screen is not None:
-        Gtk.StyleContext.add_provider_for_screen(
-            screen, provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
-
-
 def _pretty_app_name(key):
     low = (key or "").strip().lower()
     if not low:
@@ -173,18 +320,6 @@ def _icon_candidates(key):
     return unique
 
 
-def _theme_pixbuf(name, size):
-    """A themed icon pixbuf, or None. Never raises."""
-    try:
-        theme = Gtk.IconTheme.get_default()
-        if theme is None:
-            return None
-        info = theme.lookup_icon(name, size, Gtk.IconLookupFlags.FORCE_SIZE)
-        return info.load_icon() if info is not None else None
-    except Exception:
-        return None
-
-
 def _sway_quote(text):
     """Quote one Sway command argument (names may contain spaces or quotes)."""
     return '"' + str(text).replace("\\", "\\\\").replace('"', '\\"') + '"'
@@ -201,7 +336,7 @@ def _sway_env():
 def _desktop_blocks_layer_shell():
     """True on a desktop that does not implement wlr-layer-shell.
 
-    The typelib can be installed on a GNOME or KDE box where the compositor has
+    The library can be installed on a GNOME or KDE box where the compositor has
     no such protocol; attempting to map a layer surface there is worse than the
     plain-window fallback. Sway, Hyprland and labwc name themselves in
     XDG_CURRENT_DESKTOP and pass this check.
@@ -211,14 +346,50 @@ def _desktop_blocks_layer_shell():
         "gnome", "kde", "plasma", "unity", "cinnamon", "mate", "xfce"))
 
 
+def _tree_find_app(node, app_id):
+    """The first Sway tree node whose app_id matches, or None."""
+    if not isinstance(node, dict):
+        return None
+    if node.get("app_id") == app_id:
+        return node
+    for key in ("nodes", "floating_nodes"):
+        for child in node.get(key) or []:
+            hit = _tree_find_app(child, app_id)
+            if hit is not None:
+                return hit
+    return None
+
+
+def _prepare_wayland_env():
+    """Point Qt at Wayland when the session is Wayland.
+
+    Qt may still choose xcb (Sway exports DISPLAY for XWayland); the layer-shell
+    integration needs a QWaylandWindow. An explicit QT_QPA_PLATFORM always wins.
+    """
+    if not os.environ.get("WAYLAND_DISPLAY"):
+        return
+    if not os.environ.get("QT_QPA_PLATFORM"):
+        os.environ["QT_QPA_PLATFORM"] = "wayland"
+
+
 # --------------------------------------------------------------------------
 # The bar
 # --------------------------------------------------------------------------
 
-class Shell:
-    """One layer-shell (or plain) window and the widgets inside it."""
+class _Signals(QObject):
+    """Worker -> GUI hand-off (Qt queues these onto the GUI thread)."""
+
+    sway = Signal(object, str, str)
+    usage = Signal(str, bool)
+    music = Signal(object)
+    quit = Signal()
+
+
+class Shell(QWidget):
+    """The bar window and the widgets inside it."""
 
     def __init__(self, args):
+        super().__init__()
         self.args = args
         self.height = max(18, min(64, int(args.height)))
         self.jawn_dir = args.jawn_dir
@@ -226,157 +397,159 @@ class Shell:
         self.worker = None
         self._ws_signature = None
         self._icon_cache = {}
-        self._launcher_window = None
         self.using_layer_shell = False
+        self.clock_timer = None
 
-        self.window = Gtk.Window()
-        self.window.set_title("JawnOS")
-        self.window.set_size_request(-1, self.height)
-        self.window.get_style_context().add_class("jawnos-bar")
+        self.signals = _Signals(self)
+        self.setObjectName("bar")
+        self.setWindowTitle("JawnOS")
+        self.setFixedHeight(self.height)
+        self.setStyleSheet(_QSS)
+
         self._claim_surface()
         self._build()
+
+        self.signals.sway.connect(self.apply_sway)
+        self.signals.usage.connect(self.set_usage)
+        self.signals.music.connect(self.set_music)
+        self.signals.quit.connect(self.quit)
 
     # ---- window shape ----------------------------------------------------
 
     def _claim_surface(self):
         """Become a layer-shell panel, or the best ordinary window available."""
-        if GtkLayerShell is not None and not self.args.no_layer_shell:
-            if _desktop_blocks_layer_shell():
-                LOG.warning("%s does not implement wlr-layer-shell; using an "
-                            "undecorated window",
-                            os.environ.get("XDG_CURRENT_DESKTOP"))
-            elif not os.environ.get("WAYLAND_DISPLAY"):
-                LOG.warning("gtk-layer-shell needs a Wayland display; "
-                            "using an undecorated window")
-            else:
-                try:
-                    GtkLayerShell.init_for_window(self.window)
-                    GtkLayerShell.set_namespace(self.window, "jawnos-shell")
-                    GtkLayerShell.set_layer(self.window, GtkLayerShell.Layer.TOP)
-                    for edge in (GtkLayerShell.Edge.TOP,
-                                 GtkLayerShell.Edge.LEFT,
-                                 GtkLayerShell.Edge.RIGHT):
-                        GtkLayerShell.set_anchor(self.window, edge, True)
-                    GtkLayerShell.set_exclusive_zone(self.window, self.height)
-                    # The bar itself never wants typing; the launcher entry is a
-                    # separate toplevel and gets focus normally when opened.
-                    GtkLayerShell.set_keyboard_mode(
-                        self.window, GtkLayerShell.KeyboardMode.NONE)
+        if not self.args.no_layer_shell and not _desktop_blocks_layer_shell():
+            if QGuiApplication.platformName() == "wayland":
+                if _LAYER_SHELL.claim(self, self.height):
                     self.using_layer_shell = True
                     LOG.info("session bar is a layer-shell panel (%dpx)",
                              self.height)
                     return
-                except Exception as exc:
-                    LOG.warning("gtk-layer-shell could not claim the panel (%s); "
-                                "using an undecorated window", exc)
-        elif GtkLayerShell is None:
-            LOG.warning("gtk-layer-shell is not available (%s); using an "
-                        "undecorated window. On Wayland a normal window cannot "
-                        "reserve space, so Sway tiles it rather than placing it "
-                        "above the windows.", _LAYER_ERROR)
+                LOG.warning("layer-shell-qt is not available; using a "
+                            "frameless window. On Sway the bar will float over "
+                            "the workspace rather than reserve an edge.")
+            else:
+                LOG.info("not a Wayland session; using a frameless window")
+        elif self.args.no_layer_shell:
+            LOG.info("--no-layer-shell: using a frameless window")
         else:
-            LOG.info("--no-layer-shell: using an undecorated window")
+            LOG.warning("%s does not implement wlr-layer-shell; using a "
+                        "frameless window",
+                        os.environ.get("XDG_CURRENT_DESKTOP"))
 
-        # Fallback: a dock on X11; on Wayland Sway treats it as an ordinary
-        # toplevel (the bar is usable, but it does not reserve an exclusive zone).
-        self.window.set_decorated(False)
-        self.window.set_skip_taskbar_hint(True)
-        self.window.set_skip_pager_hint(True)
-        try:
-            self.window.set_type_hint(Gdk.WindowTypeHint.DOCK)
-        except Exception:
-            pass
-        try:
-            self.window.set_keep_above(True)
-        except Exception:
-            pass
-        screen = Gdk.Screen.get_default()
-        self.window.set_default_size(screen.get_width() if screen else 1024,
-                                     self.height)
+        # A dock on X11; on Wayland Sway treats it as an ordinary toplevel. It
+        # never takes focus on show, matching the layer-shell keyboard mode.
+        self.setWindowFlags(Qt.WindowType.FramelessWindowHint
+                            | Qt.WindowType.WindowStaysOnTopHint
+                            | Qt.WindowType.Tool)
+        self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, True)
 
     # ---- widgets ---------------------------------------------------------
 
     def _build(self):
-        outer = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
-        outer.set_margin_start(4)
-        outer.set_margin_end(4)
-        outer.set_size_request(-1, self.height)
-        self.window.add(outer)
+        outer = QHBoxLayout(self)
+        outer.setContentsMargins(4, 2, 4, 2)
+        outer.setSpacing(6)
+        outer.setAlignment(Qt.AlignmentFlag.AlignVCenter)
 
-        left = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
-        left.set_valign(Gtk.Align.CENTER)
+        left = QWidget()
+        left_box = QHBoxLayout(left)
+        left_box.setContentsMargins(0, 0, 0, 0)
+        left_box.setSpacing(6)
+        left_box.setAlignment(Qt.AlignmentFlag.AlignVCenter)
 
-        self.launcher = Gtk.Button(label="Jawn")
-        self.launcher.set_relief(Gtk.ReliefStyle.NONE)
-        self.launcher.get_style_context().add_class("launcher")
-        self.launcher.set_tooltip_text("Open the launcher")
-        self.launcher.connect("clicked", self._on_launcher)
-        left.pack_start(self.launcher, False, False, 0)
+        self.launcher = QPushButton("Jawn")
+        self.launcher.setObjectName("launcher")
+        self.launcher.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.launcher.setToolTip("Open the launcher")
+        self.launcher.clicked.connect(self._on_launcher)
+        left_box.addWidget(self.launcher)
 
-        self.ws_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=2)
-        self.ws_box.set_valign(Gtk.Align.CENTER)
-        left.pack_start(self.ws_box, False, False, 0)
+        self.ws_box = QWidget()
+        self.ws_layout = QHBoxLayout(self.ws_box)
+        self.ws_layout.setContentsMargins(0, 0, 0, 0)
+        self.ws_layout.setSpacing(2)
+        self.ws_layout.setAlignment(Qt.AlignmentFlag.AlignVCenter)
+        left_box.addWidget(self.ws_box)
 
-        self.app_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=5)
-        self.app_box.set_valign(Gtk.Align.CENTER)
-        self.app_icon = Gtk.Image()
-        self.app_icon.set_pixel_size(16)
-        self.app_box.pack_start(self.app_icon, False, False, 0)
-        self.app_label = Gtk.Label(label="")
-        self.app_label.set_ellipsize(Pango.EllipsizeMode.END)
-        self.app_label.set_max_width_chars(34)
-        self.app_label.get_style_context().add_class("app-name")
-        self.app_box.pack_start(self.app_label, False, False, 0)
-        left.pack_start(self.app_box, False, False, 0)
+        self.app_box = QWidget()
+        app_layout = QHBoxLayout(self.app_box)
+        app_layout.setContentsMargins(0, 0, 0, 0)
+        app_layout.setSpacing(5)
+        app_layout.setAlignment(Qt.AlignmentFlag.AlignVCenter)
+        self.app_icon = QLabel()
+        self.app_icon.setFixedSize(16, 16)
+        app_layout.addWidget(self.app_icon)
+        self.app_label = QLabel("")
+        self.app_label.setObjectName("app-name")
+        app_layout.addWidget(self.app_label)
+        left_box.addWidget(self.app_box)
 
-        outer.pack_start(left, False, False, 0)
+        outer.addWidget(left, 0, Qt.AlignmentFlag.AlignVCenter)
 
-        right = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
-        right.set_valign(Gtk.Align.CENTER)
+        right = QWidget()
+        right_box = QHBoxLayout(right)
+        right_box.setContentsMargins(0, 0, 0, 0)
+        right_box.setSpacing(12)
+        right_box.setAlignment(Qt.AlignmentFlag.AlignVCenter)
 
-        self.usage_label = Gtk.Label(label="Today —")
-        self.usage_label.get_style_context().add_class("dim")
-        self.usage_label.set_tooltip_text("Recorded app time today")
-        right.pack_start(self.usage_label, False, False, 0)
+        self.usage_label = QLabel("Today \u2014")
+        self.usage_label.setProperty("dim", True)
+        self.usage_label.setToolTip("Recorded app time today")
+        right_box.addWidget(self.usage_label)
 
-        self.music_label = Gtk.Label(label="")
-        self.music_label.get_style_context().add_class("dim")
-        self.music_label.set_ellipsize(Pango.EllipsizeMode.END)
-        self.music_label.set_max_width_chars(34)
-        self.music_label.set_no_show_all(True)
-        right.pack_start(self.music_label, False, False, 0)
+        self.music_label = QLabel("")
+        self.music_label.setProperty("dim", True)
+        self.music_label.setVisible(False)
+        right_box.addWidget(self.music_label)
 
-        clock = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
-        clock.set_valign(Gtk.Align.CENTER)
-        self.time_label = Gtk.Label(label="")
-        self.time_label.get_style_context().add_class("time")
-        self.date_label = Gtk.Label(label="")
-        self.date_label.get_style_context().add_class("dim")
-        clock.pack_start(self.time_label, False, False, 0)
-        clock.pack_start(self.date_label, False, False, 0)
-        right.pack_start(clock, False, False, 0)
+        clock = QWidget()
+        clock_layout = QVBoxLayout(clock)
+        clock_layout.setContentsMargins(0, 0, 0, 0)
+        clock_layout.setSpacing(0)
+        clock_layout.setAlignment(Qt.AlignmentFlag.AlignVCenter)
+        self.time_label = QLabel("")
+        self.time_label.setObjectName("time")
+        self.date_label = QLabel("")
+        self.date_label.setProperty("dim", True)
+        clock_layout.addWidget(self.time_label)
+        clock_layout.addWidget(self.date_label)
+        right_box.addWidget(clock)
 
-        outer.pack_end(right, False, False, 0)
+        outer.addStretch(1)
+        outer.addWidget(right, 0, Qt.AlignmentFlag.AlignVCenter)
         self._tick_clock()
+
+    def _elide(self, label, text, chars=34):
+        """Elide like GTK's max-width-chars, keeping the full text as a tooltip."""
+        if not text:
+            return ""
+        metrics = QFontMetrics(label.font())
+        width = max(60, metrics.averageCharWidth() * chars)
+        return metrics.elidedText(text, Qt.TextElideMode.ElideRight, width)
+
+    def _repolish(self, widget):
+        style = widget.style()
+        style.unpolish(widget)
+        style.polish(widget)
+        widget.update()
 
     # ---- clock -----------------------------------------------------------
 
     def _tick_clock(self):
         now = datetime.datetime.now()
-        self.time_label.set_text(now.strftime("%H:%M"))
-        self.date_label.set_text(now.strftime("%a %d %b"))
-        return True
+        self.time_label.setText(now.strftime("%H:%M"))
+        self.date_label.setText(now.strftime("%a %d %b"))
 
     # ---- Sway: workspaces and focus -------------------------------------
 
     def apply_sway(self, workspaces, key, title):
-        """Called on the GTK thread with a completed Sway read."""
+        """Called on the GUI thread with a completed Sway read."""
         # An empty list is how a failed query looks; keep the last indicators
         # rather than flickering them away (Sway always has one workspace).
         if workspaces:
             self._render_workspaces(workspaces)
         self._render_app(key, title)
-        return False
 
     def _render_workspaces(self, workspaces):
         clean = [w for w in workspaces if isinstance(w, dict)]
@@ -390,73 +563,80 @@ class Shell:
             return
         self._ws_signature = signature
 
-        for child in self.ws_box.get_children():
-            self.ws_box.remove(child)
+        while self.ws_layout.count():
+            item = self.ws_layout.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.deleteLater()
 
         for workspace in clean:
             name = str(workspace.get("name") or workspace.get("num") or "?")
-            button = Gtk.Button(label=name)
-            button.set_relief(Gtk.ReliefStyle.NONE)
-            context = button.get_style_context()
-            context.add_class("ws")
-            if workspace.get("focused"):
-                context.add_class("active")
-            elif workspace.get("urgent"):
-                context.add_class("urgent")
-            button.set_tooltip_text("Switch to workspace %s" % name)
-            button.connect("clicked", self._on_workspace, name)
-            button.show()
-            self.ws_box.pack_start(button, False, False, 0)
+            button = QPushButton(name)
+            button.setProperty("ws", True)
+            button.setProperty("active", bool(workspace.get("focused")))
+            button.setProperty("urgent", bool(workspace.get("urgent"))
+                               and not workspace.get("focused"))
+            button.setToolTip("Switch to workspace %s" % name)
+            button.setCursor(Qt.CursorShape.PointingHandCursor)
+            button.clicked.connect(
+                lambda _checked=False, n=name: self._on_workspace(n))
+            self.ws_layout.addWidget(button)
+        self._repolish(self.ws_box)
 
     def _render_app(self, key, title):
         if not key:
-            self.app_label.set_text("")
-            self.app_icon.hide()
-            self.app_box.set_tooltip_text(None)
+            self.app_label.setText("")
+            self.app_icon.clear()
+            self.app_icon.setVisible(False)
+            self.app_box.setToolTip("")
             return
-        self.app_label.set_text(_pretty_app_name(key))
-        self.app_box.set_tooltip_text(title or key)
-        pixbuf = self._app_pixbuf(key, 16)
-        if pixbuf is not None:
-            self.app_icon.set_from_pixbuf(pixbuf)
+        self.app_label.setText(self._elide(self.app_label, _pretty_app_name(key)))
+        self.app_box.setToolTip(title or key)
+        icon = self._icon_for(key)
+        if icon is not None and not icon.isNull():
+            self.app_icon.setPixmap(icon.pixmap(16, 16))
+            self.app_icon.setVisible(True)
         else:
-            self.app_icon.set_from_icon_name("application-x-executable",
-                                             Gtk.IconSize.MENU)
-        self.app_icon.show()
+            self.app_icon.clear()
+            self.app_icon.setVisible(False)
 
-    def _app_pixbuf(self, key, size):
+    def _icon_for(self, key):
         low = (key or "").lower()
         if low in self._icon_cache:
             return self._icon_cache[low]
-        pixbuf = None
+        icon = None
         if low.startswith("jawnos"):
-            try:
-                pixbuf = GdkPixbuf.Pixbuf.new_from_file_at_size(
-                    os.path.join(DESKTOP_DIR, "icons", "jawnos.png"),
-                    size, size)
-            except Exception:
-                pixbuf = None
-        if pixbuf is None:
+            path = os.path.join(DESKTOP_DIR, "icons", "jawnos.png")
+            if os.path.exists(path):
+                icon = QIcon(path)
+                if icon.isNull():
+                    icon = None
+        if icon is None:
             for candidate in _icon_candidates(key):
-                pixbuf = _theme_pixbuf(candidate, size)
-                if pixbuf is not None:
+                icon = QIcon.fromTheme(candidate)
+                if not icon.isNull():
                     break
-        self._icon_cache[low] = pixbuf
-        return pixbuf
+        if icon is None or icon.isNull():
+            icon = QIcon.fromTheme("application-x-executable")
+        if icon is None or icon.isNull():
+            icon = self.style().standardIcon(QStyle.StandardPixmap.SP_FileIcon)
+        self._icon_cache[low] = icon
+        return icon
 
-    def _on_workspace(self, _button, name):
+    def _on_workspace(self, name):
         def switch():
             try:
                 usage.swaymsg(["-t", "command",
                                "workspace " + _sway_quote(name)])
             except Exception as exc:
                 LOG.debug("workspace switch to %s failed: %s", name, exc)
+
         threading.Thread(target=switch, name="jawnos-shell-workspace",
                          daemon=True).start()
 
     # ---- launcher --------------------------------------------------------
 
-    def _on_launcher(self, _button):
+    def _on_launcher(self):
         exe = shutil.which("fuzzel")
         if exe:
             try:
@@ -464,117 +644,134 @@ class Shell:
                 return
             except OSError as exc:
                 LOG.warning("fuzzel would not start (%s); using the built-in "
-                            "entry", exc)
-        self._show_launcher_entry()
+                            "prompt", exc)
 
-    def _show_launcher_entry(self):
-        """A plain GTK command entry, used when fuzzel is not installed."""
-        if self._launcher_window is not None:
-            self._launcher_window.present()
+        # No parent: a layer surface cannot parent an xdg_toplevel. The dialog
+        # is its own window and takes the keyboard normally when opened.
+        text, ok = QInputDialog.getText(None, "Run", "Command")
+        text = (text or "").strip()
+        if not ok or not text:
             return
-        window = Gtk.Window(title="Run")
-        window.set_default_size(520, -1)
-        window.set_keep_above(True)
-        entry = Gtk.Entry()
-        entry.set_placeholder_text("Command")
-        entry.set_margin_top(10)
-        entry.set_margin_bottom(10)
-        entry.set_margin_start(10)
-        entry.set_margin_end(10)
-        window.add(entry)
-
-        def run(_entry=None):
-            text = entry.get_text().strip()
-            window.destroy()
-            if text:
-                try:
-                    subprocess.Popen(["/bin/sh", "-c", text], env=_sway_env())
-                except OSError as exc:
-                    LOG.warning("could not run %r: %s", text, exc)
-
-        def closed(_window=None):
-            self._launcher_window = None
-
-        entry.connect("activate", run)
-        entry.connect("key-press-event", self._launcher_key)
-        window.connect("destroy", closed)
-        self._launcher_window = window
-        window.show_all()
-
-        def focus():
-            entry.grab_focus()
-            return False
-
-        # An idle callback (not a direct call) so the entry is realized first;
-        # the callback returns False so GLib does not call it again.
-        GLib.idle_add(focus)
-
-    def _launcher_key(self, _widget, event):
-        if Gdk is not None and event.keyval == Gdk.KEY_Escape:
-            if self._launcher_window is not None:
-                self._launcher_window.destroy()
-            return True
-        return False
+        try:
+            subprocess.Popen(["/bin/sh", "-c", text], env=_sway_env())
+        except OSError as exc:
+            LOG.warning("could not run %r: %s", text, exc)
 
     # ---- manager: today's app time --------------------------------------
 
     def set_usage(self, text, ok):
-        self.usage_label.set_text(text)
-        context = self.usage_label.get_style_context()
-        if ok:
-            context.remove_class("offline")
-        else:
-            context.add_class("offline")
-        return False
+        self.usage_label.setText(text)
+        self.usage_label.setProperty("offline", not ok)
+        self._repolish(self.usage_label)
 
     # ---- playerctl: now playing -----------------------------------------
 
     def set_music(self, text):
         if text:
-            self.music_label.set_text(text)
-            self.music_label.set_tooltip_text(text)
-            self.music_label.show()
+            elided = self._elide(self.music_label, text)
+            self.music_label.setText(elided)
+            self.music_label.setToolTip(text)
+            self.music_label.setVisible(True)
         else:
-            self.music_label.hide()
-        return False
+            self.music_label.setVisible(False)
 
     # ---- lifecycle -------------------------------------------------------
 
     def start(self):
-        _apply_css()
-        self.window.connect("destroy", self._on_destroy)
-        self.window.show_all()
-        # set_no_show_all leaves it hidden until there is something playing.
-        self.music_label.hide()
+        self.show()
+        LOG.debug("bar size hint %s, minimum %s, font height %d",
+                  self.sizeHint(), self.minimumSizeHint(),
+                  self.fontMetrics().height())
         self._tick_clock()
-        GLib.timeout_add_seconds(1, self._tick_clock)
+        self.clock_timer = QTimer(self)
+        self.clock_timer.timeout.connect(self._tick_clock)
+        self.clock_timer.start(1000)
+
         self.worker = _Worker(self)
         self.worker.start()
-        for signum in (signal.SIGTERM, signal.SIGINT):
-            try:
-                GLib.unix_signal_add(GLib.PRIORITY_DEFAULT, signum,
-                                     self._on_signal, signum)
-            except Exception:
-                pass
 
-    def _on_signal(self, signum):
-        LOG.info("received signal %s; stopping the session bar", signum)
-        self.quit()
-        return GLib.SOURCE_REMOVE
+        if not self.using_layer_shell:
+            if QGuiApplication.platformName().startswith("wayland"):
+                # Wait for Sway to map the window, off the GUI thread.
+                threading.Thread(target=self._place_sway_window,
+                                 name="jawnos-shell-place", daemon=True).start()
+            else:
+                QTimer.singleShot(50, self._place_x11)
 
-    def _on_destroy(self, _window):
+    def _place_x11(self):
+        screen = QGuiApplication.primaryScreen()
+        if screen is None:
+            return
+        geometry = screen.geometry()
+        self.setGeometry(geometry.x(), geometry.y(),
+                         geometry.width(), self.height)
+        self.raise_()
+
+    def _place_sway_window(self):
+        """Float the fallback bar at the output's top edge (no layer role).
+
+        A normal Wayland toplevel cannot reserve an exclusive zone, so this asks
+        Sway to float it at 0,0, fill the output width, and stick it to every
+        workspace. It then overlays windows: a fullscreen window covers it.
+
+        The criteria command only sees windows Sway has already mapped, and
+        ``show()`` returns before that commit, so wait (briefly, up to 5 s) for
+        the app_id to appear in the tree. Runs on a daemon thread: swaymsg is a
+        blocking subprocess and must never stall the bar.
+        """
+        if not usage.swaymsg_available():
+            return
+        try:
+            outputs = [o for o in (usage.swaymsg(["-t", "get_outputs"]) or [])
+                       if isinstance(o, dict)]
+            width = 0
+            for output in outputs:
+                if output.get("focused") or output.get("active"):
+                    width = int((output.get("rect") or {}).get("width") or 0)
+                    if width:
+                        break
+            if not width:
+                for output in outputs:
+                    width = int((output.get("rect") or {}).get("width") or 0)
+                    if width:
+                        break
+            if not width:
+                width = 1024
+            for _attempt in range(20):
+                if _tree_find_app(usage.get_tree(), "jawnos-session"):
+                    break
+                time.sleep(0.25)
+            # Sway refuses to make a floating window shorter than 50px
+            # (floating_minimum_size, default 75x50). Lower the height floor --
+            # only as far as the bar itself -- so a 30px bar is possible.
+            if self.height < 50:
+                usage.swaymsg(["-t", "command",
+                               "floating_minimum_size 75 x %d" % self.height])
+            # Resize before moving: Sway re-centres a floating window when its
+            # size changes, so a move first would be undone.
+            command = (
+                '[app_id="jawnos-session"] floating enable, border none, '
+                'resize set width %d px height %d px, move position 0 0, '
+                'sticky enable' % (width, self.height))
+            usage.swaymsg(["-t", "command", command])
+        except Exception as exc:
+            LOG.debug("could not place the fallback bar in Sway: %s", exc)
+
+    def stop(self):
         if self.worker is not None:
             self.worker.stop_now()
-        Gtk.main_quit()
+            self.worker = None
 
     def quit(self):
-        if self.worker is not None:
-            self.worker.stop_now()
-        try:
-            Gtk.main_quit()
-        except Exception:
-            pass
-        return False
+        self.stop()
+        if QApplication is not None:
+            QApplication.quit()
+
+    def closeEvent(self, event):
+        self.stop()
+        super().closeEvent(event)
+        if QApplication is not None:
+            QApplication.quit()
 
 
 # --------------------------------------------------------------------------
@@ -582,11 +779,12 @@ class Shell:
 # --------------------------------------------------------------------------
 
 class _Worker(threading.Thread):
-    """Sway events plus the slow clocks, all off the GTK thread."""
+    """Sway events plus the slow clocks, all off the GUI thread."""
 
     def __init__(self, shell):
         super().__init__(name="jawnos-shell-worker", daemon=True)
         self.shell = shell
+        self.signals = shell.signals
         self.stop = threading.Event()
         self._want_sway = threading.Event()
         self._client = None
@@ -610,6 +808,13 @@ class _Worker(threading.Thread):
                 proc.terminate()
             except OSError:
                 pass
+
+    def _emit(self, signal, *args):
+        try:
+            signal.emit(*args)
+        except Exception:
+            # The window can be gone while a refresh is in flight.
+            pass
 
     # ---- main loop -------------------------------------------------------
 
@@ -664,7 +869,7 @@ class _Worker(threading.Thread):
                             "container" not in event and \
                             "current" not in event:
                         LOG.info("Sway is exiting; closing the session bar")
-                        GLib.idle_add(self.shell.quit)
+                        self._emit(self.signals.quit)
                         self.stop.set()
                         break
                     if "container" in event or "current" in event or \
@@ -710,7 +915,7 @@ class _Worker(threading.Thread):
                 node = usage.focused_container(tree)
                 if isinstance(node, dict):
                     title = (node.get("name") or "").strip()
-            GLib.idle_add(self.shell.apply_sway, workspaces, key or "", title)
+            self._emit(self.signals.sway, workspaces, key or "", title)
         except Exception as exc:
             LOG.debug("Sway refresh failed: %s", exc)
 
@@ -728,10 +933,10 @@ class _Worker(threading.Thread):
             LOG.debug("today's app time is unavailable: %s", exc)
             total = None
         if total is None:
-            GLib.idle_add(self.shell.set_usage, "Today —", False)
+            self._emit(self.signals.usage, "Today \u2014", False)
         else:
-            GLib.idle_add(self.shell.set_usage,
-                          "Today " + usage.format_duration(total), True)
+            self._emit(self.signals.usage,
+                       "Today " + usage.format_duration(total), True)
 
     # ---- now playing -----------------------------------------------------
 
@@ -753,9 +958,9 @@ class _Worker(threading.Thread):
             artist = parts[1] if len(parts) > 1 else ""
             title = parts[2] if len(parts) > 2 else ""
             if status == "Playing" and (artist or title):
-                text = "♪ " + " — ".join(
+                text = "\u266a " + " \u2014 ".join(
                     piece for piece in (artist, title) if piece)
-        GLib.idle_add(self.shell.set_music, text or None)
+        self._emit(self.signals.music, text or None)
 
 
 # --------------------------------------------------------------------------
@@ -773,7 +978,7 @@ def main(argv=None):
                         help="the jawn tree for the usage summary (default: the "
                              "desktop setting, or $JAWNOS_DIR)")
     parser.add_argument("--no-layer-shell", action="store_true",
-                        help="use an ordinary undecorated window instead of a "
+                        help="use an ordinary frameless window instead of a "
                              "layer-shell panel (debugging)")
     parser.add_argument("--no-music", action="store_true",
                         help="do not look for playerctl / now-playing")
@@ -787,24 +992,48 @@ def main(argv=None):
         stream=sys.stderr,
     )
 
-    if _GTK_ERROR is not None:
-        LOG.error("GTK 3 / PyGObject is not available (%s); the session bar "
-                  "cannot start", _GTK_ERROR)
+    if _QT_ERROR is not None:
+        LOG.error("PySide6 is not available (%s); the session bar cannot "
+                  "start", _QT_ERROR)
         return 1
     if not os.environ.get("WAYLAND_DISPLAY") and not os.environ.get("DISPLAY"):
         LOG.error("no Wayland or X display; the session bar cannot start")
         return 1
 
+    _prepare_wayland_env()
+
+    app = QApplication([sys.argv[0]])
+    app.setApplicationName("jawnos-session")
+    app.setApplicationDisplayName("JawnOS")
+    app.setOrganizationName("JawnOS")
+    # Wayland derives app_id from this; Sway's fallback rule matches it.
+    try:
+        app.setDesktopFileName("jawnos-session")
+    except Exception:
+        pass
+
     shell = Shell(args)
+
+    def _on_signal(signum, _frame):
+        LOG.info("received signal %s; stopping the session bar", signum)
+        app.quit()
+
+    # The clock timer calls back into Python every second, which is also what
+    # lets a SIGTERM/SIGINT handler run while Qt owns the event loop.
+    for signum in (signal.SIGTERM, signal.SIGINT):
+        try:
+            signal.signal(signum, _on_signal)
+        except Exception:
+            pass
+
     shell.start()
     try:
-        Gtk.main()
+        code = app.exec()
     except KeyboardInterrupt:
-        pass
+        code = 0
     finally:
-        if shell.worker is not None:
-            shell.worker.stop_now()
-    return 0
+        shell.stop()
+    return code
 
 
 if __name__ == "__main__":

@@ -531,9 +531,22 @@ dashboard. The tray badge carries the same state dot: green running, amber
 starting/restarting, red stopped. Its menu has no browser item; **Open in
 browser** stays a button in the panel's Open card. `--engine webkit` still
 starts the old GTK dashboard as a fallback for one release; the remaining
-GTK-only programs are Browse, the session bar and the BLE daemon. The Arch live
-image installs `pyside6`, `qt6-webengine` and `qt6-wayland`
+GTK-only programs are Browse and the BLE daemon. The Arch live image installs
+`pyside6`, `qt6-webengine`, `qt6-wayland` and `layer-shell-qt`
 (`desktop/mkosi/mkosi.conf`); WebKitGTK stays for the fallback and Browse.
+
+The **session bar** (`desktop/jawnos-shell`, `jawnos_desktop/shell.py`) is Qt
+too. On Wayland it takes the same wlr-layer-shell top layer, top/left/right
+anchors, exclusive zone and keyboard mode as the old GTK bar: layer-shell-qt
+has no C API, so `shell.py` resolves its C++ setters with a small ctypes shim
+and passes the QWindow PySide6 created. Install `layer-shell-qt` for that path.
+Without the package, on X11, or on a compositor without wlr-layer-shell, the bar
+falls back to a frameless always-on-top window: on Sway it asks `swaymsg` to
+float it at 0,0, size it to the output and make it sticky (lowering Sway's
+floating minimum height when the bar is shorter than 50px). That overlays
+windows instead of reserving an exclusive zone, and a fullscreen window covers
+it. On the layer-shell path the GTK bar's exclusive zone is unchanged, so a
+fullscreen JawnOS window still has the bar over it, exactly as before.
 
 ## Windows
 
