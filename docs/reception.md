@@ -21,7 +21,7 @@ adapter.
 | `lib/JawnOS/Sco/Render.pm` | gateway | Piper → raw 8 kHz s16le, cached by words and voice |
 | `perl/sco/sco_helper.c` | gateway | the audio half: `--pcm` (BlueALSA) or `--pipe` (`parec`/`pacat`), one JSON line per event |
 | `perl/Reception.pl` | gateway | keeps the gateway armed from the phone's settings, and keeps the names a call left in `~/.president/sco/kept/` |
-| `scripts/vosk_stream.py` | gateway | reads the helper's `--tee` FIFO, segments the caller's voice and asks Vosk for one sentence at a time |
+| `scripts/whisper_stream.py` | gateway | reads the helper's `--tee` FIFO, segments the caller's voice and asks whisper.cpp for one sentence at a time |
 | `scripts/rtc_bridge.py` | gateway | the WebRTC peer behind **Connect me**: the caller out as an Opus track, the person's microphone back into `jawn_prompt` |
 
 ## Why a virtual handset
@@ -160,18 +160,24 @@ silence and the conversation rather than only the name. The write is
 non-blocking and a missing reader is retried once a second: a transcript must
 never stall the audio.
 
-`scripts/vosk_stream.py` reads the FIFO, resamples 8 kHz to the 16 kHz Vosk
-wants, learns the room's level, and emits one sentence per pause (0.7 s) with
-partials while it is being said. `Gateway.pm` keeps the lines in `sco.json`,
-writes `~/.president/sco/transcripts/<call_id>.jsonl`, and pushes each one on
-the phone's websocket so the pane draws it as a bubble.
+`scripts/whisper_stream.py` reads the FIFO, resamples 8 kHz to the 16 kHz the
+model wants, learns the room's level, and emits one sentence per pause (0.7 s)
+with partials while it is being said. Speech has to hold 300 ms to open a line,
+a line is capped at 15 s, and anything under 1 s waits for the next sentence
+instead of being sent alone. Each segment goes to the warm whisper.cpp server on
+loopback (`POST /inference`, JSON, language auto), or to whisper-cli when that
+server is not up. `Gateway.pm` keeps the lines in `sco.json`, writes
+`~/.president/sco/transcripts/<call_id>.jsonl`, and pushes each one on the
+phone's websocket so the pane draws it as a bubble.
 
-Vosk must be installed on the gateway machine (Configure → Plat → AI →
-Transcription, `local:vosk`; `scripts/jawnos_deps.pl --extras-only --install`
-puts it under `~/.local/share/jawnos/vosk`). Without it the call is unchanged
-and the pane says why there is no text. **Termux cannot run Vosk** (Bionic, no
-wheel), so the phone does not transcribe its own screened call - the audio is
-on the gateway anyway.
+whisper.cpp must be installed on the gateway machine (Configure → Plat → AI →
+Transcription, `local:whisper.cpp`; `scripts/jawnos_deps.pl --extras-only
+--install` puts the pywhispercpp wheel, the base and tiny models and the
+`whisper-cli`/`whisper-server` wrappers under `~/.local/share/jawnos/whisper`).
+A hand-built whisper.cpp in `~/whisper.cpp` is still found. Without it the call
+is unchanged and the pane says why there is no text. **Termux cannot run the
+glibc wheel**, so the phone does not transcribe its own screened call - the
+audio is on the gateway anyway.
 
 When the call ends, the phone files the call appointment, and that is the
 moment the transcript reaches Chat: `phone_call_transcript_note` picks the
@@ -223,7 +229,7 @@ a raw audio socket would send the caller their own voice.
 true, noiseSuppression: true, autoGainControl: true}})` and posts it to
 `POST /manager/sco/rtc` (`action=start`, then `action=signal`). That route calls
 the gateway daemon on its own socket; the gateway spawns
-`scripts/rtc_bridge.py` (aiortc, in the same venv as Vosk) with
+`scripts/rtc_bridge.py` (aiortc, in its own venv) with
 `parec ... jawn_call_in.monitor` as its outgoing track and `pacat ...
 jawn_prompt` as its incoming one, both at 48 kHz under the name
 `jawn-sco-bridge`.
@@ -311,10 +317,10 @@ so cross-device delivery over the peer rail is the next step).
   the manager that handles that phone's call log must be the same house. A
   gateway on a different machine would need the transcript fetched over the
   peer rail before it can be filed.
-- **Vosk's model is per language.** The installer brings English; another
-  language is a model directory dropped under `~/.local/share/jawnos/vosk/models`.
-  A language with no model leaves the transcript empty (whisper.cpp is the
-  fallback for a *clip*, not for the stream).
+- **The streamer needs a local model.** The installer brings the multilingual
+  base and tiny ggml files under `~/.local/share/jawnos/whisper/models`; another
+  model is a `ggml-*.bin` dropped there. The warm server uses whichever model it
+  was started with, and the streamer's CLI fallback takes base.
 - A screened call is answered even if the gateway is not ready; the phone's
   watchdog closes it (40 s for a name, 120 s for a message) so the line is
   never left open.

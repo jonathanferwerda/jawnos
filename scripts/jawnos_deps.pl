@@ -143,12 +143,13 @@ if ($install && -f $runtime_marker) {
 # add another by pushing one more row. `--extras-only` is what the update hook
 # runs, so a new version's new app lands without a hand.
 my $home = $ENV{'HOME'} || (getpwuid $<)[7] || '';
-my $piper_dir = "$home/.local/share/jawnos/piper";
-my $vosk_dir  = "$home/.local/share/jawnos/vosk";
+my $piper_dir   = "$home/.local/share/jawnos/piper";
+my $whisper_dir = "$home/.local/share/jawnos/whisper";
+my $rtc_dir     = "$home/.local/share/jawnos/rtc";
 my @extras = (
-	{ id => 'piper', label => 'Piper TTS (natural voice)', check => \&have_piper, install => \&install_piper },
-	{ id => 'vosk',  label => 'Vosk speech-to-text (offline)', check => \&have_vosk, install => \&install_vosk },
-	{ id => 'rtc',   label => 'WebRTC bridge (Connect me)', check => \&have_rtc, install => \&install_rtc },
+	{ id => 'piper',   label => 'Piper TTS (natural voice)', check => \&have_piper, install => \&install_piper },
+	{ id => 'whisper', label => 'whisper.cpp speech-to-text (offline)', check => \&have_whisper, install => \&install_whisper },
+	{ id => 'rtc',     label => 'WebRTC bridge (Connect me)', check => \&have_rtc, install => \&install_rtc },
 );
 
 if ($extras_only) {
@@ -439,92 +440,126 @@ sub install_piper_bundle {
 	print "  piper: installed (no binary produced?)\n" unless -x "$piper_dir/piper";
 }
 
-# --- Vosk: the offline recogniser -------------------------------------------
-# Vosk's Python package has glibc wheels only, so it cannot run under Termux;
-# the gateway machine (desktop or laptop) is where it belongs. The venv keeps it
-# out of the system Python and survives a PEP 668 "externally managed" system.
-# One small English model comes down with it; another language is a directory
-# dropped under models/ and found by subs::vosk_model_dir.
-sub vosk_model_name { return 'vosk-model-small-en-us-0.15'; }
-sub vosk_model_url  { return 'https://alphacephei.com/vosk/models/' . vosk_model_name() . '.zip'; }
-sub vosk_models_dir { return "$vosk_dir/models"; }
-sub vosk_model_path { return "$vosk_dir/models/" . vosk_model_name(); }
-
-sub have_vosk {
-	my $py = "$vosk_dir/venv/bin/python3";
-	return 0 unless -x $py;
-	return 0 unless -d vosk_model_path();
-	# the directory alone is not proof: an interrupted pip leaves the venv
-	return system($py, '-c', 'import vosk') == 0 ? 1 : 0;
+# --- whisper.cpp: the local recogniser --------------------------------------
+# pywhispercpp ships a glibc wheel with libwhisper but no command. The two
+# wrappers below give the tree the whisper-cli and whisper-server shapes it
+# already speaks, so nothing here needs cmake or sudo. The models are the
+# multilingual base and tiny ggml files. Re-running this upgrades the wheel.
+# Termux is Bionic and has no wheel: a phone leaves a screened call's audio on
+# the gateway, which is where the transcript is made anyway.
+sub whisper_model_url {
+	my ($name) = @_;
+	return "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-$name.bin";
 }
 
-# The venv every gateway media helper shares: Vosk's model and the WebRTC
-# bridge's aiortc. It is checked for pip, not only for the interpreter - a venv
-# made before python3-venv was installed has no pip and would fail forever.
-sub ensure_venv {
+sub whisper_wrapper {
+	my ($mode) = @_;
+	my $text = <<WRAP;
+#!/bin/sh
+# whisper.cpp from the pywhispercpp wheel. The wheel carries libwhisper but no
+# command, so whisper_tool.py is the command; this wrapper is what the tree
+# calls whisper-$mode.
+exec "\$HOME/.local/share/jawnos/whisper/venv/bin/python" "\$HOME/.local/share/jawnos/whisper/whisper_tool.py" $mode "\$@"
+WRAP
+	return $text;
+}
+
+sub whisper_models_dir { return "$whisper_dir/models"; }
+
+sub have_whisper {
+	my $py = "$whisper_dir/venv/bin/python3";
+	return 0 unless -x $py;
+	return 0 unless -x "$whisper_dir/whisper-cli" || -x "$whisper_dir/whisper-server";
+	return 0 unless -s whisper_models_dir() . '/ggml-base.bin' || -s whisper_models_dir() . '/ggml-tiny.bin';
+	# the directory alone is not proof: an interrupted pip leaves the venv
+	return system($py, '-c', 'import pywhispercpp') == 0 ? 1 : 0;
+}
+
+sub install_whisper {
+	if ($platform eq 'termux') {
+		print "  whisper: Termux (Bionic) has no pywhispercpp wheel; the gateway machine transcribes the call.\n";
+		return;
+	}
 	my $py = which('python3') || which('python');
-	return '' unless $py;
-	my $venv_py = "$vosk_dir/venv/bin/python3";
+	if (!$py) {
+		print "  whisper: python3 is not installed; skipping (transcription is unavailable).\n";
+		return;
+	}
+	system('mkdir', '-p', whisper_models_dir());
+	my $venv_py = "$whisper_dir/venv/bin/python3";
 	my $has_pip = -x $venv_py && system($venv_py, '-m', 'pip', '--version') == 0;
 	unless ($has_pip) {
-		remove_tree("$vosk_dir/venv") if -d "$vosk_dir/venv";
-		run($py, '-m', 'venv', "$vosk_dir/venv");
+		remove_tree("$whisper_dir/venv") if -d "$whisper_dir/venv";
+		run($py, '-m', 'venv', "$whisper_dir/venv");
+	}
+	unless (-x $venv_py && system($venv_py, '-m', 'pip', '--version') == 0) {
+		print "  whisper: could not make a working virtual environment (install python3-venv); skipping.\n";
+		return;
+	}
+	if (run("$whisper_dir/venv/bin/pip", 'install', '--quiet', '--disable-pip-version-check', '--upgrade', 'pywhispercpp') != 0) {
+		print "  whisper: pip could not install pywhispercpp; skipping.\n";
+		return;
+	}
+	# the wheel ships no command: put both shapes beside the venv
+	my $tool = "$FindBin::Bin/whisper_tool.py";
+	if (-f $tool) {
+		copy($tool, "$whisper_dir/whisper_tool.py");
+		chmod 0755, "$whisper_dir/whisper_tool.py";
+	}
+	foreach my $mode (qw(cli server)) {
+		my $path = "$whisper_dir/whisper-$mode";
+		if (open(my $w, '>', $path)) {
+			print {$w} whisper_wrapper($mode);
+			close $w;
+			chmod 0755, $path;
+		}
+	}
+	# The models are the big part; keep them between upgrades. The part file
+	# lives beside the model, not in /tmp: on a machine where /tmp is a tmpfs,
+	# rename() across filesystems fails and leaves the engine with no model.
+	foreach my $name (qw(base tiny)) {
+		my $path = whisper_models_dir() . "/ggml-$name.bin";
+		next if -s $path;
+		my $tmp = "$path.part";
+		unlink $tmp;
+		if (run('curl', '-L', '--fail', '--retry', '2', '-o', $tmp, whisper_model_url($name)) != 0) {
+			print "  whisper: $name model download failed; the engine has no model for it yet.\n";
+			unlink $tmp;
+			next;
+		}
+		rename $tmp, $path;
+	}
+	print "  whisper: installed to $whisper_dir\n" if have_whisper();
+	print "  whisper: installed, but the model or import check failed\n" unless have_whisper();
+}
+
+# --- the WebRTC bridge: its own venv ----------------------------------------
+# The bridge is a WebRTC peer (aiortc). It is what "Connect me" runs; without it
+# the face's button has nothing to talk to, so it is an extra of its own rather
+# than a surprise at the first call. It used to share the transcript venv;
+# now that the transcript is whisper.cpp, it has one of its own.
+sub rtc_venv_py { return "$rtc_dir/venv/bin/python3"; }
+
+sub have_rtc {
+	my $py = &rtc_venv_py();
+	return 0 unless -x $py;
+	return system($py, '-c', 'import aiortc') == 0 ? 1 : 0;
+}
+
+# A venv made before python3-venv was installed has no pip and would fail
+# forever, so pip is checked, not only the interpreter.
+sub ensure_rtc_venv {
+	my $py = which('python3') || which('python');
+	return '' unless $py;
+	my $venv_py = &rtc_venv_py();
+	my $has_pip = -x $venv_py && system($venv_py, '-m', 'pip', '--version') == 0;
+	unless ($has_pip) {
+		remove_tree("$rtc_dir/venv") if -d "$rtc_dir/venv";
+		run($py, '-m', 'venv', "$rtc_dir/venv");
 	}
 	return '' unless -x $venv_py;
 	return '' unless system($venv_py, '-m', 'pip', '--version') == 0;
 	return $venv_py;
-}
-
-sub install_vosk {
-	if ($platform eq 'termux') {
-		print "  vosk: Termux (Bionic) has no Vosk wheel; the gateway machine runs it.\n";
-		return;
-	}
-	if (!(which('python3') || which('python'))) {
-		print "  vosk: python3 is not installed; skipping (transcription falls back to whisper.cpp).\n";
-		return;
-	}
-	system('mkdir', '-p', vosk_models_dir());
-	my $venv_py = ensure_venv();
-	if (!$venv_py) {
-		print "  vosk: could not make a working virtual environment (install python3-venv); skipping.\n";
-		return;
-	}
-	if (run($venv_py, '-m', 'pip', 'install', '--disable-pip-version-check', 'vosk') != 0) {
-		print "  vosk: pip could not install the package; leaving the fallback in place.\n";
-		return;
-	}
-	unless (-d vosk_model_path()) {
-		my $tmp_dir = ($ENV{'TMPDIR'} && -d $ENV{'TMPDIR'} && -w $ENV{'TMPDIR'}) ? $ENV{'TMPDIR'} : '/tmp';
-		$tmp_dir = $vosk_dir unless -w $tmp_dir;
-		my $zip = "$tmp_dir/jawnos_vosk_$$.zip";
-		if (run('curl', '-L', '--fail', '-o', $zip, vosk_model_url()) != 0) {
-			print "  vosk: model download failed; the package is installed but has no model.\n";
-			return;
-		}
-		# python3 -m zipfile needs nothing else installed, and Termux is not a
-		# path here anyway; unzip is only preferred because it is quicker.
-		my $unzip = which('unzip');
-		my $ok = $unzip
-			? run($unzip, '-q', '-o', $zip, '-d', vosk_models_dir()) == 0
-			: run((which('python3') || which('python')), '-m', 'zipfile', '-e', $zip, vosk_models_dir()) == 0;
-		unlink $zip;
-		unless ($ok && -d vosk_model_path()) {
-			print "  vosk: model extract failed.\n";
-			return;
-		}
-	}
-	print "  vosk: installed to $vosk_dir\n" if have_vosk();
-	print "  vosk: installed, but the import probe failed\n" unless have_vosk();
-}
-
-# The bridge is a WebRTC peer (aiortc) in the same venv. It is what "Connect me"
-# runs; without it the face's button has nothing to talk to, so it is an extra
-# of its own rather than a surprise at the first call.
-sub have_rtc {
-	my $py = "$vosk_dir/venv/bin/python3";
-	return 0 unless -x $py;
-	return system($py, '-c', 'import aiortc') == 0 ? 1 : 0;
 }
 
 sub install_rtc {
@@ -532,7 +567,7 @@ sub install_rtc {
 		print "  webrtc: Termux has no aiortc wheel; the gateway machine runs the bridge.\n";
 		return;
 	}
-	my $venv_py = ensure_venv();
+	my $venv_py = ensure_rtc_venv();
 	if (!$venv_py) {
 		print "  webrtc: no working Python environment (install python3-venv); skipping.\n";
 		return;
@@ -541,7 +576,7 @@ sub install_rtc {
 		print "  webrtc: pip could not install aiortc; Connect me stays off.\n";
 		return;
 	}
-	print "  webrtc: installed to $vosk_dir/venv\n" if have_rtc();
+	print "  webrtc: installed to $rtc_dir/venv\n" if have_rtc();
 	print "  webrtc: installed, but the import probe failed\n" unless have_rtc();
 }
 

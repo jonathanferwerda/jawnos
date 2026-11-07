@@ -591,9 +591,9 @@ sub manager_starter() {
 		sleep 30;
 		while (1) {
 			&subs::subprocessor_heartbeat();
-			my $bin   = &subs::home('~/whisper.cpp/build/bin/whisper-server');
-			my $model = &subs::home('~/whisper.cpp/models/ggml-tiny.bin');
-			$model = &subs::home('~/whisper.cpp/models/ggml-base.bin') unless -e $model;
+			my $bin   = &subs::whisper_server_bin();
+			my $model = &subs::whisper_model_file('tiny');
+			$model = &subs::whisper_model_file('base') unless length $model && -e $model;
 			if (-x $bin && -e $model) {
 				my $port = &subs::whisper_server_port();
 				# A server already listening there (started by hand, or this loop's

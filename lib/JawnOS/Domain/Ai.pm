@@ -169,16 +169,16 @@ sub whisper_cli_transcribe {
 	return '' unless $raw;
 	require IPC::Open3;
 	require Symbol;
-	my $bin   = &subs::home('~/whisper.cpp/build/bin/whisper-cli');
+	my $bin   = &whisper_cli_bin();
 	# A command is a handful of words against a tiny vocabulary, so the fast tiny
 	# model is plenty and a clip gets through much sooner, especially on the
 	# phone; base is the fallback when tiny is not installed. A caller that knows
 	# its clip needs more (a screened call's name) names the model it wants.
-	my $model = ($wanted && -e $wanted) ? $wanted : &subs::home('~/whisper.cpp/models/ggml-tiny.bin');
-	if (!defined $wanted && !-e $model) {
-		$model = &subs::home('~/whisper.cpp/models/ggml-base.bin');
+	my $model = ($wanted && -e $wanted) ? $wanted : &whisper_model_file('tiny');
+	if (!defined $wanted && (!length $model || !-e $model)) {
+		$model = &whisper_model_file('base');
 	}
-	return '' unless -e $bin && -e $model;
+	return '' unless $bin && length $model && -e $model;
 	my $language = (defined $lang && $lang =~ /^[a-z]{2,3}$/ && $lang ne 'auto') ? ' -l ' . $lang : '';
 	my $cmd = sprintf(
 		'ffmpeg -nostdin -loglevel error -i - -blocksize 4096 -f wav -ar 16000 -ac 1 -acodec pcm_s16le - | %s -m %s%s --output-txt --file - 2>/dev/null',
@@ -201,48 +201,47 @@ sub whisper_cli_transcribe {
 	return $text;
 }
 
-# --- Vosk: the free, offline recogniser ------------------------------------
-# Vosk's Python package ships glibc wheels only, so it cannot run under Termux
-# (Bionic); the gateway/laptop is where it lives. scripts/jawnos_deps.pl puts a
-# venv and the small English model under ~/.local/share/jawnos/vosk. The runner
-# is a JSON-lines helper because it is also the live stream the screening
-# transcript reads (--raw --stream).
-sub vosk_runner {
-	# JAWNOS_VOSK_RUNNER and JAWNOS_VOSK_DIR exist for a worktree or a machine
-	# that keeps the model on a bigger disk; the defaults are the installed tree.
-	my $runner = $ENV{'JAWNOS_VOSK_RUNNER'};
-	return $runner if defined $runner && length $runner;
-	return &subs::home('~/jawnos/scripts/vosk_transcribe.py');
-}
-sub vosk_root {
-	my $dir = $ENV{'JAWNOS_VOSK_DIR'};
+# --- whisper.cpp: the local recogniser -------------------------------------
+# Every machine transcribes with the same engine. scripts/whisper_stream.py
+# reads a screened call; the one-shot paths use the warm server on loopback or
+# whisper-cli. scripts/jawnos_deps.pl puts the pywhispercpp wheel, the models
+# and both wrappers under ~/.local/share/jawnos/whisper; a machine that built
+# whisper.cpp by hand into ~/whisper.cpp is still found. Termux cannot run the
+# glibc wheel, so a phone leaves its screened call's audio on the gateway.
+
+sub whisper_root {
+	my $dir = $ENV{'JAWNOS_WHISPER_DIR'};
 	return $dir if defined $dir && length $dir;
-	return &subs::home('~/.local/share/jawnos/vosk');
+	return &subs::home('~/.local/share/jawnos/whisper');
 }
 
-# The live reader sits beside the one-shot runner and takes the same model.
-sub vosk_streamer {
-	my $streamer = $ENV{'JAWNOS_VOSK_STREAMER'};
-	return $streamer if defined $streamer && length $streamer;
-	my $runner = &vosk_runner();
-	$runner =~ s{[^/]+$}{vosk_stream.py};
-	return $runner;
+sub whisper_models_dir {
+	my $dir = $ENV{'JAWNOS_WHISPER_MODELS'};
+	return $dir if defined $dir && length $dir;
+	my $installed = &whisper_root() . '/models';
+	return $installed if -d $installed;
+	my $built = &subs::home('~/whisper.cpp/models');
+	return $built if -d $built;
+	return $installed;
 }
 
-# The WebRTC bridge sits beside the other two readers and uses the same venv
-# (aiortc lives there).
-sub rtc_bridge {
-	my $script = $ENV{'JAWNOS_RTC_BRIDGE'};
-	return $script if defined $script && length $script;
-	my $runner = &vosk_runner();
-	$runner =~ s{[^/]+$}{rtc_bridge.py};
-	return $runner;
+sub whisper_model_file {
+	# 'base', 'tiny' or a path; '' when that model is not installed.
+	my ($name) = @_;
+	$name = 'base' unless defined $name && length $name;
+	return $name if $name =~ m{/} && -e $name;
+	my $dir = &whisper_models_dir();
+	foreach my $candidate ("ggml-$name.bin", "$name.bin") {
+		my $path = $dir . '/' . $candidate;
+		return $path if -e $path;
+	}
+	return '';
 }
 
-sub vosk_python {
-	my $venv = &vosk_root() . '/venv/bin/python3';
+sub whisper_python {
+	my $venv = &whisper_root() . '/venv/bin/python3';
 	return $venv if -x $venv;
-	foreach my $dir ( split /:/, ($ENV{'PATH'} // '') ) {
+	foreach my $dir (split /:/, ($ENV{'PATH'} // '')) {
 		next unless defined $dir && length $dir;
 		my $py = "$dir/python3";
 		return $py if -x $py;
@@ -250,42 +249,73 @@ sub vosk_python {
 	return '';
 }
 
-# A model is a directory named for its language (vosk-model-small-en-us-0.15,
-# or a hand-made `fr`). A language asked for but not installed answers '', so
-# the caller falls back to whisper rather than reading French with an English
-# model; 'auto' takes English when it exists and the first model otherwise.
-sub vosk_model_dir {
-	my ($lang) = @_;
-	$lang = lc($lang // '');
-	$lang = '' unless $lang =~ /^[a-z]{2,3}$/;
-	my $root = &vosk_root() . '/models';
-	return '' unless -d $root;
-	opendir(my $dh, $root) or return '';
-	my @names = sort grep { !/^\./ && -d "$root/$_" } readdir $dh;
-	closedir $dh;
-	return '' unless @names;
-	if (length $lang) {
-		foreach my $n (@names) {
-			return "$root/$n" if $n eq $lang || $n =~ /-$lang-/ || $n =~ /-$lang$/;
-		}
-		return '';
+sub whisper_cli_bin {
+	my $bin = $ENV{'JAWNOS_WHISPER_CLI'};
+	return $bin if defined $bin && length $bin && -x $bin;
+	foreach my $candidate (
+		&whisper_root() . '/whisper-cli',
+		&whisper_root() . '/venv/bin/whisper-cli',
+		&subs::home('~/whisper.cpp/build/bin/whisper-cli'),
+	) {
+		return $candidate if -x $candidate;
 	}
-	foreach my $n (@names) {
-		return "$root/$n" if $n =~ /-en-/ || $n =~ /-en$/;
+	foreach my $dir (split /:/, ($ENV{'PATH'} // '')) {
+		next unless defined $dir && length $dir;
+		my $path = "$dir/whisper-cli";
+		return $path if -x $path;
 	}
-	return "$root/$names[0]";
+	return '';
 }
 
-sub _python_has_vosk {
-	# A venv with the wheel installed, or a system interpreter that already has
-	# it. The import is the only proof: a bare python3 is not an install.
-	my ($python) = @_;
-	return 0 unless $python;
+sub whisper_server_bin {
+	my $bin = $ENV{'JAWNOS_WHISPER_SERVER'};
+	return $bin if defined $bin && length $bin && -x $bin;
+	foreach my $candidate (
+		&whisper_root() . '/whisper-server',
+		&whisper_root() . '/venv/bin/whisper-server',
+		&subs::home('~/whisper.cpp/build/bin/whisper-server'),
+	) {
+		return $candidate if -x $candidate;
+	}
+	foreach my $dir (split /:/, ($ENV{'PATH'} // '')) {
+		next unless defined $dir && length $dir;
+		my $path = "$dir/whisper-server";
+		return $path if -x $path;
+	}
+	return '';
+}
+
+sub whisper_streamer {
+	my $streamer = $ENV{'JAWNOS_WHISPER_STREAMER'};
+	return $streamer if defined $streamer && length $streamer;
+	return &subs::home('~/jawnos/scripts/whisper_stream.py');
+}
+
+# The Plat page and the Crew rail both ask this; one probe a minute is enough.
+our $whisper_probe;
+sub whisper_available {
+	my $now = time;
+	return $whisper_probe->{'ok'} if $whisper_probe && $now - $whisper_probe->{'at'} < 60;
+	my $ok = 0;
+	my $streamer = &whisper_streamer();
+	my $model = &whisper_model_file('base');
+	$model = &whisper_model_file('tiny') unless length $model;
+	if (-f $streamer && length &whisper_python() && length $model
+		&& (length &whisper_cli_bin() || length &whisper_server_bin())) {
+		$ok = 1;
+	}
+	$whisper_probe = { at => $now, ok => $ok };
+	return $ok;
+}
+
+sub _python_has_module {
+	my ($python, $module) = @_;
+	return 0 unless $python && $module;
 	require IPC::Open3;
 	require Symbol;
 	my ($in, $out, $err);
 	$err = Symbol::gensym();
-	my $pid = eval { IPC::Open3::open3($in, $out, $err, $python, '-c', 'import vosk') };
+	my $pid = eval { IPC::Open3::open3($in, $out, $err, $python, '-c', "import $module") };
 	return 0 unless $pid;
 	close $in;
 	do { local $/; <$out> };
@@ -296,54 +326,32 @@ sub _python_has_vosk {
 	return $? == 0 ? 1 : 0;
 }
 
-# The Plat page and the Crew abilities both ask this; one probe a minute is
-# enough, and it keeps a page render from forking Python for every role.
-our $vosk_probe;
-sub vosk_available {
-	my $now = time;
-	return $vosk_probe->{'ok'} if $vosk_probe && $now - $vosk_probe->{'at'} < 60;
-	my $ok = 0;
-	if (-f &vosk_runner() && length &vosk_model_dir()) {
-		$ok = &_python_has_vosk(&vosk_python());
-	}
-	$vosk_probe = { at => $now, ok => $ok };
-	return $ok;
+# The WebRTC bridge is its own extra and its own venv now that the transcript
+# no longer needs one. A machine that has not re-run the installer may still
+# have aiortc in the old shared venv, so that location is read but not written.
+sub rtc_root {
+	my $dir = $ENV{'JAWNOS_RTC_DIR'};
+	return $dir if defined $dir && length $dir;
+	return &subs::home('~/.local/share/jawnos/rtc');
 }
 
-sub vosk_transcribe {
-	# A whole clip through Vosk. Raw audio bytes in (any container ffmpeg reads),
-	# the transcript out; '' when Vosk is not installed, its model for this
-	# language is missing, or it heard nothing.
-	my ($raw, $lang) = @_;
-	return '' unless defined $raw && length $raw;
-	my $runner = &vosk_runner();
-	my $python = &vosk_python();
-	my $model  = &vosk_model_dir($lang);
-	return '' unless -f $runner && $python && length $model;
-	require IPC::Open3;
-	require Symbol;
-	my ($in, $out, $err);
-	$err = Symbol::gensym();
-	my $pid = eval {
-		IPC::Open3::open3($in, $out, $err, $python, $runner,
-			'--model', $model, '--lang', (defined $lang ? $lang : ''));
-	};
-	return '' unless $pid;
-	binmode($in);
-	print {$in} $raw;
-	close($in);
-	my $output = do { local $/; <$out> // '' };
-	close($out);
-	close($err);
-	waitpid($pid, 0);
-	my ($line) = split /\n/, $output;
-	my $d = eval { decode_json($line) } || {};
-	return '' if $d->{'error'};
-	my $text = $d->{'text'} // '';
-	$text =~ s/\r//g;
-	$text =~ s/^\s+|\s+$//g;
-	$text =~ s/\n+/ /g;
-	return $text;
+sub rtc_python {
+	my $venv = &rtc_root() . '/venv/bin/python3';
+	return $venv if -x $venv;
+	my $legacy = &subs::home('~/.local/share/jawnos/vosk/venv/bin/python3');
+	return $legacy if -x $legacy && &_python_has_module($legacy, 'aiortc');
+	foreach my $dir (split /:/, ($ENV{'PATH'} // '')) {
+		next unless defined $dir && length $dir;
+		my $py = "$dir/python3";
+		return $py if -x $py;
+	}
+	return '';
+}
+
+sub rtc_bridge {
+	my $script = $ENV{'JAWNOS_RTC_BRIDGE'};
+	return $script if defined $script && length $script;
+	return &subs::home('~/jawnos/scripts/rtc_bridge.py');
 }
 
 sub whisper_local_transcribe {
@@ -362,36 +370,38 @@ sub whisper_local_transcribe {
 
 sub transcribe_local_engine {
 	# The local engine a role value names, as a coderef, or undef for a cloud
-	# model. A new engine is one more line here and its own option on the Plat
-	# page (templates/configure/plat_setting_list.html.ep).
+	# model. An older settings row may still say local:vosk; that engine is
+	# gone, and the value is read as whisper.cpp so the role keeps working.
 	my ($value) = @_;
-	return \&vosk_transcribe          if ($value // '') eq 'local:vosk';
-	return \&whisper_local_transcribe if ($value // '') eq 'local:whisper.cpp';
+	$value = '' unless defined $value;
+	$value = 'local:whisper.cpp' if $value eq 'local:vosk';
+	return \&whisper_local_transcribe if $value eq 'local:whisper.cpp';
 	return undef;
 }
 
 sub whisper_transcribe {
 	# Speech -> text. The transcription role names a primary and a fallback,
-	# tried in that order; either may be a local engine (Vosk, whisper.cpp) or a
+	# tried in that order; either may be the local engine (whisper.cpp) or a
 	# cloud model. whisper.cpp is always the last resort when it is not already
-	# in the list, so a role that names only Vosk still has a free path when the
-	# Vosk model for the language is missing. Raw audio bytes in (any container
-	# ffmpeg reads), the transcript out. '' on any failure or on a stock silence
-	# line, so a caller only has to check for text. $lang is the keyboard
-	# layout's language ('fr', 'hi', ...); 'auto' lets the engine decide.
+	# in the list. An older role value of local:vosk is read as whisper.cpp.
+	# Raw audio bytes in (any container ffmpeg reads), the transcript out. ''
+	# on any failure or on a stock silence line, so a caller only has to check
+	# for text. $lang is the keyboard layout's language ('fr', 'hi', ...);
+	# 'auto' lets the engine decide.
 	my ($raw, $lang) = @_;
 	return '' unless $raw;
 	my ($primary, $fallback) = &ai_role_models('transcription_assistant');
 	my @order = grep { defined && length } ($primary, $fallback);
 	my %seen;
 	foreach my $m (@order) {
-		next if $seen{$m}++;
-		my $local = &transcribe_local_engine($m);
-		my $text = $local ? $local->($raw, $lang) : &ai_transcribe_cloud($m, $raw, $lang);
+		my $engine = ($m eq 'local:vosk') ? 'local:whisper.cpp' : $m;
+		next if $seen{$engine}++;
+		my $local = &transcribe_local_engine($engine);
+		my $text = $local ? $local->($raw, $lang) : &ai_transcribe_cloud($engine, $raw, $lang);
 		next if $text && &subs::voice_silence_hallucination($text);
 		return $text if $text;
 	}
-	return '' if grep { $_ eq 'local:whisper.cpp' } @order;
+	return '' if grep { $_ eq 'local:whisper.cpp' || $_ eq 'local:vosk' } @order;
 	return &whisper_local_transcribe($raw, $lang);
 }
 
@@ -407,8 +417,8 @@ sub whisper_name_transcribe {
 	# close. '' when nobody spoke.
 	my ($raw, $lang) = @_;
 	return '' unless defined $raw && length $raw;
-	my $base = &subs::home('~/whisper.cpp/models/ggml-base.bin');
-	my $text = -e $base
+	my $base = &whisper_model_file('base');
+	my $text = ($base && -e $base)
 		? &whisper_cli_transcribe($raw, $lang || 'auto', $base)
 		: &whisper_transcribe($raw, $lang || 'auto');
 	return '' if !length $text || &voice_silence_hallucination($text);

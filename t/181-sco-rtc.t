@@ -84,7 +84,8 @@ like($gateway_pm, qr/\Q$guard\E/,
 
 # ------------------------------------------------------------- the bridge's answer
 my ($venv_py) = grep { -x } map { "$_/python3" }
-	("$ENV{'HOME'}/.local/share/jawnos/vosk/venv/bin");
+	("$ENV{'HOME'}/.local/share/jawnos/rtc/venv/bin",
+	 "$ENV{'HOME'}/.local/share/jawnos/vosk/venv/bin");
 my $py3 = (grep { -x } map { "$_/python3" } split /:/, ($ENV{'PATH'} || ''))[0];
 SKIP: {
 	skip 'no python3 on PATH', 2 unless $py3;

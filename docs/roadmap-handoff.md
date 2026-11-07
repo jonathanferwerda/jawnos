@@ -141,7 +141,7 @@ the final full-clip transcript authoritative. Guard one decode in flight, cap
 30 s, drop silence hallucinations, and use local tiny for partials when the
 configured model is cloud (or disable partials for cloud). This improves the
 feel, not the final answer latency; a true streaming final needs a streaming
-engine — sherpa-onnx/Vosk locally or Deepgram/AssemblyAI/Google/Azure — because
+engine — sherpa-onnx locally or Deepgram/AssemblyAI/Google/Azure — because
 whisper.cpp has no streaming HTTP API. Repeated POSTs to
 `/manager/help/listen` were rejected as the shipping design: each blocks a
 manager worker and re-uploads the growing clip.

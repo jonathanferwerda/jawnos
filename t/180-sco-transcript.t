@@ -1,11 +1,11 @@
-# tests-for: lib/JawnOS/Sco/Gateway.pm lib/JawnOS/Domain/Phone.pm lib/JawnOS/Controller/manager_phone.pm perl/sco/sco_helper.c scripts/vosk_stream.py public/js/manager/phone.js public/js/manager/screening.js public/css/manager.css templates/apps/phone.html.ep public/js/manager/websocket/01_message_handler.js
+# tests-for: lib/JawnOS/Sco/Gateway.pm lib/JawnOS/Domain/Phone.pm lib/JawnOS/Controller/manager_phone.pm perl/sco/sco_helper.c scripts/whisper_stream.py public/js/manager/phone.js public/js/manager/screening.js public/css/manager.css templates/apps/phone.html.ep public/js/manager/websocket/01_message_handler.js
 # covers:    A screened call's live transcript: the helper's non-blocking tap
 #           above the recorder's gate, the gateway keeping a sentence in the
 #           status and on disk, the partial that is not yet a line, a bounded
 #           history, the Phone pane's bubbles, the caller's name header on the
 #           filed message, a remote gateway's live status filing the words
 #           when no local file exists, and the streamer's segmentation
-#           arithmetic without Vosk installed.
+#           arithmetic without a model installed.
 use strict;
 use warnings;
 
@@ -45,6 +45,9 @@ my $gw = JawnOS::Sco::Gateway->new(
 $gw->{'call_id'} = 'test-call';
 $gw->{'peer'} = '00:11:22:33:44:55';
 $gw->{'transcript_file'} = "$dir/caller.jsonl";
+
+$gw->_transcript_event({ event => 'ready' });
+is($gw->status->{'transcript_engine'}, 'whisper.cpp', 'a ready reader names the local engine');
 
 $gw->_transcript_event({ event => 'partial', text => 'may i ask' });
 is($gw->status->{'partial'}, 'may i ask', 'the sentence being said is in the status');
@@ -255,9 +258,13 @@ like($tpl, qr/id="phone_transcript_title"/, 'with its own header');
 like($tpl, qr/Live transcript/, 'labelled as such');
 
 # --------------------------------------------------------- the streamer's arithmetic
-my $stream = read_file("$repo/scripts/vosk_stream.py");
-like($stream, qr/args\.rate \* 2 == 16000/,
+my $stream = read_file("$repo/scripts/whisper_stream.py");
+like($stream, qr/args\.rate \* 2 == RATE/,
 	'the 8 kHz call is doubled in this process, not through a second program');
+like($stream, qr/--pause.*0\.7|pause_s, default=0\.7/s, '700 ms of silence ends a line');
+like($stream, qr/--open.*0\.3|open_s, default=0\.3/s, '300 ms of speech opens one');
+like($stream, qr/--ceiling.*15|ceiling_s, default=15/s, 'a line is capped at 15 s');
+like($stream, qr/language.*auto/, 'the model detects the language unless told one');
 my ($py3) = grep { -x } map { "$_/python3" } split /:/, ($ENV{'PATH'} || '');
 SKIP: {
 	skip 'no python3 on PATH', 2 unless $py3;
@@ -271,10 +278,11 @@ silence = b"\x00\x00" * 1600
 loud = (1000).to_bytes(2, 'little', signed=True) * 1600
 assert int(m.rms16(silence)) == 0, "silence is not zero"
 assert 999 <= int(m.rms16(loud)) <= 1001, "a flat tone is its own level"
-seg = m.Segmenter(object(), object(), 0.7, 0.4, 20)
+seg = m.Segmenter(0.7, 1.0, 0.3, 15)
 assert seg.pause_windows == 7, "0.7 s is seven 100 ms windows"
-assert seg.min_windows == 4, "0.4 s is four"
-assert seg.ceiling_windows == 200, "20 s is two hundred"
+assert seg.min_windows == 10, "1 s is ten"
+assert seg.open_windows == 3, "0.3 s is three"
+assert seg.ceiling_windows == 150, "15 s is one hundred and fifty"
 up = m.upsample2((1000).to_bytes(2, 'little', signed=True) * 4)
 import array
 samples = array.array('h')
@@ -283,8 +291,8 @@ assert len(samples) == 8, "8 kHz samples double"
 assert list(samples) == [1000] * 8, "a level stays its level"
 print("ok")
 PY
-	my $out = qx{'$py3' '$probe' '$repo/scripts/vosk_stream.py' 2>&1};
-	is($? >> 8, 0, 'the streamer loads without Vosk installed');
+	my $out = qx{'$py3' '$probe' '$repo/scripts/whisper_stream.py' 2>&1};
+	is($? >> 8, 0, 'the streamer loads without a model installed');
 	like($out, qr/^ok/m, 'and its window arithmetic is right');
 }
 

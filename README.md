@@ -615,11 +615,11 @@ make
 # Fetch the base model configuration
 bash ./models/download-ggml-model.sh base
 
-# Offline speech-to-text, optional and quicker on a short clip: Vosk. The
-# installer makes a venv and brings one small English model under
-# ~/.local/share/jawnos/vosk, then Configure -> Plat offers
-# "Vosk · this machine" for Transcription. whisper.cpp above stays the
-# fallback (and the engine for a language Vosk has no model for).
+# Offline speech-to-text: whisper.cpp. The installer puts the pywhispercpp
+# wheel, the base and tiny models, and the whisper-cli/whisper-server wrappers
+# under ~/.local/share/jawnos/whisper with no cmake and no sudo, then Configure
+# -> Plat offers "whisper.cpp · this machine" for Transcription. A hand-built
+# whisper.cpp in ~/whisper.cpp is still found. Termux cannot run the glibc wheel.
 perl scripts/jawnos_deps.pl --extras-only --install
 
 sudo cpanm --notest --force Mojolicious::Lite \

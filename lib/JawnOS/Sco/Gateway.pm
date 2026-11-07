@@ -956,13 +956,14 @@ sub _spawn {
 # The caller's words are the other half of a screening, and a person watching
 # the Phone pane should read them while the call is up, not after. The helper
 # copies every frame of the caller's voice into a FIFO (--tee); a Python child
-# segments it and asks Vosk for a sentence at a time. This side only routes:
+# segments it and hands each sentence to whisper.cpp. This side only routes:
 # it keeps the lines in the status (so a pane that opens late catches up), in a
 # JSONL file beside the gateway (so the Chat app can file them later), and on
 # the phone's websocket (so the bubbles appear as they are said).
 #
-# A transcript is never required for a call: no Vosk, no model, or a streamer
-# that dies leaves the plan running and the pane saying why there is no text.
+# A transcript is never required for a call: no whisper.cpp, no model, or a
+# streamer that dies leaves the plan running and the pane saying why there is
+# no text.
 
 sub _start_transcript {
 	my ($self) = @_;
@@ -970,15 +971,15 @@ sub _start_transcript {
 	$self->{'partial'} = '';
 	$self->{'transcript_engine'} = '';
 	$self->{'transcript_note'} = '';
-	unless (eval { &subs::vosk_available() }) {
-		$self->{'transcript_note'} = 'Vosk is not installed on this machine';
+	unless (eval { &subs::whisper_available() }) {
+		$self->{'transcript_note'} = 'whisper.cpp is not installed on this machine';
 		return 0;
 	}
-	my $python   = eval { &subs::vosk_python() } || '';
-	my $model    = eval { &subs::vosk_model_dir() } || '';
-	my $streamer = eval { &subs::vosk_streamer() } || '';
+	my $python   = eval { &subs::whisper_python() } || '';
+	my $model    = eval { &subs::whisper_models_dir() } || '';
+	my $streamer = eval { &subs::whisper_streamer() } || '';
 	unless (-x $python && length $model && -f $streamer) {
-		$self->{'transcript_note'} = 'Vosk is installed but its streamer or model is missing';
+		$self->{'transcript_note'} = 'whisper.cpp is installed but its streamer or model is missing';
 		return 0;
 	}
 	my $dir = $self->{'dir'} . '/transcripts';
@@ -1044,7 +1045,7 @@ sub _transcript_event {
 	my ($self, $event) = @_;
 	my $name = $event->{'event'} || '';
 	if ($name eq 'ready') {
-		$self->{'transcript_engine'} = 'vosk';
+		$self->{'transcript_engine'} = 'whisper.cpp';
 		$self->write_status();
 		return 1;
 	}
@@ -1180,7 +1181,7 @@ sub _start_rtc {
 	return { ok => 0, error => 'no call is up' }
 		unless $self->{'state'} =~ /^(?:armed|in_call|done)$/;
 	return { ok => 1, state => $self->{'rtc'}->{'state'} } if $self->{'rtc_pid'};
-	my $python = eval { &subs::vosk_python() } || '';
+	my $python = eval { &subs::rtc_python() } || '';
 	my $script = eval { &subs::rtc_bridge() } || '';
 	unless ($python && -x $python && $script && -f $script) {
 		$self->{'rtc'} = { state => 'unavailable', error => 'the WebRTC bridge is not installed on this machine' };

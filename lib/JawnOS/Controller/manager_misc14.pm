@@ -195,8 +195,8 @@ sub action_45403 {
 				$stderr = gensym;
 
 				# 1. Resolve your absolute home directory paths first so they pass smoothly into the shell string
-				my $whisper_bin   = &subs::home('~/whisper.cpp/build/bin/whisper-cli');
-				my $whisper_model = &subs::home('~/whisper.cpp/models/ggml-base.bin');
+				my $whisper_bin   = &subs::whisper_cli_bin();
+				my $whisper_model = &subs::whisper_model_file('base');
 
 				my $pipeline_cmd = sprintf(
 					'ffmpeg -nostdin -loglevel error -i - -blocksize 4096 -f wav -ar 16000 -ac 1 -acodec pcm_s16le - | %s -m %s --output-txt --file -',

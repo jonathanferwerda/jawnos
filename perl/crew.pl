@@ -94,12 +94,6 @@ our %KINDS = (
 		needs   => ['whisper'],
 		cost    => 'heavy',
 	},
-	'vosk.transcribe' => {
-		handler => \&_job_vosk_transcribe,
-		timeout => 300,
-		needs   => ['vosk'],
-		cost    => 'heavy',
-	},
 );
 
 # The kind's registry row, or undef. The name is validated before lookup so a
@@ -184,7 +178,6 @@ sub _compute_abilities {
 		ffmpeg    => _which('ffmpeg') ? 1 : 0,
 		tesseract => _which('tesseract') ? 1 : 0,
 		whisper   => _whisper_binary() ? 1 : 0,
-		vosk      => (eval { &subs::vosk_available() }) ? 1 : 0,
 		perl      => _which('perl') ? 1 : 0,
 		node      => _which('node') ? 1 : 0,
 		git       => _which('git') ? 1 : 0,
@@ -819,10 +812,8 @@ sub _which {
 }
 
 sub _whisper_binary {
-	my $hardwired = eval { &subs::home('~/whisper.cpp/build/bin/whisper-cli') };
-	if (defined $hardwired && length $hardwired && -x $hardwired) {
-		return $hardwired;
-	}
+	my $installed = eval { &subs::whisper_cli_bin() } || '';
+	return $installed if length $installed;
 	foreach my $name ( qw/whisper-cli whisper-cpp whisper/ ) {
 		my $path = _which($name);
 		return $path if length $path;
@@ -947,19 +938,6 @@ sub _job_whisper_transcribe {
 	my $text = &subs::whisper_transcribe($raw, $lang);
 	die "no transcript\n" unless defined $text && length $text;
 	return { text => $text, lang => $lang };
-}
-
-sub _job_vosk_transcribe {
-	# Vosk on whatever machine holds the model. The caller still gets the same
-	# shape as whisper.transcribe, so a device can switch engines without
-	# learning a second reply.
-	my ($payload) = @_;
-	my $raw = _payload_audio($payload);
-	die "vosk.transcribe needs audio\n" unless defined $raw && length $raw;
-	my $lang = $payload->{'lang'} // 'auto';
-	my $text = &subs::vosk_transcribe($raw, $lang);
-	die "no transcript\n" unless defined $text && length $text;
-	return { text => $text, lang => $lang, engine => 'vosk' };
 }
 
 1;
