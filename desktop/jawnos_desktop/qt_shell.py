@@ -42,6 +42,14 @@ DESKTOP_DIR = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
 ROOT_DIR = os.path.dirname(DESKTOP_DIR)
 
 
+def _qurl_host(url):
+    """The lower-case host of a QUrl, or ''; QUrl spells it host(), not hostname()."""
+    try:
+        return (url.host() or "").strip("[]").lower()
+    except Exception:
+        return ""
+
+
 def prepare_wayland_env():
     """Point Qt and Chromium at Wayland when the session is Wayland.
 
@@ -787,14 +795,35 @@ def main(argv=None):
         # Only the manager's own origin may use the bridge. A public page
         # loaded in this view must not be able to borrow the app's key.
         try:
-            host = page_obj.url().hostname() or ""
+            host = _qurl_host(page_obj.url())
         except Exception:
             host = ""
+        if not host:
+            # During a redirect/reload QWebEnginePage.url() can be empty while
+            # the view already knows the committed origin.
+            try:
+                host = _qurl_host(view_obj.url())
+            except Exception:
+                pass
         allowed = {"127.0.0.1", "localhost", "::1"}
         if allowed_host:
             allowed.add(allowed_host)
         if host not in allowed:
+            if os.environ.get("JAWNOS_QT_DEBUG"):
+                sys.stderr.write("qt-bridge reject %s host=%r allowed=%r\n" % (
+                    action, host, sorted(allowed)))
+            # Answer a rejected caller so the page's app-login promise settles;
+            # silence here left the gate on "Checking this app..." forever.
+            msg_id = message.get("id") or ""
+            if msg_id:
+                page_obj.runJavaScript(
+                    "window.__jawnAppResult && window.__jawnAppResult(%s, %s);"
+                    % (json.dumps(msg_id),
+                       json.dumps({"ok": False, "error": "unavailable"})))
             return
+        if os.environ.get("JAWNOS_QT_DEBUG"):
+            sys.stderr.write("qt-bridge %s host=%r allowed_host=%r\n" % (
+                action, host, allowed_host))
         if action == "media_state":
             media["audio"] = bool(message.get("audio"))
             media["video"] = bool(message.get("video"))
@@ -857,6 +886,9 @@ def main(argv=None):
                     % (json.dumps(msg_id), json.dumps(reply)))
             except Exception:
                 pass
+        if os.environ.get("JAWNOS_QT_DEBUG"):
+            sys.stderr.write("qt-bridge reply %s ok=%s error=%r\n" % (
+                action, reply.get("ok"), reply.get("error")))
 
     # ---- fullscreen asked for by the page (a video) ------------------------
     def page_fullscreen(request):

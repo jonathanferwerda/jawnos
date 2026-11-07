@@ -48,8 +48,19 @@ function jawnDesktopCall(action, args) {
 			reject({ error: 'unavailable' }); return;
 		}
 		var id = 'app' + Date.now() + Math.random().toString(36).slice(2);
+		var done = false;
+		// A desktop app that rejects the origin (or an older build that never
+		// replies) must not leave the app gate on "Checking this app" forever.
+		var timer = setTimeout(function () {
+			if (done) { return; }
+			done = true;
+			window.__jawnAppResult = null;
+			reject({ error: 'timeout' });
+		}, 2500);
 		window.__jawnAppResult = function (rid, res) {
-			if (rid !== id) { return; }
+			if (rid !== id || done) { return; }
+			done = true;
+			clearTimeout(timer);
 			window.__jawnAppResult = null;
 			if (res && res.ok) { resolve(res); } else { reject(res || { error: 'failed' }); }
 		};
@@ -57,6 +68,7 @@ function jawnDesktopCall(action, args) {
 			window.webkit.messageHandlers.jawnos.postMessage(JSON.stringify({ action: action, id: id, args: args || {} }));
 		}
 		catch (e) {
+			clearTimeout(timer);
 			window.__jawnAppResult = null;
 			reject({ error: 'unavailable' });
 		}

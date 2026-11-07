@@ -62,6 +62,8 @@ like($qt, qr/messageHandlers\[name\]/, 'and the WebKit handler names the page ch
 like($qt, qr/window\.JawnDesktop/, 'the desktop marker universal.js keys app login off');
 like($qt, qr/def handle_message\([^)]*allowed_host/,
 	'the handler receives the window\'s manager host');
+like($qt, qr/def _qurl_host/, 'and reads a QUrl host with the right API');
+unlike($qt, qr/\.url\(\)\.hostname\(\)/, 'not the urlparse spelling');
 like($qt, qr/handle_message\(name, raw, page_obj, view_obj, allowed_host\)/,
 	'and the bridge passes it through');
 like($qt, qr/bridge\.app_public_pem|bridge\.app_sign_b64/,
@@ -171,6 +173,14 @@ SKIP: {
 	skip 'the PySide6 panel cannot be built here', 1
 		if $panel_run =~ /No module named .PySide6|ModuleNotFoundError/;
 	like($panel_run, qr/panel-ok JawnOS control panel/, 'the panel builds offscreen');
+}
+
+my $hostkit = `cd "$root" && QT_QPA_PLATFORM=offscreen PYTHONPATH=desktop python3 -c 'from PySide6.QtCore import QUrl; from jawnos_desktop.qt_shell import _qurl_host; print(_qurl_host(QUrl("https://Example.COM:45545/x")), _qurl_host(QUrl("https://[::1]:1/")))' 2>&1`;
+SKIP: {
+	skip 'PySide6 is not installed here', 1
+		if $hostkit =~ /No module named .PySide6|ModuleNotFoundError/;
+	like($hostkit, qr/^example\.com ::1$/m,
+		'the QUrl host is lower-cased and IPv6 brackets are stripped');
 }
 
 done_testing();

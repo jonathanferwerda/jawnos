@@ -9,6 +9,9 @@ use lib "$FindBin::Bin/lib", "t/lib";
 use Test::More;
 use RepoSource;
 use File::Temp qw(tempdir);
+use File::Slurp qw(read_file);
+
+my $root = "$FindBin::Bin/..";
 
 # The gate template asks for $webauthn_available. A render that leaves it out
 # raises "Global symbol ... requires explicit package name" under strict and the
@@ -91,5 +94,11 @@ like($hook, qr!\$path =~ m\{\^/js/universal/\}!,
 # path as a comment, so that is what the source shows now.
 like($text, qr{POST /manager/self_deploy\nsub action_\d+ \{.*?peer_verify}ms,
 	'self_deploy peer_verifies the caller');
+
+# The app gate's desktop bridge call must settle: a rejected origin or an old
+# build that never replies used to leave the page on "Checking this app...".
+my $unlock = read_file("$root/public/js/universal/03_unlock_requests_media_locks.js");
+like($unlock, qr/reject\(\{ error: 'timeout' \}\)/,
+	'the app bridge call times out instead of hanging the gate');
 
 done_testing();
