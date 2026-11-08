@@ -1,4 +1,4 @@
-# tests-for: desktop/jawnos_desktop/qt_shell.py desktop/jawnos_desktop/qt_panel.py desktop/jawnos_desktop/bridge.py desktop/jawnos_desktop/keepawake.py desktop/jawnos_desktop/gpu.py desktop/jawnos_desktop/theme.py desktop/jawnos_desktop/core.py desktop/jawnos-desktop desktop/jawnos-qt desktop/wayland/jawnos-session
+# tests-for: desktop/jawnos_desktop/qt_shell.py desktop/jawnos_desktop/qt_panel.py desktop/jawnos_desktop/bridge.py desktop/jawnos_desktop/keepawake.py desktop/jawnos_desktop/gpu.py desktop/jawnos_desktop/theme.py desktop/jawnos_desktop/errorpage.py desktop/jawnos_desktop/core.py desktop/jawnos-desktop desktop/jawnos-qt desktop/wayland/jawnos-session
 # covers:    the Qt WebEngine desktop shell is the default: the same Manager page
 #           in Chromium, which is the engine with WebRTC (Debian's WebKitGTK is
 #           built without RTCPeerConnection), the ticket cookie kept on disk,
@@ -24,6 +24,7 @@ my $keepawake = read_file("$root/desktop/jawnos_desktop/keepawake.py");
 my $bridge = read_file("$root/desktop/jawnos_desktop/bridge.py");
 my $gpu = read_file("$root/desktop/jawnos_desktop/gpu.py");
 my $theme = read_file("$root/desktop/jawnos_desktop/theme.py");
+my $errpage = read_file("$root/desktop/jawnos_desktop/errorpage.py");
 my $core = read_file("$root/desktop/jawnos_desktop/core.py");
 my $webview = read_file("$root/desktop/jawnos_desktop/webview.py");
 my $entry = read_file("$root/desktop/jawnos-desktop");
@@ -122,6 +123,11 @@ like($qt, qr/page_obj\.setBackgroundColor\(black\)/,
 	'with the page background, not a white default');
 like($qt, qr/black_page\(page, view\)/, 'applied to the main view');
 like($qt, qr/black_page\(other, win\)/, 'and to each peer Manager window');
+like($qt, qr/ErrorPageEnabled, False/, 'the built-in white error page is off');
+like($qt, qr/errorpage\.dark_page/, 'the manager shows a dark page after its retries');
+like($qt, qr/errorpage\.watch\(other\)/, 'and peer windows show one at once');
+like($errpage, qr/background:#000000/, 'the error page is on the black ground');
+like($errpage, qr/#ffcc00/, 'with the jawn yellow for the retry');
 like($qt, qr/QSystemTrayIcon/, 'the shell keeps a tray');
 like($qt, qr/class Supervisor/, 'and supervises jawn');
 like($qt, qr/auto_update_available/, 'including the desktop self-update');
@@ -237,6 +243,16 @@ SKIP: {
 		if $black =~ /No module named .PySide6|ModuleNotFoundError/;
 	like($black, qr/^#000000 True background-color: #000000; #000000$/m,
 		'the page, view palette and stylesheet are all black');
+}
+
+# The dark error page: escaped inputs, the retry only for a real URL, and the
+# phrase the user sees instead of Chromium's white page.
+my $errtest = `cd "$root" && PYTHONPATH=desktop python3 -c 'from jawnos_desktop.errorpage import dark_page; h=dark_page("<b>x</b>", "https://h/p?q=<1>"); print("err-ok", "&lt;b&gt;" in h, "Try again" in h, "background:#000000" in h, "<title>This page cannot be displayed</title>" in h)' 2>&1`;
+SKIP: {
+	skip 'python3 is not installed here', 1
+		if $errtest =~ /command not found|No such file/;
+	like($errtest, qr/^err-ok True True True True$/m,
+		'the dark page escapes, retries and names the failure');
 }
 
 # The status rule the panel and the tray share: red when down, amber while a

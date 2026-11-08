@@ -47,7 +47,6 @@ Safety rules (see ``docs/internet-contract.md``):
 
 import argparse
 import collections
-import html as html_lib
 import ipaddress
 import json
 import logging
@@ -57,7 +56,7 @@ import sys
 import threading
 import urllib.parse
 
-from . import bridge, core, gpu, keepawake, usage
+from . import bridge, core, errorpage, gpu, keepawake, usage
 
 LOG = logging.getLogger("jawnos.browser")
 
@@ -1222,29 +1221,7 @@ def _new_tab_html():
 
 
 def _error_html(uri, message):
-    safe_uri = html_lib.escape(uri or "")
-    safe_message = html_lib.escape(message or "")
-    retry = ""
-    try:
-        scheme = urllib.parse.urlsplit(uri or "").scheme.lower()
-    except ValueError:
-        scheme = ""
-    if safe_uri and scheme in ("http", "https"):
-        retry = '<p><a href="%s">Try again</a></p>' % safe_uri
-    return """<!DOCTYPE html>
-<html><head><meta charset="utf-8"><title>Can't open this page</title>
-<style>
- html,body{height:100%%;margin:0;background:#111;color:#ededed;
-           font-family:system-ui,sans-serif;}
- .wrap{max-width:720px;margin:0 auto;padding:10vh 24px;}
- h1{font-size:26px;margin:0 0 12px;color:#ffcc00;}
- p{line-height:1.5;margin:0 0 12px;}
- .u{opacity:.6;word-break:break-all;font-family:monospace;font-size:13px;}
- a{color:#ffcc00;}
-</style></head>
-<body><div class="wrap"><h1>Can't open this page</h1>
-<p>%s</p><p class="u">%s</p>%s</div></body></html>""" % (
-        safe_message, safe_uri, retry)
+    return errorpage.dark_page(message, uri, title="Can't open this page")
 
 
 # --------------------------------------------------------------------------

@@ -1,4 +1,4 @@
-# tests-for: desktop/jawnos_desktop/browser.py desktop/jawnos-browse
+# tests-for: desktop/jawnos_desktop/browser.py desktop/jawnos_desktop/errorpage.py desktop/jawnos-browse
 # covers:    Browse is Qt WebEngine (no GTK): a named on-disk profile of its
 #            own, the house certificate and capture permissions, the page
 #            bridge and media keep-awake, the ad-block picker in an isolated
@@ -23,6 +23,8 @@ my $launcher = read_file("$root/desktop/jawnos-browse");
 
 like($src, qr/from PySide6\.QtWebEngineWidgets import QWebEngineView/,
 	'the window is Qt WebEngine');
+like($src, qr/errorpage\.dark_page/,
+	'and a failed load shows the shared dark error page');
 like($src, qr/from PySide6\.QtWebEngineCore import \(\s*\n\s*QWebEngineDownloadRequest,/,
 	'and uses the WebEngine core types');
 like($src, qr/PROFILE_NAME = "jawnos-browse"/,

@@ -35,7 +35,7 @@ import threading
 import time
 from urllib.parse import urljoin, urlparse
 
-from . import bridge, core, gpu, theme
+from . import bridge, core, errorpage, gpu, theme
 
 # desktop/, resolved the same way the other entry scripts do it.
 DESKTOP_DIR = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
@@ -760,6 +760,12 @@ def main(argv=None):
     page_settings = page.settings()
     page_settings.setAttribute(
         QWebEngineSettings.WebAttribute.PlaybackRequiresUserGesture, False)
+    # Qt's own error page is white; errorpage.py supplies a dark one instead.
+    try:
+        page_settings.setAttribute(
+            QWebEngineSettings.WebAttribute.ErrorPageEnabled, False)
+    except Exception:
+        pass
 
     # ---- keep the screen awake while media plays ---------------------------
     media = {"audio": False, "video": False}
@@ -796,6 +802,12 @@ def main(argv=None):
         other = QWebEnginePage(profile, win)
         win.setPage(other)
         black_page(other, win)
+        try:
+            other.settings().setAttribute(
+                QWebEngineSettings.WebAttribute.ErrorPageEnabled, False)
+        except Exception:
+            pass
+        errorpage.watch(other)
         win.setWindowTitle(title or "JawnOS Machine")
         win.resize(900, 700)
         other.certificateError.connect(_accept_certificate)
@@ -1342,12 +1354,20 @@ def main(argv=None):
                 _ok, view.title(), view.url().toString().endswith("/manager"), login_pending))
         if not _ok:
             # jawn may still be starting (the supervisor's first tick starts
-            # it). Retry the same URL, like the WebKit shell does, instead of
-            # leaving the window on a connection-refused page.
+            # it). Retry the same URL instead of leaving the window empty;
+            # after the retries are spent, say so on the dark error page.
             load_failures["n"] += 1
+            current = view.url().toString()
+            retry = current if current.startswith(("http://", "https://")) else url
             if load_failures["n"] <= 40 and not args.probe:
-                retry = view.url().toString() or url
                 QTimer.singleShot(1500, lambda: view.setUrl(QUrl(retry)))
+                return
+            if not args.probe:
+                page.setHtml(errorpage.dark_page(
+                    "The Manager did not answer.",
+                    retry,
+                    hint="It may still be starting. Press Try again, or read "
+                         "the log from the control panel."))
             return
         load_failures["n"] = 0
         if login_pending:
