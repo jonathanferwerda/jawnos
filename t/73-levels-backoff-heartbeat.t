@@ -38,8 +38,14 @@ ok($sync, 'house_levels_sync is still one sub');
 
 like($sync, qr/context => 'levels_backoff', subcontext => \$rsig/,
 	'the backoff is per peer');
-like($sync, qr/my \$hold = \(\$backoff->\{'until'\} \|\| 0\) > &rightNow\(\);/,
+like($sync, qr/my \$hold = \$same_version && \(\$backoff->\{'until'\} \|\| 0\) > &rightNow\(\);/,
 	'a backed-off peer is not asked');
+like($sync, qr/my \$same_version = \(\(\$backoff->\{'version'\} \|\| ''\) eq \$version\)/,
+	'a backoff written by another version does not hold');
+like($sync, qr/\{ failures => \$failures, until => &rightNow\(\) \+ \$delay, at => &rightNow\(\), version => \$version \}/,
+	'the failure record names the version that wrote it');
+like($sync, qr/\{ failures => 0, until => 0, at => &rightNow\(\), version => \$version \}/,
+	'and an answer clears it on the current version');
 like($sync, qr/if \(\$hold\) \{\s*\$skipped\+\+;\s*\$keep_previous->\(\$rsig, \$pname\);\s*next;/,
 	'a skipped peer keeps the row it last had');
 like($sync, qr/my \$delay = 240000 \* \(2 \*\* \(\$failures - 1\)\);/,

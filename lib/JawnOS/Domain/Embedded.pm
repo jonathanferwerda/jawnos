@@ -475,8 +475,14 @@ sub house_levels_sync {
 		# (/manager/health_report, /manager/available) clears it at once, which is
 		# how a machine coming back is noticed without polling for it.
 		my $backoff = &cache_get({ app => '__president', context => 'levels_backoff', subcontext => $rsig }) || {};
-		my $failures = ($backoff->{'failures'} || 0) + 0;
-		my $hold = ($backoff->{'until'} || 0) > &rightNow();
+		my $version = &jawn_version();
+		# A row written by another version is not a hold: an update may be the
+		# fix (a new CA, a new peer route), and a person who has just updated must
+		# not watch a peer stay grey for the rest of a fifteen-minute backoff.
+		# Within one version the backoff still works as before.
+		my $same_version = (($backoff->{'version'} || '') eq $version) ? 1 : 0;
+		my $failures = $same_version ? ($backoff->{'failures'} || 0) + 0 : 0;
+		my $hold = $same_version && ($backoff->{'until'} || 0) > &rightNow();
 		# the card being open is a person waiting: it may look again past a first
 		# blip, but not past a peer that has been gone for several passes
 		$hold = 0 if $opts->{'fast'} && $failures <= 2;
@@ -500,7 +506,7 @@ sub house_levels_sync {
 			my $delay = 240000 * (2 ** ($failures - 1));
 			$delay = 900000 if $delay > 900000;
 			&cache_set({ app => '__president', context => 'levels_backoff', subcontext => $rsig, warranty => '+1d' },
-				{ failures => $failures, until => &rightNow() + $delay, at => &rightNow() });
+				{ failures => $failures, until => &rightNow() + $delay, at => &rightNow(), version => $version });
 			my $err = $@ ? do { my $e = $@; $e =~ s/\s+/ /g; substr($e, 0, 120) } : '';
 			$log->info('house levels: ' . $pname . ' '
 				. ($res ? ('HTTP ' . $res->code) : 'no answer') . ($err ne '' ? " ($err)" : '')
@@ -511,7 +517,7 @@ sub house_levels_sync {
 		# it answered: the next pass asks it again
 		if ($failures) {
 			&cache_set({ app => '__president', context => 'levels_backoff', subcontext => $rsig, warranty => '+1d' },
-				{ failures => 0, until => 0, at => &rightNow() });
+				{ failures => 0, until => 0, at => &rightNow(), version => $version });
 		}
 		$peers++;
 		my $peer_battery = (ref $h->{'battery'} eq 'HASH') ? &battery_gauge_eta($h->{'battery'}) : {};
