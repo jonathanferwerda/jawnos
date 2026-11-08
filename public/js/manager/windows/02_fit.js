@@ -23,6 +23,12 @@ function windowMinimizer(timestamp,app) {
 		$('#window_' + timestamp).css({'height': tnh, 'width': tnw });
 	}
 	windowDimensionSetter(win);
+	if (!windowPhoneChecker() && typeof windowTileRefresh === 'function') {
+		// a restored window comes back in front; a minimised one hands the rail
+		// to the next window
+		if (win.length && win.is(':visible')) { topLevelNow(win); }
+		windowTileRefresh();
+	}
 	// the window that steps forward or away from the front owns the keyboard cue
 	if (typeof jawnosWindowFocusApply == 'function') { jawnosWindowFocusApply(); }
 }
@@ -162,6 +168,12 @@ function windowRestorer(timestamp,app) {
 		win.attr('visible', 'no');
 	}
 	windowDimensionSetter(win);
+	if (!windowPhoneChecker() && typeof windowTileRefresh === 'function') {
+		// restoring a window from the taskbar brings it out of the rail and in
+		// front, so the whole frame is the one on show
+		if (win.length && win.is(':visible')) { topLevelNow(win); }
+		windowTileRefresh();
+	}
 	if (typeof jawnosWindowFocusApply == 'function') { jawnosWindowFocusApply(); }
 
 }
@@ -247,6 +259,8 @@ function windowDraggable(win) {
 				}
 				if (typeof markerDragger === 'function') { markerDragger(p.target.id,'stop'); }
 				windowDimensionSetter($('#' + p.target.id));
+				// a rail bar is a switcher, not a free window: put it back in the rail
+				if (win.hasClass('tile_rail') && typeof windowTileRefresh === 'function') { windowTileRefresh(); }
 				// a phone's pile is a cascade; a drag would leave the window over the
 				// others' bars and swallow their taps, so restack it - to the top of
 				// the pile - the moment the drag ends
@@ -321,20 +335,23 @@ $(document).on('click', '.place_button', function(e) {
 	var app = win.attr('app');
 	if (!win.length || !app) { return; }
 	if (button.attr('status') == 'on') {
-		// let it tile again: no place of its own, and the next open cascades it
+		// let it tile again: no place of its own, and the rail takes it back
 		button.attr('status', 'off');
 		win.attr('pre_dimensioned', 0);
+		win.removeAttr('tile_w').removeAttr('tile_h');
 		settingDeleter({ 'app': app, 'setting': 'dimensions' });
 		settingSetter({ 'app': app, 'setting': 'place', 'value': 'tile' });
 	}
 	else {
-		// keep it as it sits, on the screen it sits on
+		// keep it as it sits, on the screen it sits on. A rail bar is only a
+		// title bar; the pin takes the whole size it held before it joined.
 		button.attr('status', 'on');
 		win.attr('pre_dimensioned', 1);
+		if (win.hasClass('tile_rail') && typeof windowTileRelease === 'function') { windowTileRelease(win); }
 		windowDimensionSetter(win);
 		settingSetter({ 'app': app, 'setting': 'place', 'value': 'lock' });
 	}
-	if (typeof windowFindSpaceRefresh === 'function') { windowFindSpaceRefresh(); }
+	if (typeof windowTileRefresh === 'function') { windowTileRefresh(); }
 });
 
 // Double-press a window's title bar on a desk to let the tiled windows find the
@@ -509,10 +526,12 @@ $(document).on('resizestop', '.wind', function () {
 	// a person's own resize is the new wanted size
 	$(this).removeAttr('fit_shrunk').removeAttr('fit_height');
 	windowFit($(this));
-	// resizing a window that holds its own place moves an obstacle the tile
+	// the focused frame's new size is what the rail restores when it comes back
+	if (typeof windowTileRememberSize === 'function') { windowTileRememberSize(this); }
+	// resizing a window that holds its own place moves an obstacle the rail
 	// has to flow around
-	if (!windowIsTiled(this) && typeof windowFindSpaceRefresh === 'function') {
-		windowFindSpaceRefresh();
+	if (!windowIsTiled(this) && typeof windowTileRefresh === 'function') {
+		windowTileRefresh();
 	}
 });
 

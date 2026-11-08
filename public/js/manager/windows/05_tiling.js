@@ -1,17 +1,17 @@
 // ---------------------------------------------------------------- the tile
 //
 // Every window that is not anchored is a tile member (windowIsTiled in the
-// index says which), and the tile is one straight vertical column of title
-// bars: the front window first, then each one a bar lower. The front window is
-// nudged a little to one side so the bars behind it keep a clickable edge. On a
-// desk find-space mode moves the whole column into the first place that clears
-// the anchored windows; without it the column starts at the left edge.
+// index says which). The tile is a vertical rail of title bars: each unfocused
+// window keeps only its navbar - icon, name and colour - so every window is
+// visible and one press away. The focused window (the front one) leaves the
+// rail and shows its whole frame beside it. An anchored window keeps the place
+// and size it was pinned at, and find-space mode moves the rail clear of it.
 
 function windowTiledWindows() {
 	var tiled = $('.wind').filter(function() {
 		return windowIsTiled(this);
 	});
-	// the front window is first, so it takes the top of the column
+	// the front window is first, so it is the one shown in full
 	tiled.sort(function(a, b) {
 		return (parseInt($(b).css('z-index'), 10) || 0) - (parseInt($(a).css('z-index'), 10) || 0);
 	});
@@ -30,60 +30,91 @@ function windowRectHits(rect, list) {
 	return false;
 }
 
-// The column: front first, each title bar one bar lower than the last. The first
-// (front) window is nudged right when there is room and left otherwise, so the
-// bars below it keep an exposed edge. With obstacles (find-space mode) the whole
-// column takes the first left edge whose frames clear them, and a nudge that
-// would land on one is dropped.
-function windowTileColumnPositions(windows, obstacles, view, startTop, stepX, nudge) {
-	var positions = [];
-	var tops = [];
-	var y = startTop;
-	for (var i = 0; i < windows.length; i++) {
-		tops.push(y);
-		y += windows[i].advance || windows[i].bar || 40;
+function windowOverlapArea(rect, list) {
+	var area = 0;
+	for (var i = 0; i < list.length; i++) {
+		var other = list[i];
+		var wide = Math.min(rect.left + rect.width, other.left + other.width) - Math.max(rect.left, other.left);
+		var tall = Math.min(rect.top + rect.height, other.top + other.height) - Math.max(rect.top, other.top);
+		if (wide > 0 && tall > 0) { area += wide * tall; }
 	}
-	var maxWidth = 0;
-	for (var w = 0; w < windows.length; w++) {
-		maxWidth = Math.max(maxWidth, windows[w].width || 0);
-	}
-	var maxLeft = Math.max(0, view.width - Math.min(maxWidth, view.width));
-	stepX = stepX || 50;
-	var base = 0;
-	if (obstacles && obstacles.length) {
-		var found = false;
-		for (var left = 0; left <= maxLeft && !found; left += stepX) {
-			var clear = true;
-			for (var j = 0; j < windows.length; j++) {
-				var frame = { left: left, top: tops[j], width: windows[j].width || 0, height: windows[j].height || 0 };
-				if (windowRectHits(frame, obstacles)) { clear = false; break; }
-			}
-			if (clear) { base = left; found = true; }
-		}
-	}
-	var walls = obstacles || [];
-	for (var k = 0; k < windows.length; k++) {
-		var win = windows[k];
-		var spot = { left: base, top: tops[k] };
-		if (k === 0 && nudge) {
-			var right = base + nudge;
-			var left_spot = base - nudge;
-			var right_frame = { left: right, top: tops[k], width: win.width || 0, height: win.height || 0 };
-			var left_frame = { left: left_spot, top: tops[k], width: win.width || 0, height: win.height || 0 };
-			if (right + (win.width || 0) <= view.width && !windowRectHits(right_frame, walls)) {
-				spot.left = right;
-			}
-			else if (left_spot >= 0 && !windowRectHits(left_frame, walls)) {
-				spot.left = left_spot;
-			}
-		}
-		positions.push(spot);
-	}
-	return positions;
+	return area;
 }
 
-// Anchored windows are the only windows with a place of their own; the column
-// flows around them in find-space mode.
+// The rail's width: wide enough for the icon and a name, narrow enough to leave
+// the focused window the desk.
+function windowTileRailWidth(view) {
+	return Math.max(160, Math.min(360, Math.round(view.width * 0.30)));
+}
+
+// The first left edge whose title-bar strip clears the anchored windows. A rail
+// that cannot find a clear strip stays at the left edge; the anchored window
+// still takes precedence over it.
+function windowTileRailLeft(obstacles, view, railW, top, height) {
+	var maxLeft = Math.max(0, view.width - railW);
+	for (var left = 0; left <= maxLeft; left += 50) {
+		if (!windowRectHits({ left: left, top: top, width: railW, height: height }, obstacles)) {
+			return left;
+		}
+	}
+	return 0;
+}
+
+// The tile's places. windows is the front-first list; the first becomes the
+// focused frame beside the rail, the rest become title-bar rows. Returns
+// { focus: {left,top,width,height}, rail: [{left,top,width,height}, ...] }.
+function windowTileRailLayout(windows, obstacles, view, startTop, bottomClearance, railW, avoidAnchors) {
+	var bar = (windows.length && windows[0].bar) || 40;
+	var railCount = Math.max(0, windows.length - 1);
+	var top = startTop;
+	var floor = view.height - (bottomClearance || 0);
+	var rail = [];
+	var railX = 0;
+	if (obstacles && obstacles.length && railCount) {
+		railX = windowTileRailLeft(obstacles, view, railW, top, railCount * bar);
+	}
+	for (var i = 0; i < railCount; i++) {
+		rail.push({ left: railX, top: top + i * bar, width: railW, height: bar });
+	}
+	var gap = 12;
+	var height = Math.max(200, floor - top);
+	var walls = (avoidAnchors && obstacles) ? obstacles : [];
+	var rightX = railCount ? railX + railW + gap : 0;
+	var leftEnd = railCount ? railX - gap : 0;
+	var rightEnd = view.width;
+	var leftStart = 0;
+	// the focused frame reaches from the rail to the first held place on its
+	// side, so an anchored window on the right is as good as one on the left
+	for (var w = 0; w < walls.length; w++) {
+		var wall = walls[w];
+		if (wall.top >= top + height || wall.top + wall.height <= top) { continue; }
+		if (wall.left >= rightX) { rightEnd = Math.min(rightEnd, wall.left); }
+		if (wall.left + wall.width <= leftEnd) { leftStart = Math.max(leftStart, wall.left + wall.width); }
+	}
+	var rightW = Math.max(0, rightEnd - rightX);
+	var leftW = Math.max(0, leftEnd - leftStart);
+	var rightRect = { left: rightX, top: top, width: rightW, height: height };
+	var leftRect = { left: leftStart, top: top, width: leftW, height: height };
+	var rightOpen = windowOverlapArea(rightRect, walls);
+	var leftOpen = windowOverlapArea(leftRect, walls);
+	var useRight = rightOpen < leftOpen;
+	if (rightOpen === leftOpen) { useRight = rightW >= leftW; }
+	if (rightW <= 0 && leftW > 0) { useRight = false; }
+	if (leftW <= 0 && rightW > 0) { useRight = true; }
+	var focusX = useRight ? rightX : leftStart;
+	var focusW = Math.max(0, useRight ? rightW : leftW);
+	var front = windows[0] || { width: focusW, height: height };
+	var focus = {
+		left: focusX,
+		top: top,
+		width: Math.min(front.width || focusW, focusW),
+		height: Math.min(front.height || height, height)
+	};
+	return { focus: focus, rail: rail };
+}
+
+// Anchored windows are the only windows with a place of their own; find-space
+// mode flows the rail and the focused frame around them.
 function windowAnchoredRects() {
 	var list = [];
 	$('.wind').each(function() {
@@ -100,28 +131,56 @@ function windowAnchoredRects() {
 	return list;
 }
 
+// A window remembers the size it had before it joined the rail, so focusing it
+// again restores the whole frame rather than a title-bar sliver.
+function windowTileStoredSize(win) {
+	if (!win.attr('tile_w') || !win.attr('tile_h')) {
+		win.attr('tile_w', Math.round(win.width()) || 480);
+		win.attr('tile_h', Math.round(win.height()) || 640);
+	}
+	if (!win.attr('tile_left') || !win.attr('tile_top')) {
+		win.attr('tile_left', Math.round(parseFloat(win.css('left')) || 0));
+		win.attr('tile_top', Math.round(parseFloat(win.css('top')) || 0));
+	}
+	return { width: parseFloat(win.attr('tile_w')) || 480, height: parseFloat(win.attr('tile_h')) || 640,
+		left: parseFloat(win.attr('tile_left')) || 0, top: parseFloat(win.attr('tile_top')) || 0 };
+}
+
+function windowTileRememberSize(win) {
+	win = $(win);
+	if (!windowIsTiled(win) || win.hasClass('tile_rail')) { return; }
+	win.attr('tile_w', Math.round(win.width())).attr('tile_h', Math.round(win.height()));
+	win.attr('tile_left', Math.round(parseFloat(win.css('left')) || 0))
+		.attr('tile_top', Math.round(parseFloat(win.css('top')) || 0));
+}
+
 function windowArrangeTile(avoidAnchors) {
 	if (windowPhoneChecker()) { return; }
 	var windows = windowTiledWindows().filter(':visible');
+	if (!windows.length) { return; }
 	var specs = [];
 	var targets = [];
 	windows.each(function() {
 		var win = $(this);
+		var size = windowTileStoredSize(win);
 		var bar = win.find('.top_navbar').first();
-		var step = bar.outerHeight() || 40;
-		specs.push({
-			width: win.width(),
-			height: win.height(),
-			bar: step,
-			advance: step - (parseFloat(bar.css('border-top-width')) || 0)
-		});
+		specs.push({ width: size.width, height: size.height, bar: bar.outerHeight() || 40 });
 		targets.push(win);
 	});
-	var obstacles = avoidAnchors ? windowAnchoredRects() : [];
-	var positions = windowTileColumnPositions(specs, obstacles, windowViewport(), windowTopLimit(), 50, 18);
-	for (var i = 0; i < targets.length; i++) {
-		targets[i].css({ 'left': positions[i].left, 'top': positions[i].top });
-		windowFit(targets[i]);
+	var view = windowViewport();
+	var railW = windowTileRailWidth(view);
+	// the rail always steps around a held place so its names stay visible; the
+	// focused frame only does so in find-space mode
+	var layout = windowTileRailLayout(specs, windowAnchoredRects(),
+		view, windowTopLimit(), windowBottomClearance(), railW, avoidAnchors);
+	var focus = targets[0];
+	focus.removeClass('tile_rail').addClass('tile_focus');
+	focus.css({ left: layout.focus.left, top: layout.focus.top, width: layout.focus.width, height: layout.focus.height });
+	windowFit(focus);
+	for (var i = 1; i < targets.length; i++) {
+		var spot = layout.rail[i - 1];
+		targets[i].removeClass('tile_focus').addClass('tile_rail');
+		targets[i].css({ left: spot.left, top: spot.top, width: spot.width, height: spot.height });
 	}
 }
 
@@ -133,13 +192,22 @@ function windowFindSpaceArrange() {
 	windowArrangeTile(true);
 }
 
-// A press raises the window (topLevelNow did) and the new front takes the top
-// of the column, with the side nudge that keeps the bars behind it reachable.
+// A press raises the window (topLevelNow did), and the new front leaves the
+// rail for the focused frame.
 function windowTileClick(win) {
 	if (!win || !$(win).length) { return; }
 	if (!windowIsTiled(win)) { return; }
 	if (windowFindSpaceMode) { windowFindSpaceArrange(); }
 	else { windowTileArrange(); }
+}
+
+// Pinning a window from the rail remembers the whole size it held before it
+// became a title-bar row, so the pin keeps something worth keeping.
+function windowTileRelease(win) {
+	win = $(win);
+	var size = windowTileStoredSize(win);
+	win.removeClass('tile_rail');
+	win.css({ width: size.width, height: size.height, left: size.left, top: size.top });
 }
 
 var windowFindSpaceMode = false;
@@ -148,8 +216,8 @@ function windowFindSpaceActive() {
 	return windowFindSpaceMode;
 }
 
-// A title-bar double-press is the whole switch: find-space lays the column
-// around the places that are already held, and the second press puts it back at
+// A title-bar double-press is the whole switch: find-space lays the rail
+// around the places that are already held, and the second press returns it to
 // the left edge.
 function windowFindSpaceToggle() {
 	windowFindSpaceMode = !windowFindSpaceMode;
@@ -159,7 +227,9 @@ function windowFindSpaceToggle() {
 }
 
 // A window that joined, left or changed its held place moves an obstacle the
-// column has to flow around again. Outside find-space mode there is nothing to do.
-function windowFindSpaceRefresh() {
+// rail has to flow around again.
+function windowTileRefresh() {
+	if (windowPhoneChecker()) { return; }
 	if (windowFindSpaceMode) { windowFindSpaceArrange(); }
+	else { windowTileArrange(); }
 }

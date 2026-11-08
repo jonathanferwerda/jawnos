@@ -965,6 +965,17 @@ canvas.background {
    Web/Browse tabs sit under it. */
 
 .wind { border-radius: var(--window_radius, var(--jawnos-corner, 12px)); background-color: var(--window, var(--panel)); box-shadow: 0 20px 50px rgba(0,0,0,.24), 0 2px 8px rgba(0,0,0,.12); }
+/* The tiled rail: an unfocused window keeps only its title bar, so every
+   window's icon and name stay in reach; the focused window leaves the rail and
+   shows its whole frame beside it. The window controls belong to the focused
+   frame, so the rail keeps its room for the name. */
+.wind.tile_rail { overflow: hidden; }
+.wind.tile_rail .window_contents,
+.wind.tile_rail .window_drawer { display: none !important; }
+.wind.tile_rail .navbar_buttons,
+.wind.tile_rail .navbar_reveal { display: none !important; }
+/* the rail row answers as a whole; its icon is not a separate reveal control */
+.wind.tile_rail .window_icon_holder { pointer-events: none; }
 body.dark_theme .wind { box-shadow: 0 22px 56px rgba(0,0,0,.55), 0 2px 8px rgba(0,0,0,.35); }
 /* Inside a window every surface that asked for the panel surface gets the
    window's own colour instead, so an app or an appointment does not dissolve

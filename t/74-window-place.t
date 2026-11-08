@@ -64,20 +64,25 @@ like($fit, qr/var scale = Math\.min\(now_w \/ saved_w, now_h \/ saved_h\);/, 'th
 like($fit, qr/win\.attr\('place_restoring', '1'\)/, 'restoring does not ratchet the saved place down');
 like($windows, qr/windowPlaceRestore\(\$\('#' \+ window_id\)\)/, 'the open path restores a pinned place');
 
-# --- the vertical tile and find-space mode ---------------------------------
+# --- the rail and find-space mode ------------------------------------------
 like($windows, qr/function windowIsTiled\(win\)/, 'one predicate says which windows the tile owns');
-like($tiling, qr/function windowTileColumnPositions\(windows, obstacles, view/, 'the tile has one place that hands out column slots');
-like($tiling, qr/tiled\.sort\(function/, 'the front window takes the top of the column');
-like($tiling, qr/function windowTileClick\(win\)/, 'a press moves the window to the top of the column');
+like($tiling, qr/function windowTileRailLayout\(windows, obstacles, view/, 'the tile has one place that hands out rail and focus places');
+like($tiling, qr/tiled\.sort\(function/, 'the front window is the one shown in full');
+like($tiling, qr/function windowTileClick\(win\)/, 'a press brings a window out of the rail');
+like($tiling, qr/function windowTileRelease\(win\)/, 'pinning a rail bar restores its whole size');
+like($tiling, qr/addClass\('tile_rail'\)/, 'unfocused windows become title-bar rows');
+like($tiling, qr/removeClass\('tile_rail'\)/, 'the focused window leaves the rail');
+like($tiling, qr/function windowTileRememberSize\(win\)/, 'a focused resize is what the rail restores');
+like($css, qr/\.wind\.tile_rail \.window_contents/, 'a rail bar hides the window body');
 like($fit, qr/\$\(document\)\.on\('dblclick', '\.top_navbar'/, 'double-pressing a title bar toggles find-space mode');
 unlike($fit, qr/win\.attr\('tile'/, 'a drag no longer takes a window out of the tile');
 like($windows, qr/windowFindSpaceActive\(\)/, 'the open path lays find-space mode out');
-like($stack, qr/windowFindSpaceRefresh\(\)/, 'closing a window closes the gap it leaves');
+like($stack, qr/windowTileRefresh\(\)/, 'closing a window leaves its rail row behind');
 
-# --- the straight column ----------------------------------------------------
-# The layout functions are played in a bare context: the column is a pure list
-# of places, the membership is read from the window attributes, and the switch
-# is the only state.
+# --- the rail and its focus -------------------------------------------------
+# The layout functions are played in a bare context: the rail is a pure list of
+# places, the membership is read from the window attributes, and the switch is
+# the only state.
 my $node = `command -v node 2>/dev/null`;
 chomp $node if defined $node;
 SKIP: {
@@ -107,6 +112,7 @@ function El(id, attrs, style) {
 	this.attrs = Object.assign({ id: id, app: id }, attrs || {});
 	this.style = Object.assign({ left: '0px', top: '0px', width: '400px', height: '300px' }, style || {});
 	this.classes = ['wind'];
+	this.classNames = [];
 }
 El.prototype.attr = function (k, v) {
 	if (v === undefined) { return this.attrs[k]; }
@@ -127,27 +133,36 @@ El.prototype.find = function (sel) {
 };
 El.prototype.show = function () { return this; };
 El.prototype.is = function () { return true; };
+El.prototype.width = function () { return parseFloat(this.style.width) || 0; };
+El.prototype.height = function () { return parseFloat(this.style.height) || 0; };
+El.prototype.addClass = function (name) { if (this.classNames.indexOf(name) < 0) { this.classNames.push(name); } return this; };
+El.prototype.removeClass = function (name) { this.classNames = this.classNames.filter(function (c) { return c !== name; }); return this; };
+El.prototype.hasClass = function (name) { return this.classNames.indexOf(name) >= 0; };
 
 function J(els) {
 	els = els || [];
-	const j = { length: els.length };
+	const j = { length: els.length, els: els };
 	els.forEach(function (el, i) { j[i] = el; });
 	j.each = function (fn) { els.forEach(function (el, i) { fn.call(el, i, el); }); return j; };
 	j.on = function () { return j; };
 	j.width = function () { return els[0] === windowStub ? windowStub.width : (els[0] && els[0].width ? els[0].width() : 0); };
-	j.height = function () { return els[0] === windowStub ? windowStub.height : 0; };
+	j.height = function () { return els[0] === windowStub ? windowStub.height : (els[0] && els[0].height ? els[0].height() : 0); };
 	j.attr = function (k, v) { return els[0] ? els[0].attr(k, v) : undefined; };
 	j.css = function (k, v) { return els[0] ? els[0].css(k, v) : j; };
 	j.find = function (sel) { return els[0] ? J([els[0].find(sel)]) : J([]); };
 	j.outerHeight = function () { return 0; };
 	j.show = function () { return j; };
 	j.val = function () { return j; };
+	j.addClass = function (name) { els.forEach(function (el) { if (el.addClass) { el.addClass(name); } }); return j; };
+	j.removeClass = function (name) { els.forEach(function (el) { if (el.removeClass) { el.removeClass(name); } }); return j; };
+	j.hasClass = function (name) { return els.length > 0 && els[0].hasClass ? els[0].hasClass(name) : false; };
 	return j;
 }
 
 const documentStub = { getElementById: function () { return null; } };
 
 function $(arg) {
+	if (arg && arg.els) { return J(arg.els); }
 	if (arg === windowStub) { return J([windowStub]); }
 	if (arg === documentStub) { return J([documentStub]); }
 	if (typeof arg === 'string') {
@@ -202,52 +217,78 @@ eq(ctx.windowIsTiled(member({ pre_dimensioned: '1' })), false, 'a pinned window 
 eq(ctx.windowIsTiled(member({ pre_dimensioned: '0', view: 'max' })), true, 'a maximized window stays in the tile');
 eq(ctx.windowIsTiled(member({ pre_dimensioned: '0', tile: 'off' })), true, 'a dragged window stays in the tile');
 
-// --- the vertical column ----------------------------------------------------
+// --- the rail and the focused frame -----------------------------------------
 const view = { width: 1920, height: 1080 };
 function specs(n) {
 	const list = [];
-	for (let i = 0; i < n; i++) { list.push({ width: 450, height: 300, bar: 40, advance: 40 }); }
+	for (let i = 0; i < n; i++) { list.push({ width: 480, height: 640, bar: 40 }); }
 	return list;
 }
 function overlaps(a, b) {
 	return a.left < b.left + b.width && b.left < a.left + a.width &&
 	       a.top < b.top + b.height && b.top < a.top + a.height;
 }
-function framesClear(positions, list, obstacles) {
-	for (let i = 0; i < positions.length; i++) {
-		const frame = { left: positions[i].left, top: positions[i].top, width: list[i].width, height: list[i].height };
+function framesClear(rects, obstacles) {
+	for (const rect of rects) {
 		for (const obstacle of obstacles) {
-			if (overlaps(frame, obstacle)) { return false; }
+			if (overlaps(rect, obstacle)) { return false; }
 		}
 	}
 	return true;
 }
 
-const column = ctx.windowTileColumnPositions(specs(6), [], view, 0, 50, 18);
-eq(column.length, 6, 'every tiled window takes a place in the column');
-eq(column[0].left, 18, 'the front window is nudged right when there is room');
-eq(column[0].top, 0, 'and takes the top');
-eq(column[1].left, 0, 'the window behind it sits at the left edge');
-eq(column[1].top, 40, 'one title bar lower');
-eq(column[5].top, 200, 'the sixth window is five bars down');
+const layout = ctx.windowTileRailLayout(specs(3), [], view, 0, 0, 320, false);
+eq(layout.rail.length, 2, 'the two unfocused windows take rail rows');
+eq(layout.focus.left, 332, 'the focused frame sits beside the rail');
+eq(layout.focus.top, 0, 'at the top');
+eq(layout.focus.width, 480, 'at the size it had before it joined the rail');
+eq(layout.focus.height, 640, 'in full');
+eq(layout.rail[0].left, 0, 'the rail starts at the left edge');
+eq(layout.rail[0].top, 0, 'with the first title bar at the top');
+eq(layout.rail[0].width, 320, 'the rail has its own width');
+eq(layout.rail[0].height, 40, 'and each row is one title bar');
+eq(layout.rail[1].top, 40, 'the next row is one bar lower');
 
 const anchored = [{ left: 0, top: 0, width: 400, height: 1080 }];
-const around = ctx.windowTileColumnPositions(specs(6), anchored, view, 0, 50, 18);
-eq(around[0].left, 418, 'the column starts right of the anchor, then the front is nudged');
-eq(around[1].left, 400, 'the rest of the column shares that left edge');
-eq(around[1].top, 40, 'and keeps the vertical bar step');
-eq(framesClear(around, specs(6), anchored), true, 'no tiled frame is placed over the anchored window');
+const tiled_mode = ctx.windowTileRailLayout(specs(3), anchored, view, 0, 0, 320, false);
+eq(tiled_mode.rail[0].left, 400, 'the rail steps around an anchor in tiling mode too');
+const around = ctx.windowTileRailLayout(specs(3), anchored, view, 0, 0, 320, true);
+eq(around.rail[0].left, 400, 'the rail starts right of the anchored window');
+eq(around.focus.left, 732, 'the focused frame takes the space beyond it');
+eq(framesClear([around.focus], anchored), true, 'the focused frame never covers the anchor');
+eq(framesClear(around.rail, anchored), true, 'and neither does the rail');
 
-const narrow = { width: 500, height: 1080 };
-const left_obstacle = [{ left: 0, top: 0, width: 30, height: 1080 }];
-const leftward = ctx.windowTileColumnPositions([{ width: 450, height: 300, bar: 40, advance: 40 }], left_obstacle, narrow, 0, 50, 18);
-eq(leftward[0].left, 32, 'with no room right the front is nudged left');
+const right_anchor = [{ left: 1520, top: 0, width: 400, height: 1080 }];
+const cleared = ctx.windowTileRailLayout(specs(3), right_anchor, view, 0, 0, 320, true);
+eq(cleared.focus.left, 332, 'a right-hand anchor stops the focused frame');
+eq(framesClear([cleared.focus], right_anchor), true, 'and the frame stays clear of it');
+
+const wide = ctx.windowTileRailLayout([{ width: 2000, height: 1400, bar: 40 }], [], view, 0, 0, 320, false);
+eq(wide.focus.width, 1920, 'a frame wider than the desk is fitted');
+eq(wide.focus.height, 1080, 'and so is one taller than it');
+eq(ctx.windowTileRailWidth(view), 360, 'the rail has a readable width on a wide desk');
+eq(ctx.windowTileRailWidth({ width: 800, height: 600 }), 240, 'and narrows with the desk');
+eq(ctx.windowTileRailWidth({ width: 400, height: 600 }), 160, 'down to a readable minimum');
+
+const rail_win = new El('window_r', { pre_dimensioned: '0' }, { width: '120px', height: '40px' });
+rail_win.classNames = ['tile_rail'];
+rail_win.attrs.tile_w = '480';
+rail_win.attrs.tile_h = '640';
+ctx.windowTileRelease(rail_win);
+eq(rail_win.style.width, 480, 'pinning a rail bar restores its whole width');
+eq(rail_win.style.height, 640, 'and height');
+eq(rail_win.hasClass('tile_rail'), false, 'and takes it out of the rail');
+
+const focused = new El('window_f', { pre_dimensioned: '0' }, { width: '600px', height: '500px' });
+ctx.windowTileRememberSize(focused);
+eq(focused.attr('tile_w'), 600, 'a focused frame remembers its width');
+eq(focused.attr('tile_h'), 500, 'and height for the rail to restore');
 
 // --- a press -----------------------------------------------------------------
 let pressed = 0;
 ctx.windowTileArrange = function () { pressed++; };
 ctx.windowTileClick(new El('window_x', { pre_dimensioned: '0' }));
-eq(pressed, 1, 'a press on a tiled window lays the column out again');
+eq(pressed, 1, 'a press on a tiled window lays the rail out again');
 ctx.windowTileClick(new El('window_y', { pre_dimensioned: '1' }));
 eq(pressed, 1, 'a press on an anchored window does not');
 
@@ -258,9 +299,9 @@ ctx.windowFindSpaceArrange = function () { arranged++; };
 ctx.windowTileArrange = function () { tiled++; };
 eq(ctx.windowFindSpaceActive(), false, 'the desk starts in tiling mode');
 eq(ctx.windowFindSpaceToggle(), true, 'a title-bar double-press switches to find-space');
-eq(arranged, 1, 'and lays the column out');
+eq(arranged, 1, 'and lays the rail around the anchors');
 eq(ctx.windowFindSpaceToggle(), false, 'a second press returns to tiling');
-eq(tiled, 1, 'and puts the column back at the left edge');
+eq(tiled, 1, 'and puts the rail back at the left edge');
 
 process.exit(failures ? 1 : 0);
 JS
@@ -269,7 +310,7 @@ JS
 	my $out = `$node "$harness_file" "$root/public/js/manager/windows.js" "$root/public/js/manager/windows/05_tiling.js" 2>&1`;
 	my $rc = $? >> 8;
 	diag($out) if $rc;
-	is($rc, 0, 'the column and its switch play out');
+	is($rc, 0, 'the rail and its switch play out');
 }
 
 done_testing();

@@ -123,7 +123,7 @@ function closeWindow(timestamp) {
 	startMenuDisplayer();
 	windowBackgroundAdjuster();
 	// find-space mode closes the gap the closed window leaves in the tile
-	if (typeof windowFindSpaceRefresh === 'function') { windowFindSpaceRefresh(); }
+	if (typeof windowTileRefresh === 'function') { windowTileRefresh(); }
 	// a phone layers its windows on one another, so the layers left behind
 	// want re-parking against the smaller count
 	if (windowPhoneChecker()) { windowStacker(); }
@@ -144,9 +144,12 @@ $(document).on('click', '.wind', function(e) {
 		return;
 	}
 	topLevelNow($(this));
-	// the raised window takes the top of the vertical tile, nudged aside so the
-	// bars behind it stay clickable
-	if (typeof windowTileClick === 'function') { windowTileClick($(this)); }
+	// a maximize/restore is its own size choice; anything else leaves the rail
+	// for the focused frame
+	if (!$(e.target).closest('.maximize_button, .restore_button').length
+		&& typeof windowTileClick === 'function') {
+		windowTileClick($(this));
+	}
 });
 
 // A scroll is a touch on that window. Scrolling a window that is not at the
