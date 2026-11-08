@@ -203,8 +203,8 @@ $topic{'music'} = {
 			'Open the gear and press Archives in the folders row to include the archive drives as well as this machine; press it again to show only what is here.',
 			'Click a track to play it; the transport along the top controls playback.',
 			'For a track with no picture of its own, open the tools panel (the wrench in the player) and choose a Visualization; the drawing shows in the player\'s corner while the library is up, and takes the whole player in Theatre mode or fullscreen.',
-			'Fullscreen (the player button, or F) fills the screen with the picture; moving the mouse brings back the top bar and the transport, and they fade away again when the pointer rests. The player bar also carries the equalizer and gear icons in fullscreen and the theatre, so the Audio and Configuration sheets can be opened without leaving the picture; the sheet floats above the video.',
-			'A wheel over the picture moves through the track; on a trackpad, a sideways swipe does the same and up/down sets the volume. On a touchscreen, drag sideways to move through it and up or down to set the volume. The same gestures work in fullscreen, over the interface; the fullscreen button (or F) leaves fullscreen too.',
+			'Fullscreen (the player button, or F) fills the screen with the picture; Escape leaves it, and moving the mouse brings back the top bar and the transport, and they fade away again when the pointer rests. The player bar also carries the equalizer and gear icons in fullscreen and the theatre, so the Audio and Configuration sheets can be opened without leaving the picture; the sheet floats above the video.',
+			'A wheel over the picture moves through the track; on a trackpad, a sideways swipe does the same and up/down sets the volume. On a touchscreen, drag sideways to move through it and up or down to set the volume. The same gestures work in fullscreen, over the interface; the fullscreen button, F, or Escape leaves fullscreen too.',
 			'A wheel or trackpad scroll directly over the seek bar moves through the track, and the same over the volume bar turns it up or down.',
 			'The gear opens the configuration drawer and the equalizer icon opens the Audio drawer. Both can be open together: the first stays where it is and the next opens beside it, so the folders, the outputs and the equalizer are all in reach. Drag either one by the bar across its top to move it anywhere on the screen, and press the X on that bar to close it.',
 			'Open the Audio drawer (the equalizer icon beside the gear) to choose the audio output, or to send playback to another machine on the mesh.',
@@ -231,7 +231,7 @@ $topic{'video'} = {
 		steps => [
 			'Open Video and pick a file from your media folders.',
 			'Play, pause and scrub with the controls; go fullscreen from the player.',
-			'A wheel over the picture scrubs it; on a trackpad, a sideways swipe scrubs and up/down sets the volume. On a touchscreen, drag sideways to scrub and up or down to set the volume. The fullscreen button leaves fullscreen too.'
+			'A wheel over the picture scrubs it; on a trackpad, a sideways swipe scrubs and up/down sets the volume. On a touchscreen, drag sideways to scrub and up or down to set the volume. The fullscreen button or Escape leaves fullscreen too.'
 		],
 		related => [ 'gallery', 'folders' ]
 	};
