@@ -187,7 +187,11 @@ sub device_ws_peer_relay {
 	# President.pl: manager = port, ws = port + 1, arm = port + 2.
 	my $port = $arm - 2;
 	return 0 if $port <= 0;
-	my $ua = Mojo::UserAgent->new(connect_timeout => 2, inactivity_timeout => 3);
+	# A peer that is going to answer answers at once (the Table answered a signed
+	# frame in 0.1 s). A peer on a network this machine cannot route to must not
+	# hold the press for the full default timeout: one second, then the caller
+	# keeps its own road.
+	my $ua = Mojo::UserAgent->new(connect_timeout => 1, inactivity_timeout => 2);
 	$ua->insecure(1);
 	my $tx = $ua->build_tx(POST => 'https://' . $host . ':' . $port . '/manager/device_ws');
 	# Pairs, not a hashref: Mojo::Parameters::merge calls to_hash on a single

@@ -295,4 +295,14 @@ ok(!$relayed, 'and reports no delivery, so the caller keeps its own road');
 my $bare = eval { subs::device_ws_peer_relay('chip1', { t => 'cmd' }) };
 ok(!$@ && !$bare, 'a chip with no homebase is a plain no');
 
+# The board roads are dials, and a dial in the request path is what made a burst
+# queue behind a peer that could not answer. They all run in the sender now.
+my $device_ws_at = index($notify_src, 'my $ws_sent = &subs::device_ws_command({');
+my $sender_at   = index($notify_src, '&subs::subprocessor(sub {');
+ok($sender_at >= 0 && $device_ws_at > $sender_at,
+	'the socket road runs inside the sender, not in the request');
+like($devws, qr/connect_timeout => 1,/, 'a peer that will not answer cannot hold a press for long');
+like(read_file(root() . '/lib/JawnOS/Domain/Notify.pm'), qr/my \$deadline = time\(\) \+ 5;/,
+	'the per-chip lock waits seconds, not a quarter of a minute');
+
 done_testing();

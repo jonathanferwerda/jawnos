@@ -395,12 +395,32 @@ sub app_peer_ok {
 	my $want = $pub;
 	$want =~ s/\s+//g;
 	my $rows = eval { &subs::db_select('remote_machines')->hashes } || [];
+	# The key names the caller, so match it on the roster - including the
+	# machines a trusted peer's hub listed in its `mirrors` blob. A machine that
+	# is not the hub only learns the other peers that way (Dev is a mirror on the
+	# Table, not a direct row), and a signature from the key a mirror published
+	# proves the same caller a direct row would. Without this search the app rail
+	# refused every such machine: the device relay answered 403 to every press.
 	my $rm;
-	foreach my $row ( @{$rows} ) {
+	my $key_matches = sub {
+		my ($row) = @_;
 		my $key = $row->{'pubkey'} // '';
-		next unless length $key;
+		return 0 unless length $key;
 		$key =~ s/\s+//g;
-		if ($key eq $want) { $rm = $row; last; }
+		return $key eq $want ? 1 : 0;
+	};
+	foreach my $row ( @{$rows} ) {
+		if ($key_matches->($row)) { $rm = $row; last; }
+		next unless $row->{'mirrors'};
+		my $list = eval { decode_json $row->{'mirrors'} } || [];
+		next unless ref $list eq 'ARRAY';
+		foreach my $mirror ( @{$list} ) {
+			next unless ref $mirror eq 'HASH';
+			next unless length($mirror->{'pubkey'} || '');
+			next unless ($mirror->{'signatorial'} || '') =~ /^[a-f0-9]{16,}$/i;
+			if ($key_matches->($mirror)) { $rm = $mirror; last; }
+		}
+		last if $rm;
 	}
 	return 0 unless $rm;
 	return &subs::peer_verify($c, $rm) ? 1 : 0;

@@ -179,15 +179,16 @@ sub device_command_lock {
 	# physical switch) wakes the link. The lock is a file in the house's tmp dir,
 	# so it serializes every forked sender - the panel, an appointment, the
 	# automation fan-out - across workers. The OS releases it when the child
-	# exits, so a killed sender cannot wedge the queue. A bounded wait, then
-	# proceed: a dropped press is worse than one more try.
+	# exits, so a killed sender cannot wedge the queue. A short bounded wait, then
+	# proceed: a dropped press is worse than one more try, and a long wait is what
+	# made the fifth press of a burst arrive as a stale one.
 	my ($chip_id) = @_;
 	return undef unless defined $chip_id && length $chip_id;
 	my $dir = ($gb::tmp_dir || '/tmp') . '/device_cmd';
 	eval { mkdir $dir unless -d $dir; 1 };
 	my $file = $dir . '/' . &subs::path_name($chip_id) . '.lock';
 	sysopen(my $fh, $file, O_CREAT | O_RDWR, 0600) or return undef;
-	my $deadline = time() + 15;
+	my $deadline = time() + 5;
 	my $locked = 1;
 	while (!flock($fh, LOCK_EX | LOCK_NB)) {
 		if (time() >= $deadline) { $locked = 0; last; }
@@ -289,37 +290,42 @@ sub embedded_toggle($data) {
 	# resume its relays before it has rejoined WiFi.
 	if ($chip_id && ($component eq 'led' || $component eq 'relay' || $component eq 'servo')) {
 		my $number_state = $state eq 'on' ? 1 : ($state eq 'off' ? 0 : $state);
-		# A board holding a /device/ws socket takes the command there. The same
-		# fields the HTTP query below carries ride the frame; the helper answers 0
-		# when no socket is attached. A successful write is NOT a board ack: a
-		# half-open link, or a peer's cached socket, can swallow it and the board
-		# never clicks. Keep the board's own route below even after a write - the
-		# uuid is the same on both roads, so the board's command manifest drops
-		# the duplicate instead of clicking twice.
-		# The block below is the only road to the hardware, so say when it is taken:
-		# a press whose log jumps from the toggle write straight to nothing is a
-		# press the fan-out never handed to a board.
-		$log->info('device command: ' . ($chip_id || '?') . ' ' . ($component || '?')
-			. ' ' . ($pin // '?') . ' ' . ($state || '?') . ' @' . $timestamp . ' (send)') if $log;
-		my $ws_sent = &subs::device_ws_command({
-			chip_id => $chip_id,
-			component => $component,
-			appt_uuid => $appt_uuid,
-			uuid => $uuid,
-			when => $when,
-			pin => $pin,
-			state => $state,
-			timestamp => $timestamp,
-			measure => $measure,
-		});
-		$log->info('device command: ' . ($chip_id || '?') . ' ' . ($component || '?') . ' '
-			. ($pin // '?') . ' ' . ($state || '?') . ' @' . $timestamp . ' (ws)') if $ws_sent && $log;
 		# A board with a live LAN address answers its own route at once. The
 		# bridge can spend the client's full connect timeout when its link is
 		# asleep, which is the 20-second delay on a relay press. Try HTTP first;
 		# keep the bridge for a device with no address or a failed HTTP send.
+		#
+		# Every road below is a dial, and a dial in the request path is what made a
+		# burst queue: each press waited on a peer relay that could not answer, so
+		# the fifth press arrived twenty seconds late and was refused as older.
+		# All the roads run here, in the sender, and the press returns at once.
 		&subs::subprocessor(sub {
 			Mojo::IOLoop->reset;
+			# The block below is the only road to the hardware, so say when it is
+			# taken: a press whose log jumps from the toggle write straight to
+			# nothing is a press the fan-out never handed to a board.
+			$log->info('device command: ' . ($chip_id || '?') . ' ' . ($component || '?')
+				. ' ' . ($pin // '?') . ' ' . ($state || '?') . ' @' . $timestamp . ' (send)') if $log;
+			# A board holding a /device/ws socket takes the command there. The same
+			# fields the HTTP query below carries ride the frame; the helper answers
+			# 0 when no socket is attached. A successful write is NOT a board ack: a
+			# half-open link, or a peer's cached socket, can swallow it and the board
+			# never clicks. Keep the board's own route below even after a write - the
+			# uuid is the same on both roads, so the board's command manifest drops
+			# the duplicate instead of clicking twice.
+			my $ws_sent = &subs::device_ws_command({
+				chip_id => $chip_id,
+				component => $component,
+				appt_uuid => $appt_uuid,
+				uuid => $uuid,
+				when => $when,
+				pin => $pin,
+				state => $state,
+				timestamp => $timestamp,
+				measure => $measure,
+			});
+			$log->info('device command: ' . ($chip_id || '?') . ' ' . ($component || '?') . ' '
+				. ($pin // '?') . ' ' . ($state || '?') . ' @' . $timestamp . ' (ws)') if $ws_sent && $log;
 			my $watch = &subs::device_lister($timestamp, $edt, undef, $chip_id);
 			my $watch_ip = (ref $watch eq 'HASH' && $watch->{'ip'}) ? $watch->{'ip'} : $ip;
 			# One command at a time per board. A Pico services one HTTP client, so
