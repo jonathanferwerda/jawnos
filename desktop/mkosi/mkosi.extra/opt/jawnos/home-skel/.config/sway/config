@@ -1,22 +1,27 @@
 # The live image's Sway session. Deliberately shorter than
 # desktop/wayland/sway.conf: it only has to put JawnOS on the screen and give a
-# way out, because the tree it starts may be a version that predates a setting.
+# way out, because the tree it starts may be a version that predates a setting
+# (a key binding, an output stanza or a window rule from the installed session).
 set $mod Mod4
 
 exec /home/jawn/jawnos/desktop/wayland/jawnos-session
 exec sh -c 'swaybg -i /home/jawn/Pictures/jawnos-wallpaper.png -m fill 2>/dev/null || swaybg -c "#2e3440"'
-exec waybar -c /home/jawn/jawnos/desktop/wayland/waybar.conf
+
+# The bar is the Qt session bar, the same one desktop/wayland/sway.conf starts:
+# a layer-shell panel with a 30px exclusive zone, so the manager tiles below it.
+# It replaces waybar, which is no longer in the image. jawnos-usage is left out
+# on purpose: a live session has no established manager ticket to record app
+# time with, so the watcher would only log failed logins.
+exec /home/jawn/jawnos/desktop/jawnos-shell
 
 # An unfamiliar monitor can come up with no mode at all (a black screen). Try
 # the house's safe modes once Sway is up; $mod+Shift+d repeats it below.
 exec /usr/local/bin/jawnos-display --once
 
-# JawnOS owns the screen. This rule runs when the view maps; Sway also reflows
-# an already-fullscreen window when its output changes mode or size (a QEMU
-# window resize, or an EDID change on virtio-gpu), and the app repaints and
-# re-fills the WebKit surface when GDK reports the change. No per-resolution
-# output stanza is needed.
-for_window [app_id="^(jawnos|jawnos-desktop)$"] fullscreen enable
+# The manager is an ordinary tiled window, not a fullscreen one: the session
+# bar owns the screen edge, and force-fullscreening the view would cover it.
+# Sway tiles the view in the area below the bar. Only the terminal floats, so a
+# person can still drag it over the view.
 for_window [app_id="^foot$"] floating enable, resize set 900 600
 
 bindsym $mod+Return exec foot
