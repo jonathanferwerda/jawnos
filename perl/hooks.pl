@@ -226,6 +226,12 @@ Manager::app->hook(before_dispatch => sub {
 		# the tunnel websocket authorizes itself (signatorial vs remote_machines)
 		# and a websocket upgrade cannot carry the gate's session or ws_auth
 		$path eq '/manager/tunnel/ws' ||
+		# the embedded output bus: a board holds /device/ws open and presents the
+		# rotated Now Me pair, exactly like /watch. A websocket upgrade cannot
+		# carry a session cookie, and the route runs embedded_authorizer before
+		# it reads a frame; without this the gate answered the Pico's upgrade
+		# with the Gate page and the socket never attached.
+		$path eq '/device/ws' ||
 		# the audio stream is opened by a browser on this machine (approved
 		# session) and by a peer's manager (pinned peer signature); the route
 		# checks whichever role the connection names. A peer has no session, so
