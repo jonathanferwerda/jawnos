@@ -159,6 +159,32 @@ sub device_ws_send_local {
 	return 1;
 }
 
+sub device_ws_time_frame {
+	# The house clock, offered to a board on the socket it already holds. A board
+	# keeps time with its own crystal between /watch/time calls, and a 40 s drift
+	# made a switch write its session in the past - and, once the socket carries
+	# commands, made "now" look far enough off that the board's own ordering had
+	# to guess. The frame is plain milliseconds since the epoch, UTC, so it needs
+	# no token: the socket was already authenticated.
+	my ($house_ms) = @_;
+	return { t => 'time', ms => ($house_ms || &rightNow()) };
+}
+
+sub device_ws_clock_note {
+	# The board answers a time frame with its millis() and the epoch it now
+	# believes. Say the difference: a board minutes behind is the reason an
+	# appointment written from a switch lands in the past, and a board that never
+	# answers is the reason to look at the firmware it is running.
+	my ($chip_id, $m) = @_;
+	return 0 unless ref $m eq 'HASH';
+	my $board = eval { $m->{'epoch_ms'} + 0 } || 0;
+	return 0 unless $board > 0;
+	my $skew = int(($board - &rightNow()) / 1000);
+	$log->info('device clock: ' . ($chip_id || '?') . ' board and house differ by '
+		. $skew . 's') if $log;
+	return 1;
+}
+
 sub device_ws_deliver {
 	# Called in the websocket worker for a Websocket::send('device', ...) frame.
 	# 1 when the chip had a socket and the frame went out, 0 when it did not: the

@@ -734,6 +734,17 @@ sub action_719 {
 		name => $name,
 		ws => $c->tx,
 	});
+	# Teach the clock on connect, and every two minutes after. The board keeps
+	# time with its own crystal between /watch/time calls; a drift of tens of
+	# seconds made a switch stamp its session in the past, and this socket is
+	# open exactly when it needs the house's time.
+	my $tell_time = sub {
+		return eval { $c->send(encode_json(&subs::device_ws_time_frame(&subs::rightNow()))); 1 };
+	};
+	$tell_time->();
+	my $clock_timer = Mojo::IOLoop->recurring(120 => sub {
+		&subs::device_ws_detach($chip_id) unless $tell_time->();
+	});
 	# The same picture /watch and the BLE bridge build, so a socket connect and a
 	# Now Me cannot disagree.
 	$c->send(encode_json(&subs::device_ws_snapshot({ chip_id => $chip_id, edt => $edt })));
@@ -746,8 +757,15 @@ sub action_719 {
 		elsif ($t eq 'ack') {
 			&subs::device_ws_ack($chip_id, $m->{'id'});
 		}
+		elsif ($t eq 'millis') {
+			# The board's answer to a time frame: its own millis() and the epoch
+			# it now believes. Naming the difference is what makes a drifting
+			# board visible instead of mysterious.
+			&subs::device_ws_clock_note($chip_id, $m);
+		}
 	});
 	$c->on(finish => sub ($ws, $code, $reason) {
+		Mojo::IOLoop->remove($clock_timer) if $clock_timer;
 		&subs::device_ws_detach($chip_id, $ws);
 		# TODO: no embedded "mark offline" helper exists to call here. Presence
 		# is derived from sightings by subs::device_lister

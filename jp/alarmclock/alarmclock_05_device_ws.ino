@@ -236,6 +236,23 @@ static void dev_ws_handle_text(const String &text) {
       }
     }
   }
+  else if (t == "time") {
+    // The house's clock, in UTC milliseconds, over the socket this board already
+    // holds. Between /watch/time calls the board runs on its own crystal, and a
+    // drift of tens of seconds stamped a switch's session in the past. now_ms()
+    // is local, so fold the timezone back in before setting it.
+    int64_t house = jint64(m["ms"]);
+    if (house > 1600000000000LL) {
+      int64_t off = offset_sane(offset) ? offset : 0;
+      set_epoch_ms(house + off * 1000);
+    }
+    // Answer with the clock it now believes: the manager can then see the skew
+    // it just corrected, and a board that ignores the frame is visible as one
+    // that never answers.
+    String reply = "{\"t\":\"millis\",\"ms\":" + String((unsigned long)millis())
+      + ",\"epoch_ms\":" + String((double)event_ms(), 0) + "}";
+    dev_ws_send_text(reply);
+  }
   else if (t == "ping") {
     dev_ws_send_text("{\"t\":\"pong\"}");
   }
