@@ -3,7 +3,8 @@
 #            machine can open is used as it stands, a path another machine wrote is
 #            mapped through this device's photo folder, and a snapshot's data URI is
 #            used directly. The gallery, the taskbar/start-menu icon and the app
-#            search icon all resolve the row the same way.
+#            search icon all resolve the row the same way. An icon only takes a
+#            path that really holds a picture, so a synced stub falls back.
 
 use strict;
 use warnings;
@@ -95,6 +96,39 @@ unlike( $spaced, qr{phone pic}, 'and never sent raw' );
 # percent too or /file_open decodes it back into a space and misses the file
 my $skewed = subs::main_image_src('/sdcard/DCIM/my%20app/pic.jpg', 'my app');
 like( $skewed, qr{my%2520app}, 'an app folder path_name encoded stays encoded in the URL' );
+
+# --- a placeholder is not a picture -----------------------------------------
+# A settings row can arrive on this device as a one-byte stub while its bytes
+# still live on the machine that wrote it; /file_open answers that with nothing,
+# so an icon must not take the stub as its picture and go blank. A sealed photo
+# is the house's own container: "Salted__", an 8-byte salt, then the ciphertext.
+my $stub = "$photos/programming/stub.jpg.enc";
+write_file($stub, "\0");
+is( subs::main_image_src($stub, 'programming', 1, 1), '',
+	'a one-byte stub is not a picture, so it yields no icon src' );
+like( subs::main_image_src($stub, 'programming'), qr{stub\.jpg\.enc},
+	'but a caller not asking for a real picture still names the row' );
+
+my $sealed = "$photos/programming/sealed.jpg.enc";
+write_file($sealed, 'Salted__' . ('x' x 32));
+like( subs::main_image_src($sealed, 'programming', 1, 1), qr{sealed\.jpg\.enc},
+	'a sealed container is a picture this device holds' );
+like( subs::main_image_src($sealed, 'programming', 1, 1), qr{&thumb=ya\z},
+	'a sealed picture still asks for its thumbnail' );
+
+my $words = "$photos/programming/notes.txt";
+write_file($words, "just some words\n");
+is( subs::main_image_src($words, 'programming', 1, 1), '',
+	'an open file that is not an image is not an icon' );
+like( subs::main_image_src($words, 'programming', 1), qr{notes\.txt},
+	'while the plain resolver still returns its path' );
+
+# --- the stub falls through to the app's own picture -------------------------
+my $stub_icon = subs::main_icon_source({ app => 'programming', settings => { main_image => $stub, pos => 'product' } });
+like( $stub_icon, qr{product}, 'a missing picture falls back to the pos icon' );
+unlike( $stub_icon, qr{stub\.jpg}, 'and never points at the stub' );
+my $stub_gear = subs::main_icon_source({ app => 'zz_no_such_custom_app', settings => { main_image => $stub } });
+like( $stub_gear, qr/gear/, 'a stub on a custom app falls through to the gear' );
 
 # --- the other surfaces follow the same rule --------------------------------
 my $root = root();

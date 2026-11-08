@@ -442,6 +442,25 @@ sub watch_reply_stream {
 	return $done;
 }
 
+# Does this path hold a picture, not just a directory entry? A synced stub can be
+# a single placeholder byte, which /file_open answers with nothing; an icon must
+# not take it while the real picture is still on another machine. A sealed photo
+# names itself the way Note reads it back ("Salted__", an 8-byte salt, then the
+# ciphertext); an open file must answer with an image magic.
+sub main_image_real_file {
+	my $file = shift;
+	return 0 unless defined $file && length $file && -f $file;
+	my $size = -s $file || 0;
+	open my $fh, '<', $file or return 0;
+	binmode $fh;
+	my $head = '';
+	read($fh, $head, 64);
+	close $fh;
+	return (substr($head, 0, 8) eq 'Salted__' && $size > 16) ? 1 : 0 if $file =~ /\.enc\z/i;
+	my $type = &subs::plaintext_verdict($head);
+	return (defined $type && $type =~ m{\Aimage/}) ? 1 : 0;
+}
+
 # The picture an app's `main_image` setting names, as an <img> can draw it. The
 # row is written per device, and a synced row can name the file on the machine
 # that wrote it; a path this machine can open is used as it stands, and a foreign
@@ -449,7 +468,7 @@ sub watch_reply_stream {
 # the gallery maps a row another machine wrote. A snapshot main image is a data
 # URI that carries its own bytes. Returns '' when nothing here can be shown.
 sub main_image_src {
-	my ($value, $app, $thumb) = @_;
+	my ($value, $app, $thumb, $require_real) = @_;
 	return '' unless defined $value && length $value;
 	return $value if $value =~ /\Adata:image\//i;
 	my $file = -e $value ? $value : '';
@@ -459,6 +478,7 @@ sub main_image_src {
 		$file = $local if length $local && -e $local;
 	}
 	return '' unless length $file;
+	return '' if $require_real && !&main_image_real_file($file);
 	my $src = '/file_open?file=' . &subs::url_escape_utf8($file)
 		. ((defined $app && length $app) ? '&app=' . &subs::url_escape_utf8($app) : '');
 	# An icon is drawn at a few dozen pixels: the cached thumbnail is the right
@@ -479,7 +499,7 @@ sub main_icon_source {
 	my $settings = $data->{'settings'};
 	$settings = &subs::settings_grabber({ app => $unformatted_name }) unless $settings;
 	if ($settings->{'main_image'}) {
-		my $src = &subs::main_image_src($settings->{'main_image'}, $unformatted_name, 1);
+		my $src = &subs::main_image_src($settings->{'main_image'}, $unformatted_name, 1, 1);
 		return $src if length $src;
 	}
 	# the Internet app's picture lives under the web button's name

@@ -562,7 +562,7 @@ sub search_index_icon($data) {
 	if (length $main_image) {
 		# the same rule the gallery and the icon use: an existing path as it
 		# stands, a foreign one mapped onto this machine, or a data URI as-is
-		my $src = &subs::main_image_src($main_image, $app, 1);
+		my $src = &subs::main_image_src($main_image, $app, 1, 1);
 		if (length $src) {
 			# the setting's own stamp keeps a replaced picture from being read
 			# back out of the browser's cache under the same path
