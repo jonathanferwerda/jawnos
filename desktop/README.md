@@ -483,9 +483,13 @@ ticket, as before. `--mode measure` is unchanged: pick an element, the live
 document goes to `/manager/web/measure/live`, and the returned candidates are
 shown in a dialog.
 
-## Windows
+## Windows and macOS
 
 The supervisor in `jawnos_desktop/core.py` is deliberately written to be
-portable. A Windows port would add a `core_win` layer (process spawn / kill and
-the `%APPDATA%` paths) and a WinRT BLE backend for the bridge — the wire
-protocol and the UI are already platform-neutral.
+portable, and Qt already gives both platforms the same Manager, Browse and
+session-bar code. What differs is the server's process/socket layer, the
+platform paths, and the hardware lane (CoreBluetooth/WinRT BLE, CoreAudio/
+WASAPI audio, serial, printing, LAN discovery).
+
+The plan for a native `.app` and a native MSI/MSIX, with the Perl tree running
+locally beside the shell, is `docs/platform-roadmap.md`.
