@@ -32,6 +32,10 @@
 			<img src="<%= &subs::icon_for('/images/studio/repeat.png') %>" hint="Repeat" enabled="<%= $crate->{'settings'}->{'repeat'} %>" id="music_repeat" class="little_thumb music_repeat repeat hover">
 			<img id="<%= $miss %>_tools_toggle" hint="More tools" class="little_thumb hover media_tools_toggle" src="<%= &subs::icon_path('wrench', '/images/decipherable/gear.png') %>">
 			<span id="<%= $id %>_full_title"></span>
+			<%# the fullscreen toggle sits right of the title rather than inside the
+			    tools panel: it is used far more often than the panel's speed,
+			    snapshot, mark and loop controls %>
+			<img id="<%= $miss %>_full_screen" hint="Fullscreen" timestamp="<%= $timestamp %>" class="<%= $miss %> little_thumb hover" src="<%= &subs::icon_for('/images/studio/green screen.png') %>">
 			<span id="<%= $miss %>_tools_panel" class="media_tools_panel">
 				<input id="<%= $miss %>_speed" hint="Playback speed" class="<%= $miss %> speed hover" type="range" step=".1" min="0.1" max="4" value="1">
 				<img id="<%= $miss %>_snapshot" hint="Save a snapshot" src="<%= &subs::icon_for('/images/decipherable/gallery.png') %>" class="little_thumb <%= $miss %> hover">
@@ -51,7 +55,6 @@
 					<option value="modern_art">Modern Art</option>
 				</select>
 				<img id="<%= $id %>_subtitle_toggle" hint="Subtitles" style="" status="<%= ((eval { $crate->{'settings'}->{'subtitles'} } || '') eq 'showing') ? 'showing' : 'hidden' %>" class="little_thumb hover" src="<%= &subs::icon_for('/images/decipherable/love letter.png') %>">
-				<img id="<%= $miss %>_full_screen" hint="Fullscreen" timestamp="<%= $timestamp %>" class="<%= $miss %> little_thumb hover" src="<%= &subs::icon_for('/images/studio/green screen.png') %>">
 				<span id="<%= $miss %>_jog_wheel_frame" class=" hover">
 					<img id="<%= $miss %>_jog_wheel" hint="Jog wheel" class="<%= $miss %> jog_wheel" src="<%= &subs::icon_for('/images/studio/jog wheel.png') %>">
 					<span id="<%= $miss %>_jog_wheel_centre" style="width:1px; height: 1px;" ></span>

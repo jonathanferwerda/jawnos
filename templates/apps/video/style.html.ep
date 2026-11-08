@@ -235,7 +235,8 @@
 			background-color: #333;
 			border-radius: 4px;
 		}
-		.music_player_bar .media_tools_toggle { flex: 0 0 auto; }
+		.music_player_bar .media_tools_toggle,
+		.music_player_bar #<%= $miss %>_full_screen { flex: 0 0 auto; }
 		.music_player_bar #<%= $miss %>_jog_wheel_frame { height: 72px; width: 72px; }
 		@container (min-width: 380px) {
 			.media_controls.music_player_bar { gap: 2px; padding: 0 6px; }

@@ -255,18 +255,21 @@ $(document).on('keydown', function(e) {
 		}
 	}
 	else if (e.keyCode == 27) {
-		var dialog_cancelled = false;
-		if ($('.dialog_box').length > 0) {
+		// Only a dialog the person can see takes the Escape. The #alert_dialog
+		// shell is a .dialog_box that lives in the manager page all the time
+		// (templates/manager.html.ep), hidden until an alert opens; testing the
+		// class alone always matched it, so Escape was spent on a hidden dialog
+		// and never reached a fullscreen picture.
+		var open_dialogs = $('.dialog_box:visible');
+		if (open_dialogs.length > 0) {
 			e.preventDefault();
-			var d = $($('.dialog_box')[$('.dialog_box').length - 1]);
-			d.find('.cancel').trigger('click');
-			dialog_cancelled = true;
+			open_dialogs.last().find('.cancel').trigger('click');
 		}
-		if (!dialog_cancelled) {
+		else {
 			// Escape leaves a fullscreen picture. The browser's own handling
 			// never runs here: the Music window's shortcut block calls
 			// preventDefault for every key, so the page has to leave fullscreen
-			// itself. An open dialog still takes the first Escape.
+			// itself.
 			var fs = document.fullscreenElement || document.webkitFullscreenElement;
 			if (fs) {
 				e.preventDefault();
@@ -275,6 +278,20 @@ $(document).on('keydown', function(e) {
 				if (out && out.catch) { out.catch(function () {}); }
 			}
 		}
+	}
+	else if (e.keyCode == 70 && !e.ctrlKey && !e.altKey && !e.metaKey
+		&& !$(e.target).is('textarea, select')
+		&& !($(e.target).is('input') && $(e.target).attr('type') != 'range')
+		&& (document.fullscreenElement || document.webkitFullscreenElement)) {
+		// F leaves a fullscreen picture from here, before any app block: the
+		// Music shortcut block below is skipped while a slider has focus or
+		// another window is on top, which is exactly when the picture fills the
+		// screen. Typing in a field is left alone; a seek or volume slider still
+		// counts as a shortcut, not typing.
+		e.preventDefault();
+		var fs_out = document.exitFullscreen ? document.exitFullscreen()
+			: (document.webkitExitFullscreen ? document.webkitExitFullscreen() : null);
+		if (fs_out && fs_out.catch) { fs_out.catch(function () {}); }
 	}
 	else if (e.keyCode == 65 && e.ctrlKey == true) {
 		if (topWindow() == 'folders') {
