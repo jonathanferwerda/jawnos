@@ -71,6 +71,24 @@ is($low->{'note_limit'}, 1, 'zero clamps to 1');
 my $junk = subs::qa_note_limit_save('tomorrow', { setter => $setter });
 is($junk->{'note_limit'}, 3, 'junk reads as the default');
 
+# --- the UX judgement model (its own setting, not the Coding role) -----------
+my %model_store;
+my $model_set = sub { $model_store{'value'} = $_[0] };
+my $model_saved = subs::qa_ux_model_save('deepseek:deepseek-flash', { setter => $model_set });
+ok($model_saved->{'ok'}, 'a model saves');
+is($model_store{'value'}, 'deepseek:deepseek-flash', 'and is stored as written');
+is(subs::qa_ux_model({ grabber => sub { $model_store{'value'} } }), 'deepseek:deepseek-flash',
+	'the panel reads it back');
+my $model_blank = subs::qa_ux_model_save('', { setter => $model_set });
+ok($model_blank->{'ok'}, 'an empty model is allowed');
+is($model_store{'value'}, '', 'and turns the judgement off');
+is(subs::qa_ux_model({ grabber => sub { $model_store{'value'} } }), '', 'an empty model reads empty');
+my $model_bad = subs::qa_ux_model_save("deepseek flash\nrm -rf /", { setter => $model_set });
+ok(!$model_bad->{'ok'}, 'a value that is not a model id is refused');
+is($model_store{'value'}, '', 'and nothing is overwritten');
+is(subs::qa_ux_model_clean('  @table/gemma4:cloud  '), '@table/gemma4:cloud',
+	'a host-qualified model id is kept');
+
 # A fixture database for the queue and for the setting's read path.
 sub make_db {
 	my $dir = tempdir(CLEANUP => 1);
@@ -718,17 +736,23 @@ like($panel, qr/id="qa_note_limit"/, 'the QA panel carries the notes-per-night s
 like($panel, qr/\$qa_note_min \.\. \$qa_note_max/, 'the options come from the server bounds');
 like($panel, qr/qa_note_limit\(\)/, 'the saved number is rendered');
 like($panel, qr/configure\.qa_note_limit/, 'the label is a core language key');
+like($panel, qr/id="qa_ux_model"/, 'the QA panel carries the UX model field');
+like($panel, qr/configure\.qa_ux_model/, 'the model label is a core language key');
 
 my $js = read_file("$root/public/js/manager/configure/07_qa_nightly.js");
 like($js, qr/'#qa_note_limit'/, 'the script listens to the select');
 like($js, qr/field: 'note_limit'/, 'the script names the field it saves');
+like($js, qr/'#qa_ux_model'/, 'the script listens to the model field');
+like($js, qr/field: 'ux_model'/, 'the script names the model field it saves');
 
 my $controller = read_file("$root/lib/JawnOS/Controller/manager_configure2.pm");
 like($controller, qr/qa_note_limit_save\(/, 'the route validates the number server-side');
 like($controller, qr/field.*note_limit/s, 'the route only saves the limit when that field is named');
+like($controller, qr/qa_ux_model_save\(/, 'the route validates the UX model server-side');
 
 my $loader = read_file("$root/lib/JawnOS/Domain/Loader.pm");
 like($loader, qr/JawnOS::Domain::Remote.*qa_note_limit_save/, 'the loader maps the new helpers');
+like($loader, qr/JawnOS::Domain::Remote.*qa_ux_model_save/, 'the loader maps the UX model helpers');
 
 {
 	no warnings 'once';
@@ -739,12 +763,16 @@ like($loader, qr/JawnOS::Domain::Remote.*qa_note_limit_save/, 'the loader maps t
 		my $label = language::translate($code, 'configure.qa_note_limit');
 		ok(defined $label && length $label && $label ne 'configure.qa_note_limit',
 			"$code has a Notes per night label");
+		my $model = language::translate($code, 'configure.qa_ux_model');
+		ok(defined $model && length $model && $model ne 'configure.qa_ux_model',
+			"$code has a UX judgement model label");
 	}
 }
 
 my $help = read_file("$root/perl/help/topics_configure.pl");
 like($help, qr/Notes per night/, 'the Configure help topic explains the picker');
 like($help, qr/06:00 coding night/, 'the topic explains what the number feeds');
+like($help, qr/UX judgement model/, 'the topic explains the UX model field');
 
 my $runner_source = read_file("$root/qa/coding_night/run.pl");
 unlike($runner_source, qr/manager_killer\.pl/,

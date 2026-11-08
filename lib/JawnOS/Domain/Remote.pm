@@ -700,6 +700,54 @@ sub qa_note_limit_save {
 }
 
 # ---------------------------------------------------------------------------
+# The UX judgement model
+# ---------------------------------------------------------------------------
+# `__president/qa_ux_model`, device 'all': the model the 05:30 UX loop asks for
+# its easy/help/works verdicts. Empty means no model - the loop skips, never
+# passes. The coding night has its own role (mail/coding_assistant), so this
+# choice cannot move it or the Guide's evaluation role. The allowed shape is a
+# model id, never a sentence or a shell fragment.
+
+sub qa_ux_model_clean {
+	my ($value) = @_;
+	$value = '' unless defined $value;
+	$value =~ s/^\s+|\s+$//g;
+	return '' unless length $value;
+	return undef unless length($value) <= 120
+		&& $value =~ /\A[\@A-Za-z0-9][A-Za-z0-9\@.:_+\/-]*\z/;
+	return $value;
+}
+
+sub qa_ux_model {
+	my $opts = shift || {};
+	my $grab = $opts->{'grabber'};
+	unless ($grab) {
+		$grab = sub {
+			my $v = &subs::setting_grabber({ app => '__president', setting => 'qa_ux_model', device => 'all' });
+			$v = &subs::setting_grabber({ app => '__president', setting => 'qa_ux_model' }) unless defined $v && length $v;
+			return $v;
+		};
+	}
+	my $value = &qa_ux_model_clean( $grab->() );
+	return defined $value ? $value : '';
+}
+
+sub qa_ux_model_save {
+	my ($value, $opts) = @_;
+	$opts ||= {};
+	my $clean = &qa_ux_model_clean($value);
+	return { ok => 0, error => 'That does not look like a model name.' } unless defined $clean;
+	my $set = $opts->{'setter'};
+	unless ($set) {
+		$set = sub {
+			&subs::setting_setter({ app => '__president', setting => 'qa_ux_model', device => 'all', value => $_[0] });
+		};
+	}
+	$set->($clean);
+	return { ok => 1, model => $clean };
+}
+
+# ---------------------------------------------------------------------------
 # What the coding night works on
 # ---------------------------------------------------------------------------
 # `__president/qa_coding_lanes`, device 'all': the sources the 06:00 night draws

@@ -378,6 +378,8 @@ like($panel, qr/qa_times_read\(\)/, 'the fields are rendered from the saved time
 like($panel, qr/configure\.qa_schedule/, 'the card title is a core language key');
 like($panel, qr/value="none"/, 'the machine picker offers Off');
 like($panel, qr/configure\.qa_off/, 'the Off option is a core language key');
+like($panel, qr/id="qa_ux_model"/, 'the panel carries the UX model field');
+like($panel, qr/configure\.qa_ux_model/, 'the model label is a core language key');
 like($panel, qr/50-jawn-schedule\.conf/, 'the panel explains the drop-in');
 
 my $js = read_file("$root/public/js/manager/configure/07_qa_nightly.js");
@@ -398,6 +400,7 @@ like($controller, qr/qa_run_guard\(/, 'Run now guards the target');
 like($controller, qr/qa_run_now_local\(/, 'Run now starts the run locally');
 like($controller, qr/verb => 'qa_run_now'/, 'a remote Run now uses the signed rail');
 like($controller, qr/qa_schedule_for\(/, 'the schedule route asks the chosen machine');
+like($controller, qr/field.*ux_model/s, 'the target route saves the UX model field');
 
 my $routes = read_file("$root/lib/JawnOS/Routes/manager_configure2.pm");
 like($routes, qr{'/manager/configure/qa_schedule', 'action_50004'}, 'the schedule route is registered');
@@ -415,10 +418,12 @@ like($rail, qr/nightly system is off/, 'the far end refuses to install, retime o
 my $loader = read_file("$root/lib/JawnOS/Domain/Loader.pm");
 like($loader, qr/JawnOS::Domain::Remote.*qa_retime_local/, 'the loader maps the retime helpers');
 like($loader, qr/JawnOS::Domain::Remote.*qa_run_now_local/, 'the loader maps the run helper');
+like($loader, qr/JawnOS::Domain::Remote.*qa_ux_model_save/, 'the loader maps the UX model helper');
 
 my $help = read_file("$root/perl/help/topics_configure.pl");
 like($help, qr/Nightly schedule/, 'the Configure help topic explains the schedule');
 like($help, qr/Run now/, 'and the Run now trigger');
+like($help, qr/UX judgement model/, 'and the UX model field');
 
 {
 	no warnings 'once';
@@ -427,7 +432,7 @@ like($help, qr/Run now/, 'and the Run now trigger');
 	is(scalar(@codes), 16, 'all sixteen interface languages are listed');
 	foreach my $key (qw(configure.qa_schedule configure.qa_suite_time configure.qa_ux_time
 		configure.qa_coding_time configure.qa_save_times configure.qa_run_now configure.qa_effective
-		configure.qa_off)) {
+		configure.qa_off configure.qa_ux_model)) {
 		for my $code (@codes) {
 			my $label = language::translate($code, $key);
 			ok(defined $label && length $label && $label ne $key, "$code has $key");

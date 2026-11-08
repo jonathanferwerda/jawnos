@@ -798,11 +798,18 @@ sub action_50002 {
 		$c->render(json => { ok => 0, error => 'not signed in' }, status => 403);
 		return;
 	}
-	# The card has two pickers. `field=note_limit` saves only the notes-per-night
+	# The card has several pickers. `field=note_limit` saves only the notes-per-night
 	# number, so a phone (which cannot be the nightly machine) can still set the
 	# house's queue length; the number is clamped 1..25 here, not in the browser.
 	if (($c->param('field') // '') eq 'note_limit') {
 		$c->render(json => &subs::qa_note_limit_save($c->param('note_limit')));
+		return;
+	}
+	# `field=ux_model` saves the model the 05:30 UX loop judges with. Empty is
+	# allowed (the night then skips every note); a value must look like a model
+	# id, so a hand-made POST cannot store a sentence or a shell fragment.
+	if (($c->param('field') // '') eq 'ux_model') {
+		$c->render(json => &subs::qa_ux_model_save($c->param('ux_model')));
 		return;
 	}
 	# `field=lanes` saves which sources the coding night draws from. The list is

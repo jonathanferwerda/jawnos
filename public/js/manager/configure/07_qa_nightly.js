@@ -206,6 +206,25 @@ $(document).on('change', '#qa_note_limit', function() {
 	});
 });
 
+$(document).on('change', '#qa_ux_model', function() {
+	var input = $(this);
+	var box = $('#qa_ux_model_status');
+	box.text('');
+	// The server keeps the shape and answers with what it stored; a refused
+	// value leaves the field showing what the house did not take.
+	$.post('/manager/configure/qa_device_target', { field: 'ux_model', ux_model: input.val() }, function(res) {
+		if (!res || !res.ok) {
+			box.text((res && res.error) || qaT('Could not save the model.'));
+			return;
+		}
+		input.val(res.model || '');
+		box.text(qaT('Saved.'));
+		setTimeout(function() { box.text(''); }, 2000);
+	}).fail(function() {
+		box.text(qaT('Could not save the model.'));
+	});
+});
+
 $(document).on('change', '.qa_coding_lane', function() {
 	var box = $('#qa_coding_lanes_status');
 	var lanes = $('.qa_coding_lane:checked').map(function() { return this.value; }).get();
