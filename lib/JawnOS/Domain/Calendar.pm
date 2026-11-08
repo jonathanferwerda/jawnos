@@ -517,7 +517,11 @@ else {
 	delete $socket_retry->{$cache_key};
 }
 
-	return $response_data;
+	# A fire-and-forget push (rcv 0) has no reply to return, so its caller used
+	# to get undef whether the frame went or the socket refused it - and a device
+	# command that read that as success skipped its HTTP fallback and never
+	# reached the board. Say which happened.
+	return $rcv ? $response_data : ($ok ? 1 : 0);
 }
 
 sub request_busy_change {

@@ -222,8 +222,12 @@ sub device_ws_command {
 	if (&device_ws_connected($chip_id)) {
 		my $socket = ($gb::tmp_dir || '.') . '/ws/device';
 		if (-e $socket) {
-			&Websocket::send('device', { chip_id => $chip_id, frame => $frame });
-			return 1;
+			# Only a frame that reached the worker counts. A send that failed
+			# (the worker between restarts, a cached socket gone) must fall
+			# through to the peer relay, and then to the caller's HTTP-then-BLE
+			# order, instead of being reported as delivered.
+			my $sent = &Websocket::send('device', { chip_id => $chip_id, frame => $frame });
+			return 1 if $sent;
 		}
 	}
 	# Or another House machine holds it. Ask the homebase over the signed peer

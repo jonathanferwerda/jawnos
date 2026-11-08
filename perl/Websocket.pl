@@ -87,7 +87,11 @@ sub send() {
 		}
 
 		my $file = $gb::tmp_dir . '/ws/' . $app;
-		&subs::unix_socket_sender($file,$wsm) if -e $file;
+		# Report whether the frame actually went. The worker can be between
+		# restarts, and a device command that treats a dropped frame as delivered
+		# skips its HTTP fallback, so the relay never moves while the Manager says
+		# it did.
+		$returner = &subs::unix_socket_sender($file,$wsm) if -e $file;
 	}
 	return $returner;
 }

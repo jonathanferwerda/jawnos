@@ -246,4 +246,24 @@ subtest 'inputs stay on HTTP' => sub {
 		'the device socket has no input writer');
 };
 
+
+# --- a frame that never reached the worker is not "delivered" ----------------
+
+my $devws = read_file('lib/JawnOS/Domain/Devicews.pm');
+my $cal   = read_file('lib/JawnOS/Domain/Calendar.pm');
+my $wspl  = read_file('perl/Websocket.pl');
+
+like($devws, qr/my \$sent = &Websocket::send\('device'/,
+	'the device socket send is checked, not assumed');
+like($devws, qr/return 1 if \$sent;/,
+	'only a frame that went is reported as delivered');
+my $checked = index($devws, q(return 1 if $sent;));
+my $relay   = index($devws, q(return &device_ws_peer_relay($chip_id, $frame);));
+ok($checked >= 0 && $relay >= 0 && $checked < $relay,
+	'a failed send falls through to the peer relay instead of claiming delivery');
+like($wspl, qr/\$returner = &subs::unix_socket_sender\(\$file,\$wsm\) if -e \$file;/,
+	'the websocket push reports whether its frame went');
+like($cal, qr/return \$rcv \? \$response_data : \(\$ok \? 1 : 0\);/,
+	'the sender answers for a fire-and-forget push, where there is no reply to carry it');
+
 done_testing();
