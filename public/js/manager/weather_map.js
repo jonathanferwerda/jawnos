@@ -155,6 +155,12 @@ function weatherLocationOptions($w, locations, labels) {
 	labels = labels || {};
 	var select = $w.find('#weather_device');
 	var current = select.val();
+	var home = select.find('option[data-home="1"]').val() || '';
+	// The home plate has its own entry above this group; listing it here too
+	// would show the same place twice.
+	locations = $.grep(locations || [], function(loc) {
+		return home === '' || ('loc:' + ((loc || {}).uuid || '')) !== home;
+	});
 	var group = select.find('optgroup[data-weather-locations="1"]');
 	if (!locations.length) {
 		group.remove();

@@ -109,6 +109,11 @@ function weatherLocationDelete(uuid, button, statusSelector) {
 				if (typeof weatherLocationOptions === 'function') {
 					weatherLocationOptions($w, response.locations || [], response.labels || {});
 				}
+				// The home plate's entry sits above the Places group; deleting the
+				// place it names must take that entry too, or the picker keeps a
+				// value the route can no longer resolve.
+				var $home = $w.find('#weather_device option[data-home="1"]');
+				if ($home.length && $home.val() === uuid) { $home.remove(); }
 				if (typeof weatherAutomationLoad === 'function' && $w.find('#weather_automation_list').length) {
 					weatherAutomationLoad();
 				}
@@ -167,10 +172,12 @@ function weatherDeleteState() {
 	var $w = $('.wind[app="weather"]').last();
 	var value = $w.find('#weather_device').val() || '';
 	$w.find('#weather_location_delete').prop('disabled', value.indexOf('loc:') !== 0);
-	var anchor = $w.find('#weather_device option:selected').attr('data-anchor') === '1';
+	var $opt = $w.find('#weather_device option:selected');
+	var home = $opt.attr('data-home') === '1';
+	var anchor = $opt.attr('data-anchor') === '1';
 	$w.find('#weather_location_anchor')
-		.prop('disabled', value.indexOf('loc:') !== 0)
-		.text(anchor ? jawnosT('Anchored') : jawnosT('Anchor'));
+		.prop('disabled', home || value.indexOf('loc:') !== 0)
+		.text(home ? jawnosT('Always checked') : (anchor ? jawnosT('Anchored') : jawnosT('Anchor')));
 	$w.find('#weather_automation_location, #weather_measure_location').each(function() {
 		var id = $(this).attr('id');
 		var chosen = $(this).val() || '';

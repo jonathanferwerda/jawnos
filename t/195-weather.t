@@ -1342,10 +1342,15 @@ is(subs::weather_name_is_coordinate(''), 0, 'an empty name is not a coordinate e
 	my $plate = subs::weather_home_plate();
 	is($plate->{'from'}, 'home', 'the home app plate is the house');
 	is($plate->{'lat'}, 43.0024, 'and carries its latitude');
+	my $home_place = subs::weather_home_place();
+	is($home_place->{'uuid'}, 'warwick', 'the picker finds the place at the home plate');
 	$store{'home_plate'} = '';
 	$plate = subs::weather_home_plate();
 	is($plate->{'from'}, 'anchor', 'without a plate the anchored place is the house');
 	is($plate->{'uuid'}, 'warwick', 'and names that place');
+	is(subs::weather_home_place()->{'uuid'}, 'warwick', 'and stands in for the marked entry');
+	$store{'locations'} = Mojo::JSON::encode_json([]);
+	is(subs::weather_home_place(), undef, 'no plate and no anchor has no place to mark');
 }
 
 {
@@ -1516,13 +1521,18 @@ like($controller_auto, qr/sub action_52015\b/, 'the automation state action exis
 like($controller_auto, qr/sub action_52016\b/, 'the automation save action exists');
 like($controller_auto, qr/sub action_52017\b/, 'the observe-now action exists');
 unlike($controller_auto, qr/weather_observe_record/, 'looking at a place does not record it');
+like($controller_auto, qr/home_uuid/, 'the page finds the home plate for the picker');
 
 my $page = read_file("$root/templates/apps/weather.html.ep");
 like($page, qr/data-tab="automations"/, 'the page has an Automations tab');
 like($page, qr{apps/weather/automations}, 'the page includes the Automations panel');
 like($page, qr/id="weather_check_here"/, 'the page offers one check where you are');
+like($page, qr/data-home="1"/, 'the home plate is marked in the picker');
+like($page, qr/Home, always checked/, 'and says it is always checked');
 my $weather_script = read_file("$root/public/js/manager/weather.js");
 like($weather_script, qr/weatherCheckHere/, 'and the script keeps that reading');
+like($weather_script, qr/Always checked/, 'the anchor button marks the home plate always checked');
+like($weather_script, qr/data-home/, 'the script knows the home entry');
 my $auto_partial = read_file("$root/templates/apps/weather/automations.html.ep");
 like($auto_partial, qr/id="weather_automation_list"/, 'the panel has a rule list');
 like($auto_partial, qr/id="weather_automation_check"/, 'the panel can check now');

@@ -828,6 +828,16 @@ sub weather_home_plate() {
 	return undef;
 }
 
+# The saved place at the home plate, or undef when the house has none yet. The
+# page marks that place in the picker; the pass asks for it with create so the
+# house's ground is a place even before the first save.
+sub weather_home_place($opts = {}) {
+	$opts ||= {};
+	my $home = &weather_home_plate();
+	return undef unless $home;
+	return &weather_location_for_fix($home->{'lat'}, $home->{'lon'}, '', { create => ($opts->{'create'} ? 1 : 0) });
+}
+
 # The places the scheduled pass records. A rule's own place and every anchored
 # place are stations, and so is the home plate: the house keeps reading its own
 # ground when the phones leave. A device's fix is not a station here - the pass
@@ -852,13 +862,10 @@ sub weather_rule_locations() {
 	}
 	# The home plate is always a station. Find the place at the plate (or make
 	# one there) so its readings, History and Delete all name one place.
-	my $home = &weather_home_plate();
-	if ($home) {
-		my $place = &weather_location_for_fix($home->{'lat'}, $home->{'lon'}, '', { create => 1 });
-		if ($place && ($place->{'uuid'} // '') =~ /^[A-Za-z0-9_-]+$/) {
-			my $key = 'loc:' . $place->{'uuid'};
-			push @keys, $key unless $seen{$key}++;
-		}
+	my $home = &weather_home_place({ create => 1 });
+	if ($home && ($home->{'uuid'} // '') =~ /^[A-Za-z0-9_-]+$/) {
+		my $key = 'loc:' . $home->{'uuid'};
+		push @keys, $key unless $seen{$key}++;
 	}
 	return \@keys;
 }

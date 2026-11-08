@@ -4,12 +4,19 @@
 	my $labels = $location_labels || {};
 	my $default = $default_device || 'me';
 	my $has_me = grep { $_->{'me'} } @{$places};
+	my $home_uuid = $home_uuid || '';
+	my ($home_loc) = grep { ($_->{'uuid'} // '') eq $home_uuid } @{$locs};
+	my $home_label = $home_loc ? ($labels->{$home_uuid} // $home_loc->{'name'} // '') : '';
+	my @other_locs = grep { ($_->{'uuid'} // '') ne $home_uuid } @{$locs};
 %>
 <%= include 'apps/weather/style' %>
 <div id="weather">
 	<div id="weather_toolbar">
 		<label for="weather_device"><%= &subs::ui('Location') %></label>
 		<select id="weather_device">
+			<% if ($home_loc) { %>
+				<option value="loc:<%= $home_loc->{'uuid'} %>" data-lat="<%= $home_loc->{'lat'} %>" data-lon="<%= $home_loc->{'lon'} %>" data-anchor="<%= $home_loc->{'anchor'} ? 1 : 0 %>" data-home="1" title="<%= &subs::ui('The house\'s home plate, read every hour') %>"><%= length $home_label ? $home_label . ' — ' : '' %><%= &subs::ui('Home, always checked') %></option>
+			<% } %>
 			<% if (!$has_me) { %>
 				<option value="me" data-lat="" data-lon="" <% if ($default eq 'me') { %>selected<% } %>><%= &subs::ui('This device') %></option>
 			<% } %>
@@ -18,9 +25,9 @@
 				<% my $seen = $g->{'seen'} ? &subs::weather_stamp_text($g->{'seen'}) : ''; %>
 				<option value="<%= $value %>" data-lat="<%= $g->{'lat'} %>" data-lon="<%= $g->{'lon'} %>" data-seen="<%= $seen %>" title="<%= $g->{'devices_text'} %>" <% if ($default eq $value) { %>selected<% } %>><%= $g->{'label'} %><% if (length $seen) { %> — <%= $seen %><% } %></option>
 			<% } %>
-			<% if (@{$locs}) { %>
+			<% if (@other_locs) { %>
 				<optgroup label="<%= &subs::ui('Places') %>" data-weather-locations="1">
-					<% foreach my $loc ( @{$locs} ) { %>
+					<% foreach my $loc ( @other_locs ) { %>
 						<option value="loc:<%= $loc->{'uuid'} %>" data-lat="<%= $loc->{'lat'} %>" data-lon="<%= $loc->{'lon'} %>" data-anchor="<%= $loc->{'anchor'} ? 1 : 0 %>"><%= $labels->{ $loc->{'uuid'} } // $loc->{'name'} %></option>
 					<% } %>
 				</optgroup>

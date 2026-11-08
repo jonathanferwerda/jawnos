@@ -21,6 +21,10 @@ sub action_52010 {
 	my $places = eval { &subs::weather_place_groups($fixes) } || [];
 	my $locations = eval { &subs::weather_locations() } || [];
 	my $location_labels = eval { &subs::weather_location_labels() } || {};
+	# The home plate is the first entry in the picker, marked as the always-on
+	# station. It is looked up, not made here: the pass makes it on its own.
+	my $home_place = eval { &subs::weather_home_place() };
+	my $home_uuid = ref $home_place eq 'HASH' ? ($home_place->{'uuid'} // '') : '';
 	my ($me_group) = grep { $_->{'me'} } @{$places};
 	my $default = $me_group ? 'me' : (@{$places} ? $places->[0]{'signatorial'} : 'me');
 	my $content = $c->render_to_string(
@@ -28,6 +32,7 @@ sub action_52010 {
 		places => $places,
 		locations => $locations,
 		location_labels => $location_labels,
+		home_uuid => $home_uuid,
 		default_device => $default,
 	);
 	my $contents = &window_maker({
