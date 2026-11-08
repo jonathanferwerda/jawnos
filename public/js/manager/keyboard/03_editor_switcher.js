@@ -255,10 +255,25 @@ $(document).on('keydown', function(e) {
 		}
 	}
 	else if (e.keyCode == 27) {
+		var dialog_cancelled = false;
 		if ($('.dialog_box').length > 0) {
 			e.preventDefault();
 			var d = $($('.dialog_box')[$('.dialog_box').length - 1]);
 			d.find('.cancel').trigger('click');
+			dialog_cancelled = true;
+		}
+		if (!dialog_cancelled) {
+			// Escape leaves a fullscreen picture. The browser's own handling
+			// never runs here: the Music window's shortcut block calls
+			// preventDefault for every key, so the page has to leave fullscreen
+			// itself. An open dialog still takes the first Escape.
+			var fs = document.fullscreenElement || document.webkitFullscreenElement;
+			if (fs) {
+				e.preventDefault();
+				var out = document.exitFullscreen ? document.exitFullscreen()
+					: (document.webkitExitFullscreen ? document.webkitExitFullscreen() : null);
+				if (out && out.catch) { out.catch(function () {}); }
+			}
 		}
 	}
 	else if (e.keyCode == 65 && e.ctrlKey == true) {
@@ -360,17 +375,6 @@ $(document).on('keydown', function(e) {
 		appSwitcher();
 	} else if (!$(e.target).is('input') && !$(e.target).is('textarea') && !$(e.target).is('select') && !$(e.target).hasClass('.text_editor') && e.ctrlKey == false && topWindow() == 'music') {
 			e.preventDefault();
-			if (e.keyCode == 27) {
-				// Escape leaves a fullscreen picture. The browser's own handling
-				// never runs here: preventDefault above swallows it for the music
-				// window, so the player has to leave fullscreen itself.
-				var fs = document.fullscreenElement || document.webkitFullscreenElement;
-				if (fs) {
-					var out = document.exitFullscreen ? document.exitFullscreen()
-						: (document.webkitExitFullscreen ? document.webkitExitFullscreen() : null);
-					if (out && out.catch) { out.catch(function () {}); }
-				}
-			}
 			if (e.keyCode == 32 && !keysPressed[91]) {
 				console.log('space bar');
 				$('#play').trigger('click');
