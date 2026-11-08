@@ -17,7 +17,7 @@ $(document).on('mousemove', '#pseudonym_home', function(m) {
 });
 
 function textareaUpgrader() {
-	$('textarea[upgradeable="yes"').each(function(i,v) {
+	$('textarea[upgradeable="yes"]').each(function(i,v) {
 		if ($(v).attr('upgraded') != 'yes') {
 			var ta = $(v);
 			var id = ta.attr('id');
@@ -55,10 +55,16 @@ function textareaUpgrader() {
 						+ (parseFloat(ta.css('border-bottom-width')) || 0);
 				}
 			}
+			// Claim the field before the request leaves. The answer is async, and a
+			// second pass (a restore that draws the window twice) would otherwise
+			// start a second editor for the same textarea, so the note appeared
+			// more than once. A request that fails gives the claim back.
+			ta.attr('upgraded', 'yes');
 			$.ajax({
 				url: '/manager/text_editor/create',
 				type: 'GET',
 				data: { id: id, contents: contents, placeholder: placeholder, magic_vars: ta.attr('magic_vars') || '' },
+				error: function() { ta.removeAttr('upgraded'); },
 				success: function(response) {
 					var p_id = response.p_id;
 					id = response.id;
