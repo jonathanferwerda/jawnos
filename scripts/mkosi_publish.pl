@@ -21,7 +21,7 @@
 # --dry-run needs none of them. The GitHub path is kept for the split that the
 # 2 GiB cap forces when R2 is not configured.
 #
-# The raw image is ~8.1G on disk and is mostly a read-only system image: it
+# The raw image is ~9.5G on disk and is mostly a read-only system image: it
 # compresses to about 3.0G with zstd -3 (measured here: 47s) and rather less
 # with xz, which took over five minutes on the same box. zstd is the default
 # because publishing is a repeated operation and every modern Linux/macOS has

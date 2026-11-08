@@ -66,8 +66,8 @@ if ! command -v bluetoothctl >/dev/null 2>&1; then
 fi
 fi
 
-# The desktop view (Qt WebEngine, Chromium) and the WebKitGTK fallback/Browse
-# view are distro packages. Warn with the exact command; never fail -- the CLI
+# The desktop view (Qt WebEngine, Chromium) and the WebKitGTK fallback view
+# are distro packages. Warn with the exact command; never fail -- the CLI
 # and the dashboard work without either, and video merely decodes in software.
 if [ "$WITH_HEADLESS" -eq 0 ]; then
 os_id=$( . /etc/os-release 2>/dev/null || true; echo "${ID:-}${ID_LIKE:-}" )
@@ -107,7 +107,7 @@ if command -v gst-inspect-1.0 >/dev/null 2>&1; then
 	fi
 fi
 if [ "$with_view" -eq 0 ] || [ "$with_va" -eq 0 ]; then
-	echo "install.sh: the WebKitGTK fallback / Browse view and its video want"
+	echo "install.sh: the WebKitGTK fallback view and its video want"
 	echo "  WebKitGTK 4.1 and the GStreamer plugins (including a VA-API plugin):"
 	case "$os_id" in
 		*arch*|*manjaro*)

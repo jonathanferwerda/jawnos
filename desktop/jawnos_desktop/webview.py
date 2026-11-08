@@ -2,7 +2,8 @@
 
 The default shell is ``qt_shell`` (Qt WebEngine / Chromium), which has WebRTC.
 Debian's WebKitGTK build does not, so this view is the fallback when PySide6/Qt
-WebEngine is absent, and it is the engine behind the separate Browse window.
+WebEngine is absent. Browse and the session bar no longer use it; it is the
+manager view's fallback only.
 Why not the other embedded options:
 
 * **Chromium DevTools Protocol** (the "endpoint framework") does not embed a

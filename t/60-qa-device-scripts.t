@@ -1,4 +1,4 @@
-# tests-for: qa/android/build.sh qa/android/run.sh qa/android/weekly.sh qa/qemu/build.sh qa/qemu/run.sh qa/nightly_build.sh qa/systemd/jawnos-qa-emulator.service qa/systemd/jawnos-qa-emulator.timer scripts/verify_change.pl
+# tests-for: qa/android/build.sh qa/android/run.sh qa/android/weekly.sh qa/qemu/build.sh qa/qemu/run.sh qa/nightly_build.sh qa/systemd/jawnos-qa-emulator.service qa/systemd/jawnos-qa-emulator.timer scripts/verify_change.pl scripts/mkosi_build.pl
 # covers:    The device layers are shell scripts, which verify_change.pl does not look at.
 
 use strict;
@@ -91,6 +91,18 @@ for my $script (qw(android/build.sh android/run.sh qemu/build.sh qemu/run.sh)) {
 	like($run, qr/snapshot=on/, 'the image disk is opened with snapshot=on');
 	like($run, qr/-display none/, 'the VM is headless');
 	like($run, qr/hostfwd=.*45545/, 'the manager port is forwarded for a health check');
+}
+
+# --- the image build's own size guard ---------------------------------------
+# The Qt package set fills 4.4G of the root, so the image grew to a 6.5G root
+# (9.5G artefact). A 10G VM disk can no longer hold that plus the state
+# partition, so the script refuses anything under 12G up front.
+{
+	my $build_script = read_file("$qa/../scripts/mkosi_build.pl");
+	like($build_script, qr/1G ESP \+ 6\.5G root \+ 2G state/,
+		'the artefact size names the 6.5G root');
+	like($build_script, qr/\$disk_size < 12/,
+		'a VM disk below 12G is refused');
 }
 
 done_testing();

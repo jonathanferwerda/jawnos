@@ -3,8 +3,8 @@
 The default desktop engine is Qt WebEngine: Chromium, with the reference
 WebRTC implementation, which the chat and the screening's Connect me need.
 Debian's WebKitGTK build has no ``RTCPeerConnection``, so it remains the
-fallback when PySide6/Qt WebEngine is not installed (and it is still the engine
-of the separate Browse window, which keeps its own cookie jar).
+fallback for this view when PySide6/Qt WebEngine is not installed. Browse and
+the session bar are Qt WebEngine now; only this fallback still uses WebKitGTK.
 
     ./desktop/jawnos-qt --url https://house.example:3000/manager
     ./desktop/jawnos-qt --probe     # WebRTC, media and bridge support, then exit

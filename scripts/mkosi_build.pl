@@ -9,7 +9,7 @@
 #   perl scripts/mkosi_build.pl --stage-only  # stage only (no mkosi needed)
 #
 # --disk-size GROWS the QEMU disk only; the built artefact stays at its minimum
-# size (1G ESP + 5G root + 2G state) so the download stays small. --vm boots a
+# size (1G ESP + 6.5G root + 2G state) so the download stays small. --vm boots a
 # temporary copy (--ephemeral) so that growth, and anything the guest writes,
 # never touches the file that gets published. The image's jawnos-grow service
 # expands the state partition into the extra space at boot, exactly as it does
@@ -50,11 +50,11 @@ GetOptions(
 	'disk-size=i' => sub { $disk_size = $_[1]; $disk_size_given = 1 },
 ) or die "usage: $0 [--profile live] [--output-dir DIR] [--disk-size GB] [--dry-run] [--stage-only] [--vm]\n";
 
-# The image is built at 8G; a VM disk smaller than that cannot hold it, and a
-# size under 10G leaves no room for the state partition to grow into.
+# The image is built at 9.5G; a VM disk smaller than that cannot hold it, and a
+# size under 12G leaves no room for the state partition to grow into.
 $disk_size = 16 unless defined $disk_size;
-if ($disk_size < 10 || $disk_size > 4096) {
-	die "mkosi_build: --disk-size must be 10..4096 GB\n";
+if ($disk_size < 12 || $disk_size > 4096) {
+	die "mkosi_build: --disk-size must be 12..4096 GB\n";
 }
 if ($disk_size_given && !$vm) {
 	print "note: --disk-size only affects --vm; the built image stays at its minimum size\n";
