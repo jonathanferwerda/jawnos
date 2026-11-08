@@ -350,8 +350,38 @@ function appointmentStatsOpen(stats, stat) {
 	appointmentStatsShow(stats, stat);
 }
 
+// The chosen reading belongs to the app, not to the window: closing on the
+// money column and opening the appointment again comes back to money. The
+// choice is kept in this browser, beside the other preferences; the panel is
+// still fetched the first time it is needed, so remembering one costs nothing
+// until its window opens.
+function appointmentStatsRemember(app, stat) {
+	if (!app) { return; }
+	try { localStorage.setItem('appointment_stats_' + app, stat || ''); } catch (e) {}
+}
+
+function appointmentStatsRemembered(app) {
+	if (!app) { return ''; }
+	try { return localStorage.getItem('appointment_stats_' + app) || ''; } catch (e) { return ''; }
+}
+
+function appointmentStatsRestore(scope) {
+	$(scope || document).find('.appointment_stats').each(function() {
+		var stats = $(this);
+		var stat = appointmentStatsRemembered(stats.attr('app') || '');
+		// a header that has since gone (the app was rewritten) falls back to the
+		// evaluation the window already shows, rather than an empty panel
+		if (!stat || stat === 'evaluation') { return; }
+		if (!stats.find('.appointment_stats_header[stat="' + stat + '"]').length) { return; }
+		appointmentStatsOpen(stats, stat);
+	});
+}
+
 $(document).on('click', '.appointment_stats_header', function() {
-	appointmentStatsOpen($(this).closest('.appointment_stats'), $(this).attr('stat') || '');
+	var stats = $(this).closest('.appointment_stats');
+	var stat = $(this).attr('stat') || '';
+	appointmentStatsRemember(stats.attr('app') || '', stat);
+	appointmentStatsOpen(stats, stat);
 });
 
 // A save can move the readings a Start or Stop just changed. A panel that is

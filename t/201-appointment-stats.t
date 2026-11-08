@@ -1,4 +1,4 @@
-# tests-for: lib/JawnOS/Domain/Appointment2.pm lib/JawnOS/Domain/Loader.pm lib/JawnOS/Controller/manager_misc.pm templates/appointment_wrapper.html.ep templates/apps/appointment_stats.html.ep public/js/manager/manager/09_app_back.js public/js/manager/websocket/01_message_handler.js
+# tests-for: lib/JawnOS/Domain/Appointment2.pm lib/JawnOS/Domain/Loader.pm lib/JawnOS/Controller/manager_misc.pm templates/appointment_wrapper.html.ep templates/apps/appointment_stats.html.ep templates/apps/app_measure_details.html.ep public/js/manager/manager/09_app_back.js public/js/manager/websocket/01_message_handler.js public/js/manager/windows.js
 # covers:    the appointment's bottom line - shelf in/out, and time, count, money and measures for today/week/month/year
 
 use strict;
@@ -10,6 +10,7 @@ use Test::More;
 use File::Slurp qw(read_file);
 use File::Temp qw(tempfile);
 use Mojo::SQLite;
+use Mojo::Template;
 use JawnOSTest;
 use RepoSource;
 
@@ -62,7 +63,10 @@ sub appt {
 sub measure_json {
 	my ($at, $steps, $weight) = @_;
 	$row_id++;
-	return '[{"steps":"' . $steps . '","weight":"' . $weight . '","ts":"' . $at . '","uuid":"m' . $row_id . '"}]';
+	# the recorder stamps every entry with its clock under more than one name;
+	# none of those names is a reading
+	return '[{"steps":"' . $steps . '","weight":"' . $weight . '","ts":"' . $at
+		. '","timestamp":"' . $at . '","server_time":"' . $at . '","uuid":"m' . $row_id . '"}]';
 }
 
 appt(ts(2026, 11,  7, 10), 3600000, 10, measure_json(ts(2026, 11,  7, 10), 1000, 170));   # today
@@ -116,8 +120,30 @@ is($p{'year'}->{'measures'}->{'steps'}->{'value'}, 10000, 'the year sums every s
 is($p{'today'}->{'measures'}->{'weight'}->{'calc'}, 'average', 'weight reads as an average');
 is($p{'today'}->{'measures'}->{'weight'}->{'value'}, 170, 'today averages its weight');
 is($p{'year'}->{'measures'}->{'weight'}->{'value'}, 185, 'the year averages every weight');
-is($stats->{'measure_names'}->[0]->{'unit'}, '', 'a measure without a unit says so');
-is($stats->{'measure_names'}->[1]->{'unit'}, 'lb', 'a measure keeps the unit the app declares it in');
+my %measure_name = map { $_->{'name'} => $_ } @{ $stats->{'measure_names'} };
+my @measure_names = sort keys %measure_name;
+is_deeply(\@measure_names, [qw/steps weight/],
+	'ts, timestamp and server_time are the entry clock, not measures in the table');
+is($measure_name{'steps'}->{'unit'}, '', 'a measure without a unit says so');
+is($measure_name{'weight'}->{'unit'}, 'lb', 'a measure keeps the unit the app declares it in');
+my $series = &subs::measure_series(0);
+is_deeply([ sort keys %{ $series->{'walk'} } ], [qw/steps weight/],
+	'the same clock fields are left out of the per-day series');
+
+# the measure list under an appointment's details is the other place the entry
+# clock surfaced: the same fields are not rows there either
+my $measure_details = Mojo::Template->new(vars => 1, auto_escape => 1)->render(
+	scalar read_file("$root/templates/apps/app_measure_details.html.ep"),
+	{
+		l => { measures => [ {
+			steps => 5, weight => 170,
+			ts => 1000, timestamp => 1000, server_time => 1000, uuid => 'm1',
+		} ] },
+	},
+);
+like($measure_details, qr/>Steps</, 'the measure list still shows a reading');
+unlike($measure_details, qr/Timestamp|Server time|>Ts</,
+	'the measure list does not show the fields the entry was filed under');
 
 is(scalar @{ $stats->{'inventory'}->{'units'} }, 1, 'one unit is held');
 is($stats->{'inventory'}->{'units'}->[0]->{'in'}, 16, 'the shelf counts what came in');
@@ -173,6 +199,21 @@ like($app_back, qr/function appointmentStatsShow\(/,
 	'one helper turns the selected header and its panel');
 like($app_back, qr/function appointmentStatsReload\(/,
 	'a loaded panel has one reload path');
+like($app_back, qr/function appointmentStatsRemember\(/,
+	'a chosen reading has one place that remembers it');
+like($app_back, qr/function appointmentStatsRemembered\(/,
+	'and one place that reads it back');
+like($app_back, qr/function appointmentStatsRestore\(/,
+	'a window that is drawn puts its reading back');
+like($app_back, qr/localStorage\.setItem\('appointment_stats_' \+ app/,
+	'the reading is kept per app in this browser');
+like($app_back, qr/appointmentStatsRemember\(stats\.attr\('app'\) \|\| '', stat\)/,
+	'pressing a header saves that header for the app');
+like($app_back, qr/appointmentStatsRemembered\(stats\.attr\('app'\)/,
+	'the restore asks the same app what it last read');
+my $windows = read_file("$root/public/js/manager/windows.js");
+like($windows, qr/appointmentStatsRestore\(win\)/,
+	'the window manager restores the reading when it draws the window');
 like($app_back, qr/appointmentStatsReload\(app\);/,
 	'a save reloads the readings');
 my ($stats_reload) = $app_back =~ /(function appointmentStatsReload\(app\) \{.*?\n\})/s;

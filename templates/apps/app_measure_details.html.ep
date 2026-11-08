@@ -5,7 +5,7 @@
 	<% foreach my $me ( @{$l->{'measures'}} ) { %>
 			<% foreach my $m ( sort keys %{$me} ) { %>
 
-				<% if ($m eq 'uuid') { next; } %>
+				<% if ($m =~ /^(?:uuid|ts|timestamp|server_time)$/) { next; } %>
 				<tr class="app_measure_instance" uuid="<%= $me->{'uuid'} %>">
 					<td><%= &subs::format_name($m) %></td> 
 					<% if (grep { $_ eq $m } qw/timestamp server_time ts ost st/) { %>

@@ -549,6 +549,9 @@ function windowMaker(response, fragment) {
 			windowSaver();
 			openAttributeReopener(app);
 			appointment_chron();
+			// the bottom line comes back on the reading the person last chose,
+			// not on the evaluation a fresh render starts with
+			if (typeof appointmentStatsRestore === 'function') { appointmentStatsRestore(win); }
 			textareaUpgrader();
 			if (!appDetailsScroll[app]) { appDetailsScroll[app] = { reload: 0, position: 1 }; }
 

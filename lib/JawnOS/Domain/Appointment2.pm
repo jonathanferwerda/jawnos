@@ -41,6 +41,12 @@ our $device;
 our $gb;
 our %m;
 
+# A measure entry carries bookkeeping beside its readings: the uuid it was filed
+# under, and the clock under one of several names. None of those is a reading,
+# so every reader of the entries skips them rather than showing a "Timestamp"
+# row beside steps and weight.
+our %MEASURE_META_FIELD = map { $_ => 1 } qw(uuid ts timestamp server_time);
+
 # --- the evaluation agent -------------------------------------------------------
 # The evaluate buttons hand an app - or the whole house - to this. The raw
 # appointment numbers are rolled up first: counts, durations, an hourly and a
@@ -349,7 +355,7 @@ sub measure_series {
 			my @lt = localtime($when / 1000);
 			my $day = sprintf('%04d-%02d-%02d', $lt[5] + 1900, $lt[4] + 1, $lt[3]);
 			foreach my $name ( keys %{$entry} ) {
-				next if $name eq 'ts' || $name eq 'uuid';
+				next if $MEASURE_META_FIELD{$name};
 				my $value = $entry->{$name};
 				next unless defined $value && !ref $value && $value =~ /^-?[0-9]+(\.[0-9]+)?$/;
 				$sum{$app}->{$name}->{$day}->{'sum'} += $value;
@@ -530,7 +536,7 @@ sub evaluation_conditions {
 		my $day = sprintf('%04d-%02d-%02d', $lt[5] + 1900, $lt[4] + 1, $lt[3]);
 		foreach my $m ( @{$ms} ) {
 			foreach my $k ( keys %{$m} ) {
-				next if $k eq 'uuid' || $k eq 'ts';
+				next if $MEASURE_META_FIELD{$k};
 				my $v = $m->{$k};
 				next unless defined $v && $v =~ /^-?[0-9]+(?:\.[0-9]+)?$/;
 				my $s = ($series{$mapp . "\t" . $k} ||= { app => $mapp, name => $k, pts => [], days => {} });
@@ -654,7 +660,7 @@ sub evaluation_measures {
 			next unless ref $entry eq 'HASH';
 			my $when = 0 + ($entry->{'ts'} || 0);
 			foreach my $name ( keys %{$entry} ) {
-				next if $name eq 'ts' || $name eq 'uuid';
+				next if $MEASURE_META_FIELD{$name};
 				my $value = $entry->{$name};
 				next unless defined $value && !ref $value && $value =~ /\S/;
 				if ($value =~ /^-?[0-9]+(?:\.[0-9]+)?$/) {
@@ -861,7 +867,7 @@ sub appointment_statistics_for {
 			next unless ref $entry eq 'HASH';
 			my $when = (defined $entry->{'ts'} && $entry->{'ts'} =~ /^-?[0-9]+$/) ? $entry->{'ts'} + 0 : $start;
 			foreach my $name ( keys %{$entry} ) {
-				next if $name eq 'ts' || $name eq 'uuid';
+				next if $MEASURE_META_FIELD{$name};
 				my $value = $entry->{$name};
 				next unless defined $value && !ref $value && $value =~ /^-?[0-9]+(?:\.[0-9]+)?$/;
 				foreach my $key ( @order ) {
