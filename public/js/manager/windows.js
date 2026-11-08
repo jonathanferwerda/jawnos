@@ -4,6 +4,7 @@
      02_fit.js  - minimise/restore/move, draggable, viewport/fit, phone check
      03_stack.js  - stacker, close, z-order, everythingMoves, dimension setter, background, drawer
      04_act.js  - appActSync, the act panel open/close message the beat no longer carries
+     05_tiling.js - the tile: which windows it owns and where they find space
    /js/manager/bundle.js concatenates the index and these parts.
    [[/js-split]] */
 
@@ -472,7 +473,16 @@ function windowMaker(response, fragment) {
 			// screen; an unpinned one cascades in with the others
 			if (typeof windowPlaceRestore === 'function') { windowPlaceRestore($('#' + window_id)); }
 			if ($('#' + window_id).attr('pre_dimensioned') != 1) {
-				windowReorganizer(window_id);
+				// find-space mode lays the whole tile out around the windows that
+				// hold a place of their own; otherwise the new window takes the
+				// next slot in the usual cascade
+				if (typeof windowFindSpaceActive === 'function' && windowFindSpaceActive()) {
+					windowFindSpaceArrange();
+					topLevelNow($('#' + window_id));
+				}
+				else {
+					windowReorganizer(window_id);
+				}
 			}
 			else {
 				topLevelNow($('#' + window_id));
@@ -609,13 +619,19 @@ function windowBottomClearance() {
 	return bar;
 }
 
-// The tile counts only the windows with no place of their own. An anchored
-// window keeps the place it was pinned at, so it must not take a slot: the
-// next unpinned window steps where it would have without the pin beside it.
+// A window belongs to the tile until it is given a place of its own: the pin
+// keeps it where it sits, and a drag hands the place to the person. A maximized
+// window fills the desk, so it is not a slot in the cascade either. Everything
+// else is tiled, and only tiled windows move when the tile is laid out.
+function windowIsTiled(win) {
+	win = $(win);
+	return win.attr('pre_dimensioned') != 1 && win.attr('tile') != 'off' && win.attr('view') != 'max';
+}
+
 function windowTiledCount() {
 	var count = 0;
 	$('.wind').each(function() {
-		if ($(this).attr('pre_dimensioned') != 1) { count++; }
+		if (windowIsTiled(this)) { count++; }
 	});
 	return count;
 }

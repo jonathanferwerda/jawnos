@@ -247,6 +247,17 @@ function windowDraggable(win) {
 				}
 				if (typeof markerDragger === 'function') { markerDragger(p.target.id,'stop'); }
 				windowDimensionSetter($('#' + p.target.id));
+				// A window that really moved has a place of its own now, so it
+				// leaves the tile. The next window closes over it instead of
+				// counting it, and find-space mode flows around where it sits. A
+				// press that started a drag and ended where it began is a click.
+				var moved = ui && ui.originalPosition && ui.position
+					&& (Math.abs(ui.position.left - ui.originalPosition.left) > 1
+						|| Math.abs(ui.position.top - ui.originalPosition.top) > 1);
+				if (!windowPhoneChecker() && moved && win.attr('pre_dimensioned') != 1) {
+					win.attr('tile', 'off');
+				}
+				if (moved && typeof windowFindSpaceRefresh === 'function') { windowFindSpaceRefresh(); }
 				// a phone's pile is a cascade; a drag would leave the window over the
 				// others' bars and swallow their taps, so restack it - to the top of
 				// the pile - the moment the drag ends
@@ -324,6 +335,7 @@ $(document).on('click', '.place_button', function(e) {
 		// let it tile again: no place of its own, and the next open cascades it
 		button.attr('status', 'off');
 		win.attr('pre_dimensioned', 0);
+		win.attr('tile', 'on');
 		settingDeleter({ 'app': app, 'setting': 'dimensions' });
 		settingSetter({ 'app': app, 'setting': 'place', 'value': 'tile' });
 	}
@@ -331,9 +343,22 @@ $(document).on('click', '.place_button', function(e) {
 		// keep it as it sits, on the screen it sits on
 		button.attr('status', 'on');
 		win.attr('pre_dimensioned', 1);
+		win.attr('tile', 'off');
 		windowDimensionSetter(win);
 		settingSetter({ 'app': app, 'setting': 'place', 'value': 'lock' });
 	}
+	if (typeof windowFindSpaceRefresh === 'function') { windowFindSpaceRefresh(); }
+});
+
+// Double-press a window's title bar on a desk to let the tiled windows find the
+// free places around anchored and dragged ones, and again to return them to the
+// usual tile. A phone's title bar already walks its pile on a tap.
+$(document).on('dblclick', '.top_navbar', function(e) {
+	if (windowPhoneChecker()) { return; }
+	if ($(e.target).closest('.navbar_buttons, .navbar_reveal, .window_icon_holder').length) { return; }
+	if ($(this).closest('.wind').length == 0) { return; }
+	e.preventDefault();
+	if (typeof windowFindSpaceToggle === 'function') { windowFindSpaceToggle(); }
 });
 
 
@@ -497,6 +522,11 @@ $(document).on('resizestop', '.wind', function () {
 	// a person's own resize is the new wanted size
 	$(this).removeAttr('fit_shrunk').removeAttr('fit_height');
 	windowFit($(this));
+	// resizing a window that holds its own place moves an obstacle the tile
+	// has to flow around
+	if (!windowIsTiled(this) && typeof windowFindSpaceRefresh === 'function') {
+		windowFindSpaceRefresh();
+	}
 });
 
 function windowPhoneChecker() {

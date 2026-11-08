@@ -122,6 +122,8 @@ function closeWindow(timestamp) {
 	windowSaver();
 	startMenuDisplayer();
 	windowBackgroundAdjuster();
+	// find-space mode closes the gap the closed window leaves in the tile
+	if (typeof windowFindSpaceRefresh === 'function') { windowFindSpaceRefresh(); }
 	// a phone layers its windows on one another, so the layers left behind
 	// want re-parking against the smaller count
 	if (windowPhoneChecker()) { windowStacker(); }

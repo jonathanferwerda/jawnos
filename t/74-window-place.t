@@ -1,4 +1,4 @@
-# tests-for: lib/JawnOS/Manager/Part22.pm public/css/manager.css public/js/manager/windows.js public/js/manager/windows/02_fit.js public/js/manager/windows/03_stack.js
+# tests-for: lib/JawnOS/Manager/Part22.pm public/css/manager.css public/js/manager/windows.js public/js/manager/windows/02_fit.js public/js/manager/windows/03_stack.js public/js/manager/windows/05_tiling.js
 # covers:    A window's place used to be saved automatically and invisibly, so a desk full of windows became a memory of wh...
 
 use strict;
@@ -21,6 +21,7 @@ my $root = repo_root();
 my $maker = read_file("$root/lib/JawnOS/Manager/Part22.pm");
 my $fit = read_file("$root/public/js/manager/windows/02_fit.js");
 my $stack = read_file("$root/public/js/manager/windows/03_stack.js");
+my $tiling = read_file("$root/public/js/manager/windows/05_tiling.js");
 my $windows = read_file("$root/public/js/manager/windows.js");
 my $css = read_file("$root/public/css/manager.css");
 
@@ -62,6 +63,15 @@ like($fit, qr/var from_right = saved_w - \(left \+ width\);/, 'the edge a window
 like($fit, qr/var scale = Math\.min\(now_w \/ saved_w, now_h \/ saved_h\);/, 'the place is scaled to this screen');
 like($fit, qr/win\.attr\('place_restoring', '1'\)/, 'restoring does not ratchet the saved place down');
 like($windows, qr/windowPlaceRestore\(\$\('#' \+ window_id\)\)/, 'the open path restores a pinned place');
+
+# --- the tile and find-space mode ------------------------------------------
+like($windows, qr/function windowIsTiled\(win\)/, 'one predicate says which windows the tile owns');
+like($tiling, qr/function windowFindSpacePositions\(windows, obstacles, view/, 'find-space has one place that hands out slots');
+like($fit, qr/\$\(document\)\.on\('dblclick', '\.top_navbar'/, 'double-pressing a title bar toggles find-space mode');
+like($fit, qr/win\.attr\('tile', 'off'\)/, 'a dragged window leaves the tile');
+like($fit, qr/ui\.originalPosition/, 'a click that started a drag and ended where it began is not a move');
+like($windows, qr/windowFindSpaceActive\(\)/, 'the open path lays find-space mode out');
+like($stack, qr/windowFindSpaceRefresh\(\)/, 'closing a window closes the gap it leaves');
 
 # --- the tile does not count an anchored window ----------------------------
 # The live tiler is exercised in a bare context: windows.js needs jQuery for
@@ -116,6 +126,7 @@ El.prototype.find = function (sel) {
 	return { val: function () { return this; }, css: function () { return '0px'; }, outerHeight: function () { return 0; } };
 };
 El.prototype.show = function () { return this; };
+El.prototype.is = function () { return true; };
 
 function J(els) {
 	els = els || [];
@@ -176,6 +187,7 @@ const ctx = {
 };
 vm.createContext(ctx);
 vm.runInContext(source, ctx);
+vm.runInContext(fs.readFileSync(process.argv[3], 'utf8'), ctx);
 
 let failures = 0;
 function eq(actual, want, label) {
@@ -210,11 +222,79 @@ let three_with = open([{ id: 'window_a', pinned: true }, { id: 'window_b', pinne
 eq(three_with.fresh.style.left, 100, 'the third tiled window still steps twice');
 eq(three_with.fresh.style.top, 80, 'down two bars');
 
+// --- the tile's membership --------------------------------------------------
+function member(attrs) { return new El('window_x', attrs); }
+eq(ctx.windowIsTiled(member({ pre_dimensioned: '0' })), true, 'an unpinned window is in the tile');
+eq(ctx.windowIsTiled(member({ pre_dimensioned: '1' })), false, 'a pinned window is not');
+eq(ctx.windowIsTiled(member({ pre_dimensioned: '0', tile: 'off' })), false, 'a dragged window is not');
+eq(ctx.windowIsTiled(member({ pre_dimensioned: '0', view: 'max' })), false, 'a maximized window is not');
+
+// --- find-space slots --------------------------------------------------------
+function overlaps(a, b) {
+	return a.left < b.left + b.width && b.left < a.left + a.width &&
+	       a.top < b.top + b.height && b.top < a.top + a.height;
+}
+function barsClear(positions, specs) {
+	for (let i = 0; i < positions.length; i++) {
+		for (let j = i + 1; j < positions.length; j++) {
+			const a = { left: positions[i].left, top: positions[i].top, width: specs[i].width, height: specs[i].bar };
+			const b = { left: positions[j].left, top: positions[j].top, width: specs[j].width, height: specs[j].bar };
+			if (overlaps(a, b)) { return false; }
+		}
+	}
+	return true;
+}
+function framesClear(positions, specs, obstacles) {
+	for (let i = 0; i < positions.length; i++) {
+		const frame = { left: positions[i].left, top: positions[i].top, width: specs[i].width, height: specs[i].height };
+		for (const obstacle of obstacles) {
+			if (overlaps(frame, obstacle)) { return false; }
+		}
+	}
+	return true;
+}
+
+const view = { width: 1920, height: 1080 };
+const specs = [];
+for (let i = 0; i < 6; i++) { specs.push({ width: 450, height: 300, bar: 40 }); }
+
+const free = ctx.windowFindSpacePositions(specs, [], view, 0, 0, 50);
+eq(free.length, 6, 'every tiled window finds a slot');
+eq(free[0].left, 0, 'the first slot is at the top left');
+eq(free[0].top, 0, 'at the top');
+eq(free[1].left, 450, 'the next bar clears the first across');
+eq(free[1].top, 0, 'on the same row');
+eq(barsClear(free, specs), true, 'no two title bars share a slot');
+
+const anchored = [{ left: 0, top: 0, width: 400, height: 1080 }];
+const around = ctx.windowFindSpacePositions(specs, anchored, view, 0, 0, 50);
+eq(around[0].left, 400, 'the tile starts to the right of the anchored window');
+eq(around[0].top, 0, 'at the top of the free space');
+eq(framesClear(around, specs, anchored), true, 'no tiled frame is placed over the anchored window');
+eq(barsClear(around, specs), true, 'and every bar keeps its own slot around the anchor');
+
+const short_anchor = [{ left: 0, top: 0, width: 400, height: 280 }];
+const narrow = { width: 800, height: 1080 };
+const below = ctx.windowFindSpacePositions([{ width: 450, height: 300, bar: 40 }], short_anchor, narrow, 0, 0, 50);
+eq(below[0].left, 0, 'a short anchor does not push the tile sideways');
+eq(below[0].top, 280, 'the tile takes the space under it');
+
+// --- the switch --------------------------------------------------------------
+let arranged = 0;
+let tiled = 0;
+ctx.windowFindSpaceArrange = function () { arranged++; };
+ctx.windowTileArrange = function () { tiled++; };
+eq(ctx.windowFindSpaceActive(), false, 'the desk starts in tiling mode');
+eq(ctx.windowFindSpaceToggle(), true, 'a title-bar double-press switches to find-space');
+eq(arranged, 1, 'and lays the tile out');
+eq(ctx.windowFindSpaceToggle(), false, 'a second press returns to tiling');
+eq(tiled, 1, 'and cascades it again');
+
 process.exit(failures ? 1 : 0);
 JS
 	close $fh;
 
-	my $out = `$node "$harness_file" "$root/public/js/manager/windows.js" 2>&1`;
+	my $out = `$node "$harness_file" "$root/public/js/manager/windows.js" "$root/public/js/manager/windows/05_tiling.js" 2>&1`;
 	my $rc = $? >> 8;
 	diag($out) if $rc;
 	is($rc, 0, 'an anchored window does not take a slot in the tile');
