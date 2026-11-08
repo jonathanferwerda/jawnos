@@ -15,7 +15,8 @@ use JawnOSTest;
 # stub below, or the module load would replace the stub mid-test.
 subs::preload($_) for qw(db_select db_query formatted_time
 	network_interface_reporter signatorial_designer
-	router_discover device_scan refresh_self_address);
+	router_discover device_scan refresh_self_address
+	network_groups ip_sort_key subnet_cidr);
 
 # The Dev panel's two blind spots:
 #   - a peer the house knows (remote_machines) but no neighbour table lists, so
@@ -131,6 +132,51 @@ subs::preload($_) for qw(db_select db_query formatted_time
 	@did = ();
 	&subs::device_lister(0, 'ping_scan');
 	is_deeply \@did, [ 'scan' ], 'a ping scan sweeps but does not probe the gateway';
+}
+
+# ---------------------------------------------------- the table's order
+# A neighbour table used to be sorted by the address as text, so .5 came after
+# .147 and an address that changed (DHCP) moved the row around. Name first,
+# then the address numerically; an unnamed device follows the named ones.
+{
+	my $devices = [ {
+		uuid => 'self', hostname => 'me',
+		address => encode_json({ eth0 => {
+			ip => '192.168.1.10', netmask => '255.255.255.0',
+			neigh => [
+				{ name => 'HP OfficeJet 3830 series', ip => '192.168.1.109' },
+				{ name => 'Tablet', ip => '192.168.1.103' },
+				{ name => 'Tablet', ip => '192.168.1.9' },
+				{ name => 'Table', ip => '192.168.1.147' },
+				{ name => 'laptop', ip => '192.168.1.9' },
+				{ ip => '192.168.1.5' },
+			],
+		} }),
+	} ];
+	my $groups = &subs::network_groups($devices);
+	is_deeply(
+		[ map { (defined $_->{'name'} ? $_->{'name'} : '') . '@' . $_->{'ip'} }
+			@{ $groups->[0]{'members'}[0]{'neigh'} } ],
+		[ 'HP OfficeJet 3830 series@192.168.1.109', 'laptop@192.168.1.9',
+		  'Table@192.168.1.147', 'Tablet@192.168.1.9', 'Tablet@192.168.1.103',
+		  '@192.168.1.5' ],
+		'neighbours sort by name, then by address numerically, unnamed last'
+	);
+}
+
+# The Peers card is ordered the same way, so a sync does not shuffle it.
+{
+	my @remote = (
+		{ uuid => 'a', signatorial => 'sa', ip => '100.64.0.8', hostname => 'Tablet' },
+		{ uuid => 'b', signatorial => 'sb', ip => '100.64.0.1', hostname => 'Table' },
+		{ uuid => 'c', signatorial => 'sc', ip => '100.64.0.3', hostname => 'Laptop' },
+	);
+	local *subs::db_select = sub { return FakeRows->new([ map { { %{$_} } } @remote ]) };
+	local *subs::signatorial_designer = sub { return 'self-sign' };
+	my $orphans = &subs::remote_machine_orphans([]);
+	is_deeply [ map { $_->{'hostname'} } @{$orphans} ],
+		[ 'Laptop', 'Table', 'Tablet' ],
+		'the Peers card is ordered by name too';
 }
 
 # The helper only matters if the route passes its rows and the template draws

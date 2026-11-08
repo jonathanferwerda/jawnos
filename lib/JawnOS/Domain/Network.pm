@@ -42,6 +42,16 @@ our $gb;
 our $log;
 our %m;
 
+# A sort key for an address: packed octets so .5 sorts before .10 and .147.
+# A plain string compare put .5 after .147, which made a table look shuffled.
+sub ip_sort_key {
+	my ($ip) = @_;
+	$ip = '' unless defined $ip;
+	return pack('C4', map { $_ + 0 } split /\./, $ip)
+		if $ip =~ /^\d{1,3}(?:\.\d{1,3}){3}$/;
+	return $ip;
+}
+
 # The device rows as the lister shows them, grouped by the network each
 # neighbour sits on: one group per subnet, its members (the interfaces that
 # reach it, each on a machine), and the devices found there. device_lister has
@@ -53,20 +63,39 @@ sub network_groups {
 	# one, so dereference it rather than testing for 'ARRAY'.
 	my @rows = eval { @{$devices} };
 	return [] unless @rows;
+	my $name_key = sub {
+		my ($n) = @_;
+		my $name = $n->{'name'} || $n->{'hostname'} || $n->{'fqdn'} || '';
+		$name =~ s/^\s+|\s+$//g;
+		return lc $name;
+	};
 	my (%groups, @order);
 	foreach my $d (@rows) {
 		next unless ref $d eq 'HASH';
 		$d->{'address'} = eval { return decode_json $d->{'address'} } if $d->{'address'} && !ref $d->{'address'};
 		foreach my $nic (keys %{$d->{'address'} || {}}) {
-			my $a = $d->{'address'}->{$nic};
-			next unless ref $a eq 'HASH';
-			my $cidr = &subnet_cidr($a->{'ip'}, $a->{'netmask'}) || ($a->{'ip'} ? $a->{'ip'} : 'unknown');
+			my $iface = $d->{'address'}->{$nic};
+			next unless ref $iface eq 'HASH';
+			# The neighbour list arrives in whatever order the scan wrote it, and
+			# an address that changed (DHCP) moved a row around the table. Sort by
+			# name, then by address; an unnamed device follows the named ones, by
+			# address.
+			if (ref $iface->{'neigh'} eq 'ARRAY') {
+				@{$iface->{'neigh'}} = sort {
+					my $an = $name_key->($a);
+					my $bn = $name_key->($b);
+					(($an eq '' ? 1 : 0) <=> ($bn eq '' ? 1 : 0))
+						|| ($an cmp $bn)
+						|| (&ip_sort_key($a->{'ip'}) cmp &ip_sort_key($b->{'ip'}))
+				} @{$iface->{'neigh'}};
+			}
+			my $cidr = &subnet_cidr($iface->{'ip'}, $iface->{'netmask'}) || ($iface->{'ip'} ? $iface->{'ip'} : 'unknown');
 			unless ($groups{$cidr}) {
 				$groups{$cidr} = { cidr => $cidr, members => [] };
 				push @order, $cidr;
 			}
 			push @{$groups{$cidr}->{'members'}}, {
-				%{$a},
+				%{$iface},
 				uuid => $d->{'uuid'},
 				hostname => $d->{'hostname'},
 				domain => $d->{'domain'},
@@ -137,6 +166,22 @@ sub remote_machine_orphans {
 		elsif ($ip ne '') { $shown_ip{$ip} = 1; }
 		push @rows, { %{$rm}, manager => ($peer_manager || $manager), buttons => $buttons };
 	}
+	# The same order the network tables use: by name, then by address; a peer the
+	# house cannot name follows the named ones, by address. A row's position
+	# should not depend on the order a sync or a reconnect happened to write it.
+	my $label_key = sub {
+		my ($r) = @_;
+		my $name = $r->{'hostname'} || $r->{'name'} || $r->{'domain'} || $r->{'fqdn'} || '';
+		$name =~ s/^\s+|\s+$//g;
+		return lc $name;
+	};
+	@rows = sort {
+		my $an = $label_key->($a);
+		my $bn = $label_key->($b);
+		(($an eq '' ? 1 : 0) <=> ($bn eq '' ? 1 : 0))
+			|| ($an cmp $bn)
+			|| (&ip_sort_key($a->{'ip'}) cmp &ip_sort_key($b->{'ip'}))
+	} @rows;
 	return \@rows;
 }
 

@@ -262,7 +262,7 @@
 										<tr><th>devices</th><th>manager</th><th>purpose</th></tr>
 									</thead>
 									<tbody>
-									<% foreach my $n ( sort { $a->{'ip'} cmp $b->{'ip'} } @{$m->{'neigh'} || []} ) { %>
+									<% foreach my $n ( @{$m->{'neigh'} || []} ) { %>
 										<% my $rm = &subs::db_query('select uuid,buttons,privilege,grant_scope,grant_expires,port from remote_machines where signatorial = ?', $n->{'signatorial'})->hash; %>
 										<%# A peer reached through a tunnel stores a loopback manager (127.0.0.1)
 										    in its Go button. Point it at the peer's own name instead, so Go
