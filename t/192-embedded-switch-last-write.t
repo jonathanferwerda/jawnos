@@ -1,4 +1,4 @@
-# tests-for: lib/JawnOS/Domain/Name.pm lib/JawnOS/Domain/Loader.pm lib/JawnOS/Domain/Edt.pm lib/JawnOS/Domain/Notify.pm lib/JawnOS/Domain/Embedded2.pm lib/JawnOS/Domain/Ble2.pm lib/JawnOS/Manager/Part14.pm perl/watch.pl jp/alarmclock/alarmclock_01_globals_clock_ble.ino jp/alarmclock/alarmclock_03_loop_house_inputs_jobs.ino jp/alarmclock/alarmclock_04_jobs_clock_config_net.ino
+# tests-for: lib/JawnOS/Domain/Name.pm lib/JawnOS/Domain/Loader.pm lib/JawnOS/Domain/Edt.pm lib/JawnOS/Domain/Notify.pm lib/JawnOS/Domain/Embedded2.pm lib/JawnOS/Domain/Ble2.pm lib/JawnOS/Domain/File.pm lib/JawnOS/Manager/Part14.pm perl/watch.pl jp/alarmclock/alarmclock_01_globals_clock_ble.ino jp/alarmclock/alarmclock_03_loop_house_inputs_jobs.ino jp/alarmclock/alarmclock_04_jobs_clock_config_net.ino
 # covers:    A toggle is ordered by the event's own time, not by when the write
 #            happened to arrive. A start pressed on the panel and a switch
 #            flipped a moment later reach the manager at their own pace; the
@@ -33,6 +33,8 @@ $db->query('create table settings (setting text, value text, timestamp text, '
 	. 'browser_tab_id text, uuid text, ost text, subsetting text)');
 $db->query('create table cache (app text, context text, subcontext text, data text, '
 	. 'device text, timestamp text, server_time text, uuid text, ost text)');
+# The real cache.uuid is unique; INSERT OR IGNORE is what makes a claim atomic.
+$db->query('create unique index cache_uuid_unique on cache(uuid)');
 $db->query('create table remote_machines (uuid text, signatorial text, deletions text)');
 $db->query('create table sync_log (id integer primary key autoincrement, '
 	. 'server_time text, signatorial text, tbl text, app text, uuid text, '
@@ -99,7 +101,29 @@ $subs::say_quiet = 1;
 	ok(!&subs::toggle_event_is_older($app, &subs::rightNow() + 60000), 'and a newer one is not older');
 }
 
+# --- one flick is one event, however many roads carried it --------------------
+
+my $claim_chip = '988D7CC4B524D03A';
+my $claim_ms   = 1794105106420;
+ok(&subs::switch_event_fresh($claim_chip, '15', 'on', $claim_ms),
+	'the first copy of a flick is fresh');
+ok(!&subs::switch_event_fresh($claim_chip, '15', 'on', $claim_ms),
+	'a second copy of the same flick - another worker, or a retry - is dropped');
+ok(!&subs::switch_event_fresh($claim_chip, '15', 'on', '' . $claim_ms),
+	'the same stamp as a string is the same flick');
+ok(&subs::switch_event_fresh($claim_chip, '15', 'on', $claim_ms + 1),
+	'a later flick of the same switch is a new event');
+ok(&subs::switch_event_fresh($claim_chip, '15', 'off', $claim_ms),
+	'the opposite state at the same instant is its own event');
+ok(&subs::switch_event_fresh($claim_chip, '16', 'on', $claim_ms),
+	'another switch at the same instant is its own event');
+ok(&subs::switch_event_fresh($claim_chip, '15', 'on', 0),
+	'a board with no clock sends no stamp, so nothing is claimed');
+ok(&subs::switch_event_fresh($claim_chip, '15', 'on', 0),
+	'... and it is never swallowed by the claim');
+
 # --- every road to the toggle carries the event's time ------------------------
+
 
 my $name   = read_file("$root/lib/JawnOS/Domain/Name.pm");
 my $loader = read_file("$root/lib/JawnOS/Domain/Loader.pm");
@@ -112,6 +136,7 @@ my $watch  = read_file("$root/perl/watch.pl");
 my $g1     = read_file("$root/jp/alarmclock/alarmclock_01_globals_clock_ble.ino");
 my $g3     = read_file("$root/jp/alarmclock/alarmclock_03_loop_house_inputs_jobs.ino");
 my $g4     = read_file("$root/jp/alarmclock/alarmclock_04_jobs_clock_config_net.ino");
+my $file   = read_file("$root/lib/JawnOS/Domain/File.pm");
 
 like($name, qr/sub toggle_event_is_older \{/, 'the settings layer has one ordering helper');
 like($loader, qr/'JawnOS::Domain::Name' for qw\([^)]*toggle_event_is_older/,
@@ -156,5 +181,21 @@ like($g3, qr{/watch/button\?room=1.{0,300}?&timestamp_ms=}s, 'the HTTP button fa
 like($g3, qr/static bool lan_report_ready\(\)/, 'the board knows when the LAN can carry a report');
 my $lan_pref = () = $g3 =~ /if \(!lan_report_ready\(\) && ble_up && ble_notify_enabled\)/g;
 is($lan_pref, 2, 'a switch and a button both prefer the LAN while it is up');
+
+# --- the claim is shared, not remembered in one process -----------------------
+
+like($file, qr/sub switch_event_fresh \{/, 'one helper claims a physical switch event');
+like($file, qr/insert or ignore into cache/, 'the claim is an atomic database insert');
+like($loader, qr/'JawnOS::Domain::File' for qw\([^)]*switch_event_fresh/,
+	'the helper is registered in the domain loader');
+like($watch, qr/my \$stamp = \$c->param\('timestamp_ms'\) \|\| \$c->param\('timestamp'\)/,
+	'the switch route reads the stamp the board sent');
+like($watch, qr/switch_event_fresh\(\$chip_id, \$button, \$state, \$stamp\)/,
+	'the switch route claims it before any work');
+like($ble2, qr/my \$stamp = \$payload->\{'timestamp_ms'\} \|\| \$payload->\{'timestamp'\}/,
+	'the BLE switch reads the same stamp');
+like($ble2, qr/switch_event_fresh\(\$chip_id, \$button, \$state, \$stamp\)/,
+	'the BLE switch claims the same event, so a flick on two roads is one event');
+like($watch, qr/event_duplicate\(join\('\|', 'switch'/, 'a stamp-less board keeps the old window');
 
 done_testing();

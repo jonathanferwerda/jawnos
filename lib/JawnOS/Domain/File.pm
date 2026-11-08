@@ -400,6 +400,24 @@ sub relay_fresh {
 	return $fresh;
 }
 
+# One physical movement can reach this machine more than once: the board's BLE
+# report, the queued HTTPS twin of the same flick, a retry after the link came
+# back, two bridge radios. The copies share the board's own event stamp, which
+# is exactly what tells them apart from a second, real press. Claim the stamp
+# here with one atomic INSERT OR IGNORE, so of copies that race in different
+# workers exactly one is fresh and the rest are dropped.
+sub switch_event_fresh {
+	my ($chip_id, $button, $state, $stamp) = @_;
+	return 1 unless defined $stamp && $stamp =~ /^\s*\d+(?:\.\d+)?\s*$/ && $stamp > 0;
+	my $id = join('-', 'switch', $chip_id // '', $button // '', $state // '', $stamp);
+	my $now = &subs::rightNow();
+	my $q = &subs::db_query('insert or ignore into cache (uuid, context, app, device, server_time, timestamp) values (?,?,?,?,?,?)',
+		$id, 'switch_event', '__president', &subs::device_setter(), $now, $now);
+	my $fresh = ($q && $q->rows) ? 1 : 0;
+	&subs::db_query('delete from cache where context=? and server_time < ?', 'switch_event', $now - 600000) if $fresh;
+	return $fresh;
+}
+
 sub file_device_renamer {
 	my $data = shift;
 	my $file = $data->{'file'};

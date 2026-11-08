@@ -449,11 +449,18 @@ sub ble_message_processor {
 		my $chip_id = $msg->{'chip_id'};
 		my $button = $payload->{'switch'} || $payload->{'button'};
 		my $state = $payload->{'state'} || '';
-		# The same movement can arrive twice (two bridge radios, or an older
-		# board that still ran both of its input scanners). One flick applied
-		# twice is a toggle that flashes and a relay that clicks on and off.
-		my $ekey = join('|', 'switch', $chip_id // '', $button // '', $state);
-		if (&subs::event_duplicate($ekey)) {
+		# The same movement can arrive twice (two bridge radios, an older board
+		# that still ran both of its input scanners, or the queued HTTPS twin of
+		# this very flick). One flick applied twice is a toggle that flashes and a
+		# relay that clicks on and off. Copies share the board's own event stamp,
+		# so claim it in the shared cache - the same claim /watch/switch makes.
+		my $stamp = $payload->{'timestamp_ms'} || $payload->{'timestamp'};
+		my $sw_ms = &subs::event_time_ms($stamp, &subs::rightNow());
+		my $stamped = (defined $stamp && $stamp =~ /^\s*\d+(?:\.\d+)?\s*$/ && $stamp > 0);
+		my $duplicate = $stamped
+			? !&subs::switch_event_fresh($chip_id, $button, $state, $stamp)
+			: &subs::event_duplicate(join('|', 'switch', $chip_id // '', $button // '', $state));
+		if ($duplicate) {
 			$log->info('BLE switch for ' . ($chip_id || '?') . ': duplicate ' . ($state || '?') . ' ignored');
 			return;
 		}
@@ -465,7 +472,6 @@ sub ble_message_processor {
 		my $syl_count = ($edt eq 'microcontroller') ? 10 : 1;
 		my $b = $ws->{ &subs::shorthand_name('switch', $syl_count) . $button } || {};
 		my $toggle = ($state eq 'on') ? 'off' : 'on';
-		my $sw_ms = &subs::event_time_ms($payload->{'timestamp_ms'} || $payload->{'timestamp'}, &subs::rightNow());
 		$log->info('BLE switch for ' . ($chip_id || '?') . ': switch ' . $button . ' -> ' . $toggle . ' @' . ($payload->{'ms'} // '?'));
 		# Same reason as a button: the movement can relay a command or run one.
 		my ($sw_edt, $sw_chip, $sw_ws, $sw_button, $sw_b, $sw_payload, $sw_toggle)

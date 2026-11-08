@@ -323,10 +323,20 @@ get '/watch/switch' => sub($c) {
 		my $button = $c->param('switch');
 		my $state = $c->param('state');
 		my $toggle = $c->param('toggle');
-		my $timestamp = &subs::event_time_ms($c->param('timestamp_ms') || $c->param('timestamp'), &subs::rightNow());
+		my $stamp = $c->param('timestamp_ms') || $c->param('timestamp');
+		my $timestamp = &subs::event_time_ms($stamp, &subs::rightNow());
 		my $room = $c->param('room');
-		# A board that delivered this movement twice must not flip twice.
-		if (&subs::event_duplicate(join('|', 'switch', $chip_id // '', $button // '', $state // ''))) {
+		# A board that delivered this movement twice must not flip twice. Copies
+		# of one flick share the board's event stamp - only their road and arrival
+		# differ, and a queued HTTPS report can land minutes after its BLE twin, or
+		# in a different worker. Claim the stamp in the shared cache (one atomic
+		# insert) instead of remembering it in a single process. A board with no
+		# clock sends no stamp, so the short in-memory window still applies there.
+		my $stamped = (defined $stamp && $stamp =~ /^\s*\d+(?:\.\d+)?\s*$/ && $stamp > 0);
+		my $duplicate = $stamped
+			? !&subs::switch_event_fresh($chip_id, $button, $state, $stamp)
+			: &subs::event_duplicate(join('|', 'switch', $chip_id // '', $button // '', $state // ''));
+		if ($duplicate) {
 			return $c->render(text => 'ok');
 		}
 		if ($state eq 'on') {
