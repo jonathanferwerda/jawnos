@@ -1,4 +1,4 @@
-# tests-for: desktop/jawnos_desktop/qt_shell.py desktop/jawnos_desktop/qt_panel.py desktop/jawnos_desktop/bridge.py desktop/jawnos_desktop/keepawake.py desktop/jawnos_desktop/gpu.py desktop/jawnos_desktop/theme.py desktop/jawnos_desktop/errorpage.py desktop/jawnos_desktop/core.py desktop/jawnos-desktop desktop/jawnos-qt desktop/wayland/jawnos-session desktop/install.sh scripts/jawnos_deps.pl
+# tests-for: desktop/jawnos_desktop/qt_shell.py desktop/jawnos_desktop/gps.py desktop/jawnos_desktop/qt_panel.py desktop/jawnos_desktop/bridge.py desktop/jawnos_desktop/keepawake.py desktop/jawnos_desktop/gpu.py desktop/jawnos_desktop/theme.py desktop/jawnos_desktop/errorpage.py desktop/jawnos_desktop/core.py desktop/jawnos-desktop desktop/jawnos-qt desktop/wayland/jawnos-session desktop/install.sh scripts/jawnos_deps.pl
 # covers:    the Qt WebEngine desktop shell is the only engine: the same Manager
 #           page in Chromium, which is the engine with WebRTC, the ticket cookie
 #           kept on disk, microphone/camera grants, the house's own certificate
@@ -190,6 +190,70 @@ like($qt, qr/version_mismatch/, 'and the version restart');
 like($qt, qr/permissionRequested/, 'the newer permission signal is handled');
 like($qt, qr/PermissionType/, 'through QWebEnginePermission');
 like($qt, qr/featurePermissionRequested/, 'with the older signal kept as a fallback');
+
+# Permissions: Qt WebEngine starts from deny-everything, and the WebKitGTK
+# view this shell replaced granted the house's features only to the house's
+# own origins. The Qt handler keeps both the grant list and the origin check,
+# so a public page loaded in the Manager view inherits nothing.
+like($qt, qr/_HOUSE_PERMISSIONS = \(/, 'the granted features are one named list');
+like($qt, qr/"MediaAudioCapture"/, 'the microphone is in it');
+like($qt, qr/"DesktopVideoCapture"/, 'screen sharing is granted');
+like($qt, qr/"DesktopAudioVideoCapture"/, 'including a screen with its audio');
+like($qt, qr/"MouseLock"/, 'pointer lock is granted to the remote control');
+like($qt, qr/"ClipboardReadWrite"/, 'and clipboard reads and writes');
+like($qt, qr/"Notifications"/, 'and chat notifications');
+like($qt, qr/def _feature_permission\(page, qt, allowed_hosts, gps_on=False\)/,
+	'the handler is given the origin allowlist and the GPS decision');
+like($qt, qr/_permission_host\(\s*permission\.origin\(\)\)\s+in allowed_hosts/,
+	'a grant checks the request origin on the modern path');
+like($qt, qr/_permission_host\(origin\) in allowed_hosts/,
+	'and on the featurePermissionRequested path');
+like($qt, qr/permission\.deny\(\)/, 'anything else is denied');
+like($qt, qr/allowed_hosts = \{"127\.0\.0\.1", "localhost", "::1"\}/,
+	'the allowlist starts with loopback');
+like($qt, qr/allowed_hosts\.add\(host\.lower\(\)\)/, 'the Manager host joins it');
+like($qt, qr/allowed_hosts\.add\(peer_host\)/, 'and so does each peer window host');
+like($qt, qr/_allow_screen_capture\(page, qt, allowed_hosts\)/,
+	'the Manager page can share its screen');
+like($qt, qr/_allow_screen_capture\(other, qt, allowed_hosts\)/,
+	'and so can a peer window');
+like($qt, qr/ScreenCaptureEnabled, True/, 'Qt leaves screen capture off until asked');
+like($qt, qr/desktopMediaRequested\.connect\(handle\)/, 'then hands over the request');
+like($qt, qr/request\.selectScreen/, 'the shell picks a screen from the request');
+like($qt, qr/request\.cancel\(\)/, 'and cancels one from an origin outside the house');
+like($qt, qr/JavascriptCanAccessClipboard,\s+True/,
+	'the clipboard attribute is switched on');
+like($qt, qr/def _install_notifications/, 'a notification presenter is installed');
+like($qt, qr/setNotificationPresenter\(presenter\)/, 'Qt has no default one');
+like($qt, qr/showMessage\(title, body/, 'notifications surface through the tray');
+like($qt, qr/_install_notifications\(profile, qt, allowed_hosts, tray_holder\)/,
+	'installed on the shared profile in main');
+like($qt, qr/gps\.has_gps\(settings\.get\("jawn_dir"\)\)/,
+	'the GPS receiver decides whether location is offered');
+like($qt, qr/names\.append\(_GPS_PERMISSION\)/,
+	'and only then is Geolocation granted');
+
+# The GPS rule, as a plain function (no Qt bindings): an explicit opt-in, a
+# named device, or a receiver the USB bus names. A machine with none still
+# gets the location service's coarse, ISP position, which the house disregards.
+my $gps_dir = tempdir(CLEANUP => 1);
+my $gps_rule = 'from jawnos_desktop import gps; import sys; '
+	. 'print(gps.has_gps(sys.argv[1], sockets=(), usb=sys.argv[2]))';
+sub gps_says {
+	my ($config, $usb) = @_;
+	write_file("$gps_dir/config.json", $config);
+	return `cd "$root" && PYTHONPATH=desktop python3 -c '$gps_rule' "$gps_dir" "$usb" 2>&1`;
+}
+like(gps_says('{"gps": true}', ''), qr/^True$/m,
+	'an explicit "gps": true in config.json offers location');
+like(gps_says('{}', 'Bus 001 Device 002: ID 1546:01a7 u-blox GNSS receiver'),
+	qr/^True$/m, 'a u-blox receiver on the USB bus counts as one');
+like(gps_says('{}', 'Bus 001 Device 003: ID 046d:c31c Logitech USB keyboard'),
+	qr/^False$/m, 'a machine with no receiver is denied');
+my $gps_dev = "$gps_dir/ttyGPS0";
+write_file($gps_dev, "");
+like(gps_says(qq({"gps_device": "$gps_dev"}), ''), qr/^True$/m,
+	'a named gps_device that exists counts too');
 unlike($session, qr/--engine webkit|WebKitGTK/,
 	'the Sway session no longer falls back to WebKitGTK');
 like($session, qr/the Qt WebEngine view could not start/,

@@ -33,7 +33,7 @@ import threading
 import time
 from urllib.parse import urljoin, urlparse
 
-from . import bridge, core, errorpage, gpu, theme
+from . import bridge, core, errorpage, gps, gpu, theme
 
 # desktop/, resolved the same way the other entry scripts do it.
 DESKTOP_DIR = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
@@ -654,21 +654,65 @@ def _accept_certificate(error):
         return False
 
 
-def _feature_permission(page, qt):
-    """Grant this page the microphone (and camera) it asks for.
+# The features Qt WebEngine asks a page for, and the house will grant. Only
+# these names are allowed; everything else, and every other origin, is denied.
+# The WebKitGTK view granted every feature type to the same hosts.
+_HOUSE_PERMISSIONS = (
+    # Microphone, camera, or both (the chat and the screening's Connect me).
+    "MediaAudioCapture",
+    "MediaVideoCapture",
+    "MediaAudioVideoCapture",
+    # Screen share (getDisplayMedia) in the Wardrobe, Jp and Studio apps.
+    "DesktopVideoCapture",
+    "DesktopAudioVideoCapture",
+    # requestPointerLock in the remote control.
+    "MouseLock",
+    # navigator.clipboard and execCommand('copy') in the remote control,
+    # folders, box office and chat apps.
+    "ClipboardReadWrite",
+    # new Notification(...) in the chat.
+    "Notifications",
+)
+
+# Offered only on a machine with a real receiver; see gps.has_gps.
+_GPS_PERMISSION = "Geolocation"
+
+
+def _permission_host(origin):
+    """The lower-case host of a request's origin (a QUrl, or a URL string)."""
+    host = _qurl_host(origin)
+    if host:
+        return host
+    try:
+        return (urlparse(str(origin or "")).hostname or "").lower()
+    except ValueError:
+        return ""
+
+
+def _feature_permission(page, qt, allowed_hosts, gps_on=False):
+    """Grant this page the house's features, and only to the house's origins.
 
     Qt 6.8 moved web permissions from ``QWebEnginePage`` to
     ``QWebEnginePermission``; newer builds (Arch ships 6.12) have only the new
     signal. Keep the old path for a PySide6 older than that.
+
+    ``allowed_hosts`` is the live set of loopback hosts plus the Manager's
+    origin and each peer window's: the Manager view can also show a public
+    page, which must not inherit the camera, the screen, the clipboard or a
+    notification. A feature outside ``_HOUSE_PERMISSIONS`` is always denied.
+    Geolocation is added only where ``gps.has_gps`` found a real receiver.
     """
+    names = list(_HOUSE_PERMISSIONS)
+    if gps_on:
+        names.append(_GPS_PERMISSION)
+
     Permission = qt.get("QWebEnginePermission")
     if Permission is not None and hasattr(page, "permissionRequested"):
         enum = getattr(Permission, "PermissionType", None)
         if enum is None:
             enum = getattr(Permission, "Feature", Permission)
         granted = set()
-        for name in ("MediaAudioCapture", "MediaVideoCapture",
-                     "MediaAudioVideoCapture"):
+        for name in names:
             value = getattr(enum, name, None)
             if value is not None:
                 granted.add(value)
@@ -676,7 +720,8 @@ def _feature_permission(page, qt):
         def decide(permission):
             try:
                 feature = permission.permissionType()
-                if feature in granted:
+                if feature in granted and _permission_host(
+                        permission.origin()) in allowed_hosts:
                     permission.grant()
                 else:
                     permission.deny()
@@ -688,18 +733,138 @@ def _feature_permission(page, qt):
 
     QWebEnginePage = qt["QWebEnginePage"]
     granted = set()
-    for name in ("MediaAudioCapture", "MediaVideoCapture", "MediaAudioVideoCapture"):
+    for name in names:
         value = getattr(QWebEnginePage.Feature, name, None)
         if value is not None:
             granted.add(value)
 
     def decide_legacy(origin, feature):
+        allow = feature in granted and _permission_host(origin) in allowed_hosts
         policy = (QWebEnginePage.PermissionPolicy.PermissionGrantedByUser
-                  if feature in granted else
+                  if allow else
                   QWebEnginePage.PermissionPolicy.PermissionDeniedByUser)
         page.setFeaturePermission(origin, feature, policy)
 
     page.featurePermissionRequested.connect(decide_legacy)
+
+
+def _allow_screen_capture(page, qt, allowed_hosts):
+    """Answer a page's ``getDisplayMedia`` with the first screen.
+
+    Qt keeps screen capture switched off until ``ScreenCaptureEnabled`` is set,
+    and then hands the request to the app. ``QWebEngineDesktopMediaRequest``
+    has no accept(): there is only a screen/window model to choose from, so
+    this shares the first screen rather than presenting a picker. The request
+    does not expose its origin, so the page's committed URI is checked against
+    the same host allowlist as the permission handler.
+    """
+    try:
+        page.settings().setAttribute(
+            qt["QWebEngineSettings"].WebAttribute.ScreenCaptureEnabled, True)
+    except Exception:
+        pass
+
+    def choose(model, select):
+        if model is None or model.rowCount() < 1:
+            return False
+        select(model.index(0, 0))
+        return True
+
+    def handle(request):
+        try:
+            if _permission_host(page.url()) not in allowed_hosts:
+                request.cancel()
+                return
+            if choose(request.screensModel(), request.selectScreen):
+                return
+            # A session with no screen output may still offer windows; take
+            # the first of those instead of failing the share outright.
+            if not choose(request.windowsModel(), request.selectWindow):
+                request.cancel()
+        except Exception:
+            try:
+                request.cancel()
+            except Exception:
+                pass
+
+    try:
+        page.desktopMediaRequested.connect(handle)
+    except Exception:
+        pass
+
+
+def _allow_clipboard(page, qt):
+    """Turn on the clipboard attribute the Manager's apps use.
+
+    ``JavascriptCanAccessClipboard`` is off by default. It is not the origin
+    check: a page's read/write still goes through the permission handler's
+    ``ClipboardReadWrite`` grant, which is limited to the house's hosts.
+    """
+    try:
+        page.settings().setAttribute(
+            qt["QWebEngineSettings"].WebAttribute.JavascriptCanAccessClipboard,
+            True)
+    except Exception:
+        pass
+
+
+def _install_notifications(profile, qt, allowed_hosts, tray):
+    """Show a page's ``new Notification`` through the tray.
+
+    Qt WebEngine has no default notification presenter -- without one the
+    Manager's chat notifications are dropped silently -- and the engine only
+    reports them through ``QWebEngineProfile.setNotificationPresenter``. The
+    tray icon the shell already keeps is the presenter; when the shell was
+    asked to run without one (or the desktop has no tray), a small one is
+    created on demand, because a message needs an icon to come from.
+
+    ``tray`` is a one-slot holder: main() creates the real tray after the
+    profile, so the presenter reads it when a notification arrives.
+    """
+    from PySide6.QtGui import QIcon
+    from PySide6.QtWidgets import QSystemTrayIcon
+
+    hidden = {"tray": None}
+
+    def presenter(notification):
+        try:
+            if _permission_host(notification.origin()) not in allowed_hosts:
+                return
+            title = notification.title() or "JawnOS"
+            body = notification.message() or ""
+        except Exception:
+            return
+        icon = tray.get("tray")
+        if icon is None:
+            icon = hidden["tray"]
+            if icon is None:
+                path = os.path.join(DESKTOP_DIR, "icons", "jawnos.png")
+                mark = (QIcon(path) if os.path.exists(path)
+                        else QIcon.fromTheme("jawnos"))
+                icon = QSystemTrayIcon(mark, profile)
+                icon.setToolTip("JawnOS")
+                icon.show()
+                hidden["tray"] = icon
+        try:
+            icon.showMessage(title, body,
+                             QSystemTrayIcon.MessageIcon.Information, 8000)
+        except Exception:
+            pass
+        # Tell the engine it was presented, and let it forget the notification
+        # once the message's lifetime is over.
+        try:
+            notification.show()
+        except Exception:
+            pass
+        try:
+            qt["QTimer"].singleShot(8000, notification.close)
+        except Exception:
+            pass
+
+    try:
+        profile.setNotificationPresenter(presenter)
+    except Exception:
+        pass
 
 
 def _allow_fullscreen(page, window, qt, restore=None):
@@ -862,6 +1027,17 @@ def main(argv=None):
 
     settings = core.load_settings()
 
+    # The origins the house's permissions and screen sharing are granted to:
+    # loopback, plus the Manager's host (added once the ticket gives it) and
+    # every peer window's. One live set is shared by each page's permission
+    # handler, its screen-capture handler and the notification presenter.
+    allowed_hosts = {"127.0.0.1", "localhost", "::1"}
+    gps_on = gps.has_gps(settings.get("jawn_dir"))
+    # The real tray is made later in main(); the presenter reads this slot
+    # when a notification arrives.
+    tray_holder = {"tray": None}
+    _install_notifications(profile, qt, allowed_hosts, tray_holder)
+
     class JawnView(QWebEngineView):
         """The view, and the window state also kept in desktop.json."""
 
@@ -931,7 +1107,9 @@ def main(argv=None):
         view.move(left, top)
 
     page.certificateError.connect(_accept_certificate)
-    _feature_permission(page, qt)
+    _feature_permission(page, qt, allowed_hosts, gps_on)
+    _allow_screen_capture(page, qt, allowed_hosts)
+    _allow_clipboard(page, qt)
 
     page_settings = page.settings()
     page_settings.setAttribute(
@@ -988,10 +1166,17 @@ def main(argv=None):
         win.setWindowTitle(title or "JawnOS Machine")
         win.resize(900, 700)
         other.certificateError.connect(_accept_certificate)
-        _feature_permission(other, qt)
+        peer_host = (urlparse(manager_override).hostname or "").lower()
+        # A peer's Manager is a house origin too, so its host joins the shared
+        # allowlist before this page loads anything.
+        if peer_host:
+            allowed_hosts.add(peer_host)
+        _feature_permission(other, qt, allowed_hosts, gps_on)
+        _allow_screen_capture(other, qt, allowed_hosts)
+        _allow_clipboard(other, qt)
         install_bridge(
             other, win,
-            urlparse(manager_override).hostname or "",
+            peer_host,
             manager_override)
         win.setUrl(QUrl(url))
         win.show()
@@ -1198,6 +1383,7 @@ def main(argv=None):
         parsed = urlparse(manager)
         host = parsed.hostname or "127.0.0.1"
         port = parsed.port or 443
+        allowed_hosts.add(host.lower())
     migration_pending = bool(manager)
     reloaded = {"done": False}
 
@@ -1499,6 +1685,7 @@ def main(argv=None):
     tray = None
     if not args.probe and not args.no_tray:
         tray = make_tray()
+    tray_holder["tray"] = tray
     app.setQuitOnLastWindowClosed(tray is None)
     view._tray = tray
 
