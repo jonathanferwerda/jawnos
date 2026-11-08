@@ -3,8 +3,9 @@
 #           page in Chromium, which is the engine with WebRTC, the ticket cookie
 #           kept on disk, microphone/camera grants, the house's own certificate
 #           accepted, the page bridge, supervision, the control panel's look and
-#           tray, and the GPU flags that keep the embedded card in use. The GTK
-#           dashboard and WebKitGTK view are deleted, not just unreachable.
+#           tray, the GPU flags that keep the embedded card in use, and a video's
+#           fullscreen. The GTK dashboard and WebKitGTK view are deleted, not just
+#           unreachable.
 
 use strict;
 use warnings;
@@ -148,6 +149,17 @@ like($qt, qr/page_obj\.setBackgroundColor\(black\)/,
 like($qt, qr/black_page\(page, view\)/, 'applied to the main view');
 like($qt, qr/black_page\(other, win\)/, 'and to each peer Manager window');
 like($qt, qr/ErrorPageEnabled, False/, 'the built-in white error page is off');
+# Fullscreen: Qt WebEngine leaves the Fullscreen API off until a page is told
+# it is supported, and then drops a request the app does not accept. Browse
+# enables it; the Manager view and every peer window must too, or a player's
+# fullscreen button only fills its own box.
+like($qt, qr/FullScreenSupportEnabled/, 'a page may ask to fill the screen');
+like($qt, qr/def _allow_fullscreen/, 'the shell accepts the request itself');
+like($qt, qr/request\.accept\(\)/, 'and Qt is told to honour it');
+like($qt, qr/_allow_fullscreen\(page, view, qt, restore_window\)/,
+	'the Manager view gets it, and restores the saved window state on exit');
+like($qt, qr/_allow_fullscreen\(other, win, qt\)/,
+	'and so does each peer Manager window');
 # Scrolling feel: Qt WebEngine leaves Chromium's scroll animator off, so the
 # shell turns it on for the profile and every page inherits it. This is the port
 # of the removed WebKitGTK view's enable-smooth-scrolling.

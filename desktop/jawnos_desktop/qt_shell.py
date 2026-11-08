@@ -702,6 +702,49 @@ def _feature_permission(page, qt):
     page.featurePermissionRequested.connect(decide_legacy)
 
 
+def _allow_fullscreen(page, window, qt, restore=None):
+    """Let a page's video fill the screen.
+
+    Qt WebEngine keeps the Fullscreen API switched off until
+    ``FullScreenSupportEnabled`` is set, and then drops a request the app does
+    not accept. The WebKitGTK view this shell replaced did both, so a player's
+    fullscreen worked; without the attribute ``fullScreenRequested`` never
+    fires and the picture stays inside its box.
+
+    ``restore`` puts the window back the way it was when the video leaves
+    fullscreen; without one it returns to a normal window.
+    """
+    try:
+        page.settings().setAttribute(
+            qt["QWebEngineSettings"].WebAttribute.FullScreenSupportEnabled,
+            True)
+    except Exception:
+        pass
+
+    was_maximized = {"on": False}
+
+    def handle(request):
+        try:
+            on = bool(request.toggleOn())
+            request.accept()
+        except Exception:
+            return
+        if on:
+            was_maximized["on"] = bool(window.isMaximized())
+            window.showFullScreen()
+        elif restore is not None:
+            restore()
+        elif was_maximized["on"]:
+            window.showMaximized()
+        else:
+            window.showNormal()
+
+    try:
+        page.fullScreenRequested.connect(handle)
+    except Exception:
+        pass
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(
         prog="jawnos-qt",
@@ -935,6 +978,7 @@ def main(argv=None):
         other = QWebEnginePage(profile, win)
         win.setPage(other)
         black_page(other, win)
+        _allow_fullscreen(other, win, qt)
         try:
             other.settings().setAttribute(
                 QWebEngineSettings.WebAttribute.ErrorPageEnabled, False)
@@ -1134,25 +1178,15 @@ def main(argv=None):
                 action, reply.get("ok"), reply.get("error")))
 
     # ---- fullscreen asked for by the page (a video) ------------------------
-    def page_fullscreen(request):
-        try:
-            on = bool(request.toggleOn())
-            request.accept()
-        except Exception:
-            return
-        if on:
-            view.showFullScreen()
-        elif settings.get("maximized"):
+    def restore_window():
+        if settings.get("maximized"):
             view.showMaximized()
         elif settings.get("fullscreen"):
             view.showFullScreen()
         else:
             view.showNormal()
 
-    try:
-        page.fullScreenRequested.connect(page_fullscreen)
-    except Exception:
-        pass
+    _allow_fullscreen(page, view, qt, restore_window)
 
     # ---- the launcher URL, and the bridge installation --------------------
     ticket = None if (args.url or args.probe) else ticket_url()
