@@ -74,6 +74,8 @@ like($tiling, qr/addClass\('tile_rail'\)/, 'unfocused windows become title-bar r
 like($tiling, qr/removeClass\('tile_rail'\)/, 'the focused window leaves the rail');
 like($tiling, qr/function windowTileRememberSize\(win\)/, 'a focused resize is what the rail restores');
 like($css, qr/\.wind\.tile_rail \.window_contents/, 'a rail bar hides the window body');
+like($css, qr/\.wind\.tile_focus \.top_navbar \{[^}]*bottom: 0/s, 'the title bar rides the foot of a stacked window');
+like($tiling, qr/rowsPerColumn/, 'a full stack starts a second stack');
 like($fit, qr/\$\(document\)\.on\('dblclick', '\.top_navbar'/, 'double-pressing a title bar toggles find-space mode');
 unlike($fit, qr/win\.attr\('tile'/, 'a drag no longer takes a window out of the tile');
 like($windows, qr/windowFindSpaceActive\(\)/, 'the open path lays find-space mode out');
@@ -270,6 +272,14 @@ eq(ctx.windowTileRailWidth(view), 360, 'the rail has a readable width on a wide 
 eq(ctx.windowTileRailWidth({ width: 800, height: 600 }), 240, 'and narrows with the desk');
 eq(ctx.windowTileRailWidth({ width: 400, height: 600 }), 160, 'down to a readable minimum');
 
+const short = { width: 1920, height: 200 };
+const stacked = ctx.windowTileRailLayout(specs(7), [], short, 0, 0, 320, false);
+eq(stacked.rail[5].left, 326, 'a full stack starts a second stack');
+eq(stacked.rail[5].top, 0, 'at the top of the desk');
+eq(stacked.focus.left, 658, 'the focused frame moves past both stacks');
+const docked = ctx.windowTileRailLayout(specs(6), [], short, 0, 40, 320, false);
+eq(docked.rail[4].left, 326, 'the dock and taskbar count as the foot of a stack');
+
 const rail_win = new El('window_r', { pre_dimensioned: '0' }, { width: '120px', height: '40px' });
 rail_win.classNames = ['tile_rail'];
 rail_win.attrs.tile_w = '480';
@@ -278,6 +288,12 @@ ctx.windowTileRelease(rail_win);
 eq(rail_win.style.width, 480, 'pinning a rail bar restores its whole width');
 eq(rail_win.style.height, 640, 'and height');
 eq(rail_win.hasClass('tile_rail'), false, 'and takes it out of the rail');
+
+const pinned_focus = new El('window_pf', { pre_dimensioned: '0' }, { width: '700px', height: '500px' });
+pinned_focus.classNames = ['tile_focus'];
+ctx.windowTileRelease(pinned_focus);
+eq(pinned_focus.hasClass('tile_focus'), false, 'pinning the focused window returns its bar to the top');
+eq(parseFloat(pinned_focus.style.width), 700, 'and keeps the size it was showing');
 
 const focused = new El('window_f', { pre_dimensioned: '0' }, { width: '600px', height: '500px' });
 ctx.windowTileRememberSize(focused);

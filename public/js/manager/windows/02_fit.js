@@ -347,7 +347,7 @@ $(document).on('click', '.place_button', function(e) {
 		// title bar; the pin takes the whole size it held before it joined.
 		button.attr('status', 'on');
 		win.attr('pre_dimensioned', 1);
-		if (win.hasClass('tile_rail') && typeof windowTileRelease === 'function') { windowTileRelease(win); }
+		if (typeof windowTileRelease === 'function') { windowTileRelease(win); }
 		windowDimensionSetter(win);
 		settingSetter({ 'app': app, 'setting': 'place', 'value': 'lock' });
 	}

@@ -976,6 +976,22 @@ canvas.background {
 .wind.tile_rail .navbar_reveal { display: none !important; }
 /* the rail row answers as a whole; its icon is not a separate reveal control */
 .wind.tile_rail .window_icon_holder { pointer-events: none; }
+/* In the stack the title bar rides the foot of the window, so the row below it
+   cannot cover the name, and the whole window is read from the top down. */
+.wind.tile_rail .top_navbar,
+.wind.tile_focus .top_navbar {
+	top: auto !important;
+	bottom: 0;
+	border-radius: 0 0 var(--window_radius, var(--jawnos-corner, 12px)) var(--window_radius, var(--jawnos-corner, 12px));
+}
+.wind.tile_rail .window_contents,
+.wind.tile_focus .window_contents { padding-top: 0 !important; }
+.wind.tile_rail .window_drawer,
+.wind.tile_focus .window_drawer {
+	top: 0 !important;
+	bottom: calc(var(--navbar_h, 36px) - 2px);
+	height: auto !important;
+}
 body.dark_theme .wind { box-shadow: 0 22px 56px rgba(0,0,0,.55), 0 2px 8px rgba(0,0,0,.35); }
 /* Inside a window every surface that asked for the panel surface gets the
    window's own colour instead, so an app or an appointment does not dissolve

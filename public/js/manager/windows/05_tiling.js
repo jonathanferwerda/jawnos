@@ -69,17 +69,26 @@ function windowTileRailLayout(windows, obstacles, view, startTop, bottomClearanc
 	var top = startTop;
 	var floor = view.height - (bottomClearance || 0);
 	var rail = [];
+	var railGap = 6;
+	// a stack runs from under the header to the foot the dock/taskbar leaves;
+	// the next title bar starts a second stack instead of falling off the desk
+	var rowsPerColumn = Math.max(1, Math.floor((floor - top) / bar));
+	var columns = Math.max(1, Math.ceil(railCount / rowsPerColumn));
+	var blockW = railCount ? columns * railW + (columns - 1) * railGap : 0;
+	var blockH = Math.min(Math.max(0, floor - top), rowsPerColumn * bar);
 	var railX = 0;
 	if (obstacles && obstacles.length && railCount) {
-		railX = windowTileRailLeft(obstacles, view, railW, top, railCount * bar);
+		railX = windowTileRailLeft(obstacles, view, blockW, top, blockH);
 	}
 	for (var i = 0; i < railCount; i++) {
-		rail.push({ left: railX, top: top + i * bar, width: railW, height: bar });
+		var column = Math.floor(i / rowsPerColumn);
+		var row = i % rowsPerColumn;
+		rail.push({ left: railX + column * (railW + railGap), top: top + row * bar, width: railW, height: bar });
 	}
 	var gap = 12;
 	var height = Math.max(200, floor - top);
 	var walls = (avoidAnchors && obstacles) ? obstacles : [];
-	var rightX = railCount ? railX + railW + gap : 0;
+	var rightX = railCount ? railX + blockW + gap : 0;
 	var leftEnd = railCount ? railX - gap : 0;
 	var rightEnd = view.width;
 	var leftStart = 0;
@@ -201,13 +210,16 @@ function windowTileClick(win) {
 	else { windowTileArrange(); }
 }
 
-// Pinning a window from the rail remembers the whole size it held before it
-// became a title-bar row, so the pin keeps something worth keeping.
+// Pinning takes a window out of the tile. A rail row comes back at the whole
+// size it held before it became a title-bar row; a focused window keeps the
+// size it is showing. Either way the stacked title bar returns to the top.
 function windowTileRelease(win) {
 	win = $(win);
 	var size = windowTileStoredSize(win);
-	win.removeClass('tile_rail');
-	win.css({ width: size.width, height: size.height, left: size.left, top: size.top });
+	if (win.hasClass('tile_rail')) {
+		win.css({ width: size.width, height: size.height, left: size.left, top: size.top });
+	}
+	win.removeClass('tile_rail').removeClass('tile_focus');
 }
 
 var windowFindSpaceMode = false;
