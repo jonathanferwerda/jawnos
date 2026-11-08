@@ -1,5 +1,5 @@
 # tests-for: lib/JawnOS/Manager/Part14.pm lib/JawnOS/Domain/Calendar.pm lib/JawnOS/Manager/Part29.pm
-# covers:    a stop resolves one (oldest) open session before the relay, so every machine closes the same uuid; a named session is a hard match
+# covers:    a stop resolves one (oldest) open session before the relay, so every machine closes the same uuid; a named session is a hard match while it is still open, and a named session already closed falls back to the oldest open session at or before the press (the panel can be one header behind), bounded so a late duplicate never closes a newer one
 
 use strict;
 use warnings;
@@ -52,8 +52,10 @@ my ($target_sub) = $calendar =~ /(sub stop_target_row \{.*?\n\})/s;
 ok($target_sub, 'stop_target_row is one sub');
 like($target_sub, qr/select \* from appointments where app=\? and \(type=\? or type=\?\) and timestamp <= \? and stop_seen is null order by timestamp asc limit 1/,
 	'the unnamed fallback is the oldest open session at or before the press');
-like($target_sub, qr/return \(\$named && \$named->\{'uuid'\}\) \? \$named : undef;/,
-	'a named session stays a hard match: it never falls through to another row');
+like($target_sub, qr/return \$named if \$named && \$named->\{'uuid'\};/,
+	'a named session that is still open is closed on its own');
+like($target_sub, qr/timestamp <= \? and stop_seen is null order by timestamp asc limit 1/,
+	'a named session this machine already closed falls back to the bounded oldest open one');
 
 my ($guide_sub) = $part29 =~ /(sub guide_open_target\(.*?\n\})/s;
 ok($guide_sub, 'guide_open_target is one sub');
@@ -90,7 +92,7 @@ my @issued;
 			my $want = $args[1] // '';
 			@pool = grep { $_->{'uuid'} eq $want } @pool;
 		}
-		elsif ($sql =~ /timestamp <=\?/) {
+		elsif ($sql =~ /timestamp <= \?/) {
 			my $until = $args[3] // 0;
 			@pool = grep { $_->{'timestamp'} <= $until } @pool;
 		}
@@ -105,8 +107,12 @@ my @issued;
 		'a stop that names no session closes the oldest open one');
 	is(&subs::stop_target_row('laydown', 'new', 9_999)->{'uuid'}, 'new',
 		'a named open session is closed instead');
-	ok(!defined &subs::stop_target_row('laydown', 'gone', 9_999),
-		'a named session this machine does not hold closes nothing');
+	is(&subs::stop_target_row('laydown', 'gone', 9_999)->{'uuid'}, 'old',
+		'a named session this machine does not hold falls back to the open one it could mean');
+	is(&subs::stop_target_row('laydown', 'gone', 1_500)->{'uuid'}, 'old',
+		'the press time bounds the fallback: a session started after the press is not it');
+	ok(!defined &subs::stop_target_row('laydown', 'gone', 500),
+		'a stop stamped before every open session closes nothing');
 	is(&subs::open_session_uuid('laydown'), 'old',
 		'the header echoes the oldest open session');
 }

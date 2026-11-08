@@ -221,13 +221,20 @@ sub open_session_uuid {
 
 # The row a stop closes, resolved the same way wherever the stop runs (manager_reset
 # and appointment_writer both call this): the session the client named, carried
-# through the relay so every machine closes the same one. A stop that names a session
-# closes that row and only it - a session already closed (a stop delivered twice, or
-# one this machine has not synced) matches nothing and the stop does nothing, so a
-# duplicate can never reach another session. Only a stop that names none falls back to
-# the OLDEST open start/record for the app at or before the press - the session that has
-# been running longest, and the one a missing stop left behind. One row per press; a
-# repeated nameless stop clears the next one rather than sweeping the whole backlog.
+# through the relay so every machine closes the same one. A stop that names an open
+# session closes that row and only it.
+#
+# A named session that is already closed is not a no-op any more: the header a stop
+# button read can be one render behind (the person pressed start, the reply and its
+# header had not reached the panel yet, and the stop named the session before it),
+# and the session actually running was left open. That is still a person pressing
+# stop on the session in front of them, so it falls back to the OLDEST open
+# start/record at or before the press - the session that has been running longest,
+# and the one a missing stop left behind. The press time is what keeps a late
+# duplicate honest: a session started after that moment is not the one it meant, so
+# a duplicate stop can never close a session the person started afterwards.
+# One row per press; a repeated stop clears the next one rather than sweeping the
+# whole backlog.
 sub stop_target_row {
 	my ($app, $target_uuid, $timestamp) = @_;
 	return undef unless $app;
@@ -235,7 +242,7 @@ sub stop_target_row {
 	if ($target_uuid) {
 		my $named = &db_query('select * from appointments where app=? and uuid=? and (type=? or type=?) and stop_seen is null limit 1',
 			$app, $target_uuid, 'start', 'record')->hashes->[0];
-		return ($named && $named->{'uuid'}) ? $named : undef;
+		return $named if $named && $named->{'uuid'};
 	}
 	my $row = &db_query('select * from appointments where app=? and (type=? or type=?) and timestamp <= ? and stop_seen is null order by timestamp asc limit 1',
 		$app, 'start', 'record', $timestamp)->hashes->[0];

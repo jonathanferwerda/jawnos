@@ -192,4 +192,22 @@ is($old->{'timestamp'}, $session_start + abs($sent_duration),
 	'a backdated stop still takes the client duration');
 is($old->{'duration'}, -$sent_duration, 'and records it as the session length');
 
+# --- presses can be faster than the manager answers --------------------------
+# A start and a stop are one story. The panel used to fire each press as its
+# own request: two in flight can be answered out of order, and a stop clicked
+# before the start's reply carries the header's old session uuid. The presses
+# are queued per app, one in flight, and a stop resolves its session when it is
+# actually sent.
+my $app_back = read_file("$root/public/js/manager/manager/09_app_back.js");
+like($app_back, qr/var appointmentResetQueue = \{\};/, 'presses are queued per app');
+like($app_back, qr/q\.push\(\{ type: type, data: data, done: done, fail: fail \}\);/, 'a press keeps what it was when it was clicked');
+like($app_back, qr/if \(q\.length === 1\) \{ appointmentResetDrain\(key\); \}/, 'only one press is in flight');
+like($app_back, qr/if \(item\.type == 'stop'\) \{/, 'a stop is the press that re-reads its session');
+like($app_back, qr/\.appointment_header_background'\)\.attr\('running_uuid'\)/, 'from the header the press before it wrote');
+like($app_back, qr/appointmentResetSend\(app, type, data,/, 'managerReset sends through the queue');
+like($app_back, qr/timeout: 20000/, 'a press the server never answers cannot hold the queue forever');
+my $reset_urls = () = $app_back =~ /url: '\/manager\/reset'/g;
+is($reset_urls, 1, 'there is one reset request, inside the queue');
+
 done_testing();
+

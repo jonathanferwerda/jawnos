@@ -157,6 +157,47 @@ $(document).on('click', '.save_appointment', function(e) {
 	managerReset($(this),e);
 });
 
+// A start and a stop are one story, and a person can press them faster than
+// the manager answers. Two requests in flight can be answered out of order, and
+// a stop clicked before the start's reply carries the header's old session
+// uuid. Queue the presses per app: each waits for the reply before the next
+// goes out, and a stop re-reads the running session when it is sent - by then
+// the header is the one the press before it wrote.
+var appointmentResetQueue = {};
+function appointmentResetSend(app, type, data, done, fail) {
+	var key = app || '';
+	var q = appointmentResetQueue[key] || (appointmentResetQueue[key] = []);
+	q.push({ type: type, data: data, done: done, fail: fail });
+	if (q.length === 1) { appointmentResetDrain(key); }
+}
+function appointmentResetDrain(key) {
+	var q = appointmentResetQueue[key];
+	if (!q || !q.length) { return; }
+	var item = q[0];
+	if (item.type == 'stop') {
+		var live = $('.appointment[app="' + item.data.app + '"] .appointment_header_background').attr('running_uuid');
+		if (live) { item.data.uuid = live; }
+	}
+	$.ajax({
+		url: '/manager/reset',
+		type: 'POST',
+		data: item.data,
+		// A press the server never answers must not hold every later press
+		// behind it forever; every healthy path answers in well under this.
+		timeout: 20000,
+		success: function(response) {
+			q.shift();
+			if (item.done) { item.done(response); }
+			appointmentResetDrain(key);
+		},
+		error: function(error) {
+			q.shift();
+			if (item.fail) { item.fail(error); }
+			appointmentResetDrain(key);
+		}
+	});
+}
+
 
 function managerReset(caller,e) {
 	var lockingStatus = 'off';
@@ -255,11 +296,7 @@ function managerReset(caller,e) {
 		quantity: quantity,
 		lockingStatus: lockingStatus
 	};
-	$.ajax({
-		url: '/manager/reset',
-		type: 'POST',
-		data: data,
-		success: function(response) {
+	appointmentResetSend(app, type, data, function(response) {
 				appClearer(app)
 				// The start/stop frame is also pushed over the websocket, but the
 				// press that caused it must not depend on a live socket to show
@@ -284,8 +321,7 @@ function managerReset(caller,e) {
 				calculator();
 		//	}
 		},
-		error: function(error) { console.log(error) }
-	});
+		function(error) { console.log(error) });
 }
 
 function appClearer(app) {

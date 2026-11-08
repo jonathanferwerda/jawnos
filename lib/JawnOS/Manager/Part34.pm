@@ -131,14 +131,26 @@ sub embedded_grabber($c,$timestamp) {
 
 	my $embedded_scope = &subs::setting_grabber({ app => $edt, setting => 'watch_scope', subsetting => $chip_id });
 	my $settings;
+	# A board's GPIO view is a list of what is wired, not every pin on the
+	# board: six component types across 28 pins used to be 170 full setting
+	# forms (and a settings read each), which is what made a Pico's panel crawl.
+	# An unwired pin is still one press away on the Pins view (embedded_detail),
+	# which draws the whole board map and fetches the one form a pin needs.
+	my $configured_only = ($edt eq 'microcontroller');
+	# Every slot that runs the same app reads the same settings row: a switch,
+	# a relay and three buttons on one appointment all share it. Read it once
+	# per app instead of once per slot (the old loop asked 170 times).
+	my %aset_cache;
 	my $syl_count = 10;
 	$syl_count = 1 unless $edt eq 'microcontroller';
 	foreach my $component ( keys %{$components} ) {
 		my $syl = &subs::shorthand_name($component, $syl_count);
 		for (my $n = $start_n; $n <= $room_count * $room_max; $n++) {
-			my $app = $op_d->{$syl . $n}->{'app'} || '';
-			my $mov = $op_d->{$syl . $n}->{'movement'} || 'command';
-			my $aset = &subs::settings_grabber({ app => $app });
+			my $entry = $op_d->{$syl . $n} || {};
+			next if $configured_only && !($entry->{'app'} || $entry->{'component'} || $entry->{'movement'});
+			my $app = $entry->{'app'} || '';
+			my $mov = $entry->{'movement'} || 'command';
+			my $aset = $aset_cache{$app} ||= &subs::settings_grabber({ app => $app });
 			my $toggle = $aset->{'toggle' } eq 'on' ? 1 : 0;
 			my $tog = !$toggle || $toggle eq 'off' ? 1 : 0;
 			$aset->{'measures'} = eval { return decode_json $aset->{'app_measures'} } || {};
@@ -148,17 +160,17 @@ sub embedded_grabber($c,$timestamp) {
 				toggle => $tog,
 				formatted_name => &subs::format_name($app),
 				movement => $mov,
-				inverted => $op_d->{$syl . $n}->{'inverted'},
+				inverted => $entry->{'inverted'},
 				toggle => $toggle,
 				settings => $aset,
 				direction => $components->{$component}->{'direction'},
-				measure => $op_d->{$syl . $n}->{'measure'},
-				threshold => $op_d->{$syl . $n}->{'threshold'},
-				named_measure => $op_d->{$syl . $n}->{'named_measure'},
-				comparison => $op_d->{$syl . $n}->{'comparison'},
-				name => $op_d->{$syl . $n}->{'name'},
-				media_kind => $op_d->{$syl . $n}->{'media_kind'},
-				media_machine => $op_d->{$syl . $n}->{'media_machine'}
+				measure => $entry->{'measure'},
+				threshold => $entry->{'threshold'},
+				named_measure => $entry->{'named_measure'},
+				comparison => $entry->{'comparison'},
+				name => $entry->{'name'},
+				media_kind => $entry->{'media_kind'},
+				media_machine => $entry->{'media_machine'}
 			};
 		}
 	}

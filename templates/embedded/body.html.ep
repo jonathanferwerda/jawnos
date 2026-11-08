@@ -129,29 +129,40 @@
 				    count; the break below is at room_max/2, so only the bound must not
 				    multiply by room_count for the button devices. %>
 				<% my $slots = ($edt eq 'microcontroller') ? ($room_max * $room_count) : $room_max; %>
+				<%# A board's GPIO view lists only the pins that are wired: the panel
+				    builds settings for those alone, so a type with nothing on it does
+				    not draw a header and a row of empty forms. The Pins view still
+				    draws the whole board map and fetches the one form a pin needs. A
+				    watch or deck keeps every room it has. %>
+				<% my $syl_count = ($edt eq 'microcontroller') ? 10 : 1; %>
 				<% foreach my $component ( sort keys %{$components} ) { %>
-					<% if ($component) { %>
-						<h4><%= &subs::format_name($component) %></h4>
-						<% for (my $n = $start_n; $n <= $slots; $n++) { %>
+					<% if ($component) {
+						my $syl = &subs::shorthand_name($component, $syl_count);
+						my @pins = grep { $settings && $settings->{$syl . $_} } ($start_n .. $slots);
+					%>
+						<% if (scalar @pins) { %>
+							<h4><%= &subs::format_name($component) %></h4>
+							<% foreach my $n ( @pins ) { %>
 
-							<%= include 'embedded/component', 
-								n => $n, 
-								pin => $n,
-								component => $component, 
-								settings => $settings, 
-								components => $components, 
-								embedded => $embedded, 
-								movements => $movements,
-								device_type => $device_type,
-								source => 'gpio',
-								destinations => $destinations
-							%>
+								<%= include 'embedded/component', 
+									n => $n, 
+									pin => $n,
+									component => $component, 
+									settings => $settings, 
+									components => $components, 
+									embedded => $embedded, 
+									movements => $movements,
+									device_type => $device_type,
+									source => 'gpio',
+									destinations => $destinations
+								%>
 
-							<% if ($n % ($room_max / 2) == 0 && $n != 0) { %>
-								<br>
-							<% } %>
-							<% if ($n % $room_max == 0 && $n != 0) { %>
-								<br>
+								<% if ($n % ($room_max / 2) == 0 && $n != 0) { %>
+									<br>
+								<% } %>
+								<% if ($n % $room_max == 0 && $n != 0) { %>
+									<br>
+								<% } %>
 							<% } %>
 						<% } %>
 					<% } %>

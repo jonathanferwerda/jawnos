@@ -1,6 +1,9 @@
 # tests-for: lib/JawnOS/Domain/Device.pm lib/JawnOS/Domain/Loader.pm lib/JawnOS/Manager/Part34.pm templates/embedded/body.html.ep templates/embedded/watch.html.ep public/js/manager/embedded.js
 # covers:    The Embedded panel says which machine a device is paired to, and a
-#            scan's results can be pressed instead of retyped. A board names its
+#            scan's results can be pressed instead of retyped. A board's GPIO
+#            view draws only the pins that are wired (the Pins view is the way
+#            to add one), so a Pico opens without rendering every pin of every
+#            component type; one settings read serves every slot on one app. A board names its
 #            homebase as ip:port in its own settings row; the panel resolves that
 #            to the machine's name so nobody has to remember which address is the
 #            Table. Scan results are drawn as buttons because a datalist does not
@@ -59,4 +62,18 @@ like($js, qr/\.attr\('data-ssid', ssid\)/, 'carrying the name exactly');
 like($js, qr/\$\('#teletype_wifi_ssid'\)\.val\(ssid\)\.trigger\('change'\)/, 'pressing one fills in and saves the name');
 like($js, qr/\$\('#teletype_wifi_picks'\)\.empty\(\);/, 'and a fresh scan clears the old results');
 
+# --- a board opens on what is wired, not every pin of every type ----------
+like($part34, qr/my \$configured_only = \(\$edt eq 'microcontroller'\);/, 'a board is the device that lists only wired slots');
+like($part34, qr/next if \$configured_only && !\(\$entry->\{'app'\} \|\| \$entry->\{'component'\} \|\| \$entry->\{'movement'\}\);/,
+	'an unwired pin is skipped before its settings are read');
+like($part34, qr/my %aset_cache;/, 'one settings read is cached for the panel');
+like($part34, qr/\$aset_cache\{\$app\} \|\|= &subs::settings_grabber/, 'and reused by every slot that runs the same app');
+like($part34, qr/my \$entry = \$op_d->\{\$syl \. \$n\} \|\| \{\};/, 'each slot reads its operator-door entry once');
+
+ok(index($body, 'my @pins = grep { $settings && $settings->{$syl . $_} }') >= 0,
+	'the template draws only the slots the panel built');
+like($body, qr/if \(scalar \@pins\) \{/, 'a component type with nothing wired draws no header');
+like($body, qr/foreach my \$n \( \@pins \)/, 'and each wired pin is drawn once');
+
 done_testing();
+
