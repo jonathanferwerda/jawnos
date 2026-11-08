@@ -18,6 +18,11 @@ and ``shell`` are Linux-specific.
 
 import os
 
+# Qt auto-selects its GTK platform theme on XFCE/GNOME, which maps libgtk-3
+# into every Qt process. The desktop is Qt only now, so ask for a non-GTK
+# theme; an explicit choice from the user still wins.
+os.environ.setdefault("QT_QPA_PLATFORMTHEME", "generic")
+
 __version__ = "0.1.0"
 
 # .../desktop/jawnos_desktop/

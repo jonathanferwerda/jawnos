@@ -25,6 +25,7 @@ my $gpu = read_file("$root/desktop/jawnos_desktop/gpu.py");
 my $theme = read_file("$root/desktop/jawnos_desktop/theme.py");
 my $errpage = read_file("$root/desktop/jawnos_desktop/errorpage.py");
 my $core = read_file("$root/desktop/jawnos_desktop/core.py");
+my $package = read_file("$root/desktop/jawnos_desktop/__init__.py");
 my $entry = read_file("$root/desktop/jawnos-desktop");
 my $install = read_file("$root/desktop/install.sh");
 my $deps = read_file("$root/scripts/jawnos_deps.pl");
@@ -68,6 +69,17 @@ like($install, qr/requires PySide6 with Qt WebEngine/,
 	'it says the Qt WebEngine view is required');
 unlike($deps, qr/webkit2gtk|have_webkit|gst-inspect|gst-plugin-va/,
 	'the dependency checker no longer offers WebKitGTK or GStreamer');
+like($package, qr/setdefault\("QT_QPA_PLATFORMTHEME", "generic"\)/,
+	'Qt is kept off its GTK platform theme, which would map libgtk-3');
+
+# On a desktop that normally selects Qt's GTK theme (XFCE here), importing the
+# package must leave no GTK library in the process.
+my $gtk = `cd "$root" && XDG_CURRENT_DESKTOP=XFCE QT_QPA_PLATFORM=offscreen PYTHONPATH=desktop python3 -c 'import jawnos_desktop; from PySide6.QtWidgets import QApplication; app = QApplication([]); print("gtk-mapped", "libgtk" in open("/proc/self/maps").read())' 2>&1`;
+SKIP: {
+	skip 'PySide6 is not installed here', 1
+		if $gtk =~ /No module named .PySide6|ModuleNotFoundError/;
+	like($gtk, qr/^gtk-mapped False$/m, 'no libgtk is mapped under a GTK desktop');
+}
 
 # The engine resolver, without starting a GUI. Auto and qt are deterministic;
 # an explicit webkit request fails with a message that names the removal.
