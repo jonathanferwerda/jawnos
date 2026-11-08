@@ -12,17 +12,21 @@ void handle_jobs() {
       ledFlasher(interval,duration);
     }
     else if (String(coreJobs[coreKeys[i]]["type"]) == "https") {
+      unsigned long job_at = strtoul(String(coreJobs[coreKeys[i]]["next_at"]).c_str(), nullptr, 10);
+      if (job_at && (long)(millis() - job_at) < 0) { continue; }
+      String job_response = String(coreJobs[coreKeys[i]]["response"]);
+      bool critical = (job_response == "switch" || job_response == "button");
+      // A switch or button is a person's movement. Do not let the 60 s ping gap
+      // discard it: allow one attempt even while homebaseOnline is 0, and retry
+      // a transient failure instead of dropping the job at the bottom of this
+      // loop. That drop was the "every other flip" and the lost stop; waiting
+      // for the ping to re-arm was the 25-second-old start time.
+      if (critical) { homebaseOnline = 1; }
       String url = String(coreJobs[coreKeys[i]]["url"]);
       String response = https_request(url);
+      bool failed = (response == "failure" || response == "no ping");
 
-      if (String(coreJobs[coreKeys[i]]["response"]) == "button") {
-        // The board already applied the press locally; its own scanner reads
-        // the output pin, not this map. Nothing to write back here.
-      }
-      if (String(coreJobs[coreKeys[i]]["response"]) == "switch") {
-        // Same: local_sw_state is the scanner's source of truth.
-      }
-      if (String(coreJobs[coreKeys[i]]["response"]) == "time") {
+      if (job_response == "time" && !failed) {
         JSONVar timers = JSON.parse(response);
 
         int64_t timestamp = jint64(timers["timestamp"]);
@@ -45,6 +49,18 @@ void handle_jobs() {
         }
       }
 
+      // A transient failure (a TLS timeout, a homebase that just went quiet for
+      // one request) keeps the job for a bounded retry. The event's timestamp
+      // was stamped at the flip, so a retry still records the real moment.
+      if (failed) {
+        int tries = String(coreJobs[coreKeys[i]]["tries"]).toInt();
+        if (tries < 4) {
+          tries++;
+          coreJobs[coreKeys[i]]["tries"] = String(tries);
+          coreJobs[coreKeys[i]]["next_at"] = String((unsigned long)(millis() + 1500UL * tries));
+          continue;
+        }
+      }
     }
     else if (String(coreJobs[coreKeys[i]]["type"]) == "relay_post") {
       // A watch/deck message the BLE handler queued. Run it here, off the BLE
