@@ -600,6 +600,11 @@ sub manager_starter() {
 		my $idle_limit = 600;      # ten quiet minutes, then the model goes back
 		my $want_at = 0;           # when a transcription last asked for the server
 		my $server_pid = 0;        # the one this loop started (0: none of ours)
+		# A server started by the tree this one replaced outlived it, and the
+		# demand logic below would adopt it as "already up" and hold the model for
+		# good (see whisper_server_stop_orphans). Clear those before the first look.
+		my $orphans = &subs::whisper_server_stop_orphans();
+		$log->info("whisper: stopped $orphans orphaned server(s)") if $orphans && $log;
 		while (1) {
 			&subs::subprocessor_heartbeat();
 			my $want = &subs::whisper_server_wanted();

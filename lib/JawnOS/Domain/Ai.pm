@@ -156,6 +156,49 @@ sub whisper_server_wanted {
 	return $mtime || 0;
 }
 
+# A whisper server outlives the tree that started it: its loop is killed with the
+# restart and the process stays, reparented to init (PPid 1). Nothing would ever
+# stop it, and the demand logic in President.pl would keep it as "already up" and
+# hold the model for good - 147 MB at ggml-tiny on a machine that may never
+# transcribe again. Stop those once, when that loop starts, and only those: a
+# server a person started by hand has a shell for a parent and is left alone.
+sub whisper_server_stop_orphans {
+	my $port = &whisper_server_port();
+	opendir(my $procs, '/proc') or return 0;
+	my @pids = grep { /^[0-9]+$/ } readdir $procs;
+	closedir $procs;
+	my $stopped = 0;
+	foreach my $pid (@pids) {
+		next if $pid == $$;
+		my $stat = '';
+		if (open(my $fh, '<', "/proc/$pid/stat")) {
+			local $/;
+			$stat = <$fh>;
+			close $fh;
+		}
+		next unless defined $stat && length $stat;
+		# comm may hold spaces and parens, so the fields are counted from the
+		# last ')': state comes first, then ppid.
+		my ($rest) = $stat =~ /\)\s+(.*)$/s;
+		next unless defined $rest;
+		my @fields = split /\s+/, $rest;
+		next unless defined $fields[1] && $fields[1] eq '1';
+		my $cmd = '';
+		if (open(my $fh, '<', "/proc/$pid/cmdline")) {
+			local $/;
+			$cmd = <$fh>;
+			close $fh;
+		}
+		next unless defined $cmd && length $cmd;
+		$cmd =~ s/\0/ /g;
+		next unless $cmd =~ /whisper-(?:server|tool\.py)/;
+		next unless $cmd =~ /--port\s+\Q$port\E/;
+		kill 'TERM', $pid;
+		$stopped++;
+	}
+	return $stopped;
+}
+
 # A warm server keeps the model loaded, so a clip skips the model load the
 # one-shot CLI pays on every call. '' when it is not running or did not answer.
 sub whisper_server_transcribe {

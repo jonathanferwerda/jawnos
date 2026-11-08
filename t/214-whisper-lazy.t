@@ -68,4 +68,21 @@ unlike($loop, qr/^\t\tsleep 30;\n/s,
 like($loop, qr/sleep\(\$recent \? 5 : 30\);/,
 	'it looks soon while the house is talking and coasts otherwise');
 
+# --- the server the previous tree left behind -------------------------------
+# The eager server this loop used to start survived a restart as an orphan
+# (PPid 1). With demand-started servers the loop would read it as "already up"
+# and never stop it, so the 147 MB would stay for good.
+my ($orphans) = $ai =~ /(sub whisper_server_stop_orphans \{.*?\n\})/s;
+ok($orphans, 'Domain::Ai carries whisper_server_stop_orphans');
+like($orphans, qr/\$fields\[1\] eq '1'/,
+	'it takes a server with no parent (PPid 1) and leaves a hand-started one');
+like($orphans, qr/--port\\s\+\\Q\$port\\E/,
+	'and only a server on this machine whisper port');
+like($orphans, qr/kill 'TERM', \$pid;/,
+	'it asks that server to stop');
+like($loop, qr/&subs::whisper_server_stop_orphans\(\);/,
+	'the demand loop clears an inherited server before its first look');
+like($loader, qr/\bwhisper_server_stop_orphans\b/,
+	'Loader.pm maps that sub too');
+
 done_testing();
