@@ -54,4 +54,7 @@ like($boot, qr/if\s*\(\s*linked\s*&&\s*wifi_addressed\(\)\s*\)/,
 like($boot, qr/associated but no IP address; DHCP did not complete/,
 	'the boot log names the DHCP failure');
 
+# --- the USB diagnostic reports the address config ------------------------
+like($boot, qr/JAWNCFG MORE .*mask=.*gw=/, 'the USB diagnostic reports netmask and gateway');
+
 done_testing();

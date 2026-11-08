@@ -170,7 +170,7 @@ static void usb_config_loop() {
           else { types += k + ":" + JSON.typeof(rawj[rk[i]]) + " "; }
         }
         Serial.println("JAWNCFG TYPES " + types);
-        Serial.println("JAWNCFG MORE ssid=" + ssid + " ap_ssid=" + ap_ssid + " wifi=" + wifiState + " ip=" + WiFi.localIP().toString() + " homebaseIP=" + homebaseIP);
+        Serial.println("JAWNCFG MORE ssid=" + ssid + " ap_ssid=" + ap_ssid + " wifi=" + wifiState + " ip=" + WiFi.localIP().toString() + " mask=" + WiFi.subnetMask().toString() + " gw=" + WiFi.gatewayIP().toString() + " homebaseIP=" + homebaseIP);
         // The device bus counters: a board that cannot reach its homebase still
         // answers here, so the console can say whether the cause is the link or
         // the upgrade without a Serial write in the loop.
