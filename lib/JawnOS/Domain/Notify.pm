@@ -210,6 +210,10 @@ sub embedded_toggle($data) {
 	# hardware back on; the caller gets the state that actually holds.
 	if (&subs::toggle_event_is_older($app, $timestamp)) {
 		my $cur = &subs::setting_grabber({ app => $app, setting => 'toggle' });
+		# Silent in the log until now: a press that arrived behind a switch looked
+		# exactly like a press that never reached the manager.
+		$log->info('device command: ' . ($data->{'chip_id'} || '?') . ' ' . ($data->{'component'} || '?')
+			. ' @' . $timestamp . ' is older than the stored toggle, output left alone') if $log;
 		return { state => ($cur eq 'on' ? 1 : 0), formatted_state => $cur };
 	}
 	my $component = $data->{'component'};
@@ -292,6 +296,11 @@ sub embedded_toggle($data) {
 		# never clicks. Keep the board's own route below even after a write - the
 		# uuid is the same on both roads, so the board's command manifest drops
 		# the duplicate instead of clicking twice.
+		# The block below is the only road to the hardware, so say when it is taken:
+		# a press whose log jumps from the toggle write straight to nothing is a
+		# press the fan-out never handed to a board.
+		$log->info('device command: ' . ($chip_id || '?') . ' ' . ($component || '?')
+			. ' ' . ($pin // '?') . ' ' . ($state || '?') . ' @' . $timestamp . ' (send)') if $log;
 		my $ws_sent = &subs::device_ws_command({
 			chip_id => $chip_id,
 			component => $component,

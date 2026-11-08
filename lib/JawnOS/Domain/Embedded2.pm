@@ -167,6 +167,13 @@ sub intelligent_automation_toggle {
 	my $asets = &subs::settings_grabber({ app => $app, settings => ['ia','toggle'] });
 	my $jia = $asets->{'ia'};
 	my $ia = eval { return decode_json $jia } || {};
+	# An unreadable wiring map used to leave a press with no trace at all: the
+	# panel flipped, nothing clicked, and neither the log nor the device saw a
+	# command. Name it, with the size, so a corrupt row is obvious.
+	if (!scalar keys %{$ia} && $log) {
+		$log->info('ia toggle: ' . ($app || '?') . ' has no readable wiring (ia '
+			. (defined $jia ? length($jia) : 0) . ' bytes)');
+	}
 	my $counted = 0;
 	foreach my $chip ( keys %{$ia} ) {
 		# A switch/button is applied locally by the board that owns it; the
@@ -184,22 +191,34 @@ sub intelligent_automation_toggle {
 				#	return;
 				}
 				if ($ia->{$chip}->{$i}->{'movement'} eq 'start') {
-					my $returner = &subs::embedded_toggle({
-						app => $app,
-						pin => $ia->{$chip}->{$i}->{'pin'},
-						ip => $ia->{$chip}->{$i}->{'ip'},
-						edt => $ia->{$chip}->{$i}->{'edt'},
-						component => $ia->{$chip}->{$i}->{'component'},
-						timestamp => $timestamp,
-						'state' => $state,
-						measure => $measure,
-						chip_id => $chip,
-						'when' => $when,
-						uuid => $uuid,
-						appt_uuid => $appt_uuid,
-						value => $data->{'value'},
-						counted => $counted
-					});
+					# One output that dies must not silence the rest of the fan-out: a
+					# press drives every wired relay and LED, and an unguarded call here
+					# aborted the loop, leaving the board after it uncommanded with no
+					# word in the log. Name the chip, pin and error, then keep going.
+					my $ok = eval {
+						&subs::embedded_toggle({
+							app => $app,
+							pin => $ia->{$chip}->{$i}->{'pin'},
+							ip => $ia->{$chip}->{$i}->{'ip'},
+							edt => $ia->{$chip}->{$i}->{'edt'},
+							component => $ia->{$chip}->{$i}->{'component'},
+							timestamp => $timestamp,
+							'state' => $state,
+							measure => $measure,
+							chip_id => $chip,
+							'when' => $when,
+							uuid => $uuid,
+							appt_uuid => $appt_uuid,
+							value => $data->{'value'},
+							counted => $counted
+						});
+						1;
+					};
+					if (!$ok && $log) {
+						my $why = $@; $why =~ s/\s+/ /g;
+						$log->info('ia toggle: ' . ($app || '?') . ' output ' . $chip . ' pin '
+							. $ia->{$chip}->{$i}->{'pin'} . ' failed: ' . $why);
+					}
 				}
 				elsif ($ia->{$chip}->{$i}->{'movement'} eq 'measure') {
 					my $edt_data = {
