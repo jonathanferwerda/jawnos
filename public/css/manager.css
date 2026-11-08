@@ -965,20 +965,6 @@ canvas.background {
    Web/Browse tabs sit under it. */
 
 .wind { border-radius: var(--window_radius, var(--jawnos-corner, 12px)); background-color: var(--window, var(--panel)); box-shadow: 0 20px 50px rgba(0,0,0,.24), 0 2px 8px rgba(0,0,0,.12); }
-/* The tile is a stack. Its front window shows the title bar at the top; the
-   windows behind it sit lower with their title bars at the foot, so a stack
-   still shows every name. The stack changes position only, never width. */
-.wind.tile_bar_bottom .top_navbar {
-	top: auto !important;
-	bottom: 0;
-	border-radius: 0 0 var(--window_radius, var(--jawnos-corner, 12px)) var(--window_radius, var(--jawnos-corner, 12px));
-}
-.wind.tile_bar_bottom .window_contents { padding-top: 0 !important; }
-.wind.tile_bar_bottom .window_drawer {
-	top: 0 !important;
-	bottom: calc(var(--navbar_h, 36px) - 2px);
-	height: auto !important;
-}
 body.dark_theme .wind { box-shadow: 0 22px 56px rgba(0,0,0,.55), 0 2px 8px rgba(0,0,0,.35); }
 /* Inside a window every surface that asked for the panel surface gets the
    window's own colour instead, so an app or an appointment does not dissolve

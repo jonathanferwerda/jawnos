@@ -4,7 +4,6 @@
      02_fit.js  - minimise/restore/move, draggable, viewport/fit, phone check
      03_stack.js  - stacker, close, z-order, everythingMoves, dimension setter, background, drawer
      04_act.js  - appActSync, the act panel open/close message the beat no longer carries
-     05_tiling.js - the tile: which windows it owns and where they find space
    /js/manager/bundle.js concatenates the index and these parts.
    [[/js-split]] */
 
@@ -305,9 +304,8 @@ $(document).on('click', '.window_toggle', function() {
 			: $('.wind[data-window-id="' + window_id + '"]');
 		if (!tw.length) { return; }
 		if (!tw.is(':visible')) {
-			tw.show().attr('visible', 'yes').attr('view', '');
+			tw.show().attr('visible', 'yes');
 			topLevelNow(tw);
-			if (typeof windowTileRefresh === 'function') { windowTileRefresh(); }
 			return;
 		}
 		var topmost = null, topz = -1;
@@ -335,7 +333,6 @@ $(document).on('click', '.window_toggle', function() {
 		windowMinimizer(timestamp,app);
 	} else {
 		topLevelNow(win);
-		if (typeof windowTileRefresh === 'function') { windowTileRefresh(); }
 	}
 
 });
@@ -612,37 +609,84 @@ function windowBottomClearance() {
 	return bar;
 }
 
-// Every window that is not anchored belongs to the tile. The pin is the only
-// way out: a dragged window stays in the group, and the next layout puts it
-// back in the column.
-function windowIsTiled(win) {
-	return $(win).attr('pre_dimensioned') != 1;
-}
-
-// A window that opens joins the tile. Its own fields are filled here; where it
-// lands is the tile's business, and the tile lays every member down one column.
 function windowReorganizer(window_id) {
-	var win = $('#' + window_id);
-	if (!win.length) { return; }
-	var app = win.attr('app');
-	topLevelNow(win);
-	if (windowPhoneChecker()) {
-		// a phone keeps its own pile: the new window joins the bottom of it
-		if (typeof windowStacker === 'function') { windowStacker(); }
+	var windows = [];
+	var startingV = windowTopLimit();
+	var vSpace = 40;
+	var hSpace = 50;
+	if (!window_id) { 
+		$('.wind').each(function(i,v) {
+			windows.push($(v).attr('id'));
+		});
+	}
+	else {
+		windows.push(window_id);
+	}
+	$.each(windows, function(i,v) {
+		window_id = v;
+		var win = $('#' + window_id);
+		var window_app = win.attr('app');
+		var app = window_app;
+		var winCount = $('.wind').length;
+	//	if (!windowPhoneChecker()) {
+			winCount = winCount - 1;
+	//	}
+		topLevelNow(win);
+		var thisWinLeft = Number(numeral(win.css('left')).format()) + Number(numeral(win.css('width')).format());
+		var thisWinTop = Number(numeral(win.css('top')).format());
+		if (jws != undefined && isJson(jws) && !windowPhoneChecker()) {
+			var view = JSON.parse(jws);
+			jws = undefined;
+			win.css({ 'top': view[window_app].top, 'left': (view[window_app].left), 'height': view[window_app].height, 'width': view[window_app].width});
+		}
+		else {
+			// The title bar is the step a cascade takes - down a phone's stack
+			// of bars or across the desk - so each bar rides on the tail of the
+			// one before. Measured, not the fixed 40 that outlived the bar's
+			// thinning to 36 and left a sliver of the window underneath showing
+			// between one bar and the next.
+			var vStep = win.find('.top_navbar').outerHeight() || vSpace;
+			// The bars cascade flush, so a bar's foot and the frame of the window
+			// below would both draw at the seam and read as a double line. Step each
+			// window down by the bar less its border, so the two frames land on one
+			// another as a single line.
+			var vAdvance = vStep - (parseFloat(win.find('.top_navbar').css('border-top-width')) || 0);
+			if (!windowPhoneChecker() && $('#' + window_id).attr('pre_dimensioned') != 1) {
+				win.css({ 'left': winCount * 50, 'top': winCount * vAdvance + startingV });
+				win.show();
+
+
+				if (thisWinLeft > $(window).width()) {
+					winLine = winLine + 1;
+					win.css({ 'top': thisWinTop + ( vAdvance * winLine + startingV) });
+					fullXCount = winCount
+				}
+				if (fullXCount * (winLine ) > winCount) {
+					win.css({'left': thisWinLeft - (vStep * winCount) + startingV});
+				}
+			}
+			else {
+				var temp_placement = ( vAdvance * winCount ) + startingV;
+				win.css({'top': temp_placement });
+
+				if (temp_placement > ($(window).height() - 100)) {
+					thisWinTop = Number(numeral(win.css('top')).format());
+					fullYCount = winCount;
+					win.css({ 'top': thisWinTop - (vAdvance * fullYCount) + startingV });
+				}
+
+			}
+		}
+		// Keep a window on the screen (and phones it is the width of the screen,
+		// pinned left), with its contents scrolling rather than spilling.
 		windowFit(win);
-	}
-	else if (typeof windowFindSpaceActive === 'function' && windowFindSpaceActive()) {
-		windowFindSpaceArrange();
-	}
-	else if (typeof windowTileArrange === 'function') {
-		windowTileArrange();
-	}
-	var note = jawnosAppFieldGet(app, 'note');
-	var ago = jawnosAppFieldGet(app, 'ago');
-	var duration = jawnosAppFieldGet(app, 'duration');
-	win.find('.notes').val(note);
-	win.find('.ago').val(ago);
-	win.find('.duration').val(duration);
-	if (typeof jawnosTimePreviewPaintApp === 'function') { jawnosTimePreviewPaintApp(app); }
+		var note = jawnosAppFieldGet(app, 'note');
+		var ago = jawnosAppFieldGet(app, 'ago');
+		var duration = jawnosAppFieldGet(app, 'duration');
+		win.find('.notes').val(note);
+		win.find('.ago').val(ago);
+		win.find('.duration').val(duration);
+		if (typeof jawnosTimePreviewPaintApp === 'function') { jawnosTimePreviewPaintApp(app); }
+	});
 	startMenuDisplayer();
 }

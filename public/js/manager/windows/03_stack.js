@@ -122,8 +122,6 @@ function closeWindow(timestamp) {
 	windowSaver();
 	startMenuDisplayer();
 	windowBackgroundAdjuster();
-	// find-space mode closes the gap the closed window leaves in the tile
-	if (typeof windowTileRefresh === 'function') { windowTileRefresh(); }
 	// a phone layers its windows on one another, so the layers left behind
 	// want re-parking against the smaller count
 	if (windowPhoneChecker()) { windowStacker(); }
@@ -144,8 +142,6 @@ $(document).on('click', '.wind', function(e) {
 		return;
 	}
 	topLevelNow($(this));
-	// the raised window becomes the front of the stack with its whole frame
-	if (typeof windowTileClick === 'function') { windowTileClick($(this)); }
 });
 
 // A scroll is a touch on that window. Scrolling a window that is not at the
