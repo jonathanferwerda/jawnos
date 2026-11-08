@@ -267,11 +267,12 @@ sub device_ws_peer_relay {
 		# not hold the press: one second, then the next address.
 		my $ua = Mojo::UserAgent->new(connect_timeout => 1, inactivity_timeout => 2);
 		$ua->insecure(1);
-		my $tx = $ua->build_tx(POST => 'https://' . $candidate . ':' . $port . '/manager/device_ws');
-		# Pairs, not a hashref: Mojo::Parameters::merge calls to_hash on a single
-		# argument, and a plain hashref is not blessed - this died on every relay
-		# and took the whole output command with it (every web press, silently).
-		$tx->req->body_params->merge(chip_id => $chip_id, frame => encode_json($frame));
+		# Built as a form, not by merging into body_params: Mojo only renders the
+		# body params when the content type is a form, so a merge alone sent an
+		# empty body - the homebase saw no chip_id, answered "not sent", and every
+		# command fell through to HTTP and then Bluetooth.
+		my $tx = $ua->build_tx(POST => 'https://' . $candidate . ':' . $port . '/manager/device_ws'
+			=> form => { chip_id => $chip_id, frame => encode_json($frame) });
 		&subs::peer_sign_request($tx->req);
 		my $res = eval { $ua->start($tx)->result };
 		next unless $res && $res->is_success;

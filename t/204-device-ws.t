@@ -280,8 +280,12 @@ like($cal, qr/return \$rcv \? \$response_data : \(\$ok \? 1 : 0\);/,
 # Mojo::Parameters::merge takes pairs; handed a single hashref it calls to_hash
 # on it and dies. That bug sat in the relay's form body, so every output command
 # that fell through to the peer relay died with it and no board was ever told.
-like($devws, qr/\$tx->req->body_params->merge\(chip_id =>/, 'the relay merges pairs into its form');
-unlike($devws, qr/body_params->merge\(\{/, 'never a bare hashref');
+# The body has to be a rendered form. Merging into body_params alone leaves the
+# content type unset, so Mojo sends an empty body: the homebase saw no
+# chip_id and answered "not sent" while everything else looked right.
+like($devws, qr/=> form => \{ chip_id => \$chip_id, frame => encode_json\(\$frame\) \}/,
+	'the relay sends its fields as a form body');
+unlike($devws, qr/body_params->merge/, 'never a merge that leaves the content type unset');
 
 {
 	no warnings 'redefine';
