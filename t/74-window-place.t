@@ -64,20 +64,20 @@ like($fit, qr/var scale = Math\.min\(now_w \/ saved_w, now_h \/ saved_h\);/, 'th
 like($fit, qr/win\.attr\('place_restoring', '1'\)/, 'restoring does not ratchet the saved place down');
 like($windows, qr/windowPlaceRestore\(\$\('#' \+ window_id\)\)/, 'the open path restores a pinned place');
 
-# --- the tile and find-space mode ------------------------------------------
+# --- the vertical tile and find-space mode ---------------------------------
 like($windows, qr/function windowIsTiled\(win\)/, 'one predicate says which windows the tile owns');
-like($tiling, qr/function windowFindSpacePositions\(windows, obstacles, view/, 'find-space has one place that hands out slots');
+like($tiling, qr/function windowTileColumnPositions\(windows, obstacles, view/, 'the tile has one place that hands out column slots');
+like($tiling, qr/tiled\.sort\(function/, 'the front window takes the top of the column');
+like($tiling, qr/function windowTileClick\(win\)/, 'a press moves the window to the top of the column');
 like($fit, qr/\$\(document\)\.on\('dblclick', '\.top_navbar'/, 'double-pressing a title bar toggles find-space mode');
-like($fit, qr/win\.attr\('tile', 'off'\)/, 'a dragged window leaves the tile');
-like($fit, qr/ui\.originalPosition/, 'a click that started a drag and ended where it began is not a move');
+unlike($fit, qr/win\.attr\('tile'/, 'a drag no longer takes a window out of the tile');
 like($windows, qr/windowFindSpaceActive\(\)/, 'the open path lays find-space mode out');
 like($stack, qr/windowFindSpaceRefresh\(\)/, 'closing a window closes the gap it leaves');
 
-# --- the tile does not count an anchored window ----------------------------
-# The live tiler is exercised in a bare context: windows.js needs jQuery for
-# two document handlers at load, and nothing else to reach windowReorganizer.
-# An anchored window keeps its place, so the next unpinned window must take the
-# slot it would have taken anyway rather than step around the pin.
+# --- the straight column ----------------------------------------------------
+# The layout functions are played in a bare context: the column is a pure list
+# of places, the membership is read from the window attributes, and the switch
+# is the only state.
 my $node = `command -v node 2>/dev/null`;
 chomp $node if defined $node;
 SKIP: {
@@ -195,58 +195,27 @@ function eq(actual, want, label) {
 	else { failures++; console.log('not ok ' + label + ': got ' + actual + ', want ' + want); }
 }
 
-function open(windows, id) {
-	dom = windows.map(function (w) {
-		return new El(w.id, { pre_dimensioned: w.pinned ? '1' : '0' });
-	});
-	const fresh = new El(id, { pre_dimensioned: '0' });
-	dom.push(fresh);
-	ctx.winLine = 0;
-	ctx.fullXCount = 0;
-	ctx.fullYCount = 0;
-	ctx.windowReorganizer(id);
-	return { fresh: fresh, windows: dom };
-}
-
-let r = open([{ id: 'window_a', pinned: true }], 'window_c');
-eq(r.fresh.style.left, 0, 'an anchored window does not push the first tiled window across');
-eq(r.fresh.style.top, 0, 'nor down');
-eq(r.windows[0].style.left, '0px', 'the anchored window keeps its place');
-
-let with_pin = open([{ id: 'window_a', pinned: true }, { id: 'window_b', pinned: false }], 'window_c');
-let without_pin = open([{ id: 'window_b', pinned: false }], 'window_c');
-eq(with_pin.fresh.style.left, without_pin.fresh.style.left, 'a pin beside a tiled window does not move the next slot across');
-eq(with_pin.fresh.style.top, without_pin.fresh.style.top, 'nor down');
-
-let three_with = open([{ id: 'window_a', pinned: true }, { id: 'window_b', pinned: false }, { id: 'window_c', pinned: false }], 'window_d');
-eq(three_with.fresh.style.left, 100, 'the third tiled window still steps twice');
-eq(three_with.fresh.style.top, 80, 'down two bars');
-
 // --- the tile's membership --------------------------------------------------
 function member(attrs) { return new El('window_x', attrs); }
 eq(ctx.windowIsTiled(member({ pre_dimensioned: '0' })), true, 'an unpinned window is in the tile');
 eq(ctx.windowIsTiled(member({ pre_dimensioned: '1' })), false, 'a pinned window is not');
-eq(ctx.windowIsTiled(member({ pre_dimensioned: '0', tile: 'off' })), false, 'a dragged window is not');
-eq(ctx.windowIsTiled(member({ pre_dimensioned: '0', view: 'max' })), false, 'a maximized window is not');
+eq(ctx.windowIsTiled(member({ pre_dimensioned: '0', view: 'max' })), true, 'a maximized window stays in the tile');
+eq(ctx.windowIsTiled(member({ pre_dimensioned: '0', tile: 'off' })), true, 'a dragged window stays in the tile');
 
-// --- find-space slots --------------------------------------------------------
+// --- the vertical column ----------------------------------------------------
+const view = { width: 1920, height: 1080 };
+function specs(n) {
+	const list = [];
+	for (let i = 0; i < n; i++) { list.push({ width: 450, height: 300, bar: 40, advance: 40 }); }
+	return list;
+}
 function overlaps(a, b) {
 	return a.left < b.left + b.width && b.left < a.left + a.width &&
 	       a.top < b.top + b.height && b.top < a.top + a.height;
 }
-function barsClear(positions, specs) {
+function framesClear(positions, list, obstacles) {
 	for (let i = 0; i < positions.length; i++) {
-		for (let j = i + 1; j < positions.length; j++) {
-			const a = { left: positions[i].left, top: positions[i].top, width: specs[i].width, height: specs[i].bar };
-			const b = { left: positions[j].left, top: positions[j].top, width: specs[j].width, height: specs[j].bar };
-			if (overlaps(a, b)) { return false; }
-		}
-	}
-	return true;
-}
-function framesClear(positions, specs, obstacles) {
-	for (let i = 0; i < positions.length; i++) {
-		const frame = { left: positions[i].left, top: positions[i].top, width: specs[i].width, height: specs[i].height };
+		const frame = { left: positions[i].left, top: positions[i].top, width: list[i].width, height: list[i].height };
 		for (const obstacle of obstacles) {
 			if (overlaps(frame, obstacle)) { return false; }
 		}
@@ -254,30 +223,33 @@ function framesClear(positions, specs, obstacles) {
 	return true;
 }
 
-const view = { width: 1920, height: 1080 };
-const specs = [];
-for (let i = 0; i < 6; i++) { specs.push({ width: 450, height: 300, bar: 40 }); }
-
-const free = ctx.windowFindSpacePositions(specs, [], view, 0, 0, 50);
-eq(free.length, 6, 'every tiled window finds a slot');
-eq(free[0].left, 0, 'the first slot is at the top left');
-eq(free[0].top, 0, 'at the top');
-eq(free[1].left, 450, 'the next bar clears the first across');
-eq(free[1].top, 0, 'on the same row');
-eq(barsClear(free, specs), true, 'no two title bars share a slot');
+const column = ctx.windowTileColumnPositions(specs(6), [], view, 0, 50, 18);
+eq(column.length, 6, 'every tiled window takes a place in the column');
+eq(column[0].left, 18, 'the front window is nudged right when there is room');
+eq(column[0].top, 0, 'and takes the top');
+eq(column[1].left, 0, 'the window behind it sits at the left edge');
+eq(column[1].top, 40, 'one title bar lower');
+eq(column[5].top, 200, 'the sixth window is five bars down');
 
 const anchored = [{ left: 0, top: 0, width: 400, height: 1080 }];
-const around = ctx.windowFindSpacePositions(specs, anchored, view, 0, 0, 50);
-eq(around[0].left, 400, 'the tile starts to the right of the anchored window');
-eq(around[0].top, 0, 'at the top of the free space');
-eq(framesClear(around, specs, anchored), true, 'no tiled frame is placed over the anchored window');
-eq(barsClear(around, specs), true, 'and every bar keeps its own slot around the anchor');
+const around = ctx.windowTileColumnPositions(specs(6), anchored, view, 0, 50, 18);
+eq(around[0].left, 418, 'the column starts right of the anchor, then the front is nudged');
+eq(around[1].left, 400, 'the rest of the column shares that left edge');
+eq(around[1].top, 40, 'and keeps the vertical bar step');
+eq(framesClear(around, specs(6), anchored), true, 'no tiled frame is placed over the anchored window');
 
-const short_anchor = [{ left: 0, top: 0, width: 400, height: 280 }];
-const narrow = { width: 800, height: 1080 };
-const below = ctx.windowFindSpacePositions([{ width: 450, height: 300, bar: 40 }], short_anchor, narrow, 0, 0, 50);
-eq(below[0].left, 0, 'a short anchor does not push the tile sideways');
-eq(below[0].top, 280, 'the tile takes the space under it');
+const narrow = { width: 500, height: 1080 };
+const left_obstacle = [{ left: 0, top: 0, width: 30, height: 1080 }];
+const leftward = ctx.windowTileColumnPositions([{ width: 450, height: 300, bar: 40, advance: 40 }], left_obstacle, narrow, 0, 50, 18);
+eq(leftward[0].left, 32, 'with no room right the front is nudged left');
+
+// --- a press -----------------------------------------------------------------
+let pressed = 0;
+ctx.windowTileArrange = function () { pressed++; };
+ctx.windowTileClick(new El('window_x', { pre_dimensioned: '0' }));
+eq(pressed, 1, 'a press on a tiled window lays the column out again');
+ctx.windowTileClick(new El('window_y', { pre_dimensioned: '1' }));
+eq(pressed, 1, 'a press on an anchored window does not');
 
 // --- the switch --------------------------------------------------------------
 let arranged = 0;
@@ -286,9 +258,9 @@ ctx.windowFindSpaceArrange = function () { arranged++; };
 ctx.windowTileArrange = function () { tiled++; };
 eq(ctx.windowFindSpaceActive(), false, 'the desk starts in tiling mode');
 eq(ctx.windowFindSpaceToggle(), true, 'a title-bar double-press switches to find-space');
-eq(arranged, 1, 'and lays the tile out');
+eq(arranged, 1, 'and lays the column out');
 eq(ctx.windowFindSpaceToggle(), false, 'a second press returns to tiling');
-eq(tiled, 1, 'and cascades it again');
+eq(tiled, 1, 'and puts the column back at the left edge');
 
 process.exit(failures ? 1 : 0);
 JS
@@ -297,7 +269,7 @@ JS
 	my $out = `$node "$harness_file" "$root/public/js/manager/windows.js" "$root/public/js/manager/windows/05_tiling.js" 2>&1`;
 	my $rc = $? >> 8;
 	diag($out) if $rc;
-	is($rc, 0, 'an anchored window does not take a slot in the tile');
+	is($rc, 0, 'the column and its switch play out');
 }
 
 done_testing();

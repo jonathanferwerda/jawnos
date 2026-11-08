@@ -1,16 +1,21 @@
 // ---------------------------------------------------------------- the tile
 //
-// The windows without a place of their own are the tiles the manager may move.
-// A pin keeps a window where it is, a drag gives it the person's own place, and
-// a maximized window fills the desk, so none of those take a slot (windowIsTiled
-// in the index says which). On a desk the tile is a cascade; find-space mode
-// asks every tiled window to look for the first clear title-bar slot instead,
-// so an anchored window never hides one.
+// Every window that is not anchored is a tile member (windowIsTiled in the
+// index says which), and the tile is one straight vertical column of title
+// bars: the front window first, then each one a bar lower. The front window is
+// nudged a little to one side so the bars behind it keep a clickable edge. On a
+// desk find-space mode moves the whole column into the first place that clears
+// the anchored windows; without it the column starts at the left edge.
 
 function windowTiledWindows() {
-	return $('.wind').filter(function() {
+	var tiled = $('.wind').filter(function() {
 		return windowIsTiled(this);
 	});
+	// the front window is first, so it takes the top of the column
+	tiled.sort(function(a, b) {
+		return (parseInt($(b).css('z-index'), 10) || 0) - (parseInt($(a).css('z-index'), 10) || 0);
+	});
+	return tiled;
 }
 
 function windowRectsOverlap(a, b) {
@@ -25,50 +30,61 @@ function windowRectHits(rect, list) {
 	return false;
 }
 
-// The slots find-space mode hands out: top to bottom, then left to right. The
-// whole frame has to clear an obstacle (an anchored or dragged window), and the
-// title bar has to clear every bar already placed, so each bar stays visible.
-// No sizes change: a window keeps its width and height and only its place moves.
-function windowFindSpacePositions(windows, obstacles, view, startTop, bottomClearance, stepX) {
+// The column: front first, each title bar one bar lower than the last. The first
+// (front) window is nudged right when there is room and left otherwise, so the
+// bars below it keep an exposed edge. With obstacles (find-space mode) the whole
+// column takes the first left edge whose frames clear them, and a nudge that
+// would land on one is dropped.
+function windowTileColumnPositions(windows, obstacles, view, startTop, stepX, nudge) {
 	var positions = [];
-	var placed = [];
-	var floor = view.height - (bottomClearance || 0);
-	stepX = stepX || 50;
+	var tops = [];
+	var y = startTop;
 	for (var i = 0; i < windows.length; i++) {
-		var w = windows[i];
-		var bar = w.bar || 40;
-		var width = w.width || 0;
-		var maxLeft = Math.max(0, view.width - Math.min(width, view.width));
-		var maxTop = Math.max(startTop, floor - bar);
-		var spot = null;
-		for (var top = startTop; top <= maxTop && !spot; top += bar) {
-			for (var left = 0; left <= maxLeft; left += stepX) {
-				var frame = { left: left, top: top, width: width, height: w.height || 0 };
-				var bar_rect = { left: left, top: top, width: width, height: bar };
-				if (windowRectHits(frame, obstacles)) { continue; }
-				if (windowRectHits(bar_rect, placed)) { continue; }
-				spot = { left: left, top: top };
-				placed.push(bar_rect);
-				break;
+		tops.push(y);
+		y += windows[i].advance || windows[i].bar || 40;
+	}
+	var maxWidth = 0;
+	for (var w = 0; w < windows.length; w++) {
+		maxWidth = Math.max(maxWidth, windows[w].width || 0);
+	}
+	var maxLeft = Math.max(0, view.width - Math.min(maxWidth, view.width));
+	stepX = stepX || 50;
+	var base = 0;
+	if (obstacles && obstacles.length) {
+		var found = false;
+		for (var left = 0; left <= maxLeft && !found; left += stepX) {
+			var clear = true;
+			for (var j = 0; j < windows.length; j++) {
+				var frame = { left: left, top: tops[j], width: windows[j].width || 0, height: windows[j].height || 0 };
+				if (windowRectHits(frame, obstacles)) { clear = false; break; }
 			}
+			if (clear) { base = left; found = true; }
 		}
-		if (!spot) {
-			// No clear slot: fall back to the plain cascade, keeping the bar on
-			// the desk where the desk is deep enough for it.
-			spot = {
-				left: Math.min(i * stepX, maxLeft),
-				top: Math.min(startTop + i * bar, maxTop)
-			};
-			placed.push({ left: spot.left, top: spot.top, width: width, height: bar });
+	}
+	var walls = obstacles || [];
+	for (var k = 0; k < windows.length; k++) {
+		var win = windows[k];
+		var spot = { left: base, top: tops[k] };
+		if (k === 0 && nudge) {
+			var right = base + nudge;
+			var left_spot = base - nudge;
+			var right_frame = { left: right, top: tops[k], width: win.width || 0, height: win.height || 0 };
+			var left_frame = { left: left_spot, top: tops[k], width: win.width || 0, height: win.height || 0 };
+			if (right + (win.width || 0) <= view.width && !windowRectHits(right_frame, walls)) {
+				spot.left = right;
+			}
+			else if (left_spot >= 0 && !windowRectHits(left_frame, walls)) {
+				spot.left = left_spot;
+			}
 		}
 		positions.push(spot);
 	}
 	return positions;
 }
 
-// Anchored windows and windows the person dragged out of the tile hold their
-// space; the tile flows around them.
-function windowFindSpaceObstacles() {
+// Anchored windows are the only windows with a place of their own; the column
+// flows around them in find-space mode.
+function windowAnchoredRects() {
 	var list = [];
 	$('.wind').each(function() {
 		var win = $(this);
@@ -84,7 +100,7 @@ function windowFindSpaceObstacles() {
 	return list;
 }
 
-function windowFindSpaceArrange() {
+function windowArrangeTile(avoidAnchors) {
 	if (windowPhoneChecker()) { return; }
 	var windows = windowTiledWindows().filter(':visible');
 	var specs = [];
@@ -92,33 +108,38 @@ function windowFindSpaceArrange() {
 	windows.each(function() {
 		var win = $(this);
 		var bar = win.find('.top_navbar').first();
-		specs.push({ width: win.width(), height: win.height(), bar: bar.outerHeight() || 40 });
+		var step = bar.outerHeight() || 40;
+		specs.push({
+			width: win.width(),
+			height: win.height(),
+			bar: step,
+			advance: step - (parseFloat(bar.css('border-top-width')) || 0)
+		});
 		targets.push(win);
 	});
-	var positions = windowFindSpacePositions(specs, windowFindSpaceObstacles(), windowViewport(),
-		windowTopLimit(), windowBottomClearance(), 50);
+	var obstacles = avoidAnchors ? windowAnchoredRects() : [];
+	var positions = windowTileColumnPositions(specs, obstacles, windowViewport(), windowTopLimit(), 50, 18);
 	for (var i = 0; i < targets.length; i++) {
 		targets[i].css({ 'left': positions[i].left, 'top': positions[i].top });
 		windowFit(targets[i]);
 	}
 }
 
-// Back to the usual desk tile: each window a title bar below and a step across
-// from the one before.
 function windowTileArrange() {
-	if (windowPhoneChecker()) { return; }
-	var left = 0;
-	var top = windowTopLimit();
-	windowTiledWindows().filter(':visible').each(function() {
-		var win = $(this);
-		var bar = win.find('.top_navbar').first();
-		var step = bar.outerHeight() || 40;
-		var advance = step - (parseFloat(bar.css('border-top-width')) || 0);
-		win.css({ 'left': left, 'top': top });
-		windowFit(win);
-		left += 50;
-		top += advance;
-	});
+	windowArrangeTile(false);
+}
+
+function windowFindSpaceArrange() {
+	windowArrangeTile(true);
+}
+
+// A press raises the window (topLevelNow did) and the new front takes the top
+// of the column, with the side nudge that keeps the bars behind it reachable.
+function windowTileClick(win) {
+	if (!win || !$(win).length) { return; }
+	if (!windowIsTiled(win)) { return; }
+	if (windowFindSpaceMode) { windowFindSpaceArrange(); }
+	else { windowTileArrange(); }
 }
 
 var windowFindSpaceMode = false;
@@ -127,8 +148,9 @@ function windowFindSpaceActive() {
 	return windowFindSpaceMode;
 }
 
-// A title-bar double-press is the whole switch: find-space lays the tile around
-// the places that are already held, and the second press cascades it again.
+// A title-bar double-press is the whole switch: find-space lays the column
+// around the places that are already held, and the second press puts it back at
+// the left edge.
 function windowFindSpaceToggle() {
 	windowFindSpaceMode = !windowFindSpaceMode;
 	if (windowFindSpaceMode) { windowFindSpaceArrange(); }
@@ -136,8 +158,8 @@ function windowFindSpaceToggle() {
 	return windowFindSpaceMode;
 }
 
-// A window that joined, left or changed its held place is an obstacle the tile
-// has to flow around again. Outside find-space mode there is nothing to do.
+// A window that joined, left or changed its held place moves an obstacle the
+// column has to flow around again. Outside find-space mode there is nothing to do.
 function windowFindSpaceRefresh() {
 	if (windowFindSpaceMode) { windowFindSpaceArrange(); }
 }

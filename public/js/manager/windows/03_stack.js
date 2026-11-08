@@ -144,6 +144,9 @@ $(document).on('click', '.wind', function(e) {
 		return;
 	}
 	topLevelNow($(this));
+	// the raised window takes the top of the vertical tile, nudged aside so the
+	// bars behind it stay clickable
+	if (typeof windowTileClick === 'function') { windowTileClick($(this)); }
 });
 
 // A scroll is a touch on that window. Scrolling a window that is not at the

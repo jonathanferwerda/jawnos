@@ -473,16 +473,7 @@ function windowMaker(response, fragment) {
 			// screen; an unpinned one cascades in with the others
 			if (typeof windowPlaceRestore === 'function') { windowPlaceRestore($('#' + window_id)); }
 			if ($('#' + window_id).attr('pre_dimensioned') != 1) {
-				// find-space mode lays the whole tile out around the windows that
-				// hold a place of their own; otherwise the new window takes the
-				// next slot in the usual cascade
-				if (typeof windowFindSpaceActive === 'function' && windowFindSpaceActive()) {
-					windowFindSpaceArrange();
-					topLevelNow($('#' + window_id));
-				}
-				else {
-					windowReorganizer(window_id);
-				}
+				windowReorganizer(window_id);
 			}
 			else {
 				topLevelNow($('#' + window_id));
@@ -619,103 +610,37 @@ function windowBottomClearance() {
 	return bar;
 }
 
-// A window belongs to the tile until it is given a place of its own: the pin
-// keeps it where it sits, and a drag hands the place to the person. A maximized
-// window fills the desk, so it is not a slot in the cascade either. Everything
-// else is tiled, and only tiled windows move when the tile is laid out.
+// Every window that is not anchored belongs to the tile. The pin is the only
+// way out: a dragged window stays in the group, and the next layout puts it
+// back in the column.
 function windowIsTiled(win) {
-	win = $(win);
-	return win.attr('pre_dimensioned') != 1 && win.attr('tile') != 'off' && win.attr('view') != 'max';
+	return $(win).attr('pre_dimensioned') != 1;
 }
 
-function windowTiledCount() {
-	var count = 0;
-	$('.wind').each(function() {
-		if (windowIsTiled(this)) { count++; }
-	});
-	return count;
-}
-
+// A window that opens joins the tile. Its own fields are filled here; where it
+// lands is the tile's business, and the tile lays every member down one column.
 function windowReorganizer(window_id) {
-	var windows = [];
-	var startingV = windowTopLimit();
-	var vSpace = 40;
-	var hSpace = 50;
-	if (!window_id) { 
-		$('.wind').each(function(i,v) {
-			windows.push($(v).attr('id'));
-		});
-	}
-	else {
-		windows.push(window_id);
-	}
-	$.each(windows, function(i,v) {
-		window_id = v;
-		var win = $('#' + window_id);
-		var window_app = win.attr('app');
-		var app = window_app;
-		var winCount = $('.wind').length;
-	//	if (!windowPhoneChecker()) {
-			winCount = winCount - 1;
-	//	}
-		// the tile's slot, among the windows with no pinned place
-		var tileCount = windowTiledCount() - 1;
-		topLevelNow(win);
-		var thisWinLeft = Number(numeral(win.css('left')).format()) + Number(numeral(win.css('width')).format());
-		var thisWinTop = Number(numeral(win.css('top')).format());
-		if (jws != undefined && isJson(jws) && !windowPhoneChecker()) {
-			var view = JSON.parse(jws);
-			jws = undefined;
-			win.css({ 'top': view[window_app].top, 'left': (view[window_app].left), 'height': view[window_app].height, 'width': view[window_app].width});
-		}
-		else {
-			// The title bar is the step a cascade takes - down a phone's stack
-			// of bars or across the desk - so each bar rides on the tail of the
-			// one before. Measured, not the fixed 40 that outlived the bar's
-			// thinning to 36 and left a sliver of the window underneath showing
-			// between one bar and the next.
-			var vStep = win.find('.top_navbar').outerHeight() || vSpace;
-			// The bars cascade flush, so a bar's foot and the frame of the window
-			// below would both draw at the seam and read as a double line. Step each
-			// window down by the bar less its border, so the two frames land on one
-			// another as a single line.
-			var vAdvance = vStep - (parseFloat(win.find('.top_navbar').css('border-top-width')) || 0);
-			if (!windowPhoneChecker() && $('#' + window_id).attr('pre_dimensioned') != 1) {
-				win.css({ 'left': tileCount * 50, 'top': tileCount * vAdvance + startingV });
-				win.show();
-
-
-				if (thisWinLeft > $(window).width()) {
-					winLine = winLine + 1;
-					win.css({ 'top': thisWinTop + ( vAdvance * winLine + startingV) });
-					fullXCount = tileCount
-				}
-				if (fullXCount * (winLine ) > tileCount) {
-					win.css({'left': thisWinLeft - (vStep * tileCount) + startingV});
-				}
-			}
-			else {
-				var temp_placement = ( vAdvance * winCount ) + startingV;
-				win.css({'top': temp_placement });
-
-				if (temp_placement > ($(window).height() - 100)) {
-					thisWinTop = Number(numeral(win.css('top')).format());
-					fullYCount = winCount;
-					win.css({ 'top': thisWinTop - (vAdvance * fullYCount) + startingV });
-				}
-
-			}
-		}
-		// Keep a window on the screen (and phones it is the width of the screen,
-		// pinned left), with its contents scrolling rather than spilling.
+	var win = $('#' + window_id);
+	if (!win.length) { return; }
+	var app = win.attr('app');
+	topLevelNow(win);
+	if (windowPhoneChecker()) {
+		// a phone keeps its own pile: the new window joins the bottom of it
+		if (typeof windowStacker === 'function') { windowStacker(); }
 		windowFit(win);
-		var note = jawnosAppFieldGet(app, 'note');
-		var ago = jawnosAppFieldGet(app, 'ago');
-		var duration = jawnosAppFieldGet(app, 'duration');
-		win.find('.notes').val(note);
-		win.find('.ago').val(ago);
-		win.find('.duration').val(duration);
-		if (typeof jawnosTimePreviewPaintApp === 'function') { jawnosTimePreviewPaintApp(app); }
-	});
+	}
+	else if (typeof windowFindSpaceActive === 'function' && windowFindSpaceActive()) {
+		windowFindSpaceArrange();
+	}
+	else if (typeof windowTileArrange === 'function') {
+		windowTileArrange();
+	}
+	var note = jawnosAppFieldGet(app, 'note');
+	var ago = jawnosAppFieldGet(app, 'ago');
+	var duration = jawnosAppFieldGet(app, 'duration');
+	win.find('.notes').val(note);
+	win.find('.ago').val(ago);
+	win.find('.duration').val(duration);
+	if (typeof jawnosTimePreviewPaintApp === 'function') { jawnosTimePreviewPaintApp(app); }
 	startMenuDisplayer();
 }
