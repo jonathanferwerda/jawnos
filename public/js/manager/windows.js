@@ -609,6 +609,17 @@ function windowBottomClearance() {
 	return bar;
 }
 
+// The tile counts only the windows with no place of their own. An anchored
+// window keeps the place it was pinned at, so it must not take a slot: the
+// next unpinned window steps where it would have without the pin beside it.
+function windowTiledCount() {
+	var count = 0;
+	$('.wind').each(function() {
+		if ($(this).attr('pre_dimensioned') != 1) { count++; }
+	});
+	return count;
+}
+
 function windowReorganizer(window_id) {
 	var windows = [];
 	var startingV = windowTopLimit();
@@ -631,6 +642,8 @@ function windowReorganizer(window_id) {
 	//	if (!windowPhoneChecker()) {
 			winCount = winCount - 1;
 	//	}
+		// the tile's slot, among the windows with no pinned place
+		var tileCount = windowTiledCount() - 1;
 		topLevelNow(win);
 		var thisWinLeft = Number(numeral(win.css('left')).format()) + Number(numeral(win.css('width')).format());
 		var thisWinTop = Number(numeral(win.css('top')).format());
@@ -652,17 +665,17 @@ function windowReorganizer(window_id) {
 			// another as a single line.
 			var vAdvance = vStep - (parseFloat(win.find('.top_navbar').css('border-top-width')) || 0);
 			if (!windowPhoneChecker() && $('#' + window_id).attr('pre_dimensioned') != 1) {
-				win.css({ 'left': winCount * 50, 'top': winCount * vAdvance + startingV });
+				win.css({ 'left': tileCount * 50, 'top': tileCount * vAdvance + startingV });
 				win.show();
 
 
 				if (thisWinLeft > $(window).width()) {
 					winLine = winLine + 1;
 					win.css({ 'top': thisWinTop + ( vAdvance * winLine + startingV) });
-					fullXCount = winCount
+					fullXCount = tileCount
 				}
-				if (fullXCount * (winLine ) > winCount) {
-					win.css({'left': thisWinLeft - (vStep * winCount) + startingV});
+				if (fullXCount * (winLine ) > tileCount) {
+					win.css({'left': thisWinLeft - (vStep * tileCount) + startingV});
 				}
 			}
 			else {

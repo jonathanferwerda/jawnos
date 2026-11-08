@@ -63,15 +63,15 @@ like($fit, qr/var scale = Math\.min\(now_w \/ saved_w, now_h \/ saved_h\);/, 'th
 like($fit, qr/win\.attr\('place_restoring', '1'\)/, 'restoring does not ratchet the saved place down');
 like($windows, qr/windowPlaceRestore\(\$\('#' \+ window_id\)\)/, 'the open path restores a pinned place');
 
-# --- free-form placement counts every window -------------------------------
-# The live placer is exercised in a bare context: windows.js needs jQuery for
+# --- the tile does not count an anchored window ----------------------------
+# The live tiler is exercised in a bare context: windows.js needs jQuery for
 # two document handlers at load, and nothing else to reach windowReorganizer.
-# The pre-experiment desk steps each new window down and right by the number of
-# windows already open, whether or not one of them is pinned.
+# An anchored window keeps its place, so the next unpinned window must take the
+# slot it would have taken anyway rather than step around the pin.
 my $node = `command -v node 2>/dev/null`;
 chomp $node if defined $node;
 SKIP: {
-	skip 'node is needed to play the free-form placement', 1 unless $node && -x $node;
+	skip 'node is needed to play the tiling rules', 1 unless $node && -x $node;
 
 	my ($fh, $harness_file) = tempfile(SUFFIX => '.js', UNLINK => 1);
 	print $fh <<'JS';
@@ -197,21 +197,18 @@ function open(windows, id) {
 }
 
 let r = open([{ id: 'window_a', pinned: true }], 'window_c');
-eq(r.fresh.style.left, 50, 'a pinned window still takes a cascade step');
-eq(r.fresh.style.top, 40, 'and the next window lands one bar down');
+eq(r.fresh.style.left, 0, 'an anchored window does not push the first tiled window across');
+eq(r.fresh.style.top, 0, 'nor down');
 eq(r.windows[0].style.left, '0px', 'the anchored window keeps its place');
 
 let with_pin = open([{ id: 'window_a', pinned: true }, { id: 'window_b', pinned: false }], 'window_c');
-eq(with_pin.fresh.style.left, 100, 'two windows already open step the next one twice');
-eq(with_pin.fresh.style.top, 80, 'down two bars');
-
 let without_pin = open([{ id: 'window_b', pinned: false }], 'window_c');
-eq(without_pin.fresh.style.left, 50, 'one window already open steps it once');
-eq(without_pin.fresh.style.top, 40, 'down one bar');
+eq(with_pin.fresh.style.left, without_pin.fresh.style.left, 'a pin beside a tiled window does not move the next slot across');
+eq(with_pin.fresh.style.top, without_pin.fresh.style.top, 'nor down');
 
 let three_with = open([{ id: 'window_a', pinned: true }, { id: 'window_b', pinned: false }, { id: 'window_c', pinned: false }], 'window_d');
-eq(three_with.fresh.style.left, 150, 'free-form placement counts the pinned window too');
-eq(three_with.fresh.style.top, 120, 'and steps down three bars');
+eq(three_with.fresh.style.left, 100, 'the third tiled window still steps twice');
+eq(three_with.fresh.style.top, 80, 'down two bars');
 
 process.exit(failures ? 1 : 0);
 JS
@@ -220,7 +217,7 @@ JS
 	my $out = `$node "$harness_file" "$root/public/js/manager/windows.js" 2>&1`;
 	my $rc = $? >> 8;
 	diag($out) if $rc;
-	is($rc, 0, 'free-form placement counts every window');
+	is($rc, 0, 'an anchored window does not take a slot in the tile');
 }
 
 done_testing();

@@ -62,6 +62,21 @@ like( $src, qr{\A/file_open\?file=}, 'a local path becomes a /file_open src' );
 like( $src, qr{pic\.jpg}, 'and names the picture' );
 like( $src, qr{&app=programming\z}, 'the app travels with the file so /file_open can gate it' );
 unlike( $src, qr{\Q$photos\E}, 'the filesystem path is percent-encoded, not raw' );
+like( subs::main_image_src($local, 'programming', 1), qr{&thumb=ya\z},
+	'an icon asks /file_open for the cached thumbnail' );
+
+# --- the icon maker puts the custom picture in the title bar ----------------
+my $custom = subs::main_icon_maker({ app => 'programming', timestamp => 1, settings => { main_image => $local } });
+like( $custom, qr{<img }, 'a custom main image becomes an image' );
+like( $custom, qr{&thumb=ya}, 'and asks for its thumbnail' );
+unlike( $custom, qr/class="little_thumb"/, 'the image carries one class attribute' );
+
+# --- an app with no picture still gets its window icon ----------------------
+my $fallback_src = subs::main_icon_source({ app => 'zz_no_such_custom_app', settings => {} });
+like( $fallback_src, qr/gear/, 'an app with no picture falls back to the gear' );
+my $fallback = subs::main_icon_maker({ app => 'zz_no_such_custom_app', timestamp => 1, settings => {} });
+like( $fallback, qr{<img }, 'so its title bar wears an image, not nothing' );
+like( $fallback, qr/gear/, 'the same gear the start menu draws' );
 
 # --- a path another machine wrote is mapped onto this one -------------------
 my $phone = '/sdcard/DCIM/programming/pic.jpg';
@@ -89,5 +104,7 @@ like( read_file("$root/lib/JawnOS/Manager/Part21.pm"), qr/main_image_src/,
 	'the app search icon uses the shared resolver' );
 like( read_file("$root/lib/JawnOS/Controller/apps_misc.pm"), qr/data:image/,
 	'/apps/icon answers a data URI as bytes rather than a redirect' );
+like( read_file("$root/public/js/manager/windows.js"), qr/find\('\.window_icon'\)/,
+	'the taskbar clones the same window icon' );
 
 done_testing();

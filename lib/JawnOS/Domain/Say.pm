@@ -449,7 +449,7 @@ sub watch_reply_stream {
 # the gallery maps a row another machine wrote. A snapshot main image is a data
 # URI that carries its own bytes. Returns '' when nothing here can be shown.
 sub main_image_src {
-	my ($value, $app) = @_;
+	my ($value, $app, $thumb) = @_;
 	return '' unless defined $value && length $value;
 	return $value if $value =~ /\Adata:image\//i;
 	my $file = -e $value ? $value : '';
@@ -459,8 +459,13 @@ sub main_image_src {
 		$file = $local if length $local && -e $local;
 	}
 	return '' unless length $file;
-	return '/file_open?file=' . &subs::url_escape_utf8($file)
+	my $src = '/file_open?file=' . &subs::url_escape_utf8($file)
 		. ((defined $app && length $app) ? '&app=' . &subs::url_escape_utf8($app) : '');
+	# An icon is drawn at a few dozen pixels: the cached thumbnail is the right
+	# picture, and it is also the one /file_open can draw when the original is
+	# sealed or not on this machine.
+	$src .= '&thumb=ya' if $thumb;
+	return $src;
 }
 
 # The picture an app's icon shows: the person's own main image when there is
@@ -474,7 +479,7 @@ sub main_icon_source {
 	my $settings = $data->{'settings'};
 	$settings = &subs::settings_grabber({ app => $unformatted_name }) unless $settings;
 	if ($settings->{'main_image'}) {
-		my $src = &subs::main_image_src($settings->{'main_image'}, $unformatted_name);
+		my $src = &subs::main_image_src($settings->{'main_image'}, $unformatted_name, 1);
 		return $src if length $src;
 	}
 	# the Internet app's picture lives under the web button's name
@@ -483,7 +488,10 @@ sub main_icon_source {
 		return &icon_for($gb::known_appts->{$unformatted_name}->{'icon'});
 	}
 	return &icon_for('/icons/pos/' . $settings->{'pos'} . '.png') if $settings->{'pos'} && -e 'public/icons/pos/' . $settings->{'pos'} . '.png';
-	return '';
+	# A custom app has no entry in known_appts and may have no picture yet; the
+	# same gear the start menu and search index draw keeps its window and
+	# taskbar button from losing the icon entirely.
+	return &icon_for('/images/decipherable/gear.png');
 }
 
 sub main_icon_maker {
@@ -508,7 +516,7 @@ sub main_icon_maker {
 	my $src = &subs::main_icon_source({ app => $unformatted_name, settings => $settings });
 	my $main_image = '<span id="window_icon_' . $timestamp . '" style="display:none;" class="window_icon ' . $size . '_thumb' . $extra_class . '" app="' . $unformatted_name . '" hint="' . $hint . '" ' . $onclick . '>' . &subs::initialize_name($hint) . '</span>';
 	if (length $src) {
-		$main_image = '<img id="window_icon_' . $timestamp . '" class="window_icon ' . $size . '_thumb' . $extra_class . '" app="' . $unformatted_name . '" hint="' . $hint . '" src="' . $src . '" class="little_thumb" ' . $onclick . '>';
+		$main_image = '<img id="window_icon_' . $timestamp . '" class="window_icon ' . $size . '_thumb' . $extra_class . '" app="' . $unformatted_name . '" hint="' . $hint . '" src="' . $src . '" ' . $onclick . '>';
 	}
 	return $main_image
 }
