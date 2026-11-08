@@ -467,15 +467,16 @@ window.__run = function (kind) {
   requestAnimationFrame(rec);
   var count = kind === 'flick' ? 12 : 1;
   var delta = kind === 'flick' ? 8 : 100;
-  var sent = 0;
-  function send() {
+  // Paced by the clock, not by setTimeout: a busy first paint coalesces the
+  // timer callbacks, the burst then arrives with no span, and the shim has no
+  // velocity to carry (correctly). Spin instead, so the gap is real.
+  for (var k = 0; k < count; k++) {
     box.dispatchEvent(new WheelEvent('wheel', {
       deltaY: delta, bubbles: true, cancelable: true
     }));
-    sent += 1;
-    if (sent < count) { setTimeout(send, 12); }
+    var until = performance.now() + 12;
+    while (performance.now() < until) {}
   }
-  send();
 };
 </script></body></html>""" % _MOMENTUM_JS
 
@@ -530,8 +531,9 @@ PY
 	close $fh;
 	my $out = `cd "$root" && PYTHONPATH=desktop QTWEBENGINE_CHROMIUM_FLAGS="--disable-gpu --no-sandbox" timeout 120 xvfb-run -a python3 -u "$script" 2>&1`;
 	my %got = ($out =~ /^(flick|notch): final=([\d.]+)/mg);
-	cmp_ok($got{flick} // 0, '>', 20,
-		'a flick keeps the container moving after the wheel stops');
+	cmp_ok($got{flick} // 0, '>', 60,
+		'a flick keeps the container moving after the wheel stops')
+		or diag(substr($out, 0, 600));
 	is($got{notch} // -1, 0, 'a single wheel notch does not coast');
 }
 

@@ -362,8 +362,8 @@ _MOMENTUM_JS = r"""
   if (window.__jawnMomentum) { return; }
   window.__jawnMomentum = true;
 
-  var FRICTION = 0.994;  // share of the velocity kept per millisecond
-  var QUIET = 70;         // ms of no wheel events: the flick has ended
+  var FRICTION = 0.996;   // share of the velocity kept per millisecond
+  var QUIET = 60;         // ms of no wheel events: the flick has ended
   var WINDOW = 120;       // ms of history the velocity is read from
   var MIN_SAMPLES = 3;    // a mouse wheel notch is one or two events
   var MIN_SPAN = 40;      // ms; a notch is shorter than a flick
