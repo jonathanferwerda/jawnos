@@ -194,10 +194,17 @@ sub device_ws_write_frame {
 	my ($chip_id, $frame) = @_;
 	return 0 unless defined $chip_id && length $chip_id && ref $frame eq 'HASH';
 	return 1 if &device_ws_send_local($chip_id, $frame);
-	return 0 unless &device_ws_connected($chip_id);
+	my $connected = &device_ws_connected($chip_id) ? 1 : 0;
 	my $socket = ($gb::tmp_dir || '.') . '/ws/device';
-	return 0 unless -e $socket;
-	return &Websocket::send('device', { chip_id => $chip_id, frame => $frame }) ? 1 : 0;
+	my $here = -e $socket ? 1 : 0;
+	my $sent = 0;
+	$sent = &Websocket::send('device', { chip_id => $chip_id, frame => $frame }) ? 1 : 0
+		if $connected && $here;
+	# Which step declined is not visible from outside the worker, and a board
+	# that never clicks looks the same whichever it was.
+	$log->info('device socket write: ' . ($chip_id || '?') . ' connected=' . $connected
+		. ' socket=' . $here . ' sent=' . $sent . ' tmp=' . ($gb::tmp_dir || '-')) if $log && !$sent;
+	return $sent;
 }
 
 sub device_ws_deliver {
