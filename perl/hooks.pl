@@ -232,6 +232,8 @@ Manager::app->hook(before_dispatch => sub {
 		# it reads a frame; without this the gate answered the Pico's upgrade
 		# with the Gate page and the socket never attached.
 		$path eq '/device/ws' ||
+		# an output command relayed from a non-homebase machine (peer-signed)
+		$path eq '/manager/device_ws' ||
 		# the audio stream is opened by a browser on this machine (approved
 		# session) and by a peer's manager (pinned peer signature); the route
 		# checks whichever role the connection names. A peer has no session, so

@@ -758,3 +758,20 @@ sub action_719 {
 }
 
 1;
+
+# POST /manager/device_ws
+# A non-homebase machine relays an output command to the socket this machine
+# holds for the board (the board is homed here; the person pressed start on
+# another machine). Peer-signed, and the frame is the same one the local path
+# sends, so the board cannot tell which road it arrived on.
+sub action_47101 {
+	my $c = shift;
+	unless (&app_peer_ok($c)) {
+		$c->res->code(403);
+		return $c->render(text => 'no');
+	}
+	my $chip_id = $c->param('chip_id') || '';
+	my $frame = eval { decode_json($c->param('frame') || '') } || {};
+	my $sent = &subs::device_ws_send_local($chip_id, $frame);
+	$c->render(json => { sent => $sent ? 1 : 0 });
+}

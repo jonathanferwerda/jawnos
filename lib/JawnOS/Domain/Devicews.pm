@@ -23,6 +23,7 @@ no warnings 'uninitialized';
 no warnings 'once';
 
 use File::Slurp;
+use Mojo::UserAgent;
 use Mojo::JSON qw(decode_json encode_json);
 
 our $log;
@@ -144,6 +145,20 @@ sub device_ws_snapshot {
 	};
 }
 
+sub device_ws_send_local {
+	# The socket is in this process: write the frame and say whether it went. A
+	# failed write detaches so the caller can fall back.
+	my ($chip_id, $frame) = @_;
+	return 0 unless defined $chip_id && length $chip_id && ref $frame eq 'HASH';
+	my $conn = $DEVICE_CONN{$chip_id} or return 0;
+	my $sent = eval { $conn->{'ws'}->send(encode_json($frame)); 1 };
+	unless ($sent) {
+		&device_ws_detach($chip_id);
+		return 0;
+	}
+	return 1;
+}
+
 sub device_ws_deliver {
 	# Called in the websocket worker for a Websocket::send('device', ...) frame.
 	# 1 when the chip had a socket and the frame went out, 0 when it did not: the
@@ -154,13 +169,33 @@ sub device_ws_deliver {
 	my $chip_id = $message->{'chip_id'} || '';
 	my $frame = $message->{'frame'};
 	return 0 unless length $chip_id && ref $frame eq 'HASH';
-	my $conn = $DEVICE_CONN{$chip_id} or return 0;
-	my $sent = eval { $conn->{'ws'}->send(encode_json($frame)); 1 };
-	unless ($sent) {
-		&device_ws_detach($chip_id);
-		return 0;
-	}
-	return 1;
+	return &device_ws_send_local($chip_id, $frame);
+}
+
+sub device_ws_peer_relay {
+	# The socket may be held by another House machine: the board is homed on the
+	# Table and the person pressed start on the Phone. Ask the homebase over the
+	# signed peer rail, which writes the frame to its own socket - one hop,
+	# instead of an HTTP dial to the board. 0 when there is no homebase or it is
+	# not holding the socket, so the caller's HTTP-then-BLE order is unchanged.
+	my ($chip_id, $frame) = @_;
+	return 0 unless defined $chip_id && length $chip_id && ref $frame eq 'HASH';
+	my $od = eval { decode_json(&subs::embedded_operator_door('microcontroller', $chip_id) || '') } || {};
+	my $hb = $od->{'__specs'}->{'homebase'} || '';
+	my ($host, $arm) = $hb =~ /^(\d{1,3}(?:\.\d{1,3}){3}):(\d+)$/;
+	return 0 unless $host && $arm;
+	# President.pl: manager = port, ws = port + 1, arm = port + 2.
+	my $port = $arm - 2;
+	return 0 if $port <= 0;
+	my $ua = Mojo::UserAgent->new(connect_timeout => 2, inactivity_timeout => 3);
+	$ua->insecure(1);
+	my $tx = $ua->build_tx(POST => 'https://' . $host . ':' . $port . '/manager/device_ws');
+	$tx->req->body_params->merge({ chip_id => $chip_id, frame => encode_json($frame) });
+	&subs::peer_sign_request($tx->req);
+	my $res = eval { $ua->start($tx)->result };
+	return 0 unless $res && $res->is_success;
+	my $answer = eval { decode_json($res->body) } || {};
+	return $answer->{'sent'} ? 1 : 0;
 }
 
 sub device_ws_command {
@@ -182,11 +217,18 @@ sub device_ws_command {
 		&device_ws_detach($chip_id);
 		return 0;
 	}
-	return 0 unless &device_ws_connected($chip_id);
-	my $socket = ($gb::tmp_dir || '.') . '/ws/device';
-	return 0 unless -e $socket;
-	&Websocket::send('device', { chip_id => $chip_id, frame => $frame });
-	return 1;
+	# This machine's websocket worker may hold the socket: the presence mirror
+	# names its pid, and the fan-out socket carries the frame there.
+	if (&device_ws_connected($chip_id)) {
+		my $socket = ($gb::tmp_dir || '.') . '/ws/device';
+		if (-e $socket) {
+			&Websocket::send('device', { chip_id => $chip_id, frame => $frame });
+			return 1;
+		}
+	}
+	# Or another House machine holds it. Ask the homebase over the signed peer
+	# rail; 0 keeps the caller's HTTP-then-BLE order.
+	return &device_ws_peer_relay($chip_id, $frame);
 }
 
 sub device_ws_ack {
