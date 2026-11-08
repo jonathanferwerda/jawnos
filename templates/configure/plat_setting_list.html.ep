@@ -57,6 +57,14 @@
 		}
 	}
 	my @down = sort grep { !$bucket_ok{$_} && $_ ne 'ollama' && $_ ne 'cloudflare' } keys %bucket_ok;
+	# The QA dropdown offers the same eligible chat models as the role pickers.
+	# Hand it the catalogue and the two answers this page already computed, so
+	# opening Plat never probes Ollama or Cloudflare a second time.
+	my $qa_ux_groups = &subs::qa_ux_model_choices({
+		catalogue => $catalogue,
+		ready => sub { $provider_ready{ $_[0] } ? 1 : 0 },
+		available => sub { defined $bucket_ok{ $_[0] } ? ($bucket_ok{ $_[0] } ? 1 : 0) : 1 },
+	});
 	# Remember which Plat sub-tab was last open on this device, so reopening the
 	# panel returns to the page the person was using.
 	my $plat_tab = &subs::setting_grabber({ app => '__president', setting => 'plat_tab' }) || 'plat_ai';
@@ -363,6 +371,6 @@
 		<%= include 'configure/map_setting_list' %>
 	</div>
 	<div id="plat_qa" class="cfg_tab_panel" style="<%= $plat_tab eq 'plat_qa' ? '' : 'display:none;' %>">
-		<%= include 'configure/qa_panel' %>
+		<%= include 'configure/qa_panel', qa_ux_groups => $qa_ux_groups %>
 	</div>
 </div>

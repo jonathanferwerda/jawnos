@@ -378,8 +378,9 @@ like($panel, qr/qa_times_read\(\)/, 'the fields are rendered from the saved time
 like($panel, qr/configure\.qa_schedule/, 'the card title is a core language key');
 like($panel, qr/value="none"/, 'the machine picker offers Off');
 like($panel, qr/configure\.qa_off/, 'the Off option is a core language key');
-like($panel, qr/id="qa_ux_model"/, 'the panel carries the UX model field');
+like($panel, qr/<select[^>]*id="qa_ux_model"/, 'the panel carries the UX model dropdown');
 like($panel, qr/configure\.qa_ux_model/, 'the model label is a core language key');
+like($panel, qr/optgroup/, 'the dropdown groups eligible models by provider');
 like($panel, qr/50-jawn-schedule\.conf/, 'the panel explains the drop-in');
 
 my $js = read_file("$root/public/js/manager/configure/07_qa_nightly.js");
@@ -401,6 +402,10 @@ like($controller, qr/qa_run_now_local\(/, 'Run now starts the run locally');
 like($controller, qr/verb => 'qa_run_now'/, 'a remote Run now uses the signed rail');
 like($controller, qr/qa_schedule_for\(/, 'the schedule route asks the chosen machine');
 like($controller, qr/field.*ux_model/s, 'the target route saves the UX model field');
+
+my $plat = read_file("$root/templates/configure/plat_setting_list.html.ep");
+like($plat, qr/qa_ux_model_choices/, 'the Plat page builds the QA dropdown from its own catalogue');
+like($plat, qr/include 'configure\/qa_panel', qa_ux_groups =>/, 'and hands the groups to the QA partial');
 
 my $routes = read_file("$root/lib/JawnOS/Routes/manager_configure2.pm");
 like($routes, qr{'/manager/configure/qa_schedule', 'action_50004'}, 'the schedule route is registered');

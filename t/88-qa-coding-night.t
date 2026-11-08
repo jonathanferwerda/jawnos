@@ -89,6 +89,32 @@ is($model_store{'value'}, '', 'and nothing is overwritten');
 is(subs::qa_ux_model_clean('  @table/gemma4:cloud  '), '@table/gemma4:cloud',
 	'a host-qualified model id is kept');
 
+# --- the dropdown offers only models that can answer here --------------------
+my @fake_catalogue = (
+	{ id => 'deepseek', label => 'DeepSeek', models => [
+		{ value => 'deepseek:deepseek-flash', name => 'deepseek-flash', caps => ['chat'], paid => 0, bucket => 'deepseek' },
+		{ value => 'deepseek:deepseek-v4-pro', name => 'deepseek-v4-pro', caps => ['chat'], paid => 1, bucket => 'deepseek' },
+		{ value => 'deepseek:picture', name => 'picture', caps => ['image'], paid => 0, bucket => 'deepseek' },
+	]},
+	{ id => 'openai', label => 'OpenAI', models => [
+		{ value => 'openai:gpt-5', name => 'gpt-5', caps => ['chat'], paid => 0, bucket => 'openai' },
+	]},
+	{ id => 'ollama:Laptop', label => 'Ollama \x{00b7} Laptop', models => [
+		{ value => '@Laptop/llama', name => 'llama', caps => ['chat'], paid => 0, bucket => 'ollama' },
+	]},
+);
+my $choices = subs::qa_ux_model_choices({
+	catalogue => \@fake_catalogue,
+	ready => sub { $_[0] ne 'openai' },
+	available => sub { $_[0] ne 'deepseek' },
+});
+is_deeply([ map { $_->{'label'} } @{$choices} ], [ 'DeepSeek', 'Ollama \x{00b7} Laptop' ],
+	'the dropdown skips a provider with no key and keeps the peer group');
+is_deeply([ map { $_->{'value'} } @{ $choices->[0]->{'models'} } ], [ 'deepseek:deepseek-flash' ],
+	'a paid model in a stood-down bucket and a non-chat model are not offered');
+is_deeply([ map { $_->{'value'} } @{ $choices->[1]->{'models'} } ], [ '@Laptop/llama' ],
+	'a peer Ollama model is offered under its machine');
+
 # A fixture database for the queue and for the setting's read path.
 sub make_db {
 	my $dir = tempdir(CLEANUP => 1);
@@ -736,8 +762,10 @@ like($panel, qr/id="qa_note_limit"/, 'the QA panel carries the notes-per-night s
 like($panel, qr/\$qa_note_min \.\. \$qa_note_max/, 'the options come from the server bounds');
 like($panel, qr/qa_note_limit\(\)/, 'the saved number is rendered');
 like($panel, qr/configure\.qa_note_limit/, 'the label is a core language key');
-like($panel, qr/id="qa_ux_model"/, 'the QA panel carries the UX model field');
+like($panel, qr/<select[^>]*id="qa_ux_model"/, 'the UX model is a dropdown');
 like($panel, qr/configure\.qa_ux_model/, 'the model label is a core language key');
+like($panel, qr/optgroup/, 'the dropdown groups eligible models by provider');
+like($panel, qr/qa_ux_model_choices\(\)/, 'the dropdown is built from the eligible-model helper');
 
 my $js = read_file("$root/public/js/manager/configure/07_qa_nightly.js");
 like($js, qr/'#qa_note_limit'/, 'the script listens to the select');

@@ -747,6 +747,39 @@ sub qa_ux_model_save {
 	return { ok => 1, model => $clean };
 }
 
+# The eligible chat models for the QA dropdown, grouped the way the Platform
+# role pickers group them: a provider that can answer (a key, or a running
+# Ollama), a peer's cached Ollama, and a model whose billing bucket is not
+# stood down. The Plat template already builds the catalogue and both answers,
+# so it hands them in; a direct call reads them itself.
+sub qa_ux_model_choices {
+	my $opts = shift || {};
+	my $catalogue = $opts->{'catalogue'};
+	$catalogue = &subs::ai_model_catalogue('chat') unless ref $catalogue eq 'ARRAY';
+	my $ready = $opts->{'ready'} || sub { &subs::ai_provider_ready($_[0]) ? 1 : 0 };
+	my $available = $opts->{'available'} || sub { &subs::ai_bucket_available($_[0]) ? 1 : 0 };
+	my @groups;
+	foreach my $provider ( @{$catalogue} ) {
+		next unless ref $provider eq 'HASH';
+		next unless $ready->($provider->{'id'});
+		my @models = grep {
+			my $m = $_;
+			ref $m eq 'HASH'
+				&& scalar( grep { $_ eq 'chat' } @{ $m->{'caps'} || [] } )
+				&& (!$m->{'paid'} || $available->($m->{'bucket'}))
+		} @{ $provider->{'models'} || [] };
+		next unless @models;
+		push @groups, {
+			id     => $provider->{'id'},
+			label  => ($provider->{'label'} || $provider->{'id'}),
+			models => [ map {
+				{ value => $_->{'value'}, name => ($_->{'name'} || $_->{'value'}), paid => ($_->{'paid'} ? 1 : 0) }
+			} @models ],
+		};
+	}
+	return \@groups;
+}
+
 # ---------------------------------------------------------------------------
 # What the coding night works on
 # ---------------------------------------------------------------------------
