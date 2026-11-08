@@ -111,6 +111,9 @@ unlike($ws, qr/Serial\./,
 like($ws, qr/dev_ws_up_count\+\+/, 'a successful attach is counted');
 like($ws, qr/dev_ws_fail_count\+\+/, 'a failed dial is counted');
 like($ws, qr/dev_ws_cmd_count\+\+/, 'an applied command is counted');
+like($ws, qr/dev_ws_last = 1;/, 'a connect failure is coded (last=1)');
+like($ws, qr/dev_ws_last = 2;/, 'a refused upgrade is coded (last=2)');
+like($ws, qr/" last=" \+ String\(dev_ws_last\)/, 'the report carries the last failure stage');
 like($ws, qr/String dev_ws_report\(\)/, 'the counters are exposed by a report');
 like($globals, qr/^String dev_ws_report\(\);$/m, 'the report is forward-declared for the USB diagnostic');
 like($boot, qr/JAWNCFG WS " \+ dev_ws_report\(\)/, 'JAWNCFG? prints the device bus counters');

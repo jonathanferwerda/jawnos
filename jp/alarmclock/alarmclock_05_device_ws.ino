@@ -29,6 +29,10 @@ static uint16_t dev_ws_port = 0;
 static uint32_t dev_ws_up_count = 0;
 static uint32_t dev_ws_fail_count = 0;
 static uint32_t dev_ws_cmd_count = 0;
+// Why the last fallback dial failed: 1 connect, 2 upgrade/non-101, 3 the
+// homebase string could not be split. Read on JAWNCFG? so the console can tell
+// a network failure from a refused token without a print in the loop.
+static int dev_ws_last = 0;
 
 static String dev_ws_chip() { return String(rp2040.getChipID()); }
 
@@ -106,10 +110,10 @@ static bool dev_ws_handshake() {
   // manager's working port + 1, which is arm - 1 on every house machine.
   String hb = homebaseIP;
   int split = hb.lastIndexOf(':');
-  if (split <= 0) { return false; }
+  if (split <= 0) { dev_ws_last = 3; return false; }
   String host = hb.substring(0, split);
   int arm = hb.substring(split + 1).toInt();
-  if (host == "" || arm <= 1) { return false; }
+  if (host == "" || arm <= 1) { dev_ws_last = 3; return false; }
   dev_ws_host = host;
   dev_ws_port = (uint16_t)(arm - 1);
 
@@ -129,6 +133,7 @@ static bool dev_ws_handshake() {
   // handshake before it could finish, so the board never registered.
   dev_ws_tls.setTimeout(5000);
   if (!dev_ws_tls.connect(host.c_str(), dev_ws_port)) {
+    dev_ws_last = 1;
     dev_ws_fail_count++;
     return false;
   }
@@ -155,6 +160,7 @@ static bool dev_ws_handshake() {
   }
   (void)accept;
   if (status.indexOf(" 101 ") < 0) {
+    dev_ws_last = 2;
     dev_ws_fail_count++;
     dev_ws_tls.stop();
     return false;
@@ -162,6 +168,7 @@ static bool dev_ws_handshake() {
   // Keep a frame read short enough that a half-arrived frame cannot hold the
   // core; available() gates the read, so this only bounds a partial frame.
   dev_ws_tls.setTimeout(200);
+  dev_ws_last = 0;
   dev_ws_up_count++;
   return true;
 }
@@ -275,7 +282,8 @@ static bool dev_ws_read_frame(String &text) {
 // asked is reading the CDC, which is the condition the counters exist for.
 String dev_ws_report() {
   return "up=" + String(dev_ws_up_count) + " fail=" + String(dev_ws_fail_count)
-       + " cmd=" + String(dev_ws_cmd_count) + " live=" + String(dev_ws_up ? 1 : 0);
+       + " cmd=" + String(dev_ws_cmd_count) + " live=" + String(dev_ws_up ? 1 : 0)
+       + " last=" + String(dev_ws_last);
 }
 
 // Called on core 1 every pass. It never blocks on the socket for long: the
