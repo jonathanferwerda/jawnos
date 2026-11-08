@@ -44,4 +44,14 @@ like($route, qr/not reachable: no live Bluetooth link and no network address/,
 like($route, qr/\\d\{1,3\}/,
 	'only a real address is used for the HTTP pull');
 
+
+# --- a board on the device socket is not pushed again over BLE ---------------
+
+like($ble, qr/next if &subs::device_ws_connected\(\$w->\{'chip_id'\}\);/,
+	'a board holding the device socket is skipped for the BLE toggle push');
+my $ws_skip = index($ble, q!device_ws_connected($w->{'chip_id'})!);
+my $ws_push = index($ble, q!push @targets, { chip_id => $w->{'chip_id'}, edt => $dev_edt };!);
+ok($ws_skip >= 0 && $ws_push >= 0 && $ws_skip < $ws_push,
+	'skipped before it is added as a BLE target, not after');
+
 done_testing();

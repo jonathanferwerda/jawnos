@@ -670,6 +670,12 @@ sub watch_toggle_pusher {
 				# "microcontroller" - for every toggle.
 				my $dev_edt = $w->{'edt'} || $w->{'purpose'} || $edt;
 				next if $seen{ $w->{'chip_id'} }++;
+				# A board holding the device socket already has this state: the direct
+				# command or the automation fan-out carried it over that socket. The
+				# same toggle over BLE is a second radio transaction on a chip that
+				# runs WiFi and BLE together, and a burst of presses is what wedged
+				# this board. Keep the BLE push for a board that has no socket.
+				next if &subs::device_ws_connected($w->{'chip_id'});
 				push @targets, { chip_id => $w->{'chip_id'}, edt => $dev_edt };
 			}
 		}
