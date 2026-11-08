@@ -487,7 +487,9 @@ sub ble_message_processor {
 			# state without a push and with this chip excluded, exactly like
 			# /watch/switch. Pushing the intermediate state back was a second relay
 			# command (pin -1, or a visible click) and the flash the person saw.
-			&subs::setting_setter({ app => $sw_b->{'app'}, setting => 'toggle', value => $sw_toggle, sync => 1, source_chip_id => $sw_chip, timestamp => $sw_ms }) if $sw_b->{'app'};
+			# Stamp it the way the session is stamped: a board 40 s behind must not
+			# write this row behind a web press, or its own stop is refused as older.
+			&subs::setting_setter({ app => $sw_b->{'app'}, setting => 'toggle', value => $sw_toggle, sync => 1, source_chip_id => $sw_chip, timestamp => $press_ms }) if $sw_b->{'app'};
 			eval {
 				&subs::edt_button_presser({
 					timestamp => $press_ms,

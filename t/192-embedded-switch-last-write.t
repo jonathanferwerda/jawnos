@@ -155,8 +155,8 @@ like($emb2, qr/if \(&subs::toggle_event_is_older\(\$app, \$timestamp\)\)/,
 	'the automation leaves outputs alone for an event the settings layer superseded');
 
 like($watch, qr/param\('timestamp_ms'\)/, 'the switch/button routes prefer the millisecond stamp');
-like($watch, qr/setting_setter\(\{[^\n]*value => \$state[^\n]*timestamp => \$timestamp/,
-	'the switch pre-press carries the event time');
+like($watch, qr/setting_setter\(\{[^\n]*value => \$state[^\n]*timestamp => \$press_at/,
+	'the switch pre-press carries the same clamped event time as its session');
 like($ble2, qr/\$payload->\{'timestamp_ms'\}/, 'the BLE switch/button path prefers the millisecond stamp');
 like($part14, qr/value => 'on', timestamp => \$timestamp/, 'a start appointment stamps its toggle write');
 like($name, qr/watch_toggle_pusher\(\{[^\n]*timestamp => \$timestamp/, 'the BLE toggle push carries the same event time');

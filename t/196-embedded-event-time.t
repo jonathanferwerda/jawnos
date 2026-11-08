@@ -72,12 +72,22 @@ like($button, qr/&subs::event_time_ms\(/, 'the button route sanitises the stamp'
 like($switch, qr/my \$press_at = \(abs\(\$timestamp - \$house_now\) <= 10000\) \? \$timestamp : \$house_now;/,
 	'a switch stamp far from the house clock is recorded at receive time');
 like($switch, qr/timestamp => \$press_at,/, 'the session uses that recorded time');
+# The toggle row has to carry the same stamp as the session. A board 40 s behind
+# that wrote its own row on the raw stamp left the next flick (its own stop
+# included) behind a web press's row, so the write gate refused it as older and
+# the switch did nothing at all.
+like($switch, qr/setting => 'toggle', value => \$state, sync => 1, source_chip_id => \$chip_id, timestamp => \$press_at \}/,
+	'a switch writes the pre-press toggle on that same time');
+unlike($switch, qr/setting => 'toggle', value => \$state, sync => 1, source_chip_id => \$chip_id, timestamp => \$timestamp \}/,
+	'not on the board\'s raw stamp');
 
 my $ble2 = $read->('lib/JawnOS/Domain/Ble2.pm');
 like($ble2, qr/my \$press_ms = &subs::event_time_ms\(/, 'a bridged button sanitises the stamp');
 like($ble2, qr/my \$sw_ms = &subs::event_time_ms\(/, 'a bridged switch sanitises the stamp');
 like($ble2, qr/my \$press_ms = \(abs\(\$sw_ms - \$house_now\) <= 10000\) \? \$sw_ms : \$house_now;/,
 	'a bridged switch stamp far from the house clock is recorded at receive time');
+like($ble2, qr/setting => 'toggle', value => \$sw_toggle, sync => 1, source_chip_id => \$sw_chip, timestamp => \$press_ms \}/,
+	'a bridged switch writes its pre-press toggle on that same time too');
 like($ble2, qr/type => 'toggles', data => \$chunks->\[0\], timestamp_ms => &subs::rightNow\(\)/, 'the state reply teaches the clock');
 like($ble2, qr/type => 'toggles', data => \$chunk, timestamp_ms => &subs::rightNow\(\)/, 'paged replies too');
 

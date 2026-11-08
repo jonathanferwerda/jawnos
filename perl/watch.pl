@@ -357,7 +357,10 @@ get '/watch/switch' => sub($c) {
 		# This is the state before the switch moved; edt_button_presser reads it
 		# to decide start/stop. Write it without pushing it: pushing the inverted
 		# intermediate is what made the relay click twice and the toggle flash.
-		&subs::setting_setter({ app => $b->{'app'}, setting => 'toggle', value => $state, sync => 1, source_chip_id => $chip_id, timestamp => $timestamp });
+		# The stamp is the same one the session gets: a board whose clock is far
+		# behind must not stamp this row behind a web press, or the next flick -
+		# its own stop included - is refused as older and the switch does nothing.
+		&subs::setting_setter({ app => $b->{'app'}, setting => 'toggle', value => $state, sync => 1, source_chip_id => $chip_id, timestamp => $press_at });
 		my $data = {
 			timestamp => $press_at,
 			room => $room,
