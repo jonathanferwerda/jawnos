@@ -14,7 +14,7 @@ perl qa/run.pl                     # smoke: t/ + signed-in route pass
 perl qa/run.pl --profile full      # adds the anonymous gate pass
 perl qa/run.pl --layers l1         # route layer only
 perl qa/run.pl --layers l2         # database contracts and query plans
-perl qa/run.pl --layers l3         # UI: Chromium breadth + WebKitGTK engine
+perl qa/run.pl --layers l3         # UI: Chromium breadth + Qt WebEngine engine
 perl qa/run.pl --layers l4         # Android emulator (table: SDK + AVD)
 perl qa/run.pl --layers l5         # QEMU image boot (table: KVM + qemu)
 perl qa/run.pl --layers l5 --device-contract   # + install, boot the disk twice
@@ -100,7 +100,7 @@ recorded as drift, not as a verdict. The verdict is the PID audit.
 | `l0` | `perl scripts/run_tests.pl` (runs outside the fence; it is hermetic) | done |
 | `l1` | every classified GET route over HTTP, signed-in and anonymous; timings; crash detection + restart; fence audit | done |
 | `l2` | database contracts: integrity, stamps, real query plans | done |
-| `l3` | Chromium CDP smoke + WebKitGTK engine probe | done on table |
+| `l3` | Chromium CDP smoke + Qt WebEngine engine probe | done on table |
 | `l4` | Android emulator: cold/warm start, rotation, offline, repeat jank, WebView CDP, crash/ANR | done on table |
 | `l5` | QEMU image: version fidelity, boot evidence, install + reboot persistence, host/guest measures | done on table |
 | `l6` | UX loop: the owner's JawnOS notes attempted in a fenced copy, judged easy/help/works | harness + rubric + skip when unmodelled |
@@ -151,8 +151,8 @@ stops it, then reads the database read-only through `sqlite3`:
 Chromium over CDP visits the manager, help, chat, people, clock, warehouse,
 configure and store, collecting console errors, failed requests, 4xx assets,
 unlabelled controls and horizontal overflow; screenshots land in
-`results/ui/shots` (WebP). WebKitGTK 4.1 — the desktop's fallback engine, still
-the one this probe drives — loads the manager under Xvfb and runs the same
+`results/ui/shots` (WebP). **Qt WebEngine** (PySide6) — the desktop's engine,
+and the one this probe drives — loads the manager under Xvfb and runs the same
 probe, then clicks a synthetic
 `.budget_light` on a page where the Budget app was never opened. An appointment
 view renders that light from core, so the click must reach
@@ -160,9 +160,10 @@ view renders that light from core, so the click must reach
 a lazy chunk, l3 fails instead of reporting a green page load (v0.1.1811).
 
 Status: Chromium captures all eight pages; `/manager/store` exceeds the CDP
-navigate timeout and is reported as "not captured". WebKitGTK loads the manager
-where `xvfb-run` and `python3` with gi/WebKit2 4.1 are installed (see
-`qa/ui/NOTES.md`); a missing engine is recorded as **not run**, never as a pass.
+navigate timeout and is reported as "not captured". Qt WebEngine loads the
+manager where `xvfb-run` and `python3` with PySide6 Qt WebEngine are installed
+(see `qa/ui/NOTES.md`); a missing engine is recorded as **not run**, never as a
+pass.
 First-run warnings: `ReferenceError: $ is not defined` on fragment pages (a
 direct load has no manager shell, so its jQuery is absent), 2-12 unlabelled
 controls per page, and the slow store page.
@@ -285,7 +286,7 @@ full JDK, or the layer takes `--apk` / the newest staged APK from `releases/`.
 | --- | --- | --- |
 | table | `l1` full (signed + anonymous) | PASS, 201 requests, p50 14 ms, p95 117 ms; budgets 0 fail, 1 warn (`max_ms` = the store page) |
 | table | `l2` | PASS, 10 checks |
-| table | `l3` | PASS; WebKit `hasMenu: true` (`QAHouse`, 480 nodes); 8 Chromium pages tried, 7 captured — `/manager/store` still exceeds the navigate timeout (the tree survives it now) |
+| table | `l3` | PASS; Qt WebEngine `hasMenu: true` (`QAHouse`, 678 nodes) and the budget light clicks; 8 Chromium pages tried, 7 captured — `/manager/store` still exceeds the navigate timeout (the tree survives it now) |
 | table | `l4` emulator + app flows | PASS: cold 8.1 s, warm 0.5 s, PSS 96.3 MB, jank 100/100/100 %, rotation + offline ok, 0 crash/ANR; CDP **skip** (no manager reachable) |
 | table | `l5` boot | health 285 s (HTTP 403 gated), host peak 3093 MB at 3072 MB guest RAM |
 | table | `l5 --contract` | install 41 s; installed boot 24 s, second boot 23 s; **persistence yes** (16 G qcow2) |
@@ -293,7 +294,7 @@ full JDK, or the layer takes `--apk` / the newest staged APK from `releases/`.
 | table | nightly service | PASS, 0 failures, 1 GB peak; timer enabled, next 04:01 |
 | laptop | `l0` + `l1` full | PASS |
 | laptop | `l2` | PASS, 10 checks |
-| laptop | `l3` | 9 UI checks, 0 failures; WebKit **loads the manager** (`QAHouse`, 479 nodes) |
+| laptop | `l3` | 9 UI checks, 0 failures; Qt WebEngine **loads the manager** (`QAHouse`, 479 nodes) |
 | laptop | `qa/android/build.sh` | PASS, `jawnos-qa-3207084f.apk` from the app repo's HEAD |
 | laptop | `qa/qemu/build.sh` | `mkosi` is installed; the image in `desktop/mkosi/output` is the artefact l5 boots |
 | table | `l0` | FAILS at `t/44-native-bins.t` (pre-existing: the native-bin converter/compile toolchain is not installed there) |
@@ -393,7 +394,7 @@ The runner, one note at a time:
    --layers l0,l1`, plus `l2,l3` when the changed file list touches
    `templates/`, `public/js/`, `lib/JawnOS/Controller|Routes` or `perl/*.pl`.
    l3 includes the real-engine click check: a UI change is not green when the
-   appointment budget light is dead in WebKitGTK, even if every page loads.
+   appointment budget light is dead in Qt WebEngine, even if every page loads.
 6. **Repair** - a red suite (or, in the app lane, a red Gradle build) is not
    yet a verdict. The same worktree goes back to the agent with the failing
    test names or compiler errors and the last 40 lines of the log (the block is

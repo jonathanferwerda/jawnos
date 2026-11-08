@@ -1,39 +1,51 @@
 #!/usr/bin/env python3
-"""Load the QA manager in WebKitGTK, the desktop's fallback view.
+"""Load the QA manager in Qt WebEngine, the desktop's engine.
 
-The default Qt WebEngine view is not driven here; use
-``desktop/jawnos-qt --probe`` for that (t/185).
+The file keeps its old name so existing QA commands keep working; the engine is
+Qt WebEngine (PySide6), the same engine the desktop app uses.
 
     xvfb-run -a python3 webkit_probe.py <url> <out.json>
 
 The QA instance runs with `live`, so a loopback request is the machine in
 someone's hands and opens the manager without a cookie. The self-signed
-certificate is allowed for this host only.
-
-Two details make that TLS path work, and both are load-bearing:
-
-  * `allow_tls_certificate_for_host` takes a *host* (`127.0.0.1`), not the
-    failing URI. Handing it the URI files the exception under a key that
-    never matches the request, so every reload fails the same way.
-  * the reload must happen after the signal handler has returned. Reloading
-    from inside it (an idle in the same iteration) cancels the load that is
-    still unwinding and leaves the view on about:blank.
+certificate is accepted for the house's page through Qt's `certificateError`
+signal; Qt then retries the load itself, so the old WebKit reload dance is gone.
 
 A failed load reports what the view actually saw (`events`) so a fence or
 engine problem reads as itself instead of a bare "timeout".
 
-This is the engine check the project asks for: Chromium proves breadth, this
-proves the app in the WebView people actually use.
+The probe also writes a PNG of the loaded page to `<outdir>/shots/<page>.png`
+and names it in the report's `screenshot` key, beside the Chromium probe's
+screenshots.
 """
 
 import json
+import os
 import sys
+from urllib.parse import urlparse
 
-import gi
+# The QA host may be XFCE/GNOME, where Qt otherwise loads its GTK platform
+# theme (and libgtk) into the process. This is a Qt-only probe.
+os.environ.setdefault("QT_QPA_PLATFORMTHEME", "generic")
+os.environ.setdefault(
+    "QTWEBENGINE_CHROMIUM_FLAGS",
+    "--disable-gpu --no-sandbox --disable-dev-shm-usage")
+os.environ.setdefault("QTWEBENGINE_DISABLE_SANDBOX", "1")
 
-gi.require_version("Gtk", "3.0")
-gi.require_version("WebKit2", "4.1")
-from gi.repository import GLib, Gtk, WebKit2  # noqa: E402
+try:
+    from PySide6.QtCore import QCoreApplication, QTimer, Qt, QUrl
+    from PySide6.QtGui import QColor
+    from PySide6.QtWidgets import QApplication
+    from PySide6.QtWebEngineCore import QWebEnginePage
+    from PySide6.QtWebEngineWidgets import QWebEngineView
+    try:
+        from PySide6.QtWebEngineCore import QWebEnginePermission as Permission
+    except Exception:  # noqa: BLE001
+        Permission = None
+except Exception as exc:  # noqa: BLE001
+    print("webkit_probe: PySide6 Qt WebEngine is required: %s" % exc,
+          file=sys.stderr)
+    raise SystemExit(2)
 
 PROBE = """(() => {
     const vis = el => !!(el.offsetWidth || el.offsetHeight || el.getClientRects().length);
@@ -95,119 +107,184 @@ PROBE = """(() => {
 })()"""
 
 
+def _accept_certificate(error):
+    """Accept the house's self-signed certificate when Qt lets us override it."""
+    try:
+        if hasattr(error, "isOverridable") and not error.isOverridable():
+            return False
+        # Qt 6.8 spells it acceptCertificate(); older bindings used accept().
+        if hasattr(error, "acceptCertificate"):
+            error.acceptCertificate()
+        else:
+            error.accept()
+        return True
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _grant_permissions(page):
+    """Grant the microphone/camera requests the manager page makes."""
+    if Permission is not None and hasattr(page, "permissionRequested"):
+        enum = getattr(Permission, "PermissionType", None)
+        if enum is None:
+            enum = getattr(Permission, "Feature", Permission)
+        granted = set()
+        for name in ("MediaAudioCapture", "MediaVideoCapture",
+                     "MediaAudioVideoCapture"):
+            value = getattr(enum, name, None)
+            if value is not None:
+                granted.add(value)
+
+        def decide(permission):
+            try:
+                if permission.permissionType() in granted:
+                    permission.grant()
+                else:
+                    permission.deny()
+            except Exception:  # noqa: BLE001
+                pass
+
+        page.permissionRequested.connect(decide)
+        return
+
+    granted = set()
+    for name in ("MediaAudioCapture", "MediaVideoCapture",
+                 "MediaAudioVideoCapture"):
+        value = getattr(QWebEnginePage.Feature, name, None)
+        if value is not None:
+            granted.add(value)
+
+    def decide_legacy(origin, feature):
+        policy = (QWebEnginePage.PermissionPolicy.PermissionGrantedByUser
+                  if feature in granted else
+                  QWebEnginePage.PermissionPolicy.PermissionDeniedByUser)
+        page.setFeaturePermission(origin, feature, policy)
+
+    page.featurePermissionRequested.connect(decide_legacy)
+
+
 def main() -> int:
     if len(sys.argv) < 3:
         print("usage: webkit_probe.py <url> <out.json>", file=sys.stderr)
         return 2
     url, out = sys.argv[1], sys.argv[2]
     state = {"done": False, "load": "none", "url": url, "errors": [],
-             "events": [], "tls": 0}
+             "events": [], "tls": 0, "probed": False}
 
     def note(what, detail=""):
         state["events"].append(f"{what}: {detail}" if detail else what)
         del state["events"][:-10]
 
+    try:
+        QCoreApplication.setAttribute(Qt.ApplicationAttribute.AA_ShareOpenGLContexts)
+    except Exception:  # noqa: BLE001
+        pass
+    app = QApplication.instance() or QApplication([sys.argv[0]])
+    app.setApplicationName("jawnos-qa-probe")
+
+    view = QWebEngineView()
+    view.resize(1280, 900)
+    page = view.page()
+    page.setBackgroundColor(QColor("black"))
+    _grant_permissions(page)
+
+    def screenshot(result):
+        try:
+            outdir = os.path.dirname(os.path.abspath(out)) or "."
+            shots = os.path.join(outdir, "shots")
+            os.makedirs(shots, exist_ok=True)
+            slug = urlparse(url).path.strip("/").replace("/", "-") or "page"
+            path = os.path.join(shots, slug + ".png")
+            if view.grab().save(path):
+                result.setdefault("screenshot", path)
+        except Exception as exc:  # noqa: BLE001
+            result.setdefault("screenshot_error", str(exc))
+
     def finish(result):
         if state["done"]:
             return
         state["done"] = True
-        result.setdefault("engine", "webkit2gtk-4.1")
+        result.setdefault("engine", "qtwebengine")
         result.setdefault("events", state["events"])
+        result.setdefault("errors", state["errors"])
         try:
             with open(out, "w") as fh:
                 json.dump(result, fh)
         except Exception as exc:  # noqa: BLE001
             print(f"webkit_probe: cannot write {out}: {exc}", file=sys.stderr)
-        Gtk.main_quit()
+        app.quit()
 
-    win = Gtk.Window()
-    win.set_default_size(1280, 900)
-    view = WebKit2.WebView()
-    ctx = WebKit2.WebContext.get_default()
-
-    def on_tls(_view, failing_uri, certificate, tls_errors):
-        # self-signed, and only for this host
+    def on_tls(error):
         try:
-            host = GLib.Uri.parse(failing_uri, GLib.UriFlags.NONE).get_host() or ""
+            failing = error.url().toString() if hasattr(error, "url") else ""
         except Exception:  # noqa: BLE001
-            host = ""
+            failing = ""
+        host = urlparse(failing).hostname or ""
         state["tls"] += 1
-        note("tls-error", f"{host or '?'} flags={int(tls_errors)}")
-        if not host or state["tls"] > 3:
-            note("tls", "certificate refused; not reloading")
+        note("tls-error", f"{host or '?'}")
+        if state["tls"] > 3:
+            note("tls", "certificate refused after retries")
+            return False
+        if _accept_certificate(error):
+            note("tls-accepted", host or "?")
             return True
-        try:
-            ctx.allow_tls_certificate_for_host(certificate, host)
-        except Exception as exc:  # noqa: BLE001
-            note("tls-allow-failed", str(exc))
-            return True
-        note("tls-allowed", host)
-        # Not idle: the handler must return before this reload replaces the
-        # load that is still unwinding (otherwise: about:blank).
-        GLib.timeout_add(150, lambda: (view.load_uri(failing_uri), False)[1])
-        return True
-
-    def on_fail(_view, _event, failing_uri, error):
-        message = error.message or ""
-        note("load-failed", f"{message} ({failing_uri})")
-        # The reload above cancels the request that raised the TLS error.
-        if state["tls"] and message.lower().startswith("operation was cancelled"):
-            return True
-        state["errors"].append(f"{message} ({failing_uri})")
+        note("tls", "certificate refused")
         return False
 
-    view.connect("load-failed-with-tls-errors", on_tls)
-    view.connect("load-failed", on_fail)
-    try:
-        view.connect("web-process-terminated",
-            lambda _view, reason: note("web-process-terminated", str(reason)))
-    except TypeError:
-        pass  # older WebKit without the signal
-    win.add(view)
-    win.show_all()
-
-    def on_js(_view, task):
+    def on_js(result):
         try:
-            res = view.run_javascript_finish(task)
-            data = json.loads(res.get_js_value().to_json(0))
+            data = result if isinstance(result, dict) else json.loads(result)
         except Exception as exc:  # noqa: BLE001
             finish({"error": f"javascript probe failed: {exc}",
-                    "url": view.get_uri() or ""})
+                    "url": page.url().toString()})
             return
-        data["engine"] = "webkit2gtk-4.1"
+        data["engine"] = "qtwebengine"
         data["load"] = state["load"]
-        data["errors"] = state["errors"]
+        data["errors"] = list(state["errors"])
+        screenshot(data)
         finish(data)
 
-    def on_load(_view, event):
-        if event != WebKit2.LoadEvent.FINISHED:
-            return
-        if state.get("probed"):
-            return
-        uri = view.get_uri() or ""
-        # The view's initial about:blank finishes before load_uri takes effect.
-        if not uri or uri.startswith("about:"):
-            return
-        if uri != state["url"] and not uri.startswith(state["url"]):
-            return
-        state["probed"] = True
-        state["load"] = "finished"
-        note("finished", uri)
-        GLib.timeout_add(1500, lambda: (view.run_javascript(PROBE, None, on_js), False)[1])
-
     def on_timeout():
+        if state["done"]:
+            return
         finish({
             "error": "timeout",
             "reason": (f"no load finished in 45s (load={state['load']}, "
-                       f"tls-errors={state['tls']}, url={view.get_uri() or url})"),
-            "url": view.get_uri() or "",
+                       f"tls-errors={state['tls']}, url={page.url().toString() or url})"),
+            "url": page.url().toString() or "",
         })
-        return False
 
-    view.connect("load-changed", on_load)
-    GLib.timeout_add_seconds(45, on_timeout)
-    view.load_uri(url)
-    Gtk.main()
+    def on_load(ok):
+        if state["done"]:
+            return
+        current = page.url().toString()
+        # The view's initial about:blank finishes before setUrl takes effect.
+        if not current or current.startswith("about:"):
+            return
+        if not ok:
+            state["errors"].append(f"load-failed ({current})")
+            note("load-failed", current)
+            return
+        if state["probed"]:
+            return
+        if current != state["url"] and not current.startswith(state["url"]):
+            return
+        state["probed"] = True
+        state["load"] = "finished"
+        note("finished", current)
+        # Qt hands back an object as an empty string; JSON.stringify gives the
+        # same JSON shape the WebKit probe read with to_json(0).
+        QTimer.singleShot(1500, lambda: page.runJavaScript(
+            "JSON.stringify(" + PROBE + ")", on_js))
+
+    page.certificateError.connect(on_tls)
+    page.loadStarted.connect(lambda: note("load-started", page.url().toString()))
+    page.loadFinished.connect(on_load)
+    QTimer.singleShot(45000, on_timeout)
+
+    view.show()
+    view.setUrl(QUrl(url))
+    app.exec()
     return 0 if state["done"] else 1
 
 

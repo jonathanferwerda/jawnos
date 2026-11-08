@@ -462,8 +462,8 @@ Recorded honestly:
 
 Add `mkosi.profiles/debian.conf` with `Distribution=debian` and
 `Release=stable`, and translate the package list — Arch names do not carry over
-(`webkit2gtk-4.1`, `pipewire`, `bluez` are close; `intel-media-driver`,
-`libva-utils`, `gst-plugins-*` and `python-gobject` are not). Build it with
+(`pipewire` and `bluez` are close; `intel-media-driver`, `libva-utils` and
+`python-gobject` are not). Build it with
 `--profile debian`; keep the profile separate rather than branching `mkosi.conf`,
 so an Arch build cannot be broken by a Debian change.
 

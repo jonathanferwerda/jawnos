@@ -27,7 +27,7 @@ normal window, and give the session its own bar:
 | a top navbar **over** Zed's window | `jawnos-shell` sits in the layer-shell `top` layer, above normal windows, with an exclusive zone |
 | drag Zed around the desktop | `for_window … floating enable` — Sway drags floating windows |
 
-That is **JawnOS's own bar**, not waybar's. It is a small Qt app
+That is **JawnOS's own bar**. It is a small Qt app
 (`desktop/jawnos_desktop/shell.py`), not a change to the web UI.
 
 ## The machine: HP ProDesk/EliteDesk G3, i5-6500T

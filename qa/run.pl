@@ -457,7 +457,7 @@ if ($want_l2) {
 }
 
 # ---------------------------------------------------------------------------
-# l3 - the UI, in Chromium for breadth and WebKitGTK for the real engine
+# l3 - the UI, in Chromium for breadth and Qt WebEngine for the real engine
 # ---------------------------------------------------------------------------
 
 if ($want_l3) {
@@ -475,25 +475,25 @@ if ($want_l3) {
 		my @urls = map { $h->url_for($_) } @paths;
 		my $out = "$results/ui";
 
-		# The WebKitGTK fallback runs first: a Chromium pass that trips a
-		# handler bug can take the tree down, and then WebKit would only record
-		# the connection refused that followed.
-		my $w = Ui->webkit(url => $h->url_for('/manager'), out => "$out/webkit.json");
+		# Qt WebEngine runs first: a Chromium pass that trips a handler bug can
+		# take the tree down, and then the real engine would only record the
+		# connection refused that followed.
+		my $w = Ui->qtwebengine(url => $h->url_for('/manager'), out => "$out/qtwebengine.json");
 		if ($w->{'error'}) {
 			$report{'warnings'}++;
-			$say->('  warn webkit: ' . $w->{'error'});
+			$say->('  warn qtwebengine: ' . $w->{'error'});
 			push @{ $report{'ui'} }, {
-				name => 'webkit GET /manager', ok => 1,
+				name => 'qtwebengine GET /manager', ok => 1,
 				detail => 'not run: ' . $w->{'error'},
 			};
 		}
 		else {
 			push @{ $report{'ui'} }, {
-				name => 'webkit GET /manager',
+				name => 'qtwebengine GET /manager',
 				ok => ($w->{'hasMenu'} ? 1 : 0),
 				detail => ($w->{'title'} || '') . ', ' . ($w->{'nodes'} // '?') . ' nodes',
 			};
-			$fatal->('l3 webkit GET /manager: start menu missing') unless $w->{'hasMenu'};
+			$fatal->('l3 qtwebengine GET /manager: start menu missing') unless $w->{'hasMenu'};
 
 			# An appointment view renders the budget light on a page that never
 			# opened the Budget app. The probe clicks a synthetic one in the real
@@ -503,7 +503,7 @@ if ($want_l3) {
 			my $light = $w->{'budgetLight'} || {};
 			if ($light->{'defined'} && $light->{'handled'}) {
 				push @{ $report{'ui'} }, {
-					name => 'webkit appointment budget light', ok => 1,
+					name => 'qtwebengine appointment budget light', ok => 1,
 					detail => 'a click reaches /manager/budget/current_information',
 				};
 			}
@@ -511,9 +511,9 @@ if ($want_l3) {
 				my $why = $light->{'error'}
 					|| 'budgetLight is not a core function, or its click reached nothing';
 				push @{ $report{'ui'} }, {
-					name => 'webkit appointment budget light', ok => 0, detail => $why,
+					name => 'qtwebengine appointment budget light', ok => 0, detail => $why,
 				};
-				$fatal->('l3 webkit: the appointment budget light is dead in the real engine: ' . $why);
+				$fatal->('l3 qtwebengine: the appointment budget light is dead in the real engine: ' . $why);
 			}
 		}
 

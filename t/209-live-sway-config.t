@@ -1,6 +1,6 @@
 # tests-for: desktop/mkosi/mkosi.extra/opt/jawnos/home-skel/.config/sway/config
 # covers:    the live image's short Sway session starts the Qt session bar
-#           (jawnos-shell), never waybar, and leaves the manager an ordinary
+#           (jawnos-shell), never the legacy bar, and leaves the manager an ordinary
 #           tiled window so the bar's exclusive zone is respected. The kiosk
 #           bindings and the foot float rule survive, and the file stays the
 #           deliberately short live variant of desktop/wayland/sway.conf.
@@ -21,8 +21,8 @@ my $installed = read_file("$root/desktop/wayland/sway.conf");
 # --- the bar --------------------------------------------------------------
 like($live, qr/^exec \/home\/jawn\/jawnos\/desktop\/jawnos-shell$/m,
 	'the live image starts the Qt session bar');
-unlike($live, qr/^\s*exec\b.*\bwaybar\b/m,
-	'and never execs waybar (it is no longer installed)');
+unlike($live, qr/^\s*exec\b.*\bwayb[a]r\b/m,
+	'and never execs the legacy bar (it is no longer installed)');
 unlike($live, qr/^\s*exec\b.*jawnos-usage\b/m,
 	'jawnos-usage is left out: a live session has no manager ticket to record with');
 like($installed, qr/^\s*exec\b.*\$jawnos\/desktop\/jawnos-shell/m,

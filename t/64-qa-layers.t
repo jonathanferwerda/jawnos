@@ -1,5 +1,5 @@
 # tests-for: qa/android/run.sh qa/db.checks.json qa/lib/ qa/prune.pl qa/run.pl qa/systemd/ qa/ui/probe.js qa/ui/webkit_probe.py scripts/verify_change.pl
-# covers:    The QA layers that are not plain Perl (a shell device script, a JS probe, a Python WebKit probe, the SQL check...
+# covers:    The QA layers that are not plain Perl (a shell device script, a JS probe, a Python Qt WebEngine probe, the SQL check...
 
 use strict;
 use warnings;
@@ -10,7 +10,7 @@ use File::Slurp qw(read_file);
 use JSON::PP;
 
 # The QA layers that are not plain Perl (a shell device script, a JS probe, a
-# Python WebKit probe, the SQL check list) are invisible to verify_change.pl.
+# Python Qt WebEngine probe, the SQL check list) are invisible to verify_change.pl.
 # These checks pin that they exist, parse, and still say what they claim.
 
 my $qa = "$FindBin::Bin/../qa";
@@ -46,20 +46,25 @@ else {
 	pass('node is not installed; parse skipped');
 }
 
-my $webkit = "$qa/ui/webkit_probe.py";
-ok(-f $webkit, 'the WebKit probe exists');
-my $wk_src = read_file($webkit);
-like($wk_src, qr/GLib\.Uri\.parse/, 'the TLS exception is keyed by host, not URI');
-like($wk_src, qr/timeout_add\(150/, 'the reload waits for the handler to return');
-like($wk_src, qr/budgetLight:/, 'the WebKit probe asks for the core budget light');
-like($wk_src, qr/qa_probe_light/, 'it clicks a synthetic light on a page with no Budget app open');
-like(read_file("$qa/lib/Ui.pm"), qr/XDG_DATA_HOME/,
-	'each run gets a private WebKit profile');
+my $qt_probe = "$qa/ui/webkit_probe.py";
+ok(-f $qt_probe, 'the Qt WebEngine probe exists');
+my $qt_src = read_file($qt_probe);
+like($qt_src, qr/from PySide6[.]QtWebEngineWidgets import QWebEngineView/,
+	'the probe drives Qt WebEngine');
+like($qt_src, qr/certificateError/, 'the house certificate is accepted through Qt');
+like($qt_src, qr/budgetLight:/, 'the Qt probe asks for the core budget light');
+like($qt_src, qr/qa_probe_light/, 'it clicks a synthetic light on a page with no Budget app open');
+unlike($qt_src, qr/gi[.]repository|Web[K]it2/,
+	'the probe imports no WebKitGTK');
+my $ui_pm = read_file("$qa/lib/Ui.pm");
+like($ui_pm, qr/QTWEBENGINE_CHROMIUM_FLAGS/, 'the Qt probe runs with the desktop GPU/sandbox flags');
+like($ui_pm, qr/XDG_DATA_HOME/, 'each run gets a private Qt profile');
+unlike($ui_pm, qr/import gi|Web[K]it2/, 'Ui.pm no longer imports WebKitGTK');
 my $py = `command -v python3 2>/dev/null`;
 chomp $py if defined $py;
 if ($py) {
-	is(system($py, '-c', 'import ast,sys; ast.parse(open(sys.argv[1]).read())', $webkit),
-		0, 'the WebKit probe parses');
+	is(system($py, '-c', 'import ast,sys; ast.parse(open(sys.argv[1]).read())', $qt_probe),
+		0, 'the Qt probe parses');
 }
 else {
 	pass('python3 is not installed; compile skipped');
@@ -76,11 +81,11 @@ like($runner, qr/qemu\/run\.sh/, 'l5 hands the VM to the qemu script');
 like($runner, qr/Budget->apply/, 'the measurements are judged against the budgets');
 like($runner, qr/live => 1/, 'the UI layer boots a loopback session');
 like($runner, qr/Db->checks/, 'the database layer runs the checks');
-my $wk_at = index($runner, 'my $w = Ui->webkit');
+my $qt_at = index($runner, 'my $w = Ui->qtwebengine');
 my $cr_at = index($runner, 'my $r = Ui->probe');
-ok($wk_at >= 0 && $cr_at > $wk_at,
-	'WebKit runs before Chromium, so a handler that kills the tree cannot mask it');
-like($runner, qr/webkit appointment budget light/,
+ok($qt_at >= 0 && $cr_at > $qt_at,
+	'Qt WebEngine runs before Chromium, so a handler that kills the tree cannot mask it');
+like($runner, qr/qtwebengine appointment budget light/,
 	'l3 fails when the appointment budget light is dead in the real engine');
 
 # --- the Android runner's four fixed defects -------------------------------

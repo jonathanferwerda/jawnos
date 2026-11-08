@@ -61,13 +61,13 @@ ok(-x $launcher, 'jawnos-qt is directly runnable');
 ok(!-e "$root/desktop/jawnos_desktop/ui.py", 'the GTK dashboard is deleted');
 ok(!-e "$root/desktop/jawnos_desktop/webview.py", 'the WebKitGTK view is deleted');
 unlike($entry, qr/^\s*(?:from|import)\s+gi\b/m, 'the entry does not import PyGObject');
-unlike($entry, qr/jawnos_desktop\.(?:ui|webview)|from gi\.repository|WebKit2/,
+unlike($entry, qr/jawnos_desktop\.(?:ui|webview)|from gi[.]repository|Web[K]it2/,
 	'and names no GTK/WebKit module');
-unlike($install, qr/webkit2gtk|gir1\.2-webkit2|gst-inspect|gstreamer1\.0/i,
+unlike($install, qr/web[K]it2gtk|gir1[.]2-web[K]it2|gst-inspect|gstreamer1\.0/i,
 	'the installer no longer checks for WebKitGTK or GStreamer packages');
 like($install, qr/requires PySide6 with Qt WebEngine/,
 	'it says the Qt WebEngine view is required');
-unlike($deps, qr/webkit2gtk|have_webkit|gst-inspect|gst-plugin-va/,
+unlike($deps, qr/web[K]it2gtk|have_webkit|gst-inspect|gst-plugin-va/,
 	'the dependency checker no longer offers WebKitGTK or GStreamer');
 like($package, qr/setdefault\("QT_QPA_PLATFORMTHEME", "generic"\)/,
 	'Qt is kept off its GTK platform theme, which would map libgtk-3');

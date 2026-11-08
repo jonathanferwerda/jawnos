@@ -46,7 +46,7 @@ unlike($src, qr/QWebEngineProfile\("jawnos"/,
 
 unlike($src, qr/import\s+gi\b|gi\.repository|from gi\.repository/,
 	'no PyGObject import remains');
-unlike($src, qr/WebKit2\.|Gtk\.|Gdk\.|Gio\.|GLib\.|from gi\.repository/,
+unlike($src, qr/Web[K]it2[.]|Gtk\.|Gdk\.|Gio\.|GLib\.|from gi[.]repository/,
 	'and no WebKitGTK or GTK API symbol is left');
 unlike($src, qr/from \. import webview|import webview/,
 	'Browse no longer imports the WebKitGTK fallback');

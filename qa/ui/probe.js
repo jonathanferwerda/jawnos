@@ -8,8 +8,8 @@
 // to <outdir>/ui.json.
 //
 // Chromium is used for breadth, not as the real engine: the desktop app is
-// WebKitGTK, and qa/ui/webkit_probe.py is the engine check. A page that passes
-// here can still be wrong in WebKit.
+// Qt WebEngine, and qa/ui/webkit_probe.py is the engine check. A page that
+// passes here can still be wrong in Qt WebEngine.
 
 const fs = require('fs');
 const path = require('path');
