@@ -38,8 +38,8 @@ like($routes, qr{\[47101, 'post', '/manager/device_ws', 'action_47101'\]},
 	'the relay route is registered');
 like($ctl, qr/sub action_47101 \{.*?&app_peer_ok\(\$c\)/s,
 	'the route requires a signed peer');
-like($ctl, qr/&subs::device_ws_send_local\(\$chip_id, \$frame\)/,
-	'the route writes to the local socket');
+like($ctl, qr/&subs::device_ws_write_frame\(\$chip_id, \$frame\)/,
+	'the route writes through the worker that holds the socket');
 like($hooks, qr{\$path eq '/manager/device_ws'}, 'the session gate exempts the relay');
 
 # --- the lazy map names the new domain subs ------------------------------

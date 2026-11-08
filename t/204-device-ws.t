@@ -336,4 +336,33 @@ subtest 'the relay resolves the homebase it is told about' => sub {
 		[ '100.64.0.1' ], 'an address already right is not dialled twice');
 };
 
+
+# A relayed frame has to reach the worker that holds the socket. Writing into the
+# requesting process's registry found nothing and answered "not sent" while the
+# socket sat open one worker away, so a peer's command never reached a board.
+{
+	package FakeWs204;
+	sub send { push @{ $_[0]->{'sent'} }, $_[1]; return 1 }
+}
+subtest 'a relayed frame reaches the worker holding the socket' => sub {
+	ok(subs::provides('device_ws_write_frame'), 'the loader maps the helper');
+	is(subs::device_ws_write_frame('nobody', { t => 'cmd' }), 0,
+		'no socket for the chip is a plain no');
+	my $ws = bless { sent => [] }, 'FakeWs204';
+	subs::device_ws_attach({ chip_id => 'writeme', edt => 'microcontroller', ws => $ws });
+	is(subs::device_ws_write_frame('writeme', { t => 'cmd', pin => 28 }), 1,
+		'a frame goes to a socket this process holds');
+	is(scalar @{$ws->{'sent'}}, 1, 'exactly once');
+	subs::device_ws_detach('writeme', $ws);
+};
+
+subtest 'the relay route uses it' => sub {
+	require JawnOS::Controller::manager_ws;
+	my $src = read_file(root() . '/lib/JawnOS/Controller/manager_ws.pm');
+	like($src, qr/device_ws_write_frame\(\$chip_id, \$frame\)/,
+		'a peer command is handed to the worker, not written into this process');
+	unlike($src, qr/\$sent = &subs::device_ws_send_local\(\$chip_id, \$frame\);/,
+		'and not by the local registry alone');
+};
+
 done_testing();

@@ -790,6 +790,8 @@ sub action_47101 {
 	}
 	my $chip_id = $c->param('chip_id') || '';
 	my $frame = eval { decode_json($c->param('frame') || '') } || {};
-	my $sent = &subs::device_ws_send_local($chip_id, $frame);
+	# The socket belongs to the websocket worker, not to whichever worker took
+	# this request; the helper finds it and says whether the frame went.
+	my $sent = &subs::device_ws_write_frame($chip_id, $frame);
 	$c->render(json => { sent => $sent ? 1 : 0 });
 }

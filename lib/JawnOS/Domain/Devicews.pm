@@ -185,6 +185,21 @@ sub device_ws_clock_note {
 	return 1;
 }
 
+sub device_ws_write_frame {
+	# Write an already-built frame to a board's socket. The socket is held by the
+	# websocket worker, so a request handled anywhere else must hand the frame
+	# over: a peer relaying a command to this homebase wrote into its own
+	# process, found no registry entry, and answered "not sent" while the socket
+	# sat open one worker away. 1 only when the frame actually went.
+	my ($chip_id, $frame) = @_;
+	return 0 unless defined $chip_id && length $chip_id && ref $frame eq 'HASH';
+	return 1 if &device_ws_send_local($chip_id, $frame);
+	return 0 unless &device_ws_connected($chip_id);
+	my $socket = ($gb::tmp_dir || '.') . '/ws/device';
+	return 0 unless -e $socket;
+	return &Websocket::send('device', { chip_id => $chip_id, frame => $frame }) ? 1 : 0;
+}
+
 sub device_ws_deliver {
 	# Called in the websocket worker for a Websocket::send('device', ...) frame.
 	# 1 when the chip had a socket and the frame went out, 0 when it did not: the
