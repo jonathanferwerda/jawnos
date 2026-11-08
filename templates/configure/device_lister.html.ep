@@ -10,5 +10,5 @@
     interfaces that reach it, and a neighbour table of the devices found there.
     Styled from the house's own theme tokens so it wears the light or dark set. %>
 <%= include 'configure/device_lister/style' %>
-<%= include 'configure/device_lister/body', topology => $topology, update_method => $update_method, printers => $printers, default_printer => $default_printer,
+<%= include 'configure/device_lister/body', topology => $topology, update_method => $update_method, default_printer => $default_printer,
 	coding_push_repo => $coding_push_repo, coding_app_push_repo => $coding_app_push_repo %>

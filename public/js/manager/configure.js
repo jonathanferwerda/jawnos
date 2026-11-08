@@ -55,6 +55,14 @@ var jawnos_configure_intent = null;
 function jawnosConfigureShow(buttonId, c) {
 	if (jawnos_configure_intent !== buttonId) { return false; }
 	c.show();
+	// The chosen tab is part of the window's saved state, not just this page.
+	// Report it now that the panel is really on screen; a click alone is not a
+	// save, so a reopen (or a sync to another machine) used to draw whatever
+	// panel the server last heard about.
+	if (typeof appActSync === 'function') {
+		var win = c.closest('.wind');
+		if (win.length) { appActSync(win); }
+	}
 	return true;
 }
 $(document).on('click', '.configure_toggle', function() {
@@ -82,12 +90,32 @@ $(document).on('click', '.configure_toggle', function() {
 // #configure is re-created whenever the window is re-rendered (an icon-set
 // change, say) - one listener outlives every copy of the panel.
 window.jawnos_configure_bar_last = 0;
+var jawnos_configure_save_timer = null;
 document.addEventListener('scroll', function(event) {
 	var el = event.target;
 	if (!el || el.id !== 'configure') { return; }
 	var top = el.scrollTop || 0;
 	var last = window.jawnos_configure_bar_last || 0;
 	window.jawnos_configure_bar_last = top;
+	// The offset is part of the saved window state, beside the open panel. It
+	// used to be captured only when a tab changed, so a reopen drew the old,
+	// deep offset even though the reader had scrolled elsewhere. Save once the
+	// scroll settles, not on every pixel.
+	if (typeof appActSync === 'function') {
+		clearTimeout(jawnos_configure_save_timer);
+		jawnos_configure_save_timer = setTimeout(function () {
+			var win = $(el).closest('.wind');
+			if (!win.length) { return; }
+			// A tab switch scrolls to the top before its panel has arrived. At that
+			// instant no panel is visible, and saving would record none; the show
+			// saves the panel (and this offset) a moment later instead.
+			var shown = false;
+			$.each(jawnos_configure_panels, function (button, panel) {
+				if ($('#' + panel).is(':visible')) { shown = true; return false; }
+			});
+			if (shown) { appActSync(win); }
+		}, 600);
+	}
 	var bar = el.querySelector('.cfg_topbar');
 	if (!bar) { return; }
 	// Until the bar's own flow space has scrolled away, hiding it would leave a
@@ -129,10 +157,11 @@ function jawnosConfigureScrollRestore(at) {
 //
 // data-acc is a stable `<tab>-<section>` id and never the visible title, so a
 // translation cannot move a stored choice. `open` is the first-render default.
-// localStorage['jawnos:accordions'] is a JSON object of id -> 1 recording the
-// sections the person has opened; an absent id keeps the markup default, so the
-// map stays a whitelist. It is capped at jawnos_acc_max entries, which keeps an
-// id that has left the markup from growing the map without bound.
+// localStorage['jawnos:accordions'] is a JSON object of id -> 1 (open) or 0
+// (closed) for the sections the person has changed; an absent id keeps the
+// markup default, so a fresh screen is never empty. It is capped at
+// jawnos_acc_max entries, which keeps an id that has left the markup from
+// growing the map without bound.
 var jawnos_acc_key = 'jawnos:accordions';
 var jawnos_acc_max = 200;
 var jawnos_acc_observer = null;
@@ -157,8 +186,10 @@ function jawnosAccWrite(map) {
 function jawnosAccRemember(id, open) {
 	if (!id) { return; }
 	var map = jawnosAccRead();
-	if (open) { map[id] = 1; }
-	else { delete map[id]; }
+	// Record the closed state too. Deleting the key meant "no choice", so a
+	// section whose markup ships `open` came back open after the reader closed
+	// it. An id that was never touched still keeps the markup default.
+	map[id] = open ? 1 : 0;
 	jawnosAccWrite(map);
 }
 

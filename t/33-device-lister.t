@@ -13,7 +13,9 @@ use JawnOSTest;
 
 # The domain layer is lazy: load the real definitions before any local *subs::
 # stub below, or the module load would replace the stub mid-test.
-subs::preload($_) for qw(db_select network_interface_reporter signatorial_designer);
+subs::preload($_) for qw(db_select db_query formatted_time
+	network_interface_reporter signatorial_designer
+	router_discover device_scan refresh_self_address);
 
 # The Dev panel's two blind spots:
 #   - a peer the house knows (remote_machines) but no neighbour table lists, so
@@ -105,6 +107,30 @@ subs::preload($_) for qw(db_select network_interface_reporter signatorial_design
 	is $orphans->[0]->{'grant_scope'}, 'trusted', 'the grant scope comes along';
 	is $orphans->[0]->{'privilege'}, 'trusted', 'so does the privilege';
 	ok $orphans->[0]->{'grant_expires'}, 'and the grant expiry';
+}
+
+# ------------------------------------------------------ listing vs. scanning
+# A view must not look at the network. The gateway probe is a bounded HTTP
+# request, but a gateway that does not answer (a VPN or container NIC) costs its
+# whole timeout, and a listing waited on it. Only Scan may probe; the background
+# mDNS tick keeps the gateway row current the rest of the time.
+{
+	my @did;
+	local *subs::router_discover      = sub { push @did, 'discover'; return 1 };
+	local *subs::device_scan          = sub { push @did, 'scan'; return 1 };
+	local *subs::refresh_self_address = sub { return 0 };
+	local *subs::db_query = sub { return FakeRows->new([]) };
+	local *subs::db_select = sub { return FakeRows->new([]) };
+
+	&subs::device_lister(0, 'list');
+	is_deeply \@did, [], 'a plain listing neither probes the gateway nor scans';
+
+	&subs::device_lister(0, 'scan');
+	is_deeply \@did, [ 'discover', 'scan' ], 'Scan probes the gateway and sweeps';
+
+	@did = ();
+	&subs::device_lister(0, 'ping_scan');
+	is_deeply \@did, [ 'scan' ], 'a ping scan sweeps but does not probe the gateway';
 }
 
 # The helper only matters if the route passes its rows and the template draws

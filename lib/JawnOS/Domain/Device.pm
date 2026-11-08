@@ -508,10 +508,15 @@ sub machine_name_for_ip {
 
 sub device_lister {
 	my ($timestamp,$load_type,$ip_range,$chip_id) = @_;
+	$load_type = defined $load_type ? $load_type : '';
 	my ($dev,$devices);
-	# A plain listing and an explicit Scan both look at the gateway; a typed
-	# purpose lookup (printer, watch, ...) has no reason to probe it.
-	&router_discover() unless $load_type && $load_type ne 'scan';
+	# A view is a view: draw it from what is stored. The gateway row is kept
+	# current by the background tick (President's 'device mdns sync'), which runs
+	# router_discover every 15s, so a listing has nothing to gain by probing the
+	# gateway itself - and probing one that does not answer held the whole panel
+	# for the probe's timeout (4s per NIC). Only a full Scan looks at the network;
+	# a ping of one neighbour already knows its address.
+	&router_discover() if $load_type eq 'scan';
 	&refresh_self_address();
 	my $remote_machines = &subs::db_query('select * from remote_machines')->hashes;
 	if ($load_type eq 'scan' || $load_type eq 'ping_scan') {

@@ -405,6 +405,9 @@ $(document).on('click', '#device_lister, .device_scan', function() {
 			printerInkLoad($('#device_list'));
 			if (jawnosConfigureShow('device_lister', $('#device_list'))) {
 				b.attr('status', 'active');
+				// Only a panel that is actually on screen needs its queues read; a
+				// load that lost the race to another tab must not start one.
+				printerQueuesLoad($('#device_list'));
 			}
 			b.text(text);
 			deviceListerRestoreButtons($('#device_list'));
@@ -527,6 +530,7 @@ function deviceLister() {
 			var keep = gimmeInputSnapshot(c);
 			c.html(response);
 			printerInkLoad(c);
+			printerQueuesLoad(c);
 			deviceListerRestoreButtons(c);
 			gimmeInputRestore(c, keep);
 		}
@@ -573,6 +577,72 @@ function printerInkLoad(scope) {
 			.done(function(r) { el.find('.printer_ink_body').html(printerInkBars(r)); })
 			.fail(function() { el.find('.printer_ink_body').html('<span class="printer_state">ink unavailable</span>'); });
 	});
+}
+
+// The Dev panel draws its printer card at once and fills it a moment later:
+// lpstat talks to cupsd, and a machine with a network printer can take seconds
+// to answer, which used to hold the whole panel. The card reserves one line of
+// height while it waits, and if it does grow, a reader who has already scrolled
+// past it keeps their place: the growth is given back to the scroll offset so
+// the content below does not jump.
+function printerQueuesLoad(scope) {
+	var card = $(scope || document).find('#printer_card').first();
+	if (!card.length || card.data('queues_loading')) { return; }
+	card.data('queues_loading', true);
+	card.data('queues_height', card[0].getBoundingClientRect().height);
+	var line = card.find('#printer_queues_line');
+	var sel = card.find('#default_printer_select');
+	var initial = sel.val();
+	$.getJSON('/manager/configure/printer_list', { queues_only: 1 })
+		.done(function(r) {
+			var printers = (r && r.printers) || [];
+			// A person may have picked a queue while this was in flight: keep their
+			// choice, otherwise take the validated saved default.
+			var current = sel.val();
+			var keep = (current !== initial) ? current : ((r && typeof r.default === 'string') ? r.default : '');
+			var ask = card.attr('data-ask') || 'Ask each time';
+			var sysdef = card.attr('data-system-default') || 'system default';
+			var found = false;
+			sel.empty().append($('<option value=""></option>').text(ask));
+			$.each(printers, function(i, p) {
+				if (!p || !p.name) { return; }
+				var label = p.name + (p.default ? ' (' + sysdef + ')' : '');
+				sel.append($('<option></option>').attr('value', p.name).text(label));
+				if (keep && p.name === keep) { found = true; }
+			});
+			sel.val(found ? keep : '');
+			if (!printers.length) {
+				line.text(card.attr('data-none') || 'No CUPS printers yet.');
+			}
+			else {
+				line.text((card.attr('data-queues') || 'CUPS queues') + ': ' + $.map(printers, function(p) { return p.name; }).join(', '));
+			}
+			printerQueuesSettle(card);
+		})
+		.fail(function() {
+			line.text(card.attr('data-unavailable') || 'Printers unavailable.');
+			printerQueuesSettle(card);
+		});
+}
+
+// Give back the height the card grew to a reader who has scrolled past it. Only
+// a card fully above the visible area can push the text they are reading; a card
+// still on screen is expected to grow downward.
+function printerQueuesSettle(card) {
+	card.removeData('queues_loading');
+	var panel = card.closest('.wind').find('#configure')[0];
+	if (!panel) { return; }
+	var rect = card[0].getBoundingClientRect();
+	var before = card.data('queues_height') || rect.height;
+	var view = panel.getBoundingClientRect();
+	if (rect.bottom <= view.top) {
+		var grew = rect.height - before;
+		if (grew > 0) {
+			panel.scrollTop += grew;
+			window.jawnos_configure_bar_last = panel.scrollTop;
+		}
+	}
+	card.removeData('queues_height');
 }
 
 // Clicking a readout asks the printer again, so a cartridge just changed shows at

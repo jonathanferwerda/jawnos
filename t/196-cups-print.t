@@ -1,4 +1,4 @@
-# tests-for: lib/JawnOS/Domain/Printer2.pm lib/JawnOS/Controller/manager_configure.pm lib/JawnOS/Controller/store_misc.pm lib/JawnOS/Routes/manager_configure.pm lib/JawnOS/Routes/store_misc.pm templates/configure/device_lister/body.html.ep public/js/manager/configure/02_remote_devices.js public/js/store.js public/js/store/register.js public/css/store.css
+# tests-for: lib/JawnOS/Domain/Printer2.pm lib/JawnOS/Controller/manager_configure.pm lib/JawnOS/Controller/store_misc.pm lib/JawnOS/Routes/manager_configure.pm lib/JawnOS/Routes/store_misc.pm templates/configure/device_lister/body.html.ep public/js/manager/configure/01_update_controls.js public/js/manager/configure/02_remote_devices.js public/js/store.js public/js/store/register.js public/css/store.css
 # covers:    CUPS queue discovery (lpstat), network printer discovery (ippfind),
 #            adding a queue (lpadmin), the print/PDF path, and the Dev/Store wiring.
 
@@ -50,6 +50,7 @@ my $lpadmin = fake_script('lpadmin', 'exit 0');
 
 {
 	no warnings 'redefine';
+	local $subs::cups_printers_memo = undef;
 	local *subs::printer_command_path = sub {
 		my ($name) = @_;
 		return $lpstat if $name eq 'lpstat';
@@ -75,6 +76,59 @@ my $lpadmin = fake_script('lpadmin', 'exit 0');
 	ok($sync->{'ok'}, 'the sync reports ok');
 	is(scalar @{$sync->{'added'}}, 1, 'and adds the discovered printer');
 	is($sync->{'added'}[0]{'uri'}, 'ipp://192.168.1.60:631/ipp/print', 'for the right URI');
+}
+
+# A CUPS server that does not answer must not hold the Dev panel open: lpstat
+# talks to cupsd and waits out its own connect timeout when it cannot. The read
+# is bounded, so the panel draws with no queues instead of stalling.
+like(read_file("$root/lib/JawnOS/Domain/Printer2.pm"),
+	qr/timeout 3 \$lpstat/, 'the lpstat read is bounded');
+
+# CUPS is slow enough on a machine with a network printer that the Dev panel
+# must not pay for a fresh queue list every time it is drawn. One read serves a
+# few minutes of draws; Find printers clears it when the queues really change.
+{
+	local $subs::cups_printers_memo = undef;
+	my $count = "$dir/lpstat_calls";
+	unlink $count;
+	my $counted = fake_script('lpstat_counted',
+		"echo x >> $count\nprintf 'printer PDF is idle.\\n'");
+	no warnings 'redefine';
+	local *subs::printer_command_path = sub { return $_[0] eq 'lpstat' ? $counted : '' };
+	my $first = subs::cups_printers();
+	my $second = subs::cups_printers();
+	is(scalar @{$first}, 1, 'a queue is read');
+	is(scalar @{$second}, 1, 'and served while the memo holds');
+	my $calls = (read_file($count) =~ tr/\n//);
+	is($calls, 1, 'lpstat ran once for two draws');
+}
+
+# The Dev listing already read the queues for its draw, so the default is chosen
+# from that list rather than asking lpstat a second time.
+{
+	my $calls = 0;
+	no warnings 'redefine';
+	local *subs::cups_printers = sub { $calls++; return [ { name => 'PDF' } ] };
+	local *subs::setting_grabber = sub { return 'PDF' };
+	local *subs::signatorial_designer = sub { return 'sig' };
+	local *subs::device_setter = sub { return 'computer' };
+	my $default = subs::printer_default_get([ { name => 'PDF' }, { name => 'Officejet' } ]);
+	is($default, 'PDF', 'a passed queue list answers the default');
+	is($calls, 0, 'without reading the queues again');
+	$default = subs::printer_default_get();
+	is($default, 'PDF', 'no list still reads the queues');
+	is($calls, 1, 'once');
+}
+
+# The Dev draw must not wait on CUPS: it renders the saved queue name (a plain
+# settings read) and lets the card fill itself after the panel is on screen.
+{
+	no warnings 'redefine';
+	local *subs::setting_grabber = sub { return 'PDF' };
+	local *subs::signatorial_designer = sub { return 'sig' };
+	local *subs::device_setter = sub { return 'computer' };
+	local *subs::cups_printers = sub { die 'printer_default_saved must not ask CUPS' };
+	is(subs::printer_default_saved(), 'PDF', 'the saved default is read without CUPS');
 }
 
 # --- the PDF path -----------------------------------------------------------
@@ -111,9 +165,29 @@ like($configure_routes, qr{/manager/configure/printer_default}, 'the default-pri
 my $configure = read_file("$root/lib/JawnOS/Controller/manager_configure.pm");
 like($configure, qr/sub action_52022\b/, 'the sync action exists');
 like($configure, qr/printer_default_get/, 'the listing reads the default');
+my ($dev_action) = $configure =~ /(sub action_7789\b.*?\n\})/s;
+ok($dev_action, 'the Dev action is found');
+unlike($dev_action, qr/cups_printers|printer_default_get\b/,
+	'the Dev draw does not wait on lpstat');
+like($dev_action, qr/printer_default_saved/,
+	'it draws the saved default at once');
+my ($list_action) = $configure =~ /(sub action_52020\b.*?\n\})/s;
+ok($list_action, 'the printer-list action is found');
+like($list_action, qr/queues_only/,
+	'the card filler can skip the network sweep');
 my $dev = read_file("$root/templates/configure/device_lister/body.html.ep");
 like($dev, qr/id="default_printer_select"/, 'the Dev panel has the default printer select');
+like($dev, qr/id="printer_queues_line"/, 'and a line the queue list fills');
+like($dev, qr/data-none="/, 'the empty message is carried for the filler');
 like($dev, qr/class="printer_sync"/, 'and a Find printers button');
+my $dev_js = read_file("$root/public/js/manager/configure/01_update_controls.js");
+like($dev_js, qr/function printerQueuesLoad\(scope\)/,
+	'the printer card fills itself');
+like($dev_js, qr/queues_only: 1/, 'without the network sweep');
+like($dev_js, qr/printerQueuesLoad\(\$\('#device_list'\)\)/,
+	'the Dev draw starts the fill');
+like($dev_js, qr/panel\.scrollTop \+= grew/,
+	'growth above the reader is given back to the scroll');
 
 my $store_routes = read_file("$root/lib/JawnOS/Routes/store_misc.pm");
 like($store_routes, qr{/store/print/printers}, 'the Store printer list route exists');

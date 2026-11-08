@@ -1,4 +1,4 @@
-<% my $printer_list = $printers || []; my $default_queue = defined $default_printer ? $default_printer : ''; %>
+<% my $default_queue = defined $default_printer ? $default_printer : ''; %>
 <div class="cfg" style="width:100%;height:100%;">
 	<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px;">
 		<input type="text" value="<%= $ping %>" class="ping_host" placeholder="host" style="flex:1 1 110px;min-width:90px;margin:0;">
@@ -72,7 +72,12 @@
 				<%= &subs::ui('The 06:00 coding night pushes its branch and main to this repo instead of the checkout\'s upstream. Use owner/name or an https URL; leave it empty for origin (and fork for the app).') %>
 			</div>
 		</div>
-		<div class="device_card" id="printer_card">
+		<div class="device_card" id="printer_card"
+			data-ask="<%= &subs::ui('Ask each time') %>"
+			data-system-default="<%= &subs::ui('system default') %>"
+			data-queues="<%= &subs::ui('CUPS queues') %>"
+			data-none="<%= &subs::ui('No CUPS printers yet. Press Find printers while the printer is on the network.') %>"
+			data-unavailable="<%= &subs::ui('Printers unavailable.') %>">
 			<div class="device_head">
 				<span class="network_cidr"><%= &subs::ui('Printers') %></span>
 				<span class="device_when"><%= &subs::ui('CUPS on this machine · the Store prints here') %></span>
@@ -81,19 +86,18 @@
 			<div class="device_nic" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
 				<label for="default_printer_select"><%= &subs::ui('Default printer') %></label>
 				<select id="default_printer_select" class="default_printer_select">
-					<option value="" <% if (!length $default_queue) { %>selected<% } %>><%= &subs::ui('Ask each time') %></option>
-					<% foreach my $p ( @{$printer_list} ) { %>
-						<option value="<%= $p->{'name'} %>" <% if ($default_queue eq $p->{'name'}) { %>selected<% } %>><%= $p->{'name'} %><% if ($p->{'default'}) { %> (<%= &subs::ui('system default') %>)<% } %></option>
+					<option value=""<% if (!length $default_queue) { %> selected<% } %>><%= &subs::ui('Ask each time') %></option>
+					<% if (length $default_queue) { %>
+						<option value="<%= $default_queue %>" selected><%= $default_queue %></option>
 					<% } %>
 				</select>
 				<span id="printer_status" class="device_when"></span>
 			</div>
-			<div class="device_when" style="margin-top:4px;">
-				<% if (scalar @{$printer_list}) { %>
-					<%= &subs::ui('CUPS queues') %>: <%= join(', ', map { $_->{'name'} } @{$printer_list}) %>
-				<% } else { %>
-					<%= &subs::ui('No CUPS printers yet. Press Find printers while the printer is on the network.') %>
-				<% } %>
+			<%# The queue list is read after this card is on screen (lpstat talks to
+			    cupsd, which can take seconds). The line keeps one line of height
+			    while it waits, and the filler compensates the scroll if it grows. %>
+			<div class="device_when" id="printer_queues_line" style="margin-top:4px;min-height:1.4em;">
+				<%= &subs::ui('Reading printers…') %>
 			</div>
 		</div>
 		<% if (scalar @{$routers || []}) { %>

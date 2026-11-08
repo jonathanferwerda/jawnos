@@ -256,8 +256,12 @@ sub action_7789 {
 	my $ble_devices = &subs::ble_device_listing();
 	my $routers = &subs::router_list();
 	my $ping = &subs::setting_grabber({ app => 'misc', setting => 'ping' });
-	my $printers = &subs::cups_printers();
-	my $default_printer = &subs::printer_default_get();
+	# The queues are not read here: lpstat talks to cupsd and a machine with a
+	# network printer can take seconds to answer, which used to hold the whole
+	# panel. The card draws at once and fills from printer_list (queues_only)
+	# once the panel is on screen. The saved default is a settings read, so it is
+	# cheap enough to draw with the card.
+	my $default_printer = &subs::printer_default_saved();
 
 	$c->render(
 		template => 'configure/device_lister',
@@ -266,7 +270,6 @@ sub action_7789 {
 		remote_machines => $remote_machines,
 		ble_devices => $ble_devices,
 		routers => $routers,
-		printers => $printers,
 		default_printer => $default_printer,
 		ping => $ping,
 		ping_scan => $ping_scan,
@@ -287,10 +290,16 @@ sub action_7966 {
 # GET /manager/configure/printer_list
 sub action_52020 {
 	my $c = shift;
+	my $printers = &subs::cups_printers();
+	my $default = &subs::printer_default_get($printers);
+	# The Dev panel fills its card with this after the panel is open. Only a
+	# person pressing Find printers should sweep the network (ippfind takes its
+	# own timeout), so queues_only skips that discovery.
+	my $queues_only = $c->param('queues_only') ? 1 : 0;
 	$c->render(json => {
-		printers => &subs::cups_printers(),
-		default => &subs::printer_default_get(),
-		discovered => &subs::cups_discovered_printers(),
+		printers => $printers,
+		default => $default,
+		discovered => $queues_only ? [] : &subs::cups_discovered_printers(),
 	});
 }
 

@@ -1,4 +1,4 @@
-# tests-for: lib/JawnOS/Controller/manager_ws.pm public/js/manager/configure/04_currency_backup.js public/js/manager/manager/06_appointment_distance.js public/js/manager/manager/09_app_back.js public/js/manager/manager/10_appointment_edit.js public/js/manager/tasks.js public/js/manager/websocket.js public/js/manager/websocket/ public/js/manager/windows.js public/js/manager/windows/ public/js/universal.js public/js/universal/
+# tests-for: lib/JawnOS/Controller/manager_ws.pm public/js/manager/configure.js public/js/manager/configure/04_currency_backup.js public/js/manager/manager/06_appointment_distance.js public/js/manager/manager/09_app_back.js public/js/manager/manager/10_appointment_edit.js public/js/manager/tasks.js public/js/manager/websocket.js public/js/manager/websocket/ public/js/manager/windows.js public/js/manager/windows/ public/js/universal.js public/js/universal/
 # covers:    An act panel opening or closing used to cost a whole layout round trip: the toggle changed window_saver(), so ...
 
 use strict;
@@ -34,6 +34,21 @@ like($windows_js, qr/type: 'act', app: 'tab', window: app, jopen: json/,
 	'it names the window and travels on the tab socket');
 like($windows_js, qr/appActPosted\[key\] == json/,
 	'an unchanged state is not re-sent');
+
+# A Configure tab is part of the window's saved open panels. Showing it in this
+# page only left the stored jopen on whatever panel was open before, so a reopen
+# (or a sync to another machine) drew that one - and its old, deep offset.
+my $configure_js = js_source('public/js/manager/configure.js');
+like($configure_js, qr/function jawnosConfigureShow\(buttonId, c\)/,
+	'the Configure panel-show helper is present');
+like($configure_js, qr/c\.show\(\);[\s\S]*?appActSync\(win\);[\s\S]*?return true;/,
+	'a shown panel is reported as the open one');
+like($configure_js, qr/jawnos_configure_save_timer[\s\S]*?appActSync\(win\);/,
+	'a settled scroll is saved with that panel');
+like($configure_js, qr/map\[id\] = open \? 1 : 0;/,
+	'a closed accordion is remembered as closed');
+unlike($configure_js, qr/else \{ delete map\[id\]; \}/,
+	'closing a section no longer forgets the choice');
 
 # the toggles themselves call it, so the beat never has to notice
 foreach my $ref (

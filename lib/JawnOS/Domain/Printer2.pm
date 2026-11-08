@@ -55,10 +55,28 @@ sub printer_uri_ok($uri) {
 }
 
 # ---- the queues this machine already has ------------------------------------
+# Bound the read: lpstat talks to cupsd, and a CUPS server that is down (or a
+# stale client.conf pointing at a host nobody answers for) waits out its own
+# connect timeout - with no bound it held the whole Dev panel behind it. A
+# listing that cannot be read in three seconds is drawn as no queues, which is
+# what a person sees anyway when CUPS is not answering.
+#
+# Keep the answer for a while as well. CUPS builds the printer list through
+# cupsd, and on a machine with a network queue that is slow even when it works: a
+# laptop whose printer is on Wi-Fi took ~1s for every lpstat option and ~2s for
+# the whole read, and the Dev panel draws whenever it is opened. Queues change
+# only when someone adds or removes one, and Find printers clears this.
+our $cups_printers_memo;
+our $cups_printers_memo_ttl = 300;
 sub cups_printers {
+	my $now = time;
+	if ($cups_printers_memo && $now - $cups_printers_memo->{'at'} < $cups_printers_memo_ttl) {
+		return [ map { { %{$_} } } @{$cups_printers_memo->{'list'}} ];
+	}
 	my $lpstat = &printer_command_path('lpstat');
 	return [] unless length $lpstat;
-	my $out = `$lpstat -p -d -v -a 2>/dev/null`;
+	my $out = `timeout 3 $lpstat -p -d -v -a 2>/dev/null`;
+	my $timed_out = (($? >> 8) == 124) ? 1 : 0;
 	my (%printer, $default);
 	foreach my $line (split /\n/, $out) {
 		if ($line =~ /^printer\s+(\S+)\s+(.*)$/) {
@@ -87,6 +105,10 @@ sub cups_printers {
 		$p->{'state'} ||= 'idle';
 		$p->{'uri'} ||= '';
 	}
+	# A timed-out read is not evidence that the machine has no queues: leave it
+	# uncached so the next draw tries again rather than showing an empty card for
+	# five minutes.
+	$cups_printers_memo = { at => $now, list => [ map { { %{$_} } } @list ] } unless $timed_out;
 	return \@list;
 }
 
@@ -149,6 +171,7 @@ sub cups_sync_printers {
 			push @errors, { name => $name, uri => $d->{'uri'}, error => 'lpadmin failed' };
 		}
 	}
+	$cups_printers_memo = undef if @added;
 	return { ok => 1, added => \@added, errors => \@errors, printers => &cups_printers() };
 }
 
@@ -161,13 +184,25 @@ sub printer_customer_app($uuid, $type) {
 	return $row ? ($row->{'app'} || '') : '';
 }
 
-sub printer_default_get {
+sub printer_default_saved {
+	# The saved queue name without asking CUPS whether it still exists. The Dev
+	# panel draws its card with this at once; the queue list arrives after, and
+	# the async list is what validates the choice. A settings read is cheap; the
+	# lpstat behind the list is not.
 	my $sig = &signatorial_designer();
 	my $value = eval { &setting_grabber({ app => 'misc', setting => 'default_printer', device => $sig }) };
 	$value = eval { &setting_grabber({ app => 'misc', setting => 'default_printer', device => &device_setter() }) }
 		if !defined $value || !length $value;
-	$value = '' unless defined $value;
-	my @known = map { $_->{'name'} } @{ &cups_printers() };
+	return defined $value ? $value : '';
+}
+
+sub printer_default_get {
+	# The Dev panel already read the queues for this draw; take that list rather
+	# than asking lpstat a second time for the same answer.
+	my ($queues) = @_;
+	$queues = &cups_printers() unless ref $queues eq 'ARRAY';
+	my $value = &printer_default_saved();
+	my @known = map { $_->{'name'} } @{$queues};
 	$value = '' if length $value && !grep { $_ eq $value } @known;
 	return $value;
 }
