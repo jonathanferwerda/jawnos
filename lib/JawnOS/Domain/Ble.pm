@@ -382,6 +382,9 @@ sub ble_device_from_chip {
 	# Bluetooth address to reach it, the link's fixed service uuids, and this
 	# machine as the homebase (the watch has no address of its own off its LAN).
 	my ($chip, $load_type) = @_;
+	# The board model names its Pins map. A sighting usually has none; the record
+	# Query or a previous Now Me wrote does.
+	my $od = eval { decode_json(&subs::embedded_operator_door($chip->{'purpose'} || $load_type, $chip->{'id'}) || '') } || {};
 	my $addrs = &subs::network_interface_reporter();
 	my ($my_ip) = map { $addrs->{$_}->{'ip'} }
 		grep { $addrs->{$_}->{'ip'} && $addrs->{$_}->{'ip'} !~ /^127\./ } keys %{$addrs};
@@ -399,6 +402,7 @@ sub ble_device_from_chip {
 		ip => ($chip->{'ip'} || ''),
 		version => ($chip->{'version'} || ''),
 		version_seen => ($chip->{'version_seen'} || 0),
+		model => ($chip->{'model'} || $od->{'__specs'}->{'model'} || ''),
 		homebase => $my_ip,
 		mac => $chip->{'bluetooth'},
 		mac_addresses => { bluetooth => $chip->{'bluetooth'} },
@@ -688,12 +692,19 @@ sub watch_toggle_pusher {
 		my $push_at = &subs::rightNow();
 		foreach my $t ( @targets ) {
 			$log->info('toggle push send: ' . $t->{'chip_id'} . ' (' . $t->{'edt'} . ') ' . $app . ' -> ' . $state);
-			&subs::bluetooth_sender({
-				intent => 'com.jawn.president.bt.connect',
-				chip_id => $t->{'chip_id'},
-				edt => $t->{'edt'},
-				message => { type => 'toggle', data => { app => $app, state => $state, uuid => $push_id, timestamp => $push_at } }
-			});
+			# The same per-chip lock the direct relay command takes: a `toggle`
+			# push and an HTTP `set` for one board are one radio transaction at a
+			# time. A burst of both is what wedged the Pico until a physical
+			# switch woke the link.
+			{
+				my $lock = &subs::device_command_lock($t->{'chip_id'});
+				&subs::bluetooth_sender({
+					intent => 'com.jawn.president.bt.connect',
+					chip_id => $t->{'chip_id'},
+					edt => $t->{'edt'},
+					message => { type => 'toggle', data => { app => $app, state => $state, uuid => $push_id, timestamp => $push_at } }
+				});
+			}
 		}
 	}, { name => 'embedded toggle push', fork => 1 });
 }

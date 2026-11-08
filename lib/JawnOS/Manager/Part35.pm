@@ -131,6 +131,10 @@ sub now_me($data) {
 	$op_d->{'__specs'}->{'ip'} = $forced_home || $watch->{'homebase'};
 	$op_d->{'__specs'}->{'edt'} = $edt;
 	$op_d->{'__specs'}->{'name'} = $name;
+	# Keep the board model on the Now Me record: the Pins view draws the model's
+	# pin map, and a machine that only sees the board over the bridge has no model
+	# on its neighbour row. A value already recorded (from Query) stays.
+	$op_d->{'__specs'}->{'model'} ||= $watch->{'model'} if $watch->{'model'};
 	my @t = localtime(time);
 	# $offset already carries DST: timelocal() honours the zone's DST rules, so
 	# it is -4 h in summer and -5 h in winter here. The old winter branch added

@@ -1,9 +1,12 @@
-# tests-for: lib/JawnOS/Domain/Device.pm lib/JawnOS/Domain/Loader.pm lib/JawnOS/Manager/Part34.pm templates/embedded/body.html.ep templates/embedded/watch.html.ep public/js/manager/embedded.js
+# tests-for: lib/JawnOS/Domain/Device.pm lib/JawnOS/Domain/Loader.pm lib/JawnOS/Domain/Ble.pm lib/JawnOS/Manager/Part34.pm lib/JawnOS/Manager/Part35.pm lib/JawnOS/Controller/manager_embedded.pm templates/embedded/body.html.ep templates/embedded/watch.html.ep public/js/manager/embedded.js
 # covers:    The Embedded panel says which machine a device is paired to, and a
 #            scan's results can be pressed instead of retyped. A board's GPIO
-#            view draws only the pins that are wired (the Pins view is the way
-#            to add one), so a Pico opens without rendering every pin of every
-#            component type; one settings read serves every slot on one app. A board names its
+#            view draws its wired pins in full and keeps every empty GPIO as a
+#            compact +N button, so a Pico opens without rendering a full form
+#            for every pin of every component type; pressing an empty pin fetches
+#            that one form. One settings read serves every slot on one app. A
+#            board's Pins view falls back to the model Now Me or Query recorded
+#            when its row has none. A board names its
 #            homebase as ip:port in its own settings row; the panel resolves that
 #            to the machine's name so nobody has to remember which address is the
 #            Table. Scan results are drawn as buttons because a datalist does not
@@ -70,10 +73,37 @@ like($part34, qr/my %aset_cache;/, 'one settings read is cached for the panel');
 like($part34, qr/\$aset_cache\{\$app\} \|\|= &subs::settings_grabber/, 'and reused by every slot that runs the same app');
 like($part34, qr/my \$entry = \$op_d->\{\$syl \. \$n\} \|\| \{\};/, 'each slot reads its operator-door entry once');
 
-ok(index($body, 'my @pins = grep { $settings && $settings->{$syl . $_} }') >= 0,
-	'the template draws only the slots the panel built');
-like($body, qr/if \(scalar \@pins\) \{/, 'a component type with nothing wired draws no header');
-like($body, qr/foreach my \$n \( \@pins \)/, 'and each wired pin is drawn once');
+ok(index($body, 'my @slots = ($start_n .. $slots);') >= 0,
+	'the template walks every slot in order');
+like($body, qr/if \(\$settings && \$settings->\{\$syl \. \$n\}\) \{/,
+	'a wired slot draws its full form');
+ok(index($body, '<button class="watch_empty hover"') >= 0,
+	'an empty GPIO stays visible as a compact button');
+ok(index($body, q{hint="<%= &subs::ui('Add this pin') %>"}) >= 0,
+	'with a hint that says what pressing it does');
+ok(index($js, q{$(document).on('click', '.watch_empty'}) >= 0,
+	'pressing it fetches that one form');
+ok(index($js, 'component: component,') >= 0,
+	'filtered to the pin type it was pressed under');
+ok(index($js, q{if (!input.closest('#watch_buttons').length)}) >= 0,
+	'and naming an app redraws so the new pin joins its type');
+my $ctl = $read->('lib/JawnOS/Controller/manager_embedded.pm');
+ok(index($ctl, q{component => $c->param('component'),}) >= 0,
+	'and the pin route carries that type into the grabber');
+
+# --- the Pins view knows the board's model even without a scan -------------
+ok(index($part34, 'my $known = $gb::microcontrollers || {};') >= 0,
+	'the Pins view starts from the board models the house knows');
+ok(index($part34, q{$op_d->{'__specs'}->{'model'}}) >= 0,
+	'and falls back to the model Now Me or Query recorded');
+ok(index($part34, q{$embedded->{'model'} ||= $rb->{'model'};}) >= 0,
+	'Query writes the model onto the board record');
+my $part35 = $read->('lib/JawnOS/Manager/Part35.pm');
+ok(index($part35, q{$op_d->{'__specs'}->{'model'} ||= $watch->{'model'}}) >= 0,
+	'Now Me keeps the model on the record too');
+my $ble = $read->('lib/JawnOS/Domain/Ble.pm');
+ok(index($ble, q{model => ($chip->{'model'} || $od->{'__specs'}->{'model'} || '')}) >= 0,
+	'and a bridge-only device row carries it');
 
 done_testing();
 

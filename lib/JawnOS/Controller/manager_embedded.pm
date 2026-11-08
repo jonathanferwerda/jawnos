@@ -182,6 +182,7 @@ sub action_43384 {
 		numero => $numero,
 		pin => $pin,
 		form => $form,
+		component => $c->param('component'),
 		chip_id => $chip_id,
 		timestamp => $timestamp
 	});

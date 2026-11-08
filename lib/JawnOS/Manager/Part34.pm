@@ -129,6 +129,28 @@ sub embedded_grabber($c,$timestamp) {
 		$room_max = 28;
 	}
 
+	# The Pins view draws the pin map of the board model. A board listed over
+	# Bluetooth, or one this machine has not scanned, carries no model on its
+	# row (the neighbour table only learns it from /device_query), and the view
+	# said "I don't know this chip". Use the model Now Me recorded - Query writes
+	# it there too - and, while the house knows one board, that board's map.
+	if ($edt eq 'microcontroller' && ref $embedded eq 'HASH') {
+		my $known = $gb::microcontrollers || {};
+		my $stored = $op_d->{'__specs'}->{'model'} || '';
+		my $have = $embedded->{'model'} || '';
+		$have =~ s/^\s+|\s+$//g if $have;
+		$have = $stored if (!$have || (!$known->{$have} && $known->{$stored}));
+		if ($have && !$known->{$have}) {
+			my ($match) = grep { lc($_) eq lc($have) } keys %{$known};
+			$have = $match if $match;
+		}
+		unless ($have) {
+			my @known = keys %{$known};
+			$have = $known[0] if scalar @known == 1;
+		}
+		$embedded->{'model'} = $have;
+	}
+
 	my $embedded_scope = &subs::setting_grabber({ app => $edt, setting => 'watch_scope', subsetting => $chip_id });
 	my $settings;
 	# A board's GPIO view is a list of what is wired, not every pin on the
@@ -247,6 +269,18 @@ sub embedded_device_query($embedded) {
 			my $rb = decode_json $res->result->body;
 			my $od = &subs::setting_grabber({ app => $rb->{'purpose'}, setting => 'operator_door', subsetting => $rb->{'chip_id'} } );
 			my $op_d = eval { return decode_json $od } || {};
+			# /device_query is where a board names its model. Keep it on the Now Me
+			# record: the Pins view draws the board map from the model, and a machine
+			# that listed the board over Bluetooth (or has not scanned it) has none
+			# on the neighbour row - it said "I don't know this chip".
+			if ($rb->{'model'} && $rb->{'purpose'} && $rb->{'chip_id'}) {
+				$embedded->{'model'} ||= $rb->{'model'};
+				$op_d->{'__specs'} ||= {};
+				if (($op_d->{'__specs'}->{'model'} || '') ne $rb->{'model'}) {
+					$op_d->{'__specs'}->{'model'} = $rb->{'model'};
+					&subs::setting_setter({ app => $rb->{'purpose'}, setting => 'operator_door', subsetting => $rb->{'chip_id'}, value => encode_json $op_d });
+				}
+			}
 			if (eval { scalar @{$rb->{'wigi'}} } ) {
 				foreach my $w ( @{$rb->{'wigi'}} ) {
 					my $room = $w->{'room'};

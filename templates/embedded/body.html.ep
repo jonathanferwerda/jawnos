@@ -129,33 +129,40 @@
 				    count; the break below is at room_max/2, so only the bound must not
 				    multiply by room_count for the button devices. %>
 				<% my $slots = ($edt eq 'microcontroller') ? ($room_max * $room_count) : $room_max; %>
-				<%# A board's GPIO view lists only the pins that are wired: the panel
-				    builds settings for those alone, so a type with nothing on it does
-				    not draw a header and a row of empty forms. The Pins view still
-				    draws the whole board map and fetches the one form a pin needs. A
-				    watch or deck keeps every room it has. %>
+				<%# A board's GPIO view draws the wired pins in full and keeps every
+				    empty GPIO visible as a compact +N button. The panel builds settings
+				    only for the wired slots, so the empty pins cost a button each, not a
+				    whole form; pressing one fetches that one form (watch_empty). A watch
+				    or deck keeps every room it has and never draws an empty slot. %>
 				<% my $syl_count = ($edt eq 'microcontroller') ? 10 : 1; %>
 				<% foreach my $component ( sort keys %{$components} ) { %>
 					<% if ($component) {
 						my $syl = &subs::shorthand_name($component, $syl_count);
-						my @pins = grep { $settings && $settings->{$syl . $_} } ($start_n .. $slots);
+						my @slots = ($start_n .. $slots);
 					%>
-						<% if (scalar @pins) { %>
+						<% if (scalar @slots) { %>
 							<h4><%= &subs::format_name($component) %></h4>
-							<% foreach my $n ( @pins ) { %>
+							<% foreach my $n ( @slots ) { %>
 
-								<%= include 'embedded/component', 
-									n => $n, 
-									pin => $n,
-									component => $component, 
-									settings => $settings, 
-									components => $components, 
-									embedded => $embedded, 
-									movements => $movements,
-									device_type => $device_type,
-									source => 'gpio',
-									destinations => $destinations
-								%>
+								<% if ($settings && $settings->{$syl . $n}) { %>
+									<%= include 'embedded/component', 
+										n => $n, 
+										pin => $n,
+										component => $component, 
+										settings => $settings, 
+										components => $components, 
+										embedded => $embedded, 
+										movements => $movements,
+										device_type => $device_type,
+										source => 'gpio',
+										destinations => $destinations
+									%>
+								<% } elsif ($edt eq 'microcontroller') { %>
+									<span class="watch_<%= $component %>_container embedded_container" numero="<%= $n %>">
+										<button class="watch_empty hover" component="<%= $component %>" numero="<%= $n %>" pin="<%= $n %>"
+											hint="<%= &subs::ui('Add this pin') %>">+ <%= $n %></button>
+									</span>
+								<% } %>
 
 								<% if ($n % ($room_max / 2) == 0 && $n != 0) { %>
 									<br>

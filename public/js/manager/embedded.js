@@ -66,6 +66,14 @@ $(document).on('click', '.embedded_detail', function() {
 	embeddedDetailGrabber({ numero: numero, form: form, pin: pin });
 });
 
+// An empty GPIO in a board's GPIO view is a compact +N button. Pressing it
+// fetches that one pin's form and appends it, the same way a pin on the Pins
+// view opens its form - the panel no longer draws every empty slot in full.
+$(document).on('click', '.watch_empty', function() {
+	var b = $(this);
+	embeddedDetailGrabber({ numero: b.attr('numero'), pin: b.attr('pin'), component: b.attr('component') });
+});
+
 function embeddedDetailGrabber(data) {
 	var timestamp = Date.now();
 	var numero = data['numero'];
@@ -74,6 +82,7 @@ function embeddedDetailGrabber(data) {
 	var view = localStorage.getItem('embedded_view');
 	var form = data['form'];
 	var pin = data['pin'];
+	var component = data['component'] || '';
 	$.ajax({
 		url: '/manager/embedded/pin_grabber',
 		type: 'GET',
@@ -83,6 +92,7 @@ function embeddedDetailGrabber(data) {
 			chip_id: chip_id, 
 			view: view, 
 			form: form,
+			component: component,
 			timestamp: timestamp,
 			pin: pin
 		},
@@ -405,6 +415,13 @@ $(document).on('change', '.watch_input', function() {
 			else {
 				button.text(numero);
 				button.attr('app', '');
+			}
+			// An empty GPIO opened its form from outside the board's button list
+			// (the +N button, or a pin on the Pins view). Once it names an app,
+			// redraw so the now-wired pin joins its type instead of sitting in a
+			// form at the bottom of the panel.
+			if (!input.closest('#watch_buttons').length) {
+				embeddedDevicesOpener();
 			}
 		}
 	});

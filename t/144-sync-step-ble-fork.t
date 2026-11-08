@@ -179,4 +179,19 @@ subs::preload('bluetooth_sender_async');
 	is( scalar @sent, 1, 'and the default still sends inline to keep its place' );
 }
 
+# --- one output command at a time per board ---------------------------------
+# A Pico services one HTTP client. Two presses answered at once leave the first
+# half-answered and the second lost, and the board looks wedged until a physical
+# switch wakes the link. The sender takes a per-chip file lock across both roads.
+like($notify, qr/sub device_command_lock \{/, 'one helper serializes a board\'s output commands');
+like($notify, qr/flock\(\$fh, LOCK_EX \| LOCK_NB\)/, 'the lock is exclusive and bounded');
+like($notify, qr/device_command_lock\(\$chip_id\)/, 'the toggle sender takes it');
+like($notify, qr/my \$send_http = sub \{/, 'the HTTP send is one closure');
+like($notify, qr/select\(undef, undef, undef, 0\.15\)/, 'a failed send gets one short retry');
+like($notify, qr/device command not delivered/, 'a command neither road carried is logged');
+my $loader = read_file("$root/lib/JawnOS/Domain/Loader.pm");
+like($loader, qr/'JawnOS::Domain::Notify' for qw\([^)]*device_command_lock/,
+	'the loader maps the lock helper');
+
 done_testing();
+

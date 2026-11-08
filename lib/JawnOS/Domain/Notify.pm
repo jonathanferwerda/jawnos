@@ -13,6 +13,7 @@ no warnings 'experimental::signatures';
 use Mojo::JSON qw(decode_json encode_json);
 use Mojo::IOLoop;
 use Mojo::UserAgent;
+use Fcntl qw(:flock O_CREAT O_RDWR);
 
 # File-scope state owned by subroutines.pl, in this same package.
 our $config;
@@ -171,6 +172,31 @@ sub notification_sender($m,$db) {
 
 }
 
+sub device_command_lock {
+	# One output command at a time per board. A Pico's WebServer services one
+	# client, and two overlapping relay requests leave the first half-answered
+	# while the second is lost - the board looks wedged until something else (a
+	# physical switch) wakes the link. The lock is a file in the house's tmp dir,
+	# so it serializes every forked sender - the panel, an appointment, the
+	# automation fan-out - across workers. The OS releases it when the child
+	# exits, so a killed sender cannot wedge the queue. A bounded wait, then
+	# proceed: a dropped press is worse than one more try.
+	my ($chip_id) = @_;
+	return undef unless defined $chip_id && length $chip_id;
+	my $dir = ($gb::tmp_dir || '/tmp') . '/device_cmd';
+	eval { mkdir $dir unless -d $dir; 1 };
+	my $file = $dir . '/' . &subs::path_name($chip_id) . '.lock';
+	sysopen(my $fh, $file, O_CREAT | O_RDWR, 0600) or return undef;
+	my $deadline = time() + 15;
+	my $locked = 1;
+	while (!flock($fh, LOCK_EX | LOCK_NB)) {
+		if (time() >= $deadline) { $locked = 0; last; }
+		select(undef, undef, undef, 0.05);
+	}
+	$log->info('device command lock timed out for ' . $chip_id) if $log && !$locked;
+	return $fh;
+}
+
 sub embedded_toggle($data) {
 	my $app = $data->{'app'};
 	my $pin = $data->{'pin'};
@@ -283,22 +309,36 @@ sub embedded_toggle($data) {
 			Mojo::IOLoop->reset;
 			my $watch = &subs::device_lister($timestamp, $edt, undef, $chip_id);
 			my $watch_ip = (ref $watch eq 'HASH' && $watch->{'ip'}) ? $watch->{'ip'} : $ip;
+			# One command at a time per board. A Pico services one HTTP client, so
+			# overlapping presses are what make the third and fourth look lost.
+			# The lock covers the bridge fallback too: the radio is shared with
+			# WiFi, and a burst of writes is what wedges the board.
+			my $lock = &subs::device_command_lock($chip_id);
+			my $send_http = sub {
+				my $watch_home = 'http://' . $watch_ip . ':' . $config->{'port'} . '/' . $component . '?appt_uuid=' . $appt_uuid . '&uuid=' . $uuid . '&when=' . $when . '&pin=' . $pin . '&state=' . $state . '&component=' . $component . '&authorization=' . $op_d->{'__specs'}->{'authorization'} . '&timestamp=' . $timestamp . '&measure=' . $measure;
+				my $ua = Mojo::UserAgent->new(connect_timeout => 2, inactivity_timeout => 3);
+				my $res = $ua->insecure(1)->get($watch_home)->result;
+				my $body = eval { $res->result->body };
+				my $rb = $body ? eval { decode_json($body) } : undef;
+				if (ref $rb eq 'HASH') {
+					$state = $rb->{'state'} if defined $rb->{'state'};
+					$pin = $rb->{'pin'} if defined $rb->{'pin'};
+					return 1;
+				}
+				return 0;
+			};
+			my $http_ok = 0;
 			if ($watch_ip) {
-				my $http_ok = eval {
-					my $watch_home = 'http://' . $watch_ip . ':' . $config->{'port'} . '/' . $component . '?appt_uuid=' . $appt_uuid . '&uuid=' . $uuid . '&when=' . $when . '&pin=' . $pin . '&state=' . $state . '&component=' . $component . '&authorization=' . $op_d->{'__specs'}->{'authorization'} . '&timestamp=' . $timestamp . '&measure=' . $measure;
-					my $ua = Mojo::UserAgent->new(connect_timeout => 2, inactivity_timeout => 3);
-					my $res = $ua->insecure(1)->get($watch_home)->result;
-					my $body = eval { $res->result->body };
-					my $rb = $body ? eval { decode_json($body) } : undef;
-					if (ref $rb eq 'HASH') {
-						$state = $rb->{'state'} if defined $rb->{'state'};
-						$pin = $rb->{'pin'} if defined $rb->{'pin'};
-						1;
-					}
-					else { 0; }
-				};
-				return if $http_ok;
+				$http_ok = eval { $send_http->() } ? 1 : 0;
+				# A send can still meet the connection the command before it is
+				# closing. One short retry is enough now that the lock means this
+				# is the only request in flight by the time it runs.
+				if (!$http_ok) {
+					select(undef, undef, undef, 0.15);
+					$http_ok = eval { $send_http->() } ? 1 : 0;
+				}
 			}
+			return if $http_ok;
 			if (ref $watch eq 'HASH' && ($watch->{'ble'} || !$watch->{'ip'})) {
 				my $sent = eval {
 					&subs::bluetooth_sender({
@@ -314,6 +354,12 @@ sub embedded_toggle($data) {
 				};
 				return if $sent || !$watch_ip;
 			}
+			# Neither road carried it. Say so once, with the board and command, so
+			# a relay that missed a press can be found in the log without a
+			# reproduction.
+			$log->info('device command not delivered: ' . ($chip_id || '?') . ' '
+				. ($component || '?') . ' ' . ($state || '?') . ' (http='
+				. ($watch_ip ? 'failed' : 'no address') . ')') if $log;
 		}, { name => 'embedded toggle sender', fork => 1 });
 		return { state => $number_state, formatted_state => $state };
 	}
