@@ -838,6 +838,29 @@ sub weather_home_place($opts = {}) {
 	return &weather_location_for_fix($home->{'lat'}, $home->{'lon'}, '', { create => ($opts->{'create'} ? 1 : 0) });
 }
 
+# Resolve the home plate to a place and remember it. A move to a new plate
+# unanchors the old home: the old place stays an ordinary added place (it can be
+# anchored again deliberately) but no longer records just by being the old home.
+sub weather_home_place_sync() {
+	my $place = &weather_home_place({ create => 1 });
+	return undef unless $place && ($place->{'uuid'} // '') =~ /^[A-Za-z0-9_-]+$/;
+	my $uuid = $place->{'uuid'};
+	my $row = eval {
+		&subs::db_query(
+			"select value from settings where app = 'weather' and setting = 'home_place' "
+			. "and value is not null and value != '' order by cast(server_time as integer) desc limit 1"
+		)->hashes->[0];
+	};
+	my $old_uuid = $row ? ($row->{'value'} // '') : '';
+	return $place if $old_uuid eq $uuid;
+	if (length $old_uuid && $old_uuid =~ /^[A-Za-z0-9_-]+$/) {
+		my $old_place = &weather_location_find($old_uuid);
+		&weather_location_anchor($old_uuid, 0) if $old_place && $old_place->{'anchor'};
+	}
+	&subs::setting_setter({ app => 'weather', setting => 'home_place', value => $uuid });
+	return $place;
+}
+
 # The places the scheduled pass records. A rule's own place and every anchored
 # place are stations, and so is the home plate: the house keeps reading its own
 # ground when the phones leave. A device's fix is not a station here - the pass
@@ -1450,6 +1473,9 @@ sub weather_observe_tick() {
 			}
 		}
 	}
+	# A home plate that moved is a new station and an ordinary old place; resolve
+	# it before the pass picks its keys so the old home does not keep a turn.
+	eval { &weather_home_place_sync(); };
 	my $keys = &weather_rule_locations();
 	return { skipped => 'no fix', (defined $reconcile ? (reconcile => $reconcile) : ()) } unless @{$keys};
 	my $lock = eval { &cache_get({ app => 'weather', context => 'observe', subcontext => 'lock' }) } || {};

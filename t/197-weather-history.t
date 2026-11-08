@@ -185,6 +185,53 @@ ok(length subs::weather_day_key(1700000000000), 'a timestamp has a day key');
 	is($charlottetown->{'label'}, 'Charlottetown Weather', 'a device at a known place uses that place');
 }
 
+# --- each place keeps its own history source ---------------------------------
+{
+	my $now = 1794010000000;
+	my @reading_rows = (
+		{ app => 'weather_station', timestamp => $now - 3600000, measures => Mojo::JSON::encode_json([{ ts => '' . ($now - 3600000), temperature => '10', place => 'loc:warwick' }]) },
+		{ app => 'weather_station', timestamp => $now - 1800000, measures => Mojo::JSON::encode_json([{ ts => '' . ($now - 1800000), temperature => '20', place => 'loc:toronto' }]) },
+	);
+	no warnings 'redefine';
+	local *subs::rightNow = sub { $now };
+	local *subs::db_query = sub {
+		my ($q, @args) = @_;
+		return bless { rows => [] }, 'FakeResult' if ($q // '') =~ /from settings/;
+		return bless { rows => [ { n => 2, from_ts => $now - 3600000, to_ts => $now - 1800000 } ] }, 'FakeResult'
+			if ($q // '') =~ /count\(\*\)/;
+		return bless { rows => \@reading_rows }, 'FakeResult'
+			if ($q // '') =~ /app = 'weather_station'/
+			|| (($q // '') =~ /where app = \?/ && ($args[0] // '') eq 'weather_station');
+		return bless { rows => [] }, 'FakeResult';
+	};
+	local *subs::cache_get = sub {
+		my ($q) = @_;
+		return { place => 'Toronto', place_key => 'loc:toronto', location => 'loc:toronto' }
+			if ($q->{'context'} // '') eq 'observe' && ($q->{'subcontext'} // '') eq 'last';
+		return {};
+	};
+	local *subs::cache_set = sub { 1 };
+	local *subs::weather_history_station_place = sub {
+		my ($loc) = @_;
+		return $loc eq 'loc:warwick' ? 'Warwick' : 'Toronto';
+	};
+	local *subs::weather_location_find = sub { my $u = shift; return { uuid => $u, name => ($u eq 'warwick' ? 'Warwick' : 'Toronto'), lat => 43, lon => -81, anchor => 0 }; };
+	local *subs::weather_place_name = sub { '' };
+	local *subs::ui = sub { return defined $_[0] ? "$_[0]" : '' };
+	local *subs::format_name = sub { my $n = shift // ''; return $n; };
+	my $sources = subs::weather_history_sources('loc:toronto');
+	my ($current) = grep { ($_->{'app'} // '') eq 'weather_station' } @{$sources};
+	my ($old) = grep { ($_->{'app'} // '') eq 'weather_station:loc:warwick' } @{$sources};
+	is($current->{'label'}, 'Toronto Weather', 'the current home is the station source');
+	is($old->{'label'}, 'Warwick Weather', 'the old home keeps its own source');
+	is($old->{'location'}, 'loc:warwick', 'and its own place key');
+	my $built = subs::weather_history_build({ location => 'loc:toronto', force => 1 });
+	my %days = map { ($_ // '') => 1 } keys %{ $built->{'days'} || {} };
+	ok($days{'weather_station'}, 'the current place has history days');
+	ok($days{'weather_station:loc:warwick'}, 'and the old place keeps its days');
+	ok(!$days{'weather_station:loc:toronto'}, 'the current place is not a second key');
+}
+
 # --- a place's readings are the ones tagged with it -------------------------
 {
 	my $now = 1794010000000;

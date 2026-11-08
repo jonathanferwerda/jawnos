@@ -104,6 +104,36 @@ sub weather_history_source_label($app, $meta = {}, $station_place = '') {
 	return $name . ' ' . $weather_word;
 }
 
+# Every place the station has readings for, with a row count and its first and
+# last timestamp. Untagged readings predate places and belong to the house's
+# history, not to a place of their own.
+sub weather_history_station_places() {
+	my $rows = eval {
+		&db_query(
+			"select timestamp, measures from appointments where app = 'weather_station' and measures is not null"
+		)->hashes;
+	} || [];
+	my %place;
+	foreach my $row (@{$rows}) {
+		my $list = eval { decode_json($row->{'measures'} // '[]') } || [];
+		next unless ref $list eq 'ARRAY';
+		my $key = '';
+		foreach my $m (@{$list}) {
+			next unless ref $m eq 'HASH';
+			$key = $m->{'place'} // $m->{'location'} // '';
+			last if length $key;
+		}
+		next unless $key =~ /^loc:[A-Za-z0-9_-]+$/;
+		my $ts = $row->{'timestamp'};
+		$ts = (defined $ts && "$ts" =~ /^\d+$/) ? 0 + $ts : undef;
+		my $p = $place{$key} ||= { location => $key, readings => 0 };
+		$p->{'readings'}++;
+		$p->{'from_ts'} = $ts if defined $ts && (!defined $p->{'from_ts'} || $ts < $p->{'from_ts'});
+		$p->{'to_ts'} = $ts if defined $ts && (!defined $p->{'to_ts'} || $ts > $p->{'to_ts'});
+	}
+	return [ sort { ($b->{'to_ts'} || 0) <=> ($a->{'to_ts'} || 0) } values %place ];
+}
+
 sub weather_history_sources($station_location = '') {
 	my $rows = eval {
 		&db_query("select app, value from settings where app in ('weather', 'cambridge_weather') and setting = 'web' order by app")->hashes;
@@ -135,9 +165,9 @@ sub weather_history_sources($station_location = '') {
 			to => &weather_day_key($counts->{'to_ts'}),
 		};
 	}
-	# The app's own station readings are the ground the person is on now, so they
-	# come first: a one-day hourly view and the accuracy comparison both want the
-	# nearest source, and the two old pages stay selectable below it.
+	# The app's own station readings are read by place: the current place first
+	# (the one the person is looking at), then every other place that still has
+	# readings, so a home that moved keeps its old history under its own name.
 	my $station = eval {
 		&db_query(
 			"select count(*) as n, min(timestamp) as from_ts, max(timestamp) as to_ts "
@@ -146,11 +176,12 @@ sub weather_history_sources($station_location = '') {
 	} || {};
 	if (($station->{'n'} || 0) > 0) {
 		my $last = eval { &cache_get({ app => 'weather', context => 'observe', subcontext => 'last' }) } || {};
-		my $place = &weather_history_station_place($station_location, $last);
-		unshift @sources, {
+		my @station_sources;
+		my $current = &weather_history_station_place($station_location, $last);
+		push @station_sources, {
 			app => 'weather_station',
-			label => &weather_history_source_label('weather_station', {}, $place),
-			city => $place,
+			label => &weather_history_source_label('weather_station', {}, $current),
+			city => $current,
 			# The provider still calls the ground Lambton Shores when the person
 			# calls it Warwick; keep that name for matching the forecast.
 			region => ($last->{'place'} // ''),
@@ -162,6 +193,29 @@ sub weather_history_sources($station_location = '') {
 			from => &weather_day_key($station->{'from_ts'}),
 			to => &weather_day_key($station->{'to_ts'}),
 		};
+		foreach my $p (@{ &weather_history_station_places() }) {
+			my $key = $p->{'location'} // '';
+			next if $key eq $station_location;
+			my $place = &weather_history_station_place($key, $last);
+			my $loc;
+			if ($key =~ /^loc:([A-Za-z0-9_-]+)$/) {
+				$loc = &weather_location_find($1);
+			}
+			push @station_sources, {
+				app => 'weather_station:' . $key,
+				label => &weather_history_source_label('weather_station', {}, $place),
+				city => $place,
+				region => $loc ? (&weather_place_name($loc->{'lat'}, $loc->{'lon'}) // '') : '',
+				url => '',
+				id => '',
+				location => $key,
+				readings => $p->{'readings'} || 0,
+				show_city => 0,
+				from => &weather_day_key($p->{'from_ts'}),
+				to => &weather_day_key($p->{'to_ts'}),
+			};
+		}
+		unshift @sources, @station_sources;
 	}
 	return \@sources;
 }
@@ -202,17 +256,21 @@ sub weather_history_aggregate($rows, $opts = {}) {
 	$opts ||= {};
 	my $want_location = $opts->{'location'} // '';
 	my $location_app = $opts->{'location_app'} // 'weather_station';
+	# One underlying app can feed more than one source (the station's places), so
+	# the caller may name the source the days are grouped under.
+	my $source_key = $opts->{'source'} // '';
 	my (%days, %seen, %sources);
 	foreach my $row (@{ ref $rows eq 'ARRAY' ? $rows : [] }) {
 		next unless ref $row eq 'HASH';
 		my $app = $row->{'app'} || '';
 		next unless length $app;
+		my $source = length $source_key ? $source_key : $app;
 		my $measures = ref $row->{'measures'} eq 'ARRAY'
 			? $row->{'measures'}
 			: eval { decode_json($row->{'measures'} // '[]') };
 		next unless ref $measures eq 'ARRAY';
 		my $base_ts = $row->{'timestamp'};
-		$sources{$app} ||= { app => $app, readings => 0, days => {} };
+		$sources{$source} ||= { app => $source, readings => 0, days => {} };
 		foreach my $m (@{$measures}) {
 			next unless ref $m eq 'HASH';
 			# A reading with no location predates per-location observations: keep it
@@ -239,16 +297,16 @@ sub weather_history_aggregate($rows, $opts = {}) {
 				# The same reading can be written by more than one machine; a
 				# ten-minute bucket plus the value keeps the day's extremes
 				# honest without counting one reading twice.
-				my $dedupe = join('|', $app, $name, int($ts / 600000), lc($value));
+				my $dedupe = join('|', $source, $name, int($ts / 600000), lc($value));
 				next if $seen{$dedupe}++;
-				my $dkey = $app . '|' . $day;
+				my $dkey = $source . '|' . $day;
 				my $d = $days{$dkey} ||= {
-					source => $app, date => $day, temps => [], conditions => {},
+					source => $source, date => $day, temps => [], conditions => {},
 					humidity_sum => 0, humidity_n => 0, wind_sum => 0, wind_n => 0,
 					wind_directions => {}, visibility => '', readings => 0,
 				};
 				$d->{'readings'}++;
-				$sources{$app}{'readings'}++;
+				$sources{$source}{'readings'}++;
 				if ($name eq 'temperature') {
 					my $n = &weather_number($value);
 					push @{$d->{'temps'}}, $n if defined $n;
@@ -325,26 +383,51 @@ sub weather_history_build($opts) {
 	$opts ||= {};
 	my $station_location = $opts->{'location'} // '';
 	my $meta_list = &weather_history_sources($station_location);
-	my @apps = @{$meta_list} ? map { $_->{'app'} } @{$meta_list} : qw(weather cambridge_weather);
-	my @rows;
-	foreach my $app (@apps) {
-		my $r = eval {
-			&db_query(
-				'select app, device, timestamp, measures from appointments '
-				. 'where app = ? and measures is not null order by cast(timestamp as integer) asc',
-				$app
-			)->hashes;
-		} || [];
-		push @rows, @{$r};
-	}
-	my $agg = &weather_history_aggregate(\@rows, { location => $station_location });
-	my %meta = map { ($_->{'app'} || '') => $_ } @{$meta_list};
-	my @sources;
-	foreach my $app (@apps) {
-		my $m = $meta{$app} || { app => $app, label => $app, city => '', region => '' };
-		my $s = $agg->{'sources'}->{$app} || {};
+	my @meta = @{$meta_list};
+	# The station rows are read once. Each place aggregates the same rows with a
+	# different filter, so a place the home left keeps its own days under its own
+	# source instead of disappearing behind the new place.
+	my @station_rows;
+	my %app_rows;
+	my (@days, @sources);
+	foreach my $m (@meta) {
+		next unless ref $m eq 'HASH';
+		my $key = $m->{'app'} || '';
+		next unless length $key;
+		my $location = $m->{'location'} // '';
+		my $app = length $location ? 'weather_station' : $key;
+		my $rows;
+		if ($app eq 'weather_station') {
+			unless (@station_rows) {
+				my $station_read = eval {
+					&db_query(
+						'select app, device, timestamp, measures from appointments '
+						. 'where app = ? and measures is not null order by cast(timestamp as integer) asc',
+						'weather_station'
+					)->hashes;
+				} || [];
+				@station_rows = @{$station_read};
+			}
+			$rows = \@station_rows;
+		}
+		else {
+			$app_rows{$app} ||= eval {
+				&db_query(
+					'select app, device, timestamp, measures from appointments '
+					. 'where app = ? and measures is not null order by cast(timestamp as integer) asc',
+					$app
+				)->hashes;
+			} || [];
+			$rows = $app_rows{$app};
+		}
+		my $agg = &weather_history_aggregate($rows, {
+			($location ? (location => $location) : ()),
+			source => $key,
+		});
+		push @days, @{ $agg->{'days'} || [] };
+		my $s = $agg->{'sources'}->{$key} || {};
 		push @sources, {
-			app => $app,
+			app => $key,
 			label => $m->{'label'},
 			city => $m->{'city'} || '',
 			region => $m->{'region'} || '',
@@ -358,9 +441,7 @@ sub weather_history_build($opts) {
 		};
 	}
 	my %by_source;
-	foreach my $d (@{$agg->{'days'}}) {
-		push @{$by_source{$d->{'source'}}}, $d;
-	}
+	push @{$by_source{$_->{'source'}}}, $_ for @days;
 	my $out = {
 		built_at => &rightNow(),
 		sources => \@sources,
@@ -374,9 +455,9 @@ sub weather_history_build($opts) {
 sub weather_history_cache_key($station_location) {
 	my $suffix = $station_location // '';
 	$suffix =~ s/[^A-Za-z0-9_-]//g;
-	# v5: readings carry a physical place, so a v4 entry would keep the old
-	# per-device grouping and labels until it expired.
-	return 'v5' . (length $suffix ? '_' . $suffix : '');
+	# v6: the station is read by place, so a v5 entry would keep one source and
+	# hide a home that moved.
+	return 'v6' . (length $suffix ? '_' . $suffix : '');
 }
 
 # A one-day read is hourly, not daily: the last 24 hours of one source's
@@ -456,6 +537,10 @@ sub weather_history_pick_source($sources, $city, $region) {
 			}
 		}
 	}
+	# With several station places, the current home is the default; the token
+	# match above still picks an old place when the forecast is for it.
+	my ($current) = grep { ($_->{'app'} || '') eq 'weather_station' } @{$sources};
+	return 'weather_station' if $current;
 	my ($best) = sort { ($b->{'readings'} || 0) <=> ($a->{'readings'} || 0) } @{$sources};
 	return $best ? $best->{'app'} : '';
 }
@@ -477,10 +562,14 @@ sub weather_history_read($opts) {
 		my $from = &weather_day_key(&rightNow() - $range * 86400000);
 		@days = grep { ($_->{'date'} // '') ge $from } @days;
 	}
-	my $hours = ($range eq '1')
-		? &weather_history_hourly($source, 24, $source eq 'weather_station' ? $station_location : '')
-		: undef;
 	my ($source_meta) = grep { ($_->{'app'} || '') eq $source } @{ $history->{'sources'} || [] };
+	my $source_location = $source_meta ? ($source_meta->{'location'} // '') : '';
+	# A place source is the station app filtered to its own reading; an old page
+	# is its own app. The hourly view must follow the source, not the first one.
+	my $hourly_app = $source =~ /^weather_station/ ? 'weather_station' : $source;
+	my $hours = ($range eq '1')
+		? &weather_history_hourly($hourly_app, 24, $hourly_app eq 'weather_station' ? $source_location : '')
+		: undef;
 	return {
 		built_at => $history->{'built_at'},
 		sources => $history->{'sources'} || [],
@@ -488,7 +577,7 @@ sub weather_history_read($opts) {
 		source_label => $source_meta ? $source_meta->{'label'} : $source,
 		source_city => $source_meta ? ($source_meta->{'city'} || '') : '',
 		source_region => $source_meta ? ($source_meta->{'region'} || '') : '',
-		source_location => $source eq 'weather_station' ? $station_location : '',
+		source_location => $hourly_app eq 'weather_station' ? $source_location : '',
 		days => \@days,
 		(defined $hours ? (hours => $hours) : ()),
 		from => @days ? $days[0]->{'date'} : '',

@@ -22,8 +22,9 @@ sub action_52010 {
 	my $locations = eval { &subs::weather_locations() } || [];
 	my $location_labels = eval { &subs::weather_location_labels() } || {};
 	# The home plate is the first entry in the picker, marked as the always-on
-	# station. It is looked up, not made here: the pass makes it on its own.
-	my $home_place = eval { &subs::weather_home_place() };
+	# station. Resolving it here also handles a move: the old home is unanchored
+	# and the new place appears immediately, without waiting for the hourly pass.
+	my $home_place = eval { &subs::weather_home_place_sync() };
 	my $home_uuid = ref $home_place eq 'HASH' ? ($home_place->{'uuid'} // '') : '';
 	my ($me_group) = grep { $_->{'me'} } @{$places};
 	my $default = $me_group ? 'me' : (@{$places} ? $places->[0]{'signatorial'} : 'me');
