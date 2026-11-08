@@ -172,6 +172,31 @@ sub device_ws_deliver {
 	return &device_ws_send_local($chip_id, $frame);
 }
 
+sub device_ws_relay_hosts {
+	# Where to dial for a board's homebase, in order. A board reports the address
+	# its own network sees, which another machine may not be able to route to at
+	# all: the board's Table reports 192.168.1.x while this machine sits on
+	# 10.20.x plus Tailscale, so every relay died on a connect timeout. The
+	# homebase is a machine this house knows, so answer with the addresses it is
+	# recorded under and let the caller try them in turn.
+	my ($od, $host) = @_;
+	my @hosts = (defined $host && length $host) ? ($host) : ();
+	my $name = $od->{'__specs'}->{'name'} || '';
+	my $rows = eval { &subs::db_select('remote_machines')->hashes } || [];
+	my @rows = grep { ref $_ eq 'HASH' } @{$rows};
+	# The board names its homebase; a machine's own network report is the second
+	# way to recognise it when the name is missing (an older payload).
+	my @match = length $name ? grep { lc($_->{'hostname'} || '') eq lc $name } @rows : ();
+	@match = grep { ($_->{'network'} || '') =~ /\Q$host\E/ } @rows unless @match;
+	foreach my $rm ( @match ) {
+		foreach my $h ( $rm->{'tailnet_ip'}, $rm->{'ip'} ) {
+			push @hosts, $h if defined $h && length $h;
+		}
+	}
+	my %seen;
+	return [ grep { !$seen{$_}++ } @hosts ];
+}
+
 sub device_ws_peer_relay {
 	# The socket may be held by another House machine: the board is homed on the
 	# Table and the person pressed start on the Phone. Ask the homebase over the
@@ -187,22 +212,30 @@ sub device_ws_peer_relay {
 	# President.pl: manager = port, ws = port + 1, arm = port + 2.
 	my $port = $arm - 2;
 	return 0 if $port <= 0;
-	# A peer that is going to answer answers at once (the Table answered a signed
-	# frame in 0.1 s). A peer on a network this machine cannot route to must not
-	# hold the press for the full default timeout: one second, then the caller
-	# keeps its own road.
-	my $ua = Mojo::UserAgent->new(connect_timeout => 1, inactivity_timeout => 2);
-	$ua->insecure(1);
-	my $tx = $ua->build_tx(POST => 'https://' . $host . ':' . $port . '/manager/device_ws');
-	# Pairs, not a hashref: Mojo::Parameters::merge calls to_hash on a single
-	# argument, and a plain hashref is not blessed - this died on every relay and
-	# took the whole output command with it (every web press, silently).
-	$tx->req->body_params->merge(chip_id => $chip_id, frame => encode_json($frame));
-	&subs::peer_sign_request($tx->req);
-	my $res = eval { $ua->start($tx)->result };
-	return 0 unless $res && $res->is_success;
-	my $answer = eval { decode_json($res->body) } || {};
-	return $answer->{'sent'} ? 1 : 0;
+	my @hosts = @{ &device_ws_relay_hosts($od, $host) };
+	foreach my $candidate ( @hosts ) {
+		# A peer that will answer answers at once (the Table answered a signed
+		# frame in 0.15 s). A peer on a network this machine cannot route to must
+		# not hold the press: one second, then the next address.
+		my $ua = Mojo::UserAgent->new(connect_timeout => 1, inactivity_timeout => 2);
+		$ua->insecure(1);
+		my $tx = $ua->build_tx(POST => 'https://' . $candidate . ':' . $port . '/manager/device_ws');
+		# Pairs, not a hashref: Mojo::Parameters::merge calls to_hash on a single
+		# argument, and a plain hashref is not blessed - this died on every relay
+		# and took the whole output command with it (every web press, silently).
+		$tx->req->body_params->merge(chip_id => $chip_id, frame => encode_json($frame));
+		&subs::peer_sign_request($tx->req);
+		my $res = eval { $ua->start($tx)->result };
+		next unless $res && $res->is_success;
+		my $answer = eval { decode_json($res->body) } || {};
+		next unless $answer->{'sent'};
+		# Say which address carried it when it is not the one the board named:
+		# that correction is the thing to see when a house has two networks.
+		$log->info('device relay: ' . ($chip_id || '?') . ' via ' . $candidate . ':' . $port
+			. ' (board named ' . $host . ')') if $log && $candidate ne $host;
+		return 1;
+	}
+	return 0;
 }
 
 sub device_ws_command {

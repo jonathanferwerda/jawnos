@@ -305,4 +305,35 @@ like($devws, qr/connect_timeout => 1,/, 'a peer that will not answer cannot hold
 like(read_file(root() . '/lib/JawnOS/Domain/Notify.pm'), qr/my \$deadline = time\(\) \+ 5;/,
 	'the per-chip lock waits seconds, not a quarter of a minute');
 
+
+# The board reports the homebase address its own network sees. Another machine
+# may not be able to route to it (the Table reports 192.168.1.x; this machine is
+# on 10.20.x plus Tailscale), so the same machine's recorded addresses are tried
+# after it instead of the press dying on a connect timeout.
+{
+	package FakeRows204;
+	sub hashes { return $_[0]->{'rows'} }
+}
+
+subtest 'the relay resolves the homebase it is told about' => sub {
+	ok(subs::provides('device_ws_relay_hosts'), 'the loader maps the resolver');
+	no warnings 'redefine';
+	local *subs::db_select = sub {
+		return bless { rows => [
+			{ hostname => 'Table', ip => '100.64.0.1', tailnet_ip => '100.64.0.1', network => '' },
+			{ hostname => 'hub', ip => '10.20.0.20', tailnet_ip => '', network => '{"lan":{"ip":"192.168.1.147"}}' },
+		] }, 'FakeRows204';
+	};
+	is_deeply(subs::device_ws_relay_hosts({ __specs => { name => 'Table' } }, '192.168.1.102'),
+		[ '192.168.1.102', '100.64.0.1' ],
+		'the address the board named, then the machine the board names');
+	is_deeply(subs::device_ws_relay_hosts({ __specs => {} }, '192.168.1.147'),
+		[ '192.168.1.147', '10.20.0.20' ],
+		'a payload with no name is recognised by the machine\'s own report');
+	is_deeply(subs::device_ws_relay_hosts({ __specs => { name => 'Nobody' } }, '192.168.1.9'),
+		[ '192.168.1.9' ], 'an unknown homebase keeps the board\'s address alone');
+	is_deeply(subs::device_ws_relay_hosts({ __specs => { name => 'Table' } }, '100.64.0.1'),
+		[ '100.64.0.1' ], 'an address already right is not dialled twice');
+};
+
 done_testing();
