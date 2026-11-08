@@ -349,6 +349,14 @@ static bool config_reload_pending = false;
 // sync's own one-way delay and a browser clock that is a little off; it must
 // stay well under the "a moment later" a person means when they flip a switch.
 #define CMD_STALE_GRACE_MS 250
+// The hardware watchdog. A board that hangs - a blocked USB write, a wedged
+// radio, a deadlock in the loop path - used to sit there needing a physical
+// replug, because nothing on the chip would reset it. Core 0 feeds this from
+// the main loop, so a hang there reboots the board instead. 45 s is
+// deliberately longer than the longest legitimate block: wifi_start's join
+// (10 s) plus its blocking /watch/time request (an 8 s GET on a 15 s TLS
+// connect, ~23 s) is ~33 s, so provisioning never trips the watchdog.
+#define JAWNOS_WDT_MS 45000
 struct applied_cmd_t {
   String id;      // uuid when the road carries one
   String type;    // relay / led / servo / set / toggle

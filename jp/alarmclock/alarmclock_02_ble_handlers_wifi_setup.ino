@@ -660,6 +660,10 @@ void jawn_setup() {
   // Print a message to the LCD.
   lcd.print(config["name"]);
 
+  // Last, deliberately: everything above can block - wifi_start alone may
+  // spend ~33 s - and a watchdog armed across that would reboot the board
+  // in the middle of its own setup.
+  rp2040.wdt_begin(JAWNOS_WDT_MS);
 }
 
 // What this device is, advertised over mDNS: purpose, model and abilities.

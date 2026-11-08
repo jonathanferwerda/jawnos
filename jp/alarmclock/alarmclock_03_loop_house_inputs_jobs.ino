@@ -168,6 +168,10 @@ void handleCreateProcess() {
   }
 }
 void jawn_loop() {
+  // Feed the hardware watchdog before anything that can block. If this loop
+  // stops turning, the chip resets in JAWNOS_WDT_MS instead of going dark and
+  // waiting for someone to unplug it.
+  rp2040.wdt_reset();
   // Switches first. A board's own switch must not wait behind an HTTP request
   // or the LCD, and the local internal job below is the fast path to its relay.
   input_scanner();

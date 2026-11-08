@@ -57,4 +57,28 @@ like($boot, qr/associated but no IP address; DHCP did not complete/,
 # --- the USB diagnostic reports the address config ------------------------
 like($boot, qr/JAWNCFG MORE .*mask=.*gw=/, 'the USB diagnostic reports netmask and gateway');
 
+
+# --- a hang resets the board instead of needing a replug ---------------------
+
+like($globals, qr/^#define\s+JAWNOS_WDT_MS\s+(\d+)/m,
+	'the board names its hardware-watchdog timeout');
+my ($wdt_ms) = $globals =~ /^#define\s+JAWNOS_WDT_MS\s+(\d+)/m;
+cmp_ok($wdt_ms, '>', 35000,
+	'longer than the longest legitimate block (wifi join plus its time request)');
+
+like($boot, qr/rp2040\.wdt_begin\(JAWNOS_WDT_MS\)/,
+	'setup arms the hardware watchdog');
+my $wdt_arm  = index($boot, 'rp2040.wdt_begin(JAWNOS_WDT_MS)');
+my $wdt_wifi = index($boot, 'wifi_start();');
+ok($wdt_wifi >= 0 && $wdt_arm > $wdt_wifi,
+	'armed after wifi_start, so setup cannot reboot itself');
+
+my ($wdt_loop) = $loop =~ /(void\s+jawn_loop\(\)\s*\{.*?\n\})/s;
+ok($wdt_loop, 'jawn_loop is still one function');
+like($wdt_loop, qr/rp2040\.wdt_reset\(\)/, 'the main loop feeds the watchdog');
+my $wdt_feed = index($wdt_loop, 'rp2040.wdt_reset()');
+my $wdt_scan = index($wdt_loop, 'input_scanner()');
+ok($wdt_feed >= 0 && $wdt_scan >= 0 && $wdt_feed < $wdt_scan,
+	'fed before the first blocking call in the loop');
+
 done_testing();
