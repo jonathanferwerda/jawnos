@@ -368,11 +368,20 @@ skipped.
 ### Scrolling on the Qt view
 
 Qt leaves Chromium's scroll animator off by default, which reads as scrolling
-in steps: a flick of the trackpad stops as soon as the fingers lift. The shell
-turns it on (`ScrollAnimatorEnabled`) in the Qt profile before the first page
-exists, so the Manager and every peer Manager window opened from it glide and
-coast. Browse asks for the same attribute on each of its own views. This is the
-Qt counterpart of the removed WebKitGTK view's `enable-smooth-scrolling`.
+in steps. The shell turns it on (`ScrollAnimatorEnabled`) in the Qt profile
+before the first page exists, so the Manager and every peer Manager window
+opened from it glide between positions and Browse does the same on its own
+views. This is the Qt counterpart of the removed WebKitGTK view's
+`enable-smooth-scrolling`.
+
+The animator smooths the deltas it is handed and then stops with them. The
+laptop's touchpad is driven by libinput, which has no coasting of its own, so a
+flick would still end with the fingers. The shell therefore injects a short
+momentum script into the Manager: it keeps a burst's velocity and, once the
+wheel goes quiet, keeps the container under the pointer scrolling with a
+per-millisecond decay. A wheel the app handled itself is left alone, as are the
+wardrobe's canvases (they already glide). `JAWNOS_MOMENTUM=0` in
+`~/.config/jawnos/qt.env` turns it off.
 
 ## Desktop engine: Qt WebEngine
 

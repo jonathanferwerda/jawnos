@@ -152,9 +152,21 @@ like($qt, qr/ErrorPageEnabled, False/, 'the built-in white error page is off');
 # shell turns it on for the profile and every page inherits it. This is the port
 # of the removed WebKitGTK view's enable-smooth-scrolling.
 like($qt, qr/ScrollAnimatorEnabled, True/,
-	'scroll animation is on, so a trackpad flick glides and coasts');
+	'scroll animation is on, so a wheel scroll glides instead of stepping');
 like($qt, qr/profile\.settings\(\)\.setAttribute\b/,
 	'set on the profile, so the Manager and peer windows share it');
+# The animator stops when the deltas stop, and the laptop's touchpad driver
+# (libinput) has no coasting, so a flick would end with the fingers. The shell
+# carries the burst's velocity and keeps the container moving. The wardrobe
+# canvases already glide, so they are explicitly left alone.
+like($qt, qr/_MOMENTUM_JS/, 'a momentum shim is injected into the Manager');
+like($qt, qr/if momentum_enabled\(\):/, 'only when it is wanted');
+like($qt, qr/closest\('\.background'\)/,
+	'the wardrobe canvases keep their own glide');
+like($qt, qr/e\.defaultPrevented/, 'and a wheel the app handled is left alone');
+like($qt, qr/requestAnimationFrame\(step\)/, 'the coast decays frame by frame');
+my $moff = `cd "$root" && JAWNOS_MOMENTUM=0 PYTHONPATH=desktop python3 -c 'from jawnos_desktop.qt_shell import momentum_enabled; print(momentum_enabled())' 2>&1`;
+like($moff, qr/^False$/m, 'JAWNOS_MOMENTUM=0 turns coasting off');
 like($qt, qr/errorpage\.dark_page/, 'the manager shows a dark page after its retries');
 like($qt, qr/errorpage\.watch\(other\)/, 'and peer windows show one at once');
 like($errpage, qr/background:#000000/, 'the error page is on the black ground');
@@ -415,6 +427,112 @@ print(json.dumps(out))
 		'an unknown vendor is not guessed, but keeps the GPU path');
 	like($matrix, qr/"no_sysfs": \[null, "--ignore-gpu-blocklist/,
 		'a render node without sysfs still keeps the GPU path');
+}
+
+# Coasting, measured in the engine the shell embeds. A synthetic wheel event
+# scrolls nothing by itself, so every pixel here is the shim's: a burst of small
+# deltas must keep the box moving after they stop, and a single mouse-wheel
+# notch must not. Skipped where the engine or a display server is missing; the
+# static checks above still cover the shim's shape.
+SKIP: {
+	my $xvfb = `command -v xvfb-run 2>/dev/null`;
+	chomp $xvfb;
+	my $qt_here = `cd "$root" && PYTHONPATH=desktop python3 -c 'import PySide6.QtWebEngineWidgets' 2>&1`;
+	skip 'needs xvfb-run and PySide6 with Qt WebEngine', 2
+		if !$xvfb || $qt_here =~ /ModuleNotFoundError|No module named/;
+	my $tmp = tempdir(CLEANUP => 1);
+	my $script = "$tmp/coast.py";
+	open(my $fh, '>', $script) or die "$script: $!";
+	print $fh <<'PY';
+import json, os, time
+from PySide6.QtCore import QTimer
+from PySide6.QtWidgets import QApplication
+from PySide6.QtWebEngineWidgets import QWebEngineView
+from jawnos_desktop.qt_shell import _MOMENTUM_JS
+
+PAGE = """<!doctype html><html><body style="margin:0">
+<div id="box" style="height:200px;overflow-y:auto"><div style="height:4000px"></div></div>
+<script>%s</script>
+<script>
+window.__samples = null;
+window.__run = function (kind) {
+  var box = document.getElementById('box');
+  box.scrollTop = 0;
+  var t0 = performance.now(), samples = [];
+  function rec() {
+    var t = performance.now() - t0;
+    samples.push([Math.round(t), Math.round(box.scrollTop)]);
+    if (t < 1500) { requestAnimationFrame(rec); } else { window.__samples = samples; }
+  }
+  requestAnimationFrame(rec);
+  var count = kind === 'flick' ? 12 : 1;
+  var delta = kind === 'flick' ? 8 : 100;
+  var sent = 0;
+  function send() {
+    box.dispatchEvent(new WheelEvent('wheel', {
+      deltaY: delta, bubbles: true, cancelable: true
+    }));
+    sent += 1;
+    if (sent < count) { setTimeout(send, 12); }
+  }
+  send();
+};
+</script></body></html>""" % _MOMENTUM_JS
+
+queue = ['flick', 'notch']
+results = {}
+
+app = QApplication([])
+view = QWebEngineView()
+view.resize(400, 300)
+view.show()
+page = view.page()
+page.setHtml(PAGE, 'data:text/html,,')
+
+
+def start_next():
+    if not queue:
+        report()
+        return
+    kind = queue.pop(0)
+    page.runJavaScript('window.__samples = null; window.__run(%s)' % json.dumps(kind))
+    poll(kind, time.time() + 8)
+
+
+def poll(kind, deadline):
+    def got(value):
+        text = str(value or '')
+        if text:
+            try:
+                results[kind] = json.loads(text)
+            except ValueError:
+                results[kind] = []
+            QTimer.singleShot(150, start_next)
+        elif time.time() > deadline:
+            results[kind] = []
+            start_next()
+        else:
+            QTimer.singleShot(100, lambda: poll(kind, deadline))
+    page.runJavaScript("window.__samples ? JSON.stringify(window.__samples) : ''", got)
+
+
+def report():
+    for kind in ('flick', 'notch'):
+        samples = results.get(kind) or []
+        print('%s: final=%s' % (kind, samples[-1][1] if samples else -1), flush=True)
+    os._exit(0)
+
+
+page.loadFinished.connect(lambda ok: QTimer.singleShot(500, start_next))
+QTimer.singleShot(60000, report)
+app.exec()
+PY
+	close $fh;
+	my $out = `cd "$root" && PYTHONPATH=desktop QTWEBENGINE_CHROMIUM_FLAGS="--disable-gpu --no-sandbox" timeout 120 xvfb-run -a python3 -u "$script" 2>&1`;
+	my %got = ($out =~ /^(flick|notch): final=([\d.]+)/mg);
+	cmp_ok($got{flick} // 0, '>', 20,
+		'a flick keeps the container moving after the wheel stops');
+	is($got{notch} // -1, 0, 'a single wheel notch does not coast');
 }
 
 done_testing();

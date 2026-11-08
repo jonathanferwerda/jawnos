@@ -344,6 +344,129 @@ _BRIDGE_SHIM_JS = r"""
 """
 
 
+# Coasting after a trackpad flick. Chromium's scroll animator smooths the
+# deltas it is handed, and stops as soon as they stop; the laptop's touchpad is
+# libinput, which has no coasting of its own either. WebKitGTK's view animated a
+# wheel burst for longer, and that is the feel that went missing with the port.
+# So: keep a short velocity from the burst and, once the wheel goes quiet, keep
+# scrolling the container under the pointer with a per-millisecond decay.
+#
+# It is a page script, not a Qt one, because only the page knows which element
+# scrolls (a window's inner div, not the document). The wardrobe's canvases are
+# left alone: clotheslineScroller already glides them ~32x their distance and a
+# second glide would overshoot. A wheel the app handled itself (defaultPrevented
+# at the window, where this listener runs last) is left alone too. JAWNOS_MOMENTUM=0
+# in qt.env turns the whole thing off.
+_MOMENTUM_JS = r"""
+(function () {
+  if (window.__jawnMomentum) { return; }
+  window.__jawnMomentum = true;
+
+  var FRICTION = 0.994;  // share of the velocity kept per millisecond
+  var QUIET = 70;         // ms of no wheel events: the flick has ended
+  var WINDOW = 120;       // ms of history the velocity is read from
+  var MIN_SAMPLES = 3;    // a mouse wheel notch is one or two events
+  var MIN_SPAN = 40;      // ms; a notch is shorter than a flick
+  var MIN_SPEED = 0.06;   // px/ms; a slow drag does not coast
+  var MAX_SPEED = 6;      // px/ms; a sanity cap
+  var MIN_STEP = 0.02;    // px/ms; below this the tail is invisible
+
+  var history = [];
+  var target = null;
+  var quiet = null;
+  var coast = null;       // {el, v, last}
+  var frame = null;
+
+  function scrollerFor(node) {
+    var el = node && node.nodeType === 1 ? node : (node && node.parentElement);
+    while (el && el !== document.body && el !== document.documentElement) {
+      var overflow = window.getComputedStyle(el).overflowY;
+      if (/(auto|scroll|overlay)/.test(overflow) &&
+          el.scrollHeight > el.clientHeight + 1) {
+        return el;
+      }
+      el = el.parentElement;
+    }
+    return document.scrollingElement || document.documentElement;
+  }
+
+  function stop() {
+    if (frame) { cancelAnimationFrame(frame); frame = null; }
+    coast = null;
+  }
+
+  function step(now) {
+    if (!coast) { return; }
+    var dt = now - coast.last;
+    if (dt <= 0) {
+      // The frame's timestamp is its start, which can precede the release.
+      frame = requestAnimationFrame(step);
+      return;
+    }
+    dt = Math.min(dt, 32);
+    coast.last = now;
+    var el = coast.el;
+    var was = el.scrollTop;
+    el.scrollTop = was + coast.v * dt;
+    if (el.scrollTop === was) { stop(); return; }   // the end of the list
+    coast.v *= Math.pow(FRICTION, dt);
+    if (Math.abs(coast.v) < MIN_STEP) { stop(); return; }
+    frame = requestAnimationFrame(step);
+  }
+
+  function release() {
+    quiet = null;
+    var burst = history;
+    history = [];
+    // Same node for every event of a burst unless the pointer moved to
+    // another window mid-flick; the last one is the one being read.
+    target = burst.length ? burst[burst.length - 1][2] : target;
+    if (burst.length < MIN_SAMPLES) { return; }
+    var span = burst[burst.length - 1][0] - burst[0][0];
+    if (span < MIN_SPAN) { return; }
+    var travel = 0;
+    for (var i = 0; i < burst.length; i++) { travel += burst[i][1]; }
+    var v = travel / span;
+    if (!isFinite(v) || Math.abs(v) < MIN_SPEED) { return; }
+    v = Math.max(-MAX_SPEED, Math.min(MAX_SPEED, v));
+    coast = { el: scrollerFor(target), v: v, last: performance.now() };
+    frame = requestAnimationFrame(step);
+  }
+
+  window.addEventListener('wheel', function (e) {
+    var wasCoasting = coast !== null;
+    stop();
+    if (wasCoasting) { history = []; }
+    if (e.ctrlKey || e.defaultPrevented) { history = []; return; }
+    if (e.target && e.target.closest && e.target.closest('.background')) {
+      history = [];
+      return;
+    }
+    var now = performance.now();
+    history.push([now, e.deltaY, e.target]);
+    while (history.length && now - history[0][0] > WINDOW) { history.shift(); }
+    if (quiet !== null) { clearTimeout(quiet); }
+    quiet = setTimeout(release, QUIET);
+  }, { passive: true });
+
+  // Any other input takes the scroll back from the coast, the way a finger on
+  // the pad would.
+  ['mousedown', 'keydown', 'touchstart', 'blur'].forEach(function (name) {
+    window.addEventListener(name, function () {
+      stop();
+      history = [];
+    }, { passive: true });
+  });
+})();
+"""
+
+
+def momentum_enabled():
+    """False when JAWNOS_MOMENTUM=0 (qt.env is read into the environment)."""
+    value = str(os.environ.get("JAWNOS_MOMENTUM", "1")).strip().lower()
+    return value not in ("0", "false", "no", "off")
+
+
 def _webchannel_js():
     """Qt's QWebChannel JavaScript, read from the resource the library ships."""
     try:
@@ -860,6 +983,8 @@ def main(argv=None):
             source += channel_js + "\n"
         source += (_BRIDGE_SHIM_JS + "\n" + bridge.DESKTOP_MARKER_JS + "\n" +
                    bridge.BROWSE_BRIDGE_JS + "\n" + bridge.MEDIA_MONITOR_JS)
+        if momentum_enabled():
+            source += "\n" + _MOMENTUM_JS
         script = QWebEngineScript()
         script.setName("jawnos-bridge")
         script.setSourceCode(source)
