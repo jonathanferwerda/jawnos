@@ -192,6 +192,7 @@ like($notify, qr/device command not delivered/, 'a command neither road carried 
 ok(index($notify, q{($asked || '?') . ' -> ' . ($state || '?')}) >= 0,
 	'a delivered command logs the asked state and the board\'s answer');
 like($notify, qr/\(bridge\)/, 'and the bridge road says so too');
+like($notify, qr/\(http failed\)/, 'a failed own route is logged');
 my $loader = read_file("$root/lib/JawnOS/Domain/Loader.pm");
 like($loader, qr/'JawnOS::Domain::Notify' for qw\([^)]*device_command_lock/,
 	'the loader maps the lock helper');

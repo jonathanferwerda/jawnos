@@ -324,7 +324,13 @@ get '/watch/switch' => sub($c) {
 		my $state = $c->param('state');
 		my $toggle = $c->param('toggle');
 		my $stamp = $c->param('timestamp_ms') || $c->param('timestamp');
-		my $timestamp = &subs::event_time_ms($stamp, &subs::rightNow());
+		my $house_now = &subs::rightNow();
+		my $timestamp = &subs::event_time_ms($stamp, $house_now);
+		# A board's clock can be far off (a 40 s drift recorded a session 40 s in
+		# the past). Keep its stamp to order the movement and claim the flick,
+		# but record the session at the moment the report reached the house when
+		# the two disagree by more than a few seconds.
+		my $press_at = (abs($timestamp - $house_now) <= 10000) ? $timestamp : $house_now;
 		my $room = $c->param('room');
 		# A board that delivered this movement twice must not flip twice. Copies
 		# of one flick share the board's event stamp - only their road and arrival
@@ -353,7 +359,7 @@ get '/watch/switch' => sub($c) {
 		# intermediate is what made the relay click twice and the toggle flash.
 		&subs::setting_setter({ app => $b->{'app'}, setting => 'toggle', value => $state, sync => 1, source_chip_id => $chip_id, timestamp => $timestamp });
 		my $data = {
-			timestamp => $timestamp,
+			timestamp => $press_at,
 			room => $room,
 			watch_settings => $watch_settings,
 			button => $button,

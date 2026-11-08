@@ -69,10 +69,15 @@ like($switch, qr/&subs::event_time_ms\(/, 'the switch route sanitises the stamp'
 my ($button) = $watch =~ /(get '\/watch\/button' => sub\(\$c\) \{.*?\n\};)/s;
 ok($button, 'the button route is still one route');
 like($button, qr/&subs::event_time_ms\(/, 'the button route sanitises the stamp');
+like($switch, qr/my \$press_at = \(abs\(\$timestamp - \$house_now\) <= 10000\) \? \$timestamp : \$house_now;/,
+	'a switch stamp far from the house clock is recorded at receive time');
+like($switch, qr/timestamp => \$press_at,/, 'the session uses that recorded time');
 
 my $ble2 = $read->('lib/JawnOS/Domain/Ble2.pm');
 like($ble2, qr/my \$press_ms = &subs::event_time_ms\(/, 'a bridged button sanitises the stamp');
 like($ble2, qr/my \$sw_ms = &subs::event_time_ms\(/, 'a bridged switch sanitises the stamp');
+like($ble2, qr/my \$press_ms = \(abs\(\$sw_ms - \$house_now\) <= 10000\) \? \$sw_ms : \$house_now;/,
+	'a bridged switch stamp far from the house clock is recorded at receive time');
 like($ble2, qr/type => 'toggles', data => \$chunks->\[0\], timestamp_ms => &subs::rightNow\(\)/, 'the state reply teaches the clock');
 like($ble2, qr/type => 'toggles', data => \$chunk, timestamp_ms => &subs::rightNow\(\)/, 'paged replies too');
 

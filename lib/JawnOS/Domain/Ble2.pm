@@ -455,7 +455,13 @@ sub ble_message_processor {
 		# relay that clicks on and off. Copies share the board's own event stamp,
 		# so claim it in the shared cache - the same claim /watch/switch makes.
 		my $stamp = $payload->{'timestamp_ms'} || $payload->{'timestamp'};
-		my $sw_ms = &subs::event_time_ms($stamp, &subs::rightNow());
+		my $house_now = &subs::rightNow();
+		my $sw_ms = &subs::event_time_ms($stamp, $house_now);
+		# A board's clock can be far off (a 40 s drift recorded a session 40 s in
+		# the past). The raw stamp still orders the movement and claims the
+		# flick; the session itself is recorded at the house's receive time when
+		# the two disagree by more than a few seconds.
+		my $press_ms = (abs($sw_ms - $house_now) <= 10000) ? $sw_ms : $house_now;
 		my $stamped = (defined $stamp && $stamp =~ /^\s*\d+(?:\.\d+)?\s*$/ && $stamp > 0);
 		my $duplicate = $stamped
 			? !&subs::switch_event_fresh($chip_id, $button, $state, $stamp)
@@ -484,7 +490,7 @@ sub ble_message_processor {
 			&subs::setting_setter({ app => $sw_b->{'app'}, setting => 'toggle', value => $sw_toggle, sync => 1, source_chip_id => $sw_chip, timestamp => $sw_ms }) if $sw_b->{'app'};
 			eval {
 				&subs::edt_button_presser({
-					timestamp => $sw_ms,
+					timestamp => $press_ms,
 					room => $sw_payload->{'room'},
 					watch_settings => $sw_ws,
 					button => $sw_button,

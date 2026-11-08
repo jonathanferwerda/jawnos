@@ -287,8 +287,12 @@ sub embedded_toggle($data) {
 		my $number_state = $state eq 'on' ? 1 : ($state eq 'off' ? 0 : $state);
 		# A board holding a /device/ws socket takes the command there. The same
 		# fields the HTTP query below carries ride the frame; the helper answers 0
-		# when no socket is attached, so the HTTP-then-BLE ordering is unchanged.
-		if (&subs::device_ws_command({
+		# when no socket is attached. A successful write is NOT a board ack: a
+		# half-open link, or a peer's cached socket, can swallow it and the board
+		# never clicks. Keep the board's own route below even after a write - the
+		# uuid is the same on both roads, so the board's command manifest drops
+		# the duplicate instead of clicking twice.
+		my $ws_sent = &subs::device_ws_command({
 			chip_id => $chip_id,
 			component => $component,
 			appt_uuid => $appt_uuid,
@@ -298,9 +302,9 @@ sub embedded_toggle($data) {
 			state => $state,
 			timestamp => $timestamp,
 			measure => $measure,
-		})) {
-			return { state => $number_state, formatted_state => $state };
-		}
+		});
+		$log->info('device command: ' . ($chip_id || '?') . ' ' . ($component || '?') . ' '
+			. ($pin // '?') . ' ' . ($state || '?') . ' @' . $timestamp . ' (ws)') if $ws_sent && $log;
 		# A board with a live LAN address answers its own route at once. The
 		# bridge can spend the client's full connect timeout when its link is
 		# asleep, which is the 20-second delay on a relay press. Try HTTP first;
@@ -338,6 +342,9 @@ sub embedded_toggle($data) {
 					select(undef, undef, undef, 0.15);
 					$http_ok = eval { $send_http->() } ? 1 : 0;
 				}
+				$log->info('device command: ' . ($chip_id || '?') . ' ' . ($component || '?') . ' '
+					. ($pin // '?') . ' ' . ($asked // '?') . ' @' . $timestamp
+					. ' (http failed)') if $log && !$http_ok;
 			}
 			if ($http_ok) {
 				# The board's reply is its own state after the command. An asked
@@ -373,7 +380,7 @@ sub embedded_toggle($data) {
 			# reproduction.
 			$log->info('device command not delivered: ' . ($chip_id || '?') . ' '
 				. ($component || '?') . ' asked ' . ($asked || '?') . ' (http='
-				. ($watch_ip ? 'failed' : 'no address') . ')') if $log;
+				. ($watch_ip ? 'failed' : 'no address') . ')') if $log && !$ws_sent;
 		}, { name => 'embedded toggle sender', fork => 1 });
 		return { state => $number_state, formatted_state => $state };
 	}

@@ -206,11 +206,21 @@ subtest 'embedded_toggle falls back when no device socket is attached' => sub {
 		@sender = ();
 		local *subs::device_ws_command = sub { 1 };
 		my $returner = subs::embedded_toggle({ %{$command} });
-		is(scalar @sender, 0, 'a socket takes the command, so HTTP and BLE do not run');
+		is(scalar @sender, 1, 'a socket write still runs the board route as a backstop');
 		is($returner->{'state'}, 1, 'the socket path reports the same state');
 		is($returner->{'formatted_state'}, 'on', 'and the same formatted state');
 	}
 };
+
+# A socket write is not a board ack: a half-open link (or a peer's cached
+# socket) can swallow it. The own-route sender must still run; the shared uuid
+# makes the second copy a no-op on the board.
+my $notify_src = read_file(root() . '/lib/JawnOS/Domain/Notify.pm');
+like($notify_src, qr/my \$ws_sent = &subs::device_ws_command\(\{/, 'the socket write is recorded');
+like($notify_src, qr/\(ws\)/, 'a socket write is logged');
+like($notify_src, qr/if \$log && !\$ws_sent/, 'the not-delivered alarm is suppressed when the socket carried it');
+my $early = () = $notify_src =~ /return \{ state => \$number_state/g;
+is($early, 1, 'a socket write never returns before the board route runs');
 
 subtest 'route row and action agree' => sub {
 	require JawnOS::Routes::manager_ws;
