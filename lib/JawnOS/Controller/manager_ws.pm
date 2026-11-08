@@ -743,6 +743,10 @@ sub action_719 {
 	};
 	$tell_time->();
 	my $clock_timer = Mojo::IOLoop->recurring(120 => sub {
+		# The beat proves the socket is alive, so put the presence mirror back
+		# before telling the time: a relay that cannot see this socket takes the
+		# slow road and the press feels late.
+		&subs::device_ws_touch($chip_id);
 		&subs::device_ws_detach($chip_id) unless $tell_time->();
 	});
 	# The same picture /watch and the BLE bridge build, so a socket connect and a

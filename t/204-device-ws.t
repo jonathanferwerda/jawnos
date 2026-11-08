@@ -206,7 +206,7 @@ subtest 'embedded_toggle falls back when no device socket is attached' => sub {
 		@sender = ();
 		local *subs::device_ws_command = sub { 1 };
 		my $returner = subs::embedded_toggle({ %{$command} });
-		is(scalar @sender, 1, 'a socket write still runs the board route as a backstop');
+		is(scalar @sender, 1, 'a socket write is one sender job, not two');
 		is($returner->{'state'}, 1, 'the socket path reports the same state');
 		is($returner->{'formatted_state'}, 'on', 'and the same formatted state');
 	}
@@ -368,5 +368,42 @@ subtest 'the relay route uses it' => sub {
 	unlike($src, qr/\$sent = &subs::device_ws_send_local\(\$chip_id, \$frame\);/,
 		'and not by the local registry alone');
 };
+
+
+# A socket that has proved itself alive can put its presence mirror back: the file
+# is what another worker or another machine reads to find the socket, and it can
+# be gone while the socket is open (a failed write detaches, a stale finish
+# unlinks, a full /tmp drops the write). Without it a relay takes the slow road.
+{
+	package FakeWsTouch;
+	sub send { return 1 }
+}
+subtest 'the presence mirror heals' => sub {
+	ok(subs::provides('device_ws_touch'), 'the loader maps the touch helper');
+	my $ws = bless {}, 'FakeWsTouch';
+	subs::device_ws_attach({ chip_id => 'touchme', edt => 'microcontroller', ws => $ws });
+	my $file = subs::device_ws_presence_file('touchme');
+	ok(-e $file, 'attaching writes the mirror');
+	unlink $file;
+	ok(!-e $file, 'the mirror can go missing while the socket lives');
+	is(subs::device_ws_touch('touchme'), 1, 'a touch puts it back');
+	ok(-e $file, 'and the mirror is there again');
+	is(subs::device_ws_send_local('touchme', { t => 'cmd' }), 1, 'a frame goes to the socket');
+	unlink $file;
+	is(subs::device_ws_deliver({ message => Mojo::JSON::encode_json({ chip_id => 'touchme', frame => { t => 'cmd' } }) }), 1,
+		'a delivered frame is written');
+	ok(-e $file, 'and that delivery refreshes the mirror too');
+	subs::device_ws_detach('touchme', $ws);
+	is(subs::device_ws_touch('touchme'), 0, 'a chip with no socket has no mirror to write');
+};
+
+# And a delivered write ends the command: the fallback roads are for a board
+# without a socket, not a second attempt at a board that already has the frame.
+my $notify_now = read_file(root() . '/lib/JawnOS/Domain/Notify.pm');
+my $ws_at = index($notify_now, 'my $ws_sent = &subs::device_ws_command({');
+my $stop_at = index($notify_now, 'return if $ws_sent;');
+my $lock_at = index($notify_now, 'my $lock = &subs::device_command_lock($chip_id);');
+ok($ws_at >= 0 && $stop_at > $ws_at && $lock_at > $stop_at,
+	'a socket write returns before the lock and the fallback roads');
 
 done_testing();

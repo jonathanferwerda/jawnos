@@ -326,6 +326,12 @@ sub embedded_toggle($data) {
 			});
 			$log->info('device command: ' . ($chip_id || '?') . ' ' . ($component || '?') . ' '
 				. ($pin // '?') . ' ' . ($state || '?') . ' @' . $timestamp . ' (ws)') if $ws_sent && $log;
+			# The frame went to a socket that is up: the command is done. Running
+			# the HTTP road as well spent the whole per-chip lock on a board that
+			# already had the command, so the press after it queued - the switch's
+			# own BLE set queued with it and a flick went missing. A socket that has
+			# since died detaches itself, and the next press takes the roads below.
+			return if $ws_sent;
 			my $watch = &subs::device_lister($timestamp, $edt, undef, $chip_id);
 			my $watch_ip = (ref $watch eq 'HASH' && $watch->{'ip'}) ? $watch->{'ip'} : $ip;
 			# One command at a time per board. A Pico services one HTTP client, so
@@ -335,7 +341,7 @@ sub embedded_toggle($data) {
 			my $lock = &subs::device_command_lock($chip_id);
 			my $send_http = sub {
 				my $watch_home = 'http://' . $watch_ip . ':' . $config->{'port'} . '/' . $component . '?appt_uuid=' . $appt_uuid . '&uuid=' . $uuid . '&when=' . $when . '&pin=' . $pin . '&state=' . $state . '&component=' . $component . '&authorization=' . $op_d->{'__specs'}->{'authorization'} . '&timestamp=' . $timestamp . '&measure=' . $measure;
-				my $ua = Mojo::UserAgent->new(connect_timeout => 2, inactivity_timeout => 3);
+				my $ua = Mojo::UserAgent->new(connect_timeout => 1, inactivity_timeout => 2);
 				my $res = $ua->insecure(1)->get($watch_home)->result;
 				my $body = eval { $res->result->body };
 				my $rb = $body ? eval { decode_json($body) } : undef;

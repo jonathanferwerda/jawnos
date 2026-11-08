@@ -58,19 +58,30 @@ sub device_ws_attach {
 	# A reconnecting board replaces its old entry; the old socket's finish
 	# handler is guarded by the same ws reference so it cannot drop the new one.
 	$DEVICE_CONN{$chip_id} = $entry;
-	my $file = &device_ws_presence_file($chip_id);
-	if ($file) {
-		my $dir = $file;
-		$dir =~ s{/[^/]+$}{};
-		eval {
-			mkdir $dir unless -d $dir;
-			my %row = map { $_ => $entry->{$_} } qw(chip_id edt ip name since);
-			$row{'pid'} = $$;
-			write_file($file, encode_json(\%row));
-			1;
-		};
-	}
+	&device_ws_touch($chip_id);
 	return $entry;
+}
+
+sub device_ws_touch {
+	# Rewrite the presence mirror for a socket this process holds. The file is how
+	# another worker - or another machine relaying a command - finds the socket, and
+	# it can be gone while the socket is open: a failed write detaches, a stale
+	# finish can unlink the file of a socket that reconnected, and a full /tmp
+	# drops the write silently. A socket that has just proven itself alive (a frame
+	# delivered, a clock beat answered) can put the mirror back.
+	my ($chip_id) = @_;
+	my $entry = $DEVICE_CONN{$chip_id} or return 0;
+	my $file = &device_ws_presence_file($chip_id) or return 0;
+	my $dir = $file;
+	$dir =~ s{/[^/]+$}{};
+	my $ok = eval {
+		mkdir $dir unless -d $dir;
+		my %row = map { $_ => $entry->{$_} } qw(chip_id edt ip name since);
+		$row{'pid'} = $$;
+		write_file($file, encode_json(\%row));
+		1;
+	};
+	return $ok ? 1 : 0;
 }
 
 sub device_ws_detach {
@@ -217,7 +228,11 @@ sub device_ws_deliver {
 	my $chip_id = $message->{'chip_id'} || '';
 	my $frame = $message->{'frame'};
 	return 0 unless length $chip_id && ref $frame eq 'HASH';
-	return &device_ws_send_local($chip_id, $frame);
+	my $sent = &device_ws_send_local($chip_id, $frame);
+	# The frame went, so the socket is there: keep the mirror honest for whoever
+	# looks next (a peer relay, the auto-OTA sweep, the panel).
+	&device_ws_touch($chip_id) if $sent;
+	return $sent;
 }
 
 sub device_ws_relay_hosts {
