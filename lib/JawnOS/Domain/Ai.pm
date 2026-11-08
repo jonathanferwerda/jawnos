@@ -191,7 +191,10 @@ sub whisper_server_stop_orphans {
 		}
 		next unless defined $cmd && length $cmd;
 		$cmd =~ s/\0/ /g;
-		next unless $cmd =~ /whisper-(?:server|tool\.py)/;
+		# The compiled binary is whisper-server; the pip wrapper installs as
+		# whisper_tool.py. Both spell the name differently, and the underscore is
+		# the one this house actually runs (the Gou's server is a wrapper).
+		next unless $cmd =~ /whisper[-_](?:server|tool\.py)/;
 		next unless $cmd =~ /--port\s+\Q$port\E/;
 		kill 'TERM', $pid;
 		$stopped++;

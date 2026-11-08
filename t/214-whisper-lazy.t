@@ -76,6 +76,8 @@ my ($orphans) = $ai =~ /(sub whisper_server_stop_orphans \{.*?\n\})/s;
 ok($orphans, 'Domain::Ai carries whisper_server_stop_orphans');
 like($orphans, qr/\$fields\[1\] eq '1'/,
 	'it takes a server with no parent (PPid 1) and leaves a hand-started one');
+like($orphans, qr/whisper\[-_\]/,
+	'and matches whisper-server and the pip wrapper whisper_tool.py alike');
 like($orphans, qr/--port\\s\+\\Q\$port\\E/,
 	'and only a server on this machine whisper port');
 like($orphans, qr/kill 'TERM', \$pid;/,
