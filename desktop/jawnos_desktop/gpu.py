@@ -1,9 +1,6 @@
 """Graphics setup for the Qt WebEngine shell: keep the embedded GPU in use.
 
-The WebKitGTK shell's rules live in :mod:`webview` because WebKit reads a
-different set of switches, and its Skylake/X11 default is *software* rendering
-(a workaround for WebKit's accelerated backing store). Chromium needs the
-opposite: a blocklisted older GPU must not be left on SwiftShader, and the
+Chromium needs a blocklisted older GPU not to be left on SwiftShader, and the
 raster work belongs on the card so scrolling stays smooth when the machine is
 busy.
 
@@ -31,9 +28,10 @@ Two knobs are set here, both before Qt WebEngine initialises:
 
 Escape hatches, in this order (the real environment always wins):
 
-* ``~/.config/jawnos/webkit.env`` -- its non-``WEBKIT_*`` keys are honoured, so
-  ``JAWNOS_GPU`` and ``LIBVA_DRIVER_NAME`` carry across from the GTK shell. Its
-  ``WEBKIT_*`` switches mean nothing to Chromium and are skipped.
+* ``~/.config/jawnos/webkit.env`` -- kept from the old GTK shell. Only its
+  non-``WEBKIT_*`` keys are honoured, so ``JAWNOS_GPU`` and
+  ``LIBVA_DRIVER_NAME`` still carry across; the ``WEBKIT_*`` switches mean
+  nothing to Chromium and are skipped.
 * ``~/.config/jawnos/qt.env`` -- ``KEY=VALUE`` per line, ``#`` comments; read
   after ``webkit.env``, so it wins.
 * ``JAWNOS_GPU=0`` asks for the software path (``--disable-gpu``); any truthy
@@ -72,8 +70,8 @@ _VA_DRIVER_DIRS = (
 _VA_DRIVER_SUFFIX = "_drv_video.so"
 
 # GPU flags for a working card. Kept conservative: these two are safe on the
-# Mesa drivers and directly address the two things the GTK fixes were about --
-# using the card at all, and keeping raster work off the CPU under load.
+# Mesa drivers and directly address the two things the old workarounds were
+# about -- using the card at all, and keeping raster work off the CPU under load.
 _GPU_FLAGS = ("--ignore-gpu-blocklist", "--enable-gpu-rasterization")
 _SOFTWARE_FLAGS = ("--disable-gpu", "--disable-gpu-compositing")
 

@@ -58,23 +58,22 @@ missing=""
 "$PYTHON" -c 'import dbus' 2>/dev/null || missing="$missing python3-dbus"
 if [ -n "$missing" ]; then
 	echo "install.sh: warning - missing:$missing"
-	echo "  the CLI still works; the dashboard needs PyGObject (python3-gi) and"
-	echo "  the BLE bridge needs python3-dbus. Install them with your package manager."
+	echo "  the CLI still works; the BLE bridge needs PyGObject (python3-gi, for"
+	echo "  its GLib main loop -- not GTK) and python3-dbus. Install them with your"
+	echo "  package manager."
 fi
 if ! command -v bluetoothctl >/dev/null 2>&1; then
 	echo "install.sh: warning - bluez not found; the BLE bridge needs it"
 fi
 fi
 
-# The desktop view (Qt WebEngine, Chromium) and the WebKitGTK fallback view
-# are distro packages. Warn with the exact command; never fail -- the CLI
-# and the dashboard work without either, and video merely decodes in software.
+# The desktop view is Qt WebEngine (Chromium). PySide6 with its QtWebEngine
+# bindings is required: there is no GTK/WebKitGTK fallback any more. Warn with
+# the exact command; the CLI still works without it, but the window will not.
 if [ "$WITH_HEADLESS" -eq 0 ]; then
 os_id=$( . /etc/os-release 2>/dev/null || true; echo "${ID:-}${ID_LIKE:-}" )
-with_qt=1
-"$PYTHON" -c 'import PySide6.QtWebEngineWidgets' 2>/dev/null || with_qt=0
-if [ "$with_qt" -eq 0 ]; then
-	echo "install.sh: the desktop view wants PySide6 Qt WebEngine (WebRTC)."
+if ! "$PYTHON" -c 'import PySide6.QtWebEngineWidgets' 2>/dev/null; then
+	echo "install.sh: warning - the desktop view requires PySide6 with Qt WebEngine."
 	case "$os_id" in
 		*arch*|*manjaro*)
 			echo "  sudo pacman -S pyside6 qt6-webengine qt6-wayland"
@@ -86,51 +85,11 @@ if [ "$with_qt" -eq 0 ]; then
 			echo "  sudo dnf install python3-pyside6 qt6-qtwebengine qt6-qtwayland"
 			;;
 		*)
-			echo "  install PySide6 Qt WebEngine (and the Qt Wayland plugin) with"
-			echo "  your package manager; the app falls back to WebKitGTK without it"
-			echo "  (no WebRTC there)."
+			echo "  install PySide6 Qt WebEngine and the Qt Wayland plugin with your"
+			echo "  package manager. Without them jawnos-desktop exits with an error."
 			;;
 	esac
-fi
-with_view=1
-"$PYTHON" -c 'import gi; gi.require_version("WebKit2", "4.1")' 2>/dev/null || with_view=0
-with_va=0
-if command -v gst-inspect-1.0 >/dev/null 2>&1; then
-	# The *plugin* loading is not enough: without a VA-API driver the "va"
-	# plugin registers zero features, so the old check passed on a build that
-	# could not decode a single frame and video stayed on software decode. Look
-	# for an element WebKit actually uses to decode.
-	if gst-inspect-1.0 vah264dec >/dev/null 2>&1 \
-		|| gst-inspect-1.0 vah265dec >/dev/null 2>&1 \
-		|| gst-inspect-1.0 vaapih264dec >/dev/null 2>&1; then
-		with_va=1
-	fi
-fi
-if [ "$with_view" -eq 0 ] || [ "$with_va" -eq 0 ]; then
-	echo "install.sh: the WebKitGTK fallback view and its video want"
-	echo "  WebKitGTK 4.1 and the GStreamer plugins (including a VA-API plugin):"
-	case "$os_id" in
-		*arch*|*manjaro*)
-			echo "  sudo pacman -S webkit2gtk-4.1 gst-plugins-base gst-plugins-good \\"
-			echo "      gst-plugins-bad gst-plugins-ugly gst-libav intel-media-driver libva-utils"
-			echo "  (intel-media-driver for Gen8+ Intel GPUs; on older Intel use"
-			echo "   libva-intel-driver. Verify with: vainfo)"
-			;;
-		*debian*|*ubuntu*)
-			echo "  sudo apt install gir1.2-webkit2-4.1 gstreamer1.0-plugins-base \\"
-			echo "      gstreamer1.0-plugins-good gstreamer1.0-plugins-bad \\"
-			echo "      gstreamer1.0-plugins-ugly gstreamer1.0-libav gstreamer1.0-vaapi vainfo"
-			;;
-		*fedora*|*rhel*)
-			echo "  sudo dnf install webkit2gtk4.1 gstreamer1-plugins-base \\"
-			echo "      gstreamer1-plugins-good gstreamer1-plugins-bad-free \\"
-			echo "      gstreamer1-plugins-ugly gstreamer1-libav gstreamer1-vaapi"
-			;;
-		*)
-			echo "  install WebKitGTK 4.1, the GStreamer plugin set, and your GPU's"
-			echo "  VA-API plugin (gst-plugin-va / gstreamer1.0-vaapi). See desktop/README.md."
-			;;
-	esac
+	echo "  (jawnos-desktop has no WebKitGTK fallback.)"
 fi
 
 # Chat carries SMS, and a phone's message is full of emoji: without a colour

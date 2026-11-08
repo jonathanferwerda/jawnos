@@ -1,11 +1,10 @@
-# tests-for: desktop/jawnos_desktop/qt_shell.py desktop/jawnos_desktop/qt_panel.py desktop/jawnos_desktop/bridge.py desktop/jawnos_desktop/keepawake.py desktop/jawnos_desktop/gpu.py desktop/jawnos_desktop/theme.py desktop/jawnos_desktop/errorpage.py desktop/jawnos_desktop/core.py desktop/jawnos-desktop desktop/jawnos-qt desktop/wayland/jawnos-session
-# covers:    the Qt WebEngine desktop shell is the default: the same Manager page
-#           in Chromium, which is the engine with WebRTC (Debian's WebKitGTK is
-#           built without RTCPeerConnection), the ticket cookie kept on disk,
-#           microphone/camera grants, the house's own certificate accepted, the
-#           page bridge, supervision, the GTK dashboard's look in the Qt panel
-#           and tray, the GPU flags that keep the embedded card in use, and the
-#           WebKitGTK fallback.
+# tests-for: desktop/jawnos_desktop/qt_shell.py desktop/jawnos_desktop/qt_panel.py desktop/jawnos_desktop/bridge.py desktop/jawnos_desktop/keepawake.py desktop/jawnos_desktop/gpu.py desktop/jawnos_desktop/theme.py desktop/jawnos_desktop/errorpage.py desktop/jawnos_desktop/core.py desktop/jawnos-desktop desktop/jawnos-qt desktop/wayland/jawnos-session desktop/install.sh scripts/jawnos_deps.pl
+# covers:    the Qt WebEngine desktop shell is the only engine: the same Manager
+#           page in Chromium, which is the engine with WebRTC, the ticket cookie
+#           kept on disk, microphone/camera grants, the house's own certificate
+#           accepted, the page bridge, supervision, the control panel's look and
+#           tray, and the GPU flags that keep the embedded card in use. The GTK
+#           dashboard and WebKitGTK view are deleted, not just unreachable.
 
 use strict;
 use warnings;
@@ -26,8 +25,9 @@ my $gpu = read_file("$root/desktop/jawnos_desktop/gpu.py");
 my $theme = read_file("$root/desktop/jawnos_desktop/theme.py");
 my $errpage = read_file("$root/desktop/jawnos_desktop/errorpage.py");
 my $core = read_file("$root/desktop/jawnos_desktop/core.py");
-my $webview = read_file("$root/desktop/jawnos_desktop/webview.py");
 my $entry = read_file("$root/desktop/jawnos-desktop");
+my $install = read_file("$root/desktop/install.sh");
+my $deps = read_file("$root/scripts/jawnos_deps.pl");
 my $session = read_file("$root/desktop/wayland/jawnos-session");
 my $launcher = "$root/desktop/jawnos-qt";
 
@@ -43,24 +43,39 @@ like($qt, qr/createOffer\(\)/, 'and proves it with a real offer');
 like($qt, qr/UNMASKED_RENDERER_WEBGL/,
 	'and reports which renderer paints (software, or the Intel card)');
 like($qt, qr/--probe/, 'the probe is a command-line mode');
-like($qt, qr/def ticket_url/, 'it reads the same stored ticket as the WebKit shell');
+like($qt, qr/def ticket_url/, 'it reads the same stored ticket as always');
 like($qt, qr/def _probe_url/, 'the probe uses a real origin for the bridge');
 like($qt, qr/def manager_url/, 'and derives the manager URL from it');
 
-like($entry, qr/JAWNOS_DESKTOP_ENGINE/, 'the engine can be chosen by environment');
+like($entry, qr/JAWNOS_DESKTOP_ENGINE/, 'the engine can still be chosen by environment');
 like($entry, qr/--engine/, 'and by flag');
-like($entry, qr/return "qt" if _qt_available\(\) else "webkit"/,
-	'Qt is the default, WebKitGTK the fallback');
-like($entry, qr/from jawnos_desktop\.qt_shell import main/, 'Qt is the primary branch');
-like($entry, qr/from jawnos_desktop\.ui import main/, 'WebKitGTK stays reachable');
+like($entry, qr/name in \("", "auto", "default", "qt"\)/,
+	'auto and qt both mean Qt WebEngine');
+like($entry, qr/from jawnos_desktop\.qt_shell import main/, 'Qt is the only branch');
 like($entry, qr/import PySide6\.QtWebEngineWidgets/,
-	'and the choice is made by whether the engine imports');
+	'PySide6 with Qt WebEngine is probed before launch');
 ok(-x $launcher, 'jawnos-qt is directly runnable');
 
-# The engine resolver, without starting a GUI. qt and webkit are deterministic;
-# auto depends on the machine's packages (pinned above in the source).
-my $choose = `cd "$root" && python3 -c 'import runpy; m=runpy.run_path("desktop/jawnos-desktop"); print(m["choose_engine"]("qt"), m["choose_engine"]("webkit"))' 2>&1`;
-like($choose, qr/^qt webkit$/m, 'the resolver honours an explicit engine');
+# The GTK/WebKitGTK path is gone, not merely unreachable.
+ok(!-e "$root/desktop/jawnos_desktop/ui.py", 'the GTK dashboard is deleted');
+ok(!-e "$root/desktop/jawnos_desktop/webview.py", 'the WebKitGTK view is deleted');
+unlike($entry, qr/^\s*(?:from|import)\s+gi\b/m, 'the entry does not import PyGObject');
+unlike($entry, qr/jawnos_desktop\.(?:ui|webview)|from gi\.repository|WebKit2/,
+	'and names no GTK/WebKit module');
+unlike($install, qr/webkit2gtk|gir1\.2-webkit2|gst-inspect|gstreamer1\.0/i,
+	'the installer no longer checks for WebKitGTK or GStreamer packages');
+like($install, qr/requires PySide6 with Qt WebEngine/,
+	'it says the Qt WebEngine view is required');
+unlike($deps, qr/webkit2gtk|have_webkit|gst-inspect|gst-plugin-va/,
+	'the dependency checker no longer offers WebKitGTK or GStreamer');
+
+# The engine resolver, without starting a GUI. Auto and qt are deterministic;
+# an explicit webkit request fails with a message that names the removal.
+my $choose = `cd "$root" && python3 -c 'import runpy; m=runpy.run_path("desktop/jawnos-desktop"); print(m["choose_engine"]("auto"), m["choose_engine"]("qt"))' 2>&1`;
+like($choose, qr/^qt qt$/m, 'the resolver returns Qt for auto and qt');
+my $webkit = `cd "$root" && python3 -c 'import runpy; m=runpy.run_path("desktop/jawnos-desktop"); print(m["choose_engine"]("webkit"))' 2>&1`;
+like($webkit, qr/WebKitGTK engine has been removed/,
+	'and refuses webkit with a clear message');
 
 # The page bridge: the shim the Qt shell installs gives the page the same
 # handlers WebKitGTK registers, and the shared module holds the key and scripts.
@@ -81,9 +96,6 @@ like($bridge, qr/def app_sign_b64/, 'with its signer');
 like($bridge, qr/def browse_launcher/, 'and the Browse launcher');
 like($bridge, qr/BROWSE_BRIDGE_JS/, 'the Browse shim');
 like($bridge, qr/MEDIA_MONITOR_JS/, 'and the media monitor the keep-awake uses');
-like($webview, qr/from \.bridge import/, 'the WebKitGTK shell uses the same bridge');
-unlike($webview, qr/^def _app_public_pem/m,
-	'so the key is not defined twice');
 
 like($qt, qr/def prepare_wayland_env/, 'a Wayland session sets the Qt platform');
 like($qt, qr/--ozone-platform-hint=auto/,
@@ -135,13 +147,15 @@ like($qt, qr/version_mismatch/, 'and the version restart');
 like($qt, qr/permissionRequested/, 'the newer permission signal is handled');
 like($qt, qr/PermissionType/, 'through QWebEnginePermission');
 like($qt, qr/featurePermissionRequested/, 'with the older signal kept as a fallback');
-like($session, qr/--engine webkit/,
-	'the Sway session falls back to WebKitGTK if the Qt shell cannot start');
+unlike($session, qr/--engine webkit|WebKitGTK/,
+	'the Sway session no longer falls back to WebKitGTK');
+like($session, qr/the Qt WebEngine view could not start/,
+	'and reports a failed Qt shell instead of silently dropping to nothing');
 like($qt, qr/from \.qt_panel import ControlPanel/, 'the shell loads the Qt panel');
 like($qt, qr/\("Control panel", show_panel\)/, 'the tray opens it');
 like($qt, qr/admin_opener\["open"\] = show_panel/, 'and the page admin icon does too');
 like($panel, qr/class ControlPanel/, 'the panel is a Qt dialog');
-like($panel, qr/theme\.PANEL_CSS/, 'it carries the GTK dashboard\'s look');
+like($panel, qr/theme\.PANEL_CSS/, 'it carries the desktop\'s shared look');
 like($panel, qr/class StatusDot/, 'with painted status dots, not just coloured text');
 like($panel, qr/core\.jawn_status/, 'and the shared starting/running/stopped rule');
 like($theme, qr/QFrame#card/, 'the cards are rounded on the black ground');
@@ -154,7 +168,7 @@ like($panel, qr/update_available/, 'and the app update');
 unlike($keepawake, qr/import gi|from gi\.repository/, 'the Qt keep-awake does not need PyGObject');
 like($keepawake, qr/systemd-inhibit/, 'it uses logind\'s idle inhibitor');
 
-like($qt, qr/def webkit_localstorage/, 'the shell can read the GTK localStorage store');
+like($qt, qr/def webkit_localstorage/, 'the shell can read the legacy WebKit localStorage store');
 like($qt, qr/def device_seed_js/, 'and carries the desktop device identity across');
 like($qt, qr/__jawn_device_seeded/, 'seeding it once per profile');
 like($qt, qr/__jawn_qt_migrated/, 'the migration is marked, so later Qt changes are kept');
@@ -183,13 +197,13 @@ PYINNER
 	close $fh;
 	system("python3", $fixture, $db) == 0 or die "fixture failed";
 	my $out = `cd "$root" && PYTHONPATH=desktop python3 -c 'import json,sys; from jawnos_desktop.qt_shell import webkit_localstorage; p,d = webkit_localstorage("127.0.0.1", 45545, base=sys.argv[1]); print(json.dumps(d))' "$tmp/base" 2>&1`;
-	like($out, qr/"layout": "desk"/, 'the reader returns the GTK layout key');
+	like($out, qr/"layout": "desk"/, 'the reader returns the legacy layout key');
 	like($out, qr/background_images/, 'and the background list');
 	like($out, qr/"device_uuid": "keep-me"/, 'and the desktop device identity');
 	unlike($out, qr/browser_tab/, 'but not the live tab id');
 	my $seed = `cd "$root" && PYTHONPATH=desktop python3 -c 'import sys; from jawnos_desktop.qt_shell import device_seed_js; print(device_seed_js("127.0.0.1", 45545, base=sys.argv[1]))' "$tmp/base" 2>&1`;
 	like($seed, qr/__jawn_device_seeded/, 'the seed runs only once');
-	like($seed, qr/keep-me/, 'and writes the WebKit device identity');
+	like($seed, qr/keep-me/, 'and writes the legacy device identity');
 }
 
 # The real engine, when this machine has it. A machine without the PySide6
@@ -217,8 +231,8 @@ SKIP: {
 		'a real (origin-checked) action does not crash the handler');
 }
 
-# The panel itself, built without a display. It reads the same core as the
-# GTK dashboard; the controls are the panel's own.
+# The panel itself, built without a display. It reads the shared core; the
+# controls are the panel's own.
 my $panel_run = `cd "$root" && QT_QPA_PLATFORM=offscreen PYTHONPATH=desktop python3 -c 'from PySide6.QtWidgets import QApplication; from jawnos_desktop.qt_panel import ControlPanel; app=QApplication([]); p=ControlPanel({"jawn_dir":"/tmp","ble_with_jawn":True},{"show_view":lambda:None,"show_log":lambda:None,"restart":lambda:None}); print("panel-ok", p.windowTitle())' 2>&1`;
 SKIP: {
 	skip 'the PySide6 panel cannot be built here', 1
@@ -265,6 +279,22 @@ like($core, qr/mark_start_requested\(\)/, 'a start marks the clock');
 like($core, qr/def restart_jawn[^\n]*\n(?:.*\n)*?\s+mark_start_requested\(\)/,
 	'and a restart marks it before the stop, so it never flashes red');
 like($core, qr/clear_start_requested\(\)/, 'a deliberate stop clears it');
+
+# The self-update marker moved off the deleted GTK dashboard: a repo desktop
+# tree counts only when it has the Qt shell.
+my $ready = `cd "$root" && PYTHONPATH=desktop python3 -c '
+import os, tempfile
+from jawnos_desktop import core
+d = tempfile.mkdtemp()
+os.makedirs(os.path.join(d, "desktop", "jawnos_desktop"))
+print(core.repo_desktop_ready({"jawn_dir": d}))
+open(os.path.join(d, "desktop", "jawnos_desktop", "ui.py"), "w").close()
+print(core.repo_desktop_ready({"jawn_dir": d}))
+open(os.path.join(d, "desktop", "jawnos_desktop", "qt_shell.py"), "w").close()
+print(core.repo_desktop_ready({"jawn_dir": d}))
+' 2>&1`;
+like($ready, qr/^False\nFalse\nTrue$/m,
+	'the repo-desktop marker is qt_shell.py, not the deleted ui.py');
 
 # The tray badge: one icon per tone, built and cached, distinct by colour.
 my $icons = `cd "$root" && QT_QPA_PLATFORM=offscreen PYTHONPATH=desktop python3 -c 'from PySide6.QtWidgets import QApplication; from jawnos_desktop.qt_shell import tray_icon; from jawnos_desktop import theme; app=QApplication([]); xs=[tray_icon("desktop/icons/jawnos.png", c) for c in (theme.GREEN, theme.AMBER, theme.RED)]; print("icons-ok", len(xs), xs[0] is tray_icon("desktop/icons/jawnos.png", theme.GREEN), all(not x.isNull() for x in xs))' 2>&1`;

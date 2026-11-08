@@ -38,6 +38,10 @@ like($unit, qr/^Restart=always$/m, 'systemd restarts the watcher itself');
 like($unit, qr/^KillMode=process$/m, 'stopping the watcher leaves the tree running');
 like($install, qr/for unit in jawnos-bt jawnos jawnos-watch/, 'the installer writes the watcher unit');
 like($install, qr/enable --now jawnos-watch\.service/, 'and enables it');
+like($install, qr/requires PySide6 with Qt WebEngine/,
+	'the installer names Qt WebEngine as the one desktop engine');
+unlike($install, qr/webkit2gtk|gst-inspect-1\.0|gstreamer1\.0/,
+	'and no longer checks for WebKitGTK or the GStreamer stack');
 
 # desktop/mkosi is the image build tree. A build can leave root-owned .stage or
 # output files there; copying the whole desktop aborted the table's install on

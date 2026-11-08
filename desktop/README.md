@@ -12,19 +12,17 @@ normal Linux desktop.
    against it with no changes.
 
 It runs on any distribution: the only requirements are `python3`, BlueZ, and —
-for the GUI — PySide6 with **Qt WebEngine** (Chromium: the default view, the
-separate **Browse** window, and the engine with WebRTC). The **WebKitGTK**
-fallback (used when PySide6 is not installed) also wants WebKitGTK 4.1 and the
-GStreamer plugin set with a VA-API plugin; Chat's SMS emoji want a colour emoji
-font (Noto Color Emoji). The GTK dashboard uses GTK 3 (`python3-gi`).
-Everything is per-user; nothing needs root.
+for the GUI — PySide6 with **Qt WebEngine** (Chromium: the manager view, the
+separate **Browse** window, and the session bar). Qt WebEngine is the only
+engine and has WebRTC. Chat's SMS emoji want a colour emoji font (Noto Color
+Emoji). Everything is per-user; nothing needs root.
 
 ## Layout
 
 ```
 desktop/
   jawnosctl              the command line (start/stop/status/log/ble/…)
-  jawnos-desktop         the desktop window (Qt WebEngine; WebKitGTK fallback)
+  jawnos-desktop         the desktop window (Qt WebEngine)
   jawnos-qt              the Qt WebEngine view directly
   jawnos-browse          the native Browse window (Qt WebEngine)
   jawnos-bt-daemon       the BLE bridge daemon (127.0.0.1:45999)
@@ -33,10 +31,9 @@ desktop/
     bridge.py            the toolkit-neutral page bridge (app key, scripts)
     ble.py               the BlueZ BLE bridge
     cli.py               jawnosctl
-    qt_shell.py          the default JawnOS view (Qt WebEngine / Chromium)
+    qt_shell.py          the JawnOS view (Qt WebEngine / Chromium)
     browser.py           the Browse window (Qt WebEngine, own profile)
-    ui.py                the GTK dashboard and WebKitGTK fallback view
-    webview.py           the WebKitGTK view shared by the fallback
+    shell.py             the session bar (Qt)
     secrets.py           encrypted storage for the login ticket
   systemd/               optional systemd --user units
   udev/                  the all-input rule for the desk
@@ -94,24 +91,12 @@ The default desktop view is **Qt WebEngine** (Chromium). Install it first:
 | Fedora | `python3-pyside6` `qt6-qtwebengine` `qt6-qtwayland` |
 
 `qt6-wayland` is the Qt Wayland platform plugin; a Sway session has no X server
-to fall back to. Without the Qt view the app starts the **WebKitGTK fallback**
-(no WebRTC) when that is installed, and `--engine webkit` selects it
-explicitly.
+to fall back to. PySide6 with Qt WebEngine is **required**: `jawnos-desktop`
+exits with an error and the package hint when it cannot import it. There is no
+WebKitGTK fallback.
 
-The WebKitGTK fallback also wants WebKitGTK and GStreamer (the base table
-alone will not play video well in it — see
-[Media and video](#media-and-video)):
-
-| Distro | WebKitGTK fallback + media |
-|---|---|
-| Arch / Manjaro | `webkit2gtk-4.1` `gst-plugins-base` `gst-plugins-good` `gst-plugins-bad` `gst-plugins-ugly` `gst-libav` `libva-utils` |
-| Debian / Ubuntu | `gir1.2-webkit2-4.1` `gstreamer1.0-plugins-base` `gstreamer1.0-plugins-good` `gstreamer1.0-plugins-bad` `gstreamer1.0-plugins-ugly` `gstreamer1.0-libav` `gstreamer1.0-vaapi` `vainfo` |
-| Fedora | `webkit2gtk4.1` `gstreamer1-plugins-base` `gstreamer1-plugins-good` `gstreamer1-plugins-bad-free` `gstreamer1-plugins-ugly` `gstreamer1-libav` `gstreamer1-vaapi` |
-
-`install.sh` checks for the Qt view and for these fallback/media packages, and
-prints the right command for your distro if they are missing. On Arch the
-VA-API plugin used to be a separate `gst-plugin-va` package; on current Arch it
-ships inside `gst-plugins-bad`.
+`install.sh` checks for the Qt view and prints the right command for your
+distro if it is missing.
 
 Chat relays SMS through the phone, so its emoji are part of the conversation.
 If the system has no colour emoji font, every emoji draws as a blank box:
@@ -217,8 +202,8 @@ from the machine itself), so it reports the running version, uptime and peer
 count, not merely that a port is open. The same data is a JSON read at
 `/manager/health` and a plain page at `/manager/health/page`.
 
-No GUI packages are needed — no PySide6, PyGObject, WebKitGTK or GStreamer;
-`python3` alone runs the CLI. The unit itself needs no Python at all.
+No GUI packages are needed — no PySide6 or PyGObject; `python3` alone runs the
+CLI. The unit itself needs no Python at all.
 
 ## Using it
 
@@ -316,49 +301,20 @@ behaviour is unchanged.
 
 ## Media and video
 
-The default Qt WebEngine view decodes media through **Chromium's** own media
-stack (FFmpeg + VA-API), so its video quality follows Chromium and the GPU
-driver rather than GStreamer. The **WebKitGTK fallback** still decodes through
-system **GStreamer**; the rest of this section is for it:
+Qt WebEngine decodes media through **Chromium's** own media stack (FFmpeg +
+VA-API), so video quality follows Chromium and the GPU driver. There is no
+WebKitGTK/GStreamer path any more. Hardware decode needs the VA-API driver for
+your GPU (the table below); without one, video decodes on the CPU and the rest
+of the view still uses the card.
 
-* Install the full plugin set listed above (`gst-plugins-base/good/bad/ugly` and
-  `gst-libav`). Without them WebKit has only a software h264 decoder and HD video
-  is choppy.
-* Install the **VA-API plugin** (`gstreamer1.0-vaapi`, or the `va` plugin that
-  ships inside `gst-plugins-bad` on newer GStreamer) so decode happens on the
-  GPU. That is the single biggest win.
-* It *also* needs the driver for your GPU (`intel-media-driver` or
-  `libva-intel-driver` on Arch; `intel-media-va-driver-non-free` or
-  `i965-va-driver` on Debian). Without a driver the plugin loads but registers
-  **zero** elements, so video quietly stays on software decode — this is the
-  usual reason a machine still stutters after the plugin is installed.
-* Confirm with `gst-inspect-1.0 vah264dec` (the element WebKit actually uses),
-  not just `gst-inspect-1.0 va` — the latter succeeds even on a plugin that
-  offers nothing, and `vainfo` should list H264/HEVC profiles.
-
-On Arch/Manjaro the plugin ships inside `gst-plugins-bad`, which must be
-installed *with* the rest of the `gst-*` stack (they pin each other exactly, so
-a lone install is refused — upgrade them together):
-
-```sh
-sudo pacman -S gst-plugins-base gst-plugins-good gst-plugins-bad \
-  gst-plugins-ugly gst-libav
-```
-
-(An older Arch split the plugin into a `gst-plugin-va` package; that no longer
-exists.)
-
-If video is still not right in the WebKitGTK fallback, the renderer
-can be tuned without touching code: write `KEY=VALUE` lines to
-`~/.config/jawnos/webkit.env` (WebKit reads them at startup — the real
-environment wins over the file). The Qt view has Chromium's own GPU path, and
-reads only that file's non-`WEBKIT_*` keys (see below).
+`~/.config/jawnos/webkit.env` is kept as an escape hatch from the old GTK
+shell: Chromium reads only its non-`WEBKIT_*` keys (`JAWNOS_GPU`,
+`LIBVA_DRIVER_NAME`), and the `WEBKIT_*` switches are ignored.
 
 ### GPU on the Qt view
 
-The Qt shell keeps the card in the render path instead of working around it: the
-GTK Skylake/X11 software fallback above exists for a WebKitGTK bug and is
-deliberately not ported. Before the `QApplication` exists it sets
+The Qt shell keeps the card in the render path. Before the `QApplication`
+exists it sets
 
 ```sh
 LIBVA_DRIVER_NAME=<the card's driver>
@@ -406,91 +362,23 @@ comments; the real environment always wins). `JAWNOS_GPU=0` there asks for the
 software path (`--disable-gpu --disable-gpu-compositing`), and any extra
 Chromium flag can be added with `QTWEBENGINE_CHROMIUM_FLAGS=...`. `webkit.env`'s
 non-`WEBKIT_*` keys are honoured too, so `JAWNOS_GPU` and `LIBVA_DRIVER_NAME`
-carry across from the GTK shell; its `WEBKIT_*` switches mean nothing to
-Chromium and are skipped.
+still work there; its `WEBKIT_*` switches mean nothing to Chromium and are
+skipped.
 
-### Screen distortion on X11 (WebKitGTK fallback)
+## Desktop engine: Qt WebEngine
 
-The view asks WebKit for acceleration **on demand**, but WebKitGTK 2.52 marks
-that policy deprecated and ignores it: the view is always GPU-composited. On an
-**X11 session with an Intel Skylake GPU** — the table's HD 530 — the accelerated
-backing store corrupts the window as soon as another program forces a redraw,
-and the corruption remains until the app is restarted. Running the studio (its
-meters and track canvases repaint continuously) triggers the same thing.
-
-Before the first WebView is made, the app now detects that combination and sets
-the software path:
-
-```sh
-WEBKIT_DISABLE_COMPOSITING_MODE=1
-WEBKIT_SKIA_ENABLE_CPU_RENDERING=1
-```
-
-Video still decodes through GStreamer; only compositing/repaint is software.
-To keep GPU rendering on such a machine anyway, put `JAWNOS_GPU=1` in
-`~/.config/jawnos/webkit.env`. That is a real opt-in: it cancels the app's
-Skylake/X11 default **and** the software switches a live image's `webkit.env`
-sets (see below). A variable exported in the actual environment still wins and
-is never dropped.
-
-The same file remains the escape hatch for other drivers. Force the software
-path on any machine with:
-
-```sh
-mkdir -p ~/.config/jawnos
-echo 'WEBKIT_DISABLE_COMPOSITING_MODE=1' > ~/.config/jawnos/webkit.env
-```
-
-`WEBKIT_DISABLE_DMABUF_RENDERER=1` is the other knob worth trying on a driver
-that mishandles the DMA-BUF renderer.
-
-### The live image and virtual displays
-
-The live image ships `~/.config/jawnos/webkit.env` with the whole software path
-on, because QEMU's virtio-gpu (and a simple framebuffer) renders a blank white
-view through WebKit's GPU paths:
-
-```sh
-WEBKIT_DISABLE_COMPOSITING_MODE=1
-WEBKIT_DISABLE_DMABUF_RENDERER=1
-WEBKIT_SKIA_ENABLE_CPU_RENDERING=1
-```
-
-Those three are WebKitGTK 2.52's complete software-renderer set; the library
-reads them when it initialises, so the app applies the file (and its own
-defaults) before it imports WebKit. The non-composited view repaints through
-GTK damage regions, and on a virtual display a resize could leave a stale
-horizontal band because the newly exposed area was never marked damaged. The
-view therefore asks for a whole-widget repaint on every `size-allocate`, on
-`map`, after a page load, and when GDK reports that the monitor layout changed.
-The GPU path is untouched: the compositor presents whole frames and the extra
-repaint is not scheduled.
-
-Resizing the QEMU window is a host-side operation: the display backend scales
-or letterboxes the guest framebuffer in the window; it does not change the
-guest's output mode (only a display protocol with a resize agent, such as SPICE
-with its guest agent, can do that). Sway reflows a fullscreen window whenever
-the guest output itself changes size, and the embedded view follows that
-allocation, but no guest-side code can make a host-window drag change the page
-viewport. mkosi 27 boots the image with `-device virtio-vga` (EDID on by
-default) and `-display sdl,gl=on`.
-
-## Desktop engine: Qt WebEngine (default)
-
-The default desktop shell is **Qt WebEngine** (Chromium), because it has the
-reference WebRTC implementation: the chat and the screening's Connect me need
-`RTCPeerConnection`, and Debian's WebKitGTK build is compiled without it. It is
-also the engine family Android's WebView already uses. Install it:
+The desktop shell is **Qt WebEngine** (Chromium), the only engine: it has the
+reference WebRTC implementation the chat and the screening's Connect me need,
+and it is the engine family Android's WebView already uses. Install it:
 
     sudo pacman -S pyside6 qt6-webengine qt6-wayland        # Arch
     sudo apt install python3-pyside6.qtwebenginewidgets    # Debian 13
-    ./jawnos-desktop                  # Qt, WebKitGTK if Qt is absent
-    ./jawnos-desktop --engine qt      # require Qt (no fallback)
-    ./jawnos-desktop --engine webkit  # the GTK dashboard and WebKit view
+    ./jawnos-desktop                  # Qt WebEngine
+    ./jawnos-desktop --engine qt      # explicit (auto is the default)
     ./desktop/jawnos-qt --url https://<house>:3000/manager
     ./desktop/jawnos-qt --probe       # WebRTC, media and bridge support
 
-It uses the same stored ticket as the WebKit shell: loading the ticket URL
+It uses the same stored ticket as always: loading the ticket URL
 mints the session cookie, and the shell then loads the Manager on that host.
 The profile (`~/.config/jawnos/qt-webengine`) keeps the cookie across launches.
 Certificate errors are accepted for the house's self-signed certificate, and
@@ -509,8 +397,8 @@ handles F11 and a page's own fullscreen request. On Sway it points Qt and
 Chromium at Wayland (`QT_QPA_PLATFORM=wayland`, `--ozone-platform-hint=auto`)
 unless those are already set.
 
-On the first Qt run it copies the GTK shell's page layout out of WebKit's
-per-origin store (`~/.local/share/jawnos-desktop/localstorage/https_<host>_<port>.localstorage`)
+On the first Qt run it copies the removed GTK shell's page layout out of
+WebKit's per-origin store (`~/.local/share/jawnos-desktop/localstorage/https_<host>_<port>.localstorage`)
 into the Qt profile - `layout`, `background_images`, `dock_icons`,
 `window_places` and the rest - once, marked so later Qt changes are kept. The
 live tab id is deliberately not copied. `device_uuid` is: it is this machine's
@@ -520,20 +408,19 @@ seeded once at document start (`__jawn_device_seeded`). The window geometry,
 maximized and fullscreen state come from `~/.config/jawnos/desktop.json` and are
 written back on close.
 
-A fresh profile still lands on the padlock Gate (the WebKit shell does too).
-The **Qt control panel** is the admin window now: the tray's **Control panel**
-item, or the page's start-menu admin icon. It carries the GTK dashboard's
-controls (tailnet start/stop, the BLE autostart setting, ticket import, the
-app update, the log) in the GTK dashboard's look — black ground, rounded cards
-with upper-case section headers, the jawn yellow for the primary action, and a
-coloured dot beside each live status line — so it reads like the Android
-dashboard. The tray badge carries the same state dot: green running, amber
-starting/restarting, red stopped. Its menu has no browser item; **Open in
-browser** stays a button in the panel's Open card. `--engine webkit` still
-starts the old GTK dashboard as a fallback for one release; the remaining
-GTK-only program is the BLE daemon. The Arch live image installs
+A fresh profile still lands on the padlock Gate. The **Qt control panel** is
+the admin window: the tray's **Control panel** item, or the page's start-menu
+admin icon. It carries the supervisor's controls (tailnet start/stop, the BLE
+autostart setting, ticket import, the app update, the log) in the desktop's
+look — black ground, rounded cards with upper-case section headers, the jawn
+yellow for the primary action, and a coloured dot beside each live status line —
+so it reads like the Android dashboard. The tray badge carries the same state
+dot: green running, amber starting/restarting, red stopped. Its menu has no
+browser item; **Open in browser** stays a button in the panel's Open card.
+PySide6 with Qt WebEngine is a hard requirement; the only remaining PyGObject
+use is the BLE daemon's GLib main loop (not GTK). The Arch live image installs
 `pyside6`, `qt6-webengine`, `qt6-wayland` and `layer-shell-qt`
-(`desktop/mkosi/mkosi.conf`); WebKitGTK stays for the fallback.
+(`desktop/mkosi/mkosi.conf`).
 
 The **session bar** (`desktop/jawnos-shell`, `jawnos_desktop/shell.py`) is Qt
 too. On Wayland it takes the same wlr-layer-shell top layer, top/left/right
@@ -545,8 +432,8 @@ falls back to a frameless always-on-top window: on Sway it asks `swaymsg` to
 float it at 0,0, size it to the output and make it sticky (lowering Sway's
 floating minimum height when the bar is shorter than 50px). That overlays
 windows instead of reserving an exclusive zone, and a fullscreen window covers
-it. On the layer-shell path the GTK bar's exclusive zone is unchanged, so a
-fullscreen JawnOS window still has the bar over it, exactly as before.
+it. On the layer-shell path the exclusive zone is unchanged, so a fullscreen
+JawnOS window still has the bar over it.
 
 ## Browse window
 
@@ -560,7 +447,7 @@ Alt+Home; Esc leaves bug mode, closes find, or stops a load).
 
 It keeps a **separate, named profile** — `QWebEngineProfile("jawnos-browse")`
 under `~/.config/jawnos/browse-webengine` — so its cookies are never the
-manager view's (`jawnos`) or the GTK shell's. That is what makes Browse
+manager view's (`jawnos`). That is what makes Browse
 independent: signing into a site there does not touch the manager session. The
 window accepts the house's self-signed certificate (the same exception the Qt
 shell makes) and grants microphone/camera capture; other permissions are

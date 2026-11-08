@@ -27,9 +27,8 @@ normal window, and give the session its own bar:
 | a top navbar **over** Zed's window | `jawnos-shell` sits in the layer-shell `top` layer, above normal windows, with an exclusive zone |
 | drag Zed around the desktop | `for_window … floating enable` — Sway drags floating windows |
 
-That is **JawnOS's own bar**, not waybar's. It is a small GTK app
-(`desktop/jawnos_desktop/shell.py`), not a change to the web UI; `waybar.conf`
-is kept only as a fallback.
+That is **JawnOS's own bar**, not waybar's. It is a small Qt app
+(`desktop/jawnos_desktop/shell.py`), not a change to the web UI.
 
 ## The machine: HP ProDesk/EliteDesk G3, i5-6500T
 
@@ -51,17 +50,15 @@ Boot is off (or sign the kernel) before installing.
 sudo pacman -S mesa vulkan-intel intel-media-driver libva-utils
 
 # the session
-sudo pacman -S sway swaybg swayidle swaylock gtk-layer-shell \
+sudo pacman -S sway swaybg swayidle swaylock layer-shell-qt \
   foot fuzzel mako wl-clipboard grim slurp \
   xdg-desktop-portal-wlr polkit-gnome wireplumber pipewire
 # optional: now-playing in the bar
 sudo pacman -S playerctl
-# fallback only: waybar (jawnos-shell replaced it as the session bar)
-# sudo pacman -S waybar
 
-# JawnOS's own deps (server + the desktop app's view and media)
+# JawnOS's own deps (server + the Qt desktop view)
 sudo pacman -S python-gobject python-dbus pyside6 qt6-webengine qt6-wayland \
-  webkit2gtk-4.1 bluez bluez-utils
+  bluez bluez-utils
 # then:  perl scripts/jawnos_deps.pl --desktop
 
 # the editor
@@ -73,7 +70,6 @@ sudo pacman -S zed
 | File | Goes to | What it does |
 |---|---|---|
 | `sway.conf` | `~/.config/sway/config` | floats Zed/foot/Nautilus, leaves the manager an ordinary tiled window, keybinds, starts the session and the bar |
-| `waybar.conf` | anywhere (`waybar -c …`) | legacy fallback bar; `sway.conf` no longer starts it |
 | `jawnos-session` | run from `sway.conf`'s `exec` | starts jawn (and the BLE bridge), waits for the port, then opens the view |
 | `../jawnos-shell` | run from `sway.conf`'s `exec` | the JawnOS session bar (launcher, workspaces, focused app, today's app time, clock, optional now-playing) |
 | `../jawnos_desktop/shell.py` | imported by `jawnos-shell` | the bar's implementation |
@@ -82,12 +78,12 @@ Adjust the `~/jawnos` paths in `sway.conf` to wherever the tree lives on the box
 
 ## The session bar (`jawnos-shell`)
 
-`sway.conf` starts the bar instead of waybar. It is a GTK 3 panel in the
+`sway.conf` starts the bar. It is a Qt panel in the
 wlr-layer-shell `top` layer with an exclusive zone, so tiled windows stop at its
 lower edge instead of sliding under it. Left to right:
 
-- **Jawn** — runs `fuzzel`; if fuzzel is not installed it opens a plain GTK
-  command entry instead.
+- **Jawn** — runs `fuzzel`; if fuzzel is not installed it opens a Qt command
+  entry instead.
 - **Workspace buttons** — read from `swaymsg -t get_workspaces`; a click runs
   `swaymsg workspace <name>`.
 - **Focused app** — icon and name from Sway's tree (`app_id`, else the X11
@@ -100,26 +96,25 @@ lower edge instead of sliding under it. Left to right:
 - **Clock and date**.
 
 All slow work (the Sway event subscription, the periodic Sway read, the manager
-request and playerctl) runs on daemon threads and hands results to GTK through
-`GLib.idle_add`, so the bar never blocks its main loop and never busy-waits.
+request and playerctl) runs on daemon threads and hands results to Qt through
+queued signals, so the bar never blocks its main loop and never busy-waits.
 `swaymsg`, `playerctl` and the manager are each optional: a missing tool
 removes its widget or leaves it empty, and the bar keeps running. `swayidle` is
 not used by the bar itself; it is the optional session idle/lock timer.
 
-If the `GtkLayerShell` typelib is absent the bar falls back to an undecorated
-window (a dock on X11) and logs the reason. On Wayland that fallback cannot
-reserve screen space, so Sway will simply tile it; the fix is the
-`gtk-layer-shell` package, not a config change:
+If the `libLayerShellQtInterface` library is absent the bar falls back to an
+undecorated window (a dock on X11) and logs the reason. On Wayland that fallback
+cannot reserve screen space, so Sway will simply tile it; the fix is the
+`layer-shell-qt` package, not a config change:
 
 ```sh
-sudo pacman -S gtk-layer-shell
+sudo pacman -S layer-shell-qt
 ```
 
-The mkosi image's package list (`desktop/mkosi/mkosi.conf`) predates the bar:
-add **`gtk-layer-shell`** there before the next image build, plus **`playerctl`**
-if now-playing is wanted. `swayidle` and `swaylock` are likewise absent from that
-list in this tree, so idle lock/DPMS is a config comment in `sway.conf` until
-they are added. `waybar` is still in the image list but is no longer started.
+The mkosi image's package list (`desktop/mkosi/mkosi.conf`) already carries
+**`layer-shell-qt`**. Add **`playerctl`** there if now-playing is wanted;
+`swayidle` and `swaylock` are likewise absent from that list in this tree, so
+idle lock/DPMS is a config comment in `sway.conf` until they are added.
 
 **The manager is no longer fullscreen.** `sway.conf` used to carry
 `for_window [app_id="^(jawnos|jawnos-desktop)$"] fullscreen enable`, which made the
@@ -169,7 +164,7 @@ read-only live system forgets it all on reboot. For a real test box, install:
    `exec sway`.
 
 `bootstrap.sh` installs the graphics/session packages, the app's and server's
-deps, Zed, the app itself, and the sway/waybar config. It touches nothing about
+deps, Zed, the app itself, and the sway config. It touches nothing about
 the disk layout, the bootloader, or auto-login.
 
 ### B. A custom live ISO (archiso)
@@ -182,7 +177,7 @@ it:
 sudo pacman -S archiso
 cp -r /usr/share/archiso/configs/releng ~/jawnos-iso
 # 1. append the packages listed under "Packages" above to packages.x86_64
-# 2. copy an overlay into airootfs/: this repo's sway/waybar configs and the
+# 2. copy an overlay into airootfs/: this repo's sway config and the
 #    session script, plus a ~/.bash_profile that execs sway on tty1
 # 3. autologin: airootfs/etc/systemd/system/getty@tty1.service.d/autologin.conf
 sudo mkarchiso -v -w ~/jawnos-work -o ~/out ~/jawnos-iso
@@ -196,7 +191,7 @@ Caveats specific to JawnOS:
   `airootfs/`.
 - With no baked-in config, the first run still needs the setup wizard — so a
   live ISO is best for a **demo of the shell**, not a daily driver.
-- Size: Qt WebEngine + WebKitGTK + GStreamer + Zed put it around **3–5 GB**.
+- Size: Qt WebEngine + Zed put it around **2–4 GB**.
 
 ### Either way
 
@@ -207,7 +202,7 @@ Caveats specific to JawnOS:
 
 ## What is still open
 
-1. **JawnOS's own bar** is now `desktop/jawnos-shell` (see above): a GTK 3
+1. **JawnOS's own bar** is now `desktop/jawnos-shell` (see above): a Qt
    layer-shell panel with the launcher, workspaces, focused app, today's app time
    and clock. It is native chrome, not the DOM; item 2 is what would bring the
    window list into the HTML taskbar.

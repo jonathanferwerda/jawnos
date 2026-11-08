@@ -10,10 +10,10 @@ two things on a desktop:
     jawnos_desktop.cli    the ``jawnosctl`` command line
     jawnos_desktop.qt_shell  the default ``jawnos-desktop`` view (Qt WebEngine)
     jawnos_desktop.qt_panel  the Qt control panel (the admin window)
-    jawnos_desktop.ui     the WebKitGTK dashboard and fallback view
+    jawnos_desktop.shell  the Qt session bar
 
-Only ``core`` and ``bridge`` are meant to be portable; ``ble`` and ``ui`` are
-Linux-specific.
+Only ``core`` and ``bridge`` are meant to be portable; ``ble``, ``qt_shell``
+and ``shell`` are Linux-specific.
 """
 
 import os
@@ -25,4 +25,4 @@ PKG_DIR = os.path.dirname(os.path.abspath(__file__))
 # .../desktop/
 DESKTOP_DIR = os.path.dirname(PKG_DIR)
 
-__all__ = ["core", "bridge", "ble", "cli", "ui", "qt_shell", "qt_panel", "__version__", "PKG_DIR", "DESKTOP_DIR"]
+__all__ = ["core", "bridge", "ble", "cli", "qt_shell", "qt_panel", "shell", "__version__", "PKG_DIR", "DESKTOP_DIR"]

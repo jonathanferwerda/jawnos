@@ -8,9 +8,9 @@
 #   perl scripts/jawnos_deps.pl --sh       # print the install commands as a shell script
 #   perl scripts/jawnos_deps.pl --install  # install without prompting
 #   perl scripts/jawnos_deps.pl --desktop  # also check/install the desktop app's
-#                                          # WebKitGTK + GStreamer media packages
-#                                          # and a colour emoji font (optional:
-#                                          # their absence is not fatal)
+#                                          # Qt WebEngine view and a colour emoji
+#                                          # font (optional: their absence is not
+#                                          # fatal)
 #   perl scripts/jawnos_deps.pl --extras-only --install  # only the optional apps
 #                                          # (Piper); run after a code update
 #   perl scripts/jawnos_deps.pl --local-lib DIR --install
@@ -273,21 +273,14 @@ my @capabilities = (
 	}
 
 # --- desktop extras (opt-in: --desktop) -------------------------------------
-# The Linux desktop app's embedded view needs Qt WebEngine (PySide6), it
-# decodes media through Chromium (Arch) or system GStreamer (the WebKitGTK
-# fallback and the Browse window), and Chat draws SMS emoji with a colour emoji
-# font. These are optional -- a headless server or the phone does not need them
-# -- so a missing extra never fails the check. They are only checked where there
-# is a desktop and a package manager to install them.
+# The Linux desktop app's embedded view needs Qt WebEngine (PySide6); there is
+# no GTK/WebKitGTK fallback. Chat draws SMS emoji with a colour emoji font.
+# These are optional -- a headless server or the phone does not need them -- so
+# a missing extra never fails the check. They are only checked where there is a
+# desktop and a package manager to install them.
 my @desktop = (
 	{ label => 'PySide6 Qt WebEngine (desktop view)', check => \&have_qt_webengine,
 	  apt => 'python3-pyside6.qtwebenginewidgets', pacman => 'pyside6 qt6-webengine qt6-wayland', termux => '' },
-	{ label => 'WebKitGTK 4.1 (fallback view and Browse)', check => \&have_webkit,
-	  apt => 'gir1.2-webkit2-4.1', pacman => 'webkit2gtk-4.1', termux => '' },
-	{ label => 'GStreamer VA-API plugin (GPU video decode)', check => \&have_gst_va,
-	  apt => 'gstreamer1.0-vaapi', pacman => 'gst-plugin-va', termux => '' },
-	{ label => 'GStreamer tools', check => \&have_gst_tools,
-	  apt => 'gstreamer1.0-tools', pacman => 'gstreamer', termux => '' },
 	{ label => 'Colour emoji font (Chat, SMS and the interface)', check => \&have_emoji_font,
 	  apt => 'fonts-noto-color-emoji', pacman => 'noto-fonts-emoji', termux => '' },
 );
@@ -583,30 +576,11 @@ sub install_rtc {
 }
 
 # --- desktop extra probes ----------------------------------------------------
-sub have_webkit {
-	my $py = which('python3') || which('python');
-	return 0 unless $py;
-	my $code = 'import gi; gi.require_version("WebKit2", "4.1")';
-	return system("$py -c '$code' >/dev/null 2>&1") == 0 ? 1 : 0;
-}
-
 sub have_qt_webengine {
 	my $py = which('python3') || which('python');
 	return 0 unless $py;
 	my $code = 'import PySide6.QtWebEngineWidgets';
 	return system("$py -c '$code' >/dev/null 2>&1") == 0 ? 1 : 0;
-}
-
-sub have_gst_tools {
-	return which('gst-inspect-1.0') ? 1 : 0;
-}
-
-sub have_gst_va {
-	return 0 unless have_gst_tools();
-	# 'vaapi' is the older plugin name, 'va' the newer one; either means GPU decode.
-	return 1 if system('gst-inspect-1.0 vaapi >/dev/null 2>&1') == 0;
-	return 1 if system('gst-inspect-1.0 va >/dev/null 2>&1') == 0;
-	return 0;
 }
 
 # A colour emoji font is what draws Chat's SMS emoji, the emoji picker and every
@@ -1476,8 +1450,8 @@ if ($desktop && ($platform eq 'arch' || $platform eq 'debian')) {
 		print "desktop extras: all present\n";
 	}
 	else {
-		print "desktop extras missing (optional -- without the Qt view the app falls\n";
-		print "back to WebKitGTK, video decodes in software, and emoji use the system):\n";
+		print "desktop extras missing (optional -- the desktop view needs Qt WebEngine,\n";
+		print "and emoji use the system font):\n";
 		foreach my $d (@missing_desktop) {
 			printf "  - %-44s (%s)\n", $d->{'label'}, pkg_for($d);
 		}

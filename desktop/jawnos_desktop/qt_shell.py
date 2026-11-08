@@ -1,23 +1,21 @@
-"""JawnOS in a Qt WebEngine (Chromium) view -- the desktop shell's default.
+"""JawnOS in a Qt WebEngine (Chromium) view -- the desktop shell.
 
-The default desktop engine is Qt WebEngine: Chromium, with the reference
-WebRTC implementation, which the chat and the screening's Connect me need.
-Debian's WebKitGTK build has no ``RTCPeerConnection``, so it remains the
-fallback for this view when PySide6/Qt WebEngine is not installed. Browse and
-the session bar are Qt WebEngine now; only this fallback still uses WebKitGTK.
+The desktop engine is Qt WebEngine: Chromium, with the reference WebRTC
+implementation, which the chat and the screening's Connect me need. Browse and
+the session bar are Qt WebEngine too; there is no GTK/WebKitGTK fallback.
 
     ./desktop/jawnos-qt --url https://house.example:3000/manager
     ./desktop/jawnos-qt --probe     # WebRTC, media and bridge support, then exit
 
-The login is the same ticket the WebKit shell uses: loading the ticket URL
+The login is the same ticket the desktop has always used: loading the ticket URL
 mints the cookie and redirects to the Manager, and the profile keeps that
-cookie across launches. The first run also copies the GTK shell's page layout
-out of WebKit's per-origin SQLite store, and the window geometry comes from
+cookie across launches. The first run also copies the old WebKit shell's page
+layout out of its per-origin SQLite store, and the window geometry comes from
 ``~/.config/jawnos/desktop.json``, saved back on close. Certificate errors are
 accepted because the house serves its own self-signed certificate on its own
-port (the same exception the WebKit shell makes).
+port.
 
-The page bridge is the same contract the WebKit shell exposes: a shim turns
+The page bridge is the same contract the old shell exposed: a shim turns
 ``window.webkit.messageHandlers.jawnos`` into QWebChannel messages, so app
 signing, peer Manager windows, Browse and media keep-awake keep working.
 Supervision (start/stop/restart, the version restart, the desktop self-update)
@@ -56,12 +54,12 @@ _TRAY_ICONS = {}
 def tray_icon(icon_path, rgb):
     """The jawnos mark with a state dot in its corner, cached per colour.
 
-    The GTK tray badge drew the same dot (green running, amber
+    The old GTK tray badge drew the same dot (green running, amber
     starting/restarting, red stopped) because a tray icon has no room for a
     separate label; a dark rim keeps it readable on a light or dark panel.
 
-    PySide6 is imported here, not at module level: the WebKitGTK fallback must
-    be able to import this module on a machine with no Qt at all.
+    PySide6 is imported here, not at module level, so the rest of this module
+    (the localStorage reader) stays importable without the Qt bindings.
     """
     from PySide6.QtCore import QPointF, Qt
     from PySide6.QtGui import QColor, QIcon, QPainter, QPixmap
@@ -172,10 +170,9 @@ def ticket_url():
 def manager_url(jawn_dir, ticket=None):
     """Where the manager lives, on the host the login happened on.
 
-    Same rule as ``webview.manager_url``: the cookie is scoped to the ticket's
+    Same rule the old WebKit shell used: the cookie is scoped to the ticket's
     host, so the Manager must be loaded from that host; loopback is only the
-    fallback for a plain local launch. Kept here, GTK-free, so this module can
-    run on a machine with no WebKitGTK.
+    fallback for a plain local launch.
     """
     port = core.jawn_working_port(jawn_dir)
     host = "127.0.0.1"
@@ -194,7 +191,7 @@ def profile_dir():
 
 
 # --------------------------------------------------------------------------
-# the GTK shell's layout, moved into the Qt profile
+# the old GTK shell's layout, moved into the Qt profile
 # --------------------------------------------------------------------------
 
 # Keys that belong to a live session, not the layout: a copied tab id makes
@@ -208,10 +205,10 @@ _SKIP_KEYS = frozenset((
 
 
 def webkit_localstorage(host, port, base=None):
-    """The WebKitGTK localStorage for one origin, as ``{key: value}``.
+    """The legacy WebKitGTK localStorage for one origin, as ``{key: value}``.
 
-    The GTK shell keeps the page's layout in WebKit's per-origin SQLite store
-    (``~/.local/share/<app>/localstorage/https_<host>_<port>.localstorage``):
+    The removed GTK shell kept the page's layout in WebKit's per-origin SQLite
+    store (``~/.local/share/<app>/localstorage/https_<host>_<port>.localstorage``):
     ``layout``, ``background_images``, ``background_images_opacity``, the
     ``dock_apps`` family, the soft-keyboard layout. Qt WebEngine uses
     Chromium's LevelDB store, so the keys have to be copied once.
@@ -306,10 +303,10 @@ _MIGRATE_JS = """
 # --------------------------------------------------------------------------
 
 # Installed at document creation, after Qt's qwebchannel.js. It gives the page
-# the same handler names WebKitGTK exposes, forwards them through QWebChannel,
-# and marks the page as running inside the desktop app (universal.js keys its
-# app login off that marker). Messages that arrive before the channel is ready
-# are queued, not dropped.
+# the legacy ``window.webkit.messageHandlers`` names, forwards them through
+# QWebChannel, and marks the page as running inside the desktop app
+# (universal.js keys its app login off that marker). Messages that arrive before
+# the channel is ready are queued, not dropped.
 _BRIDGE_SHIM_JS = r"""
 (function () {
   if (window.__jawnQtShim) { return; }
@@ -669,7 +666,7 @@ def main(argv=None):
     # named. Running through `python3 jawnos-desktop` would otherwise present as
     # "python3": Sway's fullscreen rule and the taskbar/icon no longer match.
     # `jawnos` is the installed desktop entry (jawnos.desktop); the live image's
-    # rule also still accepts the GTK fallback's `jawnos-desktop`.
+    # window rule accepts both spellings.
     try:
         app.setDesktopFileName("jawnos")
     except Exception:
@@ -687,7 +684,7 @@ def main(argv=None):
     settings = core.load_settings()
 
     class JawnView(QWebEngineView):
-        """The view, and the window state the GTK shell also keeps in desktop.json."""
+        """The view, and the window state also kept in desktop.json."""
 
         def __init__(self, shell_settings, save_state):
             super().__init__()
@@ -1211,7 +1208,7 @@ def main(argv=None):
                 pass
 
     class Supervisor(QObject):
-        """The GTK dashboard's tick: liveness, restart, update, reload."""
+        """The desktop tick: liveness, restart, update, reload."""
 
         status = Signal(bool, bool)
         note = Signal(str)

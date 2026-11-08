@@ -29,6 +29,11 @@ foreach my $command (qw(jawnosctl jawnos-desktop jawnos-bt-daemon)) {
 		"$command execs its desktop implementation");
 }
 
+# The desktop command is Qt only: no GTK dashboard, no WebKitGTK view.
+my $desktop = read_file("$root/desktop/jawnos-desktop");
+unlike($desktop, qr/jawnos_desktop\.(?:ui|webview)/,
+	'jawnos-desktop has no GTK/WebKit branch');
+
 my $python = qx{python3 --version 2>/dev/null};
 SKIP: {
 	skip 'python3 is not installed', 1 unless $python;

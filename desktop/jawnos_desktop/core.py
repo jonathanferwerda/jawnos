@@ -266,7 +266,7 @@ def _write_installed_stamp(stamp, name, code):
 def repo_desktop_ready(settings):
     """True when the repo carries a desktop tree that is not this very copy."""
     repo = repo_desktop_dir(settings)
-    if not os.path.isfile(os.path.join(repo, "jawnos_desktop", "ui.py")):
+    if not os.path.isfile(os.path.join(repo, "jawnos_desktop", "qt_shell.py")):
         return False
     try:
         return os.path.realpath(repo) != os.path.realpath(DESKTOP_DIR)
@@ -475,8 +475,8 @@ def jawn_status(jawn_up, now=None):
 
     ``tone`` is green, amber or red. Running is green; a start/restart this
     process asked for and that is younger than ``STARTING_WINDOW`` is amber
-    with its age; anything else is red. This is the same three-way rule the
-    WebKitGTK dashboard used, kept here so both shells read the same.
+    with its age; anything else is red. The panel, the tray badge and the
+    session bar all read this one rule.
     """
     if jawn_up:
         clear_start_requested()

@@ -1,10 +1,9 @@
 """The desktop's shared look: the status colours and the panel's stylesheet.
 
-These are the values the WebKitGTK dashboard carries in ``ui.py`` (``_CSS`` and
-the ``*_RGB`` tuples) -- black ground, rounded cards, the jawn yellow accent and
-the green/amber/red status dots. Keeping them in one toolkit-neutral module lets
-the Qt control panel, its status dots and the tray badge use the same palette
-without either importing the other.
+These are the desktop's values -- black ground, rounded cards, the jawn yellow
+accent and the green/amber/red status dots. Keeping them in one toolkit-neutral
+module lets the Qt control panel, its status dots, the tray badge and the
+session bar use the same palette without either importing the other.
 
 Nothing here imports a GUI toolkit.
 """
@@ -27,7 +26,7 @@ TONES = {
 
 # The panel's stylesheet (Qt style sheets, which use these selectors). Object
 # names, not classes, identify the parts: `card`, `title`, `h` (a section
-# header), `dim` and `state` mirror the GTK widget classes of the same name.
+# header), `dim` and `state`.
 PANEL_CSS = """
 QDialog#panel, QWidget#body, QScrollArea,
 QScrollArea > QWidget > QWidget {

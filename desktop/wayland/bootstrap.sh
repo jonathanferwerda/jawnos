@@ -5,7 +5,7 @@
 #     ./desktop/wayland/bootstrap.sh
 #
 # It installs the graphics/session packages, the desktop app's deps, Zed, the
-# JawnOS server's Perl deps, the app itself, and the sway/waybar config. It does
+# JawnOS server's Perl deps, the app itself, and the sway config. It does
 # NOT touch the disk layout, the bootloader, or auto-login -- install Arch first
 # (the stock ISO + archinstall), then run this. See README.md.
 set -eu
@@ -17,15 +17,14 @@ say() { printf '\n== %s\n' "$*"; }
 say "graphics + Wayland session"
 $SUDO pacman -S --needed --noconfirm \
 	mesa vulkan-intel intel-media-driver libva-utils \
-	sway swaybg swayidle swaylock waybar foot fuzzel mako \
+	sway swaybg swayidle swaylock foot fuzzel mako \
 	wl-clipboard grim slurp xdg-desktop-portal-wlr polkit-gnome \
 	wireplumber pipewire pipewire-pulse
 
-say "the embedded view + media, and the editor"
+say "the Qt view, BLE bridge, and the editor"
 $SUDO pacman -S --needed --noconfirm \
-	python-gobject python-dbus webkit2gtk-4.1 bluez bluez-utils \
-	gst-plugins-base gst-plugins-good gst-plugins-bad gst-plugins-ugly \
-	gst-libav gst-plugin-va zed
+	pyside6 qt6-webengine qt6-wayland layer-shell-qt \
+	python-gobject python-dbus bluez bluez-utils zed
 
 say "the JawnOS server's Perl dependencies"
 (cd "$REPO_ROOT" && perl scripts/jawnos_deps.pl --desktop --install) || true
@@ -33,12 +32,11 @@ say "the JawnOS server's Perl dependencies"
 say "the desktop app (per-user, into ~/.local)"
 "$REPO_ROOT/desktop/install.sh"
 
-say "sway + waybar config"
-mkdir -p "$HOME/.config/sway" "$HOME/.config/waybar"
+say "sway config"
+mkdir -p "$HOME/.config/sway"
 # Point the session at this checkout, wherever it actually is.
 sed "s|set \$jawnos .*|set \$jawnos $REPO_ROOT|" \
 	"$REPO_ROOT/desktop/wayland/sway.conf" > "$HOME/.config/sway/config"
-install -m 0644 "$REPO_ROOT/desktop/wayland/waybar.conf" "$HOME/.config/waybar/config"
 chmod +x "$REPO_ROOT/desktop/wayland/jawnos-session"
 
 cat <<'NEXT'
@@ -49,7 +47,7 @@ cat <<'NEXT'
    then stop it (Ctrl+C) and continue.
 2. Start the session from a TTY:
        exec sway
-   (Zed, foot and anything else float and drag; waybar lists them.)
+   (Zed, foot and anything else float and drag; the Qt bar lists them.)
 3. Optional, auto-start on boot -- an autologin drop-in for tty1:
        sudo mkdir -p /etc/systemd/system/getty@tty1.service.d
        printf '[Service]\nExecStart=\nExecStart=-/sbin/agetty --autologin %s --noclear %%I $TERM\n' "$USER" \
