@@ -1,4 +1,4 @@
-# tests-for: desktop/jawnos_desktop/qt_shell.py desktop/jawnos_desktop/gps.py desktop/jawnos_desktop/qt_panel.py desktop/jawnos_desktop/bridge.py desktop/jawnos_desktop/keepawake.py desktop/jawnos_desktop/gpu.py desktop/jawnos_desktop/theme.py desktop/jawnos_desktop/errorpage.py desktop/jawnos_desktop/core.py desktop/jawnos-desktop desktop/jawnos-qt desktop/wayland/jawnos-session desktop/install.sh scripts/jawnos_deps.pl
+# tests-for: desktop/jawnos_desktop/qt_shell.py desktop/jawnos_desktop/gps.py desktop/jawnos_desktop/qt_panel.py desktop/jawnos_desktop/bridge.py desktop/jawnos_desktop/keepawake.py desktop/jawnos_desktop/gpu.py desktop/jawnos_desktop/theme.py desktop/jawnos_desktop/errorpage.py desktop/jawnos_desktop/core.py desktop/jawnos_desktop/webauthn.py desktop/jawnos-desktop desktop/jawnos-qt desktop/wayland/jawnos-session desktop/install.sh scripts/jawnos_deps.pl
 # covers:    the Qt WebEngine desktop shell is the only engine: the same Manager
 #           page in Chromium, which is the engine with WebRTC, the ticket cookie
 #           kept on disk, microphone/camera grants, the house's own certificate
@@ -26,6 +26,7 @@ my $gpu = read_file("$root/desktop/jawnos_desktop/gpu.py");
 my $theme = read_file("$root/desktop/jawnos_desktop/theme.py");
 my $errpage = read_file("$root/desktop/jawnos_desktop/errorpage.py");
 my $core = read_file("$root/desktop/jawnos_desktop/core.py");
+my $webauthn = read_file("$root/desktop/jawnos_desktop/webauthn.py");
 my $package = read_file("$root/desktop/jawnos_desktop/__init__.py");
 my $entry = read_file("$root/desktop/jawnos-desktop");
 my $install = read_file("$root/desktop/install.sh");
@@ -278,6 +279,91 @@ like($qt, qr/gps\.has_gps\(settings\.get\("jawn_dir"\)\)/,
 	'the GPS receiver decides whether location is offered');
 like($qt, qr/names\.append\(_GPS_PERMISSION\)/,
 	'and only then is Geolocation granted');
+
+# Passkeys: Qt WebEngine renders no WebAuthn UX itself. A page's
+# navigator.credentials call waits until the embedder draws one, so the Manager
+# view and every peer window connect the signal. The wording is a pure mapping,
+# checked without a display; the dialog follows Qt's state changes in place.
+like($qt, qr/webauthn\.install_webauthn\(page, view\)/,
+	'the Manager page answers passkey requests');
+like($qt, qr/webauthn\.install_webauthn\(page_obj, win\)/,
+	'and so does each peer Manager window');
+like($webauthn, qr/webAuthUxRequested/,
+	'the Qt 6.8+ signal is the entry point');
+like($webauthn, qr/def install_webauthn\(page, window\)/,
+	'through one small installer');
+like($webauthn, qr/stateChanged/,
+	'a request is followed across its states, not assumed');
+like($webauthn, qr/setSelectedAccount\(/,
+	'the chosen resident account is sent back');
+like($webauthn, qr/setPin\(/,
+	'and the PIN');
+like($webauthn, qr/FinishTokenCollection/,
+	'the touch state is shown while the key is touched');
+like($webauthn, qr/requestFailureReason\(\)/,
+	'a failure names its reason');
+like($webauthn, qr/def request_text\(state, reason="", pin_reason="", relying_party=""\)/,
+	'the wording is a Qt-free function');
+unlike($webauthn, qr/^(?:from|import)\s+PySide6/m,
+	'and nothing imports PySide6 at module scope');
+
+my $passkey_text = `cd "$root" && PYTHONPATH=desktop python3 -c '
+from jawnos_desktop.webauthn import request_text, pin_error_text
+for state, kw in (
+    ("SelectAccount", {"relying_party": "house.test"}),
+    ("CollectPin", {"pin_reason": "Challenge"}),
+    ("CollectPin", {"pin_reason": "Set"}),
+    ("FinishTokenCollection", {}),
+):
+    t = request_text(state, **kw)
+    print(state, "|", t["title"], "|", t["body"])
+for reason in ("KeyAlreadyRegistered", "KeyNotRegistered", "Timeout", "HardPinBlock"):
+    t = request_text("RequestFailed", reason=reason)
+    print(reason, "|", t["title"], "|", t["body"])
+print("completed-empty", request_text("Completed")["title"] == "" and request_text("Completed")["body"] == "")
+print("pinretry", pin_error_text("WrongPin", 2))
+' 2>&1`;
+like($passkey_text, qr/^SelectAccount \| Choose a passkey \| Which passkey do you want to use for house[.]test[?]$/m,
+	'the account state names the house and asks which passkey');
+like($passkey_text, qr/^CollectPin \| Security key PIN \| Enter the PIN for your security key[.]$/m,
+	'a challenge asks for the existing PIN');
+like($passkey_text, qr/^CollectPin \| Choose a security key PIN \| Set a PIN for this security key[.]$/m,
+	'a new PIN is labelled as one');
+like($passkey_text, qr/^FinishTokenCollection \| Touch your security key \| Touch your security key now/m,
+	'the touch state tells the person what to do');
+like($passkey_text, qr/^KeyAlreadyRegistered \| Passkey request failed \| .*already registered/m,
+	'a key already registered is explained');
+like($passkey_text, qr/^KeyNotRegistered \| Passkey request failed \| .*not registered/m,
+	'and so is a key the house does not know');
+like($passkey_text, qr/^Timeout \| Passkey request failed \| .*did not answer/m,
+	'and a timeout');
+like($passkey_text, qr/^HardPinBlock \| Passkey request failed \| .*locked/m,
+	'and a key locked by too many wrong PINs');
+like($passkey_text, qr/^completed-empty True$/m,
+	'a completed request needs no words');
+like($passkey_text, qr/^pinretry Wrong PIN[.] 2 attempts remaining[.]$/m,
+	'a wrong PIN is cleared and explained on the retry');
+my $noqt = `cd "$root" && PYTHONPATH=desktop python3 -c 'import sys, jawnos_desktop.webauthn; print("qt-loaded", any(m == "PySide6" or m.startswith("PySide6.") for m in sys.modules))' 2>&1`;
+like($noqt, qr/^qt-loaded False$/m,
+	'the module imports on a machine with no Qt stack');
+
+# The real page connection, offscreen: the signal exists on this binding and
+# the installer reports it. No authenticator is present, so only the wiring is
+# proved -- the dialog itself needs hardware to reach.
+my $wa_live = `cd "$root" && QT_QPA_PLATFORM=offscreen QTWEBENGINE_CHROMIUM_FLAGS='--disable-gpu --no-sandbox' PYTHONPATH=desktop timeout 45 python3 -c '
+from PySide6.QtWidgets import QApplication
+from PySide6.QtWebEngineCore import QWebEnginePage, QWebEngineProfile
+from jawnos_desktop import webauthn
+app = QApplication([])
+page = QWebEnginePage(QWebEngineProfile("webauthn-test"), None)
+print("webauthn-installed", webauthn.install_webauthn(page, None))
+' 2>&1`;
+SKIP: {
+	skip 'PySide6 is not installed here', 1
+		if $wa_live =~ /No module named .PySide6|ModuleNotFoundError/;
+	like($wa_live, qr/^webauthn-installed True$/m,
+		'the page signal is connected on this Qt (no authenticator present)');
+}
 
 # The GPS rule, as a plain function (no Qt bindings): an explicit opt-in, a
 # named device, or a receiver the USB bus names. A machine with none still

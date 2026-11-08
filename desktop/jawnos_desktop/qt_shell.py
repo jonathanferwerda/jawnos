@@ -37,7 +37,7 @@ import threading
 import time
 from urllib.parse import urljoin, urlparse
 
-from . import bridge, core, errorpage, gps, gpu, theme
+from . import bridge, core, errorpage, gps, gpu, theme, webauthn
 
 # desktop/, resolved the same way the other entry scripts do it.
 DESKTOP_DIR = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
@@ -1392,6 +1392,12 @@ def main(argv=None):
     _feature_permission(page, qt, allowed_hosts, gps_on)
     _allow_screen_capture(page, qt, allowed_hosts)
     _allow_clipboard(page, qt)
+    # Qt renders no passkey UX by itself (Qt 6.8+ hands the request over); a
+    # binding without the signal simply keeps the old behaviour.
+    try:
+        webauthn.install_webauthn(page, view)
+    except Exception:
+        pass
     _install_downloads(profile, view, tray_holder)
 
     page_settings = page.settings()
@@ -1463,6 +1469,10 @@ def main(argv=None):
         _feature_permission(page_obj, qt, allowed_hosts, gps_on)
         _allow_screen_capture(page_obj, qt, allowed_hosts)
         _allow_clipboard(page_obj, qt)
+        try:
+            webauthn.install_webauthn(page_obj, win)
+        except Exception:
+            pass
         install_bridge(
             page_obj, win,
             peer_host,
