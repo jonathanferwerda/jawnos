@@ -276,4 +276,23 @@ like($wspl, qr/\$returner = &subs::unix_socket_sender\(\$file,\$wsm\) if -e \$fi
 like($cal, qr/return \$rcv \? \$response_data : \(\$ok \? 1 : 0\);/,
 	'the sender answers for a fire-and-forget push, where there is no reply to carry it');
 
+# --- the peer relay does not die on its own request -------------------------
+# Mojo::Parameters::merge takes pairs; handed a single hashref it calls to_hash
+# on it and dies. That bug sat in the relay's form body, so every output command
+# that fell through to the peer relay died with it and no board was ever told.
+like($devws, qr/\$tx->req->body_params->merge\(chip_id =>/, 'the relay merges pairs into its form');
+unlike($devws, qr/body_params->merge\(\{/, 'never a bare hashref');
+
+{
+	no warnings 'redefine';
+	my $door = encode_json({ __specs => { homebase => '127.0.0.1:45547' } });
+	*subs::embedded_operator_door = sub { return $door };
+}
+my $relayed = eval { subs::device_ws_peer_relay('chip1', { t => 'cmd', state => 'on' }) };
+ok(!$@, 'a machine with a homebase answers instead of dying') or diag("died with: $@");
+ok(!$relayed, 'and reports no delivery, so the caller keeps its own road');
+
+my $bare = eval { subs::device_ws_peer_relay('chip1', { t => 'cmd' }) };
+ok(!$@ && !$bare, 'a chip with no homebase is a plain no');
+
 done_testing();

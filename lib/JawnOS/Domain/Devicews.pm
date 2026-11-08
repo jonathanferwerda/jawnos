@@ -190,7 +190,10 @@ sub device_ws_peer_relay {
 	my $ua = Mojo::UserAgent->new(connect_timeout => 2, inactivity_timeout => 3);
 	$ua->insecure(1);
 	my $tx = $ua->build_tx(POST => 'https://' . $host . ':' . $port . '/manager/device_ws');
-	$tx->req->body_params->merge({ chip_id => $chip_id, frame => encode_json($frame) });
+	# Pairs, not a hashref: Mojo::Parameters::merge calls to_hash on a single
+	# argument, and a plain hashref is not blessed - this died on every relay and
+	# took the whole output command with it (every web press, silently).
+	$tx->req->body_params->merge(chip_id => $chip_id, frame => encode_json($frame));
 	&subs::peer_sign_request($tx->req);
 	my $res = eval { $ua->start($tx)->result };
 	return 0 unless $res && $res->is_success;
