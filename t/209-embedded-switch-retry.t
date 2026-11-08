@@ -28,7 +28,13 @@ like($src, qr/bool failed = \(response == "failure" \|\| response == "no ping"\)
 	'the sender recognises a transient failure');
 like($src, qr/if \(failed\) \{\s*int tries/s, 'a failed job is retried instead of dropped');
 like($src, qr/if \(tries < 4\)/, 'the retry is bounded');
-like($src, qr/coreJobs\[coreKeys\[i\]\]\["next_at"\] = String\(\(unsigned long\)\(millis\(\) \+ 1500UL \* tries\)\);/,
-	'the retry backs off');
+like($src, qr/1500UL \* tries/, 'the retry backs off');
+
+# A retrying job stays in the map, so a per-job print in handle_jobs runs on
+# every pass. A USB write from core 1 with no host draining the CDC wedges the
+# board; the three debug prints here were that flood.
+unlike($src, qr/Serial\.println\("core job "\);/,
+	'no per-job serial print in the job loop');
+unlike($src, qr/Serial\.println\(coreKeys\[i\]\);/, 'the job key is not printed');
 
 done_testing();

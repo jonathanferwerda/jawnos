@@ -3,9 +3,6 @@ void handle_jobs() {
   JSONVar coreKeys = coreJobs.keys();
 
   for (int i = 0; i < coreKeys.length(); i++) {
-    Serial.println("core job ");
-    Serial.println(coreKeys[i]);
-    Serial.println(coreJobs[coreKeys[i]]["type"]);
     if (String(coreJobs[coreKeys[i]]["type"]) == "led") {
       int interval = String(coreJobs[coreKeys[i]]["interval"]).toInt();
       int duration = String(coreJobs[coreKeys[i]]["duration"]).toInt();
