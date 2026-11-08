@@ -93,7 +93,17 @@ sub now_me($data) {
 	# (method 'bluetooth', the watch-row action) is the person moving the watch to
 	# this machine on purpose, so let that one through - it is how you re-home a
 	# watch whose homebase is gone (a phone that died) onto the machine in hand.
-	if ($watch->{'ble'} && !&subs::ble_owns($edt, $chip_id) && ($method || '') ne 'bluetooth') {
+	# A device that answers a LAN ping is NOT BLE-only: it has a second road, and
+	# every house machine shares the /24, so any of them may re-home it over HTTP.
+	# Without this, a WiFi board whose homebase address moved was classed as BLE,
+	# the regular Now Me skipped, and BT Now Me forced the radio - which the
+	# non-owner had already yielded - so the token never refreshed.
+	my $lan_alive = 0;
+	if ($watch->{'ip'} && $watch->{'ip'} =~ /^\d{1,3}(?:\.\d{1,3}){3}$/) {
+		my $ping = `timeout .2 ping -c 1 $watch->{'ip'} 2>/dev/null`;
+		$lan_alive = 1 if $ping =~ /ttl/i;
+	}
+	if ($watch->{'ble'} && !$lan_alive && !&subs::ble_owns($edt, $chip_id) && ($method || '') ne 'bluetooth') {
 		$log->info('Now Me for ' . ($chip_id || '?') . ' skipped: homebase is ' . ($watch->{'homebase'} || '?'));
 		return 'hosted elsewhere';
 	}
@@ -257,9 +267,7 @@ sub now_me($data) {
 	# the very push bt_now_me sends.
 	my $link = $method && $method eq 'bluetooth' ? 'bluetooth' : undef;
 	unless ($link) {
-		my $ping = 'timeout .2 ping -c 1 ' . $watch->{'ip'};
-		my $ping_test = `$ping`;
-		$link = 'http' if $ping_test =~ /ttl/gi;
+		$link = 'http' if $lan_alive;
 		$link = 'bluetooth' if !$link && &subs::ble_bridge_capable() && $watch->{'mac_addresses'}->{'bluetooth'};
 	}
 	if ($link && $link eq 'bluetooth') {
