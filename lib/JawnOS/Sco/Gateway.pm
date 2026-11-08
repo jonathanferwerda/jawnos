@@ -1109,6 +1109,11 @@ sub _start_transcript {
 		$self->{'transcript_note'} = 'whisper.cpp is not installed on this machine';
 		return 0;
 	}
+	# Wake the warm server now rather than at the first clip: the greeting is
+	# spoken for the next several seconds, so the model has loaded by the time
+	# the caller's name is read. President.pl's loop owns the start and stops it
+	# after ten quiet minutes (subs::whisper_server_wanted).
+	eval { &subs::whisper_server_wanted(1) };
 	my $python   = eval { &subs::whisper_python() } || '';
 	my $model    = eval { &subs::whisper_models_dir() } || '';
 	my $streamer = eval { &subs::whisper_streamer() } || '';

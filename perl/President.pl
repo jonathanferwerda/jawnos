@@ -582,46 +582,78 @@ sub manager_starter() {
 		eval { &subs::voice_sync(); };
 	}, { name => 'voice sync' });
 
-	# A warm whisper.cpp server on loopback keeps the speech model loaded, so a
-	# clip skips the per-call model load the one-shot CLI pays. A machine without
-	# the binary or a model simply checks again later; whisper_transcribe falls
-	# back to the CLI or the cloud when the port is quiet. The server logs to its
-	# own file so a long-running tree's manager.log does not grow with every clip.
+	# The warm whisper.cpp server keeps the speech model loaded, so a clip skips
+	# the per-call model load the one-shot CLI pays - but a machine that takes no
+	# dictation and no call should not pay for the model either: at ggml-tiny it
+	# is 147 MB resident, measured on the Gou's 1.8 GB. So the server is started
+	# by demand. Any transcription request touches ~/.president/whisper-want
+	# (subs::whisper_server_wanted); this loop starts the server while that marker
+	# is fresh and stops the one it started once the house has been quiet for ten
+	# minutes. whisper_local_transcribe still falls back to the CLI while the port
+	# is quiet, so no request waits on this loop. A machine without the binary or
+	# a model simply finds nothing to start until one is installed. The server
+	# logs to its own file so a long-running tree's manager.log does not grow with
+	# every clip. This loop is the only thing that ever forks it, and the loop
+	# holds none of the pool's listeners - that is why it is started here and not
+	# from a request worker, whose child would inherit them.
 	&subs::subprocessor(sub {
-		sleep 30;
+		my $idle_limit = 600;      # ten quiet minutes, then the model goes back
+		my $want_at = 0;           # when a transcription last asked for the server
+		my $server_pid = 0;        # the one this loop started (0: none of ours)
 		while (1) {
 			&subs::subprocessor_heartbeat();
+			my $want = &subs::whisper_server_wanted();
+			$want_at = $want if $want > $want_at;
+			my $recent = ($want_at && (time - $want_at) <= 120) ? 1 : 0;
+			my $idle   = ($want_at && (time - $want_at) > $idle_limit) ? 1 : 0;
+			# Reap a server that died on its own, or its pid would sit as a zombie
+			# and the "is it up" answer below would be about a dead process.
+			if ($server_pid) {
+				my $reaped = waitpid($server_pid, POSIX::WNOHANG());
+				$server_pid = 0 if $reaped == $server_pid || $reaped == -1;
+			}
+			require IO::Socket::INET;
+			my $port = &subs::whisper_server_port();
+			my $probe = IO::Socket::INET->new(
+				PeerAddr => '127.0.0.1', PeerPort => $port, Proto => 'tcp', Timeout => 1);
+			my $up = $probe ? 1 : 0;
+			close $probe if $probe;
 			my $bin   = &subs::whisper_server_bin();
 			my $model = &subs::whisper_model_file('tiny');
 			$model = &subs::whisper_model_file('base') unless length $model && -e $model;
-			if (-x $bin && -e $model) {
-				my $port = &subs::whisper_server_port();
-				# A server already listening there (started by hand, or this loop's
-				# own previous run not yet gone) is left alone.
-				require IO::Socket::INET;
-				my $probe = IO::Socket::INET->new(PeerAddr => '127.0.0.1', PeerPort => $port, Proto => 'tcp', Timeout => 1);
-				if ($probe) {
-					close $probe;
-					sleep 60;
-					next;
-				}
+			if (!$up && !$server_pid && $recent && -x $bin && -e $model) {
 				my $log = &subs::home('~/whisper-server.log');
 				my $log_fh;
 				open($log_fh, '>>', $log);
 				my $pid = fork();
-				if (!$pid) {
+				if (defined $pid && $pid == 0) {
 					open(STDOUT, '>&', $log_fh) if $log_fh;
 					open(STDERR, '>&', $log_fh) if $log_fh;
-					exec($bin, '-m', $model, '--host', '127.0.0.1', '--port', $port, '--convert');
-					exit 1;
+					exec($bin, '-m', $model, '--host', '127.0.0.1', '--port', $port, '--convert')
+						or POSIX::_exit(1);
 				}
-				waitpid($pid, 0) if $pid > 0;
 				close($log_fh) if $log_fh;
-				sleep 15;
+				$server_pid = $pid if defined $pid && $pid > 0;
 			}
-			else {
-				sleep 300;
+			# A server somebody started by hand is left alone: this loop stops only
+			# the one it started itself.
+			elsif ($up && $server_pid && $idle) {
+				kill 'TERM', $server_pid;
+				my $gone = 0;
+				for (1 .. 50) {
+					$gone = 1 if waitpid($server_pid, POSIX::WNOHANG()) != 0;
+					last if $gone;
+					select(undef, undef, undef, 0.1);
+				}
+				if (!$gone) {
+					kill 'KILL', $server_pid;
+					waitpid($server_pid, 0);
+				}
+				$server_pid = 0;
 			}
+			# A model load is a second or two: look again soon while the house is
+			# talking, and coast otherwise.
+			sleep($recent ? 5 : 30);
 		}
 	}, { name => 'whisper server' });
 

@@ -137,11 +137,33 @@ sub voice_silence_hallucination {
 # machine, never a service offered to the network.
 sub whisper_server_port { return 8178; }
 
+# The warm server is started by demand, not at boot: it holds the model (147 MB
+# at ggml-tiny on a 1.8 GB handheld) and a machine that takes no dictation and
+# no call should not pay for it. Every transcription request touches this
+# marker; President.pl's own loop starts the server while the marker is fresh
+# and stops the one it started after ten quiet minutes. Returns the marker's
+# mtime, 0 when nothing has ever asked.
+sub whisper_server_wanted {
+	my ($touch) = @_;
+	my $file = &subs::home('~/.president/whisper-want');
+	if (!-e $file) {
+		return 0 unless $touch;
+		open(my $fh, '>>', $file) or return 0;
+		close($fh);
+	}
+	utime(undef, undef, $file) if $touch;
+	my $mtime = (stat($file))[9];
+	return $mtime || 0;
+}
+
 # A warm server keeps the model loaded, so a clip skips the model load the
 # one-shot CLI pays on every call. '' when it is not running or did not answer.
 sub whisper_server_transcribe {
 	my ($raw, $lang) = @_;
 	return '' unless defined $raw && length $raw;
+	# Ask for the warm server even though this request may fall back to the CLI
+	# while the model loads: the next clip is the one that finds it up.
+	&whisper_server_wanted(1);
 	my $ua = Mojo::UserAgent->new(connect_timeout => 2, inactivity_timeout => 30, request_timeout => 45);
 	my $form = {
 		file => { content => $raw, filename => 'clip.webm', 'Content-Type' => 'audio/webm' },

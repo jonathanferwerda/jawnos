@@ -412,7 +412,18 @@ my ($tree_ticks,$tree_misses) = (0,0);
 my ($last_master_tick,$tree_dead_since);
 my $reap_ticks = 0;
 &master_time_looper();
-&coding_start();
+# config.json may switch the Coding worker off on a machine that cannot spare
+# the process: it is a copy of the whole app (99 MB PSS measured on the Gou's
+# 1.8 GB), and a handheld runs no coding night. Nothing consumes the `coding`
+# queue there, so a run queued from another machine waits rather than failing,
+# and the next master start with the key back on picks it up. A worker left
+# over from before the switch is taken down here, once, instead of idling.
+my $coding_enabled = &coding_worker_enabled();
+if ($coding_enabled) { &coding_start() }
+else {
+	print "Coding worker is off on this machine (coding_worker in config.json)\n";
+	&coding_stop() if &coding_running();
+}
 &control_socket();
 &log_socket();
 sub master_time_looper() {
@@ -447,7 +458,7 @@ sub master_time_looper() {
 		my $woke = ($tick_gap > 30 && !$master_boot_watch) ? 1 : 0;
 		# Keep the Coding agent's own process alive. It is not part of the
 		# tree, so a tree restart above leaves it alone.
-		&coding_supervise();
+		&coding_supervise() if $coding_enabled;
 		my $status_file = &home('~/.president/status');
 		my $f_status = -e $status_file ? read_file($status_file) : '';
 		# Our own file changed on disk (a git update): reload the master, not just
@@ -910,6 +921,19 @@ sub pid_parent {
 # dies, and a real Stop takes it down with the tree. Its Minion job survives a
 # master that dies by being written before the process started (see
 # lib/JawnOS/Domain/Coding.pm).
+sub coding_worker_enabled {
+	# coding_worker in config.json: absent, empty or anything else means on, so
+	# an older config keeps working. Only an explicit off stops the worker.
+	my $file = -e './config.json' ? './config.json' : '';
+	return 1 unless length $file;
+	my $config = eval { decode_json(scalar read_file($file)) };
+	return 1 unless ref $config eq 'HASH';
+	my $value = $config->{'coding_worker'};
+	return 1 unless defined $value;
+	return 0 if $value =~ /^\s*(?:0|no|off|false)\s*$/i;
+	return 1;
+}
+
 sub coding_cmdline_ok {
 	my ($pid) = @_;
 	return 0 unless $pid && $pid =~ /^[0-9]+$/ && &pid_alive($pid);
