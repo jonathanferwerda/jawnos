@@ -100,8 +100,8 @@ like($qt, qr/def handle_message\([^)]*allowed_host/,
 	'the handler receives the window\'s manager host');
 like($qt, qr/def _qurl_host/, 'and reads a QUrl host with the right API');
 unlike($qt, qr/\.url\(\)\.hostname\(\)/, 'not the urlparse spelling');
-like($qt, qr/handle_message\(name, raw, page_obj, view_obj, allowed_host\)/,
-	'and the bridge passes it through');
+like($qt, qr/handle_message\(name, raw, page_obj, view_obj, allowed_host,\s*\n?\s*manager_base\)/,
+	'and the bridge passes the window\'s manager base through');
 like($qt, qr/bridge\.app_public_pem|bridge\.app_sign_b64/,
 	'the app key is answered through the shared bridge');
 like($bridge, qr/def app_public_pem/, 'the app key lives in the toolkit-neutral module');
@@ -109,6 +109,52 @@ like($bridge, qr/def app_sign_b64/, 'with its signer');
 like($bridge, qr/def browse_launcher/, 'and the Browse launcher');
 like($bridge, qr/BROWSE_BRIDGE_JS/, 'the Browse shim');
 like($bridge, qr/MEDIA_MONITOR_JS/, 'and the media monitor the keep-awake uses');
+
+# The two capabilities WebKitGTK gave a page by default and Qt does not:
+# downloads (Qt cancels one nothing accepts) and window.open/target=_blank
+# (Qt drops one whose page returns no window). A same-origin Manager URL keeps
+# the session cookie; everything else goes to Browse or the desktop.
+like($qt, qr/class JawnPage\(QWebEnginePage\)/, 'the pages are a page subclass');
+like($qt, qr/downloadRequested/, 'a download is accepted, not cancelled');
+like($qt, qr/setDownloadDirectory/, 'with the save location the person picks');
+like($qt, qr/setDownloadFileName/, 'and the file name they chose');
+like($qt, qr/item\.accept\(\)/, 'then handed to the engine');
+like($qt, qr/note\("Downloaded"/, 'the end is reported through the tray');
+like($qt, qr/def createWindow/, 'a popup gets a page instead of a silent drop');
+like($qt, qr/newWindowRequested/, 'Qt 6.2+ hands over the requested URL');
+like($qt, qr/def acceptNavigationRequest/, 'and a non-http navigation is caught');
+like($qt, qr/QDesktopServices\.openUrl/, 'a desktop scheme goes to the OS');
+like($qt, qr/def open_external/, 'through one allowlisted opener');
+like($qt, qr/def classify_new_window/, 'the same-origin rule is a pure helper');
+like($qt, qr/def _launch_browse/, 'an outside link starts Browse');
+like($qt, qr/bridge\.browse_launcher\(\)/, 'through the shared launcher');
+like($qt, qr/_launch_browse\(\n\s+url, manager_base,/, 'the bridge action uses it too');
+like($qt, qr/"--mode", mode/, 'with the same argv as before');
+
+# The classifier, without Qt: same-origin (loopback and a known house host) is
+# the Manager, any other http(s) is Browse, a known scheme is the desktop, and
+# file:, javascript:, about:blank, an empty request and a bare relative URL are
+# refused (the engine resolves relative URLs before asking).
+my $kinds = `cd "$root" && PYTHONPATH=desktop python3 -c '
+from jawnos_desktop.qt_shell import classify_new_window as c
+hosts = {"127.0.0.1", "house.test"}
+for url in (
+    "https://127.0.0.1:45545/manager/x",
+    "https://HOUSE.test/manager/x",
+    "https://example.com/a",
+    "mailto:email_test",
+    "file:///etc/passwd",
+    "javascript:alert(1)",
+    "/store/print/pdf",
+    "about:blank",
+    "",
+):
+    print(c(url, "127.0.0.1", hosts))
+' 2>&1`;
+like($kinds, qr/^manager\nmanager\nbrowse\nexternal\ndeny\ndeny\ndeny\ndeny\ndeny$/m,
+	'a new window is placed by origin and scheme, never by a file: link');
+like($qt, qr/EXTERNAL_SCHEMES = frozenset\(\{/, 'the delegated schemes are one named list');
+like($qt, qr/LOOPBACK_HOSTS/, 'and loopback is named once');
 
 like($qt, qr/def prepare_wayland_env/, 'a Wayland session sets the Qt platform');
 like($qt, qr/--ozone-platform-hint=auto/,
@@ -147,7 +193,7 @@ like($qt, qr/def black_page/, 'the empty engine is painted before the page loads
 like($qt, qr/page_obj\.setBackgroundColor\(black\)/,
 	'with the page background, not a white default');
 like($qt, qr/black_page\(page, view\)/, 'applied to the main view');
-like($qt, qr/black_page\(other, win\)/, 'and to each peer Manager window');
+like($qt, qr/black_page\(page_obj, win\)/, 'and to each peer Manager window');
 like($qt, qr/ErrorPageEnabled, False/, 'the built-in white error page is off');
 # Fullscreen: Qt WebEngine leaves the Fullscreen API off until a page is told
 # it is supported, and then drops a request the app does not accept. Browse
@@ -158,7 +204,7 @@ like($qt, qr/def _allow_fullscreen/, 'the shell accepts the request itself');
 like($qt, qr/request\.accept\(\)/, 'and Qt is told to honour it');
 like($qt, qr/_allow_fullscreen\(page, view, qt, restore_window\)/,
 	'the Manager view gets it, and restores the saved window state on exit');
-like($qt, qr/_allow_fullscreen\(other, win, qt\)/,
+like($qt, qr/_allow_fullscreen\(page_obj, win, qt\)/,
 	'and so does each peer Manager window');
 # Scrolling feel: Qt WebEngine leaves Chromium's scroll animator off, so the
 # shell turns it on for the profile and every page inherits it. This is the port
@@ -180,7 +226,7 @@ like($qt, qr/requestAnimationFrame\(step\)/, 'the coast decays frame by frame');
 my $moff = `cd "$root" && JAWNOS_MOMENTUM=0 PYTHONPATH=desktop python3 -c 'from jawnos_desktop.qt_shell import momentum_enabled; print(momentum_enabled())' 2>&1`;
 like($moff, qr/^False$/m, 'JAWNOS_MOMENTUM=0 turns coasting off');
 like($qt, qr/errorpage\.dark_page/, 'the manager shows a dark page after its retries');
-like($qt, qr/errorpage\.watch\(other\)/, 'and peer windows show one at once');
+like($qt, qr/errorpage\.watch\(page_obj\)/, 'and peer windows show one at once');
 like($errpage, qr/background:#000000/, 'the error page is on the black ground');
 like($errpage, qr/#ffcc00/, 'with the jawn yellow for the retry');
 like($qt, qr/QSystemTrayIcon/, 'the shell keeps a tray');
@@ -209,13 +255,13 @@ like($qt, qr/_permission_host\(\s*permission\.origin\(\)\)\s+in allowed_hosts/,
 like($qt, qr/_permission_host\(origin\) in allowed_hosts/,
 	'and on the featurePermissionRequested path');
 like($qt, qr/permission\.deny\(\)/, 'anything else is denied');
-like($qt, qr/allowed_hosts = \{"127\.0\.0\.1", "localhost", "::1"\}/,
+like($qt, qr/allowed_hosts = set\(LOOPBACK_HOSTS\)/,
 	'the allowlist starts with loopback');
 like($qt, qr/allowed_hosts\.add\(host\.lower\(\)\)/, 'the Manager host joins it');
 like($qt, qr/allowed_hosts\.add\(peer_host\)/, 'and so does each peer window host');
 like($qt, qr/_allow_screen_capture\(page, qt, allowed_hosts\)/,
 	'the Manager page can share its screen');
-like($qt, qr/_allow_screen_capture\(other, qt, allowed_hosts\)/,
+like($qt, qr/_allow_screen_capture\(page_obj, qt, allowed_hosts\)/,
 	'and so can a peer window');
 like($qt, qr/ScreenCaptureEnabled, True/, 'Qt leaves screen capture off until asked');
 like($qt, qr/desktopMediaRequested\.connect\(handle\)/, 'then hands over the request');

@@ -18,6 +18,10 @@ port.
 The page bridge is the same contract the old shell exposed: a shim turns
 ``window.webkit.messageHandlers.jawnos`` into QWebChannel messages, so app
 signing, peer Manager windows, Browse and media keep-awake keep working.
+Downloads come through the shared profile's handler (the engine cancels one
+nothing accepts), and a page may open a window: a same-origin Manager URL gets
+a new top-level view on the same profile and its session cookie, an outside
+address goes to Browse, and a ``mailto:``/``tel:`` link goes to the desktop.
 Supervision (start/stop/restart, the version restart, the desktop self-update)
 and the tray menu live here too, because a default launch opens only this
 window.
@@ -46,6 +50,59 @@ def _qurl_host(url):
         return (url.host() or "").strip("[]").lower()
     except Exception:
         return ""
+
+
+# Non-http schemes the shell hands to the desktop's own handler. A page may
+# link to anything; only these well-known schemes are delegated, so a file: or
+# javascript: link can never reach an external program. Keep this list equal to
+# browser.py's EXTERNAL_SCHEMES: one rule for both windows.
+EXTERNAL_SCHEMES = frozenset({
+    "mailto", "tel", "sms", "geo", "magnet", "bitcoin", "webcal",
+    "irc", "ircs", "xmpp", "spotify", "steam",
+})
+
+# The shell's own origin: the Manager may always open a window on loopback.
+LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
+
+
+def classify_new_window(url, manager_host="", allowed_hosts=()):
+    """Where a ``window.open``/``target=_blank`` URL belongs.
+
+    ``manager`` -- a same-origin Manager URL: loopback, the local Manager's
+    host, or a peer Manager's host. These open in a new top-level view on the
+    shared profile, so the session cookie comes with them.
+    ``browse`` -- any other http(s) address: the native Browse window, which
+    has its own profile and no session, so it must not be sent a Manager page.
+    ``external`` -- a scheme the desktop owns (``mailto:`` and friends).
+    ``deny`` -- everything else: ``file:``, ``javascript:``, ``about:blank``,
+    an empty request, or a bare relative URL (the engine has already resolved
+    those against the page that asked, so a schemeless value cannot be placed).
+
+    Pure and Qt-free, so the rules are testable without a display.
+    """
+    text = str(url or "").strip()
+    if not text:
+        return "deny"
+    try:
+        parsed = urlparse(text)
+        scheme = (parsed.scheme or "").lower()
+    except ValueError:
+        return "deny"
+    if scheme in ("http", "https"):
+        host = (parsed.hostname or "").lower()
+        if not host:
+            return "deny"
+        if host in LOOPBACK_HOSTS:
+            return "manager"
+        if manager_host and host == str(manager_host).strip().lower():
+            return "manager"
+        for allowed in allowed_hosts or ():
+            if host == str(allowed or "").strip().lower():
+                return "manager"
+        return "browse"
+    if scheme in EXTERNAL_SCHEMES:
+        return "external"
+    return "deny"
 
 
 _TRAY_ICONS = {}
@@ -808,6 +865,112 @@ def _allow_clipboard(page, qt):
         pass
 
 
+def open_external(uri):
+    """Hand a known desktop scheme to the OS; never file: or javascript:.
+
+    The Manager links to ``mailto:``, ``tel:`` and friends. Qt WebEngine asks
+    no one about a scheme it cannot render, so the page's request is answered
+    here; the allowlist is the same one Browse uses.
+    """
+    try:
+        scheme = (urlparse(str(uri or "")).scheme or "").lower()
+    except ValueError:
+        return False
+    if scheme not in EXTERNAL_SCHEMES:
+        return False
+    from PySide6.QtCore import QUrl
+    from PySide6.QtGui import QDesktopServices
+
+    try:
+        return bool(QDesktopServices.openUrl(QUrl(uri)))
+    except Exception:
+        return False
+
+
+def _install_downloads(profile, parent, tray_holder):
+    """Ask where to save a download, accept it, and report it through the tray.
+
+    Qt cancels a download when nothing answers the profile's
+    ``downloadRequested``, and the Manager downloads things (an email
+    attachment, a file, a store receipt). The handler is connected once to the
+    shared named profile, so the Manager view and every peer Manager window
+    opened from it inherit it. Browse keeps its own handler and profile.
+
+    There is no progress bar in the Manager view, so the tray reports the
+    start, the end and a failure; ``active`` holds the item until it finishes,
+    as Qt does not keep the Python object alive across the signals.
+    """
+    from PySide6.QtCore import QStandardPaths
+    from PySide6.QtWidgets import QFileDialog, QSystemTrayIcon
+
+    try:
+        from PySide6.QtWebEngineCore import QWebEngineDownloadRequest as Download
+    except Exception:  # Qt 5's name for the same object
+        try:
+            from PySide6.QtWebEngineCore import QWebEngineDownloadItem as Download
+        except Exception:
+            Download = None
+    enum = getattr(Download, "DownloadState", None) if Download is not None else None
+    completed = getattr(enum, "DownloadCompleted", None) if enum is not None else None
+    active = set()
+
+    def note(title, body):
+        tray = tray_holder.get("tray")
+        if tray is None:
+            return
+        try:
+            tray.showMessage(title, body,
+                             QSystemTrayIcon.MessageIcon.Information, 6000)
+        except Exception:
+            pass
+
+    def changed(item, state):
+        if completed is not None and state == completed:
+            name = "the file"
+            try:
+                name = item.downloadFileName() or name
+            except Exception:
+                pass
+            note("Downloaded", name)
+        else:
+            reason = "the download did not finish"
+            try:
+                reason = item.interruptReasonString() or reason
+            except Exception:
+                pass
+            note("Download failed", reason)
+        active.discard(item)
+
+    def started(item):
+        suggested = (item.suggestedFileName() or "download").strip() or "download"
+        folder = QStandardPaths.writableLocation(
+            QStandardPaths.StandardLocation.DownloadLocation)
+        if not folder:
+            folder = os.path.expanduser("~")
+        path, _selected = QFileDialog.getSaveFileName(
+            parent, "Save download", os.path.join(folder, suggested))
+        if not path:
+            try:
+                item.cancel()
+            except Exception:
+                pass
+            return
+        try:
+            item.setDownloadDirectory(os.path.dirname(path) or folder)
+            item.setDownloadFileName(os.path.basename(path))
+            item.stateChanged.connect(lambda state: changed(item, state))
+            item.accept()
+        except Exception:
+            return
+        active.add(item)
+        note("Downloading", os.path.basename(path))
+
+    try:
+        profile.downloadRequested.connect(started)
+    except Exception:
+        pass
+
+
 def _install_notifications(profile, qt, allowed_hosts, tray):
     """Show a page's ``new Notification`` through the tray.
 
@@ -908,6 +1071,32 @@ def _allow_fullscreen(page, window, qt, restore=None):
         page.fullScreenRequested.connect(handle)
     except Exception:
         pass
+
+
+def _launch_browse(url, manager_base, mode="browse", app="", uuid=""):
+    """Start the native Browse window for a URL the Manager does not own.
+
+    One launcher invocation for both callers: the page's ``browse`` bridge
+    action and an outside link opened by ``window.open``/``target=_blank``.
+    Browse has its own profile and no session, which is exactly why a
+    same-origin Manager URL must never come through here.
+
+    ``spawn_detached`` returns at once, so the GUI thread keeps painting. A
+    missing launcher raises for the bridge action's reply.
+    """
+    launcher = bridge.browse_launcher()
+    if not launcher:
+        raise ValueError("no browse launcher")
+    argv = launcher + [
+        "--manager", manager_base or "",
+        "--url", url,
+        "--mode", mode,
+        "--app", app,
+        "--uuid", uuid,
+    ]
+    core.spawn_detached(
+        argv, DESKTOP_DIR,
+        os.path.join(core.state_dir(), "browse.log"))
 
 
 def main(argv=None):
@@ -1031,12 +1220,15 @@ def main(argv=None):
     # loopback, plus the Manager's host (added once the ticket gives it) and
     # every peer window's. One live set is shared by each page's permission
     # handler, its screen-capture handler and the notification presenter.
-    allowed_hosts = {"127.0.0.1", "localhost", "::1"}
+    allowed_hosts = set(LOOPBACK_HOSTS)
     gps_on = gps.has_gps(settings.get("jawn_dir"))
     # The real tray is made later in main(); the presenter reads this slot
     # when a notification arrives.
     tray_holder = {"tray": None}
     _install_notifications(profile, qt, allowed_hosts, tray_holder)
+    # Filled once the Manager's window plumbing below exists; a page only asks
+    # for a new window after it has loaded something, which is later still.
+    new_window_handler = {"open": None}
 
     class JawnView(QWebEngineView):
         """The view, and the window state also kept in desktop.json."""
@@ -1088,8 +1280,98 @@ def main(argv=None):
             else:
                 self.showFullScreen()
 
+    class JawnPage(QWebEnginePage):
+        """A Manager page: it opens windows and hands outside links away.
+
+        Qt drops a ``window.open``/``target=_blank`` whose page returns no
+        window, and the WebKitGTK view this shell replaced opened one by
+        default. ``on_new_window`` decides: a same-origin Manager URL opens a
+        new top-level view on the shared profile (the session cookie comes
+        along), an outside http(s) address goes to Browse, a desktop scheme
+        goes to the OS, and anything else is dropped.
+
+        Qt 6.2+ reports the popup through ``newWindowRequested`` with its URL
+        in hand, so nothing is loaded here -- the callback loads a Manager
+        URL itself and the engine's request is simply not accepted. An older
+        binding calls ``createWindow`` first and only then loads the URL into
+        the page it returned; that page is marked ``popup`` and classifies its
+        first navigation in ``acceptNavigationRequest``.
+        """
+
+        def __init__(self, profile_obj, parent=None, on_new_window=None,
+                     popup=False):
+            super().__init__(profile_obj, parent)
+            self._on_new_window = on_new_window
+            self._popup = bool(popup)
+            self._popup_spent = False
+            self._signal_ok = False
+            if on_new_window is not None and hasattr(self, "newWindowRequested"):
+                try:
+                    self.newWindowRequested.connect(self._requested_window)
+                    self._signal_ok = True
+                except Exception:
+                    self._signal_ok = False
+
+        def _requested_window(self, request):
+            try:
+                url = request.requestedUrl().toString()
+            except Exception:
+                return
+            try:
+                self._on_new_window(url)
+            except Exception:
+                pass
+
+        def createWindow(self, window_type):
+            # Old bindings only: the engine loads the URL into the page this
+            # returns, so give it an empty one that classifies its first load.
+            if self._on_new_window is None or self._signal_ok:
+                return None
+            try:
+                return self._on_new_window(None, self)
+            except Exception:
+                return None
+
+        def acceptNavigationRequest(self, url, nav_type, is_main_frame):
+            try:
+                uri = url.toString()
+                scheme = (url.scheme() or "").lower()
+            except Exception:
+                return True
+            # A mailto:/tel: link is not a page: hand it to the desktop and
+            # cancel the navigation. http(s) is left alone -- the Manager is a
+            # single-page app and must keep navigating its own routes.
+            if is_main_frame and scheme in EXTERNAL_SCHEMES:
+                open_external(uri)
+                if self._popup:
+                    self._popup_spent = True
+                    win = self.parent()
+                    try:
+                        if win is not None:
+                            win.close()
+                    except Exception:
+                        pass
+                return False
+            if self._popup and not self._popup_spent and is_main_frame:
+                self._popup_spent = True
+                if self._on_new_window is None:
+                    return True
+                try:
+                    return self._on_new_window(uri, self) is self
+                except Exception:
+                    return True
+            return True
+
+    def dispatch_new_window(url, pending=None):
+        # The main page exists before the Manager's own window plumbing is
+        # defined; the slot is filled as soon as it is (before any load).
+        handler = new_window_handler.get("open")
+        if handler is None:
+            return None
+        return handler(url, pending)
+
     view = JawnView(settings, not args.probe)
-    page = QWebEnginePage(profile, view)
+    page = JawnPage(profile, view, on_new_window=dispatch_new_window)
     view.setPage(page)
     black_page(page, view)
     view.setWindowTitle("JawnOS")
@@ -1110,6 +1392,7 @@ def main(argv=None):
     _feature_permission(page, qt, allowed_hosts, gps_on)
     _allow_screen_capture(page, qt, allowed_hosts)
     _allow_clipboard(page, qt)
+    _install_downloads(profile, view, tray_holder)
 
     page_settings = page.settings()
     page_settings.setAttribute(
@@ -1151,33 +1434,45 @@ def main(argv=None):
     channel_js = _webchannel_js()
     admin_opener = {"open": None}
 
-    def open_manager_window(url, manager_override, title):
-        win = JawnView(settings, save_state=False)
-        other = QWebEnginePage(profile, win)
-        win.setPage(other)
-        black_page(other, win)
-        _allow_fullscreen(other, win, qt)
+    def manager_window(win, page_obj, manager_override, title):
+        """Wire a view and page as a Manager window on the shared profile.
+
+        The one wiring for a peer machine's window and for a same-origin
+        ``window.open``: black page, dark error page, the video's fullscreen,
+        the house's permissions and screen share, and the app bridge. Nothing
+        is loaded here, so the caller can either set the URL itself (the
+        engine's own popup request is then dropped) or return the page to an
+        older binding's ``createWindow``.
+        """
+        black_page(page_obj, win)
+        _allow_fullscreen(page_obj, win, qt)
         try:
-            other.settings().setAttribute(
+            page_obj.settings().setAttribute(
                 QWebEngineSettings.WebAttribute.ErrorPageEnabled, False)
         except Exception:
             pass
-        errorpage.watch(other)
+        errorpage.watch(page_obj)
         win.setWindowTitle(title or "JawnOS Machine")
         win.resize(900, 700)
-        other.certificateError.connect(_accept_certificate)
+        page_obj.certificateError.connect(_accept_certificate)
         peer_host = (urlparse(manager_override).hostname or "").lower()
         # A peer's Manager is a house origin too, so its host joins the shared
         # allowlist before this page loads anything.
         if peer_host:
             allowed_hosts.add(peer_host)
-        _feature_permission(other, qt, allowed_hosts, gps_on)
-        _allow_screen_capture(other, qt, allowed_hosts)
-        _allow_clipboard(other, qt)
+        _feature_permission(page_obj, qt, allowed_hosts, gps_on)
+        _allow_screen_capture(page_obj, qt, allowed_hosts)
+        _allow_clipboard(page_obj, qt)
         install_bridge(
-            other, win,
+            page_obj, win,
             peer_host,
             manager_override)
+
+    def open_manager_window(url, manager_override, title):
+        win = JawnView(settings, save_state=False)
+        other = JawnPage(profile, win, on_new_window=open_new_window)
+        win.setPage(other)
+        manager_window(win, other, manager_override, title)
         win.setUrl(QUrl(url))
         win.show()
         windows.append(win)
@@ -1189,6 +1484,68 @@ def main(argv=None):
                 pass
 
         win.destroyed.connect(_forget)
+        return other
+
+    def manager_origin(url):
+        """The scheme://host[:port] a Manager URL belongs to, for its bridge."""
+        parsed = urlparse(url)
+        if parsed.scheme in ("http", "https") and parsed.netloc:
+            return "%s://%s" % (parsed.scheme, parsed.netloc)
+        return manager_base
+
+    def make_popup_page():
+        """A hidden Manager window for an older binding's createWindow.
+
+        The engine loads the requested URL into this page after returning; its
+        first main-frame navigation is classified in ``JawnPage``, which shows
+        the window for a Manager URL and closes it for anything else.
+        """
+        win = JawnView(settings, save_state=False)
+        other = JawnPage(profile, win, on_new_window=open_new_window, popup=True)
+        win.setPage(other)
+        black_page(other, win)
+        win.setWindowTitle("JawnOS")
+        win.resize(900, 700)
+        return other
+
+    def open_new_window(url, pending=None):
+        """Place a ``window.open``/``target=_blank`` URL, or drop it.
+
+        ``pending`` is the page an older binding's ``createWindow`` already
+        created (and is about to load ``url`` into); it is adopted for a
+        Manager URL and closed otherwise. With the newer signal there is no
+        pending page: a Manager URL gets a window of its own here, and the
+        engine request that carried it is not accepted (it never loads), so a
+        popup cannot load twice. Returns the page the engine may load into, or
+        None once Browse or the desktop took the URL.
+        """
+        if url is None:
+            return make_popup_page()
+        kind = classify_new_window(url, host or "", allowed_hosts)
+        if os.environ.get("JAWNOS_QT_DEBUG"):
+            sys.stderr.write("qt-new-window kind=%s url=%s\n" % (kind, url))
+        win = pending.parent() if pending is not None else None
+        if kind == "manager":
+            if pending is not None:
+                if win is not None:
+                    manager_window(win, pending, manager_origin(url), "JawnOS")
+                    win.show()
+                return pending
+            open_manager_window(url, manager_origin(url), "JawnOS")
+            return None
+        if kind == "browse":
+            try:
+                _launch_browse(url, manager_base)
+            except Exception:
+                pass
+        elif kind == "external":
+            open_external(url)
+        if win is not None:
+            try:
+                win.close()
+            except Exception:
+                pass
+        return None
 
     def install_bridge(page_obj, view_obj, allowed_host, manager_base, extra_js=""):
         if QWebChannel is not None:
@@ -1197,7 +1554,8 @@ def main(argv=None):
             class PageBridge(QObject):
                 @Slot(str, str)
                 def postMessage(self, name, raw):
-                    handle_message(name, raw, page_obj, view_obj, allowed_host)
+                    handle_message(name, raw, page_obj, view_obj, allowed_host,
+                                   manager_base)
 
             handler = PageBridge(page_obj)
             channel.registerObject("jawnos", handler)
@@ -1227,12 +1585,13 @@ def main(argv=None):
         script.setRunsOnSubFrames(False)
         page_obj.scripts().insert(script)
 
-    def handle_message(name, raw, page_obj, view_obj, allowed_host):
+    def handle_message(name, raw, page_obj, view_obj, allowed_host, manager_base):
         """Handle one page message; allowed_host is this window's manager host.
 
         It is the host the window's Manager belongs to (the primary's, or a
         peer's), not the URL of whatever page is loaded: a public page has a
-        different origin and must not borrow the app key.
+        different origin and must not borrow the app key. ``manager_base`` is
+        the window's Manager URL, which Browse opens with.
         """
         # The start menu's admin icon asks for the control panel. The panel is
         # defined later; until then (or on a machine without it) raise the view.
@@ -1277,7 +1636,7 @@ def main(argv=None):
                 host = _qurl_host(view_obj.url())
             except Exception:
                 pass
-        allowed = {"127.0.0.1", "localhost", "::1"}
+        allowed = set(LOOPBACK_HOSTS)
         if allowed_host:
             allowed.add(allowed_host)
         if host not in allowed:
@@ -1332,20 +1691,11 @@ def main(argv=None):
                 parsed = urlparse(url)
                 if parsed.scheme not in ("http", "https") or not parsed.netloc:
                     raise ValueError("not a browse url")
-                launcher = bridge.browse_launcher()
-                if not launcher:
-                    raise ValueError("no browse launcher")
-                mode = "measure" if args.get("mode") == "measure" else "browse"
-                argv = launcher + [
-                    "--manager", manager_base or "",
-                    "--url", url,
-                    "--mode", mode,
-                    "--app", str(args.get("app") or "")[:200],
-                    "--uuid", str(args.get("uuid") or "")[:200],
-                ]
-                core.spawn_detached(
-                    argv, DESKTOP_DIR,
-                    os.path.join(core.state_dir(), "browse.log"))
+                _launch_browse(
+                    url, manager_base,
+                    "measure" if args.get("mode") == "measure" else "browse",
+                    str(args.get("app") or "")[:200],
+                    str(args.get("uuid") or "")[:200])
                 reply = {"ok": True}
         except Exception:
             # No cryptography on this machine, an unreadable key file, or a
@@ -1376,6 +1726,7 @@ def main(argv=None):
     # ---- the launcher URL, and the bridge installation --------------------
     ticket = None if (args.url or args.probe) else ticket_url()
     manager = None if (args.url or args.probe) else manager_url(settings["jawn_dir"], ticket)
+    manager_base = manager or args.url or ""
     login_pending = bool(ticket)
     kick = None
     host = port = None
@@ -1387,7 +1738,11 @@ def main(argv=None):
     migration_pending = bool(manager)
     reloaded = {"done": False}
 
-    install_bridge(page, view, host or "", manager or args.url or "",
+    # The pages are all built by now; from here on a window.open can place
+    # itself (nothing loads before the view's setUrl at the end of main).
+    new_window_handler["open"] = open_new_window
+
+    install_bridge(page, view, host or "", manager_base,
                    device_seed_js(host, port) if manager else "")
 
     if args.probe:
