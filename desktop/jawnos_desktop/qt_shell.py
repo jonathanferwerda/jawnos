@@ -681,6 +681,19 @@ def main(argv=None):
     profile.setPersistentCookiesPolicy(
         QWebEngineProfile.PersistentCookiesPolicy.ForcePersistentCookies)
 
+    # Chromium's scroll animator is off unless it is asked for, so a wheel or
+    # trackpad scroll steps instead of gliding, and a flick stops dead rather
+    # than coasting. This is Qt's counterpart of the old WebKitGTK
+    # ``enable-smooth-scrolling``. Profile settings are the ones every page
+    # created from this profile starts with, so the Manager view and each peer
+    # machine window opened from it get the same feel; Browse sets the same
+    # attribute on each of its own views.
+    try:
+        profile.settings().setAttribute(
+            QWebEngineSettings.WebAttribute.ScrollAnimatorEnabled, True)
+    except Exception:
+        pass
+
     settings = core.load_settings()
 
     class JawnView(QWebEngineView):

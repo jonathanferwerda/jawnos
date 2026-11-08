@@ -365,6 +365,15 @@ non-`WEBKIT_*` keys are honoured too, so `JAWNOS_GPU` and `LIBVA_DRIVER_NAME`
 still work there; its `WEBKIT_*` switches mean nothing to Chromium and are
 skipped.
 
+### Scrolling on the Qt view
+
+Qt leaves Chromium's scroll animator off by default, which reads as scrolling
+in steps: a flick of the trackpad stops as soon as the fingers lift. The shell
+turns it on (`ScrollAnimatorEnabled`) in the Qt profile before the first page
+exists, so the Manager and every peer Manager window opened from it glide and
+coast. Browse asks for the same attribute on each of its own views. This is the
+Qt counterpart of the removed WebKitGTK view's `enable-smooth-scrolling`.
+
 ## Desktop engine: Qt WebEngine
 
 The desktop shell is **Qt WebEngine** (Chromium), the only engine: it has the

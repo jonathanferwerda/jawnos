@@ -148,6 +148,13 @@ like($qt, qr/page_obj\.setBackgroundColor\(black\)/,
 like($qt, qr/black_page\(page, view\)/, 'applied to the main view');
 like($qt, qr/black_page\(other, win\)/, 'and to each peer Manager window');
 like($qt, qr/ErrorPageEnabled, False/, 'the built-in white error page is off');
+# Scrolling feel: Qt WebEngine leaves Chromium's scroll animator off, so the
+# shell turns it on for the profile and every page inherits it. This is the port
+# of the removed WebKitGTK view's enable-smooth-scrolling.
+like($qt, qr/ScrollAnimatorEnabled, True/,
+	'scroll animation is on, so a trackpad flick glides and coasts');
+like($qt, qr/profile\.settings\(\)\.setAttribute\b/,
+	'set on the profile, so the Manager and peer windows share it');
 like($qt, qr/errorpage\.dark_page/, 'the manager shows a dark page after its retries');
 like($qt, qr/errorpage\.watch\(other\)/, 'and peer windows show one at once');
 like($errpage, qr/background:#000000/, 'the error page is on the black ground');
