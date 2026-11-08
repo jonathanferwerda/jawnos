@@ -39,8 +39,13 @@ like($server_call, qr/&whisper_server_wanted\(1\);/,
 
 my ($transcript) = $gateway =~ /(sub _start_transcript \{.*?\n\})/s;
 ok($transcript, '_start_transcript is still one sub');
-like($transcript, qr/whisper_server_wanted\(1\)/,
-	'a screened call asks for the server at arm time, before the first clip');
+# Reception re-arms the gateway every five minutes while it waits, so an arm is
+# not a request for the model: asking here would hold it for as long as the
+# house is armed. Pinned so the shortcut is not re-added.
+unlike($transcript, qr/whisper_server_wanted/,
+	'arming the gateway does not warm the model (Reception re-arms every five minutes)');
+like($transcript, qr/&subs::whisper_available\(\)/,
+	'it still says why there is no transcript when whisper.cpp is missing');
 
 like($loader, qr/\bwhisper_server_wanted\b/,
 	'Loader.pm maps the new domain sub (t/91 reads the same list)');

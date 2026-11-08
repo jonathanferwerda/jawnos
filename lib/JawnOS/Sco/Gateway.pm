@@ -1109,11 +1109,12 @@ sub _start_transcript {
 		$self->{'transcript_note'} = 'whisper.cpp is not installed on this machine';
 		return 0;
 	}
-	# Wake the warm server now rather than at the first clip: the greeting is
-	# spoken for the next several seconds, so the model has loaded by the time
-	# the caller's name is read. President.pl's loop owns the start and stops it
-	# after ten quiet minutes (subs::whisper_server_wanted).
-	eval { &subs::whisper_server_wanted(1) };
+	# Nothing here asks for the warm server. Reception re-arms this gateway every
+	# five minutes while it waits for a call, and asking at arm time kept the
+	# model loaded for as long as the house was armed - which is always. The
+	# marker is touched by an actual transcription instead
+	# (subs::whisper_server_transcribe), so the model is loaded while the house
+	# is listening and let go ten quiet minutes after it stops.
 	my $python   = eval { &subs::whisper_python() } || '';
 	my $model    = eval { &subs::whisper_models_dir() } || '';
 	my $streamer = eval { &subs::whisper_streamer() } || '';
