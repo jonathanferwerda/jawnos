@@ -347,15 +347,25 @@ if ($sqlite3 && length $sqlite3) {
 		undef, '__president', 'qa_night_time', 'all', '02:45', '1000');
 	$dbh->do("insert into settings (app, setting, device, value, server_time) values (?,?,?,?,?)",
 		undef, '__president', 'qa_ux_time', 'all', 'half past', '1000');
+	$dbh->do("insert into settings (app, setting, device, value, server_time) values (?,?,?,?,?)",
+		undef, '__president', 'qa_ux_model', 'all', 'deepseek:deepseek-flash', '1000');
+	# A per-device row must not take the house choice over, the same order the
+	# other QA settings use.
+	$dbh->do("insert into settings (app, setting, device, value, server_time) values (?,?,?,?,?)",
+		undef, '__president', 'qa_ux_model', 'computer', 'deepseek:deepseek-v4-pro', '2000');
 	$dbh->disconnect;
 	is(QaSetting::read_night_time($db, 'qa_night_time'), '02:45', 'a stored time reads back from the fenced copy');
 	is(QaSetting::read_night_time($db, 'qa_ux_time'), '05:30', 'a garbage row reads as the default');
+	is(QaSetting::read_ux_model($db), 'deepseek:deepseek-flash',
+		'the UX model reads back from the fenced copy, house row first');
 }
 else {
 	pass('sqlite3 is not installed; the fenced read is skipped');
 }
 
 # --- the panel, the script, the routes, the rail -----------------------------
+like(read_file("$root/qa/ux/run"), qr/read_ux_model/,
+	'the UX runner takes its model from the QA setting when --model is absent');
 my $panel = read_file("$root/templates/configure/qa_panel.html.ep");
 like($panel, qr/id="qa_suite_time"/, 'the panel carries the suite time field');
 like($panel, qr/id="qa_ux_time"/, 'the panel carries the UX time field');

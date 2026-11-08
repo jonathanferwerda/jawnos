@@ -120,6 +120,14 @@ my $live_db = $opt{'db'} || Ux->live_db($repo);
 $opt{'limit'} = defined $opt{'limit'}
 	? QaSetting::clamp_note_limit($opt{'limit'})
 	: QaSetting::read_note_limit($live_db);
+
+# The judgement model: an explicit --model wins; otherwise the QA setting, so a
+# model change in Configure -> Plat -> QA reaches the night without editing the
+# unit. '' stays no model, and every verdict stays skip.
+if (!length $opt{'model'}) {
+	my $configured = QaSetting::read_ux_model($live_db);
+	$opt{'model'} = $configured if length $configured;
+}
 my $h = Harness->new(repo => $repo, root => $opt{'root'});
 $h->private_tmp();
 my $ro = $h->bind_live_read_only();
@@ -134,6 +142,7 @@ my $t0 = time;
 
 print 'JawnOS UX ' . ($ENV{'JAWNOS_QA_NS'} ? '[fenced]' : '[unfenced]') . "\n";
 print 'live db: ' . $live_db . ($ro ? ' (repo mounted read-only)' : '') . "\n";
+print 'model: ' . (length $opt{'model'} ? $opt{'model'} : 'none (every judgement is skip)') . "\n";
 
 # 1. read the queue, read-only, newest first
 my $notes = Ux->select_notes($live_db, limit => $opt{'limit'}, category => 'jawnos');
@@ -256,7 +265,7 @@ qa/ux/run - nightly UX evaluation of the owner's JawnOS-category notes
   --results DIR      where the report goes (default the run's results/)
   --metrics FILE     write l6.* metrics for qa/run.pl / budgets
   --db PATH          live database to read read-only (default <repo>/database/jawnos.db)
-  --model NAME       ask the Guide's model to judge (without it: skip)
+  --model NAME       override the QA model setting (without either: skip)
   --no-ui            do not boot a browser; notes + rubric only
   --no-namespace     run without the fence (read the warning in qa/README.md)
   --file-handbook    file ux-report.md through POST /manager/note_save

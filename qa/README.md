@@ -323,9 +323,11 @@ console errors and the step trail. The **rubric** answers three questions:
 - **help** — was the in-app help useful for it?
 - **works** — do the parts actually work (no console error, no dead step)?
 
-**No model is `skip`, never `pass`.** With `--model NAME` the runner asks the
-Guide's own model call (`subs::evaluation_model_call`) for the three verdicts;
-a call that errors, or with no model configured, leaves the note at `skip`.
+**No model is `skip`, never `pass`.** The model is `--model NAME` when given,
+otherwise `__president/qa_ux_model` (the house QA model setting); the runner
+asks the Guide's own model call (`subs::evaluation_model_call`) for the three
+verdicts. A call that errors, or with no model configured, leaves the note at
+`skip`.
 
 Output (under `--results`, normally `~/jawnos-qa/ux/`):
 

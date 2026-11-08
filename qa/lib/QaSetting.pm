@@ -3,8 +3,8 @@ package QaSetting;
 # The house settings the QA nightlies read, and the one clamp they share.
 #
 # Configure -> Plat -> QA writes `__president/qa_note_limit`,
-# `__president/qa_coding_agent` and the three nightly times
-# (`qa_night_time`, `qa_ux_time`, `qa_coding_time`); qa/ux/run and
+# `__president/qa_coding_agent`, `__president/qa_ux_model` and the three
+# nightly times (`qa_night_time`, `qa_ux_time`, `qa_coding_time`); qa/ux/run and
 # qa/coding_night/run.pl read the same rows here, without booting the app or the
 # domain layer. Every live read uses a `mode=ro` SQLite URI, so a nightly can
 # never write the house database.
@@ -99,6 +99,15 @@ sub read_note_limit {
 sub read_coding_agent {
 	my ($db) = @_;
 	return read_setting($db, 'qa_coding_agent');
+}
+
+# `__president/qa_ux_model`: the model the 05:30 UX loop judges with. The
+# coding night reads Configure -> Platform -> Coding (mail/coding_assistant);
+# this is the UX loop's own choice, so changing the night's model cannot move
+# the Guide's evaluation role. '' means no model: the loop skips, never passes.
+sub read_ux_model {
+	my ($db) = @_;
+	return read_setting($db, 'qa_ux_model');
 }
 
 # --- what the coding night works on ----------------------------------------
