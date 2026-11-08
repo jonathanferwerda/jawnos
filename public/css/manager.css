@@ -965,29 +965,16 @@ canvas.background {
    Web/Browse tabs sit under it. */
 
 .wind { border-radius: var(--window_radius, var(--jawnos-corner, 12px)); background-color: var(--window, var(--panel)); box-shadow: 0 20px 50px rgba(0,0,0,.24), 0 2px 8px rgba(0,0,0,.12); }
-/* The tiled rail: an unfocused window keeps only its title bar, so every
-   window's icon and name stay in reach; the focused window leaves the rail and
-   shows its whole frame beside it. The window controls belong to the focused
-   frame, so the rail keeps its room for the name. */
-.wind.tile_rail { overflow: hidden; }
-.wind.tile_rail .window_contents,
-.wind.tile_rail .window_drawer { display: none !important; }
-.wind.tile_rail .navbar_buttons,
-.wind.tile_rail .navbar_reveal { display: none !important; }
-/* the rail row answers as a whole; its icon is not a separate reveal control */
-.wind.tile_rail .window_icon_holder { pointer-events: none; }
-/* In the stack the title bar rides the foot of the window, so the row below it
-   cannot cover the name, and the whole window is read from the top down. */
-.wind.tile_rail .top_navbar,
-.wind.tile_focus .top_navbar {
+/* The tile is a stack. Its front window shows the title bar at the top; the
+   windows behind it sit lower with their title bars at the foot, so a stack
+   still shows every name. The stack changes position only, never width. */
+.wind.tile_bar_bottom .top_navbar {
 	top: auto !important;
 	bottom: 0;
 	border-radius: 0 0 var(--window_radius, var(--jawnos-corner, 12px)) var(--window_radius, var(--jawnos-corner, 12px));
 }
-.wind.tile_rail .window_contents,
-.wind.tile_focus .window_contents { padding-top: 0 !important; }
-.wind.tile_rail .window_drawer,
-.wind.tile_focus .window_drawer {
+.wind.tile_bar_bottom .window_contents { padding-top: 0 !important; }
+.wind.tile_bar_bottom .window_drawer {
 	top: 0 !important;
 	bottom: calc(var(--navbar_h, 36px) - 2px);
 	height: auto !important;

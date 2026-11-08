@@ -144,12 +144,8 @@ $(document).on('click', '.wind', function(e) {
 		return;
 	}
 	topLevelNow($(this));
-	// a maximize/restore is its own size choice; anything else leaves the rail
-	// for the focused frame
-	if (!$(e.target).closest('.maximize_button, .restore_button').length
-		&& typeof windowTileClick === 'function') {
-		windowTileClick($(this));
-	}
+	// the raised window becomes the front of the stack with its whole frame
+	if (typeof windowTileClick === 'function') { windowTileClick($(this)); }
 });
 
 // A scroll is a touch on that window. Scrolling a window that is not at the

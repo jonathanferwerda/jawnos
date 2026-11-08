@@ -6,6 +6,9 @@ function windowMinimizer(timestamp,app) {
 	if (win.is(':visible')) { 
 		win.hide();
 		win.attr('view', 'minimized');
+		// overflow hiding uses the same display:none, so the visible flag is
+		// what separates a window the person minimised from one the stack hid
+		win.attr('visible', 'no');
 		var tnh = win.height();
 		var tnw = win.width();
 
@@ -21,6 +24,7 @@ function windowMinimizer(timestamp,app) {
 		var tnh = jawnosWindowSizeGet(timestamp, 'h');
 		var tnw = jawnosWindowSizeGet(timestamp, 'w');
 		$('#window_' + timestamp).css({'height': tnh, 'width': tnw });
+		win.attr('visible', 'yes');
 	}
 	windowDimensionSetter(win);
 	if (!windowPhoneChecker() && typeof windowTileRefresh === 'function') {
@@ -122,6 +126,7 @@ function windowMaximizer(timestamp, app) {
 	}
 	$('#window_contents_' + timestamp ).css({ 'width': '100%' });
 	windowDimensionSetter($('#window_' + timestamp ));
+	if (typeof windowTileRememberSize === 'function') { windowTileRememberSize($('#window_' + timestamp)); }
 }
 
 function windowRestore(timestamp,app) {
@@ -141,6 +146,7 @@ function windowRestore(timestamp,app) {
 		}
 	}
 	windowDimensionSetter(win);
+	if (typeof windowTileRememberSize === 'function') { windowTileRememberSize(win); }
 }
 
 function windowRestorer(timestamp,app) {
@@ -260,7 +266,7 @@ function windowDraggable(win) {
 				if (typeof markerDragger === 'function') { markerDragger(p.target.id,'stop'); }
 				windowDimensionSetter($('#' + p.target.id));
 				// a rail bar is a switcher, not a free window: put it back in the rail
-				if (win.hasClass('tile_rail') && typeof windowTileRefresh === 'function') { windowTileRefresh(); }
+				if (win.hasClass('tile_bar_bottom') && typeof windowTileRefresh === 'function') { windowTileRefresh(); }
 				// a phone's pile is a cascade; a drag would leave the window over the
 				// others' bars and swallow their taps, so restack it - to the top of
 				// the pile - the moment the drag ends
@@ -335,16 +341,22 @@ $(document).on('click', '.place_button', function(e) {
 	var app = win.attr('app');
 	if (!win.length || !app) { return; }
 	if (button.attr('status') == 'on') {
-		// let it tile again: no place of its own, and the rail takes it back
+		// let it tile again: no place of its own, and the stack takes it back
 		button.attr('status', 'off');
 		win.attr('pre_dimensioned', 0);
 		win.removeAttr('tile_w').removeAttr('tile_h');
+		topLevelNow(win);
 		settingDeleter({ 'app': app, 'setting': 'dimensions' });
 		settingSetter({ 'app': app, 'setting': 'place', 'value': 'tile' });
 	}
 	else {
-		// keep it as it sits, on the screen it sits on. A rail bar is only a
-		// title bar; the pin takes the whole size it held before it joined.
+		// keep it as it sits, on the screen it sits on. A window behind another
+		// bar only wears a title bar at the foot, so bring it to the front first
+		// and pin the whole frame rather than the sliver.
+		if (win.hasClass('tile_bar_bottom') && typeof windowTileClick === 'function') {
+			topLevelNow(win);
+			windowTileClick(win);
+		}
 		button.attr('status', 'on');
 		win.attr('pre_dimensioned', 1);
 		if (typeof windowTileRelease === 'function') { windowTileRelease(win); }

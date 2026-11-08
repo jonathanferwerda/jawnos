@@ -305,8 +305,9 @@ $(document).on('click', '.window_toggle', function() {
 			: $('.wind[data-window-id="' + window_id + '"]');
 		if (!tw.length) { return; }
 		if (!tw.is(':visible')) {
-			tw.show().attr('visible', 'yes');
+			tw.show().attr('visible', 'yes').attr('view', '');
 			topLevelNow(tw);
+			if (typeof windowTileRefresh === 'function') { windowTileRefresh(); }
 			return;
 		}
 		var topmost = null, topz = -1;
@@ -334,6 +335,7 @@ $(document).on('click', '.window_toggle', function() {
 		windowMinimizer(timestamp,app);
 	} else {
 		topLevelNow(win);
+		if (typeof windowTileRefresh === 'function') { windowTileRefresh(); }
 	}
 
 });

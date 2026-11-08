@@ -64,27 +64,26 @@ like($fit, qr/var scale = Math\.min\(now_w \/ saved_w, now_h \/ saved_h\);/, 'th
 like($fit, qr/win\.attr\('place_restoring', '1'\)/, 'restoring does not ratchet the saved place down');
 like($windows, qr/windowPlaceRestore\(\$\('#' \+ window_id\)\)/, 'the open path restores a pinned place');
 
-# --- the rail and find-space mode ------------------------------------------
+# --- the stack and find-space mode -----------------------------------------
 like($windows, qr/function windowIsTiled\(win\)/, 'one predicate says which windows the tile owns');
-like($tiling, qr/function windowTileRailLayout\(windows, obstacles, view/, 'the tile has one place that hands out rail and focus places');
-like($tiling, qr/tiled\.sort\(function/, 'the front window is the one shown in full');
-like($tiling, qr/function windowTileClick\(win\)/, 'a press brings a window out of the rail');
-like($tiling, qr/function windowTileRelease\(win\)/, 'pinning a rail bar restores its whole size');
-like($tiling, qr/addClass\('tile_rail'\)/, 'unfocused windows become title-bar rows');
-like($tiling, qr/removeClass\('tile_rail'\)/, 'the focused window leaves the rail');
-like($tiling, qr/function windowTileRememberSize\(win\)/, 'a focused resize is what the rail restores');
-like($css, qr/\.wind\.tile_rail \.window_contents/, 'a rail bar hides the window body');
-like($css, qr/\.wind\.tile_focus \.top_navbar \{[^}]*bottom: 0/s, 'the title bar rides the foot of a stacked window');
-like($tiling, qr/rowsPerColumn/, 'a full stack starts a second stack');
+like($tiling, qr/function windowTileStacks\(windows, obstacles, view/, 'the tile has one place that hands out stack places');
+like($tiling, qr/var stacks = \[\];/, 'the tile is a set of stacks');
+like($tiling, qr/hidden\.push\(index\)/, 'windows with no room left stay hidden');
+like($tiling, qr/last_top/, 'the windows raised longest ago are the ones hidden');
+like($tiling, qr/function windowTileClick\(win\)/, 'a press brings a window to the front of the stack');
+like($tiling, qr/function windowTileRelease\(win\)/, 'pinning takes a window out of the stack');
+like($tiling, qr/function windowTileRememberSize\(win\)/, 'a resize is what the stack remembers');
+like($css, qr/\.wind\.tile_bar_bottom \.top_navbar \{[^}]*bottom: 0/s, 'a window behind the front wears its title bar at the foot');
+like($tiling, qr/cursor \+ bar <= floor/, 'a full stack starts a second stack');
 like($fit, qr/\$\(document\)\.on\('dblclick', '\.top_navbar'/, 'double-pressing a title bar toggles find-space mode');
 unlike($fit, qr/win\.attr\('tile'/, 'a drag no longer takes a window out of the tile');
 like($windows, qr/windowFindSpaceActive\(\)/, 'the open path lays find-space mode out');
-like($stack, qr/windowTileRefresh\(\)/, 'closing a window leaves its rail row behind');
+like($stack, qr/windowTileRefresh\(\)/, 'closing a window leaves its stack row behind');
 
-# --- the rail and its focus -------------------------------------------------
-# The layout functions are played in a bare context: the rail is a pure list of
-# places, the membership is read from the window attributes, and the switch is
-# the only state.
+# --- the stack and its overflow ---------------------------------------------
+# The layout functions are played in a bare context: the stack is a pure list
+# of places, the membership is read from the window attributes, and the switch
+# is the only state.
 my $node = `command -v node 2>/dev/null`;
 chomp $node if defined $node;
 SKIP: {
@@ -158,6 +157,8 @@ function J(els) {
 	j.addClass = function (name) { els.forEach(function (el) { if (el.addClass) { el.addClass(name); } }); return j; };
 	j.removeClass = function (name) { els.forEach(function (el) { if (el.removeClass) { el.removeClass(name); } }); return j; };
 	j.hasClass = function (name) { return els.length > 0 && els[0].hasClass ? els[0].hasClass(name) : false; };
+	j.filter = function (fn) { return J(els.filter(function (el, i) { return fn.call(el, i, el); })); };
+	j.sort = function (fn) { els.sort(fn); els.forEach(function (el, i) { j[i] = el; }); return j; };
 	return j;
 }
 
@@ -219,7 +220,17 @@ eq(ctx.windowIsTiled(member({ pre_dimensioned: '1' })), false, 'a pinned window 
 eq(ctx.windowIsTiled(member({ pre_dimensioned: '0', view: 'max' })), true, 'a maximized window stays in the tile');
 eq(ctx.windowIsTiled(member({ pre_dimensioned: '0', tile: 'off' })), true, 'a dragged window stays in the tile');
 
-// --- the rail and the focused frame -----------------------------------------
+const recency = [
+	new El('window_a', { pre_dimensioned: '0', last_top: '10' }),
+	new El('window_b', { pre_dimensioned: '0', last_top: '30' }),
+	new El('window_c', { pre_dimensioned: '0', last_top: '20' })
+];
+dom = recency;
+const ordered = ctx.windowTiledWindows();
+eq(ordered[0].id, 'window_b', 'the most recently raised window is first');
+eq(ordered[2].id, 'window_a', 'the longest-waiting window is last');
+
+// --- the stack --------------------------------------------------------------
 const view = { width: 1920, height: 1080 };
 function specs(n) {
 	const list = [];
@@ -230,81 +241,54 @@ function overlaps(a, b) {
 	return a.left < b.left + b.width && b.left < a.left + a.width &&
 	       a.top < b.top + b.height && b.top < a.top + a.height;
 }
-function framesClear(rects, obstacles) {
-	for (const rect of rects) {
-		for (const obstacle of obstacles) {
-			if (overlaps(rect, obstacle)) { return false; }
-		}
-	}
-	return true;
-}
 
-const layout = ctx.windowTileRailLayout(specs(3), [], view, 0, 0, 320, false);
-eq(layout.rail.length, 2, 'the two unfocused windows take rail rows');
-eq(layout.focus.left, 332, 'the focused frame sits beside the rail');
-eq(layout.focus.top, 0, 'at the top');
-eq(layout.focus.width, 480, 'at the size it had before it joined the rail');
-eq(layout.focus.height, 640, 'in full');
-eq(layout.rail[0].left, 0, 'the rail starts at the left edge');
-eq(layout.rail[0].top, 0, 'with the first title bar at the top');
-eq(layout.rail[0].width, 320, 'the rail has its own width');
-eq(layout.rail[0].height, 40, 'and each row is one title bar');
-eq(layout.rail[1].top, 40, 'the next row is one bar lower');
+const one = ctx.windowTileStacks(specs(3), [], view, 0, 0, 360);
+eq(one.stacks.length, 1, 'three windows fit one stack');
+eq(one.hidden.length, 0, 'and none are hidden');
+eq(one.stacks[0].items[0].top, 0, 'the front window sits at the top');
+eq(one.stacks[0].items[0].height, 640, 'with its whole frame');
+eq(one.stacks[0].items[0].bar_top, true, 'and its title bar at the top');
+eq(one.stacks[0].items[1].top, 40, 'the next window sits one bar lower');
+eq(one.stacks[0].items[1].bar_top, false, 'with its title bar at the foot');
+eq(one.stacks[0].items[2].top, 80, 'and the third another bar lower');
+eq(one.stacks[0].items[2].width, 480, 'the stack never changes a width');
 
-const anchored = [{ left: 0, top: 0, width: 400, height: 1080 }];
-const tiled_mode = ctx.windowTileRailLayout(specs(3), anchored, view, 0, 0, 320, false);
-eq(tiled_mode.rail[0].left, 400, 'the rail steps around an anchor in tiling mode too');
-const around = ctx.windowTileRailLayout(specs(3), anchored, view, 0, 0, 320, true);
-eq(around.rail[0].left, 400, 'the rail starts right of the anchored window');
-eq(around.focus.left, 732, 'the focused frame takes the space beyond it');
-eq(framesClear([around.focus], anchored), true, 'the focused frame never covers the anchor');
-eq(framesClear(around.rail, anchored), true, 'and neither does the rail');
+const short = { width: 1920, height: 800 };
+const two = ctx.windowTileStacks(specs(7), [], short, 0, 0, 360);
+eq(two.stacks.length, 2, 'a full stack starts a second stack');
+eq(two.stacks[1].items[0].left, 360, 'the second stack is stepped across');
+eq(two.stacks[1].items[0].top, 0, 'and starts at the top');
+eq(two.stacks[1].items[0].bar_top, true, 'its front window keeps its title bar on top');
 
-const right_anchor = [{ left: 1520, top: 0, width: 400, height: 1080 }];
-const cleared = ctx.windowTileRailLayout(specs(3), right_anchor, view, 0, 0, 320, true);
-eq(cleared.focus.left, 332, 'a right-hand anchor stops the focused frame');
-eq(framesClear([cleared.focus], right_anchor), true, 'and the frame stays clear of it');
+const narrow = { width: 700, height: 800 };
+const hidden = ctx.windowTileStacks(specs(7), [], narrow, 0, 0, 360);
+eq(hidden.hidden.length, 2, 'windows with no stack left stay hidden');
+eq(hidden.hidden[0], 5, 'the oldest come first in the hidden tail');
 
-const wide = ctx.windowTileRailLayout([{ width: 2000, height: 1400, bar: 40 }], [], view, 0, 0, 320, false);
-eq(wide.focus.width, 1920, 'a frame wider than the desk is fitted');
-eq(wide.focus.height, 1080, 'and so is one taller than it');
-eq(ctx.windowTileRailWidth(view), 360, 'the rail has a readable width on a wide desk');
-eq(ctx.windowTileRailWidth({ width: 800, height: 600 }), 240, 'and narrows with the desk');
-eq(ctx.windowTileRailWidth({ width: 400, height: 600 }), 160, 'down to a readable minimum');
+const anchored = [{ left: 0, top: 0, width: 400, height: 800 }];
+const around = ctx.windowTileStacks(specs(7), anchored, short, 0, 0, 360);
+eq(around.stacks[0].items[0].left, 400, 'the first stack finds room beside the anchor');
+eq(around.stacks[1].items[0].left, 760, 'the second stack finds room too, overlapping the first');
+eq(overlaps(around.stacks[0].items[0], around.stacks[0].items[1]), true, 'the stack itself overlaps');
 
-const short = { width: 1920, height: 200 };
-const stacked = ctx.windowTileRailLayout(specs(7), [], short, 0, 0, 320, false);
-eq(stacked.rail[5].left, 326, 'a full stack starts a second stack');
-eq(stacked.rail[5].top, 0, 'at the top of the desk');
-eq(stacked.focus.left, 658, 'the focused frame moves past both stacks');
-const docked = ctx.windowTileRailLayout(specs(6), [], short, 0, 40, 320, false);
-eq(docked.rail[4].left, 326, 'the dock and taskbar count as the foot of a stack');
+const docked = ctx.windowTileStacks(specs(7), [], short, 0, 40, 360);
+eq(docked.stacks[0].items.length, 4, 'the dock and taskbar shorten the stack');
 
 const rail_win = new El('window_r', { pre_dimensioned: '0' }, { width: '120px', height: '40px' });
-rail_win.classNames = ['tile_rail'];
-rail_win.attrs.tile_w = '480';
-rail_win.attrs.tile_h = '640';
+rail_win.classNames = ['tile_bar_bottom'];
 ctx.windowTileRelease(rail_win);
-eq(rail_win.style.width, 480, 'pinning a rail bar restores its whole width');
-eq(rail_win.style.height, 640, 'and height');
-eq(rail_win.hasClass('tile_rail'), false, 'and takes it out of the rail');
-
-const pinned_focus = new El('window_pf', { pre_dimensioned: '0' }, { width: '700px', height: '500px' });
-pinned_focus.classNames = ['tile_focus'];
-ctx.windowTileRelease(pinned_focus);
-eq(pinned_focus.hasClass('tile_focus'), false, 'pinning the focused window returns its bar to the top');
-eq(parseFloat(pinned_focus.style.width), 700, 'and keeps the size it was showing');
+eq(rail_win.hasClass('tile_bar_bottom'), false, 'pinning takes the foot bar off');
 
 const focused = new El('window_f', { pre_dimensioned: '0' }, { width: '600px', height: '500px' });
 ctx.windowTileRememberSize(focused);
-eq(focused.attr('tile_w'), 600, 'a focused frame remembers its width');
-eq(focused.attr('tile_h'), 500, 'and height for the rail to restore');
+eq(focused.attr('tile_w'), 600, 'a resize remembers its width');
+eq(focused.attr('tile_h'), 500, 'and height for the stack to restore');
 
 // --- a press -----------------------------------------------------------------
 let pressed = 0;
 ctx.windowTileArrange = function () { pressed++; };
 ctx.windowTileClick(new El('window_x', { pre_dimensioned: '0' }));
-eq(pressed, 1, 'a press on a tiled window lays the rail out again');
+eq(pressed, 1, 'a press on a tiled window lays the stack out again');
 ctx.windowTileClick(new El('window_y', { pre_dimensioned: '1' }));
 eq(pressed, 1, 'a press on an anchored window does not');
 
@@ -315,9 +299,9 @@ ctx.windowFindSpaceArrange = function () { arranged++; };
 ctx.windowTileArrange = function () { tiled++; };
 eq(ctx.windowFindSpaceActive(), false, 'the desk starts in tiling mode');
 eq(ctx.windowFindSpaceToggle(), true, 'a title-bar double-press switches to find-space');
-eq(arranged, 1, 'and lays the rail around the anchors');
+eq(arranged, 1, 'and lays the stacks around the anchors');
 eq(ctx.windowFindSpaceToggle(), false, 'a second press returns to tiling');
-eq(tiled, 1, 'and puts the rail back at the left edge');
+eq(tiled, 1, 'and lets the stacks use the whole desk');
 
 process.exit(failures ? 1 : 0);
 JS
@@ -326,7 +310,7 @@ JS
 	my $out = `$node "$harness_file" "$root/public/js/manager/windows.js" "$root/public/js/manager/windows/05_tiling.js" 2>&1`;
 	my $rc = $? >> 8;
 	diag($out) if $rc;
-	is($rc, 0, 'the rail and its switch play out');
+	is($rc, 0, 'the stack and its switch play out');
 }
 
 done_testing();
