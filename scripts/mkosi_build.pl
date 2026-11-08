@@ -93,7 +93,7 @@ make_path($tree);
 # scripts/stage_firmware.pl), so it stays; the rest would bloat the download and
 # the state partition firstboot copies them to.
 my @exclude = (
-	'.git', 'releases', '.shots', '.secrets', '.president', 'config.json',
+	'.git', '.worktrees', 'releases', '.shots', '.secrets', '.president', 'config.json',
 	'desktop/mkosi/.stage', 'desktop/mkosi/output',
 	'desktop/mkosi/mkosi.key', 'desktop/mkosi/mkosi.crt',
 	'node_modules',

@@ -583,6 +583,11 @@ my $gateway = JawnOS::Sco::Gateway->new(
 	dir => "$dir/sco",
 	helper => $fake,
 	status_path => "$dir/sco.json",
+	# The helper protocol, not the house's audio transport. On the gateway
+	# machine misc/sco_pipe is yes (the virtual handset is installed), and an
+	# unset pipe flag would make arm() ignore this fake helper and wait for a
+	# caller that never comes.
+	pipe => 0,
 );
 my $armed = $gateway->arm(
 	local => 'E0:E1:A9:3D:4B:B8',

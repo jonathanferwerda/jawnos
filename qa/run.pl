@@ -271,7 +271,7 @@ if (grep { $_ eq 'l1' } @layers) {
 			$fatal->("l1: no loopback session (status " . ($session->{'status'} // '?') . ')');
 		}
 		else {
-			$say->('[l1] resident session opened the manager');
+			$say->('[l1] citizen session opened the manager');
 		}
 
 		my $t0 = time;
@@ -292,7 +292,7 @@ if (grep { $_ eq 'l1' } @layers) {
 
 			my $res = $h->get($r->{'path'}, body => 1);
 			my $status = $res->{'status'};
-			my $expected = Probe::expected_status($policy, $r, 'resident');
+			my $expected = Probe::expected_status($policy, $r, 'citizen');
 			my $verdict = 'pass';
 			my $reason = '';
 

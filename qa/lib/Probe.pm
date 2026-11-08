@@ -22,7 +22,7 @@ use File::Slurp qw(read_file);
 our $VERSION = '1';
 
 # The tier table is subs::tier_needed (perl/subroutines.pl). It is mirrored
-# here so route classification needs no app boot; t/56 asserts the two agree
+# here so route classification needs no app boot; t/15-tier.t asserts the two agree
 # for every route, so drift is a test failure rather than a surprise.
 my @TIER = (
 	['citizen',  qr{^/manager/(?:configure|security|magazine/publish|power)(?:/|$)}],
@@ -81,7 +81,6 @@ sub load_policy {
 	$p->{'skip'}  ||= [];
 	$p->{'allow'} ||= [];
 	$p->{'tolerate'} ||= [];
-	$p->{'tier_status'} ||= { citizen => 403, resident => 200, '' => 200 };
 	return $p;
 }
 
@@ -126,8 +125,6 @@ sub expected_status {
 	return 200 if $policy->{'tier_exempt'} && $path =~ /$policy->{'tier_exempt'}/;
 	my $need = tier_needed($path);
 	my $rank = { '' => 0, resident => 1, citizen => 2 };
-	return $policy->{'tier_status'}->{$need}
-		if exists $policy->{'tier_status'}->{$need};
 	return 403 if ($rank->{$need} || 0) > ($rank->{$session_privilege // ''} || 0);
 	return 200;
 }

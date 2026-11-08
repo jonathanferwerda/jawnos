@@ -125,8 +125,8 @@ reason, and the report counts them. The policy is `qa/routes.policy.json`:
 - `tolerate` - routes that legitimately answer 500 without the query arguments
   the UI sends; recorded as warnings so they cannot hide a regression.
 - `tier_exempt` - rails that authenticate themselves (the padlock protocol), so
-  a resident session is expected to reach them even though the tier table says
-  `citizen`.
+  the loopback session is expected to reach them even though the tier table
+  says `citizen`.
 - `allow` - a way to opt a specific write back in when its turn comes.
 
 If a route takes the tree down, the suite names it, restarts the instance and

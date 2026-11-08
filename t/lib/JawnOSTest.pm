@@ -27,6 +27,7 @@ use warnings;
 
 use Cwd qw(abs_path getcwd);
 use Exporter ();
+use File::Copy qw(copy);
 use File::Temp qw(tempdir);
 use FindBin ();
 use POSIX ();
@@ -56,9 +57,20 @@ sub ymd {
 	return POSIX::strftime('%Y-%m-%d', localtime(int($ms / 1000)));
 }
 
+# A consistent snapshot of the live house, copied outside it. `sqlite3 .backup`
+# is atomic against the running app; a plain copy is the fallback when sqlite3
+# is not on PATH, because most tests only need the schema and a few rows.
+sub _copy_live_database {
+	my ($dest) = @_;
+	my $live = "$ROOT/database/jawnos.db";
+	return 0 unless -f $live;
+	return 1 if system('sqlite3', $live, ".backup '$dest'") == 0;
+	return copy($live, $dest) ? 1 : 0;
+}
+
 # A temp copy of a test (scripts/verify_change.pl --range does this for the
 # pre-push hook) makes FindBin point at the temp directory, not the checkout;
-# the process still runs with the repo as its working directory, so fall back to
+# the process still runs with the repo as the working directory, so fall back to
 # that before giving up.
 sub _find_root {
 	my @candidates;
@@ -118,10 +130,45 @@ sub _setup {
 	require './perl/subroutines.pl';
 	chdir $cwd or die "JawnOSTest: chdir $cwd: $!\n";
 
+	# subroutines.pl resolves the database from its own real path. The sandbox
+	# links perl/ to the checkout, so that path is the live install: without the
+	# two lines below every test would open (and a writing test would change) the
+	# live house database. Give the sandbox its own snapshot and point the app at
+	# it before any test touches the database.
+	_copy_live_database("$SANDBOX/database/jawnos.db");
+	$subs::install_dir = $SANDBOX;
+
 	if (defined $home) { $ENV{HOME} = $home }
 	else               { delete $ENV{HOME} }
 
 	$_READY = 1;
+}
+
+# The fork runner boots this harness once, so every child would otherwise share
+# the parent's install dir - and one shared database. Each child calls this
+# before its test runs: a private install dir with its own copy of the house
+# snapshot, so two tests saving the same setting cannot race each other (or
+# reach the live file).
+our $_ISOLATED_PID;
+
+sub isolate {
+	return if defined $_ISOLATED_PID && $_ISOLATED_PID == $$;
+	return unless defined $SANDBOX;
+	my $dir = tempdir('jawnos-test-run-XXXXXX', TMPDIR => 1, CLEANUP => 1);
+	die "JawnOSTest: cannot create an isolated install dir\n" unless defined $dir;
+	for my $name (qw(perl lib)) {
+		next unless -e "$ROOT/$name";
+		symlink("$ROOT/$name", "$dir/$name")
+			or die "JawnOSTest: symlink $name: $!\n";
+	}
+	mkdir "$dir/database" or die "JawnOSTest: mkdir database: $!\n";
+	mkdir "$dir/.president" or die "JawnOSTest: mkdir .president: $!\n";
+	my $source = "$SANDBOX/database/jawnos.db";
+	copy($source, "$dir/database/jawnos.db")
+		or die "JawnOSTest: copy database: $!\n" if -f $source;
+	$subs::install_dir = $dir;
+	$_ISOLATED_PID = $$;
+	return $dir;
 }
 
 _setup();

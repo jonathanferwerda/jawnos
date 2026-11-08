@@ -216,7 +216,7 @@ sub export_tree {
 
 	if ($self->{'source'} eq 'worktree') {
 		my @exclude = (
-			'--exclude=./.git', '--exclude=./.shots', '--exclude=./releases',
+			'--exclude=./.git', '--exclude=./.worktrees', '--exclude=./.shots', '--exclude=./releases',
 			'--exclude=./.secrets', '--exclude=./database/jawnos.db*',
 			'--exclude=./server/privkey.pem', '--exclude=./server/fullchain.pem',
 			'--exclude=./database/backups', '--exclude=./desktop/mkosi/output',
@@ -653,8 +653,9 @@ sub url_for {
 }
 
 # A live-boot loopback session: the documented way a machine in someone's
-# hands opens its own manager. It is a resident session, so citizen-tier
-# routes answer 403 and the route layer expects that.
+# hands opens its own manager. That session is the house owner, and Part33
+# makes it a citizen, so citizen-tier routes answer 200; the tier table itself
+# is pinned by t/15-tier.t.
 sub session {
 	my ($self, %opt) = @_;
 	my ($ua, $jar) = $self->ua(%opt);

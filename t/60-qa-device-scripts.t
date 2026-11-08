@@ -103,6 +103,10 @@ for my $script (qw(android/build.sh android/run.sh qemu/build.sh qemu/run.sh)) {
 		'the artefact size names the 6.5G root');
 	like($build_script, qr/\$disk_size < 12/,
 		'a VM disk below 12G is refused');
+	# Agent worktrees are full checkouts. At the 2026-11-08 03:10 build ~43 of
+	# them put 446k files in the staged tree, and mkfs.ext4 ran out of inodes.
+	like($build_script, qr/'\.worktrees'/,
+		'the staged tree leaves the agent worktrees out');
 }
 
 done_testing();

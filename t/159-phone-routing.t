@@ -46,8 +46,10 @@ my $none = Manager::phone_route_set('', 'ivr');
 ok(!$none->{'ok'}, 'a save without a number is refused');
 
 # ------------------------------------------------------------ resolution
+# The reception settings are house-wide (device all). A per-device row is the
+# older fallback and does not override the house value, so set the house row.
 Manager::phone_routes_save({});
-&subs::setting_setter({ app => 'phone', setting => 'ivr_enabled', value => 'no' });
+&subs::setting_setter({ app => 'phone', setting => 'ivr_enabled', value => 'no', device => 'all' });
 my $off = Manager::phone_route_for('5551234567');
 is($off->{'flow'}, 'ring', 'with the reception flow off everything rings');
 is($off->{'source'}, 'off', 'and the answer says why');
@@ -58,7 +60,7 @@ is($pinned->{'flow'}, 'ivr', 'a number route wins over a switched-off reception 
 is($pinned->{'source'}, 'number', 'and is reported as the number\'s own');
 
 Manager::phone_route_set('5551234567', 'default');
-&subs::setting_setter({ app => 'phone', setting => 'ivr_enabled', value => 'yes' });
+&subs::setting_setter({ app => 'phone', setting => 'ivr_enabled', value => 'yes', device => 'all' });
 my $unknown = Manager::phone_route_for('5551234567');
 is($unknown->{'source'}, 'unknown', 'a number the house cannot name falls to the unknown bucket');
 is($unknown->{'flow'}, 'ivr', 'which is the receptionist by default');

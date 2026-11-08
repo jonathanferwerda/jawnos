@@ -165,6 +165,11 @@ sub start_test {
 		select(STDERR); $| = 1; select(STDOUT);
 		chdir $root or POSIX::_exit(127);
 
+		# Each test gets its own copy of the house database; see JawnOSTest.
+		if (!eval { JawnOSTest::isolate(); 1 }) {
+			print STDERR "\n# run_tests_fork: database isolation failed: $@\n";
+		}
+
 		# FindBin was loaded for the runner; point it at this test before the
 		# test's `use lib "$FindBin::Bin/lib"` compiles.
 		$0 = $test;

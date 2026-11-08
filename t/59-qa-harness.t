@@ -78,6 +78,8 @@ is(Probe::tier_needed('/manager/power'),      'citizen',  'powering the machine 
 is(Probe::tier_needed('/gate'),               '',         'the gate needs no tier');
 is(Probe::expected_status($policy, { method => 'get', path => '/manager/configure' }, 'resident'),
 	403, 'a resident session is expected to be refused configure');
+is(Probe::expected_status($policy, { method => 'get', path => '/manager/configure' }, 'citizen'),
+	200, 'the live-local citizen session opens configure');
 is(Probe::expected_status($policy, { method => 'get', path => '/manager/security/padlock_state' }, 'resident'),
 	200, 'the padlock rail is exempt from the tier check');
 is(Probe::expected_status($policy, { method => 'get', path => '/manager/people' }, 'resident'),
