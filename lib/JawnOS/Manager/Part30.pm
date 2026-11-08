@@ -349,8 +349,12 @@ sub app_public_path {
 	# the route requires and verifies the machine's signature itself.
 	return 1 if $path eq '/manager/crest/cosign';
 	# The embedded devices authenticate themselves with the rotated Now Me
-	# pair; they are not browsers and must keep their rail.
-	return 1 if $path =~ m{^/(?:watch|teletype|embedded)(?:/|$)};
+	# pair; they are not browsers and must keep their rail. /device/ws is the
+	# output bus the same boards hold open (its route runs embedded_authorizer,
+	# exactly like /watch); without it the app gate answered the socket with the
+	# app-required page, so the Pico saw a 200 instead of a 101 and never
+	# attached.
+	return 1 if $path =~ m{^/(?:watch|teletype|embedded|device)(?:/|$)};
 	return 0;
 }
 
