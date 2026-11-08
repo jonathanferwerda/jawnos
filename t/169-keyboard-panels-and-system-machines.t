@@ -41,8 +41,15 @@ like($menu, qr/keyboardMaker\(\{ toggle: 'remote_control', state: 'on', remote_u
 	'it opens the remote_control panel with that machine picked');
 like($menu, qr/settingSetter\(\{ 'app': 'me', 'setting': 'remote_control_machine', 'value': machine \}\)/,
 	'the pick is saved for the next open');
-like($menu, qr/if \(\$\('#start_menu'\)\.is\(':visible'\)\) \{ startMenuToggle\(\); \}/,
+like($menu, qr/if \(\$\('\#start_menu'\)\.is\(':visible'\)\) \{ startMenuToggle\(\); \}/,
 	'the press puts the start menu away');
+
+# The levels tiles are ordered by name, then address, so a peer or a board does
+# not jump around the card between answers.
+like($htop, qr/\@peers = sort \{[\s\S]*?lc\(\$a->\{'hostname'\}[\s\S]*?ip_sort_key/,
+	'peers sort by name, then address');
+like($htop, qr/\@devices = sort \{[\s\S]*?lc\(\$a->\{'name'\}[\s\S]*?ip_sort_key/,
+	'devices sort by name, then address too');
 like($maker, qr/\$\('#remote_control_machine_select option'\)\.filter\(function\(\) \{ return this\.value === remote_uuid; \}\)/,
 	'a signatorial pick leaves the server\'s uuid selection in the picker');
 

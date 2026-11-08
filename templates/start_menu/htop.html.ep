@@ -134,8 +134,22 @@
 }; %>
 <% my @machines = @{ $levels->{'machines'} || [] }; %>
 <% my @local = grep { $_->{'local'} } @machines; %>
-<% my @peers = sort { ($a->{'hostname'} || '') cmp ($b->{'hostname'} || '') } grep { !$_->{'local'} } @machines; %>
-<% my @devices = @{ $levels->{'devices'} || [] }; %>
+<%# Tiles are ordered by name, then address, so a peer or a board does not jump
+    to another place in the card when it answers again. %>
+<% my @peers = sort {
+	my $an = lc($a->{'hostname'} || '');
+	my $bn = lc($b->{'hostname'} || '');
+	(($an eq '' ? 1 : 0) <=> ($bn eq '' ? 1 : 0))
+		|| ($an cmp $bn)
+		|| (&subs::ip_sort_key($a->{'ip'} || $a->{'signatorial'} || '') cmp &subs::ip_sort_key($b->{'ip'} || $b->{'signatorial'} || ''))
+} grep { !$_->{'local'} } @machines; %>
+<% my @devices = sort {
+	my $an = lc($a->{'name'} || $a->{'purpose'} || '');
+	my $bn = lc($b->{'name'} || $b->{'purpose'} || '');
+	(($an eq '' ? 1 : 0) <=> ($bn eq '' ? 1 : 0))
+		|| ($an cmp $bn)
+		|| (&subs::ip_sort_key($a->{'host'} || $a->{'ip'} || '') cmp &subs::ip_sort_key($b->{'host'} || $b->{'ip'} || ''))
+} @{ $levels->{'devices'} || [] }; %>
 <% my $sp = &subs::sync_progress(); %>
 <% my $thousands = sub {
 	my $n = shift;

@@ -1,4 +1,4 @@
-# tests-for: scripts/house_ca.pl lib/JawnOS/Domain/Remote.pm lib/JawnOS/Domain/Loader.pm perl/President.pl perl/Music/02_remote_audio_stream.pl perl/Music/03_remote_video.pl lib/JawnOS/Domain/Network.pm
+# tests-for: scripts/house_ca.pl lib/JawnOS/Domain/Remote.pm lib/JawnOS/Domain/Git.pm lib/JawnOS/Domain/Loader.pm perl/President.pl perl/Music/02_remote_audio_stream.pl perl/Music/03_remote_video.pl lib/JawnOS/Domain/Network.pm
 # covers:    The house CA issues a leaf with IP and DNS SANs, the peer listener
 #           is a second listener, and a peer URL moves to it only when the peer
 #           answers there and this machine holds the CA.
@@ -19,6 +19,7 @@ use IO::Socket::INET;
 my $root = abs_path("$FindBin::Bin/..");
 
 require JawnOS::Domain::Remote;
+require JawnOS::Domain::Git;
 
 my $openssl = `command -v openssl 2>/dev/null`;
 chomp $openssl;
@@ -232,5 +233,32 @@ my $music = read_file("$root/perl/Music/02_remote_audio_stream.pl");
 like($music, qr/peer_secure_url\(\$rm, \$uri\)/, 'the audio stream asks for the peer listener');
 my $video = read_file("$root/perl/Music/03_remote_video.pl");
 like($video, qr/peer_secure_url\(\$rm, \$uri\)/, 'and so does the video stream');
+
+# --- peer_useragent uses the house CA when the peer listener is chosen -------
+# The verified path used to leave the agent on the system store, which does not
+# know the house CA: every call failed TLS with "no answer" while the listener
+# was answering (the phone's levels card read the Dev machine as hours stale).
+{
+	no warnings 'redefine';
+	my $rm = {
+		cookie => '[]', manager => 'https://192.168.1.10:45545',
+		tunnel => 'no', ip => '192.168.1.10',
+	};
+	my $tls = 0;
+	local *subs::peer_live_manager = sub { return $_[0]->{'manager'} };
+	local *subs::remote_machine_tunnel_processor = sub { return $_[0] };
+	local *subs::peer_tls_verify = sub { $tls++; return 1 };
+	local *subs::peer_secure_url = sub { return ('https://192.168.1.10:45551', 1) };
+	my ($ua, $p) = subs::peer_useragent({ %{$rm} });
+	ok($ua, 'a verified peer gets a user agent');
+	is($tls, 1, 'and it is pointed at the house CA');
+	is($p->{'manager'}, 'https://192.168.1.10:45551', 'through the peer listener');
+
+	$tls = 0;
+	local *subs::peer_secure_url = sub { return ('https://192.168.1.10:45545', 0) };
+	my ($plain) = subs::peer_useragent({ %{$rm} });
+	ok($plain, 'an unverified peer still gets a user agent');
+	is($tls, 0, 'without the house CA, because it is not the peer listener');
+}
 
 done_testing();

@@ -168,7 +168,12 @@ sub peer_useragent {
 			path   => $c->{'path'} || '/',
 		));
 	}
-	if (!$peer_verified) { $ua->insecure(1) }
+	# A verified peer is reached on the house CA's peer listener. Point the UA at
+	# that CA: without it the verified case rode the system store, which does not
+	# know the house CA, so every call failed TLS with "no answer" while the
+	# listener was answering (the phone's levels card read Dev as hours stale).
+	if ($peer_verified) { &subs::peer_tls_verify($ua) }
+	else { $ua->insecure(1) }
 	# ride the same signed rail every other peer call rides: once a key is
 	# pinned, an unsigned request is refused, and this UA serves the git bundle,
 	# the APK sync and the voice sync - all peer_verify routes. (Unsigned was

@@ -523,6 +523,7 @@ sub house_levels_sync {
 		push @machines, {
 			signatorial => $rsig,
 			hostname => $pname,
+			ip => $rm->{'ip'} || '',
 			device => $h->{'device'} || $rm->{'device'} || '',
 			version => $h->{'version'} || $rm->{'version'} || '',
 			battery => $peer_battery,
