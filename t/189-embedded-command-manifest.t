@@ -35,13 +35,14 @@ like($toggle_data, qr/app\s*=>\s*\$app/, 'the push still names the app');
 like($toggle_data, qr/state\s*=>\s*\$state/, 'and still carries the state');
 like($toggle_data, qr/uuid\s*=>/, 'the toggle data carries a command id');
 like($toggle_data, qr/timestamp\s*=>/, 'and the time the movement happened');
+like($pusher, qr/my \$push_at = \$data->\{'timestamp'\} \|\| &subs::rightNow\(\);/, 'the push carries the movement\'s own event time, not the send time');
 
 # One identity for every target of the same movement: minted before the loop and
 # reused by each message, so the board can recognise a command it already ran.
 like($pusher, qr/my \$push_id\s*=\s*&subs::random_string_creator\(\d+\)/,
 	'the push mints one id');
-like($pusher, qr/my \$push_at\s*=\s*&subs::rightNow\(\)/,
-	'and stamps it with one time');
+like($pusher, qr/my \$push_at\s*=\s*\$data->\{'timestamp'\} \|\| &subs::rightNow\(\)/,
+	'and stamps it with the movement time, falling back to now');
 my @minted = $pusher =~ /random_string_creator/g;
 is(scalar @minted, 1, 'the id is minted once for the whole push, not per target');
 like($toggle_data, qr/uuid\s*=>\s*\$push_id/, 'the message uses the minted id');

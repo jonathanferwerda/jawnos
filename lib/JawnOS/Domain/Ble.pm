@@ -689,7 +689,11 @@ sub watch_toggle_pusher {
 		# second application clicks the relay again. One id for every target of this
 		# movement, plus its time, lets a board drop the copy it already ran.
 		my $push_id = &subs::random_string_creator(21);
-		my $push_at = &subs::rightNow();
+		# The push is the same movement as the direct set, so it carries the same
+		# event time. Stamping it with `now` made the board's per-pin clock run
+		# ahead of a press clicked a moment later, and that press was dropped as
+		# stale.
+		my $push_at = $data->{'timestamp'} || &subs::rightNow();
 		foreach my $t ( @targets ) {
 			$log->info('toggle push send: ' . $t->{'chip_id'} . ' (' . $t->{'edt'} . ') ' . $app . ' -> ' . $state);
 			# The same per-chip lock the direct relay command takes: a `toggle`

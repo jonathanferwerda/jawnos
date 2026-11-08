@@ -85,6 +85,29 @@ ok(index($js, q{$(document).on('click', '.watch_empty'}) >= 0,
 	'pressing it fetches that one form');
 ok(index($js, 'component: component,') >= 0,
 	'filtered to the pin type it was pressed under');
+ok(index($js, q{target: b.closest('.embedded_container'), mode: 'replace'}) >= 0,
+	'an empty pin form replaces its button where it was pressed');
+ok(index($js, 'target.replaceWith(form);') >= 0,
+	'in place, not at the bottom of the panel');
+ok(index($js, 'scrollIntoView') >= 0,
+	'and the new form is brought into view');
+ok(index($js, q{target: $(this).closest('tr'), mode: 'after'}) >= 0,
+	'a pin on the Pins view opens its form in the row under it');
+
+# --- the Pins view marks the wired pins -----------------------------------
+ok(index($part34, q{my $wired_pins = {};}) >= 0,
+	'the panel knows which GPIO numbers are wired');
+ok(index($part34, 'wired_pins => $wired_pins,') >= 0,
+	'and hands the map to the Pins view');
+ok(index($body, 'embedded_pin_wired') >= 0,
+	'a wired GPIO span is marked on the pin map');
+ok(index($body, q{$wired_pins->{$pins->{$pin}->{$method}}}) >= 0,
+	'by the GPIO number the operator door wires');
+ok(index($body, q{hint="<%= &subs::ui('This pin is wired') %>"}) >= 0,
+	'and the physical pin button says so');
+my $style = $read->('templates/embedded/style.html.ep');
+ok(index($style, '#embedded .embedded_pin_wired') >= 0,
+	'the mark has its own style');
 ok(index($js, q{if (!input.closest('#watch_buttons').length)}) >= 0,
 	'and naming an app redraws so the new pin joins its type');
 my $ctl = $read->('lib/JawnOS/Controller/manager_embedded.pm');

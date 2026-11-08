@@ -139,7 +139,7 @@ my @vol_ack = ( $ble2 =~ /type => 'volume_result'.*?\}, \{ fork => 1 \}\)/gs );
 is( scalar @vol_ack, 2, 'both volume_result replies ride their own child' );
 
 my $notify = read_file("$root/lib/JawnOS/Domain/Notify.pm");
-like( $notify, qr/if \(\$watch_ip\) \{.*?return if \$http_ok;/s,
+like( $notify, qr/if \(\$watch_ip\) \{.*?\$http_ok = eval \{ \$send_http->\(\) \}/s,
 	'a board with a LAN address takes the HTTP route before the bridge' );
 my @notify = ( $notify =~ /name => 'embedded toggle sender', fork => 1/g );
 is( scalar @notify, 2, 'both embedded toggle senders ride a child' );
@@ -189,6 +189,9 @@ like($notify, qr/device_command_lock\(\$chip_id\)/, 'the toggle sender takes it'
 like($notify, qr/my \$send_http = sub \{/, 'the HTTP send is one closure');
 like($notify, qr/select\(undef, undef, undef, 0\.15\)/, 'a failed send gets one short retry');
 like($notify, qr/device command not delivered/, 'a command neither road carried is logged');
+ok(index($notify, q{($asked || '?') . ' -> ' . ($state || '?')}) >= 0,
+	'a delivered command logs the asked state and the board\'s answer');
+like($notify, qr/\(bridge\)/, 'and the bridge road says so too');
 my $loader = read_file("$root/lib/JawnOS/Domain/Loader.pm");
 like($loader, qr/'JawnOS::Domain::Notify' for qw\([^)]*device_command_lock/,
 	'the loader maps the lock helper');

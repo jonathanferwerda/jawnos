@@ -151,6 +151,20 @@ sub embedded_grabber($c,$timestamp) {
 		$embedded->{'model'} = $have;
 	}
 
+	# Which GPIO numbers the operator door actually wires, for the Pins view: it
+	# is a board map, so the person needs to see at a glance which pins already
+	# do something. The GPIO view names them; this marks the map.
+	my $wired_pins = {};
+	if ($edt eq 'microcontroller') {
+		foreach my $key ( keys %{$op_d} ) {
+			next unless $key =~ /(\d+)$/;
+			my $entry = $op_d->{$key};
+			next unless ref $entry eq 'HASH';
+			next unless $entry->{'app'} || $entry->{'component'} || $entry->{'movement'};
+			$wired_pins->{$1} = $entry->{'app'} || $entry->{'component'} || 1;
+		}
+	}
+
 	my $embedded_scope = &subs::setting_grabber({ app => $edt, setting => 'watch_scope', subsetting => $chip_id });
 	my $settings;
 	# A board's GPIO view is a list of what is wired, not every pin on the
@@ -248,6 +262,7 @@ sub embedded_grabber($c,$timestamp) {
 		operator_door => $op_d,
 		device_type => $edt,
 		components => $components,
+		wired_pins => $wired_pins,
 		chip_ids => $chip_ids,
 		chip_id => $chip_id,
 		edt => $edt,

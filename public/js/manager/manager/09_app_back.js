@@ -187,13 +187,21 @@ function appointmentResetDrain(key) {
 		timeout: 20000,
 		success: function(response) {
 			q.shift();
-			if (item.done) { item.done(response); }
+			// Send the next press as soon as this reply lands. Apply the header
+			// first - it is what a queued stop reads for its session uuid - but
+			// do not let continent_record and the rest of the post-press UI work
+			// hold the queue: that delay made a later press arrive after a newer
+			// switch event and be dropped as older.
+			if (response && response['header'] && typeof jawnosHeaderApply === 'function') {
+				jawnosHeaderApply(item.data.app, response['header'], response['server_time']);
+			}
 			appointmentResetDrain(key);
+			if (item.done) { item.done(response); }
 		},
 		error: function(error) {
 			q.shift();
-			if (item.fail) { item.fail(error); }
 			appointmentResetDrain(key);
+			if (item.fail) { item.fail(error); }
 		}
 	});
 }

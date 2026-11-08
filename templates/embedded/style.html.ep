@@ -11,6 +11,7 @@
 	#embedded .teletype_card b, #embedded #teletype_wifi b, #embedded #teletype_router b { color: var(--ink); }
 	#embedded .teletype_wifi_config, #embedded .teletype_appearance, #embedded .embedded_setting { margin: 2px; }
 	#embedded .embedded_detail { display: inline-block; margin: 1px; padding: 1px 4px; border: 1px solid var(--line); border-radius: 4px; font-size: 90%; cursor: pointer; }
+	#embedded .embedded_pin_wired { box-shadow: inset 0 0 0 2px var(--ink); font-weight: 700; }
 	#embedded .embedded_jobs, #embedded .embedded_job { text-align: left; }
 	#embedded .embedded_job + .embedded_job { border-top: 1px solid var(--line); padding-top: 4px; margin-top: 4px; }
 	/* the buttons are laid out by the template's <br> breaks (two rows, matched to

@@ -413,7 +413,7 @@ sub setting_setter {
 			? 'background-color:green;border-color:green;box-shadow:0 0 8px 2px green;'
 			: 'background-color:#555555;border-color:#555555;opacity:0.45;filter:grayscale(1);';
 		&Websocket::send('tab', { console => &Websocket::console_command('setToggle', $app, $value, $toggle_src, $toggle_style)});
-		&subs::watch_toggle_pusher({ app => $app, value => $value, exclude_chip => $settings->{'source_chip_id'} });
+		&subs::watch_toggle_pusher({ app => $app, value => $value, exclude_chip => $settings->{'source_chip_id'}, timestamp => $timestamp });
 	}
 	if ($setting eq 'site_type') {
 		&subs::db_delete('cache', { context => 'navigation_information' });

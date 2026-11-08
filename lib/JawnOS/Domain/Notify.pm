@@ -327,6 +327,7 @@ sub embedded_toggle($data) {
 				}
 				return 0;
 			};
+			my $asked = $state;
 			my $http_ok = 0;
 			if ($watch_ip) {
 				$http_ok = eval { $send_http->() } ? 1 : 0;
@@ -338,7 +339,16 @@ sub embedded_toggle($data) {
 					$http_ok = eval { $send_http->() } ? 1 : 0;
 				}
 			}
-			return if $http_ok;
+			if ($http_ok) {
+				# The board's reply is its own state after the command. An asked
+				# state it did not take is the line that explains a press that
+				# clicked nothing (stale, redundant, or a switch that won): the
+				# asked state and the board's answer sit either side of the arrow.
+				$log->info('device command: ' . ($chip_id || '?') . ' ' . ($component || '?') . ' '
+					. ($pin // '?') . ' ' . ($asked || '?') . ' -> ' . ($state || '?')
+					. ' @' . $timestamp . ' (http)') if $log;
+				return;
+			}
 			if (ref $watch eq 'HASH' && ($watch->{'ble'} || !$watch->{'ip'})) {
 				my $sent = eval {
 					&subs::bluetooth_sender({
@@ -352,13 +362,17 @@ sub embedded_toggle($data) {
 						} }
 					});
 				};
-				return if $sent || !$watch_ip;
+				if ($sent) {
+					$log->info('device command: ' . ($chip_id || '?') . ' ' . ($component || '?') . ' '
+						. ($pin // '?') . ' ' . ($asked || '?') . ' @' . $timestamp . ' (bridge)') if $log;
+					return;
+				}
 			}
 			# Neither road carried it. Say so once, with the board and command, so
 			# a relay that missed a press can be found in the log without a
 			# reproduction.
 			$log->info('device command not delivered: ' . ($chip_id || '?') . ' '
-				. ($component || '?') . ' ' . ($state || '?') . ' (http='
+				. ($component || '?') . ' asked ' . ($asked || '?') . ' (http='
 				. ($watch_ip ? 'failed' : 'no address') . ')') if $log;
 		}, { name => 'embedded toggle sender', fork => 1 });
 		return { state => $number_state, formatted_state => $state };

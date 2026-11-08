@@ -198,7 +198,6 @@ is($old->{'duration'}, -$sent_duration, 'and records it as the session length');
 # before the start's reply carries the header's old session uuid. The presses
 # are queued per app, one in flight, and a stop resolves its session when it is
 # actually sent.
-my $app_back = read_file("$root/public/js/manager/manager/09_app_back.js");
 like($app_back, qr/var appointmentResetQueue = \{\};/, 'presses are queued per app');
 like($app_back, qr/q\.push\(\{ type: type, data: data, done: done, fail: fail \}\);/, 'a press keeps what it was when it was clicked');
 like($app_back, qr/if \(q\.length === 1\) \{ appointmentResetDrain\(key\); \}/, 'only one press is in flight');
@@ -209,5 +208,16 @@ like($app_back, qr/timeout: 20000/, 'a press the server never answers cannot hol
 my $reset_urls = () = $app_back =~ /url: '\/manager\/reset'/g;
 is($reset_urls, 1, 'there is one reset request, inside the queue');
 
+# The reply must release the queue before the slow post-press UI work runs:
+# continent_record and the header repaint used to hold the next press for
+# seconds, and a press that arrived that late was dropped as an older event.
+my $queue_at = index($app_back, 'var appointmentResetQueue = {};');
+my $header_at = index($app_back, 'jawnosHeaderApply(item.data.app', $queue_at);
+my $drain_at = index($app_back, 'appointmentResetDrain(key);', $header_at);
+my $done_at = index($app_back, 'if (item.done) { item.done(response); }', $drain_at);
+ok($queue_at >= 0 && $header_at > $queue_at && $drain_at > $header_at && $done_at > $drain_at,
+	'the next press is sent after the header, before the slow UI work');
+
 done_testing();
+
 

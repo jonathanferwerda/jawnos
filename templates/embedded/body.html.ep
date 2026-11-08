@@ -269,7 +269,9 @@
 							} %>
 							<tr>
 								<% my $lpin = (scalar keys %{$pins}) - $fpin + 1; %>
-								<% foreach my $pin ( ( $fpin, $lpin ) ) { %>
+								<% foreach my $pin ( ( $fpin, $lpin ) ) {
+									my $wired_here = ($pins->{$pin}->{'GP'} && !ref $pins->{$pin}->{'GP'} && $wired_pins->{$pins->{$pin}->{'GP'}}) ? 1 : 0;
+								%>
 
 									<td>
 										<% foreach my $method ( keys %{$pins->{$pin}} ) { %>
@@ -284,7 +286,7 @@
 													<% } %>
 												</span>
 											<% } else { %>
-												<span style="background-color:<%= $pins->{$pin}->{'colour'} || $colours->{$method} || 'lightgrey' %>;" class="hover embedded_detail"
+												<span style="background-color:<%= $pins->{$pin}->{'colour'} || $colours->{$method} || 'lightgrey' %>;" class="hover embedded_detail<%= ($method eq 'GP' && $wired_pins->{$pins->{$pin}->{$method}}) ? ' embedded_pin_wired' : '' %>"
 													form="<%= $method %>" numero="<%= $pins->{$pin}->{$method} %>">
 													<%= $method %> <%= $pins->{$pin}->{$method} %>
 												</span>
@@ -292,7 +294,7 @@
 										<% } %>
 									</td>
 									<td>
-										<button><%= $pin %></button>
+										<button class="<%= $wired_here ? 'embedded_pin_wired' : '' %>"<% if ($wired_here) { %> hint="<%= &subs::ui('This pin is wired') %>"<% } %>><%= $pin %></button>
 									</td>
 								<% } %>
 							</tr>

@@ -63,18 +63,23 @@ $(document).on('click', '.embedded_detail', function() {
 	var numero = $(this).attr('numero');
 	var form = $(this).attr('form');
 	var pin = $(this).attr('pin');
-	embeddedDetailGrabber({ numero: numero, form: form, pin: pin });
+	// Put the form in a full-width row under the pin that was pressed, not at
+	// the bottom of the panel where it is below the fold and looks like nothing
+	// happened.
+	embeddedDetailGrabber({ numero: numero, form: form, pin: pin },
+		{ target: $(this).closest('tr'), mode: 'after' });
 });
 
 // An empty GPIO in a board's GPIO view is a compact +N button. Pressing it
-// fetches that one pin's form and appends it, the same way a pin on the Pins
-// view opens its form - the panel no longer draws every empty slot in full.
+// fetches that one pin's form and replaces the button in place, so the form is
+// where the person pressed - the panel no longer draws every empty slot in full.
 $(document).on('click', '.watch_empty', function() {
 	var b = $(this);
-	embeddedDetailGrabber({ numero: b.attr('numero'), pin: b.attr('pin'), component: b.attr('component') });
+	embeddedDetailGrabber({ numero: b.attr('numero'), pin: b.attr('pin'), component: b.attr('component') },
+		{ target: b.closest('.embedded_container'), mode: 'replace' });
 });
 
-function embeddedDetailGrabber(data) {
+function embeddedDetailGrabber(data, place) {
 	var timestamp = Date.now();
 	var numero = data['numero'];
 	var edt = localStorage.getItem('embedded_device_type') || 'watch';
@@ -97,7 +102,26 @@ function embeddedDetailGrabber(data) {
 			pin: pin
 		},
 		success: function(response) {
-			$('#embedded').append(response.html);
+			var form = $(response.html);
+			if (!form.length) { return; }
+			var mode = place && place.mode;
+			var target = place && place.target;
+			if (mode == 'replace' && target && target.length) {
+				target.replaceWith(form);
+			}
+			else if (mode == 'after' && target && target.length) {
+				var row = $('<tr class="embedded_detail_form"><td colspan="4"></td></tr>');
+				row.find('td').html(form);
+				target.after(row);
+			}
+			else {
+				$('#embedded').append(form);
+			}
+			var input = form.find('.watch_input').first();
+			if (input.length) {
+				input.trigger('focus');
+				if (input[0].scrollIntoView) { input[0].scrollIntoView({ block: 'nearest' }); }
+			}
 		}
 	});
 

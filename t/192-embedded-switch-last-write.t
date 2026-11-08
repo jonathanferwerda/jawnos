@@ -159,6 +159,7 @@ like($watch, qr/setting_setter\(\{[^\n]*value => \$state[^\n]*timestamp => \$tim
 	'the switch pre-press carries the event time');
 like($ble2, qr/\$payload->\{'timestamp_ms'\}/, 'the BLE switch/button path prefers the millisecond stamp');
 like($part14, qr/value => 'on', timestamp => \$timestamp/, 'a start appointment stamps its toggle write');
+like($name, qr/watch_toggle_pusher\(\{[^\n]*timestamp => \$timestamp/, 'the BLE toggle push carries the same event time');
 like($part14, qr/value => 'off', timestamp => \$timestamp/, 'a stop appointment stamps its toggle write');
 
 # --- the board keeps its own switch as the newest word ------------------------
