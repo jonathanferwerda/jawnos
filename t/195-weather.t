@@ -1376,7 +1376,7 @@ is(subs::weather_name_is_coordinate(''), 0, 'an empty name is not a coordinate e
 			if ($_[0] // '') =~ /setting = 'home_place'/ && $store{'home_place'};
 		return bless { rows => [] }, 'FakeResult';
 	};
-	local *subs::setting_setter = sub { my ($q) = @_; $store{'home_place'} = $q->{'value'}; return 1; };
+	local *subs::setting_setter = sub { my ($q) = @_; $store{ $q->{'setting'} } = $q->{'value'}; return 1; };
 	my $place = subs::weather_home_place_sync();
 	is($place->{'uuid'}, 'toronto', 'the new home plate is the home place');
 	is($anchors{'warwick'}, 0, 'the old home is unanchored');
@@ -1389,6 +1389,49 @@ is(subs::weather_name_is_coordinate(''), 0, 'an empty name is not a coordinate e
 	local *subs::weather_location_find = sub { { uuid => 'warwick', anchor => 0 } };
 	subs::weather_home_place_sync();
 	ok(!exists $anchors{'warwick'}, 'an old home that was already unanchored is not rewritten');
+}
+
+# --- the display name follows the home, but not a name you chose -------------
+{
+	my %store = (
+		home_label => 'Warwick Weather',
+		text_weather => 'Warwick Weather',
+		text_weather_station => 'Warwick Weather',
+	);
+	no warnings 'redefine';
+	local *subs::db_query = sub {
+		my ($q, @args) = @_;
+		return bless { rows => [ { value => $store{'home_label'} } ] }, 'FakeResult'
+			if ($q // '') =~ /setting = 'home_label'/ && $store{'home_label'};
+		if (($q // '') =~ /setting = 'notification_text'/) {
+			my $app = $args[0] // '';
+			return bless { rows => [ { value => $store{"text_$app"} } ] }, 'FakeResult'
+				if defined $store{"text_$app"} && length $store{"text_$app"};
+			return bless { rows => [] }, 'FakeResult';
+		}
+		return bless { rows => [] }, 'FakeResult';
+	};
+	local *subs::setting_setter = sub {
+		my ($q) = @_;
+		$store{ $q->{'setting'} } = $q->{'value'};
+		$store{ 'text_' . $q->{'app'} } = $q->{'value'} if ($q->{'setting'} // '') eq 'notification_text';
+		return 1;
+	};
+	local *subs::format_name = sub { return $_[0] eq 'weather_station' ? 'Weather Station' : 'Weather'; };
+	local *subs::ui = sub { return $_[0] // ''; };
+	subs::weather_home_name_sync({ name => 'Toronto' });
+	is($store{'text_weather'}, 'Toronto Weather', 'the weather app follows the new home');
+	is($store{'text_weather_station'}, 'Toronto Weather', 'and the station display name too');
+	is($store{'home_label'}, 'Toronto Weather', 'and the remembered label moves');
+	$store{'text_weather'} = 'My Weather';
+	$store{'text_weather_station'} = 'Warwick Weather';
+	$store{'home_label'} = 'Warwick Weather';
+	subs::weather_home_name_sync({ name => 'Sarnia' });
+	is($store{'text_weather'}, 'My Weather', 'a name the person chose is left alone');
+	is($store{'text_weather_station'}, 'Sarnia Weather', 'a name still tracking the home follows');
+	$store{'home_label'} = 'Sarnia Weather';
+	subs::weather_home_name_sync({ name => '43.6500, -79.3800' });
+	is($store{'home_label'}, 'Sarnia Weather', 'an unnamed place does not move the label');
 }
 
 # --- the scheduled pass keeps an anchored place, not its covered phone -------

@@ -838,6 +838,69 @@ sub weather_home_place($opts = {}) {
 	return &weather_location_for_fix($home->{'lat'}, $home->{'lon'}, '', { create => ($opts->{'create'} ? 1 : 0) });
 }
 
+# The display label the house last gave the home place. A move compares the
+# notification texts with it, so a name the person set themselves is not
+# overwritten.
+sub weather_home_label() {
+	my $row = eval {
+		&subs::db_query(
+			"select value from settings where app = 'weather' and setting = 'home_label' "
+			. "and value is not null and value != '' order by cast(server_time as integer) desc limit 1"
+		)->hashes->[0];
+	};
+	my $label = $row ? ($row->{'value'} // '') : '';
+	$label =~ s/^\s+|\s+$//g;
+	return $label;
+}
+
+# Keep the app's display name in step with the home place. Only a name that
+# still reads as the old home's label (or the app's default) moves; a name the
+# person chose is left alone. An unnamed place (a coordinate) does not move it,
+# so the first observation can name the place and the next pass can follow.
+sub weather_home_name_sync($place) {
+	return unless ref $place eq 'HASH';
+	my $name = $place->{'name'} // '';
+	$name =~ s/^\s+|\s+$//g;
+	return if !length $name || &weather_name_is_coordinate($name);
+	my $weather_word = &subs::ui('Weather') || 'Weather';
+	my $label = $name . ' ' . $weather_word;
+	my @apps = qw/weather weather_station/;
+	my $note = sub {
+		my ($app) = @_;
+		my $row = eval {
+			&subs::db_query(
+				"select value from settings where app = ? and setting = 'notification_text' "
+				. "and value is not null and value != '' order by cast(server_time as integer) desc limit 1",
+				$app
+			)->hashes->[0];
+		};
+		my $current = $row ? ($row->{'value'} // '') : '';
+		$current =~ s/^\s+|\s+$//g;
+		return $current;
+	};
+	my $follow = sub {
+		my ($old) = @_;
+		foreach my $app (@apps) {
+			my $current = $note->($app);
+			my $default = eval { &subs::format_name($app) } || '';
+			next if length $current && lc($current) ne lc($old) && lc($current) ne lc($default);
+			&subs::setting_setter({ app => $app, setting => 'notification_text', value => $label });
+		}
+	};
+	my $stored = &weather_home_label();
+	unless (length $stored) {
+		# First sight of a home: only a default or empty name is replaced, so a
+		# name the person already chose stays.
+		$follow->($label);
+		&subs::setting_setter({ app => 'weather', setting => 'home_label', value => $label });
+		return $label;
+	}
+	return $label if lc($stored) eq lc($label);
+	$follow->($stored);
+	&subs::setting_setter({ app => 'weather', setting => 'home_label', value => $label });
+	return $label;
+}
+
 # Resolve the home plate to a place and remember it. A move to a new plate
 # unanchors the old home: the old place stays an ordinary added place (it can be
 # anchored again deliberately) but no longer records just by being the old home.
@@ -852,12 +915,16 @@ sub weather_home_place_sync() {
 		)->hashes->[0];
 	};
 	my $old_uuid = $row ? ($row->{'value'} // '') : '';
-	return $place if $old_uuid eq $uuid;
-	if (length $old_uuid && $old_uuid =~ /^[A-Za-z0-9_-]+$/) {
-		my $old_place = &weather_location_find($old_uuid);
-		&weather_location_anchor($old_uuid, 0) if $old_place && $old_place->{'anchor'};
+	if ($old_uuid ne $uuid) {
+		if (length $old_uuid && $old_uuid =~ /^[A-Za-z0-9_-]+$/) {
+			my $old_place = &weather_location_find($old_uuid);
+			&weather_location_anchor($old_uuid, 0) if $old_place && $old_place->{'anchor'};
+		}
+		&subs::setting_setter({ app => 'weather', setting => 'home_place', value => $uuid });
 	}
-	&subs::setting_setter({ app => 'weather', setting => 'home_place', value => $uuid });
+	# Run even when the uuid did not move: the place may have just been named by
+	# the first observation after a move to a not-yet-named ground.
+	&weather_home_name_sync($place);
 	return $place;
 }
 
