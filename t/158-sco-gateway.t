@@ -32,6 +32,13 @@ use JawnOS::Sco::Gateway;
 
 my $repo = root();
 
+# This file walks the helper protocol. The gateway machine's own house has
+# misc/sco_pipe = yes (the virtual handset is installed), which would send every
+# arm() that does not say otherwise to the pipe transport and leave it waiting
+# for streams this stand-in helper never opens. Pin the house transport off; the
+# tests that mean pipe mode still pass pipe => 1.
+&subs::setting_setter({ app => 'misc', setting => 'sco_pipe', value => 'no', device => &subs::device_setter() });
+
 # ------------------------------------------------------------- the routes
 my $routes = read_file("$repo/lib/JawnOS/Routes/manager_sco.pm");
 my $controller = read_file("$repo/lib/JawnOS/Controller/manager_sco.pm");
