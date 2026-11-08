@@ -114,9 +114,12 @@ sub manager_reset($c) {
 	# A resume reopens the row its last stop/cancel left. Resolve that row now,
 	# before the relay, the way a stop names the session it closes: every machine
 	# then reopens one and the same row instead of each reading "the newest
-	# stop" from its own - possibly different - copy of the database.
+	# stop" from its own - possibly different - copy of the database. Only a
+	# session that had already started at the press can be the one it reopens, so
+	# the newest start is bounded by the press timestamp, as a stop's fallback is.
 	if ($type eq 'resume' && !$target_uuid) {
-		my $last = &subs::db_query('select uuid from appointments where app = ? and (type = ? or type = ?) order by timestamp DESC LIMIT 1', $app, 'stop','cancel')->hashes->[0];
+		my $resume_at = $timestamp || &subs::rightNow();
+		my $last = &subs::db_query('select uuid from appointments where app = ? and (type = ? or type = ?) and timestamp <= ? order by timestamp DESC LIMIT 1', $app, 'stop','cancel', $resume_at)->hashes->[0];
 		if ($last && $last->{'uuid'}) {
 			$target_uuid = $last->{'uuid'};
 			$uuid = $target_uuid;
@@ -856,13 +859,15 @@ elsif ($type eq 'delay') {
 	}
 	elsif ($type eq 'resume') {
 		# The row is named by the pre-relay resolution above. A resume that names
-		# none (an older caller) still reopens the newest stop/cancel.
+		# none (an older caller) still reopens the newest stop/cancel, with the
+		# same bound the pre-relay resolution applies: at or before the press.
 		my $old = [];
 		if ($target_uuid) {
 			$old = &subs::db_query('select * from appointments where app = ? and uuid = ? and (type = ? or type = ?) order by timestamp DESC LIMIT 1', $app, $target_uuid, 'stop','cancel')->hashes;
 		}
 		else {
-			$old = &subs::db_query('select * from appointments where app = ? and (type = ? or type = ?) order by timestamp DESC LIMIT 1', $app, 'stop','cancel')->hashes;
+			my $resume_at = $timestamp || &subs::rightNow();
+			$old = &subs::db_query('select * from appointments where app = ? and (type = ? or type = ?) and timestamp <= ? order by timestamp DESC LIMIT 1', $app, 'stop','cancel', $resume_at)->hashes;
 		}
 		# A named row this machine has not synced yet is left alone: the row's
 		# own newer copy will arrive by sync. Guessing "the newest" here could

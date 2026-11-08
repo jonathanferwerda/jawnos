@@ -1,5 +1,5 @@
 # tests-for: lib/JawnOS/Manager/Part14.pm
-# covers:    a resumed session's children are reopened completely, not left as type=start with stop_seen set
+# covers:    a resumed session's children are reopened completely, not left as type=start with stop_seen set; a resume only considers sessions that had started by the press
 
 use strict;
 use warnings;
@@ -33,5 +33,22 @@ like($resume_branch, qr/&subs::db_update\('appointments', \{ type => 'start', st
 
 unlike($resume_branch, qr/&subs::db_update\('appointments', \{ type => 'start', server_time => \$server_time \}, \{ source_uuid => \$so->\{'source_uuid'\}/,
 	'no child is reopened by type alone');
+
+# --- a resume is bounded by the press ---------------------------------------
+# The selection is the newest stop/cancel by its START timestamp, but only a
+# session that had already started at the press can be the one this press is
+# reopening. Both the pre-relay resolution (whose uuid travels to every peer)
+# and the older fallback apply the bound; a press that carries no timestamp
+# means now.
+
+my ($resolve_block) = $part14 =~ /(if \(\$type eq 'resume' && !\$target_uuid\) \{.*?&remote_relay_request)/s;
+ok($resolve_block, 'manager_reset resolves a resume before the relay');
+like($resolve_block, qr/my \$resume_at = \$timestamp \|\| &subs::rightNow\(\);/,
+	'a resume with no timestamp treats the press as now');
+like($resolve_block, qr/and timestamp <= \? order by timestamp DESC LIMIT 1/,
+	'the pre-relay resolution takes the newest start at or before the press');
+
+like($resume_branch, qr/and timestamp <= \? order by timestamp DESC LIMIT 1/,
+	'the resume branch fallback applies the same bound');
 
 done_testing();
