@@ -180,4 +180,10 @@ unlike($g3, qr/wifiDownTicks % 3 == 0/, 'a dropped link is retried every tick, n
 like($g3, qr/if \(multi\.run\(\) == WL_CONNECTED && wifi_addressed\(\)\) \{ wifi_join_done\(\); \}/,
 	'and the retry is the same join');
 
+
+# --- (k) a failed request does not poison the shared client ----------------
+like($g4, qr/https\.end\(\);\s*\n\s*connexion->stop\(\);/,
+	'a failed GET closes the shared TLS client before returning');
+like($g4, qr/connexion->stop\(\)/, 'the stale socket is dropped explicitly');
+
 done_testing();

@@ -434,6 +434,14 @@ String https_request(String url) {
         }
         else {
           Serial.printf("HTTPS FAILED error: %s\n", https.errorToString(httpCode).c_str());
+          // Close the client before returning. `connexion` is one global
+          // WiFiClientSecure shared by every request; a failed GET left it
+          // half-open, and every later begin() reused that stale socket and
+          // failed with "connection failed" until the board rebooted. That is
+          // why one WiFi blip turned into minutes of silence from a link that
+          // was up again.
+          https.end();
+          connexion->stop();
           homebaseOnline = 0;
           return "failure";
         }
