@@ -61,6 +61,12 @@ is($pinned->{'source'}, 'number', 'and is reported as the number\'s own');
 
 Manager::phone_route_set('5551234567', 'default');
 &subs::setting_setter({ app => 'phone', setting => 'ivr_enabled', value => 'yes', device => 'all' });
+# Pin the bucket matrix too: a house that has named flows may point the unknown
+# bucket at one of them (e.g. 'receptionist'), and this test is about the route,
+# not about which flow the house chose. Without this it inherits the live row.
+&subs::setting_setter({ app => 'phone', setting => 'ivr_flows',
+	value => '{"unknown":"ivr","stranger":"ivr","friend":"ring","self":"ring","enemy":"reject","blacklisted":"reject"}',
+	device => 'all' });
 my $unknown = Manager::phone_route_for('5551234567');
 is($unknown->{'source'}, 'unknown', 'a number the house cannot name falls to the unknown bucket');
 is($unknown->{'flow'}, 'ivr', 'which is the receptionist by default');
