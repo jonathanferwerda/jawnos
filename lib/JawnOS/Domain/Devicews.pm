@@ -25,6 +25,12 @@ no warnings 'once';
 use File::Slurp;
 use Mojo::UserAgent;
 use Mojo::JSON qw(decode_json encode_json);
+BEGIN {
+	require File::Basename;
+	require Cwd;
+	my $dir = Cwd::abs_path(File::Basename::dirname(__FILE__));
+	unshift @INC, "$dir/../.." if $dir && -d "$dir/../..";
+}
 use JawnOS::Transport ();
 
 our $log;

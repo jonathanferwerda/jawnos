@@ -163,9 +163,13 @@ the binder ask `ws_server_ensure`, so a second bind cannot take the port.
   `token` for the memory's Sereal frame).
 - **SCO:** the client imports `SOCK_STREAM` from `Socket` and requires
   `IO::Socket::UNIX` only inside `_dial_unix`, so a Windows tree compiles.
+- **Boot shape:** the master's `PERL5LIB` carries only local::lib, not the repo
+  lib, so `President.pl` and `Devicews.pm` add `lib` to `@INC` themselves before
+  their compile-time loads. A `use` without that BEGIN aborts the tree before it
+  can log; `t/221` compiles both in that launch shape.
 - **Tests:** `t/228-transport-tail.t` pins the compile guard and real TCP round
   trips for memory, ws and alarm; `t/222`/`t/223` cover the new kinds and the
-  wiring.
+  wiring; `t/221` covers the no-PERL5LIB boot.
 
 The remaining P0 work is the portable smoke house on a spare checkout and the
 written go/no-go; no source change is needed for either.

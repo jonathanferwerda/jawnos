@@ -1,8 +1,9 @@
-# tests-for: perl/President.pl jawn lib/JawnOS/Platform.pm
+# tests-for: perl/President.pl jawn lib/JawnOS/Platform.pm lib/JawnOS/Domain/Devicews.pm
 # covers:    the two entry points consult the platform module: no threads, a
 #            Daemon instead of Prefork in portable mode, and a pipe instead of
 #            a pty for the master's tree runner. The choice itself is exercised
-#            in t/219; this pins the wiring that cannot be booted in a test.
+#            in t/219; this pins the wiring that cannot be booted in a test, and
+#            compiles the tree with no repo lib in @INC (the launch shape).
 
 use strict;
 use warnings;
@@ -12,6 +13,8 @@ use lib "$FindBin::Bin/lib", "t/lib", "$FindBin::Bin/../lib";
 
 use Test::More;
 use File::Slurp qw(read_file);
+use IPC::Open3 qw(open3);
+use Symbol qw(gensym);
 
 my $president = read_file("$FindBin::Bin/../perl/President.pl");
 my $master    = read_file("$FindBin::Bin/../jawn");
@@ -19,7 +22,7 @@ my $master    = read_file("$FindBin::Bin/../jawn");
 unlike($president, qr/^use threads\b/m, 'the tree no longer loads threads');
 unlike($president, qr/threads->create/, 'no browser-open thread remains');
 
-like($president, qr/^require '\.\/lib\/JawnOS\/Platform\.pm';/m,
+like($president, qr/^require JawnOS::Platform;/m,
 	'President loads the platform module');
 like($president, qr/^sub run_server\b/m, 'the server chooser exists');
 like($president, qr/JawnOS::Platform::portable\(\)/,
@@ -34,5 +37,30 @@ like($master, qr/^use JawnOS::Transport;/m,
 	'the master loads the transport module (and Platform through it)');
 like($master, qr/type => 'pipe'/, 'the master can run the tree on a pipe');
 like($master, qr/type => 'pty'/, 'the master still uses a pty when native');
+
+# The master adds the repo lib to its own @INC but its PERL5LIB carries only the
+# local::lib tree, so the tree starts as plain `perl ./perl/President.pl` with no
+# repo lib. A compile-time load that does not locate lib itself aborts the tree
+# before it can log (the 16:28 crash loop).
+sub compiles_without_repo_lib {
+	my ($file) = @_;
+	my @local = grep { m{/perl5/lib/perl5} } @INC;
+	local $ENV{'PERL5LIB'} = join ':', @local;
+	my $err = gensym;
+	my $pid = open3(my $in, my $out, $err, $^X, '-c', $file);
+	close $in;
+	my $stderr = do { local $/; <$err> } // '';
+	my $stdout = do { local $/; <$out> } // '';
+	waitpid($pid, 0);
+	return ($? >> 8, $stderr . $stdout);
+}
+
+my ($president_boot, $president_out) = compiles_without_repo_lib("$FindBin::Bin/../perl/President.pl");
+is($president_boot, 0, 'President compiles without the repo lib in @INC')
+	or diag($president_out);
+
+my ($devicews_boot, $devicews_out) = compiles_without_repo_lib("$FindBin::Bin/../lib/JawnOS/Domain/Devicews.pm");
+is($devicews_boot, 0, 'Devicews compiles without the repo lib in @INC')
+	or diag($devicews_out);
 
 done_testing();
