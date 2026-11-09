@@ -201,24 +201,6 @@ static void usb_config_loop() {
         // peripheral. One line, because the console reads lines.
         Serial.println("JAWNPINS " + board_pins_json());
       }
-      else if (line == "JAWNSCAN") {
-        // What this board's own radio can hear, for a board that will not join.
-        // A scan blocks core 0 for a few seconds, so it runs only when a person
-        // asks on USB; the 45 s watchdog still has room. The SSID is the thing
-        // that matters: the panel cannot tell a wrong password from an access
-        // point that is out of range.
-        int found = WiFi.scanNetworks();
-        Serial.println("JAWNSCAN " + String(found));
-        for (int i = 0; i < found; i++) {
-          Serial.println("JAWNSCAN AP " + String(WiFi.SSID(i))
-            + " rssi=" + String(WiFi.RSSI(i))
-            + " ch=" + String(WiFi.channel(i))
-            + " enc=" + String((int)WiFi.encryptionType(i)));
-        }
-        WiFi.scanDelete();
-        Serial.println("JAWNSCAN END status=" + String((int)WiFi.status())
-          + " wanted=" + ssid + " mode=" + String((int)WiFi.getMode()));
-      }
       else if (line == "JAWNREBOOT") {
         Serial.println("JAWNCFG REBOOT");
         usb_reboot_pending = true;

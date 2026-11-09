@@ -172,10 +172,4 @@ like($g2, qr/const char \*keep_keys\[\] = \{ "relay", "led", "button", "switch",
 	'the role and the pin maps survive a USB provision');
 
 
-# --- (i) a board that cannot join can be asked what it hears ----------------
-like($g2, qr/line == "JAWNSCAN"/, 'the console accepts a scan request');
-like($g2, qr/WiFi\.scanNetworks\(\)/, "it scans with the board's own radio");
-like($g2, qr/JAWNSCAN AP /, 'and prints one line per access point');
-like($g2, qr/wanted=" \+ ssid/, 'naming the SSID it wants, so a wrong name is visible');
-
 done_testing();
