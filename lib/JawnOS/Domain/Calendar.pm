@@ -280,6 +280,29 @@ sub session_twin_rows {
 		$app, 'start', 'record', $uuid, $timestamp, $tolerance)->hashes || [];
 }
 
+# The app's usual length is the average of the sessions it has closed. Every
+# writer that ends a session - manager_reset for a press, appointment_writer for
+# a plate, a timer, a weather rule or a relayed stop - must teach it the same
+# way, or a session the person never pressed stop on (autostop at a plate) would
+# never count toward what the app is expected to run for. The caller passes the
+# length of the session it is closing: this row must not be in the table yet, or
+# it would be counted twice. Stored stop lengths are negative (start - stop),
+# and a row a repair left without one is not a length at all.
+sub session_duration_learn {
+	my ($app, $duration) = @_;
+	return undef unless $app && defined $duration;
+	my $rows = &db_query('select duration from appointments where app=? and type=? order by server_time DESC LIMIT 40', $app, 'stop')->hashes || [];
+	my ($total, $count) = (abs($duration), 1);
+	foreach my $row ( @{$rows} ) {
+		next unless defined $row->{'duration'} && length $row->{'duration'};
+		$total += abs($row->{'duration'});
+		$count++;
+	}
+	my $average = $total / $count;
+	&setting_setter({ app => $app, setting => 'duration', value => &duration_sayer($average / 1000) });
+	return $average;
+}
+
 sub appt_header_printer {
 	my $data = shift;
 	my $app = $data->{'app'};

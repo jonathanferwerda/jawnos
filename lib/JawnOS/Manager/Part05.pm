@@ -96,6 +96,10 @@ sub appointment_writer($c,$app) {
 	delete $app->{'quiet_child'};
 	my $timestamp = $app->{'timestamp'};
 	my $server_time = $app->{'server_time'};
+	# A stop may name its own length. The stop branch below measures the session
+	# itself and overwrites the column either way, so remember whether a length
+	# arrived: only a measured one teaches the app's usual duration.
+	my $supplied_duration = $app->{'duration'};
 	$app->{'device'} = $device;
 	# A media press names the source and the machine that captures on the press
 	# itself. They are not appointment columns: keep them out of the insert and
@@ -232,6 +236,15 @@ sub appointment_writer($c,$app) {
 			$app->{'type'} = 'stop';
 			$app->{'duration'} = $appt->{'timestamp'} - $app->{'timestamp'};
 			$app->{'uuid'} = $appt->{'uuid'};
+			# A stop that carried no length of its own is a measurement, so the app's
+			# usual duration learns from it - the same learner a hand stop uses. Learn
+			# before the row is closed below: the query must not count this session a
+			# second time. A stop replayed long after its press teaches nothing,
+			# because its measured length is not the session's.
+			if (!defined $supplied_duration
+				&& abs(&subs::rightNow() - (0 + ($app->{'timestamp'} || 0))) <= &subs::stale_action_ms()) {
+				&subs::session_duration_learn($app->{'app'}, $app->{'duration'});
+			}
 			# A capture that ran on another machine is stopped there, not here. The
 			# stop is relayed before the row is closed below, so the named machine
 			# still finds its own copy open and sends its own stop. The row's data

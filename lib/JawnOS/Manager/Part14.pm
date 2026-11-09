@@ -439,19 +439,14 @@ sub manager_reset($c) {
 				# time and the row's start, exactly as a stop that carried none always
 				# did; the average below learns from it.
 				$duration = $timestamp1 - $timestamp;
-				my $all_durations = &subs::db_query('select * from appointments where app=? and type=? order by server_time DESC LIMIT 40',$app,'stop')->hashes;
-				my $total_durations = abs $duration;
 				if ($o->{'end_notes'}) {
 					my $n = &subs::note_decrypter(&subs::session_suds($c), $o->{'end_notes'}, $o->{'ost'});
 					$n .= "\n" . &subs::note_decrypter(&subs::session_suds($c), $notes);
 					$notes = &subs::note_encrypter(&subs::session_suds($c), $n);
 				}
-				foreach my $ad ( @{$all_durations} ) {
-					$total_durations += abs $ad->{'duration'};
-				}
-				my $new_duration = $total_durations / ( scalar @{$all_durations} + 1);
-
-				&subs::setting_setter({ app => $app, setting => 'duration', value => &subs::duration_sayer($new_duration / 1000 ) });
+				# The shared learner, so a session a plate, a timer or a relayed
+				# stop ends teaches the app's usual duration as this press does.
+				&subs::session_duration_learn($app, $duration);
 			}
 			else {
 				# A backdated stop (time machine, ago, timeshift) keeps this, and so does
