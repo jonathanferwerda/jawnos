@@ -104,6 +104,36 @@ Still to prove: checks 1-5 on a machine that serves nothing, recorded here. Do
 not start a master from a worktree on the house box; the sweep is scoped now,
 but the master also writes `~/.president`, which is the serving master's state.
 
+#### Throwaway LXC re-run — 2026-11-09
+
+A disposable Debian 13 LXC on the house's Proxmox host (4 cores, 4 GB), the only
+checkout on it, running this commit. Same shape as above: temp `HOME`, a fresh
+`database/jawnos.db` from `database/schema.sql`, `JAWNOS_PORTABLE=1`,
+`JAWNOS_TRANSPORT=tcp`, ports 46200/46300/46301.
+
+| Check | Result |
+|---|---|
+| 1. panel answers on the working port | pass (200) |
+| 2. one process per purpose | pass (24 `President.pl`, one per purpose; no Prefork parent or pool) |
+| 3. `starting fork`, conduit a pipe | pass (the President's fd0 and fd1 are both `pipe:[…]`) |
+| 4. restart through `scripts/restart.pl` | pass — warm guard: accepted and verified in **0.8s**; the first (cold) guard ran ~5 min, longer than the client's 150s default, so pass `--timeout 600` once per checkout |
+| 5. log view and process watch answer | pass (the log client returns bytes; the watch returns a 1451-byte Sereal frame) |
+
+The restart record for the cold run still landed (`ok:1`, `verify_change: 1323
+file(s) pass`) and the tree came back; only the caller gave up waiting, which is
+the `--timeout` note above. Nothing in the cold path is portable-specific.
+
+**Two checkouts, one box** — the case that disrupted the house. A second copy of
+the tree with its own `HOME`, config and ports served alongside the first;
+`kill -TERM` on the second master ran its `shut_down`. Its 23 Presidents
+stopped; the first checkout's 24 kept the same pids and its panel stayed 200.
+That is the scoped sweep working end to end, not just in `t/78`.
+
+**Harness note:** a smoke config must name ports the tree actually binds. The
+setup wizard's `--seed` default leaves `port` at 3000 while `working_port` is the
+port served, and `tree_serving` asks *every* configured port — set `port` and
+`working_port` consistently (or omit `port`) in a smoke config.
+
 ## Slice 2 (landed)
 
 `lib/JawnOS/Transport.pm` is the one place that knows where the master's private
@@ -206,9 +236,8 @@ the binder ask `ws_server_ensure`, so a second bind cannot take the port.
   trips for memory, ws and alarm; `t/222`/`t/223` cover the new kinds and the
   wiring; `t/221` covers the no-PERL5LIB boot.
 
-The remaining P0 work is the portable smoke house on a spare machine and the
-written go/no-go. The checkout scope above is the one source change that run
-forced.
+The remaining P0 work is the written go/no-go; the smoke house now runs on a
+spare machine, and the checkout scope above is the one source change it forced.
 
 ## Hardware gate
 
