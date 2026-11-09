@@ -32,8 +32,8 @@ like($president, qr/\$ENV\{PORT_WS_PLAIN\} = \$ws_plain_port if \$config->\{'env
 	'the plain port is exported in production');
 like($president, qr/my \@ws_listeners = \( 'https:\/\/\*:' \. \$ws_port \. \$certs, 'http:\/\/127\.0\.0\.1:' \. \$ws_plain_port \);/,
 	'the socket server listens on https and on plain loopback');
-like($president, qr/Mojo::Server::Prefork->new\(listen => \\\@ws_listeners\)/,
-	'the prefork is handed both listeners');
+like($president, qr/&run_server\('\.\/perl\/Manager\.pl', \\\@ws_listeners,/,
+	'the socket server is handed both listeners');
 
 # 2. the URL helper and the token
 like($manager, qr/^sub ws_url_for \{/m, 'the page has one socket URL builder');

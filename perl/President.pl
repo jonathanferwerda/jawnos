@@ -35,7 +35,7 @@ use Mojo::Reactor::Poll;
 use Clone qw(clone);
 use Minion;
 use POSIX ();
-use threads 'exit' => 'threads_only';
+require './lib/JawnOS/Platform.pm';
 
 no warnings 'uninitialized'; 
 # the gb globals below live in gb.pl and are written or read from every
@@ -147,19 +147,23 @@ if ($device eq 'mobile') {
 }
 
 if ($config->{'open_browser'} eq 'yes') {
+	my $url = "https://127.0.0.1:$random_number/manager";
 	if ($device eq 'mobile') {
-		threads->create(sub { 
-			&subs::device_call('open.url', { url => "https://127.0.0.1:$random_number/manager" });
-		});
+		&subs::device_call('open.url', { url => $url });
 	}
 	elsif ($device eq 'computer') {
-		threads->create(sub {
-			# The child inherits the environment; `export DISPLAY=:0` in backticks
-			# was exec'd as a program (no shell metacharacter), so the export
-			# failed and chromium never saw the display.
+		# A detached open is enough, and removing `use threads` leaves the
+		# no-fork Windows path with one concurrency model instead of two.
+		if ($^O eq 'MSWin32') {
+			system(1, 'cmd.exe', '/c', 'start', '', $url);
+		}
+		elsif ($^O eq 'darwin') {
+			system(1, 'open', $url);
+		}
+		else {
 			local $ENV{'DISPLAY'} = ':0';
-			my $chrome = `chromium https://$domain:$random_number/manager &`;
-		});
+			system(1, 'sh', '-c', 'chromium "$0" >/dev/null 2>&1 &', $url);
+		}
 	}
 }
 if ($environment) {
@@ -235,6 +239,50 @@ sub prefork_tune {
 		$log->info('worker spawn purpose=' . ($ENV{PURPOSE} || '?') . " pid=$pid");
 	});
 	return $prefork;
+}
+
+# One place that starts an HTTP server, so portable mode can choose a
+# single-process Daemon instead of Prefork without repeating the decision at
+# every listener. Native behaviour is unchanged: the same prefork_tune, the
+# same worker count, the same autoscale.
+sub run_server {
+	my ($app, $listeners, %opt) = @_;
+	$ENV{'PURPOSE'} = $opt{'purpose'} if defined $opt{'purpose'};
+	if (JawnOS::Platform::portable()) {
+		my $daemon = Mojo::Server::Daemon->new(listen => $listeners);
+		$daemon->load_app($app);
+		$daemon->run;
+		return;
+	}
+	my $prefork = &prefork_tune(
+		Mojo::Server::Prefork->new(listen => $listeners),
+		keep_alive => ($opt{'keep_alive'} ? 1 : 0),
+	);
+	$prefork->heartbeat_timeout(200);
+	$prefork->load_app($app);
+	$prefork->workers($opt{'workers'} || 1);
+	&prefork_autoscale($prefork,
+		min => $opt{'autoscale_min'},
+		max => $opt{'autoscale_max'},
+	) if $opt{'autoscale_min'};
+	$prefork->run;
+	return;
+}
+
+# Development keeps Morbo's file watcher on a native POSIX box; portable mode
+# has no fork to spare, so it uses the same single Daemon as production.
+sub run_dev_server {
+	my ($app, %opt) = @_;
+	$ENV{'PURPOSE'} = $opt{'purpose'} if defined $opt{'purpose'};
+	if (JawnOS::Platform::portable()) {
+		&run_server($app, [ split /,/, $ENV{'MOJO_LISTEN'} ], purpose => $opt{'purpose'});
+		return;
+	}
+	my $morbo = Mojo::Server::Morbo->new;
+	$morbo = $morbo->daemon(Mojo::Server::Daemon->new);
+	$morbo->backend->watch(['./', './templates']) if $opt{'watch'};
+	$morbo->run($app);
+	return;
 }
 
 require './perl/President/prefork_autoscale.pl';
@@ -693,10 +741,7 @@ sub manager_starter() {
 			print "Starting Locker Server on port " . $dock_port . "\n";
 			$ENV{MOJO_LISTEN} = 'https://*:' . $dock_port . $certs;
 			$ENV{PURPOSE} = 'locker';
-			my $morbo = Mojo::Server::Morbo->new;
-			$morbo->backend->watch(['./', './templates']);
-			$morbo = $morbo->daemon(Mojo::Server::Daemon->new);
-			$morbo->run('./perl/Manager.pl');
+			&run_dev_server('./perl/Manager.pl', purpose => 'locker', watch => 1);
 		}, { name => 'Dev Locker Server' });
 		if ($ENV{PORT_AHOY} != $ENV{PORT_MSG}) {
 			&subs::subprocessor(sub {
@@ -704,10 +749,7 @@ sub manager_starter() {
 				print "Starting WS Server on port " . $ws_port . "\n";
 				$ENV{MOJO_LISTEN} = 'https://*:' . $ws_port . $certs;
 				$ENV{PURPOSE} = 'websocket';
-				my $morbo = Mojo::Server::Morbo->new;
-				$morbo->backend->watch(['./', './templates']);
-				$morbo = $morbo->daemon(Mojo::Server::Daemon->new);
-				$morbo->run('./perl/Manager.pl');
+				&run_dev_server('./perl/Manager.pl', purpose => 'websocket', watch => 1);
 			}, { name => 'Dev WS Server' });
 		}
 		&subs::subprocessor(sub {
@@ -716,10 +758,7 @@ sub manager_starter() {
 			$ENV{MOJO_LISTEN} = join ',', ('https://*:' . $port . $certs),
 				($peer_certs ne '' ? ('https://*:' . $peer_port . $peer_certs) : ());
 			$ENV{PURPOSE} = 'main';
-			my $morbo = Mojo::Server::Morbo->new;
-			$morbo = $morbo->daemon(Mojo::Server::Daemon->new);
-			$morbo->backend->watch(['./', './templates']);
-			$morbo->run('./perl/Manager.pl');
+			&run_dev_server('./perl/Manager.pl', purpose => 'main', watch => 1);
 		}, { name => 'Dev Main Server' });
 	}
 	elsif ($config->{'environment'} eq 'production') {
@@ -736,11 +775,8 @@ sub manager_starter() {
 			print "Starting Pro Locker Server on port " . $dock_port . "\n";
 			$ENV{MOJO_LISTEN} = 'https://*:' . $dock_port . $certs;
 			$ENV{PURPOSE} = 'locker';
-			my $prefork = &prefork_tune(Mojo::Server::Prefork->new(listen => [ $ENV{MOJO_LISTEN} ]));
-			$prefork->heartbeat_timeout(200);
-			$prefork->load_app('./perl/Manager.pl');
-			$prefork->workers(1);
-			$prefork->run;
+			&run_server('./perl/Manager.pl', [ $ENV{MOJO_LISTEN} ],
+				purpose => 'locker', workers => 1);
 			$log->info('after locker server');
 		}, { name => 'Pro Locker Server' });
 
@@ -754,11 +790,8 @@ sub manager_starter() {
 			push @ws_listeners, 'https://*:' . $peer_port . $peer_certs if $peer_certs ne '';
 			$ENV{MOJO_LISTEN} = join ',', @ws_listeners;
 			$ENV{PURPOSE} = 'websocket';
-			my $prefork = &prefork_tune(Mojo::Server::Prefork->new(listen => \@ws_listeners), keep_alive => 1);
-			$prefork->heartbeat_timeout(200);
-			$prefork->load_app('./perl/Manager.pl');
-			$prefork->workers(1);
-			$prefork->run;
+			&run_server('./perl/Manager.pl', \@ws_listeners,
+				purpose => 'websocket', workers => 1, keep_alive => 1);
 			$log->info('after ws server');
 		}, { name => 'Pro WS Server' });
 
@@ -767,9 +800,6 @@ sub manager_starter() {
 			print "Starting Pro Prefork Main Server on port " . $port . "\n";
 			$ENV{MOJO_LISTEN} = 'https://*:' . $port . $certs;
 			$ENV{PURPOSE} = 'main';
-			my $prefork = &prefork_tune(Mojo::Server::Prefork->new(listen => [ $ENV{MOJO_LISTEN} ]));
-			$prefork->heartbeat_timeout(200);
-			$prefork->load_app('./perl/Manager.pl');
 			# A handheld runs this whole tree in a few hundred MB that Android's
 			# low-memory killer reclaims the moment the device tightens, so the pool
 			# stays small - but not one. A worker serves one request at a time, and on
@@ -785,11 +815,12 @@ sub manager_starter() {
 			my $configured_workers = (defined $config->{'main_workers'} && $config->{'main_workers'} =~ /^\d+$/ && $config->{'main_workers'} > 0)
 				? int($config->{'main_workers'}) : 0;
 			my $main_workers = $configured_workers || ($device eq 'controller' ? 2 : ($device eq 'mobile' ? 2 : ($device eq 'server' ? 4 : 3)));
-			$prefork->workers($main_workers);
-			# A controller rests at two like a phone and never grows: its 1.8 GB is
-			# the launcher and the call gateway, not a worker fleet.
-			&prefork_autoscale($prefork, min => $main_workers, max => ($device eq 'mobile' || $device eq 'controller') ? $main_workers : $main_workers + 2);
-			$prefork->run;
+			&run_server('./perl/Manager.pl', [ $ENV{MOJO_LISTEN} ],
+				purpose => 'main',
+				workers => $main_workers,
+				autoscale_min => $main_workers,
+				autoscale_max => ($device eq 'mobile' || $device eq 'controller')
+					? $main_workers : $main_workers + 2);
 			$log->info('after main server');
 		}, { name => 'Pro Main Server' });
 		# A controller answers no alarm, runs no terminal and keeps no window
@@ -800,11 +831,8 @@ sub manager_starter() {
 				print "Starting Pro Prefork Alarm Server on port " . $alarm_port . "\n";
 				$ENV{MOJO_LISTEN} = 'https://*:' . $alarm_port . $certs;
 				$ENV{PURPOSE} = 'alarm';
-				my $prefork = &prefork_tune(Mojo::Server::Prefork->new(listen => [ $ENV{MOJO_LISTEN} ]), keep_alive => 1);
-				$prefork->heartbeat_timeout(200);
-				$prefork->load_app('./perl/Alarm.pl');
-				$prefork->workers(1);
-				$prefork->run;
+				&run_server('./perl/Alarm.pl', [ $ENV{MOJO_LISTEN} ],
+					purpose => 'alarm', workers => 1, keep_alive => 1);
 				$log->info('after alarm server');
 			}, { name => 'Pro Alarm Server' });
 		}
@@ -823,17 +851,12 @@ sub manager_starter() {
 			$ENV{MOJO_LISTEN} = 'https://*:' . $watch_port . $certs;
 			if ($config->{'environment'} eq 'development') {
 				print "Starting Development Watch Server on $watch_port\n";
-				my $morbo = Mojo::Server::Morbo->new;
-				$morbo = $morbo->daemon(Mojo::Server::Daemon->new);
-				$morbo->run('./perl/watch.pl');
+				&run_dev_server('./perl/watch.pl', purpose => 'watch');
 			}
 			elsif ($config->{'environment'} eq 'production') {
 				print "Starting Pro Watch Server on port " . $watch_port . "\n";
-				my $prefork = &prefork_tune(Mojo::Server::Prefork->new(listen => [ $ENV{MOJO_LISTEN} ]));
-				$prefork->heartbeat_timeout(200);
-				$prefork->load_app('./perl/watch.pl');
-				$prefork->workers($device eq 'mobile' ? 1 : ($device eq 'server' ? 2 : 1));
-				$prefork->run;
+				&run_server('./perl/watch.pl', [ $ENV{MOJO_LISTEN} ],
+					purpose => 'watch', workers => $device eq 'mobile' ? 1 : ($device eq 'server' ? 2 : 1));
 			}
 		}, { name => 'Watch Server' });
 
@@ -847,17 +870,12 @@ sub manager_starter() {
 				$ENV{MOJO_LISTEN} = 'https://*:' . $tty_port . $certs;
 				if ($config->{'environment'} eq 'development') {
 					print "Starting Development TTY Server on $tty_port\n";
-					my $morbo = Mojo::Server::Morbo->new;
-					$morbo = $morbo->daemon(Mojo::Server::Daemon->new);
-					$morbo->run('./perl/teletype.pl');
+					&run_dev_server('./perl/teletype.pl', purpose => 'teletype');
 				}
 				elsif ($config->{'environment'} eq 'production') {
 					print "Starting Pro TTY Server on port " . $tty_port . "\n";
-					my $prefork = &prefork_tune(Mojo::Server::Prefork->new(listen => [ $ENV{MOJO_LISTEN} ]), keep_alive => 1);
-					$prefork->heartbeat_timeout(200);
-					$prefork->load_app('./perl/teletype.pl');
-					$prefork->workers($device eq 'mobile' ? 1 : ($device eq 'server' ? 3 : 2));
-					$prefork->run;
+					&run_server('./perl/teletype.pl', [ $ENV{MOJO_LISTEN} ],
+						purpose => 'teletype', workers => $device eq 'mobile' ? 1 : ($device eq 'server' ? 3 : 2), keep_alive => 1);
 				}
 			}, { name => 'TTY Server' });
 			&subs::subprocessor(sub {
@@ -869,17 +887,12 @@ sub manager_starter() {
 				$ENV{MOJO_LISTEN} = 'https://*:' . $ws_tty_port . $certs;
 				if ($config->{'environment'} eq 'development') {
 					print "Starting Development TTYwss Server on $ws_tty_port\n";
-					my $morbo = Mojo::Server::Morbo->new;
-					$morbo = $morbo->daemon(Mojo::Server::Daemon->new);
-					$morbo->run('./perl/teletype.pl');
+					&run_dev_server('./perl/teletype.pl', purpose => 'teletype');
 				}
 				elsif ($config->{'environment'} eq 'production') {
 					print "Starting Pro TTYwss Server on port " . $ws_tty_port . "\n";
-					my $prefork = &prefork_tune(Mojo::Server::Prefork->new(listen => [ $ENV{MOJO_LISTEN} ]), keep_alive => 1);
-					$prefork->heartbeat_timeout(200);
-					$prefork->load_app('./perl/teletype.pl');
-					$prefork->workers(1);
-					$prefork->run;
+					&run_server('./perl/teletype.pl', [ $ENV{MOJO_LISTEN} ],
+						purpose => 'teletype', workers => 1, keep_alive => 1);
 				}
 			}, { name => 'TTY WS Server' });
 		}

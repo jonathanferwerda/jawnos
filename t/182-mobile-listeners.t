@@ -43,7 +43,7 @@ for my $keep ('Pro Locker Server', 'Pro WS Server', 'Pro Main Server', 'Pro Alar
 	like($rest, qr/name => '\Q$keep\E'/, "$keep still starts on a phone");
 }
 
-like($src, qr/&prefork_autoscale\(\$prefork, min => \$main_workers, max => \(\$device eq 'mobile' \|\| \$device eq 'controller'\) \? \$main_workers : \$main_workers \+ 2\);/,
+like($src, qr/autoscale_max => \(\$device eq 'mobile' \|\| \$device eq 'controller'\)\s*\n?\s*\? \$main_workers : \$main_workers \+ 2\);/,
 	'a phone and a controller rest at their worker count while a desktop still grows by two');
 like($autoscale, qr/return \$prefork if \$max <= \$min;/,
 	'a cap equal to the pool never even starts the supervisor');

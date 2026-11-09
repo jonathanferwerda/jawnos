@@ -1,0 +1,88 @@
+name: platform-p0
+
+# P0 asks whether a box can run the house. Linux must answer; Windows and macOS
+# report until the hardware landings in P2/P3, so their jobs are allowed to fail
+# without turning the probe's finding into a red branch.
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'lib/JawnOS/Platform.pm'
+      - 'scripts/platform_probe.pl'
+      - 'perl/President.pl'
+      - 'jawn'
+      - '.github/workflows/platform-p0.yml'
+
+jobs:
+  linux-portable:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Perl
+        run: perl -v
+      - name: cpanm
+        run: |
+          curl -fsSL https://cpanmin.us | perl - App::cpanminus
+          echo "$HOME/perl5/bin" >> "$GITHUB_PATH"
+      - name: modules
+        run: |
+          cpanm --notest --quiet \
+            Mojolicious@9.39 Mojo::SQLite@3.009 Minion@10.31 \
+            Minion::Backend::SQLite@5.0.0 Mojo::IOLoop::ReadWriteFork@2.02 \
+            Sereal::Encoder@5.004 Sereal::Decoder@5.004 CryptX@0.085 \
+            DBD::SQLite@1.76 Net::SSLeay
+      - name: probe
+        run: perl scripts/platform_probe.pl --check
+      - name: portable suite
+        run: JAWNOS_PORTABLE=1 perl scripts/run_tests.pl --jobs 2
+
+  windows-probe:
+    runs-on: windows-latest
+    continue-on-error: true
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Strawberry Perl
+        shell: powershell
+        run: |
+          choco install strawberryperl -y --no-progress
+          "C:\Strawberry\perl\bin" | Out-File -FilePath $env:GITHUB_PATH -Append
+      - name: modules (best effort)
+        continue-on-error: true
+        shell: powershell
+        run: |
+          cpanm --notest Mojolicious Minion Minion::Backend::SQLite DBD::SQLite Sereal::Encoder Sereal::Decoder Net::SSLeay CryptX
+          if ($LASTEXITCODE -ne 0) { Write-Host "some modules did not build; the probe will say which" }
+      - name: probe
+        shell: powershell
+        run: perl scripts/platform_probe.pl --json | Tee-Object -FilePath platform-probe.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: platform-probe-windows
+          path: platform-probe.json
+
+  macos-probe:
+    runs-on: macos-14
+    continue-on-error: true
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Perl
+        run: |
+          brew install perl
+          echo "$(brew --prefix perl)/bin" >> "$GITHUB_PATH"
+          perl -v
+      - name: modules (best effort)
+        continue-on-error: true
+        run: |
+          curl -fsSL https://cpanmin.us | perl - App::cpanminus
+          cpanm --notest Mojolicious Minion Minion::Backend::SQLite DBD::SQLite Sereal::Encoder Sereal::Decoder Net::SSLeay CryptX \
+            || echo "some modules did not build; the probe will say which"
+      - name: probe
+        run: perl scripts/platform_probe.pl --json | tee platform-probe.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: platform-probe-macos
+          path: platform-probe.json

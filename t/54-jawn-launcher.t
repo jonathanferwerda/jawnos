@@ -21,9 +21,11 @@ open(my $fh, '<', $launcher) or die "$launcher: $!";
 my $src = do { local $/; <$fh> };
 close $fh;
 
-# The pty stays.
+# The pty stays the native default; portable mode adds a pipe.
 like($src, qr/sub\s+terminal_pty_runner/, 'the master still runs the tree on a pty');
-like($src, qr/type\s*=>\s*"pty"/, 'the conduit is still a pty');
+like($src, qr/type\s*=>\s*'pty'/, 'the native conduit is still a pty');
+like($src, qr/type\s*=>\s*'pipe'/, 'portable mode can run the tree on a pipe');
+like($src, qr/JawnOS::Platform::portable\(\)/, 'the choice follows the platform mode');
 unlike($src, qr/pty_log_fh/, 'the console is no longer teed into a pty.log file');
 like($src, qr/JawnOS::LogBus/, 'the master keeps the console stream in the log bus');
 like($src, qr/ring_append/, 'and appends every pty read to its ring');

@@ -265,6 +265,7 @@ $log->warn("orphan sweep: cleared $orphans_cleared leftover jawn process(es)")
 # and every other require in this file is cwd-relative too.
 require './perl/control.pl';
 require './lib/JawnOS/LogBus.pm';
+require './lib/JawnOS/Platform.pm';
 
 # 4 MB holds roughly an hour of this tree's console output, and the watch reads
 # 256 KB per minute, so a normal burst is never overwritten before it is asked
@@ -1560,7 +1561,11 @@ sub terminal_pty_runner() {
 	}
 	print 'starting fork' . "\n";
 
-	$fork->conduit({raw => 1, type => "pty"});
+	# A pipe is enough for the tree's line-oriented output; portable mode
+	# has no pty to spend. The read handler below is unchanged either way.
+	$fork->conduit(JawnOS::Platform::portable()
+		? { type => 'pipe' }
+		: { raw => 1, type => 'pty' });
 
   $fork->on(read => sub () {
 		my ($fork, $bytes) = @_;

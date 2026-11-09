@@ -24,11 +24,11 @@ my $src = read_file(repo_root() . '/perl/President.pl');
 like($src, qr/\$device eq 'controller' \? 2 :/,
 	'a controller rests at two main workers');
 
-my ($autoscale) = $src =~ /^(\s*&prefork_autoscale\(.*)$/m;
+my ($autoscale) = $src =~ /(&run_server\('\.\/perl\/Manager\.pl'.*?autoscale_max =>.*?;)/s;
 ok($autoscale, 'the main pool still autoscales through one call');
 like($autoscale, qr/\$device eq 'controller'/,
 	'the autoscale limit consults the controller device');
-like($autoscale, qr/controller[^\n]*\?\s*\$main_workers\s*:/,
+like($autoscale, qr/controller[^\n]*\n\s*\?\s*\$main_workers\s*:/,
 	'a controller does not grow the pool past its resting count');
 
 # A controller gate is `unless ($device eq 'controller') { ... }` indented one

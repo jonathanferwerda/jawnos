@@ -1,6 +1,9 @@
 # Native Windows and macOS Roadmap
 
-**Status:** draft — written 2026-11-08. No work is in flight; nothing here is a task.
+**Status:** P0 in flight (2026-11-08). Slice 1 landed: the questions are answered, the
+capability probe exists, and portable mode has a Daemon server and a pipe runner. No Mac or
+Windows hardware is present yet, so the hardware exits wait for it. Runbook and acceptance
+checklist: `docs/platform-p0.md`.
 **Related:** `desktop/README.md` (the Qt shell and today's supervisor), `docs/docker.md` (the
 headless server), `docs/migration-roadmap.md` (the Go path, the alternative endgame),
 `docs/infrastructure-roadmap.md` (where containers still belong).
@@ -42,20 +45,24 @@ Accepted 2026-11-08, unless marked otherwise.
 | D8 | Keep Perl for this roadmap | **accepted for now** | The Go migration is the alternative if the Windows process model proves too expensive. |
 | D9 | Direct distribution first, not the App Store or Microsoft Store | **proposed** | macOS sandbox would block child processes and broad file access. |
 
-## 3. Open questions
+## 3. Resolved questions (2026-11-08)
 
-| # | Question | Needed by |
+The original Q1–Q10 are answered here. The reasoning and the runbook are in
+`docs/platform-p0.md`; the answers that need a real machine are proposals for the
+P2/P3 exits, not measurements.
+
+| # | Question | Answer |
 |---|---|---|
-| Q1 | Windows Perl runtime: portable Strawberry Perl, a custom relocatable build, or a minimal embedded `perl.exe` + XS modules? | P0 |
-| Q2 | Does a desktop house need prefork at all, or is one `Mojo::Server::Daemon` process enough? What is the concurrency target? | P0 |
-| Q3 | Does the `subprocessor` fork model become Minion jobs, a small worker process, or a thread pool? `use threads` + `fork` is the specific hazard. | P0 |
-| Q4 | ConPTY or a plain pipe for the master's tree runner? Does anything depend on PTY semantics beyond line buffering? | P0 |
-| Q5 | Control/log/watch transports: AF_UNIX on Windows (which minimum version?) or loopback TCP plus the existing token? | P0 |
-| Q6 | Always-on: tray app with "Start with Windows", or a Windows service? What happens when no user is logged in? | P1 |
-| Q7 | macOS data directory: `~/Library/Application Support/JawnOS` with a copied tree, or a checkout-like directory under `~/.jawnos`? | P2 |
-| Q8 | Reception (screened calls) and the hardware wallet: first release, or later parity? | P1 |
-| Q9 | Minimum OS/CPU matrix: Windows 10 21H2 vs 11; macOS 13/14/15; x64 and arm64? | P0 |
-| Q10 | Hardware test plan: which real machines, BLE adapter, USB serial board, printer and audio device are the acceptance rig? | P0 |
+| Q1 | Windows Perl runtime | **Bundle Perl 5.40.** Portable Strawberry Perl for the P0 spike; a relocatable threaded build for release. The tree needs roughly a dozen XS modules (`DBD::SQLite`, `Net::SSLeay`, `Sereal`, `CryptX`, `Clone`, `HTML::Strip`, `Data::UUID`, `Compress::Zlib`), pinned as in `Dockerfile:35-68`. `use threads` only opened a browser and is now gone; it does not make Strawberry's emulated `fork` safe, so Windows stays no-fork. |
+| Q2 | Prefork on a desktop | **No prefork; one `Mojo::Server::Daemon` per purpose.** Target 3 concurrent request slots (today's desktop resting count). Measure blocking routes in portable mode before deciding whether a multi-process dispatcher is needed. |
+| Q3 | subprocessor fork model | **Split, do not convert.** Resident loops and servers become supervised processes; durable one-shots become Minion jobs; request-scoped work stays a fork. Windows runs one Daemon per server, one consolidated loops process, one Minion worker, and the BLE helper. |
+| Q4 | ConPTY or pipe | **Plain pipe.** The master never writes to the tree; a pipe only needs the tree's stdout autoflushed. No PTY use exists outside the master runner. |
+| Q5 | Control/log/watch transport | **Loopback TCP plus a per-boot token on Windows; AF_UNIX on macOS/Linux.** Protocols stay one JSON line (control/log) and length-prefixed Sereal (watch); only the socket constructor and token check change. |
+| Q6 | Always-on | **Tray/menu bar plus a login item, not a service.** The desktop house needs the user session for audio, camera and the GUI; the headless server keeps systemd/Docker. When no user is logged in, the desktop house is down. |
+| Q7 | macOS data directory | **Tree copy in `~/Library/Application Support/JawnOS`; runtime state in `~/.president`.** Add `JAWNOS_DIR` and `JAWNOS_DATA_DIR`; updates replace the tree copy and never the data. |
+| Q8 | Reception and hardware wallet | **Later, both.** Reception is a BlueZ/SCO/PipeWire project with a native helper; the wallet is opt-in vendor drivers. Ship "not on this platform" stubs, not implementations. |
+| Q9 | Minimum OS/CPU | **Propose Windows 10 21H2+/11 x64 and macOS 13+ arm64/x64.** Verify the PySide6 wheel minima in CI. No Windows ARM64 in v1. A pipe removes ConPTY's 1809 floor as a constraint. |
+| Q10 | Hardware test plan | **One Apple Silicon Mac, one Windows 11 x64 mini-PC, a Pico 2 W, a watch, a deck, a USB BT dongle, an IPP printer and a USB serial board.** CI probes; the hardware acceptance run is recorded per version. |
 
 ## 4. What Qt already solved
 
@@ -258,6 +265,21 @@ container. Keep them:
 - Stand up CI compile jobs for Strawberry Perl and macOS Perl; add a `scripts/platform_probe.pl`
   that reports fork/PTY/socket/BLE/audio/serial capabilities.
 - Write the hardware acceptance checklist and choose the machines (or the rental).
+
+**Progress (2026-11-08, slice 1):**
+
+- [x] Q1–Q10 answered (above)
+- [x] `lib/JawnOS/Platform.pm` — the capability/mode flags, no server required
+- [x] `scripts/platform_probe.pl` — what a box can do, human and JSON, `--check` for CI
+- [x] Portable servers: `Mojo::Server::Daemon` instead of Prefork, a pipe instead of a PTY, and `use threads` removed
+- [x] Runbook and hardware acceptance checklist: `docs/platform-p0.md`
+- [x] CI probe jobs for Linux, Windows and macOS (Windows/macOS report-only until hardware)
+- [ ] Control/log/watch over loopback TCP + token
+- [ ] `/proc` and network parsing behind platform modules
+- [ ] Portable smoke house and suite green on a spare checkout
+
+The portable path is behind `JAWNOS_PORTABLE`; native Linux/macOS behaviour is
+unchanged, so this is a spike, not a migration.
 
 **Exit:** a written go/no-go on the Windows process model, and a Linux house running in portable
 mode with the suite green. If the spike fails, stop and take the Go path.
