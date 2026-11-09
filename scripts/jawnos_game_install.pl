@@ -57,6 +57,12 @@ write_status();
 
 if ($WHAT eq 'emulators') {
 	finish('failed', 'There is no package manager on this machine.') unless -x '/usr/bin/pacman';
+	# A helper killed mid-run leaves pacman's lock behind; only a running
+	# pacman may keep it.
+	if (-e '/var/lib/pacman/db.lck') {
+		my $running = system('pgrep', '-x', 'pacman');
+		unlink '/var/lib/pacman/db.lck' if $running != 0;
+	}
 	$STATUS{'note'} = 'Refreshing the package list.';
 	write_status();
 	system('pacman', '-Sy', '--noconfirm');
@@ -74,10 +80,29 @@ if ($WHAT eq 'emulators') {
 		}
 		write_status();
 	}
+	# The repositories do not carry every core the shelf names. The emmc image
+	# has a full set built for this board; copy the ones still missing, never
+	# over one pacman installed.
+	if (!-d '/media/emmc/opt/libretro' && -b '/dev/mmcblk1p2') {
+		make_path('/media/emmc');
+		system('mount', '-o', 'ro', '/dev/mmcblk1p2', '/media/emmc');
+	}
+	my @copied;
+	if (-d '/media/emmc/opt/libretro') {
+		make_path('/usr/lib/libretro');
+		foreach my $core (glob('/media/emmc/opt/libretro/*/*_libretro.so')) {
+			my ($name) = $core =~ m{([^/]+)$};
+			my $dest = '/usr/lib/libretro/' . $name;
+			next if -e $dest;
+			push @copied, $name if system('cp', '-n', $core, $dest) == 0;
+		}
+	}
+	$STATUS{'copied'} = \@copied;
 	my $note = 'All emulators are installed.';
 	$note = 'Installed ' . scalar(@{ $STATUS{'done'} }) . '; the repositories did not have: '
 		. join(', ', @{ $STATUS{'failed'} }) . '.'
 		if @{ $STATUS{'failed'} };
+	$note .= ' ' . scalar(@copied) . ' cores copied from the emmc.' if @copied;
 	finish('done', $note);
 }
 

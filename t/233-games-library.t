@@ -51,6 +51,8 @@ my @packages = JawnOS::Games::packages();
 my %seen;
 is(scalar(grep { $seen{$_}++ } @packages), 0, 'the package list has no duplicates');
 ok((grep { $_ eq 'libretro-snes9x' } @packages), 'the list carries the SNES core package');
+is($packages[0], 'retroarch', 'the frontend is installed first');
+ok(!(grep { $_ eq 'libretro-ppsspp' } @packages), 'a core the repositories lack is not asked for');
 
 # --- the domain seam ----------------------------------------------------------
 my $domain = read_file("$root/lib/JawnOS/Domain/Games.pm");
@@ -70,6 +72,8 @@ like($install, qr/system\('cp', '-a', '-n'/, 'a ROM import never overwrites a fi
 like($install, qr/install\.json/, 'it reports through one status row');
 like($install, qr/eq 'emulators'/, 'it knows the emulator install');
 like($install, qr/eq 'roms'/, 'and the ROM import');
+like($install, qr|/media/emmc/opt/libretro|, 'cores the repositories lack come from the emmc');
+like($install, qr/db\.lck/, 'a stale pacman lock is cleared only when no pacman runs');
 
 # --- the launch helper --------------------------------------------------------
 my $launch = read_file("$root/scripts/jawnos_game_launch.pl");

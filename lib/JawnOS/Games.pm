@@ -27,23 +27,23 @@ our %SYSTEM = (
 	megadrive   => { label => 'Mega Drive', core => 'genesis_plus_gx_libretro.so', package => 'libretro-genesis-plus-gx' },
 	sega32x     => { label => '32X', core => 'picodrive_libretro.so', package => 'libretro-picodrive' },
 	segacd      => { label => 'Sega CD', core => 'genesis_plus_gx_libretro.so', package => 'libretro-genesis-plus-gx' },
-	saturn      => { label => 'Saturn', core => 'mednafen_saturn_libretro.so', package => 'libretro-beetle-saturn' },
+	saturn      => { label => 'Saturn', core => 'yabause_libretro.so', package => 'libretro-yabause' },
 	psx         => { label => 'PlayStation', core => 'pcsx_rearmed_libretro.so', package => 'libretro-pcsx-rearmed' },
-	psp         => { label => 'PlayStation Portable', core => 'ppsspp_libretro.so', package => 'libretro-ppsspp' },
+	psp         => { label => 'PlayStation Portable', core => 'ppsspp_libretro.so', package => '' },
 	dreamcast   => { label => 'Dreamcast', core => 'flycast_libretro.so', package => 'libretro-flycast' },
-	gc          => { label => 'GameCube', standalone => 'dolphin-emu', package => 'dolphin-emu' },
+	gc          => { label => 'GameCube', core => 'dolphin_libretro.so', package => 'libretro-dolphin' },
 	pcengine    => { label => 'PC Engine', core => 'mednafen_pce_libretro.so', package => 'libretro-beetle-pce' },
 	pcenginecd  => { label => 'PC Engine CD', core => 'mednafen_pce_libretro.so', package => 'libretro-beetle-pce' },
-	neogeo      => { label => 'Neo Geo', core => 'fbneo_libretro.so', package => 'libretro-fbneo' },
-	mame2003    => { label => 'Arcade', core => 'mame2003_libretro.so', package => 'libretro-mame2003' },
-	atari2600   => { label => 'Atari 2600', core => 'stella_libretro.so', package => 'libretro-stella' },
-	atari5200   => { label => 'Atari 5200', core => 'atari800_libretro.so', package => 'libretro-atari800' },
-	atari7800   => { label => 'Atari 7800', core => 'prosystem_libretro.so', package => 'libretro-prosystem' },
-	atarilynx   => { label => 'Atari Lynx', core => 'handy_libretro.so', package => 'libretro-handy' },
-	'3do'       => { label => '3DO', core => 'opera_libretro.so', package => 'libretro-opera' },
-	coleco      => { label => 'ColecoVision', core => 'bluemsx_libretro.so', package => 'libretro-bluemsx' },
-	ngp         => { label => 'Neo Geo Pocket', core => 'mednafen_ngp_libretro.so', package => 'libretro-beetle-ngp' },
-	ngpc        => { label => 'Neo Geo Pocket Color', core => 'mednafen_ngp_libretro.so', package => 'libretro-beetle-ngp' },
+	neogeo      => { label => 'Neo Geo', core => 'fbneo_libretro.so', package => '' },
+	mame2003    => { label => 'Arcade', core => 'mame_libretro.so', package => 'libretro-mame' },
+	atari2600   => { label => 'Atari 2600', core => 'stella_libretro.so', package => '' },
+	atari5200   => { label => 'Atari 5200', core => 'atari800_libretro.so', package => '' },
+	atari7800   => { label => 'Atari 7800', core => 'prosystem_libretro.so', package => '' },
+	atarilynx   => { label => 'Atari Lynx', core => 'handy_libretro.so', package => '' },
+	'3do'       => { label => '3DO', core => 'opera_libretro.so', package => '' },
+	coleco      => { label => 'ColecoVision', core => 'bluemsx_libretro.so', package => '' },
+	ngp         => { label => 'Neo Geo Pocket', core => 'mednafen_ngp_libretro.so', package => '' },
+	ngpc        => { label => 'Neo Geo Pocket Color', core => 'mednafen_ngp_libretro.so', package => '' },
 );
 
 # The suffixes a ROM may carry. A zip or 7z is a whole ROM to RetroArch, so it
@@ -103,9 +103,13 @@ sub runner_for {
 	return { kind => 'retroarch', core => $core, core_name => $entry->{'core'} };
 }
 
+# The frontend is not a system: it is the programme every RetroArch core runs
+# inside, so the installer asks for it first and only once.
+our $FRONTEND_PACKAGE = 'retroarch';
+
 sub packages {
-	my %seen;
-	my @out;
+	my %seen = ($FRONTEND_PACKAGE => 1);
+	my @out = ($FRONTEND_PACKAGE);
 	foreach my $system (sort keys %SYSTEM) {
 		my $package = $SYSTEM{$system}->{'package'} || '';
 		next unless length $package && !$seen{$package}++;
