@@ -259,7 +259,7 @@ function foldersArchive(state, options) {
 		type: 'POST',
 		data: { folders: JSON.stringify(payload) },
 		success: function (response) {
-			$('body').css({ 'cursor': 'auto' });
+			$('body').css({ 'cursor': 'var(--jawnos-cursor-default, auto)' });
 			if (response && response.dialog) {
 				$('#dialog_boxes').append(response.dialog);
 				foldersJobWatcher();
@@ -267,7 +267,7 @@ function foldersArchive(state, options) {
 			if ($('#folders_archive_queue').is(':visible')) { foldersArchiveQueue(); }
 		},
 		error: function () {
-			$('body').css({ 'cursor': 'auto' });
+			$('body').css({ 'cursor': 'var(--jawnos-cursor-default, auto)' });
 		}
 	});
 }

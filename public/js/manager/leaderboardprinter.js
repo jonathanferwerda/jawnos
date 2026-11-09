@@ -290,10 +290,14 @@ $(document).on('mousemove', '.background', function(e) {
 			hovering = 1;
 		}
 	});
+	// an inline `auto` here outranks the body's cursor-set rule, so a pointer
+	// resting on the timeline (or any printer canvas) fell back to the system
+	// arrow. Both branches ask the set: the hand over an item, the desk's own
+	// arrow over the rest of the canvas.
 	if (hovering == 1) {
 		$('.background').css({'cursor': 'var(--jawnos-cursor-pointer, pointer)'});
 	}
 	else {
-		$('.background').css({'cursor': 'auto'});
+		$('.background').css({'cursor': 'var(--jawnos-cursor-default, default)'});
 	}
 });

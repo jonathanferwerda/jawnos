@@ -3756,7 +3756,7 @@ function searchMusic(data) {
 
 	var search = searching || $('#music_search').val();
 	var unlock = $('#music').attr('unlock');
-	$('body').css({ 'cursor': 'progress' });
+	$('body').css({ 'cursor': 'var(--jawnos-cursor-progress, progress)' });
 	// a search swaps the track list; dim it (and drop the pointer) until the reply
 	// lands, so the stale rows cannot be clicked in the meantime
 	$('#music_files').addClass('music_loading');
@@ -3901,8 +3901,8 @@ function searchMusic(data) {
 		},
 		complete: function() {
 			// however the search ended (even a dropped connection), put the cursor
-			// and the track list back
-			$('body').css({ 'cursor': 'auto' });
+			// and the track list back. The desk's own arrow, not the system one.
+			$('body').css({ 'cursor': 'var(--jawnos-cursor-default, auto)' });
 			$('#music_files').removeClass('music_loading');
 		}
 	});

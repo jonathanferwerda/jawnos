@@ -156,7 +156,7 @@
 					}
 				<% } %>
 
-				$('#<%= $id %>, #<%= $miss %>_container').css({'cursor': 'auto'});
+				$('#<%= $id %>, #<%= $miss %>_container').css({'cursor': 'var(--jawnos-cursor-default, auto)'});
 				// Only rebuild the auto-hide timer a few times a second rather than
 				// on every mousemove event.
 				var jawnos_now = Date.now();

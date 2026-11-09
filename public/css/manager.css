@@ -1062,6 +1062,10 @@ canvas.background {
 	user-select: none;
 	-webkit-user-drag: none;
 	-webkit-tap-highlight-color: transparent;
+	/* a printer canvas inherits the desk's pointer, and says so here too: the
+	   timeline's own hover handler writes an inline cursor, and a canvas must
+	   never fall back to the system arrow between rows */
+	cursor: var(--jawnos-cursor-default, auto);
 }
 #music_player { overflow: scroll; }
 #browser { z-index: 101; position:fixed;}

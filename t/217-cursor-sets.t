@@ -1,4 +1,4 @@
-# tests-for: lib/JawnOS/Domain/Contrast.pm lib/JawnOS/Domain/Loader.pm lib/JawnOS/Domain/Name.pm lib/JawnOS/Controller/manager_configure.pm perl/gb/01_state_and_defaults.pl perl/gb/02_labels_and_collectives.pl perl/subroutines.pl perl/help/topics_features.pl perl/help/topics_configure.pl templates/configure/misc_setting_list.html.ep templates/layouts/manager.html.ep public/css/chat.css public/css/keyboard.css public/css/manager.css public/css/music.css public/css/soft_keyboard.css public/css/store.css public/css/universal.css public/js/universal/05_theme_ink_icon_swap.js public/js/manager/taskbar/01_inputs.js public/cursors/build.pl
+# tests-for: lib/JawnOS/Domain/Contrast.pm lib/JawnOS/Domain/Loader.pm lib/JawnOS/Domain/Name.pm lib/JawnOS/Controller/manager_configure.pm perl/gb/01_state_and_defaults.pl perl/gb/02_labels_and_collectives.pl perl/subroutines.pl perl/help/topics_features.pl perl/help/topics_configure.pl templates/configure/misc_setting_list.html.ep templates/layouts/manager.html.ep public/css/chat.css public/css/keyboard.css public/css/manager.css public/css/music.css public/css/soft_keyboard.css public/css/store.css public/css/universal.css public/css/jquery-ui.css public/js/universal/05_theme_ink_icon_swap.js public/js/manager/taskbar/01_inputs.js public/js/manager/leaderboardprinter.js public/js/manager/folders/02_archive_and_keyboard.js public/js/manager/manager/06_appointment_distance.js public/js/music.js public/cursors/build.pl
 # covers:    Cursor sets are part of a theme and can be picked from Misc. Every set draws every role, a theme names one, a push moves the body's marker, and the sheets ask for the set through custom properties instead of hard-coded keywords.
 
 use strict;
@@ -96,7 +96,7 @@ like($layout, qr/<style id="jawnos_cursor_css"><%== &subs::cursor_css\(\) %>/,
 	'and writes every set\'s role map into a block the push can replace');
 
 # --- the sheets ask for the set, not for a hard-coded keyword ---------------
-for my $sheet ( qw/chat.css keyboard.css manager.css music.css soft_keyboard.css store.css universal.css/ ) {
+for my $sheet ( qw/chat.css jquery-ui.css keyboard.css manager.css music.css soft_keyboard.css store.css universal.css/ ) {
 	my $text = read_file("$root/public/css/$sheet");
 	unlike($text, qr/cursor:\s*(?!var\()[a-z-]/,
 		"$sheet has no cursor that ignores the set");
@@ -112,19 +112,36 @@ like($music, qr/cursor: var\(--jawnos-cursor-ns-resize, ns-resize\)/,
 
 # Inline styles and the style blocks inside app templates are part of the same
 # desk: a hover element built with style="cursor:pointer" would otherwise keep
-# the system arrow while the sheets follow the set.
-my $roles = join '|', map { quotemeta($_) } @gb::cursor_roles;
-my $literal = qr/cursor:\s*(?:['"]?)($roles)\b/;
+# the system arrow while the sheets follow the set. `auto` is included on
+# purpose: it is what the printer canvases were parked on, and an inline auto
+# outranks the body's cursor-set rule just as a literal pointer does.
+my $roles = join '|', map { quotemeta($_) } ( @gb::cursor_roles, 'auto' );
+my $literal = qr/['"]?cursor['"]?\s*:\s*['"]?($roles)\b/;
 my (@inline, @offenders);
 find({ no_chdir => 1, wanted => sub {
 	push @inline, $File::Find::name if /\.(?:ep|js)$/;
-} }, "$root/templates", "$root/public/js/manager", "$root/public/js/universal");
+} }, "$root/templates", "$root/public/js/manager", "$root/public/js/universal",
+	"$root/public/js/music.js");
 for my $file ( @inline ) {
+	next unless -f $file;
 	my $text = read_file($file);
 	push @offenders, $file =~ s{^\Q$root\E/}{}r if $text =~ $literal;
 }
 is_deeply(\@offenders, [], 'no template or manager script keeps a literal cursor')
 	or diag('add var(--jawnos-cursor-<role>, <role>) in: ' . join(', ', @offenders));
+
+# The printer canvases are the desk itself, so a pointer resting on the
+# timeline must stay the set's arrow. The hover handler used to park an inline
+# `auto` on every .background canvas between items, which is the system cursor
+# and outranks the body rule.
+my $leaderboard = read_file("$root/public/js/manager/leaderboardprinter.js");
+like($leaderboard, qr/var\(--jawnos-cursor-default, default\)/,
+	'a printer canvas falls back to the set\'s own arrow');
+unlike($leaderboard, qr/\$\(['"]\.background['"]\)\.css\(\{['"]cursor['"]: ['"]auto['"]\}\)/,
+	'and never parks the system arrow on a canvas');
+my $manager_sheet = read_file("$root/public/css/manager.css");
+like($manager_sheet, qr/canvas\.background\s*\{[^}]*cursor:\s*var\(--jawnos-cursor-default, auto\)/s,
+	'a background canvas asks the set in CSS as well');
 
 # --- the push moves the marker ---------------------------------------------
 my $js = read_file("$root/public/js/universal/05_theme_ink_icon_swap.js");

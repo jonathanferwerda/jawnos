@@ -343,7 +343,7 @@ $(document).on('click', '.archive_file', function() {
 		type: 'POST',
 		data: { folders: JSON.stringify({ selected: [ { path: file, type: 'file' } ], folder: file }) },
 		success: function(response) {
-			$('body').css({ 'cursor': 'auto' });
+			$('body').css({ 'cursor': 'var(--jawnos-cursor-default, auto)' });
 			if (!response || !response.dialog) { return; }
 			if (typeof foldersJobWatcher === 'function') {
 				$('#dialog_boxes').append(response.dialog);
@@ -354,7 +354,7 @@ $(document).on('click', '.archive_file', function() {
 			$('#dialog_boxes').append(box);
 			appointmentArchiveWatch(box);
 		},
-		error: function() { $('body').css({ 'cursor': 'auto' }); }
+		error: function() { $('body').css({ 'cursor': 'var(--jawnos-cursor-default, auto)' }); }
 	});
 });
 

@@ -220,7 +220,7 @@ function galleryFetch(reset) {
 		gallery.items = [];
 	}
 	gallery.loading = true;
-	$('#gallery_body').css('cursor', 'progress');
+	$('#gallery_body').css('cursor', 'var(--jawnos-cursor-progress, progress)');
 	var gdata = {
 		offset: gallery.offset,
 		limit: 160,

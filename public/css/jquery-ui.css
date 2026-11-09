@@ -60,7 +60,7 @@
 /* Interaction Cues
 ----------------------------------*/
 .ui-state-disabled {
-	cursor: default !important;
+	cursor: var(--jawnos-cursor-default, default) !important;
 	pointer-events: none;
 }
 
@@ -109,56 +109,56 @@
 	display: none;
 }
 .ui-resizable-n {
-	cursor: n-resize;
+	cursor: var(--jawnos-cursor-n-resize, n-resize);
 	height: 7px;
 	width: 100%;
 	top: -5px;
 	left: 0;
 }
 .ui-resizable-s {
-	cursor: s-resize;
+	cursor: var(--jawnos-cursor-s-resize, s-resize);
 	height: 7px;
 	width: 100%;
 	bottom: -5px;
 	left: 0;
 }
 .ui-resizable-e {
-	cursor: e-resize;
+	cursor: var(--jawnos-cursor-e-resize, e-resize);
 	width: 7px;
 	right: -5px;
 	top: 0;
 	height: 100%;
 }
 .ui-resizable-w {
-	cursor: w-resize;
+	cursor: var(--jawnos-cursor-w-resize, w-resize);
 	width: 7px;
 	left: -5px;
 	top: 0;
 	height: 100%;
 }
 .ui-resizable-se {
-	cursor: se-resize;
+	cursor: var(--jawnos-cursor-se-resize, se-resize);
 	width: 12px;
 	height: 12px;
 	right: 1px;
 	bottom: 1px;
 }
 .ui-resizable-sw {
-	cursor: sw-resize;
+	cursor: var(--jawnos-cursor-sw-resize, sw-resize);
 	width: 9px;
 	height: 9px;
 	left: -5px;
 	bottom: -5px;
 }
 .ui-resizable-nw {
-	cursor: nw-resize;
+	cursor: var(--jawnos-cursor-nw-resize, nw-resize);
 	width: 9px;
 	height: 9px;
 	left: -5px;
 	top: -5px;
 }
 .ui-resizable-ne {
-	cursor: ne-resize;
+	cursor: var(--jawnos-cursor-ne-resize, ne-resize);
 	width: 9px;
 	height: 9px;
 	right: -5px;
@@ -179,7 +179,7 @@
 }
 .ui-accordion .ui-accordion-header {
 	display: block;
-	cursor: pointer;
+	cursor: var(--jawnos-cursor-pointer, pointer);
 	position: relative;
 	margin: 2px 0 0 0;
 	padding: .5em .5em .5em .7em;
@@ -194,7 +194,7 @@
 	position: absolute;
 	top: 0;
 	left: 0;
-	cursor: default;
+	cursor: var(--jawnos-cursor-default, default);
 }
 .ui-menu {
 	list-style: none;
@@ -208,7 +208,7 @@
 }
 .ui-menu .ui-menu-item {
 	margin: 0;
-	cursor: pointer;
+	cursor: var(--jawnos-cursor-pointer, pointer);
 	/* support: IE10, see #8844 */
 	list-style-image: url("data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7");
 }
@@ -256,7 +256,7 @@
 	position: relative;
 	line-height: normal;
 	margin-right: .1em;
-	cursor: pointer;
+	cursor: var(--jawnos-cursor-pointer, pointer);
 	vertical-align: middle;
 	text-align: center;
 	-webkit-user-select: none;
@@ -487,7 +487,7 @@ button.ui-button::-moz-focus-inner {
 .ui-datepicker .ui-datepicker-buttonpane button {
 	float: right;
 	margin: .5em .2em .4em;
-	cursor: pointer;
+	cursor: var(--jawnos-cursor-pointer, pointer);
 	padding: .2em .6em .3em .6em;
 	width: auto;
 	overflow: visible;
@@ -621,7 +621,7 @@ button.ui-button::-moz-focus-inner {
 }
 .ui-dialog .ui-dialog-buttonpane button {
 	margin: .5em .4em .5em 0;
-	cursor: pointer;
+	cursor: var(--jawnos-cursor-pointer, pointer);
 }
 .ui-dialog .ui-resizable-n {
 	height: 2px;
@@ -663,7 +663,7 @@ button.ui-button::-moz-focus-inner {
 	top: 0;
 }
 .ui-draggable .ui-dialog-titlebar {
-	cursor: move;
+	cursor: var(--jawnos-cursor-move, move);
 }
 .ui-progressbar {
 	height: 2em;
@@ -732,7 +732,7 @@ button.ui-button::-moz-focus-inner {
 	z-index: 2;
 	width: 1.2em;
 	height: 1.2em;
-	cursor: pointer;
+	cursor: var(--jawnos-cursor-pointer, pointer);
 	-ms-touch-action: none;
 	touch-action: none;
 }
@@ -813,7 +813,7 @@ button.ui-button::-moz-focus-inner {
 	margin: 0;
 	text-align: center;
 	position: absolute;
-	cursor: default;
+	cursor: var(--jawnos-cursor-default, default);
 	display: block;
 	overflow: hidden;
 	right: 0;
@@ -860,10 +860,10 @@ button.ui-button::-moz-focus-inner {
 .ui-tabs .ui-tabs-nav li.ui-tabs-active .ui-tabs-anchor,
 .ui-tabs .ui-tabs-nav li.ui-state-disabled .ui-tabs-anchor,
 .ui-tabs .ui-tabs-nav li.ui-tabs-loading .ui-tabs-anchor {
-	cursor: text;
+	cursor: var(--jawnos-cursor-text, text);
 }
 .ui-tabs-collapsible .ui-tabs-nav li.ui-tabs-active .ui-tabs-anchor {
-	cursor: pointer;
+	cursor: var(--jawnos-cursor-pointer, pointer);
 }
 .ui-tabs .ui-tabs-panel {
 	display: block;
