@@ -1,5 +1,7 @@
 # IT Strip — roadmap note (deferred)
 
+> **Entry point:** `docs/roadmap.md`. Deferred until the current season's steps land.
+
 **Status:** idea captured 2026-10-25. Not scheduled. Nothing built.
 **One line:** a customer-owned USB dongle they plug in and *arm* when something breaks, so the
 tech (with AI assistance) can drive the machine out-of-band — then unplug it and put it away.

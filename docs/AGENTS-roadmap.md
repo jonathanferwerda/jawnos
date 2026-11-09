@@ -1,5 +1,8 @@
 # Deferred operational items
 
+> **Entry point:** `docs/roadmap.md` — direction, this season's four steps, and the measured
+> targets. This file is only the deferred operational list.
+
 Moved out of `AGENTS.md` (a per-task reference, not an every-request map).
 
 ## Next up (deferred)

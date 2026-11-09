@@ -4,6 +4,10 @@
 Kept for reference: the measured baseline (§3) and the extraction recipe (§6.6) stay valid whenever
 this is picked up. `scripts/verify_change.pl` already covers the compile/truncation class; the
 golden-master harness in §6.1 remains the gap if behaviour-level verification is ever wanted.
+
+> **Entry point:** `docs/roadmap.md`. Re-decided 2026-11-09: no full rewrite; this stays the
+> per-worker port reference and the extraction recipe. **§3's baseline is stale** (2026-10-23):
+> `Manager.pl` is 24 lines, 899 routes, 335 test files, and 223k lines of client JS. Re-measure first.
 **Started:** 2026-10-23
 **Related:** `docs/AGENTS-notes.md` (data model), `AGENTS.md` (run/restart, rules)
 

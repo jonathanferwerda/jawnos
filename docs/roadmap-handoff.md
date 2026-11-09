@@ -1,6 +1,12 @@
 # Roadmap / handoff
 
-The remaining plan, as of **v0.1.1441** (2026-10-26). Done work is marked so it is
+> **This is the feature plan, not the architecture.** The season plan is `docs/roadmap.md`.
+> Sections: Termux exit (done) · House key · Phone — calling & messaging · Phone — assistant ·
+> Chat/mailbox · Contacts & identity · Native Android app · Desktop · Gate/login · JawnOS as the
+> OS/session · Data & records · Devices & networks · Handheld · T-Deck · Shopping & warehouse ·
+> Platforms & multi-user · Coding nightly · Cross-cutting · OS backbones.
+
+The remaining plan, as of **v0.1.1441** (2026-10-26); the tree is now v0.1.2496, so treat unmarked items as candidates and verify before starting. Done work is marked so it is
 not redone; everything unmarked is still to do. Keep this in step as items land.
 
 ---

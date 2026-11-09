@@ -1,5 +1,8 @@
 # Infrastructure roadmap — dev box, tailnet and the cloud server
 
+> **Entry point:** `docs/roadmap.md`. This is the live record of the hub/dev-box/tailnet move; it
+> is off the current season's critical path. Read it when that move is the task.
+
 **Status:** in progress — the hub move is live on ks5. The 2026-11-03 re-pointing is rolling to
 every device; what remains is the outside verification and cancelling the VPS at its renewal.
 **Started:** 2026-11-02 · **Baseline measured** 2026-11-02 by logging into all four hosts.
