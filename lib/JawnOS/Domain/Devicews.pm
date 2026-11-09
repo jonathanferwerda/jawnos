@@ -25,6 +25,7 @@ no warnings 'once';
 use File::Slurp;
 use Mojo::UserAgent;
 use Mojo::JSON qw(decode_json encode_json);
+use JawnOS::Transport ();
 
 our $log;
 
@@ -207,7 +208,7 @@ sub device_ws_write_frame {
 	return 1 if &device_ws_send_local($chip_id, $frame);
 	my $connected = &device_ws_connected($chip_id) ? 1 : 0;
 	my $socket = ($gb::tmp_dir || '.') . '/ws/device';
-	my $here = -e $socket ? 1 : 0;
+	my $here = (-e $socket || JawnOS::Transport::tcp()) ? 1 : 0;
 	my $sent = 0;
 	$sent = &Websocket::send('device', { chip_id => $chip_id, frame => $frame }) ? 1 : 0
 		if $connected && $here;
@@ -325,7 +326,7 @@ sub device_ws_command {
 	# names its pid, and the fan-out socket carries the frame there.
 	if (&device_ws_connected($chip_id)) {
 		my $socket = ($gb::tmp_dir || '.') . '/ws/device';
-		if (-e $socket) {
+		if (-e $socket || JawnOS::Transport::tcp()) {
 			# Only a frame that reached the worker counts. A send that failed
 			# (the worker between restarts, a cached socket gone) must fall
 			# through to the peer relay, and then to the caller's HTTP-then-BLE

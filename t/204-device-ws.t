@@ -271,8 +271,8 @@ my $checked = index($devws, q(return 1 if $sent;));
 my $relay   = index($devws, q(return &device_ws_peer_relay($chip_id, $frame);));
 ok($checked >= 0 && $relay >= 0 && $checked < $relay,
 	'a failed send falls through to the peer relay instead of claiming delivery');
-like($wspl, qr/\$returner = &subs::unix_socket_sender\(\$file,\$wsm\) if -e \$file;/,
-	'the websocket push reports whether its frame went');
+like($wspl, qr/\$returner = &subs::unix_socket_sender\(\$file,\$wsm\);/,
+	'the websocket push asks the sender and reports whether the frame went');
 like($cal, qr/return \$rcv \? \$response_data : \(\$ok \? 1 : 0\);/,
 	'the sender answers for a fire-and-forget push, where there is no reply to carry it');
 

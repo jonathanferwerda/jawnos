@@ -17,7 +17,13 @@ use Mojo::JSON qw(decode_json encode_json);
 use Mojo::IOLoop;
 use Data::Dumper;
 use Time::HiRes qw(gettimeofday time);
-use IO::Socket::UNIX;
+BEGIN {
+	require File::Basename;
+	require Cwd;
+	my $dir = Cwd::abs_path(File::Basename::dirname(__FILE__));
+	unshift @INC, "$dir/../lib" if $dir && -d "$dir/../lib";
+}
+use JawnOS::Transport ();
 require "./perl/gb.pl";
 require "./perl/subroutines.pl";
 require "./perl/Manager.pl"; 
@@ -482,7 +488,8 @@ sub alarm_server() {
 	my $file = $gb::tmp_dir . '/alarm';
 
 	my %buffers;
-	$alarm_server = Mojo::IOLoop->server({ path => $file } => sub {
+	my $args = JawnOS::Transport::server_args('alarm', path => $file) or return undef;
+	$alarm_server = Mojo::IOLoop->server($args => sub {
 		my ($loop,$stream,$id) = @_;
 		$stream->handle->autoflush(1); 
 	  $buffers{$id} = '';
@@ -498,6 +505,9 @@ sub alarm_server() {
 	          warn "Worker $$: Failed to parse JSON: $@";
 	          next;
 	      }
+	      next unless ref $appt eq 'HASH';
+	      next if JawnOS::Transport::tcp()
+	          && !JawnOS::Transport::token_ok($appt->{'__transport_token'});
 				#$log->info(Dumper $appt);
 				my @times = sort { $a <=> $b } (
 					$appt->{'timestamp'},

@@ -28,9 +28,28 @@ is(JawnOS::Transport::base(), 45100, 'the base reads back');
 is(JawnOS::Transport::port_for('control'), 45107, 'control is base + 7');
 is(JawnOS::Transport::port_for('log'), 45108, 'log is base + 8');
 is(JawnOS::Transport::port_for('watch'), 45109, 'watch is base + 9');
+is(JawnOS::Transport::port_for('alarm'), 45110, 'alarm is base + 10');
+is(JawnOS::Transport::port_for('memory'), 45111, 'memory is base + 11');
+is(JawnOS::Transport::port_for('ws'), 45112, 'ws is base + 12');
+is(JawnOS::Transport::port_for('mailws'), 45113, 'mailws is base + 13');
 is(JawnOS::Transport::path_for('watch'), "$dir/.process_watch", 'the watch path is the master path');
 is(JawnOS::Transport::path_for('control'), "$dir/data/control", 'the control path is under the data dir');
+is(JawnOS::Transport::path_for('alarm'), "$dir/data/alarm", 'the alarm path is under the data dir');
+is(JawnOS::Transport::path_for('memory'), "$dir/data/memory", 'the memory path is under the data dir');
+is(JawnOS::Transport::path_for('ws'), "$dir/data/ws", 'the ws folder is under the data dir');
+
+is(JawnOS::Transport::kind_for_path("$dir/data/memory"), 'memory', 'a memory path names memory');
+is(JawnOS::Transport::kind_for_path("$dir/data/alarm"), 'alarm', 'an alarm path names alarm');
+is(JawnOS::Transport::kind_for_path("$dir/.process_watch"), 'watch', 'a watch path names watch');
+is(JawnOS::Transport::kind_for_path("$dir/ws/music"), 'ws', 'a per-app path names the shared ws port');
+is(JawnOS::Transport::kind_for_path("$dir/ws/mailws"), 'mailws', 'the mail path is its own kind, not an app');
+is(JawnOS::Transport::kind_for_path("C:\\tmp\\ws\\tab"), 'ws', 'a Windows path is recognised too');
+is(JawnOS::Transport::kind_for_path("$dir/data/control"), undef, 'a foreign path has no kind');
+is(JawnOS::Transport::kind_for_path(undef), undef, 'no path has no kind');
 is(JawnOS::Transport::set_base(70000), 0, 'an out-of-range base is refused');
+is(JawnOS::Transport::set_base(65522), 1, 'a base that leaves room for the last offset is accepted');
+is(JawnOS::Transport::set_base(65523), 0, 'a base that overflows the last offset is refused');
+JawnOS::Transport::set_base(45100);
 is(JawnOS::Transport::port_for('bogus'), undef, 'an unknown kind has no port');
 
 ok(JawnOS::Transport::write_token('secret'), 'the token is written');
@@ -48,6 +67,8 @@ is($args->{'port'}, 45107, 'the TCP server uses the control port');
 	local $ENV{'JAWNOS_TRANSPORT'} = 'unix';
 	my $path_args = JawnOS::Transport::server_args('control');
 	is($path_args->{'path'}, "$dir/data/control", 'native mode keeps the UNIX path');
+	my $ws_args = JawnOS::Transport::server_args('ws', path => "$dir/ws/music");
+	is($ws_args->{'path'}, "$dir/ws/music", 'native ws keeps the per-app path');
 	ok(!JawnOS::Transport::tcp(), 'native mode is not TCP');
 }
 

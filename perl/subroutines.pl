@@ -53,7 +53,6 @@ use MIME::Base64;
 # email_send). Loading it per worker at boot is pure waste on a box that never
 # touches IMAP/SMTP, so each routine requires what it needs the first time it
 # runs. All five are used only as class methods, so there is no import to keep.
-use IO::Socket::UNIX;
 use IO::Select;
 use Sereal::Encoder qw(encode_sereal SRL_SNAPPY SRL_ZSTD);
 use Sereal::Decoder qw(decode_sereal);

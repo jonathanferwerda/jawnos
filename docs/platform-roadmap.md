@@ -3,7 +3,9 @@
 **Status:** P0 in flight (2026-11-09). Slices 1–2 landed: the questions are answered, the
 capability probe exists, portable mode has a Daemon server and a pipe runner, and control/log/watch
 speak loopback TCP with a token when asked. Slice 3 has begun: process identity, state and the
-process-group scan live in `lib/JawnOS/Platform/Process.pm` (Linux backend). No Mac or Windows
+process-group scan live in `lib/JawnOS/Platform/Process.pm` (Linux backend). Slice 4 landed the
+worker tail: no source imports `IO::Socket::UNIX` at compile time, and the alarm, memory, ws and
+mailws surfaces ride the same TCP transport (with the token) in portable mode. No Mac or Windows
 hardware is present yet, so the hardware exits wait for it. Runbook and acceptance checklist:
 `docs/platform-p0.md`.
 **Related:** `desktop/README.md` (the Qt shell and today's supervisor), `docs/docker.md` (the
@@ -59,7 +61,7 @@ P2/P3 exits, not measurements.
 | Q2 | Prefork on a desktop | **No prefork; one `Mojo::Server::Daemon` per purpose.** Target 3 concurrent request slots (today's desktop resting count). One Daemon grows in concurrent connections, not in blocking parallel work; if the measured blocking surface is too large, the portable fallback is N Daemons behind a small loopback dispatcher (P3), or the work moves to Minion. |
 | Q3 | subprocessor fork model | **Split, do not convert.** Resident loops and servers become supervised processes; durable one-shots become Minion jobs; request-scoped work stays a fork. Windows runs one Daemon per server, one consolidated loops process, one Minion worker, and the BLE helper. |
 | Q4 | ConPTY or pipe | **Plain pipe.** The master never writes to the tree; a pipe only needs the tree's stdout autoflushed. No PTY use exists outside the master runner. |
-| Q5 | Control/log/watch transport | **Loopback TCP plus a per-boot token on Windows; AF_UNIX on macOS/Linux.** Protocols stay one JSON line (control/log) and length-prefixed Sereal (watch); only the socket constructor and token check change. Implemented in `lib/JawnOS/Transport.pm` (slice 2). |
+| Q5 | Control/log/watch transport | **Loopback TCP plus a per-boot token on Windows; AF_UNIX on macOS/Linux.** Protocols stay one JSON line (control/log) and length-prefixed Sereal (watch); only the socket constructor and token check change. Implemented in `lib/JawnOS/Transport.pm` (slice 2), and extended to the worker surfaces (alarm, memory, ws, mailws) in slice 4. |
 | Q6 | Always-on | **Tray/menu bar plus a login item, not a service.** The desktop house needs the user session for audio, camera and the GUI; the headless server keeps systemd/Docker. When no user is logged in, the desktop house is down. |
 | Q7 | macOS data directory | **Tree copy in `~/Library/Application Support/JawnOS`; runtime state in `~/.president`.** Add `JAWNOS_DIR` and `JAWNOS_DATA_DIR`; updates replace the tree copy and never the data. |
 | Q8 | Reception and hardware wallet | **Later, both.** Reception is a BlueZ/SCO/PipeWire project with a native helper; the wallet is opt-in vendor drivers. Ship "not on this platform" stubs, not implementations. |
@@ -217,7 +219,9 @@ The app's deliberate loopback assumptions are an asset on a native install and a
 container. Keep them:
 
 - Fixed base: `working_port` (45545 default), `+1` wss, `+2` watch/arm, `+3` bestow, `+4` coms,
-  `+5` alarm, `+6` peer, plus `+101` plain WS on loopback (`President.pl:174-202`).
+  `+5` alarm, `+6` peer, plus `+101` plain WS on loopback (`President.pl:174-202`). The private
+  worker transport adds `+7` control, `+8` log, `+9` watch, `+10` alarm, `+11` memory, `+12` ws and
+  `+13` mailws; one ws port carries every app because the payload names it.
 - The tunnel hub currently reserves **random ports in 50000–65000**, seven per peer
   (`manager_configure2.pm:666-699`, `gb.pl:31`). Replace that with a configured range
   (`tunnel_port_min`/`tunnel_port_max`, e.g. 50000–50127 for 18 peers) and a clear exhaustion error.
@@ -278,8 +282,8 @@ container. Keep them:
 - [x] Runbook and hardware acceptance checklist: `docs/platform-p0.md`
 - [x] CI probe jobs for Linux, Windows and macOS (Windows/macOS report-only until hardware)
 - [x] Process identity, state, CPU ticks and the process-group scan behind `lib/JawnOS/Platform/Process.pm` (Linux backend; macOS/Windows to follow)
+- [x] The websocket worker, mailws, alarm and memory sockets off `IO::Socket::UNIX` at compile time (the worker tail rides TCP in portable mode)
 - [ ] Network parsing behind `JawnOS::Platform::Net` and `::Mdns`
-- [ ] The websocket worker and alarm/memory sockets off `IO::Socket::UNIX`
 - [ ] Portable smoke house and suite green on a spare checkout
 
 The portable path is behind `JAWNOS_PORTABLE`; native Linux/macOS behaviour is

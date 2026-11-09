@@ -156,11 +156,14 @@ sub appt_alarm_setter {
 	if (grep { defined $_ && $_ =~ /^\d+$/ && $_ >= &subs::rightNow() - 5000 } @times) {
 		my $file = $gb::tmp_dir . '/alarm';
 		eval {
-			my $socket = JawnOS::Transport::client_unix_socket($file)
+			my $socket = JawnOS::Transport::client_socket('alarm', path => $file)
 				or die "Socket connection failed: $!";
 			$socket->autoflush(1);
 
-			my $jwsm = encode_json $appt;
+			my %payload = ref $appt eq 'HASH' ? %{$appt} : ();
+			$payload{'__transport_token'} = JawnOS::Transport::token()
+				if JawnOS::Transport::tcp();
+			my $jwsm = encode_json \%payload;
 			print $socket $jwsm . "\n";
 		};
 	}
@@ -415,8 +418,11 @@ sub unix_socket_sender {
 	elsif ($is_watch) {
 		$file = &subs::home('~/.process_watch');
 	}
-	my $tcp = ($is_watch && JawnOS::Transport::tcp()) ? 1 : 0;
-	my $cache_key = ($tcp ? 'tcp:watch' : $file) . '_' . $$;
+	# The worker surfaces keep their paths (one per app under ws/), so the kind
+	# is read back from the path instead of guessed from the payload.
+	my $kind = JawnOS::Transport::kind_for_path($file);
+	my $tcp = ($kind && JawnOS::Transport::tcp()) ? 1 : 0;
+	my $cache_key = ($tcp ? 'tcp:' . $kind : $file) . '_' . $$;
 	my $response_data;
 	my $retry = $socket_retry->{$cache_key};
 	return if $retry && $retry->{'next'} > time;
@@ -442,7 +448,7 @@ sub unix_socket_sender {
     }
 		if (!$socket) {
 			if ($tcp) {
-				$socket = JawnOS::Transport::client_socket('watch', timeout => 5, path => $file);
+				$socket = JawnOS::Transport::client_socket($kind, timeout => 5, path => $file);
 			}
 			else {
 				$socket = JawnOS::Transport::client_unix_socket($file);

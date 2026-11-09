@@ -55,7 +55,6 @@ use MIME::Base64;
 use Sereal::Encoder qw(encode_sereal SRL_SNAPPY SRL_ZSTD);
 use Sereal::Decoder qw(decode_sereal);
 use Minion;
-use IO::Socket::UNIX;
 use IPC::Open2 qw(open2);
 use IO::Compress::Gzip qw(gzip $GzipError);
 

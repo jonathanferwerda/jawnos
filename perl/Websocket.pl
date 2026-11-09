@@ -12,7 +12,6 @@ use Date::Parse;
 use Time::Piece;
 use Crypt::Simple;
 use File::Slurp;
-use IO::Socket::UNIX;
 use Sereal::Encoder qw(encode_sereal SRL_SNAPPY SRL_ZSTD);
 use Sereal::Decoder qw(decode_sereal);
 my $encoder = Sereal::Encoder->new({ compress => SRL_ZSTD, compress_level => 3 });
@@ -20,6 +19,13 @@ my $decoder = Sereal::Decoder->new();
 
 use Mojo::JSON qw(decode_json encode_json);
 use Mojo::IOLoop;
+BEGIN {
+	require File::Basename;
+	require Cwd;
+	my $dir = Cwd::abs_path(File::Basename::dirname(__FILE__));
+	unshift @INC, "$dir/../lib" if $dir && -d "$dir/../lib";
+}
+use JawnOS::Transport ();
 use Data::Dumper;
 no warnings 'uninitialized';
 require "./perl/gb.pl";
@@ -85,13 +91,15 @@ sub send() {
 		foreach my $k ( keys %{$wsm} ) {
 			delete $wsm->{$k} unless $wsm->{$k};
 		}
+		$wsm->{'token'} = JawnOS::Transport::token() if JawnOS::Transport::tcp();
 
 		my $file = $gb::tmp_dir . '/ws/' . $app;
 		# Report whether the frame actually went. The worker can be between
 		# restarts, and a device command that treats a dropped frame as delivered
 		# skips its HTTP fallback, so the relay never moves while the Manager says
-		# it did.
-		$returner = &subs::unix_socket_sender($file,$wsm) if -e $file;
+		# it did. On TCP the sender connects to the shared ws port; on UNIX it
+		# still refuses a path that does not exist.
+		$returner = &subs::unix_socket_sender($file,$wsm);
 	}
 	return $returner;
 }
@@ -99,6 +107,8 @@ sub send() {
 sub mail_send() {
 	my ($msg) = @_;
 	my $mailfile = $gb::tmp_dir . '/ws/mailws';
+	$msg->{'token'} = JawnOS::Transport::token()
+		if JawnOS::Transport::tcp() && ref $msg eq 'HASH';
 	&subs::unix_socket_sender($mailfile,$msg);
 	
 

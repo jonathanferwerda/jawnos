@@ -21,7 +21,7 @@ package JawnOS::Sco::Client;
 # network - because every route that answers "where is the gateway?" builds one.
 use strict;
 use warnings;
-use IO::Socket::UNIX;
+use Socket qw(SOCK_STREAM);
 use IO::Socket::INET;
 use IO::Select;
 use Mojo::JSON qw(decode_json encode_json);
@@ -174,6 +174,9 @@ sub _dial_unix {
 		return (undef, { ok => 0, error => $self->{'note'} }) if length($self->{'note'} || '');
 		return (undef, { ok => 0, error => 'no gateway socket' });
 	}
+	# UNIX sockets are a POSIX shape; load the module only when this machine
+	# actually has a gateway socket to dial (Windows never takes this path).
+	require IO::Socket::UNIX;
 	my $sock = IO::Socket::UNIX->new(Peer => $path, Type => SOCK_STREAM);
 	return (undef, { ok => 0, error => 'gateway refused the connection' }) unless $sock;
 	return ($sock);

@@ -13,9 +13,13 @@ use feature 'signatures';
 # file had in force at this point, so diagnostics are unchanged.
 no warnings 'uninitialized';
 no warnings 'once';
-# A required file inherits no imports from the file that requires it: the socket
-# type constant this file passes to IO::Socket::UNIX is imported here.
-use Socket qw(SOCK_STREAM);
+BEGIN {
+	require File::Basename;
+	require Cwd;
+	my $dir = Cwd::abs_path(File::Basename::dirname(__FILE__));
+	unshift @INC, "$dir/../.." if $dir && -d "$dir/../..";
+}
+use JawnOS::Transport ();
 # Globals declared by the index (Manager.pm) and read below.
 use vars qw($config $decoder $log);
 
@@ -1459,10 +1463,18 @@ if ($ENV{PURPOSE} && ($ENV{PURPOSE} eq 'websocket' || ($ENV{PORT_ENV} eq 'develo
 	my $ws_binder_pid = $$;
 	my $ws_bind_all = sub {
 		my ($check) = @_;
+		# On TCP one port carries every app (the payload names its app), so there
+		# is nothing per-app to probe or rebind.
+		if (JawnOS::Transport::tcp()) {
+			my $server = $ws_server->{'__tcp'};
+			return if $server && defined Mojo::IOLoop->acceptor($server);
+			$ws_server->{'__tcp'} = &ws_server_socket({ app => 'ws' });
+			return;
+		}
 		foreach my $ws ( @{$gb::ws_apps} ) {
 			my $file = $gb::tmp_dir . '/ws/' . &subs::path_name($ws);
 			if ($check && -e $file) {
-				my $probe = IO::Socket::UNIX->new(Peer => $file, Type => SOCK_STREAM);
+				my $probe = JawnOS::Transport::client_unix_socket($file);
 				if ($probe) { close $probe; next; }
 			}
 			$ws_server->{$ws} = &ws_server_socket({ app => $ws });
@@ -1474,18 +1486,28 @@ if ($ENV{PURPOSE} && ($ENV{PURPOSE} eq 'websocket' || ($ENV{PORT_ENV} eq 'develo
 	Mojo::IOLoop->recurring(5 => sub { $ws_bind_all->(1) if $$ != $ws_binder_pid });
 	sub ws_server_socket($data) {
 		my $app = $data->{'app'} || 'general';
-		my $folder = $gb::tmp_dir . '/ws';
-		`mkdir -p $folder` unless -e $folder;
-		my $file = $folder . '/' . &subs::path_name($app);
-		# a reused descriptor wins over a real bind in Mojo's listen(), and the
-		# pre-fork server put this path in MOJO_REUSE from the loader's own
-		# listeners; drop it so the bind really creates the path
-		if ($ENV{'MOJO_REUSE'}) {
-			$ENV{'MOJO_REUSE'} = join ',', grep { !/^unix:\Q$file\E:/ } split /,/, $ENV{'MOJO_REUSE'};
+		my $file;
+		my $args;
+		if (JawnOS::Transport::tcp()) {
+			my $existing = $ws_server->{'__tcp'};
+			return $existing if $existing && defined Mojo::IOLoop->acceptor($existing);
+			$args = JawnOS::Transport::server_args('ws') or return undef;
 		}
-		unlink $file if -e $file;
+		else {
+			my $folder = $gb::tmp_dir . '/ws';
+			`mkdir -p $folder` unless -e $folder;
+			$file = $folder . '/' . &subs::path_name($app);
+			# a reused descriptor wins over a real bind in Mojo's listen(), and the
+			# pre-fork server put this path in MOJO_REUSE from the loader's own
+			# listeners; drop it so the bind really creates the path
+			if ($ENV{'MOJO_REUSE'}) {
+				$ENV{'MOJO_REUSE'} = join ',', grep { !/^unix:\Q$file\E:/ } split /,/, $ENV{'MOJO_REUSE'};
+			}
+			unlink $file if -e $file;
+			$args = JawnOS::Transport::server_args('ws', path => $file) or return undef;
+		}
 		my $server = eval {
-			Mojo::IOLoop->server({ path => $file } => sub ($loop,$stream,$id) {
+			Mojo::IOLoop->server($args => sub ($loop,$stream,$id) {
 				$stream->handle->autoflush(1);
 				$stream->high_water_mark(8 * 1024 * 1024);
 				$buffers{$id} = '';
@@ -1511,6 +1533,9 @@ if ($ENV{PURPOSE} && ($ENV{PURPOSE} eq 'websocket' || ($ENV{PORT_ENV} eq 'develo
                 warn "Worker $$: Failed to parse Sereal: $@";
                 next;
             }
+            next unless ref $wsm eq 'HASH';
+            next if JawnOS::Transport::tcp()
+                && !JawnOS::Transport::token_ok($wsm->{'token'});
 						# The 'device' group is the embedded output bus, not a
 						# browser app: deliver to the socket the websocket worker
 						# holds for that chip. No chip connected means nothing goes
@@ -1533,20 +1558,36 @@ if ($ENV{PURPOSE} && ($ENV{PURPOSE} eq 'websocket' || ($ENV{PORT_ENV} eq 'develo
 			});
 		};
 		my $err = $@;
-		$log->error('ws socket ' . $file . ' could not bind: ' . ($err || 'no acceptor')) if $err || !defined $server;
+		$log->error('ws socket ' . ($file || 'tcp') . ' could not bind: ' . ($err || 'no acceptor')) if $err || !defined $server;
 		return $server;
+	}
+
+	# One accessor for the per-app listener: native binds one path per app, TCP
+	# binds one shared port (the payload names the app). A caller that only has
+	# its app name asks here instead of touching $ws_server directly.
+	sub ws_server_ensure($app) {
+		return $ws_server->{$app} if $ws_server->{$app};
+		if (JawnOS::Transport::tcp()) {
+			my $server = $ws_server->{'__tcp'};
+			return $server if $server && defined Mojo::IOLoop->acceptor($server);
+			return $ws_server->{'__tcp'} = &ws_server_socket({ app => 'ws' });
+		}
+		return $ws_server->{$app} = &ws_server_socket({ app => $app });
 	}
 
 	my $mailfile = $gb::tmp_dir . '/ws/mailws';
 
 	my $mailws_server;
 	my $mailws_listener = sub {
-		# the loader no longer binds the per-app sockets (a fork child must),
-		# so this process makes the folder rather than finding it made
-		my $ws_folder = $gb::tmp_dir . '/ws';
-		`mkdir -p $ws_folder` unless -d $ws_folder;
-		unlink $mailfile if -e $mailfile;
-		$mailws_server = eval { Mojo::IOLoop->server({ path => $mailfile } => sub ($loop,$stream,$id) {
+		my $args = JawnOS::Transport::server_args('mailws', path => $mailfile) or return;
+		if (!JawnOS::Transport::tcp()) {
+			# the loader no longer binds the per-app sockets (a fork child must),
+			# so this process makes the folder rather than finding it made
+			my $ws_folder = $gb::tmp_dir . '/ws';
+			`mkdir -p $ws_folder` unless -d $ws_folder;
+			unlink $mailfile if -e $mailfile;
+		}
+		$mailws_server = eval { Mojo::IOLoop->server($args => sub ($loop,$stream,$id) {
 			$stream->handle->autoflush(1);
 			$stream->high_water_mark(8 * 1024 * 1024);
 			$buffers{$id} = '';
@@ -1571,6 +1612,9 @@ if ($ENV{PURPOSE} && ($ENV{PURPOSE} eq 'websocket' || ($ENV{PORT_ENV} eq 'develo
 		            warn "Worker $$: Failed to parse mail message: $@";
 		            next;
 		        }
+		        next unless ref $m eq 'HASH';
+		        next if JawnOS::Transport::tcp()
+		            && !JawnOS::Transport::token_ok($m->{'token'});
 
 					# one sender matches it against every tab's address
 					my $count = &mailws_sender($m);
@@ -1602,6 +1646,7 @@ if ($ENV{PURPOSE} && ($ENV{PURPOSE} eq 'websocket' || ($ENV{PORT_ENV} eq 'develo
 		if (!$is_running) { $mailws_listener->(); }
 	});
 	sub websocket_close($app) {
+		return if JawnOS::Transport::tcp();   # one shared listener serves every app
 		$app = $app;
 		unless (grep { $app eq $_ } @{$gb::ws_apps}) {
 			if (scalar keys %{$gb::ws->{$app}} == 0) {

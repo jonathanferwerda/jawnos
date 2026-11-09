@@ -3,8 +3,14 @@ package JawnOS::Transport;
 # Where the master's private control surfaces live, and how a client reaches
 # them. Native POSIX keeps the UNIX sockets; portable/Windows uses loopback TCP.
 # The wire protocols do not change: control and log are one JSON line each way,
-# the process watch is a length-prefixed Sereal record. This module only picks
-# the address and carries the token.
+# the process watch and the app sockets are a length-prefixed Sereal record, and
+# the alarm is one JSON line. This module only picks the address and carries
+# the token.
+#
+# The worker-to-worker surfaces are here too: the alarm poke, the memory duty
+# socket, the websocket worker's per-app fan-out and the mail fan-out. On TCP a
+# single ws port carries every app (the payload names its app), so the offset
+# table is fixed rather than one port per app name.
 #
 # The master owns two small files under ~/.president:
 #
@@ -24,7 +30,15 @@ my %KIND = (
 	control => { offset => 7, file => 'control' },
 	log     => { offset => 8, file => 'log' },
 	watch   => { offset => 9, file => '.process_watch', home => 1 },
+	alarm   => { offset => 10, file => 'alarm' },
+	memory  => { offset => 11, file => 'memory' },
+	ws      => { offset => 12, file => 'ws' },
+	mailws  => { offset => 13, file => 'ws/mailws' },
 );
+
+# The highest offset the base has to leave room for. set_base refuses a base
+# that would push any listener past 65535.
+my $MAX_OFFSET = (sort { $b <=> $a } map { $_->{'offset'} } values %KIND)[0];
 
 sub tcp { return JawnOS::Platform::transport() eq 'tcp' ? 1 : 0 }
 
@@ -71,7 +85,8 @@ sub base {
 
 sub set_base {
 	my ($base) = @_;
-	return 0 unless defined $base && $base =~ /^\d+$/ && $base > 1024 && $base + 9 <= 65535;
+	return 0 unless defined $base && $base =~ /^\d+$/ && $base > 1024
+		&& $base + $MAX_OFFSET <= 65535;
 	$ENV{'JAWNOS_TRANSPORT_BASE'} = int($base);
 	return _write_file(base_file(), int($base) . "\n");
 }
@@ -89,6 +104,22 @@ sub path_for {
 	my $home = JawnOS::Platform::home();
 	my $root = $spec->{'home'} ? $home : JawnOS::Platform::data_dir();
 	return length($root) ? "$root/$spec->{'file'}" : "./$spec->{'file'}";
+}
+
+# Which listener a filesystem path names. The workers still compute their paths
+# (one per app, under the ws folder), so the sender maps a path it is handed
+# back to a kind instead of guessing from the payload. Backslashes are accepted
+# because a portable caller may hand over a Windows path.
+sub kind_for_path {
+	my ($path) = @_;
+	return undef unless defined $path && length $path;
+	(my $p = $path) =~ s{\\}{/}g;
+	return 'watch' if $p =~ m{(?:^|/)\.process_watch$};
+	return 'memory' if $p =~ m{(?:^|/)memory$};
+	return 'alarm' if $p =~ m{(?:^|/)alarm$};
+	return 'mailws' if $p =~ m{(?:^|/)ws/mailws$};
+	return 'ws' if $p =~ m{(?:^|/)ws/[^/]+$};
+	return undef;
 }
 
 sub label {
@@ -161,12 +192,12 @@ sub client_socket {
 }
 
 sub server_args {
-	my ($kind) = @_;
+	my ($kind, %opt) = @_;
 	if (tcp()) {
 		my $port = port_for($kind) or return undef;
 		return { address => '127.0.0.1', port => $port };
 	}
-	my $path = path_for($kind) or return undef;
+	my $path = $opt{'path'} || path_for($kind) or return undef;
 	return { path => $path };
 }
 

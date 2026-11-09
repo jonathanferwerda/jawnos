@@ -36,6 +36,7 @@ use Clone qw(clone);
 use Minion;
 use POSIX ();
 require './lib/JawnOS/Platform.pm';
+use JawnOS::Transport ();
 
 no warnings 'uninitialized'; 
 # the gb globals below live in gb.pl and are written or read from every
@@ -1070,7 +1071,10 @@ sub socket_watch() {
 	my ($watch_file) = @_;
 	my %buffers;
 	eval {
-		my $server = Mojo::IOLoop->server({ path => $watch_file } => sub {
+		my $args = JawnOS::Transport::server_args('memory', path => $watch_file);
+		my $server;
+		if ($args) {
+			$server = Mojo::IOLoop->server($args => sub {
 			my ($loop,$stream,$id) = @_;
 			$stream->handle->autoflush(1);
 			$stream->high_water_mark(8 * 1024 * 1024);
@@ -1102,6 +1106,9 @@ sub socket_watch() {
             warn "Worker $$: Failed to parse Sereal: $@";
             next;
 	        }
+	        next unless ref $query eq 'HASH';
+	        next if JawnOS::Transport::tcp()
+	            && !JawnOS::Transport::token_ok($query->{'token'});
 
 
 					
@@ -1153,8 +1160,9 @@ sub socket_watch() {
 				delete $buffers{$id};
 			});
 		});
-		return $server;
 	}
+	return $server;
+}
 }
 
 require './perl/President/utility_stopper.pl';

@@ -112,7 +112,6 @@ use Sereal::Decoder qw(decode_sereal);
 our $encoder = Sereal::Encoder->new({ compress => SRL_ZSTD, compress_level => 3 });
 our $decoder = Sereal::Decoder->new();
 use Minion;
-use IO::Socket::UNIX;
 use IPC::Open2 qw(open2);
 no warnings 'uninitialized';
 no warnings 'once';

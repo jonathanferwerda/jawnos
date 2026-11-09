@@ -66,9 +66,10 @@ Check, in this order:
    verdict and the tree comes back;
 5. the log view and the process watch still answer.
 
-**Expected gap:** control, log and watch moved to the transport in slice 2, but
-the websocket worker's own control socket and the alarm/memory sockets still use
-`IO::Socket::UNIX`. A clean P0 run should note the rest, not hide it.
+**Expected gap:** none in the socket layer. Slice 2 moved control/log/watch,
+and slice 4 moved the websocket worker, mailws, alarm and memory surfaces to
+the same transport. What a clean run still proves is the process model (one
+Daemon, a pipe, no `use threads`) and the go/no-go that follows it.
 
 ## Slice 2 (landed)
 
@@ -77,8 +78,10 @@ surfaces live:
 
 - **Ports:** `working_port + 7` control, `+ 8` log, `+ 9` process watch. The
   occupied offsets are `+1` wss, `+2` watch/arm, `+3` bestow, `+4` coms, `+5`
-  alarm, `+6` peer, `+101` plain WS. The base is `working_port`, then `port`,
-  then 45545 when config.json names neither.
+  alarm, `+6` peer, `+101` plain WS. Slice 4 added `+10` alarm, `+11` memory,
+  `+12` ws and `+13` mailws; one ws port carries every app (the payload names
+  it). The base is `working_port`, then `port`, then 45545 when config.json
+  names neither.
 - **Files:** the master writes `~/.president/transport_base` and
   `~/.president/transport_token` (0600) after the run-state wipe, and rotates
   the token on every boot. Both files survive the wipe and a reload.
@@ -144,6 +147,29 @@ implementation against recorded fixtures on Linux:
 
 No hardware is needed for the parsing and fixture work.
 
+## Slice 4 (landed) — the worker tail
+
+The sockets a worker uses to hand work to another worker no longer depend on
+`IO::Socket::UNIX`: no file in `lib/` or `perl/` imports it at compile time.
+`lib/JawnOS/Transport.pm` now also names `alarm` (`+10`), `memory` (`+11`), `ws`
+(`+12`) and `mailws` (`+13`), and maps a path back to its kind so the existing
+per-app calls keep their shape.
+
+- **Websocket worker:** one shared TCP ws port in portable mode carries every
+  app (the payload names it); native still binds one path per app. The route and
+the binder ask `ws_server_ensure`, so a second bind cannot take the port.
+- **Alarm and memory:** the listener asks `server_args`, and both check the
+  token on the decoded payload (`__transport_token` for the alarm's JSON line,
+  `token` for the memory's Sereal frame).
+- **SCO:** the client imports `SOCK_STREAM` from `Socket` and requires
+  `IO::Socket::UNIX` only inside `_dial_unix`, so a Windows tree compiles.
+- **Tests:** `t/228-transport-tail.t` pins the compile guard and real TCP round
+  trips for memory, ws and alarm; `t/222`/`t/223` cover the new kinds and the
+  wiring.
+
+The remaining P0 work is the portable smoke house on a spare checkout and the
+written go/no-go; no source change is needed for either.
+
 ## Hardware gate
 
 ### Machines and devices
@@ -201,11 +227,8 @@ against the `Must` rows in `docs/platform-roadmap.md` §7.
 - `Mojo::IOLoop::ReadWriteFork` is the master's runner; Windows needs a
   `Win32::Process` equivalent.
 - The Minion worker is itself a subprocessor.
-- `lib/JawnOS/Manager.pm`, `perl/Websocket.pl` and `perl/Alarm.pl` still `use
-  IO::Socket::UNIX` at compile time; the websocket worker control socket and the
-  alarm/memory sockets need the same treatment before a Windows boot.
-- The memory (`~/.president/memory`) and alarm (`~/.president/alarm`) sockets
-  stay UNIX; they need a TCP path or a clean no-op on Windows.
+- No source imports `IO::Socket::UNIX` at compile time, but the SCO client still
+  dials a UNIX socket at runtime; reception is `Later` on both native platforms.
 - No Windows or macOS packaging exists yet.
 
 ## Definition of done for P0
