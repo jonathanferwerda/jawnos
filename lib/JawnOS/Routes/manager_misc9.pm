@@ -27,6 +27,11 @@ sub routes {
 	[44002, 'get', '/manager/controller/volume', 'action_44002'],
 	[44003, 'post', '/manager/controller/volume', 'action_44003'],
 	[44004, 'get', '/manager/games', 'action_44004'],
+	[44005, 'get', '/manager/games/library', 'action_44005'],
+	[44006, 'get', '/manager/games/art', 'action_44006'],
+	[44007, 'post', '/manager/games/install', 'action_44007'],
+	[44008, 'get', '/manager/games/install_status', 'action_44008'],
+	[44009, 'post', '/manager/games/launch', 'action_44009'],
 	);
 }
 

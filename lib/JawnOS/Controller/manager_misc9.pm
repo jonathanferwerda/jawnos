@@ -16,6 +16,9 @@ use strict;
 use warnings ;#'uninitialized';
 use Mojo::Promise;
 use Mojo::UserAgent;
+use Mojo::JSON ();
+use Mojo::Asset::File;
+use Cwd ();
 use Time::Local;
 use Time::Piece;
 use Time::Duration;
@@ -812,14 +815,110 @@ sub action_44003 {
 
 # GET /manager/games
 # A second launcher, one press in from the Controller's Games tile. Cards and
-# Twirl run inside the house; an emulated game will leave this view for its own
-# programme, so its tile carries a note instead of a link until there is one.
+# Twirl run inside the house; the emulated shelf is the same page with
+# ?view=emulated, which draws the ROMs found under ~/roms and the two install
+# buttons. The scan is cheap (one directory walk) and every card carries the id
+# the launch route checks against it.
 sub action_44004 {
 	my $c = shift;
 	my $timestamp = $c->param('timestamp');
-	my $contents = $c->render_to_string(template => 'apps/games');
+	my $view = ($c->param('view') // '') eq 'emulated' ? 'emulated' : 'launcher';
+	my $library = eval { &subs::game_library() } || { ok => 0, games => [], systems => [] };
+	my $contents = $c->render_to_string(
+		template => 'apps/games',
+		view => $view,
+		library => $library,
+		emulators => &subs::game_emulator_present(),
+	);
 	my $website = &Manager::window_maker({ user_agent => $c->param('user_agent'), app => 'games', contents => $contents }, $timestamp);
 	$c->render(text => $website);
+}
+
+# GET /manager/games/library
+sub action_44005 {
+	my $c = shift;
+	$c->render(json => eval { &subs::game_library() } || { ok => 0, games => [], systems => [] });
+}
+
+# GET /manager/games/art
+# The picture beside a title, if the ROM folder has one. The path comes from the
+# scan, never from the request: the id is the only thing a browser sends.
+sub action_44006 {
+	my $c = shift;
+	my $path = eval { &subs::game_art($c->param('id') // '') };
+	unless (defined $path && length $path && -f $path) {
+		$c->render(text => '', status => 404);
+		return;
+	}
+	my ($suffix) = $path =~ /\.([^.]+)$/;
+	my %type = (png => 'image/png', jpg => 'image/jpeg', jpeg => 'image/jpeg', webp => 'image/webp');
+	$c->res->headers->content_type($type{lc($suffix // '')} // 'application/octet-stream');
+	$c->res->content->asset(Mojo::Asset::File->new(path => $path));
+}
+
+# POST /manager/games/install
+sub action_44007 {
+	my $c = shift;
+	my $what = $c->param('what') // '';
+	unless ($what =~ /^(?:emulators|roms)$/) {
+		$c->render(json => { ok => 0, error => 'The shelf offers only emulators and roms.' });
+		return;
+	}
+	my $script = Cwd::abs_path('scripts/jawnos_game_install.pl');
+	my $run = eval { &subs::subprocessor_command(
+		['sudo', '-n', $^X, $script, $what],
+		{ name => 'game install', stdout => '/dev/null', stderr => '/dev/null' }
+	) };
+	$c->render(json => ($run && $run->{'pid'}) ? { ok => 1, what => $what } : { ok => 0, error => 'The installer could not start.' });
+}
+
+# GET /manager/games/install_status
+# The helper runs detached, so it reports through one JSON row in /run. A row
+# that is missing (or unreadable) is 'idle', not an error.
+sub action_44008 {
+	my $c = shift;
+	my $status = { state => 'idle' };
+	my $path = '/run/jawnos-games/install.json';
+	if (-f $path) {
+		my $raw = '';
+		if (open(my $fh, '<', $path)) { local $/; $raw = <$fh> // ''; close $fh; }
+		my $parsed = eval { Mojo::JSON->new->decode($raw) };
+		$status = $parsed if ref $parsed eq 'HASH';
+	}
+	$status->{'installed'} = &subs::game_emulator_present() ? 1 : 0;
+	$c->render(json => $status);
+}
+
+# POST /manager/games/launch
+# The launcher is torn down when the kiosk stops, so the answer only says the
+# helper started; if the library or the emulator is missing the page is told
+# before anything is stopped.
+sub action_44009 {
+	my $c = shift;
+	my $game = eval { &subs::game_by_id($c->param('id') // '') };
+	unless (ref $game eq 'HASH') {
+		$c->render(json => { ok => 0, error => 'That game is not in the library.' });
+		return;
+	}
+	my $runner = &subs::game_runner($game->{'system'});
+	unless (ref $runner eq 'HASH') {
+		$c->render(json => { ok => 0, error => 'There is no emulator for this system.' });
+		return;
+	}
+	if ($runner->{'missing'}) {
+		$c->render(json => { ok => 0, error => 'Install the emulators first.' });
+		return;
+	}
+	if ($runner->{'kind'} eq 'retroarch' && !&subs::game_emulator_present()) {
+		$c->render(json => { ok => 0, error => 'Install the emulators first.' });
+		return;
+	}
+	my $script = Cwd::abs_path('scripts/jawnos_game_launch.pl');
+	my $run = eval { &subs::subprocessor_command(
+		['sudo', '-n', $^X, $script, $game->{'id'}],
+		{ name => 'game launch', stdout => '/dev/null', stderr => '/dev/null' }
+	) };
+	$c->render(json => ($run && $run->{'pid'}) ? { ok => 1, title => $game->{'title'} } : { ok => 0, error => 'The emulator could not start.' });
 }
 
 1;
