@@ -222,4 +222,22 @@ sub _finish {
 	return;
 }
 
+# The terminal's write side. There is no pty here, so read_handle is undef and
+# terminal_session_resize - which guards on it - is a no-op; a resize cannot
+# reach a shell that has no terminal.
+sub write {
+	my ($self, $bytes) = @_;
+	my $sock = $self->{'sock'} or return 0;
+	return 0 unless defined $bytes && length $bytes;
+	my $left = $bytes;
+	while (length $left) {
+		my $n = syswrite($sock, $left);
+		return 0 unless defined $n && $n > 0;
+		substr($left, 0, $n, '');
+	}
+	return 1;
+}
+
+sub read_handle { return undef }
+
 1;

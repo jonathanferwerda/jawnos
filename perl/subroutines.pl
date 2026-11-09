@@ -41,7 +41,7 @@ use File::Path;
 use File::Type;
 use Mojo::JSON qw(decode_json encode_json);
 use JSON::PP ();
-use Mojo::IOLoop::ReadWriteFork;
+
 use Mojo::SQLite;
 use Minion;
 use Data::Dumper;

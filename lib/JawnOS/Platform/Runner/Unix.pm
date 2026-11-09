@@ -73,4 +73,16 @@ sub close {
 	return 1;
 }
 
+# The terminal session writes keystrokes to the child and resizes its pty. Both
+# exist natively here; Windows answers them differently (see Runner::Windows).
+sub write {
+	my ($self, $bytes) = @_;
+	return $self->{'fork'}->write($bytes);
+}
+
+sub read_handle {
+	my ($self) = @_;
+	return $self->{'fork'}->read_handle;
+}
+
 1;

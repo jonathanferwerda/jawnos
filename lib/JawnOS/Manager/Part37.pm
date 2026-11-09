@@ -40,7 +40,7 @@ use Number::Format qw/:subs/;
 use SQL::Abstract;
 use Mojo::SQLite;
 use Mojo::IOLoop;
-use Mojo::IOLoop::ReadWriteFork;
+use JawnOS::Platform::Runner;
 use Mojolicious::Sessions;
 use Mojo::Server::Daemon;
 use Mojolicious::Renderer;
@@ -163,7 +163,7 @@ sub terminal_session_stop {
 		eval {
 			$fork->write("exit\r");
 			$fork->close;
-			$fork->kill('TERM');
+			$fork->stop('TERM');
 		};
 	}
 	&terminal_sessions_note($id, $session, 'ended') unless $quiet;
@@ -182,7 +182,7 @@ sub terminal_session_start {
 	$spec = &terminal_shell_clean($spec);
 	&terminal_session_stop($id, 1);
 	my $session = { id => $id, spec => $spec, live => 0, rows => 24, cols => 80 };
-	my $fork = Mojo::IOLoop::ReadWriteFork->new;
+	my $fork = JawnOS::Platform::Runner->new;
 	$fork->conduit({ raw => 1, type => 'pty' });
 	$fork->on(read => sub {
 		my ($f, $bytes) = @_;

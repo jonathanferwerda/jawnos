@@ -7,7 +7,8 @@ package JawnOS::Platform::Runner;
 #
 # Both backends provide:
 #   new, conduit(\%spec), on(read|close|spawn|drain => $cb),
-#   start(\%spec) -> pid, pid, alive, stop($signal), close
+#   start(\%spec) -> pid, pid, alive, stop($signal), close,
+#   write($bytes), read_handle (undef where there is no pty, as on Windows)
 #
 # Callbacks receive the runner first, which is what ReadWriteFork already emits
 # and what the master's handlers read:

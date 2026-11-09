@@ -1,7 +1,7 @@
 # tests-for: lib/JawnOS/Platform/Runner.pm lib/JawnOS/Platform/Runner/Unix.pm
 # covers:    the runner seam picks the platform backend, every backend starts a
-#            child and reports its output and exit, and nothing outside the Unix
-#            backend names ReadWriteFork.
+#            child and reports its output and exit, a write reaches the child,
+#            and nothing outside the Unix backend names ReadWriteFork.
 
 use strict;
 use warnings;
@@ -19,16 +19,31 @@ use JawnOS::Platform::Runner;
 my $root = repo_root();
 
 # The seam exists so a Windows tree never loads Mojo::IOLoop::ReadWriteFork.
-# Only the Unix backend may name it.
-for my $file (qw(
-	jawn
-	lib/JawnOS/Manager.pm
-	lib/JawnOS/Manager/Part25.pm
-	lib/JawnOS/Domain/Ble2.pm
-)) {
-	my $text = read_file("$root/$file");
-	unlike($text, qr/Mojo::IOLoop::ReadWriteFork/,
-		"$file no longer names ReadWriteFork");
+# Only the Unix backend may name it. Several dozen files carried an unused
+# import of it - every Controller among them, where the line was blanked rather
+# than deleted because an action's line number is its route id.
+{
+	require File::Find;
+	my @sources;
+	File::Find::find({ no_chdir => 1, wanted => sub {
+		return unless -f $_ && /\.(?:pm|pl)$/;
+		my $path = $File::Find::name;
+		$path =~ s{^\Q$root/\E}{};
+		# The Unix backend is the one place allowed to name it; the Windows
+		# backend names it only in prose.
+		return if $path eq 'lib/JawnOS/Platform/Runner/Unix.pm';
+		return if $path eq 'lib/JawnOS/Platform/Runner/Windows.pm';
+		push @sources, $path;
+	} }, "$root/perl", "$root/lib");
+	push @sources, 'jawn';
+	my @offenders;
+	for my $file (@sources) {
+		my $text = read_file("$root/$file");
+		push @offenders, $file
+			if $text =~ /^\s*use Mojo::IOLoop::ReadWriteFork\b/m
+			|| $text =~ /Mojo::IOLoop::ReadWriteFork->new/;
+	}
+	is_deeply(\@offenders, [], 'nothing outside the Unix backend loads ReadWriteFork');
 }
 
 my $backend = $^O eq 'MSWin32'
@@ -84,5 +99,25 @@ Mojo::IOLoop->start;
 ok($pid2, 'a second child starts');
 ok($was_alive, 'and is alive');
 ok($now_dead, 'stop takes it down');
+
+# The terminal session writes keystrokes to the child, so write is part of the
+# seam. A pipe proves it on both backends.
+my $echo = "$tmp/echo.pl";
+write_file($echo, 'while (defined(my $line = <STDIN>)) { print "got:$line"; last; }' . "\n");
+my $said = '';
+my $writer = JawnOS::Platform::Runner->new;
+$writer->conduit({ type => 'pipe' });
+$writer->on(spawn => sub { $writer->write("ping\n") });
+$writer->on(read => sub { $said .= $_[1] });
+$writer->on(close => sub { Mojo::IOLoop->stop });
+$writer->start({ program => $^X, program_args => [$echo] });
+Mojo::IOLoop->timer(10 => sub { Mojo::IOLoop->stop });
+Mojo::IOLoop->start;
+
+like($said, qr/got:ping/, 'write reaches the child');
+
+# A pty handle exists on Unix; Windows has none, and the resize path treats
+# undef as "there is no terminal to resize".
+ok($runner->can('read_handle'), 'the seam exposes a read handle');
 
 done_testing();
