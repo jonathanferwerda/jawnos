@@ -390,11 +390,19 @@ sub system_usage_sample {
 			});
 		}
 	}
+	# The core count is cheap and stable; the start menu's Levels card shows
+	# it beside the percentage, and a peer gets it through the health JSON.
+	my $cores = 0;
+	if (open my $cpuinfo, '<', '/proc/cpuinfo') {
+		while (<$cpuinfo>) { $cores++ if /^processor\s*:/; }
+	}
+	$cores = 1 unless $cores;
 	return {
 		cpu => $cpu,
 		cpu_scope => $scope,
 		mem => $mem,
 		mem_total_kb => $mem_total,
+		cores => $cores,
 		at => $now,
 	};
 }

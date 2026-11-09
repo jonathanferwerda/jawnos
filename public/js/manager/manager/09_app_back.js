@@ -675,7 +675,9 @@ $(document).on('click','.edit_app',function() {
    their route carries more than the markup; both are unwrapped first. */
 $(function () {
 	var open = '';
+	var full = '';
 	try { open = new URLSearchParams(location.search).get('open') || ''; } catch (e) { open = ''; }
+	try { full = new URLSearchParams(location.search).get('full') || ''; } catch (e) { full = ''; }
 	if (!open) { return; }
 	var urls = {
 		twirl: '/manager/twirl',
@@ -697,13 +699,22 @@ $(function () {
 		success: function (response) {
 			var html = response;
 			if (response && typeof response === 'object') { html = response.html || response.window || ''; }
-			if (typeof windowMaker === 'function' && html) { windowMaker(html); }
+			var id = null;
+			if (typeof windowMaker === 'function' && html) { id = windowMaker(html); }
+			/* A launcher press is the whole screen: no desk, no taskbar, no
+			   title bar. The Manager desk is reached from its own button. */
+			if (full && id) {
+				document.body.classList.add('full_app_mode');
+				var el = document.getElementById(id);
+				if (el) { el.classList.add('full_app_window'); }
+			}
 		},
 		error: function () { }
 	});
 	try {
 		var u = new URL(location.href);
 		u.searchParams.delete('open');
+		u.searchParams.delete('full');
 		history.replaceState(null, '', u.pathname + (u.searchParams.toString() ? '?' + u.searchParams.toString() : ''));
 	} catch (e) { }
 });

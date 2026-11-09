@@ -12,6 +12,7 @@ no warnings 'experimental::signatures';
 
 use File::Slurp qw(read_file write_file);
 use Mojo::JSON qw(decode_json encode_json);
+use Cwd ();
 
 # File-scope state owned by subroutines.pl, in this same package.
 our $config;
@@ -104,7 +105,12 @@ sub power_actions() {
 	unless ($key eq 'mobile') {
 		my $systemctl = `command -v systemctl 2>/dev/null`;
 		my $loginctl = `command -v loginctl 2>/dev/null`;
-		@actions = qw(restart shutdown sleep) if length $systemctl || length $loginctl;
+		if (length $systemctl || length $loginctl) {
+			@actions = qw(restart shutdown);
+			# A gateway has to stay reachable: system suspend would take the
+			# radios down, so a controller is offered the dark idle instead.
+			push @actions, 'sleep' unless $machine eq 'controller';
+		}
 		push @actions, 'screen_off' if &_screen_off_option();
 		push @actions, 'logout' if length &_logind_session_id();
 	}
@@ -143,6 +149,21 @@ sub _screen_off_option() {
 }
 
 sub _screen_off_run() {
+	# A handheld with no backlight node has its own dark-idle helper. It is a
+	# no-op (exit 3) elsewhere, so the generic paths below still run; the sudo
+	# retry is what lets the unprivileged manager stop the kiosk and write fb0.
+	my $helper = 'scripts/jawnos_screen.pl';
+	if (-e $helper) {
+		my $abs = Cwd::abs_path($helper) || $helper;
+		my $rc = system($^X, $abs, 'off');
+		return (0, 'screen helper') if $rc == 0;
+		my $sudo = `command -v sudo 2>/dev/null`;
+		chomp $sudo;
+		if (length $sudo) {
+			$rc = system($sudo, '-n', $^X, $abs, 'off');
+			return (0, 'screen helper') if $rc == 0;
+		}
+	}
 	my $xset = `command -v xset 2>/dev/null`;
 	chomp $xset;
 	if (length $xset) {

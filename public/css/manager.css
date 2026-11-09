@@ -3802,3 +3802,20 @@ body.dark_theme .inventory_details {
 .taskbar_panel .taskbar_panel_bars i:nth-child(4) { height: 100%; }
 .taskbar_panel .taskbar_panel_footer { padding-top: 8px; border-top: 1px solid var(--line); }
 .taskbar_panel .taskbar_panel_footer button { width: 100%; font-weight: 600; }
+
+/* A launcher press stands the app on the whole glass: the taskbar, header,
+   desktop icons and dock are furniture a 5-inch panel cannot spare, and the
+   window title bar is redundant when the trigger already returns home. The
+   class is added by the ?open= handler and never by the desk. */
+body.full_app_mode #taskbar,
+body.full_app_mode #header,
+body.full_app_mode #pseudonym_home,
+body.full_app_mode #desk_layer,
+body.full_app_mode #desk,
+body.full_app_mode #top_right_buttons { display:none !important; }
+body.full_app_mode .wind.full_app_window {
+	left:0 !important; top:0 !important; width:100vw !important; height:100vh !important;
+	border-radius:0 !important; box-shadow:none !important;
+}
+body.full_app_mode .wind.full_app_window .top_navbar { display:none !important; }
+body.full_app_mode .wind.full_app_window .window_contents { width:100% !important; height:100% !important; }

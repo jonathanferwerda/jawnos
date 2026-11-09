@@ -458,6 +458,9 @@ sub power_helper {
 	my (@args) = @_;
 	my $script = $ENV{'JAWNOS_POWER_HELPER'} || 'scripts/jawnos_power.pl';
 	return { ok => 0, error => 'the power helper is missing' } unless -e $script;
+	# A scoped sudoers rule can only name an absolute path; the manager's cwd
+	# is the tree root, so the relative default resolves to one.
+	$script = Cwd::abs_path($script) || $script;
 	my @command = ($^X, $script, @args);
 	if ($ENV{'JAWNOS_POWER_DRY_RUN'}) {
 		return { ok => 1, dry_run => 1, command => \@command };

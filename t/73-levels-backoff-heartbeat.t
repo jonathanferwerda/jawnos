@@ -27,6 +27,8 @@ use RepoSource;
 
 my $root = repo_root();
 my $embedded = read_file("$root/lib/JawnOS/Domain/Embedded.pm");
+like($embedded, qr/cores => \$cores/, 'usage reports the core count');
+like($embedded, qr/processor\\s\*:/, 'the core count comes from /proc/cpuinfo');
 my $misc13 = read_file("$root/lib/JawnOS/Controller/manager_misc13.pm");
 my $ws_pm = read_file("$root/lib/JawnOS/Controller/manager_ws.pm");
 my $loader = read_file("$root/lib/JawnOS/Domain/Loader.pm");

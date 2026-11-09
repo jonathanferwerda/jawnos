@@ -38,12 +38,24 @@
 	.window_contents { width:100% !important; height:100% !important; }
 	/* The launcher has no window bar: a slim row holds the one way out to the
 	   desk, and the eight tiles take the rest of the glass. */
-	#controller_shell { display:flex; flex-direction:column; width:100%; height:100%; min-height:0; }
-	#controller_bar { flex:0 0 auto; display:flex; justify-content:flex-end; padding:6px 8px 0; }
-	#controller_manager_button { font:inherit; font-size:13px; line-height:1.2; padding:5px 12px;
+	#controller_shell { display:flex; flex-direction:column; width:100%; height:100%; min-height:0; position:relative; }
+	#controller_bar { flex:0 0 auto; display:flex; justify-content:flex-end; align-items:center; padding:6px 8px 0; }
+	.controller_bar_button { font:inherit; font-size:13px; line-height:1.2; padding:5px 12px;
 		border:1px solid #4a4a4a; border-radius:8px; background:#3a3a3a; color:#ffffff;
-		text-decoration:none; }
-	#controller_manager_button:hover { border-color:var(--accent, #4a90d9); }
+		text-decoration:none; cursor:var(--jawnos-cursor-pointer, pointer); }
+	.controller_bar_button:hover { border-color:var(--accent, #4a90d9); }
+	#controller_battery { min-width:72px; margin-right:6px; }
+	#controller_power_panel { position:absolute; right:8px; top:34px; z-index:50; width:250px;
+		padding:10px; border:1px solid #4a4a4a; border-radius:12px; background:#2e2e2e;
+		color:#f4f4f4; box-shadow:0 8px 24px rgba(0,0,0,.5); }
+	#controller_power_panel[hidden] { display:none; }
+	#controller_power_panel h3 { margin:0 0 8px; font-size:13px; font-weight:600; }
+	.controller_power_row { display:flex; justify-content:space-between; gap:8px; font-size:12px; line-height:1.5; }
+	.controller_power_profiles { display:grid; grid-template-columns:1fr 1fr; gap:4px; margin-top:8px; }
+	.controller_power_profiles button { font:inherit; font-size:12px; padding:5px 6px; border:1px solid #4a4a4a;
+		border-radius:8px; background:#3a3a3a; color:#ffffff; cursor:var(--jawnos-cursor-pointer, pointer); }
+	.controller_power_profiles button.active { border-color:var(--accent, #4a90d9); background:#4a90d9; }
+	.controller_power_note { margin-top:6px; font-size:11px; line-height:1.3; min-height:1em; opacity:.8; }
 	#controller_home { height:auto !important; flex:1 1 auto; min-height:0; }
 
 	.controller_tile_leave { border-style:dashed; }
@@ -67,19 +79,48 @@
 		logout => 'Log out',
 	);
 	my %power_ui = map { $_ => &subs::ui($power_label{$_}) } keys %power_label;
+	my $status = ref $power_status eq 'HASH' ? $power_status : {};
+	my $battery = ref $status->{'battery'} eq 'HASH' ? $status->{'battery'} : {};
+	my $cpu = ref $status->{'cpu'} eq 'HASH' ? $status->{'cpu'} : {};
+	my $source = ($status->{'source'} || '') eq 'ac' ? 'ac' : 'battery';
+	my $entry = (ref $status->{'config'} eq 'HASH' && ref $status->{'config'}{$source} eq 'HASH')
+		? $status->{'config'}{$source} : {};
+	my $plan = $entry->{'plan'} || 'balanced';
+	my %profile_label = (auto => 'Auto', saver => 'Power saver', balanced => 'Balanced', performance => 'Performance');
+	my %profile_ui = map { $_ => &subs::ui($profile_label{$_}) } keys %profile_label;
+	my $battery_pct = defined $battery->{'percentage'} ? sprintf('%.0f%%', $battery->{'percentage'}) : '—';
+	my $battery_note = $battery->{'present'}
+		? ($battery->{'status'} ? $battery->{'status'} : &subs::ui('Battery'))
+		: &subs::ui('No battery sensor');
+	my @cpu_bits;
+	push @cpu_bits, $cpu->{'governor'} if $cpu->{'governor'};
+	push @cpu_bits, $cpu->{'cur_mhz'} . ' GHz' if defined $cpu->{'cur_mhz'};
+	my $cpu_note = @cpu_bits ? join(' · ', @cpu_bits) : &subs::ui('Unknown');
 %>
 
 <div id="controller_shell">
 	<div id="controller_bar">
-		<a id="controller_manager_button" href="/manager?desk=1"><%= &subs::ui('Manager') %></a>
+		<button type="button" id="controller_battery" class="controller_bar_button" aria-expanded="false" aria-controls="controller_power_panel"><span id="controller_battery_pct"><%= $battery_pct %></span></button>
+		<a id="controller_manager_button" class="controller_bar_button" href="/manager?desk=1"><%= &subs::ui('Manager') %></a>
+	</div>
+	<div id="controller_power_panel" hidden>
+		<h3><%= &subs::ui('Battery and CPU') %></h3>
+		<div class="controller_power_row"><span><%= &subs::ui('Battery') %></span><strong id="controller_power_battery"><%= $battery_note %></strong></div>
+		<div class="controller_power_row"><span><%= &subs::ui('CPU') %></span><strong id="controller_power_cpu"><%= $cpu_note %></strong></div>
+		<div class="controller_power_profiles" role="group" aria-label="<%= &subs::ui('Power profile') %>">
+% for my $profile (qw(auto saver balanced performance)) {
+			<button type="button" data-power-plan="<%= $profile %>" aria-pressed="<%= $profile eq $plan ? 'true' : 'false' %>"<%= $profile eq $plan ? ' class="active"' : '' %>><%= $profile_ui{$profile} %></button>
+% }
+		</div>
+		<div class="controller_power_note" id="controller_power_note" aria-live="polite"></div>
 	</div>
 	<div id="controller_home">
-		<a class="controller_tile" href="/manager?open=music">
+		<a class="controller_tile" href="/manager?open=music&amp;full=1">
 			<img class="controller_tile_icon" src="/images/decipherable/headphones.png" alt="">
 			<span class="controller_tile_label"><%= &subs::ui('Music') %></span>
 			<span class="controller_tile_note"><%= &subs::ui('Play the house music') %></span>
 		</a>
-		<a class="controller_tile" href="/manager?open=gallery">
+		<a class="controller_tile" href="/manager?open=gallery&amp;full=1">
 			<img class="controller_tile_icon" src="/images/decipherable/gallery.png" alt="">
 			<span class="controller_tile_label"><%= &subs::ui('Gallery') %></span>
 			<span class="controller_tile_note"><%= &subs::ui('Photos and videos') %></span>
@@ -89,22 +130,22 @@
 			<span class="controller_tile_label"><%= &subs::ui('Notifications') %></span>
 			<span class="controller_tile_note"><%= &subs::ui('What the house has told you') %></span>
 		</a>
-		<a class="controller_tile" href="/manager?open=twirl">
+		<a class="controller_tile" href="/manager?open=twirl&amp;full=1">
 			<img class="controller_tile_icon" src="/images/decipherable/tetris.png" alt="">
 			<span class="controller_tile_label"><%= &subs::ui('Games') %></span>
 			<span class="controller_tile_note"><%= &subs::ui('Twirl, the falling-block puzzle') %></span>
 		</a>
-		<a class="controller_tile" href="/manager?open=configure">
+		<a class="controller_tile" href="/manager?open=configure&amp;full=1">
 			<img class="controller_tile_icon" src="/images/decipherable/gear.png" alt="">
 			<span class="controller_tile_label"><%= &subs::ui('Configuration') %></span>
 			<span class="controller_tile_note"><%= &subs::ui('Settings and system') %></span>
 		</a>
-		<a class="controller_tile" href="/manager?open=phone">
+		<a class="controller_tile" href="/manager?open=phone&amp;full=1">
 			<img class="controller_tile_icon" src="/images/decipherable/phone.png" alt="">
 			<span class="controller_tile_label"><%= &subs::ui('IVR') %></span>
 			<span class="controller_tile_note"><%= &subs::ui('The phone call menu and greeting') %></span>
 		</a>
-		<a class="controller_tile" href="/manager?open=embedded">
+		<a class="controller_tile" href="/manager?open=embedded&amp;full=1">
 			<img class="controller_tile_icon" src="/images/decipherable/on.png" alt="">
 			<span class="controller_tile_label"><%= &subs::ui('Automation') %></span>
 			<span class="controller_tile_note"><%= &subs::ui('Toggles for the house devices') %></span>
@@ -149,12 +190,88 @@
 			return response.json();
 		}).then(function (result) {
 			if (result && result.ok) { return; }
-			if (note) { note.textContent = failed; }
+			if (note) { note.textContent = failed + (result && result.error ? ' (' + result.error + ')' : ''); }
 			button.disabled = false;
 		}).catch(function () {
 			if (note) { note.textContent = failed; }
 			button.disabled = false;
 		});
 	});
+})();
+
+/* The battery button opens the same reading the Power app uses. A pack with no
+   gauge says so instead of showing a false percentage; the profile buttons
+   still apply the CPU plan through the saved Power settings. */
+(function () {
+	var button = document.getElementById('controller_battery');
+	var panel = document.getElementById('controller_power_panel');
+	if (!button || !panel) { return; }
+	var pct = document.getElementById('controller_battery_pct');
+	var batt = document.getElementById('controller_power_battery');
+	var cpu = document.getElementById('controller_power_cpu');
+	var note = document.getElementById('controller_power_note');
+	var unavailable = <%== encode_json(&subs::ui('No battery sensor')) %>;
+	var unknown = <%== encode_json(&subs::ui('Unknown')) %>;
+	var failed = <%== encode_json(&subs::ui('That did not work.')) %>;
+	var cores_label = <%== encode_json(&subs::ui('cores')) %>;
+	var data = null;
+	function paint() {
+		var s = data || {};
+		var b = s.battery || {};
+		var c = s.cpu || {};
+		var has = b.percentage !== undefined && b.percentage !== null;
+		var text = has ? (Math.round(b.percentage) + '%') : '—';
+		if (pct) { pct.textContent = text; }
+		if (batt) { batt.textContent = has ? (text + (b.status ? ' · ' + b.status : '')) : (b.present ? unknown : unavailable); }
+		if (cpu) {
+			var bits = [];
+			if (c.governor) { bits.push(c.governor); }
+			if (c.cur_mhz !== undefined && c.cur_mhz !== null) { bits.push(c.cur_mhz + ' GHz'); }
+			if (navigator.hardwareConcurrency) { bits.push(navigator.hardwareConcurrency + ' ' + cores_label); }
+			cpu.textContent = bits.join(' · ') || unknown;
+		}
+		var source = s.source || 'battery';
+		var plan = (((s.config || {})[source]) || {}).plan || 'balanced';
+		var buttons = panel.querySelectorAll('[data-power-plan]');
+		for (var i = 0; i < buttons.length; i++) {
+			var on = buttons[i].getAttribute('data-power-plan') === plan;
+			buttons[i].setAttribute('aria-pressed', on ? 'true' : 'false');
+			buttons[i].classList.toggle('active', on);
+			buttons[i].disabled = !(s && s.ok);
+		}
+	}
+	function load() {
+		fetch('/manager/power_status', { credentials: 'same-origin' })
+			.then(function (r) { return r.json(); })
+			.then(function (s) { data = s; paint(); })
+			.catch(function () { if (note) { note.textContent = failed; } });
+	}
+	button.addEventListener('click', function () {
+		var opening = panel.hasAttribute('hidden');
+		if (opening) { panel.removeAttribute('hidden'); load(); } else { panel.setAttribute('hidden', ''); }
+		button.setAttribute('aria-expanded', opening ? 'true' : 'false');
+	});
+	panel.addEventListener('click', function (event) {
+		var choice = event.target.closest('[data-power-plan]');
+		if (!choice || !data) { return; }
+		var plan = choice.getAttribute('data-power-plan');
+		var source = data.source || 'battery';
+		var limit = (((data.config || {})[source]) || {}).limit;
+		var buttons = panel.querySelectorAll('[data-power-plan]');
+		for (var i = 0; i < buttons.length; i++) { buttons[i].disabled = true; }
+		if (note) { note.textContent = ''; }
+		fetch('/manager/power/plan', {
+			method: 'POST',
+			credentials: 'same-origin',
+			headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+			body: new URLSearchParams({ source: source, plan: plan, limit: (limit === undefined || limit === null) ? '' : limit })
+		}).then(function (r) { return r.json(); }).then(function (result) {
+			if (result && result.ok) { load(); return; }
+			if (note) { note.textContent = failed + (result && result.error ? ' (' + result.error + ')' : ''); }
+			load();
+		}).catch(function () { if (note) { note.textContent = failed; } load(); });
+	});
+	setInterval(load, 30000);
+	load();
 })();
 </script>

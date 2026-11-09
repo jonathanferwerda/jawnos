@@ -147,4 +147,11 @@ my $help = read_file("$ROOT/perl/help/topics_features.pl");
 like($help, qr/Restart, Shut down and Sleep/, 'the start menu topic names the four choices');
 like($help, qr/Exit alone/, 'and says a handheld shows Exit alone');
 
+{
+	local $subs::config = { device => 'controller' };
+	local %subs::power_actions_cache = ();
+	my @actions = subs::power_actions();
+	ok(!(grep { $_ eq 'sleep' } @actions), 'a controller is not offered a system suspend');
+}
+
 done_testing();

@@ -17,6 +17,9 @@ use RepoSource;
 
 my $root = repo_root();
 my $htop = read_file($root . '/templates/start_menu/htop.html.ep');
+like($htop, qr/\$u->\{'cores'\}/, 'the usage line shows the core count');
+like($htop, qr/\$u->\{'mem_total_kb'\}/, 'the usage line shows the RAM total');
+like($htop, qr/no battery sensor/, 'a controller with no gauge says so');
 my $menu = js_source('public/js/manager/manager/05_start_menu.js');
 my $maker = js_source('public/js/manager/keyboard/02_keyboard_maker.js');
 my $dock = js_source('public/js/manager/keyboard/01_side_dock.js');

@@ -751,7 +751,8 @@ sub action_44001 {
 	my $contents = $c->render_to_string(
 		template => 'apps/controller',
 		window_maker => $c->param('window_maker'),
-		power_actions => [ &subs::power_actions() ]
+		power_actions => [ &subs::power_actions() ],
+		power_status => eval { &subs::power_status() } || {}
 	);
 	my $website = &Manager::window_maker({ user_agent => $c->param('user_agent'), app => 'controller', contents => $contents }, $timestamp);
 	$c->render(text => $website);

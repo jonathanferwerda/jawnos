@@ -1,4 +1,4 @@
-# tests-for: templates/apps/controller.html.ep lib/JawnOS/Controller/manager_misc9.pm lib/JawnOS/Routes/manager_misc9.pm lib/JawnOS/Controller/manager_misc4.pm public/js/manager/manager/09_app_back.js perl/help/topics_people.pl
+# tests-for: templates/apps/controller.html.ep lib/JawnOS/Controller/manager_misc9.pm lib/JawnOS/Routes/manager_misc9.pm lib/JawnOS/Controller/manager_misc4.pm public/js/manager/manager/09_app_back.js public/css/manager.css lib/JawnOS/Domain/Misc.pm perl/help/topics_people.pl
 # covers:    The controller's home is a launcher, not a desk: a handheld panel
 #            opens on eight tiles, a Manager button, and the Leave tile draws a
 #            working button per power choice this machine can offer.
@@ -95,5 +95,15 @@ like($desk_js, qr/location\.search\)\.get\('open'\)/, 'the desk reads the app to
 like($desk_js, qr/e\.key !== 'Home'/, 'and listens for the handheld Home key');
 like($desk_js, qr/typeof response === 'object'/, 'a JSON reply is recognised before the window is made');
 like($desk_js, qr/response\.html \|\| response\.window/, 'both window envelope shapes are unwrapped');
+like($desk_js, qr/full_app_mode/, 'a launcher press marks a full-screen app');
+like($page, qr/id="controller_battery"/, 'the launcher has a battery button');
+like($page, qr/data-power-plan=/, 'the panel offers the CPU profiles');
+like($page, qr/No battery sensor/, 'a pack with no gauge says so');
+like($page, qr/href="\/manager\?open=music&amp;full=1"/, 'an app tile asks for the full-screen mode');
+like($controller, qr/power_status =>/, 'the launcher action passes the power reading');
+like(read_file("$root/public/css/manager.css"), qr/body\.full_app_mode #taskbar/,
+	'the full-screen mode hides the taskbar');
+like(read_file("$root/lib/JawnOS/Domain/Misc.pm"), qr/jawnos_screen\.pl/,
+	'screen off uses the handheld helper');
 
 done_testing();

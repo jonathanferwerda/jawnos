@@ -41,8 +41,14 @@
 		$label .= ' (JawnOS)' if ($u->{'cpu_scope'} || '') eq 'jawnos';
 		push @bits, '<span class="' . $usage_class->($u->{'cpu'}) . '">' . $label . '</span>';
 	}
+	if (defined $u->{'cores'}) {
+		push @bits, '<span class="level_cores">' . $u->{'cores'} . ' ' . &subs::ui('cores') . '</span>';
+	}
 	if (defined $u->{'mem'}) {
 		push @bits, '<span class="' . $usage_class->($u->{'mem'}) . '">RAM ' . sprintf('%.0f%%', $u->{'mem'}) . '</span>';
+	}
+	if (defined $u->{'mem_total_kb'} && $u->{'mem_total_kb'} > 0) {
+		push @bits, '<span class="level_mem_total">' . sprintf('%.1f GB', $u->{'mem_total_kb'} / 1048576) . '</span>';
 	}
 	return '' unless @bits;
 	return '<div class="level_usage">' . join(' &middot; ', @bits) . '</div>';
@@ -57,6 +63,11 @@
 	push @bits, sprintf('%.0f mA', $b->{'current'}) if defined $b->{'current'};
 	push @bits, sprintf('%.2f %%/h', $b->{'pph'}) if defined $b->{'pph'};
 	return join(' &middot; ', @bits);
+}; %>
+<% my $battery_absent = sub {
+	my ($m) = @_;
+	return &subs::ui('no battery sensor') if (($m->{'device'} || '') eq 'controller');
+	return &subs::ui('mains');
 }; %>
 <% my $duration = sub {
 	my $h = shift;
@@ -191,7 +202,7 @@ elsif ($sp->{'known'} && defined $sp->{'age'} && $sp->{'age'} < 300) {
 			<div class="level_top">
 				<span class="level_name"><%= $m->{'hostname'} || &subs::ui('this machine') %></span>
 				<% if (defined $pct) { %><span class="level_pct <%= $level_class->($pct) %>"><%= sprintf('%.0f%%', $pct) %></span>
-				<% } else { %><span class="level_pct level_mains"><%= &subs::ui('mains') %></span><% } %>
+				<% } else { %><span class="level_pct level_mains"><%= $battery_absent->($m) %></span><% } %>
 			</div>
 			<div class="level_sub"><%= &subs::format_name($m->{'device'} || '') %> &middot; <%= &subs::ui('this machine') %> &middot; v<%= $m->{'version'} || &subs::jawn_version() %></div>
 			<% if (defined $pct) { %>
@@ -218,14 +229,14 @@ elsif ($sp->{'known'} && defined $sp->{'age'} && $sp->{'age'} < 300) {
 			<div class="level_top">
 				<span class="level_name"><%= $m->{'hostname'} || &subs::ui('machine') %></span>
 				<% if (defined $pct) { %><span class="level_pct <%= $level_class->($pct) %>"><%= sprintf('%.0f%%', $pct) %></span>
-				<% } else { %><span class="level_pct level_mains"><%= &subs::ui('mains') %></span><% } %>
+				<% } else { %><span class="level_pct level_mains"><%= $battery_absent->($m) %></span><% } %>
 			</div>
 			<div class="level_sub"><%= &subs::format_name($m->{'device'} || '') %><% if ($m->{'stale'}) { %> &middot; <%= &subs::ui('last seen') %> <%= $when->($m->{'seen'}) %><% } else { %> &middot; v<%= $m->{'version'} || '?' %><% } %></div>
 			<% if (defined $pct) { %>
 				<div class="level_bar"><i class="<%= $level_class->($pct) %>" style="width:<%= $bar_width->($pct) %>%"></i></div>
 				<div class="level_meta"><%== $battery_meta->($b) %></div>
 			<% } else { %>
-				<div class="level_meta"><%== $battery_meta->($b) || &subs::ui('on mains') %></div>
+				<div class="level_meta"><%== $battery_meta->($b) || $battery_absent->($m) %></div>
 			<% } %>
 			<%== $usage_line->($m->{'usage'}) %>
 			<% my $eta = $eta_text->($b); %>

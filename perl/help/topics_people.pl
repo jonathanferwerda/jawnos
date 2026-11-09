@@ -199,12 +199,12 @@ $topic{'controller'} = {
 		title => 'Controller', category => 'apps', app => 'controller',
 		verified => '2026-11-08',
 		templates => [ 'templates/apps/controller.html.ep' ],
-		summary => 'The handheld\'s home: eight tiles, a Manager button, and a Leave panel that powers this machine off, down or away.',
+		summary => 'The handheld\'s home: eight tiles, a battery/CPU button and a Manager button, and a Leave panel that puts the panel into a dark idle.',
 		body => [
-			'Controller is the home screen of the handheld. It has no desk of windows: it shows eight tiles, each one press away from the surface it names, and a Manager button at the top right when you want the desk itself.',
+			'Controller is the home screen of the handheld. It has no desk of windows: it shows eight tiles, each one press away from the surface it names, with the battery reading and a Manager button at the top right. Press the battery reading for the pack\'s state and the CPU profile (Auto, Power saver, Balanced, Performance).',
 			'Music opens the house music, Gallery the photos and videos, Notifications what the house has told you, and Games the Twirl falling-block puzzle. Configuration holds the house and device settings, including the Sys section. IVR opens the Phone app, where the call menu and recorded greeting live. Automation opens the embedded device toggles.',
-			'The button above the arrow keys sends Home, which returns here from any screen. The launcher has no window bar, so the panel is all tiles.',
-			'Leave is a working panel on the launcher. Sleep suspends this machine, Screen off darkens the panel, Restart and Shut down do what they say, and Log out ends the session. Press one and the tile says it asked, keeping you on the launcher; it never navigates away. A machine without logind, or without an X or framebuffer panel to darken, offers fewer of these buttons, and the tile says so when it can offer none.'
+			'An app opens on the whole panel: no desk, taskbar or title bar. The button above the arrow keys sends Home, which returns here from any screen.',
+			'Leave is a working panel on the launcher. Screen off stops the display painters, blacks the panel and drops the CPU to powersave, so the machine can wait in a bag for a call; Restart and Shut down do what they say. A controller is not offered Sleep, because a system suspend would take the radios down. Press one and the tile says it asked; a refusal names its reason. The two trigger-happy keys pressed together bring the screen back.'
 		],
 		related => [ 'twirl', 'phone', 'configure' ]
 	};
