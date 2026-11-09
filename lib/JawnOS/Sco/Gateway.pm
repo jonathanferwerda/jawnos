@@ -1109,12 +1109,18 @@ sub _start_transcript {
 		$self->{'transcript_note'} = 'whisper.cpp is not installed on this machine';
 		return 0;
 	}
-	# Nothing here asks for the warm server. Reception re-arms this gateway every
-	# five minutes while it waits for a call, and asking at arm time kept the
-	# model loaded for as long as the house was armed - which is always. The
-	# marker is touched by an actual transcription instead
-	# (subs::whisper_server_transcribe), so the model is loaded while the house
-	# is listening and let go ten quiet minutes after it stops.
+	# A gateway that is armed is a gateway expecting a call, and this one keeps
+	# the warm server up for as long as it is armed (President.pl's loop starts it
+	# while the demand marker is fresh). That costs the model - 147 MB at
+	# ggml-tiny on the Gou - on exactly the machine that needs a call answered
+	# without a model load in the middle of it. A machine that is not a gateway
+	# never arms, so its server still starts on the first transcription and lets
+	# the model go after ten quiet minutes.
+	#
+	# The name a screened call is filed under does not come through here: it takes
+	# base and the one-shot CLI (Ai.pm's whisper_name_transcribe), so a warm
+	# server does not make that transcript arrive.
+	eval { &subs::whisper_server_wanted(1) };
 	my $python   = eval { &subs::whisper_python() } || '';
 	my $model    = eval { &subs::whisper_models_dir() } || '';
 	my $streamer = eval { &subs::whisper_streamer() } || '';

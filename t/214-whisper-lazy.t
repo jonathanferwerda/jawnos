@@ -39,11 +39,13 @@ like($server_call, qr/&whisper_server_wanted\(1\);/,
 
 my ($transcript) = $gateway =~ /(sub _start_transcript \{.*?\n\})/s;
 ok($transcript, '_start_transcript is still one sub');
-# Reception re-arms the gateway every five minutes while it waits, so an arm is
-# not a request for the model: asking here would hold it for as long as the
-# house is armed. Pinned so the shortcut is not re-added.
-unlike($transcript, qr/whisper_server_wanted/,
-	'arming the gateway does not warm the model (Reception re-arms every five minutes)');
+# A gateway that is armed is a gateway expecting a call, so on that machine the
+# model stays warm for as long as it is armed (Reception re-arms every five
+# minutes, so in practice always). This is the deliberate cost: a call must
+# not pay a model load in the middle of it. A machine that never arms stays
+# lazy.
+like($transcript, qr/eval \{ &subs::whisper_server_wanted\(1\) \};/,
+	'arming the gateway keeps the warm server up');
 like($transcript, qr/&subs::whisper_available\(\)/,
 	'it still says why there is no transcript when whisper.cpp is missing');
 
