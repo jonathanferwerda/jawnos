@@ -123,7 +123,7 @@ sub action_39714 {
 		return $c->render(json => { ok => 0, error => 'busy' });
 	}
 	close $fh;
-	my $user = $ENV{USER} || getpwuid($<) || 'jawn';
+	my $user = $ENV{USER} || $ENV{USERNAME} || eval { getpwuid($<) } || 'jawn';
 	$user =~ s/[^\w.-]//g;
 	my $token = &subs::random_string_creator(24);
 	my $now = &subs::rightNow();

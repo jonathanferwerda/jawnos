@@ -125,10 +125,8 @@ sub minion_task_list {
 sub home {
 	my ($inhabitant) = @_;
 	unless (defined $home_dir) {
-		$home_dir = $ENV{HOME};
-		if (!defined $home_dir || $home_dir eq '') {
-			$home_dir = (getpwuid($<))[7] || '';
-		}
+		require JawnOS::Platform;
+		$home_dir = JawnOS::Platform::home();
 	}
 	$inhabitant =~ s/~/$home_dir/;
 	return $inhabitant;

@@ -55,8 +55,7 @@ sub clean_text {
 sub _president_dir {
 	my %opt = @_;
 	return $opt{'dir'} if defined $opt{'dir'} && length $opt{'dir'};
-	my $home = $ENV{'HOME'} // '';
-	$home = (getpwuid($<))[7] // '' unless length $home;
+	my $home = JawnOS::Platform::home();
 	$home =~ s{/+$}{};
 	return length $home ? "$home/.president" : '.president';
 }

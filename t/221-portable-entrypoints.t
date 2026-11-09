@@ -19,6 +19,23 @@ use Symbol qw(gensym);
 my $president = read_file("$FindBin::Bin/../perl/President.pl");
 my $master    = read_file("$FindBin::Bin/../jawn");
 
+# Windows dies on getpwuid, so every home lookup goes through the platform
+# module, which knows USERPROFILE and the HOMEDRIVE+HOMEPATH pair. The guarded
+# `eval { (getpwuid $<)[7] }` in Platform.pm is the only place it may appear;
+# the unguarded form this tree used to carry is what killed the Windows boot.
+for my $file (qw(
+	jawn
+	perl/President.pl
+	perl/control.pl
+	lib/JawnOS/Domain/Key.pm
+	lib/JawnOS/Controller/manager_security2.pm
+)) {
+	my $text = read_file("$FindBin::Bin/../$file");
+	unlike($text, qr/\(getpwuid\(\$<\)\)\[7\]/,
+		"$file has no unguarded getpwuid");
+}
+like($master, qr/JawnOS::Platform::home\(\)/, 'the master resolves ~ through the platform');
+
 unlike($president, qr/^use threads\b/m, 'the tree no longer loads threads');
 unlike($president, qr/threads->create/, 'no browser-open thread remains');
 

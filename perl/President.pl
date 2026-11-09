@@ -1934,10 +1934,7 @@ my $home_dir;
 sub home() {
 	my ($inhabitant) = @_;
 	unless (defined $home_dir) {
-		$home_dir = $ENV{HOME};
-		if (!defined $home_dir || $home_dir eq '') {
-			$home_dir = (getpwuid($<))[7] || '';
-		}
+		$home_dir = JawnOS::Platform::home();
 	}
 	$inhabitant =~ s/~/$home_dir/;
 	return $inhabitant;
