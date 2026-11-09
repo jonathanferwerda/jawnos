@@ -38,6 +38,14 @@ like($master, qr/^use JawnOS::Transport;/m,
 like($master, qr/type => 'pipe'/, 'the master can run the tree on a pipe');
 like($master, qr/type => 'pty'/, 'the master still uses a pty when native');
 
+# Windows cannot call getpwuid (it dies), and a launch by a service or a desktop
+# shortcut has no HOME, so the master's own local::lib block has to resolve
+# USERPROFILE and only fall back to getpwuid inside an eval. Its PERL5LIB also
+# travels to the tree, where Windows splits it on ';'.
+like($master, qr/USERPROFILE/, 'the master finds a Windows home without getpwuid');
+like($master, qr/eval \{ \(getpwuid/, 'and calls getpwuid only inside an eval');
+like($master, qr/\$sep = \$\^O eq 'MSWin32'/, 'and exports PERL5LIB with the platform separator');
+
 # The master adds the repo lib to its own @INC but its PERL5LIB carries only the
 # local::lib tree, so the tree starts as plain `perl ./perl/President.pl` with no
 # repo lib. A compile-time load that does not locate lib itself aborts the tree
