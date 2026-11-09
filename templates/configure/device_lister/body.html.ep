@@ -47,6 +47,8 @@
 				<span id="update_method_status" class="device_when"></span>
 				<button id="update_now_button" class="hover" type="button"><%= &subs::ui('Update now') %></button>
 				<span id="update_now_status" class="device_when"></span>
+				<span id="deps_pending_status" class="device_when"></span>
+				<button id="deps_pending_button" class="hover" type="button" style="display:none;"><%= &subs::ui('Install missing dependencies') %></button>
 			</div>
 			<%# The coding nightly pushes to this repo, not blindly to origin. Empty
 			    means the checkout's own remote (origin here, fork for the app). %>

@@ -18,6 +18,11 @@
 #                                          # (a local::lib, e.g. ~/perl5) as the
 #                                          # current user; never runs sudo
 #   perl scripts/jawnos_deps.pl --no-extras # skip the optional apps
+#   perl scripts/jawnos_deps.pl --after-update  # run by a code update: install
+#                                          # the system packages the new tree
+#                                          # needs when sudo -n works, otherwise
+#                                          # leave ~/.president/deps-pending.json
+#                                          # for the manager to ask about
 #
 # Freshness (no install, no download): does upstream still offer what the
 # installer asks for, and is an installed copy far behind?
@@ -63,11 +68,12 @@ use JSON::PP ();
 use FindBin;
 use Cwd qw(abs_path);
 use File::Copy qw(copy);
-use File::Path qw(remove_tree);
+use File::Path qw(remove_tree make_path);
+use Fcntl qw(:flock);
 use lib "$FindBin::Bin/../lib";
 use JawnOS::Packages;
 
-my ($report_only, $json, $sh, $install, $yes, $desktop, $extras_only, $no_extras, $local_lib, $freshness, $strict, $fixtures, $android, $android_update, $android_keep, $report_file);
+my ($report_only, $json, $sh, $install, $yes, $desktop, $extras_only, $no_extras, $local_lib, $freshness, $strict, $fixtures, $android, $android_update, $android_keep, $report_file, $after_update);
 my @only;
 GetOptions(
 	'report'      => \$report_only,
@@ -76,6 +82,7 @@ GetOptions(
 	'install'     => \$install,
 	'yes|y'       => \$yes,
 	'desktop'     => \$desktop,
+	'after-update' => \$after_update,
 	'extras-only' => \$extras_only,
 	'no-extras'   => \$no_extras,
 	'local-lib=s' => \$local_lib,
@@ -90,6 +97,17 @@ GetOptions(
 ) or die "bad options\n";
 
 $install = 1 if $yes;
+
+# --after-update is the hook a code update runs. It looks at the system packages
+# the new code needs and installs them when sudo already works without a
+# password; otherwise it leaves a request the manager asks a person to answer.
+# It never prompts and never installs Perl modules (those stay user-local) or the
+# optional apps (install_extras owns them).
+if ($after_update) {
+	$desktop = 1;
+	$no_extras = 1;
+	$install = 1;
+}
 
 # Arch keeps cpanm in /usr/bin/vendor_perl, which is not on a login PATH and is
 # certainly not on a systemd service's; the update path has modules to install
@@ -1400,6 +1418,11 @@ unless ($no_extras) {
 	}
 }
 
+if ($after_update) {
+	&after_update_run();
+	exit 0;
+}
+
 if ($json) {
 	my $data = {
 		platform        => $platform,
@@ -1497,6 +1520,17 @@ sub run {
 	return $? >> 8;
 }
 
+# The after-update path keeps what the package manager said: a failure is worth
+# showing to the person who may have to finish the install by hand.
+sub run_capture {
+	my @cmd = @_;
+	open(my $fh, '-|', @cmd) or return (127, "cannot run $cmd[0]: $!");
+	local $/;
+	my $out = <$fh>;
+	close $fh;
+	return ($? >> 8, defined $out ? $out : '');
+}
+
 sub sudo {
 	# --local-lib is a user-scoped install by contract: no package manager and
 	# no sudo, whatever the caller's privileges.
@@ -1504,6 +1538,149 @@ sub sudo {
 	return () if $platform eq 'termux';
 	return ('sudo') if -x '/usr/bin/sudo';
 	return ();
+}
+
+# --- after a code update -----------------------------------------------------
+# The update paths call --after-update. It installs the system packages the new
+# tree needs when sudo already works without a password, and otherwise writes a
+# request the manager asks a person to answer. It never prompts and never blocks
+# the update: a dependency problem must not leave a machine running old code.
+sub can_sudo_without_password {
+	return 0 unless -x '/usr/bin/sudo';
+	return system('sh', '-c', 'sudo -n true >/dev/null 2>&1') == 0 ? 1 : 0;
+}
+
+sub system_package_commands {
+	my @pkgs = @_;
+	return () unless @pkgs;
+	return ( [ 'apt-get', 'update' ], [ 'apt-get', 'install', '-y', @pkgs ] )
+		if $platform eq 'debian';
+	# Arch: no -Sy. Arch does not support partial upgrades, so the automatic path
+	# installs from the sync database it already has. A stale database makes
+	# pacman fail, and the person is asked to run pacman -Syu themselves rather
+	# than have an app update half the operating system behind their back.
+	return ( [ 'pacman', '-S', '--needed', '--noconfirm', @pkgs ] )
+		if $platform eq 'arch';
+	return ( [ 'pkg', 'install', '-y', @pkgs ] ) if $platform eq 'termux';
+	return ();
+}
+
+sub display_command {
+	my ($cmd) = @_;
+	return join ' ', ($platform eq 'termux' ? () : 'sudo'), @{$cmd};
+}
+
+sub deps_pending_file {
+	return undef unless length $home;
+	my $dir = $home . '/.president';
+	return "$dir/deps-pending.json";
+}
+
+sub deps_pending_write {
+	my ($result) = @_;
+	my $path = deps_pending_file();
+	return 0 unless defined $path;
+	(my $dir = $path) =~ s{/[^/]+$}{};
+	eval { make_path($dir) } unless -d $dir;
+	my $tmp = "$path.$$";
+	open(my $fh, '>', $tmp) or return 0;
+	print $fh JSON::PP->new->canonical->pretty->encode($result);
+	close $fh;
+	chmod 0600, $tmp;
+	unless (rename($tmp, $path)) { unlink $tmp; return 0; }
+	return 1;
+}
+
+sub deps_emit {
+	my ($result) = @_;
+	print 'JAWNOS_DEPS_RESULT=' . JSON::PP->new->canonical->encode($result) . "\n";
+	return 1;
+}
+
+sub after_update_run {
+	my $pending_path = deps_pending_file();
+	unless (defined $pending_path) {
+		return deps_emit({ ok => 0, error => 'no home directory for the request' });
+	}
+	(my $state_dir = $pending_path) =~ s{/[^/]+$}{};
+	eval { make_path($state_dir) } unless -d $state_dir;
+	# Two update paths can meet (the watcher and an explicit Update now). Two
+	# package managers at once is an error on every distribution, so the second
+	# caller reports the first and leaves it alone.
+	my $lock;
+	if (open($lock, '>>', "$state_dir/deps-install.lock")) {
+		unless (flock($lock, LOCK_EX | LOCK_NB)) {
+			return deps_emit({ ok => 0, error => 'another dependency install is running' });
+		}
+	}
+	my @missing = (
+		(map { { label => $_->{'label'}, package => pkg_for($_), kind => 'tool' } } @missing_tools),
+		(map { { label => $_->{'label'}, package => pkg_for($_), kind => 'desktop' } } @missing_desktop),
+	);
+	my @pkgs = split_pkgs(map { $_->{'package'} } @missing);
+	my %seen_pkg;
+	@pkgs = grep { !$seen_pkg{$_}++ } @pkgs;
+	my %result = (
+		platform  => $platform,
+		packages  => \@pkgs,
+		missing   => \@missing,
+		need_root => 0,
+		installed => 0,
+		ok        => 1,
+	);
+	if (defined $local_lib && length $local_lib) {
+		# A user-scoped install owns no system packages.
+		unlink $pending_path if -f $pending_path;
+		$result{'skipped'} = 'local-lib';
+		return deps_emit(\%result);
+	}
+	if (!@pkgs) {
+		unlink $pending_path if -f $pending_path;
+		return deps_emit(\%result);
+	}
+	my @commands = system_package_commands(@pkgs);
+	unless (@commands) {
+		$result{'ok'} = 0;
+		$result{'reason'} = 'this platform has no package manager JawnOS knows';
+		return deps_emit(\%result);
+	}
+	$result{'commands'} = [ map { display_command($_) } @commands ];
+	my $can_root = ($platform eq 'termux') ? 1 : can_sudo_without_password();
+	unless ($can_root) {
+		$result{'ok'} = 0;
+		$result{'need_root'} = 1;
+		$result{'reason'} = (-x '/usr/bin/sudo')
+			? 'sudo asks for a password'
+			: 'sudo is not installed';
+		$result{'timestamp'} = time;
+		$result{'pending_file'} = $pending_path;
+		deps_pending_write(\%result);
+		return deps_emit(\%result);
+	}
+	my @failed;
+	my $failure_output = '';
+	for my $command ( @commands ) {
+		my @argv = @{$command};
+		unshift @argv, 'sudo', '-n' unless $platform eq 'termux';
+		my ($rc, $said) = run_capture(@argv);
+		next unless $rc;
+		push @failed, join(' ', @argv);
+		$failure_output .= $said;
+	}
+	if (@failed) {
+		$result{'ok'} = 0;
+		$result{'need_root'} = 1;
+		$result{'reason'} = 'the package manager could not install them';
+		$result{'failed'} = \@failed;
+		$result{'output'} = substr($failure_output, -2000);
+		$result{'timestamp'} = time;
+		$result{'pending_file'} = $pending_path;
+		deps_pending_write(\%result);
+		return deps_emit(\%result);
+	}
+	unlink $pending_path if -f $pending_path;
+	$result{'installed'} = scalar @pkgs;
+	return deps_emit(\%result);
 }
 
 {

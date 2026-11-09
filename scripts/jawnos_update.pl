@@ -279,10 +279,16 @@ sub install_dependencies {
     my ($code, $out) = &capture_in_repo('perl', 'scripts/jawnos_deps.pl', '--local-lib', $lib, '--no-extras', '--install');
     &log_line('perl modules: ' . &summarise($out));
     &log_line("perl modules: install failed (code kept, exit $code)") if $code;
-    ($code, $out) = &capture_in_repo('perl', 'scripts/jawnos_deps.pl', '--extras-only', '--install');
-    &log_line('extras: ' . &summarise($out));
-    &log_line("extras: install failed (code kept, exit $code)") if $code;
-    return 1;
+    	($code, $out) = &capture_in_repo('perl', 'scripts/jawnos_deps.pl', '--extras-only', '--install');
+    	&log_line('extras: ' . &summarise($out));
+    	&log_line("extras: install failed (code kept, exit $code)") if $code;
+    	# The system packages the new tree needs. This runs as the person: with
+    	# passwordless sudo they are installed here; otherwise the request is left
+    	# for the manager to ask about when the session opens.
+    	($code, $out) = &capture_in_repo('perl', 'scripts/jawnos_deps.pl', '--after-update');
+    	&log_line('system packages: ' . &summarise($out));
+    	&log_line("system packages: check failed (code kept, exit $code)") if $code;
+    	return 1;
 }
 
 sub compiles {

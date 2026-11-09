@@ -33,6 +33,8 @@ sub routes {
 	[50006, 'post', '/manager/configure/qa_run', 'action_50006'],
 	[50007, 'post', '/manager/configure/coding_push_repo', 'action_50007'],
 	[50008, 'get', '/manager/configure/qa_reports', 'action_50008'],
+	[50009, 'get', '/manager/configure/deps_pending', 'action_50009'],
+	[50010, 'post', '/manager/configure/deps_install', 'action_50010'],
 	);
 }
 

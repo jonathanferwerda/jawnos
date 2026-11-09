@@ -455,6 +455,61 @@ sub install_local_modules {
 	}
 }
 
+# The system-package half of an update: core commands and the desktop extras
+# (Qt WebEngine, the emoji font) a new version may name. --after-update installs
+# them with sudo -n when that needs no password, and otherwise leaves a request
+# in ~/.president/deps-pending.json for the manager to ask a person about. It is
+# best effort: a dependency problem is logged and the new code stands.
+sub install_system_dependencies {
+	my ($repo) = @_;
+	$repo = '.' unless defined $repo && length $repo;
+	return { ok => 0, error => 'no scripts/jawnos_deps.pl in the tree' }
+		unless -f "$repo/scripts/jawnos_deps.pl";
+	# A package manager can take minutes on a slow mirror; never let the worker
+	# that asked wait forever. 600s is the ceiling the boot updater allows.
+	my $timeout = -x '/usr/bin/timeout' ? '/usr/bin/timeout 600 ' : '';
+	my $out = `cd "$repo" && $timeout"$^X" scripts/jawnos_deps.pl --after-update 2>&1`;
+	my $result;
+	for my $line ( split /\n/, (defined $out ? $out : '') ) {
+		next unless $line =~ /^JAWNOS_DEPS_RESULT=(\{.*\})\s*$/;
+		$result = eval { decode_json($1) };
+		last if $result;
+	}
+	$result = { ok => 0, error => 'the dependency checker did not answer' }
+		unless ref $result eq 'HASH';
+	if ($subs::logfile) {
+		my $note;
+		if ($result->{'ok'}) { $note = 'all good'; }
+		elsif ($result->{'output'} && length $result->{'output'}) {
+			my $said = join(' ', grep { /\S/ } split /\n/, $result->{'output'});
+			$said = substr($said, 0, 300) . '...' if length $said > 300;
+			$note = 'install failed: ' . join(', ', @{ $result->{'packages'} || [] }) . " ($said)";
+		}
+		elsif ($result->{'need_root'}) {
+			$note = 'waiting for the root password: ' . join(', ', @{ $result->{'packages'} || [] });
+		}
+		else { $note = $result->{'reason'} || $result->{'error'} || 'could not check'; }
+		open(my $fh, '>>', $subs::logfile);
+		print $fh &subs::rightNow() . " dependencies: $note\n";
+		close $fh;
+	}
+	return $result;
+}
+
+# The request install_system_dependencies leaves when sudo wants a password.
+# The controller serves it and the manager asks; the file is per machine, never
+# synced, because packages are.
+sub deps_pending_read {
+	my $path = &subs::home('~/.president/deps-pending.json');
+	return undef unless -f $path;
+	open(my $fh, '<', $path) or return undef;
+	local $/;
+	my $raw = <$fh>;
+	close $fh;
+	my $data = eval { decode_json(defined $raw ? $raw : '') };
+	return (ref $data eq 'HASH') ? $data : undef;
+}
+
 # Ask the master to reboot the tree, saying why. A worker writes the status file
 # on purpose: it is fire-and-forget, which is what a worker about to be killed by
 # the restart needs, and the reason rides along into ~/.president/restart.json

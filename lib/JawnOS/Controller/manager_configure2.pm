@@ -459,6 +459,68 @@ sub action_10222 {
 	$c->render(json => $result);
 }
 
+# A code update that needs a system package leaves this request when sudo asks
+# for a password. The manager reads it on start (and the Dev panel asks again),
+# lists the packages that would be installed, and takes the password there.
+# GET /manager/configure/deps_pending
+sub action_50009 {
+	my $c = shift;
+	$c->render(json => {
+		pending => &subs::deps_pending_read() || undef,
+		local   => &deps_request_is_local($c) ? 1 : 0,
+	});
+}
+
+# POST /manager/configure/deps_install
+# sudo -v spends the password to refresh the sudo timestamp; it travels on
+# stdin, never in an argument and never into a log. The same --after-update the
+# watcher ran then installs with sudo -n, so there is one implementation.
+sub action_50010 {
+	my $c = shift;
+	$c->inactivity_timeout(600);
+	unless (&deps_request_is_local($c)) {
+		$c->render(json => { ok => 0, error => 'Only this machine can install its own packages.' });
+		return;
+	}
+	my $password = $c->param('password');
+	unless (defined $password && length $password) {
+		$c->render(json => { ok => 0, error => 'Enter the root password.' });
+		return;
+	}
+	my $verified = 0;
+	{
+		# sudo may exit before it reads the line when its timestamp is still
+		# valid; a SIGPIPE on our write must not become a server error.
+		local $SIG{'PIPE'} = 'IGNORE';
+		if (open(my $fh, '|-', 'sudo', '-S', '-p', '', '-v')) {
+			print $fh $password, "\n";
+			close $fh;
+			$verified = ($? == 0) ? 1 : 0;
+		}
+	}
+	$password = '';
+	unless ($verified) {
+		$c->render(json => { ok => 0, error => 'That password was not accepted.' });
+		return;
+	}
+	my $result = &subs::install_system_dependencies(&subs::home('~/jawnos'));
+	$result->{'pending'} = &subs::deps_pending_read();
+	$result->{'local'} = 1;
+	$c->render(json => $result);
+}
+
+# A root password may only be entered at this machine's own console. A phone or
+# a peer that reached the Manager over the mesh must not be able to install
+# packages here, so the same loopback/local-address rule the padlock uses.
+sub deps_request_is_local {
+	my ($c) = @_;
+	my $local = $c->tx->local_address || '';
+	my $remote = $c->tx->remote_address || '';
+	return 1 if $local && $remote && $local eq $remote;
+	return 1 if $remote =~ /^(?:127\.|::1$|::ffff:127\.)/;
+	return 0;
+}
+
 # POST /manager/configure/remote_device_disconnect
 sub action_11684 {
 	my $c = shift;

@@ -861,13 +861,22 @@ sub update_now {
 	# is a cheap no-op after the updater.
 	&subs::install_local_modules($repo)
 		if $status eq 'updated' || $status eq 'reset' || $status eq 'peer/updated';
+	# The system packages the new tree names (core commands and the desktop
+	# extras) are the half a person may have to authorise: install_system_dependencies
+	# uses sudo -n when it can and otherwise writes the request the manager asks
+	# about after the restart.
+	my $dependencies;
+	if ($status eq 'updated' || $status eq 'reset' || $status eq 'peer/updated') {
+		$dependencies = &subs::install_system_dependencies($repo);
+	}
 	# A pull rewrites ./VERSION under this live process, so the cached number is
 	# the one from before the update. Forget it here and whoever asks next (the
 	# update route paints it into the Configure bar) reads the new version.
 	if ($status eq 'updated' || $status eq 'reset' || $status eq 'peer/updated') {
 		&subs::jawn_version_forget();
 	}
-	return { status => $status, output => $out, source => $source, method => $method };
+	return { status => $status, output => $out, source => $source, method => $method,
+		(defined $dependencies ? (dependencies => $dependencies) : ()) };
 }
 
 1;

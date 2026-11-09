@@ -130,6 +130,10 @@ sub git_watcher_check {
 	# Perl module to `use`; both are user-side and best effort
 	&subs::install_extras();
 	&subs::install_local_modules('.');
+	# ...and a new system package (Qt WebEngine, the emoji font). Installed at
+	# once when sudo needs no password; otherwise left as a request the manager
+	# puts to a person after the restart.
+	&subs::install_system_dependencies('.');
 	my $after_commit = `git rev-parse --short HEAD 2>/dev/null`;
 	chomp $after_commit;
 	my $from = substr($before, 0, 10);

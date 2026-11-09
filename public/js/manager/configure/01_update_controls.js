@@ -52,6 +52,144 @@ $(document).on('click', '#update_now_button', function() {
 	post(0);
 });
 
+// ---- system dependencies a code update left for a person ---------------------
+// scripts/jawnos_deps.pl --after-update installs the system packages a new tree
+// needs when sudo already works without a password. When it does not, it leaves
+// a request; this lists what would be installed and asks for the password at
+// the machine that owns the packages. The password goes to sudo on stdin and is
+// never written anywhere else.
+var jawnos_deps_pending = null;
+
+function jawnosDepsT(s) { return (typeof jawnosT === 'function') ? jawnosT(s) : s; }
+
+function jawnosDepsPackageList(pending) {
+	var missing = (pending && pending.missing) || [];
+	var out = [];
+	for (var i = 0; i < missing.length; i++) {
+		var m = missing[i] || {};
+		var label = m.label || '';
+		var pkg = m.package || '';
+		out.push(label && pkg && label != pkg ? (label + ' — ' + pkg) : (label || pkg));
+	}
+	return out;
+}
+
+function jawnosDepsCard() {
+	var button = $('#deps_pending_button');
+	if (!button.length) { return; }
+	var pending = jawnos_deps_pending;
+	if (!pending) {
+		button.hide();
+		$('#deps_pending_status').text('');
+		return;
+	}
+	var pkgs = (pending.packages || []).filter(function (p) { return !!p; });
+	$('#deps_pending_status').text(jawnosDepsT('system packages waiting:') + ' ' + pkgs.join(', '));
+	button.show();
+}
+
+function jawnosDepsPrompt(pending) {
+	if (!pending) { return; }
+	jawnosAlert('', { title: jawnosDepsT("Install the update's system packages") });
+	var body = $('#alert').empty();
+	body.append($('<p>').text(jawnosDepsT('The update needs system packages that are not installed:')));
+	var list = $('<ul class="deps_pending_list"></ul>');
+	$.each(jawnosDepsPackageList(pending), function (i, text) {
+		list.append($('<li>').text(text));
+	});
+	body.append(list);
+	var commands = pending.commands || [];
+	if (commands.length) {
+		body.append($('<p>').text(jawnosDepsT('They are installed with:')));
+		body.append($('<pre class="deps_pending_commands"></pre>').text(commands.join('\n')));
+	}
+	var row = $('<div class="deps_pending_form"></div>');
+	row.append($('<label for="deps_root_password"></label>').text(jawnosDepsT('Root password')));
+	row.append($('<input type="password" id="deps_root_password" autocomplete="new-password">'));
+	body.append(row);
+	var buttons = $('<div class="deps_pending_buttons"></div>');
+	buttons.append($('<button type="button" id="deps_install" class="button"></button>').text(jawnosDepsT('Install')));
+	buttons.append($('<button type="button" id="deps_later" class="button"></button>').text(jawnosDepsT('Not now')));
+	body.append(buttons);
+	body.append($('<div id="deps_pending_dialog_status" class="device_when"></div>'));
+	body.append($('<pre id="deps_pending_output" class="deps_pending_commands" style="display:none;"></pre>'));
+	$('#deps_root_password').focus();
+}
+
+function jawnosDepsCheck(force) {
+	$.ajax({
+		url: '/manager/configure/deps_pending',
+		type: 'GET',
+		dataType: 'json',
+		cache: false,
+		success: function (r) {
+			var pending = (r && r.pending) ? r.pending : null;
+			jawnos_deps_pending = pending;
+			jawnosDepsCard();
+			if (!pending || !r.local) { return; }
+			var dismissed = '';
+			try { dismissed = localStorage.getItem('jawnos_deps_dismissed') || ''; } catch (e) {}
+			if (!force && dismissed && dismissed == String(pending.timestamp)) { return; }
+			// a dialog already on screen is the person's to answer; do not rebuild
+			// it under their hands when the Dev listing refreshes
+			if ($('#deps_install').length) { return; }
+			jawnosDepsPrompt(pending);
+		}
+	});
+}
+
+$(document).on('click', '#deps_later', function () {
+	try {
+		if (jawnos_deps_pending && jawnos_deps_pending.timestamp) {
+			localStorage.setItem('jawnos_deps_dismissed', String(jawnos_deps_pending.timestamp));
+		}
+	} catch (e) {}
+	jawnosAlertClose();
+});
+
+$(document).on('click', '#deps_install', function () {
+	var button = $(this);
+	var status = $('#deps_pending_dialog_status');
+	var field = $('#deps_root_password');
+	var password = field.val();
+	field.val('');
+	if (!password) { status.text(jawnosDepsT('Enter the root password.')); return; }
+	button.attr('disabled', 'disabled');
+	status.text(jawnosDepsT('installing…'));
+	$.ajax({
+		url: '/manager/configure/deps_install',
+		type: 'POST',
+		dataType: 'json',
+		data: { password: password, timestamp: Date.now() },
+		success: function (r) {
+			button.removeAttr('disabled');
+			if (r && r.ok && !r.pending) {
+				status.text(jawnosDepsT('installed.'));
+				jawnos_deps_pending = null;
+				jawnosDepsCard();
+				try { localStorage.removeItem('jawnos_deps_dismissed'); } catch (e) {}
+				setTimeout(function () { jawnosAlertClose(); }, 1500);
+				return;
+			}
+			jawnos_deps_pending = (r && r.pending) ? r.pending : jawnos_deps_pending;
+			jawnosDepsCard();
+			var output = $('#deps_pending_output');
+			if (r && r.output) { output.text(r.output).show(); } else { output.text('').hide(); }
+			status.text((r && (r.error || r.reason)) ? (r.error || r.reason) : jawnosDepsT('the packages were not installed.'));
+		},
+		error: function () {
+			button.removeAttr('disabled');
+			status.text(jawnosDepsT('could not install the packages.'));
+		}
+	});
+});
+
+$(document).on('click', '#deps_pending_button', function () {
+	jawnosDepsCheck(true);
+});
+
+$(document).ready(function () { jawnosDepsCheck(); });
+
 // A custom notification sound: the file is uploaded to the house, which files it
 // beside the shipped ones, and every sound select is re-drawn so the new one can
 // be picked (here and on any other app's Notifications panel)
@@ -529,6 +667,7 @@ function deviceLister() {
 		success: function(response) {
 			var keep = gimmeInputSnapshot(c);
 			c.html(response);
+			jawnosDepsCheck();
 			printerInkLoad(c);
 			printerQueuesLoad(c);
 			deviceListerRestoreButtons(c);
