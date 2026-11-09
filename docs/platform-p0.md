@@ -71,6 +71,39 @@ and slice 4 moved the websocket worker, mailws, alarm and memory surfaces to
 the same transport. What a clean run still proves is the process model (one
 Daemon, a pipe, no `use threads`) and the go/no-go that follows it.
 
+### Smoke result — 2026-11-09, v0.1.2474
+
+Run from a spare worktree on the house box, with a temp `HOME`, a temp database
+built from `database/schema.sql`, `JAWNOS_PORTABLE=1`, `JAWNOS_TRANSPORT=tcp`
+and a free port range (working_port 46200, port 46300, ws 46301).
+
+| Check | Result |
+|---|---|
+| 1. panel answers on the working port | pass (200) |
+| 2. one process per purpose, no Prefork parent or worker pool | pass |
+| 3. `starting fork`, conduit a pipe (fd1 `pipe:[…]`) | pass |
+| 4. restart through `scripts/restart.pl` returns and the tree comes back | **fail** — the tree exited (status `frozen`, `signal=0`), panel `000` |
+| 5. log view and process watch answer | pass (watch bound on 46207-46209) |
+
+The restart failure was not the transport. `shut_down` swept `/proc` by command
+line and `scripts/manager_killer.pl` matched every `President.pl` on the box, so
+the smoke master stopped the live house's tree and the live master stopped the
+smoke's — twice during the run, each time recovered by the master watchdog. To
+the old sweep, two checkouts on one box were one tree.
+
+Fixed in the same version: both sweeps are now held to the checkout they belong
+to. The master chdirs to its root before it starts a child, so a child's cwd
+names its checkout; `manager_killer.pl --cwd=DIR` keeps tree and master matches
+to that directory, `shut_down` passes its root, and the master's own leftover
+loop asks `pid_in_tree`. A cwd the kernel will not show (Android/SELinux, or no
+`/proc`) keeps the old answer, so a stop is never missed. Shared helpers
+(ollama, tts, ssh) are deliberately not scoped: they belong to the host, not a
+checkout. `t/78` pins the two-checkout case.
+
+Still to prove: checks 1-5 on a machine that serves nothing, recorded here. Do
+not start a master from a worktree on the house box; the sweep is scoped now,
+but the master also writes `~/.president`, which is the serving master's state.
+
 ## Slice 2 (landed)
 
 `lib/JawnOS/Transport.pm` is the one place that knows where the master's private
@@ -173,8 +206,9 @@ the binder ask `ws_server_ensure`, so a second bind cannot take the port.
   trips for memory, ws and alarm; `t/222`/`t/223` cover the new kinds and the
   wiring; `t/221` covers the no-PERL5LIB boot.
 
-The remaining P0 work is the portable smoke house on a spare checkout and the
-written go/no-go; no source change is needed for either.
+The remaining P0 work is the portable smoke house on a spare machine and the
+written go/no-go. The checkout scope above is the one source change that run
+forced.
 
 ## Hardware gate
 

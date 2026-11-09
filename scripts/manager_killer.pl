@@ -43,17 +43,27 @@ use Time::HiRes qw(sleep);
 #   perl scripts/manager_killer.pl master     # the master too (the app's Stop)
 #   perl scripts/manager_killer.pl --list     # what would be signalled
 #   perl scripts/manager_killer.pl --scope=DIR --list
+#   perl scripts/manager_killer.pl --cwd=DIR  # only this checkout's tree
 #
 # --scope keeps only processes whose command line contains DIR. It is how the
 # regression suite drives this without touching the live house.
+#
+# --cwd keeps only tree processes whose working directory is DIR. The master
+# chdirs to its own root before it starts a single child, so a child's cwd names
+# the checkout it belongs to. Two checkouts on one box (a worktree, a smoke
+# house) start Presidents with identical command lines; without this, the
+# shutdown of one stops the tree of the other. The shared helpers (ollama, tts,
+# ssh) are not scoped: they are the host's, not a checkout's.
 
 my $kill_master = 0;
 my $list_only = 0;
 my $scope = '';
+my $cwd_scope = '';
 foreach my $arg (@ARGV) {
 	if ($arg =~ /^master$/i) { $kill_master = 1 }
 	elsif ($arg eq '--list' || $arg eq '--dry-run') { $list_only = 1 }
 	elsif ($arg =~ /^--scope=(.+)$/) { $scope = $1 }
+	elsif ($arg =~ /^--cwd=(.+)$/) { $cwd_scope = $1 }
 }
 
 my $self = $$;
@@ -79,6 +89,26 @@ sub exe_path {
 	return $link if defined $link && length $link;
 	my ($first) = split /\s+/, &cmdline($pid);
 	return defined $first ? $first : '';
+}
+
+# The checkout a process belongs to, read from its own cwd link. Undefined when
+# the kernel will not show it (Android/SELinux, or a box without /proc) - the
+# caller then keeps the old behaviour rather than missing its own tree.
+sub cwd_of {
+	my ($pid) = @_;
+	return undef unless $pid && $pid =~ /^[0-9]+$/;
+	my $dir = readlink("/proc/$pid/cwd");
+	return undef unless defined $dir && length $dir;
+	$dir =~ s/ \(deleted\)$//;
+	return $dir;
+}
+
+sub in_cwd_scope {
+	my ($pid) = @_;
+	return 1 unless length $cwd_scope;
+	my $dir = &cwd_of($pid);
+	return 1 unless defined $dir && length $dir;
+	return $dir eq $cwd_scope ? 1 : 0;
 }
 
 sub base {
@@ -169,6 +199,9 @@ sub scan_processes {
 		elsif (&is_tree($cmd, $exe)) { $label = 'tree' }
 		else { $label = &extra($cmd, $exe) }
 		next unless $label;
+		# A tree or master belongs to a checkout; a shared helper belongs to the
+		# host. Only the former is held to --cwd.
+		next if $label =~ /^(?:master|tree)$/ && !&in_cwd_scope($pid);
 		push @found, { pid => $pid, label => $label, cmd => $cmd };
 	}
 	closedir $procs;
@@ -221,6 +254,7 @@ unless ($list_only || $scope) {
 	foreach my $pid (sort { $a <=> $b } keys %listeners) {
 		next if $pid == $self || $pid == $parent;
 		next unless &running($pid);
+		next unless &in_cwd_scope($pid);
 		kill 'KILL', $pid;
 		print "KILL $pid listener\n";
 	}

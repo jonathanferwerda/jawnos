@@ -50,7 +50,7 @@ use Fcntl qw/F_SETFD FD_CLOEXEC/;
 use POSIX qw/WNOHANG/;
 use File::Slurp;
 use File::Path qw/remove_tree/;
-use Cwd qw(abs_path);
+use Cwd qw(abs_path getcwd);
 use Mojo::File 'path';
 use Mojo::Log;
 use Mojo::JSON qw/decode_json encode_json/;
@@ -802,11 +802,18 @@ sub shut_down() {
 	# command line, and whatever still holds the web port. (2026-10-14: this used to
 	# be followed by pid-as-substring matches against `ps -e`, which once matched a
 	# freshly-started President and killed the boot. Only exact, verified pids now.)
+	# The checkout this master owns. A second checkout on the same box (a
+	# worktree, a smoke house) starts Presidents with the same command line, so
+	# the sweep below stops the live house unless it is held to this directory.
+	# The master chdir'd to its root before any child existed, so a child's cwd
+	# is the checkout it belongs to.
+	my $root = getcwd();
+	(my $root_q = defined $root ? $root : '') =~ s/'/'\\''/g;
 	# run it with this interpreter, not by its shebang: on Termux perl is not at
 	# /usr/bin/perl, so './scripts/manager_killer.pl' fails to exec and the sweep
 	# silently never runs (leftover processes keep the web port and wedge the
 	# next boot). $^X is the interpreter running this master.
-	`"$^X" ./scripts/manager_killer.pl`;
+	`"$^X" ./scripts/manager_killer.pl --cwd='$root_q'`;
 	# the pids the tree reported to the master, each by its exact number and only
 	# when its command line still names a jawn program - never a substring match, so
 	# a reused pid (or a new process whose number merely contains an old one) is
@@ -866,8 +873,9 @@ sub shut_down() {
 			# avahi-publish-service (ppid 1) and it then keeps advertising the dead
 			# tree's ports. Match only our service name, not every avahi publication.
 			push @leftovers, $pid
-				if $cmd =~ /President\.pl|Manager\.pl|Websocket\.pl|teletype\.pl|watch\.pl|jawn-bt|Music\.pl|Alarm\.pl/
-				|| ($cmd =~ /avahi-publish-service/ && $cmd =~ /_jawnos-house\._tcp/);
+				if (&pid_in_tree($pid, $root))
+				&& ($cmd =~ /President\.pl|Manager\.pl|Websocket\.pl|teletype\.pl|watch\.pl|jawn-bt|Music\.pl|Alarm\.pl/
+				|| ($cmd =~ /avahi-publish-service/ && $cmd =~ /_jawnos-house\._tcp/));
 		}
 		closedir $procs;
 	}
@@ -916,6 +924,29 @@ sub pid_cmdline {
 sub pid_is_jawn {
 	my ($pid) = @_;
 	return &pid_cmdline($pid) =~ /President\.pl|Manager\.pl|Websocket\.pl|teletype\.pl|watch\.pl|jawn-bt|Music\.pl|Alarm\.pl/ ? 1 : 0;
+}
+
+# The checkout a pid belongs to, from its own cwd link. Undefined when the
+# kernel will not show it (Android/SELinux, or a box without /proc).
+sub pid_cwd {
+	my ($pid) = @_;
+	return undef unless $pid && $pid =~ /^[0-9]+$/;
+	my $dir = readlink("/proc/$pid/cwd");
+	return undef unless defined $dir && length $dir;
+	$dir =~ s/ \(deleted\)$//;
+	return $dir;
+}
+
+# True when the pid is ours or the answer is unknowable. A pid we can place in
+# another checkout is left alone: a worktree or a smoke house on the same box
+# starts Presidents that this sweep would otherwise stop. A pid we cannot place
+# keeps the old answer, because a missed stop wedges the next boot.
+sub pid_in_tree {
+	my ($pid, $root) = @_;
+	return 1 unless defined $root && length $root;
+	my $dir = &pid_cwd($pid);
+	return 1 unless defined $dir && length $dir;
+	return $dir eq $root ? 1 : 0;
 }
 
 # The ppid from /proc/<pid>/stat. The second field is "(comm)", which can hold
