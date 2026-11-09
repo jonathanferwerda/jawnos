@@ -236,8 +236,9 @@ the binder ask `ws_server_ensure`, so a second bind cannot take the port.
   trips for memory, ws and alarm; `t/222`/`t/223` cover the new kinds and the
   wiring; `t/221` covers the no-PERL5LIB boot.
 
-The remaining P0 work is the written go/no-go; the smoke house now runs on a
-spare machine, and the checkout scope above is the one source change it forced.
+The remaining P0 work is the written go/no-go, which now lives in
+`docs/platform-go-no-go.md`; the smoke house runs on a spare machine, and the
+checkout scope above is the one source change it forced.
 
 ## Hardware gate
 
@@ -307,5 +308,6 @@ against the `Must` rows in `docs/platform-roadmap.md` §7.
 - the probe is green on Linux, macOS and Windows (CI at least);
 - a portable smoke house on Linux serves the panel, logs, and restarts;
 - the suite is green with `JAWNOS_PORTABLE=1`;
-- a written go/no-go on the Windows process model, with the fork surface named;
+- the written go/no-go on the Windows process model, with the fork surface
+  named (`docs/platform-go-no-go.md`);
 - the hardware checklist is ready before the machines arrive (this file).

@@ -426,3 +426,6 @@ Before P3 is declared feasible, the P0 spike must answer:
 8. Do the XS modules build and load under the chosen Strawberry Perl?
 9. Do the fixed and tunnel port ranges pass Windows Firewall on a private network?
 10. Does the Qt shell's `--probe`, the app-key bridge and the plain loopback WS path all pass?
+
+Answered for v0.1.2477 in `docs/platform-go-no-go.md` — decision: GO, with the
+open rows and the two that could still stop it named there.
