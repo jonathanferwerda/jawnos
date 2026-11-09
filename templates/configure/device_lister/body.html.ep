@@ -7,6 +7,7 @@
 		<span id="ping_results" style="opacity:.85;"></span>
 	</div>
 	<div id="device_listings">
+		<%= include 'configure/device_lister/join_house' %>
 		<%# The mesh's own switch. It lives here because the Dev panel is where the
 		    machines are, and the value is a house setting: every machine's next
 		    settings pull carries it, and the reconnector reads it each pass. %>

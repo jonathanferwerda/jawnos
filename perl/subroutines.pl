@@ -748,6 +748,10 @@ our $tier_required = [
 our %tier_rank = ( guest => 1, resident => 2, citizen => 3 );
 our $SPEED_MEASURE_GAP_MS = 60000;   # one reading a minute
 our $SPEED_MEASURE_CAP = 500;        # a single appointment keeps this many at most
+# A join request is only a short introduction: ten minutes is long enough for a
+# person to read a code out loud and type it on the other machine, and every read
+# deletes a request older than this.
+our $JOIN_REQUEST_TTL_MS = 600000;
 
 # The clocks a trend is read from, the same scopes the inventory graphs. Each is
 # summarised for the last few periods (oldest first) rather than one span's

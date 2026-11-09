@@ -748,6 +748,166 @@ sub action_12364 {
 
 }
 
+# POST /manager/configure/join_request
+# The mesh only ever refreshed a peer it already knew, so a new machine had no
+# way in. This is the first half of the introduction: the machine that wants to
+# join makes a short code and hands the house a pending request. The request
+# lives ten minutes (JOIN_REQUEST_TTL_MS), long enough to read the code out loud
+# and type it on the other machine; every read deletes an older one.
+sub action_12450 {
+	my $c = shift;
+	my $now = &subs::rightNow();
+	# A forwarded request comes from a machine the house has never met: it has no
+	# session and no pinned key, so this branch records the pending request and
+	# nothing else. Possession of the code still buys nothing without a citizen
+	# accepting it on the house side.
+	if ($c->param('forward')) {
+		my $code = $c->param('code') || '';
+		return $c->render(json => { ok => 0, error => 'no code' }) unless $code =~ /^\d{6}$/;
+		my $address = $c->param('address') || '';
+		return $c->render(json => { ok => 0, error => 'no address' }) unless length $address;
+		# A repeated code replaces the earlier request rather than stacking up.
+		&subs::db_query('delete from cache where context = ? and server_time < ?', 'join_request', $now - $subs::JOIN_REQUEST_TTL_MS);
+		&subs::db_delete('cache', { context => 'join_request', subcontext => $code });
+		my $data = {
+			code => $code,
+			address => $address,
+			name => $c->param('name') || '',
+			signatorial => $c->param('signatorial') || '',
+			pubkey => $c->param('pubkey') || '',
+			device => $c->param('device') || '',
+			ost => $c->param('ost') || '',
+			version => $c->param('version') || '',
+			port => $c->param('port') || '',
+		};
+		&subs::db_insert('cache', {
+			uuid => &subs::random_string_creator(15),
+			context => 'join_request',
+			subcontext => $code,
+			app => '__president',
+			data => encode_json($data),
+			server_time => $now,
+			timestamp => $now,
+		});
+		# This rail answers anyone, so keep the pending list bounded.
+		&subs::db_query("delete from cache where context = 'join_request' and uuid not in (select uuid from cache where context = 'join_request' order by server_time desc limit 50)");
+		return $c->render(json => { ok => 1, code => $code });
+	}
+	unless (($c->session('authentication') || '') eq 'approved' && ($c->session('privilege') || '') eq 'citizen') {
+		return $c->render(json => { ok => 0, error => 'citizen only' });
+	}
+	my $target = $c->param('address') || '';
+	$target =~ s/^\s+|\s+$//g;
+	$target =~ s{/+$}{};
+	return $c->render(json => { ok => 0, error => 'enter the house address' }) unless $target =~ /^[A-Za-z0-9._:-]+$/;
+	my $code = &subs::random_string_creator(6, '0-9');
+	my $name = &subs::machine_name() || '';
+	my $signatorial = &subs::signatorial_designer() || '';
+	my $pubkey = &subs::peer_pubkey() || '';
+	my $port = $ENV{PORT_AHOY} || $config->{'working_port'} || $config->{'port'} || '';
+	my $self_address = ($config->{'domain'} || '127.0.0.1') . (length $port ? ':' . $port : '');
+	my $identity = {
+		code => $code,
+		name => $name,
+		signatorial => $signatorial,
+		pubkey => $pubkey,
+		device => &subs::device_setter(),
+		ost => $^O,
+		version => &subs::jawn_version(),
+		port => $port,
+	};
+	my $data = { %{$identity}, address => $target };
+	&subs::db_query('delete from cache where context = ? and server_time < ?', 'join_request', $now - $subs::JOIN_REQUEST_TTL_MS);
+	&subs::db_insert('cache', {
+		uuid => &subs::random_string_creator(15),
+		context => 'join_request',
+		subcontext => $code,
+		app => '__president',
+		data => encode_json($data),
+		server_time => $now,
+		timestamp => $now,
+	});
+	# The code is only useful where the person will type it, so hand the pending
+	# request to the house as well. A house that cannot be reached is reported,
+	# not hidden: the code is real here but cannot be accepted there.
+	my $base = $target =~ m{^https?://} ? $target : 'https://' . $target;
+	# The house needs this machine's address, not its own; keep the target in the
+	# local row (what the person asked for) and send the self address across.
+	my $forward = { %{$identity}, address => $self_address };
+	my $res = eval {
+		Mojo::UserAgent->new->insecure(1)->inactivity_timeout(10)->request_timeout(20)
+			->post($base . '/manager/configure/join_request' => form => { forward => 1, %{$forward} })->result;
+	};
+	my $delivered = 0;
+	if ($res) {
+		my $answer = eval { decode_json $res->body } || {};
+		$delivered = $answer->{'ok'} ? 1 : 0;
+	}
+	$c->render(json => { ok => 1, code => $code, delivered => $delivered, expires => $subs::JOIN_REQUEST_TTL_MS });
+}
+
+# POST /manager/configure/join_accept
+# The house's half: a citizen reads the code the new machine showed, and this
+# writes the peer row the mesh needs. The grant is the one the house gives its
+# own phone and tablet - citizen, trusted, no expiry - and it is written through
+# peer_grant_setter so the lease rules stay in one place. A code is spent by the
+# accept: the pending row is deleted before the row is written, so a second press
+# cannot use it again.
+sub action_12451 {
+	my $c = shift;
+	unless (($c->session('authentication') || '') eq 'approved' && ($c->session('privilege') || '') eq 'citizen') {
+		return $c->render(json => { ok => 0, error => 'citizen only' });
+	}
+	my $code = $c->param('code') || '';
+	$code =~ s/\s+//g;
+	return $c->render(json => { ok => 0, error => 'enter the six-digit code' }) unless $code =~ /^\d{6}$/;
+	my $now = &subs::rightNow();
+	&subs::db_query('delete from cache where context = ? and server_time < ?', 'join_request', $now - $subs::JOIN_REQUEST_TTL_MS);
+	my $pending = &subs::db_select('cache', undef, { context => 'join_request', subcontext => $code })->hash;
+	return $c->render(json => { ok => 0, error => 'that code is not waiting, or it has expired' }) unless $pending;
+	my $data = eval { decode_json($pending->{'data'}) } || {};
+	my $address = $c->param('address') || $data->{'address'} || '';
+	my $name = $c->param('name') || $data->{'name'} || '';
+	return $c->render(json => { ok => 0, error => 'the request carries no address' }) unless length $address;
+	# One use only: spend the code before anything else can find it.
+	&subs::db_delete('cache', { uuid => $pending->{'uuid'} });
+	my $addr = $address;
+	$addr =~ s{^https?://}{};
+	$addr =~ s{/.*$}{};
+	my ($host, $addr_port) = $addr =~ /^(.+?)(?::(\d+))?$/;
+	my $port = $addr_port || $data->{'port'} || '';
+	my $manager = 'https://' . $host . (length $port ? ':' . $port : '') . '/manager';
+	my $signatorial = $data->{'signatorial'} || '';
+	# A pending request comes from a stranger, so keep only shapes the roster can
+	# use: a signatorial the mesh defines and a PEM public key.
+	$signatorial = '' unless $signatorial =~ /^[0-9a-fA-F]{16,64}$/;
+	my $pubkey = $data->{'pubkey'} || '';
+	$pubkey = '' unless index($pubkey, '-----BEGIN PUBLIC KEY-----') == 0;
+	my $known = $signatorial ? &subs::db_select('remote_machines', undef, { signatorial => $signatorial })->hash : undef;
+	my $uuid = ($known && $known->{'uuid'}) ? $known->{'uuid'} : &subs::random_string_creator(15);
+	my $row = {
+		uuid => $uuid,
+		ip => $host,
+		fqdn => $host,
+		port => $port,
+		manager => $manager,
+		signatorial => $signatorial,
+		pubkey => $pubkey,
+		hostname => $name,
+		device => $data->{'device'} || '',
+		ost => $data->{'ost'} || '',
+		status => 'connected',
+		connection => 'active',
+		server_time => $now,
+		timestamp => $now,
+	};
+	if ($known) { &subs::db_update('remote_machines', $row, { uuid => $uuid }); }
+	else { &subs::db_insert('remote_machines', $row); }
+	# The same grant a citizen's own phone and tablet carry.
+	&subs::peer_grant_setter({ uuid => $uuid, scope => 'trusted', privilege => 'citizen', expires => '' });
+	$c->render(json => { ok => 1, uuid => $uuid, name => $name, address => $host . (length $port ? ':' . $port : '') });
+}
+
 # GET /manager/configure/qa_device_ready
 sub action_50001 {
 	my $c = shift;

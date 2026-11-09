@@ -307,6 +307,10 @@ sub app_public_path {
 	return 1 if $path =~ m{^/pay(?:/|$)};
 	return 1 if $path eq '/sesh_check' || $path eq '/gate';
 	return 1 if $path eq '/manager/health';
+	# A machine being introduced has no app key and no pinned peer key yet; the
+	# route records only a ten-minute pending request (or a forwarded one), and
+	# nothing is granted until a citizen accepts the code on this house.
+	return 1 if $path eq '/manager/configure/join_request';
 	# A peer pushes its own row here after a scheduled wake; health_allowed is
 	# the gate (loopback, an approved session, or a signed peer).
 	return 1 if $path eq '/manager/health_report';

@@ -559,3 +559,65 @@ $(document).on('click', '.printer_sync', function() {
 		complete: function() { button.prop('disabled', false); }
 	});
 });
+
+// The mesh had no way to introduce a machine it had never met. The machine that
+// wants in asks for a six-digit code, and the house reads that code back to
+// accept it. The code lives ten minutes; the server enforces that window.
+$(document).on('click', '.join_house_request', function() {
+	var button = $(this);
+	var t = function(s) { return (typeof jawnosT === 'function') ? jawnosT(s) : s; };
+	var address = $.trim($('#join_house_address').val() || '');
+	var status = $('#join_house_request_status');
+	if (!address) { status.text(t('Enter the house address first.')); return; }
+	button.prop('disabled', true);
+	status.text(t('Asking the house…'));
+	$.ajax({
+		url: '/manager/configure/join_request',
+		type: 'POST',
+		data: { address: address, timestamp: Date.now() },
+		dataType: 'json',
+		success: function(response) {
+			if (!response || !response.ok) {
+				status.text((response && response.error) || t('The request was refused.'));
+				return;
+			}
+			var message = t('Code') + ': ' + response.code + ' — ' + t('it lasts ten minutes.');
+			if (response.delivered === 0) {
+				message += ' ' + t('The house did not answer; a code can only be accepted where it was recorded.');
+			}
+			status.text(message);
+			$('#join_house_code').val(response.code);
+		},
+		error: function() { status.text(t('The house did not answer.')); },
+		complete: function() { button.prop('disabled', false); }
+	});
+});
+
+$(document).on('click', '.join_house_accept', function() {
+	var button = $(this);
+	var t = function(s) { return (typeof jawnosT === 'function') ? jawnosT(s) : s; };
+	var code = $.trim($('#join_house_code').val() || '');
+	var name = $.trim($('#join_house_name').val() || '');
+	var status = $('#join_house_accept_status');
+	if (!/^\d{6}$/.test(code)) { status.text(t('Enter the six-digit code.')); return; }
+	button.prop('disabled', true);
+	status.text(t('Accepting…'));
+	$.ajax({
+		url: '/manager/configure/join_accept',
+		type: 'POST',
+		data: { code: code, name: name, timestamp: Date.now() },
+		dataType: 'json',
+		success: function(response) {
+			if (!response || !response.ok) {
+				status.text((response && response.error) || t('That code was refused.'));
+				return;
+			}
+			status.text(t('Joined') + (response.name ? ': ' + response.name : '') + '.');
+			$('#join_house_code').val('');
+			$('#join_house_name').val('');
+			setTimeout(function() { deviceLister(); }, 1200);
+		},
+		error: function() { status.text(t('The house did not accept the code.')); },
+		complete: function() { button.prop('disabled', false); }
+	});
+});

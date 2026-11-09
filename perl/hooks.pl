@@ -306,6 +306,10 @@ Manager::app->hook(before_dispatch => sub {
 		# a peer's scheduled wake announces that it is briefly up and its rows have
 		# moved; this machine's own sync pass decides and pulls over the same rail
 		$path eq '/manager/available' ||
+		# a machine being introduced has no session and no pinned key yet; the
+		# route records only a ten-minute pending request (and its forward), and
+		# grants nothing until a citizen accepts the code on this house
+		$path eq '/manager/configure/join_request' ||
 		# the QA readiness, schedule and reports cards ask a linked machine what it
 		# has, which timers it holds and which runs it finished. Their *_for
 		# helpers deliberately drop the stored cookie, so the request arrives with

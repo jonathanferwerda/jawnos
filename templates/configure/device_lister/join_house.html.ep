@@ -1,0 +1,25 @@
+<%# The mesh only ever refreshed peers it already knew, so a machine with no row
+    had no way in. This card is both ends of the introduction: the machine that
+    wants to join asks for a short code, and the house reads it back to accept. %>
+<div class="device_card" id="join_house_card">
+	<div class="device_head">
+		<span class="network_cidr"><%= &subs::ui('Join a house') %></span>
+		<span class="device_when"><%= &subs::ui('A code lasts ten minutes') %></span>
+	</div>
+	<div class="device_nic" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+		<label for="join_house_address"><%= &subs::ui('House address') %></label>
+		<input type="text" id="join_house_address" placeholder="<%= &subs::ui('host or host:port') %>" autocomplete="off">
+		<button class="join_house_request" type="button"><%= &subs::ui('Request to join') %></button>
+		<span id="join_house_request_status" class="device_when"></span>
+	</div>
+	<div class="device_nic" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+		<label for="join_house_code"><%= &subs::ui('Approval code') %></label>
+		<input type="text" id="join_house_code" inputmode="numeric" maxlength="6" autocomplete="off">
+		<input type="text" id="join_house_name" placeholder="<%= &subs::ui('name (optional)') %>" autocomplete="off">
+		<button class="join_house_accept" type="button"><%= &subs::ui('Accept') %></button>
+		<span id="join_house_accept_status" class="device_when"></span>
+	</div>
+	<div class="device_when" style="margin-top:2px;opacity:.8;">
+		<%= &subs::ui('On the machine you want to add, type this house\'s address and press Request to join. It shows a six-digit code that lasts ten minutes. On this house, type that code and press Accept: the machine joins as a citizen with trusted access and no expiry, the same as this house\'s own phone. A code works once; a wrong or expired code is refused.') %>
+	</div>
+</div>
