@@ -178,22 +178,31 @@ sub weather_history_sources($station_location = '') {
 		my $last = eval { &cache_get({ app => 'weather', context => 'observe', subcontext => 'last' }) } || {};
 		my @station_sources;
 		my $current = &weather_history_station_place($station_location, $last);
-		push @station_sources, {
-			app => 'weather_station',
-			label => &weather_history_source_label('weather_station', {}, $current),
-			city => $current,
-			# The provider still calls the ground Lambton Shores when the person
-			# calls it Warwick; keep that name for matching the forecast.
-			region => ($last->{'place'} // ''),
-			url => '',
-			id => '',
-			location => $station_location,
-			readings => $station->{'n'} || 0,
-			show_city => 0,
-			from => &weather_day_key($station->{'from_ts'}),
-			to => &weather_day_key($station->{'to_ts'}),
-		};
-		foreach my $p (@{ &weather_history_station_places() }) {
+		my $places = &weather_history_station_places();
+		# The "current place" row only means something when that place is known. A
+		# client that does not run the observer has no observe cache, so its location
+		# is empty; its empty-location row aggregated every place into a second,
+		# unnamed source beside the named ones. Show the places only then. Keep the
+		# row when there is no place to show at all, so a station's untagged readings
+		# still have a source.
+		if (length $station_location || !@{$places}) {
+			push @station_sources, {
+				app => 'weather_station',
+				label => &weather_history_source_label('weather_station', {}, $current),
+				city => $current,
+				# The provider still calls the ground Lambton Shores when the person
+				# calls it Warwick; keep that name for matching the forecast.
+				region => ($last->{'place'} // ''),
+				url => '',
+				id => '',
+				location => $station_location,
+				readings => $station->{'n'} || 0,
+				show_city => 0,
+				from => &weather_day_key($station->{'from_ts'}),
+				to => &weather_day_key($station->{'to_ts'}),
+			};
+		}
+		foreach my $p (@{$places}) {
 			my $key = $p->{'location'} // '';
 			next if $key eq $station_location;
 			my $place = &weather_history_station_place($key, $last);

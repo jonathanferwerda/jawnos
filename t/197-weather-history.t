@@ -230,6 +230,25 @@ ok(length subs::weather_day_key(1700000000000), 'a timestamp has a day key');
 	ok($days{'weather_station'}, 'the current place has history days');
 	ok($days{'weather_station:loc:warwick'}, 'and the old place keeps its days');
 	ok(!$days{'weather_station:loc:toronto'}, 'the current place is not a second key');
+
+	# No observe cache and no location: this is a machine that only reads the
+	# house's station. The empty-location row used to aggregate every place into
+	# an unnamed second source beside the named ones; list places only.
+	local *subs::cache_get = sub { {} };
+	my $placeless = subs::weather_history_sources('');
+	my @broad = grep { ($_->{'app'} // '') eq 'weather_station' } @{$placeless};
+	is(scalar @broad, 0, 'an unresolved current place adds no broad station source');
+	my @named = grep { ($_->{'app'} // '') =~ /^weather_station:loc:/ } @{$placeless};
+	is(scalar @named, 2, 'the named place sources still list');
+	is(subs::weather_history_pick_source($placeless, 'Warwick', ''), 'weather_station:loc:warwick',
+		'the place source is chosen by its city');
+
+	# With no place tags at all the broad row is the only thing that can show the
+	# readings, so it stays.
+	local *subs::weather_history_station_places = sub { [] };
+	my $untagged = subs::weather_history_sources('');
+	my ($only) = grep { ($_->{'app'} // '') eq 'weather_station' } @{$untagged};
+	ok($only, 'an untagged station keeps the broad source');
 }
 
 # --- a place's readings are the ones tagged with it -------------------------
