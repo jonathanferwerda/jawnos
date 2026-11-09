@@ -286,4 +286,73 @@ sub send {
 	return $reply;
 }
 
+# ------------------------------------------------------------------- the tree
+# The master cannot signal a Windows child: the runner's stop is
+# TerminateProcess, which gives the tree no chance to leave. So the tree serves
+# one more channel - ~/.president/tree - and the master asks before it falls
+# back to a kill. Same protocol as the master's own socket: one JSON line in,
+# one JSON line out.
+#
+#   {"cmd":"stop","reason":"the master is shutting down"}
+#   {"ok":1,"cmd":"stop"}
+#   {"cmd":"status"}
+
+sub tree_handle {
+	my ($line, $ctx) = @_;
+	$ctx ||= {};
+	my $req = eval { decode_json(defined $line ? $line : '') };
+	unless (ref $req eq 'HASH') {
+		return { reply => &_fail('bad-request', 'the request is not a JSON object: ' . &clean_text($@, 200)) };
+	}
+	if (($ctx->{'transport'} || '') eq 'tcp') {
+		unless (JawnOS::Transport::token_ok($req->{'token'})) {
+			return { reply => &_fail('unauthorized', 'a transport token is required') };
+		}
+	}
+	my $cmd = lc(&clean_text($req->{'cmd'} // '', 40));
+	if ($cmd eq 'status') {
+		return { reply => {
+			ok => 1,
+			cmd => 'status',
+			pid => $ctx->{'pid'} || 0,
+			version => $ctx->{'version'} // '',
+			status => $ctx->{'status'} // 'running',
+		} };
+	}
+	if ($cmd eq 'stop') {
+		my $reason = &clean_text($req->{'reason'} // $req->{'why'} // '', 400);
+		$reason = 'asked over the tree control socket' unless length $reason;
+		return { action => 'stop', reason => $reason };
+	}
+	return { reply => &_fail('unknown-command',
+		"unknown command '" . &clean_text($cmd, 40) . "'; try stop or status") };
+}
+
+# The master's side. Delivered is not the same as stopped: the caller still
+# waits for the pid to go and falls back to the platform stop if it does not.
+sub ask_tree_stop {
+	my (%opt) = @_;
+	my $timeout = $opt{'timeout'} || 2;
+	my %where = $opt{'socket'} ? (path => $opt{'socket'}) : ();
+	my $sock = JawnOS::Transport::client_socket('tree', timeout => $timeout, %where);
+	return 0 unless $sock;
+	$sock->autoflush(1);
+	my %req = (cmd => 'stop');
+	$req{'reason'} = &clean_text($opt{'reason'} || '', 400) if $opt{'reason'};
+	$req{'token'} = JawnOS::Transport::token() if JawnOS::Transport::tcp();
+	my $line = eval { encode_json(\%req) };
+	unless (defined $line && length $line) { close $sock; return 0 }
+	my $sent = print $sock "$line\n";
+	# Read the acknowledgement, but never hold the shutdown on it: a tree still
+	# booting may not reach the line before the caller's grace expires.
+	if ($sent) {
+		my $select = IO::Select->new($sock);
+		if ($select->can_read(0.5)) {
+			sysread($sock, my $junk, 65536);
+		}
+	}
+	close $sock;
+	return $sent ? 1 : 0;
+}
+
 1;

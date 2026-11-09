@@ -12,6 +12,11 @@ package JawnOS::Transport;
 # single ws port carries every app (the payload names its app), so the offset
 # table is fixed rather than one port per app name.
 #
+# The tree's stop channel lives here as well. Windows cannot signal a child
+# cleanly (the runner's stop is TerminateProcess), so the master asks the tree
+# to leave over a socket it serves, the same way it asks itself to restart over
+# the control socket.
+#
 # The master owns two small files under ~/.president:
 #
 #   transport_base    working_port (or port) the transport offsets are based on
@@ -34,6 +39,7 @@ my %KIND = (
 	memory  => { offset => 11, file => 'memory' },
 	ws      => { offset => 12, file => 'ws' },
 	mailws  => { offset => 13, file => 'ws/mailws' },
+	tree    => { offset => 14, file => 'tree' },
 );
 
 # The highest offset the base has to leave room for. set_base refuses a base
@@ -118,7 +124,10 @@ sub kind_for_path {
 	return 'memory' if $p =~ m{(?:^|/)memory$};
 	return 'alarm' if $p =~ m{(?:^|/)alarm$};
 	return 'mailws' if $p =~ m{(?:^|/)ws/mailws$};
+	# ws is matched before tree: an app may be called "tree", and its path must
+	# still name the shared ws port, not the stop channel.
 	return 'ws' if $p =~ m{(?:^|/)ws/[^/]+$};
+	return 'tree' if $p =~ m{(?:^|/)tree$};
 	return undef;
 }
 

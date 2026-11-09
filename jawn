@@ -813,6 +813,22 @@ sub shut_down() {
 	# this tear-down is on purpose, so the fork's own close must not be read as a
 	# crash (see the close handler in terminal_pty_runner)
 	$fork->{'jawn_deliberate'} = 1 if $fork;
+	# Ask the tree over its own channel first. On Windows the runner's stop is
+	# TerminateProcess, so a signal cannot reach it; on POSIX this is the polite
+	# path, and the named signal and the sweep below remain the fallback for a
+	# tree that does not answer.
+	if ($fork) {
+		&control::ask_tree_stop(
+			reason => $keep_coding ? 'the master is restarting the tree' : 'the master is shutting down',
+		);
+		# Give the tree a moment to run its own exit before the sweep hard-stops
+		# whatever is left. A tree that does not answer loses nothing: the signal
+		# and the sweep below are still there.
+		for (1 .. 20) {
+			last unless $fork->alive;
+			select(undef, undef, undef, 0.1);
+		}
+	}
 	# No ^C byte: the pty runs raw (conduit raw => 1), so a written \x03 is data
 	# for a process that never reads stdin, not SIGINT. The named INT below and
 	# the sweep after it are the stop.

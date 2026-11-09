@@ -1,4 +1,4 @@
-# tests-for: jawn perl/Manager.pl perl/control.pl scripts/restart.pl
+# tests-for: jawn perl/Manager.pl perl/control.pl scripts/restart.pl lib/JawnOS/Transport.pm
 # covers:    The master's control socket: one JSON line in, one JSON line out, so a caller learns what happened to a restar...
 
 use strict;
@@ -218,5 +218,47 @@ unlink $socket;
 $reply = &control::send({ cmd => 'restart' }, socket => "$dir/absent", timeout => 2);
 is($reply->{'error'}, 'no-master', 'no socket reads as no master, by name');
 like($reply->{'message'}, qr/no jawn master/, 'with a message a person can act on');
+
+# --------------------------------------------------------------- the tree stop
+# The tree serves ~/.president/tree so a Windows master - which cannot signal a
+# child - can ask it to leave. The mapping is pure, like control::handle.
+my $stop = &control::tree_handle('{"cmd":"stop","reason":"the master is restarting"}', $ctx);
+is($stop->{'action'}, 'stop', 'a stop request is an action the tree performs');
+is($stop->{'reason'}, 'the master is restarting', 'with the reason it was given');
+
+$stop = &control::tree_handle('{"cmd":"stop"}', $ctx);
+is($stop->{'reason'}, 'asked over the tree control socket', 'a bare stop still has a reason');
+
+$stop = &control::tree_handle('{"cmd":"status"}', { %$ctx, status => 'running' });
+is($stop->{'reply'}->{'cmd'}, 'status', 'tree status is answered directly');
+is($stop->{'reply'}->{'version'}, '0.1.1732', 'with the version it runs');
+
+$stop = &control::tree_handle('{"cmd":"frobnicate"}', $ctx);
+is($stop->{'reply'}->{'error'}, 'unknown-command', 'an unknown tree command is refused by name');
+
+$stop = &control::tree_handle('not json', $ctx);
+is($stop->{'reply'}->{'error'}, 'bad-request', 'garbage is refused as such');
+
+# A TCP tree must present the boot token, exactly as the master's own socket
+# does. JAWNOS_DATA_DIR keeps the live token file out of the test.
+{
+	local $ENV{'JAWNOS_TRANSPORT'} = 'tcp';
+	local $ENV{'JAWNOS_TRANSPORT_TOKEN'} = 'secret';
+	local $ENV{'JAWNOS_DATA_DIR'} = $dir;
+	my $denied = &control::tree_handle('{"cmd":"status"}', { transport => 'tcp' });
+	is($denied->{'reply'}->{'error'}, 'unauthorized', 'a TCP stop without the token is refused');
+	my $allowed = &control::tree_handle('{"cmd":"status","token":"secret"}', { transport => 'tcp' });
+	is($allowed->{'reply'}->{'ok'}, 1, 'and the boot token lets it through');
+}
+
+# The master's client end: delivered is not the same as stopped.
+unlink $socket;
+my $tree_pid = &fake_master($socket, '{"ok":1,"cmd":"stop"}');
+my $asked = &control::ask_tree_stop(socket => $socket, timeout => 5, reason => 'a test');
+&reap($tree_pid);
+ok($asked, 'the master can ask the tree to stop over its channel');
+
+ok(!&control::ask_tree_stop(socket => "$dir/absent", timeout => 1),
+	'and a missing tree is reported as not asked, not as a crash');
 
 done_testing();

@@ -80,6 +80,51 @@ if (-e $logfile) {
 }
 write_file($logfile, '') if not -e $logfile;
 our $log = Mojo::Log->new(path => $logfile);
+
+# The tree's stop channel. Windows cannot signal a child cleanly (the runner's
+# stop is TerminateProcess), so the master asks here and the ask becomes the
+# same clean exit SIGINT performs. Served from this point, before the heavy
+# requires, so a boot that stalls can still be stopped politely.
+require './perl/control.pl';
+
+sub tree_stop {
+	my ($why) = @_;
+	$why = 'asked over the tree control socket' unless defined $why && length $why;
+	print "President stopping ($why); cleaning up...\n";
+	$log->info("President stopping: $why") if $log;
+	exit 0;
+}
+
+sub serve_tree_stop {
+	my $args = JawnOS::Transport::server_args('tree') or return;
+	# A tree that was killed leaves its socket behind; Mojo will not bind over it.
+	unlink $args->{'path'} if $args->{'path'} && -e $args->{'path'};
+	Mojo::IOLoop->server($args => sub {
+		my ($loop, $stream, $id) = @_;
+		$stream->handle->autoflush(1);
+		my $buf = '';
+		$stream->on(read => sub {
+			my ($stream, $bytes) = @_;
+			$buf .= $bytes;
+			while ($buf =~ s/^([^\n]*)\n//) {
+				my $out = &control::tree_handle($1, {
+					pid => $$,
+					version => ($config->{'version'} // ''),
+					transport => JawnOS::Transport::tcp() ? 'tcp' : 'unix',
+				});
+				if (($out->{'action'} || '') eq 'stop') {
+					$stream->write(encode_json({ ok => 1, cmd => 'stop' }) . "\n");
+					Mojo::IOLoop->next_tick(sub { &tree_stop($out->{'reason'}) });
+				}
+				elsif (my $reply = $out->{'reply'}) {
+					$stream->write(encode_json($reply) . "\n");
+				}
+			}
+		});
+	});
+}
+
+&serve_tree_stop();
 if ($working_dir ne $present_dir) {
 	# this file lives in perl/, so the tree is one level above the script.
 	# FindBin exported $Bin into main, but this code runs in package President.
@@ -117,10 +162,7 @@ $SIG{INT} = sub {
 	# restarts the tree again, so a deliberate restart (which sends SIGINT) became
 	# a restart loop on masters started before the jawn_deliberate guard. The
 	# close handler and the liveness watchdog are what detect a real death.
-	print "President stopping on SIGINT; cleaning up...\n";
-	$log->info('President caught SIGINT') if $log;
-	#`rm -R $dump_dir/*` if -e $dump_dir;
-	exit 0;
+	&tree_stop('SIGINT');
 };
 
 my @sockets = qw/ws alarm/;
