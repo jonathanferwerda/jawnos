@@ -135,9 +135,12 @@ rebase immediately before running the gate:
   from the same worktree, so the lander keeps the worktree and its `.shots/` (shots, probes, notes)
   while it is open; delete it when the task is done, or pass `--remove` to force the removal.
   Everything else in `.shots/` is scratch by design — a probe you want after the landing belongs in
-  `scripts/tools/`. (The lander removes it from the primary checkout, so it works even while your
-  shell sits inside.) A **refused** landing keeps the worktree too: removal happens only after the
-  push and the restart, so the files and the checkpoint are still there to look at and fix.
+  `scripts/tools/`. Nothing archives it either: a screenshot of the pre-landing code is stale the
+  moment the trunk moves, so a thread that carries on retakes what it needs, and the primary's
+  `.shots/` stays a place agents curate rather than a dump of every finished task's scratch.
+  (The lander removes it from the primary checkout, so it works even while your shell sits inside.)
+  A **refused** landing keeps the worktree too: removal happens only after the push and the restart,
+  so the files and the checkpoint are still there to look at and fix.
   `scripts/worktree_gc.pl` is the sweep for worktrees whose agent died: report-only by default,
   `--apply` to act, and it removes a worktree only when its branch is an ancestor of `origin/main`,
   its tree is clean, and no process has its cwd in it. A landed one goes at the first sweep that

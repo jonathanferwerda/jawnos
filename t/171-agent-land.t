@@ -335,6 +335,8 @@ subtest 'a landing removes its worktree by default' => sub {
 	my ($rc, $out) = land($f);
 	is($rc, 0, 'the landing exits cleanly') or diag($out);
 	like($out, qr/removed the worktree/, 'and says the worktree went with it');
+	like($out, qr/its \.shots\/ scratch went with it/,
+		'and that its scratch went too, so a continuing thread does not hunt for it');
 	ok(!-d $f->{'wt'}, 'the worktree directory is gone');
 	my ($code) = git($f->{'primary'}, 'rev-parse', '--verify', 'refs/heads/agent/task');
 	isnt($code, 0, 'and its branch is deleted');

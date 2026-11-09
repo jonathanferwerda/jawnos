@@ -433,7 +433,7 @@ sub remove_worktree {
 	}
 	my ($brc, $bout) = capture('git', '-C', $primary, 'branch', '-d', $branch);
 	print STDERR "agent_land: the worktree is gone; the branch was not deleted:\n$bout\n" if $brc != 0;
-	say_step("removed the worktree at $root");
+	say_step("removed the worktree at $root (its .shots/ scratch went with it)");
 }
 
 sub usage {
