@@ -304,4 +304,30 @@ $topic{'weather'} = {
 		related => [ 'configure', 'travel' ]
 	};
 
+$topic{'power'} = {
+		title => 'Power', category => 'apps', app => 'power',
+		templates => [ 'templates/apps/power.html.ep', 'public/js/manager/power.js', 'public/js/manager/taskbar_power.js', 'templates/manager.html.ep', 'public/css/manager.css' ],
+		verified => '2026-11-08',
+		summary => 'Battery, CPU speed and a saved power plan for mains and for battery.',
+		body => [
+			'Power reads this machine\'s battery and CPU and keeps one plan for each power source. The battery card shows the charge, whether it is charging, discharging or full, and the time left (or the time to full while it is charging), taken from the pack\'s own gauge where it reports one. A machine with no battery simply hides that card; a machine with no CPU speed control says so where the CPU figures would be.',
+			'The two plan cards are On mains and On battery. Each has a power plan - Auto, Power saver, Balanced or Performance - and a CPU speed limit from 25% to 100%. Save stores that source\'s plan; when the machine is already on that source the plan is applied at once, and the other card waits for the day the cable changes. With Switch plans automatically on, the house applies the saved plan whenever the source changes, so plugging in a laptop or pulling the cable from the Gou moves the CPU without anyone opening the app.',
+			'A plan is a governor choice, an energy preference and a turbo choice, tried in an order that fits the kernel: Power saver prefers powersave, asks for the power energy preference and turns turbo off; Balanced prefers schedutil, asks for balance_performance and leaves turbo on; Performance prefers performance. Auto writes nothing and leaves the kernel - or auto-cpufreq, when it is installed - in charge. The CPU speed limit caps the clock inside whatever governor is chosen, so it works on kernels that offer only one governor. The CPU panel shows the governor, energy preference, driver, number of clock domains and the current and maximum speed after each change.',
+			'On the JawnOS live image and the desktop app the power files are the same Linux sysfs the rest of the house uses; the live image\'s passwordless sudo is used when the files are root-owned. On the Gou the same path covers its battery and CPU. On a phone, the battery comes from the app\'s own battery bridge; Android gives an app no way to change the CPU governor, so the CPU panel says the plan is not available there rather than pretending it changed. A machine that can power itself also shows System power here - Restart, Shut down and Sleep - the same fixed actions the Leave menu offers; a phone shows none of them, because it cannot power itself.',
+			'When the taskbar is showing, a battery widget rides beside the clock: a small pack glyph, the percentage and the time left or to full. It hides itself on a machine with no battery, and a press opens Power. The widget is a taskbar slot, so the bar\'s edit mode can move it like the clock or the window list.',
+		],
+		steps => [
+			'Open Power from the start menu, or press the battery widget in the taskbar.',
+			'Read the battery card: charge, state and the time left or to full.',
+			'On On mains, choose the plan and the CPU speed limit the machine should use while plugged in, then press Save.',
+			'On On battery, choose the plan and limit for battery use, then press Save.',
+			'Leave Switch plans automatically on to apply the matching plan when the cable changes; turn it off to switch only when you press Apply now.',
+			'Press Apply now to use the current source\'s saved plan immediately.',
+			'On a machine that can power itself, press Restart, Shut down or Sleep in System power; a phone has no such row.',
+			'Read the CPU panel to see the governor, energy preference, driver and clock speed after a change.',
+		],
+		prompt => 'The reader is using JawnOS\'s Power app. It has one battery card, two plan cards (On mains and On battery), an automatic-switch tick and a CPU panel. A plan is Auto, Power saver, Balanced or Performance, and each source also has a CPU speed limit. Saving the source the machine is on applies it at once; the other source is stored until the cable changes. Never claim a CPU speed changed on a machine whose CPU panel says it is unavailable, and never describe a phone as changing a performance mode its app does not offer. If unsure, describe the control\'s label and what the panel reports rather than inventing a sequence.',
+		related => [ 'taskbar', 'start_menu', 'configure' ]
+	};
+
 1;

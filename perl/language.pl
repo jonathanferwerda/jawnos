@@ -154,6 +154,35 @@ foreach my $code ( keys %power_labels ) {
 	$catalog{$code} = { %{$catalog{$code} || {}}, %add };
 }
 
+# The Power app's own labels. These are core labels on the app window and the
+# taskbar widget, so they are written in every interface language here rather
+# than left to the English backfill. The sentences around them go through
+# subs::ui and are translated on demand.
+my @power_app_keys = qw( power power_ac power_battery power_auto power_saver power_balanced power_performance power_cpu_speed power_time_left power_time_to_full power_charging power_discharging power_full power_not_available );
+my %power_app_labels = (
+en => [ 'Power', 'On mains', 'On battery', 'Auto', 'Power saver', 'Balanced', 'Performance', 'CPU speed', 'Time left', 'Time to full', 'Charging', 'Discharging', 'Full', 'Not available on this machine' ],
+zh => [ '电源', '接入电源', '使用电池', '自动', '节能', '均衡', '性能', 'CPU 速度', '剩余时间', '充满还需', '充电中', '放电中', '已充满', '此机器不可用' ],
+fr => [ 'Alimentation', 'Sur secteur', 'Sur batterie', 'Auto', 'Économiseur', 'Équilibré', 'Performance', 'Vitesse du CPU', 'Temps restant', 'Temps avant charge complète', 'En charge', 'En décharge', 'Pleine', 'Indisponible sur cette machine' ],
+es => [ 'Energía', 'En red eléctrica', 'Con batería', 'Automático', 'Ahorro de energía', 'Equilibrado', 'Rendimiento', 'Velocidad de la CPU', 'Tiempo restante', 'Tiempo para cargar', 'Cargando', 'Descargando', 'Llena', 'No disponible en esta máquina' ],
+de => [ 'Energie', 'Am Netz', 'Im Akkubetrieb', 'Automatisch', 'Energiesparmodus', 'Ausgeglichen', 'Leistung', 'CPU-Geschwindigkeit', 'Restzeit', 'Zeit bis voll', 'Wird geladen', 'Entlädt', 'Voll', 'Auf dieser Maschine nicht verfügbar' ],
+pt => [ 'Energia', 'Na tomada', 'Na bateria', 'Automático', 'Economia de energia', 'Equilibrado', 'Desempenho', 'Velocidade da CPU', 'Tempo restante', 'Tempo até cheio', 'Carregando', 'Descarregando', 'Cheia', 'Indisponível nesta máquina' ],
+hi => [ 'पावर', 'मुख्य विद्युत पर', 'बैटरी पर', 'स्वतः', 'बिजली बचत', 'संतुलित', 'प्रदर्शन', 'CPU गति', 'शेष समय', 'पूर्ण होने में समय', 'चार्ज हो रहा है', 'डिस्चार्ज हो रहा है', 'पूर्ण', 'इस मशीन पर उपलब्ध नहीं' ],
+ar => [ 'الطاقة', 'على الكهرباء', 'على البطارية', 'تلقائي', 'توفير الطاقة', 'متوازن', 'الأداء', 'سرعة المعالج', 'الوقت المتبقي', 'الوقت حتى الامتلاء', 'جارٍ الشحن', 'تفريغ', 'ممتلئة', 'غير متاح على هذا الجهاز' ],
+bn => [ 'পাওয়ার', 'মেইনসে', 'ব্যাটারিতে', 'স্বয়ংক্রিয়', 'বিদ্যুৎ সাশ্রয়', 'ভারসাম্যপূর্ণ', 'কর্মক্ষমতা', 'CPU গতি', 'বাকি সময়', 'পূর্ণ হতে সময়', 'চার্জ হচ্ছে', 'ডিসচার্জ হচ্ছে', 'পূর্ণ', 'এই মেশিনে উপলব্ধ নয়' ],
+ru => [ 'Питание', 'От сети', 'От батареи', 'Авто', 'Экономия энергии', 'Сбалансированный', 'Производительность', 'Скорость ЦП', 'Осталось', 'До полной зарядки', 'Заряжается', 'Разряжается', 'Полная', 'Недоступно на этой машине' ],
+ja => [ '電源', '電源接続時', 'バッテリー時', '自動', '省電力', 'バランス', 'パフォーマンス', 'CPU速度', '残り時間', '満充電まで', '充電中', '放電中', '満充電', 'このマシンでは利用できません' ],
+pa => [ 'ਪਾਵਰ', 'ਮੇਨਸ ਤੇ', 'ਬੈਟਰੀ ਤੇ', 'ਆਟੋ', 'ਬਿਜਲੀ ਬਚਤ', 'ਸੰਤੁਲਿਤ', 'ਪ੍ਰਦਰਸ਼ਨ', 'CPU ਗਤੀ', 'ਬਾਕੀ ਸਮਾਂ', 'ਪੂਰਾ ਹੋਣ ਤੱਕ ਸਮਾਂ', 'ਚਾਰਜ ਹੋ ਰਿਹਾ', 'ਡਿਸਚਾਰਜ ਹੋ ਰਿਹਾ', 'ਪੂਰੀ', 'ਇਸ ਮਸ਼ੀਨ ਤੇ ਉਪਲਬਧ ਨਹੀਂ' ],
+id => [ 'Daya', 'Dari listrik', 'Dari baterai', 'Otomatis', 'Hemat daya', 'Seimbang', 'Performa', 'Kecepatan CPU', 'Sisa waktu', 'Waktu sampai penuh', 'Mengisi daya', 'Melepas daya', 'Penuh', 'Tidak tersedia di mesin ini' ],
+ko => [ '전원', '전원 연결 시', '배터리 사용 시', '자동', '절전', '균형', '성능', 'CPU 속도', '남은 시간', '완충까지', '충전 중', '방전 중', '완충', '이 기기에서 사용할 수 없음' ],
+it => [ 'Alimentazione', 'Alimentazione esterna', 'A batteria', 'Automatico', 'Risparmio energetico', 'Bilanciato', 'Prestazioni', 'Velocità CPU', 'Tempo rimasto', 'Tempo alla carica', 'In carica', 'In scarica', 'Piena', 'Non disponibile su questa macchina' ],
+tr => [ 'Güç', 'Şebekede', 'Pilde', 'Otomatik', 'Güç tasarrufu', 'Dengeli', 'Performans', 'CPU hızı', 'Kalan süre', 'Doluma kalan süre', 'Şarj oluyor', 'Deşarj oluyor', 'Dolu', 'Bu makinede kullanılamıyor' ],
+);
+foreach my $code ( keys %power_app_labels ) {
+	my %add;
+	@add{@power_app_keys} = @{$power_app_labels{$code}};
+	$catalog{$code} = { %{$catalog{$code} || {}}, %add };
+}
+
 # Configure -> Plat -> QA. These are core labels on a settings panel, so they
 # are written here in every interface language rather than left to the English
 # backfill. The surrounding explanation is help text and goes through subs::ui.

@@ -1,0 +1,105 @@
+<style>
+#power { flex: 1 1 auto; min-width: 0; min-height: 0; display: flex; flex-direction: column; gap: 14px; padding: 14px; overflow: auto; font-size: 16px; }
+#power .power_muted { opacity: .68; }
+#power .power_head { display: flex; flex-wrap: wrap; gap: 14px; align-items: stretch; }
+#power .power_battery_card { display: flex; align-items: center; gap: 14px; padding: 12px 16px; border: 1px solid var(--line); border-radius: calc(var(--jawnos-corner, 12px) * .8); background: var(--panel-2, rgba(127,127,127,.08)); flex: 1 1 280px; }
+#power .power_battery_glyph { position: relative; flex: 0 0 auto; width: 72px; height: 34px; border: 3px solid var(--ink, currentColor); border-radius: 6px; padding: 3px; box-sizing: border-box; }
+#power .power_battery_glyph::after { content: ''; position: absolute; right: -9px; top: 50%; transform: translateY(-50%); width: 5px; height: 13px; border-radius: 0 2px 2px 0; background: var(--ink, currentColor); }
+#power #power_battery_fill { display: block; height: 100%; width: 0; border-radius: 2px; background: var(--accent, #3b7ddd); transition: width .3s ease, background-color .3s ease; }
+#power #power_battery_card[state=charging] #power_battery_fill { background: #3fa34d; }
+#power #power_battery_card[state=low] #power_battery_fill { background: #c0392b; }
+#power #power_battery_card[state=full] #power_battery_fill { background: #3fa34d; }
+#power .power_battery_text { min-width: 0; }
+#power #power_battery_pct { font-size: 30px; font-weight: 600; }
+#power #power_battery_state { font-size: 16px; opacity: .8; }
+#power .power_cpu_summary { flex: 1 1 220px; padding: 12px 16px; border: 1px solid var(--line); border-radius: calc(var(--jawnos-corner, 12px) * .8); }
+#power #power_cpu_freq { font-size: 24px; font-weight: 600; margin-top: 4px; }
+#power .power_plans { display: flex; flex-wrap: wrap; gap: 14px; }
+#power .power_plan_card { flex: 1 1 300px; padding: 12px 16px; border: 1px solid var(--line); border-radius: calc(var(--jawnos-corner, 12px) * .8); }
+#power .power_plan_card[active=yes] { border-color: var(--accent, #3b7ddd); box-shadow: inset 0 0 0 1px var(--accent, #3b7ddd); }
+#power .power_plan_card h4 { margin: 0 0 10px; font-size: 18px; }
+#power .power_plan_card label { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 8px 0; }
+#power .power_plan_card select, #power .power_plan_card input[type=range] { flex: 1 1 160px; min-width: 0; }
+#power .power_save { margin-top: 6px; }
+#power .power_save.power_dirty { outline: 2px solid var(--accent, #3b7ddd); }
+#power .power_auto_row { display: flex; flex-wrap: wrap; gap: 14px; align-items: center; }
+#power .power_auto_row label { display: flex; align-items: center; gap: 8px; }
+#power #power_cpu_panel { padding: 12px 16px; border: 1px solid var(--line); border-radius: calc(var(--jawnos-corner, 12px) * .8); }
+#power #power_cpu_grid { display: grid; grid-template-columns: max-content 1fr; gap: 4px 14px; }
+#power #power_cpu_grid b { font-weight: 500; opacity: .72; }
+#power #power_status { min-height: 1.4em; }
+</style>
+<div id="power" app="power">
+	<div class="power_head">
+		<div id="power_battery_card" class="power_battery_card">
+			<div class="power_battery_glyph"><span id="power_battery_fill"></span></div>
+			<div class="power_battery_text">
+				<div><span id="power_battery_pct">—</span> <span id="power_battery_state"></span></div>
+				<div id="power_battery_eta" class="power_muted"></div>
+			</div>
+		</div>
+		<div class="power_cpu_summary">
+			<div><%= &subs::lang('power_cpu_speed') %></div>
+			<div id="power_cpu_freq">—</div>
+			<div id="power_cpu_governor" class="power_muted">—</div>
+		</div>
+	</div>
+	<div class="power_plans">
+		<section class="power_plan_card" id="power_source_ac" active="no">
+			<h4><%= &subs::lang('power_ac') %></h4>
+			<label><%= &subs::ui('Power plan') %>
+				<select id="power_plan_ac" class="power_plan_select" data-source="ac">
+					<option value="auto"><%= &subs::lang('power_auto') %></option>
+					<option value="saver"><%= &subs::lang('power_saver') %></option>
+					<option value="balanced" selected><%= &subs::lang('power_balanced') %></option>
+					<option value="performance"><%= &subs::lang('power_performance') %></option>
+				</select>
+			</label>
+			<label><%= &subs::lang('power_cpu_speed') %>
+				<input type="range" id="power_limit_ac" class="power_limit" data-source="ac" min="25" max="100" step="5" value="100">
+				<span id="power_limit_value_ac">100%</span>
+			</label>
+			<button type="button" class="power_save" id="power_save_ac" data-source="ac"><%= &subs::ui('Save') %></button>
+		</section>
+		<section class="power_plan_card" id="power_source_battery" active="no">
+			<h4><%= &subs::lang('power_battery') %></h4>
+			<label><%= &subs::ui('Power plan') %>
+				<select id="power_plan_battery" class="power_plan_select" data-source="battery">
+					<option value="auto"><%= &subs::lang('power_auto') %></option>
+					<option value="saver" selected><%= &subs::lang('power_saver') %></option>
+					<option value="balanced"><%= &subs::lang('power_balanced') %></option>
+					<option value="performance"><%= &subs::lang('power_performance') %></option>
+				</select>
+			</label>
+			<label><%= &subs::lang('power_cpu_speed') %>
+				<input type="range" id="power_limit_battery" class="power_limit" data-source="battery" min="25" max="100" step="5" value="70">
+				<span id="power_limit_value_battery">70%</span>
+			</label>
+			<button type="button" class="power_save" id="power_save_battery" data-source="battery"><%= &subs::ui('Save') %></button>
+		</section>
+	</div>
+	<div class="power_auto_row">
+		<label><input type="checkbox" id="power_auto" checked> <%= &subs::ui('Switch plans automatically when the power source changes') %></label>
+		<button type="button" id="power_apply"><%= &subs::ui('Apply now') %></button>
+	</div>
+	<% my @power_actions = &subs::power_actions(); %>
+	<% if (@power_actions) { %>
+	<div class="power_auto_row" id="power_system">
+		<span><%= &subs::ui('System power') %></span>
+		<% for my $action ( @power_actions ) { %>
+			<button type="button" class="power_system_button" data-power-action="<%= $action %>"><%= &subs::lang('power_' . $action) %></button>
+		<% } %>
+	</div>
+	<% } %>
+	<div id="power_cpu_panel">
+		<div id="power_cpu_note" style="display:none;"><%= &subs::lang('power_not_available') %></div>
+		<div id="power_cpu_grid">
+			<b><%= &subs::ui('Governor') %></b><span id="power_cpu_governor_detail">—</span>
+			<b><%= &subs::ui('Energy preference') %></b><span id="power_cpu_epp">—</span>
+			<b><%= &subs::ui('Driver') %></b><span id="power_cpu_driver">—</span>
+			<b><%= &subs::ui('Clock domains') %></b><span id="power_cpu_policies">—</span>
+			<b><%= &subs::ui('Turbo') %></b><span id="power_cpu_turbo">—</span>
+		</div>
+	</div>
+	<div id="power_status"></div>
+</div>

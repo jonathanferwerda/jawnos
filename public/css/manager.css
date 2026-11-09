@@ -398,6 +398,56 @@ body.dark_theme #taskbar { background-image: linear-gradient(rgba(255,255,255,.0
 #taskbar .window_toggle .window_toggle_icon { height: calc(var(--taskbar_h, 44px) - 18px); width: calc(var(--taskbar_h, 44px) - 18px); max-width: none; object-fit: contain; }
 #taskbar .window_toggle .window_toggle_name_text { font-size: calc(var(--taskbar_h, 44px) * 0.36); white-space: nowrap; }
 #taskbar .window_toggle .window_toggle_shorthand { display: none; }
+/* The battery widget: a small pack glyph and the percentage, with the finish
+   time when the pack reports a rate. It is a taskbar slot like the clock, so it
+   moves in edit mode and hides with the bar. */
+#taskbar_power {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	flex: 0 0 auto;
+	height: calc(var(--taskbar_h, 44px) - 12px);
+	padding: 0 8px;
+	white-space: nowrap;
+	cursor: pointer;
+	border: 1px solid var(--line);
+	border-radius: calc(var(--jawnos-corner, 12px) * .55);
+	background-color: var(--panel);
+	font-size: calc(var(--taskbar_h, 44px) * 0.3);
+}
+#taskbar_power[hidden] { display: none; }
+#taskbar_power:hover { border-color: var(--accent, #3b7ddd); }
+#taskbar_power .taskbar_power_glyph {
+	position: relative;
+	width: calc(var(--taskbar_h, 44px) * 0.44);
+	height: calc(var(--taskbar_h, 44px) * 0.22);
+	border: 2px solid var(--ink, currentColor);
+	border-radius: 3px;
+	padding: 1px;
+	box-sizing: border-box;
+}
+#taskbar_power .taskbar_power_glyph::after {
+	content: '';
+	position: absolute;
+	right: -5px;
+	top: 50%;
+	transform: translateY(-50%);
+	width: 3px;
+	height: 40%;
+	border-radius: 0 1px 1px 0;
+	background: var(--ink, currentColor);
+}
+#taskbar_power .taskbar_power_fill {
+	display: block;
+	height: 100%;
+	width: 0;
+	border-radius: 1px;
+	background: var(--accent, #3b7ddd);
+	transition: width .3s ease, background-color .3s ease;
+}
+#taskbar_power[state=charging] .taskbar_power_fill { background: #3fa34d; }
+#taskbar_power[state=low] .taskbar_power_fill { background: #c0392b; }
+#taskbar_power[state=full] .taskbar_power_fill { background: #3fa34d; }
 #taskbar_clock {
 	flex: 0 0 auto;
 	white-space: nowrap;

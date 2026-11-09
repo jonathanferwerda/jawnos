@@ -21,6 +21,7 @@ function jawnosTaskbarSlots() {
 		'search': '#search_entanglement',
 		'windows': '#taskbar_windows',
 		'clock': '#taskbar_clock',
+		'power': '#taskbar_power',
 		'icons': '#taskbar_icons'
 	};
 }
@@ -31,7 +32,7 @@ function jawnosTaskbarSlots() {
 // the button on the left keeps it there until it is dragged.
 function jawnosTaskbarDefaultOrder() {
 	var left = (typeof jawnosBars != 'undefined' && jawnosBars.start_side == 'left');
-	return left ? ['icons', 'search', 'windows', 'clock'] : ['search', 'windows', 'clock', 'icons'];
+	return left ? ['icons', 'search', 'windows', 'clock'] : ['search', 'windows', 'power', 'clock', 'icons'];
 }
 
 function jawnosTaskbarEditing() {
@@ -161,11 +162,16 @@ function jawnosTaskbarOrderApply() {
 		return item;
 	});
 	jawnosBars.order = order;
-	// the three fixed slots never fall off the bar; the search only counts while
-	// the taskbar is its home
+	// the fixed slots never fall off the bar; the search only counts while
+	// the taskbar is its home. A saved order from before the battery widget
+	// existed gains it beside the clock rather than at the far end.
 	['windows', 'clock', 'icons'].forEach(function (k) {
 		if (order.indexOf(k) < 0) { order.push(k); }
 	});
+	if (order.indexOf('power') < 0) {
+		var clock_at = order.indexOf('clock');
+		order.splice(clock_at < 0 ? order.length : clock_at, 0, 'power');
+	}
 	if (jawnosBars.search == 'taskbar' && order.indexOf('search') < 0) { order.push('search'); }
 
 	bar.children('.taskbar_pin').remove();
@@ -259,6 +265,7 @@ function jawnosTaskbarOrderSave() {
 		var el = $(this);
 		if (el.is('#taskbar_windows')) { order.push('windows'); }
 		else if (el.is('#taskbar_clock')) { order.push('clock'); }
+		else if (el.is('#taskbar_power')) { order.push('power'); }
 		else if (el.is('#taskbar_icons')) { order.push('icons'); }
 		else if (el.is('#search_entanglement')) { order.push('search'); }
 		else if (el.hasClass('taskbar_pin')) {
@@ -299,7 +306,7 @@ function jawnosTaskbarEdit(on) {
 		bar.addClass('taskbar_edit');
 		if (!bar.hasClass('ui-sortable')) {
 			bar.sortable({
-				items: '> #taskbar_windows, > #taskbar_clock, > #taskbar_icons, > #search_entanglement, > .taskbar_pin',
+				items: '> #taskbar_windows, > #taskbar_clock, > #taskbar_power, > #taskbar_icons, > #search_entanglement, > .taskbar_pin',
 				tolerance: 'pointer',
 				placeholder: 'taskbar_slot_placeholder',
 				stop: function () { jawnosTaskbarOrderSave(); }

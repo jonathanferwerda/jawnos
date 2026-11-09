@@ -1,0 +1,16 @@
+package JawnOS::Routes::manager_power;
+
+use strict;
+use warnings;
+
+sub routes {
+	return (
+		[53010, 'get',  '/manager/power',        'action_53010'],
+		[53011, 'get',  '/manager/power_status', 'action_53011'],
+		[53012, 'post', '/manager/power/plan',   'action_53012'],
+		[53013, 'post', '/manager/power/auto',   'action_53013'],
+		[53014, 'post', '/manager/power/apply',  'action_53014'],
+	);
+}
+
+1;

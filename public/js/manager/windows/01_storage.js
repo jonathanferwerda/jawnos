@@ -331,6 +331,10 @@ function appWindowOpenerNow(i,timestamp,v) {
 		else if (i == 'weather') {
 			if (typeof weatherMaker === 'function') { weatherMaker(timestamp); }
 		}
+		// Power is a shell until its opener asks for a reading, like Weather.
+		else if (i == 'power') {
+			if (typeof powerOpener === 'function') { powerOpener(timestamp); }
+		}
 		else {
 			$.ajax({
 				url: '/manager/' + i,

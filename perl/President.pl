@@ -350,6 +350,10 @@ sub manager_starter() {
 		# arriving. The tick stops the session at the last span's end after a
 		# quiet gap, so closing the tab or switching apps ends the appointment.
 		{ name => 'internet sites', first => 10, every => 10, run => sub { &subs::internet_site_appointment_tick(); } },
+		# The cable changed: apply the plan saved for the source now in use. The
+		# tick is idempotent (the applied row makes it a no-op) so a machine on
+		# mains pays one battery read per minute and no sysfs write.
+		{ name => 'power watch', first => 25, every => 60, run => sub { &subs::power_plan_tick(); } },
 	);
 	# Skipped on a controller: it runs no crew, crest, model, watch, balance or
 	# crypto pass, and this one process is another ~16 MB PSS copy of the tree.
