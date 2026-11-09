@@ -82,6 +82,55 @@
 		<label><input type="checkbox" id="power_auto" checked> <%= &subs::ui('Switch plans automatically when the power source changes') %></label>
 		<button type="button" id="power_apply"><%= &subs::ui('Apply now') %></button>
 	</div>
+	<% my $sleep_caps = (ref $status eq 'HASH' && ref $status->{'sleep'} eq 'HASH') ? $status->{'sleep'} : {}; %>
+	<% my %sleep_type_ok = map { $_ => 1 } @{ $sleep_caps->{'types'} || [] }; %>
+	<section class="power_plan_card" id="power_sleep_card">
+		<h4><%= &subs::ui('Sleep and display') %></h4>
+		<label><%= &subs::ui('Screen off after') %>
+			<select id="power_screen_timeout">
+				<option value="0"><%= &subs::ui('Never') %></option>
+				<option value="1">1 <%= &subs::ui('minute') %></option>
+				<option value="2">2 <%= &subs::ui('minutes') %></option>
+				<option value="5">5 <%= &subs::ui('minutes') %></option>
+				<option value="10">10 <%= &subs::ui('minutes') %></option>
+				<option value="15">15 <%= &subs::ui('minutes') %></option>
+				<option value="30">30 <%= &subs::ui('minutes') %></option>
+			</select>
+		</label>
+		<label><%= &subs::ui('Sleep after') %>
+			<select id="power_sleep_timeout">
+				<option value="0"><%= &subs::ui('Never') %></option>
+				<option value="1">1 <%= &subs::ui('minute') %></option>
+				<option value="2">2 <%= &subs::ui('minutes') %></option>
+				<option value="5">5 <%= &subs::ui('minutes') %></option>
+				<option value="10">10 <%= &subs::ui('minutes') %></option>
+				<option value="15">15 <%= &subs::ui('minutes') %></option>
+				<option value="30">30 <%= &subs::ui('minutes') %></option>
+				<option value="60">60 <%= &subs::ui('minutes') %></option>
+			</select>
+		</label>
+		<label id="power_lid_row"<%== $sleep_caps->{'lid'} ? '' : ' style="display:none"' %>><%= &subs::ui('When the lid closes') %>
+			<select id="power_lid_action">
+				<option value="suspend"><%= &subs::ui('Suspend') %></option>
+				<option value="hibernate"><%= &subs::ui('Hibernate') %></option>
+				<option value="hybrid_sleep"><%= &subs::ui('Hybrid suspend') %></option>
+				<option value="poweroff"><%= &subs::ui('Shut down') %></option>
+				<option value="ignore"><%= &subs::ui('Do nothing') %></option>
+			</select>
+		</label>
+		<label id="power_sleep_type_row"><%= &subs::ui('Sleep type') %>
+			<select id="power_sleep_type">
+				<option value="suspend"<%== $sleep_type_ok{'suspend'} ? '' : ' hidden disabled' %>><%= &subs::ui('Suspend') %></option>
+				<option value="hibernate"<%== $sleep_type_ok{'hibernate'} ? '' : ' hidden disabled' %>><%= &subs::ui('Hibernate') %></option>
+				<option value="hybrid_sleep"<%== $sleep_type_ok{'hybrid_sleep'} ? '' : ' hidden disabled' %>><%= &subs::ui('Hybrid suspend') %></option>
+				<option value="suspend_then_hibernate"<%== $sleep_type_ok{'suspend_then_hibernate'} ? '' : ' hidden disabled' %>><%= &subs::ui('Suspend then hibernate') %></option>
+			</select>
+		</label>
+		<button type="button" id="power_sleep_save"><%= &subs::ui('Save') %></button>
+		<button type="button" id="power_sleep_now"><%= &subs::ui('Sleep now') %></button>
+		<div id="power_sleep_note" class="power_muted"></div>
+		<div id="power_sleep_status"></div>
+	</section>
 	<% my @power_actions = &subs::power_actions(); %>
 	<% if (@power_actions) { %>
 	<div class="power_auto_row" id="power_system">

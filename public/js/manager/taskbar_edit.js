@@ -32,7 +32,8 @@ function jawnosTaskbarSlots() {
 // builds no element, which is what makes Disabled stick across reloads.
 var jawnosTaskbarWidgets = {
 	power: { hint: 'Battery', icon: '/icons/power.svg' },
-	network: { hint: 'Network', icon: '/icons/network.svg' }
+	network: { hint: 'Network', icon: '/icons/network.svg' },
+	sound: { hint: 'Sound', icon: '/icons/sound.svg' }
 };
 
 function jawnosTaskbarWidgetItem(w, mode) {
@@ -495,8 +496,14 @@ function jawnosTaskbarWidgetMake(item) {
 	}
 	else if (w == 'network') {
 		el.append('<span class="taskbar_network_glyph"><span class="taskbar_network_bars"><i></i><i></i><i></i><i></i></span><span class="taskbar_network_wire"></span></span>');
+		el.append('<span class="taskbar_network_bluetooth" aria-hidden="true"></span>');
 		el.append('<span class="taskbar_network_text taskbar_widget_text"></span>');
 		setTimeout(function () { if (typeof jawnosNetworkTaskbarLoad === 'function') { jawnosNetworkTaskbarLoad(); } }, 0);
+	}
+	else if (w == 'sound') {
+		el.append('<span class="taskbar_sound_glyph"><span class="taskbar_sound_cone"></span><span class="taskbar_sound_waves"><i></i><i></i><i></i></span></span>');
+		el.append('<span class="taskbar_sound_text taskbar_widget_text"></span>');
+		setTimeout(function () { if (typeof jawnosSoundTaskbarLoad === 'function') { jawnosSoundTaskbarLoad(); } }, 0);
 	}
 	return el;
 }

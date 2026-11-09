@@ -1,8 +1,12 @@
 // The taskbar's network widget. It reads the same /manager/network/status the
 // Network app uses and shows one of three things: the connected Wi-Fi network
-// with its signal bars, a wired link, or Disconnected. Like the battery widget
-// it is core, so the bar can say what it is connected to before any app opens.
+// with its signal bars, a wired link, or Disconnected. A second request reads
+// /manager/network/bluetooth/status and adds a Bluetooth glyph plus the
+// connected device's name, so the bar can say what it is connected to before
+// any app opens. The network status answer keeps its pinned shape; Bluetooth
+// is a separate call.
 var jawnosNetworkTaskbarData = null;
+var jawnosNetworkTaskbarBluetoothData = null;
 
 function jawnosNetworkTaskbarBars(item) {
 	if (!item) { return 0; }
@@ -29,10 +33,21 @@ function jawnosNetworkTaskbarWired(status) {
 	return null;
 }
 
-function jawnosNetworkTaskbarRender(status) {
+function jawnosNetworkTaskbarBluetoothConnected() {
+	var data = jawnosNetworkTaskbarBluetoothData || {};
+	if (!data.ok) { return null; }
+	var list = data.connected || [];
+	for (var i = 0; i < list.length; i++) {
+		var item = list[i] || {};
+		if (item.name || item.address) { return item; }
+	}
+	return null;
+}
+
+function jawnosNetworkTaskbarPaint() {
 	var widget = $('#taskbar_network');
 	if (!widget.length) { return; }
-	jawnosNetworkTaskbarData = status;
+	var status = jawnosNetworkTaskbarData;
 	var wifi = (status && status.wifi) || {};
 	var wireless = wifi.interfaces || [];
 	var connected = null;
@@ -65,12 +80,29 @@ function jawnosNetworkTaskbarRender(status) {
 			title = jawnosT('Network') + ' — ' + text;
 		}
 	}
-	widget.attr('kind', kind).attr('bars', bars).attr('title', title);
+	var bluetooth = jawnosNetworkTaskbarBluetoothConnected();
+	var bluetooth_name = bluetooth ? (bluetooth.name || bluetooth.address || '') : '';
+	if (bluetooth_name) {
+		text += ' · ' + bluetooth_name;
+		title += ' · ' + jawnosT('Bluetooth') + ': ' + bluetooth_name;
+	}
+	widget.attr('kind', kind).attr('bars', bars).attr('bluetooth', bluetooth_name ? 'on' : 'off').attr('title', title);
 	widget.find('.taskbar_network_bars i').each(function(index) {
 		$(this).toggleClass('on', index < bars);
 	});
 	widget.find('.taskbar_network_text').text(text);
+	widget.find('.taskbar_network_bluetooth').attr('title', bluetooth_name ? jawnosT('Bluetooth') + ': ' + bluetooth_name : jawnosT('Bluetooth'));
 	widget.removeAttr('hidden').show();
+}
+
+function jawnosNetworkTaskbarRender(status) {
+	jawnosNetworkTaskbarData = status;
+	jawnosNetworkTaskbarPaint();
+}
+
+function jawnosNetworkTaskbarBluetooth(bluetooth) {
+	jawnosNetworkTaskbarBluetoothData = bluetooth;
+	jawnosNetworkTaskbarPaint();
 }
 
 function jawnosNetworkTaskbarLoad() {
@@ -82,12 +114,16 @@ function jawnosNetworkTaskbarLoad() {
 		cache: false,
 		success: function(status) { jawnosNetworkTaskbarRender(status); },
 		error: function() {
-			var widget = $('#taskbar_network');
-			if (widget.length) {
-				widget.attr('kind', 'offline').attr('bars', 0).attr('title', jawnosT('Network') + ' — ' + jawnosT('Disconnected'));
-				widget.find('.taskbar_network_text').text(jawnosT('Disconnected'));
-				widget.removeAttr('hidden').show();
-			}
+			jawnosNetworkTaskbarRender(null);
+		}
+	});
+	$.ajax({
+		url: '/manager/network/bluetooth/status',
+		type: 'GET',
+		cache: false,
+		success: function(bluetooth) { jawnosNetworkTaskbarBluetooth(bluetooth); },
+		error: function() {
+			jawnosNetworkTaskbarBluetooth({ ok: 0 });
 		}
 	});
 }

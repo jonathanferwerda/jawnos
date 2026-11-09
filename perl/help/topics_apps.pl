@@ -307,14 +307,15 @@ $topic{'weather'} = {
 $topic{'power'} = {
 		title => 'Power', category => 'apps', app => 'power',
 		templates => [ 'templates/apps/power.html.ep', 'public/js/manager/power.js', 'public/js/manager/taskbar_power.js', 'templates/manager.html.ep', 'public/css/manager.css' ],
-		verified => '2026-11-08',
-		summary => 'Battery, CPU speed and a saved power plan for mains and for battery.',
+		verified => '2026-11-09',
+		summary => 'Battery, CPU speed, saved power plans, and sleep and display settings.',
 		body => [
 			'Power reads this machine\'s battery and CPU and keeps one plan for each power source. The battery card shows the charge, whether it is charging, discharging or full, and the time left (or the time to full while it is charging), taken from the pack\'s own gauge where it reports one. A machine with no battery simply hides that card; a machine with no CPU speed control says so where the CPU figures would be.',
 			'The two plan cards are On mains and On battery. Each has a power plan - Auto, Power saver, Balanced or Performance - and a CPU speed limit from 25% to 100%. Save stores that source\'s plan; when the machine is already on that source the plan is applied at once, and the other card waits for the day the cable changes. With Switch plans automatically on, the house applies the saved plan whenever the source changes, so plugging in a laptop or pulling the cable from the Gou moves the CPU without anyone opening the app.',
 			'A plan is a governor choice, an energy preference and a turbo choice, tried in an order that fits the kernel: Power saver prefers powersave, asks for the power energy preference and turns turbo off; Balanced prefers schedutil, asks for balance_performance and leaves turbo on; Performance prefers performance. Auto writes nothing and leaves the kernel - or auto-cpufreq, when it is installed - in charge. The CPU speed limit caps the clock inside whatever governor is chosen, so it works on kernels that offer only one governor. The CPU panel shows the governor, energy preference, driver, number of clock domains and the current and maximum speed after each change.',
 			'On the JawnOS live image and the desktop app the power files are the same Linux sysfs the rest of the house uses; the live image\'s passwordless sudo is used when the files are root-owned. On the Gou the same path covers its battery and CPU. On a phone, the battery comes from the app\'s own battery bridge; Android gives an app no way to change the CPU governor, so the CPU panel says the plan is not available there rather than pretending it changed. A machine that can power itself also shows System power here - Restart, Shut down and Sleep - the same fixed actions the Leave menu offers; a phone shows none of them, because it cannot power itself.',
 			'When the taskbar is showing, a Battery widget can ride on it: a small pack glyph, the percentage and the time left or to full. It hides itself on a machine with no battery, and a press opens Power. Add items -> Widgets puts it on the bar or takes it off, its right-click menu chooses Icon, Icon and status, or Disabled, and edit mode moves it like the clock or the window list.',
+			'Sleep and display is the card below the plans. Screen off after chooses 1, 2, 5, 10, 15 or 30 idle minutes, or Never; it is set through the desktop\'s gsettings where that exists, or xset on an X display, and a machine with neither says the screen timer is not available. Sleep after chooses 1, 2, 5, 10, 15, 30 or 60 idle minutes, or Never, and is written to a logind drop-in together with the lid action. When the lid closes appears only on a machine with a real lid: Suspend, Hibernate, Hybrid suspend, Shut down or Do nothing. Sleep type offers only the states this machine reports - Suspend, Hibernate, Hybrid suspend and Suspend then hibernate - and Sleep now enters the chosen state at once.',
 		],
 		steps => [
 			'Open Power from the start menu, or press the battery widget in the taskbar.',
@@ -325,9 +326,37 @@ $topic{'power'} = {
 			'Press Apply now to use the current source\'s saved plan immediately.',
 			'On a machine that can power itself, press Restart, Shut down or Sleep in System power; a phone has no such row.',
 			'Read the CPU panel to see the governor, energy preference, driver and clock speed after a change.',
+			'In Sleep and display, choose when the screen turns off and when the system sleeps, then press Save.',
+			'If the machine has a lid, choose what closing it does; a machine without a lid has no such row.',
+			'Choose a Sleep type this machine offers and press Sleep now to enter that state immediately.',
 		],
-		prompt => 'The reader is using JawnOS\'s Power app. It has one battery card, two plan cards (On mains and On battery), an automatic-switch tick and a CPU panel. A plan is Auto, Power saver, Balanced or Performance, and each source also has a CPU speed limit. Saving the source the machine is on applies it at once; the other source is stored until the cable changes. Never claim a CPU speed changed on a machine whose CPU panel says it is unavailable, and never describe a phone as changing a performance mode its app does not offer. If unsure, describe the control\'s label and what the panel reports rather than inventing a sequence.',
+		prompt => 'The reader is using JawnOS\'s Power app. It has one battery card, two plan cards (On mains and On battery), an automatic-switch tick, a Sleep and display card and a CPU panel. A plan is Auto, Power saver, Balanced or Performance, and each source also has a CPU speed limit. Saving the source the machine is on applies it at once; the other source is stored until the cable changes. Sleep and display holds the screen timeout, the sleep timeout, the lid-close action and the sleep type; the lid row exists only on a machine with a lid, and the sleep type offers only states this machine reports. Never claim a CPU speed, a screen timer or a sleep state changed on a machine where the panel says it is unavailable, and never describe a phone as changing a performance mode its app does not offer. If unsure, describe the control\'s label and what the panel reports rather than inventing a sequence.',
 		related => [ 'taskbar', 'start_menu', 'configure' ]
+	};
+
+$topic{'sound'} = {
+		title => 'Sound', category => 'apps', app => 'sound',
+		templates => [ 'templates/apps/sound.html.ep', 'public/js/manager/sound.js', 'public/js/manager/taskbar_sound.js', 'public/icons/sound.svg', 'templates/start_menu/start_menu.html.ep', 'templates/manager.html.ep', 'public/css/manager.css' ],
+		verified => '2026-11-09',
+		summary => 'Output and input devices, the default speaker and microphone, and the machine\'s volume and mute.',
+		body => [
+			'Sound lists the machine\'s output devices and input devices. The default speaker and the default microphone are marked Default; every other row carries Set default. The default output has a volume slider and a Mute button, and the default microphone has the same controls when the machine\'s mixer exposes them. The list is read from the machine itself - pactl, then wpctl, then amixer - so the ids on the screen are the devices the controls actually write to.',
+			'The Speaker and Microphone lines above each list name the device this browser uses, read from the browser\'s own media-device list: the same enumerateDevices() source the keyboard\'s walkboy panel reads its A.V. list from. That label need not be the server\'s default, because a browser and the system mixer can choose differently; the Default badge follows the system mixer, which is what Set default changes.',
+			'On a phone the app uses the app\'s own audio volume bridge: the streams are listed as outputs and the media stream is the default. The bridge has no input streams and no mute setter, so the microphone section says it is not available there and the Mute button stays disabled. A machine with no mixer at all says no devices were found instead of pretending to control one.',
+			'When the taskbar is showing, a Sound widget can ride on it: a speaker glyph, the volume percentage and the mute state, with a press opening Sound. Add items -> Widgets puts it on the bar or takes it off, its right-click menu chooses Icon, Icon and status, or Disabled, and edit mode moves it like the clock or the window list. It reads /manager/sound_status twice a minute.',
+			'The keyboard\'s walkboy panel is still the media picker for now: Sound owns the machine\'s volume, mute and default devices, while walkboy continues to choose what media plays where.',
+		],
+		steps => [
+			'Open Sound from the start menu, or press the speaker widget in the taskbar.',
+			'Read the Output list; the row marked Default is the speaker the machine is using.',
+			'Press Set default on another output to move the default speaker there.',
+			'Drag the Volume slider or press Mute to change the default output.',
+			'Read the Input list for the default microphone; Set default moves it, and Volume and Mute work when the mixer exposes them.',
+			'Read the Speaker and Microphone lines to see which devices this browser uses.',
+			'Add or remove the Sound widget under the taskbar\'s Add items -> Widgets.',
+		],
+		prompt => 'The reader is using JawnOS\'s Sound app. It has an Output list and an Input list, each marking its Default device, a volume slider and a Mute button for the default output (and for the default microphone when the mixer exposes it), and Set default buttons on the other rows. The Speaker and Microphone lines name the browser\'s own devices, which may differ from the system default. The keyboard\'s walkboy panel remains the media picker. Never claim a device changed when the app reports no devices or a disabled control; describe the row and the control instead.',
+		related => [ 'taskbar', 'start_menu', 'clock' ]
 	};
 
 1;

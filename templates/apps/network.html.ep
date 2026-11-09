@@ -1,17 +1,34 @@
 <% my $t = sub { &subs::lang($_[0]) }; %>
 <% my $devices = eval { &subs::device_lister(&subs::rightNow(), 'list') } || []; %>
 <% my $groups = eval { &subs::network_groups($devices) } || []; %>
+<% my $remote_machines = eval { &subs::remote_machine_lister() } || []; %>
+<% my @remote_rows = sort {
+	(($b->{'connection'} || '') eq 'active' ? 1 : 0) <=> (($a->{'connection'} || '') eq 'active' ? 1 : 0)
+	|| lc($a->{'hostname'} || $a->{'fqdn'} || '') cmp lc($b->{'hostname'} || $b->{'fqdn'} || '')
+} grep {
+	($_->{'mirror'} || '') ne 'yes'
+	&& ($_->{'hostname'} || '') !~ / \(mirror\)$/
+	&& ($_->{'hostname'} || '') ne 'me'
+} @{$remote_machines};
+<% my $jawnos_bluetooth = eval { &subs::ble_device_listing() } || []; %>
 <style>
 	.network_app { display:flex; flex-direction:column; gap:10px; width:100%; height:100%; min-width:0; padding:10px 12px 18px; box-sizing:border-box; overflow-y:auto; color:var(--ink); }
 	.network_bar { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
 	.network_title { font-size:18px; font-weight:700; }
 	.network_status { opacity:.7; font-size:12px; }
+	.network_tabs { display:flex; align-items:center; gap:4px; flex-wrap:wrap; border-bottom:1px solid var(--line); }
+	.network_tab { font:inherit; font-size:12px; padding:6px 12px; cursor:var(--jawnos-cursor-pointer, pointer); color:inherit; border:1px solid transparent; border-bottom:0; border-radius:calc(var(--jawnos-corner, 12px) * .4) calc(var(--jawnos-corner, 12px) * .4) 0 0; background:transparent; opacity:.7; }
+	.network_tab:hover { background:var(--panel); opacity:1; }
+	.network_tab.is-active { background:var(--panel); border-color:var(--line); opacity:1; font-weight:700; }
+	.network_tab_panel { display:flex; flex-direction:column; gap:10px; min-width:0; }
+	.network_tab_panel[hidden] { display:none !important; }
 	.network_section { border:1px solid var(--line); border-radius:calc(var(--jawnos-corner, 12px) * .55); background:var(--panel); padding:0; overflow:hidden; }
 	.network_section_head { display:flex; align-items:center; gap:8px; flex-wrap:wrap; padding:8px 10px; border-bottom:1px solid var(--line); background:var(--panel-2, var(--panel)); }
 	.network_section_head h3, .network_section_head h4 { margin:0; font-size:14px; }
 	.network_section_head .network_button { margin-left:auto; }
 	.network_section_head .network_button + .network_button { margin-left:0; }
 	.network_section_body { padding:8px 10px 10px; }
+	.network_section_body h4 { margin:12px 0 0; font-size:13px; }
 	.network_button { font:inherit; font-size:12px; padding:4px 10px; cursor:var(--jawnos-cursor-pointer, pointer); color:inherit; border:1px solid var(--line); border-radius:calc(var(--jawnos-corner, 12px) * .4); background:var(--panel); }
 	.network_button:hover { background:var(--line); }
 	.network_button[disabled] { opacity:.45; cursor:var(--jawnos-cursor-default, default); }
@@ -27,12 +44,17 @@
 	.network_pill.network_up { color:#2f8f6d; border-color:#2f8f6d; }
 	.network_pill.network_down { opacity:.65; }
 	.network_empty { opacity:.6; font-size:12px; padding:10px 4px; text-align:center; }
-	.network_list { display:flex; flex-direction:column; gap:6px; margin:8px 0 0; }
+	.network_list { display:flex; flex-direction:column; gap:6px; margin:8px 0 0; max-height:260px; overflow-y:auto; }
+	#network_wifi_state, #network_wifi_list, #network_saved_list, #network_vpn_content,
+	.network_android_list, .network_bluetooth_list { max-height:240px; overflow-y:auto; }
+	.network_bluetooth_list { gap:6px; }
+	.network_remote_list { max-height:300px; overflow:auto; }
 	.network_wifi_row, .network_vpn_card, .network_android_row { display:flex; align-items:center; gap:8px; flex-wrap:wrap; border:1px solid var(--line); border-radius:calc(var(--jawnos-corner, 12px) * .45); padding:7px 9px; background:var(--panel); }
 	.network_wifi_name, .network_vpn_name { font-weight:700; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex:1 1 120px; }
 	.network_signal { flex:0 0 auto; font-family:var(--mono-font, monospace); letter-spacing:1px; }
 	.network_wifi_pass { flex:1 1 120px; min-width:100px; font:inherit; font-size:12px; padding:3px 6px; color:inherit; border:1px solid var(--line); border-radius:6px; background:var(--panel); }
 	.network_wifi_msg { flex:1 1 100%; font-size:11px; opacity:.75; }
+	.network_bt_addr { font-family:var(--mono-font, monospace); font-size:11px; opacity:.7; }
 	.network_vpn_card { align-items:flex-start; }
 	.network_vpn_card h5 { margin:0 0 2px; font-size:13px; }
 	.network_vpn_line { font-size:12px; opacity:.85; }
@@ -42,6 +64,8 @@
 		#network_interfaces_section .network_table th:nth-child(3), #network_interfaces_section .network_table td:nth-child(3),
 		#network_interfaces_section .network_table th:nth-child(6), #network_interfaces_section .network_table td:nth-child(6),
 		#network_interfaces_section .network_table th:nth-child(7), #network_interfaces_section .network_table td:nth-child(7) { display:none; }
+		.network_list, #network_wifi_state, #network_wifi_list, #network_saved_list,
+		#network_vpn_content, .network_android_list, .network_bluetooth_list, .network_remote_list { max-height:42vh; }
 	}
 </style>
 <div class="network_app" id="network_app"
@@ -50,7 +74,9 @@
 	data-forget="<%= $t->('network.forget') %>"
 	data-scan="<%= $t->('network.scan') %>"
 	data-passphrase="<%= $t->('network.passphrase') %>"
-	data-refresh="<%= $t->('network.refresh') %>">
+	data-refresh="<%= $t->('network.refresh') %>"
+	data-pair="<%= &subs::ui('Pair') %>"
+	data-trust="<%= &subs::ui('Trust') %>">
 
 	<div class="network_bar">
 		<span class="network_title"><%= $t->('network') %></span>
@@ -58,108 +84,216 @@
 		<button type="button" id="network_refresh" class="network_button" data-label="<%= $t->('network.refresh') %>"><%= $t->('network.refresh') %></button>
 	</div>
 
-	<section class="network_section" id="network_interfaces_section">
-		<div class="network_section_head"><h3><%= $t->('network.interfaces') %></h3></div>
-		<div class="network_section_body">
-			<div class="network_table_wrap">
-				<table class="network_table">
-					<thead>
-						<tr>
-							<th><%= $t->('network.interface') %></th>
-							<th><%= $t->('network.state') %></th>
-							<th><%= $t->('network.mac') %></th>
-							<th><%= $t->('network.ipv4') %></th>
-							<th><%= $t->('network.ipv6') %></th>
-							<th><%= $t->('network.method') %></th>
-							<th><%= $t->('network.rx') %> / <%= $t->('network.tx') %></th>
-						</tr>
-					</thead>
-					<tbody id="network_interfaces_body">
-						<tr><td colspan="7" class="network_empty"><%= $t->('network.no_interfaces') %></td></tr>
-					</tbody>
-				</table>
-			</div>
-		</div>
-	</section>
+	<div class="network_tabs" role="tablist">
+		<button type="button" class="network_tab is-active" id="network_tab_network" data-network-tab="network" role="tab" aria-selected="true"><%= $t->('network') %></button>
+		<button type="button" class="network_tab" id="network_tab_bluetooth" data-network-tab="bluetooth" role="tab" aria-selected="false"><%= &subs::ui('Bluetooth') %></button>
+		<button type="button" class="network_tab" id="network_tab_remote" data-network-tab="remote" role="tab" aria-selected="false"><%= &subs::ui('Remote Machines') %></button>
+	</div>
 
-	<section class="network_section" id="network_wifi_section">
-		<div class="network_section_head">
-			<h3><%= $t->('network.wifi') %></h3>
-			<button type="button" id="network_radio_toggle" class="network_button" aria-pressed="false"><%= $t->('network.radio') %></button>
-			<button type="button" id="network_wifi_scan" class="network_button" data-label="<%= $t->('network.scan') %>"><%= $t->('network.scan') %></button>
-			<button type="button" id="network_wifi_disconnect" class="network_button" data-label="<%= $t->('network.disconnect') %>"><%= $t->('network.disconnect') %></button>
-		</div>
-		<div class="network_section_body">
-			<span id="network_wifi_hint" class="network_status"></span>
-			<div id="network_wifi_state" class="network_list"></div>
-			<div id="network_wifi_list" class="network_list">
-				<div class="network_empty"><%= $t->('network.no_wifi') %></div>
-			</div>
-			<h4 style="margin:12px 0 0;font-size:13px;"><%= $t->('network.saved') %></h4>
-			<div id="network_saved_list" class="network_list">
-				<div class="network_empty"><%= $t->('network.no_saved') %></div>
-			</div>
-		</div>
-	</section>
+	<div class="network_tab_panel" id="network_panel_network" data-network-panel="network">
 
-	<section class="network_section" id="network_vpn_section">
-		<div class="network_section_head"><h3><%= &subs::lang('vpn') %></h3></div>
-		<div class="network_section_body">
-			<div id="network_vpn_content" class="network_list">
-				<div class="network_empty"><%= $t->('network.no_vpn') %></div>
+		<section class="network_section" id="network_interfaces_section">
+			<div class="network_section_head"><h3><%= $t->('network.interfaces') %></h3></div>
+			<div class="network_section_body">
+				<div class="network_table_wrap">
+					<table class="network_table">
+						<thead>
+							<tr>
+								<th><%= $t->('network.interface') %></th>
+								<th><%= $t->('network.state') %></th>
+								<th><%= $t->('network.mac') %></th>
+								<th><%= $t->('network.ipv4') %></th>
+								<th><%= $t->('network.ipv6') %></th>
+								<th><%= $t->('network.method') %></th>
+								<th><%= $t->('network.rx') %> / <%= $t->('network.tx') %></th>
+							</tr>
+						</thead>
+						<tbody id="network_interfaces_body">
+							<tr><td colspan="7" class="network_empty"><%= $t->('network.no_interfaces') %></td></tr>
+						</tbody>
+					</table>
+				</div>
 			</div>
-		</div>
-	</section>
+		</section>
 
-	<section class="network_section" id="network_devices_section">
-		<div class="network_section_head">
-			<h3><%= $t->('network.devices') %></h3>
-			<button type="button" id="network_open_dev" class="network_button" data-label="<%= $t->('network.open_dev') %>"><%= $t->('network.open_dev') %></button>
-		</div>
-		<div class="network_section_body">
-			<div class="network_table_wrap">
-				<table class="network_table">
-					<thead>
-						<tr><th><%= $t->('network.peers') %></th><th><%= $t->('network.address') %></th><th><%= $t->('network.interface') %></th></tr>
-					</thead>
-					<tbody>
-						<% my $seen = 0; %>
-						<% foreach my $group ( @{$groups} ) { %>
-							<% next unless ref $group eq 'HASH'; %>
-							<% foreach my $member ( @{ $group->{'members'} || [] } ) { %>
-								<% next unless ref $member eq 'HASH'; %>
-								<% $seen++; %>
-								<tr>
+		<section class="network_section" id="network_wifi_section">
+			<div class="network_section_head">
+				<h3><%= $t->('network.wifi') %></h3>
+				<button type="button" id="network_radio_toggle" class="network_button" aria-pressed="false"><%= $t->('network.radio') %></button>
+				<button type="button" id="network_wifi_scan" class="network_button" data-label="<%= $t->('network.scan') %>"><%= $t->('network.scan') %></button>
+				<button type="button" id="network_wifi_disconnect" class="network_button" data-label="<%= $t->('network.disconnect') %>"><%= $t->('network.disconnect') %></button>
+			</div>
+			<div class="network_section_body">
+				<span id="network_wifi_hint" class="network_status"></span>
+				<div id="network_wifi_state" class="network_list"></div>
+				<div id="network_wifi_list" class="network_list">
+					<div class="network_empty"><%= $t->('network.no_wifi') %></div>
+				</div>
+				<h4><%= $t->('network.saved') %></h4>
+				<div id="network_saved_list" class="network_list">
+					<div class="network_empty"><%= $t->('network.no_saved') %></div>
+				</div>
+			</div>
+		</section>
+
+		<section class="network_section" id="network_vpn_section">
+			<div class="network_section_head"><h3><%= &subs::lang('vpn') %></h3></div>
+			<div class="network_section_body">
+				<div id="network_vpn_content" class="network_list">
+					<div class="network_empty"><%= $t->('network.no_vpn') %></div>
+				</div>
+			</div>
+		</section>
+
+		<section class="network_section" id="network_devices_section">
+			<div class="network_section_head">
+				<h3><%= $t->('network.devices') %></h3>
+				<button type="button" id="network_open_dev" class="network_button" data-label="<%= $t->('network.open_dev') %>"><%= $t->('network.open_dev') %></button>
+			</div>
+			<div class="network_section_body">
+				<div class="network_table_wrap">
+					<table class="network_table">
+						<thead>
+							<tr><th><%= $t->('network.peers') %></th><th><%= $t->('network.address') %></th><th><%= $t->('network.interface') %></th></tr>
+						</thead>
+						<tbody>
+							<% my $seen = 0; %>
+							<% foreach my $group ( @{$groups} ) { %>
+								<% next unless ref $group eq 'HASH'; %>
+								<% foreach my $member ( @{ $group->{'members'} || [] } ) { %>
+									<% next unless ref $member eq 'HASH'; %>
+									<% $seen++; %>
+									<tr>
+										<td>
+											<% if ($member->{'hostname'}) { %><%= &subs::format_name($member->{'hostname'}) %><% } %>
+											<% if ($member->{'domain'}) { %><br><span style="opacity:.65;font-size:11px;"><%= $member->{'domain'} %></span><% } %>
+										</td>
+										<td class="network_mono"><%= $member->{'ip'} || '' %></td>
+										<td><%= $member->{'nic'} || '' %></td>
+									</tr>
+								<% } %>
+							<% } %>
+							<% unless ($seen) { %>
+								<tr><td colspan="3" class="network_empty"><%= $t->('network.no_peers') %></td></tr>
+							<% } %>
+						</tbody>
+					</table>
+				</div>
+				<p class="network_dev_note"><%= $t->('network.dev_note') %></p>
+			</div>
+		</section>
+
+		<section class="network_section" id="network_android_section" style="display:none;">
+			<div class="network_section_head"><h3><%= $t->('network.android') %></h3></div>
+			<div class="network_section_body">
+				<div id="network_android_status" class="network_list"></div>
+				<div class="network_row" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;">
+					<button type="button" id="network_android_scan" class="network_button" data-label="<%= $t->('network.scan') %>"><%= $t->('network.scan') %></button>
+					<button type="button" id="network_android_disconnect" class="network_button" data-label="<%= $t->('network.disconnect') %>"><%= $t->('network.disconnect') %></button>
+					<button type="button" id="network_android_wifi_settings" class="network_button" data-label="<%= $t->('network.wifi_settings') %>"><%= $t->('network.wifi_settings') %></button>
+					<button type="button" id="network_android_vpn_settings" class="network_button" data-label="<%= $t->('network.vpn_settings') %>"><%= $t->('network.vpn_settings') %></button>
+				</div>
+				<div id="network_android_networks" class="network_android_list"></div>
+			</div>
+		</section>
+	</div>
+
+	<div class="network_tab_panel" id="network_panel_bluetooth" data-network-panel="bluetooth" hidden>
+		<section class="network_section" id="network_bluetooth_section">
+			<div class="network_section_head">
+				<h3><%= &subs::ui('Bluetooth') %></h3>
+				<span id="network_bluetooth_status" class="network_status"></span>
+				<button type="button" id="network_bluetooth_power" class="network_button" aria-pressed="false"><%= &subs::ui('Power') %></button>
+				<button type="button" id="network_bluetooth_scan" class="network_button" data-label="<%= $t->('network.scan') %>"><%= $t->('network.scan') %></button>
+			</div>
+			<div class="network_section_body">
+				<div id="network_bluetooth_error" class="network_status" style="color:#a33;"></div>
+				<h4><%= &subs::ui('Connected') %></h4>
+				<div id="network_bluetooth_connected" class="network_list network_bluetooth_list">
+					<div class="network_empty"><%= &subs::ui('No Bluetooth device is connected.') %></div>
+				</div>
+				<h4><%= &subs::ui('Paired') %></h4>
+				<div id="network_bluetooth_paired" class="network_list network_bluetooth_list">
+					<div class="network_empty"><%= &subs::ui('No paired Bluetooth devices.') %></div>
+				</div>
+				<h4><%= &subs::ui('Found') %></h4>
+				<div id="network_bluetooth_found" class="network_list network_bluetooth_list">
+					<div class="network_empty"><%= &subs::ui('Press Scan to list Bluetooth devices.') %></div>
+				</div>
+				<h4><%= &subs::ui('JawnOS devices') %></h4>
+				<div id="network_bluetooth_jawnos" class="network_list network_bluetooth_list">
+					<% if (ref $jawnos_bluetooth eq 'ARRAY' && @{$jawnos_bluetooth}) { %>
+						<% foreach my $ble ( @{$jawnos_bluetooth} ) { %>
+							<% next unless ref $ble eq 'HASH'; %>
+							<div class="network_wifi_row">
+								<span class="network_wifi_name"><%= &subs::format_name($ble->{'name'} || $ble->{'id'} || '') %></span>
+								<span class="network_bt_addr"><%= $ble->{'id'} || '' %></span>
+								<% if ($ble->{'hostname'}) { %><span class="network_pill"><%= &subs::format_name($ble->{'hostname'}) %></span><% } %>
+								<% if ($ble->{'seen_display'}) { %><span class="network_status"><%= $ble->{'seen_display'} %></span><% } %>
+							</div>
+						<% } %>
+					<% } else { %>
+						<div class="network_empty"><%= &subs::ui('No JawnOS Bluetooth devices seen.') %></div>
+					<% } %>
+				</div>
+			</div>
+		</section>
+	</div>
+
+	<div class="network_tab_panel" id="network_panel_remote" data-network-panel="remote" hidden>
+		<section class="network_section" id="network_remote_section">
+			<div class="network_section_head"><h3><%= &subs::ui('Remote Machines') %></h3></div>
+			<div class="network_section_body">
+				<div class="network_table_wrap network_remote_list">
+					<table class="network_table">
+						<thead>
+							<tr>
+								<th><%= &subs::ui('Machine') %></th>
+								<th><%= $t->('network.address') %></th>
+								<th><%= &subs::ui('State') %></th>
+								<th><%= &subs::ui('Purposes') %></th>
+								<th><%= &subs::ui('Actions') %></th>
+							</tr>
+						</thead>
+						<tbody>
+							<% unless (@remote_rows) { %>
+								<tr><td colspan="5" class="network_empty"><%= &subs::ui('No remote machines found.') %></td></tr>
+							<% } %>
+							<% foreach my $rm ( @remote_rows ) { %>
+								<% next unless ref $rm eq 'HASH'; %>
+								<% my $online = (($rm->{'connection'} || '') eq 'active') ? 1 : 0; %>
+								<% my $address = $rm->{'lan_ip'} || $rm->{'ip'} || $rm->{'fqdn'} || $rm->{'domain'} || ''; %>
+								<tr class="network_remote_row">
 									<td>
-										<% if ($member->{'hostname'}) { %><%= &subs::format_name($member->{'hostname'}) %><% } %>
-										<% if ($member->{'domain'}) { %><br><span style="opacity:.65;font-size:11px;"><%= $member->{'domain'} %></span><% } %>
+										<b><%= &subs::format_name($rm->{'hostname'} || $rm->{'fqdn'} || $address || '') %></b>
+										<% if ($rm->{'fqdn'} && $rm->{'fqdn'} ne ($rm->{'hostname'} || '')) { %><br><span style="opacity:.65;font-size:11px;"><%= $rm->{'fqdn'} %></span><% } %>
 									</td>
-									<td class="network_mono"><%= $member->{'ip'} || '' %></td>
-									<td><%= $member->{'nic'} || '' %></td>
+									<td class="network_mono"><%= $address %></td>
+									<td>
+										<span class="network_pill <%= $online ? 'network_up' : 'network_down' %>"><%= $online ? &subs::ui('Online') : &subs::ui('Offline') %></span>
+									</td>
+									<td>
+										<% my @purposes; %>
+										<% push @purposes, &subs::format_name($rm->{'device'}) if $rm->{'device'}; %>
+										<% push @purposes, &subs::format_name($rm->{'privilege'}) if $rm->{'privilege'}; %>
+										<% if (@purposes) { %>
+											<% foreach my $purpose ( @purposes ) { %><span class="network_pill"><%= $purpose %></span> <% } %>
+										<% } else { %>—<% } %>
+									</td>
+									<td>
+										<% if ($rm->{'uuid'} || $rm->{'manager'}) { %>
+											<button type="button" class="network_button remote_manager_open" uuid="<%= $rm->{'uuid'} || '' %>" manager="<%= $rm->{'manager'} || '' %>" hint="<%= &subs::ui("Open this machine's Manager") %>"><%= $t->('common.go') %></button>
+										<% } %>
+										<% if ($rm->{'uuid'} || $rm->{'signatorial'}) { %>
+											<button type="button" class="network_button remote_control_open" machine="<%= $rm->{'uuid'} || $rm->{'signatorial'} %>" hint="<%= &subs::ui('Open Remote control on this machine') %>"><%= &subs::ui('Remote control') %></button>
+										<% } %>
+									</td>
 								</tr>
 							<% } %>
-						<% } %>
-						<% unless ($seen) { %>
-							<tr><td colspan="3" class="network_empty"><%= $t->('network.no_peers') %></td></tr>
-						<% } %>
-					</tbody>
-				</table>
+						</tbody>
+					</table>
+				</div>
 			</div>
-			<p class="network_dev_note"><%= $t->('network.dev_note') %></p>
-		</div>
-	</section>
-
-	<section class="network_section" id="network_android_section" style="display:none;">
-		<div class="network_section_head"><h3><%= $t->('network.android') %></h3></div>
-		<div class="network_section_body">
-			<div id="network_android_status" class="network_list"></div>
-			<div class="network_row" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;">
-				<button type="button" id="network_android_scan" class="network_button" data-label="<%= $t->('network.scan') %>"><%= $t->('network.scan') %></button>
-				<button type="button" id="network_android_disconnect" class="network_button" data-label="<%= $t->('network.disconnect') %>"><%= $t->('network.disconnect') %></button>
-				<button type="button" id="network_android_wifi_settings" class="network_button" data-label="<%= $t->('network.wifi_settings') %>"><%= $t->('network.wifi_settings') %></button>
-				<button type="button" id="network_android_vpn_settings" class="network_button" data-label="<%= $t->('network.vpn_settings') %>"><%= $t->('network.vpn_settings') %></button>
-			</div>
-			<div id="network_android_networks" class="network_android_list"></div>
-		</div>
-	</section>
+		</section>
+	</div>
 </div>

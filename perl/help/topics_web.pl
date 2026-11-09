@@ -64,17 +64,20 @@ $topic{'terminal'} = {
 	};
 $topic{'network'} = {
 		title => 'Network', category => 'apps', app => 'network',
-		templates => [ 'templates/apps/network.html.ep', 'public/js/manager/network.js', 'public/js/manager/taskbar_network.js' ],
-		verified => '2026-11-08',
-		summary => 'Interfaces, Wi-Fi, VPN, the machines on the mesh, and the phone.',
+		templates => [ 'templates/apps/network.html.ep', 'public/js/manager/network.js', 'public/js/manager/network/02_tabs_bluetooth_remote.js', 'public/js/manager/taskbar_network.js', 'scripts/jawnos_network.pl', 'scripts/jawnos_bluetooth.pl' ],
+		verified => '2026-11-09',
+		summary => 'Interfaces, Wi-Fi, VPN, Bluetooth, the machines on the mesh, and the remote machines.',
 		body => [
-			'Network is the app for the connection itself. It opens from the start menu and shows four things in one window: this machine\'s interfaces, its Wi-Fi, its VPN, and a read-only view of the machines on the mesh. A fifth section appears on a phone.',
-			'Interfaces lists every network interface with its state, MAC address, IPv4 and IPv6 addresses, whether the address came from DHCP or was set by hand, and the bytes received and sent. The list refreshes itself every fifteen seconds while the window is open, and Refresh reads it again at once. An interface carries an Up or Down button beside its state, for bringing a link up or taking it down.',
+			'Network is the app for the connection itself. It opens from the start menu with three tabs: Network, Bluetooth and Remote Machines. The tab you used last is remembered, and the Refresh button and the status line stay in the same place above them.',
+			'Network holds this machine\'s interfaces, its Wi-Fi, its VPN, a read-only view of the machines on the mesh, and the phone section. Interfaces lists every network interface with its state, MAC address, IPv4 and IPv6 addresses, whether the address came from DHCP or was set by hand, and the bytes received and sent. The list refreshes itself every fifteen seconds while the window is open, and Refresh reads it again at once. An interface carries an Up or Down button beside its state, for bringing a link up or taking it down.',
 			'Wi-Fi is driven through iwd. The Radio button turns the wireless adapter on or off, Scan lists the networks in range with their security and signal, and Connect takes a passphrase for a secured network. Disconnect drops the current network and Forget removes a saved one. A machine with no wireless adapter says so instead of showing an empty list.',
 			'VPN reports what is really running. When Tailscale is installed it shows whether the tailnet is up, its address and any exit node. WireGuard configurations in /etc/wireguard and OpenVPN client configurations in /etc/openvpn/client are listed with Start and Stop buttons that drive their systemd units. When none of these is configured the section says so; it never pretends a connection exists.',
 			'Devices and mesh is a compact, read-only summary: the machines the house knows and the interfaces each one reaches a network with, built from the same device listing the Dev panel uses. The button opens Configure -> Dev for the full panel - scanning, purposes, privileges and the router cards - so the Network app never duplicates it.',
-			'On Android, when the JawnOS app exposes its network bridge, the Android section shows the phone\'s current connection and VPN and offers Scan, Connect, Disconnect, and buttons that open the phone\'s own Wi-Fi and VPN settings. The Linux sections remain the machine\'s own network, not the phone\'s.',
-			'The taskbar can carry a Network widget: signal bars and the Wi-Fi name while connected, a wired glyph for Ethernet, or Disconnected. It is added from Add items -> Widgets, and its right-click menu chooses Icon, Icon and status, or Disabled.',
+			'Bluetooth reads this machine\'s own adapter through bluetoothctl. The adapter button turns the radio on or off and Scan looks for devices. Connected, Paired and Found list every device with its address and icon, and a row offers Pair, Connect, Disconnect, Trust or Forget as they apply. A Bluetooth tool that is not installed, or a scan that fails, is reported in the tab instead of leaving an empty list. A separate JawnOS devices list shows the watches, decks and boards the house has seen over its own Bluetooth bridge; it stays empty without breaking the ordinary list when the bridge has nothing to report.',
+			'Remote Machines is a compact table of the peers the house knows: name, address, online state and purposes, with Go to open that machine\'s Manager and Remote control to open the Controller keyboard on it. It uses the same machine list and the same two buttons as the Controller keyboard rather than a second copy of that panel; Configure -> Dev remains the full machine and grant panel.',
+			'On Android, when the JawnOS app exposes its network bridge, the Network tab\'s Android section shows the phone\'s current connection and VPN and offers Scan, Connect, Disconnect, and buttons that open the phone\'s own Wi-Fi and VPN settings. The Linux sections remain the machine\'s own network, not the phone\'s.',
+			'Long lists scroll inside their own boxes instead of stretching the window, and the machine tables scroll sideways on a narrow screen.',
+			'The taskbar can carry a Network widget: signal bars and the Wi-Fi name while connected, a wired glyph for Ethernet, or Disconnected, plus a Bluetooth glyph and the name of the connected Bluetooth device. It is added from Add items -> Widgets, and its right-click menu chooses Icon, Icon and status, or Disabled.',
 			'On the live image, systemd-networkd brings up wired and wireless interfaces over DHCP, iwd handles Wi-Fi, and systemd-resolved answers DNS. In QEMU with user-mode networking the guest receives 10.0.2.15 and a working gateway automatically.'
 		],
 		steps => [
@@ -83,6 +86,8 @@ $topic{'network'} = {
 			'In Wi-Fi, press Radio to turn the adapter on, then Scan.',
 			'Type the passphrase in a secured network\'s row and press Connect; Disconnect drops it and Forget removes it from the saved list.',
 			'In VPN, start or stop Tailscale, or a WireGuard or OpenVPN configuration that is already on the machine.',
+			'Open the Bluetooth tab, turn the adapter on, then press Scan and pair or connect a device from its row.',
+			'Open the Remote Machines tab and press Go or Remote control on a machine.',
 			'Press Open Configure -> Dev for the full machine and network panel.',
 			'On a phone, use the Android section to scan, connect or open the system Wi-Fi and VPN settings.'
 		],

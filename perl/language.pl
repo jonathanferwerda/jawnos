@@ -183,6 +183,37 @@ foreach my $code ( keys %power_app_labels ) {
 	$catalog{$code} = { %{$catalog{$code} || {}}, %add };
 }
 
+# The Sound app's own labels. These are core labels on the app window, the
+# start menu and the taskbar widget, so they are written in every interface
+# language here rather than left to the English backfill. The sentences around
+# them go through subs::ui and are translated on demand.
+my @sound_keys = qw( sound sound_output sound_input sound_default sound_set_default
+	sound_volume sound_mute sound_muted sound_speaker sound_microphone
+	sound_no_devices sound_not_available sound_browser_default );
+my %sound_labels = (
+en => [ 'Sound', 'Output', 'Input', 'Default', 'Set default', 'Volume', 'Mute', 'Muted', 'Speaker', 'Microphone', 'No devices found', 'Not available on this machine', 'Browser default' ],
+zh => [ '声音', '输出', '输入', '默认', '设为默认', '音量', '静音', '已静音', '扬声器', '麦克风', '未找到设备', '此机器不可用', '浏览器默认' ],
+fr => [ 'Son', 'Sortie', 'Entrée', 'Par défaut', 'Définir par défaut', 'Volume', 'Couper le son', 'Son coupé', 'Haut-parleur', 'Microphone', 'Aucun appareil trouvé', 'Indisponible sur cette machine', 'Navigateur par défaut' ],
+es => [ 'Sonido', 'Salida', 'Entrada', 'Predeterminado', 'Establecer como predeterminado', 'Volumen', 'Silenciar', 'Silenciado', 'Altavoz', 'Micrófono', 'No se encontraron dispositivos', 'No disponible en esta máquina', 'Predeterminado del navegador' ],
+de => [ 'Ton', 'Ausgabe', 'Eingabe', 'Standard', 'Als Standard festlegen', 'Lautstärke', 'Stummschalten', 'Stummgeschaltet', 'Lautsprecher', 'Mikrofon', 'Keine Geräte gefunden', 'Auf dieser Maschine nicht verfügbar', 'Browser-Standard' ],
+pt => [ 'Som', 'Saída', 'Entrada', 'Padrão', 'Definir como padrão', 'Volume', 'Silenciar', 'Silenciado', 'Alto-falante', 'Microfone', 'Nenhum dispositivo encontrado', 'Indisponível nesta máquina', 'Padrão do navegador' ],
+hi => [ 'ध्वनि', 'आउटपुट', 'इनपुट', 'डिफ़ॉल्ट', 'डिफ़ॉल्ट बनाएँ', 'वॉल्यूम', 'म्यूट', 'म्यूट किया गया', 'स्पीकर', 'माइक्रोफ़ोन', 'कोई डिवाइस नहीं मिला', 'इस मशीन पर उपलब्ध नहीं', 'ब्राउज़र डिफ़ॉल्ट' ],
+ar => [ 'الصوت', 'الإخراج', 'الإدخال', 'الافتراضي', 'تعيين كافتراضي', 'مستوى الصوت', 'كتم', 'مكتوم', 'مكبر الصوت', 'الميكروفون', 'لم يتم العثور على أجهزة', 'غير متاح على هذا الجهاز', 'افتراضي المتصفح' ],
+bn => [ 'শব্দ', 'আউটপুট', 'ইনপুট', 'ডিফল্ট', 'ডিফল্ট সেট করুন', 'ভলিউম', 'মিউট', 'মিউট করা', 'স্পিকার', 'মাইক্রোফোন', 'কোনো ডিভাইস পাওয়া যায়নি', 'এই মেশিনে উপলব্ধ নয়', 'ব্রাউজার ডিফল্ট' ],
+ru => [ 'Звук', 'Выход', 'Вход', 'По умолчанию', 'Сделать по умолчанию', 'Громкость', 'Без звука', 'Без звука', 'Динамик', 'Микрофон', 'Устройства не найдены', 'Недоступно на этой машине', 'По умолчанию в браузере' ],
+ja => [ 'サウンド', '出力', '入力', 'デフォルト', 'デフォルトに設定', '音量', 'ミュート', 'ミュート中', 'スピーカー', 'マイク', 'デバイスが見つかりません', 'このマシンでは利用できません', 'ブラウザのデフォルト' ],
+pa => [ 'ਆਵਾਜ਼', 'ਆਉਟਪੁੱਟ', 'ਇਨਪੁੱਟ', 'ਡਿਫਾਲਟ', 'ਡਿਫਾਲਟ ਸੈੱਟ ਕਰੋ', 'ਵਾਲੀਅਮ', 'ਮਿਊਟ', 'ਮਿਊਟ ਕੀਤਾ', 'ਸਪੀਕਰ', 'ਮਾਈਕ੍ਰੋਫ਼ੋਨ', 'ਕੋਈ ਡਿਵਾਈਸ ਨਹੀਂ ਮਿਲੀ', 'ਇਸ ਮਸ਼ੀਨ ਤੇ ਉਪਲਬਧ ਨਹੀਂ', 'ਬ੍ਰਾਊਜ਼ਰ ਡਿਫਾਲਟ' ],
+id => [ 'Suara', 'Keluaran', 'Masukan', 'Bawaan', 'Jadikan bawaan', 'Volume', 'Bisukan', 'Dibisukan', 'Speaker', 'Mikrofon', 'Tidak ada perangkat ditemukan', 'Tidak tersedia di mesin ini', 'Bawaan browser' ],
+ko => [ '소리', '출력', '입력', '기본', '기본으로 설정', '볼륨', '음소거', '음소거됨', '스피커', '마이크', '장치를 찾을 수 없음', '이 기기에서 사용할 수 없음', '브라우저 기본' ],
+it => [ 'Suono', 'Uscita', 'Ingresso', 'Predefinito', 'Imposta come predefinito', 'Volume', 'Muto', 'Muto', 'Altoparlante', 'Microfono', 'Nessun dispositivo trovato', 'Non disponibile su questa macchina', 'Predefinito del browser' ],
+tr => [ 'Ses', 'Çıkış', 'Giriş', 'Varsayılan', 'Varsayılan yap', 'Ses düzeyi', 'Sessize al', 'Sessiz', 'Hoparlör', 'Mikrofon', 'Cihaz bulunamadı', 'Bu makinede kullanılamıyor', 'Tarayıcı varsayılanı' ],
+);
+foreach my $code ( keys %sound_labels ) {
+	my %add;
+	@add{@sound_keys} = @{$sound_labels{$code}};
+	$catalog{$code} = { %{$catalog{$code} || {}}, %add };
+}
+
 # Configure -> Plat -> QA. These are core labels on a settings panel, so they
 # are written here in every interface language rather than left to the English
 # backfill. The surrounding explanation is help text and goes through subs::ui.

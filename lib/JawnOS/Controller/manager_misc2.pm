@@ -203,6 +203,56 @@ sub action_7845 {
 	$c->render(text => $contents);
 }
 
+# GET /manager/network/bluetooth/status
+sub action_7849 {
+	my $c = shift;
+	my $answer = eval { &bluetooth_helper(['status']) };
+	$answer = { ok => 0, error => 'The Bluetooth status could not be read.' } unless ref $answer eq 'HASH';
+	$c->render(json => $answer);
+}
+
+# POST /manager/network/bluetooth/scan
+sub action_7852 {
+	my $c = shift;
+	my $state = $c->param('state') // '';
+	unless ($state =~ /^(?:on|off)$/) {
+		$c->render(json => { ok => 0, error => 'Scanning can only be turned on or off.' });
+		return;
+	}
+	my $answer = eval { &bluetooth_helper(['scan', $state]) };
+	$answer = { ok => 0, error => 'The scan could not be run.' } unless ref $answer eq 'HASH';
+	$c->render(json => $answer);
+}
+
+# POST /manager/network/bluetooth/action
+sub action_7855 {
+	my $c = shift;
+	my $action = $c->param('action') // '';
+	my $answer;
+	if ($action eq 'power') {
+		my $state = $c->param('state') // '';
+		unless ($state =~ /^(?:on|off)$/) {
+			$c->render(json => { ok => 0, error => 'The adapter can only be turned on or off.' });
+			return;
+		}
+		$answer = eval { &bluetooth_helper(['power', $state]) };
+	}
+	else {
+		my $address = $c->param('address') // '';
+		unless ($action =~ /^(?:pair|connect|disconnect|trust|remove)$/) {
+			$c->render(json => { ok => 0, error => 'The Bluetooth action is not valid.' });
+			return;
+		}
+		unless ($address =~ /^[0-9A-Fa-f:]{17}$/) {
+			$c->render(json => { ok => 0, error => 'That device address is not valid.' });
+			return;
+		}
+		$answer = eval { &bluetooth_helper([$action, $address]) };
+	}
+	$answer = { ok => 0, error => 'The Bluetooth request could not be completed.' } unless ref $answer eq 'HASH';
+	$c->render(json => $answer);
+}
+
 # GET /manager/network/status
 sub action_7857 {
 	my $c = shift;

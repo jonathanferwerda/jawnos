@@ -203,6 +203,9 @@ function jawnosDockAppsRender() {
 		icon.css('background-color', 'var(--panel-2)');
 		bar.append($('<div class="draggable_icon dock_app_wrap"></div>').append(icon));
 	});
+	// the saved order names pseudonyms and added apps alike; the new app faces
+	// take their place in it rather than always landing at the end
+	jawnosDockOrderApply();
 }
 // Call the dock back out after an add: a tucked row or side pill must show the
 // new face instead of staying away until the pointer finds the strip again.
@@ -262,18 +265,24 @@ function jawnosDockMenuRow(menu, opts) {
 	menu.append(row);
 	return row;
 }
-function jawnosDockMenuOpen(x, y, rows, label) {
+// Put a built menu at the pointer, kept on screen. The dock's larger menu is
+// built by jawnosDockContextBuild and arrives here already assembled.
+function jawnosDockMenuPlace(menu, x, y) {
 	$('.taskbar_context').remove();
-	if (!rows || !rows.length) { return; }
-	var menu = $('<div class="taskbar_context"></div>');
-	if (label) { $('<div class="taskbar_context_label"></div>').text(label).appendTo(menu); }
-	$.each(rows, function(i, row) { jawnosDockMenuRow(menu, row); });
+	if (!menu || !menu.length) { return; }
 	$('body').append(menu);
 	var w = menu.outerWidth();
 	var h = menu.outerHeight();
 	var left = Math.max(4, Math.min(x, $(window).width() - w - 4));
 	var top = Math.max(4, Math.min(y, $(window).height() - h - 4));
 	menu.css({ left: left + 'px', top: top + 'px' });
+}
+function jawnosDockMenuOpen(x, y, rows, label) {
+	if (!rows || !rows.length) { return; }
+	var menu = $('<div class="taskbar_context"></div>');
+	if (label) { $('<div class="taskbar_context_label"></div>').text(label).appendTo(menu); }
+	$.each(rows, function(i, row) { jawnosDockMenuRow(menu, row); });
+	jawnosDockMenuPlace(menu, x, y);
 }
 // The app a start-menu picture opens, if it names one. The taskbar's own table
 // of aliases and actions is the authority; without it, a *_toggle class is the
@@ -310,10 +319,338 @@ function jawnosDockAppMenu(x, y, entry) {
 		label: on ? jawnosDockText('dock.remove', 'Remove from dock') : jawnosDockText('dock.add', 'Add to dock')
 	}], entry.hint || entry.app);
 }
+
+// ---- dock edit mode, face order and the menu it opens ----------------------
+// The dock's faces are the server's pseudonyms plus the apps this browser
+// added. Both are wrappers in #pseudonym_bar, so one reorder pass serves them:
+// a face's key is its toggle (a pseudonym) or 'app:<name>' (an added app), and
+// the order is this browser's own (dock_order).
+var jawnosDockDrag = null;
+
+function jawnosDockEditing() {
+	return $('#pseudonym_home').hasClass('dock_edit');
+}
+
+// Edit dock: the row is dragged to reorder it. The library's per-icon drag
+// moves a face anywhere, so it stands down while the dock is being edited and
+// comes back when the mode ends; a side dock's slide is untouched by either.
+function jawnosDockEdit(on) {
+	var home = $('#pseudonym_home');
+	if (!home.length) { return; }
+	if (typeof on == 'undefined') { on = !jawnosDockEditing(); }
+	home.toggleClass('dock_edit', !!on);
+	$('.pseudonym').filter('.ui-draggable').each(function() {
+		if (on) { $(this).draggable('disable'); }
+		else { $(this).draggable('enable'); }
+	});
+	if (!on) { jawnosDockOrderSave(); }
+	jawnosDockReveal();
+}
+
+function jawnosDockFaceKey(el) {
+	el = $(el);
+	var app = el.attr('dock_app');
+	if (app) { return 'app:' + app; }
+	var toggle = el.attr('toggle');
+	if (toggle) { return toggle; }
+	return el.attr('id') || '';
+}
+
+function jawnosDockOrder() {
+	if (typeof jawnosStore == 'undefined') { return []; }
+	var raw = jawnosStore.read('dock_order') || {};
+	var order = raw.order;
+	if (typeof order == 'string') {
+		try { order = JSON.parse(order); } catch (e) { order = null; }
+	}
+	return Array.isArray(order) ? order : [];
+}
+
+// Keep the order the wrappers are in now: a pseudonym by its toggle, an added
+// app by 'app:<name>'. This is the browser's own list, like dock_apps.
+function jawnosDockOrderSave() {
+	var order = [];
+	$('#pseudonym_bar').children('.draggable_icon').each(function() {
+		var icon = $(this).children('.pseudonym.bar').first();
+		if (!icon.length) { return; }
+		var key = jawnosDockFaceKey(icon);
+		if (key) { order.push(key); }
+	});
+	if (typeof jawnosStore != 'undefined') { jawnosStore.set('dock_order', 'order', JSON.stringify(order)); }
+	return order;
+}
+
+// Lay the wrappers out in the saved order: the named faces first, in their
+// saved order, then any face the store has not seen yet (a new pseudonym, a new
+// app) in the order the server or the add list gave it. The DOM is only touched
+// when it is actually out of order, so a plain render costs no moves.
+function jawnosDockOrderApply() {
+	var bar = $('#pseudonym_bar');
+	if (!bar.length) { return; }
+	var wrappers = bar.children('.draggable_icon').toArray();
+	if (!wrappers.length) { return; }
+	var saved = jawnosDockOrder();
+	var by_key = {};
+	$.each(wrappers, function(i, w) {
+		var icon = $(w).children('.pseudonym.bar').first();
+		if (!icon.length) { return; }
+		var key = jawnosDockFaceKey(icon);
+		if (!key || by_key[key]) { return; }
+		by_key[key] = w;
+	});
+	var placed = [];
+	$.each(saved, function(i, key) {
+		if (by_key[key] && placed.indexOf(by_key[key]) < 0) { placed.push(by_key[key]); }
+	});
+	$.each(wrappers, function(i, w) {
+		if (placed.indexOf(w) < 0) { placed.push(w); }
+	});
+	var same = placed.length == wrappers.length;
+	for (var i = 0; same && i < wrappers.length; i++) {
+		if (placed[i] !== wrappers[i]) { same = false; }
+	}
+	if (same) { return; }
+	$.each(placed, function(i, w) { bar.append(w); });
+}
+
+// Where a dragged face belongs: the first visible face whose centre is past
+// the pointer, on the dock's own axis (a row is horizontal, a side dock is
+// vertical). The dragged face itself does not count.
+function jawnosDockReorderAt(x, y, drag) {
+	if (!drag) { return; }
+	var bar = $('#pseudonym_bar');
+	if (!bar.length) { return; }
+	var side = (typeof jawnosSideDock == 'function') && jawnosSideDock();
+	var pos = side ? y : x;
+	var wrappers = bar.children('.draggable_icon').toArray();
+	var self = drag.wrapper[0];
+	var target = null;
+	$.each(wrappers, function(i, w) {
+		if (w === self) { return; }
+		var icon = $(w).children('.pseudonym.bar').first();
+		if (!icon.length || !icon.is(':visible')) { return; }
+		var r = icon[0].getBoundingClientRect();
+		if (!(r.width > 0 && r.height > 0)) { return; }
+		var mid = side ? (r.top + r.height / 2) : (r.left + r.width / 2);
+		if (pos < mid) { target = w; return false; }
+	});
+	var changed = false;
+	if (target) {
+		if ($(target).prev()[0] !== self) { $(target).before(self); changed = true; }
+	}
+	else {
+		var after = null;
+		for (var j = wrappers.length - 1; j >= 0; j--) {
+			var w = wrappers[j];
+			if (w === self) { continue; }
+			var icon = $(w).children('.pseudonym.bar').first();
+			if (!icon.length || !icon.is(':visible')) { continue; }
+			var r = icon[0].getBoundingClientRect();
+			if (r.width > 0 && r.height > 0) { after = w; break; }
+		}
+		if (after) {
+			if ($(after).next()[0] !== self) { $(after).after(self); changed = true; }
+		}
+		else { bar.append(self); changed = true; }
+	}
+	if (changed) {
+		drag.dragged = true;
+		if (typeof pseudonymFreeSpaceFinder == 'function') { pseudonymFreeSpaceFinder(); }
+	}
+}
+
+function jawnosDockDragStart(x, y, target) {
+	if (!jawnosDockEditing()) { return false; }
+	var icon = $(target).closest('#pseudonym_bar .pseudonym.bar');
+	if (!icon.length) { return false; }
+	var wrapper = icon.closest('.draggable_icon');
+	if (!wrapper.length) { return false; }
+	jawnosDockDrag = { wrapper: wrapper, dragged: false };
+	$('#pseudonym_home').addClass('dock_dragging');
+	return true;
+}
+
+function jawnosDockDragMove(x, y) {
+	if (!jawnosDockDrag) { return; }
+	jawnosDockReorderAt(x, y, jawnosDockDrag);
+}
+
+function jawnosDockDragEnd() {
+	if (!jawnosDockDrag) { return; }
+	jawnosDockDrag = null;
+	$('#pseudonym_home').removeClass('dock_dragging');
+	jawnosDockOrderSave();
+	if (typeof pseudonymFreeSpaceFinder == 'function') { pseudonymFreeSpaceFinder(); }
+}
+
+// Bind the reorder drag once. It only answers while Edit dock is on; a press
+// outside that mode falls through to the library's own per-icon drag.
+function jawnosDockDragBind() {
+	if (jawnosDockDragBind.done) { return; }
+	jawnosDockDragBind.done = true;
+	$(document).on('mousedown', '#pseudonym_home.dock_edit #pseudonym_bar .pseudonym.bar', function(e) {
+		if (e.which && e.which != 1) { return; }
+		if (!jawnosDockDragStart(e.clientX, e.clientY, this)) { return; }
+		e.preventDefault();
+	});
+	$(document).on('mousemove', function(e) { jawnosDockDragMove(e.clientX, e.clientY); });
+	$(document).on('mouseup', function() { jawnosDockDragEnd(); });
+	$(document).on('touchstart', '#pseudonym_home.dock_edit #pseudonym_bar .pseudonym.bar', function(e) {
+		var t = e.originalEvent.touches && e.originalEvent.touches[0];
+		if (!t || !jawnosDockDragStart(t.clientX, t.clientY, this)) { return; }
+		e.preventDefault();
+	});
+	$(document).on('touchmove', function(e) {
+		if (!jawnosDockDrag) { return; }
+		var t = e.originalEvent.touches && e.originalEvent.touches[0];
+		if (!t) { return; }
+		jawnosDockDragMove(t.clientX, t.clientY);
+		e.preventDefault();
+	});
+	$(document).on('touchend touchcancel', function() { jawnosDockDragEnd(); });
+}
+
+// The dock's position and icons are the same misc settings the configure panel
+// writes; the menu writes them through the same route and lays the bars out
+// again at once.
+function jawnosDockPositionSet(pos) {
+	if (!pos) { return; }
+	if (typeof jawnosBars != 'undefined') { jawnosBars.dock = pos; }
+	if (typeof jawnosTaskbarSave == 'function') { jawnosTaskbarSave('dock_position', pos); }
+	if (typeof jawnosBarsApply == 'function') { jawnosBarsApply(); }
+	else { jawnosDockReveal(); }
+}
+function jawnosDockIconsSet(state) {
+	state = state == 'hidden' ? 'hidden' : 'shown';
+	if (typeof jawnosBars != 'undefined') { jawnosBars.icons = state; }
+	if (typeof jawnosTaskbarSave == 'function') { jawnosTaskbarSave('dock_icons', state); }
+	if (typeof jawnosBarsApply == 'function') { jawnosBarsApply(); }
+	else if (typeof pseudonymFreeSpaceFinder == 'function') { pseudonymFreeSpaceFinder(); }
+}
+
+// The dock's menu. It reuses the taskbar's builder for the bar's own furniture
+// (so Edit mode, Position, Clock and Add items never drift apart from the
+// taskbar's copy) and lays the dock's rows above it: Edit dock, Dock position,
+// Show/Hide icons and an Add items list of the start menu's apps and the faces
+// this browser has removed.
+function jawnosDockContextBuild() {
+	var selected = function (on) { return on ? '✓' : ''; };
+	var context = $('<div class="taskbar_context"></div>');
+	context.append($('<div class="taskbar_context_label"></div>').text(jawnosDockText('dock.title', 'Dock')));
+	context.append('<div class="taskbar_context_selection" act="dock_edit">'
+		+ jawnosDockText('dock.edit', 'Edit dock')
+		+ '<span class="taskbar_context_check">' + selected(jawnosDockEditing()) + '</span></div>');
+
+	context.append($('<div class="taskbar_context_label"></div>').text(jawnosDockText('dock.position', 'Dock position')));
+	[['bottom', 'Bottom'], ['top', 'Top'], ['left', 'Left'], ['right', 'Right'], ['hidden', 'Hidden']].forEach(function(pair) {
+		var on = (typeof jawnosBars != 'undefined') && jawnosBars.dock == pair[0];
+		context.append('<div class="taskbar_context_selection" act="dock_pos" val="' + pair[0] + '">'
+			+ jawnosDockText('dock.pos.' + pair[0], pair[1])
+			+ '<span class="taskbar_context_check">' + selected(on) + '</span></div>');
+	});
+
+	var icons_hidden = (typeof jawnosBars != 'undefined') && jawnosBars.icons == 'hidden';
+	context.append('<div class="taskbar_context_selection" act="dock_icons">'
+		+ (icons_hidden ? jawnosDockText('dock.show_icons', 'Show icons') : jawnosDockText('dock.hide_icons', 'Hide icons'))
+		+ '<span class="taskbar_context_check">' + selected(!icons_hidden) + '</span></div>');
+
+	context.append('<div class="taskbar_context_selection" act="dock_add">'
+		+ jawnosDockText('dock.add_items', 'Add items') + '<span class="taskbar_context_check">▸</span></div>');
+	var add = $('<div class="taskbar_context_sub" sub="dock_add" style="display:none;"></div>');
+	var list = $('<div class="taskbar_context_apps"></div>').appendTo(add);
+	var add_label = function (text) { list.append($('<div class="taskbar_context_label"></div>').text(text)); };
+	var add_face = function (app, hint, src, toggle) {
+		// not taskbar_context_app: that class belongs to the taskbar's own add
+		// list, whose press pins to the taskbar. These rows only answer the dock.
+		var row = $('<div class="taskbar_context_selection dock_context_app"></div>');
+		if (app) { row.attr('dock_app', app); }
+		if (toggle) { row.attr('dock_toggle', toggle); }
+		row.attr('dock_hint', hint || app || toggle || '').attr('dock_src', src || '');
+		if (src) { $('<img>').attr('src', src).appendTo(row); }
+		$('<span></span>').text(hint || app || toggle || '').appendTo(row);
+		row.append('<span class="taskbar_context_check">' + selected(app ? jawnosDockHas(app) : false) + '</span>');
+		row.attr('act', app ? 'dock_add_app' : 'dock_show_toggle');
+		return row;
+	};
+	var fill_hidden = function () {
+		var rows = [];
+		$('#pseudonym_bar .pseudonym').not('.dock_app').each(function() {
+			var p = $(this);
+			var toggle = p.attr('toggle');
+			if (!toggle || jawnosDockIconState(toggle) == 'on') { return; }
+			rows.push({ hint: p.attr('hint') || toggle, src: p.attr('src') || '', toggle: toggle });
+		});
+		if (rows.length) {
+			add_label(jawnosDockText('dock.removed_faces', 'Removed faces'));
+			$.each(rows, function(i, r) { list.append(add_face(null, r.hint, r.src, r.toggle)); });
+		}
+		return rows.length;
+	};
+	var fill_apps = function (pins) {
+		var rows = [];
+		$.each(pins || [], function(i, pin) {
+			if (!pin || !pin.app) { return; }
+			rows.push(pin);
+		});
+		if (rows.length) {
+			add_label(jawnosDockText('dock.apps', 'Apps'));
+			$.each(rows, function(i, pin) { list.append(add_face(pin.app, pin.hint, pin.src, null)); });
+		}
+		return rows.length;
+	};
+	var hidden_count = fill_hidden();
+	var live = (typeof jawnosTaskbarAppPins == 'function') ? jawnosTaskbarAppPins() : [];
+	if (live.length) {
+		if (!fill_apps(live) && !hidden_count) { add_label(jawnosDockText('dock.no_apps', 'No apps found')); }
+	}
+	else {
+		var loading = $('<div class="taskbar_context_label"></div>').text(jawnosDockText('dock.loading', 'Loading apps…')).appendTo(list);
+		$.ajax({
+			url: '/manager/start_menu', type: 'GET', data: { menu: 'app' },
+			success: function (response) {
+				loading.remove();
+				var root = $('<div>').html(response.html || '');
+				var pins = (typeof jawnosTaskbarPinsFrom == 'function') ? jawnosTaskbarPinsFrom(root) : [];
+				if (!fill_apps(pins) && !hidden_count) { add_label(jawnosDockText('dock.no_apps', 'No apps found')); }
+			},
+			error: function () { loading.text(jawnosDockText('dock.load_error', 'Could not load the apps')); }
+		});
+	}
+	context.append(add);
+
+	if (typeof jawnosTaskbarContextBuild == 'function') {
+		var base = jawnosTaskbarContextBuild();
+		context.append($('<div class="taskbar_context_label"></div>').text(jawnosDockText('dock.taskbar', 'Taskbar')));
+		context.append(base.children());
+	}
+	return context;
+}
+
 $(document).on('click', '.taskbar_context_selection[act^="dock_"]', function() {
 	var row = $(this);
 	var act = row.attr('act');
-	if (act == 'dock_app_toggle') {
+	if (act == 'dock_edit') {
+		jawnosDockEdit();
+	}
+	else if (act == 'dock_pos') {
+		jawnosDockPositionSet(row.attr('val'));
+	}
+	else if (act == 'dock_icons') {
+		jawnosDockIconsSet((typeof jawnosBars != 'undefined' && jawnosBars.icons == 'hidden') ? 'shown' : 'hidden');
+	}
+	else if (act == 'dock_add') {
+		$('.taskbar_context_sub[sub="dock_add"]').toggle();
+		$('.taskbar_context_sub[sub="add"], .taskbar_context_sub[sub="clock"]').hide();
+		return;
+	}
+	else if (act == 'dock_add_app') {
+		var app = row.attr('dock_app');
+		if (jawnosDockHas(app)) { jawnosDockAppRemove(app); }
+		else { jawnosDockAppAdd(app, row.attr('dock_hint'), row.attr('dock_src')); }
+		row.find('.taskbar_context_check').text(jawnosDockHas(app) ? '✓' : '');
+		return;
+	}
+	else if (act == 'dock_app_toggle') {
 		jawnosDockAppToggle({ app: row.attr('dock_app'), hint: row.attr('dock_hint'), src: row.attr('dock_src') });
 	}
 	else if (act == 'dock_app_remove') {
@@ -332,49 +669,49 @@ $(document).on('click', '.taskbar_context_selection[act^="dock_"]', function() {
 			jawnosDockIconSet(show, 'on');
 			jawnosDockReveal();
 		}
+		row.find('.taskbar_context_check').text('✓');
+		return;
 	}
-	$('.taskbar_context').remove();
+	if (typeof jawnosTaskbarContextClose == 'function') { jawnosTaskbarContextClose(); }
+	else { $('.taskbar_context').remove(); }
 });
-// A right-click on a dock face: take it off the dock. An app face is removed
-// from this browser's list; a pseudonym face is switched off in dock_icons (the
-// server still ships it, and the background menu can bring it back).
+
+// A right-click on a dock face opens the same menu with a Remove row for that
+// face at the top: an app face leaves this browser's dock_apps, a pseudonym
+// face is switched off in dock_icons (the menu can bring it back).
 $(document).on('contextmenu', '#pseudonym_bar .pseudonym', function(e) {
 	e.preventDefault();
 	e.stopPropagation();
 	var icon = $(this);
 	var app = icon.attr('dock_app');
-	if (app) {
-		jawnosDockMenuOpen(e.clientX, e.clientY, [{
-			act: 'dock_app_remove', app: app, icon: icon.attr('src'),
-			label: jawnosDockText('dock.remove', 'Remove from dock')
-		}], icon.attr('hint') || app);
-		return;
+	var toggle = app ? null : icon.attr('toggle');
+	var row = null;
+	if (app) { row = $('<div class="taskbar_context_selection" act="dock_app_remove"></div>').attr('dock_app', app); }
+	else if (toggle) { row = $('<div class="taskbar_context_selection" act="dock_hide_toggle"></div>').attr('dock_toggle', toggle); }
+	var menu = jawnosDockContextBuild();
+	if (row) {
+		if (icon.attr('src')) {
+			$('<img class="miniscule_thumb">').attr('src', icon.attr('src'))
+				.css({ width: '20px', height: '20px', objectFit: 'contain' }).appendTo(row);
+		}
+		$('<span></span>').text(jawnosDockText('dock.remove', 'Remove from dock')).appendTo(row);
+		menu.prepend(row);
+		menu.prepend($('<div class="taskbar_context_label"></div>').text(icon.attr('hint') || app || toggle));
 	}
-	var toggle = icon.attr('toggle');
-	if (!toggle) { return; }
-	jawnosDockMenuOpen(e.clientX, e.clientY, [{
-		act: 'dock_hide_toggle', toggle: toggle, icon: icon.attr('src'),
-		label: jawnosDockText('dock.remove', 'Remove from dock')
-	}], icon.attr('hint') || toggle);
+	jawnosDockMenuPlace(menu, e.clientX, e.clientY);
 });
+
 // A right-click on the dock's own background (the pill, or the strip it keeps
-// while tucked) lists the faces this browser has switched off, so a removal can
-// be undone from the same bar. The search keeps its native menu (paste).
+// while tucked) opens the same menu, so a face removed a moment ago, the dock's
+// edge, the icon row and the apps to add are all in one place. The search keeps
+// its native menu (paste).
 $(document).on('contextmenu', '#pseudonym_home', function(e) {
 	if ($(e.target).closest('#search_entanglement, #pseudonym_bar .pseudonym').length) { return; }
-	var rows = [];
-	$('#pseudonym_bar .pseudonym').each(function() {
-		var p = $(this);
-		if (p.hasClass('dock_app')) { return; }
-		var toggle = p.attr('toggle');
-		if (!toggle) { return; }
-		if (jawnosDockIconState(toggle) == 'on') { return; }
-		rows.push({ act: 'dock_show_toggle', toggle: toggle, icon: p.attr('src'), label: p.attr('hint') || toggle });
-	});
-	if (!rows.length) { return; }
 	e.preventDefault();
-	jawnosDockMenuOpen(e.clientX, e.clientY, rows, jawnosDockText('dock.add', 'Add to dock'));
+	e.stopPropagation();
+	jawnosDockMenuPlace(jawnosDockContextBuild(), e.clientX, e.clientY);
 });
+
 // A right-click on an app in the start menu offers the same add/remove. Only a
 // picture that names a real app is taken over; the rest keep the browser menu.
 $(document).on('contextmenu', '#start_menu .start_menu_main_display img', function(e) {
@@ -388,6 +725,19 @@ $(document).on('contextmenu', '#start_menu .start_menu_main_display img', functi
 
 $(document).ready(function() {
 	jawnosDockAppsRender();
+	jawnosDockOrderApply();
+	jawnosDockDragBind();
+	// In Edit dock a press reorders the row; it must not also open the face's
+	// panel. The handler sits on the dock itself so it runs before the document's
+	// own .pseudonym press.
+	var home = $('#pseudonym_home');
+	if (home.length) {
+		home.on('click', '.pseudonym', function(e) {
+			if (!jawnosDockEditing()) { return; }
+			e.preventDefault();
+			e.stopPropagation();
+		});
+	}
 });
 
 // A hold does what a right-click does on the dock and the start menu's apps.

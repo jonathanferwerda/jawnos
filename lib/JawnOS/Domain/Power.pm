@@ -18,6 +18,25 @@ use File::Slurp qw(read_file write_file);
 use Mojo::JSON qw(decode_json encode_json);
 
 our $power_status_memo;
+
+# The sleep and display choices. Values are stored in minutes; 0 is Never.
+# Each is a closed set, so a request value never reaches the helper unchecked.
+our @power_screen_timeouts = (0, 1, 2, 5, 10, 15, 30);
+our @power_sleep_timeouts = (0, 1, 2, 5, 10, 15, 30, 60);
+our %power_lid_action_words = (
+	suspend => 'suspend',
+	hibernate => 'hibernate',
+	hybrid_sleep => 'hybrid-sleep',
+	poweroff => 'poweroff',
+	ignore => 'ignore',
+);
+our %power_sleep_type_words = (
+	suspend => 'suspend',
+	hibernate => 'hibernate',
+	hybrid_sleep => 'hybrid-sleep',
+	suspend_then_hibernate => 'suspend-then-hibernate',
+);
+
 our %power_plan_defaults = (
 	auto => { id => 'auto', governors => [], epp => '', turbo => undef },
 	saver => { id => 'saver', governors => [qw(powersave conservative ondemand schedutil)], epp => 'power', turbo => 0 },
@@ -34,6 +53,22 @@ sub power_sysfs_root {
 sub power_plan_valid {
 	my ($plan) = @_;
 	return (defined $plan && $power_plan_defaults{$plan}) ? 1 : 0;
+}
+
+sub power_timeout_valid {
+	my ($value, $allowed) = @_;
+	return 0 unless defined $value && $value =~ /^\d+$/;
+	return (grep { $_ == $value } @{$allowed}) ? 1 : 0;
+}
+
+sub power_lid_action_valid {
+	my ($action) = @_;
+	return (defined $action && exists $power_lid_action_words{$action}) ? 1 : 0;
+}
+
+sub power_sleep_type_valid {
+	my ($type) = @_;
+	return (defined $type && exists $power_sleep_type_words{$type}) ? 1 : 0;
 }
 
 sub power_limit_clamp {
@@ -273,6 +308,12 @@ sub power_default_config {
 		auto => 1,
 		ac => { plan => 'balanced', limit => 100 },
 		battery => { plan => 'saver', limit => 70 },
+		sleep => {
+			screen_timeout => 0,
+			sleep_timeout => 0,
+			lid_action => 'suspend',
+			sleep_type => 'suspend',
+		},
 	};
 }
 
@@ -286,6 +327,17 @@ sub power_config_clean {
 		next unless ref $entry eq 'HASH';
 		$clean->{$source}->{'plan'} = $entry->{'plan'} if &power_plan_valid($entry->{'plan'});
 		$clean->{$source}->{'limit'} = &power_limit_round($entry->{'limit'}) if exists $entry->{'limit'};
+	}
+	my $sleep = $config->{'sleep'};
+	if (ref $sleep eq 'HASH') {
+		$clean->{'sleep'}->{'screen_timeout'} = $sleep->{'screen_timeout'} + 0
+			if exists $sleep->{'screen_timeout'} && &power_timeout_valid($sleep->{'screen_timeout'}, \@power_screen_timeouts);
+		$clean->{'sleep'}->{'sleep_timeout'} = $sleep->{'sleep_timeout'} + 0
+			if exists $sleep->{'sleep_timeout'} && &power_timeout_valid($sleep->{'sleep_timeout'}, \@power_sleep_timeouts);
+		$clean->{'sleep'}->{'lid_action'} = $sleep->{'lid_action'}
+			if &power_lid_action_valid($sleep->{'lid_action'});
+		$clean->{'sleep'}->{'sleep_type'} = $sleep->{'sleep_type'}
+			if &power_sleep_type_valid($sleep->{'sleep_type'});
 	}
 	return $clean;
 }
@@ -333,6 +385,49 @@ sub power_last_applied_save {
 	}
 	&subs::cache_set({ app => 'power', context => 'applied', warranty => '-1y' }, $state);
 	return $state;
+}
+
+# Whether a lid switch exists. /proc/acpi/button/lid/<device>/state is the
+# kernel's own answer; a machine without one has no lid and no row to show.
+sub power_lid_present {
+	my $proc = $ENV{'JAWNOS_POWER_PROC'} || '/proc';
+	$proc =~ s{/+$}{};
+	$proc = '/' if $proc eq '';
+	my @state = grep { -e } glob("$proc/acpi/button/lid/*/state");
+	return @state ? 1 : 0;
+}
+
+# The sleep states this machine can enter. /sys/power/state names what the
+# kernel offers; systemctl is the door we use, so a machine without it offers
+# none. mem or freeze suspend; disk hibernates. Hybrid needs both.
+sub power_supported_sleep_types {
+	my $root = &power_sysfs_root();
+	my %has = map { $_ => 1 } grep { length } split /\s+/, &power_read("$root/power/state");
+	return () unless &power_command_path('systemctl');
+	my @types;
+	push @types, 'suspend' if $has{'mem'} || $has{'freeze'};
+	push @types, 'hibernate' if $has{'disk'};
+	push @types, 'hybrid_sleep' if $has{'disk'} && ($has{'mem'} || $has{'freeze'});
+	push @types, 'suspend_then_hibernate' if $has{'disk'} && ($has{'mem'} || $has{'freeze'});
+	return @types;
+}
+
+# The screen timer owns an X or GNOME session rather than the kernel. Report
+# the method the helper will use, and never claim one when neither exists.
+sub power_screen_support {
+	return { supported => 1, method => 'gsettings' } if &power_command_path('gsettings');
+	return { supported => 1, method => 'xset' } if &power_command_path('xset') && length($ENV{'DISPLAY'} || '');
+	return { supported => 0, method => '', reason => 'no gsettings or xset with a display was found' };
+}
+
+sub power_sleep_capabilities {
+	my @types = &power_supported_sleep_types();
+	return {
+		lid => &power_lid_present() ? 1 : 0,
+		types => \@types,
+		screen => &power_screen_support(),
+		systemd => &power_command_path('systemctl') ? 1 : 0,
+	};
 }
 
 # The helper is the only writer. A direct run works on a machine whose cpufreq
@@ -444,6 +539,68 @@ sub power_apply_current {
 	return &power_apply_plan($source, $wanted->{'plan'}, $wanted->{'limit'});
 }
 
+# Save the sleep and display block. Every supplied value is checked before it
+# is stored, and a sleep state the machine cannot enter is refused rather than
+# saved and reported as applied.
+sub power_sleep_set {
+	my ($params) = @_;
+	$params = {} unless ref $params eq 'HASH';
+	my $config = &power_config();
+	my $sleep = $config->{'sleep'};
+	if (exists $params->{'screen_timeout'}) {
+		return { ok => 0, error => 'unknown screen timeout' }
+			unless &power_timeout_valid($params->{'screen_timeout'}, \@power_screen_timeouts);
+		$sleep->{'screen_timeout'} = $params->{'screen_timeout'} + 0;
+	}
+	if (exists $params->{'sleep_timeout'}) {
+		return { ok => 0, error => 'unknown sleep timeout' }
+			unless &power_timeout_valid($params->{'sleep_timeout'}, \@power_sleep_timeouts);
+		$sleep->{'sleep_timeout'} = $params->{'sleep_timeout'} + 0;
+	}
+	if (exists $params->{'lid_action'}) {
+		return { ok => 0, error => 'unknown lid action' } unless &power_lid_action_valid($params->{'lid_action'});
+		$sleep->{'lid_action'} = $params->{'lid_action'};
+	}
+	my $capabilities = &power_sleep_capabilities();
+	if (exists $params->{'sleep_type'}) {
+		my $type = $params->{'sleep_type'};
+		return { ok => 0, error => 'unknown sleep type' } unless &power_sleep_type_valid($type);
+		return { ok => 0, supported => 0, error => 'this machine cannot ' . $type, capabilities => $capabilities }
+			unless grep { $_ eq $type } @{$capabilities->{'types'}};
+		$sleep->{'sleep_type'} = $type;
+	}
+	$config->{'sleep'} = $sleep;
+	$config = &power_config_save($config);
+	# A machine with no sleep state cannot honour a sleep timer; write ignore
+	# instead of asking logind to enter a state this kernel does not offer.
+	my $effective_sleep = @{$capabilities->{'types'}} ? $config->{'sleep'}{'sleep_timeout'} : 0;
+	my $answer = &power_helper(
+		'settings',
+		$config->{'sleep'}{'screen_timeout'},
+		$effective_sleep,
+		$config->{'sleep'}{'lid_action'},
+		$config->{'sleep'}{'sleep_type'},
+	);
+	return {
+		%{$answer},
+		ok => $answer->{'ok'} ? 1 : 0,
+		config => $config,
+		applied => $answer,
+		capabilities => &power_sleep_capabilities(),
+		sleep_ignored => $effective_sleep == $config->{'sleep'}{'sleep_timeout'} ? 0 : 1,
+	};
+}
+
+sub power_sleep_now {
+	my ($type) = @_;
+	$type = 'suspend' unless defined $type && length $type;
+	return { ok => 0, error => 'unknown sleep type' } unless &power_sleep_type_valid($type);
+	my $capabilities = &power_sleep_capabilities();
+	return { ok => 0, supported => 0, error => 'this machine cannot ' . $type, capabilities => $capabilities }
+		unless grep { $_ eq $type } @{$capabilities->{'types'}};
+	return { %{ &power_helper('sleep', $type) }, type => $type };
+}
+
 # The slow loop's turn: when the cable changes, the plan saved for that source
 # is applied once. The saved "last applied" row is what makes this idempotent -
 # every poll after the first is a no-op, so a 30-second tick cannot rewrite sysfs
@@ -480,5 +637,6 @@ sub power_status {
 		config => $config,
 		plans => &power_plan_options(),
 		applied => &power_last_applied(),
+		sleep => &power_sleep_capabilities(),
 	};
 }

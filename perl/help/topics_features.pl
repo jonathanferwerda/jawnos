@@ -103,7 +103,7 @@ $topic{'taskbar'} = {
 			'While the on-screen keyboard is up, typing in the search box lifts the box itself to just above the keys - the bar it lives in keeps its own mode - and its result list opens in the space above the keys, never across them.',
 			'Right-click (or long-press) the bar for its context menu: rearrange the slots in edit mode, move it, choose the clock\'s format and time zone, and add items.',
 			'The clock shows the time the view is standing on, so when the time machine or a timeshift carries you off the present its plate lights up - a warm, breathing glow - and goes dark again when the face reads now. Its seconds keep moving every second, in the header as well as the taskbar, whatever the view refresh is set to; when the time machine holds the view at one named moment, the face stands still on it.',
-			'Taskbar widgets are live readings rather than app windows. Battery shows the charge and the time left or to full; Network shows the connected Wi-Fi name and signal bars, Ethernet, or Disconnected. Add items lists both under Widgets, and a press there puts one on the bar or takes it off. Right-click a widget for its three display modes - Icon, Icon and status, or Disabled - with the bar\'s normal menu underneath. A widget moves in edit mode like the clock, and a press opens its app. A machine with no battery shows no battery widget rather than an empty one.',
+			'Taskbar widgets are live readings rather than app windows. Battery shows the charge and the time left or to full; Network shows the connected Wi-Fi name and signal bars, Ethernet, or Disconnected; Sound shows a speaker glyph, the volume percentage and the mute state. Add items lists all three under Widgets, and a press there puts one on the bar or takes it off. Right-click a widget for its three display modes - Icon, Icon and status, or Disabled - with the bar\'s normal menu underneath. A widget moves in edit mode like the clock, and a press opens its app. A machine with no battery shows no battery widget rather than an empty one.',
 			'Click the clock to use it as a time machine: type a time - "-3h", "jul 16", "last dec 25", "dec 25 2025 at 7:04pm", even "oct 12 96" - and press Enter to carry the view there, or Escape to leave it. An empty entry is now. Named days come out right ("this christmas" is this year\'s, "next christmas" the next), as do ages ("when I\'m 60" is today, at sixty). A time of day that is a habit - "breakfast", "tea time", "coffee", "next coffee time", "bed time" - is read from when you usually do it, the times your own records cluster around (twice a day for coffee, say), and falls back to a plain hour when there is nothing to read. A phrase the app cannot read itself is handed to the guide, which reads your own records for it ("the last time I had a beer", "the next time I\'ll be free"), knows the birthdays you saved under Configure -> App -> Birthdays ("mom\'s birthday" is the next one to come, "when was mom\'s birthday" the last one that passed, "mom\'s 60th birthday" the year she turned sixty) and looks up the rest ("Abraham Lincoln\'s 35th birthday"), and gives the time as well as the day for a past or future event ("the moment JFK was shot", "when the first world war ended", "the American Revolution"), then travels where it says. When you ask for something to be started ("start lunch in 20 minutes") it makes the appointment - written at once, or staged for a yes when the Confirmation Requirement is ticked - so its alarm and any embedded relay fire. A length you name is kept too ("start office that lasts 5 minutes" writes a five-minute office visit), held the way the tree counts time - an accrual, stored as a negative offset, so a start and its stop add up. Any year works, backward as well as forward, B.C. being a negative year ("-0044-03-15").',
 			'A ghost appointment is one your records expect but that is not scheduled - your usual breakfast, the next coffee - drawn semi-transparent ahead of now in the timeline and every other view. Turn them on or off under the walkman\'s Configure (the wrench beside the time machine), where the Clothesline tick also switches the rail itself on and off.',
 			'Dialogs count as windows in the taskbar: the Alert, a folder question and a job\'s progress each get a tile there, so pressing the tile brings one back, raises it or minimises it. A dialog\'s title bar drags it, and its own X closes it - there is no separate Cancel button to hunt for.'
@@ -116,8 +116,9 @@ $topic{'taskbar'} = {
 			'Set the clock\'s format and time zone from the same menu.',
 			'Click the clock and type a time to travel to it.',
 			'Press the battery widget beside the clock to open Power; drag it in edit mode to move it along the bar.',
-			'Add or remove Battery and Network under Add items -> Widgets; right-click a widget for Icon, Icon and status, or Disabled.',
-			'Press the network widget to open Network; drag it in edit mode to move it along the bar.'
+			'Add or remove Battery, Network and Sound under Add items -> Widgets; right-click a widget for Icon, Icon and status, or Disabled.',
+			'Press the network widget to open Network; drag it in edit mode to move it along the bar.',
+			'Press the sound widget to open Sound; drag it in edit mode to move it along the bar.'
 		],
 		related => [ 'start_menu', 'dock', 'windows' ]
 	};
@@ -138,24 +139,26 @@ $topic{'start_menu'} = {
 		],
 		related => [ 'search', 'taskbar', 'hints', 'network' ]
 	};
-$topic{'dock'} = {
+	$topic{'dock'} = {
 		title => 'The dock', category => 'features',
-		verified => '2026-10-30',
+		verified => '2026-11-09',
 		summary => 'A second bar for the keyboard panels and the apps you keep at hand.',
 		templates => [ 'templates/pseudonyms.html.ep', 'templates/keyboard.html.ep', 'public/js/manager/keyboard.js' ],
 		body => [
 			'The dock is a second bar you can place on any edge. Its faces are the house\'s pseudonyms - Remote control, the walkman (delorean), Walkboy, the on-screen keyboard, the calculator, Notifications, Sessions and the Controller - and any apps you add yourself. It can also host the search box; a side dock tucks itself away and slides back when you call for it. A row dock (top or bottom) keeps the search\'s strip on screen when it tucks: press that strip to call the row back, and a press on the background where the row would have been stays a press on the background.',
 			'A face opens its own panel: the keyboard and calculator faces open the JawnOS keyboard (the calculator straight to its page), and the others open their keyboard panel above the dock. Press the same face again to put its panel away. A panel is moved by its top bar, resized by its edge or corner, and both its place and its size are remembered on this device.',
-			'Right-click (or long-press) a face to remove it from the dock, and right-click the dock\'s empty background to see the faces you have removed and put one back. Right-click an app in the start menu, or a taskbar window button or app pin, to add that app to the dock or take it off again. An app added this way opens its window from the dock, and raises or minimises it like its taskbar tile.',
-			'The dock\'s app faces and each face\'s on/off are kept by this browser, not by the house: another browser or machine sees the server\'s pseudonym list and starts with every face on. The pseudonym list itself - what exists, its icon and colour, and whether it is on the dock at all - is shared, and lives under Configure -> Pseud.',
+			'Right-click (or long-press) the dock\'s background for its menu. Edit dock turns the row into a reorderable list; Dock position moves the dock to the bottom, top, left or right edge, or hides it; Show icons and Hide icons switch the icon row on and off while the dock keeps whatever else it carries; and Add items lists the start menu\'s apps and the faces this browser has removed, so a face can be put back or an app brought onto the dock. The same menu carries the taskbar\'s own rows underneath, heading Taskbar.',
+			'Right-click (or long-press) a face for that same menu with Remove from dock at its head. A pseudonym face is switched off for this browser; an app face is taken out of this browser\'s dock list. Either can come back from Add items, and choosing an app row again takes it off.',
+			'Edit dock is the drag-to-reorder mode: drag a face along the row (or up and down a side dock) and the other faces make room; the order is kept by this browser, so it survives a reload, and a newly added face waits at the end until you drag it into place. Outside Edit dock a face still drags freely, a side dock still slides away and back, and a press on a face still opens its panel.',
+			'The dock\'s app faces, their order and each face\'s on/off are kept by this browser, not by the house: another browser or machine sees the server\'s pseudonym list, in the server\'s order, and starts with every face on. The pseudonym list itself - what exists, its icon and colour, and whether it is on the dock at all - is shared, and lives under Configure -> Pseud.',
 			'An appointment type\'s glyph (an invoice, a quote, the encrypt stamp and the rest) is not a dock face. Those have no panel of their own; they stay in the pseudonym list so the ledger can draw them on an appointment, and they start off the dock.',
 			'The dock keeps at least one face so it can always be called back: if every face is removed, Remote control returns.'
 		],
 		steps => [
 			'Press a face to open its panel, and press it again to close it.',
-			'Right-click a face to remove it from the dock.',
-			'Right-click an app in the start menu or on the taskbar to add it to the dock.',
-			'Right-click the dock background to put a removed face back.'
+			'Right-click the dock background for Edit dock, Dock position, Show or hide icons and Add items.',
+			'Turn on Edit dock and drag a face to reorder the row; this browser remembers the order.',
+			'Right-click a face to remove it, and use Add items to put it back or add an app from the start menu.'
 		],
 		related => [ 'taskbar', 'search' ]
 	};

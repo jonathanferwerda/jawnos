@@ -101,6 +101,16 @@ html, body {
    which is all that stays on screen while the row is tucked away */
 #pseudonym_home[position=top] { height: 134px; padding-top: 94px; }
 #pseudonym_home[position=hidden] { display: none !important; }
+/* Edit dock: the faces are the row being reordered, so they wear a grab cursor
+   and a dashed edge; the free per-icon drag stands down while this is on. */
+#pseudonym_home.dock_edit #pseudonym_bar .pseudonym.bar {
+	cursor: var(--jawnos-cursor-grab, grab);
+	outline: 1px dashed var(--accent, #3b7ddd);
+	outline-offset: 2px;
+}
+#pseudonym_home.dock_edit.dock_dragging #pseudonym_bar .pseudonym.bar {
+	cursor: var(--jawnos-cursor-grabbing, grabbing);
+}
 /* a dock on a side edge: a pill of stacked icons hugging the edge, the search
    button at the foot of the stack, and the search panel waiting beside it. The
    panel slides out of its edge when the button calls it, and the cancel beside
@@ -470,6 +480,33 @@ body.dark_theme #taskbar { background-image: linear-gradient(rgba(255,255,255,.0
 .taskbar_network_wire { display: none; width: 82%; height: 58%; border: 2px solid var(--ink, currentColor); border-radius: 2px; position: relative; }
 .taskbar_network_wire::after { content: ''; position: absolute; left: 50%; bottom: -5px; transform: translateX(-50%); width: 2px; height: 4px; background: var(--ink, currentColor); }
 #taskbar_network[kind=ethernet] .taskbar_network_wire { display: block; }
+.taskbar_network_bluetooth { display: inline-block; font-size: calc(var(--taskbar_h, 44px) * 0.34); line-height: 1; opacity: .25; }
+.taskbar_network_bluetooth::before { content: "\16D2"; }
+#taskbar_network[bluetooth=on] .taskbar_network_bluetooth { opacity: 1; color: var(--accent, #3b7ddd); }
+#taskbar_sound .taskbar_sound_glyph {
+	position: relative;
+	display: flex;
+	align-items: center;
+	gap: 2px;
+	width: calc(var(--taskbar_h, 44px) * 0.5);
+	height: calc(var(--taskbar_h, 44px) * 0.34);
+}
+.taskbar_sound_cone {
+	display: block;
+	flex: 0 0 42%;
+	height: 62%;
+	background: var(--ink, currentColor);
+	clip-path: polygon(0 30%, 42% 30%, 100% 0, 100% 100%, 42% 70%, 0 70%);
+}
+.taskbar_sound_waves { position: relative; display: block; flex: 1 1 auto; height: 100%; }
+.taskbar_sound_waves i { position: absolute; left: 0; top: 50%; transform: translateY(-50%); display: block; border: 2px solid var(--ink, currentColor); border-left: 0; border-top-color: transparent; border-bottom-color: transparent; border-radius: 0 60% 60% 0; opacity: .22; }
+.taskbar_sound_waves i:nth-child(1) { width: 38%; height: 46%; }
+.taskbar_sound_waves i:nth-child(2) { width: 68%; height: 76%; }
+.taskbar_sound_waves i:nth-child(3) { width: 100%; height: 100%; }
+.taskbar_sound_waves i.on { opacity: 1; }
+#taskbar_sound[state=muted] .taskbar_sound_waves,
+#taskbar_sound[level="0"] .taskbar_sound_waves { display: none; }
+#taskbar_sound[state=muted] .taskbar_sound_glyph::after { content: ''; position: absolute; left: 0; right: 0; top: 50%; height: 2px; border-radius: 1px; background: var(--ink, currentColor); transform: rotate(-38deg); }
 #taskbar_clock {
 	flex: 0 0 auto;
 	white-space: nowrap;
@@ -847,6 +884,8 @@ body.dark_theme #taskbar { background-image: linear-gradient(rgba(255,255,255,.0
 }
 .taskbar_context_app:hover { background-color: rgba(0, 0, 0, 0.1); }
 .taskbar_context_app img { width: 26px; height: 26px; max-width: 26px; object-fit: contain; }
+/* the dock's own add rows share the add list's look but not its taskbar press */
+.dock_context_app img { width: 26px; height: 26px; max-width: 26px; object-fit: contain; }
 #timeline { z-index: 2; position:absolute; right: 0px; top: 0px; width: 100%; }
 #clockface { z-index: 2; overscroll-behavior: contain; position:absolute; right: 0px; top: 0px; width: 100% }
 #leaderboard { z-index: 2; position:absolute; left:0px; width: 100%;}

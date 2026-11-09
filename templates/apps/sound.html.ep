@@ -1,0 +1,86 @@
+<% my $outputs = (ref($status) eq 'HASH' && ref($status->{'outputs'}) eq 'ARRAY') ? $status->{'outputs'} : []; %>
+<% my $inputs = (ref($status) eq 'HASH' && ref($status->{'inputs'}) eq 'ARRAY') ? $status->{'inputs'} : []; %>
+<% my $output = (ref($status) eq 'HASH' && ref($status->{'output'}) eq 'HASH') ? $status->{'output'} : {}; %>
+<% my $input = (ref($status) eq 'HASH' && ref($status->{'input'}) eq 'HASH') ? $status->{'input'} : {}; %>
+<% my $output_volume = defined $output->{'volume'} ? $output->{'volume'} : 0; %>
+<% my $input_volume = defined $input->{'volume'} ? $input->{'volume'} : 0; %>
+<% my $input_supported = (ref($status) eq 'HASH' && exists $status->{'input_supported'}) ? $status->{'input_supported'} : 1; %>
+<style>
+#sound { flex: 1 1 auto; min-width: 0; min-height: 0; display: flex; flex-direction: column; gap: 14px; padding: 14px; overflow: auto; font-size: 16px; }
+#sound .sound_note { min-height: 1.2em; opacity: .78; }
+#sound .sound_columns { display: flex; flex-wrap: wrap; gap: 14px; align-items: flex-start; }
+#sound .sound_section { flex: 1 1 300px; min-width: 0; padding: 12px 16px; border: 1px solid var(--line); border-radius: calc(var(--jawnos-corner, 12px) * .8); }
+#sound .sound_section h3 { margin: 0 0 8px; font-size: 18px; }
+#sound .sound_browser { font-size: 14px; opacity: .72; margin-bottom: 10px; }
+#sound .sound_devices { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; }
+#sound .sound_device { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 6px 8px; border: 1px solid transparent; border-radius: calc(var(--jawnos-corner, 12px) * .5); }
+#sound .sound_device[data-default="1"] { border-color: var(--accent, #3b7ddd); background: color-mix(in srgb, var(--accent, #3b7ddd) 10%, transparent); }
+#sound .sound_device_name { flex: 1 1 140px; min-width: 0; overflow-wrap: anywhere; }
+#sound .sound_device_level { opacity: .72; }
+#sound .sound_badge { font-size: 13px; padding: 1px 7px; border-radius: 999px; background: var(--accent, #3b7ddd); color: #fff; }
+#sound .sound_default { font-size: 13px; }
+#sound .sound_empty { opacity: .7; margin: 4px 0 12px; }
+#sound .sound_control { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
+#sound .sound_control label { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; flex: 1 1 220px; }
+#sound .sound_control input[type=range] { flex: 1 1 120px; min-width: 0; }
+#sound .sound_control button[disabled], #sound .sound_control input[disabled] { opacity: .45; }
+</style>
+<div id="sound" app="sound">
+	<div class="sound_note" id="sound_note"></div>
+	<div class="sound_columns">
+		<section class="sound_section" data-kind="output">
+			<h3><%= &subs::lang('sound_output') %></h3>
+			<div class="sound_browser"><%= &subs::lang('sound_speaker') %>: <span id="sound_browser_output">—</span></div>
+			<div class="sound_devices" id="sound_output_list">
+% foreach my $device (@{$outputs}) {
+				<div class="sound_device" data-kind="output" data-id="<%= $device->{'id'} %>"<% if ($device->{'default'}) { %> data-default="1"<% } %>>
+					<span class="sound_device_name"><%= $device->{'name'} || $device->{'id'} %></span>
+					<span class="sound_device_level"><%= $device->{'volume'} %>%</span>
+% if ($device->{'default'}) {
+					<span class="sound_badge"><%= &subs::lang('sound_default') %></span>
+% } else {
+					<button type="button" class="sound_default" data-kind="output" data-id="<%= $device->{'id'} %>"><%= &subs::lang('sound_set_default') %></button>
+% }
+				</div>
+% }
+% if (!@{$outputs}) {
+				<p class="sound_empty"><%= &subs::lang('sound_no_devices') %></p>
+% }
+			</div>
+			<div class="sound_control">
+				<label><%= &subs::lang('sound_volume') %>
+					<input type="range" id="sound_output_volume" min="0" max="100" step="1" value="<%= $output_volume %>"<% if (!$output->{'id'}) { %> disabled<% } %>>
+					<span id="sound_output_volume_value"><%= $output_volume %>%</span>
+				</label>
+				<button type="button" id="sound_output_mute" data-kind="output"<% if (!$output->{'id'}) { %> disabled<% } %>><%= &subs::lang('sound_mute') %></button>
+			</div>
+		</section>
+		<section class="sound_section" data-kind="input"<% if (!$input_supported) { %> data-unsupported="1"<% } %>>
+			<h3><%= &subs::lang('sound_input') %></h3>
+			<div class="sound_browser"><%= &subs::lang('sound_microphone') %>: <span id="sound_browser_input">—</span></div>
+			<div class="sound_devices" id="sound_input_list">
+% foreach my $device (@{$inputs}) {
+				<div class="sound_device" data-kind="input" data-id="<%= $device->{'id'} %>"<% if ($device->{'default'}) { %> data-default="1"<% } %>>
+					<span class="sound_device_name"><%= $device->{'name'} || $device->{'id'} %></span>
+					<span class="sound_device_level"><%= $device->{'volume'} %>%</span>
+% if ($device->{'default'}) {
+					<span class="sound_badge"><%= &subs::lang('sound_default') %></span>
+% } else {
+					<button type="button" class="sound_default" data-kind="input" data-id="<%= $device->{'id'} %>"><%= &subs::lang('sound_set_default') %></button>
+% }
+				</div>
+% }
+% if (!@{$inputs}) {
+				<p class="sound_empty" id="sound_input_empty"><%= &subs::lang('sound_not_available') %></p>
+% }
+			</div>
+			<div class="sound_control">
+				<label><%= &subs::lang('sound_volume') %>
+					<input type="range" id="sound_input_volume" min="0" max="100" step="1" value="<%= $input_volume %>"<% if (!$input_supported || !$input->{'id'}) { %> disabled<% } %>>
+					<span id="sound_input_volume_value"><%= $input_volume %>%</span>
+				</label>
+				<button type="button" id="sound_input_mute" data-kind="input"<% if (!$input_supported || !$input->{'id'}) { %> disabled<% } %>><%= &subs::lang('sound_mute') %></button>
+			</div>
+		</section>
+	</div>
+</div>

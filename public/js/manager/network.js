@@ -1,6 +1,7 @@
 /* [[js-split]]
    network.js is part 1. The rest live in network/ in name order:
      01_wifi_vpn_android.js - Wi-Fi connect and forget, VPN controls, Android actions and the poll
+     02_tabs_bluetooth_remote.js - the tabs, their remembered choice, and the Bluetooth lists and actions
    /js/manager/bundle.js concatenates the index and these parts.
    [[/js-split]] */
 // network.js - the Network app: interfaces, Wi-Fi, VPN, the mesh and the phone.

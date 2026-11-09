@@ -62,4 +62,26 @@ sub action_53014 {
 	$c->render(json => eval { &subs::power_apply_current() } || { ok => 0, error => 'the plan could not be applied' });
 }
 
+# POST /manager/power/sleep
+#
+# The sleep and display block saves as one row because the four choices are
+# written together: one logind drop-in and one screen timer.
+sub action_53015 {
+	my $c = shift;
+	my %params;
+	for my $key (qw(screen_timeout sleep_timeout lid_action sleep_type)) {
+		my $value = $c->param($key);
+		$params{$key} = $value if defined $value && length $value;
+	}
+	my $result = eval { &subs::power_sleep_set(\%params) };
+	$c->render(json => $result || { ok => 0, error => 'the sleep settings could not be saved' });
+}
+
+# POST /manager/power/sleep_now
+sub action_53016 {
+	my $c = shift;
+	my $result = eval { &subs::power_sleep_now($c->param('type')) };
+	$c->render(json => $result || { ok => 0, error => 'the machine could not be put to sleep' });
+}
+
 1;

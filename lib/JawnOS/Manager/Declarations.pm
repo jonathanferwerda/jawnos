@@ -136,6 +136,8 @@ sub js_minify;
 sub password_maker;
 sub sesh_body_digest;
 sub network_helper;
+sub bluetooth_helper;
+sub fixed_helper_answer;
 sub pay_setting_allowed;
 sub house_bio_device;
 sub crypto_payment_digest;

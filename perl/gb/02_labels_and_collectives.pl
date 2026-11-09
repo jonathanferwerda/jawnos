@@ -183,6 +183,7 @@ our $known_appts = {
 	phone => { icon => '/images/decipherable/phone.png' },
 	clock => { icon => '/icons/clock.svg' },
 	power => { icon => '/icons/power.svg' },
+	sound => { icon => '/icons/sound.svg' },
 	weather => { icon => "/images/make believe/new sun.png" },
 	people => { icon => '/images/make believe/people.png' },
 	email => { icon => '/images/decipherable/envelope.png' },

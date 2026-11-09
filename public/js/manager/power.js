@@ -37,6 +37,12 @@ function powerBind() {
 	window_box.on('click', '.power_system_button', function() {
 		powerSystem($(this).attr('data-power-action'));
 	});
+	window_box.on('click', '#power_sleep_save', function() {
+		powerSleepSave();
+	});
+	window_box.on('click', '#power_sleep_now', function() {
+		powerSleepNow();
+	});
 	window_box.on('change', '#power_auto', function() {
 		powerAuto($(this).prop('checked'));
 	});
@@ -112,6 +118,32 @@ function powerRender(status) {
 		$('#power_save_' + source).removeClass('power_dirty');
 	});
 	$('#power_auto').prop('checked', status.config && status.config.auto ? true : false);
+	var sleepConfig = (status.config && status.config.sleep) || {};
+	$('#power_screen_timeout').val(String(sleepConfig.screen_timeout === undefined || sleepConfig.screen_timeout === null ? 0 : sleepConfig.screen_timeout));
+	$('#power_sleep_timeout').val(String(sleepConfig.sleep_timeout === undefined || sleepConfig.sleep_timeout === null ? 0 : sleepConfig.sleep_timeout));
+	$('#power_lid_action').val(sleepConfig.lid_action || 'suspend');
+	var sleepCaps = status.sleep || {};
+	if (sleepCaps.lid) { $('#power_lid_row').show(); } else { $('#power_lid_row').hide(); }
+	var sleepTypes = sleepCaps.types || [];
+	powerSleepTypes(sleepTypes, sleepConfig.sleep_type);
+	if (sleepCaps.screen && sleepCaps.screen.supported) {
+		$('#power_screen_timeout').prop('disabled', false);
+	}
+	else {
+		$('#power_screen_timeout').prop('disabled', true);
+	}
+	if (!sleepTypes.length) {
+		$('#power_sleep_type').prop('disabled', true);
+		$('#power_sleep_now').prop('disabled', true);
+		$('#power_sleep_timeout').prop('disabled', true);
+		$('#power_sleep_note').text(jawnosT('This machine offers no sleep states.'));
+	}
+	else {
+		$('#power_sleep_type').prop('disabled', false);
+		$('#power_sleep_now').prop('disabled', false);
+		$('#power_sleep_timeout').prop('disabled', false);
+		$('#power_sleep_note').text('');
+	}
 	var cpu = status.cpu || {};
 	if (cpu.supported) {
 		$('#power_cpu_note').hide();
@@ -150,6 +182,83 @@ function powerPlanLabel(plan) {
 	if (plan == 'performance') { return jawnosT('Performance'); }
 	if (plan == 'balanced') { return jawnosT('Balanced'); }
 	return jawnosT('Auto');
+}
+
+// Only the sleep states this machine reports are offered. Rebuilding the list
+// each poll also drops a saved state the machine no longer supports.
+var powerSleepLabels = {
+	suspend: 'Suspend',
+	hibernate: 'Hibernate',
+	hybrid_sleep: 'Hybrid suspend',
+	suspend_then_hibernate: 'Suspend then hibernate'
+};
+
+function powerSleepTypes(types, wanted) {
+	var select = $('#power_sleep_type');
+	select.empty();
+	var chosen = null;
+	(types || []).forEach(function(type) {
+		var label = powerSleepLabels[type];
+		if (!label) { return; }
+		select.append($('<option>').attr('value', type).text(jawnosT(label)));
+		if (!chosen) { chosen = type; }
+		if (type == wanted) { chosen = type; }
+	});
+	if (chosen) { select.val(chosen); }
+}
+
+function powerSleepSave() {
+	var data = {
+		screen_timeout: $('#power_screen_timeout').val(),
+		sleep_timeout: $('#power_sleep_timeout').val()
+	};
+	var lid = $('#power_lid_action').val();
+	if (lid) { data.lid_action = lid; }
+	var type = $('#power_sleep_type').val();
+	if (type) { data.sleep_type = type; }
+	$('#power_sleep_status').text(jawnosT('Saving…'));
+	$.post('/manager/power/sleep', data, function(result) {
+		if (!result || !result.ok) {
+			var reason = (result && result.error) ? result.error : jawnosT('The sleep settings could not be saved.');
+			$('#power_sleep_status').text(reason);
+			return;
+		}
+		powerSleepReport(result);
+		powerLoad();
+	}, 'json');
+}
+
+// Never claim a change the helper could not make: the screen row is best effort.
+function powerSleepReport(result) {
+	var applied = result.applied || {};
+	var screen = applied.screen || {};
+	if (applied.dry_run) {
+		$('#power_sleep_status').text(jawnosT('The settings were saved. This machine is in a dry run, so nothing was written.'));
+	}
+	else if (screen.supported === 0) {
+		$('#power_sleep_status').text(jawnosT('The settings were saved, but the screen timer is not available on this machine.'));
+	}
+	else if (screen.ok === 0) {
+		$('#power_sleep_status').text(jawnosT('The settings were saved, but the screen timer could not be changed.'));
+	}
+	else {
+		$('#power_sleep_status').text(jawnosT('The sleep and display settings were saved.'));
+	}
+}
+
+function powerSleepNow() {
+	var type = $('#power_sleep_type').val();
+	if (!type) {
+		$('#power_sleep_status').text(jawnosT('This machine offers no sleep states.'));
+		return;
+	}
+	$('#power_sleep_status').text(jawnosT('Sleeping…'));
+	$.post('/manager/power/sleep_now', { type: type }, function(result) {
+		if (!result || !result.ok) {
+			var reason = (result && result.error) ? result.error : jawnosT('That did not work.');
+			$('#power_sleep_status').text(reason);
+		}
+	}, 'json');
 }
 
 function powerLoad() {

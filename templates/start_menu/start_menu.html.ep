@@ -122,6 +122,7 @@
 				<img id="notes_toggle" class="jonathan notes" category="accessories" src="<%= &subs::icon_for('/images/decipherable/list.png') %>" hint="Notes"></img>
 				<img id="clock_toggle" class="jonathan clock" category="accessories" src="<%= &subs::icon_for('/icons/clock.svg') %>" hint="<%= &subs::lang('clock') %>"></img>
 				<img id="power_toggle" class="jonathan power" category="system" src="<%= &subs::icon_for('/icons/power.svg') %>" hint="<%= &subs::lang('power') %>"></img>
+				<img id="sound_toggle" class="jonathan sound" category="system" src="<%= &subs::icon_for('/icons/sound.svg') %>" hint="<%= &subs::lang('sound') %>"></img>
 				<img id="weather_toggle" class="jonathan weather" category="system" src="<%= &subs::icon_for($gb::known_appts->{'weather'}->{'icon'}) %>" hint="<%= &subs::ui('Weather') %>"></img>
 
 				<br>

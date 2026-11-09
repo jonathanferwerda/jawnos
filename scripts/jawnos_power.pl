@@ -10,6 +10,13 @@
 #
 #   status
 #   apply <plan> <limit>       plan is auto|saver|balanced|performance
+#   settings <screen> <sleep> <lid> <type>
+#   sleep <type>               type is suspend|hibernate|hybrid_sleep|suspend_then_hibernate
+#
+# settings writes one logind drop-in (HandleLidSwitch*, IdleAction*) and sets the
+# screen timer through gsettings or xset. sleep runs systemctl with one fixed
+# word. Every subcommand validates its own arguments, so a request value cannot
+# become part of a command.
 #
 # Every answer is a JSON object. A machine with no cpufreq control answers
 # { ok => 1, supported => 0, reason => ... } rather than failing: "this machine
@@ -18,11 +25,18 @@
 use strict;
 use warnings;
 use Cwd ();
+use File::Path ();
 use JSON::PP ();
 
 my $ROOT = $ENV{'JAWNOS_POWER_SYSFS'} || '/sys';
 $ROOT =~ s{/+$}{};
 $ROOT = '/' if $ROOT eq '';
+
+my $ETC = $ENV{'JAWNOS_POWER_ETC'} || '/etc';
+$ETC =~ s{/+$}{};
+$ETC = '/' if $ETC eq '';
+
+my $DRY = $ENV{'JAWNOS_POWER_DRY_RUN'} ? 1 : 0;
 
 my $JSON = JSON::PP->new->utf8(1)->canonical(1);
 
@@ -52,6 +66,24 @@ my %PLAN = (
 		epp => 'performance',
 		turbo => 1,
 	},
+);
+
+# The sleep and display choices. The lists mirror the domain's whitelists; the
+# helper validates again so a direct run cannot write a value the app would not.
+my @SCREEN_MINUTES = (0, 1, 2, 5, 10, 15, 30);
+my @SLEEP_MINUTES = (0, 1, 2, 5, 10, 15, 30, 60);
+my %LID_WORD = (
+	suspend => 'suspend',
+	hibernate => 'hibernate',
+	hybrid_sleep => 'hybrid-sleep',
+	poweroff => 'poweroff',
+	ignore => 'ignore',
+);
+my %SLEEP_WORD = (
+	suspend => 'suspend',
+	hibernate => 'hibernate',
+	hybrid_sleep => 'hybrid-sleep',
+	suspend_then_hibernate => 'suspend-then-hibernate',
 );
 
 sub emit {
@@ -317,12 +349,183 @@ sub status {
 	});
 }
 
+# An absolute executable from PATH. The name is ours, never a request value.
+sub command_path {
+	my ($name) = @_;
+	for my $dir (split /:/, ($ENV{'PATH'} // '/usr/bin:/bin')) {
+		next unless length $dir;
+		my $candidate = "$dir/$name";
+		return $candidate if -x $candidate;
+	}
+	return undef;
+}
+
+# Run an argument list. exec with a list never involves a shell.
+sub run_command {
+	my (@args) = @_;
+	return { ok => 1, command => \@args, dry_run => 1 } if $DRY;
+	my $pid = fork();
+	return { ok => 0, error => 'could not start ' . $args[0], command => \@args } unless defined $pid;
+	if ($pid == 0) {
+		exec { $args[0] } @args;
+		exit 127;
+	}
+	waitpid($pid, 0);
+	my $status = $? >> 8;
+	return { ok => $status == 0 ? 1 : 0, command => \@args, status => $status };
+}
+
+# A logind drop-in is one small file. The docked case is always ignore: the
+# lid row is about a real lid, not a dock that reports itself closed.
+sub logind_text {
+	my ($sleep, $lid, $type) = @_;
+	my $idle = $sleep > 0 ? $SLEEP_WORD{$type} : 'ignore';
+	my $sec = $sleep > 0 ? $sleep . 'min' : 'infinity';
+	my $lidword = $LID_WORD{$lid};
+	return join('',
+		"# Written by JawnOS Power. This file is replaced when the settings change.\n",
+		"[Login]\n",
+		"HandleLidSwitch=$lidword\n",
+		"HandleLidSwitchExternalPower=$lidword\n",
+		"HandleLidSwitchDocked=ignore\n",
+		"IdleAction=$idle\n",
+		"IdleActionSec=$sec\n",
+	);
+}
+
+sub write_logind {
+	my ($sleep, $lid, $type) = @_;
+	my $dir = "$ETC/systemd/logind.conf.d";
+	my $path = "$dir/jawnos-power.conf";
+	my $text = logind_text($sleep, $lid, $type);
+	my $changed = (slurp($path) eq $text) ? 0 : 1;
+	my $reloaded = 0;
+	if ($changed && !$DRY) {
+		eval { File::Path::make_path($dir) };
+		open my $fh, '>', $path
+			or return { ok => 0, error => 'permission', needs_sudo => 1, path => $path };
+		print {$fh} $text;
+		close $fh;
+		# logind reads its drop-ins at start and on reload; without this a
+		# changed lid or idle rule would wait for the next reboot.
+		my $systemctl = command_path('systemctl');
+		if ($systemctl) {
+			my $run = run_command($systemctl, 'reload', 'systemd-logind');
+			$reloaded = $run->{'ok'} ? 1 : 0;
+		}
+	}
+	return { ok => 1, path => $path, changed => $changed, reloaded => $reloaded, text => $text };
+}
+
+# The screen timer is best effort and must never be claimed when neither tool
+# exists. gsettings owns a GNOME session; xset owns an X display.
+sub apply_screen {
+	my ($minutes) = @_;
+	my $sec = $minutes * 60;
+	my $gsettings = command_path('gsettings');
+	if ($gsettings) {
+		my $run = run_command($gsettings, 'set', 'org.gnome.desktop.session', 'idle-delay', $sec);
+		return {
+			supported => 1,
+			method => 'gsettings',
+			ok => $run->{'ok'} ? 1 : 0,
+			command => $run->{'command'},
+			($run->{'dry_run'} ? (dry_run => 1) : ()),
+			($run->{'ok'} ? () : (error => 'gsettings could not set the screen delay')),
+		};
+	}
+	my $xset = command_path('xset');
+	if ($xset && length($ENV{'DISPLAY'} || '')) {
+		my (@commands, $ok);
+		$ok = 1;
+		for my $args ([$xset, 's', $sec, $sec], [$xset, 'dpms', $sec, $sec, $sec]) {
+			my $run = run_command(@{$args});
+			push @commands, $run->{'command'};
+			$ok = 0 unless $run->{'ok'};
+		}
+		return {
+			supported => 1,
+			method => 'xset',
+			ok => $ok ? 1 : 0,
+			commands => \@commands,
+			($DRY ? (dry_run => 1) : ()),
+			($ok ? () : (error => 'xset could not set the screen timer')),
+		};
+	}
+	return { supported => 0, method => '', reason => 'no gsettings or xset display control was found' };
+}
+
+sub settings {
+	my ($screen, $sleep, $lid, $type) = @_;
+	return failure('unknown screen timeout')
+		unless defined $screen && $screen =~ /^\d+$/ && (grep { $_ == $screen } @SCREEN_MINUTES);
+	return failure('unknown sleep timeout')
+		unless defined $sleep && $sleep =~ /^\d+$/ && (grep { $_ == $sleep } @SLEEP_MINUTES);
+	return failure('unknown lid action') unless defined $lid && exists $LID_WORD{$lid};
+	return failure('unknown sleep type') unless defined $type && exists $SLEEP_WORD{$type};
+
+	# Sudo retries the whole helper for the root-owned drop-in; the screen timer
+	# belongs to the session user and was already set by the first run.
+	my $screen_answer = $ENV{'SUDO_USER'}
+		? { supported => 1, skipped => 1, reason => 'the screen timer is set in the session, not as root' }
+		: apply_screen($screen);
+	my $logind = write_logind($sleep, $lid, $type);
+	my %answer = (
+		logind => $logind,
+		screen => $screen_answer,
+		sleep => {
+			timeout => $sleep + 0,
+			lid_action => $lid,
+			sleep_type => $type,
+		},
+	);
+	if ($logind->{'ok'}) {
+		$answer{'ok'} = 1;
+	}
+	else {
+		$answer{'ok'} = 0;
+		$answer{'error'} = $logind->{'error'} || 'the login settings could not be written';
+		$answer{'needs_sudo'} = 1 if $logind->{'needs_sudo'};
+	}
+	emit(\%answer);
+}
+
+sub sleep_now {
+	my ($type) = @_;
+	return failure('unknown sleep type') unless defined $type && exists $SLEEP_WORD{$type};
+	my $systemctl = command_path('systemctl');
+	return emit({ ok => 1, supported => 0, reason => 'systemctl is not installed' }) unless $systemctl;
+	my $word = $SLEEP_WORD{$type};
+	my $run = run_command($systemctl, $word);
+	return emit({
+		ok => 0,
+		supported => 1,
+		error => 'systemctl ' . $word . ' failed',
+		command => $run->{'command'},
+		status => $run->{'status'},
+	}) unless $run->{'ok'};
+	return emit({
+		ok => 1,
+		supported => 1,
+		type => $type,
+		word => $word,
+		command => $run->{'command'},
+		($run->{'dry_run'} ? (dry_run => 1) : ()),
+	});
+}
+
 my $command = shift @ARGV // 'status';
 if ($command eq 'status') {
 	status();
 }
 elsif ($command eq 'apply') {
 	apply(shift @ARGV, shift @ARGV);
+}
+elsif ($command eq 'settings') {
+	settings(shift @ARGV, shift @ARGV, shift @ARGV, shift @ARGV);
+}
+elsif ($command eq 'sleep') {
+	sleep_now(shift @ARGV);
 }
 else {
 	failure('unknown command');

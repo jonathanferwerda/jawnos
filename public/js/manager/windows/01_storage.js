@@ -335,6 +335,10 @@ function appWindowOpenerNow(i,timestamp,v) {
 		else if (i == 'power') {
 			if (typeof powerOpener === 'function') { powerOpener(timestamp); }
 		}
+		// Sound is a shell until its opener asks for a reading, like Power.
+		else if (i == 'sound') {
+			if (typeof soundOpener === 'function') { soundOpener(timestamp); }
+		}
 		else {
 			$.ajax({
 				url: '/manager/' + i,

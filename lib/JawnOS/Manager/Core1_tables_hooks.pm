@@ -601,6 +601,7 @@ our @manager_bundle_files = qw(
 	/js/manager/taskbar_edit.js
 	/js/manager/taskbar_power.js
 	/js/manager/taskbar_network.js
+	/js/manager/taskbar_sound.js
 	/js/manager/narratorprinter.js
 	/js/manager/marker.js
 	/js/pm.js
@@ -628,6 +629,7 @@ our @manager_bundle_files = qw(
 	/js/manager/measures.js
 	/js/manager/monitor.js
 	/js/manager/power.js
+	/js/manager/sound.js
 	/js/manager/folders.js
 	/js/manager/desk.js
 	/js/manager/notes.js
@@ -674,6 +676,7 @@ our %manager_app_scripts = (
 	notes           => [qw(/js/manager/notes.js)],
 	weather          => [qw(/js/manager/weather.js /js/manager/weather_history.js /js/manager/weather_automation.js /js/manager/weather_map.js)],
 	power            => [qw(/js/manager/power.js)],
+	sound            => [qw(/js/manager/sound.js)],
 	search          => [qw(/js/manager/search.js)],
 	ide             => [qw(/js/manager/ide.js /js/manager/ide_code.js)],
 	store           => [qw(/js/store.js)],
@@ -704,6 +707,7 @@ our %manager_app_entry = (
 	email           => [qw(emailReaderOpen emailReaderClose)],
 	weather         => [qw(weatherMaker)],
 	power           => [qw(powerOpener)],
+	sound            => [qw(soundOpener)],
 );
 
 # The start-menu icons are drawn by the server, but each app used to register
@@ -722,6 +726,7 @@ our %manager_toggle_apps = (
 	store_toggle => 'store', email_toggle => 'email',
 	weather_toggle => 'weather',
 	power_toggle => 'power',
+	sound_toggle => 'sound',
 );
 
 # The one bundle the page loads up front: everything an app chunk names is gone

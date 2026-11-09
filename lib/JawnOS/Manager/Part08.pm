@@ -396,17 +396,29 @@ sub sesh_body_digest {
 
 sub network_helper {
 	my ($arguments, $stdin) = @_;
-	my $script = 'scripts/jawnos_network.pl';
-	return { ok => 0, error => 'The network helper is missing.' } unless -e $script;
+	return fixed_helper_answer('scripts/jawnos_network.pl', $arguments, $stdin, 'network');
+}
+
+sub bluetooth_helper {
+	my ($arguments, $stdin) = @_;
+	return fixed_helper_answer('scripts/jawnos_bluetooth.pl', $arguments, $stdin, 'Bluetooth');
+}
+
+# Both Network helpers are the same shape: a fixed script, an argument list and
+# one JSON answer. Keep the path check and the unreadable-answer fallback in one
+# place so a new helper cannot drift from the one beside it.
+sub fixed_helper_answer {
+	my ($script, $arguments, $stdin, $label) = @_;
+	return { ok => 0, error => 'The ' . $label . ' helper is missing.' } unless -e $script;
 	my $run = eval { &subs::subprocessor_command(
 		[ $^X, $script, @{$arguments || []} ],
-		{ name => 'network helper', stdin => $stdin, stdout => 'capture', stderr => 'inherit' }
+		{ name => lc($label) . ' helper', stdin => $stdin, stdout => 'capture', stderr => 'inherit' }
 	) };
-	return { ok => 0, error => 'The network helper could not start.' } unless ref $run eq 'HASH' && $run->{'pid'};
+	return { ok => 0, error => 'The ' . $label . ' helper could not start.' } unless ref $run eq 'HASH' && $run->{'pid'};
 	my $json = $run->{'output'} // '';
 	my $answer = eval { decode_json($json) };
 	return $answer if ref $answer eq 'HASH';
-	return { ok => 0, error => 'The network helper did not return a readable answer.' };
+	return { ok => 0, error => 'The ' . $label . ' helper did not return a readable answer.' };
 }
 
 sub pay_setting_allowed {
