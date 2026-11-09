@@ -186,7 +186,7 @@ input[type="checkbox"] {
 	background-repeat: no-repeat;
 	background-position: center;
 	background-size: 74% 74%;
-	cursor: pointer;
+	cursor: var(--jawnos-cursor-pointer, pointer);
 	transition: background-color .15s ease, border-color .15s ease;
 }
 input[type="checkbox"]:hover { border-color: var(--accent, #3b7ddd); }
@@ -201,7 +201,7 @@ input[type="checkbox"]:checked {
 input[type="checkbox"]:indeterminate {
 	background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M3.5 8h9' fill='none' stroke='%23fff' stroke-width='2.4' stroke-linecap='round'/%3E%3C/svg%3E");
 }
-input[type="checkbox"]:disabled { opacity: .5; cursor: default; }
+input[type="checkbox"]:disabled { opacity: .5; cursor: var(--jawnos-cursor-default, default); }
 /* Controls follow the theme's surface instead of the browser's white default.
    A dark scheme's ink is near-white, so an unthemed input was white text on a
    white box and its value could not be read. The swatches and the native check
@@ -230,7 +230,13 @@ body.dark_theme input:-webkit-autofill:hover,
 body.dark_theme input:-webkit-autofill:focus { -webkit-box-shadow: 0 0 0 1000px var(--panel-2) inset; -webkit-text-fill-color: var(--ink); }
 body.dark_theme option { background-color: var(--panel-2); color: var(--ink); }
 .text_editor { text-align:left; min-height: 30px; font-size: 16px; border: solid; border-width: 1px; border-color: var(--line); border-radius: calc(var(--jawnos-corner, 12px) * .75); width: 100%; }
-.text_editor:hover { cursor: text; }
+.text_editor:hover { cursor: var(--jawnos-cursor-text, text); }
+/* the browser's own text caret on a real field: the UA rule would otherwise
+   leave a text input on the system cursor while the rest of the desk is themed */
+textarea, .text_editor, input:not([type]), input[type="text"], input[type="search"],
+input[type="email"], input[type="password"], input[type="number"], input[type="url"],
+input[type="tel"], input[type="date"], input[type="time"], input[type="datetime-local"],
+input[type="month"], input[type="week"] { cursor: var(--jawnos-cursor-text, text); }
 .text_editor:empty:not(:focus):before {
   content: attr(placeholder);
 	opacity: .6;
@@ -265,7 +271,7 @@ body.dark_theme option { background-color: var(--panel-2); color: var(--ink); }
 	border: solid;
 	border-width: 3px;
 	z-index: 90000;
-	cursor: pointer;
+	cursor: var(--jawnos-cursor-pointer, pointer);
 }
 #yellow_dot {
 	position: fixed;
@@ -278,7 +284,7 @@ body.dark_theme option { background-color: var(--panel-2); color: var(--ink); }
 	border: solid;
 	border-width: 2px;
 	z-index: 90001;
-	cursor: pointer;
+	cursor: var(--jawnos-cursor-pointer, pointer);
 	overflow: visible;
 }
 
@@ -348,7 +354,7 @@ body.dark_theme option { background-color: var(--panel-2); color: var(--ink); }
 	border: solid;
 	border-width: 3px;
 	z-index: 90002;
-	cursor: pointer;
+	cursor: var(--jawnos-cursor-pointer, pointer);
 }
 .dot_info {
 	position: fixed;
@@ -502,7 +508,7 @@ body.dark_theme option { background-color: var(--panel-2); color: var(--ink); }
 }
 
 .hover:hover {
-	cursor: pointer;
+	cursor: var(--jawnos-cursor-pointer, pointer);
 }
 
 .manager_search_result:hover {
@@ -510,12 +516,12 @@ body.dark_theme option { background-color: var(--panel-2); color: var(--ink); }
 }
 
 .hover_showing:hover {
-	cursor: pointer;
+	cursor: var(--jawnos-cursor-pointer, pointer);
 	background-color: var(--accent-soft, #e6effb);
 }
 
 .time:hover {
-	cursor: pointer;
+	cursor: var(--jawnos-cursor-pointer, pointer);
 }
 
 /* the Dur column turns the same way a time does, so it wears the same hand and
@@ -523,11 +529,11 @@ body.dark_theme option { background-color: var(--panel-2); color: var(--ink); }
    readout a template writes turns with it */
 .appointment_detail_duration,
 .jawnos_duration {
-	cursor: pointer;
+	cursor: var(--jawnos-cursor-pointer, pointer);
 }
 
 .window_action {
-	cursor: pointer;
+	cursor: var(--jawnos-cursor-pointer, pointer);
 	/* the icon is the button: the set's chrome tiles cover it whole, so the
 	   browser's grey face, its padding and its border all step aside */
 	width: 34px;
@@ -549,11 +555,11 @@ body.dark_theme option { background-color: var(--panel-2); color: var(--ink); }
 }
 
 button {
-	cursor: pointer;
+	cursor: var(--jawnos-cursor-pointer, pointer);
 }
 
 select {
-	cursor: pointer;
+	cursor: var(--jawnos-cursor-pointer, pointer);
 }
 
 *, *::before, *::after {

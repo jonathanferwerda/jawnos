@@ -78,7 +78,7 @@ like($edit, qr/jawnosTaskbarSave\('taskbar_window_order', JSON\.stringify\(order
 	'the dragged order is the taskbar_window_order setting');
 like($windows, qr/jawnosTaskbarWindowDragAt/,
 	'the click handler ignores the press that ends a drag');
-like($css, qr/#taskbar_windows \.window_toggle \{ cursor: grab; \}/,
+like($css, qr/#taskbar_windows \.window_toggle \{ cursor: var\(--jawnos-cursor-grab, grab\); \}/,
 	'a window tile reads as draggable');
 like($css, qr/\.taskbar_window_placeholder/, 'the drop place has a visible placeholder');
 

@@ -59,6 +59,9 @@ our %icon_plate_memo;
 # each miss costs a config read (a DB query plus Sereal decode).
 our $icon_set_memo;
 our $icon_set_memo_time;
+# cursor_set() is asked once per render and once per push, like the icon set.
+our $cursor_set_memo;
+our $cursor_set_memo_time;
 our %m;
 our %theme_aliases;
 our %theme_presets;
@@ -259,6 +262,8 @@ sub theme_bundle {
 	my $bg = $scheme ? &colour_scheme_manager_colour($scheme) : $background;
 	my $icon_set = $theme->{'icon_set'} // '';
 	$icon_set = '' unless grep { $_ eq $icon_set } @gb::icon_sets;
+	my $cursor_set = $theme->{'cursor_set'} // '';
+	$cursor_set = '' unless grep { $_ eq $cursor_set } @gb::cursor_sets;
 	my $texture = $theme->{'texture'} // '';
 	$texture = '' unless grep { $_ eq $texture } @gb::textures;
 	my $accent = $theme->{'accent'} // '';
@@ -284,6 +289,7 @@ sub theme_bundle {
 		scheme     => $scheme,
 		background => $bg,
 		icon_set   => $icon_set,
+		cursor_set => $cursor_set,
 		texture    => $texture,
 		font       => &theme_safe_font($theme->{'font'}),
 		corner     => &theme_safe_corner($theme->{'corner'}),
@@ -313,7 +319,7 @@ sub active_theme_bundle {
 	if (defined $running && length $running) {
 		my $over = &theme_bundle($running);
 		my %merged = %{$system};
-		foreach my $key ( qw/scheme background icon_set texture font corner accent name/ ) {
+		foreach my $key ( qw/scheme background icon_set cursor_set texture font corner accent name/ ) {
 			$merged{$key} = $over->{$key} if defined $over->{$key} && length $over->{$key};
 		}
 		$merged{'slug'} = &theme_canonical($running);
@@ -508,7 +514,7 @@ sub active_manager_background {
 
 # Tell every open manager to re-paint its body for the current active theme.
 # A theme is more than a colour: the message carries the whole bundle, so the
-# icons, material, face and corner change with it and no reload is needed.
+# icons, cursor, material, face and corner change with it and no reload is needed.
 sub appointment_theme_push {
 	# the running set may have just changed: a warm memo would send the room the
 	# desk is leaving, so forget every theme cache before asking
@@ -520,6 +526,7 @@ sub appointment_theme_push {
 	# signature lets the browser ignore a push that changes nothing - a start or
 	# stop on the same theme must not reload every window.
 	my $icon_set = &icon_set();
+	my $cursor_set = &cursor_set();
 	my $texture = &texture_name();
 	my $font = $bundle->{'font'} || &misc_setting('title_font') || 'system-ui, sans-serif';
 	# the corner the desk is wearing: the theme's own, or the Misc override on
@@ -532,6 +539,7 @@ sub appointment_theme_push {
 		background => $bg,
 		appointment => $appointment ? 1 : 0,
 		icon_set => $icon_set,
+		cursor_set => $cursor_set,
 		texture => $texture,
 		font => $font,
 		corner => $corner,
@@ -583,7 +591,7 @@ sub native_theme_record {
 }
 
 # What the desk currently wears, as one comparable string: paint, effective
-# glyphs, material, face and corner. The appointment flag is deliberately left
+# glyphs, cursor, material, face and corner. The appointment flag is deliberately left
 # out - it changes who owns the desk, not how it is painted - so a start/stop on
 # the same theme pushes nothing and reloads no window.
 sub theme_signature {
@@ -592,7 +600,7 @@ sub theme_signature {
 	my $font = $bundle->{'font'} || &misc_setting('title_font') || 'system-ui, sans-serif';
 	my $corner = $bundle->{'slug'} ? &corner_radius() . 'px' : '';
 	my $accent = $bundle->{'accent'} || '';
-	return join '|', map { defined $_ ? $_ : '' } ( $bg, &icon_set(), &texture_name(), $font, $corner, $accent );
+	return join '|', map { defined $_ ? $_ : '' } ( $bg, &icon_set(), &cursor_set(), &texture_name(), $font, $corner, $accent );
 }
 
 # The colours the current theme is built from: the distinct *_background_colour
@@ -785,12 +793,65 @@ sub icon_set {
 	return $icon_set_memo;
 }
 
+# The cursor set the desk wears, resolved the way the icon set is: a theme may
+# name one, an explicit choice from Misc while that theme is active overrides
+# just the pointer (cursor_set_override), and a desk with no theme in charge
+# wears the Misc choice. An empty value means the system cursors, which is what
+# a theme that names none leaves alone.
+sub cursor_set {
+	my $now = &rightNow();
+	return $cursor_set_memo if defined $cursor_set_memo && $now - $cursor_set_memo_time < 1000;
+	my $set = '';
+	my $bundle = &active_theme_bundle();
+	if ($bundle->{'slug'}) {
+		my $override = &misc_setting('cursor_set_override');
+		if (defined $override && length $override && grep { $_ eq $override } @gb::cursor_sets) {
+			$set = $override;
+		}
+		elsif (defined $bundle->{'cursor_set'} && length $bundle->{'cursor_set'}) {
+			$set = $bundle->{'cursor_set'};
+		}
+	}
+	unless (length $set) {
+		my $misc = &misc_setting('cursor_set');
+		$set = $misc if defined $misc && length $misc;
+	}
+	$set = '' unless grep { $_ eq $set } @gb::cursor_sets;
+	$cursor_set_memo = $set;
+	$cursor_set_memo_time = $now;
+	return $cursor_set_memo;
+}
+
+# The CSS that maps each cursor set's roles onto the keywords the sheets ask
+# for. Every set is written once, so a theme push only moves the body's
+# data-cursor-set attribute; no stylesheet is rebuilt or re-injected. A role
+# with no image is simply absent, and the var() fallback in the sheet leaves
+# the system cursor in place.
+sub cursor_css {
+	my @rules;
+	foreach my $set ( @gb::cursor_sets ) {
+		next unless defined $set && $set =~ /^[a-z0-9][a-z0-9_-]*$/;
+		my @vars;
+		foreach my $role ( @gb::cursor_roles ) {
+			my $png = "public/cursors/sets/$set/$role.png";
+			next unless -e $png;
+			my $hotspot = $gb::cursor_hotspots{$role} // '16 16';
+			push @vars, "--jawnos-cursor-$role:url('/cursors/sets/$set/$role.png') $hotspot, $role";
+		}
+		next unless @vars;
+		push @rules, 'body[data-cursor-set="' . $set . '"]{' . join(';', @vars) . ';cursor:var(--jawnos-cursor-default, auto)}';
+	}
+	return join "\n", @rules;
+}
+
 # Called when the icon set is changed, so the very next render already uses it
 # instead of waiting out the memo above. The theme memo goes with it: a scheme
 # change can flip which cut of the set is wanted.
 sub icon_set_forget {
 	$icon_set_memo = undef;
 	$icon_set_memo_time = 0;
+	$cursor_set_memo = undef;
+	$cursor_set_memo_time = 0;
 	$theme_state_memo = undef;
 	$theme_state_time = 0;
 	$theme_registry_memo = undef;

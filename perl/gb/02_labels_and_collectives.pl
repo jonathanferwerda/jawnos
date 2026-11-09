@@ -35,6 +35,15 @@ our @theme_fonts = (
 	{ value => 'Courier New, monospace', label => 'Courier' },
 );
 
+our %cursor_set_labels = (
+	bold    => 'Bold',
+	white   => 'White',
+	outline => 'Outline',
+	neon    => 'Neon',
+	pastel  => 'Pastel',
+	mono    => 'Mono',
+);
+
 our %icon_set_labels = (
 	handdrawn    => 'Hand-drawn (original)',
 	windows      => 'Jawndows',

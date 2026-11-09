@@ -486,7 +486,7 @@ our %colour_schemes = (
 
 # ---- named themes ----------------------------------------------------------
 # A colour scheme is only the paint. A theme is the whole dressing: paint, icon
-# set, material, face and corner. The presets below are the house's own curated
+# set, cursor, material, face and corner. The presets below are the house's own curated
 # bundles; a person may save more (see theme_registry). A name found here is
 # what an appointment's Theme setting stores, so every machine that reads the
 # row paints the same room.
@@ -502,61 +502,73 @@ our %theme_presets = (
 	deepjawn => {
 		name => 'Deepjawn', scheme => 'Blue Dark',
 		icon_set => 'gnome', texture => 'soft',
+		cursor_set => 'bold',
 		font => 'Noto Sans, system-ui, sans-serif', corner => 12,
 	},
 	jawnfish => {
 		name => 'Jawnfish', scheme => 'Teal',
 		icon_set => 'pastel', texture => 'soft',
+		cursor_set => 'pastel',
 		font => 'Cantarell, system-ui, sans-serif', corner => 16,
 	},
 	adwaita => {
 		name => 'Adwaita', scheme => 'Graphite',
 		icon_set => 'gnome', texture => 'soft',
+		cursor_set => 'outline',
 		font => 'Cantarell, system-ui, sans-serif', corner => 12,
 	},
 	cuperjawno => {
 		name => 'Cuperjawno', scheme => 'Graphite',
 		icon_set => 'mac', texture => 'soft',
+		cursor_set => 'white',
 		font => 'system-ui, sans-serif', corner => 12,
 	},
 	jawndows => {
 		name => 'Jawndows', scheme => 'Blue',
 		icon_set => 'windows', texture => 'soft',
+		cursor_set => 'bold',
 		font => 'Segoe UI, system-ui, sans-serif', corner => 8,
 	},
 	mint => {
 		name => 'Mint', scheme => 'Green',
 		icon_set => 'gnome', texture => 'paper',
+		cursor_set => 'outline',
 		font => 'Noto Sans, system-ui, sans-serif', corner => 10,
 	},
 	nord => {
 		name => 'Nord', scheme => 'Nord Dark',
 		icon_set => 'outline', texture => 'fabric',
+		cursor_set => 'outline',
 		font => 'Inter, system-ui, sans-serif', corner => 10,
 	},
 	sage => {
 		name => 'Sage', scheme => 'Sage',
 		icon_set => 'pastel', texture => 'fabric',
+		cursor_set => 'pastel',
 		font => 'Noto Sans, system-ui, sans-serif', corner => 14,
 	},
 	mocha => {
 		name => 'Mocha', scheme => 'Mocha Dark',
 		icon_set => 'outline', texture => 'paper',
+		cursor_set => 'pastel',
 		font => 'Palatino Linotype, Iowan Old Style, Georgia, serif', corner => 14,
 	},
 	neon => {
 		name => 'Neon', scheme => 'Indigo Dark',
 		icon_set => 'neon', texture => 'glass',
+		cursor_set => 'neon',
 		font => 'JetBrains Mono, Courier New, monospace', corner => 14,
 	},
 	mono => {
 		name => 'Mono', scheme => 'Graphite Dark',
 		icon_set => 'mono', texture => 'metal',
+		cursor_set => 'mono',
 		font => 'system-ui, sans-serif', corner => 6,
 	},
 	rose => {
 		name => 'Rose', scheme => 'Rose',
 		icon_set => 'pastel', texture => 'paper',
+		cursor_set => 'pastel',
 		font => 'Noto Sans, system-ui, sans-serif', corner => 16,
 	},
 	# Phosphor green, a monospace face, a CRT grain and square corners: the
@@ -564,6 +576,7 @@ our %theme_presets = (
 	geek => {
 		name => 'Geek', scheme => 'Geek Dark',
 		icon_set => 'neon', texture => 'sandglass',
+		cursor_set => 'mono',
 		font => 'JetBrains Mono, Courier New, monospace', corner => 2,
 	},
 	# The VT220: amber on warm black, plain plates, outline glyphs, square
@@ -571,12 +584,14 @@ our %theme_presets = (
 	phosphor => {
 		name => 'Phosphor', scheme => 'Phosphor Dark',
 		icon_set => 'outline', texture => 'classic',
+		cursor_set => 'mono',
 		font => 'Courier New, monospace', corner => 0,
 	},
 	# Neon nights: cyan glass with a magenta accent and iridescent glyphs.
 	cyberpunk => {
 		name => 'Cyberpunk', scheme => 'Cyberpunk Dark',
 		icon_set => 'holographic', texture => 'glass',
+		cursor_set => 'neon',
 		font => 'JetBrains Mono, Courier New, monospace', corner => 10,
 		accent => '#ff3cc7',
 	},
@@ -611,6 +626,10 @@ foreach my $old ( keys %theme_aliases ) {
 our ($theme_registry_memo, $theme_registry_time);
 our $icon_set_memo;
 our $icon_set_memo_time = 0;
+# cursor_set() asks the same question on every render, so it is memoised on the
+# same short TTL as the icon set.
+our $cursor_set_memo;
+our $cursor_set_memo_time = 0;
 
 # Whether the active desktop theme is dark, and the scheme name driving it (blank
 # when the Misc manager colour is in charge). Memoised on the same short TTL as

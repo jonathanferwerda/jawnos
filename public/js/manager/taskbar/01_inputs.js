@@ -115,6 +115,16 @@ $(document).on('change', '.misc_setting', function () {
 		if (typeof startMenuHtmlFlush == 'function') { startMenuHtmlFlush(); }
 		return;
 	}
+	else if (setting == 'cursor_set' || setting == 'cursor_set_override') {
+		// the sheet already carries every set's mapping; move the body's marker.
+		// A blank override means Follow theme, so leave the theme's own cursor in
+		// place and let the server's push settle the effective value.
+		var cursorSet = $(this).val();
+		if (typeof jawnosCursorApply == 'function' && (setting == 'cursor_set' || cursorSet)) {
+			jawnosCursorApply(cursorSet);
+		}
+		return;
+	}
 	else if (setting == 'clock_format') {
 		jawnos_clock_format = $(this).val();
 		jawnosClockShow();

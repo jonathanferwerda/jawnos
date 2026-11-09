@@ -15,7 +15,7 @@ $topic{'welcome'} = {
 			'JawnOS is a desktop made of apps. Everything you open is a window: drag it by its title bar, pull its edge to resize it, and use the buttons in the title bar to minimise, maximise or close it. The window you last touched comes to the front. Press the question mark in a window\'s title bar to ask this Guide about that window, or press F1 to read the help topic for whatever is in front.',
 			'The start menu is the round button at the corner of the desk. It opens on the apps you used most recently, with a category rail for the whole catalogue and a search box. Its other pages show what is running, what is upcoming, what is expiring, and a System page (the water-drop tab) with this machine\'s battery, CPU load and memory, every other machine in the house and the parking lot of saved sessions. A new install opens the menu on that System page, so the first press shows whether the house is well.',
 			'The dock is the bar along an edge of the desk. Its icons are its pseudonyms: each one has a name, an icon, a colour, a place and something it says, all edited under Configure → Pseud. Pin the apps you reach for most and the dock keeps them within a press.',
-			'Configure is the wrench on the start menu. Under Misc → Appearance you can pick a whole theme (paint, icons, material, font and corner radius) or a colour scheme on its own; it also sets the font, the corner and how long a lock waits before its screensaver. Under App, each app has a card for its colour, budgets, goals and notifications. Under Dev are the machines of the house: Scan finds them, and each row carries its privilege, its lease, Migrate and Go. The Pseud tab holds the dock pseudonyms.',
+			'Configure is the wrench on the start menu. Under Misc → Appearance you can pick a whole theme (paint, icons, cursor, material, font and corner radius) or a colour scheme on its own; it also sets the font, the corner and how long a lock waits before its screensaver. Under App, each app has a card for its colour, budgets, goals and notifications. Under Dev are the machines of the house: Scan finds them, and each row carries its privilege, its lease, Migrate and Go. The Pseud tab holds the dock pseudonyms.',
 			'The Guide is always one press away. Type in the box under this page and press Guide me: it can answer from these topics, search your records, play media, translate a page, and open or drive the apps. It asks before it writes while the Confirmation Requirement is on, and it stages each change so you can read it first. Press Converse to keep the microphone open, or the question mark in any window\'s title bar to ask about that window. On a new install Help comes up on its own and walks the tour the first time; press Take the tour at the foot of this window to hear this walkthrough again.'
 		],
 		steps => [
@@ -204,16 +204,16 @@ $topic{'hints'} = {
 $topic{'themes'} = {
 		title => 'Themes and colour schemes', category => 'features',
 		verified => '2026-10-23',
-		summary => 'Named dressings: paint, icons, material, face and corner under one name.',
+		summary => 'Named dressings: paint, icons, cursor, material, face and corner under one name.',
 		body => [
-			'JawnOS ships a set of named colour schemes — Blue, Graphite, Green, Indigo, Steel, Amber, Teal, Plum, Rose, Nord, Sage, Mocha, Geek, Phosphor and Cyberpunk — and each has a light and a dark cut, so the chrome can range from near-white to near-black. A colour scheme is only the paint. A theme is the whole dressing: the scheme, the icon set, the material, the font and the corner radius, saved under one name.',
+			'JawnOS ships a set of named colour schemes — Blue, Graphite, Green, Indigo, Steel, Amber, Teal, Plum, Rose, Nord, Sage, Mocha, Geek, Phosphor and Cyberpunk — and each has a light and a dark cut, so the chrome can range from near-white to near-black. A colour scheme is only the paint. A theme is the whole dressing: the scheme, the icon set, the cursor set, the material, the font and the corner radius, saved under one name.',
 			'Configure → Misc → Themes is a gallery. Each card shows its palette and names its scheme and material; one click applies the whole dressing to this device. System follows the Misc choices below and changes nothing on its own. The presets are Deepjawn, Jawnfish, Adwaita, Cuperjawno, Jawndows, Mint, Nord, Sage, Mocha, Neon, Mono, Rose, Geek, Phosphor and Cyberpunk.',
-			'New theme opens the editor: give it a name, pick a colour scheme, an icon set, a material, a font and a corner radius, and save. A custom theme is a house-wide row, so it appears in the gallery on every machine; Edit and Delete sit on its own card. A theme may take the accent for its focus rings and active tiles from its scheme, or name one of its own.',
-			'An app can also carry its own Theme: while one of that app\'s start appointments is running the desktop wears the whole bundle — paint, icons, material, face and corner — the most recently started running app wins when more than one has a theme, and with none running the Misc theme or scheme comes back.',
-			'While a theme is active, the Icon Set and Texture pickers under Misc → Appearance show Follow theme. Choosing another set or material overrides just that piece for this machine and leaves the theme\'s paint, face and corner alone; Follow theme returns to the theme\'s own choice. The Corner Radius slider works the same way: with a theme in charge it overrides that theme\'s corner, and Follow theme beside it returns to the theme\'s own radius. Picking another theme from the gallery clears that override, so every theme shows its own radius again. The override belongs to this machine and is separate from the gallery\'s theme definition, so a preset is never edited by it.',
+			'New theme opens the editor: give it a name, pick a colour scheme, an icon set, a cursor set, a material, a font and a corner radius, and save. A custom theme is a house-wide row, so it appears in the gallery on every machine; Edit and Delete sit on its own card. A theme may take the accent for its focus rings and active tiles from its scheme, or name one of its own.',
+			'An app can also carry its own Theme: while one of that app\'s start appointments is running the desktop wears the whole bundle — paint, icons, cursor, material, face and corner — the most recently started running app wins when more than one has a theme, and with none running the Misc theme or scheme comes back.',
+			'While a theme is active, the Icon Set, Cursor Set and Texture pickers under Misc → Appearance show Follow theme. Choosing another set, cursor or material overrides just that piece for this machine and leaves the theme\'s paint, face and corner alone; Follow theme returns to the theme\'s own choice. The Corner Radius slider works the same way: with a theme in charge it overrides that theme\'s corner, and Follow theme beside it returns to the theme\'s own radius. Picking another theme from the gallery clears that override, so every theme shows its own radius again. The override belongs to this machine and is separate from the gallery\'s theme definition, so a preset is never edited by it.',
 			'The dark cuts change the window surfaces most, because the chrome is derived from the manager surface; inputs and dropdowns follow the same surface, so their text stays readable. Each scheme also gives windows and appointments their own surface, one step along the same ramp, so an app does not dissolve into the desktop behind it. A dark scheme also darkens the other surfaces by itself — the dock and its buttons, Configure, the start menu, the keyboard and its panels, the store and the taskbar — so a light face picked earlier does not glare through.'
 		],
-		related => [ 'icon_sets', 'zoom', 'configure' ]
+		related => [ 'icon_sets', 'cursor_sets', 'zoom', 'configure' ]
 	};
 $topic{'icon_sets'} = {
 		title => 'Icon sets', category => 'features',
@@ -223,7 +223,17 @@ $topic{'icon_sets'} = {
 			'Pick one under Configure; the whole interface follows, including the window controls, the phone app\'s handset and camera buttons and the dock\'s own buttons. The Folders listing and the desk take the set too: a folder, a plain file, an audio track, subtitles and a sealed file each wear the set\'s own picture.',
 			'Each set has a light and a dark cut. While a dark colour scheme (or a dark appointment theme) is in force the dark cut is chosen automatically — the same glyphs, on a plate that does not glare — and it returns to the light cut when the desktop does. The hand-drawn set has no dark cut of its own, so it stays as drawn.'
 		],
-		related => [ 'themes', 'configure' ]
+		related => [ 'themes', 'cursor_sets', 'configure' ]
+	};
+$topic{'cursor_sets'} = {
+		title => 'Cursor sets', category => 'features',
+		summary => 'A choice of pointer looks; a theme may carry its own.',
+		body => [
+			'The pointer can be dressed like the rest of the desk: Bold, White, Outline, Neon, Pastel and Mono each draw the arrow, the hand, the I-beam, the move and resize arrows, and the busy and refused cursors in its own colours. Each is drawn with a halo, so one set reads on a near-white and a near-black desktop. System keeps the machine\'s own cursors.',
+			'Pick one under Configure → Misc → Appearance; the whole desk follows at once, including the resize arrows on the music window and the refused cursor on a disabled control.',
+			'A theme may name its own set. While a theme is in charge the picker shows Follow theme and uses the theme\'s choice; picking another set overrides just the cursor for this machine, and Follow theme returns to the theme\'s own. The theme editor carries the same picker, so a saved theme can be saved with its pointer.'
+		],
+		related => [ 'themes', 'icon_sets', 'configure' ]
 	};
 $topic{'zoom'} = {
 		title => 'Display zoom', category => 'features',

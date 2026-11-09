@@ -162,4 +162,42 @@ our @misc_settings = qw/homepage homepage_content manager start_menu gate config
 # icon_set() selects by itself while the active theme is dark.
 # 'handdrawn' is special: it restores the original hand-drawn PNGs from public/icons/original/
 our @icon_sets = qw/handdrawn windows mac gnome cartoon dark light outline neon pastel mono sunburst holographic sticker psychedelic kaleidoscope clown/;
+
+# selectable cursor sets; each maps to public/cursors/sets/<key>/<role>.png.
+# The empty value in a setting means the system cursors. Every set draws the
+# same roles, so switching sets keeps an I-beam on text and a hand on a link.
+our @cursor_sets = qw/bold white outline neon pastel mono/;
+
+# The roles a cursor set may name, and where each image's hotspot sits on the
+# 32px tile. The server writes both into the CSS; the images only carry paint.
+our @cursor_roles = qw/default pointer text vertical-text move grab grabbing not-allowed no-drop wait progress crosshair cell col-resize row-resize ns-resize ew-resize n-resize s-resize e-resize w-resize ne-resize sw-resize nw-resize se-resize nesw-resize nwse-resize/;
+our %cursor_hotspots = (
+	'default'      => '5 5',
+	'pointer'      => '12 7',
+	'text'         => '16 16',
+	'vertical-text'=> '16 16',
+	'move'         => '16 16',
+	'grab'         => '16 16',
+	'grabbing'     => '16 16',
+	'not-allowed'  => '16 16',
+	'no-drop'      => '16 16',
+	'wait'         => '16 16',
+	'progress'     => '16 16',
+	'crosshair'    => '16 16',
+	'cell'         => '16 16',
+	'col-resize'   => '16 16',
+	'row-resize'   => '16 16',
+	'ns-resize'    => '16 16',
+	'ew-resize'    => '16 16',
+	'n-resize'     => '16 16',
+	's-resize'     => '16 16',
+	'e-resize'     => '16 16',
+	'w-resize'     => '16 16',
+	'ne-resize'    => '16 16',
+	'sw-resize'    => '16 16',
+	'nw-resize'    => '16 16',
+	'se-resize'    => '16 16',
+	'nesw-resize'  => '16 16',
+	'nwse-resize'  => '16 16',
+);
 our @textures = qw/classic round soft sandglass glass paper fabric wood metal/;

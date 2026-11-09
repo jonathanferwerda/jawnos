@@ -130,13 +130,13 @@
 	background: linear-gradient(rgba(0,0,0,.20), rgba(0,0,0,.06));
 	border-bottom: 1px solid rgba(0,0,0,.22);
 	border-radius: 6px 6px 0 0;
-	cursor: grab;
+	cursor: var(--jawnos-cursor-grab, grab);
 	user-select: none;
 	-webkit-user-select: none;
 	touch-action: none;
 }
 .keyboard_drag_bar:active {
-	cursor: grabbing;
+	cursor: var(--jawnos-cursor-grabbing, grabbing);
 }
 /* the panel's close button rides the bar's right end; it is not part of the
    drag, so the bar keeps its grip in the middle */
@@ -154,7 +154,7 @@
 	border-radius: 50%;
 	background-color: rgba(255,255,255,.65);
 	border: 1px solid rgba(0,0,0,.35);
-	cursor: pointer;
+	cursor: var(--jawnos-cursor-pointer, pointer);
 	touch-action: none;
 }
 .keyboard_closer:hover {

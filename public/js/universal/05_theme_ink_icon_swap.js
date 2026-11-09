@@ -299,7 +299,15 @@ function jawnosThemeApply(bg, appt) {
 	document.body.removeAttribute('data-theme-sig');
 	jawnosApplyInk();
 }
-// A whole dressing arrives at once: paint, glyphs, material, face, corner and
+// The cursor set is CSS-only: the sheet carries every set's role -> image
+// mapping, and the body's data-cursor-set picks one. A theme push moves the
+// attribute; no stylesheet is rebuilt and no window re-renders.
+function jawnosCursorApply(set) {
+	if (set) { document.body.setAttribute('data-cursor-set', set); }
+	else { document.body.removeAttribute('data-cursor-set'); }
+}
+
+// A whole dressing arrives at once: paint, glyphs, cursor, material, face, corner and
 // accent. The server sends this over the websocket when a start/stop moves the
 // active theme, so the desk changes without a reload. Empty fields mean "leave
 // the Misc choice alone", which is what a bare colour-scheme row needs.
@@ -351,6 +359,7 @@ function jawnosThemeBundleApply(bundle, appt) {
 	jawnosApplyInk(bundle.accent || '');
 	window.jawnos_theme_suppress_icon_reload = false;
 	if ('icon_set' in bundle) { document.body.setAttribute('data-icon-set', bundle.icon_set || ''); }
+	if ('cursor_set' in bundle) { jawnosCursorApply(bundle.cursor_set || ''); }
 	if (typeof jawnosReloadIcons === 'function') { setTimeout(jawnosReloadIcons, 60); }
 	if (sig) { document.body.setAttribute('data-theme-sig', sig); }
 }

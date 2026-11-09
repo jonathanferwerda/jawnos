@@ -727,7 +727,7 @@ sub action_9455 {
 }
 
 # ---- named themes ----------------------------------------------------------
-# A theme is the whole dressing (paint, icons, material, face, corner); these
+# A theme is the whole dressing (paint, icons, cursor, material, face, corner); these
 # routes save and remove the ones a person names. Presets live in
 # subroutines.pl::theme_presets and can never be overwritten. A saved theme is
 # one house-wide settings row, so an appointment may name it on any machine.
@@ -760,6 +760,8 @@ sub action_9480 {
 	$scheme = '' unless $subs::colour_schemes{$scheme};
 	my $icon_set = $c->param('icon_set') // '';
 	$icon_set = '' unless grep { $_ eq $icon_set } @gb::icon_sets;
+	my $cursor_set = $c->param('cursor_set') // '';
+	$cursor_set = '' unless grep { $_ eq $cursor_set } @gb::cursor_sets;
 	my $texture = $c->param('texture') // '';
 	$texture = '' unless grep { $_ eq $texture } @gb::textures;
 	my $font = &subs::theme_safe_font($c->param('font'));
@@ -770,7 +772,8 @@ sub action_9480 {
 	my $now = &subs::rightNow();
 	my $value = encode_json({
 		name => $name, scheme => $scheme, icon_set => $icon_set,
-		texture => $texture, font => $font, corner => $corner, accent => $accent,
+		cursor_set => $cursor_set, texture => $texture, font => $font,
+		corner => $corner, accent => $accent,
 	});
 	my $existing = &subs::db_query(
 		'select rowid from settings where app = ? and setting = ? and subsetting = ?',

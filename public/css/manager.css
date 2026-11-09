@@ -251,7 +251,7 @@ html, body {
 	background: none;
 	border: 0;
 	padding: 2px 0;
-	cursor: pointer;
+	cursor: var(--jawnos-cursor-pointer, pointer);
 	overflow: hidden;
 	text-overflow: ellipsis;
 	white-space: nowrap;
@@ -285,7 +285,7 @@ html, body {
 	border-radius: 6px;
 	background: var(--accent-soft, var(--panel-2));
 	color: var(--ink);
-	cursor: pointer;
+	cursor: var(--jawnos-cursor-pointer, pointer);
 }
 .attribute_actions button:hover { border-color: var(--accent); }
 .attribute_add { font-weight: 700; }
@@ -409,7 +409,7 @@ body.dark_theme #taskbar { background-image: linear-gradient(rgba(255,255,255,.0
 	height: calc(var(--taskbar_h, 44px) - 12px);
 	padding: 0 8px;
 	white-space: nowrap;
-	cursor: pointer;
+	cursor: var(--jawnos-cursor-pointer, pointer);
 	border: 1px solid var(--line);
 	border-radius: calc(var(--jawnos-corner, 12px) * .55);
 	background-color: var(--panel);
@@ -522,7 +522,7 @@ body.dark_theme #taskbar { background-image: linear-gradient(rgba(255,255,255,.0
 	background: transparent;
 	border: 1px solid transparent;
 	border-radius: calc(var(--jawnos-corner, 12px) * .5);
-	cursor: pointer;
+	cursor: var(--jawnos-cursor-pointer, pointer);
 }
 .clock_nav_item:hover { background-color: var(--line); border-color: var(--line); }
 .clock_nav_item img { width: 28px; height: 28px; object-fit: contain; }
@@ -600,14 +600,14 @@ body.dark_theme #taskbar { background-image: linear-gradient(rgba(255,255,255,.0
 	font: inherit;
 	font-size: 15px;
 	padding: 9px 15px;
-	cursor: pointer;
+	cursor: var(--jawnos-cursor-pointer, pointer);
 	color: inherit;
 	background-color: var(--panel);
 	border: 1px solid var(--line);
 	border-radius: calc(var(--jawnos-corner, 12px) * .5);
 }
 .clock_ring_buttons button:hover { background-color: var(--line); }
-.clock_ring_buttons button:disabled { opacity: .4; cursor: not-allowed; background-color: var(--panel); }
+.clock_ring_buttons button:disabled { opacity: .4; cursor: var(--jawnos-cursor-not-allowed, not-allowed); background-color: var(--panel); }
 .clock_ring_buttons button:disabled:hover { background-color: var(--panel); }
 
 /* A machine that has already acknowledged the alarm: the pill keeps its shape
@@ -639,7 +639,7 @@ body.dark_theme #taskbar { background-image: linear-gradient(rgba(255,255,255,.0
 	font-size: 13px;
 }
 #clock_toast .clock_toast_text { flex: 1 1 auto; min-width: 0; }
-#clock_toast .clock_toast_close { flex: 0 0 auto; width: 24px; height: 24px; border: none; border-radius: 50%; background: transparent; color: inherit; cursor: pointer; }
+#clock_toast .clock_toast_close { flex: 0 0 auto; width: 24px; height: 24px; border: none; border-radius: 50%; background: transparent; color: inherit; cursor: var(--jawnos-cursor-pointer, pointer); }
 #clock_toast .clock_toast_close:hover { background-color: var(--line); }
 /* the corner's own buttons come aboard while the bar stands: bare tiles of the
    bar's inner height, sitting between the window list and the clock */
@@ -713,8 +713,8 @@ body.dark_theme #taskbar { background-image: linear-gradient(rgba(255,255,255,.0
    newest right), or the order they were last dragged into, and any tile can be
    dragged along the list into another place. A press without travel still
    answers as a press; only a real drag sorts. */
-#taskbar_windows .window_toggle { cursor: grab; }
-#taskbar_windows.taskbar_window_dragging .window_toggle { cursor: grabbing; }
+#taskbar_windows .window_toggle { cursor: var(--jawnos-cursor-grab, grab); }
+#taskbar_windows.taskbar_window_dragging .window_toggle { cursor: var(--jawnos-cursor-grabbing, grabbing); }
 .taskbar_window_placeholder {
 	flex: 0 0 auto;
 	opacity: .35;
@@ -726,7 +726,7 @@ body.dark_theme #taskbar { background-image: linear-gradient(rgba(255,255,255,.0
    the pointer (a press would open a window or a menu mid-drag), but the slots
    themselves still take the drag. */
 #taskbar.taskbar_edit { outline: dashed 2px var(--ink-muted, #888); outline-offset: -3px; }
-#taskbar.taskbar_edit > * { cursor: move; }
+#taskbar.taskbar_edit > * { cursor: var(--jawnos-cursor-move, move); }
 /* the open-window slot wears a frame of its own, so it reads as the drop zone
    it is rather than a bare stretch of the bar */
 #taskbar.taskbar_edit #taskbar_windows {
@@ -752,20 +752,20 @@ body.dark_theme #taskbar { background-image: linear-gradient(rgba(255,255,255,.0
 /* The bar's context menu, shaped like the folders one. */
 /* a window in move mode is dragged from anywhere on it */
 .window_move_mode,
-.window_move_mode * { cursor: move !important; }
+.window_move_mode * { cursor: var(--jawnos-cursor-move, move) !important; }
 
 /* The Guide's associate, a Coding agent and the Agents list drag by their
    headers, so they wear the keyboard's grip: an open hand at rest and a closed
    one while the drag is held. */
 .assistant_header,
 .coding_chat_header,
-.jawnos_agents_header { cursor: grab; }
+.jawnos_agents_header { cursor: var(--jawnos-cursor-grab, grab); }
 .assistant_header:active,
 .coding_chat_header:active,
 .jawnos_agents_header:active,
 .assistant_view.ui-draggable-dragging .assistant_header,
 .coding_chat.ui-draggable-dragging .coding_chat_header,
-#jawnos_agents.ui-draggable-dragging .jawnos_agents_header { cursor: grabbing; }
+#jawnos_agents.ui-draggable-dragging .jawnos_agents_header { cursor: var(--jawnos-cursor-grabbing, grabbing); }
 
 /* a press that opens a window beats while the server answers */
 .jawnos_loading { animation: jawnos_loading_pulse .7s ease-in-out infinite; }
@@ -794,7 +794,7 @@ body.dark_theme #taskbar { background-image: linear-gradient(rgba(255,255,255,.0
 	gap: 8px;
 	padding: 5px 10px;
 	border-radius: 5px;
-	cursor: pointer;
+	cursor: var(--jawnos-cursor-pointer, pointer);
 }
 .taskbar_context_selection:hover { background-color: rgba(0, 0, 0, 0.1); }
 .taskbar_context_label {
@@ -821,7 +821,7 @@ body.dark_theme #taskbar { background-image: linear-gradient(rgba(255,255,255,.0
 	gap: 8px;
 	padding: 3px 6px;
 	border-radius: 4px;
-	cursor: pointer;
+	cursor: var(--jawnos-cursor-pointer, pointer);
 }
 .taskbar_context_app:hover { background-color: rgba(0, 0, 0, 0.1); }
 .taskbar_context_app img { width: 26px; height: 26px; max-width: 26px; object-fit: contain; }
@@ -941,32 +941,32 @@ input[type="checkbox"] {
 	accent-color: var(--accent, #3b7ddd);
 }
 input[type="checkbox"]:hover {
-	cursor: pointer;
+	cursor: var(--jawnos-cursor-pointer, pointer);
 }
 
 .save_appointment {
-	cursor: pointer;
+	cursor: var(--jawnos-cursor-pointer, pointer);
 }
 
 .time_jump {
-	cursor: pointer;
+	cursor: var(--jawnos-cursor-pointer, pointer);
 }
 /* a button that begins a group keeps a wider breath from the mate before it
    than the four pixels that separate the mates themselves */
 .row_gap { margin-left: 14px; }
 /* the group buttons open the rows that carry their buttons */
-.group_toggle { cursor: pointer; }
+.group_toggle { cursor: var(--jawnos-cursor-pointer, pointer); }
 
 .app_act {
-	cursor: pointer;
+	cursor: var(--jawnos-cursor-pointer, pointer);
 }
 
 .enabler {
-	cursor: pointer;
+	cursor: var(--jawnos-cursor-pointer, pointer);
 }
 
 .jonathan {
-	cursor: pointer;
+	cursor: var(--jawnos-cursor-pointer, pointer);
 }
 .app_notes { overflow: scroll; }
 /* the notes follow the theme's panel: a pinned white page made a dark
@@ -1077,7 +1077,7 @@ body.dark_theme .top_navbar { background-image: linear-gradient(rgba(255,255,255
    normal, not 1: overflow:hidden is here for the ellipsis and a line box of
    exactly the font size clipped the descenders (the g in a title lost its
    tail). The flex row still centres it in the bar. */
-.top_navbar .appointment_name .name_text { min-width: 0; max-width: 100%; padding: 0 6px; line-height: normal; text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: default; user-select: none; -webkit-user-select: none; }
+.top_navbar .appointment_name .name_text { min-width: 0; max-width: 100%; padding: 0 6px; line-height: normal; text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: var(--jawnos-cursor-default, default); user-select: none; -webkit-user-select: none; }
 /* on a dark desk the bar's ink is the theme's own near-white, not the pure
    #ffffff contrast_ink picks for a dark tint: the title and the window glyphs
    still read, without every bar glaring white at the top of the window */
@@ -1477,7 +1477,7 @@ html.jawnos_webview #admin_console_toggle {
 	align-items: center;
 	gap: 12px;
 	padding: 6px 10px;
-	cursor: pointer;
+	cursor: var(--jawnos-cursor-pointer, pointer);
 }
 #start_menu .start_menu_item + .start_menu_item {
 	border-top: 1px solid rgba(0,0,0,0.06);
@@ -1531,7 +1531,7 @@ html.jawnos_webview #admin_console_toggle {
 	width: 40px;
 	max-width: 40px;
 	object-fit: contain;
-	cursor: pointer;
+	cursor: var(--jawnos-cursor-pointer, pointer);
 	opacity: 0.65;
 	border-radius: 6px;
 }
@@ -1591,7 +1591,7 @@ html.jawnos_webview #admin_console_toggle {
 	font-size: 18px;
 	line-height: 1;
 	padding: 4px 8px;
-	cursor: pointer;
+	cursor: var(--jawnos-cursor-pointer, pointer);
 	opacity: 0.75;
 }
 #start_menu .start_menu_recent_clear:hover {
@@ -1801,7 +1801,7 @@ html.jawnos_webview #admin_console_toggle {
 	border-radius: 8px;
 	background: var(--panel);
 	color: inherit;
-	cursor: pointer;
+	cursor: var(--jawnos-cursor-pointer, pointer);
 	font-size: 16px;
 	line-height: 1;
 }
@@ -1934,7 +1934,7 @@ html.jawnos_webview #admin_console_toggle {
 	border-radius: 8px;
 	background: var(--panel);
 	color: inherit;
-	cursor: pointer;
+	cursor: var(--jawnos-cursor-pointer, pointer);
 	font-size: 12px;
 }
 .handbook_today_actions button:hover { background: var(--line); }
@@ -1973,11 +1973,11 @@ html.jawnos_webview #admin_console_toggle {
 	border-radius: 8px;
 	background: var(--panel);
 	color: inherit;
-	cursor: pointer;
+	cursor: var(--jawnos-cursor-pointer, pointer);
 	font-size: 12px;
 }
 .handbook_today_journal_actions button:hover { background: var(--line); }
-.handbook_today_journal_actions button:disabled { opacity: .5; cursor: wait; }
+.handbook_today_journal_actions button:disabled { opacity: .5; cursor: var(--jawnos-cursor-wait, wait); }
 #handbook_today_journal_status { font-size: 12px; opacity: .75; }
 #handbook_today_journal_status.error { color: #d33; opacity: 1; }
 .handbook_today_hint { margin-top: 6px; font-size: 11px; opacity: .6; }
@@ -2386,7 +2386,7 @@ body.dark_theme #ide {
 .wind[app="email"] .email_accounts { display: flex; flex-direction: column; }
 .wind[app="email"] .email_account_row {
 	display: flex; flex-direction: column; gap: 2px;
-	padding: 12px 16px; cursor: pointer; border-bottom: 1px solid var(--line);
+	padding: 12px 16px; cursor: var(--jawnos-cursor-pointer, pointer); border-bottom: 1px solid var(--line);
 }
 .wind[app="email"] .email_account_row:hover { background-color: var(--panel-2); }
 .wind[app="email"] .email_account_row.active { background-color: #7542ff; color: #ffffff; }
@@ -2614,7 +2614,7 @@ body.dark_theme #ide {
 /* an attachment from an unknown sender is a download button, not a link */
 .wind[app="email"] .mail_att_download {
 	background-color: var(--panel); color: var(--ink);
-	font-family: inherit; font-size: 13px; cursor: pointer;
+	font-family: inherit; font-size: 13px; cursor: var(--jawnos-cursor-pointer, pointer);
 }
 .wind[app="email"] .mail_att_download:hover { background-color: var(--panel-2); }
 
@@ -2730,11 +2730,11 @@ body.dark_theme .folders_app, body.dark_theme #desk_layer { --folders-accent: #6
 .folders_toolbar[data-remote=yes] { box-shadow: inset 0 0 0 2px orange; }
 .folders_toolbar button {
 	height: 30px; min-width: 30px; padding: 0 4px; display: inline-flex;
-	align-items: center; justify-content: center; cursor: pointer;
+	align-items: center; justify-content: center; cursor: var(--jawnos-cursor-pointer, pointer);
 	background: transparent; border: 1px solid transparent; border-radius: 8px;
 }
 .folders_toolbar button:hover { background: var(--panel); border-color: var(--line); }
-.folders_toolbar button:disabled { opacity: .32; cursor: default; }
+.folders_toolbar button:disabled { opacity: .32; cursor: var(--jawnos-cursor-default, default); }
 .folders_toolbar button:disabled:hover { background: transparent; border-color: transparent; }
 .folders_toolbar button img { height: 20px; width: 20px; max-width: 20px; object-fit: contain; }
 /* the sidebar toggle only appears when the window has room for the sidebar */
@@ -2750,7 +2750,7 @@ body.dark_theme .folders_app, body.dark_theme #desk_layer { --folders-accent: #6
 .folders_crumb {
 	height: 24px; min-width: 0; padding: 0 6px; font-size: 13px; border: 0;
 	border-radius: 5px; background: transparent; color: var(--ink);
-	cursor: pointer; white-space: nowrap;
+	cursor: var(--jawnos-cursor-pointer, pointer); white-space: nowrap;
 }
 .folders_crumb:hover { background: var(--panel-2); }
 .folders_crumb.current { font-weight: 600; }
@@ -2772,7 +2772,7 @@ body.dark_theme .folders_app, body.dark_theme #desk_layer { --folders-accent: #6
 }
 .folders_tab {
 	display: inline-flex; align-items: center; gap: 6px; max-width: 190px; flex: 0 0 auto;
-	height: 28px; padding: 0 5px 0 10px; cursor: pointer;
+	height: 28px; padding: 0 5px 0 10px; cursor: var(--jawnos-cursor-pointer, pointer);
 	background: transparent; color: var(--ink); font-size: 12.5px;
 	border: 1px solid transparent; border-bottom: 0; border-radius: 8px 8px 0 0;
 	opacity: .72;
@@ -2789,7 +2789,7 @@ body.dark_theme .folders_app, body.dark_theme #desk_layer { --folders-accent: #6
 }
 .folders_tab_close:hover { background: var(--line); opacity: 1; }
 .folders_tab_new {
-	flex: 0 0 auto; width: 26px; height: 26px; margin: 0 0 2px 2px; cursor: pointer;
+	flex: 0 0 auto; width: 26px; height: 26px; margin: 0 0 2px 2px; cursor: var(--jawnos-cursor-pointer, pointer);
 	border: 1px solid transparent; border-radius: 7px; background: transparent;
 	color: var(--ink); font-size: 17px; line-height: 24px; text-align: center;
 }
@@ -2809,7 +2809,7 @@ body.dark_theme .folders_app, body.dark_theme #desk_layer { --folders-accent: #6
 }
 .folders_sidebar_place {
 	display: flex; align-items: center; gap: 9px; width: 100%; min-height: 30px;
-	padding: 5px 8px; box-sizing: border-box; cursor: pointer; text-align: left;
+	padding: 5px 8px; box-sizing: border-box; cursor: var(--jawnos-cursor-pointer, pointer); text-align: left;
 	background: transparent; border: 0; border-radius: 7px; color: var(--ink); font-size: 13px;
 }
 .folders_sidebar_place:hover { background: var(--panel); }
@@ -2836,7 +2836,7 @@ body.dark_theme .folders_app, body.dark_theme #desk_layer { --folders-accent: #6
 .folders_file {
 	display: flex; flex-direction: column; align-items: center; gap: 4px;
 	padding: 8px 4px; border: 1px solid transparent; border-radius: 9px;
-	cursor: default; position: relative; min-width: 0; color: var(--ink);
+	cursor: var(--jawnos-cursor-default, default); position: relative; min-width: 0; color: var(--ink);
 	user-select: none; -webkit-user-select: none;
 }
 .folders_file:hover { background: rgba(128, 128, 128, .12); }
@@ -2910,7 +2910,7 @@ body.dark_theme .folders_file.selected { background: rgba(110, 168, 254, .20); }
 .folders_bookmarks .folders_bookmark {
 	display: block; width: 100%; height: auto; min-height: 28px; padding: 4px 8px;
 	text-align: left; background: transparent; border: 0; border-radius: 5px;
-	font-size: 13px; cursor: pointer;
+	font-size: 13px; cursor: var(--jawnos-cursor-pointer, pointer);
 }
 .folders_bookmarks .folders_bookmark:hover { background: var(--panel); }
 .folders_archive_queue { top: 40px; }
@@ -2951,7 +2951,7 @@ body.dark_theme .folders_file.selected { background: rgba(110, 168, 254, .20); }
 	border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 8px 24px rgba(0, 0, 0, .3);
 	font-size: 14px !important;
 }
-.folders_context .folders_context_selection { display: flex; align-items: center; gap: 8px; padding: 5px 10px; cursor: pointer; }
+.folders_context .folders_context_selection { display: flex; align-items: center; gap: 8px; padding: 5px 10px; cursor: var(--jawnos-cursor-pointer, pointer); }
 .folders_context .folders_context_selection:hover { background: var(--panel); }
 .folders_context .folders_context_selection img { height: 16px; width: 16px; max-width: 16px; object-fit: contain; }
 .folders_drag_helper { opacity: .85; z-index: 999999 !important; }
@@ -3027,7 +3027,7 @@ body.dark_theme .folders_dialog, body.dark_theme .jawnos_dialog { --folders-acce
 .folders_dialog_header, .jawnos_dialog_header {
 	flex: 0 0 auto; display: flex; align-items: center; gap: 8px;
 	padding: 7px 10px; background: var(--panel-2); border-bottom: 1px solid var(--line);
-	font-size: 16px; font-weight: 600; cursor: move;
+	font-size: 16px; font-weight: 600; cursor: var(--jawnos-cursor-move, move);
 }
 .folders_dialog_title, .jawnos_dialog_title { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .folders_dialog_close, .jawnos_dialog_close {
@@ -3062,7 +3062,7 @@ body.dark_theme .folders_dialog, body.dark_theme .jawnos_dialog { --folders-acce
 	border: 1px solid var(--line); border-radius: var(--jawnos-corner, 12px);
 	background: var(--panel-2, var(--panel)); color: var(--ink);
 	font: inherit; font-size: 18px; font-weight: bold; line-height: 1.2;
-	cursor: pointer; white-space: normal;
+	cursor: var(--jawnos-cursor-pointer, pointer); white-space: normal;
 }
 .leave_power_button:hover, .leave_power_button:focus-visible {
 	border-color: var(--accent-line, var(--accent, var(--line)));
@@ -3113,7 +3113,7 @@ body.dark_theme .folders_dialog, body.dark_theme .jawnos_dialog { --folders-acce
 .folders_picker_intro { margin: 0 0 12px; font-size: 13px; opacity: .75; }
 .folders_picker_grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(132px, 1fr)); gap: 6px; }
 .folders_picker_item {
-	display: flex; align-items: center; gap: 8px; padding: 6px 8px; cursor: pointer;
+	display: flex; align-items: center; gap: 8px; padding: 6px 8px; cursor: var(--jawnos-cursor-pointer, pointer);
 	background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px;
 }
 .folders_picker_item:hover { border-color: var(--folders-accent, #2f6feb); }
@@ -3167,7 +3167,7 @@ details.cfg-acc > summary:focus-visible { outline: 2px solid var(--accent, curre
 .app_details .tx_model_row { display: flex; flex-wrap: wrap; gap: 6px; align-items: flex-end; flex: 2 1 260px; }
 .app_details .tx_model_row > select, .app_details .tx_model_row > input { margin: 0; }
 .app_details .tx_more { display: block; margin: 8px 0 2px; }
-.app_details .tx_more > summary { cursor: pointer; font-size: 13px; opacity: .7; padding: 3px 0; }
+.app_details .tx_more > summary { cursor: var(--jawnos-cursor-pointer, pointer); font-size: 13px; opacity: .7; padding: 3px 0; }
 .app_details .tx_more[open] > summary { opacity: 1; margin-bottom: 4px; }
 .app_details .tx_more .tx_row { margin: 4px 0; }
 .app_details .tx_aux_description { flex: 1 1 220px; }
@@ -3205,7 +3205,7 @@ details.cfg-acc > summary:focus-visible { outline: 2px solid var(--accent, curre
 .editor_bar { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; padding: 6px 10px; border-bottom: 1px solid var(--line); background: var(--panel); }
 .editor_bar_fields { border-bottom: 0; border-top: 1px solid var(--line); }
 .editor_bar_separator { width: 1px; height: 20px; background: var(--line); margin: 0 4px; }
-.editor_button, .editor_style_button { min-height: 28px; padding: 3px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel-2, var(--panel)); color: inherit; font: inherit; font-size: 13px; cursor: pointer; }
+.editor_button, .editor_style_button { min-height: 28px; padding: 3px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel-2, var(--panel)); color: inherit; font: inherit; font-size: 13px; cursor: var(--jawnos-cursor-pointer, pointer); }
 .editor_button:hover, .editor_style_button:hover { border-color: var(--accent, var(--line)); }
 .editor_button_primary { font-weight: 700; background: var(--accent-soft, var(--panel-2, var(--panel))); border-color: var(--accent-line, var(--line)); }
 .editor_button_quiet { opacity: .78; }
@@ -3235,7 +3235,7 @@ details.cfg-acc > summary:focus-visible { outline: 2px solid var(--accent, curre
 .editor_content_area img, .editor_content_area video { max-width: 100%; height: auto; border-radius: 6px; }
 .editor_content_area audio { width: 100%; }
 .editor_content_area a { color: var(--accent, #2b6cb0); }
-.editor_block_grip { position: absolute; left: -2px; top: 0; display: none; padding: 2px 4px; cursor: grab; z-index: 4;
+.editor_block_grip { position: absolute; left: -2px; top: 0; display: none; padding: 2px 4px; cursor: var(--jawnos-cursor-grab, grab); z-index: 4;
 	color: var(--ink-soft, #999); font-size: 12px; letter-spacing: -2px; user-select: none; -webkit-user-select: none; }
 .editor_stored_content { display: none; }
 @media (max-width: 620px) {
@@ -3330,13 +3330,13 @@ body.dark_theme .budget_cell {
 .runway_units { display: flex; gap: 4px; }
 .runway_lookback_label { display: flex; align-items: center; gap: 6px; color: var(--ink-muted); font-size: 12px; }
 .runway_lookback {
-	font: inherit; font-size: 12px; cursor: pointer;
+	font: inherit; font-size: 12px; cursor: var(--jawnos-cursor-pointer, pointer);
 	color: var(--ink); background: var(--panel-2);
 	border: 1px solid var(--line); border-radius: var(--jawnos-corner);
 	padding: 3px 6px;
 }
 .runway_unit {
-	font: inherit; font-size: 12px; cursor: pointer;
+	font: inherit; font-size: 12px; cursor: var(--jawnos-cursor-pointer, pointer);
 	color: var(--ink); background: var(--panel-2);
 	border: 1px solid var(--line); border-radius: var(--jawnos-corner);
 	padding: 3px 10px;
@@ -3363,7 +3363,7 @@ body.dark_theme .budget_cell {
 .runway_detail { background: var(--panel-2); border: 1px solid var(--line); border-radius: var(--jawnos-corner); padding: 8px 10px; margin-bottom: 8px; }
 .runway_detail_head { display: flex; align-items: baseline; gap: 8px; }
 .runway_detail_kind { color: var(--ink-muted); font-size: 11px; }
-.runway_close { margin-left: auto; border: none; background: none; color: var(--ink); font-size: 18px; line-height: 1; cursor: pointer; }
+.runway_close { margin-left: auto; border: none; background: none; color: var(--ink); font-size: 18px; line-height: 1; cursor: var(--jawnos-cursor-pointer, pointer); }
 .runway_detail_totals { display: flex; flex-wrap: wrap; gap: 14px; color: var(--ink-muted); font-size: 12px; margin: 4px 0 6px; }
 .runway_detail_totals b { color: var(--ink); }
 .runway_detail_rows { width: 100%; border-collapse: collapse; font-size: 12px; }
@@ -3374,11 +3374,11 @@ body.dark_theme .budget_cell {
 .runway_detail_empty, .runway_detail_more { color: var(--ink-muted); font-size: 12px; margin-top: 4px; }
 .runway_detail_actions { margin-top: 8px; }
 .runway_table_details { margin-top: 8px; }
-.runway_table_details summary { cursor: pointer; color: var(--ink-muted); font-size: 12px; }
+.runway_table_details summary { cursor: var(--jawnos-cursor-pointer, pointer); color: var(--ink-muted); font-size: 12px; }
 .runway_table { width: 100%; border-collapse: collapse; margin-top: 6px; }
 .runway_table th, .runway_table td { padding: 2px 6px; border-bottom: 1px solid var(--line); font-size: 12px; }
 .runway_table th { color: var(--ink-muted); font-weight: 600; }
-.runway_row { cursor: pointer; }
+.runway_row { cursor: var(--jawnos-cursor-pointer, pointer); }
 .runway_row:hover { background: var(--accent-soft); }
 .runway_row_future { color: var(--ink-muted); }
 .runway_footnote { color: var(--ink-muted); font-size: 11px; margin-top: 8px; max-width: 78%; line-height: 1.45; }
@@ -3457,7 +3457,7 @@ body.dark_theme .inventory_details {
 	gap: 10px;
 	align-items: baseline;
 	padding: 7px 10px;
-	cursor: pointer;
+	cursor: var(--jawnos-cursor-pointer, pointer);
 	background: var(--panel, transparent);
 }
 .qa_report[open] > summary { border-bottom: 1px solid var(--line, rgba(127,127,127,.28)); }
@@ -3538,7 +3538,7 @@ body.dark_theme .inventory_details {
 	border-radius: 999px;
 	border: 1px solid currentColor;
 	background: transparent;
-	cursor: pointer;
+	cursor: var(--jawnos-cursor-pointer, pointer);
 	white-space: nowrap;
 }
 .phone_transcript_connect.on { font-weight: 600; }
@@ -3577,7 +3577,7 @@ body.dark_theme .inventory_details {
 	color: inherit;
 	font-size: 12px;
 	line-height: 1;
-	cursor: pointer;
+	cursor: var(--jawnos-cursor-pointer, pointer);
 	opacity: .7;
 	padding: 3px 7px;
 	border-radius: 999px;
@@ -3603,7 +3603,7 @@ body.dark_theme .inventory_details {
 	color: #eaf1f8;
 	font-size: 12px;
 	box-shadow: 0 8px 24px rgba(0, 0, 0, .35);
-	cursor: pointer;
+	cursor: var(--jawnos-cursor-pointer, pointer);
 	white-space: nowrap;
 	overflow: hidden;
 	text-overflow: ellipsis;
@@ -3645,7 +3645,7 @@ body.dark_theme .inventory_details {
 	border: 1px solid rgba(127, 140, 155, .55);
 	background: transparent;
 	color: inherit;
-	cursor: pointer;
+	cursor: var(--jawnos-cursor-pointer, pointer);
 }
 .jawn_screening_buttons #jawn_screening_connect.on { font-weight: 600; border-color: #7fd2a8; }
 /* the house talking back: what a person typed, on the right like a sent bubble */
@@ -3673,5 +3673,5 @@ body.dark_theme .inventory_details {
 	border: 1px solid rgba(127, 140, 155, .55);
 	background: transparent;
 	color: inherit;
-	cursor: pointer;
+	cursor: var(--jawnos-cursor-pointer, pointer);
 }

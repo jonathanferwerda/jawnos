@@ -489,7 +489,7 @@ sub setting_setter {
 		&appointment_theme_push() unless $sync;
 	}
 	elsif ($setting eq 'appearance_theme') {
-		# the whole dressing changed: paint, glyphs, material and face. Every
+		# the whole dressing changed: paint, glyphs, cursor, material and face. Every
 		# worker must forget its memo, and every open manager re-paints now.
 		&icon_set_forget();
 		&cache_delete({ app => '__president', context => 'config' });
@@ -516,11 +516,12 @@ sub setting_setter {
 		}
 		&appointment_theme_push() unless $sync;
 	}
-	elsif ($setting eq 'icon_set_override' || $setting eq 'texture_override' || $setting eq 'corner_override') {
-		# an explicit choice on top of the active theme: the effective set,
-		# material or corner moved, so the memo, the rendered pages and every open
-		# manager follow. The push carries the effective values, not the theme's
-		# defaults.
+	elsif ($setting eq 'icon_set_override' || $setting eq 'texture_override' || $setting eq 'corner_override' || $setting eq 'cursor_set_override' || $setting eq 'cursor_set') {
+		# an explicit choice on top of the active theme: the effective icon set,
+		# material, corner or cursor moved, so the memo, the rendered pages and
+		# every open manager follow. The push carries the effective values, not
+		# the theme's defaults. cursor_set is the same push for a desk with no
+		# theme in charge, where the Misc choice is the effective one.
 		&icon_set_forget();
 		&cache_delete({ app => '__president', context => 'config' });
 		&cache_delete({ context => 'template' });

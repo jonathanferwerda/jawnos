@@ -773,13 +773,13 @@ body.dark_theme .music_cfg_drawer {
 	border-bottom: 1px solid var(--music-line-soft);
 	border-radius: 13px 13px 0 0;
 	background: var(--panel-2, var(--panel));
-	cursor: grab;
+	cursor: var(--jawnos-cursor-grab, grab);
 	user-select: none;
 	-webkit-user-select: none;
 	touch-action: none;
 }
-.music_cfg_drawer .music_cfg_bar:active { cursor: grabbing; }
-.music_cfg_drawer.ui-draggable-dragging .music_cfg_bar { cursor: grabbing; }
+.music_cfg_drawer .music_cfg_bar:active { cursor: var(--jawnos-cursor-grabbing, grabbing); }
+.music_cfg_drawer.ui-draggable-dragging .music_cfg_bar { cursor: var(--jawnos-cursor-grabbing, grabbing); }
 .music_cfg_drawer .music_cfg_body {
 	flex: 1 1 auto;
 	min-height: 0;
@@ -812,7 +812,7 @@ body.dark_theme .music_cfg_drawer {
 	font-size: 22px;
 	line-height: 26px;
 	box-shadow: none;
-	cursor: pointer;
+	cursor: var(--jawnos-cursor-pointer, pointer);
 }
 .music_cfg_drawer .music_cfg_close:hover {
 	background: var(--music-line-soft);
@@ -950,7 +950,7 @@ body.dark_theme .music_cfg_drawer {
 	border-radius: 999px;
 	background: var(--panel);
 	color: var(--ink);
-	cursor: pointer;
+	cursor: var(--jawnos-cursor-pointer, pointer);
 }
 .music_cfg_drawer .volume_control_device.selected {
 	background: var(--music-accent);
@@ -1021,7 +1021,7 @@ body.dark_theme .music_cfg_drawer {
 	align-items: center;
 	gap: 3px;
 	min-width: 0;
-	cursor: ns-resize;
+	cursor: var(--jawnos-cursor-ns-resize, ns-resize);
 	outline: none;
 }
 #music_audio_panel .music_eq_track {
@@ -1124,7 +1124,7 @@ body.dark_theme .music_cfg_drawer {
 	.music_cfg_drawer { width: min(330px, calc(100% - 16px)); }
 }
 /* the volume bar takes a wheel: up/down changes the level */
-#music #music_volume { cursor: ns-resize; }
+#music #music_volume { cursor: var(--jawnos-cursor-ns-resize, ns-resize); }
 
 .all_music[enabled=yes] {
 	background-color: lightgreen;
@@ -1337,7 +1337,7 @@ body.dark_theme[data-texture]:not(:is([data-texture="plain"], [data-texture="rou
 	line-height: 1;
 	width: 28px;
 	height: 28px;
-	cursor: pointer;
+	cursor: var(--jawnos-cursor-pointer, pointer);
 	padding: 0;
 	display: inline-flex;
 	align-items: center;
@@ -1379,7 +1379,7 @@ body.dark_theme[data-texture]:not(:is([data-texture="plain"], [data-texture="rou
 	background: var(--panel);
 	color: var(--ink-muted);
 	box-shadow: none;
-	cursor: pointer;
+	cursor: var(--jawnos-cursor-pointer, pointer);
 }
 .music_cfg_drawer .music_video_output_select:hover {
 	border-color: var(--music-accent);

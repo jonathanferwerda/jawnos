@@ -175,7 +175,7 @@ var jawnos_help_tour_steps = [
 		text: 'The dock is the bar along an edge of the desk, and its icons are its pseudonyms: each can be given a name, icon, colour, place and speech. Pin the apps you reach for most so they stay one press away.'
 	},
 	{
-		text: 'Configure is the wrench on the start menu. Under Misc → Appearance holds the theme gallery (paint, icons, material, font and corner), the colour schemes, the font, the corner and the lock screensaver. Under App, each app has a card for its colour, budgets, goals and notifications. Under Dev are the machines of the house: Scan finds them, and each row carries its privilege, lease, Migrate and Go. The Pseud tab is where the dock pseudonyms are edited.',
+		text: 'Configure is the wrench on the start menu. Under Misc → Appearance holds the theme gallery (paint, icons, cursor, material, font and corner), the colour schemes, the font, the corner and the lock screensaver. Under App, each app has a card for its colour, budgets, goals and notifications. Under Dev are the machines of the house: Scan finds them, and each row carries its privilege, lease, Migrate and Go. The Pseud tab is where the dock pseudonyms are edited.',
 		verb: 'Open Configure',
 		action: { action: 'open_app', app: 'configure' }
 	},

@@ -230,6 +230,24 @@
 		<div class="icon_set_preview hover" style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;"></div>
 	</div>
 	<div class="cfg-row">
+		<label><b><%= &subs::ui('Cursor Set') %></b></label>
+		<% my $current_cursor_set = $active_theme
+			? (&subs::setting_grabber({ app => 'misc', setting => 'cursor_set_override', device => $dev }) || '')
+			: (&subs::setting_grabber({ app => 'misc', setting => 'cursor_set', device => $dev }) || ''); %>
+		<select class="misc_setting" setting="<%= $active_theme ? 'cursor_set_override' : 'cursor_set' %>" device="<%= $dev %>">
+			<% if ($active_theme) { %>
+				<% my $theme_cursor_label = $gb::cursor_set_labels{ $active_bundle->{'cursor_set'} } || ''; %>
+				<option value="" <% if (!length $current_cursor_set) { %>selected="selected"<% } %>><%= &subs::lang('configure.follow_theme') %><% if (length $theme_cursor_label) { %> &mdash; <%= $theme_cursor_label %><% } %></option>
+			<% } else { %>
+				<option value="" <% if (!length $current_cursor_set) { %>selected="selected"<% } %>><%= &subs::ui('System') %></option>
+			<% } %>
+			<% foreach my $s ( @gb::cursor_sets ) { %>
+				<option value="<%= $s %>" <% if ($current_cursor_set eq $s) { %>selected="selected"<% } %>><%= $gb::cursor_set_labels{$s} %></option>
+			<% } %>
+		</select>
+		<div class="cursor_set_preview hover" style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;"></div>
+	</div>
+	<div class="cfg-row">
 		<label><b>Start Button</b></label>
 		<%# the start button's picture: any file in the jbuttons folder; the icon
 		    set may carry a variant and icon_for() prefers it, so this is a theme
@@ -242,7 +260,7 @@
 			<% } %>
 		</select>
 	</div>
-	<p class="cfg-note"><%= &subs::ui('A theme carries its own icon set and material. Follow theme uses those; another choice overrides them for this machine while the theme is active. With no theme active, the choices here are the desk\'s own.') %></p>
+	<p class="cfg-note"><%= &subs::ui('A theme carries its own icon set, cursor and material. Follow theme uses those; another choice overrides them for this machine while the theme is active. With no theme active, the choices here are the desk\'s own.') %></p>
 	<div class="cfg-row">
 		<label><b>Appointment Colours</b></label>
 		<button id="appt_colour_update" class="hover">Re-theme appointments</button>
@@ -280,7 +298,7 @@
 			<div class="theme_card<% if ($current_theme eq $slug) { %> selected<% } %>" theme_slug="<%= $slug %>" data-builtin="<%= $b->{'builtin'} ? 1 : 0 %>" role="button" tabindex="0">
 				<span class="theme_swatches"><% foreach my $c ( @{$ramp} ) { %><span style="background:<%= $c %>"></span><% } %></span>
 				<span class="theme_card_name"><%= $b->{'name'} %></span>
-				<span class="theme_card_meta"><%= join ' · ', grep { length } ( $b->{'scheme'}, $gb::texture_labels{ $b->{'texture'} }, $b->{'corner'} ) %></span>
+				<span class="theme_card_meta"><%= join ' · ', grep { length } ( $b->{'scheme'}, $gb::texture_labels{ $b->{'texture'} }, $gb::cursor_set_labels{ $b->{'cursor_set'} }, $b->{'corner'} ) %></span>
 				<% if (!$b->{'builtin'}) { %><button type="button" class="theme_edit" theme_slug="<%= $slug %>"><%= &subs::lang('configure.edit_theme') %></button><% } %>
 			</div>
 		<% } %>
@@ -307,6 +325,12 @@
 			<select id="theme_icon_set">
 				<option value=""><%= &subs::ui('System') %></option>
 				<% foreach my $s ( @gb::icon_sets ) { %><option value="<%= $s %>"><%= $gb::icon_set_labels{$s} %></option><% } %>
+			</select>
+		</label>
+		<label><%= &subs::ui('Cursor set') %>
+			<select id="theme_cursor_set">
+				<option value=""><%= &subs::ui('System') %></option>
+				<% foreach my $s ( @gb::cursor_sets ) { %><option value="<%= $s %>"><%= $gb::cursor_set_labels{$s} %></option><% } %>
 			</select>
 		</label>
 		<label><%= &subs::ui('Texture') %>
@@ -719,11 +743,31 @@
 	jawnosPreviewIcons(iconSetPreviewValue());
 	$(document).on('change', '.misc_setting[setting="icon_set"], .misc_setting[setting="icon_set_override"]', function () { jawnosPreviewIcons(iconSetPreviewValue()); });
 
+	// Cursor set preview: the pointer, I-beam and hand are the roles people
+	// recognise, so three tiles say more than a list of names.
+	var jawnos_cursor_preview = ['default', 'pointer', 'text', 'grab', 'not-allowed'];
+	function jawnosPreviewCursors(set) {
+		var box = $('.cursor_set_preview').empty();
+		if (!set) { box.html('<i>Using the system cursors.</i>'); return; }
+		$.each(jawnos_cursor_preview, function (i, role) {
+			$('<img>').attr('src', '/cursors/sets/' + set + '/' + role + '.png').css({ width: '32px', height: '32px' }).appendTo(box);
+		});
+	}
+	var jawnos_theme_cursor_set = <%== encode_json($active_bundle->{'cursor_set'} || '') %>;
+	function cursorSetPreviewValue() {
+		var override = $('.misc_setting[setting="cursor_set_override"]').val();
+		var system = $('.misc_setting[setting="cursor_set"]').val();
+		return override || system || jawnos_theme_cursor_set || '';
+	}
+	jawnosPreviewCursors(cursorSetPreviewValue());
+	$(document).on('change', '.misc_setting[setting="cursor_set"], .misc_setting[setting="cursor_set_override"]', function () { jawnosPreviewCursors(cursorSetPreviewValue()); });
+
 	// ---- named theme gallery --------------------------------------------
 	// A card is applied with one write (the Misc setting appearance_theme); the
 	// editor saves a named bundle. Both handlers are namespaced because this
 	// panel is re-injected when Configure re-opens.
 	var jawnos_themes = <%== encode_json($theme_registry) %>;
+	var jawnos_cursor_labels = <%== encode_json(\%gb::cursor_set_labels) %>;
 	var jawnos_theme_labels = { new_theme: <%== encode_json(&subs::lang('configure.new_theme')) %>, edit_theme: <%== encode_json(&subs::lang('configure.edit_theme')) %> };
 	function themePanelDevice() {
 		// The gallery is about the machine in front of you: the manager reads its
@@ -748,6 +792,7 @@
 		var meta = [];
 		if (theme && theme.scheme) { meta.push(theme.scheme); }
 		if (theme && theme.texture) { meta.push(theme.texture); }
+		if (theme && theme.cursor_set) { meta.push(jawnos_cursor_labels[theme.cursor_set] || theme.cursor_set); }
 		if (theme && theme.corner) { meta.push(('' + theme.corner).replace('px', '') + 'px'); }
 		card.append($('<span class="theme_card_meta"></span>').text(meta.join(' \u00b7 ')));
 		if (theme && !theme.builtin && slug) {
@@ -762,6 +807,7 @@
 		$('#theme_name').val(t.name || '');
 		$('#theme_scheme').val(t.scheme || (slug ? 'Blue' : ($('#colour_scheme').val() || 'Blue')));
 		$('#theme_icon_set').val(t.icon_set || (slug ? '' : ($('.misc_setting[setting="icon_set"][device="' + dev + '"]').val() || '')));
+		$('#theme_cursor_set').val(t.cursor_set || (slug ? '' : ($('.misc_setting[setting="cursor_set"][device="' + dev + '"]').val() || '')));
 		$('#theme_texture').val(t.texture || (slug ? '' : ($('.misc_setting[setting="texture"][device="' + dev + '"]').val() || '')));
 		$('#theme_font').val(t.font || (slug ? '' : ($('.misc_setting[setting="title_font"][device="' + dev + '"]').val() || '')));
 		$('#theme_corner').val(parseInt(t.corner, 10) || 10);
@@ -773,6 +819,13 @@
 		$('#theme_status').text('');
 		$('#theme_editor').show();
 		$('#theme_name').trigger('focus');
+	}
+	// Picking a card also moves the picker's preview: Follow theme shows the
+	// theme's own cursor, and a theme that names none shows the Misc choice.
+	function jawnosThemeCursorPanel(slug) {
+		var t = jawnos_themes[slug];
+		var system = $('.misc_setting[setting="cursor_set"][device="' + themePanelDevice() + '"]').val() || '';
+		jawnosPreviewCursors(t && t.cursor_set ? t.cursor_set : system);
 	}
 	// A card carries the theme's own corner, and the server hands the corner back
 	// to the theme when one is picked (an older override no longer masks it). Paint
@@ -813,6 +866,7 @@
 			setting: 'appearance_theme', value: slug, device: themePanelDevice(), timestamp: Date.now()
 		}, function () {
 			jawnosThemeCornerPanel(slug);
+			jawnosThemeCursorPanel(slug);
 		});
 	});
 	$(document).off('keydown.themeui').on('keydown.themeui', '.theme_card[theme_slug]', function (e) {
@@ -833,6 +887,7 @@
 			name: name,
 			scheme: $('#theme_scheme').val(),
 			icon_set: $('#theme_icon_set').val(),
+			cursor_set: $('#theme_cursor_set').val(),
 			texture: $('#theme_texture').val(),
 			font: $('#theme_font').val(),
 			corner: $('#theme_corner').val(),
@@ -841,7 +896,7 @@
 			if (!r || r.error) { $('#theme_status').text((r && r.error) || <%== encode_json(&subs::ui('Could not save')) %>); return; }
 			jawnos_themes[r.slug] = $.extend({}, jawnos_themes[r.slug] || {}, {
 				name: r.name, builtin: 0, scheme: r.bundle.scheme,
-				icon_set: r.bundle.icon_set, texture: r.bundle.texture,
+				icon_set: r.bundle.icon_set, cursor_set: r.bundle.cursor_set, texture: r.bundle.texture,
 				font: r.bundle.font, corner: ('' + (r.bundle.corner || '')).replace('px', ''),
 				accent: r.bundle.accent || ''
 			});
@@ -852,6 +907,7 @@
 			// owns the desk, and the server's push keeps that rule
 			$('.theme_card').removeClass('selected');
 			card.addClass('selected');
+			jawnosThemeCursorPanel(r.slug);
 			$.post('/manager/configure/misc_setting', {
 				setting: 'appearance_theme', value: r.slug, device: themePanelDevice(), timestamp: Date.now()
 			});

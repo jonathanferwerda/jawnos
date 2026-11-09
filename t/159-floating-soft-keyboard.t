@@ -66,7 +66,7 @@ like($float, qr/border: var\(--window_border, 3px\) solid var\(--window_border_c
 	'the panel wears the same frame as every window');
 like($float, qr/border-radius: var\(--window_radius, var\(--jawnos-corner, 12px\)\)/, 'and the house corner');
 like($float, qr/box-shadow:/, 'and a floating shadow');
-like($css, qr/\.soft_kb\.soft_kb_floating \.soft_kb_bar \{ cursor: move; \}/, 'the bar reads as the move handle');
+like($css, qr/\.soft_kb\.soft_kb_floating \.soft_kb_bar \{ cursor: var\(--jawnos-cursor-move, move\); \}/, 'the bar reads as the move handle');
 
 # --- the bar says what it is, and the guide says so -------------------------
 like($tpl, qr/class="soft_kb_bar" hint="<%=\s*&subs::ui\('Drag here to move the keyboard'\)\s*%>"/,

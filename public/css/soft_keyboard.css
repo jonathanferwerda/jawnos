@@ -60,8 +60,8 @@
 	transition: transform .22s cubic-bezier(.22, .61, .36, 1), opacity .18s ease;
 }
 .soft_kb.soft_kb_floating.soft_kb_up { transform: translateY(0); opacity: 1; }
-.soft_kb.soft_kb_floating .soft_kb_bar { cursor: move; }
-.soft_kb.soft_kb_floating.ui-draggable-dragging .soft_kb_bar { cursor: grabbing; }
+.soft_kb.soft_kb_floating .soft_kb_bar { cursor: var(--jawnos-cursor-move, move); }
+.soft_kb.soft_kb_floating.ui-draggable-dragging .soft_kb_bar { cursor: var(--jawnos-cursor-grabbing, grabbing); }
 @media (prefers-reduced-motion: reduce) {
 	.soft_kb.soft_kb_floating { transition: none; }
 }
@@ -238,7 +238,7 @@ body.soft_kb_open .dot_info {
 	font-size: 12px;
 	font-weight: 700;
 	white-space: nowrap;
-	cursor: pointer;
+	cursor: var(--jawnos-cursor-pointer, pointer);
 }
 
 .soft_kb_convert_item:active {
@@ -271,7 +271,7 @@ body.soft_kb_open .dot_info {
 	font-size: 11px;
 	font-weight: 700;
 	line-height: 1;
-	cursor: pointer;
+	cursor: var(--jawnos-cursor-pointer, pointer);
 }
 
 .soft_kb_mode.active {
@@ -301,7 +301,7 @@ body.soft_kb_open .dot_info {
 	color: var(--ink);
 	font-size: 16px;
 	line-height: 1;
-	cursor: pointer;
+	cursor: var(--jawnos-cursor-pointer, pointer);
 }
 
 /* the bar's own controls: layout chooser, dictation, hide */
@@ -319,7 +319,7 @@ body.soft_kb_open .dot_info {
 	color: var(--ink);
 	font-size: 15px;
 	line-height: 1;
-	cursor: pointer;
+	cursor: var(--jawnos-cursor-pointer, pointer);
 }
 
 /* dictation wears the house's own microphone tile from the icon set, not an
@@ -382,7 +382,7 @@ body.soft_kb_open .dot_info {
 	color: var(--ink);
 	font-size: 14px;
 	line-height: 1;
-	cursor: pointer;
+	cursor: var(--jawnos-cursor-pointer, pointer);
 }
 
 .soft_kb_layout_group + .soft_kb_layout_group {
@@ -414,7 +414,7 @@ body.soft_kb_open .dot_info {
 	background: var(--panel);
 	color: var(--ink);
 	text-align: left;
-	cursor: pointer;
+	cursor: var(--jawnos-cursor-pointer, pointer);
 }
 
 .soft_kb_layout_item.active {
@@ -489,7 +489,7 @@ body.soft_kb_open .dot_info {
 	color: var(--ink);
 	font-size: 15px;
 	line-height: 1;
-	cursor: pointer;
+	cursor: var(--jawnos-cursor-pointer, pointer);
 	touch-action: manipulation;
 }
 
@@ -666,7 +666,7 @@ body.soft_kb_open .dot_info {
 	color: var(--ink-muted);
 	font-size: 12px;
 	white-space: nowrap;
-	cursor: pointer;
+	cursor: var(--jawnos-cursor-pointer, pointer);
 }
 
 .soft_kb_history_clear {
@@ -679,7 +679,7 @@ body.soft_kb_open .dot_info {
 	color: var(--ink-muted);
 	font-size: 14px;
 	line-height: 1;
-	cursor: pointer;
+	cursor: var(--jawnos-cursor-pointer, pointer);
 }
 
 .soft_kb_numpad .soft_kb_key {
@@ -729,7 +729,7 @@ body.soft_kb_open .dot_info {
 	color: var(--ink);
 	font-size: 17px;
 	line-height: 1;
-	cursor: pointer;
+	cursor: var(--jawnos-cursor-pointer, pointer);
 }
 
 .soft_kb_sym:active {
