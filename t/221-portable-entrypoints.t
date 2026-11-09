@@ -30,8 +30,8 @@ like($president, qr/Mojo::Server::Prefork->new\(listen => \$listeners\)/,
 	'native mode keeps Prefork');
 like($president, qr/^sub run_dev_server\b/m, 'development has the same choice');
 
-like($master, qr/^require '\.\/lib\/JawnOS\/Platform\.pm';/m,
-	'the master loads the platform module');
+like($master, qr/^use JawnOS::Transport;/m,
+	'the master loads the transport module (and Platform through it)');
 like($master, qr/type => 'pipe'/, 'the master can run the tree on a pipe');
 like($master, qr/type => 'pty'/, 'the master still uses a pty when native');
 

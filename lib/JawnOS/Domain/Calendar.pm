@@ -20,7 +20,13 @@ use File::Find;
 use File::Path;
 use File::Slurp;
 use IO::Select;
-use IO::Socket::UNIX;
+BEGIN {
+	require File::Basename;
+	require Cwd;
+	my $dir = Cwd::abs_path(File::Basename::dirname(__FILE__));
+	unshift @INC, "$dir/../.." if $dir && -d "$dir/../..";
+}
+use JawnOS::Transport;
 use IPC::Open2;
 use JSON::PP ();
 use List::Util qw(shuffle);
@@ -150,10 +156,8 @@ sub appt_alarm_setter {
 	if (grep { defined $_ && $_ =~ /^\d+$/ && $_ >= &subs::rightNow() - 5000 } @times) {
 		my $file = $gb::tmp_dir . '/alarm';
 		eval {
-			my $socket = IO::Socket::UNIX->new(
-				Peer => $file,
-				Type => SOCK_STREAM,
-			) or die "Socket connection failed: $!";
+			my $socket = JawnOS::Transport::client_unix_socket($file)
+				or die "Socket connection failed: $!";
 			$socket->autoflush(1);
 
 			my $jwsm = encode_json $appt;
@@ -404,20 +408,22 @@ sub unix_socket_sender {
 	$rcv = 0 unless defined $rcv;
 	$retried = 0 unless defined $retried;
 
+	my $is_watch = ($file eq 'process' || $file eq &subs::home('~/.process_watch')) ? 1 : 0;
 	if ($file eq 'memory') {
 		$file = &subs::home('~/.president/memory');
 	}
-	elsif ($file eq 'process') {
+	elsif ($is_watch) {
 		$file = &subs::home('~/.process_watch');
 	}
-	my $cache_key = $file . '_' . $$;
+	my $tcp = ($is_watch && JawnOS::Transport::tcp()) ? 1 : 0;
+	my $cache_key = ($tcp ? 'tcp:watch' : $file) . '_' . $$;
 	my $response_data;
 	my $retry = $socket_retry->{$cache_key};
 	return if $retry && $retry->{'next'} > time;
 	my $bytes_written = 0;
 	my $had_cached = defined $cached_sockets->{$cache_key} ? 1 : 0;
 	my $ok = eval {
-		return 0 unless -e $file;
+		return 0 unless $tcp || -e $file;
 
 
 		my $socket = $cached_sockets->{$cache_key};
@@ -435,10 +441,13 @@ sub unix_socket_sender {
         }
     }
 		if (!$socket) {
-			$socket = IO::Socket::UNIX->new(
-				Peer => $file,
-				Type => SOCK_STREAM,
-			) or die "Socket connection failed: $!";
+			if ($tcp) {
+				$socket = JawnOS::Transport::client_socket('watch', timeout => 5, path => $file);
+			}
+			else {
+				$socket = JawnOS::Transport::client_unix_socket($file);
+			}
+			die "Socket connection failed: $!" unless $socket;
 			$socket->autoflush(1);
 			$cached_sockets->{$cache_key} = $socket;
 		}
@@ -454,7 +463,11 @@ sub unix_socket_sender {
 			}
 		}
 
-		my $jwsm           = $encoder->encode($data);
+		my $payload = $data;
+		if ($tcp && ref $data eq 'HASH') {
+			$payload = { %$data, token => JawnOS::Transport::token() };
+		}
+		my $jwsm           = $encoder->encode($payload);
 		my $payload_length = length($jwsm);
 		my $packet         = pack('N', $payload_length) . $jwsm;
     my $bytes_to_write = length($packet);

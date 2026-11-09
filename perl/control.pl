@@ -27,9 +27,15 @@ package control;
 use strict;
 use warnings;
 
+BEGIN {
+	require File::Basename;
+	require Cwd;
+	my $dir = Cwd::abs_path(File::Basename::dirname(__FILE__));
+	unshift @INC, "$dir/../lib" if $dir && -d "$dir/../lib";
+}
+use JawnOS::Transport;
 use File::Path ();
 use IO::Select;
-use IO::Socket::UNIX;
 use Mojo::JSON qw(decode_json encode_json);
 use Time::HiRes qw(time);
 
@@ -85,6 +91,11 @@ sub handle {
 	my $req = eval { decode_json(defined $line ? $line : '') };
 	unless (ref $req eq 'HASH') {
 		return { reply => &_fail('bad-request', 'the request is not a JSON object: ' . &clean_text($@, 200)) };
+	}
+	if (($ctx->{'transport'} || '') eq 'tcp') {
+		unless (JawnOS::Transport::token_ok($req->{'token'})) {
+			return { reply => &_fail('unauthorized', 'a transport token is required') };
+		}
 	}
 	my $cmd = lc(&clean_text($req->{'cmd'} // '', 40));
 	if ($cmd eq 'status') {
@@ -227,9 +238,18 @@ sub send {
 	my $path = $opt{'socket'} || &socket_path(%opt);
 	my $timeout = $opt{'timeout'} || 150;
 
-	my $sock = IO::Socket::UNIX->new(Peer => $path);
+	my $sock;
+	if ($opt{'socket'}) {
+		require IO::Socket::UNIX;
+		$sock = IO::Socket::UNIX->new(Peer => $path);
+	}
+	else {
+		$sock = JawnOS::Transport::client_socket('control', timeout => 3, path => $path);
+		$req->{'token'} = JawnOS::Transport::token() if JawnOS::Transport::tcp();
+	}
 	unless ($sock) {
-		return { ok => 0, error => 'no-master', message => "no jawn master is listening on $path ($!)" };
+		my $where = $opt{'socket'} ? $path : JawnOS::Transport::label('control');
+		return { ok => 0, error => 'no-master', message => "no jawn master is listening on $where ($!)" };
 	}
 	$sock->autoflush(1);
 	my $line = eval { encode_json($req) };

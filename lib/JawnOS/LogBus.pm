@@ -28,8 +28,14 @@ package JawnOS::LogBus;
 use strict;
 use warnings;
 
+BEGIN {
+	require File::Basename;
+	require Cwd;
+	my $dir = Cwd::abs_path(File::Basename::dirname(__FILE__));
+	unshift @INC, "$dir/.." if $dir && -d "$dir/..";
+}
+use JawnOS::Transport;
 use IO::Select;
-use IO::Socket::UNIX;
 use Mojo::JSON qw(decode_json encode_json);
 use Time::HiRes qw(time);
 
@@ -139,15 +145,17 @@ sub client_read {
 	return undef unless defined $path && length $path;
 	$timeout = 3 unless defined $timeout && $timeout =~ /^\d+(?:\.\d+)?$/ && $timeout > 0;
 
-	my $sock = IO::Socket::UNIX->new(Type => SOCK_STREAM, Peer => $path);
+	my $sock = JawnOS::Transport::client_socket('log', timeout => $timeout, path => $path);
 	return undef unless $sock;
 	my $select = IO::Select->new($sock);
 	my $deadline = time + $timeout;
 
-	my $request = encode_json({
+	my %req = (
 		since => (defined $since && $since =~ /^\d+$/ ? $since : 0),
 		max   => (defined $max && $max =~ /^\d+$/ && $max > 0 ? $max : $DEFAULT_CHUNK),
-	}) . "\n";
+	);
+	$req{'token'} = JawnOS::Transport::token() if JawnOS::Transport::tcp();
+	my $request = encode_json(\%req) . "\n";
 	my $written = 0;
 	while ($written < length $request) {
 		my $left = $deadline - time;

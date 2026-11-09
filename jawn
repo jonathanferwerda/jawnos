@@ -3,6 +3,16 @@
 use strict;
 use warnings;
 
+BEGIN {
+	require File::Basename;
+	require Cwd;
+	my $dir = Cwd::abs_path(File::Basename::dirname(__FILE__));
+	my $cwd = Cwd::getcwd();
+	unshift @INC, "$dir/lib" if $dir && -d "$dir/lib";
+	unshift @INC, "$cwd/lib" if $cwd && -d "$cwd/lib";
+}
+use JawnOS::Transport;
+
 # Everything this tree writes is house data: the database and its WAL, backups,
 # plaintext export temporaries and the logs. Create files private by default so
 # a new one is never briefly readable by another local account; every worker
@@ -35,7 +45,6 @@ BEGIN {
 }
 
 use Mojo::IOLoop::ReadWriteFork;
-use IO::Socket::UNIX;
 use IO::Select;
 use Fcntl qw/F_SETFD FD_CLOEXEC/;
 use POSIX qw/WNOHANG/;
@@ -133,13 +142,17 @@ if (defined(my $only = $ENV{'JAWNOS_TREE_REPAIR_ONLY'})) {
 # before a single President.pl is started. Two masters otherwise fight over the
 # ports and the socket, kill each other's trees, and cycle forever.
 my $watch_path = &home('~/.process_watch');
-if (-S $watch_path) {
+my $watch_tcp = JawnOS::Transport::tcp();
+if ($watch_tcp ? JawnOS::Transport::token() : -S $watch_path) {
 	my $watch_live = 0;
 	eval {
-		my $probe = IO::Socket::UNIX->new(Peer => $watch_path);
+		my $probe = JawnOS::Transport::client_socket('watch', timeout => 3);
 		if ($probe) {
 			$probe->autoflush(1);
-			my $blob = $encoder->encode({ query => 'subprocesses' });
+			my $blob = $encoder->encode({
+				query => 'subprocesses',
+				($watch_tcp ? (token => JawnOS::Transport::token()) : ()),
+			});
 			my $packet = pack('N', length($blob)) . $blob;
 			$probe->syswrite($packet);
 			if (IO::Select->new($probe)->can_read(3)) {
@@ -179,7 +192,7 @@ my $dump_dir = &home('~/.president');
 # moment before or after the master starts; deleting it here made the manager
 # take the permanent wake lock back and lose the batched-wake markers and the
 # navigation pace until the next beat.
-my %handshake = map { $_ => 1 } qw(wake_ready wake_lock_released utility_idle music_stream_wake gps_pace location.json verify-manifest restart.json restart.log restart.log.1 pending_restart coding.pid coding-queue.db coding-queue.db-wal coding-queue.db-shm coding-queue.db-journal sco.sock sco.json sco);
+my %handshake = map { $_ => 1 } qw(wake_ready wake_lock_released utility_idle music_stream_wake gps_pace location.json verify-manifest restart.json restart.log restart.log.1 pending_restart coding.pid coding-queue.db coding-queue.db-wal coding-queue.db-shm coding-queue.db-journal sco.sock sco.json sco transport_token transport_base);
 if (-e $dump_dir && opendir(my $dump, $dump_dir)) {
 	while (my $entry = readdir($dump)) {
 		next if $entry eq '.' || $entry eq '..' || $handshake{$entry};
@@ -193,6 +206,15 @@ our $logfile = &home('~/manager.log');
 
 `touch $logfile` if not -e $logfile;
 our $log = Mojo::Log->new(path => $logfile);
+
+# The transport rendezvous: the master owns the base and the token. A client
+# (restart.pl, a worker, the error watch) reads the same two files.
+if (JawnOS::Transport::tcp()) {
+	my $base = &config_transport_base();
+	JawnOS::Transport::set_base($base);
+	JawnOS::Transport::rotate_token();
+	$log->info('transport: tcp on 127.0.0.1:' . ($base + 7) . '/' . ($base + 8) . '/' . ($base + 9));
+}
 
 # The tree's console output is kept in a bounded, sequence-numbered ring and
 # served over ~/.president/log instead of being teed into ~/pty.log. The error
@@ -265,7 +287,6 @@ $log->warn("orphan sweep: cleared $orphans_cleared leftover jawn process(es)")
 # and every other require in this file is cwd-relative too.
 require './perl/control.pl';
 require './lib/JawnOS/LogBus.pm';
-require './lib/JawnOS/Platform.pm';
 
 # 4 MB holds roughly an hour of this tree's console output, and the watch reads
 # 256 KB per minute, so a normal burst is never overwritten before it is asked
@@ -1115,6 +1136,17 @@ sub reap_own_children {
 	return $cleaned;
 }
 
+sub config_transport_base {
+	my $file = -e './config.json' ? './config.json' : '';
+	return 45545 unless $file;
+	my $cfg = eval { return decode_json scalar read_file($file) };
+	return 45545 unless $cfg && ref $cfg eq 'HASH';
+	my $base = $cfg->{'working_port'};
+	$base = $cfg->{'port'} unless defined $base && $base =~ /^\d+$/ && $base > 1024;
+	return 45545 unless defined $base && $base =~ /^\d+$/ && $base > 1024 && $base + 9 <= 65535;
+	return int($base);
+}
+
 # Bring the tree up (or not): after a (re)start the master checks that the web
 # port answers, and if it does not within the window it restarts once more, up to
 # a few tries - so a boot that lost a race with another tear-down still recovers.
@@ -1348,11 +1380,38 @@ sub private_unix_listener {
 	return $id;
 }
 
+sub forget_tcp_reuse {
+	my ($address, $port) = @_;
+	return unless defined $port;
+	my $prefix = $address . ':' . $port;
+	return unless defined $ENV{'MOJO_REUSE'} && length $ENV{'MOJO_REUSE'};
+	$ENV{'MOJO_REUSE'} = join ',', grep { !/^\Q$prefix\E:/ } split /,/, $ENV{'MOJO_REUSE'};
+	return;
+}
+
+sub private_tcp_listener {
+	my ($address, $port, $id) = @_;
+	return $id unless $id;
+	my $acceptor = Mojo::IOLoop->acceptor($id);
+	my $handle = $acceptor ? $acceptor->handle : undef;
+	return $id unless $handle;
+	fcntl($handle, F_SETFD, FD_CLOEXEC);
+	&forget_tcp_reuse($address, $port);
+	return $id;
+}
+
 sub log_socket() {
 	my $path = &home('~/.president/log');
 	eval {
-		&forget_mojo_reuse($path);
-		my $id = Mojo::IOLoop->server({ path => $path } => sub {
+		my $tcp = JawnOS::Transport::tcp();
+		if ($tcp) {
+			&forget_tcp_reuse('127.0.0.1', JawnOS::Transport::port_for('log'));
+		}
+		else {
+			&forget_mojo_reuse($path);
+		}
+		my $args = JawnOS::Transport::server_args('log');
+		my $id = Mojo::IOLoop->server($args => sub {
 			my ($loop, $stream, $cid) = @_;
 			my $buffer = '';
 			$stream->high_water_mark(8 * 1024 * 1024);
@@ -1366,7 +1425,20 @@ sub log_socket() {
 				}
 				my ($line) = split /\n/, $buffer, 2;
 				$buffer = '';
-				my $reply = JawnOS::LogBus::reply_for($log_ring, $line);
+				my $query = $line;
+				if ($tcp) {
+					my $req = eval { decode_json($line) };
+					unless (ref $req eq 'HASH' && JawnOS::Transport::token_ok($req->{'token'})) {
+						$stream->write(encode_json({ error => 'unauthorized' }) . "\n");
+						$stream->close_gracefully;
+						return;
+					}
+					$query = encode_json({
+						since => $req->{'since'} // 0,
+						max   => $req->{'max'} // 0,
+					});
+				}
+				my $reply = JawnOS::LogBus::reply_for($log_ring, $query);
 				$stream->write($reply);
 				$stream->close_gracefully;
 			});
@@ -1375,7 +1447,12 @@ sub log_socket() {
 		# fds open across exec, so a child would inherit this socket and a survivor
 		# of a dead master would answer for it - and a kept MOJO_REUSE entry makes
 		# the next reload die in listen().
-		&private_unix_listener($path, $id);
+		if ($tcp) {
+			&private_tcp_listener('127.0.0.1', JawnOS::Transport::port_for('log'), $id);
+		}
+		else {
+			&private_unix_listener($path, $id);
+		}
 		1;
 	} or print "the log socket could not be started: $@\n";
 	return;
@@ -1384,8 +1461,15 @@ sub log_socket() {
 sub control_socket() {
 	my $path = &home('~/.president/control');
 	eval {
-		&forget_mojo_reuse($path);
-		my $id = Mojo::IOLoop->server({ path => $path } => sub {
+		my $tcp = JawnOS::Transport::tcp();
+		if ($tcp) {
+			&forget_tcp_reuse('127.0.0.1', JawnOS::Transport::port_for('control'));
+		}
+		else {
+			&forget_mojo_reuse($path);
+		}
+		my $args = JawnOS::Transport::server_args('control');
+		my $id = Mojo::IOLoop->server($args => sub {
 			my ($loop, $stream, $cid) = @_;
 			my $buffer = '';
 			$stream->on(read => sub {
@@ -1405,6 +1489,7 @@ sub control_socket() {
 					version => &tree_version(),
 					pending => $pending_restart ? 1 : 0,
 					last => &control::read_record(dir => &home('~/.president')),
+					transport => ($tcp ? 'tcp' : 'unix'),
 					verify => \&tree_verify,
 				});
 				if (my $reply = $answer->{'reply'}) {
@@ -1439,19 +1524,31 @@ sub control_socket() {
 		# Mojo keeps listener fds open across exec on purpose, so every child would
 		# inherit this socket and a survivor of a dead master would answer for it -
 		# the same trap the watch socket at the top of this script guards against.
-		&private_unix_listener($path, $id);
+		if ($tcp) {
+			&private_tcp_listener('127.0.0.1', JawnOS::Transport::port_for('control'), $id);
+		}
+		else {
+			&private_unix_listener($path, $id);
+		}
 		1;
 	} or print "the control socket could not be started: $@\n";
 	return;
 }
 
 sub process_watch() {
+	my $tcp = JawnOS::Transport::tcp();
 	eval {
 
 		# a stale MOJO_REUSE entry names a dead fd and makes listen() die instead
 		# of binding (see private_unix_listener below)
-		&forget_mojo_reuse($process_watch_file);
-		my $server = Mojo::IOLoop->server({ path => $process_watch_file } => sub {
+		if ($tcp) {
+			&forget_tcp_reuse('127.0.0.1', JawnOS::Transport::port_for('watch'));
+		}
+		else {
+			&forget_mojo_reuse($process_watch_file);
+		}
+		my $args = JawnOS::Transport::server_args('watch');
+		my $server = Mojo::IOLoop->server($args => sub {
 			my ($loop,$stream,$id) = @_;
 			$stream->handle->autoflush(1);
 			$stream->high_water_mark(8 * 1024 * 1024);
@@ -1479,6 +1576,10 @@ sub process_watch() {
 					if ($@) {
 						warn "Worker $$: Failed to parse Sereal: $@";
 						next;
+					}
+					if ($tcp && !JawnOS::Transport::token_ok($process->{'token'})) {
+						$stream->close;
+						last;
 					}
 
 					if ($process->{'query'}) {
@@ -1547,6 +1648,9 @@ sub process_watch() {
 		# into the kernel backlog long after the master is gone, which is what
 		# fooled the guard at the top of this script. This fd is the master's - and
 		# the MOJO_REUSE entry has to go with it, or the next reload cannot bind.
+		if ($tcp) {
+			return &private_tcp_listener('127.0.0.1', JawnOS::Transport::port_for('watch'), $server);
+		}
 		return &private_unix_listener($process_watch_file, $server);
 	}
 }

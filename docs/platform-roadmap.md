@@ -1,9 +1,9 @@
 # Native Windows and macOS Roadmap
 
-**Status:** P0 in flight (2026-11-08). Slice 1 landed: the questions are answered, the
-capability probe exists, and portable mode has a Daemon server and a pipe runner. No Mac or
-Windows hardware is present yet, so the hardware exits wait for it. Runbook and acceptance
-checklist: `docs/platform-p0.md`.
+**Status:** P0 in flight (2026-11-08). Slices 1–2 landed: the questions are answered, the
+capability probe exists, portable mode has a Daemon server and a pipe runner, and control/log/watch
+speak loopback TCP with a token when asked. No Mac or Windows hardware is present yet, so the
+hardware exits wait for it. Runbook and acceptance checklist: `docs/platform-p0.md`.
 **Related:** `desktop/README.md` (the Qt shell and today's supervisor), `docs/docker.md` (the
 headless server), `docs/migration-roadmap.md` (the Go path, the alternative endgame),
 `docs/infrastructure-roadmap.md` (where containers still belong).
@@ -54,10 +54,10 @@ P2/P3 exits, not measurements.
 | # | Question | Answer |
 |---|---|---|
 | Q1 | Windows Perl runtime | **Bundle Perl 5.40.** Portable Strawberry Perl for the P0 spike; a relocatable threaded build for release. The tree needs roughly a dozen XS modules (`DBD::SQLite`, `Net::SSLeay`, `Sereal`, `CryptX`, `Clone`, `HTML::Strip`, `Data::UUID`, `Compress::Zlib`), pinned as in `Dockerfile:35-68`. `use threads` only opened a browser and is now gone; it does not make Strawberry's emulated `fork` safe, so Windows stays no-fork. |
-| Q2 | Prefork on a desktop | **No prefork; one `Mojo::Server::Daemon` per purpose.** Target 3 concurrent request slots (today's desktop resting count). Measure blocking routes in portable mode before deciding whether a multi-process dispatcher is needed. |
+| Q2 | Prefork on a desktop | **No prefork; one `Mojo::Server::Daemon` per purpose.** Target 3 concurrent request slots (today's desktop resting count). One Daemon grows in concurrent connections, not in blocking parallel work; if the measured blocking surface is too large, the portable fallback is N Daemons behind a small loopback dispatcher (P3), or the work moves to Minion. |
 | Q3 | subprocessor fork model | **Split, do not convert.** Resident loops and servers become supervised processes; durable one-shots become Minion jobs; request-scoped work stays a fork. Windows runs one Daemon per server, one consolidated loops process, one Minion worker, and the BLE helper. |
 | Q4 | ConPTY or pipe | **Plain pipe.** The master never writes to the tree; a pipe only needs the tree's stdout autoflushed. No PTY use exists outside the master runner. |
-| Q5 | Control/log/watch transport | **Loopback TCP plus a per-boot token on Windows; AF_UNIX on macOS/Linux.** Protocols stay one JSON line (control/log) and length-prefixed Sereal (watch); only the socket constructor and token check change. |
+| Q5 | Control/log/watch transport | **Loopback TCP plus a per-boot token on Windows; AF_UNIX on macOS/Linux.** Protocols stay one JSON line (control/log) and length-prefixed Sereal (watch); only the socket constructor and token check change. Implemented in `lib/JawnOS/Transport.pm` (slice 2). |
 | Q6 | Always-on | **Tray/menu bar plus a login item, not a service.** The desktop house needs the user session for audio, camera and the GUI; the headless server keeps systemd/Docker. When no user is logged in, the desktop house is down. |
 | Q7 | macOS data directory | **Tree copy in `~/Library/Application Support/JawnOS`; runtime state in `~/.president`.** Add `JAWNOS_DIR` and `JAWNOS_DATA_DIR`; updates replace the tree copy and never the data. |
 | Q8 | Reception and hardware wallet | **Later, both.** Reception is a BlueZ/SCO/PipeWire project with a native helper; the wallet is opt-in vendor drivers. Ship "not on this platform" stubs, not implementations. |
@@ -272,10 +272,11 @@ container. Keep them:
 - [x] `lib/JawnOS/Platform.pm` — the capability/mode flags, no server required
 - [x] `scripts/platform_probe.pl` — what a box can do, human and JSON, `--check` for CI
 - [x] Portable servers: `Mojo::Server::Daemon` instead of Prefork, a pipe instead of a PTY, and `use threads` removed
+- [x] `lib/JawnOS/Transport.pm`: control/log/watch over loopback TCP with a per-boot token, while native keeps AF_UNIX
 - [x] Runbook and hardware acceptance checklist: `docs/platform-p0.md`
 - [x] CI probe jobs for Linux, Windows and macOS (Windows/macOS report-only until hardware)
-- [ ] Control/log/watch over loopback TCP + token
 - [ ] `/proc` and network parsing behind platform modules
+- [ ] The websocket worker and alarm/memory sockets off `IO::Socket::UNIX`
 - [ ] Portable smoke house and suite green on a spare checkout
 
 The portable path is behind `JAWNOS_PORTABLE`; native Linux/macOS behaviour is

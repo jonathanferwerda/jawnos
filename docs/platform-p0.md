@@ -1,6 +1,6 @@
 # Platform P0 — portable mode, probe and hardware gate
 
-**Status:** slice 1 landed 2026-11-08. The answers are recorded in
+**Status:** slices 1–2 landed 2026-11-08. The answers are recorded in
 `docs/platform-roadmap.md` §3. No Mac or Windows hardware is present yet, so this
 runbook separates what Linux can prove now from what waits for the machines.
 **Related:** `docs/platform-roadmap.md` (the plan), `docs/migration-roadmap.md`
@@ -66,32 +66,55 @@ Check, in this order:
    verdict and the tree comes back;
 5. the log view and the process watch still answer.
 
-**Expected gap:** control, log and watch still use `~/.president/*` UNIX
-sockets on portable Linux until slice 2. A clean P0 run should note that, not
-hide it.
+**Expected gap:** control, log and watch moved to the transport in slice 2, but
+the websocket worker's own control socket and the alarm/memory sockets still use
+`IO::Socket::UNIX`. A clean P0 run should note the rest, not hide it.
 
-## Slice 2 — control/log/watch over loopback TCP
+## Slice 2 (landed)
 
-Design, for the next change:
+`lib/JawnOS/Transport.pm` is the one place that knows where the master's private
+surfaces live:
 
 - **Ports:** `working_port + 7` control, `+ 8` log, `+ 9` process watch. The
   occupied offsets are `+1` wss, `+2` watch/arm, `+3` bestow, `+4` coms, `+5`
-  alarm, `+6` peer, `+101` plain WS; verify the chosen trio on the target box.
-- **Token:** a per-boot random value in `~/.president/transport_token`, mode
-  `0600`, passed to children by inheritance and read by clients. A TCP control
-  socket can restart the tree, so an unauthenticated listener is not acceptable.
-- **Protocol:** unchanged in shape. Control and log stay one JSON line each way;
-  the watch stays a 4-byte length prefix plus Sereal. The token rides in the
-  request object (control), in the first line (log), or as a record field
-  (watch).
+  alarm, `+6` peer, `+101` plain WS. The base is `working_port`, then `port`,
+  then 45545 when config.json names neither.
+- **Files:** the master writes `~/.president/transport_base` and
+  `~/.president/transport_token` (0600) after the run-state wipe, and rotates
+  the token on every boot. Both files survive the wipe and a reload.
+- **Wire:** unchanged in shape. Control and log stay one JSON line each way; the
+  watch stays a 4-byte length prefix plus Sereal. The token rides in the request
+  object (control), in the first line (log), or as a record field (watch), and
+  each listener rejects a missing or wrong token.
 - **Clients:** `perl/control.pl` (`control::send`), `lib/JawnOS/LogBus.pm`, and
-  `subs::subprocessor` in `lib/JawnOS/Domain/Calendar.pm` read the same token
-  file and choose the same transport.
+  the process watch in `lib/JawnOS/Domain/Calendar.pm` and `Process.pm` read the
+  same two files and choose the same transport.
+- **Guard:** the one-master probe at the top of `jawn` speaks the same transport,
+  so a second launch stands down without a UNIX socket.
 - **Native:** AF_UNIX stays the default on Linux and macOS. `JAWNOS_TRANSPORT=tcp`
   forces TCP for the spike, so the same path is exercised on Linux before a
   Windows box exists.
-- **Tests:** extend `t/57-control-socket.t` with a TCP round trip and a rejected
-  token; add a framing test for the log and watch transports.
+- **Tests:** `t/222-transport.t` (unit plus real control and log round trips) and
+  `t/223-transport-wiring.t`.
+
+To exercise it on a spare checkout:
+
+```sh
+JAWNOS_PORTABLE=1 JAWNOS_TRANSPORT=tcp ./jawn
+```
+
+The base and token files appear under `~/.president`; the panel, the log view,
+the process watch and `perl scripts/restart.pl --status` must all still answer.
+
+### One Daemon that grows
+
+A single `Mojo::Server::Daemon` is one process and one event loop. It holds many
+connections, but a blocking handler serializes them; growing in the parallel
+sense needs more processes. Without fork, the portable shape is N Daemons on
+distinct loopback ports behind a small master-side dispatcher, or the slow work
+moves to Minion. P0 measures which routes actually block before choosing.
+Portable mode currently runs one Daemon per purpose; the `workers` argument is a
+hint for the dispatcher, not a Prefork pool.
 
 ## Slice 3 — `/proc` and network parsing
 
@@ -166,7 +189,11 @@ against the `Must` rows in `docs/platform-roadmap.md` §7.
 - `Mojo::IOLoop::ReadWriteFork` is the master's runner; Windows needs a
   `Win32::Process` equivalent.
 - The Minion worker is itself a subprocessor.
-- Control, log and watch are still AF_UNIX on portable Linux until slice 2.
+- `lib/JawnOS/Manager.pm`, `perl/Websocket.pl` and `perl/Alarm.pl` still `use
+  IO::Socket::UNIX` at compile time; the websocket worker control socket and the
+  alarm/memory sockets need the same treatment before a Windows boot.
+- The memory (`~/.president/memory`) and alarm (`~/.president/alarm`) sockets
+  stay UNIX; they need a TCP path or a clean no-op on Windows.
 - No Windows or macOS packaging exists yet.
 
 ## Definition of done for P0

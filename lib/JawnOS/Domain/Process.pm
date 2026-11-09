@@ -38,6 +38,13 @@ use warnings;
 no warnings 'once';
 use File::Temp qw(tempfile);
 use POSIX ();
+BEGIN {
+	require File::Basename;
+	require Cwd;
+	my $dir = Cwd::abs_path(File::Basename::dirname(__FILE__));
+	unshift @INC, "$dir/../.." if $dir && -d "$dir/../..";
+}
+use JawnOS::Transport;
 
 # The warranty seed map, keyed by the name a caller passes to
 # subs::subprocessor. Values are a compact duration ('5s', '30m', '2h') or
@@ -296,7 +303,7 @@ sub subprocessor_heartbeat {
 	return 0 if defined $heartbeat_sent_at && $now - $heartbeat_sent_at < 1000;
 	$heartbeat_sent_at = $now;
 	my $file = &subs::home('~/.process_watch');
-	return 0 unless $file && -e $file;
+	return 0 unless $file && (JawnOS::Transport::tcp() || -e $file);
 	$name = $gb::subprocessor_name unless defined $name && length $name;
 	&subs::unix_socket_sender($file, {
 		status => 'heartbeat',
@@ -418,7 +425,7 @@ sub subprocessor_command {
 	my $watch;
 	if ($record) {
 		$watch = &subs::home('~/.process_watch');
-		&subs::unix_socket_sender($watch, $child) if $watch && -e $watch;
+		&subs::unix_socket_sender($watch, $child) if $watch && (JawnOS::Transport::tcp() || -e $watch);
 	}
 
 	my $status;
@@ -454,7 +461,7 @@ sub subprocessor_command {
 		$child->{'status'} = 'stop';
 		$child->{'stop_timestamp'} = &subs::rightNow();
 		$child->{'exit'} = (defined $status && $status >= 0) ? ($status >> 8) : 127;
-		&subs::unix_socket_sender($watch, $child) if $watch && -e $watch;
+		&subs::unix_socket_sender($watch, $child) if $watch && (JawnOS::Transport::tcp() || -e $watch);
 	}
 
 	my $output = '';
