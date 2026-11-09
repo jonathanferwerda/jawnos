@@ -1027,7 +1027,11 @@ canvas.background {
 #music_player { overflow: scroll; }
 #browser { z-index: 101; position:fixed;}
 .little_window { font-size: 20px; position:fixed; bottom:10; right: 70px; height: 45px; width: 200px; background-color: var(--panel); border: 1px solid var(--line); border-radius: var(--jawnos-corner, 12px); box-shadow: var(--shadow-2, 0 8px 24px rgba(0,0,0,.18)); }
-.window_icon { vertical-align:top; border:solid; border-color: var(--line); border-radius: calc(var(--jawnos-corner, 12px) * .35); border-width:1px; font-size:26px; }
+.window_icon { vertical-align:top;
+/* A window's own icon is an <img> in an app window, where nothing sized it:
+   on the handheld it painted at its natural 1112x1038 over the page. The
+   navbar and start-menu rules below are more specific and keep their size. */
+img.window_icon { height:22px; width:auto; } border:solid; border-color: var(--line); border-radius: calc(var(--jawnos-corner, 12px) * .35); border-width:1px; font-size:26px; }
 /* Windows round their corners a touch. .wind carries the radius so its own
    panel background is clipped to it and the frame ring below inherits it; the
    title bar rounds only its top corners to match, so its square ones don't show
