@@ -167,19 +167,163 @@ void handleCreateProcess() {
     }
   }
 }
+// ---- IR: raw capture and replay, no protocol library ----------------------
+// A remote is a 38 kHz carrier plus a list of mark/space durations. Both
+// directions deal in raw microseconds, so no brand, model or protocol table is
+// involved: anything the receiver can see can be cloned and replayed.
+//
+// Capture is edge-driven. A tiny ISR records the duration between edges into a
+// fixed buffer; the loop only starts it, watches the deadline and formats the
+// result. Nothing here waits on the radio or the network, so a learn never
+// blocks the USB console.
+#define IR_RX_MAX 512
+#define IR_RX_MAX_MS 5000
+#define IR_TX_MAX_LEG_US 200000UL
+#define IR_TX_MAX_FRAME_US 4000000UL
+
+static volatile uint16_t ir_rx_durs[IR_RX_MAX];
+static volatile uint16_t ir_rx_n = 0;
+static volatile uint32_t ir_rx_prev = 0;
+static volatile bool ir_rx_active = false;
+static int ir_rx_pin = -1;
+static uint32_t ir_rx_deadline = 0;
+// -2 = nothing requested, -1 = stop, >=0 = start on that pin. The command path
+// may be core 1, so it only records the request; irrx_poll() on core 0 performs
+// the attach/detach, which keeps the edge ISR on this core.
+static volatile int ir_learn_pin = -2;
+static volatile uint32_t ir_learn_ms = 0;
+
+static void ir_rx_isr() {
+  if (!ir_rx_active) { return; }
+  uint32_t now = micros();
+  uint32_t d = now - ir_rx_prev;
+  ir_rx_prev = now;
+  if (d > 65535UL) { d = 65535UL; }   // a gap between frames, not a timing
+  if (ir_rx_n < IR_RX_MAX) {
+    ir_rx_durs[ir_rx_n] = (uint16_t)d;
+    ir_rx_n = ir_rx_n + 1;
+    if (ir_rx_n >= IR_RX_MAX) { ir_rx_active = false; }   // buffer full
+  }
+}
+
+static void irrx_detach() {
+  if (ir_rx_pin >= 0) { detachInterrupt(digitalPinToInterrupt(ir_rx_pin)); }
+  ir_rx_active = false;
+}
+
+static void irrx_begin(int pin, uint32_t ms) {
+  irrx_detach();
+  ir_rx_pin = -1;
+  ir_rx_n = 0;
+  if (!pin_ok(pin) || ms == 0) { return; }
+  if (ms > IR_RX_MAX_MS) { ms = IR_RX_MAX_MS; }   // never capture longer than 5 s
+  pinMode(pin, INPUT_PULLUP);   // most IR receivers are active-low open collector
+  ir_rx_pin = pin;
+  ir_rx_prev = micros();
+  ir_rx_deadline = millis() + ms;
+  ir_rx_active = true;
+  attachInterrupt(digitalPinToInterrupt(pin), ir_rx_isr, CHANGE);
+}
+
+// The learn command's entry point. `ms == 0` stops the current capture and
+// posts what was seen; otherwise it (re)starts one for at most 5 s.
+void irrx_request_learn(int pin, uint32_t ms) {
+  ir_learn_ms = ms;
+  ir_learn_pin = (ms == 0) ? -1 : pin;
+}
+
+static void irrx_poll() {
+  int want = ir_learn_pin;
+  if (want != -2) {
+    ir_learn_pin = -2;
+    if (want < 0 || ir_learn_ms == 0) { irrx_detach(); }
+    else { irrx_begin(want, ir_learn_ms); }
+  }
+  if (ir_rx_pin < 0) { return; }
+  if (ir_rx_active) {
+    if ((int32_t)(millis() - ir_rx_deadline) < 0) { return; }   // still capturing
+    irrx_detach();
+  }
+  int pin = ir_rx_pin;
+  ir_rx_pin = -1;
+  uint16_t n = ir_rx_n;
+  ir_rx_n = 0;
+  if (n == 0) { return; }   // no edges seen: there is nothing to report
+  String seq;
+  seq.reserve((size_t)n * 6);
+  for (uint16_t i = 0; i < n; i++) {
+    if (i) { seq += ','; }
+    seq += String((unsigned)ir_rx_durs[i]);
+  }
+  // Same road as a switch/button event: a core-1 HTTPS job, with the Now Me
+  // authorization in the URL (https_post -> url_maker) and a bounded retry.
+  String body = "{\"chip_id\":\"" + String(rp2040.getChipID()) + "\",\"pin\":" + String(pin)
+              + ",\"seq\":\"" + seq + "\",\"timestamp\":\"" + event_timestamp() + "\"}";
+  String jobTime = "ir-" + String((unsigned long)millis());
+  coreJobs[jobTime]["type"] = "ir_post";
+  coreJobs[jobTime]["path"] = "/watch/ir";
+  coreJobs[jobTime]["body"] = body;
+  coreJobs[jobTime]["response"] = "ir";
+}
+
+// A 38 kHz carrier, bit-banged: 13 us on, 13 us off. analogWriteFreq() would
+// change the PWM clock shared by other slices (a servo on another pin), so the
+// tight micros() loop is the safer choice. Every leg and the whole frame are
+// bounded, so a corrupt code cannot hold this core.
+static void ir_mark(int pin, uint32_t us) {
+  uint32_t start = micros();
+  while ((uint32_t)(micros() - start) < us) {
+    digitalWrite(pin, HIGH);
+    delayMicroseconds(13);
+    digitalWrite(pin, LOW);
+    delayMicroseconds(13);
+  }
+}
+
+// irtx: replay `code` (mark, space, mark, ... in microseconds) on `pin`.
+String ir_toggle(int pin, const String &code) {
+  if (!pin_ok(pin) || code == "") { return "off"; }
+  pinMode(pin, OUTPUT);
+  digitalWrite(pin, LOW);
+  uint32_t frame_end = micros() + IR_TX_MAX_FRAME_US;
+  int leg = 0;
+  int start = 0;
+  int len = (int)code.length();
+  for (int i = 0; i <= len; i++) {
+    if (i != len && code[i] != ',') { continue; }
+    String tok = code.substring(start, i);
+    start = i + 1;
+    tok.trim();
+    uint32_t us = (uint32_t)strtoul(tok.c_str(), nullptr, 10);
+    if (us > 0) {
+      if ((int32_t)(micros() - frame_end) >= 0) { break; }   // bounded frame
+      if (us > IR_TX_MAX_LEG_US) { us = IR_TX_MAX_LEG_US; }
+      if (leg % 2 == 0) { ir_mark(pin, us); }                // mark: carrier on
+      else { digitalWrite(pin, LOW); delayMicroseconds(us); } // space: off
+    }
+    leg++;
+  }
+  digitalWrite(pin, LOW);
+  return "sent";
+}
+
 void jawn_loop() {
   // Feed the hardware watchdog before anything that can block. If this loop
   // stops turning, the chip resets in JAWNOS_WDT_MS instead of going dark and
   // waiting for someone to unplug it.
   rp2040.wdt_reset();
+  // Start/stop/finish an IR capture on this core, so the edge ISR stays here.
+  // The poll only moves a state machine; it never waits.
+  irrx_poll();
   // Switches first. A board's own switch must not wait behind an HTTP request
   // or the LCD, and the local internal job below is the fast path to its relay.
   input_scanner();
+  // The USB console next, before the network and BLE. JAWNCFG?/JAWNPINS? must
+  // still answer while a BLE central is busy; nothing below this line may hold
+  // the radio's async lock (see ble_send_json in alarmclock_01).
+  usb_config_loop();
   server.handleClient();
   read_time();
-  // USB serial: echo (as before) and accept a "JAWNCFG <json>" line from the
-  // manager, which writes the stored WiFi and role and then reboots us.
-  usb_config_loop();
   ble_loop();
   if (config_reload_pending) {
     config_reload_pending = false;
@@ -201,6 +345,17 @@ void jawn_loop() {
     Serial.println(rp2040.getChipID());
     rp2040.reboot();
   }
+
+  // The console's liveness counter. A gap here means the previous pass took
+  // that long; it is printed by JAWNCFG? and never triggers a reboot (the 45 s
+  // hardware watchdog owns that decision).
+  core0_passes++;
+  uint32_t pass_now = millis();
+  if (core0_last_pass != 0 && (uint32_t)(pass_now - core0_last_pass) > 2000) {
+    core0_stalls++;
+    core0_stall_ms = pass_now - core0_last_pass;
+  }
+  core0_last_pass = pass_now;
 
   delay(10);
 }
@@ -813,6 +968,11 @@ void run_local_jobs() {
           }
           else if (component == "servo") {
             state = servo_toggle(pin,state);
+          }
+          else if (component == "ir" || component == "irtx") {
+            // The job's `state` slot holds the raw sequence, exactly as the
+            // live command carries it in `code`.
+            state = ir_toggle(pin, state);
           }
         }
         command_mark_pin(pin, ts);

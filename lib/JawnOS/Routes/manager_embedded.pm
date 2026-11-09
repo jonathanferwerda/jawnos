@@ -25,6 +25,11 @@ sub routes {
 	[43918, 'post', '/manager/embedded/delete_job', 'action_43918'],
 	[43934, 'get', '/manager/embedded/board_pins', 'action_43934'],
 	[43947, 'post', '/manager/embedded/board_pins_attach', 'action_43947'],
+	[44630, 'get', '/manager/embedded/remotes', 'action_44630'],
+	[44631, 'post', '/manager/embedded/remote_learn', 'action_44631'],
+	[44632, 'post', '/manager/embedded/remote_save', 'action_44632'],
+	[44633, 'post', '/manager/embedded/remote_send', 'action_44633'],
+	[44634, 'post', '/manager/embedded/remote_delete', 'action_44634'],
 	);
 }
 

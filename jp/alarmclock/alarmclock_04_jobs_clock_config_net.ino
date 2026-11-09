@@ -95,6 +95,31 @@ void handle_jobs() {
       coreJobs[coreKeys[i]]["next_at"] = String((unsigned long)(millis() + 2000UL * tries));
       continue;
     }
+    else if (String(coreJobs[coreKeys[i]]["type"]) == "ir_post") {
+      // The IR receiver's capture, posted to the house with the same
+      // authorization and bounded retry as a switch/button event. This is a
+      // POST, not a query string, because a 512-transition sequence is long.
+      unsigned long next_at = strtoul(String(coreJobs[coreKeys[i]]["next_at"]).c_str(), nullptr, 10);
+      if ((long)(millis() - next_at) < 0) { continue; }
+      String path = String(coreJobs[coreKeys[i]]["path"]);
+      String body = String(coreJobs[coreKeys[i]]["body"]);
+      int tries = String(coreJobs[coreKeys[i]]["tries"]).toInt();
+      String answer;
+      int code = https_post(path, body, answer);
+      if (code == HTTP_CODE_OK) {
+        coreJobs[coreKeys[i]] = undefined;
+        continue;
+      }
+      tries++;
+      if (tries >= 3) {
+        Serial.println("[ir] gave up " + path + " code " + String(code));
+        coreJobs[coreKeys[i]] = undefined;
+        continue;
+      }
+      coreJobs[coreKeys[i]]["tries"] = String(tries);
+      coreJobs[coreKeys[i]]["next_at"] = String((unsigned long)(millis() + 2000UL * tries));
+      continue;
+    }
     coreJobs[coreKeys[i]] = undefined;
   }
 }
@@ -324,6 +349,21 @@ void config_init() {
     if (!pin_ok(pin)) { continue; }
     
     myservo.attach(pin);
+  }
+  // The IR pair are ordinary components: an emitter is an output held off
+  // between frames, a receiver is an input held up.
+  JSONVar irtxKeys = config["irtx"].keys();
+  for (int i = 0; i < irtxKeys.length(); i++) {
+    int pin = String(irtxKeys[i]).toInt();
+    if (!pin_ok(pin)) { continue; }
+    pinMode(pin, OUTPUT);
+    digitalWrite(pin, LOW);
+  }
+  JSONVar irrxKeys = config["irrx"].keys();
+  for (int i = 0; i < irrxKeys.length(); i++) {
+    int pin = String(irrxKeys[i]).toInt();
+    if (!pin_ok(pin)) { continue; }
+    pinMode(pin, INPUT_PULLUP);
   }
   authorization = jstr(config["authorization"]);
   homebase = jstr(config["homebase"]);

@@ -180,14 +180,28 @@ static void dev_ws_apply_cmd(JSONVar d) {
   String component = jstr(d["component"]);
   int pin = jpin(d["pin"]);
   String state = jstr(d["state"]);
+  String code = jstr(d["code"]);
   String uuid = jstr(d["uuid"]);
   String when = jstr(d["when"]);
   String appt_uuid = jstr(d["appt_uuid"]);
   int64_t ms = jint64(d["timestamp"]);
   if (!pin_ok(pin)) { return; }
+  // The IR blaster carries its raw sequence in `code`; the job path stores it
+  // in the same slot a relay stores "on"/"off".
+  String comp = (component != "") ? component : String("relay");
+  if (comp == "ir" || comp == "irtx") { state = code; }
 
   if (when == "now") {
-    String comp = (component != "") ? component : String("relay");
+    if (comp == "ir" || comp == "irtx") {
+      String id = command_id(uuid, "ir", "ir", code, ms);
+      String ir_state = "sent";
+      if (!command_seen(id) && !command_is_stale(pin, ms)) { ir_state = ir_toggle(pin, code); }
+      command_mark_pin(pin, ms);
+      command_remember(id, "ir", "ir", ms);
+      dev_ws_cmd_count++;
+      dev_ws_send_text("{\"t\":\"ack\",\"id\":\"" + id + "\",\"state\":\"" + ir_state + "\"}");
+      return;
+    }
     String id = command_id(uuid, comp, "", state, ms);
     if (!command_redundant(id, pin, comp, state, ms)) {
       if (comp == "relay") { state = relay_toggle(pin, state, true, 4); }
@@ -215,6 +229,21 @@ static void dev_ws_handle_text(const String &text) {
   String t = jstr(m["t"]);
   if (t == "cmd") {
     dev_ws_apply_cmd(m);
+  }
+  else if (t == "learn") {
+    // Start (or, with ms:0, stop) an IR capture. The attach happens on core 0
+    // in irrx_poll(), so this handler only records the request and answers.
+    int pin = jpin(m["pin"]);
+    uint32_t ms = (uint32_t)jint64(m["ms"]);
+    if (!pin_ok(pin)) {
+      dev_ws_send_text("{\"t\":\"learn\",\"error\":\"pin\"}");
+    }
+    else {
+      irrx_request_learn(pin, ms);
+      dev_ws_send_text("{\"t\":\"learn\",\"pin\":" + String(pin)
+        + ",\"ms\":" + String((unsigned long)ms)
+        + ",\"state\":\"" + (ms == 0 ? "stopping" : "started") + "\"}");
+    }
   }
   else if (t == "toggles") {
     JSONVar d = m["data"];

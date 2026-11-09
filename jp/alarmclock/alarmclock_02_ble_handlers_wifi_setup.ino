@@ -89,6 +89,18 @@ static void ble_process_frame(String frame) {
 }
 
 static void ble_loop() {
+  // A can-send window that was lost (the central stopped draining) must not
+  // leave ble_send_pending set forever. Age it out here, where nothing blocks,
+  // and let the async-context worker ask again. This is also the bounded retry
+  // for a queue that could not be sent while the controller's buffers were full.
+  if (ble_send_pending && (uint32_t)(millis() - ble_send_at) > BLE_TX_STALE_MS) {
+    ble_send_pending = false;
+    ble_tx_retry_at = millis();
+  }
+  if (!ble_tx_queue.empty() && !ble_send_pending && ble_up && ble_notify_enabled
+      && (int32_t)(millis() - ble_tx_retry_at) >= 0) {
+    async_context_set_work_pending(cyw43_arch_async_context(), &ble_tx_worker);
+  }
   uint8_t b;
   while (ble_rx_queue.read(&b)) {
     if (b == 0x1E) {
@@ -175,6 +187,12 @@ static void usb_config_loop() {
         // answers here, so the console can say whether the cause is the link or
         // the upgrade without a Serial write in the loop.
         Serial.println("JAWNCFG WS " + dev_ws_report());
+        // Core 0's liveness, for a board that went quiet: the pass counter only
+        // stalls if the loop itself stopped. The 45 s hardware watchdog remains
+        // the reboot authority; this is the breadcrumb a console can read.
+        Serial.println("JAWNCFG CORE passes=" + String((unsigned long)core0_passes)
+          + " stalls=" + String((unsigned long)core0_stalls)
+          + " last_gap_ms=" + String((unsigned long)core0_stall_ms));
         Serial.println("JAWNCFG EVENTS " + event_ring_dump());
       }
       else if (line == "JAWNPINS?") {
@@ -253,7 +271,7 @@ static void ble_nus_handler(uint8_t packet_type, uint16_t channel, uint8_t *pack
       ble_connected_at = millis();
       ble_state_requested = false;
       ble_rx_queue.reset();
-      ble_tx_queue.reset();
+      ble_tx_clear();
       ble_rx_parts.clear();
       ble_rx_total = 0;
       Serial.println("[ble] connected");
@@ -264,7 +282,7 @@ static void ble_nus_handler(uint8_t packet_type, uint16_t channel, uint8_t *pack
       ble_con_handle = HCI_CON_HANDLE_INVALID;
       ble_state_requested = false;
       ble_rx_queue.reset();
-      ble_tx_queue.reset();
+      ble_tx_clear();
       ble_rx_parts.clear();
       ble_rx_total = 0;
       Serial.println("[ble] disconnected");
@@ -278,6 +296,12 @@ static void ble_start() {
   if (ble_started) { return; }
   ble_started = true;
   BluetoothLock lock;
+  // The producers' short lock and the async-context worker are set up before
+  // the radio can power on, so the first send has somewhere to go.
+  if (!ble_tx_lock) { ble_tx_lock = spin_lock_init(spin_lock_claim_unused(true)); }
+  ble_tx_worker.do_work = &ble_tx_worker_fn;
+  ble_tx_worker.user_data = nullptr;
+  async_context_add_when_pending_worker(cyw43_arch_async_context(), &ble_tx_worker);
   l2cap_init();
   sm_init();
   att_db_util_init();
@@ -551,6 +575,26 @@ void jawn_setup() {
     String when = server.arg("when");
     String uuid = server.arg("uuid");
     String appt_uuid = server.arg("appt_uuid");
+    if (component == "ir" || component == "irtx") {
+      // The blaster carries its raw sequence in `code` (comma-separated us),
+      // never a protocol name. Announce it on the same route as the other
+      // outputs and answer with the same small state object.
+      String code = server.arg("code");
+      if (when == "now") {
+        int64_t ms = (int64_t)strtoll(server.arg("timestamp").c_str(), nullptr, 10);
+        String id = command_id(uuid, "ir", "ir", code, ms);
+        String ir_state = "sent";
+        if (!command_seen(id) && !command_is_stale(pin, ms)) { ir_state = ir_toggle(pin, code); }
+        command_mark_pin(pin, ms);
+        command_remember(id, "ir", "ir", ms);
+        server.send(200, "application/json", "{\"pin\":" + String(pin) + ",\"state\":\"" + ir_state + "\"}");
+      }
+      else {
+        push_job("ir", pin, code, timestamp, uuid, appt_uuid);
+        server.send(200, "application/json", "{\"pin\":" + String(pin) + ",\"state\":\"queued\"}");
+      }
+      return;
+    }
     if (when == "now") {
       int64_t ms = (int64_t)strtoll(server.arg("timestamp").c_str(), nullptr, 10);
       String comp = (component != "") ? component : String("relay");

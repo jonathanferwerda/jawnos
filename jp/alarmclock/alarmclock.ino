@@ -23,6 +23,7 @@
 #include <ble/gatt-service/nordic_spp_service_server.h>
 #include <BluetoothLock.h>
 #include <LocklessQueue.h>
+#include <hardware/sync/spin_lock.h>
 #include <map>
 
 // Forward declaration so PlatformIO's auto-generated prototypes (inserted

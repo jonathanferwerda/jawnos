@@ -132,6 +132,9 @@ struct jawn_time;
 String led_toggle(int pin, String state, bool persist = true);
 String relay_toggle(int pin, String state, bool persist = true, int src = 2);
 String servo_toggle(int pin, String state);
+// Raw IR: a learned sequence in, the same sequence replayed out (38 kHz).
+String ir_toggle(int pin, const String &code);
+void irrx_request_learn(int pin, uint32_t ms);
 bool config_writer();
 void config_init();
 void run_local_jobs();
@@ -196,7 +199,31 @@ static LocklessQueue<uint8_t> ble_tx_queue(8192);
 static btstack_context_callback_registration_t ble_send_request;
 static btstack_packet_callback_registration_t ble_hci_reg;
 static volatile bool ble_send_pending = false;
+static volatile uint32_t ble_send_at = 0;      // when the outstanding request was made
+static volatile uint32_t ble_tx_retry_at = 0;  // earliest next can-send request
+// A can-send window that never comes back (the central stopped draining) must
+// not wedge the queue forever. The loop ages the outstanding request out and
+// asks again after BLE_TX_RETRY_MS.
+#define BLE_TX_RETRY_MS 25
+#define BLE_TX_STALE_MS 1500
+// The queue is single-writer, but core 0 (loop/scanner) and core 1 (job runner)
+// both produce, so only the memcpy is serialised. This is held for a few
+// microseconds and never across a radio or network wait.
+static spin_lock_t *ble_tx_lock = nullptr;
+// A pending worker on the CYW43/BTstack async context. Producers wake it; it is
+// the only place the send request is made (see ble_send_json).
+static async_when_pending_worker_t ble_tx_worker;
 static uint8_t ble_tx_chunk[512];
+
+// Clear the outbound queue without racing a producer on the other core. Called
+// from the BLE event handler (connect/disconnect), which runs in the async
+// context, so it takes the same short spin lock the producers use.
+static void ble_tx_clear() {
+  if (!ble_tx_lock) { ble_tx_queue.reset(); return; }
+  uint32_t save = spin_lock_blocking(ble_tx_lock);
+  ble_tx_queue.reset();
+  spin_unlock(ble_tx_lock, save);
+}
 static String ble_rx_frame;
 static std::map<int, String> ble_rx_parts;
 static int ble_rx_total = 0;
@@ -256,11 +283,39 @@ static bool board_pin_reserved(int pin) {
   return pin == 23 || pin == 24 || pin == 25;
 }
 
+// One row per component class. `kind` is the config map that holds its pins;
+// `drives` is true when the class drives a pin, so a probe must never touch it.
+// A new class - ultrasonic and DHT are next - is one row here, not a new array
+// at each reader. irrx/irtx are ordinary components: raw IR in and out.
+struct component_kind_t {
+  const char *kind;
+  bool drives;
+};
+static const component_kind_t component_kinds[] = {
+  { "relay",  true  },
+  { "led",    true  },
+  { "servo",  true  },
+  { "irtx",   true  },
+  { "button", false },
+  { "switch", false },
+  { "pot",    false },
+  { "irrx",   false },
+};
+
 // Every pin a component claims. A probe reads this before it touches anything.
 static bool board_pin_is_configured(int pin) {
   const char *maps[] = { "relay", "led", "servo", "button", "switch", "pot" };
   for (size_t m = 0; m < sizeof(maps) / sizeof(maps[0]); m++) {
     JSONVar keys = config[maps[m]].keys();
+    for (int i = 0; i < keys.length(); i++) {
+      if (String(keys[i]).toInt() == pin) { return true; }
+    }
+  }
+  // The IR pair is an ordinary component class too; a configured IR pin must be
+  // left alone by the probe just like a relay.
+  const char *ir_maps[] = { "irrx", "irtx" };
+  for (size_t m = 0; m < sizeof(ir_maps) / sizeof(ir_maps[0]); m++) {
+    JSONVar keys = config[ir_maps[m]].keys();
     for (int i = 0; i < keys.length(); i++) {
       if (String(keys[i]).toInt() == pin) { return true; }
     }
@@ -313,15 +368,14 @@ static int board_pins_probe(int pins[], String kinds[], int analogs[], int max) 
 // One component per configured pin, output maps first. app/inverted come from
 // the entry when it is an object; an output map holds only its state string.
 static int board_pins_components(int pins[], String names[], String apps[], String invs[], int max) {
-  const char *maps[] = { "relay", "led", "servo", "button", "switch", "pot" };
   int n = 0;
-  for (size_t m = 0; m < sizeof(maps) / sizeof(maps[0]); m++) {
-    JSONVar keys = config[maps[m]].keys();
+  for (size_t m = 0; m < sizeof(component_kinds) / sizeof(component_kinds[0]); m++) {
+    JSONVar keys = config[component_kinds[m].kind].keys();
     for (int i = 0; i < keys.length() && n < max; i++) {
       String spin = String(keys[i]);
       int pin = spin.toInt();
       if (!pin_ok(pin)) { continue; }
-      JSONVar entry = config[maps[m]][spin];
+      JSONVar entry = config[component_kinds[m].kind][spin];
       String app = "", inverted = "";
       if (JSON.typeof(entry) == "object") {
         app = jstr(entry["app"]);
@@ -329,7 +383,7 @@ static int board_pins_components(int pins[], String names[], String apps[], Stri
         if (inverted != "0" && inverted != "1") { inverted = jint(entry["inverted"]) ? "1" : "0"; }
       }
       pins[n] = pin;
-      names[n] = maps[m];
+      names[n] = component_kinds[m].kind;
       apps[n] = app;
       invs[n] = inverted;
       n++;
@@ -505,6 +559,15 @@ static bool config_dirty = false;
 static uint32_t config_dirty_at = 0;
 static bool config_reload_pending = false;
 
+// Core 0's liveness, for the USB console. A pass that takes longer than the
+// expected cadence is recorded; JAWNCFG? prints it. This never reboots - the
+// hardware watchdog (JAWNOS_WDT_MS) is the one reboot authority - but it lets a
+// person on the console see that the loop stopped turning, and for how long.
+static volatile uint32_t core0_passes = 0;
+static uint32_t core0_last_pass = 0;
+static uint32_t core0_stalls = 0;
+static uint32_t core0_stall_ms = 0;
+
 // The same logical command reaches this board on more than one road: the
 // manager's HTTP GET, its BLE `set` fallback, an app `toggle` push, and a
 // scheduled job. When the first road acts and its answer is lost, the second
@@ -634,7 +697,7 @@ static bool cfg_missing(JSONVar v) {
 
 // Give every optional config key a defined type before it is read or written.
 static void config_ensure() {
-  const char *obj_keys[] = { "relay", "led", "button", "switch", "pot", "servo", "outputs", "jobs", "__specs" };
+  const char *obj_keys[] = { "relay", "led", "button", "switch", "pot", "servo", "irrx", "irtx", "outputs", "jobs", "__specs" };
   for (size_t i = 0; i < sizeof(obj_keys) / sizeof(obj_keys[0]); i++) {
     if (cfg_missing(config[obj_keys[i]])) { config[obj_keys[i]] = JSON.parse("{}"); }
   }
@@ -659,10 +722,21 @@ static void input_begin(int pin) { pinMode(pin, INPUT_PULLDOWN); }
 
 static void ble_request_send();
 
+// Runs in the CYW43/BTstack async context (the pending worker below, or the
+// can-send callback), which is the only context that may touch BTstack. It is
+// deliberately not called from a producer on core 0/1 (see ble_send_json).
 static void ble_can_send(void *ctx) {
   (void)ctx;
   ble_send_pending = false;
   if (ble_con_handle == HCI_CON_HANDLE_INVALID || !ble_notify_enabled) { return; }
+  // A central that connected and then stopped draining leaves the controller's
+  // ACL buffers full. Do not pull bytes out of the queue for a send that cannot
+  // happen - att_server_notify() would return BTSTACK_ACL_BUFFERS_FULL and the
+  // chunk would be lost. Park the rest and try again after a short backoff.
+  if (!att_server_can_send_packet_now(ble_con_handle)) {
+    ble_tx_retry_at = millis() + BLE_TX_RETRY_MS;
+    return;
+  }
   uint16_t mtu = att_server_get_mtu(ble_con_handle);
   size_t max = (mtu > 3) ? (size_t)(mtu - 3) : 20;
   if (max > sizeof(ble_tx_chunk)) { max = sizeof(ble_tx_chunk); }
@@ -672,16 +746,35 @@ static void ble_can_send(void *ctx) {
     if (!ble_tx_queue.read(&b)) { break; }
     ble_tx_chunk[n++] = b;
   }
-  if (n) { nordic_spp_service_server_send(ble_con_handle, ble_tx_chunk, (uint16_t)n); }
+  if (n && nordic_spp_service_server_send(ble_con_handle, ble_tx_chunk, (uint16_t)n) != ERROR_CODE_SUCCESS) {
+    // The window closed between the check and the send. Stop here; the next
+    // can-send window continues the rest of the frame.
+    ble_tx_retry_at = millis() + BLE_TX_RETRY_MS;
+    return;
+  }
   if (!ble_tx_queue.empty()) { ble_request_send(); }
 }
 
+// Ask for exactly one can-send window. Called only from the async context, so
+// it never needs (and must never take) BluetoothLock; the old blocking acquire
+// here was the core-0 block that stopped the USB console and switch scanner.
 static void ble_request_send() {
   if (ble_con_handle == HCI_CON_HANDLE_INVALID || !ble_notify_enabled || ble_tx_queue.empty() || ble_send_pending) { return; }
   ble_send_pending = true;
+  ble_send_at = millis();
   ble_send_request.callback = &ble_can_send;
   ble_send_request.context = nullptr;
   nordic_spp_service_server_request_can_send_now(&ble_send_request, ble_con_handle);
+}
+
+// The async-context worker. Setting the work pending is the only cross-core
+// signal used by the send path: it just sets a flag and wakes the context, so a
+// producer never waits for the radio.
+static void ble_tx_worker_fn(async_context_t *context, async_when_pending_worker_t *worker) {
+  (void)context;
+  (void)worker;
+  if ((int32_t)(millis() - ble_tx_retry_at) < 0) { return; }
+  ble_request_send();
 }
 
 static void ble_send_json(const String &json) {
@@ -694,6 +787,11 @@ static void ble_send_json(const String &json) {
   size_t parts = (total + body_max - 1) / body_max;
   if (parts == 0) { parts = 1; }
   if (parts > 999) { return; }
+  if (!ble_tx_lock) { return; }
+  // Enqueue and return. The queue is single-writer, but core 0 (the loop and
+  // scanner) and core 1 (the job runner) both produce, so the memcpy is
+  // serialised by a short spin lock - never by the radio's async lock.
+  uint32_t save = spin_lock_blocking(ble_tx_lock);
   for (size_t i = 0; i < parts; i++) {
     String head = String((unsigned long)i) + "/" + String((unsigned long)parts) + ":";
     size_t off = i * body_max;
@@ -704,8 +802,16 @@ static void ble_send_json(const String &json) {
       if (!ble_tx_queue.write((uint8_t)part[j])) { break; }
     }
   }
-  BluetoothLock lock;
-  ble_request_send();
+  spin_unlock(ble_tx_lock, save);
+  // What the block was: this function used to end with
+  //     BluetoothLock lock; ble_request_send();
+  // and BluetoothLock is async_context_acquire_lock_blocking(), an unbounded
+  // wait on the CYW43/BTstack async lock. If the stack worker was inside a
+  // notification for a central that had stopped draining, that acquire never
+  // returned: core 0 stopped reading USB and scanning switches, so the board
+  // went silent after "[ble] state requested" until a replug. Wake the stack's
+  // own worker instead; it runs under the lock it already owns.
+  async_context_set_work_pending(cyw43_arch_async_context(), &ble_tx_worker);
 }
 
 static void ble_apply_now_me(JSONVar data) {
@@ -824,6 +930,8 @@ static void ble_apply_board_config(JSONVar ctp) {
   config["servo"] = JSON.parse("{}");
   config["relay"] = JSON.parse("{}");
   config["switch"] = JSON.parse("{}");
+  config["irrx"] = JSON.parse("{}");
+  config["irtx"] = JSON.parse("{}");
   config["outputs_json"] = local_outputs_build(ctp);
   config["internal_jobs"] = "";
   for (int i = 0; i < keys.length(); i++) {
@@ -868,6 +976,18 @@ static void ble_apply_board_config(JSONVar ctp) {
       else if (component == "led") { config["led"][numero] = state; }
       else { config["servo"][numero] = state; }
       if (component != "servo") { pinMode(pin, OUTPUT); }
+    }
+    else if (component == "irtx" || component == "irrx") {
+      // The IR pair arrive in the same role push as the rest. `irrx` is an
+      // input, `irtx` an output held off until a replay arrives.
+      config[component][numero] = "off";
+      if (component == "irtx") {
+        pinMode(pin, OUTPUT);
+        digitalWrite(pin, LOW);
+      }
+      else {
+        pinMode(pin, INPUT_PULLUP);
+      }
     }
   }
   if (JSON.typeof(ctp["__specs"]["internal_jobs"]) != "undefined") {

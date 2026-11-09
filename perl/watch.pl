@@ -315,6 +315,45 @@ post '/watch/ble_relay' => sub($c) {
 	$c->render(json => { ok => $ok ? 1 : 0 });
 };
 
+post '/watch/ir' => sub($c) {
+	# An IR receiver's capture. A Pico hears a burst, measures the gaps and
+	# POSTs the comma-separated microseconds here (a JSON body, because 512
+	# transitions do not fit a query string). It lands as a pending entry on
+	# the board's remotes so the next panel read shows what was just learned.
+	# This route lives on the arm listener with the other /watch inputs: the
+	# board posts to its homebase's ARM port, not the manager only.
+	unless (&embeddedAuthorizer($c)) {
+		return $c->render(json => { ok => 0, error => 'unauthorized' });
+	}
+	my $edt = $c->param('edt') || 'microcontroller';
+	my $chip_id = $c->param('chip_id') || '';
+	return $c->render(json => { ok => 0, error => 'no chip' }) unless length $chip_id;
+	my $raw = $c->req->body || $c->param('payload') || '';
+	my $msg = eval { decode_json $raw };
+	unless (ref $msg eq 'HASH') {
+		return $c->render(json => { ok => 0, error => 'bad payload' });
+	}
+	my $pin = $msg->{'pin'};
+	my $name = defined $msg->{'name'} ? $msg->{'name'} : '';
+	if (!length $name) {
+		my $remotes = &subs::remote_store_read($edt, $chip_id);
+		my $n = 1;
+		$n++ while exists $remotes->{'learned ' . ($pin // '') . ' ' . $n};
+		$name = 'learned ' . ($pin // '') . ' ' . $n;
+	}
+	my $added = &subs::remote_store_add({
+		edt     => $edt,
+		chip_id => $chip_id,
+		pin     => $pin,
+		seq     => $msg->{'seq'},
+		name    => $name,
+		pending => 1,
+	});
+	return $c->render(json => { ok => 0, error => $added->{'error'} || 'not stored' })
+		unless $added->{'ok'};
+	$c->render(json => { ok => 1, name => $added->{'name'} });
+};
+
 get '/watch/switch' => sub($c) {
 	my $edt = $c->param('edt');
 	my $chip_id = $c->param('chip_id');

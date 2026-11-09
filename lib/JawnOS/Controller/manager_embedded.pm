@@ -644,4 +644,59 @@ sub action_43947 {
 	}));
 }
 
+# GET /manager/embedded/remotes
+# The board's learned IR sequences, keyed by the name a person gave them.
+sub action_44630 {
+	my $c = shift;
+	my $edt = $c->param('edt') || 'microcontroller';
+	my $chip_id = $c->param('chip_id') || '';
+	my $remotes = &subs::remote_store_read($edt, $chip_id);
+	$c->render(json => { ok => 1, remotes => $remotes });
+}
+
+# POST /manager/embedded/remote_learn
+# Start a learn window on one pin; the board POSTs the capture back to /watch/ir.
+sub action_44631 {
+	my $c = shift;
+	$c->render(json => &subs::remote_learn_start({
+		edt     => $c->param('edt') || 'microcontroller',
+		chip_id => $c->param('chip_id'),
+		pin     => $c->param('pin'),
+		ms      => $c->param('ms'),
+	}));
+}
+
+# POST /manager/embedded/remote_save
+sub action_44632 {
+	my $c = shift;
+	$c->render(json => &subs::remote_store_add({
+		edt     => $c->param('edt') || 'microcontroller',
+		chip_id => $c->param('chip_id'),
+		pin     => $c->param('pin'),
+		seq     => $c->param('seq'),
+		name    => $c->param('name'),
+	}));
+}
+
+# POST /manager/embedded/remote_send
+sub action_44633 {
+	my $c = shift;
+	$c->render(json => &subs::remote_send({
+		edt       => $c->param('edt') || 'microcontroller',
+		chip_id   => $c->param('chip_id'),
+		name      => $c->param('name'),
+		appt_uuid => $c->param('appt_uuid'),
+	}));
+}
+
+# POST /manager/embedded/remote_delete
+sub action_44634 {
+	my $c = shift;
+	$c->render(json => &subs::remote_store_delete({
+		edt     => $c->param('edt') || 'microcontroller',
+		chip_id => $c->param('chip_id'),
+		name    => $c->param('name'),
+	}));
+}
+
 1;
