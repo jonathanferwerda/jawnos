@@ -51,6 +51,10 @@ if [ -z "$PYTHON" ]; then
 	exit 1
 fi
 
+# Set when a piece the desktop window needs is missing; the final verdict below
+# refuses to report success in that case.
+DESKTOP_INCOMPLETE=0
+
 # --- dependency sanity (warn, do not fail: distro package names differ) -----
 if [ "$WITH_HEADLESS" -eq 0 ]; then
 missing=""
@@ -73,6 +77,7 @@ fi
 if [ "$WITH_HEADLESS" -eq 0 ]; then
 os_id=$( . /etc/os-release 2>/dev/null || true; echo "${ID:-}${ID_LIKE:-}" )
 if ! "$PYTHON" -c 'import PySide6.QtWebEngineWidgets' 2>/dev/null; then
+	DESKTOP_INCOMPLETE=1
 	echo "install.sh: warning - the desktop view requires PySide6 with Qt WebEngine."
 	case "$os_id" in
 		*arch*|*manjaro*)
@@ -95,7 +100,24 @@ fi
 # Chat carries SMS, and a phone's message is full of emoji: without a colour
 # emoji font every one is a blank box. Same non-fatal treatment as the view.
 # The dependency checker installs it with the other desktop extras (--desktop).
-if command -v fc-list >/dev/null 2>&1 && ! fc-list 2>/dev/null | grep -qi emoji; then
+#
+# fc-list arrives with fontconfig, and a clean box only gets fontconfig when
+# PySide6/Qt pulls it in -- so looking only for fc-list would skip this check
+# exactly where it matters. Read the font directories the same way the checker
+# does, and use fc-list when it is present.
+emoji_font=0
+if command -v fc-list >/dev/null 2>&1 && fc-list 2>/dev/null | grep -qi emoji; then
+	emoji_font=1
+else
+	for font in "$HOME"/.local/share/fonts/*Emoji* /usr/share/fonts/*/*Emoji* /usr/share/fonts/*/*/*Emoji*; do
+		if [ -e "$font" ]; then
+			emoji_font=1
+			break
+		fi
+	done
+fi
+if [ "$emoji_font" -eq 0 ]; then
+	DESKTOP_INCOMPLETE=1
 	echo "install.sh: no colour emoji font found; Chat's emoji (SMS) will not draw."
 	case "$os_id" in
 		*arch*|*manjaro*) echo "  sudo pacman -S noto-fonts-emoji" ;;
@@ -315,6 +337,24 @@ fi
 # --- XDG autostart ----------------------------------------------------------
 if [ "$WITH_AUTOSTART" -eq 1 ]; then
 	"$DEST/jawnosctl" autostart enable
+fi
+
+# --- final verdict -----------------------------------------------------------
+# Everything the window needs must be present before this says Done.: a clean
+# box without PySide6/Qt WebEngine installs "successfully" and then jawnos-desktop
+# exits with an error. Ask the dependency checker -- the same list this installer
+# reads -- and refuse to claim success while it names a missing desktop extra.
+if [ "$WITH_HEADLESS" -eq 0 ] && [ -f "$REPO_ROOT/scripts/jawnos_deps.pl" ]; then
+	report_rc=0
+	report=$("${PERL:-perl}" "$REPO_ROOT/scripts/jawnos_deps.pl" --desktop --report 2>&1) || report_rc=$?
+	if [ "$report_rc" -ne 0 ] || [ "$DESKTOP_INCOMPLETE" -eq 1 ]; then
+		echo
+		echo "$report"
+		echo "install.sh: the desktop app cannot run until its dependencies are installed."
+		echo "  Install them with:"
+		echo "    perl $REPO_ROOT/scripts/jawnos_deps.pl --desktop --install"
+		exit 1
+	fi
 fi
 
 echo

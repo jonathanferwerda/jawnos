@@ -301,6 +301,15 @@ my @desktop = (
 	  apt => 'python3-pyside6.qtwebenginewidgets', pacman => 'pyside6 qt6-webengine qt6-wayland', termux => '' },
 	{ label => 'Colour emoji font (Chat, SMS and the interface)', check => \&have_emoji_font,
 	  apt => 'fonts-noto-color-emoji', pacman => 'noto-fonts-emoji', termux => '' },
+	# The BLE bridge is a Python process beside the view: PyGObject owns its GLib
+	# main loop (not GTK), dbus talks to BlueZ, and bluetoothctl is the scan tool
+	# the CLI calls. Without them the window still opens but Bluetooth is gone.
+	{ label => 'PyGObject (BLE bridge)', check => sub { have_python_module('gi') },
+	  apt => 'python3-gi', pacman => 'python-gobject', termux => '' },
+	{ label => 'python-dbus (BLE bridge)', check => sub { have_python_module('dbus') },
+	  apt => 'python3-dbus', pacman => 'python-dbus', termux => '' },
+	{ label => 'BlueZ (BLE bridge)', check => \&have_bluetoothctl,
+	  apt => 'bluez', pacman => 'bluez', termux => '' },
 );
 
 # --- checks ------------------------------------------------------------------
@@ -599,6 +608,19 @@ sub have_qt_webengine {
 	return 0 unless $py;
 	my $code = 'import PySide6.QtWebEngineWidgets';
 	return system("$py -c '$code' >/dev/null 2>&1") == 0 ? 1 : 0;
+}
+
+# PyGObject and dbus are imported, not a program: the BLE bridge starts in the
+# same interpreter the desktop uses.
+sub have_python_module {
+	my ($module) = @_;
+	my $py = which('python3') || which('python');
+	return 0 unless $py;
+	return system("$py -c 'import $module' >/dev/null 2>&1") == 0 ? 1 : 0;
+}
+
+sub have_bluetoothctl {
+	return which('bluetoothctl') ? 1 : 0;
 }
 
 # A colour emoji font is what draws Chat's SMS emoji, the emoji picker and every
@@ -1540,6 +1562,17 @@ sub sudo {
 	return ();
 }
 
+# A system package install needs root, and sudo is the only way this script
+# takes it on a desktop. Falling through would run apt-get as the invoking user
+# and die on the dpkg lock -- or half-install -- so say so and stop instead.
+sub need_root_without_sudo {
+	return 0 if $> == 0;
+	return 0 if defined $local_lib && length $local_lib;
+	return 0 if $platform eq 'termux';
+	return 0 if -x '/usr/bin/sudo';
+	return 1;
+}
+
 # --- after a code update -----------------------------------------------------
 # The update paths call --after-update. It installs the system packages the new
 # tree needs when sudo already works without a password, and otherwise writes a
@@ -1690,6 +1723,16 @@ sub after_update_run {
 		print "Skipping system packages in --local-lib mode: " . join(' ', @pkgs) . "\n";
 	}
 	elsif (@pkgs) {
+		if (need_root_without_sudo()) {
+			print "\nInstalling these system packages needs root, but sudo is not installed:\n";
+			print "  " . join(' ', @pkgs) . "\n";
+			print "Run as root:\n";
+			foreach my $command (system_package_commands(@pkgs)) {
+				print "  " . join(' ', @{$command}) . "\n";
+			}
+			print "Then re-run: perl $0 --install\n";
+			exit 1;
+		}
 		if ($platform eq 'debian') {
 			run( sudo(), 'apt-get', 'update' );
 			run( sudo(), 'apt-get', 'install', '-y', @pkgs );
