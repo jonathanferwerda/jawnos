@@ -104,10 +104,10 @@ The Zed panel keeps every byte it is shown; zram + earlyoom only slow the crash.
   `lib/JawnOS/Domain/Loader.pm` (`t/91`), a route action its row in `lib/JawnOS/Routes/` (`t/58`), and
   a new app page a help topic with `app => <name>` (`t/11`).
 - **Cap parallel jobs on this shared box:** `pio run -j 4`, `gradle --max-workers=4`, `make -j4`.
-- **Land once, then stop.** Every task ends by landing: commit in your worktree (`git add -p`), then
-  `perl ~/jawnos/scripts/agent_land.pl` — bumps `VERSION`, tests once, pushes, restarts. A refusal ends the
-  attempt: report it, never retry in a loop. Hot files, worktrees and the commit identity:
-  `docs/AGENTS-concurrency.md`. Alone: `version_bump.pl` → commit with
-  `JAWNOS_ALLOW_PRIMARY_COMMIT=1` → `git push` → `restart.pl`.
+- **Land once, then stop — and delete the worktree.** Every task ends by landing: commit in your
+  worktree (`git add -p`), then `perl ~/jawnos/scripts/agent_land.pl --remove` — bumps `VERSION`,
+  tests once, pushes, restarts, deletes the worktree. A refusal ends the attempt: report it, never
+  retry in a loop. Hot files, worktrees and the commit identity: `docs/AGENTS-concurrency.md`.
+  Alone: `version_bump.pl` → commit with `JAWNOS_ALLOW_PRIMARY_COMMIT=1` → `git push` → `restart.pl`.
 
 ---

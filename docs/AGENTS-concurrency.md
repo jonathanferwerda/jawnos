@@ -91,6 +91,10 @@ bare-repo guard. The path is only how the script is found; it still works on the
 8. Delete the backup branch on origin. Its work is on the trunk now, and a branch left behind is a
    "Compare & pull request" banner in GitHub for every finished task.
 9. Fast-forward the primary checkout, then `scripts/restart.pl --reason "v<new> - <summary>"`.
+10. **Remove the worktree and its merged branch** (`--remove`). This is the agent's job, not the
+    sweep's: a landed worktree is 170 MB of files that exist on the trunk and in the primary checkout,
+    and git never deletes one. Leaving it behind means waiting for `worktree_gc.pl`, older-than
+    threshold and all, for something already finished.
 
 Exit codes: **0** landed — **1** refused, nothing pushed — **2** bad usage — **4** another landing held
 the lock past `--wait` — **5** pushed, but the dev server is not on it (primary checkout dirty or
@@ -124,9 +128,14 @@ rebase immediately before running the gate:
 - A worktree is a **checkout, not a clone**: it shares the one object store (`.git` stays one copy)
   and adds a full checkout of the tracked files — about 170 MB here, with the firmware fonts and
   images. History is never duplicated.
-- **Nothing removes them.** `agent_land.pl --remove` drops the worktree and its merged branch after a
-  successful landing; without it the lander prints the two commands. `scripts/worktree_gc.pl` is the
-  sweep: report-only by default, `--apply` to act, and it removes a worktree only when its branch is
+- **A landed worktree is deleted by the agent that landed it.** `agent_land.pl --remove` drops the
+  worktree and its merged branch after a successful landing; without it the lander prints the two
+  commands and the directory stays. Pass `--remove` — the task is over, and its `.shots/` checkpoint
+  is done with it. (The lander removes it from the primary checkout, so it works even while your
+  shell sits inside.) A **refused** landing keeps the worktree: `--remove` fires only after the push
+  and the restart, so the files and the checkpoint are still there to look at and fix.
+  `scripts/worktree_gc.pl` is the sweep for worktrees whose agent died:
+  report-only by default, `--apply` to act, and it removes a worktree only when its branch is
   an ancestor of `origin/main`, its tree is clean, no process has its cwd in it, and the directory is
   older than `--older-than` hours (default 24). It is the `worktree_gc` utility job
   (daily pool, on by default), so a machine sweeps itself; run it by hand with
@@ -147,9 +156,10 @@ rebase immediately before running the gate:
   `rm -f database/jawnos.db && sqlite3 database/jawnos.db < database/schema.sql`.
   Never point a worktree at the live `database/jawnos.db`.
 - `perl/` and `lib/` are reached by cwd-relative `require`, so run commands from the worktree root.
-- Land from here with `perl ~/jawnos/scripts/agent_land.pl`, the **primary checkout's** copy: a
-  worktree's own copy can be behind. The gate refuses while the primary checkout has tracked changes,
-  so keep that checkout clean.
+- Land from here with `perl ~/jawnos/scripts/agent_land.pl --remove`, the **primary checkout's** copy:
+  a worktree's own copy can be behind. The gate refuses while the primary checkout has tracked changes,
+  so keep that checkout clean. `--remove` deletes this worktree when the landing succeeds — never
+  leave one behind for the sweep.
 - Enable the shared hooks once per clone: `git config core.hooksPath .githooks`. The pre-commit
   hook refuses a commit in the primary checkout — even when no linked worktree exists — and refuses
   a commit in a worktree while the primary has uncommitted tracked changes — listing the files, so
