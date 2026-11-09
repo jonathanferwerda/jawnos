@@ -296,8 +296,20 @@ sub capture_command {
 sub playback_command {
 	my ($self) = @_;
 	return 'pacat --client-name=jawn-sco-prompt --stream-name=jawn-sco-prompt'
-		. ' --raw --format=s16le --rate=8000 --channels=1 --latency-msec=20 --playback --device='
+		. ' --raw --format=s16le --rate=8000 --channels=1 --latency-msec=20'
+		. ' --volume=' . &playback_volume() . '% --playback --device='
 		. $SINK_OUT;
+}
+
+# The launcher's phone channel is a gain on every prompt the call hears. pacat
+# takes a stream volume as a percentage, so the 0..1 gain becomes 0..100; a
+# machine with no setting row keeps the full 100% today's command carried.
+sub playback_volume {
+	my $gain = eval { &subs::sound_channel_gain('phone') } // 1;
+	my $percent = int($gain * 100 + 0.5);
+	$percent = 0 if $percent < 0;
+	$percent = 100 if $percent > 100;
+	return $percent;
 }
 
 # The WebRTC bridge's own pair. A second application name on purpose: the plan's
@@ -314,7 +326,8 @@ sub bridge_capture_command {
 sub bridge_playback_command {
 	my ($self) = @_;
 	return 'pacat --client-name=jawn-sco-bridge --stream-name=jawn-sco-bridge'
-		. ' --raw --format=s16le --rate=48000 --channels=1 --latency-msec=20 --playback --device='
+		. ' --raw --format=s16le --rate=48000 --channels=1 --latency-msec=20'
+		. ' --volume=' . &playback_volume() . '% --playback --device='
 		. $SINK_OUT;
 }
 

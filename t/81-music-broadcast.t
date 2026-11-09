@@ -121,4 +121,21 @@ is($unreachable_keys, 16, 'music.unreachable has all sixteen interface translati
 like($help, qr/\$topic\{'music'\} = \{[\s\S]{0,60000}?broadcasting[\s\S]{0,60000}?turns that output off/i,
 	'the Music topic explains the broadcast pill and the automatic turn-off');
 
+# --- the launcher's music channel -------------------------------------------
+# The volume panel's music slider is a gain the player multiplies into both of
+# its level deciders. It starts at 1 so the autoplay handshake is never silenced
+# before the first answer, and the channel is read again when the page returns.
+like($js, qr/var musicChannelGain = 1;/, 'the music channel gain starts at one');
+like($js, qr/function musicChannelRefresh\(\)/, 'a refresh reads the launcher channel');
+like($js, qr#\$\.getJSON\('/manager/controller/volume'#, 'from the volume panel endpoint');
+like($js, qr/var row = data && data\.channels && data\.channels\.music;/,
+	'it reads the music channel row');
+like($js, qr/musicChannelGain = row\.muted \? 0 : /, 'a muted channel is a zero gain');
+like($js, qr/return master_volume \* musicChannelGain;/,
+	'the local level carries the channel gain');
+like($js, qr/return \(musicSystemWired \? musicSystemLevel : master_volume\) \* musicChannelGain;/,
+	'and so does the remote level');
+like($js, qr/visibilitychange[\s\S]{0,240}?musicChannelRefresh\(\)/,
+	'the gain is refreshed when the page is shown again');
+
 done_testing();

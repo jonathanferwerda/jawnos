@@ -63,6 +63,29 @@ chmod 0755, $pactl;
 		'with the sink moved the player is full and only the ramp remains');
 }
 
+# The launcher's alarm channel multiplies the player's level. With no setting
+# row the gain is 1, which is why the assertions above still expect the same
+# numbers; these pin the multiplication and the eval-wrapped default.
+{
+	no warnings 'redefine';
+	local *subs::sound_channel_gain = sub { 0.5 };
+	is(subs::clock_alarm_volume_at({ volume => 40, ramp => 0 }, 0, 0), '0.20',
+		'the alarm channel scales the chime level');
+	like(subs::clock_alarm_play_command({ uuid => 'gain-short', volume => 40,
+		sound => 'notifications/chime.mp3' }, 0, 0),
+		qr/^play -q -v 0\.20 /, 'and the short ring the player runs');
+	like(subs::clock_alarm_play_command({ uuid => 'gain-long', volume => 40, ramp => 5,
+		sound => 'alarms/find-the-ship-learn-from-it.mp3' }, 0, 0),
+		qr/^play -q -v 0\.20 .* fade t 5 repeat 1000 & echo \$! > /,
+		'and the long-form track at the same gain');
+}
+{
+	no warnings 'redefine';
+	local *subs::sound_channel_gain = sub { die "no database\n" };
+	is(subs::clock_alarm_volume_at({ volume => 40, ramp => 0 }, 0, 0), '0.40',
+		'a channel that cannot be read keeps today\'s level');
+}
+
 # --- the timer's own Volume ---------------------------------------------------
 my $timer = subs::clock_normalize_timer({ seconds => 60, volume => 250 });
 is($timer->{'volume'}, 100, 'a timer volume is clamped to 100');
@@ -84,12 +107,15 @@ is($timer->{'volume'}, 70, 'a timer without one uses the old 70%');
 
 # --- the wiring that makes those helpers reach the ring and the creator ------
 my $root = root();
+my $clock = read_file("$root/lib/JawnOS/Domain/Clock.pm");
 my $clock2 = read_file("$root/lib/JawnOS/Domain/Clock2.pm");
 my $clock3 = read_file("$root/lib/JawnOS/Domain/Clock3.pm");
 my $controller = read_file("$root/lib/JawnOS/Controller/manager_clock.pm");
 my $body = read_file("$root/templates/apps/clock/body.html.ep");
 my $timer_js = read_file("$root/public/js/manager/clock/01_alarms_timers.js");
 
+like($clock, qr/sound_channel_gain\('alarm'\)/,
+	'the alarm player reads the launcher alarm channel');
 like($clock2, qr/clock_alarm_volume_raise\(\$alarm\)/,
 	'the ringing machine raises the computer sink');
 like($clock2, qr/clock_alarm_play_command\(\$alarm, 0, \$system_volume\)/,

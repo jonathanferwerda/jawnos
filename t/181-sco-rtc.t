@@ -41,6 +41,26 @@ my $play = $mixer->bridge_playback_command();
 like($play, qr/--playback/, 'the other direction plays');
 like($play, qr/--device=jawn_prompt/, 'into what the caller hears');
 
+# The launcher's phone channel scales everything the caller hears. pacat takes
+# the level as a percentage, and a machine with no setting row keeps it at 100.
+{
+	no warnings 'redefine';
+	local *subs::sound_channel_gain = sub { 0.5 };
+	like($mixer->playback_command(), qr/--volume=50%/,
+		'the prompt player carries the phone channel gain');
+	like($mixer->bridge_playback_command(), qr/--volume=50%/, 'and so does the bridge');
+}
+{
+	no warnings 'redefine';
+	local *subs::sound_channel_gain = sub { 0 };
+	like($mixer->playback_command(), qr/--volume=0%/, 'a muted phone channel is silence');
+}
+{
+	no warnings 'redefine';
+	local *subs::sound_channel_gain = sub { die "no database\n" };
+	like($mixer->playback_command(), qr/--volume=100%/, 'a channel that cannot be read keeps full level');
+}
+
 # ------------------------------------------------------------- the gateway
 my $gw = JawnOS::Sco::Gateway->new(
 	dir => $dir,

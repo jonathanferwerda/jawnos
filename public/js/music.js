@@ -21,6 +21,9 @@ function musicPlay() {
 	return p;
 }
 
+// The launcher's music channel is a gain on everything this player makes. It
+// is cached and refreshed when the page comes back, never read at play time.
+var musicChannelGain = 1;
 // The local element is this machine's own output: audible whenever the 'me'
 // output is on (which is also the default when the setting has no 'me' key at
 // all), silent when it is explicitly off. The volume is deliberately dropped
@@ -30,7 +33,7 @@ function musicPlay() {
 // app on a track that was already loaded).
 function musicLocalVolume() {
 	if (music_muted || mao['me'] == 'off') { return 0; }
-	return master_volume;
+	return master_volume * musicChannelGain;
 }
 // The local output's L/centre/R choice. A stereo splitter and merger make the
 // silent side truly silent, which a pan would not: a pan at the hard left still
@@ -50,8 +53,23 @@ function musicRemoteVolume() {
 	if (music_muted) { return 0; }
 	// With a system mixer wired the app level lives in musicSystemLevel and the
 	// graph stays at full gain; the remote must hear that level too, not 1.
-	return musicSystemWired ? musicSystemLevel : master_volume;
+	return (musicSystemWired ? musicSystemLevel : master_volume) * musicChannelGain;
 }
+// Read the launcher's music channel once at load and again whenever the page is
+// shown, so a slider moved in another window follows. The gain stays 1 until the
+// answer arrives, which is what keeps the autoplay handshake audible; a muted
+// channel becomes 0, everything else volume/100.
+function musicChannelRefresh() {
+	$.getJSON('/manager/controller/volume', function (data) {
+		var row = data && data.channels && data.channels.music;
+		if (!row) { return; }
+		var volume = parseFloat(row.volume);
+		if (isNaN(volume)) { volume = 100; }
+		musicChannelGain = row.muted ? 0 : Math.max(0, Math.min(1, volume / 100));
+		musicVolumeApply();
+	});
+}
+$(function () { musicChannelRefresh(); });
 var musicGraphTrying = false;
 function musicVolumeApply() {
 	if (!tree || !tree.sound) { return; }
@@ -5531,9 +5549,13 @@ $(document).on('pointerdown touchstart keydown', function() {
 });
 // A phone pauses the graph when the app is put away; coming back resumes it.
 $(document).on('visibilitychange', function() {
-	if (!document.hidden && musicGraphWanted() && $('#music').length) {
-		musicAudioGraph();
-		musicVolumeApply();
+	if (!document.hidden) {
+		// the launcher's channel may have moved in another window
+		musicChannelRefresh();
+		if (musicGraphWanted() && $('#music').length) {
+			musicAudioGraph();
+			musicVolumeApply();
+		}
 	}
 	// a hidden page presents no frames, so the picture-lag callback can be lost
 	if (!document.hidden) { musicPicture.queued = false; musicPictureWatch(); }

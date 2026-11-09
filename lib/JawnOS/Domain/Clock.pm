@@ -687,6 +687,10 @@ sub clock_alarm_volume_at {
 	}
 	my $level = $target * $progress;
 	$level = 0.02 if $level < 0.02;
+	# The launcher's alarm channel scales every alarm the house plays. A machine
+	# with no setting row keeps the default (1), so today's level is unchanged;
+	# a muted channel is silence.
+	$level *= eval { &subs::sound_channel_gain('alarm') } // 1;
 	return sprintf('%.2f', $level);
 }
 
@@ -708,7 +712,10 @@ sub clock_alarm_play_command {
 	my $sound = &clock_valid_alarm_sound($alarm->{'sound'}) || 'notifications/ring.mp3';
 	my $file = &clock_sound_file($sound);
 	if (&clock_sound_is_long($sound)) {
-		my $target = $system_set ? '1.00' : sprintf('%.2f', ($alarm->{'volume'} || 70) / 100);
+		my $target = $system_set ? 1 : (($alarm->{'volume'} || 70) / 100);
+		# the launcher's alarm channel scales the track as it does the chime
+		$target *= eval { &subs::sound_channel_gain('alarm') } // 1;
+		$target = sprintf('%.2f', $target);
 		my $ramp = int($alarm->{'ramp'} || 0);
 		$ramp = 1 if $ramp < 1;
 		my $play = 'play -q -v ' . $target . ' ' . &quote($file) . ' fade t ' . $ramp . ' repeat 1000';
