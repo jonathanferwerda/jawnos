@@ -67,8 +67,8 @@ like($help, qr/category => 'apps', app => 'controller'/,
 # /manager is the desk. A controller cannot use it, and the panel's first
 # navigation is always there, so the desk redirects one to its launcher.
 my $desk = read_file("$root/lib/JawnOS/Controller/manager_misc4.pm");
-like($desk, qr/return \$c->redirect_to\('\/manager\/controller'\) if &subs::device_setter\(\) eq 'controller';/,
-	'the desk redirects a controller to its launcher');
+like($desk, qr/if !\$c->param\('open'\) && &subs::device_setter\(\) eq 'controller';/,
+	'the desk redirects a controller to its launcher, unless an app was named');
 
 # --- the page can actually render -------------------------------------------
 # A template runs in the app's sandbox, which has none of the controller's

@@ -426,7 +426,10 @@ sub action_13070 {
 	# that is where the panel opens. A redirect rather than a different render,
 	# so the launcher keeps one address; it stays on the same origin, so the
 	# ticket's session cookie already set here carries the person straight in.
-	return $c->redirect_to('/manager/controller') if &subs::device_setter() eq 'controller';
+	# ... unless the caller named an app to deal: ?open=twirl is a request for
+	# the desk itself, because an app's JavaScript lives in the desk's bundle.
+	return $c->redirect_to('/manager/controller')
+		if !$c->param('open') && &subs::device_setter() eq 'controller';
 
 	my ($db,$database,$sql) = &subs::database_grabber();
 	my $hostname = &subs::machine_hostname();
