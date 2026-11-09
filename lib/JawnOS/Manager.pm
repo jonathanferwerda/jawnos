@@ -93,7 +93,6 @@ Mojo::IOLoop->next_tick(sub {
 	require './perl/parent_guard.pl';
 	parent_guard::worker($worker_manager_pid);
 });
-use Mojo::IOLoop::ReadWriteFork;
 use Mojolicious::Sessions;
 use Mojo::Server::Daemon;
 use Mojolicious::Renderer;

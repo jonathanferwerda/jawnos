@@ -174,7 +174,7 @@ sub _reap {
 	my $code = pack('L', 0);
 	&_api('GetExitCodeProcess')->Call($self->{'handle'}, $code);
 	$self->{'exit'} = unpack('L', $code);
-	$self->{'events'}{'close'}->($self->{'exit'}, 0) if $self->{'events'}{'close'};
+	$self->{'events'}{'close'}->($self, $self->{'exit'}, 0) if $self->{'events'}{'close'};
 	return;
 }
 

@@ -40,7 +40,6 @@ use Number::Format qw/:subs/;
 use SQL::Abstract;
 use Mojo::SQLite;
 use Mojo::IOLoop;
-use Mojo::IOLoop::ReadWriteFork;
 use Mojolicious::Sessions;
 use Mojo::Server::Daemon;
 use Mojolicious::Renderer;

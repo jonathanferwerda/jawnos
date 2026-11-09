@@ -62,7 +62,7 @@ BEGIN {
 	}
 }
 
-use Mojo::IOLoop::ReadWriteFork;
+use JawnOS::Platform::Runner;
 use IO::Select;
 use Fcntl qw/F_SETFD FD_CLOEXEC/;
 use POSIX qw/WNOHANG/;
@@ -349,7 +349,7 @@ sub log_seed {
 }
 &log_seed();
 
-my $fork = Mojo::IOLoop::ReadWriteFork->new;
+my $fork = JawnOS::Platform::Runner->new;
 
 $SIG{INT} = sub {
 	&shut_down();
@@ -855,7 +855,7 @@ sub shut_down() {
 	# its exact pid is safe even though the kill sweep matches by command line
 	my $fpid = $fork ? $fork->pid : 0;
 	if ($fpid && &pid_alive($fpid) && $fpid != $$) {
-		kill 'INT', $fpid;
+		if ($fork) { $fork->stop('INT') } else { kill 'INT', $fpid }
 		push @sent, $fpid;
 		print "INT $fpid (pty)\n";
 	}
@@ -1710,7 +1710,7 @@ sub terminal_pty_runner() {
 	$status = 'starting';
 	my $data = shift;
 	if (!$fork) {
-		$fork = Mojo::IOLoop::ReadWriteFork->new;
+		$fork = JawnOS::Platform::Runner->new;
 	}
 	print 'starting fork' . "\n";
 
@@ -1754,7 +1754,7 @@ sub terminal_pty_runner() {
 
 	my $this_fork = $fork;
   $fork->on(close => sub () {
-		my ($exit_value, $signal) = @_;
+		my ($closed_fork, $exit_value, $signal) = @_;
 		print "closing fork";
 		# the tree's own terminal exited: unless the master tore it down for a
 		# restart (shut_down marks the fork), it died on its own - recover it rather

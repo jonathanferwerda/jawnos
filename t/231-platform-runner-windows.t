@@ -27,7 +27,7 @@ my $exit;
 my $runner = JawnOS::Platform::Runner::Windows->new;
 $runner->conduit({ type => 'pipe' });
 $runner->on(read => sub { $seen .= $_[1] });
-$runner->on(close => sub { $exit = $_[0]; Mojo::IOLoop->stop });
+$runner->on(close => sub { $exit = $_[1]; Mojo::IOLoop->stop });
 
 my $pid = $runner->start({ program => $^X, program_args => [$child] });
 ok($pid, 'the child starts') or diag($runner->{'error'});

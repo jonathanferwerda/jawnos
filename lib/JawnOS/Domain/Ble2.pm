@@ -28,7 +28,7 @@ use JawnOS::Ble::Ring qw(ring_tail);
 use List::Util qw(shuffle);
 use MIME::Base64;
 use Math::Trig qw(cartesian_to_spherical spherical_to_cartesian great_circle_distance rad2deg deg2rad great_circle_bearing great_circle_direction great_circle_destination);
-use Mojo::IOLoop::ReadWriteFork;
+use JawnOS::Platform::Runner;
 use Mojo::IOLoop;
 use Mojo::JSON qw(decode_json encode_json);
 use Mojo::Util qw/md5_sum xml_escape html_unescape term_escape quote unquote secure_compare url_escape url_unescape network_contains punycode_decode punycode_encode b64_decode b64_encode/;
@@ -641,7 +641,7 @@ sub ble_listener_start {
 		});
 	}
 	$gb::ble_listener_buffer = drain_new();
-	$gb::ble_listener = Mojo::IOLoop::ReadWriteFork->new;
+	$gb::ble_listener = JawnOS::Platform::Runner->new;
 	$gb::ble_listener->on(read => sub {
 		my ($fork, $bytes) = @_;
 		# Reads are arbitrary chunks: a JSON line longer than one chunk used to
