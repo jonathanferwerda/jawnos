@@ -9,7 +9,7 @@ require "./perl/subroutines.pl";
 our $config_file = read_file('./config.json');
 our $config = decode_json $config_file;
 our $logfile = &subs::home($config->{'logfile'});
-`touch $logfile` if not -e $logfile;
+write_file($logfile, '') if not -e $logfile;
 our $log = Mojo::Log->new(path => $logfile);
 # One UUID generator per worker. A fresh Data::UUID object per request costs far
 # more than the ids it makes (create_str on a kept object is sub-microsecond),

@@ -218,8 +218,8 @@ sub signatorial_establisher {
 	$gb::secret_maker ||= [ md5_sum('signatorial:' . ($config->{'signatorial'} || 'jawnos')) ];
 	if ($config->{'signatorial'} && -e $config->{'signatorial'}) {
 
-		my $j = &subs::terminal_name(&subs::home($config->{'signatorial'}));
-		my $checksum = `base64 $j`;
+		my $j = &subs::home($config->{'signatorial'});
+		my $checksum = encode_base64(read_file($j));
 		my $md5 = md5_sum $checksum;
 		$gb::secret_maker = [ $md5 ];
 		return $md5;
@@ -269,7 +269,7 @@ sub signatorial_designer {
 	my @identity_files = ( &signatorial_identity_file(), &signatorial_identity_mirror() );
 	for my $file ( @identity_files ) {
 		next unless defined $file && length $file && -e $file;
-		my $id = `cat $file`;
+		my $id = read_file($file);
 		chomp $id;
 		if ($id =~ /^[0-9a-f]{16,64}$/i) {
 			$gb::signatorial = lc $id;
@@ -347,12 +347,14 @@ sub signatorial_designer {
 	# identity was persisted, then pin it. Every remote_machines.signatorial,
 	# settings.device and JSON reference keeps pointing at the same value.
 	my $folder = './public/images/jonathans';
-	my $jonathans = `ls $folder`;
-	my @jonathans = split /\n/, $jonathans;
+	my @jonathans;
+	if (opendir my $dh, $folder) {
+		@jonathans = sort grep { !/^\./ } readdir $dh;
+		closedir $dh;
+	}
 	my $checksum = $database;
 	foreach my $j ( @jonathans ) {
-		$j = &terminal_name($folder . '/' . $j);
-		$checksum .= encode_base64 `cat $j`;
+		$checksum .= encode_base64(read_file($folder . '/' . $j));
 	}
 	my $md5 = md5_sum &signatorial_establisher('designer') . $checksum;
 	&signatorial_identity_write($md5);

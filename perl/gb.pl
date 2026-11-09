@@ -6,11 +6,11 @@ no warnings;
 
 require './perl/subroutines.pl';
 use Mojo::Cache;
+use Cwd ();
 
 
 package gb;
-our $pwd = `pwd`;
-chomp $pwd;
+our $pwd = Cwd::getcwd();
 our $count = 0;
 our $duty_time = &subs::rightNow();
 our $ws = {};

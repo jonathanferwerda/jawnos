@@ -1018,7 +1018,8 @@ sub manager_starter() {
 	# Skipped on a controller: serving a model is another resident process on a
 	# box that only shows a launcher and bridges calls.
 	unless ($device eq 'controller') {
-		if (`ollama -v` =~ /client version is/) {
+		my $ollama = JawnOS::Platform::tool_path('ollama');
+		if ($ollama && `"$ollama" -v` =~ /client version is/) {
 			&subs::subprocessor(sub {
 				`OLLAMA_IGPU_ENABLE=1 OLLAMA_VULKAN=1 HIP_VISIBLE_DEVICES=-1 OLLAMA_NOHISTORY=1 ollama serve`;
 			}, { name => 'ollama serve' });
@@ -1986,6 +1987,12 @@ sub device_setter() {
 	my $device = 'computer';
 	if ($config->{'device'}) {
 		$device = $config->{'device'};
+	}
+	elsif ($^O eq 'MSWin32' || $^O eq 'darwin') {
+		$device = 'computer';
+	}
+	elsif (-e '/system/bin/init' || $ENV{'ANDROID_ROOT'} || $ENV{'TERMUX_VERSION'}) {
+		$device = 'mobile';
 	}
 	else {
 		my $uname = `uname -a`;

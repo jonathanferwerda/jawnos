@@ -35,12 +35,12 @@ require "./perl/subroutines.pl";
 my $config_file = read_file('./config.json');
 my $config = decode_json $config_file;
 our $logfile = &subs::home($config->{'logfile'});
-`touch $logfile` if not -e $logfile;
+write_file($logfile, '') if not -e $logfile;
 our $log = Mojo::Log->new(path => $logfile);
 
 my $device = &subs::device_setter();
 my $home_file = &subs::home('~/') . '.president/ws_watcher';
-`touch $home_file` unless -e $home_file;
+write_file($home_file, '') if !-e $home_file && -d &subs::home('~/.president');
 
 # The padlock gate for live pushes is per recipient, in
 # Manager::websocket_sender (Part37.pm): it asks padlock_locked_now about the

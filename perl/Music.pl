@@ -44,7 +44,7 @@ our $music_config = decode_json $config_file;
 my $environment = $music_config->{'environment'};
 my @folders = @{$music_config->{'folders'}};
 our $logfile = &subs::home($music_config->{'logfile'});
-`touch $logfile` if not -e $logfile;
+write_file($logfile, '') if not -e $logfile;
 our $log = Mojo::Log->new(path => $logfile);
 my (@results);
 our $music_files = [];

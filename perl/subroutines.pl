@@ -78,7 +78,7 @@ our $config_file = read_file('./config.json');
 our $config = decode_json $config_file;
 our $logfile = &subs::home($config->{'logfile'});
 our $resolve_when_residual = '';   # what resolve_when could not read as a date (see date_leftover)
-`touch $logfile` if not -e $logfile;
+write_file($logfile, '') if not -e $logfile;
 our $log = Mojo::Log->new(path => $logfile);
 our $universal_splitter = $gb::universal_splitter;
 

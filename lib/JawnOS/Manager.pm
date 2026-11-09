@@ -233,7 +233,7 @@ our $remote_input_clipboard;
 our $config_file = read_file('./config.json');
 our $config = decode_json $config_file;
 our $logfile = &subs::home($config->{'logfile'});
-`touch $logfile` if not -e $logfile;
+write_file($logfile, '') if not -e $logfile;
 our $log = Mojo::Log->new(path => $logfile);
 &remote_input::set_log($log);
 our $environment = $config->{'environment'};

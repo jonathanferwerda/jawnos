@@ -546,6 +546,12 @@ sub device_setter {
 	if ($config->{'device'}) {
 		$device = $config->{'device'};
 	}
+	elsif ($^O eq 'MSWin32' || $^O eq 'darwin') {
+		$device = 'computer';
+	}
+	elsif (-e '/system/bin/init' || $ENV{'ANDROID_ROOT'} || $ENV{'TERMUX_VERSION'}) {
+		$device = 'mobile';
+	}
 	else {
 		my $uname = `uname -a`;
 		if ($uname =~ /Android/gi) {

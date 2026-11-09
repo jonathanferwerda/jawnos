@@ -35,7 +35,7 @@ no warnings 'once';
 my $config_file = read_file('./config.json');
 my $config = decode_json $config_file;
 our $logfile = &subs::home($config->{'logfile'});
-`touch $logfile` if not -e $logfile;
+write_file($logfile, '') if not -e $logfile;
 our $log = Mojo::Log->new(path => $logfile);
 my $device = &subs::device_setter();
 my $last_moment = &subs::rightNow();

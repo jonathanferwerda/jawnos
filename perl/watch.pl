@@ -27,7 +27,7 @@ my $config_file = read_file('./config.json');
 my $config = decode_json $config_file;
 my $device = &subs::device_setter();
 our $logfile = &subs::home($config->{'logfile'});
-`touch $logfile` if not -e $logfile;
+write_file($logfile, '') if not -e $logfile;
 our $log = Mojo::Log->new(path => $logfile);
 
 
