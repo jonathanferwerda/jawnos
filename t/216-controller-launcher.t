@@ -53,4 +53,11 @@ like($help, qr/\$topic\{'controller'\}\s*=\s*\{/,
 like($help, qr/category => 'apps', app => 'controller'/,
 	'the topic claims the controller app page');
 
+# --- the desk sends a controller home ----------------------------------------
+# /manager is the desk. A controller cannot use it, and the panel's first
+# navigation is always there, so the desk redirects one to its launcher.
+my $desk = read_file("$root/lib/JawnOS/Controller/manager_misc4.pm");
+like($desk, qr/return \$c->redirect_to\('\/manager\/controller'\) if &subs::device_setter\(\) eq 'controller';/,
+	'the desk redirects a controller to its launcher');
+
 done_testing();
