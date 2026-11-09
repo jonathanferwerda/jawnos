@@ -593,6 +593,12 @@ sub budget_current_information($app,$circumstance,$timestamp) {
 		$budget = $fresh if $fresh && ($fresh->{'is_scope'} || '') eq 'yes' && ($fresh->{'circumstance'} || '') eq $circumstance;
 	}
 
+	# The window the reading was taken over, named the way it is read: a locked
+	# budget sits on the calendar period its scope names, an unlocked one rolls
+	# that length back from now. The label is also the control that flips the lock.
+	my $locked = ((&subs::setting_grabber({ app => $app, setting => 's_lock' }) || '') eq 'on') ? 1 : 0;
+	my ($window_label, $window_phrase) = &subs::budget_window_label($budget, $locked);
+
 	# Both comparisons are read for the same share of the period, so an hour or a
 	# day only part done is not held against the whole of its budget and its whole
 	# typical. A completed (or rolling) window has share 1 and reads as before.
@@ -620,6 +626,10 @@ sub budget_current_information($app,$circumstance,$timestamp) {
 	my $c = &subs::controller_builder();
 	my $template = $c->render_to_string(
 		template => 'apps/budget_current_information',
+		app => $app,
+		locked => $locked,
+		window_label => $window_label,
+		window_phrase => $window_phrase,
 		circumstance => $circumstance,
 		improvement => $improvement,
 		budget => $budget,
@@ -627,7 +637,7 @@ sub budget_current_information($app,$circumstance,$timestamp) {
 		goal => $goal,
 		running => $running
 	);
-	return { template => $template, circumstance => $circumstance, improvement => $improvement, autocalc => $autocalc, budget => $budget, goal => $goal, running => $running };
+	return { template => $template, circumstance => $circumstance, improvement => $improvement, autocalc => $autocalc, budget => $budget, goal => $goal, running => $running, locked => $locked, window_label => $window_label, window_phrase => $window_phrase };
 }
 
 # ---------------------------------------------------------------------------

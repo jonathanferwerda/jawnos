@@ -790,6 +790,12 @@ sub action_45199 {
 	# value against this device class instead
 	my $device = $c->param('device');
 	my $s = &subs::setting_setter({ app => $app, setting => $setting, value => $value, timestamp => $timestamp, subsetting => $subsetting, device => $device });
+	# A budget's window is taken from s_lock, so a lock toggle changes both the
+	# light and the panel. Recompute the app's budget; the runner pushes both.
+	if ($setting eq 's_lock' && defined $app && length $app) {
+		my $budget = &subs::setting_grabber({ app => $app, setting => 'budget' });
+		&budget_runner($app) if defined $budget && $budget =~ /[0-9]/;
+	}
 	$s->{'note'} = $xpub_note if defined $xpub_note && ref $s eq 'HASH';
 	# Turning tracking on writes the first history point at once, so the Measures
 	# app has something to chart without waiting for the six-hour tick.

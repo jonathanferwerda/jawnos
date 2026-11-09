@@ -23,6 +23,19 @@ $(document).on('click', '.budget_light', function() {
 	budgetLight(app,circumstance);
 });
 
+// The window label on the panel is also its switch: a press flips the app's
+// s_lock between the calendar period and the window ending now. The write runs
+// the budget runner, which pushes the new light and panel, so the label and the
+// value come back from the same reading.
+$(document).on('click', '.budget_lock_toggle', function() {
+	var t = $(this);
+	var app = t.attr('app');
+	var circumstance = t.attr('circumstance');
+	var next = (t.attr('locked') == '1') ? 'off' : 'on';
+	t.attr('locked', next == 'on' ? '1' : '0');
+	settingSetter({ app: app, setting: 's_lock', value: next });
+});
+
 // The app's ci setting says whether its budget light was left open, and the
 // server renders it on the panel. Reopening a closed window brings the light
 // back just as it was left; closing it cleared ci, so a closed light stays shut.

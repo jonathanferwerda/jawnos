@@ -631,6 +631,24 @@ sub measure_calc_for {
 	return (defined $calc && length $calc) ? $calc : 'sum';
 }
 
+# The panel names the window a budget reading was taken over. A locked budget
+# sits on the calendar period its scope names ("This week"); an unlocked one
+# rolls that length back from the moment it is read ("Last 7 days"). Returns
+# the label and the phrase the pace sentence uses ("week" or "last 7 days").
+sub budget_window_label($budget, $locked) {
+	my $scope = &subs::format_name($budget->{'scope_name'} // '');
+	return (&subs::ui('This') . ' ' . $scope, $scope)
+		if $locked || $budget->{'fixed'} || !($budget->{'duration'} || 0);
+	my $ms = &subs::time_span_length($budget->{'scope_name'} // '') || int($budget->{'duration'} || 0);
+	my ($n, $unit);
+	if ($ms % 86400000 == 0) { $n = $ms / 86400000; $unit = $n == 1 ? 'day' : 'days'; }
+	elsif ($ms % 3600000 == 0) { $n = $ms / 3600000; $unit = $n == 1 ? 'hour' : 'hours'; }
+	elsif ($ms % 60000 == 0) { $n = $ms / 60000; $unit = $n == 1 ? 'minute' : 'minutes'; }
+	else { $n = int($ms / 1000); $unit = $n == 1 ? 'second' : 'seconds'; }
+	my $label = &subs::ui('Last') . ' ' . $n . ' ' . &subs::ui($unit);
+	return ($label, lc $label);
+}
+
 sub appointment_overlap {
 	my ($appt, $start, $end) = @_;
 	my $from = ($appt->{'timestamp'} || 0) + 0;
