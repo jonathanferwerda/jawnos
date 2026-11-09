@@ -1813,6 +1813,8 @@ like($loader, qr/weather_daily_extend/, 'and the daily extension');
 my $weather_style = read_file("$root/templates/apps/weather/style.html.ep");
 like($weather_style, qr/^<style>/m, 'the style partial opens a style element');
 like($weather_style, qr{</style>\s*$}m, 'and closes it, so the page does not print CSS');
+like($weather_style, qr/#weather_toolbar \{[^}]*position: sticky/, 'the location toolbar stays at the top while a tab scrolls');
+like($weather_style, qr/#weather_toolbar \{[^}]*background: var\(--panel\)/, 'and hides the tab scrolling under it');
 
 # --- saving, restoring and the strip ----------------------------------------
 like($routes_auto, qr{/manager/weather/location/delete\b}, 'the delete route exists');

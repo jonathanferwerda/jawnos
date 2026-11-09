@@ -11,6 +11,10 @@
 	overflow-y: auto;
 }
 .wind[app="weather"] #weather_toolbar {
+	position: sticky;
+	top: 0;
+	z-index: 3;
+	background: var(--panel);
 	display: flex;
 	flex-wrap: wrap;
 	align-items: center;
