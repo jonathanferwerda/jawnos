@@ -50,12 +50,67 @@ sub kiosk_active {
 	return system('systemctl', 'is-active', '--quiet', 'jawnos-kiosk') == 0;
 }
 
-# Starting the kiosk once is not enough: it can lose the race with the display
-# the emulator has just released, and a start that fails leaves the panel on
-# the bare X cursor. Restart it and wait for the browser to be up, then try once
-# more. gou-kiosk-guard.timer is the backstop if this helper dies first.
+my $kiosk_window;      # the kiosk's window, remembered across the game
+my $kiosk_hidden = 0;  # whether this run hid it
+
+# The kiosk is one window on the panel's X server, and hiding it for the length
+# of a game is what makes the way back instant. Stopping the unit costs its own
+# ExecStartPre sleep plus a cold Qt WebEngine start - six seconds on this box,
+# before the page has drawn anything. Shown again it is already running and has
+# kept its session, so one map request brings the launcher back.
+#
+# xdotool runs as the person, whose X authority reaches the server; this helper
+# is root. A window that cannot be found or shown falls back to the restart
+# below, which is also what gou-kiosk-guard.timer does if this helper dies.
+sub xdotool {
+	my (@args) = @_;
+	my $pid = open(my $out, '-|');
+	return '' unless defined $pid;
+	if (!$pid) {
+		exec('/usr/bin/setpriv', '--reuid=' . $PERSON, '--regid=' . $PERSON,
+			'--init-groups', '--', '/usr/bin/env', 'DISPLAY=:0',
+			'/usr/bin/xdotool', @args);
+		POSIX::_exit(127);
+	}
+	my $text = do { local $/; <$out> } // '';
+	close $out;
+	return $text;
+}
+
+# The window's class is the one the desktop app sets, so it is found by what it
+# is rather than by an id that moves between launches.
+sub kiosk_window {
+	my ($id) = grep { /^\d+$/ }
+		split ' ', xdotool('search', '--onlyvisible', '--class', 'JawnOS');
+	return $id;
+}
+
+sub hide_kiosk {
+	$kiosk_window = kiosk_window();
+	if (!defined $kiosk_window) {
+		# nothing to hide: the unit itself has to go, as it always did
+		system('systemctl', 'stop', 'jawnos-kiosk');
+		$kiosk_hidden = 1;
+		return;
+	}
+	xdotool('windowunmap', $kiosk_window);
+	$kiosk_hidden = 1;
+}
+
 sub restore {
 	unlink $MARKER;
+	return unless $kiosk_hidden;
+	$kiosk_hidden = 0;
+	if (defined $kiosk_window) {
+		xdotool('windowmap', $kiosk_window);
+		xdotool('windowraise', $kiosk_window);
+		xdotool('windowactivate', $kiosk_window);
+		# the server is the one that knows: only a mapped window answers
+		return if defined kiosk_window();
+	}
+	# Starting the kiosk once is not enough: it can lose the race with the
+	# display the emulator has just released, and a start that fails leaves the
+	# panel on the bare X cursor. Restart it, wait for it, then try once more.
 	system('systemctl', 'restart', 'jawnos-kiosk');
 	for (1 .. 20) {
 		select(undef, undef, undef, 0.5);
@@ -116,7 +171,7 @@ close $marker;
 
 my $evdev = mouse_device();
 
-system('systemctl', 'stop', 'jawnos-kiosk');
+hide_kiosk();
 # The daemon polls its marker four times a second; give the gamepad a beat to
 # exist before the emulator scans its controls.
 select(undef, undef, undef, 0.6);

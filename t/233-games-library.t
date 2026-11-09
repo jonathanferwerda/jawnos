@@ -78,8 +78,10 @@ like($install, qr/db\.lck/, 'a stale pacman lock is cleared only when no pacman 
 # --- the launch helper --------------------------------------------------------
 my $launch = read_file("$root/scripts/jawnos_game_launch.pl");
 like($launch, qr/HOME_KEY = 102/, 'Home is the key that ends a game');
-like($launch, qr/system\('systemctl', 'stop', 'jawnos-kiosk'\)/, 'the kiosk yields the panel');
-like($launch, qr/system\('systemctl', 'restart', 'jawnos-kiosk'\)/, 'and is restarted on the way out');
+like($launch, qr/sub hide_kiosk/, 'the kiosk window is hidden, not stopped');
+like($launch, qr/windowunmap/, 'hidden with one X request, so the browser stays warm');
+like($launch, qr/xdotool\('windowmap'/, 'and shown again when the game ends');
+like($launch, qr/system\('systemctl', 'restart', 'jawnos-kiosk'\)/, 'a kiosk that cannot be shown is restarted');
 like($launch, qr/gou-games/, 'the games marker arms the virtual gamepad');
 like($launch, qr/POSIX::setuid\(\$uid\)/, 'the emulator runs as the person, not root');
 like($launch, qr/--init-groups/, 'with the persons groups, so the sound card opens');
