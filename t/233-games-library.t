@@ -79,13 +79,15 @@ like($install, qr/db\.lck/, 'a stale pacman lock is cleared only when no pacman 
 my $launch = read_file("$root/scripts/jawnos_game_launch.pl");
 like($launch, qr/HOME_KEY = 102/, 'Home is the key that ends a game');
 like($launch, qr/system\('systemctl', 'stop', 'jawnos-kiosk'\)/, 'the kiosk yields the panel');
-like($launch, qr/system\('systemctl', 'start', 'jawnos-kiosk'\)/, 'and is started again on the way out');
+like($launch, qr/system\('systemctl', 'restart', 'jawnos-kiosk'\)/, 'and is restarted on the way out');
 like($launch, qr/gou-games/, 'the games marker arms the virtual gamepad');
 like($launch, qr/POSIX::setuid\(\$uid\)/, 'the emulator runs as the person, not root');
 like($launch, qr/--init-groups/, 'with the persons groups, so the sound card opens');
 like($launch, qr|'/usr/bin/retroarch', '-f', '-L'|, 'RetroArch is run full screen with its core');
 like($launch, qr/JawnOS::Games::runner_for/, 'the runner is the same one the route checked');
 like($launch, qr/--appendconfig/, 'the game gets the config that names the card');
+like($launch, qr/sub kiosk_active/, 'the restore waits for the kiosk, not just starts it');
+like($install, qr/input_player1_joypad_index/, 'the gamepad is player one, not the keys device');
 like($install, qr/audio_device = \\"hw:0,0\\"/, 'the installer writes the ALSA device the panel has');
 
 # --- the routes and the page --------------------------------------------------

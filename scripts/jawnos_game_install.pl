@@ -90,7 +90,8 @@ if ($WHAT eq 'emulators') {
 			print $cfg "audio_driver = \"alsa\"\n"
 				. "audio_device = \"hw:0,0\"\n"
 				. "audio_enable = \"true\"\n"
-				. "video_fullscreen = \"true\"\n";
+				. "video_fullscreen = \"true\"\n"
+				. "input_player1_joypad_index = \"1\"\n";
 			close $cfg;
 		}
 	}

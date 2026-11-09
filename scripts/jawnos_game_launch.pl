@@ -46,9 +46,22 @@ sub write_status {
 	chmod 0644, $FILE;
 }
 
+sub kiosk_active {
+	return system('systemctl', 'is-active', '--quiet', 'jawnos-kiosk') == 0;
+}
+
+# Starting the kiosk once is not enough: it can lose the race with the display
+# the emulator has just released, and a start that fails leaves the panel on
+# the bare X cursor. Restart it and wait for the browser to be up, then try once
+# more. gou-kiosk-guard.timer is the backstop if this helper dies first.
 sub restore {
 	unlink $MARKER;
-	system('systemctl', 'start', 'jawnos-kiosk');
+	system('systemctl', 'restart', 'jawnos-kiosk');
+	for (1 .. 20) {
+		select(undef, undef, undef, 0.5);
+		return if kiosk_active();
+	}
+	system('systemctl', 'restart', 'jawnos-kiosk');
 }
 
 sub fail {
