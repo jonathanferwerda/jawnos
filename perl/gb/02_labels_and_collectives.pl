@@ -158,6 +158,7 @@ our $known_appts = {
 	security => { icon => "/images/make believe/badge.png" },
 	terminal => { icon => "/images/decipherable/code.png" },
 	network => { icon => '/images/decipherable/server.png' },
+	notifications => { icon => '/images/decipherable/bell.png' },
 	ide => { icon => "/images/make believe/monitor.png" },
 	gallery => { icon => "/images/decipherable/gallery.png" },
 	synth => { icon => "/images/decipherable/piano.png" },

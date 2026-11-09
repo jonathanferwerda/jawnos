@@ -337,6 +337,27 @@ $topic{'power'} = {
 		related => [ 'taskbar', 'start_menu', 'configure' ]
 	};
 
+$topic{'notifications'} = {
+		title => 'Notifications', category => 'apps', app => 'notifications',
+		templates => [ 'templates/apps/notifications.html.ep', 'public/js/manager/notifications.js', 'public/js/manager/notifications_toast.js', 'public/js/manager/taskbar_notifications.js', 'templates/notification.html.ep' ],
+		verified => '2026-11-09',
+		summary => 'The house\'s notices, with a search and an app filter, and the taskbar bell.',
+		body => [
+			'Notifications lists what the house has told you, newest first: a payment, an alarm, a request to pair, a plan that was applied, and anything else an app announces. Each row names its app and its time, and its X removes that notice.',
+			'The search box filters the list as you type, and the app picker narrows it to one app. Both are the same search and filter the keyboard\'s notifications panel uses, so the two stay together. Remove all clears the filtered list.',
+			'A notice also rises as a small card in the top-right corner of the desk while you work, with its title and line. Press the card to open the app it came from, press its X to dismiss it, or let it fade after a few seconds; hovering a card holds it. This is the house\'s own card, not the browser\'s notification, so it follows the theme and can always be seen.',
+			'The taskbar can carry a Notifications widget: a bell with a count of what has arrived since the list was last opened. A press opens a small panel with the newest notices and a search box; Open Notifications at the foot opens this app. The count clears when the panel or the app is opened, and it is kept per browser. Add items -> Widgets puts the bell on the bar or takes it off, its right-click menu chooses Icon, Icon and status, or Disabled.',
+		],
+		steps => [
+			'Open Notifications from the start menu, or press the bell widget in the taskbar and then Open Notifications.',
+			'Type in the search box to narrow the list; choose an app to show only its notices.',
+			'Press a notice\'s X to remove it, or Remove all to clear the filtered list.',
+			'Press a rising notice card to open the app it came from, or its X to dismiss it.',
+			'Add the Notifications widget under the taskbar\'s Add items -> Widgets; its count clears when you open the list.',
+		],
+		related => [ 'taskbar', 'configure', 'clock' ]
+	};
+
 $topic{'sound'} = {
 		title => 'Sound', category => 'apps', app => 'sound',
 		templates => [ 'templates/apps/sound.html.ep', 'public/js/manager/sound.js', 'public/js/manager/taskbar_sound.js', 'public/icons/sound.svg', 'templates/start_menu/start_menu.html.ep', 'templates/manager.html.ep', 'public/css/manager.css' ],

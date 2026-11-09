@@ -301,28 +301,54 @@ function jawnosNetworkTaskbarPanelScan(panel) {
 	});
 }
 
-// The outward address is a separate route: the server asks a public echo
-// service once and caches it for ten minutes. A failed read says so rather
-// than leaving the row on "Reading…".
+// The outward address is read from this machine's own interfaces, so it costs
+// no network call. A machine behind NAT has none: the row says so and offers
+// Look up, the one explicit request that can learn the router's address.
 function jawnosNetworkTaskbarPanelPublicIp(panel) {
-	var value = panel.find('.taskbar_network_panel_public .taskbar_panel_ip');
+	var row = panel.find('.taskbar_network_panel_public');
+	var value = row.find('.taskbar_panel_ip');
+	var button = row.find('.taskbar_network_panel_public_lookup');
 	if (!value.length) { return; }
+	button.hide().prop('disabled', false);
 	value.text(jawnosT('Reading…'));
 	$.ajax({ url: '/manager/network/public_ip', type: 'GET', cache: false })
 		.done(function(response) {
 			if (response && response.ok && response.ip) {
 				var title = [];
 				if (response.family) { title.push(String(response.family)); }
-				if (response.service) { title.push(String(response.service)); }
+				if (response.interface) { title.push(String(response.interface)); }
 				value.text(String(response.ip)).attr('title', title.join(' · '));
 				return;
 			}
-			value.text(jawnosT('Unavailable')).removeAttr('title');
+			value.text(jawnosT('Behind NAT')).removeAttr('title');
+			if (response && response.behind_nat) { button.show(); }
 		})
 		.fail(function() {
 			value.text(jawnosT('Unavailable')).removeAttr('title');
 		});
 }
+
+$(document).on('click', '.taskbar_network_panel_public_lookup', function() {
+	var button = $(this);
+	var row = button.closest('.taskbar_network_panel_public');
+	var value = row.find('.taskbar_panel_ip');
+	button.prop('disabled', true).hide();
+	value.text(jawnosT('Looking up…'));
+	$.ajax({ url: '/manager/network/public_ip_lookup', type: 'POST', dataType: 'json' })
+		.done(function(response) {
+			button.prop('disabled', false);
+			if (response && response.ok && response.ip) {
+				value.text(String(response.ip)).attr('title', response.family ? String(response.family) : '');
+				return;
+			}
+			value.text(jawnosT('Unavailable')).removeAttr('title');
+			button.show();
+		})
+		.fail(function() {
+			button.prop('disabled', false).show();
+			value.text(jawnosT('Unavailable')).removeAttr('title');
+		});
+});
 
 function jawnosNetworkTaskbarPanelBluetooth(panel) {
 	if (!panel || !panel.length) { return; }
@@ -421,6 +447,7 @@ function jawnosNetworkTaskbarPanelBuild(panel) {
 	var public_row = $('<div></div>').addClass('taskbar_panel_row taskbar_network_panel_public');
 	public_row.append($('<span></span>').addClass('taskbar_panel_label').text(jawnosT('Public address')));
 	public_row.append($('<span></span>').addClass('taskbar_panel_ip').text('—'));
+	public_row.append($('<button type="button"></button>').addClass('taskbar_network_panel_public_lookup').text(jawnosT('Look up')).hide());
 	wifi.append(public_row);
 	var controls = $('<div></div>').addClass('taskbar_panel_row').appendTo(wifi);
 	controls.append($('<button type="button"></button>').addClass('taskbar_network_panel_scan').text(jawnosT('Scan')));

@@ -365,11 +365,6 @@ async function permissionAsker(kind) {
 			}
 		});
 	}
-	if (kind == 'notifications' || !kind) {
-		Notification.requestPermission().then((result) => {
-
-		});
-	}
 	if ((kind == 'nfc' || !kind) && typeof jawnNfcAvailable === 'function' && jawnNfcAvailable()) {
 		// Never mint a second reader: the first one stays armed in the
 		// background, and two readers would report every tap twice.

@@ -1,4 +1,4 @@
-# tests-for: public/js/manager/taskbar_edit.js public/js/manager/taskbar_edit/01_window_events.js public/js/manager/taskbar_power.js public/js/manager/taskbar_network.js public/js/manager/taskbar_sound.js public/js/manager/taskbar_panel.js templates/manager.html.ep public/css/manager.css scripts/jawnos_network.pl public/icons/network.svg perl/help/topics_features.pl perl/help/topics_web.pl perl/help/topics_apps.pl
+# tests-for: public/js/manager/taskbar_edit.js public/js/manager/taskbar_edit/01_window_events.js public/js/manager/taskbar_power.js public/js/manager/taskbar_network.js public/js/manager/taskbar_sound.js public/js/manager/taskbar_notifications.js public/js/manager/taskbar_panel.js public/js/manager/notifications_toast.js templates/manager.html.ep public/css/manager.css scripts/jawnos_network.pl public/icons/network.svg public/icons/notifications.svg perl/help/topics_features.pl perl/help/topics_web.pl perl/help/topics_apps.pl
 # covers:    Taskbar widgets - the add-items list, the three display modes, the
 #            widget order, and the network widget's Wi-Fi/Ethernet reading.
 
@@ -24,6 +24,9 @@ my $edit = read_file("$root/public/js/manager/taskbar_edit.js");
 like($edit, qr/jawnosTaskbarWidgets = \{/, 'the widget registry exists');
 like($edit, qr/power: \{ hint: 'Battery'/, 'Battery is a widget');
 like($edit, qr/network: \{ hint: 'Network'/, 'Network is a widget');
+like($edit, qr/notifications: \{ hint: 'Notifications'/, 'Notifications is a widget');
+like($edit, qr/w == 'notifications'/, 'the notifications widget builds its bell');
+like($edit, qr/jawnosTaskbarWidgetItem\('notifications', 'full'\)/, 'and rides the default bar');
 like($edit, qr/function jawnosTaskbarWidgetSet\(/, 'a widget mode can be written');
 like($edit, qr/function jawnosTaskbarWidgetToggle\(/, 'a widget can be turned on and off');
 like($edit, qr/function jawnosTaskbarWidgetMake\(/, 'a widget builds its element');
@@ -86,6 +89,12 @@ like($sound, qr/#taskbar_sound_panel \[data-sound-volume\]/, 'a wheel over a pan
 like($sound, qr/\{ kind: kind, id: id, volume: volume \}/, 'the panel writes a device volume by id');
 like($sound, qr{/manager/sound/default}, 'and can make a device the default');
 like($sound, qr/jawnosT\('Open Sound'\)/, 'its footer opens Sound');
+
+my $bell = read_file("$root/public/js/manager/taskbar_notifications.js");
+like($bell, qr{/manager/notifications/status}, 'the notification widget reads the notice status');
+like($bell, qr/jawnosTaskbarPanelToggle\('taskbar_notifications_panel'/, 'and opens a panel of its own');
+like($css, qr/\.taskbar_notifications_badge/, 'the bell carries a count badge');
+ok(-e "$root/public/icons/notifications.svg", 'the notifications icon exists');
 
 like($power, qr/jawnosTaskbarPanelToggle\('taskbar_power_panel'/, 'the battery widget opens its panel');
 like($power, qr/data-power-plan/, 'the panel offers the power profiles');

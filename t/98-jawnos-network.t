@@ -289,22 +289,44 @@ FAKE_NMCLI
 		'a machine without tailscale says so, and nothing else');
 }
 
-# --- the outward address, behind a fake curl --------------------------------
+# --- the outward address ----------------------------------------------------
+# Local first: the helper reads the machine's own interfaces and classifies the
+# address, so a private LAN address is not called public.
+my $ipbin = "$scratch/ipbin";
+mkdir $ipbin or die "cannot make $ipbin: $!";
+write_exe("$ipbin/ip", q{printf '[{"ifname":"wlan0","addr_info":[{"family":"inet","local":"10.0.0.5","scope":"global"}]}]'});
+{
+	my (undef, $out) = run_net(path => $ipbin, args => ['public_ip']);
+	my $data = answer(0, $out, '', 'public_ip on a private address');
+	is($data->{'behind_nat'}, 1, 'a private address is not called public');
+	is($data->{'ip'}, '', 'and no address is claimed');
+}
+write_exe("$ipbin/ip", q{printf '[{"ifname":"eth0","addr_info":[{"family":"inet","local":"1.1.1.1","scope":"global"}]}]'});
+{
+	my (undef, $out) = run_net(path => $ipbin, args => ['public_ip']);
+	my $data = answer(0, $out, '', 'public_ip on a public address');
+	is($data->{'ip'}, '1.1.1.1', 'the interface address is returned');
+	is($data->{'family'}, 'IPv4', 'and named as IPv4');
+	is($data->{'source'}, 'local', 'without asking anything outside');
+	is($data->{'behind_nat'}, 0, 'and it is not behind NAT');
+}
+
+# The explicit lookup is the only outbound call, and it is a different command.
 my $curlbin = "$scratch/curlbin";
 mkdir $curlbin or die "cannot make $curlbin: $!";
-write_exe("$curlbin/curl", q{printf '203.0.113.7\n'});
+write_exe("$curlbin/curl", q{printf '198.51.100.7\n'});
 {
-	my (undef, $out) = run_net(path => $curlbin, args => ['public_ip']);
-	my $data = answer(0, $out, '', 'public_ip');
-	is($data->{'ip'}, '203.0.113.7', 'the outward address is returned');
-	is($data->{'family'}, 'IPv4', 'and named as IPv4');
+	my (undef, $out) = run_net(path => $curlbin, args => ['public_ip_lookup']);
+	my $data = answer(0, $out, '', 'public_ip_lookup');
+	is($data->{'ip'}, '198.51.100.7', 'the lookup returns the outward address');
+	is($data->{'source'}, 'lookup', 'and says it came from the lookup');
 	is($data->{'service'}, 'curl', 'through the tool that answered');
 }
 write_exe("$curlbin/curl", q{printf '<html>login</html>\n'});
 expect_error('the public address was not an address',
 	'a captive portal page is not an address',
-	path => $curlbin, args => ['public_ip']);
+	path => $curlbin, args => ['public_ip_lookup']);
 expect_error('the public address could not be read',
-	'public_ip with no curl or wget', path => $empty, args => ['public_ip']);
+	'public_ip_lookup with no curl or wget', path => $empty, args => ['public_ip_lookup']);
 
 done_testing();

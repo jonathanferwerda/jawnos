@@ -88,6 +88,24 @@ sub action_22696 {
 	$c->render(text => $contents);
 }
 
+# GET /manager/notifications
+#
+# The Notifications app: the same list, search and app filter the keyboard's
+# notifications panel draws, in a window of its own. The panel stays as it is;
+# both read notification_grabber.
+sub action_22699 {
+	my $c = shift;
+	my $notifications = &notification_grabber({});
+	my $content = $c->render_to_string(template => 'apps/notifications', notifications => $notifications);
+	my $contents = &window_maker({
+		user_agent => $c->param('user_agent'),
+		app => 'notifications',
+		title => 'Notifications',
+		contents => $content,
+	}, $c->param('timestamp'));
+	$c->render(text => $contents);
+}
+
 # GET /manager/notes
 sub action_22702 {
 	my $c = shift;
@@ -410,6 +428,19 @@ sub action_25147 {
 	my $c = shift;
 	my $returner = &notification_grabber({ scroll => 'down', position => $c->param('position') });
 	$c->render(json => $returner);
+}
+
+# GET /manager/notifications/status
+#
+# The newest notices as JSON, for the taskbar widget's bell and its panel. The
+# widget polls this rather than the rendered list, so a minute's poll does not
+# carry the whole app's markup.
+sub action_25150 {
+	my $c = shift;
+	my $rows = eval {
+		&subs::db_query('select title, message, app, timestamp, image, uuid from notifications order by cast(timestamp as integer) desc limit 50')->hashes;
+	} || [];
+	$c->render(json => { ok => 1, total => scalar(@{$rows}), notifications => $rows });
 }
 
 # GET /manager/appointment_viewer

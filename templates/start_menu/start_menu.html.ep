@@ -108,6 +108,7 @@
 				<br>
 				<img class="jonathan" id="backup_now" category="system" src="<%= &subs::icon_for('/images/decipherable/diskette.png') %>" hint="Backup now" ></img>
 				<img id="security_toggle" category="system" src="<%= &subs::icon_for('/images/make believe/badge.png') %>" hint="Security" class="jonathan security"></img>
+				<img id="notifications_toggle" category="system" src="<%= &subs::icon_for('/images/decipherable/bell.png') %>" hint="<%= &subs::ui('Notifications') %>" class="jonathan"></img>
 				<img id="terminal_toggle" category="system" src="<%= &subs::icon_for('/images/decipherable/code.png') %>" hint="Terminal" class="jonathan terminal"></img>
 				<img id="network_toggle" category="system" src="<%= &subs::icon_for('/images/decipherable/server.png') %>" hint="<%= &subs::lang('network') %>" class="jonathan network"></img>
 				<img id="ide_toggle" class="jonathan ide" category="system" src="<%= &subs::icon_for('/images/make believe/monitor.png') %>" hint="IDE"></img>

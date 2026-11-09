@@ -375,22 +375,33 @@ sub action_7940 {
 
 # GET /manager/network/public_ip
 #
-# The outward address is an outbound lookup to a public echo service, so it is
-# never folded into the status poll: the panel asks once when it opens and the
-# answer is cached for ten minutes. A failure is not cached, so the next open
-# tries again.
+# This machine's own globally routable address, read from its interfaces: no
+# outbound request and nothing to cache. A machine behind NAT has none, and
+# says so rather than guessing at the router's address.
 sub action_7943 {
 	my $c = shift;
-	my $cached = eval { &subs::cache_get({ app => 'network', context => 'public_ip' }) };
+	my $answer = eval { &network_helper(['public_ip']) };
+	$answer = { ok => 0, error => 'The public address could not be read.' } unless ref $answer eq 'HASH';
+	$c->render(json => $answer);
+}
+
+# POST /manager/network/public_ip_lookup
+#
+# The outward address behind NAT can only be learned from outside, so this is a
+# separate, explicit request (the panel's Look up button) and the answer is
+# cached for ten minutes. A failure is not cached, so a later press retries.
+sub action_7944 {
+	my $c = shift;
+	my $cached = eval { &subs::cache_get({ app => 'network', context => 'public_ip_lookup' }) };
 	if (ref $cached eq 'HASH' && $cached->{'ok'} && ($cached->{'at'} || 0) > &subs::rightNow() - 600000) {
 		$c->render(json => $cached);
 		return;
 	}
-	my $answer = eval { &network_helper(['public_ip']) };
+	my $answer = eval { &network_helper(['public_ip_lookup']) };
 	$answer = { ok => 0, error => 'The public address could not be read.' } unless ref $answer eq 'HASH';
 	if ($answer->{'ok'}) {
 		$answer->{'at'} = &subs::rightNow();
-		eval { &subs::cache_set({ app => 'network', context => 'public_ip', warranty => '-15m' }, $answer) };
+		eval { &subs::cache_set({ app => 'network', context => 'public_ip_lookup', warranty => '-15m' }, $answer) };
 	}
 	$c->render(json => $answer);
 }

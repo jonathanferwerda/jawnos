@@ -3819,3 +3819,103 @@ body.full_app_mode .wind.full_app_window {
 }
 body.full_app_mode .wind.full_app_window .top_navbar { display:none !important; }
 body.full_app_mode .wind.full_app_window .window_contents { width:100% !important; height:100% !important; }
+/* In-program notices (notifications_toast.js). A small card rises over the
+   desk where the browser's own notification used to be; the stack sits under
+   the corner buttons and above every window. */
+#jawnos_notices {
+	position: fixed;
+	top: 58px;
+	right: 12px;
+	z-index: 50000;
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	width: min(340px, calc(100vw - 24px));
+	pointer-events: none;
+}
+.jawnos_notice {
+	pointer-events: auto;
+	display: flex;
+	align-items: flex-start;
+	gap: 9px;
+	padding: 10px 12px;
+	color: var(--ink, inherit);
+	background-color: var(--panel);
+	border: 1px solid var(--line);
+	border-left: 3px solid var(--accent, #3b7ddd);
+	border-radius: calc(var(--jawnos-corner, 12px) * .6);
+	box-shadow: 0 10px 28px rgba(0,0,0,.3);
+	font-size: 13px;
+	cursor: var(--jawnos-cursor-pointer, pointer);
+}
+.jawnos_notice[data-notice-level=warn] { border-left-color: #c98a2b; }
+.jawnos_notice[data-notice-level=error] { border-left-color: #c0392b; }
+.jawnos_notice[data-notice-level=ok] { border-left-color: #3fa34d; }
+.jawnos_notice_icon { flex: 0 0 auto; width: 24px; height: 24px; object-fit: contain; border-radius: 4px; }
+.jawnos_notice_text { flex: 1 1 auto; min-width: 0; }
+.jawnos_notice_title { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.jawnos_notice_body { margin-top: 2px; opacity: .82; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.jawnos_notice_close {
+	flex: 0 0 auto;
+	padding: 2px 4px;
+	font: inherit;
+	font-size: 13px;
+	line-height: 1;
+	color: inherit;
+	background: transparent;
+	border: 0;
+	opacity: .55;
+	cursor: var(--jawnos-cursor-pointer, pointer);
+}
+.jawnos_notice_close:hover { opacity: 1; }
+
+/* The notifications widget: a bell and a count of what arrived since the list
+   was last opened. taskbar_notifications.js paints the count and the panel. */
+#taskbar_notifications { position: relative; }
+.taskbar_notifications_glyph {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: calc(var(--taskbar_h, 44px) * 0.38);
+	height: calc(var(--taskbar_h, 44px) * 0.38);
+}
+.taskbar_notifications_glyph img { width: 100%; height: 100%; object-fit: contain; }
+.taskbar_notifications_badge {
+	position: absolute;
+	top: 1px;
+	right: 1px;
+	min-width: 14px;
+	height: 14px;
+	padding: 0 3px;
+	box-sizing: border-box;
+	font-size: 9px;
+	line-height: 14px;
+	text-align: center;
+	color: #fff;
+	background-color: #c0392b;
+	border-radius: 8px;
+}
+#taskbar_notifications[unread="0"] .taskbar_notifications_badge { display: none; }
+.taskbar_panel .taskbar_panel_search {
+	width: 100%;
+	box-sizing: border-box;
+	margin: 0;
+	padding: 5px 8px;
+	font: inherit;
+	font-size: 12px;
+	color: inherit;
+	background-color: var(--panel);
+	border: 1px solid var(--line);
+	border-radius: 6px;
+}
+.taskbar_panel .taskbar_notifications_row {
+	display: flex;
+	flex-direction: column;
+	gap: 1px;
+	padding: 6px;
+	border-radius: 6px;
+}
+.taskbar_panel .taskbar_notifications_row:hover { background-color: var(--line); }
+.taskbar_panel .taskbar_notifications_row b { font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.taskbar_panel .taskbar_notifications_message { max-width: 100%; font-size: 11px; opacity: .72; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.taskbar_panel .taskbar_notifications_when { font-size: 10px; opacity: .55; }

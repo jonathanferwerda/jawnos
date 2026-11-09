@@ -522,6 +522,7 @@ $(document).on('mousewheel touchmove', '#notifications_content', function() {
 
 function notificationScrollLoader() {
 	var nc = $('#notifications_content');
+	if (!nc.length) { return; }
 	var scroll = nc.offset().top;
 	var height = nc.height();
 	var cheight = $('#notifications').height();

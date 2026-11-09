@@ -36,8 +36,9 @@ Counts only: `perl scripts/agent_help.pl <app>` names every file, route, table, 
 - market (topic market): 3 file(s), 27 route(s)
 - measures (topic measures): 1 file(s), 4 route(s)
 - music (topic music): 12 file(s), 1 route(s)
-- network (topic network): 7 file(s), 12 route(s)
+- network (topic network): 7 file(s), 13 route(s)
 - notes (topic notes): 2 file(s), 1 route(s)
+- notifications (topic notifications): 5 file(s), 7 route(s)
 - pen (topic pen): 2 file(s), 1 route(s)
 - people (topic people): 5 file(s), 18 route(s)
 - phone (topic phone): 3 file(s), 10 route(s)
@@ -104,9 +105,9 @@ Counts only: `perl scripts/agent_help.pl <app>` names every file, route, table, 
 
 ## routes
 
-894 routes in 75 modules.
-By controller: Root_misc (3), apps_misc (3), box_office_misc (2), crest_misc (1), download_program_misc (1), embedded_misc (1), file_open_misc (1), gate_misc (1), i18n_misc (1), js_misc (2), mail_misc (2), mail_ws (1), manager_box_office (7), manager_budget (7), manager_budget2 (7), manager_clock (5), manager_configure (35), manager_configure2 (30), manager_configure3 (22), manager_configure4 (19), manager_configure5 (22), manager_crypto (8), manager_device (13), manager_embedded (25), manager_folders (15), manager_folders2 (10), manager_gallery (5), manager_help (29), manager_mail (28), manager_mail2 (10), manager_market (20), manager_market2 (7), manager_misc (23), manager_misc10 (32), manager_misc11 (45), manager_misc12 (23), manager_misc13 (35), manager_misc14 (9), manager_misc2 (36), manager_misc3 (21), manager_misc4 (24), manager_misc5 (17), manager_misc6 (21), manager_misc7 (16), manager_misc8 (25), manager_misc9 (19), manager_people (15), manager_people2 (3), manager_phone (9), manager_power (8), manager_relational (9), manager_sco (12), manager_security (30), manager_security2 (13), manager_security3 (5), manager_sound (5), manager_store (24), manager_store2 (3), manager_transaction (5), manager_transaction2 (2), manager_travel (8), manager_watch (11), manager_weather (12), manager_ws (3), manifest_json_misc (1), mugshot_misc (1), observer_misc (1), passkey_misc (3), pay_misc (4), privacy_misc (1), public_view_misc (1), sesh_check (1), store_misc (13), teletype_misc (1), watch_misc (1).
-By first path segment: / (1), /apps (3), /box_office (2), /crest (1), /device (1), /download_program (1), /embedded (1), /file_open (1), /gate (1), /house (1), /i18n (1), /js (2), /mail (3), /manager (846), /manifest.json (1), /mugshot (1), /observer (1), /passkey (3), /pay (4), /privacy (1), /public_view (1), /sesh_check (1), /store (13), /teletype (1), /watch (1), /ws (1).
+897 routes in 75 modules.
+By controller: Root_misc (3), apps_misc (3), box_office_misc (2), crest_misc (1), download_program_misc (1), embedded_misc (1), file_open_misc (1), gate_misc (1), i18n_misc (1), js_misc (2), mail_misc (2), mail_ws (1), manager_box_office (7), manager_budget (7), manager_budget2 (7), manager_clock (5), manager_configure (35), manager_configure2 (30), manager_configure3 (22), manager_configure4 (19), manager_configure5 (22), manager_crypto (8), manager_device (13), manager_embedded (25), manager_folders (15), manager_folders2 (10), manager_gallery (5), manager_help (29), manager_mail (28), manager_mail2 (10), manager_market (20), manager_market2 (7), manager_misc (23), manager_misc10 (32), manager_misc11 (45), manager_misc12 (23), manager_misc13 (35), manager_misc14 (9), manager_misc2 (37), manager_misc3 (21), manager_misc4 (24), manager_misc5 (17), manager_misc6 (23), manager_misc7 (16), manager_misc8 (25), manager_misc9 (19), manager_people (15), manager_people2 (3), manager_phone (9), manager_power (8), manager_relational (9), manager_sco (12), manager_security (30), manager_security2 (13), manager_security3 (5), manager_sound (5), manager_store (24), manager_store2 (3), manager_transaction (5), manager_transaction2 (2), manager_travel (8), manager_watch (11), manager_weather (12), manager_ws (3), manifest_json_misc (1), mugshot_misc (1), observer_misc (1), passkey_misc (3), pay_misc (4), privacy_misc (1), public_view_misc (1), sesh_check (1), store_misc (13), teletype_misc (1), watch_misc (1).
+By first path segment: / (1), /apps (3), /box_office (2), /crest (1), /device (1), /download_program (1), /embedded (1), /file_open (1), /gate (1), /house (1), /i18n (1), /js (2), /mail (3), /manager (849), /manifest.json (1), /mugshot (1), /observer (1), /passkey (3), /pay (4), /privacy (1), /public_view (1), /sesh_check (1), /store (13), /teletype (1), /watch (1), /ws (1).
 One route: `perl scripts/where.pl /manager/pen`.
 
 ## helpers

@@ -7,6 +7,7 @@ sub routes {
 	return (
 	[18867, 'get', '/manager/icons', 'action_18867'],
 	[22696, 'get', '/manager/notifications/list', 'action_22696'],
+	[22699, 'get', '/manager/notifications', 'action_22699'],
 	[22702, 'get', '/manager/notes', 'action_22702'],
 	[23193, 'get', '/manager/camera', 'action_23193'],
 	[24039, 'post', '/manager/crest/cosign', 'action_24039'],
@@ -20,6 +21,7 @@ sub routes {
 	[25133, 'get', '/manager/notifications/filter', 'action_25133'],
 	[25140, 'get', '/manager/notifications/search', 'action_25140'],
 	[25147, 'get', '/manager/notifications/scroll', 'action_25147'],
+	[25150, 'get', '/manager/notifications/status', 'action_25150'],
 	[25183, 'get', '/manager/appointment_viewer', 'action_25183'],
 	[25345, 'get', '/manager/clothesline_rail', 'action_25345'],
 	[25356, 'get', '/manager/tasks', 'action_25356'],

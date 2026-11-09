@@ -19,7 +19,8 @@
 #   vpn_status
 #   vpn_tailscale up|down
 #   vpn_unit start|stop wg|openvpn <name>
-#   public_ip                    ask a public echo service for the outward address
+#   public_ip                    name a globally routable address on this machine
+#   public_ip_lookup             ask a public echo service for the outward address
 #
 # Every answer is a JSON object. An operational failure is { ok => 0, error };
 # it is not an exit status, so the caller always gets a readable message.
@@ -759,11 +760,72 @@ sub vpn_unit {
 	return { ok => 0, error => clean($stderr) || clean($stdout) || 'systemctl did not answer.' };
 }
 
-# The address the world sees. This is an outbound request, so the caller caches
-# it; curl is tried first and wget is the fallback. Only a string that really is
-# an IPv4 or IPv6 address is returned, so a captive portal's HTML never becomes
-# an "address" on the panel.
+# An address the world can route to. RFC1918, CGNAT, loopback and the other
+# reserved ranges are not public even when the kernel calls their scope global:
+# a LAN address reads as scope global, so the address itself is classified here
+# rather than trusted from `ip`.
+sub address_is_public {
+	my ($ip) = @_;
+	return 0 unless defined $ip && length $ip;
+	if ($ip =~ /^\d{1,3}(?:\.\d{1,3}){3}$/) {
+		my @octet = split /\./, $ip;
+		return 0 if grep { $_ > 255 } @octet;
+		return 0 if $octet[0] == 0 || $octet[0] == 10 || $octet[0] == 127;
+		return 0 if $octet[0] == 169 && $octet[1] == 254;
+		return 0 if $octet[0] == 172 && $octet[1] >= 16 && $octet[1] <= 31;
+		return 0 if $octet[0] == 192 && $octet[1] == 168;
+		return 0 if $octet[0] == 100 && $octet[1] >= 64 && $octet[1] <= 127;
+		return 0 if $octet[0] == 192 && $octet[1] == 0 && $octet[2] == 0;
+		return 0 if $octet[0] == 192 && $octet[1] == 0 && $octet[2] == 2;
+		return 0 if $octet[0] == 198 && ($octet[1] == 18 || $octet[1] == 19);
+		return 0 if $octet[0] == 198 && $octet[1] == 51 && $octet[2] == 100;
+		return 0 if $octet[0] == 203 && $octet[1] == 0 && $octet[2] == 113;
+		return 0 if $octet[0] >= 224;
+		return 1;
+	}
+	my $lc = lc $ip;
+	return 0 if $lc eq '::1' || $lc eq '::';
+	return 0 if $lc =~ /^fe[89ab]/;   # link-local fe80::/10
+	return 0 if $lc =~ /^f[cd]/;      # unique-local fc00::/7
+	return 0 if $lc =~ /^::ffff:/;    # IPv4-mapped
+	return $lc =~ /:/ ? 1 : 0;
+}
+
+# What this machine can know by itself: a globally routable address on one of
+# its interfaces. A machine behind NAT has none, and no local command can see
+# the address the router wears - only the router, or something outside, knows
+# it - so an empty answer says `behind_nat` instead of guessing.
 sub public_ip {
+	my ($stdout, $stderr, $status) = run_read('ip', '-j', 'address', 'show');
+	my $list = eval { $JSON->decode($stdout) };
+	$list = [] unless ref $list eq 'ARRAY';
+	my ($v4, $v6);
+	foreach my $interface ( @{$list} ) {
+		next unless ref $interface eq 'HASH';
+		my $name = $interface->{'ifname'} || '';
+		foreach my $address ( @{ $interface->{'addr_info'} || [] } ) {
+			next unless ref $address eq 'HASH';
+			my $local = $address->{'local'} || '';
+			next unless address_is_public($local);
+			if (($address->{'family'} || '') eq 'inet' && !$v4) {
+				$v4 = { ip => $local, family => 'IPv4', interface => $name };
+			}
+			elsif (($address->{'family'} || '') eq 'inet6' && !$v6) {
+				$v6 = { ip => $local, family => 'IPv6', interface => $name };
+			}
+		}
+	}
+	my $found = $v4 || $v6;
+	return { ok => 1, source => 'local', behind_nat => 1, ip => '', family => '', interface => '' } unless $found;
+	return { ok => 1, source => 'local', behind_nat => 0, %{$found} };
+}
+
+# The address the world sees when the machine is behind NAT. This is an
+# outbound request, so it is never automatic: the panel asks only when a person
+# presses Look up, and the caller caches the answer. curl first, wget second,
+# and only a string that really is an address is returned, so a captive portal's
+# HTML never becomes an "address" on the panel.
+sub public_ip_lookup {
 	my @services = (
 		[ 'curl', '-sS', '--max-time', '5', 'https://api.ipify.org' ],
 		[ 'wget', '-qO-', '--timeout=5', 'https://api.ipify.org' ],
@@ -778,10 +840,10 @@ sub public_ip {
 	}
 	return { ok => 0, error => 'the public address could not be read' } unless $status == 0;
 	my $ip = trim($stdout);
-	my $v4 = $ip =~ /\A(?:\d{1,3}\.){3}\d{1,3}\z/ ? 1 : 0;
-	my $v6 = (!$v4 && $ip =~ /\A[0-9A-Fa-f:.]{2,45}\z/ && $ip =~ /:/) ? 1 : 0;
+	my $v4 = $ip =~ /^\d{1,3}(?:\.\d{1,3}){3}$/ ? 1 : 0;
+	my $v6 = (!$v4 && $ip =~ /^[0-9A-Fa-f:.]{2,45}$/ && $ip =~ /:/) ? 1 : 0;
 	return { ok => 0, error => 'the public address was not an address' } unless $v4 || $v6;
-	return { ok => 1, ip => $ip, family => ($v4 ? 'IPv4' : 'IPv6'), service => $used };
+	return { ok => 1, source => 'lookup', ip => $ip, family => ($v4 ? 'IPv4' : 'IPv6'), service => $used };
 }
 
 my $command = shift @ARGV;
@@ -838,6 +900,9 @@ elsif ($command eq 'vpn_tailscale') {
 }
 elsif ($command eq 'public_ip') {
 	emit(public_ip());
+}
+elsif ($command eq 'public_ip_lookup') {
+	emit(public_ip_lookup());
 }
 elsif ($command eq 'vpn_unit') {
 	my ($action, $kind, $name) = @ARGV;

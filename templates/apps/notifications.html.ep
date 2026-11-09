@@ -1,0 +1,27 @@
+<style>
+#notifications_app { flex: 1 1 auto; min-width: 0; min-height: 0; display: flex; flex-direction: column; gap: 10px; padding: 14px; box-sizing: border-box; overflow: hidden; font-size: 15px; }
+#notifications_app .notifications_app_toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+#notifications_app .notifications_app_search { flex: 1 1 220px; min-width: 0; padding: 7px 10px; font: inherit; font-size: 14px; color: inherit; background-color: var(--panel); border: 1px solid var(--line); border-radius: calc(var(--jawnos-corner, 12px) * .45); }
+#notifications_app .notifications_app_filter { flex: 0 1 200px; padding: 7px 8px; font: inherit; font-size: 14px; color: inherit; background-color: var(--panel); border: 1px solid var(--line); border-radius: calc(var(--jawnos-corner, 12px) * .45); }
+#notifications_app .notifications_app_clear { flex: 0 0 auto; }
+#notifications_app .notifications_app_list { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; gap: 8px; overflow-y: auto; padding-right: 4px; }
+#notifications_app .notification { position: relative; padding: 10px 12px; border: 1px solid var(--line); border-radius: calc(var(--jawnos-corner, 12px) * .6); background-color: var(--panel-2, rgba(127,127,127,.06)); overflow: hidden; }
+#notifications_app .notification b { font-size: 15px; }
+#notifications_app .notification .time { font-size: 12px; opacity: .6; }
+#notifications_app .notification img.little_thumb { width: 32px; height: 32px; object-fit: contain; }
+#notifications_app .notifications_app_note { min-height: 1.3em; opacity: .72; font-size: 13px; }
+</style>
+<div id="notifications_app" app="notifications">
+	<div class="notifications_app_toolbar">
+		<input type="search" id="notifications_app_search" class="notifications_app_search" placeholder="<%= &subs::ui('Search notifications') %>" value="<%= $notifications->{'settings'}->{'search'} // '' %>">
+		<select id="notifications_app_filter" class="notifications_app_filter" aria-label="<%= &subs::ui('Filter by app') %>">
+			<option value="all"<%== (($notifications->{'settings'}->{'filter'} || '') eq '' || $notifications->{'settings'}->{'filter'} eq 'all') ? ' selected' : '' %>><%= &subs::ui('All apps') %></option>
+			<% foreach my $app ( sort @{ $notifications->{'apps'} || [] } ) { %>
+				<option value="<%= $app %>"<%== (($notifications->{'settings'}->{'filter'} || '') eq $app) ? ' selected' : '' %>><%= &subs::format_name($app) %></option>
+			<% } %>
+		</select>
+		<button type="button" class="notification_remove notifications_app_clear" scope="all" uuid=""><%= &subs::ui('Remove all') %></button>
+	</div>
+	<div id="notifications_app_list" class="notifications_app_list"><%== $notifications->{'content'} %></div>
+	<div id="notifications_app_note" class="notifications_app_note"></div>
+</div>

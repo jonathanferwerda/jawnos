@@ -33,7 +33,8 @@ function jawnosTaskbarSlots() {
 var jawnosTaskbarWidgets = {
 	power: { hint: 'Battery', icon: '/icons/power.svg' },
 	network: { hint: 'Network', icon: '/icons/network.svg' },
-	sound: { hint: 'Sound', icon: '/icons/sound.svg' }
+	sound: { hint: 'Sound', icon: '/icons/sound.svg' },
+	notifications: { hint: 'Notifications', icon: '/icons/notifications.svg' }
 };
 
 function jawnosTaskbarWidgetItem(w, mode) {
@@ -47,7 +48,7 @@ function jawnosTaskbarWidgetItem(w, mode) {
 // is on by default, because a bar that has one should say so until told not to.
 function jawnosTaskbarDefaultOrder() {
 	var left = (typeof jawnosBars != 'undefined' && jawnosBars.start_side == 'left');
-	var widgets = [jawnosTaskbarWidgetItem('power', 'full')];
+	var widgets = [jawnosTaskbarWidgetItem('power', 'full'), jawnosTaskbarWidgetItem('notifications', 'full')];
 	return left ? ['icons', 'search', 'windows'].concat(widgets, ['clock'])
 		: ['search', 'windows'].concat(widgets, ['clock', 'icons']);
 }
@@ -504,6 +505,12 @@ function jawnosTaskbarWidgetMake(item) {
 		el.append('<span class="taskbar_sound_glyph"><span class="taskbar_sound_cone"></span><span class="taskbar_sound_waves"><i></i><i></i><i></i></span></span>');
 		el.append('<span class="taskbar_sound_text taskbar_widget_text"></span>');
 		setTimeout(function () { if (typeof jawnosSoundTaskbarLoad === 'function') { jawnosSoundTaskbarLoad(); } }, 0);
+	}
+	else if (w == 'notifications') {
+		el.append('<span class="taskbar_notifications_glyph"><img src="/icons/notifications.svg" alt=""></span>');
+		el.append('<span class="taskbar_notifications_badge">0</span>');
+		el.append('<span class="taskbar_notifications_text taskbar_widget_text"></span>');
+		setTimeout(function () { if (typeof jawnosNotificationsTaskbarLoad === 'function') { jawnosNotificationsTaskbarLoad(); } }, 0);
 	}
 	return el;
 }

@@ -600,9 +600,11 @@ our @manager_bundle_files = qw(
 	/js/manager/taskbar.js
 	/js/manager/taskbar_edit.js
 	/js/manager/taskbar_panel.js
+	/js/manager/notifications_toast.js
 	/js/manager/taskbar_power.js
 	/js/manager/taskbar_network.js
 	/js/manager/taskbar_sound.js
+	/js/manager/taskbar_notifications.js
 	/js/manager/narratorprinter.js
 	/js/manager/marker.js
 	/js/pm.js
@@ -634,6 +636,7 @@ our @manager_bundle_files = qw(
 	/js/manager/folders.js
 	/js/manager/desk.js
 	/js/manager/notes.js
+	/js/manager/notifications.js
 	/js/manager/weather.js
 	/js/manager/weather_history.js
 	/js/manager/weather_automation.js
@@ -675,6 +678,7 @@ our %manager_app_scripts = (
 	phone           => [qw(/js/manager/phone.js)],
 	people          => [qw(/js/manager/people.js)],
 	notes           => [qw(/js/manager/notes.js)],
+	notifications   => [qw(/js/manager/notifications.js)],
 	weather          => [qw(/js/manager/weather.js /js/manager/weather_history.js /js/manager/weather_automation.js /js/manager/weather_map.js)],
 	power            => [qw(/js/manager/power.js)],
 	sound            => [qw(/js/manager/sound.js)],
@@ -720,7 +724,7 @@ our %manager_toggle_apps = (
 	synth_toggle => 'synth', studio_toggle => 'studio', marker_toggle => 'marker',
 	terminal_toggle => 'terminal', travel_toggle => 'travel', twirl_toggle => 'twirl',
 	editor_toggle => 'editor', relational_toggle => 'relational', people_toggle => 'people',
-	notes_toggle => 'notes', search_app_toggle => 'search', camera_toggle => 'camera',
+	notes_toggle => 'notes', notifications_toggle => 'notifications', search_app_toggle => 'search', camera_toggle => 'camera',
 	network_toggle => 'network', phone_toggle => 'phone', ide_toggle => 'ide',
 	budget => 'budget', warehouse_toggle => 'warehouse', measures_toggle => 'measures',
 	market_toggle => 'market', process_monitor_toggle => 'process_monitor',

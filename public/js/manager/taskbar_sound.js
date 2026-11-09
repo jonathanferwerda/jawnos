@@ -51,6 +51,17 @@ function jawnosSoundTaskbarOptimistic(kind, volume) {
 	jawnosSoundTaskbarRender(status);
 	$('#taskbar_sound_panel [data-sound-volume="' + kind + '"]').val(volume);
 	$('#taskbar_sound_panel [data-sound-value="' + kind + '"]').text(volume + '%');
+	// The volume reads out in a house notice while it moves, the way a desktop
+	// shows its own on-screen display. The key keeps one card, updated in place.
+	if (typeof jawnosNotice === 'function') {
+		jawnosNotice({
+			key: 'volume',
+			title: jawnosT('Volume'),
+			message: (kind == 'input' ? jawnosT('Input') : jawnosT('Output')) + ': ' + volume + '%',
+			app: 'sound',
+			ttl: 1200
+		});
+	}
 }
 
 function jawnosSoundTaskbarBindWheel() {

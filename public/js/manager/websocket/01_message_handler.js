@@ -111,7 +111,13 @@ function wsMessageDispatch(raw) {
 			seenWsMessages.splice(10);
 		}
 		if (data['type'] == 'notification') {
-			var notification = new Notification(data['title'], { icon: data['icon'], body: data['message'] });
+			// Our own card, not the browser's Notification: the desktop showed
+			// the browser's only sometimes, and it cannot be themed, searched or
+			// reached from the taskbar.
+			if (typeof jawnosNotice === 'function') {
+				jawnosNotice({ title: data['title'], message: data['message'], app: data['app'], icon: data['icon'] });
+			}
+			if (typeof jawnosNotificationsTaskbarLoad === 'function') { jawnosNotificationsTaskbarLoad(); }
 			if ($('#notifications').is(':visible')) {
 				$('#notifications').prepend(data['html']);
 				appointment_chron();
