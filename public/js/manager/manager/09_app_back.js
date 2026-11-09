@@ -664,3 +664,51 @@ $(document).on('click','.edit_app',function() {
 	}
 
 });
+
+
+/* A handheld's launcher asks the desk to deal an app: /manager?open=twirl. The
+   app's own page is a window fragment - its JavaScript comes from this bundle -
+   so a link straight at /manager/twirl renders a frame with nothing driving it
+   (a canvas, and no game). The desk opens the same window the start menu does,
+   then drops the parameter so a reload does not deal a second one. */
+$(function () {
+	var open = '';
+	try { open = new URLSearchParams(location.search).get('open') || ''; } catch (e) { open = ''; }
+	if (!open) { return; }
+	var urls = {
+		twirl: '/manager/twirl',
+		music: '/manager/music',
+		gallery: '/manager/gallery',
+		configure: '/manager/configure',
+		phone: '/manager/phone',
+		embedded: '/manager/embedded',
+		cards: '/manager/cards',
+		marker: '/manager/marker',
+		chat: '/manager/chat'
+	};
+	var url = urls[open];
+	if (!url) { return; }
+	$.ajax({
+		url: url,
+		type: 'GET',
+		data: { window_maker: 'yes', app: open, timestamp: Date.now() },
+		success: function (response) {
+			if (typeof windowMaker === 'function') { windowMaker(response); }
+		},
+		error: function () { }
+	});
+	try {
+		var u = new URL(location.href);
+		u.searchParams.delete('open');
+		history.replaceState(null, '', u.pathname + (u.searchParams.toString() ? '?' + u.searchParams.toString() : ''));
+	} catch (e) { }
+});
+
+/* The handheld's Home button is KEY_HOME (the input daemon sends it). One press,
+   from any window, comes back to the controller's launcher - the kiosk has no
+   other way out of an app that failed to draw. */
+$(document).on('keydown', function (e) {
+	if (e.key !== 'Home') { return; }
+	e.preventDefault();
+	location.href = '/manager/controller';
+});

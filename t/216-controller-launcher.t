@@ -79,4 +79,15 @@ if ($page =~ /encode_json/) {
 	like($page, qr/<%\s*use Mojo::JSON[^%]*encode_json/, 'the page imports encode_json it uses');
 }
 
+
+# --- a tile asks the desk, not the fragment -----------------------------------
+# An app page is a window fragment: its JavaScript comes from the desk's bundle,
+# so a link straight at it renders a frame with nothing driving it (a canvas and
+# no game). Every app tile names the app on the desk instead.
+my $tiles = () = $page =~ /href="\/manager\?open=/g;
+cmp_ok($tiles, '>=', 6, 'app tiles ask the desk to open them');
+my $desk_js = read_file("$root/public/js/manager/manager/09_app_back.js");
+like($desk_js, qr/location\.search\)\.get\('open'\)/, 'the desk reads the app to open');
+like($desk_js, qr/e\.key !== 'Home'/, 'and listens for the handheld Home key');
+
 done_testing();

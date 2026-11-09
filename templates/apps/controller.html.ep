@@ -59,12 +59,12 @@
 %>
 
 <div id="controller_home">
-	<a class="controller_tile" href="/manager/music">
+	<a class="controller_tile" href="/manager?open=music">
 		<img class="controller_tile_icon" src="/images/decipherable/headphones.png" alt="">
 		<span class="controller_tile_label"><%= &subs::ui('Music') %></span>
 		<span class="controller_tile_note"><%= &subs::ui('Play the house music') %></span>
 	</a>
-	<a class="controller_tile" href="/manager/gallery">
+	<a class="controller_tile" href="/manager?open=gallery">
 		<img class="controller_tile_icon" src="/images/decipherable/gallery.png" alt="">
 		<span class="controller_tile_label"><%= &subs::ui('Gallery') %></span>
 		<span class="controller_tile_note"><%= &subs::ui('Photos and videos') %></span>
@@ -74,22 +74,22 @@
 		<span class="controller_tile_label"><%= &subs::ui('Notifications') %></span>
 		<span class="controller_tile_note"><%= &subs::ui('What the house has told you') %></span>
 	</a>
-	<a class="controller_tile" href="/manager/twirl">
+	<a class="controller_tile" href="/manager?open=twirl">
 		<img class="controller_tile_icon" src="/images/decipherable/tetris.png" alt="">
 		<span class="controller_tile_label"><%= &subs::ui('Games') %></span>
 		<span class="controller_tile_note"><%= &subs::ui('Twirl, the falling-block puzzle') %></span>
 	</a>
-	<a class="controller_tile" href="/manager/configure">
+	<a class="controller_tile" href="/manager?open=configure">
 		<img class="controller_tile_icon" src="/images/decipherable/gear.png" alt="">
 		<span class="controller_tile_label"><%= &subs::ui('Configuration') %></span>
 		<span class="controller_tile_note"><%= &subs::ui('Settings and system') %></span>
 	</a>
-	<a class="controller_tile" href="/manager/phone">
+	<a class="controller_tile" href="/manager?open=phone">
 		<img class="controller_tile_icon" src="/images/decipherable/phone.png" alt="">
 		<span class="controller_tile_label"><%= &subs::ui('IVR') %></span>
 		<span class="controller_tile_note"><%= &subs::ui('The phone call menu and greeting') %></span>
 	</a>
-	<a class="controller_tile" href="/manager/embedded">
+	<a class="controller_tile" href="/manager?open=embedded">
 		<img class="controller_tile_icon" src="/images/decipherable/on.png" alt="">
 		<span class="controller_tile_label"><%= &subs::ui('Automation') %></span>
 		<span class="controller_tile_note"><%= &subs::ui('Toggles for the house devices') %></span>
