@@ -280,27 +280,63 @@ sub session_twin_rows {
 		$app, 'start', 'record', $uuid, $timestamp, $tolerance)->hashes || [];
 }
 
+# The average the app's own closed sessions give it: the last forty stop lengths,
+# plus the session being closed when there is one. Stored stop lengths are
+# negative (start - stop), and a row a repair left without one is not a length at
+# all.
+sub session_duration_average {
+	my ($app, $duration) = @_;
+	return undef unless $app;
+	my $rows = &db_query('select duration from appointments where app=? and type=? order by server_time DESC LIMIT 40', $app, 'stop')->hashes || [];
+	my ($total, $count) = (0, 0);
+	if (defined $duration && length $duration) {
+		$total += abs($duration);
+		$count++;
+	}
+	foreach my $row ( @{$rows} ) {
+		next unless defined $row->{'duration'} && length $row->{'duration'};
+		$total += abs($row->{'duration'});
+		$count++;
+	}
+	return undef unless $count;
+	return $total / $count;
+}
+
 # The app's usual length is the average of the sessions it has closed. Every
 # writer that ends a session - manager_reset for a press, appointment_writer for
 # a plate, a timer, a weather rule or a relayed stop - must teach it the same
 # way, or a session the person never pressed stop on (autostop at a plate) would
 # never count toward what the app is expected to run for. The caller passes the
 # length of the session it is closing: this row must not be in the table yet, or
-# it would be counted twice. Stored stop lengths are negative (start - stop),
-# and a row a repair left without one is not a length at all.
+# it would be counted twice.
 sub session_duration_learn {
 	my ($app, $duration) = @_;
 	return undef unless $app && defined $duration;
-	my $rows = &db_query('select duration from appointments where app=? and type=? order by server_time DESC LIMIT 40', $app, 'stop')->hashes || [];
-	my ($total, $count) = (abs($duration), 1);
-	foreach my $row ( @{$rows} ) {
-		next unless defined $row->{'duration'} && length $row->{'duration'};
-		$total += abs($row->{'duration'});
-		$count++;
-	}
-	my $average = $total / $count;
+	my $average = &session_duration_average($app, $duration);
+	return undef unless defined $average;
 	&setting_setter({ app => $app, setting => 'duration', value => &duration_sayer($average / 1000) });
 	return $average;
+}
+
+# One deliberate pass over the house: every app whose stops already say how long
+# it usually runs is taught that average now, instead of waiting for its next
+# stopped session. Writes the setting only when $apply; otherwise the report is
+# the dry run. The script that runs this is scripts/duration_backfill.pl.
+sub session_duration_backfill {
+	my ($apply) = @_;
+	my $rows = &db_query('select distinct app from appointments where type=? and duration is not null and app is not null and app != ?', 'stop', '')->hashes || [];
+	my @out;
+	foreach my $row ( @{$rows} ) {
+		my $app = $row->{'app'};
+		next unless defined $app && length $app;
+		my $average = &session_duration_average($app);
+		next unless defined $average;
+		my $before = &setting_grabber({ app => $app, setting => 'duration' });
+		my $value = &duration_sayer($average / 1000);
+		&setting_setter({ app => $app, setting => 'duration', value => $value }) if $apply;
+		push @out, { app => $app, was => ($before // ''), value => $value, average => $average, changed => (($before // '') ne $value ? 1 : 0) };
+	}
+	return [ sort { $a->{'app'} cmp $b->{'app'} } @out ];
 }
 
 sub appt_header_printer {

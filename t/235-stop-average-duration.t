@@ -1,5 +1,5 @@
-# tests-for: lib/JawnOS/Domain/Calendar.pm lib/JawnOS/Domain/Loader.pm lib/JawnOS/Domain/Appointment.pm lib/JawnOS/Manager/Part05.pm lib/JawnOS/Manager/Part14.pm
-# covers:    a stop that carried no length of its own teaches the app's usual duration, whichever writer closed the session - a press through manager_reset or an automatic stop through appointment_writer (a plate, a timer, a weather rule, a relay)
+# tests-for: lib/JawnOS/Domain/Calendar.pm lib/JawnOS/Domain/Loader.pm lib/JawnOS/Domain/Appointment.pm lib/JawnOS/Manager/Part05.pm lib/JawnOS/Manager/Part14.pm scripts/duration_backfill.pl
+# covers:    a stop that carried no length of its own teaches the app's usual duration, whichever writer closed the session - a press through manager_reset or an automatic stop through appointment_writer (a plate, a timer, a weather rule, a relay); and the backfill that teaches apps from the stops they already have
 
 use strict;
 use warnings;
@@ -60,6 +60,54 @@ my ($sql_seen, $write) = ('', undef);
 
 is(&subs::session_duration_learn(undef, -1000), undef, 'an app with no name learns nothing');
 is(&subs::session_duration_learn('coffee'), undef, 'a stop with no length learns nothing');
+
+# ------------------------------------------------------------ the backfill
+# The average is also readable without a session being closed, which is what the
+# one-off backfill needs.
+{
+	no warnings 'redefine';
+	local *subs::db_query = sub { return DurationRows->new(\@closed); };
+	is(&subs::session_duration_average('coffee'), 1_200_000,
+		'with nothing being closed the average is of the closed sessions alone');
+	is(&subs::session_duration_average('coffee', -600_000), 1_000_000,
+		'a length handed in joins the same 40-row average');
+	local *subs::db_query = sub { return DurationRows->new([]); };
+	is(&subs::session_duration_average('quiet'), undef, 'an app with no closed sessions has no average');
+}
+
+my %stops = (
+	coffee => [ { duration => -600_000 }, { duration => -1_800_000 } ],
+	home   => [],
+);
+my (@writes, @reads);
+{
+	no warnings 'redefine';
+	local *subs::db_query = sub {
+		my ($sql, @args) = @_;
+		return DurationRows->new([ map { { app => $_ } } qw(coffee home empty) ]) if $sql =~ /select distinct app/;
+		return DurationRows->new($stops{$args[0]} || []);
+	};
+	local *subs::setting_grabber = sub { push @reads, $_[0]->{'app'}; return $_[0]->{'app'} eq 'coffee' ? '10m' : 'old'; };
+	local *subs::setting_setter = sub { push @writes, $_[0]; return 1; };
+
+	my $dry = &subs::session_duration_backfill(0);
+	is(scalar @writes, 0, 'the dry run writes nothing');
+	my %dry = map { $_->{'app'} => $_ } @{$dry};
+	ok(!$dry{'home'}, 'an app with no closed sessions is left out');
+	is($dry{'coffee'}->{'value'}, &subs::duration_sayer(1200), 'the computed usual length is reported');
+	is($dry{'coffee'}->{'was'}, '10m', 'and what the setting held is read back');
+	ok($dry{'coffee'}->{'changed'}, 'a different value is marked as a change');
+
+	my $applied = &subs::session_duration_backfill(1);
+	is(scalar @writes, 1, 'the apply run writes the apps that have an average');
+	is($writes[0]->{'app'},     'coffee',   'for the app the stops name');
+	is($writes[0]->{'setting'}, 'duration', 'into the usual-length setting');
+	is($writes[0]->{'value'}, &subs::duration_sayer(1200), 'with the value the dry run showed');
+}
+
+my $script = read_file("$root/scripts/duration_backfill.pl");
+like($script, qr/session_duration_backfill\(\$apply\)/, 'the script runs the shared backfill with its apply flag');
+like($script, qr/--apply/, 'and names the write it can make');
 
 # ------------------------------------------------------------ both writers call it
 
