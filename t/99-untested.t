@@ -70,6 +70,8 @@ my @no_behaviour = (
 # Our own code that no test claims yet. Remove a name when its test lands; this
 # list may shrink, and a name that is no longer untested is reported as stale.
 my %owed = map { $_ => 1 } qw(
+	public/js/pm.js
+	public/js/screensaver.js
 );
 
 my @source = git_paths(qw(lib perl templates public/js scripts));

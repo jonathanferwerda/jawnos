@@ -46,10 +46,15 @@ function timelinePrinter(appts,sort,offset) {
 	// the span's band is tall enough for the appointment's own name (20px type)
 	// to sit inside it, rather than the name overflowing a thin line
 	var bandHeight = 28;
+	// the occurrence mark is the same one the other printers draw: the app's
+	// colour in a disc with a thin ink edge. The pseudonym's plate sits in its
+	// middle, small enough that the colour still shows as a rim around it - the
+	// icon sets are rounded-square plates, so one larger than the disc covers
+	// the colour and leaves only a cut ring.
 	var dotRadius = 14;
-	var dotRing = 4;   // the coloured ring around the disc
+	var dotRing = 2;   // the ink edge around the disc
 	var dotHalo = 7;   // the theme's halo behind it, when the theme has one
-	var dotIcon = 29;
+	var dotIcon = 20;
 	var pad = 26;
 	var top = headerHeight + clothesLineHeight + 26;
 	var rows = 0;
@@ -171,8 +176,9 @@ function timelinePrinter(appts,sort,offset) {
 				ctx.restore();
 			}
 
-			// the dot: halo, ink disc, coloured ring, and the span's end cap.
-			// It sits just around the icon that goes in its middle.
+			// the dot: halo, the appointment's own colour in a disc, a thin ink
+			// edge - the same mark the other printers draw - and the span's start
+			// cap. The pseudonym's plate goes in its middle afterwards.
 			ctx.save();
 			if (halo) {
 				ctx.strokeStyle = halo;
@@ -181,24 +187,29 @@ function timelinePrinter(appts,sort,offset) {
 				ctx.arc(x, rowY, dotRadius, 0, (Math.PI * 2));
 				ctx.stroke();
 			}
-			ctx.fillStyle = ink;
+			if (typeof jawnosTextureFillCircle == 'function') { jawnosTextureFillCircle(ctx, x, rowY, dotRadius, colour, darkTheme); }
+			else { ctx.fillStyle = colour; ctx.beginPath(); ctx.arc(x, rowY, dotRadius, 0, (Math.PI * 2)); ctx.fill(); }
+			ctx.strokeStyle = ink;
+			ctx.lineWidth = dotRing;
 			ctx.beginPath();
 			ctx.arc(x, rowY, dotRadius, 0, (Math.PI * 2));
-			ctx.fill();
-			ctx.beginPath();
-			ctx.arc(x, rowY, dotRadius, 0, (Math.PI * 2));
-			if (typeof jawnosTextureStroke == 'function') { jawnosTextureStroke(ctx, colour, darkTheme, dotRing); }
-			else { ctx.strokeStyle = colour; ctx.lineWidth = dotRing; ctx.stroke(); }
+			ctx.stroke();
 			if (startX != undefined) {
+				// the span's start wears the same small mark, so both ends of the
+				// band read as the timeline's own dots rather than two vocabularies
+				if (typeof jawnosTextureFillCircle == 'function') { jawnosTextureFillCircle(ctx, startX, rowY, 5, colour, darkTheme); }
+				else { ctx.fillStyle = colour; ctx.beginPath(); ctx.arc(startX, rowY, 5, 0, (Math.PI * 2)); ctx.fill(); }
+				ctx.strokeStyle = ink;
+				ctx.lineWidth = 1.5;
 				ctx.beginPath();
 				ctx.arc(startX, rowY, 5, 0, (Math.PI * 2));
-				if (typeof jawnosTextureStroke == 'function') { jawnosTextureStroke(ctx, colour, darkTheme, 3); }
-				else { ctx.lineWidth = 3; ctx.stroke(); }
+				ctx.stroke();
 			}
 			ctx.restore();
 
-			// the pseudonym's own icon, centred in the dot. It draws when the
-			// image loads, so it lands on top of the disc above.
+			// the pseudonym's own plate, centred in the dot. It draws when the
+			// image loads, so it lands on top of the disc above; at dotIcon it
+			// leaves the appointment's colour showing as a rim inside the edge.
 			pseudoGenerator(appts,l['type'], x - (dotIcon / 2), rowY - (dotIcon / 2), dotIcon);
 
 			var labelX = x + 20;
@@ -250,15 +261,13 @@ function timelinePrinter(appts,sort,offset) {
 				ctx.arc(gx, rowY, dotRadius, 0, (Math.PI * 2));
 				ctx.stroke();
 			}
-			ctx.fillStyle = ink;
+			if (typeof jawnosTextureFillCircle == 'function') { jawnosTextureFillCircle(ctx, gx, rowY, dotRadius, colour, darkTheme); }
+			else { ctx.fillStyle = colour; ctx.beginPath(); ctx.arc(gx, rowY, dotRadius, 0, (Math.PI * 2)); ctx.fill(); }
+			ctx.strokeStyle = ink;
+			ctx.lineWidth = dotRing;
 			ctx.beginPath();
 			ctx.arc(gx, rowY, dotRadius, 0, (Math.PI * 2));
-			ctx.fill();
-			ctx.strokeStyle = colour;
-			ctx.beginPath();
-			ctx.arc(gx, rowY, dotRadius, 0, (Math.PI * 2));
-			if (typeof jawnosTextureStroke == 'function') { jawnosTextureStroke(ctx, colour, darkTheme, dotRing); }
-			else { ctx.lineWidth = dotRing; ctx.stroke(); }
+			ctx.stroke();
 			ctx.restore();
 		});
 		// a row with nothing drawn has nothing to answer for
