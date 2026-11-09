@@ -572,6 +572,8 @@ void wifi_supervise() {
 
   if (wifiDownTicks == 3) {
     WiFi.mode(WIFI_AP_STA);
+    // A mode change can restore the core's default power save; ask again.
+    WiFi.noLowPowerMode();
     if (WiFi.softAPIP() == IPAddress(0, 0, 0, 0)) {
       WiFi.softAP(ap_ssid.c_str(), ap_password.c_str());
       Serial.println("[wifi] router away; AP up while retrying");
@@ -585,9 +587,10 @@ void wifi_supervise() {
     Serial.println("[wifi] associated but no address; rejoining for a lease");
     WiFi.disconnect();
   }
-  if (wifiDownTicks >= 3 && (wifiDownTicks % 3 == 0)) {
-    if (multi.run() == WL_CONNECTED && wifi_addressed()) { wifi_join_done(); }
-  }
+  // Try on every tick while the link is down. Every third tick meant a drop
+  // cost up to 30 s before the first retry, and a command minted in that window
+  // was already old.
+  if (multi.run() == WL_CONNECTED && wifi_addressed()) { wifi_join_done(); }
 }
 
 static void local_apply(int idx, const String &state) {

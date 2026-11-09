@@ -759,6 +759,11 @@ void wifi_start() {
   WiFi.softAPdisconnect(true);
   delay(100);  
   WiFi.mode(WIFI_STA);
+  // The CYW43's default power save parks the radio between beacons. On a weak
+  // 2.4 GHz link this board dropped its association every ~30 s, which took the
+  // socket, the clock and the switch's report with it. The board is USB/mains
+  // powered, so there is nothing to save: keep the radio awake.
+  WiFi.noLowPowerMode();
   // WiFiMulti keeps every AP it was ever given and tries them in order, so a
   // rejoin after a BLE apply could land on the network the user just replaced.
   // Only the configured pair may remain.

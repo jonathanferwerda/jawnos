@@ -172,4 +172,12 @@ like($g2, qr/const char \*keep_keys\[\] = \{ "relay", "led", "button", "switch",
 	'the role and the pin maps survive a USB provision');
 
 
+
+# --- (j) the station stays awake and rejoins at once -----------------------
+like($g2, qr/WiFi\.noLowPowerMode\(\);/, 'the station disables the CYW43 power save');
+like($g3, qr/WiFi\.noLowPowerMode\(\);/, 'and asks again after an AP-mode change');
+unlike($g3, qr/wifiDownTicks % 3 == 0/, 'a dropped link is retried every tick, not every third');
+like($g3, qr/if \(multi\.run\(\) == WL_CONNECTED && wifi_addressed\(\)\) \{ wifi_join_done\(\); \}/,
+	'and the retry is the same join');
+
 done_testing();
