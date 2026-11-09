@@ -1,3 +1,4 @@
+<% use Mojo::JSON qw(encode_json); %>
 <%# The controller's home. A handheld panel is 480x854 and has no desk to lay
     windows on, so it opens on a launcher instead: eight tiles, each one press
     away from the surface it names. Leave is a panel of its own: the action asks

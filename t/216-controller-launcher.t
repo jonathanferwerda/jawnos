@@ -70,4 +70,13 @@ my $desk = read_file("$root/lib/JawnOS/Controller/manager_misc4.pm");
 like($desk, qr/return \$c->redirect_to\('\/manager\/controller'\) if &subs::device_setter\(\) eq 'controller';/,
 	'the desk redirects a controller to its launcher');
 
+# --- the page can actually render -------------------------------------------
+# A template runs in the app's sandbox, which has none of the controller's
+# imports: encode_json without this line is a 500 at render time, and a
+# clicked-through page is the only place it used to show.
+my $page = read_file("$root/templates/apps/controller.html.ep");
+if ($page =~ /encode_json/) {
+	like($page, qr/<%\s*use Mojo::JSON[^%]*encode_json/, 'the page imports encode_json it uses');
+}
+
 done_testing();
