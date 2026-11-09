@@ -181,7 +181,7 @@ $topic{'handbook'} = {
 	};
 $topic{'embedded'} = {
 		title => 'Embedded', category => 'apps', app => 'embedded',
-		templates => [ 'templates/embedded/embedded.html.ep', 'templates/embedded/component.html.ep' ],
+		templates => [ 'templates/embedded/embedded.html.ep', 'templates/embedded/component.html.ep', 'templates/embedded/body.html.ep' ],
 		verified => '2026-11-06',
 		summary => 'The device fleet, from the desktop.',
 		body => [
@@ -192,6 +192,7 @@ $topic{'embedded'} = {
 			'The WiFi card sets the network a watch, deck or board joins. Type the network name or press Scan to fill the list from this machine\'s radio, enter its password, then press Update WiFi. A password box that reads set already holds one: leave it blank to keep it, and type a new password only to replace it. The AP fields name the network the device offers when it cannot join yours. If the device is not on the network, the update goes over Bluetooth; a board wired in over USB can be written with Update USB instead.',
 			'A switch on a board is the newest word: it moves its relay at once and the panel follows it. The board keeps the moment of the flip, so a command minted before it - a start pressed on the panel a moment earlier - is dropped instead of turning the relay back on. A board takes its commands one at a time, so a run of quick start and stop presses is queued and every one of them arrives.',
 			'A board\'s GPIO view draws each wired pin in full and keeps every empty GPIO visible as a small + button: press one to open that pin\'s form in place. The Pins view draws the whole board map and outlines the pins that are already wired: press a pin there to give it an appointment, a movement or a name.',
+			'A board can also be asked what it actually has. Press Read the board above its GPIO list and the panel shows the parts it is configured for, how many pins are free and which pins look wired to something. Every pin that reads as switched to ground, tied high or unclear is offered with an appointment and a part; choose the appointment and the part, then press Attach to wire that pin where you are looking, without opening its form first.',
 			'A pin can record instead of running a command: choose Video or Audio under Movement, then pick the source - Camera (rear), Camera (front), Microphone or System audio - and the machine that records. The first press starts the recording on that machine; the next press stops it. This machine records on the computer, phone or server that serves the board.',
 			'Every device reports the build it is running, and the Firmware line beside the OTA button shows both that build and the one this machine holds. Press OTA and the stored image goes to the board; if this machine is holding an image built from older firmware, the press is refused and says so, so a board is never quietly rolled back. Tick Auto OTA and the house sends the stored image by itself whenever the device reports an older build.'
 		],
@@ -203,6 +204,7 @@ $topic{'embedded'} = {
 			'On a device row, type the WiFi name or press Scan to pick a nearby network.',
 			'On an input pin, choose Video or Audio under Movement, pick the camera or microphone kind and the machine that records, then press the pin once to start and again to stop.',
 			'On a board, open Pins to add a pin, then set the appointment and movement it runs.',
+			'On a board, press Read the board to see its configured parts and free pins, then choose an appointment and a part on a wired-looking pin and press Attach.',
 			'Leave a password box blank to keep the password already stored; type a new one to replace it, then press Update WiFi.',
 			'On a board that will not join, plug it in over USB and press Update USB to write the WiFi name and password over the cable.',
 			'On a board row, plug the board in over USB and press Restore over USB to rewrite its stored WiFi and role, then let it reboot.',

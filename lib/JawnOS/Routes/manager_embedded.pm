@@ -23,6 +23,8 @@ sub routes {
 	[43857, 'get', '/manager/embedded/teletype_backup', 'action_43857'],
 	[43881, 'get', '/manager/embedded/jobs', 'action_43881'],
 	[43918, 'post', '/manager/embedded/delete_job', 'action_43918'],
+	[43934, 'get', '/manager/embedded/board_pins', 'action_43934'],
+	[43947, 'post', '/manager/embedded/board_pins_attach', 'action_43947'],
 	);
 }
 

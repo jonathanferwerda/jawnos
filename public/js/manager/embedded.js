@@ -1,6 +1,7 @@
 /* [[js-split]]
    embedded.js is part 1. The rest live in embedded/ in name order:
      01_ota_nowme.js - nowMe push - device query - OTA and USB flashing - audio replies - TTY - diagrams
+     02_board_pins.js - reading a board's wired pins, then attaching a discovered one
    /js/manager/bundle.js concatenates the index and these parts.
    [[/js-split]] */
 var edt = 'watch';

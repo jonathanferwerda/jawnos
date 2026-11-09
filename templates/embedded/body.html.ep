@@ -123,6 +123,17 @@
 
 		<% if ($view eq 'gpio') { %>
 		
+			<% if ($edt eq 'microcontroller') { %>
+				<%# One press asks the board itself what it is wired for and what its pins
+				    see, instead of making the person open every GPIO form. The section it
+				    fills draws each discovered pin with an appointment and a part to
+				    attach it to. %>
+				<div id="embedded_board_read_row" style="margin:4px 0;">
+					<button id="embedded_board_read" hint="<%= &subs::ui('Ask the board what it is wired for and which pins it can see') %>"><%= &subs::ui('Read the board') %></button>
+				</div>
+				<div id="embedded_board_pins" class="teletype_card" style="display:none;text-align:left;"></div>
+			<% } %>
+
 			<div id="watch_buttons">
 				<%# two rows, like the device's own screen: the teletype has 8 buttons
 				    (4+4), the watch 6 (3+3), a board 28 pins (14+14). room_max is the

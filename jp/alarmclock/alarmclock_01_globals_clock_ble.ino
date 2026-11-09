@@ -144,6 +144,8 @@ void call_the_president();
 void device_ws_poll();
 // Its counters, printed by the USB diagnostic where a host is reading.
 String dev_ws_report();
+// The board's own pin map, plus a probe of the pins nothing is configured on.
+String board_pins_json();
 
 static const uint8_t ble_nus_service[16] = { 0x6E,0x40,0x00,0x01,0xB5,0xA3,0xF3,0x93,0xE0,0xA9,0xE5,0x0E,0x24,0xDC,0xCA,0x9E };
 static const uint8_t ble_nus_rx[16]      = { 0x6E,0x40,0x00,0x02,0xB5,0xA3,0xF3,0x93,0xE0,0xA9,0xE5,0x0E,0x24,0xDC,0xCA,0x9E };
@@ -241,6 +243,173 @@ static int64_t jint64(JSONVar v) {
 }
 
 static bool offset_sane(int64_t off) { return off > -50400 && off < 50400; }
+
+// ---- board pin report --------------------------------------------------------
+// A manager adopts a board by asking what it has, and a person attaching a
+// peripheral needs the same answer. The configured map is described here, and
+// the pins nothing claims can be probed. The probe never touches a configured
+// pin: driving a relay, a servo or an LED is a real-world action, not a test.
+static const int board_pin_max = 30;
+
+// On a Pico 2 W the CYW43 radio owns these; they are not general GPIO.
+static bool board_pin_reserved(int pin) {
+  return pin == 23 || pin == 24 || pin == 25;
+}
+
+// Every pin a component claims. A probe reads this before it touches anything.
+static bool board_pin_is_configured(int pin) {
+  const char *maps[] = { "relay", "led", "servo", "button", "switch", "pot" };
+  for (size_t m = 0; m < sizeof(maps) / sizeof(maps[0]); m++) {
+    JSONVar keys = config[maps[m]].keys();
+    for (int i = 0; i < keys.length(); i++) {
+      if (String(keys[i]).toInt() == pin) { return true; }
+    }
+  }
+  return false;
+}
+
+// One row per sensor class. Adding a motion or IR sensor is a new predicate and
+// one row in this table, not a new branch in the reader.
+struct pin_probe_kind_t {
+  const char *kind;
+  bool (*matches)(int hi, int lo);
+};
+static bool probe_is_floating(int hi, int lo) { return hi == 1 && lo == 0; }
+static bool probe_is_grounded(int hi, int lo) { return hi == 0 && lo == 0; }
+static bool probe_is_high(int hi, int lo) { return hi == 1 && lo == 1; }
+static const pin_probe_kind_t pin_probe_kinds[] = {
+  { "floating", probe_is_floating },
+  { "grounded", probe_is_grounded },
+  { "high",     probe_is_high },
+};
+
+// Probe only the pins no component claims. The pull-up/pull-down pair tells a
+// floating pin from one tied to ground or to a high level; INPUT then leaves
+// the pin exactly as it was found.
+static int board_pins_probe(int pins[], String kinds[], int analogs[], int max) {
+  int n = 0;
+  for (int pin = 0; pin < board_pin_max && n < max; pin++) {
+    if (!pin_ok(pin) || board_pin_reserved(pin) || board_pin_is_configured(pin)) { continue; }
+    pinMode(pin, INPUT_PULLUP);
+    delay(2);
+    int hi = digitalRead(pin);
+    pinMode(pin, INPUT_PULLDOWN);
+    delay(2);
+    int lo = digitalRead(pin);
+    int analog = analogRead(pin);
+    pinMode(pin, INPUT);
+    String kind = "unknown";
+    for (size_t k = 0; k < sizeof(pin_probe_kinds) / sizeof(pin_probe_kinds[0]); k++) {
+      if (pin_probe_kinds[k].matches(hi, lo)) { kind = pin_probe_kinds[k].kind; break; }
+    }
+    pins[n] = pin;
+    kinds[n] = kind;
+    analogs[n] = analog;
+    n++;
+  }
+  return n;
+}
+
+// One component per configured pin, output maps first. app/inverted come from
+// the entry when it is an object; an output map holds only its state string.
+static int board_pins_components(int pins[], String names[], String apps[], String invs[], int max) {
+  const char *maps[] = { "relay", "led", "servo", "button", "switch", "pot" };
+  int n = 0;
+  for (size_t m = 0; m < sizeof(maps) / sizeof(maps[0]); m++) {
+    JSONVar keys = config[maps[m]].keys();
+    for (int i = 0; i < keys.length() && n < max; i++) {
+      String spin = String(keys[i]);
+      int pin = spin.toInt();
+      if (!pin_ok(pin)) { continue; }
+      JSONVar entry = config[maps[m]][spin];
+      String app = "", inverted = "";
+      if (JSON.typeof(entry) == "object") {
+        app = jstr(entry["app"]);
+        inverted = jstr(entry["inverted"]);
+        if (inverted != "0" && inverted != "1") { inverted = jint(entry["inverted"]) ? "1" : "0"; }
+      }
+      pins[n] = pin;
+      names[n] = maps[m];
+      apps[n] = app;
+      invs[n] = inverted;
+      n++;
+    }
+  }
+  return n;
+}
+
+static String board_json_quote(const String &s) {
+  String out = "\"";
+  for (size_t i = 0; i < s.length(); i++) {
+    char c = s[i];
+    if (c == '"' || c == '\\') { out += '\\'; out += c; }
+    else if (c == '\n') { out += "\\n"; }
+    else { out += c; }
+  }
+  out += "\"";
+  return out;
+}
+
+String board_pins_json() {
+  int comp_pins[board_pin_max];
+  String comp_names[board_pin_max], comp_apps[board_pin_max], comp_invs[board_pin_max];
+  int comp_n = board_pins_components(comp_pins, comp_names, comp_apps, comp_invs, board_pin_max);
+  // Sort by pin so the report reads the same way every time.
+  for (int i = 1; i < comp_n; i++) {
+    int p = comp_pins[i];
+    String c = comp_names[i], a = comp_apps[i], v = comp_invs[i];
+    int j = i - 1;
+    while (j >= 0 && comp_pins[j] > p) {
+      comp_pins[j + 1] = comp_pins[j];
+      comp_names[j + 1] = comp_names[j];
+      comp_apps[j + 1] = comp_apps[j];
+      comp_invs[j + 1] = comp_invs[j];
+      j--;
+    }
+    comp_pins[j + 1] = p;
+    comp_names[j + 1] = c;
+    comp_apps[j + 1] = a;
+    comp_invs[j + 1] = v;
+  }
+
+  int free_pins[board_pin_max];
+  int free_n = 0;
+  for (int pin = 0; pin < board_pin_max && free_n < 30; pin++) {
+    if (!pin_ok(pin) || board_pin_reserved(pin) || board_pin_is_configured(pin)) { continue; }
+    free_pins[free_n++] = pin;
+  }
+
+  int probe_pins[board_pin_max], probe_analogs[board_pin_max];
+  String probe_kinds[board_pin_max];
+  int probe_n = board_pins_probe(probe_pins, probe_kinds, probe_analogs, board_pin_max);
+
+  String out = "{\"t\":\"pins\",";
+  out += "\"chip\":" + board_json_quote(String(rp2040.getChipID())) + ",";
+  out += "\"version\":" + board_json_quote(String(JAWN_FW_VERSION)) + ",";
+  out += "\"purpose\":" + board_json_quote(jstr(config["purpose"])) + ",";
+  out += "\"components\":[";
+  for (int i = 0; i < comp_n; i++) {
+    if (i) { out += ","; }
+    out += "{\"pin\":" + String(comp_pins[i]) +
+           ",\"component\":" + board_json_quote(comp_names[i]) +
+           ",\"app\":" + board_json_quote(comp_apps[i]) +
+           ",\"inverted\":" + board_json_quote(comp_invs[i]) + "}";
+  }
+  out += "],\"free\":[";
+  for (int i = 0; i < free_n; i++) {
+    if (i) { out += ","; }
+    out += String(free_pins[i]);
+  }
+  out += "],\"probe\":[";
+  for (int i = 0; i < probe_n; i++) {
+    if (i) { out += ","; }
+    out += "{\"pin\":" + String(probe_pins[i]) +
+           ",\"kind\":" + board_json_quote(probe_kinds[i]) +
+           ",\"analog\":" + String(probe_analogs[i]) + "}";
+  }
+  out += "]}";
+  return out;
+}
 
 // ---- the relay's outbound queue ---------------------------------------------
 // A watch or deck out of its homebase's range can still reach this board over

@@ -583,4 +583,65 @@ sub action_43918 {
 	$c->render(json => { uuid => $uuid, appt_uuid => $appt_uuid });
 }
 
+# GET /manager/embedded/board_pins
+# Ask a board what it is actually wired to, over HTTP when an ip is given and
+# over its USB console otherwise, then adopt the answer into the house record.
+sub action_43934 {
+	my $c = shift;
+	my $edt = $c->param('edt');
+	my $chip_id = $c->param('chip_id');
+	my $ip = $c->param('ip');
+	my $port = $c->param('port');
+
+	my $read;
+	if ($ip) {
+		# A board serves /pins on the same house port as /jobs and /device_query.
+		$read = &subs::board_pins_http_read($ip, $port || $config->{'port'});
+	}
+	else {
+		unless ($port) {
+			my $ports = &usb_ports_grabber();
+			my @acm = grep { $_->{'acm'} } @{$ports};
+			if (scalar @acm == 1) { $port = $acm[0]->{'path'}; }
+			else {
+				my $key = $chip_id || '';
+				$key =~ s/[^0-9A-F]//gi;
+				my @match = grep {
+					my $label = $_->{'label'} || '';
+					($chip_id && $label =~ /\Q$chip_id\E/i) || ($key && $label =~ /\Q$key\E/i)
+				} @acm;
+				$port = $match[0]->{'path'} if scalar @match == 1;
+			}
+			return $c->render(json => { ok => 0, error => 'choose a port', ports => $ports }) unless $port;
+		}
+		$read = &subs::board_pins_usb_read($port);
+	}
+	return $c->render(json => { ok => 0, error => $read->{'error'} }) unless $read->{'ok'};
+
+	my $report = $read->{'report'};
+	$edt ||= $report->{'purpose'} || 'microcontroller';
+	$chip_id ||= $report->{'chip'};
+	my $adopted = &subs::board_pins_adopt($report, { edt => $edt, chip_id => $chip_id });
+	$c->render(json => {
+		%{$adopted},
+		report => $report,
+		port => $read->{'port'},
+		ip => $read->{'ip'},
+	});
+}
+
+# POST /manager/embedded/board_pins_attach
+sub action_43947 {
+	my $c = shift;
+	$c->render(json => &subs::board_pins_attach({
+		edt => $c->param('edt'),
+		chip_id => $c->param('chip_id'),
+		pin => $c->param('pin'),
+		component => $c->param('component'),
+		app => $c->param('app'),
+		inverted => $c->param('inverted'),
+		movement => $c->param('movement'),
+	}));
+}
+
 1;

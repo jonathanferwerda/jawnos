@@ -177,6 +177,12 @@ static void usb_config_loop() {
         Serial.println("JAWNCFG WS " + dev_ws_report());
         Serial.println("JAWNCFG EVENTS " + event_ring_dump());
       }
+      else if (line == "JAWNPINS?") {
+        // The board's configured pin map plus a probe of the pins nothing is
+        // configured on, so a manager can adopt it and a person can attach a
+        // peripheral. One line, because the console reads lines.
+        Serial.println("JAWNPINS " + board_pins_json());
+      }
       else if (line == "JAWNREBOOT") {
         Serial.println("JAWNCFG REBOOT");
         usb_reboot_pending = true;
@@ -600,6 +606,15 @@ void jawn_setup() {
 
     String jstatus = JSON.stringify(status);
     server.send(200, "text/plain", jstatus);    
+  });
+  server.on("/pins", []() {
+    homebaseChecked();
+    String rauth = server.arg("authorization");
+    if (authorization.length() > 0 && rauth != authorization) {
+      server.send(403, "text/plain", "no");
+      return;
+    }
+    server.send(200, "application/json", board_pins_json());
   });
   server.on("/wifi_update", []() {
     homebaseChecked();
