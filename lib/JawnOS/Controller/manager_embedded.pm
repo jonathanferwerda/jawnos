@@ -89,7 +89,7 @@ sub action_43099 {
 	my $ip = $c->param('ip');
 	my $chip_id = $c->param('chip_id');
 	my $name = &subs::format_name($c->param('name'));
-	my $res = &now_me({ c => $c, timestamp => $timestamp, edt => $edt, ip => $ip, name => $name, chip_id => $chip_id, browser_tab_id => $c->param('browser_tab_id') });
+	my $res = &now_me({ c => $c, timestamp => $timestamp, edt => $edt, ip => $ip, name => $name, chip_id => $chip_id, browser_tab_id => $c->param('browser_tab_id'), force_home => 1 });
 	$c->render('text' => $res);
 }
 
@@ -105,7 +105,7 @@ sub action_43109 {
 	$log->info('Got bt now me');
 	$log->info($bt_mac);
 
-	my $res = &now_me({ c => $c, timestamp => $timestamp, edt => $edt, ip => $ip, name => $name, chip_id => $chip_id, browser_tab_id => $c->param('browser_tab_id'), method => 'bluetooth' });
+	my $res = &now_me({ c => $c, timestamp => $timestamp, edt => $edt, ip => $ip, name => $name, chip_id => $chip_id, browser_tab_id => $c->param('browser_tab_id'), method => 'bluetooth', force_home => 1 });
 	$c->render('text' => $res);
 }
 

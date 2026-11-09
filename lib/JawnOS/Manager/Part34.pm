@@ -551,7 +551,7 @@ sub watch_setting_save($c) {
 		chip_id => $chip_id,
 		timestamp => $timestamp
 	});
-	my $res = eval { &now_me({ c => $c, timestamp => $timestamp, edt => $edt, chip_id => $chip_id, browser_tab_id => $c->param('browser_tab_id') }) };
+	my $res = eval { &now_me({ c => $c, timestamp => $timestamp, edt => $edt, chip_id => $chip_id, browser_tab_id => $c->param('browser_tab_id'), keep_pairing => 1 }) };
 	# The setting is saved either way; a push that failed must not take the panel's
 	# whole request down with it (a red dot that says nothing).
 	$log->error('Now Me after setting: ' . ($@ =~ s/\s+/ /gr)) if $@;

@@ -771,7 +771,8 @@ sub ble_rehome_check {
 			method => 'bluetooth',
 			timestamp => $now,
 			homebase => $mine_ip,
-			ip => $mine_ip
+			ip => $mine_ip,
+			force_home => 1
 		});
 		1;
 	} or $log->error('BLE re-home failed: ' . $@);

@@ -36,4 +36,26 @@ unlike($src,
 # --- the link selection reuses the probe ----------------------------------
 like($src, qr/\$link = 'http' if \$lan_alive;/, 'a reachable device is pushed over HTTP');
 
+
+# --- Now Me is authoritative: a settings save does not re-pair ------------
+like($src, qr/my \$keep_pairing = \$data->\{'keep_pairing'\};/,
+	'now_me accepts keep_pairing');
+like($src, qr/my \$force_home\s+= \$data->\{'force_home'\};/,
+	'and force_home');
+like($src, qr/unless \(\$keep_pairing\) \{/, 'the token rotation is skipped for a save');
+like($src, qr/force_home\s+=> \(\$force_home \? 1 : 0\)/,
+	'the push says whether the person meant to move the device');
+
+my $embedded = read_file("$root/lib/JawnOS/Controller/manager_embedded.pm");
+my $part34   = read_file("$root/lib/JawnOS/Manager/Part34.pm");
+my $watch_ctl = read_file("$root/lib/JawnOS/Controller/manager_watch.pm");
+my $ble      = read_file("$root/lib/JawnOS/Domain/Ble.pm");
+like($embedded, qr/now_me\(\{[^\n]*force_home => 1 \}\)/,
+	'the Now Me button forces the move');
+like($ble, qr/force_home => 1/, 'a BLE re-home forces it too');
+like($part34, qr/now_me\(\{[^\n]*keep_pairing => 1 \}\)/,
+	'a settings save keeps the pairing');
+like($watch_ctl, qr/now_me\(\{[^\n]*keep_pairing => 1 \}\)/,
+	'a watch setting save keeps it too');
+
 done_testing();

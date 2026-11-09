@@ -133,7 +133,7 @@ sub action_43926 {
 		timestamp => $timestamp,
 		component => $component
 	});
-	my $res = &now_me({ c => $c, timestamp => $timestamp, edt => $edt, chip_id => $chip_id, browser_tab_id => $c->param('browser_tab_id') });
+	my $res = &now_me({ c => $c, timestamp => $timestamp, edt => $edt, chip_id => $chip_id, browser_tab_id => $c->param('browser_tab_id'), keep_pairing => 1 });
 	$c->render('json' => { app => $app, formatted_name => &subs::format_name($app ), html => $returner->{'html'} });
 }
 

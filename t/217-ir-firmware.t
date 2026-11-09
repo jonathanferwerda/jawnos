@@ -192,4 +192,12 @@ like($g2, qr/JAWNCFG LINK rssi=" \+ String\(WiFi\.RSSI\(\)\)/, 'JAWNCFG? reports
 like($g2, qr/" bssid=" \+ bssid_str\(\)/, 'and the access point it is on');
 like($g3, qr/\[wifi\] link lost rssi=/, 'a drop says the signal it dropped at');
 
+
+# --- (m) Now Me is authoritative on the board ------------------------------
+like($g2, qr/bool force_home = server\.arg\("force_home"\) == "1";/,
+	'/now_me reads force_home');
+like($g2, qr/\(homebaseIP == "" \|\| force_home\)/,
+	'a pinned homebase only moves on a deliberate pairing');
+like($g2, qr/\[now me\] keeping homebase/, 'and says when it kept the old one');
+
 done_testing();

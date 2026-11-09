@@ -478,9 +478,26 @@ void jawn_setup() {
 
   server.on("/now_me", []() {
     homebaseChecked();
-    homebaseIP = server.arg("homebase");
-    homebase = server.arg("ip");
-    houseRememberPreferred(homebaseIP);
+    // Now Me is authoritative: the board keeps the homebase it was paired to.
+    // An ordinary settings save also pushes a role, and used to carry whichever
+    // machine handled the save - so editing one movement on the phone pulled a
+    // board off its homebase and left the two machines disagreeing about its
+    // token. Only a deliberate pairing (force_home=1) may move it, and a board
+    // with no homebase at all still takes the first one it is given.
+    String new_home_ip = server.arg("homebase");
+    bool force_home = server.arg("force_home") == "1";
+    if (new_home_ip != "" && (homebaseIP == "" || force_home)) {
+      homebaseIP = new_home_ip;
+      homebase = server.arg("ip");
+      houseRememberPreferred(homebaseIP);
+      config["homebase"] = homebase;
+      config["homebaseIP"] = homebaseIP;
+      Serial.println("Homebase: " + homebase);
+      Serial.println("homebase ip:" + homebaseIP);
+    }
+    else {
+      Serial.println("[now me] keeping homebase " + homebaseIP);
+    }
     houseLearnJson(server.arg("houses"));
     if (server.arg("houses") != "") { config["houses"] = server.arg("houses"); }
     config["authorization"] = server.arg("authorization");
@@ -496,10 +513,6 @@ void jawn_setup() {
     config["timestamp"] = server.arg("timestamp");
     config["offset"] = server.arg("offset");
     offset = strtoll(server.arg("offset").c_str(), nullptr, 10);
-    config["homebase"] = server.arg("ip");
-    config["homebaseIP"] = server.arg("homebase");
-    Serial.println("Homebase: " + homebase);
-    Serial.println("homebase ip:" + homebaseIP);
     set_epoch_seconds(timestamp + offset);
     // Serial.println("Called President at " + homebaseIP);
     server.send(200, "text/plain", "homebase ip is now " + homebaseIP);

@@ -71,6 +71,13 @@ sub now_me($data) {
 	# now_me's own choice trusts the watch's LAN, where two machines share a /24
 	# and cannot be told apart, so the bridge names the address instead.
 	my $forced_home = $data->{'homebase'};
+	# A deliberate pairing (the Now Me / BT Now Me buttons) may move the device
+	# and rotate its token. An ordinary settings save also pushes the role, but
+	# it must not: it used to re-home the device to whichever machine handled the
+	# save and mint a new token, so editing one movement on the phone pulled a
+	# board off its own homebase and left the two machines disagreeing.
+	my $keep_pairing = $data->{'keep_pairing'};
+	my $force_home   = $data->{'force_home'};
 	my $server_time = time();
 
 
@@ -174,19 +181,22 @@ sub now_me($data) {
 	# time, so embeddedAuthorizer can keep accepting it for a grace window and a
 	# missed push costs a moment instead of locking the device out of /watch (the
 	# Gate, and with it an empty room).
-	if ($op_d->{'__specs'}->{'authorization'} && $op_d->{'__shutup'}->{'patience'}) {
-		$op_d->{'__shutup'}->{'previous'} = {
-			patience      => $op_d->{'__shutup'}->{'patience'},
-			authorization => $op_d->{'__specs'}->{'authorization'},
-			at            => time(),
-		};
+	my $authorization = $op_d->{'__specs'}->{'authorization'} || '';
+	unless ($keep_pairing) {
+		if ($op_d->{'__specs'}->{'authorization'} && $op_d->{'__shutup'}->{'patience'}) {
+			$op_d->{'__shutup'}->{'previous'} = {
+				patience      => $op_d->{'__shutup'}->{'patience'},
+				authorization => $op_d->{'__specs'}->{'authorization'},
+				at            => time(),
+			};
+		}
+		my $patience = &subs::random_string_creator(36);
+		my $au = &subs::random_string_creator(27);
+		my $auth = &subs::note_encrypter($patience, $au );
+		$authorization = `(echo $auth) | base64 -w 0`;
+		$op_d->{'__shutup'}->{'patience'} = $patience;
+		$op_d->{'__specs'}->{'authorization'} = $authorization;
 	}
-	my $patience = &subs::random_string_creator(36);
-	my $au = &subs::random_string_creator(27);
-	my $auth = &subs::note_encrypter($patience, $au );
-	my $authorization = `(echo $auth) | base64 -w 0`;
-	$op_d->{'__shutup'}->{'patience'} = $patience;
-	$op_d->{'__specs'}->{'authorization'} = $authorization;
 
 	# A device that loses its homebase must still have a House to reach, so Now
 	# Me carries the other machines on its LAN with the ports it dials. mDNS
@@ -198,6 +208,9 @@ sub now_me($data) {
 		name           => $name,
 		ip             => $watch->{ip},
 		homebase       => ($forced_home || $watch->{homebase}) . ":$watch_port",
+		# The board keeps its own homebase unless the person deliberately moved
+		# it; the firmware ignores this pair without force_home.
+		force_home     => ($force_home ? 1 : 0),
 		screen_timeout => $screen_timeout,
 		timestamp      => $server_time,
 		offset         => $offset,
