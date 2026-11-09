@@ -451,7 +451,7 @@ sub manager_starter() {
 				eval { &subs::house_levels_sync({ fast => $wanted }); };
 				my $synced = &subs::rightNow();
 				while (1) {
-					sleep 2;
+					sleep 5;
 					my $now = &subs::rightNow();
 					last if $now - $synced >= 120000;
 					$fast = &subs::cache_get({ app => '__president', context => 'levels', subcontext => 'fast' }) || 0;

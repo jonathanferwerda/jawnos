@@ -72,6 +72,20 @@ sub lan_presence_sweep {
 	close $sock;
 }
 
+# Presence and navigation are state, not a stream: one application per source
+# address per second is enough. The listener still wakes for each datagram, but
+# a peer that speaks quickly - or a burst after a network change - no longer
+# turns every one into a JSON decode and a database write.
+our %lan_presence_applied_at;
+sub lan_presence_due {
+	my ($ip, $now, $window) = @_;
+	$window = 1 unless defined $window && $window > 0;
+	my $last = $lan_presence_applied_at{$ip} || 0;
+	return 0 if $last && $now - $last < $window;
+	$lan_presence_applied_at{$ip} = $now;
+	return 1;
+}
+
 sub lan_presence_send {
 	my @nics = @{ &lan_presence_network() };
 	return unless @nics;
@@ -407,6 +421,7 @@ sub lan_presence_listen {
 			my ($port, $iaddr) = Socket::sockaddr_in($peer);
 			my $ip = $iaddr ? Socket::inet_ntoa($iaddr) : '';
 			next unless $ip;
+			next unless &lan_presence_due($ip, time(), 1);
 			my $msg = eval { decode_json($data) };
 			next unless ref $msg eq 'HASH';
 			if (($msg->{'type'} // '') eq 'jawnos-nav') {
