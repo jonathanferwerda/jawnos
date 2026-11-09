@@ -82,6 +82,7 @@ like($launch, qr/system\('systemctl', 'stop', 'jawnos-kiosk'\)/, 'the kiosk yiel
 like($launch, qr/system\('systemctl', 'start', 'jawnos-kiosk'\)/, 'and is started again on the way out');
 like($launch, qr/gou-games/, 'the games marker arms the virtual gamepad');
 like($launch, qr/POSIX::setuid\(\$uid\)/, 'the emulator runs as the person, not root');
+like($launch, qr/POSIX::setgroups/, 'with the persons groups, so the sound card opens');
 like($launch, qr|'/usr/bin/retroarch', '-f', '-L'|, 'RetroArch is run full screen with its core');
 like($launch, qr/JawnOS::Games::runner_for/, 'the runner is the same one the route checked');
 like($launch, qr/--appendconfig/, 'the game gets the config that names the card');

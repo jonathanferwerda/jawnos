@@ -96,6 +96,20 @@ fail('The RetroArch binary is missing.') unless $runner->{'kind'} ne 'retroarch'
 my (undef, undef, $uid, $gid) = getpwnam($PERSON);
 fail('The person this panel belongs to is missing.') unless defined $uid && defined $gid;
 
+# Dropping from root to the person keeps root's supplementary groups unless we
+# replace them. jawn is in audio/input/video/render, and without those the
+# emulator cannot open the sound card the panel has - it starts silent.
+my @groups = ($gid);
+if (open(my $group_file, '<', '/etc/group')) {
+	while (my $line = <$group_file>) {
+		chomp $line;
+		my ($name, $password, $group, $members) = split /:/, $line;
+		next unless defined $members;
+		push @groups, $group + 0 if grep { $_ eq $PERSON } split /,/, $members;
+	}
+	close $group_file;
+}
+
 make_path('/home/jawn/.presence');
 open my $marker, '>', $MARKER or fail('The games marker could not be written.');
 close $marker;
@@ -131,6 +145,7 @@ if (!$child) {
 	$ENV{'XDG_RUNTIME_DIR'} = '/run/user/' . $uid;
 	$ENV{'HOME'} = '/home/jawn';
 	$ENV{'SDL_AUDIODRIVER'} = 'alsa';
+	POSIX::setgroups(@groups);
 	POSIX::setgid($gid);
 	POSIX::setuid($uid);
 	no warnings 'exec';
