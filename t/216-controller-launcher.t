@@ -1,7 +1,7 @@
-# tests-for: templates/apps/controller.html.ep lib/JawnOS/Controller/manager_misc9.pm lib/JawnOS/Routes/manager_misc9.pm perl/help/topics_people.pl
+# tests-for: templates/apps/controller.html.ep lib/JawnOS/Controller/manager_misc9.pm lib/JawnOS/Routes/manager_misc9.pm lib/JawnOS/Controller/manager_misc4.pm public/js/manager/manager/09_app_back.js perl/help/topics_people.pl
 # covers:    The controller's home is a launcher, not a desk: a handheld panel
-#            opens on eight tiles, and the Leave tile draws a working button
-#            per power choice this machine can offer.
+#            opens on eight tiles, a Manager button, and the Leave tile draws a
+#            working button per power choice this machine can offer.
 
 # A handheld has no desk to lay windows on, so the controller is served as its
 # own app page at /manager/controller. The route, the action that draws it, the
@@ -67,8 +67,8 @@ like($help, qr/category => 'apps', app => 'controller'/,
 # /manager is the desk. A controller cannot use it, and the panel's first
 # navigation is always there, so the desk redirects one to its launcher.
 my $desk = read_file("$root/lib/JawnOS/Controller/manager_misc4.pm");
-like($desk, qr/if !\$c->param\('open'\) && &subs::device_setter\(\) eq 'controller';/,
-	'the desk redirects a controller to its launcher, unless an app was named');
+like($desk, qr/if !\$c->param\('open'\) && !\$c->param\('desk'\) && &subs::device_setter\(\) eq 'controller';/,
+	'the desk redirects a controller to its launcher, unless an app or the bare desk was named');
 
 # --- the page can actually render -------------------------------------------
 # A template runs in the app's sandbox, which has none of the controller's
@@ -86,8 +86,14 @@ if ($page =~ /encode_json/) {
 # no game). Every app tile names the app on the desk instead.
 my $tiles = () = $page =~ /href="\/manager\?open=/g;
 cmp_ok($tiles, '>=', 6, 'app tiles ask the desk to open them');
+like($page, qr/id="controller_manager_button"[^>]*href="\/manager\?desk=1"/,
+	'the launcher has a Manager button that asks for the bare desk');
+like($page, qr/\.wind\[app="controller"\] \.top_navbar\s*\{[^}]*display\s*:\s*none/,
+	'the launcher hides its own window bar');
 my $desk_js = read_file("$root/public/js/manager/manager/09_app_back.js");
 like($desk_js, qr/location\.search\)\.get\('open'\)/, 'the desk reads the app to open');
 like($desk_js, qr/e\.key !== 'Home'/, 'and listens for the handheld Home key');
+like($desk_js, qr/typeof response === 'object'/, 'a JSON reply is recognised before the window is made');
+like($desk_js, qr/response\.html \|\| response\.window/, 'both window envelope shapes are unwrapped');
 
 done_testing();

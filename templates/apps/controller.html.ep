@@ -9,6 +9,9 @@
 	   tall - the fourth row sat below the glass. */
 	#controller_home { display:grid; grid-template-columns:repeat(4,1fr); grid-template-rows:repeat(2,1fr);
 		gap:8px; width:100%; height:100%; min-height:0; padding:8px; box-sizing:border-box; overflow:hidden; }
+	/* The launcher is the whole glass: the desk's window bar is furniture a
+	   handheld does not need, and the Manager button is the only way out. */
+	.wind[app="controller"] .top_navbar { display:none !important; }
 	.controller_tile { display:flex; flex-direction:column; justify-content:center; gap:4px;
 		min-width:0; overflow:hidden; padding:10px; border:1px solid var(--line); border-radius:12px;
 		background:var(--panel); color:var(--ink); text-decoration:none; }
@@ -33,7 +36,15 @@
 	   below the glass. Scoped to this page, so no other window moves. */
 	.wind { left:0 !important; top:0 !important; width:100vw !important; height:100vh !important; }
 	.window_contents { width:100% !important; height:100% !important; }
-	#controller_home { height:100% !important; }
+	/* The launcher has no window bar: a slim row holds the one way out to the
+	   desk, and the eight tiles take the rest of the glass. */
+	#controller_shell { display:flex; flex-direction:column; width:100%; height:100%; min-height:0; }
+	#controller_bar { flex:0 0 auto; display:flex; justify-content:flex-end; padding:6px 8px 0; }
+	#controller_manager_button { font:inherit; font-size:13px; line-height:1.2; padding:5px 12px;
+		border:1px solid #4a4a4a; border-radius:8px; background:#3a3a3a; color:#ffffff;
+		text-decoration:none; }
+	#controller_manager_button:hover { border-color:var(--accent, #4a90d9); }
+	#controller_home { height:auto !important; flex:1 1 auto; min-height:0; }
 
 	.controller_tile_leave { border-style:dashed; }
 	.controller_leave_actions { display:flex; flex-wrap:wrap; gap:4px; }
@@ -58,55 +69,60 @@
 	my %power_ui = map { $_ => &subs::ui($power_label{$_}) } keys %power_label;
 %>
 
-<div id="controller_home">
-	<a class="controller_tile" href="/manager?open=music">
-		<img class="controller_tile_icon" src="/images/decipherable/headphones.png" alt="">
-		<span class="controller_tile_label"><%= &subs::ui('Music') %></span>
-		<span class="controller_tile_note"><%= &subs::ui('Play the house music') %></span>
-	</a>
-	<a class="controller_tile" href="/manager?open=gallery">
-		<img class="controller_tile_icon" src="/images/decipherable/gallery.png" alt="">
-		<span class="controller_tile_label"><%= &subs::ui('Gallery') %></span>
-		<span class="controller_tile_note"><%= &subs::ui('Photos and videos') %></span>
-	</a>
-	<a class="controller_tile" href="/manager/notifications/list">
-		<img class="controller_tile_icon" src="/images/decipherable/bell.png" alt="">
-		<span class="controller_tile_label"><%= &subs::ui('Notifications') %></span>
-		<span class="controller_tile_note"><%= &subs::ui('What the house has told you') %></span>
-	</a>
-	<a class="controller_tile" href="/manager?open=twirl">
-		<img class="controller_tile_icon" src="/images/decipherable/tetris.png" alt="">
-		<span class="controller_tile_label"><%= &subs::ui('Games') %></span>
-		<span class="controller_tile_note"><%= &subs::ui('Twirl, the falling-block puzzle') %></span>
-	</a>
-	<a class="controller_tile" href="/manager?open=configure">
-		<img class="controller_tile_icon" src="/images/decipherable/gear.png" alt="">
-		<span class="controller_tile_label"><%= &subs::ui('Configuration') %></span>
-		<span class="controller_tile_note"><%= &subs::ui('Settings and system') %></span>
-	</a>
-	<a class="controller_tile" href="/manager?open=phone">
-		<img class="controller_tile_icon" src="/images/decipherable/phone.png" alt="">
-		<span class="controller_tile_label"><%= &subs::ui('IVR') %></span>
-		<span class="controller_tile_note"><%= &subs::ui('The phone call menu and greeting') %></span>
-	</a>
-	<a class="controller_tile" href="/manager?open=embedded">
-		<img class="controller_tile_icon" src="/images/decipherable/on.png" alt="">
-		<span class="controller_tile_label"><%= &subs::ui('Automation') %></span>
-		<span class="controller_tile_note"><%= &subs::ui('Toggles for the house devices') %></span>
-	</a>
-	<div class="controller_tile controller_tile_leave">
-		<img class="controller_tile_icon" src="/images/decipherable/exit.png" alt="">
-		<span class="controller_tile_label"><%= &subs::ui('Leave') %></span>
+<div id="controller_shell">
+	<div id="controller_bar">
+		<a id="controller_manager_button" href="/manager?desk=1"><%= &subs::ui('Manager') %></a>
+	</div>
+	<div id="controller_home">
+		<a class="controller_tile" href="/manager?open=music">
+			<img class="controller_tile_icon" src="/images/decipherable/headphones.png" alt="">
+			<span class="controller_tile_label"><%= &subs::ui('Music') %></span>
+			<span class="controller_tile_note"><%= &subs::ui('Play the house music') %></span>
+		</a>
+		<a class="controller_tile" href="/manager?open=gallery">
+			<img class="controller_tile_icon" src="/images/decipherable/gallery.png" alt="">
+			<span class="controller_tile_label"><%= &subs::ui('Gallery') %></span>
+			<span class="controller_tile_note"><%= &subs::ui('Photos and videos') %></span>
+		</a>
+		<a class="controller_tile" href="/manager/notifications/list">
+			<img class="controller_tile_icon" src="/images/decipherable/bell.png" alt="">
+			<span class="controller_tile_label"><%= &subs::ui('Notifications') %></span>
+			<span class="controller_tile_note"><%= &subs::ui('What the house has told you') %></span>
+		</a>
+		<a class="controller_tile" href="/manager?open=twirl">
+			<img class="controller_tile_icon" src="/images/decipherable/tetris.png" alt="">
+			<span class="controller_tile_label"><%= &subs::ui('Games') %></span>
+			<span class="controller_tile_note"><%= &subs::ui('Twirl, the falling-block puzzle') %></span>
+		</a>
+		<a class="controller_tile" href="/manager?open=configure">
+			<img class="controller_tile_icon" src="/images/decipherable/gear.png" alt="">
+			<span class="controller_tile_label"><%= &subs::ui('Configuration') %></span>
+			<span class="controller_tile_note"><%= &subs::ui('Settings and system') %></span>
+		</a>
+		<a class="controller_tile" href="/manager?open=phone">
+			<img class="controller_tile_icon" src="/images/decipherable/phone.png" alt="">
+			<span class="controller_tile_label"><%= &subs::ui('IVR') %></span>
+			<span class="controller_tile_note"><%= &subs::ui('The phone call menu and greeting') %></span>
+		</a>
+		<a class="controller_tile" href="/manager?open=embedded">
+			<img class="controller_tile_icon" src="/images/decipherable/on.png" alt="">
+			<span class="controller_tile_label"><%= &subs::ui('Automation') %></span>
+			<span class="controller_tile_note"><%= &subs::ui('Toggles for the house devices') %></span>
+		</a>
+		<div class="controller_tile controller_tile_leave">
+			<img class="controller_tile_icon" src="/images/decipherable/exit.png" alt="">
+			<span class="controller_tile_label"><%= &subs::ui('Leave') %></span>
 % if (@power_available) {
-		<div class="controller_leave_actions">
+			<div class="controller_leave_actions">
 % for my $action (grep { $power_has{$_} } @power_order) {
-			<button type="button" class="controller_leave_button" data-power-action="<%= $action %>"><%= &subs::ui($power_label{$action}) %></button>
+				<button type="button" class="controller_leave_button" data-power-action="<%= $action %>"><%= &subs::ui($power_label{$action}) %></button>
+% }
+			</div>
+			<span class="controller_leave_result" aria-live="polite"></span>
+% } else {
+			<span class="controller_tile_note"><%= &subs::ui('This machine cannot power itself.') %></span>
 % }
 		</div>
-		<span class="controller_leave_result" aria-live="polite"></span>
-% } else {
-		<span class="controller_tile_note"><%= &subs::ui('This machine cannot power itself.') %></span>
-% }
 	</div>
 </div>
 

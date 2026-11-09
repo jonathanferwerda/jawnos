@@ -670,7 +670,9 @@ $(document).on('click','.edit_app',function() {
    app's own page is a window fragment - its JavaScript comes from this bundle -
    so a link straight at /manager/twirl renders a frame with nothing driving it
    (a canvas, and no game). The desk opens the same window the start menu does,
-   then drops the parameter so a reload does not deal a second one. */
+   then drops the parameter so a reload does not deal a second one. Some apps
+   answer with a window envelope (gallery's window, embedded's html) because
+   their route carries more than the markup; both are unwrapped first. */
 $(function () {
 	var open = '';
 	try { open = new URLSearchParams(location.search).get('open') || ''; } catch (e) { open = ''; }
@@ -693,7 +695,9 @@ $(function () {
 		type: 'GET',
 		data: { window_maker: 'yes', app: open, timestamp: Date.now() },
 		success: function (response) {
-			if (typeof windowMaker === 'function') { windowMaker(response); }
+			var html = response;
+			if (response && typeof response === 'object') { html = response.html || response.window || ''; }
+			if (typeof windowMaker === 'function' && html) { windowMaker(html); }
 		},
 		error: function () { }
 	});

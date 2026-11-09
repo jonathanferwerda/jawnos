@@ -428,8 +428,9 @@ sub action_13070 {
 	# ticket's session cookie already set here carries the person straight in.
 	# ... unless the caller named an app to deal: ?open=twirl is a request for
 	# the desk itself, because an app's JavaScript lives in the desk's bundle.
+	# ?desk=1 is the launcher's own Manager button asking for the bare desk.
 	return $c->redirect_to('/manager/controller')
-		if !$c->param('open') && &subs::device_setter() eq 'controller';
+		if !$c->param('open') && !$c->param('desk') && &subs::device_setter() eq 'controller';
 
 	my ($db,$database,$sql) = &subs::database_grabber();
 	my $hostname = &subs::machine_hostname();
