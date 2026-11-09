@@ -17,7 +17,7 @@ function twirlKeyCommand(code) {
 	if (code == 39) { return 'right'; }
 	if (code == 40) { return 'down'; }
 	if (code == 38) { return 'rotate'; }
-	if (code == 183) { return 'rotate_left'; } // F13: the B button
+	if (code == 124) { return 'rotate_left'; } // F13: the B button
 	if (code == 32) { return 'drop'; }
 	return null;
 }

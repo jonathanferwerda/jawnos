@@ -31,13 +31,14 @@ like($page, qr/href="\/manager\?open=twirl&amp;full=1"/, 'Twirl opens the puzzle
 like($page, qr/Emulated games/, 'the emulated shelf is named');
 like($page, qr/None installed yet/, 'and says there is nothing on it yet');
 like($page, qr/id="games_home"[^>]*href="\/manager\/controller"/, 'Home returns to the Controller launcher');
-unlike($page, qr/^\s*\.wind \{/m, 'the page does not resize every window on the desk');
+like($page, qr/^\s*\.wind \{[^}]*width:100vw/m, 'the launcher page itself fills the glass');
 
 # --- the desk and the Controller know it -------------------------------------
 my $back = read_file("$root/public/js/manager/manager/09_app_back.js");
-like($back, qr/games: '\/manager\/games'/, 'the desk resolves ?open=games to the launcher');
-like(read_file("$root/templates/apps/controller.html.ep"), qr/href="\/manager\?open=games&amp;full=1"/,
-	'the Controller Games tile opens the launcher, not Twirl directly');
+like(read_file("$root/templates/apps/controller.html.ep"), qr/href="\/manager\/games"/,
+	'the Controller Games tile opens the launcher page, not Twirl directly');
+unlike($back, qr/games: '\/manager\/games'/, 'the desk does not deal the launcher as a window');
+like($page, qr/\.wind\[app="games"\] \.top_navbar\s*\{[^}]*display:none/, 'the launcher hides its own window bar');
 
 # --- the Guide ----------------------------------------------------------------
 my $help = read_file("$root/perl/help/topics_people.pl");
@@ -46,7 +47,7 @@ like($help, qr/category => 'apps', app => 'games'/, 'the topic claims the games 
 
 # --- Twirl's two turns --------------------------------------------------------
 my $twirl = read_file("$root/public/js/manager/twirl.js");
-like($twirl, qr/code == 183/, 'B arrives as F13 and maps to a command');
+like($twirl, qr/code == 124/, 'B arrives as F13 (DOM keyCode 124) and maps to a command');
 like($twirl, qr/return 'rotate_left'/, 'that command is the counter-clockwise turn');
 my $game = read_file("$root/public/js/manager/twirl/01_twirl_game.js");
 like($game, qr/function rotateMatrixLeft/, 'a counter-clockwise matrix turn exists');

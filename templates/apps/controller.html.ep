@@ -35,7 +35,7 @@
 	   place per app, and this page arrived at 480x640 from y=100 - two rows
 	   below the glass. Scoped to this page, so no other window moves. */
 	.wind { left:0 !important; top:0 !important; width:100vw !important; height:100vh !important; }
-	.window_contents { width:100% !important; height:100% !important; }
+	.window_contents { width:100% !important; height:100% !important; padding-top:0 !important; }
 	/* The launcher has no window bar: a slim row holds the one way out to the
 	   desk, and the eight tiles take the rest of the glass. */
 	#controller_shell { display:flex; flex-direction:column; width:100%; height:100%; min-height:0; position:relative; }
@@ -191,7 +191,7 @@
 			<span class="controller_tile_label"><%= &subs::ui('Notifications') %></span>
 			<span class="controller_tile_note"><%= &subs::ui('What the house has told you') %></span>
 		</a>
-		<a class="controller_tile" href="/manager?open=games&amp;full=1">
+		<a class="controller_tile" href="/manager/games">
 			<img class="controller_tile_icon" src="/images/decipherable/tetris.png" alt="">
 			<span class="controller_tile_label"><%= &subs::ui('Games') %></span>
 			<span class="controller_tile_note"><%= &subs::ui('Cards, Twirl and emulated games') %></span>

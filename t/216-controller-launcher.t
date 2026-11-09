@@ -85,7 +85,8 @@ if ($page =~ /encode_json/) {
 # so a link straight at it renders a frame with nothing driving it (a canvas and
 # no game). Every app tile names the app on the desk instead.
 my $tiles = () = $page =~ /href="\/manager\?open=/g;
-cmp_ok($tiles, '>=', 6, 'app tiles ask the desk to open them');
+cmp_ok($tiles, '>=', 5, 'app tiles ask the desk to open them');
+like($page, qr/id="controller_games_tile"|href="\/manager\/games"/, 'the Games tile is a launcher page of its own');
 like($page, qr/id="controller_manager_button"[^>]*href="\/manager\?desk=1"/,
 	'the launcher has a Manager button that asks for the bare desk');
 like($page, qr/\.wind\[app="controller"\] \.top_navbar\s*\{[^}]*display\s*:\s*none/,
