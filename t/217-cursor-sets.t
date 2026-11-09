@@ -44,8 +44,25 @@ my $deep = &subs::theme_bundle('deepjawn');
 is($deep->{'cursor_set'}, 'bold', 'the Deepjawn preset carries its cursor set');
 my $neon = &subs::theme_bundle('neon');
 is($neon->{'cursor_set'}, 'neon', 'the Neon preset carries its cursor set');
+my $phosphor = &subs::theme_bundle('phosphor');
+is($phosphor->{'cursor_set'}, 'contrast', 'the Phosphor preset wears High Contrast');
 my $unknown = &subs::theme_bundle('not-a-theme');
 is_deeply($unknown, {}, 'an unknown theme resolves to no bundle, so no cursor');
+
+# Each set is a silhouette, not only a paint.
+my $read_svg = sub { read_file("$root/public/cursors/sets/$_[0]/$_[1].svg") };
+like($read_svg->('white', 'default'), qr/M6 3 L6 26/,
+	'White draws the slim needle arrow');
+like($read_svg->('mono', 'default'), qr/H11 V9/,
+	'Mono draws the pixel staircase');
+like($read_svg->('outline', 'pointer'), qr/fill="none"/,
+	'Outline draws the hand hollow');
+like($read_svg->('neon', 'wait'), qr/A11 11/,
+	'Neon waits with a spinner');
+like($read_svg->('pastel', 'wait'), qr/<circle/,
+	'Pastel waits with four soft dots');
+like($read_svg->('contrast', 'default'), qr/M4 3 L4 28/,
+	'Contrast draws the oversized block arrow');
 
 # --- the server writes every set's role map once ----------------------------
 my $css = &subs::cursor_css();

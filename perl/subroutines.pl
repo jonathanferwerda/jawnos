@@ -584,7 +584,7 @@ our %theme_presets = (
 	phosphor => {
 		name => 'Phosphor', scheme => 'Phosphor Dark',
 		icon_set => 'outline', texture => 'classic',
-		cursor_set => 'mono',
+		cursor_set => 'contrast',
 		font => 'Courier New, monospace', corner => 0,
 	},
 	# Neon nights: cyan glass with a magenta accent and iridescent glyphs.
