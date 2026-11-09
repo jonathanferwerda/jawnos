@@ -129,14 +129,19 @@ rebase immediately before running the gate:
   and adds a full checkout of the tracked files — about 170 MB here, with the firmware fonts and
   images. History is never duplicated.
 - **A landed worktree is deleted by the lander.** Removal is the default: the branch's work is on the
-  trunk and on origin, its `.shots/` checkpoint is finished with, and nothing else ever deletes the
-  directory. `--keep` spares it and prints the command that would drop it. (The lander removes it
-  from the primary checkout, so it works even while your shell sits inside.) A **refused** landing
-  keeps the worktree too: removal happens only after the push and the restart, so the files and the
-  checkpoint are still there to look at and fix. `scripts/worktree_gc.pl` is the sweep for worktrees
-  whose agent died: report-only by default, `--apply` to act, and it removes a worktree only when
-  its branch is an ancestor of `origin/main`, its tree is clean, and no process has its cwd in it.
-  A landed one goes at the first sweep that sees it; `--older-than H` asks for a buffer. It is the
+  trunk and on origin, and nothing else ever deletes the directory. `--keep` spares it and prints
+  the command that would drop it. **An open `.shots/AGENT-CHECKPOINT.md` spares it too** — that file
+  is the repo's own "this task is not over" marker, and a thread can land a first piece and go on
+  from the same worktree, so the lander keeps the worktree and its `.shots/` (shots, probes, notes)
+  while it is open; delete it when the task is done, or pass `--remove` to force the removal.
+  Everything else in `.shots/` is scratch by design — a probe you want after the landing belongs in
+  `scripts/tools/`. (The lander removes it from the primary checkout, so it works even while your
+  shell sits inside.) A **refused** landing keeps the worktree too: removal happens only after the
+  push and the restart, so the files and the checkpoint are still there to look at and fix.
+  `scripts/worktree_gc.pl` is the sweep for worktrees whose agent died: report-only by default,
+  `--apply` to act, and it removes a worktree only when its branch is an ancestor of `origin/main`,
+  its tree is clean, and no process has its cwd in it. A landed one goes at the first sweep that
+  sees it; `--older-than H` asks for a buffer. It is the
   `worktree_gc` utility job (daily pool, on by default), so a machine sweeps itself; run it by hand
   with `perl scripts/worktree_gc.pl --apply`. It reports anything unfinished as `wip` and keeps it:
   an unmerged branch or detached commit, a dirty tree, a waiting stash, an open

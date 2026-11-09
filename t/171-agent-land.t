@@ -117,6 +117,7 @@ die "fixture repo is not isolated: $fixture_top\n" unless $trc == 0 && defined $
 
 	write_file("$primary/VERSION",              "0.1.1\n");
 	write_file("$primary/README",               "base\n");
+	write_file("$primary/.gitignore",           ".shots/\n");
 	write_file("$primary/scripts/run_tests.pl", $SUITE);
 	write_file("$primary/scripts/version_bump.pl", $BUMP);
 	write_file("$primary/scripts/restart.pl",   $RESTART);
@@ -337,6 +338,34 @@ subtest 'a landing removes its worktree by default' => sub {
 	ok(!-d $f->{'wt'}, 'the worktree directory is gone');
 	my ($code) = git($f->{'primary'}, 'rev-parse', '--verify', 'refs/heads/agent/task');
 	isnt($code, 0, 'and its branch is deleted');
+};
+
+subtest 'an open checkpoint keeps the worktree and its shots' => sub {
+	my $f = fixture();
+	commit_in_worktree($f, 'note.txt', "a\n", 'v0.1.1 - add a note');
+	make_path("$f->{'wt'}/.shots");
+	write_file("$f->{'wt'}/.shots/AGENT-CHECKPOINT.md", "goal: still open\n");
+	write_file("$f->{'wt'}/.shots/probe-shot.webp", "fake image\n");
+
+	my ($rc, $out) = land($f);
+	is($rc, 0, 'the landing exits cleanly') or diag($out);
+	like($out, qr/worktree kept: an agent checkpoint is open/, 'it says why it kept it');
+	ok(-d $f->{'wt'}, 'the worktree is still there');
+	ok(-e "$f->{'wt'}/.shots/probe-shot.webp", 'so is the scratch the agent still needs');
+
+	my (undef, $status) = sh('git', '-C', $f->{'wt'}, 'status', '--porcelain');
+	is($status, '', 'the open checkpoint did not count as uncommitted work');
+};
+
+subtest '--remove forces past an open checkpoint' => sub {
+	my $f = fixture();
+	commit_in_worktree($f, 'note.txt', "a\n", 'v0.1.1 - add a note');
+	make_path("$f->{'wt'}/.shots");
+	write_file("$f->{'wt'}/.shots/AGENT-CHECKPOINT.md", "goal: still open\n");
+
+	my ($rc, $out) = land($f, '--remove');
+	is($rc, 0, 'the landing exits cleanly') or diag($out);
+	ok(!-d $f->{'wt'}, 'the explicit order removes it anyway');
 };
 
 subtest '--keep spares the worktree' => sub {

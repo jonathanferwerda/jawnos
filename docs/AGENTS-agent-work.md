@@ -25,7 +25,9 @@ that into a slow patch instead of a frozen machine. Protect the work, not the ch
   `file:line` + reproduce command, no raw logs; keep edits in the main thread so the diff is visible.
 - **Checkpoint** each step in `.shots/AGENT-CHECKPOINT.md` (goal, done + paths, next action, last commit)
   and **commit** it (`git add -p`, `v<version> - <summary>`). After a crash start a *fresh* thread that
-  reads it first; delete it when the task is done.
+  reads it first; delete it when the task is done. While it is open the lander keeps your
+  worktree and the `.shots/` beside it across a landing, so a task that lands a first piece and
+  goes on does not lose its screenshots or probes.
 - **The checkpoint file may be shared.** More than one agent can be writing `.shots/AGENT-CHECKPOINT.md`
   at the same time, so **identify yourself** — put an agent id/model and a timestamp on your section,
   re-read before you write, and only replace your own entry. Never overwrite another agent's section or

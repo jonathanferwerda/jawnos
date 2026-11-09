@@ -32,11 +32,14 @@
 #                                               so a timeout never loses work)
 #   perl scripts/agent_land.pl --keep            keep the worktree afterwards
 #                                               (default: remove it, with its
-#                                               merged branch, once landed)
+#                                               merged branch, once landed -
+#                                               but not while an open agent
+#                                               checkpoint says the task is not
+#                                               over)
+#   perl scripts/agent_land.pl --remove          remove it even with an open
+#                                               checkpoint (an explicit order)
 #   perl scripts/agent_land.pl --reason "..."   restart reason (default: the
 #                                               landed subject)
-#
-# --remove is accepted for callers that still pass it; removing is the default.
 #
 # Exit: 0 landed (and restarted) - 1 refused, nothing pushed - 2 bad usage -
 # 4 another landing held the lock past --wait - 5 pushed, but the dev server is
@@ -65,6 +68,7 @@ my %opt = (
 	'wait'    => 300,
 	'restart' => 1,
 	'remove'  => 1,
+	'force'   => 0,
 );
 GetOptions(
 	'branch=s'   => \$opt{'branch'},
@@ -74,7 +78,7 @@ GetOptions(
 	'wait=s'     => \$opt{'wait'},
 	'no-restart' => sub { $opt{'restart'} = 0 },
 	'keep'       => sub { $opt{'remove'} = 0 },
-	'remove'     => \$opt{'remove'},
+	'remove'     => sub { $opt{'remove'} = 1; $opt{'force'} = 1 },
 	'dry-run'    => \$opt{'dry'},
 	'help'       => \$opt{'help'},
 ) or usage(2);
@@ -402,12 +406,23 @@ exit 0;
 # A worktree is scratch: after a successful landing its files are on origin and
 # on the trunk. Removing it is the default, because nothing else does and a
 # finished agent is not coming back; --keep spares it. A refusal keeps it too -
-# that is where the failure is. Removal is forced (the suite leaves a test
-# database and a copied config behind) and is only ever attempted from the
-# primary checkout, so an agent's own shell can sit in the worktree.
+# that is where the failure is. So does an open .shots/AGENT-CHECKPOINT.md: that
+# file is the repo's own "this task is not over" marker (the sweep reads it the
+# same way), and a thread can land a first piece of work and go on from the same
+# worktree, so deleting it there would take the shots and probes the agent is
+# still using. --remove overrides, for a checkpoint left behind on purpose.
+# Removal is forced (the suite leaves a test database and a copied config behind)
+# and is only ever attempted from the primary checkout, so an agent's own shell
+# can sit in the worktree.
 sub remove_worktree {
 	if (!$opt{'remove'}) {
 		say_step("worktree kept: git worktree remove '$root' && git branch -d $branch");
+		return;
+	}
+	if (!$opt{'force'} && -e "$root/.shots/AGENT-CHECKPOINT.md") {
+		say_step("worktree kept: an agent checkpoint is open ($root/.shots/AGENT-CHECKPOINT.md), "
+			. 'so the task may not be over; delete it when it is, then: '
+			. "git worktree remove '$root' && git branch -d $branch");
 		return;
 	}
 	my ($wrc, $wout) = capture('git', '-C', $primary, 'worktree', 'remove', '--force', $root);
