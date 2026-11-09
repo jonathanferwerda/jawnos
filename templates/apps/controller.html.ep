@@ -425,6 +425,19 @@ function closeControllerPanels(except) {
 			if (range) {
 				range.addEventListener('input', function () { if (value) { value.textContent = range.value; } });
 				range.addEventListener('change', function () { write({ channel: name, volume: range.value }); });
+				/* The right stick is a wheel to the browser: with the pointer over a
+				   row, it steps that row instead of scrolling the panel. */
+				range.addEventListener('wheel', function (event) {
+					event.preventDefault();
+					var now = parseInt(range.value, 10) || 0;
+					var step = ((event.deltaY || event.deltaX) < 0) ? 1 : -1;
+					var next = Math.max(0, Math.min(100, now + step));
+					if (next === now) { return; }
+					range.value = next;
+					if (value) { value.textContent = next; }
+					if (range._wheelTimer) { clearTimeout(range._wheelTimer); }
+					range._wheelTimer = setTimeout(function () { write({ channel: name, volume: next }); }, 180);
+				}, { passive: false });
 			}
 			if (mute) {
 				mute.addEventListener('click', function () {

@@ -112,6 +112,7 @@ like($page, qr|fetch\('/manager/controller/volume'|, 'the panel reads the volume
 like($page, qr|post\('/manager/network/radio'|, 'the network panel toggles the Wi-Fi radio');
 like($page, qr|post\('/manager/network/bluetooth/action'|, 'the network panel toggles Bluetooth');
 like($page, qr/closeControllerPanels/, 'opening one panel closes the others');
+like($page, qr/addEventListener\('wheel'/, 'the right stick steps a volume row under the pointer');
 like($routes, qr/\[\s*44002\s*,\s*'get'\s*,\s*'\/manager\/controller\/volume'\s*,\s*'action_44002'\s*\]/,
 	'GET /manager/controller/volume is registered');
 like($routes, qr/\[\s*44003\s*,\s*'post'\s*,\s*'\/manager\/controller\/volume'\s*,\s*'action_44003'\s*\]/,
