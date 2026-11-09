@@ -1750,6 +1750,12 @@ like($routes_auto, qr{/manager/weather/location/anchor\b}, 'the anchor route exi
 like($controller_auto, qr/sub action_52021\b/, 'and its action');
 like($controller_auto, qr/weather_location_save/, 'the page saves a location through the domain');
 like($page, qr/id="weather_location_add"/, 'the location dropdown has an Add button');
+my ($sticky_bar) = $page =~ m{(<div id="weather_toolbar">.*?</div>)}s;
+ok($sticky_bar, 'the pinned bar is the toolbar');
+like($sticky_bar, qr/id="weather_device"/, 'the pinned bar holds the location dropdown');
+like($sticky_bar, qr/id="weather_location_add"/, 'and the Add button');
+unlike($sticky_bar, qr/id="weather_location_delete"/, 'the other controls are not pinned');
+like($page, qr{<div id="weather_actions">.*?id="weather_location_delete"}s, 'they scroll with the tab in their own row');
 like($page, qr/weather_stamp_text/, 'the dropdown uses the new date stamp');
 like($page, qr{apps/weather/map}, 'the page includes the map view');
 my $map_partial = read_file("$root/templates/apps/weather/map.html.ep");
@@ -1813,7 +1819,7 @@ like($loader, qr/weather_daily_extend/, 'and the daily extension');
 my $weather_style = read_file("$root/templates/apps/weather/style.html.ep");
 like($weather_style, qr/^<style>/m, 'the style partial opens a style element');
 like($weather_style, qr{</style>\s*$}m, 'and closes it, so the page does not print CSS');
-like($weather_style, qr/#weather_toolbar \{[^}]*position: sticky/, 'the location toolbar stays at the top while a tab scrolls');
+like($weather_style, qr/#weather_toolbar \{[^}]*position: sticky/, 'the location dropdown and Add stay at the top while a tab scrolls');
 like($weather_style, qr/#weather_toolbar \{[^}]*background: var\(--panel\)/, 'and hides the tab scrolling under it');
 
 # --- saving, restoring and the strip ----------------------------------------

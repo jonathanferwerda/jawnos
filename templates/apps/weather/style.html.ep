@@ -10,16 +10,19 @@
 	background-color: var(--panel);
 	overflow-y: auto;
 }
-.wind[app="weather"] #weather_toolbar {
-	position: sticky;
-	top: 0;
-	z-index: 3;
-	background: var(--panel);
+.wind[app="weather"] #weather_toolbar,
+.wind[app="weather"] #weather_actions {
 	display: flex;
 	flex-wrap: wrap;
 	align-items: center;
 	gap: 7px;
 	font-size: 14px;
+}
+.wind[app="weather"] #weather_toolbar {
+	position: sticky;
+	top: 0;
+	z-index: 3;
+	background: var(--panel);
 }
 .wind[app="weather"] #weather_toolbar label { opacity: .75; }
 .wind[app="weather"] #weather_device { max-width: 100%; }
