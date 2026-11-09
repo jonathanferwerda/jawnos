@@ -45,12 +45,22 @@ sub os { return $^O }
 
 sub arch { return $Config::Config{'archname'} || '' }
 
+# Windows has no getpwuid at all - the call dies rather than returning nothing -
+# and its home is USERPROFILE, with HOMEDRIVE+HOMEPATH as the older pair. One
+# answer here serves the probe, the master and every worker, so the lookup is
+# guarded in one place instead of at each caller.
 sub home {
 	my $home = $ENV{'HOME'};
+	$home = $ENV{'USERPROFILE'} if !defined $home || !length $home;
 	if (!defined $home || !length $home) {
-		$home = (getpwuid($<))[7] || '';
+		my $drive = $ENV{'HOMEDRIVE'} || '';
+		my $path = $ENV{'HOMEPATH'} || '';
+		$home = $drive . $path if length $drive || length $path;
 	}
-	return $home;
+	if (!defined $home || !length $home) {
+		$home = eval { (getpwuid($<))[7] } || '';
+	}
+	return defined $home ? $home : '';
 }
 
 sub portable {

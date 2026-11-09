@@ -50,4 +50,28 @@ like($text_out, qr/^tools:/m, 'the human probe lists tools');
 my ($check_status) = run_probe('--check');
 ok($check_status == 0 || $check_status == 1, '--check returns a verdict, not a crash');
 
+# Windows cannot call getpwuid (the call dies there), and HOME is not always set
+# on a runner, so the probe resolves USERPROFILE first. Staged here by removing
+# HOME - without this, the Windows job reports a probe that never started.
+{
+	local %ENV = %ENV;
+	delete @ENV{qw(HOME HOMEDRIVE HOMEPATH JAWNOS_DATA_DIR)};
+	$ENV{'USERPROFILE'} = '/tmp/jawnos-probe-profile';
+	my ($code, $out, $err) = run_probe('--json');
+	is($code, 0, 'the probe runs without HOME (USERPROFILE fallback)');
+	my $fallback = eval { JSON::PP->new->decode($out) };
+	is(ref $fallback, 'HASH', 'and still reports JSON') or diag($err);
+	is($fallback && $fallback->{'data_dir'}, '/tmp/jawnos-probe-profile/.president',
+		'its home comes from USERPROFILE when HOME is absent');
+}
+
+# With no home variable at all the getpwuid fallback still has to answer; on
+# Windows that call dies, which is why it is wrapped in an eval.
+{
+	local %ENV = %ENV;
+	delete @ENV{qw(HOME USERPROFILE HOMEDRIVE HOMEPATH JAWNOS_DATA_DIR)};
+	my ($code) = run_probe('--json');
+	is($code, 0, 'the probe runs with no home variable at all');
+}
+
 done_testing();

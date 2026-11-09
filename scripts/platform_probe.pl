@@ -18,7 +18,20 @@ use warnings;
 # backend. Keep the platform names general so the same block serves macOS and
 # Windows.
 BEGIN {
-	my $base = (($ENV{'HOME'} || (getpwuid $<)[7] || '') . '/perl5/lib/perl5');
+	# Windows has no getpwuid - the call dies there - and its home is
+	# USERPROFILE, with HOMEDRIVE+HOMEPATH as the older pair. Same order as
+	# JawnOS::Platform::home, because a probe that guessed another tree would
+	# report a working house as missing its backend.
+	my $home = $ENV{'HOME'};
+	$home = $ENV{'USERPROFILE'} if !defined $home || !length $home;
+	if (!defined $home || !length $home) {
+		my $drive = $ENV{'HOMEDRIVE'} || '';
+		my $path = $ENV{'HOMEPATH'} || '';
+		$home = $drive . $path if length $drive || length $path;
+	}
+	$home = eval { (getpwuid $<)[7] } if !defined $home || !length $home;
+	$home = '' unless defined $home;
+	my $base = "$home/perl5/lib/perl5";
 	if ($base =~ m{/} && -d $base) {
 		my @dirs = ($base);
 		if (opendir(my $dh, $base)) {
@@ -26,7 +39,9 @@ BEGIN {
 				my $dir = "$base/$name";
 				push @dirs, $dir
 					if $name ne '.' && $name ne '..' && -d $dir
-					&& ($name =~ /-(?:linux|darwin|MSWin32|cygwin)-/i || $name =~ /^[0-9]+\.[0-9]+/);
+					&& ($name =~ /-(?:linux|darwin|MSWin32|cygwin)-/i
+						|| $name =~ /^(?:MSWin32|darwin|x86_64|i[3-9]86)\b/i
+						|| $name =~ /^[0-9]+\.[0-9]+/);
 			}
 			closedir $dh;
 		}

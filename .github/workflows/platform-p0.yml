@@ -18,6 +18,11 @@ jobs:
   linux-portable:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    env:
+      # cpanm on the runner cannot write /usr/local, so it installs into
+      # $HOME/perl5. The probe finds that tree itself, but the suite is a plain
+      # perl child, so the job exports it instead of the harness guessing.
+      PERL5LIB: /home/runner/perl5/lib/perl5
     steps:
       - uses: actions/checkout@v4
       - name: Perl
