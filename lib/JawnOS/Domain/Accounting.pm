@@ -422,6 +422,14 @@ sub guide_message_warranty {
 			&say_it('backfill warranty_house_wide: ' . $made . ' app warranty(s) collapsed to the house row');
 			return 1;
 		},
+		'weather_rules_home_place' => sub {
+			# The Weather app's automations were house-wide before the tab became
+			# per-location; they are the home's rules. Pin each place-less rule to the
+			# saved place at the home plate, once per machine, so every machine at home
+			# shows and runs the same list. A house with no home place yet waits for
+			# the next pass instead of recording a migration it did not make.
+			return &subs::weather_automation_adopt_home() ? 1 : 0;
+		},
 		'person_owner_devices' => sub {
 			# A device with no person is not a citizen. Attach the devices that
 			# were paired after the people table existed but before this rule,

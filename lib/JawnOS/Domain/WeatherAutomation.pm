@@ -255,7 +255,7 @@ sub weather_measure_rule_apply($rules, $rule) {
 	return \@out;
 }
 
-sub weather_measure_rule_save($rule) {
+sub weather_measure_rule_save($rule, $opts = {}) {
 	my $rules = &weather_measure_rule_apply(&weather_measure_rules(), $rule);
 	return { error => &subs::ui('A measurement rule needs at least one complete condition and an action.') }
 		unless $rules;
@@ -264,7 +264,7 @@ sub weather_measure_rule_save($rule) {
 		setting => 'weather_rules',
 		value => encode_json $rules,
 	});
-	return &weather_automation_state();
+	return &weather_automation_state($opts || {});
 }
 
 # ---- reading a rule's conditions -------------------------------------------
@@ -516,7 +516,99 @@ sub weather_observe_prepare() {
 	return $own;
 }
 
-sub weather_automation_state() {
+# The rules carried over from the old weather app, and every rule added before
+# the tab was per-place, named no place and so acted on a reading anywhere. They
+# are the home's rules: pin each to the saved place at the home plate, once per
+# machine, so every machine at home shows and runs the same list. A rule that
+# already names a place is left alone; after this pass a person can still choose
+# Any location for a rule meant for the whole house. Returns false until a home
+# place exists, so the backfill retries on a later pass.
+sub weather_automation_adopt_home() {
+	my $home = &weather_home_place({ create => 1 });
+	my $uuid = ref $home eq 'HASH' ? ($home->{'uuid'} // '') : '';
+	return 0 unless $uuid =~ /^[A-Za-z0-9_-]+$/;
+	my $key = 'loc:' . $uuid;
+	my $am = &weather_observe_prepare();
+	my $changed = 0;
+	my $cms = ref $am->{'condition'} eq 'HASH' && ref $am->{'condition'}{'cm'} eq 'ARRAY'
+		? $am->{'condition'}{'cm'} : [];
+	foreach my $rule (@{$cms}) {
+		next unless ref $rule eq 'HASH';
+		next unless length($rule->{'match'} // '') && length($rule->{'app'} // '');
+		next if length &weather_rule_location_normalize($rule->{'location'});
+		$rule->{'location'} = $key;
+		$changed++;
+	}
+	if ($changed) {
+		&subs::setting_setter({ app => &weather_automation_app(), setting => 'app_measures', value => encode_json $am });
+	}
+	my $measure_rules = &weather_measure_rules();
+	my $moved = 0;
+	foreach my $rule (@{$measure_rules}) {
+		next unless ref $rule eq 'HASH';
+		next if length &weather_rule_location_normalize($rule->{'location'});
+		$rule->{'location'} = $key;
+		$moved++;
+	}
+	if ($moved) {
+		&subs::setting_setter({ app => &weather_automation_app(), setting => 'weather_rules', value => encode_json $measure_rules });
+	}
+	return 1;
+}
+
+# The place the toolbar's choice names, for the Automations tab. A saved place
+# is itself. A machine is the saved place it is standing on when that place is
+# anchored or a rule names it - the same place the observer records the reading
+# as - and otherwise the machine itself.
+sub weather_automation_view_location($opts = {}) {
+	$opts ||= {};
+	my $device = $opts->{'device'} // 'me';
+	return $device if $device =~ /^loc:[A-Za-z0-9_-]+$/;
+	my $sig = $device eq 'me' ? &subs::signatorial_designer() : $device;
+	return '' unless defined $sig && $sig =~ /^[A-Za-z0-9_-]+$/;
+	my $key = 'dev:' . $sig;
+	my ($lat, $lon) = ($opts->{'lat'}, $opts->{'lon'});
+	unless (defined $lat && defined $lon && "$lat" =~ /^-?\d/ && "$lon" =~ /^-?\d/) {
+		my $fix = eval { &subs::weather_device_fix($sig) };
+		($lat, $lon) = ($fix->{'lat'}, $fix->{'lon'}) if $fix;
+	}
+	return $key unless defined $lat && defined $lon;
+	my $place = &weather_location_for_fix($lat, $lon, '', {});
+	return $key unless $place && ($place->{'uuid'} // '') =~ /^[A-Za-z0-9_-]+$/;
+	my $place_key = 'loc:' . $place->{'uuid'};
+	return $place_key if $place->{'anchor'};
+	my $am = eval { decode_json(&subs::setting_grabber({ app => &weather_automation_app(), setting => 'app_measures' }) // '') } || {};
+	foreach my $rule (@{ &weather_automation_rules($am) }, @{ &weather_measure_rules() }) {
+		next unless ref $rule eq 'HASH';
+		return $place_key if &weather_rule_location_normalize($rule->{'location'}) eq $place_key;
+	}
+	return $key;
+}
+
+# `device`/`lat`/`lon` scope the tab to the location the toolbar shows; a
+# resolved `location` does the same for a caller that already has the key. With
+# neither, the state is the whole rule list as before. A rule for Any location
+# applies wherever you look, so it stays in every view.
+sub weather_automation_state($opts = {}) {
+	$opts ||= {};
+	my $view = '';
+	if (defined $opts->{'device'} && length $opts->{'device'}) {
+		$view = &weather_automation_view_location({
+			device => $opts->{'device'},
+			(defined $opts->{'lat'} ? (lat => $opts->{'lat'}) : ()),
+			(defined $opts->{'lon'} ? (lon => $opts->{'lon'}) : ()),
+		});
+	}
+	elsif (defined $opts->{'location'} && length $opts->{'location'}) {
+		$view = &weather_rule_location_normalize($opts->{'location'});
+	}
+	my $show = sub {
+		my ($where) = @_;
+		return 1 unless length $view;
+		$where = &weather_rule_location_normalize($where);
+		return 1 unless length $where;
+		return $where eq $view ? 1 : 0;
+	};
 	my $am = &weather_observe_prepare();
 	my $app = &weather_automation_app();
 	my $rules = &weather_automation_rules($am);
@@ -557,7 +649,7 @@ sub weather_automation_state() {
 				my $loc = $_->{'location'} // '';
 				+{ %{$_}, app_label => &subs::format_name($_->{'app'}),
 					location_label => (length $loc ? ($location_label->{$loc} || ($loc =~ /^loc:/ ? &subs::ui('Deleted place') : $loc)) : '') }
-			} @{$rules}
+			} grep { $show->($_->{'location'}) } @{$rules}
 		],
 		measures => &weather_measure_catalog(),
 		values => ($last->{'values'} || {}),
@@ -568,14 +660,15 @@ sub weather_automation_state() {
 				$r{'app_label'} = &subs::format_name($_->{'app'}) if length($_->{'app'} // '');
 				$r{'location_label'} = length $loc ? ($location_label->{$loc} || ($loc =~ /^loc:/ ? &subs::ui('Deleted place') : $loc)) : '';
 				\%r;
-			} @{$measure_rules}
+			} grep { $show->($_->{'location'}) } @{$measure_rules}
 		],
+		view_location => $view,
 		locations => $locations,
 		apps => \@app_options,
 	};
 }
 
-sub weather_automation_save($rule) {
+sub weather_automation_save($rule, $opts = {}) {
 	my $am = &weather_observe_prepare();
 	my $rules = &weather_automation_apply($am->{'condition'}->{'cm'} || [], $rule);
 	return { error => &subs::ui('A rule needs a condition and an app.') } unless $rules;
@@ -585,7 +678,7 @@ sub weather_automation_save($rule) {
 		setting => 'app_measures',
 		value => encode_json $am,
 	});
-	return &weather_automation_state();
+	return &weather_automation_state($opts || {});
 }
 
 # ---- locations --------------------------------------------------------------

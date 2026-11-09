@@ -11,6 +11,21 @@ use utf8;
 
 our $log;
 
+# The tab is scoped to the location the toolbar has chosen. The browser sends
+# the picker's value ('me', a machine's signatorial, or 'loc:<uuid>'); the
+# domain resolves it to the key a rule names, which is the place a machine is
+# standing on when that place is anchored or a rule names it.
+my $automation_scope = sub {
+	my $c = shift;
+	my $device = $c->param('device');
+	return {} unless defined $device && length $device;
+	return {
+		device => $device,
+		(defined $c->param('lat') ? (lat => $c->param('lat')) : ()),
+		(defined $c->param('lon') ? (lon => $c->param('lon')) : ()),
+	};
+};
+
 # GET /manager/weather
 sub action_52010 {
 	my $c = shift;
@@ -171,7 +186,7 @@ sub action_52014 {
 # GET /manager/weather/automations
 sub action_52015 {
 	my $c = shift;
-	my $state = eval { &subs::weather_automation_state() };
+	my $state = eval { &subs::weather_automation_state($automation_scope->($c)) };
 	$c->render(json => $state || { error => &subs::ui('Automations are unavailable.') });
 }
 
@@ -185,7 +200,7 @@ sub action_52016 {
 		action => $c->param('action') || 'start',
 		location => $c->param('location') || '',
 		remove => ($c->param('remove') ? 1 : 0),
-	}) };
+	}, $automation_scope->($c)) };
 	$c->render(json => $result || { error => &subs::ui('The automation was not saved.') });
 }
 
@@ -257,7 +272,7 @@ sub action_52019 {
 			command => $c->param('command') || '',
 			location => $c->param('location') || '',
 			remove => ($c->param('remove') ? 1 : 0),
-		});
+		}, $automation_scope->($c));
 	};
 	$c->render(json => $result || { error => &subs::ui('The measurement rule was not saved.') });
 }

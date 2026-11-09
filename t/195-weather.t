@@ -760,6 +760,126 @@ is(subs::weather_rule_location_normalize(undef), '', 'no location is the old glo
 	is(scalar @{ subs::weather_automation_matches($place_rules, 'Light Rain', '') }, 1, 'a reading with no place wakes only the global rule');
 }
 
+# --- the tab is scoped to the picker's place ----------------------------------
+{
+	my $now = 1794010000000;
+	no warnings 'redefine';
+	local *subs::signatorial_designer = sub { 'phone' };
+	local *subs::rightNow = sub { $now };
+	local *subs::weather_device_fix = sub {
+		return $_[0] eq 'phone' ? { lat => 43.0023, lon => -81.9419 } : undef;
+	};
+	local *subs::weather_locations = sub {
+		return [
+			{ uuid => 'warwick', name => 'Warwick', lat => 43.0023, lon => -81.9419, anchor => 1 },
+			{ uuid => 'cottage', name => 'Cottage', lat => 45, lon => -79, anchor => 0 },
+			{ uuid => 'cabin', name => 'Cabin', lat => 45.5, lon => -79.5, anchor => 0 },
+		];
+	};
+	local *subs::setting_grabber = sub {
+		my ($q) = @_;
+		return Mojo::JSON::encode_json({ condition => { type => 'text', cm => [
+			{ uuid => 'r', match => 'rain', app => 'raining', location => 'loc:cottage' },
+		] } }) if $q->{'app'} eq 'weather_station' && $q->{'setting'} eq 'app_measures';
+		return '[]' if $q->{'app'} eq 'weather_station' && $q->{'setting'} eq 'weather_rules';
+		return undef;
+	};
+	is(subs::weather_automation_view_location({ device => 'me' }), 'loc:warwick',
+		'a machine at the anchored home views the home place');
+	is(subs::weather_automation_view_location({ device => 'loc:cottage' }), 'loc:cottage',
+		'a saved place views itself');
+	is(subs::weather_automation_view_location({ device => 'me', lat => 45, lon => -79 }), 'loc:cottage',
+		'a machine at an unanchored place a rule names views that place');
+	is(subs::weather_automation_view_location({ device => 'me', lat => 45.5, lon => -79.5 }), 'dev:phone',
+		'a machine at a place no rule names keeps its own key');
+}
+
+{
+	my $now = 1794010000000;
+	my $cm = Mojo::JSON::encode_json({ condition => { type => 'text', cm => [
+		{ uuid => 'a', match => 'rain', app => 'raining', location => 'loc:cottage' },
+		{ uuid => 'b', match => 'snow', app => 'snowing' },
+	] } });
+	my $wr = Mojo::JSON::encode_json([
+		{ uuid => 'm1', when => [{ measure => 'wind_gust', op => '>', value => 20 }], action => 'start', app => 'gusty', location => 'loc:cabin' },
+	]);
+	no warnings 'redefine';
+	local *subs::setting_grabber = sub {
+		my ($q) = @_;
+		return $cm if $q->{'app'} eq 'weather_station' && $q->{'setting'} eq 'app_measures';
+		return $wr if $q->{'app'} eq 'weather_station' && $q->{'setting'} eq 'weather_rules';
+		return '[]' if $q->{'setting'} eq 'seen_measures';
+		return undef;
+	};
+	local *subs::setting_setter = sub { 1 };
+	local *subs::rightNow = sub { $now };
+	local *subs::signatorial_designer = sub { 'phone' };
+	local *subs::cache_get = sub { {} };
+	local *subs::weather_device_fixes = sub { [] };
+	local *subs::weather_locations = sub { [] };
+	local $gb::known_appts = {};
+
+	my $all = subs::weather_automation_state();
+	is(scalar @{ $all->{'rules'} }, 2, 'without a place the tab still lists every rule');
+	is($all->{'view_location'}, '', 'and names no view');
+
+	my $cottage = subs::weather_automation_state({ location => 'loc:cottage' });
+	is($cottage->{'view_location'}, 'loc:cottage', 'the view names the chosen place');
+	is_deeply([ map { $_->{'uuid'} } @{ $cottage->{'rules'} } ], [qw(a b)],
+		'and shows the cottage rule beside the one for any location');
+	is(scalar @{ $cottage->{'measure_rules'} }, 0, 'another place\'s measurement rule stays off this tab');
+
+	my $cabin = subs::weather_automation_state({ location => 'loc:cabin' });
+	is_deeply([ map { $_->{'uuid'} } @{ $cabin->{'rules'} } ], [qw(b)],
+		'the cabin tab shows only the rule for any location');
+	is_deeply([ map { $_->{'uuid'} } @{ $cabin->{'measure_rules'} } ], [qw(m1)],
+		'and its own measurement rule');
+}
+
+# --- the place-less rules become the home's rules -----------------------------
+{
+	my $now = 1794010000000;
+	my %store = (
+		'app_measures' => Mojo::JSON::encode_json({ condition => { type => 'text', cm => [
+			{ uuid => 'r1', match => 'rain', app => 'raining', action => 'start' },
+			{ uuid => 'r2', match => 'snow', app => 'snowing', action => 'start', location => 'loc:cabin' },
+		] } }),
+		'weather_rules' => Mojo::JSON::encode_json([
+			{ uuid => 'm1', when => [{ measure => 'wind_gust', op => '>', value => 20 }], action => 'start', app => 'gusty' },
+		]),
+	);
+	no warnings 'redefine';
+	local *subs::signatorial_designer = sub { 'phone' };
+	local *subs::rightNow = sub { $now };
+	local *subs::weather_home_place = sub { { uuid => 'warwick', name => 'Warwick' } };
+	local *subs::setting_grabber = sub {
+		my ($q) = @_;
+		return $store{ $q->{'setting'} } if $q->{'app'} eq 'weather_station';
+		return undef;
+	};
+	local *subs::setting_setter = sub {
+		my ($q) = @_;
+		$store{ $q->{'setting'} } = $q->{'value'};
+		return 1;
+	};
+
+	ok(subs::weather_automation_adopt_home(), 'the home place is adopted');
+	my $am = Mojo::JSON::decode_json($store{'app_measures'});
+	my ($placed) = grep { $_->{'uuid'} eq 'r2' } @{ $am->{'condition'}{'cm'} };
+	my ($adopted) = grep { $_->{'uuid'} eq 'r1' } @{ $am->{'condition'}{'cm'} };
+	is($adopted->{'location'}, 'loc:warwick', 'a place-less condition rule moves to the home place');
+	is($placed->{'location'}, 'loc:cabin', 'a rule that already names a place is left alone');
+	my $wr = Mojo::JSON::decode_json($store{'weather_rules'});
+	is($wr->[0]{'location'}, 'loc:warwick', 'a place-less measurement rule moves too');
+
+	my %before = %store;
+	ok(subs::weather_automation_adopt_home(), 'a second pass is still a pass');
+	is($store{'app_measures'}, $before{'app_measures'}, 'and writes nothing new');
+
+	local *subs::weather_home_place = sub { undef };
+	is(subs::weather_automation_adopt_home(), 0, 'a house with no home place waits for the next pass');
+}
+
 {
 	my $now = 1794010000000;
 	my $cm = Mojo::JSON::encode_json({ condition => { type => 'text', cm => [

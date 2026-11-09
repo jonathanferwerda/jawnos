@@ -4,6 +4,13 @@
 // own coordinate, and this tab edits the same rule list.
 var weatherAutomationLoaded = false;
 var weatherAutomationData = null;
+// The rule-location key the tab is showing (the place the toolbar is on).
+var weatherAutomationView = '';
+
+function weatherAutomationDevice() {
+	var $w = $('.wind[app="weather"]').last();
+	return $w.find('#weather_device').val() || 'me';
+}
 
 $(document).on('click', '#weather_automation_add', function() {
 	weatherAutomationFormOpen();
@@ -41,6 +48,7 @@ function weatherAutomationLoad(message) {
 	$.ajax({
 		url: '/manager/weather/automations',
 		type: 'GET',
+		data: { device: weatherAutomationDevice() },
 		dataType: 'json',
 		success: function(response) {
 			if (!response || response.error) {
@@ -57,6 +65,7 @@ function weatherAutomationRender(data, message) {
 	var $w = $('.wind[app="weather"]').last();
 	weatherAutomationLoaded = true;
 	weatherAutomationData = data;
+	if (data.view_location !== undefined) { weatherAutomationView = data.view_location || ''; }
 	weatherAutomationLocations(data);
 	if (typeof weatherDeleteState === 'function') { weatherDeleteState(); }
 	var condition = data.condition_text || weatherAutomationWords(data.condition || '');
@@ -137,7 +146,7 @@ function weatherAutomationLocationSet(selector, value, label) {
 function weatherAutomationFormOpen(rule) {
 	var $w = $('.wind[app="weather"]').last();
 	$w.find('#weather_automation_uuid').val(rule ? (rule.uuid || '') : '');
-	weatherAutomationLocationSet('#weather_automation_location', rule ? (rule.location || '') : '', rule ? (rule.location_label || '') : '');
+	weatherAutomationLocationSet('#weather_automation_location', rule ? (rule.location || '') : weatherAutomationView, rule ? (rule.location_label || '') : '');
 	if (typeof weatherDeleteState === 'function') { weatherDeleteState(); }
 	$w.find('#weather_automation_match').val(rule ? (rule.match || '') : '');
 	$w.find('#weather_automation_app').val(rule ? (rule.app || '') : '');
@@ -176,6 +185,7 @@ function weatherAutomationSave() {
 		type: 'POST',
 		data: {
 			uuid: $w.find('#weather_automation_uuid').val() || '',
+			device: weatherAutomationDevice(),
 			location: $w.find('#weather_automation_location').val() || '',
 			match: match,
 			app: app,
@@ -203,7 +213,7 @@ function weatherAutomationRemove(uuid) {
 	$.ajax({
 		url: '/manager/weather/automation',
 		type: 'POST',
-		data: { uuid: uuid, remove: 1, timestamp: Date.now() },
+		data: { uuid: uuid, device: weatherAutomationDevice(), remove: 1, timestamp: Date.now() },
 		dataType: 'json',
 		success: function(response) {
 			if (!response || response.error) {
@@ -390,7 +400,7 @@ function weatherMeasureSentence(rule) {
 function weatherMeasureFormOpen(rule) {
 	var $w = $('.wind[app="weather"]').last();
 	$w.find('#weather_measure_uuid').val(rule ? (rule.uuid || '') : '');
-	weatherAutomationLocationSet('#weather_measure_location', rule ? (rule.location || '') : '', rule ? (rule.location_label || '') : '');
+	weatherAutomationLocationSet('#weather_measure_location', rule ? (rule.location || '') : weatherAutomationView, rule ? (rule.location_label || '') : '');
 	if (typeof weatherDeleteState === 'function') { weatherDeleteState(); }
 	$w.find('#weather_measure_name').val(rule ? (rule.name || '') : '');
 	var forMs = rule ? (rule.for_ms || 0) : 0;
@@ -520,6 +530,7 @@ function weatherMeasureSave() {
 		type: 'POST',
 		data: {
 			uuid: $w.find('#weather_measure_uuid').val() || '',
+			device: weatherAutomationDevice(),
 			name: $w.find('#weather_measure_name').val() || '',
 			location: $w.find('#weather_measure_location').val() || '',
 			when: JSON.stringify(conditions),
@@ -549,7 +560,7 @@ function weatherMeasureRemove(uuid) {
 	$.ajax({
 		url: '/manager/weather/measure_rule',
 		type: 'POST',
-		data: { uuid: uuid, remove: 1, timestamp: Date.now() },
+		data: { uuid: uuid, device: weatherAutomationDevice(), remove: 1, timestamp: Date.now() },
 		dataType: 'json',
 		success: function(response) {
 			if (!response || response.error) {

@@ -24,7 +24,7 @@
 		<button type="button" id="weather_automation_cancel"><%= &subs::ui('Cancel') %></button>
 		<input type="hidden" id="weather_automation_uuid" value="">
 	</div>
-	<div class="weather_muted"><%= &subs::ui('The house records the condition it sees here. A rule starts its app when the condition contains the word, and stops the app when the condition no longer does. The rain, snow, fog, sun and thunder rules from the old weather app are carried over.') %></div>
+	<div class="weather_muted"><%= &subs::ui('The house records the condition it sees here. A rule starts its app when the condition contains the word, and stops the app when the condition no longer does. The tab shows the rules for the location chosen above, and a new rule begins at that location. The rain, snow, fog, sun and thunder rules from the old weather app are kept at the home place.') %></div>
 	<div id="weather_measure_section">
 		<div class="weather_controls">
 			<b><%= &subs::ui('Measurement automations') %></b>

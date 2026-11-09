@@ -57,6 +57,9 @@ function weatherBind() {
 		weatherHistoryLoaded = false;
 		weatherAccuracyLoaded = false;
 		weatherDeleteState();
+		// The Automations tab is scoped to this picker: a new place has its own
+		// list, so reload rather than keep the previous place's rules on screen.
+		if (typeof weatherAutomationLoad === 'function' && weatherAutomationLoaded) { weatherAutomationLoad(); }
 		weatherLoad(true);
 	});
 	$w.on('click', '#weather_location_delete', function() {
