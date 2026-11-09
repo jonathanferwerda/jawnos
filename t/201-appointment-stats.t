@@ -48,7 +48,7 @@ $gb::database_holder = {
 $subs::say_quiet = 1;
 
 my $device = &subs::device_setter();
-my $now    = ts(2026, 11, 7, 12, 0, 0);   # a Saturday, so the week began November 2
+my $now    = ts(2026, 11, 7, 12, 0, 0);   # a Saturday, so the week began Sunday November 1
 my $row_id = 0;
 
 sub appt {
@@ -75,6 +75,11 @@ appt(ts(2026, 11,  1, 10), 3600000,  5, measure_json(ts(2026, 11,  1, 10), 3000,
 appt(ts(2026,  2,  1, 10), 1800000,  7, measure_json(ts(2026,  2,  1, 10), 4000, 200));   # this year
 appt(ts(2025, 12, 31, 10), 3600000, 99, measure_json(ts(2025, 12, 31, 10), 9000, 300));   # last year
 
+# an open start carries a duration written when it began; the reading still
+# runs to now, the same way the budget reads that row
+$db->query('insert into appointments (app, timestamp, stop_timestamp, type, duration, total, measures) values (?,?,?,?,?,?,?)',
+	'walk_open', ts(2026, 11, 7, 11), undef, 'start', -600000, 0, undef);
+
 foreach my $set ( [ 'measure_calc', 'sum', 'steps' ], [ 'measure_calc', 'average', 'weight' ] ) {
 	$db->query('insert into settings (setting, value, app, device, subsetting, uuid, server_time) values (?,?,?,?,?,?,?)',
 		$set->[0], $set->[1], 'walk', $device, $set->[2], 'set-' . $set->[2], $now);
@@ -100,17 +105,33 @@ is_deeply([ map { $_->{'key'} } @{ $stats->{'periods'} } ], [qw/today week month
 my %p = map { $_->{'key'} => $_ } @{ $stats->{'periods'} };
 
 is($p{'today'}->{'count'}, 1, 'today counts the row that started today');
-is($p{'week'}->{'count'}, 2, 'this week adds its own row, not the month one');
+is($p{'week'}->{'count'}, 3, 'this week starts on Sunday, so the first of the month counts too');
 is($p{'month'}->{'count'}, 3, 'this month adds the first of the month');
 is($p{'year'}->{'count'}, 4, 'this year adds February and leaves last year out');
 
 is($p{'today'}->{'duration'}, 3600000, 'today holds an hour');
-is($p{'week'}->{'duration'}, 10800000, 'this week holds three hours');
+is($p{'week'}->{'duration'}, 14400000, 'this week holds four hours, the first of the month included');
 is($p{'month'}->{'duration'}, 14400000, 'this month holds four hours');
 is($p{'year'}->{'duration'}, 16200000, 'this year holds four and a half hours');
 
+# a start still in the stream reads to now, not to the duration the row was
+# written with when it began (the budget reads the same row the same way)
+my $open = &subs::appointment_statistics_for('walk_open', $now);
+my %op = map { $_->{'key'} => $_ } @{ $open->{'periods'} };
+is($op{'today'}->{'duration'}, 3600000, 'an open start reads to now, not its stored duration');
+is($op{'today'}->{'count'}, 1, 'and it still counts once');
+
+# a session that began last year and ran into this one gives this year the part
+# after midnight, though its occurrence stays in the year it started
+$db->query('insert into appointments (app, timestamp, stop_timestamp, type, duration, total, measures) values (?,?,?,?,?,?,?)',
+	'walk_year', ts(2025, 12, 31, 23), ts(2026, 1, 1, 1), 'stop', -7200000, 0, undef);
+my $cross = &subs::appointment_statistics_for('walk_year', $now);
+my %cy = map { $_->{'key'} => $_ } @{ $cross->{'periods'} };
+is($cy{'year'}->{'duration'}, 3600000, 'time across New Year counts where it was spent');
+is($cy{'year'}->{'count'}, 0, 'but the occurrence stays in the year it started');
+
 is($p{'today'}->{'money'}, 10, 'today holds its ten');
-is($p{'week'}->{'money'}, 30, 'this week holds thirty');
+is($p{'week'}->{'money'}, 35, 'this week holds thirty-five');
 is($p{'month'}->{'money'}, 35, 'this month holds thirty-five');
 is($p{'year'}->{'money'}, 42, 'this year holds forty-two, not last year');
 

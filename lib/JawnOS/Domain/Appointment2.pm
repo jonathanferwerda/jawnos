@@ -797,9 +797,12 @@ sub device_labels {
 # The appointment's own bottom line: what its shelf holds, and how much of it
 # there was today, this week, this month and this year. A row counts once in the
 # period its start falls in; time is the time spent inside the period, so a
-# session that crosses midnight gives each day its share; money is the total
-# column's magnitude; and a measure reads with its own calc - steps summed,
-# weight averaged - the same setting the inventory and the budget use.
+# session that crosses midnight gives each day its share, a start still running
+# reads to now (the same row the budget reads), and a session that crosses the
+# new year gives each year its part; money is the total column's magnitude; and
+# a measure reads with its own calc - steps summed, weight averaged - the same
+# setting the inventory and the budget use. The week is the house's week: it
+# begins on Sunday, as the budget's does.
 sub appointment_statistics_for {
 	my ($app, $now) = @_;
 	$now = &subs::rightNow() unless defined $now;
@@ -812,7 +815,10 @@ sub appointment_statistics_for {
 	my %label_for = ( today => 'Today', week => 'This week', month => 'This month', year => 'This year' );
 	my (%window, %period);
 	foreach my $key ( @order ) {
-		my ($begin, $end) = &subs::period_bounds($unit_for{$key}, $now, 1);
+		# The week is the house's week: it starts on Sunday, the same boundary
+		# father_time builds for a locked budget, so this panel and the budget
+		# light above it agree about which days are in "this week".
+		my ($begin, $end) = &subs::period_bounds($unit_for{$key}, $now, 0);
 		$window{$key} = { begin => $begin, end => $end };
 		$period{$key} = {
 			key => $key,
@@ -838,16 +844,34 @@ sub appointment_statistics_for {
 	}
 
 	my $rows = &subs::db_query(
-		"select timestamp, stop_timestamp, type, duration, total, measures from appointments where app = ? and (cast(timestamp as integer) >= ? or (type in ('start','record') and (stop_timestamp is null or stop_timestamp = ''))) order by cast(timestamp as integer)",
-		$app, $since)->hashes || [];
+		# A session that began before the earliest window but ran into it is fetched
+		# too: its time is spent where it happened, so New Year's Eve contributes
+		# its after-midnight part to this year.
+		"select timestamp, stop_timestamp, type, duration, total, measures from appointments"
+		. " where app = ? and (cast(timestamp as integer) >= ?"
+		. " or (type in ('start','record') and (stop_timestamp is null or stop_timestamp = ''))"
+		. " or (cast(timestamp as integer) + abs(cast(coalesce(duration,0) as real))) > ?"
+		. " or (cast(coalesce(nullif(stop_timestamp,''),'0') as integer) > ?))"
+		. " order by cast(timestamp as integer)",
+		$app, $since, $since, $since)->hashes || [];
 
 	foreach my $row ( @{$rows} ) {
 		my $start = ($row->{'timestamp'} || 0) + 0;
-		my $stop = (defined $row->{'stop_timestamp'} && $row->{'stop_timestamp'} =~ /^-?[0-9]+$/ && $row->{'stop_timestamp'} + 0 > $start)
-			? $row->{'stop_timestamp'} + 0
-			: $start + abs($row->{'duration'} || 0);
-		# an open start/record has no end yet: it has been running until now
-		$stop = $now if $stop <= $start && (($row->{'type'} || '') eq 'start' || ($row->{'type'} || '') eq 'record');
+		my $type = $row->{'type'} || '';
+		my $stop;
+		if ($type eq 'start' || $type eq 'record') {
+			# A start or record still in the stream has not stopped: it has been
+			# running until now, whatever duration the row carries (a scheduled
+			# stop, or a value written when it began). The budget reads the same
+			# row the same way, so the two headers agree while a session runs.
+			$stop = $now;
+		}
+		elsif (defined $row->{'stop_timestamp'} && $row->{'stop_timestamp'} =~ /^-?[0-9]+$/ && $row->{'stop_timestamp'} + 0 > $start) {
+			$stop = $row->{'stop_timestamp'} + 0;
+		}
+		else {
+			$stop = $start + abs($row->{'duration'} || 0);
+		}
 
 		foreach my $key ( @order ) {
 			my $begin = $window{$key}->{'begin'};
