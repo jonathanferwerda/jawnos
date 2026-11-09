@@ -23,7 +23,7 @@ them to know what is happening this season.
 | # | Step | Done when |
 |---|---|---|
 | 1 | Define "great" with numbers | the table below has targets and a review date |
-| 2 | Battery/process experiment | idle CPU < 3% of one core, summed RSS < 1 GB, one feature shipped while doing it |
+| 2 | Battery/process experiment | idle CPU < 3% of one core, PSS < 800 MB, one feature shipped while doing it |
 | 3 | Desktop install on a clean VM | one command; no manual distro packages |
 | 4 | SDK schema frozen | schema, auth, events and one generated client in the tree |
 
@@ -34,14 +34,21 @@ useful.
 
 | Metric | Measured 2026-11-09 | Target |
 |---|---|---|
-| Idle CPU, whole tree | 10.8% of one core | < 3% |
-| Summed RSS | 3.6 GB over 35 processes | < 1 GB |
+| Idle CPU, whole tree | 4.0–6.3% of one core | < 3% |
+| PSS, whole tree | ~1.08 GB (private ~650 MB) | < 800 MB PSS |
 | `/manager/health` p50 | 32 ms new connection, ~15 ms keep-alive | < 10 ms |
 | Process start | ~0.25 s | < 0.1 s |
 | Desktop install | 4–6 prerequisites across distros | one command |
 | Phone UI cost | WebView + 223k JS + 24 pollers | one native screen pilot |
 
-Summed RSS double-counts shared pages; use it for direction, not as unique memory.
+Summed RSS overstates fork-shared pages, which PSS counts once and splits between their mappers. The
+earlier 10.8% CPU sample was taken while the box was busy.
+
+**Battery experiment — 2026-11-09.** From v0.1.2505 to v0.1.2511 the LAN presence listener
+(`lib/JawnOS/Domain/Lan.pm`, with the per-peer fingerprint in `lib/JawnOS/Domain/House.pm`) fell from
+1.4–1.8% of one core and 10–16 wakeups a second to 0.4–0.8% and 5.5–6.6. Three changes did it: a
+non-blocking drain once a second, a per-peer fingerprint that ignores the changing signature, and
+navigation applied at most every five seconds.
 
 ## Decisions
 
