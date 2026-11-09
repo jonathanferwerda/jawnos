@@ -4,41 +4,60 @@ package JawnOS::Platform::Runner::Windows;
 # Mojo::IOLoop::ReadWriteFork cannot exist: it requires IO::Pty, which is Unix
 # only, and a real fork.
 #
-# Windows has no fork, no pty, and select() works only on sockets. The shapes
-# the master relies on are built here from three primitives that do work:
+# Windows has no fork, no pty, and select() works only on sockets. Rather than
+# poll a pipe, the child's standard handles ARE a loopback socket: a listener on
+# 127.0.0.1 is connected to itself, the accepted end is made inheritable and
+# handed to the child as stdin/stdout/stderr through STARTF_USESTDHANDLES, and
+# the parent end is given to Mojo's reactor. Output therefore arrives as an
+# event, exactly as it does from ReadWriteFork's pipe on Unix.
 #
-#   - IPC::Open3 starts the child and hands back its stdin/stdout/stderr pipes;
-#   - Win32API::File::FdGetOsFHandle names a pipe's handle, and Win32::API's
-#     WaitForSingleObject waits on it - a pipe is not selectable, but it is
-#     waitable, so the reader is woken only when there are bytes;
-#   - waitpid($pid, WNOHANG) reports the exit and kill terminates the child
-#     (on Windows kill is TerminateProcess, whatever the signal name).
+# Win32::Process cannot set STARTF_USESTDHANDLES, so the spawn is CreateProcessA
+# with a hand-packed STARTUPINFO. The x64 layout is 104 bytes:
+#   DWORD cb; pad; 3 pointers; 8 DWORDs; 2 WORDs; pad; pointer; 3 handles.
+# It was verified in the Windows 11 VM: the socket delivers both streams and the
+# process handle reports the exit code.
 #
-# The Windows modules are required lazily: this file still compiles - and the
-# suite still loads it on Linux - so the portability of the tree does not
-# depend on a module that only exists on one platform.
+# Exit is not polled either: the socket's EOF is the event. The process handle is
+# waited on (bounded) at that point to read the code, which is the one place a
+# wait blocks, and it happens once when the child is already going away.
 #
 # The interface is the one jawn already speaks to ReadWriteFork: conduit,
-# on(read|close|spawn), start({program, program_args}), pid, close. A pty
-# conduit is not available here and is recorded as a pipe.
+# on(read|close|spawn), start({program, program_args, cwd}), pid, close. The
+# Windows modules are required lazily, so this file still compiles on Linux.
 
 use strict;
 use warnings;
 
-use IPC::Open3 ();
-use Symbol qw(gensym);
-use POSIX qw(WNOHANG);
 use Mojo::IOLoop ();
 
 my $WAIT_OBJECT_0 = 0;
-my $WaitForSingleObject;
+my $WAIT_TIMEOUT = 258;
+my %API;
 
-sub _wait_api {
-	return $WaitForSingleObject if $WaitForSingleObject;
+sub _api {
+	my ($name) = @_;
+	return $API{$name} if $API{$name};
 	require Win32::API;
-	$WaitForSingleObject = Win32::API->new('kernel32', 'WaitForSingleObject', 'NN', 'N')
-		or die "Win32::API could not bind WaitForSingleObject: $^E\n";
-	return $WaitForSingleObject;
+	my %bind = (
+		'CreateProcessA'      => [ 'PPPPNNPPPP', 'N' ],
+		'WaitForSingleObject' => [ 'NN', 'N' ],
+		'GetExitCodeProcess'  => [ 'NP', 'N' ],
+		'TerminateProcess'    => [ 'NN', 'N' ],
+	);
+	my $spec = $bind{$name} or die "unknown Win32 call $name\n";
+	$API{$name} = Win32::API->new('kernel32', $name, $spec->[0], $spec->[1])
+		or die "Win32::API could not bind $name: $^E\n";
+	return $API{$name};
+}
+
+# A command line argument the way CreateProcess reads it back.
+sub _quote_arg {
+	my ($arg) = @_;
+	$arg = '' unless defined $arg;
+	return '""' unless length $arg;
+	return $arg unless $arg =~ /[\s"]/;
+	(my $quoted = $arg) =~ s/"/\\"/g;
+	return qq{"$quoted"};
 }
 
 sub new {
@@ -50,7 +69,7 @@ sub new {
 }
 
 # The master asks for a pty natively and a pipe in portable mode. Windows has
-# one answer, and it is the pipe.
+# one answer, and it is the socket.
 sub conduit {
 	my ($self, $spec) = @_;
 	$self->{'conduit'} = { type => 'pipe' };
@@ -70,86 +89,114 @@ sub start {
 	$spec ||= {};
 	return $self->{'pid'} if $self->{'pid'};
 	require Win32API::File;
+	require IO::Socket::INET;
+
 	my $program = $spec->{'program'} || $^X;
 	my @args = @{ $spec->{'program_args'} || [] };
+	my $cwd = $spec->{'cwd'} || '.';
 
-	my ($in, $out);
-	my $err = gensym;
-	my $pid = eval { IPC::Open3::open3($in, $out, $err, $program, @args) };
-	unless ($pid) {
-		$self->{'error'} = $@ || 'the child could not be started';
+	# The child's end: a loopback pair. The accepted socket is the one the child
+	# inherits; the connecting end is what the reactor watches.
+	my $listener = IO::Socket::INET->new(
+		LocalAddr => '127.0.0.1', LocalPort => 0,
+		Proto => 'tcp', Listen => 1, ReuseAddr => 1,
+	) or do { $self->{'error'} = "listen: $!"; return undef };
+	my $port = $listener->sockport;
+	my $mine = IO::Socket::INET->new(
+		PeerAddr => '127.0.0.1', PeerPort => $port, Proto => 'tcp',
+	) or do { $self->{'error'} = "connect: $!"; return undef };
+	my $child_end = $listener->accept
+		or do { $self->{'error'} = "accept: $!"; return undef };
+	CORE::close($listener);
+	binmode $mine;
+	binmode $child_end;
+
+	my $handle = Win32API::File::FdGetOsFHandle(fileno $child_end);
+	Win32API::File::SetHandleInformation($handle, 1, 1);   # HANDLE_FLAG_INHERIT
+
+	my $startup = pack('L x4 Q Q Q L8 S S x4 Q Q Q Q',
+		104,
+		0, 0, 0,
+		0, 0, 0, 0, 0, 0, 0, 0x00000100,    # dwFlags: STARTF_USESTDHANDLES
+		0, 0,
+		0,
+		$handle, $handle, $handle);
+	my $process = "\0" x 24;    # PROCESS_INFORMATION
+
+	my $command = join ' ', &_quote_arg($program), map { &_quote_arg($_) } @args;
+	my $ok = &_api('CreateProcessA')->Call(
+		$program, $command, 0, 0, 1, 0, 0, $cwd, $startup, $process,
+	);
+	CORE::close($child_end);    # the child holds its own copy
+	unless ($ok) {
+		CORE::close($mine);
+		$self->{'error'} = 'CreateProcess failed: ' . Win32::GetLastError();
 		return undef;
 	}
-	CORE::close($in);    # the tree reads no stdin
-	binmode $out;
-	binmode $err;
 
-	$self->{'pid'} = $pid;
-	$self->{'out'} = $out;
-	$self->{'err'} = $err;
-	$self->{'out_handle'} = Win32API::File::FdGetOsFHandle(fileno $out);
-	$self->{'err_handle'} = Win32API::File::FdGetOsFHandle(fileno $err);
-
-	# 150ms is the smallest interval that keeps line-oriented output prompt
-	# without a busy loop; the wait answers immediately when bytes arrive.
-	$self->{'timer'} = Mojo::IOLoop->recurring(0.15 => sub { $self->pump });
+	$self->{'thread'} = unpack('Q', substr($process, 8, 8));
+	$self->{'handle'} = unpack('Q', substr($process, 0, 8));
+	$self->{'pid'} = unpack('L', substr($process, 16, 4));
+	$self->{'sock'} = $mine;
+	$self->{'reactor'} = Mojo::IOLoop->singleton->reactor;
+	$self->{'reactor'}->io($mine => sub { $self->pump });
 	$self->{'events'}{'spawn'}->($self) if $self->{'events'}{'spawn'};
-	return $pid;
+	return $self->{'pid'};
 }
 
-# One wait per stream per tick. A sysread after a signalled wait returns what is
-# buffered; the next tick drains the rest, so a chatty child cannot block the
-# master inside this loop.
+# Called by the reactor when the socket is readable, and only then.
 sub pump {
 	my ($self) = @_;
 	return if $self->{'closed'};
-	my $wait = &_wait_api();
+	my $sock = $self->{'sock'} or return;
 
-	my $data = '';
-	for my $slot ([$self->{'out'}, $self->{'out_handle'}],
-	              [$self->{'err'}, $self->{'err_handle'}]) {
-		my ($fh, $handle) = @$slot;
-		next unless $fh && $handle;
-		next if $self->{'drained'}{$handle};
-		next unless $wait->Call($handle, 0) == $WAIT_OBJECT_0;
-		my $n = sysread($fh, my $chunk, 65536);
-		if (defined $n && $n > 0) {
-			$data .= $chunk;
-		}
-		elsif (defined $n) {
-			$self->{'drained'}{$handle} = 1;    # 0 bytes: end of stream
-		}
+	my $n = sysread($sock, my $bytes, 65536);
+	if (defined $n && $n > 0) {
+		$self->{'events'}{'read'}->($self, $bytes) if $self->{'events'}{'read'};
+		return;
 	}
-	if (length $data && $self->{'events'}{'read'}) {
-		$self->{'events'}{'read'}->($self, $data);
-	}
+	return if !defined $n && $!{EAGAIN};
 
+	# EOF: the child (and anything it handed the socket to) is gone.
+	$self->{'reactor'}->remove($sock);
+	CORE::close($sock);
+	delete $self->{'sock'};
+	$self->_reap;
+	return;
+}
+
+sub _reap {
+	my ($self) = @_;
 	return if defined $self->{'exit'};
-	if (waitpid($self->{'pid'}, WNOHANG) == $self->{'pid'}) {
-		$self->{'exit'} = $? >> 8;
-		$self->{'events'}{'close'}->($self->{'exit'}, 0) if $self->{'events'}{'close'};
-		Mojo::IOLoop->remove($self->{'timer'}) if $self->{'timer'};
-	}
+	# The socket closes as the process goes away; the one bounded wait reads the
+	# code without turning the reader into a poll.
+	&_api('WaitForSingleObject')->Call($self->{'handle'}, 5000);
+	my $code = pack('L', 0);
+	&_api('GetExitCodeProcess')->Call($self->{'handle'}, $code);
+	$self->{'exit'} = unpack('L', $code);
+	$self->{'events'}{'close'}->($self->{'exit'}, 0) if $self->{'events'}{'close'};
 	return;
 }
 
 sub alive {
 	my ($self) = @_;
-	return 0 unless $self->{'pid'};
+	return 0 unless $self->{'handle'};
 	return 0 if defined $self->{'exit'};
-	return waitpid($self->{'pid'}, WNOHANG) == 0 ? 1 : 0;
+	return &_api('WaitForSingleObject')->Call($self->{'handle'}, 0) == $WAIT_TIMEOUT ? 1 : 0;
 }
 
-# TerminateProcess under the signal's name. Terminating is the only stop Windows
-# offers a parent; the tree's own cleanup on the way out is a shutdown this
-# runner cannot ask for.
+# TerminateProcess. Windows gives a parent no way to ask for the tree's own
+# shutdown, so the master's stop is a kill; a graceful stop has to travel over
+# the transport as a message the tree honours.
 sub stop {
 	my ($self) = @_;
-	return 1 unless $self->{'pid'};
+	return 1 unless $self->{'handle'};
 	unless (defined $self->{'exit'}) {
-		kill 'KILL', $self->{'pid'};
-		waitpid($self->{'pid'}, 0);
-		$self->{'exit'} = $? >> 8;
+		&_api('TerminateProcess')->Call($self->{'handle'}, 1);
+		&_api('WaitForSingleObject')->Call($self->{'handle'}, 5000);
+		my $code = pack('L', 0);
+		&_api('GetExitCodeProcess')->Call($self->{'handle'}, $code);
+		$self->{'exit'} = unpack('L', $code);
 	}
 	$self->_finish;
 	return 1;
@@ -157,7 +204,7 @@ sub stop {
 
 sub close {
 	my ($self) = @_;
-	return $self->stop if $self->{'pid'} && !defined $self->{'exit'} && !$self->{'closed'};
+	return $self->stop if $self->{'handle'} && !defined $self->{'exit'} && !$self->{'closed'};
 	$self->_finish;
 	return 1;
 }
@@ -165,11 +212,11 @@ sub close {
 sub _finish {
 	my ($self) = @_;
 	$self->{'closed'} = 1;
-	Mojo::IOLoop->remove($self->{'timer'}) if $self->{'timer'};
-	for my $key (qw(out err)) {
-		CORE::close($self->{$key}) if $self->{$key};
-		delete $self->{$key};
+	if ($self->{'sock'} && $self->{'reactor'}) {
+		$self->{'reactor'}->remove($self->{'sock'});
 	}
+	CORE::close($self->{'sock'}) if $self->{'sock'};
+	delete $self->{'sock'};
 	return;
 }
 
