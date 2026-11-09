@@ -213,7 +213,10 @@ static void usb_config_loop() {
           // A USB provision carries WiFi and the token, not the role. Keep the
           // existing relays/switches so rejoining does not leave the board with
           // dead pins until the next BLE or /watch push.
-          JSONVar prior = config;
+          // Snapshot through a string: Arduino_JSON assignment shares the
+          // underlying object, so `prior = config` aliased the document and the
+          // copy below wrote an empty role into an otherwise-fine board.
+          JSONVar prior = JSON.parse(JSON.stringify(config));
           config = incoming;
           const char *keep_keys[] = { "relay", "led", "button", "switch", "pot", "servo", "outputs", "internal_jobs", "houses", "__specs" };
           for (size_t ki = 0; ki < sizeof(keep_keys) / sizeof(keep_keys[0]); ki++) {

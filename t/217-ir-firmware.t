@@ -164,4 +164,11 @@ like($g1, qr/const char \*ir_maps\[\] = \{ "irrx", "irtx" \};/,
 	'the probe leaves configured IR pins alone');
 like($g1, qr/ultrasonic and DHT are next/, 'the next classes are named where the next row goes');
 
+# --- (h) a USB provision keeps the role it did not carry --------------------
+like($g2, qr/JSONVar prior = JSON\.parse\(JSON\.stringify\(config\)\);/,
+	'the provision snapshots the role through a string, not an alias');
+unlike($g2, qr/JSONVar prior = config;/, 'a direct assignment aliases and loses it');
+like($g2, qr/const char \*keep_keys\[\] = \{ "relay", "led", "button", "switch", "pot", "servo"/,
+	'the role and the pin maps survive a USB provision');
+
 done_testing();
