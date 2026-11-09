@@ -283,18 +283,22 @@ sub session_twin_rows {
 # The average the app's own closed sessions give it: the last forty stop lengths,
 # plus the session being closed when there is one. Stored stop lengths are
 # negative (start - stop), and a row a repair left without one is not a length at
-# all.
+# all. Neither is a zero, or a "session" longer than thirty days: those are a
+# clock skew, a 1970 start or a row a bad merge left behind, and one of them
+# would carry a lifetime into the app's usual length forever.
 sub session_duration_average {
 	my ($app, $duration) = @_;
 	return undef unless $app;
 	my $rows = &db_query('select duration from appointments where app=? and type=? order by server_time DESC LIMIT 40', $app, 'stop')->hashes || [];
+	my $cap = 30 * 86400 * 1000;
 	my ($total, $count) = (0, 0);
-	if (defined $duration && length $duration) {
+	if (defined $duration && length $duration && abs($duration) > 0 && abs($duration) <= $cap) {
 		$total += abs($duration);
 		$count++;
 	}
 	foreach my $row ( @{$rows} ) {
 		next unless defined $row->{'duration'} && length $row->{'duration'};
+		next unless abs($row->{'duration'}) > 0 && abs($row->{'duration'}) <= $cap;
 		$total += abs($row->{'duration'});
 		$count++;
 	}

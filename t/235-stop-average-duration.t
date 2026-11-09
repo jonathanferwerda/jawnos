@@ -75,6 +75,23 @@ is(&subs::session_duration_learn('coffee'), undef, 'a stop with no length learns
 	is(&subs::session_duration_average('quiet'), undef, 'an app with no closed sessions has no average');
 }
 
+# A zero, a lifetime and a clock-skewed row are not lengths to learn from: one
+# bad row in the last forty would otherwise carry a lifetime into the average.
+{
+	no warnings 'redefine';
+	my @bad = (
+		{ duration => 0 },                    # a start and stop in the same instant
+		{ duration => 1_230_000_000_000 },    # ~39 years (a 1970 start)
+		{ duration => -600_000 },             # 10 minutes, the only real one
+	);
+	local *subs::db_query = sub { return DurationRows->new(\@bad); };
+	is(&subs::session_duration_average('coffee'), 600_000,
+		'a zero and a lifetime-long row are left out of the average');
+	local *subs::db_query = sub { return DurationRows->new([]); };
+	is(&subs::session_duration_average('coffee', 40 * 86400 * 1000), undef,
+		'a stop measured longer than thirty days teaches nothing');
+}
+
 my %stops = (
 	coffee => [ { duration => -600_000 }, { duration => -1_800_000 } ],
 	home   => [],
