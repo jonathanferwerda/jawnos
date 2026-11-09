@@ -373,6 +373,28 @@ sub action_7940 {
 	$c->render(json => $answer);
 }
 
+# GET /manager/network/public_ip
+#
+# The outward address is an outbound lookup to a public echo service, so it is
+# never folded into the status poll: the panel asks once when it opens and the
+# answer is cached for ten minutes. A failure is not cached, so the next open
+# tries again.
+sub action_7943 {
+	my $c = shift;
+	my $cached = eval { &subs::cache_get({ app => 'network', context => 'public_ip' }) };
+	if (ref $cached eq 'HASH' && $cached->{'ok'} && ($cached->{'at'} || 0) > &subs::rightNow() - 600000) {
+		$c->render(json => $cached);
+		return;
+	}
+	my $answer = eval { &network_helper(['public_ip']) };
+	$answer = { ok => 0, error => 'The public address could not be read.' } unless ref $answer eq 'HASH';
+	if ($answer->{'ok'}) {
+		$answer->{'at'} = &subs::rightNow();
+		eval { &subs::cache_set({ app => 'network', context => 'public_ip', warranty => '-15m' }, $answer) };
+	}
+	$c->render(json => $answer);
+}
+
 # GET /manager/time_jump
 sub action_7994 {
 	my $c = shift;

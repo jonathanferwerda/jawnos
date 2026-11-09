@@ -19,6 +19,7 @@
 #   vpn_status
 #   vpn_tailscale up|down
 #   vpn_unit start|stop wg|openvpn <name>
+#   public_ip                    ask a public echo service for the outward address
 #
 # Every answer is a JSON object. An operational failure is { ok => 0, error };
 # it is not an exit status, so the caller always gets a readable message.
@@ -758,6 +759,31 @@ sub vpn_unit {
 	return { ok => 0, error => clean($stderr) || clean($stdout) || 'systemctl did not answer.' };
 }
 
+# The address the world sees. This is an outbound request, so the caller caches
+# it; curl is tried first and wget is the fallback. Only a string that really is
+# an IPv4 or IPv6 address is returned, so a captive portal's HTML never becomes
+# an "address" on the panel.
+sub public_ip {
+	my @services = (
+		[ 'curl', '-sS', '--max-time', '5', 'https://api.ipify.org' ],
+		[ 'wget', '-qO-', '--timeout=5', 'https://api.ipify.org' ],
+	);
+	my ($stdout, $stderr, $status);
+	my $used = '';
+	for my $service ( @services ) {
+		(my $bin, my @args) = @{$service};
+		($stdout, $stderr, $status) = run_read($bin, @args);
+		$used = $bin;
+		last if $status == 0 && defined $stdout && length $stdout;
+	}
+	return { ok => 0, error => 'the public address could not be read' } unless $status == 0;
+	my $ip = trim($stdout);
+	my $v4 = $ip =~ /\A(?:\d{1,3}\.){3}\d{1,3}\z/ ? 1 : 0;
+	my $v6 = (!$v4 && $ip =~ /\A[0-9A-Fa-f:.]{2,45}\z/ && $ip =~ /:/) ? 1 : 0;
+	return { ok => 0, error => 'the public address was not an address' } unless $v4 || $v6;
+	return { ok => 1, ip => $ip, family => ($v4 ? 'IPv4' : 'IPv6'), service => $used };
+}
+
 my $command = shift @ARGV;
 $command = '' unless defined $command;
 
@@ -809,6 +835,9 @@ elsif ($command eq 'vpn_status') {
 }
 elsif ($command eq 'vpn_tailscale') {
 	emit(vpn_tailscale(shift @ARGV));
+}
+elsif ($command eq 'public_ip') {
+	emit(public_ip());
 }
 elsif ($command eq 'vpn_unit') {
 	my ($action, $kind, $name) = @ARGV;

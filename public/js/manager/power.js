@@ -184,6 +184,7 @@ function powerRender(status) {
 		$('#power_cpu_epp').text(cpu.epp || '—');
 		$('#power_cpu_driver').text(cpu.driver || '—');
 		$('#power_cpu_policies').text(cpu.policies || 0);
+		$('#power_cpu_hardware_max').text(powerGHz(cpu.hardware_max_mhz) == '—' ? '—' : powerGHz(cpu.hardware_max_mhz) + ' GHz');
 		$('#power_cpu_freq').text(powerGHz(cpu.cur_mhz) + ' / ' + powerGHz(cpu.max_mhz) + ' GHz');
 		$('#power_cpu_turbo').text(cpu.turbo === undefined || cpu.turbo === null ? '—' : (cpu.turbo ? jawnosT('On') : jawnosT('Off')));
 	}
@@ -193,6 +194,7 @@ function powerRender(status) {
 	}
 	var applied = status.applied || {};
 	var applied_here = applied.source && applied.source == status.source;
+	powerManagerNote(status, applied);
 	if (applied.error && applied_here) {
 		$('#power_status').text(jawnosT('The plan could not be applied') + ': ' + applied.error);
 	}
@@ -320,6 +322,31 @@ function powerSleepNow() {
 			$('#power_sleep_status').text(reason);
 		}
 	}, 'json');
+}
+
+// Who is writing the power knobs. A competing daemon that is still running
+// wins the race, and Auto leaves it in charge on purpose; once a real plan is
+// applied JawnOS has stopped it, and the line names the plan that governs.
+function powerManagerNote(status, applied) {
+	var manager = status.manager || {};
+	var active = manager.units || [];
+	var source = status.source || '';
+	var entry = (status.config && status.config[source]) || {};
+	var plan = entry.plan || 'balanced';
+	var text = '';
+	if (active.length) {
+		text = jawnosT('Power is managed by') + ' ' + active.join(', ') + '. ';
+		text += plan == 'auto'
+			? jawnosT('Auto leaves it in charge.')
+			: jawnosT('Choosing a plan stops it.');
+	}
+	else if (applied && applied.ok && applied.source == source && applied.plan) {
+		text = jawnosT('Power is managed by JawnOS') + ': ' + powerPlanLabel(applied.plan);
+	}
+	else {
+		text = jawnosT('Power is managed by') + ' ' + jawnosT('the kernel');
+	}
+	$('#power_manager_note').text(text);
 }
 
 function powerLoad() {

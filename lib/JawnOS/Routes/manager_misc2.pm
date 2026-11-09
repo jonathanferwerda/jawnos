@@ -21,6 +21,7 @@ sub routes {
 	[7917, 'post', '/manager/network/radio', 'action_7917'],
 	[7928, 'post', '/manager/network/interface', 'action_7928'],
 	[7940, 'post', '/manager/network/vpn', 'action_7940'],
+	[7943, 'get', '/manager/network/public_ip', 'action_7943'],
 	[7994, 'get', '/manager/time_jump', 'action_7994'],
 	[8094, 'post', '/manager/pay/setting', 'action_8094'],
 	[8127, 'post', '/manager/pay/test', 'action_8127'],

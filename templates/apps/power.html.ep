@@ -54,6 +54,7 @@
 			<div id="power_cpu_governor" class="power_muted">—</div>
 		</div>
 	</div>
+	<div id="power_manager_note" class="power_muted"></div>
 	<div class="power_plans">
 		<section class="power_plan_card" id="power_source_ac" active="no">
 			<h4><%= &subs::lang('power_ac') %></h4>
@@ -166,6 +167,7 @@
 			<b><%= &subs::ui('Energy preference') %></b><span id="power_cpu_epp">—</span>
 			<b><%= &subs::ui('Driver') %></b><span id="power_cpu_driver">—</span>
 			<b><%= &subs::ui('Clock domains') %></b><span id="power_cpu_policies">—</span>
+			<b><%= &subs::ui('Hardware maximum') %></b><span id="power_cpu_hardware_max">—</span>
 			<b><%= &subs::ui('Turbo') %></b><span id="power_cpu_turbo">—</span>
 		</div>
 	</div>

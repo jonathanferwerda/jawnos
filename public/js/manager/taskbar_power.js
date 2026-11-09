@@ -162,6 +162,21 @@ function jawnosPowerTaskbarPanelProfile(panel) {
 	else if (source == 'battery') {
 		section.append($('<div class="taskbar_panel_note"></div>').text(jawnosT('On battery power')));
 	}
+	// Name who is writing the knobs: a daemon still running wins, Auto leaves it
+	// in charge, and a real plan is JawnOS's own.
+	var manager = (status && status.manager) || {};
+	var active = manager.units || [];
+	var manager_text = '';
+	if (active.length) {
+		manager_text = jawnosT('Power is managed by') + ' ' + active.join(', ');
+		manager_text += current == 'auto'
+			? ' — ' + jawnosT('Auto leaves it in charge.')
+			: ' — ' + jawnosT('Choosing a plan stops it.');
+	}
+	else {
+		manager_text = jawnosT('Power is managed by JawnOS');
+	}
+	section.append($('<div class="taskbar_panel_note"></div>').text(manager_text));
 	var plans = [
 		['auto', jawnosT('Auto')],
 		['saver', jawnosT('Power saver')],

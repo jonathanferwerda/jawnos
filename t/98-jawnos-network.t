@@ -289,4 +289,22 @@ FAKE_NMCLI
 		'a machine without tailscale says so, and nothing else');
 }
 
+# --- the outward address, behind a fake curl --------------------------------
+my $curlbin = "$scratch/curlbin";
+mkdir $curlbin or die "cannot make $curlbin: $!";
+write_exe("$curlbin/curl", q{printf '203.0.113.7\n'});
+{
+	my (undef, $out) = run_net(path => $curlbin, args => ['public_ip']);
+	my $data = answer(0, $out, '', 'public_ip');
+	is($data->{'ip'}, '203.0.113.7', 'the outward address is returned');
+	is($data->{'family'}, 'IPv4', 'and named as IPv4');
+	is($data->{'service'}, 'curl', 'through the tool that answered');
+}
+write_exe("$curlbin/curl", q{printf '<html>login</html>\n'});
+expect_error('the public address was not an address',
+	'a captive portal page is not an address',
+	path => $curlbin, args => ['public_ip']);
+expect_error('the public address could not be read',
+	'public_ip with no curl or wget', path => $empty, args => ['public_ip']);
+
 done_testing();

@@ -14,6 +14,7 @@
 #   sleep <type>               type is suspend|hibernate|hybrid_sleep|suspend_then_hibernate
 #   charge <end>               end is the battery's charge limit, 50..100
 #   takeover                   stop a competing power daemon and disable it
+#   manager                    name the power daemon still running, if any
 #
 # settings writes one logind drop-in (HandleLidSwitch*, IdleAction*) and sets the
 # screen timer through gsettings or xset. sleep runs systemctl with one fixed
@@ -133,7 +134,7 @@ sub number {
 sub mhz {
 	my ($khz) = @_;
 	return undef unless defined $khz;
-	return int($khz / 1000 + 0.5) / 1000;
+	return int($khz / 1000 + 0.5);
 }
 
 # A policy is one clock domain: policy0 on most kernels, cpu0/cpufreq on older
@@ -197,7 +198,7 @@ sub cpu_snapshot {
 		my $hard = number("$dir/cpuinfo_max_freq");
 		if (defined $hard) { $hardware_max = $hard if !defined $hardware_max || $hard > $hardware_max; }
 	}
-	$snapshot->{'cur_mhz'} = $n ? int(($cur / $n) / 1000 + 0.5) / 1000 : undef;
+	$snapshot->{'cur_mhz'} = $n ? int(($cur / $n) / 1000 + 0.5) : undef;
 	$snapshot->{'min_mhz'} = mhz($min);
 	$snapshot->{'max_mhz'} = mhz($max);
 	$snapshot->{'hardware_max_mhz'} = mhz($hardware_max);
@@ -446,6 +447,19 @@ sub takeover {
 	return emit({ ok => 1, stopped => \@stopped, failed => [] });
 }
 
+# Which of the competing daemons is still running. The Power app names the
+# manager so a person can tell who is governing the machine, instead of
+# guessing after a plan change.
+sub manager {
+	# A dry run reads nothing: run_command's own dry-run shortcut would make
+	# every unit look active, which is the opposite of the truth.
+	return emit({ ok => 1, supported => 1, units => [], dry_run => 1 }) if $DRY;
+	my $systemctl = command_path('systemctl');
+	return emit({ ok => 1, supported => 0, units => [] }) unless $systemctl;
+	my @active = grep { run_command($systemctl, 'is-active', '--quiet', $_)->{'ok'} } @TAKEOVER_UNITS;
+	emit({ ok => 1, supported => 1, units => \@active });
+}
+
 # A logind drop-in is one small file. The docked case is always ignore: the
 # lid row is about a real lid, not a dock that reports itself closed.
 sub logind_text {
@@ -603,6 +617,9 @@ elsif ($command eq 'charge') {
 }
 elsif ($command eq 'takeover') {
 	takeover();
+}
+elsif ($command eq 'manager') {
+	manager();
 }
 else {
 	failure('unknown command');

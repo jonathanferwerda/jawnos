@@ -301,6 +301,29 @@ function jawnosNetworkTaskbarPanelScan(panel) {
 	});
 }
 
+// The outward address is a separate route: the server asks a public echo
+// service once and caches it for ten minutes. A failed read says so rather
+// than leaving the row on "Reading…".
+function jawnosNetworkTaskbarPanelPublicIp(panel) {
+	var value = panel.find('.taskbar_network_panel_public .taskbar_panel_ip');
+	if (!value.length) { return; }
+	value.text(jawnosT('Reading…'));
+	$.ajax({ url: '/manager/network/public_ip', type: 'GET', cache: false })
+		.done(function(response) {
+			if (response && response.ok && response.ip) {
+				var title = [];
+				if (response.family) { title.push(String(response.family)); }
+				if (response.service) { title.push(String(response.service)); }
+				value.text(String(response.ip)).attr('title', title.join(' · '));
+				return;
+			}
+			value.text(jawnosT('Unavailable')).removeAttr('title');
+		})
+		.fail(function() {
+			value.text(jawnosT('Unavailable')).removeAttr('title');
+		});
+}
+
 function jawnosNetworkTaskbarPanelBluetooth(panel) {
 	if (!panel || !panel.length) { return; }
 	var section = panel.find('.taskbar_network_panel_bluetooth').empty();
@@ -395,6 +418,10 @@ function jawnosNetworkTaskbarPanelBuild(panel) {
 	var wifi = jawnosNetworkTaskbarPanelSection(panel, 'wifi');
 	wifi.append($('<h4></h4>').text(jawnosT('Wi-Fi')));
 	wifi.append($('<div></div>').addClass('taskbar_network_panel_wifi_state'));
+	var public_row = $('<div></div>').addClass('taskbar_panel_row taskbar_network_panel_public');
+	public_row.append($('<span></span>').addClass('taskbar_panel_label').text(jawnosT('Public address')));
+	public_row.append($('<span></span>').addClass('taskbar_panel_ip').text('—'));
+	wifi.append(public_row);
 	var controls = $('<div></div>').addClass('taskbar_panel_row').appendTo(wifi);
 	controls.append($('<button type="button"></button>').addClass('taskbar_network_panel_scan').text(jawnosT('Scan')));
 	wifi.append($('<div></div>').addClass('taskbar_panel_note taskbar_network_panel_wifi_note'));
@@ -405,6 +432,7 @@ function jawnosNetworkTaskbarPanelBuild(panel) {
 	jawnosNetworkTaskbarPanelSection(panel, 'vpn');
 
 	jawnosNetworkTaskbarPanelWifiState(panel);
+	jawnosNetworkTaskbarPanelPublicIp(panel);
 	jawnosNetworkTaskbarPanelBluetooth(panel);
 	jawnosNetworkTaskbarPanelVpn(panel);
 

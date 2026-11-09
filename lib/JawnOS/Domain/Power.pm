@@ -108,7 +108,7 @@ sub power_number {
 sub power_mhz {
 	my ($khz) = @_;
 	return undef unless defined $khz;
-	return int($khz / 1000 + 0.5) / 1000;
+	return int($khz / 1000 + 0.5);
 }
 
 sub power_command_path {
@@ -287,7 +287,7 @@ sub power_cpu_read {
 		my $hard = &power_number("$dir/cpuinfo_max_freq");
 		if (defined $hard) { $hardware_max = $hard if !defined $hardware_max || $hard > $hardware_max; }
 	}
-	$cpu->{'cur_mhz'} = $n ? int(($cur / $n) / 1000 + 0.5) / 1000 : undef;
+	$cpu->{'cur_mhz'} = $n ? int(($cur / $n) / 1000 + 0.5) : undef;
 	$cpu->{'min_mhz'} = &power_mhz($min);
 	$cpu->{'max_mhz'} = &power_mhz($max);
 	$cpu->{'hardware_max_mhz'} = &power_mhz($hardware_max);
@@ -729,6 +729,13 @@ sub power_takeover {
 	return &power_helper('takeover');
 }
 
+# Who is writing the CPU and sleep knobs. JawnOS applies a plan for the current
+# source; a competing daemon (power-profiles-daemon, TLP or auto-cpufreq) may
+# still be running, and Auto deliberately leaves it in charge.
+sub power_manager {
+	return &power_helper('manager');
+}
+
 sub power_status {
 	my $battery = &power_battery_read();
 	my $config = &power_config();
@@ -747,6 +754,7 @@ sub power_status {
 		plans => &power_plan_options(),
 		applied => &power_last_applied(),
 		sleep => &power_sleep_capabilities(),
+		manager => &power_manager(),
 		sleep_plan => &power_plan_valid($config->{$source}{'plan'}) ? $config->{$source}{'plan'} : 'balanced',
 		charge => &power_charge_read(),
 	};

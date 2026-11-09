@@ -81,6 +81,8 @@ like($css, qr/\.taskbar_panel \.taskbar_panel_footer/, 'and so does the footer')
 like($sound, qr/jawnosTaskbarPanelToggle\('taskbar_sound_panel'/, 'the sound widget opens its panel');
 like($sound, qr/\.on\('wheel'/, 'a wheel over the sound widget is heard');
 like($sound, qr/function jawnosSoundTaskbarWheelAdjust\(/, 'and adjusts the output volume');
+like($sound, qr/jawnosSoundTaskbarWheelRate = 2\.5/, 'a notch is half the old five-point rate');
+like($sound, qr/#taskbar_sound_panel \[data-sound-volume\]/, 'a wheel over a panel slider is heard too');
 like($sound, qr/\{ kind: kind, id: id, volume: volume \}/, 'the panel writes a device volume by id');
 like($sound, qr{/manager/sound/default}, 'and can make a device the default');
 like($sound, qr/jawnosT\('Open Sound'\)/, 'its footer opens Sound');
@@ -89,12 +91,15 @@ like($power, qr/jawnosTaskbarPanelToggle\('taskbar_power_panel'/, 'the battery w
 like($power, qr/data-power-plan/, 'the panel offers the power profiles');
 like($power, qr{/manager/power/plan}, 'and saves one');
 like($power, qr/jawnosT\('Open Power'\)/, 'its footer opens Power');
+like($power, qr/jawnosT\('Power is managed by'\)/, 'the panel names who manages power');
 
 like($network, qr/jawnosTaskbarPanelToggle\('taskbar_network_panel'/, 'the network widget opens its panel');
 like($network, qr{/manager/network/wifi_scan}, 'the panel scans for networks');
 like($network, qr{/manager/network/wifi_connect}, 'and joins one');
 like($network, qr{/manager/network/vpn}, 'and starts or stops a VPN');
 like($network, qr/jawnosT\('Open Network'\)/, 'its footer opens Network');
+like($network, qr{/manager/network/public_ip}, 'the panel reads the outward address');
+like($network, qr/jawnosT\('Public address'\)/, 'and names it');
 
 # --- the shell and the styles ----------------------------------------------
 my $manager = read_file("$root/templates/manager.html.ep");

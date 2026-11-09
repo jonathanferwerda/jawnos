@@ -3790,6 +3790,7 @@ body.dark_theme .inventory_details {
 .taskbar_panel .taskbar_panel_device:hover { background-color: var(--line); }
 .taskbar_panel .taskbar_panel_device[data-default="1"] { box-shadow: inset 2px 0 0 var(--accent, #3b7ddd); }
 .taskbar_panel .taskbar_panel_device .taskbar_panel_label { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+.taskbar_panel .taskbar_panel_ip { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; font-family: ui-monospace, monospace; font-size: 12px; opacity: .9; }
 .taskbar_panel .taskbar_panel_badge { flex: 0 0 auto; padding: 0 5px; font-size: 10px; opacity: .7; border: 1px solid var(--line); border-radius: 8px; }
 .taskbar_panel .taskbar_panel_pass { flex: 1 1 80px; min-width: 0; font: inherit; font-size: 12px; padding: 4px 6px; color: inherit; background-color: var(--panel); border: 1px solid var(--line); border-radius: 6px; }
 .taskbar_panel .taskbar_panel_bars { display: inline-flex; flex: 0 0 auto; align-items: flex-end; gap: 1px; height: 12px; }

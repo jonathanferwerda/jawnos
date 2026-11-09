@@ -74,14 +74,15 @@ no warnings 'redefine';
 	ok(abs($status->{'battery'}{'discharge_eta'} - 4) < 0.001, 'the gauge gives four hours left');
 	is($status->{'cpu'}{'supported'}, 1, 'the clock domain is found');
 	is($status->{'cpu'}{'governor'}, 'schedutil', 'the governor is read');
-	is($status->{'cpu'}{'cur_mhz'}, 2, 'the current clock is read');
-	is($status->{'cpu'}{'max_mhz'}, 4, 'the ceiling is read');
+	is($status->{'cpu'}{'cur_mhz'}, 2000, 'the current clock is read in MHz');
+	is($status->{'cpu'}{'max_mhz'}, 4000, 'the ceiling is read in MHz');
 	is($status->{'cpu'}{'turbo'}, 1, 'turbo is reported on');
 	is($status->{'config'}{'battery'}{'plan'}, 'saver', 'the default battery plan is the saver');
 	is($status->{'config'}{'battery'}{'limit'}, 70, 'the default battery speed limit is 70%');
 	is($status->{'config'}{'ac'}{'plan'}, 'balanced', 'the default mains plan is balanced');
 	is($status->{'charge'}{'supported'}, 1, 'the pack reports a charge ceiling');
 	is($status->{'charge'}{'end'}, 100, 'at the percentage it currently stops at');
+	ok(exists $status->{'manager'}, 'the status names who manages power');
 }
 
 write_file("$sys/class/power_supply/AC/online", "1\n");
@@ -148,7 +149,7 @@ sub helper {
 	is(read_file("$policy/energy_performance_preference"), "power\n", 'the saver asks for the power preference');
 	is(read_file("$sys/devices/system/cpu/cpufreq/boost"), "0\n", 'the saver turns turbo off');
 	is(read_file("$policy/scaling_max_freq"), "2560000\n", '60% of 400 MHz to 4 GHz is 2.56 GHz');
-	is($saver->{'max_mhz'}, 2.56, 'the answer reports the cap');
+	is($saver->{'max_mhz'}, 2560, 'the answer reports the cap in MHz');
 
 	my $performance = helper('apply', 'performance', '100');
 	ok($performance->{'ok'}, 'the performance plan is applied');
@@ -185,6 +186,20 @@ sub helper {
 	is($high->{'ok'}, 0, 'a limit above 100 is refused');
 }
 
+# --- who is managing power --------------------------------------------------
+# A fake systemctl that reports auto-cpufreq running and the others absent:
+# the manager answer must name exactly the daemon that would race JawnOS.
+{
+	my $bin = "$scratch/bin-systemctl";
+	make_path($bin);
+	write_file("$bin/systemctl", "#!/bin/sh\ncase \"\$*\" in *auto-cpufreq*) exit 0;; *) exit 3;; esac\n");
+	chmod 0755, "$bin/systemctl";
+	local $ENV{PATH} = "$bin:/bin";
+	my $manager = helper('manager');
+	ok($manager->{'ok'}, 'the manager answer is readable');
+	is_deeply($manager->{'units'}, ['auto-cpufreq'], 'only the running daemon is named');
+}
+
 # --- the route, the controller and the tier ---------------------------------
 {
 	my $routes = read_file("$root/lib/JawnOS/Routes/manager_power.pm");
@@ -214,6 +229,8 @@ sub helper {
 		'the charge writer is in the domain loader');
 	like($loader, qr/JawnOS::Domain::Power' for qw\([^)]*\bpower_takeover\b/,
 		'the daemon takeover is in the domain loader');
+	like($loader, qr/JawnOS::Domain::Power' for qw\([^)]*\bpower_manager\b/,
+		'the manager reading is in the domain loader');
 
 	my $tiers = read_file("$root/perl/subroutines.pl");
 	like($tiers, qr{/manager/\(\?:configure\|security\|magazine/publish\|power\)},

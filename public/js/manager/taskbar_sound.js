@@ -10,10 +10,14 @@
 // The footer's button is the way into the Sound app.
 var jawnosSoundTaskbarData = null;
 var jawnosSoundTaskbarPanelStale = false;
-var jawnosSoundTaskbarWheelTimer = null;
-var jawnosSoundTaskbarWheelVolume = null;
-var jawnosSoundTaskbarWheelId = null;
+// A wheel notch is about 100 deltaY; a trackpad sends many smaller events, so
+// the points are accumulated instead of moving on every event. Half the old
+// five-points-a-notch rate, which felt too fast on a trackpad.
+var jawnosSoundTaskbarWheelRate = 2.5;
 var jawnosSoundTaskbarWheelDelay = 250;
+var jawnosSoundTaskbarWheelAccum = {};
+var jawnosSoundTaskbarWheelVolume = {};
+var jawnosSoundTaskbarWheelTimer = {};
 
 function jawnosSoundTaskbarPercent(value) {
 	var pct = parseFloat(value);
@@ -53,44 +57,52 @@ function jawnosSoundTaskbarBindWheel() {
 	var widget = $('#taskbar_sound');
 	if (!widget.length || widget.data('jawnos_sound_wheel')) { return; }
 	widget.data('jawnos_sound_wheel', 1);
-	// A native element listener is not passive, so preventDefault really stops
-	// the page scrolling under the scroll-to-adjust gesture.
-	widget.on('wheel', function(e) {
-		if (typeof jawnosTaskbarEditing === 'function' && jawnosTaskbarEditing()) { return; }
-		var original = e.originalEvent || e;
-		var delta = original.deltaY;
-		if (delta === undefined) { delta = e.deltaY; }
-		delta = parseFloat(delta) || 0;
-		if (!delta) { return; }
-		if (!jawnosSoundTaskbarWheelAdjust(delta)) { return; }
-		if (e.preventDefault) { e.preventDefault(); }
-		return false;
-	});
+	widget.on('wheel', function(e) { return jawnosSoundTaskbarWheelEvent(e, 'output'); });
 }
 
-// One notch is five points, down is quieter. A fast scroll coalesces into the
-// last value; the cached status is moved at once so the bar follows the wheel.
-function jawnosSoundTaskbarWheelAdjust(delta) {
-	var output = jawnosSoundTaskbarSelected('output');
-	if (!output || output.id === undefined || output.id === null || output.id === '') { return false; }
-	var id = String(output.id);
-	var base = jawnosSoundTaskbarWheelVolume;
-	if (base === null || base === undefined || jawnosSoundTaskbarWheelId !== id) {
-		base = jawnosSoundTaskbarPercent(output.volume);
-	}
-	var volume = jawnosSoundTaskbarPercent(base + (delta > 0 ? -5 : 5));
-	jawnosSoundTaskbarWheelId = id;
-	jawnosSoundTaskbarWheelVolume = volume;
-	jawnosSoundTaskbarOptimistic('output', volume);
-	if (jawnosSoundTaskbarWheelTimer) { clearTimeout(jawnosSoundTaskbarWheelTimer); }
-	jawnosSoundTaskbarWheelTimer = setTimeout(function() {
-		jawnosSoundTaskbarWheelTimer = null;
-		var send_id = jawnosSoundTaskbarWheelId;
-		var send_volume = jawnosSoundTaskbarWheelVolume;
-		jawnosSoundTaskbarWheelVolume = null;
-		jawnosSoundTaskbarPostVolume('output', send_id, send_volume, function(ok) {
+// One wheel handler for the widget and for the panel's sliders. Returning false
+// keeps the page from scrolling under the gesture.
+function jawnosSoundTaskbarWheelEvent(e, kind) {
+	if (typeof jawnosTaskbarEditing === 'function' && jawnosTaskbarEditing()) { return; }
+	var original = e.originalEvent || e;
+	var delta = (original.deltaY !== undefined) ? original.deltaY : e.deltaY;
+	delta = parseFloat(delta) || 0;
+	// Firefox reports lines, not pixels: three lines is about one notch.
+	if (original.deltaMode === 1) { delta *= 33; }
+	else if (original.deltaMode === 2) { delta *= 100; }
+	if (!delta) { return; }
+	if (!jawnosSoundTaskbarWheelAdjust(kind || 'output', delta)) { return; }
+	if (e.preventDefault) { e.preventDefault(); }
+	return false;
+}
+
+// One notch is 2.5 points, down is quieter. The accumulator carries the
+// fractions between events, so a trackpad moves smoothly and a mouse wheel
+// still crosses two or three points a notch while the scroll settles.
+function jawnosSoundTaskbarWheelAdjust(kind, delta) {
+	var device = jawnosSoundTaskbarSelected(kind);
+	if (!device || device.id === undefined || device.id === null || device.id === '') { return false; }
+	var id = String(device.id);
+	var state = jawnosSoundTaskbarWheelAccum[kind];
+	if (!state || state.id !== id) { state = { id: id, points: 0 }; }
+	var base = jawnosSoundTaskbarWheelVolume[kind];
+	if (base === null || base === undefined) { base = jawnosSoundTaskbarPercent(device.volume); }
+	state.points += (-(parseFloat(delta) || 0) / 100) * jawnosSoundTaskbarWheelRate;
+	var whole = state.points > 0 ? Math.floor(state.points) : Math.ceil(state.points);
+	jawnosSoundTaskbarWheelAccum[kind] = state;
+	if (!whole) { return true; }
+	state.points -= whole;
+	var volume = jawnosSoundTaskbarPercent(base + whole);
+	jawnosSoundTaskbarWheelVolume[kind] = volume;
+	jawnosSoundTaskbarOptimistic(kind, volume);
+	if (jawnosSoundTaskbarWheelTimer[kind]) { clearTimeout(jawnosSoundTaskbarWheelTimer[kind]); }
+	jawnosSoundTaskbarWheelTimer[kind] = setTimeout(function() {
+		jawnosSoundTaskbarWheelTimer[kind] = null;
+		var send_volume = jawnosSoundTaskbarWheelVolume[kind];
+		jawnosSoundTaskbarWheelVolume[kind] = null;
+		jawnosSoundTaskbarPostVolume(kind, id, send_volume, function(ok) {
 			if (!ok) { return; }
-			// The post's answer is enough for the widget; the poller owns the
+			// The post's answer is enough for the controls; the poller owns the
 			// longer-lived truth, so ask it once the scroll has settled.
 			jawnosSoundTaskbarLoad();
 		});
@@ -321,6 +333,10 @@ $(document).on('click', '#taskbar_sound', function() {
 	if (typeof appWindowOpener === 'function') {
 		appWindowOpener('sound', Date.now(), { visible: 'yes' });
 	}
+});
+
+$(document).on('wheel', '#taskbar_sound_panel [data-sound-volume]', function(e) {
+	return jawnosSoundTaskbarWheelEvent(e, $(this).attr('data-sound-volume'));
 });
 
 $(document).on('input', '#taskbar_sound_panel [data-sound-volume]', function() {
