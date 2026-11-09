@@ -1,4 +1,4 @@
-# tests-for: public/js/manager/taskbar_edit.js public/js/manager/taskbar_edit/01_window_events.js public/js/manager/taskbar_power.js public/js/manager/taskbar_network.js templates/manager.html.ep public/css/manager.css scripts/jawnos_network.pl public/icons/network.svg perl/help/topics_features.pl perl/help/topics_web.pl perl/help/topics_apps.pl
+# tests-for: public/js/manager/taskbar_edit.js public/js/manager/taskbar_edit/01_window_events.js public/js/manager/taskbar_power.js public/js/manager/taskbar_network.js public/js/manager/taskbar_sound.js public/js/manager/taskbar_panel.js templates/manager.html.ep public/css/manager.css scripts/jawnos_network.pl public/icons/network.svg perl/help/topics_features.pl perl/help/topics_web.pl perl/help/topics_apps.pl
 # covers:    Taskbar widgets - the add-items list, the three display modes, the
 #            widget order, and the network widget's Wi-Fi/Ethernet reading.
 
@@ -57,15 +57,54 @@ like($network, qr/jawnosT\('Ethernet'\)/, 'it names Ethernet');
 like($network, qr/jawnosT\('Disconnected'\)/, 'and Disconnected');
 like($network, qr/taskbar_network_bars/, 'it draws signal bars');
 
+my $sound = read_file("$root/public/js/manager/taskbar_sound.js");
+my $css = read_file("$root/public/css/manager.css");
+my $core = read_file("$root/lib/JawnOS/Manager/Core1_tables_hooks.pm");
+
+# --- the widget panels ------------------------------------------------------
+# Each widget hangs one panel under itself. taskbar_panel.js owns the frame, so
+# the three widgets can share the placing and the closing rather than grow
+# three near-copies of the clock's menu.
+my $panel = read_file("$root/public/js/manager/taskbar_panel.js");
+like($panel, qr/function jawnosTaskbarPanelToggle\(/, 'a panel can be toggled');
+like($panel, qr/function jawnosTaskbarPanelPlace\(/, 'a panel is placed against its widget');
+like($panel, qr/function jawnosTaskbarPanelClose\(/, 'and closed as one');
+like($panel, qr/addClass\('taskbar_panel'\)/, 'the panel wears the shared plate');
+like($panel, qr/\.taskbar_panel_open/, 'a footer button opens the app');
+like($panel, qr/closest\('\.taskbar_panel'\)/, 'a press outside closes it');
+like($panel, qr/keyCode == 27/, 'Escape closes it');
+like($core, qr{/js/manager/taskbar_panel\.js}, 'the panel frame is in the core bundle');
+like($css, qr/\.taskbar_panel\.open\s*\{\s*display:\s*flex/, 'the panel is shown by its open class');
+like($css, qr/\.taskbar_panel \.taskbar_panel_device/, 'a device row has a style');
+like($css, qr/\.taskbar_panel \.taskbar_panel_footer/, 'and so does the footer');
+
+like($sound, qr/jawnosTaskbarPanelToggle\('taskbar_sound_panel'/, 'the sound widget opens its panel');
+like($sound, qr/\.on\('wheel'/, 'a wheel over the sound widget is heard');
+like($sound, qr/function jawnosSoundTaskbarWheelAdjust\(/, 'and adjusts the output volume');
+like($sound, qr/\{ kind: kind, id: id, volume: volume \}/, 'the panel writes a device volume by id');
+like($sound, qr{/manager/sound/default}, 'and can make a device the default');
+like($sound, qr/jawnosT\('Open Sound'\)/, 'its footer opens Sound');
+
+like($power, qr/jawnosTaskbarPanelToggle\('taskbar_power_panel'/, 'the battery widget opens its panel');
+like($power, qr/data-power-plan/, 'the panel offers the power profiles');
+like($power, qr{/manager/power/plan}, 'and saves one');
+like($power, qr/jawnosT\('Open Power'\)/, 'its footer opens Power');
+
+like($network, qr/jawnosTaskbarPanelToggle\('taskbar_network_panel'/, 'the network widget opens its panel');
+like($network, qr{/manager/network/wifi_scan}, 'the panel scans for networks');
+like($network, qr{/manager/network/wifi_connect}, 'and joins one');
+like($network, qr{/manager/network/vpn}, 'and starts or stops a VPN');
+like($network, qr/jawnosT\('Open Network'\)/, 'its footer opens Network');
+
 # --- the shell and the styles ----------------------------------------------
 my $manager = read_file("$root/templates/manager.html.ep");
 unlike($manager, qr/id="taskbar_power"/, 'the widget is not fixed in the template');
-my $css = read_file("$root/public/css/manager.css");
+$css = read_file("$root/public/css/manager.css");
 like($css, qr/\.taskbar_widget\b/, 'the shared widget plate exists');
 like($css, qr/\.taskbar_widget\[mode=icon\] \.taskbar_widget_text/, 'Icon mode hides the text');
 like($css, qr/\.taskbar_network_bars/, 'the network bars have a style');
 like($css, qr/\[kind=ethernet\].*taskbar_network_wire/s, 'Ethernet swaps in the wire glyph');
-my $core = read_file("$root/lib/JawnOS/Manager/Core1_tables_hooks.pm");
+$core = read_file("$root/lib/JawnOS/Manager/Core1_tables_hooks.pm");
 like($core, qr{/js/manager/taskbar_network\.js}, 'the network poller is in the core bundle');
 ok(-e "$root/public/icons/network.svg", 'the add-items icon exists');
 

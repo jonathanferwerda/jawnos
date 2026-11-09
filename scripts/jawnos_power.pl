@@ -12,6 +12,8 @@
 #   apply <plan> <limit>       plan is auto|saver|balanced|performance
 #   settings <screen> <sleep> <lid> <type>
 #   sleep <type>               type is suspend|hibernate|hybrid_sleep|suspend_then_hibernate
+#   charge <end>               end is the battery's charge limit, 50..100
+#   takeover                   stop a competing power daemon and disable it
 #
 # settings writes one logind drop-in (HandleLidSwitch*, IdleAction*) and sets the
 # screen timer through gsettings or xset. sleep runs systemctl with one fixed
@@ -274,6 +276,40 @@ sub write_value {
 	return 1;
 }
 
+# The pack's own ceiling. Not every battery exposes one, so a machine without
+# charge_control_end_threshold says so instead of offering a write that lands
+# nowhere.
+sub charge_path {
+	my @supply = grep { -d } glob("$ROOT/class/power_supply/*");
+	my ($battery) = grep {
+		my $type = lc(trim(slurp("$_/type")));
+		$type eq 'battery' || -e "$_/capacity";
+	} @supply;
+	return undef unless $battery;
+	my $path = "$battery/charge_control_end_threshold";
+	return -e $path ? $path : undef;
+}
+
+sub charge {
+	my ($end) = @_;
+	my $path = charge_path();
+	return emit({ ok => 0, supported => 0, reason => 'this battery has no charge threshold' }) unless $path;
+	return failure('the charge limit must be between 50 and 100')
+		unless defined $end && $end =~ /^\d+$/ && $end >= 50 && $end <= 100;
+	$end += 0;
+	return emit({ ok => 1, dry_run => 1, write => [ { path => $path, value => $end } ] }) if $DRY;
+	# The same all-or-nothing preflight as apply: refuse before writing a byte,
+	# so a root-owned attribute reports permission instead of a partial write.
+	return emit({
+		ok => 0,
+		error => 'permission',
+		needs_sudo => 1,
+		targets => [$path],
+	}) unless -w $path;
+	return failure('could not write ' . $path) unless write_value($path, $end);
+	return emit({ ok => 1, end => $end, path => $path });
+}
+
 sub apply {
 	my ($plan_name, $limit) = @_;
 	$plan_name = '' unless defined $plan_name;
@@ -373,6 +409,41 @@ sub run_command {
 	waitpid($pid, 0);
 	my $status = $? >> 8;
 	return { ok => $status == 0 ? 1 : 0, command => \@args, status => $status };
+}
+
+# The daemons that re-apply their own power profile. Once JawnOS writes the CPU
+# and the sleep rules, a second daemon doing the same is two writers racing, so
+# a real plan asks systemd to stop and disable it. Plan `auto` leaves them
+# alone: auto means the machine's own choice stays in charge.
+my @TAKEOVER_UNITS = qw(power-profiles-daemon tlp auto-cpufreq);
+
+sub takeover {
+	my $systemctl = command_path('systemctl');
+	return emit({ ok => 1, supported => 0, reason => 'no systemctl' }) unless $systemctl;
+	return emit({
+		ok => 1,
+		dry_run => 1,
+		command => [ map { [$systemctl, 'disable', '--now', $_] } @TAKEOVER_UNITS ],
+	}) if $DRY;
+	my (@stopped, @failed);
+	for my $unit (@TAKEOVER_UNITS) {
+		my $active = run_command($systemctl, 'is-active', '--quiet', $unit);
+		next unless $active->{'ok'};
+		my $run = run_command($systemctl, 'disable', '--now', $unit);
+		if ($run->{'ok'}) { push @stopped, $unit; }
+		else { push @failed, $unit; }
+	}
+	# Disabling a unit is a root operation. Ask for the helper's own sudo retry
+	# instead of reporting a failure a passwordless sudo could have fixed; the
+	# retry skips the units this pass already stopped.
+	return emit({
+		ok => 0,
+		error => 'permission',
+		needs_sudo => 1,
+		stopped => \@stopped,
+		failed => \@failed,
+	}) if @failed;
+	return emit({ ok => 1, stopped => \@stopped, failed => [] });
 }
 
 # A logind drop-in is one small file. The docked case is always ignore: the
@@ -526,6 +597,12 @@ elsif ($command eq 'settings') {
 }
 elsif ($command eq 'sleep') {
 	sleep_now(shift @ARGV);
+}
+elsif ($command eq 'charge') {
+	charge(shift @ARGV);
+}
+elsif ($command eq 'takeover') {
+	takeover();
 }
 else {
 	failure('unknown command');

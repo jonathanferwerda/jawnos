@@ -314,6 +314,7 @@ sub power_default_config {
 			lid_action => 'suspend',
 			sleep_type => 'suspend',
 		},
+		profiles => {},
 	};
 }
 
@@ -338,6 +339,26 @@ sub power_config_clean {
 			if &power_lid_action_valid($sleep->{'lid_action'});
 		$clean->{'sleep'}->{'sleep_type'} = $sleep->{'sleep_type'}
 			if &power_sleep_type_valid($sleep->{'sleep_type'});
+	}
+	# A profile is only present when the person changed it. Each kept block is
+	# complete: the fallback fills any key the profile did not name.
+	my $profiles = $config->{'profiles'};
+	if (ref $profiles eq 'HASH') {
+		for my $plan (keys %{$profiles}) {
+			next unless &power_plan_valid($plan);
+			my $entry = $profiles->{$plan};
+			next unless ref $entry eq 'HASH';
+			my $block = { %{ $clean->{'sleep'} } };
+			$block->{'screen_timeout'} = $entry->{'screen_timeout'} + 0
+				if exists $entry->{'screen_timeout'} && &power_timeout_valid($entry->{'screen_timeout'}, \@power_screen_timeouts);
+			$block->{'sleep_timeout'} = $entry->{'sleep_timeout'} + 0
+				if exists $entry->{'sleep_timeout'} && &power_timeout_valid($entry->{'sleep_timeout'}, \@power_sleep_timeouts);
+			$block->{'lid_action'} = $entry->{'lid_action'}
+				if &power_lid_action_valid($entry->{'lid_action'});
+			$block->{'sleep_type'} = $entry->{'sleep_type'}
+				if &power_sleep_type_valid($entry->{'sleep_type'});
+			$clean->{'profiles'}{$plan} = $block;
+		}
 	}
 	return $clean;
 }
@@ -507,7 +528,19 @@ sub power_apply_plan {
 		supported => exists $answer->{'supported'} ? ($answer->{'supported'} ? 1 : 0) : 1,
 	};
 	&power_last_applied_save($state);
-	return { %{$answer}, source => $source, plan => $plan, limit => $limit };
+	my %result = (%{$answer}, source => $source, plan => $plan, limit => $limit);
+	# A real plan also switches that profile's timers and lid rule, and stops
+	# the competing daemon. Auto leaves both alone: auto means the machine (or
+	# auto-cpufreq) keeps its own schedule, so there is nothing to race. A
+	# failed sleep write never changes the plan's own verdict.
+	if ($plan ne 'auto') {
+		my ($sleep_answer, $ignored) = &power_sleep_write(
+			&power_sleep_block(&power_config(), $plan),
+		);
+		$result{'sleep'} = { %{$sleep_answer}, plan => $plan, sleep_ignored => $ignored };
+		$result{'takeover'} = &power_takeover();
+	}
+	return \%result;
 }
 
 sub power_plan_set {
@@ -539,14 +572,46 @@ sub power_apply_current {
 	return &power_apply_plan($source, $wanted->{'plan'}, $wanted->{'limit'});
 }
 
+# The sleep rules a plan runs with: its own block when the person changed it,
+# otherwise the top-level block every plan falls back to.
+sub power_sleep_block {
+	my ($config, $plan) = @_;
+	$config = &power_config() unless ref $config eq 'HASH';
+	my $profiles = ref $config->{'profiles'} eq 'HASH' ? $config->{'profiles'} : {};
+	my $block = $profiles->{$plan};
+	$block = $config->{'sleep'} unless ref $block eq 'HASH';
+	return { %{ $block || {} } };
+}
+
+# One write through the helper, shared by the global block and a profile block.
+# A machine with no sleep state cannot honour a sleep timer; write 0 instead of
+# asking logind to enter a state this kernel does not offer.
+sub power_sleep_write {
+	my ($block, $capabilities) = @_;
+	$capabilities = &power_sleep_capabilities() unless ref $capabilities eq 'HASH';
+	my $types = ref $capabilities->{'types'} eq 'ARRAY' ? $capabilities->{'types'} : [];
+	my $effective_sleep = @{$types} ? $block->{'sleep_timeout'} : 0;
+	my $answer = &power_helper(
+		'settings',
+		$block->{'screen_timeout'},
+		$effective_sleep,
+		$block->{'lid_action'},
+		$block->{'sleep_type'},
+	);
+	return ($answer, $effective_sleep == $block->{'sleep_timeout'} ? 0 : 1);
+}
+
 # Save the sleep and display block. Every supplied value is checked before it
 # is stored, and a sleep state the machine cannot enter is refused rather than
-# saved and reported as applied.
+# saved and reported as applied. With a plan, the block belongs to that profile
+# and is written to the machine only when that plan is the one in effect.
 sub power_sleep_set {
 	my ($params) = @_;
 	$params = {} unless ref $params eq 'HASH';
 	my $config = &power_config();
-	my $sleep = $config->{'sleep'};
+	my $plan = defined $params->{'plan'} ? $params->{'plan'} : '';
+	my $per_plan = &power_plan_valid($plan);
+	my $sleep = $per_plan ? &power_sleep_block($config, $plan) : { %{ $config->{'sleep'} } };
 	if (exists $params->{'screen_timeout'}) {
 		return { ok => 0, error => 'unknown screen timeout' }
 			unless &power_timeout_valid($params->{'screen_timeout'}, \@power_screen_timeouts);
@@ -569,25 +634,35 @@ sub power_sleep_set {
 			unless grep { $_ eq $type } @{$capabilities->{'types'}};
 		$sleep->{'sleep_type'} = $type;
 	}
-	$config->{'sleep'} = $sleep;
+	if ($per_plan) {
+		$config->{'profiles'}{$plan} = $sleep;
+	}
+	else {
+		$config->{'sleep'} = $sleep;
+	}
 	$config = &power_config_save($config);
-	# A machine with no sleep state cannot honour a sleep timer; write ignore
-	# instead of asking logind to enter a state this kernel does not offer.
-	my $effective_sleep = @{$capabilities->{'types'}} ? $config->{'sleep'}{'sleep_timeout'} : 0;
-	my $answer = &power_helper(
-		'settings',
-		$config->{'sleep'}{'screen_timeout'},
-		$effective_sleep,
-		$config->{'sleep'}{'lid_action'},
-		$config->{'sleep'}{'sleep_type'},
-	);
+	# A profile that is not the one the machine is on is only stored: its timers
+	# take effect when the plan does.
+	my $in_effect = 1;
+	if ($per_plan) {
+		my $source = (&power_status()->{'source'} || '') eq 'ac' ? 'ac' : 'battery';
+		$in_effect = (($config->{$source}{'plan'} || '') eq $plan) ? 1 : 0;
+	}
+	return {
+		ok => 1,
+		config => $config,
+		capabilities => $capabilities,
+		applied => undef,
+		sleep_ignored => 0,
+	} unless $in_effect;
+	my ($answer, $ignored) = &power_sleep_write($sleep, $capabilities);
 	return {
 		%{$answer},
 		ok => $answer->{'ok'} ? 1 : 0,
 		config => $config,
 		applied => $answer,
-		capabilities => &power_sleep_capabilities(),
-		sleep_ignored => $effective_sleep == $config->{'sleep'}{'sleep_timeout'} ? 0 : 1,
+		capabilities => $capabilities,
+		sleep_ignored => $ignored,
 	};
 }
 
@@ -620,6 +695,40 @@ sub power_plan_tick {
 	return &power_apply_plan($source, $wanted->{'plan'}, $wanted->{'limit'});
 }
 
+# The laptop battery's own charge ceiling. Not every pack exposes one, so a
+# machine without charge_control_end_threshold reports unsupported rather than
+# offering a control that writes nowhere.
+sub power_charge_read {
+	my $root = &power_sysfs_root();
+	my @supply = grep { -d } glob("$root/class/power_supply/*");
+	my ($battery) = grep {
+		my $type = lc(&power_read("$_/type"));
+		$type eq 'battery' || -e "$_/capacity";
+	} @supply;
+	return { supported => 0 } unless $battery;
+	my $path = "$battery/charge_control_end_threshold";
+	return { supported => 0 } unless -e $path;
+	my $end = &power_number($path);
+	return { supported => 0 } unless defined $end;
+	return { supported => 1, end => $end, min => 50, max => 100, path => $path };
+}
+
+sub power_charge_set {
+	my ($end) = @_;
+	return { ok => 0, error => 'the charge limit must be between 50 and 100' }
+		unless defined $end && $end =~ /^\d+$/ && $end >= 50 && $end <= 100;
+	my $answer = &power_helper('charge', $end);
+	return { %{$answer}, charge => &power_charge_read() };
+}
+
+# Once JawnOS writes the CPU and the sleep rules, a second daemon re-applying
+# its own profile is two writers racing, so a real plan stops
+# power-profiles-daemon, tlp and auto-cpufreq. Plan auto leaves them alone:
+# auto means they stay in charge.
+sub power_takeover {
+	return &power_helper('takeover');
+}
+
 sub power_status {
 	my $battery = &power_battery_read();
 	my $config = &power_config();
@@ -638,5 +747,7 @@ sub power_status {
 		plans => &power_plan_options(),
 		applied => &power_last_applied(),
 		sleep => &power_sleep_capabilities(),
+		sleep_plan => &power_plan_valid($config->{$source}{'plan'}) ? $config->{$source}{'plan'} : 'balanced',
+		charge => &power_charge_read(),
 	};
 }

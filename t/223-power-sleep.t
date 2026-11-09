@@ -96,6 +96,30 @@ no warnings 'redefine';
 	is($bad->{'sleep'}{'sleep_timeout'}, 0, 'an unknown sleep timeout falls back to Never');
 	is($bad->{'sleep'}{'lid_action'}, 'suspend', 'an unknown lid action falls back');
 	is($bad->{'sleep'}{'sleep_type'}, 'suspend', 'an unknown sleep type falls back');
+
+	# A profile block is the same four values, scoped to one plan. A plan the
+	# person never changed falls back to the shared block.
+	my $fallback = subs::power_sleep_block(subs::power_config(), 'performance');
+	is($fallback->{'lid_action'}, 'suspend', 'a profile without its own block falls back to the shared one');
+
+	my $profiles = subs::power_config_clean({
+		sleep => { screen_timeout => 5 },
+		profiles => {
+			saver => { screen_timeout => 10, sleep_timeout => 30, lid_action => 'ignore', sleep_type => 'suspend' },
+			turbo => { screen_timeout => 5 },
+		},
+	});
+	is($profiles->{'profiles'}{'saver'}{'screen_timeout'}, 10, 'a profile keeps its own screen timeout');
+	is($profiles->{'profiles'}{'saver'}{'sleep_timeout'}, 30, 'and its own sleep timeout');
+	is($profiles->{'profiles'}{'saver'}{'lid_action'}, 'ignore', 'and its own lid action');
+	is($profiles->{'sleep'}{'screen_timeout'}, 5, 'the shared block still exists');
+	ok(!exists $profiles->{'profiles'}{'turbo'}, 'an unknown profile is dropped');
+
+	my $bad_profile = subs::power_config_clean({
+		profiles => { saver => { screen_timeout => 7, lid_action => 'explode' } },
+	});
+	is($bad_profile->{'profiles'}{'saver'}{'screen_timeout'}, 0, 'an unknown profile timeout falls back');
+	is($bad_profile->{'profiles'}{'saver'}{'lid_action'}, 'suspend', 'and an unknown profile lid action falls back');
 }
 
 # --- what the machine reports ----------------------------------------------
@@ -167,6 +191,35 @@ no warnings 'redefine';
 		ok($no_states->{'ok'}, 'a screen-only save works with no sleep states');
 		is($no_states->{'sleep_ignored'}, 1, 'the sleep timer is reported ignored');
 		is($no_states->{'applied'}{'command'}[4], 0, 'the helper is told the sleep timer is off');
+	}
+
+	# A plan-scoped save writes only when that plan is the one the machine is
+	# on; the other profile's block is stored for the day it applies.
+	{
+		my $not_live = subs::power_sleep_set({
+			plan => 'performance',
+			screen_timeout => 10,
+			sleep_timeout => 15,
+			lid_action => 'ignore',
+			sleep_type => 'suspend',
+		});
+		ok($not_live->{'ok'}, 'a profile block is stored');
+		is($not_live->{'applied'}, undef, 'a profile that is not in effect is not written');
+		my $stored_profile = decode_json(read_file("$scratch/config.json"));
+		is($stored_profile->{'profiles'}{'performance'}{'screen_timeout'}, 10, 'the profile block is persisted');
+		is($stored_profile->{'profiles'}{'performance'}{'lid_action'}, 'ignore', 'with its lid action');
+
+		my $live = subs::power_sleep_set({
+			plan => 'saver',
+			screen_timeout => 5,
+			sleep_timeout => 0,
+			lid_action => 'suspend',
+			sleep_type => 'suspend',
+		});
+		ok($live->{'applied'}{'dry_run'}, 'the profile in effect is written at once');
+		is_deeply($live->{'applied'}{'command'},
+			[$^X, "$root/scripts/jawnos_power.pl", 'settings', 5, 0, 'suspend', 'suspend'],
+			'the fixed settings command carries the profile block');
 	}
 
 	my $now = subs::power_sleep_now('suspend');

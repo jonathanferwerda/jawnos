@@ -46,6 +46,16 @@ function powerBind() {
 	window_box.on('change', '#power_auto', function() {
 		powerAuto($(this).prop('checked'));
 	});
+	window_box.on('change', '#power_charge', function() {
+		powerCharge($(this).val());
+	});
+	window_box.on('input', '#power_charge', function() {
+		$('#power_charge_value').text($(this).val() + '%');
+	});
+	window_box.on('change', '#power_sleep_plan', function() {
+		$(this).data('picked', 1);
+		powerSleepFill($(this).val());
+	});
 	window_box.on('input', '.power_limit', function() {
 		var source = $(this).attr('data-source');
 		$('#power_limit_value_' + source).text($(this).val() + '%');
@@ -69,6 +79,12 @@ function powerBind() {
 
 function powerDirty(source) {
 	$('#power_save_' + source).addClass('power_dirty');
+}
+
+// The CPU clock is reported in MHz but reads better in GHz to two places.
+function powerGHz(mhz) {
+	if (mhz === undefined || mhz === null || isNaN(parseFloat(mhz))) { return '—'; }
+	return (parseFloat(mhz) / 1000).toFixed(2);
 }
 
 function powerDuration(hours) {
@@ -109,6 +125,18 @@ function powerRender(status) {
 	else {
 		$('#power_battery_card').hide();
 	}
+	// The charge ceiling is a battery property: a pack without the sysfs
+	// attribute hides the row rather than offering a dead control.
+	var charge = status.charge || {};
+	if (battery.present && charge.supported) {
+		var charge_end = (charge.end !== undefined && charge.end !== null) ? charge.end : (charge.max || 100);
+		$('#power_charge').val(charge_end);
+		$('#power_charge_value').text(charge_end + '%');
+		$('#power_charge_row').show();
+	}
+	else {
+		$('#power_charge_row').hide();
+	}
 	['ac', 'battery'].forEach(function(source) {
 		var entry = (status.config && status.config[source]) || {};
 		$('#power_plan_' + source).val(entry.plan || 'balanced');
@@ -118,14 +146,17 @@ function powerRender(status) {
 		$('#power_save_' + source).removeClass('power_dirty');
 	});
 	$('#power_auto').prop('checked', status.config && status.config.auto ? true : false);
-	var sleepConfig = (status.config && status.config.sleep) || {};
-	$('#power_screen_timeout').val(String(sleepConfig.screen_timeout === undefined || sleepConfig.screen_timeout === null ? 0 : sleepConfig.screen_timeout));
-	$('#power_sleep_timeout').val(String(sleepConfig.sleep_timeout === undefined || sleepConfig.sleep_timeout === null ? 0 : sleepConfig.sleep_timeout));
-	$('#power_lid_action').val(sleepConfig.lid_action || 'suspend');
 	var sleepCaps = status.sleep || {};
+	// The selector names the profile in effect; its own block, or the shared
+	// fallback, fills the four controls. Once the person has picked a profile
+	// to edit, a poll must not yank the selector back and discard their edits.
+	if (!$('#power_sleep_plan').data('picked')) {
+		var sleepPlan = status.sleep_plan || 'balanced';
+		$('#power_sleep_plan').val(sleepPlan);
+		powerSleepFill(sleepPlan);
+	}
 	if (sleepCaps.lid) { $('#power_lid_row').show(); } else { $('#power_lid_row').hide(); }
 	var sleepTypes = sleepCaps.types || [];
-	powerSleepTypes(sleepTypes, sleepConfig.sleep_type);
 	if (sleepCaps.screen && sleepCaps.screen.supported) {
 		$('#power_screen_timeout').prop('disabled', false);
 	}
@@ -153,7 +184,7 @@ function powerRender(status) {
 		$('#power_cpu_epp').text(cpu.epp || '—');
 		$('#power_cpu_driver').text(cpu.driver || '—');
 		$('#power_cpu_policies').text(cpu.policies || 0);
-		$('#power_cpu_freq').text((cpu.cur_mhz !== undefined && cpu.cur_mhz !== null ? cpu.cur_mhz : '—') + ' / ' + (cpu.max_mhz !== undefined && cpu.max_mhz !== null ? cpu.max_mhz : '—') + ' MHz');
+		$('#power_cpu_freq').text(powerGHz(cpu.cur_mhz) + ' / ' + powerGHz(cpu.max_mhz) + ' GHz');
 		$('#power_cpu_turbo').text(cpu.turbo === undefined || cpu.turbo === null ? '—' : (cpu.turbo ? jawnosT('On') : jawnosT('Off')));
 	}
 	else {
@@ -193,6 +224,23 @@ var powerSleepLabels = {
 	suspend_then_hibernate: 'Suspend then hibernate'
 };
 
+// The block a profile runs with: its own saved one, or the shared fallback.
+function powerSleepPlanBlock(plan) {
+	var config = (powerStatusData && powerStatusData.config) || {};
+	var profiles = config.profiles || {};
+	if (plan && profiles[plan]) { return profiles[plan]; }
+	return config.sleep || {};
+}
+
+function powerSleepFill(plan) {
+	var block = powerSleepPlanBlock(plan);
+	$('#power_screen_timeout').val(String(block.screen_timeout === undefined || block.screen_timeout === null ? 0 : block.screen_timeout));
+	$('#power_sleep_timeout').val(String(block.sleep_timeout === undefined || block.sleep_timeout === null ? 0 : block.sleep_timeout));
+	$('#power_lid_action').val(block.lid_action || 'suspend');
+	var caps = (powerStatusData && powerStatusData.sleep) || {};
+	powerSleepTypes(caps.types || [], block.sleep_type);
+}
+
 function powerSleepTypes(types, wanted) {
 	var select = $('#power_sleep_type');
 	select.empty();
@@ -207,11 +255,24 @@ function powerSleepTypes(types, wanted) {
 	if (chosen) { select.val(chosen); }
 }
 
+function powerCharge(end) {
+	$('#power_status').text(jawnosT('Saving…'));
+	$.post('/manager/power/charge', { end: end }, function(result) {
+		if (!result || !result.ok) {
+			$('#power_status').text((result && result.error) ? result.error : jawnosT('The charge limit could not be saved.'));
+			return;
+		}
+		powerLoad();
+	}, 'json');
+}
+
 function powerSleepSave() {
 	var data = {
 		screen_timeout: $('#power_screen_timeout').val(),
 		sleep_timeout: $('#power_sleep_timeout').val()
 	};
+	var plan = $('#power_sleep_plan').val();
+	if (plan) { data.plan = plan; }
 	var lid = $('#power_lid_action').val();
 	if (lid) { data.lid_action = lid; }
 	var type = $('#power_sleep_type').val();

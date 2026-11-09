@@ -599,6 +599,7 @@ our @manager_bundle_files = qw(
 	/js/manager/backgroundprinter.js
 	/js/manager/taskbar.js
 	/js/manager/taskbar_edit.js
+	/js/manager/taskbar_panel.js
 	/js/manager/taskbar_power.js
 	/js/manager/taskbar_network.js
 	/js/manager/taskbar_sound.js

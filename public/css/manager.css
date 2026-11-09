@@ -3740,3 +3740,64 @@ body.dark_theme .inventory_details {
 	color: inherit;
 	cursor: var(--jawnos-cursor-pointer, pointer);
 }
+
+/* A taskbar widget's panel. taskbar_panel.js owns the frame, the placing and
+   the closing; each widget builds its own contents in these classes. The
+   clock's menu (#clock_nav) is the same idea, one widget over. */
+.taskbar_panel {
+	position: fixed;
+	z-index: 40002;
+	box-sizing: border-box;
+	display: none;
+	flex-direction: column;
+	gap: 10px;
+	width: 320px;
+	padding: 12px;
+	font-size: 13px;
+	color: var(--ink, inherit);
+	background-color: var(--panel);
+	border: 1px solid var(--line);
+	border-radius: calc(var(--jawnos-corner, 12px) * .7);
+	box-shadow: 0 10px 28px rgba(0,0,0,.3);
+	overflow-y: auto;
+}
+.taskbar_panel.open { display: flex; }
+.taskbar_panel h4 { margin: 0; font-size: 11px; font-weight: 700; letter-spacing: .07em; text-transform: uppercase; opacity: .62; }
+.taskbar_panel_section { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.taskbar_panel_row { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.taskbar_panel_row .taskbar_panel_label { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.taskbar_panel_row .taskbar_panel_value { flex: 0 0 44px; text-align: right; font-variant-numeric: tabular-nums; opacity: .85; }
+.taskbar_panel input[type=range] { flex: 1 1 auto; min-width: 0; }
+.taskbar_panel button {
+	flex: 0 0 auto;
+	font: inherit;
+	font-size: 12px;
+	padding: 5px 10px;
+	color: inherit;
+	background: transparent;
+	border: 1px solid var(--line);
+	border-radius: calc(var(--jawnos-corner, 12px) * .45);
+	cursor: var(--jawnos-cursor-pointer, pointer);
+}
+.taskbar_panel button:hover { border-color: var(--accent, #3b7ddd); }
+.taskbar_panel button[disabled] { opacity: .45; cursor: var(--jawnos-cursor-default, default); }
+.taskbar_panel button[aria-pressed=true],
+.taskbar_panel button.taskbar_panel_active { color: #fff; background: var(--accent, #3b7ddd); border-color: var(--accent, #3b7ddd); }
+.taskbar_panel .taskbar_panel_empty { font-size: 12px; opacity: .6; }
+.taskbar_panel .taskbar_panel_note { min-height: 1.2em; font-size: 12px; opacity: .75; }
+.taskbar_panel .taskbar_panel_scroll { display: flex; flex-direction: column; gap: 3px; max-height: 190px; overflow-y: auto; }
+.taskbar_panel .taskbar_panel_device { display: flex; align-items: center; gap: 8px; min-width: 0; padding: 5px 6px; border-radius: calc(var(--jawnos-corner, 12px) * .4); cursor: var(--jawnos-cursor-pointer, pointer); }
+.taskbar_panel .taskbar_panel_device:hover { background-color: var(--line); }
+.taskbar_panel .taskbar_panel_device[data-default="1"] { box-shadow: inset 2px 0 0 var(--accent, #3b7ddd); }
+.taskbar_panel .taskbar_panel_device .taskbar_panel_label { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+.taskbar_panel .taskbar_panel_badge { flex: 0 0 auto; padding: 0 5px; font-size: 10px; opacity: .7; border: 1px solid var(--line); border-radius: 8px; }
+.taskbar_panel .taskbar_panel_pass { flex: 1 1 80px; min-width: 0; font: inherit; font-size: 12px; padding: 4px 6px; color: inherit; background-color: var(--panel); border: 1px solid var(--line); border-radius: 6px; }
+.taskbar_panel .taskbar_panel_bars { display: inline-flex; flex: 0 0 auto; align-items: flex-end; gap: 1px; height: 12px; }
+.taskbar_panel .taskbar_panel_bars i { display: block; width: 2px; background-color: var(--ink, currentColor); opacity: .24; }
+.taskbar_panel .taskbar_panel_bars i.on { opacity: 1; background-color: var(--accent, #3b7ddd); }
+.taskbar_panel .taskbar_panel_bars i:nth-child(1) { height: 30%; }
+.taskbar_panel .taskbar_panel_bars i:nth-child(2) { height: 50%; }
+.taskbar_panel .taskbar_panel_bars i:nth-child(3) { height: 75%; }
+.taskbar_panel .taskbar_panel_bars i:nth-child(4) { height: 100%; }
+.taskbar_panel .taskbar_panel_footer { padding-top: 8px; border-top: 1px solid var(--line); }
+.taskbar_panel .taskbar_panel_footer button { width: 100%; font-weight: 600; }

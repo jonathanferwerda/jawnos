@@ -28,6 +28,10 @@
 #power #power_cpu_grid { display: grid; grid-template-columns: max-content 1fr; gap: 4px 14px; }
 #power #power_cpu_grid b { font-weight: 500; opacity: .72; }
 #power #power_status { min-height: 1.4em; }
+#power .power_charge_row { margin-top: 8px; }
+#power .power_charge_row label { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+#power .power_charge_row input[type=range] { width: 130px; }
+#power #power_sleep_plan_row { margin-bottom: 8px; }
 </style>
 <div id="power" app="power">
 	<div class="power_head">
@@ -36,6 +40,12 @@
 			<div class="power_battery_text">
 				<div><span id="power_battery_pct">—</span> <span id="power_battery_state"></span></div>
 				<div id="power_battery_eta" class="power_muted"></div>
+				<div id="power_charge_row" class="power_charge_row" style="display:none;">
+					<label><%= &subs::ui('Charge limit') %>
+						<input type="range" id="power_charge" min="50" max="100" step="5" value="100">
+						<span id="power_charge_value">—</span>
+					</label>
+				</div>
 			</div>
 		</div>
 		<div class="power_cpu_summary">
@@ -86,6 +96,15 @@
 	<% my %sleep_type_ok = map { $_ => 1 } @{ $sleep_caps->{'types'} || [] }; %>
 	<section class="power_plan_card" id="power_sleep_card">
 		<h4><%= &subs::ui('Sleep and display') %></h4>
+		<label id="power_sleep_plan_row"><%= &subs::ui('Power profile') %>
+			<select id="power_sleep_plan">
+				<option value="auto"><%= &subs::lang('power_auto') %></option>
+				<option value="saver"><%= &subs::lang('power_saver') %></option>
+				<option value="balanced"><%= &subs::lang('power_balanced') %></option>
+				<option value="performance"><%= &subs::lang('power_performance') %></option>
+			</select>
+		</label>
+		<div class="power_muted"><%= &subs::ui('Each power profile keeps its own timers and lid action.') %></div>
 		<label><%= &subs::ui('Screen off after') %>
 			<select id="power_screen_timeout">
 				<option value="0"><%= &subs::ui('Never') %></option>

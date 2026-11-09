@@ -73,6 +73,10 @@ sub action_53015 {
 		my $value = $c->param($key);
 		$params{$key} = $value if defined $value && length $value;
 	}
+	# A plan names the profile whose block is being edited; without it the
+	# save is the shared fallback block, exactly as before.
+	my $plan = $c->param('plan');
+	$params{'plan'} = $plan if defined $plan && length $plan;
 	my $result = eval { &subs::power_sleep_set(\%params) };
 	$c->render(json => $result || { ok => 0, error => 'the sleep settings could not be saved' });
 }
@@ -82,6 +86,16 @@ sub action_53016 {
 	my $c = shift;
 	my $result = eval { &subs::power_sleep_now($c->param('type')) };
 	$c->render(json => $result || { ok => 0, error => 'the machine could not be put to sleep' });
+}
+
+# POST /manager/power/charge
+#
+# The battery's charge ceiling. A pack without the attribute answers
+# supported = 0, and the app hides the row rather than offering a dead control.
+sub action_53017 {
+	my $c = shift;
+	my $result = eval { &subs::power_charge_set($c->param('end')) };
+	$c->render(json => $result || { ok => 0, error => 'the charge limit could not be saved' });
 }
 
 1;

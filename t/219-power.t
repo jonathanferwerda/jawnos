@@ -35,6 +35,7 @@ write_file("$sys/class/power_supply/BAT0/status", "Discharging\n");
 write_file("$sys/class/power_supply/BAT0/energy_now", "40000000\n");
 write_file("$sys/class/power_supply/BAT0/energy_full", "50000000\n");
 write_file("$sys/class/power_supply/BAT0/power_now", "10000000\n");
+write_file("$sys/class/power_supply/BAT0/charge_control_end_threshold", "100\n");
 write_file("$sys/class/power_supply/AC/type", "Mains\n");
 write_file("$sys/class/power_supply/AC/online", "0\n");
 my $policy = "$sys/devices/system/cpu/cpufreq/policy0";
@@ -79,6 +80,8 @@ no warnings 'redefine';
 	is($status->{'config'}{'battery'}{'plan'}, 'saver', 'the default battery plan is the saver');
 	is($status->{'config'}{'battery'}{'limit'}, 70, 'the default battery speed limit is 70%');
 	is($status->{'config'}{'ac'}{'plan'}, 'balanced', 'the default mains plan is balanced');
+	is($status->{'charge'}{'supported'}, 1, 'the pack reports a charge ceiling');
+	is($status->{'charge'}{'end'}, 100, 'at the percentage it currently stops at');
 }
 
 write_file("$sys/class/power_supply/AC/online", "1\n");
@@ -164,6 +167,24 @@ sub helper {
 	is(read_file("$policy/scaling_governor"), "schedutil\n", 'and nothing is written');
 }
 
+# --- the charge ceiling -----------------------------------------------------
+# The laptop's pack exposes charge_control_end_threshold; the helper writes it
+# and refuses a limit outside the range the app offers.
+{
+	my $ceiling = "$sys/class/power_supply/BAT0/charge_control_end_threshold";
+	my $raised = helper('charge', '80');
+	ok($raised->{'ok'}, 'the charge limit is written');
+	is($raised->{'end'}, 80, 'and reported back');
+	is(read_file($ceiling), "80\n", 'the pack now stops at 80%');
+
+	my $low = helper('charge', '45');
+	is($low->{'ok'}, 0, 'a limit below 50 is refused');
+	is(read_file($ceiling), "80\n", 'and the saved ceiling is untouched');
+
+	my $high = helper('charge', '101');
+	is($high->{'ok'}, 0, 'a limit above 100 is refused');
+}
+
 # --- the route, the controller and the tier ---------------------------------
 {
 	my $routes = read_file("$root/lib/JawnOS/Routes/manager_power.pm");
@@ -174,6 +195,7 @@ sub helper {
 	like($routes, qr{/manager/power/plan}, 'the save route exists');
 	like($routes, qr{/manager/power/auto}, 'the automatic-switch route exists');
 	like($routes, qr{/manager/power/apply}, 'the apply route exists');
+	like($routes, qr{/manager/power/charge}, 'the charge-limit route exists');
 
 	my $controller = read_file("$root/lib/JawnOS/Controller/manager_power.pm");
 	like($controller, qr/^sub action_53010\b/m, 'the window action exists');
@@ -181,12 +203,17 @@ sub helper {
 	like($controller, qr/&subs::power_plan_set\(/, 'the save action calls the domain');
 	like($controller, qr/&subs::power_auto_set\(/, 'the automatic-switch action calls the domain');
 	like($controller, qr/&subs::power_apply_current\(/, 'the apply action calls the domain');
+	like($controller, qr/&subs::power_charge_set\(/, 'the charge-limit action calls the domain');
 
 	my $loader = read_file("$root/lib/JawnOS/Domain/Loader.pm");
 	like($loader, qr/JawnOS::Domain::Power' for qw\([^)]*\bpower_status\b/,
 		'every Power helper is in the domain loader');
 	like($loader, qr/JawnOS::Domain::Power' for qw\([^)]*\bpower_plan_tick\b/,
 		'the source switch is in the domain loader');
+	like($loader, qr/JawnOS::Domain::Power' for qw\([^)]*\bpower_charge_set\b/,
+		'the charge writer is in the domain loader');
+	like($loader, qr/JawnOS::Domain::Power' for qw\([^)]*\bpower_takeover\b/,
+		'the daemon takeover is in the domain loader');
 
 	my $tiers = read_file("$root/perl/subroutines.pl");
 	like($tiers, qr{/manager/\(\?:configure\|security\|magazine/publish\|power\)},
