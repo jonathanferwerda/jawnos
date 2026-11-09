@@ -1,5 +1,5 @@
 # tests-for: scripts/worktree_gc.pl
-# covers:    the sweep - it removes only a merged, clean, idle worktree, and it
+# covers:    the sweep - it removes only a landed, clean, unused worktree, and it
 #           never touches the primary, unmerged work, or uncommitted files
 
 use strict;
@@ -134,13 +134,13 @@ my $decoy = "$dir/decoy.git";
 sh('git', 'init', '--bare', '-q', $decoy);
 {
 	local $ENV{'GIT_DIR'} = $decoy;
-	my ($dc, $do) = gc($primary, '--older-than', '0');
+	my ($dc, $do) = gc($primary);
 	like($do, qr/keep\s+\Q$primary\E \(the primary checkout\)/,
 		'a hook GIT_DIR cannot redirect the fixture');
 }
 
 # --- report only changes nothing ------------------------------------------
-my ($rc, $out) = gc($primary, '--older-than', '0');
+my ($rc, $out) = gc($primary);
 is($rc, 0, 'the report exits cleanly');
 like($out, qr/would\s+remove \Q$wt_merged\E/, 'a merged, clean worktree is a candidate');
 like($out, qr/would\s+remove \Q$wt_rewritten\E/, 'a rewritten trunk still counts its work as landed');
@@ -149,16 +149,18 @@ like($out, qr/would\s+remove \Q$wt_rewritten\E/, 'a rewritten trunk still counts
 like($out, qr/keep\s+\Q$primary\E \(the primary checkout\)/, 'the primary is never a candidate');
 ok(-d $wt_merged, 'report-only removed nothing');
 
-# --- the idle threshold keeps a fresh worktree ----------------------------
-($rc, $out) = gc($primary, '--apply');
+# --- a landed worktree goes at the first sweep ----------------------------
+# The default is no age wait: the branch is on the trunk and the tree is clean,
+# so the agent that landed is finished with it. A buffer must be asked for.
+($rc, $out) = gc($primary, '--apply', '--older-than', '24');
 	like($out, qr/idle\s+\Q$wt_merged\E \[agent\/merged\] \(younger than 24 h/,
-	'a fresh worktree is idle, not done');
+	'--older-than keeps a fresh worktree, because a buffer was asked for');
 ok(-d $wt_merged, 'and it is still there');
 
 # --- apply removes exactly the safe one -----------------------------------
-($rc, $out) = gc($primary, '--apply', '--older-than', '0');
+($rc, $out) = gc($primary, '--apply');
 is($rc, 0, 'the sweep exits cleanly') or diag($out);
-like($out, qr/removed \Q$wt_merged\E/, 'the merged, clean, idle worktree is removed');
+like($out, qr/removed \Q$wt_merged\E/, 'the default sweep removes the landed worktree at once');
 ok(!-d $wt_merged, 'its directory is gone');
 ok(!-d $wt_rewritten, 'the rewritten-trunk worktree is removed');
 	ok(-d $wt_unmerged, 'the unmerged worktree survives');
@@ -185,7 +187,7 @@ git($primary, 'worktree', 'add', '-q', '--detach', $wt_det, 'agent/unmerged');
 make_path("$wt_check/.shots");
 write_file("$wt_check/.shots/AGENT-CHECKPOINT.md", "goal: still open\n");
 
-($rc, $out) = gc($primary, '--older-than', '0');
+($rc, $out) = gc($primary);
 like($out, qr/wip\s+\Q$wt_check\E \[agent\/check\] \(an agent checkpoint is open\)/,
 	'an open agent checkpoint is WIP');
 	like($out, qr/wip\s+\Q$wt_det\E \[\(detached\)\] \(detached at a commit not on origin\/main\)/,
@@ -195,7 +197,7 @@ like($out, qr/wip\s+\Q$wt_check\E \[agent\/check\] \(an agent checkpoint is open
 write_file("$wt_stash/stashed.txt", "not committed\n");
 git($wt_stash, 'add', '.');
 git($wt_stash, 'stash', 'push', '-q', '-m', 'wip');
-($rc, $out) = gc($primary, '--older-than', '0', '--apply');
+($rc, $out) = gc($primary, '--apply');
 like($out, qr/wip\s+\Q$wt_stash\E .*\(a stash is waiting in this repo\)/,
 	'the stash alone stops the sweep');
 	ok(-d $wt_stash, 'the worktree with a stash survives --apply');

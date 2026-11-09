@@ -93,8 +93,8 @@ bare-repo guard. The path is only how the script is found; it still works on the
 9. Fast-forward the primary checkout, then `scripts/restart.pl --reason "v<new> - <summary>"`.
 10. **Remove the worktree and its merged branch** — the default, not a flag. A landed worktree is
     170 MB of files that exist on the trunk and in the primary checkout, and git never deletes one.
-    `--keep` spares it; without it a finished task waits for `worktree_gc.pl`, older-than threshold
-    and all, for something already over.
+    `--keep` spares it; without it a finished task waits for the next `worktree_gc.pl` run, for
+    something already over.
 
 Exit codes: **0** landed — **1** refused, nothing pushed — **2** bad usage — **4** another landing held
 the lock past `--wait` — **5** pushed, but the dev server is not on it (primary checkout dirty or
@@ -134,16 +134,14 @@ rebase immediately before running the gate:
   from the primary checkout, so it works even while your shell sits inside.) A **refused** landing
   keeps the worktree too: removal happens only after the push and the restart, so the files and the
   checkpoint are still there to look at and fix. `scripts/worktree_gc.pl` is the sweep for worktrees
-  whose agent died:
-  report-only by default, `--apply` to act, and it removes a worktree only when its branch is
-  an ancestor of `origin/main`, its tree is clean, no process has its cwd in it, and the directory is
-  older than `--older-than` hours (default 24). It is the `worktree_gc` utility job
-  (daily pool, on by default), so a machine sweeps itself; run it by hand with
-  `perl scripts/worktree_gc.pl --apply`. It reports anything unfinished as `wip`
-  and keeps it: an unmerged branch or detached commit, a dirty tree, a waiting
-  stash, an open `.shots/AGENT-CHECKPOINT.md`, a process standing in the worktree,
-  or anything touched within the threshold. That is what makes it safe to run
-  while someone is mid-task. It also deletes `origin/agent/*` backup branches whose work is on the
+  whose agent died: report-only by default, `--apply` to act, and it removes a worktree only when
+  its branch is an ancestor of `origin/main`, its tree is clean, and no process has its cwd in it.
+  A landed one goes at the first sweep that sees it; `--older-than H` asks for a buffer. It is the
+  `worktree_gc` utility job (daily pool, on by default), so a machine sweeps itself; run it by hand
+  with `perl scripts/worktree_gc.pl --apply`. It reports anything unfinished as `wip` and keeps it:
+  an unmerged branch or detached commit, a dirty tree, a waiting stash, an open
+  `.shots/AGENT-CHECKPOINT.md`, or a process standing in the worktree. That is what makes it safe to
+  run while someone is mid-task. It also deletes `origin/agent/*` backup branches whose work is on the
   trunk (`--remote-only` for just that), which is what keeps GitHub's branch list clean. A worktree
   whose directory is gone is reclaimed with `git worktree prune` (the sweep does that too).
 - `config.json` is **not tracked** (it is gitignored) and `database/jawnos.db` is not in git, so a

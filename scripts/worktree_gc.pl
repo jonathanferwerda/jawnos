@@ -1,6 +1,6 @@
 #!/usr/bin/perl
 
-# Sweep agent worktrees that are finished with: landed, clean, idle, unused.
+# Sweep agent worktrees that are finished with: landed, clean, unused.
 #
 # A worktree is scratch, not an archive. Once its branch is merged into the
 # trunk the directory is 170 MB of files that exist on origin and in the primary
@@ -19,8 +19,11 @@
 #   3. no stash is waiting in it and no .shots/AGENT-CHECKPOINT.md is open;
 #   4. `git status --porcelain` there is empty (no modified or untracked file);
 #   5. no process has its cwd inside it (an agent may still be working);
-#   6. it has been idle for --older-than hours (default 24; 0 ignores). Idle is
-#      the newer of the directory and the last commit.
+#   6. it is idle for --older-than hours (default 0: a landed worktree goes at
+#      the first sweep that sees it, because the agent that landed is finished
+#      with it - the lander deletes its own unless asked to keep one. Pass hours
+#      to leave a fresh one alone that long.) Idle is the newer of the directory
+#      and the last commit.
 # Anything with unfinished work is reported `wip` and kept, whatever its age:
 # that is what makes this safe to run while someone is working. Dead
 # registrations (the directory is already gone) are pruned in either mode:
@@ -33,7 +36,7 @@ use warnings;
 
 use Getopt::Long qw(GetOptions);
 
-my %opt = (trunk => 'main', 'older-than' => 24, fetch => 1, apply => 0, remote => 1, 'remote-only' => 0);
+my %opt = (trunk => 'main', 'older-than' => 0, fetch => 1, apply => 0, remote => 1, 'remote-only' => 0);
 GetOptions(
 	'trunk=s'       => \$opt{'trunk'},
 	'older-than=s'  => \$opt{'older-than'},
@@ -211,7 +214,10 @@ for my $w ($opt{'remote-only'} ? () : @records) {
 	}
 
 	# Activity is the newer of the directory and the last commit: an agent that
-	# only edited files moves the directory, one that only committed moves %ct.
+	# only edited files moves the directory, one that only committed moves %ct. This
+	# is a buffer someone asks for, not the default: the work is landed and the tree
+	# is clean, so the only reason to wait is a person who wants the directory to
+	# stand a little longer.
 	if ($opt{'older-than'} > 0) {
 		my $age_h = -M $path;
 		my ($crc, $ct) = capture('git', '-C', $path, 'log', '-1', '--format=%ct');
@@ -302,7 +308,8 @@ worktree_gc.pl - sweep agent worktrees whose work is landed and idle
   perl scripts/worktree_gc.pl [--apply] [--older-than HOURS] [--trunk main] [--no-fetch]
                               [--remote-only] [--no-remote]
   report only unless --apply; a worktree is safe only when its work is landed,
-  its tree is clean, nothing is open or waiting in it, and it is idle.
+  its tree is clean, and nothing is open or waiting in it. A landed worktree is
+  removed at the first sweep that sees it; --older-than HOURS asks for a buffer.
   The remote sweep deletes merged origin/agent/* branches (the lander's backups).
 USAGE
 	exit $code;
