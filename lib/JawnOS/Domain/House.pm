@@ -38,6 +38,7 @@ use Unicode::Normalize qw(NFC);
 our $config;
 our $device;
 our %lan_reply_at;
+our %lan_presence_fingerprint;
 our $lan_reply_beacon;
 our %m;
 
@@ -913,9 +914,20 @@ sub lan_presence_accept {
 	return unless ($peer_ip // '') =~ /^\d{1,3}(\.\d{1,3}){3}$/;
 	my $same = grep { &same_net_test($_->{'ip'}, $peer_ip) eq 'yes' } @{ &lan_presence_network() };
 	return unless $same;
+	# A beacon repeats itself between changes. If the last verified message from
+	# this peer carries the same state, there is nothing to write, no panel to
+	# refresh and no device row to heal: skip before the database read. A full
+	# pass every minute still heals a row that a sync reset.
+	my $fingerprint = join '|', map { defined $msg->{$_} && !ref $msg->{$_} ? $msg->{$_} : '' }
+		sort grep { !/^(?:ts|server_time|nonce|signatorial)$/ } keys %{$msg};
+	my $fingerprint_key = $sig . '|' . $peer_ip;
+	my $seen = $lan_presence_fingerprint{$fingerprint_key};
+	return if ref $seen eq 'ARRAY' && $seen->[0] eq $fingerprint
+		&& &rightNow() - $seen->[1] < 60000;
 	my $rm = &db_select('remote_machines', undef, { signatorial => $sig })->hashes->[0];
 	return unless $rm;
 	return unless &lan_presence_verify($rm, $msg);
+	$lan_presence_fingerprint{$fingerprint_key} = [$fingerprint, &rightNow()];
 	my $now = &rightNow();
 	my $net = eval { decode_json $rm->{'network'} } || {};
 	$net = {} unless ref $net eq 'HASH';
