@@ -420,18 +420,27 @@ sub lan_presence_listen {
 				my ($port, $iaddr) = Socket::sockaddr_in($peer);
 				my $ip = $iaddr ? Socket::inet_ntoa($iaddr) : '';
 				next unless $ip;
-				$pending{$ip} = $data;
+				# Keep the newest of each kind: a nav frame must not overwrite the
+				# presence notice from the same address in the same pass.
+				$pending{$ip}{$data =~ /"type"\s*:\s*"jawnos-nav"/ ? 'nav' : 'presence'} = $data;
 			}
 			foreach my $ip (sort keys %pending) {
-				next unless &lan_presence_due($ip, time(), 1);
-				&subs::subprocessor_heartbeat();
-				my $msg = eval { decode_json($pending{$ip}) };
-				next unless ref $msg eq 'HASH';
-				if (($msg->{'type'} // '') eq 'jawnos-nav') {
-					eval { &lan_navigation_accept($msg, $ip) };
-					next;
+				foreach my $slot (sort keys %{$pending{$ip}}) {
+					my $msg = eval { decode_json($pending{$ip}{$slot}) };
+					next unless ref $msg eq 'HASH';
+					# Navigation is a position stream; a house map does not need it
+					# faster than every five seconds. Presence is state, and one
+					# apply a second is enough.
+					my $type = $msg->{'type'} // '';
+					my $window = $type eq 'jawnos-nav' ? 5 : 1;
+					next unless &lan_presence_due($ip . '|' . $type, time(), $window);
+					&subs::subprocessor_heartbeat();
+					if ($type eq 'jawnos-nav') {
+						eval { &lan_navigation_accept($msg, $ip) };
+						next;
+					}
+					eval { &lan_presence_accept($msg, $ip) };
 				}
-				eval { &lan_presence_accept($msg, $ip) };
 			}
 			&subs::subprocessor_heartbeat();
 		}

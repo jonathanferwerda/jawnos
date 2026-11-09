@@ -919,7 +919,7 @@ sub lan_presence_accept {
 	# refresh and no device row to heal: skip before the database read. A full
 	# pass every minute still heals a row that a sync reset.
 	my $fingerprint = join '|', map { defined $msg->{$_} && !ref $msg->{$_} ? $msg->{$_} : '' }
-		sort grep { !/^(?:ts|server_time|nonce|signatorial)$/ } keys %{$msg};
+		sort grep { !/^(?:ts|server_time|nonce|signatorial|sig)$/ } keys %{$msg};
 	my $fingerprint_key = $sig . '|' . $peer_ip;
 	my $seen = $lan_presence_fingerprint{$fingerprint_key};
 	return if ref $seen eq 'ARRAY' && $seen->[0] eq $fingerprint
