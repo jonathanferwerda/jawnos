@@ -94,11 +94,11 @@ sub action_9562 {
 			$returner->{$ip}->{'result'} = `timeout $timeout ping -c 1 ` . quote($ip);
 		}
 		else {
-			my @ifconfig = split "\n\n", `ifconfig`;
-			foreach my $if (@ifconfig) {
-				my @ifconfig_list = split "\n", $if;
+			require JawnOS::Platform::Net; my $interfaces = JawnOS::Platform::Net::interfaces();
+			foreach my $nic ( sort keys %{$interfaces} ) {
+				my $ip = $interfaces->{$nic}->{'ip'} || '';
 
-				my @routes = grep { $_ =~ /inet/ } @ifconfig_list;
+				my @routes = $ip ? ( 'inet ' . $ip ) : ();
 				foreach my $route (@routes) {
 					my @inet = split " ", $route;
 					if ($route =~ /inet /) {

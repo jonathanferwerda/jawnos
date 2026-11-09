@@ -462,11 +462,8 @@ sub house_advertise_command {
 	# The argv that publishes this machine on _jawnos-house._tcp. The embedded
 	# devices browse that service when their stored homebase goes quiet; the
 	# service carries the ports they dial, because the offsets are not something
-	# a device should have to guess from the main port.
-	my $avahi = `command -v avahi-publish-service 2>/dev/null`;
-	chomp $avahi;
-	$avahi ||= '/usr/bin/avahi-publish-service' if -x '/usr/bin/avahi-publish-service';
-	return () unless $avahi;
+	# a device should have to guess from the main port. Avahi (Linux) or dns-sd
+	# (macOS) is chosen by JawnOS::Platform::Mdns.
 	my $config = &subs::config_reader();
 	my $name = $config->{'name'} || 'JawnOS';
 	my $hostname = `hostname`;
@@ -498,7 +495,9 @@ sub house_advertise_command {
 	push @txt, 'computer=' . $computer if $computer;
 	# The instance name is what a person sees in an mDNS browser; Avahi adds a
 	# #2 itself if two machines share a name.
-	return ($avahi, '--no-reverse', '-s', 'JawnOS ' . $name . ' (' . $hostname . ')', '_jawnos-house._tcp', $port, @txt);
+	require JawnOS::Platform::Mdns;
+	return JawnOS::Platform::Mdns::publish_argv(
+		'_jawnos-house._tcp', 'JawnOS ' . $name . ' (' . $hostname . ')', $port, \@txt);
 }
 
 sub house_advertise_supervise {

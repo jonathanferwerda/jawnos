@@ -525,61 +525,26 @@ sub network_interface_reporter {
 		return { map { $_ => { %{$network_report_memo->{$_}} } } keys %{$network_report_memo} };
 	}
 	my $device = &subs::device_setter();
-	my $tmp_file = $gb::tmp_dir . '/ifconfig';
-	my $ifc = $device eq 'server' ? '/usr/sbin/ifconfig' : 'ifconfig 2>&1 | grep -v "Permission denied"';
-
-	my @ifconfig = split "\n\n", `$ifc`;
-	unlink $tmp_file;
-	my @ifconfig_link;
-	my @ifconfig_inet;
-	my $address = {};
-	my $count = {};
-	my $home_ip;
-	foreach my $if (@ifconfig) {
-		#print $if . "\n";
-		my @ifconfig_list = split "\n", $if;
-
-		@ifconfig_inet = grep { $_ =~ /inet/ } @ifconfig_list;
-
-		my $nic = (split ' ', $ifconfig_list[0])[0];
-		$nic =~ s/://;
-		$address->{$nic}->{'nic'} = $nic;
-		# The radio/NIC address is what makes an mDNS or beacon sighting a row a
-		# device can be recognised by; ifconfig prints it as `ether` on Linux and
-		# `HWaddr` on the older spelling.
-		foreach my $line (@ifconfig_list) {
-			if ($line =~ /(?:ether|HWaddr)\s+([0-9a-fA-F]{2}(?::[0-9a-fA-F]{2}){5})/) {
-				$address->{$nic}->{'mac'} = lc $1;
-				last;
-			}
-		}
-		my $gw = '$(ip route show 0.0.0.0/0 dev ' . $address->{$nic}->{'nic'} . ' | cut -d\  -f3)';
-		$address->{$nic}->{'gw'} = `echo $gw`;
-		chomp $address->{$nic}->{'gw'};
-		if ($device eq 'computer' || $device eq 'server') {
-			my $gw_mac = '/usr/sbin/arp -a ' . $gw . '  | grep ' . $address->{$nic}->{'nic'};
-			$gw_mac = `$gw_mac`;
-			$address->{$nic}->{'gw_mac'} = (split ' ', $gw_mac)[3] if $gw && $device eq 'computer';
-		}
-		foreach my $i (@ifconfig_inet) {
-			my @inet = split " ", $i;
-			if ($i =~ /inet /) {
-				$address->{$nic}->{'ip'} = $inet[1];
-				$address->{$nic}->{'port'} = $ENV{PORT_AHOY};
-				$address->{$nic}->{'ws_port'} = $ENV{PORT_MSG};
-				$address->{$nic}->{'alarm_port'} = $ENV{PORT_BELL};
-				# The ports an embedded device dials. They used to be derived from
-				# `port` (+2, +3, +4), but a peer's row should carry them so a
-				# fallback machine can be named exactly even if the offsets move.
-				$address->{$nic}->{'arm_port'} = $ENV{PORT_ARM};
-				$address->{$nic}->{'bestow_port'} = $ENV{PORT_BESTOW};
-				$address->{$nic}->{'coms_port'} = $ENV{PORT_COMS};
-				$address->{$nic}->{'dock_port'} = $ENV{PORT_DOCK};
-				$address->{$nic}->{'manager'} = 'https://' . $inet[1] . ':' . $ENV{PORT_DOCK} .  '/manager';
-				$address->{$nic}->{'netmask'} = $inet[3];
-				$address->{$nic}->{'broadcast'} = $inet[5];
-				$address->{$nic}->{'timestamp'} = &subs::rightNow();
-			}
+	require JawnOS::Platform::Net;
+	my $address = JawnOS::Platform::Net::interfaces();
+	foreach my $nic ( keys %{$address} ) {
+		my $entry = $address->{$nic};
+		$entry->{'gw'} = JawnOS::Platform::Net::gateway($nic);
+		$entry->{'gw_mac'} = JawnOS::Platform::Net::gateway_mac($nic, $entry->{'gw'})
+			if $device eq 'computer' && length($entry->{'gw'} || '');
+		if ($entry->{'ip'}) {
+			$entry->{'port'} = $ENV{PORT_AHOY};
+			$entry->{'ws_port'} = $ENV{PORT_MSG};
+			$entry->{'alarm_port'} = $ENV{PORT_BELL};
+			# The ports an embedded device dials. They used to be derived from
+			# `port` (+2, +3, +4), but a peer's row should carry them so a
+			# fallback machine can be named exactly even if the offsets move.
+			$entry->{'arm_port'} = $ENV{PORT_ARM};
+			$entry->{'bestow_port'} = $ENV{PORT_BESTOW};
+			$entry->{'coms_port'} = $ENV{PORT_COMS};
+			$entry->{'dock_port'} = $ENV{PORT_DOCK};
+			$entry->{'manager'} = 'https://' . $entry->{'ip'} . ':' . $ENV{PORT_DOCK} .  '/manager';
+			$entry->{'timestamp'} = &subs::rightNow();
 		}
 	}
 
@@ -706,44 +671,12 @@ sub router_list {
 }
 
 # Resolve mDNS/DNS-SD services of one type on the local network, as a list of
-# records (avahi is the responder this house already has). Parsable output, one
-# `=` line per resolved instance:
-#   =;iface;proto;name;type;domain;host;address;port;txt
+# records. The Avahi/dns-sd choice and the parsable-output parse live in
+# JawnOS::Platform::Mdns.
 sub mdns_browse {
 	my ($type) = @_;
-	return [] unless $type;
-	my $avahi = `command -v avahi-browse 2>/dev/null`;
-	chomp $avahi;
-	$avahi ||= '/usr/bin/avahi-browse' if -x '/usr/bin/avahi-browse';
-	return [] unless $avahi;
-	my $out = `timeout 8 $avahi -rtp $type 2>/dev/null`;
-	my @records;
-	foreach my $line (split "\n", $out) {
-		next unless $line =~ /^=;/;
-		my @f = split /;/, $line, 10;
-		my (undef, undef, undef, $name, $stype, undef, $host, $addr, $port, $txt) = @f;
-		next unless $addr && $addr =~ /^\d{1,3}(\.\d{1,3}){3}$/;
-		my %fields;
-		foreach my $kv ($txt ? $txt =~ /"([^"]*)"/g : ()) {
-			my ($k, $v) = split /=/, $kv, 2;
-			$fields{$k} = $v if defined $v;
-		}
-		my $mac = ($fields{'mac'} && $fields{'mac'} =~ /^[0-9a-fA-F:]{17}$/) ? lc $fields{'mac'} : undef;
-		my ($ty) = $txt ? $txt =~ /\bty=([^"]+?)\s*"/ : ();
-		my ($pr) = $txt ? $txt =~ /\bproduct=\(([^)]+)\)/ : ();
-		push @records, {
-			service => $stype,
-			hostname => $host,
-			ip => $addr,
-			port => $port,
-			mac => $mac,
-			name => $fields{'name'} || $ty || $pr || $name,
-			model => $fields{'model'} || $pr || $ty,
-			txt => $txt,
-			fields => \%fields,
-		};
-	}
-	return \@records;
+	require JawnOS::Platform::Mdns;
+	return JawnOS::Platform::Mdns::browse($type);
 }
 
 # The printers the local network advertises, keyed by address and by MAC so a

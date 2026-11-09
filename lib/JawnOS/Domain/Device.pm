@@ -85,29 +85,23 @@ sub device_scan {
 	my $name = &subs::setting_grabber({ app => 'me', setting => 'my_name' }) || $hostname;
 	my $cpuinfo = `cat /proc/cpuinfo`;
 	chomp $cpuinfo;
-	my $ifc = &subs::device_setter() eq 'server' ? '/usr/sbin/ifconfig' : 'ifconfig 2>/dev/null | grep -v "Permission denied"';
-	my @ifconfig = split "\n\n", `$ifc`;
-	my @ifconfig_link;
-	my @ifconfig_inet;
-	my $address = {};
+	require JawnOS::Platform::Net;
+	my $address = JawnOS::Platform::Net::interfaces();
 	my $count = {};
 	my $home_ip;
-	foreach my $if (@ifconfig) {
-		my @ifconfig_list = split "\n", $if;
-
-		@ifconfig_inet = grep { $_ =~ /inet/ } @ifconfig_list;
-
-		my $nic = (split ' ', $ifconfig_list[0])[0];
-		$nic =~ s/://;
-		$address->{$nic}->{'nic'} = $nic;
-		my $gw = '$(ip route show 0.0.0.0/0 dev ' . $address->{$nic}->{'nic'} . ' | cut -d\  -f3)';
-		$address->{$nic}->{'gw'} = `echo $gw`;
-		chomp $address->{$nic}->{'gw'};
-		if ($device eq 'computer' || $device eq 'server') {
-			my $gw_mac = '/usr/sbin/arp -a ' . $gw . '  | grep ' . $address->{$nic}->{'nic'};
-			$gw_mac = `$gw_mac`;
-			$address->{$nic}->{'gw_mac'} = (split ' ', $gw_mac)[3] if $gw && $device eq 'computer';
-		}
+	foreach my $nic ( sort keys %{$address} ) {
+		my $entry = $address->{$nic};
+		$entry->{'nic'} = $nic;
+		$entry->{'gw'} = JawnOS::Platform::Net::gateway($nic);
+		$entry->{'gw_mac'} = JawnOS::Platform::Net::gateway_mac($nic, $entry->{'gw'})
+			if $device eq 'computer' && length($entry->{'gw'} || '');
+		my @ifconfig_inet;
+		push @ifconfig_inet,
+			'inet ' . $entry->{'ip'}
+			. (defined $entry->{'netmask'} ? ' netmask ' . $entry->{'netmask'} : '')
+			. (defined $entry->{'broadcast'} ? ' broadcast ' . $entry->{'broadcast'} : '')
+			if $entry->{'ip'};
+		push @ifconfig_inet, 'inet6 ' . $entry->{'ip6'} if $entry->{'ip6'};
 		foreach my $i (@ifconfig_inet) {
 			my @inet = split " ", $i;
 			if ($i =~ /inet /) {
@@ -129,10 +123,9 @@ sub device_scan {
 				&subnet_sweep($nic, $address->{$nic}->{'ip'}, $address->{$nic}->{'netmask'}) if $load_type eq 'scan';
 
 				my @neighbours;
-				my $neighbour_check = `ip neigh show dev $nic`;
 				my @neighbourinos;
 				if ($load_type ne 'ping_scan') {
-					@neighbourinos = (split "\n", $neighbour_check);
+					@neighbourinos = @{ JawnOS::Platform::Net::neighbour_lines($nic) };
 				}
 				if ($ip_range) {
 					# a host or range typed into the box is honoured even when the
@@ -333,13 +326,6 @@ sub device_scan {
 			}
 			if ($i =~ /inet6 /) {
 				$address->{$nic}->{'ip6'} = $inet[1];
-			}
-		}
-		@ifconfig_link = grep { $_ =~ /ether/ } @ifconfig_list;
-		foreach my $m (@ifconfig_link) {
-			my @mac = split " ", $m;
-			if ($m =~ /ether/) {
-				$address->{$nic}->{'mac'} = $mac[1];
 			}
 		}
 		#here

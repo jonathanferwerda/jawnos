@@ -2,8 +2,8 @@
 
 **Status:** P0 in flight (2026-11-09). Slices 1–2 landed: the questions are answered, the
 capability probe exists, portable mode has a Daemon server and a pipe runner, and control/log/watch
-speak loopback TCP with a token when asked. Slice 3 has begun: process identity, state and the
-process-group scan live in `lib/JawnOS/Platform/Process.pm` (Linux backend). Slice 4 landed the
+speak loopback TCP with a token when asked. Slice 3 landed the process, network and mDNS seams:
+`lib/JawnOS/Platform/Process.pm`, `Net.pm` and `Mdns.pm` (Linux backends). Slice 4 landed the
 worker tail: no source imports `IO::Socket::UNIX` at compile time, and the alarm, memory, ws and
 mailws surfaces ride the same TCP transport (with the token) in portable mode. No Mac or Windows
 hardware is present yet, so the hardware exits wait for it. Runbook and acceptance checklist:
@@ -176,11 +176,12 @@ and serve without `fork`/PTY/UNIX sockets, native Windows is a rewrite, and the 
 
 ### 6.3 Network and discovery
 
-- Interface parsing: `ifconfig`, `ip route`, `netstat -avnpt` and `arp` in `Device.pm:86-105`,
-  `Edt.pm:526-566`, `Network.pm:416-426` and `manager_configure2.pm:96-108`. macOS has different
-  interface names and no `ip`; Windows has `ipconfig`/`Get-Net*` and `netstat -ano`.
-- mDNS: `avahi-browse`/`avahi-publish-service` (`Edt.pm:712-722`, `Network.pm:416-426`) becomes
-  `dns-sd` on macOS and the DNS-SD/WinRT API on Windows.
+- Interface parsing and neighbours live in `lib/JawnOS/Platform/Net.pm` (Linux backend) and are
+  called by `Device.pm`, `Edt.pm` and `manager_configure2.pm`; the module keeps the ifconfig/ip
+  shapes and exposes parsers for fixtures. macOS has different interface names and no `ip`;
+  Windows has `ipconfig`/`Get-Net*` and `netstat -ano` (their backends are P2/P3).
+- mDNS: `avahi-browse`/`avahi-publish-service` live in `lib/JawnOS/Platform/Mdns.pm`, called by
+  `Edt.pm` and `Network.pm`; macOS uses `dns-sd` and Windows the DNS-SD/WinRT API in P2/P3.
 - Tailscale: the macOS app/CLI and the Windows service replace the Linux `tailscale` binary; the
   interface filters need `utun` and `Tailscale`. The in-app VPN controls
   (`Warehouse.pm:756+`, `scripts/jawnos_network.pl`) must call the platform CLI.
@@ -283,7 +284,7 @@ container. Keep them:
 - [x] CI probe jobs for Linux, Windows and macOS (Windows/macOS report-only until hardware)
 - [x] Process identity, state, CPU ticks and the process-group scan behind `lib/JawnOS/Platform/Process.pm` (Linux backend; macOS/Windows to follow)
 - [x] The websocket worker, mailws, alarm and memory sockets off `IO::Socket::UNIX` at compile time (the worker tail rides TCP in portable mode)
-- [ ] Network parsing behind `JawnOS::Platform::Net` and `::Mdns`
+- [x] Network parsing (interfaces, routes, neighbours) and mDNS browse/publish behind `lib/JawnOS/Platform/Net.pm` and `Mdns.pm` (Linux backends; macOS/Windows to follow)
 - [ ] Portable smoke house and suite green on a spare checkout
 
 The portable path is behind `JAWNOS_PORTABLE`; native Linux/macOS behaviour is

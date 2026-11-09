@@ -119,31 +119,33 @@ moves to Minion. P0 measures which routes actually block before choosing.
 Portable mode currently runs one Daemon per purpose; the `workers` argument is a
 hint for the dispatcher, not a Prefork pool.
 
-## Slice 3 (in flight) — process and network parsing
+## Slice 3 (landed) — process, network and mDNS parsing
 
-Process identity, state, CPU ticks and the process-group scan now live in
+Process identity, state, CPU ticks and the process-group scan live in
 `lib/JawnOS/Platform/Process.pm` with the Linux `/proc` backend;
 `parent_guard.pl`, `Domain/Process.pm` and `Ble/Guard.pm` call it and keep
-their own rules. A platform without `/proc` answers `''`, `undef` or `[]`, so
-the caller's existing fallback is what runs. The macOS (`ps`/`sysctl`) and
-Windows (`Win32::Process`/`tasklist`) bodies, and the remaining direct `/proc`
-readers (`jawn`, `manager_misc.pm`, `crew.pl`, `scripts/manager_killer.pl`), are
-the rest of this slice. `t/227-platform-process.t` pins the seam, including the
-zombie/reaped distinction and the grandchild group scan.
+their own rules. Interfaces, the default gateway, the gateway MAC and `ip neigh`
+live in `lib/JawnOS/Platform/Net.pm`; `Device.pm`, `Edt.pm` and
+`manager_configure2.pm` call it. Avahi browse/publish lives in
+`lib/JawnOS/Platform/Mdns.pm`; `Edt.pm` and `Network.pm` call it. A platform
+that cannot answer gives `''`, `undef`, `[]` or `()` so the caller's fallback is
+what runs. The macOS (`ps`/`sysctl`, `route`, `dns-sd`) and Windows
+(`Win32::Process`/`tasklist`, `ipconfig`, DNS-SD) bodies, and the remaining
+direct `/proc` readers (`jawn`, `manager_misc.pm`, `crew.pl`,
+`scripts/manager_killer.pl`), are the P2/P3 work. `t/227-platform-process.t`
+and `t/230-platform-net.t` pin the seams and the recorded parser fixtures.
 
-Put process identity and state behind one module and test the macOS
-implementation against recorded fixtures on Linux:
+What the slice moved, and what each backend replaces on P2/P3:
 
-- start time, descendants, alive, kill: `/proc` today (`Domain/Process.pm`,
-  `parent_guard.pl`, `Ble/Guard.pm`, `manager_misc.pm`, `crew.pl`,
-  `scripts/manager_killer.pl`); macOS `ps -o lstart`/`sysctl`; Windows
-  `Win32::Process`/`tasklist`.
-- interfaces, routes, neighbours: `ifconfig`, `ip route`, `netstat -avnpt`,
-  `arp` in `Device.pm`, `Edt.pm`, `Network.pm` and `manager_configure2.pm`;
-  macOS `ifconfig`/`route`/`netstat`; Windows `ipconfig`/`Get-Net*`/
-  `netstat -ano`.
-- mDNS: `avahi-browse`/`avahi-publish-service` → `dns-sd` (macOS) and DNS-SD
-  (Windows).
+- start time, descendants, alive, kill: through `Platform::Process`
+  (`Domain/Process.pm`, `parent_guard.pl`, `Ble/Guard.pm`, `manager_misc.pm`,
+  `crew.pl`, `scripts/manager_killer.pl`); macOS `ps -o lstart`/`sysctl`;
+  Windows `Win32::Process`/`tasklist`.
+- interfaces, routes, neighbours: through `Platform::Net` in `Device.pm`,
+  `Edt.pm`, `Network.pm` and `manager_configure2.pm`; macOS `ifconfig`/`route`;
+  Windows `ipconfig`/`Get-Net*`/`netstat -ano`.
+- mDNS: through `Platform::Mdns` in `Edt.pm` and `Network.pm` → `dns-sd`
+  (macOS) and DNS-SD (Windows).
 
 No hardware is needed for the parsing and fixture work.
 
@@ -228,6 +230,8 @@ against the `Must` rows in `docs/platform-roadmap.md` §7.
 - The subprocessor reaper reads `/proc` through `JawnOS::Platform::Process`;
   its macOS and Windows backends are not written yet, so a non-Linux box still
   gets the empty/liveness fallbacks rather than a native answer.
+- `JawnOS::Platform::Net` and `::Mdns` are Linux backends; their macOS and
+  Windows bodies are P2/P3, so a non-Linux box still gets the empty fallbacks.
 - `Mojo::IOLoop::ReadWriteFork` is the master's runner; Windows needs a
   `Win32::Process` equivalent.
 - The Minion worker is itself a subprocessor.
