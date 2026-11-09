@@ -337,7 +337,7 @@ $(document).on('click', '.archive_file', function() {
 	var d = $(this);
 	var file = d.attr('file');
 	if (!file) { return; }
-	$('body').css({ 'cursor': 'progress' });
+	$('body').css({ 'cursor': 'var(--jawnos-cursor-progress, progress)' });
 	$.ajax({
 		url: '/manager/folders/archive',
 		type: 'POST',

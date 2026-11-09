@@ -187,7 +187,7 @@ function helpChatThinking(text) {
 	var block = $('<div style="margin:4px 0 2px;"></div>');
 	var body = $('<div class="help_chat_thought" style="display:none;white-space:pre-wrap;overflow:auto;max-height:200px;font-size:12px;opacity:.65;border-left:2px solid var(--border-color, #888);padding-left:8px;margin-top:4px;"></div>')
 		.text(text == null ? '' : String(text));
-	var toggle = $('<span class="help_chat_thought_toggle" style="font-size:12px;opacity:.6;cursor:pointer;user-select:none;"></span>')
+	var toggle = $('<span class="help_chat_thought_toggle" style="font-size:12px;opacity:.6;cursor:var(--jawnos-cursor-pointer, pointer);user-select:none;"></span>')
 		.text(label);
 	block.append(toggle).append(body);
 	log.append(block);

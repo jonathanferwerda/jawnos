@@ -87,7 +87,7 @@ function jawnosMarkerList(marker, sx, sy, canvas) {
 	$.each(marker.list, function(i, item) {
 		$('<span class="jawnos_marker_item"></span>')
 			.attr('app', item.app)
-			.css({ display: 'block', padding: '3px 4px', cursor: 'pointer' })
+			.css({ display: 'block', padding: '3px 4px', cursor: 'var(--jawnos-cursor-pointer, pointer)' })
 			.text(item.name || item.app)
 			.appendTo(list);
 	});
@@ -129,7 +129,7 @@ function jawnosGuessMenu(marker, sx, sy, canvas) {
 	});
 	$('<b></b>').text(marker.name || 'guess').css({ display: 'block', 'font-size': '12px', opacity: '.7', 'padding-bottom': '2px' }).appendTo(menu);
 	$('<span class="jawnos_guess_delete hover"></span>').attr('guess_uuid', marker['uuid'])
-		.css({ display: 'block', padding: '4px', cursor: 'pointer', 'border-radius': '5px' })
+		.css({ display: 'block', padding: '4px', cursor: 'var(--jawnos-cursor-pointer, pointer)', 'border-radius': '5px' })
 		.text('Delete this guess').appendTo(menu);
 	menu.appendTo('body');
 }

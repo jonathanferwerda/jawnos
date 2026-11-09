@@ -90,7 +90,7 @@
 				var b = document.createElement('button');
 				b.type = 'button';
 				b.textContent = <%== &subs::json_chars(&subs::ui('Set up this device\'s unlock')) %>;
-				b.style.cssText = 'margin-top:10px;font-size:16px;padding:10px 16px;border-radius:9px;border:1px solid #2b6;background:#2b6;color:#08110a;font-weight:bold;cursor:pointer;';
+				b.style.cssText = 'margin-top:10px;font-size:16px;padding:10px 16px;border-radius:9px;border:1px solid #2b6;background:#2b6;color:#08110a;font-weight:bold;cursor:var(--jawnos-cursor-pointer, pointer);';
 				b.onclick = function () {
 					if (typeof jawnosBiometricEnroll !== 'function') {
 						status(<%== &subs::json_chars(&subs::ui('Fingerprint setup is not available in this app.')) %>);

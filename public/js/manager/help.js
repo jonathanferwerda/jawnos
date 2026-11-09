@@ -205,7 +205,7 @@ function helpTourShowStep() {
 	var controls = $('<div class="help_tour_controls" style="display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end;margin:8px 0 6px;"></div>');
 	log.append(controls);
 	if (step.verb) {
-		var act = $('<button class="button hover" style="padding:5px 12px;border-radius:8px;border:2px solid var(--line);cursor:pointer;font-weight:bold;"></button>')
+		var act = $('<button class="button hover" style="padding:5px 12px;border-radius:8px;border:2px solid var(--line);cursor:var(--jawnos-cursor-pointer, pointer);font-weight:bold;"></button>')
 			.text(jawnosHelpTourText(step.verb));
 		act.on('click', function () {
 			var done = function (obs) { helpChatAdd('step', jawnosHelpTourText(obs || 'Done.')); };
@@ -215,7 +215,7 @@ function helpTourShowStep() {
 		controls.append(act);
 	}
 	var last = (jawnos_help_tour_index >= jawnos_help_tour_steps.length - 1);
-	var next = $('<button class="button hover" style="padding:5px 12px;border-radius:8px;border:2px solid var(--line);cursor:pointer;font-weight:bold;"></button>')
+	var next = $('<button class="button hover" style="padding:5px 12px;border-radius:8px;border:2px solid var(--line);cursor:var(--jawnos-cursor-pointer, pointer);font-weight:bold;"></button>')
 		.text(last ? jawnosHelpTourText('Finish') : jawnosHelpTourText('Next'));
 	next.on('click', function () {
 		if (last) {
@@ -286,8 +286,8 @@ function helpGuideAnswer(text) {
 		if (jawnos_help_chat[i].role === 'user') { q = jawnos_help_chat[i].content; break; }
 	}
 	var bar = $('<div style="display:flex;gap:8px;justify-content:flex-start;margin:-2px 0 8px 4px;">'
-		+ '<span class="hover" style="cursor:pointer;opacity:.55;font-size:13px;" hint="This answer was good">👍</span>'
-		+ '<span class="hover" style="cursor:pointer;opacity:.55;font-size:13px;" hint="This answer was not good">👎</span></div>');
+		+ '<span class="hover" style="cursor:var(--jawnos-cursor-pointer, pointer);opacity:.55;font-size:13px;" hint="This answer was good">👍</span>'
+		+ '<span class="hover" style="cursor:var(--jawnos-cursor-pointer, pointer);opacity:.55;font-size:13px;" hint="This answer was not good">👎</span></div>');
 	bar.find('span').first().attr('verdict', 'good');
 	bar.find('span').last().attr('verdict', 'bad');
 	bar.attr('data-q', q).attr('data-a', text);

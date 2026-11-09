@@ -231,9 +231,10 @@ $topic{'cursor_sets'} = {
 		title => 'Cursor sets', category => 'features',
 		summary => 'A choice of pointer looks; a theme may carry its own.',
 		body => [
-			'The pointer can be dressed like the rest of the desk: Bold, White, Outline, Neon, Pastel and Mono each draw the arrow, the hand, the I-beam, the move and resize arrows, and the busy and refused cursors in its own colours. Each is drawn with a halo, so one set reads on a near-white and a near-black desktop. System keeps the machine\'s own cursors.',
+			'The pointer can be dressed like the rest of the desk: Bold, White, Outline, Neon, Pastel, Mono and High Contrast each draw the arrow, the hand, the I-beam, the move and resize arrows, and the busy and refused cursors in its own colours. Each is drawn with a halo, so one set reads on a near-white and a near-black desktop; High Contrast is a yellow pointer inside a heavy black outline for the times the ordinary arrow is hard to find. System keeps the machine\'s own cursors.',
 			'Pick one under Configure → Misc → Appearance; the whole desk follows at once, including the resize arrows on the music window and the refused cursor on a disabled control.',
-			'A theme may name its own set. While a theme is in charge the picker shows Follow theme and uses the theme\'s choice; picking another set overrides just the cursor for this machine, and Follow theme returns to the theme\'s own. The theme editor carries the same picker, so a saved theme can be saved with its pointer.'
+			'A theme may name its own set. While a theme is in charge the picker shows Follow theme and uses the theme\'s choice; picking another set overrides just the cursor for this machine, and Follow theme returns to the theme\'s own. The theme editor carries the same picker, so a saved theme can be saved with its pointer.',
+			'Cursor Size, beside the picker, scales the pointer from 16 to 48 pixels in five steps (16, 24, 32, 40 and 48). The size belongs to this machine, not to the theme, so any theme can be worn at any size; the picker\'s preview shows the chosen size.'
 		],
 		related => [ 'themes', 'icon_sets', 'configure' ]
 	};

@@ -72,7 +72,7 @@
 	#configuration_container .nfc_buttons { display:flex; flex-wrap:wrap; gap:8px; }
 	#configuration_container .nfc_btn { display:inline-flex; align-items:center; justify-content:center; gap:6px;
 		padding:8px 14px; border:1px solid var(--line); border-radius:8px; background:var(--panel); color:var(--ink);
-		font:inherit; font-size:13px; cursor:pointer; transition:background-color .15s ease, border-color .15s ease, transform .1s ease; }
+		font:inherit; font-size:13px; cursor:var(--jawnos-cursor-pointer, pointer); transition:background-color .15s ease, border-color .15s ease, transform .1s ease; }
 	#configuration_container .nfc_btn:hover { border-color:var(--accent, #3b7ddd); }
 	#configuration_container .nfc_btn:active { transform:translateY(1px); }
 	#configuration_container .nfc_btn.danger { color:#b3403a; }

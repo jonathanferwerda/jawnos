@@ -10,6 +10,7 @@ use Test::More;
 use JawnOSTest;
 use File::Slurp qw(read_file);
 use RepoSource;
+use File::Find qw(find);
 
 my $root = repo_root();
 
@@ -25,6 +26,18 @@ for my $set ( @gb::cursor_sets ) {
 
 my @no_hotspot = grep { !defined $gb::cursor_hotspots{$_} } @gb::cursor_roles;
 is_deeply(\@no_hotspot, [], 'every role names its hotspot');
+
+# --- the sizes --------------------------------------------------------------
+is_deeply( [ sort { $a <=> $b } @gb::cursor_sizes ], [ 16, 24, 32, 40, 48 ],
+	'the slider offers the five sized cuts');
+is( &subs::cursor_size(), 32, 'with no choice the pointer is 32px' );
+for my $set ( @gb::cursor_sets ) {
+	for my $size ( grep { $_ != 32 } @gb::cursor_sizes ) {
+		my @missing = grep { !-e "$root/public/cursors/sets/$set/$size/$_.png" }
+			qw/default pointer text/;
+		is_deeply(\@missing, [], "$set draws its main roles at ${size}px" );
+	}
+}
 
 # --- a theme carries the set; a bare or unknown name does not ---------------
 my $deep = &subs::theme_bundle('deepjawn');
@@ -47,12 +60,23 @@ like($css, qr/--jawnos-cursor-not-allowed:url\('\/cursors\/sets\/pastel\/not-all
 like($css, qr/cursor:var\(--jawnos-cursor-default, auto\)/,
 	'the body itself wears the set, so unstyled descendants inherit it');
 
+# a size change points the same set at its numbered folder
+{
+	no warnings 'redefine';
+	local *subs::cursor_size = sub { 24 };
+	my $sized = &subs::cursor_css();
+	like($sized, qr{url\('/cursors/sets/bold/24/default\.png'\) 5 5, default},
+		'a 24px cut is picked when the slider says 24');
+	like($sized, qr{body\[data-cursor-set="contrast"\]\{},
+		'High Contrast is in the map like every other set');
+}
+
 # --- the layout seeds the marker and the mapping ----------------------------
 my $layout = read_file("$root/templates/layouts/manager.html.ep");
 like($layout, qr/data-cursor-set="<%= &subs::cursor_set\(\) %>"/,
 	'the layout writes the active set onto the body');
-like($layout, qr/<%== &subs::cursor_css\(\) %>/,
-	'and writes every set\'s role map into the page');
+like($layout, qr/<style id="jawnos_cursor_css"><%== &subs::cursor_css\(\) %>/,
+	'and writes every set\'s role map into a block the push can replace');
 
 # --- the sheets ask for the set, not for a hard-coded keyword ---------------
 for my $sheet ( qw/chat.css keyboard.css manager.css music.css soft_keyboard.css store.css universal.css/ ) {
@@ -69,20 +93,44 @@ my $music = read_file("$root/public/css/music.css");
 like($music, qr/cursor: var\(--jawnos-cursor-ns-resize, ns-resize\)/,
 	'the music splitter asks the resize variable');
 
+# Inline styles and the style blocks inside app templates are part of the same
+# desk: a hover element built with style="cursor:pointer" would otherwise keep
+# the system arrow while the sheets follow the set.
+my $roles = join '|', map { quotemeta($_) } @gb::cursor_roles;
+my $literal = qr/cursor:\s*(?:['"]?)($roles)\b/;
+my (@inline, @offenders);
+find({ no_chdir => 1, wanted => sub {
+	push @inline, $File::Find::name if /\.(?:ep|js)$/;
+} }, "$root/templates", "$root/public/js/manager", "$root/public/js/universal");
+for my $file ( @inline ) {
+	my $text = read_file($file);
+	push @offenders, $file =~ s{^\Q$root\E/}{}r if $text =~ $literal;
+}
+is_deeply(\@offenders, [], 'no template or manager script keeps a literal cursor')
+	or diag('add var(--jawnos-cursor-<role>, <role>) in: ' . join(', ', @offenders));
+
 # --- the push moves the marker ---------------------------------------------
 my $js = read_file("$root/public/js/universal/05_theme_ink_icon_swap.js");
 like($js, qr/function jawnosCursorApply\(set\)/,
 	'the desk has one function that sets the cursor marker');
 like($js, qr/if \('cursor_set' in bundle\) \{ jawnosCursorApply\(bundle\.cursor_set \|\| ''\); \}/,
 	'a theme push applies the cursor set with the rest of the bundle');
+like($js, qr/function jawnosCursorCssApply\(css\)/,
+	'a size push replaces the cursor style block');
+like($js, qr/if \(typeof bundle\.cursor_css === 'string'\)/,
+	'the bundle carries the rebuilt block');
+like($js, qr/function jawnosCursorInlineGuard\(/,
+	'the desk guards against an inline cursor parked at auto');
+like($js, qr/new MutationObserver\(guard\)/,
+	'the guard watches the body style jQuery UI writes');
 my $inputs = read_file("$root/public/js/manager/taskbar/01_inputs.js");
 like($inputs, qr/setting == 'cursor_set' \|\| setting == 'cursor_set_override'/,
 	'picking a cursor set from Misc applies it at once');
 
 # --- the setting and the theme save route carry it --------------------------
 my $name = read_file("$root/lib/JawnOS/Domain/Name.pm");
-like($name, qr/\$setting eq 'cursor_set_override' \|\| \$setting eq 'cursor_set'/,
-	'a cursor change is one of the settings that pushes the desk');
+like($name, qr/\$setting eq 'cursor_set_override' \|\| \$setting eq 'cursor_set' \|\| \$setting eq 'cursor_size'/,
+	'a cursor set or size change is one of the settings that pushes the desk');
 my $controller = read_file("$root/lib/JawnOS/Controller/manager_configure.pm");
 like($controller, qr/my \$cursor_set = \$c->param\('cursor_set'\)/,
 	'the theme save route reads the cursor set');
@@ -91,10 +139,14 @@ like($controller, qr/cursor_set => \$cursor_set, texture => \$texture/,
 my $contrast = read_file("$root/lib/JawnOS/Domain/Contrast.pm");
 like($contrast, qr/qw\/scheme background icon_set cursor_set texture font corner accent name\//,
 	'a running appointment theme overlays its cursor with the rest of the dressing');
-like($contrast, qr/\( \$bg, &icon_set\(\), &cursor_set\(\), &texture_name\(\)/,
+like($contrast, qr/\( \$bg, &icon_set\(\), &cursor_set\(\), &cursor_size\(\), &texture_name\(\)/,
 	'the signature carries the cursor, so the push is not filtered as unchanged');
 like($contrast, qr/cursor_set => \$cursor_set,/,
 	'the websocket bundle sends the effective cursor');
+like($contrast, qr/&cursor_set\(\), &cursor_size\(\), &texture_name\(\)/,
+	'the signature carries the size, so a size move is not filtered as unchanged');
+like($contrast, qr/cursor_css => \$cursor_css,/,
+	'the push carries the rebuilt size map');
 
 # --- the panel offers it, and the theme editor saves it --------------------
 my $tpl = read_file("$root/templates/configure/misc_setting_list.html.ep");
@@ -106,8 +158,15 @@ like($tpl, qr/cursor_set: \$\('#theme_cursor_set'\)\.val\(\)/,
 	'and the save request sends the chosen set');
 like($tpl, qr/jawnosPreviewCursors\(/,
 	'the picker shows the art it is choosing');
+like($tpl, qr/setting="cursor_size" device="<%= \$dev %>" min="16" max="48" step="8"/,
+	'the size slider has its five stops');
+like($tpl, qr/jawnosCursorPreviewUrl\(/,
+	'the preview reads the chosen size');
+like($tpl, qr/id="cursor_size_value_/, 'the slider carries a readout');
 
 my $help = read_file("$root/perl/help/topics_features.pl");
 like($help, qr/\$topic\{'cursor_sets'\}/, 'the Guide explains cursor sets');
+like($help, qr/High Contrast/, 'the Guide names the high-contrast set');
+like($help, qr/Cursor Size/, 'the Guide names the size slider');
 
 done_testing();

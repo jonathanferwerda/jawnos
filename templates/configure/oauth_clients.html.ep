@@ -49,6 +49,6 @@
 	<% } %>
 </div>
 <div class="cfg-row">
-	<button id="oauth_client_add" class="button" style="padding:6px 12px;border-radius:8px;border:2px solid var(--line);cursor:pointer;font-weight:bold;">+ Add client</button>
+	<button id="oauth_client_add" class="button" style="padding:6px 12px;border-radius:8px;border:2px solid var(--line);cursor:var(--jawnos-cursor-pointer, pointer);font-weight:bold;">+ Add client</button>
 	<span id="oauth_client_status" class="cfg-note" style="margin:0;"></span>
 </div>

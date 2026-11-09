@@ -191,11 +191,11 @@ function jawnPadlockPrompt(mode, target, requestId, deviceName, sourceDevice, so
 	go.textContent = is_go
 		? jawnPadlockPromptText('Approve with fingerprint')
 		: (have_print ? jawnPadlockPromptText('Unlock with fingerprint') : jawnPadlockPromptText('Approve on this device'));
-	go.style.cssText = 'font-size:15px;padding:10px 16px;border-radius:9px;border:1px solid #2b6;background:#2b6;color:#08110a;font-weight:bold;cursor:pointer;margin:0 4px 8px 4px;';
+	go.style.cssText = 'font-size:15px;padding:10px 16px;border-radius:9px;border:1px solid #2b6;background:#2b6;color:#08110a;font-weight:bold;cursor:var(--jawnos-cursor-pointer, pointer);margin:0 4px 8px 4px;';
 	var no = document.createElement('button');
 	no.type = 'button';
 	no.textContent = jawnPadlockPromptText('Not now');
-	no.style.cssText = 'font-size:15px;padding:10px 16px;border-radius:9px;border:1px solid #555;background:#222;color:#f4f4f4;cursor:pointer;margin:0 4px 8px 4px;';
+	no.style.cssText = 'font-size:15px;padding:10px 16px;border-radius:9px;border:1px solid #555;background:#222;color:#f4f4f4;cursor:var(--jawnos-cursor-pointer, pointer);margin:0 4px 8px 4px;';
 	box.appendChild(title);
 	box.appendChild(note);
 	box.appendChild(go);
@@ -384,11 +384,11 @@ function jawnosCryptoPaymentPrompt(data) {
 	var go = document.createElement('button');
 	go.type = 'button';
 	go.textContent = jawnPadlockPromptText('Approve with fingerprint');
-	go.style.cssText = 'font-size:15px;padding:10px 16px;border-radius:9px;border:1px solid #2b6;background:#2b6;color:#08110a;font-weight:bold;cursor:pointer;margin:0 4px 8px 4px;';
+	go.style.cssText = 'font-size:15px;padding:10px 16px;border-radius:9px;border:1px solid #2b6;background:#2b6;color:#08110a;font-weight:bold;cursor:var(--jawnos-cursor-pointer, pointer);margin:0 4px 8px 4px;';
 	var no = document.createElement('button');
 	no.type = 'button';
 	no.textContent = jawnPadlockPromptText('Not now');
-	no.style.cssText = 'font-size:15px;padding:10px 16px;border-radius:9px;border:1px solid #555;background:#222;color:#f4f4f4;cursor:pointer;margin:0 4px 8px 4px;';
+	no.style.cssText = 'font-size:15px;padding:10px 16px;border-radius:9px;border:1px solid #555;background:#222;color:#f4f4f4;cursor:var(--jawnos-cursor-pointer, pointer);margin:0 4px 8px 4px;';
 	box.appendChild(title);
 	box.appendChild(note);
 	box.appendChild(go);

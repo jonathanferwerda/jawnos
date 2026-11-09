@@ -1,6 +1,6 @@
 % no warnings 'uninitialized';
 <div class="warehouse_journal_panel">
-	<span class="warehouse_journal_close hover" hint="Close" style="float:right;cursor:pointer;">&times;</span>
+	<span class="warehouse_journal_close hover" hint="Close" style="float:right;cursor:var(--jawnos-cursor-pointer, pointer);">&times;</span>
 	<b>Stock journal<% if ($item) { %>: <%= &subs::format_name($item) %><% } %></b>
 	<% if (scalar @{$rows} == 0) { %><br><i>No movements recorded.</i><% } %>
 	<table style="width:100%;text-align:left;">

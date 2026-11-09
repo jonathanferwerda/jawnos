@@ -12,7 +12,7 @@
 		font-size:13px; color:inherit; }
 	.relational_type_tabs { display:flex; gap:5px; overflow-x:auto; padding:7px 0 6px; scrollbar-width:thin; min-height:32px; }
 	.relational_type_tab { flex:0 0 auto; border:1px solid var(--line); background:var(--panel); color:inherit;
-		border-radius:999px; padding:4px 9px; font-size:11px; cursor:pointer; white-space:nowrap; }
+		border-radius:999px; padding:4px 9px; font-size:11px; cursor:var(--jawnos-cursor-pointer, pointer); white-space:nowrap; }
 	.relational_type_tab:hover { background:var(--line); }
 	.relational_type_tab.active { background:var(--line); font-weight:bold; }
 	.relational_count { opacity:.6; font-size:10px; }
@@ -20,22 +20,22 @@
 	.relational_add_name { flex:1 1 90px; min-width:70px; }
 	.relational_add_type { flex:0 1 92px; }
 	.relational_add_button { flex:0 0 auto; padding:6px 9px; border:1px solid var(--line); border-radius:8px;
-		background:var(--panel); color:inherit; cursor:pointer; font-size:12px; }
+		background:var(--panel); color:inherit; cursor:var(--jawnos-cursor-pointer, pointer); font-size:12px; }
 	.relational_add_button:hover { background:var(--line); }
 	.relational_cards { flex:1 1 auto; min-height:0; overflow:auto; padding-right:2px; }
 	.relational_card { display:flex; align-items:center; gap:7px; padding:7px 8px; margin:0 0 5px;
-		border:1px solid var(--line); border-radius:9px; background:var(--panel); cursor:grab;
+		border:1px solid var(--line); border-radius:9px; background:var(--panel); cursor:var(--jawnos-cursor-grab, grab);
 		transition: transform .08s ease, box-shadow .08s ease; }
 	.relational_card:hover { transform:translateY(-1px); box-shadow:0 2px 6px rgba(0,0,0,.12); }
 	.relational_card.focus { box-shadow:inset 3px 0 0 #4a90e2; }
 	.relational_card.relational_dragging, .relational_member.relational_dragging { opacity:.4; }
 	.relational_dot { width:9px; height:9px; border-radius:50%; flex:0 0 9px; }
-	.relational_card_name { flex:1 1 auto; min-width:0; font-size:13px; cursor:pointer; overflow:hidden;
+	.relational_card_name { flex:1 1 auto; min-width:0; font-size:13px; cursor:var(--jawnos-cursor-pointer, pointer); overflow:hidden;
 		text-overflow:ellipsis; white-space:nowrap; }
 	.relational_card_name:hover { text-decoration:underline; }
 	.relational_card_type { font-size:10px; opacity:.55; flex:0 0 auto; }
 	.relational_card_add, .relational_member_remove { flex:0 0 auto; width:22px; height:22px; line-height:18px;
-		border:1px solid var(--line); border-radius:6px; background:var(--panel); color:inherit; cursor:pointer;
+		border:1px solid var(--line); border-radius:6px; background:var(--panel); color:inherit; cursor:var(--jawnos-cursor-pointer, pointer);
 		font-size:14px; text-align:center; padding:0; }
 	.relational_card_add:hover, .relational_member_remove:hover { background:var(--line); }
 	.relational_board { min-height:0; overflow:auto; padding-right:4px; }
@@ -52,7 +52,7 @@
 	.relational_focus_app { font-family:monospace; font-size:11px; opacity:.55; overflow-wrap:anywhere; }
 	.relational_focus_actions { display:flex; gap:6px; margin-top:7px; flex-wrap:wrap; }
 	.relational_focus_actions button { padding:5px 9px; border:1px solid var(--line); border-radius:7px;
-		background:var(--panel); color:inherit; cursor:pointer; font-size:11px; }
+		background:var(--panel); color:inherit; cursor:var(--jawnos-cursor-pointer, pointer); font-size:11px; }
 	.relational_focus_actions button:hover { background:var(--line); }
 	.relational_details { margin-top:8px; display:flex; gap:10px; flex-wrap:wrap; font-size:11px; align-items:center; }
 	.relational_details label { display:flex; gap:5px; align-items:center; }
@@ -71,18 +71,18 @@
 	.relational_dropzone.relational_drop_active { border-style:solid; border-color:#4a90e2;
 		box-shadow:inset 0 0 0 1px #4a90e2; }
 	.relational_member { display:flex; align-items:center; gap:6px; padding:5px 6px; border:1px solid var(--line);
-		border-radius:8px; background:var(--panel); cursor:grab; font-size:12px; }
-	.relational_member_name { flex:1 1 auto; min-width:0; cursor:pointer; overflow:hidden; text-overflow:ellipsis;
+		border-radius:8px; background:var(--panel); cursor:var(--jawnos-cursor-grab, grab); font-size:12px; }
+	.relational_member_name { flex:1 1 auto; min-width:0; cursor:var(--jawnos-cursor-pointer, pointer); overflow:hidden; text-overflow:ellipsis;
 		white-space:nowrap; }
 	.relational_member_name:hover { text-decoration:underline; }
 	.relational_empty { color:var(--muted,#8e8e8e); font-size:11px; text-align:center; padding:9px 4px; }
 	.relational_overview h2 { margin:0 0 4px; }
 	.relational_overview_grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(170px,1fr)); gap:10px; }
 	.relational_overview_card { border:1px solid var(--line); border-radius:12px; background:var(--panel); padding:10px; }
-	.relational_overview_card h3 { margin:0 0 2px; font-size:14px; cursor:pointer; }
+	.relational_overview_card h3 { margin:0 0 2px; font-size:14px; cursor:var(--jawnos-cursor-pointer, pointer); }
 	.relational_overview_count { font-size:22px; font-weight:bold; opacity:.75; margin-bottom:4px; }
 	.relational_overview_names { display:flex; flex-direction:column; gap:1px; }
-	.relational_overview_name { font-size:12px; cursor:pointer; opacity:.8; overflow:hidden;
+	.relational_overview_name { font-size:12px; cursor:var(--jawnos-cursor-pointer, pointer); opacity:.8; overflow:hidden;
 		text-overflow:ellipsis; white-space:nowrap; }
 	.relational_overview_name:hover { opacity:1; text-decoration:underline; }
 	.relational_loading { padding:24px; color:var(--muted,#8e8e8e); font-size:13px; }

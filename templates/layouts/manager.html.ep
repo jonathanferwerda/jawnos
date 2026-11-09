@@ -188,8 +188,10 @@
     body, button, input, select, textarea,
     .ui-widget, .ui-widget input, .ui-widget select, .ui-widget textarea, .ui-widget button,
     .title_font { font-family: var(--jawnos-font); }
-    <%== &subs::cursor_css() %>
   </style>
+  <%# every cursor set's role map at the chosen size; the websocket push
+      replaces this block when the size slider moves %>
+  <style id="jawnos_cursor_css"><%== &subs::cursor_css() %></style>
 		<div id="everything">
 			<%= content %>
 			<div id="red_dot" class="circular_thumb dot">

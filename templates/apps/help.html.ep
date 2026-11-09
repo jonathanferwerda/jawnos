@@ -34,7 +34,7 @@
 						<% } %>
 						<% foreach my $r ( @{$results} ) { %>
 							<span class="help_topic_link hover" topic="<%= $r->{'id'} %>" hint="<%= $r->{'summary'} %>"
-								style="display:block;padding:5px 6px;border-radius:6px;cursor:pointer;<% if ($shown && $shown->{'title'} eq $r->{'title'}) { %>background:var(--line);<% } %>">
+								style="display:block;padding:5px 6px;border-radius:6px;cursor:var(--jawnos-cursor-pointer, pointer);<% if ($shown && $shown->{'title'} eq $r->{'title'}) { %>background:var(--line);<% } %>">
 								<%= $r->{'title'} %>
 								<span style="display:block;font-size:11px;opacity:.65;line-height:1.25;"><%= $r->{'summary'} %></span>
 							</span>
@@ -49,7 +49,7 @@
 							</div>
 							<% foreach my $r ( @items ) { %>
 								<span class="help_topic_link hover" topic="<%= $r->{'id'} %>" hint="<%= $r->{'summary'} %>"
-									style="display:block;padding:5px 6px;border-radius:6px;cursor:pointer;<% if ($shown && $shown->{'title'} eq $r->{'title'}) { %>background:var(--line);<% } %>">
+									style="display:block;padding:5px 6px;border-radius:6px;cursor:var(--jawnos-cursor-pointer, pointer);<% if ($shown && $shown->{'title'} eq $r->{'title'}) { %>background:var(--line);<% } %>">
 									<%= $r->{'title'} %>
 								</span>
 							<% } %>
@@ -71,12 +71,12 @@
 							<% foreach my $ex ( @examples ) { %>
 								<% if ($ex->{'kind'} eq 'app') { %>
 									<span class="help_open_app button hover" app="<%= $ex->{'value'} %>" hint="<%= &subs::ui('Open') %> <%= $ex->{'label'} %>"
-										style="display:inline-block;margin:2px 8px 4px 0;padding:6px 12px;border-radius:8px;border:2px solid var(--line);cursor:pointer;font-weight:bold;">
+										style="display:inline-block;margin:2px 8px 4px 0;padding:6px 12px;border-radius:8px;border:2px solid var(--line);cursor:var(--jawnos-cursor-pointer, pointer);font-weight:bold;">
 										<%= &subs::ui('Open') %> <%= $ex->{'label'} %>
 									</span>
 								<% } else { %>
 									<span class="help_example_configure button hover" configure="<%= $ex->{'value'} %>" hint="<%= &subs::ui('Open') %> <%= $ex->{'label'} %>"
-										style="display:inline-block;margin:2px 8px 4px 0;padding:6px 12px;border-radius:8px;border:2px solid var(--line);cursor:pointer;font-weight:bold;">
+										style="display:inline-block;margin:2px 8px 4px 0;padding:6px 12px;border-radius:8px;border:2px solid var(--line);cursor:var(--jawnos-cursor-pointer, pointer);font-weight:bold;">
 										<%= &subs::ui('Open') %> <%= $ex->{'label'} %>
 									</span>
 								<% } %>
@@ -98,7 +98,7 @@
 						<div style="margin:18px 0 6px;font-weight:bold;">Every app's keys</div>
 						<% foreach my $group ( &help::shortcut_sheet($topic_id) ) { %>
 							<div style="margin:16px 0 5px;font-weight:bold;">
-								<span class="help_topic_link hover" topic="<%= $group->{'id'} %>" style="cursor:pointer;text-decoration:underline;"><%= $group->{'title'} %></span>
+								<span class="help_topic_link hover" topic="<%= $group->{'id'} %>" style="cursor:var(--jawnos-cursor-pointer, pointer);text-decoration:underline;"><%= $group->{'title'} %></span>
 							</div>
 							<table style="border-collapse:collapse;width:100%;margin:0 0 10px;font-size:14px;">
 								<% foreach my $row (@{ $group->{'rows'} }) { %>
@@ -122,7 +122,7 @@
 					<% } %>
 					<% if ($shown->{'app'}) { %>
 						<span class="help_open_app button hover" app="<%= $shown->{'app'} %>" hint="<%= &subs::ui('Open') %> <%= $shown->{'title'} %>"
-							style="display:inline-block;margin:4px 8px 12px 0;padding:7px 14px;border-radius:8px;border:2px solid var(--line);cursor:pointer;font-weight:bold;">
+							style="display:inline-block;margin:4px 8px 12px 0;padding:7px 14px;border-radius:8px;border:2px solid var(--line);cursor:var(--jawnos-cursor-pointer, pointer);font-weight:bold;">
 							<%= &subs::ui('Open') %> <%= $shown->{'title'} %>
 						</span>
 					<% } %>
@@ -132,7 +132,7 @@
 							<% foreach my $rid ( @{ $shown->{'related'} } ) { %>
 								<% my $rel = &help::get($rid); next unless $rel; %>
 								<span class="help_topic_link hover" topic="<%= &help::key($rid) %>" hint="<%= $rel->{'summary'} %>"
-									style="display:inline-block;margin:6px 8px 0 0;padding:4px 10px;border-radius:14px;border:1px solid var(--line);cursor:pointer;">
+									style="display:inline-block;margin:6px 8px 0 0;padding:4px 10px;border-radius:14px;border:1px solid var(--line);cursor:var(--jawnos-cursor-pointer, pointer);">
 									<%= $rel->{'title'} %>
 								</span>
 							<% } %>
@@ -165,16 +165,16 @@
 					<option value="<%= $mid %>" <% if ($selected_model eq $mid) { %>selected<% } %>><%= $cm->{'name'} || $mid %></option>
 				<% } } %>
 			</select>
-			<label style="display:flex;align-items:center;gap:4px;font-size:12px;opacity:.8;cursor:pointer;" hint="Switch the composer to the Coding agent, which edits and ships the JawnOS code"><input type="checkbox" id="help_coding"> Coding</label>
+			<label style="display:flex;align-items:center;gap:4px;font-size:12px;opacity:.8;cursor:var(--jawnos-cursor-pointer, pointer);" hint="Switch the composer to the Coding agent, which edits and ships the JawnOS code"><input type="checkbox" id="help_coding"> Coding</label>
 			<span id="help_context" style="font-size:12px;opacity:.7;"></span>
-			<button id="help_topics_back" class="button" hint="Back to the topics" style="display:none;margin-left:auto;padding:4px 12px;border-radius:8px;border:2px solid var(--line);cursor:pointer;">Topics</button>
-			<button id="help_tour" class="button" hint="Take the tour" style="margin-left:8px;padding:4px 12px;border-radius:8px;border:2px solid var(--line);cursor:pointer;"><%= &subs::ui('Take the tour') %></button>
+			<button id="help_topics_back" class="button" hint="Back to the topics" style="display:none;margin-left:auto;padding:4px 12px;border-radius:8px;border:2px solid var(--line);cursor:var(--jawnos-cursor-pointer, pointer);">Topics</button>
+			<button id="help_tour" class="button" hint="Take the tour" style="margin-left:8px;padding:4px 12px;border-radius:8px;border:2px solid var(--line);cursor:var(--jawnos-cursor-pointer, pointer);"><%= &subs::ui('Take the tour') %></button>
 		</div>
 		<div class="help_agent_row" style="display:flex;gap:8px;align-items:flex-end;margin-top:6px;">
 			<textarea id="help_question" rows="1" placeholder="Ask the guide — or tell it what you want to do…" data-default="<%= $default_question %>"
 				style="flex:1;box-sizing:border-box;height:36px;min-height:36px;max-height:36px;overflow-y:auto;resize:none;border-radius:8px;border:1px solid var(--line);background:var(--panel);color:var(--ink);padding:7px 9px;font-size:13px;font-family:inherit;"></textarea>
-			<button id="help_ask" class="button" hint="Ask, or ask it to do it" style="padding:8px 14px;border-radius:8px;border:2px solid var(--line);cursor:pointer;font-weight:bold;white-space:nowrap;">Guide me</button>
-			<button id="help_converse" class="button" hint="Start a spoken conversation: the mic opens again after each answer, so you can just keep talking — press End when you are done, or say “bye jawn”" style="padding:8px 12px;border-radius:8px;border:2px solid var(--line);cursor:pointer;white-space:nowrap;">Converse</button>
+			<button id="help_ask" class="button" hint="Ask, or ask it to do it" style="padding:8px 14px;border-radius:8px;border:2px solid var(--line);cursor:var(--jawnos-cursor-pointer, pointer);font-weight:bold;white-space:nowrap;">Guide me</button>
+			<button id="help_converse" class="button" hint="Start a spoken conversation: the mic opens again after each answer, so you can just keep talking — press End when you are done, or say “bye jawn”" style="padding:8px 12px;border-radius:8px;border:2px solid var(--line);cursor:var(--jawnos-cursor-pointer, pointer);white-space:nowrap;">Converse</button>
 		</div>
 	</div>
 </div>

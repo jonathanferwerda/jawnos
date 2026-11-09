@@ -166,7 +166,12 @@ our @icon_sets = qw/handdrawn windows mac gnome cartoon dark light outline neon 
 # selectable cursor sets; each maps to public/cursors/sets/<key>/<role>.png.
 # The empty value in a setting means the system cursors. Every set draws the
 # same roles, so switching sets keeps an I-beam on text and a hand on a link.
-our @cursor_sets = qw/bold white outline neon pastel mono/;
+our @cursor_sets = qw/bold white outline neon pastel mono contrast/;
+
+# The sizes the pointer can wear. 32 is the base tile beside each SVG; the
+# other cuts live in public/cursors/sets/<set>/<size>/ and are picked by the
+# Misc slider. The values are the slider's stops, not every pixel between.
+our @cursor_sizes = ( 16, 24, 32, 40, 48 );
 
 # The roles a cursor set may name, and where each image's hotspot sits on the
 # 32px tile. The server writes both into the CSS; the images only carry paint.

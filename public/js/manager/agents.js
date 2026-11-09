@@ -13,9 +13,9 @@ function jawnosAgentsPanel() {
 	panel = $('<div id="jawnos_agents" style="position:fixed;left:40px;top:60px;width:360px;max-height:72%;display:none;flex-direction:column;background:var(--panel);border:2px solid var(--line);border-radius:10px;box-shadow:0 10px 30px rgba(0,0,0,.4);overflow:hidden;z-index:995000;">'
 		+ '<div class="jawnos_agents_header" hint="Drag here to move the list" style="display:flex;align-items:center;gap:6px;padding:7px 10px;border-bottom:1px solid var(--line);">'
 		+ '<span style="flex:1;font-weight:bold;font-size:14px;opacity:.85;">Agents</span>'
-		+ '<span class="jawnos_agents_new_guide hover" hint="A new Guide associate, with its own thread" style="cursor:pointer;font-size:13px;opacity:.7;padding:0 3px;">+ guide</span>'
-		+ '<span class="jawnos_agents_new_coding hover" hint="A new Coding agent, with its own thread" style="cursor:pointer;font-size:13px;opacity:.7;padding:0 3px;">+ coding</span>'
-		+ '<span class="jawnos_agents_close hover" hint="Close" style="cursor:pointer;font-size:15px;opacity:.7;padding:0 4px;">✕</span>'
+		+ '<span class="jawnos_agents_new_guide hover" hint="A new Guide associate, with its own thread" style="cursor:var(--jawnos-cursor-pointer, pointer);font-size:13px;opacity:.7;padding:0 3px;">+ guide</span>'
+		+ '<span class="jawnos_agents_new_coding hover" hint="A new Coding agent, with its own thread" style="cursor:var(--jawnos-cursor-pointer, pointer);font-size:13px;opacity:.7;padding:0 3px;">+ coding</span>'
+		+ '<span class="jawnos_agents_close hover" hint="Close" style="cursor:var(--jawnos-cursor-pointer, pointer);font-size:15px;opacity:.7;padding:0 4px;">✕</span>'
 		+ '</div>'
 		+ '<div class="jawnos_agents_rows" style="flex:1;overflow-y:auto;padding:8px 10px;font-size:14px;line-height:1.35;"></div>'
 		+ '</div>');
@@ -185,7 +185,7 @@ function jawnosAgentsRender(panel, agents) {
 	agents.forEach(function (a) {
 		var key = '' + a.kind + ':' + a.name;
 		var is_open = !!open[key];
-		var row = $('<div class="jawnos_agents_row" style="border:1px solid var(--line);border-radius:8px;padding:6px 8px;margin:0 0 8px;cursor:pointer;"></div>')
+		var row = $('<div class="jawnos_agents_row" style="border:1px solid var(--line);border-radius:8px;padding:6px 8px;margin:0 0 8px;cursor:var(--jawnos-cursor-pointer, pointer);"></div>')
 			.attr('kind', a.kind).attr('agent_name', a.name);
 		row.append($('<div style="display:flex;gap:6px;align-items:baseline;"></div>')
 			.append($('<b style="flex:1;overflow-wrap:break-word;"></b>').text(a.title || a.name || '(untitled)'))
@@ -210,7 +210,7 @@ function jawnosAgentsRender(panel, agents) {
 			actions.append(reopen);
 		}
 		// every row deletes - an open one too: its panels go with it
-		var del = $('<span class="jawnos_agents_delete hover" hint="Throw this conversation away (press twice)" style="font-size:12px;opacity:.8;color:#c33;cursor:pointer;">delete</span>');
+		var del = $('<span class="jawnos_agents_delete hover" hint="Throw this conversation away (press twice)" style="font-size:12px;opacity:.8;color:#c33;cursor:var(--jawnos-cursor-pointer, pointer);">delete</span>');
 		del.on('click', function (e) {
 			e.stopPropagation();
 			if (del.attr('armed') === 'yes') { jawnosAgentsDelete(panel, a); return; }

@@ -72,6 +72,6 @@
 		.pay_box_interac h3 { margin: 0 0 8px; font-size: 17px; }
 		.pay_box_interac p { margin: 0 0 8px; line-height: 1.45; }
 		.pay_box_actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 10px; }
-		.pay_box_actions button { font: inherit; padding: 7px 12px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel-2, var(--panel)); color: var(--ink); cursor: pointer; }
+		.pay_box_actions button { font: inherit; padding: 7px 12px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel-2, var(--panel)); color: var(--ink); cursor: var(--jawnos-cursor-pointer, pointer); }
 	</style>
 <% } %>

@@ -1,7 +1,7 @@
 	<style>
 	#embedded { font: inherit; }
 	#embedded select, #embedded input, #embedded button, #embedded textarea { font: inherit; color: var(--ink); }
-	#embedded button { padding: 3px 10px; margin: 3px 2px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel-2); cursor: pointer; }
+	#embedded button { padding: 3px 10px; margin: 3px 2px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel-2); cursor: var(--jawnos-cursor-pointer, pointer); }
 	#embedded .hover:hover { filter: brightness(1.08); }
 	#embedded .embedded_now_me, #embedded .embedded_bt_now_me { background: var(--panel); font-weight: 700; }
 	#embedded .embedded_device_info { text-align: left; border: 1px solid var(--line); border-radius: 8px; background: var(--panel-2); padding: 6px 10px; margin: 6px auto; max-width: 720px; }
@@ -10,7 +10,7 @@
 	#embedded .teletype_card, #embedded #teletype_homebase, #embedded #teletype_wifi, #embedded #teletype_router, #embedded #teletype_appearance { display: inline-block; text-align: left; vertical-align: top; border: 1px solid var(--line); border-radius: 8px; background: var(--panel-2); color: var(--ink); padding: 6px 10px; margin: 8px; }
 	#embedded .teletype_card b, #embedded #teletype_wifi b, #embedded #teletype_router b { color: var(--ink); }
 	#embedded .teletype_wifi_config, #embedded .teletype_appearance, #embedded .embedded_setting { margin: 2px; }
-	#embedded .embedded_detail { display: inline-block; margin: 1px; padding: 1px 4px; border: 1px solid var(--line); border-radius: 4px; font-size: 90%; cursor: pointer; }
+	#embedded .embedded_detail { display: inline-block; margin: 1px; padding: 1px 4px; border: 1px solid var(--line); border-radius: 4px; font-size: 90%; cursor: var(--jawnos-cursor-pointer, pointer); }
 	#embedded .embedded_pin_wired { box-shadow: inset 0 0 0 2px var(--ink); font-weight: 700; }
 	#embedded .embedded_jobs, #embedded .embedded_job { text-align: left; }
 	#embedded .embedded_job + .embedded_job { border-top: 1px solid var(--line); padding-top: 4px; margin-top: 4px; }

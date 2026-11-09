@@ -291,7 +291,7 @@ $(document).on('mousemove', '.background', function(e) {
 		}
 	});
 	if (hovering == 1) {
-		$('.background').css({'cursor': 'pointer'});
+		$('.background').css({'cursor': 'var(--jawnos-cursor-pointer, pointer)'});
 	}
 	else {
 		$('.background').css({'cursor': 'auto'});

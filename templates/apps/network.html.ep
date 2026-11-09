@@ -12,9 +12,9 @@
 	.network_section_head .network_button { margin-left:auto; }
 	.network_section_head .network_button + .network_button { margin-left:0; }
 	.network_section_body { padding:8px 10px 10px; }
-	.network_button { font:inherit; font-size:12px; padding:4px 10px; cursor:pointer; color:inherit; border:1px solid var(--line); border-radius:calc(var(--jawnos-corner, 12px) * .4); background:var(--panel); }
+	.network_button { font:inherit; font-size:12px; padding:4px 10px; cursor:var(--jawnos-cursor-pointer, pointer); color:inherit; border:1px solid var(--line); border-radius:calc(var(--jawnos-corner, 12px) * .4); background:var(--panel); }
 	.network_button:hover { background:var(--line); }
-	.network_button[disabled] { opacity:.45; cursor:default; }
+	.network_button[disabled] { opacity:.45; cursor:var(--jawnos-cursor-default, default); }
 	.network_button.network_off { color:#a33; }
 	.network_table_wrap { width:100%; overflow-x:auto; }
 	.network_table { width:100%; border-collapse:collapse; font-size:12px; }

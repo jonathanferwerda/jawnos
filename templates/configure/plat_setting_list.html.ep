@@ -260,7 +260,7 @@
 				};
 			%>
 			<span class="cfg-inline">
-				<span id="coding_fixed_open" class="hover" hint="Review the errors the Coding agent has fixed, committed and pushed" style="cursor:pointer;text-decoration:underline;text-underline-offset:2px;">review</span>
+				<span id="coding_fixed_open" class="hover" hint="Review the errors the Coding agent has fixed, committed and pushed" style="cursor:var(--jawnos-cursor-pointer, pointer);text-decoration:underline;text-underline-offset:2px;">review</span>
 				<span class="cfg-note" style="margin:0;"><%= $fixed_n ? "$fixed_n fixed" : 'nothing yet' %></span>
 			</span>
 		</div>
@@ -296,8 +296,8 @@
 				};
 			%>
 			<span class="cfg-inline">
-				<span id="records_open" class="hover" hint="Review what the records audit has found, and Apply" style="cursor:pointer;text-decoration:underline;text-underline-offset:2px;">review</span>
-				<span id="records_scan_now" class="hover" hint="Run the audit now" style="cursor:pointer;text-decoration:underline;text-underline-offset:2px;">scan now</span>
+				<span id="records_open" class="hover" hint="Review what the records audit has found, and Apply" style="cursor:var(--jawnos-cursor-pointer, pointer);text-decoration:underline;text-underline-offset:2px;">review</span>
+				<span id="records_scan_now" class="hover" hint="Run the audit now" style="cursor:var(--jawnos-cursor-pointer, pointer);text-decoration:underline;text-underline-offset:2px;">scan now</span>
 				<span id="records_waiting_n" class="cfg-note" style="margin:0;"><%= $rec_pending ? "$rec_pending waiting" : 'nothing waiting' %></span>
 			</span>
 		</div>
@@ -305,7 +305,7 @@
 		<div class="cfg-row">
 			<label>Records fixed so far</label>
 			<span class="cfg-inline">
-				<span id="records_fixed_open" class="hover" hint="Review the findings the records watch has fixed" style="cursor:pointer;text-decoration:underline;text-underline-offset:2px;">review</span>
+				<span id="records_fixed_open" class="hover" hint="Review the findings the records watch has fixed" style="cursor:var(--jawnos-cursor-pointer, pointer);text-decoration:underline;text-underline-offset:2px;">review</span>
 				<span class="cfg-note" style="margin:0;"><%= $rec_fixed ? "$rec_fixed fixed" : 'nothing yet' %></span>
 			</span>
 		</div>
@@ -353,7 +353,7 @@
 	<p class="cfg-note">Extra verbs the Guide can run, added without a code change. Each entry is JSON: a <code>name</code>, a <code>desc</code>, an optional <code>args</code> map, and a <code>primitive</code> with its <code>params</code>. The primitives are <code>say</code>, <code>open_app</code>, <code>set_setting</code>, <code>run_command</code>, <code>toggle</code>, <code>stage</code>, <code>find</code> and <code>play_music</code>; a param value may contain <code>{name}</code> to take one of the model's arguments. The list is a setting, so it syncs to every machine and they all learn the verb.</p>
 	<textarea id="guide_verbs_json" spellcheck="false" style="width:100%;box-sizing:border-box;min-height:140px;font-family:monospace;font-size:12px;border-radius:6px;border:1px solid var(--line);background:var(--panel);color:var(--ink);padding:8px;"><%= &subs::setting_grabber({ app => '__president', setting => 'guide_verbs', device => 'all' }) || '[]' %></textarea>
 	<div class="cfg-row">
-		<button id="guide_verbs_save" class="button" style="padding:6px 12px;border-radius:8px;border:2px solid var(--line);cursor:pointer;font-weight:bold;">Save commands</button>
+		<button id="guide_verbs_save" class="button" style="padding:6px 12px;border-radius:8px;border:2px solid var(--line);cursor:var(--jawnos-cursor-pointer, pointer);font-weight:bold;">Save commands</button>
 		<span id="guide_verbs_status" class="cfg-note" style="margin:0;"></span>
 	</div>
 	</details>

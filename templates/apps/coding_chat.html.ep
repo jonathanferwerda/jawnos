@@ -15,24 +15,24 @@
 	style="position:absolute;right:10px;bottom:48px;display:none;flex-direction:column;background:var(--panel);border:2px solid var(--line);border-radius:8px;box-shadow:0 8px 26px rgba(0,0,0,.35);overflow:hidden;z-index:4000;">
 	<div class="coding_chat_header" hint="Drag here to move this panel" style="display:flex;align-items:center;gap:6px;padding:6px 8px;border-bottom:1px solid var(--line);">
 		<span class="coding_chat_title" style="flex:1;font-weight:bold;opacity:.85;"><%= $l %></span>
-		<span class="coding_chat_new hover" hint="Open another coding agent, with its own thread" style="cursor:pointer;font-size:16px;font-weight:bold;line-height:1;opacity:.6;padding:0 3px;">+</span>
-		<span class="coding_fixes_toggle hover" hint="Errors caught in the tree's log, and fixes staged for your word" style="cursor:pointer;font-size:12px;opacity:.6;">fixes <b class="coding_fixes_count">0</b></span>
-		<span class="coding_chat_stop hover" hint="Stop after the step it is on" style="display:none;cursor:pointer;font-size:12px;opacity:.6;">stop</span>
-		<span class="coding_chat_forget hover" hint="Forget this conversation" style="cursor:pointer;font-size:12px;opacity:.6;">forget</span>
-		<span class="coding_chat_close hover" hint="Close" style="cursor:pointer;font-size:14px;opacity:.7;padding:0 4px;">✕</span>
+		<span class="coding_chat_new hover" hint="Open another coding agent, with its own thread" style="cursor:var(--jawnos-cursor-pointer, pointer);font-size:16px;font-weight:bold;line-height:1;opacity:.6;padding:0 3px;">+</span>
+		<span class="coding_fixes_toggle hover" hint="Errors caught in the tree's log, and fixes staged for your word" style="cursor:var(--jawnos-cursor-pointer, pointer);font-size:12px;opacity:.6;">fixes <b class="coding_fixes_count">0</b></span>
+		<span class="coding_chat_stop hover" hint="Stop after the step it is on" style="display:none;cursor:var(--jawnos-cursor-pointer, pointer);font-size:12px;opacity:.6;">stop</span>
+		<span class="coding_chat_forget hover" hint="Forget this conversation" style="cursor:var(--jawnos-cursor-pointer, pointer);font-size:12px;opacity:.6;">forget</span>
+		<span class="coding_chat_close hover" hint="Close" style="cursor:var(--jawnos-cursor-pointer, pointer);font-size:14px;opacity:.7;padding:0 4px;">✕</span>
 	</div>
 	<div class="coding_chat_log" style="flex:1;overflow-y:auto;padding:8px;"></div>
 	<div class="coding_fixes_panel" style="display:none;flex:1;flex-direction:column;overflow:hidden;">
 		<div style="display:flex;align-items:center;gap:8px;padding:4px 8px;border-bottom:1px solid var(--line);">
-			<span class="coding_fixes_back hover" hint="Back to the chat" style="cursor:pointer;font-size:12px;opacity:.7;">&larr; chat</span>
+			<span class="coding_fixes_back hover" hint="Back to the chat" style="cursor:var(--jawnos-cursor-pointer, pointer);font-size:12px;opacity:.7;">&larr; chat</span>
 			<span style="flex:1;font-size:12px;opacity:.6;">errors caught &amp; fixes staged</span>
-			<span class="coding_fixes_clear hover" hint="Empty the whole list (an applied fix lives in git, and a fault that comes back is caught again)" style="cursor:pointer;font-size:12px;opacity:.7;">clear</span>
-			<span class="coding_fixes_restart hover" hint="Restart the tree so applied fixes go live" style="cursor:pointer;font-size:12px;opacity:.7;">restart</span>
+			<span class="coding_fixes_clear hover" hint="Empty the whole list (an applied fix lives in git, and a fault that comes back is caught again)" style="cursor:var(--jawnos-cursor-pointer, pointer);font-size:12px;opacity:.7;">clear</span>
+			<span class="coding_fixes_restart hover" hint="Restart the tree so applied fixes go live" style="cursor:var(--jawnos-cursor-pointer, pointer);font-size:12px;opacity:.7;">restart</span>
 		</div>
 		<div class="coding_fixes_rows" style="flex:1;overflow-y:auto;padding:8px;"></div>
 	</div>
 	<div class="coding_chat_composer" style="display:flex;gap:6px;align-items:flex-end;padding:6px;border-top:1px solid var(--line);">
 		<textarea class="coding_chat_input" rows="1" placeholder="Tell the coding agent what to change…" style="flex:1;box-sizing:border-box;height:34px;min-height:34px;max-height:34px;resize:none;border-radius:8px;border:1px solid var(--line);background:var(--panel);color:var(--ink);padding:6px 8px;font-family:inherit;"></textarea>
-		<button class="coding_chat_send button" hint="Send to the coding agent" style="padding:7px 12px;border-radius:8px;border:2px solid var(--line);cursor:pointer;font-weight:bold;">Send</button>
+		<button class="coding_chat_send button" hint="Send to the coding agent" style="padding:7px 12px;border-radius:8px;border:2px solid var(--line);cursor:var(--jawnos-cursor-pointer, pointer);font-weight:bold;">Send</button>
 	</div>
 </div>

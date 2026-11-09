@@ -133,7 +133,7 @@ function travelNearRender(container, items, show_empty) {
 	var label = box.find('.travel_near_label');
 	if (label.length) {
 		label.text(items.length ? jawnosT('Nearby: {0}', items.length) : jawnosT('Nearby'));
-		label.css({ cursor: items.length ? 'pointer' : 'default', textDecoration: items.length ? 'underline' : 'none' })
+		label.css({ cursor: items.length ? 'var(--jawnos-cursor-pointer, pointer)' : 'var(--jawnos-cursor-default, default)', textDecoration: items.length ? 'underline' : 'none' })
 			.off('click').on('click', function() { if (items.length) { travelNearOpen(container, 0); } });
 	}
 	if (!items.length) {
@@ -145,13 +145,13 @@ function travelNearRender(container, items, show_empty) {
 	var shown = items.slice(0, travelNearPreviewMax);
 	$.each(shown, function(i, it) {
 		$('<img>').addClass('travel_near_thumb').attr('src', it.thumb_url).attr('alt', it.label || '').attr('title', it.label || '')
-			.css({ width: '52px', height: '52px', objectFit: 'cover', borderRadius: '5px', marginRight: '3px', cursor: 'pointer', verticalAlign: 'middle', background: '#222' })
+			.css({ width: '52px', height: '52px', objectFit: 'cover', borderRadius: '5px', marginRight: '3px', cursor: 'var(--jawnos-cursor-pointer, pointer)', verticalAlign: 'middle', background: '#222' })
 			.on('click', function() { travelNearOpen(container, i); })
 			.appendTo(strip);
 	});
 	if (items.length > shown.length) {
 		$('<span></span>').addClass('travel_near_more').text(jawnosT('+{0} more', items.length - shown.length))
-			.css({ fontSize: '11px', opacity: '.8', cursor: 'pointer', marginLeft: '6px', verticalAlign: 'middle' })
+			.css({ fontSize: '11px', opacity: '.8', cursor: 'var(--jawnos-cursor-pointer, pointer)', marginLeft: '6px', verticalAlign: 'middle' })
 			.on('click', function() { travelNearOpen(container, 0); })
 			.appendTo(strip);
 	}
@@ -166,13 +166,13 @@ function travelNearGallery(container, items) {
 	var shown = items.slice(0, travelNearPreviewMax);
 	$.each(shown, function(i, it) {
 		$('<img>').addClass('travel_near_grid_thumb').attr('src', it.thumb_url).attr('alt', it.label || '').attr('title', it.label || '')
-			.css({ width: '100%', height: '96px', objectFit: 'cover', borderRadius: '5px', cursor: 'pointer', background: '#222' })
+			.css({ width: '100%', height: '96px', objectFit: 'cover', borderRadius: '5px', cursor: 'var(--jawnos-cursor-pointer, pointer)', background: '#222' })
 			.on('click', function() { travelNearOpen(container, i); })
 			.appendTo(grid);
 	});
 	if (items.length > shown.length) {
 		$('<div></div>').addClass('travel_near_grid_more').text(jawnosT('+{0} more', items.length - shown.length))
-			.css({ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '96px', borderRadius: '5px', cursor: 'pointer', background: '#222', color: '#ddd', fontSize: '12px' })
+			.css({ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '96px', borderRadius: '5px', cursor: 'var(--jawnos-cursor-pointer, pointer)', background: '#222', color: '#ddd', fontSize: '12px' })
 			.on('click', function() { travelNearOpen(container, 0); })
 			.appendTo(grid);
 	}
@@ -292,7 +292,7 @@ $(document).on('input', '#travel_plate_app', function() {
 			if (!list.length) { box.hide(); return; }
 			$.each(list, function(i, a) {
 				$('<div></div>').text(a.name).attr('data-app', a.app)
-					.css({ padding: '3px 6px', cursor: 'pointer', fontSize: '11px', color: '#ddd' })
+					.css({ padding: '3px 6px', cursor: 'var(--jawnos-cursor-pointer, pointer)', fontSize: '11px', color: '#ddd' })
 					.on('click', function(e) {
 						e.stopPropagation();
 						$('#travel_plate_app').val(a.app);

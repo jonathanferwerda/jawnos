@@ -62,6 +62,8 @@ our $icon_set_memo_time;
 # cursor_set() is asked once per render and once per push, like the icon set.
 our $cursor_set_memo;
 our $cursor_set_memo_time;
+our $cursor_size_memo;
+our $cursor_size_memo_time;
 our %m;
 our %theme_aliases;
 our %theme_presets;
@@ -527,6 +529,8 @@ sub appointment_theme_push {
 	# stop on the same theme must not reload every window.
 	my $icon_set = &icon_set();
 	my $cursor_set = &cursor_set();
+	my $cursor_size = &cursor_size();
+	my $cursor_css = &cursor_css();
 	my $texture = &texture_name();
 	my $font = $bundle->{'font'} || &misc_setting('title_font') || 'system-ui, sans-serif';
 	# the corner the desk is wearing: the theme's own, or the Misc override on
@@ -540,6 +544,8 @@ sub appointment_theme_push {
 		appointment => $appointment ? 1 : 0,
 		icon_set => $icon_set,
 		cursor_set => $cursor_set,
+		cursor_size => $cursor_size,
+		cursor_css => $cursor_css,
 		texture => $texture,
 		font => $font,
 		corner => $corner,
@@ -600,7 +606,7 @@ sub theme_signature {
 	my $font = $bundle->{'font'} || &misc_setting('title_font') || 'system-ui, sans-serif';
 	my $corner = $bundle->{'slug'} ? &corner_radius() . 'px' : '';
 	my $accent = $bundle->{'accent'} || '';
-	return join '|', map { defined $_ ? $_ : '' } ( $bg, &icon_set(), &cursor_set(), &texture_name(), $font, $corner, $accent );
+	return join '|', map { defined $_ ? $_ : '' } ( $bg, &icon_set(), &cursor_set(), &cursor_size(), &texture_name(), $font, $corner, $accent );
 }
 
 # The colours the current theme is built from: the distinct *_background_colour
@@ -822,21 +828,44 @@ sub cursor_set {
 	return $cursor_set_memo;
 }
 
+# The pointer's size in pixels: one of the slider's stops (16, 24, 32, 40 or
+# 48). A stored value between stops, or one this house does not draw, reads as
+# the base 32 rather than a broken image. Memoised like the set because the CSS
+# below is rebuilt from it.
+sub cursor_size {
+	my $now = &rightNow();
+	return $cursor_size_memo if defined $cursor_size_memo && $now - $cursor_size_memo_time < 1000;
+	my $misc = &misc_setting('cursor_size');
+	my $size = (defined $misc && $misc =~ /^\s*(\d{1,2})\s*(?:px)?\s*$/) ? $1 + 0 : 32;
+	$size = 32 unless grep { $_ == $size } @gb::cursor_sizes;
+	$cursor_size_memo = $size;
+	$cursor_size_memo_time = $now;
+	return $cursor_size_memo;
+}
+
 # The CSS that maps each cursor set's roles onto the keywords the sheets ask
-# for. Every set is written once, so a theme push only moves the body's
-# data-cursor-set attribute; no stylesheet is rebuilt or re-injected. A role
-# with no image is simply absent, and the var() fallback in the sheet leaves
-# the system cursor in place.
+# for. Every set is written once at the chosen size, so a theme push only moves
+# the body's data-cursor-set attribute; a size change sends a fresh copy of
+# this block instead. A role with no image is simply absent, and the var()
+# fallback in the sheet leaves the system cursor in place.
 sub cursor_css {
+	my $size = &cursor_size();
+	my $size_dir = $size == 32 ? '' : "$size/";
 	my @rules;
 	foreach my $set ( @gb::cursor_sets ) {
 		next unless defined $set && $set =~ /^[a-z0-9][a-z0-9_-]*$/;
 		my @vars;
 		foreach my $role ( @gb::cursor_roles ) {
-			my $png = "public/cursors/sets/$set/$role.png";
+			my $rel = $size_dir . "$role.png";
+			my $png = "public/cursors/sets/$set/$rel";
+			# a set that never got this size still wears its base tile
+			unless (-e $png) {
+				$rel = "$role.png";
+				$png = "public/cursors/sets/$set/$rel";
+			}
 			next unless -e $png;
 			my $hotspot = $gb::cursor_hotspots{$role} // '16 16';
-			push @vars, "--jawnos-cursor-$role:url('/cursors/sets/$set/$role.png') $hotspot, $role";
+			push @vars, "--jawnos-cursor-$role:url('/cursors/sets/$set/$rel') $hotspot, $role";
 		}
 		next unless @vars;
 		push @rules, 'body[data-cursor-set="' . $set . '"]{' . join(';', @vars) . ';cursor:var(--jawnos-cursor-default, auto)}';
@@ -852,6 +881,8 @@ sub icon_set_forget {
 	$icon_set_memo_time = 0;
 	$cursor_set_memo = undef;
 	$cursor_set_memo_time = 0;
+	$cursor_size_memo = undef;
+	$cursor_size_memo_time = 0;
 	$theme_state_memo = undef;
 	$theme_state_time = 0;
 	$theme_registry_memo = undef;

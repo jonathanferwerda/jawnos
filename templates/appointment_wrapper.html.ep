@@ -290,7 +290,7 @@
 	.appointment_stats { margin-top: 6px; width: 100%; text-align: left; }
 	.appointment_stats_headers { display: flex; flex-wrap: nowrap; gap: 2px; width: 100%; }
 	.appointment_stats_header { flex: 1 1 0; min-width: 0; padding: 2px 1px; font: inherit; font-size: 11px;
-		line-height: 1.3; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer;
+		line-height: 1.3; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: var(--jawnos-cursor-pointer, pointer);
 		border: 1px solid var(--line); border-radius: 6px; background: var(--panel-2, #ffffff); color: var(--ink); }
 	.appointment_stats_header.selected { background-color: var(--line); font-weight: bold; }
 	.appointment_stats_panel { margin-top: 3px; width: 100%; box-sizing: border-box; }

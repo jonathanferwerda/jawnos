@@ -630,6 +630,9 @@ our $icon_set_memo_time = 0;
 # same short TTL as the icon set.
 our $cursor_set_memo;
 our $cursor_set_memo_time = 0;
+# The size slider is memoised on the same TTL; it is read once per cursor set.
+our $cursor_size_memo;
+our $cursor_size_memo_time = 0;
 
 # Whether the active desktop theme is dark, and the scheme name driving it (blank
 # when the Misc manager colour is in charge). Memoised on the same short TTL as

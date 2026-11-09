@@ -125,7 +125,7 @@
 			border: 1px solid #333;
 			background-color: rgba(255,255,255,0.9);
 			color: #000;
-			cursor: pointer;
+			cursor: var(--jawnos-cursor-pointer, pointer);
 		}
 		.padlock_fingerprint,
 		.padlock_biometric {

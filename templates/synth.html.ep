@@ -81,7 +81,7 @@
 		background: var(--panel);
 		color: inherit;
 		padding: 3px 8px;
-		cursor: pointer;
+		cursor: var(--jawnos-cursor-pointer, pointer);
 	}
 	.synth_voices { opacity: .55; margin-left: auto; font-size: 13px; }
 
@@ -101,7 +101,7 @@
 		white-space: nowrap;
 	}
 	.piano_key {
-		cursor: pointer;
+		cursor: var(--jawnos-cursor-pointer, pointer);
 		user-select: none;
 		border: solid;
 		border-width: 1px;
@@ -155,7 +155,7 @@
 	.synth_seq { margin-top: 6px; overflow-x: auto; padding-bottom: 4px; }
 	.synth_seq_row { display: flex; align-items: center; height: 16px; }
 	.synth_seq_label { width: 36px; font-size: 10px; opacity: .6; flex: none; }
-	.synth_seq_cell { width: 16px; height: 14px; margin-right: 2px; border: 1px solid var(--line); border-radius: 2px; background: var(--panel); flex: none; cursor: pointer; }
+	.synth_seq_cell { width: 16px; height: 14px; margin-right: 2px; border: 1px solid var(--line); border-radius: 2px; background: var(--panel); flex: none; cursor: var(--jawnos-cursor-pointer, pointer); }
 	.synth_seq_cell.on { background: #4caf50; }
 	.synth_seq_cell.synth_seq_playing { outline: 2px solid #ffd21e; }
 </style>

@@ -209,7 +209,7 @@ function codingChatThoughtShow(mount, reasoning) {
 	if (!why) { return; }
 	var log = codingChatPanel(mount).find('.coding_chat_log');
 	if (!log.length) { return; }
-	log.append($('<span class="coding_chat_thought_toggle" style="cursor:pointer;font-size:11px;opacity:.55;margin-left:6px;"></span>').text(codingT('thinking')));
+	log.append($('<span class="coding_chat_thought_toggle" style="cursor:var(--jawnos-cursor-pointer, pointer);font-size:11px;opacity:.55;margin-left:6px;"></span>').text(codingT('thinking')));
 	log.append($('<div class="coding_chat_thought" style="white-space:pre-wrap;overflow-wrap:break-word;font-size:12px;opacity:.75;max-height:220px;overflow:auto;border-left:2px solid var(--line);padding:2px 6px;margin:3px 0 6px;display:none;"></div>').text(why));
 }
 
@@ -226,7 +226,7 @@ function codingChatSubagentShow(mount, sub) {
 	if (!log.length || !sub || typeof sub !== 'object') { return; }
 	var task = $.trim(String(sub.task == null ? '' : sub.task));
 	if (task.length > 60) { task = task.slice(0, 60) + '…'; }
-	var toggle = $('<span class="coding_chat_subagent_toggle" style="cursor:pointer;font-size:11px;opacity:.6;margin-left:6px;"></span>')
+	var toggle = $('<span class="coding_chat_subagent_toggle" style="cursor:var(--jawnos-cursor-pointer, pointer);font-size:11px;opacity:.6;margin-left:6px;"></span>')
 		.text(codingT('subagent') + ': ' + task);
 	var box = $('<div class="coding_chat_subagent" style="display:none;overflow-wrap:break-word;font-size:12px;opacity:.8;max-height:220px;overflow:auto;border-left:2px solid var(--line);padding:2px 6px;margin:3px 0 6px;"></div>');
 	var children = Array.isArray(sub.steps) ? sub.steps : [];
@@ -486,8 +486,8 @@ function codingChatReviewShow(mount, run, r) {
 		block.append($('<div class="coding_chat_review_files" style="font-size:11px;opacity:.6;overflow-wrap:break-word;margin:0 0 4px;"></div>'));
 		block.append($('<pre class="coding_chat_review_diff" style="max-height:240px;overflow:auto;white-space:pre-wrap;font-size:12px;background:rgba(0,0,0,.05);border-radius:5px;padding:4px 6px;margin:0 0 6px;"></pre>'));
 		var row = $('<div style="display:flex;gap:6px;"></div>');
-		row.append($('<button class="coding_chat_approve button" style="padding:4px 10px;border-radius:6px;border:2px solid var(--line);cursor:pointer;font-weight:bold;"></button>').text(codingT('approve')));
-		row.append($('<button class="coding_chat_reject button" style="padding:4px 10px;border-radius:6px;border:2px solid var(--line);cursor:pointer;"></button>').text(codingT('reject')));
+		row.append($('<button class="coding_chat_approve button" style="padding:4px 10px;border-radius:6px;border:2px solid var(--line);cursor:var(--jawnos-cursor-pointer, pointer);font-weight:bold;"></button>').text(codingT('approve')));
+		row.append($('<button class="coding_chat_reject button" style="padding:4px 10px;border-radius:6px;border:2px solid var(--line);cursor:var(--jawnos-cursor-pointer, pointer);"></button>').text(codingT('reject')));
 		block.append(row);
 		log.append(block);
 	}

@@ -16,26 +16,26 @@
 	.phone_app_pane.on { display:block; flex:1 1 auto; min-height:0; overflow-y:auto; }
 	.phone_app_tabs { display:flex; gap:6px; justify-content:center; flex-wrap:wrap; margin-bottom:10px; }
 	.phone_app_tab { padding:6px 14px; border:1px solid var(--line); border-radius:999px;
-		background:var(--panel); cursor:pointer; font-size:13px; user-select:none; }
+		background:var(--panel); cursor:var(--jawnos-cursor-pointer, pointer); font-size:13px; user-select:none; }
 	.phone_app_tab.on { background:var(--accent,#4a90d9); color:#fff; border-color:transparent; }
 	.phone_app_status { text-align:center; min-height:20px; color:var(--muted,#8e8e8e); font-size:13px; margin-bottom:10px; }
 	.phone_app_pane { display:none; }
 	.phone_app_pane.on { display:block; }
 	.phone_app_list { max-height:340px; overflow:auto; }
 	.phone_app_row { display:flex; align-items:center; gap:10px; padding:9px 10px;
-		border-bottom:1px solid var(--line); cursor:pointer; border-radius:8px; }
+		border-bottom:1px solid var(--line); cursor:var(--jawnos-cursor-pointer, pointer); border-radius:8px; }
 	.phone_app_row:hover { background:var(--line); }
 	.phone_app_avatar { width:34px; height:34px; border-radius:50%; background:var(--line);
 		display:flex; align-items:center; justify-content:center; flex:0 0 auto; overflow:hidden; }
 	.phone_app_avatar img { width:100%; height:100%; object-fit:cover; }
 	.phone_app_name { flex:1 1 auto; font-size:15px; }
 	.phone_app_sub { font-size:12px; color:var(--muted,#8e8e8e); }
-	.phone_app_line { text-decoration:underline dotted; text-underline-offset:2px; cursor:pointer; }
+	.phone_app_line { text-decoration:underline dotted; text-underline-offset:2px; cursor:var(--jawnos-cursor-pointer, pointer); }
 	.phone_app_line:hover { color:var(--accent,#4a90d9); }
 	.phone_app_missed .phone_app_name { color:#e0444e; }
-	.phone_app_block { flex:0 0 auto; opacity:0.55; cursor:pointer; }
+	.phone_app_block { flex:0 0 auto; opacity:0.55; cursor:var(--jawnos-cursor-pointer, pointer); }
 	.phone_app_block:hover { opacity:1; }
-	.phone_app_row_call { flex:0 0 auto; opacity:0.7; cursor:pointer; }
+	.phone_app_row_call { flex:0 0 auto; opacity:0.7; cursor:var(--jawnos-cursor-pointer, pointer); }
 	.phone_app_row_call:hover { opacity:1; }
 	.phone_app_ivr { max-width:420px; margin:0 auto; display:flex; flex-direction:column; gap:10px; }
 	.phone_app_ivr label { display:flex; flex-direction:column; gap:4px; font-size:13px; }
@@ -44,7 +44,7 @@
 	.phone_app_ivr textarea { resize:vertical; }
 	.phone_app_ivr .phone_app_ivr_toggle { flex-direction:row; align-items:center; gap:8px; }
 	.phone_app_ivr_save { align-self:flex-start; padding:7px 18px; border-radius:999px;
-		border:1px solid var(--line); background:var(--panel); color:inherit; cursor:pointer; }
+		border:1px solid var(--line); background:var(--panel); color:inherit; cursor:var(--jawnos-cursor-pointer, pointer); }
 	.phone_app_ivr_status { min-height:18px; color:var(--muted,#8e8e8e); font-size:12px; }
 	.phone_app_ivr_flows { display:flex; flex-direction:column; gap:6px; }
 	.phone_app_ivr_flow_row { display:flex; align-items:center; gap:8px; }
@@ -56,7 +56,7 @@
 	.phone_app_ivr_flows_title { font-size:14px; font-weight:600; }
 	.phone_app_ivr_flow_list { display:flex; flex-direction:column; gap:6px; }
 	.phone_app_ivr_flow_item { border:1px solid var(--line); border-radius:9px; overflow:hidden; }
-	.phone_app_ivr_flow_head { display:flex; align-items:center; gap:8px; padding:8px 10px; cursor:pointer; }
+	.phone_app_ivr_flow_head { display:flex; align-items:center; gap:8px; padding:8px 10px; cursor:var(--jawnos-cursor-pointer, pointer); }
 	.phone_app_ivr_flow_head:hover { background:var(--line); }
 	.phone_app_ivr_flow_item_name { flex:1 1 auto; font-weight:600; }
 	.phone_app_ivr_flow_more { transition: transform .15s; }
@@ -70,7 +70,7 @@
 	.phone_app_vm_transcript { padding:3px 10px; border-radius:999px; border:1px solid var(--line); text-decoration:none; color:inherit; }
 	.phone_app_vm_words { padding:4px 8px 6px; font-size:12px; white-space:pre-wrap; color:var(--muted,#8e8e8e); }
 	/* the IVR pane's one line back to the messages while the flows are edited */
-	.phone_app_ivr_vm_link { cursor:pointer; text-decoration:underline dotted; text-underline-offset:2px; }
+	.phone_app_ivr_vm_link { cursor:var(--jawnos-cursor-pointer, pointer); text-decoration:underline dotted; text-underline-offset:2px; }
 	.phone_app_ivr_vm_link:hover { color:var(--accent,#4a90d9); }
 	.phone_app_ivr_flow_head.on .phone_app_ivr_flow_more { transform: rotate(180deg); }
 	.phone_app_ivr_flow_count { flex:0 0 auto; color:var(--muted,#8e8e8e); font-size:12px; }
@@ -86,16 +86,16 @@
 	.phone_app_ivr_flow_edit textarea { resize:vertical; }
 	.phone_app_ivr_flow_actions { display:flex; gap:8px; flex-wrap:wrap; }
 	.phone_app_ivr_flow_actions button { padding:6px 14px; border-radius:999px; border:1px solid var(--line);
-		background:var(--panel); color:inherit; cursor:pointer; font:inherit; }
+		background:var(--panel); color:inherit; cursor:var(--jawnos-cursor-pointer, pointer); font:inherit; }
 	.phone_app_ivr_flow_actions button[armed="yes"] { background:#b0342e; color:#fff; border-color:transparent; }
 	/* a flow's voicemail greeting: the typed words, or one recording with its
 	   own Record, Play and Remove */
 	.phone_app_ivr_greeting { display:flex; flex-direction:column; gap:6px; }
 	.phone_app_ivr_greeting_row { display:flex; gap:8px; flex-wrap:wrap; }
 	.phone_app_ivr_greeting_row button { padding:5px 12px; border-radius:999px; border:1px solid var(--line);
-		background:var(--panel); color:inherit; cursor:pointer; font:inherit; font-size:12px; }
+		background:var(--panel); color:inherit; cursor:var(--jawnos-cursor-pointer, pointer); font:inherit; font-size:12px; }
 	.phone_app_ivr_greeting_row button[armed="yes"] { background:#b0342e; color:#fff; border-color:transparent; }
-	.phone_app_ivr_greeting_row button:disabled { opacity:.5; cursor:default; }
+	.phone_app_ivr_greeting_row button:disabled { opacity:.5; cursor:var(--jawnos-cursor-default, default); }
 	.phone_app_ivr_greeting_note { font-size:12px; color:var(--muted,#8e8e8e); }
 	/* the steps: an ordered list the person can drag into the order the gateway
 	   speaks. The handle is the only draggable part, so the fields inside a step
@@ -105,12 +105,12 @@
 	.phone_app_ivr_steps { display:flex; flex-direction:column; gap:6px; }
 	.phone_app_ivr_step { border:1px solid var(--line); border-radius:8px; background:var(--panel); }
 	.phone_app_ivr_step_head { display:flex; align-items:center; gap:6px; padding:6px 8px; }
-	.phone_app_ivr_step_handle { cursor:grab; touch-action:none; user-select:none; -webkit-user-select:none;
+	.phone_app_ivr_step_handle { cursor:var(--jawnos-cursor-grab, grab); touch-action:none; user-select:none; -webkit-user-select:none;
 		padding:2px 8px; border-radius:6px; color:var(--muted,#8e8e8e); font-size:15px; line-height:1; }
-	.phone_app_ivr_step_handle:active { cursor:grabbing; background:var(--line); }
+	.phone_app_ivr_step_handle:active { cursor:var(--jawnos-cursor-grabbing, grabbing); background:var(--line); }
 	.phone_app_ivr_step_type { flex:1 1 auto; font-size:13px; font-weight:600; }
 	.phone_app_ivr_step_remove { flex:0 0 auto; padding:2px 10px; border-radius:999px; border:1px solid var(--line);
-		background:transparent; color:inherit; cursor:pointer; font:inherit; font-size:12px; }
+		background:transparent; color:inherit; cursor:var(--jawnos-cursor-pointer, pointer); font:inherit; font-size:12px; }
 	.phone_app_ivr_step_fields { padding:0 8px 8px; display:flex; flex-direction:column; gap:6px; }
 	.phone_app_ivr_step_fields label { display:flex; flex-direction:column; gap:3px; font-size:12px; }
 	.phone_app_ivr_step_hint { font-size:12px; color:var(--muted,#8e8e8e); }
@@ -122,10 +122,10 @@
 	.phone_app_ivr_step_add { display:flex; gap:8px; align-items:center; }
 	.phone_app_ivr_step_add select { flex:1 1 auto; }
 	.phone_app_ivr_step_add button { flex:0 0 auto; padding:6px 12px; border-radius:999px; border:1px solid var(--line);
-		background:var(--panel); color:inherit; cursor:pointer; font:inherit; font-size:12px; }
+		background:var(--panel); color:inherit; cursor:var(--jawnos-cursor-pointer, pointer); font:inherit; font-size:12px; }
 	.phone_app_ivr_step_placeholder { border:1px dashed var(--line); border-radius:8px; height:44px; background:transparent; }
 	.phone_app_ivr_steps_dragging .phone_app_ivr_step { opacity:.75; }
-	.phone_app_ivr_steps_dragging .phone_app_ivr_step_handle { cursor:grabbing; }
+	.phone_app_ivr_steps_dragging .phone_app_ivr_step_handle { cursor:var(--jawnos-cursor-grabbing, grabbing); }
 	/* the callers: who this flow answers. A number typed here, or a body picked
 	   from the house's people, vendors and corporations, sits above the bucket
 	   matrix in the call flow. */
@@ -137,25 +137,25 @@
 	.phone_app_ivr_caller_kind { flex:0 0 auto; color:var(--muted,#8e8e8e); text-transform:capitalize; }
 	.phone_app_ivr_caller_label { flex:1 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 	.phone_app_ivr_caller_remove { flex:0 0 auto; padding:2px 10px; border-radius:999px; border:1px solid var(--line);
-		background:transparent; color:inherit; cursor:pointer; font:inherit; font-size:12px; }
+		background:transparent; color:inherit; cursor:var(--jawnos-cursor-pointer, pointer); font:inherit; font-size:12px; }
 	.phone_app_ivr_caller_add { display:flex; gap:6px; align-items:center; flex-wrap:wrap; }
 	.phone_app_ivr_caller_add select, .phone_app_ivr_caller_add input { flex:1 1 auto; min-width:0; }
 	.phone_app_ivr_caller_add button { flex:0 0 auto; padding:5px 11px; border-radius:999px; border:1px solid var(--line);
-		background:var(--panel); color:inherit; cursor:pointer; font:inherit; font-size:12px; }
+		background:var(--panel); color:inherit; cursor:var(--jawnos-cursor-pointer, pointer); font:inherit; font-size:12px; }
 	.phone_app_ivr_caller_help { font-size:12px; color:var(--muted,#8e8e8e); }
 	.phone_app_stranger .phone_app_name { font-variant-numeric:tabular-nums; letter-spacing:1px; }
 	.phone_app_stranger .phone_app_avatar { opacity:0.6; }
 	.phone_app_unblock { flex:0 0 auto; font-size:12px; padding:3px 10px; border-radius:999px;
-		border:1px solid var(--line); background:var(--panel); cursor:pointer; }
+		border:1px solid var(--line); background:var(--panel); cursor:var(--jawnos-cursor-pointer, pointer); }
 	.phone_app_unblock[armed="yes"] { background:#b0342e; color:#fff; border-color:transparent; }
 	.phone_app_dial { max-width:300px; margin:0 auto; }
 	.phone_app_display { min-height:40px; font-size:27px; text-align:center; letter-spacing:2px; }
 	.phone_app_keys { display:grid; grid-template-columns:repeat(3,1fr); gap:8px; margin-top:10px; }
 	.phone_app_key { padding:15px 0; font-size:21px; text-align:center; border:1px solid var(--line);
-		border-radius:12px; background:var(--panel); cursor:pointer; user-select:none; }
+		border-radius:12px; background:var(--panel); cursor:var(--jawnos-cursor-pointer, pointer); user-select:none; }
 	.phone_app_key:active { background:var(--line); }
 	.phone_app_call { margin-top:14px; text-align:center; }
-	.phone_app_row_route { flex:0 0 auto; opacity:0.55; cursor:pointer; }
+	.phone_app_row_route { flex:0 0 auto; opacity:0.55; cursor:var(--jawnos-cursor-pointer, pointer); }
 	.phone_app_row_route:hover { opacity:1; }
 	.phone_app_row_route[route] { opacity:0.9; }
 	#phone_app { position:relative; }
@@ -165,12 +165,12 @@
 		border-radius:14px; padding:16px; width:100%; max-width:360px; box-shadow:0 10px 40px rgba(0,0,0,0.35); }
 	.phone_app_sheet_title { display:flex; align-items:center; justify-content:space-between;
 		font-size:16px; margin-bottom:4px; }
-	.phone_app_sheet_close { cursor:pointer; font-size:22px; line-height:1; padding:0 4px; opacity:0.7; }
+	.phone_app_sheet_close { cursor:var(--jawnos-cursor-pointer, pointer); font-size:22px; line-height:1; padding:0 4px; opacity:0.7; }
 	.phone_app_sheet_who { font-size:14px; margin-bottom:2px; }
 	.phone_app_sheet_note { font-size:12px; color:var(--muted,#8e8e8e); min-height:16px; margin-bottom:10px; }
 	.phone_app_sheet_choices { display:flex; flex-direction:column; gap:6px; }
 	.phone_route_choice { padding:8px 12px; border:1px solid var(--line); border-radius:9px;
-		background:var(--panel); color:inherit; cursor:pointer; text-align:left; font:inherit; }
+		background:var(--panel); color:inherit; cursor:var(--jawnos-cursor-pointer, pointer); text-align:left; font:inherit; }
 	.phone_route_choice:hover { background:var(--line); }
 	.phone_route_choice.on { border-color:var(--accent,#4a90d9); box-shadow:inset 0 0 0 1px var(--accent,#4a90d9); }
 	.phone_app_empty { color:var(--muted,#8e8e8e); font-size:13px; text-align:center; padding:18px; }

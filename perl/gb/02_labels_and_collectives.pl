@@ -42,6 +42,7 @@ our %cursor_set_labels = (
 	neon    => 'Neon',
 	pastel  => 'Pastel',
 	mono    => 'Mono',
+	contrast=> 'High Contrast',
 );
 
 our %icon_set_labels = (

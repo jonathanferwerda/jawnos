@@ -25,11 +25,15 @@ use warnings;
 
 use FindBin;
 use File::Path qw(make_path);
+use File::Temp qw(tempfile);
 use POSIX qw(cos sin);
 
 my $DIR = $FindBin::Bin;
 my $MAGICK = $ENV{'MAGICK'} || 'magick';
 my $SIZE = 32;
+# The sizes the server offers. 32 is the base tile written beside the SVG;
+# the others live in a numbered folder and are only written when asked for.
+our @SIZES = ( 16, 24, 40, 48 );
 
 # Each role's hotspot (the point the browser aligns with the pointer) is shared
 # by every set: it is geometry, not dressing. The renderer never reads this; the
@@ -74,6 +78,10 @@ our @SETS = (
 	{ name => 'neon',    fill => '#22e6ff', halo => '#050a0c', weight => 2.0, glow => 1 },
 	{ name => 'pastel',  fill => '#ffb0c8', halo => '#3a1f2b', weight => 2.0 },
 	{ name => 'mono',    fill => '#c8ccd2', halo => '#161a20', weight => 2.0 },
+	# High contrast: a yellow pointer inside a heavy black outline. It stays
+	# legible on any desktop and is the set to reach for when the ordinary
+	# arrow is hard to find.
+	{ name => 'contrast', fill => '#ffdd00', halo => '#000000', weight => 2.6 },
 );
 
 sub num { return sprintf '%.2f', $_[0] }
@@ -314,10 +322,21 @@ foreach my $set ( @SETS ) {
 		open(my $fh, '>', $svg_path) or die "$svg_path: $!";
 		print $fh $svg->{$role}, "\n";
 		close $fh;
-		my $draw = $mvg->{$role};
-		system($MAGICK, '-size', "${SIZE}x${SIZE}", 'xc:none', '-draw', $draw, '-depth', '8', '-strip', $png_path) == 0
-			or die "could not draw $png_path: $?\n";
-		$made++;
+		# Draw once at three times the design size, then scale down. A 16px
+		# cursor drawn at 16 directly loses the outline; a 48px one drawn at 48
+		# would need every coordinate tripled by hand.
+		my ($tmp_fh, $master) = tempfile(SUFFIX => '.png', UNLINK => 1);
+		close $tmp_fh;
+		my $draw = 'scale 3,3 ' . $mvg->{$role};
+		system($MAGICK, '-size', '96x96', 'xc:none', '-draw', $draw, '-depth', '8', '-strip', $master) == 0
+			or die "could not draw $master: $?\n";
+		foreach my $size ( $SIZE, @SIZES ) {
+			my $target = $size == $SIZE ? $png_path : "$dir/$size/$role.png";
+			make_path("$dir/$size") if $size != $SIZE;
+			system($MAGICK, $master, '-resize', "${size}x${size}", '-depth', '8', '-strip', $target) == 0
+				or die "could not write $target: $?\n";
+			$made++;
+		}
 	}
 	print "wrote $name: " . scalar(keys %SHAPES) . " roles\n";
 }

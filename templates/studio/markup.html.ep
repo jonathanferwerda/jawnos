@@ -46,7 +46,7 @@
 		.studio_synth_body { margin-top: 4px; }
 		.studio_synth_keys { position: relative; width: 100%; box-sizing: border-box; height: 96px; overflow-x: auto; overflow-y: hidden; padding-bottom: 2px; }
 		.studio_synth_keys .synth_keys_inner { position: relative; height: 92px; white-space: nowrap; }
-		.studio_synth_keys .piano_key { cursor: pointer; user-select: none; border: solid; border-width: 1px; box-sizing: border-box; }
+		.studio_synth_keys .piano_key { cursor: var(--jawnos-cursor-pointer, pointer); user-select: none; border: solid; border-width: 1px; box-sizing: border-box; }
 		.studio_synth_keys .piano_key.white { display: inline-block; vertical-align: top; width: 20px; height: 92px; background: #fdfdfa; color: #666; font-size: 8px; text-align: center; padding-top: 76px; border-radius: 0 0 3px 3px; position: relative; z-index: 1; }
 		.studio_synth_keys .piano_key.black { position: absolute; top: 0; width: 13px; height: 58px; background: #141414; border-color: #000; border-radius: 0 0 3px 3px; z-index: 2; }
 		.studio_synth_keys .piano_key.white.piano_key_on { background: #ffd21e; }

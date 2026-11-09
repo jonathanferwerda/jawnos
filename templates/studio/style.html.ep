@@ -44,7 +44,7 @@
 	.track {
 		width: 100%;
 		height: calc(100% / <%= $channel_count %>);
-		cursor: grab;
+		cursor: var(--jawnos-cursor-grab, grab);
 	}
 	.channel_fx {
 		display: block;
@@ -73,10 +73,10 @@
 		box-shadow: inset 0 0 0 3px #8ab4f8;
 	}
 	.pedal_background {
-		cursor: grab;
+		cursor: var(--jawnos-cursor-grab, grab);
 	}
 	.knob {
-		cursor: ns-resize;
+		cursor: var(--jawnos-cursor-ns-resize, ns-resize);
 		touch-action: none;
 	}
 	.knob.knob_active {
@@ -96,7 +96,7 @@
 	}
 	/* a channel's inserted-pedal badge jumps the pedalboard to that pedal */
 	.channel_fx_pedal {
-		cursor: pointer;
+		cursor: var(--jawnos-cursor-pointer, pointer);
 	}
 	.pedal.pedal_revealed {
 		box-shadow: 0 0 0 4px #ffd21e;

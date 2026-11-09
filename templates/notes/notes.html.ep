@@ -95,19 +95,19 @@ body.soft_kb_open .wind[app="notes"] #notes_input_row {
 	margin-top: 4px;
 	font-size: 12px;
 	opacity: 0.85;
-	cursor: default;
+	cursor: var(--jawnos-cursor-default, default);
 }
 .wind[app="notes"] .note_editor select { font-size: 12px; max-width: 45%; }
 </style>
 <div id="notes">
 	<div id="notes_body">
 		<div id="notes_category_bar" style="flex:0 0 auto;display:flex;flex-wrap:wrap;align-items:center;gap:4px;padding-bottom:4px;font-size:13px;">
-			<button class="notes_chip" category="" style="padding:2px 9px;border:1px solid var(--line);border-radius:999px;font-size:13px;opacity:0.8;cursor:pointer;"><%= &subs::lang('notes.all') %> <span class="notes_count" style="opacity:0.7;font-size:11px;"><%= $total || 0 %></span></button>
+			<button class="notes_chip" category="" style="padding:2px 9px;border:1px solid var(--line);border-radius:999px;font-size:13px;opacity:0.8;cursor:var(--jawnos-cursor-pointer, pointer);"><%= &subs::lang('notes.all') %> <span class="notes_count" style="opacity:0.7;font-size:11px;"><%= $total || 0 %></span></button>
 			<% foreach my $cat ( @{$categories} ) { %>
-				<button class="notes_chip" category="<%= $cat->{'code'} %>" style="padding:2px 9px;border:1px solid var(--line);border-radius:999px;font-size:13px;opacity:0.8;cursor:pointer;"><%= $cat->{'label'} %> <span class="notes_count" style="opacity:0.7;font-size:11px;"><%= $counts->{ $cat->{'code'} } || 0 %></span></button>
+				<button class="notes_chip" category="<%= $cat->{'code'} %>" style="padding:2px 9px;border:1px solid var(--line);border-radius:999px;font-size:13px;opacity:0.8;cursor:var(--jawnos-cursor-pointer, pointer);"><%= $cat->{'label'} %> <span class="notes_count" style="opacity:0.7;font-size:11px;"><%= $counts->{ $cat->{'code'} } || 0 %></span></button>
 			<% } %>
 			<% foreach my $cat ( @{$categories} ) { next unless $cat->{'target'}; %>
-				<button class="notes_category_open" category="<%= $cat->{'code'} %>" target="<%= $cat->{'target'} %>" style="display:none;margin-left:auto;padding:2px 9px;border:1px solid var(--line);border-radius:999px;font-size:13px;cursor:pointer;" title="<%= $cat->{'open_label'} %>"><%= $cat->{'open_label'} %></button>
+				<button class="notes_category_open" category="<%= $cat->{'code'} %>" target="<%= $cat->{'target'} %>" style="display:none;margin-left:auto;padding:2px 9px;border:1px solid var(--line);border-radius:999px;font-size:13px;cursor:var(--jawnos-cursor-pointer, pointer);" title="<%= $cat->{'open_label'} %>"><%= $cat->{'open_label'} %></button>
 			<% } %>
 		</div>
 		<div id="notes_list">
@@ -118,7 +118,7 @@ body.soft_kb_open .wind[app="notes"] #notes_input_row {
 			<% foreach my $n ( @{$notes} ) { %>
 				<% my $draft_of = $n->{'app'} || ''; %>
 				<% my $status = &subs::notes_status_effective( $n->{'status'} ); %>
-				<div class="note hover<%= ($status eq 'completed' ? ' note_completed' : '') %>" uuid="<%= $n->{'uuid'} %>" timestamp="<%= $n->{'timestamp'} %>" category="<%= $n->{'category'} %>" status="<%= $status %>" style="border-bottom:solid 1px var(--line);padding:6px;font-size:18px;cursor:move;">
+				<div class="note hover<%= ($status eq 'completed' ? ' note_completed' : '') %>" uuid="<%= $n->{'uuid'} %>" timestamp="<%= $n->{'timestamp'} %>" category="<%= $n->{'category'} %>" status="<%= $status %>" style="border-bottom:solid 1px var(--line);padding:6px;font-size:18px;cursor:var(--jawnos-cursor-move, move);">
 					<button class="note_delete" uuid="<%= $n->{'uuid'} %>" style="float:right;" title="<%= &subs::lang('delete') %>">X</button>
 					<span class="note_status note_status_<%= $status %>" title="<%= &subs::lang('notes.status') %>"><%= &subs::lang( 'notes.status.' . $status ) %></span>
 					<% if ($draft_of ne '' && $draft_of ne 'notes') { %><span class="note_app" title="<%= &subs::lang('notes.draft') %>"><%= $draft_of %> · <%= &subs::lang('notes.draft') %></span><% } elsif (($n->{'category'} || '') ne '') { %><span class="note_category" title="<%= &subs::lang('notes.category') %>" style="padding:1px 7px;border:1px solid var(--line);border-radius:999px;font-size:11px;opacity:0.8;"><%= &subs::lang( 'notes.category.' . $n->{'category'} ) %></span><% } %>

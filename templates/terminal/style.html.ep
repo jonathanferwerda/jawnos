@@ -57,7 +57,7 @@
 		line-height: 1.32;
 		letter-spacing: 0;
 		tab-size: 8;
-		cursor: text;
+		cursor: var(--jawnos-cursor-text, text);
 	}
 	.terminal_app .term-line {
 		white-space: pre;
@@ -103,7 +103,7 @@
 		color: var(--term_ink);
 		font: inherit;
 		font-size: 12px;
-		cursor: pointer;
+		cursor: var(--jawnos-cursor-pointer, pointer);
 		z-index: 3;
 	}
 	.terminal_app .terminal_jump[data-show="yes"] { display: inline-flex; }
@@ -163,7 +163,7 @@
 		border-color: var(--line);
 		background: var(--panel);
 		color: var(--ink);
-		cursor: pointer;
+		cursor: var(--jawnos-cursor-pointer, pointer);
 	}
 	.terminal_app .terminal_clear:hover { background: var(--panel-2); }
 	.terminal_app .terminal_entries {
@@ -211,7 +211,7 @@
 	}
 	.terminal_app .terminal_entry_more { margin-top: 4px; }
 	.terminal_app .terminal_entry_more summary {
-		cursor: pointer;
+		cursor: var(--jawnos-cursor-pointer, pointer);
 		font-size: 11px;
 		color: var(--ink-muted);
 	}
@@ -325,7 +325,7 @@
 		color: var(--ink-muted);
 		font: inherit;
 		font-size: 12px;
-		cursor: pointer;
+		cursor: var(--jawnos-cursor-pointer, pointer);
 	}
 	.terminal_app .terminal_view_select img { height: 18px; width: 18px; object-fit: contain; border: 0; background: transparent; }
 	.terminal_app .terminal_view_select:hover { background: var(--panel); color: var(--ink); }
@@ -359,7 +359,7 @@
 		color: var(--ink-muted);
 		font: inherit;
 		font-size: 14px;
-		cursor: pointer;
+		cursor: var(--jawnos-cursor-pointer, pointer);
 	}
 	.terminal_app .terminal_tool:hover { background: var(--panel); color: var(--ink); }
 	.terminal_app .terminal_tool img { height: 18px; width: 18px; border: 0; background: transparent; object-fit: contain; }
@@ -403,7 +403,7 @@
 		background: var(--panel);
 		color: var(--ink);
 		font-size: 12px;
-		cursor: pointer;
+		cursor: var(--jawnos-cursor-pointer, pointer);
 	}
 	.terminal_app .terminal_config_body { padding: 10px 12px 12px; }
 	.terminal_app .terminal_config_section { padding: 8px 0; border-bottom: 1px solid var(--line); }
@@ -430,7 +430,7 @@
 		font: inherit;
 		font-size: 13px;
 		text-align: left;
-		cursor: pointer;
+		cursor: var(--jawnos-cursor-pointer, pointer);
 	}
 	.terminal_app .terminal_local_connect:hover { background: var(--panel); }
 	.terminal_app .terminal_local_connect.current { border-color: var(--term_accent); }
@@ -475,7 +475,7 @@
 		color: var(--ink);
 		font-size: 12px;
 		font-weight: 700;
-		cursor: pointer;
+		cursor: var(--jawnos-cursor-pointer, pointer);
 	}
 	.terminal_app .terminal_remote_connect:hover { background: var(--term_accent); color: #16181d; }
 	.terminal_app .terminal_session_row {
@@ -506,10 +506,10 @@
 		color: var(--ink);
 		font-size: 12px;
 		font-weight: 700;
-		cursor: pointer;
+		cursor: var(--jawnos-cursor-pointer, pointer);
 	}
 	.terminal_app .terminal_session_open:hover { background: var(--term_accent); color: #16181d; }
-	.terminal_app .terminal_session_open:disabled { opacity: .42; cursor: default; background: var(--panel-2); color: var(--ink-muted); }
+	.terminal_app .terminal_session_open:disabled { opacity: .42; cursor: var(--jawnos-cursor-default, default); background: var(--panel-2); color: var(--ink-muted); }
 	.terminal_app .terminal_session_end {
 		flex: 0 0 auto;
 		height: 28px;
@@ -520,7 +520,7 @@
 		background: var(--panel-2);
 		color: var(--ink-muted);
 		font-size: 12px;
-		cursor: pointer;
+		cursor: var(--jawnos-cursor-pointer, pointer);
 	}
 	.terminal_app .terminal_session_end:hover { background: var(--term_red); color: #16181d; }
 	.terminal_app .terminal_config_hint { margin-top: 6px; font-size: 11px; color: var(--ink-muted); }
@@ -535,7 +535,7 @@
 		background: var(--panel-2);
 		color: var(--ink);
 		font-size: 13px;
-		cursor: pointer;
+		cursor: var(--jawnos-cursor-pointer, pointer);
 	}
 	.terminal_app .terminal_font_size { min-width: 34px; text-align: center; font-variant-numeric: tabular-nums; color: var(--ink-muted); }
 	/* Narrow windows keep the icons and drop the words, so every control stays

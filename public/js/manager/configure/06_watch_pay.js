@@ -407,7 +407,7 @@ $(document).on('input', '.crypto_tracking_app_input', function() {
 			list.forEach(function(a) {
 				$('<div class="crypto_tracking_app_choice"></div>')
 					.attr('data-app', a.app).attr('data-name', a.name)
-					.css({ padding: '6px 9px', cursor: 'pointer', 'border-bottom': '1px solid var(--line)' })
+					.css({ padding: '6px 9px', cursor: 'var(--jawnos-cursor-pointer, pointer)', 'border-bottom': '1px solid var(--line)' })
 					.text(a.name + '  ·  ' + a.app)
 					.appendTo(box);
 			});

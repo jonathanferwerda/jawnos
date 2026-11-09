@@ -253,7 +253,7 @@ function foldersArchive(state, options) {
 		payload = $.extend(true, {}, st);
 		payload['delete_after'] = 1;
 	}
-	$('body').css({ 'cursor': 'progress' });
+	$('body').css({ 'cursor': 'var(--jawnos-cursor-progress, progress)' });
 	$.ajax({
 		url: '/manager/folders/archive',
 		type: 'POST',

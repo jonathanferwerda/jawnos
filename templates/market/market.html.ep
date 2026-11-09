@@ -70,7 +70,7 @@
 	</div>
 	<% if (scalar @nearby) { %>
 		<div id="market_nearby" style="flex:0 0 auto;padding:3px 0;font-size:15px;opacity:.85;">Here:
-			<% foreach my $n ( @nearby ) { %><span class="market_nearby_list" list="<%= $n->{'key'} %>" style="cursor:pointer;text-decoration:underline;margin-left:6px;"><%= &subs::format_name($n->{'name'}) %></span><% } %>
+			<% foreach my $n ( @nearby ) { %><span class="market_nearby_list" list="<%= $n->{'key'} %>" style="cursor:var(--jawnos-cursor-pointer, pointer);text-decoration:underline;margin-left:6px;"><%= &subs::format_name($n->{'name'}) %></span><% } %>
 		</div>
 	<% } %>
 	<div id="market_list_panel" style="flex:1 1 auto;overflow:auto;padding-top:6px;display:flex;flex-direction:column;">

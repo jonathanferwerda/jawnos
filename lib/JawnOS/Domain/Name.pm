@@ -516,7 +516,7 @@ sub setting_setter {
 		}
 		&appointment_theme_push() unless $sync;
 	}
-	elsif ($setting eq 'icon_set_override' || $setting eq 'texture_override' || $setting eq 'corner_override' || $setting eq 'cursor_set_override' || $setting eq 'cursor_set') {
+	elsif ($setting eq 'icon_set_override' || $setting eq 'texture_override' || $setting eq 'corner_override' || $setting eq 'cursor_set_override' || $setting eq 'cursor_set' || $setting eq 'cursor_size') {
 		# an explicit choice on top of the active theme: the effective icon set,
 		# material, corner or cursor moved, so the memo, the rendered pages and
 		# every open manager follow. The push carries the effective values, not

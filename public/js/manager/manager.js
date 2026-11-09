@@ -275,8 +275,8 @@ function assistantStagedRender(panel, rows) {
 		if (lasted) { meta += ' · lasts ' + lasted; }
 		text.append($('<div class="chat_meta"></div>').text(meta));
 		var trash = $.trim(panel.find('.assistant_trash_icon').text()) || '/icons/trash.png';
-		var approve = '<span class="assistant_staged_approve hover" hint="Approve and save this staged appointment" title="Save it" style="cursor:pointer;font-size:15px;opacity:.75;">👍</span>';
-		var del = '<img class="tiny_thumb assistant_staged_delete hover" hint="Delete this staged appointment" title="Delete it" style="cursor:pointer;padding:2px;" src="' + trash + '">';
+		var approve = '<span class="assistant_staged_approve hover" hint="Approve and save this staged appointment" title="Save it" style="cursor:var(--jawnos-cursor-pointer, pointer);font-size:15px;opacity:.75;">👍</span>';
+		var del = '<img class="tiny_thumb assistant_staged_delete hover" hint="Delete this staged appointment" title="Delete it" style="cursor:var(--jawnos-cursor-pointer, pointer);padding:2px;" src="' + trash + '">';
 		item.append(text).append(approve).append(del);
 		list.append(item);
 	});

@@ -7,17 +7,17 @@
 #gallery { display:flex; flex-direction:column; width:100%; height:100%; min-height:0; background:#0b0b0d; color:#eee; font-family:system-ui,-apple-system,sans-serif; overflow:hidden; }
 #gallery * { box-sizing:border-box; }
 #gallery_header { display:flex; align-items:center; gap:6px; padding:7px 8px; flex-wrap:wrap; background:#151519; border-bottom:1px solid #2a2a30; flex:0 0 auto; }
-#gallery_header .gallery_tab { font-size:13px; line-height:1; padding:8px 11px; border:1px solid #34343c; border-radius:8px; background:#1d1d23; color:#ddd; cursor:pointer; }
+#gallery_header .gallery_tab { font-size:13px; line-height:1; padding:8px 11px; border:1px solid #34343c; border-radius:8px; background:#1d1d23; color:#ddd; cursor:var(--jawnos-cursor-pointer, pointer); }
 #gallery_header .gallery_tab.active { background:#3a3a44; border-color:#5a5a68; color:#fff; }
 .gallery_header_right { margin-left:auto; display:flex; align-items:center; gap:6px; }
 #gallery_header .gallery_config_toggle img { width:16px; height:16px; display:block; }
 #gallery_configuration { flex:0 0 auto; background:#151519; border-bottom:1px solid #2a2a30; padding:8px 10px; }
 .gallery_cfg_bar { display:flex; align-items:center; gap:8px; font-size:12px; color:#cfcfd6; margin-bottom:4px; }
 .gallery_cfg_bar span { font-weight:600; }
-.gallery_cfg_close { margin-left:auto; background:transparent; border:0; color:#eee; font-size:18px; line-height:1; cursor:pointer; }
+.gallery_cfg_close { margin-left:auto; background:transparent; border:0; color:#eee; font-size:18px; line-height:1; cursor:var(--jawnos-cursor-pointer, pointer); }
 .gallery_cfg_row { display:flex; align-items:center; gap:8px; flex-wrap:wrap; padding:4px 0; }
 .gallery_cfg_label { font-size:12px; color:#9a9aa6; min-width:56px; }
-.gallery_cfg_toggle { font-size:12px; padding:6px 9px; border:1px solid #444; border-radius:8px; background:#191919; color:#eee; cursor:pointer; }
+.gallery_cfg_toggle { font-size:12px; padding:6px 9px; border:1px solid #444; border-radius:8px; background:#191919; color:#eee; cursor:var(--jawnos-cursor-pointer, pointer); }
 .gallery_cfg_toggle[status="on"] { background:#233a4a; border-color:#3a6a8a; color:#cfe8ff; }
 .gallery_cfg_note { font-size:11px; color:#9a9aa6; flex:1 1 220px; }
 #gallery_sort_select { font-size:12px; padding:6px 8px; border:1px solid #444; border-radius:8px; background:#191919; color:#eee; }
@@ -25,14 +25,14 @@
 #gallery_search:focus { border-color:#6a6a7a; }
 #gallery_body { flex:1 1 auto; min-height:0; overflow-y:auto; overflow-x:hidden; position:relative; }
 #gallery_albums { display:grid; grid-template-columns:repeat(auto-fill,minmax(135px,1fr)); gap:10px; padding:10px; }
-.gallery_album_card { position:relative; border-radius:10px; overflow:hidden; background:#1a1a20; cursor:pointer; border:1px solid #26262d; }
+.gallery_album_card { position:relative; border-radius:10px; overflow:hidden; background:#1a1a20; cursor:var(--jawnos-cursor-pointer, pointer); border:1px solid #26262d; }
 .gallery_album_card:hover { border-color:#4a4a56; }
 .gallery_album_card img { display:block; width:100%; aspect-ratio:1/1; object-fit:cover; background:#222; }
 .gallery_album_meta { padding:6px 8px; }
 .gallery_album_name { font-size:13px; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .gallery_album_count { font-size:11px; color:#9a9aa6; margin-top:2px; }
 #gallery_grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(104px,1fr)); gap:3px; padding:3px; }
-.gallery_tile { position:relative; aspect-ratio:1/1; overflow:hidden; background:#17171c; cursor:pointer; border-radius:3px; }
+.gallery_tile { position:relative; aspect-ratio:1/1; overflow:hidden; background:#17171c; cursor:var(--jawnos-cursor-pointer, pointer); border-radius:3px; }
 .gallery_tile img { display:block; width:100%; height:100%; object-fit:cover; }
 .gallery_tile:hover img { opacity:.85; }
 .gallery_tile_badge { position:absolute; right:4px; bottom:4px; font-size:10px; letter-spacing:.04em; text-transform:uppercase; padding:2px 5px; border-radius:5px; background:#000a; color:#fff; }
@@ -55,14 +55,14 @@
 .gallery_fullscreen_window::after { display:none !important; }
 #gallery_viewer_stage { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; }
 #gallery_viewer_stage img, #gallery_viewer_stage video { max-width:100%; max-height:100%; object-fit:contain; display:block; }
-.gallery_viewer_nav { position:absolute; top:50%; transform:translateY(-50%); z-index:3; width:44px; height:64px; font-size:30px; line-height:1; border:0; border-radius:10px; background:#0008; color:#fff; cursor:pointer; }
+.gallery_viewer_nav { position:absolute; top:50%; transform:translateY(-50%); z-index:3; width:44px; height:64px; font-size:30px; line-height:1; border:0; border-radius:10px; background:#0008; color:#fff; cursor:var(--jawnos-cursor-pointer, pointer); }
 #gallery_viewer_prev { left:6px; }
 #gallery_viewer_next { right:6px; }
-#gallery_viewer_close { position:absolute; top:calc(var(--gallery_viewer_pad,6px) + env(safe-area-inset-top, 0px)); right:6px; z-index:3; width:40px; height:40px; font-size:24px; border:0; border-radius:50%; background:#0008; color:#fff; cursor:pointer; }
-#gallery_viewer_full { position:absolute; top:calc(var(--gallery_viewer_pad,6px) + env(safe-area-inset-top, 0px)); right:52px; z-index:3; width:40px; height:40px; font-size:19px; line-height:1; border:0; border-radius:50%; background:#0008; color:#fff; cursor:pointer; }
+#gallery_viewer_close { position:absolute; top:calc(var(--gallery_viewer_pad,6px) + env(safe-area-inset-top, 0px)); right:6px; z-index:3; width:40px; height:40px; font-size:24px; border:0; border-radius:50%; background:#0008; color:#fff; cursor:var(--jawnos-cursor-pointer, pointer); }
+#gallery_viewer_full { position:absolute; top:calc(var(--gallery_viewer_pad,6px) + env(safe-area-inset-top, 0px)); right:52px; z-index:3; width:40px; height:40px; font-size:19px; line-height:1; border:0; border-radius:50%; background:#0008; color:#fff; cursor:var(--jawnos-cursor-pointer, pointer); }
 #gallery_viewer_bar { position:absolute; left:0; right:0; bottom:0; z-index:3; display:flex; align-items:center; gap:6px; padding:9px; flex-wrap:wrap; background:linear-gradient(transparent,#000d); }
 #gallery_viewer_label { flex:1 1 130px; min-width:100px; font-size:12px; color:#ddd; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-.gallery_viewer_action { font-size:12px; padding:7px 9px; border:1px solid #444; border-radius:8px; background:#191919; color:#eee; cursor:pointer; }
+.gallery_viewer_action { font-size:12px; padding:7px 9px; border:1px solid #444; border-radius:8px; background:#191919; color:#eee; cursor:var(--jawnos-cursor-pointer, pointer); }
 .gallery_viewer_action.armed { background:#7a1d1d; border-color:#b33; }
 #gallery_lock { position:absolute; inset:0; z-index:70; background:#0b0b0d; display:flex; align-items:flex-start; justify-content:center; overflow:auto; padding:10px; }
 /* margin:auto centres a gate that fits and leaves it scrollable from the top
@@ -119,7 +119,7 @@
 		</div>
 	</div>
 	<div id="gallery_lock" style="display:none;">
-		<button type="button" id="gallery_lock_close" hint="Close" style="position:absolute;top:8px;right:8px;z-index:2;width:38px;height:38px;font-size:22px;border:0;border-radius:50%;background:#222;color:#eee;cursor:pointer;">×</button>
+		<button type="button" id="gallery_lock_close" hint="Close" style="position:absolute;top:8px;right:8px;z-index:2;width:38px;height:38px;font-size:22px;border:0;border-radius:50%;background:#222;color:#eee;cursor:var(--jawnos-cursor-pointer, pointer);">×</button>
 		<% $c->stash('compact' => 1); %>
 		<%= include 'padlock', mode => 'gallery', fingerprint => 1 %>
 	</div>

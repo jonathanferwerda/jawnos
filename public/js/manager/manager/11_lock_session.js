@@ -200,7 +200,7 @@ function jawnosGoPrompt(r, uuid, manager) {
 	var title = $('<div>').css({ fontSize: '19px', lineHeight: '1.35', marginBottom: '6px' }).text(t('Open {0}?', r.name || t('the machine')));
 	var note = $('<div>').css({ fontSize: '14px', color: '#bbb', marginBottom: '14px', minHeight: '18px' }).text(t('Confirm it is you before this window opens.'));
 	var row = $('<div>');
-	var btnCss = 'font-size:14px;padding:9px 14px;border-radius:9px;border:1px solid #555;background:#222;color:#f4f4f4;cursor:pointer;margin:0 4px 8px 4px;';
+	var btnCss = 'font-size:14px;padding:9px 14px;border-radius:9px;border:1px solid #555;background:#222;color:#f4f4f4;cursor:var(--jawnos-cursor-pointer, pointer);margin:0 4px 8px 4px;';
 	function addButton(text, css, handler) {
 		var b = $('<button type="button">').text(text).css(css).on('click', handler);
 		row.append(b);

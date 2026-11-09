@@ -118,7 +118,7 @@
 	color: inherit;
 	padding: 4px 11px;
 	font-size: 13px;
-	cursor: pointer;
+	cursor: var(--jawnos-cursor-pointer, pointer);
 	opacity: .68;
 }
 .wind[app="weather"] .weather_tab.active { opacity: 1; font-weight: 600; background: var(--panel); }

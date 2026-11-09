@@ -16,7 +16,7 @@
 			Closing this app forgets the unlock; the key actions inside ask again anyway.
 		</p>
 		<details style="text-align:left;margin-top:10px;font-size:13px;">
-			<summary style="cursor:pointer;opacity:.7;">Lost the phone? Use the paper code</summary>
+			<summary style="cursor:var(--jawnos-cursor-pointer, pointer);opacity:.7;">Lost the phone? Use the paper code</summary>
 			<div style="margin-top:10px;">
 				<textarea class="security_code" placeholder="The paper recovery code, or three shares on separate lines" style="width:100%;min-height:70px;font-family:ui-monospace,Menlo,monospace;font-size:13px;"></textarea>
 				<button class="button security_code_go" type="button" style="margin-top:8px;">Confirm with the code</button>

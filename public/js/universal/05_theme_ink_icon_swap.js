@@ -303,8 +303,37 @@ function jawnosThemeApply(bg, appt) {
 // mapping, and the body's data-cursor-set picks one. A theme push moves the
 // attribute; no stylesheet is rebuilt and no window re-renders.
 function jawnosCursorApply(set) {
+	// a drag may have left an inline snapshot of the old set on the body; the
+	// sheet owns the cursor again once this line clears it
+	document.body.style.removeProperty('cursor');
 	if (set) { document.body.setAttribute('data-cursor-set', set); }
 	else { document.body.removeAttribute('data-cursor-set'); }
+}
+// The size slider changes the URLs in the style block, not the marker. The
+// server sends the rebuilt block with the push so a size change is live.
+function jawnosCursorCssApply(css) {
+	var style = document.getElementById('jawnos_cursor_css');
+	if (!style || typeof css !== 'string') { return; }
+	// a drag may have left the old size as an inline snapshot on the body
+	document.body.style.removeProperty('cursor');
+	style.textContent = css;
+}
+// jQuery UI parks the body's inline cursor at 'auto' when a window resize ends.
+// An inline cursor outranks the sheet's body rule, so the whole desk fell back
+// to the system pointer after a resize (opening Power can fit its window and
+// trigger one). Drop only the parked value: a real gesture cursor (move,
+// n-resize, progress) still shows while the gesture runs, and the set returns
+// when the gesture ends.
+function jawnosCursorInlineGuard() {
+	var body = document.body;
+	if (!body || typeof MutationObserver !== 'function') { return; }
+	var guard = function () {
+		if (!body.getAttribute('data-cursor-set')) { return; }
+		var inline = body.style.cursor;
+		if (inline === 'auto' || inline === 'default') { body.style.removeProperty('cursor'); }
+	};
+	new MutationObserver(guard).observe(body, { attributes: true, attributeFilter: ['style'] });
+	guard();
 }
 
 // A whole dressing arrives at once: paint, glyphs, cursor, material, face, corner and
@@ -360,10 +389,11 @@ function jawnosThemeBundleApply(bundle, appt) {
 	window.jawnos_theme_suppress_icon_reload = false;
 	if ('icon_set' in bundle) { document.body.setAttribute('data-icon-set', bundle.icon_set || ''); }
 	if ('cursor_set' in bundle) { jawnosCursorApply(bundle.cursor_set || ''); }
+	if (typeof bundle.cursor_css === 'string') { jawnosCursorCssApply(bundle.cursor_css); }
 	if (typeof jawnosReloadIcons === 'function') { setTimeout(jawnosReloadIcons, 60); }
 	if (sig) { document.body.setAttribute('data-theme-sig', sig); }
 }
-$(function () { jawnosApplyInk('', true); });
+$(function () { jawnosApplyInk('', true); jawnosCursorInlineGuard(); });
 
 // ---- icon set swap: refresh the icons currently on screen ----------------------
 // Called over the websocket after the pseudonym icon set changes; swaps the
