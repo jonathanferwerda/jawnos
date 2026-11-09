@@ -41,6 +41,17 @@ our $device;
 our $gb;
 our $log;
 
+# The legacy bootstrap read these with `cat`, which contributed nothing when a
+# path was a directory or unreadable. Keep that tolerance: the identity
+# migration runs at boot, and File::Slurp::read_file can die where the shell
+# returned ''.
+sub _slurp_or_empty {
+	my ($path) = @_;
+	return '' unless defined $path && length $path;
+	my $text = eval { read_file($path) };
+	return defined $text ? $text : '';
+}
+
 sub render_signature {
 	my $device = &device_setter();
 	my $config = &config_reader();
@@ -219,7 +230,7 @@ sub signatorial_establisher {
 	if ($config->{'signatorial'} && -e $config->{'signatorial'}) {
 
 		my $j = &subs::home($config->{'signatorial'});
-		my $checksum = encode_base64(read_file($j));
+		my $checksum = encode_base64(&_slurp_or_empty($j));
 		my $md5 = md5_sum $checksum;
 		$gb::secret_maker = [ $md5 ];
 		return $md5;
@@ -269,7 +280,7 @@ sub signatorial_designer {
 	my @identity_files = ( &signatorial_identity_file(), &signatorial_identity_mirror() );
 	for my $file ( @identity_files ) {
 		next unless defined $file && length $file && -e $file;
-		my $id = read_file($file);
+		my $id = &_slurp_or_empty($file);
 		chomp $id;
 		if ($id =~ /^[0-9a-f]{16,64}$/i) {
 			$gb::signatorial = lc $id;
@@ -354,7 +365,7 @@ sub signatorial_designer {
 	}
 	my $checksum = $database;
 	foreach my $j ( @jonathans ) {
-		$checksum .= encode_base64(read_file($folder . '/' . $j));
+		$checksum .= encode_base64(&_slurp_or_empty($folder . '/' . $j));
 	}
 	my $md5 = md5_sum &signatorial_establisher('designer') . $checksum;
 	&signatorial_identity_write($md5);

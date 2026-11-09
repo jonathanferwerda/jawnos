@@ -1,5 +1,6 @@
 # tests-for: lib/JawnOS/Domain/Say.pm
-# covers:    Every method the tree asks the device bridge for must be one the app knows.
+# covers:    Every method the tree asks the device bridge for must be one the app knows; and an
+#            Android shell is recognised from its environment before `uname` is asked.
 
 use strict;
 use warnings;
@@ -8,6 +9,9 @@ use FindBin;
 use lib "$FindBin::Bin/lib", "t/lib";
 use Test::More;
 use File::Find;
+use JawnOSTest;
+
+subs::preload('device_setter');
 
 # Every method the tree asks the device bridge for must be one the app knows.
 # A typo does not fail loudly: subs::device_call falls back to the termux
@@ -82,5 +86,21 @@ ok(scalar keys %seen, 'the tree calls the device bridge');
 for my $method (sort keys %seen) {
 	ok($known{$method}, "device_call('$method') is a known bridge method");
 }
+
+# An Android shell is recognised before `uname` is asked: ANDROID_ROOT is a
+# truthy check, and its value is never read. PATH is emptied for the block so a
+# fall-through to `uname -a` cannot answer 'mobile' by accident.
+{
+	local $subs::config = {};
+	local $ENV{'ANDROID_ROOT'} = '/no/such/path';
+	local $ENV{'TERMUX_VERSION'} = undef;
+	local $ENV{'PATH'} = '/nonexistent/bin';
+	is(&subs::device_setter(), 'mobile',
+		'ANDROID_ROOT marks the device mobile without running uname');
+}
+
+# The probe is environment-only; the block's local must have restored the real
+# environment for everything that runs after this file.
+isnt($ENV{'ANDROID_ROOT'}, '/no/such/path', 'the fake Android root is cleared after the block');
 
 done_testing();
