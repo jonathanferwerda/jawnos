@@ -94,6 +94,10 @@ sub hide_kiosk {
 		return;
 	}
 	xdotool('windowunmap', $kiosk_window);
+	# Hidden is not idle enough. The page keeps its timers, and a browser that
+	# paints in software takes the CPU the emulator wants; frozen, the whole
+	# unit's cgroup spends nothing and the page is still there to resume.
+	system('systemctl', 'kill', '--signal=SIGSTOP', 'jawnos-kiosk');
 	$kiosk_hidden = 1;
 }
 
@@ -101,6 +105,8 @@ sub restore {
 	unlink $MARKER;
 	return unless $kiosk_hidden;
 	$kiosk_hidden = 0;
+	# woken before it is shown: a stopped window would draw nothing
+	system('systemctl', 'kill', '--signal=SIGCONT', 'jawnos-kiosk');
 	if (defined $kiosk_window) {
 		xdotool('windowmap', $kiosk_window);
 		xdotool('windowraise', $kiosk_window);

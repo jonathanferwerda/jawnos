@@ -81,6 +81,8 @@ like($launch, qr/HOME_KEY = 102/, 'Home is the key that ends a game');
 like($launch, qr/sub hide_kiosk/, 'the kiosk window is hidden, not stopped');
 like($launch, qr/windowunmap/, 'hidden with one X request, so the browser stays warm');
 like($launch, qr/xdotool\('windowmap'/, 'and shown again when the game ends');
+like($launch, qr/'--signal=SIGSTOP'/, 'the browser is frozen so the emulator has the machine');
+like($launch, qr/'--signal=SIGCONT'/, 'and woken before it is shown again');
 like($launch, qr/system\('systemctl', 'restart', 'jawnos-kiosk'\)/, 'a kiosk that cannot be shown is restarted');
 like($launch, qr/gou-games/, 'the games marker arms the virtual gamepad');
 like($launch, qr/POSIX::setuid\(\$uid\)/, 'the emulator runs as the person, not root');
