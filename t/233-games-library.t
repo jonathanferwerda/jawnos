@@ -105,6 +105,8 @@ my $controller = read_file("$root/lib/JawnOS/Controller/manager_misc9.pm");
 like($controller, qr/my \$view = .* eq 'emulated'/, 'the page has an emulated view');
 like($controller, qr/game_runner\(\$game->\{'system'\}\)/, 'the launch route checks the runner first');
 like($controller, qr/retroarch/, 'and refuses a launch with no emulator');
+like($controller, qr/sub game_helper_start/, 'the helper is detached from the request');
+like($controller, qr/POSIX::setsid/, 'under its own session, so no warranty kills the game');
 
 my $page = read_file("$root/templates/apps/games.html.ep");
 like($page, qr/id="games_install_emulators"/, 'the shelf has an install-emulators button');

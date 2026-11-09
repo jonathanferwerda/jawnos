@@ -19,6 +19,7 @@ use Mojo::UserAgent;
 use Mojo::JSON ();
 use Mojo::Asset::File;
 use Cwd ();
+use POSIX ();
 use Time::Local;
 use Time::Piece;
 use Time::Duration;
@@ -856,6 +857,31 @@ sub action_44006 {
 	$c->res->content->asset(Mojo::Asset::File->new(path => $path));
 }
 
+# A game outlives the request that starts it: the kiosk has to stop, the
+# emulator has to run, and the request is gone long before it ends. The
+# subprocessor supervisor puts a warranty on a command and kills it when that
+# expires, which left the kiosk stopped and the panel dark. A double fork under
+# its own session hands the helper to init, where no request owns it.
+sub game_helper_start {
+	my ($script, @arguments) = @_;
+	return 0 unless defined $script && length $script;
+	my $pid = fork();
+	return 0 unless defined $pid;
+	if ($pid) {
+		waitpid($pid, 0);
+		return 1;
+	}
+	POSIX::setsid();
+	my $child = fork();
+	POSIX::_exit(0) if $child;
+	open(STDIN, '<', '/dev/null');
+	open(STDOUT, '>', '/dev/null');
+	open(STDERR, '>', '/dev/null');
+	no warnings 'exec';
+	exec('sudo', '-n', $^X, $script, @arguments);
+	POSIX::_exit(127);
+}
+
 # POST /manager/games/install
 sub action_44007 {
 	my $c = shift;
@@ -865,11 +891,8 @@ sub action_44007 {
 		return;
 	}
 	my $script = Cwd::abs_path('scripts/jawnos_game_install.pl');
-	my $run = eval { &subs::subprocessor_command(
-		['sudo', '-n', $^X, $script, $what],
-		{ name => 'game install', stdout => '/dev/null', stderr => '/dev/null' }
-	) };
-	$c->render(json => ($run && $run->{'pid'}) ? { ok => 1, what => $what } : { ok => 0, error => 'The installer could not start.' });
+	my $started = eval { &game_helper_start($script, $what) };
+	$c->render(json => $started ? { ok => 1, what => $what } : { ok => 0, error => 'The installer could not start.' });
 }
 
 # GET /manager/games/install_status
@@ -914,11 +937,8 @@ sub action_44009 {
 		return;
 	}
 	my $script = Cwd::abs_path('scripts/jawnos_game_launch.pl');
-	my $run = eval { &subs::subprocessor_command(
-		['sudo', '-n', $^X, $script, $game->{'id'}],
-		{ name => 'game launch', stdout => '/dev/null', stderr => '/dev/null' }
-	) };
-	$c->render(json => ($run && $run->{'pid'}) ? { ok => 1, title => $game->{'title'} } : { ok => 0, error => 'The emulator could not start.' });
+	my $started = eval { &game_helper_start($script, $game->{'id'}) };
+	$c->render(json => $started ? { ok => 1, title => $game->{'title'} } : { ok => 0, error => 'The emulator could not start.' });
 }
 
 1;
