@@ -25,9 +25,11 @@ BEGIN {
 
 use strict;
 use warnings;
+use FindBin;
+use lib "$FindBin::Bin/../lib";
 use File::Slurp qw(read_file write_file);
 use Mojo::JSON qw(decode_json);
-use Time::HiRes qw(sleep);
+use Time::HiRes qw(sleep time);
 
 # Stop everything jawn runs: the tree and its workers, the BLE client, ollama,
 # and whatever still holds the web port. This is the clean path behind the
@@ -44,6 +46,12 @@ use Time::HiRes qw(sleep);
 #   perl scripts/manager_killer.pl --list     # what would be signalled
 #   perl scripts/manager_killer.pl --scope=DIR --list
 #   perl scripts/manager_killer.pl --cwd=DIR  # only this checkout's tree
+#   perl scripts/manager_killer.pl --scope=DIR --ask-tree
+#
+# Before any signal, the stop asks the tree to leave over ~/.president/tree and
+# waits up to two seconds for it to go, so the sweep below is only for a tree
+# that did not answer. --list never asks, and --scope skips the ask because the
+# channel is per-home rather than per-checkout; --ask-tree asks anyway.
 #
 # --scope keeps only processes whose command line contains DIR. It is how the
 # regression suite drives this without touching the live house.
@@ -57,11 +65,13 @@ use Time::HiRes qw(sleep);
 
 my $kill_master = 0;
 my $list_only = 0;
+my $ask_tree = 0;
 my $scope = '';
 my $cwd_scope = '';
 foreach my $arg (@ARGV) {
 	if ($arg =~ /^master$/i) { $kill_master = 1 }
 	elsif ($arg eq '--list' || $arg eq '--dry-run') { $list_only = 1 }
+	elsif ($arg eq '--ask-tree') { $ask_tree = 1 }
 	elsif ($arg =~ /^--scope=(.+)$/) { $scope = $1 }
 	elsif ($arg =~ /^--cwd=(.+)$/) { $cwd_scope = $1 }
 }
@@ -136,6 +146,20 @@ sub running {
 	my $s = &state($pid);
 	return 0 if $s eq 'Z' || $s eq 'X' || $s eq 'x';
 	return 1;
+}
+
+# The tree also serves ~/.president/tree: one JSON line in, one JSON line out,
+# and {"cmd":"stop"} is a request to leave rather than a signal. The client is
+# in perl/control.pl, which pulls in JawnOS::Transport and Mojo::JSON, so it is
+# loaded here, in an eval: a GUI launch runs this with a thin @INC, and a stop
+# must never die because the client could not be loaded.
+sub ask_tree_stop {
+	my $loaded = eval {
+		require "$FindBin::Bin/../perl/control.pl";
+		1;
+	};
+	return 0 unless $loaded;
+	return eval { &control::ask_tree_stop(reason => 'the app asked for a stop') } ? 1 : 0;
 }
 
 sub is_perl_exe {
@@ -214,6 +238,27 @@ my @ordered = sort { $RANK{$a->{'label'}} <=> $RANK{$b->{'label'}} || $a->{'pid'
 if ($list_only) {
 	printf "%d\t%s\t%s\n", $_->{'pid'}, $_->{'label'}, $_->{'cmd'} foreach @ordered;
 	exit 0;
+}
+
+# Ask before signalling. The channel is per-home, not per-checkout, so a scoped
+# run stays off it unless the caller opts in; --list never touches it.
+my $asked = 0;
+if (!$scope || $ask_tree) {
+	$asked = &ask_tree_stop();
+	print "manager_killer: asked the tree to stop cleanly\n" if $asked;
+}
+
+# Give it a bounded moment to go on its own, but only when the scan found tree
+# pids to wait for: no tree, no delay.
+if ($asked) {
+	my @tree_pids = grep { $_->{'label'} eq 'tree' } @ordered;
+	if (@tree_pids) {
+		my $deadline = time + 2;
+		while (time < $deadline) {
+			last unless grep { &running($_->{'pid'}) } @tree_pids;
+			sleep 0.05;
+		}
+	}
 }
 
 if (@ordered) {

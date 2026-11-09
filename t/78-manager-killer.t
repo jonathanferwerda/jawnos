@@ -174,4 +174,94 @@ ok($master_gone, 'the master is stopped in master mode');
 
 kill 'KILL', $master if kill(0, $master);
 
+# --------------------------------------------------------------- the tree ask
+# Stop now asks the tree to leave over ~/.president/tree before it signals
+# anything. A scoped run stays off that channel (it is per-home, not per
+# checkout) unless --ask-tree says so - which is exactly how this test drives it
+# without touching the live house.
+sub wait_for_socket {
+	my ($path) = @_;
+	my $bound_by = time + 20;
+	sleep 0.01 until -S $path || time > $bound_by;
+	return -S $path ? 1 : 0;
+}
+
+# A stand-in tree: accept once, record the request line, answer the stop. Its
+# accept has a bound so a killer that never asks fails a test, not the suite.
+sub fake_tree {
+	my ($path, $record) = @_;
+	my $pid = fork();
+	die "fork tree: $!\n" unless defined $pid;
+	if (!$pid) {
+		require IO::Socket::UNIX;
+		require IO::Select;
+		my $server = IO::Socket::UNIX->new(Local => $path, Listen => 5) or exit 1;
+		my $select = IO::Select->new($server);
+		my $client = $select->can_read(15) ? $server->accept : undef;
+		exit 2 unless $client;
+		my $line = <$client>;
+		if (defined $line && length $line) {
+			write_file($record, $line);
+			print $client '{"ok":1,"cmd":"stop"}', "\n";
+		}
+		close $client;
+		close $server;
+		exit 0;
+	}
+	return $pid;
+}
+
+sub reap {
+	my ($pid) = @_;
+	my $deadline = time + 20;
+	while (1) {
+		my $got = waitpid($pid, WNOHANG);
+		return if $got == $pid || $got == -1;
+		last if time > $deadline;
+		sleep 0.02;
+	}
+	kill 'KILL', $pid;
+	waitpid($pid, 0);
+}
+
+my $tree_dir = tempdir(CLEANUP => 1);
+my $tree_record = "$tree_dir/request.json";
+my $tree_server = &fake_tree("$tree_dir/tree", $tree_record);
+ok(&wait_for_socket("$tree_dir/tree"), 'the stand-in tree bound its stop channel');
+
+my $tree_rc;
+{
+	local $ENV{'JAWNOS_DATA_DIR'} = $tree_dir;
+	local $ENV{'JAWNOS_TRANSPORT'} = 'unix';
+	$tree_rc = system($^X, $script, "--scope=$tree_dir", '--ask-tree', "--cwd=$tree_dir");
+}
+my $got_by = time + 5;
+while (time < $got_by) {
+	last if -f $tree_record;
+	sleep 0.02;
+}
+my $received = -f $tree_record ? read_file($tree_record) : '';
+&reap($tree_server);
+is($tree_rc, 0, 'the stop exits 0 after asking the tree');
+like($received, qr/"cmd"\s*:\s*"stop"/, 'the tree is asked to stop over its channel');
+
+# --list is a read-only answer and must not open the tree channel at all, even
+# when --ask-tree is named.
+my $list_dir = tempdir(CLEANUP => 1);
+my $list_record = "$list_dir/request.json";
+my $list_server = &fake_tree("$list_dir/tree", $list_record);
+ok(&wait_for_socket("$list_dir/tree"), 'the stand-in tree for --list bound its channel');
+
+my $list_rc;
+{
+	local $ENV{'JAWNOS_DATA_DIR'} = $list_dir;
+	local $ENV{'JAWNOS_TRANSPORT'} = 'unix';
+	$list_rc = system($^X, $script, '--list', "--scope=$list_dir", '--ask-tree', "--cwd=$list_dir");
+}
+sleep 0.3;
+ok(!-f $list_record, '--list does not ask the tree to stop');
+is($list_rc, 0, '--list still exits 0');
+kill 'KILL', $list_server if kill(0, $list_server);
+waitpid($list_server, 0);
+
 done_testing();

@@ -718,9 +718,10 @@ def start_jawn(jawn_dir):
 
 
 def stop_jawn(jawn_dir, wait=12.0):
-    """Take the whole tree and the master down. The killer is the clean path;
-    any master still alive after it is terminated directly, so stop is never a
-    no-op when the master is wedged."""
+    """Take the whole tree and the master down. The killer is the clean path:
+    it first asks the tree to leave over its control channel, then sweeps what
+    did not answer; a master still alive after it is terminated directly, so
+    stop is never a no-op when the master is wedged."""
     # Remember the choice before the killer runs: a watcher tick during the stop
     # must not read the gap as a crash and start the tree again.
     set_held(True)
