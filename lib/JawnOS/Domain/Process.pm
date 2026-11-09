@@ -308,7 +308,7 @@ sub subprocessor_heartbeat {
 	$name = $gb::subprocessor_name unless defined $name && length $name;
 	&subs::unix_socket_sender($file, {
 		status => 'heartbeat',
-		parent => getppid(),
+		parent => JawnOS::Platform::parent_pid(),
 		pid    => $$,
 		uuid   => defined $gb::subprocessor_uuid ? $gb::subprocessor_uuid : '',
 		name   => defined $name ? $name : '',

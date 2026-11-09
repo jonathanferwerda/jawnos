@@ -80,4 +80,13 @@ SKIP: {
 	ok(JawnOS::Platform::unix_socket_available(), 'a POSIX box reports UNIX sockets available');
 }
 
+# Windows has no getppid; the runner exports the parent pid for the child it
+# spawns. On POSIX the real parent wins, so a stale hint cannot mislead.
+is(JawnOS::Platform::parent_pid(), getppid(), 'parent_pid is the real parent');
+{
+	local $ENV{'JAWNOS_PARENT_PID'} = '4242';
+	is(JawnOS::Platform::parent_pid(), getppid(),
+		'a POSIX parent is never overridden by the hint');
+}
+
 done_testing();

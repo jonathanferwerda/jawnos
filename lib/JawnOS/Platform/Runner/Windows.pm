@@ -123,6 +123,8 @@ sub start {
 		$handle, $handle, $handle);
 	my $process = "\0" x 24;    # PROCESS_INFORMATION
 
+	# The child cannot call getppid on Windows; the master knows the answer.
+	local $ENV{'JAWNOS_PARENT_PID'} = $$;
 	my $command = join ' ', &_quote_arg($program), map { &_quote_arg($_) } @args;
 	my $ok = &_api('CreateProcessA')->Call(
 		$program, $command, 0, 0, 1, 0, 0, $cwd, $startup, $process,

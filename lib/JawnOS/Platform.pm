@@ -63,6 +63,17 @@ sub home {
 	return defined $home ? $home : '';
 }
 
+# The process that started us. Windows has no getppid, and the runner knows the
+# answer anyway: it exports JAWNOS_PARENT_PID for the child it spawns. On POSIX
+# the real parent wins, so a hint can never mislead a worker whose manager is
+# not the master.
+sub parent_pid {
+	return getppid() unless $^O eq 'MSWin32';
+	my $given = $ENV{'JAWNOS_PARENT_PID'};
+	return $given + 0 if defined $given && $given =~ /^[0-9]+$/;
+	return 0;
+}
+
 sub portable {
 	my $mode = lc($ENV{'JAWNOS_PORTABLE'} || '');
 	return 1 if $mode eq '1' || $mode eq 'yes' || $mode eq 'on'

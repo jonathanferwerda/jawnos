@@ -32,14 +32,18 @@ BEGIN {
 	unshift @INC, "$dir/../lib" if $dir && -d "$dir/../lib";
 }
 use JawnOS::Platform::Process ();
+use JawnOS::Platform ();
 
 # start(tree => PID, master => PID, interval => SECONDS)
 # Returns the watchdog pid in the tree, has no return in the watchdog, or
 # returns undef when the fork fails.
 sub start {
 	my (%o) = @_;
+	# Windows has no fork, and its answer to a dead master is the Job Object that
+	# P1 adds; until then the master's own watchdog is the safety net.
+	return undef if $^O eq 'MSWin32';
 	my $tree = $o{'tree'} || $$;
-	my $master = $o{'master'} || getppid();
+	my $master = $o{'master'} || JawnOS::Platform::parent_pid();
 	return undef unless $tree =~ /^[0-9]+$/ && $master =~ /^[0-9]+$/;
 	my $pid = fork();
 	return undef unless defined $pid;
@@ -137,14 +141,14 @@ sub pdeathsig {
 # manager's workers still held the listening sockets.
 sub worker {
 	my ($manager) = @_;
-	$manager ||= getppid();
+	$manager ||= JawnOS::Platform::parent_pid();
 	return 0 unless $manager && $manager =~ /^[0-9]+$/;
 	my $direct = &pdeathsig();
 	# the manager can die between fork and this call; prctl is too late then
-	POSIX::_exit(0) if getppid() != $manager;
+	POSIX::_exit(0) if JawnOS::Platform::parent_pid() != $manager;
 	unless ($direct) {
 		Mojo::IOLoop->recurring(1 => sub {
-			POSIX::_exit(0) if getppid() != $manager;
+			POSIX::_exit(0) if JawnOS::Platform::parent_pid() != $manager;
 		});
 	}
 	return 1;

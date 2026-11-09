@@ -35,6 +35,9 @@ for my $file (qw(
 		"$file has no unguarded getpwuid");
 }
 like($master, qr/JawnOS::Platform::home\(\)/, 'the master resolves ~ through the platform');
+unlike($president, qr/getppid/, 'President never calls getppid (Windows has none)');
+unlike($president, qr/`pwd`/, 'and never shells out to pwd');
+unlike($president, qr/`touch /, 'and never shells out to touch');
 
 unlike($president, qr/^use threads\b/m, 'the tree no longer loads threads');
 unlike($president, qr/threads->create/, 'no browser-open thread remains');

@@ -10,7 +10,7 @@ use FindBin qw($Bin);
 chdir("$Bin/..") or die "Cannot change directory to $Bin/..: $!";
 package President;
 print $0 ."\n";
-print `pwd` . "\n";
+print Cwd::getcwd() . "\n";
 my $self = $$;
 print "I am $self\n";
 use Mojolicious::Lite;
@@ -53,7 +53,7 @@ no warnings 'uninitialized';
 # corner of the house; a file that touches one only once is not a typo
 no warnings 'once';
 my $working_dir = $0;
-my $present_dir = `pwd`;
+my $present_dir = Cwd::getcwd();
 
 my $dump_dir = &home('~/.president');
 $gb::dump_dir = $dump_dir;
@@ -61,26 +61,24 @@ $gb::dump_dir = $dump_dir;
 `mkdir $dump_dir` unless -e $dump_dir;
 `mkdir ./server` unless -e './server';
 my $duty_file = &home('~/.president/on_duty');
-`touch $duty_file`;
 write_file($duty_file, 0);
 my $status_file = &home('~/.president/status');
-`touch $status_file`;
+write_file($status_file, '') unless -e $status_file;
 my $pid_file = &home('~/.president/pid');
-`touch $pid_file`;
 write_file($pid_file, $$);
 
 # The master can be SIGKILLed, and then nothing asks the tree to stop. Leave
 # with it: see the note in perl/parent_guard.pl. Started here, before the heavy
 # requires, so the watchdog is a small copy of this process.
 require './perl/parent_guard.pl';
-&parent_guard::start(tree => $$, master => getppid());
+&parent_guard::start(tree => $$, master => JawnOS::Platform::parent_pid());
 my $config_file = read_file('./config.json');
 my $config = decode_json $config_file;
 our $logfile = &home($config->{'logfile'});
 if (-e $logfile) {
 #	`shred -u $logfile`;
 }
-`touch $logfile` if not -e $logfile;
+write_file($logfile, '') if not -e $logfile;
 our $log = Mojo::Log->new(path => $logfile);
 if ($working_dir ne $present_dir) {
 	# this file lives in perl/, so the tree is one level above the script.
@@ -88,7 +86,7 @@ if ($working_dir ne $present_dir) {
 	my $new_dir = "$FindBin::Bin/..";
 	print 'chdir to ' . $new_dir . "\n";
 	chdir $new_dir;
-	print `pwd` . "\n";
+	print Cwd::getcwd() . "\n";
 
 }
 #`espeak "president has begun"`;

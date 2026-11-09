@@ -30,7 +30,7 @@ like($jawn, qr/\$SIG\{HUP\} = sub \{\s*&shut_down\(\);/, 'the master handles SIG
 like($jawn, qr/sub sweep_orphans/, 'the master can sweep a dead predecessor');
 like($jawn, qr/&sweep_orphans\(\)/, 'it sweeps at boot, after the one-master check');
 like($president, qr{require './perl/parent_guard\.pl'}, 'the tree loads the guard');
-like($president, qr/&parent_guard::start\(tree => \$\$, master => getppid\(\)\)/,
+like($president, qr/&parent_guard::start\(tree => \$\$, master => JawnOS::Platform::parent_pid\(\)\)/,
 	'the tree watches the master that forked it');
 like($guard, qr/sub alive/, 'the guard can tell a dead or reused pid from a live master');
 like($guard, qr/kill 'TERM', \$tree/, 'the guard stops the tree with SIGTERM, the normal path');
