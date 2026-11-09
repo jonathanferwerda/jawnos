@@ -21,7 +21,7 @@ Counts only: `perl scripts/agent_help.pl <app>` names every file, route, table, 
 - edit_app (no topic): 1 file(s), 2 route(s)
 - editor (topic editor): 2 file(s), 3 route(s)
 - email (topic email): 10 file(s), 31 route(s)
-- embedded (topic embedded): 6 file(s), 26 route(s)
+- embedded (topic embedded): 7 file(s), 26 route(s)
 - evaluation (topic evaluation): 1 file(s)
 - folders (topic folders): 9 file(s), 25 route(s)
 - gallery (topic gallery): 2 file(s), 6 route(s)

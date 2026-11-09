@@ -182,7 +182,7 @@ $topic{'handbook'} = {
 $topic{'embedded'} = {
 		title => 'Embedded', category => 'apps', app => 'embedded',
 		templates => [ 'templates/embedded/embedded.html.ep', 'templates/embedded/component.html.ep', 'templates/embedded/body.html.ep' ],
-		verified => '2026-11-06',
+		verified => '2026-11-08',
 		summary => 'The device fleet, from the desktop.',
 		body => [
 			'Embedded is the fleet view: it lists the JawnOS devices on your network, their purposes and models, and lets you query one, send a room to a watch, deck or board, and set how a device behaves.',
@@ -193,6 +193,7 @@ $topic{'embedded'} = {
 			'A switch on a board is the newest word: it moves its relay at once and the panel follows it. The board keeps the moment of the flip, so a command minted before it - a start pressed on the panel a moment earlier - is dropped instead of turning the relay back on. A board takes its commands one at a time, so a run of quick start and stop presses is queued and every one of them arrives.',
 			'A board\'s GPIO view draws each wired pin in full and keeps every empty GPIO visible as a small + button: press one to open that pin\'s form in place. The Pins view draws the whole board map and outlines the pins that are already wired: press a pin there to give it an appointment, a movement or a name.',
 			'A board can also be asked what it actually has. Press Read the board above its GPIO list and the panel shows the parts it is configured for, how many pins are free and which pins look wired to something. Every pin that reads as switched to ground, tied high or unclear is offered with an appointment and a part; choose the appointment and the part, then press Attach to wire that pin where you are looking, without opening its form first.',
+			'IR remotes have their own panel under the GPIO list. Set the Receiver pin and the Learn window (ms), press Learn and press a button on the remote: the board times the burst and posts it back as a pending capture. Every remote is listed with its pin and how many transitions it holds; a pending capture also carries a box to name it, and Save keeps it under that name. Press Send to replay a learned remote, or Delete to forget it. Press Refresh to read the list again.',
 			'A pin can record instead of running a command: choose Video or Audio under Movement, then pick the source - Camera (rear), Camera (front), Microphone or System audio - and the machine that records. The first press starts the recording on that machine; the next press stops it. This machine records on the computer, phone or server that serves the board.',
 			'Every device reports the build it is running, and the Firmware line beside the OTA button shows both that build and the one this machine holds. Press OTA and the stored image goes to the board; if this machine is holding an image built from older firmware, the press is refused and says so, so a board is never quietly rolled back. Tick Auto OTA and the house sends the stored image by itself whenever the device reports an older build.'
 		],
@@ -205,6 +206,8 @@ $topic{'embedded'} = {
 			'On an input pin, choose Video or Audio under Movement, pick the camera or microphone kind and the machine that records, then press the pin once to start and again to stop.',
 			'On a board, open Pins to add a pin, then set the appointment and movement it runs.',
 			'On a board, press Read the board to see its configured parts and free pins, then choose an appointment and a part on a wired-looking pin and press Attach.',
+			'On a board, set the Receiver pin and the Learn window (ms), press Learn, then press a button on the remote; name the capture and press Save to keep it.',
+			'Press Send on a learned IR remote to replay it, or Delete to remove it.',
 			'Leave a password box blank to keep the password already stored; type a new one to replace it, then press Update WiFi.',
 			'On a board that will not join, plug it in over USB and press Update USB to write the WiFi name and password over the cable.',
 			'On a board row, plug the board in over USB and press Restore over USB to rewrite its stored WiFi and role, then let it reboot.',

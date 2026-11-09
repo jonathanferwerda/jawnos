@@ -34,7 +34,7 @@ function embeddedBoardAppointments() {
 
 function embeddedBoardComponentSelect(pin_kind, analog) {
 	var select = $('<select class="embedded_board_component">');
-	var choices = ['relay', 'led', 'servo', 'button', 'switch', 'pot'];
+	var choices = ['relay', 'led', 'servo', 'button', 'switch', 'pot', 'irtx', 'irrx'];
 	var preferred = 'button';
 	if (pin_kind === 'grounded') { preferred = 'button'; }
 	else if (analog) { preferred = 'pot'; }

@@ -132,6 +132,22 @@
 					<button id="embedded_board_read" hint="<%= &subs::ui('Ask the board what it is wired for and which pins it can see') %>"><%= &subs::ui('Read the board') %></button>
 				</div>
 				<div id="embedded_board_pins" class="teletype_card" style="display:none;text-align:left;"></div>
+				<%# A board keeps the IR captures it learns. The board POSTs a capture to
+				    /watch/ir as a pending entry; this panel names it, then replays or
+				    deletes a named remote. Every row is a name, its pin and length. %>
+				<div id="embedded_ir_panel" class="teletype_card" style="text-align:left;margin-top:8px;">
+					<h4><%= &subs::ui('IR remotes') %></h4>
+					<div id="embedded_ir_learn_row" style="margin:4px 0;">
+						<label for="embedded_ir_learn_pin"><%= &subs::ui('Receiver pin') %></label>
+						<input type="number" id="embedded_ir_learn_pin" min="0" max="29" step="1" value="0" style="width:60px">
+						<label for="embedded_ir_learn_ms"><%= &subs::ui('Learn window (ms)') %></label>
+						<input type="number" id="embedded_ir_learn_ms" min="500" max="10000" step="100" value="5000" style="width:80px">
+						<button id="embedded_ir_learn_button" hint="<%= &subs::ui('Ask the board to listen on the receiver pin for this many milliseconds') %>"><%= &subs::ui('Learn') %></button>
+						<button id="embedded_ir_refresh" hint="<%= &subs::ui('Read the board\'s learned remotes again') %>"><%= &subs::ui('Refresh') %></button>
+					</div>
+					<div id="embedded_ir_status" class="embedded_ir_status" style="min-height:1.2em;"></div>
+					<div id="embedded_ir_list" class="embedded_ir_list"></div>
+				</div>
 			<% } %>
 
 			<div id="watch_buttons">
