@@ -19,6 +19,15 @@
 	   (a 1112x1038 gear over the first row); the house's thumbnail rules are not
 	   in scope here, so it is pinned. */
 	img.window_icon { width:22px; height:22px; object-fit:contain; }
+	/* The handheld's own look: dark grey panel, white words, and a picture
+	   per tile from the house's decipherable set. Scoped to this page. */
+	html, body, .wind, .window_contents { background:#2e2e2e !important; color:#f4f4f4 !important; }
+	.controller_tile { background:#3a3a3a !important; border-color:#4a4a4a !important;
+		color:#ffffff !important; align-items:center; text-align:center; }
+	.controller_tile_label { color:#ffffff !important; }
+	.controller_tile_note { color:#d8d8d8 !important; opacity:1; }
+	.controller_tile_icon { width:46px; height:46px; object-fit:contain; }
+
 	/* The launcher is the whole panel. The desk remembers a window's size and
 	   place per app, and this page arrived at 480x640 from y=100 - two rows
 	   below the glass. Scoped to this page, so no other window moves. */
@@ -51,34 +60,42 @@
 
 <div id="controller_home">
 	<a class="controller_tile" href="/manager/music">
+		<img class="controller_tile_icon" src="/images/decipherable/headphones.png" alt="">
 		<span class="controller_tile_label"><%= &subs::ui('Music') %></span>
 		<span class="controller_tile_note"><%= &subs::ui('Play the house music') %></span>
 	</a>
 	<a class="controller_tile" href="/manager/gallery">
+		<img class="controller_tile_icon" src="/images/decipherable/gallery.png" alt="">
 		<span class="controller_tile_label"><%= &subs::ui('Gallery') %></span>
 		<span class="controller_tile_note"><%= &subs::ui('Photos and videos') %></span>
 	</a>
 	<a class="controller_tile" href="/manager/notifications/list">
+		<img class="controller_tile_icon" src="/images/decipherable/bell.png" alt="">
 		<span class="controller_tile_label"><%= &subs::ui('Notifications') %></span>
 		<span class="controller_tile_note"><%= &subs::ui('What the house has told you') %></span>
 	</a>
 	<a class="controller_tile" href="/manager/twirl">
+		<img class="controller_tile_icon" src="/images/decipherable/tetris.png" alt="">
 		<span class="controller_tile_label"><%= &subs::ui('Games') %></span>
 		<span class="controller_tile_note"><%= &subs::ui('Twirl, the falling-block puzzle') %></span>
 	</a>
 	<a class="controller_tile" href="/manager/configure">
+		<img class="controller_tile_icon" src="/images/decipherable/gear.png" alt="">
 		<span class="controller_tile_label"><%= &subs::ui('Configuration') %></span>
 		<span class="controller_tile_note"><%= &subs::ui('Settings and system') %></span>
 	</a>
 	<a class="controller_tile" href="/manager/phone">
+		<img class="controller_tile_icon" src="/images/decipherable/phone.png" alt="">
 		<span class="controller_tile_label"><%= &subs::ui('IVR') %></span>
 		<span class="controller_tile_note"><%= &subs::ui('The phone call menu and greeting') %></span>
 	</a>
 	<a class="controller_tile" href="/manager/embedded">
+		<img class="controller_tile_icon" src="/images/decipherable/on.png" alt="">
 		<span class="controller_tile_label"><%= &subs::ui('Automation') %></span>
 		<span class="controller_tile_note"><%= &subs::ui('Toggles for the house devices') %></span>
 	</a>
 	<div class="controller_tile controller_tile_leave">
+		<img class="controller_tile_icon" src="/images/decipherable/exit.png" alt="">
 		<span class="controller_tile_label"><%= &subs::ui('Leave') %></span>
 % if (@power_available) {
 		<div class="controller_leave_actions">
