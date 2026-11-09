@@ -25,6 +25,18 @@ String ap_ssid = "Pico 2W";
 String ap_password = "president";
 WiFiMulti multi;
 WebServer server(3000);
+
+// The associated access point as hex. This core has BSSID() but no BSSIDstr();
+// a bssid that changes between joins is a board roaming between access points
+// that share a name, which looks like an unstable link.
+String bssid_str() {
+  uint8_t b[6] = {0};
+  if (!WiFi.BSSID(b)) { return String("-"); }
+  char out[18];
+  snprintf(out, sizeof(out), "%02X:%02X:%02X:%02X:%02X:%02X",
+    b[0], b[1], b[2], b[3], b[4], b[5]);
+  return String(out);
+}
 String homebase;
 String homebaseIP;
 // The address Now Me gave this board is the preferred House machine. The active

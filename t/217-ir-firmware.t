@@ -186,4 +186,10 @@ like($g4, qr/https\.end\(\);\s*\n\s*connexion->stop\(\);/,
 	'a failed GET closes the shared TLS client before returning');
 like($g4, qr/connexion->stop\(\)/, 'the stale socket is dropped explicitly');
 
+
+# --- (l) the console reports the link, not just up/down --------------------
+like($g2, qr/JAWNCFG LINK rssi=" \+ String\(WiFi\.RSSI\(\)\)/, 'JAWNCFG? reports the signal');
+like($g2, qr/" bssid=" \+ bssid_str\(\)/, 'and the access point it is on');
+like($g3, qr/\[wifi\] link lost rssi=/, 'a drop says the signal it dropped at');
+
 done_testing();

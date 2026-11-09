@@ -563,6 +563,11 @@ void wifi_supervise() {
   }
 
   if (wifiState == "connected") {
+    // Say why the link went. A drop at -70 dBm is the router; one at -82 is
+    // distance or an access point that will not hold the client.
+    Serial.println("[wifi] link lost rssi=" + String(WiFi.RSSI())
+      + " status=" + String((int)WiFi.status())
+      + " bssid=" + bssid_str());
     wifiState = "disconnected";
     jawnos_mdns_up = false;
   }

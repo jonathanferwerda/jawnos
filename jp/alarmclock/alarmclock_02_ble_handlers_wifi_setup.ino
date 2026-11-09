@@ -183,6 +183,10 @@ static void usb_config_loop() {
         }
         Serial.println("JAWNCFG TYPES " + types);
         Serial.println("JAWNCFG MORE ssid=" + ssid + " ap_ssid=" + ap_ssid + " wifi=" + wifiState + " ip=" + WiFi.localIP().toString() + " mask=" + WiFi.subnetMask().toString() + " gw=" + WiFi.gatewayIP().toString() + " homebaseIP=" + homebaseIP);
+        // The link itself: rssi and bssid tell a weak signal from a software
+        // fault, and a bssid that changes between joins means the board is
+        // roaming between access points that share a name.
+        Serial.println("JAWNCFG LINK rssi=" + String(WiFi.RSSI()) + " bssid=" + bssid_str());
         // The device bus counters: a board that cannot reach its homebase still
         // answers here, so the console can say whether the cause is the link or
         // the upgrade without a Serial write in the loop.
