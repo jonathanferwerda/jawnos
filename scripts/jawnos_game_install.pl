@@ -95,6 +95,34 @@ if ($WHAT eq 'emulators') {
 			close $cfg;
 		}
 	}
+	# The virtual pad has no upstream profile, and RetroArch's fallback reads
+	# its buttons by position: Start landed on nothing. This profile names every
+	# button by the position it has in the pad's own key bitmap.
+	my $autoconfig = "$config_dir/autoconfig/udev";
+	make_path($autoconfig);
+	my $profile = "$autoconfig/JawnOS Gamepad.cfg";
+	if (!-e $profile) {
+		my @lines = (
+			'input_driver = "udev"',
+			'input_device = "JawnOS Gamepad"',
+			'input_vendor_id = "4617"',
+			'input_product_id = "2"',
+			'input_b_btn = "0"',
+			'input_a_btn = "1"',
+			'input_x_btn = "2"',
+			'input_y_btn = "3"',
+			'input_select_btn = "4"',
+			'input_start_btn = "5"',
+			'input_up_btn = "6"',
+			'input_down_btn = "7"',
+			'input_left_btn = "8"',
+			'input_right_btn = "9"',
+		);
+		if (open(my $fh, '>', $profile)) {
+			print $fh "$_\n" for @lines;
+			close $fh;
+		}
+	}
 	system('chown', '-R', 'jawn:jawn', $config_dir);
 
 	# The repositories do not carry every core the shelf names. The emmc image

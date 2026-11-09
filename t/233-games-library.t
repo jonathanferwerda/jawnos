@@ -88,6 +88,8 @@ like($launch, qr/JawnOS::Games::runner_for/, 'the runner is the same one the rou
 like($launch, qr/--appendconfig/, 'the game gets the config that names the card');
 like($launch, qr/sub kiosk_active/, 'the restore waits for the kiosk, not just starts it');
 like($install, qr/input_player1_joypad_index/, 'the gamepad is player one, not the keys device');
+like($install, qr/JawnOS Gamepad\.cfg/, 'the virtual pad gets an autoconfig profile');
+like($install, qr/input_start_btn = "5"/, 'Start is mapped by the pad key position');
 like($install, qr/audio_device = \\"hw:0,0\\"/, 'the installer writes the ALSA device the panel has');
 
 # --- the routes and the page --------------------------------------------------
