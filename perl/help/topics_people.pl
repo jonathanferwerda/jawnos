@@ -195,6 +195,18 @@ $topic{'twirl'} = {
 		],
 		related => [ 'cards' ]
 	};
+$topic{'controller'} = {
+		title => 'Controller', category => 'apps', app => 'controller',
+		verified => '2026-11-08',
+		templates => [ 'templates/apps/controller.html.ep' ],
+		summary => 'The handheld\'s home: eight tiles that open the apps and name the power choices.',
+		body => [
+			'Controller is the home screen of the handheld. It has no desk of windows: it shows eight tiles, each one press away from the surface it names.',
+			'Music opens the house music, Gallery the photos and videos, Notifications what the house has told you, and Games the Twirl falling-block puzzle. Configuration holds the house and device settings, including the Sys section. IVR opens the Phone app, where the call menu and recorded greeting live. Automation opens the embedded device toggles.',
+			'Leave is a placeholder for the power choices: Sleep, Screen off, Restart and Shut down. They are named on the panel but are not wired yet, so pressing there does nothing.'
+		],
+		related => [ 'twirl', 'phone', 'configure' ]
+	};
 $topic{'budget'} = {
 		title => 'Accounting', category => 'apps', app => 'budget',
 		verified => '2026-10-30',

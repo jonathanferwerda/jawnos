@@ -308,14 +308,18 @@ sub manager_starter() {
 	# a holder and a source. The code watcher above keeps the Perl tree current;
 	# this keeps the app blob current. A first pass soon after boot, then every
 	# five minutes.
-	&subs::subprocessor(sub {
-		sleep 45;
-		while (1) {
-			&subs::subprocessor_heartbeat();
-			eval { &subs::app_release_sync(); };
-			sleep 300;
-		}
-	}, { name => 'app release sync' });
+	# Skipped on a controller: it keeps no APK store of its own, and every resident
+	# loop is another ~16 MB PSS copy of this tree on a 1.8 GB box.
+	unless ($device eq 'controller') {
+		&subs::subprocessor(sub {
+			sleep 45;
+			while (1) {
+				&subs::subprocessor_heartbeat();
+				eval { &subs::app_release_sync(); };
+				sleep 300;
+			}
+		}, { name => 'app release sync' });
+	}
 
 	# The slow background passes used to be one forked copy of the whole tree
 	# each: seven processes mostly asleep, about fifty megabytes of private heap
@@ -347,44 +351,52 @@ sub manager_starter() {
 		# quiet gap, so closing the tab or switching apps ends the appointment.
 		{ name => 'internet sites', first => 10, every => 10, run => sub { &subs::internet_site_appointment_tick(); } },
 	);
-	&subs::subprocessor(sub {
-		my $started = time;
-		my %due = map { $_->{'name'} => $started + $_->{'first'} } @slow_loops;
-		while (1) {
-			&subs::subprocessor_heartbeat();
-			my $now = time;
-			foreach my $loop ( @slow_loops ) {
-				next if $now < $due{ $loop->{'name'} };
-				$due{ $loop->{'name'} } = $now + $loop->{'every'};
-				eval { $loop->{'run'}->(); };
+	# Skipped on a controller: it runs no crew, crest, model, watch, balance or
+	# crypto pass, and this one process is another ~16 MB PSS copy of the tree.
+	unless ($device eq 'controller') {
+		&subs::subprocessor(sub {
+			my $started = time;
+			my %due = map { $_->{'name'} => $started + $_->{'first'} } @slow_loops;
+			while (1) {
+				&subs::subprocessor_heartbeat();
+				my $now = time;
+				foreach my $loop ( @slow_loops ) {
+					next if $now < $due{ $loop->{'name'} };
+					$due{ $loop->{'name'} } = $now + $loop->{'every'};
+					eval { $loop->{'run'}->(); };
+				}
+				sleep 5;
 			}
-			sleep 5;
-		}
-	}, { name => 'slow loops' });
+		}, { name => 'slow loops' });
+	}
 
 	# The start menu's System card: every peer's battery and the embedded boards
 	# the house can see. The peers answer /manager/health; the boards answer
 	# /device_query. Both are cached, so the card never waits on a sleeping board.
-	&subs::subprocessor(sub {
-		sleep 20;
-		while (1) {
-			&subs::subprocessor_heartbeat();
-			# Two minutes is the house pace, but a System card on screen asks for
-			# quick passes (levels_fast_request): sleep in slices and answer it
-			# within seconds, so a phone plugged in a moment ago updates.
-			my $fast = &subs::cache_get({ app => '__president', context => 'levels', subcontext => 'fast' }) || 0;
-			my $wanted = ($fast && &subs::rightNow() - $fast < 90000) ? 1 : 0;
-			eval { &subs::house_levels_sync({ fast => $wanted }); };
-			my $synced = &subs::rightNow();
+	# Skipped on a controller: it polls no peers or boards, so the System card's
+	# levels sync is another resident copy of the tree it never needs.
+	unless ($device eq 'controller') {
+		&subs::subprocessor(sub {
+			sleep 20;
 			while (1) {
-				sleep 2;
-				my $now = &subs::rightNow();
-				last if $now - $synced >= 120000;
-				$fast = &subs::cache_get({ app => '__president', context => 'levels', subcontext => 'fast' }) || 0;
-				last if $fast && $now - $fast < 90000 && $now - $synced >= 8000;
+				&subs::subprocessor_heartbeat();
+				# Two minutes is the house pace, but a System card on screen asks for
+				# quick passes (levels_fast_request): sleep in slices and answer it
+				# within seconds, so a phone plugged in a moment ago updates.
+				my $fast = &subs::cache_get({ app => '__president', context => 'levels', subcontext => 'fast' }) || 0;
+				my $wanted = ($fast && &subs::rightNow() - $fast < 90000) ? 1 : 0;
+				eval { &subs::house_levels_sync({ fast => $wanted }); };
+				my $synced = &subs::rightNow();
+				while (1) {
+					sleep 2;
+					my $now = &subs::rightNow();
+					last if $now - $synced >= 120000;
+					$fast = &subs::cache_get({ app => '__president', context => 'levels', subcontext => 'fast' }) || 0;
+					last if $fast && $now - $fast < 90000 && $now - $synced >= 8000;
+				}
 			}
-		}
-	}, { name => 'house levels' });
+		}, { name => 'house levels' });
+	}
 
 	# mDNS is how a device names itself the moment it joins: fold what the local
 	# network advertises (_jawnos._tcp, plus a printer on _ipp._tcp) into this
@@ -479,14 +491,18 @@ sub manager_starter() {
 	# heartbeat costs nothing at the moment someone says "hey jawn". A scan holds
 	# the radio for eight seconds, and the old thirty-second beat was most of the
 	# phone's Bluetooth drain.
-	&subs::subprocessor(sub {
-		sleep 40;
-		while (1) {
-			&subs::subprocessor_heartbeat();
-			eval { &subs::ble_adopt_scan(); };
-			sleep 300;
-		}
-	}, { name => 'ble adopt scan', fork => 1 });
+	# Skipped on a controller: it owns no BLE bridge to adopt an unknown board for,
+	# and holding the radio is another resident copy of the tree.
+	unless ($device eq 'controller') {
+		&subs::subprocessor(sub {
+			sleep 40;
+			while (1) {
+				&subs::subprocessor_heartbeat();
+				eval { &subs::ble_adopt_scan(); };
+				sleep 300;
+			}
+		}, { name => 'ble adopt scan', fork => 1 });
+	}
 
 	# The Android app's scheduled wake (JawnWakeReceiver) holds the CPU for a
 	# short window each navigation interval. Once the app has proved it is
@@ -764,31 +780,39 @@ sub manager_starter() {
 			# overrides the resting count when a machine wants another.
 			my $configured_workers = (defined $config->{'main_workers'} && $config->{'main_workers'} =~ /^\d+$/ && $config->{'main_workers'} > 0)
 				? int($config->{'main_workers'}) : 0;
-			my $main_workers = $configured_workers || ($device eq 'mobile' ? 2 : ($device eq 'server' ? 4 : 3));
+			my $main_workers = $configured_workers || ($device eq 'controller' ? 2 : ($device eq 'mobile' ? 2 : ($device eq 'server' ? 4 : 3)));
 			$prefork->workers($main_workers);
-			&prefork_autoscale($prefork, min => $main_workers, max => $device eq 'mobile' ? $main_workers : $main_workers + 2);
+			# A controller rests at two like a phone and never grows: its 1.8 GB is
+			# the launcher and the call gateway, not a worker fleet.
+			&prefork_autoscale($prefork, min => $main_workers, max => ($device eq 'mobile' || $device eq 'controller') ? $main_workers : $main_workers + 2);
 			$prefork->run;
 			$log->info('after main server');
 		}, { name => 'Pro Main Server' });
-		&subs::subprocessor(sub {
-		 # $SIG{'KILL'} = sub { threads->exit(); };
-			print "Starting Pro Prefork Alarm Server on port " . $alarm_port . "\n";
-			$ENV{MOJO_LISTEN} = 'https://*:' . $alarm_port . $certs;
-			$ENV{PURPOSE} = 'alarm';
-			my $prefork = &prefork_tune(Mojo::Server::Prefork->new(listen => [ $ENV{MOJO_LISTEN} ]), keep_alive => 1);
-			$prefork->heartbeat_timeout(200);
-			$prefork->load_app('./perl/Alarm.pl');
-			$prefork->workers(1);
-			$prefork->run;
-			$log->info('after alarm server');
-		}, { name => 'Pro Alarm Server' });
+		# A controller answers no alarm, runs no terminal and keeps no window
+		# fleet, so none of these listeners has a client on it.
+		unless ($device eq 'controller') {
+			&subs::subprocessor(sub {
+			 # $SIG{'KILL'} = sub { threads->exit(); };
+				print "Starting Pro Prefork Alarm Server on port " . $alarm_port . "\n";
+				$ENV{MOJO_LISTEN} = 'https://*:' . $alarm_port . $certs;
+				$ENV{PURPOSE} = 'alarm';
+				my $prefork = &prefork_tune(Mojo::Server::Prefork->new(listen => [ $ENV{MOJO_LISTEN} ]), keep_alive => 1);
+				$prefork->heartbeat_timeout(200);
+				$prefork->load_app('./perl/Alarm.pl');
+				$prefork->workers(1);
+				$prefork->run;
+				$log->info('after alarm server');
+			}, { name => 'Pro Alarm Server' });
+		}
 
 	}
 	else {
 		print "I have no environment!\n";
 	}
 
-	if ($device ne 'server') {
+	# A controller is a handheld with no terminal and no watch: treat it like a
+	# server here, so the watch, teletype and tty-ws servers never start.
+	if ($device ne 'server' && $device ne 'controller') {
 		&subs::subprocessor(sub {
 		#  $SIG{'KILL'} = sub { threads->exit(); };
 			$ENV{PURPOSE} = "watch";
@@ -921,10 +945,14 @@ sub manager_starter() {
 		write_file($status_file, 'good');
 		print "wrote status good\n";
 	}
-	if (`ollama -v` =~ /client version is/) {
-		&subs::subprocessor(sub {
-			`OLLAMA_IGPU_ENABLE=1 OLLAMA_VULKAN=1 HIP_VISIBLE_DEVICES=-1 OLLAMA_NOHISTORY=1 ollama serve`;
-		}, { name => 'ollama serve' });
+	# Skipped on a controller: serving a model is another resident process on a
+	# box that only shows a launcher and bridges calls.
+	unless ($device eq 'controller') {
+		if (`ollama -v` =~ /client version is/) {
+			&subs::subprocessor(sub {
+				`OLLAMA_IGPU_ENABLE=1 OLLAMA_VULKAN=1 HIP_VISIBLE_DEVICES=-1 OLLAMA_NOHISTORY=1 ollama serve`;
+			}, { name => 'ollama serve' });
+		}
 	}
 	&subs::subprocessor(sub {
 
@@ -955,44 +983,56 @@ sub manager_starter() {
 	# The archive queue's worker. Jobs are enqueued from the web process into
 	# the same SQLite file under ~/.president; one at a time, so a slow link is
 	# never asked for two files at once and the queue keeps its order.
-	&subs::subprocessor(sub {
-		my $minion = &subs::minion_grabber();
-		# the launcher clears the queue at startup and the nightly evaluation
-		# wishes live in the settings: put their schedules back
-		&subs::nightly_evaluation_reconcile();
-		my $worker = $minion->worker;
-		$worker->status->{jobs} = 1;
-		$worker->run;
-	}, { name => 'Minion Worker' });
+	# Skipped on a controller: the archive queue's worker is another full copy of
+	# the tree, and a 1.8 GB launcher has no archiving to do.
+	unless ($device eq 'controller') {
+		&subs::subprocessor(sub {
+			my $minion = &subs::minion_grabber();
+			# the launcher clears the queue at startup and the nightly evaluation
+			# wishes live in the settings: put their schedules back
+			&subs::nightly_evaluation_reconcile();
+			my $worker = $minion->worker;
+			$worker->status->{jobs} = 1;
+			$worker->run;
+		}, { name => 'Minion Worker' });
+	}
 
 	# The evaluation schedules live in this machine's queue, but the cadence that
 	# asks for them is a shared setting. Re-read the wishes every few minutes so a
 	# machine that stays up learns of a cadence changed on a peer, and so every
 	# machine holds the schedules that let it take the night over when the chosen
 	# machine is quiet.
-	&subs::subprocessor(sub {
-		sleep 120;
-		while (1) {
-			&subs::subprocessor_heartbeat();
-			eval { &subs::nightly_evaluation_reconcile(); };
-			sleep 300;
-		}
-	}, { name => 'evaluation schedules' });
+	# Skipped on a controller: it takes no part in the evaluation night, and each
+	# loop is another resident copy of the tree.
+	unless ($device eq 'controller') {
+		&subs::subprocessor(sub {
+			sleep 120;
+			while (1) {
+				&subs::subprocessor_heartbeat();
+				eval { &subs::nightly_evaluation_reconcile(); };
+				sleep 300;
+			}
+		}, { name => 'evaluation schedules' });
+	}
 
 	# The evaluation dispatch: the server assigns each scheduled run to a ready
 	# worker a few minutes before it is due, and every machine turns an assignment
 	# addressed to it into a queued job. The ledger travels with the ordinary sync,
 	# so a partition that cannot see the dispatcher has no fresh assignment and
 	# stands down instead of running the same report twice.
-	&subs::subprocessor(sub {
-		sleep 45;
-		while (1) {
-			&subs::subprocessor_heartbeat();
-			eval { &subs::evaluation_dispatch_tick(); };
-			eval { &subs::where_audit_tick(); };
-			sleep 60;
-		}
-	}, { name => 'evaluation dispatch' });
+	# Skipped on a controller: it takes no part in the evaluation night, and each
+	# loop is another resident copy of the tree.
+	unless ($device eq 'controller') {
+		&subs::subprocessor(sub {
+			sleep 45;
+			while (1) {
+				&subs::subprocessor_heartbeat();
+				eval { &subs::evaluation_dispatch_tick(); };
+				eval { &subs::where_audit_tick(); };
+				sleep 60;
+			}
+		}, { name => 'evaluation dispatch' });
+	}
 	Mojo::IOLoop->start;
 	END {
 		print "quitting now!\n";

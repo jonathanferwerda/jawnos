@@ -23,6 +23,7 @@ sub routes {
 	[30779, 'get', '/manager/ide', 'action_30779'],
 	[30859, 'post', '/manager/ide/folder_selector', 'action_30859'],
 	[30875, 'post', '/manager/ide/folder_open', 'action_30875'],
+	[44001, 'get', '/manager/controller', 'action_44001'],
 	);
 }
 

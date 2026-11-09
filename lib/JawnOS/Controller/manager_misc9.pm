@@ -742,4 +742,18 @@ sub action_30875 {
 	$c->render(json => { html => $html });
 }
 
+# GET /manager/controller
+# The handheld's home: eight tiles for the apps it is allowed to reach, so the
+# controller opens on a launcher instead of a desk full of windows.
+sub action_44001 {
+	my $c = shift;
+	my $timestamp = $c->param('timestamp');
+	my $contents = $c->render_to_string(
+		template => 'apps/controller',
+		window_maker => $c->param('window_maker')
+	);
+	my $website = &Manager::window_maker({ user_agent => $c->param('user_agent'), app => 'controller', contents => $contents }, $timestamp);
+	$c->render(text => $website);
+}
+
 1;
