@@ -384,7 +384,6 @@ sub lan_presence_wait {
 sub lan_presence_listen {
 	require Socket;
 	require IO::Socket::INET;
-	require IO::Select;
 	while (1) {
 		# A cloud server whose only address is public has no LAN to listen on;
 		# do not open the port to the internet.
@@ -404,31 +403,37 @@ sub lan_presence_listen {
 			&lan_presence_wait(10);
 			next;
 		}
-		my $ready = IO::Select->new($sock);
+				# A packet wakes a process. A peer that speaks ten times a second then
+		# costs ten wakeups and ten decodes for state that only needs its newest
+		# value. Let the datagrams queue for a second, then drain them and apply
+		# one - the newest - per source: presence lands within a second, and the
+		# loop wakes once a second instead of once a datagram.
+		$sock->blocking(0);
 		while (1) {
-			# Read only what is there. A blocking recv on a silent network never
-			# returns, so the lease expired and the reaper killed the listener - the
-			# presence wake then never fired again on this machine.
-			unless ($ready->can_read(15)) {
+			sleep 1;
+			my %pending;
+			while (1) {
+				my $data = '';
+				my $peer = recv($sock, $data, 4096, 0);
+				last unless defined $peer;
+				next unless length $data;
+				my ($port, $iaddr) = Socket::sockaddr_in($peer);
+				my $ip = $iaddr ? Socket::inet_ntoa($iaddr) : '';
+				next unless $ip;
+				$pending{$ip} = $data;
+			}
+			foreach my $ip (sort keys %pending) {
+				next unless &lan_presence_due($ip, time(), 1);
 				&subs::subprocessor_heartbeat();
-				next;
+				my $msg = eval { decode_json($pending{$ip}) };
+				next unless ref $msg eq 'HASH';
+				if (($msg->{'type'} // '') eq 'jawnos-nav') {
+					eval { &lan_navigation_accept($msg, $ip) };
+					next;
+				}
+				eval { &lan_presence_accept($msg, $ip) };
 			}
-			my $data = '';
-			my $peer = recv($sock, $data, 4096, 0);
-			last unless defined $peer;
 			&subs::subprocessor_heartbeat();
-			next unless length $data;
-			my ($port, $iaddr) = Socket::sockaddr_in($peer);
-			my $ip = $iaddr ? Socket::inet_ntoa($iaddr) : '';
-			next unless $ip;
-			next unless &lan_presence_due($ip, time(), 1);
-			my $msg = eval { decode_json($data) };
-			next unless ref $msg eq 'HASH';
-			if (($msg->{'type'} // '') eq 'jawnos-nav') {
-				eval { &lan_navigation_accept($msg, $ip) };
-				next;
-			}
-			eval { &lan_presence_accept($msg, $ip) };
 		}
 		close $sock;
 		&lan_presence_wait(2);

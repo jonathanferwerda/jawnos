@@ -380,8 +380,9 @@ like($lan, qr/name => 'tunnel holder wss ' .*?warranty => 'forever'/s,
 # The presence listener is a resident loop with a two-minute lease. A blocking
 # recv on a quiet network never returns, so its heartbeat stopped, the reaper
 # expired it, and the presence wake never fired again on that machine.
-like($lan, qr/\$ready->can_read\(/,
-	'the presence listener reads with a timeout instead of blocking on recv');
+like($lan, qr/\$sock->blocking\(0\);/, 'the presence listener reads without blocking');
+like($lan, qr/sleep 1;\n\s*my %pending;/, 'it wakes once a second and drains the queued datagrams');
+unlike($lan, qr/\$ready->can_read\(/, 'the per-datagram select is gone');
 like($lan, qr/sub lan_presence_listen \{.*?subprocessor_heartbeat.*?\n\}/s,
 	'the presence listener heartbeats while it waits');
 like($loader, qr/JawnOS::Domain::Lan' for qw\([^)]*lan_presence_listen[^)]*lan_presence_wait/,
