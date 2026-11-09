@@ -39,11 +39,14 @@ my ($radius) = $src =~ /var dotRadius = (\d+);/;
 my ($ring)   = $src =~ /var dotRing = (\d+);/;
 my ($icon)   = $src =~ /var dotIcon = (\d+);/;
 ok(defined $radius && defined $ring && defined $icon, 'the three mark sizes were read');
-is($radius, 14, 'the disc keeps its radius');
+cmp_ok($radius, '>=', 18, 'the disc is big enough for a legible plate');
 cmp_ok($ring, '<=', 2, "the edge is the other printers' thin ink line");
-cmp_ok($icon, '<=', 2 * ($radius - $ring),
-	'the pseudonym plate fits inside the colour disc, leaving a rim');
-cmp_ok($icon, '>=', 16, 'and is still large enough to read');
+cmp_ok($icon, '>=', 26, 'the pseudonym plate is large enough to read');
+# the tightest icon set is 492 wide of a 512 viewBox with a 128 corner radius:
+# its rounded corner reaches 0.576 of the plate side from the centre, so the
+# plate must clear the ink edge's inner radius (dotRadius - dotRing/2)
+cmp_ok($icon * 0.576, '<=', $radius - $ring / 2,
+	"even the plate's rounded corners sit inside the ink edge");
 
 # the plate must land after the disc it sits on
 like($src, qr/ctx\.restore\(\);\s*\n\s*\/\/ the pseudonym's own plate.*?pseudoGenerator\(appts,l\['type'\], x - \(dotIcon \/ 2\)/s,

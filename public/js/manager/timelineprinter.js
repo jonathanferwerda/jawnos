@@ -42,19 +42,20 @@ function timelinePrinter(appts,sort,offset) {
 	$('#timeline').show();
 	canvas.width = $('#background').width();
 
-	var rowHeight = 34;
+	var rowHeight = 40;
 	// the span's band is tall enough for the appointment's own name (20px type)
 	// to sit inside it, rather than the name overflowing a thin line
 	var bandHeight = 28;
 	// the occurrence mark is the same one the other printers draw: the app's
 	// colour in a disc with a thin ink edge. The pseudonym's plate sits in its
-	// middle, small enough that the colour still shows as a rim around it - the
-	// icon sets are rounded-square plates, so one larger than the disc covers
-	// the colour and leaves only a cut ring.
-	var dotRadius = 14;
+	// middle, and its size is bounded by the icon sets themselves: the tightest
+	// plate is 492 of a 512 viewBox with a 128 corner radius, so its rounded
+	// corner reaches 0.576 of the plate's side from the centre - 16.1px for a
+	// 28px plate, just inside the 17px inner edge of a radius-18 disc.
+	var dotRadius = 18;
 	var dotRing = 2;   // the ink edge around the disc
-	var dotHalo = 7;   // the theme's halo behind it, when the theme has one
-	var dotIcon = 20;
+	var dotHalo = 8;   // the theme's halo behind it, when the theme has one
+	var dotIcon = 28;
 	var pad = 26;
 	var top = headerHeight + clothesLineHeight + 26;
 	var rows = 0;
@@ -148,9 +149,8 @@ function timelinePrinter(appts,sort,offset) {
 			var x = dotEdge + (column * pct / 2);
 			rowLeft = (rowLeft == undefined) ? (x - dotRadius) : Math.min(rowLeft, x - dotRadius);
 			rowRight = (rowRight == undefined) ? (x + dotRadius) : Math.max(rowRight, x + dotRadius);
-			var dotMag = dotRadius + ((halo ? dotHalo : dotRing) / 2);
-			magLeft = (magLeft == undefined) ? (x - dotMag) : Math.min(magLeft, x - dotMag);
-			magRight = (magRight == undefined) ? (x + dotMag) : Math.max(magRight, x + dotMag);
+			magLeft = (magLeft == undefined) ? (x - dotEdge) : Math.min(magLeft, x - dotEdge);
+			magRight = (magRight == undefined) ? (x + dotEdge) : Math.max(magRight, x + dotEdge);
 
 			var startX;
 			var startPct = parseFloat(l[scope + '_start_percent']);
@@ -274,7 +274,7 @@ function timelinePrinter(appts,sort,offset) {
 		if (rowLeft == undefined) { return true; }
 		// the entry carries its own magnify box: the click answers over the whole
 		// row, but only the compact item grows
-		appPosition.push([rowLeft, rowY - 16, rowRight, rowY + 16, v, [magLeft, rowY - 18, magRight, rowY + 18]]);
+		appPosition.push([rowLeft, rowY - dotRadius, rowRight, rowY + dotRadius, v, [magLeft, rowY - dotEdge, magRight, rowY + dotEdge]]);
 	});
 
 	$.each(textPrinter, function(i,t) {
