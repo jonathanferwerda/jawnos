@@ -9,6 +9,7 @@ use warnings;
 use FindBin;
 use lib "$FindBin::Bin/lib", "t/lib";
 use Test::More;
+use File::Path qw(make_path);
 use File::Slurp qw(read_file write_file);
 use File::Temp qw(tempdir);
 use RepoSource;
@@ -17,13 +18,17 @@ my $root = repo_root();
 my $helper = "$root/scripts/jawnos_screen.pl";
 ok(-x $helper, 'the screen helper is executable');
 
-# a fake backlight class device, so the dry run finds the node this box lacks
-my $blroot = tempdir(CLEANUP => 1);
-mkdir "$blroot/panel" or die "$blroot/panel: $!";
-write_file("$blroot/panel/brightness", "200\n");
-write_file("$blroot/panel/bl_power", "0\n");
+# A fake sysfs root: a CPU policy node and a backlight class device, so the dry
+# run finds the nodes a CI runner does not have. The helper prefixes every
+# sysfs path with JAWNOS_SCREEN_ROOT, so both live under one root - an absolute
+# JAWNOS_SCREEN_BACKLIGHT would be prefixed too and found nowhere.
+my $sysroot = tempdir(CLEANUP => 1);
+make_path("$sysroot/sys/devices/system/cpu/policy0");
+make_path("$sysroot/sys/class/backlight/panel");
+write_file("$sysroot/sys/class/backlight/panel/brightness", "200\n");
+write_file("$sysroot/sys/class/backlight/panel/bl_power", "0\n");
 
-my $off = `JAWNOS_SCREEN_FORCE=1 JAWNOS_SCREEN_BACKLIGHT=$blroot $^X $helper off --dry-run 2>&1`;
+my $off = `JAWNOS_SCREEN_FORCE=1 JAWNOS_SCREEN_ROOT=$sysroot $^X $helper off --dry-run 2>&1`;
 like($off, qr/^stop jawnos-kiosk$/m, 'off stops the kiosk');
 like($off, qr/^stop gou-rotate$/m, 'off stops the rotating painter');
 like($off, qr/^stop gou-x$/m, 'off stops X');
@@ -33,7 +38,7 @@ like($off, qr/^max_freq 1000000 /m, 'off pins 1.0 GHz');
 like($off, qr/^backlight off$/m, 'off switches the panel backlight off');
 like($off, qr/^marker /m, 'off leaves a marker for the wake chord');
 
-my $on = `JAWNOS_SCREEN_FORCE=1 JAWNOS_SCREEN_BACKLIGHT=$blroot $^X $helper on --dry-run 2>&1`;
+my $on = `JAWNOS_SCREEN_FORCE=1 JAWNOS_SCREEN_ROOT=$sysroot $^X $helper on --dry-run 2>&1`;
 like($on, qr/^start gou-x$/m, 'on starts X');
 like($on, qr/^start gou-rotate$/m, 'on starts the painter');
 like($on, qr/^start jawnos-kiosk$/m, 'on starts the kiosk');

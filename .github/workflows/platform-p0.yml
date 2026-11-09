@@ -42,7 +42,18 @@ jobs:
             SQL::Abstract Data::UUID Mojolicious::Plugin::RenderFile \
             WWW::Mechanize Crypt::Simple File::Type HTML::Strip URI::Encode \
             LWP::Protocol::https Net::IMAP::Client MIME::Parser Email::Stuffer \
-            Authen::SASL Time::Piece
+            Authen::SASL Time::Piece Archive::Zip
+      - name: system tools
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg sqlite3
+      - name: seed the checkout
+        # A clean clone has neither file: config.json is gitignored and the
+        # database is not in git. Several tests load perl/subroutines.pl, which
+        # reads ./config.json at compile time, so they die before the first
+        # assertion without this. This is the portable step from
+        # docs/platform-p0.md, done here because the runner is a plain clone.
+        run: |
+          cp -n config.json.example config.json
+          sqlite3 database/jawnos.db < database/schema.sql
       - name: probe
         run: perl scripts/platform_probe.pl --check
       - name: portable suite

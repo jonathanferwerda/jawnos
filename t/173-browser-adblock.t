@@ -52,6 +52,17 @@ like($src, qr/Key on the page's own URI/,
 
 my $python = qx{python3 --version 2>/dev/null};
 SKIP: {
+	skip 'python3 is not installed', 2 unless $python;
+
+	# With no Qt installed the module still has to import: the fallback once
+	# missed QLineEdit (AddressEntry's base), so the import died with NameError
+	# and the clean "PySide6 with Qt WebEngine is required" path was
+	# unreachable. Blocking the package is how a Qt-less box looks to Python.
+	my $fallback = qx{python3 -c "import sys; sys.path.insert(0, '$root/desktop'); sys.modules['PySide6'] = None; import jawnos_desktop.browser as b; print('ok', b._QT_OK)" 2>&1};
+	like($fallback, qr/^ok False$/m, 'the module imports with no Qt at all') or diag($fallback);
+}
+
+SKIP: {
 	skip 'python3 is not installed', 20 unless $python;
 
 	my $dir = tempdir(CLEANUP => 1);

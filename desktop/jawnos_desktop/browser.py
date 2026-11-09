@@ -345,6 +345,10 @@ except Exception as _exc:  # pragma: no cover - only without PySide6/Qt WebEngin
     QWebEngineScript = QWebEngineSettings = QWebEngineView = None
     QWebEngineUrlRequestInterceptor = QWebEngineDownloadRequest = None
     QWebEnginePermission = QWebChannel = None
+    # Every name the module subclasses at import time has to exist even here, or
+    # the import dies with a NameError and the clean "Qt is required" path is
+    # unreachable (QLineEdit is AddressEntry's base).
+    QLineEdit = object
     QObject = QWidget = QMainWindow = QTabWidget = object
     _accept_certificate = black_page = prepare_wayland_env = None
 
