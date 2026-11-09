@@ -31,8 +31,9 @@ like($globals, qr/^\s*bool\s+wifi_addressed\(\)\s*;/m,
 
 # --- the AP is not dropped without a lease --------------------------------
 like($loop,
-	qr/void\s+wifi_join_done\(\)\s*\{\s*if\s*\(\s*!\s*wifi_addressed\(\)\s*\)\s*\{[^}]*wifiState\s*=\s*"disconnected"[^}]*return;[^}]*\}\s*WiFi\.softAPdisconnect\(true\)/s,
+	qr/void\s+wifi_join_done\(\)\s*\{\s*if\s*\(\s*!\s*wifi_addressed\(\)\s*\)\s*\{[^}]*wifiState\s*=\s*"disconnected"[^}]*return;[^}]*\}/s,
 	'wifi_join_done keeps the AP up and stays disconnected without an address');
+like($loop, qr/wifi_ap_down_pending = true;/, 'a real join schedules the AP teardown instead of doing it inline');
 
 # --- the supervise loop treats it as down, keeps the AP, and retries ------
 like($loop, qr/if\s*\(\s*wifi_addressed\(\)\s*\)\s*\{\s*wifiDownTicks\s*=\s*0;/,

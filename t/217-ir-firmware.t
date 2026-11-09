@@ -200,4 +200,12 @@ like($g2, qr/\(homebaseIP == "" \|\| force_home\)/,
 	'a pinned homebase only moves on a deliberate pairing');
 like($g2, qr/\[now me\] keeping homebase/, 'and says when it kept the old one');
 
+
+# --- (n) the provisioning AP comes down only after the link holds ----------
+like($g3, qr/static bool wifi_ap_down_pending/, 'the AP teardown is deferred');
+like($g3, qr/wifi_ap_down_at = millis\(\) \+ 30000UL/, 'by one supervisor window');
+like($g3, qr/\[wifi\] link held; AP down/, 'and it is taken down once the link held');
+unlike($g3, qr/WiFi\.softAPdisconnect\(true\);\s*\n\s*wifiState = "connected";/,
+	'not in the same breath as the join');
+
 done_testing();

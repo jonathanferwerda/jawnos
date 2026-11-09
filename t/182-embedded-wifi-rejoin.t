@@ -46,7 +46,10 @@ my ($join_done) = $loop =~ /(void wifi_join_done\(\) \{.*?\n\})/s;
 ok($join_done, 'wifi_join_done is still one function');
 unlike($join_done, qr/WiFi\.mode\(WIFI_STA\)/,
 	'the rejoin does not switch to WIFI_STA after the station is up (that dropped it)');
-like($join_done, qr/WiFi\.softAPdisconnect\(true\);/, 'it still drops the provisioning AP');
+like($join_done, qr/wifi_ap_down_pending = true;/,
+	'it keeps the provisioning AP for now (dropping it here dropped the station)');
+like($loop, qr/WiFi\.softAPdisconnect\(true\);[^\n]*\n[^\n]*\[wifi\] link held; AP down/s,
+	'and drops it once the link has held');
 
 # --- /wifi_update refuses an empty or unreadable answer ----------------------
 my ($update) = $handlers =~ /(server\.on\("\/wifi_update".*?\n  \}\);)/s;

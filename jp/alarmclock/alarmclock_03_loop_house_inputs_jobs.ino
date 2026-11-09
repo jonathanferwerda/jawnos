@@ -526,6 +526,13 @@ bool wifi_addressed() {
 // DHCP runs again. wifi_supervise ticks every 10s, so six ticks is a minute.
 static const int DHCP_RETRY_TICKS = 6;
 
+// Turning the provisioning AP off in the same breath as a join dropped the
+// station a few seconds later on this driver: wifi_supervise then put the AP
+// back up, and the board flapped on a ~30 s cycle (join, drop, AP up, join).
+// Keep the AP up until the link has actually held, then take it down once.
+static bool wifi_ap_down_pending = false;
+static unsigned long wifi_ap_down_at = 0;
+
 // A successful join: drop the provisioning AP and bring mDNS and the clock up
 // on the network we just rejoined. Do not switch to WIFI_STA here: the join
 // often happens in AP_STA after the provisioning AP came up, and changing the
@@ -538,7 +545,12 @@ void wifi_join_done() {
     wifiState = "disconnected";
     return;
   }
-  WiFi.softAPdisconnect(true);
+  if (WiFi.getMode() == WIFI_AP_STA) {
+    // The AP was up before this join. Take it down only after the link has
+    // held for one supervisor window; doing it here was the flap.
+    wifi_ap_down_pending = true;
+    wifi_ap_down_at = millis() + 30000UL;
+  }
   wifiState = "connected";
   wifiDownTicks = 0;
   president_loaded = false;
@@ -546,7 +558,7 @@ void wifi_join_done() {
   jawnos_mdns_start();
   server.begin();
   request_time();
-  Serial.println("[wifi] reconnected; AP down");
+  Serial.println("[wifi] reconnected" + String(wifi_ap_down_pending ? "; AP kept for now" : "; AP down"));
   homebasePing();
 }
 
@@ -559,6 +571,11 @@ void wifi_supervise() {
   if (wifi_addressed()) {
     wifiDownTicks = 0;
     if (wifiState != "connected") { wifi_join_done(); }
+    if (wifi_ap_down_pending && (int32_t)(millis() - wifi_ap_down_at) >= 0) {
+      wifi_ap_down_pending = false;
+      WiFi.softAPdisconnect(true);
+      Serial.println("[wifi] link held; AP down");
+    }
     return;
   }
 
@@ -568,6 +585,7 @@ void wifi_supervise() {
     Serial.println("[wifi] link lost rssi=" + String(WiFi.RSSI())
       + " status=" + String((int)WiFi.status())
       + " bssid=" + bssid_str());
+    wifi_ap_down_pending = false;
     wifiState = "disconnected";
     jawnos_mdns_up = false;
   }
