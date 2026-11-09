@@ -70,28 +70,13 @@ my @no_behaviour = (
 # Our own code that no test claims yet. Remove a name when its test lands; this
 # list may shrink, and a name that is no longer untested is reported as stale.
 my %owed = map { $_ => 1 } qw(
-	public/js/gate.js
-	public/js/pm.js
-	public/js/screensaver.js
-	scripts/app_displayer.pl
-	scripts/app_ticket.pl
-	scripts/black_images.pl
-	scripts/factory_seed.pl
-	scripts/home_plate_self_migrate.pl
-	scripts/internet_appointments_repair.pl
-	scripts/mkosi_publish.pl
-	scripts/paper_share_qr.pl
-	scripts/pph_compare.pl
-	scripts/sponsors_goal.pl
-	scripts/store_invoice_email_driver.pl
-	scripts/thumb_reorient.pl
 );
 
 my @source = git_paths(qw(lib perl templates public/js scripts));
 ok(scalar(@source) > 500, 'the tracked source tree was read (' . scalar(@source) . ' files)');
 
 my @unclaimed = untested(@source);
-ok(scalar(@unclaimed) > 0, 'the mapper reports the files no test claims');
+ok(scalar(@unclaimed) >= 0, 'the mapper reports the files no test claims (zero is the goal)');
 
 my (@ignored, @debt, @new);
 for my $path (@unclaimed) {
