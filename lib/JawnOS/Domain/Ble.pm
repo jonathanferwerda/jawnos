@@ -772,7 +772,11 @@ sub ble_rehome_check {
 			timestamp => $now,
 			homebase => $mine_ip,
 			ip => $mine_ip,
-			force_home => 1
+			# A board is pinned to the machine its person paired it to: only an
+			# explicit Now Me (or USB provisioning) moves it, never a bridge that
+			# happened to hear it. A watch or deck has one link and its homebase
+			# may genuinely be gone, so the bridge still re-homes those.
+			force_home => ($edt eq 'microcontroller' ? 0 : 1)
 		});
 		1;
 	} or $log->error('BLE re-home failed: ' . $@);

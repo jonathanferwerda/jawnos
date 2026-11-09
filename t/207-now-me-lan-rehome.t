@@ -52,10 +52,13 @@ my $watch_ctl = read_file("$root/lib/JawnOS/Controller/manager_watch.pm");
 my $ble      = read_file("$root/lib/JawnOS/Domain/Ble.pm");
 like($embedded, qr/now_me\(\{[^\n]*force_home => 1 \}\)/,
 	'the Now Me button forces the move');
-like($ble, qr/force_home => 1/, 'a BLE re-home forces it too');
+like($ble, qr/force_home => \(\$edt eq 'microcontroller' \? 0 : 1\)/,
+	'a BLE re-home moves a watch but leaves a board pinned');
 like($part34, qr/now_me\(\{[^\n]*keep_pairing => 1 \}\)/,
 	'a settings save keeps the pairing');
 like($watch_ctl, qr/now_me\(\{[^\n]*keep_pairing => 1 \}\)/,
 	'a watch setting save keeps it too');
+
+
 
 done_testing();
