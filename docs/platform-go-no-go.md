@@ -9,7 +9,8 @@ already a P1/P3 task listed below.
 Measured at v0.1.2477 on a throwaway Debian 13 LXC (4 cores, 4 GB) with no other
 checkout on it, `JAWNOS_PORTABLE=1 JAWNOS_TRANSPORT=tcp`, a temp `HOME` and a
 fresh `database/jawnos.db` from `database/schema.sql`; the two-checkout case ran
-on the house box. Run detail: `docs/platform-p0.md`.
+on the house box; the Windows and Linux rows ran on the `platform-p0` workflow's
+runners at v0.1.2482. Run detail: `docs/platform-p0.md`.
 
 ## What P0 proved
 
@@ -36,6 +37,16 @@ on the house box. Run detail: `docs/platform-p0.md`.
 - **Probe.** `JAWNOS_PORTABLE=1 JAWNOS_TRANSPORT=tcp perl scripts/platform_probe.pl
   --json --check` → `use_fork: 0`, `use_pty: 0`, `use_unix_socket: 0`,
   `transport: "tcp"`, `missing_required: []`.
+- **Windows CI.** The `windows-latest` job runs the probe on Strawberry Perl:
+  `os: MSWin32`, `mode: portable`, `use_fork: 0`, `use_pty: 0`,
+  `use_unix_socket: 0`, `transport: "tcp"`, `missing_required: []`. Its first
+  run exposed two probe bugs — an unconditional `getpwuid`, and a local::lib scan
+  that missed Windows arch names — both fixed in v0.1.2482; before that the job
+  died at compile time and reported nothing.
+- **macOS CI is not available on the current plan.** `macos-14` is cancelled
+  with "The configuration ... is not supported", so the probe and suite cannot
+  run there until the account has macOS runners or a Mac is added. The macOS
+  rows are unmeasured, not failed.
 
 ## Appendix B, answered
 
@@ -48,7 +59,7 @@ on the house box. Run detail: `docs/platform-p0.md`.
 | 5 | Do control/log/watch work over loopback TCP with the existing token and the same JSON lines? | **Yes.** Control and log use the same JSON lines with the same token; watch stays a 4-byte length plus Sereal, whose record carries the token. All three round-tripped on the smoke box. | Nothing; pinned by `t/222` and `t/228`. |
 | 6 | Does the parent guard survive a killed master (Job Object or watchdog)? | **Partial.** `parent_guard.pl` exists and ran (`jawn guard`), and a deliberate TERM runs `shut_down` correctly. A SIGKILL of the master was not exercised. Windows needs `TerminateProcess`/Job Objects — `lib/JawnOS/Platform/Process.pm:150`. | A kill -9 test on Linux; Job Object design in P1, acceptance in P3. |
 | 7 | Does `manager_killer` find the right processes through `Win32::Process::Info`/`tasklist`? | **Linux:** yes, and now scoped to its own checkout (`t/78`, plus the two-checkout run). **Windows:** open — the script reads `/proc` directly and the `Platform::Process` Windows backend is not written. | The P1 backend; see the checkout-identity note below. |
-| 8 | Do the XS modules build and load under the chosen Strawberry Perl? | **Open.** Linux loads all of them: CryptX 0.085, DBD::SQLite 1.76, Net::SSLeay 1.94, Sereal 5.004, `ReadWriteFork` 2.02, Mojolicious 9.39, `missing_required: []`. | A Windows CI job that builds the set and runs `platform_probe.pl`. **This is the one row that can still stop the project.** |
+| 8 | Do the XS modules build and load under the chosen Strawberry Perl? | **Proven.** The `windows-latest` runner builds and loads the set: CryptX 0.091, DBD::SQLite 1.78, Net::SSLeay 1.96, Sereal 7.001, Mojolicious 9.54, `missing_required: []`. The only modules absent are `ReadWriteFork` and `IO::Pty` — the two the P1 process layer replaces. | Nothing for P0; keep the job green as the regression guard. |
 | 9 | Do the fixed and tunnel port ranges pass Windows Firewall on a private network? | **Open.** On Linux the app's Daemons bind `0.0.0.0` (46200-46205); the master's private surfaces bind `127.0.0.1` (46207-46209), so only the app range needs a rule. | An installer rule for the app range on private networks; an acceptance run on a real LAN. |
 | 10 | Does the Qt shell's `--probe`, the app-key bridge and the plain loopback WS path all pass? | **Partial.** The shared ws port bound and the worker answered (ws round trips in `t/228`); the Qt shell and the app-key bridge ran on the house box but not against a portable tree — the smoke box had no display. | Run the desktop app against a portable tree on a Linux desktop or VM; then macOS and Windows. |
 
@@ -71,15 +82,15 @@ on the house box. Run detail: `docs/platform-p0.md`.
 3. **`Platform::Process` backends.** macOS (`ps`/`sysctl`) and Windows
    (`tasklist`/`Win32::Process`) replace the `/proc` reads in the reaper, the
    guard and `manager_killer`.
-4. **XS in CI.** The Windows job is the gate for Q8: Strawberry Perl, the pinned
-   module set, `platform_probe.pl --json --check` green, and the suite.
+4. **XS in CI.** The Windows job already proves the set builds and loads; keep
+   it green and pinned, and add the macOS job once a runner exists.
 5. **Qt and WS against a portable tree.** `--probe`, the app-key bridge and a ws
    round trip with no Prefork behind them.
 
 ## What would stop it
 
-Only two rows can: **Q8**, if the XS set cannot be built reproducibly for
-Windows, or **Q6**, if the minimum Windows version gives no Job Object
-equivalent for the guard. Either one stops the native path and takes
-`docs/migration-roadmap.md` (roadmap §10) — that is the trigger, not a schedule
-slip.
+One row is left as a stop condition: **Q6**, if the minimum Windows version
+gives no Job Object equivalent for the guard. That would stop the native path
+and take `docs/migration-roadmap.md` (roadmap §10). **Q8 is proven** on a real
+Windows runner, and the macOS backend is a design risk rather than a measured
+one until a Mac or macOS runners exist.

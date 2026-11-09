@@ -37,7 +37,12 @@ jobs:
             Mojolicious@9.39 Mojo::SQLite@3.009 Minion@10.31 \
             Minion::Backend::SQLite@5.0.0 Mojo::IOLoop::ReadWriteFork@2.02 \
             Sereal::Encoder@5.004 Sereal::Decoder@5.004 CryptX@0.085 \
-            DBD::SQLite@1.76 Net::SSLeay
+            DBD::SQLite@1.76 Net::SSLeay \
+            Time::Duration File::Slurp Number::Format Date::Parse Hash::Merge \
+            SQL::Abstract Data::UUID Mojolicious::Plugin::RenderFile \
+            WWW::Mechanize Crypt::Simple File::Type HTML::Strip URI::Encode \
+            LWP::Protocol::https Net::IMAP::Client MIME::Parser Email::Stuffer \
+            Authen::SASL Time::Piece
       - name: probe
         run: perl scripts/platform_probe.pl --check
       - name: portable suite
@@ -62,7 +67,12 @@ jobs:
           if ($LASTEXITCODE -ne 0) { Write-Host "some modules did not build; the probe will say which" }
       - name: probe
         shell: powershell
-        run: perl scripts/platform_probe.pl --json | Tee-Object -FilePath platform-probe.json
+        run: |
+          # utf8 without a BOM: the artifact is read by tools, and PowerShell 5.1's
+          # -Encoding utf8 writes one.
+          $report = perl scripts/platform_probe.pl --json | Out-String
+          [System.IO.File]::WriteAllText("$PWD/platform-probe.json", $report, [System.Text.UTF8Encoding]::new($false))
+          $report
       - uses: actions/upload-artifact@v4
         with:
           name: platform-probe-windows
