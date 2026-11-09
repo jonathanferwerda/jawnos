@@ -248,8 +248,11 @@ sub whisper_cli_transcribe {
 	}
 	return '' unless $bin && length $model && -e $model;
 	my $language = (defined $lang && $lang =~ /^[a-z]{2,3}$/ && $lang ne 'auto') ? ' -l ' . $lang : '';
+	# A screened call still has prompts to play while its name is read: base
+	# held ~3 of 4 ARM cores for 27 s and starved the Piper voice. Both stages
+	# yield with nice 19 so ffmpeg and whisper-cli give the CPU back to the call.
 	my $cmd = sprintf(
-		'ffmpeg -nostdin -loglevel error -i - -blocksize 4096 -f wav -ar 16000 -ac 1 -acodec pcm_s16le - | %s -m %s%s --output-txt --file - 2>/dev/null',
+		'nice -n 19 ffmpeg -nostdin -loglevel error -i - -blocksize 4096 -f wav -ar 16000 -ac 1 -acodec pcm_s16le - | nice -n 19 %s -m %s%s --output-txt --file - 2>/dev/null',
 		$bin, $model, $language
 	);
 	my ($in, $out, $err);
@@ -475,21 +478,28 @@ sub whisper_transcribe {
 
 sub whisper_name_transcribe {
 	# The one thing a screened call leaves is who called, and the words are a
-	# handful over a narrowband 8 kHz link. The tiny model that keeps dictation
-	# fast read one such clip as "Listen strong." where base read "This is John."
-	# - through ffmpeg, sox and miniaudio alike - and base still answers in
-	# seconds over a clip this short. So the name takes base and the CLI, and the
-	# warm server's model is left to the keyboard. What comes back is the words as
-	# heard; the caller is filed under name_from_transcript of them, and the raw
-	# line is kept beside it because a surname over this link is often only
-	# close. '' when nobody spoke.
+	# handful over a narrowband 8 kHz link. The warm server (ggml-tiny, model
+	# already loaded) hears an 8 s clip in about 9 s; the one-shot CLI at base
+	# took 27 s and held ~3 of 4 ARM cores for most of it, starving the Piper
+	# voice still playing the call's remaining prompts. So the warm server is
+	# asked first. It is tiny, and tiny once read one such clip as "Listen
+	# strong." where base read "This is John." - through ffmpeg, sox and miniaudio
+	# alike - so when the server is down or says nothing usable the accurate base
+	# model and the CLI are the fallback, even at that cost. What comes back is
+	# the words as heard; the caller is filed under name_from_transcript of them,
+	# and the raw line is kept beside it because a surname over this link is
+	# often only close. '' when nobody spoke.
 	my ($raw, $lang) = @_;
 	return '' unless defined $raw && length $raw;
-	my $base = &whisper_model_file('base');
-	my $text = ($base && -e $base)
-		? &whisper_cli_transcribe($raw, $lang || 'auto', $base)
-		: &whisper_transcribe($raw, $lang || 'auto');
-	return '' if !length $text || &voice_silence_hallucination($text);
+	my $text = &whisper_server_transcribe($raw, $lang || 'auto');
+	$text = '' if defined $text && &voice_silence_hallucination($text);
+	if (!defined $text || !length $text) {
+		my $base = &whisper_model_file('base');
+		$text = ($base && -e $base)
+			? &whisper_cli_transcribe($raw, $lang || 'auto', $base)
+			: &whisper_transcribe($raw, $lang || 'auto');
+	}
+	return '' if !defined $text || !length $text || &voice_silence_hallucination($text);
 	return $text;
 }
 

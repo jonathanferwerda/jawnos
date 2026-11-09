@@ -5,6 +5,10 @@
 #            dictation and no call. Every transcription request touches the
 #            demand marker, a screened call touches it at arm time, and the loop
 #            stops only the server it started itself.
+#
+# covers:    The name path asks the warm server first and keeps the base model on
+#            the one-shot CLI as the fallback, with both pipeline stages at nice
+#            19 so a transcribed name never starves the call's voice.
 
 use strict;
 use warnings;
@@ -36,6 +40,28 @@ my ($server_call) = $ai =~ /(sub whisper_server_transcribe \{.*?\n\})/s;
 ok($server_call, 'whisper_server_transcribe is still one sub');
 like($server_call, qr/&whisper_server_wanted\(1\);/,
 	'a warm-server request asks for the server (and falls back to the CLI meanwhile)');
+
+# --- the name path: warm server first, base+CLI as the fallback ------------
+# The warm server (ggml-tiny) hears an 8 s name clip in ~9 s. The one-shot CLI at
+# base took 27 s at ~3 of 4 cores and starved the call's voice, so it is now
+# only the fallback for a server that is down or says nothing usable.
+my ($name) = $ai =~ /(sub whisper_name_transcribe \{.*?\n\})/s;
+ok($name, 'whisper_name_transcribe is still one sub');
+like($name, qr/&whisper_server_transcribe\(\$raw, \$lang \|\| 'auto'\)/,
+	'it asks the warm server for the name');
+my $server_at = index($name, 'whisper_server_transcribe');
+my $base_at   = index($name, "whisper_model_file('base')");
+my $cli_at    = index($name, 'whisper_cli_transcribe');
+ok($server_at >= 0 && $cli_at > $server_at,
+	'the warm server is tried before any CLI fallback');
+ok($base_at > $server_at && $cli_at > $base_at,
+	'and the accurate base model on the one-shot CLI is the fallback that follows');
+
+my ($cli) = $ai =~ /(sub whisper_cli_transcribe \{.*?\n\})/s;
+ok($cli, 'whisper_cli_transcribe is still one sub');
+my @nice = $cli =~ /nice -n 19/g;
+is(scalar @nice, 2,
+	'both pipeline stages (ffmpeg and whisper-cli) yield at nice 19');
 
 my ($transcript) = $gateway =~ /(sub _start_transcript \{.*?\n\})/s;
 ok($transcript, '_start_transcript is still one sub');

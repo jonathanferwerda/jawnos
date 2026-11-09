@@ -1,7 +1,7 @@
 # tests-for: templates/apps/controller.html.ep lib/JawnOS/Controller/manager_misc9.pm lib/JawnOS/Routes/manager_misc9.pm perl/help/topics_people.pl
 # covers:    The controller's home is a launcher, not a desk: a handheld panel
-#            opens on eight tiles, and the Leave tile names the power choices
-#            before they are wired.
+#            opens on eight tiles, and the Leave tile draws a working button
+#            per power choice this machine can offer.
 
 # A handheld has no desk to lay windows on, so the controller is served as its
 # own app page at /manager/controller. The route, the action that draws it, the
@@ -32,6 +32,8 @@ like($action, qr/template => 'apps\/controller'/,
 	'the action renders the controller app page');
 like($action, qr/&Manager::window_maker\(/,
 	'the page is served through the window maker');
+like($action, qr/power_actions\s*=>\s*\[\s*&subs::power_actions\(\)\s*\]/,
+	'the action passes the usable power choices to the template');
 
 # --- the eight tiles ----------------------------------------------------------
 my $template = read_file("$root/templates/apps/controller.html.ep");
@@ -39,12 +41,20 @@ for my $label (qw(Music Gallery Notifications Games Configuration IVR Automation
 	like($template, qr/\Q$label\E/, "the $label tile is on the launcher");
 }
 
-# Leave has no route yet, so it must not be a link.
-my ($leave) = $template =~ /(<div class="controller_tile controller_tile_leave">.*?<\/div>)/s;
-ok($leave, 'Leave is a panel, not a link');
-like($leave, qr/Sleep, Screen off, Restart, Shut down/,
-	'Leave names the four power choices');
-like($leave, qr/Not wired yet/, 'Leave says the choices are not wired');
+# Leave is a panel, not a link: one button per action, drawn from the list
+# the action handed the template, and an inline script that posts the chosen
+# word to the power route without navigating away.
+like($template, qr/<div class="controller_tile controller_tile_leave">/,
+	'Leave is a panel, not a link');
+like($template, qr/\(grep \{ \$power_has\{\$\_\} \} \@power_order\)/,
+	'the buttons are filtered from the actions this machine offers');
+like($template, qr/\@power_order\s*=\s*qw\(sleep screen_off restart shutdown logout\)/,
+	'the panel offers Sleep, Screen off, Restart, Shut down and Log out in order');
+like($template, qr/data-power-action=/, 'each Leave button carries its action word');
+like($template, qr/fetch\('\/manager\/power'/, 'the buttons post to the power route');
+like($template, qr/URLSearchParams\(\{ action: action/, 'the action word is the only thing sent');
+like($template, qr/This machine cannot power itself/,
+	'an empty list says so instead of drawing dead buttons');
 
 # --- the Guide topic ----------------------------------------------------------
 my $help = read_file("$root/perl/help/topics_people.pl");

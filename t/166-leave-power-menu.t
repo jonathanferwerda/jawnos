@@ -28,8 +28,17 @@ my $log = "$bin/power.log";
 my $tool = "$bin/systemctl";
 write_file($tool, "#!/bin/sh\nprintf '%s\\n' \"\$*\" >> \"\$POWER_LOG\"\nexit 0\n");
 chmod 0755, $tool;
+# The new choices have their own tools. loginctl answers the session query the
+# way the real one does for this process, so logout is offered on any test box.
+my $loginctl = "$bin/loginctl";
+write_file($loginctl, "#!/bin/sh\nprintf '%s\\n' \"\$*\" >> \"\$POWER_LOG\"\ncase \"\$*\" in *show-session*) echo 1 ;; esac\nexit 0\n");
+chmod 0755, $loginctl;
+my $xset = "$bin/xset";
+write_file($xset, "#!/bin/sh\nprintf '%s\\n' \"\$*\" >> \"\$POWER_LOG\"\nexit 0\n");
+chmod 0755, $xset;
 local $ENV{PATH} = "$bin:$ENV{PATH}";
 local $ENV{POWER_LOG} = $log;
+local $ENV{XDG_SESSION_ID} = '1';
 
 {
 	local $subs::config = { device => 'mobile' };
@@ -45,8 +54,8 @@ local $ENV{POWER_LOG} = $log;
 {
 	local $subs::config = { device => 'computer' };
 	local %subs::power_actions_cache = ();
-	is_deeply([ subs::power_actions() ], [ qw(restart shutdown sleep) ],
-		'a computer with systemd offers restart, shut down and sleep');
+	is_deeply([ subs::power_actions() ], [ qw(restart shutdown sleep screen_off logout) ],
+		'a computer with systemd, a session and an X display offers every choice');
 
 	my %want = ( restart => 'reboot', shutdown => 'poweroff', sleep => 'suspend' );
 	for my $action ( sort keys %want ) {
@@ -57,6 +66,18 @@ local $ENV{POWER_LOG} = $log;
 		is(read_file($log), "--no-block $want{$action}\n",
 			"$action asks systemd for $want{$action} without blocking the reply");
 	}
+
+	write_file($log, '');
+	my $screen = subs::power_action('screen_off');
+	is($screen->{'ok'}, 1, 'screen off is accepted when a panel can be blanked');
+	is($screen->{'method'}, 'xset', 'and names xset as the mechanism that ran');
+	is(read_file($log), "-display :0 dpms force off\n", 'xset blanks the display');
+
+	write_file($log, '');
+	my $logout = subs::power_action('logout');
+	is($logout->{'ok'}, 1, 'logout is accepted when this process has a session');
+	is($logout->{'method'}, 'loginctl', 'and names logind as the mechanism that ran');
+	like(read_file($log), qr/terminate-session 1/, 'logind is asked to end this session');
 
 	write_file($log, '');
 	my $bad = subs::power_action('exit');
@@ -91,6 +112,10 @@ my $js = read_file("$ROOT/public/js/manager/manager/10_appointment_edit.js");
 like($js, qr/jawnosLeaveMenu\(\$\(this\)\)/, 'a press on Leave opens the menu, it does not leave at once');
 like($js, qr/data-leave-action/, 'each choice carries its action');
 like($js, qr/url:\s*'\/manager\/power'/, 'the power choices post to the power route');
+like($js, qr/screen_off:\s*\{ label:/, 'the menu offers Screen off');
+like($js, qr/logout:\s*\{ label:/, 'the menu offers Log out');
+like($js, qr/Darkening the screen/, 'Screen off has its own working line');
+like($js, qr/Logging out/, 'Log out has its own working line');
 like($js, qr/jawnosAlert\(/, 'the menu is the house dialog, not a browser prompt');
 
 my $css = read_file("$ROOT/public/css/manager.css");

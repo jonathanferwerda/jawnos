@@ -105,9 +105,63 @@ sub power_actions() {
 		my $systemctl = `command -v systemctl 2>/dev/null`;
 		my $loginctl = `command -v loginctl 2>/dev/null`;
 		@actions = qw(restart shutdown sleep) if length $systemctl || length $loginctl;
+		push @actions, 'screen_off' if &_screen_off_option();
+		push @actions, 'logout' if length &_logind_session_id();
 	}
 	$power_actions_cache{$key} = \@actions;
 	return @actions;
+}
+
+# The session logind can end on our behalf. XDG_SESSION_ID is the honest
+# answer from a session's own environment; when this process was started by
+# the system unit there is none, so ask logind for the session holding us.
+# An id is used in a shell word below, so it is validated first.
+sub _logind_session_id() {
+	my $loginctl = `command -v loginctl 2>/dev/null`;
+	chomp $loginctl;
+	return '' unless length $loginctl;
+	my $id = $ENV{'XDG_SESSION_ID'} || '';
+	$id = `$loginctl show-session self -p Id --value 2>/dev/null` unless length $id;
+	chomp $id;
+	return '' unless $id =~ /^[A-Za-z0-9_.-]+$/;
+	my $known = `$loginctl show-session '$id' -p Id --value 2>/dev/null`;
+	chomp $known;
+	return $known eq $id ? $id : '';
+}
+
+# Screen off is a dark panel, not a power state: xset owns an X session, the
+# backlight and the framebuffer own the console. Any one of them is enough to
+# offer the choice; _screen_off_run() tries them in that order and names the
+# one that ran. A blanked framebuffer is repainted by whatever owns the panel,
+# so the dark lasts only if the caller stops that painter first.
+sub _screen_off_option() {
+	my $xset = `command -v xset 2>/dev/null`;
+	return 1 if length $xset;
+	my @backlight = glob('/sys/class/backlight/*');
+	return 1 if @backlight;
+	return -d '/sys/class/graphics/fb0' ? 1 : 0;
+}
+
+sub _screen_off_run() {
+	my $xset = `command -v xset 2>/dev/null`;
+	chomp $xset;
+	if (length $xset) {
+		my $rc = system($xset, '-display', ':0', 'dpms', 'force', 'off');
+		return ($rc, 'xset') if $rc == 0;
+	}
+	my $sudo = `command -v sudo 2>/dev/null`;
+	chomp $sudo;
+	my $prefix = length $sudo ? [$sudo, '-n'] : [];
+	my @backlight = glob('/sys/class/backlight/*');
+	if (@backlight) {
+		my $rc = system(@$prefix, 'sh', '-c', 'echo 4 > /sys/class/backlight/*/bl_power');
+		return ($rc, 'backlight') if $rc == 0;
+	}
+	if (-d '/sys/class/graphics/fb0') {
+		my $rc = system(@$prefix, 'sh', '-c', 'echo 4 > /sys/class/graphics/fb0/blank');
+		return ($rc, 'framebuffer') if $rc == 0;
+	}
+	return (1, '');
 }
 
 # Run one of the menu's choices. The action is a fixed word from
@@ -118,30 +172,51 @@ sub power_action($action) {
 	$action = '' unless defined $action;
 	my %allowed = map { $_ => 1 } &power_actions();
 	return { ok => 0, error => 'unsupported' } unless $allowed{$action};
-	my %verb = ( restart => 'reboot', shutdown => 'poweroff', sleep => 'suspend' );
-	my $verb = $verb{$action};
-	my @cmd;
-	my $systemctl = `command -v systemctl 2>/dev/null`;
-	chomp $systemctl;
-	if (length $systemctl) {
-		@cmd = ($systemctl, '--no-block', $verb);
-	}
-	else {
+	my $rc = 1;
+	my $method = '';
+	if ($action eq 'logout') {
+		my $id = &_logind_session_id();
+		return { ok => 0, error => 'no session' } unless length $id;
 		my $loginctl = `command -v loginctl 2>/dev/null`;
 		chomp $loginctl;
-		@cmd = ($loginctl, $verb) if length $loginctl;
+		return { ok => 0, error => 'no power tool' } unless length $loginctl;
+		$rc = system($loginctl, 'terminate-session', $id);
+		if ($rc != 0) {
+			my $sudo = `command -v sudo 2>/dev/null`;
+			$rc = system('sudo', '-n', $loginctl, 'terminate-session', $id) if length $sudo;
+		}
+		$method = 'loginctl';
 	}
-	return { ok => 0, error => 'no power tool' } unless @cmd;
-	my $rc = system(@cmd);
-	# A desktop started outside the graphical session (a system unit, a
-	# headless test) is not an active logind session, so polkit may refuse.
-	# The live image grants passwordless sudo; -n never prompts and never hangs.
-	if ($rc != 0) {
-		my $sudo = `command -v sudo 2>/dev/null`;
-		$rc = system('sudo', '-n', @cmd) if length $sudo;
+	elsif ($action eq 'screen_off') {
+		($rc, $method) = &_screen_off_run();
+	}
+	else {
+		my %verb = ( restart => 'reboot', shutdown => 'poweroff', sleep => 'suspend' );
+		my $verb = $verb{$action};
+		my @cmd;
+		my $systemctl = `command -v systemctl 2>/dev/null`;
+		chomp $systemctl;
+		if (length $systemctl) {
+			@cmd = ($systemctl, '--no-block', $verb);
+		}
+		else {
+			my $loginctl = `command -v loginctl 2>/dev/null`;
+			chomp $loginctl;
+			@cmd = ($loginctl, $verb) if length $loginctl;
+		}
+		return { ok => 0, error => 'no power tool' } unless @cmd;
+		$rc = system(@cmd);
+		# A desktop started outside the graphical session (a system unit, a
+		# headless test) is not an active logind session, so polkit may refuse.
+		# The live image grants passwordless sudo; -n never prompts and never hangs.
+		if ($rc != 0) {
+			my $sudo = `command -v sudo 2>/dev/null`;
+			$rc = system('sudo', '-n', @cmd) if length $sudo;
+		}
 	}
 	&subs::say_it('power ' . $action . ($rc == 0 ? ' requested' : ' failed'));
-	return $rc == 0 ? { ok => 1, action => $action } : { ok => 0, error => 'refused' };
+	return { ok => 0, error => 'refused' } unless $rc == 0;
+	return { ok => 1, action => $action, ($method ? (method => $method) : ()) };
 }
 
 sub misc_setting_list {

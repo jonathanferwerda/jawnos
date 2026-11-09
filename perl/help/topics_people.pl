@@ -199,11 +199,11 @@ $topic{'controller'} = {
 		title => 'Controller', category => 'apps', app => 'controller',
 		verified => '2026-11-08',
 		templates => [ 'templates/apps/controller.html.ep' ],
-		summary => 'The handheld\'s home: eight tiles that open the apps and name the power choices.',
+		summary => 'The handheld\'s home: eight tiles, and a Leave panel that powers this machine off, down or away.',
 		body => [
 			'Controller is the home screen of the handheld. It has no desk of windows: it shows eight tiles, each one press away from the surface it names.',
 			'Music opens the house music, Gallery the photos and videos, Notifications what the house has told you, and Games the Twirl falling-block puzzle. Configuration holds the house and device settings, including the Sys section. IVR opens the Phone app, where the call menu and recorded greeting live. Automation opens the embedded device toggles.',
-			'Leave is a placeholder for the power choices: Sleep, Screen off, Restart and Shut down. They are named on the panel but are not wired yet, so pressing there does nothing.'
+			'Leave is a working panel on the launcher. Sleep suspends this machine, Screen off darkens the panel, Restart and Shut down do what they say, and Log out ends the session. Press one and the tile says it asked, keeping you on the launcher; it never navigates away. A machine without logind, or without an X or framebuffer panel to darken, offers fewer of these buttons, and the tile says so when it can offer none.'
 		],
 		related => [ 'twirl', 'phone', 'configure' ]
 	};

@@ -471,8 +471,9 @@ $(document).on('click', '.leave', function() {
 
 // The Leave button is the house's power menu. Exit is what Leave always did -
 // seal the database and end the session. The rest ask this machine to restart,
-// shut down or sleep. A machine that cannot do one (the Android app) does not
-// carry it: the start menu renders `power` from subs::power_actions().
+// shut down, sleep, darken the screen or end the session. A machine that cannot
+// do one (the Android app) does not carry it: the start menu renders `power`
+// from subs::power_actions().
 function jawnosLeaveMenu(toggle) {
 	if (typeof startMenuCloser == 'function') { startMenuCloser(0); }
 	var supported = String((toggle && toggle.attr('power')) || '').split(',');
@@ -482,7 +483,9 @@ function jawnosLeaveMenu(toggle) {
 	var extra = {
 		restart: { label: 'power_restart', note: 'Restart the computer' },
 		shutdown: { label: 'power_shutdown', note: 'Turn the computer off' },
-		sleep: { label: 'power_sleep', note: 'Suspend, the same as closing the lid' }
+		sleep: { label: 'power_sleep', note: 'Suspend, the same as closing the lid' },
+		screen_off: { label: 'Screen off', note: 'Darken the display' },
+		logout: { label: 'Log out', note: 'End this session' }
 	};
 	$.each(supported, function (i, action) {
 		if (extra[action]) { choices.push($.extend({ action: action }, extra[action])); }
@@ -505,7 +508,9 @@ $(document).on('click', '.leave_power_button', function() {
 });
 
 function jawnosLeavePower(action) {
-	var working = action == 'sleep' ? 'Sleeping…' : (action == 'restart' ? 'Restarting…' : 'Shutting down…');
+	var working = action == 'sleep' ? 'Sleeping…' : (action == 'restart' ? 'Restarting…'
+		: (action == 'screen_off' ? 'Darkening the screen…'
+		: (action == 'logout' ? 'Logging out…' : 'Shutting down…')));
 	jawnosAlert('<p class="leave_power_working">' + jawnosT(working) + '</p>', { title: jawnosT('power_leave') });
 	$.ajax({
 		url: '/manager/power',
