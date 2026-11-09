@@ -11,21 +11,19 @@ use strict;
 use warnings;
 
 use Exporter 'import';
+BEGIN {
+	require File::Basename;
+	require Cwd;
+	my $dir = Cwd::abs_path(File::Basename::dirname(__FILE__));
+	unshift @INC, "$dir/../.." if $dir && -d "$dir/../..";
+}
+use JawnOS::Platform::Process ();
 our @EXPORT_OK = qw(cpu_ticks cpu_hog);
 
-# cpu_ticks($pid) -> utime + stime, or undef when /proc is not available.
+# cpu_ticks($pid) -> utime + stime, or undef when the platform cannot read
+# them. /proc parsing lives in JawnOS::Platform::Process.
 sub cpu_ticks {
-	my ($pid) = @_;
-	return unless defined $pid && $pid =~ /^\d+$/;
-	open(my $fh, '<', "/proc/$pid/stat") or return;
-	my $line = <$fh>;
-	close $fh;
-	return unless defined $line;
-	# comm can contain spaces and parens; fields after the last ')' are fixed.
-	my $close = rindex($line, ')');
-	return if $close < 0;
-	my @f = split ' ', substr($line, $close + 2);
-	return $f[11] + $f[12];
+	return JawnOS::Platform::Process::cpu_ticks($_[0]);
 }
 
 # cpu_hog($delta_ticks, $seconds, $hz) -> true when that is >= 80% of a core.

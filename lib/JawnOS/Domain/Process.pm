@@ -45,6 +45,7 @@ BEGIN {
 	unshift @INC, "$dir/../.." if $dir && -d "$dir/../..";
 }
 use JawnOS::Transport;
+use JawnOS::Platform::Process ();
 
 # The warranty seed map, keyed by the name a caller passes to
 # subs::subprocessor. Values are a compact duration ('5s', '30m', '2h') or
@@ -400,15 +401,7 @@ sub subprocessor_command {
 
 	# The command inherits the wrapper's process group (pgid 0 here), so a group
 	# kill of the wrapper still takes it, while its own expiry kills only it.
-	my $start_ticks = '';
-	if (open(my $stat_fh, '<', "/proc/$pid/stat")) {
-		my $stat_line = <$stat_fh>;
-		close $stat_fh;
-		if (defined $stat_line && (my $close = rindex($stat_line, ')')) >= 0) {
-			my @stat_field = split ' ', substr($stat_line, $close + 2);
-			$start_ticks = $stat_field[19] // '';
-		}
-	}
+	my $start_ticks = JawnOS::Platform::Process::start_time($pid) || '';
 	my $child = {
 		parent => $$,
 		pid => $pid,
@@ -524,44 +517,11 @@ sub subprocessor_reap {
 
 	my $alive = $opt{'alive'} || sub {
 		my ($pid) = @_;
-		return 0 unless defined $pid && $pid =~ /^\d+$/;
-		return kill(0, $pid) ? 1 : 0;
+		return JawnOS::Platform::Process::pid_exists($pid) ? 1 : 0;
 	};
-	my $starttime = $opt{'starttime'} || sub {
-		my ($pid) = @_;
-		return '' unless defined $pid && $pid =~ /^\d+$/;
-		open(my $fh, '<', "/proc/$pid/stat") or return '';
-		my $line = <$fh>;
-		close $fh;
-		return '' unless defined $line;
-		my $close = rindex($line, ')');
-		return '' if $close < 0;
-		my @field = split ' ', substr($line, $close + 2);
-		return defined $field[19] ? $field[19] : '';
-	};
-	# The group's other members: state is field 3, ppid 4, pgrp 5, so after the
-	# "(comm)" cut, pgrp is index 2. A zombie is already gone for our purpose.
-	my $descendants = $opt{'descendants'} || sub {
-		my ($pid, $pgid) = @_;
-		my @found;
-		return \@found unless defined $pgid && $pgid =~ /^\d+$/ && $pgid > 1;
-		opendir(my $dh, '/proc') or return \@found;
-		foreach my $entry (readdir $dh) {
-			next unless $entry =~ /^\d+$/;
-			next if $entry == $pid;
-			open(my $fh, '<', "/proc/$entry/stat") or next;
-			my $line = <$fh>;
-			close $fh;
-			next unless defined $line;
-			my $close = rindex($line, ')');
-			next if $close < 0;
-			my @field = split ' ', substr($line, $close + 2);
-			next if defined $field[0] && $field[0] eq 'Z';
-			push @found, $entry if defined $field[2] && $field[2] == $pgid;
-		}
-		closedir $dh;
-		return \@found;
-	};
+	my $starttime = $opt{'starttime'} || \&JawnOS::Platform::Process::start_time;
+	# The group's other members, skipping the pid itself and zombies.
+	my $descendants = $opt{'descendants'} || \&JawnOS::Platform::Process::descendants;
 	my $kill = $opt{'kill'} || sub {
 		my ($signal, $target) = @_;
 		return kill($signal, $target);

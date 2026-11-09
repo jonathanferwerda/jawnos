@@ -116,7 +116,17 @@ moves to Minion. P0 measures which routes actually block before choosing.
 Portable mode currently runs one Daemon per purpose; the `workers` argument is a
 hint for the dispatcher, not a Prefork pool.
 
-## Slice 3 — `/proc` and network parsing
+## Slice 3 (in flight) — process and network parsing
+
+Process identity, state, CPU ticks and the process-group scan now live in
+`lib/JawnOS/Platform/Process.pm` with the Linux `/proc` backend;
+`parent_guard.pl`, `Domain/Process.pm` and `Ble/Guard.pm` call it and keep
+their own rules. A platform without `/proc` answers `''`, `undef` or `[]`, so
+the caller's existing fallback is what runs. The macOS (`ps`/`sysctl`) and
+Windows (`Win32::Process`/`tasklist`) bodies, and the remaining direct `/proc`
+readers (`jawn`, `manager_misc.pm`, `crew.pl`, `scripts/manager_killer.pl`), are
+the rest of this slice. `t/227-platform-process.t` pins the seam, including the
+zombie/reaped distinction and the grandchild group scan.
 
 Put process identity and state behind one module and test the macOS
 implementation against recorded fixtures on Linux:
@@ -185,7 +195,9 @@ against the `Must` rows in `docs/platform-roadmap.md` §7.
 
 - Resident loops still fork through `subs::subprocessor`; Windows needs the
   supervised process layer (P1/P3).
-- The subprocessor reaper reads `/proc` (`lib/JawnOS/Domain/Process.pm`).
+- The subprocessor reaper reads `/proc` through `JawnOS::Platform::Process`;
+  its macOS and Windows backends are not written yet, so a non-Linux box still
+  gets the empty/liveness fallbacks rather than a native answer.
 - `Mojo::IOLoop::ReadWriteFork` is the master's runner; Windows needs a
   `Win32::Process` equivalent.
 - The Minion worker is itself a subprocessor.

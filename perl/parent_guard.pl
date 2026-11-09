@@ -25,6 +25,13 @@ use Config;
 use POSIX ();
 use Mojo::IOLoop;
 use Time::HiRes qw(sleep);
+BEGIN {
+	require File::Basename;
+	require Cwd;
+	my $dir = Cwd::abs_path(File::Basename::dirname(__FILE__));
+	unshift @INC, "$dir/../lib" if $dir && -d "$dir/../lib";
+}
+use JawnOS::Platform::Process ();
 
 # start(tree => PID, master => PID, interval => SECONDS)
 # Returns the watchdog pid in the tree, has no return in the watchdog, or
@@ -62,49 +69,26 @@ sub start {
 	POSIX::_exit(0);
 }
 
-# The process state from /proc/<pid>/stat (S, R, Z, ...), or '' when it cannot
-# be read. The second field is "(comm)", which can hold spaces and parentheses,
-# so cut through its closing paren first.
-sub state {
-	my ($pid) = @_;
-	open(my $fh, '<', "/proc/$pid/stat") or return '';
-	my $line = <$fh>;
-	close $fh;
-	return '' unless defined $line;
-	$line =~ s/^.*\)\s+//;
-	my ($state) = split /\s+/, $line;
-	return defined $state ? $state : '';
-}
+# The /proc reads live in JawnOS::Platform::Process, where the macOS and Windows
+# backends can replace them without touching the guard's rules. The wrappers
+# stay because the guard's names are part of its own shape.
+
+# The process state (S, R, Z, ...), or '' when it cannot be read.
+sub state { return JawnOS::Platform::Process::state($_[0]) }
 
 # Exists and is not a zombie. This is the right test for the tree: a killed
 # child stays visible to kill(0) until its parent reaps it.
-sub running {
-	my ($pid) = @_;
-	return 0 unless $pid && $pid =~ /^[0-9]+$/;
-	return 0 unless kill 0, $pid;
-	my $state = &state($pid);
-	return 0 if $state eq 'Z' || $state eq 'X' || $state eq 'x';
-	return 1;
-}
+sub running { return JawnOS::Platform::Process::running($_[0]) }
 
-# /proc/<pid>/stat's start time (field 22). It identifies the process rather
-# than its name: the QA harness runs the tree under script(1), whose command
-# line does not mention jawn, and that wrapper is as legitimate a master as
-# ./jawn. A recycled pid starts later, so the time is what tells them apart.
-sub start_time {
-	my ($pid) = @_;
-	open(my $fh, '<', "/proc/$pid/stat") or return '';
-	my $line = <$fh>;
-	close $fh;
-	return '' unless defined $line;
-	$line =~ s/^.*\)\s+//;   # cut through "(comm)", which may hold spaces
-	my @field = split /\s+/, $line;
-	return $field[19] // '';    # field 3 is state, so field 22 is index 19
-}
+# The start token identifies the process rather than its name: the QA harness
+# runs the tree under script(1), whose command line does not mention jawn, and
+# that wrapper is as legitimate a master as ./jawn. A recycled pid starts later,
+# so the time is what tells them apart.
+sub start_time { return JawnOS::Platform::Process::start_time($_[0]) }
 
-# The master is alive only when it exists, is not a zombie, and - where /proc
-# can be read - is still the same process rather than an unrelated one that
-# inherited the number in between polls.
+# The master is alive only when it exists, is not a zombie, and - where a start
+# token can be read - is still the same process rather than an unrelated one
+# that inherited the number in between polls.
 sub alive {
 	my ($pid, $start) = @_;
 	return 0 unless &running($pid);
@@ -113,14 +97,8 @@ sub alive {
 		return ($now ne '' && $now eq $start) ? 1 : 0;
 	}
 	# No start time was captured (no /proc): fall back to the name test.
-	if (open(my $fh, '<', "/proc/$pid/cmdline")) {
-		local $/;
-		my $cmd = <$fh>;
-		close $fh;
-		$cmd = '' unless defined $cmd;
-		$cmd =~ s/\0/ /g;
-		return 0 if length $cmd && $cmd !~ m{(?:^|/)jawn(?:\s|$)};
-	}
+	my $cmd = JawnOS::Platform::Process::command_line($pid);
+	return 0 if length $cmd && $cmd !~ m{(?:^|/)jawn(?:\s|$)};
 	return 1;
 }
 

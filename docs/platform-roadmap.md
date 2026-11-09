@@ -1,9 +1,11 @@
 # Native Windows and macOS Roadmap
 
-**Status:** P0 in flight (2026-11-08). Slices 1–2 landed: the questions are answered, the
+**Status:** P0 in flight (2026-11-09). Slices 1–2 landed: the questions are answered, the
 capability probe exists, portable mode has a Daemon server and a pipe runner, and control/log/watch
-speak loopback TCP with a token when asked. No Mac or Windows hardware is present yet, so the
-hardware exits wait for it. Runbook and acceptance checklist: `docs/platform-p0.md`.
+speak loopback TCP with a token when asked. Slice 3 has begun: process identity, state and the
+process-group scan live in `lib/JawnOS/Platform/Process.pm` (Linux backend). No Mac or Windows
+hardware is present yet, so the hardware exits wait for it. Runbook and acceptance checklist:
+`docs/platform-p0.md`.
 **Related:** `desktop/README.md` (the Qt shell and today's supervisor), `docs/docker.md` (the
 headless server), `docs/migration-roadmap.md` (the Go path, the alternative endgame),
 `docs/infrastructure-roadmap.md` (where containers still belong).
@@ -118,9 +120,9 @@ Current Linux/POSIX dependencies:
   `Mojo::IOLoop::ReadWriteFork` with `type => 'pty'`).
 - `~/.president/control`, `~/.president/log` and the watch socket are UNIX sockets
   (`jawn:1315-1527`, `perl/control.pl:26-40`).
-- Process identity and state come from `/proc` (`jawn:866-900`, `parent_guard.pl:60-118`,
-  `Ble/Guard.pm:17-27`, `manager_misc.pm:472-546`, `crew.pl:151-161`), and the killer scans it
-  (`scripts/manager_killer.pl:65-100`).
+- Process identity and state come from `/proc` through `lib/JawnOS/Platform/Process.pm`
+  (`parent_guard.pl`, `Domain/Process.pm`, `Ble/Guard.pm`); `jawn:866-900`, `manager_misc.pm:472-546`,
+  `crew.pl:151-161` and `scripts/manager_killer.pl:65-100` still read it directly.
 - `kill`, `waitpid` and signals are assumed throughout; `parent_guard` already has a
   `PR_SET_PDEATHSIG` fast path guarded by `$^O eq 'linux'` with a heartbeat fallback
   (`parent_guard.pl:142-146`).
@@ -275,7 +277,8 @@ container. Keep them:
 - [x] `lib/JawnOS/Transport.pm`: control/log/watch over loopback TCP with a per-boot token, while native keeps AF_UNIX
 - [x] Runbook and hardware acceptance checklist: `docs/platform-p0.md`
 - [x] CI probe jobs for Linux, Windows and macOS (Windows/macOS report-only until hardware)
-- [ ] `/proc` and network parsing behind platform modules
+- [x] Process identity, state, CPU ticks and the process-group scan behind `lib/JawnOS/Platform/Process.pm` (Linux backend; macOS/Windows to follow)
+- [ ] Network parsing behind `JawnOS::Platform::Net` and `::Mdns`
 - [ ] The websocket worker and alarm/memory sockets off `IO::Socket::UNIX`
 - [ ] Portable smoke house and suite green on a spare checkout
 
