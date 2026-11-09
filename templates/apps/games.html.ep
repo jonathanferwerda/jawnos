@@ -1,0 +1,45 @@
+<%# A second launcher, one press in from the Controller's Games tile. Cards and
+    Twirl run inside the house; an emulated game will leave this view for its
+    own programme, so its tile carries a note instead of a link until there is
+    something to run. %>
+<style>
+	html, body, .wind, .window_contents { background:#2e2e2e !important; color:#f4f4f4 !important; }
+	.wind { left:0 !important; top:0 !important; width:100vw !important; height:100vh !important; }
+	.window_contents { width:100% !important; height:100% !important; padding-top:0 !important; }
+	#games_shell { display:flex; flex-direction:column; width:100%; height:100%; min-height:0; }
+	#games_bar { flex:0 0 auto; display:flex; justify-content:flex-end; padding:6px 8px 0; }
+	#games_home { font:inherit; font-size:13px; line-height:1.2; padding:5px 12px;
+		border:1px solid #4a4a4a; border-radius:8px; background:#3a3a3a; color:#ffffff;
+		text-decoration:none; }
+	#games_home:hover { border-color:var(--accent, #4a90d9); }
+	#games_grid { flex:1 1 auto; min-height:0; display:grid; grid-template-columns:repeat(3,1fr);
+		gap:10px; padding:8px; box-sizing:border-box; }
+	.games_tile { display:flex; flex-direction:column; align-items:center; justify-content:center;
+		gap:8px; min-width:0; padding:12px; border:1px solid #4a4a4a; border-radius:14px;
+		background:#3a3a3a; color:#ffffff; text-decoration:none; text-align:center; }
+	.games_tile:hover { border-color:var(--accent, #4a90d9); }
+	.games_tile_icon { width:56px; height:56px; object-fit:contain; }
+	.games_tile_label { font-size:16px; font-weight:600; line-height:1.1; }
+	.games_tile_note { font-size:11px; line-height:1.3; opacity:.8; }
+	.games_tile_soon { border-style:dashed; opacity:.72; cursor:var(--jawnos-cursor-default, default); }
+</style>
+<div id="games_shell">
+	<div id="games_bar"><a id="games_home" href="/manager/controller"><%= &subs::ui('Home') %></a></div>
+	<div id="games_grid">
+		<a class="games_tile" href="/manager?open=cards&amp;full=1">
+			<img class="games_tile_icon" src="/images/decipherable/cards.png" alt="">
+			<span class="games_tile_label"><%= &subs::ui('Cards') %></span>
+			<span class="games_tile_note"><%= &subs::ui('The card room, solitaire and blackjack') %></span>
+		</a>
+		<a class="games_tile" href="/manager?open=twirl&amp;full=1">
+			<img class="games_tile_icon" src="/images/decipherable/tetris.png" alt="">
+			<span class="games_tile_label"><%= &subs::ui('Twirl') %></span>
+			<span class="games_tile_note"><%= &subs::ui('The falling-block puzzle: A turns one way and B the other') %></span>
+		</a>
+		<div class="games_tile games_tile_soon">
+			<img class="games_tile_icon" src="/images/decipherable/diskette.png" alt="">
+			<span class="games_tile_label"><%= &subs::ui('Emulated games') %></span>
+			<span class="games_tile_note"><%= &subs::ui('None installed yet. An emulated game runs outside the JawnOS view.') %></span>
+		</div>
+	</div>
+</div>

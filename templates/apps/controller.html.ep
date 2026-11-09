@@ -191,10 +191,10 @@
 			<span class="controller_tile_label"><%= &subs::ui('Notifications') %></span>
 			<span class="controller_tile_note"><%= &subs::ui('What the house has told you') %></span>
 		</a>
-		<a class="controller_tile" href="/manager?open=twirl&amp;full=1">
+		<a class="controller_tile" href="/manager?open=games&amp;full=1">
 			<img class="controller_tile_icon" src="/images/decipherable/tetris.png" alt="">
 			<span class="controller_tile_label"><%= &subs::ui('Games') %></span>
-			<span class="controller_tile_note"><%= &subs::ui('Twirl, the falling-block puzzle') %></span>
+			<span class="controller_tile_note"><%= &subs::ui('Cards, Twirl and emulated games') %></span>
 		</a>
 		<a class="controller_tile" href="/manager?open=configure&amp;full=1">
 			<img class="controller_tile_icon" src="/images/decipherable/gear.png" alt="">

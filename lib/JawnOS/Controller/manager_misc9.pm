@@ -810,4 +810,16 @@ sub action_44003 {
 	$c->render(json => $answer);
 }
 
+# GET /manager/games
+# A second launcher, one press in from the Controller's Games tile. Cards and
+# Twirl run inside the house; an emulated game will leave this view for its own
+# programme, so its tile carries a note instead of a link until there is one.
+sub action_44004 {
+	my $c = shift;
+	my $timestamp = $c->param('timestamp');
+	my $contents = $c->render_to_string(template => 'apps/games');
+	my $website = &Manager::window_maker({ user_agent => $c->param('user_agent'), app => 'games', contents => $contents }, $timestamp);
+	$c->render(text => $website);
+}
+
 1;

@@ -130,6 +130,18 @@ function twirlGame() {
 		return out;
 	}
 
+	function rotateMatrixLeft(m) {
+		var n = m.length;
+		var out = [];
+		for (var r = 0; r < n; r++) { out.push(new Array(n).fill(0)); }
+		for (var r = 0; r < n; r++) {
+			for (var c = 0; c < n; c++) {
+				out[n - 1 - c][r] = m[r][c];
+			}
+		}
+		return out;
+	}
+
 	function pieceCells(matrix) {
 		var cells = [];
 		for (var r = 0; r < matrix.length; r++) {
@@ -212,6 +224,29 @@ function twirlGame() {
 		var n = p.matrix.length;
 		var pr = p.pivot[0], pc = p.pivot[1];
 		var npr = pc, npc = n - 1 - pr;
+		var nx = p.x + pc - npc;
+		var ny = p.y + pr - npr;
+		var kicks = [[0,0],[-1,0],[1,0],[-2,0],[2,0],[0,-1],[-1,-1],[1,-1]];
+		for (var i = 0; i < kicks.length; i++) {
+			if (!collides(rotated, nx + kicks[i][0], ny + kicks[i][1])) {
+				p.matrix = rotated;
+				p.x = nx + kicks[i][0];
+				p.y = ny + kicks[i][1];
+				p.pivot = [npr, npc];
+				return;
+			}
+		}
+	}
+
+	// The same fixed-pivot turn the other way, for B.
+	function rotateCounter() {
+		var p = twirlSpace.current;
+		if (!p) { return; }
+		var rotated = rotateMatrixLeft(p.matrix);
+		if (sameMatrix(rotated, p.matrix)) { return; }
+		var n = p.matrix.length;
+		var pr = p.pivot[0], pc = p.pivot[1];
+		var npr = n - 1 - pc, npc = pr;
 		var nx = p.x + pc - npc;
 		var ny = p.y + pr - npr;
 		var kicks = [[0,0],[-1,0],[1,0],[-2,0],[2,0],[0,-1],[-1,-1],[1,-1]];
@@ -555,6 +590,9 @@ function twirlGame() {
 		else if (command == 'rotate') {
 			rotate();
 		}
+		else if (command == 'rotate_left') {
+			rotateCounter();
+		}
 		else if (command == 'drop') {
 			var dropped = 0;
 			while (tryMove(0, 1)) { dropped++; }
@@ -651,7 +689,7 @@ function twirlGame() {
 					twirlStartRepeat();
 				}
 			}
-			else if (cmd == 'rotate' || cmd == 'drop') {
+			else if (cmd == 'rotate' || cmd == 'rotate_left' || cmd == 'drop') {
 				e.preventDefault();
 				if (!twirlHeld[cmd]) {
 					twirlHeld[cmd] = true;
@@ -678,6 +716,15 @@ function twirlGame() {
 			if (!twirlHeld['left'] && !twirlHeld['right'] && !twirlHeld['down']) {
 				twirlStopRepeat();
 			}
+		});
+
+		/* A is the left click (the input daemon maps BTN_EAST to BTN_LEFT), so a
+		   plain press on the well turns the piece clockwise; B arrives as F13 and
+		   turns it back. */
+		$(document).on('mousedown', '#twirl', function (e) {
+			if (!activeGame() || e.which !== 1) { return; }
+			e.preventDefault();
+			twirlControls.action('rotate');
 		});
 
 		$(window).on('blur', function () {

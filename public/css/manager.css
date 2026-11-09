@@ -3819,6 +3819,10 @@ body.full_app_mode .wind.full_app_window {
 }
 body.full_app_mode .wind.full_app_window .top_navbar { display:none !important; }
 body.full_app_mode .wind.full_app_window .window_contents { width:100% !important; height:100% !important; }
+/* The window's own script tucks the contents under its title bar. A full-screen
+   app has no title bar, and that padding showed as a strip the height of the
+   navbar above every app. */
+body.full_app_mode .wind.full_app_window .window_contents { padding-top:0 !important; }
 /* In-program notices (notifications_toast.js). A small card rises over the
    desk where the browser's own notification used to be; the stack sits under
    the corner buttons and above every window. */

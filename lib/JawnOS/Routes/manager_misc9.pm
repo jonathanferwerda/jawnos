@@ -26,6 +26,7 @@ sub routes {
 	[44001, 'get', '/manager/controller', 'action_44001'],
 	[44002, 'get', '/manager/controller/volume', 'action_44002'],
 	[44003, 'post', '/manager/controller/volume', 'action_44003'],
+	[44004, 'get', '/manager/games', 'action_44004'],
 	);
 }
 

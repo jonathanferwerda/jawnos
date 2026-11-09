@@ -203,12 +203,24 @@ $topic{'controller'} = {
 		body => [
 			'Controller is the home screen of the handheld. It has no desk of windows: it shows eight tiles, each one press away from the surface it names, with Network, Sound, the battery reading and a Manager button at the top right. Press the battery reading for the pack\'s state and the CPU profile (Auto, Power saver, Balanced, Performance).',
 			'Network shows whether Wi-Fi and Bluetooth are on and lets you switch either one; the Wi-Fi row names the network it is joined to. Sound is a master level and three channels: Music, Phone and Alarm. Master is the machine\'s own mixer, so it is the level that leaves the speaker or the headphones; a controller whose boot tree has no sound card says so and leaves the master row disabled. Each channel keeps its own level, so one source can be turned down without silencing another; a player applies its channel as it is brought onto the mix.',
-			'Music opens the house music, Gallery the photos and videos, Notifications what the house has told you, and Games the Twirl falling-block puzzle. Configuration holds the house and device settings, including the Sys section. IVR opens the Phone app, where the call menu and recorded greeting live. Automation opens the embedded device toggles.',
+			'Music opens the house music, Gallery the photos and videos, Notifications what the house has told you, and Games a second launcher for Cards and Twirl. Configuration holds the house and device settings, including the Sys section. IVR opens the Phone app, where the call menu and recorded greeting live. Automation opens the embedded device toggles.',
 			'An app opens on the whole panel: no desk, taskbar or title bar. The button above the arrow keys sends Home, which returns here from any screen.',
 			'Leave is a working panel on the launcher. Screen off stops the display painters, blacks the panel and drops the CPU to powersave, so the machine can wait in a bag for a call; Restart and Shut down do what they say. A controller is not offered Sleep, because a system suspend would take the radios down. Press one and the tile says it asked; a refusal names its reason. The two trigger-happy keys pressed together bring the screen back.'
 		],
 		related => [ 'twirl', 'phone', 'configure' ]
 	};
+$topic{'games'} = {
+	title => 'Games', category => 'apps', app => 'games',
+	verified => '2026-11-09',
+	templates => [ 'templates/apps/games.html.ep', 'public/js/manager/twirl.js' ],
+	summary => 'The games launcher: Cards and Twirl inside the house, with a shelf for emulated games that run outside it.',
+	body => [
+		'Games is a second launcher, one press in from the Controller\'s Games tile. Cards opens the card room and its solitaire and blackjack games. Twirl opens the falling-block puzzle, where the left and right arrows slide a piece, the down arrow nudges it, the space bar drops it, and Enter deals again after a game over.',
+		'On the handheld the A button turns the piece clockwise and B turns it counter-clockwise. A is the plain click the launcher and the Manager already use, so a press on the well turns the piece; B is delivered as a key that no other app uses.',
+		'The emulated games shelf is empty until an emulator is installed. An emulated game will leave the JawnOS view and run in its own programme, with the handheld\'s controls handed to it as a gamepad.'
+	],
+	related => [ 'cards', 'twirl', 'controller' ]
+};
 $topic{'budget'} = {
 		title => 'Accounting', category => 'apps', app => 'budget',
 		verified => '2026-10-30',
