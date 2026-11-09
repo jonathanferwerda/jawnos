@@ -600,6 +600,7 @@ our @manager_bundle_files = qw(
 	/js/manager/taskbar.js
 	/js/manager/taskbar_edit.js
 	/js/manager/taskbar_power.js
+	/js/manager/taskbar_network.js
 	/js/manager/narratorprinter.js
 	/js/manager/marker.js
 	/js/pm.js

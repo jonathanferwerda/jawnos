@@ -58,6 +58,7 @@ function jawnosPowerTaskbarLoad() {
 }
 
 $(document).on('click', '#taskbar_power', function() {
+	if (typeof jawnosTaskbarEditing === 'function' && jawnosTaskbarEditing()) { return; }
 	if (typeof appWindowOpener === 'function') {
 		appWindowOpener('power', Date.now(), { visible: 'yes' });
 	}

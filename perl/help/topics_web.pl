@@ -64,8 +64,8 @@ $topic{'terminal'} = {
 	};
 $topic{'network'} = {
 		title => 'Network', category => 'apps', app => 'network',
-		templates => [ 'templates/apps/network.html.ep', 'public/js/manager/network.js' ],
-		verified => '2026-10-30',
+		templates => [ 'templates/apps/network.html.ep', 'public/js/manager/network.js', 'public/js/manager/taskbar_network.js' ],
+		verified => '2026-11-08',
 		summary => 'Interfaces, Wi-Fi, VPN, the machines on the mesh, and the phone.',
 		body => [
 			'Network is the app for the connection itself. It opens from the start menu and shows four things in one window: this machine\'s interfaces, its Wi-Fi, its VPN, and a read-only view of the machines on the mesh. A fifth section appears on a phone.',
@@ -74,6 +74,7 @@ $topic{'network'} = {
 			'VPN reports what is really running. When Tailscale is installed it shows whether the tailnet is up, its address and any exit node. WireGuard configurations in /etc/wireguard and OpenVPN client configurations in /etc/openvpn/client are listed with Start and Stop buttons that drive their systemd units. When none of these is configured the section says so; it never pretends a connection exists.',
 			'Devices and mesh is a compact, read-only summary: the machines the house knows and the interfaces each one reaches a network with, built from the same device listing the Dev panel uses. The button opens Configure -> Dev for the full panel - scanning, purposes, privileges and the router cards - so the Network app never duplicates it.',
 			'On Android, when the JawnOS app exposes its network bridge, the Android section shows the phone\'s current connection and VPN and offers Scan, Connect, Disconnect, and buttons that open the phone\'s own Wi-Fi and VPN settings. The Linux sections remain the machine\'s own network, not the phone\'s.',
+			'The taskbar can carry a Network widget: signal bars and the Wi-Fi name while connected, a wired glyph for Ethernet, or Disconnected. It is added from Add items -> Widgets, and its right-click menu chooses Icon, Icon and status, or Disabled.',,
 			'On the live image, systemd-networkd brings up wired and wireless interfaces over DHCP, iwd handles Wi-Fi, and systemd-resolved answers DNS. In QEMU with user-mode networking the guest receives 10.0.2.15 and a working gateway automatically.'
 		],
 		steps => [

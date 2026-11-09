@@ -203,11 +203,12 @@ sub helper {
 	like($menu, qr/hint="<%= &subs::lang\('power'\) %>"/, 'its hint is a core label');
 
 	my $manager = read_file("$root/templates/manager.html.ep");
-	like($manager, qr/id="taskbar_power"/, 'the taskbar carries the battery widget');
-	like($manager, qr/class="taskbar_power_fill"/, 'and its fill');
+	like($manager, qr/id="taskbar_windows"/, 'the taskbar container is still the shell');
+	unlike($manager, qr/id="taskbar_power"/, 'the battery widget is built by the widget registry, not fixed in the template');
 
 	my $core = read_file("$root/lib/JawnOS/Manager/Core1_tables_hooks.pm");
-	like($core, qr{/js/manager/taskbar_power\.js}, 'the widget is in the core bundle');
+	like($core, qr{/js/manager/taskbar_power\.js}, 'the battery poller is in the core bundle');
+	like($core, qr{/js/manager/taskbar_network\.js}, 'the network poller is in the core bundle');
 	like($core, qr/power\s*=>\s*\[qw\(\/js\/manager\/power\.js\)\]/, 'the app has its lazy chunk');
 	like($core, qr/power\s*=>\s*\[qw\(powerOpener\)\]/, 'the opener has its entry stub');
 	like($core, qr/power_toggle\s*=>\s*'power'/, 'the first click is replayed to the app');
@@ -216,8 +217,11 @@ sub helper {
 	like($windows, qr/i == 'power'/, 'a restored Power window uses its own opener');
 
 	my $edit = read_file("$root/public/js/manager/taskbar_edit.js");
-	like($edit, qr/'power':\s*'#taskbar_power'/, 'the widget is a taskbar slot');
-	like($edit, qr/> #taskbar_power/, 'edit mode can drag it');
+	like($edit, qr/jawnosTaskbarWidgets = \{/, 'the widget registry exists');
+	like($edit, qr/power: \{ hint: 'Battery'/, 'the battery widget is in it');
+	like($edit, qr/network: \{ hint: 'Network'/, 'and the network widget');
+	like($edit, qr/jawnosTaskbarWidgetMake\(/, 'a widget is built from its order entry');
+	like($edit, qr/> \.taskbar_widget/, 'edit mode can drag a widget');
 
 	my $template = read_file("$root/templates/apps/power.html.ep");
 	like($template, qr/&subs::power_actions\(\)/, 'the app asks what system power the machine offers');

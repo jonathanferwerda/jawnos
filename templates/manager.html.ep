@@ -18,7 +18,6 @@
 <div id="taskbar" class="theme_surface_soft" position="<%= $taskbar_position %>">
 	<span id="taskbar_windows"></span>
 	<span id="taskbar_icons"></span>
-	<span id="taskbar_power" class="taskbar_power" hidden><span class="taskbar_power_glyph"><span class="taskbar_power_fill"></span></span><span class="taskbar_power_text"></span></span>
 	<span id="taskbar_clock"></span>
 </div>
 <%# The clock's own little menu, hung under or over the taskbar clock by

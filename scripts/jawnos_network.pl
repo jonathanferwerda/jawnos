@@ -251,6 +251,13 @@ sub interface_report {
 			$method = static_configured($name) ? 'static' : 'unknown';
 		}
 		my $wireless = (-d $base . '/wireless' || -d $base . '/phy80211') ? 1 : 0;
+		# A restricted /sys (Android, a container without the net class) hides
+		# the wireless directory. iw answers the same question for the interface
+		# the kernel really has, so try it before calling the link wired.
+		if (!$wireless && find_command('iw')) {
+			my ($iw_out, $iw_err, $iw_status) = run_read('iw', 'dev', $name, 'info');
+			$wireless = 1 if $iw_status == 0 && $iw_out =~ /^\s*type\s+\S+/m;
+		}
 		push @interfaces, {
 			name     => $name,
 			state    => $state,
@@ -374,6 +381,43 @@ sub saved_networks {
 	return \@saved;
 }
 
+# A Wi-Fi link's strength. iw is the direct answer; /proc/net/wireless is the
+# fallback for a machine that has a wireless kernel interface but no iw. Both
+# are reduced to the same quality (0-100) and bars (0-4) the widget draws.
+sub wifi_signal_fields {
+	my ($rssi, $quality) = @_;
+	my %signal;
+	if (defined $rssi) {
+		$signal{'rssi'} = $rssi + 0;
+		$quality = ($rssi + 100) * 2;
+	}
+	return \%signal unless defined $quality;
+	$quality = int($quality + 0.5);
+	$quality = 0 if $quality < 0;
+	$quality = 100 if $quality > 100;
+	$signal{'quality'} = $quality;
+	$signal{'bars'} = $quality >= 75 ? 4 : ($quality >= 50 ? 3 : ($quality >= 25 ? 2 : ($quality > 0 ? 1 : 0)));
+	return \%signal;
+}
+
+sub wifi_signal {
+	my ($interface) = @_;
+	return {} unless valid_interface($interface);
+	if (find_command('iw')) {
+		my ($stdout, $stderr, $status) = run_read('iw', 'dev', $interface, 'link');
+		if ($status == 0 && $stdout =~ /signal:\s*(-?\d+(?:\.\d+)?)\s*dBm/) {
+			return wifi_signal_fields($1 + 0, undef);
+		}
+	}
+	my $text = slurp('/proc/net/wireless');
+	foreach my $line ( split /\n/, $text ) {
+		next unless $line =~ /^\s*\Q$interface\E:\s*\S+\s+(-?\d+(?:\.\d+)?)\.?\s+(-?\d+(?:\.\d+)?)/;
+		my ($link, $level) = ($1 + 0, $2 + 0);
+		return wifi_signal_fields($level < 0 ? $level : undef, $link * 100 / 70);
+	}
+	return {};
+}
+
 sub wifi_status {
 	my ($interfaces) = @_;
 	$interfaces = interface_report() unless ref $interfaces eq 'ARRAY';
@@ -381,11 +425,23 @@ sub wifi_status {
 	foreach my $interface ( @{$interfaces} ) {
 		next unless $interface->{'wireless'};
 		my $station = station_report($interface->{'name'});
+		# iwd is the house's Wi-Fi tool, but a NetworkManager desktop has no
+		# iwctl. `iw dev <if> link` carries the same SSID and state, so use it
+		# when the station report is empty.
+		if (!($station->{'connected network'} || '') && find_command('iw')) {
+			my ($link_out, $link_err, $link_status) = run_read('iw', 'dev', $interface->{'name'}, 'link');
+			if ($link_status == 0) {
+				$station->{'connected network'} = $1 if $link_out =~ /^\s*SSID:\s*(.+?)\s*$/m;
+				$station->{'state'} = 'connected' if $link_out =~ /Connected to/m;
+			}
+		}
+		my $signal = wifi_signal($interface->{'name'});
 		push @wireless, {
 			name  => $interface->{'name'},
 			state => $station->{'state'} || $interface->{'state'},
 			ssid  => $station->{'connected network'} || '',
 			mac   => $interface->{'mac'},
+			%{$signal},
 		};
 	}
 	my $adapters = adapter_report();

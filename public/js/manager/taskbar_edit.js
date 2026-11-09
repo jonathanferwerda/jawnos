@@ -15,24 +15,40 @@
 // route the configure panel uses.
 
 // Where the bar's slots live. Order keys that are plain strings name these; a
-// pin (an app or keyboard the user added) is an object and builds its own tile.
+// pin (an app or keyboard the user added) is an object and builds its own tile,
+// and so does a widget (battery, network).
 function jawnosTaskbarSlots() {
 	return {
 		'search': '#search_entanglement',
 		'windows': '#taskbar_windows',
 		'clock': '#taskbar_clock',
-		'power': '#taskbar_power',
 		'icons': '#taskbar_icons'
 	};
+}
+
+// The widgets the Add items list offers. A widget is not a pin: it has no
+// window of its own, it polls one reading, and it has three display modes.
+// `off` keeps the entry in the order (so it is not re-added as a default) but
+// builds no element, which is what makes Disabled stick across reloads.
+var jawnosTaskbarWidgets = {
+	power: { hint: 'Battery', icon: '/icons/power.svg' },
+	network: { hint: 'Network', icon: '/icons/network.svg' }
+};
+
+function jawnosTaskbarWidgetItem(w, mode) {
+	return { k: 'widget', w: w, mode: mode || 'full' };
 }
 
 // The order before the user has ever dragged anything: the window list, the
 // clock and the start button, with the search at the leading edge when it lives
 // here. The old start-button side setting is honoured once, so a bar that had
-// the button on the left keeps it there until it is dragged.
+// the button on the left keeps it there until it is dragged. The battery widget
+// is on by default, because a bar that has one should say so until told not to.
 function jawnosTaskbarDefaultOrder() {
 	var left = (typeof jawnosBars != 'undefined' && jawnosBars.start_side == 'left');
-	return left ? ['icons', 'search', 'windows', 'clock'] : ['search', 'windows', 'power', 'clock', 'icons'];
+	var widgets = [jawnosTaskbarWidgetItem('power', 'full')];
+	return left ? ['icons', 'search', 'windows'].concat(widgets, ['clock'])
+		: ['search', 'windows'].concat(widgets, ['clock', 'icons']);
 }
 
 function jawnosTaskbarEditing() {
@@ -152,8 +168,10 @@ function jawnosTaskbarOrderApply() {
 	var slots = jawnosTaskbarSlots();
 	var order = (jawnosBars.order && jawnosBars.order.length) ? jawnosBars.order.slice() : jawnosTaskbarDefaultOrder();
 	// upgrade a pin that names a start-menu row but not the app behind it, and
-	// undo an older pin that mistook an action (now) for an app
+	// undo an older pin that mistook an action (now) for an app. The first
+	// battery widget was a bare 'power' string; it becomes the widget object.
 	order = order.map(function (item) {
+		if (item === 'power' || item === 'network') { return jawnosTaskbarWidgetItem(item, 'full'); }
 		if (item && typeof item === 'object' && item.k == 'pin' && item.sel) {
 			var derived = jawnosTaskbarDeriveApp(item.sel);
 			if (derived && !item.app) { return { k: 'pin', app: derived, sel: item.sel, hint: item.hint, src: item.src }; }
@@ -161,20 +179,22 @@ function jawnosTaskbarOrderApply() {
 		}
 		return item;
 	});
+	// A bar saved before widgets existed gains the battery widget; a bar that has
+	// a widget entry - even a disabled one - is left exactly as the person left it.
+	var has_widget = order.some(function (item) { return item && typeof item === 'object' && item.k == 'widget'; });
+	if (!has_widget) {
+		var clock_at = order.indexOf('clock');
+		order.splice(clock_at < 0 ? order.length : clock_at, 0, jawnosTaskbarWidgetItem('power', 'full'));
+	}
 	jawnosBars.order = order;
 	// the fixed slots never fall off the bar; the search only counts while
-	// the taskbar is its home. A saved order from before the battery widget
-	// existed gains it beside the clock rather than at the far end.
+	// the taskbar is its home
 	['windows', 'clock', 'icons'].forEach(function (k) {
 		if (order.indexOf(k) < 0) { order.push(k); }
 	});
-	if (order.indexOf('power') < 0) {
-		var clock_at = order.indexOf('clock');
-		order.splice(clock_at < 0 ? order.length : clock_at, 0, 'power');
-	}
 	if (jawnosBars.search == 'taskbar' && order.indexOf('search') < 0) { order.push('search'); }
 
-	bar.children('.taskbar_pin').remove();
+	bar.children('.taskbar_pin, .taskbar_widget').remove();
 	// A parked window button was a child of the pin just removed; the next
 	// displayer must rebuild its tile instead of trusting an unchanged stamp.
 	bar.find('#taskbar_windows').removeAttr('data-taskbar-stamp');
@@ -182,6 +202,10 @@ function jawnosTaskbarOrderApply() {
 		var el = null;
 		if (item && typeof item === 'object' && item.k == 'pin') {
 			el = jawnosTaskbarPinMake(item);
+		}
+		else if (item && typeof item === 'object' && item.k == 'widget') {
+			if ((item.mode || 'full') == 'off') { return; }
+			el = jawnosTaskbarWidgetMake(item);
 		}
 		else if (typeof item === 'string' && slots[item]) {
 			if (item == 'search' && jawnosBars.search != 'taskbar') { return; }
@@ -265,9 +289,11 @@ function jawnosTaskbarOrderSave() {
 		var el = $(this);
 		if (el.is('#taskbar_windows')) { order.push('windows'); }
 		else if (el.is('#taskbar_clock')) { order.push('clock'); }
-		else if (el.is('#taskbar_power')) { order.push('power'); }
 		else if (el.is('#taskbar_icons')) { order.push('icons'); }
 		else if (el.is('#search_entanglement')) { order.push('search'); }
+		else if (el.hasClass('taskbar_widget')) {
+			order.push({ k: 'widget', w: el.attr('widget'), mode: el.attr('mode') || 'full' });
+		}
 		else if (el.hasClass('taskbar_pin')) {
 			if (el.hasClass('taskbar_app_pin')) {
 				order.push({ k: 'pin', app: el.attr('app'), sel: el.attr('sel') || undefined, hint: el.attr('hint'), src: el.children('img').first().attr('src') });
@@ -275,6 +301,15 @@ function jawnosTaskbarOrderSave() {
 			else {
 				order.push({ k: 'pin', sel: el.attr('sel'), hint: el.attr('hint'), src: el.attr('src') });
 			}
+		}
+	});
+	// A disabled widget has no element to read back; keep its entry (and its
+	// disabled mode) so the default does not put it back on the bar.
+	var seen = {};
+	order.forEach(function (item) { if (item && item.k == 'widget') { seen[item.w] = 1; } });
+	(jawnosBars.order || []).forEach(function (item) {
+		if (item && typeof item === 'object' && item.k == 'widget' && !seen[item.w]) {
+			order.push({ k: 'widget', w: item.w, mode: item.mode || 'off' });
 		}
 	});
 	jawnosBars.order = order;
@@ -306,7 +341,7 @@ function jawnosTaskbarEdit(on) {
 		bar.addClass('taskbar_edit');
 		if (!bar.hasClass('ui-sortable')) {
 			bar.sortable({
-				items: '> #taskbar_windows, > #taskbar_clock, > #taskbar_power, > #taskbar_icons, > #search_entanglement, > .taskbar_pin',
+				items: '> #taskbar_windows, > #taskbar_clock, > .taskbar_widget, > #taskbar_icons, > #search_entanglement, > .taskbar_pin',
 				tolerance: 'pointer',
 				placeholder: 'taskbar_slot_placeholder',
 				stop: function () { jawnosTaskbarOrderSave(); }
@@ -396,6 +431,74 @@ function jawnosTaskbarPinned(sel) {
 function jawnosTaskbarAppPinned(app) {
 	return $('#taskbar').children('.taskbar_app_pin[app="' + app + '"]').length > 0
 		|| (jawnosBars.order || []).some(function (it) { return it && it.app == app; });
+}
+
+// The widget entry in the order, including the short-lived shape the first
+// battery widget used (a bare 'power' string). A missing entry is "off".
+function jawnosTaskbarWidgetEntry(w) {
+	var order = (jawnosBars.order && jawnosBars.order.length) ? jawnosBars.order : [];
+	for (var i = 0; i < order.length; i++) {
+		var item = order[i];
+		if (item && typeof item === 'object' && item.k == 'widget' && item.w == w) { return item; }
+		if (item === w) { return jawnosTaskbarWidgetItem(w, 'full'); }
+	}
+	return null;
+}
+
+function jawnosTaskbarWidgetMode(w) {
+	var entry = jawnosTaskbarWidgetEntry(w);
+	return entry ? (entry.mode || 'full') : 'off';
+}
+
+function jawnosTaskbarWidgetOn(w) {
+	return jawnosTaskbarWidgetMode(w) != 'off';
+}
+
+// Set one widget's mode and keep the order. `off` keeps the entry, so a widget
+// the person disabled stays disabled instead of being re-added as a default.
+function jawnosTaskbarWidgetSet(w, mode) {
+	var order = (jawnosBars.order && jawnosBars.order.length) ? jawnosBars.order.slice() : jawnosTaskbarDefaultOrder();
+	var found = false;
+	order = order.map(function (item) {
+		if (item === w) { found = true; return jawnosTaskbarWidgetItem(w, mode); }
+		if (item && typeof item === 'object' && item.k == 'widget' && item.w == w) {
+			found = true;
+			return $.extend({}, item, { mode: mode });
+		}
+		return item;
+	});
+	if (!found && mode != 'off') {
+		var at = order.indexOf('clock');
+		order.splice(at < 0 ? order.length : at, 0, jawnosTaskbarWidgetItem(w, mode));
+	}
+	jawnosBars.order = order;
+	jawnosTaskbarSave('taskbar_order', JSON.stringify(order));
+	jawnosBarsApply();
+}
+
+function jawnosTaskbarWidgetToggle(w) {
+	jawnosTaskbarWidgetSet(w, jawnosTaskbarWidgetOn(w) ? 'off' : 'full');
+}
+
+// Build one widget's element. The pollers (taskbar_power.js, taskbar_network.js)
+// find it by id and fill it; the mode is an attribute the CSS reads.
+function jawnosTaskbarWidgetMake(item) {
+	var w = item && item.w;
+	var spec = jawnosTaskbarWidgets[w];
+	if (!spec) { return $(); }
+	var mode = item.mode || 'full';
+	var el = $('<span class="taskbar_widget taskbar_widget_' + w + '" id="taskbar_' + w + '" widget="' + w + '" mode="' + mode + '" hidden></span>');
+	if (w == 'power') {
+		el.append('<span class="taskbar_power_glyph"><span class="taskbar_power_fill"></span></span>');
+		el.append('<span class="taskbar_power_text taskbar_widget_text"></span>');
+		setTimeout(function () { if (typeof jawnosPowerTaskbarLoad === 'function') { jawnosPowerTaskbarLoad(); } }, 0);
+	}
+	else if (w == 'network') {
+		el.append('<span class="taskbar_network_glyph"><span class="taskbar_network_bars"><i></i><i></i><i></i><i></i></span><span class="taskbar_network_wire"></span></span>');
+		el.append('<span class="taskbar_network_text taskbar_widget_text"></span>');
+		setTimeout(function () { if (typeof jawnosNetworkTaskbarLoad === 'function') { jawnosNetworkTaskbarLoad(); } }, 0);
+	}
+	return el;
 }
 
 function jawnosTaskbarAddPin(pin) {
@@ -553,8 +656,21 @@ function jawnosTaskbarContextBuild() {
 		var keyboards = jawnosTaskbarKeyboardPins();
 		if (keyboards.length) { add_label('Keyboards'); add_rows(keyboards); }
 	};
+	var fill_widgets = function () {
+		add_label('Widgets');
+		Object.keys(jawnosTaskbarWidgets).forEach(function (w) {
+			var spec = jawnosTaskbarWidgets[w];
+			var row = $('<div class="taskbar_context_app"></div>');
+			row.attr('pin_widget', w);
+			row.append($('<img>').attr('src', spec.icon));
+			row.append($('<span></span>').text(jawnosT(spec.hint)));
+			row.append('<span class="taskbar_context_check">' + selected(jawnosTaskbarWidgetOn(w)) + '</span>');
+			list.append(row);
+		});
+	};
 	// the menu's markup is only in the DOM once it has been opened; otherwise it
 	// is fetched the way the menu itself fetches it
+	fill_widgets();
 	var live = jawnosTaskbarAppPins();
 	if (live.length) {
 		fill_apps(live);
@@ -577,6 +693,26 @@ function jawnosTaskbarContextBuild() {
 	}
 	context.append(add);
 
+	return context;
+}
+
+// A widget's own menu: its three display modes first, then the bar's normal
+// menu (edit mode, position, autohide, clock, add items) underneath. The base
+// menu is built by jawnosTaskbarContextBuild and its children are moved here,
+// so the widget menu never has to keep a second copy of those handlers.
+function jawnosTaskbarWidgetContextBuild(w) {
+	var spec = jawnosTaskbarWidgets[w] || { hint: w };
+	var mode = jawnosTaskbarWidgetMode(w);
+	var selected = function (on) { return on ? '✓' : ''; };
+	var context = $('<div class="taskbar_context"></div>');
+	context.append('<div class="taskbar_context_label">' + jawnosT(spec.hint) + ' ' + jawnosT('widget') + '</div>');
+	[['icon', 'Icon'], ['full', 'Icon and status'], ['off', 'Disabled']].forEach(function (pair) {
+		context.append('<div class="taskbar_context_selection" act="widget_mode" w="' + w + '" mode="' + pair[0] + '">'
+			+ jawnosT(pair[1]) + '<span class="taskbar_context_check">' + selected(mode == pair[0]) + '</span></div>');
+	});
+	var base = jawnosTaskbarContextBuild();
+	context.append('<div class="taskbar_context_label">' + jawnosT('Taskbar') + '</div>');
+	context.append(base.children());
 	return context;
 }
 

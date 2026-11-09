@@ -38,9 +38,10 @@ function jawnosWindowContextBuild(app) {
 	return context;
 }
 
-function jawnosTaskbarContextOpen(x, y, app) {
+function jawnosTaskbarContextOpen(x, y, app, widget) {
 	jawnosTaskbarContextClose();
-	var context = app ? jawnosWindowContextBuild(app) : jawnosTaskbarContextBuild();
+	var context = app ? jawnosWindowContextBuild(app)
+		: (widget ? jawnosTaskbarWidgetContextBuild(widget) : jawnosTaskbarContextBuild());
 	$('body').append(context);
 	// keep it on screen
 	var w = context.outerWidth();
@@ -52,6 +53,13 @@ function jawnosTaskbarContextOpen(x, y, app) {
 
 $(document).on('contextmenu', '#taskbar', function (e) {
 	e.preventDefault();
+	// A widget is not a pin or a window: its menu adds the three display modes
+	// above the bar's normal furniture.
+	var widget = $(e.target).closest('.taskbar_widget');
+	if (widget.length) {
+		jawnosTaskbarContextOpen(e.clientX, e.clientY, null, widget.attr('widget'));
+		return;
+	}
 	// An app pin is a launcher, not a window: its menu is the dock's add/remove.
 	var pin = $(e.target).closest('.taskbar_app_pin');
 	if (pin.length && typeof jawnosDockAppMenu == 'function') {
@@ -106,6 +114,10 @@ $(document).on('click', '.taskbar_context_selection', function () {
 		$('.taskbar_context_sub[sub="add"]').toggle();
 		$('.taskbar_context_sub[sub="clock"]').hide();
 	}
+	else if (act == 'widget_mode') {
+		jawnosTaskbarWidgetSet($(this).attr('w'), $(this).attr('mode'));
+		jawnosTaskbarContextClose();
+	}
 	else if (act == 'pin_app') {
 		var app = $(this).attr('app');
 		if (jawnosTaskbarAppPinned(app)) { jawnosTaskbarRemoveAppPin(app); }
@@ -155,8 +167,15 @@ $(document).on('change', '.taskbar_clock_notifications', function () {
 	jawnosTaskbarSave('clock_notifications', jawnos_clock_notifications);
 });
 
-// a press on an app in the add list pins it, or unpins a pinned one
+// a press on an app in the add list pins it, or unpins a pinned one; a press on
+// a widget row enables or disables that widget
 $(document).on('click', '.taskbar_context_app', function () {
+	var widget = $(this).attr('pin_widget');
+	if (widget) {
+		jawnosTaskbarWidgetToggle(widget);
+		$(this).find('.taskbar_context_check').text(jawnosTaskbarWidgetOn(widget) ? '✓' : '');
+		return;
+	}
 	var sel = $(this).attr('pin_sel');
 	var app = $(this).attr('pin_app') || '';
 	var on = app ? jawnosTaskbarAppPinned(app) : jawnosTaskbarPinned(sel);
