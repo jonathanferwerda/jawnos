@@ -24,6 +24,8 @@ sub routes {
 	[30859, 'post', '/manager/ide/folder_selector', 'action_30859'],
 	[30875, 'post', '/manager/ide/folder_open', 'action_30875'],
 	[44001, 'get', '/manager/controller', 'action_44001'],
+	[44002, 'get', '/manager/controller/volume', 'action_44002'],
+	[44003, 'post', '/manager/controller/volume', 'action_44003'],
 	);
 }
 

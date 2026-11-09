@@ -629,7 +629,7 @@ sub clock_volume_backend {
 		$found = { kind => 'wpctl', bin => $bin{'wpctl'} } if $status =~ /PipeWire|Audio/;
 	}
 	if (!$found && $bin{'amixer'}) {
-		foreach my $control (qw(Master PCM Speaker)) {
+		foreach my $control ('Master', 'PCM', 'Speaker', 'Master Playback Volume') {
 			my $out = `$bin{'amixer'} sget $control 2>/dev/null`;
 			next unless $out =~ /\[(\d+)%\]/;
 			$found = { kind => 'amixer', bin => $bin{'amixer'}, control => $control };

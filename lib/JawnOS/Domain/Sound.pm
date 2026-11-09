@@ -19,6 +19,9 @@ use strict;
 use warnings;
 use utf8;
 
+# The channel map is one JSON setting; this file loads no other JSON module.
+require JSON::PP;
+
 # The backend is discovered once per worker, like the Clock's mixer probe. A
 # machine with no mixer is 'none' rather than an error: the app says so.
 our $sound_backend_memo;
@@ -85,7 +88,7 @@ sub sound_backend {
 	if (!$found) {
 		my $amixer = &sound_which('amixer');
 		if ($amixer) {
-			foreach my $control (qw(Master PCM Speaker)) {
+			foreach my $control ('Master', 'PCM', 'Speaker', 'Master Playback Volume') {
 				my $out = &sound_run($amixer, 'sget', $control);
 				next unless defined $out && $out =~ /\[(\d+)%\]/;
 				$found = { kind => 'amixer', bin => $amixer, control => $control };
@@ -222,7 +225,7 @@ sub sound_parse_wpctl {
 # `[off]` is the mute switch.
 sub sound_amixer_control {
 	my ($bin, $control) = @_;
-	return undef unless defined $control && $control =~ /^(?:Master|PCM|Speaker|Capture|Mic)$/;
+	return undef unless defined $control && $control =~ /^(?:Master Playback Volume|Master|PCM|Speaker|Capture|Mic)$/;
 	my $out = &sound_run($bin, 'sget', $control);
 	return undef unless defined $out;
 	my ($volume) = $out =~ /\[(\d+)%\]/;
@@ -240,7 +243,7 @@ sub sound_amixer_control {
 sub sound_amixer_devices {
 	my ($bin) = @_;
 	my (@outputs, @inputs);
-	foreach my $control (qw(Master PCM Speaker)) {
+	foreach my $control ('Master', 'PCM', 'Speaker', 'Master Playback Volume') {
 		my $device = &sound_amixer_control($bin, $control);
 		next unless $device;
 		$device->{'kind'} = 'sink';
@@ -317,7 +320,7 @@ sub sound_wpctl_id_ok {
 sub sound_amixer_id_ok {
 	my ($id) = @_;
 	return 0 unless defined $id;
-	return $id =~ /^(?:Master|PCM|Speaker|Capture|Mic)$/ ? 1 : 0;
+	return $id =~ /^(?:Master Playback Volume|Master|PCM|Speaker|Capture|Mic)$/ ? 1 : 0;
 }
 
 # ---- the reading ------------------------------------------------------------
@@ -400,6 +403,7 @@ sub sound_status {
 	$status->{'volume'} = $output ? $output->{'volume'} : undef;
 	$status->{'muted'} = ($output && $output->{'muted'}) ? 1 : 0;
 	$status->{'name'} = $output ? ($output->{'name'} || '') : '';
+	$status->{'channels'} = &sound_channels();
 	return $status;
 }
 
@@ -521,6 +525,67 @@ sub sound_default {
 
 	return { ok => 0, error => 'the default device could not be set' } if $rc != 0;
 	return { %{ &sound_status() }, ok => 1, changed => { kind => $kind, id => $id } };
+}
+
+# ---- the channels -----------------------------------------------------------
+# The launcher's own mix: a master output and the three named sources a Gou
+# carries. One setting holds the whole map, so a write never loses a channel it
+# did not name. A worker with no database keeps the defaults instead of refusing
+# to play: the widget must still draw on a fresh machine.
+our %sound_channel_default = ( music => 70, phone => 100, alarm => 100 );
+
+sub sound_channels {
+	my %channel = map {
+		$_ => { volume => $sound_channel_default{$_}, muted => 0 }
+	} sort keys %sound_channel_default;
+	my $raw = eval { &subs::setting_grabber({ app => 'controller', setting => 'channels' }) };
+	my $stored = (defined $raw && length $raw) ? eval { JSON::PP::decode_json($raw) } : undef;
+	if (ref $stored eq 'HASH') {
+		foreach my $name (keys %channel) {
+			my $row = $stored->{$name};
+			next unless ref $row eq 'HASH';
+			my $volume = $row->{'volume'};
+			$channel{$name}{'volume'} = int($volume)
+				if defined $volume && $volume =~ /^\d+$/ && $volume <= 100;
+			$channel{$name}{'muted'} = $row->{'muted'} ? 1 : 0
+				if defined $row->{'muted'};
+		}
+	}
+	return \%channel;
+}
+
+sub sound_channel_set {
+	my ($channel, $volume, $muted) = @_;
+	return { ok => 0, error => 'unknown channel' }
+		unless defined $channel && exists $sound_channel_default{$channel};
+	return { ok => 0, error => 'volume must be between 0 and 100' }
+		if defined $volume && !&sound_volume_valid($volume);
+	my $want;
+	if (defined $muted) {
+		$want = &sound_mute_value($muted);
+		return { ok => 0, error => 'mute must be on or off' } unless defined $want;
+	}
+
+	my $channels = &sound_channels();
+	$channels->{$channel}{'volume'} = int($volume) if defined $volume;
+	$channels->{$channel}{'muted'} = $want if defined $want;
+	my $saved = eval {
+		&subs::setting_setter({ app => 'controller', setting => 'channels', value => JSON::PP::encode_json($channels) });
+		1;
+	};
+	return { ok => 0, error => 'the channels could not be saved' } unless $saved;
+	return { ok => 1, channels => $channels };
+}
+
+# A player multiplies its own level by this, so a muted channel is silence and
+# an unknown channel cannot make a stream loud by accident.
+sub sound_channel_gain {
+	my ($channel) = @_;
+	my $channels = &sound_channels();
+	my $row = $channels->{$channel};
+	return 0 unless ref $row eq 'HASH';
+	return 0 if $row->{'muted'};
+	return $row->{'volume'} / 100;
 }
 
 1;

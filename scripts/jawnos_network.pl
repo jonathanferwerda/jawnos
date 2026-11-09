@@ -447,12 +447,19 @@ sub wifi_status {
 		};
 	}
 	my $adapters = adapter_report();
+	my $radio_powered = $adapters->{'powered'};
+	# NetworkManager has no iwctl adapter list to read the radio from;
+	# `nmcli radio wifi` prints enabled/disabled for the same switch.
+	if (!find_command('iwctl') && find_command('nmcli')) {
+		my ($out, $err, $status) = run_read('nmcli', 'radio', 'wifi');
+		$radio_powered = ($status == 0 && $out =~ /\A\s*enabled\s*\z/i) ? 1 : 0;
+	}
 	return {
 		present       => scalar(@wireless) ? 1 : 0,
 		iwd           => $adapters->{'present'} ? 1 : 0,
 		interfaces    => \@wireless,
 		adapters      => $adapters->{'adapters'},
-		radio_powered => $adapters->{'powered'},
+		radio_powered => $radio_powered,
 		saved         => saved_networks(),
 	};
 }
@@ -613,7 +620,14 @@ sub wifi_forget {
 sub radio_set {
 	my ($state) = @_;
 	return { ok => 0, error => 'The radio can only be turned on or off.' } unless defined $state && $state =~ /\A(?:on|off)\z/;
-	return { ok => 0, error => 'iwd is not installed.' } unless find_command('iwctl');
+	# iwd is the house's Wi-Fi stack. A NetworkManager machine has no iwctl at
+	# all, and `nmcli radio wifi on|off` is the same switch there.
+	unless (find_command('iwctl')) {
+		return { ok => 0, error => 'iwd is not installed.' } unless find_command('nmcli');
+		my ($stdout, $stderr, $status) = run_write(undef, 'nmcli', 'radio', 'wifi', $state);
+		return { ok => 1, powered => ($state eq 'on' ? 1 : 0) } if $status == 0;
+		return { ok => 0, error => clean($stderr) || clean($stdout) || 'Could not change the radio.' };
+	}
 	my $adapter = adapter_name();
 	return { ok => 0, error => 'No wireless adapter found.' } unless $adapter;
 	my ($stdout, $stderr, $status) = run_write(undef, 'iwctl', 'adapter', $adapter, 'set-property', 'Powered', $state);

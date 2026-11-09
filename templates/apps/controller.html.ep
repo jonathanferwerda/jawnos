@@ -39,23 +39,38 @@
 	/* The launcher has no window bar: a slim row holds the one way out to the
 	   desk, and the eight tiles take the rest of the glass. */
 	#controller_shell { display:flex; flex-direction:column; width:100%; height:100%; min-height:0; position:relative; }
-	#controller_bar { flex:0 0 auto; display:flex; justify-content:flex-end; align-items:center; padding:6px 8px 0; }
+	#controller_bar { flex:0 0 auto; display:flex; justify-content:flex-end; align-items:center; gap:6px; padding:6px 8px 0; }
 	.controller_bar_button { font:inherit; font-size:13px; line-height:1.2; padding:5px 12px;
 		border:1px solid #4a4a4a; border-radius:8px; background:#3a3a3a; color:#ffffff;
 		text-decoration:none; cursor:var(--jawnos-cursor-pointer, pointer); }
 	.controller_bar_button:hover { border-color:var(--accent, #4a90d9); }
-	#controller_battery { min-width:72px; margin-right:6px; }
-	#controller_power_panel { position:absolute; right:8px; top:34px; z-index:50; width:250px;
+	#controller_battery { min-width:72px; }
+	#controller_power_panel, #controller_volume_panel, #controller_network_panel { position:absolute; right:8px; top:34px; z-index:50; width:250px;
 		padding:10px; border:1px solid #4a4a4a; border-radius:12px; background:#2e2e2e;
 		color:#f4f4f4; box-shadow:0 8px 24px rgba(0,0,0,.5); }
-	#controller_power_panel[hidden] { display:none; }
-	#controller_power_panel h3 { margin:0 0 8px; font-size:13px; font-weight:600; }
+	#controller_power_panel[hidden], #controller_volume_panel[hidden], #controller_network_panel[hidden] { display:none; }
+	#controller_power_panel h3, #controller_volume_panel h3, #controller_network_panel h3 { margin:0 0 8px; font-size:13px; font-weight:600; }
 	.controller_power_row { display:flex; justify-content:space-between; gap:8px; font-size:12px; line-height:1.5; }
 	.controller_power_profiles { display:grid; grid-template-columns:1fr 1fr; gap:4px; margin-top:8px; }
 	.controller_power_profiles button { font:inherit; font-size:12px; padding:5px 6px; border:1px solid #4a4a4a;
 		border-radius:8px; background:#3a3a3a; color:#ffffff; cursor:var(--jawnos-cursor-pointer, pointer); }
 	.controller_power_profiles button.active { border-color:var(--accent, #4a90d9); background:#4a90d9; }
 	.controller_power_note { margin-top:6px; font-size:11px; line-height:1.3; min-height:1em; opacity:.8; }
+	/* The volume panel: a master row and one row per source channel. A channel is
+	   a gain its player multiplies in; master is the machine's own mixer. */
+	.controller_volume_row { display:grid; grid-template-columns:58px 1fr 30px 44px; align-items:center; gap:6px;
+		font-size:12px; line-height:1.6; }
+	.controller_volume_row input[type="range"] { width:100%; accent-color:#4a90d9; }
+	.controller_volume_value { text-align:right; font-variant-numeric:tabular-nums; }
+	.controller_volume_note { font-size:11px; line-height:1.3; min-height:1em; opacity:.8; margin-bottom:4px; }
+	.controller_mute_button, .controller_network_row button { font:inherit; font-size:11px; line-height:1.2; padding:3px 6px;
+		border:1px solid #4a4a4a; border-radius:6px; background:#3a3a3a; color:#ffffff;
+		cursor:var(--jawnos-cursor-pointer, pointer); }
+	.controller_mute_button.active, .controller_network_row button.on { border-color:var(--accent, #4a90d9); background:#4a90d9; }
+	.controller_mute_button:disabled, .controller_network_row button:disabled { opacity:.5; cursor:var(--jawnos-cursor-default, default); }
+	.controller_network_row { display:flex; justify-content:space-between; align-items:center; gap:8px;
+		font-size:12px; line-height:1.6; }
+	.controller_network_detail { display:block; font-size:11px; opacity:.8; line-height:1.25; min-height:1em; }
 	#controller_home { height:auto !important; flex:1 1 auto; min-height:0; }
 
 	.controller_tile_leave { border-style:dashed; }
@@ -96,10 +111,23 @@
 	push @cpu_bits, $cpu->{'governor'} if $cpu->{'governor'};
 	push @cpu_bits, $cpu->{'cur_mhz'} . ' GHz' if defined $cpu->{'cur_mhz'};
 	my $cpu_note = @cpu_bits ? join(' · ', @cpu_bits) : &subs::ui('Unknown');
+
+	# The sound reading carries the master output and the three source channels.
+	# Channels have defaults, so the panel draws even on a machine with no card;
+	# only the master row says it is unavailable.
+	my $sound = ref $sound_status eq 'HASH' ? $sound_status : {};
+	my $channels = ref $sound->{'channels'} eq 'HASH' ? $sound->{'channels'} : {};
+	my $master = ref $sound->{'output'} eq 'HASH' ? $sound->{'output'} : {};
+	my $master_known = $sound->{'ok'} ? 1 : 0;
+	my $master_volume = $master_known && defined $master->{'volume'} ? $master->{'volume'} : 0;
+	my %channel_label = (music => 'Music', phone => 'Phone', alarm => 'Alarm');
+	my %channel_ui = map { $_ => &subs::ui($channel_label{$_}) } keys %channel_label;
 %>
 
 <div id="controller_shell">
 	<div id="controller_bar">
+		<button type="button" id="controller_network" class="controller_bar_button" aria-expanded="false" aria-controls="controller_network_panel"><%= &subs::ui('Network') %></button>
+		<button type="button" id="controller_volume" class="controller_bar_button" aria-expanded="false" aria-controls="controller_volume_panel"><%= &subs::ui('Sound') %></button>
 		<button type="button" id="controller_battery" class="controller_bar_button" aria-expanded="false" aria-controls="controller_power_panel"><span id="controller_battery_pct"><%= $battery_pct %></span></button>
 		<a id="controller_manager_button" class="controller_bar_button" href="/manager?desk=1"><%= &subs::ui('Manager') %></a>
 	</div>
@@ -113,6 +141,39 @@
 % }
 		</div>
 		<div class="controller_power_note" id="controller_power_note" aria-live="polite"></div>
+	</div>
+	<div id="controller_volume_panel" hidden>
+		<h3><%= &subs::ui('Sound') %></h3>
+		<div class="controller_volume_note" id="controller_volume_note" aria-live="polite"><%= $master_known ? '' : &subs::ui('No sound card') %></div>
+		<div class="controller_volume_row" data-volume-channel="master">
+			<span><%= &subs::ui('Master') %></span>
+			<input type="range" min="0" max="100" step="1" value="<%= $master_volume %>" aria-label="<%= &subs::ui('Master volume') %>"<%= $master_known ? '' : ' disabled' %>>
+			<span class="controller_volume_value"><%= $master_volume %></span>
+			<button type="button" class="controller_mute_button<%= $master_known && $master->{'muted'} ? ' active' : '' %>" aria-pressed="<%= $master_known && $master->{'muted'} ? 'true' : 'false' %>"<%= $master_known ? '' : ' disabled' %>><%= $master->{'muted'} ? &subs::ui('Unmute') : &subs::ui('Mute') %></button>
+		</div>
+% for my $channel (qw(music phone alarm)) {
+% 	my $state = ref $channels->{$channel} eq 'HASH' ? $channels->{$channel} : {};
+% 	my $volume = defined $state->{'volume'} ? $state->{'volume'} : 100;
+% 	my $muted = $state->{'muted'} ? 1 : 0;
+		<div class="controller_volume_row" data-volume-channel="<%= $channel %>">
+			<span><%= $channel_ui{$channel} %></span>
+			<input type="range" min="0" max="100" step="1" value="<%= $volume %>" aria-label="<%= $channel_ui{$channel} %>">
+			<span class="controller_volume_value"><%= $volume %></span>
+			<button type="button" class="controller_mute_button<%= $muted ? ' active' : '' %>" aria-pressed="<%= $muted ? 'true' : 'false' %>"><%= $muted ? &subs::ui('Unmute') : &subs::ui('Mute') %></button>
+		</div>
+% }
+	</div>
+	<div id="controller_network_panel" hidden>
+		<h3><%= &subs::ui('Network') %></h3>
+		<div class="controller_network_row">
+			<span>Wi-Fi<span class="controller_network_detail" id="controller_wifi_detail"></span></span>
+			<button type="button" id="controller_wifi_toggle" aria-pressed="false"><%= &subs::ui('Off') %></button>
+		</div>
+		<div class="controller_network_row">
+			<span>Bluetooth<span class="controller_network_detail" id="controller_bluetooth_detail"></span></span>
+			<button type="button" id="controller_bluetooth_toggle" aria-pressed="false"><%= &subs::ui('Off') %></button>
+		</div>
+		<div class="controller_power_note" id="controller_network_note" aria-live="polite"></div>
 	</div>
 	<div id="controller_home">
 		<a class="controller_tile" href="/manager?open=music&amp;full=1">
@@ -168,6 +229,21 @@
 </div>
 
 <script>
+/* One panel at a time: three buttons share one corner of the glass, and a panel
+   left open under another would sit on the tiles. */
+function closeControllerPanels(except) {
+	var pairs = [['controller_battery', 'controller_power_panel'],
+		['controller_volume', 'controller_volume_panel'],
+		['controller_network', 'controller_network_panel']];
+	for (var i = 0; i < pairs.length; i++) {
+		var panel = document.getElementById(pairs[i][1]);
+		var button = document.getElementById(pairs[i][0]);
+		if (!panel || panel === except) { continue; }
+		panel.setAttribute('hidden', '');
+		if (button) { button.setAttribute('aria-expanded', 'false'); }
+	}
+}
+
 (function () {
 	var tile = document.querySelector('.controller_tile_leave');
 	if (!tile) { return; }
@@ -248,6 +324,7 @@
 	}
 	button.addEventListener('click', function () {
 		var opening = panel.hasAttribute('hidden');
+		closeControllerPanels(panel);
 		if (opening) { panel.removeAttribute('hidden'); load(); } else { panel.setAttribute('hidden', ''); }
 		button.setAttribute('aria-expanded', opening ? 'true' : 'false');
 	});
@@ -274,4 +351,203 @@
 	setInterval(load, 30000);
 	load();
 })();
+/* The volume panel. Master is the machine's own mixer, so it is the one row that
+   can be unavailable; a channel is a gain the source multiplies into its own
+   playback, so it is always settable and the master decides what leaves the
+   speaker or the headphones. */
+(function () {
+	var button = document.getElementById('controller_volume');
+	var panel = document.getElementById('controller_volume_panel');
+	if (!button || !panel) { return; }
+	var note = document.getElementById('controller_volume_note');
+	var rows = panel.querySelectorAll('[data-volume-channel]');
+	var failed = <%== encode_json(&subs::ui('That did not work.')) %>;
+	var unavailable = <%== encode_json(&subs::ui('No sound card')) %>;
+	var mute_label = <%== encode_json(&subs::ui('Mute')) %>;
+	var unmute_label = <%== encode_json(&subs::ui('Unmute')) %>;
+	var state = null;
+
+	function reading(name) {
+		if (name === 'master') {
+			var s = state || {};
+			var out = s.output || {};
+			var available = !!(s.ok && s.output);
+			return { available: available, volume: available && out.volume !== undefined ? out.volume : 0, muted: available && out.muted ? 1 : 0 };
+		}
+		var channels = (state && state.channels) || {};
+		var c = channels[name] || {};
+		return { available: true, volume: c.volume !== undefined ? c.volume : 0, muted: c.muted ? 1 : 0 };
+	}
+	function paintRow(row) {
+		var name = row.getAttribute('data-volume-channel');
+		var c = reading(name);
+		var range = row.querySelector('input[type="range"]');
+		var value = row.querySelector('.controller_volume_value');
+		var mute = row.querySelector('.controller_mute_button');
+		if (range) { range.value = c.volume; range.disabled = !c.available; }
+		if (value) { value.textContent = c.volume; }
+		if (mute) {
+			mute.classList.toggle('active', !!c.muted);
+			mute.setAttribute('aria-pressed', c.muted ? 'true' : 'false');
+			mute.textContent = c.muted ? unmute_label : mute_label;
+			mute.disabled = !c.available;
+		}
+	}
+	function paint() {
+		for (var i = 0; i < rows.length; i++) { paintRow(rows[i]); }
+		if (note) { note.textContent = reading('master').available ? '' : unavailable; }
+	}
+	function load() {
+		fetch('/manager/controller/volume', { credentials: 'same-origin' })
+			.then(function (r) { return r.json(); })
+			.then(function (s) { state = s; paint(); })
+			.catch(function () { if (note) { note.textContent = failed; } });
+	}
+	function write(body) {
+		if (note) { note.textContent = ''; }
+		fetch('/manager/controller/volume', {
+			method: 'POST',
+			credentials: 'same-origin',
+			headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+			body: new URLSearchParams(body)
+		}).then(function (r) { return r.json(); }).then(function (result) {
+			if (result && result.ok) { state = result; paint(); return; }
+			if (note) { note.textContent = failed + (result && result.error ? ' (' + result.error + ')' : ''); }
+			load();
+		}).catch(function () { if (note) { note.textContent = failed; } load(); });
+	}
+	for (var i = 0; i < rows.length; i++) {
+		(function (row) {
+			var name = row.getAttribute('data-volume-channel');
+			var range = row.querySelector('input[type="range"]');
+			var value = row.querySelector('.controller_volume_value');
+			var mute = row.querySelector('.controller_mute_button');
+			if (range) {
+				range.addEventListener('input', function () { if (value) { value.textContent = range.value; } });
+				range.addEventListener('change', function () { write({ channel: name, volume: range.value }); });
+			}
+			if (mute) {
+				mute.addEventListener('click', function () {
+					write({ channel: name, muted: reading(name).muted ? '0' : '1' });
+				});
+			}
+		})(rows[i]);
+	}
+	button.addEventListener('click', function () {
+		var opening = panel.hasAttribute('hidden');
+		closeControllerPanels(panel);
+		if (opening) { panel.removeAttribute('hidden'); load(); } else { panel.setAttribute('hidden', ''); }
+		button.setAttribute('aria-expanded', opening ? 'true' : 'false');
+	});
+})();
+
+/* The network panel: Wi-Fi's radio and the Bluetooth adapter. Both reads are the
+   same ones the desk's taskbar uses; a panel that is open refreshes every
+   fifteen seconds, and a closed panel costs nothing. */
+(function () {
+	var button = document.getElementById('controller_network');
+	var panel = document.getElementById('controller_network_panel');
+	if (!button || !panel) { return; }
+	var wifiDetail = document.getElementById('controller_wifi_detail');
+	var wifiToggle = document.getElementById('controller_wifi_toggle');
+	var btDetail = document.getElementById('controller_bluetooth_detail');
+	var btToggle = document.getElementById('controller_bluetooth_toggle');
+	var note = document.getElementById('controller_network_note');
+	var failed = <%== encode_json(&subs::ui('That did not work.')) %>;
+	var on_label = <%== encode_json(&subs::ui('On')) %>;
+	var off_label = <%== encode_json(&subs::ui('Off')) %>;
+	var connected_label = <%== encode_json(&subs::ui('Connected')) %>;
+	var no_wifi = <%== encode_json(&subs::ui('No Wi-Fi')) %>;
+	var no_bluetooth = <%== encode_json(&subs::ui('No Bluetooth')) %>;
+	var timer = null;
+	var wifiOn = false, btOn = false;
+
+	function paintToggle(el, on) {
+		if (!el) { return; }
+		el.textContent = on ? on_label : off_label;
+		el.classList.toggle('on', !!on);
+		el.setAttribute('aria-pressed', on ? 'true' : 'false');
+	}
+	function paintWifi(s) {
+		s = s || {};
+		var w = s.wifi || {};
+		var list = w.interfaces || [];
+		var link = null;
+		for (var i = 0; i < list.length; i++) { if (!link || list[i].state === 'connected') { link = list[i]; } }
+		var present = !!w.present;
+		/* iwd answers with the adapter's powered bit; NetworkManager has no
+		   adapter list, so a wireless link that exists is the honest reading. */
+		wifiOn = w.iwd ? !!w.radio_powered : present;
+		if (wifiDetail) {
+			if (!present) { wifiDetail.textContent = no_wifi; }
+			else if (link && link.ssid) { wifiDetail.textContent = link.ssid; }
+			else if (link && link.state === 'connected') { wifiDetail.textContent = connected_label; }
+			else { wifiDetail.textContent = ''; }
+		}
+		if (wifiToggle) { wifiToggle.disabled = !present; }
+		paintToggle(wifiToggle, wifiOn);
+	}
+	function paintBluetooth(s) {
+		s = s || {};
+		var adapter = s.adapter || {};
+		var present = s.ok !== 0;
+		btOn = !!adapter.powered;
+		var device = (s.connected || [])[0];
+		if (btDetail) {
+			if (!present) { btDetail.textContent = no_bluetooth; }
+			else if (device && (device.name || device.address)) { btDetail.textContent = device.name || device.address; }
+			else { btDetail.textContent = ''; }
+		}
+		if (btToggle) { btToggle.disabled = !present; }
+		paintToggle(btToggle, btOn);
+	}
+	function load() {
+		fetch('/manager/network/status', { credentials: 'same-origin' })
+			.then(function (r) { return r.json(); }).then(paintWifi)
+			.catch(function () { if (note) { note.textContent = failed; } });
+		fetch('/manager/network/bluetooth/status', { credentials: 'same-origin' })
+			.then(function (r) { return r.json(); }).then(paintBluetooth)
+			.catch(function () {});
+	}
+	function post(url, body) {
+		if (note) { note.textContent = ''; }
+		fetch(url, {
+			method: 'POST',
+			credentials: 'same-origin',
+			headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+			body: new URLSearchParams(body)
+		}).then(function (r) { return r.json(); }).then(function (result) {
+			if (!(result && result.ok) && note) {
+				note.textContent = failed + (result && result.error ? ' (' + result.error + ')' : '');
+			}
+			load();
+		}).catch(function () { if (note) { note.textContent = failed; } load(); });
+	}
+	if (wifiToggle) {
+		wifiToggle.addEventListener('click', function () {
+			wifiToggle.disabled = true;
+			post('/manager/network/radio', { state: wifiOn ? 'off' : 'on' });
+		});
+	}
+	if (btToggle) {
+		btToggle.addEventListener('click', function () {
+			btToggle.disabled = true;
+			post('/manager/network/bluetooth/action', { action: 'power', state: btOn ? 'off' : 'on' });
+		});
+	}
+	button.addEventListener('click', function () {
+		var opening = panel.hasAttribute('hidden');
+		closeControllerPanels(panel);
+		if (opening) {
+			panel.removeAttribute('hidden');
+			load();
+			timer = setInterval(load, 15000);
+		} else {
+			panel.setAttribute('hidden', '');
+			if (timer) { clearInterval(timer); timer = null; }
+		}
+		button.setAttribute('aria-expanded', opening ? 'true' : 'false');
+	});
+})();
+
 </script>

@@ -752,10 +752,62 @@ sub action_44001 {
 		template => 'apps/controller',
 		window_maker => $c->param('window_maker'),
 		power_actions => [ &subs::power_actions() ],
-		power_status => eval { &subs::power_status() } || {}
+		power_status => eval { &subs::power_status() } || {},
+		sound_status => eval { &subs::sound_status() } || {}
 	);
 	my $website = &Manager::window_maker({ user_agent => $c->param('user_agent'), app => 'controller', contents => $contents }, $timestamp);
 	$c->render(text => $website);
+}
+
+# GET /manager/controller/volume
+# The launcher's volume panel: the master output this machine plays through and
+# the three source channels the house mixes into it. A channel is a gain its
+# player multiplies in, so it survives a machine with no card; master writes the
+# machine's own mixer and says so when there is none.
+sub action_44002 {
+	my $c = shift;
+	my $status = eval { &subs::sound_status() } || { ok => 0, error => 'the sound reading failed' };
+	$status->{'channels'} = eval { &subs::sound_channels() } || {}
+		unless ref $status->{'channels'} eq 'HASH';
+	$c->render(json => $status);
+}
+
+# POST /manager/controller/volume
+sub action_44003 {
+	my $c = shift;
+	my $channel = $c->param('channel') // '';
+	my $volume = $c->param('volume');
+	my $muted = $c->param('muted');
+	my $answer;
+	if ($channel eq 'master') {
+		my $status = eval { &subs::sound_status() } || {};
+		my $output = ref $status->{'output'} eq 'HASH' ? $status->{'output'} : undef;
+		if (!$status->{'ok'} || !$output) {
+			$c->render(json => { ok => 0, supported => 0, error => 'No sound card',
+				channels => eval { &subs::sound_channels() } || {} });
+			return;
+		}
+		if (defined $volume && length $volume) {
+			$answer = eval { &subs::sound_set('output', $output->{'id'}, $volume) };
+		}
+		elsif (defined $muted && length $muted) {
+			$answer = eval { &subs::sound_mute('output', $output->{'id'}, $muted eq '1' ? 1 : 0) };
+		}
+		else {
+			$answer = { ok => 0, error => 'nothing to change' };
+		}
+	}
+	else {
+		$answer = eval { &subs::sound_channel_set($channel, $volume, $muted) };
+		if (ref $answer eq 'HASH' && $answer->{'ok'}) {
+			my $status = eval { &subs::sound_status() } || {};
+			$answer = { %{$status}, %{$answer} };
+		}
+	}
+	$answer = { ok => 0, error => 'The volume could not be set.' } unless ref $answer eq 'HASH';
+	$answer->{'channels'} = eval { &subs::sound_channels() } || {}
+		unless ref $answer->{'channels'} eq 'HASH';
+	$c->render(json => $answer);
 }
 
 1;

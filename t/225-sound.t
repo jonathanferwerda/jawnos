@@ -125,7 +125,7 @@ my $amixer_bin = "$scratch/amixer";
 make_path($amixer_bin);
 write_exe("$amixer_bin/amixer", <<'SH');
 case "$1 $2" in
-	"sget Master") cat <<'OUT'
+	"sget Master"|"sget Master Playback Volume") cat <<'OUT'
 Simple mixer control 'Master',0
   Capabilities: pvolume pswitch
   Playback channels: Front Left - Front Right
@@ -143,7 +143,7 @@ Simple mixer control 'Capture',0
 OUT
 		exit 0 ;;
 	"sget PCM"|"sget Speaker"|"sget Mic") exit 1 ;;
-	"sset Master"|"sset Capture"|"sset PCM"|"sset Speaker"|"sset Mic")
+	"sset Master"|"sset Master Playback Volume"|"sset Capture"|"sset PCM"|"sset Speaker"|"sset Mic")
 		printf '%s\n' "$*" >> "$SOUND_LOG"; exit 0 ;;
 esac
 exit 1
@@ -183,6 +183,8 @@ ok(!subs::sound_pactl_id_ok('a b'), 'a space is refused');
 ok(subs::sound_wpctl_id_ok('45'), 'a wpctl id is valid');
 ok(!subs::sound_wpctl_id_ok('4x'), 'a wpctl id must be numeric');
 ok(subs::sound_amixer_id_ok('Master'), 'an amixer control is valid');
+ok(subs::sound_amixer_id_ok('Master Playback Volume'), 'the spaced codec control is valid');
+ok(!subs::sound_amixer_id_ok('Master Playback Volume; rm -rf /'), 'a control with junk after it is refused');
 ok(!subs::sound_amixer_id_ok('Anything'), 'an unknown amixer control is refused');
 
 {
@@ -331,6 +333,11 @@ write_file($log, '');
 	is($status->{input}{volume}, 60, 'the capture volume is read');
 	is($status->{input}{muted}, 1, 'the capture mute state is read');
 
+	# The codec's control has a space, so the probe must hand it as one argv.
+	my $spaced = subs::sound_amixer_control("$amixer_bin/amixer", 'Master Playback Volume');
+	ok($spaced, 'the spaced codec control is probed');
+	is($spaced->{id}, 'Master Playback Volume', 'and keeps its name');
+
 	my $set = subs::sound_set('output', 'Master', 50);
 	is($set->{ok}, 1, 'the amixer volume is set');
 	like(read_file($log), qr/sset Master 50%/, 'the amixer volume verb ran');
@@ -340,6 +347,62 @@ write_file($log, '');
 	my $default = subs::sound_default('output', 'Master');
 	is($default->{ok}, 0, 'amixer cannot choose a default');
 	is($default->{supported}, 0, 'and says it is unsupported');
+}
+
+# ============================================================================
+# channels: the launcher's master output plus music, phone and alarm
+# ============================================================================
+# The settings helpers are stubbed with an in-memory map: the real ones read and
+# write the database, and this file must not touch it. That is enough to check
+# the defaults, the validation and the read-back through the same calls the
+# domain makes.
+{
+	my %store;
+	*subs::setting_grabber = sub {
+		my ($settings) = @_;
+		return $store{ $settings->{'setting'} };
+	};
+	*subs::setting_setter = sub {
+		my ($settings) = @_;
+		$store{ $settings->{'setting'} } = $settings->{'value'};
+		return 1;
+	};
+
+	my $channels = subs::sound_channels();
+	is($channels->{music}{volume}, 70, 'music defaults to 70');
+	is($channels->{phone}{volume}, 100, 'phone defaults to 100');
+	is($channels->{alarm}{volume}, 100, 'alarm defaults to 100');
+	is($channels->{music}{muted}, 0, 'music starts unmuted');
+
+	is(subs::sound_channel_gain('music'), 0.7, 'the gain is the volume fraction');
+	is(subs::sound_channel_gain('phone'), 1, 'full volume is a gain of one');
+
+	my $set = subs::sound_channel_set('music', 40, 0);
+	is($set->{ok}, 1, 'a channel is set');
+	is($set->{channels}{music}{volume}, 40, 'the answer names the new volume');
+	$channels = subs::sound_channels();
+	is($channels->{music}{volume}, 40, 'the write is read back');
+	is($channels->{phone}{volume}, 100, 'an untouched channel keeps its default');
+
+	my $bad = subs::sound_channel_set('nonsense', 40, 0);
+	is($bad->{ok}, 0, 'an unknown channel is refused');
+	$bad = subs::sound_channel_set('music', 101, 0);
+	is($bad->{ok}, 0, 'an out-of-range volume is refused');
+	$bad = subs::sound_channel_set('music', 40, 'bogus');
+	is($bad->{ok}, 0, 'an unknown mute state is refused');
+	$channels = subs::sound_channels();
+	is($channels->{music}{volume}, 40, 'a refused write changes nothing');
+
+	subs::sound_channel_set('alarm', undef, 1);
+	is(subs::sound_channel_gain('alarm'), 0, 'a muted channel has no gain');
+	is(subs::sound_channels()->{alarm}{volume}, 100, 'a mute-only write keeps the volume');
+	is(subs::sound_channel_gain('nonsense'), 0, 'an unknown channel has no gain');
+
+	local $ENV{PATH} = "$amixer_bin:$os_bin";
+	$subs::sound_backend_memo = undef;
+	my $status = subs::sound_status();
+	ok(ref $status->{channels} eq 'HASH', 'the status carries the channels');
+	is($status->{channels}{music}{volume}, 40, 'and their current volumes');
 }
 
 # ============================================================================

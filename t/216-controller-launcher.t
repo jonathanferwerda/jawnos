@@ -99,6 +99,21 @@ like($desk_js, qr/full_app_mode/, 'a launcher press marks a full-screen app');
 like($page, qr/id="controller_battery"/, 'the launcher has a battery button');
 like($page, qr/data-power-plan=/, 'the panel offers the CPU profiles');
 like($page, qr/No battery sensor/, 'a pack with no gauge says so');
+like($page, qr/id="controller_volume"/, 'the launcher has a volume button');
+like($page, qr/id="controller_network"/, 'the launcher has a network button');
+like($page, qr/data-volume-channel="master"/, 'the volume panel has a master row');
+like($page, qr/% for my \$channel \(qw\(music phone alarm\)\)/, 'the panel draws the three source channels');
+like($page, qr/Master volume/, 'the master row is labelled for a screen reader');
+like($page, qr/channel_label = \(music => 'Music'/, 'the channels are named in the on-screen words');
+like($page, qr|fetch\('/manager/controller/volume'|, 'the panel reads the volume route');
+like($page, qr|post\('/manager/network/radio'|, 'the network panel toggles the Wi-Fi radio');
+like($page, qr|post\('/manager/network/bluetooth/action'|, 'the network panel toggles Bluetooth');
+like($page, qr/closeControllerPanels/, 'opening one panel closes the others');
+like($routes, qr/\[\s*44002\s*,\s*'get'\s*,\s*'\/manager\/controller\/volume'\s*,\s*'action_44002'\s*\]/,
+	'GET /manager/controller/volume is registered');
+like($routes, qr/\[\s*44003\s*,\s*'post'\s*,\s*'\/manager\/controller\/volume'\s*,\s*'action_44003'\s*\]/,
+	'POST /manager/controller/volume is registered');
+like($controller, qr/sound_status =>/, 'the launcher action passes the sound reading');
 like($page, qr/href="\/manager\?open=music&amp;full=1"/, 'an app tile asks for the full-screen mode');
 like($controller, qr/power_status =>/, 'the launcher action passes the power reading');
 like(read_file("$root/public/css/manager.css"), qr/body\.full_app_mode #taskbar/,

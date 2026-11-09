@@ -222,6 +222,8 @@ like(( run_net('args' => ['interface', 'up', 'wlan0']) )[1],
 case "$*" in
 	*"--fields SSID,SECURITY,SIGNAL"*)
 		printf 'jawn-test-net:WPA2:80\ntest net with space:WPA2:60\nopen-test-net::40\ncolon\\:name:WPA2:20\n' ;;
+	"radio wifi on"|"radio wifi off") exit 0 ;;
+	"radio wifi") printf 'enabled\n' ;;
 	*) exit 1 ;;
 esac
 FAKE_NMCLI
@@ -243,6 +245,28 @@ FAKE_NMCLI
 	is_deeply([ sort keys %{ $nets->[0] } ], [qw(bars secure security signal ssid)],
 		'the fallback answers the same five fields');
 	is($nets->[0]->{'signal'}, 80, 'and sorts by signal');
+
+	# A NetworkManager machine has no iwctl, so the radio switch and the radio
+	# state must come from nmcli instead.
+	{
+		my (undef, $out) = run_net(path => $nm, args => [qw(radio on)]);
+		my $data = eval { decode_json($out) };
+		is_deeply($data, { ok => 1, powered => 1 }, 'radio on goes through nmcli and reports powered');
+	}
+	{
+		my (undef, $out) = run_net(path => $nm, args => [qw(radio off)]);
+		my $data = eval { decode_json($out) };
+		is_deeply($data, { ok => 1, powered => 0 }, 'radio off goes through nmcli and reports unpowered');
+	}
+	expect_error('The radio can only be turned on or off.', 'radio with a bad state on a NetworkManager machine',
+		path => $nm, args => ['radio', 'maybe']);
+	{
+		my ($rc, $out) = run_net(path => $nm, args => ['status']);
+		my $data = answer($rc, $out, '', 'status on a NetworkManager machine');
+		my $wifi = $data->{'wifi'};
+		is($wifi->{'iwd'}, 0, 'iwd is reported absent without iwctl');
+		is($wifi->{'radio_powered'}, 1, 'the radio state comes from nmcli radio wifi');
+	}
 }
 
 {
