@@ -186,7 +186,7 @@
 			<span class="controller_tile_label"><%= &subs::ui('Gallery') %></span>
 			<span class="controller_tile_note"><%= &subs::ui('Photos and videos') %></span>
 		</a>
-		<a class="controller_tile" href="/manager/notifications/list">
+		<a class="controller_tile" href="/manager?open=notifications&amp;full=1">
 			<img class="controller_tile_icon" src="/images/decipherable/bell.png" alt="">
 			<span class="controller_tile_label"><%= &subs::ui('Notifications') %></span>
 			<span class="controller_tile_note"><%= &subs::ui('What the house has told you') %></span>

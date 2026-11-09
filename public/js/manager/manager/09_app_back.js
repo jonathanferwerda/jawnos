@@ -686,6 +686,7 @@ $(function () {
 		configure: '/manager/configure',
 		phone: '/manager/phone',
 		embedded: '/manager/embedded',
+		notifications: '/manager/notifications',
 		cards: '/manager/cards',
 		marker: '/manager/marker',
 		chat: '/manager/chat'
