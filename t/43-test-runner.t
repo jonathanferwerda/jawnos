@@ -136,4 +136,14 @@ subtest 'the fork engine reports pass and failure' => sub {
 	like($out, qr/boom/, 'a test that dies shows its error');
 };
 
+# 9. a worktree is seeded before the engine runs (config.json, test database)
+{
+	open(my $fh, '<', $runner) or die "$runner: $!";
+	local $/;
+	my $source = <$fh>;
+	close $fh;
+	like($source, qr/worktree_seed\.pl/,
+		'the runner seeds a worktree before it starts the engine');
+}
+
 done_testing();

@@ -26,6 +26,8 @@
 use strict;
 use warnings;
 
+use FindBin ();
+
 # where.pl records every lookup in the live ledger; a test run must not. The one
 # test that checks the row turns this off for itself and uses a fixture database.
 $ENV{'JAWNOS_WHERE_LOG_OFF'} = 1;
@@ -86,6 +88,15 @@ else {
 if ($dry) {
 	print join(' ', @cmd), "\n";
 	exit 0;
+}
+
+# A linked worktree has no config.json and no database file - both are install
+# local and gitignored - and the app reads the config at load, so without them
+# every test file fails and the landing reads as a broken change. Seed them
+# first; a no-op in the primary checkout, and never a tracked write. Rationale:
+# docs/AGENTS-concurrency.md.
+if (-f "$FindBin::Bin/worktree_seed.pl") {
+	system($^X, "$FindBin::Bin/worktree_seed.pl");
 }
 
 exec @cmd;

@@ -197,6 +197,8 @@ subtest 'a dry run reports the plan and touches nothing' => sub {
 	like($out, qr/would back up agent\/task to origin\/agent\/task/,
 		'it backs the branch up before it waits for the gate');
 	like($out, qr/would fast-forward the primary checkout/, 'and the primary checkout step');
+	like($out, qr/would remove this worktree afterwards/,
+		'and the removal, because it is the default');
 	ok(!-e "$f->{'marker'}/suite",   'no suite ran');
 	ok(!-e "$f->{'marker'}/restart", 'nothing restarted');
 
@@ -325,22 +327,35 @@ subtest 'a second landing waits for the lock and then gives up' => sub {
 	close($hold);
 };
 
-subtest 'a landing can drop its worktree' => sub {
+subtest 'a landing removes its worktree by default' => sub {
 	my $f = fixture();
 	commit_in_worktree($f, 'note.txt', "a\n", 'v0.1.1 - add a note');
 
-	my ($rc, $out) = land($f, '--remove');
+	my ($rc, $out) = land($f);
 	is($rc, 0, 'the landing exits cleanly') or diag($out);
+	like($out, qr/removed the worktree/, 'and says the worktree went with it');
 	ok(!-d $f->{'wt'}, 'the worktree directory is gone');
 	my ($code) = git($f->{'primary'}, 'rev-parse', '--verify', 'refs/heads/agent/task');
 	isnt($code, 0, 'and its branch is deleted');
+};
+
+subtest '--keep spares the worktree' => sub {
+	my $f = fixture();
+	commit_in_worktree($f, 'note.txt', "a\n", 'v0.1.1 - add a note');
+
+	my ($rc, $out) = land($f, '--keep');
+	is($rc, 0, 'the landing exits cleanly') or diag($out);
+	like($out, qr/worktree kept: git worktree remove/, 'and names the command to drop it');
+	ok(-d $f->{'wt'}, 'the worktree is still there');
+	my ($code) = git($f->{'primary'}, 'rev-parse', '--verify', 'refs/heads/agent/task');
+	is($code, 0, 'and so is its branch');
 };
 
 subtest 're-running the gate on an already-merged branch refuses' => sub {
 	my $f = fixture();
 	commit_in_worktree($f, 'note.txt', "a\n", 'v0.1.1 - add a note');
 
-	my ($first) = land($f);
+	my ($first) = land($f, '--keep');
 	is($first, 0, 'the first landing succeeds');
 
 	my ($rc, $out) = land($f);

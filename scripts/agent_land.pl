@@ -30,13 +30,20 @@
 #                                               300; the branch is pushed to
 #                                               origin before the wait starts,
 #                                               so a timeout never loses work)
-#   perl scripts/agent_land.pl --remove         delete the worktree afterwards
+#   perl scripts/agent_land.pl --keep            keep the worktree afterwards
+#                                               (default: remove it, with its
+#                                               merged branch, once landed)
 #   perl scripts/agent_land.pl --reason "..."   restart reason (default: the
 #                                               landed subject)
+#
+# --remove is accepted for callers that still pass it; removing is the default.
 #
 # Exit: 0 landed (and restarted) - 1 refused, nothing pushed - 2 bad usage -
 # 4 another landing held the lock past --wait - 5 pushed, but the dev server is
 # not on it (primary checkout dirty or diverged, or the restart was refused).
+#
+# A failed landing keeps the worktree: the crash is the thing to look at, and
+# the branch is on origin either way.
 #
 # The branch is expected to be committed: a dirty worktree is refused rather
 # than swept up, because the agent knows which hunks are its own and this script
@@ -57,7 +64,7 @@ my %opt = (
 	'jobs'    => 2,
 	'wait'    => 300,
 	'restart' => 1,
-	'remove'  => 0,
+	'remove'  => 1,
 );
 GetOptions(
 	'branch=s'   => \$opt{'branch'},
@@ -66,6 +73,7 @@ GetOptions(
 	'jobs=s'     => \$opt{'jobs'},
 	'wait=s'     => \$opt{'wait'},
 	'no-restart' => sub { $opt{'restart'} = 0 },
+	'keep'       => sub { $opt{'remove'} = 0 },
 	'remove'     => \$opt{'remove'},
 	'dry-run'    => \$opt{'dry'},
 	'help'       => \$opt{'help'},
@@ -391,9 +399,12 @@ say_step("landed v$new and restarted");
 remove_worktree();
 exit 0;
 
-# A worktree is scratch: its files are on origin and on the trunk now. Never
-# remove it silently - an agent's shell may still be sitting in it - but say the
-# command, and do it only when asked.
+# A worktree is scratch: after a successful landing its files are on origin and
+# on the trunk. Removing it is the default, because nothing else does and a
+# finished agent is not coming back; --keep spares it. A refusal keeps it too -
+# that is where the failure is. Removal is forced (the suite leaves a test
+# database and a copied config behind) and is only ever attempted from the
+# primary checkout, so an agent's own shell can sit in the worktree.
 sub remove_worktree {
 	if (!$opt{'remove'}) {
 		say_step("worktree kept: git worktree remove '$root' && git branch -d $branch");
@@ -415,7 +426,7 @@ sub usage {
 	print STDERR <<'USAGE';
 agent_land.pl - land one agent's branch onto the trunk, once, behind a lock
   perl scripts/agent_land.pl [--branch B] [--trunk main] [--jobs 2] [--wait 300]
-                             [--dry-run] [--no-restart] [--remove] [--reason TEXT]
+                             [--dry-run] [--no-restart] [--keep] [--reason TEXT]
 USAGE
 	exit $code;
 }

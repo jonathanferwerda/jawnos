@@ -55,7 +55,8 @@ like($doc, qr/even when no linked worktree exists/, 'the refusal does not need a
 like($doc, qr/JAWNOS_ALLOW_PRIMARY_COMMIT=1/, 'and names the override');
 like($doc, qr/uncommitted tracked changes/, 'the doc names the primary-write refusal too');
 like($doc, qr/JAWNOS_ALLOW_DIRTY_PRIMARY=1/, 'and its escape');
-like($doc, qr/only lets the suite and the\s+scripts/, 'and says a copied config.json changes nothing in git');
+like($doc, qr/writes nothing tracked, so the checkout cannot go dirty/,
+	'and says the seeded config.json and test database cannot dirty it');
 
 # --- run the real hook in a throwaway repo ---------------------------------
 sub quote { my $s = shift; $s =~ s/'/'\\''/g; return "'$s'" }

@@ -75,10 +75,10 @@ like($concurrency, qr/before your first edit/,
 	'the worktree doc says create it before the first edit');
 like($concurrency, qr/config\.json` is \*\*not tracked\*\*/,
 	'the worktree doc says config.json is not tracked');
-like($concurrency, qr/cp \.\.\/\.\.\/config\.json \./,
-	'and gives the copy that lets the suite boot');
-like($concurrency, qr/sqlite3 database\/jawnos\.db < database\/schema\.sql/,
-	'the worktree doc builds a test database from the schema');
+like($concurrency, qr/worktree_seed\.pl/,
+	'and names the seeder that writes it and the test database');
+like($concurrency, qr/database\/schema\.sql/,
+	'the test database comes from the shipped schema');
 like($concurrency, qr{perl ~/jawnos/scripts/agent_land\.pl},
 	'the worktree doc lands through the primary checkout\'s lander');
 like(read_file("$root/.gitignore"), qr{^/\.worktrees/$}m,
