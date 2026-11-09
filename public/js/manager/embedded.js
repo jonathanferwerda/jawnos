@@ -21,7 +21,7 @@ $(document).on('change', '#embedded_device_picker', function() {
 $(document).on('change', '#embedded_device_chip_id', function() {
 	var chip_id = $(this).val();
 	localStorage.setItem('embedded_chip_id', chip_id);
-	var edt = $('#embedded_device_picker').val();
+	var edt = ((jQuery('#embedded_device_picker').val() || '') + '').trim() || localStorage.getItem('embedded_device_type') || 'watch';
 	localStorage.setItem('embedded_device_type', edt);
 	embeddedDevicesOpener();
 });
@@ -32,8 +32,8 @@ $(document).on('click', '#embedded_toggle', function() {
 
 function embeddedDevicesOpener() {
 	var timestamp = Date.now();
-	var edt = localStorage.getItem('embedded_device_type') || 'watch';
-	var chip_id = localStorage.getItem('embedded_chip_id') || '';
+	var edt = ((jQuery('#embedded_device_picker').val() || '') + '').trim() || localStorage.getItem('embedded_device_type') || 'watch';
+	var chip_id = (typeof embeddedChipId === 'function') ? embeddedChipId() : (localStorage.getItem('embedded_chip_id') || '');
 	var view = localStorage.getItem('embedded_view');
 	$.ajax({
 		url: '/manager/embedded',
@@ -80,11 +80,25 @@ $(document).on('click', '.watch_empty', function() {
 		{ target: b.closest('.embedded_container'), mode: 'replace' });
 });
 
+function embeddedDetailError(place, message) {
+	// The empty-pin form arrives by AJAX. A request that answered nothing used
+	// to look exactly like a click that did nothing: the form never appeared and
+	// no reason was shown. Say which failure it was, beside the pin.
+	var target = place && place.target;
+	var text = (typeof jawnosT === 'function') ? jawnosT(message) : message;
+	var note = $('<div class="embedded_detail_error">')
+		.css({ color: 'crimson', 'font-size': '15px', margin: '3px 0' })
+		.text(text);
+	if (target && target.length) { target.after(note); }
+	else { $('#embedded').append(note); }
+	return note;
+}
+
 function embeddedDetailGrabber(data, place) {
 	var timestamp = Date.now();
 	var numero = data['numero'];
-	var edt = localStorage.getItem('embedded_device_type') || 'watch';
-	var chip_id = localStorage.getItem('embedded_chip_id') || '';
+	var edt = ((jQuery('#embedded_device_picker').val() || '') + '').trim() || localStorage.getItem('embedded_device_type') || 'watch';
+	var chip_id = (typeof embeddedChipId === 'function') ? embeddedChipId() : (localStorage.getItem('embedded_chip_id') || '');
 	var view = localStorage.getItem('embedded_view');
 	var form = data['form'];
 	var pin = data['pin'];
@@ -104,7 +118,10 @@ function embeddedDetailGrabber(data, place) {
 		},
 		success: function(response) {
 			var form = $(response.html);
-			if (!form.length) { return; }
+			if (!form.length) {
+				embeddedDetailError(place, 'That pin did not return a form');
+				return;
+			}
 			var mode = place && place.mode;
 			var target = place && place.target;
 			if (mode == 'replace' && target && target.length) {
@@ -123,6 +140,9 @@ function embeddedDetailGrabber(data, place) {
 				input.trigger('focus');
 				if (input[0].scrollIntoView) { input[0].scrollIntoView({ block: 'nearest' }); }
 			}
+		},
+		fail: function(xhr) {
+			embeddedDetailError(place, 'Could not fetch this pin' + (xhr && xhr.status ? ' (HTTP ' + xhr.status + ')' : ''));
 		}
 	});
 
@@ -157,8 +177,8 @@ $(document).on('click', '.watch_component', function() {
 $(document).on('click', '#watch_set_proxy', function() {
 	var timestamp = Date.now();
 	var scope = $('#watch_scope').val();
-	var chip_id = localStorage.getItem('embedded_chip_id') || '';
-	var edt = localStorage.getItem('embedded_device_type') || 'watch';
+	var chip_id = (typeof embeddedChipId === 'function') ? embeddedChipId() : (localStorage.getItem('embedded_chip_id') || '');
+	var edt = ((jQuery('#embedded_device_picker').val() || '') + '').trim() || localStorage.getItem('embedded_device_type') || 'watch';
 	var continent = continent_record({app:edt,timestamp:timestamp,purpose:'proxy_set',scope:scope,chip_id:chip_id});
 	var scope = $('#watch_scope').val();
 
@@ -166,8 +186,8 @@ $(document).on('click', '#watch_set_proxy', function() {
 
 function setProxy(timestamp,uuid) {
 	var scope = $('#watch_scope').val();
-	var chip_id = localStorage.getItem('embedded_chip_id') || '';
-	var edt = localStorage.getItem('embedded_device_type') || 'watch';
+	var chip_id = (typeof embeddedChipId === 'function') ? embeddedChipId() : (localStorage.getItem('embedded_chip_id') || '');
+	var edt = ((jQuery('#embedded_device_picker').val() || '') + '').trim() || localStorage.getItem('embedded_device_type') || 'watch';
 	$.ajax({
 		url: '/manager/watch/set_proxy',
 		data: { timestamp: timestamp, uuid: uuid, scope: scope, edt: edt, chip_id: chip_id },
@@ -185,8 +205,8 @@ function setProxy(timestamp,uuid) {
 $(document).on('change', '#watch_scope', function() {
 	var scope = $(this).val();
 	var timestamp = Date.now();
-	var chip_id = localStorage.getItem('embedded_chip_id') || '';
-	var edt = localStorage.getItem('embedded_device_type') || 'watch';
+	var chip_id = (typeof embeddedChipId === 'function') ? embeddedChipId() : (localStorage.getItem('embedded_chip_id') || '');
+	var edt = ((jQuery('#embedded_device_picker').val() || '') + '').trim() || localStorage.getItem('embedded_device_type') || 'watch';
 	$.ajax({
 		url: '/manager/setting_setter',
 		type: 'POST',
@@ -200,8 +220,8 @@ $(document).on('change', '#watch_scope', function() {
 $(document).on('click', '#watch_list_proxy', function() {
 	var timestamp = Date.now();
 	var scope = $('#watch_scope').val();
-	var chip_id = localStorage.getItem('embedded_chip_id') || '';
-	var edt = localStorage.getItem('embedded_device_type') || 'watch';
+	var chip_id = (typeof embeddedChipId === 'function') ? embeddedChipId() : (localStorage.getItem('embedded_chip_id') || '');
+	var edt = ((jQuery('#embedded_device_picker').val() || '') + '').trim() || localStorage.getItem('embedded_device_type') || 'watch';
 	if ($('#watch_proxy_view').html() != '') {
 		$('#watch_proxy_view').html('');
 		$('#embedded_campus').hide()
@@ -217,8 +237,8 @@ function listProxy(timestamp,uuid) {
 	var scope = $('#watch_scope').val();
 	var window_width = $('#watch_scope').closest('.wind').width();
 	var window_height = $('#watch_scope').closest('.wind').width();
-	var chip_id = localStorage.getItem('embedded_chip_id') || '';
-	var edt = localStorage.getItem('embedded_device_type') || 'watch';
+	var chip_id = (typeof embeddedChipId === 'function') ? embeddedChipId() : (localStorage.getItem('embedded_chip_id') || '');
+	var edt = ((jQuery('#embedded_device_picker').val() || '') + '').trim() || localStorage.getItem('embedded_device_type') || 'watch';
 	$.ajax({
 		url: '/manager/watch/list_proxy',
 		data: { timestamp: timestamp, uuid: uuid, scope: scope, width: window_width, height: window_height, edt: edt, chip_id: chip_id },
@@ -236,8 +256,8 @@ $(document).on('click', '.watch_proxy_load', function() {
 	var proxy = $(this).closest('.proxy');
 	var uuid = proxy.attr('uuid');
 	var timestamp = $(this).closest('.wind').attr('timestamp');
-	var chip_id = localStorage.getItem('embedded_chip_id') || '';
-	var edt = localStorage.getItem('embedded_device_type') || 'watch';
+	var chip_id = (typeof embeddedChipId === 'function') ? embeddedChipId() : (localStorage.getItem('embedded_chip_id') || '');
+	var edt = ((jQuery('#embedded_device_picker').val() || '') + '').trim() || localStorage.getItem('embedded_device_type') || 'watch';
 	$.ajax({
 		url: '/manager/watch/proxy_load',
 		type: 'POST',
@@ -254,8 +274,8 @@ $(document).on('click', '.watch_proxy_here', function() {
 	var uuid = proxy.attr('uuid');
 	var timestamp = Date.now();
 	var continent = continent_record({app:'watch',timestamp:timestamp});
-	var chip_id = localStorage.getItem('embedded_chip_id') || '';
-	var edt = localStorage.getItem('embedded_device_type') || 'watch';
+	var chip_id = (typeof embeddedChipId === 'function') ? embeddedChipId() : (localStorage.getItem('embedded_chip_id') || '');
+	var edt = ((jQuery('#embedded_device_picker').val() || '') + '').trim() || localStorage.getItem('embedded_device_type') || 'watch';
 	setTimeout(function() {
 		$.ajax({
 			url: '/manager/watch/proxy_here',
@@ -270,8 +290,8 @@ $(document).on('click', '.watch_proxy_here', function() {
 $(document).on('click', '.watch_proxy_delete', function() {
 	var proxy = $(this).closest('.proxy');
 	var uuid = proxy.attr('uuid');
-	var chip_id = localStorage.getItem('embedded_chip_id') || '';
-	var edt = localStorage.getItem('embedded_device_type') || 'watch';
+	var chip_id = (typeof embeddedChipId === 'function') ? embeddedChipId() : (localStorage.getItem('embedded_chip_id') || '');
+	var edt = ((jQuery('#embedded_device_picker').val() || '') + '').trim() || localStorage.getItem('embedded_device_type') || 'watch';
 	$.ajax({
 		url: '/manager/watch/delete_proxy',
 		type: 'POST',
@@ -285,8 +305,8 @@ $(document).on('click', '.watch_proxy_delete', function() {
 $(document).on('click', '.watch_proxy_save', function() {
 	var proxy = $(this).closest('.proxy');
 	var uuid = proxy.attr('uuid');
-	var chip_id = localStorage.getItem('embedded_chip_id') || '';
-	var edt = localStorage.getItem('embedded_device_type') || 'watch';
+	var chip_id = (typeof embeddedChipId === 'function') ? embeddedChipId() : (localStorage.getItem('embedded_chip_id') || '');
+	var edt = ((jQuery('#embedded_device_picker').val() || '') + '').trim() || localStorage.getItem('embedded_device_type') || 'watch';
 	var timestamp = Date.now();
 	$.ajax({
 		url: '/manager/watch/proxy_save',
@@ -325,8 +345,8 @@ $(document).on('click', '.embedded_usb_provision', function() {
 });
 
 $(document).on('click', '.embedded_jobs', function() {
-	var edt = localStorage.getItem('embedded_device_type') || 'watch';
-	var chip_id = localStorage.getItem('embedded_chip_id') || '';
+	var edt = ((jQuery('#embedded_device_picker').val() || '') + '').trim() || localStorage.getItem('embedded_device_type') || 'watch';
+	var chip_id = (typeof embeddedChipId === 'function') ? embeddedChipId() : (localStorage.getItem('embedded_chip_id') || '');
 	var ip = $(this).attr('ip');
 	var mac = $(this).attr('mac');
 	var timestamp = Date.now();
@@ -351,8 +371,8 @@ $(document).on('click', '.delete_embedded_job', function() {
 	var a = $(this);
 	var uuid = a.attr('uuid');
 	var appt_uuid = a.attr('appt_uuid');
-	var edt = localStorage.getItem('embedded_device_type') || 'watch';
-	var chip_id = localStorage.getItem('embedded_chip_id') || '';
+	var edt = ((jQuery('#embedded_device_picker').val() || '') + '').trim() || localStorage.getItem('embedded_device_type') || 'watch';
+	var chip_id = (typeof embeddedChipId === 'function') ? embeddedChipId() : (localStorage.getItem('embedded_chip_id') || '');
 	var timestamp = Date.now();
 	if (a.attr('armed') == 'yes') {	
 		$.ajax({
@@ -423,7 +443,7 @@ $(document).on('change', '.watch_input', function() {
 	var ip = input.attr('ip');
 	var edt = input.attr('edt');
 	var timestamp = Date.now();
-	var chip_id = localStorage.getItem('embedded_chip_id') || '';
+	var chip_id = (typeof embeddedChipId === 'function') ? embeddedChipId() : (localStorage.getItem('embedded_chip_id') || '');
 
 	$.ajax({
 		url: '/manager/watch/assign',
@@ -458,7 +478,7 @@ $(document).on('change', '.watch_measures', function() {
 	var edt = input.attr('edt');
 	var component = input.attr('component');
 	var numero = input.attr('pin');
-	var chip_id = localStorage.getItem('embedded_chip_id') || '';
+	var chip_id = (typeof embeddedChipId === 'function') ? embeddedChipId() : (localStorage.getItem('embedded_chip_id') || '');
 	$.ajax({
 		url: '/manager/watch/measure',
 		type: 'POST',
@@ -474,8 +494,8 @@ $(document).on('mouseover mousemove touchmove', 'input.watch_setting[type="range
 	var setting = movement.attr('setting');
 	var numero = movement.attr('numero');
 	var component = movement.attr('component');
-	var edt = localStorage.getItem('embedded_device_type') || 'watch';
-	var chip_id = localStorage.getItem('embedded_chip_id') || '';
+	var edt = ((jQuery('#embedded_device_picker').val() || '') + '').trim() || localStorage.getItem('embedded_device_type') || 'watch';
+	var chip_id = (typeof embeddedChipId === 'function') ? embeddedChipId() : (localStorage.getItem('embedded_chip_id') || '');
 	var mov = movement.val();
 
 	var max = movement.attr('max');
@@ -499,7 +519,7 @@ $(document).on('click change', '.watch_toggle', function() {
 	var ip = b.attr('ip');
 	var timestamp = Date.now();
 	var edt = $(this).attr('edt');
-	var chip_id = localStorage.getItem('embedded_chip_id') || '';
+	var chip_id = (typeof embeddedChipId === 'function') ? embeddedChipId() : (localStorage.getItem('embedded_chip_id') || '');
 	$.ajax({
 		url: '/manager/embedded/toggle',
 		type: 'POST',
@@ -567,7 +587,7 @@ $(document).on('change', '.teletype_appearance', function() {
 	var timestamp = Date.now();
 	var value = $(this).val();
 	var field = $(this).attr('field');
-	var chip_id = localStorage.getItem('embedded_chip_id') || '';
+	var chip_id = (typeof embeddedChipId === 'function') ? embeddedChipId() : (localStorage.getItem('embedded_chip_id') || '');
 	$.ajax({
 		url: '/manager/teletype/appearance',
 		type: 'POST',
@@ -640,7 +660,7 @@ $(document).on('click', '.teletype_wifi_pick', function() {
 $(document).on('click', '#teletype_wifi_update', function() {
 	var timestamp = Date.now();
 	var chip_id = embeddedChipId();
-	var edt = localStorage.getItem('embedded_device_type') || 'watch';
+	var edt = ((jQuery('#embedded_device_picker').val() || '') + '').trim() || localStorage.getItem('embedded_device_type') || 'watch';
 	$.ajax({
 		url: '/manager/teletype/wifi_update',
 		type: 'POST',
@@ -659,7 +679,7 @@ $(document).on('click', '#teletype_wifi_update', function() {
 $(document).on('click', '#teletype_usb_update', function() {
 	var timestamp = Date.now();
 	var chip_id = embeddedChipId();
-	var edt = localStorage.getItem('embedded_device_type') || 'watch';
+	var edt = ((jQuery('#embedded_device_picker').val() || '') + '').trim() || localStorage.getItem('embedded_device_type') || 'watch';
 	$.ajax({
 		url: '/manager/teletype/wifi_update',
 		type: 'GET',
@@ -687,7 +707,7 @@ $(document).on('change', '.teletype_wifi_config', function() {
 	// a password field shows only that it is set; an empty value means "leave it"
 	if (/password/.test(field) && !val) { return; }
 	var timestamp = Date.now();
-	var edt = localStorage.getItem('embedded_device_type') || 'watch';
+	var edt = ((jQuery('#embedded_device_picker').val() || '') + '').trim() || localStorage.getItem('embedded_device_type') || 'watch';
 	var chip_id = embeddedChipId();
 	$.ajax({
 		url: '/manager/teletype/wifi_config',

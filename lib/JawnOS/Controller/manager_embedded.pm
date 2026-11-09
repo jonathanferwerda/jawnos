@@ -588,21 +588,38 @@ sub action_43918 {
 # over its USB console otherwise, then adopt the answer into the house record.
 sub action_43934 {
 	my $c = shift;
-	my $edt = $c->param('edt');
+	my $edt = $c->param('edt') || 'microcontroller';
 	my $chip_id = $c->param('chip_id');
 	my $ip = $c->param('ip');
 	my $port = $c->param('port');
 
 	my $read;
-	if ($ip) {
-		# A board serves /pins on the same house port as /jobs and /device_query.
-		$read = &subs::board_pins_http_read($ip, $port || $config->{'port'});
+	if ($port) {
+		$read = &subs::board_pins_usb_read($port);
 	}
 	else {
-		unless ($port) {
+		# No address from the caller: ask the house where this board last
+		# answered. A board plugged into another machine's USB still reports
+		# over the network, and /pins is guarded like every other board route,
+		# so the check needs the door's token.
+		if ((!$ip) && defined $chip_id && length $chip_id) {
+			my $watch = eval { &subs::device_lister(&subs::rightNow(), $edt, undef, $chip_id) };
+			$ip = $watch->{'ip'} if ref $watch eq 'HASH' && defined $watch->{'ip'} && length $watch->{'ip'};
+		}
+		my $authorization = '';
+		if (defined $chip_id && length $chip_id) {
+			my $od = eval { decode_json(&subs::embedded_operator_door($edt, $chip_id) || '') } || {};
+			$authorization = $od->{'__specs'}->{'authorization'} || '';
+		}
+		if ($ip) {
+			# A board serves /pins on the same house port as /jobs and /device_query.
+			$read = &subs::board_pins_http_read($ip, $port || $config->{'port'}, $authorization);
+		}
+		unless ($read && $read->{'ok'}) {
 			my $ports = &usb_ports_grabber();
 			my @acm = grep { $_->{'acm'} } @{$ports};
-			if (scalar @acm == 1) { $port = $acm[0]->{'path'}; }
+			my $usb_port;
+			if (scalar @acm == 1) { $usb_port = $acm[0]->{'path'}; }
 			else {
 				my $key = $chip_id || '';
 				$key =~ s/[^0-9A-F]//gi;
@@ -610,13 +627,20 @@ sub action_43934 {
 					my $label = $_->{'label'} || '';
 					($chip_id && $label =~ /\Q$chip_id\E/i) || ($key && $label =~ /\Q$key\E/i)
 				} @acm;
-				$port = $match[0]->{'path'} if scalar @match == 1;
+				$usb_port = $match[0]->{'path'} if scalar @match == 1;
 			}
-			return $c->render(json => { ok => 0, error => 'choose a port', ports => $ports }) unless $port;
+			if ($usb_port) {
+				my $usb = &subs::board_pins_usb_read($usb_port);
+				# Keep the network error when USB cannot answer either: it names
+				# the address that did not reply, which is more use than a port.
+				$read = $usb if $usb->{'ok'} || !$read;
+			}
+			elsif (!$read) {
+				return $c->render(json => { ok => 0, error => 'choose a port', ports => $ports });
+			}
 		}
-		$read = &subs::board_pins_usb_read($port);
 	}
-	return $c->render(json => { ok => 0, error => $read->{'error'} }) unless $read->{'ok'};
+	return $c->render(json => { ok => 0, error => $read->{'error'} }) unless $read && $read->{'ok'};
 
 	my $report = $read->{'report'};
 	$edt ||= $report->{'purpose'} || 'microcontroller';

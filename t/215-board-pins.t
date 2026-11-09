@@ -286,4 +286,35 @@ subtest 'the board pin routes reach their actions' => sub {
 	like($controller, qr/sub\s+action_43947\b/, 'the attach action is defined');
 };
 
+
+subtest 'the token rides the network read, so /pins is not refused' => sub {
+	# The board guards /pins with the same token as /jobs and /relay. A read
+	# without it answered 403, and the panel then said it did not know the chip
+	# although the board was answering fine.
+	my $src = read_file(root() . '/lib/JawnOS/Domain/Boardpins.pm');
+	like($src, qr/sub board_pins_http_read\(\$ip, \$port, \$authorization\)/,
+		'the http reader takes the board token');
+	like($src, qr/\$url->query\(authorization => \$authorization\)/,
+		'and puts it on the query string');
+
+	my $controller = read_file(root() . '/lib/JawnOS/Controller/manager_embedded.pm');
+	like($controller, qr/device_lister\(&subs::rightNow\(\), \$edt, undef, \$chip_id\)/,
+		'the route finds the address the house already knows');
+	like($controller, qr/embedded_operator_door\(\$edt, \$chip_id\)/,
+		'and reads the token from the board door');
+};
+
+subtest 'an IR pin is part of the attach vocabulary' => sub {
+	# Refused for the app's absence, not for the component's: that is the line
+	# that proves irrx/irtx passed the vocabulary check without writing a door.
+	for my $component (qw(irrx irtx)) {
+		my $r = subs::board_pins_attach({
+			edt => 'microcontroller', chip_id => 'chipA', pin => 15,
+			component => $component, app => 'no-such-app-xyz',
+		});
+		is($r->{'error'}, 'no such appointment: no-such-app-xyz',
+			"$component is a known component");
+	}
+};
+
 done_testing();

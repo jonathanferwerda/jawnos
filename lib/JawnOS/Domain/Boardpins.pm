@@ -27,6 +27,7 @@ no warnings 'uninitialized';
 no warnings 'once';
 
 use Mojo::UserAgent;
+use Mojo::URL;
 use Mojo::JSON qw(decode_json encode_json);
 
 # The component vocabulary is the house's, not the board's: an unknown name is
@@ -35,9 +36,11 @@ my %DIRECTION = (
 	relay  => 'output',
 	led    => 'output',
 	servo  => 'output',
+	irtx   => 'output',
 	button => 'input',
 	switch => 'input',
 	pot    => 'input',
+	irrx   => 'input',
 );
 
 # A door key is the component name (or its one-letter shorthand on a device
@@ -127,11 +130,17 @@ sub board_pins_usb_read($port) {
 
 # The network path to the same report. The timeouts are short because a board
 # that does not answer right now is not worth a request that hangs.
-sub board_pins_http_read($ip, $port) {
+sub board_pins_http_read($ip, $port, $authorization) {
 	return { ok => 0, error => 'need an ip' } unless defined $ip && length $ip;
 	$port = 80 unless defined $port && length $port;
+	my $url = Mojo::URL->new('http://' . $ip . ':' . $port . '/pins');
+	# The board's /pins is guarded exactly like /jobs and /relay: without the
+	# token it answers 403 and the panel reported "I don't know this chip" for a
+	# board that was answering fine.
+	$url->query(authorization => $authorization)
+		if defined $authorization && length $authorization;
 	my $ua = Mojo::UserAgent->new(connect_timeout => 2, inactivity_timeout => 3);
-	my $res = eval { $ua->get('http://' . $ip . ':' . $port . '/pins')->result };
+	my $res = eval { $ua->get($url)->result };
 	return { ok => 0, error => 'no reply from ' . $ip . ':' . $port } unless $res;
 	return { ok => 0, error => 'HTTP ' . $res->code . ' from ' . $ip . ':' . $port }
 		unless $res->is_success;
