@@ -39,6 +39,7 @@ our $config;
 our $device;
 our %lan_reply_at;
 our %lan_presence_fingerprint;
+our %lan_presence_last_at;
 our $lan_reply_beacon;
 our %m;
 
@@ -921,9 +922,21 @@ sub lan_presence_accept {
 	my $fingerprint = join '|', map { defined $msg->{$_} && !ref $msg->{$_} ? $msg->{$_} : '' }
 		sort grep { !/^(?:ts|server_time|nonce|signatorial|sig)$/ } keys %{$msg};
 	my $fingerprint_key = $sig . '|' . $peer_ip;
+	my $now_at = &rightNow();
+	my $quiet = ($lan_presence_last_at{$fingerprint_key} || 0)
+		? $now_at - $lan_presence_last_at{$fingerprint_key} : 0;
+	$lan_presence_last_at{$fingerprint_key} = $now_at;
 	my $seen = $lan_presence_fingerprint{$fingerprint_key};
-	return if ref $seen eq 'ARRAY' && $seen->[0] eq $fingerprint
-		&& &rightNow() - $seen->[1] < 60000;
+	if (ref $seen eq 'ARRAY' && $seen->[0] eq $fingerprint
+		&& $now_at - $seen->[1] < 60000) {
+		# A peer that was quiet and is back is a wake even when its state is
+		# unchanged: the phone's start/stop must reach the reconnector at once.
+		if ($quiet > 10000) {
+			&lan_presence_wake();
+			&lan_presence_reply($peer_ip);
+		}
+		return;
+	}
 	my $rm = &db_select('remote_machines', undef, { signatorial => $sig })->hashes->[0];
 	return unless $rm;
 	return unless &lan_presence_verify($rm, $msg);
@@ -1036,8 +1049,8 @@ sub lan_presence_accept {
 	# A unicast reply teaches the sender our address too. Android/Termux filters
 	# broadcast reception on Wi-Fi, so the sender's sweep may be the only thing we
 	# heard; the reply is the other half that lets both ends learn each other.
-	&lan_presence_reply($peer_ip) if $changed;
-	&lan_presence_wake() if $changed;
+	&lan_presence_reply($peer_ip) if $changed || $quiet > 10000;
+	&lan_presence_wake() if $changed || $quiet > 10000;
 	# Carry the signed notice to the house server on this peer's behalf. A phone
 	# whose tailnet is down still has a LAN peer that can reach the server, and the
 	# server is where another machine asks when its stored name goes stale. The

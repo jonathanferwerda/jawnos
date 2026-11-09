@@ -384,6 +384,7 @@ sub lan_presence_wait {
 sub lan_presence_listen {
 	require Socket;
 	require IO::Socket::INET;
+	require IO::Select;
 	while (1) {
 		# A cloud server whose only address is public has no LAN to listen on;
 		# do not open the port to the internet.
@@ -409,8 +410,19 @@ sub lan_presence_listen {
 		# one - the newest - per source: presence lands within a second, and the
 		# loop wakes once a second instead of once a datagram.
 		$sock->blocking(0);
+		my $ready = IO::Select->new($sock);
+		my $busy = 0;
 		while (1) {
-			sleep 1;
+			# Idle: block on the socket, so the first datagram after a quiet
+			# spell is applied at once. Busy: let a stream queue for a second
+			# and apply only the newest per source.
+			if ($busy) {
+				sleep 1;
+			}
+			elsif (!$ready->can_read(15)) {
+				&subs::subprocessor_heartbeat();
+				next;
+			}
 			my %pending;
 			while (1) {
 				my $data = '';
@@ -424,6 +436,7 @@ sub lan_presence_listen {
 				# presence notice from the same address in the same pass.
 				$pending{$ip}{$data =~ /"type"\s*:\s*"jawnos-nav"/ ? 'nav' : 'presence'} = $data;
 			}
+			$busy = scalar(keys %pending) ? 1 : 0;
 			foreach my $ip (sort keys %pending) {
 				foreach my $slot (sort keys %{$pending{$ip}}) {
 					my $msg = eval { decode_json($pending{$ip}{$slot}) };

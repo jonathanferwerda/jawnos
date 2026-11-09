@@ -576,7 +576,9 @@ sub manager_starter() {
 		sleep 7;
 		while (1) {
 			&subs::subprocessor_heartbeat();
-			sleep 2;
+			# A wake is the phone's start/stop reaching the mesh: poll twice a
+			# second so the websockets come back without a visible pause.
+			select(undef, undef, undef, 0.5);
 			my $wake = &subs::cache_get({ app => '__president', context => 'lan', subcontext => 'wake' });
 			next unless $wake;
 			&subs::cache_delete({ app => '__president', context => 'lan', subcontext => 'wake' });
