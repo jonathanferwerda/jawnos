@@ -107,9 +107,19 @@ system('systemctl', 'stop', 'jawnos-kiosk');
 # exist before the emulator scans its controls.
 select(undef, undef, undef, 0.6);
 
-my @command = $runner->{'kind'} eq 'standalone'
-	? ($runner->{'command'}, '-b', '-e', $game->{'file'})
-	: ('/usr/bin/retroarch', '-f', '-L', $runner->{'core'}, $game->{'file'});
+my @command;
+if ($runner->{'kind'} eq 'standalone') {
+	@command = ($runner->{'command'}, '-b', '-e', $game->{'file'});
+}
+else {
+	@command = ('/usr/bin/retroarch', '-f', '-L', $runner->{'core'});
+	# RetroArch's default audio device is one this image never configured. The
+	# append config pins ALSA to the panel's card, so a game has sound without a
+	# visit to the settings menu.
+	push @command, '--appendconfig', '/home/jawn/.config/retroarch/gou.cfg'
+		if -f '/home/jawn/.config/retroarch/gou.cfg';
+	push @command, $game->{'file'};
+}
 
 $child = fork();
 if (!defined $child) {

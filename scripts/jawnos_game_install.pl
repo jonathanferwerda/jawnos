@@ -80,6 +80,22 @@ if ($WHAT eq 'emulators') {
 		}
 		write_status();
 	}
+	# RetroArch's default output is a "default" device this image never
+	# configured; pin it to the panel's card once.
+	my $config_dir = '/home/jawn/.config/retroarch';
+	make_path($config_dir);
+	my $config = "$config_dir/gou.cfg";
+	if (!-e $config) {
+		if (open(my $cfg, '>', $config)) {
+			print $cfg "audio_driver = \"alsa\"\n"
+				. "audio_device = \"hw:0,0\"\n"
+				. "audio_enable = \"true\"\n"
+				. "video_fullscreen = \"true\"\n";
+			close $cfg;
+		}
+	}
+	system('chown', '-R', 'jawn:jawn', $config_dir);
+
 	# The repositories do not carry every core the shelf names. The emmc image
 	# has a full set built for this board; copy the ones still missing, never
 	# over one pacman installed.

@@ -84,6 +84,8 @@ like($launch, qr/gou-games/, 'the games marker arms the virtual gamepad');
 like($launch, qr/POSIX::setuid\(\$uid\)/, 'the emulator runs as the person, not root');
 like($launch, qr|'/usr/bin/retroarch', '-f', '-L'|, 'RetroArch is run full screen with its core');
 like($launch, qr/JawnOS::Games::runner_for/, 'the runner is the same one the route checked');
+like($launch, qr/--appendconfig/, 'the game gets the config that names the card');
+like($install, qr/audio_device = \\"hw:0,0\\"/, 'the installer writes the ALSA device the panel has');
 
 # --- the routes and the page --------------------------------------------------
 my $routes = read_file("$root/lib/JawnOS/Routes/manager_misc9.pm");
