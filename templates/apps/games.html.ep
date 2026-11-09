@@ -3,10 +3,11 @@
     own programme, so its tile carries a note instead of a link until there is
     something to run. %>
 <style>
-	html, body, .wind, .window_contents { background:#2e2e2e !important; color:#f4f4f4 !important; }
-	.wind { left:0 !important; top:0 !important; width:100vw !important; height:100vh !important; }
-	.window_contents { width:100% !important; height:100% !important; padding-top:0 !important; }
-	#games_shell { display:flex; flex-direction:column; width:100%; height:100%; min-height:0; }
+	/* Scoped to this page: it is a window on the desk, so it must not resize
+	   every other window the way the controller's whole-device launcher does.
+	   body.full_app_mode makes it full screen; manager.css drops the title pad. */
+	#games_shell { display:flex; flex-direction:column; width:100%; height:100%; min-height:0;
+		background:#2e2e2e; color:#f4f4f4; }
 	#games_bar { flex:0 0 auto; display:flex; justify-content:flex-end; padding:6px 8px 0; }
 	#games_home { font:inherit; font-size:13px; line-height:1.2; padding:5px 12px;
 		border:1px solid #4a4a4a; border-radius:8px; background:#3a3a3a; color:#ffffff;

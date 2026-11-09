@@ -31,6 +31,7 @@ like($page, qr/href="\/manager\?open=twirl&amp;full=1"/, 'Twirl opens the puzzle
 like($page, qr/Emulated games/, 'the emulated shelf is named');
 like($page, qr/None installed yet/, 'and says there is nothing on it yet');
 like($page, qr/id="games_home"[^>]*href="\/manager\/controller"/, 'Home returns to the Controller launcher');
+unlike($page, qr/^\s*\.wind \{/m, 'the page does not resize every window on the desk');
 
 # --- the desk and the Controller know it -------------------------------------
 my $back = read_file("$root/public/js/manager/manager/09_app_back.js");
