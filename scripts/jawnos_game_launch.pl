@@ -90,11 +90,17 @@ sub governor_boost {
 		closedir $dh;
 	}
 	$governor_saved = 'schedutil' unless length $governor_saved;
+	# what to go back to, for the guard if this helper dies mid-game
+	if (open(my $fh, '>', "$STATE/governor")) {
+		print $fh "$governor_saved\n";
+		close $fh;
+	}
 	governor_set('performance');
 }
 
 sub governor_restore {
 	governor_set($governor_saved) if length $governor_saved;
+	unlink "$STATE/governor";
 }
 
 my $kiosk_window;      # the kiosk's window, remembered across the game
