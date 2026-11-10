@@ -42,6 +42,7 @@ use Number::Format qw/:subs/;
 use SQL::Abstract;
 use Mojo::SQLite;
 use Mojo::IOLoop;
+use JawnOS::Platform::Audio ();
 
 use Mojolicious::Sessions;
 use Mojo::Server::Daemon;
@@ -473,7 +474,7 @@ sub action_41801 {
 				&subs::device_call('audio.volume', { stream => $stream, volume => $volume });
 			}
 			else {
-				`amixer set $stream $volume%`;
+				JawnOS::Platform::Audio::run('amixer', 'set', $stream, $volume . '%');
 			}
 		}
 		if ($device eq 'mobile') {
@@ -481,7 +482,7 @@ sub action_41801 {
 		}
 		else {
 			foreach my $control ( qw/Master Capture/ ) {
-				my $amixer = `amixer get $control`;
+				my $amixer = JawnOS::Platform::Audio::run('amixer', 'get', $control);
 				my @lines = split /\n/, $amixer;
 
 				my $volume;

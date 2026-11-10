@@ -19,6 +19,8 @@ use strict;
 use warnings;
 use utf8;
 
+use JawnOS::Platform::Audio ();
+
 # The channel map is one JSON setting; this file loads no other JSON module.
 require JSON::PP;
 
@@ -26,29 +28,14 @@ require JSON::PP;
 # machine with no mixer is 'none' rather than an error: the app says so.
 our $sound_backend_memo;
 
-# Find a command on PATH without a shell. The returned path is a bare word we
-# hand to exec as argv[0], never a string assembled into a command line.
+# The command and parser seam lives in JawnOS::Platform::Audio; these keep the
+# domain names the Loader maps so an existing call site changes nothing.
 sub sound_which {
-	my ($name) = @_;
-	return undef unless defined $name && $name =~ /^[A-Za-z0-9_.\-]+$/;
-	foreach my $dir (split /:/, ($ENV{'PATH'} || '')) {
-		next unless length $dir;
-		my $path = "$dir/$name";
-		return $path if -f $path && -x _;
-	}
-	return undef;
+	return JawnOS::Platform::Audio::which(@_);
 }
 
-# Run a fixed argv and return its stdout. The list form of open skips the
-# shell, so a device name with a space or a quote is one argument, not code.
 sub sound_run {
-	my (@cmd) = @_;
-	return undef unless @cmd;
-	open(my $fh, '-|', @cmd) or return undef;
-	local $/;
-	my $out = <$fh>;
-	close $fh;
-	return defined $out ? $out : '';
+	return JawnOS::Platform::Audio::run(@_);
 }
 
 sub sound_mobile {
@@ -68,195 +55,41 @@ sub sound_backend {
 	}
 
 	if (!$found) {
-		my $pactl = &sound_which('pactl');
-		if ($pactl) {
-			my $info = &sound_run($pactl, 'info');
-			$found = { kind => 'pactl', bin => $pactl }
-				if defined $info && $info =~ /Server Name:/;
-		}
-	}
-
-	if (!$found) {
-		my $wpctl = &sound_which('wpctl');
-		if ($wpctl) {
-			my $status = &sound_run($wpctl, 'status');
-			$found = { kind => 'wpctl', bin => $wpctl }
-				if defined $status && $status =~ /(?:PipeWire|Audio)/;
-		}
-	}
-
-	if (!$found) {
-		my $amixer = &sound_which('amixer');
-		if ($amixer) {
-			foreach my $control ('Master', 'PCM', 'Speaker', 'Master Playback Volume') {
-				my $out = &sound_run($amixer, 'sget', $control);
-				next unless defined $out && $out =~ /\[(\d+)%\]/;
-				$found = { kind => 'amixer', bin => $amixer, control => $control };
-				last;
-			}
-		}
+		# the memo above is the domain's reset point for a test; keep the
+		# platform probe in step with it
+		JawnOS::Platform::Audio::reset_backend();
+		$found = JawnOS::Platform::Audio::backend();
 	}
 
 	$sound_backend_memo = $found || { kind => 'none', bin => '' };
 	return $sound_backend_memo;
 }
 
-# ---- pactl ------------------------------------------------------------------
-# `pactl list sinks` gives a block per device: Name, Description, Mute and one
-# or more Volume lines. A device's id is its Name, which is what the set- and
-# default- verbs take.
+# ---- the backend's own parsers ---------------------------------------------
+# They live in JawnOS::Platform::Audio; these wrappers keep the domain names
+# the Loader indexes (and the fixtures pin) working.
 sub sound_parse_pactl_devices {
-	my ($text, $kind) = @_;
-	my $header = $kind eq 'input' ? 'Source' : 'Sink';
-	my (@devices, $current);
-	foreach my $line (split /\n/, ($text || '')) {
-		if ($line =~ /^\s*$header #(\d+)/) {
-			$current = { index => $1 + 0, kind => ($kind eq 'input' ? 'source' : 'sink') };
-			push @devices, $current;
-			next;
-		}
-		next unless $current;
-		if ($line =~ /^\s+Name:\s*(.+?)\s*$/) {
-			$current->{'id'} = $1;
-		}
-		elsif ($line =~ /^\s+Description:\s*(.+?)\s*$/) {
-			$current->{'name'} = $1;
-		}
-		elsif ($line =~ /^\s+Mute:\s*(yes|no)\s*$/i) {
-			$current->{'muted'} = lc($1) eq 'yes' ? 1 : 0;
-		}
-		elsif (!defined $current->{'volume'} && $line =~ /^\s+Volume:.*?(\d+)%/) {
-			$current->{'volume'} = $1 + 0;
-		}
-	}
-	@devices = grep { defined $_->{'id'} && length $_->{'id'} } @devices;
-	foreach my $device (@devices) {
-		$device->{'name'} = $device->{'id'}
-			unless defined $device->{'name'} && length $device->{'name'};
-		$device->{'volume'} = 0 unless defined $device->{'volume'};
-		$device->{'muted'} = 0 unless defined $device->{'muted'};
-	}
-	return \@devices;
+	return JawnOS::Platform::Audio::parse_pactl_devices(@_);
 }
 
-# A short listing is the fallback when the long one is unreadable: the name is
-# column two and every other column is informational.
 sub sound_parse_pactl_short {
-	my ($text, $kind) = @_;
-	my @devices;
-	foreach my $line (split /\n/, ($text || '')) {
-		my @field = split /\t/, $line;
-		next unless @field >= 2 && length $field[1];
-		push @devices, {
-			id => $field[1],
-			name => $field[1],
-			index => $field[0] + 0,
-			volume => 0,
-			muted => 0,
-			kind => ($kind eq 'input' ? 'source' : 'sink'),
-		};
-	}
-	return \@devices;
+	return JawnOS::Platform::Audio::parse_pactl_short(@_);
 }
 
-# The default device's own verbs are the authority for its level and mute, even
-# when the long listing missed them. Other devices keep what the listing said.
 sub sound_pactl_devices {
-	my ($bin, $kind) = @_;
-	my $type = $kind eq 'input' ? 'sources' : 'sinks';
-	my $default = ($kind eq 'input' ? 'get-default-source' : 'get-default-sink');
-	my $default_id = '';
-	my $default_out = &sound_run($bin, $default);
-	$default_id = $1 if defined $default_out && $default_out =~ /^\s*(\S+)/;
-
-	my $long = &sound_run($bin, 'list', $type);
-	my $devices = &sound_parse_pactl_devices($long, $kind);
-	$devices = &sound_parse_pactl_short(&sound_run($bin, 'list', 'short', $type), $kind)
-		unless @{$devices};
-
-	foreach my $device (@{$devices}) {
-		$device->{'default'} = ($default_id ne '' && $device->{'id'} eq $default_id) ? 1 : 0;
-		next unless $device->{'default'};
-		my $vol_verb = $kind eq 'input' ? 'get-source-volume' : 'get-sink-volume';
-		my $mute_verb = $kind eq 'input' ? 'get-source-mute' : 'get-sink-mute';
-		my $vol = &sound_run($bin, $vol_verb, $device->{'id'});
-		$device->{'volume'} = $1 + 0 if defined $vol && $vol =~ /(\d+)%/;
-		my $mute = &sound_run($bin, $mute_verb, $device->{'id'});
-		$device->{'muted'} = lc($1) eq 'yes' ? 1 : 0
-			if defined $mute && $mute =~ /Mute:\s*(yes|no)/i;
-	}
-	return $devices;
+	return JawnOS::Platform::Audio::pactl_devices(@_);
 }
 
-# ---- wpctl ------------------------------------------------------------------
-# `wpctl status` draws a tree. A device line in the Sinks or Sources section is
-# `  *   45. Built-in Audio Analog Stereo [vol: 0.70]`; the star is the default
-# and MUTED inside the bracket is the mute state.
 sub sound_parse_wpctl {
-	my ($text) = @_;
-	my (@outputs, @inputs);
-	my $section = '';
-	foreach my $line (split /\n/, ($text || '')) {
-		if ($line =~ /^\s*[^\w]*Sinks:\s*$/) { $section = 'output'; next; }
-		if ($line =~ /^\s*[^\w]*Sources:\s*$/) { $section = 'input'; next; }
-		if ($line =~ /^\s*[^\w]*(?:Devices|Filters|Streams|Clients|Video|Audio):\s*$/) {
-			$section = '';
-			next;
-		}
-		next unless $section;
-		next unless $line =~ /^\s*[^\w*]*(\*)?\s*(\d+)\.\s+(.+?)\s+\[vol:\s*([0-9.]+)(\s+MUTED)?\]/i;
-		my ($star, $id, $name, $volume, $muted) = ($1, $2, $3, $4, $5);
-		my $device = {
-			id => $id,
-			index => $id + 0,
-			name => $name,
-			volume => int(($volume * 100) + 0.5),
-			muted => (defined $muted && length $muted) ? 1 : 0,
-			default => $star ? 1 : 0,
-			kind => ($section eq 'input' ? 'source' : 'sink'),
-		};
-		push @{ $section eq 'input' ? \@inputs : \@outputs }, $device;
-	}
-	return (\@outputs, \@inputs);
+	return JawnOS::Platform::Audio::parse_wpctl(@_);
 }
 
-# ---- amixer -----------------------------------------------------------------
-# One control per direction. The volume is the first percentage in `sget`, and
-# `[off]` is the mute switch.
 sub sound_amixer_control {
-	my ($bin, $control) = @_;
-	return undef unless defined $control && $control =~ /^(?:Master Playback Volume|Master|PCM|Speaker|Capture|Mic)$/;
-	my $out = &sound_run($bin, 'sget', $control);
-	return undef unless defined $out;
-	my ($volume) = $out =~ /\[(\d+)%\]/;
-	return undef unless defined $volume;
-	my ($switch) = $out =~ /\[(on|off)\]/i;
-	return {
-		id => $control,
-		name => $control,
-		volume => $volume + 0,
-		muted => (defined $switch && lc($switch) eq 'off') ? 1 : 0,
-		kind => 'sink',
-	};
+	return JawnOS::Platform::Audio::amixer_control(@_);
 }
 
 sub sound_amixer_devices {
-	my ($bin) = @_;
-	my (@outputs, @inputs);
-	foreach my $control ('Master', 'PCM', 'Speaker', 'Master Playback Volume') {
-		my $device = &sound_amixer_control($bin, $control);
-		next unless $device;
-		$device->{'kind'} = 'sink';
-		push @outputs, $device;
-	}
-	foreach my $control (qw(Capture Mic)) {
-		my $device = &sound_amixer_control($bin, $control);
-		next unless $device;
-		$device->{'kind'} = 'source';
-		$device->{'name'} = 'Capture' if $control eq 'Capture';
-		push @inputs, $device;
-	}
-	return (\@outputs, \@inputs);
+	return JawnOS::Platform::Audio::amixer_devices(@_);
 }
 
 # ---- Android ----------------------------------------------------------------
@@ -332,19 +165,9 @@ sub sound_devices {
 	my $input_mute = 1;
 	my $input_supported = 1;
 
-	if ($type eq 'pactl') {
-		@outputs = @{ &sound_pactl_devices($backend->{'bin'}, 'output') };
-		@inputs  = @{ &sound_pactl_devices($backend->{'bin'}, 'input') };
-	}
-	elsif ($type eq 'wpctl') {
-		my ($out, $in) = &sound_parse_wpctl(&sound_run($backend->{'bin'}, 'status'));
-		@outputs = @{$out};
-		@inputs  = @{$in};
-	}
-	elsif ($type eq 'amixer') {
-		my ($out, $in) = &sound_amixer_devices($backend->{'bin'});
-		@outputs = @{$out};
-		@inputs  = @{$in};
+	if ($type eq 'pactl' || $type eq 'wpctl' || $type eq 'amixer') {
+		@outputs = @{ JawnOS::Platform::Audio::devices('output') };
+		@inputs  = @{ JawnOS::Platform::Audio::devices('input') };
 	}
 	elsif ($type eq 'android') {
 		my $streams = &sound_android_streams();
@@ -420,19 +243,18 @@ sub sound_set {
 	my $type = $backend->{'kind'} || 'none';
 	return { ok => 0, supported => 0, error => 'no sound backend' } if $type eq 'none';
 
-	my $rc;
+	my $ok;
 	if ($type eq 'pactl') {
 		return { ok => 0, error => 'unknown device' } unless &sound_pactl_id_ok($id);
-		my $verb = $kind eq 'input' ? 'set-source-volume' : 'set-sink-volume';
-		$rc = system($backend->{'bin'}, $verb, $id, $volume . '%');
+		$ok = JawnOS::Platform::Audio::set_volume($kind, $id, $volume);
 	}
 	elsif ($type eq 'wpctl') {
 		return { ok => 0, error => 'unknown device' } unless &sound_wpctl_id_ok($id);
-		$rc = system($backend->{'bin'}, 'set-volume', $id, $volume . '%');
+		$ok = JawnOS::Platform::Audio::set_volume($kind, $id, $volume);
 	}
 	elsif ($type eq 'amixer') {
 		return { ok => 0, error => 'unknown device' } unless &sound_amixer_id_ok($id);
-		$rc = system($backend->{'bin'}, 'sset', $id, $volume . '%');
+		$ok = JawnOS::Platform::Audio::set_volume($kind, $id, $volume);
 	}
 	elsif ($type eq 'android') {
 		my $streams = &sound_android_streams();
@@ -444,13 +266,13 @@ sub sound_set {
 		my $answer = eval { &subs::device_call('audio.volume', { stream => $id, volume => $level }) };
 		return { ok => 0, supported => 0, error => 'the sound bridge did not answer' }
 			unless ref $answer eq 'HASH';
-		$rc = 0;
+		$ok = 1;
 	}
 	else {
 		return { ok => 0, supported => 0, error => 'no sound backend' };
 	}
 
-	return { ok => 0, error => 'the volume could not be set' } if $rc != 0;
+	return { ok => 0, error => 'the volume could not be set' } unless $ok;
 	return { %{ &sound_status() }, ok => 1, changed => { kind => $kind, id => $id, volume => $volume } };
 }
 
@@ -465,19 +287,18 @@ sub sound_mute {
 	my $type = $backend->{'kind'} || 'none';
 	return { ok => 0, supported => 0, error => 'no sound backend' } if $type eq 'none';
 
-	my $rc;
+	my $ok;
 	if ($type eq 'pactl') {
 		return { ok => 0, error => 'unknown device' } unless &sound_pactl_id_ok($id);
-		my $verb = $kind eq 'input' ? 'set-source-mute' : 'set-sink-mute';
-		$rc = system($backend->{'bin'}, $verb, $id, $want ? '1' : '0');
+		$ok = JawnOS::Platform::Audio::set_mute($kind, $id, $want);
 	}
 	elsif ($type eq 'wpctl') {
 		return { ok => 0, error => 'unknown device' } unless &sound_wpctl_id_ok($id);
-		$rc = system($backend->{'bin'}, 'set-mute', $id, $want ? '1' : '0');
+		$ok = JawnOS::Platform::Audio::set_mute($kind, $id, $want);
 	}
 	elsif ($type eq 'amixer') {
 		return { ok => 0, error => 'unknown device' } unless &sound_amixer_id_ok($id);
-		$rc = system($backend->{'bin'}, 'sset', $id, $want ? 'mute' : 'unmute');
+		$ok = JawnOS::Platform::Audio::set_mute($kind, $id, $want);
 	}
 	elsif ($type eq 'android') {
 		return { ok => 0, supported => 0, error => 'mute is not available on this machine' };
@@ -486,7 +307,7 @@ sub sound_mute {
 		return { ok => 0, supported => 0, error => 'no sound backend' };
 	}
 
-	return { ok => 0, error => 'the mute state could not be set' } if $rc != 0;
+	return { ok => 0, error => 'the mute state could not be set' } unless $ok;
 	return { %{ &sound_status() }, ok => 1, changed => { kind => $kind, id => $id, muted => $want } };
 }
 
@@ -506,15 +327,14 @@ sub sound_default {
 	my ($match) = grep { defined $_->{'id'} && $_->{'id'} eq $id } @{$list};
 	return { ok => 0, error => 'unknown device' } unless $match;
 
-	my $rc;
+	my $ok;
 	if ($type eq 'pactl') {
 		return { ok => 0, error => 'unknown device' } unless &sound_pactl_id_ok($id);
-		my $verb = $kind eq 'input' ? 'set-default-source' : 'set-default-sink';
-		$rc = system($backend->{'bin'}, $verb, $id);
+		$ok = JawnOS::Platform::Audio::set_default($kind, $id);
 	}
 	elsif ($type eq 'wpctl') {
 		return { ok => 0, error => 'unknown device' } unless &sound_wpctl_id_ok($id);
-		$rc = system($backend->{'bin'}, 'set-default', $id);
+		$ok = JawnOS::Platform::Audio::set_default($kind, $id);
 	}
 	elsif ($type eq 'amixer' || $type eq 'android') {
 		return { ok => 0, supported => 0, error => 'choosing a default device is not available on this machine' };
@@ -523,7 +343,7 @@ sub sound_default {
 		return { ok => 0, supported => 0, error => 'no sound backend' };
 	}
 
-	return { ok => 0, error => 'the default device could not be set' } if $rc != 0;
+	return { ok => 0, error => 'the default device could not be set' } unless $ok;
 	return { %{ &sound_status() }, ok => 1, changed => { kind => $kind, id => $id } };
 }
 

@@ -20,6 +20,7 @@ use File::Find;
 use File::Path;
 use File::Slurp;
 use JawnOS::Platform ();
+use JawnOS::Platform::Audio ();
 use IO::Select;
 use IPC::Open2;
 use JSON::PP ();
@@ -93,7 +94,7 @@ sub say_piper_argv {
 # handheld and the caller passes an empty command.
 sub say_player_command {
 	return '' if $device eq 'mobile';
-	return 'play -q';
+	return join ' ', JawnOS::Platform::Audio::player_argv();
 }
 
 # The piper invocation shared by the local player and the streaming reply:
@@ -192,8 +193,8 @@ sub say_speak {
 	# through the shell printed Windows' "path not found" on every backfill
 	# note. system(LIST) also keeps the words out of the shell.
 	my $voice = $spec->{'voice'} || 'en-us';
-	my $espeak = JawnOS::Platform::tool_path('espeak');
-	system($espeak, '-a70', '-v', $voice, $text) if $espeak;
+	my @espeak = JawnOS::Platform::Audio::speak_argv($text, $voice);
+	system(@espeak) if @espeak;
 	return;
 }
 

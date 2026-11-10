@@ -14,6 +14,7 @@ use Mojo::JSON qw(decode_json encode_json);
 use Mojo::IOLoop;
 use Mojo::UserAgent;
 use Fcntl qw(:flock O_CREAT O_RDWR);
+use JawnOS::Platform::Audio ();
 
 # File-scope state owned by subroutines.pl, in this same package.
 our $config;
@@ -58,7 +59,7 @@ sub notification_sender($m,$db) {
 	else {
 		&subs::subprocessor(sub {
 			if ($sound) {
-				my $co = 'play -q ' . $sound_file;
+				my $co = join ' ', JawnOS::Platform::Audio::player_argv($sound_file);
 				`$co`;
 			}
 			if ($words) {

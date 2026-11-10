@@ -19,6 +19,7 @@ use File::Copy;
 use File::Find;
 use File::Path;
 use File::Slurp;
+use JawnOS::Platform::Audio ();
 use IPC::Open2;
 use JSON::PP ();
 use List::Util qw(shuffle);
@@ -161,7 +162,7 @@ sub clock_timer_finish {
 	$sound =~ s{.*/}{};
 	my $file = &clock_sound_file($sound_path);
 	my $timer_volume = sprintf('%.2f', (($timer->{'volume'} || 70) / 100));
-	my $play = 'play -q -v ' . $timer_volume . ' ' . &quote($file);
+	my $play = join ' ', JawnOS::Platform::Audio::player_argv($file, $timer_volume);
 	# A phone sounds the timer on the alarm channel through the app.
 	my $mobile = (&device_setter() eq 'mobile') ? 1 : 0;
 	&clock_device_timer($timer) if $mobile;

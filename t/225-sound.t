@@ -9,7 +9,7 @@ no warnings 'once';
 use utf8;
 
 use FindBin;
-use lib "$FindBin::Bin/lib", "t/lib";
+use lib "$FindBin::Bin/lib", "t/lib", "$FindBin::Bin/../lib";
 use Test::More;
 use File::Path qw(make_path);
 use File::Slurp qw(read_file write_file);
@@ -258,6 +258,7 @@ OUT
 	is($set->{ok}, 1, 'the output volume is set');
 	is($set->{changed}{volume}, 40, 'the answer names the new volume');
 	like(read_file($log), qr/set-sink-volume fake_sink 40%/, 'the fixed command array ran');
+	like(read_file($log), qr/^set-sink-volume fake_sink 40%$/m, 'the platform seam wrote the exact argv');
 
 	my $bad = subs::sound_set('output', 'fake_sink', 101);
 	is($bad->{ok}, 0, 'an out-of-range volume is refused');
@@ -283,6 +284,7 @@ write_file($log, '');
 	my $default = subs::sound_default('input', 'fake_source');
 	is($default->{ok}, 1, 'the input can be made default');
 	like(read_file($log), qr/set-default-source fake_source/, 'the source default verb ran');
+	is(JawnOS::Platform::Audio::get_volume('input', 'fake_source'), 70, 'the seam reads the same source volume');
 }
 
 # ============================================================================

@@ -8,6 +8,7 @@ use Mojo::JSON qw(decode_json encode_json);
 use File::Slurp;
 use URI::Encode qw(uri_encode);
 use Fcntl qw(F_SETPIPE_SZ);
+use JawnOS::Platform::Audio ();
 
 our ($music_device, $music_config);
 
@@ -61,24 +62,27 @@ sub music_remote_audio_start($st) {
 		# tablet's OpenSL sink from resampling. The command is fixed text (no
 		# caller input), so the shell pipeline is safe here.
 		my $filter = $pan ne '' ? ' -af "' . $pan . '"' : '';
+		my $pacat = join ' ', JawnOS::Platform::Audio::play_argv(
+			rate => 44100, channels => 2,
+			latency => &music_receiver_latency_ms($st),
+			volume => 65536, client => 'jawnos-music-opus', stream => 'jawnos-music');
 		my $pipeline = 'ffmpeg -hide_banner -loglevel error -fflags nobuffer -analyzeduration 0 -probesize 32k'
 			. ' -i pipe:0' . $filter . ' -f s16le -acodec pcm_s16le -ar 44100 -ac 2 pipe:1'
-			. ' | pacat --playback --raw --format=s16le --rate=44100 --channels=2 --latency-msec=' . &music_receiver_latency_ms($st)
-			. ' --volume=65536 --client-name=jawnos-music-opus --stream-name=jawnos-music';
+			. ' | ' . $pacat;
 		@cmd = ('sh', '-c', $pipeline);
 	}
 	elsif ($pan ne '') {
 		# Raw stereo PCM plus a channel filter: ffmpeg only remaps the samples,
 		# so the same pacat at the end keeps the low latency.
 		my $rate = &music_stream_rate($st->{'rate'});
-		my $pacat = `command -v pacat 2>/dev/null`;
-		chomp $pacat;
-		$pacat = 'pacat' unless $pacat;
+		my $pacat = join ' ', JawnOS::Platform::Audio::play_argv(
+			rate => $rate, channels => 2,
+			latency => &music_receiver_latency_ms($st),
+			volume => 65536, client => 'jawnos-music', stream => 'jawnos-music');
 		my $pipeline = 'ffmpeg -hide_banner -loglevel error -fflags nobuffer -f s16le'
 			. ' -ar ' . $rate . ' -ac 2 -i pipe:0 -af "' . $pan . '"'
 			. ' -f s16le -acodec pcm_s16le -ar ' . $rate . ' -ac 2 pipe:1'
-			. ' | ' . $pacat . ' --playback --raw --format=s16le --rate=' . $rate
-			. ' --channels=2 --latency-msec=' . &music_receiver_latency_ms($st) . ' --volume=65536 --client-name=jawnos-music --stream-name=jawnos-music';
+			. ' | ' . $pacat;
 		@cmd = ('sh', '-c', $pipeline);
 	}
 	else { @cmd = &music_pacat_command($st, $st->{'rate'}); }

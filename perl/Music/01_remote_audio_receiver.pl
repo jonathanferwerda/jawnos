@@ -6,6 +6,7 @@ use feature 'signatures';
 
 use Mojo::JSON qw(decode_json encode_json);
 use File::Slurp;
+use JawnOS::Platform::Audio ();
 
 our ($music_device);
 
@@ -175,16 +176,14 @@ sub music_wake_lock($delta) {
 # `module-sles-sink` there (OpenSL), so a normal `pacat` reaches the Android
 # speaker; a LINUX node's PipeWire/Pulse is already up.
 sub music_pulse_ready {
-	my $info = `pactl info 2>&1`;
+	my $info = JawnOS::Platform::Audio::info();
 	return 1 if $info =~ /Server String:/;
 	return 0 unless $music_device eq 'mobile';
-	my $found = `command -v pulseaudio 2>/dev/null`;
-	chomp $found;
-	return 0 unless $found;
-	`$found --start --exit-idle-time=-1 >/dev/null 2>&1`;
+	return 0 unless JawnOS::Platform::Audio::which('pulseaudio');
+	JawnOS::Platform::Audio::start_pulse();
 	for (1..20) {
 		select(undef, undef, undef, 0.1);
-		$info = `pactl info 2>&1`;
+		$info = JawnOS::Platform::Audio::info();
 		return 1 if $info =~ /Server String:/;
 	}
 	return 0;
@@ -217,9 +216,7 @@ sub music_channel_filter($channel, $device) {
 # ping can only measure the network and the player's start, so without this a
 # phone's OpenSL buffer sat between the remote sound and the picture.
 sub music_receiver_sink_latency {
-	my $json = `pactl -f json list sink-inputs 2>/dev/null`;
-	return 0 unless $json =~ /^\s*\[/;
-	my $list = eval { decode_json $json } || [];
+	my $list = JawnOS::Platform::Audio::stream_inputs();
 	my $ms = 0;
 	foreach my $si ( @{$list} ) {
 		my $p = $si->{'properties'} || {};
@@ -245,25 +242,21 @@ sub music_receiver_bytes_per_ms($st) {
 }
 
 sub music_pacat_command($st, $rate) {
-	my $pacat = `command -v pacat 2>/dev/null`;
-	chomp $pacat;
-	$pacat = 'pacat' unless $pacat;
-	return ($pacat,
-		'--playback', '--raw', '--format=s16le',
-		'--rate=' . &music_stream_rate($rate),
-		'--channels=2',
+	return JawnOS::Platform::Audio::play_argv(
+		rate => &music_stream_rate($rate),
+		channels => 2,
 		# A video's picture is delayed to match the sound, so its remote stream is
 		# allowed a deeper buffer: a Wi-Fi stall then plays through instead of
 		# cutting out. A music file has no picture to answer the extra delay, so it
 		# keeps the tight sink buffer.
-		'--latency-msec=' . &music_receiver_latency_ms($st),
+		latency => &music_receiver_latency_ms($st),
 		# PulseAudio's stream-restore remembers a stream name's old level, so a
 		# receiver that was once turned down (or muted) came back silent while
 		# the Music app looked like it was playing. pacat names the level it
 		# wants at creation; the sender's own volume arrives in the samples.
-		'--volume=65536',
-		'--client-name=jawnos-music',
-		'--stream-name=jawnos-music');
+		volume => 65536,
+		client => 'jawnos-music',
+		stream => 'jawnos-music');
 }
 
 # A video can spend a few hundred milliseconds of buffer on lip-sync; a music

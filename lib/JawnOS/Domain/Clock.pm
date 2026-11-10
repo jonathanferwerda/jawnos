@@ -19,6 +19,7 @@ use File::Copy;
 use File::Find;
 use File::Path;
 use File::Slurp;
+use JawnOS::Platform::Audio ();
 use IPC::Open2;
 use JSON::PP ();
 use List::Util qw(shuffle);
@@ -718,11 +719,13 @@ sub clock_alarm_play_command {
 		$target = sprintf('%.2f', $target);
 		my $ramp = int($alarm->{'ramp'} || 0);
 		$ramp = 1 if $ramp < 1;
-		my $play = 'play -q -v ' . $target . ' ' . &quote($file) . ' fade t ' . $ramp . ' repeat 1000';
-		return $play . ' & echo $! > ' . &clock_alarm_pidfile($alarm->{'uuid'});
+		my @play = JawnOS::Platform::Audio::player_argv($file, $target);
+		my $play = join(' ', @play[0 .. 3], &quote($play[4]));
+		return $play . ' fade t ' . $ramp . ' repeat 1000 & echo $! > ' . &clock_alarm_pidfile($alarm->{'uuid'});
 	}
 	my $level = &clock_alarm_volume_at($alarm, $elapsed, $system_set);
-	return 'play -q -v ' . $level . ' ' . &quote($file) . ' fade t 1';
+	my @play = JawnOS::Platform::Audio::player_argv($file, $level);
+	return join(' ', @play[0 .. 3], &quote($play[4])) . ' fade t 1';
 }
 
 # Play one repetition of a short chime through the operating system. The

@@ -41,6 +41,27 @@ my $play = $mixer->bridge_playback_command();
 like($play, qr/--playback/, 'the other direction plays');
 like($play, qr/--device=jawn_prompt/, 'into what the caller hears');
 
+my @cap_argv = JawnOS::Platform::Audio::record_argv(
+	client => 'jawn-sco-bridge', stream => 'jawn-sco-bridge',
+	rate => 48000, channels => 1, latency => 20,
+	device => 'jawn_call_in.monitor');
+is_deeply([ @cap_argv[1 .. $#cap_argv] ],
+	[ '--client-name=jawn-sco-bridge', '--stream-name=jawn-sco-bridge', '--raw',
+		'--format=s16le', '--rate=48000', '--channels=1', '--latency-msec=20',
+		'--device=jawn_call_in.monitor' ],
+	'the bridge capture command is exactly the seam argv');
+is($cap, join(' ', @cap_argv), 'and the mixer runs that array');
+my @play_argv = JawnOS::Platform::Audio::play_argv(
+	client => 'jawn-sco-bridge', stream => 'jawn-sco-bridge',
+	rate => 48000, channels => 1, latency => 20,
+	volume => '100%', device => 'jawn_prompt');
+is_deeply([ @play_argv[1 .. $#play_argv] ],
+	[ '--playback', '--raw', '--format=s16le', '--rate=48000', '--channels=1',
+		'--latency-msec=20', '--volume=100%', '--client-name=jawn-sco-bridge',
+		'--stream-name=jawn-sco-bridge', '--device=jawn_prompt' ],
+	'the bridge playback command is exactly the seam argv');
+is($play, join(' ', @play_argv), 'and the mixer runs that array');
+
 # The launcher's phone channel scales everything the caller hears. pacat takes
 # the level as a percentage, and a machine with no setting row keeps it at 100.
 {

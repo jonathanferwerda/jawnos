@@ -24,9 +24,17 @@ package JawnOS::Sco::Mixer;
 # plays our prompt into its own earpiece and the caller never hears it. That
 # is a host setting on the gateway (WirePlumber's `bluez5.roles`), not
 # something this mixer can route around.
+BEGIN {
+	require File::Basename;
+	require Cwd;
+	my $dir = Cwd::abs_path(File::Basename::dirname(__FILE__));
+	unshift @INC, "$dir/../.." if $dir && -d "$dir/../..";
+}
+
 use strict;
 use warnings;
 use Mojo::JSON qw(decode_json);
+use JawnOS::Platform::Audio ();
 
 our $SINK_IN = 'jawn_call_in';
 our $SINK_OUT = 'jawn_prompt';
@@ -42,13 +50,7 @@ sub new {
 
 sub pactl {
 	my (@args) = @_;
-	my $out = '';
-	if (open(my $fh, '-|', 'pactl', @args)) {
-		local $/;
-		$out = <$fh> // '';
-		close $fh;
-	}
-	return $out;
+	return JawnOS::Platform::Audio::run('pactl', @args);
 }
 
 sub module_loaded {
@@ -288,17 +290,18 @@ sub call_active {
 # it. A named stream has no saved route to inherit, and --device steers it.
 sub capture_command {
 	my ($self) = @_;
-	return 'parec --client-name=jawn-sco-caller --stream-name=jawn-sco-caller'
-		. ' --raw --format=s16le --rate=8000 --channels=1 --latency-msec=20 --device='
-		. $SINK_IN . '.monitor';
+	return join ' ', JawnOS::Platform::Audio::record_argv(
+		client => 'jawn-sco-caller', stream => 'jawn-sco-caller',
+		rate => 8000, channels => 1, latency => 20,
+		device => $SINK_IN . '.monitor');
 }
 
 sub playback_command {
 	my ($self) = @_;
-	return 'pacat --client-name=jawn-sco-prompt --stream-name=jawn-sco-prompt'
-		. ' --raw --format=s16le --rate=8000 --channels=1 --latency-msec=20'
-		. ' --volume=' . &playback_volume() . '% --playback --device='
-		. $SINK_OUT;
+	return join ' ', JawnOS::Platform::Audio::play_argv(
+		client => 'jawn-sco-prompt', stream => 'jawn-sco-prompt',
+		rate => 8000, channels => 1, latency => 20,
+		volume => &playback_volume() . '%', device => $SINK_OUT);
 }
 
 # The launcher's phone channel is a gain on every prompt the call hears. pacat
@@ -318,17 +321,18 @@ sub playback_volume {
 # speaks; PipeWire resamples the 8 kHz SCO link at the edges.
 sub bridge_capture_command {
 	my ($self) = @_;
-	return 'parec --client-name=jawn-sco-bridge --stream-name=jawn-sco-bridge'
-		. ' --raw --format=s16le --rate=48000 --channels=1 --latency-msec=20 --device='
-		. $SINK_IN . '.monitor';
+	return join ' ', JawnOS::Platform::Audio::record_argv(
+		client => 'jawn-sco-bridge', stream => 'jawn-sco-bridge',
+		rate => 48000, channels => 1, latency => 20,
+		device => $SINK_IN . '.monitor');
 }
 
 sub bridge_playback_command {
 	my ($self) = @_;
-	return 'pacat --client-name=jawn-sco-bridge --stream-name=jawn-sco-bridge'
-		. ' --raw --format=s16le --rate=48000 --channels=1 --latency-msec=20'
-		. ' --volume=' . &playback_volume() . '% --playback --device='
-		. $SINK_OUT;
+	return join ' ', JawnOS::Platform::Audio::play_argv(
+		client => 'jawn-sco-bridge', stream => 'jawn-sco-bridge',
+		rate => 48000, channels => 1, latency => 20,
+		volume => &playback_volume() . '%', device => $SINK_OUT);
 }
 
 1;

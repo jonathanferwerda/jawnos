@@ -7,6 +7,7 @@ use feature 'signatures';
 use Mojo::JSON qw(decode_json encode_json);
 use File::Slurp;
 use URI::Encode qw(uri_encode);
+use JawnOS::Platform::Audio ();
 
 our ($music_device, $music_config);
 
@@ -338,9 +339,7 @@ sub music_video_receiver_command($id, $info, $open) {
 sub music_stream_health {
 	my $full = shift || 0;
 	return [] unless $music_device eq 'computer';
-	my $json = `pactl -f json list sink-inputs 2>/dev/null`;
-	return [] unless $json =~ /^\s*\[/;
-	my $list = eval { decode_json $json } || [];
+	my $list = JawnOS::Platform::Audio::stream_inputs();
 	my @fixed;
 	my $latency = 0;
 	foreach my $si ( @{$list} ) {
@@ -372,8 +371,8 @@ sub music_stream_health {
 		# element is a full-gain pass-through, and with the system mixer wired
 		# the ceiling is for the mixer to set.
 		next unless $full;
-		`pactl set-sink-input-mute $id 0 2>/dev/null`;
-		`pactl set-sink-input-volume $id 100% 2>/dev/null`;
+		JawnOS::Platform::Audio::set_stream_input_mute($id, 0);
+		JawnOS::Platform::Audio::set_stream_input_volume($id, 100);
 		push @fixed, $id;
 	}
 	return (\@fixed, $latency);

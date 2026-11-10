@@ -29,6 +29,7 @@ use Mojo::JSON qw(decode_json encode_json);
 use Mojo::Util qw/md5_sum xml_escape html_unescape term_escape quote unquote secure_compare url_escape url_unescape network_contains punycode_decode punycode_encode b64_decode b64_encode/;
 use POSIX ();   # mktime: a local-time epoch that still predates 1970
 use JawnOS::Platform::Process ();
+use JawnOS::Platform::Audio ();
 use Text::Unidecode;
 use Time::Duration;
 use Time::HiRes qw(gettimeofday time);
@@ -614,29 +615,11 @@ our $clock_volume_backend;
 
 sub clock_volume_backend {
 	return $clock_volume_backend if ref $clock_volume_backend eq 'HASH';
-	my %bin;
-	foreach my $cmd (qw(pactl wpctl amixer)) {
-		my $path = `command -v $cmd 2>/dev/null`;
-		chomp $path;
-		$bin{$cmd} = $path if length $path;
-	}
-	my $found;
-	if ($bin{'pactl'}) {
-		my $info = `$bin{'pactl'} info 2>/dev/null`;
-		$found = { kind => 'pactl', bin => $bin{'pactl'} } if $info =~ /Server Name:/;
-	}
-	if (!$found && $bin{'wpctl'}) {
-		my $status = `$bin{'wpctl'} status 2>/dev/null`;
-		$found = { kind => 'wpctl', bin => $bin{'wpctl'} } if $status =~ /PipeWire|Audio/;
-	}
-	if (!$found && $bin{'amixer'}) {
-		foreach my $control ('Master', 'PCM', 'Speaker', 'Master Playback Volume') {
-			my $out = `$bin{'amixer'} sget $control 2>/dev/null`;
-			next unless $out =~ /\[(\d+)%\]/;
-			$found = { kind => 'amixer', bin => $bin{'amixer'}, control => $control };
-			last;
-		}
-	}
+	# the domain memo is the reset point for a test that changes PATH; keep the
+	# platform probe in step with it
+	JawnOS::Platform::Audio::reset_backend();
+	my $found = JawnOS::Platform::Audio::backend();
+	$found = undef if !$found || ($found->{'kind'} || 'none') eq 'none';
 	$clock_volume_backend = $found if $found;
 	return $found;
 }
@@ -644,21 +627,7 @@ sub clock_volume_backend {
 sub clock_system_volume_get {
 	my $b = &clock_volume_backend();
 	return undef unless $b;
-	if ($b->{'kind'} eq 'pactl') {
-		my $sink = '@DEFAULT_SINK@';
-		my $out = `$b->{'bin'} get-sink-volume $sink 2>/dev/null`;
-		return int($1) if $out =~ /(\d+)%/;
-	}
-	elsif ($b->{'kind'} eq 'wpctl') {
-		my $sink = '@DEFAULT_AUDIO_SINK@';
-		my $out = `$b->{'bin'} get-volume $sink 2>/dev/null`;
-		return int(($1 * 100) + 0.5) if $out =~ /Volume:\s*([0-9.]+)/;
-	}
-	elsif ($b->{'kind'} eq 'amixer') {
-		my $out = `$b->{'bin'} sget $b->{'control'} 2>/dev/null`;
-		return int($1) if $out =~ /\[(\d+)%\]/;
-	}
-	return undef;
+	return JawnOS::Platform::Audio::get_volume('output');
 }
 
 sub clock_system_volume_set {
@@ -668,22 +637,8 @@ sub clock_system_volume_set {
 	$percent = 100 if $percent > 100;
 	my $b = &clock_volume_backend();
 	return 0 unless $b;
-	my $rc;
-	if ($b->{'kind'} eq 'pactl') {
-		my $sink = '@DEFAULT_SINK@';
-		$rc = system($b->{'bin'}, 'set-sink-volume', $sink, $percent . '%');
-	}
-	elsif ($b->{'kind'} eq 'wpctl') {
-		my $sink = '@DEFAULT_AUDIO_SINK@';
-		$rc = system($b->{'bin'}, 'set-volume', $sink, $percent . '%');
-	}
-	elsif ($b->{'kind'} eq 'amixer') {
-		$rc = system($b->{'bin'}, 'sset', $b->{'control'}, $percent . '%');
-	}
-	else {
-		return 0;
-	}
-	return $rc == 0 ? 1 : 0;
+	my $ok = JawnOS::Platform::Audio::set_volume('output', undef, $percent);
+	return $ok ? 1 : 0;
 }
 
 # ---- a tap's Volume for the whole house --------------------------------------
