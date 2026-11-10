@@ -64,6 +64,9 @@ sub git_watcher_check {
 	# bootstraps it; that unit owns the first checkout, so staying silent here is
 	# correct (an hourly no-repo note would only be noise).
 	return unless -d '.git';
+	# When this pass began, so a restart accepted while it runs can be told from
+	# one that booted a tree this pass has not moved yet (see the guard below).
+	my $watch_started = int(time);
 	# Update method is the house's choice of authority: none stops auto-update,
 	# the manual modes leave it off for the Dev panel's Update now button, github
 	# follows origin/main alone, peers takes only a peer's fast-forward, and any
@@ -117,7 +120,7 @@ sub git_watcher_check {
 		# name the source in the log: origin is the authority, a peer the fallback
 		my $label = ($status =~ m{^peer/}) ? $status : "origin/$status";
 		open(my $fh, '>>', $subs::logfile);
-		print $fh &subs::rightNow() . " git watcher: $label " . substr($before,0,10) . " -> " . substr($after,0,10) . ", restarting\n";
+		print $fh &subs::rightNow() . " git watcher: $label " . substr($before,0,10) . " -> " . substr($after,0,10) . ", updating\n";
 		close $fh;
 	}
 	# A desktop host keeps an installed copy of the app in
@@ -138,6 +141,35 @@ sub git_watcher_check {
 	chomp $after_commit;
 	my $from = substr($before, 0, 10);
 	$from = '?' unless length $from;
+	# The move above and this request are not one step: the installs in between
+	# can take half a minute, and a landing's own restart can be accepted and
+	# booted inside that gap. Asking again would stop and boot the same tree a
+	# second time - the double restart a connected tab follows as two reconnects.
+	# Ask only when no accepted restart already booted the version on disk.
+	my $tree_version = '';
+	if (open(my $vfh, '<', './VERSION')) {
+		local $/;
+		$tree_version = <$vfh>;
+		close $vfh;
+	}
+	$tree_version = '' unless defined $tree_version;
+	$tree_version =~ s/\s+//g;
+	require './perl/control.pl';
+	my $last_restart = &control::read_record();
+	if (&control::restart_covers($last_restart, $tree_version, $watch_started)) {
+		if ($subs::logfile) {
+			my $by = ($last_restart && $last_restart->{'source'}) ? $last_restart->{'source'} : 'an earlier restart';
+			open(my $fh, '>>', $subs::logfile);
+			print $fh &subs::rightNow() . " git watcher: " . substr($before,0,10) . ' -> ' . (length $after_commit ? $after_commit : '?') . " is already running (v$tree_version, restart recorded by $by); not asking again\n";
+			close $fh;
+		}
+		return;
+	}
+	if ($subs::logfile) {
+		open(my $fh, '>>', $subs::logfile);
+		print $fh &subs::rightNow() . " git watcher: asking for a restart (v$tree_version)\n";
+		close $fh;
+	}
 	&subs::restart_request('the git watcher moved the tree ' . $from . ' -> ' . (length $after_commit ? $after_commit : '?'));
 }
 

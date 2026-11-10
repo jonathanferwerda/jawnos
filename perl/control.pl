@@ -64,6 +64,25 @@ sub socket_path { my %opt = @_; return &_president_dir(%opt) . '/control' }
 sub record_file { my %opt = @_; return &_president_dir(%opt) . '/restart.json' }
 sub log_file    { my %opt = @_; return &_president_dir(%opt) . '/restart.log' }
 
+# Does the last recorded restart already boot the tree now on disk? A request is
+# redundant when it does, and every caller that moves the tree and then asks in
+# a second step can race itself that way: the git watcher fast-forwards, then
+# installs extras, Perl modules and system packages before it asks, and a
+# landing's own restart can be accepted and booted inside that gap. Honouring
+# the late request then stops and boots the same tree again - the double restart
+# a connected tab follows as two reconnects. `$since` is when the caller's pass
+# began (an epoch second): a record older than that booted a tree this pass has
+# not moved yet, so it cannot cover the move.
+sub restart_covers {
+	my ($record, $version, $since) = @_;
+	return 0 unless ref $record eq 'HASH';
+	return 0 unless $record->{'ok'};
+	return 0 unless defined $version && length $version;
+	return 0 unless defined $record->{'version'} && $record->{'version'} eq $version;
+	return 0 unless defined $record->{'epoch'} && $record->{'epoch'} >= ($since || 0);
+	return 1;
+}
+
 # The status file has said exactly "restart" since the beginning, so that keeps
 # working; anything after a colon (or a dash) is the reason the caller gave, and
 # it travels into the record. Returns (is_restart, reason).

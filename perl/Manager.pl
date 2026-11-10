@@ -13,6 +13,10 @@ use FindBin;
 use lib "$FindBin::Bin/../lib";
 $ENV{MOJO_HOME} ||= "$FindBin::Bin/..";
 
+# The restart record's reader (restart.json) is shared with the git watcher,
+# which is a lazily loaded domain module. Load it with the app so that dependency
+# is static, the way every other file a worker calls into is loaded.
+require './perl/control.pl';
 require JawnOS;
 my $app = JawnOS->new;
 
