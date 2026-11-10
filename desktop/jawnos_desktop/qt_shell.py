@@ -11,9 +11,10 @@ The login is the same ticket the desktop has always used: loading the ticket URL
 mints the cookie and redirects to the Manager, and the profile keeps that
 cookie across launches. The first run also copies the old WebKit shell's page
 layout out of its per-origin SQLite store, and the window geometry comes from
-``~/.config/jawnos/desktop.json``, saved back on close. Certificate errors are
-accepted because the house serves its own self-signed certificate on its own
-port.
+``~/.config/jawnos/desktop.json``, saved back on close. A certificate error is
+accepted only for this install's own certificates (the leaf in
+``server/fullchain.pem`` and, on a joined machine, ``server/house-ca.pem``); an
+unrelated certificate stays rejected.
 
 The page bridge is the same contract the old shell exposed: a shim turns
 ``window.webkit.messageHandlers.jawnos`` into QWebChannel messages, so app
@@ -37,7 +38,7 @@ import threading
 import time
 from urllib.parse import urljoin, urlparse
 
-from . import bridge, core, errorpage, gps, gpu, theme, webauthn
+from . import bridge, core, errorpage, gps, gpu, theme, trust, webauthn
 
 # desktop/, resolved the same way the other entry scripts do it.
 DESKTOP_DIR = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
@@ -696,21 +697,6 @@ def _probe(page, app, qt):
 # the shell
 # --------------------------------------------------------------------------
 
-def _accept_certificate(error):
-    """Accept the house's self-signed certificate (as the WebKit shell does)."""
-    try:
-        if hasattr(error, "isOverridable") and not error.isOverridable():
-            return False
-        # Qt 6.8 spells it acceptCertificate(); older bindings used accept().
-        if hasattr(error, "acceptCertificate"):
-            error.acceptCertificate()
-        else:
-            error.accept()
-        return True
-    except Exception:
-        return False
-
-
 # The features Qt WebEngine asks a page for, and the house will grant. Only
 # these names are allowed; everything else, and every other origin, is denied.
 # The WebKitGTK view granted every feature type to the same hosts.
@@ -1215,6 +1201,9 @@ def main(argv=None):
         pass
 
     settings = core.load_settings()
+    # The certificate anchors live under this tree; record it before any
+    # page exists so every certificate signal can consult them.
+    trust.set_tree(settings.get("jawn_dir"))
 
     # The origins the house's permissions and screen sharing are granted to:
     # loopback, plus the Manager's host (added once the ticket gives it) and
@@ -1388,7 +1377,7 @@ def main(argv=None):
     if isinstance(left, int) and isinstance(top, int):
         view.move(left, top)
 
-    page.certificateError.connect(_accept_certificate)
+    page.certificateError.connect(trust.accept_certificate)
     _feature_permission(page, qt, allowed_hosts, gps_on)
     _allow_screen_capture(page, qt, allowed_hosts)
     _allow_clipboard(page, qt)
@@ -1460,7 +1449,7 @@ def main(argv=None):
         errorpage.watch(page_obj)
         win.setWindowTitle(title or "JawnOS Machine")
         win.resize(900, 700)
-        page_obj.certificateError.connect(_accept_certificate)
+        page_obj.certificateError.connect(trust.accept_certificate)
         peer_host = (urlparse(manager_override).hostname or "").lower()
         # A peer's Manager is a house origin too, so its host joins the shared
         # allowlist before this page loads anything.

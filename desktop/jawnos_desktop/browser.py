@@ -38,8 +38,10 @@ Safety rules (see ``docs/internet-contract.md``):
 * the ad-block picker runs in an isolated Qt script world, so a page cannot
   see or call it; its messages reach Python over a DOM event and are validated
   again here;
-* TLS errors are accepted for the house's self-signed certificate, the same
-  exception the Qt shell makes; external ``file:`` and unknown schemes are
+* TLS errors are accepted only for this install's own certificates (the
+  leaf in ``server/fullchain.pem`` and, on a joined machine,
+  ``server/house-ca.pem``), the rule the Qt shell uses; an unrelated
+  certificate is rejected, and external ``file:`` and unknown schemes are
   refused;
 * navigation to loopback, link-local and other private addresses is refused
   unless ``JAWNOS_BROWSE_ALLOW_PRIVATE=1``.
@@ -56,7 +58,7 @@ import sys
 import threading
 import urllib.parse
 
-from . import bridge, core, errorpage, gpu, keepawake, usage
+from . import bridge, core, errorpage, gpu, keepawake, trust, usage
 
 LOG = logging.getLogger("jawnos.browser")
 
@@ -336,7 +338,7 @@ try:  # pragma: no cover - the import result depends on the installed packages
     # The window painter and the one certificate rule live in qt_shell; both
     # are toolkit code shared with the manager view, so they are imported
     # rather than copied. qt_shell imports no toolkit at module level.
-    from .qt_shell import _accept_certificate, black_page, prepare_wayland_env
+    from .qt_shell import black_page, prepare_wayland_env
     _QT_OK = True
 except Exception as _exc:  # pragma: no cover - only without PySide6/Qt WebEngine
     _QT_OK = False
@@ -350,7 +352,7 @@ except Exception as _exc:  # pragma: no cover - only without PySide6/Qt WebEngin
     # unreachable (QLineEdit is AddressEntry's base).
     QLineEdit = object
     QObject = QWidget = QMainWindow = QTabWidget = object
-    _accept_certificate = black_page = prepare_wayland_env = None
+    black_page = prepare_wayland_env = None
 
 if _QT_OK:
     _ObjectBase = QObject
@@ -1573,7 +1575,7 @@ class BrowsePage(_PageBase):
     def __init__(self, profile, tab):
         super().__init__(profile, tab)
         self._tab = tab
-        self.certificateError.connect(_accept_certificate)
+        self.certificateError.connect(trust.accept_certificate)
         self._configure_settings()
         grant_media_permissions(self)
         self.loadStarted.connect(self._tab.on_load_started)
@@ -1828,6 +1830,14 @@ class BrowserWindow(_MainWindowBase):
         self._chrome_before_page_fullscreen = None
         self._media = {}
         self._engine_audio = {}
+
+        # Browse is its own process, so the shell's module state is not here.
+        # Read the same settings, unless a caller already named a tree.
+        if trust.tree() is None:
+            try:
+                trust.set_tree(core.load_settings().get("jawn_dir"))
+            except Exception:
+                pass
 
         self.data_dir = browser_data_dir()
         try:
@@ -3144,6 +3154,12 @@ def main(argv=None):
     # Chromium flags when it initialises.
     gpu.prepare_env()
     prepare_wayland_env()
+    # Record the tree before any page exists, so a certificate error can
+    # consult this install's anchors.
+    try:
+        trust.set_tree(core.load_settings().get("jawn_dir"))
+    except Exception:
+        trust.set_tree(None)
 
     app = QApplication([sys.argv[0]])
     app.setApplicationName("JawnOS Browse")

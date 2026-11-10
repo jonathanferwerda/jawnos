@@ -53,10 +53,10 @@ unlike($src, qr/from \. import webview|import webview/,
 
 # ---- the shared helpers, imported not edited ------------------------------
 
-like($src, qr/from \.qt_shell import _accept_certificate, black_page, prepare_wayland_env/,
-	'the certificate rule and black page are shared with qt_shell');
-like($src, qr/self\.certificateError\.connect\(_accept_certificate\)/,
-	'every page accepts the house self-signed certificate');
+like($src, qr/from \.qt_shell import black_page, prepare_wayland_env/,
+	'the black page and Wayland helpers are shared with qt_shell');
+like($src, qr/self\.certificateError\.connect\(trust\.accept_certificate\)/,
+	'every page trusts only this install\'s certificates');
 like($src, qr/black_page\(self\.page, self\.view\)/,
 	'and the empty page is painted black');
 like($src, qr/def grant_media_permissions\(page\):/,

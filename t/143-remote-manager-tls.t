@@ -1,6 +1,6 @@
 # tests-for: desktop/jawnos_desktop/browser.py
-# covers:    The Browse window accepts the house's self-signed certificate through
-#            the shared Qt helper; the GTK/WebKitGTK TLS path is gone.
+# covers:    The Browse window trusts only this install's own certificates through
+#            the shared Qt policy; the GTK/WebKitGTK TLS path is gone.
 
 use strict;
 use warnings;
@@ -21,10 +21,12 @@ my $browser = read_file("$root/desktop/jawnos_desktop/browser.py");
 
 ok(!-e "$root/desktop/jawnos_desktop/webview.py", 'the WebKitGTK view is deleted');
 
-like($browser, qr/from \.qt_shell import _accept_certificate/,
-	'Browse borrows the Qt shell\'s certificate rule');
-like($browser, qr/certificateError\.connect\(_accept_certificate\)/,
-	'and accepts the house certificate on every page');
+like($browser, qr/from \. import [^\n]*\btrust\b/,
+	'Browse uses the shared certificate policy');
+like($browser, qr/certificateError\.connect\(trust\.accept_certificate\)/,
+	'and applies it on every page');
+like($browser, qr/trust\.set_tree\(core\.load_settings\(\)\.get\("jawn_dir"\)\)/,
+	'with the tree from the same settings the shell saves');
 unlike($browser, qr/TLSErrorsPolicy/,
 	'the WebKit TLS policy is gone from Browse');
 unlike($browser, qr/allow_tls_certificate_for_host/,
