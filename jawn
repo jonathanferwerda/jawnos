@@ -940,8 +940,9 @@ sub master_reload {
 # context -- otherwise it returns a list of lines and we only ever decode the
 # first one.
 sub config_is_usable() {
-	return 0 unless -e './config.json';
-	my $json = read_file('./config.json');
+	my $file = JawnOS::Platform::Paths::config_path();
+	return 0 unless -e $file;
+	my $json = read_file($file);
 	my $config = eval { decode_json $json };
 	return ( ref $config eq 'HASH' && $config->{'signatorial'} ) ? 1 : 0;
 }
@@ -1224,7 +1225,7 @@ sub pid_in_tree {
 sub coding_worker_enabled {
 	# coding_worker in config.json: absent, empty or anything else means on, so
 	# an older config keeps working. Only an explicit off stops the worker.
-	my $file = -e './config.json' ? './config.json' : '';
+	my $file = -e JawnOS::Platform::Paths::config_path() ? JawnOS::Platform::Paths::config_path() : '';
 	return 1 unless length $file;
 	my $config = eval { decode_json(scalar read_file($file)) };
 	return 1 unless ref $config eq 'HASH';
@@ -1503,7 +1504,7 @@ sub reap_own_children {
 }
 
 sub config_transport_base {
-	my $file = -e './config.json' ? './config.json' : '';
+	my $file = -e JawnOS::Platform::Paths::config_path() ? JawnOS::Platform::Paths::config_path() : '';
 	return 45545 unless $file;
 	my $cfg = eval { return decode_json scalar read_file($file) };
 	return 45545 unless $cfg && ref $cfg eq 'HASH';
@@ -1524,7 +1525,7 @@ sub config_transport_base {
 # screen the app was opening (2026-10-29: the phone's 45545 stayed dead while
 # 3000 answered, and the app sat black).
 sub config_ports {
-	my $file = -e './config.json' ? './config.json' : '';
+	my $file = -e JawnOS::Platform::Paths::config_path() ? JawnOS::Platform::Paths::config_path() : '';
 	return () unless $file;
 	my $cfg = eval { return decode_json scalar read_file($file) };
 	return () unless $cfg && ref $cfg eq 'HASH';
@@ -1580,7 +1581,7 @@ sub wedge_dump {
 	my @tree = grep { /\b(?:President|Manager|Websocket|teletype|watch|Music|Alarm|pen)\.pl\b/ }
 		split(/\n/, defined $ps ? $ps : '');
 	push @out, "PROCESSES\n", (map { "$_\n" } @tree), "\n" if @tree;
-	foreach my $file ( glob('database/jawnos.db*') ) {
+	foreach my $file ( glob(JawnOS::Platform::Paths::database_dir() . '/jawnos.db*') ) {
 		my $bytes = -s $file;
 		$bytes = 0 unless defined $bytes;
 		push @out, sprintf("%-34s %12d bytes\n", $file, $bytes);

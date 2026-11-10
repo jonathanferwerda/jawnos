@@ -25,7 +25,7 @@ require JawnOS::Sco::Client;
 require JawnOS::Sco::Render;
 require JawnOS::Sco::Reconnect;
 
-my $config = -e './config.json' ? eval { decode_json(read_file('./config.json')) } : {};
+my $config = -e &subs::config_path() ? eval { decode_json(read_file(&subs::config_path())) } : {};
 my $log = Mojo::Log->new(path => &subs::home(($config && $config->{'logfile'}) || '~/manager.log'));
 my $client = JawnOS::Sco::Client->new();
 my $helper = './perl/sco/sco_helper';

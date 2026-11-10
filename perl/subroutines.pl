@@ -15,6 +15,7 @@ use warnings;
 use utf8;
 
 use Unicode::Normalize qw(NFC);
+use JawnOS::Platform::Paths ();
 use Encode qw(encode_utf8);
 # This file used to pull in Mojolicious::Lite, whose import built an app object
 # and monkey-patched the DSL into package subs. It is a library: load Mojolicious
@@ -71,7 +72,7 @@ require "./perl/gb.pl";
 require "./perl/Websocket.pl";
 require "./perl/language.pl";
 
-our $config_file = read_file('./config.json');
+our $config_file = read_file(JawnOS::Platform::Paths::config_path());
 # `our`, not `my`: the domain modules in lib/ are in this package and read the
 # same config (notification_sender, embedded_toggle and friends used to be in
 # Manager.pl).

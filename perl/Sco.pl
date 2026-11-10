@@ -46,7 +46,7 @@ require './perl/subroutines.pl';
 require JawnOS::Sco::Gateway;
 require JawnOS::Sco::Render;
 
-my $config_file = './config.json';
+my $config_file = &subs::config_path();
 my $config = -e $config_file ? eval { decode_json(read_file($config_file)) } : {};
 my $logfile = &subs::home(($config && $config->{'logfile'}) || '~/manager.log');
 my $log = Mojo::Log->new(path => $logfile);

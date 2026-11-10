@@ -157,8 +157,14 @@ and serve without `fork`/PTY/UNIX sockets, native Windows is a rewrite, and the 
 
 ### 6.2 Filesystem and paths
 
-- The tree is cwd-relative: `require './perl/...'`, `./database`, `./config.json`, `./server`,
-  `voices/`, `releases/`. An app bundle is not a writable working directory.
+- The tree is cwd-relative: `require './perl/...'` and the factory seed/schema in `database/`. An
+  app bundle is not a writable working directory, so the writable half is one root.
+- **The store (landed 2026-11-10):** `JawnOS::Platform::Paths::store_dir` answers `config.json`,
+  `database/`, `run/`, `server/`, `voices/` and `releases/`. `JAWNOS_STORE_DIR` moves them
+  together while `database/initial.enc` and `database/schema.sql` stay with the read-only code. A
+  checkout and Docker default to the tree; a package sets `/var/lib/jawnos` (system) or
+  `~/.local/share/jawnos` (per-user). `subs::store_dir` and the domain wrappers keep tests and
+  symlinked checkouts on the same answer (`t/245`).
 - Copy the tree into the platform data directory on first run, the way `desktop/install.sh` copies
   to `~/.local/share/jawnos/desktop`, and run from there. Mutable state lives beside the copy; code
   updates replace the copy.

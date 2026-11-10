@@ -32,7 +32,7 @@ require "./perl/gb.pl";
 require "./perl/subroutines.pl";
 
 
-my $config_file = read_file('./config.json');
+my $config_file = read_file(&subs::config_path());
 my $config = decode_json $config_file;
 our $logfile = &subs::home($config->{'logfile'});
 write_file($logfile, '') if not -e $logfile;

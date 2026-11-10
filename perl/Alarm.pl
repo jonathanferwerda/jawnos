@@ -32,7 +32,7 @@ no warnings 'uninitialized';
 # the gb globals below live in gb.pl and are written or read from every
 # corner of the house; a file that touches one only once is not a typo
 no warnings 'once';
-my $config_file = read_file('./config.json');
+my $config_file = read_file(&subs::config_path());
 my $config = decode_json $config_file;
 our $logfile = &subs::home($config->{'logfile'});
 write_file($logfile, '') if not -e $logfile;

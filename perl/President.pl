@@ -60,7 +60,11 @@ my $dump_dir = &home('~/.president');
 $gb::dump_dir = $dump_dir;
 #`rm -R $dump_dir/*` if -e $dump_dir;
 `mkdir $dump_dir` unless -e $dump_dir;
-`mkdir ./server` unless -e './server';
+my $server_dir = JawnOS::Platform::Paths::server_dir();
+unless (-d $server_dir) {
+	require File::Path;
+	eval { File::Path::make_path($server_dir) };
+}
 my $duty_file = &home('~/.president/on_duty');
 write_file($duty_file, 0);
 my $status_file = &home('~/.president/status');
@@ -73,7 +77,7 @@ write_file($pid_file, $$);
 # requires, so the watchdog is a small copy of this process.
 require './perl/parent_guard.pl';
 &parent_guard::start(tree => $$, master => JawnOS::Platform::parent_pid());
-my $config_file = read_file('./config.json');
+my $config_file = read_file(JawnOS::Platform::Paths::config_path());
 my $config = decode_json $config_file;
 our $logfile = &home($config->{'logfile'});
 if (-e $logfile) {
@@ -240,8 +244,8 @@ my $alarm_port = $port + JawnOS::Platform::Ports::offset('bell');
 # The offset skips +1 (ws), +2 (watch), +3 (tty), +4 (tty ws) and +5 (alarm).
 my $peer_port = JawnOS::Platform::Ports::port_for('peer', base => $port);
 my $peer_certs = "";
-if (-e './server/peer-fullchain.pem' && -e './server/peer-privkey.pem') {
-	$peer_certs = "?cert=./server/peer-fullchain.pem&key=./server/peer-privkey.pem";
+if (-e "$server_dir/peer-fullchain.pem" && -e "$server_dir/peer-privkey.pem") {
+	$peer_certs = "?cert=$server_dir/peer-fullchain.pem&key=$server_dir/peer-privkey.pem";
 }
 if ($config->{'environment'} eq 'development') {
 	$ws_port = $port;
@@ -403,14 +407,14 @@ sub manager_starter() {
 	# TLS listeners can bind instead of dying before the panel is reachable.
 	my $local_tls = eval {
 		require JawnOS::Platform::TLS;
-		JawnOS::Platform::TLS::ensure_local_cert(dir => './server');
+		JawnOS::Platform::TLS::ensure_local_cert(dir => $server_dir);
 	};
 	$log->error('local TLS: ' . $local_tls->{'error'})
 		if $local_tls && $local_tls->{'error'};
 	my $certs = "";
 
-	if (-e './server/fullchain.pem' && -e './server/privkey.pem') {
-		$certs = "?cert=./server/fullchain.pem&key=./server/privkey.pem";
+	if (-e "$server_dir/fullchain.pem" && -e "$server_dir/privkey.pem") {
+		$certs = "?cert=$server_dir/fullchain.pem&key=$server_dir/privkey.pem";
 	}
 	my $time_count = 0;
 	my $now = &subs::rightNow();

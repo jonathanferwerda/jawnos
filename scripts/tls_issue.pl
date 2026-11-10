@@ -17,10 +17,11 @@
 # Configure -> Plat -> DNS, and installs the result where jawn can read it.
 #
 # No root is needed: certbot keeps its account, certs and logs under
-# ~/.jawnos_tls, and the copy into server/ is owned by the same user.
+# ~/.jawnos_tls, and the copy into the store's server/ dir is owned by the same
+# user.
 #
-# The certificate goes to server/fullchain.pem and server/privkey.pem, the two
-# paths President.pl already passes to every listener. A changed certificate
+# The certificate goes to the store's server/fullchain.pem and privkey.pem, the
+# two paths President.pl already passes to every listener. A changed certificate
 # asks for a restart, which is what makes the new one live.
 
 use strict;
@@ -92,7 +93,8 @@ my $email = '';
 my $client_uuid = '';
 my $manual_ok = 0;
 my $host_mode = 0;
-my $out_dir = 'server';
+my $default_out = &subs::server_dir();
+my $out_dir = $default_out;
 for (my $i = 0; $i < @ARGV; $i++) {
 	$domain = $ARGV[$i + 1] if $ARGV[$i] eq '--domain' && defined $ARGV[$i + 1];
 	$email = $ARGV[$i + 1] if $ARGV[$i] eq '--email' && defined $ARGV[$i + 1];
@@ -228,7 +230,7 @@ close $af;
 if ($after ne $before) {
 	my $status = "$ENV{'HOME'}/.president/status";
 	my $reason = 'installed a new TLS certificate for ' . $domain;
-	if ($out_dir ne 'server') {
+	if ($out_dir ne $default_out) {
 		&say_status(1, 'installed a new certificate for ' . $domain . ' in ' . $out_dir);
 	}
 	elsif (open my $sf, '>', $status) {

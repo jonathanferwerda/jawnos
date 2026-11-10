@@ -4,6 +4,12 @@ package JawnOS::Platform::Paths;
 # worker and the probe all read these roots, so a tree override or an XDG
 # variable is honoured in one place instead of at a dozen call sites.
 #
+# Two roots, deliberately separate:
+#   tree_dir/store_dir   code and the house's writable store (the same place in
+#                        a checkout; split by JAWNOS_STORE_DIR for a package)
+#   data_dir             per-user runtime state (~/.president)
+# Nothing that reads the store requires the tree to be writable.
+#
 # Linux is the only backend implemented today. macOS (Application Support,
 # /var/folders temp) and Windows (LOCALAPPDATA, %TEMP%) differ in the roots
 # but not in the questions, and land with docs/platform-roadmap.md P2/P3.
@@ -27,6 +33,8 @@ use File::Spec ();
 use Exporter 'import';
 our @EXPORT_OK = qw(
 	home tree_dir data_dir config_dir state_dir tmp_dir
+	store_dir config_path database_dir run_dir server_dir voices_dir releases_dir
+	database_seed_path database_schema_path
 	log_path tool_path
 );
 
@@ -66,13 +74,89 @@ sub tree_dir {
 	return (defined $cwd && length $cwd) ? $cwd : '.';
 }
 
-# The runtime state (database, pid, sockets, logs) lives under ~/.president.
+# The runtime state (pid, sockets, transport tokens, job logs) lives under
+# ~/.president. It is private per-user state, not the house's data store; the
+# two roots stay separate because a packaged install can put the store in a
+# system location while each user keeps their own runtime state.
 sub data_dir {
 	my %opt = @_;
 	my $dir = _env(%opt)->{'JAWNOS_DATA_DIR'};
 	return $dir if defined $dir && length $dir;
 	my $home = home(%opt);
 	return length($home) ? "$home/.president" : './.president';
+}
+
+# The house's writable store: the database and its backups, TLS material, voice
+# models, staged app releases and config.json. A checkout keeps all of it in the
+# tree (the default, unchanged); a packaged install points JAWNOS_STORE_DIR at
+# /var/lib/jawnos or ~/.local/share/jawnos so /usr/share/jawnos stays read-only.
+# Docker is the same idea: its volumes mount database/, server/, voices/ and
+# releases/ under /app, so JAWNOS_STORE_DIR=/app reproduces the current layout.
+#
+# `root` is the tree to fall back to; a caller that resolved the tree from its
+# own real path (subs::install_dir) passes it so a test sandbox or a symlinked
+# checkout is not mistaken for the process's working directory.
+sub store_dir {
+	my %opt = @_;
+	my $dir = _env(%opt)->{'JAWNOS_STORE_DIR'};
+	return $dir if defined $dir && length $dir;
+	my $root = $opt{'root'};
+	return $root if defined $root && length $root;
+	return tree_dir(%opt);
+}
+
+# The tree a read-only seed lives in: schema.sql and the factory seed stay with
+# the code, never in the writable store.
+sub _tree_root {
+	my %opt = @_;
+	my $root = $opt{'root'};
+	return $root if defined $root && length $root;
+	return tree_dir(%opt);
+}
+
+sub config_path {
+	my %opt = @_;
+	return File::Spec->catfile(store_dir(%opt), 'config.json');
+}
+
+sub database_dir {
+	my %opt = @_;
+	return File::Spec->catdir(store_dir(%opt), 'database');
+}
+
+# jawn's own run/ surface: sockets and watch files, not house data. It follows
+# the store by default and keeps JAWNOS_RUN_DIR as the whole-path override the
+# tests and a packaged install already use.
+sub run_dir {
+	my %opt = @_;
+	my $dir = _env(%opt)->{'JAWNOS_RUN_DIR'};
+	return $dir if defined $dir && length $dir;
+	return File::Spec->catdir(store_dir(%opt), 'run');
+}
+
+sub server_dir {
+	my %opt = @_;
+	return File::Spec->catdir(store_dir(%opt), 'server');
+}
+
+sub voices_dir {
+	my %opt = @_;
+	return File::Spec->catdir(store_dir(%opt), 'voices');
+}
+
+sub releases_dir {
+	my %opt = @_;
+	return File::Spec->catdir(store_dir(%opt), 'releases');
+}
+
+sub database_seed_path {
+	my %opt = @_;
+	return File::Spec->catfile(_tree_root(%opt), 'database', 'initial.enc');
+}
+
+sub database_schema_path {
+	my %opt = @_;
+	return File::Spec->catfile(_tree_root(%opt), 'database', 'schema.sql');
 }
 
 # XDG roots. Nothing reads config_dir yet; both are the answer the P2/P3

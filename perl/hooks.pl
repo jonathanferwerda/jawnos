@@ -7,7 +7,7 @@ use Data::Dumper;
 use JawnOS::Platform::Process ();
 
 require "./perl/subroutines.pl";
-our $config_file = read_file('./config.json');
+our $config_file = read_file(&subs::config_path());
 our $config = decode_json $config_file;
 our $logfile = &subs::home($config->{'logfile'});
 write_file($logfile, '') if not -e $logfile;

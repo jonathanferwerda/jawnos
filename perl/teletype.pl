@@ -23,7 +23,7 @@ require './perl/Websocket.pl';
 require './perl/remote_input.pl';
 
 
-my $config_file = read_file('./config.json');
+my $config_file = read_file(&subs::config_path());
 my $config = decode_json $config_file;
 my $device = &subs::device_setter();
 our $logfile = &subs::home($config->{'logfile'});

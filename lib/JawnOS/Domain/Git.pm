@@ -316,7 +316,7 @@ sub ollama_models_sync {
 }
 
 sub app_release_sync {
-	my $dir = &subs::home('~/jawnos/releases');
+	my $dir = &subs::releases_dir();
 	mkdir $dir unless -d $dir;
 	my $me = &subs::signatorial_designer();
 	my (%local, %best);
@@ -415,7 +415,7 @@ sub app_release_sync {
 # part of this list. The models are immutable, so presence is enough: no version
 # to compare, unlike an APK.
 sub voice_sync {
-my $dir = &subs::home('~/jawnos/voices');
+my $dir = &subs::voices_dir();
 mkdir $dir unless -d $dir;
 
 	# The CC BY voices need their attribution with the models, not only in the

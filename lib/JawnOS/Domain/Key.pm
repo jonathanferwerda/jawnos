@@ -36,6 +36,8 @@ use Time::Local;
 use Time::Piece;
 use Unicode::Normalize qw(NFC);
 
+use JawnOS::Platform::Paths ();
+
 our %M;
 our $config;
 # One stable id per construct, independent of the name and of the device. The
@@ -241,8 +243,28 @@ sub ide_files {
 
 sub install_dir { return $install_dir }
 
+# The house's writable store. A checkout keeps it in the tree, unchanged; a
+# packaged install sets JAWNOS_STORE_DIR so the code under /usr/share stays
+# read-only. `root` is the tree resolved from this file's own path, not the
+# process cwd, so a test sandbox and a symlinked copy answer as they always did.
+sub store_dir { return JawnOS::Platform::Paths::store_dir(root => $install_dir) }
+# config.json is read at boot from the tree the process runs in (cwd), or from
+# JAWNOS_STORE_DIR when a package sets one. It deliberately does not follow
+# $install_dir: a test's isolated install dir carries a private database, not
+# a config, and every boot path has already chdir'd to the tree.
+sub config_path { return JawnOS::Platform::Paths::config_path() }
+sub server_dir { return JawnOS::Platform::Paths::server_dir(root => $install_dir) }
+sub voices_dir { return JawnOS::Platform::Paths::voices_dir(root => $install_dir) }
+sub releases_dir { return JawnOS::Platform::Paths::releases_dir(root => $install_dir) }
+
+# The read-only seeds stay with the code, never in the store: a packaged tree
+# ships schema.sql and initial.enc and the store only ever gains the database
+# they built.
+sub database_seed_path { return JawnOS::Platform::Paths::database_seed_path(root => $install_dir) }
+sub database_schema_path { return JawnOS::Platform::Paths::database_schema_path(root => $install_dir) }
+
 sub database_dir {
-	my $dir = &subs::install_dir() . '/database';
+	my $dir = &subs::store_dir() . '/database';
 	unless (-d $dir) { require File::Path; eval { File::Path::make_path($dir) }; }
 	return $dir;
 }
@@ -256,13 +278,12 @@ sub backups_dir {
 }
 
 # The tree's runtime surfaces - the sockets and watch files the workers hand
-# each other - live in run/ beside the database, not under ~/.president (the
+# each other - live in the store's run/ directory, not under ~/.president (the
 # machine's private config) and not in /tmp (where names collide across
 # installs). The path is worked out per call because a test points install_dir
 # at its sandbox after the harness boots; JAWNOS_RUN_DIR overrides it whole.
 sub runtime_dir {
-	my $dir = $ENV{'JAWNOS_RUN_DIR'};
-	$dir = &subs::install_dir() . '/run' unless defined $dir && length $dir;
+	my $dir = JawnOS::Platform::Paths::run_dir(root => $install_dir);
 	unless (-d $dir) {
 		require File::Path;
 		eval { File::Path::make_path($dir) };
@@ -464,10 +485,14 @@ sub database_adopt_legacy {
 # The lock keeps a worker that races the first request from building twice.
 sub database_bootstrap {
 	my (%opt) = @_;
-	my $dir    = $opt{'dir'}      || &subs::database_dir();
+	my $dir_given = defined $opt{'dir'} && length $opt{'dir'};
+	my $dir    = $dir_given       ? $opt{'dir'}      : &subs::database_dir();
 	my $db     = $opt{'database'} || "$dir/jawnos.db";
-	my $schema = $opt{'schema'}   || "$dir/schema.sql";
-	my $seed   = $opt{'seed'}     || "$dir/initial.enc";
+	# An explicit dir keeps its old contract: the seed and schema sit in it. The
+	# app's own first boot omits dir, so the database goes to the store while the
+	# read-only seed and schema stay in the tree.
+	my $schema = $opt{'schema'}   || ($dir_given ? "$dir/schema.sql"   : &subs::database_schema_path());
+	my $seed   = $opt{'seed'}     || ($dir_given ? "$dir/initial.enc" : &subs::database_seed_path());
 	return $db if -e $db && -s $db > 5000;
 
 	require File::Path;

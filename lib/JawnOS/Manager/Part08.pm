@@ -641,7 +641,7 @@ sub app_release_sha {
 }
 
 sub app_release_lister {
-	my $dir = &subs::home('~/jawnos/releases');
+	my $dir = &subs::releases_dir();
 	my @out;
 	opendir(my $dh, $dir) or return \@out;
 	foreach my $f ( sort readdir($dh) ) {
@@ -665,7 +665,7 @@ sub app_release_lister {
 # voices/. Only the models are shared: the piper binary is per-arch and stays
 # local (say_piper_binary), so it is not listed here.
 sub voice_lister {
-	my $dir = &subs::home('~/jawnos/voices');
+	my $dir = &subs::voices_dir();
 	my @out;
 	opendir(my $dh, $dir) or return \@out;
 	foreach my $f ( sort readdir($dh) ) {

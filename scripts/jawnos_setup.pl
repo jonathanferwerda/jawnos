@@ -46,10 +46,18 @@ use Digest::MD5 qw(md5_hex);
 use Getopt::Long qw(GetOptions);
 use Cwd ();
 use JawnOS::Database::Bootstrap qw(seed_from_factory build_from_schema backup_database);
+use JawnOS::Platform::Paths ();
 
 # run from the repo root (the parent of scripts/)
 my $root = Cwd::abs_path("$Bin/..");
 chdir $root or die "cannot chdir to $root: $!";
+# The writable store (JAWNOS_STORE_DIR) and the read-only seeds in the tree. A
+# checkout leaves the store in the tree, so both are $root; a packaged install
+# writes config and the database under /var/lib/jawnos and reads schema.sql and
+# initial.enc from /usr/share/jawnos.
+my $store  = JawnOS::Platform::Paths::store_dir(root => $root);
+my $CONFIG = JawnOS::Platform::Paths::config_path(root => $root);
+make_path($store) unless -d $store;
 require "./perl/language.pl";
 
 my $port       = 3210;
@@ -113,18 +121,18 @@ sub encrypter {
 # re-seals the result under the user's own unlock code.
 our $FACTORY_CODE = 'JAWNOS-FACTORY-SEED-v1';
 
-sub config_exists { return -e './config.json'; }
+sub config_exists { return -e $CONFIG; }
 
 sub read_config {
 	return unless config_exists();
-	my $json = read_file('./config.json');
+	my $json = read_file($CONFIG);
 	my $c = eval { decode_json $json };
 	return ref $c eq 'HASH' ? $c : undef;
 }
 
 sub write_config {
 	my $data = shift;
-	write_file( './config.json', JSON::PP->new->canonical->pretty->utf8->encode($data) );
+	write_file( $CONFIG, JSON::PP->new->canonical->pretty->utf8->encode($data) );
 }
 
 # a stable file the cookie-signing md5 is derived from
@@ -209,12 +217,12 @@ sub make_database {
 	my $tmp = jawn_home('~/.president');
 	make_path($tmp) unless -d $tmp;
 
-	# one machine, one database: it lives in the install's database/ dir, its
+	# one machine, one database: it lives in the store's database/ dir, its
 	# sealed copy beside it in database/backups/. There is no start directory to
 	# pick and no database to name.
-	my $live_db  = "$root/database/jawnos.db";
-	my $enc_file = "$root/database/backups/jawnos.enc";
-	make_path("$root/database/backups") unless -d "$root/database/backups";
+	my $live_db  = "$store/database/jawnos.db";
+	my $enc_file = "$store/database/backups/jawnos.enc";
+	make_path("$store/database/backups") unless -d "$store/database/backups";
 	my $working  = $tmp . '/setup_' . randstr(10) . '.db';
 	unlink $working if -e $working;
 
@@ -225,9 +233,11 @@ sub make_database {
 	# lib/JawnOS/Database/Bootstrap.pm, which the app's own first request
 	# (subs::database_bootstrap) calls too - there is one implementation, not two.
 	my $seeded = 0;
-	if ( -e 'database/initial.enc' ) {
+	my $seed_path   = JawnOS::Platform::Paths::database_seed_path(root => $root);
+	my $schema_path = JawnOS::Platform::Paths::database_schema_path(root => $root);
+	if ( -e $seed_path ) {
 		my ($ok) = seed_from_factory(
-			'database/initial.enc', $working,
+			$seed_path, $working,
 			splitter     => $splitter,
 			factory_code => $FACTORY_CODE,
 			standard     => $standard,
@@ -235,10 +245,10 @@ sub make_database {
 		$seeded = 1 if $ok;
 	}
 	unless ($seeded) {
-		unless ( -e 'database/schema.sql' ) {
+		unless ( -e $schema_path ) {
 			return { error => 'database/schema.sql is missing.' };
 		}
-		my ($ok, $error) = build_from_schema('database/schema.sql', $working);
+		my ($ok, $error) = build_from_schema($schema_path, $working);
 		unless ($ok) {
 			$error = '' unless defined $error;
 			$error =~ s/\s+$//;
@@ -461,7 +471,7 @@ sub run_setup {
 	# database is left alone (re-running --setup only re-writes config.json).
 	my $code;
 	my $created = 0;
-	unless ( -e "$root/database/jawnos.db" ) {
+	unless ( -e "$store/database/jawnos.db" ) {
 		$code = ( defined $in->{'code'} && $in->{'code'} =~ /^[0-9]{4,12}$/ )
 			? $in->{'code'}
 			: sprintf( '%08d', int( rand(100000000) ) );
@@ -774,8 +784,8 @@ if ($seed) {
 
 	print "\n";
 	print "JawnOS seeded non-interactively.\n\n";
-	print "  config        $root/config.json\n";
-	print "  database      $root/database/jawnos.db\n";
+	print "  config        $CONFIG\n";
+	print "  database      $store/database/jawnos.db\n";
 	print "  signatorial   " . ( $res->{'config'}->{'signatorial'} || '' ) . "\n";
 	print "  theme         " . ( $in->{'theme'} || 'factory (Nord)' ) . "\n";
 	if ( $res->{'created'} ) {
@@ -787,8 +797,8 @@ if ($seed) {
 		print "  database      already present, left untouched\n";
 	}
 	print "\n";
-	print "JAWNOS_CONFIG=$root/config.json\n";
-	print "JAWNOS_DATABASE=$root/database/jawnos.db\n";
+	print "JAWNOS_CONFIG=$CONFIG\n";
+	print "JAWNOS_DATABASE=$store/database/jawnos.db\n";
 	print "JAWNOS_UNLOCK_CODE=$res->{'code'}\n" if $res->{'created'};
 	exit 0;
 }

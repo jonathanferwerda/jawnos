@@ -71,7 +71,7 @@ sub say_piper_binary {
 	return $onpath if $onpath;
 	# the copy staged in the repo's blob store (fine on a desktop)
 	return '' if $device eq 'mobile';
-	my $bundled = &subs::home('~/jawnos/voices/piper/piper');
+	my $bundled = &subs::voices_dir() . '/piper/piper';
 	return $bundled if -x $bundled;
 	return '';
 }
@@ -106,7 +106,7 @@ sub say_piper_parts {
 	my $spec = &subs::say_voice_spec($pick) || &subs::say_voice_spec(&subs::say_default_voice());
 	return () unless $spec && (($spec->{'engine'} || '') eq 'piper');
 	my @argv = &subs::say_piper_argv();
-	my $model = &subs::home('~/jawnos/voices') . '/' . $spec->{'model'} . '.onnx';
+	my $model = &subs::voices_dir() . '/' . $spec->{'model'} . '.onnx';
 	return () unless scalar @argv && -e $model;
 	# a bundle carries its own espeak-ng data; point piper at it (the glibc
 	# launcher, unlike a native run, does not find it on its own)

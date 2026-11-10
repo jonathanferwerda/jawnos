@@ -286,6 +286,7 @@ sub peer_port_for {
 
 sub peer_ca_file {
 	for my $candidate (
+		(&subs::server_dir() . '/house-ca.pem'),
 		($ENV{'JAWNOS_ROOT'} ? $ENV{'JAWNOS_ROOT'} . '/server/house-ca.pem' : ()),
 		'server/house-ca.pem',
 		'./server/house-ca.pem',

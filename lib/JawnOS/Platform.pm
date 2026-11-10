@@ -117,6 +117,7 @@ sub preferred_transport { return portable() ? 'tcp' : 'unix' }
 
 sub tree_dir { return JawnOS::Platform::Paths::tree_dir(@_) }
 sub data_dir { return JawnOS::Platform::Paths::data_dir(@_) }
+sub store_dir { return JawnOS::Platform::Paths::store_dir(@_) }
 
 sub module_version {
 	my ($module) = @_;
@@ -233,6 +234,7 @@ sub capabilities {
 		preferred_transport      => preferred_transport(),
 		tree_dir                 => tree_dir(),
 		data_dir                 => data_dir(),
+		store_dir                => store_dir(),
 		modules                  => \%modules,
 		tools                    => \%tools,
 		serial_devices           => serial_devices(),

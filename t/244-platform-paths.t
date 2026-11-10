@@ -15,7 +15,7 @@ use File::Temp qw(tempdir);
 use File::Slurp qw(read_file);
 
 use JawnOS::Platform;
-use JawnOS::Platform::Paths qw(home tree_dir data_dir config_dir state_dir tmp_dir log_path tool_path);
+use JawnOS::Platform::Paths qw(home tree_dir data_dir config_dir state_dir tmp_dir log_path tool_path store_dir config_path database_dir run_dir server_dir voices_dir releases_dir database_seed_path database_schema_path);
 
 my $root = "$FindBin::Bin/..";
 
@@ -37,6 +37,25 @@ is(data_dir(env => { 'HOME' => '/house/home' }), '/house/home/.president',
 my $no_home = home(env => {});
 is(data_dir(env => {}), length($no_home) ? "$no_home/.president" : './.president',
 	'the data dir follows whatever home the box has');
+
+# --- the store (the writable half of a packaged install) --------------------
+is(store_dir(env => { 'JAWNOS_STORE_DIR' => '/a/store' }), '/a/store',
+	'JAWNOS_STORE_DIR caps the store');
+is(store_dir(root => '/a/tree'), '/a/tree', 'otherwise the store is the tree it is given');
+is(store_dir(env => { 'JAWNOS_STORE_DIR' => '', 'JAWNOS_DIR' => '/cwd/tree' }), '/cwd/tree',
+	'a blank store override falls back to the tree');
+is(config_path(root => '/a/tree'), '/a/tree/config.json', 'config.json lives in the store');
+is(database_dir(root => '/a/tree'), '/a/tree/database', 'the database lives in the store');
+is(run_dir(env => { 'JAWNOS_RUN_DIR' => '/a/run' }, root => '/a/tree'), '/a/run',
+	'JAWNOS_RUN_DIR still wins over the store');
+is(run_dir(root => '/a/tree'), '/a/tree/run', 'and the store is the default');
+is(server_dir(root => '/a/tree'), '/a/tree/server', 'TLS material lives in the store');
+is(voices_dir(root => '/a/tree'), '/a/tree/voices', 'voices live in the store');
+is(releases_dir(root => '/a/tree'), '/a/tree/releases', 'releases live in the store');
+is(database_seed_path(root => '/a/tree'), '/a/tree/database/initial.enc',
+	'the factory seed stays with the code');
+is(database_schema_path(root => '/a/tree'), '/a/tree/database/schema.sql',
+	'and the schema stays with it');
 
 # --- XDG roots --------------------------------------------------------------
 is(config_dir(env => { 'XDG_CONFIG_HOME' => '/xdg', 'HOME' => '/h' }), '/xdg/jawnos',

@@ -103,9 +103,10 @@ sub action_37811 {
 	my $file = $c->param('file');
 	$config->{'signatorial'} = $file;
 	my $jconfig = encode_json $config;
-	write_file('./config.json', $jconfig);
-	my $pp = `cat ./config.json | json_pp`;
-	write_file('./config.json', $pp);
+	my $config_path = &subs::config_path();
+	write_file($config_path, $jconfig);
+	my $pp = `cat "$config_path" | json_pp`;
+	write_file($config_path, $pp);
 
 	my $contents = &security_initializer($c);
 	$c->render(json => $contents);

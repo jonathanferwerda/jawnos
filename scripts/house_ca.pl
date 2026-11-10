@@ -25,6 +25,7 @@
 use strict;
 use warnings;
 use FindBin;
+use lib "$FindBin::Bin/../lib";
 use Cwd qw(abs_path);
 use File::Copy qw(copy);
 use File::Path qw(make_path);
@@ -34,6 +35,14 @@ my $root = abs_path("$FindBin::Bin/..");
 chdir $root or die "house_ca: cannot find the jawnos root: $!\n";
 
 my $SERVER    = 'server';
+my $STORE_DB  = "$root/database/jawnos.db";
+# The store decides where the house keeps its TLS material and its database. A
+# copied tree that carries only scripts/ (a test fixture) has no lib/, so fall
+# back to the old in-tree paths rather than refusing to run.
+if (eval { require JawnOS::Platform::Paths; 1 }) {
+	$SERVER   = JawnOS::Platform::Paths::server_dir(root => $root);
+	$STORE_DB = JawnOS::Platform::Paths::database_dir(root => $root) . '/jawnos.db';
+}
 my $CA_KEY    = "$SERVER/house-ca.key";
 my $CA_CERT   = "$SERVER/house-ca.pem";
 my $LEAF_CERT = "$SERVER/peer-fullchain.pem";
@@ -47,15 +56,15 @@ sub usage {
 	print STDERR <<'TEXT';
 usage: perl scripts/house_ca.pl <command>
 
-  init                      create the house CA (server/house-ca.{key,pem})
-  issue --name NAME         issue a peer leaf (server/peer-{fullchain,privkey}.pem)
+  init                      create the house CA (the store's server/house-ca.{key,pem})
+  issue --name NAME         issue a peer leaf (the store's server/peer-{fullchain,privkey}.pem)
         --ip ADDR             an address the peer may be dialled by (repeatable)
         --dns NAME            a name the peer may be dialled by (repeatable)
-        --out DIR             where to write the leaf (default: server)
+        --out DIR             where to write the leaf (default: the store's server dir)
         --force               replace an existing leaf
   peer --host NAME          issue the leaf for one remote_machines row
        --all                 issue every row (the local machine is skipped)
-       --db PATH             the house database (default <root>/database/jawnos.db)
+       --db PATH             the house database (default: the store's database/jawnos.db)
        --out DIR             staging directory (default server/peers)
   verify --cert FILE        check a leaf against the house CA and show its SANs
   show                      print the CA and the installed leaf
@@ -289,7 +298,7 @@ sub cmd_peer {
 	my $host = '';
 	my $all = 0;
 	my $out = "$SERVER/peers";
-	my $db = "$root/database/jawnos.db";
+	my $db = $STORE_DB;
 	my $force = 0;
 	my @argv = @ARGV;
 	while (my $arg = shift @argv) {

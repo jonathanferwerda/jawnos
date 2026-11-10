@@ -6,6 +6,7 @@ use warnings ;#'uninitialized';
 use Mojo::Base 'Mojolicious::Controller';
 use utf8;
 use feature 'signatures';
+use JawnOS::Platform::Paths ();
 
 # The old `app` was Mojolicious::Lite's accessor for the one application object.
 # Manager.pm is now loaded by JawnOS::startup, which publishes the app here
@@ -229,7 +230,7 @@ our $universal_splitter = $gb::universal_splitter;
 our $database;
 our $sql;
 our $remote_input_clipboard;
-our $config_file = read_file('./config.json');
+our $config_file = read_file(JawnOS::Platform::Paths::config_path());
 our $config = decode_json $config_file;
 our $logfile = &subs::home($config->{'logfile'});
 write_file($logfile, '') if not -e $logfile;

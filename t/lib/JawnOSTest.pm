@@ -338,6 +338,7 @@ sub _setup {
 	my $cwd  = getcwd();
 	my $home = $ENV{HOME};
 	$ENV{HOME} = $SANDBOX;   # Websocket.pl touches the tree runtime (run/ws_watcher) at boot
+	delete $ENV{JAWNOS_STORE_DIR};   # the sandbox is the store; a developer export must not redirect it
 
 	chdir $SANDBOX or die "JawnOSTest: chdir $SANDBOX: $!\n";
 	require './perl/subroutines.pl';

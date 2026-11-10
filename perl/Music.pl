@@ -39,7 +39,7 @@ chomp $cwd;
 
 require "./perl/subroutines.pl";
 our $music_device = &subs::device_setter();
-my $config_file = read_file('./config.json');
+my $config_file = read_file(&subs::config_path());
 our $music_config = decode_json $config_file;
 my $environment = $music_config->{'environment'};
 my @folders = @{$music_config->{'folders'}};

@@ -9,6 +9,7 @@ use strict;
 use warnings;
 
 use JawnOS::Platform ();
+use JawnOS::Platform::Paths ();
 
 # OpenSSL is a Strawberry tool in C:\Strawberry\c\bin, which is not always on
 # PATH; fall back to the copy beside the interpreter.
@@ -25,7 +26,7 @@ sub openssl {
 
 sub ensure_local_cert {
 	my (%opt) = @_;
-	my $dir  = $opt{'dir'}  || './server';
+	my $dir  = $opt{'dir'}  || JawnOS::Platform::Paths::server_dir();
 	my $cert = $opt{'cert'} || "$dir/fullchain.pem";
 	my $key  = $opt{'key'}  || "$dir/privkey.pem";
 	return { cert => $cert, key => $key, created => 0 }

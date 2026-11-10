@@ -243,7 +243,7 @@ sub action_10322 {
 	unless ($pick) { $c->rendered(404); return; }
 	$c->res->headers->content_type('application/vnd.android.package-archive');
 	$c->res->headers->content_disposition('attachment; filename="' . $pick->{'filename'} . '"');
-	$c->res->content->asset(Mojo::Asset::File->new(path => &subs::home('~/jawnos/releases') . '/' . $pick->{'filename'}));
+	$c->res->content->asset(Mojo::Asset::File->new(path => &subs::releases_dir() . '/' . $pick->{'filename'}));
 	$c->rendered(200);
 }
 
@@ -433,7 +433,7 @@ sub action_10521 {
 	my $file = $c->param('file') || '';
 	# a plain model filename inside voices/, never a path
 	unless ($file =~ /^[A-Za-z0-9_.-]+\.onnx(\.json)?$/) { $c->rendered(404); return; }
-	my $path = &subs::home('~/jawnos/voices') . '/' . $file;
+	my $path = &subs::voices_dir() . '/' . $file;
 	unless (-f $path) { $c->rendered(404); return; }
 	$c->res->headers->content_type('application/octet-stream');
 	$c->res->headers->content_disposition('attachment; filename="' . $file . '"');
