@@ -797,7 +797,7 @@ sub action_9743 {
 	my $c = shift;
 	my $signatorial = $c->param('signatorial');
 	my $rm = ($signatorial && &subs::db_select('remote_machines', undef, { signatorial => $signatorial })->hashes->[0]);
-	unless ($rm && &subs::peer_verify($c, $rm)) { $c->rendered(403); return; }
+	unless ($rm && $rm->{'pubkey'} && &subs::peer_verify($c, $rm)) { $c->rendered(403); return; }
 	&subs::sync_pull_touch();
 	my $path = &subs::home($c->param('file') || '');
 	unless ($path =~ /\.enc$/ && -f $path) { $c->rendered(404); return; }

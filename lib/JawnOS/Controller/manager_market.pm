@@ -266,7 +266,7 @@ sub action_3694 {
 	if ($from_peer) {
 		my $peer_sig = $c->param('signatorial') || '';
 		my $rm = ($peer_sig && &subs::db_select('remote_machines', undef, { signatorial => $peer_sig })->hashes->[0]);
-		return $c->rendered(403) unless $rm && &subs::peer_verify($c, $rm);
+		return $c->rendered(403) unless $rm && $rm->{'pubkey'} && &subs::peer_verify($c, $rm);
 	}
 	my $me = $c->param('browser_tab_id') || '';
 	my $since = &subs::rightNow() - $ws_live_window;
@@ -344,7 +344,7 @@ sub action_3781 {
 	if ($from_peer) {
 		my $peer_sig = $c->param('signatorial') || '';
 		my $rm = ($peer_sig && &subs::db_select('remote_machines', undef, { signatorial => $peer_sig })->hashes->[0]);
-		return $c->rendered(403) unless $rm && &subs::peer_verify($c, $rm);
+		return $c->rendered(403) unless $rm && $rm->{'pubkey'} && &subs::peer_verify($c, $rm);
 	}
 	my $bti = $c->param('browser_tab_id') || '';
 	return $c->render(json => { error => 'no device' }) unless $bti =~ /\S/;
@@ -519,7 +519,7 @@ sub action_4184 {
 	if (($c->param('peer') || '') eq 'yes') {
 		my $peer_sig = $c->param('signatorial') || '';
 		my $rm = ($peer_sig && &subs::db_select('remote_machines', undef, { signatorial => $peer_sig })->hashes->[0]);
-		return $c->rendered(403) unless $rm && &subs::peer_verify($c, $rm);
+		return $c->rendered(403) unless $rm && $rm->{'pubkey'} && &subs::peer_verify($c, $rm);
 	}
 	my $s = &market_scan_session();
 	unless (($s->{'uuid'} || '') ne '' && $s->{'uuid'} eq $session) {

@@ -948,7 +948,7 @@ sub qrcode_generator($params) {
 	my $secret_json = encode_json $sj;
 	$suds = &subs::note_encrypter($sj->{'p'}, $suds);
 	my $secret = &subs::note_encrypter($random_password, $secret_json);
-	$secret = url_escape `echo "$secret" | base64 -w 0`;
+	$secret = url_escape encode_base64($secret // '', '');
 
 	my $uuid = $sj->{'uuid'};
 
@@ -1054,13 +1054,15 @@ sub qrcode_updater($c) {
 		# box office down with it
 		next unless $t->{'secret'} && $t->{'password'};
 		my $secretive = $t->{'secret'};
-		my $ver = url_unescape `echo "$secretive" | base64 --decode`;
+		# Decode in Perl: this row can arrive over the sync rail, and a shell
+		# would expand $(...) inside the quotes before anything checks it.
+		my $ver = url_unescape decode_base64($secretive // '');
 		my $ts = &subs::note_decrypter($t->{'password'},$ver);
 
 		my $sj = decode_json $ts;
 		my $secret_json = encode_json $sj;
 		my $secret = &subs::note_encrypter($t->{'password'}, $secret_json);
-		$secret = url_escape `echo "$secret" | base64 -w 0`;
+		$secret = url_escape encode_base64($secret // '', '');
 		my $x = &subs::device_lister($timestamp, '')->[0]->{'address'};
 		# A pass minted where qrencode was missing holds a blank image; its link is
 		# the credential and the QR is how it is shown, so repair it here, on the

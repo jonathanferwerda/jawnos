@@ -360,7 +360,7 @@ sub action_45571 {
 									my $od = &subs::setting_grabber({ app => 'watch', setting => 'operator_door' });
 									my $op_d = eval { decode_json $od } || {};
 									my $secret = &subs::note_encrypter($op_d->{'__shutup'}->{'patience'}, &subs::session_suds($c));
-									$secret = `echo "$secret" | base64 -w 0`;
+									$secret = encode_base64($secret // '', '');
 									my $watch_home = 'http://' . $watch->{'ip'} . ':' . $config->{'port'} . '/chat_received?s=' . $secret . '&timestamp=' . $m->{'timestamp'} . '&uuid=' . $m->{'uuid'};
 
 									my $ping = 'timeout .2 ping -c 1 ' . $watch->{'ip'};

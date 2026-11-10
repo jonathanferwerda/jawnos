@@ -145,36 +145,32 @@ sub action_7519 {
 			# machine's lease.
 			my $claimed = lc($c->param('signatorial') || '');
 			my $peer_row;
+			my $peer_proved = 0;   # only a body-bound, signed login is a peer
 			if ($claimed =~ /^[0-9a-f]{16,64}$/) {
 				$peer_row = &subs::db_select('remote_machines', undef, { signatorial => $claimed })->hash;
 				# Only the new body-bound login carries a digest. A caller from the
 				# previous version sends the name without one; it may still log in,
-				# but its name is not proved and is not kept below.
+				# but its name is not proved and it is not a peer session.
 				if ($peer_row && $body_sha ne '' && !&subs::peer_verify_strict($c, $peer_row)) {
 					$log->info('sesh_check peer login refused: ' . $claimed . ' did not sign');
 					$c->render(json => { authentication => 'denied', error => 'the peer did not sign' });
 					return;
 				}
+				$peer_proved = 1 if $peer_row && $body_sha ne '';
 			}
 			app->sessions->samesite(undef);
 			$c->session('authentication' => 'approved');
 			# A peer logs in with the house password over the signed rail; mark
 			# the session so the app gate lets remote_device_connect through
 			# without a browser app key. A browser Gate login also sends
-			# president/backup, so only neighbour/remote_timestamp (the peer rail)
-			# marks a peer.
-			my $peer_login = ($c->param('neighbour') || $c->param('remote_timestamp')) ? 1 : 0;
-			if ($peer_login) {
+			# president/backup, so only a proved peer rail login is marked.
+			if ($peer_proved) {
 				$c->session('peer' => 1);
-				# Keep a name only when it was proved against a roster row. A first
-				# contact has no row yet; the password opens the session but no name
-				# is trusted until a row pins one.
-				if ($peer_row && $body_sha ne '') {
-					$c->session('peer_signatorial' => $claimed);
-				}
-				else {
-					$c->session('peer_signatorial' => undef);
-				}
+				$c->session('peer_signatorial' => $claimed);
+			}
+			else {
+				$c->session('peer' => undef);
+				$c->session('peer_signatorial' => undef);
 			}
 			# The password is a login, not a recovery share. It no longer seals a
 			# copy of the house key: threshold shares (paper or device) are the way
@@ -186,11 +182,11 @@ sub action_7519 {
 			$c->session('warranty' => $warranty);
 			$c->session('string' => &subs::random_string_creator());
 			$c->session('name') => &subs::setting_grabber({ app => 'me', setting => 'name' });
-			$c->session('privilege' => ($peer_login ? 'resident' : 'guest'));
+			$c->session('privilege' => ($peer_proved ? 'resident' : 'guest'));
 			# A password-only login is bootstrap/recovery: it can pair a device,
 			# restore a backup or recover, never open the manager. The recovery
 			# code or the app key is the way in, on this console or another.
-			if ($peer_login) {
+			if ($peer_proved) {
 				$c->session('bootstrap' => undef);
 			}
 			else {

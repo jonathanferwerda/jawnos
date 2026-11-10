@@ -54,7 +54,8 @@ sub embedded_wigi {
 		my $wat_set = &subs::embedded_operator_door($edt, $chip_id);
 		my $watch_settings = eval { return decode_json $wat_set } || {};
 		my $auth = $watch_settings->{'__specs'}->{'authorization'};
-		my $author = `echo $auth | base64 --decode`;
+		# Decode in Perl: a shell would expand $(...) inside the quotes.
+		my $author = decode_base64($auth // '');
 		my $authorization = &subs::note_decrypter($watch_settings->{'__shutup'}->{'patience'}, $author);
 
 
@@ -64,7 +65,8 @@ sub embedded_wigi {
 
 		my $wigi = eval { return decode_json $res->body } || {};
 		my $rauth = $wigi->{'authorization'};
-		my $rauthorization = `echo $rauth | base64 --decode`;
+		# The device's answer is request data: decode it in Perl, never a shell.
+		my $rauthorization = decode_base64($rauth // '');
 		my $remote_auth = &subs::note_decrypter($watch_settings->{'__shutup'}->{'patience'}, $rauthorization);
 
 		if (secure_compare($remote_auth, $authorization)) {

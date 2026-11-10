@@ -78,7 +78,7 @@ sub action_12377 {
 	# mirror lists peers share - so a rostered name alone is not enough: the peer
 	# must also sign the handshake, exactly like every request on the HTTP peer
 	# rail. peer_verify pins the key on first contact and refuses a changed key.
-	unless (&subs::peer_verify($c, $rm)) {
+	unless ($rm->{'pubkey'} && &subs::peer_verify($c, $rm)) {
 		$c->rendered(403);
 		return;
 	}
@@ -115,7 +115,7 @@ sub action_12416 {
 	# roster row it names - without this, anyone quoting a signatorial could make
 	# this hub dial every peer it knows with an attacker's chip_chyea.
 	my $self_row = &subs::db_query('select * from remote_machines where signatorial = ?', $signatorial)->hashes->[-1];
-	unless ($self_row && &subs::peer_verify($c, $self_row)) {
+	unless ($self_row && $self_row->{'pubkey'} && &subs::peer_verify($c, $self_row)) {
 		$c->rendered(403);
 		return;
 	}

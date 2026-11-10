@@ -164,7 +164,7 @@ sub action_9798 {
 	my $c = shift;
 	my $signatorial = $c->param('signatorial');
 	my $rm = ($signatorial && &subs::db_select('remote_machines', undef, { signatorial => $signatorial })->hashes->[0]);
-	unless ($c->session('authentication') eq 'approved' || ($rm && &subs::peer_verify($c, $rm))) {
+	unless ($c->session('authentication') eq 'approved' || ($rm && $rm->{'pubkey'} && &subs::peer_verify($c, $rm))) {
 		$c->rendered(403);
 		return;
 	}
@@ -280,7 +280,7 @@ sub action_10035 {
 	# roster instead, so a lapsed cookie cannot wedge the sync again.
 	my $requester = $c->param('signatorial');
 	my $requester_rm = ($requester && &subs::db_select('remote_machines', undef, { signatorial => $requester })->hashes->[0]);
-	unless ($c->session('authentication') eq 'approved' || ($requester_rm && &subs::peer_verify($c, $requester_rm))) {
+	unless ($c->session('authentication') eq 'approved' || ($requester_rm && $requester_rm->{'pubkey'} && &subs::peer_verify($c, $requester_rm))) {
 		$c->rendered(403);
 		return;
 	}
@@ -1003,7 +1003,7 @@ sub action_50001 {
 		# A direct roster row, or a machine the hub listed in its mirrors;
 		# both are proven by the same pinned key.
 		my $rm = &subs::peer_roster_row($caller);
-		$peer_ok = ($rm && &subs::peer_verify($c, $rm)) ? 1 : 0;
+		$peer_ok = ($rm && $rm->{'pubkey'} && &subs::peer_verify($c, $rm)) ? 1 : 0;
 	}
 	unless ($c->session('authentication') eq 'approved' || $peer_ok) {
 		$c->render(json => { ok => 0, error => 'not signed in' }, status => 403);
@@ -1025,7 +1025,7 @@ sub action_50008 {
 		# A direct roster row, or a machine the hub listed in its mirrors;
 		# both are proven by the same pinned key.
 		my $rm = &subs::peer_roster_row($caller);
-		$peer_ok = ($rm && &subs::peer_verify($c, $rm)) ? 1 : 0;
+		$peer_ok = ($rm && $rm->{'pubkey'} && &subs::peer_verify($c, $rm)) ? 1 : 0;
 	}
 	unless ($c->session('authentication') eq 'approved' || $peer_ok) {
 		$c->render(json => { ok => 0, error => 'not signed in' }, status => 403);
@@ -1124,7 +1124,7 @@ sub action_50004 {
 		# A direct roster row, or a machine the hub listed in its mirrors;
 		# both are proven by the same pinned key.
 		my $rm = &subs::peer_roster_row($caller);
-		$peer_ok = ($rm && &subs::peer_verify($c, $rm)) ? 1 : 0;
+		$peer_ok = ($rm && $rm->{'pubkey'} && &subs::peer_verify($c, $rm)) ? 1 : 0;
 	}
 	unless ($c->session('authentication') eq 'approved' || $peer_ok) {
 		$c->render(json => { ok => 0, error => 'not signed in' }, status => 403);

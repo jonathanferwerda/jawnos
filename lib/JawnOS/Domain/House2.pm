@@ -735,7 +735,9 @@ sub legacy_suds {
 	my $ticket = $q ? $q->hashes->[0] : undef;
 	return unless $ticket && $ticket->{'suds'};
 	my $secret = $ticket->{'secret'};
-	my $ver = url_unescape `echo "$secret" | base64 --decode`;
+	# Decode in Perl: the ticket row is data, and a shell would expand $(...)
+	# inside the quotes.
+	my $ver = url_unescape decode_base64($secret // '');
 	my $verification = &note_decrypter($ticket->{'password'}, $ver);
 	my $vrai = eval { return decode_json $verification } || {};
 	return unless $vrai->{'p'};

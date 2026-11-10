@@ -534,7 +534,8 @@ sub action_43881 {
 	my $watch_settings = eval { return decode_json $wat_set } || {};
 
 	my $auth = $watch_settings->{'__specs'}->{'authorization'};
-	my $author = `echo $auth | base64 --decode`;
+	# Decode in Perl: a shell would expand $(...) inside the quotes.
+	my $author = decode_base64($auth // '');
 	my $authorization = &subs::note_decrypter($watch_settings->{'__shutup'}->{'patience'}, $author);
 
 

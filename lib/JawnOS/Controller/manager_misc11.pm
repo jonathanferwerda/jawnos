@@ -67,7 +67,7 @@ sub action_35907 {
 	my $c = shift;
 	my $signatorial = $c->param('signatorial');
 	my $rm = ($signatorial && &subs::db_select('remote_machines', undef, { signatorial => $signatorial })->hashes->[0]);
-	unless ($rm && &subs::peer_verify($c, $rm)) { $c->rendered(403); return; }
+	unless ($rm && $rm->{'pubkey'} && &subs::peer_verify($c, $rm)) { $c->rendered(403); return; }
 	# Input is the most intimate thing a peer can ask for, so it sits on the
 	# Trusted rung rather than with the ordinary house actions.
 	unless (&subs::peer_allows($c, $rm, 'remote_control')) {
@@ -104,7 +104,7 @@ sub action_35942 {
 	my $c = shift;
 	my $signatorial = $c->param('signatorial');
 	my $rm = ($signatorial && &subs::db_select('remote_machines', undef, { signatorial => $signatorial })->hashes->[0]);
-	unless ($rm && &subs::peer_verify($c, $rm)) { $c->rendered(403); return; }
+	unless ($rm && $rm->{'pubkey'} && &subs::peer_verify($c, $rm)) { $c->rendered(403); return; }
 	unless (&subs::peer_allows($c, $rm, 'remote_control')) { $c->rendered(403); return; }
 	my $geometry = &remote_input_geometry();
 	$c->send(&remote_input_frame({
@@ -483,7 +483,7 @@ sub action_37365 {
 	my $c = shift;
 	my $signatorial = $c->param('signatorial');
 	my $rm = ($signatorial && &subs::db_select('remote_machines', undef, { signatorial => $signatorial })->hashes->[0]);
-	unless ($rm && &subs::peer_verify($c, $rm)) { $c->rendered(403); return; }
+	unless ($rm && $rm->{'pubkey'} && &subs::peer_verify($c, $rm)) { $c->rendered(403); return; }
 	# A peer that holds the accurate copy asks this machine to clear the records a
 	# bridge bug mangled (a millisecond date read as a span of minutes). This runs
 	# only the unmistakable bad-date pass, is idempotent, and writes through the

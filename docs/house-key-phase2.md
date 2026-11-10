@@ -24,9 +24,11 @@ re-enrol a device. Phase 2 separates **authentication** from **key custody**.
 
 ## Current state after v0.1.938
 
-- `sesh_check`: password -> `guest` + `bootstrap=1`; only the peer rail
-  (`neighbour`/`remote_timestamp`) -> `resident` + `peer=1`. A browser Gate login
-  no longer borrows the peer flag from `president`/`backup`.
+- `sesh_check`: password -> `guest` + `bootstrap=1`; the peer rail
+  (`neighbour`/`remote_timestamp`) -> `resident` + `peer=1` only when the login
+  is body-bound and signed against a roster row. A browser Gate login no longer
+  borrows the peer flag from `president`/`backup`, and an unproved password login
+  stays `guest` + `bootstrap`.
 - `app_login` promotes a paired app to `citizen` and clears `bootstrap`.
 - `authentication_passer` denies a bootstrap session every manager path except the
   public pairing/recovery rail (`/manager/device/*`, `/sesh_check`, `/gate`,

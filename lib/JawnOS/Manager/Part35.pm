@@ -193,7 +193,7 @@ sub now_me($data) {
 		my $patience = &subs::random_string_creator(36);
 		my $au = &subs::random_string_creator(27);
 		my $auth = &subs::note_encrypter($patience, $au );
-		$authorization = `(echo $auth) | base64 -w 0`;
+		$authorization = encode_base64($auth // '', '');
 		$op_d->{'__shutup'}->{'patience'} = $patience;
 		$op_d->{'__specs'}->{'authorization'} = $authorization;
 	}
@@ -507,7 +507,7 @@ sub health_allowed {
 	# a signed peer on the roster
 	my $signatorial = $c->param('signatorial');
 	my $rm = ($signatorial && &subs::db_select('remote_machines', undef, { signatorial => $signatorial })->hashes->[0]);
-	return 1 if $rm && &subs::peer_verify($c, $rm);
+	return 1 if $rm && $rm->{'pubkey'} && &subs::peer_verify($c, $rm);
 	return 0;
 }
 

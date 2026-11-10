@@ -471,7 +471,7 @@ sub action_25152 {
 	# the request against its roster row, exactly like the rest of the peer rail.
 	my $signatorial = $c->param('signatorial');
 	my $rm = ($signatorial && &subs::db_select('remote_machines', undef, { signatorial => $signatorial })->hashes->[0]);
-	unless ($c->session('authentication') eq 'approved' || ($rm && &subs::peer_verify($c, $rm))) {
+	unless ($c->session('authentication') eq 'approved' || ($rm && $rm->{'pubkey'} && &subs::peer_verify($c, $rm))) {
 		$c->rendered(403);
 		return;
 	}

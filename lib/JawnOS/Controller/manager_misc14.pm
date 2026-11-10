@@ -282,7 +282,7 @@ sub action_46078 {
 
 	my $rm = &subs::db_select('remote_machines', undef, { signatorial => $remote_signatorial })->hashes->[0];
 	$log->info('president route: command=' . ($command || '') . ' from=' . ($remote_signatorial || '') . ' ip=' . $c->tx->remote_address) if $log;
-	if ($rm && &subs::peer_verify($c, $rm) && $command eq 'restart') {
+	if ($rm && $rm->{'pubkey'} && &subs::peer_verify($c, $rm) && $command eq 'restart') {
 		&president_restarter();
 	}
 	$c->render(json => { command => $command, remote_signatorial => $remote_signatorial });

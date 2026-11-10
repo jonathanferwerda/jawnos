@@ -107,7 +107,7 @@ sub action_22744 {
 	my $peer_rm = $peer_sig ? &subs::db_select('remote_machines', undef, { signatorial => $peer_sig })->hash : undef;
 	unless (($c->session('authentication') eq 'approved'
 			&& !&subs::guest_browser_session($c->session('privilege'), $c->session('source')))
-		|| ($peer_rm && &subs::peer_verify($c, $peer_rm)) || &app_peer_ok($c)) {
+		|| ($peer_rm && $peer_rm->{'pubkey'} && &subs::peer_verify($c, $peer_rm)) || &app_peer_ok($c)) {
 		return $c->rendered(403);
 	}
 	# A machine that is ringing tells the rest of the house, so a Manager window

@@ -168,7 +168,7 @@ sub action_10187 {
 	my $c = shift;
 	my $signatorial = $c->param('signatorial');
 	my $rm = ($signatorial && &subs::db_select('remote_machines', undef, { signatorial => $signatorial })->hashes->[0]);
-	unless ($rm && &subs::peer_verify($c, $rm)) { $c->rendered(403); return; }
+	unless ($rm && $rm->{'pubkey'} && &subs::peer_verify($c, $rm)) { $c->rendered(403); return; }
 	my $repo = &subs::home('~/jawnos');
 	# force reconciles a tree git cannot fast-forward (the branch's history was
 	# rewritten, or local commits exist) by resetting hard to this machine's
@@ -193,7 +193,7 @@ sub action_10288 {
 	my $c = shift;
 	my $signatorial = $c->param('signatorial');
 	my $rm = ($signatorial && &subs::db_select('remote_machines', undef, { signatorial => $signatorial })->hashes->[0]);
-	unless ($rm && &subs::peer_verify($c, $rm)) { $c->rendered(403); return; }
+	unless ($rm && $rm->{'pubkey'} && &subs::peer_verify($c, $rm)) { $c->rendered(403); return; }
 	my $repo = &subs::home('~/jawnos');
 	my $git = &subs::git_binary();
 	my $base = $c->param('base') || '';
@@ -221,7 +221,7 @@ sub action_10311 {
 	# The signatorial is public (it is rendered into DOM attributes), so naming
 	# one is not a credential: the request must carry the machine's signature.
 	# app_release_sync signs every call through peer_useragent.
-	unless ($rm && &subs::peer_verify($c, $rm)) { $c->rendered(403); return; }
+	unless ($rm && $rm->{'pubkey'} && &subs::peer_verify($c, $rm)) { $c->rendered(403); return; }
 	my $hostname = `hostname`; chomp $hostname;
 	$c->render(json => { hostname => $hostname, signatorial => &subs::signatorial_designer(), releases => &app_release_lister() });
 }
@@ -231,7 +231,7 @@ sub action_10322 {
 	my $c = shift;
 	my $signatorial = $c->param('signatorial');
 	my $rm = ($signatorial && &subs::db_select('remote_machines', undef, { signatorial => $signatorial })->hashes->[0]);
-	unless ($rm && &subs::peer_verify($c, $rm)) { $c->rendered(403); return; }
+	unless ($rm && $rm->{'pubkey'} && &subs::peer_verify($c, $rm)) { $c->rendered(403); return; }
 	my $product = $c->param('product') || 'app';
 	my $want = $c->param('versionCode');
 	my $pick;
@@ -338,7 +338,7 @@ sub action_10415 {
 	my $c = shift;
 	my $signatorial = $c->param('signatorial');
 	my $rm = ($signatorial && &subs::db_select('remote_machines', undef, { signatorial => $signatorial })->hashes->[0]);
-	unless ($rm && &subs::peer_verify($c, $rm)) { $c->rendered(403); return; }
+	unless ($rm && $rm->{'pubkey'} && &subs::peer_verify($c, $rm)) { $c->rendered(403); return; }
 	# A job payload is bounded: a peer is trusted, but a 4 GB prompt must not be
 	# read into a worker's memory before the kind is even looked at.
 	my $declared = $c->req->headers->content_length || 0;
@@ -451,7 +451,7 @@ sub action_11014 {
 	my $c = shift;
 	my $signatorial = $c->param('signatorial');
 	my $rm = ($signatorial && &subs::db_select('remote_machines', undef, { signatorial => $signatorial })->hashes->[0]);
-	unless (($c->session('authentication') || '') eq 'approved' || ($rm && &subs::peer_verify($c, $rm))) {
+	unless (($c->session('authentication') || '') eq 'approved' || ($rm && $rm->{'pubkey'} && &subs::peer_verify($c, $rm))) {
 		$c->rendered(403);
 		return;
 	}
@@ -535,7 +535,7 @@ sub action_11091 {
 	my $c = shift;
 	my $signatorial = $c->param('signatorial');
 	my $rm = ($signatorial && &subs::db_select('remote_machines', undef, { signatorial => $signatorial })->hashes->[0]);
-	unless (($c->session('authentication') || '') eq 'approved' || ($rm && &subs::peer_verify($c, $rm))) {
+	unless (($c->session('authentication') || '') eq 'approved' || ($rm && $rm->{'pubkey'} && &subs::peer_verify($c, $rm))) {
 		$c->rendered(403);
 		return;
 	}
@@ -557,7 +557,7 @@ sub action_11111 {
 	my $c = shift;
 	my $signatorial = $c->param('signatorial');
 	my $rm = ($signatorial && &subs::db_select('remote_machines', undef, { signatorial => $signatorial })->hashes->[0]);
-	unless (($c->session('authentication') || '') eq 'approved' || ($rm && &subs::peer_verify($c, $rm))) {
+	unless (($c->session('authentication') || '') eq 'approved' || ($rm && $rm->{'pubkey'} && &subs::peer_verify($c, $rm))) {
 		$c->rendered(403);
 		return;
 	}
@@ -609,7 +609,7 @@ sub action_11638 {
 	# signature (the caller names itself in `signatorial`).
 	my $signatorial = $c->param('signatorial');
 	my $rm = ($signatorial && &subs::db_select('remote_machines', undef, { signatorial => $signatorial })->hashes->[0]);
-	unless (($c->session('authentication') || '') eq 'approved' || ($rm && &subs::peer_verify($c, $rm))) {
+	unless (($c->session('authentication') || '') eq 'approved' || ($rm && $rm->{'pubkey'} && &subs::peer_verify($c, $rm))) {
 		$c->rendered(403);
 		return;
 	}

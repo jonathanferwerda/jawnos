@@ -26,7 +26,7 @@ Manager::app->routes->websocket('/manager/music/video' => sub ($c) {
 	if ($c->param('peer')) {
 		my $signatorial = $c->param('signatorial');
 		my $rm = ($signatorial ? &subs::db_select('remote_machines', undef, { signatorial => $signatorial })->hashes->[0] : undef);
-		unless ($rm && &subs::peer_verify($c, $rm)) { $c->rendered(403); return; }
+		unless ($rm && $rm->{'pubkey'} && &subs::peer_verify($c, $rm)) { $c->rendered(403); return; }
 		my $id = $c->param('stream') || &subs::random_string_creator(20);
 		my $st = { id => $id, tx => $c->tx, info => {}, open => 0 };
 		$c->on(text => sub {
@@ -194,7 +194,7 @@ Manager::app->routes->websocket('/manager/music/stream' => sub ($c) {
 	if ($c->param('peer')) {
 		my $signatorial = $c->param('signatorial');
 		my $rm = ($signatorial ? &subs::db_select('remote_machines', undef, { signatorial => $signatorial })->hashes->[0] : undef);
-		unless ($rm && &subs::peer_verify($c, $rm)) {
+		unless ($rm && $rm->{'pubkey'} && &subs::peer_verify($c, $rm)) {
 			$c->rendered(403);
 			return;
 		}

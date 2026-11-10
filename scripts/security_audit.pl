@@ -113,6 +113,18 @@ for my $hit ( grep_tree('(system|exec)\s*\(\s*["\x27][^"\x27]*\$|`[^`]*\$', 'lib
 		fix => 'list-form system/exec, or quote() every interpolated word');
 }
 
+# A base64 value on a shell command line is a shell metacharacter away from RCE,
+# and the value is often a database row or a device's answer. MIME::Base64 does
+# the same work in-process (and is portable: BSD base64 has no -w 0).
+for my $hit ( grep_tree('`[^`]*base64[^`]*`', 'lib', 'perl') ) {
+	my ($path, $line, $text) = @{$hit};
+	next if $text =~ /^\s*#/;
+	finding('high', 'perl.shell.base64', 'command injection',
+		'base64 is piped through a shell command', path => $path, line => $line,
+		evidence => redact($text),
+		fix => 'encode/decode with MIME::Base64 in Perl; never interpolate a value into a shell');
+}
+
 for my $hit ( grep_tree('read_file\s*\(\s*\$c->param|`tail \$', 'lib', 'perl') ) {
 	my ($path, $line, $text) = @{$hit};
 	next if $text =~ /path_is_within|path_name|quote\(/;

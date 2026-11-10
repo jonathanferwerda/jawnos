@@ -538,7 +538,9 @@ sub authentication_passer($c) {
 				my $suds;
 				if ($ticket->{'suds'}) {
 					my $secretive = $ticket->{'secret'};
-					my $ver = url_unescape `echo "$secretive" | base64 --decode`;
+					# Decode in Perl: the row is data, and a shell would expand
+					# $(...) inside the quotes (see box_office_misc).
+					my $ver = url_unescape decode_base64($secretive // '');
 					my $ts = &subs::note_decrypter($ticket->{'password'},$ver);
 					my $sj = decode_json $ts;
 					$suds = &subs::note_decrypter($sj->{'p'}, $ticket->{'suds'});

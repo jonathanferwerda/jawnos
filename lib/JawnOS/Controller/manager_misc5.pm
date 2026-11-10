@@ -441,7 +441,7 @@ sub action_15450 {
 	my $c = shift;
 	my $signatorial = $c->param('signatorial') || '';
 	my $rm = ($signatorial && &subs::db_select('remote_machines', undef, { signatorial => $signatorial })->hashes->[0]);
-	unless ($rm && &subs::peer_verify($c, $rm)) { $c->rendered(403); return; }
+	unless ($rm && $rm->{'pubkey'} && &subs::peer_verify($c, $rm)) { $c->rendered(403); return; }
 	my $ip = $c->tx->remote_address || '';
 	my @nics = @{ &subs::lan_physical_network() };
 	my $same = grep { &subs::same_net_test($_->{'ip'}, $ip) eq 'yes' } @nics;
