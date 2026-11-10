@@ -99,8 +99,8 @@ write_text('beta.pl', "use strict;\nthis is not perl(;\n1;\n");
 isnt($code, 0, 'a broken edit is still rejected');
 like($out, qr/\Qbeta.pl\E/, 'and the report names it');
 # perl -c writes its diagnosis on stderr, so finding it in the report is the
-# proof that the shell-free runner reads both pipes to EOF and does not rely on
-# the exit code alone.
+# proof that this run went through run_capture and that it read the child's
+# stderr to EOF - not that the exit code alone carried the verdict.
 like($out, qr/syntax error at .*\Qbeta.pl\E line 2/,
 	'and quotes the compiler stderr from the new runner');
 
@@ -160,5 +160,21 @@ unlike($source, qr{cd\s+"\$root"\s*&&}, 'no cd through a shell');
 # the Perl checks still see the app's own lib/ from any working directory,
 # which is what `cd <root> && perl -Ilib` used to buy them
 like($source, qr{'\-I' \. "\$root/lib"}, 'the compiler is handed an absolute include path');
+
+# run_capture gives the child real files. Windows select() understands sockets
+# only, so a pair of IPC::Open3 pipes in IO::Select->can_read is never reported
+# ready and the guard waits forever; the missing stderr then sent check() into
+# the -M retry, which hung the same way. Pinning the mechanism here keeps it
+# from coming back - the syntax-error assertion above only proves the output
+# arrives, not how it was collected.
+my ($capture) = $source =~ /sub run_capture\b(.*?\n})/s;
+ok(defined $capture, 'the source carries run_capture');
+unless (defined $capture) { $capture = '' }
+unlike($capture, qr/IO::Select/, 'run_capture does not wait on select, which is socket-only on Windows');
+unlike($capture, qr/gensym/, 'run_capture does not gensym a pipe handle');
+like($capture, qr/File::Temp::tempfile/, 'run_capture opens temp files for the child');
+like($capture, qr/File::Spec->devnull/, 'and a null device for its stdin');
+like($capture, qr/seek\(\$fh, 0, 0\)/, 'reading the child output seeks back to the start first');
+like($capture, qr/128 \+ \(\$status & 127\)/, 'a signalled child still reports 128 + the signal');
 
 done_testing();

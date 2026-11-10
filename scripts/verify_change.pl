@@ -130,44 +130,52 @@ sub read_text {
 }
 
 # Run a command from an argv list - never through a shell - and collect its
-# stdout and stderr to EOF. IPC::Open3 is core, and given more than one argument
-# it execs the program directly on every platform (under cmd.exe as well), so a
+# stdout and stderr. IPC::Open3 is core, and given more than one argument it
+# execs the program directly on every platform (under cmd.exe as well), so a
 # path or a flag is never re-parsed as shell syntax. Both streams are read:
 # `perl -c` prints its verdict, and its syntax errors, on stderr, and the report
 # quotes them. Returns ($text, $exit_code) with stdout first, then stderr; a
 # signalled child reports 128 + the signal.
+#
+# The child writes to real files, not pipes. On Windows `select` only works on
+# sockets, so an anonymous-pipe pair wrapped in IO::Select->can_read is never
+# reported ready and the guard waits forever; the lost stderr then made check()
+# fall through to the -M retry, which hung the same way. A temp file needs no
+# readiness check: the child exits, and we seek back and read it. IPC::Open3
+# builds a pipe for any handle it is merely given, so the redirections are
+# written as the documented '<&N'/'>&N' descriptor dups of our files.
 sub run_capture {
 	require IPC::Open3;
-	require IO::Select;
-	require Symbol;
-	require Errno;
-	my ($in, $out, $err) = (undef, undef, Symbol::gensym());
-	my $pid = eval { IPC::Open3::open3($in, $out, $err, @_) };
+	require File::Temp;
+	require File::Spec;
+	my ($out_fh) = File::Temp::tempfile('jawn_verify_out_XXXXXX',
+		TMPDIR => 1, UNLINK => 1);
+	my ($err_fh) = File::Temp::tempfile('jawn_verify_err_XXXXXX',
+		TMPDIR => 1, UNLINK => 1);
+	open(my $devnull, '<', File::Spec->devnull)
+		or return ('could not open ' . File::Spec->devnull . ": $!\n", 127);
+	my $pid = eval {
+		IPC::Open3::open3('<&' . fileno($devnull),
+			'>&' . fileno($out_fh), '>&' . fileno($err_fh), @_)
+	};
 	unless ($pid) {
 		my $why = $@ || 'could not start';
 		$why =~ s/\s+\z//;
 		return ("$why\n", 127);
 	}
-	close $in;
-	my %text = ("$out" => '', "$err" => '');
-	my $select = IO::Select->new($out, $err);
-	while (my @ready = $select->can_read) {
-		foreach my $fh (@ready) {
-			my $n = sysread($fh, my $chunk, 8192);
-			if (!defined $n) {
-				# a retried syscall is not the end of the stream
-				next if $! == Errno::EINTR();
-				$select->remove($fh);
-				next;
-			}
-			if ($n == 0) { $select->remove($fh); next }
-			$text{"$fh"} .= $chunk;
-		}
-	}
+	close $devnull;
 	waitpid($pid, 0);
 	my $status = $?;
 	my $code = ($status & 127) ? 128 + ($status & 127) : ($status >> 8);
-	return ($text{"$out"} . $text{"$err"}, $code);
+	my $text = '';
+	foreach my $fh ($out_fh, $err_fh) {
+		seek($fh, 0, 0);
+		local $/;
+		my $chunk = <$fh>;
+		$text .= $chunk if defined $chunk;
+		close $fh;
+	}
+	return ($text, $code);
 }
 
 # --- the verification manifest ---------------------------------------------
