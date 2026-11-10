@@ -39,6 +39,7 @@ use Fcntl qw(:flock O_CREAT O_EXCL O_WRONLY);
 use Number::Format qw/:subs/;
 use SQL::Abstract;
 use Mojo::SQLite;
+use JawnOS::Platform::Print ();
 use Mojo::IOLoop;
 
 use Mojolicious::Sessions;
@@ -233,13 +234,12 @@ sub scanner_scan_command($feed, $file) {
 	my $resolution = $scanner->{'resolution'};
 	my @feeds = map { lc } @{ $scanner->{'feeds'} || [] };
 	$feed = lc($feed || '');
-	if ($feed eq 'flatbed' && grep { $_ eq 'flatbed' } @feeds) {
-		return "scanimage --format tiff --source Flatbed --batch=$file.tiff --mode Color -d $address --resolution=$resolution --progress";
-	}
-	if ($feed eq 'adf' && grep { $_ eq 'adf' } @feeds) {
-		return "scanimage --format tiff --source ADF --batch=$file\_\%d.tiff --mode Color -d $address --resolution=$resolution --progress";
-	}
-	return undef;
+	# The seam builds the argv; this keeps the feeder the scanner advertises as
+	# the one it will run. The call sites still hold a shell string.
+	return undef unless ($feed eq 'flatbed' && grep { $_ eq 'flatbed' } @feeds)
+		|| ($feed eq 'adf' && grep { $_ eq 'adf' } @feeds);
+	my $argv = JawnOS::Platform::Print::scan_argv($feed, $file, $address, $resolution);
+	return @{$argv} ? join(' ', @{$argv}) : undef;
 }
 
 sub scanner_page_list($base) {

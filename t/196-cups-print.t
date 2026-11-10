@@ -1,4 +1,4 @@
-# tests-for: lib/JawnOS/Domain/Printer2.pm lib/JawnOS/Controller/manager_configure.pm lib/JawnOS/Controller/store_misc.pm lib/JawnOS/Routes/manager_configure.pm lib/JawnOS/Routes/store_misc.pm templates/configure/device_lister/body.html.ep public/js/manager/configure/01_update_controls.js public/js/manager/configure/02_remote_devices.js public/js/store.js public/js/store/register.js public/css/store.css
+# tests-for: lib/JawnOS/Platform/Print.pm lib/JawnOS/Domain/Printer2.pm lib/JawnOS/Controller/manager_configure.pm lib/JawnOS/Controller/store_misc.pm lib/JawnOS/Routes/manager_configure.pm lib/JawnOS/Routes/store_misc.pm templates/configure/device_lister/body.html.ep public/js/manager/configure/01_update_controls.js public/js/manager/configure/02_remote_devices.js public/js/store.js public/js/store/register.js public/css/store.css
 # covers:    CUPS queue discovery (lpstat), network printer discovery (ippfind),
 #            adding a queue (lpadmin), the print/PDF path, and the Dev/Store wiring.
 
@@ -51,7 +51,7 @@ my $lpadmin = fake_script('lpadmin', 'exit 0');
 {
 	no warnings 'redefine';
 	local $subs::cups_printers_memo = undef;
-	local *subs::printer_command_path = sub {
+	local *JawnOS::Platform::Print::tool = sub {
 		my ($name) = @_;
 		return $lpstat if $name eq 'lpstat';
 		return $ippfind if $name eq 'ippfind';
@@ -81,8 +81,8 @@ my $lpadmin = fake_script('lpadmin', 'exit 0');
 # A CUPS server that does not answer must not hold the Dev panel open: lpstat
 # talks to cupsd and waits out its own connect timeout when it cannot. The read
 # is bounded, so the panel draws with no queues instead of stalling.
-like(read_file("$root/lib/JawnOS/Domain/Printer2.pm"),
-	qr/timeout 3 \$lpstat/, 'the lpstat read is bounded');
+like(read_file("$root/lib/JawnOS/Platform/Print.pm"),
+	qr/_bounded\(3,\s*\$lpstat/, 'the lpstat read is bounded');
 
 # CUPS is slow enough on a machine with a network printer that the Dev panel
 # must not pay for a fresh queue list every time it is drawn. One read serves a
@@ -94,7 +94,7 @@ like(read_file("$root/lib/JawnOS/Domain/Printer2.pm"),
 	my $counted = fake_script('lpstat_counted',
 		"echo x >> $count\nprintf 'printer PDF is idle.\\n'");
 	no warnings 'redefine';
-	local *subs::printer_command_path = sub { return $_[0] eq 'lpstat' ? $counted : '' };
+	local *JawnOS::Platform::Print::tool = sub { return $_[0] eq 'lpstat' ? $counted : '' };
 	my $first = subs::cups_printers();
 	my $second = subs::cups_printers();
 	is(scalar @{$first}, 1, 'a queue is read');
@@ -134,7 +134,7 @@ like(read_file("$root/lib/JawnOS/Domain/Printer2.pm"),
 # --- the PDF path -----------------------------------------------------------
 {
 	no warnings 'redefine';
-	local *subs::printer_command_path = sub { return ''; };
+	local *JawnOS::Platform::Print::tool = sub { return ''; };
 	my ($pdf, $error) = subs::printer_pdf_from_html('<html><body>x</body></html>');
 	ok(!defined $pdf, 'no PDF without weasyprint');
 	like($error, qr/weasyprint/, 'and the error names it');
@@ -142,7 +142,7 @@ like(read_file("$root/lib/JawnOS/Domain/Printer2.pm"),
 {
 	my $weasy = fake_script('weasyprint', 'printf "%%PDF-1.4\\n" > "$2"');
 	no warnings 'redefine';
-	local *subs::printer_command_path = sub { return $weasy if $_[0] eq 'weasyprint'; return ''; };
+	local *JawnOS::Platform::Print::tool = sub { return $weasy if $_[0] eq 'weasyprint'; return ''; };
 	my ($pdf, $error) = subs::printer_pdf_from_html('<html><body>x</body></html>');
 	ok(defined $pdf, 'a PDF is produced when weasyprint is there');
 	is($error, undef, 'with no error');

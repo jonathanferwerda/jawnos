@@ -5,10 +5,11 @@ package subs;
 # print, discovers a printer that is not queued yet, and remembers which queue
 # this machine should use by default.
 #
-# Manjaro no longer packages cups-browsed, so discovery is ippfind (or the
-# mDNS records Printer::mdns_printers already reads) and the queue is added
-# with `lpadmin -m everywhere`. Printing is `lp`; the PDF is made with the
-# same weasyprint the mail attachment uses.
+# The commands and their parsing live in JawnOS::Platform::Print now: lpstat,
+# lpadmin, lp, weasyprint and ippfind keep the same argv, bounds and `sudo -n`
+# retry there, so Linux prints exactly as it did. This module keeps the house's
+# policy - the queue list memo, the mDNS fallback, the saved default - and the
+# JSON shapes its routes answer.
 #
 # Loaded on demand by lib/JawnOS/Domain/Loader.pm.
 use strict;
@@ -20,23 +21,18 @@ no warnings 'experimental::args_array_with_signatures';
 
 use File::Spec;
 use File::Temp ();
+use JawnOS::Platform::Print ();
 
 our $device;
 our $log;
 
 # ---- locating a command -----------------------------------------------------
-# The manager's PATH is not the login shell's, so try the usual homes too. The
-# name is a fixed identifier, never caller text.
+# Kept for the Loader map and any caller that still asks by name; the seam
+# owns the path. The name is a fixed identifier, never caller text.
 sub printer_command_path($name) {
 	return '' unless defined $name && $name =~ /^[A-Za-z0-9_.\-]+$/;
-	my $found = `command -v $name 2>/dev/null`;
-	chomp $found;
-	return $found if length $found && -x $found;
-	foreach my $dir (qw(/usr/bin /usr/local/bin /bin /usr/sbin /sbin)) {
-		my $path = "$dir/$name";
-		return $path if -x $path;
-	}
-	return '';
+	my $path = JawnOS::Platform::Print::tool($name);
+	return (defined $path && length $path) ? $path : '';
 }
 
 sub printer_queue_clean($name) {
@@ -55,17 +51,15 @@ sub printer_uri_ok($uri) {
 }
 
 # ---- the queues this machine already has ------------------------------------
-# Bound the read: lpstat talks to cupsd, and a CUPS server that is down (or a
-# stale client.conf pointing at a host nobody answers for) waits out its own
-# connect timeout - with no bound it held the whole Dev panel behind it. A
-# listing that cannot be read in three seconds is drawn as no queues, which is
-# what a person sees anyway when CUPS is not answering.
+# CUPS builds the printer list through cupsd, and on a machine with a network
+# queue that is slow even when it works: a laptop whose printer is on Wi-Fi
+# took ~1s for every lpstat option and ~2s for the whole read, and the Dev
+# panel draws whenever it is opened. Queues change only when someone adds or
+# removes one, and Find printers clears this.
 #
-# Keep the answer for a while as well. CUPS builds the printer list through
-# cupsd, and on a machine with a network queue that is slow even when it works: a
-# laptop whose printer is on Wi-Fi took ~1s for every lpstat option and ~2s for
-# the whole read, and the Dev panel draws whenever it is opened. Queues change
-# only when someone adds or removes one, and Find printers clears this.
+# A read that timed out is not evidence that the machine has no queues: it is
+# left uncached so the next draw tries again rather than showing an empty card
+# for five minutes.
 our $cups_printers_memo;
 our $cups_printers_memo_ttl = 300;
 sub cups_printers {
@@ -73,55 +67,17 @@ sub cups_printers {
 	if ($cups_printers_memo && $now - $cups_printers_memo->{'at'} < $cups_printers_memo_ttl) {
 		return [ map { { %{$_} } } @{$cups_printers_memo->{'list'}} ];
 	}
-	my $lpstat = &printer_command_path('lpstat');
-	return [] unless length $lpstat;
-	my $out = `timeout 3 $lpstat -p -d -v -a 2>/dev/null`;
-	my $timed_out = (($? >> 8) == 124) ? 1 : 0;
-	my (%printer, $default);
-	foreach my $line (split /\n/, $out) {
-		if ($line =~ /^printer\s+(\S+)\s+(.*)$/) {
-			my ($name, $rest) = ($1, $2);
-			$printer{$name} ||= { name => $name, enabled => 1, accepting => 0 };
-			$printer{$name}{'state'} = $1 if $rest =~ /^(?:is|now)\s+(\w+)/;
-			$printer{$name}{'state'} = 'disabled' if $rest =~ /disabled/;
-			$printer{$name}{'enabled'} = 0 if $rest =~ /disabled/;
-			$printer{$name}{'detail'} = $rest;
-		}
-		elsif ($line =~ /^system default destination:\s*(\S+)/) {
-			$default = $1;
-		}
-		elsif ($line =~ /^device for\s+(\S+):\s*(.+)$/) {
-			$printer{$1} ||= { name => $1, enabled => 1, accepting => 0 };
-			$printer{$1}{'uri'} = $2;
-		}
-		elsif ($line =~ /^(\S+)\s+accepting requests/) {
-			$printer{$1} ||= { name => $1, enabled => 1, accepting => 0 };
-			$printer{$1}{'accepting'} = 1;
-		}
-	}
-	my @list = map { $printer{$_} } sort keys %printer;
-	foreach my $p (@list) {
-		$p->{'default'} = (defined $default && $p->{'name'} eq $default) ? 1 : 0;
-		$p->{'state'} ||= 'idle';
-		$p->{'uri'} ||= '';
-	}
-	# A timed-out read is not evidence that the machine has no queues: leave it
-	# uncached so the next draw tries again rather than showing an empty card for
-	# five minutes.
-	$cups_printers_memo = { at => $now, list => [ map { { %{$_} } } @list ] } unless $timed_out;
-	return \@list;
+	my ($list, $complete) = JawnOS::Platform::Print::printers();
+	$list ||= [];
+	$cups_printers_memo = { at => $now, list => [ map { { %{$_} } } @{$list} ] } if $complete;
+	return [ map { { %{$_} } } @{$list} ];
 }
 
 # ---- printers on the network that CUPS does not know yet --------------------
 sub cups_discovered_printers {
 	my %found;
-	my $ippfind = &printer_command_path('ippfind');
-	if (length $ippfind) {
-		my $out = `$ippfind -T 5 2>/dev/null`;
-		foreach my $line (split /\n/, $out) {
-			next unless &printer_uri_ok($line);
-			$found{$line} = { uri => $line, host => $line, name => $line };
-		}
+	foreach my $uri (@{ JawnOS::Platform::Print::discover() }) {
+		$found{$uri} = { uri => $uri, host => $uri, name => $uri };
 	}
 	if (!scalar keys %found) {
 		my $mdns = eval { &mdns_printers() } || {};
@@ -147,8 +103,8 @@ sub cups_discovered_printers {
 
 # ---- add the discovered printers as queues ---------------------------------
 sub cups_sync_printers {
-	my $lpadmin = &printer_command_path('lpadmin');
-	return { ok => 0, error => 'lpadmin is not installed' } unless length $lpadmin;
+	my $lpadmin = JawnOS::Platform::Print::tool('lpadmin');
+	return { ok => 0, error => 'lpadmin is not installed' } unless defined $lpadmin && length $lpadmin;
 	my $known = &cups_printers();
 	my %known_uri = map { ($_->{'uri'} || '') => 1 } @{$known};
 	my %taken = map { $_->{'name'} => 1 } @{$known};
@@ -159,10 +115,8 @@ sub cups_sync_printers {
 		my $base = $name;
 		my $n = 2;
 		while ($taken{$name}) { $name = $base . '-' . $n++; }
-		my @cmd = ($lpadmin, '-p', $name, '-E', '-v', $d->{'uri'}, '-m', 'everywhere', '-D', $name);
-		my $rc = system(@cmd);
-		$rc = system('sudo', '-n', @cmd) if $rc != 0;
-		if ($rc == 0) {
+		my $rc = JawnOS::Platform::Print::add_queue($name, $d->{'uri'});
+		if (defined $rc && $rc == 0) {
 			push @added, { name => $name, uri => $d->{'uri'} };
 			$known_uri{$d->{'uri'}} = 1;
 			$taken{$name} = 1;
@@ -225,31 +179,15 @@ sub printer_default_set($name) {
 
 # ---- paper ----------------------------------------------------------------
 sub printer_pdf_from_html($html) {
-	return (undef, 'no paper to print') unless defined $html && length $html;
-	my $weasyprint = &printer_command_path('weasyprint');
-	return (undef, 'weasyprint is not installed') unless length $weasyprint;
-	my ($fh, $html_path) = File::Temp::tempfile('jawn_print_XXXXXX', SUFFIX => '.html', DIR => File::Spec->tmpdir, UNLINK => 0);
-	return (undef, 'could not write the print file') unless $fh;
-	print $fh $html;
-	close $fh;
-	(my $pdf_path = $html_path) =~ s/\.html$/.pdf/;
-	my $timeout = &printer_command_path('timeout');
-	my $rc = length $timeout
-		? system($timeout, '45', $weasyprint, $html_path, $pdf_path)
-		: system($weasyprint, $html_path, $pdf_path);
-	unlink $html_path;
-	return (undef, 'weasyprint failed') unless $rc == 0 && -s $pdf_path;
-	return ($pdf_path, undef);
+	return JawnOS::Platform::Print::pdf_from_html($html);
 }
 
 sub printer_cups_send($name, $pdf_path) {
 	return { ok => 0, error => 'no printer' } unless defined $name && length $name;
 	my @known = map { $_->{'name'} } @{ &cups_printers() };
 	return { ok => 0, error => 'that printer is not a CUPS queue' } unless grep { $_ eq $name } @known;
-	my $lp = &printer_command_path('lp');
-	return { ok => 0, error => 'lp is not installed' } unless length $lp;
-	my $rc = system($lp, '-d', $name, $pdf_path);
-	$rc = system('sudo', '-n', $lp, '-d', $name, $pdf_path) if $rc != 0;
+	my $rc = JawnOS::Platform::Print::send($name, $pdf_path);
+	return { ok => 0, error => 'lp is not installed' } unless defined $rc;
 	return $rc == 0
 		? { ok => 1, printer => $name }
 		: { ok => 0, error => 'lp failed for ' . $name };
