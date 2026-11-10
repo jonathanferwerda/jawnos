@@ -291,6 +291,13 @@ sub prefork_tune {
 		my ($self, $pid) = @_;
 		$log->info('worker spawn purpose=' . ($ENV{PURPOSE} || '?') . " pid=$pid");
 	});
+	# The module logs a bare "Worker $pid stopped"; a purpose on the way out is
+	# what tells the next reader which pool lost a worker, and a run of these
+	# with no matching spawn is how a pool emptying presents itself.
+	$prefork->on(reap => sub {
+		my ($self, $pid) = @_;
+		$log->info('worker exit purpose=' . ($ENV{PURPOSE} || '?') . " pid=$pid");
+	});
 	return $prefork;
 }
 
@@ -307,8 +314,14 @@ sub run_server {
 		$daemon->run;
 		return;
 	}
+	# The floored subclass refuses a TTOU that would take `workers` below the
+	# resting pool (prefork_autoscale.pl). Without it a shrink that outran the
+	# real pool reached zero, and a zero-worker manager never spawns again.
 	my $prefork = &prefork_tune(
-		Mojo::Server::Prefork->new(listen => $listeners),
+		President::PoolPrefork->new(
+			listen      => $listeners,
+			min_workers => $opt{'autoscale_min'} || $opt{'workers'} || 1,
+		),
 		keep_alive => ($opt{'keep_alive'} ? 1 : 0),
 	);
 	$prefork->heartbeat_timeout(200);

@@ -21,6 +21,14 @@ use vars qw($log);
 # The supervisor is a child of the prefork manager (the process that becomes the
 # manager when run() is called), so its signal names the manager directly and it
 # retires with it.
+#
+# The pool it reasons about is read from the manager, never assumed. TTIN and
+# TTOU are ordinary signals, so a burst of them is coalesced by the kernel into
+# one delivery: a grow burst of three can leave the manager with one extra
+# worker while this side believes it has three. A later shrink then retires
+# workers that were never created. It used to reach zero, and a manager asked
+# for zero workers never starts one again - it keeps the listening socket and
+# answers nothing until the watchdog restarts the tree.
 sub prefork_autoscale {
 	my ($prefork, %opt) = @_;
 	my $min = $opt{'min'} || $prefork->workers;
@@ -53,6 +61,12 @@ sub prefork_autoscale {
 		# arrives, not a second later.
 		select(undef, undef, undef, 0.5);
 		last unless kill 0, $parent;
+		# The manager's own children are its workers plus this supervisor. Reading
+		# them every tick keeps `$current` in step with the pool a signal burst
+		# really produced; where the platform cannot tell (no /proc, a just-forked
+		# manager) fall back to the last target.
+		my $live = &prefork_live_workers($parent);
+		$live = $current unless defined $live;
 		my $now = &subs::rightNow();
 		my $busy = 0;
 		if (opendir(my $dh, $dir)) {
@@ -71,29 +85,70 @@ sub prefork_autoscale {
 			}
 			closedir $dh;
 		}
-		if ($busy >= $current) { $high++ } else { $high = 0 }
-		if ($high >= $grow_after && $current < $max) {
+		if ($busy >= $live) { $high++ } else { $high = 0 }
+		if ($high >= $grow_after && $live < $max) {
 			my $add = $grow_by;
-			$add = $max - $current if $current + $add > $max;
+			$add = $max - $live if $live + $add > $max;
 			kill 'TTIN', $parent for 1 .. $add;
-			my $was = $current;
-			$current += $add;
+			$current = $live + $add;
 			$high = 0;
 			$low = 0;
-			$log->info('autoscale: all ' . $was . ' main workers active; raising to ' . $current);
+			$log->info('autoscale: all ' . $live . ' main workers active; raising to ' . $current);
 		}
-		if ($busy <= $current - 1) { $low++ } else { $low = 0 }
-		if ($low >= $shrink_after && $current > $min) {
+		if ($busy <= $live - 1) { $low++ } else { $low = 0 }
+		if ($low >= $shrink_after && $live > $min) {
 			my $drop = $shrink_by;
-			$drop = $current - $min if $current - $drop < $min;
+			$drop = $live - $min if $live - $drop < $min;
 			kill 'TTOU', $parent for 1 .. $drop;
-			$current -= $drop;
+			$current = $live - $drop;
 			$low = 0;
 			$high = 0;
 			$log->info('autoscale: main workers quiet; back to ' . $current);
 		}
 	}
 	POSIX::_exit(0);
+}
+
+# How many workers the manager actually has. It lists its direct children in one
+# file on Linux (and on the Android it runs on); the supervisor itself is one of
+# them and is not a worker. undef means "cannot tell", so the caller keeps its
+# last target rather than shrinking a pool it cannot see.
+sub prefork_live_workers {
+	my ($parent) = @_;
+	return undef unless defined $parent && $parent =~ /^[0-9]+$/;
+	open(my $fh, '<', "/proc/$parent/task/$parent/children") or return undef;
+	local $/;
+	my $text = <$fh>;
+	close $fh;
+	return undef unless defined $text;
+	my @children = grep { /^[0-9]+$/ } split /\s+/, $text;
+	return scalar grep { $_ != $$ } @children;
+}
+
+# ---- a manager that cannot be asked for zero workers -------------------------
+# Mojo::Server::Prefork answers TTOU by lowering `workers` by one with no floor,
+# and `_manage` starts workers only while that target is above zero:
+# `(workers - live) + spare`, where spare is added only for workers already
+# shutting down. So a target of zero is permanent - the manager keeps the
+# listening socket and never spawns again. Counting children keeps the
+# supervisor honest, but a replacement the manager started while two graceful
+# workers were still in its pool makes the count read high, and a platform
+# without /proc gives no count at all. The floor is the guarantee: the manager is
+# the only process that knows its own target, so it refuses to lower it below
+# the resting pool. A stray TTOU then retires one worker and is replaced, but
+# the pool never bottoms out.
+package President::PoolPrefork;
+use Mojo::Base 'Mojo::Server::Prefork';
+
+has 'min_workers';
+
+sub workers {
+	my $self = shift;
+	my $floor = $self->min_workers;
+	return $self->SUPER::workers unless @_;
+	my $want = shift;
+	$want = $floor if defined $floor && $want < $floor;
+	return $self->SUPER::workers($want);
 }
 
 1;

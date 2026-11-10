@@ -49,8 +49,10 @@ like($president, qr/JawnOS::Platform::portable\(\)/,
 	'the chooser consults portable mode');
 like($president, qr/Mojo::Server::Daemon->new\(listen => \$listeners\)/,
 	'portable mode uses a single Daemon');
-like($president, qr/Mojo::Server::Prefork->new\(listen => \$listeners\)/,
-	'native mode keeps Prefork');
+like($president, qr/President::PoolPrefork->new\(\s*listen\s*=> \$listeners,/s,
+	'native mode keeps Prefork (the floored subclass)');
+like($president, qr/min_workers => \$opt\{'autoscale_min'\}/,
+	'and tells it the pool it may not shrink below');
 like($president, qr/^sub run_dev_server\b/m, 'development has the same choice');
 
 like($master, qr/^use JawnOS::Transport;/m,

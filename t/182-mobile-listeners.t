@@ -55,4 +55,43 @@ like($calendar, qr/\$request_busy_depth > 0 \? 'start ' : 'end '/, 'the marker n
 like($autoscale, qr/return \$prefork if \$max <= \$min;/,
 	'a cap equal to the pool never even starts the supervisor');
 
+# The pool emptied on the live phone: a shrink burst was coalesced into fewer
+# TTIN deliveries than the supervisor counted, so a later TTOU retired workers
+# that did not exist. At workers=0 the manager (Mojo::Server::Prefork) never
+# spawns again - `_manage` adds spare only for workers already shutting down -
+# and it keeps the listening socket open while answering nothing.
+like($autoscale, qr/sub prefork_live_workers \{/,
+	'the supervisor reads the manager\'s real pool, not only its own target');
+like($autoscale, qr/if \(\$low >= \$shrink_after && \$live > \$min\)/,
+	'shrinking starts from the real pool');
+like($autoscale, qr/\$drop = \$live - \$min if \$live - \$drop < \$min;/,
+	'and never plans to retire below the resting pool');
+like($src, qr/worker exit purpose=/, 'a worker exit says which pool lost it');
+like($src, qr/\$prefork->accepts\(500\) if \$device eq 'mobile'/,
+	'a phone still recycles a worker after 500 accepts');
+like($src, qr/\$prefork->heartbeat_interval\(1\)/, 'the fallback heartbeat is a second');
+like($src, qr/\$prefork->heartbeat_timeout\(200\)/, 'the heartbeat timeout is still 200 seconds');
+
+subtest 'the manager refuses a target below the resting pool' => sub {
+	require Mojo::Server::Prefork;
+	require "$root/perl/President/prefork_autoscale.pl";
+	my $pool = President::PoolPrefork->new(listen => [], min_workers => 3);
+	ok($pool->isa('Mojo::Server::Prefork'), 'the floored pool is still a Prefork');
+	$pool->workers(7);
+	is($pool->workers, 7, 'growing is accepted');
+	$pool->workers(0);
+	is($pool->workers, 3, 'a shrink to zero is held at the resting pool');
+	$pool->workers(2);
+	is($pool->workers, 3, 'a one-worker overshoot is held too');
+};
+
+subtest 'the supervisor counts the manager\'s real children' => sub {
+	my $kid = fork();
+	skip 'cannot fork', 1 unless defined $kid;
+	if (!$kid) { select(undef, undef, undef, 0.3); exit 0 }
+	my $seen = President::prefork_live_workers($$);
+	is($seen, 1, 'one worker child is one worker, not the count minus one');
+	waitpid $kid, 0;
+};
+
 done_testing();
