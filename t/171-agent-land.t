@@ -89,6 +89,25 @@ print "a restart is already pending\n";
 exit 2;
 PL
 
+# A guard that outlives the control client's 150 s makes the verdict time out even
+# though the tree is coming up on the new version. The lander must look, not fail.
+my $TIMEOUT_RESTART = <<'PL';
+#!/usr/bin/perl
+use strict; use warnings;
+my $dir = $ENV{'AGENT_LAND_TEST_DIR'} || die "no AGENT_LAND_TEST_DIR\n";
+open(my $fh, '>>', "$dir/restart") or die $!;
+print $fh "@ARGV\n";
+close $fh;
+if (grep { $_ eq '--status' } @ARGV) {
+	my $v = '0.0.0';
+	if (open(my $in, '<', 'VERSION')) { $v = <$in>; close $in; $v =~ s/\s+$// }
+	print '{"ok":1,"pending":0,"version":"' . $v . '"}', "\n";
+	exit 0;
+}
+print STDERR "restart failed: the master did not answer within 150s\n";
+exit 2;
+PL
+
 sub sh {
 	# Git exports GIT_DIR to the pre-push hook that runs this suite. Without this
 	# clear, `git -C <temp>` still acts on the live checkout.
@@ -529,6 +548,20 @@ subtest '--json puts a refusal on stdout and keeps progress on stderr' => sub {
 	is($j->{'code'}, 1, 'with the refusal exit code');
 	is($j->{'reason_class'}, 'dirty_worktree', 'and a machine-readable reason');
 	like($j->{'message'}, qr/uncommitted work/, 'that still names the work');
+};
+
+subtest 'a timed-out restart verdict checks the version the tree booted' => sub {
+	my $f = fixture(restart => $TIMEOUT_RESTART);
+	commit_in_worktree($f, 'note.txt', "a\n", 'add a note');
+
+	my ($rc, $out) = land($f);
+	is($rc, 0, 'the landing is not failed by a slow verdict') or diag($out);
+	like($out, qr/verdict timed out/, 'it says the verdict timed out');
+	like($out, qr/checking the version/, 'and that it is checking the tree');
+
+	my @calls = grep { length } split /\n/, read_file("$f->{'marker'}/restart");
+	ok(@calls >= 2, 'it asked, then checked the running version');
+	like($calls[1], qr/--status --json/, 'the second was the version check');
 };
 
 subtest 'a busy restart waits for the pending tree and verifies the version' => sub {

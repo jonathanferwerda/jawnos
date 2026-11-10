@@ -66,7 +66,9 @@ use Fcntl qw(:flock);
 use File::Temp qw(tempfile);
 use Getopt::Long qw(GetOptions);
 use IO::Handle ();
+use IPC::Open3 qw(open3);
 use JSON::PP ();
+use Symbol qw(gensym);
 
 my %opt = (
 	'trunk'         => 'main',
@@ -120,6 +122,21 @@ sub git {
 	my ($code, $out) = capture('git', @args);
 	$out =~ s/\s+$// if defined $out;
 	return ($code, $out);
+}
+
+# restart.pl puts the reason a verdict was not reached on stderr, and the plain
+# capture above reads only stdout. The class of the refusal (busy, timeout, no
+# master) is the whole decision, so this one keeps both streams.
+sub capture_both {
+	my @cmd = @_;
+	my $err = gensym;
+	my $pid = open3(my $in, my $out, $err, @cmd);
+	close $in;
+	local $/;
+	my $stdout = <$out> // '';
+	my $stderr = <$err> // '';
+	waitpid($pid, 0);
+	return ($? >> 8, $stdout . $stderr);
 }
 
 sub say_step {
@@ -490,16 +507,20 @@ sub remove_worktree {
 # restart to settle, then check the version the tree actually booted.
 sub restart_and_verify {
 	my ($primary, $reason, $want) = @_;
-	my ($rc, $out) = capture($^X, "$primary/scripts/restart.pl", '--reason', $reason);
+	my ($rc, $out) = capture_both($^X, "$primary/scripts/restart.pl", '--reason', $reason);
 	print STDERR $out if length $out;
 	return (1, '') if $rc == 0;
 
-	# Only the single-slot refusal is worth waiting for. A missing master or a
-	# timed-out guard is an exit 5 the caller must see now, not 180 s later.
-	return (0, $out) unless $out =~ /already pending|busy/i;
+	# A missing master is not something to wait for. A busy master and a timed-out
+	# verdict are both "the restart may be under way": check what the tree booted.
+	return (0, $out) if $out =~ /no[ -]?master/i;
+	my $busy    = $out =~ /already pending|busy/i;
+	my $timeout = $out =~ /did not answer|no answer|timed? ?out/i;
+	return (0, $out) unless $busy || $timeout;
 
-	say_step('a restart is already pending; waiting for the tree it boots');
-	my $deadline = time + 180;
+	say_step($busy ? 'a restart is already pending; waiting for the tree it boots'
+		: 'the restart verdict timed out; checking the version it booted');
+	my $deadline = time + ($busy ? 180 : 60);
 	while (time < $deadline) {
 		my ($src, $sout) = capture($^X, "$primary/scripts/restart.pl", '--status', '--json');
 		if ($src == 0) {
@@ -513,7 +534,7 @@ sub restart_and_verify {
 	}
 
 	say_step('asking for the restart again');
-	my ($rrc, $rout) = capture($^X, "$primary/scripts/restart.pl", '--reason', $reason);
+	my ($rrc, $rout) = capture_both($^X, "$primary/scripts/restart.pl", '--reason', $reason);
 	print STDERR $rout if length $rout;
 	return (1, '') if $rrc == 0;
 	return (0, $rout);
