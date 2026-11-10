@@ -653,6 +653,12 @@ sub action_45121 {
 	$c->render(json => { ok => 1, pull => $need });
 }
 
+# The house address book. Every machine reports its signed presence here when it
+# boots, changes network or wakes; the server merges it and pushes the address
+# directory to the other machines. A peer that cannot reach the server relays
+# the same signed notice, and a machine whose stored name has gone stale asks
+# here rather than waiting out a timeout. All three routes authenticate the
+# caller with the signed peer rail (or a loopback caller) inside the handlers.
 # POST /manager/address_report
 sub action_45146 {
 	my $c = shift;

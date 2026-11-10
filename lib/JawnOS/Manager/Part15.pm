@@ -387,6 +387,9 @@ sub inventory_cell_summary($data) {
 	return { summary => $text, error => $error, briefing => $briefing };
 }
 
+# The next local midnight after a moment, as epoch milliseconds. The calendar
+# date is stepped by hand because Time::Local refuses an out-of-range day (32)
+# and normalising through it would croak on the last day of a month.
 sub next_local_midnight {
 	my $ms = shift;
 	my @lt = localtime(int($ms / 1000));
@@ -403,6 +406,13 @@ sub next_local_midnight {
 	return timelocal(0, 0, 0, $mday, $mon, $year) * 1000;
 }
 
+# Allocate a session's time across the allocation view's components by when it
+# was actually spent: the hour of the day, weekday, day of the month and the
+# rest each get their part, instead of the whole session landing on the one it
+# started in. Seconds and minutes repeat on a fixed clock, so whole cycles are
+# added once and only the remainder is walked; the longer components step from
+# one local boundary to the next. A span past a year is one bad row rather than
+# a distribution, so it stays on the components it started in.
 sub allocation_duration_add {
 	my ($returner, $appt, $display, $display_options) = @_;
 	my $from = ($appt->{'timestamp'} || 0) + 0;
@@ -494,6 +504,10 @@ sub allocation_duration_add {
 	}
 }
 
+# the value one window shows for the inventory's chosen measure, the way the
+# inventory buckets it (a running session read to now, a measure read off the
+# appointment's own readings). A duration is read only for the part inside the
+# window when the caller names its edges.
 sub inventory_window_value($appts, $display, $settings, $start, $end, $view_now) {
 	my $value = 0;
 	my $now = $view_now || &subs::rightNow();

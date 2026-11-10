@@ -624,6 +624,10 @@ sub budget_status_maker($returner) {
 	return $returner;
 }
 
+# The calc a measure reads with: its own remembered one (steps sum, weight
+# average), else the app's s_calc as the fallback. Used wherever a measure's
+# value is taken - the budget runner, the panel - so a steps budget and a weight
+# budget read right at the same time, whatever the display is showing.
 sub measure_calc_for {
 	my ($app, $measure, $fallback) = @_;
 	my $calc = &subs::setting_grabber({ app => $app, setting => 'measure_calc', subsetting => $measure });
@@ -649,6 +653,12 @@ sub budget_window_label($budget, $locked) {
 	return ($label, lc $label);
 }
 
+# The part of an appointment's span that lies inside [start, end): an appointment
+# runs from its timestamp for its duration, and a session that crosses a period's
+# edge belongs to both periods by the time actually spent in each - 23:36 to
+# 02:30 gives the first day 24 minutes and the next 2 hours 30, rather than the
+# whole night to the day it started. The caller sets duration for a running
+# session (there is none in the row while it is open).
 sub appointment_overlap {
 	my ($appt, $start, $end) = @_;
 	my $from = ($appt->{'timestamp'} || 0) + 0;

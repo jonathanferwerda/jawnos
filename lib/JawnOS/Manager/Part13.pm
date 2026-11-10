@@ -125,6 +125,8 @@ sub thumbnail_creator($data) {
 	return $data;
 }
 
+# Decrypt a sealed file's bytes, trying each security credential the way
+# rock_and_roll does. Returns undef when none open it.
 sub sealed_file_bytes {
 	my ($suds, $file) = @_;
 	return read_file($file) unless $file =~ /\.enc$/i;
@@ -153,6 +155,8 @@ sub travel_map_record {
 	return ($map, $maps);
 }
 
+# A scale legend read off a map ("500 ft") is ground truth only once it is metres:
+# the engine measures pixels-per-metre off it, so a plain number is what gets stored.
 sub map_legend_metres {
 	my ($text) = @_;
 	return undef unless defined $text && length $text;
@@ -432,6 +436,15 @@ sub schedule_maker($c,$schedule,$timestamp) {
 	return $result;
 }
 
+# A peer's lease is enforced here: a signed peer call must carry the rung its
+# movement needs (start/stop and an app toggle are resident; a shell command is
+# trusted). A local session has no peer identity and is left to the session
+# gate. A peer session minted by sesh_check carries the caller's signatorial, so
+# a session-riding call is checked too; a session from before that change has no
+# name on it yet and keeps its existing gate until it logs in again.
+# The verified row for this request, or undef for a local session. A signed
+# request sets the stash through app_peer_ok/peer_verify; a peer session carries
+# its proved signatorial and is looked up here. Local calls have neither.
 sub peer_row_for_request {
 	my ($c) = @_;
 	my $peer_key = $c->stash('peer_verified_key') || '';

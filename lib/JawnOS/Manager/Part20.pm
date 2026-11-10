@@ -116,6 +116,10 @@ sub budget_runner($app) {
 	}, { name => 'budget runner' });
 }
 
+# One budget/goal entry read apart: a leading "<=" or ">=" says which way it
+# runs (under is good, or over is good), the number is the target, the name that
+# follows is the measure ($ for money, absent for occurences), and "/<scope>"
+# makes it a rate rather than a fixed level.
 sub budget_entry_parse {
 	my $entry = shift;
 	my $direction = 'floor';
@@ -130,6 +134,14 @@ sub budget_entry_parse {
 	return { raw => $entry, direction => $direction, value => $value, measure => $measure, scope => $scope, fixed => (defined $scope ? 0 : 1) };
 }
 
+# The measure's own trend: a least-squares line through its readings, as
+# value-per-day, with the latest reading and the reading count. The stretch it
+# reads is the floor given unless the measure is recorded more sparsely than
+# that: the window is widened to about a dozen readings when the median gap
+# between them is longer than the floor of a dozen dozen, so a level recorded
+# once a month or once a year is not judged on the few points a fixed 90 days
+# would hold. Times are measured from the first reading so the huge millisecond
+# stamps do not cancel the fit.
 sub measure_trend($app, $measure, $floor_days) {
 	my $floor = ($floor_days || 90) * 86400000;
 	my $appts = &subs::db_query('select timestamp,measures from appointments where app = ? and measures is not null order by timestamp desc limit 600', $app)->hashes;
@@ -173,6 +185,9 @@ sub measure_trend($app, $measure, $floor_days) {
 	return ($slope * 86400000, $fit[-1][1], scalar @pts);
 }
 
+# A goal read for one circumstance: the target, where the measure stands now, and
+# - the part a budget cannot give a scopeless entry - when the current trend
+# carries it to the goal. A trend moving the wrong way has no date.
 sub goal_reading($app, $circumstance) {
 	my $raw = &subs::setting_grabber({ app => $app, setting => 'goals' });
 	return undef unless ($raw || '') =~ /\S/;
@@ -354,11 +369,20 @@ sub budget_autocalc($data) {
 	return $returner;
 }
 
+# --- People: the house crest -------------------------------------------------
+# The first pass owns one crest: the house's own drawing. It is scanned or
+# uploaded, normalized and hashed, sealed like a picture, and signed by a house
+# key kept sealed under the house key. Other houses' crests and the vouches
+# between them come next; nothing here writes a peer row.
 sub people_citizen {
 	my ($c) = @_;
 	return (($c->session('privilege') || '') eq 'citizen') ? 1 : 0;
 }
 
+# Keep the people table and the person constructs in step. A person construct
+# creates its people row; a row whose construct was deleted from the database
+# is removed; a construct that merely changed away from person (to idea, say)
+# keeps its row, so a mistaken change does not cost the identity behind it.
 sub people_link_sync {
 	my $index = &people_index();
 	my %person = map { $_ => 1 } @{ $index->{'person_apps'} };
@@ -396,6 +420,7 @@ sub people_link_sync {
 	return $index;
 }
 
+# The peer crest linked to a contact app, as an image the window can show.
 sub people_crest_image {
 	my ($app) = @_;
 	return &people_crest_entry_image(&subs::crest_contact_entry($app));
@@ -410,6 +435,9 @@ sub people_crest_entry_image {
 	return &subs::crest_peer_image_file($entry) ? '/manager/people/crest_image?peer=' . $uuid . '&stamp=' . &subs::rightNow() : '';
 }
 
+# The person's own picture. The main_image setting is written per device and
+# may be a sealed path or (on a phone) a data URI; /file_open is what unfastens
+# a sealed picture for an <img>, and it takes the app alongside the path.
 sub people_main_image {
 	my ($app) = @_;
 	return '' unless defined $app && length $app;
@@ -420,6 +448,8 @@ sub people_main_image {
 	return '/file_open?file=' . &subs::url_escape_utf8($value) . '&app=' . &subs::url_escape_utf8($app) . '&thumb=ya&timestamp=' . &subs::rightNow();
 }
 
+# Met / introduced state for a linked crest, read the same way the crest
+# detail panel reads it.
 sub people_crest_state {
 	my ($entry) = @_;
 	my $own = &subs::crest_record_read();
@@ -454,6 +484,8 @@ sub people_crest_scan_dir {
 	return $dir;
 }
 
+# The singular a construct app answers to ('community', 'team', ...), or empty
+# when the app is not a construct of this house.
 sub people_construct_kind {
 	my ($app) = @_;
 	return '' unless defined $app && length $app;
@@ -466,6 +498,9 @@ sub people_construct_kind {
 	return '';
 }
 
+# True when this app is another house's construct, imported read-only. A local
+# construct has no house_uuid; the marker is what keeps publication, logos and
+# Relational edits away from something this house does not own.
 sub people_app_foreign {
 	my ($app) = @_;
 	return 0 unless defined $app && length $app;
@@ -497,6 +532,11 @@ sub construct_crest_find_by_uuid {
 	return undef;
 }
 
+# A construct is published to another house only when its own public setting
+# says so. The setting is kept per device, like the public toggle on the
+# appointment itself, and People consolidates the rows it holds: the newest
+# choice across the house is the answer the construct row shows and the answer
+# a lookup carries.
 sub people_construct_public {
 	my ($app) = @_;
 	return 0 unless defined $app && length $app;
@@ -504,6 +544,11 @@ sub people_construct_public {
 	return ($row && ($row->{'value'} || '') eq 'on') ? 1 : 0;
 }
 
+# Import another house's construct as settings rows this house can read but not
+# change. Its identity is the signed construct crest (uuid + house uuid); the
+# local app key is only a label, suffixed when the name is already taken. The
+# house crest must already be held: a construct is only trustworthy as part of
+# a house this machine knows.
 sub foreign_construct_import {
 	my ($record) = @_;
 	return { ok => 0, error => 'no construct crest' }
@@ -575,6 +620,10 @@ sub foreign_construct_import {
 	};
 }
 
+# What this house publishes to another house that presents a crest: the house
+# name and key, its address, and only the constructs marked public, with the
+# names of their members. Nothing here is a permission; the answer is signed by
+# the house key so the asker can check it came from the crest it holds.
 sub people_crest_profile {
 	my $crest = &subs::crest_record_read();
 	return undef unless $crest->{'uuid'} && $crest->{'pubkey'};

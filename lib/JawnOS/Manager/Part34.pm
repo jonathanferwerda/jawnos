@@ -469,6 +469,10 @@ sub embedded_app_deleter($data) {
 	}, { name => 'embedded app deleter' });
 }
 
+# ---- USB flashing -----------------------------------------------------------
+# The esp32 boards are plugged into this machine, so the panel cannot flash them
+# itself: it asks the manager, which runs the PlatformIO upload and then polls the
+# log for esptool's percentage lines.
 sub usb_ports_grabber {
 	my %by_id;
 	foreach my $link ( glob('/dev/serial/by-id/*') ) {

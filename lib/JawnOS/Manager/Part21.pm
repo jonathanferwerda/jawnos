@@ -146,6 +146,11 @@ sub people_crest_install {
 	return { ok => 1, crest => $signed };
 }
 
+# A construct's crest: the same signed record, card and compact code as the
+# house crest, signed by the house key and naming the construct. It lives on the
+# construct's own settings rows, so deleting the construct takes its crest with
+# it. The drawing is stored beside the house drawing with a name only this
+# construct's id makes, so the two never collide.
 sub construct_crest_install {
 	my ($c, $src, $app) = @_;
 	my $sing = &people_construct_kind($app);
@@ -350,6 +355,13 @@ sub people_crest_import_code {
 	return { ok => 1, crest => $record, entry => $entry, known => $known };
 }
 
+# The note an appointment window is still typing is a draft. It is the same
+# notes table the Notes app reads, which already rides the generic peer sync, so
+# a refresh, a crash or another machine finds the words again. The row's name is
+# derived from the app name, so every peer converges on one draft per app rather
+# than making a note for each keystroke. An empty text clears the draft once the
+# note has been filed on the appointment; the row is kept (and hidden) rather
+# than deleted, because a notes deletion is not carried by the sync tombstones.
 sub app_draft_uuid($app, $field) {
 	my $name = $app . '_' . $field;
 	if (length($name) > 150) {
@@ -543,18 +555,27 @@ sub centre_view_grabber($data) {
 	}
 }
 
+# The entry a setting wears for this device: the device's own row, then the
+# house-wide ('all') one, then whatever row there is.
 sub search_index_setting($set, $device) {
 	return undef unless ref $set eq 'HASH' && scalar keys %{$set};
 	return (defined $device && exists $set->{$device}) ? $set->{$device}
 		: (exists $set->{'all'} ? $set->{'all'} : (values %{$set})[0]);
 }
 
+# Has anything the search list draws changed? Every write through setting_setter
+# stamps a fresh server_time, and a delete (a removed app or its last setting)
+# moves the count, so these two aggregates are the cheap watch. The icon set is
+# included because the row pictures follow it; manager_background_colour picks
+# the light or dark cut of that set.
 sub search_index_signature {
 	my $s = &subs::db_query("select count(*) as n, max(cast(server_time as integer)) as t from settings where setting in ('pos','visible','main_image','icon_set','manager_background_colour')")->hashes->[0] || {};
 	my $g = &subs::db_query('select count(*) as n, max(cast(server_time as integer)) as t from appointments where account = ?', 'gallery')->hashes->[0] || {};
 	return join ':', ($s->{'n'} // 0), ($s->{'t'} // 0), ($g->{'n'} // 0), ($g->{'t'} // 0);
 }
 
+# The picture an app's search row wears: the same one its window does - the
+# app's own main image first, then the built-in drawing, then the pos tile.
 sub search_index_icon($data) {
 	my $app = $data->{'app'};
 	my $main_image = $data->{'main_image'} || '';
@@ -579,6 +600,9 @@ sub search_index_icon($data) {
 	return &subs::icon_for('/images/decipherable/gear.png');
 }
 
+# The Apps tab. An app matches when its own name (or the name a person reads)
+# carries the words, and it is one the house knows: an appointment record, a
+# visible app, or a built-in the menu opens.
 sub search_app_matches($search) {
 	$search = &subs::unformat_name($search || '');
 	return [] unless length $search;
@@ -622,6 +646,10 @@ sub search_app_matches($search) {
 	return \@out;
 }
 
+# ---- search engines -------------------------------------------------------
+# The engines live in code (gb.pl) and the person's own are in one setting:
+# which are on, and any added from the Browser. `device => 'all'` keeps the
+# choice for the whole house, like the language.
 sub search_engine_state {
 	my $raw = &subs::setting_grabber({ app => 'search', setting => 'engines', device => 'all' });
 	my $state = eval { decode_json $raw } || {};
@@ -650,6 +678,8 @@ sub search_engine_all {
 	return (\@out, $state);
 }
 
+# The five catalogue sections, plus custom for a site added from the Browser.
+# The label is a core interface label so it comes back in the house language.
 sub search_engine_group($group) {
 	return (defined $group && $group =~ /^(?:general|reference|media|shopping|news|custom)$/) ? $group : 'custom';
 }
@@ -664,6 +694,7 @@ sub search_engine_url($engine, $q) {
 	return $url =~ /\{q\}/ ? ($url =~ s/\{q\}/$esc/gr) : $url . $esc;
 }
 
+# The engines the Web tab asks, in the order they sit in the settings panel.
 sub search_enabled_engines {
 	my ($all) = &search_engine_all();
 	return [ grep { $_->{'enabled'} } @{$all} ];

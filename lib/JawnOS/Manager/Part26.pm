@@ -59,6 +59,8 @@ use IPC::Open2 qw(open2);
 
 our ($APP, $ws_live_window, $encoder, $decoder, $tuuid, $thread_uuid, $universal_splitter, $database, $sql, $remote_input_clipboard, $config_file, $config, $logfile, $log, $environment, $random_caching_string, $duty_file, $main_process, $device, $user_agent, %time_machine_guide_cache, @media_unlock_apps, %help_search_tables, %media_type_for_ext, %file_relay_down, @appointments, @results, %market_payment_family, @manager_bundle_files, $manager_bundle_cache, $js_minifier, %app_release_sha, %folders_desk_not_app, $jg_body, $remote_input_geometry_at, $remote_input_geometry_cache, %remote_input_ua, %remote_input_ws, %remote_input_rm, %remote_input_ws_failed, $public_ip_memo, $coding_protocols, $coding_protocols_mtime, $app_schema_done, $fingerprint_checked_at, $fingerprint_ok, %padlock_time_memo, %credential_browser_app, %app_gate_shadow_seen, $ws_server, %mailws_untrusted_rate);
 
+# Advance one side of an empty grid pocket by one line, when the whole line is
+# empty ground and still inside the grid. Returns 1 when the line was taken.
 sub travel_pocket_line {
 	my ($pocket, $side, $axis) = @_;
 	my $empty = $pocket->{'empty'};
@@ -90,6 +92,10 @@ sub travel_pocket_line {
 	return 1;
 }
 
+# The pocket grown by a fraction of each of its own spans, on every side - but only
+# through empty ground: a side advances one grid line at a time and stops at the
+# first line that would touch a map, so the grown box still covers nothing known.
+# The guess fills the blank the measured maps leave, never over them.
 sub travel_pocket_grow {
 	my ($pocket, $fraction) = @_;
 	$pocket = { %{$pocket} };
@@ -107,6 +113,11 @@ sub travel_pocket_grow {
 	return $pocket;
 }
 
+# Widen a pocket's short axis towards the canvas the picture will be drawn on (the
+# long side 768, the short side never under 256, so about 1:3 at the most), a grid
+# line at a time and only through empty ground - so the picture is not stretched
+# on the canvas, and the widening, like everything else here, still covers nothing
+# known. A map in the way simply stops that side; the picture stretches a little.
 sub travel_pocket_widen {
 	my ($pocket, $view) = @_;
 	my $n = $pocket->{'n'};
@@ -136,6 +147,7 @@ sub travel_pocket_widen {
 	return $pocket;
 }
 
+# The box grown by a fraction of each of its own spans, on every side.
 sub travel_box_grow {
 	my ($box, $fraction) = @_;
 	my $lat = ($box->{'maxLat'} - $box->{'minLat'}) * $fraction;
@@ -146,6 +158,10 @@ sub travel_box_grow {
 	};
 }
 
+# The part of one map that falls inside a ground box, as picture bytes: the
+# georeference read backwards (a box corner to an image pixel), cropped and shrunk
+# for the Vision model. Undef when the map is not on this machine or the box
+# misses it.
 sub travel_map_box_bytes {
 	my ($c, $map, $box) = @_;
 	my $p = &travel_map_home_plate($map);
@@ -209,6 +225,9 @@ sub travel_map_box_bytes {
 	return $out;
 }
 
+# What the maps around a pocket show of it: their own parts of that ground, read
+# by the Vision model into a conservative paragraph the image model can draw from.
+# Returns the description and the names of the maps that fed it; both may be empty.
 sub travel_guess_describe_area {
 	my ($c, $placed, $box) = @_;
 	my @images;
@@ -229,6 +248,11 @@ sub travel_guess_describe_area {
 	return ($text, \@names);
 }
 
+# The names of the placed maps nearest a box (a map inside or touching it counts
+# as at its edge), for naming the guess after where it lies. A map whose ground
+# lies inside a bigger map's is a detail of it, not a neighbour a guess can sit
+# "between" - naming by it reads oddly (the mall sits inside Sarnia) - so the
+# top-level maps do the naming.
 sub travel_box_names {
 	my ($placed, $box, $want) = @_;
 	my $pi = 3.14159265358979;
@@ -274,6 +298,12 @@ sub travel_box_names {
 	return @names;
 }
 
+# The measured maps, normalised for the client engine: a file URL the browser can
+# open plus the two things that place the picture on the globe - the home_plate (a
+# pixel at a latitude/longitude) and the scale bar (metres between two pixels).
+# Shared by the travel viewer and the continent background. A map that cannot be
+# placed (no plate, still ungeoreferenced) is left out rather than sent to be
+# silently skipped.
 sub travel_atlas_maps {
 	my ($maps, $with_guesses) = @_;
 	$with_guesses = 1 unless defined $with_guesses;
@@ -304,6 +334,15 @@ sub travel_atlas_maps {
 	return $out;
 }
 
+# The machine's current position - the single row several writers (the headless
+# navigator, the browser, the tunnels, the reconnector) keep rewriting with type
+# 'temporary'. Returns undef when none has been recorded, or when the row's hold
+# has run out: a fix borrowed from a phone must not leave the laptop claiming a
+# place the phone left hours ago. Writers always stamp a warranty; a legacy row
+# with none is still read.
+# A filed fix carries its appointment's uuid as a prefix (uuid => appt . '-' .
+# random). Find that prefix when it names a real appointment; a fix that names no
+# session is not part of a track.
 sub travel_appointment_uuid {
 	my ($uuid, $set) = @_;
 	return '' unless defined $uuid && length $uuid;
@@ -322,6 +361,9 @@ sub travel_here_position {
 	return ($row && $row->{'latitude'}) ? { latitude => $row->{'latitude'} + 0, longitude => $row->{'longitude'} + 0, label => 'You are here' } : undef;
 }
 
+# Every place the continent has a fix for in a time range (or all of them), the
+# same places the travel viewer shows. Repeated identical fixes collapse to one
+# dot, so a walk reads as its points rather than a stack of samples.
 sub travel_atlas_points {
 	my ($start,$end) = @_;
 	my $sql = 'select app, latitude, longitude, timestamp from continent where latitude is not null and (type is null or type != ?)';
@@ -354,6 +396,11 @@ sub travel_atlas_points {
 	return $points;
 }
 
+# The appointments the view's time range holds: every app with a row whose span
+# touches [start,end] (a running appointment reaches back past the window), each
+# at its latest recorded fix, so a tap on the map can open its appointment
+# window. The same visibility rule as travel_atlas_points applies - a thing
+# marked not-visible is not drawn.
 sub travel_atlas_appointments {
 	my ($start,$end) = @_;
 	return [] unless defined $start && length $start && defined $end && length $end;
@@ -383,6 +430,10 @@ sub travel_atlas_appointments {
 	return $out;
 }
 
+# Every home plate the machine knows, for the map's place markers: the plates are
+# the fixed points a walk comes home to, and the same spot can hold several of
+# them (one per device, or a place and the thing beside it), so the client groups
+# them by where they sit.
 sub travel_atlas_home_plates {
 	my $rows = &subs::db_select('settings', undef, { setting => 'home_plate' })->hashes;
 	my $out = [];
@@ -404,6 +455,13 @@ sub travel_atlas_home_plates {
 	return $out;
 }
 
+# --- Handbook: Today ---------------------------------------------------------
+# Today is the Handbook's daily page. It reads the day in the same stores the
+# rest of the house writes to - appointments, the money ledger, measures, notes
+# and the social constructs - and lays them out as a journal: what the day cost,
+# what state things are in, which projects moved and who is in the plans. A
+# typed `day` is read by the same resolver the clock's time machine uses, so
+# "today", "yesterday", "jul 16" or "2025-10-21" all land on a day.
 sub handbook_day_bounds {
 	my ($day, $fallback) = @_;
 	$fallback = &subs::rightNow() unless defined $fallback && $fallback;
@@ -458,6 +516,8 @@ sub handbook_day_bounds {
 	return { start => $start, end => $end, today => $today, ms => $ms, unread => $unread };
 }
 
+# A money row's value, without its sign: the ledger writes expenses and payments
+# as negatives and income as a positive.
 sub handbook_money_number {
 	my ($row) = @_;
 	my $value = $row->{'total'};
@@ -470,6 +530,10 @@ sub handbook_money_value {
 	return abs(&handbook_money_number($row));
 }
 
+# The moment a planted idea/plan/dream belongs to. A model is asked for an ISO
+# date, but a phrase the calendar can read is kept too; a bare item falls back to
+# a horizon that fits its kind. A past date is rolled forward - a thing planted
+# now is a thing ahead, not a record of something already gone.
 sub handbook_plant_time {
 	my ($when, $kind, $now) = @_;
 	$now = &subs::rightNow() unless defined $now && $now;
@@ -492,6 +556,10 @@ sub handbook_plant_time {
 	return defined $noon ? $noon * 1000 : $ms;
 }
 
+# The day's journal, read from both stores the house keeps: the journal app's note
+# appointments (encrypted, the long-form entries the person already has) and the
+# plain notes table (the Notes app and the watch). They are merged into one list
+# so the page and the Guide read the same journal, whatever wrote the entry.
 sub handbook_journal_entries {
 	my ($from, $to, $limit) = @_;
 	$limit ||= 50;
@@ -535,6 +603,9 @@ sub handbook_journal_entries {
 	return \@entries;
 }
 
+# A journal entry is an appointment on the journal app, encrypted the way that
+# app's existing notes are. It is a real record, not a note in a side table, so
+# it travels the mesh and the Guide can read it back through note_retriever.
 sub handbook_journal_write {
 	my ($c, $text, $bounds, $now) = @_;
 	$text =~ s/^\s+|\s+$//g;

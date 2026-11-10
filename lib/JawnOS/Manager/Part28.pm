@@ -59,6 +59,7 @@ use IPC::Open2 qw(open2);
 
 our ($APP, $ws_live_window, $encoder, $decoder, $tuuid, $thread_uuid, $universal_splitter, $database, $sql, $remote_input_clipboard, $config_file, $config, $logfile, $log, $environment, $random_caching_string, $duty_file, $main_process, $device, $user_agent, %time_machine_guide_cache, @media_unlock_apps, %help_search_tables, %media_type_for_ext, %file_relay_down, @appointments, @results, %market_payment_family, @manager_bundle_files, $manager_bundle_cache, $js_minifier, %app_release_sha, %folders_desk_not_app, $jg_body, $remote_input_geometry_at, $remote_input_geometry_cache, %remote_input_ua, %remote_input_ws, %remote_input_rm, %remote_input_ws_failed, $public_ip_memo, $coding_protocols, $coding_protocols_mtime, $app_schema_done, $fingerprint_checked_at, $fingerprint_ok, %padlock_time_memo, %credential_browser_app, %app_gate_shadow_seen, $ws_server, %mailws_untrusted_rate);
 
+# the nearest thing we have measured, for naming a fix
 sub help_nearest_place($lat, $lon, $within_km = 0.15) {
 	my $rows = &subs::db_query("select app, value from settings where setting = 'home_plate' and value like '%latitude%' limit 400")->hashes;
 	my ($best, $best_km);
@@ -72,6 +73,9 @@ sub help_nearest_place($lat, $lon, $within_km = 0.15) {
 	return { app => $best, km => $best_km };
 }
 
+# the distance walked between two moments, read from the walk app's own fixes.
+# A step is only counted between fixes close in time and at a walking pace, so
+# the quiet hours between two walks do not read as one long stride.
 sub help_walk_distance_km($start, $end) {
 	my $rows = &subs::db_query("select latitude, longitude, timestamp from continent where app = 'walk' and cast(timestamp as integer) >= ? and cast(timestamp as integer) <= ? and latitude is not null and latitude != '' order by cast(timestamp as integer) asc", $start, $end)->hashes;
 	my ($total, $prev) = (0, undef);
@@ -88,6 +92,8 @@ sub help_walk_distance_km($start, $end) {
 	return ($total, scalar @{$rows});
 }
 
+# the person's weight trend, read from their logged measurements, projected to a
+# target: a line through the recent readings, taken to where it meets the budget
 sub help_weight_projection($app, $target) {
 	my $rows = &subs::db_query('select timestamp, measures from appointments where app = ? and measures like ? order by cast(timestamp as integer) asc', $app, '%"weight"%')->hashes;
 	my @pts;
@@ -123,6 +129,7 @@ sub help_weight_projection($app, $target) {
 		slope_per_week => sprintf('%.3f', $slope * 7), days => $days, when => $when };
 }
 
+# "where was I at a moment" - the newest fix at or before it, named if we can
 sub help_where($when) {
 	my $target;
 	if (defined $when && $when =~ /^\d{10,}$/) { $target = $when + 0; }
@@ -142,6 +149,8 @@ sub help_where($when) {
 	};
 }
 
+# "how far did I walk" and "when will I be <target>" - read from the fixes and
+# the logged measurements, answered in the guide's own voice
 sub help_measure($measure, $period, $target) {
 	$measure = lc($measure // '');
 	$period = lc($period // 'month');
@@ -192,6 +201,11 @@ sub help_measure($measure, $period, $target) {
 	return { error => 'I can only measure walking distance and weight so far.' };
 }
 
+# "play <x>" - run the music app's own folder walk (Music::music_search) over
+# every known location, then keep the files that contain all the words asked for,
+# best match first (a "Ben Folds Five" album folder and a "Mess" track are the
+# same request). Hands back the one file to play. Shared by the guide's route and
+# the remote command channel.
 sub help_music_file($c, $q, $shuffle) {
 	$q = '' unless defined $q;
 	$q =~ s/^\s+//; $q =~ s/\s+$//;
@@ -248,6 +262,14 @@ sub help_music_file($c, $q, $shuffle) {
 	return { q => $q, found => scalar @hits, file => $file, title => $title, files => \@all, same_order => $same_order };
 }
 
+# A name a write route was handed by our own client or by the model. An id wins
+# over a name, so a rename is not an identity change; a name that now means more
+# than one thing asks instead of acting on the wrong one. An exact app key the
+# client sent is trusted even when the name is ambiguous, because a key is not a
+# guess. A name nothing matches is handed back unchanged: stage may be naming an
+# app that does not exist yet.
+# exact => 1 is for a create: there a partial name is a new thing being named,
+# not a shorthand for an old one, so only the key itself (or an id) is accepted.
 sub guide_request_app {
 	my ($app, $app_uuid, $opts) = @_;
 	$opts = {} unless ref $opts eq 'HASH';
@@ -318,6 +340,8 @@ sub remote_command_run($c, $data) {
 	return { ok => 1, action => $action, observation => $obs };
 }
 
+# Run one action here. Client effects go to our own tabs over the websocket;
+# anything that is only words is answered directly.
 sub remote_command_execute($c, $action) {
 	$action = &guide_resolve_action($action) if ref $action eq 'HASH';
 	return $action->{'text'} if ref $action eq 'HASH' && ($action->{'action'} || '') eq 'ask';
@@ -383,6 +407,7 @@ sub remote_command_execute($c, $action) {
 	return $action->{'text'} || ('did ' . ($a // 'nothing'));
 }
 
+# The local half: this machine sends a command to a peer.
 sub remote_command_send($data) {
 	my $uuid = $data->{'uuid'};
 	my $rm = &subs::remote_machine_lister({ uuid => $uuid, limit => 1 });
@@ -406,6 +431,14 @@ sub remote_command_send($data) {
 	return $parsed;
 }
 
+# Remote keyboard and mouse, the peer half: a linked machine that this house
+# already trusts sends one batch of pointer/key events and they are injected
+# here. It is the same path the T-Deck's teletype uses, shared through
+# remote_input.pl, so an X11 or Wayland backend installed for one serves both.
+#
+# The batch is small and arrives in order from the sending manager; moves are
+# absolute fractions of this screen, so a lost or reordered batch cannot leave
+# the pointer drifting.
 sub remote_input_geometry {
 	if (time - $remote_input_geometry_at > 10 || !$remote_input_geometry_cache) {
 		$remote_input_geometry_cache = &remote_input::screen_geometry();
@@ -414,6 +447,10 @@ sub remote_input_geometry {
 	return $remote_input_geometry_cache;
 }
 
+# Adjacent moves and typed characters are one action each: a fast typist must
+# not become a process per character, and a dragged pointer only needs its last
+# position. Runs on both sides so a batch that crossed a handshake is still one
+# string.
 sub remote_input_coalesce($events) {
 	my @out;
 	foreach my $e ( @{$events} ) {
@@ -499,11 +536,17 @@ sub remote_input_apply($events) {
 	return $applied;
 }
 
+# A peer that answered the handshake with a page or a refusal is not asked again
+# for a minute: the signed HTTP route still carries input, and an old peer must
+# not pay a dial on every batch.
 sub remote_input_socket_cooling($key) {
 	my $until = $remote_input_ws_failed{$key} || 0;
 	return $until > time ? 1 : 0;
 }
 
+# The roster row is read on every batch otherwise (a SQLite query per 6 ms of
+# typing). Ten seconds is long enough to save the work and short enough to
+# follow a tunnel that moved.
 sub remote_input_machine($uuid) {
 	return undef unless $uuid;
 	my $hit = $remote_input_rm{$uuid};
@@ -520,12 +563,17 @@ sub remote_input_batch($events) {
 	return $events;
 }
 
+# Mojo builds a text frame from a character string and would encode a byte
+# string again, so an accented letter typed on one side would arrive mangled.
+# Decode exactly once, as websocket_sender does.
 sub remote_input_frame($object) {
 	my $wire = encode_json($object);
 	utf8::decode($wire) if defined $wire && length $wire && !utf8::is_utf8($wire);
 	return $wire;
 }
 
+# The signed HTTP relay, used when a control socket cannot be opened. Every call
+# signs and verifies with openssl, which is exactly why the socket exists.
 sub remote_input_http($rm, $events) {
 	my $cache_key = ($rm->{'uuid'} || '') . '|' . ($rm->{'manager'} || '');
 	my $ua = $remote_input_ua{$cache_key};
@@ -551,6 +599,11 @@ sub remote_input_http($rm, $events) {
 	return { ok => 0, error => 'that machine did not understand the input' };
 }
 
+# One open control socket per peer. Signing the handshake is the expensive part
+# (openssl on each end), so it is paid once and the frames after it are cheap.
+# Nothing is sent on the socket until the peer's `hello` arrives: until then the
+# signed HTTP route carries the input, so an old peer (or a handshake the gate
+# refused after the upgrade) costs latency but never control.
 sub remote_input_socket_for($rm, $browser_tab_id, $events) {
 	my $key = ($rm->{'uuid'} || $rm->{'signatorial'} || '') . '|' . ($rm->{'manager'} || '');
 	return 0 if &remote_input_socket_cooling($key);
@@ -668,6 +721,12 @@ sub remote_input_send($data) {
 	return $result;
 }
 
+# ---- the Guide's write path: stage, then promote or drop ------------------
+# The Guide never writes an appointment straight in. It stages a proposal, the
+# person sees it, and only a promote turns it into a real appointment.
+# The Guide's write path as named subs, so the routes and the voice brain share
+# one implementation: a proposal staged by a spoken "remind me to ..." lands in
+# the same staged_appointments row a typed one would.
 sub guide_stage_appointment($c, $params) {
 	my $uuid = &subs::random_string_creator(40);
 	my $now = &subs::rightNow();

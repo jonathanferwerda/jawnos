@@ -555,17 +555,28 @@ sub register_grabber($app) {
 	return $returner
 }
 
+# --- Market: the shopping side of the warehouse ---
+# A vendor is an app whose part of speech (or second reading) is 'vendor', the way
+# packaging reads the places. The shopping list is one JSON setting on the market
+# app: rows of { uuid, text, kind (need|want), vendor, timestamp }.
 sub market_vendors {
 	my $rows = &subs::db_query("select distinct(app) from settings where setting in ('pos','mab') and value = ? order by app", 'vendor')->hashes;
 	return [ map { $_->{'app'} } @{$rows} ];
 }
 
+# The registry of named lists (Grocery, Hardware, Clothing, ...) with the vendors
+# each is shopped at, so a vendor's location can name the lists that apply there.
+# Names come from the house's categories, so a list lines up with the budget's
+# category rather than inventing a parallel scheme.
 sub market_lists {
 	my $raw = &subs::setting_grabber({ app => 'market', setting => 'market_lists' });
 	my $lists = eval { return decode_json $raw } || {};
 	return ref $lists eq 'HASH' ? $lists : {};
 }
 
+# The lists the dropdown offers: every category the house keeps, plus any list
+# already in use. A category app is a list by default, so the names line up with
+# the budget's categories.
 sub market_lists_for_menu {
 	my $learned = &market_lists();
 	my %menu = map { $_ => { name => ($learned->{$_}->{'name'} || &subs::format_name($_)) } } keys %{$learned};
@@ -583,6 +594,7 @@ sub market_list_key {
 	return &subs::unformat_name($name);
 }
 
+# Remember that a list is shopped at a vendor, so a vendor's location names it.
 sub market_lists_touch_vendor {
 	my ($key, $name, $vendor) = @_;
 	return unless $key && $vendor;
@@ -594,6 +606,9 @@ sub market_lists_touch_vendor {
 	&subs::setting_setter({ app => 'market', setting => 'market_lists', value => encode_json($lists) });
 }
 
+# --- barcodes: look a code up once, then name it in our terms ---
+# The cache is one setting: { code => { raw, item, category, unit, at } }, so a
+# code is looked up and consolidated the first time and is instant after.
 sub market_barcodes {
 	my $raw = &subs::setting_grabber({ app => 'market', setting => 'barcodes' });
 	my $c = eval { return decode_json $raw } || {};
@@ -609,12 +624,16 @@ sub market_barcode_remember {
 	&subs::setting_setter({ app => 'market', setting => 'barcodes', value => encode_json($c) });
 }
 
+# A code the house already knows: an item app carrying it as its product code.
 sub market_barcode_house {
 	my ($code) = @_;
 	my $row = &subs::db_query("select app from settings where setting in ('barcode','product_code') and value = ? limit 1", $code)->hashes->[0];
 	return $row ? $row->{'app'} : undef;
 }
 
+# Ask a public catalogue what a code is. Best-effort and only for a code never
+# seen before: an ISBN goes to Open Library, a retail code to UPCitemdb, and a
+# failure never stops the scan (the code itself is kept until it is named).
 sub market_barcode_lookup {
 	my ($code) = @_;
 	return undef unless $code =~ /^[0-9]{8,14}$/;
@@ -627,6 +646,8 @@ sub market_barcode_lookup {
 	return ($code =~ /^97[89]/) ? $d->{'title'} : $d->{'items'}->[0]->{'title'};
 }
 
+# Fold a raw retail name into our terms: a house item name, a category the house
+# keeps and a unit. The model does the naming; the categories and units are ours.
 sub market_barcode_consolidate {
 	my ($raw) = @_;
 	return { item => &subs::unformat_name($raw || ''), category => '', unit => '' } unless defined $raw && $raw ne '';
@@ -662,11 +683,13 @@ sub market_barcode_resolve {
 	return $map;
 }
 
+# The newest GPS fix the house holds (the phone writes continent rows), or nothing.
 sub market_here {
 	my $row = &subs::db_query("select latitude, longitude from continent where latitude is not null and latitude != '' order by cast(timestamp as integer) desc limit 1")->hashes->[0];
 	return ($row && $row->{'latitude'} && $row->{'longitude'}) ? { latitude => $row->{'latitude'} + 0, longitude => $row->{'longitude'} + 0 } : undef;
 }
 
+# A vendor's own home plate, if it has one.
 sub market_vendor_place {
 	my ($vendor) = @_;
 	return undef unless $vendor;
@@ -674,6 +697,9 @@ sub market_vendor_place {
 	return ($hp->{'latitude'} && $hp->{'longitude'}) ? { latitude => $hp->{'latitude'} + 0, longitude => $hp->{'longitude'} + 0 } : undef;
 }
 
+# The lists that apply where the house is now: a list whose vendors include one
+# within the radius. At a supermarket that is the grocery list; at a big-box store
+# several lists can be in range at once.
 sub market_nearby_lists {
 	my $here = &market_here();
 	return [] unless $here;
@@ -705,6 +731,8 @@ sub market_save_list {
 	&Websocket::send('tab', { console => &Websocket::console_command('marketReload')});
 }
 
+# Upgrade a matching list row to a need: what the warehouse asks, and what the
+# sweep does on open.
 sub market_upgrade_need {
 	my ($text) = @_;
 	return 0 unless defined $text && $text ne '';
@@ -720,6 +748,8 @@ sub market_upgrade_need {
 	return $upgraded;
 }
 
+# An item on the list the warehouse says is due: its own app's fixed-level quantity
+# budget (6quantity) names the target, and on-hand below it is due.
 sub market_item_due {
 	my ($text) = @_;
 	return 0 unless defined $text && $text ne '';
@@ -729,6 +759,8 @@ sub market_item_due {
 	return (($b->{'value'} || 0) < ($b->{'budgeted'} || 0)) ? 1 : 0;
 }
 
+# Every due row becomes a need: the list keeps its own books in step with the
+# shelf without the warehouse reaching in.
 sub market_sweep_needs {
 	my $list = &market_list();
 	my $upgraded = 0;
@@ -760,11 +792,15 @@ sub market_maker {
 	);
 }
 
+# The account apps: an app whose pos or mab is 'account' (the same discovery the
+# transaction form and the budget use).
 sub market_accounts {
 	my $rows = &subs::db_query("select distinct(app) from settings where setting in ('pos','mab') and value = ? order by app", 'account')->hashes;
 	return [ map { { app => $_->{'app'}, name => &subs::format_name($_->{'app'}) } } @{$rows} ];
 }
 
+# Every unit a transaction can name: the built-in measures plus the ones the
+# Measures app has saved, so a packaging named on the spot is offered next time.
 sub measures_all {
 	my $stored = eval { return decode_json &subs::setting_grabber({ app => 'measures', setting => 'measures' }) } || {};
 	my %all = (%{$gb::measures}, %{$stored});

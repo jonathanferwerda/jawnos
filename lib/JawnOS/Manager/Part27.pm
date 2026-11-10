@@ -485,11 +485,18 @@ sub handbook_today {
 	};
 }
 
+# ---- what the acting guide reads to answer, instead of guessing --------
+# These turn the model's words into an answer from data already on the machine
+# (the place fixes, the home plates, the logged measurements), so the guide can
+# say where, how far, and when without reaching the network or inventing a number.
+# kilometres between two latitude/longitude pairs, in the app's own units
 sub help_distance_km($lat1, $lon1, $lat2, $lon2) {
 	return 0 unless defined $lat1 && defined $lon1 && defined $lat2 && defined $lon2;
 	return great_circle_distance(deg2rad($lon1), deg2rad(90 - $lat1), deg2rad($lon2), deg2rad(90 - $lat2), $gb::planet_radius);
 }
 
+# The current place's rating - 1 at home (private), 2 out (public), 3 dangerous.
+# A lost fix reads as public, so an unknown place denies rather than reveals.
 sub help_site_rating {
 	my $sig = &subs::signatorial_designer();
 	my $nav = eval { &subs::navigation_information({ signatorial => $sig, cache => 'yes' }) } || {};
@@ -498,6 +505,13 @@ sub help_site_rating {
 
 sub help_at_home { return help_site_rating() <= 1 ? 1 : 0; }
 
+# The media padlocks (gallery, music, folders) are per screen. An unlock is a
+# token minted for the device that asked for the print, stored for that device
+# alone, and dropped the moment the app window, the screen or the tree closes.
+# A peer, another window on a different device, or a restarted tree holds no
+# grant, so opening the app there stays locked.
+# The screen a media request speaks for. The app's own requests carry the uuid
+# it knows (jawnDeviceUuid); a request without one falls back to the session.
 sub media_unlock_device($c) {
 	my $device = ($c && ($c->session('device_uuid') || '')) || '';
 	$device = '' unless $device =~ /^[A-Za-z0-9]{8,64}$/;
@@ -512,6 +526,7 @@ sub media_unlock_device($c) {
 	return $device;
 }
 
+# The window a media request speaks for, when it names one.
 sub media_unlock_tab($c) {
 	return '' unless $c;
 	my $tab = $c->param('browser_tab_id') || $c->session('browser_tab_id') || '';
@@ -519,6 +534,8 @@ sub media_unlock_tab($c) {
 	return $tab;
 }
 
+# Drop one app's grant (or every media grant) for one device. The rows are keyed
+# by the device uuid, so one screen locking never reaches a peer's row.
 sub media_unlock_clear {
 	my ($device, $app) = @_;
 	return 0 unless defined $device && length $device;
@@ -530,6 +547,11 @@ sub media_unlock_clear {
 	return $q ? $q->rows : 0;
 }
 
+# Closing a private window, or five minutes without movement, relocks private.
+# On a manual close, $opts->{'only_if_last'} keeps the grant and the other
+# private windows alive while any of them is still open (the person may just be
+# tidying the screen); the last close clears it. The idle lock passes
+# close_windows and closes them all.
 sub private_relock {
 	my ($c, $tab, $opts) = @_;
 	$opts ||= {};
@@ -561,6 +583,9 @@ sub private_relock {
 	return 1;
 }
 
+# Mint one window's grant. Only one grant stands per app and device: a second
+# unlock replaces the first, which is what makes a new window open locked even
+# while another was open a moment ago.
 sub media_unlock_store {
 	my ($app, $device, $tab) = @_;
 	return '' unless $app && $device;
@@ -586,6 +611,9 @@ sub media_unlock_store {
 	return $token;
 }
 
+# The sealed token an open grant holds, for the request that just minted it.
+# The console push is the usual way a window is told; this lets the same window
+# read it straight from the reply when the push is late or the socket is down.
 sub media_unlock_token {
 	my ($app, $device) = @_;
 	return '' unless defined $app && length $app && defined $device && length $device;
@@ -600,6 +628,8 @@ sub media_unlock_token {
 	return '';
 }
 
+# A grant belongs to one device. Helpers without a request (the guide's own
+# search) are given the device explicitly; with no device they see a shut lock.
 sub help_media_unlocked($device) {
 	$device = '' unless defined $device;
 	return 0 unless $device =~ /^[A-Za-z0-9]{8,64}$/;
@@ -615,11 +645,20 @@ sub help_media_unlocked($device) {
 	return 0;
 }
 
+# A thing the person marked not-visible is shown while that screen's padlock is
+# open. The place used to be part of the rule; it is not any more: a machine with
+# no location fix could never reveal its own private albums after an unlock,
+# which read as "the unlock did nothing". The unlock is the deliberate act.
 sub help_media_revealed {
 	my ($device) = @_;
 	return help_media_unlocked($device) ? 1 : 0;
 }
 
+# A file read is not an app window: /file_open and /play do not carry the media
+# app's own unlock token. Any live media grant on this screen is still a
+# fingerprint, so a private file loads after Gallery, Folders or Music was
+# unlocked (or after Security's Private apps grant). The place gate is checked
+# by the caller.
 sub media_grant_open($c) {
 	return 1 if &subs::private_revealed();
 	return 0 unless $c;
@@ -628,6 +667,10 @@ sub media_grant_open($c) {
 	return &help_media_unlocked($device) ? 1 : 0;
 }
 
+# Whether one page's `unlock` token opens one media app's padlock. The token is
+# checked against the grant stored for this device: a token minted on another
+# screen or another machine is no proof here, and a fresh open carries none and
+# stays locked.
 sub media_unlock_open($c, $app, $max_age = undef) {
 	return 0 unless ($c && defined $app && length $app);
 	my $token = $c->param('unlock');
@@ -660,6 +703,12 @@ sub media_unlock_open($c, $app, $max_age = undef) {
 	return 0;
 }
 
+# An app is hidden when the visibility rule says it is hidden here and now:
+# a place level below the room's exposure, or the lockdown (a dangerous place or
+# an Enemy present). During a lockdown Security stays, a Dangerous app stays,
+# and an Enemy's running app waits for the fingerprint reveal.
+# What the guide may reach: an app the rule shows, or the reveal rule holds.
+# A lockdown is not opened by an old media padlock grant.
 sub help_app_visible($app, $device = undef) {
 	return 0 if &subs::lockdown_active() && &subs::app_hidden_now($app);
 	# A private app is not even readable by the Guide outside a private place, and

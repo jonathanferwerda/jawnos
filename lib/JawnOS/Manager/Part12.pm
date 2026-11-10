@@ -212,6 +212,19 @@ sub pseudonym_maker($context,$app) {
 	return $pseudonyms;
 };
 
+# Ticket management is the citizen's desk: minting, deleting, suspending,
+# renewing and reinstating are the owner's acts, and the hook's tier check only
+# knows that /manager is resident territory, not who the owner is. A
+# neighbouring machine on the mesh is admitted too, over the same signed rail
+# the other peer routes use: it names itself in `signatorial` and peer_verify
+# checks its signature. The desk
+# is exactly the thing a device without a ticket of its own needs, and the
+# request it holds may live on a neighbour's database, so the owner must be
+# able to answer it from a machine that is not the citizen session itself.
+#
+# A pinned pubkey is required, unlike the trust-on-first-contact peer routes:
+# this desk hands out citizenship, so a machine that has merely linked and not
+# yet completed a signed exchange must not reach it before its key is on file.
 sub ticket_desk_allowed($c) {
 	return 1 if $c->session('authentication') eq 'approved' && $c->session('privilege') eq 'citizen';
 	# The Dev panel's Go rides a stored peer session (resident, not citizen). That
@@ -226,6 +239,10 @@ sub ticket_desk_allowed($c) {
 	return 0;
 }
 
+# The request desk's policy and its blacklist are rows read by the newest
+# write, not device-scoped settings: the public page is served by the server
+# while the owner may sit at a phone, so a choice made anywhere has to be seen
+# everywhere the mesh carries the settings table.
 sub ticket_policy() {
 	my $row = &subs::db_query('select value from settings where app=? and setting=? order by server_time desc limit 1', 'box_office', 'request_policy')->hashes->[0];
 	my $policy = eval { return decode_json $row->{'value'} } || {};
@@ -247,6 +264,10 @@ sub ticket_blacklist_save($list) {
 	&subs::setting_setter({ app => 'box_office', setting => 'blacklist', value => encode_json $list });
 }
 
+# The call blacklist is that same desk list seen from the phone: every entry
+# that carries a phone, as the bare digits the app compares. A listed number is
+# turned away before it can ring (the app's CallScreeningService reads this), so
+# the numbers are handed to the phone on its own route.
 sub ticket_blacklist_numbers() {
 	my @numbers;
 	foreach my $b ( @{&ticket_blacklist()} ) {
@@ -258,6 +279,9 @@ sub ticket_blacklist_numbers() {
 	return [ grep { !$seen{$_}++ } @numbers ];
 }
 
+# Block a number straight from the desk or from the phone's recents: one entry,
+# keyed by the number so a second press never doubles it. The label is the app
+# that owns the number when the house knows it, blank otherwise.
 sub ticket_blacklist_block($number,$label,$note) {
 	my $clean = &ticket_contact_clean('phone', $number);
 	return '' unless $clean;
@@ -277,6 +301,9 @@ sub ticket_blacklist_block($number,$label,$note) {
 	return $clean;
 }
 
+# The house's numbers by name, for the app's in-call screen and its contact
+# list: the same settings 'phone' rows the Phone app shows, keyed by the bare
+# digits so the native side compares them the way it compares the blacklist.
 sub phone_names() {
 	my $rows = &subs::db_query('select app, value from settings where setting=? and value != ?', 'phone', '')->hashes;
 	my %names;
@@ -302,6 +329,12 @@ sub phone_names() {
 	return \%names;
 }
 
+# Every number the house holds, split the way the Phone app's panes want it: the
+# people it knows, and the numbers that are only numbers (a stranger's call makes
+# its number an app of its own, so those rows are the ones still to be named).
+# One row per app, carrying every line the person keeps - the plain phone row
+# first, then the typed list - so a person with a home and a work number is listed
+# once, not once per number.
 sub phone_directory() {
 	my $lines = &subs::contact_lines('phone');
 	my (@known, @numbers);
@@ -341,6 +374,8 @@ sub phone_caller_choices {
 	return \@choices;
 }
 
+# The desk's blacklist seen as calls: the numbers to refuse, each with whatever
+# the desk knew about it (a name when the request carried one, the note).
 sub phone_blocked() {
 	my @blocked;
 	foreach my $b ( @{&ticket_blacklist()} ) {
@@ -719,6 +754,10 @@ sub phone_relationships {
 	return \%out;
 }
 
+# A small square picture of a person for the app's call screen: the house's own
+# image when there is one, downscaled once and kept beside the database, keyed by
+# the source's name, size and mtime so a new picture makes a new thumbnail. The
+# app shows its own logo when there is none, so nothing is drawn here for that.
 sub phone_avatar_thumb($file) {
 	return '' unless $file && -e $file;
 	my $dir = &subs::database_dir() . '/.thumbs';
@@ -734,6 +773,9 @@ sub phone_avatar_thumb($file) {
 	return (-e $thumb && -s $thumb > 0) ? $thumb : '';
 }
 
+# The person's picture as a data URI, for the one fetch the app makes: it hands
+# the whole directory over at once, so an image per call would be a fetch the app
+# (which may be ringing with no page up) cannot wait for.
 sub phone_avatar_data($app) {
 	my $settings = &subs::settings_grabber({ app => $app }) || {};
 	return '' unless $settings->{'main_image'};
@@ -764,6 +806,7 @@ sub ticket_contact_clean($kind,$value) {
 	return $value;
 }
 
+# A request matches the blacklist when any one of its identifiers does.
 sub ticket_blacklist_match($info) {
 	my $name = &ticket_contact_clean('name', $info->{'name'});
 	my $email = &ticket_contact_clean('email', $info->{'email'});
@@ -777,6 +820,9 @@ sub ticket_blacklist_match($info) {
 	return 0;
 }
 
+# Is this requester already known to the house? The same rows the mailbox uses
+# to name a thread: an email or a phone number kept on an app - the plain setting
+# or a typed entry beside it (their work line, a second mailbox).
 sub ticket_request_known($info) {
 	my @known;
 	my $email = &ticket_contact_clean('email', $info->{'email'});
@@ -789,6 +835,9 @@ sub ticket_request_known($info) {
 	return \@known;
 }
 
+# The door's throttle: one request per browser tab at a time, and one per
+# address per ten minutes. Over the line the form answers exactly as it does
+# to a queued request, so the door never says who is on the list.
 sub ticket_request_allowed($c) {
 	my $browser_tab_id = $c->param('browser_tab_id') || '';
 	if ($browser_tab_id) {
@@ -810,6 +859,9 @@ sub ticket_request_pending_html() {
 	return '<h3>' . &subs::lang('home.request_received') . '</h3><p>' . &subs::lang('home.request_pending') . '</p>';
 }
 
+# What an approval mints: the box office's own mint, with the house's suds
+# when a citizen is not the one pressing the button, and the requesting tab
+# carried over so the waiting page can be let in.
 sub ticket_request_mint($c, $request, $privilege, $warranty) {
 	my $info = eval { return decode_json $request->{'information'} } || {};
 	my $host = $c->req->url->base->host;

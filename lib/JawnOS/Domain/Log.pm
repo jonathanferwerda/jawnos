@@ -702,6 +702,9 @@ sub capture_target_uuid($rows) {
 	return $sorted[0]->{'uuid'};
 }
 
+# Build the account/project pickers' marker lists (__accounts/__projects) from
+# the pos/mab settings. A header-only log_reader skips this work; the centre
+# view that follows builds it once before rendering the wrapper.
 sub appts_marker_builder {
 	my $appts = shift;
 	return $appts unless ref $appts eq 'HASH';

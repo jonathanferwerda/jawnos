@@ -146,6 +146,11 @@ sub card_of_the_year() {
 	return $card . '.png';
 }
 
+# --- Relational: the social-construct workspace ------------------------------
+# The workspace is built from the same index the People window uses. The old
+# matcher rendered each bucket through the relational cache; this one reads the
+# settings rows once and hands the client a single JSON board, so adding a link
+# is one request rather than a partial re-render per pane.
 sub relational_social_sing {
 	my ($entry) = @_;
 	return '' unless ref $entry eq 'HASH';
@@ -287,6 +292,9 @@ sub relational_workspace {
 	};
 }
 
+# Write the membership array on every device copy of an app. The workspace
+# unions those copies, so changing only this device's row would leave the
+# member visible on the others.
 sub relational_sc_update_all {
 	my ($app, $sing, $add_uuid, $remove_uuids) = @_;
 	return 0 unless defined $app && length $app && defined $sing && length $sing;
@@ -378,6 +386,9 @@ sub relationalizer($data) {
 	return $returner;
 }
 
+# The folder the desk shows. A chosen desktop_folder wins; otherwise ~/Desktop
+# is used only when it has something in it (an empty desktop reads as broken),
+# and the home folder stands in for both.
 sub folders_desk_folder {
 	my $set = &subs::setting_grabber({ app => 'folders', setting => 'desktop_folder' });
 	if (defined $set && length $set) {
@@ -397,6 +408,7 @@ sub folders_desk_folder {
 	return $home;
 }
 
+# The apps pinned to the desk, in the order they were pinned.
 sub folders_desk_pinned {
 	my $raw = eval { decode_json &subs::setting_grabber({ app => 'folders', setting => 'desktop_apps' }) };
 	my @list = ref $raw eq 'ARRAY' ? @{$raw} : ();
@@ -407,6 +419,7 @@ sub folders_desk_pinned {
 	} @list;
 }
 
+# Every app a person may pin, with the name and icon the picker draws.
 sub folders_pinable_apps {
 	return [ map {
 		{
@@ -417,6 +430,8 @@ sub folders_pinable_apps {
 	} grep { !$folders_desk_not_app{$_} } sort { lc($a) cmp lc($b) } keys %{$gb::known_appts} ];
 }
 
+# The app a path belongs to: the first segment under a known location root
+# (~/Pictures/<app>/...). Used to apply the visibility rule to a listing.
 sub folders_owning_app($path) {
 	return undef unless defined $path && length $path;
 	my $misc = &misc_setting_list();
@@ -436,6 +451,9 @@ sub folders_owning_app($path) {
 	return undef;
 }
 
+# The house's own apps are written to disk under their key form - path_name() of
+# the app name - so a folder the program made reads as a word salad in the
+# listing. The apps the settings table knows are collected here once per folder.
 sub folders_app_names {
 	my %apps = map { $_ => 1 } keys %{ $gb::known_appts || {} };
 	my $names = &subs::appointment_names() || {};
@@ -443,6 +461,9 @@ sub folders_app_names {
 	return \%apps;
 }
 
+# One path segment as the address bar reads it: a component a program wrote
+# carries its percent escapes (path_name), so decode it first; then the house's
+# own words, the same format_name every other name gets.
 sub folders_display_segment($seg) {
 	$seg = '' unless defined $seg;
 	if ($seg =~ /%[0-9A-Fa-f]{2}/) {
@@ -452,6 +473,8 @@ sub folders_display_segment($seg) {
 	return &subs::format_name($seg);
 }
 
+# The folder a person reads along the top and in the title bar. This is the eye
+# only: folder, path, history and every command keep the real path.
 sub folders_display_path($path) {
 	return '' unless defined $path && length $path;
 	my $lead = (substr($path, 0, 1) eq '/') ? '/' : '';
@@ -460,6 +483,8 @@ sub folders_display_path($path) {
 	return $lead . join('/', map { &folders_display_segment($_) } @parts);
 }
 
+# The name the window's title bar adds after "Folders": the folder on screen,
+# not its whole path.
 sub folders_display_name($path) {
 	return '' unless defined $path && length $path;
 	return '/' if $path eq '/';
@@ -468,6 +493,9 @@ sub folders_display_name($path) {
 	return length $display ? $display : '/';
 }
 
+# The folder a media location wrote for an app reads as the app's own name. Only
+# a location's top level is renamed; a folder inside an app folder keeps the
+# name it has on disk.
 sub folders_app_folder_display($path, $apps) {
 	return undef unless defined $path && length $path && $apps;
 	my $base = $path;
@@ -481,6 +509,9 @@ sub folders_app_folder_display($path, $apps) {
 	return ($display eq $base) ? undef : $display;
 }
 
+# A sealed name carries no words of its own. A row that points at it may name it
+# - a map's place, a document's title - and that name wins; otherwise it reads as
+# the app that wrote it and the moment it was made, "Autumn 10162026 3:30pm".
 sub folders_sealed_display($path, $apps, $references) {
 	return undef unless defined $path && length $path;
 	my $blob;
@@ -525,6 +556,7 @@ sub folders_sealed_display($path, $apps, $references) {
 	return undef;
 }
 
+# The moment a sealed file was made, in the house's short form: 10162026 3:30pm.
 sub folders_stamp_words($ms) {
 	return '' unless $ms && $ms > 0;
 	my @t = localtime(int($ms / 1000));
@@ -533,6 +565,9 @@ sub folders_stamp_words($ms) {
 	return sprintf('%02d%02d%04d %d:%02d%s', $t[4] + 1, $t[3], $t[5] + 1900, $hour, $t[1], ($t[2] < 12 ? 'am' : 'pm'));
 }
 
+# Whether Folders may list sealed names comes from the window's own unlock
+# token (media_unlock_open), never from the secret left in settings: a fresh
+# open is locked, while the refresh after an unlock carries the token.
 sub folders_opener($data) {
 	my $folder = $data->{'folder'};
 	my $command = $data->{'command'};
@@ -557,6 +592,10 @@ sub folders_opener($data) {
 		display_name => &folders_display_name($folder) };
 }
 
+# The names in a folder, in the order a file manager lists them. `readdir` rather
+# than a shell `ls`: a name is data, and one holding a space, a quote, a star or a
+# newline used to be split or expanded by the shell before the app ever saw it.
+# Dotfiles stay out of the listing, as they did with `ls`.
 sub folders_entry_names {
 	my ($folder, $show_hidden) = @_;
 	unless (defined $folder && length $folder && -d $folder) { return (); }
@@ -568,6 +607,10 @@ sub folders_entry_names {
 	return sort { lc($a) cmp lc($b) || $a cmp $b } @names;
 }
 
+# The archive's copy of the folder being read, for the badge on a local item
+# that also has a copy on the archive machine. The manifest is asked for once
+# per location and cached briefly; an unreachable archive leaves the listing
+# unmarked rather than failing it.
 sub folders_archive_index($folder) {
 	my $misc = &misc_setting_list();
 	my $device = &subs::device_setter();

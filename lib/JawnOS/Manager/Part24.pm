@@ -59,6 +59,10 @@ use IPC::Open2 qw(open2);
 
 our ($APP, $ws_live_window, $encoder, $decoder, $tuuid, $thread_uuid, $universal_splitter, $database, $sql, $remote_input_clipboard, $config_file, $config, $logfile, $log, $environment, $random_caching_string, $duty_file, $main_process, $device, $user_agent, %time_machine_guide_cache, @media_unlock_apps, %help_search_tables, %media_type_for_ext, %file_relay_down, @appointments, @results, %market_payment_family, @manager_bundle_files, $manager_bundle_cache, $js_minifier, %app_release_sha, %folders_desk_not_app, $jg_body, $remote_input_geometry_at, $remote_input_geometry_cache, %remote_input_ua, %remote_input_ws, %remote_input_rm, %remote_input_ws_failed, $public_ip_memo, $coding_protocols, $coding_protocols_mtime, $app_schema_done, $fingerprint_checked_at, $fingerprint_ok, %padlock_time_memo, %credential_browser_app, %app_gate_shadow_seen, $ws_server, %mailws_untrusted_rate);
 
+# One folder read as the app (and the desktop behind it) shows it: its entries,
+# the folders apart from the files and the disk's own figures. The padlock rule
+# is the same one the gallery reads, so a not-visible app's files stay out until
+# this screen's Folders padlock is open.
 sub folders_listing($folder, $unlocked, $c, $show_hidden) {
 	my $formatted_folder = &subs::terminal_name($folder);
 	my $files = [];
@@ -197,6 +201,8 @@ sub folders_property_grabber($data) {
 	return $file;
 }
 
+# One name inside a folder, as a file manager means it: no slash, no climbing
+# out of the folder, and nothing that is only whitespace.
 sub folders_name_cleaner {
 	my $name = shift;
 	return undef unless defined $name;
@@ -206,6 +212,8 @@ sub folders_name_cleaner {
 	return $name;
 }
 
+# What a folders command works on: what is selected, else the file the menu was
+# opened on, else nothing at all. The background menu names no item.
 sub folders_command_items {
 	my $folders = shift;
 	my @items = grep { defined $_->{'path'} && length $_->{'path'} } @{$folders->{'selected'} || []};
@@ -213,6 +221,10 @@ sub folders_command_items {
 	return @items;
 }
 
+# ---- the Recycle Bin ---------------------------------------------------------
+# Deleting a file moves it here instead of unlinking it; a shred still destroys
+# it. The layout is the freedesktop one (~/.local/share/Trash/files beside
+# info/*.trashinfo), so the bin also works with the rest of the desktop.
 sub folders_trash_root {
 	my $root = &subs::home('~/.local/share/Trash');
 	$root =~ s{/+$}{};
@@ -238,6 +250,9 @@ sub folders_in_trash($folder) {
 	return ($folder eq $dir || $folder eq $dir . '/files' || $folder eq $dir . '/info') ? 1 : 0;
 }
 
+# A move that works across filesystems: rename is the cheap same-disk case; a
+# folder is walked otherwise, so a file deleted onto another drive still lands
+# in the bin rather than being shredded to make the move fit.
 sub folders_move_path($from, $to) {
 	return 0 unless defined $from && length $from && -e $from;
 	return 1 if rename($from, $to);
@@ -255,6 +270,7 @@ sub folders_move_path($from, $to) {
 	return 1;
 }
 
+# Put one path in the bin, with a .trashinfo naming where it came from.
 sub folders_trash_move($path) {
 	return 'no path' unless (defined $path && length $path);
 	return $path . ': it is not there' unless -e $path;
@@ -276,6 +292,7 @@ sub folders_trash_move($path) {
 	return undef;
 }
 
+# The original path a bin entry remembers, or '' when there is no info file.
 sub folders_trash_original($name) {
 	return '' unless (defined $name && length $name && $name !~ m{/});
 	my $file = &folders_trash_info_dir() . '/' . $name . '.trashinfo';
@@ -288,6 +305,8 @@ sub folders_trash_original($name) {
 	return $path;
 }
 
+# Put one bin entry back where it came from. A restored name that is already
+# taken is kept beside it as name.restored, never written over.
 sub folders_trash_restore($name) {
 	return { ok => 0, error => 'That is not a bin entry.' } unless (defined $name && length $name && $name !~ m{/} && $name ne '.' && $name ne '..');
 	my $src = &folders_trash_files_dir() . '/' . $name;
@@ -310,6 +329,7 @@ sub folders_trash_restore($name) {
 	return { ok => 1, path => $dest, name => $name };
 }
 
+# Permanently take away every entry in the bin.
 sub folders_trash_empty {
 	my $files = &folders_trash_files_dir();
 	my $info = &folders_trash_info_dir();
@@ -329,6 +349,13 @@ sub folders_trash_count {
 	return scalar @names;
 }
 
+# Take a folders selection away. Anything an appointment has attached goes
+# through the app's own file deletion first, so the appointment lets go of it,
+# the thumb goes with it, and the other machines hear about it; the rows
+# besides appointments that named the file - a mailbox's attachments, the
+# store's rows - are trimmed of it, and a backup whose sealed file it was goes
+# the way a pruned backup goes. Whatever is left after that is deleted or
+# shredded where it lies. Returns the errors.
 sub folders_delete_away {
 	my ($command, $items) = @_;
 	my @errors;
@@ -356,6 +383,9 @@ sub folders_delete_away {
 	return \@errors;
 }
 
+# A backup whose sealed file is being taken away goes with it: the row is
+# deleted and the other machines are told to drop it, the same as when
+# backup_now rotates a backup out. Returns how many were pruned.
 sub folders_delete_backups {
 	my $path = shift;
 	return 0 unless (defined $path && length $path);
@@ -372,6 +402,14 @@ sub folders_delete_backups {
 	return $pruned;
 }
 
+# Which location an archived path belongs to and where it sits inside it, asked
+# of the machine that owns the drive. A caller that only has a path on that
+# machine - a selection in folders, a track, a photo - asks this first, and the
+# answer is what a fetch needs.
+#
+# These archive routes are on the peer rail the way remote_upgrade is: a
+# sending machine has no session on the archive machine, so the login gate must
+# step aside for its pinned signature. archive_peer_allowed is their gate.
 sub archive_peer_allowed {
 	my $c = shift;
 	my $until = $c->session('app_until') || 0;
@@ -508,6 +546,9 @@ sub ide_file_open($file,$source) {
 	return ($tab,$content,$file);
 }
 
+# The mailbox rows a folder holds. The built-in folders are statuses; Starred is
+# the flagged subset of everything not thrown away; Trash is the soft delete. A
+# folder the person made is simply a status of its own, so it needs no schema.
 sub email_folder_is_builtin {
 	my ($folder) = @_;
 	return $folder =~ /^(inbox|starred|drafts|sent|outbox|archive|trash|contacts)$/ ? 1 : 0;
@@ -529,12 +570,17 @@ sub email_folder_rows {
 	return &subs::db_query('select * from mailbox where status = ?', $folder)->hashes;
 }
 
+# The folders the person made: their names live in one setting and ride the mesh
+# like everything else. Reserved names are ignored so a stored list can never
+# shadow a built-in.
 sub email_extra_folders {
 	my $raw = &subs::setting_grabber({ app => 'mail', setting => 'email_folders' });
 	my $list = eval { &decode_json($raw) } || [];
 	return [ grep { defined $_ && length $_ && !&email_folder_is_builtin($_) } @{$list} ];
 }
 
+# How the list is ordered: date, sender or subject, ascending or descending. The
+# choice is a setting, so it is remembered and follows the person's machines.
 sub email_sort {
 	my $raw = &subs::setting_grabber({ app => 'mail', setting => 'email_sort' });
 	my $s = eval { &decode_json($raw) } || {};
@@ -543,6 +589,9 @@ sub email_sort {
 	return $choice;
 }
 
+# Order a folder's threads. Date and sender sort on columns (no decryption);
+# subject needs the subjects read, so they are opened once here when asked for.
+# Always ascending - the caller slices from whichever end the direction wants.
 sub email_sort_threads {
 	my ($threads, $suds, $sort) = @_;
 	my $by = $sort->{'by'} || 'date';
@@ -560,6 +609,7 @@ sub email_sort_threads {
 	return [ sort { ($a->{'last'}->{'timestamp'} || 0) <=> ($b->{'last'}->{'timestamp'} || 0) } @{$threads} ];
 }
 
+# A short plain-text preview of a letter's body, for the list's second line.
 sub email_snippet {
 	my ($suds, $body) = @_;
 	my $text = &subs::note_decrypter($suds, $body || '');
@@ -576,6 +626,14 @@ sub email_snippet {
 	return substr($text, 0, 180);
 }
 
+# Group a folder's letters into conversations, newest first, each with its newest
+# letter's row. This touches no ciphertext, so it is cheap for a whole folder;
+# the readable bits (subject, snippet, counts) are added per page instead
+# (email_thread_annotate), so a folder of thousands only decrypts what it shows.
+# Grouping rides the stored thread key only (a header chain, set when a letter is
+# written or received); a row from before the column has no key and stands alone.
+# A key is never rebuilt from the subject here - two unrelated letters that
+# happen to share a subject must not fold into one thread.
 sub email_threads {
 	my ($emails) = @_;
 	my (%threads, @order);
@@ -592,6 +650,10 @@ sub email_threads {
 	return [ sort { ($b->{'last'}->{'timestamp'} || 0) <=> ($a->{'last'}->{'timestamp'} || 0) } @order ];
 }
 
+# The readable half of a thread: the newest letter's party and subject, its star,
+# how many letters it holds and how many are unread, and a snippet of the newest
+# body. This is the part that decrypts, so it runs on one page of threads, not a
+# whole folder.
 sub email_thread_annotate {
 	my ($threads, $suds) = @_;
 	foreach my $t ( @{$threads} ) {
@@ -606,6 +668,8 @@ sub email_thread_annotate {
 	return $threads;
 }
 
+# What the folder rail wears beside each name: the unread count for Inbox and
+# Starred, the total for Drafts and Trash, nothing for the rest.
 sub email_folder_counts {
 	my %counts = (
 		inbox   => scalar @{ &subs::db_query("select uuid from mailbox where status = 'inbox' and email is not null and (seen is null or seen != 'yes')")->hashes },
@@ -620,6 +684,10 @@ sub email_folder_counts {
 	return \%counts;
 }
 
+# Which sections each app owns. Mailbox (no scope) carries them all. An app that
+# owns one section shows no switcher; one that owns several (chat) shows just its
+# own, so its sidebar is that app's navigation and nothing else. Declared here,
+# beside the renderer, because the scope is what picks the sidebar's buttons.
 sub mail_scope_sections($scope) {
 	return () unless $scope;
 	my %groups = (
@@ -630,6 +698,9 @@ sub mail_scope_sections($scope) {
 	return @{ $groups{$scope} || [$scope] };
 }
 
+# A decrypted note is UTF-8 bytes. The template and the JSON socket both want
+# characters, or an emoji goes out as four Latin-1 glyphs; invalid UTF-8 is left
+# exactly as it came.
 sub mail_text_chars {
 	my ($text) = @_;
 	utf8::decode($text) if defined $text && length $text;

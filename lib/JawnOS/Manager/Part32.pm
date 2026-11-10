@@ -59,6 +59,7 @@ use IPC::Open2 qw(open2);
 
 our ($APP, $ws_live_window, $encoder, $decoder, $tuuid, $thread_uuid, $universal_splitter, $database, $sql, $remote_input_clipboard, $config_file, $config, $logfile, $log, $environment, $random_caching_string, $duty_file, $main_process, $device, $user_agent, %time_machine_guide_cache, @media_unlock_apps, %help_search_tables, %media_type_for_ext, %file_relay_down, @appointments, @results, %market_payment_family, @manager_bundle_files, $manager_bundle_cache, $js_minifier, %app_release_sha, %folders_desk_not_app, $jg_body, $remote_input_geometry_at, $remote_input_geometry_cache, %remote_input_ua, %remote_input_ws, %remote_input_rm, %remote_input_ws_failed, $public_ip_memo, $coding_protocols, $coding_protocols_mtime, $app_schema_done, $fingerprint_checked_at, $fingerprint_ok, %padlock_time_memo, %credential_browser_app, %app_gate_shadow_seen, $ws_server, %mailws_untrusted_rate);
 
+# The T-Deck's HTTP server uses the same port the embedded fleet already knows.
 sub lorawan_devices {
 	my $list = &subs::device_lister(&subs::rightNow(), 'teletype', undef, 'all');
 	my @rows = eval { @{$list} };
@@ -447,6 +448,11 @@ sub deletion_performer($json) {
 	return $returner;
 }
 
+# Apply a peer's deletions: its queued `deletions` and its durable tombstone
+# log. Used by the handshake and by the v3 row pull, so a machine that never
+# handshakes the donor (out of its hub's range) still learns what was deleted.
+# The reader's confirmed cursor is advanced here, which is what lets the donor
+# purge the tombstones once every machine has read past them.
 sub apply_peer_tombstones {
 	my ($rj, $signatorial) = @_;
 	return 0 unless ref $rj eq 'HASH';
@@ -533,6 +539,7 @@ sub credential_payload_read($suds, $row) {
 	return ref $data eq 'HASH' ? $data : {};
 }
 
+# Is a measure code a currency (a fiat code, a coin, or a crypto asset)?
 sub currency_unit($unit) {
 	return 0 unless defined $unit && length $unit;
 	return 1 if &subs::crypto_asset($unit);
@@ -637,6 +644,9 @@ sub formula_calculator($formula) {
 	return ($formula,$evaluation,$uom,$format);
 }
 
+# ---- the keyboard's units of conversion -----------------------------------
+# A unit resolved from whatever a person typed: the registry key ("JPY", "L",
+# "m"), the same code in another case, the unit's own name, or its plural.
 sub measure_unit_resolve($raw, $units) {
 	return (undef, undef) unless defined $raw;
 	$raw =~ s/^\s+|\s+$//g;
@@ -659,6 +669,9 @@ sub measure_unit_resolve($raw, $units) {
 	return &measure_unit_resolve(substr($low, 0, -1), $units);
 }
 
+# The old calculator's formulas are directed ("x * 1000mL" says one litre is a
+# thousand millilitres), so the graph carries each edge and its reciprocal and a
+# short walk reaches any unit of the same kind (Litre -> mL -> teaspoon).
 sub measure_conversion_edges($units) {
 	my %edge;
 	foreach my $from ( keys %{$units} ) {
@@ -677,6 +690,7 @@ sub measure_conversion_edges($units) {
 	return \%edge;
 }
 
+# units of $to per one $from, walked over the formula graph
 sub measure_conversion_factor($edges, $from, $to) {
 	return undef unless defined $from && defined $to;
 	return 1 if $from eq $to;

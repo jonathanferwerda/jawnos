@@ -19,6 +19,7 @@ our $device;
 our $log;
 our $logfile;
 
+# Resolve a spoken or typed name. opts: kind => app|person|construct|machine|house.
 sub guide_resolve_target {
 	my ($text, %opts) = @_;
 	$text = '' unless defined $text;
@@ -254,6 +255,12 @@ sub guide_resolve_target {
 	return { ok => 0, reason => 'ambiguous', candidates => \@candidates };
 }
 
+# The social people are settings rows (`pos` or `mab` = person), not the
+# `people` table's device accounts. One read builds the whole picture: every
+# app's effective construct, the settings uuid each device copy carries, and
+# the membership arrays (`sc_<singular>`) those rows already keep. The
+# Relational cache is deliberately not reused here: it caches rendered
+# buckets, and this index is one small query over rows the window needs fresh.
 sub people_index {
 	my $rows = eval {
 		&subs::db_query("select app, device, setting, value, server_time from settings where setting in ('pos','mab','uuid','house_uuid','house_name','house_pubkey','peer_name','peer_construct','peer_profile','web','crest_uuid') or substr(setting,1,3) = 'sc_'")->hashes;
@@ -458,6 +465,8 @@ sub guide_alias_add {
 	return { ok => 1, text => 'Remembered "' . $alias . '" for ' . ($t->{'name'} || $app) . '.', target => $t };
 }
 
+# The construct chips a person wears: each membership array names a construct
+# app's settings uuid, and the index's reverse map names the app itself.
 sub people_chips {
 	my ($index, $app) = @_;
 	my $entry = $index->{'apps'}->{$app} || {};
@@ -487,6 +496,9 @@ sub people_chips {
 	return \@chips;
 }
 
+# Resolve the app a Guide action names before it runs. A clear answer is written
+# back as the canonical key; a tie becomes an "ask" action, so the model does not
+# get to pick one John Smith for the person.
 sub guide_resolve_action {
 	my ($action) = @_;
 	return $action unless ref $action eq 'HASH';
@@ -583,6 +595,10 @@ sub guide_target_label {
 	return $name . ' (' . $label . ')';
 }
 
+# The long-standing aka convention: a settings row on the app itself, with a
+# comma-separated list of other words for it ("21" for policy 21, "zzz" for
+# sleep). It predates the Guide and is already used by setting_initializer, so
+# the resolver reads it too; a taught alias for an app is written here.
 sub guide_aka_read {
 	my $rows = eval { &subs::db_query("select app, value from settings where setting='aka'")->hashes } || [];
 	my %map;
@@ -627,6 +643,15 @@ sub guide_aliases_write {
 	return 1;
 }
 
+# ---- names and identity -----------------------------------------------------
+# A name is not an identity. "music" can mean the Music app or a club called
+# Music, and two people can both be called John Smith. Resolution returns a
+# ranked set of candidates and only acts when one is clearly ahead; anything
+# else is handed back as a question, never guessed.
+# A person's own words for a thing: "zzz" for sleep, "js" for John Smith.
+# One synced map of normalized word -> target, so every machine understands the
+# same aliases. The target is stored by identity (kind + uuid + app) as well as
+# by name, so a rename does not break the alias.
 sub guide_aliases_read {
 	my $raw = eval { &subs::setting_grabber({ app => '__president', setting => 'aliases', device => 'all' }) } || '';
 	my $map = eval { decode_json($raw) } || {};

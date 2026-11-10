@@ -731,6 +731,11 @@ sub action_35597 {
 	$c->render(json => &guide_alias_remove($c->param('alias') || '', $c->param('app') || ''));
 }
 
+# ---- the remote verb channel ------------------------------------------------
+# A peer can be told what to do in the words the person used (text, parsed by
+# that machine's own guide, so it stays offline) or as a structured verb from the
+# same registry the local guide offers. Client effects are broadcast to the
+# peer's own tabs over its websocket; questions are answered here and handed back.
 # The peer half: a known remote_machine may tell us what to do.
 # POST /manager/remote_command
 sub action_35739 {

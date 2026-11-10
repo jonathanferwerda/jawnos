@@ -75,11 +75,15 @@ sub go_approval_clear {
 	&subs::db_query('delete from cache where context = ? and uuid = ?', 'go_approval', 'goa' . $id);
 }
 
+# Dismiss any device prompt still showing this request (the target is the
+# request id, not a screen, so the padlock handler only dismisses and stops).
 sub go_dismiss {
 	my ($id) = @_;
 	&Websocket::send('server', { padlock_open => 1, mode => 'go', target => ($id || ''), timestamp => &subs::rightNow() });
 }
 
+# A request that came from this machine itself. The phone/tablet is remote, so
+# its signature opens the lock; the locked screen's own key may not.
 sub padlock_request_is_local {
 	my ($c) = @_;
 	my $local = $c->tx->local_address || '';
@@ -104,6 +108,9 @@ sub padlock_request_is_local {
 	return 0;
 }
 
+# A phone that enrolled its Keystore fingerprint: the lock screen should offer
+# that fingerprint even when the page itself cannot see the native bridge (the
+# button then explains that the app is needed rather than hiding silently).
 sub biometric_enrolled_for {
 	my ($device_uuid) = @_;
 	return 0 unless $device_uuid;
@@ -169,6 +176,8 @@ sub padlock_device_locked {
 	return &subs::db_query('select 1 from security where level = ? and uuid = ? limit 1', 'padlock_device', $device_uuid)->hashes->[0] ? 1 : 0;
 }
 
+# The screen's own unlock stamp, used only when the whole house is locked: it
+# is what lets one screen open without opening every screen.
 sub padlock_device_until {
 	my ($device_uuid) = @_;
 	return 0 unless $device_uuid;
@@ -190,6 +199,8 @@ sub padlock_device_clear_time {
 	&subs::db_query('delete from settings where app = ? and setting = ? and device = ?', '__president', 'padlock_device_time', $device_uuid);
 }
 
+# What a target's unlock request is asking about: a manual row always locks;
+# a screen timer decides on its own; otherwise the house-wide timer does.
 sub padlock_target_locked {
 	my ($target, $c) = @_;
 	return 0 unless $target;
@@ -211,6 +222,10 @@ sub padlock_time_value {
 	return $padlock_time_memo{$memo_key} = $value;
 }
 
+# $state is the truth this request has already established (see
+# authentication_passer): { row => the padlock security row, contexts => the
+# decoded padlock_contexts }. It saves the duplicate reads without changing
+# the answer; callers with nothing prefetched pass nothing.
 sub padlock_global_locked {
 	my ($c, $state) = @_;
 	my $padlock = $state ? $state->{'row'} : &subs::db_query('select * from security where level = ?', 'padlock')->hashes->[0];
@@ -267,6 +282,15 @@ sub padlock_gate_answer {
 	return;
 }
 
+# One way to open: a paired device's signature, the paper recovery code, and
+# the emergency paths all land here. A manual gate locks one device; a target
+# names it, an empty target is the house-wide timeout lock. The global timer is
+# moved past now either way, so the unlocked screen is not re-locked at once.
+# The key material in Security is a second door behind the app: rotating the
+# house key, replacing the recovery code, splitting or releasing shares, and
+# adding or removing a passkey each ask for the person again. Only a grant
+# minted in the last two minutes counts, so browsing the app on one unlock is
+# not enough to change how the house can be opened.
 sub security_action_open {
 	my ($c) = @_;
 	return &media_unlock_open($c, 'security', 120000) ? 1 : 0;
@@ -358,6 +382,13 @@ sub padlock_mark_unlocked {
 	return 1;
 }
 
+# --- local biometric unlock ------------------------------------------------
+# The phone's Android app keeps an EC P-256 key in the Android Keystore with
+# setUserAuthenticationRequired: the OS will not use it until the person passes
+# the fingerprint prompt. The house verifies the key's signature, so this is a
+# real factor - unlike the JS confirmation the phone-as-key page uses - and it
+# is the one signature a local request may present. It opens only the screen it
+# is on, never another device and never the whole house.
 sub biometric_nonce_take {
 	my ($purpose, $device_uuid, $nonce, $ttl) = @_;
 	$ttl ||= 60000;
@@ -369,6 +400,10 @@ sub biometric_nonce_take {
 	return 1;
 }
 
+# A payment is confirmed by the current device's enrolled biometric key: the
+# phone signs a verify challenge, the same proof used before replacing a
+# fingerprint. A device with no key has no biometric to ask for, so the signed-in
+# citizen is the fallback there; the panel says which path it will use.
 sub biometric_payment_confirmed {
 	my ($c) = @_;
 	my $device_uuid = $c->session('device_uuid') || '';
@@ -419,6 +454,10 @@ sub padlock_time_extender($c) {
 #	}, { name => 'padlock time extender' });
 }
 
+# A self-contained page command for a phone-side send: the new bundle's helper
+# when it is there, the bridge when the bundle is old but the app is new, and
+# the phone's own termux when neither has landed yet - so a message always goes
+# out during the hand-over from termux-sms-send.
 sub sms_send_command($digits, $message) {
 	# A command object, not source: the browser router runs jawnSmsSend (or the
 	# bridge/termux fallback) from its table.
@@ -442,6 +481,10 @@ sub sms_mms_command($digits, $text, $parts, $jawn_uuid) {
 	};
 }
 
+# This machine's radio. termux-telephony-deviceinfo is the same source the
+# Phone app trusts: a phone answers phone_type=gsm/cdma with a ready SIM, a
+# wifi-only tablet answers phone_type=none. Which is why a caller that needs a
+# radio asks the bridge rather than the platform name.
 sub telephony_status() {
 	my $state = { telephony => 0, phone_type => 'none', sim_state => '', network_type => '' };
 	return $state unless &subs::device_setter() eq 'mobile';
@@ -455,6 +498,8 @@ sub telephony_status() {
 	return $state;
 }
 
+# A peer's radio, asked before an MMS is handed over: a laptop with a phone and
+# a wifi tablet must not send the picture to the tablet and call it a phone.
 sub peer_telephony($ru) {
 	return undef unless $ru && $ru->{'ua'} && $ru->{'manager'};
 	my $tx = eval { $ru->{'ua'}->inactivity_timeout(10)->get($ru->{'manager'} . '/manager/telephony') };
@@ -463,6 +508,10 @@ sub peer_telephony($ru) {
 	return (ref $info eq 'HASH') ? $info : undef;
 }
 
+# The app's FileProvider is rooted at getFilesDir() (/data/user/0/...), while
+# subs::home() and TermuxConstants say /data/data/.... Hand the bridge the
+# provider's own spelling so getUriForFile finds the file; a path outside that
+# root is what made the share() hand-off fail.
 sub bridge_path($path) {
 	my $data = $ENV{'TERMUX_APP__DATA_DIR'};
 	return $path unless $data && $path =~ m{^/data/data/[^/]+/files(?:/|$)};
@@ -470,6 +519,10 @@ sub bridge_path($path) {
 	return $path;
 }
 
+# MMS carriers are happiest below about a megabyte; an original photo can be
+# several. A copy is shrunk to fit (and auto-oriented), leaving the filed
+# original alone. No ImageMagick, or a failure, keeps the original for the
+# bridge's own Bitmap compression to handle.
 sub mms_part_prepare($path, $mime) {
 	return ($path, $mime) unless $path && -e $path;
 	return ($path, $mime) unless ($mime || '') =~ m{^image/}i;
@@ -523,6 +576,10 @@ sub sms_message_send($digits,$message) {
 	return ($digits,$message,$via);
 }
 
+# The house encrypts files at rest, renaming them to random .enc paths; an
+# attachment carried on a message names its file by uuid, so the current paths
+# are read from the filing the upload made, not from the snapshot the page sent.
+# Returns (f, thumb, encryption_standard) - f is the current path, possibly .enc.
 sub attachment_resolve($att) {
 	my $fu = $att->{'uuid'} || '';
 	my $f = $att->{'f'} || '';
@@ -537,6 +594,8 @@ sub attachment_resolve($att) {
 	return ($entry->{'f'}, $entry->{'thumb'}, $row->{'encryption_standard'});
 }
 
+# An attachment's file as plain bytes on disk: encrypted at rest, so a copy is
+# decrypted to the house's sms_parts drawer and that path is returned.
 sub attachment_plain_path($att) {
 	my ($f, undef, $standard) = &attachment_resolve($att);
 	return undef unless $f && -e $f;
@@ -552,12 +611,21 @@ sub attachment_plain_path($att) {
 	return (-e $plain) ? $plain : undef;
 }
 
+# The house row a message was filed as before it touched the sms stack wears
+# the system's own identity once the phone has filed the same message: the
+# system thread keeps the sent copy, and this row IS that message here, so the
+# poll, a re-read and every other machine see one message rather than two. The
+# system's date also becomes the row's time, so a poll matches it exactly.
 sub sms_mms_row_link($mms_id, $mms_date) {
 	my %set = (message_id => 'mms:' . $mms_id, server_time => &subs::rightNow());
 	$set{'timestamp'} = $mms_date * 1000 if $mms_date && $mms_date =~ /^\d+$/;
 	return \%set;
 }
 
+# An attachment on the sms road: on the phone the parts are already local files
+# the bridge reads; anywhere else they are read, base64'd and relayed to the
+# phone's /manager/sms/mms. A phone is found by asking its radio, not by taking
+# the first mobile peer (the house may also hold a wifi-only tablet).
 sub sms_mms_relay($digits, $text, $attachments, $jawn_uuid) {
 	my $parts = [];
 	foreach my $att ( @{$attachments || []} ) {
@@ -624,6 +692,15 @@ sub sms_mms_relay($digits, $text, $attachments, $jawn_uuid) {
 	return { ok => 0, error => $last };
 };
 
+# ---------------------------------------------------------------------------
+# LoRaWAN: the Chat app's radio mode.
+#
+# The T-Deck carries an SX1262 and RadioLib's LoRaWANNode; JawnOS keeps the
+# network credentials, pushes them to the deck that is on the LAN, and offers a
+# webhook a network server (TTN, ChirpStack, Helium) can post uplinks to. The
+# message itself is filed on the `lora` contact, the same way sms is filed on a
+# number and a ticket on its uuid, so the conversation survives a restart.
+# ---------------------------------------------------------------------------
 sub lorawan_settings {
 	my %s;
 	foreach my $k (qw/enabled band subband join_eui dev_eui app_key fport confirmed webhook_token/) {

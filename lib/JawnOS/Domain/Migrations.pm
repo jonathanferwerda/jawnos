@@ -18,6 +18,13 @@ our $device;
 our $log;
 our $logfile;
 
+# A lot of the migration list below predates the schema, so on a database built from
+# database/schema.sql the column or index it wants to add is already there and
+# SQLite refuses the statement ("duplicate column name", "index ... already
+# exists"). Those refusals are warnings, not errors, so they never reached the eval
+# around the runner -- they just filled the log on every unlock, and a real failure
+# would have been one line among dozens. Statements that are already satisfied are
+# skipped now, and everything that still runs is worth looking at.
 sub update_database($data) {
 	&subs::cache_delete({ app => 'me', context => 'pseudonyms' });
 	my $commands = [

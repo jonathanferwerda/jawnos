@@ -60,6 +60,10 @@ use IPC::Open2 qw(open2);
 
 our ($APP, $ws_live_window, $encoder, $decoder, $tuuid, $thread_uuid, $universal_splitter, $database, $sql, $remote_input_clipboard, $config_file, $config, $logfile, $log, $environment, $random_caching_string, $duty_file, $main_process, $device, $user_agent, %time_machine_guide_cache, @media_unlock_apps, %help_search_tables, %media_type_for_ext, %file_relay_down, @appointments, @results, %market_payment_family, @manager_bundle_files, $manager_bundle_cache, $js_minifier, %app_release_sha, %folders_desk_not_app, $jg_body, $remote_input_geometry_at, $remote_input_geometry_cache, %remote_input_ua, %remote_input_ws, %remote_input_rm, %remote_input_ws_failed, $public_ip_memo, $coding_protocols, $coding_protocols_mtime, $app_schema_done, $fingerprint_checked_at, $fingerprint_ok, %padlock_time_memo, %credential_browser_app, %app_gate_shadow_seen, $ws_server, %mailws_untrusted_rate);
 
+# Guess which account a printed tender names. An exact word always wins (a
+# mastercard account for a mastercard receipt); with no exact word, a family with
+# a single account takes it (a receipt saying "credit" selects the only credit
+# account, which may be a mastercard; "debit" selects the only interac one).
 sub market_payment_account {
 	my ($method) = @_;
 	my $want = lc($method || '');
@@ -97,6 +101,8 @@ sub market_payment_account {
 	return '';
 }
 
+# The device type a browser's user agent names. Only the types the capability
+# table knows are returned; anything else is a computer (the house's default).
 sub market_client_type {
 	my ($ua) = @_;
 	my $t = lc($ua || '');
@@ -104,6 +110,10 @@ sub market_client_type {
 	return 'computer';
 }
 
+# --- a scan session: a rapid-fire run of codes a person confirms at the end ---
+# The machine that pressed Scan owns the list and the session. A phone on its own
+# jawn forwards each code to it over the peer rail; Done puts the collected items
+# on the list, Cancel throws them away and stops the phone's scanner.
 sub market_scan_session {
 	my $raw = &subs::setting_grabber({ app => 'market', setting => 'scan_session' });
 	my $s = eval { return decode_json $raw } || {};
@@ -115,6 +125,9 @@ sub market_scan_session_save {
 	&subs::setting_setter({ app => 'market', setting => 'scan_session', value => encode_json($s) });
 }
 
+# A run can have several inputs at once (the computer's webcam and two phones,
+# say). Each has a stable id so the page can add, replace or stop one without
+# disturbing the others.
 sub market_scan_device_id {
 	my ($d) = @_;
 	return '' unless ref $d eq 'HASH';
@@ -129,6 +142,9 @@ sub market_scan_session_devices {
 	return @d;
 }
 
+# One resolved code into a session. The phone's relay and this machine's own
+# webcam reader both come through here, so a product is looked up in our terms
+# once and lands in the run the same way.
 sub market_scan_session_add {
 	my ($s, $code) = @_;
 	$code = '' unless defined $code;
@@ -149,6 +165,9 @@ sub market_scan_session_add {
 	return $it;
 }
 
+# The computer's own webcam, read by zbar. A session on this machine watches the
+# camera in the background; each poll folds the codes the reader printed since the
+# last one into the run. A phone has its own scanner, and a server has neither.
 sub market_camera_dir { return '/tmp/jawn_market_camera'; }
 
 sub market_camera_available {
@@ -173,12 +192,14 @@ sub market_camera_stop {
 	return 1;
 }
 
+# A reused pid must not be taken for our reader.
 sub market_camera_is_reader {
 	my ($pid) = @_;
 	my $cmd = JawnOS::Platform::Process::command_line($pid);
 	return ($cmd && $cmd =~ /zbarcam/) ? 1 : 0;
 }
 
+# Is the reader this machine started still running?
 sub market_camera_alive {
 	my $pidfile = &market_camera_dir() . '/pid';
 	return 0 unless -e $pidfile;
@@ -188,6 +209,8 @@ sub market_camera_alive {
 	return ($pid && $pid =~ /^([0-9]+)/ && &market_camera_is_reader($1) && kill(0, $1)) ? 1 : 0;
 }
 
+# Start the reader for a fresh run: one zbarcam on the machine, writing each code
+# it reads as a line, detached so the request can return at once.
 sub market_camera_start {
 	&market_camera_stop();
 	my $dir = &market_camera_dir();
@@ -211,6 +234,9 @@ sub market_camera_start {
 	return $pid;
 }
 
+# Fold the lines the reader printed since the last poll into the session. zbar
+# repeats a code while it stays in view, so the same read is ignored for a few
+# seconds; a new item is taken at once.
 sub market_camera_ingest {
 	my ($s) = @_;
 	return 0 unless ($s->{'camera'} || 0);
@@ -249,6 +275,9 @@ sub market_camera_ingest {
 	return $added;
 }
 
+# Ask the Android app to put its scanner away. The page is paused behind Google's
+# scan sheet, so the JS cannot do it; a broadcast reaches the bridge natively and
+# it clears the sheet off the task.
 sub market_scan_native_stop {
 	return 0 unless &subs::device_setter() eq 'mobile';
 	my $pid = fork();
@@ -263,6 +292,8 @@ sub market_scan_native_stop {
 	return 1;
 }
 
+# What the session page shows: the raw names stay in the record, the printed ones
+# are formatted here so no caller has to remember to unformat an app name.
 sub market_scan_session_view {
 	my ($s) = @_;
 	my @items;
@@ -295,6 +326,8 @@ sub market_scan_session_view {
 	};
 }
 
+# Tell a device/tab to start (or stop) its scanner. A peer is reached over the
+# signed rail; a tab on this machine gets the console command directly.
 sub market_scan_device_send {
 	my ($c, $device, $s, $stop) = @_;
 	my $bti = $device->{'browser_tab_id'} || '';
@@ -331,6 +364,14 @@ sub market_scan_device_send {
 	return 1;
 }
 
+# --- receipts: read a shop receipt into the cart ---
+# A receipt is long, so it is scanned - the ADF feeds it in one pass - or
+# photographed, and the vision model reads the pages into strict JSON. Each line
+# is then matched to a house item: a printed code through the barcode cache, else
+# the description folded into our terms by the same model that names a scan. The
+# list is only touched once a person confirms, and confirming links each line to
+# the list in the cart, so the familiar Checkout is still what writes purchases.
+# Whether the house already has an app by this name (a scanned or typed item).
 sub market_app_exists {
 	my ($item) = @_;
 	return 0 unless defined $item && $item ne '';
@@ -338,6 +379,8 @@ sub market_app_exists {
 	return $row ? 1 : 0;
 }
 
+# The list row an item names, if the list already holds one (by our name or by
+# what it was typed as).
 sub market_list_row {
 	my ($item) = @_;
 	return undef unless defined $item && $item ne '';
@@ -348,6 +391,9 @@ sub market_list_row {
 	return undef;
 }
 
+# Fold a receipt's unknown descriptions into our terms in ONE model call: a
+# receipt has many lines, and one call each would be slow and wasteful. Returns
+# a hash of description => house name, its misses left absent.
 sub market_receipt_name_batch {
 	my ($raws) = @_;
 	my %out;
@@ -369,6 +415,8 @@ sub market_receipt_name_batch {
 	return \%out;
 }
 
+# The pages of one receipt -> its lines as JSON. All pages go in one call so a
+# total printed on the last page is read with the lines above it.
 sub market_receipt_read {
 	my ($pages) = @_;
 	return (undef, 'no receipt image to read') unless $pages && scalar @{$pages};
@@ -391,6 +439,10 @@ sub market_receipt_read {
 	return ($out, undef);
 }
 
+# Read a receipt's lines into rows a person can confirm. A printed code resolves
+# through the barcode cache; a description the house already keeps is taken as
+# is; only the genuinely new descriptions are handed to the batch fold. Every row
+# carries what it matched by, so the confirm panel can say why.
 sub market_receipt_lines {
 	my ($out) = @_;
 	my @raw = grep { ref $_ eq 'HASH' } @{ $out->{'lines'} || [] };
@@ -441,6 +493,11 @@ sub market_receipt_lines {
 	return \@lines;
 }
 
+# Run the scanner for a receipt, into the market app's own scan folder so the
+# pages can be filed as a document afterwards. Synchronous, because the person is
+# at the printer waiting, and bounded so a jam cannot wedge the request. A run is
+# named by the caller's scan_id so a second request can watch its pages arrive.
+# Returns (error, [jpg paths]).
 sub market_receipt_scan {
 	my ($feed, $scan_id) = @_;
 	$scan_id = '' unless defined $scan_id;
@@ -501,6 +558,8 @@ sub market_receipt_scan {
 	return (undef, \@jpgs);
 }
 
+# The last lines of a log, read from its tail so a chatty scanner (--progress
+# writes a lot) does not make every poll slurp the whole file.
 sub scanner_log_tail {
 	my ($log, $bytes) = @_;
 	$bytes ||= 4096;
@@ -513,6 +572,9 @@ sub scanner_log_tail {
 	return grep { /\S/ } split /[\r\n]+/, ($tail || '');
 }
 
+# The scanner's own last word on why a run produced nothing, in plain terms. The
+# useful line is scanimage's error ("Document feeder out of documents", "Error
+# during device I/O"), not the batch summary printed after it.
 sub scanner_log_reason {
 	my ($log) = @_;
 	my @lines = &scanner_log_tail($log);
@@ -529,6 +591,9 @@ sub scanner_log_reason {
 	return lcfirst $why;
 }
 
+# Save a bridged or uploaded receipt page into the market app's scan folder, so
+# the paper can be filed like a scanned one. Returns the jpg path, or undef when
+# it could not be converted.
 sub market_receipt_store {
 	my ($bytes) = @_;
 	return undef unless $bytes && length $bytes;
@@ -543,6 +608,11 @@ sub market_receipt_store {
 	return (-e $jpg && -s $jpg) ? $jpg : undef;
 }
 
+# Keep the receipt: its pages stay where the scanner put them (the market app's
+# own folder) and a record of what it was - vendor, total, date, the lines read -
+# is kept under the market app's own settings, beside the shopping list and the
+# barcode cache rather than as an appointment, so nothing else about the app is
+# touched by a receipt.
 sub market_receipt_file {
 	my ($data) = @_;
 	my @files = grep { defined $_ && -e $_ } @{ $data->{'files'} || [] };
@@ -575,16 +645,24 @@ sub market_receipt_file {
 	&subs::setting_setter({ app => 'market', setting => 'receipts', value => encode_json($receipts) });
 }
 
+# The scan feeds THIS machine can run: the capability table's answer for the host
+# device. A computer has the ADF and the flatbed, a server neither, so the Market
+# offers the scanner buttons only when this is non-empty (a phone reaching the
+# house still scans on the computer that holds the scanner - the scan runs here).
 sub market_scan_feeds {
 	return [ @{ $gb::capabilities->{&subs::device_setter()}->{'scan'} || [] } ];
 }
 
+# The kept receipts, newest first (the raw `receipts` setting on the market app).
 sub market_receipts {
 	my $raw = &subs::setting_grabber({ app => 'market', setting => 'receipts' });
 	my $receipts = eval { return decode_json $raw } || [];
 	return [ grep { ref $_ eq 'HASH' } @{$receipts} ];
 }
 
+# The kept receipts prepared for the Market pane: the pages that are still on
+# disk as /file_open links, and each receipt's lines ready to re-apply (so the
+# pane can put the whole shop back on the list in one press).
 sub market_receipts_prepared {
 	my @out;
 	foreach my $r ( @{ &market_receipts() } ) {
@@ -612,6 +690,10 @@ sub market_receipts_prepared {
 	return \@out;
 }
 
+# Group warehouse rows for the warehouse app. The warehouse holds both money
+# and stock: a money row is one that names an account (or is denominated in a
+# currency measure), everything else is stock grouped by place, then item,
+# then unit. Used for the place view and for item search.
 sub warehouse_grabber($opts) {
 	my $search = $opts->{'search'};
 	my $places = $opts->{'places'} || [];

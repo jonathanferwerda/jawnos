@@ -59,6 +59,8 @@ use IPC::Open2 qw(open2);
 
 our ($APP, $ws_live_window, $encoder, $decoder, $tuuid, $thread_uuid, $universal_splitter, $database, $sql, $remote_input_clipboard, $config_file, $config, $logfile, $log, $environment, $random_caching_string, $duty_file, $main_process, $device, $user_agent, %time_machine_guide_cache, @media_unlock_apps, %help_search_tables, %media_type_for_ext, %file_relay_down, @appointments, @results, %market_payment_family, @manager_bundle_files, $manager_bundle_cache, $js_minifier, %app_release_sha, %folders_desk_not_app, $jg_body, $remote_input_geometry_at, $remote_input_geometry_cache, %remote_input_ua, %remote_input_ws, %remote_input_rm, %remote_input_ws_failed, $public_ip_memo, $coding_protocols, $coding_protocols_mtime, $app_schema_done, $fingerprint_checked_at, $fingerprint_ok, %padlock_time_memo, %credential_browser_app, %app_gate_shadow_seen, $ws_server, %mailws_untrusted_rate);
 
+# Threads from before the registry existed (the Coding agent's settings rows):
+# give each a row so the history is complete. Only threads with something said.
 sub agent_registry_adopt {
 	my $rows = &agent_registry;
 	my %known = map { ($_->{'kind'} || '') . "/" . ($_->{'name'} || '') => 1 } @{$rows};
@@ -167,6 +169,8 @@ sub security_initializer($c) {
 	return { html => $contents, signatorial => $config->{'signatorial'} };
 }
 
+# The paired-device plumbing shared by pair, device login, recovery and the
+# approval door.
 sub device_pubkey_clean($armor) {
 	return unless $armor;
 	return $armor if $armor =~ /BEGIN PUBLIC KEY/;
@@ -244,11 +248,21 @@ sub device_request_notify($c, $name, $code) {
 	&notification_sender({ app => 'security', role => 'citizen', title => 'Device Request', message => $who . ' asks to pair (code ' . $code . ')', image => $gb::known_appts->{'security'}->{'icon'} }, $database);
 }
 
+# --- the lock gate ---------------------------------------------------------
+# The padlock used to be a client overlay: every route still answered behind
+# it. The gate is the server-side half. 'shadow' writes what it would refuse
+# and still answers (so the list can be checked on a live machine); 'enforce'
+# refuses everything except the ways in.
 sub padlock_gate_mode {
 	my $mode = &subs::setting_grabber({ app => '__president', setting => 'padlock_gate' });
 	return (defined $mode && $mode eq 'shadow') ? 'shadow' : 'enforce';
 }
 
+# --- the app gate ----------------------------------------------------------
+# The installed apps are the only browser engines allowed to see /manager. A
+# browser may read the public homepage and store, and the embedded devices keep
+# their own rotated-token rail. 'shadow' logs what it would deny; 'enforce'
+# answers with the open-in-the-app page.
 sub app_access_mode {
 	# A machine that cannot enroll an app key may opt itself out: a row named by
 	# this machine's signatorial wins over the house-wide 'all' row, so one device
@@ -381,6 +395,15 @@ sub app_session_ok {
 	return $until > &subs::rightNow() ? 1 : 0;
 }
 
+# The other way in is the signed peer rail. A linked machine's request is not
+# a browser and has no app key; its proof is the pinned key on its roster row.
+# Some peer routes verify that themselves, but the app gate runs first, so a
+# peer whose session cookie was lost (or a tunnelled peer whose calls cross a
+# restart) was answered with the app-required page before its signature was
+# ever read. Require a real signature and an already-pinned key - not the
+# trust-on-first-contact path - so a browser quoting a signatorial cannot use
+# this door. peer_verify memoises its answer on the stash, so a route that
+# checks again after this does not fail on the already-spent nonce.
 sub app_peer_ok {
 	my ($c) = @_;
 	my $sig = $c->req->headers->header('X-Peer-Signature');
@@ -518,6 +541,12 @@ sub app_schema_ensure {
 	eval { &subs::db_query('create index if not exists idx1_credentials on credentials (app, origin)') };
 }
 
+# A lock is local to the machine that saw it, but an explicit unlock request
+# must reach every screen in the house. This hands the same padlock_key_show to
+# the peers over the signed rail; each one broadcasts to its own websockets and
+# carries the message on, and relay_id stops a loop. `prompt` marks a request
+# the person made on the locked screen (not a lock being announced), so only
+# that kind may put a confirmation in front of another device.
 sub padlock_key_show_relay {
 	my ($c, $mode, $target, $show, $prompt, $request_id, $device_name, $source_device, $source_hostname) = @_;
 	return unless $c;
@@ -552,6 +581,14 @@ sub padlock_key_show_relay {
 	}, { name => 'padlock key show relay' });
 }
 
+# ---- explicit unlock requests --------------------------------------------
+# A locked screen no longer pulls every phone and laptop onto the unlock page.
+# The person presses Unlock on the locked screen; that writes a short-lived
+# request (local cache, never synced) and broadcasts it. A device that is
+# already open shows a fingerprint prompt in place, signs the target screen
+# open, and goes back to what it was doing. The request is also readable from
+# padlock_state, so a phone that was asleep when the button was pressed finds
+# it on its next connection.
 sub padlock_request_store {
 	my ($target, $mode, $source, $id, $device_name, $source_device, $source_hostname, $tab) = @_;
 	my $now = &subs::rightNow();
@@ -587,6 +624,9 @@ sub padlock_request_store {
 	return $id;
 }
 
+# The request a media mint may read: the newest one naming this screen. Its
+# `source` says which machine holds the screen, and its `tab` says which window
+# asked, so the token goes to that window alone.
 sub padlock_request_for_target {
 	my ($target) = @_;
 	return {} unless defined $target && $target =~ /^[A-Za-z0-9]{8,64}$/;
@@ -618,6 +658,8 @@ sub padlock_request_get {
 	return $d;
 }
 
+# One screen opening does not answer a request for another screen, and a
+# whole-house open answers every request.
 sub padlock_request_clear {
 	my ($target) = @_;
 	return unless defined $target;
@@ -633,6 +675,9 @@ sub padlock_request_clear {
 	}
 }
 
+# Clearing a request is also the signal that stops the prompt everywhere. The
+# request's own id travels with it, so a screen can tell this one from a newer
+# request that happens to name the same device.
 sub padlock_request_clear_id {
 	my ($id) = @_;
 	return unless defined $id && $id =~ /^[A-Za-z0-9]{8,64}$/;
@@ -640,6 +685,13 @@ sub padlock_request_clear_id {
 	&Websocket::send('server', { padlock_key_clear => 1, request_id => $id, timestamp => &subs::rightNow() });
 }
 
+# --- Go approvals ---------------------------------------------------------
+# A Go pressed in the installed app is already authenticated by the app key,
+# but the person may ask for a second factor before the peer ticket is minted:
+# this machine's reader, the phone's own Keystore print, or another paired
+# device's print. The request itself stays local to this machine; only asking a
+# device puts it on the padlock prompt rail, so a laptop fingerprint does not
+# buzz every phone in the house.
 sub go_approvers {
 	my ($c, $source_device) = @_;
 	my $local = (&fingerprint_available() && &padlock_request_is_local($c)) ? 1 : 0;
@@ -665,6 +717,9 @@ sub go_hostname {
 	return substr($hostname, 0, 120);
 }
 
+# One pending Go per session. The row carries the peer the ticket is for, so
+# go_status can mint it after the approval; the session names the request so a
+# second page cannot redeem someone else's approval.
 sub go_request_create {
 	my ($c, $rm, $source_device, $manager, $name) = @_;
 	my $now = &subs::rightNow();

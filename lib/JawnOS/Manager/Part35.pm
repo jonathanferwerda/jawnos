@@ -356,6 +356,11 @@ sub now_me($data) {
 	return {};
 }
 
+# ---- marker sessions ---------------------------------------------------
+# A session is one cache row (context 'sessions', subcontext = the session
+# id) holding every marker layer as a PNG data URL, so a drawing outlives the
+# window and can be recalled from the sessions panel. The cache table lives in
+# the encrypted database, so nothing here needs the network or the filesystem.
 sub marker_sessions($app) {
 	my $filter = $app || '';
 	my @sessions;
@@ -396,6 +401,16 @@ sub marker_session_store($session) {
 	);
 }
 
+# ---------------------------------------------------------------------------
+# A headless health read: what a supervisor or `jawnosctl status` needs to tell
+# "the tree is up and current" from "it is wedged" - the running version and
+# commit, how long it has been up, the database and its write-ahead log, and
+# each peer's last reported version and link state. No setting value crosses
+# here. A server has no session and no login, so the route rides the gate-exempt
+# rail (hooks.pl) and gates itself: a loopback caller (the machine's own CLI or
+# monitor), an approved browser session, or a signed peer (peer_verify against
+# the roster) - everyone else is refused.
+# ---------------------------------------------------------------------------
 sub health_html_escape {
 	my $s = defined $_[0] ? $_[0] : '';
 	$s =~ s/&/&amp;/g;
@@ -513,6 +528,13 @@ sub health_human_uptime {
 	return ($d ? "${d}d " : '') . sprintf('%02d:%02d', $h, $m);
 }
 
+# The app's WebView trusts the house certificate for page loads
+# (onReceivedSslError), but a WebSocket handshake never reaches that callback,
+# so wss:// to the self-signed manager fails inside the app. The socket server
+# also listens plainly on 127.0.0.1; Chromium treats loopback as trustworthy,
+# so an https page may open ws:// there. A Secure session cookie is not sent on
+# that handshake, so the page carries a short-lived token that restores the
+# session for the socket.
 sub ws_plain_token {
 	my ($c) = @_;
 	my $token = $c->stash('ws_plain_token');
@@ -591,6 +613,12 @@ sub president_restarter() {
 	&subs::restart_request('president_restarter was asked to restart' . (defined $where ? ' from ' . $where : ''));
 }
 
+# Log a peer back in so the session cookie we keep for it is fresh. The relay and
+# the sync rail post to a peer's ordinary routes carrying that cookie, and those
+# routes are gated; the cookie lapses without a word - most often when the peer
+# renames its database, which the session remembers - so a relayed request comes
+# back with the Gate page where the route's reply was expected. Reuses the same
+# credentialed login (the peer's /sesh_check) the reconnect path uses.
 sub remote_machine_reauth($c, $rm, $timestamp, $ip, $browser_tab_id, $browser_tab) {
 	my $rdc = {
 		# the row's manager can be a leftover loopback from a dead tunnel: log back
@@ -612,6 +640,11 @@ sub remote_machine_reauth($c, $rm, $timestamp, $ip, $browser_tab_id, $browser_ta
 	return &remote_device_connect($rdc);
 }
 
+# The sync topology is a house setting (`sync/topology`, so the settings merge
+# carries it to every machine). The Dev panel writes one shared `device => 'all'`
+# row; an older override can still sit on a machine's own device row or in
+# `__president/sync_topology`, so read those as fallbacks. A blank or unknown
+# value means auto.
 sub sync_topology_get {
 	my $v = &subs::setting_grabber({ app => 'sync', setting => 'topology', device => 'all' });
 	$v = &subs::setting_grabber({ app => 'sync', setting => 'topology' }) unless defined $v && length $v;
@@ -620,6 +653,9 @@ sub sync_topology_get {
 	return $v;
 }
 
+# A hub is healthy enough to collapse a spoke's pass to hub-and-spoke when its
+# last handshake is recent and, if we reach it through a tunnel, that tunnel still
+# has a fresh pong (the same freshness the tunnel checker reads).
 sub sync_hub_status {
 	my ($hub) = @_;
 	return 0 unless $hub && $hub->{'signatorial'};
@@ -638,6 +674,9 @@ sub sync_hub_status {
 	return 1;
 }
 
+# Pick the hub once per pass and persist it, so roster churn cannot silently move
+# the mesh's centre. A server is its own hub; a spoke learns its server's
+# signatorial from the roster and keeps the saved one while its row is recent.
 sub sync_hub_pick {
 	my ($machines, $is_hub) = @_;
 	return &subs::signatorial_designer() if $is_hub;

@@ -534,6 +534,11 @@ sub travel_grabber($c) {
 	return $contents;
 }
 
+# A map's home plate is its anchor on the globe: a pixel at a latitude/longitude.
+# Measuring can also leave it as a named legend instead ("lambton mall") - the
+# home_plate setting of the app it names - so fold whichever exists into the
+# map's home_plate, and the client has one shape to read. The map is modified in
+# place; the resolved plate is returned.
 sub travel_map_home_plate {
 	my ($map) = @_;
 	my $home_plate = $map->{'home_plate'} || {};
@@ -548,6 +553,10 @@ sub travel_map_home_plate {
 	return $home_plate;
 }
 
+# The ground bounds of a measured map: the latitude/longitude of its top-left and
+# bottom-right image pixels, from its home plate and scale bar - the same
+# arithmetic the client engine does (mapengine.js mapBounds), here so the server
+# can reason about where the maps sit and what lies between them.
 sub travel_map_bounds {
 	my ($map) = @_;
 	my $p = $map->{'home_plate'} || {};
@@ -582,6 +591,9 @@ sub travel_map_bounds {
 	return { nw => $at->(0, 0), se => $at->($w, $h) };
 }
 
+# Whether the ground at a point is already known: inside any placed map's bounds -
+# and, when $with_guesses, inside a guess already drawn, so a pocket is not
+# guessed over twice.
 sub travel_point_covered {
 	my ($placed, $lat, $lon, $with_guesses) = @_;
 	foreach my $p ( @{$placed} ) {
@@ -593,6 +605,13 @@ sub travel_point_covered {
 	return 0;
 }
 
+# The largest pocket of unmapped ground inside the view: a coarse grid marks the
+# cells whose centre no placed map (or existing guess) covers, and the largest
+# all-empty rectangle in it becomes the pocket. A rectangle - not the bounding box
+# of a connected region: empty ground that wraps around a map (the corridor beside
+# it, the void above it) has a bounding box that swallows the map itself, and a
+# guess there would lie under ground we already know. Undef when the view is all
+# known ground, or only slivers of it are not.
 sub travel_uncovered_pocket {
 	my ($placed, $view) = @_;
 	my $n = 32;
@@ -634,6 +653,7 @@ sub travel_uncovered_pocket {
 	return { %{$best}, n => $n, empty => \@empty };
 }
 
+# A grid pocket's cells as a ground box - the grid's own arithmetic, read back.
 sub travel_grid_box {
 	my ($view, $pocket) = @_;
 	my $n = $pocket->{'n'};

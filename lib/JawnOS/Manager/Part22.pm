@@ -59,6 +59,8 @@ use IPC::Open2 qw(open2);
 
 our ($APP, $ws_live_window, $encoder, $decoder, $tuuid, $thread_uuid, $universal_splitter, $database, $sql, $remote_input_clipboard, $config_file, $config, $logfile, $log, $environment, $random_caching_string, $duty_file, $main_process, $device, $user_agent, %time_machine_guide_cache, @media_unlock_apps, %help_search_tables, %media_type_for_ext, %file_relay_down, @appointments, @results, %market_payment_family, @manager_bundle_files, $manager_bundle_cache, $js_minifier, %app_release_sha, %folders_desk_not_app, $jg_body, $remote_input_geometry_at, $remote_input_geometry_cache, %remote_input_ua, %remote_input_ws, %remote_input_rm, %remote_input_ws_failed, $public_ip_memo, $coding_protocols, $coding_protocols_mtime, $app_schema_done, $fingerprint_checked_at, $fingerprint_ok, %padlock_time_memo, %credential_browser_app, %app_gate_shadow_seen, $ws_server, %mailws_untrusted_rate);
 
+# Add one engine the person named, or (from the Browser) one found on the page
+# they are reading. Both end in the same custom entry.
 sub search_engine_add_custom($name, $url) {
 	my $state = &search_engine_state();
 	$name =~ s/^\s+|\s+$//g;
@@ -83,6 +85,10 @@ sub search_engine_add_custom($name, $url) {
 	return $entry;
 }
 
+# The Web tab. Every enabled engine is asked for the words and its links are
+# read back as results. The page is never shown as-is: a result is a title and
+# an address, and the click opens it in the house's own browser. Eight engines
+# at most keeps one query from holding a worker for a minute.
 sub search_web_matches($q) {
 	my @engines;
 	my $ua = Mojo::UserAgent->new(
@@ -239,12 +245,27 @@ sub search_engine_grabber($c) {
 	return $window;
 }
 
+# ---- Internet: usage and live-page measures ------------------------------
+# Browse is a native sibling of the manager (a WebKitGTK window on the desktop,
+# an activity on Android). It posts here as the installed app it belongs to, so
+# the ordinary app gate is the only credential; there is no second token.
 sub usage_ms {
 	my $value = shift;
 	return 0 unless defined $value && $value =~ /^\d+$/;
 	return int($value);
 }
 
+# The apps the launcher and the Internet tab choose from: the house's own
+# catalog first, then any app a person has made. Kept in one place so the
+# manager and the phone never disagree about what an app is called.
+#
+# visible_only is for a picker that assigns a thing to an app: it leaves out an
+# app the visibility rule hides here and now (off, or a place level below the
+# room), so a suggestion never offers what the house is keeping out of sight.
+#
+# any_appt is for the Internet picker: a website may belong to any appointment
+# in the house, not only the house's built-in apps and launcher icons. The
+# visibility rule still decides which ones are offered.
 sub internet_app_catalog {
 	my ($opts) = @_;
 	my $visible_only = $opts && $opts->{'visible_only'};
@@ -285,6 +306,9 @@ sub internet_app_catalog {
 	return \@apps;
 }
 
+# The launcher's icon URL. The icon set ships SVG, which Android's
+# BitmapFactory cannot decode, and a person's own main image is sealed behind
+# /file_open; /apps/icon answers both with a PNG.
 sub app_icon_url {
 	my ($app) = @_;
 	return '' unless defined $app && length $app;

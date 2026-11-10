@@ -550,6 +550,12 @@ our ($APP, $ws_live_window, $encoder, $decoder, $tuuid, $thread_uuid, $universal
 	return ($sync->{'state'} || 'done');
 };
 
+# A browser cannot carry the house key to a peer, and the peer's ticket desk
+# will not serve an expired session. Mint a ticket with the stored peer
+# session; if that session has lapsed, re-auth with the house key and try
+# once more. The URL keeps the peer's path/secret but is pointed at the
+# peer's own host and dock port, because qrcode_generator may compute a
+# loopback or tunnel-local origin.
 sub remote_manager_ticket($c, $rm) {
 	return '' unless ref $rm eq 'HASH' && $rm->{'manager'};
 	my $timestamp = &subs::rightNow();
@@ -599,6 +605,9 @@ sub remote_manager_ticket($c, $rm) {
 	return $ticket || '';
 }
 
+# The login URL carries only the name and the body digest; the password and the
+# identity fields travel in the POST body. The peer signature covers the query,
+# so the digest binds the body to it without changing the signature format.
 sub sesh_login_url {
 	my ($manager, $browser_tab_id, $signatorial, $login) = @_;
 	return $manager . '/sesh_check?silence=yes&neighbour=' . $browser_tab_id

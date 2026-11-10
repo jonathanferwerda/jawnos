@@ -59,6 +59,10 @@ use IPC::Open2 qw(open2);
 
 our ($APP, $ws_live_window, $encoder, $decoder, $tuuid, $thread_uuid, $universal_splitter, $database, $sql, $remote_input_clipboard, $config_file, $config, $logfile, $log, $environment, $random_caching_string, $duty_file, $main_process, $device, $user_agent, %time_machine_guide_cache, @media_unlock_apps, %help_search_tables, %media_type_for_ext, %file_relay_down, @appointments, @results, %market_payment_family, @manager_bundle_files, $manager_bundle_cache, $js_minifier, %app_release_sha, %folders_desk_not_app, $jg_body, $remote_input_geometry_at, $remote_input_geometry_cache, %remote_input_ua, %remote_input_ws, %remote_input_rm, %remote_input_ws_failed, $public_ip_memo, $coding_protocols, $coding_protocols_mtime, $app_schema_done, $fingerprint_checked_at, $fingerprint_ok, %padlock_time_memo, %credential_browser_app, %app_gate_shadow_seen, $ws_server, %mailws_untrusted_rate);
 
+# The bytes a key press should send down the pty. The browser now sends those
+# bytes itself, so this only has to keep an older page working: a whole-string
+# key name is mapped, a modifier name is dropped (it is not input), and any
+# other string passes through unchanged.
 sub terminal_input_bytes {
 	my $input = shift;
 	return '' unless defined $input && length $input;
@@ -81,6 +85,8 @@ sub terminal_input_bytes {
 	return $input;
 }
 
+# Only values that can name a host, an ssh login and a port get through; the
+# start below passes them as separate argv entries, never through a shell.
 sub terminal_shell_clean {
 	my ($spec) = @_;
 	$spec = {} unless ref $spec eq 'HASH';
@@ -117,6 +123,8 @@ sub terminal_session_id_clean {
 	return $id;
 }
 
+# The live session list the Terminal settings panel shows. The websocket worker
+# writes it, the manager route reads it; an ended shell is removed here.
 sub terminal_sessions_note {
 	my ($id, $session, $state) = @_;
 	my $now = &subs::rightNow();
@@ -290,6 +298,7 @@ sub terminal_session_status {
 	} });
 }
 
+# Kept for callers from older code: sessions now start when a window opens.
 sub terminal_pty_runner {
 	return;
 }
@@ -433,10 +442,17 @@ sub websocket_sender($wsm) {
 	return $return_msg;
 }
 
+# The construct columns in the fixed order a channel tuple names them: the
+# plural keys sorted, which is what mail_channel_key joins and what a list
+# row's uuid concatenates. Changing $gb::social_constructs changes the tuple,
+# so every place that builds or splits one asks here instead of naming six.
 sub mail_construct_columns() {
 	return map { $gb::social_constructs->{$_}->{'sing'} } sort keys %{$gb::social_constructs};
 }
 
+# The social constructs with every value filled: what the client leaves out
+# falls back to the same default the mailbox reader reaches for, so a tab with
+# its pickers hidden (a phone) still has an address a message can find.
 sub mailws_constructs($picker) {
 	my $constructs = {};
 	foreach my $k ( keys %{$gb::social_constructs} ) {
@@ -447,11 +463,19 @@ sub mailws_constructs($picker) {
 	return $constructs;
 }
 
+# The house's trust rule for words: a citizen or a resident holds a ticket
+# this house issued and named, so what they write is filed - stored, synced
+# and readable later like any mail. A guest is a visitor whose words are only
+# ever heard live by whoever is tuned in: they are never written down.
+# Moving a privilege between the two lists is the whole policy.
 sub mailws_trusted($c) {
 	my $privilege = $c->session('privilege');
 	return ($privilege eq 'citizen' || $privilege eq 'resident') ? 1 : 0;
 }
 
+# A dialled picker: at least one social construct chosen by hand. A tab with
+# an empty picker has no dial of its own - a guest on their ticket, say - not
+# a tab dialled to the defaults.
 sub mailws_picker_dialled($picker) {
 	return 0 unless ref $picker eq 'HASH';
 	foreach my $k ( keys %{$gb::social_constructs} ) {
@@ -460,10 +484,14 @@ sub mailws_picker_dialled($picker) {
 	return 0;
 }
 
+# One tuple of construct values names one thread; this is how two dials are
+# compared, whatever order their keys arrived in.
 sub mail_channel_key($constructs) {
 	return join "\x1f", map { defined $constructs->{$_} ? $constructs->{$_} : '' } sort keys %{$gb::social_constructs};
 }
 
+# The dials this house advertises to guests, each filled to the same six
+# values a message carries, so comparing one to a dial is comparing threads.
 sub mail_public_channels() {
 	my $channels = eval { return decode_json &subs::setting_grabber({ app => 'mail', setting => 'public_channels' }) } || [];
 	my @out;
@@ -473,6 +501,8 @@ sub mail_public_channels() {
 	return \@out;
 }
 
+# A channel is public only when the house advertised exactly this tuple; a
+# guest may watch or write to advertised dials and nothing else.
 sub mail_public_channel_allows($picker) {
 	return 0 unless &mailws_picker_dialled($picker);
 	my $key = &mail_channel_key(&mailws_constructs($picker));
@@ -482,6 +512,7 @@ sub mail_public_channel_allows($picker) {
 	return 0;
 }
 
+# The human name of a dial: its construct values in the order the dial lists them.
 sub mail_channel_label($constructs) {
 	return join ' ', map { &subs::format_name($constructs->{$_->{'name'}}) }
 		sort { $a->{'order'} <=> $b->{'order'} } values %{$gb::social_constructs};
@@ -497,6 +528,10 @@ sub mailws_untrusted_throttle($id) {
 	return $entry->{'count'} <= 20 ? 1 : 0;
 }
 
+# What one mail tab is watching when it connects: a guest watches a dial the
+# house advertises when they tuned one, and their ticket otherwise; everyone
+# else watches whichever of a phone number, an email address, a contact or a
+# social construct chain their section put in the url.
 sub mailws_address($c, $picker) {
 	my $address = {};
 	if ($c->session('privilege') eq 'guest' && $c->session('ticket_uuid')) {
@@ -527,6 +562,8 @@ sub mailws_address($c, $picker) {
 	return $address;
 }
 
+# The constructs a message is addressed to - undef when it wears a phone, an
+# email or a contact instead.
 sub mailws_message_constructs($m) {
 	return undef if $m->{'phone'} || $m->{'email'} || $m->{'mail_contact'} || $m->{'contact'};
 	my $picker = $m->{'picker'};
@@ -557,6 +594,11 @@ sub mailws_address_matches($address, $m, $constructs) {
 	return 1;
 }
 
+# Deliver one mail message to every tab it is addressed to. The registry is
+# flat now - one entry per browser tab - so the address does the matching
+# instead of a hand-walked nest of hash levels, and every door a message can
+# come through (a browser, the mail unix socket, the depublicizer) ends up
+# here.
 sub mailws_sender($m) {
 	my $constructs = &mailws_message_constructs($m);
 	my $pmsg = encode_json $m;

@@ -59,6 +59,13 @@ use IPC::Open2 qw(open2);
 
 our ($APP, $ws_live_window, $encoder, $decoder, $tuuid, $thread_uuid, $universal_splitter, $database, $sql, $remote_input_clipboard, $config_file, $config, $logfile, $log, $environment, $random_caching_string, $duty_file, $main_process, $device, $user_agent, %time_machine_guide_cache, @media_unlock_apps, %help_search_tables, %media_type_for_ext, %file_relay_down, @appointments, @results, %market_payment_family, @manager_bundle_files, $manager_bundle_cache, $js_minifier, %app_release_sha, %folders_desk_not_app, $jg_body, $remote_input_geometry_at, $remote_input_geometry_cache, %remote_input_ua, %remote_input_ws, %remote_input_rm, %remote_input_ws_failed, $public_ip_memo, $coding_protocols, $coding_protocols_mtime, $app_schema_done, $fingerprint_checked_at, $fingerprint_ok, %padlock_time_memo, %credential_browser_app, %app_gate_shadow_seen, $ws_server, %mailws_untrusted_rate);
 
+# The warehouse as one ledger of moves, stock and money together. A stock row is
+# already signed - a pull is negative, an addition positive - and a money move is
+# the ledger row mirrored from the transaction that produced it (an expense is
+# stored negative, an income positive, a transfer as both), so a single list says
+# what left and what came in. The balance snapshots (kind inventory) are anchors,
+# not moves, and are left out. Filters: places (stock only - money carries none),
+# search, limit.
 sub warehouse_moves($opts) {
 	my $limit = $opts->{'limit'} || 300;
 	my $search = $opts->{'search'};
@@ -145,6 +152,12 @@ sub warehouse_money_mirror($row) {
 	return &subs::warehouse_money_mirror($row);
 }
 
+# An appointment's own quantity can move stock. The app names the item, unless
+# its Stock Item setting names another. A record moves at once; a start/stop
+# session moves when it stops, using the amount typed at the start, so a
+# cancelled session never touches the shelf. A consume takes only what is on
+# hand at that place; the rest is usage - the Coke that came from outside the
+# warehouse is counted, but does not make the shelf negative.
 sub appointment_stock_movement {
 	my ($c, $app, $type, $quantity, $unit, $timestamp, $uuid) = @_;
 	return unless defined $app && length $app;
@@ -190,6 +203,11 @@ sub appointment_stock_movement {
 	}
 }
 
+# An edit to a record documents the difference as a move: a return to the shelf or
+# a take from it, never a rewrite of the original rows. The levels end up where the
+# edit says, and the ledger still shows what happened. The original movement keeps
+# its uuid, time and reason; the adjustment carries reason 'returned_to_shelf',
+# 'taken_from_shelf' or 'edit_adjust_unstocked'.
 sub appointment_edit_stock_row {
 	my ($app, $uuid, $item, $unit, $place, $quantity, $reason, $timestamp) = @_;
 	return unless defined $item && length $item && $quantity;
@@ -389,6 +407,8 @@ sub store_maker($c) {
 
 }
 
+# How many items a category holds, counting only the ones this viewer may see.
+# The Store uses this to hide empty shelves and to print a count beside each one.
 sub store_category_item_count {
 	my ($category, $privilege) = @_;
 	return 0 unless defined $category && length $category;
@@ -403,6 +423,8 @@ sub store_category_item_count {
 	return $row ? ($row->{'c'} + 0) : 0;
 }
 
+# One distinct item per type, so a chip can say how much it would show. A row
+# that carries both a pos and a mab value must not be counted twice.
 sub store_type_counts {
 	my ($privilege, $category_apps) = @_;
 	my %counts = map { $_ => 0 } @gb::store_types;
@@ -426,6 +448,9 @@ sub store_type_counts {
 	return \%counts;
 }
 
+# Item counts for the direct children of a category (or of a subcategory). The
+# $field is the settings key the items carry at that depth: `subcategory` for the
+# first level, `subcategory1` for the next, and so on.
 sub store_subcategory_counts {
 	my ($category, $field, $privilege) = @_;
 	$field = 'subcategory' unless defined $field && $field =~ /^subcategory\d*$/;
@@ -541,6 +566,9 @@ sub quote_id_maker($quote) {
 	return $id;
 }
 
+# Move the stock a quote/invoice/sale represents through the warehouse. $sign
+# is +1 to apply the movement and -1 to reverse it (when the document is
+# deleted or moved back to a quote). Only fires when the item has a place.
 sub store_quote_stock($appt,$sign) {
 	return unless $appt && $appt->{'data'};
 	my $q = eval { return decode_json $appt->{'data'} } || {};

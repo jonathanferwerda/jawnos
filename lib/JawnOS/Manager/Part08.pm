@@ -256,6 +256,13 @@ sub editor_maker($c) {
 	return $contents;
 }
 
+# Where the built bundle is memoised. The in-process cache below only ever helps
+# the worker that built it: production runs several prefork workers and recycles
+# each after `accepts`, so a per-process memo meant every fresh worker shelled
+# out to terser again -- several seconds on the ~1.3MB concatenation -- and a
+# page load stalled whenever it landed on a cold one. Sharing the built bytes on
+# disk (keyed by the source signature) means terser runs once per code change for
+# the whole machine, and every other worker just reads the file.
 sub manager_bundle_paths {
 	my $dir = &subs::home('~/.president');
 	unless (-d $dir) {
@@ -380,6 +387,9 @@ sub password_maker($c) {
 	return $secret;
 }
 
+# The login body: the password and identity fields ride the POST body, and the
+# digest is appended to the query the peer signature covers. Length-prefixing
+# keeps the canonical form unambiguous even if a value contains & or =.
 sub sesh_body_digest {
 	my ($fields) = @_;
 	require Digest::SHA;
@@ -393,6 +403,11 @@ sub sesh_body_digest {
 	return $sha->hexdigest;
 }
 
+# --- Network app ------------------------------------------------------------
+# The Network window is a thin client over scripts/jawnos_network.pl. The helper
+# owns the fixed Linux command set (iwctl, ip, tailscale, systemctl) and answers
+# JSON, so no interface name, SSID or passphrase ever reaches a shell. The phone
+# calls its own window.JawnNetwork bridge in the browser and never comes here.
 sub network_helper {
 	my ($arguments, $stdin) = @_;
 	return fixed_helper_answer('scripts/jawnos_network.pl', $arguments, $stdin, 'network');
@@ -436,6 +451,12 @@ sub pay_setting_allowed {
 	return (grep { $_ eq $name } @allowed) ? 1 : 0;
 }
 
+# ---- crypto payments on a Store invoice -------------------------------------
+# The seller shows a payment request, the buyer sends the coin, and the seller
+# records it here. A payer's PAY1Z proof is checked against their crest and
+# countersigned with the house's; the txid is carried, not chain-checked. The
+# money side is an ordinary income transaction on the wallet account, so every
+# statement keeps working.
 sub house_bio_device {
 	my ($except) = @_;
 	my $rows = &subs::db_select('paired_devices', undef, { status => 'active' })->hashes;
@@ -480,6 +501,12 @@ sub store_invoice_balance {
 	return ($data, $balance + 0, $paid + 0);
 }
 
+# ---- passkeys (WebAuthn) ---------------------------------------------------
+# Registration needs a signed-in session and a person; login is the one thing
+# that must work before anyone is signed in, so those two routes are public in
+# app_public_path. A passkey session is marked webauthn so the app gate admits
+# it: a key held by the platform, bound to this house's origin, is a stronger
+# door than a ticket and is exactly what the gate exists to protect.
 sub webauthn_person($c) {
 	my $uuid = $c->session('person_uuid') || '';
 	if (length $uuid) {
@@ -524,6 +551,10 @@ sub store_setting_list() {
 	return $settings;
 }
 
+# Where a mugshot is rendered from. Older installs still hold a data URI in
+# me.mugshot; those are returned as-is. A name is served by the public /mugshot
+# route, which is where the image file actually lives (sealed, under
+# photo_location/me). Returns undef when nothing is set.
 sub mugshot_source($dev) {
 	$dev = &subs::device_setter() unless defined $dev && length $dev;
 	my $name = &subs::setting_grabber({ app => 'me', setting => 'mugshot', device => $dev });
@@ -532,6 +563,12 @@ sub mugshot_source($dev) {
 	return '/mugshot?device=' . Mojo::Util::url_escape($dev) . '&timestamp=' . &subs::rightNow();
 }
 
+# Code sync is a peer-key route, not a session route: a peer's cookie lapses,
+# and a gated reply silently stalls a sync. Both routes require a pinned key
+# (no trust-on-first-contact for a tree that can carry secrets) and are
+# restricted to the jawnos folder. The exclusion list is the gitignored/secret
+# side of the tree: .shots (the ticket and DB copies), the database, voices,
+# releases, personal pictures, generated build caches and the agent notes.
 sub code_sync_excludes {
 	return join ' ', map { "--exclude='$_'" } (
 		'jawnos/.git',
@@ -562,6 +599,9 @@ sub code_sync_tar {
 	return `tar czf - -C "$home" $excludes jawnos 2>/dev/null`;
 }
 
+# Extract only a tarball whose every member is under jawnos/; this keeps a
+# compromised or mistaken peer from writing .ssh, .president or anything else
+# in the home directory.
 sub code_sync_unpack {
 	my ($tmp, $home) = @_;
 	my @members = `tar tzf "$tmp" 2>/dev/null`;
@@ -620,6 +660,9 @@ sub app_release_lister {
 	return \@out;
 }
 
+# The voice models this machine can serve - the *.onnx files and their json under
+# voices/. Only the models are shared: the piper binary is per-arch and stays
+# local (say_piper_binary), so it is not listed here.
 sub voice_lister {
 	my $dir = &subs::home('~/jawnos/voices');
 	my @out;
@@ -638,6 +681,9 @@ sub voice_lister {
 	return \@out;
 }
 
+# One encrypted batch of a table's rows: the wire unit of the v3 sync rail. The
+# cursor is the last rowid the caller already has, so a dropped tunnel costs the
+# batch, not the pull; the total is sent with the first batch for progress.
 sub sync_rows_batch {
 	my ($remote, $signatorial, $secret, $table, $cut, $after, $range) = @_;
 	my $url = $remote->{'manager'} . '/manager/sync_rows?signatorial=' . $signatorial
@@ -685,6 +731,9 @@ sub sync_rows_batch {
 	return ($batch, undef);
 }
 
+# One table's band map, over the same sealed peer rail. The map is a few integers
+# per band, so it is one request, not a cursor. An older peer has no route: that
+# is a plain failure and the caller falls back to the whole-table read.
 sub sync_buckets_batch {
 	my ($remote, $signatorial, $secret, $table, $band) = @_;
 	my $url = $remote->{'manager'} . '/manager/sync_buckets?signatorial=' . $signatorial

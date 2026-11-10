@@ -319,6 +319,9 @@ sub ocr_reader($c,$filename) {
 	return $ocr;
 }
 
+# Resolve a repo-relative path, refusing anything that climbs out of the tree or
+# reaches state the agent must not touch (git internals, local config, the blob
+# stores whose files are large binaries kept out of git).
 sub coding_path($rel) {
 	$rel = '' unless defined $rel;
 	$rel =~ s{^\./+}{};

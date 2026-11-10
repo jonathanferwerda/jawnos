@@ -59,6 +59,20 @@ use IPC::Open2 qw(open2);
 
 our ($APP, $ws_live_window, $encoder, $decoder, $tuuid, $thread_uuid, $universal_splitter, $database, $sql, $remote_input_clipboard, $config_file, $config, $logfile, $log, $environment, $random_caching_string, $duty_file, $main_process, $device, $user_agent, %time_machine_guide_cache, @media_unlock_apps, %help_search_tables, %media_type_for_ext, %file_relay_down, @appointments, @results, %market_payment_family, @manager_bundle_files, $manager_bundle_cache, $js_minifier, %app_release_sha, %folders_desk_not_app, $jg_body, $remote_input_geometry_at, $remote_input_geometry_cache, %remote_input_ua, %remote_input_ws, %remote_input_rm, %remote_input_ws_failed, $public_ip_memo, $coding_protocols, $coding_protocols_mtime, $app_schema_done, $fingerprint_checked_at, $fingerprint_ok, %padlock_time_memo, %credential_browser_app, %app_gate_shadow_seen, $ws_server, %mailws_untrusted_rate);
 
+# ---- the Guide's change path: update an appointment that already exists -------
+# A change names the appointment by its app (the app is the thing; its appointments
+# are its events), the latest one unless a title picks among them. The change is
+# staged the way a create is, so the person sees what will happen and confirms it,
+# and it is applied in place - an edit, not a new event.
+# The appointment a guide action names, or undef. The app is the thing; its
+# appointments are its events. Which one is picked by $opts: "which" is "upcoming"
+# (the next one) or "last" (the most recent past one); "at" is a named moment
+# ("yesterday around 3:30pm", "a week from now") matched to the closest
+# appointment; "title" is a match on the note; the latest by default.
+# The WHERE that names one construct's appointments. The stable id is preferred
+# when the caller has it, so a rename is not an identity change; rows written
+# before app_uuid existed still match by name, but only when they carry no id of
+# their own, so one construct's rows never answer for another's.
 sub guide_appointment_identity {
 	my ($app, $app_uuid) = @_;
 	$app = &subs::unformat_name($app || '');
@@ -94,6 +108,10 @@ sub guide_find_target($app, $opts) {
 	return $rows->[0];
 }
 
+# The fields a change would set, read from the person's words: "delay" pushes the
+# moment later by the length they gave, "when" moves it to a named time instead,
+# "duration" sets how long it lasts, "notes" replaces the note. Only the fields
+# actually named come back, so the change touches nothing else.
 sub guide_update_changes($target, $p) {
 	my %c;
 	if (defined $p->{'delay'} && $p->{'delay'} =~ /\S/) {
@@ -122,6 +140,7 @@ sub guide_length_words($ms) {
 	return $h . 'h' . ($m ? (' ' . $m . 'm') : '');
 }
 
+# Plain words for what a change does, shown in the chat and on the staged row.
 sub guide_update_summary($target, $changes) {
 	my $who = &subs::format_name($target->{'app'});
 	my @parts;
@@ -140,6 +159,9 @@ sub guide_update_summary($target, $changes) {
 	return join(', and ', @parts);
 }
 
+# Stage a change to an appointment that already exists, the shape promote applies:
+# the row names the appointment (kind "update", target_uuid) and carries the fields
+# to set.
 sub guide_stage_change($target, $changes, $summary) {
 	my $uuid = &subs::random_string_creator(40);
 	&subs::db_insert('staged_appointments', {
@@ -164,6 +186,9 @@ sub guide_stage_update($c, $params) {
 	return &guide_stage_change($target, $changes, &guide_update_summary($target, $changes));
 }
 
+# The app's running appointment: a start (or a recording) that has begun and has not
+# been stopped. This is what "stop it" means - the oldest such row, so a stale session
+# left open by a stop that never landed is the one "stop it" clears.
 sub guide_open_target($app, $app_uuid) {
 	$app = &subs::unformat_name($app || '');
 	my ($id_where, $id_args) = &guide_appointment_identity($app, $app_uuid);
@@ -174,6 +199,8 @@ sub guide_open_target($app, $app_uuid) {
 	return $rows->[0];
 }
 
+# When a stop should land: a length from now ("in 10 minutes", "10 minutes") is a
+# delay; "now" and anything else (a clock time) is read as a moment.
 sub guide_stop_when($when) {
 	my $now = &subs::rightNow();
 	return $now unless defined $when && $when =~ /\S/;
@@ -187,6 +214,11 @@ sub guide_stop_when($when) {
 	return &guide_when_ms($when);
 }
 
+# Stop the running appointment. Not staged: a stop is a control the person wants at
+# once, and it is on the undo stack. Stopping now goes the way the stop button does
+# (the writer stops the open start/record, finalises any recording and redraws the
+# header); a stop at a named moment is a scheduled stop - a stop_timestamp the alarm
+# clock fires when it comes.
 sub guide_stop_appointment($c, $params) {
 	my $app = $params->{'app'} || '';
 	my $target = &guide_open_target($app, $params->{'app_uuid'});
@@ -214,6 +246,8 @@ sub guide_stop_appointment($c, $params) {
 	return { ok => 1, app => $target->{'app'}, summary => 'stopping "' . &subs::format_name($target->{'app'}) . '" ' . $when_words };
 }
 
+# Stage a delete of one of the app's appointments. Staged like any other change, so
+# the person confirms which one goes; promote removes it.
 sub guide_stage_delete($c, $params) {
 	my $app = $params->{'app'} || '';
 	my $target = &guide_find_target($app, { title => $params->{'title'}, at => $params->{'when'}, which => $params->{'which'}, app_uuid => $params->{'app_uuid'} });
@@ -232,6 +266,8 @@ sub guide_stage_delete($c, $params) {
 	return { staged => $uuid, app => $target->{'app'}, kind => 'delete', summary => $summary, timestamp => $target->{'timestamp'} };
 }
 
+# The undo stack: one record per applied change, the appointment's fields as they
+# were before it, newest last. One setting, capped, so it syncs but cannot grow.
 sub guide_undo_push($rec) {
 	my $stack = eval { decode_json(&subs::setting_grabber({ app => 'me', setting => 'guide_undo' }) || '[]') } || [];
 	$stack = [] unless ref $stack eq 'ARRAY';
@@ -248,6 +284,10 @@ sub guide_undo_pop() {
 	return $rec;
 }
 
+# Redraw an app on screen the moment a change lands: the header a window shows
+# (appointment_header) and the open detail view. appt_header_printer also re-arms
+# the app's alarms through its header worker, so a moved appointment fires at its
+# new time.
 sub guide_refresh_app($app, $uuid) {
 	&subs::appt_header_printer({ app => $app, timestamp => &subs::rightNow() });
 	my $js = &Websocket::console_command('appointmentDetailGrabber', $app, $uuid);
@@ -255,6 +295,7 @@ sub guide_refresh_app($app, $uuid) {
 	&Websocket::send('server', { console => $js });
 }
 
+# Apply a staged change in place, remembering how to undo it, then redraw it.
 sub guide_promote_update($c, $row) {
 	my $changes = eval { decode_json($row->{'changes'} || '{}') } || {};
 	return { error => 'nothing to change' } unless ref $changes eq 'HASH' && scalar keys %{$changes};
@@ -284,6 +325,9 @@ sub guide_promote_update($c, $row) {
 	return { promoted => $row->{'uuid'}, uuid => $target->{'uuid'}, app => $target->{'app'}, kind => 'update', summary => $row->{'title'} };
 }
 
+# Apply a staged delete: remove the appointment it names the way the program always
+# deletes one - the file rows, the warehouse rows, a payment to unwind, and the
+# tombstone that tells the peers - then redraw the app.
 sub guide_promote_delete($c, $row) {
 	my $target = &subs::db_select('appointments', undef, { uuid => $row->{'target_uuid'} })->hash;
 	return { error => 'that appointment is gone' } unless $target;
@@ -299,6 +343,9 @@ sub guide_promote_delete($c, $row) {
 	return { promoted => $row->{'uuid'}, uuid => $target->{'uuid'}, app => $target->{'app'}, kind => 'delete', summary => $row->{'title'} };
 }
 
+# A schedule that waited for clarification: the appointment or bill is already
+# made, and this writes the repeats from the clarified phrase. The token names
+# the row the form left behind, so the Guide cannot schedule the wrong one.
 sub guide_apply_schedule($c, $token, $text) {
 	my $row = &subs::pending_schedule_get($token);
 	return { ok => 0, error => 'That schedule is no longer waiting; type it again in the form.' } unless $row;
@@ -356,6 +403,10 @@ sub _guide_fill {
 	return $v;
 }
 
+# ---- runtime (learned) verbs: the executor --------------------------------
+# Run one learned verb. Its row (help::learned_verbs) names a closed primitive
+# and the parameters; the model's own args may fill {placeholders} or override a
+# declared argument. It can never reach anything the primitive list does not name.
 sub guide_verb_execute($c, $action) {
 	my $name = $action->{'action'} // '';
 	my ($verb) = grep { $_->{'name'} eq $name } @{ &help::learned_verbs() };
@@ -432,6 +483,13 @@ sub guide_verb_execute($c, $action) {
 	return 'unknown primitive: ' . $prim;
 }
 
+# ---- the Coding agent: the Guide's self-healing half ---------------------
+# A closed-vocabulary agent that edits the repo and ships the change: read and
+# write files, run one checked command, bump the version, commit, push, restart.
+# Every verb is a fixed operation with its own guardrail (paths stay inside the
+# repo, commands are allow-listed), so the model can never reach a raw shell. It
+# runs server-side because git and the release routine have to.
+# The repo-relative form of a path, for recording what the agent touched.
 sub coding_rel($rel) {
 	$rel = '' unless defined $rel;
 	$rel =~ s{^\./+}{};
@@ -439,6 +497,8 @@ sub coding_rel($rel) {
 	return $rel;
 }
 
+# Run one coding action and hand back its observation as plain text. The verbs
+# are the same ones help::coding_prompt offers (gb::coding_tools).
 sub coding_execute($c, $action, $touched) {
 	my $a = $action->{'action'} // '';
 	if ($a eq 'list') {
@@ -613,6 +673,8 @@ sub coding_system_prompt {
 	return $system;
 }
 
+# A named conversation's recent turns, kept in one setting so the agent remembers
+# what it did last time without a table of its own.
 sub coding_conversation_load($name) {
 	my $rows = eval { decode_json &subs::setting_grabber({ app => '__president', setting => 'coding_conversation_' . $name }) } || [];
 	return ref $rows eq 'ARRAY' ? $rows : [];
@@ -629,6 +691,8 @@ sub guide_message_warranty($name) {
 	return &subs::guide_message_warranty($name);
 }
 
+# The Guide associate's threads, the same way (the Coding agent's thread is
+# saved by its own route; both kinds land in the one registry below).
 sub guide_conversation_load($name) {
 	my $rows = eval { decode_json &subs::setting_grabber({ app => '__president', setting => 'guide_conversation_' . $name }) } || [];
 	$rows = [] unless ref $rows eq 'ARRAY';
@@ -645,6 +709,12 @@ sub guide_conversation_save($name, $rows) {
 	&subs::setting_setter({ app => '__president', setting => 'guide_conversation_' . $name, value => encode_json $rows });
 }
 
+# ---- the agents list ---------------------------------------------------------
+# Every named conversation - the Coding agent's threads and the Guide
+# associate's - leaves a row in one registry setting: what to call it, when it
+# last spoke, how long it is, and a line of what it is about. The registry is
+# one setting so it syncs with the rest; the turns stay in the conversation's
+# own setting. The list is opened by double-pressing the Assistant button.
 sub agent_registry {
 	my $rows = eval { decode_json &subs::setting_grabber({ app => '__president', setting => 'agent_conversations' }) } || [];
 	return ref $rows eq 'ARRAY' ? $rows : [];
@@ -655,6 +725,8 @@ sub agent_registry_write {
 	&subs::setting_setter({ app => '__president', setting => 'agent_conversations', value => encode_json($rows) });
 }
 
+# A thread names itself the way a chat thread does: one small model call over
+# the first words, with a cut of them as the floor when no model is set.
 sub agent_title {
 	my ($kind, $text) = @_;
 	$text = '' unless defined $text;
@@ -684,6 +756,9 @@ sub agent_title {
 	return (length $out && length $out <= 60) ? $out : $fallback;
 }
 
+# Note a conversation: upsert its registry row. A row that has no title yet
+# gets one made from the thread's own words; every note carries the turn count
+# and a line of the last thing said.
 sub agent_registry_note {
 	my ($kind, $name, $turns) = @_;
 	return {} unless length($name || '');

@@ -59,6 +59,9 @@ use IPC::Open2 qw(open2);
 
 our ($APP, $ws_live_window, $encoder, $decoder, $tuuid, $thread_uuid, $universal_splitter, $database, $sql, $remote_input_clipboard, $config_file, $config, $logfile, $log, $environment, $random_caching_string, $duty_file, $main_process, $device, $user_agent, %time_machine_guide_cache, @media_unlock_apps, %help_search_tables, %media_type_for_ext, %file_relay_down, @appointments, @results, %market_payment_family, @manager_bundle_files, $manager_bundle_cache, $js_minifier, %app_release_sha, %folders_desk_not_app, $jg_body, $remote_input_geometry_at, $remote_input_geometry_cache, %remote_input_ua, %remote_input_ws, %remote_input_rm, %remote_input_ws_failed, $public_ip_memo, $coding_protocols, $coding_protocols_mtime, $app_schema_done, $fingerprint_checked_at, $fingerprint_ok, %padlock_time_memo, %credential_browser_app, %app_gate_shadow_seen, $ws_server, %mailws_untrusted_rate);
 
+# A record press may name its source (the media group's video/audio/screen
+# buttons do). Only the sources this build can actually run are accepted; an
+# empty or unknown value falls back to the app's own setting.
 sub record_source_param($source) {
 	$source = '' unless defined $source;
 	return '' unless $source =~ /^(?:video|video_front|audio|screen|security|system)$/;
@@ -210,6 +213,10 @@ sub record_audio_stop($data) {
 	return $filename;
 }
 
+# The time machine's phrase turned into a moment. A written date and a recognized
+# relative offset are read by subs::resolve_when / ago_calc; anything else - a
+# phrase neither can read, or one that lands exactly on the epoch without naming
+# it - is handed to the guide to interpret, and the view travels where it says.
 sub time_machine_read {
 	my ($spec, $timestamp, $deep) = @_;
 	return undef unless defined $spec && $spec =~ /\S/;
@@ -287,6 +294,8 @@ sub time_machine_resolve {
 	return $ms;
 }
 
+# A warranty is a moment ahead of the record: the same reader as the time
+# machine, but a bare length ("2 years", "-2y") runs forward rather than back.
 sub warranty_resolve {
 	my ($spec, $anchor, $deep) = @_;
 	return undef unless defined $spec && $spec =~ /\S/;
@@ -305,6 +314,9 @@ sub warranty_resolve {
 	return $read;
 }
 
+# A duration in milliseconds, from the compact form ("5m", "1h 30m") or the
+# words ("five minutes", "an hour and a half"). Always a positive length; the
+# caller applies the start/record accrual sign.
 sub duration_read {
 	my ($spec) = @_;
 	return undef unless defined $spec && $spec =~ /\S/;
@@ -334,6 +346,10 @@ sub time_preview_schedule {
 	return { text => &subs::ui('Next') . ': ' . join(', ', @say), dates => \@say, read => 1 };
 }
 
+# A staged appointment's time, read the same way the time machine reads a typed
+# time. A value already in milliseconds passes straight through; anything else
+# ("in 20 minutes", "jul 16", "next friday") is resolved by the one resolver the
+# clock uses, guide fallback and all, so a create lands where it says.
 sub guide_when_ms {
 	my ($when) = @_;
 	my $now = &subs::rightNow();
@@ -342,6 +358,12 @@ sub guide_when_ms {
 	return &time_machine_resolve($when, $now);
 }
 
+# A length the person gave ("5 minutes", "lasts 2h") as the tree stores it. Read
+# here rather than through time_abbrev_translator: that parser reads a compact unit
+# ("5m", "1h") but treats a number followed by a spelled-out word as a bare number -
+# minutes - so a model's "90 seconds" arrived as ninety minutes and "1 hour" as one
+# minute. A model writes words, so both forms are read here, and a phrase may name
+# several parts ("1 hour 30 minutes").
 sub guide_duration_ms {
 	my ($phrase, $type, $anchor) = @_;
 	return undef unless defined $phrase && $phrase =~ /\S/;
@@ -388,6 +410,8 @@ sub guide_duration_ms {
 	return (($type || '') =~ /^(?:start|record)$/) ? -int($total) : int($total);
 }
 
+# The words worth searching a phrase for: its nouns, with the small connective
+# words dropped, so "the last time I had a beer" searches for "beer".
 sub guide_time_keywords {
 	my ($spec) = @_;
 	$spec = lc($spec // '');
@@ -408,6 +432,7 @@ sub guide_time_keywords {
 	return @w;
 }
 
+# A one-line report of a help_search, for a prompt.
 sub help_search_summary {
 	my ($f) = @_;
 	my @bits;
@@ -419,6 +444,10 @@ sub help_search_summary {
 	return @bits ? join('; ', @bits) : 'nothing found';
 }
 
+# One search over the person's records: the appointments that match (by app, file
+# or notes), the files they carry, the first, newest and next such moments, and
+# any named thing in the content tables. This is the read behind the guide's find
+# action and the time machine's own fallback.
 sub help_search($q, $device = undef) {
 	$q = '' unless defined $q;
 	my $like = '%' . join('%', split /\s+/, $q) . '%';
@@ -474,6 +503,14 @@ sub help_search($q, $device = undef) {
 	return { query => $q, count => $visible_count, apps => \@apps, files => \@all, named => \@named, first => $first, last => $last, next => $next };
 }
 
+# A person's birthday. "<name>'s [next|last] [Nth] birthday" (and "when is/was
+# <name>'s birthday") names the annual occasion: the plain form is the next one to
+# come, "was"/"last" the last one that passed, and the Nth the year they turn N -
+# all counted here from the saved birthday (Configure -> App -> Birthdays). "when
+# was <name> born" and "the day <name> was born" name the actual date. Failing a
+# saved birthday the guide looks the person up (it knows "Abraham Lincoln's
+# birthday"). undef when the phrase is none of these or the date cannot be found,
+# so the guide still runs.
 sub person_birthday_of {
 	my ($spec, $timestamp) = @_;
 	my ($name, $n, $mod, $tense) = ('', undef, '', '');
@@ -511,6 +548,12 @@ sub person_birthday_of {
 	return (defined $this && $this >= $timestamp) ? $this : $in_year->($now[5] + 1901);
 }
 
+# The time machine's own fallback: read a phrase neither a written date nor a
+# relative offset could. The records are looked up first and handed to the guide,
+# which answers with the moment it means - or, when the phrase asks the person's
+# thing to be started, with an appointment it has it write (through
+# appointment_writer, so alarms, budgets and any embedded relay all fire).
+# Without a guide model the phrase is left unread (undef).
 sub guide_time_machine {
 	my ($spec, $timestamp) = @_;
 	my $key = lc $spec;
@@ -608,6 +651,11 @@ sub timestamp_adjuster($c) {
 	return $timestamp;
 }
 
+# The app's camera bridge (window.JawnCamera) writes its capture here, in the
+# Termux home both processes share, and the page posts only the path. Base64 of
+# a real phone photo was several megabytes through evaluateJavascript, which the
+# WebView's binder transaction cannot carry - the camera opened and the answer
+# never arrived.
 sub native_capture_dir() {
 	# `home()` only expands a leading ~; a bare relative path stayed relative, so
 	# the app's always-absolute staged path could never match it (the capture was
@@ -626,6 +674,8 @@ sub native_capture_spelling($path) {
 	return $path;
 }
 
+# Accept only a plain file directly inside the staging directory: the page names
+# the path, so a traversal or a link to somewhere else must not be followed.
 sub native_capture_claim($path) {
 	return undef unless defined $path && length $path;
 	my $name = $path;

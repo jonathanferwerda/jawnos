@@ -59,6 +59,10 @@ use IPC::Open2 qw(open2);
 
 our ($APP, $ws_live_window, $encoder, $decoder, $tuuid, $thread_uuid, $universal_splitter, $database, $sql, $remote_input_clipboard, $config_file, $config, $logfile, $log, $environment, $random_caching_string, $duty_file, $main_process, $device, $user_agent, %time_machine_guide_cache, @media_unlock_apps, %help_search_tables, %media_type_for_ext, %file_relay_down, @appointments, @results, %market_payment_family, @manager_bundle_files, $manager_bundle_cache, $js_minifier, %app_release_sha, %folders_desk_not_app, $jg_body, $remote_input_geometry_at, $remote_input_geometry_cache, %remote_input_ua, %remote_input_ws, %remote_input_rm, %remote_input_ws_failed, $public_ip_memo, $coding_protocols, $coding_protocols_mtime, $app_schema_done, $fingerprint_checked_at, $fingerprint_ok, %padlock_time_memo, %credential_browser_app, %app_gate_shadow_seen, $ws_server, %mailws_untrusted_rate);
 
+# The whole-track loudness baseline: one ffmpeg pass over the audio, measuring
+# the mean and peak level. The mean is the track's own loudness; a single gain
+# computed from it preserves the dynamics inside the track instead of squeezing
+# dialogue and action towards each other every second.
 sub media_loudness_measure_path($path) {
 	my $out = '';
 	eval {
@@ -92,6 +96,8 @@ sub media_loudness_cached($path) {
 	return (ref $cached eq 'HASH' && defined $cached->{'mean_volume'}) ? $cached : undef;
 }
 
+# Answer with a cached measurement when there is one, otherwise measure the
+# plaintext path and cache the result against the original file's identity.
 sub media_loudness_response($c, $measure_path, $identity_path) {
 	my $identity = defined $identity_path && length $identity_path ? $identity_path : $measure_path;
 	my $cached = &media_loudness_cached($identity);
@@ -109,6 +115,13 @@ sub media_loudness_response($c, $measure_path, $identity_path) {
 	return;
 }
 
+# Making a thumbnail means decrypting the whole original and running
+# ImageMagick inside the request. A gallery asks for a screenful at once, so
+# every prefork worker ended up doing that (or sleeping on the per-appointment
+# priority lock) and the UI's own requests waited behind them - the "web UI
+# froze" reports. Only one generation runs per machine; a request that finds
+# the slot taken answers at once with a placeholder, and the next view gets the
+# finished thumbnail because it is stored in the appointment.
 sub thumb_generation_slot {
 	my $path = $gb::tmp_dir . '/thumb_generation.lock';
 	open(my $fh, '>>', $path) or return undef;
@@ -125,6 +138,11 @@ sub thumb_placeholder {
 	$c->render(data => $png);
 }
 
+# A corrupt file or a stuck decoder used to hold the worker forever; a
+# thumbnail is not worth an unanswered request.
+# The app answers a thumbnail in one bridge call (M3). undef means there is no
+# bridge (a desktop) or the file is not something it can draw, and the caller
+# runs its ffmpeg | magick pipeline exactly as before.
 sub native_thumb_png {
 	my ($path, $size, $at_ms) = @_;
 	return undef unless defined $path && length $path;
@@ -146,6 +164,12 @@ sub run_thumb_command {
 	return $out;
 }
 
+# A remote track is streamed to the player as it arrives. The ordinary relay
+# reads the whole body into a scalar and hands it to render(): a film on an
+# archive drive is gigabytes, so the browser waited for the entire download,
+# the manager held two copies of it, and every seek re-read the whole file.
+# The peer's Range answer is passed through, so <video> can start at once and
+# seek; only /play takes this path (pictures stay on the bounded relay above).
 sub remote_relay_media($c) {
 	my $agent = &subs::remote_agent_for($c->param('remote_uuid'));
 	if ($agent->{'error'} || !$agent->{'manager'}) {

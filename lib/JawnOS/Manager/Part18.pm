@@ -59,6 +59,11 @@ use IPC::Open2 qw(open2);
 
 our ($APP, $ws_live_window, $encoder, $decoder, $tuuid, $thread_uuid, $universal_splitter, $database, $sql, $remote_input_clipboard, $config_file, $config, $logfile, $log, $environment, $random_caching_string, $duty_file, $main_process, $device, $user_agent, %time_machine_guide_cache, @media_unlock_apps, %help_search_tables, %media_type_for_ext, %file_relay_down, @appointments, @results, %market_payment_family, @manager_bundle_files, $manager_bundle_cache, $js_minifier, %app_release_sha, %folders_desk_not_app, $jg_body, $remote_input_geometry_at, $remote_input_geometry_cache, %remote_input_ua, %remote_input_ws, %remote_input_rm, %remote_input_ws_failed, $public_ip_memo, $coding_protocols, $coding_protocols_mtime, $app_schema_done, $fingerprint_checked_at, $fingerprint_ok, %padlock_time_memo, %credential_browser_app, %app_gate_shadow_seen, $ws_server, %mailws_untrusted_rate);
 
+# --- Bank statement import and reconciliation ------------------------------
+# A statement is read into dated, signed lines, matched against the money the
+# ledger already holds for one account, and shown as a screen where a person
+# settles the rest. Reconciling writes the statement's ending balance as an
+# inventory anchor, which is the number the Budget balance is measured from.
 sub bank_date_ms {
 	my ($d,$order) = @_;
 	return undef unless defined $d && length $d;
@@ -311,6 +316,9 @@ sub bank_statement_parse {
 	return &bank_statement_parse_csv($text,$date_order);
 }
 
+# The money the ledger already holds for the account at the statement's end:
+# its last inventory anchor plus every transaction after it. Purchase rows are
+# breakdowns, not moves, so only type='transaction' is read.
 sub bank_ledger_balance {
 	my ($account,$end) = @_;
 	my $anchor = &subs::db_query("select amount, timestamp from appointments where account=? and movement='inventory' and type='transaction' and cast(timestamp as integer) <= cast(? as integer) order by cast(timestamp as integer) desc limit 1", $account, $end)->hashes->[0];
@@ -321,6 +329,12 @@ sub bank_ledger_balance {
 	return $balance;
 }
 
+# Pair each bank line with at most one ledger row of the same amount within three
+# days; the closest date wins. A line the ledger only partly holds - an e-transfer
+# whose service charge was recorded on its own, as Libro writes it - is then
+# settled from the few rows that make it up, and the screen records only the
+# remainder. Rows left over are the money in Budget that the statement does not
+# show.
 sub bank_reconcile_match {
 	my ($lines,$candidates) = @_;
 	my $used = {};
@@ -369,6 +383,11 @@ sub bank_reconcile_match {
 	return \@outstanding;
 }
 
+# The merchant memory: the app a description has consistently been filed under.
+# It reads the old transactions' vendor (Libro writes 77 Vape Wyoming as
+# 77_vape), then their item, then their app, and matches those words against a
+# statement line. A suggestion is only a default - the line still waits to be
+# confirmed.
 sub bank_merchant_tokens {
 	my $s = shift || '';
 	$s = lc $s;
@@ -414,6 +433,8 @@ sub bank_merchant_lookup {
 	return $best;
 }
 
+# The pair of two legs of one transfer is the other side of the same move, so a
+# missing leg is recorded as that transfer rather than as a new expense.
 sub bank_reconcile_result {
 	my ($account,$lines,$filename,$file_balance,$parse_error,$statement_end) = @_;
 	my ($min,$max);
@@ -540,6 +561,10 @@ sub bank_reconcile_result {
 	};
 }
 
+# Write the decisions of a reconciliation: each line left on Record becomes a
+# transaction, then the statement's closing balance becomes the account's newest
+# inventory anchor. Nothing is read back from the browser to decide this, so the
+# same routine can run on a copy of the database in a test.
 sub budget_reconcile_apply {
 	my ($account,$statement_end,$ending,$lines) = @_;
 	$lines = [] unless ref $lines eq 'ARRAY';
@@ -622,6 +647,10 @@ sub budget_reconcile_apply {
 	return { recorded => $recorded, anchored => $anchored, balance => &bank_ledger_balance($account, &subs::rightNow()) };
 }
 
+# --- Financial statements --------------------------------------------------
+# The cash-basis statements read the same ledger the Budget view does: each
+# account's money moves (type='transaction'), grouped by the app that carries
+# the category. Nothing here writes.
 sub accounting_moves {
 	my ($accounts,$from,$to) = @_;
 	my @rows;
@@ -632,6 +661,9 @@ sub accounting_moves {
 	return \@rows;
 }
 
+# Open invoices (not quotes) at a moment, with the balance and the age of each.
+# There is no due date on an invoice, so the age is counted from the day it was
+# written; the screen says so.
 sub accounting_receivables {
 	my $to = shift;
 	my $returner = { rows => [], total => 0, count => 0, buckets => { current => 0, '31_60' => 0, '61_90' => 0, 'over_90' => 0 } };

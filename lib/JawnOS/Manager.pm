@@ -3,7 +3,6 @@ package Manager;
 use strict;
 use warnings ;#'uninitialized';
 
-
 use Mojo::Base 'Mojolicious::Controller';
 use utf8;
 use feature 'signatures';
@@ -262,14 +261,6 @@ if ($device eq 'mobile') {
 	&subs::setting_setter({ app => '__president', setting => 'remote_upgrade', value => '' })
 		if &subs::remote_upgrade_marker_reapable($up);
 }
-
-# A record press may name its source (the media group's video/audio/screen
-# buttons do). Only the sources this build can actually run are accepted; an
-# empty or unknown value falls back to the app's own setting.
-
-
-
-
 
 # What the guide made of a phrase the time machine could not read; cached per
 # phrase so a typed word the poll re-sends every cycle costs one model call, not

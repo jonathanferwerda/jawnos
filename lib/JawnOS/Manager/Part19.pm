@@ -59,6 +59,10 @@ use IPC::Open2 qw(open2);
 
 our ($APP, $ws_live_window, $encoder, $decoder, $tuuid, $thread_uuid, $universal_splitter, $database, $sql, $remote_input_clipboard, $config_file, $config, $logfile, $log, $environment, $random_caching_string, $duty_file, $main_process, $device, $user_agent, %time_machine_guide_cache, @media_unlock_apps, %help_search_tables, %media_type_for_ext, %file_relay_down, @appointments, @results, %market_payment_family, @manager_bundle_files, $manager_bundle_cache, $js_minifier, %app_release_sha, %folders_desk_not_app, $jg_body, $remote_input_geometry_at, $remote_input_geometry_cache, %remote_input_ua, %remote_input_ws, %remote_input_rm, %remote_input_ws_failed, $public_ip_memo, $coding_protocols, $coding_protocols_mtime, $app_schema_done, $fingerprint_checked_at, $fingerprint_ok, %padlock_time_memo, %credential_browser_app, %app_gate_shadow_seen, $ws_server, %mailws_untrusted_rate);
 
+# Open bills at a moment. A bill is a money row on the payables account (money
+# owed, not money moved); a payment is a bank move that names the bill it
+# settles in source_uuid. There is no due date on a bill, so the age is counted
+# from the day it was written; the screen says so.
 sub accounting_payables {
 	my $to = shift;
 	# a schedule whose date has come is a real bill; make them before reading
@@ -103,6 +107,10 @@ sub accounting_payables {
 	return $returner;
 }
 
+# --- Recurring bills -------------------------------------------------------
+# A schedule is a template, not a bill. It lives in a setting so it needs no
+# table of its own, and each due date becomes a real bill keyed by the schedule
+# and that date, so running the schedules twice cannot double a bill.
 sub payable_schedules {
 	my $raw = &subs::setting_grabber({ app => 'budget', setting => 'payable_schedules' });
 	my $list = eval { decode_json $raw || '[]' } || [];
@@ -196,6 +204,11 @@ sub payable_schedule_run {
 	return $made;
 }
 
+# --- Notifications that name a payment -------------------------------------
+# A bank's "you spent $29.38 at PUBLIC MOBILE SELF" is a bill that has already
+# been paid. Match it, suggest the app the house has used for that merchant, and
+# offer one OK. The bill's uuid is derived from the notification's own key, so a
+# notification stored twice (the phone and the mirror) is still one bill.
 sub notification_account {
 	my $n = shift;
 	my $key = $n->{'key'} || '';
@@ -214,6 +227,9 @@ sub notification_bill_uuid {
 	return 'note-' . &subs::md5_sum($seed);
 }
 
+# What a notification names: an amount and the merchant it was paid to. It is
+# only a payment when a spending verb sits beside the amount, so "you have $0.00
+# left" is not one.
 sub notification_payment_of {
 	my $n = shift;
 	my $msg = $n->{'message'} || '';
@@ -237,6 +253,8 @@ sub payable_dismissed_keys {
 	return map { $_ => 1 } @{$list};
 }
 
+# Remember that a notification is not a bill. The undo of a booked notification
+# is the same decision, so a key dismissed here is never booked again.
 sub payable_dismiss_add {
 	my @keys = grep { defined $_ && length $_ } @_;
 	return 0 unless scalar @keys;
@@ -252,6 +270,9 @@ sub payable_dismiss_add {
 	return $changed;
 }
 
+# The same calendar day, in the house's own local time. A statement line is
+# stamped with the purchase date, so an import and the notification that
+# announced it share a day even when the import ran hours later.
 sub notification_same_day {
 	my ($a,$b) = @_;
 	return 0 unless $a && $b;
@@ -260,6 +281,12 @@ sub notification_same_day {
 	return ($x[5] == $y[5] && $x[4] == $y[4] && $x[7] == $y[7]) ? 1 : 0;
 }
 
+# Has this purchase already been written as money leaving the account? A
+# statement import, a reconciliation or a typed transaction records the same
+# payment as an expense; a bill and its payment on top of that would take the
+# money out twice. The match is the account, the amount and the day, and the
+# merchant when the recorded row names one. The day is what keeps today's coffee
+# from looking like yesterday's.
 sub notification_already_recorded {
 	my ($n,$payment,$account) = @_;
 	my $timestamp = ($n->{'timestamp'} || 0) + 0;
@@ -280,6 +307,12 @@ sub notification_already_recorded {
 	return 0;
 }
 
+# Book every qualifying notification. This is the clickless path: a payment the
+# bank has already made is a bill raised and settled in the same breath, so it
+# needs no prompt. Only a notification from a bank account the house knows is
+# booked, because that is what makes the payment leg real money leaving an
+# account. The bill's uuid comes from the notification's key, so a duplicate row
+# (phone and mirror) books once, and a row already booked is skipped.
 sub notification_payable_autobook {
 	my $rows = shift;
 	$rows = &subs::db_query('select * from notifications order by cast(timestamp as integer) desc limit 400')->hashes || [] unless $rows;
@@ -330,12 +363,19 @@ sub notification_payable_autobook {
 	return $made || 0;
 }
 
+# The bills the notifications made, newest first, so the screen can show what it
+# booked and offer an undo.
 sub notification_booked_bills {
 	my $limit = shift || 10;
 	my $rows = &subs::db_query("select w.*, (select p.account from warehouse p where p.kind='money' and p.movement='payment' and p.source_uuid=w.uuid order by p.timestamp limit 1) as pay_account from warehouse w where w.kind='money' and w.movement='payable' and substr(w.uuid,1,5)='note-' order by cast(w.timestamp as integer) desc limit ?", $limit)->hashes || [];
 	return $rows;
 }
 
+# The accrual side of the statements. Income and expenses are what the journal
+# posted - an invoice's revenue, a bill's cost, a stocked item's cost of goods -
+# so the income statement agrees with the Trial Balance. A row whose account is
+# a bank account outside the chosen set is left out, so the account filter still
+# means something; invoices and bills have no bank account and are house-wide.
 sub accounting_journal_report {
 	my ($accounts,$from,$to,$pfrom,$pto) = @_;
 	my @selected = grep { defined $_ && length $_ } @{$accounts || []};
@@ -547,6 +587,9 @@ sub accounting_reports {
 	};
 }
 
+# A bill is money owed, not money moved, so it is written on the payables
+# account and the journal carries the expense now and the payable until a
+# payment settles it.
 sub payable_amount {
 	my $value = shift;
 	$value = '' unless defined $value;
@@ -554,6 +597,13 @@ sub payable_amount {
 	return $value + 0;
 }
 
+# A circumstance's own reading, written the way the budget panel shows it: a base
+# mode (occurences, duration, total, quantity) wears that mode's formatter, and a
+# measure wears its own name, the way the autocalc writes one ("8681.139steps").
+# The lookup is guarded on purpose: a bare chained deref of an absent measure
+# would autovivify the key in %{$gb::budget_modes}, and then every later
+# budget_calculator in this process would take the measure for a base mode and
+# skip reading it (its budget value came back undef).
 sub budget_value_formatter {
 	my ($circumstance, $value) = @_;
 	my $mode = $gb::budget_modes->{$circumstance};

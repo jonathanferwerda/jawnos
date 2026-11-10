@@ -77,6 +77,12 @@ sub database_vacuum_bag() {
 	return @unique_settings;
 }
 
+# Merge one table's rows into the live database. The row source is a closure so the
+# encrypted-snapshot path (rowid batches from a temp SQLite) and the row-stream path
+# share every table-specific rule: uuid upsert, protected settings, utility
+# controller keys, window state, continent temporary rows, file mirrors, deletions.
+# The body keeps its original `next` statements: a one-pass ROW label makes a row's
+# `next` leave just that row, while a `next` inside a nested loop still binds to it.
 sub merge_table_rows {
 	my ($ctx, $q, $next_row, $results_size, $count, $table_total, $expected) = @_;
 	my $configuration = $ctx->{'configuration'};
@@ -521,6 +527,9 @@ sub merge_table_rows {
 	return $merge_short;
 }
 
+# The post-merge work shared by the snapshot path and the row-stream path: refresh
+# the header/budget for appointments that moved, apply the deletions that came with
+# the pull, and drop the relational caches an app's settings invalidate.
 sub merge_finish {
 	my ($ctx) = @_;
 	my $configuration = $ctx->{'configuration'} || {};
@@ -553,6 +562,9 @@ sub merge_finish {
 	&deletion_performer($configuration->{'remote'}->{'deletions'}) if $configuration->{'remote'};
 }
 
+# Merge an encrypted snapshot: the full-migration / deep-gimme / v2 path. A normal
+# v3 delta never gets here - `sync_rows_pull` feeds the same merge_table_rows and
+# merge_finish directly from the row batches.
 sub merge_database($c,$configuration) {
 	&update_database($c);
 	my $filename = $configuration->{'file'};

@@ -296,6 +296,11 @@ sub remote_device_connect($rdata) {
 	return $returner;
 }
 
+# The tunnel control calls come from a peer's own supervisor, not a browser.
+# They sit on the gate-exempt rail (hooks.pl) because a peer whose session
+# cookie was lost must still be able to reserve its ports; the route checks the
+# caller itself - a session or a pinned, signed peer - like the rest of the
+# peer rail.
 sub tunnel_rail_allowed {
 	my ($c) = @_;
 	return 1 if $c->session('authentication') eq 'approved';
@@ -305,6 +310,10 @@ sub tunnel_rail_allowed {
 	return 0;
 }
 
+# A typed contact list (phones/emails): the editor the nfc list wears, one row
+# per number or address with a type - mobile, home, work, or a custom label. The
+# uuid names the row so a field change and a delete both find the same one, and
+# a uuid nobody holds yet starts a new row.
 sub contact_list_row_finder {
 	my ($app, $list) = @_;
 	my $rows = eval { return decode_json &subs::setting_grabber({ app => $app, setting => $list }) } || [];
@@ -477,11 +486,20 @@ sub lock_session($c, $explicit = 0, $scope = '') {
 	return 1;
 }
 
+# The apps the start menu was last used to open, freshest first. The app menu
+# is a recent list and the shelf rail is how everything else is reached, so
+# it lives in the president's cache like the System view's snapshot; cache entries are
+# per device, so each screen keeps its own list. The warranty is asked for
+# outright: __president has no warranty setting, and the fallback resolves to
+# "now", which the alarm's cache purge then deletes a minute later.
 sub start_menu_recent() {
 	my $recent = &subs::cache_get({ app => '__president', context => 'start_menu', subcontext => 'recent' });
 	return [ ref $recent eq 'ARRAY' ? @{$recent} : () ];
 }
 
+# A press's key is the button's id, or its hint when it has none. It is a
+# cache value that the list renders back into the page, so the press and the
+# forget both cut it down to plain words first.
 sub start_menu_key_clean($key) {
 	# Keep the letters of every script: the key names a button in the recent
 	# list, and an app called 中文 or Café must not become an empty string.
@@ -490,6 +508,7 @@ sub start_menu_key_clean($key) {
 	return substr($key, 0, 60);
 }
 
+# The freshest ten are kept.
 sub start_menu_used($key) {
 	$key = &start_menu_key_clean($key);
 	return &start_menu_recent() unless length $key;
@@ -501,6 +520,7 @@ sub start_menu_used($key) {
 	return $recent;
 }
 
+# What the X on an item asks for: the app leaves the list, whatever its place.
 sub start_menu_forget($key) {
 	$key = &start_menu_key_clean($key);
 	return &start_menu_recent() unless length $key;
@@ -509,6 +529,10 @@ sub start_menu_forget($key) {
 	return $recent;
 }
 
+# The start menu's static icon grid is the house's built-in apps, so a private
+# one must disappear from it too. The client matches these keys against the
+# icon map; a custom app is not in the grid, and its running rows are filtered
+# by appointment_private_now in the template.
 sub start_menu_hidden_apps {
 	my (%seen, @apps);
 	foreach my $app ( keys %{ $gb::known_appts || {} } ) {

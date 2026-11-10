@@ -226,6 +226,11 @@ sub take_picture($c,$data) {
 	return ($jfiles,$ocr);
 }
 
+# The scanimage invocation for a feed, shared by the document scanner and the
+# Market receipt reader so the two never drift. $feed is 'adf' or 'flatbed'
+# (case-insensitive) and must be one the scanner declares; $file is the output
+# base (an ADF pages itself with --batch and a %d suffix). Undef for a feed the
+# scanner does not offer, which callers read as "this scanner cannot do that".
 sub scanner_scan_command($feed, $file) {
 	my $scanner = $config->{'scanners'}->[0];
 	return undef unless $scanner && $file;
@@ -242,6 +247,10 @@ sub scanner_scan_command($feed, $file) {
 	return @{$argv} ? join(' ', @{$argv}) : undef;
 }
 
+# The page files one scanner run produced, in page order. An ADF run writes
+# $base_1.tiff, $base_2.tiff, ... (the %d suffix); a flatbed run a single
+# $base.tiff. mtime is not a trustworthy order for a fast feed, so a numbered
+# page sorts by that number and an unnumbered page (the flatbed one) by name.
 sub scanner_page_list($base) {
 	my @files = grep { length } glob("$base*.tiff");
 	return sort {
@@ -379,6 +388,10 @@ sub play_audio_stop($file) {
 	return $file;
 }
 
+# One URL from a /manager/thumbs batch, as a data URI. Returns (src, raw size).
+# Everything that is not a cheap, local, already-existing picture is left to
+# /file_open: that is where thumbnail generation, archive lookup and peer relay
+# live, and each has its own guard there.
 sub thumbs_bundle_one {
 	my ($c, $raw, $appt_cache, $secrets_cache, $standard_cache, $suds_ref, $max_file) = @_;
 	return undef unless defined $raw && length $raw && length $raw < 8192;
@@ -464,6 +477,8 @@ sub thumbs_bundle_one {
 	return ('data:' . $type . ';base64,' . encode_base64($opened->{'data'}, ''), length $opened->{'data'});
 }
 
+# The data URI's type when the bytes themselves did not identify one. Sealed
+# files end in .enc, so look at the name they were sealed from.
 sub thumbs_bundle_type {
 	my ($file) = @_;
 	my $name = $file || '';
@@ -477,6 +492,8 @@ sub thumbs_bundle_type {
 	return 'application/octet-stream';
 }
 
+# The tag for a file response: path, inode, size and mtime. A reseal changes the
+# ciphertext (and the tag); an unchanged file revalidates without any decryption.
 sub file_cache_tag($file) {
 	my @st = stat($file);
 	return undef unless @st;
@@ -486,6 +503,7 @@ sub file_cache_tag($file) {
 	};
 }
 
+# Stamp an existing tag on a response that is about to carry the file.
 sub file_response_headers($c, $file, $cache_control) {
 	my $tag = &file_cache_tag($file);
 	return 0 unless $tag;
@@ -502,6 +520,10 @@ sub file_response_headers($c, $file, $cache_control) {
 	return 1;
 }
 
+# Answer an unchanged file with a 304 before any bytes are read. Only called
+# after authentication, so it cannot tell a stranger whether a path exists.
+# Nothing is stamped unless the request really is a match, so a failed render is
+# never given a tag a later request could revalidate against.
 sub file_response_cache_headers($c, $file, $cache_control) {
 	my $tag = &file_cache_tag($file);
 	return 0 unless $tag;
@@ -535,12 +557,20 @@ sub media_content_type($file, $verdict) {
 	return undef;
 }
 
+# A media response is inline, so a phone's player receives it as the track and
+# not as a download; every other file keeps render_file's attachment default.
 sub media_render_args($file, $verdict) {
 	my $type = &media_content_type($file, $verdict);
 	return () unless defined $type && $type =~ m{^(?:audio|video)/};
 	return (content_type => $type, content_disposition => 'inline');
 }
 
+# Android's /sdcard is a FUSE mount. Mojolicious's render_file(filepath => ...)
+# hands the path to Mojo::Asset::File, whose sendfile/seek path never returns on
+# that mount: the request is left open with no headers, so the phone's <video>
+# sits at readyState 0 and the music player runs through the whole queue. A
+# plain read/seek on the same path works (the /play as_is path proves it), so
+# stream the bytes here instead - with the one Range a media element sends.
 sub stream_fuse_media($c, $file) {
 	my $type = &media_content_type($file, undef);
 	return 0 unless defined $type && $type =~ m{^(?:audio|video)/};
@@ -598,6 +628,12 @@ sub stream_fuse_media($c, $file) {
 	return 1;
 }
 
+# Pump a sealed file to the client a chunk at a time, so a large video starts
+# playing after the 16 KB probe instead of after the whole file is decrypted and
+# copied. Content-Length is known (the ciphertext length, which is exactly what
+# the old path served for nopad), so this is a plain body, not chunked encoding.
+# Only the in-process ciphers reach here; the openssl fallback and PDFs keep the
+# buffered path.
 sub stream_sealed_file($c, $job, $file, $cache_control) {
 	my $spec = $job->{'spec'};
 	my $mode = $spec->{'family'} eq 'ctr' ? &subs::note_ctr_mode($spec) : &subs::note_cbc_mode($spec, 1);
@@ -644,6 +680,9 @@ sub stream_sealed_file($c, $job, $file, $cache_control) {
 	return 1;
 }
 
+# Decrypt just the head of a sealed video for ffmpeg. The first frame needs the
+# header and opening clusters, not the whole file; the caller falls back to a
+# full decrypt when the prefix yields nothing (an mp4 whose moov atom is last).
 sub sealed_thumb_prefix($filename, $job, $bytes) {
 	my $spec = $job->{'spec'} or return 0;
 	my $container = $job->{'container'};
@@ -661,6 +700,8 @@ sub sealed_thumb_prefix($filename, $job, $bytes) {
 	return 1;
 }
 
+# Write a sealed stream's whole plaintext to a path, a chunk at a time, so a
+# two-hour film never has to sit in memory as one string.
 sub sealed_file_to_path($job, $path) {
 	my $spec = $job->{'spec'} or return 0;
 	my $container = $job->{'container'};

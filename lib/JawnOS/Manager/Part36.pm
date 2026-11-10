@@ -559,6 +559,29 @@ sub remote_machine_online($data) {
 	return 0;
 }
 
+# Fill in the variables a text editor says: ${vape}->duration; becomes the
+# setting itself, shown as an illusion that remembers what was written, so a
+# click hands the words back. The name may wear braces and a dollar or neither
+# - ${vape}->duration, $vape->duration and vape->duration all name the same app
+# and setting, read the way the manager reads names. A dollar with a digit
+# behind it - $5, $500 - is a number, not a name, and is left alone. A word
+# whose setting does not exist is left exactly as it was written, never eaten.
+# The whole text comes back with the token its spans wear, so the caret can be
+# put back after the last one; the token is undefined when nothing was found.
+#
+# $self->total names the thing the editor is about rather than an app: the
+# appointment it sits in, the quote/invoice and its customer the compose window
+# was opened for, or the person a letter is addressed to and the newest thing
+# they were sent. The context rides on the editor's magic_vars attribute; when
+# it names no record - a template, before it belongs to a document - the words
+# are left as written, because a template is where they are meant to wait.
+#
+# Two flourishes for fields that are not rich editors. 'plain' answers with the
+# value itself, no illusion, and does not need the semicolon - it is for the
+# compose subject, which cannot wear spans and is prose. 'self_only' refuses
+# the app->setting spellings and only says $self: a subject is prose, and
+# prose must not have its arrows eaten. Tags are stepped over, so an illusion
+# already in the text keeps its remembrance of the words through a later pass.
 sub text_area_magic($text, $context, $options = undef) {
 	$options ||= {};
 	my $plain = $options->{'plain'};
@@ -611,6 +634,10 @@ sub text_area_magic($text, $context, $options = undef) {
 	return ($magic, $found ? $token : undef);
 }
 
+# The context an upgraded text editor carries in its magic_vars attribute:
+# comma separated key:value pairs. The keys name the kinds of thing an editor
+# can be about - appointment, document, customer, template. It is deliberately
+# small, and both sides of the wire build or read it in one line.
 sub text_area_context($string) {
 	my $context = {};
 	foreach my $pair ( split ',', ($string || '') ) {
@@ -621,11 +648,22 @@ sub text_area_context($string) {
 	return $context;
 }
 
+# The newest thing a customer was sent - whatever carries numbers, so a quote,
+# invoice, receipt or the like - is what a letter about them is about. Only
+# papers this house printed are asked for, by the numbers they carry.
 sub text_editor_latest_document($app) {
 	return unless $app;
 	return &subs::db_query('select * from appointments where app = ? and data like ? order by timestamp desc limit 1', $app, '%"numbers"%')->hashes->[0];
 }
 
+# What $self->name and its brothers answer for a context. An appointment
+# answers from itself and its settings, and names its app rather than a record -
+# the newest record that app wrote is the one its numbers come from; a document
+# answers from its numbers (total, balance, the id it printed under) and from
+# its customer (name, email, phone, address); a letter to a customer answers
+# the same way, with the newest document standing in for the one the words are
+# about; a context that names no record answers nothing, so the words wait to
+# be said by whoever applies them.
 sub text_editor_context_value($context, $key) {
 	my $lookup = &subs::unformat_name($key);
 	my $appt;
@@ -663,6 +701,11 @@ sub text_editor_context_value($context, $key) {
 	return &subs::setting_grabber({ app => $about, setting => $lookup });
 }
 
+# The legend an upgraded text editor shows across its top: the names $self
+# can say in this context, each with the value it would show right now when
+# there is something to resolve it against. A template is shown the same
+# names without values - they are what it will say once it belongs to a
+# document, and seeing them is how a template is written at all.
 sub text_editor_variables($context) {
 	my @names;
 	if ($context->{'appointment'}) {
