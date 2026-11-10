@@ -15,6 +15,7 @@ no warnings 'once';
 use strict;
 use warnings ;#'uninitialized';
 use Mojo::Promise;
+use JawnOS::Platform::Shell ();
 use Mojo::UserAgent;
 use Time::Local;
 use Time::Piece;
@@ -199,7 +200,7 @@ sub action_26639 {
 		$returner = $clip ? ($clip->{'text'} // '') : '';
 	}
 	elsif ($device eq 'computer') {
-		$returner = eval { return `xclip -o` };
+		$returner = JawnOS::Platform::Shell::clipboard_get();
 	}
 	$c->render(text => $returner);
 }

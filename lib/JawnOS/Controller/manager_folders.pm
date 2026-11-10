@@ -15,6 +15,7 @@ no warnings 'once';
 use strict;
 use warnings ;#'uninitialized';
 use Mojo::Promise;
+use JawnOS::Platform::Shell ();
 use Mojo::UserAgent;
 use Time::Local;
 use Time::Piece;
@@ -613,11 +614,11 @@ sub action_30215 {
 	my $folders = eval { return decode_json $c->param('folders') } || {};
 	my @paths = map { $_->{'path'} } grep { -e $_->{'path'} } &folders_command_items($folders);
 	&subs::subprocessor(sub {
-		# The app opens it on Android; a desktop falls back to xdg-open.
-		my $opener = -x '/usr/bin/xdg-open' ? '/usr/bin/xdg-open' : undef;
+		# The app opens it on Android; a desktop asks the platform seam, which
+		# uses xdg-open and does nothing when there is no opener.
 		foreach my $path ( @paths ) {
 			next if &subs::device_call('open.url', { path => $path });
-			system($opener, $path) if $opener;
+			JawnOS::Platform::Shell::open_path($path);
 		}
 	}, { name => 'folders open with' });
 	$c->render(json => { status => 'ok', opened => scalar @paths });

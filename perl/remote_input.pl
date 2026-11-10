@@ -2,6 +2,13 @@ package remote_input;
 use strict;
 use warnings;
 use feature 'signatures';
+BEGIN {
+	require File::Basename;
+	require Cwd;
+	my $dir = Cwd::abs_path(File::Basename::dirname(__FILE__));
+	unshift @INC, "$dir/../lib" if $dir && -d "$dir/../lib";
+}
+use JawnOS::Platform::Shell ();
 
 # --- input injection --------------------------------------------------------
 #
@@ -275,42 +282,11 @@ sub screen_geometry() {
 # round. X11 and Wayland each have a small tool for it; when none is installed
 # a paste still works by typing the text instead.
 sub clipboard_read() {
-	my $out = '';
-	if (which('xclip')) {
-		$out = `timeout 2 xclip -selection clipboard -o 2>/dev/null`;
-	}
-	elsif (which('xsel')) {
-		$out = `timeout 2 xsel --clipboard --output 2>/dev/null`;
-	}
-	elsif (which('wl-paste')) {
-		$out = `timeout 2 wl-paste --no-newline 2>/dev/null`;
-	}
-	utf8::decode($out) if defined $out && length $out && !utf8::is_utf8($out);
-	return $out;
+	return JawnOS::Platform::Shell::clipboard_get();
 }
 
 sub clipboard_write($text) {
-	my $bytes = defined $text ? $text : '';
-	utf8::encode($bytes) if utf8::is_utf8($bytes);
-	if (which('xclip')) {
-		open(my $fh, '|-', 'xclip', '-selection', 'clipboard') or return 0;
-		print {$fh} $bytes;
-		close $fh;
-		return 1;
-	}
-	if (which('xsel')) {
-		open(my $fh, '|-', 'xsel', '--clipboard', '--input') or return 0;
-		print {$fh} $bytes;
-		close $fh;
-		return 1;
-	}
-	if (which('wl-copy')) {
-		open(my $fh, '|-', 'wl-copy') or return 0;
-		print {$fh} $bytes;
-		close $fh;
-		return 1;
-	}
-	return 0;
+	return JawnOS::Platform::Shell::clipboard_set($text);
 }
 
 sub clipboard_paste($text) {

@@ -31,7 +31,8 @@
 
 use strict;
 use warnings;
-use FindBin qw($Bin);
+use FindBin qw($Bin $RealBin);
+use lib "$RealBin/../lib";
 use Mojolicious::Lite;
 use Mojo::IOLoop;
 use Mojo::JSON qw(decode_json encode_json);
@@ -777,10 +778,10 @@ print " $url\n";
 print "========================================\n\n";
 
 # Open the wizard in the host app (open.url over the M1 bridge) or, on a
-# desktop, with xdg-open. The wizard runs before the tree is serving and loads
-# no runtime module, so this writes the one-line bridge protocol out rather
-# than calling subs::device_call: $HOME/.jawn/device.token, 127.0.0.1:46000,
-# one JSON request, one JSON reply.
+# desktop, through the platform shell seam (xdg-open). The wizard runs before
+# the tree is serving, so the bridge below is written out by hand rather than
+# through subs::device_call, which needs the runtime:
+# $HOME/.jawn/device.token, 127.0.0.1:46000, one JSON request, one JSON reply.
 sub open_in_host {
 	my ($url) = @_;
 
@@ -828,7 +829,10 @@ sub open_in_host {
 
 unless ($no_browser) {
 	unless (open_in_host($url)) {
-		system("xdg-open $url >/dev/null 2>&1 &") if -x '/usr/bin/xdg-open';
+		# The seed path above never gets here, so a pristine image tree without
+		# lib/ still seeds; the wizard always ships the full tree.
+		require JawnOS::Platform::Shell;
+		JawnOS::Platform::Shell::open_url($url);
 	}
 }
 
