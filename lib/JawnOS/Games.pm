@@ -107,6 +107,26 @@ sub runner_for {
 # inside, so the installer asks for it first and only once.
 our $FRONTEND_PACKAGE = 'retroarch';
 
+# The frontend the games run on. /opt/retroarch-gl is the build with desktop
+# OpenGL: the packaged binary offers a GLES hardware context only, and every
+# core that renders in 3D (mupen64plus-next, flycast, yabause, dolphin) asks
+# for a desktop context and refuses to load without one. It is first so the
+# build, once installed, is what games use; the packaged binary stays as the
+# fallback for a machine that has not been through the build.
+our @RETROARCH_BINARY = (
+	'/opt/retroarch-gl/bin/retroarch',
+	'/usr/bin/retroarch',
+	'/usr/local/bin/retroarch',
+);
+
+# Whichever of those is installed, the first one wins; undef when none is.
+sub retroarch_binary {
+	foreach my $path (@RETROARCH_BINARY) {
+		return $path if -x $path;
+	}
+	return undef;
+}
+
 sub packages {
 	my %seen = ($FRONTEND_PACKAGE => 1);
 	my @out = ($FRONTEND_PACKAGE);

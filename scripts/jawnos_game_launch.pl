@@ -165,7 +165,8 @@ write_status();
 my $runner = JawnOS::Games::runner_for($game->{'system'});
 fail('There is no emulator for ' . $game->{'system_label'} . '.') unless ref $runner eq 'HASH';
 fail('The emulator is not installed.') if $runner->{'missing'};
-fail('The RetroArch binary is missing.') unless $runner->{'kind'} ne 'retroarch' || -x '/usr/bin/retroarch';
+my $retroarch = JawnOS::Games::retroarch_binary();
+fail('The RetroArch binary is missing.') unless $runner->{'kind'} ne 'retroarch' || defined $retroarch;
 
 my (undef, undef, $uid, $gid) = getpwnam($PERSON);
 fail('The person this panel belongs to is missing.') unless defined $uid && defined $gid;
@@ -187,7 +188,7 @@ if ($runner->{'kind'} eq 'standalone') {
 	@command = ($runner->{'command'}, '-b', '-e', $game->{'file'});
 }
 else {
-	@command = ('/usr/bin/retroarch', '-f', '-L', $runner->{'core'});
+	@command = ($retroarch, '-f', '-L', $runner->{'core'});
 	# RetroArch's default audio device is one this image never configured. The
 	# append config pins ALSA to the panel's card, so a game has sound without a
 	# visit to the settings menu.

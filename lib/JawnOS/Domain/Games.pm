@@ -57,10 +57,8 @@ sub game_runner {
 }
 
 sub game_emulator_present {
-	foreach my $path ('/usr/bin/retroarch', '/usr/local/bin/retroarch') {
-		return 1 if -x $path;
-	}
-	return 0;
+	require JawnOS::Games;
+	return defined &JawnOS::Games::retroarch_binary() ? 1 : 0;
 }
 
 1;
