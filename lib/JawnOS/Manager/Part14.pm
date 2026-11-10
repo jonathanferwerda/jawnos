@@ -273,11 +273,15 @@ sub manager_reset($c) {
 		}
 
 		my $source_uuid;
+		my $source_link;
 		foreach my $qo ( qw/model option/ ) {
 			my $mo = &subs::db_select($qo, undef, { name => $app })->hashes;
 			foreach my $ao ( @{$mo} ) {
 				my $began = &subs::db_query('select * from appointments where app=? and (type=? or type=?) and timestamp <= ? order by timestamp desc limit 1',$ao->{'app'},'record','start',$timestamp)->hashes;
 				$source_uuid = $began->[0]->{'uuid'};
+				$source_link = ($began->[0] && $source_uuid)
+					? { parent_uuid => $source_uuid, table => $qo, catalog => $ao }
+					: undef;
 			}
 		}
 
@@ -318,6 +322,17 @@ sub manager_reset($c) {
 			browser_tab_id => $browser_tab_id
 		});
 		}
+		# A start that names a running parent as its model or option belongs in
+		# that parent's list: the details view reads the list, not source_uuid.
+		&subs::source_model_option_add($source_link->{'parent_uuid'}, $source_link->{'table'}, {
+			uuid => $source_link->{'catalog'}->{'uuid'},
+			name => $app,
+			timestamp => $timestamp,
+			quantity => $quantity || $source_link->{'catalog'}->{'quantity'},
+			unit => $unit || $source_link->{'catalog'}->{'unit'},
+			delay_start => $source_link->{'catalog'}->{'delay_start'},
+			delay_stop => $source_link->{'catalog'}->{'delay_stop'},
+		}) if $source_link;
 		# The header goes out the instant the row is written, before the toggle, the
 		# automation and the default model/option sessions: those can wait, the
 		# person watching the header cannot.

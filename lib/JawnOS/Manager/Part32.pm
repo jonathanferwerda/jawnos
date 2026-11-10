@@ -211,6 +211,10 @@ sub delete_app($app,$uuid,$server_time,$reason,$silent = 0) {
 			&subs::db_query("delete from warehouse where kind = 'inventory' and app_uuid = ?", $app->{'uuid'});
 			&subs::db_query("delete from warehouse where kind = 'stock' and app_uuid = ?", $app->{'uuid'});
 			&subs::db_query("delete from warehouse where kind = 'usage' and app_uuid = ?", $app->{'uuid'});
+			# A model/option child names its parent in source_uuid; the parent's
+			# list is what its details view reads, so the deleted child leaves it.
+			&subs::source_model_option_remove($app->{'source_uuid'}, $app->{'app'}, $app->{'uuid'}, $app->{'type'})
+				if $app->{'source_uuid'};
 		}
 
 		&embedded_app_deleter({ appt_uuid => $uuid });

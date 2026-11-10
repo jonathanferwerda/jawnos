@@ -422,6 +422,60 @@ sub source_appt_writer {
 
 }
 
+# A model/option session is a child appointment whose source_uuid names the
+# parent session. The parent's own model/options list is what its details view
+# reads, so the list follows the session: a start that attaches a child to a
+# running parent adds the entry, and deleting the child leaves it. Only an entry
+# that names the child's app is touched, so the other relationships that share
+# source_uuid - a purchase to its transaction, the two legs of a transfer, a
+# browser tab - are left alone.
+sub source_model_option_add {
+	my ($parent_uuid, $table, $entry) = @_;
+	return unless ($parent_uuid // '') ne '' && ref $entry eq 'HASH';
+	return unless $table eq 'model' || $table eq 'option';
+	my $parent = &subs::db_select('appointments', undef, { uuid => $parent_uuid })->hashes->[0];
+	return unless $parent && ($parent->{'uuid'} // '') ne '';
+	if ($table eq 'model') {
+		my $current = eval { return decode_json $parent->{'model'} } || {};
+		return $parent if ($current->{'uuid'} // '') eq ($entry->{'uuid'} // '');
+		&subs::db_update('appointments', { model => encode_json($entry) }, { uuid => $parent->{'uuid'}, app => $parent->{'app'} });
+	}
+	else {
+		my $options = eval { return decode_json $parent->{'options'} } || [];
+		return $parent if grep { ($_->{'uuid'} // '') eq ($entry->{'uuid'} // '') } @{$options};
+		push @{$options}, $entry;
+		&subs::db_update('appointments', { options => encode_json($options) }, { uuid => $parent->{'uuid'}, app => $parent->{'app'} });
+	}
+	&Websocket::send('tab', { console => &Websocket::console_command('appointmentDetailGrabber', $parent->{'app'}, $parent->{'uuid'})});
+	return $parent;
+}
+
+sub source_model_option_remove {
+	my ($parent_uuid, $child_app, $child_uuid, $child_type) = @_;
+	return unless ($parent_uuid // '') ne '' && ($child_app // '') ne '';
+	my $parent = &subs::db_select('appointments', undef, { uuid => $parent_uuid })->hashes->[0];
+	return unless $parent && ($parent->{'uuid'} // '') ne '';
+	# A child of another kind can share the parent's source_uuid and its app name
+	# (a purchase whose item is also one of the transaction's models). Only a
+	# session child, or one carrying the parent's own type, is a model/option.
+	my $child_session = ($child_type // '') =~ /^(?:start|record|usual|add|stop|cancel)$/;
+	return $parent unless $child_session || ($child_type // '') eq ($parent->{'type'} // '');
+	# A second live child of the same app still holds the entry in the parent's list.
+	my $live = &subs::db_query("select uuid from appointments where source_uuid = ? and app = ? and type not in ('stop','cancel') and uuid != ? limit 1",
+		$parent_uuid, $child_app, ($child_uuid // ''))->hash;
+	return $parent if $live && $live->{'uuid'};
+	my $model = eval { return decode_json $parent->{'model'} } || {};
+	my $options = eval { return decode_json $parent->{'options'} } || [];
+	my $write = {};
+	$write->{'model'} = undef if ($model->{'name'} // '') eq $child_app;
+	my @kept = grep { ($_->{'name'} // '') ne $child_app } @{$options};
+	$write->{'options'} = encode_json(\@kept) if scalar @kept != scalar @{$options};
+	return $parent unless keys %{$write};
+	&subs::db_update('appointments', $write, { uuid => $parent->{'uuid'}, app => $parent->{'app'} });
+	&Websocket::send('tab', { console => &Websocket::console_command('appointmentDetailGrabber', $parent->{'app'}, $parent->{'uuid'})});
+	return $parent;
+}
+
 sub log_writer {
 	my $data = shift;
 	my $log_data;
