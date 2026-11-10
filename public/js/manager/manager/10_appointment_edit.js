@@ -358,10 +358,10 @@ function appointmentDetailGrabber(app,uuid) {
 		var variables = { uuid: uuid, sorts: sorts, app: app, filter: filter, time_machine: time_machine, timeshift: timeshift, timestamp: timestamp, scope: scope };
 		var lists = []
 		$('.appointment_detail[uuid="' + uuid + '"]').find('.appointment_list').each(function(i,v) {
-			// Dist and Measures come back from the house setting, so the server
-			// render is newer than what was open here
+			// Dist, Measures and Duties come back from the app setting, so the
+			// server render is newer than what was open here
 			var list_name = $(v).attr('list');
-			if (list_name == 'distance' || list_name == 'measures') { return; }
+			if (list_name == 'distance' || list_name == 'measures' || list_name == 'duties') { return; }
 			if ($(v).is(':visible')) {
 				lists.push(list_name);
 			}

@@ -117,13 +117,22 @@ sub action_25444 {
 		$provider =~ s/^map_key_//;
 		push @{$map_keys}, { provider => $provider, value => $mkr->{'value'} };
 	}
-	# The Dist picker's last view is one answer for the house, so every machine
-	# opens the list or the same basemap the person left it on.
-	my $dist_view = &subs::setting_grabber({ app => '__president', setting => 'appointment_dist_view', device => 'all' }) || 'fixes';
-	# The Dist and Measures sections keep their open or closed state for the house
-	# too, so a detail comes back the way it was left.
-	my $distance_open = (&subs::setting_grabber({ app => '__president', setting => 'appointment_distance_open', device => 'all' }) || '') eq 'on' ? 1 : 0;
-	my $measures_open = (&subs::setting_grabber({ app => '__president', setting => 'appointment_measures_open', device => 'all' }) || '') eq 'on' ? 1 : 0;
+	# Each app remembers its own appointment-details layout: the Dist view and
+	# whether the Dist, Measures and Duties sections were left open. The answer is
+	# shared by the house's machines; a __president row from the first build is
+	# the fallback until that app is changed.
+	my %detail_setting;
+	foreach my $name (qw(dist_view distance_open measures_open duties_open)) {
+		my $value = &subs::setting_grabber({ app => $app, setting => 'appointment_' . $name, device => 'all' });
+		if (!defined $value || !length $value) {
+			$value = &subs::setting_grabber({ app => '__president', setting => 'appointment_' . $name, device => 'all' });
+		}
+		$detail_setting{$name} = $value;
+	}
+	my $dist_view = $detail_setting{'dist_view'} || 'fixes';
+	my $distance_open = ($detail_setting{'distance_open'} || '') eq 'on' ? 1 : 0;
+	my $measures_open = ($detail_setting{'measures_open'} || '') eq 'on' ? 1 : 0;
+	my $duties_open = ($detail_setting{'duties_open'} || '') eq 'on' ? 1 : 0;
 	foreach my $mo ( @{$models}, @{$options} ) {
 		$mo->{'characteristics'} = eval { return decode_json $mo->{'characteristics'} } || [];
 		if (my @oc = grep { $_->{'name'} eq 'option_category' } @{$mo->{'characteristics'}}) {
@@ -252,6 +261,7 @@ sub action_25444 {
 		dist_view => $dist_view,
 		distance_open => $distance_open,
 		measures_open => $measures_open,
+		duties_open => $duties_open,
 		# the template's map fallback draws the house's own home plate when neither
 		# the model nor the app has one, so hand it the decoded plate
 		main_home_plate => $main_home_plate,

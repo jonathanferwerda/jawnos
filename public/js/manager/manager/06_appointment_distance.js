@@ -289,15 +289,19 @@ $(document).ready(function() {
 
 $(document).on('change', '.appointment_dist_view', function() {
 	var kind = $(this).val() || 'fixes';
-	// one answer for the house, and for every panel already on this page
-	$('.appointment_dist_view').attr('data-view', kind);
-	settingSetter({ app: '__president', setting: 'appointment_dist_view', device: 'all', value: kind });
+	var app = $(this).attr('app');
+	// one answer for this app, and for every panel of it already on the page
+	$('.appointment_dist_view').each(function() {
+		if ($(this).attr('app') === app) { $(this).attr('data-view', kind); }
+	});
+	settingSetter({ app: app, setting: 'appointment_dist_view', device: 'all', value: kind });
 	appointmentDistShow($(this).closest('.appointment_distance_panel'));
 });
 
 $(document).on('click', '.appointment_list_toggle', function() {
 	var list = $(this).attr('list');
 	var detail = $(this).closest('.appointment_detail');
+	var app = detail.attr('app');
 	var l = detail.find('.appointment_list[list="' + list + '"]');
 	var open = !l.is(':visible');
 	if (open) {
@@ -310,9 +314,9 @@ $(document).on('click', '.appointment_list_toggle', function() {
 	else {
 		l.hide();
 	}
-	// Dist and Measures are sections the house keeps open or closed
-	if (list == 'distance' || list == 'measures') {
-		settingSetter({ app: '__president', setting: 'appointment_' + list + '_open', device: 'all', value: open ? 'on' : 'off' });
+	// Dist, Measures and Duties are sections each app keeps open or closed
+	if (list == 'distance' || list == 'measures' || list == 'duties') {
+		settingSetter({ app: app, setting: 'appointment_' + list + '_open', device: 'all', value: open ? 'on' : 'off' });
 	}
 	appActSync($(this).closest('.wind'));
 

@@ -173,7 +173,7 @@
 				</span>
 			<% } %>
 			<% if ($l->{'duties'}) { %>
-				<span class="appointment_list" list="duties" style="display:none;">
+				<span class="appointment_list" list="duties" style="<%= $duties_open ? '' : 'display:none;' %>">
 					<% foreach my $d ( @{$l->{'duties'}} ) { %>
 						<span class="appointment_duty_container" duuid="<%= $d->{'duuid'} %>">
 							<img class="little_thumb"
