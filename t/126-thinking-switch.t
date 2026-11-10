@@ -9,6 +9,7 @@ use warnings;
 use FindBin;
 use lib "$FindBin::Bin/../lib";
 use File::Slurp qw(read_file);
+use MIME::Base64 qw(decode_base64);
 use Test::More;
 
 require JawnOS::Domain::Ai2;
@@ -130,6 +131,7 @@ my @calls;
 	like( $plat, qr/\$test_hint/, 'each role says what its Test does in the hover hint' );
 	like( $plat, qr/\$cap eq 'video-gen'/, 'the generation roles name their Test too' );
 	like( $plat, qr/\$cap eq 'audio'/, 'and so does transcription' );
+	like( $plat, qr/\$cap eq 'vision'/, 'the Vision role says it is sent a picture' );
 	like( $plat, qr/id="qa_ux_model"/, 'the UX judgment model lives in the AI tab' );
 	like( $plat, qr/setting="qa_ux_model"/, 'and is a model row of its own' );
 	my $qa_panel = read_file("$root/templates/configure/qa_panel.html.ep");
@@ -179,6 +181,80 @@ my @calls;
 	($ok, $message) = subs::ai_model_test('openai:gpt-5', 'help_assistant');
 	is( $ok, 0, 'an empty answer is not a pass' );
 	like( $message, qr/nothing readable/, 'and reads as nothing readable' );
+}
+
+# The Vision role is tested with a picture, not a line: a vision-only model
+# (moondream, llava) has nothing to answer from text, and a chat model that
+# answers one proves nothing about seeing. The picture is a solid colour, and
+# the answer is checked against the colour it really is.
+{
+	my @asked;
+	local *subs::ai_vision_test_image = sub { return ("PNG\x00BYTES", 'red') };
+	local *subs::ai_chat_raw = sub {
+		my ($model, $messages, $thinking, $role) = @_;
+		push @asked, { model => $model, messages => $messages, thinking => $thinking, role => $role };
+		return ({ 'message' => { 'content' => " Red.\n" } }, undef);
+	};
+	no warnings 'redefine';
+	local *subs::ai_chat_parts = sub { die 'ai_chat_parts must not be used by the test' };
+
+	my ($ok, $message) = subs::ai_model_test('ollama:moondream', 'visual_assistant');
+	is( $ok, 1, 'a vision model that names the colour passes' );
+	is( $message, 'the model saw: Red.', 'the answer is reported as what it saw' );
+	my $m = $asked[0]{'messages'}[0];
+	like( $m->{'content'}, qr/solid colour/, 'the picture is asked about, not a bare line' );
+	unlike( $m->{'content'}, qr/single word OK/, 'and not the text-only test' );
+	is( scalar @{ $m->{'images'} || [] }, 1, 'one image rides with the message' );
+	my $img = $m->{'images'}[0];
+	is( $img->{'mime'}, 'image/png', 'as a PNG' );
+	is( decode_base64($img->{'data'}), "PNG\x00BYTES", 'the test picture itself' );
+	is( $asked[0]{'model'}, 'ollama:moondream', 'the picked model is asked' );
+	is( $asked[0]{'role'}, 'visual_assistant', 'and the role rides along for spend accounting' );
+
+	local *subs::ai_chat_raw = sub { return ({ 'message' => { 'content' => 'blue' } }, undef) };
+	($ok, $message) = subs::ai_model_test('ollama:moondream', 'visual_assistant');
+	is( $ok, 0, 'a model that names another colour fails' );
+	like( $message, qr/test image was red/, 'and says what the image really was' );
+
+	local *subs::ai_chat_raw = sub { return ({ 'message' => { 'content' => '  ' } }, undef) };
+	($ok, $message) = subs::ai_model_test('ollama:moondream', 'visual_assistant');
+	is( $ok, 0, 'a vision model that returns nothing fails' );
+	like( $message, qr/nothing readable/, 'and reads as nothing readable' );
+
+	local *subs::ai_chat_raw = sub { return (undef, 'the model answered 404: model not found') };
+	($ok, $message) = subs::ai_model_test('ollama:moondream', 'visual_assistant');
+	is( $ok, 0, 'a provider error still fails the vision test' );
+	is( $message, 'the model answered 404: model not found', 'and its reason is carried back' );
+}
+
+# The test picture is a real PNG of one solid colour, so every provider's builder
+# (base64 blocks for Anthropic, image_url for OpenAI, inline_data for Gemini,
+# images for Ollama) gets bytes it can send.
+{
+	require Compress::Zlib;
+	my %names = map { $_ => 1 } qw(red green blue yellow);
+	for (1 .. 8) {
+		my ($png, $colour) = subs::ai_vision_test_image();
+		ok( exists $names{$colour}, "the picture names a colour we know ($colour)" );
+		is( substr($png, 0, 8), "\x89PNG\r\n\x1a\n", 'it starts with the PNG signature' );
+		my ($w, $h, $depth, $ctype) = unpack('NNCC', substr($png, 16, 10));
+		is( $w, 32, '32 pixels wide' );
+		is( $h, 32, 'and tall' );
+		is( $depth, 8, 'eight bits a channel' );
+		is( $ctype, 2, 'truecolour RGB' );
+		my ($at, $idat) = (8);
+		while ($at < length $png) {
+			my $len = unpack('N', substr($png, $at, 4));
+			my $type = substr($png, $at + 4, 4);
+			$idat = substr($png, $at + 8, $len) if $type eq 'IDAT';
+			$at += 12 + $len;
+		}
+		ok( defined $idat, 'it carries image data' );
+		my $raw = Compress::Zlib::uncompress($idat);
+		is( length $raw, 32 * (1 + 32 * 3), 'scanlines of 32 RGB pixels each' );
+		my %seen = map { $_ => 1 } map { unpack('H6', substr($raw, $_, 3)) } (1, 94, 31 * 97 + 1, 31 * 97 + 94);
+		is( scalar keys %seen, 1, 'every sampled pixel is the same colour' );
+	}
 }
 
 # The generation roles are tested in their own kind, and transcription through

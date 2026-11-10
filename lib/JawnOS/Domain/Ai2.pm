@@ -848,10 +848,38 @@ sub ai_chat {
 	return ($text, ($text && length $text) ? undef : 'the model returned nothing readable');
 }
 
+# The picture the Vision Test sends: a small solid colour and its name. The
+# colour is picked per press, so a model that reads the picture says the right
+# one; a text model that cannot see answers another colour or nothing. Returns
+# (png_bytes, colour_name).
+sub ai_vision_test_image {
+	my @colours = (
+		[ 'red',    [ 210,  40,  40 ] ],
+		[ 'green',  [  40, 160,  70 ] ],
+		[ 'blue',   [  40,  80, 210 ] ],
+		[ 'yellow', [ 235, 200,  30 ] ],
+	);
+	my ($name, $rgb) = @{ $colours[ int(rand(@colours)) ] };
+	my ($w, $h) = (32, 32);
+	my $raw = join '', map { "\0" . (pack('C3', @$rgb) x $w) } 1 .. $h;
+	require Compress::Zlib;
+	my $chunk = sub {
+		my ($type, $data) = @_;
+		my $body = $type . $data;
+		return pack('N', length $data) . $body . pack('N', Compress::Zlib::crc32($body));
+	};
+	my $png = "\x89PNG\r\n\x1a\n"
+		. $chunk->('IHDR', pack('NNCCCCC', $w, $h, 8, 2, 0, 0, 0))
+		. $chunk->('IDAT', Compress::Zlib::compress($raw))
+		. $chunk->('IEND', '');
+	return ($png, $name);
+}
+
 # The Plat panel's Test button: ask the chosen model to prove it can answer.
-# A language model is told one small thing and its reply is reported; the
-# generation roles are asked for a tiny file of their own kind, and transcription
-# gets half a second of silence. The chat path calls the model itself
+# A chat model is told one small thing and its reply is reported; Vision is sent
+# a small solid-colour picture and must name the colour; the generation roles are
+# asked for a tiny file of their own kind, and transcription gets half a second
+# of silence. The chat path calls the model itself
 # (ai_chat_raw) rather than ai_chat_parts so a paid model that is stood down is
 # still tried and a bad key or a name that no longer exists is reported instead
 # of being papered over by the free-model fallback. Returns (ok, message).
@@ -879,6 +907,40 @@ sub ai_model_test {
 		my %noun = ( image => 'an image', audio => 'audio', video => 'a video' );
 		return (1, 'the model returned ' . $noun{$kind} . ' (' . &subs::data_size(length $bytes) . ')');
 	}
+	my $readable = sub {
+		my ($body) = @_;
+		my $text = &ai_response_text($body);
+		$text = '' unless defined $text;
+		$text =~ s/\s+/ /g;
+		$text =~ s/^\s+|\s+$//g;
+		return ('', '') unless length $text;
+		my $long = length($text) > 80;
+		return (substr($text, 0, 80) . ($long ? "\x{2026}" : ''), $text);
+	};
+
+	# Vision is tested with a picture, not a line. A vision-only model has
+	# nothing to answer from a text-only turn (moondream, llava), and a chat
+	# model that answers one proves nothing about seeing. The picture is one
+	# solid colour; the reply is checked against the colour it really is.
+	if ($role eq 'visual_assistant') {
+		my ($png, $colour) = &ai_vision_test_image();
+		my ($body, $err) = &ai_chat_raw(
+			$model,
+			[ {
+				role => 'user',
+				content => 'This is a connection test. The image is one solid colour. Reply with that colour\'s name and nothing else.',
+				images => [ { data => encode_base64($png, ''), mime => 'image/png' } ],
+			} ],
+			undef,
+			$role,
+		);
+		return (0, $err || 'the model returned nothing') if $err;
+		my ($shown, $text) = $readable->($body);
+		return (0, 'the model returned nothing readable') unless length $text;
+		return (1, 'the model saw: ' . $shown) if $text =~ /\b\Q$colour\E\b/i;
+		return (0, 'the model answered: ' . $shown . ' but the test image was ' . $colour . ', so it did not read it');
+	}
+
 	my ($body, $err) = &ai_chat_raw(
 		$model,
 		[ { role => 'user', content => 'This is a connection test. Reply with the single word OK.' } ],
@@ -886,14 +948,9 @@ sub ai_model_test {
 		$role,
 	);
 	return (0, $err || 'the model returned nothing') if $err;
-	my $text = &ai_response_text($body);
-	$text = '' unless defined $text;
-	$text =~ s/\s+/ /g;
-	$text =~ s/^\s+|\s+$//g;
+	my ($shown, $text) = $readable->($body);
 	return (0, 'the model returned nothing readable') unless length $text;
-	my $long = length($text) > 80;
-	$text = substr($text, 0, 80) . ($long ? "\x{2026}" : '');
-	return (1, 'the model answered: ' . $text);
+	return (1, 'the model answered: ' . $shown);
 }
 
 # the same wire pen_message uses, but the answer is read whole: the evaluation

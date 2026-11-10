@@ -702,8 +702,8 @@ sub ai_model_caps_by_name {
 	return ('audio-gen') if $n =~ /(musicgen|audio-?gen|music-?gen|audio-?lm|suno|riffusion|stable-?audio|bark|elevenlabs|melod|melotts|aura-|\btts\b|speech-?synth)/;
 	return ('audio') if $n =~ /(whisper|asr|transcri|speech-to-text|\bstt\b|deepgram|nova-?2|parakeet)/;
 	return ('other') if $n =~ /(embed|rerank|\bbge\b|resnet|distilbert|sst-2|translat|m2m100|indictrans|guard|smart-turn|moderation)/;
-	return ('vision') if $n =~ /(llava|bakllava|moondream|minicpm-?v|cogvlm|pixtral|qwen2-?vl|qwen2\.5-?vl|qwen2\.5vl|internvl|llama-?3\.2-vision|vision)/;
-	return ('chat', 'vision') if $n =~ /(gpt-4o|gpt-4\.1|claude|gemini|gemma3|gemma4|grok-2-vision|grok-vision)/;
+	return ('vision') if $n =~ /(llava|bakllava|moondream|minicpm-?v|cogvlm|pixtral|qwen2-?vl|qwen2\.5-?vl|qwen2\.5vl|internvl|llama-?3\.2-vision|vision|(?:^|[-_.])vl\d*(?:$|[-_.]))/;
+	return ('chat', 'vision') if $n =~ /(gpt-4o|gpt-4\.1|claude|gemini|gemma3|gemma4|grok-2-vision|grok-vision|llama-?4|mistral-small-?3(?:\.\d+)?|phi-?4-multimodal)/;
 	return ('chat');
 }
 

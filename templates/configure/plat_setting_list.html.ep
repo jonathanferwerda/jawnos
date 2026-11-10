@@ -114,6 +114,7 @@
 				: $cap eq 'audio-gen' ? 'Generate a short test sound'
 				: $cap eq 'video-gen' ? 'Generate a short test video; this can take a while'
 				: $cap eq 'audio'     ? 'Check the transcription model can answer'
+				: $cap eq 'vision'    ? 'Send a small test image and show what the model saw'
 				:                       'Ask this model a trivial question and show its answer';
 			my $thinks = ($thinking_cap && $current && $thinks_of->($current)) ? 1 : 0;
 			my $think = $thinking_of->($setting);
