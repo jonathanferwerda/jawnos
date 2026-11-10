@@ -760,9 +760,10 @@ sub tunnels_stall_duty {
 # The machine's navigation interval, in seconds. The runtime adopts the stored
 # row from the utility controller at runtime, but Manager and the scripts do not
 # share that process, so read the same persisted row here. A navigation job in a
-# batch pool keeps the pool's pace.
+# batch pool keeps the pool's pace. A caller may name another machine (a fix
+# relayed from it); with no name the local one answers.
 sub navigation_interval {
-	my $signatorial = &subs::signatorial_designer();
+	my $signatorial = shift || &subs::signatorial_designer();
 	my $controls = eval { return decode_json &subs::setting_grabber({ app => '__president', setting => 'utility_controller' }) } || {};
 	my $interval = &batch_interval($controls->{$signatorial}, 'navigation');
 	$interval = $controls->{$signatorial}->{'navigation'}->{'interval'} unless $interval && $interval > 0;

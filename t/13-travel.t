@@ -1,5 +1,5 @@
-# tests-for: lib/JawnOS/Domain/Appointment.pm lib/JawnOS/Domain/Appointment2.pm lib/JawnOS/Domain/Device2.pm
-# covers:    Which device was with the person.
+# tests-for: lib/JawnOS/Domain/Appointment.pm lib/JawnOS/Domain/Appointment2.pm lib/JawnOS/Domain/Device2.pm lib/JawnOS/Domain/Render.pm
+# covers:    Which device was with the person; and how long a stopped home-plate visit stays resumable (three navigation intervals)
 
 use strict;
 use warnings;
@@ -7,7 +7,10 @@ use warnings;
 use FindBin;
 use lib "$FindBin::Bin/lib", "t/lib";
 use Test::More;
+use File::Slurp qw(read_file);
 use JawnOSTest;
+
+my $root = root();
 
 # Which device was with the person. One appointment can hold fixes from more than
 # one machine - a tablet left in the house and the phone that went for the walk -
@@ -193,5 +196,30 @@ is( &subs::home_plate_stop_armed({ duties => [
 	{ distance => '0.200', action => 'none', latitude => 43, longitude => -81 },
 	{ distance => '0.300', action => 'record', latitude => 43, longitude => -81 }
 ] }), 1, 'one armed duty is enough among several' );
+
+# ------------------------------------------- how long a stopped visit can resume
+# The reopen window is three navigation intervals, not a fixed fifteen minutes,
+# so it follows the utility controller's navigation pace on the machine that
+# produced the fix. A named machine answers with its own row; the local one with
+# no name.
+use Mojo::JSON qw(encode_json);
+{
+	no warnings 'redefine';
+	local *subs::signatorial_designer = sub { return 'sig' };
+	local *subs::setting_grabber = sub {
+		return encode_json({
+			sig   => { navigation => { interval => 240 } },
+			other => { navigation => { interval => 600 } },
+		});
+	};
+	is(&subs::navigation_interval(), 240, 'the local navigation interval comes from the utility controller');
+	is(&subs::navigation_interval('other'), 600, 'another machine reads its own interval');
+}
+
+my $appointment_src = read_file("$root/lib/JawnOS/Domain/Appointment.pm");
+like($appointment_src, qr/my \$reopen_window = 3 \* &navigation_interval\(\$signatorial\) \* 1000;/,
+	'the reopen window is three navigation intervals');
+unlike($appointment_src, qr/stop_timestamp >= \? order by stop_timestamp desc limit 1', \$app, 'navigation', 'stop', &subs::rightNow\(\) - 15 \* 60 \* 1000/,
+	'and no longer the fixed fifteen minutes');
 
 done_testing();
