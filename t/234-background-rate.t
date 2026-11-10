@@ -1,4 +1,4 @@
-# tests-for: lib/JawnOS/Domain/Lan.pm lib/JawnOS/Domain/House.pm perl/President.pl
+# tests-for: lib/JawnOS/Domain/Lan.pm lib/JawnOS/Domain/House.pm perl/President.pl perl/jobs.pl
 use strict;
 use warnings;
 
@@ -31,8 +31,8 @@ like($house, qr/nonce\|signatorial\|sig/, 'the signature is excluded from the fi
 like($house, qr/our %lan_presence_last_at;/, 'a quiet peer is tracked');
 like($house, qr/\$quiet > 10000/, 'a returning peer wakes the reconnector');
 
-my $pres = read_file("$root/perl/President.pl");
-my ($levels) = $pres =~ /(my \$fast = &subs::cache_get\(\{ app => '__president', context => 'levels', subcontext => 'fast' \}.*?name => 'house levels')/s;
+my $jobs = read_file("$root/perl/jobs.pl");
+my ($levels) = $jobs =~ /(sub job_house_levels \{.*?\n\})/s;
 ok($levels, 'the house levels loop is still one block');
 like($levels, qr/\bsleep 5;/, 'the fast levels slice waits five seconds');
 unlike($levels, qr/\bsleep 2;/, 'and no longer wakes every two seconds');

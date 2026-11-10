@@ -57,7 +57,7 @@ is(&subs::subprocessor_heartbeat_for('tunnel holder wss 4 ports'), undef,
 # be safe (forever), but it would be an inventory nobody can review.
 my $root = root();
 my $president = read_file("$root/perl/President.pl");
-my @seeded = ($president =~ /\},\s*\{\s*name\s*=>\s*'([^']+)'[^{}]*\}\);/g);
+my @seeded = ($president =~ /\{\s*name\s*=>\s*'([^']+)'[^{}]*\}\);/g);
 ok(scalar @seeded > 20, 'President names its subprocesses (' . scalar(@seeded) . ')');
 my @unseeded = grep { !defined &subs::subprocessor_warranty_for($_) } @seeded;
 is_deeply(\@unseeded, [], 'every named President subprocess has a warranty seed')

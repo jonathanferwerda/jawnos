@@ -719,6 +719,49 @@ sub subprocessor {
 		}
 		return $result;
 	}
+	# On a box without fork Mojo::IOLoop::Subprocess refuses outright
+	# ("Subprocesses do not support fork emulation"), so a registered job runs
+	# in its own process, started by name. The record and the heartbeat then
+	# belong to that process - never to the parent, whose pid would name
+	# President as the job and let the reaper kill the tree.
+	require JawnOS::Platform;
+	if (!JawnOS::Platform::use_fork()) {
+		require JawnOS::Platform::Job;
+		require './perl/jobs.pl';
+		my $job_name = $params->{'name'};
+		# The worker itself: a body that asks for another subprocessor is
+		# already a process of its own, so its children run here.
+		if (defined $ENV{'JAWNOS_JOB_ARGS'} && length $ENV{'JAWNOS_JOB_ARGS'}) {
+			my $result = eval { $subroutine->() };
+			my $error = $@;
+			if ($error) {
+				eval { $log->error('subprocessor ' . ($job_name || '?') . ' inline failed: ' . ($error =~ s/\s+/ /gr)) } if $log;
+			}
+			return $result;
+		}
+		# They drive sshd, a BLE radio or a native whisper server; there is
+		# nothing for them to do here, so say so instead of spawning a process.
+		if (defined $job_name && length $job_name && $jobs::NO_FORK_SKIP{$job_name}) {
+			eval { $log->info('subprocessor ' . $job_name . ' skipped: this platform has no fork') } if $log;
+			return;
+		}
+		if (defined $job_name && length $job_name && exists $jobs::JOB{$job_name}) {
+			my $child = JawnOS::Platform::Job::spawn($job_name, $params->{'args'} || {});
+			unless ($child && $child->{'pid'}) {
+				eval { $log->error('subprocessor ' . $job_name . ' could not start') } if $log;
+			}
+			return $child;
+		}
+		# A finite job runs here. Do not stamp a process record with this pid:
+		# the parent did not become the job.
+		my $result = eval { $subroutine->() };
+		my $error = $@;
+		if ($error) {
+			eval { $log->error('subprocessor ' . ($job_name || '?') . ' failed: ' . ($error =~ s/\s+/ /gr)) } if $log;
+			eval { &subs::log_writer('subprocessor ' . ($job_name || '?') . ' failed: ' . ($error =~ s/\s+/ /gr)) };
+		}
+		return $result;
+	}
 	my $parent_pid = $$;
 	# The warranty belongs to the job's name, not to each call site: one seed map
 	# (Domain::Process) gives a tunnel holder 'forever' and a header render five

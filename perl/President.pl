@@ -147,6 +147,9 @@ require './perl/AddressDirectory.pl';
 # The Crew: this machine's abilities and the house's job placement. It calls
 # &subs::... at run time and needs nothing loaded before it.
 require './perl/crew.pl';
+# The blocking jobs live here so a box without fork can start each by name in
+# its own process; President passes the same sub to subprocessor as before.
+require './perl/jobs.pl';
 
 # The archive root (config.json archive_dir) gets one folder per location type,
 # made here if it is missing. A blank archive_dir means this machine is not an
@@ -437,14 +440,7 @@ sub manager_starter() {
 	# Skipped on a controller: it keeps no APK store of its own, and every resident
 	# loop is another ~16 MB PSS copy of this tree on a 1.8 GB box.
 	unless ($device eq 'controller') {
-		&subs::subprocessor(sub {
-			sleep 45;
-			while (1) {
-				&subs::subprocessor_heartbeat();
-				eval { &subs::app_release_sync(); };
-				sleep 300;
-			}
-		}, { name => 'app release sync' });
+		&subs::subprocessor(\&jobs::job_app_release_sync, { name => 'app release sync' });
 	}
 
 	# The slow background passes used to be one forked copy of the whole tree
@@ -453,51 +449,10 @@ sub manager_starter() {
 	# process runs them in order on their own slots. The app release sync keeps
 	# its own process (pulling a 35MB APK can hold it for minutes), as do the
 	# short-tick discovery loops and the servers with live connections.
-	my @slow_loops = (
-		{ name => 'crew advert sync', first => 45, every => 300, run => \&crew::advert_sync },
-		{ name => 'crew queue tick', first => 20, every => 60, run => \&crew::tick },
-		{ name => 'crest member cosign', first => 90, every => 300, run => sub { &subs::crest_member_cosig_sync(); } },
-		{ name => 'ollama models sync', first => 60, every => 600, run => sub { &subs::ollama_models_sync(); } },
-		{ name => 'error watch', first => 25, every => 60, run => sub { &subs::error_watch_tick(); } },
-		{ name => 'guide watch', first => 40, every => 60, run => sub { &subs::guide_watch_tick(); } },
-		{ name => 'records watch', first => 120, every => 7200, run => sub { &subs::records_watch_tick(); } },
-		{ name => 'ai balance', first => 30, every => 600, run => sub { &subs::ai_balance_refresh(); } },
-		# The thresholds set under the chart: an hour over the limit, or a runway
-		# under it, becomes one Handbook note per crossing. The ledger's prune
-		# rides the same turn.
-		{ name => 'ai balance watch', first => 95, every => 1800, run => sub { &subs::ai_alert_tick(); } },
-		{ name => 'crypto rates', first => 35, every => 1800, run => sub { &subs::crypto_rates_refresh(); } },
-		# Interac e-Transfer has no API: the notification letters are the record.
-		# A few-minute pass stages one for a person, or records it when the house
-		# asked for that and the match is unmistakable.
-		{ name => 'interac watch', first => 75, every => 300, run => sub { &subs::pay_interac_scan(); } },
-		# A website assigned to an app is a session: a native browser posts its
-		# site spans every half minute, and the mapped app runs while they keep
-		# arriving. The tick stops the session at the last span's end after a
-		# quiet gap, so closing the tab or switching apps ends the appointment.
-		{ name => 'internet sites', first => 10, every => 10, run => sub { &subs::internet_site_appointment_tick(); } },
-		# The cable changed: apply the plan saved for the source now in use. The
-		# tick is idempotent (the applied row makes it a no-op) so a machine on
-		# mains pays one battery read per minute and no sysfs write.
-		{ name => 'power watch', first => 25, every => 60, run => sub { &subs::power_plan_tick(); } },
-	);
 	# Skipped on a controller: it runs no crew, crest, model, watch, balance or
 	# crypto pass, and this one process is another ~16 MB PSS copy of the tree.
 	unless ($device eq 'controller') {
-		&subs::subprocessor(sub {
-			my $started = time;
-			my %due = map { $_->{'name'} => $started + $_->{'first'} } @slow_loops;
-			while (1) {
-				&subs::subprocessor_heartbeat();
-				my $now = time;
-				foreach my $loop ( @slow_loops ) {
-					next if $now < $due{ $loop->{'name'} };
-					$due{ $loop->{'name'} } = $now + $loop->{'every'};
-					eval { $loop->{'run'}->(); };
-				}
-				sleep 5;
-			}
-		}, { name => 'slow loops' });
+		&subs::subprocessor(\&jobs::job_slow_loops, { name => 'slow loops' });
 	}
 
 	# The start menu's System card: every peer's battery and the embedded boards
@@ -506,40 +461,14 @@ sub manager_starter() {
 	# Skipped on a controller: it polls no peers or boards, so the System card's
 	# levels sync is another resident copy of the tree it never needs.
 	unless ($device eq 'controller') {
-		&subs::subprocessor(sub {
-			sleep 20;
-			while (1) {
-				&subs::subprocessor_heartbeat();
-				# Two minutes is the house pace, but a System card on screen asks for
-				# quick passes (levels_fast_request): sleep in slices and answer it
-				# within seconds, so a phone plugged in a moment ago updates.
-				my $fast = &subs::cache_get({ app => '__president', context => 'levels', subcontext => 'fast' }) || 0;
-				my $wanted = ($fast && &subs::rightNow() - $fast < 90000) ? 1 : 0;
-				eval { &subs::house_levels_sync({ fast => $wanted }); };
-				my $synced = &subs::rightNow();
-				while (1) {
-					sleep 5;
-					my $now = &subs::rightNow();
-					last if $now - $synced >= 120000;
-					$fast = &subs::cache_get({ app => '__president', context => 'levels', subcontext => 'fast' }) || 0;
-					last if $fast && $now - $fast < 90000 && $now - $synced >= 8000;
-				}
-			}
-		}, { name => 'house levels' });
+		&subs::subprocessor(\&jobs::job_house_levels, { name => 'house levels' });
 	}
 
 	# mDNS is how a device names itself the moment it joins: fold what the local
 	# network advertises (_jawnos._tcp, plus a printer on _ipp._tcp) into this
 	# machine's device row on a short tick, so a plugged-in watch, deck or pico
 	# appears with its purpose and abilities without anyone pressing Scan.
-	&subs::subprocessor(sub {
-		sleep 12;
-		while (1) {
-			&subs::subprocessor_heartbeat();
-			eval { &subs::device_mdns_sync(); };
-			sleep 15;
-		}
-	}, { name => 'device mdns sync' });
+	&subs::subprocessor(\&jobs::job_device_mdns_sync, { name => 'device mdns sync' });
 
 	# Advertise this House machine on the LAN. An embedded device browses
 	# _jawnos-house._tcp when the homebase it was handed stops answering, so it
@@ -547,14 +476,7 @@ sub manager_starter() {
 	# going dark until someone runs Now Me again. The TXT carries the ports it
 	# dials (arm/coms/bestow), not just the main one. Avahi renames the instance
 	# if two machines share a name, which is fine: devices read the TXT.
-	&subs::subprocessor(sub {
-		sleep 5;
-		while (1) {
-			&subs::subprocessor_heartbeat();
-			eval { &subs::house_advertise_supervise(); };
-			sleep 30;
-		}
-	}, { name => 'house advertise' });
+	&subs::subprocessor(\&jobs::job_house_advertise, { name => 'house advertise' });
 
 	# sshd: the login service the house dials on 8022. It is started and kept up
 	# here, in President, once per tree - not in a worker, which would start a
@@ -565,13 +487,7 @@ sub manager_starter() {
 	# subs::sshd_start is a no-op on a machine that is not the Android app (see
 	# subs::sshd_platform), and it does nothing at all when the prefix has no
 	# sshd_config to read.
-	&subs::subprocessor(sub {
-		while (1) {
-			&subs::subprocessor_heartbeat();
-			eval { &subs::sshd_start(); };
-			sleep 60;
-		}
-	}, { name => 'sshd watcher' });
+	&subs::subprocessor(\&jobs::job_sshd_watcher, { name => 'sshd watcher' });
 
 	# A peer joining a network - the house wifi, a friend's, a hotspot - says so
 	# with a small signed broadcast on that LAN. The listener refreshes the peer's
@@ -579,39 +495,13 @@ sub manager_starter() {
 	# mesh resumes within seconds instead of waiting for the next tunnel check.
 	# This is the path the phone and tablet use: Termux has no avahi, so mDNS
 	# alone never reaches them.
-	&subs::subprocessor(sub {
-		sleep 6;
-		while (1) {
-			&subs::subprocessor_heartbeat();
-			eval { &subs::lan_presence_send(); };
-			sleep 5;
-		}
-	}, { name => 'lan presence beacon', fork => 1 });
+	&subs::subprocessor(\&jobs::job_lan_presence_beacon, { name => 'lan presence beacon', fork => 1 });
 
-	&subs::subprocessor(sub {
-		sleep 3;
-		while (1) {
-			&subs::subprocessor_heartbeat();
-			eval { &subs::lan_presence_listen(); };
-			sleep 5;
-		}
-	}, { name => 'lan presence listener', fork => 1 });
+	&subs::subprocessor(\&jobs::job_lan_presence_listener, { name => 'lan presence listener', fork => 1 });
 
 	# The listener only leaves a cache stamp; this loop runs the mesh sync in its
 	# own process so the listener is never blocked behind a pull.
-	&subs::subprocessor(sub {
-		sleep 7;
-		while (1) {
-			&subs::subprocessor_heartbeat();
-			# A wake is the phone's start/stop reaching the mesh: poll twice a
-			# second so the websockets come back without a visible pause.
-			select(undef, undef, undef, 0.5);
-			my $wake = &subs::cache_get({ app => '__president', context => 'lan', subcontext => 'wake' });
-			next unless $wake;
-			&subs::cache_delete({ app => '__president', context => 'lan', subcontext => 'wake' });
-			eval { &subs::remote_machine_negotiator({}); };
-		}
-	}, { name => 'lan mesh wake', fork => 1 });
+	&subs::subprocessor(\&jobs::job_lan_mesh_wake, { name => 'lan mesh wake', fork => 1 });
 
 	# A device that has never been on WiFi cannot be named by mDNS, and the tree
 	# holds no address for it, so nothing ever connects and it stays invisible while
@@ -626,14 +516,7 @@ sub manager_starter() {
 	# Skipped on a controller: it owns no BLE bridge to adopt an unknown board for,
 	# and holding the radio is another resident copy of the tree.
 	unless ($device eq 'controller') {
-		&subs::subprocessor(sub {
-			sleep 40;
-			while (1) {
-				&subs::subprocessor_heartbeat();
-				eval { &subs::ble_adopt_scan(); };
-				sleep 300;
-			}
-		}, { name => 'ble adopt scan', fork => 1 });
+		&subs::subprocessor(\&jobs::job_ble_adopt_scan, { name => 'ble adopt scan', fork => 1 });
 	}
 
 	# The Android app's scheduled wake (JawnWakeReceiver) holds the CPU for a
@@ -648,70 +531,13 @@ sub manager_starter() {
 	# absence means no stream is being received and any count left in the wake
 	# file is stale (a restart or crash mid-stream never decrements it).
 	if ($device eq 'mobile') {
-		&subs::subprocessor(sub {
-			sleep 20;
-			my $ready_file = &subs::home('~/.president/wake_ready');
-			my $released_file = &subs::home('~/.president/wake_lock_released');
-			my $music_file = &subs::home('~/.president/music_stream_wake');
-			# Music.pl may not be loaded in this worker, so the state path is
-			# built here rather than through its helper.
-			my $music_state_file = &subs::home('~/.president/music_stream.json');
-			# A count with no stream behind it would otherwise keep the permanent
-			# lock forever. Repair it once at start and let the release path below
-			# do the actual unlock, so the lock is never dropped from here.
-			if (-e $music_file && !-e $music_state_file) { write_file($music_file, 0); }
-			while (1) {
-				&subs::subprocessor_heartbeat();
-				eval {
-					my $setting = &subs::setting_grabber({ app => '__president', setting => 'wake_schedule' });
-					$setting = 'on' unless defined $setting && $setting =~ /\S/;
-					my $ready = (-e $ready_file && (time - (stat($ready_file))[9] < 3600)) ? 1 : 0;
-					# only a stream the state file still describes holds the lock
-					my $music = (-e $music_file && -e $music_state_file) ? (read_file($music_file) + 0) : 0;
-					if ($setting eq 'on' && $ready && !$music) {
-						unless (-e $released_file) {
-							&subs::device_call('power.wake_unlock');
-							# A track that started between the check and the unlock
-							# must keep its lock; the same live-count rule applies.
-							my $m2 = (-e $music_file && -e $music_state_file) ? (read_file($music_file) + 0) : 0;
-							if ($m2 > 0) {
-								&subs::device_call('power.wake_lock');
-							}
-							write_file($released_file, time());
-							$log->info('wake schedule: app scheduler ready; released the permanent wake lock');
-						}
-					}
-					elsif ($setting ne 'on' || !$ready) {
-						if (-e $released_file) {
-							unless ($music) {
-								&subs::device_call('power.wake_lock');
-							}
-							unlink $released_file;
-							$log->info('wake schedule: taking the permanent wake lock back');
-						}
-					}
-				};
-				sleep 60;
-			}
-		}, { name => 'wake schedule' });
+		&subs::subprocessor(\&jobs::job_wake_schedule, { name => 'wake schedule' });
 	}
 
 	# The house address book: this machine reports where it is when it boots and
 	# whenever its own interfaces change. The wake report in utility_runner covers
 	# a phone's scheduled beats; this covers a laptop moving between networks.
-	&subs::subprocessor(sub {
-		sleep 30;
-		eval { &AddressDirectory::report('boot'); };
-		my $last = eval { &AddressDirectory::fingerprint() } || '';
-		while (1) {
-			&subs::subprocessor_heartbeat();
-			sleep 60;
-			my $now = eval { &AddressDirectory::fingerprint() } || '';
-			next if $now eq $last;
-			$last = $now;
-			eval { &AddressDirectory::report('network'); };
-		}
-	}, { name => 'address directory' });
+	&subs::subprocessor(\&jobs::job_address_directory, { name => 'address directory' });
 
 
 
@@ -725,10 +551,7 @@ sub manager_starter() {
 	# this is a single pass after boot rather than a loop: a device that lacks a
 	# voice pulls it in and can then serve it. Opening Configure -> Misc refreshes
 	# them on demand (see the misc_setting_list route).
-	&subs::subprocessor(sub {
-		sleep 50;
-		eval { &subs::voice_sync(); };
-	}, { name => 'voice sync' });
+	&subs::subprocessor(\&jobs::job_voice_sync, { name => 'voice sync' });
 
 	# The warm whisper.cpp server keeps the speech model loaded, so a clip skips
 	# the per-call model load the one-shot CLI pays - but a machine that takes no
@@ -744,71 +567,7 @@ sub manager_starter() {
 	# every clip. This loop is the only thing that ever forks it, and the loop
 	# holds none of the pool's listeners - that is why it is started here and not
 	# from a request worker, whose child would inherit them.
-	&subs::subprocessor(sub {
-		my $idle_limit = 600;      # ten quiet minutes, then the model goes back
-		my $want_at = 0;           # when a transcription last asked for the server
-		my $server_pid = 0;        # the one this loop started (0: none of ours)
-		# A server started by the tree this one replaced outlived it, and the
-		# demand logic below would adopt it as "already up" and hold the model for
-		# good (see whisper_server_stop_orphans). Clear those before the first look.
-		my $orphans = &subs::whisper_server_stop_orphans();
-		$log->info("whisper: stopped $orphans orphaned server(s)") if $orphans && $log;
-		while (1) {
-			&subs::subprocessor_heartbeat();
-			my $want = &subs::whisper_server_wanted();
-			$want_at = $want if $want > $want_at;
-			my $recent = ($want_at && (time - $want_at) <= 120) ? 1 : 0;
-			my $idle   = ($want_at && (time - $want_at) > $idle_limit) ? 1 : 0;
-			# Reap a server that died on its own, or its pid would sit as a zombie
-			# and the "is it up" answer below would be about a dead process.
-			if ($server_pid) {
-				my $reaped = waitpid($server_pid, POSIX::WNOHANG());
-				$server_pid = 0 if $reaped == $server_pid || $reaped == -1;
-			}
-			require IO::Socket::INET;
-			my $port = &subs::whisper_server_port();
-			my $probe = IO::Socket::INET->new(
-				PeerAddr => '127.0.0.1', PeerPort => $port, Proto => 'tcp', Timeout => 1);
-			my $up = $probe ? 1 : 0;
-			close $probe if $probe;
-			my $bin   = &subs::whisper_server_bin();
-			my $model = &subs::whisper_model_file('tiny');
-			$model = &subs::whisper_model_file('base') unless length $model && -e $model;
-			if (!$up && !$server_pid && $recent && -x $bin && -e $model) {
-				my $log = &subs::home('~/whisper-server.log');
-				my $log_fh;
-				open($log_fh, '>>', $log);
-				my $pid = fork();
-				if (defined $pid && $pid == 0) {
-					open(STDOUT, '>&', $log_fh) if $log_fh;
-					open(STDERR, '>&', $log_fh) if $log_fh;
-					exec($bin, '-m', $model, '--host', '127.0.0.1', '--port', $port, '--convert')
-						or POSIX::_exit(1);
-				}
-				close($log_fh) if $log_fh;
-				$server_pid = $pid if defined $pid && $pid > 0;
-			}
-			# A server somebody started by hand is left alone: this loop stops only
-			# the one it started itself.
-			elsif ($up && $server_pid && $idle) {
-				kill 'TERM', $server_pid;
-				my $gone = 0;
-				for (1 .. 50) {
-					$gone = 1 if waitpid($server_pid, POSIX::WNOHANG()) != 0;
-					last if $gone;
-					select(undef, undef, undef, 0.1);
-				}
-				if (!$gone) {
-					kill 'KILL', $server_pid;
-					waitpid($server_pid, 0);
-				}
-				$server_pid = 0;
-			}
-			# A model load is a second or two: look again soon while the house is
-			# talking, and coast otherwise.
-			sleep($recent ? 5 : 30);
-		}
-	}, { name => 'whisper server' });
+	&subs::subprocessor(\&jobs::job_whisper_server, { name => 'whisper server' });
 
 
 
@@ -1051,15 +810,7 @@ sub manager_starter() {
 	# Skipped on a controller: the archive queue's worker is another full copy of
 	# the tree, and a 1.8 GB launcher has no archiving to do.
 	unless ($device eq 'controller') {
-		&subs::subprocessor(sub {
-			my $minion = &subs::minion_grabber();
-			# the launcher clears the queue at startup and the nightly evaluation
-			# wishes live in the settings: put their schedules back
-			&subs::nightly_evaluation_reconcile();
-			my $worker = $minion->worker;
-			$worker->status->{jobs} = 1;
-			$worker->run;
-		}, { name => 'Minion Worker' });
+		&subs::subprocessor(\&jobs::job_minion_worker, { name => 'Minion Worker' });
 	}
 
 	# The evaluation schedules live in this machine's queue, but the cadence that
@@ -1070,14 +821,7 @@ sub manager_starter() {
 	# Skipped on a controller: it takes no part in the evaluation night, and each
 	# loop is another resident copy of the tree.
 	unless ($device eq 'controller') {
-		&subs::subprocessor(sub {
-			sleep 120;
-			while (1) {
-				&subs::subprocessor_heartbeat();
-				eval { &subs::nightly_evaluation_reconcile(); };
-				sleep 300;
-			}
-		}, { name => 'evaluation schedules' });
+		&subs::subprocessor(\&jobs::job_evaluation_schedules, { name => 'evaluation schedules' });
 	}
 
 	# The evaluation dispatch: the server assigns each scheduled run to a ready
@@ -1088,15 +832,7 @@ sub manager_starter() {
 	# Skipped on a controller: it takes no part in the evaluation night, and each
 	# loop is another resident copy of the tree.
 	unless ($device eq 'controller') {
-		&subs::subprocessor(sub {
-			sleep 45;
-			while (1) {
-				&subs::subprocessor_heartbeat();
-				eval { &subs::evaluation_dispatch_tick(); };
-				eval { &subs::where_audit_tick(); };
-				sleep 60;
-			}
-		}, { name => 'evaluation dispatch' });
+		&subs::subprocessor(\&jobs::job_evaluation_dispatch, { name => 'evaluation dispatch' });
 	}
 	Mojo::IOLoop->start;
 	END {

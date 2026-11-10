@@ -1,10 +1,11 @@
-# tests-for: lib/JawnOS/Platform/Runner.pm lib/JawnOS/Platform/Runner/Unix.pm lib/JawnOS/Platform/Server.pm
+# tests-for: lib/JawnOS/Platform/Runner.pm lib/JawnOS/Platform/Runner/Unix.pm lib/JawnOS/Platform/Server.pm lib/JawnOS/Platform/Job.pm perl/jobs.pl perl/subprocessor_worker.pl
 # covers:    the runner seam picks the platform backend, every backend starts a
 #            child and reports its output and exit, a write reaches the child,
 #            and nothing outside the Unix backend names ReadWriteFork.
 
 use strict;
 use warnings;
+no warnings 'once';
 
 use FindBin;
 use lib "$FindBin::Bin/lib", "t/lib", "$FindBin::Bin/../lib";
@@ -16,6 +17,8 @@ use RepoSource;
 use Mojo::IOLoop;
 use JawnOS::Platform::Runner;
 use JawnOS::Platform::Server;
+use JawnOS::Platform::Job;
+use Mojo::JSON qw(decode_json);
 
 my $root = repo_root();
 
@@ -142,6 +145,74 @@ ok($runner->can('read_handle'), 'the seam exposes a read handle');
 	is($plan->{'env'}{'MOJO_HOME'}, '/tmp/root', 'plan points Mojolicious at the tree');
 	is($plan->{'cwd'}, '/tmp/root', 'plan keeps the cwd');
 	is(JawnOS::Platform::Server::plan(), undef, 'plan without an app is undef');
+}
+
+
+# The job launcher names the worker and the exact job; the registry holds every
+# blocking name President starts, and subprocessor chooses the spawn on a
+# no-fork box instead of refusing Strawberry's pseudofork.
+{
+	my $plan = JawnOS::Platform::Job::plan('voice sync', { probe => 1 }, cwd => '/tmp/root');
+	ok($plan, 'plan returns a spec for a job');
+	is($plan->{'program'}, $^X, 'plan runs the same interpreter');
+	is_deeply($plan->{'program_args'},
+		[ '-I', '/tmp/root/lib', './perl/subprocessor_worker.pl', '--name', 'voice sync' ],
+		'plan names the worker, its lib and the exact job name');
+	is($plan->{'cwd'}, '/tmp/root', 'plan keeps the cwd');
+	is_deeply(decode_json($plan->{'env'}{'JAWNOS_JOB_ARGS'}), { probe => 1 },
+		'the args travel as JSON');
+	is(JawnOS::Platform::Job::plan(), undef, 'plan without a name is undef');
+}
+
+{
+	chdir $root or die "chdir $root: $!";
+	require './perl/jobs.pl';
+	my @lifted = (
+		'app release sync', 'slow loops', 'house levels', 'device mdns sync',
+		'house advertise', 'sshd watcher', 'lan presence beacon',
+		'lan presence listener', 'lan mesh wake', 'ble adopt scan', 'wake schedule',
+		'address directory', 'voice sync', 'whisper server', 'Minion Worker',
+		'evaluation schedules', 'evaluation dispatch',
+	);
+	my @missing = grep { !exists $jobs::JOB{$_} } @lifted;
+	is_deeply(\@missing, [], 'every blocking job President starts is in %jobs::JOB');
+	my $pres = read_file("$root/perl/President.pl");
+	my @unnamed = grep { $pres !~ /name => '\Q$_\E'/ } @lifted;
+	is_deeply(\@unnamed, [], 'and each still uses that exact call-site name in President');
+	ok(exists $jobs::NO_FORK_SKIP{'utility functions'},
+		'utility functions (not liftable yet) is skipped, never run in the master');
+}
+
+{
+	local $ENV{'JAWNOS_PORTABLE'} = '1';
+	local $ENV{'JAWNOS_JOB_ARGS'};
+	delete $ENV{'JAWNOS_JOB_ARGS'};
+	require JawnOS::Domain::Loader;
+	subs::preload('subprocessor');
+	my $spawned;
+	my $ran = 0;
+	no warnings 'redefine';
+	local *JawnOS::Platform::Job::spawn = sub {
+		my ($name, $args) = @_;
+		$spawned = [ $name, $args ];
+		return { runner => undef, pid => 4242 };
+	};
+	my $child = &subs::subprocessor(sub { $ran = 1 }, { name => 'voice sync', args => { probe => 1 } });
+	ok($spawned, 'a registered job is spawned when fork is unavailable');
+	is($spawned->[0], 'voice sync', 'and keeps the call-site name');
+	is_deeply($spawned->[1], { probe => 1 }, 'and carries its args');
+	ok(!$ran, 'the closure did not run in this process');
+	ok($child && $child->{'pid'} == 4242, 'the child handle is returned');
+
+	$spawned = undef;
+	my $skipped = 0;
+	$child = &subs::subprocessor(sub { $skipped = 1 }, { name => 'sshd watcher' });
+	ok(!$spawned, 'a Unix-only job is not spawned without fork');
+	ok(!$skipped, 'and is not run inline either');
+
+	my $inline = 0;
+	&subs::subprocessor(sub { $inline = 1 }, { name => 'address report' });
+	is($inline, 1, 'an unregistered finite job runs inline');
 }
 
 done_testing();

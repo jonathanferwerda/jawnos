@@ -1,4 +1,4 @@
-# tests-for: lib/JawnOS/Domain/House.pm lib/JawnOS/Domain/Process.pm perl/President.pl scripts/manager_killer.pl
+# tests-for: lib/JawnOS/Domain/House.pm lib/JawnOS/Domain/Process.pm perl/President.pl perl/jobs.pl scripts/manager_killer.pl
 
 use strict;
 use warnings;
@@ -136,9 +136,10 @@ is($started, 0, 'sshd_start is a no-op on Linux even with a prefix to point at')
 # The source must keep the ownership straight: President owns the start, Manager
 # does not start one per worker, and the recovery script has no bare `sshd`.
 my $president = do { local $/; open(my $fh, '<', "$FindBin::Bin/../perl/President.pl") or die $!; <$fh> };
+my $jobs = do { local $/; open(my $fh, '<', "$FindBin::Bin/../perl/jobs.pl") or die $!; <$fh> };
 my $manager = manager_source();
 my $killer = do { local $/; open(my $fh, '<', "$FindBin::Bin/../scripts/manager_killer.pl") or die $!; <$fh> };
-like($president, qr/&subs::sshd_start\(\)/, 'President starts sshd once per tree');
+like($jobs, qr/&subs::sshd_start\(\)/, 'President starts sshd once per tree, now through the jobs table');
 like($president, qr/name => 'sshd watcher'/, 'and keeps it up from a supervised loop');
 unlike($manager, qr/subs::sshd_start\(\)/, 'Manager.pl does not start a daemon in every worker');
 unlike($president, qr/^\s*`sshd`;/m, 'President.pl does not start a bare sshd at boot');

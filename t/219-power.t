@@ -1,4 +1,4 @@
-# tests-for: lib/JawnOS/Domain/Power.pm lib/JawnOS/Domain/Loader.pm lib/JawnOS/Controller/manager_power.pm lib/JawnOS/Routes/manager_power.pm scripts/jawnos_power.pl templates/apps/power.html.ep public/js/manager/power.js public/js/manager/taskbar_power.js public/icons/power.svg templates/start_menu/start_menu.html.ep templates/manager.html.ep public/css/manager.css lib/JawnOS/Manager/Core1_tables_hooks.pm public/js/manager/windows/01_storage.js public/js/manager/taskbar_edit.js perl/President.pl perl/language.pl perl/help/topics_apps.pl perl/help/topics_features.pl perl/gb/02_labels_and_collectives.pl
+# tests-for: lib/JawnOS/Domain/Power.pm lib/JawnOS/Domain/Loader.pm lib/JawnOS/Controller/manager_power.pm lib/JawnOS/Routes/manager_power.pm scripts/jawnos_power.pl templates/apps/power.html.ep public/js/manager/power.js public/js/manager/taskbar_power.js public/icons/power.svg templates/start_menu/start_menu.html.ep templates/manager.html.ep public/css/manager.css lib/JawnOS/Manager/Core1_tables_hooks.pm public/js/manager/windows/01_storage.js public/js/manager/taskbar_edit.js perl/President.pl perl/jobs.pl perl/language.pl perl/help/topics_apps.pl perl/help/topics_features.pl perl/gb/02_labels_and_collectives.pl
 # covers:    The Power app: a battery reading and its finish time, the CPU reading,
 #            the two source plans, the idempotent source switch, the fixed writer,
 #            and the menu/taskbar/help/translation wiring.
@@ -289,9 +289,9 @@ sub helper {
 	is($topic->{category}, 'apps', 'it lives in the app category');
 	like($topic->{summary}, qr/battery/i, 'the summary names the battery');
 
-	my $president = read_file("$root/perl/President.pl");
-	like($president, qr/name => 'power watch'/, 'the slow loop carries the source switch');
-	like($president, qr/&subs::power_plan_tick\(\)/, 'and calls the domain helper');
+	my $jobs = read_file("$root/perl/jobs.pl");
+	like($jobs, qr/name => 'power watch'/, 'the slow loop carries the source switch');
+	like($jobs, qr/&subs::power_plan_tick\(\)/, 'and calls the domain helper');
 }
 
 done_testing();

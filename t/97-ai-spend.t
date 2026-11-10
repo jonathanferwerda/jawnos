@@ -387,7 +387,7 @@ like(read_file("$root/lib/JawnOS/Domain/Migrations.pm"), qr/create table if not 
 	'the migration creates the synced report table');
 
 # ---- the audit is wired to the button and the master -------------------------
-like(read_file("$root/perl/President.pl"), qr/where_audit_tick/,
+like(read_file("$root/perl/jobs.pl"), qr/where_audit_tick/,
 	'the master ticks the locator audit');
 like(read_file("$root/lib/JawnOS/Controller/manager_configure4.pm"), qr/sub action_19400/,
 	'the run-now route has an action');

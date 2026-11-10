@@ -1,4 +1,4 @@
-# tests-for: perl/President.pl lib/JawnOS/Domain/Ai.pm lib/JawnOS/Sco/Gateway.pm lib/JawnOS/Domain/Loader.pm
+# tests-for: perl/President.pl perl/jobs.pl lib/JawnOS/Domain/Ai.pm lib/JawnOS/Sco/Gateway.pm lib/JawnOS/Domain/Loader.pm
 # covers:    The warm whisper.cpp server is started by demand, not at boot, and
 #            stopped once the house has been quiet for ten minutes. It held
 #            147 MB resident at ggml-tiny on a 1.8 GB handheld that took no
@@ -21,6 +21,7 @@ use RepoSource;
 
 my $root = repo_root();
 my $president = read_file("$root/perl/President.pl");
+my $jobs = read_file("$root/perl/jobs.pl");
 my $ai        = read_file("$root/lib/JawnOS/Domain/Ai.pm");
 my $gateway   = read_file("$root/lib/JawnOS/Sco/Gateway.pm");
 my $loader    = read_file("$root/lib/JawnOS/Domain/Loader.pm");
@@ -79,8 +80,8 @@ like($loader, qr/\bwhisper_server_wanted\b/,
 	'Loader.pm maps the new domain sub (t/91 reads the same list)');
 
 # --- the loop that starts and stops it -------------------------------------
-my ($loop) = $president =~ /(&subs::subprocessor\(sub \{\s*my \$idle_limit = 600;.*?\}, \{ name => 'whisper server' \}\);)/s;
-ok($loop, 'the whisper server loop is still registered as a subprocessor');
+my ($loop) = $jobs =~ /(sub job_whisper_server \{.*?\n\})/s;
+ok($loop, 'the whisper server loop is still a named subprocessor job');
 like($loop, qr/my \$want = &subs::whisper_server_wanted\(\);/,
 	'the loop reads the demand marker');
 like($loop, qr/my \$idle_limit = 600;/,
