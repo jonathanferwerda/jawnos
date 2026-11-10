@@ -20,6 +20,10 @@
 # checkout (the master does not pull on restart) and restarts, so the dev server
 # is always on what was just landed.
 #
+# The generated agent index and the baked protocols describe the tree, so they
+# are refreshed on the rebased tip before the suite: a landing that rebases onto
+# a newer trunk must test the tree it is about to push.
+#
 #   perl scripts/agent_land.pl                  land the current branch
 #   perl scripts/agent_land.pl --branch agent/pen
 #   perl scripts/agent_land.pl --dry-run        print the plan, change nothing
@@ -221,6 +225,7 @@ if ($opt{'dry'}) {
 	say_step("would back up $branch to origin/$branch (so the work survives a busy gate)");
 	say_step("would lock $lock_path");
 	say_step("would fetch origin and rebase $branch onto origin/$opt{'trunk'}");
+	say_step('would refresh the generated agent index and baked protocols on the rebased tree');
 	say_step("would run: $^X scripts/run_tests.pl --jobs $opt{'jobs'}");
 	say_step("would bump VERSION, rewrite the tip subject, and push HEAD:refs/heads/$opt{'trunk'}");
 	say_step("would bump the firmware version of every board this landing changed");
@@ -336,6 +341,11 @@ my ($nrc, $ahead) = git('rev-list', '--count', "origin/$opt{'trunk'}..HEAD");
 refuse("nothing to land: $branch has no commits ahead of origin/$opt{'trunk'} "
 	. '(it is already merged)', 'nothing')
 	if $nrc == 0 && ($ahead // '') eq '0';
+
+# The rebase just changed the tree, and the index and baked protocols describe
+# the tree. Refresh them here, before the suite, so t/97 and t/98 judge what will
+# be pushed rather than a trunk that moved under the branch.
+refresh_generated();
 
 # --- the suite is the gate ------------------------------------------------
 
@@ -499,6 +509,36 @@ sub remove_worktree {
 	my ($brc, $bout) = capture('git', '-C', $primary, 'branch', '-d', $branch);
 	print STDERR "agent_land: the worktree is gone; the branch was not deleted:\n$bout\n" if $brc != 0;
 	say_step("removed the worktree at $root (its .shots/ scratch went with it)");
+}
+
+# The index and the baked protocols are generated from the tree, and the rebase
+# just changed it. A no-op refresh adds no commit; a real one rides the landing
+# tip, so the landing stays one commit and the suite still tests it.
+sub refresh_generated {
+	return unless -f 'scripts/agent_help.pl' || -f 'scripts/bake_agents_rules.pl';
+
+	# The scan wants the app's config and database the way the suite does. The
+	# seeder is idempotent and writes only gitignored files.
+	capture($^X, 'scripts/worktree_seed.pl') if -f 'scripts/worktree_seed.pl';
+
+	if (-f 'scripts/agent_help.pl') {
+		my ($rc, $out) = capture($^X, 'scripts/agent_help.pl', '--write-index');
+		refuse("agent_help.pl --write-index failed:\n$out", 'generated') if $rc != 0;
+	}
+	if (-f 'scripts/bake_agents_rules.pl' && -f 'AGENTS.md') {
+		my ($rc, $out) = capture($^X, 'scripts/bake_agents_rules.pl');
+		refuse("bake_agents_rules.pl failed:\n$out", 'generated') if $rc != 0;
+	}
+
+	my @paths = grep { -e $_ } qw(qa/coding_night/agent-index.md docs/coding_agent_protocols.md);
+	return unless @paths;
+	my (undef, $dirty) = git('status', '--porcelain', '--', @paths);
+	return unless length $dirty;
+
+	say_step('refreshing the generated agent index and baked protocols for the rebased tree');
+	git('add', '--', @paths);
+	my ($rc, $out) = git('commit', '--amend', '--no-edit');
+	refuse("amending the refreshed generated files failed:\n$out", 'generated') if $rc != 0;
 }
 
 # A restart is one request to one master, and a second caller while one is

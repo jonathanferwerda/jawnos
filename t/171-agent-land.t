@@ -29,7 +29,8 @@ my $SUITE = <<'PL';
 use strict; use warnings;
 my $dir = $ENV{'AGENT_LAND_TEST_DIR'} || die "no AGENT_LAND_TEST_DIR\n";
 open(my $fh, '>>', "$dir/suite") or die $!;
-print $fh "@ARGV\n";
+my $generated = -e "$dir/generated" ? 1 : 0;
+print $fh "@ARGV generated=$generated\n";
 close $fh;
 system('git', 'config', 'core.bare', 'true') if -e "$dir/bare";
 if (-e "$dir/moved") {
@@ -56,6 +57,33 @@ open(my $out, '>', 'VERSION') or die "VERSION: $!\n";
 print $out "$new\n";
 close $out;
 print "$new\n";
+PL
+
+my $AGENT_HELP = <<'PL';
+#!/usr/bin/perl
+use strict; use warnings;
+my $dir = $ENV{'AGENT_LAND_TEST_DIR'} || die "no AGENT_LAND_TEST_DIR\n";
+open(my $log, '>>', "$dir/generated") or die $!;
+print $log "agent_help @ARGV\n";
+close $log;
+open(my $out, '>', 'qa/coding_night/agent-index.md') or die "index: $!\n";
+print $out "generated index\n";
+close $out;
+print "wrote index\n";
+exit 0;
+PL
+
+my $BAKE = <<'PL';
+#!/usr/bin/perl
+use strict; use warnings;
+my $dir = $ENV{'AGENT_LAND_TEST_DIR'} || die "no AGENT_LAND_TEST_DIR\n";
+open(my $log, '>>', "$dir/generated") or die $!;
+print $log "bake_agents_rules\n";
+close $log;
+open(my $out, '>', 'docs/coding_agent_protocols.md') or die "protocols: $!\n";
+print $out "generated protocols\n";
+close $out;
+exit 0;
 PL
 
 my $RESTART = <<'PL';
@@ -149,6 +177,14 @@ sub fixture {
 	my ($pc, $pout) = sh('git', 'init', '-b', 'main', $primary);
 	die "primary: $pout" if $pc != 0;
 	make_path($primary, "$primary/scripts", $marker);
+	if ($arg{'generated'}) {
+		make_path("$primary/qa/coding_night", "$primary/docs");
+		write_file("$primary/qa/coding_night/agent-index.md", "stale index\n");
+		write_file("$primary/docs/coding_agent_protocols.md", "stale protocols\n");
+		write_file("$primary/scripts/agent_help.pl", $AGENT_HELP);
+		write_file("$primary/scripts/bake_agents_rules.pl", $BAKE);
+		write_file("$primary/AGENTS.md", "# fixture map\n");
+	}
 
 	git($primary, 'config', 'user.email', 'agent_land@example.test');
 	git($primary, 'config', 'user.name',  'agent_land test');
@@ -577,6 +613,25 @@ subtest 'a busy restart waits for the pending tree and verifies the version' => 
 	ok(@calls >= 2, 'it asked, then checked the running version');
 	like($calls[0], qr/--reason v0\.1\.2/, 'the first call was the restart');
 	like($calls[1], qr/--status --json/, 'the second was the version check');
+};
+
+subtest 'the lander refreshes the generated index before the suite' => sub {
+	my $f = fixture(generated => 1);
+	commit_in_worktree($f, 'note.txt', "a\n", 'add a note');
+
+	my ($rc, $out) = land($f);
+	is($rc, 0, 'the landing exits cleanly') or diag($out);
+	like($out, qr/refreshing the generated agent index/, 'it says it refreshed the generated files');
+
+	my @suite = grep { /--jobs/ } split /\n/, read_file("$f->{'marker'}/suite");
+	like($suite[0] // '', qr/generated=1/, 'the suite ran after the refresh');
+
+	my (undef, $index) = git($f->{'primary'}, 'show', 'origin/main:qa/coding_night/agent-index.md');
+	my (undef, $protocols) = git($f->{'primary'}, 'show', 'origin/main:docs/coding_agent_protocols.md');
+	is($index, 'generated index', 'the pushed tip carries the refreshed index');
+	is($protocols, 'generated protocols', 'and the refreshed baked protocols');
+	my (undef, $count) = git($f->{'primary'}, 'rev-list', '--count', 'origin/main');
+	is($count, 2, 'the refresh rides the landing commit, not a second one');
 };
 
 done_testing();
