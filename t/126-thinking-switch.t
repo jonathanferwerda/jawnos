@@ -211,6 +211,15 @@ my @calls;
 	is( $asked[0]{'model'}, 'ollama:moondream', 'the picked model is asked' );
 	is( $asked[0]{'role'}, 'visual_assistant', 'and the role rides along for spend accounting' );
 
+	# a shade of the right hue proves the picture was read; the exact word need
+	# not match, because DeepSeek Flash says "goldenrod" where the image is yellow
+	local *subs::ai_vision_test_image = sub { return ("PNG\x00BYTES", 'yellow', qr/yellow|gold|golden|goldenrod|amber|lemon|mustard/i) };
+	local *subs::ai_chat_raw = sub { return ({ 'message' => { 'content' => 'Goldenrod' } }, undef) };
+	($ok, $message) = subs::ai_model_test('deepseek:deepseek-flash', 'visual_assistant');
+	is( $ok, 1, 'a shade of the right hue passes (goldenrod for yellow)' );
+	is( $message, 'the model saw: Goldenrod', 'and is reported as seen' );
+
+	local *subs::ai_vision_test_image = sub { return ("PNG\x00BYTES", 'red') };
 	local *subs::ai_chat_raw = sub { return ({ 'message' => { 'content' => 'blue' } }, undef) };
 	($ok, $message) = subs::ai_model_test('ollama:moondream', 'visual_assistant');
 	is( $ok, 0, 'a model that names another colour fails' );

@@ -850,16 +850,18 @@ sub ai_chat {
 
 # The picture the Vision Test sends: a small solid colour and its name. The
 # colour is picked per press, so a model that reads the picture says the right
-# one; a text model that cannot see answers another colour or nothing. Returns
-# (png_bytes, colour_name).
+# one; a text model that cannot see answers another colour or nothing. Each
+# colour also accepts the shades a model may name instead ("goldenrod" for
+# yellow): the right hue proves the picture was read, and the exact word need
+# not match. Returns (png_bytes, colour_name, accepted_words).
 sub ai_vision_test_image {
 	my @colours = (
-		[ 'red',    [ 210,  40,  40 ] ],
-		[ 'green',  [  40, 160,  70 ] ],
-		[ 'blue',   [  40,  80, 210 ] ],
-		[ 'yellow', [ 235, 200,  30 ] ],
+		[ 'red',    qr/red|crimson|scarlet|vermilion|cherry/i,             [ 210,  40,  40 ] ],
+		[ 'green',  qr/green|lime|emerald|olive|moss/i,                    [  40, 160,  70 ] ],
+		[ 'blue',   qr/blue|azure|navy|cobalt|indigo/i,                    [  40,  80, 210 ] ],
+		[ 'yellow', qr/yellow|gold|golden|goldenrod|amber|lemon|mustard/i, [ 235, 200,  30 ] ],
 	);
-	my ($name, $rgb) = @{ $colours[ int(rand(@colours)) ] };
+	my ($name, $words, $rgb) = @{ $colours[ int(rand(@colours)) ] };
 	my ($w, $h) = (32, 32);
 	my $raw = join '', map { "\0" . (pack('C3', @$rgb) x $w) } 1 .. $h;
 	require Compress::Zlib;
@@ -872,7 +874,7 @@ sub ai_vision_test_image {
 		. $chunk->('IHDR', pack('NNCCCCC', $w, $h, 8, 2, 0, 0, 0))
 		. $chunk->('IDAT', Compress::Zlib::compress($raw))
 		. $chunk->('IEND', '');
-	return ($png, $name);
+	return ($png, $name, $words);
 }
 
 # The Plat panel's Test button: ask the chosen model to prove it can answer.
@@ -923,7 +925,8 @@ sub ai_model_test {
 	# model that answers one proves nothing about seeing. The picture is one
 	# solid colour; the reply is checked against the colour it really is.
 	if ($role eq 'visual_assistant') {
-		my ($png, $colour) = &ai_vision_test_image();
+		my ($png, $colour, $words) = &ai_vision_test_image();
+		$words = qr/\Q$colour\E/i unless ref $words eq 'Regexp';
 		my ($body, $err) = &ai_chat_raw(
 			$model,
 			[ {
@@ -937,7 +940,7 @@ sub ai_model_test {
 		return (0, $err || 'the model returned nothing') if $err;
 		my ($shown, $text) = $readable->($body);
 		return (0, 'the model returned nothing readable') unless length $text;
-		return (1, 'the model saw: ' . $shown) if $text =~ /\b\Q$colour\E\b/i;
+		return (1, 'the model saw: ' . $shown) if $text =~ /\b(?:$words)\b/i;
 		return (0, 'the model answered: ' . $shown . ' but the test image was ' . $colour . ', so it did not read it');
 	}
 

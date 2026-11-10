@@ -32,9 +32,30 @@ is( caps('phi-4-multimodal'), 'chat+vision', 'Phi-4 multimodal sees images' );
 is( caps('gpt-4o'), 'chat+vision', 'gpt-4o still does' );
 is( caps('gemma3'), 'chat+vision', 'gemma3 still does' );
 
+# DeepSeek Flash reads images; the pro model does not (both were tested against
+# the provider: Flash named the colour, V4 Pro answered "I cannot see the image").
+is( caps('deepseek-flash'), 'chat+vision', 'DeepSeek Flash sees images' );
+is( caps('deepseek-v4.1-flash:cloud'), 'chat+vision', 'including the Ollama cloud tag' );
+is( caps('deepseek-v4-pro'), 'chat', 'DeepSeek V4 Pro does not' );
+
 # Text stays text: the Vision list must not promise sight it does not have.
-is( caps('deepseek-flash'), 'chat', 'DeepSeek Flash is a text model' );
 is( caps('llama-3.3-70b-instruct'), 'chat', 'a text Llama is not offered to Vision' );
 is( caps('mistral-small-latest'), 'chat', 'an untagged Mistral Small is not assumed to see' );
+
+# A provider's own capability list outranks the name guess, which is how a cloud
+# model called "deepseek-v4.1-flash:cloud" reaches the Vision list.
+sub caps_of { return join '+', subs::ai_model_caps(@_) }
+is( caps_of('ollama', 'deepseek-v4.1-flash:cloud', { capabilities => [qw(completion thinking vision)] }),
+	'chat+vision', 'Ollama says a cloud model sees, so it sees' );
+is( caps_of('ollama', 'gemma4:cloud', { capabilities => [qw(completion vision)] }),
+	'chat+vision', 'and so does any other vision-capable one' );
+is( caps_of('ollama', 'nomic-embed-text', { capabilities => [qw(embedding)] }),
+	'other', 'an embedding model is not a chat model' );
+is( caps_of('ollama', 'some-text-model', { capabilities => [qw(completion)] }),
+	'chat', 'completion alone is chat' );
+is( caps_of('ollama', 'mystery-model', {}),
+	'chat', 'no capabilities falls back to the name guess' );
+is( caps_of('deepseek', 'deepseek-v4-pro', undef),
+	'chat', 'a provider list without metadata still guesses by name' );
 
 done_testing();

@@ -703,7 +703,7 @@ sub ai_model_caps_by_name {
 	return ('audio') if $n =~ /(whisper|asr|transcri|speech-to-text|\bstt\b|deepgram|nova-?2|parakeet)/;
 	return ('other') if $n =~ /(embed|rerank|\bbge\b|resnet|distilbert|sst-2|translat|m2m100|indictrans|guard|smart-turn|moderation)/;
 	return ('vision') if $n =~ /(llava|bakllava|moondream|minicpm-?v|cogvlm|pixtral|qwen2-?vl|qwen2\.5-?vl|qwen2\.5vl|internvl|llama-?3\.2-vision|vision|(?:^|[-_.])vl\d*(?:$|[-_.]))/;
-	return ('chat', 'vision') if $n =~ /(gpt-4o|gpt-4\.1|claude|gemini|gemma3|gemma4|grok-2-vision|grok-vision|llama-?4|mistral-small-?3(?:\.\d+)?|phi-?4-multimodal)/;
+	return ('chat', 'vision') if $n =~ /(gpt-4o|gpt-4\.1|claude|gemini|gemma3|gemma4|grok-2-vision|grok-vision|llama-?4|mistral-small-?3(?:\.\d+)?|phi-?4-multimodal|deepseek-(?:v[0-9.]+-)?flash)/;
 	return ('chat');
 }
 
@@ -721,6 +721,18 @@ sub ai_model_caps_by_task {
 
 sub ai_model_caps {
 	my ($provider, $name, $meta) = @_;
+	# A provider that states a model's capabilities itself outranks the name
+	# guess: Ollama reports completion / vision / tools / thinking / embedding per
+	# model, which is how a cloud model whose name says nothing
+	# (deepseek-v4.1-flash:cloud) still reaches the Vision list.
+	if (ref $meta eq 'HASH' && ref $meta->{'capabilities'} eq 'ARRAY') {
+		my %c = map { $_ => 1 } @{ $meta->{'capabilities'} };
+		my @caps;
+		push @caps, 'other'  if $c{'embedding'};
+		push @caps, 'chat'   if $c{'completion'};
+		push @caps, 'vision' if $c{'vision'};
+		return @caps if @caps;
+	}
 	my $task = '';
 	if (ref $meta eq 'HASH' && defined $meta->{'task'}) {
 		# Cloudflare's search returns task as an object { id, name } in some versions
