@@ -10,9 +10,11 @@
 #            pid-reuse start token, the command line and environment, the
 #            parent/group/cwd/exe reads, RSS, the one-pass table, the ppid
 #            closure and kill-tree, the machine memory/uptime/load/CPU reads,
-#            the safe empty answers a platform without /proc gives, and that
-#            the request-side call sites, the master's stop sweep and the
-#            manager killer no longer open /proc themselves.
+#            the safe empty answers a platform without /proc gives, the Windows
+#            backend's tasklist/CIM/OS/CPU parsers and their units (pages,
+#            100 Hz ticks, ticks since boot), its ppid closure, the cached
+#            snapshot, and that the request-side call sites, the master's stop
+#            sweep and the manager killer no longer open /proc themselves.
 
 use strict;
 use warnings;
@@ -29,8 +31,11 @@ use JawnOS::Platform::Process qw(
 	parse_stat state running pid_exists same_process start_time
 	command_line cpu_ticks descendants signal
 	comm ppid pgrp cwd exe environ rss_kib
-	table tree kill_tree
+	table tree kill_tree ppid_closure
 	meminfo uptime loadavg cpu_times
+	parse_tasklist parse_cim parse_windows_os parse_windows_cpu
+	cim_epoch windows_rows windows_snapshot windows_os windows_signal
+	reset_cache
 );
 
 my $linux = ($^O eq 'linux') ? 1 : 0;
@@ -391,5 +396,130 @@ for my $rel (@process_folded) {
 	unlike($src, qr{(?:open|readlink)\([^)]*['"]/proc/\$}, "$rel does not read /proc/<pid> itself");
 	like($src, qr{JawnOS::Platform::Process::}, "$rel uses the platform process seam");
 }
+
+# ------------------------------------------------------------ the Windows backend
+# The Windows commands cannot run here, so the parsers are fed the exact text
+# tasklist and ConvertTo-Csv emit and are checked on Linux. These are pure
+# readers: the $^O gate means they are reachable only through a Windows branch
+# in a house, but the text they read is the same text on both boxes.
+
+my $tasklist_text = <<'CSV';
+"chrome.exe","1234","Console","1","123,456 K"
+"a,b.exe","4321","Services","0","12,345 K"
+"System","4","Services","0","144 K"
+CSV
+
+my $tl = parse_tasklist($tasklist_text);
+is($tl->{1234}{'comm'}, 'chrome.exe', 'tasklist CSV: the image name is the comm');
+is($tl->{1234}{'mem_kib'}, 123456, 'tasklist CSV: the thousands separator is removed');
+is($tl->{4321}{'comm'}, 'a,b.exe', 'tasklist CSV: a comma inside a quoted name stays');
+is($tl->{4}{'mem_kib'}, 144, 'tasklist CSV: a plain size is read');
+is_deeply(parse_tasklist(''), {}, 'no tasklist text is no processes');
+
+my $cim_text = <<'CSV';
+"ProcessId","ParentProcessId","CommandLine","ExecutablePath","CreationDate","KernelModeTime","UserModeTime","WorkingSetSize"
+"1234","1","""C:\Program Files\App\app.exe"" --flag,value ""a,b""","C:\Program Files\App\app.exe","20261110093045.500000","12345678","2345678","104857600"
+CSV
+
+my $cim = parse_cim($cim_text);
+is($cim->{1234}{'ppid'}, 1, 'CIM CSV: the parent pid is a number');
+is($cim->{1234}{'cmdline'}, '"C:\Program Files\App\app.exe" --flag,value "a,b"',
+	'CIM CSV: a comma and a doubled quote survive the command line');
+is($cim->{1234}{'exe'}, 'C:\Program Files\App\app.exe', 'CIM CSV: the executable path is read');
+is($cim->{1234}{'ws'}, 104857600, 'CIM CSV: the working set is in bytes');
+is_deeply(parse_cim(''), {}, 'no CIM text is no processes');
+
+my $boot = cim_epoch('20261110090000.000000');
+ok(defined $boot, 'a CIM timestamp parses to an epoch');
+is(cim_epoch('not-a-stamp'), undef, 'a non-timestamp has no epoch');
+
+my ($win) = grep { $_->{'pid'} eq '1234' } @{ windows_rows($tasklist_text, $cim_text, $boot) };
+ok($win, 'the two Windows sources merge into one row');
+is($win->{'pid'}, '1234', 'the Windows pid is a string, as the Monitor has always had it');
+is($win->{'ppid'}, 1, 'the Windows ppid is a number');
+is($win->{'comm'}, 'chrome.exe', 'the Windows comm is the tasklist image name');
+is($win->{'cmdline'}, '"C:\Program Files\App\app.exe" --flag,value "a,b"',
+	'the Windows row carries the command line');
+is($win->{'exe'}, 'C:\Program Files\App\app.exe', 'the Windows row carries the executable');
+is($win->{'state'}, 'R', 'a row in the snapshot is a live process');
+is($win->{'pgrp'}, 0, 'Windows has no process group');
+is($win->{'rss'}, 25600, 'WorkingSetSize/4096 is pages, so monitor.js r*4 is KiB');
+is($win->{'utime'}, 23, 'UserModeTime 100ns units become 100 Hz ticks');
+is($win->{'stime'}, 123, 'KernelModeTime 100ns units become 100 Hz ticks');
+is($win->{'start'}, 184550, 'start is 100 Hz ticks since boot');
+
+# tasklist alone still gives the name and a size; CIM adds the counters.
+my $no_ws = <<'CSV';
+"ProcessId","ParentProcessId","CommandLine","ExecutablePath","CreationDate","KernelModeTime","UserModeTime","WorkingSetSize"
+"1234","1","chrome.exe","C:\Bin\chrome.exe","","0","0",""
+CSV
+my ($fallback) = grep { $_->{'pid'} eq '1234' } @{ windows_rows($tasklist_text, $no_ws, undef) };
+is($fallback->{'rss'}, 30864, 'a missing working set falls back to tasklist KB / 4');
+is($fallback->{'start'}, '', 'no boot time leaves the start token unknown, not guessed');
+is($fallback->{'exe'}, 'C:\Bin\chrome.exe', 'CIM names the executable when the tasklist does not');
+
+# The ppid closure is the same code tree() runs; a Windows fixture proves it.
+my $tree_cim = <<'CSV';
+"ProcessId","ParentProcessId","CommandLine","ExecutablePath","CreationDate","KernelModeTime","UserModeTime","WorkingSetSize"
+"100","1","jawn","","","0","0","0"
+"200","100","President.pl","","","0","0","0"
+"300","200","Manager.pl","","","0","0","0"
+"400","1","other","","","0","0","0"
+CSV
+my $tree_rows = windows_rows('', $tree_cim, undef);
+is_deeply([ sort { $a <=> $b } @{ ppid_closure($tree_rows, 100) } ], [200, 300],
+	'the Windows ppid closure finds the whole subtree from one snapshot');
+is_deeply(ppid_closure($tree_rows, 1), [], 'pid 1 is not a Windows machine stop');
+
+my $os_text = <<'CSV';
+"LastBootUpTime","TotalVisibleMemorySize","FreePhysicalMemory"
+"20261110090000.000000","8000000","4000000"
+CSV
+my $os = parse_windows_os($os_text);
+is($os->{'boot'}, $boot, 'the OS query gives the boot epoch');
+is($os->{'total'}, 8000000, 'TotalVisibleMemorySize is already KiB');
+is($os->{'available'}, 4000000, 'FreePhysicalMemory is already KiB');
+is_deeply(parse_windows_os(''), { boot => undef, total => 0, available => 0 },
+	'an unavailable memory query is the zero answer');
+
+my $cpu_text = <<'CSV';
+"Name","Timestamp_Sys100NS","PercentIdleTime"
+"0","133400000000000000","1200000000"
+"1","133400000000000000","1300000000"
+"_Total","133400000000000000","1250000000"
+CSV
+is_deeply(parse_windows_cpu($cpu_text),
+	[ { t => 133400000000000000, i => 1200000000 },
+	  { t => 133400000000000000, i => 1300000000 } ],
+	'the CPU query skips _Total and keeps one entry per core');
+is_deeply(parse_windows_cpu(''), [], 'no CPU text is no cores');
+
+# Windows has no signals, so the refusal is the whole safe path here.
+is(windows_signal(4), 0, 'windows_signal refuses System pid 4');
+is(windows_signal(1), 0, 'windows_signal refuses pid 1');
+is(windows_signal('not-a-pid'), 0, 'windows_signal refuses a non-numeric pid');
+
+# The unavailable-command path and the cache, with the command hook.
+{
+	local $JawnOS::Platform::Process::RUN = sub { return '' };
+	local $JawnOS::Platform::Process::CACHE_TTL = 0;
+	reset_cache();
+	is_deeply(windows_snapshot(), [], 'unavailable commands are an empty snapshot');
+	is_deeply(windows_os(), { boot => undef, total => 0, available => 0 },
+		'unavailable commands leave the OS answer at zero');
+}
+{
+	my $calls = 0;
+	local $JawnOS::Platform::Process::RUN = sub { $calls++; return '' };
+	reset_cache();
+	windows_snapshot();
+	my $after_first = $calls;
+	windows_snapshot();
+	is($calls, $after_first, 'a second poll inside the TTL spawns nothing');
+	reset_cache();
+	windows_snapshot();
+	cmp_ok($calls, '>', $after_first, 'reset_cache forces a fresh snapshot');
+}
+reset_cache();
 
 done_testing();
