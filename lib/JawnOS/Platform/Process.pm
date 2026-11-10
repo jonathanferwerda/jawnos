@@ -6,7 +6,10 @@ package JawnOS::Platform::Process;
 #
 # Linux reads /proc directly. Windows reads the same facts from `tasklist` and
 # `Get-CimInstance` (see the Windows section at the bottom), lazily, so a Unix
-# box never loads a Win32 module and never runs a Windows command. macOS
+# box never loads a Win32 module and never runs a Windows command; liveness is
+# the exception, because it is asked per pid on a hot loop: a direct
+# OpenProcess/GetExitCodeProcess handle query, with the snapshot as fallback.
+# macOS
 # (ps/sysctl) still lands in its roadmap phase: docs/platform-roadmap.md P2.
 #
 # A platform that cannot answer gives the empty answer instead of dying ('' or
@@ -30,6 +33,7 @@ our @EXPORT_OK = qw(
 	parse_tasklist parse_cim parse_windows_os parse_windows_cpu
 	cim_epoch windows_rows windows_snapshot windows_os windows_signal
 	windows_pid_exists reset_cache
+	_win_exit_alive _win_open_state
 );
 
 # The /proc mount. Tests point this at a fixture tree; nothing else changes it.
@@ -465,8 +469,10 @@ sub cpu_times {
 #
 # Windows has no /proc. Every sub above reaches this section only through a
 # `$^O eq 'MSWin32'` branch, so a Unix box never runs a Windows command and
-# never loads a Win32 module. (None is needed: the two commands below supply
-# every read, so no Win32::* module is used at all.)
+# never loads a Win32 module. The two commands below supply every read except
+# liveness: a snapshot costs seconds, and the reaper asks about each tracked pid
+# on every run, so windows_pid_exists() opens the pid's own handle through
+# Win32::API instead and only falls back to the snapshot when it cannot bind.
 #
 #   tasklist /FO CSV /NH          Image Name, PID, Session Name, Session# and
 #                                 Mem Usage in KB - the name and the size
@@ -842,17 +848,95 @@ sub _cached_win_row {
 	return undef;
 }
 
-# The Windows liveness test. A pid in the cached snapshot is alive with no
-# query. An absent pid is looked for once more in a freshly read snapshot, then
-# answered from that one: a child started after the last snapshot exists even
-# though the cache has not seen it yet, which is what the supervisor loops and
-# the just-spawned-child check in Domain/Process.pm need. That refresh is rate
-# limited: at most one per $REFRESH_INTERVAL, because it costs seconds and the
-# reaper asks about every tracked record on its run. Inside the interval the
-# remaining absent pids read the snapshot the refresh left behind.
+# The Win32 liveness calls, bound once. OpenProcess returns a handle (0 on
+# failure), GetExitCodeProcess reports STILL_ACTIVE while the process runs, and
+# CloseHandle releases the reference we took: a reaper that opened one handle
+# per record per run and never closed it would climb until the machine stopped.
+# The binding is attempted once, lazily, and only on Windows; a box that cannot
+# bind (no Win32::API, an unusual kernel32) leaves $WIN_LIVENESS undef and the
+# snapshot below answers instead.
+my $PROCESS_QUERY_LIMITED_INFORMATION = 0x1000;
+my $STILL_ACTIVE = 259;
+my $ERROR_INVALID_PARAMETER = 87;
+my $ERROR_ACCESS_DENIED = 5;
+my $WIN_LIVENESS;
+my $WIN_LIVENESS_TRIED;
+
+sub _win_liveness_api {
+	return $WIN_LIVENESS if $WIN_LIVENESS;
+	return undef if $WIN_LIVENESS_TRIED;
+	$WIN_LIVENESS_TRIED = 1;
+	return undef unless $^O eq 'MSWin32';
+	# Win32 carries GetLastError, which tells a missing pid (87) from a pid we
+	# may not open (5).
+	eval { require Win32::API; require Win32; 1 } or return undef;
+	my %bind = (
+		'OpenProcess'        => [ 'NNN', 'N' ],
+		'GetExitCodeProcess' => [ 'NP', 'N' ],
+		'CloseHandle'        => [ 'N', 'N' ],
+	);
+	my %api;
+	foreach my $name (sort keys %bind) {
+		my $spec = $bind{$name};
+		my $call = eval { Win32::API->new('kernel32', $name, $spec->[0], $spec->[1]) };
+		return undef unless $call;
+		$api{$name} = $call;
+	}
+	$WIN_LIVENESS = \%api;
+	return $WIN_LIVENESS;
+}
+
+# The exit code GetExitCodeProcess reports. STILL_ACTIVE is the only code that
+# means the process is running: any other code is a process that has ended and
+# whose handle we still hold for this one query.
+sub _win_exit_alive {
+	my ($code) = @_;
+	return 0 unless defined $code && $code =~ /^\d+$/;
+	return $code == $STILL_ACTIVE ? 1 : 0;
+}
+
+# OpenProcess returning 0: the last error decides. 87 (ERROR_INVALID_PARAMETER)
+# is the kernel saying there is no such pid. 5 (ERROR_ACCESS_DENIED) is a pid
+# that exists and refuses to be opened (a protected process, another user), so
+# it is alive. Anything else is not an answer, and undef sends the caller to the
+# snapshot: a live process must never be called dead on a guess.
+sub _win_open_state {
+	my ($errno) = @_;
+	return undef unless defined $errno && $errno =~ /^\d+$/;
+	return 0 if $errno == $ERROR_INVALID_PARAMETER;
+	return 1 if $errno == $ERROR_ACCESS_DENIED;
+	return undef;
+}
+
+# One handle query: 1 alive, 0 gone, undef when the API could not answer and the
+# caller must fall back to the snapshot. This is a few microseconds, where the
+# tasklist + Get-CimInstance snapshot measured ~3.8 s on Windows 11.
+sub _win_handle_alive {
+	my ($pid) = @_;
+	return undef unless _is_pid($pid);
+	my $api = _win_liveness_api() or return undef;
+	my $handle = $api->{'OpenProcess'}->Call($PROCESS_QUERY_LIMITED_INFORMATION, 0, $pid);
+	return _win_open_state(Win32::GetLastError()) unless $handle;
+	my $code = pack('L', 0);
+	my $read = $api->{'GetExitCodeProcess'}->Call($handle, $code);
+	$api->{'CloseHandle'}->Call($handle);
+	# An open handle already proves the pid exists; a failed code read leaves
+	# the answer at alive rather than guessing it dead.
+	return 1 unless $read;
+	return _win_exit_alive(unpack('L', $code));
+}
+
+# The Windows liveness test. One OpenProcess handle query answers it, which is
+# what the reaper calls per tracked record. Only when Win32::API cannot bind
+# does the snapshot answer: a pid in the cached snapshot is alive with no query,
+# an absent one is looked for once more in a freshly read snapshot, and that
+# refresh is rate limited (at most one per $REFRESH_INTERVAL) because it costs
+# seconds. The direct answer never triggers a refresh.
 sub windows_pid_exists {
 	my ($pid) = @_;
 	return 0 unless _is_pid($pid);
+	my $answer = _win_handle_alive($pid);
+	return $answer ? 1 : 0 if defined $answer;
 	return 1 if _cached_win_row($pid);
 	my $now = _now();
 	my $last = $CACHE{'forced_at'};

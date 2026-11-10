@@ -36,6 +36,7 @@ use JawnOS::Platform::Process qw(
 	parse_tasklist parse_cim parse_windows_os parse_windows_cpu
 	cim_epoch windows_rows windows_snapshot windows_os windows_signal
 	windows_pid_exists reset_cache
+	_win_exit_alive _win_open_state
 );
 
 my $linux = ($^O eq 'linux') ? 1 : 0;
@@ -603,5 +604,44 @@ reset_cache();
 	is($calls, 3, 'and refreshes at once, OS snapshot included');
 }
 reset_cache();
+
+# ------------------------------------------------------ the direct liveness query
+# A handle query is what makes the master's reaper cheap: OpenProcess plus
+# GetExitCodeProcess is microseconds, where the tasklist + Get-CimInstance
+# snapshot it replaces measured ~3.8 s on Windows 11. The two decisions are pure
+# so they can be proven on a Linux box.
+is(_win_exit_alive(259), 1, 'STILL_ACTIVE means the process is still running');
+is(_win_exit_alive(0), 0, 'exit code 0 is a process that has ended');
+is(_win_exit_alive(1), 0, 'any other exit code is a process that has ended');
+
+is(_win_open_state(87), 0, 'ERROR_INVALID_PARAMETER is no such pid');
+is(_win_open_state(5), 1, 'ERROR_ACCESS_DENIED is a pid that exists and cannot be opened');
+is(_win_open_state(1234), undef, 'any other error falls back to the snapshot, never a guess');
+
+# The routing is pinned in the source: the liveness path asks the kernel about
+# the one pid, and only a binding failure reaches the snapshot.
+my $process_src = do {
+	open(my $fh, '<', "$repo/lib/JawnOS/Platform/Process.pm") or die "read Process.pm: $!";
+	local $/;
+	my $text = <$fh>;
+	close $fh;
+	$text;
+};
+{
+	my ($handle) = $process_src =~ /(sub _win_handle_alive \{.*?\n\}\n)/s;
+	ok($handle, 'the handle query is one block to check');
+	like($handle || '', qr/OpenProcess/, 'the Windows liveness path opens the pid handle');
+	unlike($handle || '', qr/\btable\s*\(/, 'and never scans the process table');
+	my ($exists) = $process_src =~ /(sub windows_pid_exists \{.*?\n\}\n)/s;
+	ok($exists, 'windows_pid_exists is one block to check');
+	like($exists || '', qr/_win_handle_alive\(\$pid\)/, 'liveness asks the handle query first');
+	unlike($exists || '', qr/\btable\s*\(/, 'and its snapshot fallback does not scan the table either');
+}
+
+# Off Windows there is no Win32::API to bind, so the snapshot answers and the
+# module is never loaded.
+is(JawnOS::Platform::Process::_win_liveness_api(), undef,
+	'the direct query is unavailable off Windows');
+ok(!$INC{'Win32/API.pm'}, 'and Win32::API was never loaded here');
 
 done_testing();

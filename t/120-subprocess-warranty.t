@@ -339,11 +339,10 @@ sub tracked_record {
 	is($tracked->{100}{subprocesses}{200}{'warranty'}, $NOW + 10_000, 'without moving that moment');
 }
 
-# The master answers the reaper from one process table read, not one
-# pid_exists() per record. On Windows pid_exists() for an absent pid forces a
-# tasklist/CIM snapshot, which costs seconds; several dead records in one run
-# stalled the master's tick. The injectable alive callback is how one read
-# answers every record.
+# The reaper takes an injectable alive callback, so one answer can rule over
+# every record and the rules are testable without forking. The master no longer
+# passes one: pid_exists() is a direct handle query on Windows now, so a per
+# record answer is cheap. The callback contract is still part of the reaper.
 {
 	my $tracked = {
 		100 => { subprocesses => {
@@ -413,15 +412,18 @@ like($launcher, qr/subs::subprocessor_reap\(\$subprocesses/,
 like($launcher, qr/Mojo::IOLoop->recurring\(5 => sub/, 'the reaper runs on its own tick');
 like($launcher, qr/'heartbeat'/, 'the master accepts a heartbeat');
 # The master's reaper is booted only by ./jawn under its own loop, so the wiring
-# is pinned in the source: one table read answers every record instead of a
-# pid_exists() per record (seconds per absent pid on Windows).
+# is pinned in the source: it leaves liveness to the reaper's default
+# pid_exists(), which on Windows is one OpenProcess handle query, instead of
+# scanning the whole process table on every tick.
 {
 	my ($reaper_block) = $launcher =~ /(Mojo::IOLoop->recurring\(5 => sub \{.*?\n\}\);)/s;
 	ok($reaper_block, 'the reaper tick is one block to check');
-	like($reaper_block || '', qr/alive\s*=>\s*\$alive/,
-		'the master passes its own alive callback to the reaper');
-	like($reaper_block || '', qr/JawnOS::Platform::Process::table\(\)/,
-		'and the callback answers every record from one table read');
+	unlike($reaper_block || '', qr/JawnOS::Platform::Process::table\s*\(/,
+		'the reaper no longer scans the process table');
+	unlike($reaper_block || '', qr/alive\s*=>/,
+		'and passes no alive callback, so the default pid_exists answers');
+	like($reaper_block || '', qr/subs::subprocessor_reap\(\$subprocesses/,
+		'and still reaps the tracked records');
 }
 
 my $loader = read_file("$root/lib/JawnOS/Domain/Loader.pm");
