@@ -71,6 +71,13 @@ function weatherBind() {
 	$w.on('click', '#weather_refresh', function() { weatherLoad(true); });
 	$w.on('click', '#weather_browser', function() { weatherBrowser(); });
 	$w.on('click', '#weather_check_here', function() { weatherCheckHere(); });
+	$w.on('click', '#weather_daily .weather_day_toggle', function() { weatherDayToggle(this); });
+	$w.on('keydown', '#weather_daily .weather_day_toggle', function(e) {
+		if (e.key === 'Enter' || e.key === ' ' || e.key === 'Spacebar') {
+			e.preventDefault();
+			weatherDayToggle(this);
+		}
+	});
 }
 
 // Delete a saved place, twice: the first press asks, the second removes it. A
@@ -351,7 +358,7 @@ function weatherRender(data) {
 	$w.find('#weather_stats').html(stats.join(''));
 	weatherAlerts(data.alerts || []);
 	weatherHours(data.hourly || []);
-	weatherDays(data.daily || []);
+	weatherDays(data.daily || [], data.hourly || []);
 	var status = data.provider_label || '';
 	if (data.location_distance_km) { status += ' · ' + Math.round(data.location_distance_km) + ' km'; }
 	status += ' · ' + jawnosT('Updated') + ' ' + weatherTime(data.fetched_at || Date.now());
@@ -390,8 +397,9 @@ function weatherHours(hours) {
 	$w.find('#weather_hourly').html(html);
 }
 
-function weatherDays(days) {
+function weatherDays(days, hours) {
 	var $w = $('.wind[app="weather"]');
+	var byDate = weatherHoursByDate(hours || []);
 	var html = '';
 	for (var i = 0; i < days.length && i < 14; i++) {
 		var d = days[i] || {};
@@ -401,15 +409,157 @@ function weatherDays(days) {
 			+ (d.low !== undefined && d.low !== null ? ' / ' + weatherTemp(d.low) : '');
 		var text = d.condition || d.text || '';
 		if (d.precip_prob !== undefined && d.precip_prob !== null) { text += (text ? ' · ' : '') + weatherNum(d.precip_prob) + '%'; }
-		html += '<div class="weather_day">'
-			+ '<div class="weather_day_label"><span>' + weatherEsc(label) + '</span>'
+		var detail = weatherDayDetail(d, (d.date && byDate[d.date]) || []);
+		var row = '<div class="weather_day_label"><span>' + weatherEsc(label) + '</span>'
 			+ (stamp ? '<span class="weather_day_stamp">' + weatherEsc(stamp) + '</span>' : '') + '</div>'
 			+ '<div class="weather_day_glyph">' + weatherEsc(d.glyph || '•') + '</div>'
 			+ '<div class="weather_day_temps">' + weatherEsc(temps) + '</div>'
-			+ '<div class="weather_day_text">' + weatherEsc(text) + '</div>'
+			+ '<div class="weather_day_text">' + weatherEsc(text) + '</div>';
+		if (!detail) {
+			html += '<div class="weather_day_wrap"><div class="weather_day">' + row + '</div></div>';
+			continue;
+		}
+		var id = 'weather_day_detail_' + i;
+		html += '<div class="weather_day_wrap">'
+			+ '<div class="weather_day weather_day_toggle" role="button" tabindex="0" aria-expanded="false" aria-controls="' + id + '">' + row + '</div>'
+			+ '<div class="weather_day_detail" id="' + id + '">' + detail + '</div>'
 			+ '</div>';
 	}
 	$w.find('#weather_daily').html(html);
+}
+
+// A day opens when it has more to say than the row: the hours it was read
+// for, or the sunrise, sunset, UV and wind the provider sent with the day.
+// Clicking the row again hides it.
+function weatherDayDetail(day, hours) {
+	var stats = [];
+	function stat(label, value) {
+		if (value === undefined || value === null || value === '') { return; }
+		stats.push('<div class="weather_stat"><b>' + weatherEsc(jawnosT(label)) + '</b>' + weatherEsc(value) + '</div>');
+	}
+	if (day.precip_prob !== undefined && day.precip_prob !== null) {
+		stat('Chance of precipitation', weatherNum(day.precip_prob) + '%');
+	}
+	if (day.wind_speed !== undefined && day.wind_speed !== null) {
+		stat('Wind', weatherNum(day.wind_speed) + ' ' + (day.wind_unit || 'km/h') + (day.wind_direction ? ' ' + day.wind_direction : ''));
+	}
+	if (day.uv !== undefined && day.uv !== null && day.uv !== '') { stat('UV', day.uv); }
+	if (day.sunrise) { stat('Sunrise', weatherHourLabel(day.sunrise)); }
+	if (day.sunset) { stat('Sunset', weatherHourLabel(day.sunset)); }
+	if (!hours.length && !stats.length) { return ''; }
+	var html = '';
+	var rain = weatherPrecipWindows(hours);
+	var trend = weatherTempTrend(hours);
+	if (rain || trend) {
+		html += '<div class="weather_day_summary">'
+			+ (rain ? '<span>' + weatherEsc(rain) + '</span>' : '')
+			+ (trend ? '<span>' + weatherEsc(trend) + '</span>' : '')
+			+ '</div>';
+	}
+	if (hours.length) {
+		html += '<div class="weather_day_hours">';
+		for (var i = 0; i < hours.length; i++) {
+			var h = hours[i] || {};
+			var prob = parseFloat(h.precip_prob);
+			var wet = !isNaN(prob) && prob >= 30;
+			var time = h.time_text ? weatherHourLabel(h.time_text) : weatherTime(h.time);
+			html += '<div class="weather_hour' + (wet ? ' weather_hour_wet' : '') + '">'
+				+ '<div>' + weatherEsc(time) + '</div>'
+				+ '<div class="weather_hour_glyph">' + weatherEsc(h.glyph || '•') + '</div>'
+				+ '<div class="weather_hour_temp">' + weatherTemp(h.temperature) + '</div>'
+				+ (h.precip_prob !== undefined && h.precip_prob !== null ? '<div class="weather_hour_precip">' + weatherNum(h.precip_prob) + '%</div>' : '')
+				+ '</div>';
+		}
+		html += '</div>';
+	}
+	if (stats.length) { html += '<div class="weather_day_meta">' + stats.join('') + '</div>'; }
+	return html;
+}
+
+// The hourly forecast is one list for the whole fortnight; the day a person
+// opened only wants its own hours. The provider's time text is the place's
+// local clock, so keep its date rather than the browser's.
+function weatherHoursByDate(hours) {
+	var by = {};
+	for (var i = 0; i < hours.length; i++) {
+		var h = hours[i] || {};
+		var date = weatherHourDate(h);
+		if (!date) { continue; }
+		(by[date] || (by[date] = [])).push(h);
+	}
+	return by;
+}
+
+function weatherHourDate(h) {
+	var m = String((h && h.time_text) || '').match(/^(\d{4}-\d{2}-\d{2})/);
+	if (m) { return m[1]; }
+	var ms = h && h.time ? Number(h.time) : 0;
+	if (!ms) { return ''; }
+	var d = new Date(ms);
+	if (isNaN(d.getTime())) { return ''; }
+	return d.getFullYear() + '-' + ('0' + (d.getMonth() + 1)).slice(-2) + '-' + ('0' + d.getDate()).slice(-2);
+}
+
+// When the rain (or snow) is likely: each run of hours at or above thirty
+// percent reads as one window, with the peak chance beside it.
+function weatherPrecipWindows(hours) {
+	var runs = [];
+	var run = null;
+	for (var i = 0; i < hours.length; i++) {
+		var h = hours[i] || {};
+		var p = parseFloat(h.precip_prob);
+		if (!isNaN(p) && p >= 30) {
+			if (!run) { run = { first: h, last: h, max: p }; runs.push(run); }
+			else {
+				run.last = h;
+				if (p > run.max) { run.max = p; }
+			}
+		} else {
+			run = null;
+		}
+	}
+	if (!runs.length) { return ''; }
+	var parts = [];
+	for (var j = 0; j < runs.length; j++) {
+		parts.push(weatherHourLabel(runs[j].first.time_text) + '–' + weatherHourEndLabel(runs[j].last.time_text) + ' · ' + weatherNum(runs[j].max) + '%');
+	}
+	return jawnosT('Precipitation likely') + ' ' + parts.join(', ');
+}
+
+// An hour's reading covers the hour that starts with it, so the window ends
+// when the next hour begins.
+function weatherHourEndLabel(text) {
+	var m = String(text || '').match(/T(\d{2}):(\d{2})/);
+	if (!m) { return String(text || ''); }
+	var h = (parseInt(m[1], 10) + 1) % 24;
+	var suffix = h >= 12 ? 'PM' : 'AM';
+	var n = h % 12;
+	if (!n) { n = 12; }
+	return n + ':' + m[2] + ' ' + suffix;
+}
+
+function weatherTempTrend(hours) {
+	var low = null;
+	var high = null;
+	for (var i = 0; i < hours.length; i++) {
+		var h = hours[i] || {};
+		var t = parseFloat(h.temperature);
+		if (isNaN(t)) { continue; }
+		if (!low || t < low.t) { low = { t: t, h: h }; }
+		if (!high || t > high.t) { high = { t: t, h: h }; }
+	}
+	if (!low || !high || low.t === high.t) { return ''; }
+	return jawnosT('Warmest') + ' ' + weatherHourLabel(high.h.time_text) + ' ' + weatherTemp(high.t)
+		+ ' · ' + jawnosT('Coolest') + ' ' + weatherHourLabel(low.h.time_text) + ' ' + weatherTemp(low.t);
+}
+
+function weatherDayToggle(row) {
+	var $row = $(row);
+	var $detail = $row.next('.weather_day_detail');
+	if (!$detail.length) { return; }
+	var open = !$detail.hasClass('open');
+	$detail.toggleClass('open', open);
+	$row.attr('aria-expanded', open ? 'true' : 'false');
 }
 
 function weatherError(message) {

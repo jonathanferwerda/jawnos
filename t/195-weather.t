@@ -1812,6 +1812,12 @@ my $now_partial = read_file("$root/templates/apps/weather/now.html.ep");
 like($now_partial, qr/14-day forecast/, 'the Now tab promises fourteen days');
 like($now_partial, qr/Next 24 hours/, 'and names the hourly strip');
 like($weather_js, qr/i < 14/, 'the script draws fourteen days');
+like($weather_js, qr/weatherDayToggle/, 'a forecast day opens its detail, and a second press hides it');
+like($weather_js, qr/weatherDayDetail/, 'the detail is built from the day and its hours');
+like($weather_js, qr/weatherHoursByDate/, 'the hourly forecast is grouped by the day it belongs to');
+like($weather_js, qr/weatherPrecipWindows/, 'the detail names when precipitation is likely');
+like($weather_js, qr/weatherTempTrend/, 'and the warmest and coolest hours');
+like($weather_js, qr/aria-expanded/, 'the day row reports whether it is open');
 like($loader, qr/weather_reverse_geocode/, 'the domain loader maps the reverse geocoder');
 like($loader, qr/weather_daily_extend/, 'and the daily extension');
 
@@ -1821,6 +1827,7 @@ like($weather_style, qr/^<style>/m, 'the style partial opens a style element');
 like($weather_style, qr{</style>\s*$}m, 'and closes it, so the page does not print CSS');
 like($weather_style, qr/#weather_toolbar \{[^}]*position: sticky/, 'the location dropdown and Add stay at the top while a tab scrolls');
 like($weather_style, qr/#weather_toolbar \{[^}]*background: var\(--panel\)/, 'and hides the tab scrolling under it');
+like($weather_style, qr/\.weather_day_detail\.open/, 'the day detail stays hidden until the row is opened');
 
 # --- saving, restoring and the strip ----------------------------------------
 like($routes_auto, qr{/manager/weather/location/delete\b}, 'the delete route exists');
