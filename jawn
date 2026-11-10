@@ -430,6 +430,24 @@ my $pending_restart;
 		}
 	}
 }
+# The tree guard is started through the runner and finishes as an event. A cold
+# sweep (`verify_change.pl --all`) takes minutes - 642s measured on the Windows
+# VM - so running it inside the one-second tick froze the control listener for
+# the whole sweep and left the restart client waiting with no verdict.
+#
+#   $verify_waiting = { kind => 'restart'|'master', started => epoch,
+#                       stamp => master stamp, proof => { ok => ... } }
+#
+# `proof` is set by the runner's close (or error) handler and consumed on the
+# next tick; `started` is what the 20-minute bound measures. One verify is in
+# flight at a time. $restart_waiting keeps what only the restart path knows
+# (the state to report as `status_before`) while the runner runs.
+my $verify_runner;
+my $verify_text = '';
+my $verify_waiting;
+my $restart_waiting;
+my $verify_timeout = 20 * 60;
+
 # What this tree is running. Read when it is asked for, not once at startup: a
 # version bump alone does not reload the master (only ./jawn does), so a cached
 # string kept reporting the version from before the restart that shipped it.
@@ -516,42 +534,46 @@ sub master_time_looper() {
 		&coding_supervise() if $coding_enabled;
 		my $status_file = &home('~/.president/status');
 		my $f_status = -e $status_file ? read_file($status_file) : '';
+		# A guard started on an earlier tick has finished (or outlived its bound).
+		# Its proof is consumed here, before anything else can start another sweep.
+		if ($verify_waiting) {
+			if (!defined $verify_waiting->{'proof'}
+				&& $tick_now - $verify_waiting->{'started'} > $verify_timeout) {
+				&verify_expire();
+				return;
+			}
+			if (defined $verify_waiting->{'proof'}) {
+				my $waiting = $verify_waiting;
+				$verify_waiting = undef;
+				if (($waiting->{'kind'} || '') eq 'master') {
+					&master_reload($waiting->{'proof'}, $waiting, $status_file);
+				}
+				else {
+					my $restart = $restart_waiting || {};
+					$restart_waiting = undef;
+					&restart_commit($waiting->{'proof'},
+						$restart->{'before'} || ($status eq 'frozen' ? 'frozen' : 'started'));
+				}
+				return;
+			}
+		}
 		# Our own file changed on disk (a git update): reload the master, not just
 		# the tree. Verify first: a half-written or broken ./jawn must not replace
 		# the master that is still serving. A pending 'restart' is consumed here so
-		# the fresh master does not immediately restart again.
+		# the fresh master does not immediately restart again. The guard is a
+		# runner, not a backtick, so the control listener keeps answering while it
+		# sweeps; a stamp with no guard beside it predates the guard and reloads.
 		my $stamp = &master_stamp();
-		if ($stamp ne '' && $stamp ne $master_stamp && time >= $master_retry_at) {
-			my $proof = &tree_verify();
-			if ($proof->{'ok'}) {
-				$master_stamp = $stamp;
-				print "master changed on disk; reloading $master_path\n";
-				# A restart asked for in this very tick is owed an answer, and the exec
-				# loses every structure that could keep it. Answer, then hand the reason
-				# to the next incarnation through a file the startup wipe preserves.
-				if ($pending_restart) {
-					&answer_restart($proof, $status eq 'frozen' ? 'frozen' : 'started');
-					write_file(&home('~/.president/pending_restart'), encode_json({
-						reason => $pending_restart->{'reason'},
-						source => $pending_restart->{'source'},
-					}));
-					$pending_restart = undef;
-				}
-				write_file($status_file, 'good');
-				$master_timer_paused = 1;
-				&shut_down(1);
-				exec($^X, $master_path, @ARGV) or do {
-					print "re-exec of $master_path failed: $!\n";
-					$master_timer_paused = 0;
-					$status = 'frozen';
-					$status_why = 'the master could not re-exec itself';
-					return;
-				};
+		if (!$verify_waiting && $stamp ne '' && $stamp ne $master_stamp && time >= $master_retry_at) {
+			if (&verify_start('master', stamp => $stamp)) {
+				return;
 			}
-			else {
-				$master_retry_at = time + 10;
-				print "master changed on disk but the tree does not verify; keeping the running master:\n" . ($proof->{'report'} || '') . "\n";
+			$master_retry_at = time + 10;
+			if (!-f 'scripts/verify_change.pl') {
+				&master_reload({ ok => 1 }, { stamp => $stamp }, $status_file);
+				return;
 			}
+			print "the changed master could not be verified; keeping the running master\n";
 		}
 		# Liveness watchdog: 'started' means the tree should be serving. The pace
 		# is probe::watch_policy(): a slow resting probe while the tree answers,
@@ -601,11 +623,12 @@ sub master_time_looper() {
 		# current pty child, whose exit status belongs to ReadWriteFork.
 		if (++$reap_ticks >= 30) {
 			$reap_ticks = 0;
-			# The Coding daemon started through the runner is a real child of
-			# this master; it is not a leftover.
+			# The Coding daemon and an in-flight guard started through the runner are
+			# real children of this master; they are not leftovers.
 			&reap_own_children(
 				($fork ? $fork->pid : 0),
 				($coding_runner ? $coding_runner->pid : 0),
+				($verify_runner ? $verify_runner->pid : 0),
 			);
 		}
 		# A restart is asked for three ways, and all three end here so all three are
@@ -631,83 +654,35 @@ sub master_time_looper() {
 			}
 			else { $request = { reason => $down, source => 'master-watchdog' } }
 		}
-		if ($request) {
-			$master_timer_paused = 1;
+		if ($request && !$verify_waiting) {
 			my $before = $status eq 'frozen' ? 'frozen' : 'started';
-			my $died = '';
-			eval {
-				# A live tree is verified first: a change that does not parse would
-				# only come back broken (or blank, like the /manager page a truncated
-				# manager.js once blanked), so refuse it, keep the running tree serving
-				# and say so. A frozen tree is already down - nothing serving to
-				# protect - so it restarts regardless.
-				my $proof = $status eq 'frozen'
-					? { ok => 1, skipped => 'not verified: the tree was already down' }
-					: &tree_verify();
-				# the request is ours now: left standing, the next one-second tick
-				# reads it again, kills the fresh boot before it writes "good", and
-				# restarts forever
+			# A frozen tree is already down - nothing serving to protect - so it
+			# restarts regardless and needs no sweep.
+			if ($status eq 'frozen') {
 				write_file($status_file, 'good') if $file_restart;
-				print 'restart asked by ' . ($request->{'source'} || '?') . ': ' . $request->{'reason'} . "\n";
-				&control::write_record({
-					ok => $proof->{'ok'} ? 1 : 0,
-					refused => $proof->{'ok'} ? undef : 'verify',
-					reason => $request->{'reason'},
-					source => $request->{'source'} || 'status-file',
-					requested_by => $request->{'requested_by'} || 0,
-					status_before => $before,
-					version => &tree_version(),
-					master_pid => $$,
-					verify => $proof->{'summary'} || $proof->{'skipped'} || '',
-					report => $proof->{'ok'} ? '' : &control::clean_text($proof->{'report'} || '', 2000),
-				}, dir => &home('~/.president'));
-				&answer_restart($proof, $before);
-				$pending_restart = undef;
-				if ($proof->{'ok'}) {
-					&shut_down(1);
-					$status = 'restarting';
-					$status_why = '';
-					# No blind countdown: shut_down() already waited for the pids it
-					# signalled, and the bind check below is the real gate, so "in 3...
-					# 2... 1" only added three seconds to every restart.
-					print "restarting president\n";
-					# The old listeners are released asynchronously: a prefork
-					# manager can be signalled and still hold its socket for a few
-					# seconds. A boot that binds first loses the main server with
-					# "Address already in use" while the dock still answers - and
-					# it used to stay that way, because the liveness check only
-					# knew the dock. Wait until every configured port is free (a
-					# bind, not a connect: a stuck listener still answers a
-					# connect) or the deadline passes; the boot watch recovers a
-					# tree that could not come up.
-					my $free_deadline = time + 20;
-					while (time < $free_deadline) {
-						my $busy = 0;
-						foreach my $port ( &config_ports() ) {
-							$busy = 1 unless &port_free($port);
-						}
-						last unless $busy;
-						sleep .5;
-					}
-					$fork = undef;
-					$fork = &terminal_pty_runner(&president_process());
-					&arm_boot_watch();
-				}
-				else {
-					print "restart refused - the tree is still serving; the code does not verify:\n" . ($proof->{'report'} || '') . "\n";
-				}
-				1;
-			} or $died = $@ || 'unknown error';
-			if ($died ne '') {
-				print "restart sequence failed: $died\n";
-				# arm_boot_watch may already be watching; only force a retry when the
-				# sequence died before it armed (a mid-spawn death is recovered there)
-				unless ($status eq 'restarting') {
-					$status = 'frozen';
-					$status_why = 'the restart sequence failed: ' . $died;
-				}
+				$pending_restart = $request unless $pending_restart;
+				&restart_commit({ ok => 1, skipped => 'not verified: the tree was already down' }, $before);
+				return;
 			}
-			$master_timer_paused = 0;
+			# A live tree is verified first: a change that does not parse would only
+			# come back broken (or blank, like the /manager page a truncated
+			# manager.js once blanked), so refuse it, keep the running tree serving
+			# and say so. Claim the request now - the status file is put back to
+			# "good" so the next tick does not read it again, kill the fresh boot
+			# before it writes good, and restart forever - then let the guard run as
+			# an event instead of blocking this tick for the sweep.
+			write_file($status_file, 'good') if $file_restart;
+			$pending_restart = $request unless $pending_restart;
+			$restart_waiting = { before => $before };
+			if (&verify_start('restart')) {
+				return;
+			}
+			my $proof = -f 'scripts/verify_change.pl'
+				? { ok => 0, report => 'the guard could not be started' }
+				: { ok => 1 };
+			$restart_waiting = undef;
+			&restart_commit($proof, $before);
+			return;
 		}
 	});
 }
@@ -726,18 +701,237 @@ sub master_time_looper() {
 # (agents reporting a minute-long "restart" from a status file). With the
 # manifest a restart with nothing new to judge is ~0.4s; a fresh tree, a new
 # manifest version, or a tree that just failed still gets the full sweep.
+#
+# tree_verify is kept for the control socket's explicit `verify` command. The
+# tick does NOT call it: it starts verify_start() and consumes the proof later.
 sub tree_verify() {
 	return { ok => 1 } unless -f 'scripts/verify_change.pl';
 	my $manifest = &home('~/.president/verify-manifest');
 	my $out = `perl scripts/verify_change.pl --all --quiet --manifest "$manifest" 2>&1`;
-	my $code = $? >> 8;
-	$out = '' unless defined $out;
-	$out =~ s/\s+$//;
-	# the summary line ("745 file(s) pass (...)") is what a caller is shown back
-	my ($summary) = reverse grep { /\S/ } split /\n/, $out;
+	return &verify_proof($? >> 8, $out);
+}
+
+# The guard's verdict from its exit and output. The summary line ("745 file(s)
+# pass (...)") is the last non-empty line, which is what a caller is shown back;
+# a failure carries the (bounded, one-line) report the caller needs to fix it.
+sub verify_proof {
+	my ($exit, $text) = @_;
+	$exit = 0 unless defined $exit;
+	$text = '' unless defined $text;
+	$text =~ s/\s+$//;
+	my ($summary) = reverse grep { /\S/ } split /\n/, $text;
 	$summary = '' unless defined $summary;
-	return { ok => 1, summary => &control::clean_text($summary, 300) } if $code == 0;
-	return { ok => 0, report => substr($out, 0, 2000) };
+	return { ok => 1, summary => &control::clean_text($summary, 300) } if $exit == 0;
+	return { ok => 0, report => &control::clean_text(substr($text, 0, 2000), 2000) };
+}
+
+# Start the guard as a runner child and return at once: its own output arrives
+# on read and its exit on close, so a 642s sweep never parks the master tick or
+# the control listener. One at a time; a missing guard predates verification and
+# is answered as passing. Returns 1 when a child is in flight.
+sub verify_start {
+	my ($kind, %opt) = @_;
+	return 0 if $verify_runner || $verify_waiting;
+	return 0 unless -f 'scripts/verify_change.pl';
+	my $manifest = &home('~/.president/verify-manifest');
+	my $runner = JawnOS::Platform::Runner->new;
+	$runner->conduit({ type => 'pipe' });
+	$runner->on(read => sub {
+		my ($r, $bytes) = @_;
+		$verify_text .= $bytes if defined $bytes;
+	});
+	# A fork that never starts emits error instead of close (ReadWriteFork); a
+	# Windows CreateProcess failure is a synchronous no-pid return from start().
+	$runner->on(error => sub {
+		my ($r, $error) = @_;
+		return unless $verify_runner && $verify_runner == $r;
+		$verify_runner = undef;
+		$verify_text = '';
+		eval { $r->close };
+		&verify_complete(255, 'the guard could not be started: '
+			. (defined $error ? $error : 'unknown error'));
+	});
+	$runner->on(close => sub {
+		my ($r, $exit) = @_;
+		return unless $verify_runner && $verify_runner == $r;
+		my $text = $verify_text;
+		$verify_runner = undef;
+		$verify_text = '';
+		&verify_complete($exit, $text);
+	});
+	$verify_text = '';
+	my $started = eval {
+		$runner->start({
+			program      => $^X,
+			program_args => [ 'scripts/verify_change.pl', '--all', '--quiet', '--manifest', $manifest ],
+			cwd          => '.',
+		});
+	};
+	if ($@) {
+		print "the guard could not be started: $@\n";
+		eval { $runner->close };
+		return 0;
+	}
+	# Only Windows can fail synchronously; the Unix backend forks on the next tick.
+	if (!$started && $^O eq 'MSWin32') {
+		print 'the guard could not be started: '
+			. (($runner->{'error'}) || 'unknown error') . "\n";
+		return 0;
+	}
+	$verify_runner = $runner;
+	$verify_waiting = { kind => $kind, started => time, stamp => $opt{'stamp'} };
+	return 1;
+}
+
+sub verify_complete {
+	my ($exit, $text) = @_;
+	return 0 unless $verify_waiting;
+	return 0 if defined $verify_waiting->{'proof'};
+	$verify_waiting->{'proof'} = &verify_proof($exit, $text);
+	return 1;
+}
+
+# The guard outlived its bound. Stop it and clear every trace of it, then keep
+# the promise the caller is still waiting on: a restart is refused by name, a
+# master reload keeps the old master and tries again later.
+sub verify_expire {
+	my $waiting = $verify_waiting || {};
+	$verify_waiting = undef;
+	my $runner = $verify_runner;
+	$verify_runner = undef;
+	$verify_text = '';
+	if ($runner) {
+		eval { $runner->stop };
+		eval { $runner->close };
+	}
+	if (($waiting->{'kind'} || '') eq 'master') {
+		$master_retry_at = time + 10;
+		print "the changed master did not verify within " . int($verify_timeout / 60)
+			. " minutes; keeping the running master\n";
+		return 1;
+	}
+	my $restart = $restart_waiting || {};
+	$restart_waiting = undef;
+	my $proof = {
+		ok => 0,
+		refused => 'verify-timeout',
+		report => 'the guard did not finish within ' . int($verify_timeout / 60)
+			. ' minutes; the running tree was kept',
+	};
+	&restart_commit($proof, $restart->{'before'} || ($status eq 'frozen' ? 'frozen' : 'started'));
+	return 1;
+}
+
+# The post-verify restart sequence. Only this part pauses the one-second ticker
+# (the port release wait and shut_down block the loop); the sweep never did.
+sub restart_commit {
+	my ($proof, $before) = @_;
+	my $request = $pending_restart;
+	unless ($request) {
+		$request = { reason => 'the tree went down', source => 'master-watchdog' };
+		$pending_restart = $request;
+	}
+	$before = 'started' unless defined $before;
+	$master_timer_paused = 1;
+	my $died = '';
+	eval {
+		print 'restart asked by ' . ($request->{'source'} || '?') . ': ' . $request->{'reason'} . "\n";
+		&control::write_record({
+			ok => $proof->{'ok'} ? 1 : 0,
+			refused => $proof->{'ok'} ? undef : ($proof->{'refused'} || 'verify'),
+			reason => $request->{'reason'},
+			source => $request->{'source'} || 'status-file',
+			requested_by => $request->{'requested_by'} || 0,
+			status_before => $before,
+			version => &tree_version(),
+			master_pid => $$,
+			verify => $proof->{'summary'} || $proof->{'skipped'} || '',
+			report => $proof->{'ok'} ? '' : &control::clean_text($proof->{'report'} || '', 2000),
+		}, dir => &home('~/.president'));
+		&answer_restart($proof, $before);
+		$pending_restart = undef;
+		if ($proof->{'ok'}) {
+			&shut_down(1);
+			$status = 'restarting';
+			$status_why = '';
+			# No blind countdown: shut_down() already waited for the pids it
+			# signalled, and the bind check below is the real gate, so "in 3...
+			# 2... 1" only added three seconds to every restart.
+			print "restarting president\n";
+			# The old listeners are released asynchronously: a prefork manager
+			# can be signalled and still hold its socket for a few seconds. A
+			# boot that binds first loses the main server with "Address already
+			# in use" while the dock still answers - and it used to stay that
+			# way, because the liveness check only knew the dock. Wait until
+			# every configured port is free (a bind, not a connect: a stuck
+			# listener still answers a connect) or the deadline passes; the
+			# boot watch recovers a tree that could not come up.
+			my $free_deadline = time + 20;
+			while (time < $free_deadline) {
+				my $busy = 0;
+				foreach my $port ( &config_ports() ) {
+					$busy = 1 unless &port_free($port);
+				}
+				last unless $busy;
+				sleep .5;
+			}
+			$fork = undef;
+			$fork = &terminal_pty_runner(&president_process());
+			&arm_boot_watch();
+		}
+		else {
+			print "restart refused - the tree is still serving; the code does not verify:\n"
+				. ($proof->{'report'} || '') . "\n";
+		}
+		1;
+	} or $died = $@ || 'unknown error';
+	if ($died ne '') {
+		print "restart sequence failed: $died\n";
+		# arm_boot_watch may already be watching; only force a retry when the
+		# sequence died before it armed (a mid-spawn death is recovered there)
+		unless ($status eq 'restarting') {
+			$status = 'frozen';
+			$status_why = 'the restart sequence failed: ' . $died;
+		}
+	}
+	$master_timer_paused = 0;
+	return;
+}
+
+# Reload the master after its guard passed (or at once when the guard predates
+# the tree). On success the exec replaces this process; on failure the old
+# master keeps serving and retries in ten seconds.
+sub master_reload {
+	my ($proof, $waiting, $status_file) = @_;
+	if ($proof->{'ok'}) {
+		$master_stamp = $waiting->{'stamp'} if defined $waiting->{'stamp'};
+		print "master changed on disk; reloading $master_path\n";
+		# A restart asked for while the guard ran is owed an answer, and the exec
+		# loses every structure that could keep it. Answer, then hand the reason
+		# to the next incarnation through a file the startup wipe preserves.
+		if ($pending_restart) {
+			&answer_restart($proof, $status eq 'frozen' ? 'frozen' : 'started');
+			write_file(&home('~/.president/pending_restart'), encode_json({
+				reason => $pending_restart->{'reason'},
+				source => $pending_restart->{'source'},
+			}));
+			$pending_restart = undef;
+		}
+		write_file($status_file, 'good');
+		$master_timer_paused = 1;
+		&shut_down(1);
+		exec($^X, $master_path, @ARGV) or do {
+			print "re-exec of $master_path failed: $!\n";
+			$master_timer_paused = 0;
+			$status = 'frozen';
+			$status_why = 'the master could not re-exec itself';
+		};
+		return;
+	}
+	$master_retry_at = time + 10;
+	print "master changed on disk but the tree does not verify; keeping the running master:\n"
+		. ($proof->{'report'} || '') . "\n";
+	return;
 }
 
 
@@ -1500,6 +1694,12 @@ sub answer_restart {
 		pid => $$,
 		status_before => $before,
 	});
+	# A timeout is a refusal with its own word, not a tree that failed to
+	# verify: the caller must know the guard ran too long rather than produced
+	# a report to fix.
+	if (!$reply->{'ok'} && defined $proof && $proof->{'refused'}) {
+		$reply->{'refused'} = $proof->{'refused'};
+	}
 	&control_write($stream, encode_json($reply) . "\n");
 	return;
 }
