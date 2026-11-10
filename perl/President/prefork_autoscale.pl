@@ -51,7 +51,7 @@ sub prefork_autoscale {
 	while (1) {
 		# Twice a second: a burst should be wider before the next request
 		# arrives, not a second later.
-		sleep 0.5;
+		select(undef, undef, undef, 0.5);
 		last unless kill 0, $parent;
 		my $now = &subs::rightNow();
 		my $busy = 0;
