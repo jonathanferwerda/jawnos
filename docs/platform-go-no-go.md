@@ -87,6 +87,16 @@ runners at v0.1.2482. Run detail: `docs/platform-p0.md`.
 5. **Qt and WS against a portable tree.** `--probe`, the app-key bridge and a ws
    round trip with no Prefork behind them.
 
+## P1 status (2026-11-10)
+
+The P1 seams are in: `Platform::Process`, `Net`, `Mdns`, `Audio`, `Serial`, `Print`,
+`Shell`, `Paths` and `Ports`, with `Job`, `Server`, `TLS` and `Runner` for the
+process model. Each is Linux-complete and answers empty off Linux; the macOS and
+Windows bodies named in conditions 1-3 above are P2/P3. The capability probe now
+asks the seams for the audio backend, print availability, the terminal list and
+the mDNS roles instead of reading a hand-written tool list. Per-module state and
+the test numbers are in `docs/platform-roadmap.md` P1.
+
 ## What would stop it
 
 One row is left as a stop condition: **Q6**, if the minimum Windows version

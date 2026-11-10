@@ -295,15 +295,39 @@ mode with the suite green. If the spike fails, stop and take the Go path.
 
 ### P1 — platform abstraction
 
-- Add `JawnOS::Platform::Process`, `Net`, `Mdns`, `Audio`, `Serial`, `Print`, `Shell`, `Paths` and
-  `Ports`; Linux implementations preserve today's behavior exactly.
-- `desktop/jawnos_desktop/core.py` gets the same split for spawn/kill/paths/secrets/autostart.
-- Every new domain sub goes in `lib/JawnOS/Domain/Loader.pm` (`t/91`), every new Manager helper in
-  `lib/JawnOS/Manager/Index.pm` + `Declarations.pm` (`t/54`), and every new test gets a
-  `# tests-for:` header (`t/99`).
-- The tunnel range config lands here, because all three platforms need it.
+The abstraction is real: every platform question is asked of a seam, each seam keeps today's Linux
+behaviour, and a platform that cannot answer gets an empty result rather than a crash. `Process`,
+`Net` and `Mdns` landed in P0; P1 added `Audio`, `Serial`, `Print`, `Shell`, `Paths` and `Ports` and
+folded the remaining call sites onto the seams that already existed. The platform-specific bodies are
+deliberately the P2/P3 work in the last column.
 
-**Exit:** Linux suite green, no behavior change, and the platform interface is small enough to port.
+| Module | State on Linux | Platform branch |
+|---|---|---|
+| `Platform::Process` | `/proc` identity, state, CPU ticks and the group scan; P1 folded the request-side readers, the master and `manager_killer` onto it | `ps`/`sysctl` (P2), `Win32::Process`/`tasklist` (P3) |
+| `Platform::Net` | `ip`/`ifconfig`/`route`/`arp` parsers; P1 moved hostname and own-address reads here | `ifconfig`/`route`/`netstat` (P2), `ipconfig`/`Get-Net*` (P3) |
+| `Platform::Mdns` | Avahi browse and publish | `dns-sd` (P2), the DNS-SD API (P3) |
+| `Platform::Audio` | pactl, then wpctl, then amixer; devices, volume, default, player/recorder argv | CoreAudio (P2), WASAPI (P3) |
+| `Platform::Serial` | `/dev/ttyACM*` and `/dev/ttyUSB*`, stty, the shared console protocol | `/dev/cu.*` (P2), `COM*` (P3) |
+| `Platform::Print` | the CUPS client, weasyprint PDF, ipptool ink, scanimage | CUPS (P2), the spooler (P3) |
+| `Platform::Shell` | clipboard, opener, notification, terminal list | `pbcopy`/`open`/`osascript` (P2), `clip`/`ShellExecute`/toasts (P3) |
+| `Platform::Paths` | XDG install roots, `tool_path`, a temp that can fall back | Application Support (P2), `LOCALAPPDATA`/`%TEMP%` (P3) |
+| `Platform::Ports` | base-relative duty and transport tables, the configured tunnel range | none: the numbers are shared |
+| `Platform::Job`, `Server`, `TLS`, `Runner` | one job/server launcher, the local certificate, the runner seam (`ReadWriteFork` on Unix) | the Windows runner and no-fork path (P3) |
+
+- [x] `Process`, `Net`, `Mdns`, `Audio`, `Serial`, `Print`, `Shell`, `Paths` and `Ports` exist, and
+  each Linux implementation preserves today's behaviour: `t/227` (Process), `t/230` (Net), `t/240`
+  (Ports), `t/242` (Audio), `t/243` (Print), `t/244` (Paths), `t/245` (Shell), `t/246` (Serial).
+- [x] `desktop/jawnos_desktop/core.py` split into `core_paths`, `core_process`, `core_secrets`,
+  `core_autostart` and `core_shell`; their macOS/Windows branches are P2/P3.
+- [x] Every new domain sub is in `lib/JawnOS/Domain/Loader.pm` (`t/91`), every new Manager helper in
+  `lib/JawnOS/Manager/Index.pm` + `Declarations.pm` (`t/54`), and every new test has a
+  `# tests-for:` header (`t/99`).
+- [x] The tunnel range config landed with `Platform::Ports` (`t/240`).
+- [x] `scripts/platform_probe.pl` asks the seams for the audio backend, print availability, the
+  terminal list and the mDNS roles, and reports the tools each seam owns (`t/219`, `t/220`).
+
+**Exit:** Linux suite green, no behaviour change, and the platform interface is small enough to port.
+Met on Linux. The macOS and Windows bodies are P2/P3; nothing in P1 claims them.
 
 ### P2 — macOS native
 

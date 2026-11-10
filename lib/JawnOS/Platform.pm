@@ -1,8 +1,10 @@
 package JawnOS::Platform;
 
-# The portability questions P0 asks, answered in one place. Nothing here starts
-# a process, opens a socket or reads the database, so ./jawn can require it
-# before the tree exists and a test can exercise it without a house.
+# The portability questions P0 asks, answered in one place. Nothing here opens
+# a socket or reads the database, so ./jawn can require it before the tree
+# exists and a test can exercise it without a house. capabilities() is the one
+# exception to "no process": it asks the audio, print, shell and mDNS seams,
+# whose Linux backend may run a short tool read.
 #
 # Two different questions are kept apart:
 #
@@ -138,6 +140,47 @@ sub serial_devices {
 	return JawnOS::Platform::Serial::devices();
 }
 
+# The seam answers a bare tool name cannot give: which mixer is actually
+# running, whether a print stack is present, the terminal list this machine
+# would try, and whether an mDNS role has a responder. Every seam loads this
+# file for tool_path, so a literal require here would look like a cycle to the
+# graph check; the load is deferred instead. A caller cannot reach
+# capabilities() before Platform.pm has finished loading, so the seam's own
+# `use JawnOS::Platform ()` is a no-op. Domain::Loader uses the same pattern.
+sub _load_seam {
+	my ($module) = @_;
+	(my $file = $module) =~ s{::}{/}g;
+	$file .= '.pm';
+	require $file;
+	return;
+}
+
+sub _seam_capabilities {
+	_load_seam('JawnOS::Platform::Audio');
+	my $backend = JawnOS::Platform::Audio::backend();
+
+	_load_seam('JawnOS::Platform::Print');
+	my $print = JawnOS::Platform::Print::available() ? 1 : 0;
+
+	_load_seam('JawnOS::Platform::Shell');
+	my @terminals = JawnOS::Platform::Shell::terminals();
+
+	_load_seam('JawnOS::Platform::Mdns');
+
+	return {
+		audio_backend => {
+			kind => (defined $backend->{'kind'} && length $backend->{'kind'}) ? $backend->{'kind'} : 'none',
+			bin  => defined $backend->{'bin'} ? $backend->{'bin'} : '',
+		},
+		print_available => $print,
+		shell_terminals => [ @terminals ],
+		mdns_available  => {
+			browse  => JawnOS::Platform::Mdns::available('browse'),
+			publish => JawnOS::Platform::Mdns::available('publish'),
+		},
+	};
+}
+
 sub capabilities {
 	my %modules;
 	my @extra = qw(
@@ -150,15 +193,25 @@ sub capabilities {
 		$modules{$module} = module_version($module);
 	}
 
+	# The seams own these names now: the audio backend and its recorder/player,
+	# the CUPS and scan tools, the small desktop surfaces, stty for a serial
+	# console, and the Linux network readers behind Net. Reporting a name beside
+	# the seam that would use it keeps a missing tool visible.
 	my @tool_names = qw(
 		bluetoothctl busctl system_profiler powershell
 		pactl wpctl amixer say afplay
+		parec pacat pulseaudio
 		lpstat lp lpadmin cupsd
+		ipptool weasyprint ippfind scanimage
 		avahi-browse avahi-publish-service dns-sd
+		xclip xsel wl-paste wl-copy xdg-open notify-send
+		stty
+		ip ifconfig route arp
 		tailscale git node
 		ffmpeg magick convert tesseract qrencode zbarimg espeak sox
 	);
 	my %tools = map { $_ => (tool_path($_) ? 1 : 0) } @tool_names;
+	my $seams = _seam_capabilities();
 
 	return {
 		os                       => os(),
@@ -183,6 +236,10 @@ sub capabilities {
 		modules                  => \%modules,
 		tools                    => \%tools,
 		serial_devices           => serial_devices(),
+		audio_backend            => $seams->{'audio_backend'},
+		print_available          => $seams->{'print_available'},
+		shell_terminals          => $seams->{'shell_terminals'},
+		mdns_available           => $seams->{'mdns_available'},
 		missing_required         => missing_required(),
 	};
 }

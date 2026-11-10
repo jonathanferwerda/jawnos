@@ -39,6 +39,15 @@ is(ref $data->{'tools'}, 'HASH', 'the tool state is an object');
 is(ref $data->{'serial_devices'}, 'ARRAY', 'the serial list is an array');
 ok(exists $data->{'missing_required'}, 'the report names missing required modules');
 
+# capabilities() asks the seams, and the report carries their answers.
+is(ref $data->{'audio_backend'}, 'HASH', 'the report carries the audio backend');
+ok(exists $data->{'audio_backend'}{'kind'}, 'the audio backend names a kind');
+ok(exists $data->{'print_available'}, 'the report carries print availability');
+is(ref $data->{'shell_terminals'}, 'ARRAY', 'the report carries the terminal list');
+is(ref $data->{'mdns_available'}, 'HASH', 'the report carries the mDNS roles');
+ok(exists $data->{'mdns_available'}{'browse'}, 'the mDNS browse role is reported');
+ok(exists $data->{'mdns_available'}{'publish'}, 'the mDNS publish role is reported');
+
 my ($text_status, $text_out) = run_probe();
 is($text_status, 0, 'the human probe exits 0');
 like($text_out, qr/^JawnOS platform probe/m, 'the human probe has a heading');

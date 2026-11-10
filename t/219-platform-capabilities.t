@@ -74,6 +74,34 @@ ok(exists $caps->{'tools'}, 'capabilities carries tool state');
 is(ref $caps->{'serial_devices'}, 'ARRAY', 'serial devices are a list');
 ok(defined $caps->{'mode'}, 'capabilities names the mode');
 
+# capabilities() asks the seams rather than guessing from a tool name.
+is(ref $caps->{'audio_backend'}, 'HASH', 'capabilities carries the audio backend');
+ok(defined $caps->{'audio_backend'}{'kind'} && length $caps->{'audio_backend'}{'kind'},
+	'the audio backend names a kind');
+ok(!ref $caps->{'audio_backend'}{'kind'}, 'the audio kind is a plain string');
+is(ref $caps->{'shell_terminals'}, 'ARRAY', 'capabilities carries the terminal list');
+ok(@{ $caps->{'shell_terminals'} }, 'the terminal list is not empty');
+is(ref $caps->{'shell_terminals'}[0], 'ARRAY', 'a terminal is a name and its flags');
+is(ref $caps->{'shell_terminals'}[0][1], 'ARRAY', 'a terminal carries a flag list');
+is(ref $caps->{'mdns_available'}, 'HASH', 'capabilities carries the mDNS roles');
+ok(exists $caps->{'mdns_available'}{'browse'}, 'the mDNS browse role is answered');
+ok(exists $caps->{'mdns_available'}{'publish'}, 'the mDNS publish role is answered');
+ok($caps->{'print_available'} eq '0' || $caps->{'print_available'} eq '1',
+	'print availability is a flag');
+
+# The names each seam owns are reported, so a missing tool shows up in the probe.
+foreach my $name (qw(
+	parec pacat pulseaudio
+	ipptool weasyprint ippfind scanimage
+	xclip xsel wl-paste wl-copy xdg-open notify-send
+	stty
+	ip ifconfig route arp
+)) {
+	ok(exists $caps->{'tools'}{$name}, "the probe reports $name");
+	ok($caps->{'tools'}{$name} eq '0' || $caps->{'tools'}{$name} eq '1',
+		"$name is a flag");
+}
+
 SKIP: {
 	skip 'POSIX-only capability', 2 if $^O eq 'MSWin32';
 	ok(JawnOS::Platform::fork_available(), 'a POSIX box reports fork available');
