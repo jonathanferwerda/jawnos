@@ -41,12 +41,13 @@ my ($icon)   = $src =~ /var dotIcon = (\d+);/;
 my ($round)  = $src =~ /var dotIconClip = (\d+);/;
 ok(defined $radius && defined $ring && defined $icon && defined $round,
 	'the mark sizes and the plate\'s round clip were read');
-cmp_ok($radius, '>=', 18, 'the disc is big enough for a legible plate');
+cmp_ok($radius, '>=', 19, 'the disc grew to keep a rim outside the zoomed plate');
 cmp_ok($ring, '<=', 2, "the edge is the other printers' thin ink line");
 cmp_ok($icon, '>=', 34, 'the pseudonym plate is zoomed in to read');
 # the ink edge's inner radius is dotRadius - dotRing/2; the clip must stay
-# inside it so the appointment's colour still rings the plate
-cmp_ok($round, '<=', $radius - $ring / 2, 'the round clip sits inside the ink edge');
+# inside it, leaving the appointment's colour as a one-pixel rim
+cmp_ok($round, '<', $radius - $ring / 2, 'the round clip sits inside the ink edge');
+cmp_ok($radius - $ring / 2 - $round, '==', 1, 'one pixel of colour rings the plate');
 cmp_ok($round, '>=', 14, 'the round clip still fills the disc');
 
 # the plate is clipped to that circle before it is drawn, and drawn on top

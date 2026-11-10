@@ -50,13 +50,13 @@ function timelinePrinter(appts,sort,offset) {
 	// colour in a disc with a thin ink edge. The pseudonym's plate sits in its
 	// middle, zoomed until it nearly fills the disc: the plate is a square, so
 	// its corners are rounded to a circle just inside the ink edge, and the
-	// appointment's colour still shows as a thin rim. The edge's inner radius is
-	// 17 (dotRadius less half the ring), so the clip sits at 16.
-	var dotRadius = 18;
+	// appointment's colour still shows as a one-pixel rim. The edge's inner
+	// radius is 18 (dotRadius less half the ring), so the clip sits at 17.
+	var dotRadius = 19;
 	var dotRing = 2;   // the ink edge around the disc
 	var dotHalo = 8;   // the theme's halo behind it, when the theme has one
 	var dotIcon = 36;  // the plate, zoomed from 28 so the glyph reads at a glance
-	var dotIconClip = 16; // the circle the plate's corners are rounded to
+	var dotIconClip = 17; // the circle the plate's corners are rounded to
 	var pad = 26;
 	var top = headerHeight + clothesLineHeight + 26;
 	var rows = 0;
