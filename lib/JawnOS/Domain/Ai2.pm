@@ -427,6 +427,22 @@ sub ai_system_payload {
 	];
 }
 
+# Cloudflare's Workers AI chat API defaults max_tokens to 256. That is enough for
+# a one-line answer, but a full evaluation report needs more, and a reasoning
+# model can spend the whole 256 on its reasoning and return no final text at all
+# (the evaluation then falls back to DeepSeek). Ask for a report-sized budget;
+# the model still stops when it is done. 2048 is under every chat model's ceiling
+# we call here, and eight times the API default.
+sub ai_cloudflare_payload {
+	my ($model, $system, $wire) = @_;
+	return {
+		model => $model,
+		messages => [ { role => 'system', content => $system }, @{ $wire || [] } ],
+		stream => \0,
+		max_tokens => 2048,
+	};
+}
+
 # One provider's streamed frame, as [ kind, text ] deltas. The providers frame
 # the same information differently: Anthropic names a delta kind, Gemini marks a
 # thought part, Ollama puts content and thinking beside each other, and the
@@ -582,7 +598,7 @@ sub ai_chat_raw {
 	if ($provider eq 'cloudflare') {
 		$url = 'https://api.cloudflare.com/client/v4/accounts/' . $settings->{'cloudflare_account'} . '/ai/run/' . $model;
 		$headers = { 'Authorization' => 'Bearer ' . $secret->($settings->{'cloudflare_token'}), 'Content-Type' => 'application/json' };
-		$payload = { model => $model, messages => [ { role => 'system', content => $system }, @wire ], stream => \0 };
+		$payload = &ai_cloudflare_payload($model, $system, \@wire);
 	}
 	elsif ($provider eq 'anthropic') {
 		$url = 'https://api.anthropic.com/v1/messages';
