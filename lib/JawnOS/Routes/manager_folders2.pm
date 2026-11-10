@@ -15,6 +15,16 @@ sub routes {
 	[30562, 'post', '/manager/folders/archive/receive', 'action_30562'],
 	[30651, 'post', '/manager/folders/file/open', 'action_30651'],
 	[30660, 'post', '/manager/folders/archive/discard', 'action_30660'],
+	[30700, 'post', '/manager/folders/cloud', 'action_30700'],
+	[30701, 'post', '/manager/folders/cloud/start', 'action_30701'],
+	[30702, 'get', '/manager/folders/cloud', 'action_30702'],
+	[30703, 'post', '/manager/folders/cloud/remove', 'action_30703'],
+	[30704, 'post', '/manager/folders/cloud/now', 'action_30704'],
+	[30710, 'post', '/manager/folders/cloud/space', 'action_30710'],
+	[30711, 'post', '/manager/folders/cloud/probe', 'action_30711'],
+	[30712, 'post', '/manager/folders/cloud/receive', 'action_30712'],
+	[30713, 'post', '/manager/folders/cloud/discard', 'action_30713'],
+	[30714, 'post', '/manager/folders/cloud/prune', 'action_30714'],
 	);
 }
 

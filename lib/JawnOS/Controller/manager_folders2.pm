@@ -107,7 +107,7 @@ sub action_30356 {
 # GET /manager/folders/archive
 sub action_30392 {
 	my $c = shift;
-	my $list = &subs::minion_grabber()->backend->list_jobs(0, 200, { tasks => ['archive_transfer', 'archive_manifest_rescan', 'archive_fetch_home'] })->{'jobs'} || [];
+	my $list = &subs::minion_grabber()->backend->list_jobs(0, 200, { tasks => ['archive_transfer', 'archive_manifest_rescan', 'archive_fetch_home', 'cloud_sync'] })->{'jobs'} || [];
 	my @jobs;
 	foreach my $job ( @{$list} ) {
 		my $item = ($job->{'args'} || [])->[0] || {};
@@ -550,6 +550,450 @@ sub action_30651 {
 
 	$c->render(json => $returner);
 
+}
+
+# ---- cloud sync -----------------------------------------------------------
+# A folder in the house that keeps a copy on other devices. The dialog asks
+# every peer how much room it has before it offers a box, so a device that
+# cannot hold the folder is disabled rather than chosen and failed.
+# POST /manager/folders/cloud
+sub action_30700 {
+	my $c = shift;
+	my $folders = eval { return decode_json $c->param('folders') } || {};
+	my $folder = $c->param('folder') || $folders->{'path'} || $folders->{'folder'} || '';
+	if (defined $folder && length $folder) {
+		$folder = &subs::home($folder);
+		$folder =~ s{/+$}{} unless $folder eq '/';
+	}
+	my $box;
+	if (!defined $folder || !length $folder || !-d $folder) {
+		$box = { name => &subs::ui('CloudSync'), text => &subs::ui('That folder is not there.'), cancel => 'no', height => '220px' };
+	}
+	else {
+		my $base = &subs::cloud_sync_base_for($folder);
+		my $totals = &subs::cloud_sync_totals($folder);
+		my $devices = &subs::cloud_sync_space_rows($base, $totals->{'bytes'});
+		my $registered = &subs::cloud_sync_registration_for($folder);
+		my %chosen = map { ($_->{'uuid'} || '') => 1 } @{ ($registered || {})->{'devices'} || [] };
+		$devices = [ map {
+			my $d = $_;
+			my $selected = $d->{'ok'} ? ($registered ? ($chosen{ $d->{'uuid'} } ? 1 : 0) : 1) : 0;
+			{ %{$d}, selected => $selected }
+		} @{$devices} ];
+		my $content = $c->render_to_string(
+			template => 'folders/cloud_sync',
+			folder => $folder,
+			base => $base,
+			totals => $totals,
+			devices => $devices,
+			registered => $registered
+		);
+		$box = {
+			name => &subs::ui('CloudSync'),
+			command => 'cloud_sync',
+			content => $content,
+			ok_label => &subs::ui('Start syncing'),
+			height => '70%',
+			width => 'min(620px, 94vw)'
+		};
+	}
+	my $dialog = $c->render_to_string(
+		template => 'folders/dialog_box',
+		folders => { folder => $folder },
+		box => $box,
+		uuid => &subs::random_string_creator(10)
+	);
+	$c->render(json => { status => 'ok', dialog => $dialog });
+}
+
+# The dialog's OK: register the folder for the chosen devices and queue the
+# first pass. Room is checked again here, because the dialog may have been open
+# for a while and another copy could have filled the disk since.
+# POST /manager/folders/cloud/start
+sub action_30701 {
+	my $c = shift;
+	my $folder = $c->param('folder') || '';
+	my $devices = eval { return decode_json $c->param('devices') } || [];
+	my $returner = {};
+	my $answer = sub {
+		my $box = shift;
+		$returner->{'dialog'} = $c->render_to_string(
+			template => 'folders/dialog_box',
+			folders => { folder => $folder },
+			box => $box,
+			uuid => &subs::random_string_creator(10)
+		);
+	};
+	if (defined $folder && length $folder) {
+		$folder = &subs::home($folder);
+		$folder =~ s{/+$}{} unless $folder eq '/';
+	}
+	if (!defined $folder || !length $folder || !-d $folder) {
+		$answer->({ name => &subs::ui('CloudSync'), text => &subs::ui('That folder is not there.'), cancel => 'no', height => '220px' });
+		$c->render(json => $returner);
+		return;
+	}
+	my $base = &subs::cloud_sync_base_for($folder);
+	my $totals = &subs::cloud_sync_totals($folder);
+	my $rows = &subs::cloud_sync_space_rows($base, $totals->{'bytes'});
+	my %by_id = map { ($_->{'uuid'} || '') => $_ } @{$rows};
+	my (@chosen, @refused);
+	foreach my $uuid ( @{$devices} ) {
+		next unless defined $uuid && length $uuid;
+		my $row = $by_id{$uuid};
+		if (!$row) { push @refused, $uuid . ': ' . &subs::ui('that device is not known in the house'); next; }
+		if (!$row->{'ok'}) {
+			push @refused, $row->{'hostname'} . ': ' . ($row->{'error'} || &subs::ui('there is not enough room'));
+			next;
+		}
+		push @chosen, { uuid => $uuid, hostname => $row->{'hostname'} };
+	}
+	if (!scalar @chosen) {
+		$answer->({ name => &subs::ui('CloudSync'), text => &subs::ui('No device was chosen, or none of them has room.'), cancel => 'no', height => '220px' });
+		$c->render(json => $returner);
+		return;
+	}
+	my $id = &subs::minion_grabber()->enqueue(cloud_sync => [ {
+		path => $folder,
+		base => $base,
+		devices => \@chosen
+	} ] => { retries => 1 });
+	my $registrations = &subs::cloud_sync_registrations();
+	my @keep = grep { ($_->{'path'} || '') ne $folder } @{$registrations};
+	push @keep, {
+		path => $folder,
+		base => $base,
+		devices => \@chosen,
+		added => &subs::rightNow(),
+		fingerprint => &subs::cloud_sync_fingerprint($folder),
+		job => $id
+	};
+	&subs::cloud_sync_registrations_write(\@keep);
+	my $text = &subs::ui('Syncing to') . ' ' . join(', ', map { $_->{'hostname'} } @chosen) . '.';
+	$text .= ' ' . &subs::ui('Not used:') . ' ' . join('; ', @refused) if scalar @refused;
+	$answer->({ name => &subs::ui('CloudSync'), text => $text, job => $id, progress => &subs::ui('starting'), ok => 'no', cancel => 'no', height => '240px' });
+	$c->render(json => $returner);
+}
+# The list the Places column's CloudSync row opens: every folder registered on
+# this machine, the devices it goes to, and its own Sync now and Stop controls.
+# GET /manager/folders/cloud
+sub action_30702 {
+	my $c = shift;
+	my @rows;
+	foreach my $reg ( @{ &subs::cloud_sync_registrations() } ) {
+		my @parts = split '/', ($reg->{'path'} || '');
+		my $name = pop @parts;
+		push @rows, {
+			%{$reg},
+			display => &subs::format_name($name || $reg->{'path'}),
+			totals => &subs::cloud_sync_totals($reg->{'path'})
+		};
+	}
+	my $content = $c->render_to_string(template => 'folders/cloud_list', registrations => \@rows);
+	my $dialog = $c->render_to_string(
+		template => 'folders/dialog_box',
+		folders => { folder => '' },
+		box => {
+			name => &subs::ui('CloudSync'),
+			command => 'cloud_list',
+			content => $content,
+			ok => 'no',
+			cancel => 'yes',
+			cancel_label => &subs::ui('Close'),
+			height => '70%',
+			width => 'min(620px, 94vw)'
+		},
+		uuid => &subs::random_string_creator(10)
+	);
+	$c->render(json => { status => 'ok', dialog => $dialog, folders => \@rows });
+}
+
+# Stop watching a folder. Copies already on the other devices are left alone;
+# this only removes the registration on this machine.
+# POST /manager/folders/cloud/remove
+sub action_30703 {
+	my $c = shift;
+	my $folder = $c->param('folder') || '';
+	my $reg = &subs::cloud_sync_registration_for($folder);
+	if ($reg && $reg->{'job'}) {
+		my $job = &subs::minion_grabber()->job($reg->{'job'});
+		$job->note(cancel => 1) if ($job && ($job->info->{'state'} || '') eq 'active');
+	}
+	my @keep = grep { ($_->{'path'} || '') ne $folder } @{ &subs::cloud_sync_registrations() };
+	&subs::cloud_sync_registrations_write(\@keep);
+	$c->render(json => { status => 'ok', remaining => scalar @keep });
+}
+
+# Queue a registered folder again, for the person who does not want to wait for
+# the sweep or is retrying after a device was unreachable.
+# POST /manager/folders/cloud/now
+sub action_30704 {
+	my $c = shift;
+	my $folder = $c->param('folder') || '';
+	my $returner = {};
+	my $answer = sub {
+		my $box = shift;
+		$returner->{'dialog'} = $c->render_to_string(
+			template => 'folders/dialog_box',
+			folders => { folder => $folder },
+			box => $box,
+			uuid => &subs::random_string_creator(10)
+		);
+	};
+	my $reg = &subs::cloud_sync_registration_for($folder);
+	if (!$reg) {
+		$answer->({ name => &subs::ui('CloudSync'), text => &subs::ui('That folder is not set to CloudSync.'), cancel => 'no', height => '220px' });
+		$c->render(json => $returner);
+		return;
+	}
+	if ($reg->{'job'}) {
+		my $running = &subs::minion_grabber()->job($reg->{'job'});
+		my $state = ($running && $running->info) ? ($running->info->{'state'} || '') : '';
+		if ($state eq 'active' || $state eq 'inactive') {
+			$answer->({ name => &subs::ui('CloudSync'), text => &subs::ui('That folder is already syncing.'), ok => 'no', cancel => 'no', height => '220px' });
+			$c->render(json => $returner);
+			return;
+		}
+	}
+	my $id = &subs::minion_grabber()->enqueue(cloud_sync => [ {
+		path => $reg->{'path'},
+		base => $reg->{'base'},
+		devices => $reg->{'devices'}
+	} ] => { retries => 1 });
+	$reg->{'job'} = $id;
+	$reg->{'fingerprint'} = &subs::cloud_sync_fingerprint($reg->{'path'});
+	my $registrations = &subs::cloud_sync_registrations();
+	foreach my $row ( @{$registrations} ) {
+		%{$row} = %{$reg} if (($row->{'path'} || '') eq $folder);
+	}
+	&subs::cloud_sync_registrations_write($registrations);
+	$answer->({ name => &subs::ui('CloudSync'), text => &subs::ui('Syncing now.'), job => $id, progress => &subs::ui('starting'), ok => 'no', cancel => 'no', height => '220px' });
+	$c->render(json => $returner);
+}
+# A peer answering how much room its copy would have. It measures the nearest
+# ancestor that exists, so a sync folder is not created just to ask.
+# POST /manager/folders/cloud/space
+sub action_30710 {
+	my $c = shift;
+	unless (&archive_peer_allowed($c)) {
+		$c->render(json => { status => 'error', error => 'not allowed' });
+		return;
+	}
+	my $dest = &subs::cloud_sync_destination({ base => $c->param('base'), path => '' });
+	if ($dest->{'error'}) {
+		$c->render(json => { status => 'error', error => $dest->{'error'} });
+		return;
+	}
+	my $space = &subs::cloud_sync_free_space($dest->{'root'});
+	$space->{'hostname'} = &subs::machine_name();
+	$space->{'path'} = $dest->{'root'};
+	$c->render(json => $space);
+}
+
+# Whether the destination already has a file at the same size and time, and
+# whether a partial copy is waiting to be resumed.
+# POST /manager/folders/cloud/probe
+sub action_30711 {
+	my $c = shift;
+	unless (&archive_peer_allowed($c)) {
+		$c->render(json => { status => 'error', error => 'not allowed' });
+		return;
+	}
+	my $dest = &subs::cloud_sync_destination({ base => $c->param('base'), path => $c->param('path') });
+	if ($dest->{'error'}) {
+		$c->render(json => { status => 'error', error => $dest->{'error'} });
+		return;
+	}
+	my $exists = -e $dest->{'path'} ? 1 : 0;
+	my @stat = $exists ? stat($dest->{'path'}) : ();
+	$c->render(json => {
+		status => 'ok',
+		path => $dest->{'path'},
+		exists => $exists,
+		size => $exists ? -s $dest->{'path'} : undef,
+		mtime => $exists ? $stat[9] : undef,
+		partial => &subs::archive_partial_state({ path => $dest->{'path'} })
+	});
+}
+# The upload half of CloudSync. The same partial/resume rule as an archive
+# transfer, but the destination is the folder named by the shared base, not an
+# archive location.
+# POST /manager/folders/cloud/receive
+sub action_30712 {
+	my $c = shift;
+	unless (&archive_peer_allowed($c)) {
+		$c->render(json => { status => 'error', error => 'not allowed' });
+		return;
+	}
+	my @uploads = @{$c->req->uploads};
+	my $upload = $uploads[0];
+	unless ($upload) {
+		$c->render(json => { status => 'error', error => 'no file in the request' });
+		return;
+	}
+	my $dest = &subs::cloud_sync_destination({ base => $c->param('base'), path => $c->param('path') });
+	if ($dest->{'error'}) {
+		$c->render(json => { status => 'error', error => $dest->{'error'} });
+		return;
+	}
+	Mojo::File->new($dest->{'parent'})->make_path;
+	my $mtime = $c->param('mtime');
+	my $offset = $c->param('offset');
+	my $total = $c->param('total');
+	my $source = $c->param('source');
+	my $part = &subs::archive_partial_path($dest->{'path'});
+	my $meta_path = &subs::archive_partial_meta_path($dest->{'path'});
+	my $chunked = (defined $offset && $offset =~ /^\d+$/ && defined $total && $total =~ /^\d+$/) ? 1 : 0;
+	if ($chunked) {
+		my $source_path = eval { $upload->asset->path };
+		unless ($source_path && -e $source_path) {
+			$c->render(json => { status => 'error', error => 'the upload has no file' });
+			return;
+		}
+		if ($offset > 0) {
+			unless (-e $part) {
+				$c->render(json => { status => 'error', error => 'there is no partial copy to resume', path => $dest->{'path'} });
+				return;
+			}
+			my $have = -s $part;
+			$have = 0 unless defined $have;
+			if ($have < $offset) {
+				$c->render(json => { status => 'error', error => 'the partial is shorter than the resume offset', path => $dest->{'path'}, size => $have });
+				return;
+			}
+			my $meta = {};
+			$meta = eval { return decode_json scalar read_file($meta_path) } || {} if ($meta_path && -e $meta_path);
+			$meta = {} unless ref $meta eq 'HASH';
+			if (defined $meta->{'total'} && $meta->{'total'} != $total) {
+				$c->render(json => { status => 'error', error => 'the partial belongs to a different source', path => $dest->{'path'} });
+				return;
+			}
+			if (defined $meta->{'source'} && length $meta->{'source'}
+				&& defined $source && length $source && $meta->{'source'} ne $source) {
+				$c->render(json => { status => 'error', error => 'the partial belongs to another source', path => $dest->{'path'} });
+				return;
+			}
+		}
+		my $mode = ($offset > 0) ? '+<' : '>';
+		my ($in, $out);
+		unless (open($out, $mode, $part)) {
+			$c->render(json => { status => 'error', error => "cannot open $part: $!", path => $dest->{'path'} });
+			return;
+		}
+		binmode $out;
+		seek($out, $offset, 0) if $offset > 0;
+		unless (open($in, '<:raw', $source_path)) {
+			close $out;
+			$c->render(json => { status => 'error', error => "cannot read the upload: $!", path => $dest->{'path'} });
+			return;
+		}
+		binmode $in;
+		my $written = 0;
+		my $buf;
+		while (my $n = read($in, $buf, 1024 * 1024)) {
+			print $out $buf;
+			$written += $n;
+		}
+		close $in;
+		close $out;
+		if ($offset == 0) {
+			&subs::archive_partial_meta_write($dest->{'path'}, {
+				source => (defined $source && length $source ? $source : undef),
+				total => 0 + $total,
+				mtime => (defined $mtime && $mtime =~ /^\d+$/ ? 0 + $mtime : undef),
+				started => &subs::rightNow()
+			});
+		}
+		if ($c->param('final') && ($offset + $written) != $total) {
+			$c->render(json => { status => 'error', error => 'the file is incomplete', path => $dest->{'path'}, size => -s $part });
+			return;
+		}
+		my $size = -s $part;
+		$size = 0 unless defined $size;
+		my $sha;
+		if ($c->param('final')) {
+			if ($size != $total) {
+				$c->render(json => { status => 'error', error => 'the file is incomplete', path => $dest->{'path'}, size => $size });
+				return;
+			}
+			$sha = &subs::archive_file_digest($part);
+			unless (defined $sha && rename($part, $dest->{'path'})) {
+				$c->render(json => { status => 'error', error => 'the verified copy could not be moved into place', path => $dest->{'path'} });
+				return;
+			}
+			unlink $meta_path if ($meta_path && -e $meta_path);
+			utime $mtime, $mtime, $dest->{'path'} if ($mtime && $mtime =~ /^\d+$/);
+			$log->info('cloud sync: received ' . $dest->{'path'} . ' (' . $size . ' bytes)') if $log;
+		}
+		$c->render(json => {
+			status => 'ok',
+			path => $dest->{'path'},
+			size => $size,
+			offset => 0 + $offset,
+			received => $written,
+			sha256 => $sha,
+			final => $c->param('final') ? 1 : 0
+		});
+		return;
+	}
+	eval { $upload->move_to($part) };
+	if ($@) {
+		$c->render(json => { status => 'error', error => "$@", path => $dest->{'path'} });
+		return;
+	}
+	my $written = -s $part;
+	$written = 0 unless defined $written;
+	my $sha = &subs::archive_file_digest($part);
+	unless (defined $sha && rename($part, $dest->{'path'})) {
+		$c->render(json => { status => 'error', error => 'the verified copy could not be moved into place', path => $dest->{'path'} });
+		return;
+	}
+	unlink $meta_path if ($meta_path && -e $meta_path);
+	utime $mtime, $mtime, $dest->{'path'} if ($mtime && $mtime =~ /^\d+$/);
+	$log->info('cloud sync: received ' . $dest->{'path'} . ' (' . $written . ' bytes)') if $log;
+	$c->render(json => { status => 'ok', path => $dest->{'path'}, size => $written, sha256 => $sha });
+}
+# Throw away a partial copy at the sender's request after a cancel. Only the
+# .part and its sidecar go; a finished copy and the source are untouched.
+# POST /manager/folders/cloud/discard
+sub action_30713 {
+	my $c = shift;
+	unless (&archive_peer_allowed($c)) {
+		$c->render(json => { status => 'error', error => 'not allowed' });
+		return;
+	}
+	my $dest = &subs::cloud_sync_destination({ base => $c->param('base'), path => $c->param('path') });
+	if ($dest->{'error'}) {
+		$c->render(json => { status => 'error', error => $dest->{'error'} });
+		return;
+	}
+	my $state = &subs::archive_partial_state({ path => $dest->{'path'} });
+	my $source = $c->param('source');
+	if ($state->{'exists'} && defined $source && length $source
+		&& defined $state->{'source'} && length $state->{'source'} && $state->{'source'} ne $source) {
+		$c->render(json => { status => 'error', error => 'the partial belongs to another source', path => $dest->{'path'} });
+		return;
+	}
+	my $removed = &subs::archive_partial_discard($dest->{'path'});
+	$c->render(json => { status => 'ok', path => $dest->{'path'}, removed => $removed->{'removed'} });
+}
+
+# Apply the source's file list to the destination's tracked manifest, removing
+# only files CloudSync itself placed that the source no longer has.
+# POST /manager/folders/cloud/prune
+sub action_30714 {
+	my $c = shift;
+	unless (&archive_peer_allowed($c)) {
+		$c->render(json => { status => 'error', error => 'not allowed' });
+		return;
+	}
+	my $files = eval { return decode_json $c->param('files') } || [];
+	my $pruned = &subs::cloud_sync_prune_files($c->param('base'), $files);
+	if ($pruned->{'error'}) {
+		$c->render(json => { status => 'error', error => $pruned->{'error'} });
+		return;
+	}
+	$c->render(json => { status => 'ok', removed => $pruned->{'removed'}, tracked => $pruned->{'tracked'} });
 }
 
 1;

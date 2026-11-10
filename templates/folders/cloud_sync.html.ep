@@ -1,0 +1,30 @@
+<%# The rooms a CloudSync folder can go to. Every device in the house is listed
+    with the free space on the volume its copy would land on; a device that
+    cannot hold the folder is disabled rather than left out, so the person can
+    see why. The boxes are what the dialog's OK reads. %>
+<div class="folders_cloud_check" path="<%= $folder %>">
+	<div class="folders_cloud_summary">
+		<%= &subs::ui('This folder holds') %>
+		<b><%= $totals->{'files'} %></b> <%= &subs::ui('file(s)') %>,
+		<b><%= &subs::data_size($totals->{'bytes'} || 0) %></b>
+	</div>
+	<% if (scalar @{$devices}) { %>
+		<% foreach my $d ( @{$devices} ) { %>
+			<label class="folders_cloud_device_row" title="<%= $d->{'hostname'} %>">
+				<input type="checkbox" class="folders_cloud_device" value="<%= $d->{'uuid'} %>"<% if ($d->{'selected'}) { %> checked="checked"<% } %><% unless ($d->{'ok'}) { %> disabled="disabled"<% } %>>
+				<span class="folders_cloud_device_name"><%= $d->{'hostname'} %></span>
+				<span class="folders_cloud_device_space">
+					<% if (defined $d->{'free_bytes'}) { %><%= &subs::ui('Free') %>: <%= $d->{'free_human'} %><% } %>
+				</span>
+				<% if ($d->{'error'}) { %>
+					<span class="folders_cloud_device_note"><%= $d->{'error'} %></span>
+				<% } elsif (!$d->{'enough'} && defined $d->{'free_bytes'}) { %>
+					<span class="folders_cloud_device_note"><%= &subs::ui('not enough room') %></span>
+				<% } %>
+			</label>
+		<% } %>
+		<div class="folders_cloud_hint"><%= &subs::ui('Every change to the folder is copied to the chosen devices. A file deleted here leaves their copies on the next pass.') %></div>
+	<% } else { %>
+		<div class="folders_cloud_empty"><%= &subs::ui('There are no other devices in the house.') %></div>
+	<% } %>
+</div>

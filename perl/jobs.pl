@@ -414,6 +414,9 @@ sub job_minion_worker {
 	# the launcher clears the queue at startup and the nightly evaluation
 	# wishes live in the settings: put their schedules back
 	&subs::nightly_evaluation_reconcile();
+	# CloudSync folders are watched by the worker, not a browser tab: a change
+	# while no Folders window is open still reaches the other machines.
+	&subs::cloud_sync_sweep_start();
 	my $worker = $minion->worker;
 	$worker->status->{jobs} = 1;
 	$worker->run;

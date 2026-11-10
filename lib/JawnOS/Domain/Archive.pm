@@ -332,12 +332,12 @@ sub archive_discard_remote {
 	my $data = shift;
 	my ($ua, $manager) = ($data->{'ua'}, $data->{'manager'});
 	return { status => 'error', error => 'no archive machine to ask' } unless ($ua && $manager);
+	my $url = $data->{'url'} || '/manager/folders/archive/discard';
+	my %form = (path => $data->{'relative'}, source => $data->{'source'});
+	$form{'location'} = $data->{'location'} if defined $data->{'location'};
+	$form{'base'} = $data->{'base'} if defined $data->{'base'};
 	my $tx = eval {
-		return $ua->post($manager . '/manager/folders/archive/discard' => form => {
-			location => $data->{'location'},
-			path => $data->{'relative'},
-			source => $data->{'source'}
-		})
+		return $ua->post($manager . $url => form => \%form)
 	};
 	my ($res, $err) = &archive_reply($tx);
 	return $res if ($res && $res->{'status'} eq 'ok');
@@ -367,22 +367,26 @@ sub archive_send_file {
 	my $start = $data->{'start'} || 0;
 	$start = 0 unless ($start =~ /^\d+$/ && (!defined $total || $start < $total));
 	my $progress = $data->{'progress'} || sub { return 0 };
+	my $url = $data->{'url'} || '/manager/folders/archive/receive';
+	my $discard_url = $data->{'discard_url'};
+	$discard_url = '/manager/folders/archive/discard' if (!defined $discard_url && !$data->{'url'});
 	my $post_chunk = sub {
 		my ($path, $offset, $final, $chunked) = @_;
 		my %form = (
-			location => $data->{'location'},
 			path => $data->{'relative'},
 			mtime => $data->{'mtime'},
 			source => $source,
 			file => { file => $path }
 		);
+		$form{'location'} = $data->{'location'} if defined $data->{'location'};
+		$form{'base'} = $data->{'base'} if defined $data->{'base'};
 		if ($chunked) {
 			$form{'offset'} = $offset;
 			$form{'total'} = $total;
 			$form{'final'} = $final ? 1 : 0;
 		}
 		my $tx = eval {
-			$ua->post($manager . '/manager/folders/archive/receive' => form => \%form)
+			$ua->post($manager . $url => form => \%form)
 		};
 		return &archive_reply($tx);
 	};
@@ -435,7 +439,11 @@ sub archive_send_file {
 		close $out;
 		if ($cancelled) {
 			unlink $chunk_path;
-			&archive_discard_remote({ ua => $ua, manager => $manager, location => $data->{'location'}, relative => $data->{'relative'}, source => $source });
+			&archive_discard_remote({
+				ua => $ua, manager => $manager, url => $discard_url,
+				location => $data->{'location'}, base => $data->{'base'},
+				relative => $data->{'relative'}, source => $source
+			}) if defined $discard_url;
 			return (0, 'cancelled', { cancelled => 1, resumed => $start > 0 });
 		}
 		if ($left > 0) {
@@ -1487,6 +1495,455 @@ sub folders_entry_names {
 		}
 	}
 	return 0;
+}
+
+# ---- cloud sync -----------------------------------------------------------
+#
+# A folder registered for CloudSync is pushed to the devices chosen for it.
+# The machine that registered the folder is the source; every chosen machine
+# keeps a mirror of it. The transfer uses the same partial/resume rule and the
+# same job note the archive rail uses, so one progress bar serves both.
+#
+# The destination is named by `base`: a path relative to the destination's own
+# home, or an absolute path when the source sits outside home. That is what
+# lets ~/Documents/Shared mean the right folder on a machine whose home has a
+# different absolute path.
+
+# The device list a CloudSync folder may use: every peer in the house, with the
+# free space on the volume its copy would land on. A device that cannot answer,
+# or cannot hold the source, is returned with ok => 0 and the reason, so the
+# dialog can say why its box is disabled rather than silently omit it.
+sub cloud_sync_space_rows {
+	my ($base, $bytes) = @_;
+	my $machines = &remote_machine_lister({ self => 'no' }) || [];
+	my %seen;
+	my @rows;
+	foreach my $rm ( @{$machines} ) {
+		next unless ref $rm eq 'HASH';
+		next if (($rm->{'mirror'} || '') eq 'yes');
+		my $uuid = $rm->{'uuid'} || '';
+		next unless length $uuid && !$seen{$uuid}++;
+		my $hostname = $rm->{'hostname'} || $rm->{'fqdn'} || $rm->{'ip'} || $uuid;
+		my $space = { status => 'error', error => 'that machine did not answer' };
+		my $agent = eval { return &remote_agent_for($uuid) };
+		if ($agent && !$agent->{'error'}) {
+			$agent->{'ua'}->request_timeout(6);
+			$agent->{'ua'}->inactivity_timeout(6);
+			$agent->{'ua'}->connect_timeout(6);
+			my $tx = eval {
+				return $agent->{'ua'}->post($agent->{'manager'} . '/manager/folders/cloud/space' => form => {
+					base => $base
+				})
+			};
+			my ($res, $err) = &archive_reply($tx);
+			if ($res && $res->{'status'} eq 'ok') { $space = $res; }
+			else { $space = { status => 'error', error => $err || ($res && $res->{'error'}) || 'that machine did not answer' }; }
+		}
+		else {
+			$space = { status => 'error', error => ($agent && $agent->{'error'}) || 'that machine is not registered' };
+		}
+		my $free = (defined $space->{'free_bytes'} && $space->{'free_bytes'} =~ /^\d+$/) ? 0 + $space->{'free_bytes'} : undef;
+		my $needed = (defined $bytes && $bytes =~ /^\d+$/) ? 0 + $bytes : 0;
+		push @rows, {
+			uuid => $uuid,
+			hostname => $hostname,
+			free_bytes => $free,
+			free_human => (defined $free ? &data_size($free) : ''),
+			needed => $needed,
+			enough => (defined $free && $free >= $needed) ? 1 : 0,
+			ok => (defined $free && $free >= $needed) ? 1 : 0,
+			error => $space->{'error'}
+		};
+	}
+	return \@rows;
+}
+
+# The free space on the volume a path is (or will be) on. A copy folder that
+# does not exist yet is measured on the nearest ancestor that does, because a
+# mount that has not come up must never look like an empty disk.
+sub cloud_sync_free_space {
+	my $path = shift;
+	return { status => 'error', error => 'no folder to measure' } unless (defined $path && length $path);
+	my $probe = $path;
+	$probe =~ s{/+$}{} unless $probe eq '/';
+	$probe = '/' unless length $probe;
+	while (!-e $probe && $probe ne '/') {
+		$probe =~ s{/[^/]+$}{};
+		$probe = '/' unless length $probe;
+	}
+	my @lines;
+	if (open(my $df, '-|', 'df', '-Pk', '--', $probe)) {
+		while (defined(my $line = <$df>)) { push @lines, $line; }
+		close $df;
+	}
+	my @f = split /\s+/, ($lines[-1] // '');
+	if (scalar @f < 4 || $f[3] !~ /^\d+$/) {
+		return { status => 'error', error => 'the free space could not be read', path => $path, probe => $probe };
+	}
+	return {
+		status => 'ok',
+		path => $path,
+		probe => $probe,
+		free_bytes => 0 + $f[3] * 1024,
+		used_bytes => 0 + $f[2] * 1024,
+		total_bytes => 0 + $f[1] * 1024
+	};
+}
+
+# The source folder named the way every device can resolve it. Under this
+# machine's home it is a relative path (so the same words mean the same folder
+# on a peer); anywhere else it is absolute.
+sub cloud_sync_base_for {
+	my $path = shift;
+	return '' unless (defined $path && length $path);
+	$path = &home($path);
+	$path =~ s{/+$}{} unless $path eq '/';
+	my $home = &home('~');
+	$home =~ s{/+$}{} unless $home eq '/';
+	return '' if ($path eq $home);
+	return substr($path, length($home) + 1) if ($home ne '/' && index($path, $home . '/') == 0);
+	return $path;
+}
+
+# A file's place on the destination, from the shared base and a path inside
+# it. `..` resolves against what came before it and cannot climb above the
+# base, because the source names both and the destination must never be talked
+# into writing outside the folder the person chose.
+sub cloud_sync_destination {
+	my $data = shift || {};
+	my $base = defined $data->{'base'} ? $data->{'base'} : '';
+	my $root = ($base =~ m{^/}) ? $base : &home('~/' . $base);
+	$root =~ s{/+$}{} unless $root eq '/';
+	return { error => 'no destination' } unless length $root;
+	my @parts;
+	foreach my $part (split m{/+}, ($data->{'path'} // '')) {
+		next if $part eq '' || $part eq '.';
+		if ($part eq '..') { pop @parts; next; }
+		push @parts, $part;
+	}
+	my $relative = join '/', @parts;
+	my @parent = @parts;
+	pop @parent if scalar @parent;
+	return {
+		base => $base,
+		root => $root,
+		relative => $relative,
+		path => $root . (length $relative ? '/' . $relative : ''),
+		parent => $root . (scalar @parent ? '/' . join('/', @parent) : '')
+	};
+}
+
+sub cloud_sync_registrations {
+	my $blob = eval { return &setting_grabber({ app => 'folders', setting => 'cloud_sync' }) };
+	my $list = eval { return decode_json $blob } if (defined $blob && length $blob && ref $blob ne 'ARRAY');
+	$list = $blob if (ref $blob eq 'ARRAY');
+	$list = [] unless ref $list eq 'ARRAY';
+	return [ grep { ref $_ eq 'HASH' && defined $_->{'path'} && length $_->{'path'} } @{$list} ];
+}
+
+sub cloud_sync_registrations_write {
+	my $list = shift || [];
+	&setting_setter({ app => 'folders', setting => 'cloud_sync', value => encode_json($list) });
+	return $list;
+}
+
+sub cloud_sync_registration_for {
+	my $path = shift;
+	return undef unless (defined $path && length $path);
+	foreach my $reg ( @{ &cloud_sync_registrations() } ) {
+		return $reg if (($reg->{'path'} || '') eq $path);
+	}
+	return undef;
+}
+
+# Every file of a CloudSync folder, without the manifest of what CloudSync
+# itself has delivered. A folder that is empty is a real answer.
+sub cloud_sync_files {
+	my $path = shift;
+	return [] unless (defined $path && length $path && -d $path);
+	return [ grep { $_ !~ m{/\.cloudsync\.json$} } &dir_listing([$path], 1) ];
+}
+
+sub cloud_sync_totals {
+	my $path = shift;
+	my ($files, $bytes) = (0, 0);
+	foreach my $file ( @{ &cloud_sync_files($path) } ) {
+		my $size = -s $file;
+		$bytes += $size if defined $size;
+		$files++;
+	}
+	return { files => $files, bytes => $bytes };
+}
+
+# A cheap change signal for the sweep: how many files, the newest time and the
+# byte total. An edit changes one of them; a sweep that sees the same numbers
+# has nothing to queue.
+sub cloud_sync_fingerprint {
+	my $path = shift;
+	my ($files, $newest, $bytes) = (0, 0, 0);
+	foreach my $file ( @{ &cloud_sync_files($path) } ) {
+		my @stat = stat($file);
+		$files++;
+		$bytes += $stat[7] || 0;
+		$newest = $stat[9] if (($stat[9] || 0) > $newest);
+	}
+	return $files . ':' . $newest . ':' . $bytes;
+}
+
+# What a destination may remove: a tracked path the source no longer names.
+# Pure, so the rule that protects files CloudSync did not place can be tested
+# without a disk.
+sub cloud_sync_prune_list {
+	my ($tracked, $incoming) = @_;
+	my %keep = map { $_ => 1 } grep { defined $_ && length $_ } @{$incoming || []};
+	return [ grep { defined $_ && length $_ && !$keep{$_} } @{$tracked || []} ];
+}
+
+# Bring a destination's manifest forward and remove only the files it names
+# that the source has dropped. A destination with no manifest is left alone:
+# CloudSync never deletes something it cannot prove it put there.
+sub cloud_sync_prune_files {
+	my ($base, $incoming) = @_;
+	my $dest = &cloud_sync_destination({ base => $base, path => '' });
+	return { error => $dest->{'error'} } if $dest->{'error'};
+	my $manifest = $dest->{'root'} . '/.cloudsync.json';
+	my $tracked = [];
+	if (-e $manifest) {
+		my $raw = eval { return decode_json scalar read_file($manifest) };
+		$tracked = $raw if ref $raw eq 'ARRAY';
+	}
+	my $removed = 0;
+	foreach my $relative ( @{ &cloud_sync_prune_list($tracked, $incoming) } ) {
+		my $into = &cloud_sync_destination({ base => $base, path => $relative });
+		next if $into->{'error'};
+		$removed++ if (-f $into->{'path'} && unlink $into->{'path'});
+	}
+	my @keep = sort grep { defined $_ && length $_ } @{$incoming || []};
+	write_file($manifest, encode_json \@keep);
+	return { removed => $removed, tracked => scalar @keep, manifest => $manifest };
+}
+
+# The worker half of CloudSync. One job carries every device chosen for the
+# folder, so the dialog and the queue each show one line for the folder. A file
+# already at the destination at the same size and time costs one probe and is
+# skipped; a changed file is sent through the same partial/resume path the
+# archive uses; deletions are applied through the destination's manifest at the
+# end, never before the copies have landed.
+sub cloud_sync_job {
+	my ($job, $data) = @_;
+	my $path = $data->{'path'};
+	unless (defined $path && length $path && -d $path) {
+		$job->fail('the CloudSync folder is not there');
+		return;
+	}
+	my $base = defined $data->{'base'} ? $data->{'base'} : &cloud_sync_base_for($path);
+	my @devices = grep { ref $_ eq 'HASH' && defined $_->{'uuid'} && length $_->{'uuid'} } @{ $data->{'devices'} || [] };
+	unless (scalar @devices) {
+		$job->fail('no device is chosen for CloudSync');
+		return;
+	}
+	my @files = @{ &cloud_sync_files($path) };
+	my $files_count = scalar @files;
+	my %size;
+	my %mtime;
+	my %relative;
+	my $source_bytes = 0;
+	foreach my $file ( @files ) {
+		my @stat = stat($file);
+		$size{$file} = $stat[7] || 0;
+		$mtime{$file} = $stat[9] || 0;
+		$source_bytes += $size{$file};
+		my $rel = substr($file, length($path));
+		$rel =~ s{^/+}{};
+		$relative{$file} = $rel;
+	}
+	my @source_relatives = map { $relative{$_} } @files;
+
+	my $device_count = scalar @devices;
+	my $bytes_total = $source_bytes * $device_count;
+	my $files_total = $files_count * $device_count;
+	my $bytes_done = 0;
+	my $index = 0;
+	my @errors;
+	my %result;
+
+	my $note = sub {
+		my ($state, %extra) = @_;
+		$job->note(archive => &archive_progress_view({
+			state => $state,
+			files => $files_total,
+			index => $index,
+			bytes_done => $bytes_done,
+			bytes_total => $bytes_total,
+			%extra
+		}));
+	};
+	$note->('copying', bytes_done => 0);
+
+	foreach my $device ( @devices ) {
+		my $host = $device->{'hostname'} || $device->{'uuid'};
+		my $agent = &remote_agent_for($device->{'uuid'});
+		if ($agent->{'error'}) {
+			push @errors, $host . ': ' . $agent->{'error'};
+			$bytes_done += $source_bytes;
+			$result{$host} = { error => $agent->{'error'} };
+			next;
+		}
+		my $ua = $agent->{'ua'};
+		my $manager = $agent->{'manager'};
+		my ($sent, $skipped, $bytes, $device_errors) = (0, 0, 0, 0);
+
+		foreach my $file ( @files ) {
+			$index++;
+			my $rel = $relative{$file};
+			my $file_size = $size{$file} || 0;
+			if ((($job->info->{'notes'} || {})->{'cancel'})) {
+				$note->('cancelled', file => $rel, file_bytes_done => 0, file_bytes_total => $file_size);
+				$job->finish({ sent => $sent, skipped => $skipped, bytes => $bytes, files => $files_count, cancelled => 1 });
+				return;
+			}
+			my $probe_tx = eval {
+				return $ua->post($manager . '/manager/folders/cloud/probe' => form => {
+					base => $base,
+					path => $rel
+				})
+			};
+			my ($probe, $probe_error) = &archive_reply($probe_tx);
+			if (!$probe || $probe->{'status'} ne 'ok') {
+				push @errors, $host . ': ' . ($rel || $file) . ': ' . (($probe && $probe->{'error'}) || $probe_error || 'the machine did not answer');
+				$device_errors++;
+				$bytes_done += $file_size;
+				next;
+			}
+			if ($probe->{'exists'} && defined $probe->{'size'} && $probe->{'size'} == $file_size
+			&& (!defined $probe->{'mtime'} || $probe->{'mtime'} == $mtime{$file})) {
+				$skipped++;
+				$bytes_done += $file_size;
+				$note->('copying', file => $rel, file_bytes_done => $file_size, file_bytes_total => $file_size);
+				next;
+			}
+			my $resume = &archive_resume_offset({
+				file => $file,
+				total => $file_size,
+				mtime => $mtime{$file},
+				partial => $probe->{'partial'}
+			});
+			my $start_bytes = $bytes_done;
+			my $progress = sub {
+				my ($file_done, $file_total, $phase) = @_;
+				my $state = (defined $phase && $phase eq 'verifying') ? 'verifying' : 'copying';
+				$note->($state,
+				file => $rel,
+				file_bytes_done => $file_done,
+				file_bytes_total => $file_total,
+				bytes_done => $start_bytes + $file_done
+				);
+				return ((($job->info->{'notes'} || {})->{'cancel'}) ? 1 : 0);
+			};
+			my ($sent_bytes, $send_error) = &archive_send_file({
+				ua => $ua,
+				manager => $manager,
+				url => '/manager/folders/cloud/receive',
+				discard_url => '/manager/folders/cloud/discard',
+				base => $base,
+				relative => $rel,
+				source => $rel,
+				file => $file,
+				mtime => $mtime{$file},
+				start => $resume->{'offset'} || 0,
+				progress => $progress
+			});
+			if (defined $send_error && $send_error eq 'cancelled') {
+				$note->('cancelled', file => $rel, file_bytes_done => 0, file_bytes_total => $file_size);
+				$job->finish({ sent => $sent, skipped => $skipped, bytes => $bytes, files => $files_count, cancelled => 1 });
+				return;
+			}
+			if ($send_error) {
+				push @errors, $host . ': ' . $rel . ': ' . $send_error;
+				$device_errors++;
+				$bytes_done += $file_size;
+				next;
+			}
+			$sent++;
+			$bytes += $sent_bytes || 0;
+			$bytes_done = $start_bytes + $file_size;
+			$note->('copying', file => $rel, file_bytes_done => $file_size, file_bytes_total => $file_size, bytes_done => $bytes_done);
+		}
+
+		my $prune_tx = eval {
+			return $ua->post($manager . '/manager/folders/cloud/prune' => form => {
+				base => $base,
+				files => encode_json(\@source_relatives)
+			})
+		};
+		my ($pruned, $prune_error) = &archive_reply($prune_tx);
+		if (!$pruned || $pruned->{'status'} ne 'ok') {
+			push @errors, $host . ': ' . (($pruned && $pruned->{'error'}) || $prune_error || 'the destination could not be tidied');
+			$device_errors++;
+		}
+		$result{$host} = {
+			sent => $sent,
+			skipped => $skipped,
+			bytes => $bytes,
+			removed => ($pruned && $pruned->{'removed'}) || 0,
+			($device_errors ? (errors => $device_errors) : ())
+		};
+	}
+
+	$note->('done', bytes_done => $bytes_done);
+	my $final = { files => $files_count, devices => \%result };
+	if (scalar @errors) {
+		$final->{'errors'} = \@errors;
+		# a failed pass clears the swept fingerprint, so a device that was
+		# unreachable is tried again instead of waiting for the next edit
+		my $registrations = &cloud_sync_registrations();
+		my $cleared = 0;
+		foreach my $reg ( @{$registrations} ) {
+			next unless (($reg->{'path'} || '') eq $path);
+			delete $reg->{'fingerprint'};
+			$cleared = 1;
+		}
+		&cloud_sync_registrations_write($registrations) if $cleared;
+		$job->fail($final);
+		return;
+	}
+	$job->finish($final);
+}
+
+# The sweep runs in the Minion worker: a registered folder whose fingerprint
+# moved since the last pass is queued for every device it names. The fingerprint
+# is written when the job is queued; a failed pass clears it so the next
+# sweep tries the device again.
+sub cloud_sync_sweep {
+	my $registrations = &cloud_sync_registrations();
+	return 0 unless scalar @{$registrations};
+	my $minion = &minion_grabber();
+	my $queued = 0;
+	foreach my $reg ( @{$registrations} ) {
+		next unless -d $reg->{'path'};
+		my @devices = grep { ref $_ eq 'HASH' && $_->{'uuid'} } @{ $reg->{'devices'} || [] };
+		next unless scalar @devices;
+		my $fingerprint = &cloud_sync_fingerprint($reg->{'path'});
+		next if (defined $reg->{'fingerprint'} && $reg->{'fingerprint'} eq $fingerprint);
+		$reg->{'fingerprint'} = $fingerprint;
+		$reg->{'job'} = $minion->enqueue(cloud_sync => [ {
+			path => $reg->{'path'},
+			base => $reg->{'base'},
+			devices => \@devices
+		} ] => { retries => 1 });
+		$queued++;
+	}
+	&cloud_sync_registrations_write($registrations) if $queued;
+	return $queued;
+}
+
+our $cloud_sync_sweep_timer;
+sub cloud_sync_sweep_start {
+	return 0 if $cloud_sync_sweep_timer;
+	$cloud_sync_sweep_timer = Mojo::IOLoop->recurring(60 => sub {
+		eval { &cloud_sync_sweep() };
+	});
+	return 1;
 }
 
 1;

@@ -35,6 +35,15 @@ function foldersCommandConfirm(uuid) {
 		if (typeof deskPinsSaveList == 'function') { deskPinsSaveList(pinned); }
 		return;
 	}
+	// CloudSync picks its devices with checkboxes, then starts its own job
+	if (command == 'cloud_sync') {
+		var cloud_folder = box.attr('folder') || '';
+		var cloud_devices = [];
+		box.find('.folders_cloud_device:checked').each(function () { cloud_devices.push($(this).val()); });
+		box.remove();
+		foldersCloudStart(cloud_folder, cloud_devices);
+		return;
+	}
 	var surface = box.attr('state_surface') || 'folders';
 	var st = (surface == 'desk') ? desk : folders;
 	var inputs = {};
@@ -328,6 +337,11 @@ function foldersArchiveQueue() {
 				if (job['task'] == 'archive_manifest_rescan') {
 					$('<span>').text(' reading ' + (item['location'] || '?') + ' again').appendTo(line);
 				}
+				else if (job['task'] == 'cloud_sync') {
+					var hosts = [];
+					$.each(item['devices'] || [], function (n, d) { hosts.push(d['hostname'] || d['uuid']); });
+					$('<span>').text(' ' + name + '  ->  ' + (hosts.join(', ') || foldersArchiveT('the chosen devices'))).appendTo(line);
+				}
 				else {
 					$('<span>').text(' ' + name + '  ->  ' + (item['location'] || '?') + ' on ' + (item['remote_hostname'] || '?')).appendTo(line);
 				}
@@ -373,6 +387,96 @@ function foldersArchiveRescan(location) {
 		success: function () { foldersArchiveQueue(); }
 	});
 }
+
+// ---- cloud sync ------------------------------------------------------------
+// Ask the machine which devices have room, then show one row per device. The
+// dialog's OK starts the job; from then on the same watcher and the same queue
+// drawer that show an archive transfer show this one.
+function foldersCloudCheck(state) {
+	var st = state || folders;
+	var path = st.path || st.folder || '';
+	$('body').css({ 'cursor': 'var(--jawnos-cursor-progress, progress)' });
+	$.ajax({
+		url: '/manager/folders/cloud',
+		type: 'POST',
+		data: { folder: path, folders: JSON.stringify(st) },
+		success: function (response) {
+			$('body').css({ 'cursor': 'var(--jawnos-cursor-default, auto)' });
+			if (response && response.dialog) {
+				$('#dialog_boxes').append($(response.dialog).attr('state_surface', (st === desk) ? 'desk' : 'folders'));
+				appointment_chron();
+			}
+		},
+		error: function () {
+			$('body').css({ 'cursor': 'var(--jawnos-cursor-default, auto)' });
+		}
+	});
+}
+
+function foldersCloudStart(folder, devices) {
+	$('body').css({ 'cursor': 'var(--jawnos-cursor-progress, progress)' });
+	$.ajax({
+		url: '/manager/folders/cloud/start',
+		type: 'POST',
+		data: { folder: folder || '', devices: JSON.stringify(devices || []) },
+		success: function (response) {
+			$('body').css({ 'cursor': 'var(--jawnos-cursor-default, auto)' });
+			if (response && response.dialog) {
+				$('#dialog_boxes').append($(response.dialog).attr('state_surface', 'folders'));
+				appointment_chron();
+				foldersJobWatcher();
+			}
+		},
+		error: function () {
+			$('body').css({ 'cursor': 'var(--jawnos-cursor-default, auto)' });
+		}
+	});
+}
+
+// The Places column's CloudSync row: every folder this machine watches.
+function foldersCloudList() {
+	$.ajax({
+		url: '/manager/folders/cloud',
+		type: 'GET',
+		success: function (response) {
+			if (!response || !response.dialog) { return; }
+			$('.dialog_box[command="cloud_list"]').remove();
+			$('#dialog_boxes').append($(response.dialog));
+			appointment_chron();
+		}
+	});
+}
+
+$(document).on('click', '.folders_cloud_open', function () {
+	foldersActivateFrom(this);
+	foldersCloudList();
+});
+
+$(document).on('click', '.folders_cloud_stop', function () {
+	var path = $(this).attr('path') || '';
+	$.ajax({
+		url: '/manager/folders/cloud/remove',
+		type: 'POST',
+		data: { folder: path },
+		success: function () { foldersCloudList(); }
+	});
+});
+
+$(document).on('click', '.folders_cloud_now', function () {
+	var path = $(this).attr('path') || '';
+	$.ajax({
+		url: '/manager/folders/cloud/now',
+		type: 'POST',
+		data: { folder: path },
+		success: function (response) {
+			if (response && response.dialog) {
+				$('#dialog_boxes').append($(response.dialog));
+				appointment_chron();
+				foldersJobWatcher();
+			}
+		}
+	});
+});
 
 // ---- sidebar ---------------------------------------------------------------
 // One observer per window instance. The window's contents are replaced on every

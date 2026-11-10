@@ -132,6 +132,10 @@
 					<span><%= $p->{'name'} %></span>
 				</button>
 			<% } %>
+			<button type="button" class="folders_sidebar_place folders_cloud_open hover" title="<%= &subs::ui('CloudSync') %>">
+				<img src="<%= &subs::icon_for('/images/decipherable/diskette.png') %>" alt="">
+				<span><%= &subs::ui('CloudSync') %></span>
+			</button>
 		</aside>
 		<div id="folders_listing_pane" class="folders_listing_pane">
 			<div id="folders_list_header" class="folders_list_header" aria-hidden="true">

@@ -523,6 +523,9 @@ function foldersCommand(data, state) {
 	else if (command == 'archive_move') {
 		foldersArchive(st, { delete_after: true });
 	}
+	else if (command == 'cloud_sync') {
+		foldersCloudCheck(st);
+	}
 	else {
 		$.ajax({
 			url: '/manager/folders/context/command',

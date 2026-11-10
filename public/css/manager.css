@@ -2983,6 +2983,22 @@ body.dark_theme .folders_file.selected { background: rgba(110, 168, 254, .20); }
 }
 .folders_bookmarks .folders_bookmark:hover { background: var(--panel); }
 .folders_archive_queue { top: 40px; }
+/* CloudSync: a row per device in the check dialog, and a row per registered
+   folder in the Places list */
+.folders_cloud_summary { padding: 4px 0 8px; }
+.folders_cloud_device_row {
+	display: flex; align-items: center; gap: 8px; min-height: 30px;
+	padding: 3px 0; border-bottom: 1px solid var(--line);
+}
+.folders_cloud_device_name { font-weight: 600; }
+.folders_cloud_device_space { margin-left: auto; font-size: 13px; opacity: .85; }
+.folders_cloud_device_note { font-size: 12px; color: var(--folders-accent, #2f6feb); }
+.folders_cloud_hint, .folders_cloud_empty { padding: 8px 0; font-size: 13px; opacity: .85; }
+.folders_cloud_row { padding: 7px 0; border-bottom: 1px solid var(--line); }
+.folders_cloud_row_head { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+.folders_cloud_row_path { font-size: 12px; opacity: .7; overflow-wrap: anywhere; }
+.folders_cloud_row_detail { font-size: 12px; opacity: .85; padding: 2px 0 5px; }
+.folders_cloud_row_buttons { display: flex; gap: 6px; }
 /* a job's bytes, drawn per file and for the whole job; the fill is set from the
    percent the worker notes, so it moves while the copy runs */
 .folders_job_bar { margin: 4px 0 2px; }

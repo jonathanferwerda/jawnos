@@ -1,0 +1,23 @@
+<%# The list of folders this machine watches for CloudSync, opened from the
+    Places column. Each row carries its own Sync now and Stop controls. %>
+<% my $any = 0; %>
+<div class="folders_cloud_list">
+	<% foreach my $reg ( @{$registrations} ) { $any = 1; %>
+		<div class="folders_cloud_row" path="<%= $reg->{'path'} %>">
+			<div class="folders_cloud_row_head">
+				<b><%= $reg->{'display'} %></b>
+				<span class="folders_cloud_row_path"><%= $reg->{'path'} %></span>
+			</div>
+			<div class="folders_cloud_row_detail">
+				<%= &subs::data_size(($reg->{'totals'} || {})->{'bytes'} || 0) %>
+				&middot;
+				<%= join ', ', map { $_->{'hostname'} } @{ $reg->{'devices'} || [] } %>
+			</div>
+			<div class="folders_cloud_row_buttons">
+				<button type="button" class="hover folders_cloud_now" path="<%= $reg->{'path'} %>"><%= &subs::ui('Sync now') %></button>
+				<button type="button" class="hover folders_cloud_stop" path="<%= $reg->{'path'} %>"><%= &subs::ui('Stop syncing') %></button>
+			</div>
+		</div>
+	<% } %>
+	<% unless ($any) { %><div class="folders_cloud_empty"><%= &subs::ui('No folders are set to CloudSync.') %></div><% } %>
+</div>

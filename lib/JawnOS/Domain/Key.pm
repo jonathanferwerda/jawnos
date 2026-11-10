@@ -119,6 +119,7 @@ sub minion_task_list {
 		folders_encrypt => \&folders_encrypt_job,
 		folders_decrypt => \&folders_decrypt_job,
 		folders_reseal => \&folders_reseal_job,
+		cloud_sync => \&cloud_sync_job,
 		key_push => \&key_push_job,
 		appointment_evaluation => \&appointment_evaluation_job
 	};
