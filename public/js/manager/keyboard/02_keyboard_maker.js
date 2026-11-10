@@ -399,6 +399,12 @@ $(document).on('change', '#clothesline_on', function() {
 	settingSetter({ 'app': 'misc', 'setting': 'clothesline_on', 'value': value });
 	if (typeof clotheslineToggleApply == 'function') { clotheslineToggleApply(value); }
 });
+$(document).on('change', '#appt_walkman_global', function() {
+	var value = $(this).is(':checked') ? 'checked' : 'unchecked';
+	settingSetter({ 'app': 'keyboard', 'setting': 'appt_walkman_global', 'value': value });
+	// the walkman handler reads this seed, so the next press obeys at once
+	if (typeof jawnos_bar_settings != 'undefined') { jawnos_bar_settings['appt_walkman_global'] = value; }
+});
 
 // A work claim says which machine is on a job, so two agents do not take the same
 // one. It rides the 'claims' app, which the mesh carries to every machine.

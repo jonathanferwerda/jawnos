@@ -315,7 +315,7 @@ $(document).on('mousewheel touchmove', '.detail_area', function(e) {
 	}
 });
 
-function appointmentDetailsGrabber(a,source) {
+function appointmentDetailsGrabber(a,source,time_machine_override) {
 	var parent = a.closest('.appointment');
 	var app = a.attr('app');
 	if ($('.wind[app="' + app + '"]').length > 0) {
@@ -323,7 +323,9 @@ function appointmentDetailsGrabber(a,source) {
 		container.html('');
 		var timestamp = Date.now();
 		var timeshift = localStorage.getItem('timeshift') + localStorage.getItem('timeshift_scope');
-		var time_machine = localStorage.getItem('time_machine');
+		// the walkman may read this app at a moment of its own, leaving the
+		// house's time machine where it stands
+		var time_machine = (typeof time_machine_override == 'undefined' || time_machine_override === null) ? localStorage.getItem('time_machine') : time_machine_override;
 		var sorts = localStorage.getItem('sorts');
 		var scope = localStorage.getItem('scope');
 		var filter = localStorage.getItem('filter');

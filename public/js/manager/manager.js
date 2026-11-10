@@ -78,6 +78,14 @@ var startMenuTimeout;
 // the menu's html per tab, so reopening a tab does not fetch (and re-stamp) it
 // again - see startMenuToggle()
 var startMenuHtml = {};
+// The appointment window's reverse/forward walkman: by default it moves only
+// the app whose record it sits under - the app's details are read at that
+// moment while the house's time machine stays where it is. The walkman's
+// Configure tick (Appt walkman controls global time) brings back the older
+// behaviour of carrying the whole view there.
+function jawnosApptWalkmanGlobal() {
+	return (typeof jawnos_bar_settings != 'undefined') && jawnos_bar_settings['appt_walkman_global'] === 'checked';
+}
 $(document).on('click', '.time_jump', function() {
 	var j = $(this);
 	var appointment = j.closest('.appointment');
@@ -92,11 +100,17 @@ $(document).on('click', '.time_jump', function() {
 		data: { timestamp: timestamp, filter: filter, type: type, app: app, scope: delorean.scope },
 		success: function(response) {
 			if (response.new_timestamp) {
-				$('#time_machine').val(response.date);
-				localStorage.setItem('time_machine',response.date);
 				j.attr('timestamp',response.new_timestamp);
 				j.closest('.walkman_controls').find('.time_jump').attr('timestamp',response.new_timestamp);
-				appointmentDetailsGrabber(j);
+				if (jawnosApptWalkmanGlobal()) {
+					$('#time_machine').val(response.date);
+					localStorage.setItem('time_machine',response.date);
+					appointmentDetailsGrabber(j);
+				}
+				else {
+					// the app alone reads its details at that moment; no clock moves
+					appointmentDetailsGrabber(j, undefined, response.date);
+				}
 			}
 			else {
 				$('.time_jump').attr('timestamp',response.old_timestamp);

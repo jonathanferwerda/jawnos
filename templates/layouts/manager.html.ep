@@ -110,6 +110,9 @@
 				clothesline_height: '<%= &subs::misc_setting('clothesline_height') || 40 %>',
 				// whether the rail is worn at all; unset means on, as it always was
 				clothesline_on: '<%= &subs::misc_setting('clothesline_on') || 'on' %>',
+				// whether an appointment window's reverse/forward walkman carries the
+				// whole house to that moment; unset means it moves only that app
+				appt_walkman_global: '<%= &subs::setting_grabber({ app => 'keyboard', setting => 'appt_walkman_global' }) || 'unchecked' %>',
 				// the desk's material: classic (Plain), round, sandglass, glass, paper,
 				// fabric, wood or metal; universal.css and the canvas clothesline both
 				// read it

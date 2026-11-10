@@ -10,6 +10,7 @@
 	<% my $in_view = &subs::setting_grabber({ app => 'keyboard', setting => 'timestamp_in_view' }); %>
 	<% my $ghosts = &subs::setting_grabber({ app => 'keyboard', setting => 'ghost_appointments' }); %>
 	<% my $clothesline_on = &subs::setting_grabber({ app => 'misc', setting => 'clothesline_on' }); %>
+	<% my $walkman_global = &subs::setting_grabber({ app => 'keyboard', setting => 'appt_walkman_global' }); %>
 	<% my $ghost_claim = &subs::work_claim('ghosts'); %>
 	<% $trackpad = '.02' unless (defined $trackpad && length $trackpad); %>
 	<% $clothesline = '.4' unless (defined $clothesline && length $clothesline); %>
@@ -22,6 +23,7 @@
 			<label style="display:block;"><input type="checkbox" id="timestamp_in_view" <% if ($in_view eq 'checked') { %>checked="checked"<% } %>> Timestamps in view only</label>
 			<label style="display:block;"><input type="checkbox" id="ghost_appointments" <% if ($ghosts eq 'checked') { %>checked="checked"<% } %>> Ghost appointments</label>
 			<label style="display:block;"><input type="checkbox" id="clothesline_on" <% unless (defined $clothesline_on && $clothesline_on eq 'off') { %>checked="checked"<% } %>> <%= &subs::ui('Show clothesline') %></label>
+			<label style="display:block;"><input type="checkbox" id="appt_walkman_global" <% if ((defined $walkman_global ? $walkman_global : '') eq 'checked') { %>checked="checked"<% } %>> <%= &subs::ui('Appt walkman controls global time') %></label>
 		</span>
 		<label class="ghosts_claim" style="display:block;">Ghosts being sorted out: <% if ($ghost_claim) { %>by <b><%= $ghost_claim->{'machine'} || $ghost_claim->{'by'} %></b> since <%= &subs::formatted_time($ghost_claim->{'at'}) %> <a href="#" class="work_claim_release" task="ghosts">release</a><% } else { %>nobody <a href="#" class="work_claim_take" task="ghosts">take it</a><% } %></label>
 	</span>
