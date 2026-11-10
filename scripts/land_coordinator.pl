@@ -327,7 +327,7 @@ sub run_wave {
 	release($lock);
 	LandQueue::event($dir, {
 		event => 'wave', size => scalar(@integrated),
-		tickets => [ map { $_->{'id'} } @integrated ],
+		tickets => [ map { $_->{'ticket'}{'id'} } @integrated ],
 		integrate_ms => $integrate_ms, suite_ms => $suite_ms,
 		jobs => $opt->{'jobs'}, result => 'landed', retries => $attempts,
 		apply => $applied ? 'ok' : 'blocked', restart => $restart,

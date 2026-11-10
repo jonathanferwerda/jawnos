@@ -238,6 +238,15 @@ subtest 'two branches land in one wave, with one suite and one restart' => sub {
 
 	my (undef, $stats) = status_stats($f);
 	like($stats, qr/waves: 1/, 'the stats count the one wave');
+
+	my $ledger = "$f->{'primary'}/.git/land-queue/land.jsonl";
+	my ($wave_line) = grep {
+		my $e = eval { JSON::PP->new->decode($_) } || {};
+		($e->{'event'} // '') eq 'wave' && ($e->{'result'} // '') eq 'landed';
+	} lines($ledger);
+	my $wave = eval { JSON::PP->new->decode($wave_line // '') } || {};
+	is_deeply($wave->{'tickets'}, [$t1->{'id'}, $t2->{'id'}],
+		'the landed wave names the tickets it landed, not null');
 };
 
 # --- a red wave splits, and the good branch still lands --------------------
