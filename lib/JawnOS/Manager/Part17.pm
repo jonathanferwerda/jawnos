@@ -434,7 +434,10 @@ sub merge_table_rows {
 												}
 											}
 
-											unless (-e $dest) {
+											# A file that is only a sentinel stub (0, 1 or 3 bytes left by the
+											# old unchecked decode) is not a local copy: fetch over it, so a
+											# later merge can heal what the bug wrote.
+											unless (-e $dest && !&subs::file_sentinel_stub($dest)) {
 												`mkdir -p $destination`;
 												$destination = $destination . $asset;
 												if ($configuration->{'remote'}) {
@@ -444,12 +447,20 @@ sub merge_table_rows {
 													# worker) used to kill the whole merge. The row is still
 													# worth keeping; its file can be fetched by a later pass.
 													my $file_data = eval { $configuration->{'remote'}->{'ua'}->get($url)->result };
-													if ($file_data && $file_data->is_success && $file_data->body ne 'not found') {
-														my $fd = $file_data->body;
-														$fd = decode_base64 $fd;
+													if ($file_data && $file_data->is_success) {
+														# /file_open answers a refusal with the words "no", "none"
+														# or "not found"; that is not base64, and decoding it is
+														# what wrote the 1- and 3-byte stubs. synced_file_payload
+														# refuses those and checks a sealed file's head.
+														my $fd = &subs::synced_file_payload($file_data->body, $dest);
 														# the destination can be unwritable (a logo row whose
 														# app has no local media folder); keep the row anyway
-														eval { write_file($dest,$fd) };
+														if (defined $fd && length $fd) {
+															eval { write_file($dest,$fd) };
+															# a short write is not a copy: do not leave a truncated
+															# file claiming to be the picture
+															unlink $dest if (-e $dest && (-s $dest || 0) != length($fd));
+														}
 													}
 												}
 											}

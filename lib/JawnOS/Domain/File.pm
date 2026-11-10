@@ -63,6 +63,56 @@ sub secure_unlink {
 	return (-e $path || -l $path) ? 0 : 1;
 }
 
+# A synced media file whose bytes stayed on another machine is not a file: the
+# old merge wrote /file_open's plain-text refusals ("no", "none") as if they
+# were the base64 payload, so decode_base64 turned them into one and three
+# bytes. Those stubs then circulated to every machine that pulled the row, and
+# a main_image drawn from one is blank. Recognize the bytes themselves - an
+# empty file too - so a later merge can replace the stub instead of trusting
+# it, and refuse the sentinel as payload (synced_file_payload below).
+our %file_sentinel_stub = (
+	"\x9e"         => 1,    # decode_base64('no==')
+	"\x9e\x89\xde" => 1,    # decode_base64('none')
+);
+
+sub file_sentinel_stub_bytes {
+	my ($bytes) = @_;
+	return 1 unless defined $bytes && length $bytes;
+	return 0 if length($bytes) > 3;
+	return $file_sentinel_stub{$bytes} ? 1 : 0;
+}
+
+sub file_sentinel_stub {
+	my ($path) = @_;
+	return 0 unless defined $path && length $path && -f $path;
+	my $size = -s $path || 0;
+	return 1 if $size == 0;
+	return 0 if $size > 3;
+	my $bytes = eval { &read_file($path) };
+	return 0 unless defined $bytes;
+	return &file_sentinel_stub_bytes($bytes);
+}
+
+# The bytes a /file_open as_is answer really carries, or undef when the peer
+# answered with words instead of a file. encode_base64 inserts newlines, so
+# only the base64 alphabet (and whitespace) is accepted; an HTML error or lock
+# page is not a file. A sealed path must open with the house container's own
+# "Salted__" head and hold more than its 16-byte header, which also refuses a
+# stub that has already reached a peer and is served back as "ng==".
+sub synced_file_payload {
+	my ($body, $path) = @_;
+	return undef unless defined $body && length $body;
+	return undef if $body =~ /\A\s*(?:no|none|not found)\s*\z/i;
+	return undef unless $body =~ /\A[A-Za-z0-9+\/=\r\n\s]+\z/;
+	my $bytes = eval { decode_base64($body) };
+	return undef unless defined $bytes && length $bytes;
+	return undef if &file_sentinel_stub_bytes($bytes);
+	if (defined $path && $path =~ /\.enc\z/i) {
+		return undef unless length($bytes) > 16 && substr($bytes, 0, 8) eq 'Salted__';
+	}
+	return $bytes;
+}
+
 sub file_encrypter {
 	my $data = shift;
 
@@ -99,7 +149,15 @@ sub file_encrypter {
 					my $secret = $suds;
 					# first, store the encryption standard.
 
-					&seal_file($path, $enc_path, $secret, $encryption_standard);
+					my $sealed = &seal_file($path, $enc_path, $secret, $encryption_standard);
+					if (!$sealed) {
+						# A failed seal must never destroy the only copy: the old code
+						# repointed the row at an .enc that was never written and then
+						# shredded the plaintext, which blanked the picture for good.
+						# Leave it for the next pass.
+						&subs::log_writer('encrypter: could not seal ' . $path . '; leaving it in place');
+						next;
+					}
 					&secure_unlink($path);
 					$f = $enc_path;
 					$fi->{$file_type} = $f;

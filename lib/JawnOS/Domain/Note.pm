@@ -179,8 +179,18 @@ sub seal_file {
 	return 0 unless defined $plain && length $plain;
 	my $container = &note_seal_bytes($plain, $secret, $standard);
 	return 0 unless defined $container && length $container;
-	eval { &write_file($out_path, $container) };
-	return(-e $out_path ? 1 : 0);
+	# Write beside the destination, then rename. The caller shreds the plaintext
+	# on a true answer, so `-e` alone (or a short write) used to keep a broken
+	# container and destroy the only good copy; it also must not damage an
+	# existing file when this is an in-place re-seal.
+	my $temp = $out_path . '.part.' . &random_string_creator(10);
+	eval { &write_file($temp, $container) };
+	my $ok = (-e $temp && (-s $temp || 0) == length($container)) ? 1 : 0;
+	if (!$ok || !rename $temp, $out_path) {
+		unlink $temp;
+		return 0;
+	}
+	return 1;
 }
 
 # ZIP containers name themselves inside the archive: ODF and EPUB put an
