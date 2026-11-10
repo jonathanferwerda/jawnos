@@ -88,6 +88,10 @@ like($launch, qr/gou-games/, 'the games marker arms the virtual gamepad');
 like($launch, qr/POSIX::setuid\(\$uid\)/, 'the emulator runs as the person, not root');
 like($launch, qr/--init-groups/, 'with the persons groups, so the sound card opens');
 like($launch, qr/JawnOS::Games::retroarch_binary/, 'the frontend is the desktop-GL build when it is installed');
+like($launch, qr/governor_set\('performance'\)/, 'the CPU is held at performance while a game runs');
+like($launch, qr/governor_restore\(\)/, 'and the saved governor is put back on the way out');
+like(read_file("$root/lib/JawnOS/Games.pm"), qr|/opt/retroarch-gl/cores|, 'the cores built beside that frontend are searched first');
+
 like($launch, qr/\@command = \(\$retroarch, '-f', '-L'/, 'and the core runs inside that frontend, full screen');
 like(read_file("$root/lib/JawnOS/Games.pm"), qr|/opt/retroarch-gl/bin/retroarch|, 'Games.pm knows where the GL build goes');
 

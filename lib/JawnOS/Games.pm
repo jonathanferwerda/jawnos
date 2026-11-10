@@ -55,7 +55,12 @@ our @EXTENSION = qw(
 	d64 g64 crt tap tzx z80 dsk zip 7z
 );
 
-our @CORE_DIR = ('/usr/lib/libretro', '/usr/lib/retroarch/cores', '/usr/share/libretro/cores');
+# The first directory wins, so the cores built beside the desktop-OpenGL
+# frontend are found before the packaged ones: mupen64plus-next ships as the
+# ParaLLEl/Vulkan build in the repositories, and that one renders nothing on a
+# machine with no Vulkan device.
+our @CORE_DIR = ('/opt/retroarch-gl/cores', '/usr/lib/libretro', '/usr/lib/retroarch/cores', '/usr/share/libretro/cores');
+
 
 sub systems { return \%SYSTEM; }
 

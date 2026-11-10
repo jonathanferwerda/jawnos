@@ -50,6 +50,53 @@ sub kiosk_active {
 	return system('systemctl', 'is-active', '--quiet', 'jawnos-kiosk') == 0;
 }
 
+# The emulator is CPU-bound here: it renders through llvmpipe, so every frame is
+# the processor's work and schedutil settles at a clock that costs a third of
+# the frame rate (17 -> 27 fps, measured on Mario Kart 64). The governor is held
+# at performance for the length of the game and put back on the way out. A
+# helper that dies leaves performance behind - hot, not broken - and
+# gou-kiosk-guard puts the saved governor back when no game is behind it.
+my $CPU_ROOT = '/sys/devices/system/cpu';
+my $governor_saved;
+
+sub governor_set {
+	my ($name) = @_;
+	opendir(my $dh, $CPU_ROOT) or return;
+	foreach my $cpu (grep { /^cpu\d+$/ } readdir $dh) {
+		my $path = "$CPU_ROOT/$cpu/cpufreq/scaling_governor";
+		next unless -w $path;
+		open(my $fh, '>', $path) or next;
+		print $fh "$name\n";
+		close $fh;
+	}
+	closedir $dh;
+}
+
+sub governor_boost {
+	$governor_saved = '';
+	opendir(my $dh, $CPU_ROOT);
+	if ($dh) {
+		foreach my $cpu (sort grep { /^cpu\d+$/ } readdir $dh) {
+			my $path = "$CPU_ROOT/$cpu/cpufreq/scaling_governor";
+			open(my $fh, '<', $path) or next;
+			my $now = <$fh>;
+			close $fh;
+			if (defined $now) {
+				chomp $now;
+				$governor_saved = $now if length $now;
+				last;
+			}
+		}
+		closedir $dh;
+	}
+	$governor_saved = 'schedutil' unless length $governor_saved;
+	governor_set('performance');
+}
+
+sub governor_restore {
+	governor_set($governor_saved) if length $governor_saved;
+}
+
 my $kiosk_window;      # the kiosk's window, remembered across the game
 my $kiosk_hidden = 0;  # whether this run hid it
 
@@ -105,6 +152,7 @@ sub restore {
 	unlink $MARKER;
 	return unless $kiosk_hidden;
 	$kiosk_hidden = 0;
+	governor_restore();
 	# woken before it is shown: a stopped window would draw nothing
 	system('systemctl', 'kill', '--signal=SIGCONT', 'jawnos-kiosk');
 	if (defined $kiosk_window) {
@@ -179,6 +227,8 @@ close $marker;
 my $evdev = mouse_device();
 
 hide_kiosk();
+# every frame is the CPU's work: give the emulator the top of the clock
+governor_boost();
 # The daemon polls its marker four times a second; give the gamepad a beat to
 # exist before the emulator scans its controls.
 select(undef, undef, undef, 0.6);
