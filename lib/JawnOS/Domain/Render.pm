@@ -221,17 +221,28 @@ sub setting_initializer {
 
 sub signatorial_establisher {
 	my $context = shift // '';
+	my $designer = ($context eq 'designer');
+
 	# One session key for the whole tree, chosen once and kept. A Mojolicious
 	# session cookie is signed with this key, so a key that differs between
 	# workers - or between boots - makes every existing cookie invalid and sends
 	# the person back to the sign-in screen.
 	#
+	# ~/.president/session_secret is the choice the first boot made. It is
+	# consulted before anything is derived, so a later boot never reads the image
+	# or the config at all: the key cannot drift when the signatorial image comes
+	# and goes (it lives on external storage on Android, which is not readable at
+	# every worker boot, and deriving per boot flipped the key between the image's
+	# md5 and the deterministic fallback - the daily sign-in).
+	my $pinned = &session_secret_read();
+	if (defined $pinned && !$designer) {
+		$gb::secret_maker = [ $pinned ];
+		return $pinned;
+	}
+
 	# The derivation is unchanged: the signatorial image's bytes when the image is
-	# readable, else the deterministic fallback (the configured path). What is new
-	# is that the result is written to ~/.president/session_secret the first time
-	# and read back on every later boot. The image lives on external storage on
-	# Android and is not readable at every worker boot, so deriving it per boot
-	# flipped the key between the two values and invalidated sessions daily.
+	# readable, else the deterministic fallback (the configured path). This runs
+	# once in the tree's life; every boot after the first reads the file above.
 	my ($derived, $from_image);
 	if ($config->{'signatorial'} && -e $config->{'signatorial'}) {
 		my $j = &subs::home($config->{'signatorial'});
@@ -251,18 +262,36 @@ sub signatorial_establisher {
 	my $secret = &session_secret_pin($derived);
 	if (defined $secret && length $secret) {
 		$gb::secret_maker = [ $secret ];
-		return $context eq 'designer' ? $ingredient : $secret;
+		return $designer ? $ingredient : $secret;
 	}
 
 	# A home that cannot hold the file (read-only, permissions) must never make
 	# the tree unbootable: keep the old in-memory behaviour exactly. The fallback
 	# path is still deterministic, so the workers of this boot agree.
 	$gb::secret_maker = [ $derived ];
-	return $context eq 'designer' ? $ingredient : &random_string_creator(12);
+	return $designer ? $ingredient : &random_string_creator(12);
 }
 
 sub session_secret_file {
 	return &home('~/.president/session_secret');
+}
+
+# The key the first boot wrote, or undef when it is not there yet. A writer
+# creates the file before it writes into it, so a reader can catch an empty or
+# half-written key: wait briefly for a complete one rather than adopt an
+# incomplete value for the life of the process. A file that never yields a key
+# (wrong mode, a home that cannot hold it) reads as undef, and the caller falls
+# back to what it did before the key was persisted.
+sub session_secret_read {
+	my $file = &session_secret_file();
+	return undef unless defined $file && length $file && -e $file;
+	for my $attempt (1 .. 20) {
+		my $key = &_slurp_or_empty($file);
+		$key =~ s/\s+\z//;
+		return $key if $key =~ /^[0-9a-f]{32}$/;
+		Time::HiRes::usleep(10_000) if $attempt < 20;
+	}
+	return undef;
 }
 
 # Choose the session key once for this tree and keep it. The first process to
@@ -276,9 +305,8 @@ sub session_secret_pin {
 	my $file = &session_secret_file();
 	return undef unless defined $file && length $file;
 
-	my $existing = &_slurp_or_empty($file);
-	$existing =~ s/\s+\z//;
-	return $existing if length $existing;
+	my $existing = &session_secret_read();
+	return $existing if defined $existing;
 
 	# ~/.president normally exists; a fresh home may not. A failure here is not
 	# fatal - the sysopen below decides, and the caller falls back to memory.
@@ -294,18 +322,9 @@ sub session_secret_pin {
 		return $derived;
 	}
 
-	# Lost the race, or the file appeared between the read and the create. An
-	# empty read here is the winner's write still in flight, not a key: wait for
-	# it briefly instead of adopting a different key for this process's life.
-	if (-e $file) {
-		for my $attempt (1 .. 20) {
-			my $key = &_slurp_or_empty($file);
-			$key =~ s/\s+\z//;
-			return $key if length $key;
-			Time::HiRes::usleep(10_000) if $attempt < 20;
-		}
-	}
-	return undef;
+	# Lost the race, or the file appeared between the read and the create: the
+	# winner's key is the tree's key.
+	return &session_secret_read();
 }
 
 sub signatorial_identity_file {

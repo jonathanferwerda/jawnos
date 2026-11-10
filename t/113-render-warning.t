@@ -138,4 +138,48 @@ is((stat $secret_file)[2] & 07777, 0600, 'the secret file is private to its owne
 	is($second, $image_key, 'a later boot without the image keeps the pinned key');
 }
 
+# The proof that matters is a process that did not choose the key: a fresh
+# worker booting after the tree restarted has no memory of the first choice and
+# must not derive one of its own - not even from an image it can read now.
+{
+	my $home = tempdir(CLEANUP => 1);
+	my $dir  = tempdir(CLEANUP => 1);
+	my $missing = "$dir/not-mounted.png";
+	my $image   = "$dir/portrait.png";
+	open my $img, '>', $image or die "cannot write $image: $!";
+	print $img "portrait\n";
+	close $img;
+
+	my $first;
+	{
+		local $subs::home_dir = $home;
+		local $subs::config = { signatorial => $missing };
+		local $gb::secret_maker = undef;
+		$first = &subs::signatorial_establisher();
+	}
+	is($first, Mojo::Util::md5_sum('signatorial:' . $missing),
+		'the first process pins the fallback while external storage is away');
+
+	my $script = <<'SECOND_PROCESS';
+BEGIN { chdir $ARGV[2] or die "chdir $ARGV[2]: $!" }
+use JawnOSTest;
+$subs::home_dir = $ARGV[0];
+$subs::config = { signatorial => $ARGV[1] };
+subs::preload('signatorial_establisher');
+print subs::signatorial_establisher(), "\n";
+SECOND_PROCESS
+
+	open my $second, '-|', $^X, '-I' . root() . '/lib', '-I' . root() . '/t/lib',
+		'-e', $script, $home, $image, root()
+		or die "cannot start a second process: $!";
+	my $key = do { local $/; <$second> };
+	my $status = close $second;
+	is($status, 1, 'the second process starts and exits cleanly');
+	$key = '' unless defined $key;
+	$key =~ s/\s+\z//;
+	is($key, $first, 'a second process reads the stored key');
+	isnt($key, Mojo::Util::md5_sum(MIME::Base64::encode_base64("portrait\n")),
+		'it does not derive the image it can read now');
+}
+
 done_testing();
