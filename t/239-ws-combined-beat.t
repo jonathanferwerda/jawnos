@@ -38,6 +38,7 @@ like($ctl, qr/beats => \\%beats/, 'the reply carries a beats map');
 like($ctl, qr/if \(ref \$data->\{'apps'\} eq 'ARRAY' && scalar\(\@beat_apps\) > 1\)/,
 	'a combined request gets one combined reply');
 like($ctl, qr/&Websocket::send\(\$data->\{'app'\}, \$frame\)/, 'the combined reply is one frame');
+like($ctl, qr/'uuid' => \$uuid \. ':' \. \$app,/, 'each app row gets its own uuid');
 
 # --- the client applies each beat --------------------------------------------
 like($beat, qr/function stayingAliveOne\(data\)/, 'the old per-app handler still exists');

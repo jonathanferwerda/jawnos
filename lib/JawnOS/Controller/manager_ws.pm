@@ -382,7 +382,7 @@ sub action_47050 {
 							browser_tab_id => $browser_tab_id,
 							browser_tab => $browser_tab,
 							db => $database,
-							'uuid' => $uuid,
+							'uuid' => $uuid . ':' . $app, # mux: one connection, one row per app
 							app => $app,
 							connected => $init_data->{'connected'} || $timestamp,
 							hostname => $hostname,
