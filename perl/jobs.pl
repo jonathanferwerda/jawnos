@@ -50,6 +50,30 @@ sub job_say_it {
 	&subs::say_speak($args->{'text'}, $args->{'voice'});
 }
 
+# The watch's spoken answer and the board-command senders dial a bridge or a
+# board in the request path, so each is always its own process. The bodies live
+# beside the request code (Say.pm, Notify.pm) and start with a loop reset; on a
+# box without fork these entries are what keeps that reset out of the caller.
+sub job_watch_reply_wifi {
+	my ($args) = @_;
+	&subs::watch_reply_wifi($args);
+}
+
+sub job_watch_reply_audio {
+	my ($args) = @_;
+	&subs::watch_reply_audio($args);
+}
+
+sub job_embedded_toggle_send {
+	my ($args) = @_;
+	&subs::embedded_toggle_send($args);
+}
+
+sub job_embedded_toggle_refresh {
+	my ($args) = @_;
+	&subs::embedded_toggle_refresh($args);
+}
+
 sub job_app_release_sync {
 	my ($args) = @_;
 	sleep 45;
@@ -470,6 +494,10 @@ sub job_utility_functions {
 	'wake schedule' => \&job_wake_schedule,
 	'address directory' => \&job_address_directory,
 	'say it' => \&job_say_it,
+	'watch reply wifi' => \&job_watch_reply_wifi,
+	'watch reply audio' => \&job_watch_reply_audio,
+	'embedded toggle sender' => \&job_embedded_toggle_send,
+	'embedded toggle refresh' => \&job_embedded_toggle_refresh,
 	'voice sync' => \&job_voice_sync,
 	'whisper server' => \&job_whisper_server,
 	'Minion Worker' => \&job_minion_worker,

@@ -141,8 +141,8 @@ is( scalar @vol_ack, 2, 'both volume_result replies ride their own child' );
 my $notify = read_file("$root/lib/JawnOS/Domain/Notify.pm");
 like( $notify, qr/if \(\$watch_ip\) \{.*?\$http_ok = eval \{ \$send_http->\(\) \}/s,
 	'a board with a LAN address takes the HTTP route before the bridge' );
-my @notify = ( $notify =~ /name => 'embedded toggle sender', fork => 1/g );
-is( scalar @notify, 2, 'both embedded toggle senders ride a child' );
+my @notify = ( $notify =~ /name => 'embedded toggle (?:sender|refresh)', fork => 1/g );
+is( scalar @notify, 2, 'both embedded toggle halves ride a child' );
 
 my $say = read_file("$root/lib/JawnOS/Domain/Say.pm");
 like( $say, qr/name => 'watch reply wifi', fork => 1/,  'the WiFi reply rides a child' );

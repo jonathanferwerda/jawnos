@@ -334,32 +334,57 @@ sub watch_reply {
 	# small, immediate half either way.
 	my $wifi = &subs::device_wifi_reply($meta);
 	if ($wifi) {
-		&subs::subprocessor(sub {
-			Mojo::IOLoop->reset;
-			my $id = &subs::device_reply_wav($text);
-			if ($id) {
-				&subs::bluetooth_sender({
-					intent => 'com.jawn.president.bt.connect',
-					chip_id => $meta->{'chip_id'},
-					edt => $edt,
-					message => { type => 'say_audio_ready', data => { id => $id, base => $wifi->{'base'} } }
-				});
-			}
-			else {
-				# piper/ffmpeg failed: the BLE stream still gets the sound there
-				&subs::watch_reply_stream($meta, $text);
-			}
-		}, { name => 'watch reply wifi', fork => 1 });
+		my $args = {
+			text => $text,
+			chip_id => $meta->{'chip_id'},
+			edt => $edt,
+			base => $wifi->{'base'},
+		};
+		&subs::subprocessor(sub { Mojo::IOLoop->reset; &subs::watch_reply_wifi($args) },
+			{ name => 'watch reply wifi', fork => 1, args => $args });
 		return;
 	}
 	# Piper synthesizes far faster than the answer is spoken, and the WiFi path
 	# runs voice_ingest inline in the request: do all of this off the request. The
 	# child re-dials the database itself (bluetooth_sender reads it), so forking
 	# here is safe.
-	&subs::subprocessor(sub {
-		Mojo::IOLoop->reset;
+	my $args = { text => $text, chip_id => $meta->{'chip_id'}, edt => $edt };
+	&subs::subprocessor(sub { Mojo::IOLoop->reset; &subs::watch_reply_audio($args) },
+		{ name => 'watch reply audio', fork => 1, args => $args });
+}
+
+# The WiFi half of a watch reply, as a named body: the subprocessor starts it by
+# name on a box without fork, so it must not close over the request it came from.
+# It renders one WAV the watch pulls, or streams the sound over BLE when piper
+# could not render.
+sub watch_reply_wifi {
+	my ($args) = @_;
+	my $text = defined $args->{'text'} ? $args->{'text'} : '';
+	my $meta = { chip_id => $args->{'chip_id'}, edt => $args->{'edt'} };
+	my $edt = $args->{'edt'} || 'watch';
+	my $id = &subs::device_reply_wav($text);
+	if ($id) {
+		&subs::bluetooth_sender({
+			intent => 'com.jawn.president.bt.connect',
+			chip_id => $meta->{'chip_id'},
+			edt => $edt,
+			message => { type => 'say_audio_ready', data => { id => $id, base => $args->{'base'} } }
+		});
+	}
+	else {
+		# piper/ffmpeg failed: the BLE stream still gets the sound there
 		&subs::watch_reply_stream($meta, $text);
-	}, { name => 'watch reply audio', fork => 1 });
+	}
+	return;
+}
+
+sub watch_reply_audio {
+	my ($args) = @_;
+	&subs::watch_reply_stream(
+		{ chip_id => $args->{'chip_id'}, edt => $args->{'edt'} },
+		defined $args->{'text'} ? $args->{'text'} : '',
+	);
+	return;
 }
 
 # Stream the spoken answer to the watch as PCM parts. Piper writes raw samples as

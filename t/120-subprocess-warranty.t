@@ -1,4 +1,4 @@
-# tests-for: lib/JawnOS/Domain/Process.pm lib/JawnOS/Domain/Calendar.pm lib/JawnOS/Domain/Lan.pm lib/JawnOS/Domain/Loader.pm lib/JawnOS/Domain/Render.pm lib/JawnOS/Manager/Part02.pm lib/JawnOS/Manager/Part08.pm perl/President.pl perl/jobs.pl jawn
+# tests-for: lib/JawnOS/Domain/Process.pm lib/JawnOS/Domain/Calendar.pm lib/JawnOS/Domain/Lan.pm lib/JawnOS/Domain/Loader.pm lib/JawnOS/Domain/Render.pm lib/JawnOS/Domain/Say.pm lib/JawnOS/Domain/Notify.pm lib/JawnOS/Manager/Part02.pm lib/JawnOS/Manager/Part08.pm perl/President.pl perl/jobs.pl jawn
 # covers:    a subprocessor stamps a warranty, the reaper forgets a dead pid and kills a job past its
 #            finite warranty, and a resident loop or a tunnel holder declared 'forever' is never touched.
 
@@ -9,6 +9,7 @@ use FindBin;
 use lib "$FindBin::Bin/lib", "t/lib", "$FindBin::Bin/../lib";
 use Test::More;
 use File::Slurp qw(read_file);
+use Mojo::IOLoop;
 use JawnOSTest;
 
 # The warranty is an absolute epoch-millisecond moment, the same unit every other
@@ -408,5 +409,41 @@ like($loader, qr/JawnOS::Domain::Lan' for qw\([^)]*lan_presence_listen[^)]*lan_p
 # Waiting out a quiet spell must heartbeat in chunks, not sleep past the lease.
 like($lan, qr/sub lan_presence_wait \{.*?subprocessor_heartbeat.*?sleep\(.*?\n\}/s,
 	'the wait helper heartbeats between short sleeps');
+
+# The other bodies written for a child are named jobs too: each dials a bridge
+# or a board in the request path, and each starts by resetting its loop.
+like($job_source, qr/'watch reply wifi' => \\&job_watch_reply_wifi/,
+	'the WiFi watch reply is a named job');
+like($job_source, qr/'watch reply audio' => \\&job_watch_reply_audio/,
+	'the audio watch reply is a named job');
+like($job_source, qr/'embedded toggle sender' => \\&job_embedded_toggle_send/,
+	'the board sender is a named job');
+like($job_source, qr/'embedded toggle refresh' => \\&job_embedded_toggle_refresh/,
+	'the board read-back is its own job');
+my $notify_source = read_file("$root/lib/JawnOS/Domain/Notify.pm");
+for my $pair ([ $say_source, 'watch_reply_wifi' ], [ $say_source, 'watch_reply_audio' ],
+	[ $notify_source, 'embedded_toggle_send' ], [ $notify_source, 'embedded_toggle_refresh' ]) {
+	my ($text, $name) = @$pair;
+	my ($body) = $text =~ /(sub $name \{.*?\n\})/s;
+	ok($body, "$name is its own named body");
+	unlike($body || '', qr/Mojo::IOLoop->reset/, "$name does not reset a loop it does not own");
+}
+
+# A fork=>1 body that is not a registered job cannot be started by name, so the
+# no-fork branch runs it inline. It must not take the caller's reactor with it:
+# a cold first request lost its reply exactly that way.
+like($calendar, qr/local \*Mojo::IOLoop::reset = sub \{ return \}/,
+	'the inline branch stubs out a child body\'s loop reset');
+{
+	local $ENV{'JAWNOS_PORTABLE'} = 1;
+	my $loop = Mojo::IOLoop->singleton;
+	my $probe = $loop->timer(3600 => sub { });
+	my $ran = 0;
+	my $ok = eval { subs::subprocessor(sub { Mojo::IOLoop->reset; $ran = 1 }, { fork => 1 }); 1 };
+	ok($ok, 'an unregistered fork job runs inline without dying');
+	is($ran, 1, 'and its body still runs');
+	ok($loop->reactor->{timers}{$probe}, 'the caller keeps its own reactor timers');
+	$loop->remove($probe);
+}
 
 done_testing();

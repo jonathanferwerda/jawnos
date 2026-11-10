@@ -754,7 +754,22 @@ sub subprocessor {
 		}
 		# A finite job runs here. Do not stamp a process record with this pid:
 		# the parent did not become the job.
-		my $result = eval { $subroutine->() };
+		#
+		# A body that asked for a child starts by resetting the loop it inherited.
+		# Inline, that reset would clear this process's own listeners and the reply
+		# in flight - a cold first request died that way when a migration backfill
+		# spoke. The body cannot start by name unless it is registered in %JOB, so
+		# run it here with the reset made a no-op rather than let it take the
+		# caller down.
+		my $result;
+		if ($params->{'fork'}) {
+			no warnings 'redefine';
+			local *Mojo::IOLoop::reset = sub { return };
+			$result = eval { $subroutine->() };
+		}
+		else {
+			$result = eval { $subroutine->() };
+		}
 		my $error = $@;
 		if ($error) {
 			eval { $log->error('subprocessor ' . ($job_name || '?') . ' failed: ' . ($error =~ s/\s+/ /gr)) } if $log;

@@ -299,136 +299,189 @@ sub embedded_toggle($data) {
 		# burst queue: each press waited on a peer relay that could not answer, so
 		# the fifth press arrived twenty seconds late and was refused as older.
 		# All the roads run here, in the sender, and the press returns at once.
-		&subs::subprocessor(sub {
-			Mojo::IOLoop->reset;
-			# The block below is the only road to the hardware, so say when it is
-			# taken: a press whose log jumps from the toggle write straight to
-			# nothing is a press the fan-out never handed to a board.
-			$log->info('device command: ' . ($chip_id || '?') . ' ' . ($component || '?')
-				. ' ' . ($pin // '?') . ' ' . ($state || '?') . ' @' . $timestamp . ' (send)') if $log;
-			# A board holding a /device/ws socket takes the command there. The same
-			# fields the HTTP query below carries ride the frame; the helper answers
-			# 0 when no socket is attached. A successful write is NOT a board ack: a
-			# half-open link, or a peer's cached socket, can swallow it and the board
-			# never clicks. Keep the board's own route below even after a write - the
-			# uuid is the same on both roads, so the board's command manifest drops
-			# the duplicate instead of clicking twice.
-			my $ws_sent = &subs::device_ws_command({
-				chip_id => $chip_id,
-				component => $component,
-				appt_uuid => $appt_uuid,
-				uuid => $uuid,
-				when => $when,
-				pin => $pin,
-				state => $state,
-				timestamp => $timestamp,
-				measure => $measure,
-			});
-			$log->info('device command: ' . ($chip_id || '?') . ' ' . ($component || '?') . ' '
-				. ($pin // '?') . ' ' . ($state || '?') . ' @' . $timestamp . ' (ws)') if $ws_sent && $log;
-			# The frame went to a socket that is up: the command is done. Running
-			# the HTTP road as well spent the whole per-chip lock on a board that
-			# already had the command, so the press after it queued - the switch's
-			# own BLE set queued with it and a flick went missing. A socket that has
-			# since died detaches itself, and the next press takes the roads below.
-			return if $ws_sent;
-			my $watch = &subs::device_lister($timestamp, $edt, undef, $chip_id);
-			my $watch_ip = (ref $watch eq 'HASH' && $watch->{'ip'}) ? $watch->{'ip'} : $ip;
-			# One command at a time per board. A Pico services one HTTP client, so
-			# overlapping presses are what make the third and fourth look lost.
-			# The lock covers the bridge fallback too: the radio is shared with
-			# WiFi, and a burst of writes is what wedges the board.
-			my $lock = &subs::device_command_lock($chip_id);
-			my $send_http = sub {
-				my $watch_home = 'http://' . $watch_ip . ':' . $config->{'port'} . '/' . $component . '?appt_uuid=' . $appt_uuid . '&uuid=' . $uuid . '&when=' . $when . '&pin=' . $pin . '&state=' . $state . '&component=' . $component . '&authorization=' . $op_d->{'__specs'}->{'authorization'} . '&timestamp=' . $timestamp . '&measure=' . $measure;
-				my $ua = Mojo::UserAgent->new(connect_timeout => 1, inactivity_timeout => 2);
-				my $res = $ua->insecure(1)->get($watch_home)->result;
-				my $body = eval { $res->result->body };
-				my $rb = $body ? eval { decode_json($body) } : undef;
-				if (ref $rb eq 'HASH') {
-					$state = $rb->{'state'} if defined $rb->{'state'};
-					$pin = $rb->{'pin'} if defined $rb->{'pin'};
-					return 1;
-				}
-				return 0;
-			};
-			my $asked = $state;
-			my $http_ok = 0;
-			if ($watch_ip) {
-				$http_ok = eval { $send_http->() } ? 1 : 0;
-				# A send can still meet the connection the command before it is
-				# closing. One short retry is enough now that the lock means this
-				# is the only request in flight by the time it runs.
-				if (!$http_ok) {
-					select(undef, undef, undef, 0.15);
-					$http_ok = eval { $send_http->() } ? 1 : 0;
-				}
-				$log->info('device command: ' . ($chip_id || '?') . ' ' . ($component || '?') . ' '
-					. ($pin // '?') . ' ' . ($asked // '?') . ' @' . $timestamp
-					. ' (http failed)') if $log && !$http_ok;
-			}
-			if ($http_ok) {
-				# The board's reply is its own state after the command. An asked
-				# state it did not take is the line that explains a press that
-				# clicked nothing (stale, redundant, or a switch that won): the
-				# asked state and the board's answer sit either side of the arrow.
-				$log->info('device command: ' . ($chip_id || '?') . ' ' . ($component || '?') . ' '
-					. ($pin // '?') . ' ' . ($asked || '?') . ' -> ' . ($state || '?')
-					. ' @' . $timestamp . ' (http)') if $log;
-				return;
-			}
-			if (ref $watch eq 'HASH' && ($watch->{'ble'} || !$watch->{'ip'})) {
-				my $sent = eval {
-					&subs::bluetooth_sender({
-						intent => 'com.jawn.president.bt.connect',
-						chip_id => $chip_id,
-						edt => $edt,
-						message => { type => 'set', data => {
-							component => $component, pin => $pin, state => $state,
-							when => $when, uuid => $uuid, appt_uuid => $appt_uuid,
-							timestamp => $timestamp, measure => $measure, app => $app
-						} }
-					});
-				};
-				if ($sent) {
-					$log->info('device command: ' . ($chip_id || '?') . ' ' . ($component || '?') . ' '
-						. ($pin // '?') . ' ' . ($asked || '?') . ' @' . $timestamp . ' (bridge)') if $log;
-					return;
-				}
-			}
-			# Neither road carried it. Say so once, with the board and command, so
-			# a relay that missed a press can be found in the log without a
-			# reproduction.
-			$log->info('device command not delivered: ' . ($chip_id || '?') . ' '
-				. ($component || '?') . ' asked ' . ($asked || '?') . ' (http='
-				. ($watch_ip ? 'failed' : 'no address') . ')') if $log && !$ws_sent;
-		}, { name => 'embedded toggle sender', fork => 1 });
+		my $job_args = {
+			chip_id => $chip_id, component => $component, pin => $pin, state => $state,
+			timestamp => $timestamp, appt_uuid => $appt_uuid, uuid => $uuid, when => $when,
+			measure => $measure, app => $app, edt => $edt, ip => $ip,
+			port => $config->{'port'}, authorization => $op_d->{'__specs'}->{'authorization'},
+		};
+		&subs::subprocessor(sub { Mojo::IOLoop->reset; &subs::embedded_toggle_send($job_args) },
+			{ name => 'embedded toggle sender', fork => 1, args => $job_args });
 		return { state => $number_state, formatted_state => $state };
 	}
 
-  &subs::subprocessor(sub {
-    Mojo::IOLoop->reset;
-		eval {
-			my $watch = &subs::device_lister($timestamp, $edt, undef, $chip_id);
-
-			my $watch_home = 'http://' . $watch->{'ip'} . ':' . $config->{'port'} . '/' . $component . '?appt_uuid=' . $appt_uuid . '&uuid=' . $uuid . '&when=' . $when . '&pin=' . $pin . '&state=' . $state . '&component=' . $component . '&authorization=' . $op_d->{'__specs'}->{'authorization'} . '&timestamp=' . $timestamp . '&measure=' . $measure;
-			my $ua = Mojo::UserAgent->new();
-
-			my $res = $ua->insecure(1)->get($watch_home)->result;
-			if (eval { $res->result->body }) {
-				if (eval { decode_json $res->result->body }) {
-					my $rb = decode_json $res->result->body;
-					$state = $rb->{'state'};
-					$pin = $rb->{'pin'};
-				}
-			}
-			my $number_state = $state eq 'on' ? 1 : 0;
-		};
-	}, { name => 'embedded toggle sender', fork => 1 });
+	my $refresh_args = {
+		timestamp => $timestamp, edt => $edt, chip_id => $chip_id, component => $component,
+		appt_uuid => $appt_uuid, uuid => $uuid, when => $when, pin => $pin,
+		state => $state, measure => $measure, port => $config->{'port'},
+		authorization => $op_d->{'__specs'}->{'authorization'},
+	};
+	&subs::subprocessor(sub { Mojo::IOLoop->reset; &subs::embedded_toggle_refresh($refresh_args) },
+		{ name => 'embedded toggle refresh', fork => 1, args => $refresh_args });
 	my $number_state = $state eq 'on' ? 1 : 0;
 	my $returner = { 'state' => $number_state, formatted_state => $state };
 
 	return $returner;
+}
+
+# The sender body as a named sub: the subprocessor starts it by name on a box
+# without fork, so every value it needs travels in args. It owns the per-chip
+# lock, the WebSocket frame, the HTTP dial and the BLE fallback; the press that
+# asked for it has already returned.
+sub embedded_toggle_send {
+	my ($args) = @_;
+	my $chip_id = $args->{'chip_id'};
+	my $component = $args->{'component'};
+	my $pin = $args->{'pin'};
+	my $state = $args->{'state'};
+	my $timestamp = $args->{'timestamp'};
+	my $appt_uuid = $args->{'appt_uuid'};
+	my $uuid = $args->{'uuid'};
+	my $when = $args->{'when'};
+	my $measure = $args->{'measure'};
+	my $app = $args->{'app'};
+	my $edt = $args->{'edt'};
+	my $ip = $args->{'ip'};
+	my $port = $args->{'port'};
+	my $authorization = $args->{'authorization'};
+		# The block below is the only road to the hardware, so say when it is
+		# taken: a press whose log jumps from the toggle write straight to
+		# nothing is a press the fan-out never handed to a board.
+		$log->info('device command: ' . ($chip_id || '?') . ' ' . ($component || '?')
+			. ' ' . ($pin // '?') . ' ' . ($state || '?') . ' @' . $timestamp . ' (send)') if $log;
+		# A board holding a /device/ws socket takes the command there. The same
+		# fields the HTTP query below carries ride the frame; the helper answers
+		# 0 when no socket is attached. A successful write is NOT a board ack: a
+		# half-open link, or a peer's cached socket, can swallow it and the board
+		# never clicks. Keep the board's own route below even after a write - the
+		# uuid is the same on both roads, so the board's command manifest drops
+		# the duplicate instead of clicking twice.
+		my $ws_sent = &subs::device_ws_command({
+			chip_id => $chip_id,
+			component => $component,
+			appt_uuid => $appt_uuid,
+			uuid => $uuid,
+			when => $when,
+			pin => $pin,
+			state => $state,
+			timestamp => $timestamp,
+			measure => $measure,
+		});
+		$log->info('device command: ' . ($chip_id || '?') . ' ' . ($component || '?') . ' '
+			. ($pin // '?') . ' ' . ($state || '?') . ' @' . $timestamp . ' (ws)') if $ws_sent && $log;
+		# The frame went to a socket that is up: the command is done. Running
+		# the HTTP road as well spent the whole per-chip lock on a board that
+		# already had the command, so the press after it queued - the switch's
+		# own BLE set queued with it and a flick went missing. A socket that has
+		# since died detaches itself, and the next press takes the roads below.
+		return if $ws_sent;
+		my $watch = &subs::device_lister($timestamp, $edt, undef, $chip_id);
+		my $watch_ip = (ref $watch eq 'HASH' && $watch->{'ip'}) ? $watch->{'ip'} : $ip;
+		# One command at a time per board. A Pico services one HTTP client, so
+		# overlapping presses are what make the third and fourth look lost.
+		# The lock covers the bridge fallback too: the radio is shared with
+		# WiFi, and a burst of writes is what wedges the board.
+		my $lock = &subs::device_command_lock($chip_id);
+		my $send_http = sub {
+			my $watch_home = 'http://' . $watch_ip . ':' . $port . '/' . $component . '?appt_uuid=' . $appt_uuid . '&uuid=' . $uuid . '&when=' . $when . '&pin=' . $pin . '&state=' . $state . '&component=' . $component . '&authorization=' . $authorization . '&timestamp=' . $timestamp . '&measure=' . $measure;
+			my $ua = Mojo::UserAgent->new(connect_timeout => 1, inactivity_timeout => 2);
+			my $res = $ua->insecure(1)->get($watch_home)->result;
+			my $body = eval { $res->result->body };
+			my $rb = $body ? eval { decode_json($body) } : undef;
+			if (ref $rb eq 'HASH') {
+				$state = $rb->{'state'} if defined $rb->{'state'};
+				$pin = $rb->{'pin'} if defined $rb->{'pin'};
+				return 1;
+			}
+			return 0;
+		};
+		my $asked = $state;
+		my $http_ok = 0;
+		if ($watch_ip) {
+			$http_ok = eval { $send_http->() } ? 1 : 0;
+			# A send can still meet the connection the command before it is
+			# closing. One short retry is enough now that the lock means this
+			# is the only request in flight by the time it runs.
+			if (!$http_ok) {
+				select(undef, undef, undef, 0.15);
+				$http_ok = eval { $send_http->() } ? 1 : 0;
+			}
+			$log->info('device command: ' . ($chip_id || '?') . ' ' . ($component || '?') . ' '
+				. ($pin // '?') . ' ' . ($asked // '?') . ' @' . $timestamp
+				. ' (http failed)') if $log && !$http_ok;
+		}
+		if ($http_ok) {
+			# The board's reply is its own state after the command. An asked
+			# state it did not take is the line that explains a press that
+			# clicked nothing (stale, redundant, or a switch that won): the
+			# asked state and the board's answer sit either side of the arrow.
+			$log->info('device command: ' . ($chip_id || '?') . ' ' . ($component || '?') . ' '
+				. ($pin // '?') . ' ' . ($asked || '?') . ' -> ' . ($state || '?')
+				. ' @' . $timestamp . ' (http)') if $log;
+			return;
+		}
+		if (ref $watch eq 'HASH' && ($watch->{'ble'} || !$watch->{'ip'})) {
+			my $sent = eval {
+				&subs::bluetooth_sender({
+					intent => 'com.jawn.president.bt.connect',
+					chip_id => $chip_id,
+					edt => $edt,
+					message => { type => 'set', data => {
+						component => $component, pin => $pin, state => $state,
+						when => $when, uuid => $uuid, appt_uuid => $appt_uuid,
+						timestamp => $timestamp, measure => $measure, app => $app
+					} }
+				});
+			};
+			if ($sent) {
+				$log->info('device command: ' . ($chip_id || '?') . ' ' . ($component || '?') . ' '
+					. ($pin // '?') . ' ' . ($asked || '?') . ' @' . $timestamp . ' (bridge)') if $log;
+				return;
+			}
+		}
+		# Neither road carried it. Say so once, with the board and command, so
+		# a relay that missed a press can be found in the log without a
+		# reproduction.
+		$log->info('device command not delivered: ' . ($chip_id || '?') . ' '
+			. ($component || '?') . ' asked ' . ($asked || '?') . ' (http='
+			. ($watch_ip ? 'failed' : 'no address') . ')') if $log && !$ws_sent;
+	return;
+}
+
+# The read-back half of a press, also its own process. It asks the board for its
+# state and answers the board's own view; on Unix the answer never reaches the
+# parent, and on a box without fork a worker keeps that true.
+sub embedded_toggle_refresh {
+	my ($args) = @_;
+	my $timestamp = $args->{'timestamp'};
+	my $edt = $args->{'edt'};
+	my $chip_id = $args->{'chip_id'};
+	my $component = $args->{'component'};
+	my $appt_uuid = $args->{'appt_uuid'};
+	my $uuid = $args->{'uuid'};
+	my $when = $args->{'when'};
+	my $pin = $args->{'pin'};
+	my $state = $args->{'state'};
+	my $measure = $args->{'measure'};
+	my $port = $args->{'port'};
+	my $authorization = $args->{'authorization'};
+	eval {
+		my $watch = &subs::device_lister($timestamp, $edt, undef, $chip_id);
+
+		my $watch_home = 'http://' . $watch->{'ip'} . ':' . $port . '/' . $component . '?appt_uuid=' . $appt_uuid . '&uuid=' . $uuid . '&when=' . $when . '&pin=' . $pin . '&state=' . $state . '&component=' . $component . '&authorization=' . $authorization . '&timestamp=' . $timestamp . '&measure=' . $measure;
+		my $ua = Mojo::UserAgent->new();
+
+		my $res = $ua->insecure(1)->get($watch_home)->result;
+		if (eval { $res->result->body }) {
+			if (eval { decode_json $res->result->body }) {
+				my $rb = decode_json $res->result->body;
+				$state = $rb->{'state'};
+				$pin = $rb->{'pin'};
+			}
+		}
+		my $number_state = $state eq 'on' ? 1 : 0;
+	};
+	return;
 }
 
 # A settings row has no uuid: it is identified by the key it is stored under.
