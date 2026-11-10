@@ -36,8 +36,7 @@ sub leave($c) {
 	&subs::db_delete('settings',{app => 'keyboard'});
 	&subs::db_delete('settings',{app => 'watch', setting => 'patience' });
 #	&subs::db_delete('remote_machines');
-	my $hostname = `hostname`;
-	chomp($hostname);
+	my $hostname = &subs::machine_hostname();
 	if ($c->param('debriefer')) {
 		my $d = $c->param('debriefer');
 		my $settings = decode_json $d;

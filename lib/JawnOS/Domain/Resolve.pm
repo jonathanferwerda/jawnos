@@ -582,7 +582,7 @@ sub claim_work {
 # The machine's own name, for a claim a person has to read. The signatorial is the
 # mesh identity; this is what to show beside it.
 #
-# Android has no hostname of its own - Termux answers `hostname` with 'localhost'
+# Android has no hostname of its own - Termux answers hostname(1) with 'localhost'
 # and some builds answer a build token ('fe'), neither of which tells a person
 # which device it is. The config's own name, then its house domain's first label
 # (phone.jonathanferwerda.com -> Phone), are the names a person actually uses;
@@ -598,8 +598,7 @@ sub machine_name {
 	my $name = &setting_grabber({ app => 'me', setting => 'computer_name' }) || &setting_grabber({ app => 'me', setting => 'my_name' });
 	$name =~ s/^\s+|\s+$//g if defined $name;
 	return $name if defined $name && $name ne '';
-	my $h = `hostname`;
-	chomp $h;
+	my $h = &subs::machine_hostname();
 	$h =~ s/^\s+|\s+$//g;
 	return '' if $h eq '' || $h =~ /^(?:localhost|127\.0\.0\.1|::1)$/i;
 	return $h;
@@ -658,7 +657,7 @@ sub device_hostname_from_domain {
 }
 
 # The name a person reads for a machine. A phone has no hostname of its own:
-# Android/Termux answers `hostname` with 'localhost', and that used to overwrite
+# Android/Termux answers hostname(1) with 'localhost', and that used to overwrite
 # the good name a peer had already learned every time the phone reconnected.
 # Prefer the machine's own report, then the name we already remember, then the
 # first label of its fqdn (phone.example.com -> Phone).

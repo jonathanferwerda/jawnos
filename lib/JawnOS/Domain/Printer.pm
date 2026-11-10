@@ -240,8 +240,7 @@ sub device_mdns_sync {
 	# The gateway is usually the one appliance that never runs jawn, so it is
 	# discovered here rather than by the peer mesh. Throttled inside.
 	eval { &router_discover(); };
-	my $hostname = `hostname`;
-	chomp $hostname;
+	my $hostname = &subs::machine_hostname();
 	my $row = &subs::db_select('devices', undef, { hostname => $hostname })->hashes->[0];
 	return unless $row && $row->{'address'};
 	my $address = eval { decode_json $row->{'address'} } || {};

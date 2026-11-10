@@ -22,7 +22,7 @@ our $log;
 our $logfile;
 
 sub notification_sender($m,$db) {
-	my $origin = &subs::format_name(&subs::config_reader()->{'name'} || &subs::setting_grabber({ app => 'me', setting => 'computer_name' })) ||&subs::shorthand_name(`hostname`);
+	my $origin = &subs::format_name(&subs::config_reader()->{'name'} || &subs::setting_grabber({ app => 'me', setting => 'computer_name' })) ||&subs::shorthand_name(&subs::machine_hostname());
 
 	my $message = $m->{'message'};
 	my ($database,$sql);

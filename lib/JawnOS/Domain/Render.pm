@@ -376,9 +376,7 @@ sub signatorial_designer {
 
 sub runner_label {
 	# the machine a command ran on, for the appointment details
-	my $hostname = `hostname`;
-	chomp $hostname;
-	return $hostname;
+	return &subs::machine_hostname();
 }
 
 sub destination_relay {
@@ -511,8 +509,7 @@ sub run_command {
 	my $exec = 'none';
 	my $whoami = `whoami`;
 	chomp $whoami;
-	my $hostname = `hostname`;
-	chomp $hostname;
+	my $hostname = &subs::machine_hostname();
   &subs::subprocessor(sub {
     Mojo::IOLoop->reset;
 		if ($command =~ /^&/) {

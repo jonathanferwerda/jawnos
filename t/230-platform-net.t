@@ -1,7 +1,8 @@
-# tests-for: lib/JawnOS/Platform/Net.pm lib/JawnOS/Platform/Mdns.pm lib/JawnOS/Domain/Device.pm lib/JawnOS/Domain/Edt.pm lib/JawnOS/Domain/Network.pm lib/JawnOS/Controller/manager_configure2.pm
+# tests-for: lib/JawnOS/Platform/Net.pm lib/JawnOS/Platform/Mdns.pm lib/JawnOS/Domain/Device.pm lib/JawnOS/Domain/Edt.pm lib/JawnOS/Domain/Network.pm lib/JawnOS/Controller/manager_configure2.pm lib/JawnOS/Domain/Misc.pm lib/JawnOS/Domain/Printer.pm lib/JawnOS/Domain/Notify.pm lib/JawnOS/Domain/Generate.pm lib/JawnOS/Domain/Resolve.pm lib/JawnOS/Domain/Ble.pm lib/JawnOS/Domain/Embedded.pm lib/JawnOS/Domain/Tunnel.pm lib/JawnOS/Domain/Render.pm lib/JawnOS/Domain/Name.pm lib/JawnOS/Manager/Part31.pm
 # covers:    the network seam: ifconfig/route/neigh parsing against recorded
-#            output, the Avahi parsable record, the safe empty answers, and the
-#            call sites that now ask the platform modules.
+#            output, the Avahi parsable record, the safe empty answers, the
+#            hostname/addresses/neighbours reads, and the call sites that now
+#            ask the platform modules.
 
 use strict;
 use warnings;
@@ -12,8 +13,9 @@ use lib "$FindBin::Bin/lib", "t/lib", "$FindBin::Bin/../lib";
 use Test::More;
 use File::Slurp qw(read_file);
 use JawnOS::Platform::Net qw(
+	hostname addresses neighbours
 	interfaces gateway gateway_mac neighbour_lines
-	parse_ifconfig parse_route parse_neigh
+	parse_ifconfig parse_ip_addr parse_route parse_neigh
 );
 use JawnOS::Platform::Mdns qw(available browse parse_browse publish_argv);
 
@@ -103,6 +105,42 @@ else {
 		'and publishing answers an empty argv');
 }
 
+# ------------------------------------------------------------ host address
+my $ipout = <<'IPADDR';
+1: lo    inet 127.0.0.1/8 scope host lo\       valid_lft forever preferred_lft forever
+1: lo    inet6 ::1/128 scope host \       valid_lft forever preferred_lft forever
+2: eth0    inet 10.20.0.10/24 brd 10.20.0.255 scope global dynamic eth0\       valid_lft 86123sec preferred_lft 86123sec
+2: eth0    inet6 fe80::1/64 scope link \       valid_lft forever preferred_lft forever
+3: wlan0    inet6 2001:db8::5/64 scope global \       valid_lft forever preferred_lft forever
+3: wlan0    inet 192.168.1.20/24 scope global wlan0\       valid_lft forever preferred_lft forever
+IPADDR
+is_deeply(parse_ip_addr($ipout), [qw(10.20.0.10 192.168.1.20 2001:db8::5)],
+	'ip -o addr show: IPv4 first, loopback and link-local dropped');
+is_deeply(parse_ip_addr(''), [], 'no address output is an empty list');
+is_deeply(parse_ip_addr('sh: 1: ip: not found'), [], 'a shell error is no address');
+
+require POSIX;
+my $me = hostname();
+ok(defined $me && length $me, 'hostname answers this machine');
+unlike($me, qr/\s/, 'with no trailing newline');
+is(hostname(), $me, 'and is read once');
+is($me, (POSIX::uname())[1], 'the kernel nodename hostname(1) prints') if $^O ne 'MSWin32';
+
+my $mine = addresses();
+is(ref $mine, 'ARRAY', 'addresses answers a list');
+ok(!grep { /^127\./ || /^fe80:/i || $_ eq '::1' } @{$mine},
+	'no loopback or link-local address');
+unlike(join('', map { /:/ ? '6' : '4' } @{$mine}), qr/64/,
+	'every IPv4 address comes before the IPv6 ones');
+
+my $rows = neighbours('eth0', $neigh);
+is(scalar @{$rows}, 3, 'the neighbour fixture projects to rows');
+is_deeply([sort keys %{$rows->[0]}], [qw(ip mac state)], 'a row is only ip/mac/state');
+is($rows->[0]{'ip'}, '10.20.0.5', 'a neighbour keeps its address');
+is($rows->[0]{'mac'}, 'aa:bb:cc:dd:ee:ff', 'and its MAC');
+is($rows->[2]{'state'}, 'FAILED', 'and its state');
+is_deeply(neighbours('bad nic!'), [], 'an invalid interface has no neighbours');
+
 # ------------------------------------------------------------ the call sites
 my $device = read_file("$FindBin::Bin/../lib/JawnOS/Domain/Device.pm");
 my $edt = read_file("$FindBin::Bin/../lib/JawnOS/Domain/Edt.pm");
@@ -115,5 +153,22 @@ like($edt, qr/JawnOS::Platform::Net::interfaces/, 'the interface reporter asks t
 like($edt, qr/JawnOS::Platform::Mdns::browse/, 'the browse wrapper asks the mdns module');
 like($network, qr/JawnOS::Platform::Mdns::publish_argv/, 'the house advert asks the mdns module');
 like($configure, qr/JawnOS::Platform::Net::interfaces/, 'the network helper asks the net module');
+
+# ------------------------------------------------------------ no hostname shellout
+my @seamed = qw(
+	Domain/Device.pm Domain/Edt.pm Domain/Network.pm Domain/Misc.pm
+	Domain/Printer.pm Domain/Notify.pm Domain/Generate.pm Domain/Resolve.pm
+	Domain/Ble.pm Domain/Embedded.pm Domain/Tunnel.pm Domain/Render.pm
+	Domain/Name.pm Manager/Part31.pm
+);
+foreach my $one (@seamed) {
+	my $source = read_file("$FindBin::Bin/../lib/JawnOS/$one");
+	unlike($source, qr/`\s*hostname\b/, "$one reads the hostname through the seam");
+	unlike($source, qr/\bhostname\s+-[A-Za-z]/, "$one runs no hostname option read");
+}
+my $part31 = read_file("$FindBin::Bin/../lib/JawnOS/Manager/Part31.pm");
+like($part31, qr/JawnOS::Platform::Net::addresses/,
+	'the padlock check asks the net module for this machine\'s addresses');
+like($device, qr/subs::machine_hostname/, 'device reads its name from the domain seam');
 
 done_testing();

@@ -466,8 +466,7 @@ sub house_advertise_command {
 	# (macOS) is chosen by JawnOS::Platform::Mdns.
 	my $config = &subs::config_reader();
 	my $name = $config->{'name'} || 'JawnOS';
-	my $hostname = `hostname`;
-	chomp $hostname;
+	my $hostname = &subs::machine_hostname();
 	my $purpose = &subs::device_setter();
 	my $port = $ENV{PORT_AHOY} || $config->{'working_port'} || 45545;
 	my $mesh = '';

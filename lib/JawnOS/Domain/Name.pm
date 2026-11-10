@@ -956,16 +956,12 @@ sub sc_list_clean {
 	return \@out;
 }
 
-# The machine's own hostname without spawning `hostname` for every page. The
-# value cannot change while the process lives, and the manager page asks for it
-# on each render (here and in its own action).
-our $hostname_memo;
+# The machine's own hostname, from the platform seam: one memoised read of the
+# kernel nodename, no process per page. Kept as a domain name because the manager
+# and every app already ask for it here.
 sub machine_hostname {
-	return $hostname_memo if defined $hostname_memo;
-	require Sys::Hostname;
-	$hostname_memo = eval { Sys::Hostname::hostname() };
-	$hostname_memo = '' unless defined $hostname_memo;
-	return $hostname_memo;
+	require JawnOS::Platform::Net;
+	return JawnOS::Platform::Net::hostname();
 }
 
 1;

@@ -142,7 +142,7 @@ sub tunnel_checker {
 		# off the loopback NIC that marks this hub), so the two agree on shape. The
 		# write is skipped when nothing changed, so a healthy hub does not churn.
 		{
-			my $hostname = `hostname`; chomp $hostname;
+			my $hostname = &subs::machine_hostname();
 			my $me = &subs::db_select('devices', undef, { hostname => $hostname })->hashes->[0];
 			if ($me) {
 				my $address = eval { decode_json $me->{'address'} } || {};
@@ -456,8 +456,7 @@ sub tunnel_peer_enrol {
 	my $tuns = &subs::tunnel_port_mapper({ signatorial => $signatorial });
 	my $dock = $tuns->{'PORT_DOCK'};
 	return unless $dock;
-	my $hostname = `hostname`;
-	chomp $hostname;
+	my $hostname = &subs::machine_hostname();
 	my $me = &subs::db_select('devices', undef, { hostname => $hostname })->hashes->[0];
 	return unless $me;
 	# the neighbour row for this peer, if the naming pass has made one yet

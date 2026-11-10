@@ -74,9 +74,8 @@ sub device_scan {
 			}
 		}
 	}
-	my $hostname = `hostname`;
+	my $hostname = &subs::machine_hostname();
 	my @me_device = grep { $_->{'hostname'} eq $hostname } @{$devices};
-	chomp $hostname;
 	my $uname = `uname -a`;
 	chomp $uname;
 	my $username = 'jawn';#`whoami`;
@@ -417,8 +416,7 @@ sub device_scan {
 # device_lister pass refreshes it from the interface report, and only when the
 # interface/address signature moved.
 sub refresh_self_address {
-	my $hostname = `hostname`;
-	chomp $hostname;
+	my $hostname = &subs::machine_hostname();
 	return 0 unless length $hostname;
 	my $address = &subs::network_interface_reporter();
 	return 0 unless $address && scalar keys %{$address};
@@ -444,8 +442,7 @@ sub refresh_self_address {
 }
 
 sub ensure_self_device {
-	my $hostname = `hostname`;
-	chomp $hostname;
+	my $hostname = &subs::machine_hostname();
 	# A blank or loopback hostname is no name to file a machine under (and would
 	# make a second, shadow self row on a phone); leave those alone.
 	return undef if !$hostname || $hostname eq 'localhost';

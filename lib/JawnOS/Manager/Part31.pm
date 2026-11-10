@@ -91,18 +91,13 @@ sub padlock_request_is_local {
 	our $padlock_mine_at = 0;
 	our @padlock_mine;
 	if (!$padlock_mine_at || time - $padlock_mine_at > 60) {
-		@padlock_mine = split /\s+/, `hostname -I 2>/dev/null`;
-		# `hostname -I` is not on every distro (this laptop's hostname rejects
-		# it), and an empty list made its own browser look remote: the local
-		# fingerprint was refused and the host would not refuse its own
-		# signature. Read the addresses from ip(8) instead, then hostname -i.
-		unless (@padlock_mine) {
-			my $ipout = `ip -4 -o addr show 2>/dev/null`;
-			while ($ipout =~ /inet\s+([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)/g) { push @padlock_mine, $1; }
-		}
-		unless (@padlock_mine) {
-			@padlock_mine = split /\s+/, `hostname -i 2>/dev/null`;
-		}
+		# Every address this machine answers on, IPv4 first. hostname(1) -I is not
+		# on every distro (this laptop's rejects it), and an empty list made a
+		# machine's own browser look remote: the local fingerprint was refused
+		# and the host would not refuse its own signature. The platform seam reads
+		# ip(8) - or ifconfig - once, and falls back on its own.
+		require JawnOS::Platform::Net;
+		@padlock_mine = @{ JawnOS::Platform::Net::addresses() };
 		$padlock_mine_at = time;
 	}
 	return 1 if grep { $_ eq $remote } @padlock_mine;

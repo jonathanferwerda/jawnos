@@ -242,12 +242,7 @@ sub ble_device_record {
 	my $chip_id = $data->{'chip_id'} || return;
 	my $edt = $data->{'edt'} || 'watch';
 	my $now = &subs::rightNow();
-	my $hostname = $gb::ble_hostname;
-	unless ($hostname) {
-		$hostname = `hostname`;
-		chomp $hostname;
-		$gb::ble_hostname = $hostname;
-	}
+	my $hostname = &subs::machine_hostname();
 	my $row;
 	foreach my $r ( @{ &subs::db_select('devices')->hashes } ) {
 		my $h = $r->{'hostname'} || '';

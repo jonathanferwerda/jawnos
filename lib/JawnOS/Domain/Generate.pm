@@ -167,8 +167,7 @@ sub manager_file_maker {
 	my $session_name = shift;
 	my ($my_name,$hostname,$hostnamer,$database);
 	(undef,$database) = &subs::database_grabber();
-	$hostname = `hostname`;
-	chomp $hostname;
+	$hostname = &subs::machine_hostname();
 	$hostnamer = eval { return &subs::db_select('devices', ['name'], { hostname => $hostname } )->hash->{name} };
 	$my_name = $session_name || &subs::setting_grabber({ app => 'me', setting => 'my_name' });
 	# The computer segment is this machine's own name, never the mesh-synced
@@ -446,8 +445,7 @@ sub log_writer {
 
 	my $sl = encode_json $settings->{'log'};
 	&subs::setting_setter({ app => 'terminal', setting => 'log', value => $sl });
-	my $hostname = `hostname`;
-	chomp $hostname;
+	my $hostname = &subs::machine_hostname();
 	&Websocket::send('server', { view => 'log', console => $logg, error => $uuid, whoami => ($ENV{'USER'} || ''), hostname => $hostname });
 	return $data;
 }
@@ -510,7 +508,7 @@ sub code_revision {
 		# ignores them too), so `dirty` means tracked files were modified
 		$dirty = 1 if (`git status --porcelain --untracked-files=no 2>/dev/null` =~ /\S/);
 	}
-	my $hostname = `hostname`; chomp $hostname;
+	my $hostname = &subs::machine_hostname();
 	$code_revision_cache = {
 		fingerprint => $fingerprint,
 		commit => $commit,

@@ -411,7 +411,7 @@ sub house_levels_sync {
 	my $opts = shift || {};
 	my ($connect_timeout, $inactivity_timeout) = $opts->{'fast'} ? (2, 3) : (6, 10);
 	my $me = &signatorial_designer();
-	my $hostname = `hostname`; chomp $hostname;
+	my $hostname = &subs::machine_hostname();
 	my $embedded_cache = &embedded_levels_cache();
 	my $devices = (($embedded_cache->{'at'} || 0) + 300000 > &rightNow())
 		? $embedded_cache->{'devices'}
@@ -683,7 +683,7 @@ sub levels_snapshot {
 		last;
 	}
 	unless ($local) {
-		my $hostname = `hostname`; chomp $hostname;
+		my $hostname = &subs::machine_hostname();
 		$local = { signatorial => $me, hostname => $hostname, device => &device_setter(), version => &jawn_version() };
 		unshift @{ $snap->{'machines'} }, $local;
 	}
