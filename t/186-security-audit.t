@@ -9,8 +9,9 @@ use FindBin;
 use lib "$FindBin::Bin/lib", "t/lib";
 use Test::More;
 use Cwd qw(abs_path);
-use File::Slurp qw(read_file);
+use File::Slurp qw(read_file write_file);
 use File::Temp qw(tempdir);
+use File::Path qw(make_path);
 use JSON::PP;
 
 my $root = abs_path("$FindBin::Bin/..");
@@ -61,5 +62,29 @@ SKIP: {
 	is(scalar read_file("$dir/status.txt"), "ok\n", 'a clean run writes the ok status');
 	is($doc->{'sections'}[0]{'title'}, 'Findings', 'it carries the findings table the panel renders');
 }
+
+# A fixture repo proves the guards fire, so a rule that silently stops matching
+# is caught. The audit greps git-tracked source, so the fixture is committed,
+# not merely written.
+my $fx = tempdir(CLEANUP => 1);
+make_path("$fx/lib", "$fx/perl");
+write_file("$fx/lib/Bad.pm", join "\n",
+	'package Bad;',
+	'my $x = $row->{\'secret\'};',
+	'my $y = `echo "$x" | base64 --decode`;',
+	'my $z = subs::peer_verify($c, $rm);',
+	'1;',
+	'');
+write_file("$fx/perl/Keep.pl", "1;\n");
+system('git', '-C', $fx, 'init', '-q');
+system('git', '-C', $fx, 'config', 'user.email', 'test@example.invalid');
+system('git', '-C', $fx, 'config', 'user.name', 'JawnOS test');
+system('git', '-C', $fx, 'add', '-A');
+is(system('git', '-C', $fx, 'commit', '-q', '-m', 'fixture'), 0, 'the fixture repo commits');
+my $fx_json = `perl "$root/scripts/security_audit.pl" --check --json --root "$fx" 2>&1`;
+my $fx_report = eval { JSON::PP->new->decode($fx_json) } || {};
+my %fx_ids = map { $_->{'id'} => 1 } @{ $fx_report->{'findings'} || [] };
+ok($fx_ids{'perl.shell.base64'}, 'the shell-base64 rule fires on a fixture') or diag($fx_json);
+ok($fx_ids{'peer.no_pin'}, 'the unpinned-peer rule fires on a fixture') or diag($fx_json);
 
 done_testing();

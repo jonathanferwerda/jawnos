@@ -79,8 +79,27 @@ sub is_tracked($path) {
 	return ($rc == 0 && $out =~ /\S/) ? 1 : 0;
 }
 
+# The lines of one tracked file, memoised: a rule that needs context around a
+# grep hit reads the file once, not once per hit.
+my %source_line_cache;
+sub source_lines($path) {
+	return $source_line_cache{$path} if exists $source_line_cache{$path};
+	open(my $fh, '<', $path) or return $source_line_cache{$path} = [];
+	my @lines = <$fh>;
+	close $fh;
+	return $source_line_cache{$path} = \@lines;
+}
+
 # Git grep over tracked source. Returns (path, line, text) triples.
+# A pathspec the tree does not have is a skip, not a fatal: the same script runs
+# on a partial tree (a fixture, or a distribution without firmware), and git
+# grep exits 128 when one pathspec matches nothing.
 sub grep_tree($pattern, @paths) {
+	if (@paths) {
+		my @have = grep { -e $_ } @paths;
+		return () unless @have;
+		@paths = @have;
+	}
 	my @args = ('git', '-C', $root, 'grep', '-n', '-I', '-E', '--', $pattern);
 	push @args, @paths if @paths;
 	my ($rc, $out) = capture(@args);
@@ -183,6 +202,28 @@ for my $hit ( grep_tree('return \(\$stored \? 0 : 1\)', 'lib') ) {
 	finding('high', 'auth.peer.unsigned', 'authentication',
 		'a keyless peer is accepted without a signature', path => $hit->[0], line => $hit->[1],
 		evidence => redact($hit->[2]), fix => 'require X-Peer-Signature on every peer request');
+}
+
+# A signatorial is a name, not a secret (it rides in query strings and mirror
+# lists). peer_verify's trust-on-first-contact is for the handshake that enrols
+# a machine; the rails that deploy, restart, read the database, drive the
+# keyboard or hand out tickets must name a key already pinned on the roster.
+# Exceptions: the primitive and its strict wrapper, app_peer_ok (it matches the
+# offered key against a stored one), and the address directory's first boot.
+for my $hit ( grep_tree('peer_verify\(\$c', 'lib', 'perl') ) {
+	my ($path, $line, $text) = @{$hit};
+	next if $text =~ /^\s*#/;
+	next if $path =~ m{^(?:lib/JawnOS/Domain/Crypt\.pm|lib/JawnOS/Manager/Part30\.pm|perl/AddressDirectory\.pl)$};
+	# The remote_auth_test handshake is the signed door that pins a new machine.
+	next if $path =~ m{/manager_misc14\.pm$} && $text =~ /\$cand/;
+	my $lines = &source_lines($path);
+	my $from = $line > 7 ? $line - 7 : 1;
+	my $near = join '', @{$lines}[ $from - 1 .. $line - 1 ];
+	next if $near =~ /pubkey/;
+	finding('high', 'peer.no_pin', 'authentication',
+		'a peer rail verifies a signature without a pinned key', path => $path, line => $line,
+		evidence => redact($text),
+		fix => 'require $rm->{\'pubkey\'} before peer_verify; keep TOFU to the enrolment handshake');
 }
 
 for my $hit ( grep_tree('-----BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY-----', '.') ) {
