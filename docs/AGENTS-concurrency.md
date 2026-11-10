@@ -23,19 +23,21 @@ every landing touches:
 
 ## Which landing method
 
-Three paths, and the condition picks one:
+Three paths, and the condition picks one. Agents queue; the other two are for a human owner.
 
-- **Queue it** (`perl scripts/land_enqueue.pl`, the default when more than one agent is working):
+- **Queue it** (`perl scripts/land_enqueue.pl`, the default for agents; use it whenever more than
+  one agent is working):
   commit the branch, run the script, and let the coordinator land it. You do not push or restart,
   and **you do not delete the worktree**. `perl scripts/land_status.pl --branch <branch>` is the
   verdict; when it says landed, the branch is on the trunk and the worktree may go (or wait for
   `worktree_gc`). A refused ticket keeps the worktree: fix, re-enqueue, and never run
   `agent_land.pl` on the same branch.
-- **Land it yourself** (`perl ~/jawnos/scripts/agent_land.pl`, from the worktree root): one agent at
-  the gate, which the lock makes safe. It bumps `VERSION`, runs the suite once, pushes, restarts and
+- **Land it yourself** (`perl ~/jawnos/scripts/agent_land.pl`, from the worktree root): the human
+  owner's path, or a lone agent's; one agent at the gate, which the lock makes safe. It bumps
+  `VERSION`, runs the suite once, pushes, restarts and
   removes the worktree. `--keep` is only for work that continues (an open checkpoint) or a handoff;
   a refusal keeps the worktree anyway.
-- **Hand-land as the owner** (the old "Alone" path): only when you are the **sole agent on this box
+- **Hand-land as the owner** (the human-only path): only when you are the **sole agent on this box
   and the primary checkout is yours** — no other agent is working and no queue is draining. Then
   `perl scripts/version_bump.pl` → commit with `JAWNOS_ALLOW_PRIMARY_COMMIT=1` → `git push` →
   `perl scripts/restart.pl`. This is the only hand push/restart; with another agent active it is the
@@ -136,7 +138,7 @@ and reported", not "landed"; nothing else is owed, and the next attempt is a del
 
 ## The landing queue and the train
 
-The lander is still the hand landing, but a busy checkout runs a queue.
+Queueing is the agent path; the lander is the hand path.
 `perl scripts/land_enqueue.pl` from the worktree validates the branch, backs it up to origin and
 writes a ticket in `<git-common-dir>/land-queue/`. With `--authority <host>` the ticket is written
 by the authority's copy over ssh instead, so a worker box never owns a second queue. The coordinator

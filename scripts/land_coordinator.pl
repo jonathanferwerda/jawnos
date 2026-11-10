@@ -29,7 +29,7 @@ use warnings;
 
 use Cwd qw(abs_path getcwd);
 use Fcntl qw(:flock);
-use File::Path qw(rmtree);
+use File::Path qw(make_path rmtree);
 use File::Temp qw(tempdir tempfile);
 use FindBin;
 use Getopt::Long qw(GetOptions);
@@ -172,8 +172,39 @@ sub run_wave {
 		return { result => 'fetch_failed', stop => 1 };
 	}
 
-	my $parent = tempdir('jawnos-train-XXXXXX', TMPDIR => 1, CLEANUP => 0);
-	my $tmp    = "$parent/tree";
+	# The train must not live under /tmp: the relay deliberately refuses /tmp,
+	# and a train there makes t/71 fail for a reason that has nothing to do with
+	# the ticket. Use the QA root (the systemd unit leaves it writable), or the
+	# home directory for a hand run.
+	my $train_root = $ENV{'JAWNOS_QA_ROOT'} || (($ENV{'HOME'} || '.') . '/jawnos-qa');
+	$train_root =~ s{/+$}{};
+	my $train_parent = "$train_root/train";
+	make_path($train_parent) unless -d $train_parent;
+
+	# A coordinator that died can leave a detached train worktree, which
+	# worktree_gc would keep. A wave is minutes; an hour is certainly dead.
+	if (opendir(my $tdh, $train_parent)) {
+		for my $name (grep { /^jawnos-train-/ } readdir $tdh) {
+			my $path = "$train_parent/$name";
+			next unless -d $path;
+			my $age = time - ((stat($path))[9] || 0);
+			next if $age < 3600;
+			git_in($root, 'worktree', 'remove', '--force', "$path/tree");
+			rmtree($path);
+		}
+		closedir $tdh;
+	}
+
+	my $parent = eval { tempdir('jawnos-train-XXXXXX', DIR => $train_parent, CLEANUP => 0) };
+	if (!$parent) {
+		my $why = $@ || 'tempdir failed';
+		$why =~ s/\s+$//;
+		requeue($dir, $wave, 60);
+		release($lock);
+		logit("cannot make the train worktree under $train_parent: $why");
+		return { result => 'worktree_failed', stop => 1 };
+	}
+	my $tmp = "$parent/tree";
 	my ($wrc, $wout) = git_in($root, 'worktree', 'add', '--detach', $tmp, "origin/$opt->{'trunk'}");
 	if ($wrc != 0) {
 		requeue($dir, $wave, 60);

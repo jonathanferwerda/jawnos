@@ -85,10 +85,12 @@ like(read_file("$root/.gitignore"), qr{^/\.worktrees/$}m,
 	'.worktrees is ignored, so a worktree cannot dirty the primary checkout');
 
 # --- the landing conditions and the handheld build note ---------------------
-like($text, qr/sole agent.*owns the primary/s,
-	'the map names the only hand-landing case');
+like($text, qr/human owner/, 'the map makes hand-landing the human owner\'s path');
+like($text, qr/Queue a committed\s+branch with `scripts\/land_enqueue\.pl`/s,
+	'and makes the queue the agent default');
 like($concurrency, qr/sole agent.*primary checkout/s,
 	'the worktree doc names it in full');
+like($concurrency, qr/default for agents/, 'and makes the queue the agent default');
 like($concurrency, qr/land_enqueue\.pl.*do not delete the worktree/s,
 	'the queued path says what happens to the worktree');
 like($concurrency, qr/refused\s+and\s+reported/,

@@ -9,6 +9,7 @@ Type=oneshot
 User=jawn
 WorkingDirectory=/home/jawn/jawnos
 Environment=HOME=/home/jawn
+Environment=JAWNOS_QA_ROOT=/home/jawn/jawnos-qa
 # One drain at a time. The script also holds land-coordinator.lock, so a manual
 # run and the timer cannot both drain.
 ExecStart=/usr/bin/perl /home/jawn/jawnos/scripts/land_coordinator.pl --train-size 6 --jobs 4

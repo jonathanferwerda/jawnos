@@ -81,9 +81,9 @@ user for the exact file/folder/name. A wrong guess costs far more tokens than a 
 
 ## Many agents at once
 
-The primary checkout is read-only for agents: a dirty one blocks every landing. Land with
-`perl ~/jawnos/scripts/agent_land.pl` (the primary copy) or queue with `scripts/land_enqueue.pl`;
-never push or restart by hand. The paths, the worktree and `--keep`: `docs/AGENTS-concurrency.md`.
+The primary checkout is read-only for agents: a dirty one blocks every landing. Queue a committed
+branch with `scripts/land_enqueue.pl`; the coordinator lands it. Hand-land only as a human owner;
+never push or restart by hand. Details: `docs/AGENTS-concurrency.md`.
 
 ## Crash-resilient agent work
 
@@ -190,10 +190,10 @@ translatable in the same change:
   `lib/JawnOS/Domain/Loader.pm` (`t/91`), a route action its row in `lib/JawnOS/Routes/` (`t/58`), and
   a new app page a help topic with `app => <name>` (`t/11`).
 - **Cap parallel jobs on this shared box:** `pio run -j 4`, `gradle --max-workers=4`, `make -j4`.
-- **Land once, then stop.** Commit in your worktree (`git add -p`), then land or queue (the rule
-  above). A refusal ends the attempt: report it; the worktree and checkpoint stay. Only a sole agent
-  that owns the primary may hand-land (`version_bump.pl` → `JAWNOS_ALLOW_PRIMARY_COMMIT=1` → push →
-  `restart.pl`). `--keep` only for work that continues or a handoff. Hot files, worktrees and the
+- **Land once, then stop.** Commit in your worktree (`git add -p`), then queue it with
+  `scripts/land_enqueue.pl`. A human owner alone may land with
+  `perl ~/jawnos/scripts/agent_land.pl`. A refusal ends the attempt: report it; the worktree and
+  checkpoint stay. `--keep` only for work that continues or a handoff. Hot files, worktrees and the
   commit identity: `docs/AGENTS-concurrency.md`.
 
 ---

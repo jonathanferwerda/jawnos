@@ -24,10 +24,14 @@ my $real = abs_path("$FindBin::Bin/..");
 my $SUITE = <<'PL';
 #!/usr/bin/perl
 use strict; use warnings;
+use Cwd qw(getcwd);
 my $dir = $ENV{'LAND_TEST_DIR'} || die "no LAND_TEST_DIR\n";
 open(my $fh, '>>', "$dir/suite") or die $!;
 print $fh "@ARGV\n";
 close $fh;
+open(my $cwd_fh, '>>', "$dir/cwd") or die $!;
+print $cwd_fh getcwd(), "\n";
+close $cwd_fh;
 # The train worktree is the cwd, so a branch that adds BREAK makes this red.
 exit(-e 'BREAK' ? 1 : 0);
 PL
@@ -71,6 +75,9 @@ sub git {
 
 sub fixture {
 	my $dir     = tempdir(CLEANUP => 1);
+	# The train must not be under /tmp (t/71 exercises the relay's /tmp refusal), so
+	# the fixture's QA root is under HOME, as the systemd unit's is.
+	my $qa      = tempdir('land-qa-XXXXXX', DIR => ($ENV{'HOME'} || '.'), CLEANUP => 1);
 	my $origin  = "$dir/origin.git";
 	my $primary = "$dir/primary";
 	my $wt1     = "$dir/work-one";
@@ -113,7 +120,7 @@ sub fixture {
 
 	return {
 		dir => $dir, origin => $origin, primary => $primary,
-		wt1 => $wt1, wt2 => $wt2, marker => $marker,
+		wt1 => $wt1, wt2 => $wt2, marker => $marker, qa => $qa,
 	};
 }
 
@@ -140,6 +147,7 @@ sub enqueue {
 sub coordinator {
 	my ($f, @args) = @_;
 	local $ENV{'LAND_TEST_DIR'} = $f->{'marker'};
+	local $ENV{'JAWNOS_QA_ROOT'} = $f->{'qa'};
 	my $cwd = getcwd();
 	chdir $f->{'primary'} or die "chdir primary: $!";
 	my ($rc, $out) = sh($^X, 'scripts/land_coordinator.pl', @args);
@@ -208,6 +216,11 @@ subtest 'two branches land in one wave, with one suite and one restart' => sub {
 	my @suite = lines("$f->{'marker'}/suite");
 	is(scalar @suite, 1, 'the wave ran the suite exactly once');
 	like($suite[0], qr/--jobs 1/, 'with the coordinator job cap');
+
+	my @cwd = grep { length } split /\n/, read_file("$f->{'marker'}/cwd");
+	ok(@cwd && index($cwd[0], "$f->{'qa'}/train") == 0,
+		'the train runs under the QA root');
+	unlike($cwd[0] // '', qr{^/tmp/}, 'not under /tmp, where the relay refuses sockets');
 
 	my @restart = lines("$f->{'marker'}/restart");
 	is(scalar @restart, 1, 'the wave restarted once');
@@ -376,6 +389,7 @@ subtest 'the systemd units run the coordinator and point the timer at it' => sub
 	like($service, qr{ExecStart=.*land_coordinator\.pl --train-size 6 --jobs 4},
 		'it runs the coordinator with the wave and job caps');
 	like($service, qr{^TimeoutStartSec=4h}m, 'a wave may serve several branches');
+	like($service, qr{^Environment=JAWNOS_QA_ROOT=}m, 'the unit pins the QA root for the train');
 	like($timer, qr{^Unit=jawnos-land-coordinator\.service}m, 'the timer fires the service');
 	like($timer, qr{OnUnitActiveSec=60s}, 'and re-arms a minute after the drain ends');
 };
