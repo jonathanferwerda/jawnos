@@ -38,8 +38,9 @@ sub spew {
 	close $fh;
 }
 
-# The pristine tree shape the image ships: the seed files, the setup script and
-# the language catalogue. The live database is deliberately not copied.
+# The pristine tree shape the image ships: the seed files, the setup script,
+# the language catalogue and lib/ (the setup script now shares the database
+# bootstrap with the app). The live database is deliberately not copied.
 sub make_tree {
 	my ($name) = @_;
 	my $dir = "$tmp/$name";
@@ -48,6 +49,7 @@ sub make_tree {
 	copy( "$root/database/initial.enc",   "$dir/database/initial.enc" )   or die "seed: $!";
 	copy( "$root/scripts/jawnos_setup.pl", "$dir/scripts/jawnos_setup.pl" ) or die "setup: $!";
 	symlink( "$root/perl", "$dir/perl" ) or die "perl: $!";
+	symlink( "$root/lib",  "$dir/lib" )  or die "lib: $!";
 	return $dir;
 }
 

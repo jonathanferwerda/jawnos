@@ -36,6 +36,7 @@ copy("$root/database/schema.sql", "$dir/database/schema.sql") or die "schema: $!
 copy("$root/database/initial.enc", "$dir/database/initial.enc") or die "seed: $!";
 copy("$root/scripts/jawnos_setup.pl", "$dir/scripts/jawnos_setup.pl") or die "setup: $!";
 symlink("$root/perl", "$dir/perl") or die "perl: $!";
+symlink("$root/lib",  "$dir/lib")  or die "lib: $!";
 
 my $pid = open(my $setup, '-|');
 die "fork: $!" unless defined $pid;

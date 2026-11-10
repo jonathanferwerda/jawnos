@@ -493,65 +493,23 @@ sub database_bootstrap {
 
 sub _database_seed_from_factory {
 	my ($seed, $db) = @_;
-	my $openssl = &_database_openssl();
-	return 0 unless $openssl;
-	# factory_seed.pl writes the ciphertext, then appends the splitter and an
-	# encrypted note naming the cipher. openssl cannot read past the note, so the
-	# ciphertext is cut out first. The note names aes-256-cbc today; a different
-	# seed falls through to the schema rather than guessing.
+	require JawnOS::Database::Bootstrap;
 	my $splitter = $gb::universal_splitter || '--simple--split--and--whatnot--';
-	open(my $in, '<:raw', $seed) or return 0;
-	my $raw = do { local $/; <$in> };
-	close $in;
-	my $cut = rindex($raw, $splitter);
-	$raw = substr($raw, 0, $cut) if $cut >= 0;
-	my $tmp = "$db.seed.$$";
-	open(my $out, '>:raw', $tmp) or return 0;
-	my $written = print {$out} $raw;
-	close $out;
-	return 0 unless $written;
-	my $rc = system($openssl, 'enc', '-d',
-		'-k', 'JAWNOS-FACTORY-SEED-v1', '-aes-256-cbc', '-pbkdf2',
-		'-in', $tmp, '-out', $db);
-	unlink $tmp;
-	eval { chmod 0600, $db };
-	return ($rc == 0 && -e $db && -s $db > 5000) ? 1 : 0;
+	my ($ok) = JawnOS::Database::Bootstrap::seed_from_factory(
+		$seed, $db, splitter => $splitter);
+	return $ok ? 1 : 0;
 }
 
 sub _database_build_from_schema {
 	my ($schema, $db) = @_;
-	return 0 unless -e $schema;
-	open(my $in, '<', $schema) or return 0;
-	my $sql_text = do { local $/; <$in> };
-	close $in;
-	return 0 unless defined $sql_text && length $sql_text;
-	require DBI;
-	my $dbh = eval {
-		DBI->connect("dbi:SQLite:dbname=$db", '', '',
-			{ RaiseError => 1, PrintError => 0 });
-	};
-	return 0 unless $dbh;
-	my $ok = eval {
-		# the shipped schema is many statements and has no triggers
-		$dbh->{'sqlite_allow_multiple_statements'} = 1;
-		$dbh->do($sql_text);
-		1;
-	};
-	eval { $dbh->disconnect };
-	eval { chmod 0600, $db };
-	return ($ok && -e $db && -s $db > 5000) ? 1 : 0;
+	require JawnOS::Database::Bootstrap;
+	my ($ok) = JawnOS::Database::Bootstrap::build_from_schema($schema, $db);
+	return $ok ? 1 : 0;
 }
 
 sub _database_openssl {
-	require JawnOS::Platform;
-	my $path = JawnOS::Platform::tool_path('openssl');
-	return $path if $path;
-	my $perl = $^X;
-	if ($perl =~ m{^(.*?)[/\\]perl[/\\]bin[/\\]perl(?:\.exe)?$}i) {
-		my $candidate = "$1/c/bin/openssl.exe";
-		return $candidate if -f $candidate;
-	}
-	return undef;
+	require JawnOS::Database::Bootstrap;
+	return JawnOS::Database::Bootstrap::openssl_path();
 }
 
 sub database_grabber {

@@ -40,10 +40,12 @@ use JSON::PP ();
 use Mojo::SQLite;
 use File::Slurp qw(read_file write_file);
 use File::Path qw(make_path);
+use File::Copy qw(copy);
 use Crypt::Simple;
 use Digest::MD5 qw(md5_hex);
 use Getopt::Long qw(GetOptions);
 use Cwd ();
+use JawnOS::Database::Bootstrap qw(seed_from_factory build_from_schema backup_database);
 
 # run from the repo root (the parent of scripts/)
 my $root = Cwd::abs_path("$Bin/..");
@@ -77,7 +79,14 @@ GetOptions(
 # ---------------------------------------------------------------------------
 sub jawn_home {
 	my $p = shift;
-	my $h = $ENV{'HOME'} || '';
+	# the platform module knows USERPROFILE on Windows, where there is no HOME
+	# and getpwuid is unimplemented. HOME is still the first answer on Unix.
+	my $loaded = eval {
+		require JawnOS::Platform;
+		1;
+	};
+	my $h = $loaded ? JawnOS::Platform::home() : undef;
+	$h = $ENV{'HOME'} || '' unless defined $h;
 	$p =~ s{^~}{$h};
 	return $p;
 }
@@ -96,14 +105,6 @@ sub encrypter {
 	local *decrypt;
 	Crypt::Simple->import( passphrase => $secret );
 	return encrypt($content);
-}
-
-sub decrypter {
-	my ( $secret, $content ) = @_;
-	local *encrypt;
-	local *decrypt;
-	Crypt::Simple->import( passphrase => $secret );
-	return decrypt($content);
 }
 
 # The factory seed database/initial.enc is sealed under this code (must match
@@ -220,24 +221,28 @@ sub make_database {
 	# the template: the factory seed when it is there and opens, else a fresh
 	# database from the shipped schema. The seed carries the factory settings
 	# (appearance and configuration defaults); the schema build carries the same
-	# few defaults inserted below.
+	# few defaults inserted below. Both paths live in
+	# lib/JawnOS/Database/Bootstrap.pm, which the app's own first request
+	# (subs::database_bootstrap) calls too - there is one implementation, not two.
 	my $seeded = 0;
 	if ( -e 'database/initial.enc' ) {
-		my $seed_standard = $standard;
-		my $data = `tail database/initial.enc`;
-		my ( undef, $app ) = split /\Q$splitter\E/, $data, 2;
-		my $decoded = $app ? decrypter( $FACTORY_CODE, $app ) : '';
-		$seed_standard = $decoded if $decoded && $decoded =~ /^[a-z0-9-]+$/i;
-		`openssl enc -d -k "$FACTORY_CODE" -$seed_standard -pbkdf2 -in database/initial.enc -out $working 2>/dev/null`;
-		$seeded = 1 if -s $working > 5000;
+		my ($ok) = seed_from_factory(
+			'database/initial.enc', $working,
+			splitter     => $splitter,
+			factory_code => $FACTORY_CODE,
+			standard     => $standard,
+		);
+		$seeded = 1 if $ok;
 	}
 	unless ($seeded) {
 		unless ( -e 'database/schema.sql' ) {
 			return { error => 'database/schema.sql is missing.' };
 		}
-		my $build = `sqlite3 $working < database/schema.sql 2>&1`;
-		if ( $? != 0 || !-e $working ) {
-			return { error => "Could not build the database: $build" };
+		my ($ok, $error) = build_from_schema('database/schema.sql', $working);
+		unless ($ok) {
+			$error = '' unless defined $error;
+			$error =~ s/\s+$//;
+			return { error => "Could not build the database: $error" };
 		}
 	}
 
@@ -336,29 +341,44 @@ sub make_database {
 	# .seeded marker on the strength of this answer, and a partial live database
 	# then takes the whole tree down in a crash loop.
 	unlink "$live_db-wal", "$live_db-shm";
-	system('cp', '-f', $working, $live_db);
-	if ( $? != 0 || !-s $live_db ) {
+	copy($working, $live_db) or return { error => "could not write the live database at $live_db." };
+	if ( !-e $live_db || !-s $live_db ) {
 		return { error => "could not write the live database at $live_db." };
 	}
 	# the schema probe is the same one firstboot uses: an empty file or a copy
-	# that stopped halfway must not be reported as a finished house. Run sqlite3
-	# with an argument list, not a shell string: an install path may contain
-	# spaces or a quote.
+	# that stopped halfway must not be reported as a finished house. Ask
+	# DBD::SQLite directly - a clean Windows box has no sqlite3 command. The
+	# message keeps the shape callers and the firstboot test expect.
 	my $probe = '';
-	my $probe_status = -1;
-	if ( open( my $fh, '-|', 'sqlite3', $live_db, 'select count(*) from sync_jobs' ) ) {
-		local $/;
-		$probe = <$fh> // '';
-		close $fh;
-		$probe_status = $?;
+	my $probe_ok = 0;
+	{
+		require DBI;
+		my $dbh = eval {
+			DBI->connect("dbi:SQLite:dbname=$live_db", '', '',
+				{ RaiseError => 1, PrintError => 0, ReadOnly => 1 });
+		};
+		if ($dbh) {
+			my $count = eval { $dbh->selectrow_array('select count(*) from sync_jobs') };
+			if ( defined $count && $count =~ /^\s*\d+\s*$/ ) {
+				$probe = $count;
+				$probe_ok = 1;
+			}
+			else {
+				$probe = $@ || '';
+			}
+			eval { $dbh->disconnect };
+		}
+		else {
+			$probe = $@ || '';
+		}
 	}
-	if ( $probe_status != 0 || $probe !~ /^\s*\d+\s*$/ ) {
+	if ( !$probe_ok ) {
 		$probe = '' unless defined $probe;
 		$probe =~ s/\s+/ /g;
 		return { error => "the live database at $live_db has no schema: $probe" };
 	}
 	my $temp_backup = $working . '.1.db';
-	`sqlite3 $working ".backup '$temp_backup'"`;
+	backup_database($working, $temp_backup);
 	`openssl enc -e -k "$code" -$standard -pbkdf2 -in $temp_backup -out $enc_file`;
 	unless ( -e $enc_file && -s $enc_file > 100 ) {
 		return { error => 'openssl failed to encrypt the database.' };
@@ -370,8 +390,14 @@ sub make_database {
 		close $fh;
 	}
 
-	`shred -u $working $temp_backup $working-wal $working-shm 2>/dev/null`;
-	`rm -f $working-wal $working-shm $temp_backup`;
+	if ($^O eq 'MSWin32') {
+		# Windows has no shred; removing the working copies is the whole job.
+		unlink $working, $temp_backup, "$working-wal", "$working-shm";
+	}
+	else {
+		`shred -u $working $temp_backup $working-wal $working-shm 2>/dev/null`;
+		`rm -f $working-wal $working-shm $temp_backup`;
+	}
 
 	return { ok => 1, enc_file => $enc_file, database => $live_db, code => $code, seeded => $seeded };
 }

@@ -160,7 +160,39 @@ if ($install && -f $runtime_marker) {
 # that cannot install one keeps working with its fallback). Piper is the first;
 # add another by pushing one more row. `--extras-only` is what the update hook
 # runs, so a new version's new app lands without a hand.
-my $home = $ENV{'HOME'} || (getpwuid $<)[7] || '';
+# The extras live under the user's home. Ask the platform module when the tree
+# is beside the script; the fallback chain below is the same one it uses, kept
+# here because this checker must run with only core Perl. getpwuid is
+# unimplemented on Windows and dies when called, so it stays behind an eval.
+sub home_from_env {
+	my ($env) = @_;
+	$env ||= \%ENV;
+	my $home = $env->{'HOME'};
+	$home = $env->{'USERPROFILE'} if !defined $home || !length $home;
+	if (!defined $home || !length $home) {
+		my $drive = $env->{'HOMEDRIVE'} || '';
+		my $path  = $env->{'HOMEPATH'} || '';
+		$home = $drive . $path if length $drive || length $path;
+	}
+	if (!defined $home || !length $home) {
+		$home = eval { (getpwuid($<))[7] } || '';
+	}
+	return defined $home ? $home : '';
+}
+
+sub resolve_home {
+	my $loaded = eval {
+		require JawnOS::Platform;
+		1;
+	};
+	if ($loaded) {
+		my $home = JawnOS::Platform::home();
+		return $home if defined $home && length $home;
+	}
+	return home_from_env(\%ENV);
+}
+
+my $home = resolve_home();
 my $piper_dir   = "$home/.local/share/jawnos/piper";
 my $whisper_dir = "$home/.local/share/jawnos/whisper";
 my $rtc_dir     = "$home/.local/share/jawnos/rtc";
@@ -190,7 +222,11 @@ if ($extras_only) {
 my @tools = (
 	{ cmd => 'perl',      apt => 'perl',             pacman => 'perl',           termux => 'perl',             label => 'Perl' },
 	{ cmd => 'openssl',   apt => 'openssl',          pacman => 'openssl',        termux => 'openssl',          label => 'OpenSSL' },
-	{ cmd => 'sqlite3',   apt => 'sqlite3',          pacman => 'sqlite',         termux => 'sqlite',           label => 'SQLite' },
+	# DBD::SQLite is the driver the tree actually uses, and the runtime carries it.
+	# The sqlite3 CLI is what the QA scripts and a few maintenance flows call, so
+	# Linux and Android keep the row; a clean Windows box has no CLI and needs
+	# none for first-run setup, so it is not demanded there.
+	{ cmd => 'sqlite3',   apt => 'sqlite3',          pacman => 'sqlite',          termux => 'sqlite',           label => 'SQLite', required_on => sub { $^O ne 'MSWin32' } },
 	{ cmd => 'argon2',    apt => 'argon2',           pacman => 'argon2',         termux => 'argon2',           label => 'argon2 (recovery KDF)' },
 	{ cmd => 'curl',      apt => 'curl',             pacman => 'curl',           termux => 'curl',             label => 'curl' },
 	{ cmd => 'ssh',       apt => 'openssh-client',   pacman => 'openssh',        termux => 'openssh',          label => 'OpenSSH' },
@@ -320,8 +356,16 @@ sub which {
 	return $path;
 }
 
+sub tool_required {
+	my ($t) = @_;
+	my $predicate = $t->{'required_on'};
+	return 1 unless ref $predicate eq 'CODE';
+	return $predicate->() ? 1 : 0;
+}
+
 sub have_command {
 	my $t = shift;
+	return 1 unless tool_required($t);
 	return 1 if which($t->{'cmd'});
 	return 1 if $t->{'alt'} && which($t->{'alt'});
 	return 0;
@@ -963,6 +1007,7 @@ sub freshness_report {
 	my (%seen_deb, %seen_arch);
 	my @deb_packages;
 	for my $tool (@tools) {
+		next unless tool_required($tool);
 		my $package = $tool->{'apt'};
 		next unless defined $package && length $package;
 		next if $seen_deb{$package}++;
@@ -1018,6 +1063,7 @@ sub freshness_report {
 
 	my @arch_packages;
 	for my $tool (@tools) {
+		next unless tool_required($tool);
 		my $package = $tool->{'pacman'};
 		next unless defined $package && length $package;
 		next if $seen_arch{$package}++;
