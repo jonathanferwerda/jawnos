@@ -198,27 +198,38 @@ is( &subs::home_plate_stop_armed({ duties => [
 ] }), 1, 'one armed duty is enough among several' );
 
 # ------------------------------------------- how long a stopped visit can resume
-# The reopen window is three navigation intervals, not a fixed fifteen minutes,
-# so it follows the utility controller's navigation pace on the machine that
-# produced the fix. A named machine answers with its own row; the local one with
-# no name.
+# The reopen window is three navigation intervals, capped at twenty minutes, so
+# it follows the utility controller's navigation pace on the machine that
+# produced the fix without letting a very slow pace hold an old visit.
 use Mojo::JSON qw(encode_json);
 {
 	no warnings 'redefine';
 	local *subs::signatorial_designer = sub { return 'sig' };
 	local *subs::setting_grabber = sub {
 		return encode_json({
-			sig   => { navigation => { interval => 240 } },
-			other => { navigation => { interval => 600 } },
+			sig    => { navigation => { interval => 240 } },
+			other  => { navigation => { interval => 600 } },
+			brisk  => { navigation => { interval => 60 } },
 		});
 	};
 	is(&subs::navigation_interval(), 240, 'the local navigation interval comes from the utility controller');
 	is(&subs::navigation_interval('other'), 600, 'another machine reads its own interval');
+	is(&subs::navigation_reopen_window('brisk'), 180_000, 'three intervals at a brisk pace');
+	is(&subs::navigation_reopen_window('sig'), 720_000, 'and three at the default four-minute pace');
+}
+{
+	no warnings 'redefine';
+	local *subs::navigation_interval = sub { return 600 };
+	is(&subs::navigation_reopen_window('slow'), 1_200_000, 'a slow pace is capped at twenty minutes');
+	local *subs::navigation_interval = sub { return 3600 };
+	is(&subs::navigation_reopen_window('slower'), 1_200_000, 'an hour-long pace is capped too');
 }
 
 my $appointment_src = read_file("$root/lib/JawnOS/Domain/Appointment.pm");
-like($appointment_src, qr/my \$reopen_window = 3 \* &navigation_interval\(\$signatorial\) \* 1000;/,
-	'the reopen window is three navigation intervals');
+like($appointment_src, qr/my \$reopen_window = &subs::navigation_reopen_window\(\$signatorial\);/,
+	'the plate asks the shared rule for its reopen window');
+like($appointment_src, qr/return \$window > \$cap \? \$cap : \$window;/,
+	'and the rule caps the window rather than scaling without bound');
 unlike($appointment_src, qr/stop_timestamp >= \? order by stop_timestamp desc limit 1', \$app, 'navigation', 'stop', &subs::rightNow\(\) - 15 \* 60 \* 1000/,
 	'and no longer the fixed fifteen minutes');
 

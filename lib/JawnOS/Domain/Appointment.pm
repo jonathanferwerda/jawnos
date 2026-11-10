@@ -323,8 +323,9 @@ sub visibility_cache_clear {
 # than three radii away is certain - no ordinary GPS jitter brings a person back
 # from there - so a return must start a new session instead of reopening the one
 # it closed. A near-boundary stop stays resumable for the reopen window in
-# navigation_automation (three navigation intervals). The fact is transient (a
-# cache entry), but it only has to outlive the next fix and the resume window.
+# navigation_automation (three navigation intervals, capped at twenty minutes).
+# The fact is transient (a cache entry), but it only has to outlive the next fix
+# and the resume window.
 sub navigation_plate_exit_set {
 	my ($app, $duty, $certain) = @_;
 	return unless $app && $duty;
@@ -383,6 +384,18 @@ sub home_plate_stop_armed {
 		return 1;
 	}
 	return 0;
+}
+
+# How long a stopped plate visit may reopen instead of starting a new session:
+# three navigation intervals, so the window follows the pace that produced the
+# fixes, never longer than twenty minutes - a slow machine's pace must not keep
+# yesterday's visit resumable all evening. The certain-exit cache lives an hour,
+# which comfortably outlives this cap.
+sub navigation_reopen_window {
+	my ($signatorial) = @_;
+	my $window = 3 * &navigation_interval($signatorial) * 1000;
+	my $cap = 20 * 60 * 1000;
+	return $window > $cap ? $cap : $window;
 }
 
 sub navigation_automation {
@@ -448,17 +461,16 @@ sub navigation_automation {
 							#	&subs::leave();
 							}
 							elsif (($tog || '') ne 'on') {
-								# A return within three navigation intervals of a navigation stop is
-								# the same visit, so reopen that session rather than starting a new
-								# one. The interval is the machine's navigation job in the utility
-								# controller (four minutes by default), so the window follows the
-								# pace that produced the fixes rather than a fixed fifteen
-								# minutes - a plate that reports every ten minutes keeps the visit
-								# whole across two missed fixes. A leave farther than three radii
-								# was certain, so its return starts a new session even inside the
-								# window. Reopen only the newest stop - the one the person has
-								# just come back from - never every stop in the window.
-								my $reopen_window = 3 * &navigation_interval($signatorial) * 1000;
+								# A return within the reopen window of a navigation stop is the
+								# same visit, so reopen that session rather than starting a new
+								# one. The window is three navigation intervals, capped at twenty
+								# minutes (see navigation_reopen_window), so it follows the pace
+								# that produced the fixes without keeping an old visit resumable
+								# all evening. A leave farther than three radii was certain, so
+								# its return starts a new session even inside the window. Reopen
+								# only the newest stop - the one the person has just come back
+								# from - never every stop in the window.
+								my $reopen_window = &subs::navigation_reopen_window($signatorial);
 								my $lappts = &subs::db_query('select * from appointments where app = ? and subtype = ? and type = ? and stop_timestamp >= ? order by stop_timestamp desc limit 1', $app, 'navigation', 'stop', &subs::rightNow() - $reopen_window)->hashes;
 								my $certain_leave = &subs::navigation_plate_exit_certain($app, $duty_key);
 								&subs::navigation_plate_exit_clear($app, $duty_key);
