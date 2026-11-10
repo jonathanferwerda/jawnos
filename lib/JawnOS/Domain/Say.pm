@@ -19,6 +19,7 @@ use File::Copy;
 use File::Find;
 use File::Path;
 use File::Slurp;
+use JawnOS::Platform ();
 use IO::Select;
 use IPC::Open2;
 use JSON::PP ();
@@ -65,9 +66,8 @@ sub say_piper_binary {
 	my $installed = &subs::home('~/.local/share/jawnos/piper/piper');
 	return $installed if -x $installed;
 	# a piper on PATH (a distribution package, or a Termux install)
-	my $onpath = `command -v piper 2>/dev/null`;
-	chomp $onpath;
-	return $onpath if $onpath && -x $onpath;
+	my $onpath = JawnOS::Platform::tool_path('piper');
+	return $onpath if $onpath;
 	# the copy staged in the repo's blob store (fine on a desktop)
 	return '' if $device eq 'mobile';
 	my $bundled = &subs::home('~/jawnos/voices/piper/piper');
@@ -82,9 +82,8 @@ sub say_piper_argv {
 	my $piper = &subs::say_piper_binary();
 	return () unless $piper;
 	if ($device eq 'mobile' && $piper eq &subs::home('~/.local/share/jawnos/piper/piper')) {
-		my $runner = `command -v glibc-runner 2>/dev/null`;
-		chomp $runner;
-		return ($runner, $piper) if $runner && -x $runner;
+		my $runner = JawnOS::Platform::tool_path('glibc-runner');
+		return ($runner, $piper) if $runner;
 	}
 	return ($piper);
 }
@@ -190,11 +189,12 @@ sub say_it {
 			return;
 		}
 		# espeak: the chosen espeak voice, or the fallback when piper is missing.
-		# Its own quotes are escaped so the words cannot break out of the shell.
-		my $safe = $text;
-		$safe =~ s/"/\\"/g;
+		# It is a Unix tool; a box without it has no speech, and probing for it
+		# through the shell printed Windows' "path not found" on every backfill
+		# note. system(LIST) also keeps the words out of the shell.
 		my $voice = $spec->{'voice'} || 'en-us';
-		`espeak -a70 -v $voice "$safe" 2>/dev/null`;
+		my $espeak = JawnOS::Platform::tool_path('espeak');
+		system($espeak, '-a70', '-v', $voice, $text) if $espeak;
 	# A request may call this (Leave says goodbye): an inline run resets the
 	# request worker's event loop and the reply never leaves. Always a child.
 	}, { name => 'say it', fork => 1 });
