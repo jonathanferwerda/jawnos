@@ -261,4 +261,59 @@ ok($asked, 'the master can ask the tree to stop over its channel');
 ok(!&control::ask_tree_stop(socket => "$dir/absent", timeout => 1),
 	'and a missing tree is reported as not asked, not as a crash');
 
+# ------------------------------------------------- the client's own @INC
+# Windows has no getpwuid - the call dies rather than returning nothing - and a
+# service or scheduled task has no HOME. The BEGIN that seeds local::lib into
+# @INC used to call getpwuid unguarded, so scripts/restart.pl aborted before it
+# could ask the master anything. Order it like the platform module and guard the
+# last answer.
+{
+	my $restart;
+	open(my $fh, '<', "$FindBin::Bin/../scripts/restart.pl") or die $!;
+	{ local $/; $restart = <$fh> }
+	close $fh;
+	my ($begin) = $restart =~ /(BEGIN \{.*?\n\})/s;
+	ok($begin, 'scripts/restart.pl still seeds @INC in BEGIN');
+	like($begin, qr/\$ENV\{USERPROFILE\}/, 'the Windows home is consulted');
+	like($begin, qr/\$ENV\{HOMEDRIVE\}[\s\S]*\$ENV\{HOMEPATH\}/,
+		'then the older HOMEDRIVE+HOMEPATH pair');
+	like($begin, qr/eval \{ \(getpwuid \$<\)\[7\] \}/,
+		'and getpwuid only inside an eval');
+	# Comments may name it; only a call counts.
+	(my $code = $begin) =~ s/^\s*#.*$//mg;
+	$code =~ s/eval \{ \(getpwuid \$<\)\[7\] \}/eval/;
+	unlike($code, qr/getpwuid/, 'no unguarded getpwuid call is left');
+
+	# It must not die before doing anything when HOME is absent: this is the
+	# launch shape a Windows service or a coded agent's shell has.
+	{
+		local %ENV = %ENV;
+		delete @ENV{qw(HOME HOMEDRIVE HOMEPATH)};
+		$ENV{'USERPROFILE'} = $dir;
+		my $out = `$^X -c "$FindBin::Bin/../scripts/restart.pl" 2>&1`;
+		is($?, 0, 'restart.pl compiles with no HOME (USERPROFILE fallback)') or diag($out);
+	}
+}
+
+# ---------------------------------------------- the master's TCP listener
+# Strawberry's Fcntl has no F_SETFD macro: calling it dies with "Your vendor
+# has not defined Fcntl macro F_SETFD", and that took the control and log
+# listeners down with it after boot. The CLOEXEC clear is Unix-only; on Windows
+# handles are non-inheritable unless marked, and only the runner's socket is.
+{
+	my $master;
+	open(my $fh, '<', "$FindBin::Bin/../jawn") or die $!;
+	{ local $/; $master = <$fh> }
+	close $fh;
+	my ($tcp) = $master =~ /(sub private_tcp_listener \{.*?\n\})/s;
+	ok($tcp, 'the master has private_tcp_listener');
+	like($tcp, qr/fcntl\(\$handle, F_SETFD, FD_CLOEXEC\) if \$\^O ne 'MSWin32';/,
+		'the CLOEXEC clear is skipped on Windows, where F_SETFD does not exist');
+	unlike($tcp, qr/fcntl\(\$handle, F_SETFD, FD_CLOEXEC\);\n/,
+		'and no unguarded Fcntl call remains');
+	my ($unix) = $master =~ /(sub private_unix_listener \{.*?\n\})/s;
+	like($unix, qr/fcntl\(\$handle, F_SETFD, FD_CLOEXEC\);\n/,
+		'Unix sockets still clear CLOEXEC');
+}
+
 done_testing();

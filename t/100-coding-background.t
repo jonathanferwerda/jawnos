@@ -168,11 +168,37 @@ like($domain, qr/coding-queue\.db/, 'the queue has a file the master reload does
 # --- the master -------------------------------------------------------------
 my $master = source('jawn');
 like($master, qr/sub coding_start\b/, 'the master starts the coding process');
-like(sub_body($master, 'coding_start'), qr/POSIX::setsid/,
-	'the daemon detaches through POSIX, which is imported');
-unlike(sub_body($master, 'coding_start'), qr/(?<!::)\bsetsid\(/,
+my $start = sub_body($master, 'coding_start');
+like($start, qr/JawnOS::Platform::use_fork\(\)/,
+	'the start asks whether this platform has a real fork');
+like($start, qr/coding_start_runner/,
+	'and sends the no-fork platform to the runner seam');
+unlike($start, qr/POSIX::_exit/,
+	'the dispatch never exits the master process');
+like(sub_body($master, 'coding_start_fork'), qr/POSIX::setsid/,
+	'the native daemon detaches through POSIX, which is imported');
+unlike(sub_body($master, 'coding_start_fork'), qr/(?<!::)\bsetsid\(/,
 	'no bare setsid in the spawn: ./jawn does not import it');
+# The root cause this pins: on Windows the emulated fork is threads in one OS
+# process, so POSIX::_exit(0) in the intermediate killed the master itself. Only
+# the native double-fork may name it, and only the native path runs there.
+my $fork_body = sub_body($master, 'coding_start_fork');
+like($fork_body, qr/POSIX::_exit/, 'the native double-fork still leaves its intermediate');
+my $runner_body = sub_body($master, 'coding_start_runner');
+unlike($runner_body, qr/POSIX::_exit/, 'the runner path never calls POSIX::_exit');
+unlike($runner_body, qr/\bfork\b\s*\(/, 'and never forks');
+like($runner_body, qr/JawnOS::Platform::Runner/,
+	'the no-fork daemon is spawned through the runner seam');
+like($runner_body, qr/write_file\(\$coding_pid_file/,
+	'its pid reaches the pid file');
+like($runner_body, qr/coding_log_append/,
+	'and its output is appended to ~/coding.log');
+like($runner_body, qr/local \$ENV\{'JAWNOS_MASTER_PID'\}/,
+	'and it still learns which master owns it');
 like($master, qr/sub coding_stop\b/, 'the master can stop it');
+like(sub_body($master, 'coding_stop'), qr/JawnOS::Platform::Process::signal/,
+	'the stop signals through the platform seam (taskkill on Windows)');
+like($master, qr/sub coding_log_append\b/, 'the no-fork daemon writes its own log');
 like($master, qr/&coding_supervise\(\)/, 'the tick keeps it alive');
 like($master, qr/coding-queue\.db/, 'the queue database survives a master reload wipe');
 my $keeps = () = $master =~ /&shut_down\(1\)/g;

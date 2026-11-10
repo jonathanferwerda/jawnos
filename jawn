@@ -403,6 +403,9 @@ my $coding_pid_file = &home('~/.president/coding.pid');
 my $coding_log_file = &home('~/coding.log');
 my $coding_pid = 0;
 my $coding_spawned_at = 0;
+# The runner that owns a Coding daemon started without fork. File-scoped so its
+# socket/reactor registration and process handle survive the call that made it.
+my $coding_runner;
 # Why the state machine is about to restart. Set wherever the tree is found down,
 # so a recovery restart records a reason instead of looking like a request.
 my $status_why = '';
@@ -598,7 +601,12 @@ sub master_time_looper() {
 		# current pty child, whose exit status belongs to ReadWriteFork.
 		if (++$reap_ticks >= 30) {
 			$reap_ticks = 0;
-			&reap_own_children($fork ? $fork->pid : 0);
+			# The Coding daemon started through the runner is a real child of
+			# this master; it is not a leftover.
+			&reap_own_children(
+				($fork ? $fork->pid : 0),
+				($coding_runner ? $coding_runner->pid : 0),
+			);
 		}
 		# A restart is asked for three ways, and all three end here so all three are
 		# verified, recorded and answered the same way: the control socket (a caller
@@ -1004,8 +1012,10 @@ sub pid_in_tree {
 # A coding run is minutes of model turns and file writes. The tree is rebuilt on
 # every restart, so a run cannot live under it: if it did, the agent's own
 # "restart" step would kill the answer it had just earned. This daemon is
-# started by the master, double-forked so it is not a child the reaper takes,
-# and left alone when shut_down is only restarting the tree.
+# started by the master and left alone when shut_down is only restarting the
+# tree. Where fork exists it is double-forked so it is not a child the reaper
+# takes; where it does not (Windows, portable mode) the runner seam starts it as
+# a real process, and the reaper is told to keep its pid.
 #
 # It is still managed here: a pid file names it, the master restarts it if it
 # dies, and a real Stop takes it down with the tree. Its Minion job survives a
@@ -1049,6 +1059,17 @@ sub coding_pids {
 }
 
 sub coding_running {
+	# A daemon this master started is alive while its runner is: the runner holds
+	# the real process handle (Windows) or the fork (portable Unix). Asked first
+	# because the Windows process table is a tasklist/CIM snapshot that may not
+	# name a child started a moment ago yet, and a miss there would spawn a
+	# second worker.
+	if ($coding_runner && $coding_runner->alive) {
+		my $runner_pid = $coding_runner->pid;
+		$coding_pid = $runner_pid + 0
+			if defined $runner_pid && $runner_pid =~ /^[0-9]+$/;
+		return 1;
+	}
 	my $pid = -f $coding_pid_file ? read_file($coding_pid_file) : '';
 	$pid = '' unless defined $pid;
 	$pid =~ s/\s+//g;
@@ -1069,6 +1090,18 @@ sub coding_start {
 	# an exec takes a moment; do not race a second spawn out of the next tick
 	return 0 if $coding_spawned_at && (time - $coding_spawned_at) < 15;
 	$coding_spawned_at = time;
+	# The double-fork below needs a real fork. Windows has none: Strawberry runs
+	# its emulated fork as threads in one OS process, so the intermediate's
+	# _exit(0) tears down the entire process - the master died before it ever
+	# bound its control and log listeners. Portable mode asks for no fork either.
+	# Those start the daemon through the runner seam instead.
+	return &coding_start_runner() unless JawnOS::Platform::use_fork();
+	return &coding_start_fork();
+}
+
+# The native path: a double fork reparents the daemon away from this master, so
+# the reaper can never take it for a leftover.
+sub coding_start_fork {
 	my $master = $$;
 	my $pid = fork();
 	return 0 unless defined $pid;
@@ -1096,6 +1129,78 @@ sub coding_start {
 	exec($^X, './perl/Coding.pl') or POSIX::_exit(1);
 }
 
+# The no-fork path. The runner starts perl/Coding.pl as a real OS process on
+# Windows (CreateProcess) or through ReadWriteFork's pipe in portable mode; its
+# output arrives as an event and is appended to ~/coding.log. The object stays
+# in $coding_runner so the reactor registration survives this call.
+sub coding_start_runner {
+	$coding_runner = JawnOS::Platform::Runner->new;
+	# A pipe is enough: the daemon's output is line-oriented and is appended to
+	# ~/coding.log, and a no-fork platform has no pty to spend.
+	$coding_runner->conduit({ type => 'pipe' });
+
+	# The pid is written when the runner reports it: the Windows backend has it
+	# from CreateProcess at once, while ReadWriteFork forks on the next tick.
+	$coding_runner->on(spawn => sub {
+		my ($runner) = @_;
+		my $pid = $runner->pid;
+		return unless defined $pid && $pid =~ /^[0-9]+$/;
+		$coding_pid = $pid + 0;
+		write_file($coding_pid_file, $coding_pid);
+	});
+	$coding_runner->on(read => sub {
+		my ($runner, $bytes) = @_;
+		&coding_log_append($bytes);
+	});
+	$coding_runner->on(close => sub {
+		my ($runner) = @_;
+		# Only forget this object; a replacement may already have been started
+		# between its last read and this event.
+		if ($coding_runner && $coding_runner == $runner) {
+			$coding_runner = undef;
+			$coding_pid = 0;
+		}
+	});
+
+	my $started = eval {
+		local $ENV{'JAWNOS_MASTER_PID'} = $$;
+		$coding_runner->start({
+			program      => $^X,
+			program_args => [ './perl/Coding.pl' ],
+			cwd          => '.',
+		});
+	};
+	if ($@) {
+		print "coding runner could not start: $@\n";
+		$coding_runner = undef;
+		return 0;
+	}
+	# The Windows backend returns its pid and has already emitted spawn; the Unix
+	# one returns undef here and emits it on the next loop tick. Only Windows can
+	# fail synchronously, so only there is a missing pid an error.
+	if (!$started && $^O eq 'MSWin32') {
+		print 'coding runner could not start: '
+			. (($coding_runner && $coding_runner->{'error'}) || 'unknown error') . "\n";
+		$coding_runner = undef;
+		return 0;
+	}
+	return 1;
+}
+
+# The daemon's console output has no terminal to land on, so it goes to the same
+# ~/coding.log the fork path redirects to. Opened per read: the log is append-
+# only, and the master is not the daemon's stdout, so it owns no long-lived
+# handle that would keep the file open after a stop.
+sub coding_log_append {
+	my ($bytes) = @_;
+	return 0 unless defined $bytes && length $bytes;
+	open(my $fh, '>>', $coding_log_file) or return 0;
+	binmode $fh;
+	print $fh $bytes;
+	close $fh;
+	return 1;
+}
+
 sub coding_supervise {
 	return if &coding_running();
 	&coding_start();
@@ -1110,8 +1215,15 @@ sub coding_stop {
 	$pid =~ s/\s+//g;
 	push @pids, $pid + 0 if $pid =~ /^[0-9]+$/ && !grep { $_ == $pid } @pids;
 	unlink $coding_pid_file;
+	# Close the runner that owns it, if this master started it. A daemon adopted
+	# from a previous master has only the pid file and the process table.
+	if ($coding_runner) {
+		eval { $coding_runner->close };
+		$coding_runner = undef;
+	}
 	return unless @pids;
-	kill 'TERM', @pids;
+	# kill on Unix, taskkill on Windows: one seam for both.
+	JawnOS::Platform::Process::signal('TERM', $_) for @pids;
 	# Minion stops dequeuing on TERM and lets the job it is on finish; a job
 	# can be minutes long, so the grace is short and what is left is stopped.
 	for (1 .. 100) {
@@ -1119,7 +1231,7 @@ sub coding_stop {
 		select(undef, undef, undef, 0.05);
 	}
 	my @left = grep { &pid_alive($_) } @pids;
-	kill 'KILL', @left if @left;
+	JawnOS::Platform::Process::signal('KILL', $_) for @left;
 	print 'stopped coding worker ' . join(',', @pids) . "\n";
 }
 
@@ -1157,15 +1269,15 @@ sub sweep_orphans {
 # sleep/select, and a re-exec leaves before the IOLoop runs again, so a child
 # killed there stayed a zombie for the life of the next incarnation - the
 # `[bash] <defunct>` that survived a re-exec on 2026-10-21, from when the pty
-# ran a shell. `keep` is the current pty child, whose exit status belongs to its
-# close event.
+# ran a shell. Each keep is a child whose exit status belongs to a runner's
+# close event: the current pty child and, without fork, the Coding daemon.
 sub reap_own_children {
-	my ($keep) = @_;
-	$keep ||= 0;
+	my @keep = grep { defined $_ && /^[0-9]+$/ && $_ } @_;
 	my @kids;
 	foreach my $proc ( @{ JawnOS::Platform::Process::table() } ) {
 		my $pid = $proc->{'pid'} + 0;
-		next if $pid == $$ || $pid == $keep;
+		next if $pid == $$;
+		next if grep { $_ == $pid } @keep;
 		next unless $proc->{'ppid'} == $$;
 		push @kids, [ $pid, $proc->{'state'} ];
 	}
@@ -1456,7 +1568,14 @@ sub private_tcp_listener {
 	my $acceptor = Mojo::IOLoop->acceptor($id);
 	my $handle = $acceptor ? $acceptor->handle : undef;
 	return $id unless $handle;
-	fcntl($handle, F_SETFD, FD_CLOEXEC);
+	# Unix: Mojo keeps listener fds open across exec on purpose, so clear the
+	# flag that would let a child inherit this socket. Windows: handles are
+	# non-inheritable unless explicitly marked, and the only handle the tree
+	# marks inheritable is the runner's own socket - so there is nothing to
+	# clear. It must not be attempted there either: Strawberry's Fcntl has no
+	# F_SETFD macro and calling it dies with "Your vendor has not defined Fcntl
+	# macro F_SETFD", which took the control and log listeners down with it.
+	fcntl($handle, F_SETFD, FD_CLOEXEC) if $^O ne 'MSWin32';
 	&forget_tcp_reuse($address, $port);
 	return $id;
 }

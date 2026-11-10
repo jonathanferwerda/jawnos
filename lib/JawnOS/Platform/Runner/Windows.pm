@@ -60,6 +60,29 @@ sub _quote_arg {
 	return qq{"$quoted"};
 }
 
+# Clear HANDLE_FLAG_INHERIT on the master's own standard handles before the
+# child is created. CreateProcess makes every inheritable handle part of the
+# child, so a master whose stdout was redirected to jawn-master.log handed that
+# file to the process it started; the file then stayed open past the master's
+# exit, and the next start could not open it. The child's three standard handles
+# come through STARTUPINFO and are not affected.
+#
+# The two OS calls are injected so this runs (and is tested) on any platform;
+# start() supplies Win32API::File. A missing or invalid descriptor is skipped,
+# never fatal: there is no console to inherit in a service.
+sub _clear_std_inherit {
+	my ($fds, $handle_of, $clear) = @_;
+	my @cleared;
+	for my $fd (@{ $fds || [] }) {
+		next unless defined $fd;
+		my $handle = $handle_of->($fd);
+		next unless defined $handle && $handle;
+		$clear->($handle);
+		push @cleared, $handle;
+	}
+	return \@cleared;
+}
+
 sub new {
 	my ($class, %opt) = @_;
 	return bless {
@@ -122,6 +145,14 @@ sub start {
 		0,
 		$handle, $handle, $handle);
 	my $process = "\0" x 24;    # PROCESS_INFORMATION
+
+	# Only the child's socket may be inherited. The master's own standard handles
+	# are cleared first, or a redirected log file rides into the child.
+	&_clear_std_inherit(
+		[ map { eval { fileno($_) } } (\*main::STDIN, \*main::STDOUT, \*main::STDERR) ],
+		sub { eval { Win32API::File::FdGetOsFHandle($_[0]) } },
+		sub { eval { Win32API::File::SetHandleInformation($_[0], 1, 0) } },
+	);
 
 	# The child cannot call getppid on Windows; the master knows the answer.
 	local $ENV{'JAWNOS_PARENT_PID'} = $$;
