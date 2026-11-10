@@ -65,16 +65,18 @@ runners at v0.1.2482. Run detail: `docs/platform-p0.md`.
 
 ### VM200 evidence (2026-11-10)
 
-Windows 11 x64, 4 cores/8 GB, on ks5; `.shots/AGENT-CHECKPOINT.md` v0.1.2536-2551:
+Windows 11 x64, 4 cores/8 GB, on ks5; `.shots/AGENT-CHECKPOINT.md` v0.1.2536-2612:
 
-- seven listeners on 3000 and 45545-45550;
+- seven listeners on 3000 and 45545-45550, plus the master's loopback control/log/watch;
 - `curl -k https://127.0.0.1:45545/manager` → 6,707 B `<title>Gate</title>`;
-- a cold bootstrap DB of 524,288 B built from the seed;
-- a self-signed certificate of 1,111 B and a key of 1,704 B, both LF;
-- boot noise: 0;
-- **still open:** the first request after a cold boot reset at v0.1.2551; the 2026-11-10 run
-  served 200 but the boot-time browser opened the panel first, so a headless first hit is still
-  the check that closes it.
+- a cold bootstrap DB of 524,288 B built from the seed, and an LF certificate/key;
+- boot noise: 0 (the setup-tool noise is gone in v0.1.2602);
+- **clean install (v0.1.2612):** delete the tree, extract, copy `config.json.example` to
+  `config.json`, start — `/manager` and `/manager/health` 200 on the first attempt with no
+  `sqlite3`, `tail` or `getpwuid` step;
+- **still open:** restart. The master accepts the control connection (`CTRL ACCEPT`) but the
+  accepted stream's read never fires (`CTRL READ` absent), so `restart.pl --status` times out and
+  clients sit in `CLOSE_WAIT`.
 
 ## Conditions on the GO (P1 input)
 
@@ -112,17 +114,17 @@ the test numbers (`t/227`, `t/230`, `t/240`, `t/242`-`t/246`) are in
 **Windows-side P1 conditions (VM200):**
 
 - **Condition 1 — partly.** The runner seam and `Runner/Windows.pm` (v0.1.2508,
-  `t/232`, `t/231`), no-fork servers (`Platform/Server.pm`, v0.1.2530) and named
-  jobs (`Platform/Job.pm`, v0.1.2532) landed. The Job Object for the parent guard
-  and a Windows `Process::signal` are still open
-  (`lib/JawnOS/Platform/Process.pm:322-327`).
+  `t/232`, `t/231`), no-fork servers (`Platform/Server.pm`, v0.1.2530), named jobs
+  (`Platform/Job.pm`, v0.1.2532) and the Windows `Process` backend (including
+  `taskkill /F` signals, v0.1.2589) landed. The Job Object for the parent guard is
+  still open.
 - **Condition 2 — open.** Spawns still use relative paths (`jawn:386-387`,
   `lib/JawnOS/Platform/Job.pm:33`); the absolute checkout path or `JAWNOS_TREE` is
   not passed yet.
-- **Condition 3 — written.** `Platform::Process` now has a Windows backend
-  (`tasklist` + `Get-CimInstance Win32_Process`, branch `agent/process-win`, 2026-11-10) with
-  Linux-compatible units; it is fixture-tested on Linux and the live VM200 run is the remaining
-  check. The `Net`, `Mdns`, `Audio`, `Serial`, `Print` and `Shell` bodies remain.
+- **Condition 3 — landed.** `Platform::Process` has a Windows backend
+  (`tasklist` + `Get-CimInstance Win32_Process`, Linux-compatible units, v0.1.2589, `t/227`). It is
+  fixture-tested on Linux; the live guard/killer path on VM200 is not yet asserted. The `Net`,
+  `Mdns`, `Audio`, `Serial`, `Print` and `Shell` bodies remain.
 - **Condition 4 — done.** The Windows XS job is green (`missing_required: []`).
 - **Condition 5 — partly.** The panel is served on VM200 (`curl -k` returns
   6,707 B, `<title>Gate</title>`); the Qt shell has not run against the portable

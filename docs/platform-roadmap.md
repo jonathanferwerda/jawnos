@@ -3,9 +3,10 @@
 **Status:** 2026-11-10. P0 is **done** — the go/no-go is GO and the portable suite is green
 (333 files, 14,493 assertions at v0.1.2477, `docs/platform-go-no-go.md:35-36`). P1 is **done on
 Linux**: every seam exists and the probe asks it (v0.1.2584). Windows now comes first (D10): the
-Windows runner, no-fork servers and named jobs, cold-start DB/cert bootstrap and desktop cert trust
-have landed on VM200, and P3 is in progress there. P2 (macOS) is deferred until a Mac or a macOS CI
-runner exists. Runbook and acceptance checklist: `docs/platform-p0.md`.
+Windows runner, no-fork servers and named jobs, the `Process` backend, cold-start DB/cert bootstrap
+and a trivially easy clean install have landed and been exercised on VM200. P3 remains in progress
+for restart, the Job Object, the other platform bodies and packaging. P2 (macOS) is deferred until a
+Mac or a macOS CI runner exists. Runbook and acceptance checklist: `docs/platform-p0.md`.
 **Related:** `desktop/README.md` (the Qt shell and today's supervisor), `docs/docker.md` (the
 headless server), `docs/migration-roadmap.md` (the Go path, the alternative endgame),
 `docs/infrastructure-roadmap.md` (where containers still belong).
@@ -369,7 +370,7 @@ machine.
 ### P3 — Windows native — IN PROGRESS on VM200
 
 **Landed on VM200** (win11-p0, Windows 11 x64, 4 cores/8 GB, on ks5; `.shots/AGENT-CHECKPOINT.md`
-v0.1.2508-2551):
+v0.1.2508-2612):
 
 - the runner seam and `Runner/Windows.pm` (v0.1.2508; `t/232`, `t/231`), and a graceful tree stop
   over the tree transport (v0.1.2512);
@@ -380,34 +381,40 @@ v0.1.2508-2551):
   from the seed (`Domain/Key.pm`, v0.1.2539, `t/235`) and `Platform/TLS.pm` issues the self-signed
   certificate (v0.1.2540);
 - desktop certificate trust (`t/239`, v0.1.2544), the cold-boot tool-probe noise removed
-  (`Domain/Say.pm`, v0.1.2547), and the TLS PEM pair normalized to LF (v0.1.2551).
+  (`Domain/Say.pm`, v0.1.2547), and the TLS PEM pair normalized to LF (v0.1.2551);
+- the `Platform::Process` Windows backend (`tasklist` + `Get-CimInstance Win32_Process` with
+  Linux-compatible units, `taskkill /F` for signals) — v0.1.2589, `t/227`;
+- the master survives and keeps ticking: the Coding daemon uses the runner instead of the
+  Strawberry pseudo-fork (v0.1.2601), `F_SETFD` is skipped on Windows, `restart.pl` resolves
+  `USERPROFILE`, and the tree no longer inherits the master's log handle; the runner socket is
+  non-blocking (v0.1.2606) and registered as a Mojo stream (v0.1.2612);
+- setup builds the database without `sqlite3` or `tail` — one implementation in
+  `lib/JawnOS/Database/Bootstrap.pm`, DBD::SQLite for the schema and backup (v0.1.2602, `t/248`).
 
-Today's goal is a trivially easy install on a clean Windows box; a fresh VM is built once the
-kinks are out.
+**Clean install verified on VM200** (v0.1.2612): delete the tree, extract the archive, copy
+`config.json.example` to `config.json`, start — `/manager` and `/manager/health` answer 200 on the
+first attempt, the database is 524,288 B from the seed, and the certificate/key are issued LF. No
+`sqlite3`, `tail` or `getpwuid` step remains. The loop was run with `open_browser: no` so the first
+hit was the test's, not the boot browser's.
 
 **Next:**
 
+- **Restart from the app.** The master binds control/log/watch and the accept callback fires, but
+  the accepted stream's read event never does on Windows: at v0.1.2612 `CTRL ACCEPT` appears and
+  `CTRL READ` does not, clients sit in `CLOSE_WAIT`, and `restart.pl --status` times out. A minimal
+  Mojo server on the same box (including the runner's shape) reads correctly, so the cause is still
+  in the master's stream path. This is the one acceptance step that fails.
 - Finish the no-fork mode: a Job Object or watchdog for the parent guard, and an absolute checkout
   path or `JAWNOS_TREE` in the spawns (`jawn:386-387`, `lib/JawnOS/Platform/Job.pm:33`, both
   relative).
-- The `Platform::Process` Windows backend is written and fixture-tested on branch
-  `agent/process-win` (2026-11-10): a `tasklist` + `Get-CimInstance Win32_Process` snapshot with
-  Linux-compatible units, `taskkill /F` for signals, and an empty answer for the reads Windows does
-  not expose. A live VM200 run is the remaining check.
+- The `Platform::Process` Windows backend is landed (v0.1.2589) and fixture-tested; the live
+  guard/killer path on VM200 is not yet asserted.
 - Windows platform modules: `Win32::Process`/`Proc::ProcessTable`/`tasklist`, `ipconfig`/`Get-Net*`
   / `netstat -ano`, DNS-SD, WASAPI, `COM*`, the spooler, WinRT BLE, clipboard/toasts/`ShellExecute`;
   `LOCALAPPDATA` and `%TEMP%` in `Paths`.
-- Install blockers proved on VM200 (2026-11-10): `scripts/restart.pl` dies under a HOME-less SYSTEM
-  shell (`getpwuid` at `:23`) and finds no control listener on TCP base+7, so the documented restart
-  path is unusable from the guest; `scripts/jawnos_setup.pl` logs a missing `sqlite3`, a missing
-  `tail` and an uninitialised `gt` at `:232` (`scripts/jawnos_deps.pl:163` also calls `getpwuid`); and
-  a boot-time browser process can hold `jawn-master.log` open so the next start cannot open it.
-- The 2026-11-10 cold run built the DB and both certificates from nothing and served `/manager` and
-  `/manager/health` 200, but the boot-time browser opened the panel first, so the v0.1.2551 finding
-  (the first request after a cold boot resets) still needs a headless first hit to reproduce.
-- Firewall rules for 46200-46205.
-- Package a signed MSI/MSIX with the bundled Perl runtime, Start menu, tray, "Start with Windows",
-  firewall rules for the fixed and tunnel ranges, and an updater.
+- Firewall rules for 46200-46205, then package a signed MSI/MSIX with the bundled Perl runtime,
+  Start menu, tray, "Start with Windows" and an updater, and repeat the clean install on a fresh
+  Windows VM.
 - Acceptance: a `device=computer` house on a real Windows box with no WSL, Docker, Perl or Python
   installed by the user.
 
