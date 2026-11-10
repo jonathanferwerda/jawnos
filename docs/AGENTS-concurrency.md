@@ -160,6 +160,10 @@ checkout and the master — the authority:
   wave becomes single-ticket waves. The bad branch is refused with its failing lines and the rest
   land.
 - **The queue is a snapshot.** Re-enqueueing the same branch updates its sha and keeps its place.
+  A branch that still carries a commit already on the trunk under another sha (a re-enqueued ticket)
+  is not a conflict: the coordinator skips the empty patch and lands the rest. A branch with nothing
+  new is marked `nothing` and makes no version-only commit. For the verdict in the same turn use
+  `perl scripts/land_status.pl --branch <branch> --wait --timeout 300`; a refusal exits 1.
   `perl scripts/land_status.pl` gives the position and verdict; `--stats` prints measured waits and
   suite times.
 - **The ticket owns your worktree.** The coordinator lands from origin and never needs your

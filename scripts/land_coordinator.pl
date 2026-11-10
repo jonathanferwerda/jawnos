@@ -342,6 +342,8 @@ sub run_wave {
 
 sub integrate_ticket {
 	my ($root, $tmp, $t, $prev, $opt) = @_;
+	# keep git's messages in one language: the empty-patch guard below reads them
+	local $ENV{'LC_ALL'} = 'C';
 	my $sha = $t->{'sha'} // '';
 	return (0, 'stale', 'the ticket has no sha') unless length $sha;
 
@@ -361,8 +363,9 @@ sub integrate_ticket {
 	return (0, 'nothing', 'the branch has no commits left to land; it is already on the trunk')
 		if $crc == 0 && ($count // 0) == 0;
 
+	my (undef, $train_before) = git_in($tmp, 'rev-parse', 'HEAD');
 	my ($prc, $pout) = git_in($tmp, 'cherry-pick', '--allow-empty', "$base..$sha");
-	if ($prc != 0) {
+	while ($prc != 0) {
 		my (undef, $unmerged) = git_in($tmp, 'diff', '--name-only', '--diff-filter=U');
 		my @unmerged = grep { length } split /\n/, $unmerged;
 		if (@unmerged && !grep { $_ ne 'VERSION' } @unmerged) {
@@ -370,16 +373,25 @@ sub integrate_ticket {
 			# the branch carried, so the number stays unique.
 			git_in($tmp, 'checkout', '--ours', '--', 'VERSION');
 			git_in($tmp, 'add', '--', 'VERSION');
-			my ($rrc, $rout) = git_in($tmp, 'cherry-pick', '--continue');
-			return (0, 'rebase', "cherry-pick --continue failed: $rout") if $rrc != 0;
+			($prc, $pout) = git_in($tmp, 'cherry-pick', '--continue');
+			next;
 		}
-		else {
-			git_in($tmp, 'cherry-pick', '--abort');
-			my $files = @unmerged ? join(', ', @unmerged) : 'unknown files';
-			return (0, 'rebase', "the branch conflicts with the train ($files); "
-				. 'rebase it onto the new trunk and enqueue again');
+		if (!@unmerged && $pout =~ /previous cherry-pick is now empty/i) {
+			# The branch still carries a commit the trunk already has under
+			# another sha - it landed from an earlier ticket, and re-enqueueing
+			# kept the original commit in the branch. That is not a conflict:
+			# skip the empty patch and carry on with the rest of the branch.
+			($prc, $pout) = git_in($tmp, 'cherry-pick', '--skip');
+			next;
 		}
+		git_in($tmp, 'cherry-pick', '--abort');
+		my $files = @unmerged ? join(', ', @unmerged) : 'unknown files';
+		return (0, 'rebase', "the branch conflicts with the train ($files); "
+			. 'rebase it onto the new trunk and enqueue again');
 	}
+	my (undef, $train_after) = git_in($tmp, 'rev-parse', 'HEAD');
+	return (0, 'nothing', 'the branch has no commits left to land; it is already on the trunk')
+		if $train_after eq $train_before;
 
 	my ($brc, $bump) = LandQueue::run_in($tmp, $^X, "$tmp/scripts/version_bump.pl");
 	return (0, 'bump', "version_bump.pl failed: $bump") if $brc != 0;

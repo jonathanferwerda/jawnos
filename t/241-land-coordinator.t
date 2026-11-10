@@ -2,7 +2,8 @@
 # covers:    the landing queue - enqueue validation and the backup push, the
 #           coordinator's waves, one suite and one restart per wave, the hot-file
 #           cap, the red-wave split into single tickets, landed-ticket records,
-#           dead-running reaping, and the status/stats reader
+#           skipping a commit already on the trunk, dead-running reaping, and the
+#           status/stats reader
 
 use strict;
 use warnings;
@@ -297,6 +298,43 @@ subtest 'two hot-file branches land one wave at a time' => sub {
 	is(scalar @suite, 2, 'the hot-file cap made two waves');
 	my (undef, $v) = git($f->{'primary'}, 'show', 'origin/main:VERSION');
 	is($v, '0.1.3', 'both branches are on the trunk');
+};
+
+# --- a re-enqueued branch carries its already-landed commit ----------------
+
+subtest 'a commit already on the trunk does not refuse the rest of the branch' => sub {
+	my $f = fixture();
+	commit_file($f->{'wt1'}, 'one.txt', "one\n", 'one: first landing');
+	my ($e1, $eo1) = enqueue($f, $f->{'wt1'});
+	is($e1, 0, 'the first branch enqueues') or diag($eo1);
+	my ($c1, $co1) = coordinator($f, '--train-size', '1', '--jobs', '1', '--no-restart');
+	is($c1, 0, 'the first ticket drains') or diag($co1);
+	my (undef, $first) = git($f->{'primary'}, 'show', 'origin/main:one.txt');
+	is($first, 'one', 'the first commit is on the trunk');
+
+	# The branch still holds its original commit (the trunk has the rebased
+	# copy), which is what a second commit and re-enqueue looks like.
+	commit_file($f->{'wt1'}, 'two.txt', "two\n", 'one: second landing');
+	my ($e2, $eo2) = enqueue($f, $f->{'wt1'});
+	is($e2, 0, 'the branch re-enqueues with its old commit still in it') or diag($eo2);
+	my ($c2, $co2) = coordinator($f, '--train-size', '1', '--jobs', '1', '--no-restart');
+	is($c2, 0, 'the coordinator drains rather than refusing an empty patch') or diag($co2);
+	my (undef, $second) = git($f->{'primary'}, 'show', 'origin/main:two.txt');
+	is($second, 'two', 'the new work landed');
+	my (undef, $st) = status($f, '--branch', 'agent/one');
+	is($st->{'ticket'}{'state'}, 'landed', 'and the ticket is landed');
+	my (undef, $version) = git($f->{'primary'}, 'show', 'origin/main:VERSION');
+	is($version, '0.1.3', 'only the second ticket bumped the version');
+
+	# A branch with nothing new at all is not a version-only landing.
+	my ($e3, $eo3) = enqueue($f, $f->{'wt1'});
+	is($e3, 0, 'the unchanged branch re-enqueues') or diag($eo3);
+	my ($c3, $co3) = coordinator($f, '--train-size', '1', '--jobs', '1', '--no-restart');
+	is($c3, 0, 'the coordinator drains') or diag($co3);
+	my (undef, $st3) = status($f, '--branch', 'agent/one');
+	is($st3->{'ticket'}{'result'}{'reason_class'}, 'nothing', 'and says there was nothing left to land');
+	my (undef, $version3) = git($f->{'primary'}, 'show', 'origin/main:VERSION');
+	is($version3, '0.1.3', 'no version-only commit was pushed');
 };
 
 # --- enqueue refuses what it cannot land ----------------------------------
