@@ -92,9 +92,31 @@ like($js, qr/function musicShelfBand\(\) \{/,
     'the band has its own reader');
 like($js, qr/getComputedStyle\(el\)\.getPropertyValue\('--music-shelf-height'\)/,
     'it reads the measured band, not a stacked box');
-like($js, qr/music_albums: \{ bottom: \$\('#music_albums'\)\.css\('top'\), height: musicShelfBand\(\) \}/,
-    'the player cache saves the band');
-like($js, qr/music_albums: \{ bottom: \$\('#music_albums'\)\.css\('top'\), height: band, scrollTop:/,
-    'the search save records the band');
+like($js, qr/music_albums: \{ bottom: \$\('#music_albums'\)\.css\('top'\), height: musicShelfBand\(\), auto: musicShelfAuto \? 1 : 0 \}/,
+    'the player cache saves the band and whether it follows the window');
+like($js, qr/music_albums: \{ bottom: \$\('#music_albums'\)\.css\('top'\), height: band, auto: musicShelfAuto \? 1 : 0, scrollTop:/,
+    'the search save records the band and whether it follows the window');
+
+# --- the default band is a share of the artist/tracks height ---------------
+# The track list keeps 71.28% of the window between the 100px interface and the
+# 110px player; the shelves take the other 28.72%, never less than the old shipped
+# 125. A person's own drag is kept, and an unmarked 125 save (the old shipped
+# default) is read as a default.
+like($js, qr/var MUSIC_TRACK_SHARE = 0\.7128;/,
+    'the track list has a 71.28% share');
+like($js, qr/function musicShelfAutoBand\(\) \{[^}]*1 - MUSIC_TRACK_SHARE/s,
+    'the default band is the rest of that share');
+like($js, qr/return Math\.max\(125, share\);/,
+    'and the old 125 band is the floor, so the shelves only grow');
+like($js, qr/return Math\.max\(0, \(parseFloat\(h\) \|\| 0\) - 210\);/,
+    'the shared height is the window less the interface and the player');
+like($js, qr/musicShelfAuto = \(saved\.auto === undefined\) \? \(!band \|\| band == 125\)/,
+    'an unmarked save at the old 125 default follows the share');
+like($js, qr/musicShelfAuto = false;/,
+    'dragging the shelf takes the band out of the share');
+like($js, qr/new ResizeObserver\(function\(\) \{/,
+    'a window made taller or shorter moves a default band with it');
+like($js, qr/\$\('#music_files'\)\.css\(\{ 'top': \(band \+ 100\) \+ 'px', 'height': 'auto' \}\)/,
+    'the list keeps its foot at 110px and takes what the band leaves');
 
 done_testing();

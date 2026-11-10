@@ -56,6 +56,15 @@ ok($repeat_at >= 0 && $toggle_at > $repeat_at && $title_at > $toggle_at,
 ok($title_at >= 0 && $screen_at > $title_at && $panel_at > $screen_at,
 	'the fullscreen button is right of the title, outside the tools panel');
 
+# The corner picture (a video or the visualiser played into a muted video) wears
+# thumb_style. The playing track row is z-index 1100, so without a lift the
+# picture is hidden under it when the library is up. The theatre picture needs
+# no lift: the library is put away there.
+like($markup, qr/thumb_style="[^"]*z-index:1200;/,
+	'the corner picture sits over the playing track');
+unlike($markup, qr/big_style="[^"]*z-index:/,
+	'the theatre picture keeps its own layer');
+
 like($help, qr/Escape leaves it/,
 	'the Music help says Escape leaves fullscreen');
 like($help, qr/button or Escape leaves fullscreen/,

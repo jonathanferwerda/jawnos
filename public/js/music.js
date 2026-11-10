@@ -2182,6 +2182,58 @@ function musicConfigDraggable() {
 function musicPhoneLayout() {
 	return $('#music').attr('phone_layout') == 'yes';
 }
+// The shelves and the track list share the library's height: the window less
+// the 100px interface above them and the 110px player below. The tracks keep
+// 71.28% of that and the shelves the other 28.72%, so the split is measured on
+// the window rather than left as the old 125px default. A band the person
+// dragged is their own; musicShelfAuto stands down for it. A save from before
+// the share carries no marker, so the old shipped 125 is read as the default
+// rather than as a chosen size.
+var MUSIC_TRACK_SHARE = 0.7128;
+var musicShelfAuto = true;
+var musicShelfWatcher;
+var musicShelfWatchTimer;
+// The artist/tracks height itself: the window's own height less the two fixed
+// bands the shelves and list sit between.
+function musicShelfLibraryHeight() {
+	var wind = $('#music').closest('.wind');
+	var h = wind.length ? wind.height() : $('#music').height();
+	return Math.max(0, (parseFloat(h) || 0) - 210);
+}
+// The shelves' share of that height, to two decimals so the ratio holds rather
+// than being rounded into 1% of drift on a small window. The old shipped band is
+// the floor: a window too short to give the tracks their 71.28% keeps its
+// shelves where they were instead of making the list even smaller.
+function musicShelfAutoBand() {
+	var share = Math.round(musicShelfLibraryHeight() * (1 - MUSIC_TRACK_SHARE) * 100) / 100;
+	return Math.max(125, share);
+}
+function musicShelfPlace(band) {
+	$('#music_artists, #music_albums').height(band);
+	$('#music').css('--music-shelf-height', band + 'px');
+	// the list's foot is fixed at 110px, so its top decides its height
+	$('#music_files').css({ 'top': (band + 100) + 'px', 'height': 'auto' });
+}
+function musicShelfAutoPlace() {
+	if (!musicShelfAuto || musicPhoneLayout() || !$('#music').length) { return; }
+	// a window not laid out yet has no height to take a share of
+	if (!(musicShelfLibraryHeight() > 0)) { return; }
+	musicShelfPlace(musicShelfAutoBand());
+}
+// A window can be made taller or shorter after it opened (dragged, maximised,
+// fitted to the screen); while the band is the default, it follows the new
+// height. A dragged band is left where it was put.
+function musicShelfWatch() {
+	if (musicPhoneLayout() || typeof ResizeObserver != 'function') { return; }
+	var wind = $('#music').closest('.wind')[0];
+	if (!wind) { return; }
+	if (musicShelfWatcher) { musicShelfWatcher.disconnect(); }
+	musicShelfWatcher = new ResizeObserver(function() {
+		clearTimeout(musicShelfWatchTimer);
+		musicShelfWatchTimer = setTimeout(musicShelfAutoPlace, 60);
+	});
+	musicShelfWatcher.observe(wind);
+}
 // The shelf band is the height the two shelves share when side by side. A
 // narrow window splits that band between them, so the boxes there are shorter
 // than the band and must not be what a save or a reopen remembers.
@@ -2217,6 +2269,7 @@ function musicKeepalive(playing) {
 // again. Minimising or hiding the window leaves it alone.
 $(document).on('click touchend', '.close_button[app="music"]', function() {
 	musicKeepalive(false);
+	if (musicShelfWatcher) { musicShelfWatcher.disconnect(); musicShelfWatcher = null; }
 	// Closing the window gives the AudioContext (and so its Pulse stream) back
 	// to the browser. The leaked streams were the unused ones treeMaker made on
 	// every re-render, not this graph; see treeMaker.
@@ -2333,6 +2386,9 @@ function musicBarIntervalArm() {
 }
 
 async function musicInit(method) {
+	// a search keeps the band (and its auto/manual state) that is on screen; a
+	// fresh open starts from the default until a save or a drag says otherwise
+	if (method != 'search') { musicShelfAuto = true; }
 	treeMaker();
 	// every open and every search leaves exactly one bar tick running
 	musicBarIntervalArm();
@@ -2444,20 +2500,24 @@ async function musicInit(method) {
 			// the saved height is the shelf band, not the box a stacked shelf wears:
 			// a narrow window splits that band between the two shelves and the
 			// container query owns their boxes, so take the measure from the save
-			var band = parseFloat(pd.resizes.music_albums.height) || musicShelfBand();
-			$('#music_albums').height(pd.resizes.music_albums.height);
-			$('#music_albums').scrollTop(pd.resizes.music_albums.scrollTop);
-			$('#music_artists').height(pd.resizes.music_artists.height);
-			$('#music_albums').scrollTop(pd.resizes.music_albums.scrollTop);
-			$('#music').css('--music-shelf-height', band + 'px');
-			$('#music_files').css({ 'top': (band + 100) + 'px' });
-			var i = $('#interface').height();
-			var mc = $('#music').find('.media_controls').height();
-			$('#music_files').height($('#music').height() - (band + mc + i));
+			var saved = pd.resizes.music_albums || {};
+			var band = parseFloat(saved.height) || 0;
+			// A save from before the share has no marker: the old shipped 125 was the
+			// default, so it follows the window like a save with auto=1. Any other
+			// height is a band the person dragged, and is kept exactly as saved.
+			musicShelfAuto = (saved.auto === undefined) ? (!band || band == 125) : (String(saved.auto) == '1');
+			if (!musicShelfAuto && band > 0) { musicShelfPlace(band); }
+			var artists_saved = pd.resizes.music_artists || {};
+			$('#music_artists').scrollTop(artists_saved.scrollTop || 0);
+			$('#music_albums').scrollTop(saved.scrollTop || 0);
 		}
 		playerCacheSaver();
 		musicVisualApply();
 	}
+	// The shelves' band follows the window until the person drags it; a stacked
+	// (narrow) window, which splits the band, still follows it as a whole.
+	musicShelfAutoPlace();
+	musicShelfWatch();
 	// a window with no player cache still wears the setting from its markup
 	musicNormalizeApply();
 
@@ -2481,6 +2541,8 @@ async function musicInit(method) {
 			start: function(p) {
 			},
 			resize: function(p,j) {
+				// a dragged band is the person's own; the window no longer moves it
+				musicShelfAuto = false;
 				if (p.target.id == 'music_artists') {
 					$('#music_albums').height(j.size.height);
 				}
@@ -2490,11 +2552,8 @@ async function musicInit(method) {
 				// the new band width is what a narrow window will split
 				$('#music').css('--music-shelf-height', $('#music_albums').height() + 'px');
 				var newTop = ($('#music_albums').height() + 100) + 'px';
-				$('#music_files').css({ 'top': newTop });
-				var i = $('#interface').height();
-				var mc = $('#music').find('.media_controls').height();
-				var mm = $('#music_albums').height();
-				$('#music_files').height($('#music').height() - (mm + mc + i));	
+				// the list's foot is already fixed, so its top is its whole height
+				$('#music_files').css({ 'top': newTop, 'height': 'auto' });
 			},
 			stop: function(p) { 
 			}
@@ -2539,8 +2598,8 @@ function playerCacheSaver(type, force) {
 			theatre_mode: $('#video').attr('theatre_mode'), 
 			unlocked: unlocked,
 			resizes: {
-				music_albums: { bottom: $('#music_albums').css('top'), height: musicShelfBand() },
-				music_artists: { bottom: $('#music_artists').css('top'), height: musicShelfBand() },
+				music_albums: { bottom: $('#music_albums').css('top'), height: musicShelfBand(), auto: musicShelfAuto ? 1 : 0 },
+				music_artists: { bottom: $('#music_artists').css('top'), height: musicShelfBand(), auto: musicShelfAuto ? 1 : 0 },
 				music_files: { top: $('#music_files').css('top'), height: $('#music_files').height() }
 			},
 			type: $('#video').attr('type'),
@@ -3437,8 +3496,8 @@ function musicInformation(file) {
 function musicWindowResizes() {
 	var band = musicShelfBand();
 	var resizes = {
-		music_albums: { bottom: $('#music_albums').css('top'), height: band, scrollTop: $('#music_albums').scrollTop() },
-		music_artists: { bottom: $('#music_artists').css('top'), height: band, scrollTop: $('#music_artists').scrollTop() },
+		music_albums: { bottom: $('#music_albums').css('top'), height: band, auto: musicShelfAuto ? 1 : 0, scrollTop: $('#music_albums').scrollTop() },
+		music_artists: { bottom: $('#music_artists').css('top'), height: band, auto: musicShelfAuto ? 1 : 0, scrollTop: $('#music_artists').scrollTop() },
 		music_files: { top: $('#music_files').css('top'), height: $('#music_files').height() },
 	};
 	return resizes;
@@ -3889,8 +3948,9 @@ function searchMusic(data) {
 			$('#music_artists').scrollTop(artistScroll.top).scrollLeft(artistScroll.left);
 			musicInit('search');
 			// the search just sent the shelf band; the replaced shelves cannot be
-			// trusted for it while a narrow window has them stacked
-			$('#music').css('--music-shelf-height', (parseFloat(resizes.music_albums.height) || 125) + 'px');
+			// trusted for it while a narrow window has them stacked - musicInit has
+			// already put the band (auto or dragged) back in the custom property
+			$('#music').css('--music-shelf-height', musicShelfBand() + 'px');
 
 			if (configOpen == true) {
 				musicConfigShow($('#music_configuration'));
