@@ -302,6 +302,8 @@ subtest 'enqueue refuses dirty, primary, already-merged and full queues' => sub 
 
 	commit_file($f->{'wt2'}, 'two.txt', "two\n", 'two: add another');
 	my ($ok, $oout) = enqueue($f, $f->{'wt2'});
+	like($oout, qr/land_status\.pl --branch agent\/two.*keep the worktree/s,
+		'a ticket names the verdict and says to keep the worktree');
 	is($ok, 0, 'a clean branch enqueues') or diag($oout);
 	my $first = ticket_json($oout);
 

@@ -43,8 +43,9 @@ user for the exact file/folder/name. A wrong guess costs far more tokens than a 
 ## Many agents at once
 
 The primary checkout is read-only for agents: a dirty one blocks every landing. Queue a committed
-branch with `scripts/land_enqueue.pl`; the coordinator lands it. Hand-land only as a human owner;
-never push or restart by hand. Details: `docs/AGENTS-concurrency.md`.
+branch with `scripts/land_enqueue.pl`; the coordinator lands it. Sole agent on a quiet box? Land with
+`perl ~/jawnos/scripts/agent_land.pl`; the lock guards both. The primary-checkout recipe is the
+human owner's. Never push or restart by hand. Doc: `docs/AGENTS-concurrency.md`.
 
 
 ## Crash-resilient agent work
@@ -105,9 +106,8 @@ The Zed panel keeps every byte it is shown; zram + earlyoom only slow the crash.
   a new app page a help topic with `app => <name>` (`t/11`).
 - **Cap parallel jobs on this shared box:** `pio run -j 4`, `gradle --max-workers=4`, `make -j4`.
 - **Land once, then stop.** Commit in your worktree (`git add -p`), then queue it with
-  `scripts/land_enqueue.pl`. A human owner alone may land with
-  `perl ~/jawnos/scripts/agent_land.pl`. A refusal ends the attempt: report it; the worktree and
-  checkpoint stay. `--keep` only for work that continues or a handoff. Hot files, worktrees and the
-  commit identity: `docs/AGENTS-concurrency.md`.
+  `scripts/land_enqueue.pl` (see Many agents at once). A refusal ends the attempt: report it; the
+  worktree and checkpoint stay. `--keep` only for work that continues or a handoff. Hot files,
+  worktrees and the commit identity: `docs/AGENTS-concurrency.md`.
 
 ---

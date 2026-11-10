@@ -23,7 +23,8 @@ every landing touches:
 
 ## Which landing method
 
-Three paths, and the condition picks one. Agents queue; the other two are for a human owner.
+Three paths, and the condition picks one. Agents queue; a lone agent on a quiet box may land the
+branch itself; the primary-checkout recipe is the human owner's alone.
 
 - **Queue it** (`perl scripts/land_enqueue.pl`, the default for agents; use it whenever more than
   one agent is working):
@@ -32,8 +33,8 @@ Three paths, and the condition picks one. Agents queue; the other two are for a 
   verdict; when it says landed, the branch is on the trunk and the worktree may go (or wait for
   `worktree_gc`). A refused ticket keeps the worktree: fix, re-enqueue, and never run
   `agent_land.pl` on the same branch.
-- **Land it yourself** (`perl ~/jawnos/scripts/agent_land.pl`, from the worktree root): the human
-  owner's path, or a lone agent's; one agent at the gate, which the lock makes safe. It bumps
+- **Land it yourself** (`perl ~/jawnos/scripts/agent_land.pl`, from the worktree root): the lone
+  agent's path, and the owner's; one agent at the gate, which the lock makes safe. It bumps
   `VERSION`, runs the suite once, pushes, restarts and
   removes the worktree. `--keep` is only for work that continues (an open checkpoint) or a handoff;
   a refusal keeps the worktree anyway.
@@ -138,7 +139,7 @@ and reported", not "landed"; nothing else is owed, and the next attempt is a del
 
 ## The landing queue and the train
 
-Queueing is the agent path; the lander is the hand path.
+Queueing is the agent default; the lander is the lone agent's shortcut on a quiet box.
 `perl scripts/land_enqueue.pl` from the worktree validates the branch, backs it up to origin and
 writes a ticket in `<git-common-dir>/land-queue/`. With `--authority <host>` the ticket is written
 by the authority's copy over ssh instead, so a worker box never owns a second queue. The coordinator
@@ -174,7 +175,7 @@ checkout and the master — the authority:
 - **A remote ticket carries no worktree path.** The worker's own `worktree_gc` sweeps the branch by
   the subject a rebase preserves; the authority only needs the branch on origin.
 - **A worker box follows the trunk through the existing code sync.** A dedicated apply timer on a
-  worker is not built; a box that runs the app waits for the sync, or lands by hand.
+  worker is not built; a box that runs the app waits for the sync, or queues through the authority.
 - The units are `scripts/systemd/jawnos-land-coordinator.{service,timer}`; install them on the
   authority. Do not make it a manager utility job: it must land the fix when the tree is broken.
 

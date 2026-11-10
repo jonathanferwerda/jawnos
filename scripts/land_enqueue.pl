@@ -312,15 +312,24 @@ sub agent_name {
 
 sub output {
 	my ($t, $pos, $line) = @_;
+	# The ticket is not the landing: say where the verdict comes from, so nobody
+	# deletes the worktree while the coordinator is still working on it.
+	my $next = 'the coordinator drains it within a minute; '
+		. "`perl scripts/land_status.pl --branch $t->{'branch'}` is the verdict; "
+		. 'keep the worktree until it lands';
+	$next = 'the authority drains it; '
+		. "`perl scripts/land_status.pl --authority <host> --branch $t->{'branch'}` is the verdict; "
+		. 'keep the worktree until it lands'
+		if $t->{'remote'};
 	if ($opt{'json'}) {
 		print JSON::PP->new->canonical->encode({
 			ok => 1, id => $t->{'id'}, branch => $t->{'branch'}, sha => $t->{'sha'},
 			position => $pos, remote => $t->{'remote'} ? 1 : 0,
 		}), "\n";
-		print STDERR "land_enqueue: $line\n";
+		print STDERR "land_enqueue: $line\nland_enqueue: $next\n";
 	}
 	else {
-		print "land_enqueue: $line\n";
+		print "land_enqueue: $line\nland_enqueue: $next\n";
 	}
 }
 
