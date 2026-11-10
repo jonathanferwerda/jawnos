@@ -139,6 +139,7 @@ sub sessions {
 	$rows = sessions();
 	is( $rows->[0]->{'type'}, 'stop', 'the quiet site stops it' );
 	is( int( $rows->[0]->{'stop_timestamp'} ), $base + 60_000, 'at the last span end, not at the tick' );
+	is( int( $rows->[0]->{'duration'} ), -60_000, 'the first pause is the elapsed time' );
 
 	# A subdomain page resumes within the window: the same row, not a second
 	# one, even though the gap was long enough to stop the tick's first run.
@@ -157,6 +158,7 @@ sub sessions {
 	$rows = sessions();
 	is( scalar @{$rows}, 1, 'still one appointment after the visit ends' );
 	is( int( $rows->[0]->{'stop_timestamp'} ), $base + 100_000, 'closed at the resumed span end' );
+	is( int( $rows->[0]->{'duration'} ), -90_000, 'the 10s pause is left out of the length' );
 
 	# A page more than five minutes after the stop is a real departure, not a
 	# pause: it starts a new appointment.

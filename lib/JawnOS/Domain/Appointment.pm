@@ -204,6 +204,48 @@ sub internet_site_app_for_host {
 	return '';
 }
 
+# A pause keeps one session, and its length is left out of the appointment.
+# The paused milliseconds are accumulated by the row's uuid (the cache lives in
+# the house database, so a restart keeps them); a close reads them with peeks,
+# and the final stop takes and removes them.
+sub session_pause_key {
+	my ($uuid) = @_;
+	return undef unless defined $uuid && length $uuid;
+	return {
+		app => '__president',
+		context => 'session_pause',
+		subcontext => substr($uuid, 0, 24),
+		warranty => '-2d',
+	};
+}
+
+sub session_pause_peek {
+	my ($uuid) = @_;
+	my $key = &session_pause_key($uuid) or return 0;
+	my $row = &subs::cache_get($key);
+	return ref $row eq 'HASH' ? int($row->{'ms'} // 0) : 0;
+}
+
+sub session_pause_add {
+	my ($uuid, $app, $ms) = @_;
+	my $key = &session_pause_key($uuid) or return 0;
+	$ms = int($ms // 0);
+	return 0 unless $ms > 0;
+	my $row = &subs::cache_get($key);
+	my $total = (ref $row eq 'HASH' ? int($row->{'ms'} // 0) : 0) + $ms;
+	&subs::cache_set($key, { ms => $total, app => $app // '', at => &rightNow() });
+	return $total;
+}
+
+sub session_pause_take {
+	my ($uuid) = @_;
+	my $key = &session_pause_key($uuid) or return 0;
+	my $row = &subs::cache_get($key);
+	return 0 unless ref $row eq 'HASH';
+	&subs::cache_delete($key);
+	return int($row->{'ms'} // 0);
+}
+
 sub internet_site_appointment_tick {
 	my ($opts) = @_;
 	$opts ||= {};
@@ -229,7 +271,7 @@ sub internet_site_appointment_tick {
 			 order by cast(started_at as integer) asc
 		}, $from)->hashes;
 	} || [];
-	my (%run_start, %run_end, %domains_for_app);
+	my (%run_start, %run_end, %domains_for_app, %span_starts);
 	foreach my $domain ( keys %{$map} ) {
 		my $app = $map->{$domain} // next;
 		push @{$domains_for_app{$app}}, $domain if length $domain;
@@ -240,6 +282,7 @@ sub internet_site_appointment_tick {
 		my $start = int($row->{'started_at'} // 0);
 		my $end = int($row->{'ended_at'} // 0);
 		next unless $start > 0 && $end > 0;
+		push @{$span_starts{$app}}, $start;
 		if (!defined $run_end{$app}) {
 			$run_start{$app} = $start;
 			$run_end{$app} = $end;
@@ -291,12 +334,20 @@ sub internet_site_appointment_tick {
 			}
 		}
 		my $active = defined $last && ($now - $last) <= $quiet && !&app_hidden_now($app);
-		next if $active;
+		if ($active) {
+			# A heartbeat for the housekeeping: a machine that stops writing this
+			# (a dead battery, a killed browser) leaves a row a peer can close at
+			# the last moment it was heard from.
+			&db_update('appointments', { server_time => $now }, { uuid => $uuid, app => $app });
+			next;
+		}
 		my $stop_at = (defined $last && $last > $started) ? $last : $now;
 		# A session's duration is the negative accrual (start - stop), the sign
-		# every other close path writes; a positive value paints the band before
-		# the start dot instead of running from it to the recorded end.
-		my $duration = $started - $stop_at;
+		# every other close path writes; a negative value paints the band before
+		# the start dot instead of running from it to the recorded end. Sees the
+		# pauses accumulated so far, so a resumed visit leaves them out.
+		my $paused = &session_pause_peek($uuid);
+		my $duration = $started - $stop_at + $paused;
 		$duration = 0 if $duration > 0;
 		&db_update('appointments', {
 			type => 'stop',
@@ -341,6 +392,16 @@ sub internet_site_appointment_tick {
 			my $row_app = $marker->{'app'} || $name;
 			my $stopped = &db_query('select uuid, stop_timestamp from appointments where app = ? and uuid = ? and type = ? and stop_seen is not null order by cast(stop_timestamp as integer) desc limit 1', $row_app, $marker->{'uuid'}, 'stop')->hash;
 			if ($stopped && $stopped->{'uuid'} && abs(int($stopped->{'stop_timestamp'} // 0) - int($marker->{'at'} // 0)) <= 2000) {
+				# The gap between the pause and this page is not play time; add it
+				# to the row's ledger so the next close leaves it out. The resume
+				# begins at the first span after the stop, not at the run's first
+				# span (a gap inside the pause threshold keeps the same run).
+				my $resume_at = $start_at;
+				foreach my $span_start ( @{$span_starts{$app} || []} ) {
+					if ($span_start > int($marker->{'at'} // 0)) { $resume_at = $span_start; last; }
+				}
+				my $gap = $resume_at - int($marker->{'at'} // 0);
+				&session_pause_add($stopped->{'uuid'}, $row_app, $gap) if $gap > 0;
 				&db_update('appointments', {
 					type => 'start',
 					stop_timestamp => undef,
@@ -393,6 +454,191 @@ sub internet_site_appointment_tick {
 		&Websocket::send('tab', { console => &Websocket::console_command('appointmentDetailGrabber', $name, $uuid)});
 	}
 	return 1;
+}
+
+# The Gou's game helper writes launch.json (state, at, game, title); its input
+# daemon writes activity, the last moment a control was touched. A game session
+# is one appointment for the games app on this machine: it starts at the launch,
+# pauses after half a minute with no control, and resumes - the same row, with
+# the pause left out of the play time - on the next touch within five minutes.
+sub game_state_dir {
+	my $dir = $ENV{'JAWNOS_GAMES_STATE'};
+	return defined $dir && length $dir ? $dir : '/run/jawnos-games';
+}
+
+sub game_state_json {
+	my $path = &game_state_dir() . '/launch.json';
+	return {} unless -f $path;
+	my $raw = eval { read_file($path) } || '';
+	return {} unless length $raw;
+	my $data = eval { decode_json($raw) };
+	return ref $data eq 'HASH' ? $data : {};
+}
+
+sub game_activity_ms {
+	my $path = &game_state_dir() . '/activity';
+	return 0 unless -f $path;
+	my $raw = eval { read_file($path) } || '';
+	$raw =~ s/\s+//g;
+	return $raw =~ /^\d+$/ ? int($raw) : 0;
+}
+
+sub game_session_close {
+	my ($open, $stop_at, $now, $mode) = @_;
+	my $uuid = $open->{'uuid'} || return 0;
+	my $app = $open->{'app'} || 'games';
+	my $started = int($open->{'timestamp'} // 0);
+	$stop_at = $started if $stop_at < $started;
+	$stop_at = $now if !$stop_at || $stop_at > $now;
+	my $paused = ($mode // '') eq 'take' ? &session_pause_take($uuid) : &session_pause_peek($uuid);
+	my $duration = $started - $stop_at + $paused;
+	$duration = 0 if $duration > 0;
+	&db_update('appointments', {
+		type => 'stop',
+		stop_timestamp => $stop_at,
+		stop_seen => 'yes',
+		duration => $duration,
+		server_time => $now,
+	}, { uuid => $uuid, app => $app });
+	&intelligent_automation_toggle({ appt_uuid => $uuid, app => $app, 'state' => 'off', timestamp => $stop_at });
+	&Websocket::send('tab', { console => &Websocket::console_command('appointmentDetailGrabber', $app, $uuid)});
+	return 1;
+}
+
+sub game_play_appointment_tick {
+	my ($opts) = @_;
+	$opts ||= {};
+	my $now = &rightNow();
+	my $launch = &game_state_json();
+	return 0 unless ref $launch eq 'HASH' && scalar keys %{$launch};
+	my $state = $launch->{'state'} // '';
+	my $app = 'games';
+	my $device = &device_setter();
+	my $title = $launch->{'title'} // '';
+	my $game = $launch->{'game'} // '';
+	my $launch_at = int($launch->{'at'} // 0) * 1000;
+	$launch_at = $now if $launch_at <= 0;
+	my $activity = &game_activity_ms();
+	$activity = $launch_at if $activity < $launch_at;
+	my $marker_key = { app => '__president', context => 'game_stop', subcontext => $app, warranty => '-10m' };
+	my $open = &db_query(q{
+		select * from appointments
+		 where app = ? and lower(source) = 'game' and device = ?
+		   and (type = 'start' or type = 'record') and stop_seen is null
+		 order by cast(timestamp as integer) desc limit 1
+	}, $app, $device)->hash;
+	my $marker = &subs::cache_get($marker_key);
+	if ($state eq 'done' || $state eq 'failed') {
+		if ($open && $open->{'uuid'}) {
+			my $finish = int($launch->{'finished'} // 0) * 1000;
+			my $stop_at = $activity > 0 ? $activity : $finish;
+			&game_session_close($open, $stop_at, $now, 'take');
+		}
+		elsif (ref $marker eq 'HASH' && ($marker->{'uuid'} // '')) {
+			# the row was already closed as a pause; its ledger is finished
+			&session_pause_take($marker->{'uuid'});
+		}
+		&subs::cache_delete($marker_key);
+		return 1;
+	}
+	return 0 unless $state eq 'starting' || $state eq 'running';
+	if ($open && $open->{'uuid'}) {
+		my $started = int($open->{'timestamp'} // 0);
+		if ($now - $activity <= 30_000) {
+			&db_update('appointments', { server_time => $now }, { uuid => $open->{'uuid'}, app => $app });
+			return 1;
+		}
+		my $stop_at = $activity > $started ? $activity : $started;
+		&game_session_close($open, $stop_at, $now, 'peek');
+		&subs::cache_set($marker_key, { uuid => $open->{'uuid'}, at => $stop_at, app => $app, game => $game, title => $title });
+		return 1;
+	}
+	my $new_start = $launch_at;
+	if (ref $marker eq 'HASH' && ($marker->{'uuid'} // '')) {
+		my $marker_at = int($marker->{'at'} // 0);
+		if (($marker->{'game'} // '') eq $game) {
+			if ($activity <= $marker_at) {
+				# Still paused: no control since the pause. Leave the session
+				# closed and wait; the next touch is what resumes it.
+				return 1;
+			}
+			if ($activity < $marker_at + 5 * 60 * 1000) {
+				# A resume inside the window continues the same appointment.
+				my $row = &db_query('select uuid, timestamp from appointments where uuid = ? and app = ? limit 1', $marker->{'uuid'}, $app)->hash;
+				if ($row && $row->{'uuid'}) {
+					my $gap = $activity - $marker_at;
+					&session_pause_add($row->{'uuid'}, $app, $gap) if $gap > 0;
+					&db_update('appointments', { type => 'start', stop_seen => undef, stop_timestamp => undef, server_time => $now }, { uuid => $row->{'uuid'}, app => $app });
+					&subs::cache_delete($marker_key);
+					&intelligent_automation_toggle({ appt_uuid => $row->{'uuid'}, app => $app, 'state' => 'on', timestamp => $now });
+					&Websocket::send('tab', { console => &Websocket::console_command('appointmentDetailGrabber', $app, $row->{'uuid'})});
+					return 1;
+				}
+			}
+			# A touch after the window starts a new session; its first segment
+			# begins at the touch, not at the old launch.
+			$new_start = $activity;
+		}
+		&subs::cache_delete($marker_key);
+	}
+	my $settings = &settings_grabber({ app => $app });
+	my $uuid = &random_string_creator(90);
+	my $row = {
+		app => $app,
+		uuid => $uuid,
+		type => 'start',
+		timestamp => $new_start,
+		server_time => $now,
+		device => $device,
+		source => 'game',
+		seen => 'yes',
+		project => length $title ? $title : $settings->{'t_project'},
+		pos => $settings->{'pos'},
+	};
+	&db_insert('appointments', $row);
+	&intelligent_automation_toggle({ appt_uuid => $uuid, app => $app, 'state' => 'on', timestamp => $new_start });
+	&Websocket::send('tab', { console => &Websocket::console_command('appointmentDetailGrabber', $app, $uuid)});
+	return 1;
+}
+
+# An open session whose machine stopped reporting - a Gou whose battery died,
+# a browser killed, a manager that was down - is closed at the last moment it
+# was heard from, not at this tick. Only the two sources the house writes
+# itself are touched; a session a person started is left alone.
+sub session_housekeeping_tick {
+	my $now = &rightNow();
+	my $stale = 10 * 60 * 1000;
+	my $rows = eval {
+		&db_query(q{
+			select app, uuid, timestamp, server_time from appointments
+			 where lower(source) in ('internet', 'game')
+			   and (type = 'start' or type = 'record') and stop_seen is null
+		})->hashes;
+	} || [];
+	my $closed = 0;
+	foreach my $open ( @{$rows} ) {
+		my $uuid = $open->{'uuid'} || next;
+		my $app = $open->{'app'} || next;
+		my $started = int($open->{'timestamp'} // 0);
+		my $beat = int($open->{'server_time'} // 0) || $started;
+		next if $now - $beat <= $stale;
+		my $stop_at = $beat > $started ? $beat : $started;
+		$stop_at = $now if $stop_at > $now;
+		my $paused = &session_pause_take($uuid);
+		my $duration = $started - $stop_at + $paused;
+		$duration = 0 if $duration > 0;
+		&db_update('appointments', {
+			type => 'stop',
+			stop_timestamp => $stop_at,
+			stop_seen => 'yes',
+			duration => $duration,
+			server_time => $now,
+		}, { uuid => $uuid, app => $app });
+		&intelligent_automation_toggle({ appt_uuid => $uuid, app => $app, 'state' => 'off', timestamp => $stop_at });
+		&Websocket::send('tab', { console => &Websocket::console_command('appointmentDetailGrabber', $app, $uuid)});
+		$closed++;
+	}
+	return $closed;
 }
 
 # A settings write or a presence change must be seen by the rest of this

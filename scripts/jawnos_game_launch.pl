@@ -286,6 +286,12 @@ $SIG{'TERM'} = sub {
 };
 $SIG{'INT'} = $SIG{'TERM'};
 
+# The game is up: the manager's play tick starts the appointment from this state.
+$STATUS{'state'} = 'running';
+$STATUS{'at'} = time;
+$STATUS{'system'} = $game->{'system_label'} // '';
+write_status();
+
 if (defined $evdev && open(my $ev, '<', $evdev)) {
 	my $readable = '';
 	vec($readable, fileno($ev), 1) = 1;

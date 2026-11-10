@@ -50,13 +50,14 @@ like($stop_branch, qr/if \(!\$c->param\('duration'\) \|\| \(\$live_stop && !\$ty
 	'a live stop still ignores the duration unless the person typed it');
 like($stop_branch, qr/\$duration = \$timestamp1 - \$timestamp;/,
 	'a live stop measures the session from the press time');
+like($stop_branch, qr/&subs::session_pause_take\(\$o->\{'uuid'\}\)/, 'a stop takes the pause ledger');
 
 # The backdated branch is unchanged and must stay: there the duration is the
 # person's account of a session that ran earlier, and the typed live press takes
 # the same path.
 my ($backdated) = $stop_branch =~ /(else \{\s*(?:\#[^\n]*\n\s*)*\$duration = \(abs \$duration\) \* -1;.*?\n\s*\})/s;
 ok($backdated, 'the backdated branch survives');
-like($backdated, qr/\$duration = \(abs \$duration\) \* -1;\s*\$timestamp = \$timestamp1 - \$duration;/,
+like($backdated, qr/\$duration = \(abs \$duration\) \* -1;.*?\$timestamp = \$timestamp1 - \$duration;/s,
 	'a backdated stop is still placed back from the start by the duration');
 
 # A typed length that lands after the press is a scheduled stop: the row stays an

@@ -82,6 +82,13 @@ sub job_slow_loops {
 		# arriving. The tick stops the session at the last span's end after a
 		# quiet gap, so closing the tab or switching apps ends the appointment.
 		{ name => 'internet sites', first => 10, every => 10, run => sub { &subs::internet_site_appointment_tick(); } },
+		# A game on the Gou is a session too: launch.json says it is running and
+		# the input daemon's activity stamp says when a control was last touched,
+		# so a paused game is not counted as play time.
+		{ name => 'game play', first => 15, every => 10, run => sub { &subs::game_play_appointment_tick(); } },
+		# A session whose machine died leaves a row open - a Gou battery, a
+		# killed browser, a manager that was down. Close it at its last heartbeat.
+		{ name => 'session housekeeping', first => 30, every => 60, run => sub { &subs::session_housekeeping_tick(); } },
 		# The cable changed: apply the plan saved for the source now in use. The
 		# tick is idempotent (the applied row makes it a no-op) so a machine on
 		# mains pays one battery read per minute and no sysfs write.

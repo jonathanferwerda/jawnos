@@ -439,6 +439,10 @@ sub manager_reset($c) {
 				# time and the row's start, exactly as a stop that carried none always
 				# did; the average below learns from it.
 				$duration = $timestamp1 - $timestamp;
+				# A pause the site tick or the house kept is not part of the
+				# session; leave it out of a stop the person writes too.
+				my $paused = &subs::session_pause_take($o->{'uuid'});
+				$duration += $paused if $paused > 0;
 				if ($o->{'end_notes'}) {
 					my $n = &subs::note_decrypter(&subs::session_suds($c), $o->{'end_notes'}, $o->{'ost'});
 					$n .= "\n" . &subs::note_decrypter(&subs::session_suds($c), $notes);
@@ -456,6 +460,9 @@ sub manager_reset($c) {
 				# above - moving a stop forward without the typed flag is the bug that
 				# path avoids.
 				$duration = (abs $duration) * -1;
+				# A typed length is the person's whole account; the pause ledger
+				# is not used, but it must not outlive this stop.
+				&subs::session_pause_take($o->{'uuid'});
 				$timestamp = $timestamp1 - $duration;
 			}
 			# A typed length that ends the session after this press schedules the stop:
