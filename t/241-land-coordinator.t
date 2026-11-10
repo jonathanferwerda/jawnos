@@ -627,6 +627,12 @@ subtest 'the authority refuses a foreign commit identity' => sub {
 	is(ticket_json($out)->{'reason_class'}, 'identity', 'and names the identity');
 };
 
+subtest 'the warden reads the QA panel switch' => sub {
+	my $src = read_file("$real/scripts/land_warden.pl");
+	like($src, qr/qa_warden_report/, 'it reads the setting the QA panel saves');
+	like($src, qr{/manager/note_save}, 'and files the report through the app note route');
+};
+
 subtest 'the systemd units run the coordinator and point the timer at it' => sub {
 	my $service = read_file("$real/scripts/systemd/jawnos-land-coordinator.service");
 	my $timer   = read_file("$real/scripts/systemd/jawnos-land-coordinator.timer");

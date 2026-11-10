@@ -15,6 +15,7 @@
 		installers => 'Installer gaps',
 	);
 	my $qa_times = &subs::qa_times_read();
+	my $qa_warden_report = &subs::setting_grabber({ app => '__president', setting => 'qa_warden_report', device => 'all' });
 	my $qa_local_ok = &subs::qa_device_kind_eligible(&subs::device_setter());
 	my $qa_label = sub {
 		my ($rm) = @_;
@@ -58,6 +59,13 @@
 		</span>
 		<span id="qa_coding_lanes_status" class="cfg-note" style="margin:0 0 0 8px;"></span>
 	</div>
+	<div class="cfg-row">
+		<label style="display:block;"><input type="checkbox" id="qa_warden_report" <% unless (defined $qa_warden_report && $qa_warden_report eq 'off') { %>checked="checked"<% } %>> <%= &subs::ui('Report warden results in the Handbook') %></label>
+		<span id="qa_warden_report_status" class="cfg-note" style="margin:0 0 0 8px;"></span>
+	</div>
+	<p class="cfg-note" style="margin:6px 0 0;">
+		<%= &subs::ui('The land warden rescues refused tickets the coordinator leaves; ticked, it files one Handbook note when a ticket needs a person - a conflict, a red suite, a timeout or a missing commit.') %>
+	</p>
 	<p class="cfg-note" style="margin:6px 0 0;">
 		<%= &subs::ui('The nightly systemd timer reads this setting through qa/device_target.pl. The unit must be installed on every machine that might be chosen; the machine that is not chosen skips its run, and the chosen one runs it. The weekly artefact build stays wherever its toolchain is (mkosi, qemu, a full JDK) - it does not follow this choice.') %>
 	</p>

@@ -384,6 +384,8 @@ like($plat, qr/configure\.qa_ux_model/, 'the model label is a core language key'
 like($plat, qr/optgroup/, 'the dropdown groups eligible models by provider');
 unlike($panel, qr/id="qa_ux_model"/, 'the QA Nightly tab no longer carries it');
 like($panel, qr/50-jawn-schedule\.conf/, 'the panel explains the drop-in');
+like($panel, qr/id="qa_warden_report"/, 'the panel carries the warden report switch');
+like($panel, qr/Report warden results in the Handbook/, 'and says where the report goes');
 
 my $js = read_file("$root/public/js/manager/configure/07_qa_nightly.js");
 like($js, qr{/manager/configure/qa_schedule'}, 'the script reads the schedule');
@@ -394,6 +396,7 @@ like($js, qr/\.qa_run_now/, 'the Run now buttons are wired');
 like($js, qr/qaRunPollStart/, 'the script polls the job state');
 like($js, qr/function qaApplyOff/, 'the script knows how to stand the controls down');
 like($js, qr/if \(r\.off\)/, 'the script renders the off state');
+like($js, qr/'#qa_warden_report'/, 'the script listens to the warden report switch');
 
 my $controller = read_file("$root/lib/JawnOS/Controller/manager_configure2.pm");
 like($controller, qr/qa_times_save\(/, 'the save route validates server-side');
@@ -404,6 +407,7 @@ like($controller, qr/qa_run_now_local\(/, 'Run now starts the run locally');
 like($controller, qr/verb => 'qa_run_now'/, 'a remote Run now uses the signed rail');
 like($controller, qr/qa_schedule_for\(/, 'the schedule route asks the chosen machine');
 like($controller, qr/field.*ux_model/s, 'the target route saves the UX model field');
+like($controller, qr/field.*warden_report/s, 'and the warden report switch');
 
 my $routes = read_file("$root/lib/JawnOS/Routes/manager_configure2.pm");
 like($routes, qr{'/manager/configure/qa_schedule', 'action_50004'}, 'the schedule route is registered');
@@ -426,6 +430,7 @@ like($loader, qr/JawnOS::Domain::Remote.*qa_ux_model_save/, 'the loader maps the
 my $help = read_file("$root/perl/help/topics_configure.pl");
 like($help, qr/Nightly schedule/, 'the Configure help topic explains the schedule');
 like($help, qr/Run now/, 'and the Run now trigger');
+like($help, qr/Report warden results in the Handbook/, 'and the warden report switch');
 like($help, qr/UX judgement model/, 'and the UX model field');
 
 {
@@ -440,6 +445,9 @@ like($help, qr/UX judgement model/, 'and the UX model field');
 			my $label = language::translate($code, $key);
 			ok(defined $label && length $label && $label ne $key, "$code has $key");
 		}
+	}
+	for my $code (@codes) {
+		is(language::translate($code, 'configure.qa_nightly'), 'QA', "$code names the tab QA");
 	}
 }
 

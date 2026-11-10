@@ -74,6 +74,7 @@ my $qa_root = ($ENV{'JAWNOS_QA_ROOT'} || (($ENV{'HOME'} || '.') . '/jawnos-qa'))
 $qa_root =~ s{/+$}{};
 my $work_root = "$qa_root/warden";
 my $report_dir = $opt{'report'} || $work_root;
+my $report_on = warden_report_enabled($primary);
 
 # One warden at a time; a second timer tick exits quietly.
 my $lock;
@@ -448,8 +449,86 @@ sub write_report {
 			branch => ($t->{'branch'} // ''),
 			state => $w->{'state'},
 		});
+		notify_report($t, $w, $path);
 	}
 	print 'land_warden: ticket ', $id, ' ', ($w->{'state'} // 'unknown'), ': ', ($w->{'detail'} // ''), "\n";
+}
+
+# The report is also a Handbook note when the panel asks for one. Only the
+# states that leave a person something to do are sent; enqueued and nothing are
+# the queue's own answer.
+sub notify_report {
+	my ($t, $w, $path) = @_;
+	return unless $report_on;
+	my $state = $w->{'state'} // '';
+	my %attention = map { $_ => 1 } qw(conflict red timeout gone push_failed enqueue_failed blocked);
+	return unless $attention{$state};
+	my $live = live_url($primary);
+	my $ticket = ticket_url($primary);
+	return unless length $live && length $ticket;
+	require Mojo::UserAgent;
+	my $ua = Mojo::UserAgent->new(insecure => 1, max_redirects => 5, request_timeout => 30);
+	my $mint = eval { $ua->get($ticket) };
+	unless ($mint && $mint->res->is_success) {
+		print STDERR "land_warden: the Handbook note was not filed; the ticket did not mint a session\n";
+		return;
+	}
+	my $id = $t->{'id'} // '';
+	my @lines = (
+		"Land warden: ticket $id $state",
+		'',
+		($w->{'detail'} // ''),
+		'',
+		'- branch: ' . ($t->{'branch'} // ''),
+		'- worktree: ' . ($w->{'worktree'} // ''),
+		'- report: ' . $path,
+	);
+	if (ref $w->{'failing'} eq 'ARRAY' && @{ $w->{'failing'} }) {
+		push @lines, '', 'Failing lines:', map { "    $_" } @{ $w->{'failing'} };
+	}
+	my $text = join("\n", @lines);
+	my $post = eval { $ua->post($live . '/manager/note_save' => form => { text => $text, category => 'journal' }) };
+	unless ($post && $post->res->is_success) {
+		print STDERR "land_warden: the Handbook note was not filed\n";
+	}
+}
+
+sub warden_report_enabled {
+	my ($repo) = @_;
+	my $lib = "$FindBin::Bin/../qa/lib";
+	return 1 unless -f "$lib/QaSetting.pm";
+	eval { require "$lib/QaSetting.pm"; 1 } or return 1;
+	my $db = "$repo/database/jawnos.db";
+	return 1 unless -f $db;
+	my $v = eval { QaSetting::read_setting($db, 'qa_warden_report') };
+	return 1 unless defined $v && length $v;
+	return $v eq 'off' ? 0 : 1;
+}
+
+sub live_url {
+	my ($repo) = @_;
+	my $path = "$repo/config.json";
+	my $port = 3000;
+	if (-f $path) {
+		open(my $fh, '<', $path) or return "https://127.0.0.1:$port";
+		local $/;
+		my $json = <$fh> // '';
+		close $fh;
+		my $cfg = eval { JSON::PP->new->utf8->decode($json) };
+		$port = $cfg->{'working_port'} if ref $cfg eq 'HASH' && $cfg->{'working_port'};
+	}
+	return "https://127.0.0.1:$port";
+}
+
+sub ticket_url {
+	my ($repo) = @_;
+	my $path = "$repo/.shots/ticket.txt";
+	return '' unless -f $path;
+	open(my $fh, '<', $path) or return '';
+	my $url = <$fh> // '';
+	close $fh;
+	$url =~ s/^\s+|\s+$//g;
+	return $url;
 }
 
 sub git_in {

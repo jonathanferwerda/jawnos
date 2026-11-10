@@ -252,6 +252,22 @@ $(document).on('change', '.qa_coding_lane', function() {
 	});
 });
 
+$(document).on('change', '#qa_warden_report', function() {
+	var box = $('#qa_warden_report_status');
+	var value = $(this).is(':checked') ? 'on' : 'off';
+	box.text('');
+	$.post('/manager/configure/qa_device_target', { field: 'warden_report', warden_report: value }, function(res) {
+		if (!res || !res.ok) {
+			box.text((res && res.error) || qaT('Could not save the choice.'));
+			return;
+		}
+		box.text(qaT('Saved.'));
+		setTimeout(function() { box.text(''); }, 2000);
+	}).fail(function() {
+		box.text(qaT('Could not save the choice.'));
+	});
+});
+
 $(document).on('click', '#qa_schedule_save', function() {
 	var button = $(this);
 	var status = $('#qa_schedule_status');

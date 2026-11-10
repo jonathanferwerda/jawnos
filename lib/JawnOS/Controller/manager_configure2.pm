@@ -1036,6 +1036,14 @@ sub action_50002 {
 		$c->render(json => &subs::qa_coding_lanes_save($c->param('lanes')));
 		return;
 	}
+	# The warden's report switch. Only the literal off is off; a hand-made POST
+	# cannot store a sentence or turn an unknown value into a new state.
+	if (($c->param('field') // '') eq 'warden_report') {
+		my $value = (($c->param('warden_report') // '') eq 'off') ? 'off' : 'on';
+		&subs::setting_setter({ app => '__president', setting => 'qa_warden_report', device => 'all', value => $value });
+		$c->render(json => { ok => 1, value => $value });
+		return;
+	}
 	# The value is a signatorial, the literal 'none' (the whole nightly system
 	# off), or '' for this machine. A phone or tablet is refused here as well as
 	# at install, so a hand-made POST cannot pin the nightly to a device that
