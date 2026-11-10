@@ -1818,6 +1818,8 @@ like($weather_js, qr/weatherHoursByDate/, 'the hourly forecast is grouped by the
 like($weather_js, qr/weatherPrecipWindows/, 'the detail names when precipitation is likely');
 like($weather_js, qr/weatherTempTrend/, 'and the warmest and coolest hours');
 like($weather_js, qr/weatherDayChart/, 'the day detail draws a small temperature chart');
+like($weather_js, qr/function weatherWet/, 'the likely-precipitation threshold is shared');
+like($weather_js, qr/weather_day_chart_wet/, 'and the chart shades the hours precipitation is likely');
 like($weather_js, qr/Hourly temperature for the day/, 'and labels the chart for assistive tech');
 like($weather_js, qr/aria-expanded/, 'the day row reports whether it is open');
 like($loader, qr/weather_reverse_geocode/, 'the domain loader maps the reverse geocoder');
@@ -1831,6 +1833,7 @@ like($weather_style, qr/#weather_toolbar \{[^}]*position: sticky/, 'the location
 like($weather_style, qr/#weather_toolbar \{[^}]*background: var\(--panel\)/, 'and hides the tab scrolling under it');
 like($weather_style, qr/\.weather_day_detail\.open/, 'the day detail stays hidden until the row is opened');
 like($weather_style, qr/\.weather_day_chart svg/, 'the day chart gets a compact height');
+like($weather_style, qr/\.weather_day_chart_wet/, 'with a soft band behind the line');
 
 # --- saving, restoring and the strip ----------------------------------------
 like($routes_auto, qr{/manager/weather/location/delete\b}, 'the delete route exists');

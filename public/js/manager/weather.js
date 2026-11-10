@@ -462,8 +462,7 @@ function weatherDayDetail(day, hours) {
 		html += '<div class="weather_day_hours">';
 		for (var i = 0; i < hours.length; i++) {
 			var h = hours[i] || {};
-			var prob = parseFloat(h.precip_prob);
-			var wet = !isNaN(prob) && prob >= 30;
+			var wet = weatherWet(h);
 			var time = h.time_text ? weatherHourLabel(h.time_text) : weatherTime(h.time);
 			html += '<div class="weather_hour' + (wet ? ' weather_hour_wet' : '') + '">'
 				+ '<div>' + weatherEsc(time) + '</div>'
@@ -502,6 +501,13 @@ function weatherHourDate(h) {
 	return d.getFullYear() + '-' + ('0' + (d.getMonth() + 1)).slice(-2) + '-' + ('0' + d.getDate()).slice(-2);
 }
 
+// Thirty percent is the app's line for "likely": the day summary, the wet
+// hour cards and the chart's shading all read it from here.
+function weatherWet(h) {
+	var p = parseFloat(h && h.precip_prob);
+	return !isNaN(p) && p >= 30;
+}
+
 // When the rain (or snow) is likely: each run of hours at or above thirty
 // percent reads as one window, with the peak chance beside it.
 function weatherPrecipWindows(hours) {
@@ -509,8 +515,8 @@ function weatherPrecipWindows(hours) {
 	var run = null;
 	for (var i = 0; i < hours.length; i++) {
 		var h = hours[i] || {};
-		var p = parseFloat(h.precip_prob);
-		if (!isNaN(p) && p >= 30) {
+		if (weatherWet(h)) {
+			var p = parseFloat(h.precip_prob);
 			if (!run) { run = { first: h, last: h, max: p }; runs.push(run); }
 			else {
 				run.last = h;
@@ -583,9 +589,18 @@ function weatherDayChart(hours) {
 		dots += '<circle cx="' + sx + '" cy="' + sy + '" r="2" fill="#4a90d9"/>';
 	}
 	if (points.length < 2) { return ''; }
+	var spacing = plotW / (hours.length - 1);
+	var wet = '';
+	for (var k = 0; k < hours.length; k++) {
+		if (!weatherWet(hours[k])) { continue; }
+		var left = k === 0 ? L : x(k) - spacing / 2;
+		var right = k === hours.length - 1 ? (W - R) : x(k) + spacing / 2;
+		wet += '<rect class="weather_day_chart_wet" x="' + left + '" y="' + T + '" width="' + (right - left) + '" height="' + plotH + '"/>';
+	}
 	var first = weatherHourLabel(hours[0] && hours[0].time_text) || weatherTime(hours[0] && hours[0].time);
 	var last = weatherHourLabel(hours[hours.length - 1] && hours[hours.length - 1].time_text) || weatherTime(hours[hours.length - 1] && hours[hours.length - 1].time);
-	var svg = '<svg viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="' + weatherEsc(jawnosT('Hourly temperature for the day')) + '">';
+	var svg = '<svg viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="' + weatherEsc(jawnosT('Hourly temperature for the day, shaded where precipitation is likely')) + '">';
+	svg += wet;
 	svg += '<line x1="' + L + '" y1="' + T + '" x2="' + L + '" y2="' + (T + plotH) + '" stroke="currentColor" opacity=".22"/>';
 	svg += '<line x1="' + L + '" y1="' + (T + plotH) + '" x2="' + (W - R) + '" y2="' + (T + plotH) + '" stroke="currentColor" opacity=".12"/>';
 	svg += '<text x="' + (L - 4) + '" y="' + (y(max) + 4) + '" text-anchor="end" font-size="10" fill="currentColor" opacity=".6">' + Math.round(max) + '°</text>';
