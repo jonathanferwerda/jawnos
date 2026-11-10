@@ -1,4 +1,4 @@
-# tests-for: lib/JawnOS/Domain/Sync.pm lib/JawnOS/Manager/Part35.pm lib/JawnOS/Domain/Loader.pm perl/gb/01_state_and_defaults.pl perl/President.pl perl/help/topics_features.pl scripts/sync_kick.pl
+# tests-for: lib/JawnOS/Domain/Sync.pm lib/JawnOS/Manager/Part35.pm lib/JawnOS/Domain/Loader.pm perl/gb/01_state_and_defaults.pl perl/utility_jobs.pl perl/help/topics_features.pl scripts/sync_kick.pl
 # covers:    the sync kick job clears the three things that stall a rail and nudges the ordinary pass; a dead hub is not chosen
 
 use strict;
@@ -109,9 +109,9 @@ is($job->{'toggle'}, 'on', 'it starts on: a stuck rail is the failure the job ex
 is($job->{'group'}, 'fast', 'it runs in the fast pool');
 ok(($job->{'timeout'} || 0) >= 30, 'it has a bounded slot');
 
-my $president = read_file("$root/perl/President.pl");
+my $president = read_file("$root/perl/utility_jobs.pl");
 like($president, qr/\$gb::timeouts->\{'sync_kick'\}->\{'subroutine'\} = sub \{\s*return &subs::sync_kick\(\);/s,
-	'President wires the job to subs::sync_kick');
+	'utility_jobs.pl wires the job to subs::sync_kick');
 
 my $loader = read_file("$root/lib/JawnOS/Domain/Loader.pm");
 like($loader, qr/JawnOS::Domain::Sync' for qw\([^)]*\bsync_kick\b/s,

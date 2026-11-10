@@ -33,6 +33,9 @@ if (defined $ENV{'JAWNOS_JOB_ARGS'} && length $ENV{'JAWNOS_JOB_ARGS'}) {
 
 require './perl/subroutines.pl';
 require './perl/jobs.pl';
+# The utility scheduler's bodies live outside jobs.pl so the require graph stays
+# acyclic; load them only for the job that runs them.
+require './perl/utility_jobs.pl' if defined $name && $name eq 'utility functions';
 
 my $job = (defined $name && length $name) ? $jobs::JOB{$name} : undef;
 unless ($job) {

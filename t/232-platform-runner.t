@@ -1,4 +1,4 @@
-# tests-for: lib/JawnOS/Platform/Runner.pm lib/JawnOS/Platform/Runner/Unix.pm lib/JawnOS/Platform/Server.pm lib/JawnOS/Platform/Job.pm perl/jobs.pl perl/subprocessor_worker.pl
+# tests-for: lib/JawnOS/Platform/Runner.pm lib/JawnOS/Platform/Runner/Unix.pm lib/JawnOS/Platform/Server.pm lib/JawnOS/Platform/Job.pm perl/jobs.pl perl/utility_jobs.pl perl/subprocessor_worker.pl
 # covers:    the runner seam picks the platform backend, every backend starts a
 #            child and reports its output and exit, a write reaches the child,
 #            and nothing outside the Unix backend names ReadWriteFork.
@@ -172,6 +172,7 @@ ok($runner->can('read_handle'), 'the seam exposes a read handle');
 		'house advertise', 'sshd watcher', 'lan presence beacon',
 		'lan presence listener', 'lan mesh wake', 'ble adopt scan', 'wake schedule',
 		'address directory', 'voice sync', 'whisper server', 'Minion Worker',
+		'utility functions',
 		'evaluation schedules', 'evaluation dispatch',
 	);
 	my @missing = grep { !exists $jobs::JOB{$_} } @lifted;
@@ -180,7 +181,7 @@ ok($runner->can('read_handle'), 'the seam exposes a read handle');
 	my @unnamed = grep { $pres !~ /name => '\Q$_\E'/ } @lifted;
 	is_deeply(\@unnamed, [], 'and each still uses that exact call-site name in President');
 	ok(!exists $jobs::NO_FORK_SKIP{'utility functions'},
-		'utility functions runs on the master loop, not as a skipped child');
+		'utility functions is a named job, not a skipped child');
 	ok(exists $jobs::NO_FORK_SKIP{'sshd watcher'},
 		'a Unix-only job is skipped without fork');
 }

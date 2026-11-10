@@ -1,4 +1,4 @@
-# tests-for: lib/JawnOS/Domain/Firmware.pm lib/JawnOS/Domain/Loader.pm lib/JawnOS/Domain/Ble.pm lib/JawnOS/Domain/Ble2.pm lib/JawnOS/Manager/Part34.pm lib/JawnOS/Controller/manager_embedded.pm templates/embedded/body.html.ep public/js/manager/embedded/01_ota_nowme.js perl/gb/01_state_and_defaults.pl perl/President.pl scripts/fw_version.py scripts/stage_firmware.pl jp/alarmclock/alarmclock_01_globals_clock_ble.ino jp/alarmclock/alarmclock_02_ble_handlers_wifi_setup.ino jt/jt_01_globals_ble_house.ino jt/jt_03_setup.ino jt/jt_05_loop.ino jw/jw_01_globals.ino jw/jw_05_loop2.ino
+# tests-for: lib/JawnOS/Domain/Firmware.pm lib/JawnOS/Domain/Loader.pm lib/JawnOS/Domain/Ble.pm lib/JawnOS/Domain/Ble2.pm lib/JawnOS/Manager/Part34.pm lib/JawnOS/Controller/manager_embedded.pm templates/embedded/body.html.ep public/js/manager/embedded/01_ota_nowme.js perl/gb/01_state_and_defaults.pl perl/utility_jobs.pl scripts/fw_version.py scripts/stage_firmware.pl jp/alarmclock/alarmclock_01_globals_clock_ble.ino jp/alarmclock/alarmclock_02_ble_handlers_wifi_setup.ino jt/jt_01_globals_ble_house.ino jt/jt_03_setup.ino jt/jt_05_loop.ino jw/jw_01_globals.ino jw/jw_05_loop2.ino
 # covers:    Every embedded device knows (and says) which build it is running,
 #            and the house knows which build it would send. The version is
 #            compiled in from VERSION, reported in state_request and
@@ -126,7 +126,7 @@ like($js, qr/\$\('#embedded_firmware_device'\)\.text\('v' \+ response\.query\.ve
 # --- the sweep is on the utility schedule ---------------------------------
 my $defaults = $read->('perl/gb/01_state_and_defaults.pl');
 like($defaults, qr/'firmware_auto_ota' => \{ interval =>/, 'the sweep has a utility slot');
-my $president = $read->('perl/President.pl');
+my $president = $read->('perl/utility_jobs.pl');
 like($president, qr/\$gb::timeouts->\{'firmware_auto_ota'\}->\{'subroutine'\}/, 'and a subroutine attached to it');
 
 # --- the sweep's own rules -------------------------------------------------

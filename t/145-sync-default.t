@@ -1,4 +1,4 @@
-# tests-for: perl/gb/01_state_and_defaults.pl perl/President.pl
+# tests-for: perl/gb/01_state_and_defaults.pl perl/utility_jobs.pl
 # covers:    the built-in utility switches a fresh machine starts from - the sync
 #            pass runs on its own timer so a box with no LAN presence still syncs -
 #            and the task leaves the scheduling to utility_runner.
@@ -37,8 +37,8 @@ my $gc = $gb::timeouts->{'worktree_gc'};
 ok(ref $gc eq 'HASH', 'the worktree sweep is a declared utility');
 is($gc->{'toggle'}, 'on', 'the sweep starts on: a landed worktree is scratch');
 is($gc->{'group'}, 'daily', 'the sweep runs in the daily pool');
-my ($gc_task) = read_file("$root/perl/President.pl") =~ /(\$gb::timeouts->\{'worktree_gc'\}->\{'subroutine'\} = sub \{.*?\n\t\t\};)/s;
-ok(defined $gc_task && length $gc_task, 'the sweep task is declared in President');
+my ($gc_task) = read_file("$root/perl/utility_jobs.pl") =~ /(\$gb::timeouts->\{'worktree_gc'\}->\{'subroutine'\} = sub \{.*?\n\t\t\};)/s;
+ok(defined $gc_task && length $gc_task, 'the sweep task is declared in utility_jobs.pl');
 like($gc_task // '', qr/worktree_gc\.pl/, 'it runs the sweep script');
 like($gc_task // '', qr/--apply/, 'in apply mode, not report-only');
 
@@ -46,9 +46,9 @@ like($gc_task // '', qr/--apply/, 'in apply mode, not report-only');
 # `lasted_run` looked equivalent, but adoption stamps that marker to "now" for a
 # fresh process, so the first slot after every restart was skipped - and a box
 # that restarts often could defer the pass indefinitely.
-my $president = read_file("$root/perl/President.pl");
+my $president = read_file("$root/perl/utility_jobs.pl");
 my ($sync_task) = $president =~ /(\$gb::timeouts->\{'remote_machine_sync'\}->\{'subroutine'\} = sub \{.*?\n\t\t\};)/s;
-ok(defined $sync_task && length $sync_task, 'the sync task is declared in President');
+ok(defined $sync_task && length $sync_task, 'the sync task is declared in utility_jobs.pl');
 unlike($sync_task, qr/lasted_run'\}\s*>=\s*\(\$interval \* 1000\)/,
 	'the sync task does not gate itself on lasted_run: the runner slot is the schedule');
 

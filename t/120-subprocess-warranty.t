@@ -1,4 +1,4 @@
-# tests-for: lib/JawnOS/Domain/Process.pm lib/JawnOS/Domain/Calendar.pm lib/JawnOS/Domain/Lan.pm lib/JawnOS/Domain/Loader.pm lib/JawnOS/Domain/Render.pm lib/JawnOS/Manager/Part02.pm lib/JawnOS/Manager/Part08.pm perl/President.pl jawn
+# tests-for: lib/JawnOS/Domain/Process.pm lib/JawnOS/Domain/Calendar.pm lib/JawnOS/Domain/Lan.pm lib/JawnOS/Domain/Loader.pm lib/JawnOS/Domain/Render.pm lib/JawnOS/Manager/Part02.pm lib/JawnOS/Manager/Part08.pm perl/President.pl perl/jobs.pl jawn
 # covers:    a subprocessor stamps a warranty, the reaper forgets a dead pid and kills a job past its
 #            finite warranty, and a resident loop or a tunnel holder declared 'forever' is never touched.
 
@@ -350,7 +350,8 @@ like($calendar, qr/deferred_warranty_spec\s*=>\s*\$warranty_spec/, 'a run_p job 
 like($calendar, qr/my \$forked = \$gb::subprocessed > 1 && !\$params->\{'fork'\} \? 0 : 1;/,
 	'a job that may run inline is not stamped as deferred');
 like($calendar, qr/setpgrp\(0, 0\)/, 'the wrapper owns its process group');
-like($president, qr/subs::subprocessor_heartbeat\(\)/, 'a resident loop heartbeats');
+my $job_source = read_file("$root/perl/jobs.pl");
+like($job_source, qr/subs::subprocessor_heartbeat\(\)/, 'a resident loop heartbeats');
 
 my $launcher = read_file("$root/jawn");
 like($launcher, qr/subs::subprocessor_reap\(\$subprocesses/,

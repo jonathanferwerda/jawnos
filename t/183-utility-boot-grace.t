@@ -1,6 +1,6 @@
-# tests-for: perl/President.pl
+# tests-for: perl/utility_jobs.pl
 # covers:    A tree that just started does not run its whole past-due utility backlog in one tick,
-#           and the cap is never the undefined a forked child would inherit.
+#           and the cap is never the undefined a job process could inherit.
 
 use strict;
 use warnings;
@@ -23,7 +23,7 @@ use RepoSource;
 # and a cap on how many due jobs one pass may start. The rest stay due for the
 # next tick instead of all starting together.
 
-my $src = read_file(repo_root() . '/perl/President.pl');
+my $src = read_file(repo_root() . '/perl/utility_jobs.pl');
 
 my ($functions) = $src =~ /(sub utility_functions\(\) \{.*?\n\})/s;
 ok($functions, 'utility_functions is still one sub');
@@ -36,7 +36,7 @@ like($runner, qr/return if \$utility_boot_at && &subs::rightNow\(\) - \$utility_
 	'the first twenty seconds after boot run no job');
 
 like($src, qr/our \$utility_pass_cap = 2;/, 'one pass starts at most two jobs');
-like($runner, qr/my \$pass_cap = &subs::utility_pass_cap_value\(\$utility_pass_cap\);/, 'the cap is resolved: the forked child inherits it undefined, and 0 >= undef is true');
+like($runner, qr/my \$pass_cap = &subs::utility_pass_cap_value\(\$utility_pass_cap\);/, 'the cap is resolved before the pass: 0 >= undef is true');
 
 my $cap_at = index($runner, 'if ($started >= $pass_cap)');
 my $stamp_at = index($runner, q{$u->{'last_attempt'} = $now;});

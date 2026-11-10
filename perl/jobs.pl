@@ -19,8 +19,10 @@ package jobs;
 
 use strict;
 use warnings;
+no warnings 'once';
 
 use File::Slurp qw(read_file write_file);
+use Mojo::IOLoop;
 
 our %JOB;
 our %UNIX_ONLY = (
@@ -29,9 +31,9 @@ our %UNIX_ONLY = (
 	'whisper server' => 1,
 );
 
-# `utility functions` is not in this table: it reads President's own $gb state,
-# so a box without fork registers its timers on the master's loop instead of
-# spawning a child that could not see them (see perl/President.pl).
+# `utility functions` is not in this table: it is an ordinary named job now
+# (jobs::job_utility_functions), so its timers run in its own process with its
+# own loop. What remains here is genuinely Unix-only.
 our %NO_FORK_SKIP = (
 	%UNIX_ONLY,
 );
@@ -404,9 +406,43 @@ sub job_evaluation_dispatch {
 	}
 }
 
+# The utility scheduler: alarms, navigation, sync and the rest run from the
+# timers this registers, so it must own a process and a loop of its own. On
+# Unix subs::subprocessor forks it as before; on a box without fork the named
+# job starts perl/subprocessor_worker.pl. The bodies live in
+# perl/utility_jobs.pl; the two entry points that host this job (President.pl
+# and perl/subprocessor_worker.pl) load it, so jobs.pl stays a leaf in the
+# require graph (Calendar.pm requires jobs.pl).
+sub job_utility_functions {
+	my ($args) = @_;
+	# A forked child inherited these from President; a worker fills them from
+	# subroutines.pl. utility_jobs.pl declares the same package variables.
+	$President::config = $subs::config unless $President::config;
+	$President::device = $subs::device unless defined $President::device;
+	$President::log = $subs::log unless $President::log;
+	my $status_file = &subs::home('~/.president/status');
+	Mojo::IOLoop->timer(2 => sub {
+		&President::utility_functions();
+	});
+	Mojo::IOLoop->recurring(2 => sub {
+		&subs::subprocessor_heartbeat();
+		if ($gb::utility_functions_watcher == 0) {
+			$gb::utility_functions_watcher = 1;
+			$President::log->info('starting utility functions');
+		}
+		my $f_status = read_file($status_file);
+		if ($f_status eq '') {
+			write_file($status_file, 'good');
+			print "wrote status good\n";
+		}
+	});
+	Mojo::IOLoop->start;
+}
+
 %JOB = (
 	'app release sync' => \&job_app_release_sync,
 	'slow loops' => \&job_slow_loops,
+	'utility functions' => \&job_utility_functions,
 	'house levels' => \&job_house_levels,
 	'device mdns sync' => \&job_device_mdns_sync,
 	'house advertise' => \&job_house_advertise,

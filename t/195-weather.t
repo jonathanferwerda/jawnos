@@ -1,4 +1,4 @@
-# tests-for: lib/JawnOS/Domain/Weather.pm lib/JawnOS/Domain/WeatherHistory.pm lib/JawnOS/Domain/WeatherAutomation.pm lib/JawnOS/Controller/manager_weather.pm lib/JawnOS/Routes/manager_weather.pm lib/JawnOS/Manager/Core1_tables_hooks.pm lib/JawnOS/Manager/Part15.pm templates/apps/weather.html.ep templates/apps/weather/automations.html.ep templates/apps/weather/map.html.ep public/js/manager/weather.js public/js/manager/weather_history.js public/js/manager/weather_automation.js public/js/manager/weather_map.js public/js/manager/mapengine/01_engine.js
+# tests-for: lib/JawnOS/Domain/Weather.pm lib/JawnOS/Domain/WeatherHistory.pm lib/JawnOS/Domain/WeatherAutomation.pm lib/JawnOS/Controller/manager_weather.pm lib/JawnOS/Routes/manager_weather.pm lib/JawnOS/Manager/Core1_tables_hooks.pm lib/JawnOS/Manager/Part15.pm templates/apps/weather.html.ep templates/apps/weather/automations.html.ep templates/apps/weather/map.html.ep public/js/manager/weather.js public/js/manager/weather_history.js public/js/manager/weather_automation.js public/js/manager/weather_map.js public/js/manager/mapengine/01_engine.js perl/utility_jobs.pl
 # covers:    The Weather app's pure parsers for Environment Canada and Open-Meteo,
 #            the country-to-provider choice, and the app's route/menu/help wiring.
 
@@ -1736,7 +1736,7 @@ like($core_auto, qr{/js/manager/weather_automation\.js}, 'the lazy app loads the
 like($core_auto, qr{weather\s*=>\s*\[qw\(/js/manager/weather\.js /js/manager/weather_history\.js /js/manager/weather_automation\.js /js/manager/weather_map\.js\)\]}, 'the automation and map scripts are in the Weather chunk');
 my $loader_auto = read_file("$root/lib/JawnOS/Domain/Loader.pm");
 like($loader_auto, qr/JawnOS::Domain::WeatherAutomation' for qw\([^)]*weather_observe_record/, 'the domain loader maps the observer');
-my $president = read_file("$root/perl/President.pl");
+my $president = read_file("$root/perl/utility_jobs.pl");
 like($president, qr/weather_observe_tick/, 'the utility attaches the weather observer');
 my $defaults = read_file("$root/perl/gb/01_state_and_defaults.pl");
 like($defaults, qr/'weather_observe'\s*=>\s*\{/, 'the observer has a scheduled slot');
