@@ -54,6 +54,7 @@ local $ENV{'JAWNOS_POWER_SYSFS'} = $sys;
 local $ENV{'JAWNOS_POWER_CONFIG_FILE'} = "$scratch/config.json";
 local $ENV{'JAWNOS_POWER_STATE_FILE'} = "$scratch/state.json";
 local $ENV{'JAWNOS_POWER_DRY_RUN'} = 1;
+local $ENV{'JAWNOS_POWER_RK818_DISABLE'} = 1;
 
 require "$root/lib/JawnOS/Domain/Power.pm";
 
@@ -304,6 +305,49 @@ sub helper {
 	is(subs::power_ocv_percent(3.30), 0, 'an empty cell is 0%');
 	is(subs::power_ocv_percent(3.90), 60, 'the middle of the table is read');
 	$ENV{'JAWNOS_POWER_SYSFS'} = $sys;
+}
+
+# --- the rk818 is the Gou's real gauge --------------------------------------
+# The rk817 node reports a different rail (and called a charging pack
+# "Discharging"). The rk818 says plug-in, CC/CV, ~3.99 V and ~0.9 A, which is a
+# 75% pack on the resting-voltage table. A fake i2cget supplies those registers;
+# the reader is read-only and is what the panel sees on the device.
+{
+	my $fake = "$scratch/fake_i2cget";
+	write_file($fake, <<'SH');
+#!/bin/sh
+case "$5" in
+	0x21) echo 0x57 ;;
+	0xa0) echo 0xb7 ;;
+	0xc4) echo 0x0e ;;
+	0xc5) echo 0x81 ;;
+	0xd5) echo 0x0a ;;
+	0xd6) echo 0xde ;;
+	0xd7) echo 0x0f ;;
+	0xd8) echo 0x42 ;;
+	0xbc) echo 0x02 ;;
+	0xbd) echo 0x57 ;;
+	*) echo 0x00 ;;
+esac
+SH
+	chmod 0755, $fake;
+	delete $ENV{'JAWNOS_POWER_RK818_DISABLE'};
+	$ENV{'JAWNOS_POWER_RK818'} = '1';
+	$ENV{'JAWNOS_POWER_RK818_BUS'} = '0';
+	$ENV{'JAWNOS_POWER_RK818_ADDR'} = '0x1c';
+	$ENV{'JAWNOS_POWER_I2CGET'} = $fake;
+	my $b = subs::power_battery_read();
+	is($b->{'source'}, 'rk818', 'the rk818 reading wins over the rk817 node');
+	is($b->{'percentage'}, 75, 'the calibrated pack voltage gives 75%');
+	is($b->{'status'}, 'charging', 'CC/CV is charging');
+	is($b->{'ac'}, 1, 'a plugged rk818 is the mains source');
+	is($b->{'cable'}, 1, 'and the cable is reported');
+	is($b->{'estimated'}, 1, 'the percentage is marked as an estimate');
+	ok(abs($b->{'voltage'} - 3.993) < 0.001, 'the calibrated voltage is 3.993 V');
+	ok(abs($b->{'current'} - 0.902094) < 0.00001, 'the current is 0.9 A');
+	ok(abs($b->{'charge_eta'} - 1.1085) < 0.01, 'the charge estimate is about 1.1 h');
+	delete @ENV{qw(JAWNOS_POWER_RK818 JAWNOS_POWER_RK818_BUS JAWNOS_POWER_RK818_ADDR JAWNOS_POWER_I2CGET)};
+	$ENV{'JAWNOS_POWER_RK818_DISABLE'} = 1;
 }
 
 # --- the labels and the help topic -----------------------------------------

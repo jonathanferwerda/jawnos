@@ -153,11 +153,99 @@ sub power_ocv_percent {
 	return 0;
 }
 
+# The Gou puts its battery and charger on the rk818 PMIC, not on the rk817
+# that also sits on the I2C bus (the rk817's gauge reports a different rail and
+# called a charging pack "Discharging"). Mainline has no rk818-battery driver,
+# so its registers are read directly, read-only, through i2cget. The percentage
+# is the same coarse resting-voltage table, marked as an estimate.
+sub power_rk818_byte {
+	my ($tool, $bus, $addr, $reg) = @_;
+	return undef unless defined $tool && length $tool;
+	my $pid = open(my $fh, '-|', $tool, '-y', '-f', $bus, $addr, "0x$reg");
+	return undef unless $pid;
+	my $line = <$fh> // '';
+	close $fh;
+	return undef unless $line =~ /0x([0-9a-fA-F]{2})/;
+	return hex($1);
+}
+
+sub power_rk818_read {
+	return undef if $ENV{'JAWNOS_POWER_RK818_DISABLE'};
+	my ($bus, $addr) = ('0', '0x1c');
+	if (defined $ENV{'JAWNOS_POWER_RK818'} && length $ENV{'JAWNOS_POWER_RK818'}) {
+		$bus = $ENV{'JAWNOS_POWER_RK818_BUS'} || $bus;
+		$addr = $ENV{'JAWNOS_POWER_RK818_ADDR'} || $addr;
+	}
+	else {
+		# The MFD driver owns the device, and its sysfs name says which PMIC it is.
+		my ($dev) = grep { -d } glob('/sys/bus/i2c/devices/*-001c');
+		return undef unless $dev;
+		my $name = &power_read("$dev/name");
+		return undef unless $name =~ /rk818/i;
+		($bus) = $dev =~ m{/(\d+)-001c$};
+		return undef unless defined $bus;
+	}
+	my $tool = $ENV{'JAWNOS_POWER_I2CGET'} || &power_command_path('i2cget');
+	return undef unless defined $tool && -x $tool;
+	my %r;
+	for my $reg (qw(21 a0 c4 c5 d5 d6 d7 d8 bc bd)) {
+		my $value = &power_rk818_byte($tool, $bus, $addr, $reg);
+		return undef unless defined $value;
+		$r{$reg} = $value;
+	}
+
+	my $vcalib0 = ($r{'d5'} << 8) | $r{'d6'};
+	my $vcalib1 = ($r{'d7'} << 8) | $r{'d8'};
+	my $k = $vcalib1 > $vcalib0 ? (4200 - 3000) * 1000 / ($vcalib1 - $vcalib0) : 1000;
+	my $b = 4200 - ($k * $vcalib1) / 1000;
+	my $mv = int(($k * (($r{'c4'} << 8) | $r{'c5'})) / 1000 + $b);
+	return undef unless $mv >= 2500 && $mv <= 4600;
+
+	my $raw_current = ($r{'bc'} << 8) | $r{'bd'};
+	$raw_current -= 4096 if $raw_current & 0x0800;
+	my $amps = $raw_current * 1506 / 1000 / 1000;
+
+	my $state = ($r{'a0'} >> 4) & 0x07;
+	my $status = $state == 4 ? 'full'
+		: (($state == 1 || $state == 2 || $state == 3) ? 'charging'
+		: ($state == 0 ? 'not charging' : 'unknown'));
+	my $plug = ($r{'21'} & 0x40) ? 1 : 0;
+	my $percentage = &power_ocv_percent($mv / 1000);
+	$percentage = 100 if $state == 4;
+	my $full = 4_000_000;
+	my $now = int($full * $percentage / 100);
+
+	my %b = (
+		present => 1,
+		source => 'rk818',
+		percentage => $percentage,
+		percentage_raw => $percentage,
+		estimated => 1,
+		status => $status,
+		voltage => $mv / 1000,
+		current => $amps,
+		ac => $plug,
+		cable => $plug,
+		charge_full => $full,
+		charge_now => $now,
+		health => 'good',
+	);
+	if ($status eq 'charging' && $amps > 0 && $full > $now) {
+		$b{'charge_eta'} = ($full - $now) / ($amps * 1_000_000);
+	}
+	elsif ($status eq 'discharging' && $amps < 0 && $now > 0) {
+		$b{'discharge_eta'} = $now / (abs($amps) * 1_000_000);
+	}
+	return \%b;
+}
+
 # Read the battery directly. On a Linux machine this is cheap and exact; on a
 # phone sysfs is often denied, so the bridge's battery.status is the fallback.
 # The bridge is not asked on a machine that is plainly not a phone: a desktop
 # with no pack should not wait five seconds for a bridge that is not there.
 sub power_battery_read {
+	my $rk818 = &power_rk818_read();
+	return $rk818 if ref $rk818 eq 'HASH';
 	my $root = &power_sysfs_root();
 	my @supply = grep { -d } glob("$root/class/power_supply/*");
 	my ($battery) = grep {
