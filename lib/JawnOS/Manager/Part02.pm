@@ -155,7 +155,7 @@ sub take_picture($c,$data) {
 		&subs::device_call('camera.photo', { path => $filename, camera => $camera });
 	}
 	elsif ($device eq 'computer' && $camera eq 'webcam') {
-		eval { `ffmpeg -nostdin -i /dev/video0 $filename` };
+		eval { system('ffmpeg', '-nostdin', '-i', '/dev/video0', $filename) };
 	}
 	if (-e $filename) {
 		if ($kind eq 'image') {
@@ -375,8 +375,8 @@ sub play_audio($file) {
 		}
 		else {
 			&subs::subprocessor(sub {
-		    Mojo::IOLoop->reset;
-				`play "$file"`;
+		Mojo::IOLoop->reset;
+				system('play', $file);
 			}, { name => 'audio player' });
 		}
 	}, { name => "Audio file player" });

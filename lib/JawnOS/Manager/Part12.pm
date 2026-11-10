@@ -769,7 +769,7 @@ sub phone_avatar_thumb($file) {
 	my $thumb = $dir . '/' . $base . '-' . ($stat[7] || 0) . '-' . ($stat[9] || 0) . '.jpg';
 	return $thumb if -e $thumb && -s $thumb > 0;
 	my $covered = &subs::image_bridge_cover($file, 160, $thumb, 82);
-	`magick "$file" -resize 160x160^ -gravity center -extent 160x160 -quality 82 "$thumb" 2>/dev/null` unless $covered;
+	system('magick', $file, '-resize', '160x160^', '-gravity', 'center', '-extent', '160x160', '-quality', '82', $thumb) unless $covered;
 	return (-e $thumb && -s $thumb > 0) ? $thumb : '';
 }
 
@@ -995,7 +995,7 @@ sub qrcode_generator($params) {
 	# secret, and a ';' or '$' in it would run there.
 	my $image = '';
 	{
-		my $qr = qx/qrencode -o - "\$url"/;
+		my $qr = &qrencode_png($url);
 		$image = 'data:image/png;base64,' . encode_base64($qr, '')
 			if defined $qr && length $qr && substr($qr, 0, 4) eq "\x89PNG";
 	}
@@ -1071,7 +1071,7 @@ sub qrcode_updater($c) {
 		if (defined $t->{'uuid'} && !$ticket_image_is_png->($t->{'image'})) {
 			my $ip = (ref $x eq 'HASH' && $t->{'nic'} && $x->{$t->{'nic'}}) ? $x->{$t->{'nic'}}->{'ip'} : '';
 			my $url = 'https://' . $ip . ':' . $ENV{'PORT_DOCK'} . '/box_office/' . $t->{'uuid'} . '?s=' . $secret;
-			my $qr = qx/qrencode -o - "\$url"/;
+			my $qr = &qrencode_png($url);
 			if (defined $qr && length $qr && substr($qr, 0, 4) eq "\x89PNG") {
 				&subs::db_update('tickets', {
 					image => 'data:image/png;base64,' . encode_base64($qr, ''),
@@ -1126,7 +1126,21 @@ sub random_word_grabber($times) {
 	return $sentence;
 };
 
-# A ticket's stored image is a PNG data URI or it is nothing: a phone runtime
-# without qrencode stored 'data:image/png;base64,' with an empty body, so a
-# length test is not enough. qrcode_updater uses this to decide whether a row
+# qrencode writes a PNG to stdout. The URL carries a secret and may contain any
+# character a query string allows, so the program gets it as one argv word, never
+# through a shell.
+sub qrencode_png {
+	my ($url) = @_;
+	return '' unless defined $url && length $url;
+	my $png = '';
+	my $ok = open(my $fh, '-|', 'qrencode', '-o', '-', $url);
+	return '' unless $ok;
+	{
+		local $/;
+		$png = <$fh> // '';
+	}
+	close $fh;
+	return $png;
+}
+
 1;

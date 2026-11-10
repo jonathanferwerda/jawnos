@@ -144,6 +144,19 @@ for my $hit ( grep_tree('`[^`]*base64[^`]*`', 'lib', 'perl') ) {
 		fix => 'encode/decode with MIME::Base64 in Perl; never interpolate a value into a shell');
 }
 
+# A double-quoted string handed to system()/exec() is parsed by a shell. A
+# variable inside it is not quoted for that shell, so a path or a name holding
+# `$(...)` runs there. List form, or a string built from quote()ed words, is the
+# shape that is safe.
+for my $hit ( grep_tree('(system|exec)[[:space:]]*\([[:space:]]*"[^)]*[$]', 'lib', 'perl') ) {
+	my ($path, $line, $text) = @{$hit};
+	next if $text =~ /^\s*#/;
+	finding('high', 'perl.shell.double_quoted', 'command injection',
+		'a double-quoted command string reaches system/exec', path => $path, line => $line,
+		evidence => redact($text),
+		fix => 'use list-form system()/exec(), or build the string from quote()ed words');
+}
+
 for my $hit ( grep_tree('read_file\s*\(\s*\$c->param|`tail \$', 'lib', 'perl') ) {
 	my ($path, $line, $text) = @{$hit};
 	next if $text =~ /path_is_within|path_name|quote\(/;

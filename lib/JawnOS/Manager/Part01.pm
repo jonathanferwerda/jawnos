@@ -77,11 +77,11 @@ sub record_video($data) {
 	my $folder = &subs::home(&subs::setting_grabber( { app => 'misc', setting => 'video_location', device => $device } ));
 
 	my $filename = $folder . '/' . $app_path;
-	`mkdir -p $filename` unless -e $filename;
+	system('mkdir', '-p', $filename) unless -e $filename;
 	$filename = $filename . '/' . $app_path . '_' . $timestamp . '.webm';
 
 	&subs::subprocessor(sub {
-		`ffmpeg -nostdin -i /dev/video0 $filename`;
+		system('ffmpeg', '-nostdin', '-i', '/dev/video0', $filename);
 	}, { name => "Video file converter" });
 
 	return [];
@@ -94,7 +94,7 @@ sub record_audio($data) {
 	my $timestamp = $data->{'timestamp'};
 	my $folder = &subs::home(&subs::setting_grabber( { app => 'misc', setting => 'rec_location', device => $device } ));
 	my $filename = $folder . '/' . $app_path;
-	`mkdir -p $filename` unless -e $filename;
+	system('mkdir', '-p', $filename) unless -e $filename;
 	if ($device eq 'mobile') {
 		$filename = $filename . '/' . $app_path . '_' . $timestamp . '.mp3';
 	}
@@ -109,7 +109,7 @@ sub record_audio($data) {
 	}
 	elsif ($device eq 'computer') {
 		&subs::subprocessor(sub {
-			`rec $filename`;
+			system('rec', $filename);
 		}, { name => "Audio file converter" });
 	}
 	return [];
@@ -126,7 +126,7 @@ sub record_video_stop($data) {
 	my $folder = &subs::home(&subs::setting_grabber( { app => 'misc', setting => 'video_location', device => $device } ));
 
 	my $filename = $folder . '/' . $app_path;
-	`mkdir -p $filename` unless -e $filename;
+	system('mkdir', '-p', $filename) unless -e $filename;
 
 	`pkill ffmpeg`;
 	my $stopped = &subs::db_select('appointments', undef, { uuid => $uuid, app => $app })->hashes->[0];
@@ -179,7 +179,7 @@ sub record_audio_stop($data) {
 	my $stopped = &subs::db_select('appointments', undef, { uuid => $uuid, app => $app })->hashes->[0];
 	if ($stopped->{'uuid'} && $stopped->{'type'} eq 'record') {
 		$filename = $folder . '/' . $app_path;
-		`mkdir -p $filename` unless -e $filename;
+		system('mkdir', '-p', $filename) unless -e $filename;
 		if ($device eq 'mobile') {
 			$filename = $filename . '/' . $app_path . '_' . $timestamp . '.mp3';
 		}
@@ -648,6 +648,7 @@ sub timestamp_adjuster($c) {
 	if ($ago) {
 		$timestamp = &time_machine_resolve($ago,$timestamp);
 	}
+	$timestamp = &subs::rightNow() unless defined $timestamp && $timestamp =~ /\A\d{1,16}\z/;
 	return $timestamp;
 }
 

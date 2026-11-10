@@ -53,9 +53,13 @@ unlike($generator, qr/my \$image = 'data:image\/png;base64,' \. encode_base64\(\
 like($generator, qr/my \$image = '';/, 'a failed encode starts from no image at all');
 like($generator, qr/unless \(length \$image\) \{/, 'a failure is detected by the image, not the exit code');
 like($generator, qr/qrencode produced no PNG/, 'one honest line names qrencode as the cause');
-like($generator, qr/qx\/qrencode -o - "\\\$url"\//,
-	'the url is one quoted word, so the shell cannot split or expand it');
+like($generator, qr/&qrencode_png\(\$url\)/,
+	'the url is handed to qrencode as a list, so no shell splits or expands it');
 unlike($generator, qr/`qrencode -o - \$url`/, 'no backtick call is left in the mint');
+my ($qrsub) = $part12 =~ /(sub qrencode_png\b.*?\n\}\n)/s;
+ok($qrsub, 'qrencode_png is one sub');
+like($qrsub, qr/open\(my \$fh, '-\|', 'qrencode', '-o', '-', \$url\)/,
+	'the helper passes the url as one argv word, never through a shell');
 like($generator, qr/image => \$image,/, 'the pass still carries the (possibly empty) image column');
 
 # --- repair on open -------------------------------------------------------------

@@ -201,10 +201,10 @@ sub action_10288 {
 	my ($fh, $path) = File::Temp::tempfile(SUFFIX => '.bundle', UNLINK => 1);
 	close $fh;
 	my $delta = '';
-	if ($base =~ /^[0-9a-f]{7,40}$/ && system("cd \"$repo\" && \"$git\" cat-file -e $base 2>/dev/null") == 0) {
+	if ($base =~ /^[0-9a-f]{7,40}$/ && system('cd ' . &quote($repo) . ' && ' . &quote($git) . ' cat-file -e ' . &quote($base) . ' 2>/dev/null') == 0) {
 		$delta = " ^$base";
 	}
-	`cd "$repo" && "$git" bundle create "$path" HEAD$delta 2>&1`;
+	`cd ` . &quote($repo) . ' && ' . &quote($git) . ' bundle create ' . &quote($path) . ' HEAD' . $delta . ' 2>&1';
 	my $data = '';
 	if (open(my $bf, '<', $path)) { binmode $bf; local $/; $data = <$bf>; close $bf; }
 	unlink $path;

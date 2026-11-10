@@ -583,7 +583,7 @@ sub rock_and_roll($c) {
 				}
 				elsif (grep { $ext eq $_ } qw/xcf tiff/) {
 					my $t_file = &subs::terminal_name($file);
-					my $c_command = 'magick "' . $file . '[0]" -alpha on -background none -flatten -resize 256x256 png:-';
+					my $c_command = 'magick ' . &quote($file . '[0]') . ' -alpha on -background none -flatten -resize 256x256 png:-';
 					my $converted = &native_thumb_png($file, 256);
 					$converted = `$c_command` unless defined $converted && length $converted;
 					my $data =  $converted;
@@ -670,7 +670,7 @@ sub rock_and_roll($c) {
 							elsif ($c->param('chapter') ne 'ya') {
 								$duration = &subs::thumbnail_seek_position($duration);
 							}
-							my $command = 'ffmpeg -nostdin -ss ' . $duration . ' -i ' . &subs::terminal_name($file) . ' -vframes 1 -c:v png -f image2pipe - | magick - -resize 200x200 -';
+							my $command = 'ffmpeg -nostdin -ss ' . &quote($duration) . ' -i ' . &quote($file) . ' -vframes 1 -c:v png -f image2pipe - | magick - -resize 200x200 -';
 							$data = &native_thumb_png($file, 200);
 							$data = &run_thumb_command($command) unless defined $data && length $data;
 
@@ -682,7 +682,7 @@ sub rock_and_roll($c) {
 				}
 				elsif (grep { $ext eq $_ } qw/xcf tiff/) {
 					my $t_file = &subs::terminal_name($file);
-					my $c_command = 'magick "' . $file . '[0]" -alpha on -background none -flatten -resize 256x256 png:-';
+					my $c_command = 'magick ' . &quote($file . '[0]') . ' -alpha on -background none -flatten -resize 256x256 png:-';
 					my $converted = &native_thumb_png($file, 256);
 					$converted = `$c_command` unless defined $converted && length $converted;
 					my $data =  $converted;

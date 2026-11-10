@@ -480,6 +480,10 @@ sub coding_propose_execute {
 		$cmd =~ s/^\s+|\s+$//g;
 		return 'refused: only perl -c, perl scripts/*, prove and read-only git are allowed here'
 			unless $cmd =~ m{^(?:perl\s+-c\s+[\w./-]+|perl\s+scripts/[\w./-]+(?:\s+[^\n;|&]*)?|prove(?:\s+[^\n;|&]*)?|git\s+(?:status|diff|log|show|rev-parse|branch|remote)(?:\s+[^\n;|&]*)?)$};
+		# The command still runs through a shell: `$(...)`, a backtick or a quote
+		# in an argument would run as code, so no metacharacter may survive.
+		return 'refused: a shell metacharacter in a run command'
+			if $cmd =~ /[\$`\\'"<>(){}*?!\[\]\n]/;
 		my $repo = &error_watch_repo();
 		my $out = `cd "$repo" && $cmd 2>&1`;
 		$out = '' unless defined $out;

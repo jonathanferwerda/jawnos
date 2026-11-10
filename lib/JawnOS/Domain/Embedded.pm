@@ -709,11 +709,14 @@ sub restore_list {
 	# is gone from this path), so the install's own backups dir is the list.
 	my $directory = &subs::backups_dir() . '/';
 	if ($directory && $directory =~ /\/$/) {
-		my $backup_ls = `ls -t $directory`;
-		@backups = split "\n", $backup_ls;
-		foreach my $b (@backups) {
-			$b = $directory . $b;
+		my @names;
+		if (opendir(my $dh, $directory)) {
+			@names = grep { $_ ne '.' && $_ ne '..' } readdir($dh);
+			closedir $dh;
 		}
+		# newest first, as `ls -t` ordered them
+		@names = sort { ((stat($directory . $b))[9] || 0) <=> ((stat($directory . $a))[9] || 0) } @names;
+		@backups = map { $directory . $_ } @names;
 	}
 
 	foreach my $b (@backups) {
