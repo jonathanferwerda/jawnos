@@ -1,3 +1,4 @@
+<% use Mojo::JSON qw(encode_json); %>
 <%# RetroArch tuning for the handheld. The controls are drawn from the same
     tables lib/JawnOS/Domain/Retroarch.pm writes through, so a control cannot
     name a key the writer does not know. The sound card is the one that made a

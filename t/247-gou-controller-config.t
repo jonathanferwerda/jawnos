@@ -9,6 +9,7 @@ use warnings;
 use FindBin;
 use lib "$FindBin::Bin/lib", "t/lib";
 use Test::More;
+use Mojo::Template;
 use File::Slurp qw(read_file write_file);
 use File::Temp qw(tempdir);
 use File::Path qw(make_path);
@@ -79,6 +80,42 @@ like($ra, qr/data-ra-core=/, 'the page draws the per-core controls');
 like($ra, qr/data-ra-preset=/, 'the page offers the presets');
 like($ra, qr|fetch\('/manager/controller/retroarch'|, 'the page posts a change');
 like($ra, qr/Audio and video/, 'the audio and video section is named');
+
+# A template has none of the controller's imports. `encode_json` without this
+# line is a 500 at render time, which is exactly how the page reached the panel
+# as "this page cannot be displayed".
+for my $page (qw(time retroarch)) {
+	my $text = read_file("$root/templates/controller/$page.html.ep");
+	like($text, qr/<%\s*use Mojo::JSON[^%]*\bencode_json\b/, "$page imports encode_json it uses");
+}
+
+# Render all three pages the way the app does (vars => 1 puts the stash keys in
+# scope). This is the check that would have caught the missing import before the
+# page reached the panel.
+{
+	no warnings 'redefine';
+	*subs::ui = sub { $_[0] };
+	*subs::icon_for = sub { $_[0] };
+	my $mt = Mojo::Template->new({ vars => 1 });
+	my $ra_out = eval {
+		$mt->render_file("$root/templates/controller/retroarch.html.ep", {
+			settings => {
+				ok => 1, path => '/tmp/retroarch.cfg', values => { audio_latency => '128' },
+				settings => [ { key => 'audio_latency', label => 'Audio latency', type => 'number', min => 0, max => 255, step => 1 } ],
+				cores => [], presets => [],
+			},
+		});
+	};
+	ok(defined $ra_out && $ra_out =~ /data-ra-key=/, 'the RetroArch page renders');
+	my $time_out = eval {
+		$mt->render_file("$root/templates/controller/time.html.ep", {
+			zone => 'America/New_York', zones => [ 'America/New_York', 'UTC' ], system_zone => 'UTC', synchronized => 1,
+		});
+	};
+	ok(defined $time_out && $time_out =~ /controller_time_zone/, 'the Time page renders');
+	my $config_out = eval { $mt->render_file("$root/templates/controller/config.html.ep", {}) };
+	ok(defined $config_out && $config_out =~ /controller_config_grid/, 'the config sublauncher renders');
+}
 
 # --- the writer itself --------------------------------------------------------
 use lib "$root/lib";
