@@ -6,6 +6,7 @@
 #   perl scripts/land_enqueue.pl --branch agent/pen --reason "the pen fix"
 #   perl scripts/land_enqueue.pl --authority dev
 #   perl scripts/land_enqueue.pl --json
+#   perl scripts/land_enqueue.pl --wait --timeout 300
 #
 # Run this from the worktree whose branch you want landed. It validates the
 # branch, backs it up to origin (so the queue can lose nothing), and writes a
@@ -18,6 +19,11 @@
 # committed sha. Re-running it for the same branch updates that snapshot and
 # keeps the queue position. A branch already running is refused, not queued
 # twice.
+#
+# --wait asks for the verdict in this turn: it waits for the ticket to land or be
+# refused, or for --timeout seconds to pass (default 300). The exit is then 0
+# landed, 1 refused and 2 no verdict. Without --wait the exit is 0 once the
+# ticket exists; read the verdict later with land_status.pl --branch.
 
 use strict;
 use warnings;
@@ -33,6 +39,7 @@ require "$FindBin::Bin/land_lib.pl";
 my %opt = (
 	'trunk'          => 'main',
 	'max_queue'      => 12,
+	'timeout'        => 300,
 	'authority_port' => 8022,
 	'authority_root' => '$HOME/jawnos',
 );
@@ -49,11 +56,17 @@ GetOptions(
 	'sha=s'          => \$opt{'sha'},
 	'box=s'          => \$opt{'box'},
 	'json'           => \$opt{'json'},
+	'wait'           => \$opt{'wait'},
+	'timeout=s'      => \$opt{'timeout'},
 	'help'           => \$opt{'help'},
 ) or usage(2);
 usage(0) if $opt{'help'};
 usage(2) unless $opt{'max_queue'} =~ /^\d+$/ && $opt{'max_queue'} > 0;
 usage(2) unless $opt{'authority_port'} =~ /^\d+$/;
+usage(2) unless $opt{'timeout'} =~ /^\d+$/ && $opt{'timeout'} > 0;
+finish(2, 'usage', '--wait and --json cannot be combined; wait without --json, '
+	. 'or read the verdict with land_status.pl --json')
+	if $opt{'wait'} && $opt{'json'};
 
 # The authority's own half: the worker has already pushed, so there is no local
 # branch to inspect and no primary-checkout rule. Keep the same validation the
@@ -64,7 +77,8 @@ if ($opt{'remote'}) {
 	exit 0;
 }
 
-local_enqueue();
+my ($branch, $remote, $primary) = local_enqueue();
+exit wait_for_verdict($branch, $remote, $primary) if $opt{'wait'};
 exit 0;
 
 sub repo_or_finish {
@@ -133,8 +147,9 @@ sub local_enqueue {
 		if $prc != 0;
 
 	if ($opt{'authority'}) {
-		enqueue_on_authority($primary, $branch, $sha);
-		return;
+		my $arc = enqueue_on_authority($primary, $branch, $sha);
+		return ($branch, 1, $primary) if $arc == 0;
+		exit $arc;
 	}
 
 	my $dir = LandQueue::queue_dir($common);
@@ -142,6 +157,35 @@ sub local_enqueue {
 		branch => $branch, sha => $sha, base => $base,
 		worktree => $root, remote => 0,
 	});
+	return ($branch, 0, $primary);
+}
+
+# One wait, whichever queue owns the ticket. The authority path asks its own
+# land_status over the same rail the enqueue used; a local ticket is read here.
+# The status script owns the polling and the 0/1/2 verdict codes.
+sub wait_for_verdict {
+	my ($branch, $remote, $primary) = @_;
+	my @args = ('--branch', $branch, '--wait', '--timeout', $opt{'timeout'});
+	print STDERR "land_enqueue: waiting up to $opt{'timeout'}s for ${branch}'s verdict\n";
+	my ($rc, $out, $err);
+	if ($remote) {
+		($rc, $out, $err) = LandQueue::run_authority(
+			host    => $opt{'authority'},
+			port    => $opt{'authority_port'},
+			root    => $opt{'authority_root'},
+			script  => 'scripts/land_status.pl',
+			args    => \@args,
+			primary => $primary,
+		);
+	}
+	else {
+		($rc, $out, $err) = LandQueue::run_cmd_split($^X, "$FindBin::Bin/land_status.pl", @args);
+	}
+	$out =~ s/\s+$//;
+	$err =~ s/\s+$//;
+	print STDOUT "$out\n" if length $out;
+	print STDERR "$err\n" if length $err;
+	return $rc;
 }
 
 sub enqueue_on_authority {
@@ -174,7 +218,7 @@ sub enqueue_on_authority {
 		print STDERR "land_enqueue: the authority $opt{'authority'} could not be reached; "
 			. "the branch is safe on origin/$branch\n";
 	}
-	exit $arc;
+	return $arc;
 }
 
 sub remote_enqueue {
@@ -314,13 +358,15 @@ sub output {
 	my ($t, $pos, $line) = @_;
 	# The ticket is not the landing: say where the verdict comes from, so nobody
 	# deletes the worktree while the coordinator is still working on it.
-	my $next = 'the coordinator drains it within a minute; '
-		. "`perl scripts/land_status.pl --branch $t->{'branch'}` is the verdict; "
-		. 'keep the worktree until it lands';
+	my $next = $opt{'wait'}
+		? "waiting up to $opt{'timeout'}s for the verdict"
+		: 'the coordinator drains it within a minute; '
+			. "`perl scripts/land_status.pl --branch $t->{'branch'}` is the verdict; "
+			. 'keep the worktree until it lands';
 	$next = 'the authority drains it; '
 		. "`perl scripts/land_status.pl --authority <host> --branch $t->{'branch'}` is the verdict; "
 		. 'keep the worktree until it lands'
-		if $t->{'remote'};
+		if $t->{'remote'} && !$opt{'wait'};
 	if ($opt{'json'}) {
 		print JSON::PP->new->canonical->encode({
 			ok => 1, id => $t->{'id'}, branch => $t->{'branch'}, sha => $t->{'sha'},
@@ -350,8 +396,11 @@ sub usage {
 land_enqueue.pl - put one committed branch in the landing queue
   perl scripts/land_enqueue.pl [--branch B] [--reason TEXT] [--agent NAME]
                                [--trunk main] [--max-queue 12] [--json]
+                               [--wait] [--timeout 300]
                                [--authority HOST] [--authority-root PATH]
                                [--authority-port 8022]
+  --wait holds this call until the ticket lands (exit 0), is refused (exit 1)
+  or --timeout seconds pass (exit 2). --json cannot be combined with --wait.
   Run it from the worktree whose branch you want landed. --authority hands the
   ticket to another checkout (default root $HOME/jawnos there, ssh port 8022).
   --remote is the authority's own half and is normally not run by hand.

@@ -86,7 +86,7 @@ like(read_file("$root/.gitignore"), qr{^/\.worktrees/$}m,
 
 # --- the landing conditions and the handheld build note ---------------------
 like($text, qr/human owner/, 'the map makes hand-landing the human owner\'s path');
-like($text, qr/Queue a committed\s+branch with `scripts\/land_enqueue\.pl`/s,
+like($text, qr/Queue a committed\s+branch with `scripts\/land_enqueue\.pl(?: --wait)?`/s,
 	'and makes the queue the agent default');
 like($concurrency, qr/sole agent.*primary checkout/s,
 	'the worktree doc names it in full');

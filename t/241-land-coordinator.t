@@ -2,8 +2,8 @@
 # covers:    the landing queue - enqueue validation and the backup push, the
 #           coordinator's waves, one suite and one restart per wave, the hot-file
 #           cap, the red-wave split into single tickets, landed-ticket records,
-#           skipping a commit already on the trunk, dead-running reaping, and the
-#           status/stats reader
+#           skipping a commit already on the trunk, the bounded enqueue wait,
+#           dead-running reaping, and the status/stats reader
 
 use strict;
 use warnings;
@@ -141,6 +141,16 @@ sub enqueue {
 	my $cwd = getcwd();
 	chdir $wt or die "chdir $wt: $!";
 	my ($rc, $out) = sh($^X, 'scripts/land_enqueue.pl', '--json', @args);
+	chdir $cwd or die "chdir back: $!";
+	return ($rc, $out);
+}
+
+sub enqueue_wait {
+	my ($f, $wt, @args) = @_;
+	local $ENV{'LAND_TEST_DIR'} = $f->{'marker'};
+	my $cwd = getcwd();
+	chdir $wt or die "chdir $wt: $!";
+	my ($rc, $out) = sh($^X, 'scripts/land_enqueue.pl', '--wait', @args);
 	chdir $cwd or die "chdir back: $!";
 	return ($rc, $out);
 }
@@ -335,6 +345,47 @@ subtest 'a commit already on the trunk does not refuse the rest of the branch' =
 	is($st3->{'ticket'}{'result'}{'reason_class'}, 'nothing', 'and says there was nothing left to land');
 	my (undef, $version3) = git($f->{'primary'}, 'show', 'origin/main:VERSION');
 	is($version3, '0.1.3', 'no version-only commit was pushed');
+};
+
+# --- the bounded wait -------------------------------------------------------
+
+subtest 'enqueue can wait for the verdict, bounded' => sub {
+	my $f = fixture();
+	commit_file($f->{'wt1'}, 'one.txt', "one\n", 'one: add a branch');
+
+	# No coordinator is running, so the ticket cannot reach a verdict. The wait
+	# returns 2 and leaves the ticket queued: a timeout is a pause, not a loss.
+	my ($rc, $out) = enqueue_wait($f, $f->{'wt1'}, '--timeout', '1');
+	is($rc, 2, 'a queued ticket with no coordinator gives no verdict');
+	like($out, qr/is still queued|waiting up to 1s/, 'the wait is bounded and says so');
+	my (undef, $st) = status($f, '--branch', 'agent/one');
+	is($st->{'ticket'}{'state'}, 'queued', 'the ticket is still queued, not lost');
+
+	my ($jrc, $jout) = enqueue_wait($f, $f->{'wt1'}, '--json');
+	is($jrc, 2, '--wait and --json are refused');
+	like($jout, qr/cannot be combined/i, 'and the reason names the pair');
+};
+
+subtest 'enqueue --wait returns the landed verdict' => sub {
+	my $f = fixture();
+	commit_file($f->{'wt1'}, 'one.txt', "one\n", 'one: add a branch');
+
+	# The coordinator drains in another process while the enqueue waits.
+	my $pid = fork();
+	die "fork: $!" unless defined $pid;
+	if (!$pid) {
+		sleep 1;
+		coordinator($f, '--train-size', '1', '--jobs', '1', '--no-restart');
+		require POSIX;
+		POSIX::_exit(0);
+	}
+
+	my ($rc, $out) = enqueue_wait($f, $f->{'wt1'}, '--timeout', '60');
+	waitpid($pid, 0);
+	is($rc, 0, 'the wait returns 0 when the ticket lands') or diag($out);
+	like($out, qr/landed/, 'and prints the landed verdict');
+	my (undef, $st) = status($f, '--branch', 'agent/one');
+	is($st->{'ticket'}{'state'}, 'landed', 'the ticket is landed');
 };
 
 # --- enqueue refuses what it cannot land ----------------------------------

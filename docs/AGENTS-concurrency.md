@@ -26,15 +26,15 @@ every landing touches:
 Three paths, and the condition picks one. Agents queue; a lone agent on a quiet box may land the
 branch itself; the primary-checkout recipe is the human owner's alone.
 
-- **Queue it** (`perl scripts/land_enqueue.pl`, the default for agents; use it whenever more than
-  one agent is working):
-  commit the branch, run the script, and let the coordinator land it. You do not push or restart,
-  and **you do not delete the worktree**. `perl scripts/land_status.pl --branch <branch>` is the
-  verdict; when it says landed, the branch is on the trunk and the worktree may go (or wait for
-  `worktree_gc`). The landing rebases, so your original commits are no longer ancestors and
-  `git branch -d` declines: the verdict prints the two commands that do work, `git worktree remove
-  <dir>` and `git branch -D <branch>`. A refused ticket keeps the worktree: fix, re-enqueue, and
-  never run `agent_land.pl` on the same branch.
+- **Queue it** (`perl scripts/land_enqueue.pl --wait`, the default for agents; use it whenever more
+  than one agent is working):
+  commit the branch, run the script, and it returns the verdict in the same call. `--timeout`
+  bounds the wait (default 300 s): exit 0 landed, 1 refused, 2 no verdict yet. You do not push or
+  restart, and **you do not delete the worktree**. When it lands, the branch is on the trunk and the
+  worktree may go (or wait for `worktree_gc`). The landing rebases, so your original commits are no
+  longer ancestors and `git branch -d` declines: the verdict prints the two commands that do work,
+  `git worktree remove <dir>` and `git branch -D <branch>`. A refused ticket keeps the worktree:
+  repair it once (see below) and enqueue again; never run `agent_land.pl` on the same branch.
 - **Land it yourself** (`perl ~/jawnos/scripts/agent_land.pl`, from the worktree root): the lone
   agent's path, and the owner's; one agent at the gate, which the lock makes safe. It bumps
   `VERSION`, runs the suite once, pushes, restarts and
@@ -126,24 +126,39 @@ the lock past `--wait` — **5** pushed, but the dev server is not on it (primar
 diverged, or the restart was refused). Exit 5 means the work is safe on `origin`; fix the checkout and
 restart.
 
-## A refusal ends the attempt
+## A refusal: wait, repair once, or stop
 
-The lander is the last step, not a loop. When it exits non-zero, the run is over: report the refusal
-with its reason and stop. Do not re-run it hoping the lock or a flaky test has cleared, and do not fall
-back to `git push` and `restart.pl` by hand — that is how two agents resume sweeping each other's work.
-A landing takes a minute or two (rebase, one suite, push, restart); it is not hung, and its progress
-lines go to stderr, so a wrapper that pipes stdout shows nothing until it ends.
+The queue and the lone-agent lander answer differently.
+
+For the queue, a refusal is a verdict, not the end. `land_enqueue.pl --wait` (or
+`land_status.pl --branch <branch> --wait --timeout 300`) exits **0** landed, **1** refused, **2** no
+verdict yet. On 1, read the class:
+
+- `rebase`, `suite`, `commit`: repair it once in the same worktree, enqueue again, and wait again.
+- `hot`, `queue_full`: re-enqueue after the wave; nothing in the code needs changing.
+- `identity`, `stale`, `nothing`: report it; do not edit.
+
+A second refusal ends the attempt. On 2, the ticket is still queued: report "queued, not landed" with
+its id and keep the worktree.
+
+For the lone-agent lander (`agent_land.pl`), the lander is the last step, not a loop. When it exits
+non-zero, the run is over: report the refusal with its reason and stop. Do not re-run it hoping the
+lock or a flaky test has cleared, and do not fall back to `git push` and `restart.pl` by hand — that
+is how two agents resume sweeping each other's work. A landing takes a minute or two (rebase, one
+suite, push, restart); it is not hung, and its progress lines go to stderr, so a wrapper that pipes
+stdout shows nothing until it ends.
 
 **What "done" looks like after a refusal:** the worktree is still there (the lander removes it only
 after the push and the restart), the branch is on `origin/<branch>`, and the reason and the next
-action belong in `.shots/AGENT-CHECKPOINT.md`. Report that and stop. "Done" for the task is "refused
-and reported", not "landed"; nothing else is owed, and the next attempt is a deliberate one.
+action belong in `.shots/AGENT-CHECKPOINT.md`. After the one repair attempt, report that and stop.
+"Done" for the task is "refused and reported", not "landed"; nothing else is owed, and the next
+attempt is a deliberate one.
 
 ## The landing queue and the train
 
 Queueing is the agent default; the lander is the lone agent's shortcut on a quiet box.
-`perl scripts/land_enqueue.pl` from the worktree validates the branch, backs it up to origin and
-writes a ticket in `<git-common-dir>/land-queue/`. With `--authority <host>` the ticket is written
+`perl scripts/land_enqueue.pl --wait` from the worktree validates the branch, backs it up to origin
+and writes a ticket in `<git-common-dir>/land-queue/`. With `--authority <host>` the ticket is written
 by the authority's copy over ssh instead, so a worker box never owns a second queue. The coordinator
 (`scripts/land_coordinator.pl`) drains the queue in **waves** on the box that owns the primary
 checkout and the master — the authority:
@@ -173,7 +188,7 @@ checkout and the master — the authority:
   records `apply blocked`, and the next wave retries the fast-forward and restart.
 - **One coordinator per trunk.** Two boxes running it would race the push. The authority is the box
   with the suite and the primary. A worker pushes its branch and runs
-  `perl scripts/land_enqueue.pl --authority <host>`; that runs the authority's copy over ssh (port
+  `perl scripts/land_enqueue.pl --authority <host> --wait`; that runs the authority's copy over ssh (port
   8022, `BatchMode`, root `$HOME/jawnos`, `--authority-root` to move it), and
   `perl scripts/land_status.pl --authority <host>` reads the queue back. A same-box authority uses
   the primary's copy directly, no sshd. The authority checks the commit's identity because the
