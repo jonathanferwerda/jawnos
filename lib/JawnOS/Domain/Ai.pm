@@ -50,8 +50,16 @@ our %m;
 # transcriptions endpoint (Groq whisper-large-v3*, OpenAI whisper-1). '' on any
 # failure, so the caller falls back to the local whisper.cpp pipeline.
 sub ai_transcribe_cloud {
+	my ($text) = &ai_transcribe_cloud_result(@_);
+	return defined $text ? $text : '';
+}
+
+# The same call, with the reason a failure failed and with silence told apart
+# from an outage: a 2xx that heard nothing is still a working model, which is
+# what the Plat Test needs to know. ai_transcribe_cloud keeps its old '' answer.
+sub ai_transcribe_cloud_result {
 	my ($model, $raw, $lang) = @_;
-	return '' unless $model && defined $raw && length $raw;
+	return (undef, 'no transcription model is set') unless $model && defined $raw && length $raw;
 	my @key_settings = &subs::ai_key_settings();
 	my $settings = &subs::settings_grabber({ app => 'mail', settings => [ 'cloudflare_account', 'cloudflare_token', @key_settings ] });
 	my $suds = &subs::suds_grabber();
@@ -65,38 +73,76 @@ sub ai_transcribe_cloud {
 	if ($model =~ /^\@cf/) {
 		my $account = $settings->{'cloudflare_account'};
 		my $token = $secret->($settings->{'cloudflare_token'});
-		return '' unless $account && $token;
+		return (undef, 'no Cloudflare account is set (Configure, Plat, Provider access)') unless $account;
+		return (undef, 'no Cloudflare token is set (Configure, Plat, Provider access)') unless $token;
 		my $tx = $ua->post('https://api.cloudflare.com/client/v4/accounts/' . $account . '/ai/run/' . $model => {
 			'Authorization' => 'Bearer ' . $token,
 			'Content-Type' => 'application/json'
 		} => json => { audio => encode_base64($raw, '') });
-		return '' if $tx->error || !$tx->res->is_success;
-		my $d = eval { $tx->res->json } || {};
+		return (undef, 'could not reach Cloudflare: ' . $tx->error->{'message'}) if $tx->error;
+		my $res = $tx->res;
+		return (undef, 'the transcription model answered ' . $res->code . ': ' . substr(($res->body || ''), 0, 200)) unless $res->is_success;
+		my $d = eval { $res->json } || {};
 		my $text = $d->{'result'}->{'text'} || $d->{'result'}->{'transcription'} || $d->{'result'};
 		$text = '' if ref $text;
-		return ($text || '');
+		return ($text // '', undef);
 	}
 	# openai-compatible transcription: groq, openai, mistral (any provider whose
 	# /audio/transcriptions speaks the same multipart shape)
 	my ($provider, $real) = ('groq', $model);
 	if ($model =~ /^([a-z]+):(.+)$/) { ($provider, $real) = ($1, $2); }
 	my %ep = ( openai => 'https://api.openai.com/v1/audio/transcriptions', groq => 'https://api.groq.com/openai/v1/audio/transcriptions' );
-	my $url = $ep{$provider} or return '';
+	return (undef, 'no transcription endpoint for ' . $provider) unless $ep{$provider};
+	my $url = $ep{$provider};
 	my %key = ( openai => 'openai_key', groq => 'groq_key' );
 	my $key = $secret->($settings->{ $key{$provider} });
-	return '' unless $key;
+	return (undef, 'no ' . $provider . ' key is set (Configure, Plat, Provider access)') unless $key;
+	# A test clip is a WAV; a phone's real clip is webm. Name the file by its own
+	# header, so a provider that trusts the name still sees the right container.
+	my $is_wav = substr($raw, 0, 4) eq 'RIFF';
 	my %form = (
 		model => $real,
-		file => { content => $raw, filename => 'clip.webm', 'Content-Type' => 'audio/webm' },
+		file => {
+			content => $raw,
+			filename => ($is_wav ? 'clip.wav' : 'clip.webm'),
+			'Content-Type' => ($is_wav ? 'audio/wav' : 'audio/webm'),
+		},
 		response_format => 'json'
 	);
 	$form{'language'} = $lang if defined $lang && $lang =~ /^[a-z]{2,3}$/ && $lang ne 'auto';
 	my $tx = $ua->post($url => {
 		'Authorization' => 'Bearer ' . $key
 	} => form => \%form);
-	return '' if $tx->error || !$tx->res->is_success;
-	my $d = eval { $tx->res->json } || {};
-	return ($d->{'text'} || '');
+	return (undef, 'could not reach ' . $provider . ': ' . $tx->error->{'message'}) if $tx->error;
+	my $res = $tx->res;
+	return (undef, 'the transcription model answered ' . $res->code . ': ' . substr(($res->body || ''), 0, 200)) unless $res->is_success;
+	my $d = eval { $res->json } || {};
+	return ($d->{'text'} // '', undef);
+}
+
+# The Plat panel's Test for the transcription role. A cloud model is asked to
+# transcribe half a second of silence: the transcript may rightly be empty, so a
+# 2xx is the pass and the provider's error is the failure. whisper.cpp has no
+# handshake, so its readiness on this machine is the test.
+sub ai_transcribe_test {
+	my ($model) = @_;
+	$model = '' unless defined $model;
+	$model =~ s/^\s+|\s+$//g;
+	return (0, 'Pick a model first.') unless length $model;
+	if ($model eq 'local:whisper.cpp' || $model eq 'local:vosk') {
+		return &whisper_available()
+			? (1, 'whisper.cpp is ready on this machine')
+			: (0, 'whisper.cpp is not installed on this machine');
+	}
+	my $rate = 8000;
+	my $frames = int($rate / 2);
+	my $pcm = "\x80\x00" x $frames;
+	my $wav = 'RIFF' . pack('V', 36 + length($pcm))
+		. 'WAVEfmt ' . pack('VvvVVvv', 16, 1, 1, $rate, $rate * 2, 2, 16)
+		. 'data' . pack('V', length($pcm)) . $pcm;
+	my (undef, $err) = &ai_transcribe_cloud_result($model, $wav, 'en');
+	return (0, $err) if $err;
+	return (1, 'the transcription model answered');
 }
 
 sub voice_silence_hallucination {

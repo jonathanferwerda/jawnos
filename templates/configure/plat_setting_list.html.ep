@@ -65,6 +65,7 @@
 		ready => sub { $provider_ready{ $_[0] } ? 1 : 0 },
 		available => sub { defined $bucket_ok{ $_[0] } ? ($bucket_ok{ $_[0] } ? 1 : 0) : 1 },
 	});
+	my $qa_ux_current = &subs::qa_ux_model();
 	# Remember which Plat sub-tab was last open on this device, so reopening the
 	# panel returns to the page the person was using.
 	my $plat_tab = &subs::setting_grabber({ app => '__president', setting => 'plat_tab' }) || 'plat_ai';
@@ -107,6 +108,13 @@
 			# pick changes.
 			my $thinking_cap = ($cap eq 'chat' || $cap eq 'vision') ? 1 : 0;
 			$thinking_cap = 0 unless $allowed_of->($setting);
+			# What the Test button does for this role, said in its hover hint.
+			my $test_hint =
+				$cap eq 'image'     ? 'Generate a tiny test image'
+				: $cap eq 'audio-gen' ? 'Generate a short test sound'
+				: $cap eq 'video-gen' ? 'Generate a short test video; this can take a while'
+				: $cap eq 'audio'     ? 'Check the transcription model can answer'
+				:                       'Ask this model a trivial question and show its answer';
 			my $thinks = ($thinking_cap && $current && $thinks_of->($current)) ? 1 : 0;
 			my $think = $thinking_of->($setting);
 			$think = 'none' unless length $think;
@@ -165,10 +173,8 @@
 							<option value="<%= $current %>" data-thinks="<%= $thinks %>" selected="selected"><%= $current %> (kept — not offered here just now)</option>
 						<% } %>
 					</select>
-					<% if ($cap eq 'chat' || $cap eq 'vision') { %>
-						<button type="button" class="button ai_model_test" hint="Ask this model a trivial question and show its answer">Test</button>
-						<span class="cfg-note ai_model_test_status" style="margin:0;flex:1 1 100%;display:none;overflow-wrap:anywhere;"></span>
-					<% } %>
+					<button type="button" class="button ai_model_test" hint="<%= $test_hint %>">Test</button>
+					<span class="cfg-note ai_model_test_status" style="margin:0;flex:1 1 100%;display:none;overflow-wrap:anywhere;"></span>
 					</span>
 				</div>
 				<div class="cfg-row ai_fallback_row">
@@ -228,6 +234,36 @@
 					</div>
 				<% } %>
 			</div>
+			<% if ($setting eq 'coding_assistant') { %>
+				<div class="ai_role" setting="qa_ux_model">
+					<div class="cfg-row">
+						<label for="qa_ux_model"><%= &subs::lang('configure.qa_ux_model') %></label>
+						<span class="cfg-inline ai_model_picker">
+						<select id="qa_ux_model" class="qa_ux_model ai_role_model">
+							<option value="" <% if (!length $qa_ux_current) { %>selected<% } %>><%= &subs::ui('No model (skip)') %></option>
+							<% my $qa_ux_shown = 0; %>
+							<% foreach my $qa_group ( @{$qa_ux_groups} ) { %>
+								<optgroup label="<%= $qa_group->{'label'} %>">
+									<% foreach my $qa_m ( @{$qa_group->{'models'}} ) {
+										my $qa_selected = ($qa_ux_current eq $qa_m->{'value'}) ? 1 : 0;
+										$qa_ux_shown = 1 if $qa_selected;
+									%>
+										<option value="<%= $qa_m->{'value'} %>" <% if ($qa_selected) { %>selected<% } %>><%= $qa_m->{'name'} %> · <%= $qa_m->{'paid'} ? 'paid' : 'free' %></option>
+									<% } %>
+								</optgroup>
+							<% } %>
+							<% if (length($qa_ux_current) && !$qa_ux_shown) { %>
+								<option value="<%= $qa_ux_current %>" selected><%= $qa_ux_current %> (kept — not offered just now)</option>
+							<% } %>
+						</select>
+						<button type="button" class="button ai_model_test" hint="Ask the UX judgment model a trivial question and show its answer">Test</button>
+						<span class="cfg-note ai_model_test_status" style="margin:0;flex:1 1 100%;display:none;overflow-wrap:anywhere;"></span>
+						</span>
+						<span id="qa_ux_model_status" class="cfg-note" style="margin:0 0 0 8px;"></span>
+					</div>
+					<p class="cfg-note" style="margin:0 0 6px;">The 05:30 UX night asks this model for its easy, help and works verdicts. Empty keeps every note at skip.</p>
+				</div>
+			<% } %>
 		<% } %>
 	</div>
 
@@ -377,6 +413,6 @@
 		<%= include 'configure/map_setting_list' %>
 	</div>
 	<div id="plat_qa" class="cfg_tab_panel" style="<%= $plat_tab eq 'plat_qa' ? '' : 'display:none;' %>">
-		<%= include 'configure/qa_panel', qa_ux_groups => $qa_ux_groups %>
+		<%= include 'configure/qa_panel' %>
 	</div>
 </div>

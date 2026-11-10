@@ -1,4 +1,4 @@
-# tests-for: lib/JawnOS/Domain/Ai2.pm templates/configure/misc_setting_list.html.ep public/js/manager/configure/03_platform_misc.js templates/configure/plat_setting_list.html.ep
+# tests-for: lib/JawnOS/Domain/Ai2.pm lib/JawnOS/Domain/Ai.pm templates/configure/misc_setting_list.html.ep public/js/manager/configure/03_platform_misc.js templates/configure/plat_setting_list.html.ep templates/configure/qa_panel.html.ep
 # covers:    the per-device thinking off switch - ai_role_thinking_allowed and
 #           ai_role_thinking_effective, the `thinking_off` setting they read, the
 #           role call that drops the level, and the Misc panel and JS that write it.
@@ -12,6 +12,7 @@ use File::Slurp qw(read_file);
 use Test::More;
 
 require JawnOS::Domain::Ai2;
+require JawnOS::Domain::Ai;
 
 # this machine, as a worker knows it: the switch is read for it when no device
 # is named
@@ -124,9 +125,15 @@ my @calls;
 
 	my $plat = read_file("$root/templates/configure/plat_setting_list.html.ep");
 	like( $plat, qr/\$thinking_cap = 0 unless \$allowed_of->\(\$setting\);/, 'Plat hides the Thinking row for a silenced role' );
-	like( $plat, qr/class="button ai_model_test"/, 'Plat puts a Test button beside a language model' );
+	like( $plat, qr/class="button ai_model_test"/, 'Plat puts a Test button beside a model' );
 	like( $plat, qr/class="cfg-inline ai_model_picker"/, 'the Test button shares the model row, beside the dropdown' );
-	like( $plat, qr/\$cap eq 'chat' \|\| \$cap eq 'vision'/, 'generation and transcription roles offer no Test' );
+	like( $plat, qr/\$test_hint/, 'each role says what its Test does in the hover hint' );
+	like( $plat, qr/\$cap eq 'video-gen'/, 'the generation roles name their Test too' );
+	like( $plat, qr/\$cap eq 'audio'/, 'and so does transcription' );
+	like( $plat, qr/id="qa_ux_model"/, 'the UX judgment model lives in the AI tab' );
+	like( $plat, qr/setting="qa_ux_model"/, 'and is a model row of its own' );
+	my $qa_panel = read_file("$root/templates/configure/qa_panel.html.ep");
+	unlike( $qa_panel, qr/id="qa_ux_model"/, 'and has left the QA Nightly tab' );
 	like( $js, qr#/manager/configure/ai_model_test#, 'the Test button posts to the model-test route' );
 	like( $js, qr/setting: role\.attr\('setting'\)/, 'and names the role whose model it tests' );
 	like( $js, qr/\.ai_model_test_status/, 'the answer is shown under the row' );
@@ -166,6 +173,84 @@ my @calls;
 	($ok, $message) = subs::ai_model_test('openai:gpt-5', 'help_assistant');
 	is( $ok, 0, 'an empty answer is not a pass' );
 	like( $message, qr/nothing readable/, 'and reads as nothing readable' );
+}
+
+# The generation roles are tested in their own kind, and transcription through
+# its own handshake: none of them is asked a line of text.
+{
+	my @asked;
+	local *subs::data_size = sub { $_[0] . ' bytes' };
+	local *subs::ai_text_to_image = sub {
+		push @asked, [ 'image', $_[0] ];
+		return ('PNGDATA', 'image/png', undef);
+	};
+	local *subs::ai_text_to_media = sub {
+		my ($kind, $data) = @_;
+		push @asked, [ $kind, $data ];
+		return ('MEDIADATA', $kind . '/test', undef);
+	};
+
+	my ($ok, $message) = subs::ai_model_test('openai:gpt-image-1', 'text_to_image_assistant');
+	is( $ok, 1, 'an image model that returns bytes passes' );
+	like( $message, qr/returned an image \(7 bytes\)/, 'and the image is reported with its size' );
+	is( $asked[0][0], 'image', 'the image role uses the image generator' );
+	like( $asked[0][1]{'prompt'}, qr/red square/, 'with a tiny test prompt' );
+	is( $asked[0][1]{'model'}, 'openai:gpt-image-1', 'and the picked model' );
+
+	($ok, $message) = subs::ai_model_test('openai:tts-1', 'text_to_audio_assistant');
+	is( $ok, 1, 'an audio model that returns bytes passes' );
+	like( $message, qr/returned audio/, 'and the audio is reported' );
+	is( $asked[1][0], 'audio', 'the audio role uses the audio generator' );
+
+	($ok, $message) = subs::ai_model_test('google:veo-3', 'text_to_video_assistant');
+	is( $ok, 1, 'a video model that returns bytes passes' );
+	like( $message, qr/returned a video/, 'and the video is reported' );
+	is( $asked[2][0], 'video', 'the video role uses the video generator' );
+
+	local *subs::ai_text_to_image = sub { return (undef, undef, 'the model answered 403: forbidden') };
+	($ok, $message) = subs::ai_model_test('openai:gpt-image-1', 'text_to_image_assistant');
+	is( $ok, 0, 'a generation error fails the test' );
+	is( $message, 'the model answered 403: forbidden', 'and the provider reason is carried back' );
+
+	local *subs::ai_transcribe_test = sub {
+		my ($model) = @_;
+		push @asked, [ 'transcribe', $model ];
+		return (1, 'the transcription model answered');
+	};
+	($ok, $message) = subs::ai_model_test('openai:whisper-1', 'transcription_assistant');
+	is( $ok, 1, 'the transcription role has its own test' );
+	is( $message, 'the transcription model answered', 'and its own answer' );
+	is( $asked[3][0], 'transcribe', 'which is not sent through the chat layer' );
+	is( $asked[3][1], 'openai:whisper-1', 'the transcription model is the one tested' );
+}
+
+# The transcription Test's own handshake: whisper.cpp is judged by readiness,
+# a cloud model by the provider's answer to half a second of silence.
+{
+	local *subs::whisper_available = sub { 1 };
+	my ($ok, $message) = subs::ai_transcribe_test('local:whisper.cpp');
+	is( $ok, 1, 'whisper.cpp ready here passes' );
+	local *subs::whisper_available = sub { 0 };
+	($ok, $message) = subs::ai_transcribe_test('local:whisper.cpp');
+	is( $ok, 0, 'whisper.cpp missing here fails' );
+	like( $message, qr/not installed/, 'and says so' );
+
+	my @asked;
+	local *subs::ai_transcribe_cloud_result = sub {
+		my ($model, $raw, $lang) = @_;
+		push @asked, [ $model, $raw, $lang ];
+		return ('', undef);
+	};
+	($ok, $message) = subs::ai_transcribe_test('openai:whisper-1');
+	is( $ok, 1, 'a 2xx with an empty transcript is a pass, because silence is not speech' );
+	is( $asked[0][0], 'openai:whisper-1', 'the picked model is the one asked' );
+	is( substr($asked[0][1], 0, 4), 'RIFF', 'a small WAV clip is sent' );
+	is( $asked[0][2], 'en', 'and it is marked English' );
+
+	local *subs::ai_transcribe_cloud_result = sub { return (undef, 'the transcription model answered 401: unauthorized') };
+	($ok, $message) = subs::ai_transcribe_test('openai:whisper-1');
+	is( $ok, 0, 'a provider error fails the transcription test' );
+	is( $message, 'the transcription model answered 401: unauthorized', 'and its reason is carried back' );
 }
 
 done_testing();

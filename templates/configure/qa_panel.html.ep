@@ -7,10 +7,6 @@
 	my $qa_machines = &subs::qa_target_machines();
 	my $qa_chosen = &subs::qa_nightly_device();
 	my $qa_note_limit = &subs::qa_note_limit();
-	my $qa_ux_model = &subs::qa_ux_model();
-	# Plat builds this from the catalogue it already read; the fallback keeps the
-	# partial usable on its own.
-	my $qa_ux_choices = ref $qa_ux_groups eq 'ARRAY' ? $qa_ux_groups : &subs::qa_ux_model_choices();
 	my ($qa_note_min, $qa_note_max) = &subs::qa_note_limit_bounds();
 	my %qa_lane_on = map { $_ => 1 } &subs::qa_coding_lanes();
 	my %qa_lane_label = (
@@ -28,7 +24,6 @@
 %>
 	<p class="cfg-note"><%= &subs::ui('The QA suite runs once a night from one machine: per-route checks, the database contracts and the regression tests, all in a fenced copy of the house. Choose the machine here. Only a computer or a server is offered, because the suite needs a JawnOS checkout, perl and prove, and a private namespace to run in. The choice is a house setting, so every machine reads the same answer: the nightly timer on each machine asks this panel\'s setting whether that machine is the chosen one and skips its run when it is not. With no choice, each machine keeps the local fallback and runs its own suite. Choose Off to stop the whole nightly system - the QA suite, the UX loop and the coding night - on every machine; nothing is deleted and the times are kept for when you turn it back on.') %></p>
 	<p class="cfg-note"><%= &subs::ui('Notes per night sets how many of the open JawnOS notes the 06:00 coding night works through, one at a time, and is also the default for the 05:30 UX loop. Pick 1 to 25; the default is 3. It is a house setting, so every machine reads the same number.') %></p>
-	<p class="cfg-note"><%= &subs::ui('UX judgement model is the model the 05:30 UX night asks for its easy, help and works verdicts. The list offers only the models that can answer here, the same list the Platform role pickers use. Leave it empty to keep every note at skip; the coding night keeps its own Coding model under Platform.') %></p>
 	<p class="cfg-note"><%= &subs::ui('What the coding night works on chooses the sources it draws from. Notes are the open JawnOS notes. Security findings are the new high findings in the nightly security audit; the night fixes at most two of them. Installer gaps are the packages the installer check reports missing upstream; it fixes at most two. A report item has no note to close - the next report is what says whether it is still there. Choose at least one source.') %></p>
 <div class="cfg-card">
 	<h3 style="margin-top:0;"><%= &subs::lang('configure.qa_nightly') %></h3>
@@ -50,26 +45,6 @@
 			<% } %>
 		</select>
 		<span id="qa_note_limit_status" class="cfg-note" style="margin:0 0 0 8px;"></span>
-	</div>
-	<div class="cfg-row">
-		<label for="qa_ux_model"><%= &subs::lang('configure.qa_ux_model') %></label>
-		<select id="qa_ux_model" class="qa_ux_model">
-			<option value="" <%= length($qa_ux_model) ? '' : 'selected' %>><%= &subs::ui('No model (skip)') %></option>
-			<% my $qa_ux_shown = 0; %>
-			<% foreach my $qa_group ( @{$qa_ux_choices} ) { %>
-				<optgroup label="<%= $qa_group->{'label'} %>">
-					<% foreach my $qa_m ( @{$qa_group->{'models'}} ) { %>
-						<% my $qa_selected = ($qa_ux_model eq $qa_m->{'value'}) ? 1 : 0; %>
-						<% $qa_ux_shown = 1 if $qa_selected; %>
-						<option value="<%= $qa_m->{'value'} %>" <%= $qa_selected ? 'selected' : '' %>><%= $qa_m->{'name'} %> · <%= $qa_m->{'paid'} ? 'paid' : 'free' %></option>
-					<% } %>
-				</optgroup>
-			<% } %>
-			<% if (length($qa_ux_model) && !$qa_ux_shown) { %>
-				<option value="<%= $qa_ux_model %>" selected><%= $qa_ux_model %> (kept — not offered just now)</option>
-			<% } %>
-		</select>
-		<span id="qa_ux_model_status" class="cfg-note" style="margin:0 0 0 8px;"></span>
 	</div>
 	<div class="cfg-row" style="align-items:flex-start;">
 		<label><%= &subs::ui('What the coding night works on') %></label>

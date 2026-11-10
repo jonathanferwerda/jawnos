@@ -848,16 +848,37 @@ sub ai_chat {
 	return ($text, ($text && length $text) ? undef : 'the model returned nothing readable');
 }
 
-# The Plat panel's Test button: say one small thing to the chosen model and
-# report what came back. It calls the model itself (ai_chat_raw) rather than
-# ai_chat_parts so a paid model that is stood down is still tried and a bad key
-# or a name that no longer exists is reported instead of being papered over by
-# the free-model fallback. Returns (ok, message).
+# The Plat panel's Test button: ask the chosen model to prove it can answer.
+# A language model is told one small thing and its reply is reported; the
+# generation roles are asked for a tiny file of their own kind, and transcription
+# gets half a second of silence. The chat path calls the model itself
+# (ai_chat_raw) rather than ai_chat_parts so a paid model that is stood down is
+# still tried and a bad key or a name that no longer exists is reported instead
+# of being papered over by the free-model fallback. Returns (ok, message).
 sub ai_model_test {
 	my ($model, $role) = @_;
 	$model = '' unless defined $model;
 	$model =~ s/^\s+|\s+$//g;
 	return (0, 'Pick a model first.') unless length $model;
+	return &subs::ai_transcribe_test($model) if $role eq 'transcription_assistant';
+	my %gen = (
+		text_to_image_assistant => 'image',
+		text_to_audio_assistant => 'audio',
+		text_to_video_assistant => 'video',
+	);
+	if (my $kind = $gen{$role}) {
+		my %ask = (
+			image => 'A single small red square on a white background.',
+			audio => 'Say the word OK.',
+			video => 'A red square for one second.',
+		);
+		my ($bytes, $mime, $err) = $kind eq 'image'
+			? &subs::ai_text_to_image({ prompt => $ask{$kind}, model => $model })
+			: &subs::ai_text_to_media($kind, { prompt => $ask{$kind}, model => $model });
+		return (0, $err || 'the model returned no ' . $kind) unless defined $bytes && length $bytes;
+		my %noun = ( image => 'an image', audio => 'audio', video => 'a video' );
+		return (1, 'the model returned ' . $noun{$kind} . ' (' . &subs::data_size(length $bytes) . ')');
+	}
 	my ($body, $err) = &ai_chat_raw(
 		$model,
 		[ { role => 'user', content => 'This is a connection test. Reply with the single word OK.' } ],
