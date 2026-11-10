@@ -1,0 +1,24 @@
+[Unit]
+Description=JawnOS land promotion (test working, fast-forward main)
+Documentation=file:/home/jawn/jawnos/docs/AGENTS-concurrency.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=jawn
+WorkingDirectory=/home/jawn/jawnos
+Environment=HOME=/home/jawn
+Environment=JAWNOS_QA_ROOT=/home/jawn/jawnos-qa
+# One promotion at a time, and never while the working coordinator is integrating
+# a wave: the job takes the same land lock.
+ExecStart=/usr/bin/perl /home/jawn/jawnos/scripts/land_promote.pl --once --jobs 2
+# The full suite is the gate; it shares the box with the coordinator and warden.
+Nice=5
+CPUQuota=200%
+TimeoutStartSec=2h
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

@@ -12,7 +12,7 @@ Environment=HOME=/home/jawn
 Environment=JAWNOS_QA_ROOT=/home/jawn/jawnos-qa
 # One ticket and one suite at a time. The warden holds land-warden.lock, so a
 # manual run and the timer cannot both rescue the same ticket.
-ExecStart=/usr/bin/perl /home/jawn/jawnos/scripts/land_warden.pl --once --max 1 --jobs 2
+ExecStart=/usr/bin/perl /home/jawn/jawnos/scripts/land_warden.pl --once --max 1 --jobs 2 --trunk working
 # The suite is the slow part, and it shares the box with the coordinator.
 Nice=10
 CPUQuota=200%

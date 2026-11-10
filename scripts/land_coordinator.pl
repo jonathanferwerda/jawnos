@@ -44,6 +44,7 @@ my %opt = (
 	'jobs'          => 4,
 	'suite_retries' => 1,
 	'restart'       => 1,
+	'apply'         => 1,
 	'wait'          => 0,
 	'once'          => 0,
 );
@@ -53,6 +54,7 @@ GetOptions(
 	'jobs=s'         => \$opt{'jobs'},
 	'suite-retries=s'=> \$opt{'suite_retries'},
 	'no-restart'     => sub { $opt{'restart'} = 0 },
+	'no-apply'       => sub { $opt{'apply'} = 0 },
 	'wait=s'         => \$opt{'wait'},
 	'once'           => \$opt{'once'},
 	'dry-run'        => \$opt{'dry_run'},
@@ -312,15 +314,17 @@ sub run_wave {
 
 	cleanup_train($root, $tmp, $parent);
 
-	my ($applied, $apply_why) = apply_primary($primary, $opt->{'trunk'});
+	# A working-trunk coordinator must not move the primary checkout: the app
+	# follows main, and only the promotion job moves it. --no-apply is that mode.
+	my ($applied, $apply_why) = $opt->{'apply'} ? apply_primary($primary, $opt->{'trunk'}) : (1, '');
 	my $restart = 'skipped';
 	my $last = $integrated[-1];
-	if ($applied && $opt->{'restart'}) {
+	if ($opt->{'apply'} && $applied && $opt->{'restart'}) {
 		my ($ok, $why) = restart_once($primary, $last->{'version'}, $last->{'subject'});
 		$restart = $ok ? 'ok' : 'failed';
 		logit("the restart failed: $why") if !$ok;
 	}
-	elsif (!$applied) {
+	elsif ($opt->{'apply'} && !$applied) {
 		logit("landed, but the primary checkout did not take it: $apply_why");
 	}
 
@@ -330,7 +334,7 @@ sub run_wave {
 		tickets => [ map { $_->{'ticket'}{'id'} } @integrated ],
 		integrate_ms => $integrate_ms, suite_ms => $suite_ms,
 		jobs => $opt->{'jobs'}, result => 'landed', retries => $attempts,
-		apply => $applied ? 'ok' : 'blocked', restart => $restart,
+		apply => $opt->{'apply'} ? ($applied ? 'ok' : 'blocked') : 'skipped', restart => $restart,
 	});
 	my $n = scalar @integrated;
 	logit("landed $n branch(es) in one wave: "
@@ -623,8 +627,8 @@ sub usage {
 	print STDERR <<'USAGE';
 land_coordinator.pl - drain the landing queue in waves
   perl scripts/land_coordinator.pl [--train-size 1] [--jobs 4] [--once]
-                                   [--suite-retries 1] [--no-restart]
-                                   [--wait 0] [--dry-run]
+                                   [--suite-retries 1] [--no-restart] [--no-apply]
+                                   [--trunk main] [--wait 0] [--dry-run]
   Run it from the primary checkout. One instance per repository.
 USAGE
 	exit $code;

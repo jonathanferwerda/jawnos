@@ -1,4 +1,4 @@
-# tests-for: scripts/land_lib.pl scripts/land_enqueue.pl scripts/land_status.pl scripts/land_coordinator.pl scripts/land_warden.pl scripts/systemd/jawnos-land-coordinator.service scripts/systemd/jawnos-land-coordinator.timer scripts/systemd/jawnos-land-warden.service scripts/systemd/jawnos-land-warden.timer
+# tests-for: scripts/land_lib.pl scripts/land_enqueue.pl scripts/land_status.pl scripts/land_coordinator.pl scripts/land_warden.pl scripts/land_promote.pl scripts/systemd/jawnos-land-coordinator.service scripts/systemd/jawnos-land-coordinator.timer scripts/systemd/jawnos-land-warden.service scripts/systemd/jawnos-land-warden.timer scripts/systemd/jawnos-land-promote.service scripts/systemd/jawnos-land-promote.timer
 # covers:    the landing queue - enqueue validation and the backup push, the
 #           coordinator's waves, one suite and one restart per wave, the hot-file
 #           cap, the red-wave split into single tickets, landed-ticket records,
@@ -104,7 +104,7 @@ sub fixture {
 	write_file("$primary/scripts/run_tests.pl", $SUITE);
 	write_file("$primary/scripts/restart.pl", $RESTART);
 	write_file("$primary/scripts/version_bump.pl", read_file("$real/scripts/version_bump.pl"));
-	for my $name (qw(land_lib.pl land_enqueue.pl land_status.pl land_coordinator.pl land_warden.pl)) {
+	for my $name (qw(land_lib.pl land_enqueue.pl land_status.pl land_coordinator.pl land_warden.pl land_promote.pl)) {
 		write_file("$primary/scripts/$name", read_file("$real/scripts/$name"));
 	}
 	for my $hook (qw(pre-commit pre-push)) {
@@ -165,6 +165,25 @@ sub warden {
 	my ($rc, $out) = sh($^X, 'scripts/land_warden.pl', '--once', @args);
 	chdir $cwd or die "chdir back: $!";
 	return ($rc, $out);
+}
+
+sub promoter {
+	my ($f, @args) = @_;
+	local $ENV{'LAND_TEST_DIR'} = $f->{'marker'};
+	local $ENV{'JAWNOS_QA_ROOT'} = $f->{'qa'};
+	my $cwd = getcwd();
+	chdir $f->{'primary'} or die "chdir primary: $!";
+	my ($rc, $out) = sh($^X, 'scripts/land_promote.pl', '--once', @args);
+	chdir $cwd or die "chdir back: $!";
+	return ($rc, $out);
+}
+
+sub make_working {
+	my ($f) = @_;
+	git($f->{'primary'}, 'branch', 'working', 'main');
+	git($f->{'primary'}, 'push', 'origin', 'working');
+	git($f->{'wt1'}, 'fetch', 'origin');
+	git($f->{'wt1'}, 'checkout', '-B', 'working', 'origin/working');
 }
 
 sub coordinator {
@@ -528,6 +547,77 @@ subtest 'the warden reports a red ticket and tries it once' => sub {
 	like($wout2, qr/no stranded ticket/, 'it does not retry the same ticket');
 };
 
+# --- working and the promotion to main -------------------------------------
+
+subtest 'the promoter tests working and fast-forwards main' => sub {
+	my $f = fixture();
+	make_working($f);
+	commit_file($f->{'wt1'}, 'working.txt', "working\n", 'working: add a file');
+	git($f->{'wt1'}, 'push', 'origin', 'working');
+
+	my ($rc, $out) = promoter($f);
+	is($rc, 0, 'the promoter runs') or diag($out);
+	like($out, qr/promoted main/, 'it promotes main');
+	my (undef, $main) = git($f->{'primary'}, 'rev-parse', 'origin/main');
+	my (undef, $work) = git($f->{'primary'}, 'rev-parse', 'origin/working');
+	is($main, $work, 'main is the working tip');
+	my (undef, $file) = git($f->{'primary'}, 'show', 'origin/main:working.txt');
+	is($file, 'working', 'the working work is on main');
+	my @restart = lines("$f->{'marker'}/restart");
+	ok(@restart && $restart[-1] =~ /promotion/, 'the promotion restarted the app');
+};
+
+subtest 'a red working branch does not move main' => sub {
+	my $f = fixture();
+	make_working($f);
+	commit_file($f->{'wt1'}, 'BREAK', "1\n", 'working: break the suite');
+	git($f->{'wt1'}, 'push', 'origin', 'working');
+	my (undef, $before) = git($f->{'primary'}, 'rev-parse', 'origin/main');
+
+	my ($rc, $out) = promoter($f);
+	is($rc, 0, 'the promoter runs') or diag($out);
+	like($out, qr/red/, 'it reports the red suite');
+	my (undef, $after) = git($f->{'primary'}, 'rev-parse', 'origin/main');
+	is($after, $before, 'main did not move');
+};
+
+subtest 'a diverged main is refused' => sub {
+	my $f = fixture();
+	make_working($f);
+	commit_file($f->{'wt1'}, 'working.txt', "working\n", 'working: add a file');
+	git($f->{'wt1'}, 'push', 'origin', 'working');
+	commit_file($f->{'primary'}, 'hotfix.txt', "hotfix\n", 'main: a direct commit');
+	git($f->{'primary'}, 'push', 'origin', 'main');
+
+	my ($rc, $out) = promoter($f);
+	is($rc, 0, 'the promoter runs') or diag($out);
+	like($out, qr/not an ancestor/, 'it names the divergence');
+};
+
+subtest 'the working coordinator does not move the primary' => sub {
+	my $f = fixture();
+	make_working($f);
+	git($f->{'wt1'}, 'checkout', '-B', 'agent/one', 'origin/working');
+	commit_file($f->{'wt1'}, 'one.txt', "one\n", 'one: add a branch');
+	my ($erc, $eout) = enqueue($f, $f->{'wt1'}, '--trunk', 'working');
+	is($erc, 0, 'the branch enqueues against working') or diag($eout);
+
+	my ($crc, $cout) = coordinator($f, '--trunk', 'working', '--no-apply', '--train-size', '1', '--jobs', '1');
+	is($crc, 0, 'the working coordinator drains') or diag($cout);
+	my (undef, $work) = git($f->{'primary'}, 'show', 'origin/working:one.txt');
+	is($work, 'one', 'the work is on working');
+	my ($on_main) = git($f->{'primary'}, 'cat-file', '-e', 'origin/main:one.txt');
+	isnt($on_main, 0, 'and not on main yet');
+	my (undef, $head) = git($f->{'primary'}, 'rev-parse', 'HEAD');
+	my (undef, $main) = git($f->{'primary'}, 'rev-parse', 'main');
+	is($head, $main, 'the primary stays on main');
+
+	my ($prc, $pout) = promoter($f);
+	is($prc, 0, 'the promoter runs') or diag($pout);
+	my (undef, $promoted) = git($f->{'primary'}, 'show', 'origin/main:one.txt');
+	is($promoted, 'one', 'the promotion lands it on main');
+};
+
 # --- enqueue refuses what it cannot land ----------------------------------
 
 subtest 'enqueue refuses dirty, primary, already-merged and full queues' => sub {
@@ -649,6 +739,11 @@ subtest 'the systemd units run the coordinator and point the timer at it' => sub
 		'the warden runs one ticket with the shared job cap');
 	like($wservice, qr/CPUQuota=200%/, 'and is capped on the shared box');
 	like($wtimer, qr/OnUnitActiveSec=15min/, 'the warden timer ticks every fifteen minutes');
+	my $pservice = read_file("$real/scripts/systemd/jawnos-land-promote.service");
+	my $ptimer   = read_file("$real/scripts/systemd/jawnos-land-promote.timer");
+	like($pservice, qr/ExecStart=.*land_promote\.pl --once --jobs 2/, 'the promoter runs the suite gate');
+	like($ptimer, qr/OnUnitActiveSec=15min/, 'the promotion timer ticks every fifteen minutes');
+	like($service, qr/--trunk working --no-apply/, 'the coordinator lands to working without touching main');
 };
 
 done_testing();

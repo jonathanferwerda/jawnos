@@ -20,6 +20,9 @@
 # keeps the queue position. A branch already running is refused, not queued
 # twice.
 #
+# Agents queue to the working branch: pass --trunk working. The default is main
+# for the owner's emergency and the tests.
+#
 # --wait asks for the verdict in this turn: it waits for the ticket to land or be
 # refused, or for --timeout seconds to pass (default 300). The exit is then 0
 # landed, 1 refused and 2 no verdict. Without --wait the exit is 0 once the

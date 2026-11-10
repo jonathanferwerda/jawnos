@@ -26,8 +26,8 @@ every landing touches:
 Three paths, and the condition picks one. Agents queue; a lone agent on a quiet box may land the
 branch itself; the primary-checkout recipe is the human owner's alone.
 
-- **Queue it** (`perl scripts/land_enqueue.pl --wait`, the default for agents; use it whenever more
-  than one agent is working):
+- **Queue it** (`perl scripts/land_enqueue.pl --trunk working --wait`, the default for agents; use
+  it whenever more than one agent is working):
   commit the branch, run the script, and it returns the verdict in the same call. `--timeout`
   bounds the wait (default 300 s): exit 0 landed, 1 refused, 2 no verdict yet. You do not push or
   restart, and **you do not delete the worktree**. When it lands, the branch is on the trunk and the
@@ -35,11 +35,11 @@ branch itself; the primary-checkout recipe is the human owner's alone.
   longer ancestors and `git branch -d` declines: the verdict prints the two commands that do work,
   `git worktree remove <dir>` and `git branch -D <branch>`. A refused ticket keeps the worktree:
   repair it once (see below) and enqueue again; never run `agent_land.pl` on the same branch.
-- **Land it yourself** (`perl ~/jawnos/scripts/agent_land.pl`, from the worktree root): the lone
-  agent's path, and the owner's; one agent at the gate, which the lock makes safe. It bumps
-  `VERSION`, runs the suite once, pushes, restarts and
-  removes the worktree. `--keep` is only for work that continues (an open checkpoint) or a handoff;
-  a refusal keeps the worktree anyway.
+- **Land it yourself** (`perl ~/jawnos/scripts/agent_land.pl`, from the worktree root): the owner's
+  emergency path; one agent at the gate, which the lock makes safe. It bumps `VERSION`, runs the
+  suite once, pushes, restarts and removes the worktree. It moves **main directly**, bypassing
+  `working` and its promotion; do not use it for normal work. `--keep` is only for work that
+  continues (an open checkpoint) or a handoff; a refusal keeps the worktree anyway.
 - **Hand-land as the owner** (the human-only path): only when you are the **sole agent on this box
   and the primary checkout is yours** — no other agent is working and no queue is draining. Then
   `perl scripts/version_bump.pl` → commit with `JAWNOS_ALLOW_PRIMARY_COMMIT=1` → `git push` →
@@ -154,11 +154,28 @@ action belong in `.shots/AGENT-CHECKPOINT.md`. After the one repair attempt, rep
 "Done" for the task is "refused and reported", not "landed"; nothing else is owed, and the next
 attempt is a deliberate one.
 
+## The working branch and main
+
+`main` is the stable branch the app runs. Agents do not land on it. They fetch `origin/working`, branch
+from it, and queue with `scripts/land_enqueue.pl --trunk working --wait`. The coordinator lands the
+tested waves on `working` and runs with `--trunk working --no-apply`, so it never moves the primary
+checkout.
+
+`scripts/land_promote.pl` (timer `jawnos-land-promote.timer`, every fifteen minutes) takes the land
+lock, runs the full suite on `origin/working` in a scratch worktree, and only then fast-forwards
+`main` to it, fast-forwards the primary checkout and restarts the app. A red suite, a main that is not
+an ancestor of working, or a dirty primary changes nothing; the loop event says why. The first run
+creates `origin/working` from `origin/main`.
+
+A direct commit to main (or `agent_land.pl`) breaks the fast-forward promotion: main must stay an
+ancestor of working. The hand-land path is the owner's emergency route, not the normal one.
+
 ## The landing queue and the train
 
 Queueing is the agent default; the lander is the lone agent's shortcut on a quiet box.
-`perl scripts/land_enqueue.pl --wait` from the worktree validates the branch, backs it up to origin
-and writes a ticket in `<git-common-dir>/land-queue/`. With `--authority <host>` the ticket is written
+`perl scripts/land_enqueue.pl --trunk working --wait` from the worktree validates the branch, backs
+it up to origin and writes a ticket in `<git-common-dir>/land-queue/`. With `--authority <host>` the
+ticket is written
 by the authority's copy over ssh instead, so a worker box never owns a second queue. The coordinator
 (`scripts/land_coordinator.pl`) drains the queue in **waves** on the box that owns the primary
 checkout and the master — the authority:
@@ -181,7 +198,8 @@ checkout and the master — the authority:
 - **The warden.** `scripts/land_warden.pl` (timer `jawnos-land-warden.timer`, every fifteen
   minutes) takes one refused ticket the coordinator left, recreates a `warden/land-<id>-<stamp>`
   branch from its commit or its origin branch under `$JAWNOS_QA_ROOT/warden/<id>`, rebases it onto
-  `origin/main` and runs the suite. Green: it pushes the warden branch and enqueues it. Red or
+  `origin/working` (the warden's `--trunk`) and runs the suite. Green: it pushes the warden branch
+  and enqueues it. Red or
   conflicted: it leaves the worktree and writes `ticket-<id>.md` beside it. A worktree left for a
   conflict is resumed on the next tick once the rebase is finished and the tree is clean; a ticket
   whose patches are already on the trunk is marked `superseded` without a suite. It never touches
@@ -196,11 +214,11 @@ checkout and the master — the authority:
 - **The ticket owns your worktree.** The coordinator lands from origin and never needs your
   directory; the worktree stays until the ticket is landed (then `worktree_gc` may sweep it) or
   refused (then it stays for the fix). Do not delete it before the verdict.
-- **A dirty primary blocks this box's apply, not the trunk.** The coordinator pushes the green train,
-  records `apply blocked`, and the next wave retries the fast-forward and restart.
+- **A dirty primary blocks promotion, not working.** The coordinator's `--no-apply` leaves the
+  primary alone; the promotion job fast-forwards main and the primary when the checkout is clean.
 - **One coordinator per trunk.** Two boxes running it would race the push. The authority is the box
   with the suite and the primary. A worker pushes its branch and runs
-  `perl scripts/land_enqueue.pl --authority <host> --wait`; that runs the authority's copy over ssh (port
+  `perl scripts/land_enqueue.pl --authority <host> --trunk working --wait`; that runs the authority's copy over ssh (port
   8022, `BatchMode`, root `$HOME/jawnos`, `--authority-root` to move it), and
   `perl scripts/land_status.pl --authority <host>` reads the queue back. A same-box authority uses
   the primary's copy directly, no sshd. The authority checks the commit's identity because the
@@ -224,7 +242,7 @@ rebase immediately before running the gate:
 
 ## In a worktree
 
-- `git worktree add .worktrees/<task> -b agent/<task> origin/main` **before your first edit**, and
+- `git worktree add .worktrees/<task> -b agent/<task> origin/working` **before your first edit**, and
   work only there. The primary checkout is read-only for agents: a source write left in it makes
   `agent_land.pl` refuse every landing, not just yours. Generated artifacts that scripts stage in
   place — `releases/`, firmware `build/`, `.shots/` — are gitignored and are not source writes.
@@ -245,7 +263,7 @@ rebase immediately before running the gate:
   A **refused** landing keeps the worktree too: removal happens only after the push and the restart,
   so the files and the checkpoint are still there to look at and fix.
   `scripts/worktree_gc.pl` is the sweep for worktrees whose agent died: report-only by default,
-  `--apply` to act, and it removes a worktree only when its branch is an ancestor of `origin/main`,
+  `--apply` to act, and it removes a worktree only when its branch is an ancestor of `origin/working`,
   its tree is clean, and no process has its cwd in it. A landed one goes at the first sweep that
   sees it; `--older-than H` asks for a buffer. It is the
   `worktree_gc` utility job (daily pool, on by default), so a machine sweeps itself; run it by hand

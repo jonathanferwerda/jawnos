@@ -1,0 +1,13 @@
+[Unit]
+Description=JawnOS land promotion every fifteen minutes
+
+[Timer]
+# A quiet working branch is promoted on the first tick after it has work; a red
+# suite is retried on the next tick, not in a loop.
+OnBootSec=3min
+OnUnitActiveSec=15min
+Persistent=true
+Unit=jawnos-land-promote.service
+
+[Install]
+WantedBy=timers.target

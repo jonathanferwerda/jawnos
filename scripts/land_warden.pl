@@ -40,6 +40,7 @@ my %opt = (
 	'jobs'   => 2,
 	'timeout' => 1800,
 	'report' => undef,
+	'trunk'  => 'main',
 	'dry_run' => 0,
 	'retry' => 0,
 	'once' => 0,
@@ -50,6 +51,7 @@ GetOptions(
 	'jobs=s'    => \$opt{'jobs'},
 	'timeout=s' => \$opt{'timeout'},
 	'report=s'  => \$opt{'report'},
+	'trunk=s'   => \$opt{'trunk'},
 	'dry-run'   => \$opt{'dry_run'},
 	'retry'     => \$opt{'retry'},
 	'once'      => \$opt{'once'},
@@ -198,7 +200,7 @@ sub handle_ticket {
 		return;
 	}
 
-	my ($rrc, $rout) = git_in($wt, 'rebase', 'origin/main');
+	my ($rrc, $rout) = git_in($wt, 'rebase', "origin/$opt{'trunk'}");
 	if ($rrc != 0) {
 		my (undef, $conflicts) = git_in($wt, 'diff', '--name-only', '--diff-filter=U');
 		my @files = grep { length } split /\n/, ($conflicts // '');
@@ -267,7 +269,7 @@ sub resume_existing {
 sub finish_branch {
 	my ($t, $wt, $wbranch) = @_;
 	my $id = $t->{'id'} // '';
-	my (undef, $ahead) = git_in($wt, 'rev-list', '--count', 'origin/main..HEAD');
+	my (undef, $ahead) = git_in($wt, 'rev-list', '--count', "origin/$opt{'trunk'}..HEAD");
 	if (($ahead // '') eq '0') {
 		$t->{'state'} = 'superseded';
 		$t->{'result'} = { code => 0, reason_class => 'nothing',
@@ -342,7 +344,7 @@ sub finish_branch {
 # answer means the ref is an ancestor; every '-' line is an equivalent patch.
 sub already_upstream {
 	my ($cwd, $ref) = @_;
-	my ($rc, $out) = git_in($cwd, 'cherry', 'origin/main', $ref);
+	my ($rc, $out) = git_in($cwd, 'cherry', "origin/$opt{'trunk'}", $ref);
 	return 0 if $rc != 0;
 	my @lines = grep { length } split /\n/, ($out // '');
 	return 1 unless @lines;
@@ -551,7 +553,7 @@ sub usage {
 land_warden.pl - rescue a refused ticket into a worktree
   perl scripts/land_warden.pl [--once] [--ticket ID] [--max 1]
                               [--jobs 2] [--timeout 1800]
-                              [--report DIR] [--retry] [--dry-run]
+                              [--report DIR] [--trunk main] [--retry] [--dry-run]
   Runs on the authority, where the queue is. It leaves the owner's branch and
   the primary checkout alone; its worktrees live under $JAWNOS_QA_ROOT/warden.
 USAGE

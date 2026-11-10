@@ -81,10 +81,11 @@ user for the exact file/folder/name. A wrong guess costs far more tokens than a 
 
 ## Many agents at once
 
-The primary checkout is read-only for agents: a dirty one blocks every landing. Queue a committed
-branch with `scripts/land_enqueue.pl --wait`; the coordinator lands it and returns the verdict. Sole
-agent on a quiet box? Land with `perl ~/jawnos/scripts/agent_land.pl`; the lock guards both. The
-primary-checkout recipe is the human owner's. Never push or restart by hand. Doc: `docs/AGENTS-concurrency.md`.
+The primary checkout is read-only for agents: a dirty one blocks landings. Branch from
+`origin/working` and queue it with `scripts/land_enqueue.pl --trunk working --wait`; it lands and
+returns the verdict. Sole agent? Land with `perl ~/jawnos/scripts/agent_land.pl`;
+the lock guards both. The primary-checkout recipe is the human owner's. Never push or restart by
+hand. Doc: `docs/AGENTS-concurrency.md`.
 
 ## Crash-resilient agent work
 
@@ -191,10 +192,10 @@ translatable in the same change:
   `lib/JawnOS/Domain/Loader.pm` (`t/91`), a route action its row in `lib/JawnOS/Routes/` (`t/58`), and
   a new app page a help topic with `app => <name>` (`t/11`).
 - **Cap parallel jobs on this shared box:** `pio run -j 4`, `gradle --max-workers=4`, `make -j4`.
-- **Land once, wait, then repair or stop.** Commit in your worktree (`git add -p`), queue it with
-  `scripts/land_enqueue.pl --wait`, read the verdict. Repair a refused `rebase`, `suite` or
-  `commit` once, re-enqueue; report. Second refusal ends it. `--keep` for work that continues or a
-  handoff. The commit identity: `docs/AGENTS-concurrency.md`.
+- **Land once, wait, then repair or stop.** Commit in the worktree, queue it with
+  `scripts/land_enqueue.pl --trunk working --wait`, read the verdict. Repair a refused `rebase`,
+  `suite` or `commit` once, re-enqueue; report. Second refusal stops `--keep` for work that
+  continues or a handoff. The commit identity: `docs/AGENTS-concurrency.md`.
 
 ---
 

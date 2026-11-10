@@ -767,7 +767,7 @@ sub utility_functions() {
 		$gb::timeouts->{'worktree_gc'}->{'subroutine'} = sub {
 			my $repo = &subs::home('~/jawnos');
 			return undef unless -d "$repo/.git" && -f "$repo/scripts/worktree_gc.pl";
-			my $out = qx{cd "$repo" && $^X scripts/worktree_gc.pl --apply 2>&1};
+			my $out = qx{cd "$repo" && $^X scripts/worktree_gc.pl --apply --trunk working 2>&1};
 			my ($summary) = $out =~ /^(# (?:removed|would remove).*)$/m;
 			return $summary;
 		};
