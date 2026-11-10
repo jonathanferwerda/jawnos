@@ -1,7 +1,8 @@
-# tests-for: public/js/manager/timelineprinter.js
+# tests-for: public/js/manager/timelineprinter.js public/js/manager/taskbar.js
 # covers:    the timeline's occurrence mark is the printer family's mark - the
-#            appointment colour in a disc with a thin ink edge - with the
-#            pseudonym icon's own ink scaled and rounded to fill that disc.
+#            appointment colour in a disc with an ink edge whose width follows
+#            the Misc Button Border - with the pseudonym icon's own ink scaled
+#            and rounded to fill that disc.
 
 use strict;
 use warnings;
@@ -37,18 +38,17 @@ like($src, qr/ctx\.strokeStyle = ink;\s*\n\s*ctx\.lineWidth = dotRing;\s*\n\s*ct
 # opaque pixels and scales those to the disc, clipping the square's corners to
 # a circle that meets the ink edge - so no appointment colour shows round it.
 my ($radius) = $src =~ /var dotRadius = (\d+);/;
-my ($ring)   = $src =~ /var dotRing = (\d+);/;
 my ($icon)   = $src =~ /var dotIcon = (\d+);/;
-my ($round)  = $src =~ /var dotIconClip = (\d+);/;
-ok(defined $radius && defined $ring && defined $icon && defined $round,
-	'the mark sizes and the icon\'s round clip were read');
+ok(defined $radius && defined $icon, 'the disc and icon box sizes were read');
 cmp_ok($radius, '>=', 19, 'the disc is big enough for a legible icon');
-cmp_ok($ring, '<=', 2, "the edge is the other printers' thin ink line");
 cmp_ok($icon, '>=', 34, 'the icon is given a large box to fill');
-# the ink edge's inner radius is dotRadius - dotRing/2; the clip meets it so
-# the scaled ink reaches the edge instead of leaving a margin of app colour
-cmp_ok($round, '==', $radius - $ring / 2, 'the round clip meets the ink edge');
-cmp_ok($round, '>=', 14, 'the round clip still fills the disc');
+
+# the edge is the Misc Button Border width, shared with the clothesline and
+# every pressed control; the clip is derived from it so the ink still meets it
+like($src, qr/var dotRing = \(typeof jawnosButtonBorderWidth == 'function'\) \? jawnosButtonBorderWidth\(\) : 2;/,
+	'the ink edge follows the Button Border width');
+like($src, qr/var dotIconClip = dotRadius - \(dotRing \/ 2\);/,
+	"the clip is the edge's inner radius at any width");
 
 # the icon's opaque ink is measured once it loads, and the draw crops to it
 like($src, qr/icon\.ink = iconInk\(icon\.img\)/, 'the icon is measured for its opaque ink');
@@ -62,6 +62,11 @@ like($src, qr/ctx\.arc\(x \+ \(size \/ 2\), y \+ \(size \/ 2\), roundRadius, 0, 
 	'the ink is clipped to the round radius before it is drawn');
 like($src, qr/ctx\.restore\(\);\s*\n\s*\/\/ the pseudonym's own glyph.*?pseudoGenerator\(appts,l\['type'\], x - \(dotIcon \/ 2\).*?dotIconClip\)/s,
 	'the icon is drawn on top of the disc, rounded');
+
+# the slider previews live: the repaint hook redraws the timeline too
+my $taskbar = read_file("$root/public/js/manager/taskbar.js");
+like($taskbar, qr/function jawnosButtonBorderRepaint\(\).*?timelinePrinter\(appts\)/s,
+	'a width change repaints the timeline');
 
 # --- the band is untouched --------------------------------------------------
 like($src, qr/jawnosTextureStroke\(ctx, colour, darkTheme, bandHeight\)/,

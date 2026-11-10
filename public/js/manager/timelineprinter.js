@@ -47,15 +47,16 @@ function timelinePrinter(appts,sort,offset) {
 	// to sit inside it, rather than the name overflowing a thin line
 	var bandHeight = 28;
 	// the occurrence mark is the same one the other printers draw: the app's
-	// colour in a disc with a thin ink edge. The pseudonym's icon sits in its
+	// colour in a disc with an ink edge. The pseudonym's icon sits in its
 	// middle: its opaque ink is measured and scaled to the circle inside the
-	// edge (radius 18, dotRadius less half the ring), and the clip rounds the
-	// corners of whatever square the ink's bounds make.
+	// edge, and the clip rounds the corners of whatever square the ink's bounds
+	// make. The edge is the Misc Button Border width, the one the clothesline
+	// and every pressed control wear, so the clip follows it too.
 	var dotRadius = 19;
-	var dotRing = 2;   // the ink edge around the disc
+	var dotRing = (typeof jawnosButtonBorderWidth == 'function') ? jawnosButtonBorderWidth() : 2;
 	var dotHalo = 8;   // the theme's halo behind it, when the theme has one
-	var dotIcon = 36;  // the box the icon's ink is scaled to (the clip's diameter)
-	var dotIconClip = 18; // the circle the icon is clipped to, meeting the ink edge
+	var dotIcon = 36;  // the box the icon's ink is scaled to
+	var dotIconClip = dotRadius - (dotRing / 2); // the circle inside that edge
 	var pad = 26;
 	var top = headerHeight + clothesLineHeight + 26;
 	var rows = 0;

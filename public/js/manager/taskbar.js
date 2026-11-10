@@ -137,12 +137,19 @@ function jawnosButtonBorderColourApply(colour) {
 	else { root.removeProperty('--button_border_colour'); }
 	jawnosButtonBorderRepaint();
 }
-// The clothesline is canvas, so a width or colour change has to be painted
-// again by hand; the CSS-only surfaces follow their custom properties.
+// The clothesline and the timeline are canvas, so a width or colour change has
+// to be painted again by hand; the CSS-only surfaces follow their custom
+// properties.
 function jawnosButtonBorderRepaint() {
 	if (typeof clotheslineHanger == 'function' && typeof wardrobe != 'undefined' && wardrobe && wardrobe.length
 		&& typeof hangingClothes != 'undefined' && hangingClothes == 0) {
 		clotheslineHanger(wardrobe);
+	}
+	// the timeline's occurrence dots wear the same edge; only the drawn layout
+	// needs repainting, and only while it is the timeline
+	if (typeof timelinePrinter == 'function' && typeof appts != 'undefined' && appts
+		&& appts['__specs'] && localStorage.getItem('layout') == 'timeline') {
+		timelinePrinter(appts);
 	}
 }
 // The desk's corner radius. Every window frame, input, dropdown, textarea,
