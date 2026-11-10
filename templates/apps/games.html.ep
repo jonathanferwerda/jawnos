@@ -1,11 +1,26 @@
 <% use Mojo::JSON qw(encode_json); %>
 <%# A second launcher, one press in from the Controller's Games tile. Cards and
     Twirl run inside the house. ?view=emulated is the emulated shelf: the ROMs
-    found under ~/roms, a card each, with the two install buttons above them. %>
+    found under ~/roms, a card each, with the two install buttons above them,
+    a filter by system, the emulator each system runs on, a cover fetch and a
+    way to the controls page. %>
 <%
 	my $mode = (defined $view && $view eq 'emulated') ? 'emulated' : 'launcher';
 	my $games = (ref $library eq 'HASH' && ref $library->{'games'} eq 'ARRAY') ? $library->{'games'} : [];
 	my $count = scalar @{ $games };
+	# The shelf's own data may come from a scan that is older than this page, so
+	# every field is read defensively: a missing system list draws no filter, and
+	# a system with no runners draws no picker rather than a dead control.
+	my $systems = (ref $library eq 'HASH' && ref $library->{'systems'} eq 'ARRAY') ? $library->{'systems'} : [];
+	my @filter_systems = grep {
+		ref $_ eq 'HASH' && defined $_->{'id'} && length $_->{'id'}
+			&& (!defined $_->{'count'} || $_->{'count'} > 0)
+	} @{ $systems };
+	my @picker_systems = grep {
+		ref $_ eq 'HASH' && defined $_->{'id'} && length $_->{'id'}
+			&& ref $_->{'runners'} eq 'ARRAY'
+			&& grep { ref $_ eq 'HASH' && defined $_->{'id'} && length $_->{'id'} } @{ $_->{'runners'} }
+	} @{ $systems };
 %>
 <style>
 	/* A launcher page of its own, like the controller's: the desk only ever
@@ -23,6 +38,29 @@
 	.games_action:disabled { opacity:.5; cursor:var(--jawnos-cursor-default, default); }
 	#games_bar_spacer { flex:1 1 auto; }
 	#games_install_note { flex:1 1 100%; font-size:11px; line-height:1.3; min-height:1em; opacity:.85; }
+	#games_covers_note { font-size:11px; line-height:1.3; opacity:.85; }
+	/* The filter rides above the shelf and scrolls sideways: a system set is
+	   wider than a handheld, and wrapping it would eat the shelf's height. */
+	#games_shelf { flex:0 0 auto; display:flex; flex-direction:column; gap:2px; padding:6px 8px 0; }
+	#games_shelf_row { display:flex; align-items:center; gap:8px; min-width:0; }
+	#games_filters { display:flex; overflow-x:auto; white-space:nowrap; gap:6px; flex-wrap:nowrap;
+		flex:1 1 auto; min-width:0; padding-bottom:2px; }
+	.games_filter { flex:0 0 auto; font:inherit; font-size:12px; line-height:1.2; white-space:nowrap;
+		padding:4px 10px; border:1px solid #4a4a4a; border-radius:999px; background:#3a3a3a;
+		color:#ffffff; cursor:var(--jawnos-cursor-pointer, pointer); }
+	.games_filter:hover { border-color:var(--accent, #4a90d9); }
+	.games_filter.is_active { background:var(--accent, #4a90d9); border-color:var(--accent, #4a90d9); }
+	.games_filter_count { margin-left:6px; font-size:11px; opacity:.8; }
+	/* One row per system, each with the emulator it runs on. The list is folded
+	   away by default: there can be more systems than a shelf has room for. */
+	#games_emulators { padding:0 2px; font-size:11px; }
+	#games_emulators summary { cursor:var(--jawnos-cursor-pointer, pointer); opacity:.85; padding:2px 0; }
+	.games_system_row { display:flex; align-items:center; gap:8px; padding:2px 0; }
+	.games_system_name { flex:0 0 40%; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+	.games_system_row select { flex:0 1 auto; min-width:0; font:inherit; font-size:11px; padding:2px 4px;
+		border:1px solid #4a4a4a; border-radius:6px; background:#3a3a3a; color:#ffffff;
+		cursor:var(--jawnos-cursor-pointer, pointer); }
+	.games_emulator_note { flex:1 1 auto; min-width:0; opacity:.8; }
 	#games_grid { flex:1 1 auto; min-height:0; display:grid; grid-template-columns:repeat(3,1fr);
 		gap:10px; padding:8px; box-sizing:border-box; }
 	.games_tile { display:flex; flex-direction:column; align-items:center; justify-content:center;
@@ -40,6 +78,7 @@
 		border:1px solid #4a4a4a; border-radius:10px; background:#3a3a3a; color:#ffffff;
 		font:inherit; text-align:left; cursor:var(--jawnos-cursor-pointer, pointer); }
 	.game_card:hover { border-color:var(--accent, #4a90d9); }
+	.game_card[hidden] { display:none; }
 	.game_art { display:flex; align-items:center; justify-content:center; width:100%;
 		aspect-ratio:3 / 4; overflow:hidden; border-radius:6px; background:#2a2a2a; }
 	.game_art img { width:100%; height:100%; object-fit:cover; }
@@ -74,14 +113,43 @@
 		<span id="games_bar_spacer"></span>
 		<button type="button" class="games_action" id="games_install_emulators"><%= &subs::ui('Install emulators') %></button>
 		<button type="button" class="games_action" id="games_install_roms"><%= &subs::ui('Install ROMs') %></button>
+		<button type="button" class="games_action" id="games_covers"><%= &subs::ui('Fetch covers') %></button>
+		<span id="games_covers_note" aria-live="polite"></span>
 		<span id="games_install_note" aria-live="polite"></span>
+	</div>
+	<div id="games_shelf">
+		<div id="games_shelf_row">
+			<div id="games_filters" role="group" aria-label="<%= &subs::ui('Filter by system') %>">
+				<button type="button" class="games_filter is_active" data-filter="all" aria-pressed="true"><%= &subs::ui('All') %></button>
+% for my $sys (@filter_systems) {
+				<button type="button" class="games_filter" data-filter="<%= $sys->{'id'} %>" data-system="<%= $sys->{'id'} %>" aria-pressed="false"><%= (defined $sys->{'label'} && length $sys->{'label'}) ? $sys->{'label'} : $sys->{'id'} %><% if (defined $sys->{'count'}) { %><span class="games_filter_count"><%= $sys->{'count'} %></span><% } %></button>
+% }
+			</div>
+			<a id="games_controls" class="games_action" href="/manager/games/mapping"><%= &subs::ui('Controls') %></a>
+		</div>
+% if (@picker_systems) {
+		<details id="games_emulators">
+			<summary><%= &subs::ui('Systems') %></summary>
+% for my $sys (@picker_systems) {
+			<div class="games_system_row">
+				<span class="games_system_name"><%= (defined $sys->{'label'} && length $sys->{'label'}) ? $sys->{'label'} : $sys->{'id'} %></span>
+				<select data-system-emulator="<%= $sys->{'id'} %>" aria-label="<%= &subs::ui('Emulator for this system') %>">
+% for my $runner (grep { ref $_ eq 'HASH' && defined $_->{'id'} && length $_->{'id'} } @{ $sys->{'runners'} }) {
+					<option value="<%= $runner->{'id'} %>"<% if (defined $sys->{'chosen'} && $sys->{'chosen'} eq $runner->{'id'}) { %> selected<% } %><% if (defined $runner->{'available'} && !$runner->{'available'}) { %> disabled<% } %>><%= (defined $runner->{'label'} && length $runner->{'label'}) ? $runner->{'label'} : $runner->{'id'} %></option>
+% }
+				</select>
+				<span class="games_emulator_note" aria-live="polite"></span>
+			</div>
+% }
+		</details>
+% }
 	</div>
 	<div id="games_library">
 % if (!@{$games}) {
 		<p class="games_empty"><%= $emulators ? &subs::ui('No games yet. Copy ROMs in from a USB stick or the emmc.') : &subs::ui('No games yet. Install the emulators, then copy ROMs in from a USB stick or the emmc.') %></p>
 % }
 % for my $game (@{$games}) {
-		<button type="button" class="game_card" data-game="<%= $game->{'id'} %>">
+		<button type="button" class="game_card" data-game="<%= $game->{'id'} %>" data-system="<%= defined $game->{'system'} ? $game->{'system'} : '' %>">
 			<span class="game_art">
 % if ($game->{'art'}) {
 				<img src="/manager/games/art?id=<%= $game->{'id'} %>" alt="" loading="lazy">
@@ -100,16 +168,27 @@
 <script>
 /* The install buttons start one helper and read its one status row; a card asks
    the launch route to run the game. The launch stops the kiosk, so that request
-   is the last thing this page does. */
+   is the last thing this page does. The filter owns which cards are shown, the
+   Systems list saves the emulator each system runs on, and Fetch covers starts
+   the cover lookup and reads its progress. */
 (function () {
 	var note = document.getElementById('games_install_note');
 	var emulators = document.getElementById('games_install_emulators');
 	var roms = document.getElementById('games_install_roms');
+	var covers = document.getElementById('games_covers');
+	var coversNote = document.getElementById('games_covers_note');
+	var controls = document.getElementById('games_controls');
+	var filters = document.querySelectorAll('.games_filter');
+	var cards = document.querySelectorAll('.game_card');
 	var failed = <%== encode_json(&subs::ui('That did not work.')) %>;
+	var saved = <%== encode_json(&subs::ui('Saved')) %>;
+	var saving = <%== encode_json(&subs::ui('Saving')) %>;
+	var fetchingCovers = <%== encode_json(&subs::ui('Fetching covers')) %>;
 	var busy = false;
 	var reloaded = false;
 
 	function say(text) { if (note) { note.textContent = text || ''; } }
+	function coversSay(text) { if (coversNote) { coversNote.textContent = text || ''; } }
 	function post(url, body) {
 		return fetch(url, {
 			method: 'POST', credentials: 'same-origin',
@@ -121,6 +200,102 @@
 		if (emulators) { emulators.disabled = !on; }
 		if (roms) { roms.disabled = !on; }
 	}
+	/* One filter at a time: All clears the choice, a system shows only its
+	   cards, and Controls follows the choice into its query. */
+	function applyFilter(system) {
+		var i;
+		for (i = 0; i < cards.length; i++) {
+			var own = cards[i].getAttribute('data-system') || '';
+			cards[i].hidden = !!system && own !== system;
+		}
+		for (i = 0; i < filters.length; i++) {
+			var on = (filters[i].getAttribute('data-filter') || 'all') === (system || 'all');
+			filters[i].classList.toggle('is_active', on);
+			filters[i].setAttribute('aria-pressed', on ? 'true' : 'false');
+		}
+		if (controls) {
+			controls.href = '/manager/games/mapping' + (system ? '?system=' + encodeURIComponent(system) : '');
+		}
+	}
+	for (var f = 0; f < filters.length; f++) {
+		filters[f].addEventListener('click', function () {
+			var chosen = this.getAttribute('data-filter') || 'all';
+			applyFilter(chosen === 'all' ? '' : chosen);
+		});
+	}
+	applyFilter('');
+	/* The picker is drawn only for a system that has a runner to choose; the
+	   choice is saved against that one system, and its note reports the answer. */
+	var pickers = document.querySelectorAll('select[data-system-emulator]');
+	for (var p = 0; p < pickers.length; p++) {
+		pickers[p].addEventListener('change', function () {
+			var picker = this;
+			var system = picker.getAttribute('data-system-emulator');
+			var row = picker.closest('.games_system_row');
+			var rowNote = row ? row.querySelector('.games_emulator_note') : null;
+			if (rowNote) { rowNote.textContent = saving + '…'; }
+			post('/manager/games/emulator', { system: system, runner: picker.value }).then(function (answer) {
+				if (!answer || !answer.ok) {
+					if (rowNote) { rowNote.textContent = (answer && answer.error) || failed; }
+					return;
+				}
+				if (rowNote) { rowNote.textContent = saved; }
+			}).catch(function () {
+				if (rowNote) { rowNote.textContent = failed; }
+			});
+		});
+	}
+	for (var c = 0; c < cards.length; c++) {
+		cards[c].addEventListener('click', function () {
+			var id = this.getAttribute('data-game');
+			say(<%== encode_json(&subs::ui('Starting')) %> + '…');
+			post('/manager/games/launch', { id: id }).then(function (answer) {
+				if (!answer || !answer.ok) { say((answer && answer.error) || failed); }
+			}).catch(function () { say(failed); });
+		});
+	}
+	/* Fetch covers is one helper and one status row: every two seconds while it
+	   runs, showing how many of the total are done, then a reload so the cards
+	   pick up the new pictures. */
+	function coversPoll() {
+		fetch('/manager/games/covers/status', { credentials: 'same-origin' })
+			.then(function (answer) { return answer.json(); })
+			.then(function (status) {
+				status = status || {};
+				if (status.state === 'running') {
+					if (covers) { covers.disabled = true; }
+					coversSay(fetchingCovers + ' ' + (status.done || 0) + '/' + (status.total || 0));
+					setTimeout(coversPoll, 2000);
+					return;
+				}
+				if (covers) { covers.disabled = false; }
+				if (status.state === 'done') {
+					coversSay((status.done || 0) + '/' + (status.total || 0));
+					setTimeout(function () { location.reload(); }, 900);
+				}
+				else if (status.state === 'failed') { coversSay(status.error || failed); }
+			})
+			.catch(function () {
+				if (covers) { covers.disabled = false; }
+				coversSay(failed);
+			});
+	}
+	function startCovers() {
+		if (covers) { covers.disabled = true; }
+		coversSay(fetchingCovers + '…');
+		post('/manager/games/covers', {}).then(function (answer) {
+			if (!answer || !answer.ok) {
+				coversSay((answer && answer.error) || failed);
+				if (covers) { covers.disabled = false; }
+				return;
+			}
+			coversPoll();
+		}).catch(function () {
+			coversSay(failed);
+			if (covers) { covers.disabled = false; }
+		});
+	}
+	if (covers) { covers.addEventListener('click', startCovers); }
 	function poll() {
 		fetch('/manager/games/install_status', { credentials: 'same-origin' })
 			.then(function (answer) { return answer.json(); })
@@ -155,16 +330,6 @@
 	}
 	if (emulators) { emulators.addEventListener('click', function () { start('emulators'); }); }
 	if (roms) { roms.addEventListener('click', function () { start('roms'); }); }
-	var cards = document.querySelectorAll('.game_card');
-	for (var i = 0; i < cards.length; i++) {
-		cards[i].addEventListener('click', function () {
-			var id = this.getAttribute('data-game');
-			say(<%== encode_json(&subs::ui('Starting')) %> + '…');
-			post('/manager/games/launch', { id: id }).then(function (answer) {
-				if (!answer || !answer.ok) { say((answer && answer.error) || failed); }
-			}).catch(function () { say(failed); });
-		});
-	}
 	poll();
 	setInterval(poll, 2500);
 })();

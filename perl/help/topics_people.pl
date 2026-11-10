@@ -212,13 +212,15 @@ $topic{'controller'} = {
 	};
 $topic{'games'} = {
 	title => 'Games', category => 'apps', app => 'games',
-	verified => '2026-11-09',
+	verified => '2026-11-10',
 	templates => [ 'templates/apps/games.html.ep', 'public/js/manager/twirl.js' ],
-	summary => 'The games launcher: Cards and Twirl, and an emulated shelf that installs its emulators, reads the ROMs under ~/roms, and runs one outside the house view.',
+	summary => 'The games launcher: Cards and Twirl, and an emulated shelf that installs its emulators, reads the ROMs under ~/roms, filters them by system, fetches their covers and runs one outside the house view.',
 	body => [
 		'Games is a second launcher, one press in from the Controller\'s Games tile. Cards opens the card room and its solitaire and blackjack games. Twirl opens the falling-block puzzle, where the left and right arrows slide a piece, the down arrow nudges it, the space bar drops it, and Enter deals again after a game over.',
 		'On the handheld the A button turns the piece clockwise and B turns it counter-clockwise. A is the plain click the launcher and the Manager already use, so a press on the well turns the piece; B is delivered as a key that no other app uses.',
 		'Emulated games opens on the shelf. Install emulators fetches RetroArch and the emulator cores the shelf knows; Install ROMs copies ROMs from the emmc or a USB stick into the person\'s own roms folder, without overwriting one already there. The games found there are drawn as a grid of cards, each with its cover picture when the ROM folder carries one beside it, and its system under the title.',
+		'Above the cards, the filter bar shows All and then one button for each system that holds a game, with the number beside it. Press a system to see only its cards and press All to bring every one back; the bar scrolls sideways when there are more systems than fit. Controls opens the controls page for the system the filter shows, so its buttons can be mapped before a game starts. Fetch covers looks up a cover picture for every game that has none: while it runs the bar shows how many it has done of the total, and when it finishes the shelf is redrawn with the new pictures.',
+		'The Systems list below the filter chooses the emulator each system runs on. Pick one and the choice is saved for that system; a small note says whether it was saved. A system with no emulator to choose from is left out of the list rather than shown as an empty control.',
 		'Press a card to run the game. It leaves the JawnOS view and runs in its own programme, with the handheld\'s controls handed to it as a gamepad; the Home button above the arrow keys ends it and brings the launcher back. A machine with no emulator for a system says so instead of starting nothing. A game\'s play time follows the controls: a quiet stretch over half a minute is a pause and is not counted, a touch within five minutes resumes the same play appointment, and a session left open by a dead battery closes at the last control it saw.'
 	],
 	related => [ 'cards', 'twirl', 'controller' ]
