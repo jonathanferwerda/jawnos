@@ -273,7 +273,7 @@ var startMenuIconApps = {
 	internet_toggle: 'internet', search_app_toggle: 'search', folders_toggle: 'folders',
 	budget: 'budget', travel_toggle: 'travel', relational_toggle: 'relational', people_toggle: 'people',
 	mailbox_toggle: 'mailbox', email_toggle: 'email', chat_toggle: 'chat', music_toggle: 'music',
-	embedded_toggle: 'embedded', ticketmaker: 'box_office', cards_toggle: 'cards', web_toggle: 'web',
+	embedded_toggle: 'embedded', ticketmaker: 'box_office', cards_toggle: 'cards',
 	backup_now: 'backup', security_toggle: 'security', terminal_toggle: 'terminal', network_toggle: 'network',
 	ide_toggle: 'ide', image_toggle: 'gallery', camera_toggle: 'camera', phone_toggle: 'phone',
 	synth_toggle: 'synth', editor_toggle: 'editor', marker_toggle: 'marker', notes_toggle: 'notes',

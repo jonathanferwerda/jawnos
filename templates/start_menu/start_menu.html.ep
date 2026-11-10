@@ -104,7 +104,6 @@
 				<img id="embedded_toggle" category="system" src="<%= &subs::icon_for('/images/decipherable/microchip.png') %>" hint="Embedded" class="jonathan embedded"></img>
 				<span><img id="ticketmaker" class="jonathan little_thumb" category="business" src="<%= &subs::icon_for('/images/decipherable/ticket.png') %>" hint="Passes"></span>
 				<img id="cards_toggle" category="games" src="<%= &subs::icon_for('/images/decipherable/cards.png') %>" hint="Cards" class="jonathan cards">
-				<img class="jonathan" category="media" src="<%= &subs::icon_for('/images/make believe/web_button.png') %>" hint="Web" id="web_toggle"></img>
 				<br>
 				<img class="jonathan" id="backup_now" category="system" src="<%= &subs::icon_for('/images/decipherable/diskette.png') %>" hint="Backup now" ></img>
 				<img id="security_toggle" category="system" src="<%= &subs::icon_for('/images/make believe/badge.png') %>" hint="Security" class="jonathan security"></img>

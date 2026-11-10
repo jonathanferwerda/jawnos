@@ -327,7 +327,7 @@ function calculator() {
 	}
 }
 
-$(document).on('click', '#web_toggle,.web_toggle', function() {
+$(document).on('click', '.web_toggle', function() {
 	var timestamp = Date.now();
 
 	$.ajax({

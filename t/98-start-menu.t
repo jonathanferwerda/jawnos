@@ -1,5 +1,5 @@
-# tests-for: templates/start_menu/start_menu.html.ep
-# covers:    the start menu's running list lists open sessions only
+# tests-for: templates/start_menu/start_menu.html.ep public/js/manager/manager/05_start_menu.js
+# covers:    the running list lists open sessions only, and Internet is the one web entry point
 
 use strict;
 use warnings;
@@ -19,6 +19,13 @@ use JawnOSTest;
 # copy. Nothing here touches the live database.
 
 my $template = read_file(root() . '/templates/start_menu/start_menu.html.ep');
+
+# The Web app is a component of Internet now; the start menu offers Internet
+# alone, so two icons cannot open the same pages from different places.
+unlike($template, qr/id="web_toggle"/, 'no separate Web icon in the start menu');
+like($template, qr/id="internet_toggle"/, 'Internet is the one web entry point');
+my $menu_js = read_file(root() . '/public/js/manager/manager/05_start_menu.js');
+unlike($menu_js, qr/web_toggle/, 'the start menu no longer maps a Web icon');
 
 my ($run_sql) = $template =~ /if \(\$menu eq 'run'\) \{\s*\$query = &subs::db_query\('([^']+)'/s;
 ok(defined $run_sql, 'the run list has its own query');

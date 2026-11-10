@@ -32,10 +32,10 @@ $topic{'internet'} = {
 $topic{'web'} = {
 		title => 'Web', category => 'apps', app => 'web',
 		templates => [ 'templates/web/web.html.ep', 'templates/web/web_measure_confirm.html.ep' ],
-		verified => '2026-10-26',
+		verified => '2026-11-09',
 		summary => 'The pages the house fetched, with measures.',
 		body => [
-			'Web is the saved-page component of Internet, useful for pulling a page up beside your work without leaving the desktop.',
+			'Web is the saved-page component of Internet: open Internet from the start menu and press the browser icon at the top of its Web tab. It is useful for pulling a saved page up beside your work without leaving the desktop.',
 			'To watch a number on a page, open the page in Web and click the Measures icon in its toolbar. Pick the measure from the list, then click the value on the page. Web tests the click and offers the shapes it can read: a JSON path for a feed, the table row and cell that hold the value, a label with the value beside it, or the plain element. Pick the shape whose Value column shows the number you want, then press Save.',
 			'The shape is stored, not a page position, so a table that gains a row keeps reading the right cell; a JSON feed keeps the exact key. A measure reads from the workspace as a whole, so the phone can fetch the page while the selectors stay on the computer.'
 		],

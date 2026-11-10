@@ -141,7 +141,7 @@ sub action_27049 {
 	# gear is Configure, and the Search app's icon carries search_app_toggle.
 	my %special = ( ticketmaker => 'box_office', budget => 'budget', image_toggle => 'gallery', main_logo => 'configure', search_app_toggle => 'search' );
 	# Things that are actions or tools, not apps the launcher opens.
-	my %skip = map { $_ => 1 } qw( home_toggle torch_toggle sms_list_check web_toggle
+	my %skip = map { $_ => 1 } qw( home_toggle torch_toggle sms_list_check
 		now_toggle site_type_toggle admin_console_toggle browser_toggle );
 	my (@apps, %seen);
 	while ($html =~ /<img\b([^>]*)>/g) {
