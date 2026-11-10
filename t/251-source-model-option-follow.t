@@ -16,6 +16,7 @@ use Mojo::SQLite;
 require JawnOS::Domain::Calendar;
 require JawnOS::Domain::Generate;
 require JawnOS::Manager::Part01;
+require JawnOS::Manager::Part20;
 
 # A parent appointment's model and options columns are the list its details
 # view reads; source_uuid is only the link to the child session. A manually
@@ -59,6 +60,7 @@ $gb::database_holder = {
 	local *subs::source_header_printer = sub { return 1 };
 	local *subs::construct_uuid = sub { return 'test-app-uuid' };
 	local *subs::log_writer = sub { diag('log_writer: ' . ($_[0] // '')); return 1 };
+	local *Manager::budget_runner = sub { return 1 };
 
 	my $now    = 1_800_000_000_000;
 	my $parent = 'parent-uuid-test';
@@ -189,6 +191,10 @@ like($part32, qr/source_model_option_remove\(\$app->\{'source_uuid'\}, \$app->\{
 my $part14 = read_file(root() . '/lib/JawnOS/Manager/Part14.pm');
 like($part14, qr/source_model_option_add\(\$source_link->\{'parent_uuid'\}, \$source_link->\{'table'\}/,
 	'a start that attached a child updates the parent');
+
+my $generate = read_file(root() . '/lib/JawnOS/Domain/Generate.pm');
+like($generate, qr/&Manager::budget_runner\(\$done\{'app'\}\);\s*&subs::source_header_printer\(\[\$done\{'app'\}\]/,
+	'a retroactive child refreshes the app budget and then rewrites its header');
 
 my $options = read_file(root() . '/templates/apps/transaction/options.html.ep');
 my ($option_cell) = $options =~ /(<td class="appointment_option_name.*?<\/td>)/s;

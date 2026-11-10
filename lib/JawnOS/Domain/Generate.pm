@@ -427,6 +427,10 @@ sub source_appt_writer {
 			|| &Manager::warranty_resolve(($settings->{'warranty'} || '-10y'), $holder, 1)
 			|| &subs::ago_calc(($settings->{'warranty'} || '-10y'), $holder);
 		&subs::db_insert('appointments', \%done);
+		# The past record moves the child app's budget the way a live session
+		# does, and the header is drawn after the budget so its lights read the
+		# new row.
+		&Manager::budget_runner($done{'app'});
 		&subs::source_header_printer([$done{'app'}], $done{'stop_timestamp'} || $done{'timestamp'});
 		&Websocket::send('tab', { console => &Websocket::console_command('appointmentDetailGrabber', $done{'app'}, $done{'uuid'})});
 		return \%done;
