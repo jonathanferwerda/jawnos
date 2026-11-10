@@ -9,6 +9,18 @@ use FindBin qw($Bin);
 # Change directory to the tree the script lives in (it lives in perl/)
 chdir("$Bin/..") or die "Cannot change directory to $Bin/..: $!";
 package President;
+
+# The tree's lib/ must be on @INC before any `use` below can name a module that
+# a package installs in lib/ instead of the system (Minion, Mojo::SQLite, a
+# vendored dist). This used to sit after `use Minion`, which only worked because
+# a checkout's local::lib or the distro had Minion already.
+BEGIN {
+	require File::Basename;
+	require Cwd;
+	my $dir = Cwd::abs_path(File::Basename::dirname(__FILE__));
+	unshift @INC, "$dir/../lib" if $dir && -d "$dir/../lib";
+}
+
 print $0 ."\n";
 print Cwd::getcwd() . "\n";
 my $self = $$;
@@ -35,16 +47,6 @@ use Mojo::Reactor::Poll;
 use Clone qw(clone);
 use Minion;
 use POSIX ();
-# The tree is started as `perl ./perl/President.pl` with the repo's lib not in
-# @INC (the master adds it to its own @INC and to PERL5LIB only for its local::lib
-# tree). Anything this file loads at compile time has to find lib itself, the
-# same way parent_guard.pl and Websocket.pl do.
-BEGIN {
-	require File::Basename;
-	require Cwd;
-	my $dir = Cwd::abs_path(File::Basename::dirname(__FILE__));
-	unshift @INC, "$dir/../lib" if $dir && -d "$dir/../lib";
-}
 require JawnOS::Platform;
 use JawnOS::Transport ();
 use JawnOS::Platform::Ports ();

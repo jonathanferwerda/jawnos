@@ -58,6 +58,32 @@ Adding or changing a module:
 
 The suite runs the same check, so the two manifests cannot drift.
 
+### Verified in clean guests
+
+Tested on two throwaway Proxmox guests on ks5 (Debian 13 cloud image and Arch
+cloud image, minimal install, no local Perl beyond the distro packages):
+
+- **Debian:** `build_deb.sh` built `jawnos_<version>-1_all.deb`; `apt install
+  --no-install-recommends` resolved the manifest; first start seeded
+  `config.json` and the database in `/var/lib/jawnos`, printed one unlock code,
+  and served `/manager/health` (`device: server`, working port 45545); restart
+  and `jawnosctl status` worked; `apt purge` left the store and removed the
+  tree.
+- **Arch:** `yay -Bi` resolved the AUR dependencies, `makepkg -sif` built and
+  installed; sysusers/tmpfiles created `jawn` and `/var/lib/jawnos`; the service
+  served `/manager/health`; `pacman -Rns` removed the tree and left the store.
+
+The clean Arch install found dependencies that the CPAN metadata does not
+declare. They are in `deps.json` now because the app dies without them:
+
+- `Mojo::SQLite` needs `SQL::Abstract::Pg` and `URI::db`;
+- `Minion` needs `YAML::XS`;
+- `Crypt::Simple` needs `Crypt::Blowfish` and `FreezeThaw`.
+
+It also found `President.pl` doing `use Minion` before it put the tree's `lib/`
+on `@INC`; that only worked where the distro or a local::lib already had
+Minion. The `BEGIN` now precedes every `use`, and `t/255` pins the order.
+
 ## Build the `.deb`
 
 ```sh

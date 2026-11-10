@@ -15,6 +15,7 @@ override_dh_auto_test:
 override_dh_auto_install:
 	dh_install
 	rm -rf debian/jawnos/usr/share/jawnos/desktop/mkosi
+	find debian/jawnos/usr/share/jawnos -type d -name __pycache__ -prune -exec rm -rf {} +
 	install -Dm755 packaging/common/jawn.wrapper debian/jawnos/usr/bin/jawn
 	install -Dm755 packaging/common/jawnosctl.wrapper debian/jawnos/usr/bin/jawnosctl
 	install -Dm644 packaging/debian/jawnos.env debian/jawnos/etc/jawnos/jawnos.env

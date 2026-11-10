@@ -1,6 +1,17 @@
 #!/bin/sh
 set -e
 
+# Python may have cached the desktop package while the app ran; dpkg cannot
+# remove a directory that still holds an untracked file.
+case "$1" in
+	remove|purge)
+		rm -rf /usr/share/jawnos/desktop/jawnos_desktop/__pycache__
+		rmdir /usr/share/jawnos/desktop/jawnos_desktop 2>/dev/null || true
+		rmdir /usr/share/jawnos/desktop 2>/dev/null || true
+		rmdir /usr/share/jawnos 2>/dev/null || true
+		;;
+esac
+
 #DEBHELPER#
 
 if [ "$1" = purge ]; then

@@ -1,4 +1,4 @@
-# tests-for: packaging/ jawn
+# tests-for: packaging/ jawn perl/President.pl
 # covers:    the packaging manifests. deps.json is the one dependency list; the
 #            Debian control and the AUR PKGBUILD must agree with it, the tree
 #            installs under /usr/share/jawnos, the writable store is
@@ -45,7 +45,7 @@ for my $module (@modules) {
 
 # The Dockerfile/README loads these outside @modules; they are part of the
 # packaged runtime too.
-for my $module (qw(DBI IO::Pty WebService::Ollama Email::Sender Text::Unidecode Clone Compress::Zlib)) {
+for my $module (qw(DBI IO::Pty WebService::Ollama Email::Sender Text::Unidecode Clone Compress::Zlib SQL::Abstract::Pg URI::db Crypt::Blowfish FreezeThaw YAML::XS)) {
 	ok($deps->{'modules'}{$module}, "$module is in the packaging manifest");
 }
 
@@ -99,6 +99,12 @@ like($service, qr/^Environment=JAWNOS_STORE_DIR=\/var\/lib\/jawnos$/m,
 	'and writes to the store');
 like($service, qr/^Environment=JAWNOS_PACKAGED=1$/m,
 	'and skips the dependency installer');
+like($service, qr/^Environment=JAWNOS_DEVICE=server$/m,
+	'and seeds a server, not a desktop');
+like($service, qr{^StandardOutput=append:/var/lib/jawnos/\.local/state/jawnos/jawn-stdout\.log$}m,
+	'and writes the supervisor log where jawn seeds it');
+like($service, qr{^ExecStartPre=/usr/bin/systemd-tmpfiles --create /usr/lib/tmpfiles\.d/jawnos\.conf$}m,
+	'and recreates the store/state dirs before starting');
 like($service, qr/^EnvironmentFile=-\/etc\/jawnos\/jawnos\.env$/m,
 	'with a package-owned environment file');
 like($service, qr/^ExecStart=\/usr\/bin\/perl \/usr\/share\/jawnos\/jawn$/m,
@@ -112,10 +118,18 @@ like($wrapper, qr/cd \/usr\/share\/jawnos/, 'and runs from the read-only tree');
 like(read_file('jawn'), qr/JAWNOS_PACKAGED/,
 	'first run skips the dependency installer when packaged');
 
+my $president = read_file('perl/President.pl');
+my $inc = index($president, 'unshift @INC, "$dir/../lib"');
+my $minion = index($president, 'use Minion;');
+ok($inc >= 0 && $minion >= 0 && $inc < $minion,
+	'President puts lib/ on @INC before use Minion (a vendored Minion must be found)');
+
 like(read_file('packaging/debian/jawnos.postinst'), qr/adduser .* jawn/s,
 	'postinst creates the service user');
-like(read_file('packaging/debian/jawnos.conffiles'), qr{^/etc/jawnos/jawnos\.env$}m,
-	'the environment file is a conffile');
+like(read_file('packaging/debian/jawnos.postrm'), qr{__pycache__},
+	'postrm clears the runtime Python cache so dpkg can remove the tree');
+like(read_file('packaging/debian/jawnos.env'), qr/^JAWNOS_DEVICE=server$/m,
+	'the environment file seeds a server');
 like(read_file('packaging/debian/jawnos.postinst'), qr{/var/lib/jawnos},
 	'postinst creates the store');
 like(read_file('packaging/README.md'), qr/JAWNOS_STORE_DIR/,

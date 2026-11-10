@@ -8,16 +8,17 @@ url='https://github.com/jonathanferwerda/jawnos'
 license=('BSD-2-Clause')
 depends=(
 	'argon2' 'ca-certificates' 'curl' 'espeak-ng' 'ffmpeg' 'git' 'imagemagick'
-	'iproute2' 'nodejs' 'openssh' 'openssl' 'perl' 'perl-authen-sasl' 'perl-clone'
-	'perl-crypt-simple' 'perl-cryptx' 'perl-data-uuid' 'perl-dbd-sqlite' 'perl-dbi'
+	'iproute2' 'inetutils' 'nodejs' 'openssh' 'openssl' 'perl' 'perl-authen-sasl' 'perl-clone'
+	'perl-crypt-blowfish' 'perl-crypt-simple' 'perl-cryptx' 'perl-data-uuid' 'perl-dbd-sqlite' 'perl-dbi'
 	'perl-email-sender' 'perl-email-stuffer' 'perl-file-slurp' 'perl-file-type'
-	'perl-hash-merge' 'perl-html-strip' 'perl-io-tty' 'perl-libwww'
+	'perl-freezethaw' 'perl-hash-merge' 'perl-html-strip' 'perl-io-tty' 'perl-libwww'
 	'perl-lwp-protocol-https' 'perl-mime-tools' 'perl-mojolicious'
 	'perl-mojolicious-plugin-renderfile' 'perl-net-ssleay' 'perl-number-format'
 	'perl-sereal-decoder' 'perl-sereal-encoder' 'perl-sql-abstract'
-	'perl-text-unidecode' 'perl-time-duration' 'perl-timedate' 'perl-uri-encode'
+	'perl-sql-abstract-pg' 'perl-text-unidecode' 'perl-time-duration' 'perl-timedate'
+	'perl-uri-db' 'perl-uri-encode'
 	'perl-www-mechanize' 'python' 'qrencode' 'rsync' 'sox' 'sqlite' 'tesseract'
-	'tmux' 'tzdata' 'zbar' 'zip'
+	'tmux' 'tzdata' 'zbar' 'zip' 'perl-yaml-libyaml'
 )
 optdepends=(
 	'pyside6: desktop window'

@@ -1,3 +1,8 @@
 # The house database, its WAL, the backups, TLS material, voices and staged
 # releases. The service user owns it; nothing else needs to read it.
 d /var/lib/jawnos 0700 jawn jawn -
+# The supervisor's own output, in the per-user state dir jawn's log seed reads.
+d /var/lib/jawnos/.local 0700 jawn jawn -
+d /var/lib/jawnos/.local/state 0700 jawn jawn -
+d /var/lib/jawnos/.local/state/jawnos 0700 jawn jawn -
+f /var/lib/jawnos/.local/state/jawnos/jawn-stdout.log 0600 jawn jawn -

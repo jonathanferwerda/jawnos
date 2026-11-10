@@ -14,13 +14,17 @@ WorkingDirectory=/usr/share/jawnos
 # The environment file is read after this default, so a local edit can override
 # the store or the service's ports.
 Environment=JAWNOS_STORE_DIR=/var/lib/jawnos
+Environment=JAWNOS_DEVICE=server
 Environment=JAWNOS_PACKAGED=1
 EnvironmentFile=-/etc/jawnos/jawnos.env
+# The state dir and its log must exist before systemd opens the append: target.
+# tmpfiles made them at install; this also recovers a manually cleared store.
+ExecStartPre=/usr/bin/systemd-tmpfiles --create /usr/lib/tmpfiles.d/jawnos.conf
 ExecStart=/usr/bin/perl /usr/share/jawnos/jawn
 Restart=always
 RestartSec=5
-StandardOutput=append:/var/lib/jawnos/jawn-stdout.log
-StandardError=append:/var/lib/jawnos/jawn-stdout.log
+StandardOutput=append:/var/lib/jawnos/.local/state/jawnos/jawn-stdout.log
+StandardError=append:/var/lib/jawnos/.local/state/jawnos/jawn-stdout.log
 KillMode=mixed
 TimeoutStopSec=30
 

@@ -13,17 +13,19 @@ Package: jawnos
 Architecture: all
 Depends: ${misc:Depends},
  adduser, argon2, ca-certificates, curl, espeak, ffmpeg, git, imagemagick, iproute2,
- libauthen-sasl-perl, libclone-perl, libcrypt-simple-perl, libcryptx-perl,
+ libauthen-sasl-perl, libclone-perl, libcrypt-blowfish-perl, libcrypt-simple-perl, libcryptx-perl,
  libdata-uuid-perl, libdbd-sqlite3-perl, libdbi-perl, libemail-sender-perl,
- libemail-stuffer-perl, libfile-slurp-perl, libfile-type-perl, libhash-merge-perl,
+ libemail-stuffer-perl, libfile-slurp-perl, libfile-type-perl, libfreezethaw-perl, libhash-merge-perl,
  libhtml-strip-perl, libio-pty-perl, liblwp-protocol-https-perl, libmime-tools-perl,
  libminion-backend-sqlite-perl, libminion-perl, libmojo-sqlite-perl,
  libmojolicious-perl, libmojolicious-plugin-renderfile-perl, libnet-imap-client-perl,
  libnet-ssleay-perl, libnumber-format-perl, libsereal-decoder-perl,
- libsereal-encoder-perl, libsql-abstract-perl, libtext-unidecode-perl,
- libtime-duration-perl, libtimedate-perl, liburi-encode-perl, libwww-mechanize-perl,
- libwww-perl, nodejs, openssh-client, openssl, perl, python3, qrencode, rsync, sox,
- sqlite3, tesseract-ocr, tmux, tzdata, zbar-tools, zip
+ libsereal-encoder-perl, libsql-abstract-perl, libsql-abstract-pg-perl,
+ libtext-unidecode-perl,
+ libtime-duration-perl, libtimedate-perl, liburi-db-perl, liburi-encode-perl,
+ libwww-mechanize-perl,
+ libwww-perl, hostname, nodejs, openssh-client, openssl, perl, python3, qrencode, rsync, sox,
+ sqlite3, tesseract-ocr, tmux, tzdata, zbar-tools, zip, libyaml-libyaml-perl
 Recommends: bluez, fonts-noto-color-emoji, python3-dbus, python3-gi,
  python3-pyside6.qtwebenginewidgets, weasyprint
 Suggests: ollama, piper-tts, whisper.cpp

@@ -69,18 +69,19 @@ sub package_names {
 	return sort keys %seen;
 }
 
-# Modules the target has no package for, as cpanm distribution specs.
+# Modules the target has no package for, as cpanm specs. cpanm resolves a
+# module name (Mojolicious::Plugin::RenderFile), not a hyphenated dist name
+# (Mojolicious-Plugin-RenderFile), so the module name is what we print.
 sub vendor_specs {
 	my ($which) = @_;
 	my @out;
 	for my $name (sort keys %{ $data->{modules} || {} }) {
 		my $row = $data->{modules}{$name};
+		next if $row->{'core'} || $row->{'provided_by'};
 		next if defined wanted($row, $which);
-		my $dist = $row->{'dist'};
-		next unless defined $dist && length $dist;
 		push @out, (defined $row->{'version'} && length $row->{'version'})
-			? "$dist\@" . $row->{'version'}
-			: $dist;
+			? "$name\@" . $row->{'version'}
+			: $name;
 	}
 	return @out;
 }
