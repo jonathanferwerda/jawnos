@@ -52,6 +52,20 @@ sub _slurp_or_empty {
 	return defined $text ? $text : '';
 }
 
+# The cache policy for a static asset. A window draws about fifty icons,
+# template pictures and cursors, and a blanket no-cache made every open
+# revalidate every one: a phone paid a round trip per icon before the window felt
+# painted. These files change only with a release or a replaced file, so a short
+# max-age serves a session's opens from cache while a replacement still reaches
+# the screen on the next page. Scripts and styles keep the deliberate
+# revalidation - the bundle rebuilds from their mtimes, so they must be checked.
+sub static_cache_control {
+	my ($path) = @_;
+	return 'private, max-age=300, must-revalidate'
+		if defined $path && $path =~ m{^/(?:icons|images|cursors)/};
+	return 'no-cache, max-age=0, must-revalidate';
+}
+
 sub render_signature {
 	my $device = &device_setter();
 	my $config = &config_reader();

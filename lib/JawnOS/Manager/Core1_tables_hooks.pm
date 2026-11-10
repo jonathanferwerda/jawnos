@@ -543,14 +543,17 @@ app->hook(before_render => sub {
 });
 
 # Static files (icons, css, js) get an ETag/Last-Modified but no Cache-Control,
-# so browsers cached them heuristically and kept showing stale icons. Force a
-# revalidation on every request: an unchanged file answers 304, a changed one a
-# fresh 200, so a refresh always sees the latest. A STABLE ?string= is what lets
-# the 304 happen - a random buster made every load a fresh URL and a full
-# re-download.
+# so browsers cached them heuristically and kept showing stale icons. Scripts and
+# styles still force a revalidation on every request: an unchanged file answers
+# 304, a changed one a fresh 200, and the bundle rebuilds from their mtimes. A
+# STABLE ?string= is what lets the 304 happen - a random buster made every load a
+# fresh URL and a full re-download. Icons, template pictures and cursors carry no
+# such stamp and a window draws about fifty of them, so they take a short max-age
+# instead (the policy lives in subs::static_cache_control): opening a window no
+# longer pays a round trip per icon, and a replaced file shows on the next page.
 app->hook(after_static => sub {
 	my ($c) = @_;
-	$c->res->headers->cache_control('no-cache, max-age=0, must-revalidate');
+	$c->res->headers->cache_control(&subs::static_cache_control($c->req->url->path));
 });
 
 # The manager view used to open ~44 separate <script> tags, a request each over
