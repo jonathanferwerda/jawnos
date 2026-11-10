@@ -46,8 +46,9 @@ for my $keep ('Pro Locker Server', 'Pro WS Server', 'Pro Main Server', 'Pro Alar
 like($src, qr/my \$configured_max = .*?main_workers_max/s, 'a configured burst ceiling is read');
 like($src, qr/autoscale_max => \$main_workers_max\)/, 'the ceiling reaches the pool');
 like($autoscale, qr/my \$recent_ms = 3000;/, 'a worker that just finished still counts as active');
-like($autoscale, qr/my \$grow_by = 2;/, 'a burst opens two slots at a time');
-like($autoscale, qr/my \$shrink_after = 10;/, 'ten quiet seconds retires workers');
+like($autoscale, qr/my \$grow_by = 3;/, 'a burst opens three slots at a time');
+like($autoscale, qr/my \$shrink_after = 20;/, 'ten quiet seconds retires workers at a half-second sample');
+like($autoscale, qr/sleep 0\.5;/, 'the supervisor samples twice a second');
 like($autoscale, qr/\$kind eq 'end' && \$now - \$at <= \$recent_ms/, 'a recent end is activity');
 my $calendar = read_file("$root/lib/JawnOS/Domain/Calendar.pm");
 like($calendar, qr/\$request_busy_depth > 0 \? 'start ' : 'end '/, 'the marker names a start and an end');

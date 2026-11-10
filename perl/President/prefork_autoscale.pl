@@ -45,11 +45,13 @@ sub prefork_autoscale {
 	# page loads never holds every worker at one sample and the pool never grows.
 	my $recent_ms = 3000;
 	my $grow_after = 1;
-	my $grow_by = 2;
-	my $shrink_after = 10;
+	my $grow_by = 3;
+	my $shrink_after = 20;
 	my $shrink_by = 2;
 	while (1) {
-		sleep 1;
+		# Twice a second: a burst should be wider before the next request
+		# arrives, not a second later.
+		sleep 0.5;
 		last unless kill 0, $parent;
 		my $now = &subs::rightNow();
 		my $busy = 0;
