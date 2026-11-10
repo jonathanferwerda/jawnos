@@ -99,4 +99,36 @@ is($code, 0, 'an app repo with no pin publishes as before');
 isnt($code, 0, '--runtime without a pin is an error');
 like($out, qr/does not exist/, 'and says the pin is missing');
 
+# The release body is the notes file's bytes. The build list is decoded JSON
+# (UTF-8-flagged ASCII), and joining it to the file's bytes upgrades them as
+# Latin-1, which published an em dash as the notorious "a-hat, caret-@,
+# caret-T". Run a copied script against a recorder gh and read what it got.
+subtest 'the release notes reach gh as the file bytes' => sub {
+	my $root = "$tmp/encoding-root";
+	my $copy = "$root/scripts/app_publish.pl";
+	make_path("$root/scripts", "$root/docs", "$root/server");
+	spew($copy, slurp($script));
+	spew("$root/docs/app-release-notes.md",
+		"## 2026-11-10 \xe2\x80\x94 a dash\n\n- one line\n");
+	spew("$root/server/downloads.json", '{}');
+
+	my $bin = "$tmp/bin";
+	make_path($bin);
+	my $record = "$tmp/gh-args";
+	unlink $record;
+	my $fake = '#!/bin/sh' . "\n"
+		. '{ printf "%s\n" "$@"; } >> ' . "'$record'" . "\n"
+		. 'exit 0' . "\n";
+	spew("$bin/gh", $fake);
+	chmod 0755, "$bin/gh" or die "chmod gh: $!";
+
+	local $ENV{'PATH'} = "$bin:$ENV{'PATH'}";
+	my $out = qx{$^X '$copy' --dir '$dir' --app-repo '$app' --no-runtime --repo owner/name 2>&1};
+	is($? >> 8, 0, 'the publish runs against the recorder') or diag($out);
+
+	my $args = -f $record ? slurp($record) : '';
+	like($args, qr/\xe2\x80\x94/, 'the notes carry the em dash as its UTF-8 bytes');
+	unlike($args, qr/\xc3\xa2/, 'and not as a double-encoded Latin-1 string');
+};
+
 done_testing();

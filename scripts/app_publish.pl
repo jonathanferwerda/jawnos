@@ -47,9 +47,16 @@ sub release_notes {
 		}
 	}
 	my $list = join("\n", map { "- $_" } @current);
-	return "The newest JawnOS app builds, served as release assets.\n\n"
+	my $notes = "The newest JawnOS app builds, served as release assets.\n\n"
 		. ($body ? "$body\n\n" : '')
 		. "---\n\n**Builds in this release:**\n\n$list\n";
+	# The build list comes from decode_json, whose ASCII strings carry the UTF-8
+	# flag. Joining one to the file's bytes upgrades those bytes as Latin-1, so a
+	# dash in a heading was published as three characters. Downgrading restores
+	# the original bytes; a real wide character (downgrade refused) stays UTF-8,
+	# which is also what gh takes.
+	utf8::downgrade($notes, 1);
+	return $notes;
 }
 while ( defined(my $arg = shift @ARGV) ) {
 	if ($arg eq '--repo')    { $repo = shift @ARGV; next; }
