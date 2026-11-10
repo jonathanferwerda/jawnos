@@ -465,14 +465,15 @@ function markerWorkingUuid() {
 function markerSessionSave() {
 	var canvas = document.getElementById('whiteboard');
 	if (!canvas || markerLayers.length == 0) { return; }
-	var name = prompt('Session name', markerSessionName || ('Session ' + new Date().toLocaleString()));
-	if (!name) { return; }
-	markerSessionName = name;
-	markerSessionUpload({
-		name: name,
-		session_uuid: markerSessionUuid,
-		origin_uuid: markerSessionUuid,
-		origin_name: name
+	jawnosPrompt('Session name', markerSessionName || ('Session ' + new Date().toLocaleString()), function (name) {
+		if (!name) { return; }
+		markerSessionName = name;
+		markerSessionUpload({
+			name: name,
+			session_uuid: markerSessionUuid,
+			origin_uuid: markerSessionUuid,
+			origin_name: name
+		});
 	});
 }
 
@@ -501,7 +502,7 @@ function markerSessionUpload(options) {
 	// a useful error, so fail loudly here rather than silently losing the art
 	if (payload.length > 12000000) {
 		if (options.silent) { say_it('drawing too big to autosave!'); }
-		else { alert('This drawing is too big to save as one session (' + Math.round(payload.length / 1048576) + 'MB). Try fewer or flatter layers.'); }
+		else { jawnosAlertText('This drawing is too big to save as one session (' + Math.round(payload.length / 1048576) + 'MB). Try fewer or flatter layers.'); }
 		return;
 	}
 	markerSessionUploadInFlight = true;

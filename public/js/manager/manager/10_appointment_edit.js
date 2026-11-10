@@ -66,7 +66,7 @@ $(document).on('click','.edit_app_submit', function() {
 			}, 2000);
 		},
 		error: function(xhr) {
-			if (xhr && xhr.status == 409) { alert('That name is already in use.'); }
+			if (xhr && xhr.status == 409) { jawnosAlertText('That name is already in use.'); }
 		},
 	});
 });

@@ -223,12 +223,12 @@ var save = function() {
 		data: { uuid: button.attr('uuid') },
 		success: function(response) {
 			button.removeAttr('disabled');
-			if (response.error) { alert(response.error); return; }
+			if (response.error) { jawnosAlertText(response.error); return; }
 			budgetInit();
 		},
 		error: function() {
 			button.removeAttr('disabled');
-			alert(jawnosT('The schedule could not be saved.'));
+			jawnosAlertText(jawnosT('The schedule could not be saved.'));
 		}
 	});
 };

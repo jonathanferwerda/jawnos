@@ -545,7 +545,7 @@ window.marketPhoneCamera = function(opts) {
 			// no in-browser reader: hand it to the app's own scanner
 			finish('');
 			if (window.JawnScan && typeof window.JawnScan.scan === 'function') { window.JawnScan.scan(); }
-			else { window.alert('This browser cannot read barcodes.'); }
+			else { jawnosAlertText('This browser cannot read barcodes.'); }
 			return;
 		}
 		iv = setInterval(function() {

@@ -433,7 +433,7 @@ function nameConflictPanel(response) {
 				success: function (resp) {
 					if (resp && typeof resp === 'object' && resp.conflict) { nameConflictPanel(resp); return; }
 					if (resp && typeof resp === 'object' && resp.error) {
-						window.alert(resp.error);
+						jawnosAlertText(resp.error);
 						button.prop('disabled', false).text('Rename & merge');
 						return;
 					}
@@ -442,7 +442,7 @@ function nameConflictPanel(response) {
 				},
 				error: function () {
 					button.prop('disabled', false).text('Rename & merge');
-					window.alert('The merge request failed; nothing was changed on this screen.');
+					jawnosAlertText('The merge request failed; nothing was changed on this screen.');
 				}
 			});
 		};

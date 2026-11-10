@@ -70,7 +70,8 @@ function jawnosAlert(html, options) {
 		return;
 	}
 	if (html !== undefined) {
-		content.html(html);
+		if (options.text) { content.text(html); }
+		else { content.html(html); }
 		$('#alert_message').text('');
 	}
 	// Back to the shell's own title if this Alert replaced a question.
@@ -85,6 +86,19 @@ function jawnosAlert(html, options) {
 	jawnosDialogRaise(dialog);
 }
 
+// An Alert whose message is text, not markup: the native alert() it replaces
+// showed the string as written, and an error may name a file with a '<' in it.
+function jawnosAlertText(message, options) {
+	options = options || {};
+	options.text = true;
+	if (!$('#alert_dialog').length) {
+		// a page without the shell (an older template): the browser's own box
+		if (typeof window.alert === 'function') { window.alert(message); }
+		return;
+	}
+	jawnosAlert(message, options);
+}
+
 // A question with an OK and a Cancel, in the Alert's own shell. The engine's
 // confirm() is a Qt, Android or OS box: it looks different on every machine and
 // is unreadable where the house forces a black ground. This one is the house
@@ -92,6 +106,7 @@ function jawnosAlert(html, options) {
 // The answer is a callback: on_yes runs only on OK, never on Cancel, the X or
 // Escape. The message is text, not markup - it may name a record or a network.
 var jawnos_confirm_yes = null;
+var jawnos_confirm_no = null;
 
 function jawnosConfirm(message, on_yes, options) {
 	options = options || {};
@@ -103,9 +118,11 @@ function jawnosConfirm(message, on_yes, options) {
 		return;
 	}
 	jawnos_confirm_yes = (typeof on_yes === 'function') ? on_yes : null;
+	jawnos_confirm_no = (typeof options.on_cancel === 'function') ? options.on_cancel : null;
 	var content = $('#alert');
-	content.text(message === undefined ? '' : message);
+	content.text(message === undefined ? '' : message).addClass('jawnos_dialog_text');
 	$('#alert_message').text('');
+	$('#alert_input').hide().val('');
 	$('#alert_buttons').html(
 		'<button type="button" class="cancel" id="alert_confirm_cancel">' + jawnosDialogT('Cancel') + '</button>' +
 		'<button type="button" class="ok" id="alert_confirm_ok">' + jawnosDialogT('OK') + '</button>'
@@ -116,15 +133,39 @@ function jawnosConfirm(message, on_yes, options) {
 	jawnosDialogRaise(dialog);
 }
 
-// Drop a pending question without running it. Closing the shell is the same
-// thing for an Alert, so both go through here first.
-function jawnosConfirmClear() {
-	jawnos_confirm_yes = null;
-	$('#alert_buttons').hide().empty();
+// A question that takes one line of text. The input carries the default and
+// gets the focus; OK hands the typed value to on_yes. The same shell, so a
+// rename or a typed confirmation reads like every other question.
+function jawnosPrompt(message, default_value, on_yes, options) {
+	options = options || {};
+	if (!$('#alert_dialog').length) {
+		// a page without the shell (an older template): the browser's own box
+		var answer = (typeof window.prompt === 'function')
+			? window.prompt(message, default_value == null ? '' : default_value)
+			: null;
+		if (answer !== null && typeof on_yes === 'function') { on_yes(answer); }
+		return;
+	}
+	jawnosConfirm(message, on_yes, options);
+	$('#alert_input')
+		.val(default_value === undefined || default_value === null ? '' : default_value)
+		.show().trigger('focus').select();
 }
 
-function jawnosAlertClose() {
-	jawnosConfirmClear();
+// Drop a pending question. `run_cancel` is true only when the person dismissed
+// it (Cancel, the X, Escape); an Alert replacing it does not answer it.
+function jawnosConfirmClear(run_cancel) {
+	var no = jawnos_confirm_no;
+	jawnos_confirm_yes = null;
+	jawnos_confirm_no = null;
+	$('#alert_buttons').hide().empty();
+	$('#alert_input').hide().val('');
+	$('#alert').removeClass('jawnos_dialog_text');
+	if (run_cancel && typeof no === 'function') { no(); }
+}
+
+function jawnosAlertClose(run_cancel) {
+	jawnosConfirmClear(run_cancel === true);
 	var dialog = $('#alert_dialog');
 	var content = $('#alert');
 	$('#alert_message').text('');
@@ -139,17 +180,19 @@ function jawnosAlertClose() {
 }
 
 $(document).on('click', '#alert_close', function() {
-	jawnosAlertClose();
+	jawnosAlertClose(true);
 });
 
 $(document).on('click', '#alert_confirm_ok', function() {
 	var yes = jawnos_confirm_yes;
+	// A prompt's answer must be read before the close empties the input.
+	var value = $('#alert_input').is(':visible') ? $('#alert_input').val() : null;
 	jawnosAlertClose();
-	if (typeof yes === 'function') { yes(); }
+	if (typeof yes === 'function') { yes(value); }
 });
 
 $(document).on('click', '#alert_confirm_cancel', function() {
-	jawnosAlertClose();
+	jawnosAlertClose(true);
 });
 
 // Drag a dialog by its title bar. A fixed, centred box is converted to left/top

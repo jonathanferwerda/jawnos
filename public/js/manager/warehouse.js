@@ -159,7 +159,7 @@ $(document).on('click', '#warehouse_stock_add', function() {
 	$.post('/manager/warehouse/stock_in', {
 		item: item, quantity: quantity, place: place, reason: reason, timestamp: Date.now()
 	}, function(response) {
-		if (!response || !response.ok) { alert((response && response.error) || 'Could not add stock'); return; }
+		if (!response || !response.ok) { jawnosAlertText((response && response.error) || 'Could not add stock'); return; }
 		box.remove();
 		warehouseListingReload($('#warehouse_search').val() || '');
 	}, 'json');

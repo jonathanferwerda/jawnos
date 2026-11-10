@@ -259,7 +259,7 @@
 		var id = $(this).attr('id');
 		jawnosConfirm('Remove this passkey from the house?', function () {
 			$.post('/manager/webauthn/remove', { id: id }, function (r) {
-				if (!r || !r.ok) { alert((r && r.error) || 'could not remove'); return; }
+				if (!r || !r.ok) { jawnosAlertText((r && r.error) || 'could not remove'); return; }
 				securityRefresh();
 			}, 'json');
 		});

@@ -557,25 +557,25 @@ $(document).on('click', '.vacuum_app', function() {
 // person has to type the app's own name before it runs.
 $(document).on('click', '.delete_whole_app', function() {
 	var app = $(this).attr('app');
-	var typed = prompt('Delete the app "' + app + '"?\n\nThis removes every record, setting and piece of stock in it, and the deletion is copied to every machine.\n\nType the app\'s name to confirm:');
-	if (typed === null) { return; }
-	var normal = typed.trim().toLowerCase().replace(/\s+/g, '_');
-	if (normal !== app) {
-		jawnosAlert('The name did not match. Nothing was deleted.');
-		return;
-	}
-	$.ajax({
-		url: '/manager/delete_whole_app',
-		type: 'POST',
-		data: { app: app, confirm_name: app, timestamp: Date.now(), server_time: Date.now() },
-		success: function() {
-			$('.app_block[app="' + app + '"]').remove();
-			$('.appointment_configuration_cell[app="' + app + '"]').remove();
-			$('.wind[app="' + app + '"]').remove();
-		},
-		error: function(xhr) {
-			jawnosAlert(xhr && xhr.status == 403 ? 'That is a house app and cannot be deleted.' : 'Could not delete the app.');
+	jawnosPrompt('Delete the app "' + app + '"?\n\nThis removes every record, setting and piece of stock in it, and the deletion is copied to every machine.\n\nType the app\'s name to confirm:', '', function (typed) {
+		var normal = (typed || '').trim().toLowerCase().replace(/\s+/g, '_');
+		if (normal !== app) {
+			jawnosAlertText('The name did not match. Nothing was deleted.');
+			return;
 		}
+		$.ajax({
+			url: '/manager/delete_whole_app',
+			type: 'POST',
+			data: { app: app, confirm_name: app, timestamp: Date.now(), server_time: Date.now() },
+			success: function() {
+				$('.app_block[app="' + app + '"]').remove();
+				$('.appointment_configuration_cell[app="' + app + '"]').remove();
+				$('.wind[app="' + app + '"]').remove();
+			},
+			error: function(xhr) {
+				jawnosAlertText(xhr && xhr.status == 403 ? 'That is a house app and cannot be deleted.' : 'Could not delete the app.');
+			}
+		});
 	});
 });
 

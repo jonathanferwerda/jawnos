@@ -228,8 +228,9 @@ $(document).on('dblclick', '.marker_layer_name', function(e) {
 	var row = $(this).closest('.marker_layer_row');
 	var layer = markerLayerByUuid(row.attr('uuid'));
 	if (!layer) { return; }
-	var name = prompt('Layer name', layer.name);
-	if (name) { layer.name = name; markerLayerList(); }
+	jawnosPrompt('Layer name', layer.name, function (name) {
+		if (name) { layer.name = name; markerLayerList(); }
+	});
 });
 
 $(document).on('click', '.marker_layer_add', function() {

@@ -319,12 +319,12 @@ $(document).on('click', '.record_purchase', function() {
 	var t = function(text) { return (typeof jawnosT === 'function') ? jawnosT(text) : text; };
 	if (movement == 'transfer') {
 		if (!(numeral(transfer_amount).value() > 0)) {
-			alert(t('Enter the amount to transfer.'));
+			jawnosAlertText(t('Enter the amount to transfer.'));
 			iq.find('.transfer_amount').focus();
 			return;
 		}
 		if (!to_account || to_account === account) {
-			alert(t('Choose a different account to receive the transfer.'));
+			jawnosAlertText(t('Choose a different account to receive the transfer.'));
 			iq.find('.to_account').focus();
 			return;
 		}
@@ -332,7 +332,7 @@ $(document).on('click', '.record_purchase', function() {
 	else {
 		var sum_total = numeral(iq.find('.transaction_total[attribute="total"]').text()).value();
 		if ($.trim(total || '') === '' && $.trim(amount || '') === '' && sum_total === 0) {
-			alert(t('Enter the amount or the total before saving.'));
+			jawnosAlertText(t('Enter the amount or the total before saving.'));
 			return;
 		}
 	}
@@ -379,7 +379,7 @@ $(document).on('click', '.record_purchase', function() {
 			type: 'POST',
 			data: data,
 			success: function(response) {
-				if (response && response.error) { alert(response.error); return; }
+				if (response && response.error) { jawnosAlertText(response.error); return; }
 				centreViewWriter(response['cv']);
 				continent_record({'uuid':response['uuid'], 'app':response['app'],'purpose':'app','timestamp':response['timestamp'],'navigation':navigation});
 				appointment_chron();

@@ -827,28 +827,28 @@ $(document).on('click', '#phone_app #phone_ivr_flow_add', function (e) {
 	e.preventDefault();
 	jawnPhoneFlowsInit();
 	jawnPhoneFlowsSync();
-	var name = window.prompt(jawnosT('Name this flow'), jawnosT('New flow'));
-	if (name === null) { return; }
-	name = (name || '').replace(/^\s+|\s+$/g, '');
-	if (!name) { return; }
-	var key = jawnPhoneFlowSlug(name);
-	var source = jawnPhoneFlowDefs.receptionist || {};
-	jawnPhoneFlowDefs[key] = {
-		name: name,
-		voice: source.voice || '',
-		greeting: source.greeting || '',
-		prompt: source.prompt || '',
-		voicemail: source.voicemail || '',
-		voicemail_greeting: source.voicemail_greeting || '',
-		voicemail_seconds: source.voicemail_seconds || 300,
-		thanks: source.thanks || '',
-		hold: source.hold || '',
-		after: source.after || 'hold',
-		callers: [],
-		builtin: 0
-	};
-	jawnPhoneFlowOpen[key] = true;
-	jawnPhoneFlowsRender();
+	jawnosPrompt(jawnosT('Name this flow'), jawnosT('New flow'), function (name) {
+		name = (name || '').replace(/^\s+|\s+$/g, '');
+		if (!name) { return; }
+		var key = jawnPhoneFlowSlug(name);
+		var source = jawnPhoneFlowDefs.receptionist || {};
+		jawnPhoneFlowDefs[key] = {
+			name: name,
+			voice: source.voice || '',
+			greeting: source.greeting || '',
+			prompt: source.prompt || '',
+			voicemail: source.voicemail || '',
+			voicemail_greeting: source.voicemail_greeting || '',
+			voicemail_seconds: source.voicemail_seconds || 300,
+			thanks: source.thanks || '',
+			hold: source.hold || '',
+			after: source.after || 'hold',
+			callers: [],
+			builtin: 0
+		};
+		jawnPhoneFlowOpen[key] = true;
+		jawnPhoneFlowsRender();
+	});
 });
 
 $(document).on('click', '#phone_app .phone_app_ivr_flow_rename', function (e) {
@@ -858,13 +858,13 @@ $(document).on('click', '#phone_app .phone_app_ivr_flow_rename', function (e) {
 	jawnPhoneFlowsSync();
 	var flow = jawnPhoneFlowDefs[key];
 	if (!flow) { return; }
-	var name = window.prompt(jawnosT('Name this flow'), flow.name || '');
-	if (name === null) { return; }
-	name = (name || '').replace(/^\s+|\s+$/g, '');
-	if (!name) { return; }
-	flow.name = name;
-	jawnPhoneFlowOpen[key] = true;
-	jawnPhoneFlowsRender();
+	jawnosPrompt(jawnosT('Name this flow'), flow.name || '', function (name) {
+		name = (name || '').replace(/^\s+|\s+$/g, '');
+		if (!name) { return; }
+		flow.name = name;
+		jawnPhoneFlowOpen[key] = true;
+		jawnPhoneFlowsRender();
+	});
 });
 
 // Deleting a flow is the house's two-press rule, like blocking a number.
@@ -934,7 +934,7 @@ $(document).on('click', '#phone_app .phone_app_ivr_caller_number_add', function 
 	var raw = (item.find('.phone_app_ivr_caller_number').val() || '').replace(/^\s+|\s+$/g, '');
 	var value = raw.replace(/\D+/g, '').replace(/^1/, '');
 	if (value.length < 7 || value.length > 15) {
-		window.alert(jawnosT('That does not look like a telephone number.'));
+		jawnosAlertText(jawnosT('That does not look like a telephone number.'));
 		return;
 	}
 	var numberKey = jawnPhoneCallerKey(value);
@@ -985,7 +985,7 @@ $(document).on('click', '#phone_app .phone_app_ivr_step_add_btn', function (e) {
 	if (!flow) { return; }
 	flow.steps = jawnPhoneFlowStepsOf(flow);
 	if (flow.steps.length >= 20) {
-		window.alert(jawnosT('A flow can have at most 20 steps.'));
+		jawnosAlertText(jawnosT('A flow can have at most 20 steps.'));
 		return;
 	}
 	var type = item.find('.phone_app_ivr_step_type_new').val() || 'say';

@@ -45,7 +45,7 @@
 			return true;
 		}
 		if (mode === 'measure') {
-			alert('Measuring a live page needs the installed JawnOS app.');
+			jawnosAlertText('Measuring a live page needs the installed JawnOS app.');
 			return false;
 		}
 		if (url) { window.open(url, '_blank'); }

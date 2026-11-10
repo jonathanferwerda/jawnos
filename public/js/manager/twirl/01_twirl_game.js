@@ -648,8 +648,14 @@ function twirlGame() {
 		clearInterval(dropper);
 
 		if (qualifies(twirlSpace.score)) {
-			var initials = prompt('You made the top ' + MAX_SCORES + '!\nScore: ' + twirlSpace.score + '\nEnter your initials (up to 3 letters):', twirlSpace.initials || '');
-			insertScore(twirlSpace.score, sanitizeInitials(initials));
+			var scored = twirlSpace.score;
+			var record = function (initials) {
+				insertScore(scored, sanitizeInitials(initials));
+			};
+			jawnosPrompt('You made the top ' + MAX_SCORES + '!\nScore: ' + scored + '\nEnter your initials (up to 3 letters):', twirlSpace.initials || '', record, {
+				// a cancelled entry still stands as YOU, as the native prompt did
+				on_cancel: function () { record(null); }
+			});
 		}
 
 		draw();

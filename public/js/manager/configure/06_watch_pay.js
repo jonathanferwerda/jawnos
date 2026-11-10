@@ -196,7 +196,7 @@ $(document).on('change', '#house_domain_input', function() {
 $(document).on('change', '.device_host_input', function() {
 	var t = $(this);
 	$.post('/manager/configure/domain/host', { signatorial: t.attr('signatorial'), host: t.val() }, function(r) {
-		if (!r || r.result !== 'ok') { alert((r && r.message) || 'could not save'); return; }
+		if (!r || r.result !== 'ok') { jawnosAlertText((r && r.message) || 'could not save'); return; }
 		dnsPanelRefresh();
 	}, 'json');
 });
@@ -232,7 +232,7 @@ function paySettingSave(setting, value, done) {
 	$.post('/manager/pay/setting', {
 		setting: setting, value: value, timestamp: Date.now()
 	}, function(r) {
-		if (!r || !r.ok) { alert((r && r.error) || 'could not save'); }
+		if (!r || !r.ok) { jawnosAlertText((r && r.error) || 'could not save'); }
 		if (done) { done(r); }
 	}, 'json');
 }
@@ -315,7 +315,7 @@ function cryptoSettingSave(setting, value, done) {
 	$.post('/manager/setting_setter', {
 		app: 'crypto', setting: setting, value: value, device: 'all', timestamp: Date.now()
 	}, function(r) {
-		if (r && r.ok === 0) { alert(r.error || 'could not save'); }
+		if (r && r.ok === 0) { jawnosAlertText(r.error || 'could not save'); }
 		if (done) { done(r); }
 	}, 'json');
 }

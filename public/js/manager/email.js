@@ -219,12 +219,13 @@ function emailBulkFolders() {
 }
 
 $(document).on('click', '#email_new_folder', function () {
-	var name = window.prompt('New folder name');
-	if (!name) { return; }
-	$.post('/manager/mail/email/folder/add', { name: name }, function (r) {
-		if (r.result === 'ok') { emailRailRefresh(); emailToast('Folder made'); }
-		else if (r.result === 'exists') { emailToast('That folder already exists'); }
-		else { emailToast('That name cannot be used'); }
+	jawnosPrompt('New folder name', '', function (name) {
+		if (!name) { return; }
+		$.post('/manager/mail/email/folder/add', { name: name }, function (r) {
+			if (r.result === 'ok') { emailRailRefresh(); emailToast('Folder made'); }
+			else if (r.result === 'exists') { emailToast('That folder already exists'); }
+			else { emailToast('That name cannot be used'); }
+		});
 	});
 });
 
