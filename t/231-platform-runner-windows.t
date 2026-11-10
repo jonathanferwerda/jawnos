@@ -1,6 +1,8 @@
 # tests-for: lib/JawnOS/Platform/Runner/Windows.pm
 # covers:    the Windows child runner: start, read both streams, see the exit,
-#            and stop a live child. Skipped everywhere but Windows.
+#            and stop a live child. The socket-mode and read-retry helpers are
+#            pure, so they are checked on every platform; the live child is
+#            Windows only.
 
 use strict;
 use warnings;
@@ -9,45 +11,103 @@ use FindBin;
 use lib "$FindBin::Bin/lib", "t/lib", "$FindBin::Bin/../lib";
 
 use Test::More;
+use Errno qw(EAGAIN EINTR EWOULDBLOCK);
 use File::Temp qw(tempdir);
-use File::Slurp qw(write_file);
+use File::Slurp qw(write_file read_file);
 use Time::HiRes qw(sleep);
-
-plan skip_all => 'Windows only' unless $^O eq 'MSWin32';
 
 use Mojo::IOLoop;
 require JawnOS::Platform::Runner::Windows;
 
-my $tmp = tempdir(CLEANUP => 1);
-my $child = "$tmp/child.pl";
-write_file($child, "print qq(one\\n); print STDERR qq(two\\n); sleep 1; exit 3;\n");
+# --- the pure part ----------------------------------------------------------
+# A handle the caller supplies is never made non-blocking by Mojo
+# (Mojo::IOLoop::Stream::new only stores it), so start() must do it. The fake
+# records the call and answers with the previous mode, the way blocking() does.
+{
+	package FakeSocket;
+	sub new { bless { calls => [], mode => $_[1] }, $_[0] }
+	sub blocking {
+		my ($self, $mode) = @_;
+		push @{ $self->{'calls'} }, $mode;
+		my $previous = $self->{'mode'};
+		$self->{'mode'} = $mode if @_ > 1;
+		return $previous;
+	}
+}
 
-my $seen = '';
-my $exit;
-my $runner = JawnOS::Platform::Runner::Windows->new;
-$runner->conduit({ type => 'pipe' });
-$runner->on(read => sub { $seen .= $_[1] });
-$runner->on(close => sub { $exit = $_[1]; Mojo::IOLoop->stop });
+my $fake = FakeSocket->new(1);
+is(JawnOS::Platform::Runner::Windows::_nonblocking($fake), 1,
+	'the socket helper reports success');
+is_deeply($fake->{'calls'}, [0], 'and asks for non-blocking mode exactly once');
+is($fake->{'mode'}, 0, 'the socket is left non-blocking');
+ok(!JawnOS::Platform::Runner::Windows::_nonblocking(undef),
+	'no socket is not an error');
 
-my $pid = $runner->start({ program => $^X, program_args => [$child] });
-ok($pid, 'the child starts') or diag($runner->{'error'});
-is($runner->pid, $pid, 'and its pid is known');
-Mojo::IOLoop->timer(15 => sub { Mojo::IOLoop->stop });
-Mojo::IOLoop->start;
+# A readable socket with nothing to give is retried, never read as EOF.
+{
+	local $! = EAGAIN;
+	ok(JawnOS::Platform::Runner::Windows::_retry_read(undef), 'EAGAIN is retried');
+}
+{
+	local $! = EWOULDBLOCK;
+	ok(JawnOS::Platform::Runner::Windows::_retry_read(undef), 'EWOULDBLOCK is retried');
+}
+{
+	local $! = EINTR;
+	ok(JawnOS::Platform::Runner::Windows::_retry_read(undef), 'EINTR is retried');
+}
+{
+	local $! = 0;
+	ok(!JawnOS::Platform::Runner::Windows::_retry_read(undef),
+		'a failed read with no errno is EOF');
+}
+ok(!JawnOS::Platform::Runner::Windows::_retry_read(0), 'a zero-length read is EOF');
 
-like($seen, qr/^one\r?$/m, 'stdout arrives through the reader');
-like($seen, qr/^two\r?$/m, 'stderr arrives through the reader');
-is($exit, 3, 'the exit code is seen');
+# The switch has to happen before the reactor holds the handle, or the first
+# readable-but-empty report parks the loop.
+{
+	my $source = read_file("$FindBin::Bin/../lib/JawnOS/Platform/Runner/Windows.pm");
+	my $switch = index $source, '&_nonblocking($mine)';
+	my $watch  = index $source, '->io($mine';
+	ok($switch >= 0, 'start makes the parent end non-blocking');
+	ok($watch >= 0 && $switch < $watch, 'and does so before the reactor watches it');
+}
 
-# a live child is stopped, and stopping is not a wait for a clean exit
-my $long = "$tmp/long.pl";
-write_file($long, "sleep 60;\n");
-my $second = JawnOS::Platform::Runner::Windows->new;
-my $pid2 = $second->start({ program => $^X, program_args => [$long] });
-ok($pid2, 'the second child starts');
-sleep 1;
-ok($second->alive, 'and is alive');
-$second->stop;
-ok(!$second->alive, 'stop takes it down');
+# --- the live child, Windows only -------------------------------------------
+SKIP: {
+	skip 'the socket child is Windows only', 8 unless $^O eq 'MSWin32';
+
+	my $tmp = tempdir(CLEANUP => 1);
+	my $child = "$tmp/child.pl";
+	write_file($child, "print qq(one\\n); print STDERR qq(two\\n); sleep 1; exit 3;\n");
+
+	my $seen = '';
+	my $exit;
+	my $runner = JawnOS::Platform::Runner::Windows->new;
+	$runner->conduit({ type => 'pipe' });
+	$runner->on(read => sub { $seen .= $_[1] });
+	$runner->on(close => sub { $exit = $_[1]; Mojo::IOLoop->stop });
+
+	my $pid = $runner->start({ program => $^X, program_args => [$child] });
+	ok($pid, 'the child starts') or diag($runner->{'error'});
+	is($runner->pid, $pid, 'and its pid is known');
+	Mojo::IOLoop->timer(15 => sub { Mojo::IOLoop->stop });
+	Mojo::IOLoop->start;
+
+	like($seen, qr/^one\r?$/m, 'stdout arrives through the reader');
+	like($seen, qr/^two\r?$/m, 'stderr arrives through the reader');
+	is($exit, 3, 'the exit code is seen');
+
+	# a live child is stopped, and stopping is not a wait for a clean exit
+	my $long = "$tmp/long.pl";
+	write_file($long, "sleep 60;\n");
+	my $second = JawnOS::Platform::Runner::Windows->new;
+	my $pid2 = $second->start({ program => $^X, program_args => [$long] });
+	ok($pid2, 'the second child starts');
+	sleep 1;
+	ok($second->alive, 'and is alive');
+	$second->stop;
+	ok(!$second->alive, 'stop takes it down');
+}
 
 done_testing();

@@ -83,6 +83,29 @@ sub _clear_std_inherit {
 	return \@cleared;
 }
 
+# Mojo never switches a handle it is handed for the reactor (see
+# Mojo::IOLoop::Stream::new, which only stores it). The reactor reports the
+# socket readable from select(), our sysread then finds nothing, and in blocking
+# mode that call parks the whole loop: timers stop and no listener accepts. The
+# parent end of the loopback pair is ours to switch; the child's accepted end
+# stays blocking.
+sub _nonblocking {
+	my ($sock) = @_;
+	return 0 unless $sock;
+	$sock->blocking(0);
+	return 1;
+}
+
+# True when a failed sysread is "nothing to read yet" and the reactor must be
+# allowed to call again. EINTR is a signal, not EOF; EWOULDBLOCK is EAGAIN's
+# other name on most systems.
+sub _retry_read {
+	my ($n) = @_;
+	return 0 if defined $n;
+	return 1 if $!{EAGAIN} || $!{EWOULDBLOCK} || $!{EINTR};
+	return 0;
+}
+
 sub new {
 	my ($class, %opt) = @_;
 	return bless {
@@ -167,6 +190,10 @@ sub start {
 		return undef;
 	}
 
+	# Before the reactor holds it, or the first readable-but-empty report parks
+	# the loop (the freeze this comment names).
+	&_nonblocking($mine);
+
 	$self->{'thread'} = unpack('Q', substr($process, 8, 8));
 	$self->{'handle'} = unpack('Q', substr($process, 0, 8));
 	$self->{'pid'} = unpack('L', substr($process, 16, 4));
@@ -188,7 +215,7 @@ sub pump {
 		$self->{'events'}{'read'}->($self, $bytes) if $self->{'events'}{'read'};
 		return;
 	}
-	return if !defined $n && $!{EAGAIN};
+	return if &_retry_read($n);
 
 	# EOF: the child (and anything it handed the socket to) is gone.
 	$self->{'reactor'}->remove($sock);
