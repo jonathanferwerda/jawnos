@@ -3,8 +3,1110 @@
 Every commit to JawnOS, newest first and grouped by day. Version-tagged subjects
 (`v<version> - ...`) mark the points where `VERSION` was bumped.
 
+## 2026-11-10
+
+- v0.1.2633 - release: a branch per machine, a weekly release, and a scoped working gate
+- v0.1.2632 - timeline: zoom the pseudonym plate and round its corners into the dot
+- v0.1.2631 - landing: promote at the end of a drain without repeating the suite
+- v0.1.2630 - landing: the promoter's pushes are already tested
+- v0.1.2629 - platform: make Windows liveness a direct handle query
+- v0.1.2628 - landing: a working branch under a stable main
+- v0.1.2627 - games: runner choice, launch by runner, and cover lookup
+- v0.1.2626 - platform: confirm before a model test
+- v0.1.2625 - games: filter the shelf by system, pick its emulator, fetch covers, reach Controls
+- v0.1.2624 - verify: run the guard without a Unix shell
+- v0.1.2623 - Add a visual per-console controller mapping page
+- v0.1.2622 - qa: a warden report switch under Plat -> QA
+- v0.1.2621 - platform: test every model type and move the UX model into AI
+- v0.1.2620 - verify: accept a shrink that removes only comments
+- v0.1.2619 - manager: reunite orphaned helper docs with their code
+- v0.1.2618 - landing: a warden that rescues refused tickets
+- v0.1.2617 - platform: test a model from the Plat panel
+- v0.1.2616 - platform: stop the Windows process snapshot from stalling the master loop
+- v0.1.2615 - appointments: refresh the child app's budget on a retroactive add
+- v0.1.2614 - platform: record the clean Windows install and the restart gap
+- v0.1.2613 - appointments: write a model/option added to an ended record
+- v0.1.2612 - platform: register the Windows runner as a Mojo stream
+- v0.1.2611 - landing: a refused-ticket board anyone can read
+- v0.1.2610 - landing: keep the wait's lines in order
+- v0.1.2609 - tests: reclaim abandoned scratch dirs by owner stamp
+- v0.1.2608 - appointments: keep a parent's model/option list in step with its sessions
+- v0.1.2607 - landing: wait for the verdict, then repair once
+- v0.1.2606 - platform: keep the Windows runner socket non-blocking
+- v0.1.2605 - restart: one accepted restart covers the tree the git watcher moved
+- v0.1.2604 - controller: import encode_json on the time and RetroArch pages
+- v0.1.2603 - peer: resolve and persist a reachable manager address
+- v0.1.2602 - setup: build the database without sqlite3 or tail
+- v0.1.2601 - platform: keep the master alive on Windows
+- v0.1.2600 - power: read the Gou's real rk818 gauge
+- v0.1.2599 - landing: skip a commit the trunk already has
+- v0.1.2598 - Weather: shade the wet hours on the day chart
+- v0.1.2597 - appointment details: range beside the app count
+- v0.1.2596 - retroarch: accept hyphenated core-option keys
+- v0.1.2595 - Weather: draw the day's hourly temperature line
+- v0.1.2594 - v-1 - appointments: index account so the app-search warm-up stops scanning
+- v0.1.2593 - configure: offer the full update-check cadence
+- v0.1.2592 - Weather: open a forecast day for its hours and detail
+- v0.1.2591 - gou: launcher clock, handheld settings sublauncher, RetroArch tuning
+- v0.1.2590 - platform: record P0/P1 done and the Windows-first order
+- v0.1.2589 - platform: refresh the process snapshot when a pid is missing
+- v0.1.2588 - appt walkman: walk the app, not the house clock
+- v0.1.2587 - v-1 - render: let icons and template art ride the browser cache
+- v0.1.2586 - v-1 - session: read the pinned key before anything is derived
+- v0.1.2585 - prefork: never let a shrink take the main pool to zero
+- v0.1.2584 - platform: the probe asks the seams, and the roadmap says so
+- v0.1.2583 - desktop: the browse, Qt and BLE callers import the split modules
+- v0.1.2582 - platform: one seam for the install roots, and a temp that can fall back
+- v0.1.2581 - landing: the verdict carries the cleanup commands
+- v0.1.2580 - coordinator: the landed wave records its ticket ids
+- v0.1.2579 - platform: add the serial seam and fold the board readers onto it
+- v0.1.2578 - platform: fold the clipboard, opener, notify and terminal list onto Shell
+- v0.1.2577 - landing: give agents one rule, and a ticket that names the verdict
+- v0.1.2576 - coordinator: train under the QA root, and make the queue the agent default
+- v0.1.2575 - platform: fold the master and manager_killer onto Process
+- v0.1.2574 - watchdog: confirm a dead tree before calling it, and name the port
+- v0.1.2573 - docs: name the landing conditions, the refusal done state, and the handheld build cap
+- v0.1.2572 - platform: one audio seam for pactl/pacat/wpctl/amixer
+- v0.1.2571 - desktop: split core.py into platform-shaped modules
+- v0.1.2570 - print: one seam for CUPS and scanimage
+- v0.1.2569 - platform: one seam for ports, and a configured tunnel range
+- v0.1.2568 - platform: one process seam for the request-side /proc readers
+- v0.1.2567 - platform: read the hostname and own addresses through Platform::Net
+- v0.1.2566 - platform: fork-only bodies are named jobs; inline runs cannot reset the loop
+- v0.1.2565 - agent_land: refresh the generated index on the rebased tree before the suite
+- v0.1.2564 - websockets: tidy the legacy socket surface at boot
+- v0.1.2563 - Dev: a per-machine update-check cadence (30s or 1h)
+- v0.1.2562 - tests: free a run's scratch dirs when it ends
+- v0.1.2561 - platform: speech is a named job, so a cold first request keeps its reply
+- v0.1.2560 - websockets: per-app rows for a mux tab
+- v0.1.2559 - landing queue: remote enqueue over the authority
+- v0.1.2558 - games: a disc image beside its cue is the same game
+- v0.1.2557 - websockets: one combined beat per tab; debrief endpoint
+- v0.1.2556 - landing queue: a timed-out restart verdict checks the booted version
+- v0.1.2555 - appointments: remember each app's details layout
+- v0.1.2554 - landing queue: one suite and one restart per wave
+- v0.1.2553 - sessions: leave pause time out, and close a dead machine's session
+- v0.1.2552 - appointments: remember the Dist and Measures sections for the house
+- v0.1.2551 - tls: keep the local certificate pair LF-only
+- v0.1.2550 - media: walk each audit root once
+- v0.1.2549 - appointments: remember the Dist view for the house
+- v0.1.2548 - games: leave the governor to go back to where the guard can find it
+- v0.1.2547 - say: look up the speech tools instead of probing the shell
+- v0.1.2546 - games: find the GL-built cores first, and hold the CPU at performance
+- v0.1.2545 - media: audit the sync stubs and fetch them back from a peer
+- v0.1.2544 - desktop: trust only this install's certificates
+- v0.1.2543 - internet: one appointment across a site's pages and subdomains
+- v0.1.2541 - websockets: move sockets to run/, add opt-in one-socket multiplex
+- v0.1.2540 - tls: give Strawberry's openssl a config for the local certificate
+- v0.1.2539 - boot: provision the database and a local certificate on first start
+- v0.1.2538 - start menu: drop the separate Web icon; Internet owns Web
+- v0.1.2537 - autoscale: select() for the half-second sample; sleep 0.5 is a busy loop
+- v0.1.2536 - windows: utility scheduler as a named job process
+- v0.1.2535 - home plate: cap the reopen window at twenty minutes
+- v0.1.2534 - autoscale: grow three at a time, sample twice a second
+- v0.1.2533 - windows: run the utility scheduler on the master's loop
+- v0.1.2532 - windows: run subprocessor jobs as named child processes
+- v0.1.2531 - music: the shelves take the share that leaves the tracks 71.28%, and the corner picture rides over the playing row
+- v0.1.2530 - windows: bind each server with an explicit -l, and keep its output
+- v0.1.2529 - games: run the cores on the frontend built with desktop OpenGL
+- v0.1.2528 - appointments: backfill the warranty rows were born without
+- v0.1.2527 - windows: start each server as a real child, not a fork
+- v0.1.2526 - main pool: burst to a configured ceiling and settle back
+- v0.1.2525 - appointments: write the warranty before the row, not after it
+- v0.1.2524 - ws: retry fast after a healthy socket closes, even when hidden
+- v0.1.2523 - duration: read --apply as one grep
+- v0.1.2522 - identity: keep the shell's tolerance for unreadable bootstrap files
+- v0.1.2521 - duration: only real session lengths teach the usual length
+- appointment details: name the view's window
+- platform: a Windows backend for the process seam
+- v-1 - session: pin the signing key once so daily sign-ins stop
+- sync: never turn a /file_open refusal into a media file
+- home plate: make the reopen window three navigation intervals
+
+## 2026-11-09
+
+- v0.1.2520 - duration: backfill every app's usual length from its closed sessions
+- v0.1.2519 - stop: ask the tree to leave before the sweep
+- v0.1.2518 - windows: replace boot-path unix shellouts with Perl
+- v0.1.2517 - docs(roadmap): measure memory as PSS and correct idle CPU
+- v0.1.2516 - desktop: refuse a non-runnable install and guard no-sudo package installs
+- v0.1.2515 - lan: answer the first datagram at once, and wake the mesh for a returning peer
+- v0.1.2514 - budget panel: name a rolling window, and let its label flip the lock
+- v0.1.2513 - stop: an automatic stop teaches the app's usual duration too
+- v0.1.2512 - platform: a graceful stop over the tree's own channel
+- v0.1.2511 - lan: nav at 5s, and fingerprint presence without its signature
+- v0.1.2510 - appointment stats: use the budget's week and read open starts to now
+- v0.1.2509 - house: skip an unchanged presence beacon before the row work
+- v0.1.2508 - platform: the runner seam owns write and read_handle; drop the dead imports
+- v0.1.2507 - lan: drain presence datagrams once a second, not once per packet
+- v0.1.2506 - platform: parent_pid, and a President startup Windows can run
+- v0.1.2505 - tests: register lan_presence_due and refresh the agent index
+- v0.1.2504 - platform: every home lookup goes through Platform::home
+- v0.1.2503 - games: freeze the kiosk while a game holds the panel
+- v0.1.2502 - platform: one runner seam for the tree, Unix unchanged
+- v0.1.2501 - games: hide the kiosk window instead of stopping the unit
+- v0.1.2500 - platform: the Windows runner watches a socket, not a pipe on a timer
+- v0.1.2499 - games: name every button of the virtual pad
+- v0.1.2498 - docs: make docs/roadmap.md the single entry point
+- v0.1.2497 - platform: a Windows child runner, prototyped on the real VM
+- v0.1.2496 - controller: the right stick steps the volume row under the pointer
+- v0.1.2495 - games: wait for the kiosk, and make the pad player one
+- v0.1.2494 - master: the boot block finds a home on Windows
+- v0.1.2493 - games: init the person's groups with setpriv
+- v0.1.2492 - games: give the emulator the person's groups
+- v0.1.2491 - games: detach the launch and install helpers from the request
+- v0.1.2490 - games: pin RetroArch to the panel's card and write that config
+- v0.1.2489 - games: install the frontend, the real package names, and the emmc cores
+- v0.1.2488 - ci: a clean runner gets the deps and the repo state the suite needs
+- v0.1.2487 - games: an emulated shelf that installs, reads ~/roms and launches
+- v0.1.2486 - cursors: a printer canvas keeps the desk's pointer
+- v0.1.2485 - controller: Notifications opens through the desk
+- v0.1.2484 - ci: the portable suite gets its harness modules, and the probe reports on Windows
+- v0.1.2483 - games: a launcher page of its own, and B's real key
+- v0.1.2482 - platform: the probe runs on Windows, and CI finds its local::lib
+- v0.1.2481 - games: keep the launcher's styles inside its own window
+- v0.1.2480 - games: a second launcher, Twirl's other turn, no top strip
+- v0.1.2479 - players: multiply each source by its launcher channel gain
+- v0.1.2478 - p0: the go/no-go answer sheet
+- v0.1.2477 - p0: record the portable smoke on a throwaway lxc
+- v0.1.2476 - help: the controller's sound panel says what the channels do today
+- v0.1.2475 - qa: regenerate the agent index for the controller routes
+- v0.1.2474 - timeline: a legible plate in a larger disc
+- v0.1.2473 - platform: interfaces, routes, neighbours and mDNS behind the platform seam
+- v0.1.2472 - timeline: the occurrence mark is the printer family's mark
+- v0.1.2471 - platform: locate lib in the tree's own boot files
+- v0.1.2470 - The house gets its own notices, a notifications app and a taskbar bell
+- v0.1.2469 - tests: prune the owed list the newer claims just emptied
+- v0.1.2468 - platform: worker sockets ride the transport, no compile-time UNIX
+- v0.1.2467 - Name the power manager, fix the CPU units, and refine the widget panels
+- v0.1.2466 - Weather history: skip an unresolved broad station source
+- v0.1.2465 - platform: process identity and state behind JawnOS::Platform::Process
+- v0.1.2464 - Taskbar widgets gain panels; Power gains a charge limit and per-profile sleep
+- v0.1.2463 - controller: a Manager button, no window bar, JSON windows unwrapped
+- v0.1.2462 - A bridge does not move a board; a watch may still be recovered
+- v0.1.2461 - Controller: a named app is not redirected away from the desk
+- v0.1.2460 - Take the provisioning AP down only after the link has held
+- v0.1.2459 - Cursors: each set gets its own silhouette, and Phosphor wears High Contrast
+- v0.1.2458 - Power sleep, Network Bluetooth/Remote, Sound, and Dock menus
+- v0.1.2457 - Now Me means Now Me: an ordinary save no longer re-homes a device
+- v0.1.2456 - Desk: an app can be opened on load, and Home comes back to the launcher
+- v0.1.2455 - deps: install an update's system packages, or ask for the root password
+- v0.1.2454 - Report the link's signal and access point, and why it dropped
+- v0.1.2453 - Windows: an app window's own icon is not a 1112px picture
+- v0.1.2452 - platform: token-guarded transport for control, log and watch
+- v0.1.2451 - Cursors: a size slider, a High Contrast set, and a guard for jQuery UI
+- v0.1.2450 - A failed HTTPS request must close the shared client
+- v0.1.2449 - Help: remove a stray comma in the Network widget paragraph
+- v0.1.2448 - Keep the WiFi radio awake, and rejoin on the next tick
+- v0.1.2447 - Taskbar: Battery and Network widgets
+- v0.1.2446 - Weather: pin only the location dropdown and Add
+- v0.1.2445 - Controller: the launcher fills the panel, four across and two down
+- v0.1.2444 - IR remotes in the Embedded panel: learn, name, send, delete
+- v0.1.2443 - Weather: keep the location toolbar at the top while a tab scrolls
+- v0.1.2442 - Remove JAWNSCAN: a blocked scan wedged core 0
+- v0.1.2441 - A board that cannot join can be asked what it hears
+- v0.1.2440 - Cursors: a theme can dress the pointer, and Misc can pick one
+- v0.1.2439 - Read a board's pins over the network, with the token its route requires
+- v0.1.2438 - platform: answer P0 and add portable mode
+- v0.1.2437 - Power: battery, CPU plans and a taskbar widget
+- v0.1.2436 - Refresh the generated agent index for the two new weather helpers
+- v0.1.2435 - Controller: the launcher can render its Leave script
+- v0.1.2434 - A USB provision keeps the role it did not carry
+- v0.1.2433 - Leave: five power choices; and a name transcription that does not starve the call
+- v0.1.2432 - IR blaster + receiver on the Pico, and the core-0 wedge that froze the board
+- v0.1.2431 - Controller: the desk sends a controller to its launcher
+- v0.1.2430 - Controller: a handheld device type, and its launcher
+- v0.1.2429 - Land: say when a removed worktree took its .shots/ with it
+- v0.1.2428 - Embedded: a board describes its pins, the house adopts it, a pin attaches to an appointment
+- v0.1.2427 - Land: an open checkpoint keeps the worktree and its shots
+- v0.1.2426 - Worktrees: the sweep takes a landed one at the first run
+- v0.1.2425 - Worktrees: land removes one by default; the suite seeds a worktree
+- v0.1.2424 - qa: pin the IVR flow buckets so t/159 is hermetic
+- v0.1.2423 - Memory: the gateway keeps the whisper model warm while it is armed
+- v0.1.2422 - Docs: an agent deletes its worktree after landing
+- lan: apply one presence datagram per source per second
+- restart: a tree sweep stays in its own checkout
+- controller: network and sound widgets, backlight in the dark idle
+- controller: a dark idle, wake chord, battery/CPU panel, full-screen apps
+- Controller: a picture on every tile, and the handheld's dark grey
+- Join a house: an explicit, two-screen arrival with a ten-minute window
+- Weather automations are per location; existing rules move to the home place
+
+## 2026-11-08
+
+- v0.1.2421 - Memory: arming the gateway is not a request for the model
+- v0.1.2420 - Embedded: heal the socket mirror, and let a delivered write end the command
+- v0.1.2419 - Memory: the orphan sweep matches the wrapper it actually runs
+- v0.1.2418 - Memory: a whisper server the last tree left behind is stopped at start
+- v0.1.2417 - Embedded: the relay's form body is actually sent
+- v0.1.2416 - Memory: the warm whisper model and the Coding worker start on demand
+- v0.1.2415 - Embedded: name the step that declines a device-socket write
+- v0.1.2414 - Embedded: a relayed command reaches the worker that holds the socket
+- v0.1.2413 - Embedded: the board learns the house clock over its socket
+- v0.1.2412 - Levels: a backoff written by another version does not hold
+- v0.1.2411 - Embedded: the relay dials a homebase address this machine can reach
+- v0.1.2410 - Embedded: the press does not dial, and a mirrored peer can take the relay
+- v0.1.2409 - Levels: sort the System tiles; point a verified peer at the house CA
+- v0.1.2408 - Dev: order network devices by name, then address, so a table stops shuffling
+- v0.1.2407 - Embedded: a switch writes its toggle on the same clock as its session
+- v0.1.2406 - Embedded: the peer relay hands Mojo its form as pairs, so a press survives it
+- v0.1.2405 - Embedded: one dead output no longer silences the rest of a press
+- v0.1.2404 - Config: draw Dev without waiting on CUPS; remember the panel, scroll and closed sections
+- v0.1.2403 - Embedded: a socket write is not delivery, and a far-off board clock records at the house
+- v0.1.2402 - Embedded: open a pin's form where it was pressed, mark wired pins, and stamp the toggle push with the event time
+- v0.1.2401 - qa: the UX model field is a dropdown of eligible models
+- v0.1.2400 - Regenerate the agent index for the embedded panel and device lock
+- v0.1.2399 - docs: roadmap for native Windows and macOS
+- v0.1.2398 - qa: a UX model field on the Configure QA panel
+- v0.1.2397 - qa: give the UX night a model, and let the flick test retry
+- v0.1.2396 - Embedded: a board opens on its wired pins, and fast start/stop presses queue
+- v0.1.2395 - phone: pin the gateway test's transport, not just one gateway
+- v0.1.2394 - nightly: keep the suite off the live database, and clear the red
+- v0.1.2393 - music: leave fullscreen on Escape and F, move the button beside the title
+- v0.1.2392 - music: leave fullscreen from the first Escape branch
+- v0.1.2391 - music: leave fullscreen on Escape, and put More tools beside Repeat
+- v0.1.2390 - desktop: render the passkey prompt Qt leaves to the embedder
+- v0.1.2389 - desktop: keep downloads and new windows in the Qt Manager view
+- v0.1.2388 - desktop: grant the Manager's media permissions only to house origins
+- v0.1.2387 - appointment: remember the bottom-line reading, and leave the entry clock out of measures
+- v0.1.2386 - Resume bounds the session it reopens by the press timestamp
+- v0.1.2385 - desktop: let video go fullscreen in the Qt view
+- v0.1.2384 - desktop: let a flicked scroll coast further
+- v0.1.2383 - Device socket: a frame the worker never got is not "delivered"
+- v0.1.2382 - desktop: coast after a trackpad flick in the Manager view
+- v0.1.2381 - icons: a custom main image must really be a picture
+- v0.1.2380 - desktop: turn Chromium's scroll animator on in the Qt view
+- v0.1.2379 - BLE: do not push a toggle to a board that holds the device socket
+- v0.1.2378 - windows: keep anchored windows out of the free-form tile; restore custom icons
+- v0.1.2377 - notes: close the upgrader selector and claim a field before asking
+- v0.1.2376 - Pico: a hardware watchdog so a hang resets instead of needing a replug
+- v0.1.2375 - windows: return to free-form windows
+- v0.1.2373 - Regenerate the agent index for switch_event_fresh
+- v0.1.2372 - windows: stack tiled windows and hide the overflow
+- v0.1.2371 - qa: drive the real-engine UI probe in Qt WebEngine
+- v0.1.2370 - windows: stand the title bar at the foot and wrap the rail
+- v0.1.2369 - desktop: the live image's Sway session runs the Qt session bar
+- v0.1.2368 - windows: replace the tile with a title-bar rail and focused frame
+- v0.1.2367 - desktop: keep Qt off the GTK platform theme
+- v0.1.2366 - desktop: remove the GTK/WebKitGTK path; Qt WebEngine only
+- v0.1.2365 - windows: make the tile a straight vertical column
+- v0.1.2364 - Pico: stop printing every core job on every loop
+- v0.1.2363 - Regenerate the agent index for the device relay
+- v0.1.2362 - desktop: a dark error page instead of Chromium's white one
+- v0.1.2361 - weather: the display name follows the home
+- v0.1.2360 - windows: add find-space mode for the tile
+- v0.1.2359 - weather: moving home keeps the old place's history
+- v0.1.2358 - Gate: exempt /device/ws from the session gate too
+- v0.1.2357 - docs: Browse and the session bar are Qt now; follow the 6.5G root
+- v0.1.2356 - windows: keep anchored windows out of the tile
+- v0.1.2355 - App gate: let the device bus through
+- v0.1.2354 - weather: mark the home plate first in the picker
+- v0.1.2353 - Now Me: a LAN-reachable device is not BLE-only
+- Embedded: keep empty GPIOs visible, name the board model, and serialize output
+- Pico switch: claim the event's stamp so one flick is one session
+- Device bus: relay a command to the homebase that holds the socket
+- Pico: a switch flip is never dropped by the ping gap
+- Pico device bus: report which stage the dial failed at
+- Pico: report netmask and gateway on the USB diagnostic
+
+## 2026-11-07
+
+- v0.1.2352 - desktop: grow the live root to 6.5G for the Qt package set
+- v0.1.2351 - Browse: port the native window from WebKitGTK to Qt WebEngine
+- v0.1.2350 - weather: keep the home plate, not the phone
+- v0.1.2349 - Port the session bar from GTK layer-shell to Qt
+- v0.1.2348 - desktop: pick the VA-API driver from the DRM vendor
+- v0.1.2347 - Regenerate the agent index for lan_address_ok
+- v0.1.2346 - desktop: paint the empty Qt view black, not Chromium's white
+- v0.1.2345 - desktop: a restart reads as starting from the stop, not red then amber
+- v0.1.2344 - desktop: gate the Qt panel on the GTK look, tray state and GPU
+- v0.1.2343 - Pico device bus: setTimeout is milliseconds, not seconds
+- v0.1.2342 - weather: the house server keeps its own weather pass
+- v0.1.2341 - desktop: read the bridge page origin with QUrl.host()
+- v0.1.2340 - appointment window: say the readings are loading and keep the chosen header
+- v0.1.2339 - Pico: hold a /device/ws socket so the web UI drives the relay
+- v0.1.2338 - appointment window: reload an open readings panel after a save
+- v0.1.2337 - desktop: a Qt control panel, and GTK-free keep-awake
+- v0.1.2336 - appointment window: fetch the readings only when a header is pressed
+- v0.1.2335 - desktop: keep the desktop's device identity in the Qt profile
+- v0.1.2334 - regenerate the agent index for appointment_statistics_for
+- v0.1.2333 - agent index: regenerate for the /device/ws route and its domain subs
+- v0.1.2332 - desktop: the page bridge gets its window's allowed host
+- v0.1.2331 - sync: retire an app's readings without its settings
+- v0.1.2330 - weather: a saved place name wins over the provider name in History
+- v0.1.2329 - weather: anchorable places that keep recording when the phone leaves
+- v0.1.2328 - desktop: let Chromium choose the Wayland Ozone platform
+- v0.1.2327 - guide: the associate sits at the page's own level, not in the button shelf
+- v0.1.2326 - qa: refresh the agent index for the new weather helpers
+- v0.1.2325 - guide: an associate opens below the top bar on a short screen
+- v0.1.2324 - desktop: Qt WebEngine is the default view
+- v0.1.2323 - alarmclock: keep the AP up when a link has no DHCP lease
+- v0.1.2322 - peer probe: fall back to the plain manager rail when TLS verification fails
+- v0.1.2321 - sco: Send to voicemail works on any live call
+- v0.1.2320 - app: downloads.json carries 0.118.309 (versionCode 1307)
+- v0.1.2319 - screening: the panel asks its gateway, and paints what it hears
+- v0.1.2318 - screening: end the call from the panel
+- v0.1.2317 - whisper: the voice gate knows the phone link, not a room
+- v0.1.2316 - deck: a button press never blocks on TLS
+- v0.1.2315 - agent index: regenerate after whisper.cpp replaces Vosk
+- v0.1.2314 - watch: keep the bridge through the doze, flush queued taps at once
+- v0.1.2313 - ble: a volume_result must not block the listener
+- v0.1.2312 - phone: voicemail is its own pill, and a flow folds again
+- v0.1.2311 - app 0.118.306 (versionCode 1304): release manifest
+- v0.1.2310 - ble: send a device only the toggles it draws
+- v0.1.2309 - sco: Hold uses the flow's music, not the step the plan happens to be on
+- v0.1.2308 - downloads.json: app 0.118.305 (versionCode 1303) is the published build
+- v0.1.2307 - volume: keep the peer roster the lister actually returns
+- v0.1.2306 - remote: backfill old roster blobs through the new views
+- v0.1.2305 - agent index: two new domain subs
+- v0.1.2304 - qa: refresh the agent index for machine_file_from
+- v0.1.2303 - app: downloads.json carries 0.118.304 (versionCode 1302)
+- v0.1.2302 - volume: run the BLE fan-out inline, not in a forked child
+- v0.1.2301 - phone: a flow names its callers, and one phone configuration
+- v0.1.2300 - volume: forward a tap without the per-peer probe
+- v0.1.2299 - qa: refresh the agent index for the greeting routes
+- v0.1.2298 - volume: a homebase with no mixer forwards the tap to the house
+- v0.1.2297 - weather: one actor for the house's automations, and the reading's warranty
+- House: hand embedded devices only routable LAN addresses
+- Pico device bus: never write to Serial from the poll, bound the TLS connect
+- appointment window: a bottom line for shelf and period totals
+- device-ws: a device-authenticated output bus at /device/ws
+- weather: name sources by place and keep recording when the hub is away
+- whisper.cpp is the one local speech engine; remove Vosk
+- remote: prune the roster data machines exchange
+- ble: a machine's durable id is its own name, not a synced setting
+- phone: a flow's voicemail greeting can be recorded
+
+## 2026-11-06
+
+- v0.1.2296 - command taps: run the local copy of an every-machine press
+- v0.1.2295 - phone: file a voicemail onto its call, link the transcript, and let each flow set its message length
+- v0.1.2294 - dock: a jittered first click opens a face; the calculator glow is softer
+- v0.1.2293 - phone: the gateway runs the caller's own flow, and the panel can send them to voicemail
+- v0.1.2292 - app: downloads.json carries 0.118.303, whose phone names the caller's flow
+- v0.1.2291 - sco: the gateway runs the caller's own flow, with menus
+- v0.1.2290 - qa: regenerate the agent index for the flow-step helpers
+- v0.1.2289 - keyboard: the calculator wears the accent ring while it owns the keypad
+- v0.1.2288 - firmware: the lander bumps the boards a landing changed, and follows the house scheme
+- v0.1.2287 - keyboard: the calculator yields the keypad to a focused field and takes it back when pressed
+- v0.1.2286 - weather: delete a saved place, survive a refresh, and check hourly once
+- v0.1.2285 - sco: a flow that asks nothing neither beeps nor records a name
+- v0.1.2284 - phone: a voicemail flow records the message, and the pane can hear it
+- v0.1.2283 - ui: a Configure checkbox keeps its square, not the row's width
+- v0.1.2282 - app 1300: refuse holds a silent four-second answered line
+- v0.1.2281 - keyboard: the floating dock is fixed and the bar can be grabbed
+- v0.1.2280 - firmware: judge a new image by its bytes, not its source digest
+- v0.1.2279 - firmware: each board carries its own version
+- v0.1.2278 - keyboard: the desk dock floats and drags, and the keypad feeds the calculator
+- v0.1.2277 - sco: a Hold button the app can press, and a spoken message leaves the line to the caller
+- v0.1.2276 - weather: a fortnight, an hourly strip that says so, and place names anywhere
+- v0.1.2275 - app: publish 0.118.301 (versionCode 1299)
+- v0.1.2274 - ui: keep dropdown lists on screen, the search above the dock, and the dock out of the background
+- v0.1.2273 - weather: a two-argument provider read no longer dies
+- v0.1.2272 - weather: remember a name lookup miss per place
+- v0.1.2271 - sco: type to a caller on hold, and stop offering the phone its own Connect me
+- v0.1.2270 - weather: the picker names places, and one place is one entry
+- v0.1.2269 - watch: rebuild the room instead of stacking it, and repaint on a toggle push
+- v0.1.2268 - sco: hear the caller's keypad on the downlink
+- v0.1.2267 - phone: named IVR flows with their own voice, words and hold music
+- v0.1.2266 - app: downloads.json advertises build 1298
+- v0.1.2265 - pico: a clockless board asks for state at once
+- v0.1.2264 - weather: keep the app suggestions small
+- v0.1.2263 - weather: rules act only where they were set, and the app field suggests apps
+- v0.1.2262 - sco: a phone walked back to the table is asked within the minute
+- v0.1.2261 - embedded: name the machine a device is paired to, and let a scan be pressed
+- v0.1.2260 - sco: bring the phone's link back, and keep hearing the caller over the music
+- v0.1.2259 - deps: a desktop gets the Piper wheel, and a dropped call forgets its hold
+- v0.1.2258 - network: Scan works on a NetworkManager machine
+- v0.1.2257 - weather: measurement rules, a map for saved locations, and an hourly day
+- v0.1.2256 - deps: drop the four tools nothing spawns
+- v0.1.2255 - screening: a Hide that tucks the panel, and a device that woke asks for the call
+- v0.1.2254 - balance drop: step through periods, project the runway forward
+- v0.1.2253 - embedded: a clockless board's " 0" stamp, and one push per chip
+- v0.1.2252 - roadmap: only the house container renews the wildcard now
+- v0.1.2251 - phone: file a caller who said "this is" over a narrowband link
+- v0.1.2250 - weather: Cloudy and cloudy are the same condition
+- v0.1.2249 - sco: a bridged call survives the plan's stop
+- v0.1.2248 - peer ticket retry keeps the house CA on its fresh agent
+- v0.1.2247 - app release: point downloads at 0.118.299 (versionCode 1297)
+- v0.1.2246 - embedded: a build reported over the bridge reaches the panel
+- v0.1.2245 - sco: the hold library is the house's own folder again
+- v0.1.2244 - phone: hold music after the thanks, chosen on the IVR pane
+- v0.1.2243 - weather: the GPS fix list joins a column that exists
+- v0.1.2242 - firmware: staleness follows the firmware sources, not the house counter
+- v0.1.2241 - weather: the observer says why a scheduled check did not record
+- v0.1.2240 - house_ca: enroll a peer from its remote_machines row
+- v0.1.2239 - weather: the tab's stylesheet renders, and the rain/snow/fog rules move to the new app
+- v0.1.2238 - firmware: a local build that differs is a note, not stale
+- v0.1.2237 - tls: let a machine hold its own certificate, not the wildcard key
+- v0.1.2236 - embedded: every device knows its build, and the house keeps it current
+- v0.1.2235 - tls: move the peer listener off the TTY socket port
+- v0.1.2234 - house_ca: let a client machine verify without the signing key
+- v0.1.2233 - weather: keep the old readings as history and compare forecasts with what happened
+- v0.1.2232 - sco: hear a quiet narrowband name; keep the Manager's sheets when a load fails
+- v0.1.2231 - tls: give the peer rail its own certificate from a house CA
+- v0.1.2230 - crypto: verify the exchange-rate certificate again
+- v0.1.2229 - qa: let the coding night choose what it works on
+- v0.1.2228 - deck: stop stacking widgets on the room screen - the redraw grew until it froze
+- v0.1.2227 - desktop: the Qt shell inherits the GTK layout and window state
+- v0.1.2226 - pico: relay a watch/deck volume tap through the house
+- v0.1.2225 - desktop: a Qt WebEngine shell behind a flag
+- v0.1.2224 - embedded: an OTA that checks its writes, reports, and fails cleanly
+- v0.1.2223 - security: send every console frame as a command object, run the audit in the QA lane
+- v0.1.2222 - print: CUPS printers, a default, and the Store print bar
+- v0.1.2221 - weather: add the start-menu Weather app
+- v0.1.2220 - watch: one press, one command - a press id and a destination guard
+- v0.1.2219 - security: route console frames, pin the wallet, and add a nightly audit
+- v0.1.2218 - web: a stylesheet is not dropped until its replacement loads
+- v0.1.2217 - sco: a transport label is not the phone's address
+- v0.1.2216 - watch: relay a named miss through the headless queue, and flash the button
+- v0.1.2215 - security: confine file paths, require signed peer proof, and token-gate OTA
+- v0.1.2214 - embedded: a switch report takes the LAN, not a stale Bluetooth link
+- v0.1.2213 - watch: a named destination is dialled even when its roster row reads inactive
+- v0.1.2212 - screening: the panel hangs from the top, like the app
+- v0.1.2211 - embedded: a switch outranks a command minted before it
+- v0.1.2210 - security: decode request tokens in Perl and run media players in list form
+- v0.1.2209 - app: the site offers 0.118.297
+- v0.1.2208 - app: the installer carries the release key
+- v0.1.2207 - embedded: cancel a session scheduled stop when it is stopped
+- v0.1.2206 - embedded: make the Pico OTA authenticatable and durable
+- v0.1.2205 - sco: the caller is the sink-input whatever the card calls itself
+- v0.1.2204 - embedded: a board drops a command it has already run
+- v0.1.2203 - note: a wrong key's bytes are not text unless they decode as UTF-8
+- v0.1.2202 - ble: take the board's LAN HTTP route before the bridge
+- v0.1.2201 - t/README: refresh the suite guide
+- v0.1.2200 - gallery: a configuration panel for Archives and Order
+- v0.1.2199 - sco: the mixer serves both HFP roles, and the panel clears the dock
+- v0.1.2198 - archive: a Gallery switch, relayed downloads, and archive-from-the-record
+- v0.1.2197 - ble: write the board before the watch on a toggle fan-out
+- v0.1.2196 - archive: the machine holding the drive can use it, and every machine can reach it
+- v0.1.2195 - alarmclock: keep the station when a rejoin drops the AP
+- v0.1.2194 - app: the site offers 0.118.296
+- v0.1.2193 - sco: the live transcript names the caller
+- v0.1.2192 - embedded: rejoin the saved WiFi, scan SSIDs, add video/audio pins
+- v0.1.2191 - sco: the phone reaches the gateway machine, and the transcript names the caller
+- v0.1.2190 - primary checkout commits are refused even in a lone checkout
+- v0.1.2189 - mobile: the ticket desk runs again, so the watchdog stops restarting the phone
+- v0.1.2188 - worktree rule moves into Rules and names its scope
+- v0.1.2187 - watchdog: a handheld answers for its manager alone
+- phone: a flow is an ordered list of steps, reordered by drag
+- sco: in the AG role, put the caller stream back on the default source
+
+## 2026-11-05
+
+- v0.1.2186 - utility: the pass cap is never undefined in the forked child
+- v0.1.2185 - utility: trace the tick, so a silent schedule names its gate
+- v0.1.2184 - utility: name the numbers behind a silent tick
+- v0.1.2183 - reception: a reconnecting window asks about the screening
+- v0.1.2182 - index: regenerate after the rebase
+- v0.1.2181 - reception: a window that opens mid-screening still gets the panel
+- v0.1.2180 - sealed-files: pick a credential by proof, not by a guess
+- v0.1.2179 - settings prune: close the handle before vacuum
+- v0.1.2178 - settings prune: quiet vacuum, fresh size
+- v0.1.2177 - settings prune: vacuum with the sqlite3 binary
+- v0.1.2176 - settings prune: vacuum through the raw handle
+- v0.1.2175 - ble: the scan builds its command instead of printing shell_quote
+- v0.1.2174 - settings: a key is a name, and a prune for the rows already grown
+- v0.1.2173 - index: regenerate for the new domain sub
+- v0.1.2172 - utilities: a boot does not run the whole backlog at once
+- v0.1.2171 - reception: the face's Connect me opens the page that carries the call
+- v0.1.2170 - app builds: never stage a release without its runtime
+- v0.1.2169 - mobile: no dock or tty listener, and a pool that does not grow
+- v0.1.2168 - board port: a board's firmware port is not our entry port
+- v0.1.2167 - reception: Connect me carries the call to the device that pressed it
+- v0.1.2166 - sealed-files: keep the wrong-credential defect visible
+- v0.1.2165 - vosk: a venv with no pip is rebuilt, and the call is doubled here
+- v0.1.2164 - let the sync kick CLI find the house's local::lib
+- v0.1.2163 - the sync kick CLI nudges the running manager, not a bare controller
+- v0.1.2162 - a sync kick job that clears a stalled rail, and a hub that cannot be dead
+- v0.1.2161 - reception: the screening face, and the shape Connect me would take
+- v0.1.2160 - Guard the last log-reader and background-image flags
+- v0.1.2159 - reopen a resumed session's children completely
+- v0.1.2158 - sco: the caller's words, live, and into Chat when the call ends
+- v0.1.2157 - Give the websocket controller's log_me setting a defined default
+- v0.1.2156 - Finish the uninitialized guards in the log reader, relay and warehouse
+- v0.1.2155 - vosk: an offline engine beside whisper.cpp
+- v0.1.2154 - note that the person reads Eastern time
+- v0.1.2153 - Silence the uninitialized-value warnings; probe twice before a socket rebuild
+- v0.1.2152 - gallery: Travel on Esri imagery and Cards mahjong, and a publish that keeps the phone shots
+- v0.1.2151 - a stop resolves one oldest open session before the relay
+- v0.1.2150 - releases: app 0.118.293 reaches the shelf
+- v0.1.2149 - releases: app 0.118.291 reaches the shelf
+- v0.1.2148 - sco: keep the line fed with silence between prompts
+- v0.1.2147 - sco: put the prompt player back on its own sink
+- v0.1.2146 - sco: name the helper's audio streams so WirePlumber cannot re-route them
+- v0.1.2145 - runtime: keep the video pair in the x86_64 core
+- v0.1.2144 - licensing: the x86_64 runtime carries the notices too
+- v0.1.2143 - licensing: point the release at the 0.1.1751 runtime and record that it carries the notices
+- v0.1.2142 - a typed stop length past the press schedules the stop for the Alarm
+- v0.1.2141 - releases: app 0.118.288 reaches the shelf
+- v0.1.2140 - releases: app 0.118.287, and the gateway is chosen by address
+- v0.1.2139 - licensing: carry the runtime notices, the Piper source offer, and the font/voice attributions
+- v0.1.2138 - QA peer lookup: accept the collection db_select returns
+- v0.1.2137 - a stop uses a duration the person typed, and an edited length moves its stop
+- v0.1.2136 - QA reads: let the reports path and mirrored peers through
+- v0.1.2134 - Keep worktrees out of the code revision; land the refresh probe
+- v0.1.2133 - Cards: sync only the tarot mode, variant and draw lists
+- v0.1.2132 - licensing: tell the truth about the APK, pin its source, and drop the Windows Solitaire skin
+- v0.1.2131 - Cards: the draw history updates on the deal, and a house draw syncs
+- v0.1.2130 - sco: a pair already up when the gateway arms has had its plan
+- v0.1.2129 - Answer Exit with the gate before the house is taken away
+- v0.1.2128 - sync: merge a row even when its table has no timestamp column
+- v0.1.2127 - sync: prove a table's picture before recording it, and rotate the mobile cap
+- v0.1.2126 - a code-sync repair is the house, and a rewritten trunk still counts as landed
+- v0.1.2125 - sco: let the line settle before the greeting
+- v0.1.2124 - Seed the vault from the live image's unlock code
+- v0.1.2123 - sco: greet a caller who is waiting, not one who has spoken
+- v0.1.2122 - pre-commit: refuse a worktree commit while the primary has tracked edits
+- v0.1.2121 - sync: a carry-only stream cannot starve the mobile cap, and a proved route survives a deep pull
+- v0.1.2120 - agents: every write is a worktree write — the primary checkout is read-only
+- v0.1.2119 - agents commit as the house, not themselves
+- v0.1.2118 - sco: the band guard reads the interface list iw actually prints
+- v0.1.2117 - tests: t/156 is about the remote rows, not this machine
+- v0.1.2116 - Browse blocks ads and leaves no chrome in fullscreen
+- v0.1.2115 - agents: the on-ramp names the real worktree setup, and the primary refuses commits
+- v0.1.2114 - tests: a hook GIT_DIR cannot redirect the fixture repos
+- v0.1.2113 - music: a narrow window stacks the shelves, capped on a short window
+- v0.1.2112 - Leave refuses to shred the database when the backup did not seal
+- v0.1.2111 - agents run the primary's lander, so a stale worktree cannot land with an old one
+- v0.1.2110 - a finished plan lets go of its line four seconds after the thanks
+- v0.1.2109 - the System page's own machine opens the Me view too
+- v0.1.2108 - the gate closes the trunk half of the corruption, and backup branches do not linger
+- v0.1.2107 - the gate heals a bare repo, and the daily sweep knows WIP from done
+- v0.1.2106 - the screened call's idle check is wall time, and a put-down helper takes its audio children
+- v0.1.2105 - the emulator run stops being manual
+- v0.1.2104 - the lander test proves its worktree landed in the fixture, not the house repo
+- v0.1.2103 - a sweep retires worktrees whose work is landed and idle
+- v0.1.2102 - where.pl lists the handset probes, and both take their devices as arguments
+- v0.1.2101 - landing an already-merged branch is refused, not an empty bump
+- v0.1.2100 - a busy gate backs the branch up instead of blocking the work
+- v0.1.2099 - a landing runs the suite once, and a refusal ends the attempt
+- v0.1.2098 - the coding agent reads the concurrency protocol
+- v0.1.2097 - the reports card carries every QA job
+- v0.1.2096 - land agent work through one locked gate
+- v0.1.2096 - the agent index knows the reports route
+- v0.1.2095 - the QA card carries the weekly build and the emulator run
+- v0.1.2094 - a narrow music window stacks its shelves
+- v0.1.2093 - every template closes its own elements
+- v0.1.2092 - the QA panel shows the last 14 days of nightly reports
+- v0.1.2091 - sweep template markup and make window ids unique
+- v0.1.2090 - a call is not over when its streams blink, and silence is not a call
+- v0.1.2089 - a System card opens remote control, and keyboard panels get a default frame
+- v0.1.2088 - agents keep the reusable probe, and where.pl lists the shelf
+- v0.1.2087 - the music shelves stay inside a slim window
+- utility: attach a job table the controller never reached, and say so
+- reception: a screening is visible on every open window
+- backup: sweep a killed build's plaintext copy
+- sco: the gateway can be a machine in the bag, and a 2.4 GHz link is named
+
+## 2026-11-04
+
+- v0.1.2086 - the weekly APK build compiles instead of saying UP-TO-DATE
+- v0.1.2085 - balance the Configure app list and inventory markup
+- v0.1.2084 - build-tools keep the version AGP resolves
+- v0.1.2083 - build-tools and platforms are pruned by the same rule as the NDK
+- v0.1.2082 - the first view is the desk, All filters and a ticking clock
+- v0.1.2080 - the SDK keeps the pinned NDK and the newest two
+- v0.1.2079 - the caller is matched against the people the house already knows
+- v0.1.2079 - the nightly check sees a newer NDK and installs it
+- v0.1.2077 - move a stream only when it is on the wrong device
+- v0.1.2077 - the Leave button is a power menu, and a live boot can open Configure
+- v0.1.2076 - the nightly freshness check asks Google for the SDK/NDK too
+- v0.1.2075 - move the call's streams again every second, not only when they are already live
+- v0.1.2074 - the call's own streams stay ours, and one plan is one call
+- v0.1.2073 - the installer's packages are checked for freshness without downloading
+- v0.1.2072 - one plan per call, and no greeting a line that is not carrying audio
+- v0.1.2071 - the name is filed as the name, read by the model that can hear it
+- v0.1.2070 - the nightly Docker smoke cleans up after a pipeline
+- v0.1.2069 - the receptionist waits for the name, and stops re-arming every six seconds
+- v0.1.2068 - the nightly Docker smoke is a separate toolchain unit
+- v0.1.2066 - a tone, a name that waits for speech, and the words in the house log
+- v0.1.2066 - the Docker doc names the Proxmox LXC requirements
+- v0.1.2065 - the container runs on the threaded Perl with the house's modules
+- v0.1.2064 - a screened call leaves its name, and the setup is written down
+- v0.1.2063 - a deleted settings key stays deleted across the mesh
+- v0.1.2060 - the gateway has a virtual handset
+- v0.1.2060 - docker compose runs the house as a server
+- v0.1.2058 - every floating panel resizes, and remembers the size per device
+- v0.1.2057 - the watch gets its toggles in pages, and a settings key stops doubling
+- v0.1.2056 - a large bridge command is written whole, not truncated
+- v0.1.2055 - the hands-free pcm is reopened between calls
+- v0.1.2055 - the desk keyboard floats and remembers its place; Android Back puts it away
+- v0.1.2054 - downloads.json names the 1280 build
+- v0.1.2053 - a helper complaint is reported, not fatal
+- v0.1.2051 - the dock opens the keyboard it names, and the hider stops tucking it under the pointer
+- v0.1.2050 - the bridge's error text reaches the log, and the ring names a top-level mac
+- v0.1.2049 - the gateway speaks to a Hands-Free stack, and waits for the line
+- v0.1.2049 - name the event that stalled the BLE listener
+- v0.1.2047 - downloads.json names the 1279 build
+- v0.1.2047 - the BLE listener stops re-parsing events and is restarted if it stalls
+- v0.1.2046 - the call goes to the gateway, not to whichever headset is active
+- v0.1.2045 - downloads.json names the 1278 build
+- v0.1.2044 - the phone panes scroll in their window, and the phone role is offered
+- v0.1.2042 - downloads.json names the 1277 build
+- v0.1.2042 - the BLE listener stops copying an unterminated tail on every read
+- v0.1.2041 - one gateway helper at a time, and never a zombie one
+- v0.1.2040 - downloads.json names the 1276 build
+- v0.1.2039 - a gateway can be the machine you are sitting at
+- v0.1.2038 - an IVR save from the laptop lands on the phone at once
+- v0.1.2037 - downloads.json names the 1275 build
+- v0.1.2036 - the machine with the adapter can offer itself as the gateway
+- v0.1.2035 - the reception's words are the house's, and every reader sees them
+- v0.1.2034 - downloads.json names the 1274 build
+- v0.1.2033 - a number can answer like itself, and the gateway arms from the phone's settings
+- v0.1.2032 - the SCO helper finds an adapter that will take the listener
+- v0.1.2031 - the SCO gateway becomes a daemon the phone can arm
+- v0.1.2030 - the nightly agent index catches up with the relationship setting
+- v0.1.2030 - a person's relationship is a setting, and the phone has a call flow for each one
+- v0.1.2029 - taskbar windows hold their opened order and drag; the front title bar is the keyboard cue; a desk's keys stay put
+- v0.1.2028 - app: the 1272 release carries the runtime bins
+- v0.1.2027 - phone: IVR reception pane and recent-call dialer
+- v0.1.2026 - Runway estimates from a chosen window, and bills are not double counted
+- v0.1.2025 - a bridge link waiting out its retry reads as reconnecting
+- v0.1.2024 - QA readiness finds perl's core scripts off PATH
+- v0.1.2023 - the BLE listener stops instead of spinning on a dead select
+- v0.1.2022 - Accounting Runway view and a readable chart that opens its period
+- v0.1.2021 - the QA readiness and schedule reads reach a sessionless peer
+- v0.1.2020 - phone: Recent leaves blacklisted callers out
+- v0.1.2019 - the websocket padlock gate follows the device, and a computer may carry an evaluation
+- v0.1.2018 - the crew finds a user-installed Ollama under the home directory
+- v0.1.2017 - the BLE listener drains a burst in one pass
+- v0.1.2016 - automatic evaluations run on the server; every other machine runs one only when asked
+- v0.1.2015 - publish app 0.118.269 (versionCode 1268)
+- v0.1.2014 - the backup prune deletes where shred is missing, and every machine's limit finally applies
+- v0.1.2013 - the dock search's index skips corrupt names, and its key bounds the request
+- v0.1.2012 - Cards: one tarot list per house, layouts for narrow screens
+- v0.1.2011 - the on-demand app-release sync runs in a child, not in the request worker
+- v0.1.2010 - Cards: deck names with spaces reach the browser intact
+- v0.1.2009 - an appointment with no time no longer warns twice on every alarm poke
+- v0.1.2008 - Cards: blackjack keeps the next bet, deal order, drag cost
+- v0.1.2007 - Cards: drag solitaire, layered turtle, blackjack, tarot 500 fix
+- v0.1.2006 - a failed band map reads from the watermark, and the System card shows sync rows and time left
+- v0.1.2005 - Cards: a Deal button, card-sized art, cleaner alt text
+- v0.1.2004 - Cards: choose tarot, solitaire or mahjong; spread draws three
+- v0.1.2003 - a pull from a phone or tablet takes one table per pass too
+- v0.1.2002 - resident loops always fork, so a prefork worker is never held inline
+- v0.1.2001 - a phone asks the notification bridge once, and the dead remote socket builder is gone
+- v0.1.2000 - the dock search sits on the keys, and its list follows input-method typing
+- v0.1.1999 - the interface probe finds ifconfig where Debian keeps it
+- v0.1.1998 - the dock search's app list keeps clear of a phone's or tablet's keyboard
+- v0.1.1997 - the presence listener keeps its heartbeat while it waits
+- v0.1.1996 - the sync slot runs when it is due, not one interval after a restart
+- v0.1.1995 - a machine syncs on its own timer, not only on a LAN presence wake
+- v0.1.1994 - mobile sync takes one table per pass; BLE sends always fork
+- v0.1.1993 - sync the locator audit report across the house
+- v0.1.1992 - the desktop installer skips the image build tree
+- v0.1.1991 - peer Manager windows trust their paired certificate; hub reachable through the exit node
+- v0.1.1990 - a peer file failure no longer kills the sync merge
+- v0.1.1989 - timers take a volume, and computer alarms set and restore the sink
+
+## 2026-11-03
+
+- v0.1.1988 - the alarm takes the Clock's volume and puts the phone's back
+- v0.1.1987 - the alarm keeps your volume, and any window can answer it
+- v0.1.1986 - appointments restore their light face on a light theme
+- v0.1.1985 - Peer ticket mint retries without a stale session cookie
+- v0.1.1984 - soft keyboard: a backspace tap always deletes one character
+- v0.1.1983 - the index counts the subs that shipped
+- v0.1.1982 - Go mints for the desktop app's remote window
+- v0.1.1981 - the hook keeps its own local::lib seed
+- v0.1.1980 - Go opens the peer's reachable ticket port; first boot verifies its database
+- v0.1.1979 - a tree cannot move backwards, and the hook can compile
+- v0.1.1978 - a job started inside a job is its own process
+- v0.1.1977 - sshd starts by its own path, and a failed start says so
+- v0.1.1976 - a quiet child still pushes its own redraw
+- v0.1.1975 - a live stop closes now, a killed fork says so, children stop forking windows, qrencode ships
+- v0.1.1974 - an appointment's main image draws on every device
+- v0.1.1973 - the reaper reads the options the master gives it
+- v0.1.1972 - the sshd launcher survives a missing setsid
+- v0.1.1971 - a forked job's warranty starts when it forks
+- v0.1.1970 - agent index: the sshd helpers
+- v0.1.1970 - sshd starts with the tree, once, from President
+- v0.1.1969 - a device can switch an agent's thinking off
+- v0.1.1968 - roadmap: P8, dev on the tailnet and key-only SSH everywhere
+- v0.1.1967 - a press renders its header inline again; the fork put it behind the defaults
+- v0.1.1966 - draw the time-in-use lines from the domain layer so the panel renders
+- v0.1.1965 - refresh the generated agent index for the two new domain subs
+- v0.1.1965 - measure agent time in use, and ask the final reply to explain the change
+- v0.1.1964 - a start's header renders in its own process
+- v0.1.1963 - a media child can no longer stop the request group
+- v0.1.1962 - VPN exit-node list moves to the Me view
+- v0.1.1961 - VPN button offers the tailnet's own exit nodes
+- v0.1.1960 - QA nightly runs under the read-only fence
+- v0.1.1959 - Remove the design docs from the exploration
+- v0.1.1958 - Reality check: four modules, a minimal app format, two real apps
+- v0.1.1957 - Router: central routing table, adapter-local bytes
+- v0.1.1956 - the roadmap records the completed house re-pointing
+- v0.1.1955 - No fork: phased v1 in place, Music is the invariant
+- v0.1.1954 - Music first: vertical slice, Gallery stays the contract pilot
+- v0.1.1953 - v1 strategy: greenfield core, old data, one app at a time
+- v0.1.1952 - Encrypted app databases and the DB broker
+- v0.1.1951 - App sandbox: process model, userns/systemd/proot per platform
+- v0.1.1950 - Agent-first review and the junderground app store
+- v0.1.1949 - App lifecycle: registry, agent-built apps, health, v1 fork
+- v0.1.1948 - a configured tunnel_hub starts its tunnel, and the house stops calling itself cloud
+- v0.1.1947 - Per-app databases: core/app split and ATTACH registry
+- v0.1.1946 - App SDK design; folders pass
+- v0.1.1945 - Roadmap: whole-app extraction needs a host SDK
+- v0.1.1944 - Roadmap: travel coverage maths, keyboard verdict
+- v0.1.1943 - Roadmap: zero-friction contract, LoRa split, store/music pass
+
+## 2026-11-02
+
+- v0.1.1942 - CPAN extraction roadmap: 30 candidates, 11 picked
+- v0.1.1941 - the records rationale sits where the work happens
+- v0.1.1940 - the per-request map drops 37%; detail moves to docs
+- v0.1.1939 - the agent brief explains its brace shorthand
+- v0.1.1938 - the house renews its own wildcard, and the backups run nightly to the laptop and table
+- v0.1.1937 - the agent brief keeps every route as a brace tree
+- v0.1.1935 - the house server and hub run on ks5; P6 is down to backups and a certificate credential
+- v0.1.1934 - the tailnet control plane lives on ks5, and the apex certificate renews there
+- v0.1.1933 - headscale runs on ks5, and the cutover keeps the apex URL
+- v0.1.1932 - an update waits for a press unless Auto-reload on update is on
+- v0.1.1931 - the exit node is ks5's, and the laptop is not pinned to it
+- v0.1.1930 - the locator outline reads JavaScript $ names without interpolating $]
+- v0.1.1929 - P3 is done: dev and house are on the box, and the suite is green there
+- v0.1.1928 - app_migrate streams to a file on Debian's perl, and a fresh clone skips the notes test
+- v0.1.1927 - a butler switch pauses the locator audit without losing the cadence
+- v0.1.1926 - an autocomplete name that is not a column answers empty, not 500
+- v0.1.1925 - the lookup context names the agent above the shell
+- v0.1.1924 - a parent route answers with its children, a miss report says what worked, and lookups record their context
+- v0.1.1923 - record transfers and rebuild the transfer form
+- v0.1.1922 - the data pool imports before /var/lib/vz mounts, not twelve seconds later
+- v0.1.1920 - the locator audit releases its lock when the run finishes
+- v0.1.1919 - the locator audit has a button and a cadence, and reads since its last run
+- v0.1.1918 - tracked commands bound a hung grandchild
+- v0.1.1917 - the KS-5 is reinstalled with ZFS root, so the host is snapshot-capable too
+- v0.1.1917 - heartbeat leases and descendant-aware warranties
+- v0.1.1916 - the KS-5 is installed, hardened and on the tailnet; P3 is next
+- v0.1.1915 - name the ollama supervisor in the subprocess inventory
+- v0.1.1914 - subprocess warranties and a reaper
+- v0.1.1913 - a wrong locator report separates ranking from coverage
+- v0.1.1912 - the locator learns from agent reports, and an audit briefs its maintenance
+- v0.1.1911 - the certificate timer can reach certbot, and the wildcard is reissued through it
+- v0.1.1910 - the jniLibs carry the jawnos home, and the packer refuses one that still names Termux
+- v0.1.1909 - the locator ledger is pruned with the AI ledger
+- v0.1.1908 - the Coding agent patches a hunk instead of rewriting, and the locator records its hits and misses
+- v0.1.1907 - a closed or locked music player advertises nothing, not a hollow track
+- v0.1.1906 - a websocket frame missing app, type or method is normalised once, not warned about on every comparison
+- v0.1.1905 - the music socket outlives its window, and a reopened desk session is open again
+- v0.1.1904 - a live log can be cut in place, tail kept and the rest archived
+- v0.1.1903 - the desk-session reopen repaints the child apps it reopens
+- v0.1.1901 - the archived console log is private like the live one
+- v0.1.1900 - where.pl prints a declaration's body, ending at its brace
+- v0.1.1900 - cap the console log, and rewrite the runtime home path so phone logins stop chdir-ing to Termux
+- v0.1.1899 - where.pl locates JS, template and firmware names, and mentions print their line
+- v0.1.1898 - refresh the agent index after the cache and header work
+- v0.1.1897 - a stopped session's child apps get their headers back
+- v0.1.1896 - cache pruning refuses a loudness sweep with no library folder
+- v0.1.1895 - cache_clean can sweep every app's expired rows
+- v0.1.1894 - the websocket drain reads recv buffer lengths, not the sender address, so a push no longer warns and wedges the pty
+- v0.1.1893 - docs: no Kimsufi promo codes exist; Black Friday applies automatically, so record the real trade-off
+- v0.1.1892 - the database migration check no longer warns on every call
+- v0.1.1891 - docs: 38.58 CAD at 64 GB confirmed; market check and order-now timing
+- v0.1.1890 - settings and cache leftovers move to disk; relational lists become sets
+- v0.1.1889 - docs: standalone task for the weekly certificate timer
+- v0.1.1888 - docs: the wildcard renews on the laptop; neither server renews what it serves
+- v0.1.1887 - docs: buy the 32 GB KS-5, skip the SYS-1, retire the VPS after the paid month
+- v0.1.1886 - the soft keyboard sends single-encoded currency symbols
+- v0.1.1885 - docs: tailnet gets a name under the house wildcard, not the apex or an IP; firmware may flash from the table
+- v0.1.1884 - the app release manifest points at the self-healing tailnet build
+- v0.1.1883 - the soft keyboard takes its fiat marks from a character table
+- v0.1.1882 - docs: roadmap takes the tailnet to the KS-5, pins the LAN firmware workflow, corrects the mail stack
+- v0.1.1881 - the soft keyboard's symbol map is decoded once
+- v0.1.1880 - docs: infrastructure roadmap measured across the house (cloud is the control plane, house server and hub on 2 vCPU)
+- v0.1.1879 - docs: infrastructure roadmap for the dev box offload and the tailnet move
+- v0.1.1878 - the signatorial fallback no longer warns on every render
+- v0.1.1877 - stored names are decoded once, and mojibake keys are quarantined
+- v0.1.1876 - the manager reads the app's real tailnet state, and the app ships a self-healing tailnet
+- v0.1.1875 - the favicon response is finalized
+- v0.1.1874 - the mark is public on the login gate too
+- v0.1.1873 - the locker gate lets the house mark through
+- v0.1.1872 - the house mark is one cached URL, not 195 KB in every page
+- v0.1.1871 - keep the version ahead of the peer commit that landed during the last push
+- v0.1.1870 - a LAN beacon keeps the peer's tailnet address, so the row has a route off the LAN
+- v0.1.1869 - the template cache comment describes the update-in-place write
+- v0.1.1868 - a cache write updates in place, so an interrupted boot cannot erase the balance history
+- v0.1.1867 - a changed test selects its own .t file, so --staged --run can run it
+- v0.1.1865 - the tailnet address is stored while a peer reports it, so it survives the VPN dropping
+- v0.1.1865 - write whole and never through a symlink, and name each finished subagent
+- v0.1.1864 - a machine is named by any address it advertises, not only the one it was last reached at
+- v0.1.1863 - a machine answers with its configured name, not a leftover hostname
+- v0.1.1862 - a peer answers to any name it has, a handheld keeps its real name, and the tailnet address outlives the VPN
+- v0.1.1861 - the IME page versions its stylesheets so the keyboard fix lands
+- v0.1.1860 - the keyboard dock stops double-counting the system-bar inset
+- v0.1.1859 - the guards judge where a path really goes, and a batch shows its progress
+- v0.1.1858 - a late default cannot resurrect or orphan a stopped child
+- v0.1.1857 - run a batch of subagents at the same time
+- v0.1.1856 - theme changes repaint in place; the IME keyboard stops double-counting the nav bar
+- v0.1.1853 - the review gate fails closed, and the commit stages what was reviewed
+- v0.1.1851 - the default model and option sessions no longer hold the press
+- v0.1.1850 - the header is printed the instant the start or stop is written
+- v0.1.1849 - review the diff before a commit, and push run updates over the socket
+- v0.1.1847 - keep the new tests runnable on a fresh checkout
+- v0.1.1847 - test the shortcut sheet, help audit, web measures and network report
+- v0.1.1846 - push the header before its writes; one toggle write per start
+- v0.1.1845 - ten subagents by default, chosen in Plat; cache the stable prompt
+- v0.1.1844 - test the remote-audio worklet and the thumbnail-folder migration
+- v0.1.1844 - say to improve the locator in the same change, and keep it test-green
+- v0.1.1843 - the header is a plain render/cache/push again; the caller forks the window
+- v0.1.1842 - refresh the repository index for the committed tree
+- v0.1.1842 - test the settings audit's refusals and the rule-bake; keep the killer test off the flake list
+- v0.1.1841 - unwrap a subagent's final, and keep a child from shipping
+- v0.1.1840 - stream the answer live, and give the Coding agent a subagent tool
+- v0.1.1839 - bound the stand-in master's bind, the last flake in the control-socket test
+- v0.1.1839 - test the i18n tools; a dry run writes nothing and the catalog sorts deterministically
+- v0.1.1838 - a start or stop answers before the header is redrawn
+- v0.1.1837 - show the model's thinking beside each coding step and Guide reply
+- v0.1.1836 - cut the agent rulebook by a third, and stop sending the nightly commands it cannot run
+- v0.1.1835 - the header reply no longer waits for the centre view
+- v0.1.1834 - the coding worker recycles itself between jobs when the tree ships
+- v0.1.1833 - spawn the coding daemon with POSIX::setsid
+- v0.1.1832 - run the Coding agent in its own process, and remember open agent panels
+- v0.1.1831 - record Ollama usage, house token total and the chart's clock
+- v0.1.1830 - tell every agent to look it up first, and test the identity and permissions audits
+- v0.1.1829 - balance chart review fixes: DST-safe days, matching spans, role threading, migration order
+- v0.1.1828 - tests for firmware staging, sealed files and records recovery; the split verifier and a tap-threshold shim
+- v0.1.1827 - schema briefs for the agent tier, and an inventory of untested files
+- v0.1.1826 - help topics for the pages that had none, and test selection derived from the app index
+- v0.1.1825 - four balance windows, per-call token ledger with model and role, balance alerts
+- v0.1.1824 - two tiers of help: a generated technical brief per app, and the nightly index it was missing
+- v0.1.1823 - a house-wide settings row is a sync trigger, so the nightly choice reaches the table
+- v0.1.1822 - definitive indexes: domain subs, route rows and help topics, each pinned by a test
+- v0.1.1821 - the app lane repairs a red build, and the nightly can be turned off in Plat
+- v0.1.1820 - last-hour window, hourly token ledger and per-hour detail in Sys
+- v0.1.1819 - a lost appointment header is corrected on the next beat
+- v0.1.1818 - the websocket watch actually runs, and a dead push socket is retried
+- v0.1.1817 - bound the control-socket fake master so the suite cannot hang
+- v0.1.1817 - index every Manager helper, and fail the push when the map drifts
+- v0.1.1816 - Drop by hour graph under the Sys balance drop chart
+- v0.1.1815 - the coding nightly repairs a red suite, and its prompt names the rules that bite
+- v0.1.1814 - trim AGENTS.md split prose into docs, add scripts/where.pl
+- v0.1.1813 - l3 clicks the appointment budget light in WebKitGTK, and the coding-nightly roadmap is tracked
+- v0.1.1812 - websocket watchdog, instant wake, and a header catch-up on reconnect
+- v0.1.1811 - the budget light is core, and a failed grep is not a miss
+- v0.1.1810 - restore the budget light in appointment views
+- v0.1.1810 - every agent path names the fast test runner
+- v0.1.1809 - the recovery tests and their mapping ship with the feature
+- v0.1.1808 - the coding agent can read before it edits
+- v0.1.1807 - the coding agent retrieves sections, orders its prefix, and counts its tokens
+- v0.1.1806 - AGENTS.md published and checked against the tree
+- v0.1.1805 - boot the suite once and fork per test
+- v0.1.1804 - one node process checks every script; header-map gaps
+- v0.1.1803 - targeted test runs: a tests-for map and a faster ledger scan
+- v0.1.1802 - the nightly can be rolled back, and it pushes to your fork
+- v0.1.1801 - the coding nightly has an app lane, and a fenced reply is a reply
+- v0.1.1800 - register the QA schedule helpers v0.1.1799 left unreachable, and the last schedule text says 05:00
+- v0.1.1799 - the coding nightly has an agent, and the nightly controls are editable
+- v0.1.1798 - 06:00 coding nightly in a worktree, and a notes-per-night limit
+- v0.1.1797 - qa: retime the nightly and keep TLS keys out of the tar; parent_guard identifies the master by start time
+- v0.1.1796 - the boot self-update compiles the launcher where it really is, so a machine can finally follow origin again
+- v0.1.1795 - the last five monsters split: Manager, Music, gb, universal.js and the President master
+- v0.1.1794 - configure: choose the nightly's device, check it, install it
+- v0.1.1793 - the last three monsters split: the language catalogue, the help topics, and the stranded prose re-homed
+- v0.1.1792 - notes statuses and tombstones, resumable archives, instant websocket wake
+
+## 2026-11-01
+
+- v0.1.1790 - subroutines.pl holds only live state: 4,257 stranded design lines move to docs
+- v0.1.1789 - balance runway, theme-safe surfaces, inventory shares, music output state, sync export lock
+- v0.1.1788 - a deliberate stop is held, and the watcher does not resurrect it
+- v0.1.1787 - store: a real cash register; nightly UX reads the JawnOS notes
+- v0.1.1786 - workers die with their manager, the killer reads /proc once, and the desktop gets a supervisor
+- v0.1.1785 - notes categories, a QA netns relay, and table builds its own artefacts
+- v0.1.1784 - the tree and its workers leave with the master
+- v0.1.1783 - the title-bar icon shows a pointer
+- v0.1.1782 - a half-applied update heals itself at start
+- v0.1.1781 - Help and the pin live behind the app icon
+- v0.1.1780 - the beat's per-connection memory is bounded
+- v0.1.1779 - the Windows help topic describes the pin
+- v0.1.1778 - a window keeps its place only when it is pinned
+- v0.1.1777 - the lockdown state is remembered per connection
+- v0.1.1776 - absent peers are not polled, and the beat stops resending the lockdown
+- v0.1.1775 - windows drag again; a location helper stops hiding in an app chunk
+- v0.1.1774 - a page left open finds its websocket again
+- v0.1.1773 - the transaction panel reports open when its form lands
+- v0.1.1772 - app sections: the measures template needs the set the window reads
+- v0.1.1771 - the visualiser stops drawing for nobody; a window stops shipping forms it hides
+- v0.1.1770 - qa: a minimum budget is checked in both directions
+- v0.1.1769 - act panels report themselves; WS frames dispatch in one pass; clock walk caches its nodes
+- v0.1.1768 - qa: budgets judge every run; l4 app flows and l5 install contract on table
+- v0.1.1767 - publish app 0.118.259
+- v0.1.1766 - editor: a block is always an element, and the page fills its window
+- v0.1.1765 - editor is a writing page; gzip responses; one fork per open
+- v0.1.1764 - publish app 0.118.256
+- v0.1.1763 - clock polls 60 s idle, ticks 1 Hz with no window
+- v0.1.1762 - last high-frequency uninitialized warnings
+- v0.1.1761 - ago_calc treats a missing offset as empty
+- v0.1.1760 - last uninitialized comparison in the appointment viewer
+- v0.1.1759 - Editor opens again; appointment opens stop waking hidden tabs; raw first chunks
+- v0.1.1758 - quiet the uninitialized-value warning firehose
+- v0.1.1757 - qa: nightly is green on table
+- v0.1.1756 - core split: video is an optional part; 31 MB boot core; device Vulkan loader
+- v0.1.1755 - qa: record the nightly result and the open runtime_build mismatch
+- v0.1.1754 - qa nightly: 3-core quota; t/55 skip outside SKIP aborts a clean machine
+- v0.1.1753 - qa: idempotent teardown so a passing run exits 0
+- v0.1.1752 - lazy app chunks: the page loads only the core, an app's scripts on first open
+- v0.1.1751 - qa: Android runner fixes, hardened nightly timer, prune
+- v0.1.1750 - qa: run WebKit before Chromium; a page that kills the tree is named
+- v0.1.1749 - qa: WebKitGTK probe loads the manager (host TLS exception, per-run profile)
+- v0.1.1748 - deleting a media row removes its file, thumb and preview on Android
+- v0.1.1747 - OCR leaves no .txt, picture uploads accept TIFF/XCF, camera help wording
+- v0.1.1746 - split big browser scripts and firmware sketches into an index plus ordered parts
+- v0.1.1745 - qa: database contracts (l2) and UI layer (l3)
+- v0.1.1744 - capture target accepts a db_query collection
+- v0.1.1743 - split runtime parts (media/ocr), claim app captures, upright photos, TIFF/XCF previews
+- v0.1.1742 - a master restart keeps its crash record. The ring is memory only, so the new master now seeds it from the tail (256 KB) of the supervisor's jawn-stdout.log before the tree starts: under the desktop app and both systemd units that file already holds jawn's own stdout, including the pty bytes, and it survives the restart. The old pty.log was truncated at the same moment, so this keeps at least as much as it did and usually the whole crash; in a bare terminal there is no file and the screen is the record. The master and systemd units use different state paths when XDG_STATE_HOME is set, so the seed takes whichever candidate the supervisor is actually writing. The error classifier now counts `tree exited on its own` and `See it's dead` as faults (deliberate restarts suppress the latter, and the END line `They dead` does not match), while the shutdown sweep's `kill: ... failed` noise is filtered. t/62 pins the classifier; t/54 pins the seed wiring.
+- v0.1.1741 - the error watch reads the console stream over a log bus, not ~/pty.log. ./jawn keeps the pty's bytes in a 4 MB sequence-numbered ring and serves it at ~/.president/log; the watch asks for everything after its saved `pty_seq` cursor (in the existing offsets file), so a tree restart resumes exactly where it left off and the next tree still reads a dying tree's last words. The ring reports `dropped` when it overwrote unseen bytes and `reset` when a master restart began the sequence again; the reader advances to the earliest surviving byte and warns a drop into manager.log so the same watch stages it. The pty itself is unchanged (merged stdout+stderr, death text, shutdown INT, Ctrl+C). JawnOS::LogBus carries the ring, the wire shape and the one-shot client, with its own test; the launcher test pins the bus and the absence of pty_log_fh; the Termux ledger's pty baseline drops 12 to 7; help.pl and the Plat note no longer name a pty log.
+- v0.1.1740 - the master execs President directly instead of typing it into bash. `bash -i` was there only so the pty runner could write the command and a ^C to its stdin: the command landed in the house's ~/.bash_history on every shell exit, the INPUTRC/PROMPT_COMMAND/TERM=taming existed for the prompt, and a raw pty never turned the written \x03 into SIGINT anyway (the shutdown INT is the explicit kill). ReadWriteFork now gets the interpreter and ./perl/President.pl as program/program_args, on the same pty, which still merges stdout+stderr for the ~/pty.log tee, the 'They dead' detection and the shutdown signal. The M2 launcher contract test follows the new argv; a new launcher test pins the direct-exec path and proves a raw-pty child still delivers output, takes an explicit INT and reports its exit status.
+- v0.1.1739 - qa: device build/run contracts, supported JDK, validation notes
+- v0.1.1738 - qa: run App::Prove directly so l0 works over ssh
+- v0.1.1737 - qa: discover local::lib when PERL5LIB is unset
+- v0.1.1736 - qa suite: fenced instance, route layer and monitor
+- v0.1.1735 - downloads.json carries app 0.118.251, whose tree gate follows President.pl into perl/
+- v0.1.1734 - the master reports the version on disk, and a numeric requester pid
+- v0.1.1733 - control socket: restart requests get a verdict and a reason
+- v0.1.1732 - restart guard caches verify verdicts by file content
+- v0.1.1731 - big templates split into partials; zero-arg signatures fixed
+- v0.1.1730 - root tidy: the service layer moves to perl/
+- v0.1.1729 - the domain layer's controller builder gets the one app back
+- v0.1.1728 - Manager.pl into full Mojolicious: controllers, route table, lazy helpers
+- v0.1.1727 - subroutines.pl split into lazy lib/JawnOS/Domain modules
+- v0.1.1726 - websocket: the app gate accepts the loopback ws token
+- v0.1.1725 - battery: hold the last good reading; sockets: plain loopback for the app
+- v0.1.1724 - mail: back off a failing socket instead of rebuilding it
+- v0.1.1723 - domain layer: lib/JawnOS/Domain modules, lazy-loaded
+- v0.1.1722 - domain layer: guide aliases, budget, log reader, leave and migrations
+- v0.1.1721 - domain layer: the first Manager subs move to domain.pl
+- v0.1.1720 - tests: guard cross-package sub calls and the require graph
+- v0.1.1719 - termux exit: the wizard asks the bridge, and the roadmap retires
+
+## 2026-10-31
+
+- v0.1.1718 - sync: reap a dead pull marker at boot instead of hiding rows from peers
+- v0.1.1717 - sshd: one builder with the prefix's keys; stop the bare daemon at boot
+- v0.1.1716 - app 0.118.250: long-lived services use specialUse
+- v0.1.1715 - pull rail: an empty cookie jar is silent on the signed requests
+- v0.1.1714 - pull railway: drop the cookie clear (the runtime has no Mojo::CookieJar)
+- v0.1.1713 - pull rail: load Mojo::CookieJar before clearing it
+- v0.1.1712 - pull rail: a stale cookie must not veto a signed peer
+- v0.1.1711 - snapshot pull: log the code, url and body that made the reply unusable
+- v0.1.1710 - pull: strip /manager from a named manager; app 0.118.247 refreshes a stale runtime
+- v0.1.1709 - save a register row from Enter or Add/Save, and give the attribute form labels and a readable layout
+- v0.1.1707 - runtime_build: refuse climbing alias paths (they truncated bin/git)
+- v0.1.1707 - let Enter create the model or option typed into an appointment's register panel
+- v0.1.1706 - sshd: ship its helpers, name the host keys, and make key auth work
+- v0.1.1704 - downloads: build 1241 and the x86_64 0.1.1702 runtime
+- v0.1.1704 - re-enable the language servers for this project
+- v0.1.1703 - sync over the LAN without the VPN, biometric re-enroll after a reinstall, --no-bin
+- v0.1.1702 - m5b: native bin generator, and app_build builds the SDK 36 release
+- v0.1.1701 - m5: signed release builds, a resumable migration, and the exec-model proof
+- v0.1.1700 - downloads: the 0.1.1697 runtime and build 1232
+- v0.1.1699 - run the test suite in parallel across cores
+- v0.1.1698 - runtime: ImageMagick leaves the diet; media call sites are bridged
+- v0.1.1697 - image work: scan, receipt, MMS, map guess, montage and crest ask the bridge
+- v0.1.1696 - thumbnails: cover art and generated stills come from the bridge
+- v0.1.1695 - palette: restore its client, and run its duties in the app's bridge
+- v0.1.1694 - m3: native image resize/save, and the bridges heal with the app
+- v0.1.1693 - m4: the app module has no termux-derived file left
+- v0.1.1692 - m4: app identity pass; com.termux is gone from the sources
+- v0.1.1691 - the app is GPL-3.0, not GPL-2.0, in the published manifest
+- v0.1.1690 - m4: jawnos-shared is BSD-2
+- v0.1.1689 - m4: four gpl originals left
+- v0.1.1688 - m4: seven gpl originals left; TermuxUtils and PackageUtils are ours
+- v0.1.1687 - m4: 21 dead gpl-only shared files gone; 12 to rewrite
+- v0.1.1686 - m1: the self-row signature covers the ports too
+- v0.1.1685 - m1: keep the self row's address current without a scan
+- v0.1.1684 - m1: the interface report comes from the bridge, not ifconfig
+- v0.1.1683 - m4: stop the tree, wait for a complete first run, verify the restored database
+- v0.1.1682 - m4: a scripted uninstall+restore migration
+- v0.1.1681 - m5: publish guarantees the runtime the apk pins
+- v0.1.1680 - run the BLE bridge client through the running perl
+- v0.1.1679 - downloads.json: app 1214, and the shared user that lets it install
+- v0.1.1678 - m4: last termux shebang, prefix default, and the stale runtime note
+- v0.1.1677 - one press one session, mailbox dates, and an app photo that lands
+- v0.1.1676 - a signed lever lets the accurate copy clear a peer's mangled dates
+- v0.1.1675 - a deep pull dials the peer's proven manager, not a stale roster ip
+- v0.1.1674 - the app gate steps aside for the peer deploy and restart levers
+- v0.1.1673 - finish the com.jawnos migration: bridge dates, deep pull, current releases
+- v0.1.1672 - migration B: the phone recipe, and the two files a fresh clone lacks
+- v0.1.1671 - downloads.json: app 1211 and the relocated runtimes
+- v0.1.1670 - the peer repair path calls the peer by name too, not the dead loopback
+- v0.1.1669 - a peer's stale loopback manager becomes its name (sync never dialled 127.0.0.1)
+- v0.1.1668 - the app gate pairs a signed-in session (device.js on app_required)
+- v0.1.1667 - the gate renders on every route: /gate and /manager/leave passed no webauthn_available
+- v0.1.1666 - migration must carry the house key, the peer key and the identity file
+
 ## 2026-10-30
 
+- v0.1.1665 - com.jawnos.app: the tree asks for the app's new package, actions and components
+- v0.1.1663 - music: probe the raw path, so the poster cache can heal
+- v0.1.1662 - music: a failed probe no longer hides a poster, and a poster is not taken at the fade
+- v0.1.1661 - M4: the runtime relocates by rewriting its baked prefix (equal-length, so no ELF shifts)
+- v0.1.1661 - music: the bar tick survives a search, so the next track has a seek and a title
+- v0.1.1660 - record the remote .vtt fallback for films with subtitles
+- v0.1.1659 - thumbnails come from the app's own decoders, ffmpeg|magick only as fallback
+- v0.1.1658 - runtime update costs, slicing options and the M4 plan
+- v0.1.1657 - M3 closed: runtime archive on both ABIs, first run proven, voices named as the open gap
+- v0.1.1656 - runtime ships base64/timeout/ip/ss/ping; x86_64 archive built and proven on the emulator
+- v0.1.1655 - runtime keeps ffmpeg and ImageMagick: 51 call sites, not a codec call
+- v0.1.1654 - runtime diet resolves ELF DT_NEEDED instead of listing library names
+- v0.1.1653 - no rate note on the provider's own currency
+- v0.1.1651 - m3b: the runtime carries its symlink targets and libandroid shims
+- v0.1.1651 - provider dropdown and currency pickers on API balances
+- v0.1.1649 - m3b: the runtime declares itself complete, so the wizard installs nothing
+- v0.1.1649 - show the Sys balance chart in the house currency
+- v0.1.1648 - m3a: the tree runs on the app's own runtime on the tablet
+- v0.1.1647 - m3a: the runtime archive - diet, packer, and a proof it runs away from the prefix
+- v0.1.1646 - chart how fast API balances fall in Sys
+- v0.1.1645 - music: key the window shell to the queue it was built for
+- v0.1.1644 - m1 complete: native ble and permissions; every device command proven
+- v0.1.1643 - music: a replayed queue is filtered, not refused
+- v0.1.1642 - music: remember the queue itself, not the rendered shell
+- v0.1.1641 - m1: the last five fallbacks go; m2 supervisor recorded
+- v0.1.1640 - m2: the master names its interpreter; the app builds the command
+- v0.1.1639 - music: come back to the saved position, not 0:00
+- v0.1.1638 - m1 exit: drop the termux fallback for every proven command
+- v0.1.1637 - termux roadmap: phone proof for the m1 batch
+- v0.1.1636 - m1: native camera and biometric prompt; all 24 commands native
+- v0.1.1635 - m1: native notification list and microphone recording
+- v0.1.1634 - save the player cache when the track or the pause changes
+- v0.1.1633 - turn the language servers off for this project
+- v0.1.1632 - m1: version bump for the media/share/open commit
+- v0.1.1631 - remove the xerj tooling
+- v0.1.1630 - m1: native media, share and open through the bridge
+- v0.1.1629 - only carry a tree this file built
+- v0.1.1628 - key the music player's tracks instead of counting them
+- v0.1.1627 - keep Manager.pl in the xerj index
+- v0.1.1627 - keep the music bar updating across a pause
+- v0.1.1626 - m1: native location, speech and telephony through the bridge
+- v0.1.1625 - show autostop only when a home plate can stop the session
+- v0.1.1624 - m1: native contacts, SMS and call log through the bridge
+- v0.1.1623 - m1: native clipboard, volume, torch and wake lock
+- v0.1.1622 - sync: carry the proven peer manager into the row pull
+- v0.1.1621 - m1: native notification and toast through the device bridge
+- v0.1.1620 - sync: start each pass with the peer that has waited longest
+- v0.1.1619 - termux roadmap: the single app is com.jawnos
+- v0.1.1617 - termux roadmap: m1 battery proven on the tablet
+- v0.1.1617 - sync: keep the peer manager that answered the presence probe
+- v0.1.1616 - termux roadmap: record m1 at the version it shipped
+- v0.1.1614 - m1: app device bridge and battery.status behind the termux fallback
+- v0.1.1614 - sync: a stale peer manager falls back to the fqdn it advertises
+- v0.1.1613 - termux roadmap: spike a passes without a tty
+- v0.1.1612 - termux roadmap: spike b passes at targetSdk 28 and 36
+- v0.1.1611 - m0: one door for the termux commands and a ledger ratchet
+- v0.1.1610 - ai: pause a rate-limited bucket for the provider's own reset, not 30 minutes
+- v0.1.1609 - watchdog: ask the tree to answer, not just listen
+- v0.1.1608 - utilities: stop adopting our own row back over the live runtime
+- v0.1.1607 - utilities: keep the runtime clock this process wrote; reset only a previous boot's
+- v0.1.1606 - close guest paths on the self-authenticating rails
+- v0.1.1605 - utilities: a boot starts each job's runtime clock at now, not the blob's old value
+- v0.1.1604 - sync: a pull claim that never became a fork no longer wedges automatic pulls
+- v0.1.1603 - stop logging provider keys in plaintext
+- v0.1.1602 - enforce the privilege tier in before_dispatch
+- v0.1.1601 - help: refresh 41 stale topics against the current apps
+- v0.1.1600 - Movement recording: save the choice house-wide (device all)
+- v0.1.1599 - docs: refresh README screenshots and feature list
 - v0.1.1598 - renew keeps the warranty you typed, and a warranty belongs to the house. `manager_reset`'s renew branch re-read the app's stored warranty setting and ignored the warranty typed in the app card, so renewing silently restored the old value to every record (driving's 266 rows were re-anchored to 70 months from the phone's `-70M` while the card held a different value); it now re-anchors to the value every other action resolves, and `warranty_renewal_ok` refuses a warranty already in the past, which `alarm_haircut` would sweep. A warranty is stored on the `all` device row like the language and theme, read house-first with a per-device row only as the fallback, seeded house-wide by `setting_initializer`, and collapsed by the `warranty_house_wide` backfill to the value written most recently. Driving is re-anchored to `-10y`. `t/14-warranty.t` covers the offset arithmetic, the past guard and the house-row read, write and backfill.
 
 ## 2026-10-29
