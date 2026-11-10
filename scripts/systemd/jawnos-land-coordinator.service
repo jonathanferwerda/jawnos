@@ -1,0 +1,22 @@
+[Unit]
+Description=JawnOS landing coordinator (one queue, one train)
+Documentation=file:/home/jawn/jawnos/docs/AGENTS-concurrency.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=jawn
+WorkingDirectory=/home/jawn/jawnos
+Environment=HOME=/home/jawn
+# One drain at a time. The script also holds land-coordinator.lock, so a manual
+# run and the timer cannot both drain.
+ExecStart=/usr/bin/perl /home/jawn/jawnos/scripts/land_coordinator.pl --train-size 6 --jobs 4
+# A wave runs the suite and may serve several branches; a cold guard is minutes.
+Nice=5
+TimeoutStartSec=4h
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

@@ -14,6 +14,7 @@ use File::Path qw(make_path);
 use File::Slurp qw(read_file write_file);
 use File::Temp qw(tempdir);
 use IPC::Open3 qw(open3);
+use JSON::PP ();
 use Symbol qw(gensym);
 use Test::More;
 
@@ -68,6 +69,26 @@ print "restarted\n";
 exit 0;
 PL
 
+# A master that already has a restart pending answers the second caller busy.
+# The lander must wait for that restart, then compare the version the tree
+# actually booted rather than treating the refusal as a failed landing.
+my $BUSY_RESTART = <<'PL';
+#!/usr/bin/perl
+use strict; use warnings;
+my $dir = $ENV{'AGENT_LAND_TEST_DIR'} || die "no AGENT_LAND_TEST_DIR\n";
+open(my $fh, '>>', "$dir/restart") or die $!;
+print $fh "@ARGV\n";
+close $fh;
+if (grep { $_ eq '--status' } @ARGV) {
+	my $v = '0.0.0';
+	if (open(my $in, '<', 'VERSION')) { $v = <$in>; close $in; $v =~ s/\s+$// }
+	print '{"ok":1,"pending":0,"version":"' . $v . '"}', "\n";
+	exit 0;
+}
+print "a restart is already pending\n";
+exit 2;
+PL
+
 sub sh {
 	# Git exports GIT_DIR to the pre-push hook that runs this suite. Without this
 	# clear, `git -C <temp>` still acts on the live checkout.
@@ -120,7 +141,7 @@ die "fixture repo is not isolated: $fixture_top\n" unless $trc == 0 && defined $
 	write_file("$primary/.gitignore",           ".shots/\n");
 	write_file("$primary/scripts/run_tests.pl", $SUITE);
 	write_file("$primary/scripts/version_bump.pl", $BUMP);
-	write_file("$primary/scripts/restart.pl",   $RESTART);
+	write_file("$primary/scripts/restart.pl",   $arg{'restart'} // $RESTART);
 	write_file("$primary/scripts/agent_land.pl", read_file($real));
 	# Only the tests that land a firmware change need the board files; without
 	# them the lander skips the firmware step, which is what every other fixture
@@ -469,6 +490,60 @@ subtest 'a board on an older major.minor follows the house' => sub {
 	is($jt, '0.2.0', 'and the tip commit carries it');
 	my (undef, $house) = git($f->{'primary'}, 'show', 'main:VERSION');
 	is($house, '0.2.1', 'while the house counter moves on its own');
+};
+
+sub json_out {
+	my ($out) = @_;
+	my ($line) = grep { /^\{/ } split /\n/, $out;
+	return eval { JSON::PP->new->decode($line // '') } || {};
+}
+
+# --- the queue's two additions to a hand landing ---------------------------
+
+subtest '--defer-restart lands and leaves the restart to the queue' => sub {
+	my $f = fixture();
+	commit_in_worktree($f, 'note.txt', "a\n", 'add a note');
+
+	my ($rc, $out) = land($f, '--defer-restart', '--json', '--keep');
+	is($rc, 0, 'the landing exits cleanly') or diag($out);
+	my $j = json_out($out);
+	is($j->{'version'}, '0.1.2', 'the JSON names the landed version');
+	ok($j->{'restart_deferred'}, 'and says the restart was deferred');
+	ok(!-e "$f->{'marker'}/restart", 'nothing restarted');
+
+	my (undef, $subject) = git($f->{'primary'}, 'log', '-1', '--format=%s', 'origin/main');
+	is($subject, 'v0.1.2 - add a note', 'the trunk still took the versioned commit');
+	my (undef, $head)   = git($f->{'primary'}, 'rev-parse', 'HEAD');
+	my (undef, $origin) = git($f->{'primary'}, 'rev-parse', 'origin/main');
+	is($head, $origin, 'and the primary checkout still moved');
+};
+
+subtest '--json puts a refusal on stdout and keeps progress on stderr' => sub {
+	my $f = fixture();
+	write_file("$f->{'wt'}/loose.txt", "uncommitted\n");
+
+	my ($rc, $out) = land($f, '--json');
+	is($rc, 1, 'the lander refuses');
+	my $j = json_out($out);
+	is($j->{'ok'}, 0, 'the JSON says it did not land');
+	is($j->{'code'}, 1, 'with the refusal exit code');
+	is($j->{'reason_class'}, 'dirty_worktree', 'and a machine-readable reason');
+	like($j->{'message'}, qr/uncommitted work/, 'that still names the work');
+};
+
+subtest 'a busy restart waits for the pending tree and verifies the version' => sub {
+	my $f = fixture(restart => $BUSY_RESTART);
+	commit_in_worktree($f, 'note.txt', "a\n", 'add a note');
+
+	my ($rc, $out) = land($f);
+	is($rc, 0, 'the landing is not failed by the busy master') or diag($out);
+	like($out, qr/a restart is already pending/, 'it saw the pending restart');
+	like($out, qr/waiting for the tree it boots/, 'and waited for the version');
+
+	my @calls = grep { length } split /\n/, read_file("$f->{'marker'}/restart");
+	ok(@calls >= 2, 'it asked, then checked the running version');
+	like($calls[0], qr/--reason v0\.1\.2/, 'the first call was the restart');
+	like($calls[1], qr/--status --json/, 'the second was the version check');
 };
 
 done_testing();

@@ -24,6 +24,11 @@
 #   perl scripts/agent_land.pl --branch agent/pen
 #   perl scripts/agent_land.pl --dry-run        print the plan, change nothing
 #   perl scripts/agent_land.pl --no-restart
+#   perl scripts/agent_land.pl --defer-restart  stop before the restart; the
+#                                               landing queue restarts once per
+#                                               wave (scripts/land_coordinator.pl)
+#   perl scripts/agent_land.pl --json           one machine-readable result on
+#                                               stdout; progress stays on stderr
 #   perl scripts/agent_land.pl --jobs 4         suite job count (default 2:
 #                                               other agents share the cores)
 #   perl scripts/agent_land.pl --wait 60        seconds for the gate (default
@@ -61,22 +66,27 @@ use Fcntl qw(:flock);
 use File::Temp qw(tempfile);
 use Getopt::Long qw(GetOptions);
 use IO::Handle ();
+use JSON::PP ();
 
 my %opt = (
-	'trunk'   => 'main',
-	'jobs'    => 2,
-	'wait'    => 300,
-	'restart' => 1,
-	'remove'  => 1,
-	'force'   => 0,
+	'trunk'         => 'main',
+	'jobs'          => 2,
+	'wait'          => 300,
+	'restart'       => 1,
+	'remove'        => 1,
+	'force'         => 0,
+	'json'          => 0,
+	'defer_restart' => 0,
 );
 GetOptions(
-	'branch=s'   => \$opt{'branch'},
-	'reason=s'   => \$opt{'reason'},
-	'trunk=s'    => \$opt{'trunk'},
-	'jobs=s'     => \$opt{'jobs'},
-	'wait=s'     => \$opt{'wait'},
-	'no-restart' => sub { $opt{'restart'} = 0 },
+	'branch=s'      => \$opt{'branch'},
+	'reason=s'      => \$opt{'reason'},
+	'trunk=s'       => \$opt{'trunk'},
+	'jobs=s'        => \$opt{'jobs'},
+	'wait=s'        => \$opt{'wait'},
+	'json'          => \$opt{'json'},
+	'defer-restart' => \$opt{'defer_restart'},
+	'no-restart'    => sub { $opt{'restart'} = 0 },
 	'keep'       => sub { $opt{'remove'} = 0 },
 	'remove'     => sub { $opt{'remove'} = 1; $opt{'force'} = 1 },
 	'dry-run'    => \$opt{'dry'},
@@ -90,6 +100,10 @@ usage(2) unless $opt{'wait'} =~ /^\d+$/;
 $ENV{'GIT_EDITOR'} = 'true';
 
 # --- the repo we are in ----------------------------------------------------
+
+# Named here so finish() can put the branch in a --json result even when the
+# failure happens before the branch is resolved.
+my $branch;
 
 sub capture {
 	my @cmd = @_;
@@ -115,17 +129,45 @@ sub say_step {
 }
 
 sub refuse {
-	my ($why) = @_;
+	my ($why, $class) = @_;
 	print STDERR "agent_land: refused: $why\n";
 	print STDERR 'agent_land: a refusal ends the attempt - fix it and run the gate again deliberately, '
 		. "or report it; do not retry in a loop.\n";
-	exit 1;
+	finish(1, reason_class => ($class || 'refused'), message => $why);
+}
+
+# One exit, so --json always ends with exactly one machine-readable line while
+# the progress lines stay on stderr.
+my $finished = 0;
+sub finish {
+	my ($code, %result) = @_;
+	return if $finished++;
+	$result{'ok'}     = $code == 0 ? 1 : 0;
+	$result{'code'}   = $code;
+	$result{'branch'} = $branch if defined $branch && length $branch;
+	if ($opt{'json'}) {
+		print JSON::PP->new->canonical->encode(\%result), "\n";
+	}
+	exit $code;
+}
+
+# The master reports the version it booted, so "my code is live" is a version
+# comparison, not a restart call that happened to return 0.
+sub version_ge {
+	my ($a, $b) = @_;
+	my @a = (($a // '') =~ /^v?(\d+)\.(\d+)\.(\d+)/) ? ($1, $2, $3) : (0, 0, 0);
+	my @b = (($b // '') =~ /^v?(\d+)\.(\d+)\.(\d+)/) ? ($1, $2, $3) : (0, 0, 0);
+	for my $i (0 .. 2) {
+		return 1 if $a[$i] > $b[$i];
+		return 0 if $a[$i] < $b[$i];
+	}
+	return 1;
 }
 
 my ($rc, $root) = git('rev-parse', '--show-toplevel');
-refuse("not inside a git worktree\n$root") if $rc != 0 || !length $root;
+refuse("not inside a git worktree\n$root", 'not_worktree') if $rc != 0 || !length $root;
 $root = abs_path($root);
-chdir $root or refuse("cannot enter $root: $!");
+chdir $root or refuse("cannot enter $root: $!", 'enter');
 
 # The common dir is shared by every worktree; the lock and the shared refs live
 # there. It has to be the common dir, not this worktree's .git.
@@ -134,23 +176,23 @@ if ($crc != 0 || $common !~ m{^/}) {
 	($crc, my $rel) = git('rev-parse', '--git-common-dir');
 	$common = $rel =~ m{^/} ? $rel : abs_path($rel);
 }
-refuse('cannot find the git common dir') unless defined $common && length $common;
+refuse('cannot find the git common dir', 'not_repo') unless defined $common && length $common;
 
 # The primary checkout is the master's tree: the first entry in the worktree
 # list. Landing must move it forward - restart does not pull.
 my ($wrc, $wlist) = git('worktree', 'list', '--porcelain');
-refuse('cannot list worktrees') if $wrc != 0;
+refuse('cannot list worktrees', 'not_repo') if $wrc != 0;
 my ($primary) = $wlist =~ /^worktree\s+(.+)$/m;
-refuse('cannot find the primary worktree') unless defined $primary && length $primary;
+refuse('cannot find the primary worktree', 'not_repo') unless defined $primary && length $primary;
 
-my $branch = $opt{'branch'};
+$branch = $opt{'branch'};
 if (!defined $branch) {
 	my ($brc, $b) = git('rev-parse', '--abbrev-ref', 'HEAD');
-	refuse("cannot read the current branch\n$b") if $brc != 0;
+	refuse("cannot read the current branch\n$b", 'not_repo') if $brc != 0;
 	$branch = $b;
 }
 refuse("$branch is the trunk; work in a worktree "
-	. "(git worktree add .worktrees/<task> -b agent/<task> origin/main) and land that") if $branch eq $opt{'trunk'};
+	. "(git worktree add .worktrees/<task> -b agent/<task> origin/main) and land that", 'trunk') if $branch eq $opt{'trunk'};
 
 my $lock_path = "$common/jawnos-land.lock";
 
@@ -186,16 +228,16 @@ sub heal_bare {
 if (repo_is_bare()) {
 	heal_bare();
 	refuse('the repository was bare (core.bare=true), which stops every git command. '
-		. 'It has been reset to false; nothing was landed. Re-run the gate deliberately.');
+		. 'It has been reset to false; nothing was landed. Re-run the gate deliberately.', 'bare');
 }
 
 my ($drc, $dirty) = git('status', '--porcelain');
-refuse("the worktree has uncommitted work; commit it first:\n$dirty") if length $dirty;
+refuse("the worktree has uncommitted work; commit it first:\n$dirty", 'dirty_worktree') if length $dirty;
 
 my ($prc, $pdirty) = capture('git', '-C', $primary, 'status', '--porcelain', '--untracked-files=no');
 if ($prc != 0 || length $pdirty) {
 	refuse("the primary checkout at $primary has uncommitted changes; "
-		. "commit or stash them, or the dev server cannot take this landing:\n$pdirty");
+		. "commit or stash them, or the dev server cannot take this landing:\n$pdirty", 'dirty_primary');
 }
 
 # --- back the branch up before waiting ------------------------------------
@@ -218,7 +260,7 @@ sub lock_holder {
 }
 
 my $lock;
-open($lock, '>>', $lock_path) or refuse("cannot open $lock_path: $!");
+open($lock, '>>', $lock_path) or refuse("cannot open $lock_path: $!", 'lock');
 $lock->autoflush(1);
 
 my $deadline = time + $opt{'wait'};
@@ -231,7 +273,8 @@ while (!flock($lock, LOCK_EX | LOCK_NB)) {
 			. ($holder =~ /^(\d+)\s*(.*)$/ && $2 ne '' ? " (pid $1 on $2)" : '')
 			. "; waited $opt{'wait'} s. This branch is already on origin/$branch, so "
 			. "the work is safe — land again later rather than retrying in a loop.\n";
-		exit 4;
+		finish(4, reason_class => 'busy',
+			message => "the gate is busy; waited $opt{'wait'} s; the branch is safe on origin/$branch");
 	}
 	$waited++;
 	sleep 1;
@@ -244,7 +287,7 @@ print $lock "$$ $branch\n";
 
 say_step("rebasing $branch onto origin/$opt{'trunk'}");
 my ($frc, $fout) = git('fetch', 'origin', '--quiet');
-refuse("git fetch failed:\n$fout") if $frc != 0;
+refuse("git fetch failed:\n$fout", 'fetch') if $frc != 0;
 
 while (1) {
 	my ($rrc, $rout) = git('rebase', "origin/$opt{'trunk'}");
@@ -259,12 +302,12 @@ while (1) {
 		git('checkout', '--ours', '--', 'VERSION');
 		git('add', '--', 'VERSION');
 		my ($crc, $cout) = git('rebase', '--continue');
-		refuse("git rebase --continue failed:\n$cout") if $crc != 0;
+		refuse("git rebase --continue failed:\n$cout", 'rebase') if $crc != 0;
 		next;
 	}
 
 	git('rebase', '--abort');
-	refuse("the branch does not rebase onto origin/$opt{'trunk'}:\n$rout");
+	refuse("the branch does not rebase onto origin/$opt{'trunk'}:\n$rout", 'rebase');
 }
 
 # --- nothing to land is a refusal, not an empty bump -----------------------
@@ -274,7 +317,7 @@ while (1) {
 # no, not a rewritten trunk.
 my ($nrc, $ahead) = git('rev-list', '--count', "origin/$opt{'trunk'}..HEAD");
 refuse("nothing to land: $branch has no commits ahead of origin/$opt{'trunk'} "
-	. '(it is already merged)')
+	. '(it is already merged)', 'nothing')
 	if $nrc == 0 && ($ahead // '') eq '0';
 
 # --- the suite is the gate ------------------------------------------------
@@ -289,13 +332,13 @@ say_step("running the suite (--jobs $opt{'jobs'})");
 my ($src, $sout) = capture($^X, 'scripts/run_tests.pl', '--jobs', $opt{'jobs'});
 if ($src != 0) {
 	print STDERR $sout unless length $sout > 20000;
-	refuse('the suite failed; fix it and land again');
+	refuse('the suite failed; fix it and land again', 'suite');
 }
 if (repo_is_bare()) {
 	heal_bare();
 	refuse('the suite left the repository bare (core.bare=true). It has been reset to '
 		. 'false and nothing was pushed - this is the test-corruption bug, not this branch. '
-		. 'Report it, and land again once it is fixed.');
+		. 'Report it, and land again once it is fixed.', 'suite_bare');
 }
 
 my (undef, $trunk_after) = git('-C', $primary, 'rev-parse', "refs/heads/$opt{'trunk'}");
@@ -305,19 +348,19 @@ if (length $trunk_before && length $trunk_after && $trunk_after ne $trunk_before
 	if (($who // '') =~ /\@example\.(?:invalid|test)\b|\@jawnos\.invalid\b/) {
 		git('-C', $primary, 'reset', '--mixed', $trunk_before);
 		refuse("the suite moved $opt{'trunk'} in the primary checkout to a fixture commit "
-			. "($trunk_before -> $trunk_after). It has been put back; nothing was pushed.");
+			. "($trunk_before -> $trunk_after). It has been put back; nothing was pushed.", 'suite_moved');
 	}
 	refuse("$opt{'trunk'} moved in the primary checkout during the suite "
-		. "($trunk_before -> $trunk_after); nothing was pushed. Commit or revert it by hand, then land again.");
+		. "($trunk_before -> $trunk_after); nothing was pushed. Commit or revert it by hand, then land again.", 'suite_moved');
 }
 
 # --- bump, rewrite the tip subject ---------------------------------------
 
 say_step('bumping VERSION');
 my ($brc, $new) = capture($^X, 'scripts/version_bump.pl');
-refuse("version_bump.pl failed:\n$new") if $brc != 0;
+refuse("version_bump.pl failed:\n$new", 'bump') if $brc != 0;
 $new =~ s/\s+$//;
-refuse("version_bump.pl printed no version:\n$new") unless $new =~ /^\d+\.\d+\.\d+$/;
+refuse("version_bump.pl printed no version:\n$new", 'bump') unless $new =~ /^\d+\.\d+\.\d+$/;
 
 # A board's firmware version is its own, but the landing owns the bookkeeping:
 # a board whose firmware this landing changed takes a patch bump, and a board
@@ -328,7 +371,7 @@ my @fw_version_files = grep { -f $_ } qw(jt/VERSION jw/VERSION jp/alarmclock/VER
 if (-f 'scripts/fw_bump.pl' && @fw_version_files) {
 	my ($fwrc, $fwout) = capture($^X, 'scripts/fw_bump.pl', '--sync',
 		'--from', "origin/$opt{'trunk'}", '--house', $new);
-	refuse("fw_bump.pl failed:\n$fwout") if $fwrc != 0;
+	refuse("fw_bump.pl failed:\n$fwout", 'bump') if $fwrc != 0;
 	$fwout =~ s/\s+$//;
 	say_step($fwout) if length $fwout;
 }
@@ -337,7 +380,7 @@ my (undef, $subject) = git('log', '-1', '--format=%s');
 my (undef, $body)    = git('log', '-1', '--format=%b');
 $subject =~ s/^\s*v\d+\.\d+\.\d+\s+-\s+//;   # never stack two version prefixes
 $subject =~ s/\s+$//;
-refuse('the branch tip has no commit') unless length $subject;
+refuse('the branch tip has no commit', 'no_subject') unless length $subject;
 $body =~ s/\s+$//;
 my $message = "v$new - $subject" . (length $body ? "\n\n$body" : '');
 
@@ -346,7 +389,7 @@ my ($fh, $msg_path) = tempfile(UNLINK => 1, SUFFIX => '.msg');
 print $fh $message;
 close $fh;
 my ($amrc, $amout) = git('commit', '--amend', '-F', $msg_path);
-refuse("amending the tip failed:\n$amout") if $amrc != 0;
+refuse("amending the tip failed:\n$amout", 'commit') if $amrc != 0;
 unlink $msg_path;
 
 # --- push, then move the primary checkout ---------------------------------
@@ -358,7 +401,7 @@ say_step("pushing HEAD:refs/heads/$opt{'trunk'}");
 $ENV{'JAWNOS_SUITE_ALREADY_RUN'} = 1;
 my ($pusc, $puso) = git('push', 'origin', "HEAD:refs/heads/$opt{'trunk'}");
 delete $ENV{'JAWNOS_SUITE_ALREADY_RUN'};
-refuse("the push was refused (rebase and land again):\n$puso") if $pusc != 0;
+refuse("the push was refused (rebase and land again):\n$puso", 'push') if $pusc != 0;
 
 # The backup branch has done its job: its work is on the trunk now, and leaving
 # it on origin is what puts every finished task in GitHub's "Compare & pull
@@ -370,38 +413,43 @@ say_step("origin/$branch was not deleted (remove it by hand): $delout") if $delr
 say_step("fast-forwarding the primary checkout at $primary");
 my ($pfrc, $pfout) = capture('git', '-C', $primary, 'fetch', 'origin', '--quiet');
 if ($pfrc != 0) {
-	print STDERR "agent_land: landed and pushed v$new, but the primary checkout "
-		. "could not fetch:\n$pfout\n";
-	exit 5;
+	my $why = "landed and pushed v$new, but the primary checkout could not fetch: $pfout";
+	print STDERR "agent_land: $why\n";
+	finish(5, reason_class => 'apply', version => $new, subject => $subject, message => $why);
 }
 my ($mrc, $mout) = capture('git', '-C', $primary, 'merge', '--ff-only', "origin/$opt{'trunk'}");
 if ($mrc != 0) {
-	print STDERR "agent_land: landed and pushed v$new, but the primary checkout at "
-		. "$primary is not on it:\n$mout\n";
-	exit 5;
+	my $why = "landed and pushed v$new, but the primary checkout at $primary is not on it: $mout";
+	print STDERR "agent_land: $why\n";
+	finish(5, reason_class => 'apply', version => $new, subject => $subject, message => $why);
 }
 
 # --- restart, so the server is on what just landed -----------------------
 
+if ($opt{'defer_restart'}) {
+	say_step("landed v$new (restart deferred: the queue owns it)");
+	remove_worktree();
+	finish(0, reason_class => 'landed', version => $new, subject => $subject, restart_deferred => 1);
+}
+
 if (!$opt{'restart'}) {
 	say_step("landed v$new (not restarting: --no-restart)");
 	remove_worktree();
-	exit 0;
+	finish(0, reason_class => 'landed', version => $new, subject => $subject, restart => 0);
 }
 
 $reason = "v$new - $subject" unless defined $reason && length $reason;
 say_step("restarting: $reason");
-my ($rrc, $rout) = capture($^X, "$primary/scripts/restart.pl", '--reason', $reason);
-print $rout if length $rout;
-if ($rrc != 0) {
-	print STDERR "agent_land: landed and pushed v$new, but the restart was refused "
-		. "(see the report above)\n";
-	exit 5;
+my ($rok, $rdetail) = restart_and_verify($primary, $reason, $new);
+if (!$rok) {
+	my $why = "landed and pushed v$new, but the restart was refused: $rdetail";
+	print STDERR "agent_land: $why\n";
+	finish(5, reason_class => 'apply', version => $new, subject => $subject, message => $why);
 }
 
 say_step("landed v$new and restarted");
 remove_worktree();
-exit 0;
+finish(0, reason_class => 'landed', version => $new, subject => $subject);
 
 # A worktree is scratch: after a successful landing its files are on origin and
 # on the trunk. Removing it is the default, because nothing else does and a
@@ -436,12 +484,48 @@ sub remove_worktree {
 	say_step("removed the worktree at $root (its .shots/ scratch went with it)");
 }
 
+# A restart is one request to one master, and a second caller while one is
+# pending is told busy. The work is already on the trunk and the primary is
+# already fast-forwarded, so busy is not a failed landing: wait for the pending
+# restart to settle, then check the version the tree actually booted.
+sub restart_and_verify {
+	my ($primary, $reason, $want) = @_;
+	my ($rc, $out) = capture($^X, "$primary/scripts/restart.pl", '--reason', $reason);
+	print STDERR $out if length $out;
+	return (1, '') if $rc == 0;
+
+	# Only the single-slot refusal is worth waiting for. A missing master or a
+	# timed-out guard is an exit 5 the caller must see now, not 180 s later.
+	return (0, $out) unless $out =~ /already pending|busy/i;
+
+	say_step('a restart is already pending; waiting for the tree it boots');
+	my $deadline = time + 180;
+	while (time < $deadline) {
+		my ($src, $sout) = capture($^X, "$primary/scripts/restart.pl", '--status', '--json');
+		if ($src == 0) {
+			my $reply = eval { JSON::PP->new->decode($sout) };
+			if (ref $reply eq 'HASH' && !$reply->{'pending'}) {
+				return (1, '') if version_ge($reply->{'version'}, $want);
+				last;
+			}
+		}
+		sleep 2;
+	}
+
+	say_step('asking for the restart again');
+	my ($rrc, $rout) = capture($^X, "$primary/scripts/restart.pl", '--reason', $reason);
+	print STDERR $rout if length $rout;
+	return (1, '') if $rrc == 0;
+	return (0, $rout);
+}
+
 sub usage {
 	my ($code) = @_;
 	print STDERR <<'USAGE';
 agent_land.pl - land one agent's branch onto the trunk, once, behind a lock
   perl scripts/agent_land.pl [--branch B] [--trunk main] [--jobs 2] [--wait 300]
-                             [--dry-run] [--no-restart] [--keep] [--reason TEXT]
+                             [--dry-run] [--no-restart] [--defer-restart]
+                             [--json] [--keep] [--reason TEXT]
 USAGE
 	exit $code;
 }

@@ -1,0 +1,14 @@
+[Unit]
+Description=JawnOS landing coordinator every minute
+
+[Timer]
+# The service is oneshot: this fires again a minute after the last drain ends,
+# not while one is still running. The queue is on disk, so a missed minute is
+# just a later wave.
+OnBootSec=2min
+OnUnitActiveSec=60s
+Persistent=true
+Unit=jawnos-land-coordinator.service
+
+[Install]
+WantedBy=timers.target

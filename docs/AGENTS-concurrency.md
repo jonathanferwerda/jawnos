@@ -109,6 +109,36 @@ back to `git push` and `restart.pl` by hand — that is how two agents resume sw
 A landing takes a minute or two (rebase, one suite, push, restart); it is not hung, and its progress
 lines go to stderr, so a wrapper that pipes stdout shows nothing until it ends.
 
+## The landing queue and the train
+
+The lander is still the hand landing, but a busy checkout runs a queue.
+`perl scripts/land_enqueue.pl` from the worktree validates the branch, backs it up to origin and
+writes a ticket in `<git-common-dir>/land-queue/`. The coordinator
+(`scripts/land_coordinator.pl`) drains the queue in **waves** on the box that owns the primary
+checkout and the master — the authority:
+
+- **One suite per wave.** It rebases the wave's branches onto a growing tip in a scratch worktree,
+  drops each branch's `VERSION` hunk, bumps once per branch, regenerates the generated indexes at the
+  tip, runs `run_tests.pl` once on the integrated tree, pushes that tree as one fast-forward and
+  restarts once. The worktrees themselves are left to `worktree_gc`; a landed branch is recognized
+  by the subject a rebase preserves.
+- **One hot-file branch per wave.** The name maps (`Manager/Index.pm`, `Declarations.pm`,
+  `Domain/Loader.pm`, the route rows) and the help/language tables are the conflict class; a second
+  hot ticket waits for the next wave.
+- **A red wave is split, not retried forever.** The suite is retried once; if it is still red, the
+  wave becomes single-ticket waves. The bad branch is refused with its failing lines and the rest
+  land.
+- **The queue is a snapshot.** Re-enqueueing the same branch updates its sha and keeps its place.
+  `perl scripts/land_status.pl` gives the position and verdict; `--stats` prints measured waits and
+  suite times.
+- **A dirty primary blocks this box's apply, not the trunk.** The coordinator pushes the green train,
+  records `apply blocked`, and the next wave retries the fast-forward and restart.
+- **One coordinator per trunk.** Two boxes running it would race the push. The authority is the box
+  with the suite and the primary; a worker box is the next edge (enqueue over SSH, apply the trunk on
+  a timer), not this one.
+- The units are `scripts/systemd/jawnos-land-coordinator.{service,timer}`; install them on the
+  authority. Do not make it a manager utility job: it must land the fix when the tree is broken.
+
 ## Hot files
 
 These are edited by nearly every task, so a landing that touches one should be small and land first —
