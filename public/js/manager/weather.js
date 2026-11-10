@@ -456,6 +456,8 @@ function weatherDayDetail(day, hours) {
 			+ (trend ? '<span>' + weatherEsc(trend) + '</span>' : '')
 			+ '</div>';
 	}
+	var chart = weatherDayChart(hours);
+	if (chart) { html += '<div class="weather_day_chart">' + chart + '</div>'; }
 	if (hours.length) {
 		html += '<div class="weather_day_hours">';
 		for (var i = 0; i < hours.length; i++) {
@@ -551,6 +553,49 @@ function weatherTempTrend(hours) {
 	if (!low || !high || low.t === high.t) { return ''; }
 	return jawnosT('Warmest') + ' ' + weatherHourLabel(high.h.time_text) + ' ' + weatherTemp(high.t)
 		+ ' · ' + jawnosT('Coolest') + ' ' + weatherHourLabel(low.h.time_text) + ' ' + weatherTemp(low.t);
+}
+
+// A compact line for the day: one point an hour, so the rise and fall reads at
+// a glance above the hour cards. Two readings are needed to draw a line.
+function weatherDayChart(hours) {
+	var values = [];
+	for (var i = 0; i < hours.length; i++) {
+		var v = parseFloat(hours[i] && hours[i].temperature);
+		if (!isNaN(v)) { values.push(v); }
+	}
+	if (values.length < 2 || hours.length < 2) { return ''; }
+	var min = Math.min.apply(null, values);
+	var max = Math.max.apply(null, values);
+	var pad = Math.max(1, (max - min) * 0.15);
+	min -= pad;
+	max += pad;
+	var W = 600, H = 120, L = 34, R = 10, T = 12, B = 22;
+	var plotW = W - L - R, plotH = H - T - B;
+	function x(i) { return L + plotW * i / (hours.length - 1); }
+	function y(v) { return T + (max - v) / (max - min) * plotH; }
+	var points = [];
+	var dots = '';
+	for (var j = 0; j < hours.length; j++) {
+		var t = parseFloat(hours[j] && hours[j].temperature);
+		if (isNaN(t)) { continue; }
+		var sx = x(j), sy = y(t);
+		points.push(sx + ',' + sy);
+		dots += '<circle cx="' + sx + '" cy="' + sy + '" r="2" fill="#4a90d9"/>';
+	}
+	if (points.length < 2) { return ''; }
+	var first = weatherHourLabel(hours[0] && hours[0].time_text) || weatherTime(hours[0] && hours[0].time);
+	var last = weatherHourLabel(hours[hours.length - 1] && hours[hours.length - 1].time_text) || weatherTime(hours[hours.length - 1] && hours[hours.length - 1].time);
+	var svg = '<svg viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="' + weatherEsc(jawnosT('Hourly temperature for the day')) + '">';
+	svg += '<line x1="' + L + '" y1="' + T + '" x2="' + L + '" y2="' + (T + plotH) + '" stroke="currentColor" opacity=".22"/>';
+	svg += '<line x1="' + L + '" y1="' + (T + plotH) + '" x2="' + (W - R) + '" y2="' + (T + plotH) + '" stroke="currentColor" opacity=".12"/>';
+	svg += '<text x="' + (L - 4) + '" y="' + (y(max) + 4) + '" text-anchor="end" font-size="10" fill="currentColor" opacity=".6">' + Math.round(max) + '°</text>';
+	svg += '<text x="' + (L - 4) + '" y="' + (y(min) + 4) + '" text-anchor="end" font-size="10" fill="currentColor" opacity=".6">' + Math.round(min) + '°</text>';
+	svg += '<polyline fill="none" stroke="#4a90d9" stroke-width="2" points="' + points.join(' ') + '"/>';
+	svg += dots;
+	svg += '<text x="' + L + '" y="' + (H - 4) + '" font-size="10" fill="currentColor" opacity=".6">' + weatherEsc(first) + '</text>';
+	svg += '<text x="' + (W - R) + '" y="' + (H - 4) + '" text-anchor="end" font-size="10" fill="currentColor" opacity=".6">' + weatherEsc(last) + '</text>';
+	svg += '</svg>';
+	return svg;
 }
 
 function weatherDayToggle(row) {
