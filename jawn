@@ -13,6 +13,7 @@ BEGIN {
 }
 use JawnOS::Transport;
 use JawnOS::Platform::Ports ();
+use JawnOS::Platform::Process ();
 
 # Everything this tree writes is house data: the database and its WAL, backups,
 # plaintext export temporaries and the logs. Create files private by default so
@@ -920,22 +921,18 @@ sub shut_down() {
 	# clear. Compile probes are left alone: another agent's `perl -c perl/Manager.pl`
 	# looks like a worker by name, so a command line carrying -c/-e/-M is skipped.
 	my @leftovers;
-	if (opendir(my $procs, '/proc')) {
-		for my $entry (readdir $procs) {
-			next unless $entry =~ /^([0-9]+)$/;
-			my $pid = $1;
-			next if $pid == $$ || $pid == $fpid;
-			my $cmd = &pid_cmdline($pid);
-			next if $cmd =~ / (?:-c|-e|-M) /;
-			# The house advertiser runs under a worker; a killed tree can orphan the
-			# avahi-publish-service (ppid 1) and it then keeps advertising the dead
-			# tree's ports. Match only our service name, not every avahi publication.
-			push @leftovers, $pid
-				if (&pid_in_tree($pid, $root))
-				&& ($cmd =~ /President\.pl|Manager\.pl|Websocket\.pl|teletype\.pl|watch\.pl|jawn-bt|Music\.pl|Alarm\.pl/
-				|| ($cmd =~ /avahi-publish-service/ && $cmd =~ /_jawnos-house\._tcp/));
-		}
-		closedir $procs;
+	foreach my $proc ( @{ JawnOS::Platform::Process::table() } ) {
+		my $pid = $proc->{'pid'} + 0;
+		next if $pid == $$ || $pid == $fpid;
+		my $cmd = $proc->{'cmdline'};
+		next if $cmd =~ / (?:-c|-e|-M) /;
+		# The house advertiser runs under a worker; a killed tree can orphan the
+		# avahi-publish-service (ppid 1) and it then keeps advertising the dead
+		# tree's ports. Match only our service name, not every avahi publication.
+		push @leftovers, $pid
+			if (&pid_in_tree($pid, $root))
+			&& ($cmd =~ /President\.pl|Manager\.pl|Websocket\.pl|teletype\.pl|watch\.pl|jawn-bt|Music\.pl|Alarm\.pl/
+			|| ($cmd =~ /avahi-publish-service/ && $cmd =~ /_jawnos-house\._tcp/));
 	}
 	my $cleared = 0;
 	foreach my $pid (@leftovers) {
@@ -959,20 +956,18 @@ sub shut_down() {
 sub pid_alive {
 	my ($pid) = @_;
 	return 0 unless $pid && $pid =~ /^[0-9]+$/;
-	return kill(0, $pid) ? 1 : 0;
+	return JawnOS::Platform::Process::pid_exists($pid) ? 1 : 0;
 }
 
 sub pid_cmdline {
 	my ($pid) = @_;
 	return '' unless $pid && $pid =~ /^[0-9]+$/;
-	if (open(my $fh, '<', "/proc/$pid/cmdline")) {
-		local $/;
-		my $line = <$fh>;
-		close $fh;
-		$line = '' unless defined $line;
-		$line =~ s/\0/ /g;
-		return $line;
-	}
+	my $line = JawnOS::Platform::Process::command_line($pid);
+	return $line if length $line;
+	# An empty answer is a kernel thread, a process that just exited, or a
+	# platform without /proc. Keep the ps fallback this master has always had
+	# for the last case; a kernel thread's brackets match none of the regexes
+	# that ask this question.
 	my $ps = `ps -o args= -p $pid 2>/dev/null`;
 	$ps = '' unless defined $ps;
 	$ps =~ s/\s+$//;
@@ -988,9 +983,8 @@ sub pid_is_jawn {
 # kernel will not show it (Android/SELinux, or a box without /proc).
 sub pid_cwd {
 	my ($pid) = @_;
-	return undef unless $pid && $pid =~ /^[0-9]+$/;
-	my $dir = readlink("/proc/$pid/cwd");
-	return undef unless defined $dir && length $dir;
+	my $dir = JawnOS::Platform::Process::cwd($pid);
+	return undef unless length $dir;
 	$dir =~ s/ \(deleted\)$//;
 	return $dir;
 }
@@ -1005,20 +999,6 @@ sub pid_in_tree {
 	my $dir = &pid_cwd($pid);
 	return 1 unless defined $dir && length $dir;
 	return $dir eq $root ? 1 : 0;
-}
-
-# The ppid from /proc/<pid>/stat. The second field is "(comm)", which can hold
-# spaces and parentheses, so cut through its closing paren before splitting.
-sub pid_parent {
-	my ($pid) = @_;
-	return 0 unless $pid && $pid =~ /^[0-9]+$/;
-	open(my $fh, '<', "/proc/$pid/stat") or return 0;
-	my $line = <$fh>;
-	close $fh;
-	return 0 unless defined $line;
-	$line =~ s/^.*\)\s+//;
-	my ($state, $ppid) = split /\s+/, $line;
-	return $ppid && $ppid =~ /^[0-9]+$/ ? $ppid : 0;
 }
 
 # ---- the Coding agent's own process -----------------------------------------
@@ -1060,15 +1040,12 @@ sub coding_cmdline_ok {
 # too, not only the pid in the file.
 sub coding_pids {
 	my @pids;
-	return @pids unless opendir(my $procs, '/proc');
-	for my $entry (readdir $procs) {
-		next unless $entry =~ /^([0-9]+)$/;
-		my $pid = $1 + 0;
+	foreach my $proc ( @{ JawnOS::Platform::Process::table() } ) {
+		my $pid = $proc->{'pid'} + 0;
 		next if $pid == $$;
 		next unless &coding_cmdline_ok($pid);
 		push @pids, $pid;
 	}
-	closedir $procs;
 	return @pids;
 }
 
@@ -1154,20 +1131,18 @@ sub coding_stop {
 # through one), so an editor that merely opened Manager.pl is left alone.
 sub sweep_orphans {
 	my $cleared = 0;
-	opendir(my $procs, '/proc') or return 0;
-	my @pids = grep { /^[0-9]+$/ } readdir $procs;
-	closedir $procs;
 	my $ours = qr/President\.pl|Manager\.pl|Websocket\.pl|teletype\.pl|watch\.pl|Music\.pl|Alarm\.pl|Sco\.pl|Reception\.pl/;
 	my $supervised = qr/(?:^|[\/\s])jawn(?:\s|$)|President\.pl|Manager\.pl|Websocket\.pl|teletype\.pl|watch\.pl/;
-	foreach my $pid (@pids) {
+	foreach my $proc ( @{ JawnOS::Platform::Process::table() } ) {
+		my $pid = $proc->{'pid'} + 0;
 		next if $pid == $$;
-		my $cmd = &pid_cmdline($pid);
+		my $cmd = $proc->{'cmdline'};
 		next unless $cmd =~ $ours;
 		next if $cmd =~ / (?:-c|-e|-M) /;
 		my ($exe) = split /\s+/, $cmd;
 		next unless ($exe || '') =~ m{(?:^|/)(?:perl[0-9.]*|libbin_perl\.so)$}
 			|| ($exe || '') =~ m{President\.pl$|Manager\.pl$};
-		my $ppid = &pid_parent($pid);
+		my $ppid = $proc->{'ppid'};
 		my $pcmd = $ppid ? &pid_cmdline($ppid) : '';
 		next if $pcmd =~ $supervised;
 		next unless &pid_alive($pid);
@@ -1189,20 +1164,11 @@ sub reap_own_children {
 	my ($keep) = @_;
 	$keep ||= 0;
 	my @kids;
-	if (opendir(my $procs, '/proc')) {
-		for my $entry (readdir $procs) {
-			next unless $entry =~ /^([0-9]+)$/;
-			my $pid = $1;
-			next if $pid == $$ || $pid == $keep;
-			next unless open(my $fh, '<', "/proc/$pid/stat");
-			my $line = <$fh>;
-			close $fh;
-			next unless defined $line;
-			# "pid (comm) state ppid ..." - comm may hold spaces and parens
-			my ($state, $ppid) = $line =~ /\)\s+(\S+)\s+([0-9]+)\s/;
-			push @kids, [$pid, $state] if defined $ppid && $ppid == $$;
-		}
-		closedir $procs;
+	foreach my $proc ( @{ JawnOS::Platform::Process::table() } ) {
+		my $pid = $proc->{'pid'} + 0;
+		next if $pid == $$ || $pid == $keep;
+		next unless $proc->{'ppid'} == $$;
+		push @kids, [ $pid, $proc->{'state'} ];
 	}
 	my $cleaned = 0;
 	for my $kid (@kids) {

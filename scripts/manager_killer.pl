@@ -31,6 +31,7 @@ use File::Slurp qw(read_file write_file);
 use Mojo::JSON qw(decode_json);
 use Time::HiRes qw(sleep time);
 use JawnOS::Platform::Ports ();
+use JawnOS::Platform::Process ();
 
 # Stop everything jawn runs: the tree and its workers, the BLE client, ollama,
 # and whatever still holds the web port. This is the clean path behind the
@@ -83,22 +84,13 @@ my $android = (-e '/system/bin/init' || defined $ENV{'ANDROID_ROOT'}) ? 1 : 0;
 my @SCRIPTS = qw(President.pl Manager.pl Websocket.pl teletype.pl watch.pl Music.pl Alarm.pl);
 my %RANK = (master => 0, tree => 1, 'jawn-bt' => 2, ollama => 3, tts => 4, sshpass => 5, ssh => 6);
 
-sub cmdline {
-	my ($pid) = @_;
-	open(my $fh, '<', "/proc/$pid/cmdline") or return '';
-	local $/;
-	my $line = <$fh>;
-	close $fh;
-	$line = '' unless defined $line;
-	$line =~ s/\0/ /g;
-	return $line;
-}
-
+# The executable for a table row: the link when the kernel shows it, otherwise
+# argv[0] (a direct shebang run). Both come from the one scan, so this no longer
+# re-reads /proc per pid.
 sub exe_path {
-	my ($pid) = @_;
-	my $link = readlink("/proc/$pid/exe");
-	return $link if defined $link && length $link;
-	my ($first) = split /\s+/, &cmdline($pid);
+	my ($exe, $cmd) = @_;
+	return $exe if defined $exe && length $exe;
+	my ($first) = split /\s+/, $cmd;
 	return defined $first ? $first : '';
 }
 
@@ -107,19 +99,27 @@ sub exe_path {
 # caller then keeps the old behaviour rather than missing its own tree.
 sub cwd_of {
 	my ($pid) = @_;
-	return undef unless $pid && $pid =~ /^[0-9]+$/;
-	my $dir = readlink("/proc/$pid/cwd");
-	return undef unless defined $dir && length $dir;
+	my $dir = JawnOS::Platform::Process::cwd($pid);
+	return undef unless length $dir;
 	$dir =~ s/ \(deleted\)$//;
 	return $dir;
+}
+
+# The same question against a cwd already read by one table pass, so the scan
+# does not follow each link twice. An unreadable cwd keeps the old answer
+# (in scope): a missed stop wedges the next boot.
+sub in_cwd_scope_value {
+	my ($dir) = @_;
+	return 1 unless length $cwd_scope;
+	return 1 unless defined $dir && length $dir;
+	$dir =~ s/ \(deleted\)$//;
+	return $dir eq $cwd_scope ? 1 : 0;
 }
 
 sub in_cwd_scope {
 	my ($pid) = @_;
 	return 1 unless length $cwd_scope;
-	my $dir = &cwd_of($pid);
-	return 1 unless defined $dir && length $dir;
-	return $dir eq $cwd_scope ? 1 : 0;
+	return &in_cwd_scope_value(&cwd_of($pid));
 }
 
 sub base {
@@ -129,24 +129,10 @@ sub base {
 	return $path;
 }
 
-sub state {
-	my ($pid) = @_;
-	open(my $fh, '<', "/proc/$pid/stat") or return '';
-	my $line = <$fh>;
-	close $fh;
-	return '' unless defined $line;
-	$line =~ s/^.*\)\s+//;
-	my ($state) = split /\s+/, $line;
-	return defined $state ? $state : '';
-}
-
 sub running {
 	my ($pid) = @_;
 	return 0 unless $pid && $pid =~ /^[0-9]+$/;
-	return 0 unless kill 0, $pid;
-	my $s = &state($pid);
-	return 0 if $s eq 'Z' || $s eq 'X' || $s eq 'x';
-	return 1;
+	return JawnOS::Platform::Process::running($pid) ? 1 : 0;
 }
 
 # The tree also serves ~/.president/tree: one JSON line in, one JSON line out,
@@ -205,20 +191,21 @@ sub extra {
 	return '';
 }
 
-# One /proc pass. Only processes that name a jawn program (or one of the few
-# helpers the tree starts) are returned, and only when their executable still
-# is perl - a shell, editor, compiler probe or a test that merely mentions a
-# script in its command line is left alone.
+# One process table pass. Only processes that name a jawn program (or one of the
+# few helpers the tree starts) are returned, and only when their executable
+# still is perl - a shell, editor, compiler probe or a test that merely mentions
+# a script in its command line is left alone. cwd is read in the same pass so a
+# tree can be held to its checkout without following the link again.
 sub scan_processes {
 	my @found;
-	opendir(my $procs, '/proc') or return @found;
-	foreach my $pid (grep { /^[0-9]+$/ } readdir $procs) {
+	foreach my $proc ( @{ JawnOS::Platform::Process::table(cwd => 1, exe => 1) } ) {
+		my $pid = $proc->{'pid'};
 		next if $pid == $self || $pid == $parent;
-		next unless &running($pid);
-		my $cmd = &cmdline($pid);
+		next unless &live($proc);
+		my $cmd = $proc->{'cmdline'};
 		next unless length $cmd;
 		next if length $scope && index($cmd, $scope) < 0;
-		my $exe = &exe_path($pid);
+		my $exe = &exe_path($proc->{'exe'}, $cmd);
 		my $label = '';
 		if ($kill_master && &is_master($cmd, $exe)) { $label = 'master' }
 		elsif (&is_tree($cmd, $exe)) { $label = 'tree' }
@@ -226,11 +213,20 @@ sub scan_processes {
 		next unless $label;
 		# A tree or master belongs to a checkout; a shared helper belongs to the
 		# host. Only the former is held to --cwd.
-		next if $label =~ /^(?:master|tree)$/ && !&in_cwd_scope($pid);
+		next if $label =~ /^(?:master|tree)$/ && !&in_cwd_scope_value($proc->{'cwd'});
 		push @found, { pid => $pid, label => $label, cmd => $cmd };
 	}
-	closedir $procs;
 	return @found;
+}
+
+# The old scan asked kill(0) before trusting a pid. A row exists only because
+# its stat was read, so the only part of that test still worth keeping is the
+# one kill(0) on its own cannot answer: a zombie is not something to stop.
+sub live {
+	my ($proc) = @_;
+	my $state = $proc->{'state'} || '';
+	return 0 if $state eq 'Z' || $state eq 'X' || $state eq 'x';
+	return 1;
 }
 
 my @found = &scan_processes();
@@ -265,13 +261,13 @@ if ($asked) {
 if (@ordered) {
 	print "manager_killer: " . scalar(@ordered) . " process(es)\n";
 	foreach my $p (@ordered) {
-		kill 'TERM', $p->{'pid'};
+		JawnOS::Platform::Process::signal('TERM', $p->{'pid'});
 		print "TERM $p->{'pid'} $p->{'label'}\n";
 	}
 	sleep 0.4;
 	foreach my $p (@ordered) {
 		next unless &running($p->{'pid'});
-		kill 'KILL', $p->{'pid'};
+		JawnOS::Platform::Process::signal('KILL', $p->{'pid'});
 		print "KILL $p->{'pid'} $p->{'label'}\n";
 	}
 	# A prefork manager can start a spare while it is being stopped. One more
@@ -279,7 +275,7 @@ if (@ordered) {
 	foreach my $p (&scan_processes()) {
 		next if grep { $_->{'pid'} == $p->{'pid'} } @ordered;
 		next unless &running($p->{'pid'});
-		kill 'KILL', $p->{'pid'};
+		JawnOS::Platform::Process::signal('KILL', $p->{'pid'});
 		print "KILL $p->{'pid'} $p->{'label'} (spawned during the stop)\n";
 	}
 }
@@ -301,7 +297,7 @@ unless ($list_only || $scope) {
 		next if $pid == $self || $pid == $parent;
 		next unless &running($pid);
 		next unless &in_cwd_scope($pid);
-		kill 'KILL', $pid;
+		JawnOS::Platform::Process::signal('KILL', $pid);
 		print "KILL $pid listener\n";
 	}
 }

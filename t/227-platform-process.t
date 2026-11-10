@@ -1,4 +1,5 @@
 # tests-for: lib/JawnOS/Platform/Process.pm
+# tests-for: jawn scripts/manager_killer.pl
 # tests-for: lib/JawnOS/Manager/Part06.pm lib/JawnOS/Manager/Part35.pm
 # tests-for: lib/JawnOS/Controller/manager_misc.pm
 # tests-for: lib/JawnOS/Domain/House.pm lib/JawnOS/Domain/Ai.pm
@@ -10,7 +11,8 @@
 #            parent/group/cwd/exe reads, RSS, the one-pass table, the ppid
 #            closure and kill-tree, the machine memory/uptime/load/CPU reads,
 #            the safe empty answers a platform without /proc gives, and that
-#            the request-side call sites no longer open /proc themselves.
+#            the request-side call sites, the master's stop sweep and the
+#            manager killer no longer open /proc themselves.
 
 use strict;
 use warnings;
@@ -374,6 +376,20 @@ for my $rel (@folded) {
 	my $src = do { local $/; <$fh> };
 	close $fh;
 	unlike($src, qr{['"]/proc['"/]}, "$rel reads processes through the platform module");
+}
+
+# The master and the killer read process state through the seam too. The
+# quoted-path test above would also flag jawn's log-filter string
+# ('cannot open /proc/net'), which is not a process read, so these look for the
+# two shapes a process read actually takes.
+my @process_folded = qw(jawn scripts/manager_killer.pl);
+for my $rel (@process_folded) {
+	open(my $fh, '<', "$repo/$rel") or die "read $rel: $!";
+	my $src = do { local $/; <$fh> };
+	close $fh;
+	unlike($src, qr{opendir\([^)]*['"]/proc['"]}, "$rel does not scan /proc itself");
+	unlike($src, qr{(?:open|readlink)\([^)]*['"]/proc/\$}, "$rel does not read /proc/<pid> itself");
+	like($src, qr{JawnOS::Platform::Process::}, "$rel uses the platform process seam");
 }
 
 done_testing();

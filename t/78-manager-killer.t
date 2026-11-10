@@ -48,6 +48,16 @@ unlike($src, qr/`\s*(?:pkill|pgrep)/, 'no pkill/pgrep in the code path');
 like($src, qr/sub is_tree/, 'the tree is identified by executable and command line');
 like($src, qr/--scope/, 'a scope keeps a test run away from the live tree');
 
+# The scan itself no longer opens /proc: one table pass supplies the state, the
+# command line, the executable and the cwd, and signals go through the same
+# module. These shapes are how a process read appears; a comment that merely
+# names /proc is not one.
+unlike($src, qr{opendir\([^)]*['"]/proc['"]}, 'the killer does not scan /proc itself');
+unlike($src, qr{(?:open|readlink)\([^)]*['"]/proc/\$}, 'the killer does not read /proc/<pid> itself');
+unlike($src, qr{kill\s+0\s*,}, 'the killer does not test liveness with kill 0');
+like($src, qr{JawnOS::Platform::Process::table\(cwd => 1, exe => 1\)}, 'one table pass carries cwd and exe');
+like($src, qr{JawnOS::Platform::Process::signal}, 'signals go through the platform module');
+
 my $tmp = tempdir(CLEANUP => 1);
 
 # The master hands the killer its own root on every stop, and places a pid in
@@ -55,6 +65,11 @@ my $tmp = tempdir(CLEANUP => 1);
 my $master_src = read_file("$root/jawn");
 like($master_src, qr/sub pid_in_tree/, 'the master places a pid in its own checkout');
 like($master_src, qr/manager_killer\.pl --cwd=/, 'the stop hands the killer its own root');
+unlike($master_src, qr{opendir\([^)]*['"]/proc['"]}, 'the master does not scan /proc itself');
+unlike($master_src, qr{(?:open|readlink)\([^)]*['"]/proc/\$}, 'the master does not read /proc/<pid> itself');
+unlike($master_src, qr{kill\s*\(\s*0\s*,}, 'the master does not test liveness with kill 0');
+like($master_src, qr{JawnOS::Platform::Process::pid_exists}, 'the master asks the seam whether a pid exists');
+like($master_src, qr{JawnOS::Platform::Process::table}, 'the master scans through the process table');
 
 # A real worker-shaped process: perl running a script named President.pl.
 write_file("$tmp/President.pl", "sleep 60;\n");
@@ -118,6 +133,27 @@ unlike($here, qr/^\Q$elsewhere\E\t/m, 'a process in another checkout is left alo
 my $there = `$^X $script --list --cwd=$other 2>&1`;
 like($there, qr/^\Q$elsewhere\E\t/m, 'the other checkout answers to its own cwd');
 unlike($there, qr/^\Q$fake\E\t/m, 'and does not name this one');
+
+# A checkout removed while its tree still runs: the kernel appends " (deleted)"
+# to the cwd link, and the killer must still place the process in that checkout.
+# That is the same rule the master's pid_in_tree keeps, and it is what the seam
+# returns, so this proves the fold did not lose it.
+my $gone = tempdir(CLEANUP => 1);
+write_file("$gone/President.pl", "sleep 60;\n");
+my $deleted = fork();
+die "fork deleted: $!\n" unless defined $deleted;
+if ($deleted == 0) {
+	chdir($gone) or exit 126;
+	exec($^X, "$gone/President.pl");
+	exit 127;
+}
+ok(wait_for_cmdline($deleted, 'President.pl'), 'the worker in the removed checkout is running');
+unlink("$gone/President.pl");
+rmdir($gone);
+my $gone_list = `$^X $script --list --cwd=$gone 2>&1`;
+like($gone_list, qr/^\Q$deleted\E\t/m, '--cwd still places a worker whose checkout was removed');
+kill 'KILL', $deleted;
+waitpid($deleted, 0);
 
 system($^X, $script, "--scope=$tmp") == 0 or fail('the killer exited non-zero');
 
