@@ -88,6 +88,35 @@ sub public_origin_host {
 	return lc $d;
 }
 
+# A state-changing request from a browser must name this house as its Origin,
+# or, when the browser omits Origin, as its Referer. An empty source is allowed
+# only for a caller that says it is an XHR: a cross-origin form cannot set that
+# header. $ours lists the hostnames this box answers to; a port is ignored.
+sub http_origin_ok {
+	my ($source, $ours, $xhr) = @_;
+	my $has = (defined $source && length $source) ? 1 : 0;
+	return (($xhr && !$has) ? 1 : 0) unless $has;
+	my ($host) = $source =~ m{^https?://(\[[^\]]+\]|[^/:]+)}i;
+	return 0 unless defined $host && length $host;
+	my $norm = sub {
+		my ($h) = @_;
+		return '' unless defined $h;
+		$h =~ s/^\s+|\s+$//g;
+		$h = lc $h;
+		return $1 if $h =~ /^\[([^\]]+)\](?::\d+)?$/;
+		return $h if ($h =~ tr/:/:/) > 1;
+		$h =~ s/:\d+$//;
+		return $h;
+	};
+	my $want = $norm->($host);
+	return 0 unless length $want;
+	my $list = ref $ours eq 'ARRAY' ? $ours : [$ours];
+	foreach my $one ( @{$list} ) {
+		return 1 if $norm->($one) eq $want;
+	}
+	return 0;
+}
+
 sub tailnet_address {
 	my ($rm) = @_;
 	my $network = ref($rm->{'network'}) eq 'HASH' ? $rm->{'network'} : (eval { decode_json($rm->{'network'} || '{}') } || {});

@@ -630,7 +630,7 @@ sub action_11638 {
 		foreach my $defb ( @{$defunct_backups} ) {
 			if ($defb->{'enc_file'} && -e $defb->{'enc_file'}) {
 				my $delb = $defb->{'enc_file'};
-				`shred -u $delb`;
+				system('shred', '-u', $delb);
 			}
 			&deletion_registration({ table => 'backups', uuid => $defb->{'uuid'}, scope => 'single', server_time => $defb->{'server_time'} });
 			&subs::db_delete('backups', { uuid => $defb->{'uuid'} });
@@ -640,7 +640,7 @@ sub action_11638 {
 	}
 	if (-e $backup_data->{'enc_file'}) {
 		my $f = $backup_data->{'enc_file'};
-		`shred -u $f`;
+		system('shred', '-u', $f);
 	}
 	# The puller's confirmation is what makes a migration done: mark the
 	# snapshot row it was waiting on, so Dev's status follows the real finish

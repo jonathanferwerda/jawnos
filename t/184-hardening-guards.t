@@ -1,4 +1,4 @@
-# tests-for: lib/JawnOS/Domain/Format.pm lib/JawnOS/Domain/Crypto.pm lib/JawnOS/Domain/Crypt.pm lib/JawnOS/Domain/Sent.pm lib/JawnOS/Manager/Part04.pm lib/JawnOS/Manager/Part05.pm lib/JawnOS/Manager/Part13.pm lib/JawnOS/Manager/Part17.pm lib/JawnOS/Controller/manager_configure.pm lib/JawnOS/Controller/manager_configure3.pm lib/JawnOS/Controller/manager_configure4.pm lib/JawnOS/Controller/manager_configure5.pm lib/JawnOS/Controller/manager_embedded.pm lib/JawnOS/Controller/manager_misc.pm lib/JawnOS/Controller/manager_misc5.pm lib/JawnOS/Controller/manager_misc6.pm lib/JawnOS/Controller/manager_misc12.pm lib/JawnOS/Controller/manager_misc14.pm lib/JawnOS/Controller/manager_mail.pm lib/JawnOS/Controller/mail_ws.pm qa/coding_night/run.pl qa/systemd/jawnos-qa-coding.service desktop/install-wallet.sh jp/alarmclock/alarmclock_02_ble_handlers_wifi_setup.ino jp/alarmclock/alarmclock_03_loop_house_inputs_jobs.ino jt/jt_01_globals_ble_house.ino jt/jt_02_lorawan_radio_gps.ino jt/jt_03_setup.ino jw/jw_01_globals.ino jw/jw_03_setup.ino public/js/manager/embedded/01_ota_nowme.js templates/embedded/body.html.ep lib/JawnOS/Controller/manager_mail2.pm lib/JawnOS/Controller/manager_misc2.pm lib/JawnOS/Controller/manager_misc7.pm lib/JawnOS/Controller/manager_misc9.pm lib/JawnOS/Controller/manager_misc10.pm lib/JawnOS/Controller/manager_misc13.pm lib/JawnOS/Controller/sesh_check.pm lib/JawnOS/Domain/Generate.pm lib/JawnOS/Domain/Weather.pm lib/JawnOS/Manager/Part30.pm lib/JawnOS/Manager/Part32.pm
+# tests-for: lib/JawnOS/Domain/Format.pm lib/JawnOS/Domain/Crypto.pm lib/JawnOS/Domain/Crypt.pm lib/JawnOS/Domain/Sent.pm lib/JawnOS/Manager/Part04.pm lib/JawnOS/Manager/Part05.pm lib/JawnOS/Manager/Part13.pm lib/JawnOS/Manager/Part17.pm lib/JawnOS/Controller/manager_configure.pm lib/JawnOS/Controller/manager_configure3.pm lib/JawnOS/Controller/manager_configure4.pm lib/JawnOS/Controller/manager_configure5.pm lib/JawnOS/Controller/manager_embedded.pm lib/JawnOS/Controller/manager_misc.pm lib/JawnOS/Controller/manager_misc5.pm lib/JawnOS/Controller/manager_misc6.pm lib/JawnOS/Controller/manager_misc12.pm lib/JawnOS/Controller/manager_misc14.pm lib/JawnOS/Controller/manager_mail.pm lib/JawnOS/Controller/mail_ws.pm qa/coding_night/run.pl qa/systemd/jawnos-qa-coding.service desktop/install-wallet.sh jp/alarmclock/alarmclock_02_ble_handlers_wifi_setup.ino jp/alarmclock/alarmclock_03_loop_house_inputs_jobs.ino jt/jt_01_globals_ble_house.ino jt/jt_02_lorawan_radio_gps.ino jt/jt_03_setup.ino jw/jw_01_globals.ino jw/jw_03_setup.ino public/js/manager/embedded/01_ota_nowme.js templates/embedded/body.html.ep lib/JawnOS/Controller/manager_mail2.pm lib/JawnOS/Controller/manager_misc2.pm lib/JawnOS/Controller/manager_misc7.pm lib/JawnOS/Controller/manager_misc9.pm lib/JawnOS/Controller/manager_misc10.pm lib/JawnOS/Controller/manager_misc13.pm lib/JawnOS/Controller/sesh_check.pm lib/JawnOS/Domain/Generate.pm lib/JawnOS/Domain/Weather.pm lib/JawnOS/Manager/Part30.pm lib/JawnOS/Manager/Part32.pm lib/JawnOS/Controller/manager_ws.pm lib/JawnOS/Controller/manager_misc11.pm lib/JawnOS/Controller/manager_misc3.pm lib/JawnOS/Domain/Backup.pm lib/JawnOS/Domain/Name.pm lib/JawnOS/Manager/Part02.pm lib/JawnOS/Manager/Part06.pm lib/JawnOS/Manager/Part10.pm
 # covers:    The second audit pass: file reads stay inside a root, peer proof is
 #           signed, the console channel escapes its data, and OTA needs a token.
 
@@ -187,5 +187,61 @@ ok(index($part32, 'request text is data, not source') >= 0,
 	'the arithmetic eval is guarded');
 like(source('qa/security/allowlist.json'), qr/restricted to digits/,
 	'the allowlist records why the calculator eval remains');
+
+# --- the third audit pass: client text never becomes shell ------------------
+my $ws = source('lib/JawnOS/Controller/manager_ws.pm');
+ok(index($ws, 'my %waveforms = map { $_ => 1 } qw(sine square triangle sawtooth') >= 0,
+	'the synth waveform is a whitelist, not client text');
+like($ws, qr/\$freq =~ \/\\A\\d\{1,5\}/, 'the synth frequency is digits only');
+like($ws, qr/\$length =~ \/\\A\\d\{1,2\}/, 'the synth length is digits only');
+
+my $conf5 = source('lib/JawnOS/Controller/manager_configure5.pm');
+ok(index($conf5, q{`sqlite3 ` . &quote($database) . ' .tables'}) >= 0,
+	'a table probe quotes the database path');
+ok(index($conf5, q{quote(".backup '$database.1.db'")}) >= 0, 'a backup operand is quoted whole');
+ok(index($conf5, "system('mkdir', '-p', \$temp_folder)") >= 0, 'the export folder is made in list form');
+ok(index($conf5, "system('touch', \$tdatabase)") >= 0, 'the export scratch file is made in list form');
+ok(index($conf5, "system('shred', '-u', \$tdatabase)") >= 0, 'the export scratch file is shredded in list form');
+ok(index($conf5, "system('rm', '-R', \$temp_folder)") >= 0, 'the export folder is removed in list form');
+ok(index($conf5, 'opendir(my $dh, $folder)') >= 0, 'a folder listing is read in Perl, not by ls');
+unlike($conf5, qr/`ls \$folder`/, 'no raw folder reaches ls');
+
+my $misc10 = source('lib/JawnOS/Controller/manager_misc10.pm');
+ok(index($misc10, 'opendir(my $dh, $folder)') >= 0, 'the file browser reads its folder in Perl');
+unlike($misc10, qr/`ls \$folder`/, 'no raw folder reaches ls');
+
+ok(index(source('lib/JawnOS/Controller/manager_misc11.pm'), "system('mkdir', '-p', \$dir)") >= 0,
+	'the SMS part folder is made in list form');
+my $misc3 = source('lib/JawnOS/Controller/manager_misc3.pm');
+ok(index($misc3, "system('shred', '-u', \$delb)") >= 0, 'a defunct backup is shredded in list form');
+ok(index($misc3, "system('shred', '-u', \$f)") >= 0, 'the replaced backup is shredded in list form');
+
+my $backupdom = source('lib/JawnOS/Domain/Backup.pm');
+ok(index($backupdom, q{`sqlite3 ` . &quote($database) . ' .tables'}) >= 0,
+	'the backup table probe quotes the database path');
+ok(index($backupdom, "system('shred', '-u', \$schema_file)") >= 0, 'the scratch schema is shredded in list form');
+ok(index($backupdom, q{&quote($temporary_path) . '*'}) >= 0, 'the scratch-file glob is quoted, its wildcard left outside');
+ok(index(source('lib/JawnOS/Domain/Name.pm'), q{`sqlite3 ` . &quote($database) . ' .tables'}) >= 0,
+	'a rename reads its tables through a quoted path');
+
+my $part02 = source('lib/JawnOS/Manager/Part02.pm');
+ok(index($part02, "system('mkdir', '-p', \$dir)") >= 0, 'the picture folder is made in list form');
+ok(index($part02, "system('mkdir', '-p', \$thumb_dir)") >= 0, 'the picture thumbnail folder is made in list form');
+ok(index($part02, "system('mkdir', '-p', \$filename)") >= 0, 'the scan folder is made in list form');
+
+my $part06 = source('lib/JawnOS/Manager/Part06.pm');
+ok(index($part06, "system('mkdir', '-p', \$dir)") >= 0, 'the market camera folder is made in list form');
+ok(index($part06, "system('shred', '-u', \$t)") >= 0, 'a receipt intermediate is shredded in list form');
+
+my $part10 = source('lib/JawnOS/Manager/Part10.pm');
+ok(index($part10, "system('mkdir', '-p', \$temp_folder)") >= 0, 'the remote upgrade folder is made in list form');
+ok(index($part10, "system('rm', '-R', \$temp_folder)") >= 0, 'the remote upgrade folder is removed in list form');
+ok(index($part10, "system('shred', '-u', \$temporary_file)") >= 0, 'a remote upgrade scratch file is shredded in list form');
+
+# The CSRF origin decision has its own unit test; this pins its wiring.
+my $hooks = source('perl/hooks.pl');
+ok(index($hooks, '&subs::http_origin_ok(') >= 0, 'the dispatcher asks the origin helper');
+ok(index($hooks, 'security/media_lock') >= 0, 'the three beacons stay exempt');
+
 
 done_testing();

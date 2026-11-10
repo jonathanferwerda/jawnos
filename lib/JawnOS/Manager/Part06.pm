@@ -214,7 +214,7 @@ sub market_camera_alive {
 sub market_camera_start {
 	&market_camera_stop();
 	my $dir = &market_camera_dir();
-	`mkdir -p $dir` unless -e $dir;
+	system('mkdir', '-p', $dir) unless -e $dir;
 	return 0 unless -d $dir;
 	open my $codes, '>', $dir . '/codes'; close $codes;
 	open my $log, '>', $dir . '/log'; close $log;
@@ -504,7 +504,7 @@ sub market_receipt_scan {
 	$scan_id =~ s/[^A-Za-z0-9]//g;
 	$scan_id = &subs::rightNow() unless length $scan_id;
 	my $filename = &subs::home(&subs::setting_grabber({ app => 'misc', setting => 'scan_location', device => $device }) . '/market');
-	`mkdir -p $filename` unless -e $filename;
+	system('mkdir', '-p', $filename) unless -e $filename;
 	my $base = $filename . '/receipt_' . $scan_id;
 	my $command = &scanner_scan_command($feed, $base);
 	return ('the scanner does not offer that feed', []) unless $command;
@@ -549,7 +549,7 @@ sub market_receipt_scan {
 			my $converted = &subs::image_bridge_convert($t, $jpg);
 			system('magick', 'convert', $t, $jpg) unless $converted;
 		}
-		`shred -u $t`;
+		system('shred', '-u', $t);
 		push @jpgs, $jpg if -e $jpg;
 	}
 	unlink glob("$base.preview_*.jpg");
@@ -598,7 +598,7 @@ sub market_receipt_store {
 	my ($bytes) = @_;
 	return undef unless $bytes && length $bytes;
 	my $folder = &subs::home(&subs::setting_grabber({ app => 'misc', setting => 'scan_location', device => $device }) . '/market');
-	`mkdir -p $folder` unless -e $folder;
+	system('mkdir', '-p', $folder) unless -e $folder;
 	my $jpg = $folder . '/receipt_' . &subs::rightNow() . '.jpg';
 	my $tmp = $jpg . '.in';
 	write_file($tmp, $bytes);

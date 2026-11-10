@@ -106,6 +106,36 @@ Manager::app->hook(before_dispatch => sub {
 		}
 	}
 
+	# CSRF: a cookie-authenticated state change must come from the house's own
+	# page. SameSite=Lax is the first line; this is the second, for a WebView that
+	# ignores SameSite. A peer's signed request, an embedded board's token and a
+	# direct loopback caller are not browsers; the three beacon posts cannot set a
+	# header. An Origin naming another host is refused even with
+	# X-Requested-With, because a cross-origin page cannot set that header.
+	if (($c->req->method // '') =~ /^(?:POST|PUT|PATCH|DELETE)$/
+		&& ($c->session('authentication') || '') eq 'approved'
+		&& ($c->tx->remote_address ne $c->tx->local_address
+			|| $c->req->headers->header('X-Forwarded-For')
+			|| $c->req->headers->header('Forwarded'))
+		&& !$c->req->headers->header('X-Peer-Signature')
+		&& !$c->req->headers->header('X-Jawn-Authorization')) {
+		my $csrf_path = $c->req->url->path->to_string;
+		my $csrf_source = ($c->req->headers->header('Origin') // '')
+			|| ($c->req->headers->header('Referer') // '');
+		my $csrf_ok = $csrf_path =~ m{^/manager/(?:debrief|js_error|security/media_lock)$}
+			|| &subs::http_origin_ok($csrf_source, [
+				$c->req->url->base->host, $config->{'domain'},
+				&subs::public_origin_host(), &subs::local_domain(),
+				'127.0.0.1', 'localhost', '::1'
+			], ($c->req->headers->header('X-Requested-With') // '') =~ /XMLHttpRequest/i);
+		unless ($csrf_ok) {
+			$log->info('csrf: refused ' . ($c->req->method // '') . ' ' . $csrf_path . ' from ' . ($c->tx->remote_address // '?') . ' source=' . ($csrf_source || '-'));
+			$c->res->code(403);
+			$c->render(text => 'forbidden');
+			return;
+		}
+	}
+
 
 #	&subs::log_writer($remote_address . ' ' . $path);
 

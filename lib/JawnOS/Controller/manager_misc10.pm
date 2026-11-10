@@ -124,7 +124,11 @@ sub action_30917 {
 		pop @folder;
 
 		my $folder = join '/', @folder;
-		my @files = split /\n/, `ls $folder`;
+		my @files;
+		if (opendir(my $dh, $folder)) {
+			@files = sort grep { $_ ne '.' && $_ ne '..' } readdir($dh);
+			closedir $dh;
+		}
 		foreach my $fi ( @files ) {
 			if ($location eq './') {
 				$fi = $gb::pwd . '/' . $fi;

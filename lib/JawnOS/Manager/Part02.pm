@@ -125,9 +125,9 @@ sub take_picture($c,$data) {
 	my $media_setting = $kind eq 'video' ? 'video_location' : 'photo_location';
 	my $folder = &subs::home(&subs::setting_grabber( { app => 'misc', setting => $media_setting, device => $device } ));
 	my $dir = $folder . '/' . $app_path;
-	`mkdir -p $dir` unless -e $dir;
+	system('mkdir', '-p', $dir) unless -e $dir;
 	my $thumb_dir = $dir . '/.thumbs/';
-	`mkdir -p $thumb_dir` unless -e $thumb_dir;
+	system('mkdir', '-p', $thumb_dir) unless -e $thumb_dir;
 	my $base = $dir . '/' . $app_path . '_' . $timestamp;
 	my $thumb = $thumb_dir . $app_path . '_' . $timestamp . '.jpg';
 	my $ext = $kind eq 'video' ? 'mp4' : 'jpg';
@@ -287,9 +287,9 @@ sub scan($c,$scandata) {
 	my $folder = &subs::home(&subs::setting_grabber( { app => 'misc', setting => 'scan_location', device => $device } ));
 	my $filename = $folder . '/' . $app_path;
 	$filename = &subs::home($filename);
-	`mkdir -p $filename` unless -e $filename;
+	system('mkdir', '-p', $filename) unless -e $filename;
 	my $thumb_folder = $filename . '/.thumbs';
-	`mkdir -p $thumb_folder` unless -e $thumb_folder;
+	system('mkdir', '-p', $thumb_folder) unless -e $thumb_folder;
 	my $thumb = $thumb_folder . '/' . $app_path . '_' . $timestamp . '.jpg';
 	my $file = $filename . '/' . $app_path . '_' . $timestamp;
 	my $image_file = $file . '.jpg';

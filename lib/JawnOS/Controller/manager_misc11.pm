@@ -857,7 +857,7 @@ sub action_40709 {
 		$name =~ s{[^A-Za-z0-9._-]}{_}g;
 		my $mime = $p->{'mime'} || 'image/jpeg';
 		my $dir = &subs::home('~/.shots/sms_parts');
-		`mkdir -p $dir` unless -e $dir;
+		system('mkdir', '-p', $dir) unless -e $dir;
 		my $file = $dir . '/' . &subs::random_string_creator(8) . '-' . $name;
 		my $bytes = decode_base64($data);
 		&write_file($file, $bytes);

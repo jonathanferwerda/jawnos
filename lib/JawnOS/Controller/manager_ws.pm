@@ -645,14 +645,14 @@ sub action_47050 {
 			}
 		}
 		elsif ($data->{'type'} eq 'synth' && $app eq 'music') {
-			my $freq = $data->{'freq'};
-			my $waveform = $data->{'waveform'};
-			my $length = $data->{'length'};
-      &subs::subprocessor(sub {
-		    Mojo::IOLoop->reset;
-
+			# This frame is client data: only a bounded number and a known waveform
+			# may reach the shell. synth_frame_checked (at the end of this file)
+			# returns nothing for a frame that is not playable.
+			my ($freq, $waveform, $length) =
+				&synth_frame_checked($data->{'freq'}, $data->{'waveform'}, $data->{'length'});
+			&subs::subprocessor(sub { Mojo::IOLoop->reset;
 				`play "|sox -n -p synth $length $waveform $freq " &`;
-			}, { name => 'synth ws player' });
+			}, { name => 'synth ws player' }) if $length;
 		}
 		elsif ($data->{'method'} eq 'playerCache') {
 			&subs::cache_set({ app => 'music', context => 'player' }, $data);
@@ -845,4 +845,17 @@ sub action_47101 {
 	# this request; the helper finds it and says whether the frame went.
 	my $sent = &subs::device_ws_write_frame($chip_id, $frame);
 	$c->render(json => { sent => $sent ? 1 : 0 });
+}
+
+# A synth frame is client data: only a bounded number and a known waveform may
+# reach the shell. Returns nothing when the frame is not playable.
+sub synth_frame_checked {
+	my ($freq, $waveform, $length) = @_;
+	my %waveforms = map { $_ => 1 } qw(sine square triangle sawtooth trapezium exp whitenoise pinknoise brownnoise pluck);
+	$waveform = 'sine' unless defined $waveform && $waveforms{$waveform};
+	return ()
+		unless defined $length && $length =~ /\A\d{1,2}(?:\.\d{1,3})?\z/ && $length > 0
+		&& defined $freq && $freq =~ /\A\d{1,5}(?:\.\d{1,3})?\z/ && $freq >= 20 && $freq <= 20000;
+	$length = 60 if $length > 60;
+	return ($freq, $waveform, $length);
 }

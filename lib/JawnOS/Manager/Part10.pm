@@ -294,7 +294,7 @@ our ($APP, $ws_live_window, $encoder, $decoder, $tuuid, $thread_uuid, $universal
 						&Websocket::send('tab', { yellow => $html, uuid => $auuid, colour => $remote_machine->{'data'}->{'manager_colour'}, progress => 1, state => 'running'  });
 						&update_database({ commands => $body->{'update_commands'} });
 					}
-					`mkdir -p $temp_folder` unless -e "$temp_folder";
+					system('mkdir', '-p', $temp_folder) unless -e $temp_folder;
 					my $temporary_file = $temp_folder . '/tmpman_' . &subs::random_string_creator(4) . '.enc';
 					# A route the caller proved (or a probe that just answered) is the
 					# route to fetch over. Rewriting it to the tunnel loopback defeated
@@ -393,8 +393,8 @@ our ($APP, $ws_live_window, $encoder, $decoder, $tuuid, $thread_uuid, $universal
 							sync_job => $job,
 							colour => $remote_machine->{'data'}->{'manager_colour'}
 						});
-						`shred -u $temporary_file`;
-						`rm -R $temp_folder`;
+						system('shred', '-u', $temporary_file);
+						system('rm', '-R', $temp_folder);
 						if (($disposition->{'status'} || '') ne 'succeed') {
 							# Do not confirm a merge that did not finish: the peer would mark the
 							# snapshot delivered while this machine still lacks it.
@@ -410,7 +410,7 @@ our ($APP, $ws_live_window, $encoder, $decoder, $tuuid, $thread_uuid, $universal
 						&Websocket::send('tab', { yellow => 'Complete', 'close' => 'yes', colour => $remote_machine->{'data'}->{'manager_colour'}, state => 'failed', progress => 100  });
 						&subs::setting_setter({ app => '__president', setting => 'remote_upgrade', value => '' });
 						&subs::say_it('ssh fail');
-						`rm -R $temp_folder`;
+						system('rm', '-R', $temp_folder);
 						return 'failed';
 					}
 					&subs::setting_setter({ app => '__president', setting => 'remote_upgrade', value => '' });
@@ -422,7 +422,7 @@ our ($APP, $ws_live_window, $encoder, $decoder, $tuuid, $thread_uuid, $universal
 					foreach my $defb ( @{$defunct_backups} ) {
 						if ($defb->{'enc_file'} && -e $defb->{'enc_file'}) {
 							my $delb = $defb->{'enc_file'};
-							`shred -u $delb`;
+							system('shred', '-u', $delb);
 						}
 					}
 					my $url = $remote_machine->{'manager'} . '/manager/backup/confirm';

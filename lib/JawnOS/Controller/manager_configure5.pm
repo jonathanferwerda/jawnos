@@ -130,7 +130,7 @@ sub action_19406 {
 	});
 	$db->insert('tickets', $data);
 
-	my $backup = `sqlite3 ` . quote($database) . ` ".backup '$database.1.db'"`;
+	my $backup = `sqlite3 ` . quote($database) . ' ' . quote(".backup '$database.1.db'");
 	my $encryption_standard = &subs::setting_grabber({ app => 'misc', setting => 'encryption_standard' } ) || "aes-256-ctr";
 	my $encrypt = &subs::openssl_file_crypt('e', $encryption_standard, $secret, $database . '.1.db', $enc_file, 0, 1);
 	my $appendage = $universal_splitter . &subs::encrypter($secret,$encryption_standard);
@@ -250,7 +250,7 @@ sub action_19589 {
 	my $c = shift;
 	my ($db,$database,$sql) = &subs::database_grabber();
 	my $returner = { tables => [], auuid => &subs::random_string_creator(20) };
-	my $tables = `sqlite3 $database .tables`;
+	my $tables = `sqlite3 ` . &quote($database) . ' .tables';
 	@{$returner->{'tables'}} = split ' ', $tables;
 
 
@@ -301,20 +301,21 @@ sub action_19632 {
 	&Websocket::send('server', { yellow => $html, uuid => $auuid });
 	my $download_location = &subs::home('~/.president');
 	my $temp_folder = &subs::home($download_location . '/' . &subs::random_string_creator(10));
-	`mkdir -p $temp_folder` unless -e "$temp_folder";
+	system('mkdir', '-p', $temp_folder) unless -e $temp_folder;
 	my $ndatabase = $temp_folder . '/' . &subs::random_string_creator(21) . '.db';
 	my $tdatabase = $temp_folder . '/' . &subs::random_string_creator(20) . '.db';
-	`touch $tdatabase`;
-	`touch $ndatabase`;
-	`sqlite3 $database .schema | grep -vE 'sqlite_stat|sqlite_sequence' > $temp_folder/schema.sql`;
-	my $backup = `sqlite3 $database ".backup '$tdatabase'"`;
+	system('touch', $tdatabase);
+	system('touch', $ndatabase);
+	my $schema_dump = 'sqlite3 ' . &quote($database) . q{ .schema | grep -vE 'sqlite_stat|sqlite_sequence' > } . &quote("$temp_folder/schema.sql");
+	`$schema_dump`;
+	my $backup = `sqlite3 ` . &quote($database) . ' ' . &quote(".backup '$tdatabase'");
 
-	my $command = `sqlite3 $ndatabase < $temp_folder/schema.sql`;
+	my $command = `sqlite3 ` . &quote($ndatabase) . ' < ' . &quote("$temp_folder/schema.sql");
 	my $nsql = Mojo::SQLite->new('sqlite:' . $ndatabase);
 	my $ndb = $nsql->db;
 	my $tsql = Mojo::SQLite->new('sqlite:' . $tdatabase);
 	my $tdb = $tsql->db;
-	my $tables = `sqlite3 $ndatabase .tables`;
+	my $tables = `sqlite3 ` . &quote($ndatabase) . ' .tables';
 	@{$returner->{'tables'}} = split ' ', $tables;
 
 	foreach my $table ( @{$returner->{'tables'}} ) {
@@ -355,11 +356,11 @@ sub action_19632 {
 			}
 		}
 	}
-	$backup = `sqlite3 $ndatabase ".backup '$database'"`;
-	`shred -u $temp_folder/schema.sql`;
-	`shred -u $tdatabase`;
-	`shred -u $ndatabase`;
-	`rm -R $temp_folder`;
+	$backup = `sqlite3 ` . &quote($ndatabase) . ' ' . &quote(".backup '$database'");
+	system('shred', '-u', "$temp_folder/schema.sql");
+	system('shred', '-u', $tdatabase);
+	system('shred', '-u', $ndatabase);
+	system('rm', '-R', $temp_folder);
 	$c->render(json => $returner);
 }
 
@@ -626,7 +627,11 @@ sub action_41659 {
 			$folder_name =~ s/_location$//gi;
 			my $folder = &subs::home($misc_settings->{$device}->{$ms} . '/' . &subs::path_name($app));
 
-			my @files = split /\n/, `ls $folder`;
+			my @files;
+			if (opendir(my $dh, $folder)) {
+				@files = sort grep { $_ ne '.' && $_ ne '..' } readdir($dh);
+				closedir $dh;
+			}
 
 			if (scalar @files > 0) {
 				$html .= '<h3>' . &subs::format_name($folder_name) . ':</h3> ' . $folder . '<br>';
