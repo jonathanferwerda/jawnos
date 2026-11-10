@@ -251,6 +251,9 @@ sub git_checkout_normalize {
 	my $repo  = $opts->{'repo'} || &subs::home('~/jawnos');
 	my $label = $opts->{'label'} || 'sync';
 	my $branch = $opts->{'branch'} || 'main';
+	# A branch is a ref name, never a shell word: it is interpolated into the git
+	# commands below, and `$(...)` in a name would run there.
+	$branch = 'main' unless $branch =~ /\A[A-Za-z0-9][A-Za-z0-9._\/-]*\z/;
 	my $ref = "origin/$branch";
 	my $git   = &subs::git_binary();
 	return ('no-repo', '') unless -d "$repo/.git";
@@ -300,6 +303,9 @@ sub git_repo_update {
 	my $repo  = $opts->{'repo'} || &subs::home('~/jawnos');
 	my $force = $opts->{'force'} ? 1 : 0;
 	my $branch = $opts->{'branch'} || 'main';
+	# A branch is a ref name, never a shell word: it is interpolated into the git
+	# commands below, and `$(...)` in a name would run there.
+	$branch = 'main' unless $branch =~ /\A[A-Za-z0-9][A-Za-z0-9._\/-]*\z/;
 	my $ref = "origin/$branch";
 	my $git   = &subs::git_binary();
 	return ('no-repo', '') unless -d "$repo/.git";
@@ -347,8 +353,8 @@ sub git_repo_update {
 		$out .= $run->("\"$git\" reset --hard $ref");
 		return ('reset', $out);
 	}
-	my $behind = (system("cd \"$repo\" && \"$git\" merge-base --is-ancestor HEAD $ref >/dev/null 2>&1") == 0);
-	return ('ahead', $out) if system("cd \"$repo\" && \"$git\" merge-base --is-ancestor $ref HEAD >/dev/null 2>&1") == 0;
+	my $behind = (system('cd ' . &quote($repo) . ' && ' . &quote($git) . ' merge-base --is-ancestor HEAD ' . &quote($ref) . ' >/dev/null 2>&1') == 0);
+	return ('ahead', $out) if system('cd ' . &quote($repo) . ' && ' . &quote($git) . ' merge-base --is-ancestor ' . &quote($ref) . ' HEAD >/dev/null 2>&1') == 0;
 	if ($behind) {
 		$out .= $run->("\"$git\" merge --ff-only $ref");
 		return ('updated', $out);
@@ -411,7 +417,7 @@ sub git_peer_update {
 		my $out = `cd "$repo" && "$git" reset --hard $target 2>&1`;
 		return ('reset', $out);
 	}
-	if (system("cd \"$repo\" && \"$git\" merge-base --is-ancestor HEAD $target >/dev/null 2>&1") == 0) {
+	if (system('cd ' . &quote($repo) . ' && ' . &quote($git) . ' merge-base --is-ancestor HEAD ' . &quote($target) . ' >/dev/null 2>&1') == 0) {
 		my $out = `cd "$repo" && "$git" merge --ff-only $target 2>&1`;
 		return ('updated', $out);
 	}

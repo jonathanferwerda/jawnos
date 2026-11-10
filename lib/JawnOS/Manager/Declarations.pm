@@ -125,6 +125,7 @@ sub store_subcategory_counts;
 sub markup_adjuster;
 sub store_item_merchandiser;
 sub quote_id_maker;
+sub qrencode_png;
 sub store_quote_stock;
 sub store_printer;
 sub editor_maker;

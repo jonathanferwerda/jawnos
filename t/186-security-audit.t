@@ -72,6 +72,7 @@ write_file("$fx/lib/Bad.pm", join "\n",
 	'package Bad;',
 	'my $x = $row->{\'secret\'};',
 	'my $y = `echo "$x" | base64 --decode`;',
+	'my $w = system("cd \"$repo\" && ls $x");',
 	'my $z = subs::peer_verify($c, $rm);',
 	'1;',
 	'');
@@ -85,6 +86,7 @@ my $fx_json = `perl "$root/scripts/security_audit.pl" --check --json --root "$fx
 my $fx_report = eval { JSON::PP->new->decode($fx_json) } || {};
 my %fx_ids = map { $_->{'id'} => 1 } @{ $fx_report->{'findings'} || [] };
 ok($fx_ids{'perl.shell.base64'}, 'the shell-base64 rule fires on a fixture') or diag($fx_json);
+ok($fx_ids{'perl.shell.double_quoted'}, 'the double-quoted-system rule fires on a fixture') or diag($fx_json);
 ok($fx_ids{'peer.no_pin'}, 'the unpinned-peer rule fires on a fixture') or diag($fx_json);
 
 done_testing();

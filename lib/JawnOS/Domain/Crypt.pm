@@ -387,7 +387,7 @@ sub peer_sign_request {
 	my $msg_file = &peer_temp_file('sign_msg');
 	my $sig_file = &peer_temp_file('sign_sig');
 	write_file($msg_file, &peer_sign_message($req->method, $req->url->path_query, $ts, $nonce));
-	`openssl pkeyutl -sign -inkey "$key" -rawin -in "$msg_file" -out "$sig_file" 2>/dev/null`;
+	`openssl pkeyutl -sign -inkey ` . &quote($key) . ' -rawin -in ' . &quote($msg_file) . ' -out ' . &quote($sig_file) . ' 2>/dev/null';
 	my $sig = (-s $sig_file) ? read_file($sig_file) : '';
 	my $pub = &peer_pubkey();
 	if ($sig && $pub) {
@@ -410,7 +410,7 @@ sub peer_sign_blob {
 	my $msg_file = &peer_temp_file('blob_msg');
 	my $sig_file = &peer_temp_file('blob_sig');
 	write_file($msg_file, $msg);
-	`openssl pkeyutl -sign -inkey "$key" -rawin -in "$msg_file" -out "$sig_file" 2>/dev/null`;
+	`openssl pkeyutl -sign -inkey ` . &quote($key) . ' -rawin -in ' . &quote($msg_file) . ' -out ' . &quote($sig_file) . ' 2>/dev/null';
 	my $sig = (-s $sig_file) ? read_file($sig_file) : '';
 	unlink $msg_file, $sig_file;
 	return $sig ? encode_base64($sig, '') : '';
@@ -455,7 +455,7 @@ sub peer_verify {
 	write_file($msg_file, &peer_sign_message($c->req->method, $c->req->url->path_query, $ts, $nonce));
 	write_file($sig_file, $sig);
 	write_file($key_file, $pubkey);
-	my $ok = system("openssl pkeyutl -verify -pubin -inkey \"$key_file\" -rawin -in \"$msg_file\" -sigfile \"$sig_file\" >/dev/null 2>&1") == 0;
+	my $ok = system('openssl pkeyutl -verify -pubin -inkey ' . &quote($key_file) . ' -rawin -in ' . &quote($msg_file) . ' -sigfile ' . &quote($sig_file) . ' >/dev/null 2>&1') == 0;
 	unlink $msg_file, $sig_file, $key_file;
 	return 0 unless $ok;
 	# the nonce is spent; the first verified contact pins the offered key

@@ -456,6 +456,7 @@ our %SUB = (
 	'phone_relationships'                    => 'JawnOS/Manager/Part12.pm',
 	'phone_route_for'                        => 'JawnOS/Manager/Part12.pm',
 	'phone_route_set'                        => 'JawnOS/Manager/Part12.pm',
+	'qrencode_png'                           => 'JawnOS/Manager/Part12.pm',
 	'phone_routes_read'                      => 'JawnOS/Manager/Part12.pm',
 	'phone_routes_save'                      => 'JawnOS/Manager/Part12.pm',
 	'phone_self_signatorial'                 => 'JawnOS/Manager/Part12.pm',

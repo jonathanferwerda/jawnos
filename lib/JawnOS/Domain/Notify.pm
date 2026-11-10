@@ -60,8 +60,8 @@ sub notification_sender($m,$db) {
 	else {
 		&subs::subprocessor(sub {
 			if ($sound) {
-				my $co = join ' ', JawnOS::Platform::Audio::player_argv($sound_file);
-				`$co`;
+				my @argv = JawnOS::Platform::Audio::player_argv($sound_file);
+				system(@argv) if @argv;
 			}
 			if ($words) {
 				&subs::say_it($words);
@@ -110,14 +110,21 @@ sub notification_sender($m,$db) {
 		delete $nargs{$_} for grep { !defined $nargs{$_} } keys %nargs;
 		my $posted = &subs::device_call('notification.post', \%nargs);
 		unless ($posted) {
-			my ($t, $b) = ($title, $message);
-			$t =~ s/"/'/g;
-			$b =~ s/"/'/g;
-			my $silent = $m->{'silent'} ? ' --ez silent true' : '';
 			my $notify = &subs::app_component('JawnNotifyReceiver');
 			my $notify_action = &subs::app_action('JAWN_NOTIFY');
-			my $bc = `am broadcast -n $notify -a $notify_action --es title "$t" --es message "$b" --es tag "$id"$silent 2>&1`;
-			$log->info("notification broadcast failed: $bc") unless $bc =~ /Broadcast completed/;
+			# List form: the title and message are arbitrary text and must never
+			# be parsed by a shell.
+			my @am = ('am', 'broadcast', '-n', $notify, '-a', $notify_action,
+				'--es', 'title', $title, '--es', 'message', $message, '--es', 'tag', $id);
+			push @am, '--ez', 'silent', 'true' if $m->{'silent'};
+			my $bc = '';
+			my $am_ok = open(my $am_fh, '-|', @am);
+			if ($am_ok) {
+				local $/;
+				$bc = <$am_fh> // '';
+				close $am_fh;
+			}
+			$log->info('notification broadcast failed: ' . ($bc || 'not run')) if !$am_ok || $? != 0;
 		}
 	}
 	elsif ( eval { $sql->db } && $sql->dsn !~ /:$/) {

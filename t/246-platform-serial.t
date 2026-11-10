@@ -189,8 +189,8 @@ for my $line (
 ) {
 	ok(index($embedded, $line) >= 0, "manager_embedded uses $line");
 }
-like($embedded, qr/run -j 4 -e ' \. \$environment \. ' -t upload --upload-port ' \. \$port/,
-	'the pio upload argv is unchanged');
+like($embedded, qr/run -j 4 -e ' \. &quote\(\$environment\) \. ' -t upload --upload-port ' \. &quote\(\$port\)/,
+	'the pio upload argv is unchanged, every word quoted');
 
 my $boardpins = $source->('lib/JawnOS/Domain/Boardpins.pm');
 unlike($boardpins, qr/system\('stty'/, 'the pins reader no longer runs stty itself');

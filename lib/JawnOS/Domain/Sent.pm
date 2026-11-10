@@ -58,7 +58,7 @@ sub sent_mail_filer {
 	foreach my $f ( @{$data->{'files'} || []} ) {
 		next unless $f->{'src'} && -e $f->{'src'};
 		my ($destination,$asset,$type) = &subs::file_device_renamer({ file => ($f->{'name'} || $f->{'src'}), app => $app, is_thumb => 0 });
-		`mkdir -p "$destination"` unless -e $destination;
+		system('mkdir', '-p', $destination) unless -e $destination;
 		copy($f->{'src'}, $destination . $asset);
 		push @{$files}, {
 			server_time => &subs::rightNow(),
@@ -155,14 +155,14 @@ sub email_send {
 			if ($att->{'html'}) {
 				my $page = $gb::tmp_dir . '/paper_' . &subs::random_string_creator(12) . '.html';
 				write_file($page, '<!DOCTYPE html><html><head><meta charset="utf-8"><base href="' . $att_url . '"></head><body>' . $att->{'html'} . '</body></html>');
-				`weasyprint "$page" "$loc"`;
+				system('weasyprint', $page, $loc);
 				unlink $page;
 			}
 			unless (-s $loc) {
-				`weasyprint "$local_url" "$loc"`;
+				system('weasyprint', $local_url, $loc);
 			}
 			unless (-s $loc) {
-				`weasyprint "$att_url" "$loc"`;
+				system('weasyprint', $att_url, $loc);
 			}
 			&subs::log_writer('mail paper ' . $loc_name . ' drawn: ' . (-s $loc) . ' bytes');
 			$stuffer->attach_file($loc);
@@ -205,7 +205,7 @@ sub email_send {
 		$result = 'fail';
 	}
 	foreach my $loc ( @locations ) {
-		`shred -u "$loc"`;
+		system('shred', '-u', $loc);
 	}
 	return $result;
 }
