@@ -39,6 +39,9 @@ import time
 from urllib.parse import urljoin, urlparse
 
 from . import bridge, core, errorpage, gps, gpu, theme, trust, webauthn
+from .core_paths import config_dir, data_dir, state_dir
+from .core_process import spawn_detached
+from .core_secrets import manager_host
 
 # desktop/, resolved the same way the other entry scripts do it.
 DESKTOP_DIR = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
@@ -240,12 +243,12 @@ def manager_url(jawn_dir, ticket=None):
         except ValueError:
             pass
     else:
-        host = core.manager_host() or host
+        host = manager_host() or host
     return "https://%s:%d/manager" % (host, port)
 
 
 def profile_dir():
-    return os.path.join(core.config_dir(), "qt-webengine")
+    return os.path.join(config_dir(), "qt-webengine")
 
 
 # --------------------------------------------------------------------------
@@ -274,7 +277,7 @@ def webkit_localstorage(host, port, base=None):
     ``base`` exists so the reader can be tested against a fixture; the default
     is the XDG data directory the installed desktop app writes to.
     """
-    base = base or os.path.expanduser("~/.local/share")
+    base = base or data_dir()
     name = "https_%s_%s.localstorage" % (host, port)
     candidates = []
     for pattern in ("*/localstorage/" + name, "*/*/localstorage/" + name):
@@ -1080,9 +1083,9 @@ def _launch_browse(url, manager_base, mode="browse", app="", uuid=""):
         "--app", app,
         "--uuid", uuid,
     ]
-    core.spawn_detached(
+    spawn_detached(
         argv, DESKTOP_DIR,
-        os.path.join(core.state_dir(), "browse.log"))
+        os.path.join(state_dir(), "browse.log"))
 
 
 def main(argv=None):

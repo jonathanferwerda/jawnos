@@ -41,6 +41,11 @@ def state_dir():
     return os.path.join(_xdg("XDG_STATE_HOME", ".local/state"), "jawnos")
 
 
+def data_dir():
+    """The XDG data root (``$XDG_DATA_HOME``, else ``~/.local/share``)."""
+    return _xdg("XDG_DATA_HOME", ".local/share")
+
+
 def settings_path():
     return os.path.join(config_dir(), "desktop.json")
 

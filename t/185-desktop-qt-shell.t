@@ -1,4 +1,4 @@
-# tests-for: desktop/jawnos_desktop/qt_shell.py desktop/jawnos_desktop/gps.py desktop/jawnos_desktop/qt_panel.py desktop/jawnos_desktop/bridge.py desktop/jawnos_desktop/keepawake.py desktop/jawnos_desktop/gpu.py desktop/jawnos_desktop/theme.py desktop/jawnos_desktop/errorpage.py desktop/jawnos_desktop/core.py desktop/jawnos_desktop/webauthn.py desktop/jawnos-desktop desktop/jawnos-qt desktop/wayland/jawnos-session desktop/install.sh scripts/jawnos_deps.pl
+# tests-for: desktop/jawnos_desktop/qt_shell.py desktop/jawnos_desktop/browser.py desktop/jawnos_desktop/ble.py desktop/jawnos_desktop/gps.py desktop/jawnos_desktop/qt_panel.py desktop/jawnos_desktop/bridge.py desktop/jawnos_desktop/keepawake.py desktop/jawnos_desktop/gpu.py desktop/jawnos_desktop/theme.py desktop/jawnos_desktop/errorpage.py desktop/jawnos_desktop/core.py desktop/jawnos_desktop/webauthn.py desktop/jawnos-desktop desktop/jawnos-qt desktop/wayland/jawnos-session desktop/install.sh scripts/jawnos_deps.pl
 # covers:    the Qt WebEngine desktop shell is the only engine: the same Manager
 #           page in Chromium, which is the engine with WebRTC, the ticket cookie
 #           kept on disk, microphone/camera grants, the house's own certificate
@@ -19,6 +19,8 @@ use File::Slurp qw(read_file write_file);
 
 my $root = "$FindBin::Bin/..";
 my $qt = read_file("$root/desktop/jawnos_desktop/qt_shell.py");
+my $browse = read_file("$root/desktop/jawnos_desktop/browser.py");
+my $ble = read_file("$root/desktop/jawnos_desktop/ble.py");
 my $panel = read_file("$root/desktop/jawnos_desktop/qt_panel.py");
 my $keepawake = read_file("$root/desktop/jawnos_desktop/keepawake.py");
 my $bridge = read_file("$root/desktop/jawnos_desktop/bridge.py");
@@ -409,6 +411,19 @@ unlike($keepawake, qr/import gi|from gi\.repository/, 'the Qt keep-awake does no
 like($keepawake, qr/systemd-inhibit/, 'it uses logind\'s idle inhibitor');
 
 like($qt, qr/def webkit_localstorage/, 'the shell can read the legacy WebKit localStorage store');
+like($qt, qr/base = base or data_dir\(\)/, 'reading the shared XDG data root');
+unlike($qt, qr/expanduser\("~\/\.local\/share"\)/, 'not a hand-built home path');
+unlike($browse, qr/XDG_DATA_HOME/, 'Browse does not hand-build the XDG data path');
+like($browse, qr/return os\.path\.join\(data_dir\(\), "jawnos", "browser"\)/,
+	'it asks core_paths for the data root');
+like($ble, qr/from \.core_paths import ble_pid_path, config_dir/,
+	'the BLE daemon reads its paths from core_paths');
+unlike($ble, qr/from \.core import BRIDGE_PORT, ble_pid_path, config_dir/,
+	'not through the core.py facade');
+for my $module ([$qt, 'the Qt shell'], [$browse, 'Browse'], [$ble, 'the BLE daemon']) {
+	unlike($module->[0], qr/XDG_DATA_HOME|expanduser\("~\/\.local\/share"\)/,
+		"$module->[1] does not hand-build an XDG/home data path");
+}
 like($qt, qr/def device_seed_js/, 'and carries the desktop device identity across');
 like($qt, qr/__jawn_device_seeded/, 'seeding it once per profile');
 like($qt, qr/__jawn_qt_migrated/, 'the migration is marked, so later Qt changes are kept');

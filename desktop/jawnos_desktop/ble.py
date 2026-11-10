@@ -59,7 +59,8 @@ import time
 import zlib
 from collections import deque
 
-from .core import BRIDGE_PORT, ble_pid_path, config_dir
+from .core import BRIDGE_PORT
+from .core_paths import ble_pid_path, config_dir
 
 try:
     import dbus

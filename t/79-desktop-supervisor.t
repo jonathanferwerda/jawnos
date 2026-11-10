@@ -61,6 +61,9 @@ unlike($install, qr/cp -R "\$DESKTOP_SRC\/\." "\$DEST\/"/,
 # autostart and shell helpers live in their own modules, and core.py keeps the
 # public names by re-exporting them so no caller changes its imports.
 like($core_paths, qr/^def config_dir\(\):/m, 'paths live in core_paths');
+like($core_paths, qr/^def data_dir\(\):/m, 'including the XDG data root');
+like($core_paths, qr/_xdg\("XDG_DATA_HOME", "\.local\/share"\)/,
+	'with XDG_DATA_HOME and the same home fallback');
 like($core_paths, qr/^def default_jawn_dir\(\):/m, 'including the tree locator');
 like($core_process, qr/^def spawn_detached\(/m, 'detached spawn lives in core_process');
 like($core_process, qr/start_new_session=True/, 'with the same session flag');
@@ -83,7 +86,7 @@ unlike($core, qr/^def config_dir\(\):/m, 'nor the path helpers');
 my $python = qx{python3 --version 2>/dev/null};
 
 SKIP: {
-	skip 'python3 is not installed', 6 unless $python;
+	skip 'python3 is not installed', 7 unless $python;
 
 	my $dir = tempdir(CLEANUP => 1);
 	my $state = tempdir(CLEANUP => 1);
@@ -93,9 +96,12 @@ import os
 import sys
 
 os.environ['XDG_STATE_HOME'] = sys.argv[2]
+os.environ['XDG_DATA_HOME'] = sys.argv[2] + '/data'
 sys.path.insert(0, sys.argv[1] + '/desktop')
 from jawnos_desktop import core
 from jawnos_desktop import core_autostart, core_paths, core_process, core_secrets, core_shell
+
+print('data:' + core_paths.data_dir())
 
 print('split:' + str(
     core.config_dir is core_paths.config_dir
@@ -129,6 +135,7 @@ PY
 	like($out, qr/^cleared:False$/m, 'a start clears the hold');
 	like($out, qr/^down:started$/m, 'restart_if_stale starts a down tree');
 	like($out, qr/^stale:restarted$/m, 'and still restarts a stale one');
+	like($out, qr/^data:\Q$state\E\/data$/m, 'the data root honours XDG_DATA_HOME as before');
 	like($out, qr/^split:True$/m, 'core re-exports the split modules');
 }
 

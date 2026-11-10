@@ -59,6 +59,7 @@ import threading
 import urllib.parse
 
 from . import bridge, core, errorpage, gpu, keepawake, trust, usage
+from .core_paths import data_dir
 
 LOG = logging.getLogger("jawnos.browser")
 
@@ -372,10 +373,7 @@ else:  # pragma: no cover
 
 def browser_data_dir():
     """The browse window's own data store, separate from the manager's."""
-    base = os.environ.get("XDG_DATA_HOME")
-    if not base:
-        base = os.path.join(os.path.expanduser("~"), ".local", "share")
-    return os.path.join(base, "jawnos", "browser")
+    return os.path.join(data_dir(), "jawnos", "browser")
 
 
 def profile_store_dir():
