@@ -848,6 +848,33 @@ sub ai_chat {
 	return ($text, ($text && length $text) ? undef : 'the model returned nothing readable');
 }
 
+# The Plat panel's Test button: say one small thing to the chosen model and
+# report what came back. It calls the model itself (ai_chat_raw) rather than
+# ai_chat_parts so a paid model that is stood down is still tried and a bad key
+# or a name that no longer exists is reported instead of being papered over by
+# the free-model fallback. Returns (ok, message).
+sub ai_model_test {
+	my ($model, $role) = @_;
+	$model = '' unless defined $model;
+	$model =~ s/^\s+|\s+$//g;
+	return (0, 'Pick a model first.') unless length $model;
+	my ($body, $err) = &ai_chat_raw(
+		$model,
+		[ { role => 'user', content => 'This is a connection test. Reply with the single word OK.' } ],
+		undef,
+		$role,
+	);
+	return (0, $err || 'the model returned nothing') if $err;
+	my $text = &ai_response_text($body);
+	$text = '' unless defined $text;
+	$text =~ s/\s+/ /g;
+	$text =~ s/^\s+|\s+$//g;
+	return (0, 'the model returned nothing readable') unless length $text;
+	my $long = length($text) > 80;
+	$text = substr($text, 0, 80) . ($long ? "\x{2026}" : '');
+	return (1, 'the model answered: ' . $text);
+}
+
 # the same wire pen_message uses, but the answer is read whole: the evaluation
 # is a report, not a conversation
 # The thinking levels the Plat panel stores: none means "let the model answer

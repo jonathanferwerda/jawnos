@@ -40,6 +40,7 @@ sub routes {
 	[9455, 'post', '/manager/configure/misc_settings', 'action_9455'],
 	[9480, 'post', '/manager/configure/theme_save', 'action_9480'],
 	[9541, 'post', '/manager/configure/theme_delete', 'action_9541'],
+	[9542, 'post', '/manager/configure/ai_model_test', 'action_9542'],
 	);
 }
 

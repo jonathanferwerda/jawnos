@@ -124,6 +124,48 @@ my @calls;
 
 	my $plat = read_file("$root/templates/configure/plat_setting_list.html.ep");
 	like( $plat, qr/\$thinking_cap = 0 unless \$allowed_of->\(\$setting\);/, 'Plat hides the Thinking row for a silenced role' );
+	like( $plat, qr/class="button ai_model_test"/, 'Plat puts a Test button beside a language model' );
+	like( $plat, qr/class="cfg-inline ai_model_picker"/, 'the Test button shares the model row, beside the dropdown' );
+	like( $plat, qr/\$cap eq 'chat' \|\| \$cap eq 'vision'/, 'generation and transcription roles offer no Test' );
+	like( $js, qr#/manager/configure/ai_model_test#, 'the Test button posts to the model-test route' );
+	like( $js, qr/setting: role\.attr\('setting'\)/, 'and names the role whose model it tests' );
+	like( $js, qr/\.ai_model_test_status/, 'the answer is shown under the row' );
+}
+
+# The Test button's answer comes from the model itself: ai_chat_raw, not the
+# ai_chat_parts wrapper, so a paid model that is stood down is still tried and a
+# failure is reported rather than papered over by the free-model fallback.
+{
+	my @asked;
+	local *subs::ai_chat_raw = sub {
+		my ($model, $messages, $thinking, $role) = @_;
+		push @asked, { model => $model, messages => $messages, thinking => $thinking, role => $role };
+		return ({ 'message' => { 'content' => "  OK \n" } }, undef);
+	};
+	no warnings 'redefine';
+	local *subs::ai_chat_parts = sub { die 'ai_chat_parts must not be used by the test' };
+
+	my ($ok, $message) = subs::ai_model_test('  deepseek:deepseek-flash  ', 'help_assistant');
+	is( $ok, 1, 'a model that answers passes the test' );
+	is( $message, 'the model answered: OK', 'the reply is reported back, whitespace squeezed' );
+	is( $asked[0]{'model'}, 'deepseek:deepseek-flash', 'the model is trimmed before the call' );
+	is( $asked[0]{'role'}, 'help_assistant', 'the role rides along for spend accounting' );
+	like( $asked[0]{'messages'}[0]{'content'}, qr/connection test/, 'one small line is said to the model' );
+	is( $asked[0]{'thinking'}, undef, 'the test does not turn thinking on' );
+
+	($ok, $message) = subs::ai_model_test('', 'help_assistant');
+	is( $ok, 0, 'no model is not a pass' );
+	like( $message, qr/Pick a model first/, 'and says so' );
+
+	local *subs::ai_chat_raw = sub { return (undef, 'the model answered 401: unauthorized') };
+	($ok, $message) = subs::ai_model_test('openai:gpt-5', 'help_assistant');
+	is( $ok, 0, 'a provider error fails the test' );
+	is( $message, 'the model answered 401: unauthorized', 'and the provider\'s reason is carried back' );
+
+	local *subs::ai_chat_raw = sub { return ({ 'message' => { 'content' => "  \n " } }, undef) };
+	($ok, $message) = subs::ai_model_test('openai:gpt-5', 'help_assistant');
+	is( $ok, 0, 'an empty answer is not a pass' );
+	like( $message, qr/nothing readable/, 'and reads as nothing readable' );
 }
 
 done_testing();

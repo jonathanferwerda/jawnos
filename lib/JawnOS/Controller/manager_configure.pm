@@ -360,6 +360,16 @@ sub action_8054 {
 	$c->render(template => 'configure/plat_setting_list');
 }
 
+# The Test button beside a model: say one trivial thing to the chosen model and
+# report its answer, so a person can tell whether the key and the model name work
+# now rather than when an agent next needs them.
+# POST /manager/configure/ai_model_test
+sub action_9542 {
+	my $c = shift;
+	my ($ok, $message) = &subs::ai_model_test($c->param('model'), $c->param('setting'));
+	$c->render(json => { ok => ($ok ? 1 : 0), message => $message });
+}
+
 # ---- crypto (Configure -> Plat -> Crypto) -----------------------------------
 # Wallets are ordinary account apps; this panel owns the assets, the live rates
 # and how a wallet is valued. It never holds a key: only an address is stored.

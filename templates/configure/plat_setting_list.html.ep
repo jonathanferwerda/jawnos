@@ -136,6 +136,7 @@
 			<div class="ai_role" setting="<%= $setting %>">
 				<div class="cfg-row">
 					<label><%= $label %></label>
+					<span class="cfg-inline ai_model_picker">
 					<select class="configure_input ai_role_model" app="mail" setting="<%= $setting %>">
 						<option value="">— none —</option>
 						<% foreach my $provider ( @{$catalogue} ) {
@@ -164,6 +165,11 @@
 							<option value="<%= $current %>" data-thinks="<%= $thinks %>" selected="selected"><%= $current %> (kept — not offered here just now)</option>
 						<% } %>
 					</select>
+					<% if ($cap eq 'chat' || $cap eq 'vision') { %>
+						<button type="button" class="button ai_model_test" hint="Ask this model a trivial question and show its answer">Test</button>
+						<span class="cfg-note ai_model_test_status" style="margin:0;flex:1 1 100%;display:none;overflow-wrap:anywhere;"></span>
+					<% } %>
+					</span>
 				</div>
 				<div class="cfg-row ai_fallback_row">
 					<label>Fallback</label>

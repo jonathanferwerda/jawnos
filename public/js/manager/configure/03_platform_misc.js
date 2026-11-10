@@ -65,6 +65,39 @@ $(document).on('change', '.ai_role_model', function() {
 	if (fb.val() === primary) { fb.val(''); }
 });
 
+// The Test button beside a model says one trivial thing to the chosen model, so
+// the answer proves the key and the model name work now - not when the agent is
+// next used. The value is read from the select, so a pick that has not finished
+// saving is still the one tested.
+$(document).on('click', '.ai_model_test', function() {
+	var btn = $(this);
+	var role = btn.closest('.ai_role');
+	var model = role.find('.ai_role_model').val();
+	var status = role.find('.ai_model_test_status');
+	if (!model) {
+		status.text('Pick a model first.').show();
+		return;
+	}
+	var label = btn.text();
+	btn.prop('disabled', true).text('Testing…');
+	status.hide().text('');
+	$.ajax({
+		url: '/manager/configure/ai_model_test',
+		type: 'POST',
+		dataType: 'json',
+		data: { model: model, setting: role.attr('setting'), timestamp: Date.now() },
+		success: function(r) {
+			var ok = !!(r && r.ok);
+			status.text((ok ? '\u2713 ' : '\u2717 ') + ((r && r.message) || 'no answer')).show()
+				.css('color', ok ? 'var(--accent, inherit)' : '#e5484d');
+		},
+		error: function() {
+			status.text('\u2717 the test could not reach the manager').show().css('color', '#e5484d');
+		},
+		complete: function() { btn.prop('disabled', false).text(label); }
+	});
+});
+
 // the Speech setting's Preview button: speak a test phrase in the voice chosen
 // for that device, rather than waiting for a real say_it to happen
 $(document).on('click', '.say_voice_test', function() {
