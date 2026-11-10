@@ -125,7 +125,22 @@ sub json_line {
 		ticket => $t,
 		position => $pos,
 		counts => LandQueue::counts($dir),
+		($t ? (cleanup => [ cleanup_steps($t) ]) : ()),
 	}) . "\n";
+}
+
+# A queued landing rebases, so the branch's original commits are not ancestors
+# of the trunk any more and `git branch -d` declines them. The verdict is where
+# the agent is standing, so name the two steps that are safe once it says
+# landed -- and only then: a refused ticket keeps its worktree for the fix.
+sub cleanup_steps {
+	my ($t) = @_;
+	return () unless ($t->{'state'} // '') eq 'landed';
+	my @steps;
+	my $wt = $t->{'worktree'} // '';
+	push @steps, "git worktree remove $wt" if length $wt && -d $wt;
+	push @steps, "git branch -D $t->{'branch'}" if length($t->{'branch'} // '');
+	return @steps;
 }
 
 sub print_ticket {
@@ -145,6 +160,9 @@ sub print_ticket {
 	if (ref $t->{'result'} eq 'HASH' && length($t->{'result'}{'message'} // '')) {
 		print '  result: ', $t->{'result'}{'message'}, "\n";
 	}
+	my @next = cleanup_steps($t);
+	print '  next: your work is on the trunk, so these are safe now: `',
+		join('`, `', @next), "`\n" if @next;
 }
 
 sub print_queue {

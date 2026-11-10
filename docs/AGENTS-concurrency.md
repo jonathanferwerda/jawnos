@@ -31,8 +31,10 @@ branch itself; the primary-checkout recipe is the human owner's alone.
   commit the branch, run the script, and let the coordinator land it. You do not push or restart,
   and **you do not delete the worktree**. `perl scripts/land_status.pl --branch <branch>` is the
   verdict; when it says landed, the branch is on the trunk and the worktree may go (or wait for
-  `worktree_gc`). A refused ticket keeps the worktree: fix, re-enqueue, and never run
-  `agent_land.pl` on the same branch.
+  `worktree_gc`). The landing rebases, so your original commits are no longer ancestors and
+  `git branch -d` declines: the verdict prints the two commands that do work, `git worktree remove
+  <dir>` and `git branch -D <branch>`. A refused ticket keeps the worktree: fix, re-enqueue, and
+  never run `agent_land.pl` on the same branch.
 - **Land it yourself** (`perl ~/jawnos/scripts/agent_land.pl`, from the worktree root): the lone
   agent's path, and the owner's; one agent at the gate, which the lock makes safe. It bumps
   `VERSION`, runs the suite once, pushes, restarts and

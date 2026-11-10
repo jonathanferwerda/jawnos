@@ -235,6 +235,11 @@ subtest 'two branches land in one wave, with one suite and one restart' => sub {
 	is($s1->{'ticket'}{'result'}{'version'}, '0.1.2', 'with its own version');
 	my (undef, $s2) = status($f, '--id', $t2->{'id'});
 	is($s2->{'ticket'}{'result'}{'version'}, '0.1.3', 'the second carries the next one');
+	my @cleanup = @{ $s2->{'cleanup'} || [] };
+	like(join(' ', @cleanup), qr/git branch -D agent\/two/,
+		'a landed ticket names the branch cleanup, since -d declines a rebased branch');
+	ok(grep({ m{^git worktree remove } } @cleanup),
+		'and the worktree removal, while the directory is still there');
 
 	my (undef, $stats) = status_stats($f);
 	like($stats, qr/waves: 1/, 'the stats count the one wave');
