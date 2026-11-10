@@ -68,6 +68,19 @@ CNF
 
 	return { cert => $cert, key => $key, created => 0, error => "openssl failed ($rc)" }
 		if $rc != 0 || !-e $cert || !-s $cert || !-e $key || !-s $key;
+
+	# Windows openssl writes PEM in text mode (CRLF). The TLS stack reads the
+	# key as a string and refuses a CRLF one, so the pair is kept LF-only.
+	for my $file ($cert, $key) {
+		open(my $in, '<:raw', $file) or next;
+		my $data = do { local $/; <$in> };
+		close $in;
+		next unless defined $data && $data =~ /\r/;
+		$data =~ s/\r\n/\n/g;
+		open(my $out, '>:raw', $file) or next;
+		print {$out} $data;
+		close $out;
+	}
 	eval { chmod 0600, $key };
 	return { cert => $cert, key => $key, created => 1 };
 }
