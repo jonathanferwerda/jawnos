@@ -12,12 +12,10 @@ package subs;
 # newly discovered pin to an existing appointment in one call, writing both the
 # board's door and the appointment's wiring map (ia).
 #
-# The USB reader mirrors the technique in Controller/manager_embedded.pm
-# action_43737 (stty raw, then an IO::Select loop with a deadline) rather than
-# sharing code with it: that action sends a different payload on a different
-# protocol, so factoring only the "open the same port and read" part would have
-# meant editing a working provisioning path. The port validation and the read
-# loop stay deliberately identical so the two cannot disagree about a port.
+# The USB reader and Controller/manager_embedded.pm action_43737 send different
+# payloads on different protocols, but they drive the same port the same way:
+# both ask JawnOS::Platform::Serial for the port shape, the stty setup, the open
+# and the deadline read, so the two cannot disagree about a port.
 use strict;
 use warnings;
 use utf8;
@@ -29,6 +27,7 @@ no warnings 'once';
 use Mojo::UserAgent;
 use Mojo::URL;
 use Mojo::JSON qw(decode_json encode_json);
+use JawnOS::Platform::Serial ();
 
 # The component vocabulary is the house's, not the board's: an unknown name is
 # refused rather than written into a door where nothing would drive it.
@@ -97,29 +96,15 @@ sub board_pins_parse($text) {
 # either without a branch.
 sub board_pins_usb_read($port) {
 	return { ok => 0, error => 'need a port' } unless defined $port && length $port;
-	return { ok => 0, error => 'that port does not look right' } unless $port =~ m{^/dev/tty(?:ACM|USB)\d+$};
-	require IO::Select;
-	require IO::Handle;
+	return { ok => 0, error => 'that port does not look right' } unless JawnOS::Platform::Serial::valid_port($port);
 
-	system('stty', '-F', $port, 'raw', '115200', '-echo') == 0
+	JawnOS::Platform::Serial::prepare($port)
 		or return { ok => 0, error => 'could not prepare ' . $port };
-	open(my $fh, '+<', $port)
+	my $fh = JawnOS::Platform::Serial::open_read($port)
 		or return { ok => 0, error => 'could not open ' . $port . ': ' . $! };
-	$fh->autoflush(1);
 	print {$fh} "JAWNPINS?\n";
 
-	my $sel = IO::Select->new($fh);
-	my $buf = '';
-	my $deadline = time() + 8;
-	while (time() < $deadline) {
-		my @ready = $sel->can_read(0.25);
-		next unless @ready;
-		my $chunk = '';
-		my $n = sysread($fh, $chunk, 4096);
-		last unless defined $n && $n > 0;
-		$buf .= $chunk;
-		last if $buf =~ /JAWNPINS\s*\{/;
-	}
+	my $buf = JawnOS::Platform::Serial::read_until($fh, qr/JAWNPINS\s*\{/, time() + 8);
 	close $fh;
 
 	my $report = board_pins_parse($buf);

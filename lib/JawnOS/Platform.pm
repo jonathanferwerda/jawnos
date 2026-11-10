@@ -22,6 +22,7 @@ use warnings;
 use Config ();
 use Cwd ();
 use File::Spec ();
+use JawnOS::Platform::Serial ();
 
 our $VERSION = '0.01';
 
@@ -172,15 +173,9 @@ sub tool_path {
 }
 
 sub serial_devices {
-	return [] if $^O eq 'MSWin32';
-	my @patterns = $^O eq 'darwin'
-		? ('/dev/cu.usbmodem*', '/dev/cu.usbserial*')
-		: ('/dev/ttyACM*', '/dev/ttyUSB*');
-	my @found;
-	foreach my $pattern (@patterns) {
-		push @found, sort glob($pattern);
-	}
-	return [ @found ];
+	# The device set lives in the serial seam; this keeps the capability map
+	# and Platform.pm callers on the same answer as the board readers.
+	return JawnOS::Platform::Serial::devices();
 }
 
 sub capabilities {

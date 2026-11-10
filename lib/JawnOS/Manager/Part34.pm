@@ -40,6 +40,7 @@ use Number::Format qw/:subs/;
 use SQL::Abstract;
 use Mojo::SQLite;
 use Mojo::IOLoop;
+use JawnOS::Platform::Serial ();
 
 use Mojolicious::Sessions;
 use Mojo::Server::Daemon;
@@ -428,8 +429,9 @@ sub embedded_pin_grabber($data) {
 
 	my @embedded_ports;
 	if ($device eq 'computer' || $device eq 'server') {
-		my $embedded_ports = `ls /dev/ttyACM*`;
-		@embedded_ports = split /\n/, $embedded_ports;
+		# Only the CDC boards here, as the ls glob was: the deck's ttyUSB
+		# bridge is not a microcontroller panel.
+		@embedded_ports = grep { m{/ttyACM} } @{ JawnOS::Platform::Serial::devices() };
 	}
 
 	my $chip_ids = [];
@@ -480,7 +482,7 @@ sub usb_ports_grabber {
 		$by_id{'/dev/' . $target} = &subs::format_name($label);
 	}
 	my @ports;
-	foreach my $path ( glob('/dev/ttyACM*'), glob('/dev/ttyUSB*') ) {
+	foreach my $path ( @{ JawnOS::Platform::Serial::devices() } ) {
 		push @ports, {
 			path => $path,
 			label => $by_id{$path} || $path,

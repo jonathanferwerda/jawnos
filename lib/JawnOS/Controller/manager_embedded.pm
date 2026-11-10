@@ -42,6 +42,7 @@ use Number::Format qw/:subs/;
 use SQL::Abstract;
 use Mojo::SQLite;
 use Mojo::IOLoop;
+use JawnOS::Platform::Serial ();
 
 use Mojolicious::Sessions;
 use Mojo::Server::Daemon;
@@ -349,7 +350,7 @@ sub action_43677 {
 
 	my ($project, $environment, $prefer_acm) = $edt eq 'teletype' ? ('./jt', 'deck', 0) : ('./jw', 'watch', 1);
 
-	if ($port && $port !~ m{^/dev/(ttyACM|ttyUSB)\d+$}) {
+	if ($port && !JawnOS::Platform::Serial::valid_port($port)) {
 		return $c->render(json => { started => 0, result => 'that port does not look right' });
 	}
 
@@ -407,8 +408,6 @@ sub action_43714 {
 # POST /manager/embedded/usb_provision
 sub action_43737 {
 	my $c = shift;
-	require IO::Select;
-	require IO::Handle;
 	my $chip_id = $c->param('chip_id');
 	my $edt = $c->param('edt') || 'microcontroller';
 	my $port = $c->param('port');
@@ -434,7 +433,7 @@ sub action_43737 {
 			}
 		}
 	}
-	return $c->render(json => { ok => 0, error => 'that port does not look right' }) unless $port =~ m{^/dev/tty(?:ACM|USB)\d+$};
+	return $c->render(json => { ok => 0, error => 'that port does not look right' }) unless JawnOS::Platform::Serial::valid_port($port);
 
 	my $wifi = eval { decode_json &subs::setting_grabber({ app => $edt, setting => 'wifi', subsetting => $chip_id }) } || {};
 	return $c->render(json => { ok => 0, error => 'this chip has no stored WiFi' }) unless $wifi->{'ssid'} && $wifi->{'password'};
@@ -466,34 +465,21 @@ sub action_43737 {
 	};
 	my $json = encode_json $payload;
 
-	system('stty', '-F', $port, 'raw', '115200', '-echo') == 0
+	JawnOS::Platform::Serial::prepare($port)
 		or return $c->render(json => { ok => 0, error => 'could not prepare ' . $port });
-	open(my $fh, '+<', $port)
+	my $fh = JawnOS::Platform::Serial::open_read($port)
 		or return $c->render(json => { ok => 0, error => 'could not open ' . $port . ': ' . $! });
-	$fh->autoflush(1);
 	# The Pico's USB CDC receive ring is small; a 2.5 KB line written in one go
 	# overflows it and the JSON arrives truncated (the board still answers OK,
 	# because the partial object parses). Feed it in small pieces, paced so the
 	# sketch's loop drains each one before the next.
 	my $line = "JAWNCFG " . $json . "\n";
-	for (my $off = 0; $off < length($line); $off += 64) {
-		print {$fh} substr($line, $off, 64);
-		select(undef, undef, undef, 0.004);
-	}
+	JawnOS::Platform::Serial::write_paced($fh, $line, 64, 4);
 
-	my $sel = IO::Select->new($fh);
 	my ($buf, $err, $ok) = ('', '', 0);
-	my $deadline = time() + 8;
-	while (time() < $deadline) {
-		my @ready = $sel->can_read(0.25);
-		next unless @ready;
-		my $chunk = '';
-		my $n = sysread($fh, $chunk, 4096);
-		last unless defined $n && $n > 0;
-		$buf .= $chunk;
-		if ($buf =~ /JAWNCFG OK/) { $ok = 1; last; }
-		if ($buf =~ /JAWNCFG ERR\s*([^\r\n]*)/) { $err = $1; last; }
-	}
+	$buf = JawnOS::Platform::Serial::read_until($fh, qr/JAWNCFG (?:OK|ERR)/, time() + 8);
+	if ($buf =~ /JAWNCFG OK/) { $ok = 1; }
+	elsif ($buf =~ /JAWNCFG ERR\s*([^\r\n]*)/) { $err = $1; }
 	close $fh;
 	# Never hand the echoed command back: it carries the WiFi password and the
 	# device authorization. An older firmware echoes it; strip that line.
