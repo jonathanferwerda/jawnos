@@ -423,33 +423,37 @@ function nameConflictPanel(response) {
 		$.each((response.appointments && response.appointments.options) || [], function (i, o) {
 			if (o.policy === policy) { selected = o; }
 		});
+		var button = $(this);
+		var merge = function () {
+			button.prop('disabled', true).text('Merging...');
+			$.ajax({
+				url: '/manager/configure',
+				type: 'POST',
+				data: { app: response.app, setting: 'name_change', value: response.new, choices: JSON.stringify(choices), appt_policy: policy, timestamp: Date.now() },
+				success: function (resp) {
+					if (resp && typeof resp === 'object' && resp.conflict) { nameConflictPanel(resp); return; }
+					if (resp && typeof resp === 'object' && resp.error) {
+						window.alert(resp.error);
+						button.prop('disabled', false).text('Rename & merge');
+						return;
+					}
+					panel.remove();
+					if (typeof appointment_chron === 'function') { appointment_chron(); }
+				},
+				error: function () {
+					button.prop('disabled', false).text('Rename & merge');
+					window.alert('The merge request failed; nothing was changed on this screen.');
+				}
+			});
+		};
 		if (selected && Number(selected.dropped) > 0 && policy !== 'keep_all' && policy !== 'flag') {
 			var who = '';
 			if (policy === 'keep_old') { who = ' from ' + response.new; }
 			else if (policy === 'keep_new') { who = ' from ' + response.app; }
-			if (!window.confirm('This will drop ' + Number(selected.dropped) + ' appointment row(s)' + who + '. Continue?')) { return; }
+			jawnosConfirm('This will drop ' + Number(selected.dropped) + ' appointment row(s)' + who + '. Continue?', merge);
+			return;
 		}
-		var button = $(this);
-		button.prop('disabled', true).text('Merging...');
-		$.ajax({
-			url: '/manager/configure',
-			type: 'POST',
-			data: { app: response.app, setting: 'name_change', value: response.new, choices: JSON.stringify(choices), appt_policy: policy, timestamp: Date.now() },
-			success: function (resp) {
-				if (resp && typeof resp === 'object' && resp.conflict) { nameConflictPanel(resp); return; }
-				if (resp && typeof resp === 'object' && resp.error) {
-					window.alert(resp.error);
-					button.prop('disabled', false).text('Rename & merge');
-					return;
-				}
-				panel.remove();
-				if (typeof appointment_chron === 'function') { appointment_chron(); }
-			},
-			error: function () {
-				button.prop('disabled', false).text('Rename & merge');
-				window.alert('The merge request failed; nothing was changed on this screen.');
-			}
-		});
+		merge();
 	});
 	$('#name_conflict_cancel').on('click', function () { panel.remove(); });
 }

@@ -190,22 +190,23 @@ $(document).on('click', '.budget_payable_delete', function() {
 	var button = $(this);
 	var message = $('#budget_payable_message');
 	message.text('');
-	if (!confirm(jawnosT('Delete this bill and any payments against it?'))) { return; }
-	button.attr('disabled', 'disabled');
-	$.ajax({
-		url: '/manager/budget/payable/delete',
-		type: 'POST',
-		data: { uuid: button.attr('uuid') },
-		success: function(response) {
-			button.removeAttr('disabled');
-			if (response.error) { message.text(response.error); return; }
-			budgetInit();
-		},
-		error: function() {
-		button.removeAttr('disabled');
-		message.text(jawnosT('The bill could not be deleted.'));
-	}
-});
+	jawnosConfirm(jawnosT('Delete this bill and any payments against it?'), function() {
+		button.attr('disabled', 'disabled');
+		$.ajax({
+			url: '/manager/budget/payable/delete',
+			type: 'POST',
+			data: { uuid: button.attr('uuid') },
+			success: function(response) {
+				button.removeAttr('disabled');
+				if (response.error) { message.text(response.error); return; }
+				budgetInit();
+			},
+			error: function() {
+				button.removeAttr('disabled');
+				message.text(jawnosT('The bill could not be deleted.'));
+			}
+		});
+	});
 });
 
 
@@ -214,22 +215,28 @@ var button = $(this);
 var url = button.hasClass('budget_schedule_toggle')
 	? '/manager/budget/payable/schedule/toggle'
 	: '/manager/budget/payable/schedule/delete';
-if (button.hasClass('budget_schedule_delete') && !confirm(jawnosT('Delete this scheduled bill? Bills it already made are kept.'))) { return; }
-button.attr('disabled', 'disabled');
-$.ajax({
-	url: url,
-	type: 'POST',
-	data: { uuid: button.attr('uuid') },
-	success: function(response) {
-		button.removeAttr('disabled');
-		if (response.error) { alert(response.error); return; }
-		budgetInit();
-	},
-	error: function() {
-		button.removeAttr('disabled');
-		alert(jawnosT('The schedule could not be saved.'));
-	}
-});
+var save = function() {
+	button.attr('disabled', 'disabled');
+	$.ajax({
+		url: url,
+		type: 'POST',
+		data: { uuid: button.attr('uuid') },
+		success: function(response) {
+			button.removeAttr('disabled');
+			if (response.error) { alert(response.error); return; }
+			budgetInit();
+		},
+		error: function() {
+			button.removeAttr('disabled');
+			alert(jawnosT('The schedule could not be saved.'));
+		}
+	});
+};
+if (button.hasClass('budget_schedule_delete')) {
+	jawnosConfirm(jawnosT('Delete this scheduled bill? Bills it already made are kept.'), save);
+	return;
+}
+save();
 });
 
 $(document).on('click', '#budget_journal_rebuild', function() {

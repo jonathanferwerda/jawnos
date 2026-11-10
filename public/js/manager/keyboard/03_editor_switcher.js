@@ -241,10 +241,13 @@ $(document).on('keydown', function(e) {
 	var movInc = 5;
 	if (markerShortcut(e)) { return; }
 	if (e.keyCode == 13) {
-		if ($('.dialog_box').length > 0) {
+		// Only a dialog the person can see takes Enter. The alert shell lives in
+		// the page all the time and now carries the OK of a house question, so
+		// the hidden one must never be the one Enter presses.
+		var open_boxes = $('.dialog_box:visible');
+		if (open_boxes.length > 0) {
 			e.preventDefault();
-			var d = $($('.dialog_box')[$('.dialog_box').length - 1]);
-			d.find('.ok').trigger('click');
+			open_boxes.last().find('.ok').trigger('click');
 			console.log('dialog box showing');
 		}
 		if (app == 'folders') {

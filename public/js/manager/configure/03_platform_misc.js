@@ -79,27 +79,30 @@ $(document).on('click', '.ai_model_test', function() {
 		return;
 	}
 	// A Test is a real request: it can spend an API call and, for a generation
-	// model, actually make and bill a file. Ask before that happens.
+	// model, actually make and bill a file. Ask before that happens - in the
+	// house's own dialog, not the engine's, so the question reads the same here,
+	// in the live image and on the phone.
 	var ask = 'This will ask a model for a real response, and may cost money, do you want to continue?';
 	ask = (typeof jawnosT === 'function') ? jawnosT(ask) : ask;
-	if (!confirm(ask)) { return; }
-	var label = btn.text();
-	btn.prop('disabled', true).text('Testing…');
-	status.hide().text('');
-	$.ajax({
-		url: '/manager/configure/ai_model_test',
-		type: 'POST',
-		dataType: 'json',
-		data: { model: model, setting: role.attr('setting'), timestamp: Date.now() },
-		success: function(r) {
-			var ok = !!(r && r.ok);
-			status.text((ok ? '\u2713 ' : '\u2717 ') + ((r && r.message) || 'no answer')).show()
-				.css('color', ok ? 'var(--accent, inherit)' : '#e5484d');
-		},
-		error: function() {
-			status.text('\u2717 the test could not reach the manager').show().css('color', '#e5484d');
-		},
-		complete: function() { btn.prop('disabled', false).text(label); }
+	jawnosConfirm(ask, function() {
+		var label = btn.text();
+		btn.prop('disabled', true).text('Testing…');
+		status.hide().text('');
+		$.ajax({
+			url: '/manager/configure/ai_model_test',
+			type: 'POST',
+			dataType: 'json',
+			data: { model: model, setting: role.attr('setting'), timestamp: Date.now() },
+			success: function(r) {
+				var ok = !!(r && r.ok);
+				status.text((ok ? '\u2713 ' : '\u2717 ') + ((r && r.message) || 'no answer')).show()
+					.css('color', ok ? 'var(--accent, inherit)' : '#e5484d');
+			},
+			error: function() {
+				status.text('\u2717 the test could not reach the manager').show().css('color', '#e5484d');
+			},
+			complete: function() { btn.prop('disabled', false).text(label); }
+		});
 	});
 });
 

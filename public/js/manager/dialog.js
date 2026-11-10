@@ -54,10 +54,15 @@ function jawnosDialogToggle(id) {
 
 // The Alert's #alert div is the dialog's body, so every caller that writes into
 // it keeps working; this shell supplies the frame, the title and the close.
+function jawnosDialogT(s) {
+	return (typeof jawnosT === 'function') ? jawnosT(s) : s;
+}
+
 function jawnosAlert(html, options) {
 	options = options || {};
 	var dialog = $('#alert_dialog');
 	var content = $('#alert');
+	jawnosConfirmClear();
 	if (!dialog.length) {
 		// a page without the shell (an older template): the old behaviour
 		if (html !== undefined) { content.html(html); }
@@ -68,7 +73,9 @@ function jawnosAlert(html, options) {
 		content.html(html);
 		$('#alert_message').text('');
 	}
-	if (options.title) { dialog.find('.jawnos_dialog_title').text(options.title); }
+	// Back to the shell's own title if this Alert replaced a question.
+	dialog.find('.jawnos_dialog_title').text(
+		options.title || dialog.attr('data-dialog-title') || jawnosDialogT('Alert'));
 	if (options.uuid) {
 		content.attr('uuid', options.uuid);
 		dialog.attr('uuid', options.uuid);
@@ -78,7 +85,46 @@ function jawnosAlert(html, options) {
 	jawnosDialogRaise(dialog);
 }
 
+// A question with an OK and a Cancel, in the Alert's own shell. The engine's
+// confirm() is a Qt, Android or OS box: it looks different on every machine and
+// is unreadable where the house forces a black ground. This one is the house
+// dialog, so the live image, the phone and the browser all ask the same way.
+// The answer is a callback: on_yes runs only on OK, never on Cancel, the X or
+// Escape. The message is text, not markup - it may name a record or a network.
+var jawnos_confirm_yes = null;
+
+function jawnosConfirm(message, on_yes, options) {
+	options = options || {};
+	var dialog = $('#alert_dialog');
+	if (!dialog.length) {
+		// a page without the shell (an older template): the browser's question
+		if (typeof window.confirm === 'function' && !window.confirm(message)) { return; }
+		if (typeof on_yes === 'function') { on_yes(); }
+		return;
+	}
+	jawnos_confirm_yes = (typeof on_yes === 'function') ? on_yes : null;
+	var content = $('#alert');
+	content.text(message === undefined ? '' : message);
+	$('#alert_message').text('');
+	$('#alert_buttons').html(
+		'<button type="button" class="cancel" id="alert_confirm_cancel">' + jawnosDialogT('Cancel') + '</button>' +
+		'<button type="button" class="ok" id="alert_confirm_ok">' + jawnosDialogT('OK') + '</button>'
+	).removeAttr('hidden').show();
+	dialog.find('.jawnos_dialog_title').text(options.title || jawnosDialogT('Confirm'));
+	content.removeAttr('hidden');
+	dialog.removeAttr('hidden').show();
+	jawnosDialogRaise(dialog);
+}
+
+// Drop a pending question without running it. Closing the shell is the same
+// thing for an Alert, so both go through here first.
+function jawnosConfirmClear() {
+	jawnos_confirm_yes = null;
+	$('#alert_buttons').hide().empty();
+}
+
 function jawnosAlertClose() {
+	jawnosConfirmClear();
 	var dialog = $('#alert_dialog');
 	var content = $('#alert');
 	$('#alert_message').text('');
@@ -93,6 +139,16 @@ function jawnosAlertClose() {
 }
 
 $(document).on('click', '#alert_close', function() {
+	jawnosAlertClose();
+});
+
+$(document).on('click', '#alert_confirm_ok', function() {
+	var yes = jawnos_confirm_yes;
+	jawnosAlertClose();
+	if (typeof yes === 'function') { yes(); }
+});
+
+$(document).on('click', '#alert_confirm_cancel', function() {
 	jawnosAlertClose();
 });
 

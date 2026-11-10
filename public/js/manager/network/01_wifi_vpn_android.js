@@ -32,9 +32,10 @@ $(document).on('click', '#network_wifi_disconnect', function() {
 $(document).on('click', '.network_wifi_forget', function() {
 	var ssid = $(this).attr('data-ssid') || '';
 	if (!ssid) { return; }
-	if (!confirm(networkT('Forget this network?'))) { return; }
-	networkPost('wifi_disconnect', { forget: '1', ssid: ssid }, function() {
-		networkRefreshAll();
+	jawnosConfirm(networkT('Forget this network?'), function() {
+		networkPost('wifi_disconnect', { forget: '1', ssid: ssid }, function() {
+			networkRefreshAll();
+		});
 	});
 });
 

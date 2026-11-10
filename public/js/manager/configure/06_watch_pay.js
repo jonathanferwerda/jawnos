@@ -71,9 +71,12 @@ $(document).on('keydown', '.records_ask_q', function(e) {
 // a class the person knows is really long: silence the audit for that app
 $(document).on('click', '.records_leave_app', function() {
 	var b = $(this), app = b.attr('app');
-	if (app && !confirm('Leave "' + app + '" alone? The records audit will stop reporting it.')) { return; }
-	b.prop('disabled', true).text('…');
-	$.post('/manager/records/fixes_exempt', { uuid: b.attr('uuid'), app: app }, function() { recordsRender(); });
+	var leave_alone = function() {
+		b.prop('disabled', true).text('…');
+		$.post('/manager/records/fixes_exempt', { uuid: b.attr('uuid'), app: app }, function() { recordsRender(); });
+	};
+	if (!app) { leave_alone(); return; }
+	jawnosConfirm('Leave "' + app + '" alone? The records audit will stop reporting it.', leave_alone);
 });
 $(document).on('click', '#records_scan_now', function() {
 	var s = $(this); s.text('scanning…');
@@ -254,8 +257,9 @@ $(document).on('change', '.pay_secret', function() {
 
 $(document).on('click', '.pay_secret_clear', function() {
 	var setting = $(this).attr('setting');
-	if (!confirm('Clear the saved value?')) { return; }
-	paySettingSave(setting, '', function() { payPanelRefresh(); });
+	jawnosConfirm('Clear the saved value?', function() {
+		paySettingSave(setting, '', function() { payPanelRefresh(); });
+	});
 });
 
 $(document).on('click', '.pay_test', function() {
@@ -302,8 +306,9 @@ $(document).on('click', '.pay_interac_ignore', function() {
 });
 
 $(document).on('click', '#pay_interac_token_new', function() {
-	if (!confirm('Make a new forwarding token? Any service using the old URL will stop working.')) { return; }
-	$.post('/manager/pay/interac/token', { timestamp: Date.now() }, function() { payPanelRefresh(); }, 'json');
+	jawnosConfirm('Make a new forwarding token? Any service using the old URL will stop working.', function() {
+		$.post('/manager/pay/interac/token', { timestamp: Date.now() }, function() { payPanelRefresh(); }, 'json');
+	});
 });
 
 function cryptoSettingSave(setting, value, done) {

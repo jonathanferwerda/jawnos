@@ -24,21 +24,24 @@ $(document).on('click', '#update_now_button', function() {
 				if (s == 'ahead' || s == 'diverged' || s == 'peer/diverged') {
 					// The tree holds commits the authority does not have, so a plain pull
 					// cannot move it. Offer the force the server already knows how to do:
-					// reset the checkout hard to the authority's head.
-					if (!force && confirm(t('Local commits block the update. Discard them and pull the latest code anyway?'))) {
-						post(1);
-						return;
-					}
+					// reset the checkout hard to the authority's head. The reason is on
+					// screen with the question, so declining leaves it there.
 					status.text(t('local commits block the update'));
+					if (!force) {
+						jawnosConfirm(t('Local commits block the update. Discard them and pull the latest code anyway?'), function() {
+							post(1);
+						});
+					}
 					return;
 				}
 				if (s == 'dirty') {
 					var files = ((r && r.output) || '').trim();
-					if (!force && confirm(t('Local changes block the update. Discard them and update anyway?'))) {
-						post(1);
-						return;
-					}
 					status.text(t('local changes block the update') + (files ? ': ' + files.split('\n').slice(0, 3).join(' ') : ''));
+					if (!force) {
+						jawnosConfirm(t('Local changes block the update. Discard them and update anyway?'), function() {
+							post(1);
+						});
+					}
 					return;
 				}
 				status.text(s + ((r && r.output) ? ': ' + r.output : ''));

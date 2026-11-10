@@ -244,13 +244,14 @@ $(document).on('click', '.marker_layer_add', function() {
 $(document).on('click', '.marker_layer_delete', function() {
 	var layer = markerActiveLayer();
 	if (markerLayers.length <= 1 || !layer) { return; }
-	if (!confirm('Delete layer: ' + layer.name + '?')) { return; }
-	markerHistoryPush(markerStructureRecord());
-	markerLayers.splice(markerLayerActive, 1);
-	markerLayerActive = Math.min(markerLayerActive, markerLayers.length - 1);
-	markerLayerList();
-	markerCompose();
-	markerAutosaveSoon();
+	jawnosConfirm('Delete layer: ' + layer.name + '?', function() {
+		markerHistoryPush(markerStructureRecord());
+		markerLayers.splice(markerLayerActive, 1);
+		markerLayerActive = Math.min(markerLayerActive, markerLayers.length - 1);
+		markerLayerList();
+		markerCompose();
+		markerAutosaveSoon();
+	});
 });
 
 $(document).on('click', '.marker_layer_up', function() {
@@ -282,17 +283,18 @@ $(document).on('click', '.marker_undo', function() { markerUndo(); });
 $(document).on('click', '.marker_redo', function() { markerRedoStep(); });
 
 $(document).on('click', '.marker_new_board', function() {
-	if (!confirm('Start a new drawing?')) { return; }
-	markerLayers = [markerNewLayer('Layer 1')];
-	markerLayerActive = 0;
-	markerSessionUuid = undefined;
-	markerSessionName = undefined;
-	markerHistoryClear();
-	markerLayerList();
-	markerCompose();
-	// a new board should not come back from the working copy either
-	markerAutosaveDirty = true;
-	markerAutosaveNow();
+	jawnosConfirm('Start a new drawing?', function() {
+		markerLayers = [markerNewLayer('Layer 1')];
+		markerLayerActive = 0;
+		markerSessionUuid = undefined;
+		markerSessionName = undefined;
+		markerHistoryClear();
+		markerLayerList();
+		markerCompose();
+		// a new board should not come back from the working copy either
+		markerAutosaveDirty = true;
+		markerAutosaveNow();
+	});
 });
 
 $(document).on('click', '.marker_zoom_in', function() { markerZoomCentre(1.25); });

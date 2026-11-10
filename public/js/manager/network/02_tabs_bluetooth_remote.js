@@ -156,15 +156,21 @@ $(document).on('click', '.network_bluetooth_action', function() {
 	var action = $(this).attr('data-action') || '';
 	var address = $(this).attr('data-address') || '';
 	if (!action || !address) { return; }
-	if (action === 'remove' && !confirm(networkT('Forget this Bluetooth device?'))) { return; }
 	var button = $(this);
-	button.prop('disabled', true);
-	networkPost('bluetooth/action', { action: action, address: address }, function(response) {
-		button.prop('disabled', false);
-		if (!response.ok) { networkBluetoothError(response.error || networkT('The Bluetooth action failed.')); }
-		else { networkBluetoothError(''); }
-		networkBluetoothRefresh();
-	});
+	var send = function() {
+		button.prop('disabled', true);
+		networkPost('bluetooth/action', { action: action, address: address }, function(response) {
+			button.prop('disabled', false);
+			if (!response.ok) { networkBluetoothError(response.error || networkT('The Bluetooth action failed.')); }
+			else { networkBluetoothError(''); }
+			networkBluetoothRefresh();
+		});
+	};
+	if (action === 'remove') {
+		jawnosConfirm(networkT('Forget this Bluetooth device?'), send);
+		return;
+	}
+	send();
 });
 
 $(document).on('click', '#network_refresh', function() {

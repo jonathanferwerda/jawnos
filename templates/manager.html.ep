@@ -8,9 +8,9 @@
 	<div class="body jawnos_dialog_body">
 		<h4 id="alert_message"></h4>
 		<input type="text" style="display:none;" id="alert_input">
-		<span id="alert_buttons"></span>
 		<div id="alert"></div>
 	</div>
+	<div class="bottom_buttons jawnos_dialog_footer" id="alert_buttons" hidden style="display:none;"></div>
 </div>
 
 <span id="header"></span>

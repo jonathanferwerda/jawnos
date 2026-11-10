@@ -634,11 +634,12 @@ function twirlGame() {
 	}
 
 	function clearScores() {
-		if (!confirm('Clear all Twirl high scores?')) { return; }
-		twirlSpace.scores = [];
-		syncTopScore();
-		saveScores();
-		draw();
+		jawnosConfirm('Clear all Twirl high scores?', function () {
+			twirlSpace.scores = [];
+			syncTopScore();
+			saveScores();
+			draw();
+		});
 	}
 
 	// --- game over ---

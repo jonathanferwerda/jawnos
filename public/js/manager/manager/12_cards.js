@@ -1436,10 +1436,11 @@ if (typeof jQuery !== 'undefined') {
 	$(document).on('click', '#cards_solitaire #sol_reset', function() {
 		if (!solitaireState) { return; }
 		var ask = window.jawnosT ? jawnosT('Reset the bank to zero?') : 'Reset the bank to zero?';
-		if (window.confirm && !window.confirm(ask)) { return; }
-		solitaireState.bank = 0;
-		solitaireRender(solitaireState);
-		solitaireSaveBank();
+		jawnosConfirm(ask, function() {
+			solitaireState.bank = 0;
+			solitaireRender(solitaireState);
+			solitaireSaveBank();
+		});
 	});
 
 	// ---- mahjong ----
@@ -1509,8 +1510,9 @@ if (typeof jQuery !== 'undefined') {
 	$(document).on('click', '#cards_blackjack #bj_reset', function() {
 		if (!blackjackState) { return; }
 		var ask = window.jawnosT ? jawnosT('Reset the bank to 500?') : 'Reset the bank to 500?';
-		if (window.confirm && !window.confirm(ask)) { return; }
-		blackjackNewBank(BJ_BANK_START);
+		jawnosConfirm(ask, function() {
+			blackjackNewBank(BJ_BANK_START);
+		});
 	});
 
 	// An app window opened directly (not through the start menu) still needs its

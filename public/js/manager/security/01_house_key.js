@@ -256,11 +256,13 @@
 	});
 
 	$(document).on('click', '.passkey_remove', function () {
-		if (!confirm('Remove this passkey from the house?')) { return; }
-		$.post('/manager/webauthn/remove', { id: $(this).attr('id') }, function (r) {
-			if (!r || !r.ok) { alert((r && r.error) || 'could not remove'); return; }
-			securityRefresh();
-		}, 'json');
+		var id = $(this).attr('id');
+		jawnosConfirm('Remove this passkey from the house?', function () {
+			$.post('/manager/webauthn/remove', { id: id }, function (r) {
+				if (!r || !r.ok) { alert((r && r.error) || 'could not remove'); return; }
+				securityRefresh();
+			}, 'json');
+		});
 	});
 
 	// The app window is on 127.0.0.1, which is not a usable WebAuthn origin. Mint

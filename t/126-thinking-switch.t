@@ -139,8 +139,8 @@ my @calls;
 	like( $js, qr/\.ai_model_test_status/, 'the answer is shown under the row' );
 	like( $js, qr/may cost money/, 'the Test warns that it may cost money' );
 	like( $js, qr/jawnosT\(ask\)/, 'and the warning is translatable' );
-	like( $js, qr/confirm\(ask\)/, 'and asks before it runs' );
-	my $ask_at = index($js, 'confirm(ask)');
+	like( $js, qr/jawnosConfirm\(ask,/, 'and asks in the house dialog before it runs' );
+	my $ask_at = index($js, 'jawnosConfirm(ask,');
 	my $post_at = index($js, "url: '/manager/configure/ai_model_test'");
 	ok( $ask_at >= 0 && $ask_at < $post_at, 'the confirmation comes before the request' );
 }

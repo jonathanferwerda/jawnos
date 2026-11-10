@@ -98,19 +98,21 @@ $(document).on('click', '.edit_app_delete', function() {
 	// This editor edits one record, so its trash deletes that record and only it.
 	// Deleting a whole app lives in Configure -> the app's card, where the name
 	// has to be typed first.
-	if (!confirm('Delete this record?')) { return; }
-	if (!confirm('Delete it for good? This is copied to every machine.')) { return; }
-	var ea = b.closest('.appointment_edit_area');
-	var status = ea.find('.edit_app_status');
-	status.text('Deleting...');
-	$.ajax({
-		url: '/manager/delete_app',
-		type: 'POST',
-		data: { app: app, uuid: uuid, timestamp: b.attr('timestamp'), type: b.attr('type'), server_time: Date.now() },
-		success: function() {
-			ea.html('').hide();
-		},
-		error: function() { status.text('Could not delete.'); }
+	jawnosConfirm('Delete this record?', function() {
+		jawnosConfirm('Delete it for good? This is copied to every machine.', function() {
+			var ea = b.closest('.appointment_edit_area');
+			var status = ea.find('.edit_app_status');
+			status.text('Deleting...');
+			$.ajax({
+				url: '/manager/delete_app',
+				type: 'POST',
+				data: { app: app, uuid: uuid, timestamp: b.attr('timestamp'), type: b.attr('type'), server_time: Date.now() },
+				success: function() {
+					ea.html('').hide();
+				},
+				error: function() { status.text('Could not delete.'); }
+			});
+		});
 	});
 });
 
