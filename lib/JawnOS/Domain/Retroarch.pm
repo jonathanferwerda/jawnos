@@ -123,7 +123,7 @@ sub retroarch_config_read {
 	my %value;
 	for my $line (@lines) {
 		next if $line =~ /^\s*(?:#|$)/;
-		if ($line =~ /^\s*([A-Za-z0-9_]+)\s*=\s*"?([^"\r\n]*)"?\s*$/) {
+		if ($line =~ /^\s*([A-Za-z0-9_.-]+)\s*=\s*"?([^"\r\n]*)"?\s*$/) {
 			$value{$1} = $2;
 		}
 	}
@@ -136,7 +136,7 @@ sub retroarch_config_read {
 sub retroarch_config_write {
 	my ($file, $key, $value) = @_;
 	return { ok => 0, error => 'no config file' } unless defined $file && length $file;
-	return { ok => 0, error => 'bad key' } unless defined $key && $key =~ /^[A-Za-z0-9_]+$/;
+	return { ok => 0, error => 'bad key' } unless defined $key && $key =~ /^[A-Za-z0-9_.-]+$/;
 	$value = '' unless defined $value;
 	$value = '' if $value eq 'undef';
 	$value =~ s/[\r\n"]//g;

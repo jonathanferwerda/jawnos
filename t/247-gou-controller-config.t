@@ -118,6 +118,17 @@ like(read_file($psx), qr/^pcsx_rearmed_frameskip = "auto"$/m, 'the core option f
 my $wrong_core = subs::retroarch_set('pcsx_rearmed_frameskip', 'auto', 'mupen64plus_next');
 ok(!$wrong_core->{'ok'}, 'a core setting is not accepted for another core');
 
+my $mupen = subs::retroarch_core_file('mupen64plus_next');
+ok(defined $mupen && $mupen =~ m{Mupen64Plus-Next/Mupen64Plus-Next\.opt$}, 'the N64 option file is found by core id');
+make_path($tmp . '/config/Mupen64Plus-Next');
+write_file($mupen, "mupen64plus-ThreadedRenderer = \"False\"\n");
+my $hyphen = subs::retroarch_set('mupen64plus-ThreadedRenderer', 'True', 'mupen64plus_next');
+ok($hyphen->{'ok'}, 'a hyphenated core key is writable');
+like(read_file($mupen), qr/^mupen64plus-ThreadedRenderer = "True"$/m,
+	'the hyphenated key lands as an INI line');
+my ($mupen_read) = subs::retroarch_config_read($mupen);
+is($mupen_read->{'mupen64plus-ThreadedRenderer'}, 'True', 'a hyphenated core key is readable');
+
 my $preset = subs::retroarch_preset('audio_compatible');
 ok($preset->{'ok'}, 'the audio-compatibility preset applies');
 my $preset_cfg = read_file($cfg);
