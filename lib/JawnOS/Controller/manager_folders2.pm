@@ -578,7 +578,7 @@ sub action_30700 {
 		$devices = [ map {
 			my $d = $_;
 			my $selected = $d->{'ok'} ? ($registered ? ($chosen{ $d->{'uuid'} } ? 1 : 0) : 1) : 0;
-			{ %{$d}, selected => $selected }
+			+{ %{$d}, selected => $selected }
 		} @{$devices} ];
 		my $content = $c->render_to_string(
 			template => 'folders/cloud_sync',

@@ -180,6 +180,18 @@ ok(!-e "$incoming_dir/one.txt", 'the file is gone');
 my $deleted_state = subs::cloud_sync_state_read($incoming_base);
 ok($deleted_state->{'deleted'}->{'one.txt'}, 'and the state remembers the deletion');
 
+# ---- a device row stays a hash after the selected flag ----------------------
+
+my $device_rows = [ { uuid => 'u', hostname => 'h', ok => 1, selected => 0 } ];
+my $mapped_rows = [ map {
+	my $d = $_;
+	my $selected = $d->{'ok'} ? 1 : 0;
+	+{ %{$d}, selected => $selected }
+} @{$device_rows} ];
+is(ref($mapped_rows->[0]), 'HASH', 'the selected flag is added to a hash row, not a bare block');
+is($mapped_rows->[0]->{'selected'}, 1, 'the row carries the choice');
+is($mapped_rows->[0]->{'uuid'}, 'u', 'and its uuid is still a field');
+
 # ---- the rail, the queue and the app agree ----------------------------------
 
 my $archive    = read_file("$root/lib/JawnOS/Domain/Archive.pm");
@@ -220,6 +232,7 @@ like($routes, qr{'\/manager\/folders\/cloud\/delete', 'action_30717'}, 'the peer
 unlike($routes, qr{'\/manager\/folders\/cloud\/prune'}, 'the old one-way prune route is gone');
 
 like($controller, qr/sub action_30700/, 'the check action exists');
+like($controller, qr/\+\{ %\{\$d\}, selected/, 'the device row is built as a hashref');
 like($controller, qr/sub action_30701/, 'the start action exists');
 like($controller, qr/sub action_30715/, 'the register action exists');
 like($controller, qr/sub action_30717/, 'the delete action exists');
