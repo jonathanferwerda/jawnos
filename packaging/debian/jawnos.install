@@ -1,0 +1,16 @@
+jawn			usr/share/jawnos
+Makefile.PL		usr/share/jawnos
+VERSION			usr/share/jawnos
+LICENSE			usr/share/jawnos
+config.json.example	usr/share/jawnos
+jawnosctl		usr/share/jawnos
+perl			usr/share/jawnos
+lib			usr/share/jawnos
+templates		usr/share/jawnos
+public			usr/share/jawnos
+i18n			usr/share/jawnos
+scripts			usr/share/jawnos
+desktop			usr/share/jawnos
+database		usr/share/jawnos
+docs/THIRD-PARTY.md	usr/share/jawnos/docs
+docs/licenses		usr/share/jawnos/docs

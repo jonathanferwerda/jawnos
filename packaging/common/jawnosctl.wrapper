@@ -1,0 +1,9 @@
+#!/bin/sh
+# The packaged CLI. It points at the read-only tree and the writable store; use
+# systemctl for the service's start/stop, and jawnosctl status/log for its state.
+set -eu
+: "${JAWNOS_DIR:=/usr/share/jawnos}"
+: "${JAWNOS_STORE_DIR:=/var/lib/jawnos}"
+: "${JAWNOS_PACKAGED:=1}"
+export JAWNOS_DIR JAWNOS_STORE_DIR JAWNOS_PACKAGED
+exec /usr/bin/python3 /usr/share/jawnos/desktop/jawnosctl "$@"

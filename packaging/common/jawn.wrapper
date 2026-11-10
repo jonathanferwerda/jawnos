@@ -1,0 +1,9 @@
+#!/bin/sh
+# The packaged launcher. /usr/share/jawnos is read-only; the house lives in the
+# store (JAWNOS_STORE_DIR, /var/lib/jawnos by default).
+set -eu
+: "${JAWNOS_STORE_DIR:=/var/lib/jawnos}"
+: "${JAWNOS_PACKAGED:=1}"
+export JAWNOS_STORE_DIR JAWNOS_PACKAGED
+cd /usr/share/jawnos
+exec /usr/bin/perl ./jawn "$@"

@@ -1,0 +1,11 @@
+#!/bin/sh
+set -e
+
+#DEBHELPER#
+
+if [ "$1" = purge ]; then
+	cat <<'EOF'
+JawnOS: /var/lib/jawnos (the database, its backups and the TLS material) was
+kept on purge. Remove it by hand only when the house is really gone.
+EOF
+fi

@@ -1,0 +1,2 @@
+# The server runs as its own system user; the store is its home.
+u jawn - "JawnOS server" /var/lib/jawnos -

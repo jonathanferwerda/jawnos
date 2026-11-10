@@ -1,0 +1,38 @@
+Source: jawnos
+Section: net
+Priority: optional
+Maintainer: Jonathan Ferwerda <jonathan.ferwerda@outlook.com>
+Build-Depends: debhelper-compat (= 13)
+Standards-Version: 4.7.0
+Homepage: https://github.com/jonathanferwerda/jawnos
+Rules-Requires-Root: no
+Vcs-Git: https://github.com/jonathanferwerda/jawnos.git
+Vcs-Browser: https://github.com/jonathanferwerda/jawnos
+
+Package: jawnos
+Architecture: all
+Depends: ${misc:Depends},
+ adduser, argon2, ca-certificates, curl, espeak, ffmpeg, git, imagemagick, iproute2,
+ libauthen-sasl-perl, libclone-perl, libcrypt-simple-perl, libcryptx-perl,
+ libdata-uuid-perl, libdbd-sqlite3-perl, libdbi-perl, libemail-sender-perl,
+ libemail-stuffer-perl, libfile-slurp-perl, libfile-type-perl, libhash-merge-perl,
+ libhtml-strip-perl, libio-pty-perl, liblwp-protocol-https-perl, libmime-tools-perl,
+ libminion-backend-sqlite-perl, libminion-perl, libmojo-sqlite-perl,
+ libmojolicious-perl, libmojolicious-plugin-renderfile-perl, libnet-imap-client-perl,
+ libnet-ssleay-perl, libnumber-format-perl, libsereal-decoder-perl,
+ libsereal-encoder-perl, libsql-abstract-perl, libtext-unidecode-perl,
+ libtime-duration-perl, libtimedate-perl, liburi-encode-perl, libwww-mechanize-perl,
+ libwww-perl, nodejs, openssh-client, openssl, perl, python3, qrencode, rsync, sox,
+ sqlite3, tesseract-ocr, tmux, tzdata, zbar-tools, zip
+Recommends: bluez, fonts-noto-color-emoji, python3-dbus, python3-gi,
+ python3-pyside6.qtwebenginewidgets, weasyprint
+Suggests: ollama, piper-tts, whisper.cpp
+Description: local-first personal server and desktop
+ JawnOS is a personal environment that runs as a house server and, with the
+ Qt desktop installed for the user, as a desktop. It keeps its database,
+ TLS material, voice models and staged app releases in a writable store,
+ while the application tree itself can be read-only.
+ .
+ This package installs the server tree, the jawn launcher and the jawnosctl
+ CLI. It does not start the service automatically: first start seeds the
+ database and prints the one unlock code.

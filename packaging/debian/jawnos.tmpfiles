@@ -1,0 +1,3 @@
+# The house database, its WAL, the backups, TLS material, voices and staged
+# releases. The service user owns it; nothing else needs to read it.
+d /var/lib/jawnos 0700 jawn jawn -

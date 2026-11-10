@@ -967,7 +967,9 @@ sub first_run_setup() {
 	# A machine with a display is a desktop: check the app's own packages too -
 	# WebKitGTK and GStreamer for the embedded view, and the colour emoji font
 	# Chat's SMS emoji need. A headless server and the phone keep to the core.
-	if ( -e 'scripts/jawnos_deps.pl' ) {
+	# A packaged install has already resolved them through the distro; running
+	# the installer as the service user would prompt, or install into its home.
+	if ( -e 'scripts/jawnos_deps.pl' && !$ENV{'JAWNOS_PACKAGED'} ) {
 		my @deps = ( 'perl', 'scripts/jawnos_deps.pl' );
 		push @deps, '--desktop' if $ENV{'DISPLAY'} || $ENV{'WAYLAND_DISPLAY'};
 		system(@deps);

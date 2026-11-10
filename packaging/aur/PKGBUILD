@@ -1,0 +1,81 @@
+# Maintainer: Jonathan Ferwerda <jonathan.ferwerda@outlook.com>
+pkgname=jawnos
+pkgver=0.1.2649
+pkgrel=1
+pkgdesc='A local-first personal server and desktop'
+arch=('any')
+url='https://github.com/jonathanferwerda/jawnos'
+license=('BSD-2-Clause')
+depends=(
+	'argon2' 'ca-certificates' 'curl' 'espeak-ng' 'ffmpeg' 'git' 'imagemagick'
+	'iproute2' 'nodejs' 'openssh' 'openssl' 'perl' 'perl-authen-sasl' 'perl-clone'
+	'perl-crypt-simple' 'perl-cryptx' 'perl-data-uuid' 'perl-dbd-sqlite' 'perl-dbi'
+	'perl-email-sender' 'perl-email-stuffer' 'perl-file-slurp' 'perl-file-type'
+	'perl-hash-merge' 'perl-html-strip' 'perl-io-tty' 'perl-libwww'
+	'perl-lwp-protocol-https' 'perl-mime-tools' 'perl-mojolicious'
+	'perl-mojolicious-plugin-renderfile' 'perl-net-ssleay' 'perl-number-format'
+	'perl-sereal-decoder' 'perl-sereal-encoder' 'perl-sql-abstract'
+	'perl-text-unidecode' 'perl-time-duration' 'perl-timedate' 'perl-uri-encode'
+	'perl-www-mechanize' 'python' 'qrencode' 'rsync' 'sox' 'sqlite' 'tesseract'
+	'tmux' 'tzdata' 'zbar' 'zip'
+)
+optdepends=(
+	'pyside6: desktop window'
+	'qt6-webengine: desktop window'
+	'qt6-wayland: desktop window'
+	'python-gobject: BLE bridge'
+	'python-dbus: BLE bridge'
+	'bluez: BLE bridge'
+	'noto-fonts-emoji: SMS emoji'
+	'python-weasyprint: PDF rendering'
+	'ollama: local AI models'
+	'whisper.cpp: offline transcription'
+	'piper-tts: natural voice'
+)
+makedepends=('cpanminus')
+# The release tag is v<version>; build one per packaged release, not per VERSION
+# bump. Replace sha256sums with `updpkgsums` after the tarball is published.
+source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz")
+sha256sums=('SKIP')
+backup=('etc/jawnos/jawnos.env')
+
+prepare() {
+	cd "$srcdir/$pkgname-$pkgver"
+	# Arch has no packages for Mojo::SQLite, Minion, Minion::Backend::SQLite,
+	# Mojo::IOLoop::ReadWriteFork, Net::IMAP::Client or WebService::Ollama, so the
+	# manifest's null entries are fetched here. --no-deps: their dependencies are
+	# the declared `depends` above.
+	sh packaging/vendor/fetch.sh arch
+}
+
+package() {
+	cd "$srcdir/$pkgname-$pkgver"
+
+	install -d "$pkgdir/usr/share/jawnos"
+	cp -a jawn Makefile.PL VERSION LICENSE config.json.example jawnosctl \
+		perl lib templates public i18n scripts desktop database \
+		"$pkgdir/usr/share/jawnos/"
+	rm -rf "$pkgdir/usr/share/jawnos/desktop/mkosi"
+
+	install -d "$pkgdir/usr/share/jawnos/docs"
+	cp -a docs/THIRD-PARTY.md docs/licenses "$pkgdir/usr/share/jawnos/docs/"
+
+	if [ -d vendor/lib/perl5 ]; then
+		cp -a vendor/lib/perl5/. "$pkgdir/usr/share/jawnos/lib/"
+	fi
+
+	install -Dm755 packaging/common/jawn.wrapper "$pkgdir/usr/bin/jawn"
+	install -Dm755 packaging/common/jawnosctl.wrapper "$pkgdir/usr/bin/jawnosctl"
+	install -Dm644 packaging/debian/jawnos.service \
+		"$pkgdir/usr/lib/systemd/system/jawnos.service"
+	install -Dm644 packaging/debian/jawnos.tmpfiles \
+		"$pkgdir/usr/lib/tmpfiles.d/jawnos.conf"
+	install -Dm644 packaging/aur/jawnos.sysusers \
+		"$pkgdir/usr/lib/sysusers.d/jawnos.conf"
+	install -Dm644 packaging/debian/jawnos.env \
+		"$pkgdir/etc/jawnos/jawnos.env"
+
+	install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+	install -Dm644 docs/THIRD-PARTY.md \
+		"$pkgdir/usr/share/licenses/$pkgname/THIRD-PARTY.md"
+}

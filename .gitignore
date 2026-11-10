@@ -73,3 +73,11 @@ perl/sco/sco_helper
 
 # --- Runtime sockets and watch files (workers hand each other live pushes) ---
 /run/
+
+# --- Packaging: fetched CPAN dists, .deb output and makepkg scratch -------------
+/vendor/
+/packaging/out/
+/packaging/aur/pkg/
+/packaging/aur/src/
+/packaging/aur/*.pkg.tar.*
+/packaging/aur/.SRCINFO

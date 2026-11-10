@@ -1,0 +1,10 @@
+jawnos (0.1.2649-1) unstable; urgency=medium
+
+  * Package the server tree, the jawn launcher and the jawnosctl CLI.
+  * Install the writable store at /var/lib/jawnos and keep /usr/share/jawnos
+    read-only via JAWNOS_STORE_DIR.
+  * Use Debian's Perl packages where they exist; vendor only the two CPAN
+    dists Debian does not package (Mojo::IOLoop::ReadWriteFork, WebService::Ollama).
+  * Add jawnos.service, tmpfiles and the /etc/jawnos/jawnos.env default file.
+
+ -- Jonathan Ferwerda <jonathan.ferwerda@outlook.com>  Mon, 10 Nov 2026 21:00:00 -0500

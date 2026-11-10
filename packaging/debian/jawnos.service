@@ -1,0 +1,28 @@
+[Unit]
+Description=JawnOS server (jawn)
+Documentation=https://github.com/jonathanferwerda/jawnos
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=jawn
+Group=jawn
+UMask=0077
+WorkingDirectory=/usr/share/jawnos
+# The store is the writable half of the install; /usr/share/jawnos is code.
+# The environment file is read after this default, so a local edit can override
+# the store or the service's ports.
+Environment=JAWNOS_STORE_DIR=/var/lib/jawnos
+Environment=JAWNOS_PACKAGED=1
+EnvironmentFile=-/etc/jawnos/jawnos.env
+ExecStart=/usr/bin/perl /usr/share/jawnos/jawn
+Restart=always
+RestartSec=5
+StandardOutput=append:/var/lib/jawnos/jawn-stdout.log
+StandardError=append:/var/lib/jawnos/jawn-stdout.log
+KillMode=mixed
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target

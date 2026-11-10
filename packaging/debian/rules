@@ -1,0 +1,28 @@
+#!/usr/bin/make -f
+
+export DH_VERBOSE = 1
+
+%:
+	dh $@
+
+# The tree is installed whole; there is no compilation step. The manifest check
+# is the only build-time assertion, and it needs core Perl only.
+override_dh_auto_configure:
+override_dh_auto_build:
+override_dh_auto_test:
+	perl packaging/render_deps.pl --check
+
+override_dh_auto_install:
+	dh_install
+	rm -rf debian/jawnos/usr/share/jawnos/desktop/mkosi
+	install -Dm755 packaging/common/jawn.wrapper debian/jawnos/usr/bin/jawn
+	install -Dm755 packaging/common/jawnosctl.wrapper debian/jawnos/usr/bin/jawnosctl
+	install -Dm644 packaging/debian/jawnos.env debian/jawnos/etc/jawnos/jawnos.env
+	if [ -d vendor/lib/perl5 ]; then \
+		cp -a vendor/lib/perl5/. debian/jawnos/usr/share/jawnos/lib/; \
+	fi
+
+# Do not start or enable on install: the first start creates the database and
+# prints the one unlock code, which a person has to see.
+override_dh_installsystemd:
+	dh_installsystemd --no-enable --no-start

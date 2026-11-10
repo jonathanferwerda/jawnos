@@ -1,0 +1,25 @@
+#!/bin/sh
+set -e
+
+# The service user owns the store; the package never runs the app as root.
+if ! getent passwd jawn >/dev/null 2>&1; then
+	adduser --system --group --home /var/lib/jawnos --no-create-home \
+		--shell /usr/sbin/nologin jawn
+fi
+
+install -d -o jawn -g jawn -m 0700 /var/lib/jawnos
+
+#DEBHELPER#
+
+if [ "$1" = configure ]; then
+	cat <<'EOF'
+JawnOS is installed but not started. The first start builds the database and
+prints the one unlock code, so it has to be watched:
+
+  sudo systemctl enable --now jawnos
+  sudo journalctl -u jawnos -n 40
+
+Save the unlock code; it is the only key to the database. The store is
+/var/lib/jawnos and the code is /usr/share/jawnos.
+EOF
+fi
