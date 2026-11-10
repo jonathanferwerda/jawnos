@@ -206,7 +206,7 @@
 				<% my @map_points = map { { latitude => $_->{'latitude'} + 0, longitude => $_->{'longitude'} + 0, distance => $_->{'distance'}, timestamp => $_->{'timestamp'}, signatorial => $_->{'signatorial'}, uuid => $_->{'uuid'} } } grep { $_->{'latitude'} && $_->{'longitude'} } @{$l->{'distance'}}; %>
 				<div class="appointment_list appointment_distance_panel" list="distance" style="display:none;">
 					<div class="appointment_distance_toolbar" style="display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:4px 0;">
-						<select class="appointment_dist_view" app="<%= $a %>" uuid="<%= $l->{'uuid'} %>">
+						<select class="appointment_dist_view" app="<%= $a %>" uuid="<%= $l->{'uuid'} %>" data-view="<%= $dist_view %>">
 							<option value="fixes"><%= &subs::ui('Fixes') %></option>
 						</select>
 						<% if ($l->{'carrier'}) { %>

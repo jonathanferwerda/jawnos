@@ -117,6 +117,9 @@ sub action_25444 {
 		$provider =~ s/^map_key_//;
 		push @{$map_keys}, { provider => $provider, value => $mkr->{'value'} };
 	}
+	# The Dist picker's last view is one answer for the house, so every machine
+	# opens the list or the same basemap the person left it on.
+	my $dist_view = &subs::setting_grabber({ app => '__president', setting => 'appointment_dist_view', device => 'all' }) || 'fixes';
 	foreach my $mo ( @{$models}, @{$options} ) {
 		$mo->{'characteristics'} = eval { return decode_json $mo->{'characteristics'} } || [];
 		if (my @oc = grep { $_->{'name'} eq 'option_category' } @{$mo->{'characteristics'}}) {
@@ -242,6 +245,7 @@ sub action_25444 {
 		options => $options,
 		option_categories => $option_categories,
 		map_keys => $map_keys,
+		dist_view => $dist_view,
 		# the template's map fallback draws the house's own home plate when neither
 		# the model nor the app has one, so hand it the decoded plate
 		main_home_plate => $main_home_plate,

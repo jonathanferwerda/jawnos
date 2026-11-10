@@ -138,6 +138,19 @@ function appointmentDistKeys(panel) {
 	return keys;
 }
 
+// The Dist picker opens on the view the house last chose: the fixes list, or
+// one of the basemaps. The template hands over that answer in data-view, and a
+// basemap whose key is no longer saved is not offered, so a remembered one that
+// cannot be drawn falls back to the list.
+function appointmentDistViewRestore(sel) {
+	var saved = sel.attr('data-view') || 'fixes';
+	var found = false;
+	sel.find('option').each(function() {
+		if ($(this).val() === saved) { found = true; }
+	});
+	sel.val(found ? saved : 'fixes');
+}
+
 function appointmentDistFill(detail) {
 	var panel = $(detail).find('.appointment_distance_panel');
 	if (!panel.length || !window.jawnosMap) { return; }
@@ -157,6 +170,7 @@ function appointmentDistFill(detail) {
 		}
 	}
 	if (added) { sel.append(group); }
+	appointmentDistViewRestore(sel);
 }
 
 function appointmentDistShow(panel) {
@@ -241,6 +255,10 @@ function appointmentDistMap(panel, provider) {
 }
 
 $(document).on('change', '.appointment_dist_view', function() {
+	var kind = $(this).val() || 'fixes';
+	// one answer for the house, and for every panel already on this page
+	$('.appointment_dist_view').attr('data-view', kind);
+	settingSetter({ app: '__president', setting: 'appointment_dist_view', device: 'all', value: kind });
 	appointmentDistShow($(this).closest('.appointment_distance_panel'));
 });
 
