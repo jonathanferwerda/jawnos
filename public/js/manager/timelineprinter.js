@@ -48,14 +48,15 @@ function timelinePrinter(appts,sort,offset) {
 	var bandHeight = 28;
 	// the occurrence mark is the same one the other printers draw: the app's
 	// colour in a disc with a thin ink edge. The pseudonym's plate sits in its
-	// middle, and its size is bounded by the icon sets themselves: the tightest
-	// plate is 492 of a 512 viewBox with a 128 corner radius, so its rounded
-	// corner reaches 0.576 of the plate's side from the centre - 16.1px for a
-	// 28px plate, just inside the 17px inner edge of a radius-18 disc.
+	// middle, zoomed until it nearly fills the disc: the plate is a square, so
+	// its corners are rounded to a circle just inside the ink edge, and the
+	// appointment's colour still shows as a thin rim. The edge's inner radius is
+	// 17 (dotRadius less half the ring), so the clip sits at 16.
 	var dotRadius = 18;
 	var dotRing = 2;   // the ink edge around the disc
 	var dotHalo = 8;   // the theme's halo behind it, when the theme has one
-	var dotIcon = 28;
+	var dotIcon = 36;  // the plate, zoomed from 28 so the glyph reads at a glance
+	var dotIconClip = 16; // the circle the plate's corners are rounded to
 	var pad = 26;
 	var top = headerHeight + clothesLineHeight + 26;
 	var rows = 0;
@@ -207,10 +208,11 @@ function timelinePrinter(appts,sort,offset) {
 			}
 			ctx.restore();
 
-			// the pseudonym's own plate, centred in the dot. It draws when the
-			// image loads, so it lands on top of the disc above; at dotIcon it
-			// leaves the appointment's colour showing as a rim inside the edge.
-			pseudoGenerator(appts,l['type'], x - (dotIcon / 2), rowY - (dotIcon / 2), dotIcon);
+			// the pseudonym's own plate, centred in the dot and zoomed to fill it.
+			// It draws when the image loads, so it lands on top of the disc above;
+			// the round clip cuts its corners inside the ink edge, leaving the
+			// appointment's colour as a thin rim.
+			pseudoGenerator(appts,l['type'], x - (dotIcon / 2), rowY - (dotIcon / 2), dotIcon, dotIconClip);
 
 			var labelX = x + 20;
 			var labelEnd = labelX;
@@ -288,7 +290,7 @@ function timelinePrinter(appts,sort,offset) {
 // decoded and is drawn with the dots on every later pass; only the first time
 // an icon appears does it wait for the network, once.
 var pseudonymIcons = {};
-function pseudoGenerator(appts,type,x,y,size) {
+function pseudoGenerator(appts,type,x,y,size,roundRadius) {
 	var pseudonym = $.grep(appts['__specs']['pseudonyms'], function(n, i){ // just use arr
 		return n['name'] == type;
 	});
@@ -307,7 +309,16 @@ function pseudoGenerator(appts,type,x,y,size) {
 			icon.img.src = src;
 		}
 		var draw = function(){
+			// a round radius cuts the plate's square corners, so a zoomed plate can
+			// fill the disc without its corners poking through the ink edge
+			if (roundRadius) {
+				ctx.save();
+				ctx.beginPath();
+				ctx.arc(x + (size / 2), y + (size / 2), roundRadius, 0, (Math.PI * 2));
+				ctx.clip();
+			}
 			ctx.drawImage(icon.img, x, y, size, size);
+			if (roundRadius) { ctx.restore(); }
 		};
 		if (icon.ready) {
 			draw();

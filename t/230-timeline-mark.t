@@ -1,7 +1,7 @@
 # tests-for: public/js/manager/timelineprinter.js
 # covers:    the timeline's occurrence mark is the printer family's mark - the
 #            appointment colour in a disc with a thin ink edge - and the
-#            pseudonym's plate is small enough to leave that colour showing.
+#            pseudonym's plate zoomed and rounded to sit inside that edge.
 
 use strict;
 use warnings;
@@ -31,26 +31,29 @@ like($src, qr/jawnosTextureFillCircle\(ctx, gx, rowY, dotRadius, colour, darkThe
 like($src, qr/ctx\.strokeStyle = ink;\s*\n\s*ctx\.lineWidth = dotRing;\s*\n\s*ctx\.beginPath\(\);\s*\n\s*ctx\.arc\(gx, rowY, dotRadius/,
 	'with the same ink edge');
 
-# --- the plate fits inside the disc -----------------------------------------
-# The icon sets are 512x512 rounded-square plates, so a plate wider than the
-# disc covers its colour and cuts the edge into a sliver. Keep the plate inside
-# the colour disc (dotRing is the half of the ink edge that sits inside it).
+# --- the plate is zoomed and rounded into the disc ---------------------------
+# The icon sets are square plates, so the plate is zoomed until it nearly fills
+# the disc and its square corners are clipped to a circle just inside the ink
+# edge; the appointment's colour still shows as a thin rim.
 my ($radius) = $src =~ /var dotRadius = (\d+);/;
 my ($ring)   = $src =~ /var dotRing = (\d+);/;
 my ($icon)   = $src =~ /var dotIcon = (\d+);/;
-ok(defined $radius && defined $ring && defined $icon, 'the three mark sizes were read');
+my ($round)  = $src =~ /var dotIconClip = (\d+);/;
+ok(defined $radius && defined $ring && defined $icon && defined $round,
+	'the mark sizes and the plate\'s round clip were read');
 cmp_ok($radius, '>=', 18, 'the disc is big enough for a legible plate');
 cmp_ok($ring, '<=', 2, "the edge is the other printers' thin ink line");
-cmp_ok($icon, '>=', 26, 'the pseudonym plate is large enough to read');
-# the tightest icon set is 492 wide of a 512 viewBox with a 128 corner radius:
-# its rounded corner reaches 0.576 of the plate side from the centre, so the
-# plate must clear the ink edge's inner radius (dotRadius - dotRing/2)
-cmp_ok($icon * 0.576, '<=', $radius - $ring / 2,
-	"even the plate's rounded corners sit inside the ink edge");
+cmp_ok($icon, '>=', 34, 'the pseudonym plate is zoomed in to read');
+# the ink edge's inner radius is dotRadius - dotRing/2; the clip must stay
+# inside it so the appointment's colour still rings the plate
+cmp_ok($round, '<=', $radius - $ring / 2, 'the round clip sits inside the ink edge');
+cmp_ok($round, '>=', 14, 'the round clip still fills the disc');
 
-# the plate must land after the disc it sits on
-like($src, qr/ctx\.restore\(\);\s*\n\s*\/\/ the pseudonym's own plate.*?pseudoGenerator\(appts,l\['type'\], x - \(dotIcon \/ 2\)/s,
-	'the plate is drawn on top of the disc');
+# the plate is clipped to that circle before it is drawn, and drawn on top
+like($src, qr/ctx\.arc\(x \+ \(size \/ 2\), y \+ \(size \/ 2\), roundRadius, 0, \(Math\.PI \* 2\)\);\s*\n\s*ctx\.clip\(\);\s*\n\s*\}\s*\n\s*ctx\.drawImage\(icon\.img, x, y, size, size\)/,
+	'the plate is clipped to the round radius before it is drawn');
+like($src, qr/ctx\.restore\(\);\s*\n\s*\/\/ the pseudonym's own plate.*?pseudoGenerator\(appts,l\['type'\], x - \(dotIcon \/ 2\).*?dotIconClip\)/s,
+	'the plate is drawn on top of the disc, rounded');
 
 # --- the band is untouched --------------------------------------------------
 like($src, qr/jawnosTextureStroke\(ctx, colour, darkTheme, bandHeight\)/,
