@@ -15,7 +15,9 @@ use File::Basename qw(dirname);
 # half its lines is the failure it exists to catch (a 4,151-line manager.js once
 # shipped as 1,008 lines). A refactor that MOVES the content into new files is
 # legitimate, so the guard asks whether files the same change adds cover what the
-# shrinking file lost. These subtests pin both halves of that rule.
+# shrinking file lost. A doc cleanup is legitimate too: when only whole comments
+# and blanks went, every line of code is still there. These subtests pin those
+# rules.
 
 my $repo = tempdir(CLEANUP => 1);
 my $script = "$FindBin::Bin/../scripts/verify_change.pl";
@@ -74,5 +76,24 @@ is($code, 0, 'a shrink covered by the files the change adds is accepted')
 unlink "$repo/parts/b.txt" or die $!;
 ($code, $out) = verify();
 isnt($code, 0, 'a shrink the additions do not cover is still rejected');
+
+# 4. removing only whole comments and blanks keeps every line of code, so it is
+# a doc cleanup rather than a truncated write
+write_text('big.txt', $lines);
+unlink "$repo/parts/a.txt" or die $!;
+
+my $commented = join '', map { ($_ % 4 == 0) ? "line $_\n" : "# comment $_\n" } 1 .. 400;
+write_text('comments.txt', $commented);
+&git('git add -A');
+&git('git commit -qm commented');
+write_text('comments.txt', join '', map { "line $_\n" } grep { $_ % 4 == 0 } 1 .. 400);
+($code, $out) = verify();
+is($code, 0, 'a shrink that removes only comments and blanks is accepted')
+	or diag($out);
+
+# 5. code lost beneath the comments is still the failure the guard exists for
+write_text('comments.txt', join '', map { "line $_\n" } grep { $_ % 4 == 0 && $_ <= 40 } 1 .. 400);
+($code, $out) = verify();
+isnt($code, 0, 'a shrink that also drops code is still rejected');
 
 done_testing();

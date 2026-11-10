@@ -189,7 +189,13 @@ sub first_line {
 #
 # A refactor is the one legitimate big shrink: the content moved into new files.
 # So a shrink whose lost lines are covered by files this same change adds is a
-# move, not a truncated write, and passes.
+# move, not a truncated write, and passes. A doc cleanup is the other: when the
+# lines that went are only whole comments and blanks, every line of code is
+# still there, so there is nothing to truncate.
+sub code_lines {
+	my ($text) = @_;
+	return join '', grep { !/^\s*$/ && !/^\s*(?:#|\/\/)/ } split /(?<=\n)/, $text;
+}
 my $added_lines;
 sub added_lines {
 	return $added_lines if defined $added_lines;
@@ -215,6 +221,7 @@ sub shrink_problem {
 	return '' if index($old, "\0") >= 0;            # binary
 	my $old_lines = ($old =~ tr/\n//);
 	return '' if $old_lines < 120;
+	return '' if defined $new_text && &code_lines($old) eq &code_lines($new_text);
 	my $new_lines = (defined $new_text ? ($new_text =~ tr/\n//) : 0);
 	return '' unless $new_lines < $old_lines * 0.5;
 	return '' if &added_lines >= $old_lines - $new_lines;
