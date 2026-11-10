@@ -387,6 +387,16 @@ sub president_process() {
 		program_args => [ './perl/President.pl' ],
 	};
 }
+
+# The master's own state, declared before the tree is spawned: the pty runner's
+# spawn handler sets $status = 'started' synchronously, so a later
+# `my $status = 'off'` would run its initialiser after that handler and clobber
+# it. A fresh master then reported 'off', and the liveness watchdog below never
+# watched the tree it had just started.
+my $status = 'off';
+# Why the state machine is about to restart. Set wherever the tree is found down,
+# so a recovery restart records a reason instead of looking like a request.
+my $status_why = '';
 # A re-exec keeps this master's pid, so any child it fathered before exec is
 # still ours - and nobody else can reap it. Clear a stale pty child (and any
 # defunct child) before this incarnation starts one of its own.
@@ -394,7 +404,6 @@ sub president_process() {
 $fork = &terminal_pty_runner(&president_process());
 &arm_boot_watch();
 
-my $status = 'off';
 # The Coding agent's process: one daemon the master starts and supervises, but
 # deliberately leaves running when only the tree is restarted. Its job is a
 # long model run, and a restart (including the one that run itself asks for)
@@ -406,9 +415,6 @@ my $coding_spawned_at = 0;
 # The runner that owns a Coding daemon started without fork. File-scoped so its
 # socket/reactor registration and process handle survive the call that made it.
 my $coding_runner;
-# Why the state machine is about to restart. Set wherever the tree is found down,
-# so a recovery restart records a reason instead of looking like a request.
-my $status_why = '';
 # A restart asked for over the control socket, waiting for the guard's verdict on
 # the next tick (the caller is holding a connection until then).
 my $pending_restart;
@@ -494,7 +500,9 @@ my $tree_dead_port;
 my $coding_enabled = &coding_worker_enabled();
 if ($coding_enabled) { &coding_start() }
 else {
-	print "Coding worker is off on this machine (coding_worker in config.json)\n";
+	my $why = 'coding_worker in config.json';
+	$why .= '; no fork here, so Minion cannot run' unless JawnOS::Platform::use_fork();
+	print "Coding worker is off on this machine ($why)\n";
 	&coding_stop() if &coding_running();
 }
 &control_socket();
@@ -1225,16 +1233,32 @@ sub pid_in_tree {
 # master that dies by being written before the process started (see
 # lib/JawnOS/Domain/Coding.pm).
 sub coding_worker_enabled {
-	# coding_worker in config.json: absent, empty or anything else means on, so
-	# an older config keeps working. Only an explicit off stops the worker.
-	my $file = -e JawnOS::Platform::Paths::config_path() ? JawnOS::Platform::Paths::config_path() : '';
-	return 1 unless length $file;
-	my $config = eval { decode_json(scalar read_file($file)) };
-	return 1 unless ref $config eq 'HASH';
+	# coding_worker in config.json: an explicit off (0, no, off, false) always
+	# stops the worker, and an explicit on is the user's choice. Absent means on
+	# where this platform can fork - an older config keeps working - and off where
+	# it cannot, because Minion dies with "Minion workers do not support fork
+	# emulation" (perl/Coding.pl), so a spawn there is a doomed process every
+	# 15s plus a process-table scan in coding_pids().
+	#
+	# The optional arguments let a test exercise each branch without the machine's
+	# real config: coding_worker_enabled(config => {}, use_fork => 0).
+	my %opt = @_;
+	if (!exists $opt{'config'}) {
+		my $file = -e JawnOS::Platform::Paths::config_path() ? JawnOS::Platform::Paths::config_path() : '';
+		return 1 unless length $file;
+		my $config = eval { decode_json(scalar read_file($file)) };
+		return 1 unless ref $config eq 'HASH';
+		$opt{'config'} = $config;
+	}
+	my $config = $opt{'config'};
+	$config = {} unless ref $config eq 'HASH';
 	my $value = $config->{'coding_worker'};
-	return 1 unless defined $value;
-	return 0 if $value =~ /^\s*(?:0|no|off|false)\s*$/i;
-	return 1;
+	if (defined $value) {
+		return 0 if $value =~ /^\s*(?:0|no|off|false)\s*$/i;
+		return 1;
+	}
+	my $use_fork = exists $opt{'use_fork'} ? $opt{'use_fork'} : JawnOS::Platform::use_fork();
+	return $use_fork ? 1 : 0;
 }
 
 sub coding_cmdline_ok {
