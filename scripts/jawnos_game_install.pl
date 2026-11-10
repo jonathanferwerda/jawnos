@@ -125,6 +125,38 @@ if ($WHAT eq 'emulators') {
 	}
 	system('chown', '-R', 'jawn:jawn', $config_dir);
 
+	# DOS games run in DOSBox, which reads the person's own config. A game
+	# folder the launcher hands it is mounted as C: by DOSBox itself; this
+	# config only pins the panel: full screen, the built-in mixer, no prompt.
+	my $dosbox_dir = '/home/jawn/.config/dosbox';
+	make_path($dosbox_dir);
+	my $dosbox_config = "$dosbox_dir/gou.conf";
+	if (!-e $dosbox_config) {
+		if (open(my $cfg, '>', $dosbox_config)) {
+			print $cfg "[sdl]\n"
+				. "fullscreen=true\n"
+				. "output=surface\n"
+				. "autolock=false\n"
+				. "\n"
+				. "[mixer]\n"
+				. "nosound=false\n"
+				. "rate=44100\n"
+				. "blocksize=1024\n";
+			close $cfg;
+		}
+	}
+	system('chown', '-R', 'jawn:jawn', $dosbox_dir);
+	# The launch helper hands a standalone emulator `-b -e <file>` (Dolphin's
+	# shape). DOSBox ignores those switches and runs the file itself, except a
+	# .conf, which has to be `-conf`. The wrapper makes that one translation.
+	my $dosbox_wrapper = "$FindBin::Bin/jawnos_dosbox.pl";
+	if (-f $dosbox_wrapper) {
+		make_path('/usr/local/bin');
+		if (system('cp', '-f', $dosbox_wrapper, '/usr/local/bin/jawnos-dosbox') == 0) {
+			chmod 0755, '/usr/local/bin/jawnos-dosbox';
+		}
+	}
+
 	# The repositories do not carry every core the shelf names. The emmc image
 	# has a full set built for this board; copy the ones still missing, never
 	# over one pacman installed.

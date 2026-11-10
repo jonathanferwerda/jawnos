@@ -33,6 +33,7 @@ our %SYSTEM = (
 	psp         => { label => 'PlayStation Portable', core => 'ppsspp_libretro.so', package => '' },
 	dreamcast   => { label => 'Dreamcast', core => 'flycast_libretro.so', package => 'libretro-flycast' },
 	gc          => { label => 'GameCube', core => 'dolphin_libretro.so', package => 'libretro-dolphin' },
+	dos         => { label => 'DOS', standalone => 'jawnos-dosbox', package => 'dosbox' },
 	pcengine    => { label => 'PC Engine', core => 'mednafen_pce_libretro.so', package => 'libretro-beetle-pce' },
 	pcenginecd  => { label => 'PC Engine CD', core => 'mednafen_pce_libretro.so', package => 'libretro-beetle-pce' },
 	neogeo      => { label => 'Neo Geo', core => 'fbneo_libretro.so', package => '' },
@@ -54,6 +55,7 @@ our @EXTENSION = qw(
 	iso cue chd gdi cdi pbp cso rvz gcm wad bin img mdf mds
 	32x sms gg sg md gen smd pce sgx ngp ngc col a26 a52 a78 lnx
 	d64 g64 crt tap tzx z80 dsk zip 7z
+	exe com bat conf
 );
 
 # The first directory wins, so the cores built beside the desktop-OpenGL

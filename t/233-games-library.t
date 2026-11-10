@@ -1,4 +1,4 @@
-# tests-for: lib/JawnOS/Games.pm lib/JawnOS/Domain/Games.pm lib/JawnOS/Domain/Loader.pm scripts/jawnos_game_install.pl scripts/jawnos_game_launch.pl lib/JawnOS/Controller/manager_misc9.pm lib/JawnOS/Routes/manager_misc9.pm templates/apps/games.html.ep perl/help/topics_people.pl
+# tests-for: lib/JawnOS/Games.pm lib/JawnOS/Domain/Games.pm lib/JawnOS/Domain/Loader.pm scripts/jawnos_game_install.pl scripts/jawnos_dosbox.pl scripts/jawnos_game_launch.pl lib/JawnOS/Controller/manager_misc9.pm lib/JawnOS/Routes/manager_misc9.pm templates/apps/games.html.ep perl/help/topics_people.pl
 # covers:    The emulated shelf: the ROM scan under ~/roms, the system table and
 #            package list, the two install actions, the launch helper that gives
 #            the emulator the panel and Home, and the page that draws the cards.
@@ -68,6 +68,15 @@ is($tetris->{'art'}, "$tmp/nes/images/Tetris (U) [!].png",
 is(JawnOS::Games::art_path($tmp, $tetris->{'id'}), "$tmp/nes/images/Tetris (U) [!].png",
 	'and the refreshed index answers it without another walk');
 delete $ENV{'JAWNOS_GAMES_ART_INDEX'};
+# A DOS folder is a folder of files, not one ROM: the config and the
+# program beside it are both cards.
+my $dos = tempdir(CLEANUP => 1);
+make_path("$dos/dos");
+write_file("$dos/dos/TEST.conf", 'config');
+write_file("$dos/dos/GAME.EXE", 'exe');
+my $dos_library = JawnOS::Games::scan($dos);
+is(scalar @{ $dos_library->{'games'} }, 2, 'a DOS config and a DOS program both reach the shelf');
+is($dos_library->{'systems'}->[0]->{'label'}, 'DOS', 'the DOS folder is labelled DOS');
 
 # --- the system table ---------------------------------------------------------
 is(JawnOS::Games::system_label('snes'), 'Super Nintendo', 'the table names a system');
@@ -80,6 +89,21 @@ is(scalar(grep { $seen{$_}++ } @packages), 0, 'the package list has no duplicate
 ok((grep { $_ eq 'libretro-snes9x' } @packages), 'the list carries the SNES core package');
 is($packages[0], 'retroarch', 'the frontend is installed first');
 ok(!(grep { $_ eq 'libretro-ppsspp' } @packages), 'a core the repositories lack is not asked for');
+
+# DOS runs in DOSBox, not through a libretro core.
+my $systems = JawnOS::Games::systems();
+is($systems->{'dos'}->{'label'}, 'DOS', 'the table names the DOS system');
+is($systems->{'dos'}->{'standalone'}, 'jawnos-dosbox', 'DOS runs through the DOSBox wrapper');
+is($systems->{'dos'}->{'package'}, 'dosbox', 'DOS asks for the dosbox package');
+my $dos_runner = JawnOS::Games::runner_for('dos');
+is($dos_runner->{'kind'}, 'standalone', 'DOS is a standalone emulator, not a RetroArch core');
+is($dos_runner->{'package'}, 'dosbox', 'the DOS runner names its package');
+ok((grep { $_ eq 'dosbox' } @packages), 'the package list carries DOSBox');
+
+my %extension = map { $_ => 1 } @JawnOS::Games::EXTENSION;
+for my $suffix (qw(exe com bat conf zip img iso cue bin)) {
+	ok($extension{$suffix}, "the library accepts .$suffix as a DOS game");
+}
 
 # --- the domain seam ----------------------------------------------------------
 my $domain = read_file("$root/lib/JawnOS/Domain/Games.pm");
@@ -146,6 +170,17 @@ like($install, qr/audio_device = \\"hw:0,0\\"/, 'the installer writes the ALSA d
 
 my $games_pm = read_file("$root/lib/JawnOS/Games.pm");
 like($games_pm, qr/-e "\$root\/\$system\/\$stem\.cue"/, 'a .bin beside its .cue is not a second game');
+like($install, qr|/home/jawn/\.config/dosbox|, 'the installer writes DOSBox settings in the persons config folder');
+like($install, qr/fullscreen=true/, 'DOSBox starts full screen');
+like($install, qr/jawnos-dosbox/, 'the installer places the wrapper the shelf names');
+
+# --- the DOSBox wrapper -------------------------------------------------------
+my $dosbox = read_file("$root/scripts/jawnos_dosbox.pl");
+like($dosbox, qr/'-fullscreen'/, 'the wrapper asks DOSBox for the whole panel');
+like($dosbox, qr/'-exit'/, 'and asks it to leave when the game does');
+like($dosbox, qr/'-conf'/, 'a DOS config is handed to DOSBox as its config');
+like($dosbox, qr/eq '-e'/, 'the wrapper reads the launch helpers file argument');
+like($dosbox, qr|/home/jawn/\.config/dosbox|, 'and names the person config the installer wrote');
 
 # --- the routes and the page --------------------------------------------------
 my $routes = read_file("$root/lib/JawnOS/Routes/manager_misc9.pm");
