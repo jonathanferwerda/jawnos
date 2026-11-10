@@ -1,13 +1,11 @@
 # Native Windows and macOS Roadmap
 
-**Status:** P0 in flight (2026-11-09). Slices 1–2 landed: the questions are answered, the
-capability probe exists, portable mode has a Daemon server and a pipe runner, and control/log/watch
-speak loopback TCP with a token when asked. Slice 3 landed the process, network and mDNS seams:
-`lib/JawnOS/Platform/Process.pm`, `Net.pm` and `Mdns.pm` (Linux backends). Slice 4 landed the
-worker tail: no source imports `IO::Socket::UNIX` at compile time, and the alarm, memory, ws and
-mailws surfaces ride the same TCP transport (with the token) in portable mode. No Mac or Windows
-hardware is present yet, so the hardware exits wait for it. Runbook and acceptance checklist:
-`docs/platform-p0.md`.
+**Status:** 2026-11-10. P0 is **done** — the go/no-go is GO and the portable suite is green
+(333 files, 14,493 assertions at v0.1.2477, `docs/platform-go-no-go.md:35-36`). P1 is **done on
+Linux**: every seam exists and the probe asks it (v0.1.2584). Windows now comes first (D10): the
+Windows runner, no-fork servers and named jobs, cold-start DB/cert bootstrap and desktop cert trust
+have landed on VM200, and P3 is in progress there. P2 (macOS) is deferred until a Mac or a macOS CI
+runner exists. Runbook and acceptance checklist: `docs/platform-p0.md`.
 **Related:** `desktop/README.md` (the Qt shell and today's supervisor), `docs/docker.md` (the
 headless server), `docs/migration-roadmap.md` (the Go path, the alternative endgame),
 `docs/infrastructure-roadmap.md` (where containers still belong).
@@ -48,6 +46,7 @@ Accepted 2026-11-08, unless marked otherwise.
 | D7 | Qt WebEngine stays the only UI engine | **accepted** | Already true; no GTK/WebKitGTK fallback. |
 | D8 | Keep Perl for this roadmap | **accepted for now** | The Go migration is the alternative if the Windows process model proves too expensive. |
 | D9 | Direct distribution first, not the App Store or Microsoft Store | **proposed** | macOS sandbox would block child processes and broad file access. |
+| D10 | **Windows first; macOS (P2) deferred** until a Mac or a macOS CI runner exists | **accepted 2026-11-10** | Windows has a real box (VM200) and carries the process-model risk that P0 named; macOS cannot be measured without hardware or runners, so P2 waits rather than blocking P3. |
 
 ## 3. Resolved questions (2026-11-08)
 
@@ -262,7 +261,12 @@ container. Keep them:
 
 ## 8. Phases
 
-### P0 — decisions and spikes (no product code)
+**Order (2026-11-10).** P0 → P1 → P3 → P2. P0 and P1 are done, so the phase order no longer
+follows the platform order in the title. Windows comes first because it has a real box (VM200)
+and carries the process-model risk; macOS cannot be measured until a Mac or a macOS CI runner
+exists (`docs/platform-go-no-go.md:46-49`), so it waits. P4 and P5 stay last.
+
+### P0 — decisions and spikes — DONE 2026-11-09
 
 - Answer Q1–Q10, especially Q1 (Perl runtime), Q2 (prefork), Q3 (fork/threads) and Q5 (sockets).
 - Implement **portable mode on Linux**: a capability flag turns off `fork`, Prefork, PTY and UNIX
@@ -285,7 +289,7 @@ container. Keep them:
 - [x] Process identity, state, CPU ticks and the process-group scan behind `lib/JawnOS/Platform/Process.pm` (Linux backend; macOS/Windows to follow)
 - [x] The websocket worker, mailws, alarm and memory sockets off `IO::Socket::UNIX` at compile time (the worker tail rides TCP in portable mode)
 - [x] Network parsing (interfaces, routes, neighbours) and mDNS browse/publish behind `lib/JawnOS/Platform/Net.pm` and `Mdns.pm` (Linux backends; macOS/Windows to follow)
-- [ ] Portable smoke house and suite green on a spare checkout
+- [x] Portable smoke house and suite green on a spare checkout — 333 files, 14,493 assertions at v0.1.2477 (`docs/platform-go-no-go.md:35-36`)
 
 The portable path is behind `JAWNOS_PORTABLE`; native Linux/macOS behaviour is
 unchanged, so this is a spike, not a migration.
@@ -293,13 +297,14 @@ unchanged, so this is a spike, not a migration.
 **Exit:** a written go/no-go on the Windows process model, and a Linux house running in portable
 mode with the suite green. If the spike fails, stop and take the Go path.
 
-### P1 — platform abstraction
+### P1 — platform abstraction — DONE (Linux) 2026-11-10
 
 The abstraction is real: every platform question is asked of a seam, each seam keeps today's Linux
 behaviour, and a platform that cannot answer gets an empty result rather than a crash. `Process`,
 `Net` and `Mdns` landed in P0; P1 added `Audio`, `Serial`, `Print`, `Shell`, `Paths` and `Ports` and
-folded the remaining call sites onto the seams that already existed. The platform-specific bodies are
-deliberately the P2/P3 work in the last column.
+folded the remaining call sites onto the seams that already existed. Most of the platform-specific
+bodies are deliberately the P2/P3 work in the last column; the Windows runner and no-fork process
+model have already landed (P3, below).
 
 | Module | State on Linux | Platform branch |
 |---|---|---|
@@ -312,7 +317,7 @@ deliberately the P2/P3 work in the last column.
 | `Platform::Shell` | clipboard, opener, notification, terminal list | `pbcopy`/`open`/`osascript` (P2), `clip`/`ShellExecute`/toasts (P3) |
 | `Platform::Paths` | XDG install roots, `tool_path`, a temp that can fall back | Application Support (P2), `LOCALAPPDATA`/`%TEMP%` (P3) |
 | `Platform::Ports` | base-relative duty and transport tables, the configured tunnel range | none: the numbers are shared |
-| `Platform::Job`, `Server`, `TLS`, `Runner` | one job/server launcher, the local certificate, the runner seam (`ReadWriteFork` on Unix) | the Windows runner and no-fork path (P3) |
+| `Platform::Job`, `Server`, `TLS`, `Runner` | one job/server launcher, the local certificate, the runner seam (`ReadWriteFork` on Unix); the Windows runner (`Runner/Windows.pm`, v0.1.2508, `t/231`/`t/232`), no-fork servers (`Server.pm`, v0.1.2530) and named jobs (`Job.pm`, v0.1.2532) landed on VM200 | the Windows `Process` backend and the Job Object guard remain (P3) |
 
 - [x] `Process`, `Net`, `Mdns`, `Audio`, `Serial`, `Print`, `Shell`, `Paths` and `Ports` exist, and
   each Linux implementation preserves today's behaviour: `t/227` (Process), `t/230` (Net), `t/240`
@@ -324,12 +329,30 @@ deliberately the P2/P3 work in the last column.
   `# tests-for:` header (`t/99`).
 - [x] The tunnel range config landed with `Platform::Ports` (`t/240`).
 - [x] `scripts/platform_probe.pl` asks the seams for the audio backend, print availability, the
-  terminal list and the mDNS roles, and reports the tools each seam owns (`t/219`, `t/220`).
+  terminal list and the mDNS roles, and reports the tools each seam owns (v0.1.2584; `t/219`, `t/220`).
+- [x] Windows runner and no-fork path on VM200: the runner seam (`Platform/Runner.pm`) and
+  `Runner/Windows.pm` (v0.1.2508, `t/232`, `t/231`), graceful tree stop over the tree transport
+  (v0.1.2512), one `Mojo::Server::Daemon` per purpose (`Platform/Server.pm`, v0.1.2530) and named
+  jobs (`Platform/Job.pm`, `perl/subprocessor_worker.pl`, `perl/jobs.pl`, v0.1.2532; the utility
+  job split out in v0.1.2536).
+- [x] Cold start is self-sufficient on Windows: `subs::database_bootstrap` builds the database from
+  the seed (`Domain/Key.pm`, v0.1.2539, `t/235`) and `Platform/TLS.pm` issues the self-signed
+  certificate (v0.1.2540).
+- [x] Desktop certificate trust digest-pins the PEMs (`t/239`, v0.1.2544); the cold-boot tool-probe
+  noise is gone (`Domain/Say.pm`, v0.1.2547) and the TLS PEM pair is normalized to LF (v0.1.2551).
 
 **Exit:** Linux suite green, no behaviour change, and the platform interface is small enough to port.
-Met on Linux. The macOS and Windows bodies are P2/P3; nothing in P1 claims them.
+Met on Linux. The macOS bodies, and the Windows bodies other than the runner/server/job path, are
+P2/P3.
 
-### P2 — macOS native
+### P2 — macOS native — DEFERRED (no Mac; resumes when hardware or a macOS runner exists)
+
+**Blocked (2026-11-10):** there is no Mac, and the current CI plan has no macOS runner
+(`docs/platform-go-no-go.md:46-49`), so nothing in this phase can be measured. **Not blocked:**
+the backends can be written and fixture-tested on Linux the way `Process`, `Net` and `Mdns`
+already are; the tree copy, the launchd item and the entitlement list can be prepared; and the
+packaging and signing scripts can be written. Only the acceptance run and notarization need the
+machine.
 
 - Implement the platform modules: `ps`/`sysctl` for processes, `ifconfig`/`route`/`netstat` for the
   network, `dns-sd` for mDNS, `/dev/cu.*` for serial, CUPS for printing, CoreAudio for audio and
@@ -343,13 +366,46 @@ Met on Linux. The macOS and Windows bodies are P2/P3; nothing in P1 claims them.
 
 **Exit:** the macOS app passes the capability matrix's `Must` rows on real hardware.
 
-### P3 — Windows native
+### P3 — Windows native — IN PROGRESS on VM200
 
-- Implement the no-fork mode: one `Mojo::Server::Daemon` per server, Minion/managed workers for
-  background jobs, a Job Object or watchdog for the parent guard, ConPTY or a pipe for the tree
-  output, and loopback TCP control/log/watch plus the token.
+**Landed on VM200** (win11-p0, Windows 11 x64, 4 cores/8 GB, on ks5; `.shots/AGENT-CHECKPOINT.md`
+v0.1.2508-2551):
+
+- the runner seam and `Runner/Windows.pm` (v0.1.2508; `t/232`, `t/231`), and a graceful tree stop
+  over the tree transport (v0.1.2512);
+- one `Mojo::Server::Daemon` per purpose (`Platform/Server.pm`, v0.1.2530) and named jobs
+  (`Platform/Job.pm`, `perl/subprocessor_worker.pl`, `perl/jobs.pl`, v0.1.2532; the utility job
+  split out in v0.1.2536);
+- a cold start with no hand-made state: `subs::database_bootstrap` builds `database/jawnos.db`
+  from the seed (`Domain/Key.pm`, v0.1.2539, `t/235`) and `Platform/TLS.pm` issues the self-signed
+  certificate (v0.1.2540);
+- desktop certificate trust (`t/239`, v0.1.2544), the cold-boot tool-probe noise removed
+  (`Domain/Say.pm`, v0.1.2547), and the TLS PEM pair normalized to LF (v0.1.2551).
+
+Today's goal is a trivially easy install on a clean Windows box; a fresh VM is built once the
+kinks are out.
+
+**Next:**
+
+- Finish the no-fork mode: a Job Object or watchdog for the parent guard, and an absolute checkout
+  path or `JAWNOS_TREE` in the spawns (`jawn:386-387`, `lib/JawnOS/Platform/Job.pm:33`, both
+  relative).
+- The `Platform::Process` Windows backend is written and fixture-tested on branch
+  `agent/process-win` (2026-11-10): a `tasklist` + `Get-CimInstance Win32_Process` snapshot with
+  Linux-compatible units, `taskkill /F` for signals, and an empty answer for the reads Windows does
+  not expose. A live VM200 run is the remaining check.
 - Windows platform modules: `Win32::Process`/`Proc::ProcessTable`/`tasklist`, `ipconfig`/`Get-Net*`
-  / `netstat -ano`, DNS-SD, WASAPI, `COM*`, the spooler, WinRT BLE, clipboard/toasts/`ShellExecute`.
+  / `netstat -ano`, DNS-SD, WASAPI, `COM*`, the spooler, WinRT BLE, clipboard/toasts/`ShellExecute`;
+  `LOCALAPPDATA` and `%TEMP%` in `Paths`.
+- Install blockers proved on VM200 (2026-11-10): `scripts/restart.pl` dies under a HOME-less SYSTEM
+  shell (`getpwuid` at `:23`) and finds no control listener on TCP base+7, so the documented restart
+  path is unusable from the guest; `scripts/jawnos_setup.pl` logs a missing `sqlite3`, a missing
+  `tail` and an uninitialised `gt` at `:232` (`scripts/jawnos_deps.pl:163` also calls `getpwuid`); and
+  a boot-time browser process can hold `jawn-master.log` open so the next start cannot open it.
+- The 2026-11-10 cold run built the DB and both certificates from nothing and served `/manager` and
+  `/manager/health` 200, but the boot-time browser opened the panel first, so the v0.1.2551 finding
+  (the first request after a cold boot resets) still needs a headless first hit to reproduce.
+- Firewall rules for 46200-46205.
 - Package a signed MSI/MSIX with the bundled Perl runtime, Start menu, tray, "Start with Windows",
   firewall rules for the fixed and tunnel ranges, and an updater.
 - Acceptance: a `device=computer` house on a real Windows box with no WSL, Docker, Perl or Python
@@ -371,7 +427,10 @@ Met on Linux. The macOS and Windows bodies are P2/P3; nothing in P1 claims them.
   platform permissions belong in the app, not in a terminal or a container log.
 - A support matrix (OS versions, CPU architectures, known hardware limits).
 
-## 9. Test and hardware strategy (no boxes today)
+## 9. Test and hardware strategy (one Windows VM, no Mac, 2026-11-10)
+
+One Windows box exists today — **VM200** (`win11-p0`, Windows 11 x64, 4 cores/8 GB, on ks5) —
+and there is no Mac. The hardware lane below stands as the acceptance rig.
 
 - **CI first.** Use macOS and Windows runners for `perl -c`, the platform unit tests and
   `QT_QPA_PLATFORM=offscreen`. The UI acceptance still needs a real Qt WebEngine desktop view; a

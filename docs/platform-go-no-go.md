@@ -63,6 +63,19 @@ runners at v0.1.2482. Run detail: `docs/platform-p0.md`.
 | 9 | Do the fixed and tunnel port ranges pass Windows Firewall on a private network? | **Open.** On Linux the app's Daemons bind `0.0.0.0` (46200-46205); the master's private surfaces bind `127.0.0.1` (46207-46209), so only the app range needs a rule. | An installer rule for the app range on private networks; an acceptance run on a real LAN. |
 | 10 | Does the Qt shell's `--probe`, the app-key bridge and the plain loopback WS path all pass? | **Partial.** The shared ws port bound and the worker answered (ws round trips in `t/228`); the Qt shell and the app-key bridge ran on the house box but not against a portable tree — the smoke box had no display. | Run the desktop app against a portable tree on a Linux desktop or VM; then macOS and Windows. |
 
+### VM200 evidence (2026-11-10)
+
+Windows 11 x64, 4 cores/8 GB, on ks5; `.shots/AGENT-CHECKPOINT.md` v0.1.2536-2551:
+
+- seven listeners on 3000 and 45545-45550;
+- `curl -k https://127.0.0.1:45545/manager` → 6,707 B `<title>Gate</title>`;
+- a cold bootstrap DB of 524,288 B built from the seed;
+- a self-signed certificate of 1,111 B and a key of 1,704 B, both LF;
+- boot noise: 0;
+- **still open:** the first request after a cold boot reset at v0.1.2551; the 2026-11-10 run
+  served 200 but the boot-time browser opened the panel first, so a headless first hit is still
+  the check that closes it.
+
 ## Conditions on the GO (P1 input)
 
 1. **Process layer.** Replace `Mojo::IOLoop::ReadWriteFork` (`jawn:334`,
@@ -89,13 +102,31 @@ runners at v0.1.2482. Run detail: `docs/platform-p0.md`.
 
 ## P1 status (2026-11-10)
 
-The P1 seams are in: `Platform::Process`, `Net`, `Mdns`, `Audio`, `Serial`, `Print`,
-`Shell`, `Paths` and `Ports`, with `Job`, `Server`, `TLS` and `Runner` for the
-process model. Each is Linux-complete and answers empty off Linux; the macOS and
-Windows bodies named in conditions 1-3 above are P2/P3. The capability probe now
-asks the seams for the audio backend, print availability, the terminal list and
-the mDNS roles instead of reading a hand-written tool list. Per-module state and
-the test numbers are in `docs/platform-roadmap.md` P1.
+**P1 is complete on Linux.** The seams (`Process`, `Net`, `Mdns`, `Audio`, `Serial`,
+`Print`, `Shell`, `Paths`, `Ports`) and the process model (`Job`, `Server`, `TLS`,
+`Runner`) exist, each keeps today's Linux behaviour, and the capability probe asks
+them instead of reading a hand-written tool list (v0.1.2584). Per-module state and
+the test numbers (`t/227`, `t/230`, `t/240`, `t/242`-`t/246`) are in
+`docs/platform-roadmap.md` §8.
+
+**Windows-side P1 conditions (VM200):**
+
+- **Condition 1 — partly.** The runner seam and `Runner/Windows.pm` (v0.1.2508,
+  `t/232`, `t/231`), no-fork servers (`Platform/Server.pm`, v0.1.2530) and named
+  jobs (`Platform/Job.pm`, v0.1.2532) landed. The Job Object for the parent guard
+  and a Windows `Process::signal` are still open
+  (`lib/JawnOS/Platform/Process.pm:322-327`).
+- **Condition 2 — open.** Spawns still use relative paths (`jawn:386-387`,
+  `lib/JawnOS/Platform/Job.pm:33`); the absolute checkout path or `JAWNOS_TREE` is
+  not passed yet.
+- **Condition 3 — written.** `Platform::Process` now has a Windows backend
+  (`tasklist` + `Get-CimInstance Win32_Process`, branch `agent/process-win`, 2026-11-10) with
+  Linux-compatible units; it is fixture-tested on Linux and the live VM200 run is the remaining
+  check. The `Net`, `Mdns`, `Audio`, `Serial`, `Print` and `Shell` bodies remain.
+- **Condition 4 — done.** The Windows XS job is green (`missing_required: []`).
+- **Condition 5 — partly.** The panel is served on VM200 (`curl -k` returns
+  6,707 B, `<title>Gate</title>`); the Qt shell has not run against the portable
+  tree yet.
 
 ## What would stop it
 

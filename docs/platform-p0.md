@@ -289,16 +289,20 @@ against the `Must` rows in `docs/platform-roadmap.md` §7.
 
 ## Known gaps — do not mistake these for P0 success
 
-- Resident loops still fork through `subs::subprocessor`; Windows needs the
-  supervised process layer (P1/P3).
-- The subprocessor reaper reads `/proc` through `JawnOS::Platform::Process`;
-  its macOS and Windows backends are not written yet, so a non-Linux box still
-  gets the empty/liveness fallbacks rather than a native answer.
+- Resident loops and forks no longer have to be raw `fork()`: `subs::subprocessor`
+  runs a registered named job or is a supervised child (`Platform/Job.pm`,
+  `Platform/Server.pm`, v0.1.2530-2536), and `ReadWriteFork` sits behind the
+  runner seam (`Platform/Runner.pm`, `Runner/Windows.pm`, v0.1.2508).
+- `JawnOS::Platform::Process` has a Windows backend on branch `agent/process-win` (2026-11-10,
+  `tasklist` + `Get-CimInstance`, fixture-tested); the live VM200 run is the remaining check. The
+  macOS backend is not written, and the other Windows bodies are P3.
 - `JawnOS::Platform::Net` and `::Mdns` are Linux backends; their macOS and
   Windows bodies are P2/P3, so a non-Linux box still gets the empty fallbacks.
-- `Mojo::IOLoop::ReadWriteFork` is the master's runner; Windows needs a
-  `Win32::Process` equivalent.
-- The Minion worker is itself a subprocessor.
+  The same is true of the `Audio`, `Serial`, `Print` and `Shell` bodies.
+- Database and certificate cold start now exist (`Domain/Key.pm`
+  `database_bootstrap`, `Platform/TLS.pm`); the first request after a cold Windows boot reset at
+  v0.1.2551 and was not isolated on 2026-11-10 (the boot browser opened the panel first), so a
+  headless first hit is still owed.
 - No source imports `IO::Socket::UNIX` at compile time, but the SCO client still
   dials a UNIX socket at runtime; reception is `Later` on both native platforms.
 - No Windows or macOS packaging exists yet.
