@@ -16,6 +16,7 @@ use File::Temp qw(tempdir);
 use IPC::Open3 qw(open3);
 use JSON::PP ();
 use Symbol qw(gensym);
+use Sys::Hostname qw(hostname);
 use Test::More;
 
 my $real = abs_path("$FindBin::Bin/..");
@@ -322,6 +323,50 @@ subtest 'a ticket left running by a dead coordinator is reaped and landed' => su
 
 	my (undef, $s) = status($f, '--branch', 'agent/one');
 	is($s->{'ticket'}{'state'}, 'landed', 'the reaped ticket landed');
+};
+
+subtest 'a worker enqueues on the authority and the train lands it' => sub {
+	my $f = fixture();
+	commit_file($f->{'wt1'}, 'one.txt', "one\n", 'one: add a branch');
+
+	my $host = hostname();
+	my ($rc, $out) = enqueue($f, $f->{'wt1'}, '--authority', $host);
+	is($rc, 0, 'the worker enqueues through the authority') or diag($out);
+	my $j = ticket_json($out);
+	ok($j->{'id'}, 'the authority returned a ticket');
+
+	my (undef, $st) = status($f, '--id', $j->{'id'});
+	is($st->{'ticket'}{'remote'}, 1, 'the ticket is marked remote');
+	ok(!length($st->{'ticket'}{'worktree'} // ''), 'and carries no worktree path');
+
+	my $cwd = getcwd();
+	chdir $f->{'wt1'} or die "chdir worktree: $!";
+	my ($src, $sout) = sh($^X, 'scripts/land_status.pl',
+		'--authority', $host, '--id', $j->{'id'}, '--json');
+	chdir $cwd or die "chdir back: $!";
+	is($src, 0, 'the worker reads the authority queue') or diag($sout);
+	my $sj = eval { JSON::PP->new->decode($sout) } || {};
+	is($sj->{'ticket'}{'state'}, 'queued', 'and sees the queued ticket');
+
+	my ($crc, $cout) = coordinator($f, '--train-size', '1', '--jobs', '1', '--no-restart');
+	is($crc, 0, 'the coordinator drains') or diag($cout);
+	my (undef, $done) = status($f, '--id', $j->{'id'});
+	is($done->{'ticket'}{'state'}, 'landed', 'the remote ticket landed');
+	my (undef, $one) = git($f->{'primary'}, 'show', 'origin/main:one.txt');
+	is($one, 'one', 'and its work is on the trunk');
+};
+
+subtest 'the authority refuses a foreign commit identity' => sub {
+	my $f = fixture();
+	write_file("$f->{'wt1'}/one.txt", "one\n");
+	git($f->{'wt1'}, 'add', '--', 'one.txt');
+	my ($cc, $co) = git($f->{'wt1'}, '-c', 'user.name=Zed', '-c', 'user.email=zed@jawnos.local',
+		'commit', '-m', 'one: foreign commit');
+	die "foreign commit: $co" if $cc != 0;
+
+	my ($rc, $out) = enqueue($f, $f->{'wt1'}, '--authority', hostname());
+	is($rc, 1, 'the authority refuses it');
+	is(ticket_json($out)->{'reason_class'}, 'identity', 'and names the identity');
 };
 
 subtest 'the systemd units run the coordinator and point the timer at it' => sub {

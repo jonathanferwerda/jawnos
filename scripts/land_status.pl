@@ -23,19 +23,51 @@ use JSON::PP ();
 
 require "$FindBin::Bin/land_lib.pl";
 
-my %opt = ('timeout' => 60);
+my %opt = (
+	'timeout'        => 60,
+	'authority_port' => 8022,
+	'authority_root' => '$HOME/jawnos',
+);
 GetOptions(
-	'id=s'      => \$opt{'id'},
-	'branch=s'  => \$opt{'branch'},
-	'json'      => \$opt{'json'},
-	'wait'      => \$opt{'wait'},
-	'timeout=s' => \$opt{'timeout'},
-	'stats'     => \$opt{'stats'},
-	'help'      => \$opt{'help'},
+	'id=s'             => \$opt{'id'},
+	'branch=s'         => \$opt{'branch'},
+	'json'             => \$opt{'json'},
+	'wait'             => \$opt{'wait'},
+	'timeout=s'        => \$opt{'timeout'},
+	'stats'            => \$opt{'stats'},
+	'authority=s'      => \$opt{'authority'},
+	'authority-root=s' => \$opt{'authority_root'},
+	'authority-port=s' => \$opt{'authority_port'},
+	'help'             => \$opt{'help'},
 ) or usage(2);
 usage(0) if $opt{'help'};
 usage(2) unless $opt{'timeout'} =~ /^\d+$/;
+usage(2) unless $opt{'authority_port'} =~ /^\d+$/;
 $opt{'id'} = sprintf('%08d', $opt{'id'}) if defined $opt{'id'} && $opt{'id'} =~ /^\d+$/;
+
+if ($opt{'authority'}) {
+	my @fwd;
+	push @fwd, '--id', $opt{'id'} if defined $opt{'id'};
+	push @fwd, '--branch', $opt{'branch'} if defined $opt{'branch'};
+	push @fwd, '--json' if $opt{'json'};
+	push @fwd, '--wait' if $opt{'wait'};
+	push @fwd, '--timeout', $opt{'timeout'};
+	push @fwd, '--stats' if $opt{'stats'};
+
+	my ($lroot) = eval { LandQueue::repo() };
+	my $primary = $lroot ? LandQueue::primary_checkout($lroot) : '';
+	my ($arc, $aout, $aerr) = LandQueue::run_authority(
+		host    => $opt{'authority'},
+		port    => $opt{'authority_port'},
+		root    => $opt{'authority_root'},
+		script  => 'scripts/land_status.pl',
+		args    => \@fwd,
+		primary => $primary,
+	);
+	print STDOUT $aout if length $aout;
+	print STDERR $aerr if length $aerr;
+	exit $arc;
+}
 
 my ($root, $common) = eval { LandQueue::repo() };
 if (!$root) {
@@ -179,6 +211,8 @@ sub usage {
 land_status.pl - what is in the landing queue
   perl scripts/land_status.pl [--id ID | --branch B] [--wait] [--timeout 60]
                               [--stats] [--json]
+                              [--authority HOST] [--authority-root PATH]
+                              [--authority-port 8022]
 USAGE
 	exit $code;
 }

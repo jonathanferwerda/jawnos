@@ -81,9 +81,9 @@ user for the exact file/folder/name. A wrong guess costs far more tokens than a 
 
 ## Many agents at once
 
-The primary checkout is read-only for agents: a dirty one blocks every landing. Land from the
-worktree root with `perl ~/jawnos/scripts/agent_land.pl` (the primary copy); never push or restart by
-hand.
+The primary checkout is read-only for agents: a dirty one blocks every landing. Land with
+`perl ~/jawnos/scripts/agent_land.pl` (the primary copy) or queue with `scripts/land_enqueue.pl`;
+never push or restart by hand.
 
 ## Crash-resilient agent work
 

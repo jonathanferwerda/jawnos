@@ -113,7 +113,8 @@ lines go to stderr, so a wrapper that pipes stdout shows nothing until it ends.
 
 The lander is still the hand landing, but a busy checkout runs a queue.
 `perl scripts/land_enqueue.pl` from the worktree validates the branch, backs it up to origin and
-writes a ticket in `<git-common-dir>/land-queue/`. The coordinator
+writes a ticket in `<git-common-dir>/land-queue/`. With `--authority <host>` the ticket is written
+by the authority's copy over ssh instead, so a worker box never owns a second queue. The coordinator
 (`scripts/land_coordinator.pl`) drains the queue in **waves** on the box that owns the primary
 checkout and the master — the authority:
 
@@ -134,8 +135,16 @@ checkout and the master — the authority:
 - **A dirty primary blocks this box's apply, not the trunk.** The coordinator pushes the green train,
   records `apply blocked`, and the next wave retries the fast-forward and restart.
 - **One coordinator per trunk.** Two boxes running it would race the push. The authority is the box
-  with the suite and the primary; a worker box is the next edge (enqueue over SSH, apply the trunk on
-  a timer), not this one.
+  with the suite and the primary. A worker pushes its branch and runs
+  `perl scripts/land_enqueue.pl --authority <host>`; that runs the authority's copy over ssh (port
+  8022, `BatchMode`, root `$HOME/jawnos`, `--authority-root` to move it), and
+  `perl scripts/land_status.pl --authority <host>` reads the queue back. A same-box authority uses
+  the primary's copy directly, no sshd. The authority checks the commit's identity because the
+  worker's pre-commit hook never ran there.
+- **A remote ticket carries no worktree path.** The worker's own `worktree_gc` sweeps the branch by
+  the subject a rebase preserves; the authority only needs the branch on origin.
+- **A worker box follows the trunk through the existing code sync.** A dedicated apply timer on a
+  worker is not built; a box that runs the app waits for the sync, or lands by hand.
 - The units are `scripts/systemd/jawnos-land-coordinator.{service,timer}`; install them on the
   authority. Do not make it a manager utility job: it must land the fix when the tree is broken.
 

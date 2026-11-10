@@ -28,6 +28,7 @@ use IO::Handle ();
 use IPC::Open3 qw(open3);
 use JSON::PP ();
 use Symbol qw(gensym);
+use Sys::Hostname qw(hostname);
 
 # The files nearly every task edits. One branch touching these can join a wave;
 # a second one waits, because integrating two of them is where the conflicts are.
@@ -47,7 +48,7 @@ sub json { return JSON::PP->new->canonical }
 # Git exports GIT_DIR and friends into hooks and pre-commit children. A helper
 # that answers `git -C <fixture>` must not inherit them, or it acts on the live
 # checkout instead of the one it was pointed at.
-sub run_cmd {
+sub run_cmd_split {
 	delete local $ENV{'GIT_DIR'};
 	delete local $ENV{'GIT_WORK_TREE'};
 	delete local $ENV{'GIT_INDEX_FILE'};
@@ -63,7 +64,11 @@ sub run_cmd {
 	close $out;
 	close $err;
 	waitpid($pid, 0);
-	my $code = $? >> 8;
+	return ($? >> 8, $stdout, $stderr);
+}
+
+sub run_cmd {
+	my ($code, $stdout, $stderr) = run_cmd_split(@_);
 	$stdout =~ s/\s+$//;
 	$stderr =~ s/\s+$//;
 	my $all = $stdout;
@@ -71,13 +76,23 @@ sub run_cmd {
 	return ($code, $all);
 }
 
-sub run_in {
+sub run_in_split {
 	my ($dir, @cmd) = @_;
 	my $old = getcwd();
-	chdir $dir or return (127, "cannot enter $dir: $!");
-	my @out = run_cmd(@cmd);
+	chdir $dir or return (127, '', "cannot enter $dir: $!");
+	my @out = run_cmd_split(@cmd);
 	chdir $old;
 	return @out;
+}
+
+sub run_in {
+	my ($dir, @cmd) = @_;
+	my ($code, $stdout, $stderr) = run_in_split($dir, @cmd);
+	$stdout =~ s/\s+$//;
+	$stderr =~ s/\s+$//;
+	my $all = $stdout;
+	$all .= (length $all ? "\n" : '') . $stderr if length $stderr;
+	return ($code, $all);
 }
 
 sub repo {
@@ -302,6 +317,65 @@ sub percentile {
 	$i = 0 if $i < 0;
 	$i = $#v if $i > $#v;
 	return $v[$i];
+}
+
+# One argument, safe to place in a remote shell command line. Reason and agent
+# are free text; a branch is git-validated but a path in a root is not.
+sub shell_quote {
+	my ($s) = @_;
+	$s = '' unless defined $s;
+	$s =~ s/'/'\\''/g;
+	return "'$s'";
+}
+
+sub primary_checkout {
+	my ($root) = @_;
+	my (undef, $out) = run_cmd('git', '-C', $root, 'worktree', 'list', '--porcelain');
+	my ($p) = ($out // '') =~ /^worktree\s+(.+)$/m;
+	return defined $p && length $p ? $p : $root;
+}
+
+sub is_local_host {
+	my ($h) = @_;
+	return 0 unless defined $h && length $h;
+	return 1 if $h eq 'localhost' || $h eq '127.0.0.1' || $h eq '::1';
+	my $host = hostname();
+	return 1 if $h eq $host || $h eq "$host.local";
+	return 0;
+}
+
+# Hand a command to the authority. A local authority is just the primary's copy
+# of the script (so a same-box worker does not need sshd); a remote one is one
+# ssh with a batch-mode, short connect so an absent box fails now, not in 150 s.
+# The authority's checkout defaults to $HOME/jawnos and expands in its shell.
+sub run_authority {
+	my (%a) = @_;
+	my $host   = $a{'host'} // '';
+	my $port   = defined $a{'port'} && length $a{'port'} ? $a{'port'} : 8022;
+	my $root   = $a{'root'} // '$HOME/jawnos';
+	my $script = $a{'script'} // 'scripts/land_enqueue.pl';
+	my @args   = @{ $a{'args'} || [] };
+
+	return (2, '', 'no authority host was given') unless length $host;
+	return (2, '', "the authority root '$root' has characters a remote shell would interpret")
+		unless $root =~ m{^[~\$A-Za-z0-9_./-]+$};
+	return (2, '', "the authority script '$script' is not a relative path")
+		unless $script =~ m{^[A-Za-z0-9_./-]+$};
+	return (2, '', "the authority host '$host' is not a hostname")
+		if $host =~ /^-/ || $host !~ /^[A-Za-z0-9._\@:-]+$/;
+	return (2, '', "the authority port '$port' is not a port") unless $port =~ /^\d+$/;
+
+	if (is_local_host($host)) {
+		my $primary = $a{'primary'} // '';
+		return (2, '', 'no local primary checkout to run the authority command in')
+			unless length $primary;
+		return run_in_split($primary, $^X, "$primary/$script", @args);
+	}
+
+	my $cmd = 'cd ' . $root . ' && perl ' . $script . ' '
+		. join(' ', map { shell_quote($_) } @args);
+	return run_cmd_split('ssh', '-p', $port, '-o', 'BatchMode=yes',
+		'-o', 'ConnectTimeout=10', $host, $cmd);
 }
 
 1;
