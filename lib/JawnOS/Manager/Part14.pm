@@ -272,18 +272,11 @@ sub manager_reset($c) {
 			$jdata = encode_json $dat;
 		}
 
-		my $source_uuid;
-		my $source_link;
-		foreach my $qo ( qw/model option/ ) {
-			my $mo = &subs::db_select($qo, undef, { name => $app })->hashes;
-			foreach my $ao ( @{$mo} ) {
-				my $began = &subs::db_query('select * from appointments where app=? and (type=? or type=?) and timestamp <= ? order by timestamp desc limit 1',$ao->{'app'},'record','start',$timestamp)->hashes;
-				$source_uuid = $began->[0]->{'uuid'};
-				$source_link = ($began->[0] && $source_uuid)
-					? { parent_uuid => $source_uuid, table => $qo, catalog => $ao }
-					: undef;
-			}
-		}
+		# The parent this hand-made session belongs to: a catalogue name is not
+		# unique (programming is an option of laydown, office and garage_office),
+		# so only the app whose session is still running may take it.
+		my $source_link = &subs::source_parent_link($app, $timestamp);
+		my $source_uuid = $source_link ? $source_link->{'parent_uuid'} : undef;
 
 		my $stop_timestamp = $c->param('duration') =~ /[a-zA-Z0-9]/ ? $timestamp - ((abs $duration) * -1) : undef;
 		# A live start that is already here (a replay delivered twice) is the same

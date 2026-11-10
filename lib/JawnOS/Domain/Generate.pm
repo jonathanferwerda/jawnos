@@ -464,6 +464,32 @@ sub source_appt_writer {
 
 }
 
+# The running session a hand-started app belongs to. A catalogue name is shared
+# by every app that offers it - programming is an option of laydown, office and
+# garage_office - so the lookup cannot take the last match: an app that is not
+# running would replace the parent that is. Only an open start/record at or
+# before the press qualifies, and the last running match wins because the child
+# row carries one source_uuid.
+#
+#   my $link = &subs::source_parent_link($app, $timestamp);
+#   # { parent_uuid, table, catalog } or undef
+sub source_parent_link {
+	my ($app, $timestamp) = @_;
+	return undef unless ($app // '') ne '';
+	$timestamp ||= &subs::rightNow();
+	my $link;
+	foreach my $table ( qw/model option/ ) {
+		my $catalog = &subs::db_select($table, undef, { name => $app })->hashes;
+		foreach my $entry ( @{$catalog} ) {
+			my $began = &subs::db_query('select uuid from appointments where app=? and (type=? or type=?) and stop_seen is null and timestamp <= ? order by timestamp desc limit 1',
+				$entry->{'app'}, 'record', 'start', $timestamp)->hashes->[0];
+			next unless $began && ($began->{'uuid'} // '') ne '';
+			$link = { parent_uuid => $began->{'uuid'}, table => $table, catalog => $entry };
+		}
+	}
+	return $link;
+}
+
 # A model/option session is a child appointment whose source_uuid names the
 # parent session. The parent's own model/options list is what its details view
 # reads, so the list follows the session: a start that attaches a child to a

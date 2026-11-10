@@ -42,6 +42,12 @@ $db->query('create table settings (
 	app text, setting text, value text, device text, subsetting text,
 	server_time text, timestamp text, uuid text, ost text, browser_tab_id text
 )');
+foreach my $catalog ( qw/model option/ ) {
+	$db->query("create table $catalog (
+		app text, name text, uuid text, quantity text, unit text,
+		delay_start text, delay_stop text, def text, save_app text
+	)");
+}
 my @st = stat($dbfile);
 $gb::database_holder = {
 	server_time => &subs::rightNow(),
@@ -181,6 +187,47 @@ $gb::database_holder = {
 	&subs::source_model_option_remove($txn, 'banana-test', 'purchase-child-test', 'purchase');
 	$row = $db->query('select * from appointments where uuid = ?', $txn)->hash;
 	like($row->{'model'}, qr/banana-test/, 'a purchase child does not clear the transaction model');
+
+	# A catalogue name is shared by every app that offers it. Starting
+	# programming by hand while laydown runs must attach to laydown, even when
+	# the same option is catalogued for apps with no session at all - that is
+	# the case that cleared the running parent and left the child unlinked.
+	my $laydown = 'laydown-uuid-test';
+	$db->insert('appointments', {
+		app         => 'laydown-test',
+		uuid        => $laydown,
+		type        => 'start',
+		timestamp   => $now - 60_000,
+		server_time => $now - 60_000,
+		seen        => 'yes',
+		options     => '[]',
+	});
+	$db->insert('appointments', {
+		app         => 'office-test',
+		uuid        => 'office-uuid-test',
+		type        => 'start',
+		timestamp   => $now - 300_000,
+		server_time => $now - 300_000,
+		seen        => 'yes',
+		stop_seen   => 'yes',
+	});
+	$db->insert('option', { app => 'laydown-test',       name => 'programming-test', uuid => 'option-laydown' });
+	$db->insert('option', { app => 'office-test',        name => 'programming-test', uuid => 'option-office' });
+	$db->insert('option', { app => 'garage-office-test', name => 'programming-test', uuid => 'option-garage' });
+	$db->insert('option', { app => 'office-test',        name => 'closed-only-test', uuid => 'option-closed' });
+
+	my $link = &subs::source_parent_link('programming-test', $now);
+	ok($link, 'a hand-started option finds a parent');
+	is($link->{'parent_uuid'}, $laydown, 'the running app, not the catalogued apps with no session');
+	is($link->{'table'}, 'option', 'found through the option catalogue');
+	ok(&subs::source_model_option_add($link->{'parent_uuid'}, $link->{'table'}, {
+		uuid => $link->{'catalog'}->{'uuid'}, name => 'programming-test', timestamp => $now, unit => 'programming',
+	}), 'the start finds the parent');
+	$row = $db->query('select * from appointments where uuid = ?', $laydown)->hash;
+	my @programming = grep { ($_->{'name'} // '') eq 'programming-test' } @{ decode_json($row->{'options'}) };
+	is(scalar @programming, 1, 'the option lands in the running parent list');
+
+	ok(!&subs::source_parent_link('closed-only-test', $now), 'a closed parent does not take the session');
 }
 
 # The delete path detaches a child, and the start path attaches one, in the
