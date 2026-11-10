@@ -230,6 +230,11 @@ like($qt, qr/requestAnimationFrame\(step\)/, 'the coast decays frame by frame');
 my $moff = `cd "$root" && JAWNOS_MOMENTUM=0 PYTHONPATH=desktop python3 -c 'from jawnos_desktop.qt_shell import momentum_enabled; print(momentum_enabled())' 2>&1`;
 like($moff, qr/^False$/m, 'JAWNOS_MOMENTUM=0 turns coasting off');
 like($qt, qr/errorpage\.dark_page/, 'the manager shows a dark page after its retries');
+like($qt, qr/LOAD_TIMEOUT_MS = 20000/, 'a navigation that never finishes has its own deadline');
+like($qt, qr/page\.loadStarted\.connect\(lambda: nav_guard\.start\(LOAD_TIMEOUT_MS\)\)/,
+	'the deadline is armed by every navigation');
+like($qt, qr/view\.stop\(\)/, 'a stalled navigation is stopped, not left running');
+like($qt, qr/this page retries by itself/, 'and the dark page says it retries by itself');
 like($qt, qr/errorpage\.watch\(page_obj\)/, 'and peer windows show one at once');
 like($errpage, qr/background:#000000/, 'the error page is on the black ground');
 like($errpage, qr/#ffcc00/, 'with the jawn yellow for the retry');
@@ -237,6 +242,11 @@ like($qt, qr/QSystemTrayIcon/, 'the shell keeps a tray');
 like($qt, qr/class Supervisor/, 'and supervises jawn');
 like($qt, qr/auto_update_available/, 'including the desktop self-update');
 like($qt, qr/version_mismatch/, 'and the version restart');
+like($qt, qr/core\.jawn_health\(jawn_dir, timeout=3\.0\)/,
+	'the supervisor asks the health route, not just the port');
+like($qt, qr/restarted a manager that stopped answering/,
+	'and restarts a manager whose HTTP stopped answering');
+like($qt, qr/core\.game_running\(\)/, 'a game in progress is not read as a wedged manager');
 like($qt, qr/permissionRequested/, 'the newer permission signal is handled');
 like($qt, qr/PermissionType/, 'through QWebEnginePermission');
 like($qt, qr/featurePermissionRequested/, 'with the older signal kept as a fallback');

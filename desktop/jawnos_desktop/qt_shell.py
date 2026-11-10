@@ -1939,6 +1939,7 @@ def main(argv=None):
             self._restart_at = 0.0
             self._update_pending = None
             self._update_at = 0.0
+            self._unanswered = 0
             self._version = self._manager_version()
             self._timer = QTimer(self)
             self._timer.timeout.connect(self.tick)
@@ -1980,6 +1981,28 @@ def main(argv=None):
                 now = time.monotonic()
                 if now - self._check_at >= 60:
                     self._check_at = now
+                    # A wedged master leaves the workers holding the port:
+                    # port_open says "up" while every page hangs, so ask the
+                    # house's own health route. Two silent checks in a row is
+                    # a restart - unless a game holds the panel, where a slow
+                    # answer is just llvmpipe.
+                    if core.jawn_health(jawn_dir, timeout=3.0) is not None or not jawn:
+                        self._unanswered = 0
+                    elif not core.game_running():
+                        self._unanswered += 1
+                    if (self._unanswered >= 2
+                            and now - self._restart_at >= 300):
+                        self._unanswered = 0
+                        self._restart_at = now
+                        core.mark_start_requested()
+                        self.status.emit(False, ble)
+                        ok, message = core.restart_all(jawn_dir, with_ble)
+                        self.note.emit(
+                            "restarted a manager that stopped answering"
+                            if ok else ("restart failed: %s" % message))
+                        if ok:
+                            self.reload.emit()
+                        jawn = core.jawn_up(jawn_dir)
                     if jawn and now - self._restart_at >= 300:
                         stale = core.version_mismatch(jawn_dir)
                         if stale:
@@ -2059,9 +2082,62 @@ def main(argv=None):
         supervisor.start()
 
     load_failures = {"n": 0}
+    # A navigation that never completes is the worst state this view can be
+    # in: the last page stays on screen and every press goes nowhere. When the
+    # Manager's socket accepts but no worker answers, Chromium can wait for
+    # minutes, so the shell sets its own deadline: stop the load, say so on
+    # the dark page, and keep retrying until the Manager answers again.
+    LOAD_TIMEOUT_MS = 20000
+    RETRY_MS = 10000
+    nav = {"stalled": False, "retry": None}
+    nav_guard = QTimer()
+    nav_guard.setSingleShot(True)
+    retry_timer = QTimer()
+    retry_timer.setSingleShot(True)
+
+    def retry_navigation(target):
+        nav["retry"] = target
+        retry_timer.start(RETRY_MS)
+
+    def retry_fire():
+        if nav["retry"]:
+            view.setUrl(QUrl(nav["retry"]))
+
+    retry_timer.timeout.connect(retry_fire)
+
+    def show_unanswered(target):
+        if args.probe or not target:
+            return
+        try:
+            page.setHtml(errorpage.dark_page(
+                "The Manager did not answer.",
+                target,
+                hint="It may be starting or restarting. Press Try again, or "
+                     "wait: this page retries by itself."))
+        except Exception:
+            pass
+        retry_navigation(target)
+
+    def on_stall():
+        nav["stalled"] = True
+        try:
+            view.stop()
+        except Exception:
+            pass
+        load_failures["n"] += 1
+        show_unanswered(manager or url)
+
+    nav_guard.timeout.connect(on_stall)
+    page.loadStarted.connect(lambda: nav_guard.start(LOAD_TIMEOUT_MS))
 
     def on_load(_ok):
         nonlocal login_pending, migration_pending
+        nav_guard.stop()
+        if not _ok and nav["stalled"]:
+            # view.stop() from the deadline: the dark page is already drawn
+            nav["stalled"] = False
+            return
+        nav["stalled"] = False
         if os.environ.get("JAWNOS_QT_DEBUG"):
             sys.stderr.write("qt-load ok=%s title=%r manager=%s pending=%s\n" % (
                 _ok, view.title(), view.url().toString().endswith("/manager"), login_pending))
@@ -2072,16 +2148,13 @@ def main(argv=None):
             load_failures["n"] += 1
             current = view.url().toString()
             retry = current if current.startswith(("http://", "https://")) else url
-            if load_failures["n"] <= 40 and not args.probe:
+            if load_failures["n"] <= 6 and not args.probe:
                 QTimer.singleShot(1500, lambda: view.setUrl(QUrl(retry)))
                 return
-            if not args.probe:
-                page.setHtml(errorpage.dark_page(
-                    "The Manager did not answer.",
-                    retry,
-                    hint="It may still be starting. Press Try again, or read "
-                         "the log from the control panel."))
+            show_unanswered(retry)
             return
+        nav["retry"] = None
+        retry_timer.stop()
         load_failures["n"] = 0
         if login_pending:
             # The ticket page mints the session cookie; give it a moment, the

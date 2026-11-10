@@ -380,6 +380,16 @@ def jawn_up(jawn_dir):
     return port_open(jawn_working_port(jawn_dir)) or port_open(DOCK_PORT)
 
 
+def game_running():
+    """A game holds the panel (the handheld's `gou-games` marker).
+
+    llvmpipe makes a launch the busiest moment on the machine, so the
+    supervisor must not read one slow answer as a wedged manager then.
+    """
+    return os.path.exists(os.path.join(os.path.expanduser("~"),
+                                       ".presence", "gou-games"))
+
+
 # --------------------------------------------------------------------------
 # a start request, while the tree is still coming up
 # --------------------------------------------------------------------------

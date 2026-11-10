@@ -99,6 +99,14 @@ like(read_file("$root/lib/JawnOS/Games.pm"), qr|/opt/retroarch-gl/bin/retroarch|
 like($launch, qr/JawnOS::Games::runner_by_id/, 'the runner is the same one the route checked');
 like($launch, qr/--appendconfig/, 'the game gets the config that names the card');
 like($launch, qr/sub kiosk_active/, 'the restore waits for the kiosk, not just starts it');
+like($launch, qr/game-launch-/, 'a launch writes one log file of its own');
+like($launch, qr/open\(STDERR, '>&', \$LOGFH\)/, 'the emulator\'s own words go to that log');
+like($launch, qr/log_line\("kiosk hidden/, 'and the helper records what it hid');
+like($launch, qr/\$STATUS\{'log'\} = \$LOG/, 'the status row names the log');
+like(read_file("$root/lib/JawnOS/Controller/manager_misc9.pm"), qr/sub action_44018/,
+	'the launch status action exists');
+like(read_file("$root/lib/JawnOS/Routes/manager_misc9.pm"), qr{/manager/games/launch_status},
+	'and its route');
 like($install, qr/input_player1_joypad_index/, 'the gamepad is player one, not the keys device');
 like($install, qr/JawnOS Gamepad\.cfg/, 'the virtual pad gets an autoconfig profile');
 like($install, qr/input_start_btn = "5"/, 'Start is mapped by the pad key position');

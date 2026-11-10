@@ -66,6 +66,13 @@ like($page, qr/coversSay\(fetchingCovers \+ ' ' \+ \(status\.done \|\| 0\) \+ '\
 	'progress is shown as done over total');
 like($page, qr/coversSay\(status\.error \|\| failed\)/, 'a failure shows the error');
 
+# --- the launch's own status --------------------------------------------------
+like($page, qr{fetch\('/manager/games/launch_status'}, 'a launch is read back from its own route');
+like($page, qr/function launchPoll/, 'and polled until the helper says what happened');
+like($page, qr/status\.state === 'failed'/, 'a failed helper shows its reason instead of Starting');
+like($page, qr/The game did not start\./, 'a launch that never reaches the emulator says so');
+like($page, qr/The game has ended\./, 'and a returned kiosk says the game ended');
+
 # --- the controls page --------------------------------------------------------
 like($page, qr/id="games_controls"[^>]*href="\/manager\/games\/mapping"/,
 	'Controls points at the mapping page');

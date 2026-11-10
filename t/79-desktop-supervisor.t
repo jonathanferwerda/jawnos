@@ -29,6 +29,8 @@ my $install = read_file("$root/desktop/install.sh");
 
 like($core, qr/return "started", "jawn was down; started it/,
 	'a down tree is started, not just reported');
+like($core, qr/def game_running\(\):/, 'the supervisor knows a game holds the panel');
+like($core, qr/\.presence", "gou-games"/, 'and reads the same marker the launch helper writes');
 like($core, qr/ok, message = start_all\(jawn_dir, with_ble=with_ble\)/,
 	'it goes through the combined jawn + BLE start');
 like($core_paths, qr/def is_held\(\):/, 'a deliberate stop is remembered');

@@ -245,12 +245,34 @@
 			});
 		});
 	}
+	var ended = <%== encode_json(&subs::ui('The game has ended.')) %>;
+	var noStart = <%== encode_json(&subs::ui('The game did not start.')) %>;
+	/* The helper's own row says whether a launch reached the emulator: one
+	   that failed before it could hide the kiosk leaves the page showing
+	   Starting, so its status is read back and the reason shown. While a game
+	   runs the kiosk is stopped, so these timers fire again on the way back. */
+	function launchPoll(attempt) {
+		fetch('/manager/games/launch_status', { credentials: 'same-origin' })
+			.then(function (answer) { return answer.json(); })
+			.then(function (status) {
+				status = status || {};
+				if (status.state === 'failed') { say(status.error || failed); return; }
+				if (status.state === 'done') { say(ended); return; }
+				if (attempt >= 20) { say(noStart); return; }
+				setTimeout(function () { launchPoll(attempt + 1); }, 1500);
+			})
+			.catch(function () {
+				if (attempt >= 20) { say(noStart); return; }
+				setTimeout(function () { launchPoll(attempt + 1); }, 1500);
+			});
+	}
 	for (var c = 0; c < cards.length; c++) {
 		cards[c].addEventListener('click', function () {
 			var id = this.getAttribute('data-game');
 			say(<%== encode_json(&subs::ui('Starting')) %> + '…');
 			post('/manager/games/launch', { id: id }).then(function (answer) {
-				if (!answer || !answer.ok) { say((answer && answer.error) || failed); }
+				if (!answer || !answer.ok) { say((answer && answer.error) || failed); return; }
+				launchPoll(0);
 			}).catch(function () { say(failed); });
 		});
 	}

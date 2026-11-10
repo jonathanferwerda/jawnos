@@ -1001,6 +1001,23 @@ sub action_44017 {
 	$c->render(json => $status);
 }
 
+# GET /manager/games/launch_status
+# The launch helper writes one row in /run before it hides the kiosk. The page
+# reads it back, so a helper that failed on the way to the emulator says why
+# instead of leaving "Starting..." on screen. A missing row is 'idle'.
+sub action_44018 {
+	my $c = shift;
+	my $status = { state => 'idle' };
+	my $path = '/run/jawnos-games/launch.json';
+	if (-f $path) {
+		my $raw = '';
+		if (open(my $fh, '<', $path)) { local $/; $raw = <$fh> // ''; close $fh; }
+		my $parsed = eval { Mojo::JSON->new->decode($raw) };
+		$status = $parsed if ref $parsed eq 'HASH';
+	}
+	$c->render(json => $status);
+}
+
 # GET /manager/controller/config
 # The Configuration tile used to open the house's Configure app, which is a desk
 # of settings a handheld cannot comfortably use. It opens this sublauncher

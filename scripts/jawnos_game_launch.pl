@@ -35,8 +35,36 @@ my $FILE = "$STATE/launch.json";
 my $JSON = JSON::PP->new->canonical(1);
 my $HOME_KEY = 102;   # KEY_HOME, which gou_inputd sends for the Home button
 
+# The manager runs this through sudo with every descriptor on /dev/null, so a
+# launch that fails leaves nothing to read. One file per launch holds the
+# helper's own steps and the emulator's output; the newest five are kept.
+my $CACHE = '/home/jawn/.cache/jawnos';
+my $LOG = "$CACHE/game-launch-" . time() . ".log";
+my $LOGFH;
+
 my %STATUS = (state => 'starting', at => time, game => '');
 my ($child, $interrupted);
+
+sub log_open {
+	make_path($CACHE) unless -d $CACHE;
+	open($LOGFH, '>>', $LOG) or return;
+	my $previous = select($LOGFH);
+	$| = 1;
+	select($previous);
+	my (undef, undef, $uid, $gid) = getpwnam($PERSON);
+	chown($uid, $gid, $LOG) if defined $uid && defined $gid;
+	my @old = sort glob("$CACHE/game-launch-*.log");
+	while (@old > 5) {
+		my $gone = shift @old;
+		unlink $gone if $gone ne $LOG;
+	}
+}
+
+sub log_line {
+	return unless $LOGFH;
+	my ($text) = @_;
+	print $LOGFH scalar(localtime) . ' ' . (defined $text ? $text : '') . "\n";
+}
 
 sub write_status {
 	make_path($STATE);
@@ -144,6 +172,7 @@ sub hide_kiosk {
 	if (!defined $kiosk_window) {
 		# nothing to hide: the unit itself has to go, as it always did
 		system('systemctl', 'stop', 'jawnos-kiosk');
+		log_line('kiosk stopped (no window found)');
 		$kiosk_hidden = 1;
 		return;
 	}
@@ -152,10 +181,12 @@ sub hide_kiosk {
 	# paints in software takes the CPU the emulator wants; frozen, the whole
 	# unit's cgroup spends nothing and the page is still there to resume.
 	system('systemctl', 'kill', '--signal=SIGSTOP', 'jawnos-kiosk');
+	log_line("kiosk hidden window=$kiosk_window");
 	$kiosk_hidden = 1;
 }
 
 sub restore {
+	log_line('restore the kiosk');
 	unlink $MARKER;
 	return unless $kiosk_hidden;
 	$kiosk_hidden = 0;
@@ -182,6 +213,7 @@ sub restore {
 
 sub fail {
 	my ($message) = @_;
+	log_line("failed: $message");
 	$STATUS{'state'} = 'failed';
 	$STATUS{'error'} = $message;
 	$STATUS{'finished'} = time;
@@ -208,6 +240,9 @@ sub mouse_device {
 	return undef;
 }
 
+log_open();
+$STATUS{'log'} = $LOG;
+log_line('start id=' . $ID . ' runner=' . (length $RUNNER_ID ? $RUNNER_ID : 'default'));
 $STATUS{'game'} = $ID;
 write_status();
 
@@ -254,12 +289,21 @@ else {
 	push @command, $game->{'file'};
 }
 
+log_line('run: ' . join(' ', @command));
+
 $child = fork();
 if (!defined $child) {
 	fail('The emulator could not be started.');
 }
 if (!$child) {
 	POSIX::setsid();
+	# The emulator's own words go to the launch log, not /dev/null.
+	if ($LOGFH) {
+		open(STDOUT, '>&', $LOGFH);
+		open(STDERR, '>&', $LOGFH);
+		select(STDERR);
+		$| = 1;
+	}
 	$ENV{'DISPLAY'} = ':0';
 	$ENV{'XDG_RUNTIME_DIR'} = '/run/user/' . $uid;
 	$ENV{'HOME'} = '/home/jawn';
@@ -325,6 +369,7 @@ if (waitpid($child, POSIX::WNOHANG()) == 0) {
 	waitpid($child, 0);
 }
 
+log_line('emulator exited');
 $STATUS{'state'} = 'done';
 $STATUS{'finished'} = time;
 write_status();
