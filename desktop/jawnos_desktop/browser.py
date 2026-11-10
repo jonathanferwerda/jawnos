@@ -573,8 +573,12 @@ class SiteUsage:
             if not key:
                 self._close_locked()
                 return
-            if self._current and self._current["key"] == key \
-                    and self._current["url"] == url:
+            if self._current and self._current["key"] == key:
+                # A page-to-page move on the same site is the same visit. The
+                # phone already keeps its span this way; closing on a URL
+                # change is what split one site visit into an appointment per
+                # page.
+                self._current["url"] = url or ""
                 self._current["title"] = title or self._current.get("title") or ""
                 return
             self._close_locked()

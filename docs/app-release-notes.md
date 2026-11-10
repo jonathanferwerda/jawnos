@@ -5,6 +5,27 @@ this file, adds the release date and the version codes that are actually
 staged, and writes it back to the release. Keep the newest release at the top
 under a dated heading; older sections stay as history.
 
+## 2026-11-10 — the browser opens again, and a site visit stays one appointment
+
+- **Browse opens on a phone again.** The browser runs in its own process, and
+  its WebView data directory has to be named before the WebView provider loads.
+  The application was loading the provider first (to set the remote-debugging
+  flag), so the browser's suffix call came too late; both processes then shared
+  one data directory, which the WebView refuses with "Using WebView from more
+  than one process at once with the same data directory is not supported." The
+  suffix is set in the application now, before the debugging flag, for the
+  browser process only.
+- **A page-to-page move is still the same visit.** The site tick used to stop
+  the mapped appointment after a quiet gap and start a new one when spans
+  resumed, so moving around a site produced several appointments. The desktop
+  browser also closed its site span on every URL change. Both keep the visit
+  now: the desktop span follows the site, and a stop the tick made is reopened
+  as the same appointment when the site returns within two minutes. A person's
+  own stop is never reopened.
+- **Subdomains belong to the site.** A span carries its full host in its URL,
+  so marketplace.facebook.com counts for the facebook.com assignment; an
+  explicit assignment to that subdomain wins over the site's.
+
 ## 2026-11-06 — a refused call holds a silent line, then ends
 
 - **A refused call is answered and held for four seconds before it is ended.**

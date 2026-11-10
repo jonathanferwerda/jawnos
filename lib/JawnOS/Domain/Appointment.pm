@@ -166,6 +166,44 @@ sub internet_domain_app_map {
 	return ref $map eq 'HASH' ? $map : {};
 }
 
+# The host a span was really on. key_name is the registrable domain the totals
+# use, so a subdomain only survives in the URL; an empty URL falls back to the
+# key, which is what every saved or hand-posted span has.
+sub internet_site_host {
+	my ($url, $fallback) = @_;
+	my $host = '';
+	if (defined $url && $url =~ m{^[a-z][a-z0-9+.-]*://([^/?#]+)}i) {
+		$host = $1;
+		$host =~ s/^.*\@//;      # userinfo
+		$host =~ s/:\d+$//;      # port
+	}
+	$host = lc($host);
+	$host =~ s/^\[//;
+	$host =~ s/\]$//;
+	$host =~ s/\.+$//;
+	return length $host ? $host : lc($fallback // '');
+}
+
+# The app a host belongs to: the most specific assigned site wins, so an
+# explicit marketplace.facebook.com assignment beats the facebook.com one while
+# every other facebook subdomain still falls back to facebook.com. A bare TLD
+# is never a match.
+sub internet_site_app_for_host {
+	my ($map, $host) = @_;
+	return '' unless $map && ref $map eq 'HASH';
+	$host = lc($host // '');
+	$host =~ s/^\.+//;
+	$host =~ s/\.+$//;
+	return '' unless length $host;
+	my @labels = split /\./, $host;
+	for (my $i = 0; $i <= $#labels - 1; $i++) {
+		my $candidate = join '.', @labels[$i .. $#labels];
+		my $app = $map->{$candidate};
+		return $app if defined $app && length $app;
+	}
+	return '';
+}
+
 sub internet_site_appointment_tick {
 	my ($opts) = @_;
 	$opts ||= {};
@@ -174,11 +212,18 @@ sub internet_site_appointment_tick {
 	$internet_site_tick_at = $now;
 	my $map = &internet_domain_app_map();
 	return 0 unless scalar keys %{$map};
-	my $grace = 60000;
+	# A gap over 30 seconds is a pause, not a second visit. The browsers post a
+	# span every 30 seconds, so the stop is written one reporting interval later
+	# to avoid racing the flush, and the appointment is reopened - the same row,
+	# not a new one - if the next page arrives within five minutes. A longer gap
+	# is a real departure and starts a new appointment.
+	my $pause = 30_000;
+	my $quiet = 40_000;
+	my $resume = 5 * 60 * 1000;
 	my $from = $now - 15 * 60 * 1000;
 	my $rows = eval {
 		&db_query(q{
-			select key_name, started_at, ended_at
+			select key_name, url, started_at, ended_at
 			  from usage_sessions
 			 where kind = 'site' and cast(ended_at as integer) >= ?
 			 order by cast(started_at as integer) asc
@@ -190,9 +235,8 @@ sub internet_site_appointment_tick {
 		push @{$domains_for_app{$app}}, $domain if length $domain;
 	}
 	foreach my $row ( @{$rows} ) {
-		my $domain = lc($row->{'key_name'} // '');
-		$domain =~ s/^www\.//;
-		my $app = $map->{$domain} || next;
+		my $host = &internet_site_host($row->{'url'}, $row->{'key_name'});
+		my $app = &internet_site_app_for_host($map, $host) || next;
 		my $start = int($row->{'started_at'} // 0);
 		my $end = int($row->{'ended_at'} // 0);
 		next unless $start > 0 && $end > 0;
@@ -200,7 +244,7 @@ sub internet_site_appointment_tick {
 			$run_start{$app} = $start;
 			$run_end{$app} = $end;
 		}
-		elsif ($start <= $run_end{$app} + $grace) {
+		elsif ($start <= $run_end{$app} + $pause) {
 			$run_end{$app} = $end if $end > $run_end{$app};
 		}
 		else {
@@ -224,16 +268,29 @@ sub internet_site_appointment_tick {
 		my $started = int($open->{'timestamp'} // 0);
 		my $last = $run_end{$app};
 		if (!defined $last) {
+			# No span for this app in the last quarter hour: find the newest one
+			# this session could have been running on, so the stop lands at the
+			# last moment the person was really there rather than at this tick.
 			my $domains = $domains_for_app{$app} || [];
 			if (scalar @{$domains}) {
-				my $ph = join ',', map { '?' } @{$domains};
-				my $row = eval {
-					&db_query("select max(cast(ended_at as integer)) as last_end from usage_sessions where kind = 'site' and key_name in ($ph) and cast(ended_at as integer) >= ?", @{$domains}, $started)->hash;
-				} || {};
-				$last = int($row->{'last_end'}) if defined $row->{'last_end'} && $row->{'last_end'} ne '';
+				my $recent = eval {
+					&db_query(q{
+						select url, key_name, ended_at
+						  from usage_sessions
+						 where kind = 'site' and cast(ended_at as integer) >= ?
+						 order by cast(ended_at as integer) desc
+						 limit 200
+					}, $started)->hashes;
+				} || [];
+				foreach my $span ( @{$recent} ) {
+					my $host = &internet_site_host($span->{'url'}, $span->{'key_name'});
+					next unless &internet_site_app_for_host($map, $host) eq $app;
+					my $end = int($span->{'ended_at'} // 0);
+					$last = $end if $end > ($last // 0);
+				}
 			}
 		}
-		my $active = defined $last && ($now - $last) <= $grace && !&app_hidden_now($app);
+		my $active = defined $last && ($now - $last) <= $quiet && !&app_hidden_now($app);
 		next if $active;
 		my $stop_at = (defined $last && $last > $started) ? $last : $now;
 		# A session's duration is the negative accrual (start - stop), the sign
@@ -248,19 +305,56 @@ sub internet_site_appointment_tick {
 			duration => $duration,
 			server_time => $now,
 		}, { uuid => $uuid, app => $app });
+		# Remember that this stop was ours, so a span that resumes it within the
+		# resume window can reopen the same appointment. A person's own stop is
+		# never marked and never reopened.
+		&subs::cache_set({
+			app => '__president',
+			context => 'internet_site_stop',
+			subcontext => $app,
+			warranty => '-10m'
+		}, { uuid => $uuid, at => $stop_at, app => $app });
 		&intelligent_automation_toggle({ appt_uuid => $uuid, app => $app, 'state' => 'off', timestamp => $stop_at });
 		&Websocket::send('tab', { console => &Websocket::console_command('appointmentDetailGrabber', $app, $uuid)});
 	}
 	# Sessions to start: a mapped site that is still being reported and has no
 	# session of any kind running for its app.
 	foreach my $app ( sort keys %run_end ) {
-		next if $now - $run_end{$app} > $grace;
+		next if $now - $run_end{$app} > $quiet;
 		next if &app_hidden_now($app);
 		next if &open_session_uuid($app);
 		my $init = &setting_initializer($app, $run_start{$app});
 		my $name = (ref $init eq 'HASH' && $init->{'app'}) ? $init->{'app'} : $app;
 		next if $name ne $app && (&open_session_uuid($name) || &app_hidden_now($name));
 		my $start_at = $run_start{$app};
+		# A stop this tick made, with the site back inside the resume window, was
+		# navigation rather than a departure: reopen that appointment instead of
+		# starting a second one. The stopped row must still be the one the marker
+		# names - a person's own stop or a repair is left alone.
+		my $marker_key = $name;
+		my $marker = &subs::cache_get({ app => '__president', context => 'internet_site_stop', subcontext => $marker_key });
+		if (ref $marker ne 'HASH' && $marker_key ne $app) {
+			$marker_key = $app;
+			$marker = &subs::cache_get({ app => '__president', context => 'internet_site_stop', subcontext => $marker_key });
+		}
+		if (ref $marker eq 'HASH' && ($marker->{'uuid'} // '') && $start_at < int($marker->{'at'} // 0) + $resume) {
+			my $row_app = $marker->{'app'} || $name;
+			my $stopped = &db_query('select uuid, stop_timestamp from appointments where app = ? and uuid = ? and type = ? and stop_seen is not null order by cast(stop_timestamp as integer) desc limit 1', $row_app, $marker->{'uuid'}, 'stop')->hash;
+			if ($stopped && $stopped->{'uuid'} && abs(int($stopped->{'stop_timestamp'} // 0) - int($marker->{'at'} // 0)) <= 2000) {
+				&db_update('appointments', {
+					type => 'start',
+					stop_timestamp => undef,
+					stop_seen => undef,
+					duration => undef,
+					server_time => $now,
+				}, { app => $row_app, uuid => $stopped->{'uuid'} });
+				&subs::cache_delete({ app => '__president', context => 'internet_site_stop', subcontext => $marker_key });
+				&intelligent_automation_toggle({ appt_uuid => $stopped->{'uuid'}, app => $row_app, 'state' => 'on', timestamp => $now });
+				&Websocket::send('tab', { console => &Websocket::console_command('appointmentDetailGrabber', $row_app, $stopped->{'uuid'})});
+				next;
+			}
+			&subs::cache_delete({ app => '__president', context => 'internet_site_stop', subcontext => $marker_key });
+		}
 		# A session that just ended (a person starting and stopping by hand while
 		# the page was open) must not be counted twice.
 		my $prev = eval {
