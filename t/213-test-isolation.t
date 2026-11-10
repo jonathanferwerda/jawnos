@@ -33,4 +33,19 @@ SKIP: {
 	cmp_ok($tables->{'n'}, '>', 10, 'and the snapshot carries the schema');
 }
 
+# Windows does not implement POSIX::tzset - the call dies rather than refreshing
+# the cache - and every test that loaded this harness aborted there. TZ is still
+# pinned; the refresh has to stay inside the eval and nothing else may call it.
+my $harness = do {
+	open(my $fh, '<', "$FindBin::Bin/lib/JawnOSTest.pm") or die $!;
+	local $/;
+	<$fh>;
+};
+like($harness, qr/\$ENV\{TZ\} = 'UTC'/, 'the harness still pins TZ to UTC');
+like($harness, qr/eval \{ POSIX::tzset\(\) \}/,
+	'and refreshes the zone inside an eval (Windows has no tzset)');
+(my $hcode = $harness) =~ s/^\s*#.*$//mg;
+$hcode =~ s/eval \{ POSIX::tzset\(\) \}/eval/;
+unlike($hcode, qr/POSIX::tzset/, 'no unguarded POSIX::tzset call is left');
+
 done_testing();

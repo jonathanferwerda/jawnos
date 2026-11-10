@@ -1,4 +1,4 @@
-# tests-for: perl/President.pl jawn lib/JawnOS/Platform.pm lib/JawnOS/Domain/Devicews.pm
+# tests-for: perl/President.pl jawn lib/JawnOS/Platform.pm lib/JawnOS/Domain/Devicews.pm scripts/manager_killer.pl scripts/sync_kick.pl
 # covers:    the two entry points consult the platform module: no threads, a
 #            Daemon instead of Prefork in portable mode, and a pipe instead of
 #            a pty for the master's tree runner. The choice itself is exercised
@@ -67,6 +67,43 @@ like($master, qr/type => 'pty'/, 'the master still uses a pty when native');
 like($master, qr/USERPROFILE/, 'the master finds a Windows home without getpwuid');
 like($master, qr/eval \{ \(getpwuid/, 'and calls getpwuid only inside an eval');
 like($master, qr/\$sep = \$\^O eq 'MSWin32'/, 'and exports PERL5LIB with the platform separator');
+
+# The same BEGIN shape in the two helper scripts a bare shell launches: the
+# killer behind the Stop button and a restart, and the sync kick. An unguarded
+# getpwuid there died on Windows before the script did anything, and the restart
+# guard's perl -c runs that BEGIN, so each one failed the whole tree check.
+for my $script (qw(scripts/manager_killer.pl scripts/sync_kick.pl)) {
+	my $text = read_file("$FindBin::Bin/../$script");
+	my ($begin) = $text =~ /(BEGIN \{.*?\n\})/s;
+	ok($begin, "$script still seeds \@INC in BEGIN");
+	like($begin, qr/\$ENV\{USERPROFILE\}/, "$script consults USERPROFILE");
+	like($begin, qr/\$ENV\{HOMEDRIVE\}[\s\S]*\$ENV\{HOMEPATH\}/,
+		"$script then the HOMEDRIVE+HOMEPATH pair");
+	like($begin, qr/eval \{ \(getpwuid \$<\)\[7\] \}/,
+		"$script guards getpwuid in an eval");
+	# Comments may name it; only a call counts.
+	(my $code = $begin) =~ s/^\s*#.*$//mg;
+	$code =~ s/eval \{ \(getpwuid \$<\)\[7\] \}/eval/;
+	unlike($code, qr/getpwuid/, "$script has no unguarded getpwuid call");
+	like($begin, qr/\$sep = \$\^O eq 'MSWin32'/,
+		"$script exports PERL5LIB with the platform separator");
+}
+
+# With no HOME at all - a Windows service or scheduled task - the compile must
+# reach the USERPROFILE fallback instead of aborting in getpwuid.
+for my $script (qw(scripts/manager_killer.pl scripts/sync_kick.pl)) {
+	local %ENV = %ENV;
+	delete @ENV{qw(HOME HOMEDRIVE HOMEPATH)};
+	$ENV{'USERPROFILE'} = "$FindBin::Bin/..";
+	my $err = gensym;
+	my $pid = open3(my $in, my $out, $err, $^X, '-c', "$FindBin::Bin/../$script");
+	close $in;
+	my $stderr = do { local $/; <$err> } // '';
+	my $stdout = do { local $/; <$out> } // '';
+	waitpid($pid, 0);
+	is($? >> 8, 0, "$script compiles with no HOME (USERPROFILE fallback)")
+		or diag($stderr . $stdout);
+}
 
 # The master adds the repo lib to its own @INC but its PERL5LIB carries only the
 # local::lib tree, so the tree starts as plain `perl ./perl/President.pl` with no

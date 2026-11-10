@@ -328,9 +328,12 @@ sub _setup {
 		. '"port":"3000","working_port":"3001","ws_port":"3001"}';
 	close $fh;
 
-	# Calendar code is only sane in one timezone.
+	# Calendar code is only sane in one timezone. Windows does not implement
+	# POSIX::tzset (it dies with "not implemented on this architecture"), so
+	# the call is a cache refresh the platform may lack: $ENV{TZ} is the answer
+	# and the eval leaves the failing refresh out of every test that loads this.
 	$ENV{TZ} = 'UTC';
-	POSIX::tzset();
+	eval { POSIX::tzset() };
 
 	my $cwd  = getcwd();
 	my $home = $ENV{HOME};
