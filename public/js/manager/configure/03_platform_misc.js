@@ -78,6 +78,11 @@ $(document).on('click', '.ai_model_test', function() {
 		status.text('Pick a model first.').show();
 		return;
 	}
+	// A Test is a real request: it can spend an API call and, for a generation
+	// model, actually make and bill a file. Ask before that happens.
+	var ask = 'This will ask a model for a real response, and may cost money, do you want to continue?';
+	ask = (typeof jawnosT === 'function') ? jawnosT(ask) : ask;
+	if (!confirm(ask)) { return; }
 	var label = btn.text();
 	btn.prop('disabled', true).text('Testing…');
 	status.hide().text('');

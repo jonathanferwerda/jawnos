@@ -137,6 +137,12 @@ my @calls;
 	like( $js, qr#/manager/configure/ai_model_test#, 'the Test button posts to the model-test route' );
 	like( $js, qr/setting: role\.attr\('setting'\)/, 'and names the role whose model it tests' );
 	like( $js, qr/\.ai_model_test_status/, 'the answer is shown under the row' );
+	like( $js, qr/may cost money/, 'the Test warns that it may cost money' );
+	like( $js, qr/jawnosT\(ask\)/, 'and the warning is translatable' );
+	like( $js, qr/confirm\(ask\)/, 'and asks before it runs' );
+	my $ask_at = index($js, 'confirm(ask)');
+	my $post_at = index($js, "url: '/manager/configure/ai_model_test'");
+	ok( $ask_at >= 0 && $ask_at < $post_at, 'the confirmation comes before the request' );
 }
 
 # The Test button's answer comes from the model itself: ai_chat_raw, not the
