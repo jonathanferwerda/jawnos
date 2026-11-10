@@ -108,13 +108,13 @@ like($loop, qr/sleep\(\$recent \? 5 : 30\);/,
 # and never stop it, so the 147 MB would stay for good.
 my ($orphans) = $ai =~ /(sub whisper_server_stop_orphans \{.*?\n\})/s;
 ok($orphans, 'Domain::Ai carries whisper_server_stop_orphans');
-like($orphans, qr/\$fields\[1\] eq '1'/,
+like($orphans, qr/\$row->\{'ppid'\} eq '1'/,
 	'it takes a server with no parent (PPid 1) and leaves a hand-started one');
 like($orphans, qr/whisper\[-_\]/,
 	'and matches whisper-server and the pip wrapper whisper_tool.py alike');
 like($orphans, qr/--port\\s\+\\Q\$port\\E/,
 	'and only a server on this machine whisper port');
-like($orphans, qr/kill 'TERM', \$pid;/,
+like($orphans, qr/signal\('TERM', \$pid\);/,
 	'it asks that server to stop');
 like($loop, qr/&subs::whisper_server_stop_orphans\(\);/,
 	'the demand loop clears an inherited server before its first look');

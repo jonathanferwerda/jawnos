@@ -37,6 +37,7 @@ use File::Copy;
 use POSIX ();
 use Fcntl qw(:flock O_CREAT O_EXCL O_WRONLY);
 use Number::Format qw/:subs/;
+use JawnOS::Platform::Process ();
 use SQL::Abstract;
 use Mojo::SQLite;
 use Mojo::IOLoop;
@@ -174,10 +175,7 @@ sub market_camera_stop {
 
 sub market_camera_is_reader {
 	my ($pid) = @_;
-	open my $cf, '<', "/proc/$pid/cmdline" or return 0;
-	local $/;
-	my $cmd = <$cf>;
-	close $cf;
+	my $cmd = JawnOS::Platform::Process::command_line($pid);
 	return ($cmd && $cmd =~ /zbarcam/) ? 1 : 0;
 }
 

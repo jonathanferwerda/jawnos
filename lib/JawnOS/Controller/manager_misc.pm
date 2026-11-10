@@ -38,6 +38,7 @@ use File::Type;
 use File::Copy;
 use POSIX ();
 use Fcntl qw(:flock O_CREAT O_EXCL O_WRONLY);
+use JawnOS::Platform::Process ();
 use Number::Format qw/:subs/;
 use SQL::Abstract;
 use Mojo::SQLite;
@@ -450,12 +451,12 @@ sub action_3186 {
 }
 
 # A process viewer for the machine (the Monitor app): CPU/memory graphs plus the
-# process list, read straight from /proc. The old start-menu htop figure came
-# from `times` inside a prefork master that spent its life blocked in run(), so
-# its numbers were nonsense; cumulative jiffies per pid plus a difference taken
-# in the browser are correct no matter which prefork worker answers. On Termux
-# the same reads work for JawnOS's own processes (shared UID); other apps'
-# states are hidden and are simply skipped.
+# process list, read through JawnOS::Platform::Process. The old start-menu htop
+# figure came from `times` inside a prefork master that spent its life blocked
+# in run(), so its numbers were nonsense; cumulative jiffies per pid plus a
+# difference taken in the browser are correct no matter which prefork worker
+# answers. On Termux the same reads work for JawnOS's own processes (shared UID);
+# other apps' states are hidden and are simply skipped.
 # GET /manager/process_monitor
 sub action_4940 {
 	my $c = shift;
@@ -474,79 +475,35 @@ sub action_4950 {
 	my $clk = 100;   # CLK_TCK
 
 	# memory (KB)
-	my ($mem_total, $mem_avail) = (0, 0);
-	if (open(my $mf, '<', '/proc/meminfo')) {
-		while (my $l = <$mf>) {
-			$mem_total = $1 if $l =~ /^MemTotal:\s+(\d+)/;
-			$mem_avail = $1 if $l =~ /^MemAvailable:\s+(\d+)/;
-			last if $mem_total && $mem_avail;
-		}
-		close $mf;
-	}
+	my $mem = JawnOS::Platform::Process::meminfo();
+	my $mem_total = $mem->{'total'};
+	my $mem_avail = $mem->{'available'};
 
-	# uptime, to turn each pid's starttime into an age. Android denies
-	# /proc/uptime to apps, so the age is simply unknown there (-1).
-	my $uptime;
-	if (open(my $uf, '<', '/proc/uptime')) {
-		my $ul = <$uf>;
-		close $uf;
-		$uptime = $1 if $ul && $ul =~ /^([\d.]+)/;
-	}
+	# uptime, to turn each pid's starttime into an age. Android denies the
+	# uptime file to apps, so the age is simply unknown there (-1).
+	my $uptime = JawnOS::Platform::Process::uptime();
 
 	# per-core CPU: cumulative total and idle jiffies
-	my @cpus;
-	if (open(my $st, '<', '/proc/stat')) {
-		while (my $l = <$st>) {
-			next if $l =~ /^cpu\s/;               # the aggregate line
-			last unless $l =~ /^cpu(\d+)\s+(.*)$/;
-			my @v = split ' ', $2;
-			my $idle = ($v[3] // 0) + ($v[4] // 0);   # idle + iowait
-			my $total = 0;
-			$total += ($_ // 0) for @v;
-			push @cpus, { t => $total, i => $idle };
-		}
-		close $st;
-	}
+	my $cpus = JawnOS::Platform::Process::cpu_times();
 
 	my @procs;
-	for my $d (glob('/proc/[0-9]*')) {
-		(my $pid = $d) =~ s{.*/}{};
-		open(my $sf, '<', "$d/stat") or next;
-		my $line = <$sf>;
-		close $sf;
-		next unless defined $line;
-		my $open = index($line, '(');
-		my $close = rindex($line, ')');
-		next if $open < 0 || $close < 0;
-		my $comm = substr($line, $open + 1, $close - $open - 1);
-		my @f = split ' ', substr($line, $close + 2);
-		my $cmd = '';
-		if (open(my $cf, '<', "$d/cmdline")) {
-			local $/;
-			$cmd = <$cf>;
-			close $cf;
-			$cmd =~ s/\0/ /g;
-			$cmd =~ s/\s+$//;
-		}
-		$cmd = $comm if !defined $cmd || $cmd eq '';
+	foreach my $row ( @{ JawnOS::Platform::Process::table() } ) {
+		my $cmd = $row->{'cmdline'};
+		$cmd =~ s/\s+$//;
+		$cmd = $row->{'comm'} if $cmd eq '';
 		$cmd = substr($cmd, 0, 90);
 		my $age = -1;
-		if (defined $uptime && defined $f[19]) {
-			$age = int($uptime - $f[19] / $clk);
+		if (defined $uptime && defined $row->{'start'}) {
+			$age = int($uptime - $row->{'start'} / $clk);
 			$age = 0 if $age < 0;
 		}
-		push @procs, { p => $pid, pp => $f[1], t => ($f[11] + $f[12]), r => $f[21], a => $age, n => $cmd };
+		push @procs, { p => $row->{'pid'}, pp => $row->{'ppid'}, t => ($row->{'utime'} + $row->{'stime'}), r => $row->{'rss'}, a => $age, n => $cmd };
 	}
 	# The Monitor's headline: what this machine is running and how it is doing.
 	# The battery comes through the shared sampler so a two-second poll does not
 	# spawn termux-battery-status each tick; everything else is read here.
 	my ($dbm, $database) = &subs::database_grabber();
-	my $load = '';
-	if (open(my $lf, '<', '/proc/loadavg')) {
-		my $l = <$lf>;
-		close $lf;
-		$load = $1 if $l && $l =~ /^([\d.]+ [\d.]+ [\d.]+)/;
-	}
+	my $load = JawnOS::Platform::Process::loadavg();
 	my $running_jobs = &subs::db_query('select count(*) as c from sync_jobs where state = ?', 'running')->hashes->[0]->{'c'} || 0;
 	my $last_job = &subs::db_query('select note, updated from sync_jobs order by cast(updated as integer) desc limit 1')->hashes->[0] || {};
 	my $active_peers = &subs::db_query('select count(*) as c from remote_machines where connection = ?', 'active')->hashes->[0]->{'c'} || 0;
@@ -567,7 +524,7 @@ sub action_4950 {
 		peers_active => $active_peers + 0,
 		battery => &subs::battery_sample(),
 	};
-	$c->render(json => { at => &subs::rightNow(), clk => $clk, mem_total => $mem_total, mem_avail => $mem_avail, cpus => \@cpus, procs => \@procs, health => $health });
+	$c->render(json => { at => &subs::rightNow(), clk => $clk, mem_total => $mem_total, mem_avail => $mem_avail, cpus => $cpus, procs => \@procs, health => $health });
 }
 
 # GET /manager/warehouse

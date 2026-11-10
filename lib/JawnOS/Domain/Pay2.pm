@@ -28,6 +28,7 @@ use Mojo::IOLoop;
 use Mojo::JSON qw(decode_json encode_json);
 use Mojo::Util qw/md5_sum xml_escape html_unescape term_escape quote unquote secure_compare url_escape url_unescape network_contains punycode_decode punycode_encode b64_decode b64_encode/;
 use POSIX ();   # mktime: a local-time epoch that still predates 1970
+use JawnOS::Platform::Process ();
 use Text::Unidecode;
 use Time::Duration;
 use Time::HiRes qw(gettimeofday time);
@@ -889,16 +890,12 @@ sub clock_alarm_stop_sound {
 	$pid =~ s/\D//g;
 	return $restored unless length $pid;
 	# A stale pid file after a reboot must not kill whatever inherited the number.
-	# The player's command line still names play and the sounds directory.
-	if (-e '/proc/' . $pid . '/cmdline') {
-		my $cmdline = eval { read_file('/proc/' . $pid . '/cmdline') } // '';
-		return $restored unless $cmdline =~ /play/ && $cmdline =~ m{public/sounds};
-	}
-	else {
-		return $restored;
-	}
-	eval { kill 'TERM', $pid; };
-	eval { kill 'KILL', $pid; };
+	# The player's command line still names play and the sounds directory. An
+	# unreadable command line (the process is gone) is the same refusal.
+	my $cmdline = JawnOS::Platform::Process::command_line($pid);
+	return $restored unless $cmdline =~ /play/ && $cmdline =~ m{public/sounds};
+	JawnOS::Platform::Process::signal('TERM', $pid);
+	JawnOS::Platform::Process::signal('KILL', $pid);
 	return 1;
 }
 
@@ -923,13 +920,12 @@ sub clock_preview_stop {
 	return 0 unless defined $pid;
 	$pid =~ s/\D//g;
 	return 0 unless length $pid;
-	return 0 unless -e '/proc/' . $pid;
 	# The preview's timeout command line names the player and the sounds
 	# directory; a recycled pid after a reboot does not.
-	my $cmdline = eval { read_file('/proc/' . $pid . '/cmdline') } // '';
+	my $cmdline = JawnOS::Platform::Process::command_line($pid);
 	return 0 unless $cmdline =~ /play/ && $cmdline =~ m{public/sounds};
-	eval { kill 'TERM', $pid; };
-	eval { kill 'KILL', $pid; };
+	JawnOS::Platform::Process::signal('TERM', $pid);
+	JawnOS::Platform::Process::signal('KILL', $pid);
 	return 1;
 }
 

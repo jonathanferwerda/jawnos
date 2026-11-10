@@ -28,6 +28,7 @@ use Mojo::IOLoop;
 use Mojo::JSON qw(decode_json encode_json);
 use Mojo::Util qw/md5_sum xml_escape html_unescape term_escape quote unquote secure_compare url_escape url_unescape network_contains punycode_decode punycode_encode b64_decode b64_encode/;
 use POSIX ();   # mktime: a local-time epoch that still predates 1970
+use JawnOS::Platform::Process ();
 use Text::Unidecode;
 use Time::Duration;
 use Time::HiRes qw(gettimeofday time);
@@ -504,7 +505,7 @@ sub sshd_command_line {
 # started without a pidfile (the bare `sshd` this replaces) has no pid file, and
 # a stale pid file outlives a killed daemon. The pid file is believed only when
 # the process it names is still running and would rename itself 'sshd' (a
-# recycled pid is not it); otherwise the /proc scan decides.
+# recycled pid is not it); otherwise the process scan decides.
 sub sshd_running {
 	my ($prefix) = @_;
 	unless (defined $prefix && length $prefix) {
@@ -515,17 +516,14 @@ sub sshd_running {
 		close $fh;
 		if (defined $pid && $pid =~ /^\s*(\d+)/) {
 			my $candidate = $1;
-			if ($candidate > 1 && kill 0, $candidate) {
-				my $comm = eval { read_file("/proc/$candidate/comm") } || '';
-				chomp $comm;
-				return 1 if $comm eq 'sshd';
+			if ($candidate > 1 && JawnOS::Platform::Process::pid_exists($candidate)) {
+				return 1 if JawnOS::Platform::Process::comm($candidate) eq 'sshd';
 			}
 		}
 	}
-	foreach my $proc ( glob('/proc/[0-9]*') ) {
-		my $cmd = eval { read_file("$proc/cmdline") } || '';
-		$cmd =~ s/\0.*//s;
-		return 1 if $cmd =~ m{(?:^|/)sshd$};
+	foreach my $row ( @{ JawnOS::Platform::Process::table() } ) {
+		my ($cmd) = split ' ', $row->{'cmdline'};
+		return 1 if defined $cmd && $cmd =~ m{(?:^|/)sshd$};
 	}
 	return 0;
 }

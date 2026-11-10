@@ -28,6 +28,7 @@ use File::Temp ();
 use Digest::SHA ();
 use POSIX ();
 use Cwd ();
+use JawnOS::Platform::Process ();
 
 # The coding queue is its own SQLite file, not the tree's minion.db. The master
 # wipes ~/.president on a reload (that is how the tree gets a clean run state),
@@ -164,13 +165,11 @@ sub coding_worker_alive {
 	$pid = '' unless defined $pid;
 	$pid =~ s/\s+//g;
 	return 0 unless $pid =~ /^[0-9]+$/ && kill(0, $pid);
-	# a recycled pid is not a worker; the command line says which it is
-	if (open(my $cf, '<', "/proc/$pid/cmdline")) {
-		local $/;
-		my $cmd = <$cf>;
-		close $cf;
-		return 0 unless defined $cmd && $cmd =~ /Coding\.pl/;
-	}
+	# a recycled pid is not a worker; the command line says which it is. An
+	# unreadable command line (no process table, another user) is not evidence
+	# against it, so the name test is skipped rather than failed.
+	my $cmd = JawnOS::Platform::Process::command_line($pid);
+	return 0 if length $cmd && $cmd !~ /Coding\.pl/;
 	return 1;
 }
 

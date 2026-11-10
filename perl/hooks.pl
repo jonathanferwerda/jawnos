@@ -4,6 +4,7 @@ use strict;
 no warnings;
 use IO::Compress::Gzip qw(gzip);
 use Data::Dumper;
+use JawnOS::Platform::Process ();
 
 require "./perl/subroutines.pl";
 our $config_file = read_file('./config.json');
@@ -39,8 +40,7 @@ Manager::app->hook(before_dispatch => sub {
 		if (!defined $subs::worker_mem_at || $now - $subs::worker_mem_at > 60000) {
 			$subs::worker_mem_at = $now;
 			my $pid = $$;
-			my $status = eval { read_file("/proc/$pid/status") } || '';
-			my ($rss) = $status =~ /VmRSS:\s+(\d+)/;
+			my $rss = JawnOS::Platform::Process::rss_kib($pid);
 			$log->info('worker mem purpose=' . ($ENV{PURPOSE} || '?') . " pid=$pid rss=" . (defined $rss ? $rss : '?') . 'kB');
 		}
 	}

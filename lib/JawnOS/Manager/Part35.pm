@@ -37,6 +37,7 @@ use File::Copy;
 use POSIX ();
 use Fcntl qw(:flock O_CREAT O_EXCL O_WRONLY);
 use Number::Format qw/:subs/;
+use JawnOS::Platform::Process ();
 use SQL::Abstract;
 use Mojo::SQLite;
 use Mojo::IOLoop;
@@ -408,21 +409,14 @@ sub health_process_count {
 	# The jawnos processes this tree is running, found the way the master finds
 	# its own: the process's command line names a jawnos script and its working
 	# directory is this tree (so a second tree on the machine is not counted).
-	# Read from /proc, the same source the process monitor uses; entries we cannot
-	# read (another user) are skipped.
+	# Read through JawnOS::Platform::Process, the same source the process monitor
+	# uses; entries we cannot read (another user) are skipped.
 	require Cwd;
 	my $root = Cwd::getcwd();
 	my $count = 0;
-	for my $d ( glob('/proc/[0-9]*') ) {
-		my $cwd = readlink("$d/cwd");
-		next unless defined $cwd && $cwd eq $root;
-		open(my $cf, '<', "$d/cmdline") or next;
-		local $/;
-		my $cmd = <$cf>;
-		close $cf;
-		next unless defined $cmd;
-		$cmd =~ s/\0/ /g;
-		$count++ if $cmd =~ /President\.pl|Manager\.pl|Websocket\.pl|teletype\.pl|watch\.pl|jawn-bt|Music\.pl|Alarm\.pl|pen\.pl/;
+	foreach my $row ( @{ JawnOS::Platform::Process::table(cwd => 1) } ) {
+		next unless $row->{'cwd'} eq $root;
+		$count++ if ($row->{'cmdline'} || '') =~ /President\.pl|Manager\.pl|Websocket\.pl|teletype\.pl|watch\.pl|jawn-bt|Music\.pl|Alarm\.pl|pen\.pl/;
 	}
 	return $count;
 }
@@ -454,13 +448,9 @@ sub health_report {
 		};
 	}
 
-	# uptime, for "how long has this been up". Android denies /proc/uptime.
-	my $uptime;
-	if (open(my $uf, '<', '/proc/uptime')) {
-		my $ul = <$uf>;
-		close $uf;
-		$uptime = $1 + 0 if $ul && $ul =~ /^([\d.]+)/;
-	}
+	# uptime, for "how long has this been up". Android denies the file.
+	my $uptime = JawnOS::Platform::Process::uptime();
+	$uptime += 0 if defined $uptime;
 
 	return {
 		ok             => 1,
