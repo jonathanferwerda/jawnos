@@ -938,8 +938,67 @@ sub action_44009 {
 		return;
 	}
 	my $script = Cwd::abs_path('scripts/jawnos_game_launch.pl');
-	my $started = eval { &game_helper_start($script, $game->{'id'}) };
+	# The runner id travels with the launch so the helper runs the same emulator
+	# the route checked, not merely the system's default one.
+	my $started = eval { &game_helper_start($script, $game->{'id'}, $runner->{'id'}) };
 	$c->render(json => $started ? { ok => 1, title => $game->{'title'} } : { ok => 0, error => 'The emulator could not start.' });
+}
+
+# POST /manager/games/emulator
+# The Systems picker saves one emulator per system. The choice is a house
+# setting on this device, and the domain refuses any runner this machine cannot
+# actually run, so a crafted request cannot store a broken pick.
+sub action_44015 {
+	my $c = shift;
+	my $body = eval { $c->req->json } || {};
+	$body = {} unless ref $body eq 'HASH';
+	my $system = defined $body->{'system'} ? $body->{'system'} : $c->param('system');
+	my $runner = defined $body->{'runner'} ? $body->{'runner'} : $c->param('runner');
+	my $answer = eval { &subs::game_runner_choose($system // '', $runner // '') };
+	$answer = { ok => 0, error => 'The emulator could not be saved.' } unless ref $answer eq 'HASH';
+	$c->render(json => $answer);
+}
+
+# POST /manager/games/covers
+# One detached helper looks up covers for the whole shelf. A helper already
+# running is not started twice: the page is told to keep polling its row.
+sub action_44016 {
+	my $c = shift;
+	my $library = eval { &subs::game_library() } || {};
+	my $games = (ref $library eq 'HASH' && ref $library->{'games'} eq 'ARRAY') ? $library->{'games'} : [];
+	unless (@{ $games }) {
+		$c->render(json => { ok => 0, error => 'There are no games to look up.' });
+		return;
+	}
+	my $path = '/run/jawnos-games/covers.json';
+	if (-f $path) {
+		my $raw = '';
+		if (open(my $fh, '<', $path)) { local $/; $raw = <$fh> // ''; close $fh; }
+		my $status = eval { Mojo::JSON->new->decode($raw) };
+		if (ref $status eq 'HASH' && ($status->{'state'} // '') eq 'running') {
+			$c->render(json => { ok => 1, state => 'running' });
+			return;
+		}
+	}
+	my $script = Cwd::abs_path('scripts/rom_covers.pl');
+	my $started = eval { &game_helper_start($script) };
+	$c->render(json => $started ? { ok => 1 } : { ok => 0, error => 'The cover lookup could not start.' });
+}
+
+# GET /manager/games/covers/status
+# The helper writes one JSON row in /run; a missing or unreadable row is
+# 'idle', exactly as the install row behaves.
+sub action_44017 {
+	my $c = shift;
+	my $status = { state => 'idle' };
+	my $path = '/run/jawnos-games/covers.json';
+	if (-f $path) {
+		my $raw = '';
+		if (open(my $fh, '<', $path)) { local $/; $raw = <$fh> // ''; close $fh; }
+		my $parsed = eval { Mojo::JSON->new->decode($raw) };
+		$status = $parsed if ref $parsed eq 'HASH';
+	}
+	$c->render(json => $status);
 }
 
 # GET /manager/controller/config

@@ -96,7 +96,7 @@ like(read_file("$root/lib/JawnOS/Games.pm"), qr|/opt/retroarch-gl/cores|, 'the c
 like($launch, qr/\@command = \(\$retroarch, '-f', '-L'/, 'and the core runs inside that frontend, full screen');
 like(read_file("$root/lib/JawnOS/Games.pm"), qr|/opt/retroarch-gl/bin/retroarch|, 'Games.pm knows where the GL build goes');
 
-like($launch, qr/JawnOS::Games::runner_for/, 'the runner is the same one the route checked');
+like($launch, qr/JawnOS::Games::runner_by_id/, 'the runner is the same one the route checked');
 like($launch, qr/--appendconfig/, 'the game gets the config that names the card');
 like($launch, qr/sub kiosk_active/, 'the restore waits for the kiosk, not just starts it');
 like($install, qr/input_player1_joypad_index/, 'the gamepad is player one, not the keys device');
@@ -115,6 +115,9 @@ for my $row (
 	[44007, 'post', '/manager/games/install', 'action_44007'],
 	[44008, 'get', '/manager/games/install_status', 'action_44008'],
 	[44009, 'post', '/manager/games/launch', 'action_44009'],
+	[44015, 'post', '/manager/games/emulator', 'action_44015'],
+	[44016, 'post', '/manager/games/covers', 'action_44016'],
+	[44017, 'get', '/manager/games/covers/status', 'action_44017'],
 ) {
 	my ($id, $verb, $path, $action) = @{$row};
 	like($routes, qr/\[\s*$id\s*,\s*'$verb'\s*,\s*'\Q$path\E'\s*,\s*'$action'\s*\]/,
@@ -139,5 +142,70 @@ like($page, qr/No games yet/, 'an empty shelf says so');
 my $help = read_file("$root/perl/help/topics_people.pl");
 like($help, qr/Install emulators fetches RetroArch/, 'the Guide describes the shelf');
 like($help, qr/Home button above the arrow keys ends it/, 'and says how a game ends');
+
+# --- the runner table ---------------------------------------------------------
+# Availability is a filesystem fact, so the checks point @CORE_DIR at a folder
+# they own: the answer must not depend on what this machine happens to have.
+{
+	my $cores = tempdir(CLEANUP => 1);
+	write_file("$cores/mupen64plus_next_libretro.so.opt", 'core');
+	write_file("$cores/mupen64plus_next_libretro.so", 'core');
+	local @JawnOS::Games::CORE_DIR = ($cores);
+
+	my $runners = JawnOS::Games::runners_for('n64');
+	is(scalar @{ $runners }, 3, 'the N64 offers three runners');
+	is($runners->[0]->{'id'}, 'retroarch-opt', 'the optimized build is offered first');
+	ok($runners->[0]->{'available'}, 'and is available when its core is installed');
+	is($runners->[1]->{'id'}, 'retroarch', 'the packaged core is the second');
+	ok($runners->[1]->{'available'}, 'it is available too');
+	is($runners->[2]->{'id'}, 'stock', 'the eMMC emulator is the third');
+	ok(!$runners->[2]->{'available'}, 'and can never be chosen on this kernel');
+	like($runners->[2]->{'reason'}, qr/Mali/, 'because it needs a driver this kernel does not load');
+	is(JawnOS::Games::default_runner('n64')->{'id'}, 'retroarch-opt', 'the optimized build is the default');
+	is(JawnOS::Games::runner_by_id('n64', 'stock')->{'available'}, 0, 'a blocked runner resolves as unavailable');
+	is(JawnOS::Games::runner_by_id('n64', 'nonsense')->{'id'}, 'retroarch-opt', 'an unknown id falls back to the default');
+	my $chosen = JawnOS::Games::runner_for('n64', 'retroarch');
+	is($chosen->{'id'}, 'retroarch', 'runner_for honors the chosen id');
+	is($chosen->{'core_name'}, 'mupen64plus_next_libretro.so', 'and resolves that runner\'s core');
+	is(scalar @{ JawnOS::Games::runners_for('weird_system') }, 0, 'an unknown system has no runners');
+
+	my $scan = JawnOS::Games::scan($tmp, { chosen => { n64 => 'retroarch' } });
+	my ($n64row) = grep { $_->{'id'} eq 'n64' } @{ $scan->{'systems'} };
+	is($n64row->{'chosen'}, 'retroarch', 'a saved pick is the chosen runner');
+	is(scalar @{ $n64row->{'runners'} }, 3, 'a system with a choice reports every runner');
+	ok(!exists $n64row->{'runners'}[0]->{'core'}, 'the page-facing copy carries no core path');
+	my ($stockrow) = grep { $_->{'id'} eq 'stock' } @{ $n64row->{'runners'} };
+	ok(!$stockrow->{'available'}, 'the blocked runner is drawn disabled');
+	like($stockrow->{'reason'}, qr/Mali/, 'with its reason');
+
+	my $blocked = JawnOS::Games::scan($tmp, { chosen => { n64 => 'stock' } });
+	($n64row) = grep { $_->{'id'} eq 'n64' } @{ $blocked->{'systems'} };
+	is($n64row->{'chosen'}, 'retroarch-opt', 'an unavailable pick is never chosen');
+	my $unknown = JawnOS::Games::scan($tmp, { chosen => { n64 => 'nonsense' } });
+	($n64row) = grep { $_->{'id'} eq 'n64' } @{ $unknown->{'systems'} };
+	is($n64row->{'chosen'}, 'retroarch-opt', 'an unknown pick falls back to the default');
+	my ($snesrow) = grep { $_->{'id'} eq 'snes' } @{ $scan->{'systems'} };
+	ok(!exists $snesrow->{'runners'}, 'a single-runner system draws no picker');
+
+	unlink "$cores/mupen64plus_next_libretro.so.opt";
+	is(JawnOS::Games::default_runner('n64')->{'id'}, 'retroarch', 'a missing optimized core falls back to the packaged one');
+}
+
+# --- the new seams ------------------------------------------------------------
+like(read_file("$root/lib/JawnOS/Domain/Loader.pm"),
+	qr/'JawnOS::Domain::Games' for qw\([^)]*game_runners[^)]*game_runner_choice[^)]*game_runner_choose/,
+	'the loader registers the runner subs');
+like($controller, qr/sub action_44015/, 'the emulator choice has an action');
+like($controller, qr/&subs::game_runner_choose/, 'and saves through the domain');
+like($controller, qr/sub action_44016/, 'the cover lookup has an action');
+like($controller, qr/sub action_44017/, 'and a status action');
+like($controller, qr/game_helper_start\(\$script, \$game->\{'id'\}, \$runner->\{'id'\}\)/,
+	'the launch hands the chosen runner to the helper');
+like($launch, qr/\$RUNNER_ID/, 'the helper takes the runner id');
+like($launch, qr/\@\{ \$runner->\{'args'\} \/\/ \['-b', '-e'\] \}/, 'a standalone emulator gets its own or the default arguments');
+
+# --- the cover module ---------------------------------------------------------
+like(read_file("$root/lib/JawnOS/RomCovers.pm"), qr/sub best_match/, 'the cover matcher is a pure module');
+like(read_file("$root/scripts/rom_covers.pl"), qr/JawnOS::RomCovers/, 'the helper uses it');
 
 done_testing();

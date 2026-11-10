@@ -37,6 +37,9 @@ sub routes {
 	[44012, 'post', '/manager/controller/time', 'action_44012'],
 	[44013, 'get', '/manager/controller/retroarch', 'action_44013'],
 	[44014, 'post', '/manager/controller/retroarch', 'action_44014'],
+	[44015, 'post', '/manager/games/emulator', 'action_44015'],
+	[44016, 'post', '/manager/games/covers', 'action_44016'],
+	[44017, 'get', '/manager/games/covers/status', 'action_44017'],
 	);
 }
 

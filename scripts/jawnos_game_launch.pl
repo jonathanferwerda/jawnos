@@ -26,6 +26,7 @@ use POSIX ();
 use JawnOS::Games ();
 
 my $ID = shift @ARGV // '';
+my $RUNNER_ID = shift @ARGV // '';
 my $ROMS = '/home/jawn/roms';
 my $PERSON = 'jawn';
 my $MARKER = '/home/jawn/.presence/gou-games';
@@ -216,9 +217,9 @@ fail('That game is not in the library.') unless ref $game eq 'HASH';
 $STATUS{'title'} = $game->{'title'};
 write_status();
 
-my $runner = JawnOS::Games::runner_for($game->{'system'});
+my $runner = JawnOS::Games::runner_by_id($game->{'system'}, length $RUNNER_ID ? $RUNNER_ID : undef);
 fail('There is no emulator for ' . $game->{'system_label'} . '.') unless ref $runner eq 'HASH';
-fail('The emulator is not installed.') if $runner->{'missing'};
+fail($runner->{'reason'} || 'That emulator is not available on this machine.') unless $runner->{'available'};
 my $retroarch = JawnOS::Games::retroarch_binary();
 fail('The RetroArch binary is missing.') unless $runner->{'kind'} ne 'retroarch' || defined $retroarch;
 
@@ -241,7 +242,7 @@ select(undef, undef, undef, 0.6);
 
 my @command;
 if ($runner->{'kind'} eq 'standalone') {
-	@command = ($runner->{'command'}, '-b', '-e', $game->{'file'});
+	@command = ($runner->{'command'}, @{ $runner->{'args'} // ['-b', '-e'] }, $game->{'file'});
 }
 else {
 	@command = ($retroarch, '-f', '-L', $runner->{'core'});

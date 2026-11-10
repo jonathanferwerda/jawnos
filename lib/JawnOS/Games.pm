@@ -61,6 +61,25 @@ our @EXTENSION = qw(
 # machine with no Vulkan device.
 our @CORE_DIR = ('/opt/retroarch-gl/cores', '/usr/lib/libretro', '/usr/lib/retroarch/cores', '/usr/share/libretro/cores');
 
+# The emulators a system may run on, in the order the page offers them. A
+# system with no entry here has the one RetroArch runner its core names, so the
+# table only grows where a machine has a real second choice. The N64 is the case
+# that exists: the core built beside the desktop-GL frontend (`.so.opt`) is
+# first because the packaged ParaLLEl/Vulkan build renders nothing without a
+# Vulkan device, and the eMMC image carries a standalone mupen64plus that the
+# kernel's missing Mali driver keeps from drawing.
+our %RUNNERS = (
+	n64 => [
+		{ id => 'retroarch-opt', label => 'RetroArch (optimized build)', kind => 'retroarch', core => 'mupen64plus_next_libretro.so.opt' },
+		{ id => 'retroarch', label => 'RetroArch (packaged core)', kind => 'retroarch', core => 'mupen64plus_next_libretro.so' },
+		{
+			id => 'stock', label => 'eMMC mupen64plus (needs Mali driver)', kind => 'standalone',
+			command => '/opt/mupen64plus-stock/run.sh', args => [], blocked => 1,
+			reason => 'The eMMC emulator renders through the Mali driver this kernel does not load.',
+		},
+	],
+);
+
 
 sub systems { return \%SYSTEM; }
 
@@ -79,33 +98,147 @@ sub core_for {
 	return $SYSTEM{$system};
 }
 
-sub core_path {
-	my ($system) = @_;
-	my $entry = core_for($system);
-	return undef unless $entry;
+sub core_path_for {
+	my ($file) = @_;
+	return undef unless defined $file && length $file;
 	foreach my $dir (@CORE_DIR) {
-		my $path = "$dir/$entry->{'core'}";
+		my $path = "$dir/$file";
 		return $path if -f $path;
 	}
 	return undef;
 }
 
-sub runner_for {
+sub core_path {
 	my ($system) = @_;
-	my $entry = $SYSTEM{defined $system ? $system : ''};
+	my $entry = core_for($system);
 	return undef unless $entry;
-	if ($entry->{'standalone'}) {
-		my $bin = $entry->{'standalone'};
-		foreach my $dir (split /:/, ($ENV{'PATH'} || '/usr/bin:/bin')) {
-			next unless length $dir;
-			return { kind => 'standalone', command => "$dir/$bin", package => $entry->{'package'} }
-				if -x "$dir/$bin";
-		}
-		return { kind => 'standalone', command => $bin, package => $entry->{'package'}, missing => 1 };
+	return core_path_for($entry->{'core'});
+}
+
+# `standalone` in %SYSTEM may name a bare programme; a runner's `command` may be
+# a path. Either way the answer is the executable itself, or undef.
+sub _command_path {
+	my ($command) = @_;
+	return undef unless defined $command && length $command;
+	return $command if $command =~ m{/} && -x $command;
+	return undef if $command =~ m{/};
+	foreach my $dir (split /:/, ($ENV{'PATH'} || '/usr/bin:/bin')) {
+		next unless length $dir;
+		return "$dir/$command" if -x "$dir/$command";
 	}
-	my $core = core_path($system);
-	return undef unless $core;
-	return { kind => 'retroarch', core => $core, core_name => $entry->{'core'} };
+	return undef;
+}
+
+# The descriptors before the filesystem is asked: every system has at least one,
+# so one table row is enough for the page and the launcher to agree on an id.
+sub _runner_specs {
+	my ($system) = @_;
+	return [] unless defined $system && $SYSTEM{$system};
+	return [ map { { %{$_} } } @{ $RUNNERS{$system} } ] if $RUNNERS{$system};
+	if ($SYSTEM{$system}->{'standalone'}) {
+		return [ {
+			id => 'standalone', label => 'Standalone', kind => 'standalone',
+			command => $SYSTEM{$system}->{'standalone'}, args => ['-b', '-e'],
+		} ];
+	}
+	return [ {
+		id => 'retroarch', label => 'RetroArch', kind => 'retroarch',
+		core => $SYSTEM{$system}->{'core'},
+	} ];
+}
+
+# Availability is a filesystem fact, so it is computed on every call: a core
+# installed while the panel is open becomes usable without a restart.
+sub _resolve_runner {
+	my ($spec, $system) = @_;
+	my %runner = (
+		id => $spec->{'id'},
+		label => $spec->{'label'},
+		kind => $spec->{'kind'},
+		args => [ @{ $spec->{'args'} || [] } ],
+	);
+	if ($runner{'kind'} eq 'retroarch') {
+		$runner{'core_name'} = $spec->{'core'};
+		my $path = core_path_for($spec->{'core'});
+		if (defined $path) {
+			$runner{'core'} = $path;
+			$runner{'available'} = 1;
+		}
+		else {
+			$runner{'available'} = 0;
+			$runner{'reason'} = 'The ' . $spec->{'core'} . ' core is not installed.';
+		}
+	}
+	else {
+		my $path = _command_path($spec->{'command'});
+		$runner{'command'} = defined $path ? $path : $spec->{'command'};
+		if ($spec->{'blocked'}) {
+			$runner{'available'} = 0;
+			$runner{'reason'} = $spec->{'reason'} || 'This emulator cannot run on this machine.';
+		}
+		elsif (defined $path) {
+			$runner{'available'} = 1;
+		}
+		else {
+			$runner{'available'} = 0;
+			$runner{'reason'} = 'The emulator is not installed.';
+		}
+	}
+	return \%runner;
+}
+
+sub runners_for {
+	my ($system) = @_;
+	return [ map { _resolve_runner($_, $system) } @{ _runner_specs($system) } ];
+}
+
+sub default_runner {
+	my ($system) = @_;
+	foreach my $spec (@{ _runner_specs($system) }) {
+		my $runner = _resolve_runner($spec, $system);
+		return $runner if $runner->{'available'};
+	}
+	return undef;
+}
+
+sub runner_by_id {
+	my ($system, $id) = @_;
+	my $specs = _runner_specs($system);
+	return undef unless @{ $specs };
+	if (defined $id && length $id) {
+		my ($picked) = grep { $_->{'id'} eq $id } @{ $specs };
+		return _resolve_runner($picked, $system) if $picked;
+	}
+	my $default = default_runner($system);
+	return $default if $default;
+	return _resolve_runner($specs->[0], $system);
+}
+
+# The launcher's install button exists because this machine has no RetroArch
+# yet. The returned shape is the one the routes and helpers already read; a
+# runner id narrows it to the emulator the person chose.
+sub runner_for {
+	my ($system, $id) = @_;
+	my $resolved = runner_by_id($system, $id);
+	return undef unless ref $resolved eq 'HASH';
+	my $entry = $SYSTEM{defined $system ? $system : ''} || {};
+	my %runner = (
+		kind => $resolved->{'kind'},
+		package => $entry->{'package'} || '',
+		id => $resolved->{'id'},
+		label => $resolved->{'label'},
+		args => $resolved->{'args'},
+	);
+	if ($resolved->{'kind'} eq 'retroarch') {
+		return undef unless defined $resolved->{'core'} && length $resolved->{'core'};
+		$runner{'core'} = $resolved->{'core'};
+		$runner{'core_name'} = $resolved->{'core_name'};
+	}
+	else {
+		$runner{'command'} = $resolved->{'command'};
+		$runner{'missing'} = 1 unless $resolved->{'available'};
+	}
+	return \%runner;
 }
 
 # The frontend is not a system: it is the programme every RetroArch core runs
@@ -205,7 +338,8 @@ sub art_for {
 }
 
 sub scan {
-	my ($root) = @_;
+	my ($root, $opts) = @_;
+	$opts = {} unless ref $opts eq 'HASH';
 	$root = '' unless defined $root;
 	my $answer = { ok => 0, root => $root, systems => [], games => [] };
 	return $answer unless length $root && -d $root;
@@ -244,15 +378,48 @@ sub scan {
 	} @games;
 	$answer->{'ok'} = 1;
 	$answer->{'games'} = \@games;
+	my $requested = ref $opts->{'chosen'} eq 'HASH' ? $opts->{'chosen'} : {};
 	$answer->{'systems'} = [
 		map {
-			{
-				id => $_,
-				label => system_label($_),
-				count => $count{$_},
-				core => ($SYSTEM{$_}->{'core'} || ''),
-				label_for => system_label($_),
+			my $system = $_;
+			my $runners = runners_for($system);
+			my $chosen;
+			if (@{ $runners }) {
+				if (defined $requested->{$system} && length $requested->{$system}) {
+					my ($picked) = grep { $_->{'id'} eq $requested->{$system} && $_->{'available'} } @{ $runners };
+					$chosen = $picked->{'id'} if $picked;
+				}
+				unless (defined $chosen) {
+					my $default = default_runner($system);
+					$chosen = $default->{'id'} if $default;
+				}
 			}
+			my $row = {
+				id => $system,
+				label => system_label($system),
+				count => $count{$system},
+				core => ($SYSTEM{$system}->{'core'} || ''),
+				label_for => system_label($system),
+				chosen => $chosen,
+			};
+			# One runner draws no picker: the page shows the list only when
+			# there is a choice to make. The page-facing copy carries no
+			# command, core or path. A single-runner system still reports
+			# `chosen` so the launch route and the page agree on the id.
+			if (scalar @{ $runners } > 1) {
+				$row->{'runners'} = [
+					map {
+						my %page = (
+							id => $_->{'id'},
+							label => $_->{'label'},
+							available => $_->{'available'} ? 1 : 0,
+						);
+						$page{'reason'} = $_->{'reason'} if defined $_->{'reason'} && length $_->{'reason'};
+						\%page;
+					} @{ $runners }
+				];
+			}
+			$row;
 		} sort keys %count
 	];
 	return $answer;
