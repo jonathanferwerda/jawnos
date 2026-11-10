@@ -20,8 +20,7 @@ use strict;
 use warnings;
 
 use Config ();
-use Cwd ();
-use File::Spec ();
+use JawnOS::Platform::Paths ();
 use JawnOS::Platform::Serial ();
 
 our $VERSION = '0.01';
@@ -46,23 +45,10 @@ sub os { return $^O }
 
 sub arch { return $Config::Config{'archname'} || '' }
 
-# Windows has no getpwuid at all - the call dies rather than returning nothing -
-# and its home is USERPROFILE, with HOMEDRIVE+HOMEPATH as the older pair. One
-# answer here serves the probe, the master and every worker, so the lookup is
-# guarded in one place instead of at each caller.
-sub home {
-	my $home = $ENV{'HOME'};
-	$home = $ENV{'USERPROFILE'} if !defined $home || !length $home;
-	if (!defined $home || !length $home) {
-		my $drive = $ENV{'HOMEDRIVE'} || '';
-		my $path = $ENV{'HOMEPATH'} || '';
-		$home = $drive . $path if length $drive || length $path;
-	}
-	if (!defined $home || !length $home) {
-		$home = eval { (getpwuid($<))[7] } || '';
-	}
-	return defined $home ? $home : '';
-}
+# The roots live in JawnOS::Platform::Paths. The names stay here, delegating,
+# so the probe, Transport, the master and every worker keep calling
+# JawnOS::Platform::* unchanged.
+sub home { return JawnOS::Platform::Paths::home(@_) }
 
 # The process that started us. Windows has no getppid, and the runner knows the
 # answer anyway: it exports JAWNOS_PARENT_PID for the child it spawns. On POSIX
@@ -127,21 +113,8 @@ sub use_unix_socket {
 
 sub preferred_transport { return portable() ? 'tcp' : 'unix' }
 
-# The tree is cwd-relative; the runtime state lives under ~/.president. Both
-# get an explicit override so an app bundle never has to guess.
-sub tree_dir {
-	my $dir = $ENV{'JAWNOS_DIR'};
-	return $dir if defined $dir && length $dir;
-	my $cwd = eval { Cwd::getcwd() };
-	return (defined $cwd && length $cwd) ? $cwd : '.';
-}
-
-sub data_dir {
-	my $dir = $ENV{'JAWNOS_DATA_DIR'};
-	return $dir if defined $dir && length $dir;
-	my $home = home();
-	return length($home) ? "$home/.president" : './.president';
-}
+sub tree_dir { return JawnOS::Platform::Paths::tree_dir(@_) }
+sub data_dir { return JawnOS::Platform::Paths::data_dir(@_) }
 
 sub module_version {
 	my ($module) = @_;
@@ -157,20 +130,7 @@ sub missing_required {
 	return [ grep { !defined module_version($_) } @REQUIRED_MODULES ];
 }
 
-sub tool_path {
-	my ($name) = @_;
-	return undef unless defined $name && length $name;
-	my @names = ($name);
-	push @names, "$name.exe", "$name.bat", "$name.cmd" if $^O eq 'MSWin32';
-	foreach my $dir (File::Spec->path) {
-		next unless defined $dir && length $dir;
-		foreach my $candidate (@names) {
-			my $path = File::Spec->catfile($dir, $candidate);
-			return $path if -f $path && -x $path;
-		}
-	}
-	return undef;
-}
+sub tool_path { return JawnOS::Platform::Paths::tool_path(@_) }
 
 sub serial_devices {
 	# The device set lives in the serial seam; this keeps the capability map

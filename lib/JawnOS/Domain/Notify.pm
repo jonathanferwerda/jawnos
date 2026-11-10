@@ -15,6 +15,7 @@ use Mojo::IOLoop;
 use Mojo::UserAgent;
 use Fcntl qw(:flock O_CREAT O_RDWR);
 use JawnOS::Platform::Audio ();
+use JawnOS::Platform::Paths ();
 
 # File-scope state owned by subroutines.pl, in this same package.
 our $config;
@@ -185,7 +186,7 @@ sub device_command_lock {
 	# made the fifth press of a burst arrive as a stale one.
 	my ($chip_id) = @_;
 	return undef unless defined $chip_id && length $chip_id;
-	my $dir = ($gb::tmp_dir || '/tmp') . '/device_cmd';
+	my $dir = ($gb::tmp_dir || JawnOS::Platform::Paths::tmp_dir()) . '/device_cmd';
 	eval { mkdir $dir unless -d $dir; 1 };
 	my $file = $dir . '/' . &subs::path_name($chip_id) . '.lock';
 	sysopen(my $fh, $file, O_CREAT | O_RDWR, 0600) or return undef;

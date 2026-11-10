@@ -14,6 +14,7 @@ BEGIN {
 use JawnOS::Transport;
 use JawnOS::Platform::Ports ();
 use JawnOS::Platform::Process ();
+use JawnOS::Platform::Paths ();
 
 # Everything this tree writes is house data: the database and its WAL, backups,
 # plaintext export temporaries and the logs. Create files private by default so
@@ -242,12 +243,9 @@ if (JawnOS::Transport::tcp()) {
 # still holds a dying tree's last words when the next tree reconnects. The ring
 # itself is created after ./lib/JawnOS/LogBus.pm is loaded below, and log_socket
 # serves it.
-my $tmp_dir = '/tmp';
-# Android's root /tmp exists on an emulator but belongs to the shell user, so
-# a writable check matters as much as the directory check.
-unless ( -d $tmp_dir && -w $tmp_dir ) {
-	$tmp_dir = &home('~/.president/');
-}
+# The /tmp writable check and the Android fallback to ~/.president live in
+# one place now (JawnOS::Platform::Paths::tmp_dir).
+my $tmp_dir = JawnOS::Platform::Paths::tmp_dir();
 `mkdir $tmp_dir/ws` unless -e $tmp_dir . '/ws';
 
 if (-l $0) {
@@ -321,9 +319,10 @@ our $log_ring = JawnOS::LogBus::ring_new(4 * 1024 * 1024);
 # did and usually the whole crash. In a bare terminal there is no file and the
 # screen is the record; the bus still works, it just starts empty.
 sub log_seed {
-	my @paths = ( &home('~/.local/state/jawnos/jawn-stdout.log') );
-	unshift @paths, "$ENV{'XDG_STATE_HOME'}/jawnos/jawn-stdout.log"
-		if defined $ENV{'XDG_STATE_HOME'} && length $ENV{'XDG_STATE_HOME'};
+	# state_dir honours XDG_STATE_HOME; the fixed path is the systemd unit's.
+	# Both are candidates because either writer may be the live one.
+	my @paths = ( JawnOS::Platform::Paths::log_path('jawn-stdout.log') );
+	push @paths, &home('~/.local/state/jawnos/jawn-stdout.log');
 	my %seen;
 	@paths = grep { !$seen{$_}++ } @paths;
 	# The desktop respects XDG_STATE_HOME while the systemd units use the fixed
@@ -1815,8 +1814,9 @@ my $home_dir;
 sub home() {
 	my ($inhabitant) = @_;
 	unless (defined $home_dir) {
-		# Platform::home already knows the Windows order (USERPROFILE, the
-		# HOMEDRIVE+HOMEPATH pair, then a guarded getpwuid).
+		# Platform::home is the facade over JawnOS::Platform::Paths::home,
+		# which knows the Windows order (USERPROFILE, the HOMEDRIVE+HOMEPATH
+		# pair, then a guarded getpwuid). t/221 pins this call by name.
 		$home_dir = JawnOS::Platform::home();
 	}
 	$inhabitant =~ s/~/$home_dir/;

@@ -952,7 +952,7 @@ my $home_dir;
 sub home() {
 	my ($inhabitant) = @_;
 	unless (defined $home_dir) {
-		$home_dir = JawnOS::Platform::home();
+		$home_dir = JawnOS::Platform::Paths::home();
 	}
 	$inhabitant =~ s/~/$home_dir/;
 	return $inhabitant;

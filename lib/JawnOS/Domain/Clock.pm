@@ -20,6 +20,7 @@ use File::Find;
 use File::Path;
 use File::Slurp;
 use JawnOS::Platform::Audio ();
+use JawnOS::Platform::Paths ();
 use IPC::Open2;
 use JSON::PP ();
 use List::Util qw(shuffle);
@@ -162,7 +163,7 @@ sub clock_lock_path {
 	unless (-d $dir) {
 		eval { File::Path::make_path($dir); };
 	}
-	$dir = '/tmp' unless -d $dir;
+	$dir = JawnOS::Platform::Paths::tmp_dir() unless -d $dir;
 	return $dir . '/.clock_lock';
 }
 
@@ -533,7 +534,7 @@ sub clock_alarm_next_at {
 sub clock_skip_file {
 	my $dir = &home('~/.president');
 	eval { File::Path::make_path($dir); } unless -d $dir;
-	$dir = '/tmp' unless -d $dir;
+	$dir = JawnOS::Platform::Paths::tmp_dir() unless -d $dir;
 	return $dir . '/clock_skip.json';
 }
 

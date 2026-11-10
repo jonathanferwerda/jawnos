@@ -30,6 +30,7 @@ use Mojo::Util qw/md5_sum xml_escape html_unescape term_escape quote unquote sec
 use POSIX ();   # mktime: a local-time epoch that still predates 1970
 use JawnOS::Platform::Process ();
 use JawnOS::Platform::Audio ();
+use JawnOS::Platform::Paths ();
 use Text::Unidecode;
 use Time::Duration;
 use Time::HiRes qw(gettimeofday time);
@@ -602,7 +603,7 @@ sub clock_alarm_pidfile {
 	my $uuid = shift || 'x';
 	$uuid =~ s/[^A-Za-z0-9_\-]//g;
 	my $dir = &home('~/.president');
-	$dir = '/tmp' unless -d $dir;
+	$dir = JawnOS::Platform::Paths::tmp_dir() unless -d $dir;
 	return $dir . '/clock_alarm_' . $uuid . '.pid';
 }
 
@@ -778,7 +779,7 @@ sub clock_alarm_volume_file {
 	$uuid =~ s/[^A-Za-z0-9_\-]//g;
 	my $dir = &home('~/.president');
 	eval { File::Path::make_path($dir); } unless -d $dir;
-	$dir = '/tmp' unless -d $dir;
+	$dir = JawnOS::Platform::Paths::tmp_dir() unless -d $dir;
 	return $dir . '/clock_volume_' . $uuid . '.json';
 }
 
@@ -860,7 +861,7 @@ sub clock_alarm_stop_sound {
 sub clock_preview_pidfile {
 	my $dir = &home('~/.president');
 	eval { File::Path::make_path($dir); } unless -d $dir;
-	$dir = '/tmp' unless -d $dir;
+	$dir = JawnOS::Platform::Paths::tmp_dir() unless -d $dir;
 	return $dir . '/clock_preview.pid';
 }
 

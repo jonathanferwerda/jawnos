@@ -16,7 +16,8 @@ our $terminal_forker;
 # (/device/ws) through Websocket::send.
 our $ws_apps = [ 'music', 'server', 'tab', 'device' ];
 if (&subs::device_setter() ne 'mobile') {
-	$tmp_dir = '/tmp';
+	require JawnOS::Platform::Paths;
+	$tmp_dir = JawnOS::Platform::Paths::tmp_dir(root => '/tmp');
 }
 
 our $planet_radius = 6372.8;

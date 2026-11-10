@@ -141,7 +141,7 @@ sub say_render_wav {
 	return '' unless defined $text && length $text;
 	my ($argv, $espeak, $model) = &subs::say_piper_parts($pick_hint);
 	return '' unless $argv && $model;
-	my $tmp_dir = $gb::tmp_dir || '/tmp';
+	my $tmp_dir = $gb::tmp_dir || JawnOS::Platform::Paths::tmp_dir();
 	my $wav = $tmp_dir . '/jawn_say_' . &subs::random_string_creator(10) . '.wav';
 	my $made = 0;
 	# the words go to piper on stdin, so nothing has to be quoted for a shell.
