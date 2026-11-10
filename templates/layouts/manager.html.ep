@@ -37,6 +37,8 @@
 			}
 			var paperboy_url = '<%= $paperboy_url %>';
 			var ws_url = '<%= $ws_url %>';
+			// one socket carries every app when config.json asks for it
+			var ws_multiplex = <%= (&subs::config_reader()->{'ws_multiplex'} ? 'true' : 'false') %>;
 			var mail_ws_url = '<%= $mail_ws_url %>';
 			var my_name = '<%= $my_name %>';
 			var advertise_watching = '<%= $advertise_watching %>';

@@ -1472,7 +1472,7 @@ if ($ENV{PURPOSE} && ($ENV{PURPOSE} eq 'websocket' || ($ENV{PORT_ENV} eq 'develo
 			return;
 		}
 		foreach my $ws ( @{$gb::ws_apps} ) {
-			my $file = $gb::tmp_dir . '/ws/' . &subs::path_name($ws);
+			my $file = &subs::ws_dir() . '/' . &subs::path_name($ws);
 			if ($check && -e $file) {
 				my $probe = JawnOS::Transport::client_unix_socket($file);
 				if ($probe) { close $probe; next; }
@@ -1494,7 +1494,7 @@ if ($ENV{PURPOSE} && ($ENV{PURPOSE} eq 'websocket' || ($ENV{PORT_ENV} eq 'develo
 			$args = JawnOS::Transport::server_args('ws') or return undef;
 		}
 		else {
-			my $folder = $gb::tmp_dir . '/ws';
+			my $folder = &subs::ws_dir();
 			`mkdir -p $folder` unless -e $folder;
 			$file = $folder . '/' . &subs::path_name($app);
 			# a reused descriptor wins over a real bind in Mojo's listen(), and the
@@ -1575,7 +1575,7 @@ if ($ENV{PURPOSE} && ($ENV{PURPOSE} eq 'websocket' || ($ENV{PORT_ENV} eq 'develo
 		return $ws_server->{$app} = &ws_server_socket({ app => $app });
 	}
 
-	my $mailfile = $gb::tmp_dir . '/ws/mailws';
+	my $mailfile = &subs::ws_dir() . '/mailws';
 
 	my $mailws_server;
 	my $mailws_listener = sub {
@@ -1583,7 +1583,7 @@ if ($ENV{PURPOSE} && ($ENV{PURPOSE} eq 'websocket' || ($ENV{PORT_ENV} eq 'develo
 		if (!JawnOS::Transport::tcp()) {
 			# the loader no longer binds the per-app sockets (a fork child must),
 			# so this process makes the folder rather than finding it made
-			my $ws_folder = $gb::tmp_dir . '/ws';
+			my $ws_folder = &subs::ws_dir();
 			`mkdir -p $ws_folder` unless -d $ws_folder;
 			unlink $mailfile if -e $mailfile;
 		}
@@ -1651,7 +1651,7 @@ if ($ENV{PURPOSE} && ($ENV{PURPOSE} eq 'websocket' || ($ENV{PORT_ENV} eq 'develo
 		unless (grep { $app eq $_ } @{$gb::ws_apps}) {
 			if (scalar keys %{$gb::ws->{$app}} == 0) {
 				Mojo::IOLoop->remove($ws_server->{$app});
-				my $folder = $gb::tmp_dir . '/ws';
+				my $folder = &subs::ws_dir();
 				my $file = $folder . '/' . &subs::path_name($app);
 				`rm -R $file` if -e $file;
 				delete $ws_server->{$app};

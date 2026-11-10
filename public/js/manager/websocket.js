@@ -8,6 +8,11 @@
    [[/js-split]] */
 var ws = {};
 var remote_ws = {};
+// One socket carries every app when the page says so (config.json
+// ws_multiplex). The proxies in ws[] keep the per-app API the rest of this
+// file speaks; only the transport is shared.
+var wsMultiplex = (typeof ws_multiplex != 'undefined') ? !!ws_multiplex : false;
+var wsBus = null;
 var heartbeat = {};
 // The liveness beat. Every beat is a network round trip that wakes the radio,
 // and an open tab has two or three sockets beating, so the cadence is
@@ -108,6 +113,9 @@ var lastSocketRebuild = 0;
 function websocketRebuild() {
 	if (Date.now() - lastSocketRebuild < 1000) { return; }
 	lastSocketRebuild = Date.now();
+	// A rebuild means the transport is suspect: drop the bus before the
+	// proxies, so their close() does not send on a socket we are abandoning.
+	if (wsBus) { wsBus['deliberate'] = 1; try { wsBus.close(); } catch (e) {} wsBus = null; }
 	Object.keys(ws).forEach(function(app) {
 		clearInterval(heartbeat[app]);
 		delete heartbeat[app];
@@ -288,6 +296,10 @@ function websocketStart(appt,address) {
 	var uA = navigator.userAgent;
 	var browser_tab_id = bti || sessionStorage.getItem('browser_tab_id') ? sessionStorage.getItem('browser_tab_id') : '';
 	var browser_tab = localStorage.getItem('browser_tab') ? localStorage.getItem('browser_tab') : '';
+	if (wsMultiplex && !address) {
+		websocketMuxStart(wappts, timestamp, browser_tab_id, browser_tab, uA);
+		return;
+	}
 	$.each(wappts, function(i,app) {
 
 		if ((ws[app] && ws[app] != null && ws[app].readyState == 1) || (ws[app] && ws[app]['status'] != 'alive')) {  return true; }
@@ -322,6 +334,97 @@ function websocketStart(appt,address) {
 
 		}
 	});
+}
+
+// One physical socket for the whole tab. The server tags every push with the
+// app it came from; the proxy for that app is touched and the inner frame goes
+// to the same wsMessageHandler the per-app sockets used. A proxy is what the
+// heartbeat, the watchdog and websocketStop already expect: send, close,
+// readyState and the ack stamps.
+function wsMuxProxy(app) {
+	return {
+		__mux: app,
+		readyState: 0,
+		status: 'connect',
+		stayingAlive: Date.now(),
+		send: function (data) {
+			if (wsBus && wsBus.readyState == 1) { wsBus.send(data); return true; }
+			return false;
+		},
+		close: function () {
+			this.readyState = 3;
+			if (wsBus && wsBus.readyState == 1) {
+				wsBus.send(JSON.stringify({
+					app: app,
+					type: 'close_app',
+					browser_tab_id: sessionStorage.getItem('browser_tab_id') || ''
+				}));
+			}
+		}
+	};
+}
+
+function wsMuxOpen(event) {
+	if (!wsBus) { return; }
+	wsBus['status'] = 'alive';
+	wsBus['ackAt'] = Date.now();
+	Object.keys(ws).forEach(function (app) {
+		var socket = ws[app];
+		if (!socket || !socket.__mux || socket.readyState == 1) { return; }
+		socket.readyState = 1;
+		socket['stayingAlive'] = Date.now();
+		wsOpener(event, app, 'self');
+	});
+}
+
+function websocketMuxStart(wappts, timestamp, browser_tab_id, browser_tab, uA) {
+	var need = [];
+	Object.keys(wappts).forEach(function (i) {
+		var app = wappts[i];
+		if (!ws[app]) { ws[app] = wsMuxProxy(app); }
+		if (ws[app] && ws[app].__mux) { need.push(app); }
+	});
+	if (!wsBus || wsBus.readyState > 1) {
+		var tail = 'timestamp=' + timestamp + '&app=server&mux=1&browser_tab_id=' + browser_tab_id + '&browser_tab=' + browser_tab + '&user_agent=' + uA;
+		wsBus = new WebSocket(wsSocketUrl(ws_url, tail));
+		wsBus['stayingAlive'] = Date.now();
+		wsBus['status'] = 'connect';
+		wsBus.onopen = function (event) { wsMuxOpen(event); };
+		wsBus.onmessage = function (event) {
+			wsBus['ackAt'] = Date.now();
+			var data = null;
+			try { data = JSON.parse(event.data); } catch (e) { data = null; }
+			if (data && typeof data === 'object' && data.__mux_app !== undefined && data.__mux !== undefined) {
+				wsTouched(data.__mux_app);
+				wsMessageHandler({ data: JSON.stringify(data.__mux) });
+			}
+			else {
+				// the connect frame and any untagged frame belong to server
+				wsTouched('server');
+				wsMessageHandler(event);
+			}
+		};
+		wsBus.onclose = function (event) {
+			var heard = this['ackAt'] || this['stayingAlive'] || 0;
+			var wasAlive = heard && (Date.now() - heard) < (stayingAliveInterval * 2);
+			var deliberate = this['deliberate'] ? 1 : 0;
+			if (wsBus === this) { wsBus = null; }
+			if (deliberate) { return; }
+			Object.keys(ws).forEach(function (app) {
+				if (ws[app] && ws[app].__mux) { ws[app].readyState = 3; }
+			});
+			websocketRetryLater(wasAlive);
+		};
+	}
+	if (wsBus.readyState == 1) {
+		need.forEach(function (app) {
+			var socket = ws[app];
+			if (!socket || socket.readyState == 1) { return; }
+			socket.readyState = 1;
+			socket['stayingAlive'] = Date.now();
+			wsOpener({}, app, 'self');
+		});
+	}
 }
 
 var windowWsMouseMove = {}

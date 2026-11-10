@@ -124,7 +124,7 @@ sub _setup {
 
 	my $cwd  = getcwd();
 	my $home = $ENV{HOME};
-	$ENV{HOME} = $SANDBOX;   # Websocket.pl touches ~/.president/ws_watcher at boot
+	$ENV{HOME} = $SANDBOX;   # Websocket.pl touches the tree runtime (run/ws_watcher) at boot
 
 	chdir $SANDBOX or die "JawnOSTest: chdir $SANDBOX: $!\n";
 	require './perl/subroutines.pl';

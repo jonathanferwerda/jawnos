@@ -39,8 +39,8 @@ write_file($logfile, '') if not -e $logfile;
 our $log = Mojo::Log->new(path => $logfile);
 
 my $device = &subs::device_setter();
-my $home_file = &subs::home('~/') . '.president/ws_watcher';
-write_file($home_file, '') if !-e $home_file && -d &subs::home('~/.president');
+my $home_file = &subs::ws_watcher_path();
+write_file($home_file, '') if !-e $home_file;
 
 # The padlock gate for live pushes is per recipient, in
 # Manager::websocket_sender (Part37.pm): it asks padlock_locked_now about the
@@ -93,7 +93,7 @@ sub send() {
 		}
 		$wsm->{'token'} = JawnOS::Transport::token() if JawnOS::Transport::tcp();
 
-		my $file = $gb::tmp_dir . '/ws/' . $app;
+		my $file = &subs::ws_dir() . '/' . $app;
 		# Report whether the frame actually went. The worker can be between
 		# restarts, and a device command that treats a dropped frame as delivered
 		# skips its HTTP fallback, so the relay never moves while the Manager says
@@ -106,7 +106,7 @@ sub send() {
 
 sub mail_send() {
 	my ($msg) = @_;
-	my $mailfile = $gb::tmp_dir . '/ws/mailws';
+	my $mailfile = &subs::ws_dir() . '/mailws';
 	$msg->{'token'} = JawnOS::Transport::token()
 		if JawnOS::Transport::tcp() && ref $msg eq 'HASH';
 	&subs::unix_socket_sender($mailfile,$msg);

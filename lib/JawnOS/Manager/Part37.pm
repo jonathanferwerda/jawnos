@@ -363,7 +363,14 @@ sub websocket_sender($wsm) {
 		my $deliver = sub {
 			my ($target, $conn, $key) = @_;
 			return 0 unless $conn;
-			my $ok = eval { $conn->send($wire); 1 };
+			# A mux tab holds one socket for every app, so the frame must name
+			# the app it belongs to. The inner bytes are the same JSON the
+			# per-app socket sent; the client unwraps and dispatches it.
+			my $frame = $wire;
+			if ($conn->{'mux'}) {
+				$frame = '{"__mux_app":' . encode_json($app) . ',"__mux":' . $wire . '}';
+			}
+			my $ok = eval { $conn->send($frame); 1 };
 			unless ($ok) {
 				delete $target->{$app}->{$key} if defined $key;
 			}

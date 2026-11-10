@@ -136,7 +136,7 @@ like($ws_pm, qr/\$data->\{'method'\} = '' unless defined \$data->\{'method'\};/,
 	'a frame that omits method is normalised before the eq chain (no warning flood)');
 like($ws_pm, qr/eval \{ &subs::appointment_theme_push\(\) \} if \$data->\{'theme'\};/,
 	'a reconnect asks the theme to speak once more');
-like($part37, qr/my \$deliver = sub \{.*?my \$ok = eval \{ \$conn->send\(\$wire\); 1 \};.*?delete \$target->\{\$app\}->\{\$key\} if defined \$key;/s,
+like($part37, qr/my \$deliver = sub \{.*?my \$frame = \$wire;.*?my \$ok = eval \{ \$conn->send\(\$frame\); 1 \};.*?delete \$target->\{\$app\}->\{\$key\} if defined \$key;/s,
 	'one dead recipient is dropped, not the broadcast');
 like($part37, qr/next if eval \{ \$recipient_locked->\(\$conn\) \};/,
 	'a failing padlock check cannot take the push down');

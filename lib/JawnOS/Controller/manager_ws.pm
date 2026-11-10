@@ -73,6 +73,13 @@ sub action_47050 {
 	unless ($ws_server->{$app}) {
 		&ws_server_ensure($app);
 	}
+	# One physical socket can carry every app. The client opens it once with
+	# mux=1 and names the app on every frame; the handler registers that tx
+	# under each name, and websocket_sender tags each push with the app it came
+	# from. Off unless config.json opts in, so the per-app sockets stay the
+	# default.
+	my $mux = ($c->param('mux') && &subs::config_reader()->{'ws_multiplex'}) ? 1 : 0;
+	$c->tx->{'mux'} = 1 if $mux;
 	my $remote_address = $c->tx->remote_address;
 #	$c->render(template => 'guest_layouts/denial') unless $app eq 'music' || $app eq 'server' || $app eq 'tab';
 	my $timestamp = $c->param('timestamp');
@@ -246,12 +253,24 @@ sub action_47050 {
 		$data->{'method'} = '' unless defined $data->{'method'};
 		my $app = $data->{'app'};
 		my $apper = $data->{'app'};
+		# A mux tab leaving one window asks the worker to stop feeding that app;
+		# the one socket stays open for the rest.
+		if ($c->tx->{'mux'} && $data->{'type'} eq 'close_app') {
+			delete $gb::ws->{$app}->{$data->{'browser_tab_id'} || $browser_tab_id};
+			return;
+		}
 		if ($app =~ /@/gi) {
 			my @app = split /\@/, $app;
 			$apper = $app[0];
 		}
 		unless ($ws_server->{$app}) {
 			&ws_server_ensure($app);
+		}
+		if ($c->tx->{'mux'} && $app ne '') {
+			my $tab = $data->{'browser_tab_id'} || $browser_tab_id;
+			$gb::ws->{$app}->{$tab} = $c->tx;
+			$gb::ws->{$app}->{$tab}->{'privilege'} = $c->session('privilege');
+			$gb::ws->{$app}->{$tab}->{'device_uuid'} = $c->session('device_uuid') || '';
 		}
 		my $remote_machines;
 		if ($data->{'type'} eq 'stayingAlive') {
@@ -716,7 +735,7 @@ sub action_47050 {
 # the websocket worker (the ws_port), whose keep-alive worker is where
 # %DEVICE_CONN lives. Inputs (buttons, switches, pots) stay on HTTP; this
 # socket carries outputs only.
-sub action_719 {
+sub action_738 {
 	my $c = shift;
 	my $watch_settings = eval { &subs::embedded_authorizer($c) };
 	my $chip_id = $c->param('chip_id') || '';

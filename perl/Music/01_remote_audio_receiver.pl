@@ -23,7 +23,7 @@ our ($music_device);
 # marker are kept; they now describe and stop this stream.
 
 sub music_stream_state_path { return &subs::home('~/.president/music_stream.json'); }
-sub music_stream_watcher_path { return &subs::home('~/.president/ws_watcher'); }
+sub music_stream_watcher_path { return &subs::ws_watcher_path(); }
 sub music_stream_wake_path { return &subs::home('~/.president/music_stream_wake'); }
 sub music_stream_rate { my $r = shift || 48000; return $r =~ /^\d+$/ ? $r : 48000; }
 

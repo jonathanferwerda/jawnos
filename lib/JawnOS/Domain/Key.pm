@@ -255,6 +255,32 @@ sub backups_dir {
 	return $dir;
 }
 
+# The tree's runtime surfaces - the sockets and watch files the workers hand
+# each other - live in run/ beside the database, not under ~/.president (the
+# machine's private config) and not in /tmp (where names collide across
+# installs). The path is worked out per call because a test points install_dir
+# at its sandbox after the harness boots; JAWNOS_RUN_DIR overrides it whole.
+sub runtime_dir {
+	my $dir = $ENV{'JAWNOS_RUN_DIR'};
+	$dir = &subs::install_dir() . '/run' unless defined $dir && length $dir;
+	unless (-d $dir) {
+		require File::Path;
+		eval { File::Path::make_path($dir) };
+	}
+	return $dir;
+}
+
+sub ws_dir {
+	my $dir = &subs::runtime_dir() . '/ws';
+	unless (-d $dir) {
+		require File::Path;
+		eval { File::Path::make_path($dir) };
+	}
+	return $dir;
+}
+
+sub ws_watcher_path { return &subs::runtime_dir() . '/ws_watcher' }
+
 # A house with a way back in starts gated. The paper recovery code is the
 # emergency door, so a house that has one gets the padlock row, General as its
 # context, and Enforce as the mode the first time this runs, then the marker

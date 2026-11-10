@@ -478,7 +478,7 @@ sub socket_retry_note {
 # Drain what a push got written back, then report whether the peer is gone.
 #
 # recv() returns the *sender's address*, not a byte count. On a unix socket that
-# is a packed sockaddr_un ("\x01\0/tmp/ws/server\0"), so comparing it to 0 warns
+# is a packed sockaddr_un ("\x01\0<tree>/run/ws/server\0"), so comparing it to 0 warns
 # on every push - and a flood of those warnings fills the pty and blocks the
 # worker that wrote them (v0.1.1850). The bytes live in the buffer recv filled;
 # the call itself only says whether it succeeded.

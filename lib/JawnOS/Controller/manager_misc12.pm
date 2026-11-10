@@ -506,7 +506,7 @@ sub action_41801 {
 		foreach my $j ( @{$json_vol} ) {
 			$j->{'stream'} = &subs::format_name($j->{'stream'});
 		}
-		my $ws_watcher = &subs::home('~/.president/ws_watcher');
+		my $ws_watcher = &subs::ws_watcher_path();
 		$md = eval { return decode_json read_file($ws_watcher) } || {};
 	}
 

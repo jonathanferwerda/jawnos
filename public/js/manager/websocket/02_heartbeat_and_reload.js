@@ -295,6 +295,7 @@ function websocketStop(app) {
 		});
 	}
 	else if (!app) {
+		if (wsBus) { wsBus['deliberate'] = 1; try { wsBus.close(); } catch (e) {} wsBus = null; }
 		$.each(ws, function(i,v) {
 			if (i != 'tab' || i != 'music' || i != 'server') {
 				closer = $('.close_appointment[app="' + i + '"]');

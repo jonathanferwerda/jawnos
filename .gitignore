@@ -70,3 +70,6 @@ perl/sco/sco_helper
 
 # Agent worktrees: one per task, never tracked (docs/AGENTS-concurrency.md).
 /.worktrees/
+
+# --- Runtime sockets and watch files (workers hand each other live pushes) ---
+/run/
