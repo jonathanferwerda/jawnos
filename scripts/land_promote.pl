@@ -8,10 +8,12 @@
 #
 # The working branch is the coordinator's trunk: agents land their tickets
 # there, tested. main is the stable branch the app runs. This job takes the land
-# lock (so a wave is never half-landed), rebases nothing, runs the full suite on
-# origin/working in a scratch worktree, and only then fast-forwards main to it
-# and restarts the primary checkout. If main is not an ancestor of working, or
-# the suite is red, nothing moves; the event log says why.
+# lock (so a wave is never half-landed), rebases nothing, and only then
+# fast-forwards main to the working tip and restarts the primary checkout. The
+# coordinator records the tip its own suite passed, so a tip that matches that
+# record is promoted without a second suite; anything else (a hand push to
+# working) runs the full suite here first. If main is not an ancestor of working,
+# or the suite is red, nothing moves; the event log says why.
 #
 # It bootstraps origin/working from origin/main when the branch does not exist
 # yet. One promotion at a time; a held land lock is a later look, not a failure.
@@ -123,39 +125,60 @@ if (($ahead // '') eq '0') {
 my $stamp = strftime('%Y%m%d-%H%M%S', localtime);
 my $wt = "$promote_root/$stamp";
 my $log = "$qa_root/promote-$stamp.log";
-if ($opt{'dry_run'}) {
-	print "land_promote: would test $working ($ahead commit(s)) in $wt and fast-forward $main\n";
-	exit 0;
-}
-make_path($promote_root) unless -d $promote_root;
-my ($wrc, $wout) = git_in($primary, 'worktree', 'add', '--detach', $wt, $working);
-if ($wrc != 0) {
-	print STDERR "land_promote: could not create the promotion worktree: $wout\n";
-	event('worktree_failed', working => ref_sha($working), main => ref_sha($main));
-	exit 0;
-}
 
-my ($src, $sout) = LandQueue::run_in($wt,
-	'timeout', $opt{'timeout'}, $^X, "$wt/scripts/run_tests.pl", '--jobs', $opt{'jobs'});
-write_file($log, $sout);
-if ($src != 0) {
-	git_in($primary, 'worktree', 'remove', '--force', $wt);
-	print STDERR "land_promote: the suite is red on $working; nothing moved (exit $src, log $log)\n";
-	event('red', working => ref_sha($working), main => ref_sha($main), suite_exit => $src, log => $log);
-	exit 0;
-}
-
-my (undef, $version) = git_in($wt, 'show', 'HEAD:VERSION');
-$version =~ s/\s+//g;
-my (undef, $subject) = git_in($wt, 'log', '-1', '--format=%s');
-$subject =~ s/^\s*v?\d+\.\d+\.\d+\s*-\s*//;
-$subject =~ s/\s+$//;
+# The coordinator records the tip its own suite passed before it pushes it, so a
+# working tip that matches that record is already a tested whole and does not
+# need a second suite here. Anything else (a hand push to working, a tip landed
+# by an older coordinator) falls through to the full gate below.
 my $working_sha = ref_sha($working);
 my $main_sha = ref_sha($main);
+my $tested = LandQueue::tested_read($dir);
+my $trusted = ($tested && ($tested->{'sha'} // '') eq $working_sha) ? 1 : 0;
+
+if ($opt{'dry_run'}) {
+	print "land_promote: would " . ($trusted ? 'fast-forward' : 'test')
+		. " $working ($ahead commit(s)) and fast-forward $main\n";
+	exit 0;
+}
+
+my $worktree_made = 0;
+if ($trusted) {
+	print "land_promote: $working is the tip the queue tested; the suite is not repeated\n";
+}
+else {
+	make_path($promote_root) unless -d $promote_root;
+	my ($wrc, $wout) = git_in($primary, 'worktree', 'add', '--detach', $wt, $working);
+	if ($wrc != 0) {
+		print STDERR "land_promote: could not create the promotion worktree: $wout\n";
+		event('worktree_failed', working => $working_sha, main => $main_sha);
+		exit 0;
+	}
+	$worktree_made = 1;
+
+	my ($src, $sout) = LandQueue::run_in($wt,
+		'timeout', $opt{'timeout'}, $^X, "$wt/scripts/run_tests.pl", '--jobs', $opt{'jobs'});
+	write_file($log, $sout);
+	if ($src != 0) {
+		git_in($primary, 'worktree', 'remove', '--force', $wt);
+		print STDERR "land_promote: the suite is red on $working; nothing moved (exit $src, log $log)\n";
+		event('red', working => $working_sha, main => $main_sha, suite_exit => $src, log => $log);
+		exit 0;
+	}
+}
+
+my $version_at = $worktree_made ? $wt : $primary;
+my $version_ref = $worktree_made ? 'HEAD' : $working_sha;
+my (undef, $version) = git_in($version_at, 'show', "$version_ref:VERSION");
+$version = '' unless defined $version;
+$version =~ s/\s+//g;
+my (undef, $subject) = git_in($version_at, 'log', '-1', '--format=%s', $version_ref);
+$subject = '' unless defined $subject;
+$subject =~ s/^\s*v?\d+\.\d+\.\d+\s*-\s*//;
+$subject =~ s/\s+$//;
 
 my ($prc, $pout) = push_tested($primary, "$working:refs/heads/$opt{'main'}");
 if ($prc != 0) {
-	git_in($primary, 'worktree', 'remove', '--force', $wt);
+	git_in($primary, 'worktree', 'remove', '--force', $wt) if $worktree_made;
 	print STDERR "land_promote: the main push was refused: $pout\n";
 	event('push_rejected', working => $working_sha, main => $main_sha, version => $version);
 	exit 0;
@@ -173,9 +196,10 @@ else {
 }
 event('promoted',
 	working => $working_sha, main => $main_sha, version => $version,
+	suite => $trusted ? 'recorded' : 'ran',
 	apply => $applied ? 'ok' : 'blocked', restart => $restart,
 );
-git_in($primary, 'worktree', 'remove', '--force', $wt);
+git_in($primary, 'worktree', 'remove', '--force', $wt) if $worktree_made;
 exit 0;
 
 # The pre-push hook is the gate for a hand push. This job already ran the suite
@@ -236,8 +260,9 @@ land_promote.pl - test working and fast-forward main to it
                                [--jobs 2] [--timeout 1800] [--no-restart]
                                [--dry-run]
   The working branch is the coordinator's trunk. This job holds the land lock,
-  runs the full suite on origin/working, and only then fast-forwards main and
-  restarts the primary checkout. It never rebases or integrates a ticket.
+  promotes a tip the queue recorded as tested without repeating the suite, and
+  otherwise runs the full suite first. Only then does it fast-forward main and
+  restart the primary checkout. It never rebases or integrates a ticket.
 USAGE
 	exit $code;
 }

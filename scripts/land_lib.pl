@@ -120,6 +120,36 @@ sub metrics_path {
 	return "$dir/land.jsonl";
 }
 
+# The coordinator pushes the exact tree its suite just passed, so the pushed tip
+# is a tested whole. The promoter reads this record and fast-forwards main to it
+# without running the suite again; a tip that does not match (a hand push, a
+# ticket landed by an older coordinator) still gets the full gate.
+sub tested_path {
+	my ($dir) = @_;
+	return "$dir/tested.json";
+}
+
+sub tested_read {
+	my ($dir) = @_;
+	open(my $fh, '<', tested_path($dir)) or return undef;
+	local $/;
+	my $text = <$fh>;
+	close $fh;
+	my $r = eval { json()->decode($text) };
+	return ref $r eq 'HASH' ? $r : undef;
+}
+
+sub tested_write {
+	my ($dir, $sha, %a) = @_;
+	return 0 unless defined $sha && $sha =~ /^[0-9a-f]{7,64}$/;
+	my $path = tested_path($dir);
+	my $tmp = "$path.$$.tmp";
+	open(my $fh, '>', $tmp) or return 0;
+	print $fh json()->encode({ sha => $sha, at => time, %a });
+	close $fh;
+	return rename($tmp, $path) ? 1 : 0;
+}
+
 sub ticket_path {
 	my ($dir, $id) = @_;
 	return "$dir/$id.json";

@@ -45,6 +45,7 @@ my %opt = (
 	'suite_retries' => 1,
 	'restart'       => 1,
 	'apply'         => 1,
+	'promote_now'   => 0,
 	'wait'          => 0,
 	'once'          => 0,
 );
@@ -55,6 +56,7 @@ GetOptions(
 	'suite-retries=s'=> \$opt{'suite_retries'},
 	'no-restart'     => sub { $opt{'restart'} = 0 },
 	'no-apply'       => sub { $opt{'apply'} = 0 },
+	'promote-now'    => sub { $opt{'promote_now'} = 1 },
 	'wait=s'         => \$opt{'wait'},
 	'once'           => \$opt{'once'},
 	'dry-run'        => \$opt{'dry_run'},
@@ -98,6 +100,7 @@ git_in($root, 'fetch', 'origin', '--quiet');
 
 my $force_single = 0;
 my $waves = 0;
+my $landed = 0;
 while (1) {
 	my $wave = select_wave($root, $dir, $opt{'train_size'}, $force_single);
 	last unless @$wave;
@@ -109,6 +112,7 @@ while (1) {
 
 	my $result = run_wave($root, $common, $primary, $dir, $wave, \%opt);
 	$waves++;
+	$landed = 1 if ($result->{'result'} // '') eq 'landed';
 
 	if (($result->{'result'} // '') eq 'red' && @$wave > 1) {
 		# One bad branch must not hold the rest. Keep the drain single-file for
@@ -118,6 +122,13 @@ while (1) {
 	last if $opt{'once'};
 	last if $result->{'stop'};
 }
+
+# The wave just pushed a tip its suite passed; that is exactly what the promoter
+# would promote. Asking it now makes the app current in seconds instead of at
+# the next fifteen-minute tick. One drain promotes once, at the end, so a batch
+# of waves costs one restart. A promoter that is busy or a record that does not
+# match the tip still leaves the timer as the safety net.
+promote_now($primary, \%opt) if $landed && $opt{'promote_now'};
 
 logit("drained $waves wave(s)") if $waves;
 exit 0;
@@ -305,6 +316,9 @@ sub run_wave {
 	}
 
 	my $finished = time;
+	my (undef, $tested) = git_in($tmp, 'rev-parse', 'HEAD');
+	LandQueue::tested_write($dir, $tested,
+		trunk => $opt->{'trunk'}, size => scalar(@integrated));
 	for my $i (@integrated) {
 		my $t = $i->{'ticket'};
 		my $wait = ($t->{'started_at'} // $finished) - ($t->{'submitted_at'} // $finished);
@@ -340,6 +354,21 @@ sub run_wave {
 	logit("landed $n branch(es) in one wave: "
 		. join(', ', map { $_->{'ticket'}{'branch'} } @integrated));
 	return { result => 'landed' };
+}
+
+sub promote_now {
+	my ($primary, $opt) = @_;
+	my $script = "$primary/scripts/land_promote.pl";
+	if (!-f $script) {
+		logit("promote now: $script is missing; the promoter timer will get it");
+		return;
+	}
+	my ($rc, $out) = LandQueue::run_cmd($^X, $script, '--once', '--jobs', $opt->{'jobs'});
+	for my $line (split /\n/, $out // '') {
+		next unless length $line;
+		logit("promote now: $line");
+	}
+	logit("promote now: the promoter exited $rc") if $rc != 0;
 }
 
 # --- integrating one ticket ------------------------------------------------

@@ -161,11 +161,16 @@ from it, and queue with `scripts/land_enqueue.pl --trunk working --wait`. The co
 tested waves on `working` and runs with `--trunk working --no-apply`, so it never moves the primary
 checkout.
 
-`scripts/land_promote.pl` (timer `jawnos-land-promote.timer`, every fifteen minutes) takes the land
-lock, runs the full suite on `origin/working` in a scratch worktree, and only then fast-forwards
-`main` to it, fast-forwards the primary checkout and restarts the app. A red suite, a main that is not
-an ancestor of working, or a dirty primary changes nothing; the loop event says why. The first run
-creates `origin/working` from `origin/main`.
+A drain that landed tickets ends by calling `scripts/land_promote.pl --once` (`--promote-now`), so the
+app is current in seconds, not at the next timer tick; one drain promotes once, so a batch of waves
+costs one restart. The promoter takes the land lock and fast-forwards `main` to the working tip,
+then fast-forwards the primary checkout and restarts the app. It does **not** run the suite again
+when the tip matches `land-queue/tested.json`: the coordinator records the exact tip its suite passed
+before pushing it, so a recorded tip is already a tested whole. A tip it did not record (a hand push
+to `working`, a branch landed by an older coordinator) gets the full suite first. The timer
+(`jawnos-land-promote.timer`, every fifteen minutes) is the safety net for those cases. A red suite,
+a main that is not an ancestor of working, or a dirty primary changes nothing; the loop event says
+why. The first run creates `origin/working` from `origin/main`.
 
 A direct commit to main (or `agent_land.pl`) breaks the fast-forward promotion: main must stay an
 ancestor of working. The hand-land path is the owner's emergency route, not the normal one.
@@ -182,9 +187,9 @@ checkout and the master — the authority:
 
 - **One suite per wave.** It rebases the wave's branches onto a growing tip in a scratch worktree,
   drops each branch's `VERSION` hunk, bumps once per branch, regenerates the generated indexes at the
-  tip, runs `run_tests.pl` once on the integrated tree, pushes that tree as one fast-forward and
-  restarts once. The worktrees themselves are left to `worktree_gc`; a landed branch is recognized
-  by the subject a rebase preserves.
+  tip, runs `run_tests.pl` once on the integrated tree, and pushes that tree as one fast-forward
+  (on `working`, where one promotion then restarts the app). The worktrees themselves are left to
+  `worktree_gc`; a landed branch is recognized by the subject a rebase preserves.
 - **One hot-file branch per wave.** The name maps (`Manager/Index.pm`, `Declarations.pm`,
   `Domain/Loader.pm`, the route rows) and the help/language tables are the conflict class; a second
   hot ticket waits for the next wave.

@@ -624,7 +624,7 @@ subtest 'a diverged main is refused' => sub {
 	like($out, qr/not an ancestor/, 'it names the divergence');
 };
 
-subtest 'the working coordinator does not move the primary' => sub {
+subtest 'the working coordinator promotes the tested tip at the end of the drain' => sub {
 	my $f = fixture();
 	make_working($f);
 	git($f->{'wt1'}, 'checkout', '-B', 'agent/one', 'origin/working');
@@ -632,20 +632,36 @@ subtest 'the working coordinator does not move the primary' => sub {
 	my ($erc, $eout) = enqueue($f, $f->{'wt1'}, '--trunk', 'working');
 	is($erc, 0, 'the branch enqueues against working') or diag($eout);
 
-	my ($crc, $cout) = coordinator($f, '--trunk', 'working', '--no-apply', '--train-size', '1', '--jobs', '1');
+	my ($crc, $cout) = coordinator($f, '--trunk', 'working', '--no-apply', '--promote-now',
+		'--train-size', '1', '--jobs', '1');
 	is($crc, 0, 'the working coordinator drains') or diag($cout);
 	my (undef, $work) = git($f->{'primary'}, 'show', 'origin/working:one.txt');
 	is($work, 'one', 'the work is on working');
-	my ($on_main) = git($f->{'primary'}, 'cat-file', '-e', 'origin/main:one.txt');
-	isnt($on_main, 0, 'and not on main yet');
+	my (undef, $promoted) = git($f->{'primary'}, 'show', 'origin/main:one.txt');
+	is($promoted, 'one', 'the end of the drain promoted it to main');
 	my (undef, $head) = git($f->{'primary'}, 'rev-parse', 'HEAD');
 	my (undef, $main) = git($f->{'primary'}, 'rev-parse', 'main');
-	is($head, $main, 'the primary stays on main');
+	is($head, $main, 'the primary stays on main and follows it');
+
+	my @suite = lines("$f->{'marker'}/suite");
+	is(scalar @suite, 1, 'the promotion does not repeat the suite the wave ran');
 
 	my ($prc, $pout) = promoter($f);
-	is($prc, 0, 'the promoter runs') or diag($pout);
-	my (undef, $promoted) = git($f->{'primary'}, 'show', 'origin/main:one.txt');
-	is($promoted, 'one', 'the promotion lands it on main');
+	is($prc, 0, 'a second promoter run is quiet') or diag($pout);
+	like($pout, qr/nothing new/, 'main already has the tip');
+};
+
+subtest 'a hand push to working still gets the full suite' => sub {
+	my $f = fixture();
+	make_working($f);
+	commit_file($f->{'wt1'}, 'hand.txt', "hand\n", 'working: a direct push');
+	git($f->{'wt1'}, 'push', 'origin', 'working');
+
+	my ($rc, $out) = promoter($f);
+	is($rc, 0, 'the promoter runs') or diag($out);
+	like($out, qr/promoted main/, 'it promotes') or diag($out);
+	my @suite = lines("$f->{'marker'}/suite");
+	is(scalar @suite, 1, 'the tip the queue did not test is gated here');
 };
 
 # --- enqueue refuses what it cannot land ----------------------------------
@@ -774,6 +790,7 @@ subtest 'the systemd units run the coordinator and point the timer at it' => sub
 	like($pservice, qr/ExecStart=.*land_promote\.pl --once --jobs 2/, 'the promoter runs the suite gate');
 	like($ptimer, qr/OnUnitActiveSec=15min/, 'the promotion timer ticks every fifteen minutes');
 	like($service, qr/--trunk working --no-apply/, 'the coordinator lands to working without touching main');
+	like($service, qr/--promote-now/, 'it asks the promoter at the end of a drain instead of waiting');
 };
 
 done_testing();
