@@ -79,7 +79,7 @@ sub run_backfills {
 # behind (never clobbers local commits or a dirty tree), then asks jawn to
 # restart. When the tree is clean but diverged because origin's history was
 # rewritten (every local commit still exists upstream under a new hash), it
-# resets hard to origin/main so the machine rejoins the update track; a tree
+# resets hard to the update branch so the machine rejoins the update track; a tree
 # with genuinely local commits is left alone. Open browsers reload on their own:
 # the websocket hands out the revision and the client reloads when it changes.
 # ---------------------------------------------------------------------------
@@ -118,12 +118,13 @@ sub git_binary {
 	return 'git';
 }
 
-# Fast-forward a checkout to origin/main. Returns (status, output):
+# Fast-forward a checkout to the update branch (origin/main unless this machine
+# chose another). Returns (status, output):
 #   current   already up to date
-#   updated   fast-forwarded to origin/main
-#   ahead     has commits origin/main does not; left alone
+#   updated   fast-forwarded to the update branch
+#   ahead     has commits the update branch does not; left alone
 #   reset     diverged, but every local commit already exists upstream under a
-#             rewritten hash, so reset hard to origin/main (nothing unique lost)
+#             rewritten hash, so reset hard to it (nothing unique lost)
 #   diverged  has local commits that are not upstream; left alone (use force)
 #   dirty     tracked files are modified; never touched (use force)
 #   error     the fetch failed (no route, bad credentials) or the checkout
@@ -231,23 +232,26 @@ sub git_worktree_tree {
 	return ($tree =~ /^[0-9a-f]{40}$/) ? $tree : undef;
 }
 
-# Whether origin/main's history already carries this exact tree.
+# Whether the update branch's history already carries this exact tree.
 sub git_origin_has_tree {
-	my ($repo, $tree) = @_;
+	my ($repo, $tree, $branch) = @_;
+	$branch = 'main' unless defined $branch && length $branch;
 	my $git = &subs::git_binary();
-	my $trees = `cd "$repo" && "$git" log --format=%T origin/main 2>/dev/null`;
+	my $trees = `cd "$repo" && "$git" log --format=%T origin/$branch 2>/dev/null`;
 	return scalar grep { $_ eq $tree } split /\n/, $trees;
 }
 
 # A code sync writes a peer's tree over a checkout (the pack excludes .git), so
 # every synced file reads as modified against a stale HEAD. Put the checkout back
-# in a state git can move: if the synced tree is a shipped commit, reset to
-# origin/main; otherwise preserve it as a local commit, so the work is not lost
+# in a state git can move: if the synced tree is a shipped commit, reset to the
+# update branch; otherwise preserve it as a local commit, so the work is not lost
 # and the tree is clean for the next pull. No git, nothing to do.
 sub git_checkout_normalize {
 	my ($opts) = @_;
 	my $repo  = $opts->{'repo'} || &subs::home('~/jawnos');
 	my $label = $opts->{'label'} || 'sync';
+	my $branch = $opts->{'branch'} || 'main';
+	my $ref = "origin/$branch";
 	my $git   = &subs::git_binary();
 	return ('no-repo', '') unless -d "$repo/.git";
 	my $dirty = `cd "$repo" && "$git" status --porcelain --untracked-files=no 2>/dev/null`;
@@ -256,13 +260,13 @@ sub git_checkout_normalize {
 	`cd "$repo" && timeout 30 "$git" fetch origin --quiet 2>/dev/null`;
 	my $fetched = ($? == 0);
 	my $tree = &subs::git_worktree_tree($repo);
-	if ($fetched && $tree && &subs::git_origin_has_tree($repo, $tree)) {
+	if ($fetched && $tree && &subs::git_origin_has_tree($repo, $tree, $branch)) {
 		# The synced files may be an older peer's tree laid over a newer checkout.
 		# Follow the authority when it advanced; otherwise reset to HEAD, which
 		# cleans the tree without putting older code back on the machine.
-		my $older = $target_is_older->($repo, 'origin/main');
-		$rollback_refused->($repo, 'origin/main', 'code sync') if $older;
-		my $target = $older ? 'HEAD' : 'origin/main';
+		my $older = $target_is_older->($repo, $ref);
+		$rollback_refused->($repo, $ref, 'code sync') if $older;
+		my $target = $older ? 'HEAD' : $ref;
 		my $out = `cd "$repo" && "$git" reset --hard $target 2>&1`;
 		return ('reset', $out);
 	}
@@ -295,6 +299,8 @@ sub git_repo_update {
 	my ($opts) = @_;
 	my $repo  = $opts->{'repo'} || &subs::home('~/jawnos');
 	my $force = $opts->{'force'} ? 1 : 0;
+	my $branch = $opts->{'branch'} || 'main';
+	my $ref = "origin/$branch";
 	my $git   = &subs::git_binary();
 	return ('no-repo', '') unless -d "$repo/.git";
 	my $run = sub { my $cmd = shift; return `cd "$repo" && $cmd 2>&1`; };
@@ -316,12 +322,12 @@ sub git_repo_update {
 		# work to protect: reset to the authority instead of sitting behind.
 		if ($fetch_ok) {
 			my $tree = &subs::git_worktree_tree($repo);
-			if ($tree && &subs::git_origin_has_tree($repo, $tree)) {
-				# Same rule as the code-sync normalize: restore HEAD when origin is
-				# behind, so a synced tree cannot drag the checkout backwards.
-				my $older = $target_is_older->($repo, 'origin/main');
-				$rollback_refused->($repo, 'origin/main', 'git update') if $older;
-				my $target = $older ? 'HEAD' : 'origin/main';
+			if ($tree && &subs::git_origin_has_tree($repo, $tree, $branch)) {
+				# Same rule as the code-sync normalize: restore HEAD when the update
+				# branch is behind, so a synced tree cannot drag the checkout backwards.
+				my $older = $target_is_older->($repo, $ref);
+				$rollback_refused->($repo, $ref, 'git update') if $older;
+				my $target = $older ? 'HEAD' : $ref;
 				my $reset = $run->("\"$git\" reset --hard $target");
 				return ('reset', $dirty . $reset);
 			}
@@ -329,33 +335,33 @@ sub git_repo_update {
 		return ('dirty', $dirty);
 	}
 	my $head   = `cd "$repo" && "$git" rev-parse HEAD 2>/dev/null`; chomp $head;
-	my $origin = `cd "$repo" && "$git" rev-parse origin/main 2>/dev/null`; chomp $origin;
+	my $origin = `cd "$repo" && "$git" rev-parse $ref 2>/dev/null`; chomp $origin;
 	return ('error', $out) unless $fetch_ok && $head && $origin;
 	return ('current', $out) if $head eq $origin;
-	# force makes the checkout exactly origin/main, whatever the local state
+	# force makes the checkout exactly the update branch, whatever the local state
 	if ($force) {
-		if ($target_is_older->($repo, 'origin/main')) {
-			$rollback_refused->($repo, 'origin/main', 'forced update');
+		if ($target_is_older->($repo, $ref)) {
+			$rollback_refused->($repo, $ref, 'forced update');
 			return ('ahead', $out);
 		}
-		$out .= $run->("\"$git\" reset --hard origin/main");
+		$out .= $run->("\"$git\" reset --hard $ref");
 		return ('reset', $out);
 	}
-	my $behind = (system("cd \"$repo\" && \"$git\" merge-base --is-ancestor HEAD origin/main >/dev/null 2>&1") == 0);
-	return ('ahead', $out) if system("cd \"$repo\" && \"$git\" merge-base --is-ancestor origin/main HEAD >/dev/null 2>&1") == 0;
+	my $behind = (system("cd \"$repo\" && \"$git\" merge-base --is-ancestor HEAD $ref >/dev/null 2>&1") == 0);
+	return ('ahead', $out) if system("cd \"$repo\" && \"$git\" merge-base --is-ancestor $ref HEAD >/dev/null 2>&1") == 0;
 	if ($behind) {
-		$out .= $run->("\"$git\" merge --ff-only origin/main");
+		$out .= $run->("\"$git\" merge --ff-only $ref");
 		return ('updated', $out);
 	}
 	# diverged and not ahead: accept it when every local commit is already
 	# upstream under a rewritten hash (git cherry marks those with '-')
-	my $cherry = $run->("\"$git\" cherry origin/main HEAD");
+	my $cherry = $run->("\"$git\" cherry $ref HEAD");
 	return ('diverged', $out . $cherry) if grep { /^\+/ } split /\n/, $cherry;
-	if ($target_is_older->($repo, 'origin/main')) {
-		$rollback_refused->($repo, 'origin/main', 'git update');
+	if ($target_is_older->($repo, $ref)) {
+		$rollback_refused->($repo, $ref, 'git update');
 		return ('diverged', $out . $cherry);
 	}
-	$out .= $run->("\"$git\" reset --hard origin/main");
+	$out .= $run->("\"$git\" reset --hard $ref");
 	return ('reset', $out);
 }
 

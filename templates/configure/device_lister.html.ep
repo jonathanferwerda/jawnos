@@ -4,6 +4,7 @@
 	|| &subs::setting_grabber({ app => 'sync', setting => 'topology' }) || 'auto'; %>
 <% my $update_method = &subs::sync_update_method_get(); %>
 <% my $update_interval = &subs::sync_update_interval_get($signatorial); %>
+<% my $update_branch = &subs::sync_update_branch_get($signatorial); %>
 <% my $coding_push_repo = &subs::coding_push_repo_get('repo'); %>
 <% my $coding_app_push_repo = &subs::coding_push_repo_get('app'); %>
 <%# the lister as networks: a toolbar, the machines (each named and removable
@@ -11,6 +12,7 @@
     interfaces that reach it, and a neighbour table of the devices found there.
     Styled from the house's own theme tokens so it wears the light or dark set. %>
 <%= include 'configure/device_lister/style' %>
+<%# update_branch is this machine's branch choice, beside its update cadence %>
 <%= include 'configure/device_lister/body', topology => $topology, update_method => $update_method,
-	update_interval => $update_interval, signatorial => $signatorial, default_printer => $default_printer,
+	update_interval => $update_interval, update_branch => $update_branch, signatorial => $signatorial, default_printer => $default_printer,
 	coding_push_repo => $coding_push_repo, coding_app_push_repo => $coding_app_push_repo %>

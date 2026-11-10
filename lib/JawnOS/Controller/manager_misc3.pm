@@ -170,10 +170,11 @@ sub action_10187 {
 	my $rm = ($signatorial && &subs::db_select('remote_machines', undef, { signatorial => $signatorial })->hashes->[0]);
 	unless ($rm && &subs::peer_verify($c, $rm)) { $c->rendered(403); return; }
 	my $repo = &subs::home('~/jawnos');
-	# force reconciles a tree git cannot fast-forward (origin's history was
-	# rewritten, or local commits exist) by resetting hard to origin/main; off by
-	# default so a plain pull never clobbers real work.
-	my ($status, $out) = &subs::git_repo_update({ repo => $repo, force => ($c->param('force') ? 1 : 0) });
+	# force reconciles a tree git cannot fast-forward (the branch's history was
+	# rewritten, or local commits exist) by resetting hard to this machine's
+	# update branch; off by default so a plain pull never clobbers real work.
+	my ($status, $out) = &subs::git_repo_update({ repo => $repo, force => ($c->param('force') ? 1 : 0),
+		branch => &subs::sync_update_branch_get() });
 	if (-d &subs::home('~/.local/share/jawnos/desktop') && -x "$repo/desktop/install.sh") {
 		`cd "$repo" && ./desktop/install.sh >/dev/null 2>&1`;
 	}

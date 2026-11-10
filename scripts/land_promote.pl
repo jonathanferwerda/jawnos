@@ -10,10 +10,11 @@
 # there, tested. main is the stable branch the app runs. This job takes the land
 # lock (so a wave is never half-landed), rebases nothing, and only then
 # fast-forwards main to the working tip and restarts the primary checkout. The
-# coordinator records the tip its own suite passed, so a tip that matches that
-# record is promoted without a second suite; anything else (a hand push to
-# working) runs the full suite here first. If main is not an ancestor of working,
-# or the suite is red, nothing moves; the event log says why.
+# coordinator records the tip and the scope of the suite it passed; only a tip it
+# tested with the FULL suite is promoted without another run (a normally scoped
+# working wave, or a hand push, gets the full suite here first), so main is
+# always gated by the whole suite. If main is not an ancestor of working, or the
+# suite is red, nothing moves; the event log says why.
 #
 # It bootstraps origin/working from origin/main when the branch does not exist
 # yet. One promotion at a time; a held land lock is a later look, not a failure.
@@ -126,14 +127,15 @@ my $stamp = strftime('%Y%m%d-%H%M%S', localtime);
 my $wt = "$promote_root/$stamp";
 my $log = "$qa_root/promote-$stamp.log";
 
-# The coordinator records the tip its own suite passed before it pushes it, so a
-# working tip that matches that record is already a tested whole and does not
-# need a second suite here. Anything else (a hand push to working, a tip landed
-# by an older coordinator) falls through to the full gate below.
+# The coordinator records the tip and the scope of the suite it passed before it
+# pushes. Only a tip it tested with the FULL suite is promoted without another
+# run: a scoped working gate is the fast gate, and main is the release branch,
+# so a release always runs everything. A hand push (no record) is the same.
 my $working_sha = ref_sha($working);
 my $main_sha = ref_sha($main);
 my $tested = LandQueue::tested_read($dir);
-my $trusted = ($tested && ($tested->{'sha'} // '') eq $working_sha) ? 1 : 0;
+my $recorded = ($tested && ($tested->{'sha'} // '') eq $working_sha) ? 1 : 0;
+my $trusted = ($recorded && ($tested->{'scope'} // '') eq 'full') ? 1 : 0;
 
 if ($opt{'dry_run'}) {
 	print "land_promote: would " . ($trusted ? 'fast-forward' : 'test')
@@ -143,9 +145,11 @@ if ($opt{'dry_run'}) {
 
 my $worktree_made = 0;
 if ($trusted) {
-	print "land_promote: $working is the tip the queue tested; the suite is not repeated\n";
+	print "land_promote: $working is the tip the queue tested with the full suite; the suite is not repeated\n";
 }
 else {
+	print "land_promote: $working was not fully tested, so the release branch gets the full suite\n"
+		if $recorded;
 	make_path($promote_root) unless -d $promote_root;
 	my ($wrc, $wout) = git_in($primary, 'worktree', 'add', '--detach', $wt, $working);
 	if ($wrc != 0) {

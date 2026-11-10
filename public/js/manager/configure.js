@@ -600,6 +600,24 @@ $(document).on('change', '.update_interval_select', function() {
 	});
 });
 
+// Which branch this machine's watcher follows, beside its cadence. Per machine:
+// the house can ride `working` (the newest landed, tested code) while a release
+// candidate stays on `main`, the released code. The watcher reads it on its
+// next pass, so a save takes effect on that tick.
+$(document).on('change', '.update_branch_select', function() {
+	var status = $('#update_branch_status');
+	var device = $(this).attr('data-device') || '';
+	var t = function(s) { return (typeof jawnosT === 'function') ? jawnosT(s) : s; };
+	status.text(t('saving…'));
+	$.ajax({
+		url: '/manager/setting_setter',
+		type: 'POST',
+		data: { app: 'sync', setting: 'update_branch', value: $(this).val(), device: device, timestamp: Date.now() },
+		success: function() { status.text(t('saved for this machine')); },
+		error: function() { status.text(t('could not save')); }
+	});
+});
+
 // The coding nightly pushes to the repo named here, not blindly to origin. The
 // server validates owner/name or an https URL (no spaces, no credentials) and
 // answers with the effective target, which is what the line under the fields

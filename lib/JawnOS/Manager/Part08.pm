@@ -617,7 +617,8 @@ sub code_sync_unpack {
 	# The pack excludes .git, so a synced checkout is dirty against its old HEAD
 	# and its watcher would refuse to move. Reset it when the synced tree is a
 	# shipped commit, or commit it locally when it is peer-only work.
-	my ($norm, $nout) = &subs::git_checkout_normalize({ repo => "$home/jawnos", label => 'code sync' });
+	my ($norm, $nout) = &subs::git_checkout_normalize({ repo => "$home/jawnos", label => 'code sync',
+		branch => &subs::sync_update_branch_get() });
 	if ($subs::logfile && ($norm eq 'reset' || $norm eq 'committed')) {
 		open(my $fh, '>>', $subs::logfile);
 		print $fh &subs::rightNow() . " code sync: checkout $norm\n";

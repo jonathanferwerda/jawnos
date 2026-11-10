@@ -1,11 +1,13 @@
 [Unit]
-Description=JawnOS land promotion every fifteen minutes
+Description=JawnOS land promotion (weekly release)
 
 [Timer]
-# A quiet working branch is promoted on the first tick after it has work; a red
-# suite is retried on the next tick, not in a loop.
+# The weekly release: a quiet working branch is promoted on the first tick
+# after this one, and a red suite is retried the following week. `perl
+# scripts/land_promote.pl --once` promotes by hand at any time. The coordinator's
+# optional --promote-now is the other way to release immediately.
 OnBootSec=3min
-OnUnitActiveSec=15min
+OnUnitActiveSec=1w
 Persistent=true
 Unit=jawnos-land-promote.service
 

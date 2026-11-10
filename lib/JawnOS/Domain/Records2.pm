@@ -638,6 +638,23 @@ sub sync_update_interval_get {
 	return int $v;
 }
 
+# Which branch this machine's code watcher follows. A per-machine setting, like
+# its cadence: a house box can ride `working` (the newest landed, tested code)
+# while a release candidate stays on `main`. `main` is the fallback, which is
+# what every machine followed before this control existed, and an unknown value
+# must never point the watcher at a branch nobody publishes.
+sub sync_update_branch_get {
+	my ($device) = @_;
+	$device = &subs::signatorial_designer() unless defined $device && length $device;
+	my %q = (app => 'sync', setting => 'update_branch');
+	$q{'device'} = $device if defined $device && length $device;
+	my $v = &subs::setting_grabber(\%q);
+	$v = &subs::setting_grabber({ app => 'sync', setting => 'update_branch' })
+		unless defined $v && length $v;
+	return 'main' unless defined $v && $v =~ /^(?:main|working)$/;
+	return $v;
+}
+
 # Where the 06:00 coding nightly pushes. `coding_push_repo` is the JawnOS
 # checkout and `coding_app_push_repo` the Android app checkout; empty means the
 # checkout's own remote (origin / fork). The value is `owner/name` or an https
@@ -812,6 +829,7 @@ sub git_bootstrap_update {
 	}
 	local $ENV{'JAWNOS_REPO'} = $repo;
 	local $ENV{'JAWNOS_HOME'} = &subs::home('~');
+	local $ENV{'JAWNOS_BRANCH'} = $opts->{'branch'} || &subs::sync_update_branch_get();
 	open(my $fh, '-|', @command) or return ('error', "cannot run the updater: $!");
 	local $/;
 	my $out = <$fh>;
@@ -833,6 +851,7 @@ sub update_now {
 	my $repo = $opts->{'repo'} || '.';
 	my $force = $opts->{'force'} ? 1 : 0;
 	my $method = $opts->{'method'} || &subs::sync_update_method_get();
+	my $branch = $opts->{'branch'} || &subs::sync_update_branch_get();
 	my $was_dirty = 0;
 	if ($force) {
 		my $git = &subs::git_binary();
@@ -845,11 +864,11 @@ sub update_now {
 	# modules before its own perl -c check (that check needs them).
 	my $bootstrapped = (-d "$repo/.git") ? 0 : 1;
 	if ($bootstrapped) {
-		($status, $out) = &subs::git_bootstrap_update({ repo => $repo });
+		($status, $out) = &subs::git_bootstrap_update({ repo => $repo, branch => $branch });
 		$source = 'github';
 	}
 	elsif ($method eq 'github' || $method eq 'manual_github') {
-		($status, $out) = &subs::git_repo_update({ repo => $repo, force => $force });
+		($status, $out) = &subs::git_repo_update({ repo => $repo, force => $force, branch => $branch });
 		$source = 'github';
 	}
 	elsif ($method eq 'peers' || $method eq 'manual_peers') {
@@ -857,7 +876,7 @@ sub update_now {
 		$source = 'peers';
 	}
 	else {
-		($status, $out) = &subs::git_repo_update({ repo => $repo, force => $force });
+		($status, $out) = &subs::git_repo_update({ repo => $repo, force => $force, branch => $branch });
 		$source = 'github';
 		unless ($status eq 'updated' || $status eq 'reset' || $status eq 'current') {
 			my ($pst, $pout) = &subs::git_peer_update_best({ repo => $repo, force => $force });

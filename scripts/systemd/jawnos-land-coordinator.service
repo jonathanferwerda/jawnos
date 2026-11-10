@@ -12,10 +12,10 @@ Environment=HOME=/home/jawn
 Environment=JAWNOS_QA_ROOT=/home/jawn/jawnos-qa
 # One drain at a time. The script also holds land-coordinator.lock, so a manual
 # run and the timer cannot both drain. The coordinator lands the tested waves on
-# the working branch; the primary checkout follows main, which only the
-# promotion job moves. --promote-now asks that job once at the end of the drain,
-# instead of leaving the app to wait for the fifteen-minute timer.
-ExecStart=/usr/bin/perl /home/jawn/jawnos/scripts/land_coordinator.pl --train-size 6 --jobs 4 --trunk working --no-apply --promote-now
+# the working branch; the primary checkout follows main, which only the promotion
+# job moves. That job is its own weekly timer (or `land_promote.pl --once` by
+# hand); add --promote-now here only to release as each drain lands.
+ExecStart=/usr/bin/perl /home/jawn/jawnos/scripts/land_coordinator.pl --train-size 6 --jobs 4 --trunk working --no-apply
 # A wave runs the suite and may serve several branches; a cold guard is minutes.
 Nice=5
 TimeoutStartSec=4h

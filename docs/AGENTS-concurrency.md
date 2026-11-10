@@ -161,16 +161,17 @@ from it, and queue with `scripts/land_enqueue.pl --trunk working --wait`. The co
 tested waves on `working` and runs with `--trunk working --no-apply`, so it never moves the primary
 checkout.
 
-A drain that landed tickets ends by calling `scripts/land_promote.pl --once` (`--promote-now`), so the
-app is current in seconds, not at the next timer tick; one drain promotes once, so a batch of waves
-costs one restart. The promoter takes the land lock and fast-forwards `main` to the working tip,
-then fast-forwards the primary checkout and restarts the app. It does **not** run the suite again
-when the tip matches `land-queue/tested.json`: the coordinator records the exact tip its suite passed
-before pushing it, so a recorded tip is already a tested whole. A tip it did not record (a hand push
-to `working`, a branch landed by an older coordinator) gets the full suite first. The timer
-(`jawnos-land-promote.timer`, every fifteen minutes) is the safety net for those cases. A red suite,
-a main that is not an ancestor of working, or a dirty primary changes nothing; the loop event says
-why. The first run creates `origin/working` from `origin/main`.
+`main` moves on a release: `jawnos-land-promote.timer` runs `scripts/land_promote.pl --once` weekly,
+and the same command promotes by hand whenever the owner wants. `--promote-now` on the coordinator is
+the opt-in for a box that should release as each drain lands; the shipped unit does not pass it, so
+`working` can carry changes for days without the app moving. The promoter takes the land lock and
+fast-forwards `main` to the working tip, then fast-forwards the primary checkout and restarts the app.
+It runs the **full** suite first: `land-queue/tested.json` records the tip and the scope the
+coordinator tested, and only a `full` record for the same tip is promoted without repeating it. A
+normally scoped working wave, a hand push to `working`, or a branch landed by an older coordinator all
+get the full suite here, so main is never gated by the path-scoped working gate. A red suite, a main
+that is not an ancestor of working, or a dirty primary changes nothing; the loop event says why. The
+first run creates `origin/working` from `origin/main`.
 
 A direct commit to main (or `agent_land.pl`) breaks the fast-forward promotion: main must stay an
 ancestor of working. The hand-land path is the owner's emergency route, not the normal one.
@@ -187,9 +188,12 @@ checkout and the master — the authority:
 
 - **One suite per wave.** It rebases the wave's branches onto a growing tip in a scratch worktree,
   drops each branch's `VERSION` hunk, bumps once per branch, regenerates the generated indexes at the
-  tip, runs `run_tests.pl` once on the integrated tree, and pushes that tree as one fast-forward
-  (on `working`, where one promotion then restarts the app). The worktrees themselves are left to
-  `worktree_gc`; a landed branch is recognized by the subject a rebase preserves.
+  tip, runs the tests that claim the wave's changed files once on the integrated tree, and pushes
+  that tree as one fast-forward (on `working`, where a release then restarts the app).
+  `scripts/tests_for.pl` does the picking; it fails safe — an unclaimed path, a `t/lib` change, or no
+  picker means the full suite — and a wave whose files no test observes skips the suite. The release
+  promotion always runs the full suite. The worktrees themselves are left to `worktree_gc`; a landed
+  branch is recognized by the subject a rebase preserves.
 - **One hot-file branch per wave.** The name maps (`Manager/Index.pm`, `Declarations.pm`,
   `Domain/Loader.pm`, the route rows) and the help/language tables are the conflict class; a second
   hot ticket waits for the next wave.

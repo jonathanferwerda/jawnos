@@ -107,6 +107,9 @@ sub fixture {
 	for my $name (qw(land_lib.pl land_enqueue.pl land_status.pl land_coordinator.pl land_warden.pl land_promote.pl)) {
 		write_file("$primary/scripts/$name", read_file("$real/scripts/$name"));
 	}
+	# The wave gate picks its tests through the real picker, so the fixture
+	# exercises the same fail-safe the live tree does.
+	write_file("$primary/scripts/tests_for.pl", read_file("$real/scripts/tests_for.pl"));
 	for my $hook (qw(pre-commit pre-push)) {
 		write_file("$primary/.git-hooks/$hook", "#!/bin/sh\nexit 0\n");
 		chmod 0755, "$primary/.git-hooks/$hook" or die "chmod $hook: $!";
@@ -664,6 +667,69 @@ subtest 'a hand push to working still gets the full suite' => sub {
 	is(scalar @suite, 1, 'the tip the queue did not test is gated here');
 };
 
+subtest 'a scoped working gate is not trusted for the release' => sub {
+	my $f = fixture();
+	make_path("$f->{'primary'}/t");
+	write_file("$f->{'primary'}/t/01-one.t", "# tests-for: one.txt\nuse Test::More;\nok(1);\ndone_testing();\n");
+	git($f->{'primary'}, 'add', 't');
+	git($f->{'primary'}, 'commit', '-m', 'test: one.txt is claimed');
+	git($f->{'primary'}, 'push', 'origin', 'main');
+	make_working($f);
+	git($f->{'wt1'}, 'checkout', '-B', 'agent/one', 'origin/working');
+	commit_file($f->{'wt1'}, 'one.txt', "one\n", 'one: add a branch');
+	my ($erc, $eout) = enqueue($f, $f->{'wt1'}, '--trunk', 'working');
+	is($erc, 0, 'the branch enqueues') or diag($eout);
+
+	my ($crc, $cout) = coordinator($f, '--trunk', 'working', '--no-apply', '--train-size', '1', '--jobs', '1');
+	is($crc, 0, 'the wave lands') or diag($cout);
+	my $record = read_file("$f->{'primary'}/.git/land-queue/tested.json");
+	like($record, qr/"scope":"paths"/, 'the wave recorded a scoped suite');
+
+	my ($prc, $pout) = promoter($f);
+	is($prc, 0, 'the promoter runs') or diag($pout);
+	like($pout, qr/full suite/, 'it names the full gate it runs for a scoped tip') or diag($pout);
+	my @suite = lines("$f->{'marker'}/suite");
+	is(scalar @suite, 2, 'the release ran the suite again, in full');
+	like($suite[-1], qr/^--jobs \d+$/, 'the full run named no test, so it ran everything');
+};
+
+subtest 'a wave runs the tests that claim its files' => sub {
+	my $f = fixture();
+	make_path("$f->{'primary'}/t");
+	write_file("$f->{'primary'}/t/01-one.t", "# tests-for: one.txt\nuse Test::More;\nok(1);\ndone_testing();\n");
+	write_file("$f->{'primary'}/t/02-two.t", "# tests-for: two.txt\nuse Test::More;\nok(1);\ndone_testing();\n");
+	git($f->{'primary'}, 'add', 't');
+	git($f->{'primary'}, 'commit', '-m', 'test: two fixture claims');
+	git($f->{'primary'}, 'push', 'origin', 'main');
+	make_working($f);
+	git($f->{'wt1'}, 'checkout', '-B', 'agent/one', 'origin/working');
+	commit_file($f->{'wt1'}, 'one.txt', "one\n", 'one: add a branch');
+	my ($erc, $eout) = enqueue($f, $f->{'wt1'}, '--trunk', 'working');
+	is($erc, 0, 'the branch enqueues') or diag($eout);
+
+	my ($crc, $cout) = coordinator($f, '--trunk', 'working', '--no-apply', '--train-size', '1', '--jobs', '1');
+	is($crc, 0, 'the wave lands') or diag($cout);
+	my @suite = lines("$f->{'marker'}/suite");
+	is(scalar @suite, 1, 'the suite ran once');
+	like($suite[0], qr/t\/01-one\.t/, 'it ran the test that claims the changed file');
+	unlike($suite[0], qr/t\/02-two\.t/, 'and not the one that does not');
+};
+
+subtest 'a wave no test observes skips the suite' => sub {
+	my $f = fixture();
+	make_working($f);
+	git($f->{'wt1'}, 'checkout', '-B', 'agent/one', 'origin/working');
+	commit_file($f->{'wt1'}, 'docs/note.md', "a note\n", 'docs: a note');
+	my ($erc, $eout) = enqueue($f, $f->{'wt1'}, '--trunk', 'working');
+	is($erc, 0, 'the branch enqueues') or diag($eout);
+
+	my ($crc, $cout) = coordinator($f, '--trunk', 'working', '--no-apply', '--train-size', '1', '--jobs', '1');
+	is($crc, 0, 'the wave lands') or diag($cout);
+	ok(!-f "$f->{'marker'}/suite", 'the suite did not run');
+	my (undef, $note) = git($f->{'primary'}, 'show', 'origin/working:docs/note.md');
+	is($note, 'a note', 'the change is on working');
+};
+
 # --- enqueue refuses what it cannot land ----------------------------------
 
 subtest 'enqueue refuses dirty, primary, already-merged and full queues' => sub {
@@ -788,9 +854,9 @@ subtest 'the systemd units run the coordinator and point the timer at it' => sub
 	my $pservice = read_file("$real/scripts/systemd/jawnos-land-promote.service");
 	my $ptimer   = read_file("$real/scripts/systemd/jawnos-land-promote.timer");
 	like($pservice, qr/ExecStart=.*land_promote\.pl --once --jobs 2/, 'the promoter runs the suite gate');
-	like($ptimer, qr/OnUnitActiveSec=15min/, 'the promotion timer ticks every fifteen minutes');
+	like($ptimer, qr/OnUnitActiveSec=1w/, 'the promotion is the weekly release');
 	like($service, qr/--trunk working --no-apply/, 'the coordinator lands to working without touching main');
-	like($service, qr/--promote-now/, 'it asks the promoter at the end of a drain instead of waiting');
+	unlike($service, qr/^ExecStart=.*--promote-now/m, 'a drain does not release by itself');
 };
 
 done_testing();

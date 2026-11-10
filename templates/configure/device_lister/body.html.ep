@@ -40,7 +40,7 @@
 					<option value="none" <% if ($update_method eq 'none') { %>selected<% } %>><%= &subs::ui('None — automatic updates off') %></option>
 					<option value="manual_github" <% if ($update_method eq 'manual_github') { %>selected<% } %>><%= &subs::ui('Manual - GitHub') %></option>
 					<option value="manual_peers" <% if ($update_method eq 'manual_peers') { %>selected<% } %>><%= &subs::ui('Manual - Peers') %></option>
-					<option value="github" <% if ($update_method eq 'github') { %>selected<% } %>><%= &subs::ui('GitHub — pull automatically from origin/main only') %></option>
+					<option value="github" <% if ($update_method eq 'github') { %>selected<% } %>><%= &subs::ui('GitHub — pull automatically from this machine\'s update branch') %></option>
 					<option value="peers" <% if ($update_method eq 'peers') { %>selected<% } %>><%= &subs::ui('Peers — pull automatically only from this mesh') %></option>
 					<option value="any" <% if ($update_method eq 'any') { %>selected<% } %>><%= &subs::ui('Any — GitHub first, then a peer') %></option>
 				</select>
@@ -74,6 +74,12 @@
 					<option value="2592000" <% if (defined $update_interval && $update_interval == 2592000) { %>selected<% } %>><%= &subs::ui('1 month') %></option>
 				</select>
 				<span id="update_interval_status" class="device_when"></span>
+				<label for="update_branch_select"><%= &subs::ui('Update branch') %></label>
+				<select id="update_branch_select" class="update_branch_select" data-device="<%= $signatorial %>">
+					<option value="main" <% if ($update_branch eq 'main') { %>selected<% } %>><%= &subs::ui('main — released code') %></option>
+					<option value="working" <% if ($update_branch eq 'working') { %>selected<% } %>><%= &subs::ui('working — newest tested code') %></option>
+				</select>
+				<span id="update_branch_status" class="device_when"></span>
 				<span id="deps_pending_status" class="device_when"></span>
 				<button id="deps_pending_button" class="hover" type="button" style="display:none;"><%= &subs::ui('Install missing dependencies') %></button>
 			</div>

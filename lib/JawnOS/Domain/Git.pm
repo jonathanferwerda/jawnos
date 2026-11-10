@@ -69,23 +69,26 @@ sub git_watcher_check {
 	my $watch_started = int(time);
 	# Update method is the house's choice of authority: none stops auto-update,
 	# the manual modes leave it off for the Dev panel's Update now button, github
-	# follows origin/main alone, peers takes only a peer's fast-forward, and any
-	# (the default) tries GitHub first, then a peer. An explicit update still
-	# works whatever the method says.
+	# follows the update branch alone, peers takes only a peer's fast-forward, and
+	# any (the default) tries GitHub first, then a peer. An explicit update still
+	# works whatever the method says. The branch is this machine's own choice
+	# (`sync/update_branch`), main unless it rides working.
 	my $method = &subs::sync_update_method_get();
 	return if $method eq 'none' || $method eq 'manual_github' || $method eq 'manual_peers';
+	my $branch = &subs::sync_update_branch_get();
+	my $upstream = "origin/$branch";
 	my $before = `git rev-parse HEAD 2>/dev/null`; chomp $before;
-	# `any` keeps the old order: the checkout follows origin/main first, and only a
-	# machine origin cannot move forward - the fetch failed (the mesh answers while
-	# the internet does not), or it holds commits origin/main lacks - consults a
-	# peer as the fallback. A peer pull must be a true fast-forward: the old order
-	# ("whoever has the newest is it") let a peer whose advertised version outran
-	# its actual tree reset this machine backward through the rewritten-history
+	# `any` keeps the old order: the checkout follows the update branch first, and
+	# only a machine origin cannot move forward - the fetch failed (the mesh answers
+	# while the internet does not), or it holds commits the branch lacks - consults
+	# a peer as the fallback. A peer pull must be a true fast-forward: the old
+	# order ("whoever has the newest is it") let a peer whose advertised version
+	# outran its actual tree reset this machine backward through the rewritten-history
 	# path, so the watcher never accepts a peer reset. A peer with rewritten
 	# history, or with work the whole house should ride, pushes to GitHub and the
 	# authority carries it everywhere.
 	my ($status, $out) = ('none', '');
-	($status, $out) = &subs::git_repo_update({ repo => '.', force => 0 }) unless $method eq 'peers';
+	($status, $out) = &subs::git_repo_update({ repo => '.', force => 0, branch => $branch }) unless $method eq 'peers';
 	unless ($status eq 'dirty' || $status eq 'updated' || $status eq 'reset' || $status eq 'current') {
 		return unless $method eq 'peers' || $method eq 'any';
 		my ($pst, $pout) = &subs::git_peer_update_best({ repo => '.' });
@@ -104,7 +107,7 @@ sub git_watcher_check {
 			my $detail = '';
 			if ($status eq 'ahead' || $status eq 'diverged' || $status eq 'peer/diverged') {
 				my $git = &subs::git_binary();
-				$detail = `cd . && "$git" log --oneline --max-count=3 origin/main..HEAD 2>/dev/null`;
+				$detail = `cd . && "$git" log --oneline --max-count=3 $upstream..HEAD 2>/dev/null`;
 				$detail =~ s/\s+/ /g;
 				$detail = ' commits: ' . $detail if $detail;
 			}

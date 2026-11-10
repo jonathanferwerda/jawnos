@@ -8,10 +8,12 @@
 #
 # One coordinator per checkout (the lock is in the git common dir). It takes the
 # oldest tickets, rebases each branch onto the growing tip, bumps VERSION per
-# branch, regenerates the generated indexes once at the tip, runs the suite ONCE
-# on the integrated tree, pushes that tree atomically and restarts once. A wave
+# branch, regenerates the generated indexes once at the tip, then runs the tests
+# that claim the wave's files (the full suite when a path is unclaimed) ONCE on
+# the integrated tree, pushes that tree atomically and restarts once. A wave
 # that is red is retried once, then split into single-ticket waves so one bad
-# branch cannot hold the rest.
+# branch cannot hold the rest. `--suite-scope full` makes every wave pay for the
+# whole suite; the promotion to main runs it in any case.
 #
 # Why a train: the suite is a couple of minutes and the trunk is one ref. Twelve
 # agents do not need twelve suites; they need two or three, and they need the
@@ -43,6 +45,7 @@ my %opt = (
 	'train_size'    => 1,
 	'jobs'          => 4,
 	'suite_retries' => 1,
+	'suite_scope'   => 'auto',
 	'restart'       => 1,
 	'apply'         => 1,
 	'promote_now'   => 0,
@@ -54,6 +57,7 @@ GetOptions(
 	'train-size=s'   => \$opt{'train_size'},
 	'jobs=s'         => \$opt{'jobs'},
 	'suite-retries=s'=> \$opt{'suite_retries'},
+	'suite-scope=s' => \$opt{'suite_scope'},
 	'no-restart'     => sub { $opt{'restart'} = 0 },
 	'no-apply'       => sub { $opt{'apply'} = 0 },
 	'promote-now'    => sub { $opt{'promote_now'} = 1 },
@@ -66,6 +70,7 @@ usage(0) if $opt{'help'};
 usage(2) unless $opt{'train_size'} =~ /^\d+$/ && $opt{'train_size'} >= 1 && $opt{'train_size'} <= 8;
 usage(2) unless $opt{'jobs'} =~ /^\d+$/ && $opt{'jobs'} >= 1 && $opt{'jobs'} <= 8;
 usage(2) unless $opt{'suite_retries'} =~ /^\d+$/ && $opt{'suite_retries'} <= 3;
+usage(2) unless $opt{'suite_scope'} =~ /^(?:auto|full)$/;
 usage(2) unless $opt{'wait'} =~ /^\d+$/;
 
 $ENV{'GIT_EDITOR'} = 'true';
@@ -229,6 +234,7 @@ sub run_wave {
 
 	my (undef, $prev) = git_in($tmp, 'rev-parse', 'HEAD');
 	my @integrated;
+	my @scope_paths;
 	my $integrate_start = time;
 	my $hot_in_wave = 0;
 
@@ -246,6 +252,7 @@ sub run_wave {
 		}
 		$hot_in_wave = 1 if $was_hot;
 		$prev = $tip;
+		push @scope_paths, LandQueue::changed_files($root, $t->{'base'}, $t->{'sha'});
 		push @integrated, {
 			ticket => $t, version => $version, subject => $subject, tip => $tip,
 		};
@@ -259,14 +266,23 @@ sub run_wave {
 
 	my $integrate_ms = int((time - $integrate_start) * 1000);
 	regenerate($root, $tmp);
+	# The tickets name what the wave changed; the picker maps that to the tests
+	# that claim those files. It fails safe (an unclaimed path means the full
+	# suite), and the release promotion still runs everything on main, so a fast
+	# working gate cannot become the only gate on a release.
+	my ($scope, $scoped) = suite_scope($tmp, \@scope_paths, $opt);
+	my $scope_note = $scope eq 'full' ? "the wave's suite is the full suite"
+		: $scope eq 'none' ? 'no test observes this wave; the suite is skipped'
+		: 'the wave\'s suite is scoped to ' . scalar(@$scoped) . ' test(s)';
+	logit($scope_note) if $scope ne 'full' || !$opt->{'apply'};
 	my $suite_start = time;
-	my ($sok, $sout) = run_suite($root, $tmp, $opt->{'jobs'});
+	my ($sok, $sout) = run_suite($root, $tmp, $opt->{'jobs'}, $scoped);
 
 	my $attempts = 0;
 	while (!$sok && $attempts < $opt->{'suite_retries'}) {
 		$attempts++;
 		logit("the suite failed; retrying once before splitting the wave ($attempts)");
-		($sok, $sout) = run_suite($root, $tmp, $opt->{'jobs'});
+		($sok, $sout) = run_suite($root, $tmp, $opt->{'jobs'}, $scoped);
 	}
 	my $suite_ms = int((time - $suite_start) * 1000);
 
@@ -280,7 +296,7 @@ sub run_wave {
 				event => 'wave', size => scalar(@$wave),
 				tickets => [ map { $_->{'id'} } @$wave ],
 				integrate_ms => $integrate_ms, suite_ms => $suite_ms,
-				jobs => $opt->{'jobs'}, result => 'red', retries => $attempts,
+				jobs => $opt->{'jobs'}, suite => $scope, result => 'red', retries => $attempts,
 			});
 			logit("the integrated suite is red; splitting the wave and retrying one branch at a time");
 			return { result => 'red' };
@@ -294,7 +310,7 @@ sub run_wave {
 			event => 'wave', size => 1,
 			tickets => [ map { $_->{'id'} } @$wave ],
 			integrate_ms => $integrate_ms, suite_ms => $suite_ms,
-			jobs => $opt->{'jobs'}, result => 'red', retries => $attempts,
+			jobs => $opt->{'jobs'}, suite => $scope, result => 'red', retries => $attempts,
 		});
 		return { result => 'red' };
 	}
@@ -309,7 +325,7 @@ sub run_wave {
 			event => 'wave', size => scalar(@$wave),
 			tickets => [ map { $_->{'id'} } @$wave ],
 			integrate_ms => $integrate_ms, suite_ms => $suite_ms,
-			jobs => $opt->{'jobs'}, result => 'push_rejected',
+			jobs => $opt->{'jobs'}, suite => $scope, result => 'push_rejected',
 		});
 		logit("the push was refused; the tickets are back in the queue: $pout");
 		return { result => 'push_rejected', stop => 1 };
@@ -318,7 +334,7 @@ sub run_wave {
 	my $finished = time;
 	my (undef, $tested) = git_in($tmp, 'rev-parse', 'HEAD');
 	LandQueue::tested_write($dir, $tested,
-		trunk => $opt->{'trunk'}, size => scalar(@integrated));
+		trunk => $opt->{'trunk'}, size => scalar(@integrated), scope => $scope);
 	for my $i (@integrated) {
 		my $t = $i->{'ticket'};
 		my $wait = ($t->{'started_at'} // $finished) - ($t->{'submitted_at'} // $finished);
@@ -347,7 +363,7 @@ sub run_wave {
 		event => 'wave', size => scalar(@integrated),
 		tickets => [ map { $_->{'ticket'}{'id'} } @integrated ],
 		integrate_ms => $integrate_ms, suite_ms => $suite_ms,
-		jobs => $opt->{'jobs'}, result => 'landed', retries => $attempts,
+		jobs => $opt->{'jobs'}, suite => $scope, result => 'landed', retries => $attempts,
 		apply => $opt->{'apply'} ? ($applied ? 'ok' : 'blocked') : 'skipped', restart => $restart,
 	});
 	my $n = scalar @integrated;
@@ -485,9 +501,36 @@ sub regenerate {
 }
 
 sub run_suite {
-	my ($root, $tmp, $jobs) = @_;
-	my ($rc, $out) = LandQueue::run_in($tmp, $^X, "$tmp/scripts/run_tests.pl", '--jobs', $jobs);
+	my ($root, $tmp, $jobs, $tests) = @_;
+	# An empty list is a real answer (no test observes this wave), not "run
+	# everything": run_tests.pl with no arguments boots the whole suite.
+	return (1, '') if defined $tests && !@$tests;
+	my @args = defined $tests ? @$tests : ();
+	my ($rc, $out) = LandQueue::run_in($tmp, $^X, "$tmp/scripts/run_tests.pl", '--jobs', $jobs, @args);
 	return ($rc == 0, $out);
+}
+
+# Which tests observe this wave. The tickets name the files they changed; the
+# picker maps them to the tests that claim those files (its own fail-safe: an
+# unclaimed path means the full suite). Returns (scope, tests): 'full' with
+# undef, 'none' with [], or 'paths' with the list. No picker, a bad answer or a
+# change under t/lib all mean full.
+sub suite_scope {
+	my ($tmp, $paths, $opt) = @_;
+	return ('full', undef) if ($opt->{'suite_scope'} // 'auto') eq 'full';
+	my %seen;
+	my @files = grep { length && !$seen{$_}++ } @$paths;
+	return ('full', undef) unless @files;
+	return ('full', undef) unless -f "$tmp/scripts/tests_for.pl";
+	my ($rc, $out) = LandQueue::run_in($tmp, $^X, "$tmp/scripts/tests_for.pl",
+		'--files', @files, '--json');
+	my ($line) = ($out // '') =~ /(\{[^\n]*\})/;
+	my $sel = $line ? eval { JSON::PP->new->decode($line) } : undef;
+	return ('full', undef) unless $rc == 0 && ref $sel eq 'HASH';
+	return ('full', undef) if $sel->{'full'};
+	my @tests = @{ $sel->{'tests'} || [] };
+	return ('none', []) unless @tests;
+	return ('paths', \@tests);
 }
 
 sub failure_tail {
@@ -656,9 +699,13 @@ sub usage {
 	print STDERR <<'USAGE';
 land_coordinator.pl - drain the landing queue in waves
   perl scripts/land_coordinator.pl [--train-size 1] [--jobs 4] [--once]
-                                   [--suite-retries 1] [--no-restart] [--no-apply]
+                                   [--suite-retries 1] [--suite-scope auto|full]
+                                   [--no-restart] [--no-apply] [--promote-now]
                                    [--trunk main] [--wait 0] [--dry-run]
   Run it from the primary checkout. One instance per repository.
+  --suite-scope auto picks the tests that claim the wave's files; full runs
+  every test. --promote-now promotes when a drain lands (the release timer and
+  land_promote.pl --once are the other ways to move main).
 USAGE
 	exit $code;
 }
