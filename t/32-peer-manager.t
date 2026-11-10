@@ -24,6 +24,15 @@ is(subs::peer_live_manager({ manager => 'https://10.0.0.5:45545', fqdn => 'lapto
 	'https://10.0.0.5:45545',
 	'a real manager is left alone');
 
+# peer_secure_url rewrites a peer url to the house-CA listener (main port + 6)
+# and pins the user agent to the house CA. The literal fallback must keep that
+# port; rebuilding the url from the row's base `port` dialled the public
+# listener, whose wildcard certificate cannot satisfy the CA check, so the pull
+# read as "the peer did not answer" (the phone and laptop, 2026-11-10).
+is(subs::peer_literal_manager({ ip => '10.20.0.20', port => '45545', manager => 'https://10.20.0.20:45551' }),
+	'https://10.20.0.20:45551',
+	'a peer listener port survives the literal fallback');
+
 is(subs::peer_live_manager({ manager => 'https://127.0.0.1:53665', fqdn => 'laptop.example', port => '45545', tunnel => 'yes' }),
 	'https://127.0.0.1:53665',
 	'a tunnel route keeps its loopback manager');

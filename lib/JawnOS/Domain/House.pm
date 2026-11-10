@@ -724,6 +724,18 @@ sub peer_literal_manager {
 	my $addrs = &peer_literal_addresses($rm);
 	my $best = $addrs->[0] || return undef;
 	my $port = $best->{'port'} || ($rm && $rm->{'port'}) || 45545;
+	# A manager that peer_secure_url rewrote names the peer listener (main port
+	# + 6) that proved itself and whose house-CA leaf the user agent now
+	# verifies. When the best literal is that same host, keep the manager's own
+	# port: rebuilding it from the row's base `port` pointed the pull at the
+	# public listener and its wildcard certificate, so the TLS check failed and
+	# the peer read as unreachable (the phone and laptop pulling the hub,
+	# 2026-11-10). A stale LAN literal the tailnet route replaces still takes
+	# the winning candidate's port.
+	my ($mhost, $mport) = &peer_manager_host($rm);
+	$port = $mport
+		if defined $mhost && defined $mport && $mport =~ /^[0-9]+$/
+		&& $best->{'host'} eq $mhost;
 	return 'https://' . $best->{'host'} . ':' . $port;
 }
 
