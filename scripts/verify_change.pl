@@ -27,6 +27,12 @@
 # mtime-keyed: a checkout back to an already-verified state is a hit too. It only
 # writes a manifest when the whole run passes, so a failure is never cached.
 #
+# Every external command (git, perl, node) is run from an argv list through
+# IPC::Open3, never through a shell. The restart guard runs this script on the
+# Windows machines too, where the Unix idioms - a null-device redirect, a shell
+# builtin lookup, `cd ... &&` - are not things cmd.exe understands and every
+# check failed with "The system cannot find the path specified."
+#
 # Exit 0 when every file passes, 1 when any file fails. scripts/verify_change.pl
 # is what staged_fix_apply calls before it commits a coding agent's proposal, and
 # .githooks/pre-push calls it before a push, so a broken file cannot ship.
@@ -41,11 +47,43 @@ my $root = abs_path("$FindBin::Bin/..");
 
 # node is the only exact JavaScript syntax checker we have; without it the JS
 # parse is skipped (the truncation guard below still stands) rather than failed.
-my $node = 0;
+#
+# The lookup is a PATH scan done in-process. Asking the shell where a tool lives
+# is a POSIX builtin, so under cmd.exe it is not a command at all - the reason a
+# machine that only needed the JS check skipped refused every restart instead.
+# JawnOS::Platform::tool_path already answers this for every platform (it adds
+# .exe/.bat/.cmd on MSWin32); a copy of this script run from a tree without lib/
+# - the tests copy it into a temp repo - falls back to the same scan here.
+use lib "$FindBin::Bin/../lib";
+my ($node, $node_bin) = (0, undef);
 {
-	my $p = `command -v node 2>/dev/null`;
-	chomp $p if defined $p;
-	$node = 1 if defined $p && length $p && -x $p;
+	my $found = eval {
+		require JawnOS::Platform;
+		JawnOS::Platform::tool_path('node');
+	};
+	if (!defined $found || !length $found) {
+		require File::Spec;
+		my @names = ('node');
+		if ($^O eq 'MSWin32') {
+			my @ext = split /;/, (defined $ENV{PATHEXT} && length $ENV{PATHEXT})
+				? $ENV{PATHEXT} : '.EXE;.BAT;.CMD';
+			push @names, map { 'node' . $_ } grep { length } @ext;
+		}
+		foreach my $dir (File::Spec->path) {
+			next unless defined $dir && length $dir;
+			foreach my $name (@names) {
+				my $abs = File::Spec->catfile($dir, $name);
+				next unless -f $abs && -x $abs;
+				$found = $abs;
+				last;
+			}
+			last if defined $found && length $found;
+		}
+	}
+	if (defined $found && length $found && -x $found) {
+		$node = 1;
+		$node_bin = $found;
+	}
 }
 
 my (@named, $all, $quiet, $allow_shrink, $range, $manifest);
@@ -89,6 +127,47 @@ sub read_text {
 	my $text = do { local $/; <$fh> };
 	close $fh;
 	return defined $text ? $text : '';
+}
+
+# Run a command from an argv list - never through a shell - and collect its
+# stdout and stderr to EOF. IPC::Open3 is core, and given more than one argument
+# it execs the program directly on every platform (under cmd.exe as well), so a
+# path or a flag is never re-parsed as shell syntax. Both streams are read:
+# `perl -c` prints its verdict, and its syntax errors, on stderr, and the report
+# quotes them. Returns ($text, $exit_code) with stdout first, then stderr; a
+# signalled child reports 128 + the signal.
+sub run_capture {
+	require IPC::Open3;
+	require IO::Select;
+	require Symbol;
+	require Errno;
+	my ($in, $out, $err) = (undef, undef, Symbol::gensym());
+	my $pid = eval { IPC::Open3::open3($in, $out, $err, @_) };
+	unless ($pid) {
+		my $why = $@ || 'could not start';
+		$why =~ s/\s+\z//;
+		return ("$why\n", 127);
+	}
+	close $in;
+	my %text = ("$out" => '', "$err" => '');
+	my $select = IO::Select->new($out, $err);
+	while (my @ready = $select->can_read) {
+		foreach my $fh (@ready) {
+			my $n = sysread($fh, my $chunk, 8192);
+			if (!defined $n) {
+				# a retried syscall is not the end of the stream
+				next if $! == Errno::EINTR();
+				$select->remove($fh);
+				next;
+			}
+			if ($n == 0) { $select->remove($fh); next }
+			$text{"$fh"} .= $chunk;
+		}
+	}
+	waitpid($pid, 0);
+	my $status = $?;
+	my $code = ($status & 127) ? 128 + ($status & 127) : ($status >> 8);
+	return ($text{"$out"} . $text{"$err"}, $code);
 }
 
 # --- the verification manifest ---------------------------------------------
@@ -151,8 +230,8 @@ sub save_manifest {
 sub git_blob {
 	my ($rev, $rel) = @_;
 	return undef if !defined $rev || $rel =~ m{^/};
-	my $text = `cd "$root" && git --no-pager show "$rev:$rel" 2>/dev/null`;
-	return undef if $? != 0;
+	my ($text, $code) = &run_capture('git', '-C', $root, '--no-pager', 'show', "$rev:$rel");
+	return undef if $code != 0;
 	return $text;
 }
 
@@ -199,10 +278,16 @@ sub code_lines {
 my $added_lines;
 sub added_lines {
 	return $added_lines if defined $added_lines;
+	my ($range_added) = &run_capture('git', '-C', $root, '--no-pager',
+		'diff', '--name-only', '--diff-filter=A', "$base..$tip");
+	my ($untracked) = &run_capture('git', '-C', $root, '--no-pager',
+		'ls-files', '--others', '--exclude-standard');
+	my ($staged) = &run_capture('git', '-C', $root, '--no-pager',
+		'diff', '--cached', '--name-only', '--diff-filter=A');
 	my @added = $range_mode
-		? map { &rel_of($_) } split /\n/, `cd "$root" && git --no-pager diff --name-only --diff-filter=A "$base..$tip" 2>/dev/null`
-		: (map { &rel_of($_) } split /\n/, `cd "$root" && git --no-pager ls-files --others --exclude-standard 2>/dev/null`),
-		  (map { &rel_of($_) } split /\n/, `cd "$root" && git --no-pager diff --cached --name-only --diff-filter=A 2>/dev/null`);
+		? map { &rel_of($_) } split /\n/, $range_added
+		: (map { &rel_of($_) } split /\n/, $untracked),
+		  (map { &rel_of($_) } split /\n/, $staged);
 	$added_lines = 0;
 	for my $rel (@added) {
 		next unless length $rel;
@@ -267,12 +352,15 @@ sub check {
 	my $kind = &source_kind($rel, $src);
 
 	if ($kind eq 'perl') {
-		my $out = `cd "$root" && "$^X" -Ilib -c "$path" 2>&1`;
+		# -I$root/lib is what `cd $root && perl -Ilib` meant: the app's own
+		# modules resolve the same from any working directory.
+		my ($out) = &run_capture($^X, '-I' . "$root/lib", '-c', $path);
 		$out = '' unless defined $out;
 		unless ($out =~ /syntax OK/) {
 			# an app fragment (hooks.pl) leans on the DSL and imports Manager.pl
 			# brings in, so retry with them before calling it broken
-			my $again = `cd "$root" && "$^X" -Ilib -Mfeature=signatures -MMojolicious::Lite -MMojo::JSON=decode_json,encode_json -c "$path" 2>&1`;
+			my ($again) = &run_capture($^X, '-I' . "$root/lib", '-Mfeature=signatures',
+				'-MMojolicious::Lite', '-MMojo::JSON=decode_json,encode_json', '-c', $path);
 			$again = '' unless defined $again;
 			unless ($again =~ /syntax OK/) {
 				my $missing = &missing_module_name($out);
@@ -294,8 +382,7 @@ sub check {
 	}
 	elsif ($kind eq 'js') {
 		if ($node) {
-			my $out = `cd "$root" && node --check "$path" 2>&1`;
-			my $code = $? >> 8;
+			my ($out, $code) = &run_capture($node_bin, '--check', $path);
 			$out = '' unless defined $out;
 			push @probs, 'node --check: ' . &first_line($out) if $code != 0;
 		}
@@ -321,8 +408,9 @@ sub check {
 sub collect_files {
 	return @named if @named;
 	if ($range_mode) {
-		my @f = split /\n/, `cd "$root" && git -c core.quotepath=0 diff --name-only --diff-filter=ACMR $range 2>/dev/null`;
-		return map { rel_of($_) } @f;
+		my ($out) = &run_capture('git', '-C', $root, '-c', 'core.quotepath=0',
+			'diff', '--name-only', '--diff-filter=ACMR', $range);
+		return map { rel_of($_) } split /\n/, $out;
 	}
 	if ($all) {
 		my @f;
@@ -345,8 +433,9 @@ sub collect_files {
 		}, $root);
 		return @f;
 	}
+	my ($out) = &run_capture('git', '-C', $root, '-c', 'core.quotepath=0', 'status', '--porcelain');
 	my @f;
-	foreach my $line (split /\n/, `cd "$root" && git -c core.quotepath=0 status --porcelain 2>/dev/null`) {
+	foreach my $line (split /\n/, $out) {
 		next unless length $line;
 		my $path = substr($line, 3);
 		if ($path =~ / -> /) { ($path) = $path =~ / -> (.*)$/; }

@@ -98,6 +98,11 @@ write_text('beta.pl', "use strict;\nthis is not perl(;\n1;\n");
 ($code, $out) = verify();
 isnt($code, 0, 'a broken edit is still rejected');
 like($out, qr/\Qbeta.pl\E/, 'and the report names it');
+# perl -c writes its diagnosis on stderr, so finding it in the report is the
+# proof that the shell-free runner reads both pipes to EOF and does not rely on
+# the exit code alone.
+like($out, qr/syntax error at .*\Qbeta.pl\E line 2/,
+	'and quotes the compiler stderr from the new runner');
 
 # ...and the failure is never cached: the manifest is left as the last good one,
 # so the next restart re-examines the file instead of trusting a stale verdict.
@@ -138,5 +143,22 @@ for my $name (sort keys %lib) {
 }
 ($code, $out) = verify();
 is($code, 0, 'a lib module that uses a sibling under lib/ compiles') or diag($out);
+
+# 9. the guard runs without a shell. `command -v`, a null-device redirect and
+# `cd ... &&` are Unix shell idioms: cmd.exe rejects all three, which made every
+# check fail on Windows and the restart guard refuse every restart. Each command
+# is an argv list through IPC::Open3 now, so none of them may come back.
+my $source = do {
+	open(my $fh, '<', $script) or die "$script: $!";
+	local $/;
+	<$fh>;
+};
+unlike($source, qr{2>/dev/null}, 'no stderr redirect to the null device');
+unlike($source, qr{\bcommand\s+-v\b}, 'no shell builtin lookup for a tool');
+unlike($source, qr{cd\s+"\$root"\s*&&}, 'no cd through a shell');
+
+# the Perl checks still see the app's own lib/ from any working directory,
+# which is what `cd <root> && perl -Ilib` used to buy them
+like($source, qr{'\-I' \. "\$root/lib"}, 'the compiler is handed an absolute include path');
 
 done_testing();
