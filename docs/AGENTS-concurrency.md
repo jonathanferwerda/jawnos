@@ -21,6 +21,26 @@ every landing touches:
   150-second wait for a verdict; ten agents asking at once queue, time out and report failures for
   work that was fine. Only the lander restarts.
 
+## Which landing method
+
+Three paths, and the condition picks one:
+
+- **Queue it** (`perl scripts/land_enqueue.pl`, the default when more than one agent is working):
+  commit the branch, run the script, and let the coordinator land it. You do not push or restart,
+  and **you do not delete the worktree**. `perl scripts/land_status.pl --branch <branch>` is the
+  verdict; when it says landed, the branch is on the trunk and the worktree may go (or wait for
+  `worktree_gc`). A refused ticket keeps the worktree: fix, re-enqueue, and never run
+  `agent_land.pl` on the same branch.
+- **Land it yourself** (`perl ~/jawnos/scripts/agent_land.pl`, from the worktree root): one agent at
+  the gate, which the lock makes safe. It bumps `VERSION`, runs the suite once, pushes, restarts and
+  removes the worktree. `--keep` is only for work that continues (an open checkpoint) or a handoff;
+  a refusal keeps the worktree anyway.
+- **Hand-land as the owner** (the old "Alone" path): only when you are the **sole agent on this box
+  and the primary checkout is yours** — no other agent is working and no queue is draining. Then
+  `perl scripts/version_bump.pl` → commit with `JAWNOS_ALLOW_PRIMARY_COMMIT=1` → `git push` →
+  `perl scripts/restart.pl`. This is the only hand push/restart; with another agent active it is the
+  collision the lander exists to prevent.
+
 ## The commit identity
 
 Every commit in this tree is authored **and** committed as
@@ -109,6 +129,11 @@ back to `git push` and `restart.pl` by hand — that is how two agents resume sw
 A landing takes a minute or two (rebase, one suite, push, restart); it is not hung, and its progress
 lines go to stderr, so a wrapper that pipes stdout shows nothing until it ends.
 
+**What "done" looks like after a refusal:** the worktree is still there (the lander removes it only
+after the push and the restart), the branch is on `origin/<branch>`, and the reason and the next
+action belong in `.shots/AGENT-CHECKPOINT.md`. Report that and stop. "Done" for the task is "refused
+and reported", not "landed"; nothing else is owed, and the next attempt is a deliberate one.
+
 ## The landing queue and the train
 
 The lander is still the hand landing, but a busy checkout runs a queue.
@@ -132,6 +157,9 @@ checkout and the master — the authority:
 - **The queue is a snapshot.** Re-enqueueing the same branch updates its sha and keeps its place.
   `perl scripts/land_status.pl` gives the position and verdict; `--stats` prints measured waits and
   suite times.
+- **The ticket owns your worktree.** The coordinator lands from origin and never needs your
+  directory; the worktree stays until the ticket is landed (then `worktree_gc` may sweep it) or
+  refused (then it stays for the fix). Do not delete it before the verdict.
 - **A dirty primary blocks this box's apply, not the trunk.** The coordinator pushes the green train,
   records `apply blocked`, and the next wave retries the fast-forward and restart.
 - **One coordinator per trunk.** Two boxes running it would race the push. The authority is the box

@@ -44,7 +44,7 @@ user for the exact file/folder/name. A wrong guess costs far more tokens than a 
 
 The primary checkout is read-only for agents: a dirty one blocks every landing. Land with
 `perl ~/jawnos/scripts/agent_land.pl` (the primary copy) or queue with `scripts/land_enqueue.pl`;
-never push or restart by hand.
+never push or restart by hand. The paths, the worktree and `--keep`: `docs/AGENTS-concurrency.md`.
 
 
 ## Crash-resilient agent work
@@ -104,11 +104,10 @@ The Zed panel keeps every byte it is shown; zram + earlyoom only slow the crash.
   `lib/JawnOS/Domain/Loader.pm` (`t/91`), a route action its row in `lib/JawnOS/Routes/` (`t/58`), and
   a new app page a help topic with `app => <name>` (`t/11`).
 - **Cap parallel jobs on this shared box:** `pio run -j 4`, `gradle --max-workers=4`, `make -j4`.
-- **Land once, then stop — and delete the worktree.** Every task ends by landing: commit in your
-  worktree (`git add -p`), then `perl ~/jawnos/scripts/agent_land.pl` — bumps `VERSION`,
-  tests once, pushes, restarts, deletes the worktree (`--keep`, or an open checkpoint). A refusal ends the attempt:
-  report it, never retry in a loop. Hot files, worktrees and the commit identity:
-  `docs/AGENTS-concurrency.md`. Alone: `version_bump.pl` → commit with
-  `JAWNOS_ALLOW_PRIMARY_COMMIT=1` → `git push` → `restart.pl`.
+- **Land once, then stop.** Commit in your worktree (`git add -p`), then land or queue (the rule
+  above). A refusal ends the attempt: report it; the worktree and checkpoint stay. Only a sole agent
+  that owns the primary may hand-land (`version_bump.pl` → `JAWNOS_ALLOW_PRIMARY_COMMIT=1` → push →
+  `restart.pl`). `--keep` only for work that continues or a handoff. Hot files, worktrees and the
+  commit identity: `docs/AGENTS-concurrency.md`.
 
 ---

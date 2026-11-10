@@ -84,4 +84,21 @@ like($concurrency, qr{perl ~/jawnos/scripts/agent_land\.pl},
 like(read_file("$root/.gitignore"), qr{^/\.worktrees/$}m,
 	'.worktrees is ignored, so a worktree cannot dirty the primary checkout');
 
+# --- the landing conditions and the handheld build note ---------------------
+like($text, qr/sole agent.*owns the primary/s,
+	'the map names the only hand-landing case');
+like($concurrency, qr/sole agent.*primary checkout/s,
+	'the worktree doc names it in full');
+like($concurrency, qr/land_enqueue\.pl.*do not delete the worktree/s,
+	'the queued path says what happens to the worktree');
+like($concurrency, qr/refused\s+and\s+reported/,
+	'a refusal has a defined "done"');
+like($concurrency, qr/--keep.*continues/s,
+	'and --keep has a rule');
+my $releases = read_file("$root/docs/AGENTS-app-releases.md");
+like($releases, qr/-j2.*memory watchdog/s,
+	'the handheld build note names -j2 and the watchdog');
+like($releases, qr/(?:-j4.*1\.8 GB|1\.8 GB.*-j4)/s,
+	'and why');
+
 done_testing();

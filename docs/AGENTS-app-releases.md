@@ -17,6 +17,9 @@ Moved out of `AGENTS.md` (a per-task reference, not an every-request map).
   staging, the script compares the APK's certificate with that keystore and refuses anything else. A
   debug-signed APK is a valid APK and still cannot install over a release-signed app, so `--debug` is
   only for developing against the app and says so. `--no-build` stops after the bump.
+- **On the handheld, build small.** The 1.8 GB handheld froze twice at `-j4`: use `-j2` (or
+  `--max-workers=2`) and keep a memory watchdog running for the whole build. The table and laptop
+  are not memory-bound; the shared box's `-j4`/`--max-workers=4` cap does not apply to the phone.
 - **Publish it (don't skip this):** `perl scripts/app_publish.pl` (needs an authenticated `gh`) uploads
   the newest staged APK **and** a matching `app_release.json` manifest to the GitHub `releases`
   release, so a device can pull it from github.com as well as from a peer. **A build that is only
