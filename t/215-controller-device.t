@@ -24,7 +24,7 @@ my $src = read_file(repo_root() . '/perl/President.pl');
 like($src, qr/\$device eq 'controller' \? 2 :/,
 	'a controller rests at two main workers');
 
-my ($autoscale) = $src =~ /(&run_server\('\.\/perl\/Manager\.pl'.*?autoscale_max =>.*?;)/s;
+my ($autoscale) = $src =~ /(&server_process\('\.\/perl\/Manager\.pl'.*?autoscale_max =>.*?;)/s;
 ok($autoscale, 'the main pool still autoscales through one call');
 like($autoscale, qr/autoscale_max => \$main_workers_max/,
 	'the pool ceiling is the configured or default cap');
@@ -40,7 +40,7 @@ like($max_rule, qr/\$main_workers : \$main_workers \+ 2/,
 # registration as gated only if that opener reaches it without crossing a closer.
 sub gated_by_controller {
 	my ($name) = @_;
-	return $src =~ /unless \(\$device eq 'controller'\) \{(?:(?!\n\t\}\n).)*?\{ name => '\Q$name\E'[^\n}]*\}\);/s;
+	return $src =~ /unless \(\$device eq 'controller'\) \{(?:(?!\n\t\}\n).)*?name => '\Q$name\E'/s;
 }
 
 my @skipped = (

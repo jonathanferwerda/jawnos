@@ -32,7 +32,7 @@ like($president, qr/\$ENV\{PORT_WS_PLAIN\} = \$ws_plain_port if \$config->\{'env
 	'the plain port is exported in production');
 like($president, qr/my \@ws_listeners = \( 'https:\/\/\*:' \. \$ws_port \. \$certs, 'http:\/\/127\.0\.0\.1:' \. \$ws_plain_port \);/,
 	'the socket server listens on https and on plain loopback');
-like($president, qr/&run_server\('\.\/perl\/Manager\.pl', \\\@ws_listeners,/,
+like($president, qr/&server_process\('\.\/perl\/Manager\.pl', \\\@ws_listeners,/,
 	'the socket server is handed both listeners');
 
 # 2. the URL helper and the token

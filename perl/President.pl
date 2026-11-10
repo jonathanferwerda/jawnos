@@ -339,6 +339,33 @@ sub run_dev_server {
 require './perl/President/prefork_autoscale.pl';
 
 my @threads;
+
+# One place that starts a server, so Windows (no fork) can spawn a real child
+# while a box with fork keeps the subprocessor behaviour it has always had.
+our @server_processes;
+sub server_process {
+	my ($app, $listeners, %opt) = @_;
+	my @listen = ref $listeners eq 'ARRAY' ? @$listeners : split /,/, (defined $listeners ? $listeners : '');
+	if (JawnOS::Platform::use_fork()) {
+		return &subs::subprocessor(sub {
+			$ENV{PURPOSE} = $opt{'purpose'} if $opt{'purpose'};
+			$ENV{MOJO_LISTEN} = join ',', @listen if @listen;
+			$opt{'dev'} ? &run_dev_server($app, purpose => $opt{'purpose'}, watch => $opt{'watch'})
+			            : &run_server($app, \@listen, %opt);
+		}, { name => $opt{'name'} });
+	}
+	require JawnOS::Platform::Server;
+	my $child = JawnOS::Platform::Server::spawn(
+		app => $app, purpose => $opt{'purpose'}, listen => \@listen, name => $opt{'name'},
+	);
+	push @server_processes, $child if $child;
+	print 'Started ' . ($opt{'name'} || $opt{'purpose'} || 'server') . ' as pid ' . ($child->{'pid'} || '?') . "\n" if $child;
+	return $child;
+}
+# On Windows the master cannot kill President's children when it stops
+# President, so take each one down as this process leaves.
+END { foreach my $c (@server_processes) { eval { $c->{'runner'}->stop } if $c } }
+
 sub manager_starter() {
 	my $ws_tty_port = $tty_port + 1;
 	$ENV{PORT_AHOY} = $random_number;
@@ -789,30 +816,19 @@ sub manager_starter() {
 
 	$ENV{'MOJO_MAX_LINE_SIZE'} = "64000";
 	if ($config->{'environment'} eq 'development') {
-		&subs::subprocessor(sub {
-		#  $SIG{'KILL'} = sub { threads->exit(); };
-			print "Starting Locker Server on port " . $dock_port . "\n";
-			$ENV{MOJO_LISTEN} = 'https://*:' . $dock_port . $certs;
-			$ENV{PURPOSE} = 'locker';
-			&run_dev_server('./perl/Manager.pl', purpose => 'locker', watch => 1);
-		}, { name => 'Dev Locker Server' });
+		print "Starting Locker Server on port " . $dock_port . "\n";
+		&server_process('./perl/Manager.pl', [ 'https://*:' . $dock_port . $certs ],
+			purpose => 'locker', name => 'Dev Locker Server', dev => 1, watch => 1);
 		if ($ENV{PORT_AHOY} != $ENV{PORT_MSG}) {
-			&subs::subprocessor(sub {
-			#  $SIG{'KILL'} = sub { threads->exit(); };
-				print "Starting WS Server on port " . $ws_port . "\n";
-				$ENV{MOJO_LISTEN} = 'https://*:' . $ws_port . $certs;
-				$ENV{PURPOSE} = 'websocket';
-				&run_dev_server('./perl/Manager.pl', purpose => 'websocket', watch => 1);
-			}, { name => 'Dev WS Server' });
+			print "Starting WS Server on port " . $ws_port . "\n";
+			&server_process('./perl/Manager.pl', [ 'https://*:' . $ws_port . $certs ],
+				purpose => 'websocket', name => 'Dev WS Server', dev => 1, watch => 1);
 		}
-		&subs::subprocessor(sub {
-		#  $SIG{'KILL'} = sub { threads->exit(); };
-			print "Starting Main Server on port " . $port . "\n";
-			$ENV{MOJO_LISTEN} = join ',', ('https://*:' . $port . $certs),
-				($peer_certs ne '' ? ('https://*:' . $peer_port . $peer_certs) : ());
-			$ENV{PURPOSE} = 'main';
-			&run_dev_server('./perl/Manager.pl', purpose => 'main', watch => 1);
-		}, { name => 'Dev Main Server' });
+		print "Starting Main Server on port " . $port . "\n";
+		my @dev_main_listeners = ('https://*:' . $port . $certs,
+			($peer_certs ne '' ? ('https://*:' . $peer_port . $peer_certs) : ()));
+		&server_process('./perl/Manager.pl', \@dev_main_listeners,
+			purpose => 'main', name => 'Dev Main Server', dev => 1, watch => 1);
 	}
 	elsif ($config->{'environment'} eq 'production') {
 
@@ -823,79 +839,59 @@ sub manager_starter() {
 		# servers and the phone could no longer sign in; the master's watchdog,
 		# which asks every configured port, then restarted the healthy tree
 		# every 90 seconds.
-		&subs::subprocessor(sub {
-		 # $SIG{'KILL'} = sub { threads->exit(); };
-			print "Starting Pro Locker Server on port " . $dock_port . "\n";
-			$ENV{MOJO_LISTEN} = 'https://*:' . $dock_port . $certs;
-			$ENV{PURPOSE} = 'locker';
-			&run_server('./perl/Manager.pl', [ $ENV{MOJO_LISTEN} ],
-				purpose => 'locker', workers => 1);
-			$log->info('after locker server');
-		}, { name => 'Pro Locker Server' });
+		print "Starting Pro Locker Server on port " . $dock_port . "\n";
+		&server_process('./perl/Manager.pl', [ 'https://*:' . $dock_port . $certs ],
+			purpose => 'locker', name => 'Pro Locker Server', workers => 1);
+		$log->info('after locker server');
 
-		&subs::subprocessor(sub {
-		#  $SIG{'KILL'} = sub { threads->exit(); };
-			print "Starting Pro WS Server on port " . $ws_port . "\n";
-			my @ws_listeners = ( 'https://*:' . $ws_port . $certs, 'http://127.0.0.1:' . $ws_plain_port );
-			# The peer listener lives on the socket server in production: it is
-			# the worker that already holds long-lived connections, and the same
-			# app answers the peer routes there.
-			push @ws_listeners, 'https://*:' . $peer_port . $peer_certs if $peer_certs ne '';
-			$ENV{MOJO_LISTEN} = join ',', @ws_listeners;
-			$ENV{PURPOSE} = 'websocket';
-			&run_server('./perl/Manager.pl', \@ws_listeners,
-				purpose => 'websocket', workers => 1, keep_alive => 1);
-			$log->info('after ws server');
-		}, { name => 'Pro WS Server' });
+		print "Starting Pro WS Server on port " . $ws_port . "\n";
+		my @ws_listeners = ( 'https://*:' . $ws_port . $certs, 'http://127.0.0.1:' . $ws_plain_port );
+		# The peer listener lives on the socket server in production: it is
+		# the worker that already holds long-lived connections, and the same
+		# app answers the peer routes there.
+		push @ws_listeners, 'https://*:' . $peer_port . $peer_certs if $peer_certs ne '';
+		&server_process('./perl/Manager.pl', \@ws_listeners,
+			purpose => 'websocket', name => 'Pro WS Server', workers => 1, keep_alive => 1);
+		$log->info('after ws server');
 
-		&subs::subprocessor(sub {
-		#  $SIG{'KILL'} = sub { threads->exit(); };
-			print "Starting Pro Prefork Main Server on port " . $port . "\n";
-			$ENV{MOJO_LISTEN} = 'https://*:' . $port . $certs;
-			$ENV{PURPOSE} = 'main';
-			# A handheld runs this whole tree in a few hundred MB that Android's
-			# low-memory killer reclaims the moment the device tightens, so the pool
-			# stays small - but not one. A worker serves one request at a time, and on
-			# a phone the single worker was busy for 30-60s every couple of minutes
-			# (the log's autoscale lines), which queued the whole panel behind it:
-			# the "Manager is frozen" after picking the phone up. Two resting workers
-			# mean one slow request never holds the screen. Unlike a desktop, a phone
-			# does not grow the pool: every extra worker was a fork of a 100 MB+
-			# process, and that spike is what Android's killer reaped the tree for.
-			# A burst waits behind the two instead; a desktop rests at three and a
-			# server at four, each growing by two. `main_workers` in config.json
-			# overrides the resting count when a machine wants another.
-			my $configured_workers = (defined $config->{'main_workers'} && $config->{'main_workers'} =~ /^\d+$/ && $config->{'main_workers'} > 0)
-				? int($config->{'main_workers'}) : 0;
-			my $main_workers = $configured_workers || ($device eq 'controller' ? 2 : ($device eq 'mobile' ? 2 : ($device eq 'server' ? 4 : 3)));
-			# A burst pool: `main_workers` is where the pool rests and
-			# `main_workers_max` is the ceiling an interactive burst may reach.
-			# Without a configured ceiling the old rule stands: a phone and a
-			# controller rest, a desktop and a server grow by two.
-			my $configured_max = (defined $config->{'main_workers_max'} && $config->{'main_workers_max'} =~ /^\d+$/ && $config->{'main_workers_max'} > 0)
-				? int($config->{'main_workers_max'}) : 0;
-			my $main_workers_max = $configured_max
-				|| (($device eq 'mobile' || $device eq 'controller') ? $main_workers : $main_workers + 2);
-			$main_workers_max = $main_workers if $main_workers_max < $main_workers;
-			&run_server('./perl/Manager.pl', [ $ENV{MOJO_LISTEN} ],
-				purpose => 'main',
-				workers => $main_workers,
-				autoscale_min => $main_workers,
-				autoscale_max => $main_workers_max);
-			$log->info('after main server');
-		}, { name => 'Pro Main Server' });
+		print "Starting Pro Prefork Main Server on port " . $port . "\n";
+		# A handheld runs this whole tree in a few hundred MB that Android's
+		# low-memory killer reclaims the moment the device tightens, so the pool
+		# stays small - but not one. A worker serves one request at a time, and on
+		# a phone the single worker was busy for 30-60s every couple of minutes
+		# (the log's autoscale lines), which queued the whole panel behind it:
+		# the "Manager is frozen" after picking the phone up. Two resting workers
+		# mean one slow request never holds the screen. Unlike a desktop, a phone
+		# does not grow the pool: every extra worker was a fork of a 100 MB+
+		# process, and that spike is what Android's killer reaped the tree for.
+		# A burst waits behind the two instead; a desktop rests at three and a
+		# server at four, each growing by two. `main_workers` in config.json
+		# overrides the resting count when a machine wants another.
+		my $configured_workers = (defined $config->{'main_workers'} && $config->{'main_workers'} =~ /^\d+$/ && $config->{'main_workers'} > 0)
+			? int($config->{'main_workers'}) : 0;
+		my $main_workers = $configured_workers || ($device eq 'controller' ? 2 : ($device eq 'mobile' ? 2 : ($device eq 'server' ? 4 : 3)));
+		# A burst pool: `main_workers` is where the pool rests and
+		# `main_workers_max` is the ceiling an interactive burst may reach.
+		# Without a configured ceiling the old rule stands: a phone and a
+		# controller rest, a desktop and a server grow by two.
+		my $configured_max = (defined $config->{'main_workers_max'} && $config->{'main_workers_max'} =~ /^\d+$/ && $config->{'main_workers_max'} > 0)
+			? int($config->{'main_workers_max'}) : 0;
+		my $main_workers_max = $configured_max
+			|| (($device eq 'mobile' || $device eq 'controller') ? $main_workers : $main_workers + 2);
+		$main_workers_max = $main_workers if $main_workers_max < $main_workers;
+		&server_process('./perl/Manager.pl', [ 'https://*:' . $port . $certs ],
+			purpose => 'main', name => 'Pro Main Server',
+			workers => $main_workers,
+			autoscale_min => $main_workers,
+			autoscale_max => $main_workers_max);
+		$log->info('after main server');
 		# A controller answers no alarm, runs no terminal and keeps no window
 		# fleet, so none of these listeners has a client on it.
 		unless ($device eq 'controller') {
-			&subs::subprocessor(sub {
-			 # $SIG{'KILL'} = sub { threads->exit(); };
-				print "Starting Pro Prefork Alarm Server on port " . $alarm_port . "\n";
-				$ENV{MOJO_LISTEN} = 'https://*:' . $alarm_port . $certs;
-				$ENV{PURPOSE} = 'alarm';
-				&run_server('./perl/Alarm.pl', [ $ENV{MOJO_LISTEN} ],
-					purpose => 'alarm', workers => 1, keep_alive => 1);
-				$log->info('after alarm server');
-			}, { name => 'Pro Alarm Server' });
+			print "Starting Pro Prefork Alarm Server on port " . $alarm_port . "\n";
+			&server_process('./perl/Alarm.pl', [ 'https://*:' . $alarm_port . $certs ],
+				purpose => 'alarm', name => 'Pro Alarm Server', workers => 1, keep_alive => 1);
+			$log->info('after alarm server');
 		}
 
 	}
@@ -906,56 +902,46 @@ sub manager_starter() {
 	# A controller is a handheld with no terminal and no watch: treat it like a
 	# server here, so the watch, teletype and tty-ws servers never start.
 	if ($device ne 'server' && $device ne 'controller') {
-		&subs::subprocessor(sub {
-		#  $SIG{'KILL'} = sub { threads->exit(); };
-			$ENV{PURPOSE} = "watch";
-			$ENV{MOJO_LISTEN} = 'https://*:' . $watch_port . $certs;
-			if ($config->{'environment'} eq 'development') {
-				print "Starting Development Watch Server on $watch_port\n";
-				&run_dev_server('./perl/watch.pl', purpose => 'watch');
-			}
-			elsif ($config->{'environment'} eq 'production') {
-				print "Starting Pro Watch Server on port " . $watch_port . "\n";
-				&run_server('./perl/watch.pl', [ $ENV{MOJO_LISTEN} ],
-					purpose => 'watch', workers => $device eq 'mobile' ? 1 : ($device eq 'server' ? 2 : 1));
-			}
-		}, { name => 'Watch Server' });
+		if ($config->{'environment'} eq 'development') {
+			print "Starting Development Watch Server on $watch_port\n";
+			&server_process('./perl/watch.pl', [ 'https://*:' . $watch_port . $certs ],
+				purpose => 'watch', name => 'Watch Server', dev => 1);
+		}
+		elsif ($config->{'environment'} eq 'production') {
+			print "Starting Pro Watch Server on port " . $watch_port . "\n";
+			&server_process('./perl/watch.pl', [ 'https://*:' . $watch_port . $certs ],
+				purpose => 'watch', name => 'Watch Server',
+				workers => $device eq 'mobile' ? 1 : ($device eq 'server' ? 2 : 1));
+		}
 
 		# A handheld is not a Linux deck: a teletype session needs a shell on the
 		# machine it runs on, and Android offers none. Both listeners were a whole
 		# app each for a door nothing on a phone opens.
 		if ($device ne 'mobile') {
-			&subs::subprocessor(sub {
-			 # $SIG{'KILL'} = sub { threads->exit(); };
-				$ENV{PURPOSE} = "teletype";
-				$ENV{MOJO_LISTEN} = 'https://*:' . $tty_port . $certs;
-				if ($config->{'environment'} eq 'development') {
-					print "Starting Development TTY Server on $tty_port\n";
-					&run_dev_server('./perl/teletype.pl', purpose => 'teletype');
-				}
-				elsif ($config->{'environment'} eq 'production') {
-					print "Starting Pro TTY Server on port " . $tty_port . "\n";
-					&run_server('./perl/teletype.pl', [ $ENV{MOJO_LISTEN} ],
-						purpose => 'teletype', workers => $device eq 'mobile' ? 1 : ($device eq 'server' ? 3 : 2), keep_alive => 1);
-				}
-			}, { name => 'TTY Server' });
-			&subs::subprocessor(sub {
-			#  $SIG{'KILL'} = sub { threads->exit(); };
-				# The deck's control channel carries keystrokes, pointer movement and
-				# button presses, so it is TLS like every other listener. This is the
-				# wss port handed to a device as PORT_COMS / now_me's twshomebase.
-				$ENV{PURPOSE} = "teletype";
-				$ENV{MOJO_LISTEN} = 'https://*:' . $ws_tty_port . $certs;
-				if ($config->{'environment'} eq 'development') {
-					print "Starting Development TTYwss Server on $ws_tty_port\n";
-					&run_dev_server('./perl/teletype.pl', purpose => 'teletype');
-				}
-				elsif ($config->{'environment'} eq 'production') {
-					print "Starting Pro TTYwss Server on port " . $ws_tty_port . "\n";
-					&run_server('./perl/teletype.pl', [ $ENV{MOJO_LISTEN} ],
-						purpose => 'teletype', workers => 1, keep_alive => 1);
-				}
-			}, { name => 'TTY WS Server' });
+			if ($config->{'environment'} eq 'development') {
+				print "Starting Development TTY Server on $tty_port\n";
+				&server_process('./perl/teletype.pl', [ 'https://*:' . $tty_port . $certs ],
+					purpose => 'teletype', name => 'TTY Server', dev => 1);
+			}
+			elsif ($config->{'environment'} eq 'production') {
+				print "Starting Pro TTY Server on port " . $tty_port . "\n";
+				&server_process('./perl/teletype.pl', [ 'https://*:' . $tty_port . $certs ],
+					purpose => 'teletype', name => 'TTY Server',
+					workers => $device eq 'mobile' ? 1 : ($device eq 'server' ? 3 : 2), keep_alive => 1);
+			}
+			# The deck's control channel carries keystrokes, pointer movement and
+			# button presses, so it is TLS like every other listener. This is the
+			# wss port handed to a device as PORT_COMS / now_me's twshomebase.
+			if ($config->{'environment'} eq 'development') {
+				print "Starting Development TTYwss Server on $ws_tty_port\n";
+				&server_process('./perl/teletype.pl', [ 'https://*:' . $ws_tty_port . $certs ],
+					purpose => 'teletype', name => 'TTY WS Server', dev => 1);
+			}
+			elsif ($config->{'environment'} eq 'production') {
+				print "Starting Pro TTYwss Server on port " . $ws_tty_port . "\n";
+				&server_process('./perl/teletype.pl', [ 'https://*:' . $ws_tty_port . $certs ],
+					purpose => 'teletype', name => 'TTY WS Server', workers => 1, keep_alive => 1);
+			}
 		}
 	}
 

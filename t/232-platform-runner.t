@@ -1,4 +1,4 @@
-# tests-for: lib/JawnOS/Platform/Runner.pm lib/JawnOS/Platform/Runner/Unix.pm
+# tests-for: lib/JawnOS/Platform/Runner.pm lib/JawnOS/Platform/Runner/Unix.pm lib/JawnOS/Platform/Server.pm
 # covers:    the runner seam picks the platform backend, every backend starts a
 #            child and reports its output and exit, a write reaches the child,
 #            and nothing outside the Unix backend names ReadWriteFork.
@@ -15,6 +15,7 @@ use File::Slurp qw(write_file read_file);
 use RepoSource;
 use Mojo::IOLoop;
 use JawnOS::Platform::Runner;
+use JawnOS::Platform::Server;
 
 my $root = repo_root();
 
@@ -119,5 +120,26 @@ like($said, qr/got:ping/, 'write reaches the child');
 # A pty handle exists on Unix; Windows has none, and the resize path treats
 # undef as "there is no terminal to resize".
 ok($runner->can('read_handle'), 'the seam exposes a read handle');
+
+# The server launcher names the child's command and environment without
+# starting anything; spawn is the thin half that starts it.
+{
+	my $plan = JawnOS::Platform::Server::plan(
+		app     => './perl/Manager.pl',
+		purpose => 'main',
+		listen  => ['https://*:3000?x', 'http://127.0.0.1:3001'],
+		cwd     => '/tmp/root',
+	);
+	ok($plan, 'plan returns a spec for an app');
+	is($plan->{'program'}, $^X, 'plan runs the same interpreter');
+	is_deeply($plan->{'program_args'}, [ '-I', '/tmp/root/lib', './perl/Manager.pl' ],
+		'plan puts lib on @INC and passes the app');
+	is($plan->{'env'}{'PURPOSE'}, 'main', 'plan carries the purpose');
+	is($plan->{'env'}{'MOJO_LISTEN'}, 'https://*:3000?x,http://127.0.0.1:3001',
+		'plan carries the listeners as one MOJO_LISTEN');
+	is($plan->{'env'}{'MOJO_HOME'}, '/tmp/root', 'plan points Mojolicious at the tree');
+	is($plan->{'cwd'}, '/tmp/root', 'plan keeps the cwd');
+	is(JawnOS::Platform::Server::plan(), undef, 'plan without an app is undef');
+}
 
 done_testing();

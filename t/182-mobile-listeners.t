@@ -34,11 +34,11 @@ while ($src =~ /if \(\$device ne 'mobile'\) \{/g) {
 }
 is(scalar @guards, 1, 'a phone skips the teletype listeners only');
 
-like($src, qr/&subs::subprocessor\(sub \{.*?name => 'Pro Locker Server' \}\);/s,
+like($src, qr/&server_process\('\.\/perl\/Manager\.pl', \[[^\]]*\],\s*purpose => 'locker', name => 'Pro Locker Server'/s,
 	'the dock/ticket listener starts on a phone');
 
 my $rest = $src;
-$rest =~ s/if \(\$device ne 'mobile'\) \{\s*&subs::subprocessor\(sub \{.*?name => 'TTY WS Server' \}\);\s*\}//s;
+$rest =~ s/if \(\$device ne 'mobile'\) \{.*?\n\t\t\}\n//s;
 for my $keep ('Pro Locker Server', 'Pro WS Server', 'Pro Main Server', 'Pro Alarm Server', 'Watch Server') {
 	like($rest, qr/name => '\Q$keep\E'/, "$keep still starts on a phone");
 }
