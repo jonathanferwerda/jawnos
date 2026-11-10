@@ -5,7 +5,9 @@
 #            box). The harness now owns its dirs - keyed by pid, so a forked
 #            child never removes the sandbox its siblings share - and removes
 #            them recursively at exit and on INT/TERM/HUP. The fork runner sweeps
-#            what a SIGKILLed run could not.
+#            what a SIGKILLed run could not: each dir carries its owner's pid and
+#            /proc starttime, so the sweep removes a dead owner's dir at once and
+#            still keeps a live run's, which no cwd or open file points at.
 
 use strict;
 use warnings;
@@ -64,5 +66,26 @@ ok(!-e $tap, 'and its TAP spill file');
 ok(-d $fresh, 'a fresh dir is left for the run using it');
 ok(-f $hints, 'the duration-hints file is not scratch');
 cmp_ok($removed, '>=', 2, 'the sweep reports what it removed');
+
+# --- the owner stamp decides without waiting out the age ---------------------
+
+my $live = "$tmp/jawnos-test-live02";
+mkdir $live or die "mkdir $live: $!\n";
+JawnOSTest::_stamp_owner($live);          # this process, and its starttime
+utime($past, $past, $live) or die "utime: $!\n";
+JawnOSTest::sweep_stale_scratch(dir => $tmp, max_age => 60);
+ok(-d $live, 'a stamped dir whose owner is still running is kept, however old');
+
+my $dead = "$tmp/jawnos-test-dead02";
+mkdir $dead or die "mkdir $dead: $!\n";
+JawnOSTest::_stamp_owner($dead, 999_999, 1);
+JawnOSTest::sweep_stale_scratch(dir => $tmp, max_age => 3600);
+ok(!-e $dead, 'a young dir stamped by a dead pid is swept at once');
+
+my $reused = "$tmp/jawnos-test-reused";
+mkdir $reused or die "mkdir $reused: $!\n";
+JawnOSTest::_stamp_owner($reused, $$, 1);  # same pid, wrong starttime
+JawnOSTest::sweep_stale_scratch(dir => $tmp, max_age => 3600);
+ok(!-e $reused, 'a stamp whose pid was reused (starttime differs) is swept');
 
 done_testing();

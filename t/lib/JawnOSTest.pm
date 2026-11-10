@@ -54,13 +54,71 @@ sub sandbox { return $SANDBOX }
 # rebooted. Track the owner here so the removal is explicit, recursive, and still
 # safe across the fork: a child removes only its own isolated dir, never the
 # sandbox its siblings share.
+#
+# The owner is also written into the dir (`_OWNER_STAMP`), so a later run can
+# tell a live dir from an abandoned one. A killed process leaves no END, but its
+# pid is dead, and the sweep below removes what it left at once instead of
+# waiting out the age threshold.
 my @SCRATCH;
+my $OWNER_STAMP = '.jawnos-owner';
 
 sub _scratch_new {
 	my ($template, $what) = @_;
 	my $dir = tempdir($template, TMPDIR => 1, CLEANUP => 0);
 	die "JawnOSTest: cannot create $what\n" unless defined $dir;
+	_stamp_owner($dir);
 	return _track_scratch($dir);
+}
+
+# The stamp is `<pid> <starttime>`. /proc's starttime (field 22) is what tells a
+# recycled pid apart from the owner. It is written before the database copy, so a
+# concurrent sweep never sees an unstamped live dir for more than an instant.
+sub _stamp_owner {
+	my ($dir, $pid, $start) = @_;
+	$pid = $$ unless defined $pid;
+	$start = _proc_starttime($pid) unless defined $start;
+	$start = 0 unless defined $start;
+	open(my $fh, '>', File::Spec->catfile($dir, $OWNER_STAMP)) or return 0;
+	print $fh "$pid $start\n";
+	close $fh;
+	return 1;
+}
+
+sub _owner_stamp {
+	my ($dir) = @_;
+	my $file = File::Spec->catfile($dir, $OWNER_STAMP);
+	return unless -f $file;
+	open(my $fh, '<', $file) or return;
+	my $line = <$fh>;
+	close $fh;
+	return unless defined $line && $line =~ /\A(\d+)\s+(\d+)\s*\z/;
+	return ($1, $2);
+}
+
+# starttime from /proc/<pid>/stat. The comm field is parenthesised and may hold
+# spaces, so split only what follows the last ')' (starttime is field 22 overall,
+# index 19 after the comm).
+sub _proc_starttime {
+	my ($pid) = @_;
+	return unless defined $pid && $pid =~ /\A\d+\z/ && $pid > 0;
+	open(my $fh, '<', "/proc/$pid/stat") or return;
+	my $line = <$fh>;
+	close $fh;
+	return unless defined $line;
+	my $i = rindex($line, ')');
+	return unless $i >= 0;
+	my @field = split ' ', substr($line, $i + 1);
+	return unless @field > 19;
+	return $field[19];
+}
+
+# Without a recorded starttime fall back to a plain pid probe (no /proc).
+sub _owner_alive {
+	my ($pid, $start) = @_;
+	return 0 unless defined $pid && $pid =~ /\A\d+\z/ && $pid > 0;
+	return kill(0, $pid) ? 1 : 0 unless $start;
+	my $now = _proc_starttime($pid);
+	return defined $now && $now eq $start;
 }
 
 # Owner defaults to the creating pid. The tests pass a sentinel owner so they
@@ -109,11 +167,14 @@ sub _install_scratch_signals {
 # --- sweeping what a dead run left -------------------------------------------
 
 # A run killed by SIGKILL (or one whose runner was orphaned) never reaches END,
-# so its scratch dirs never go away. The next suite sweeps what is clearly
-# abandoned: older than the threshold (6 hours, JAWNOS_TEST_SCRATCH_MAX_AGE
-# overrides it) AND named by no live process, so a concurrent run's dirs - fresh,
-# and open - stay put. The duration-hint file is `jawnos-test-times-<uid>`,
-# which is state, not scratch.
+# so its scratch dirs never go away. The next suite sweeps what is abandoned. A
+# dir is safe to remove when the pid in its stamp is dead (or has been reused:
+# the starttime no longer matches), or - for a dir written before the stamp, or
+# one caught between mkdir and the stamp landing - when it is older than the
+# threshold (6 hours, JAWNOS_TEST_SCRATCH_MAX_AGE overrides it) AND named by no
+# live process. A live run's own dir stays: its pid is alive and its stamp says
+# so, even though after boot the dir is neither its cwd nor an open file. The
+# duration-hint file is `jawnos-test-times-<uid>`, which is state, not scratch.
 sub sweep_stale_scratch {
 	my (%opt) = @_;
 	my $max_age = defined $opt{'max_age'} ? $opt{'max_age'}
@@ -135,8 +196,20 @@ sub sweep_stale_scratch {
 		next if -l $path;                     # never follow (or remove) a link
 		my @st = lstat($path);
 		next unless @st;
-		next if $now - $st[9] < $max_age;     # a run may still be writing it
 		next if _referenced($path, \@live);
+
+		# A stamp names the run that owns the dir: keep it while that pid is
+		# alive, and remove what a killed run left without waiting out the age
+		# threshold (the stamp lands before the database copy).
+		my ($pid, $start) = _owner_stamp($path);
+		if (defined $pid) {
+			next if _owner_alive($pid, $start);
+			remove_tree($path, { error => \my $err });
+			$removed++;
+			next;
+		}
+
+		next if $now - $st[9] < $max_age;     # a run may still be writing it
 		remove_tree($path, { error => \my $err });
 		$removed++;
 	}

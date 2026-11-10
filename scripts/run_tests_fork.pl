@@ -110,8 +110,9 @@ if (!$booted) {
 
 # A killed run cannot clean up after itself (END never runs on SIGKILL), and a
 # suite leaves one copy of the house database per test file in tmpfs. Sweep what
-# is clearly abandoned before this run starts; a dir a live process still names,
-# or one younger than the threshold, is left for the run using it.
+# is abandoned before this run starts: a dir whose stamped pid is dead goes now;
+# an unstamped dir waits out the age threshold, and any dir a live process names
+# or still owns is left for the run using it.
 JawnOSTest::sweep_stale_scratch();
 
 # --- run ---------------------------------------------------------------------
