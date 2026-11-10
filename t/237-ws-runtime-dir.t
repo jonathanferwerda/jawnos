@@ -10,7 +10,8 @@ use FindBin;
 use lib "$FindBin::Bin/lib", "t/lib";
 use Test::More;
 use File::Temp qw(tempdir);
-use File::Slurp qw(read_file);
+use File::Slurp qw(read_file write_file);
+use Socket qw(SOCK_STREAM);
 use JawnOSTest;
 
 my $dir = tempdir('jawnos-ws-run-XXXXXX', TMPDIR => 1, CLEANUP => 1);
@@ -49,5 +50,37 @@ like($misc, qr/subs::ws_watcher_path\(\)/, 'the manager read asks for the runtim
 my $music = read_file("$FindBin::Bin/../perl/Music/01_remote_audio_receiver.pl");
 unlike($music, qr{\.president/ws_watcher}, 'the music receiver no longer names ~/.president');
 like($music, qr/subs::ws_watcher_path\(\)/, 'the music receiver asks for the runtime watcher');
+
+
+subtest 'the legacy socket surface is tidied' => sub {
+	my $legacy = tempdir('jawnos-ws-legacy-XXXXXX', TMPDIR => 1, CLEANUP => 1);
+	my $new    = tempdir('jawnos-ws-new-XXXXXX', TMPDIR => 1, CLEANUP => 1);
+	mkdir "$legacy/ws" or die "mkdir legacy ws: $!";
+	for my $app (qw/server tab/) {
+		my $sock = IO::Socket::UNIX->new(Type => SOCK_STREAM, Local => "$legacy/ws/$app", Listen => 1)
+			or die "socket $app: $!";
+		close $sock;
+	}
+	write_file("$legacy/ws/keep.txt", 'not a socket');
+	write_file("$legacy/ws_watcher", '');
+
+	local $gb::tmp_dir = $legacy;
+	local $subs::install_dir = $new;
+	local $ENV{'JAWNOS_RUN_DIR'} = '';
+	ok(subs::ws_legacy_tidy(), 'the legacy surface is tidied');
+	ok(!-e "$legacy/ws/server", 'the stale server socket is gone');
+	ok(!-e "$legacy/ws/tab", 'the stale tab socket is gone');
+	ok(-e "$legacy/ws/keep.txt", 'a non-socket file is left alone');
+	ok(!-e "$legacy/ws_watcher", 'the old watcher is gone');
+	ok(-d "$new/run/ws", 'the active run/ws is not touched');
+
+	# When the legacy path is the active path, nothing is removed.
+	my $live = IO::Socket::UNIX->new(Type => SOCK_STREAM, Local => "$legacy/ws/server", Listen => 1)
+		or die "live socket: $!";
+	close $live;
+	local $ENV{'JAWNOS_RUN_DIR'} = $legacy;
+	ok(!subs::ws_legacy_tidy(), 'the active path is not tidied');
+	ok(-S "$legacy/ws/server", 'the active socket stays');
+};
 
 done_testing();

@@ -281,6 +281,38 @@ sub ws_dir {
 
 sub ws_watcher_path { return &subs::runtime_dir() . '/ws_watcher' }
 
+# The pre-run/ code kept the per-app sockets and the watcher under $gb::tmp_dir
+# (~/.president on the phone, /tmp elsewhere). They are stale now, but a Unix
+# socket file outlives its process, so the old names sit on disk forever. At
+# websocket boot, remove only the legacy sockets that no longer answer and the
+# old watcher, and never touch the active run/ path. A live socket is left for
+# the process that still owns it.
+sub ws_legacy_tidy {
+	my $tmp = $gb::tmp_dir;
+	return 0 unless defined $tmp && length $tmp;
+	my $legacy = $tmp . '/ws';
+	my $active = &subs::ws_dir();
+	my $did = 0;
+	if ($legacy ne $active && -d $legacy) {
+		opendir(my $dh, $legacy) or return 0;
+		require JawnOS::Transport;
+		for my $entry ( sort readdir $dh ) {
+			next if $entry eq '.' || $entry eq '..';
+			my $path = "$legacy/$entry";
+			next unless -S $path;
+			my $probe = eval { JawnOS::Transport::client_unix_socket($path) };
+			if ($probe) { close $probe; next; }
+			$did = 1 if unlink $path;
+		}
+		closedir $dh;
+		eval { rmdir $legacy };
+	}
+	my $old_watch = $tmp . '/ws_watcher';
+	my $new_watch = &subs::ws_watcher_path();
+	if ($old_watch ne $new_watch && -e $old_watch) { $did = 1 if unlink $old_watch; }
+	return $did;
+}
+
 # The debrief is the browser's whole localStorage snapshot, saved by the tab
 # and read back when a fresh window opens. It travels over HTTP, not the
 # heartbeat: a store can be large, and the websocket frame is a liveness beat,

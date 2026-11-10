@@ -41,6 +41,8 @@ our $log = Mojo::Log->new(path => $logfile);
 my $device = &subs::device_setter();
 my $home_file = &subs::ws_watcher_path();
 write_file($home_file, '') if !-e $home_file;
+my $legacy_tidied = &subs::ws_legacy_tidy();
+$log->info('ws: removed the legacy socket surface') if $legacy_tidied;
 
 # The padlock gate for live pushes is per recipient, in
 # Manager::websocket_sender (Part37.pm): it asks padlock_locked_now about the
