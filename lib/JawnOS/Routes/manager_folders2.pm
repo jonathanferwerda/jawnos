@@ -24,7 +24,9 @@ sub routes {
 	[30711, 'post', '/manager/folders/cloud/probe', 'action_30711'],
 	[30712, 'post', '/manager/folders/cloud/receive', 'action_30712'],
 	[30713, 'post', '/manager/folders/cloud/discard', 'action_30713'],
-	[30714, 'post', '/manager/folders/cloud/prune', 'action_30714'],
+	[30715, 'post', '/manager/folders/cloud/register', 'action_30715'],
+	[30716, 'post', '/manager/folders/cloud/unregister', 'action_30716'],
+	[30717, 'post', '/manager/folders/cloud/delete', 'action_30717'],
 	);
 }
 

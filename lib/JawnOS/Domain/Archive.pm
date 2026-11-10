@@ -269,6 +269,8 @@ sub archive_partial_state {
 		total => $meta->{'total'},
 		mtime => $meta->{'mtime'},
 		source => $meta->{'source'},
+		sender => $meta->{'sender'},
+		started => $meta->{'started'},
 	};
 }
 
@@ -336,6 +338,7 @@ sub archive_discard_remote {
 	my %form = (path => $data->{'relative'}, source => $data->{'source'});
 	$form{'location'} = $data->{'location'} if defined $data->{'location'};
 	$form{'base'} = $data->{'base'} if defined $data->{'base'};
+	$form{'sender'} = $data->{'sender'} if defined $data->{'sender'};
 	my $tx = eval {
 		return $ua->post($manager . $url => form => \%form)
 	};
@@ -380,6 +383,7 @@ sub archive_send_file {
 		);
 		$form{'location'} = $data->{'location'} if defined $data->{'location'};
 		$form{'base'} = $data->{'base'} if defined $data->{'base'};
+		$form{'sender'} = $data->{'sender'} if defined $data->{'sender'};
 		if ($chunked) {
 			$form{'offset'} = $offset;
 			$form{'total'} = $total;
@@ -442,7 +446,8 @@ sub archive_send_file {
 			&archive_discard_remote({
 				ua => $ua, manager => $manager, url => $discard_url,
 				location => $data->{'location'}, base => $data->{'base'},
-				relative => $data->{'relative'}, source => $source
+				relative => $data->{'relative'}, source => $source,
+				sender => $data->{'sender'}
 			}) if defined $discard_url;
 			return (0, 'cancelled', { cancelled => 1, resumed => $start > 0 });
 		}
@@ -1499,15 +1504,309 @@ sub folders_entry_names {
 
 # ---- cloud sync -----------------------------------------------------------
 #
-# A folder registered for CloudSync is pushed to the devices chosen for it.
-# The machine that registered the folder is the source; every chosen machine
-# keeps a mirror of it. The transfer uses the same partial/resume rule and the
-# same job note the archive rail uses, so one progress bar serves both.
+# A CloudSync folder is a little mesh: every device that holds it watches its
+# own copy and pushes what changed to the others. The machine that started the
+# sync registers the folder on each chosen device, so each of them has the same
+# member list and the same job.
 #
-# The destination is named by `base`: a path relative to the destination's own
-# home, or an absolute path when the source sits outside home. That is what
-# lets ~/Documents/Shared mean the right folder on a machine whose home has a
-# different absolute path.
+# Each device keeps its own state file (under ~/.president/cloud_sync, never
+# inside the folder): what it last agreed each file was, what it has seen
+# deleted, and what it still has to deliver. That is what lets an offline
+# device's edit and another device's deletion be compared by time instead of
+# one silently winning. A conflict keeps both copies: the deterministic winner
+# stays at the name and the loser is saved beside it as .conflict-<hash>.
+
+sub cloud_sync_state_empty {
+	return { files => {}, deleted => {}, pending => [] };
+}
+
+sub cloud_sync_state_normalize {
+	my $state = shift;
+	$state = {} unless ref $state eq 'HASH';
+	$state->{'files'} = {} unless ref $state->{'files'} eq 'HASH';
+	$state->{'deleted'} = {} unless ref $state->{'deleted'} eq 'HASH';
+	$state->{'pending'} = [] unless ref $state->{'pending'} eq 'ARRAY';
+	return $state;
+}
+
+sub cloud_sync_state_dir {
+	return &home('~/.president/cloud_sync');
+}
+
+sub cloud_sync_state_path {
+	my $base = defined $_[0] ? $_[0] : '';
+	return &cloud_sync_state_dir() . '/' . sha256_hex($base) . '.json';
+}
+
+# A per-destination lock under ~/.president, not inside the folder, so two
+# devices pushing the same path cannot write one partial at the same time. The
+# lock file must never become sync content.
+sub cloud_sync_lock_path {
+	my $path = defined $_[0] ? $_[0] : '';
+	my $dir = &cloud_sync_state_dir() . '/locks';
+	File::Path::make_path($dir) unless -d $dir;
+	return $dir . '/' . sha256_hex($path) . '.lock';
+}
+
+sub cloud_sync_state_read {
+	my $base = shift;
+	my $path = &cloud_sync_state_path($base);
+	return &cloud_sync_state_empty() unless -e $path;
+	open(my $fh, '<', $path) or return &cloud_sync_state_empty();
+	flock($fh, LOCK_SH);
+	local $/;
+	my $raw = <$fh> // '';
+	close $fh;
+	my $state = eval { return decode_json($raw) };
+	return &cloud_sync_state_normalize($state);
+}
+
+# Read, change and write one device's state under one exclusive lock, so a
+# receive in the web process and a sweep in the worker cannot lose each
+# other's entries.
+sub cloud_sync_state_modify {
+	my ($base, $code) = @_;
+	my $path = &cloud_sync_state_path($base);
+	my $dir = $path;
+	$dir =~ s{/[^/]+$}{};
+	File::Path::make_path($dir) unless -d $dir;
+	my $fh;
+	unless (open($fh, '+<', $path)) {
+		open($fh, '>', $path) or return { error => "cannot open $path: $!" };
+	}
+	flock($fh, LOCK_EX);
+	local $/;
+	my $raw = <$fh> // '';
+	my $state = eval { return decode_json($raw) };
+	$state = &cloud_sync_state_normalize($state);
+	my $answer = $code->($state);
+	# A scan that found nothing must not rewrite a large state file every
+	# minute. Callers that change state leave __dirty unset or true.
+	my $dirty = $state->{'__dirty'};
+	delete $state->{'__dirty'};
+	if (!defined $dirty || $dirty) {
+		seek($fh, 0, 0);
+		truncate($fh, 0);
+		print $fh encode_json($state);
+	}
+	close $fh;
+	return $answer;
+}
+
+sub cloud_sync_pending_id {
+	return &rightNow() . '-' . &random_string_creator(8);
+}
+
+sub cloud_sync_pending_clear {
+	my ($state, $rel) = @_;
+	$state->{'pending'} = [ grep { ($_->{'rel'} || '') ne ($rel || '') } @{ $state->{'pending'} || [] } ];
+	return;
+}
+
+sub cloud_sync_pending_add {
+	my ($state, $change) = @_;
+	my $entry = { %{$change || {}} };
+	$entry->{'id'} = &cloud_sync_pending_id() unless $entry->{'id'};
+	&cloud_sync_pending_clear($state, $entry->{'rel'});
+	push @{ $state->{'pending'} }, $entry;
+	return $entry;
+}
+
+sub cloud_sync_pending_remove {
+	my ($state, $ids) = @_;
+	my %drop = map { $_ => 1 } @{ $ids || [] };
+	$state->{'pending'} = [ grep { !$drop{$_->{'id'} || ''} } @{ $state->{'pending'} || [] } ];
+	return;
+}
+
+sub cloud_sync_relative_for {
+	my ($root, $file) = @_;
+	return '' unless (defined $root && defined $file);
+	my $relative = substr($file, length($root));
+	$relative =~ s{^/+}{};
+	return $relative;
+}
+
+# Which copy wins when two devices hold different bytes. Time first; an equal
+# time is decided by the content hash, so both devices choose the same winner
+# and the result cannot ping-pong.
+sub cloud_sync_conflict_choice {
+	my ($local_mtime, $incoming_mtime, $local_hash, $incoming_hash) = @_;
+	$local_mtime = 0 unless (defined $local_mtime && $local_mtime =~ /^\d+$/);
+	$incoming_mtime = 0 unless (defined $incoming_mtime && $incoming_mtime =~ /^\d+$/);
+	return 'incoming' if $incoming_mtime > $local_mtime;
+	return 'local' if $local_mtime > $incoming_mtime;
+	return 'same' if (defined $local_hash && defined $incoming_hash
+		&& length $local_hash && length $incoming_hash && $local_hash eq $incoming_hash);
+	return 'local' unless (defined $incoming_hash && length $incoming_hash);
+	return 'incoming' unless (defined $local_hash && length $local_hash);
+	return ($incoming_hash gt $local_hash) ? 'incoming' : 'local';
+}
+
+# The name a losing copy is kept under. The hash makes the same loser get the
+# same name on every device, so two devices that save it do not multiply it.
+sub cloud_sync_conflict_path {
+	my ($dest, $hash) = @_;
+	my $tag = (defined $hash && $hash =~ /^([0-9a-f]{8})/i) ? lc $1 : 'copy';
+	my $base = $dest->{'path'} . '.conflict-' . $tag;
+	my $path = $base;
+	my $n = 1;
+	while (-e $path) {
+		# The same loser may already be saved under this name on another
+		# device. Reuse it rather than make a second copy of the same bytes.
+		if (defined $hash && -f $path) {
+			my $have = &archive_file_digest($path);
+			return {
+				path => $path,
+				relative => &cloud_sync_relative_for($dest->{'root'}, $path),
+				parent => $dest->{'parent'}
+			} if (defined $have && $have eq $hash);
+		}
+		$path = $base . '.' . $n;
+		$n++;
+	}
+	my @parts = split '/', $path;
+	my $name = pop @parts;
+	return {
+		path => $path,
+		relative => &cloud_sync_relative_for($dest->{'root'}, $path),
+		parent => join('/', @parts)
+	};
+}
+
+# A received upload's last step. The caller has the complete bytes in the
+# partial; this decides whether they replace the local file, become a conflict
+# copy, or lose to a newer deletion. State and files are changed under one
+# state lock, so a sweep sees the result whole.
+sub cloud_sync_finalize_upload {
+	my $data = shift || {};
+	my $base = $data->{'base'};
+	my $dest = $data->{'dest'} || {};
+	my $part = $data->{'part'};
+	my $meta_path = $data->{'meta_path'};
+	my $mtime = $data->{'mtime'};
+	$mtime = 0 unless (defined $mtime && $mtime =~ /^\d+$/);
+	my $incoming_hash = (defined $data->{'hash'} && length $data->{'hash'})
+		? $data->{'hash'} : &archive_file_digest($part);
+	return { error => 'the upload could not be read' } unless defined $incoming_hash;
+	my $final_path = $dest->{'path'};
+	my $rel = $dest->{'relative'};
+	return { error => 'no destination' } unless (defined $final_path && defined $rel);
+
+	my $answer = &cloud_sync_state_modify($base, sub {
+		my $state = shift;
+		my $tomb = $state->{'deleted'}->{$rel};
+		my $exists = -f $final_path ? 1 : 0;
+		my @stat = $exists ? stat($final_path) : ();
+		my $local_mtime = $exists ? ($stat[9] || 0) : 0;
+		my $local_size = $exists ? ($stat[7] || 0) : 0;
+		my $incoming_size = -s $part;
+		$incoming_size = 0 unless defined $incoming_size;
+		my $local_hash;
+		# A hash is only needed where it decides something: identical bytes
+		# under different times, or a real tie. The common changed file is
+		# settled by its time.
+		if ($exists && ($local_size == $incoming_size || $local_mtime == $mtime)) {
+			$local_hash = &archive_file_digest($final_path);
+		}
+
+		if (!$exists && defined $tomb && $tomb >= $mtime) {
+			unlink $part if -e $part;
+			unlink $meta_path if ($meta_path && -e $meta_path);
+			return { accepted => 0, kept => 'deleted', deleted_at => 0 + $tomb };
+		}
+
+		if ($exists && defined $local_hash && $local_hash eq $incoming_hash) {
+			unless (rename($part, $final_path)) {
+				return { error => 'the identical copy could not be moved into place' };
+			}
+			utime $mtime, $mtime, $final_path if $mtime;
+			$state->{'files'}->{$rel} = { size => $local_size, mtime => $mtime, hash => $incoming_hash };
+			delete $state->{'deleted'}->{$rel};
+			&cloud_sync_pending_clear($state, $rel);
+			unlink $meta_path if ($meta_path && -e $meta_path);
+			return { accepted => 1, same => 1, hash => $incoming_hash };
+		}
+
+		my $choice = $exists
+			? &cloud_sync_conflict_choice($local_mtime, $mtime, $local_hash, $incoming_hash)
+			: 'incoming';
+
+		if ($choice eq 'local') {
+			# The local copy wins. Keep the incoming bytes beside it and mark
+			# the local copy as changed, so the next sweep pushes the winner
+			# back to the sender.
+			my $conflict = &cloud_sync_conflict_path($dest, $incoming_hash);
+			File::Path::make_path($conflict->{'parent'}) unless -d $conflict->{'parent'};
+			unless (rename($part, $conflict->{'path'})) {
+				return { error => 'the losing copy could not be kept' };
+			}
+			utime $mtime, $mtime, $conflict->{'path'} if $mtime;
+			delete $state->{'files'}->{$rel};
+			&cloud_sync_pending_clear($state, $rel);
+			unlink $meta_path if ($meta_path && -e $meta_path);
+			return {
+				accepted => 0,
+				kept => 'local',
+				mtime => $local_mtime,
+				hash => $local_hash,
+				conflict => 1,
+				saved => $conflict->{'relative'}
+			};
+		}
+
+		# The incoming copy wins. A different local copy is kept under its
+		# own conflict name before the winner takes the original place.
+		my $saved;
+		if ($exists) {
+			my $loser_hash = $local_hash || &archive_file_digest($final_path);
+			my $conflict = &cloud_sync_conflict_path($dest, $loser_hash);
+			File::Path::make_path($conflict->{'parent'}) unless -d $conflict->{'parent'};
+			unless (rename($final_path, $conflict->{'path'})) {
+				return { error => 'the local copy could not be kept' };
+			}
+			utime $local_mtime, $local_mtime, $conflict->{'path'} if $local_mtime;
+			$saved = $conflict->{'relative'};
+		}
+		unless (rename($part, $final_path)) {
+			rename($saved ? $dest->{'root'} . '/' . $saved : '', $final_path) if $saved && -e $dest->{'root'} . '/' . $saved;
+			return { error => 'the verified copy could not be moved into place' };
+		}
+		utime $mtime, $mtime, $final_path if $mtime;
+		$state->{'files'}->{$rel} = { size => (-s $final_path || 0), mtime => $mtime, hash => $incoming_hash };
+		delete $state->{'deleted'}->{$rel};
+		&cloud_sync_pending_clear($state, $rel);
+		unlink $meta_path if ($meta_path && -e $meta_path);
+		return { accepted => 1, conflict => ($saved ? 1 : 0), saved => $saved, hash => $incoming_hash };
+	});
+	return $answer;
+}
+
+# A peer saying a path is gone. The local copy stays if it was edited after
+# the deletion; that edit is then marked as changed so it travels back.
+sub cloud_sync_apply_delete {
+	my ($base, $dest, $deleted_at) = @_;
+	$deleted_at = 0 unless (defined $deleted_at && $deleted_at =~ /^\d+$/);
+	return { error => 'no destination' } unless (ref $dest eq 'HASH' && defined $dest->{'path'});
+	my $rel = $dest->{'relative'};
+	return &cloud_sync_state_modify($base, sub {
+		my $state = shift;
+		my $path = $dest->{'path'};
+		my $exists = -f $path ? 1 : 0;
+		my $mtime = $exists ? ((stat($path))[9] || 0) : 0;
+		if ($exists && $mtime > $deleted_at) {
+			delete $state->{'files'}->{$rel};
+			&cloud_sync_pending_clear($state, $rel);
+			return { deleted => 0, kept => 1, mtime => $mtime };
+		}
+		unlink $path if $exists;
+		my $old = $state->{'deleted'}->{$rel};
+		$state->{'deleted'}->{$rel} = ($old && $old > $deleted_at) ? $old : $deleted_at;
+		delete $state->{'files'}->{$rel};
+		&cloud_sync_pending_clear($state, $rel);
+		return { deleted => $exists, kept => 0, deleted_at => $state->{'deleted'}->{$rel} };
+	});
+}
 
 # The device list a CloudSync folder may use: every peer in the house, with the
 # free space on the volume its copy would land on. A device that cannot answer,
@@ -1546,6 +1845,7 @@ sub cloud_sync_space_rows {
 		my $needed = (defined $bytes && $bytes =~ /^\d+$/) ? 0 + $bytes : 0;
 		push @rows, {
 			uuid => $uuid,
+			signatorial => $rm->{'signatorial'},
 			hostname => $hostname,
 			free_bytes => $free,
 			free_human => (defined $free ? &data_size($free) : ''),
@@ -1647,6 +1947,24 @@ sub cloud_sync_registrations_write {
 	return $list;
 }
 
+# Registrations are one JSON setting, so every writer has to take the same lock
+# or a worker's job id can overwrite a folder the person just started. The
+# callback changes the list in place; the write happens under the lock.
+sub cloud_sync_registrations_modify {
+	my $code = shift;
+	my $dir = &cloud_sync_state_dir();
+	File::Path::make_path($dir) unless -d $dir;
+	my $lock_path = $dir . '/registrations.lock';
+	my $lock;
+	open($lock, '>>', $lock_path) or return $code->([ &cloud_sync_registrations() ]);
+	flock($lock, LOCK_EX);
+	my $list = &cloud_sync_registrations();
+	my $answer = $code->($list);
+	&cloud_sync_registrations_write($list);
+	close $lock;
+	return $answer;
+}
+
 sub cloud_sync_registration_for {
 	my $path = shift;
 	return undef unless (defined $path && length $path);
@@ -1656,8 +1974,15 @@ sub cloud_sync_registration_for {
 	return undef;
 }
 
-# Every file of a CloudSync folder, without the manifest of what CloudSync
-# itself has delivered. A folder that is empty is a real answer.
+sub cloud_sync_registration_for_base {
+	my $base = shift;
+	my $dest = &cloud_sync_destination({ base => $base, path => '' });
+	return undef if $dest->{'error'};
+	return &cloud_sync_registration_for($dest->{'root'});
+}
+
+# Every file of a CloudSync folder, without the old one-way manifest. A folder
+# that is empty is a real answer.
 sub cloud_sync_files {
 	my $path = shift;
 	return [] unless (defined $path && length $path && -d $path);
@@ -1675,93 +2000,229 @@ sub cloud_sync_totals {
 	return { files => $files, bytes => $bytes };
 }
 
-# A cheap change signal for the sweep: how many files, the newest time and the
-# byte total. An edit changes one of them; a sweep that sees the same numbers
-# has nothing to queue.
-sub cloud_sync_fingerprint {
-	my $path = shift;
-	my ($files, $newest, $bytes) = (0, 0, 0);
+# What changed on this device since its own last agreed state. The state is
+# brought forward as changes are queued, and the changes themselves stay in
+# pending until a job has delivered them. Re-reading an unchanged file reuses
+# the hash already in the state, so a large folder is not hashed every minute.
+# Every file, for a device that has just joined an existing folder: the other
+# members consider their copies settled, so only a one-time full list can seed
+# the newcomer. Hashes already in the state are reused.
+sub cloud_sync_full_changes {
+	my ($path, $base) = @_;
+	my $state = &cloud_sync_state_read($base);
+	my @changes;
 	foreach my $file ( @{ &cloud_sync_files($path) } ) {
+		my $rel = &cloud_sync_relative_for($path, $file);
+		next unless length $rel;
 		my @stat = stat($file);
-		$files++;
-		$bytes += $stat[7] || 0;
-		$newest = $stat[9] if (($stat[9] || 0) > $newest);
+		my $size = $stat[7] || 0;
+		my $mtime = $stat[9] || 0;
+		my $old = $state->{'files'}->{$rel};
+		my $hash = ($old && defined $old->{'hash'} && ($old->{'size'} || 0) == $size && ($old->{'mtime'} || 0) == $mtime)
+			? $old->{'hash'} : &archive_file_digest($file);
+		push @changes, {
+			kind => 'file',
+			rel => $rel,
+			size => $size,
+			mtime => $mtime,
+			hash => $hash
+		};
 	}
-	return $files . ':' . $newest . ':' . $bytes;
+	return \@changes;
 }
 
-# What a destination may remove: a tracked path the source no longer names.
-# Pure, so the rule that protects files CloudSync did not place can be tested
-# without a disk.
-sub cloud_sync_prune_list {
-	my ($tracked, $incoming) = @_;
-	my %keep = map { $_ => 1 } grep { defined $_ && length $_ } @{$incoming || []};
-	return [ grep { defined $_ && length $_ && !$keep{$_} } @{$tracked || []} ];
+sub cloud_sync_collect_changes {
+	my ($path, $base) = @_;
+	my @pending;
+	&cloud_sync_state_modify($base, sub {
+		my $state = shift;
+		$state->{'__dirty'} = 0;
+		my %seen;
+		foreach my $file ( @{ &cloud_sync_files($path) } ) {
+			my $rel = &cloud_sync_relative_for($path, $file);
+			next unless length $rel;
+			$seen{$rel} = 1;
+			my @stat = stat($file);
+			my $size = $stat[7] || 0;
+			my $mtime = $stat[9] || 0;
+			my $old = $state->{'files'}->{$rel};
+			my $hash;
+			if ($old && defined $old->{'hash'} && ($old->{'size'} || 0) == $size && ($old->{'mtime'} || 0) == $mtime) {
+				$hash = $old->{'hash'};
+			}
+			else {
+				$hash = &archive_file_digest($file);
+			}
+			my $changed = !$old
+				|| ($old->{'size'} || 0) != $size
+				|| ($old->{'mtime'} || 0) != $mtime
+				|| (defined $old->{'hash'} && defined $hash && $old->{'hash'} ne $hash);
+			if ($changed) {
+				&cloud_sync_pending_add($state, {
+					kind => 'file',
+					rel => $rel,
+					size => $size,
+					mtime => $mtime,
+					hash => $hash
+				});
+				$state->{'files'}->{$rel} = { size => $size, mtime => $mtime, hash => $hash };
+				delete $state->{'deleted'}->{$rel};
+				$state->{'__dirty'} = 1;
+			}
+			elsif (defined $state->{'deleted'}->{$rel}) {
+				delete $state->{'deleted'}->{$rel};
+				$state->{'__dirty'} = 1;
+			}
+		}
+		foreach my $rel ( keys %{ $state->{'files'} } ) {
+			next if $seen{$rel};
+			my $deleted_at = time();
+			&cloud_sync_pending_add($state, {
+				kind => 'delete',
+				rel => $rel,
+				deleted_at => $deleted_at
+			});
+			delete $state->{'files'}->{$rel};
+			$state->{'deleted'}->{$rel} = $deleted_at;
+			$state->{'__dirty'} = 1;
+		}
+		@pending = map { { %{$_} } } @{ $state->{'pending'} };
+	});
+	return \@pending;
 }
 
-# Bring a destination's manifest forward and remove only the files it names
-# that the source has dropped. A destination with no manifest is left alone:
-# CloudSync never deletes something it cannot prove it put there.
-sub cloud_sync_prune_files {
-	my ($base, $incoming) = @_;
-	my $dest = &cloud_sync_destination({ base => $base, path => '' });
-	return { error => $dest->{'error'} } if $dest->{'error'};
-	my $manifest = $dest->{'root'} . '/.cloudsync.json';
-	my $tracked = [];
-	if (-e $manifest) {
-		my $raw = eval { return decode_json scalar read_file($manifest) };
-		$tracked = $raw if ref $raw eq 'ARRAY';
-	}
-	my $removed = 0;
-	foreach my $relative ( @{ &cloud_sync_prune_list($tracked, $incoming) } ) {
-		my $into = &cloud_sync_destination({ base => $base, path => $relative });
-		next if $into->{'error'};
-		$removed++ if (-f $into->{'path'} && unlink $into->{'path'});
-	}
-	my @keep = sort grep { defined $_ && length $_ } @{$incoming || []};
-	write_file($manifest, encode_json \@keep);
-	return { removed => $removed, tracked => scalar @keep, manifest => $manifest };
+# Take a peer's newer deletion locally. Used when a push is answered with
+# "you were deleted after your copy's time", so the two sides do not wait for
+# another round trip.
+sub cloud_sync_delete_local {
+	my ($path, $base, $rel, $deleted_at) = @_;
+	$deleted_at = 0 unless (defined $deleted_at && $deleted_at =~ /^\d+$/);
+	my $file = $path . '/' . $rel;
+	my $mtime = -f $file ? ((stat($file))[9] || 0) : 0;
+	return { deleted => 0, kept => 1, mtime => $mtime } if ($mtime > $deleted_at);
+	unlink $file if -f $file;
+	return &cloud_sync_state_modify($base, sub {
+		my $state = shift;
+		my $old = $state->{'deleted'}->{$rel};
+		$state->{'deleted'}->{$rel} = ($old && $old > $deleted_at) ? $old : $deleted_at;
+		delete $state->{'files'}->{$rel};
+		&cloud_sync_pending_clear($state, $rel);
+		return { deleted => 1 };
+	});
 }
 
-# The worker half of CloudSync. One job carries every device chosen for the
-# folder, so the dialog and the queue each show one line for the folder. A file
-# already at the destination at the same size and time costs one probe and is
-# skipped; a changed file is sent through the same partial/resume path the
-# archive uses; deletions are applied through the destination's manifest at the
-# end, never before the copies have landed.
+sub cloud_sync_self_row {
+	return {
+		uuid => 'self',
+		signatorial => &signatorial_designer(),
+		hostname => &machine_name()
+	};
+}
+
+# A chosen folder as it is registered on one peer. The peer resolves the
+# member names against its own roster, drops itself, and remembers the rest as
+# the devices it pushes to.
+sub cloud_sync_register_peer {
+	my ($device, $base, $members) = @_;
+	my $agent = &remote_agent_for($device->{'uuid'});
+	return { error => $agent->{'error'} } if $agent->{'error'};
+	$agent->{'ua'}->request_timeout(20);
+	$agent->{'ua'}->inactivity_timeout(20);
+	$agent->{'ua'}->connect_timeout(6);
+	my $tx = eval {
+		return $agent->{'ua'}->post($agent->{'manager'} . '/manager/folders/cloud/register' => form => {
+			base => $base,
+			members => encode_json($members || [])
+		})
+	};
+	my ($res, $err) = &archive_reply($tx);
+	return $res if ($res && $res->{'status'} eq 'ok');
+	return { error => ($res && $res->{'error'}) || $err || 'the device did not register the folder' };
+}
+
+sub cloud_sync_unregister_peer {
+	my ($device, $base) = @_;
+	my $agent = &remote_agent_for($device->{'uuid'});
+	return { error => $agent->{'error'} } if $agent->{'error'};
+	$agent->{'ua'}->request_timeout(15);
+	$agent->{'ua'}->inactivity_timeout(15);
+	$agent->{'ua'}->connect_timeout(6);
+	my $tx = eval {
+		return $agent->{'ua'}->post($agent->{'manager'} . '/manager/folders/cloud/unregister' => form => {
+			base => $base
+		})
+	};
+	my ($res, $err) = &archive_reply($tx);
+	return $res if ($res && $res->{'status'} eq 'ok');
+	return { error => ($res && $res->{'error'}) || $err || 'the device did not stop the folder' };
+}
+
+sub cloud_sync_delete_peer {
+	my ($device, $base, $rel, $deleted_at) = @_;
+	my $agent = &remote_agent_for($device->{'uuid'});
+	return { error => $agent->{'error'} } if $agent->{'error'};
+	my $tx = eval {
+		return $agent->{'ua'}->post($agent->{'manager'} . '/manager/folders/cloud/delete' => form => {
+			base => $base,
+			path => $rel,
+			deleted_at => $deleted_at
+		})
+	};
+	my ($res, $err) = &archive_reply($tx);
+	return $res if ($res && $res->{'status'} eq 'ok');
+	return { error => ($res && $res->{'error'}) || $err || 'the device did not take the deletion' };
+}
+
+sub cloud_sync_delete_agent {
+	my ($agent, $base, $rel, $deleted_at) = @_;
+	return { error => 'no device to ask' } unless ($agent && !$agent->{'error'});
+	my $tx = eval {
+		return $agent->{'ua'}->post($agent->{'manager'} . '/manager/folders/cloud/delete' => form => {
+			base => $base,
+			path => $rel,
+			deleted_at => $deleted_at
+		})
+	};
+	my ($res, $err) = &archive_reply($tx);
+	return $res if ($res && $res->{'status'} eq 'ok');
+	return { error => ($res && $res->{'error'}) || $err || 'the device did not take the deletion' };
+}
+
+# The worker half of CloudSync. A job carries the pending changes of one
+# folder and pushes each to every other member. A change matters only if the
+# peer does not already have it; the receiver is the one that settles a
+# genuine conflict. Nothing is removed from pending unless every device was
+# reached, so a sleeping machine is retried without losing the change.
 sub cloud_sync_job {
 	my ($job, $data) = @_;
 	my $path = $data->{'path'};
+	my $base = $data->{'base'};
 	unless (defined $path && length $path && -d $path) {
 		$job->fail('the CloudSync folder is not there');
 		return;
 	}
-	my $base = defined $data->{'base'} ? $data->{'base'} : &cloud_sync_base_for($path);
 	my @devices = grep { ref $_ eq 'HASH' && defined $_->{'uuid'} && length $_->{'uuid'} } @{ $data->{'devices'} || [] };
 	unless (scalar @devices) {
 		$job->fail('no device is chosen for CloudSync');
 		return;
 	}
-	my @files = @{ &cloud_sync_files($path) };
-	my $files_count = scalar @files;
-	my %size;
-	my %mtime;
-	my %relative;
-	my $source_bytes = 0;
-	foreach my $file ( @files ) {
-		my @stat = stat($file);
-		$size{$file} = $stat[7] || 0;
-		$mtime{$file} = $stat[9] || 0;
-		$source_bytes += $size{$file};
-		my $rel = substr($file, length($path));
-		$rel =~ s{^/+}{};
-		$relative{$file} = $rel;
+	my @changes = grep { ref $_ eq 'HASH' && defined $_->{'rel'} && length $_->{'rel'} } @{ $data->{'changes'} || [] };
+	if ($data->{'seed'}) {
+		@changes = @{ &cloud_sync_full_changes($path, $base) };
 	}
-	my @source_relatives = map { $relative{$_} } @files;
-
+	elsif ($data->{'collect'}) {
+		@changes = @{ &cloud_sync_collect_changes($path, $base) };
+	}
+	unless (scalar @changes) {
+		$job->finish({ changes => 0, devices => scalar @devices });
+		return;
+	}
 	my $device_count = scalar @devices;
-	my $bytes_total = $source_bytes * $device_count;
-	my $files_total = $files_count * $device_count;
+	my $bytes_total = 0;
+	foreach my $change ( @changes ) {
+		$bytes_total += ($change->{'size'} || 0) * $device_count if (($change->{'kind'} || '') eq 'file');
+	}
+	my $files_total = scalar(@changes) * $device_count;
 	my $bytes_done = 0;
 	my $index = 0;
 	my @errors;
@@ -1785,155 +2246,196 @@ sub cloud_sync_job {
 		my $agent = &remote_agent_for($device->{'uuid'});
 		if ($agent->{'error'}) {
 			push @errors, $host . ': ' . $agent->{'error'};
-			$bytes_done += $source_bytes;
 			$result{$host} = { error => $agent->{'error'} };
 			next;
 		}
-		my $ua = $agent->{'ua'};
-		my $manager = $agent->{'manager'};
-		my ($sent, $skipped, $bytes, $device_errors) = (0, 0, 0, 0);
-
-		foreach my $file ( @files ) {
+		my ($sent, $removed, $skipped) = (0, 0, 0);
+		foreach my $change ( @changes ) {
 			$index++;
-			my $rel = $relative{$file};
-			my $file_size = $size{$file} || 0;
-			if ((($job->info->{'notes'} || {})->{'cancel'})) {
-				$note->('cancelled', file => $rel, file_bytes_done => 0, file_bytes_total => $file_size);
-				$job->finish({ sent => $sent, skipped => $skipped, bytes => $bytes, files => $files_count, cancelled => 1 });
+			my $rel = $change->{'rel'};
+			my $kind = $change->{'kind'} || 'file';
+			my $file = $path . '/' . $rel;
+			if (($job->info->{'notes'} || {})->{'cancel'}) {
+				$note->('cancelled', file => $rel, file_bytes_done => 0, file_bytes_total => ($change->{'size'} || 0));
+				$job->finish({ cancelled => 1, changes => scalar @changes });
 				return;
 			}
-			my $probe_tx = eval {
-				return $ua->post($manager . '/manager/folders/cloud/probe' => form => {
+			if ($kind eq 'file') {
+				unless (-f $file) {
+					$bytes_done += ($change->{'size'} || 0);
+					next;
+				}
+				my @stat = stat($file);
+				my $size = $stat[7] || 0;
+				my $mtime = $stat[9] || 0;
+				my $probe_tx = eval {
+					return $agent->{'ua'}->post($agent->{'manager'} . '/manager/folders/cloud/probe' => form => {
+						base => $base,
+						path => $rel
+					})
+				};
+				my ($probe, $probe_error) = &archive_reply($probe_tx);
+				if (!$probe || $probe->{'status'} ne 'ok') {
+					push @errors, $host . ': ' . $rel . ': ' . (($probe && $probe->{'error'}) || $probe_error || 'the machine did not answer');
+					$bytes_done += $size;
+					next;
+				}
+				my $partial = $probe->{'partial'} || {};
+				my $partial_sender = $partial->{'sender'};
+				if (defined $partial_sender && length $partial_sender && $partial_sender ne &signatorial_designer()) {
+					my $stale = (defined $partial->{'started'} && $partial->{'started'} =~ /^\d+$/
+						&& (&rightNow() - $partial->{'started'}) > 600000) ? 1 : 0;
+					unless ($stale) {
+						push @errors, $host . ': ' . $rel . ': another device is sending this file';
+						$bytes_done += $size;
+						next;
+					}
+				}
+				if ($probe->{'exists'} && defined $probe->{'size'} && $probe->{'size'} == $size
+					&& (!defined $probe->{'mtime'} || $probe->{'mtime'} == $mtime)) {
+					$skipped++;
+					$bytes_done += $size;
+					$note->('copying', file => $rel, file_bytes_done => $size, file_bytes_total => $size);
+					next;
+				}
+				if (defined $probe->{'deleted_at'} && $probe->{'deleted_at'} >= $mtime) {
+					# The peer's deletion is newer than this copy. Take it now;
+					# waiting would leave the two sides disagreeing.
+					&cloud_sync_delete_local($path, $base, $rel, $probe->{'deleted_at'});
+					$skipped++;
+					$bytes_done += $size;
+					next;
+				}
+				my $resume = &archive_resume_offset({
+					file => $file,
+					total => $size,
+					mtime => $mtime,
+					partial => $probe->{'partial'}
+				});
+				my $start_bytes = $bytes_done;
+				my $progress = sub {
+					my ($file_done, $file_total, $phase) = @_;
+					my $state = (defined $phase && $phase eq 'verifying') ? 'verifying' : 'copying';
+					$note->($state,
+						file => $rel,
+						file_bytes_done => $file_done,
+						file_bytes_total => $file_total,
+						bytes_done => $start_bytes + $file_done
+					);
+					return ((($job->info->{'notes'} || {})->{'cancel'}) ? 1 : 0);
+				};
+				my ($sent_bytes, $send_error, $detail) = &archive_send_file({
+					ua => $agent->{'ua'},
+					manager => $agent->{'manager'},
+					url => '/manager/folders/cloud/receive',
+					discard_url => '/manager/folders/cloud/discard',
 					base => $base,
-					path => $rel
-				})
-			};
-			my ($probe, $probe_error) = &archive_reply($probe_tx);
-			if (!$probe || $probe->{'status'} ne 'ok') {
-				push @errors, $host . ': ' . ($rel || $file) . ': ' . (($probe && $probe->{'error'}) || $probe_error || 'the machine did not answer');
-				$device_errors++;
-				$bytes_done += $file_size;
-				next;
+					relative => $rel,
+					source => $rel,
+					file => $file,
+					mtime => $mtime,
+					start => $resume->{'offset'} || 0,
+					sender => &signatorial_designer(),
+					progress => $progress
+				});
+				$detail = {} unless ref $detail eq 'HASH';
+				if (defined $send_error && $send_error eq 'cancelled') {
+					$note->('cancelled', file => $rel, file_bytes_done => 0, file_bytes_total => $size);
+					$job->finish({ cancelled => 1, changes => scalar @changes });
+					return;
+				}
+				if ($send_error) {
+					push @errors, $host . ': ' . $rel . ': ' . $send_error;
+					$bytes_done += $size;
+					next;
+				}
+				$sent++;
+				if (($detail->{'kept'} || '') eq 'deleted'
+					&& defined $detail->{'deleted_at'} && $detail->{'deleted_at'} >= $mtime) {
+					&cloud_sync_delete_local($path, $base, $rel, $detail->{'deleted_at'});
+				}
+				$bytes_done = $start_bytes + $size;
+				$note->('copying', file => $rel, file_bytes_done => $size, file_bytes_total => $size, bytes_done => $bytes_done);
 			}
-			if ($probe->{'exists'} && defined $probe->{'size'} && $probe->{'size'} == $file_size
-			&& (!defined $probe->{'mtime'} || $probe->{'mtime'} == $mtime{$file})) {
-				$skipped++;
-				$bytes_done += $file_size;
-				$note->('copying', file => $rel, file_bytes_done => $file_size, file_bytes_total => $file_size);
-				next;
+			else {
+				my $deleted_at = $change->{'deleted_at'} || time();
+				if (-f $file) {
+					next;
+				}
+				my $res = &cloud_sync_delete_agent($agent, $base, $rel, $deleted_at);
+				if ($res->{'error'}) {
+					push @errors, $host . ': ' . $rel . ': ' . $res->{'error'};
+					next;
+				}
+				$removed++;
 			}
-			my $resume = &archive_resume_offset({
-				file => $file,
-				total => $file_size,
-				mtime => $mtime{$file},
-				partial => $probe->{'partial'}
-			});
-			my $start_bytes = $bytes_done;
-			my $progress = sub {
-				my ($file_done, $file_total, $phase) = @_;
-				my $state = (defined $phase && $phase eq 'verifying') ? 'verifying' : 'copying';
-				$note->($state,
-				file => $rel,
-				file_bytes_done => $file_done,
-				file_bytes_total => $file_total,
-				bytes_done => $start_bytes + $file_done
-				);
-				return ((($job->info->{'notes'} || {})->{'cancel'}) ? 1 : 0);
-			};
-			my ($sent_bytes, $send_error) = &archive_send_file({
-				ua => $ua,
-				manager => $manager,
-				url => '/manager/folders/cloud/receive',
-				discard_url => '/manager/folders/cloud/discard',
-				base => $base,
-				relative => $rel,
-				source => $rel,
-				file => $file,
-				mtime => $mtime{$file},
-				start => $resume->{'offset'} || 0,
-				progress => $progress
-			});
-			if (defined $send_error && $send_error eq 'cancelled') {
-				$note->('cancelled', file => $rel, file_bytes_done => 0, file_bytes_total => $file_size);
-				$job->finish({ sent => $sent, skipped => $skipped, bytes => $bytes, files => $files_count, cancelled => 1 });
-				return;
-			}
-			if ($send_error) {
-				push @errors, $host . ': ' . $rel . ': ' . $send_error;
-				$device_errors++;
-				$bytes_done += $file_size;
-				next;
-			}
-			$sent++;
-			$bytes += $sent_bytes || 0;
-			$bytes_done = $start_bytes + $file_size;
-			$note->('copying', file => $rel, file_bytes_done => $file_size, file_bytes_total => $file_size, bytes_done => $bytes_done);
 		}
-
-		my $prune_tx = eval {
-			return $ua->post($manager . '/manager/folders/cloud/prune' => form => {
-				base => $base,
-				files => encode_json(\@source_relatives)
-			})
-		};
-		my ($pruned, $prune_error) = &archive_reply($prune_tx);
-		if (!$pruned || $pruned->{'status'} ne 'ok') {
-			push @errors, $host . ': ' . (($pruned && $pruned->{'error'}) || $prune_error || 'the destination could not be tidied');
-			$device_errors++;
-		}
-		$result{$host} = {
-			sent => $sent,
-			skipped => $skipped,
-			bytes => $bytes,
-			removed => ($pruned && $pruned->{'removed'}) || 0,
-			($device_errors ? (errors => $device_errors) : ())
-		};
+		$result{$host} = { sent => $sent, removed => $removed, skipped => $skipped };
 	}
 
 	$note->('done', bytes_done => $bytes_done);
-	my $final = { files => $files_count, devices => \%result };
+	my $final = { changes => scalar @changes, devices => $device_count, files => scalar(@changes) };
 	if (scalar @errors) {
 		$final->{'errors'} = \@errors;
-		# a failed pass clears the swept fingerprint, so a device that was
-		# unreachable is tried again instead of waiting for the next edit
-		my $registrations = &cloud_sync_registrations();
-		my $cleared = 0;
-		foreach my $reg ( @{$registrations} ) {
-			next unless (($reg->{'path'} || '') eq $path);
-			delete $reg->{'fingerprint'};
-			$cleared = 1;
-		}
-		&cloud_sync_registrations_write($registrations) if $cleared;
 		$job->fail($final);
 		return;
 	}
+	my @ids = map { $_->{'id'} } grep { defined $_->{'id'} && length $_->{'id'} } @changes;
+	&cloud_sync_state_modify($base, sub {
+		my $state = shift;
+		&cloud_sync_pending_remove($state, \@ids);
+		return 1;
+	});
 	$job->finish($final);
 }
 
-# The sweep runs in the Minion worker: a registered folder whose fingerprint
-# moved since the last pass is queued for every device it names. The fingerprint
-# is written when the job is queued; a failed pass clears it so the next
-# sweep tries the device again.
+# The sweep runs in the Minion worker: a registered folder with local changes
+# or undelivered ones is queued. A job that is still active is not queued a
+# second time. When no device answers, the pending list is the retry.
 sub cloud_sync_sweep {
 	my $registrations = &cloud_sync_registrations();
 	return 0 unless scalar @{$registrations};
 	my $minion = &minion_grabber();
 	my $queued = 0;
+	my @updates;
 	foreach my $reg ( @{$registrations} ) {
 		next unless -d $reg->{'path'};
 		my @devices = grep { ref $_ eq 'HASH' && $_->{'uuid'} } @{ $reg->{'devices'} || [] };
 		next unless scalar @devices;
-		my $fingerprint = &cloud_sync_fingerprint($reg->{'path'});
-		next if (defined $reg->{'fingerprint'} && $reg->{'fingerprint'} eq $fingerprint);
-		$reg->{'fingerprint'} = $fingerprint;
-		$reg->{'job'} = $minion->enqueue(cloud_sync => [ {
+		# A start that died between its write and its enqueue must not block the
+		# sweep for ever.
+		if ($reg->{'starting'}) {
+			my $age = &rightNow() - $reg->{'starting'};
+			next if ($age >= 0 && $age < 300000);
+		}
+		if ($reg->{'job'}) {
+			my $old = $minion->job($reg->{'job'});
+			my $state = ($old && $old->info) ? ($old->info->{'state'} || '') : '';
+			next if ($state eq 'active' || $state eq 'inactive');
+		}
+		my $changes = &cloud_sync_collect_changes($reg->{'path'}, $reg->{'base'});
+		next unless scalar @{$changes};
+		my $job_id = $minion->enqueue(cloud_sync => [ {
 			path => $reg->{'path'},
 			base => $reg->{'base'},
-			devices => \@devices
+			devices => \@devices,
+			changes => $changes
 		} ] => { retries => 1 });
+		push @updates, { path => $reg->{'path'}, job => $job_id };
 		$queued++;
 	}
-	&cloud_sync_registrations_write($registrations) if $queued;
+	if (scalar @updates) {
+		&cloud_sync_registrations_modify(sub {
+			my $list = shift;
+			foreach my $u ( @updates ) {
+				foreach my $reg ( @{$list} ) {
+					next unless (($reg->{'path'} || '') eq $u->{'path'});
+					$reg->{'job'} = $u->{'job'};
+				}
+			}
+			return 1;
+		});
+	}
 	return $queued;
 }
 
@@ -1942,6 +2444,7 @@ sub cloud_sync_sweep_start {
 	return 0 if $cloud_sync_sweep_timer;
 	$cloud_sync_sweep_timer = Mojo::IOLoop->recurring(60 => sub {
 		eval { &cloud_sync_sweep() };
+		&say_it('cloud sync sweep: ' . $@) if $@;
 	});
 	return 1;
 }
