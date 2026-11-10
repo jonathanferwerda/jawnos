@@ -458,6 +458,7 @@ sub house_levels_sync {
 		next unless $rsig && $rsig ne $me;
 		my $recent = (($rm->{'server_time'} || 0) + 15 * 60 * 1000) > &rightNow();
 		next unless ($rm->{'connection'} || '') eq 'active' || $recent;
+		my $stored_manager = $rm->{'manager'} || '';
 		my ($ua, $p) = &peer_useragent($rm);
 		# The manager URL is the name the house knows the machine by
 		# (phone.jonathanferwerda.com); the OS hostname is often a bare "Fe" or
@@ -522,6 +523,12 @@ sub house_levels_sync {
 			$keep_previous->($rsig, $pname);
 			next;
 		}
+		# A health body is proof the route answered. Write it back so a stale
+		# loopback or a LAN this machine has left is healed for the next pass. The
+		# live manager is the plain row port, not the peer listener (port + 6) the
+		# request may have moved to.
+		my $plain = &subs::peer_live_manager({ %{$rm}, manager => $stored_manager });
+		&subs::peer_manager_remember({ %{$rm}, manager => $stored_manager }, $plain);
 		# it answered: the next pass asks it again
 		if ($failures) {
 			&cache_set({ app => '__president', context => 'levels_backoff', subcontext => $rsig, warranty => '+1d' },

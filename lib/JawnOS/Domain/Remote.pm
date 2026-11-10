@@ -393,6 +393,11 @@ sub remote_useragent_maker($data) {
 	if (($manager || '') ne $live_manager) {
 		$manager = $live_manager;
 		$rm->{'manager'} = $manager;
+		# The stale route was resolved to one this machine can reach (the tailnet
+		# after the peer's LAN changed, or a name after a retired tunnel). Persist
+		# it so the next caller does not start from the old address again. A
+		# time-critical fan-out must not write while it is racing its warranty.
+		&subs::peer_manager_remember($rm, $manager) unless $data->{'no_probe'};
 	}
 	# The peer listener (main port + 6) is where the house-CA leaf lives. Only
 	# switch to it when the peer answers there; the signed rail still carries

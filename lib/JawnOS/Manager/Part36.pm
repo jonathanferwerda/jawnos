@@ -529,6 +529,12 @@ sub remote_machine_online($data) {
 		signatorial => $remote_signatorial,
 	});
 	if ($probe->{'ok'}) {
+		# Persist the address that actually answered, so the next pass does not
+		# start from the retired loopback or the LAN this machine has left. Keep
+		# the row's own manager port: the probe may have answered on the house-CA
+		# listener (port + 6), which is not the port a row stores.
+		&subs::peer_manager_remember($rm,
+			&subs::peer_entry_url($probe->{'manager'}, $probe->{'port'}));
 		# Keep the address that actually answered for the rest of this pass: the
 		# handshake that follows uses $rm->{manager}. A literal host also becomes
 		# the row's ip, which is what the pull job and the panel report.

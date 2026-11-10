@@ -243,6 +243,27 @@ sub peer_address_rank {
 	return 2;
 }
 
+# Whether a peer's private LAN address is on one of this machine's own networks.
+# A stored LAN literal is only the best route while both machines share that
+# LAN; from another network the tailnet is the path between them. The address
+# reporter is memoised for a few seconds, so ranking a pass costs one read.
+sub peer_on_our_lan {
+	my ($host) = @_;
+	return 0 unless defined $host && length $host;
+	return 0 unless &peer_host_is_literal($host);
+	return 0 if &peer_host_is_loopback($host);
+	return 0 unless &peer_address_rank($host) == 0;
+	my $net = eval { &subs::network_interface_reporter() } || {};
+	foreach my $nic ( sort keys %{$net} ) {
+		next if $nic eq 'public_address';
+		my $ip = $net->{$nic}->{'ip'} // '';
+		next unless $ip =~ /^\d{1,3}(?:\.\d{1,3}){3}$/;
+		next if $ip =~ /^127\./;
+		return 1 if &subs::same_net_test($host, $ip) eq 'yes';
+	}
+	return 0;
+}
+
 # The host and port a stored manager url names.
 sub peer_manager_host {
 	my ($rm) = @_;
@@ -644,12 +665,28 @@ sub peer_literal_addresses {
 		&$add($pseu->{'ip'}, $pseu->{'port'}, 'pseudonym') if ref $pseu eq 'HASH';
 	}
 	&$add($rm->{'tailnet_ip'} || &tailnet_address($rm), $default_port, 'tailnet');
-	# Private LAN first, then the tailnet, then anything else; insertion order
-	# breaks ties so the row's own ip keeps its precedence.
+	# A same-LAN address first, then the tailnet, then a LAN literal we are not
+	# on, then anything else; insertion order breaks ties so the row's own ip
+	# keeps its precedence within a rank. A LAN address on a network this
+	# machine has left is still a candidate (a probe may fall back to it) but it
+	# must not win over the tailnet route that actually connects the two.
+	my %rank_of;
+	foreach my $c ( @out ) {
+		my $host = $c->{'host'};
+		next if exists $rank_of{$host};
+		my $rank = &peer_address_rank($host);
+		if ($rank == 0) {
+			$rank = &peer_on_our_lan($host) ? 0 : 2;
+		}
+		elsif ($rank == 2) {
+			$rank = 3;
+		}
+		$rank_of{$host} = $rank;
+	}
 	my $i = 0;
 	my %at = map { $_->{'host'} . ':' . $_->{'port'} => $i++ } @out;
 	@out = sort {
-		&peer_address_rank($a->{'host'}) <=> &peer_address_rank($b->{'host'})
+		$rank_of{$a->{'host'}} <=> $rank_of{$b->{'host'}}
 			|| $at{$a->{'host'} . ':' . $a->{'port'}} <=> $at{$b->{'host'} . ':' . $b->{'port'}}
 	} @out;
 	return \@out;
@@ -814,11 +851,42 @@ sub peer_live_manager {
 		return $manager unless $fqdn ne '' && $fqdn !~ m{^127\.};
 		return &peer_manager_url($rm, $fqdn, $rm->{'port'});
 	}
+	# A stored LAN literal outlives the network it was learned on: the laptop
+	# row kept 192.168.1.123 after this machine moved to the tailnet, so every
+	# call dialled an address on a network dev is not attached to. Keep the
+	# literal only while this machine is on that LAN; otherwise the tailnet
+	# address is the route that connects the two.
+	if (&peer_host_is_literal($host) && &peer_address_rank($host) == 0
+		&& !&peer_on_our_lan($host)) {
+		my $literal = &peer_literal_manager($rm);
+		return $literal if $literal;
+	}
 	if (!$resolves) {
 		my $literal = &peer_literal_manager($rm);
 		return $literal if $literal;
 	}
 	return $manager;
+}
+
+# Write the route that answered back to the row, so the next pass does not
+# start from a retired loopback or a LAN this machine has left. A tunnel row's
+# loopback belongs to the hub and is never rewritten here. The manager url
+# carries the port; keep the row's port column in step when it changes.
+sub peer_manager_remember {
+	my ($rm, $manager) = @_;
+	return 0 unless ref $rm eq 'HASH' && defined $manager && length $manager;
+	return 0 if ($rm->{'tunnel'} || '') eq 'yes';
+	return 0 unless $manager =~ m{^https?://};
+	my ($host) = &peer_manager_host({ manager => $manager });
+	return 0 if !defined $host || !length $host || &peer_host_is_loopback($host);
+	my $uuid = $rm->{'uuid'} || '';
+	return 0 unless $uuid;
+	return 0 if ($rm->{'manager'} || '') eq $manager;
+	my $update = { manager => $manager };
+	my ($port) = $manager =~ m{:([0-9]{1,5})/?$};
+	$update->{'port'} = $port + 0 if defined $port && $port =~ /^[0-9]+$/;
+	&subs::db_update('remote_machines', $update, { uuid => $uuid });
+	return 1;
 }
 
 # ---- LAN presence: a peer on whatever network we have just joined ----------

@@ -10,6 +10,10 @@ use Test::More;
 use RepoSource;
 use JawnOSTest;
 
+# The address reporter is lazy: load the real definition before a local stub,
+# or the module load replaces the stub mid-test.
+subs::preload('network_interface_reporter');
+
 # A peer's stored manager can outlive the route it named: a LAN address the
 # machine has since left, or a 127.0.0.1 port from a tunnel that is gone. The
 # probe (remote_machine_online) and the useragent builder must call the address
@@ -137,9 +141,15 @@ my $tailnet_row = {
 	port    => 45545,
 	network => '{"lan":{"ip":"192.168.1.155","port":"45545"}}',
 };
-my $ranked = subs::peer_probe_candidates($tailnet_row, 45545);
+my $ranked;
+{
+	# This machine is on the peer's LAN, so the direct LAN address is the route.
+	no warnings qw(redefine once);
+	local *subs::network_interface_reporter = sub { return { eth0 => { ip => '192.168.1.50' } } };
+	$ranked = subs::peer_probe_candidates($tailnet_row, 45545);
+}
 is($ranked->[0]->{'host'}, '192.168.1.155',
-	'the advertised LAN address is tried before the stored tailnet ip');
+	'the advertised LAN address is tried before the stored tailnet ip when we share that LAN');
 
 # The probe must not use ping as a gate: a peer whose echo is dropped (or a
 # candidate whose name has no DNS answer) still gets its manager called, and a
@@ -212,7 +222,13 @@ my $remembered = {
 	network    => '{"lan":{"nic":"lan","ip":"192.168.1.142","port":45545}}',
 	port       => 45545,
 };
-my $addresses = subs::peer_literal_addresses($remembered);
+my $addresses;
+{
+	# A peer on our own LAN: the direct address is still tried first.
+	no warnings qw(redefine once);
+	local *subs::network_interface_reporter = sub { return { eth0 => { ip => '192.168.1.50' } } };
+	$addresses = subs::peer_literal_addresses($remembered);
+}
 my @hosts = map { $_->{'host'} } @{$addresses};
 ok(scalar(grep { $_ eq '100.64.0.6' } @hosts), 'a persisted tailnet address is a probe candidate');
 my $lan_at = (grep { $hosts[$_] eq '192.168.1.142' } 0 .. $#hosts)[0];
