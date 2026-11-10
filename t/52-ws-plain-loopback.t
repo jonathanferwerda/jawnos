@@ -26,7 +26,7 @@ my $president = read_file("$FindBin::Bin/../perl/President.pl");
 my $manager   = manager_source();
 
 # 1. the plain listener exists, on loopback, and only with the socket server
-like($president, qr/my \$ws_plain_port = \$ws_port \+ 100;/,
+like($president, qr/JawnOS::Platform::Ports::port_for\(\s*'ws_plain', base => \$port, ws_port => \$ws_port,\s*\)/s,
 	'the plain socket port is derived from the socket port');
 like($president, qr/\$ENV\{PORT_WS_PLAIN\} = \$ws_plain_port if \$config->\{'environment'\} eq 'production';/,
 	'the plain port is exported in production');

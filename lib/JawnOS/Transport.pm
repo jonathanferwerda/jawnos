@@ -30,21 +30,24 @@ use warnings;
 
 use Socket ();
 use JawnOS::Platform ();
+use JawnOS::Platform::Ports ();
 
+# The offsets live in JawnOS::Platform::Ports; this table keeps each kind's
+# file so path_for and kind_for_path stay local to the transport.
 my %KIND = (
-	control => { offset => 7, file => 'control' },
-	log     => { offset => 8, file => 'log' },
-	watch   => { offset => 9, file => '.process_watch', home => 1 },
-	alarm   => { offset => 10, file => 'alarm' },
-	memory  => { offset => 11, file => 'memory' },
-	ws      => { offset => 12, file => 'ws' },
-	mailws  => { offset => 13, file => 'ws/mailws' },
-	tree    => { offset => 14, file => 'tree' },
+	control => { file => 'control' },
+	log     => { file => 'log' },
+	watch   => { file => '.process_watch', home => 1 },
+	alarm   => { file => 'alarm' },
+	memory  => { file => 'memory' },
+	ws      => { file => 'ws' },
+	mailws  => { file => 'ws/mailws' },
+	tree    => { file => 'tree' },
 );
 
 # The highest offset the base has to leave room for. set_base refuses a base
 # that would push any listener past 65535.
-my $MAX_OFFSET = (sort { $b <=> $a } map { $_->{'offset'} } values %KIND)[0];
+my $MAX_OFFSET = JawnOS::Platform::Ports::max_offset(table => 'transport');
 
 sub tcp { return JawnOS::Platform::transport() eq 'tcp' ? 1 : 0 }
 
@@ -85,14 +88,13 @@ sub base {
 	my $base = _read_file(base_file());
 	$base = $ENV{'JAWNOS_TRANSPORT_BASE'}
 		unless defined $base && length $base && $base =~ /^\d+$/;
-	$base = 45545 unless defined $base && $base =~ /^\d+$/ && $base > 1024;
+	$base = 45545 unless JawnOS::Platform::Ports::valid_base($base, max_offset => 0);
 	return int($base);
 }
 
 sub set_base {
 	my ($base) = @_;
-	return 0 unless defined $base && $base =~ /^\d+$/ && $base > 1024
-		&& $base + $MAX_OFFSET <= 65535;
+	return 0 unless JawnOS::Platform::Ports::valid_base($base, max_offset => $MAX_OFFSET);
 	$ENV{'JAWNOS_TRANSPORT_BASE'} = int($base);
 	return _write_file(base_file(), int($base) . "\n");
 }
@@ -100,8 +102,7 @@ sub set_base {
 sub port_for {
 	my ($kind) = @_;
 	my $spec = $KIND{$kind} or return undef;
-	my $port = base() + $spec->{'offset'};
-	return ($port > 1024 && $port <= 65535) ? $port : undef;
+	return JawnOS::Platform::Ports::port_for($kind, table => 'transport', base => base());
 }
 
 sub path_for {

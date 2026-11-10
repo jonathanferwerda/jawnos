@@ -722,43 +722,39 @@ sub action_12285 {
 	my $ports = eval { return decode_json $c->param('ports') } || {};
 	my $batch_uuid = $c->param('batch_uuid');
 	my $returner = { status => $status, batch_uuid => $batch_uuid, signatorial => $signatorial };
-	my @netstats = split /\n/, `netstat -avnpt 2>/dev/null`;
+	require JawnOS::Platform::Ports;
 	&subs::db_query('delete from tunnels where signatorial = ? and batch_uuid != ?', $signatorial, $batch_uuid);
 	&subs::db_query('delete from tunnels where status=? and server_time < ?', 'reserved', &subs::rightNow() - 60000);
+	# Every port a live or half-built tunnel still owns, in one query. The old
+	# per-candidate select was the same rule, and rows outside the configured
+	# range stay readable here so a live tunnel is not stranded after a restart.
+	my %tunnel_taken;
+	foreach my $row (&subs::db_query(
+		'select in_port from tunnels where status = ? or status = ?',
+		'reserved', 'active',
+	)->hashes) {
+		$tunnel_taken{ int($row->{'in_port'}) } = 1
+			if defined $row->{'in_port'} && $row->{'in_port'} =~ /^[0-9]+$/;
+	}
+	my ($new_ports, $port_error) = JawnOS::Platform::Ports::reserve_tunnel_ports(
+		scalar(@gb::ports),
+		config => $config || {},
+		held   => [ map { $ENV{$_} } @gb::ports ],
+		taken  => sub { $tunnel_taken{ $_[0] } ? 1 : 0 },
+	);
+	if ($port_error) {
+		$returner->{'error'} = $port_error;
+		$c->render(json => $returner, status => 503);
+		return;
+	}
+	my $port_index = 0;
 	foreach my $p ( @gb::ports ) {
 		my $reservation_uuid = &subs::random_string_creator(29);
-		my $new_port = &port_scan();
+		my $new_port = $new_ports->[$port_index++];
 		$returner->{$p} = { dest => $ports->{$p}, source => $new_port, reservation_uuid => $reservation_uuid };
 		&subs::db_insert('tunnels', { in_port => $new_port, uuid => $reservation_uuid, status => 'reserved' });
 
 	}
-	sub port_scan() {
-		my $port;
-		my @random_numbers = map { 50000 + int(rand(65000 - 50000 + 1)) } 1 .. 300;
-		foreach my $n ( @random_numbers ) {
-			$port = $n;
-			my $next = 0;
-			foreach my $p ( @gb::ports ) {
-				$next = 1 if $ENV{$p} == $n;
-			}
-			if ($next == 0) {
-				my $full_address = '127.0.0.1:' . $n;
-				my $ss = `ss -t | grep $port`;
-				if ($ss =~ /\Q$port/gi) {
-					$next = 1;
-					next;
-				}
-			}
-
-
-			next if $next == 1;
-			my $tun = &subs::db_query('select * from tunnels where in_port = ? and (status = ? or status = ?) order by in_port desc limit 1', $port, 'reserved', 'active')->hashes->[0];
-			next if $tun->{'uuid'};
-			last;
-		}
-		return $port;
-	}
-
 
 	$c->render(json => $returner);
 }

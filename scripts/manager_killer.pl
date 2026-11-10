@@ -30,6 +30,7 @@ use lib "$FindBin::Bin/../lib";
 use File::Slurp qw(read_file write_file);
 use Mojo::JSON qw(decode_json);
 use Time::HiRes qw(sleep time);
+use JawnOS::Platform::Ports ();
 
 # Stop everything jawn runs: the tree and its workers, the BLE client, ollama,
 # and whatever still holds the web port. This is the clean path behind the
@@ -311,8 +312,13 @@ sub working_port {
 		: ($ENV{'HOME'} ? "$ENV{'HOME'}/jawnos/config.json" : '');
 	if ($config_file && -e $config_file) {
 		my $config = eval { decode_json(scalar read_file($config_file)) };
-		$port = $config->{'working_port'}
-			if $config && $config->{'working_port'} && $config->{'working_port'} =~ /^[0-9]+$/;
+		if ($config) {
+			$port = JawnOS::Platform::Ports::base(
+				working_port => $config->{'working_port'},
+				default      => 3000,
+				ceiling      => 65536,
+			);
+		}
 	}
 	return $port;
 }

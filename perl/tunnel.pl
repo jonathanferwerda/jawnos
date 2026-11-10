@@ -27,6 +27,13 @@
 use strict;
 use warnings;
 
+BEGIN {
+	require File::Basename;
+	require Cwd;
+	my $dir = Cwd::abs_path(File::Basename::dirname(__FILE__));
+	unshift @INC, "$dir/../lib" if $dir && -d "$dir/../lib";
+}
+
 package Tunnel;
 
 use Mojo::IOLoop;
@@ -34,6 +41,7 @@ use Mojo::UserAgent;
 use Mojo::Server::Daemon;
 use Mojo::JSON qw(decode_json encode_json);
 use IO::Socket::INET;
+use JawnOS::Platform::Ports ();
 
 our $VERSION = '0.1';
 our $HUB_LISTEN = {};   # used by the CLI hub app below
@@ -146,15 +154,11 @@ sub hub_session {
     # ReuseAddr Mojo uses) and leave a held port to its holder; the peer's own
     # redial retires it. New peers dial the ws port, whose server has one
     # worker, so the retire-and-rebind below always runs in the right process.
-    my $free = IO::Socket::INET->new(
-      LocalAddr => '127.0.0.1', LocalPort => $r->{'source'},
-      Proto => 'tcp', Listen => 5, ReuseAddr => 1
-    );
+    my $free = JawnOS::Platform::Ports::can_bind('127.0.0.1', $r->{'source'});
     unless ($free) {
       _log('hub port %s for %s is held by another worker; leaving it alone', $r->{'source'}, $name);
       next;
     }
-    close $free;
     my $id = Mojo::IOLoop->server({ address => '127.0.0.1', port => $r->{'source'} } => sub {
       my ($loop, $stream) = @_;
       my $ch = $session->{'channel_next'}++;

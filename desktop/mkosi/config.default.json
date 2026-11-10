@@ -12,6 +12,8 @@
 	"working_port": "45545",
 	"ws_port": "3001",
 	"ssh_port": "8022",
+	"tunnel_port_min": "50000",
+	"tunnel_port_max": "50127",
 	"open_browser": "no",
 	"archive_dir": "",
 	"folders": [

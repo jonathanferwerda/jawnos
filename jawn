@@ -12,6 +12,7 @@ BEGIN {
 	unshift @INC, "$cwd/lib" if $cwd && -d "$cwd/lib";
 }
 use JawnOS::Transport;
+use JawnOS::Platform::Ports ();
 
 # Everything this tree writes is house data: the database and its WAL, backups,
 # plaintext export temporaries and the logs. Create files private by default so
@@ -1208,7 +1209,7 @@ sub config_transport_base {
 	return 45545 unless $cfg && ref $cfg eq 'HASH';
 	my $base = $cfg->{'working_port'};
 	$base = $cfg->{'port'} unless defined $base && $base =~ /^\d+$/ && $base > 1024;
-	return 45545 unless defined $base && $base =~ /^\d+$/ && $base > 1024 && $base + 9 <= 65535;
+	return 45545 unless JawnOS::Platform::Ports::valid_base($base, max_offset => 9);
 	return int($base);
 }
 

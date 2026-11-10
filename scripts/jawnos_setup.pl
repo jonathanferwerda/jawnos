@@ -399,6 +399,8 @@ sub build_config {
 		working_port   => $existing->{'working_port'} || '45545',
 		ws_port        => $existing->{'ws_port'} || '3001',
 		ssh_port       => $existing->{'ssh_port'} || '8022',
+		tunnel_port_min => $existing->{'tunnel_port_min'} || '50000',
+		tunnel_port_max => $existing->{'tunnel_port_max'} || '50127',
 		open_browser   => $existing->{'open_browser'} || 'yes',
 		signatorial    => $sig,
 		folders        => $in->{'folders'} || [ '~/Music', '~/Downloads', '~/Videos', '~/Pictures', '~/Documents' ],

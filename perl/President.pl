@@ -47,6 +47,7 @@ BEGIN {
 }
 require JawnOS::Platform;
 use JawnOS::Transport ();
+use JawnOS::Platform::Ports ();
 
 no warnings 'uninitialized'; 
 # the gb globals below live in gb.pl and are written or read from every
@@ -175,15 +176,10 @@ my @sockets = qw/ws alarm/;
 foreach my $s ( @sockets ) {
 	unlink $gb::tmp_dir . '/' . $s;
 }
-my $random_number;
-if (!$config->{'working_port'}) {
-	$random_number = 0;
-	until ($random_number > 1024 && $random_number < 60000) {
-		$random_number = int(rand(59999));
-	}
-} else {
-	$random_number = $config->{'working_port'} < 60000 ? $config->{'working_port'} : 45545;
-}
+my $random_number = JawnOS::Platform::Ports::base(
+	working_port => $config->{'working_port'},
+	random       => 1,
+);
 my $on_duty = 0;
 my $hour = localtime( &subs::rightNow() / 1000 )->strftime( "%H");
 
@@ -233,17 +229,16 @@ if ($environment) {
 
 }
 my $port = $random_number;
-my $watch_port = $port + 2;
-my $ws_port = $port + 1;
+my $watch_port = $port + JawnOS::Platform::Ports::offset('watch');
+my $ws_port = $port + JawnOS::Platform::Ports::offset('ws');
 my $dock_port = $config->{'port'};
-my $tty_port = $port + 3;
-my $alarm_port = $port + 5;
+my $tty_port = $port + JawnOS::Platform::Ports::offset('bestow');
+my $alarm_port = $port + JawnOS::Platform::Ports::offset('bell');
 # The peer listener carries the house-CA leaf (scripts/house_ca.pl). It is a
 # second listener, not a second certificate on the main one: a listener presents
 # one certificate, and the main port must keep the public wildcard for browsers.
 # The offset skips +1 (ws), +2 (watch), +3 (tty), +4 (tty ws) and +5 (alarm).
-my $peer_port = $port + 6;
-$peer_port -= 12 if $peer_port > 65535;
+my $peer_port = JawnOS::Platform::Ports::port_for('peer', base => $port);
 my $peer_certs = "";
 if (-e './server/peer-fullchain.pem' && -e './server/peer-privkey.pem') {
 	$peer_certs = "?cert=./server/peer-fullchain.pem&key=./server/peer-privkey.pem";
@@ -259,8 +254,9 @@ if ($config->{'environment'} eq 'development') {
 # on loopback. Chromium treats 127.0.0.1 as trustworthy, so the https page may
 # open ws:// there; the page carries a short-lived token because a Secure
 # session cookie is not sent on a ws:// handshake.
-my $ws_plain_port = $ws_port + 100;
-$ws_plain_port = $ws_port - 100 if $ws_plain_port > 60000;
+my $ws_plain_port = JawnOS::Platform::Ports::port_for(
+	'ws_plain', base => $port, ws_port => $ws_port,
+);
 
 
 # A worker's Perl heap grows with the work it does and is never handed back to
@@ -373,7 +369,7 @@ sub server_process {
 END { foreach my $c (@server_processes) { eval { $c->{'runner'}->stop } if $c } }
 
 sub manager_starter() {
-	my $ws_tty_port = $tty_port + 1;
+	my $ws_tty_port = $port + JawnOS::Platform::Ports::offset('coms');
 	$ENV{PORT_AHOY} = $random_number;
 	$ENV{PORT_MSG} = $ws_port;
 	$ENV{PORT_WS_PLAIN} = $ws_plain_port if $config->{'environment'} eq 'production';
