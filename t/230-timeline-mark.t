@@ -1,7 +1,7 @@
 # tests-for: public/js/manager/timelineprinter.js
 # covers:    the timeline's occurrence mark is the printer family's mark - the
-#            appointment colour in a disc with a thin ink edge - and the
-#            pseudonym's plate zoomed and rounded to sit inside that edge.
+#            appointment colour in a disc with a thin ink edge - with the
+#            pseudonym icon's own ink scaled and rounded to fill that disc.
 
 use strict;
 use warnings;
@@ -31,30 +31,37 @@ like($src, qr/jawnosTextureFillCircle\(ctx, gx, rowY, dotRadius, colour, darkThe
 like($src, qr/ctx\.strokeStyle = ink;\s*\n\s*ctx\.lineWidth = dotRing;\s*\n\s*ctx\.beginPath\(\);\s*\n\s*ctx\.arc\(gx, rowY, dotRadius/,
 	'with the same ink edge');
 
-# --- the plate is zoomed and rounded into the disc ---------------------------
-# The icon sets are square plates, so the plate is zoomed until it nearly fills
-# the disc and its square corners are clipped to a circle just inside the ink
-# edge; the appointment's colour still shows as a thin rim.
+# --- the icon's ink fills and rounds into the disc ---------------------------
+# Icon sets place the glyph differently (a plated square, or the bare outline
+# glyph) and all of them leave a transparent margin. The printer measures the
+# opaque pixels and scales those to the disc, clipping the square's corners to
+# a circle that meets the ink edge - so no appointment colour shows round it.
 my ($radius) = $src =~ /var dotRadius = (\d+);/;
 my ($ring)   = $src =~ /var dotRing = (\d+);/;
 my ($icon)   = $src =~ /var dotIcon = (\d+);/;
 my ($round)  = $src =~ /var dotIconClip = (\d+);/;
 ok(defined $radius && defined $ring && defined $icon && defined $round,
-	'the mark sizes and the plate\'s round clip were read');
-cmp_ok($radius, '>=', 19, 'the disc grew to keep a rim outside the zoomed plate');
+	'the mark sizes and the icon\'s round clip were read');
+cmp_ok($radius, '>=', 19, 'the disc is big enough for a legible icon');
 cmp_ok($ring, '<=', 2, "the edge is the other printers' thin ink line");
-cmp_ok($icon, '>=', 34, 'the pseudonym plate is zoomed in to read');
-# the ink edge's inner radius is dotRadius - dotRing/2; the clip must stay
-# inside it, leaving the appointment's colour as a one-pixel rim
-cmp_ok($round, '<', $radius - $ring / 2, 'the round clip sits inside the ink edge');
-cmp_ok($radius - $ring / 2 - $round, '==', 1, 'one pixel of colour rings the plate');
+cmp_ok($icon, '>=', 34, 'the icon is given a large box to fill');
+# the ink edge's inner radius is dotRadius - dotRing/2; the clip meets it so
+# the scaled ink reaches the edge instead of leaving a margin of app colour
+cmp_ok($round, '==', $radius - $ring / 2, 'the round clip meets the ink edge');
 cmp_ok($round, '>=', 14, 'the round clip still fills the disc');
 
-# the plate is clipped to that circle before it is drawn, and drawn on top
-like($src, qr/ctx\.arc\(x \+ \(size \/ 2\), y \+ \(size \/ 2\), roundRadius, 0, \(Math\.PI \* 2\)\);\s*\n\s*ctx\.clip\(\);\s*\n\s*\}\s*\n\s*ctx\.drawImage\(icon\.img, x, y, size, size\)/,
-	'the plate is clipped to the round radius before it is drawn');
-like($src, qr/ctx\.restore\(\);\s*\n\s*\/\/ the pseudonym's own plate.*?pseudoGenerator\(appts,l\['type'\], x - \(dotIcon \/ 2\).*?dotIconClip\)/s,
-	'the plate is drawn on top of the disc, rounded');
+# the icon's opaque ink is measured once it loads, and the draw crops to it
+like($src, qr/icon\.ink = iconInk\(icon\.img\)/, 'the icon is measured for its opaque ink');
+like($src, qr/getImageData\(0, 0, probe, probe\)/, 'the measurement reads the icon\'s pixels');
+like($src, qr/ctx\.drawImage\(icon\.img, icon\.ink\.x, icon\.ink\.y, icon\.ink\.w, icon\.ink\.h,/,
+	'the drawn ink is cropped to those bounds');
+# the cropped ink is scaled to the clip's diameter and clipped to its circle
+like($src, qr/var box = roundRadius \* 2;.*?var scale = box \/ Math\.max\(icon\.ink\.w, icon\.ink\.h\);/s,
+	'the ink is scaled to the round circle');
+like($src, qr/ctx\.arc\(x \+ \(size \/ 2\), y \+ \(size \/ 2\), roundRadius, 0, \(Math\.PI \* 2\)\);\s*\n\s*ctx\.clip\(\);/,
+	'the ink is clipped to the round radius before it is drawn');
+like($src, qr/ctx\.restore\(\);\s*\n\s*\/\/ the pseudonym's own glyph.*?pseudoGenerator\(appts,l\['type'\], x - \(dotIcon \/ 2\).*?dotIconClip\)/s,
+	'the icon is drawn on top of the disc, rounded');
 
 # --- the band is untouched --------------------------------------------------
 like($src, qr/jawnosTextureStroke\(ctx, colour, darkTheme, bandHeight\)/,

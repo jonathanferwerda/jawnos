@@ -47,16 +47,15 @@ function timelinePrinter(appts,sort,offset) {
 	// to sit inside it, rather than the name overflowing a thin line
 	var bandHeight = 28;
 	// the occurrence mark is the same one the other printers draw: the app's
-	// colour in a disc with a thin ink edge. The pseudonym's plate sits in its
-	// middle, zoomed until it nearly fills the disc: the plate is a square, so
-	// its corners are rounded to a circle just inside the ink edge, and the
-	// appointment's colour still shows as a one-pixel rim. The edge's inner
-	// radius is 18 (dotRadius less half the ring), so the clip sits at 17.
+	// colour in a disc with a thin ink edge. The pseudonym's icon sits in its
+	// middle: its opaque ink is measured and scaled to the circle inside the
+	// edge (radius 18, dotRadius less half the ring), and the clip rounds the
+	// corners of whatever square the ink's bounds make.
 	var dotRadius = 19;
 	var dotRing = 2;   // the ink edge around the disc
 	var dotHalo = 8;   // the theme's halo behind it, when the theme has one
-	var dotIcon = 36;  // the plate, zoomed from 28 so the glyph reads at a glance
-	var dotIconClip = 17; // the circle the plate's corners are rounded to
+	var dotIcon = 36;  // the box the icon's ink is scaled to (the clip's diameter)
+	var dotIconClip = 18; // the circle the icon is clipped to, meeting the ink edge
 	var pad = 26;
 	var top = headerHeight + clothesLineHeight + 26;
 	var rows = 0;
@@ -208,10 +207,9 @@ function timelinePrinter(appts,sort,offset) {
 			}
 			ctx.restore();
 
-			// the pseudonym's own plate, centred in the dot and zoomed to fill it.
+			// the pseudonym's own glyph, centred in the dot and scaled to fill it.
 			// It draws when the image loads, so it lands on top of the disc above;
-			// the round clip cuts its corners inside the ink edge, leaving the
-			// appointment's colour as a thin rim.
+			// the round clip cuts the corners of its square bounds to the circle.
 			pseudoGenerator(appts,l['type'], x - (dotIcon / 2), rowY - (dotIcon / 2), dotIcon, dotIconClip);
 
 			var labelX = x + 20;
@@ -290,6 +288,39 @@ function timelinePrinter(appts,sort,offset) {
 // decoded and is drawn with the dots on every later pass; only the first time
 // an icon appears does it wait for the network, once.
 var pseudonymIcons = {};
+
+// No two icon sets place the glyph the same way: the plated sets wrap it in a
+// rounded square inset from the 512 viewBox, and the outline set draws it bare.
+// That margin is transparent, so scaling the whole image to the dot would scale
+// the empty space with it and leave the appointment's colour showing round the
+// glyph. Measure the opaque pixels once per icon instead, and let the timeline
+// crop to them.
+function iconInk(img) {
+	var probe = 128;
+	var canvas = document.createElement('canvas');
+	canvas.width = canvas.height = probe;
+	var probeCtx = canvas.getContext('2d');
+	probeCtx.drawImage(img, 0, 0, probe, probe);
+	var pixels;
+	try { pixels = probeCtx.getImageData(0, 0, probe, probe).data; }
+	catch (e) { return null; }
+	var left = probe, top = probe, right = -1, bottom = -1;
+	for (var y = 0; y < probe; y++) {
+		for (var x = 0; x < probe; x++) {
+			if (pixels[((y * probe) + x) * 4 + 3] > 4) {
+				if (x < left) { left = x; }
+				if (x > right) { right = x; }
+				if (y < top) { top = y; }
+				if (y > bottom) { bottom = y; }
+			}
+		}
+	}
+	if (right < left || bottom < top) { return null; }
+	var kx = (img.naturalWidth || 512) / probe;
+	var ky = (img.naturalHeight || 512) / probe;
+	return { x: left * kx, y: top * ky, w: (right - left + 1) * kx, h: (bottom - top + 1) * ky };
+}
+
 function pseudoGenerator(appts,type,x,y,size,roundRadius) {
 	var pseudonym = $.grep(appts['__specs']['pseudonyms'], function(n, i){ // just use arr
 		return n['name'] == type;
@@ -303,21 +334,32 @@ function pseudoGenerator(appts,type,x,y,size,roundRadius) {
 			icon = pseudonymIcons[src] = { img: new Image, ready: 0, waiting: [] };
 			icon.img.onload = function(){
 				icon.ready = 1;
+				icon.ink = iconInk(icon.img);
 				$.each(icon.waiting, function(i,draw){ draw(); });
 				icon.waiting = [];
 			};
 			icon.img.src = src;
 		}
 		var draw = function(){
-			// a round radius cuts the plate's square corners, so a zoomed plate can
-			// fill the disc without its corners poking through the ink edge
+			// a round radius scales the drawn ink to the circle's own square and
+			// clips the corners that would otherwise run past the circle
 			if (roundRadius) {
 				ctx.save();
 				ctx.beginPath();
 				ctx.arc(x + (size / 2), y + (size / 2), roundRadius, 0, (Math.PI * 2));
 				ctx.clip();
 			}
-			ctx.drawImage(icon.img, x, y, size, size);
+			if (roundRadius && icon.ink) {
+				var box = roundRadius * 2;
+				var scale = box / Math.max(icon.ink.w, icon.ink.h);
+				var w = icon.ink.w * scale;
+				var h = icon.ink.h * scale;
+				ctx.drawImage(icon.img, icon.ink.x, icon.ink.y, icon.ink.w, icon.ink.h,
+					x + ((size - w) / 2), y + ((size - h) / 2), w, h);
+			}
+			else {
+				ctx.drawImage(icon.img, x, y, size, size);
+			}
 			if (roundRadius) { ctx.restore(); }
 		};
 		if (icon.ready) {
