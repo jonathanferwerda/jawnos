@@ -339,6 +339,43 @@ sub tracked_record {
 	is($tracked->{100}{subprocesses}{200}{'warranty'}, $NOW + 10_000, 'without moving that moment');
 }
 
+# The master answers the reaper from one process table read, not one
+# pid_exists() per record. On Windows pid_exists() for an absent pid forces a
+# tasklist/CIM snapshot, which costs seconds; several dead records in one run
+# stalled the master's tick. The injectable alive callback is how one read
+# answers every record.
+{
+	my $tracked = {
+		100 => { subprocesses => {
+			111 => { parent => 100, pid => 111, warranty => $NOW + 60_000, pgid => 0 },
+			222 => { parent => 100, pid => 222, warranty => $NOW + 60_000, pgid => 0 },
+			333 => { parent => 100, pid => 333, warranty => $NOW + 60_000, pgid => 0 },
+		} },
+	};
+	my @table = ({ pid => '111' }, { pid => '333' });
+	my (%alive_pid, $table_reads, $read) = ((), 0, 0);
+	my @asked;
+	my $alive = sub {
+		my ($pid) = @_;
+		push @asked, $pid;
+		unless ($read) {
+			$read = 1;
+			$table_reads++;
+			$alive_pid{ $_->{'pid'} } = 1 foreach @table;
+		}
+		return $alive_pid{$pid} ? 1 : 0;
+	};
+	my $report = &subs::subprocessor_reap($tracked,
+		now => $NOW, alive => $alive, kill => sub { die 'no kill' },
+		starttime => sub { '' }, descendants => sub { [] });
+	is($table_reads, 1, 'one process table read answers every record');
+	is_deeply([ sort @asked ], [111, 222, 333], 'the alive callback is asked about each tracked pid');
+	is($report->{'reaped'}, 1, 'the pid missing from the table is forgotten');
+	ok(!exists $tracked->{100}{subprocesses}{222}, 'and only that record goes');
+	ok($tracked->{100}{subprocesses}{111} && $tracked->{100}{subprocesses}{333},
+		'the pids the table has stay');
+}
+
 # --------------------------------------------------------------- the wiring
 my $calendar = read_file("$root/lib/JawnOS/Domain/Calendar.pm");
 like($calendar, qr/subprocessor_warranty_at\(\$warranty_spec, \$started\)/,
@@ -375,6 +412,17 @@ like($launcher, qr/subs::subprocessor_reap\(\$subprocesses/,
 	'the master reaps the records the workers send it');
 like($launcher, qr/Mojo::IOLoop->recurring\(5 => sub/, 'the reaper runs on its own tick');
 like($launcher, qr/'heartbeat'/, 'the master accepts a heartbeat');
+# The master's reaper is booted only by ./jawn under its own loop, so the wiring
+# is pinned in the source: one table read answers every record instead of a
+# pid_exists() per record (seconds per absent pid on Windows).
+{
+	my ($reaper_block) = $launcher =~ /(Mojo::IOLoop->recurring\(5 => sub \{.*?\n\}\);)/s;
+	ok($reaper_block, 'the reaper tick is one block to check');
+	like($reaper_block || '', qr/alive\s*=>\s*\$alive/,
+		'the master passes its own alive callback to the reaper');
+	like($reaper_block || '', qr/JawnOS::Platform::Process::table\(\)/,
+		'and the callback answers every record from one table read');
+}
 
 my $loader = read_file("$root/lib/JawnOS/Domain/Loader.pm");
 like($loader, qr/JawnOS::Domain::Process' for qw\([^)]*subprocessor_reap[^)]*subprocessor_warranty_at[^)]*subprocessor_warranty_for/,

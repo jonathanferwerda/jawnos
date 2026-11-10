@@ -39,15 +39,29 @@ our $PROC_ROOT = '/proc';
 # Monitor poll is two seconds apart and calls table() once, but the field reads
 # (comm, rss_kib, start_time) call back into the seam per pid; without the cache
 # each of those would enumerate every process again. A pid the snapshot does not
-# have makes pid_exists() refresh once (a child may have just started); every
-# other read keeps the cache. reset_cache() is the documented way to force a
-# fresh read unconditionally (tests).
+# have may make pid_exists() refresh (a child may have just started), but only
+# once per $REFRESH_INTERVAL; every other read keeps the cache. reset_cache() is
+# the documented way to force a fresh read unconditionally (tests).
 our $CACHE_TTL = 5;
 our %CACHE;
+
+# How long a forced liveness refresh must wait: a fresh tasklist + CIM read
+# costs seconds on a Windows box, and the master's reaper asks about every
+# tracked pid on its run, so a dead record would otherwise cost one full
+# snapshot each. One forced refresh per interval; the absent pids after it read
+# the snapshot that refresh left behind. A present pid never forces. The
+# interval lives in %CACHE, so reset_cache() clears both.
+our $REFRESH_INTERVAL = 1;
+
+# Test clock: when set, the refresh interval and the snapshot TTL are measured
+# against it instead of time(). Nothing in a house sets it.
+our $NOW;
 
 # Test hook: when set, answers a Windows command instead of starting it, so the
 # parsers and the empty-answer paths run on Linux. Nothing in a house sets it.
 our $RUN;
+
+sub _now { return defined $NOW ? $NOW : time() }
 
 sub _proc_path {
 	my ($name) = @_;
@@ -739,7 +753,7 @@ sub windows_rows {
 # describe a pid the snapshot already has.
 sub windows_snapshot {
 	my (%opt) = @_;
-	my $now = time;
+	my $now = _now();
 	my $cached = $CACHE{'snapshot'};
 	return $cached->{'rows'}
 		if !$opt{'force'} && $cached && ($now - $cached->{'at'}) < $CACHE_TTL;
@@ -754,7 +768,7 @@ sub windows_snapshot {
 # The operating-system snapshot: boot time, total and available memory. It is
 # cached as well, so uptime() and meminfo() in one poll share a query.
 sub windows_os {
-	my $now = time;
+	my $now = _now();
 	my $cached = $CACHE{'os'};
 	return $cached->{'info'} if $cached && ($now - $cached->{'at'}) < $CACHE_TTL;
 	my $text = _capture($PS, '-NoProfile', '-NonInteractive', '-Command', $CIM_OS);
@@ -813,17 +827,39 @@ sub windows_signal {
 	return ($? == 0) ? 1 : 0;
 }
 
-# The Windows liveness test. A pid the cached snapshot does not have is looked
-# for once more in a freshly read snapshot, then answered from that one: a
-# child started after the last snapshot exists even though the cache has not
-# seen it yet, which is what the supervisor loops and the just-spawned-child
-# check in Domain/Process.pm need. A pid that is present keeps the cached
-# answer, so a Monitor poll stays one query. Exactly one refresh per call.
+# The row for a pid in the cached snapshot only, or undef. Unlike _win_row this
+# never triggers a snapshot read: a liveness answer may come from the snapshot
+# on hand.
+sub _cached_win_row {
+	my ($pid) = @_;
+	return undef unless _is_pid($pid);
+	my $snapshot = $CACHE{'snapshot'};
+	return undef unless $snapshot && ref $snapshot->{'rows'} eq 'ARRAY';
+	my $wanted = $pid + 0;
+	foreach my $row ( @{ $snapshot->{'rows'} } ) {
+		return $row if $row->{'pid'} == $wanted;
+	}
+	return undef;
+}
+
+# The Windows liveness test. A pid in the cached snapshot is alive with no
+# query. An absent pid is looked for once more in a freshly read snapshot, then
+# answered from that one: a child started after the last snapshot exists even
+# though the cache has not seen it yet, which is what the supervisor loops and
+# the just-spawned-child check in Domain/Process.pm need. That refresh is rate
+# limited: at most one per $REFRESH_INTERVAL, because it costs seconds and the
+# reaper asks about every tracked record on its run. Inside the interval the
+# remaining absent pids read the snapshot the refresh left behind.
 sub windows_pid_exists {
 	my ($pid) = @_;
 	return 0 unless _is_pid($pid);
-	return 1 if _win_row($pid);
-	windows_snapshot(force => 1);
+	return 1 if _cached_win_row($pid);
+	my $now = _now();
+	my $last = $CACHE{'forced_at'};
+	if (!defined $last || $now - $last >= $REFRESH_INTERVAL) {
+		windows_snapshot(force => 1);
+		$CACHE{'forced_at'} = $now;
+	}
 	return _win_row($pid) ? 1 : 0;
 }
 

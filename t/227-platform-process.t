@@ -548,6 +548,7 @@ CSV
 		return $live_os if grep { /Win32_OperatingSystem/ } @args;
 		return $live_cim;
 	};
+	local $JawnOS::Platform::Process::NOW = 1_700_000_000;
 	reset_cache();
 
 	is(windows_pid_exists(1234), 1, 'a pid in the snapshot is alive');
@@ -556,9 +557,50 @@ CSV
 	is(windows_pid_exists(1234), 1, 'the cached pid is still alive');
 	is($calls, $warm, 'a present pid does not refresh');
 
+	$JawnOS::Platform::Process::NOW += 1;
 	$calls = 0;
 	is(windows_pid_exists(9999), 0, 'a pid the snapshot and the refresh lack is dead');
 	is($calls, 2, 'a missing pid refreshes exactly once (tasklist and CIM; the OS snapshot is still cached)');
+}
+reset_cache();
+
+# ------------------------------------------------------------ the refresh limit
+# A snapshot costs two to four seconds on a Windows box, and the master's reaper
+# asks about every tracked record on each run. Absent pids inside one interval
+# share the refresh the first of them paid for.
+{
+	my $calls = 0;
+	local $JawnOS::Platform::Process::RUN = sub {
+		my ($command, @args) = @_;
+		$calls++;
+		return $live_tasklist if lc($command) eq 'tasklist';
+		return $live_os if grep { /Win32_OperatingSystem/ } @args;
+		return $live_cim;
+	};
+	local $JawnOS::Platform::Process::NOW = 1_700_000_000;
+	reset_cache();
+	windows_snapshot();   # warm: tasklist, CIM and OS
+	is($calls, 3, 'the warm snapshot is three reads');
+
+	$calls = 0;
+	is(windows_pid_exists(1234), 1, 'a present pid answers from the warm snapshot');
+	is($calls, 0, 'a present pid never refreshes');
+
+	is(windows_pid_exists(9999), 0, 'the first absent pid forces a refresh');
+	is($calls, 2, 'that refresh is one tasklist and one CIM read');
+	is(windows_pid_exists(9998), 0, 'a second absent pid inside the interval is dead');
+	is(windows_pid_exists(9997), 0, 'and so is a third');
+	is($calls, 2, 'the rest of the run reads the refreshed snapshot, not another one');
+
+	$JawnOS::Platform::Process::NOW += 1;
+	$calls = 0;
+	is(windows_pid_exists(9996), 0, 'an absent pid after the interval is dead');
+	is($calls, 2, 'and is allowed another refresh');
+
+	$calls = 0;
+	reset_cache();
+	is(windows_pid_exists(9995), 0, 'after reset_cache an absent pid is dead');
+	is($calls, 3, 'and refreshes at once, OS snapshot included');
 }
 reset_cache();
 

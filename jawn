@@ -822,8 +822,25 @@ Mojo::IOLoop->recurring(2 => sub {
 # does not load the domain tree.
 require './lib/JawnOS/Domain/Process.pm' unless defined &subs::subprocessor_reap;
 Mojo::IOLoop->recurring(5 => sub {
+	# One process table read per run answers every record. Asking pid_exists()
+	# per record makes Windows refresh its tasklist/CIM snapshot for each absent
+	# pid, and a snapshot costs seconds: the reaper would stall the master's
+	# tick. A single table() scan is exact, and cheaper than kill(0) per record
+	# on Linux too.
+	my $alive_pid = {};
+	my $table_read = 0;
+	my $alive = sub {
+		my ($pid) = @_;
+		unless ($table_read) {
+			$table_read = 1;
+			my $rows = eval { JawnOS::Platform::Process::table() } || [];
+			$alive_pid->{ $_->{'pid'} } = 1 foreach @{$rows};
+		}
+		return $alive_pid->{$pid} ? 1 : 0;
+	};
 	my $report = eval { &subs::subprocessor_reap($subprocesses, {
 		now => time() * 1000,
+		alive => $alive,
 		on_expire => sub {
 			my ($record, $why) = @_;
 			my $line = 'subprocess ' . ($record->{'name'} || '?')
