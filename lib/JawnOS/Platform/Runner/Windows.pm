@@ -8,8 +8,14 @@ package JawnOS::Platform::Runner::Windows;
 # poll a pipe, the child's standard handles ARE a loopback socket: a listener on
 # 127.0.0.1 is connected to itself, the accepted end is made inheritable and
 # handed to the child as stdin/stdout/stderr through STARTF_USESTDHANDLES, and
-# the parent end is given to Mojo's reactor. Output therefore arrives as an
-# event, exactly as it does from ReadWriteFork's pipe on Unix.
+# the parent end is given to a Mojo::IOLoop::Stream. Output therefore arrives as
+# an event, exactly as it does from ReadWriteFork's pipe on Unix.
+#
+# The stream, not a raw reactor->io registration: Reactor::Poll::io watches the
+# handle for reading AND writing, so a raw watcher fires forever on a writable
+# socket with no data (WSAEWOULDBLOCK in a tight loop) and bypasses the stream
+# bookkeeping the rest of the loop relies on. A stream watches write only until
+# its buffer drains, and hands the read path the bytes it got.
 #
 # Win32::Process cannot set STARTF_USESTDHANDLES, so the spawn is CreateProcessA
 # with a hand-packed STARTUPINFO. The x64 layout is 104 bytes:
@@ -84,11 +90,10 @@ sub _clear_std_inherit {
 }
 
 # Mojo never switches a handle it is handed for the reactor (see
-# Mojo::IOLoop::Stream::new, which only stores it). The reactor reports the
-# socket readable from select(), our sysread then finds nothing, and in blocking
-# mode that call parks the whole loop: timers stop and no listener accepts. The
-# parent end of the loopback pair is ours to switch; the child's accepted end
-# stays blocking.
+# Mojo::IOLoop::Stream::new, which only stores it). The stream's sysread would
+# then park the whole loop in blocking mode: timers stop and no listener
+# accepts. The parent end of the loopback pair is ours to switch; the child's
+# accepted end stays blocking.
 sub _nonblocking {
 	my ($sock) = @_;
 	return 0 unless $sock;
@@ -96,15 +101,6 @@ sub _nonblocking {
 	return 1;
 }
 
-# True when a failed sysread is "nothing to read yet" and the reactor must be
-# allowed to call again. EINTR is a signal, not EOF; EWOULDBLOCK is EAGAIN's
-# other name on most systems.
-sub _retry_read {
-	my ($n) = @_;
-	return 0 if defined $n;
-	return 1 if $!{EAGAIN} || $!{EWOULDBLOCK} || $!{EINTR};
-	return 0;
-}
 
 sub new {
 	my ($class, %opt) = @_;
@@ -190,37 +186,40 @@ sub start {
 		return undef;
 	}
 
-	# Before the reactor holds it, or the first readable-but-empty report parks
-	# the loop (the freeze this comment names).
+	# Before the stream holds it, or the first readable-but-empty report parks the
+	# loop (the freeze this comment names).
 	&_nonblocking($mine);
 
 	$self->{'thread'} = unpack('Q', substr($process, 8, 8));
 	$self->{'handle'} = unpack('Q', substr($process, 0, 8));
 	$self->{'pid'} = unpack('L', substr($process, 16, 4));
 	$self->{'sock'} = $mine;
-	$self->{'reactor'} = Mojo::IOLoop->singleton->reactor;
-	$self->{'reactor'}->io($mine => sub { $self->pump });
+
+	# The stream owns the read side: it delivers bytes to read, and EOF to close.
+	# Its default 15s timeout would close a child that is merely quiet, and the
+	# tree runs for hours with no output, so the timer is disabled.
+	my $stream = Mojo::IOLoop::Stream->new($mine);
+	$stream->timeout(0);
+	$stream->on(read => sub {
+		my ($stream, $bytes) = @_;
+		$self->{'events'}{'read'}->($self, $bytes) if $self->{'events'}{'read'};
+	});
+	$stream->on(close => sub { $self->_stream_closed });
+	$self->{'stream'} = $stream;
+	Mojo::IOLoop->stream($stream);
+
 	$self->{'events'}{'spawn'}->($self) if $self->{'events'}{'spawn'};
 	return $self->{'pid'};
 }
 
-# Called by the reactor when the socket is readable, and only then.
-sub pump {
+# EOF: the child (and anything it handed the socket to) is gone. The stream has
+# already removed itself from the reactor and deleted its handle by now.
+sub _stream_closed {
 	my ($self) = @_;
 	return if $self->{'closed'};
-	my $sock = $self->{'sock'} or return;
-
-	my $n = sysread($sock, my $bytes, 65536);
-	if (defined $n && $n > 0) {
-		$self->{'events'}{'read'}->($self, $bytes) if $self->{'events'}{'read'};
-		return;
-	}
-	return if &_retry_read($n);
-
-	# EOF: the child (and anything it handed the socket to) is gone.
-	$self->{'reactor'}->remove($sock);
-	CORE::close($sock);
+	$self->{'closed'} = 1;
 	delete $self->{'sock'};
+	delete $self->{'stream'};
 	$self->_reap;
 	return;
 }
@@ -272,27 +271,26 @@ sub close {
 sub _finish {
 	my ($self) = @_;
 	$self->{'closed'} = 1;
-	if ($self->{'sock'} && $self->{'reactor'}) {
-		$self->{'reactor'}->remove($self->{'sock'});
+	if (my $stream = delete $self->{'stream'}) {
+		$stream->close;
 	}
-	CORE::close($self->{'sock'}) if $self->{'sock'};
+	elsif (my $sock = delete $self->{'sock'}) {
+		CORE::close($sock);
+	}
 	delete $self->{'sock'};
 	return;
 }
 
-# The terminal's write side. There is no pty here, so read_handle is undef and
-# terminal_session_resize - which guards on it - is a no-op; a resize cannot
-# reach a shell that has no terminal.
+# The terminal's write side. The stream buffers the bytes and flushes them when
+# the socket can take them, so there is no second buffer here. There is no pty,
+# so read_handle is undef and terminal_session_resize - which guards on it - is
+# a no-op; a resize cannot reach a shell that has no terminal.
 sub write {
 	my ($self, $bytes) = @_;
-	my $sock = $self->{'sock'} or return 0;
 	return 0 unless defined $bytes && length $bytes;
-	my $left = $bytes;
-	while (length $left) {
-		my $n = syswrite($sock, $left);
-		return 0 unless defined $n && $n > 0;
-		substr($left, 0, $n, '');
-	}
+	my $stream = $self->{'stream'} or return 0;
+	return 0 if $self->{'closed'};
+	$stream->write($bytes);
 	return 1;
 }
 

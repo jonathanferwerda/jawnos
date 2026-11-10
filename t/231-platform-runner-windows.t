@@ -1,8 +1,8 @@
 # tests-for: lib/JawnOS/Platform/Runner/Windows.pm
 # covers:    the Windows child runner: start, read both streams, see the exit,
-#            and stop a live child. The socket-mode and read-retry helpers are
-#            pure, so they are checked on every platform; the live child is
-#            Windows only.
+#            and stop a live child. The socket-mode helper and the shape of the
+#            registration are pure, so they are checked on every platform; the
+#            live child is Windows only.
 
 use strict;
 use warnings;
@@ -11,7 +11,6 @@ use FindBin;
 use lib "$FindBin::Bin/lib", "t/lib", "$FindBin::Bin/../lib";
 
 use Test::More;
-use Errno qw(EAGAIN EINTR EWOULDBLOCK);
 use File::Temp qw(tempdir);
 use File::Slurp qw(write_file read_file);
 use Time::HiRes qw(sleep);
@@ -43,34 +42,20 @@ is($fake->{'mode'}, 0, 'the socket is left non-blocking');
 ok(!JawnOS::Platform::Runner::Windows::_nonblocking(undef),
 	'no socket is not an error');
 
-# A readable socket with nothing to give is retried, never read as EOF.
-{
-	local $! = EAGAIN;
-	ok(JawnOS::Platform::Runner::Windows::_retry_read(undef), 'EAGAIN is retried');
-}
-{
-	local $! = EWOULDBLOCK;
-	ok(JawnOS::Platform::Runner::Windows::_retry_read(undef), 'EWOULDBLOCK is retried');
-}
-{
-	local $! = EINTR;
-	ok(JawnOS::Platform::Runner::Windows::_retry_read(undef), 'EINTR is retried');
-}
-{
-	local $! = 0;
-	ok(!JawnOS::Platform::Runner::Windows::_retry_read(undef),
-		'a failed read with no errno is EOF');
-}
-ok(!JawnOS::Platform::Runner::Windows::_retry_read(0), 'a zero-length read is EOF');
-
-# The switch has to happen before the reactor holds the handle, or the first
-# readable-but-empty report parks the loop.
+# The parent end is a Mojo stream, not a raw reactor->io watcher. A raw watcher
+# watches read and write together, so it fires forever on a writable socket with
+# no data and starves the rest of the loop's streams.
 {
 	my $source = read_file("$FindBin::Bin/../lib/JawnOS/Platform/Runner/Windows.pm");
+	like($source, qr/Mojo::IOLoop::Stream->new/, 'the parent end is a Mojo stream');
+	like($source, qr/\$stream->timeout\(0\)/, 'the stream timeout is disabled');
+	unlike($source, qr/->reactor->io\s*\(/, 'and no raw reactor->io registration remains');
+	like($source, qr/Mojo::IOLoop->stream\(\$stream\)/, 'the stream is registered with the loop');
+
 	my $switch = index $source, '&_nonblocking($mine)';
-	my $watch  = index $source, '->io($mine';
+	my $stream = index $source, 'Mojo::IOLoop::Stream->new($mine)';
 	ok($switch >= 0, 'start makes the parent end non-blocking');
-	ok($watch >= 0 && $switch < $watch, 'and does so before the reactor watches it');
+	ok($stream >= 0 && $switch < $stream, 'and does so before the stream holds it');
 }
 
 # --- the live child, Windows only -------------------------------------------
