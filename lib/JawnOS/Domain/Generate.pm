@@ -355,6 +355,11 @@ sub source_appt_writer {
 			|| ($source_row->{'type'} || '') =~ /^(?:stop|cancel)$/)) {
 		return;
 	}
+	# An appointment that has already ended still takes a model or option when
+	# the person corrects what happened: that child is a closed record over the
+	# parent's own span, not a session starting now.
+	my $closed = (($source_row->{'stop_seen'} || '') eq 'yes')
+		|| ($source_row->{'type'} || '') =~ /^(?:stop|cancel)$/;
 	my $char = eval { return decode_json $m->{'characteristics'} } || [];
 	my $measures = { uuid => &subs::random_string_creator(19) };
 	my $unit =  ($app eq $m->{'unit'}) ? $data->{'unit'} : $m->{'unit'};
@@ -391,6 +396,41 @@ sub source_appt_writer {
 		$datas->{'timestamp'} = $timestamp;
 	}
 
+	my $write_child = sub {
+		my ($row) = @_;
+		if (!$closed) {
+			my $c = &subs::controller_builder();
+			return &Manager::appointment_writer($c,$row);
+		}
+		# Write the child closed over the parent's span, the shape the stop path
+		# leaves the model/option sessions it was already carrying in.
+		my %done = %{$row};
+		delete $done{'quiet_child'};
+		my $cancelled = ($source_row->{'type'} || '') eq 'cancel';
+		$done{'type'} = $cancelled ? 'cancel' : 'stop';
+		$done{'duration'} = defined $source_row->{'duration'} ? $source_row->{'duration'} : $done{'duration'};
+		$done{'timestamp'} = $done{'timestamp'} || $source_row->{'timestamp'} || $timestamp;
+		unless ($cancelled) {
+			$done{'stop_seen'} = 'yes';
+			$done{'stop_timestamp'} = (defined $source_row->{'stop_timestamp'} && length $source_row->{'stop_timestamp'})
+				? $source_row->{'stop_timestamp'}
+				: (($source_row->{'timestamp'} || $done{'timestamp'}) - ($source_row->{'duration'} || 0));
+		}
+		$done{'seen'} = 'yes';
+		$done{'server_time'} = &subs::rightNow();
+		$done{'device'} = &subs::device_setter() unless $done{'device'};
+		my $settings = &subs::settings_grabber({ app => $done{'app'} });
+		$done{'pos'} = $settings->{'pos'} unless $done{'pos'};
+		$done{'project'} = $settings->{'t_project'} unless $done{'project'};
+		my $holder = $done{'timestamp'} > $done{'server_time'} ? $done{'timestamp'} : $done{'server_time'};
+		$done{'warranty'} = $done{'warranty'}
+			|| &Manager::warranty_resolve(($settings->{'warranty'} || '-10y'), $holder, 1)
+			|| &subs::ago_calc(($settings->{'warranty'} || '-10y'), $holder);
+		&subs::db_insert('appointments', \%done);
+		&subs::source_header_printer([$done{'app'}], $done{'stop_timestamp'} || $done{'timestamp'});
+		&Websocket::send('tab', { console => &Websocket::console_command('appointmentDetailGrabber', $done{'app'}, $done{'uuid'})});
+		return \%done;
+	};
 
 	unless (scalar @{$recursion_check} > 0) {
 
@@ -403,8 +443,7 @@ sub source_appt_writer {
 		}
 		my $md5 = md5_sum $datas->{'source_uuid'} . '-' . $app . '-' . $timestamp . '-' . $datas->{'app'};
 		$datas->{'uuid'} = $datas->{'source_uuid'} . '-' . $md5;# || &subs::random_string_creator(92);
-		my $c = &subs::controller_builder();
-		$returner = &Manager::appointment_writer($c,$datas);
+		$returner = $write_child->($datas);
 	}
 
 	foreach my $ch ( @{$char} ) {
@@ -415,8 +454,7 @@ sub source_appt_writer {
 			$datas->{'unit'} = $ch->{'unit'};
 			my $md5 = md5_sum $datas->{'source_uuid'} . '-' . $app . '-' . $timestamp . '-' . $ch->{'name'};
 			$datas->{'uuid'} = $datas->{'source_uuid'} . '-' . $md5,# || &subs::random_string_creator(92);
-			my $c = &subs::controller_builder();
-			&Manager::appointment_writer($c, $datas);
+			$write_child->($datas);
 		}
 	}
 
