@@ -132,8 +132,10 @@ ok($runner->can('read_handle'), 'the seam exposes a read handle');
 	);
 	ok($plan, 'plan returns a spec for an app');
 	is($plan->{'program'}, $^X, 'plan runs the same interpreter');
-	is_deeply($plan->{'program_args'}, [ '-I', '/tmp/root/lib', './perl/Manager.pl' ],
-		'plan puts lib on @INC and passes the app');
+	is_deeply($plan->{'program_args'},
+		[ '-I', '/tmp/root/lib', './perl/Manager.pl', 'daemon',
+			'-l', 'https://*:3000?x', '-l', 'http://127.0.0.1:3001' ],
+		'plan puts lib on @INC and passes the app and each listener as an explicit -l');
 	is($plan->{'env'}{'PURPOSE'}, 'main', 'plan carries the purpose');
 	is($plan->{'env'}{'MOJO_LISTEN'}, 'https://*:3000?x,http://127.0.0.1:3001',
 		'plan carries the listeners as one MOJO_LISTEN');
