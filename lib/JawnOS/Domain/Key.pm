@@ -376,6 +376,103 @@ sub database_adopt_legacy {
 	return $target;
 }
 
+# A fresh install ships schema.sql and the factory seed (initial.enc) but no
+# database: provisioning used to be a setup script that needed the sqlite3
+# command, which a Windows box does not have. Build it here instead - the seed
+# first (it carries the factory defaults), the shipped schema as the fallback.
+# The lock keeps a worker that races the first request from building twice.
+sub database_bootstrap {
+	my (%opt) = @_;
+	my $dir    = $opt{'dir'}      || &subs::database_dir();
+	my $db     = $opt{'database'} || "$dir/jawnos.db";
+	my $schema = $opt{'schema'}   || "$dir/schema.sql";
+	my $seed   = $opt{'seed'}     || "$dir/initial.enc";
+	return $db if -e $db && -s $db > 5000;
+
+	require File::Path;
+	File::Path::make_path($dir) unless -d $dir;
+	my $lock = "$dir/.bootstrap.lock";
+	open(my $lfh, '>', $lock) or return undef;
+	require Fcntl;
+	flock($lfh, Fcntl::LOCK_EX());
+	if (-e $db && -s $db > 5000) { close $lfh; return $db }
+
+	my $ok = 0;
+	if (-e $seed && -s $seed > 100) {
+		$ok = &_database_seed_from_factory($seed, $db);
+	}
+	unless ($ok) {
+		unlink $db if -e $db;
+		$ok = &_database_build_from_schema($schema, $db);
+	}
+	close $lfh;
+	unlink $lock;
+	return ($ok && -e $db && -s $db > 5000) ? $db : undef;
+}
+
+sub _database_seed_from_factory {
+	my ($seed, $db) = @_;
+	my $openssl = &_database_openssl();
+	return 0 unless $openssl;
+	# factory_seed.pl writes the ciphertext, then appends the splitter and an
+	# encrypted note naming the cipher. openssl cannot read past the note, so the
+	# ciphertext is cut out first. The note names aes-256-cbc today; a different
+	# seed falls through to the schema rather than guessing.
+	my $splitter = $gb::universal_splitter || '--simple--split--and--whatnot--';
+	open(my $in, '<:raw', $seed) or return 0;
+	my $raw = do { local $/; <$in> };
+	close $in;
+	my $cut = rindex($raw, $splitter);
+	$raw = substr($raw, 0, $cut) if $cut >= 0;
+	my $tmp = "$db.seed.$$";
+	open(my $out, '>:raw', $tmp) or return 0;
+	my $written = print {$out} $raw;
+	close $out;
+	return 0 unless $written;
+	my $rc = system($openssl, 'enc', '-d',
+		'-k', 'JAWNOS-FACTORY-SEED-v1', '-aes-256-cbc', '-pbkdf2',
+		'-in', $tmp, '-out', $db);
+	unlink $tmp;
+	eval { chmod 0600, $db };
+	return ($rc == 0 && -e $db && -s $db > 5000) ? 1 : 0;
+}
+
+sub _database_build_from_schema {
+	my ($schema, $db) = @_;
+	return 0 unless -e $schema;
+	open(my $in, '<', $schema) or return 0;
+	my $sql_text = do { local $/; <$in> };
+	close $in;
+	return 0 unless defined $sql_text && length $sql_text;
+	require DBI;
+	my $dbh = eval {
+		DBI->connect("dbi:SQLite:dbname=$db", '', '',
+			{ RaiseError => 1, PrintError => 0 });
+	};
+	return 0 unless $dbh;
+	my $ok = eval {
+		# the shipped schema is many statements and has no triggers
+		$dbh->{'sqlite_allow_multiple_statements'} = 1;
+		$dbh->do($sql_text);
+		1;
+	};
+	eval { $dbh->disconnect };
+	eval { chmod 0600, $db };
+	return ($ok && -e $db && -s $db > 5000) ? 1 : 0;
+}
+
+sub _database_openssl {
+	require JawnOS::Platform;
+	my $path = JawnOS::Platform::tool_path('openssl');
+	return $path if $path;
+	my $perl = $^X;
+	if ($perl =~ m{^(.*?)[/\\]perl[/\\]bin[/\\]perl(?:\.exe)?$}i) {
+		my $candidate = "$1/c/bin/openssl.exe";
+		return $candidate if -f $candidate;
+	}
+	return undef;
+}
+
 sub database_grabber {
 	my $connection = shift || '';
 	# A forked child inherits the parent's handle. Detach it so our exit cannot
@@ -413,7 +510,10 @@ sub database_grabber {
 	# newest .db, so a stray file can never become the database. An older build
 	# kept it under start_dir, so the first run after this one adopts that.
 	my $database = &subs::database_path();
-	unless (-e $database) { &subs::database_adopt_legacy(); }
+	unless (-e $database && -s $database > 5000) {
+		&subs::database_adopt_legacy();
+		&subs::database_bootstrap() unless (-e $database && -s $database > 5000);
+	}
 
 	if ($database && -e $database && -s $database > 5000) {
 

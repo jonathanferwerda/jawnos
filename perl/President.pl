@@ -390,6 +390,14 @@ sub manager_starter() {
 	$ENV{PORT_ENV} = $config->{'environment'};
 	$ENV{cookie_name} = 'president';
 
+	# A fresh install has no certificate; issue a local self-signed one so the
+	# TLS listeners can bind instead of dying before the panel is reachable.
+	my $local_tls = eval {
+		require JawnOS::Platform::TLS;
+		JawnOS::Platform::TLS::ensure_local_cert(dir => './server');
+	};
+	$log->error('local TLS: ' . $local_tls->{'error'})
+		if $local_tls && $local_tls->{'error'};
 	my $certs = "";
 
 	if (-e './server/fullchain.pem' && -e './server/privkey.pem') {
