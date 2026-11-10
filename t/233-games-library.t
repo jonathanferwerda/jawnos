@@ -104,6 +104,9 @@ like($install, qr/JawnOS Gamepad\.cfg/, 'the virtual pad gets an autoconfig prof
 like($install, qr/input_start_btn = "5"/, 'Start is mapped by the pad key position');
 like($install, qr/audio_device = \\"hw:0,0\\"/, 'the installer writes the ALSA device the panel has');
 
+my $games_pm = read_file("$root/lib/JawnOS/Games.pm");
+like($games_pm, qr/-e "\$root\/\$system\/\$stem\.cue"/, 'a .bin beside its .cue is not a second game');
+
 # --- the routes and the page --------------------------------------------------
 my $routes = read_file("$root/lib/JawnOS/Routes/manager_misc9.pm");
 for my $row (

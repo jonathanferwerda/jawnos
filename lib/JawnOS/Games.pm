@@ -221,6 +221,12 @@ sub scan {
 			my ($base) = $relative =~ m{([^/]+)$};
 			my ($suffix) = $base =~ /\.([^.]+)$/;
 			next unless defined $suffix && $extension{lc $suffix};
+			# A .cue names the tracks beside it: the image of a disc is part
+			# of that disc, not a second game on the shelf.
+			if (lc($suffix) =~ /^(?:bin|img|raw)$/) {
+				(my $stem = $relative) =~ s/\.[^.]+$//;
+				next if -e "$root/$system/$stem.cue";
+			}
 			$count{$system}++;
 			push @games, {
 				id => id_for($system, $relative),
