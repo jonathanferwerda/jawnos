@@ -38,6 +38,14 @@ is_deeply(
 	'the real sealed file and the open picture/notes are not stubs'
 );
 
+# document_location and scan_location are both ~/Documents on this house, so the
+# same tree arrives twice from the settings list. It must be walked once, and a
+# root passed inside another must not repeat its parent.
+my $twice = media_stub_scan([$dir, $dir]);
+is( $twice->{'total'}, 3, 'the same root named twice is walked once' );
+my $nested = media_stub_scan([$dir, "$dir/a"]);
+is( $nested->{'total'}, 3, 'a root inside another is not counted twice' );
+
 # `main` prints; capture the answer and the exit code.
 sub run_main {
 	my (@args) = @_;

@@ -35,12 +35,20 @@ require './perl/subroutines.pl';
 sub media_stub_scan {
 	my ($roots) = @_;
 	my (@files, $bytes);
-	my %seen_root;
+	my %unique;
 	$bytes = 0;
 	foreach my $root ( @{$roots} ) {
 		next unless defined $root && length $root;
 		my $real = &subs::home($root);
 		next unless -d $real;
+		$unique{$real} = 1;
+	}
+	# document_location and scan_location are both ~/Documents on this house,
+	# and a caller may name the same tree twice. Walk each tree once: take the
+	# outermost roots and skip one already inside another.
+	my %seen_root;
+	foreach my $real ( sort { length($a) <=> length($b) } keys %unique ) {
+		next if grep { $real eq $_ || index($real, $_ . '/') == 0 } keys %seen_root;
 		$seen_root{$real} = 1;
 		File::Find::find({
 			no_chdir => 1,
@@ -58,7 +66,7 @@ sub media_stub_scan {
 	my %by_root;
 	my %kind = (one => 0, three => 0, empty => 0);
 	foreach my $f ( @files ) {
-		my ($root) = grep { index($f->{'path'}, $_) == 0 } keys %seen_root;
+		my ($root) = grep { index($f->{'path'}, $_ . '/') == 0 } keys %seen_root;
 		$root //= '(other)';
 		$by_root{$root}++;
 		$kind{'empty'}++ if $f->{'size'} == 0;
