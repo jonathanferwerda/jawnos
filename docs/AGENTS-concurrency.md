@@ -178,6 +178,14 @@ checkout and the master — the authority:
   class and the message the coordinator left; `--check` exits 1 while one is waiting (a monitor's
   signal), and `--all` includes the landed tickets. This is the read-only answer to "what is
   stranded?", without needing a branch or ticket id.
+- **The warden.** `scripts/land_warden.pl` (timer `jawnos-land-warden.timer`, every fifteen
+  minutes) takes one refused ticket the coordinator left, recreates a `warden/land-<id>-<stamp>`
+  branch from its commit or its origin branch under `$JAWNOS_QA_ROOT/warden/<id>`, rebases it onto
+  `origin/main` and runs the suite. Green: it pushes the warden branch and enqueues it. Red or
+  conflicted: it leaves the worktree and writes `ticket-<id>.md` beside it. A worktree left for a
+  conflict is resumed on the next tick once the rebase is finished and the tree is clean; a ticket
+  whose patches are already on the trunk is marked `superseded` without a suite. It never touches
+  the owner's branch or the primary checkout; it tries each ticket once, and `--retry` allows another.
 - **The queue is a snapshot.** Re-enqueueing the same branch updates its sha and keeps its place.
   A branch that still carries a commit already on the trunk under another sha (a re-enqueued ticket)
   is not a conflict: the coordinator skips the empty patch and lands the rest. A branch with nothing

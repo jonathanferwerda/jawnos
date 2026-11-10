@@ -1,4 +1,4 @@
-# tests-for: scripts/land_lib.pl scripts/land_enqueue.pl scripts/land_status.pl scripts/land_coordinator.pl scripts/systemd/jawnos-land-coordinator.service scripts/systemd/jawnos-land-coordinator.timer
+# tests-for: scripts/land_lib.pl scripts/land_enqueue.pl scripts/land_status.pl scripts/land_coordinator.pl scripts/land_warden.pl scripts/systemd/jawnos-land-coordinator.service scripts/systemd/jawnos-land-coordinator.timer scripts/systemd/jawnos-land-warden.service scripts/systemd/jawnos-land-warden.timer
 # covers:    the landing queue - enqueue validation and the backup push, the
 #           coordinator's waves, one suite and one restart per wave, the hot-file
 #           cap, the red-wave split into single tickets, landed-ticket records,
@@ -104,7 +104,7 @@ sub fixture {
 	write_file("$primary/scripts/run_tests.pl", $SUITE);
 	write_file("$primary/scripts/restart.pl", $RESTART);
 	write_file("$primary/scripts/version_bump.pl", read_file("$real/scripts/version_bump.pl"));
-	for my $name (qw(land_lib.pl land_enqueue.pl land_status.pl land_coordinator.pl)) {
+	for my $name (qw(land_lib.pl land_enqueue.pl land_status.pl land_coordinator.pl land_warden.pl)) {
 		write_file("$primary/scripts/$name", read_file("$real/scripts/$name"));
 	}
 	for my $hook (qw(pre-commit pre-push)) {
@@ -156,6 +156,17 @@ sub enqueue_wait {
 	return ($rc, $out);
 }
 
+sub warden {
+	my ($f, @args) = @_;
+	local $ENV{'LAND_TEST_DIR'} = $f->{'marker'};
+	local $ENV{'JAWNOS_QA_ROOT'} = $f->{'qa'};
+	my $cwd = getcwd();
+	chdir $f->{'primary'} or die "chdir primary: $!";
+	my ($rc, $out) = sh($^X, 'scripts/land_warden.pl', '--once', @args);
+	chdir $cwd or die "chdir back: $!";
+	return ($rc, $out);
+}
+
 sub coordinator {
 	my ($f, @args) = @_;
 	local $ENV{'LAND_TEST_DIR'} = $f->{'marker'};
@@ -190,6 +201,15 @@ sub ticket_json {
 	my ($json) = @_;
 	my ($obj) = $json =~ /(\{.*\})/s;
 	return eval { JSON::PP->new->decode($obj // '') } || {};
+}
+
+sub refuse_ticket {
+	my ($f, $t) = @_;
+	my $path = "$f->{'primary'}/.git/land-queue/$t->{'id'}.json";
+	my $rec = JSON::PP->new->decode(read_file($path));
+	$rec->{'state'} = 'refused';
+	$rec->{'result'} = { code => 1, reason_class => 'suite', message => 'fixture: refused for the warden' };
+	write_file($path, JSON::PP->new->canonical->encode($rec));
 }
 
 sub lines {
@@ -416,6 +436,98 @@ subtest 'the refused list answers without a branch id' => sub {
 	ok(ref $cj->{'tickets'} eq 'ARRAY', 'and still carries the list');
 };
 
+# --- the warden rescues what the coordinator refused -----------------------
+
+subtest 'the warden rescues a green refused ticket' => sub {
+	my $f = fixture();
+	commit_file($f->{'wt1'}, 'one.txt', "one\n", 'one: a green branch');
+	my ($erc, $eout) = enqueue($f, $f->{'wt1'});
+	is($erc, 0, 'the branch enqueues') or diag($eout);
+	my $t = ticket_json($eout);
+
+	# Stand in for the coordinator refusing a green branch: the ticket is the
+	# warden's input, and this keeps the rescue deterministic.
+	my $path = "$f->{'primary'}/.git/land-queue/$t->{'id'}.json";
+	my $rec = JSON::PP->new->decode(read_file($path));
+	$rec->{'state'} = 'refused';
+	$rec->{'result'} = { code => 1, reason_class => 'suite', message => 'fixture: refused for the warden' };
+	write_file($path, JSON::PP->new->canonical->encode($rec));
+
+	my ($wrc, $wout) = warden($f);
+	is($wrc, 0, 'the warden runs') or diag($wout);
+	like($wout, qr/enqueued/, 'it enqueues the rescued branch');
+	my (undef, $s1) = status($f, '--branch', 'agent/one');
+	is($s1->{'ticket'}{'warden'}{'state'}, 'enqueued', 'the refused ticket records the rescue');
+	ok($s1->{'ticket'}{'warden'}{'report'} && -f $s1->{'ticket'}{'warden'}{'report'},
+		'the report is written');
+
+	my ($crc, $cout) = coordinator($f, '--train-size', '1', '--jobs', '1', '--no-restart');
+	is($crc, 0, 'the rescued ticket drains') or diag($cout);
+	my (undef, $one) = git($f->{'primary'}, 'show', 'origin/main:one.txt');
+	is($one, 'one', 'the rescued work is on the trunk');
+};
+
+subtest 'the warden resumes a resolved conflict' => sub {
+	my $f = fixture();
+	commit_file($f->{'wt1'}, 'README', "branch\n", 'one: change the readme');
+	my ($erc, $eout) = enqueue($f, $f->{'wt1'});
+	is($erc, 0, 'the branch enqueues') or diag($eout);
+	my $t = ticket_json($eout);
+
+	# Move the trunk under the branch, so the warden's rebase conflicts.
+	commit_file($f->{'primary'}, 'README', "trunk\n", 'trunk: change the readme too');
+	my ($prc) = git($f->{'primary'}, 'push', 'origin', 'main');
+	is($prc, 0, 'the trunk moves');
+	refuse_ticket($f, $t);
+
+	my ($wrc, $wout) = warden($f);
+	is($wrc, 0, 'the warden runs') or diag($wout);
+	like($wout, qr/conflict/, 'it reports the conflict');
+	my (undef, $s1) = status($f, '--branch', 'agent/one');
+	my $wt = $s1->{'ticket'}{'warden'}{'worktree'};
+	ok($wt && -d $wt, 'the conflict worktree is left');
+
+	# The person resolves the marker: keep the branch's text and finish the rebase.
+	my ($crc) = git($wt, 'checkout', '--theirs', 'README');
+	is($crc, 0, 'the branch side is kept');
+	git($wt, 'add', 'README');
+	local $ENV{'GIT_EDITOR'} = 'true';
+	my ($rrc, $rout) = git($wt, 'rebase', '--continue');
+	is($rrc, 0, 'the rebase finishes') or diag($rout);
+
+	my ($wrc2, $wout2) = warden($f);
+	is($wrc2, 0, 'the warden resumes') or diag($wout2);
+	like($wout2, qr/enqueued/, 'it enqueues the resolved branch');
+	my ($crc2, $cout2) = coordinator($f, '--train-size', '1', '--jobs', '1', '--no-restart');
+	is($crc2, 0, 'the rescued ticket drains') or diag($cout2);
+	my (undef, $readme) = git($f->{'primary'}, 'show', 'origin/main:README');
+	is($readme, 'branch', 'the resolved work is on the trunk');
+};
+
+subtest 'the warden reports a red ticket and tries it once' => sub {
+	my $f = fixture();
+	commit_file($f->{'wt1'}, 'BREAK', "1\n", 'one: break the suite');
+	enqueue($f, $f->{'wt1'});
+	my ($crc, $cout) = coordinator($f, '--train-size', '1', '--jobs', '1', '--suite-retries', '0', '--no-restart');
+	is($crc, 0, 'the coordinator drains') or diag($cout);
+	my (undef, $s1) = status($f, '--branch', 'agent/one');
+	is($s1->{'ticket'}{'state'}, 'refused', 'the red branch is refused');
+
+	my ($wrc, $wout) = warden($f);
+	is($wrc, 0, 'the warden runs') or diag($wout);
+	like($wout, qr/red/, 'it reports the red suite');
+	my (undef, $s1b) = status($f, '--branch', 'agent/one');
+	is($s1b->{'ticket'}{'warden'}{'state'}, 'red', 'the ticket records the red attempt');
+	ok($s1b->{'ticket'}{'warden'}{'worktree'} && -d $s1b->{'ticket'}{'warden'}{'worktree'},
+		'the worktree is left for the fix');
+	ok($s1b->{'ticket'}{'warden'}{'report'} && -f $s1b->{'ticket'}{'warden'}{'report'},
+		'the report is written');
+
+	my ($wrc2, $wout2) = warden($f);
+	is($wrc2, 0, 'the second run is quiet');
+	like($wout2, qr/no stranded ticket/, 'it does not retry the same ticket');
+};
+
 # --- enqueue refuses what it cannot land ----------------------------------
 
 subtest 'enqueue refuses dirty, primary, already-merged and full queues' => sub {
@@ -518,6 +630,8 @@ subtest 'the authority refuses a foreign commit identity' => sub {
 subtest 'the systemd units run the coordinator and point the timer at it' => sub {
 	my $service = read_file("$real/scripts/systemd/jawnos-land-coordinator.service");
 	my $timer   = read_file("$real/scripts/systemd/jawnos-land-coordinator.timer");
+	my $wservice = read_file("$real/scripts/systemd/jawnos-land-warden.service");
+	my $wtimer   = read_file("$real/scripts/systemd/jawnos-land-warden.timer");
 	like($service, qr{^Type=oneshot}m, 'the drain is a oneshot');
 	like($service, qr{ExecStart=.*land_coordinator\.pl --train-size 6 --jobs 4},
 		'it runs the coordinator with the wave and job caps');
@@ -525,6 +639,10 @@ subtest 'the systemd units run the coordinator and point the timer at it' => sub
 	like($service, qr{^Environment=JAWNOS_QA_ROOT=}m, 'the unit pins the QA root for the train');
 	like($timer, qr{^Unit=jawnos-land-coordinator\.service}m, 'the timer fires the service');
 	like($timer, qr{OnUnitActiveSec=60s}, 'and re-arms a minute after the drain ends');
+	like($wservice, qr/ExecStart=.*land_warden\.pl --once --max 1 --jobs 2/,
+		'the warden runs one ticket with the shared job cap');
+	like($wservice, qr/CPUQuota=200%/, 'and is capped on the shared box');
+	like($wtimer, qr/OnUnitActiveSec=15min/, 'the warden timer ticks every fifteen minutes');
 };
 
 done_testing();

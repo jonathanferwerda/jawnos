@@ -1,0 +1,13 @@
+[Unit]
+Description=JawnOS land warden every fifteen minutes
+
+[Timer]
+# One refused ticket per tick; a ticket with a warden attempt is skipped, so a
+# week of quiet is not a week of suites.
+OnBootSec=5min
+OnUnitActiveSec=15min
+Persistent=true
+Unit=jawnos-land-warden.service
+
+[Install]
+WantedBy=timers.target

@@ -202,6 +202,13 @@ sub print_ticket {
 	if (ref $t->{'result'} eq 'HASH' && length($t->{'result'}{'message'} // '')) {
 		print '  result: ', $t->{'result'}{'message'}, "\n";
 	}
+	if (ref $t->{'warden'} eq 'HASH') {
+		print '  warden: ', ($t->{'warden'}{'state'} // '?'), ' - ', ($t->{'warden'}{'detail'} // ''), "\n";
+		print '  warden worktree: ', $t->{'warden'}{'worktree'}, "\n"
+			if length($t->{'warden'}{'worktree'} // '');
+		print '  warden report: ', $t->{'warden'}{'report'}, "\n"
+			if length($t->{'warden'}{'report'} // '');
+	}
 	my @next = cleanup_steps($t);
 	print '  next: your work is on the trunk, so these are safe now: `',
 		join('`, `', @next), "`\n" if @next;
