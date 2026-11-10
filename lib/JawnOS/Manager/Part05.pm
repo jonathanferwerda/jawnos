@@ -142,6 +142,15 @@ sub appointment_writer($c,$app) {
 		$preset->{'camera'} = $pressed_camera if defined $pressed_camera && $named_source =~ /^video/;
 		$app->{'data'} = encode_json $preset;
 	}
+	# The row's warranty, project and pos belong to the row, not to the press that
+	# came after it. They used to be filled below, after the first insert, and the
+	# small refresh at the foot writes only the maker's fields - so every session
+	# this writer started (a plate, a timer, a relayed start) was born without a
+	# warranty and could never expire. Fill them before the insert.
+	my $warranty_holder = $app->{'timestamp'} > $app->{'server_time'} ? $app->{'timestamp'} : $app->{'server_time'};
+	$app->{'warranty'} = $app->{'warranty'} || &warranty_resolve(($init->{'warranty'} || '-10y'), $warranty_holder, 1) || &subs::ago_calc(($init->{'warranty'} || '-10y'), $warranty_holder);
+	$app->{'project'} = $settings->{'t_project'} unless $app->{'project'};
+	$app->{'pos'} = $settings->{'pos'} unless $app->{'pos'};
 	if ($app->{'type'} eq 'usual' || $app->{'type'} eq 'start' || $app->{'type'} eq 'record') {
 		&subs::db_insert('appointments', $app);
 		$appt_header = &subs::appt_header_printer({ app => $app->{'app'}, timestamp => $app->{'timestamp'} });
@@ -155,11 +164,6 @@ sub appointment_writer($c,$app) {
 			$app->{'quantity'} = $model->{'quantity'};
 		}
 	}
-
-	my $warranty_holder = $app->{'timestamp'} > $app->{'server_time'} ? $app->{'timestamp'} : $app->{'server_time'};
-	$app->{'warranty'} = $app->{'warranty'} || &warranty_resolve(($init->{'warranty'} || '-10y'), $warranty_holder, 1) || &subs::ago_calc(($init->{'warranty'} || '-10y'), $warranty_holder);
-	$app->{'project'} = $settings->{'t_project'} unless $app->{'project'};
-	$app->{'pos'} = $settings->{'pos'} unless $app->{'pos'};
 
 
 	if ($app->{'type'} eq 'record') {
