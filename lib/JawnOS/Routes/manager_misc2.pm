@@ -9,6 +9,8 @@ sub routes {
 	[7170, 'post', '/manager/editor/save', 'action_7170'],
 	[7226, 'post', '/manager/editor/delete', 'action_7226'],
 	[7767, 'get', '/manager/debrief_grabber', 'action_7767'],
+	[9001, 'get', '/manager/debrief', 'action_9001'],
+	[9002, 'post', '/manager/debrief', 'action_9002'],
 	[7783, 'post', '/manager/fuck_you', 'action_7783'],
 	[7845, 'get', '/manager/network', 'action_7845'],
 	[7849, 'get', '/manager/network/bluetooth/status', 'action_7849'],

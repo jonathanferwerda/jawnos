@@ -1,5 +1,24 @@
 var heartbeatSettle = {};
 function stayingAlive(data) {
+	if (!data) { return; }
+	var now = Date.now();
+	var apps = data.apps || (data.app ? [data.app] : []);
+	apps.forEach(function (app) {
+		if (ws[app]) { ws[app]['stayingAlive'] = now; }
+	});
+	if (data.beats) {
+		Object.keys(data.beats).forEach(function (app) {
+			var beat = data.beats[app];
+			if (!beat) { return; }
+			if (!beat.app) { beat.app = app; }
+			stayingAliveOne(beat);
+		});
+		return;
+	}
+	stayingAliveOne(data);
+}
+
+function stayingAliveOne(data) {
 	var now = Date.now();
 
 	if (!data || !data.app) { return; }
@@ -296,6 +315,7 @@ function websocketStop(app) {
 	}
 	else if (!app) {
 		if (wsBus) { wsBus['deliberate'] = 1; try { wsBus.close(); } catch (e) {} wsBus = null; }
+		if (heartbeatAll) { clearInterval(heartbeatAll); heartbeatAll = 0; }
 		$.each(ws, function(i,v) {
 			if (i != 'tab' || i != 'music' || i != 'server') {
 				closer = $('.close_appointment[app="' + i + '"]');

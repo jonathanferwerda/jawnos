@@ -281,6 +281,29 @@ sub ws_dir {
 
 sub ws_watcher_path { return &subs::runtime_dir() . '/ws_watcher' }
 
+# The debrief is the browser's whole localStorage snapshot, saved by the tab
+# and read back when a fresh window opens. It travels over HTTP, not the
+# heartbeat: a store can be large, and the websocket frame is a liveness beat,
+# not a backup. The ticket is the save slot, so a new window for the same
+# ticket gets the last snapshot the page wrote.
+sub debrief_read {
+	my ($ticket_uuid) = @_;
+	return {} unless defined $ticket_uuid && length $ticket_uuid;
+	my $row = &subs::db_query('select debriefer from tickets where uuid = ?', $ticket_uuid)->hashes->[0];
+	return {} unless $row && defined $row->{'debriefer'} && length $row->{'debriefer'};
+	my $d = eval { decode_json $row->{'debriefer'} };
+	return ref $d eq 'HASH' ? $d : {};
+}
+
+sub debrief_store {
+	my ($ticket_uuid, $json) = @_;
+	return 0 unless defined $ticket_uuid && length $ticket_uuid;
+	return 0 unless defined $json && length $json;
+	return 0 if length($json) > 8 * 1024 * 1024;
+	my $updated = &subs::db_update('tickets', { debriefer => $json }, { uuid => $ticket_uuid });
+	return ($updated && $updated->rows) ? 1 : 0;
+}
+
 # A house with a way back in starts gated. The paper recovery code is the
 # emergency door, so a house that has one gets the padlock row, General as its
 # context, and Enforce as the mode the first time this runs, then the marker

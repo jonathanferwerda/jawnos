@@ -13,7 +13,10 @@ var remote_ws = {};
 // file speaks; only the transport is shared.
 var wsMultiplex = (typeof ws_multiplex != 'undefined') ? !!ws_multiplex : false;
 var wsBus = null;
+var wsMuxQuiet = 0;
 var heartbeat = {};
+var heartbeatAll = 0;
+var debriefTimer = 0;
 // The liveness beat. Every beat is a network round trip that wakes the radio,
 // and an open tab has two or three sockets beating, so the cadence is
 // deliberately slow. A socket is only declared dead when the server has not
@@ -60,6 +63,7 @@ $(document).ready(function() {
 	ensureYellowRing();
 	websocketStart();
 	wsWatchdogStart();
+	debriefStart();
 });
 
 function wsStatusChecker() {
@@ -116,6 +120,7 @@ function websocketRebuild() {
 	// A rebuild means the transport is suspect: drop the bus before the
 	// proxies, so their close() does not send on a socket we are abandoning.
 	if (wsBus) { wsBus['deliberate'] = 1; try { wsBus.close(); } catch (e) {} wsBus = null; }
+	if (heartbeatAll) { clearInterval(heartbeatAll); heartbeatAll = 0; }
 	Object.keys(ws).forEach(function(app) {
 		clearInterval(heartbeat[app]);
 		delete heartbeat[app];
@@ -218,6 +223,8 @@ document.addEventListener('visibilitychange', function() {
 		clearInterval(wsStatusInterval);
 		wsStatusInterval = null;
 		wsWatchdogStop();
+		if (heartbeatAll) { clearInterval(heartbeatAll); heartbeatAll = 0; }
+		debriefSave(1);
 		Object.keys(heartbeat).forEach(function(app) {
 			clearInterval(heartbeat[app]);
 			delete heartbeat[app];
@@ -368,6 +375,7 @@ function wsMuxOpen(event) {
 	if (!wsBus) { return; }
 	wsBus['status'] = 'alive';
 	wsBus['ackAt'] = Date.now();
+	wsMuxQuiet = 1;
 	Object.keys(ws).forEach(function (app) {
 		var socket = ws[app];
 		if (!socket || !socket.__mux || socket.readyState == 1) { return; }
@@ -375,6 +383,9 @@ function wsMuxOpen(event) {
 		socket['stayingAlive'] = Date.now();
 		wsOpener(event, app, 'self');
 	});
+	wsMuxQuiet = 0;
+	heartbeatStartAll();
+	heartbeatSendAll();
 }
 
 function websocketMuxStart(wappts, timestamp, browser_tab_id, browser_tab, uA) {
@@ -490,7 +501,9 @@ function wsOpener(event,app,origin) {
 	if (!document.hidden) {
 		heartbeatStart(app);
 		// beat once now so a rebuilt socket catches up on the spot, not in two seconds
-		heartbeatSend(app);
+		if (!wsMuxQuiet) {
+			if (wsMultiplex) { heartbeatSendAll(); } else { heartbeatSend(app); }
+		}
 	}
 	// A socket that just came back may have missed a padlock request (the phone
 	// wakes, the Wi-Fi changes, the worker restarts). The request is also kept
@@ -507,21 +520,41 @@ function wsOpener(event,app,origin) {
 // (Re)start the liveness heartbeat for one socket. Called when a socket opens
 // and again when the page becomes visible after being hidden.
 function heartbeatStart(app) {
+	if (wsMultiplex) {
+		// One timer for the whole tab; every app rides the same bus.
+		clearInterval(heartbeat[app]);
+		delete heartbeat[app];
+		heartbeatStartAll();
+		return;
+	}
 	clearInterval(heartbeat[app]);
 	heartbeat[app] = window.setInterval(function () {
 		heartbeatSend(app);
 	}, stayingAliveInterval);
 }
 
+function heartbeatStartAll() {
+	if (heartbeatAll) { return; }
+	heartbeatAll = window.setInterval(function () {
+		heartbeatSendAll();
+	}, stayingAliveInterval);
+}
+
 // One heartbeat: tell the server this tab is still here and hand over anything
 // that changed since the last one.
-function heartbeatSend(app) {
+function heartbeatSend(app, collect) {
+	if (wsMultiplex && !collect) { heartbeatSendAll(); return; }
 	var apper = app.split('@')[0];
 	var now = Date.now();
 	var browser_tab_id = sessionStorage.getItem('browser_tab_id') || '';
 	var browser_tab = localStorage.getItem('browser_tab') || '';
 	var uA = navigator.userAgent;
-	if (!ws[app]) { clearInterval(heartbeat[app]); websocketStop(app); return; }
+	if (!ws[app]) {
+		if (collect) { return null; }
+		clearInterval(heartbeat[app]);
+		websocketStop(app);
+		return;
+	}
 	ws[app]['status'] = 'alive';
 	if (!document.hidden) {
 		var data = {
@@ -550,17 +583,6 @@ function heartbeatSend(app) {
 					data['windows'] = windows_json;
 				}
 				windowWsMouseMove = mm;
-			}
-			// The localStorage debrief is for auditing, not for liveness. The
-			// snapshot is a whole-store blob written to a ticket row, so only ship
-			// it when the store actually moved since the last one.
-			if (now - windowWsDebriefer > debrieferInterval) {
-				windowWsDebriefer = now;
-				var debrief = JSON.stringify(localStorage);
-				if (debrief != windowWsDebrieferJson) {
-					windowWsDebrieferJson = debrief;
-					data['debriefer'] = debrief;
-				}
 			}
 			// A start or stop pushes the header once. A tab that was reconnecting
 			// can miss that one frame, so name the version each open window is
@@ -612,6 +634,7 @@ function heartbeatSend(app) {
 				});
 			}
 		}
+		if (collect) { return data; }
 		var json_data = JSON.stringify(data);
 		if (ws[app] && ws[app] != null && ws[app]['readyState'] == 1) {
 			ws[app].send(json_data);
@@ -624,11 +647,71 @@ function heartbeatSend(app) {
 	}
 }
 
+// One frame for the whole tab: the tab's layout and header stamps, the music
+// writer's track, and the server's watcher list. The server runs the same
+// per-app work it ran for three separate beats and answers once with a beats
+// map; the app sockets no longer pay a frame each.
+function heartbeatSendAll() {
+	if (!wsBus || wsBus.readyState != 1 || !ws['tab']) { return; }
+	var apps = Object.keys(ws).filter(function (a) { return ws[a] && ws[a].__mux; });
+	if (apps.indexOf('tab') < 0) { apps.unshift('tab'); }
+	var data = heartbeatSend('tab', true);
+	if (!data) { return; }
+	data.app = 'tab';
+	data.apps = apps;
+	if (ws['music']) {
+		var music = heartbeatSend('music', true);
+		if (music && music.music_data !== undefined) { data.music_data = music.music_data; }
+	}
+	if (ws['server']) {
+		var server = heartbeatSend('server', true);
+		if (server) {
+			if (server.jp_data !== undefined) { data.jp_data = server.jp_data; }
+			data.ws = server.ws;
+		}
+	}
+	var now = Date.now();
+	apps.forEach(function (app) {
+		if (ws[app]) {
+			ws[app]['status'] = 'alive';
+			ws[app]['stayingAlive'] = now;
+		}
+	});
+	wsBus.send(JSON.stringify(data));
+}
+
+// The debrief is a whole-store snapshot. It used to ride the tab heartbeat,
+// every five minutes and only when it changed; that put a large, rare blob in
+// the liveness frame and made a lost beat lose the save. It now has its own
+// endpoint: a slow timer while visible, and a beacon when the page goes away.
+// The heartbeat stays small, and the save survives the tab closing.
+function debriefSave(force) {
+	var d = JSON.stringify(localStorage);
+	if (!force && d === windowWsDebrieferJson) { return; }
+	windowWsDebrieferJson = d;
+	var body = new Blob(['debriefer=' + encodeURIComponent(d)], { type: 'application/x-www-form-urlencoded' });
+	if (navigator.sendBeacon && (force || document.hidden)) {
+		navigator.sendBeacon('/manager/debrief', body);
+	}
+	else {
+		$.ajax({ url: '/manager/debrief', type: 'POST', data: { debriefer: d } });
+	}
+}
+
+function debriefStart() {
+	if (debriefTimer) { return; }
+	debriefTimer = window.setInterval(function () { debriefSave(0); }, debrieferInterval);
+}
+
+$(window).on('pagehide', function () { debriefSave(1); });
+$(window).on('beforeunload', function () { debriefSave(1); });
+
 // Ask for a liveness round trip now instead of waiting for the scheduled beat.
 // A panel that has just finished drawing calls this, so the server writes the
 // fresh row and answers with the current neighbour list at once.
 function stayingAliveNow(app) {
 	app = app || 'server';
+	if (wsMultiplex) { heartbeatSendAll(); return true; }
 	var socket = ws[app];
 	if (!socket || socket.readyState != 1) {
 		if (!document.hidden) { websocketStart(); }

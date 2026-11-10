@@ -174,11 +174,7 @@ sub action_7767 {
 		return;
 	}
 	my $ticket_uuid = $c->session('ticket_uuid');
-	my ($db,$database,$sql) = &subs::database_grabber();
-	my $q = &subs::db_query('select debriefer from tickets where uuid = ?', $ticket_uuid);
-	my $debrief = $q->hashes->[0]->{'debriefer'};
-	my $debriefer = decode_json $debrief || {};
-	$c->render(json => $debriefer);
+	$c->render(json => &subs::debrief_read($ticket_uuid));
 }
 
 # POST /manager/fuck_you
@@ -848,5 +844,37 @@ sub action_9743 {
 	$c->res->content->asset(Mojo::Asset::File->new(path => $path));
 	$c->rendered(200);
 }
+
+# GET /manager/debrief
+sub action_9001 {
+	my $c = shift;
+	# The debrief is this browser's own store - personal data. The gate and the
+	# ticket are the same pair the old grabber checked.
+	unless ($c->session('authentication') eq 'approved' && $c->session('ticket_uuid')) {
+		$c->render(json => {});
+		return;
+	}
+	$c->render(json => &subs::debrief_read($c->session('ticket_uuid')));
+}
+
+# POST /manager/debrief
+sub action_9002 {
+	my $c = shift;
+	unless ($c->session('authentication') eq 'approved' && $c->session('ticket_uuid')) {
+		$c->render(json => { saved => 0 });
+		return;
+	}
+	my $debrief = $c->param('debriefer');
+	my $saved = &subs::debrief_store($c->session('ticket_uuid'), $debrief);
+	# The citizen's audit copy is the old heartbeat's second write, kept here
+	# so the save has one home.
+	if ($saved && $c->session('privilege') eq 'citizen') {
+		my $hostname = `hostname`;
+		chomp $hostname;
+		&subs::setting_setter({ app => '__DEBRIEFING__', setting => $hostname, value => $debrief });
+	}
+	$c->render(json => { saved => $saved ? 1 : 0 });
+}
+
 
 1;

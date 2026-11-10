@@ -239,7 +239,7 @@ sub action_47050 {
 	my $ws_write_refresh = 30000;
 	my %ws_lockdown_state;
 	my %ws_lockdown_swept;
-	my ($ws_neighbour_stamp, $ws_neighbour_at) = ('', 0);
+	my (%ws_neighbour_stamp, %ws_neighbour_at);
 	my $ws_neighbour_refresh = 20000;
 	$c->on(message => sub ($ws, $msg) {
 		my $data = eval { return decode_json $msg };
@@ -274,224 +274,252 @@ sub action_47050 {
 		}
 		my $remote_machines;
 		if ($data->{'type'} eq 'stayingAlive') {
-			my $server_time = &subs::rightNow();
-			$timestamp = $data->{'timestamp'};
-			my $connection = $ws->tx;
-			my $connection_id = $connection->connection;
-			my $local_address = $ws->tx->local_address;
-			my $remote_address = $ws->tx->remote_address;
-			# The controller is the only view that renders neighbours. While it is
-			# shut, a beat only has to prove the socket is alive.
-			my $controller_visible = (($data->{'controller_visible'} || '') eq 'yes') ? 1 : 0;
-			if ($app eq 'music') {
-				$data->{'music_data'} = encode_json $data->{'music_data'} if $data->{'music_data'};
-			}
-			if ($app eq 'server') {
-				$data->{'jp_data'} = encode_json $data->{'jp_data'} if $data->{'jp_data'};
-			#	my $remote_upgrade = &subs::setting_grabber({ app => '__president', setting => 'remote_upgrade' });
-			#	my $remote_connect_timer =  &subs::setting_grabber({ app => '__president', setting => 'remote_connect_timer' });
-			#	if ($remote_connect_timer + (60 * 7 * 1000) < $timestamp) {
-			#		&subs::setting_setter({ app => '__president', setting => 'remote_upgrade', value => '' });
-			#	}
-			#	if ($remote_upgrade ne 'running' && $remote_connect_timer + 30000 < $timestamp) {
-			#		&remote_machine_reconnector($c);
-			#	}
+			my $beat_once = sub {
+				my ($beat_app) = @_;
+				my $app = $beat_app;
+				my $apper = $beat_app;
+				$apper =~ s/\@.*//;
+				my $server_time = &subs::rightNow();
+				$timestamp = $data->{'timestamp'};
+				my $connection = $ws->tx;
+				my $connection_id = $connection->connection;
+				my $local_address = $ws->tx->local_address;
+				my $remote_address = $ws->tx->remote_address;
+				# The controller is the only view that renders neighbours. While it is
+				# shut, a beat only has to prove the socket is alive.
+				my $controller_visible = (($data->{'controller_visible'} || '') eq 'yes') ? 1 : 0;
+				if ($app eq 'music') {
+					$data->{'music_data'} = encode_json $data->{'music_data'} if $data->{'music_data'};
+				}
+				if ($app eq 'server') {
+					$data->{'jp_data'} = encode_json $data->{'jp_data'} if $data->{'jp_data'};
+				#	my $remote_upgrade = &subs::setting_grabber({ app => '__president', setting => 'remote_upgrade' });
+				#	my $remote_connect_timer =  &subs::setting_grabber({ app => '__president', setting => 'remote_connect_timer' });
+				#	if ($remote_connect_timer + (60 * 7 * 1000) < $timestamp) {
+				#		&subs::setting_setter({ app => '__president', setting => 'remote_upgrade', value => '' });
+				#	}
+				#	if ($remote_upgrade ne 'running' && $remote_connect_timer + 30000 < $timestamp) {
+				#		&remote_machine_reconnector($c);
+				#	}
+					if ($controller_visible) {
+						my $remote_machine_query = &subs::db_query('select buttons,uuid,status,signatorial,ip,data,connection,fqdn from remote_machines' );
+						$remote_machines = $remote_machine_query->hashes;
+						foreach my $rm ( @{$remote_machines} ) {
+							$rm->{'data'} = eval { return decode_json $rm->{'data'} } || {};
+						}
+					}
+
+				}
+				if ($app eq 'tab') {
+					if ($data->{'windows'}) {
+						my $windows = eval { return decode_json $data->{'windows'} } || [];
+
+						foreach my $w ( keys %{$windows} ) {
+							foreach my $set ( qw/scrollTop jopen/ ) {
+								# jopen rides its own act frame now. A beat that carries only
+								# geometry must not write a null over the panels on disk.
+								next unless defined $windows->{$w}->{$set};
+								if ($set eq 'jopen') {
+									$windows->{$w}->{$set} = encode_json $windows->{$w}->{$set};
+								}
+								&subs::setting_setter({ app => $windows->{$w}->{'app'}, setting => $set, value => $windows->{$w}->{$set} });
+							}
+							if ($windows->{$w}->{'headerUpdate'}) {
+								my $header = &subs::db_query('select * from cache where app = ? and context = ? and timestamp > ?', $windows->{$w}->{'app'}, 'header', $windows->{$w}->{'headerUpdate'})->hashes;
+
+								foreach my $head ( @{$header} ) {
+									my $data = decode_sereal $head->{'data'};
+									&Websocket::send($app, { type => 'header', app => $windows->{$w}->{'app'}, timestamp => $head->{'timestamp'}, header => $data->{'header'} });
+								}
+							}
+						}
+					}
+				}
+				# Only touch the heavy columns when the client actually sent them, so a
+				# light heartbeat doesn't blank out the last known layout. A beat that
+				# changes nothing is not a write: the row is refreshed on a slow
+				# cadence only so the liveness window has something to see.
+				my $ws_cache = $ws_written{ $app } ||= {};
+				my $ws_changed = 0;
+				foreach my $field ( qw/href pathname windows music_data jp_data/ ) {
+					next unless defined $data->{$field};
+					if (!defined $ws_cache->{$field} || $ws_cache->{$field} ne $data->{$field}) {
+						$ws_changed = 1;
+						last;
+					}
+				}
+				my $ws_due = (!$ws_cache->{'at'} || ($server_time - $ws_cache->{'at'}) >= $ws_write_refresh);
+				if ($ws_changed || $ws_due) {
+					my $ws_update = {
+						timestamp => $timestamp,
+						server_time => $server_time,
+						type => $data->{'type'},
+						connection_id => $connection_id,
+						local_address => $local_address,
+						remote_address => $remote_address,
+						href => $data->{'href'},
+						pathname => $data->{'pathname'}
+					};
+					foreach my $optional ( qw/windows music_data jp_data/ ) {
+						$ws_update->{$optional} = $data->{$optional} if defined $data->{$optional};
+					}
+					my $ws_updated = &subs::db_update('websockets', $ws_update, {
+						browser_tab_id => $browser_tab_id,
+						app => $app
+					});
+					# The row can vanish underneath a live socket: stale-row sweeps,
+					# warranty expiry while a tab slept, or older builds that deleted
+					# too broadly. A heartbeat that matched no row means the controller
+					# can no longer see this websocket, so put the row back.
+					unless ($ws_updated && $ws_updated->rows) {
+						# Same as the connect insert: warranty settings are negative
+						# offsets ('-1d' puts the row a day ahead), so alarm_haircut
+						# won't cull a freshly healed row.
+						my $app_warranty = &subs::setting_grabber({ app => $c->session('app'), setting => 'warranty' });
+						my $warranty = &subs::ago_calc($app_warranty || &subs::setting_grabber({ app => 'me', setting => 'warranty' }), $server_time);
+						&subs::db_insert('websockets', {
+							%{$ws_update},
+							browser_tab_id => $browser_tab_id,
+							browser_tab => $browser_tab,
+							db => $database,
+							'uuid' => $uuid,
+							app => $app,
+							connected => $init_data->{'connected'} || $timestamp,
+							hostname => $hostname,
+							user_agent => $user_agent,
+							random_string => &subs::random_string_creator(25),
+							ticket_uuid => $c->session('ticket_uuid'),
+							warranty => $warranty
+						});
+					}
+					foreach my $field ( qw/href pathname windows music_data jp_data/ ) {
+						$ws_cache->{$field} = $data->{$field} if defined $data->{$field};
+					}
+					$ws_cache->{'at'} = $server_time;
+				}
+				# A sleeper's answer carries no neighbour payload. Building it (a query,
+				# a JSON decode and re-encode per neighbour, template rendering) is work
+				# nobody can see while the controller is shut, so the reply is a bare
+				# liveness ack. An open controller gets a full payload only when the
+				# neighbourhood moved, or on a slow refresh.
+				my ($neighbours, $full);
 				if ($controller_visible) {
-					my $remote_machine_query = &subs::db_query('select buttons,uuid,status,signatorial,ip,data,connection,fqdn from remote_machines' );
-					$remote_machines = $remote_machine_query->hashes;
-					foreach my $rm ( @{$remote_machines} ) {
-						$rm->{'data'} = eval { return decode_json $rm->{'data'} } || {};
-					}
-				}
-
-			}
-			if ($app eq 'tab') {
-				if ($data->{'windows'}) {
-					my $windows = eval { return decode_json $data->{'windows'} } || [];
-
-					foreach my $w ( keys %{$windows} ) {
-						foreach my $set ( qw/scrollTop jopen/ ) {
-							# jopen rides its own act frame now. A beat that carries only
-							# geometry must not write a null over the panels on disk.
-							next unless defined $windows->{$w}->{$set};
-							if ($set eq 'jopen') {
-								$windows->{$w}->{$set} = encode_json $windows->{$w}->{$set};
+					my $community = &subs::db_query('select * from websockets where ( app = ? or app like ? ) and type = ? and server_time >= ? order by server_time DESC',$app, $app . '@%', 'stayingAlive',$server_time - $ws_live_window);
+					$neighbours = $community->hashes;
+					my $stamp = join('|', map {
+						($_->{'browser_tab_id'} // '') . ':' . ($_->{'server_time'} // '') . ':' . ($_->{'pathname'} // '') .
+						':' . length($_->{'windows'} // '') . ':' . length($_->{'music_data'} // '') . ':' . length($_->{'jp_data'} // '')
+					} @{$neighbours});
+					$full = 1 if ($stamp ne $ws_neighbour_stamp{$app});
+					$full = 1 if (($server_time - $ws_neighbour_at{$app}) >= $ws_neighbour_refresh);
+					if ($full) {
+						$ws_neighbour_stamp{$app} = $stamp;
+						$ws_neighbour_at{$app} = $server_time;
+						foreach my $n ( @{$neighbours} ) {
+							my $neighbourhood = eval { return decode_json $n->{'windows'} } || {};
+							$n->{'user_agent'} = &subs::abbreviate_name($n->{'user_agent'});
+							foreach my $nw ( keys %{$neighbourhood} ) {
+								$neighbourhood->{$nw}->{'formatted_name'} = &subs::format_name($neighbourhood->{$nw}->{'app'});
+								$neighbourhood->{$nw}->{'shorthand_name'} = &subs::shorthand_name($neighbourhood->{$nw}->{'formatted_name'});
 							}
-							&subs::setting_setter({ app => $windows->{$w}->{'app'}, setting => $set, value => $windows->{$w}->{$set} });
-						}
-						if ($windows->{$w}->{'headerUpdate'}) {
-							my $header = &subs::db_query('select * from cache where app = ? and context = ? and timestamp > ?', $windows->{$w}->{'app'}, 'header', $windows->{$w}->{'headerUpdate'})->hashes;
-
-							foreach my $head ( @{$header} ) {
-								my $data = decode_sereal $head->{'data'};
-								&Websocket::send($app, { type => 'header', app => $windows->{$w}->{'app'}, timestamp => $head->{'timestamp'}, header => $data->{'header'} });
-							}
+							$n->{'windows'} = encode_json $neighbourhood;
 						}
 					}
 				}
-			}
-			# Only touch the heavy columns when the client actually sent them, so a
-			# light heartbeat doesn't blank out the last known layout. A beat that
-			# changes nothing is not a write: the row is refreshed on a slow
-			# cadence only so the liveness window has something to see.
-			my $ws_cache = $ws_written{ $data->{'app'} } ||= {};
-			my $ws_changed = 0;
-			foreach my $field ( qw/href pathname windows music_data jp_data/ ) {
-				next unless defined $data->{$field};
-				if (!defined $ws_cache->{$field} || $ws_cache->{$field} ne $data->{$field}) {
-					$ws_changed = 1;
-					last;
-				}
-			}
-			my $ws_due = (!$ws_cache->{'at'} || ($server_time - $ws_cache->{'at'}) >= $ws_write_refresh);
-			if ($ws_changed || $ws_due) {
-				my $ws_update = {
+
+				my $return_data = {
+					browser_tab_id => $browser_tab_id,
+					browser_tab => $browser_tab,
+					'uuid' => $uuid,
 					timestamp => $timestamp,
-					server_time => $server_time,
-					type => $data->{'type'},
+					app => $app,
+					from => $hostname,
 					connection_id => $connection_id,
+					user_agent => $user_agent,
+					type => $data->{'type'},
 					local_address => $local_address,
 					remote_address => $remote_address,
-					href => $data->{'href'},
-					pathname => $data->{'pathname'}
+					input => $data->{'input'},
+					remote => $full ? $remote_machines : undef
 				};
-				foreach my $optional ( qw/windows music_data jp_data/ ) {
-					$ws_update->{$optional} = $data->{$optional} if defined $data->{$optional};
-				}
-				my $ws_updated = &subs::db_update('websockets', $ws_update, {
-					browser_tab_id => $browser_tab_id,
-					app => $data->{'app'}
-				});
-				# The row can vanish underneath a live socket: stale-row sweeps,
-				# warranty expiry while a tab slept, or older builds that deleted
-				# too broadly. A heartbeat that matched no row means the controller
-				# can no longer see this websocket, so put the row back.
-				unless ($ws_updated && $ws_updated->rows) {
-					# Same as the connect insert: warranty settings are negative
-					# offsets ('-1d' puts the row a day ahead), so alarm_haircut
-					# won't cull a freshly healed row.
-					my $app_warranty = &subs::setting_grabber({ app => $c->session('app'), setting => 'warranty' });
-					my $warranty = &subs::ago_calc($app_warranty || &subs::setting_grabber({ app => 'me', setting => 'warranty' }), $server_time);
-					&subs::db_insert('websockets', {
-						%{$ws_update},
-						browser_tab_id => $browser_tab_id,
-						browser_tab => $browser_tab,
-						db => $database,
-						'uuid' => $uuid,
-						app => $data->{'app'},
-						connected => $init_data->{'connected'} || $timestamp,
-						hostname => $hostname,
-						user_agent => $user_agent,
-						random_string => &subs::random_string_creator(25),
-						ticket_uuid => $c->session('ticket_uuid'),
-						warranty => $warranty
-					});
-				}
-				foreach my $field ( qw/href pathname windows music_data jp_data/ ) {
-					$ws_cache->{$field} = $data->{$field} if defined $data->{$field};
-				}
-				$ws_cache->{'at'} = $server_time;
-			}
-			if ($data->{'debriefer'}) {
-				if ($c->session('ticket_uuid')) {
-					&subs::db_query('update tickets set debriefer = ? where uuid = ?', $data->{'debriefer'}, $c->session('ticket_uuid'));
-				}
-				if ($c->session('privilege') eq 'citizen') {
-					my $hostname = `hostname`;
-					chomp($hostname);
-					&subs::setting_setter({ app => '__DEBRIEFING__', setting => $hostname, value => $data->{'debriefer'} });
-				}
-			}
-			# A sleeper's answer carries no neighbour payload. Building it (a query,
-			# a JSON decode and re-encode per neighbour, template rendering) is work
-			# nobody can see while the controller is shut, so the reply is a bare
-			# liveness ack. An open controller gets a full payload only when the
-			# neighbourhood moved, or on a slow refresh.
-			my ($neighbours, $full);
-			if ($controller_visible) {
-				my $community = &subs::db_query('select * from websockets where ( app = ? or app like ? ) and type = ? and server_time >= ? order by server_time DESC',$app, $app . '@%', 'stayingAlive',$server_time - $ws_live_window);
-				$neighbours = $community->hashes;
-				my $stamp = join('|', map {
-					($_->{'browser_tab_id'} // '') . ':' . ($_->{'server_time'} // '') . ':' . ($_->{'pathname'} // '') .
-					':' . length($_->{'windows'} // '') . ':' . length($_->{'music_data'} // '') . ':' . length($_->{'jp_data'} // '')
-				} @{$neighbours});
-				$full = 1 if ($stamp ne $ws_neighbour_stamp);
-				$full = 1 if (($server_time - $ws_neighbour_at) >= $ws_neighbour_refresh);
 				if ($full) {
-					$ws_neighbour_stamp = $stamp;
-					$ws_neighbour_at = $server_time;
-					foreach my $n ( @{$neighbours} ) {
-						my $neighbourhood = eval { return decode_json $n->{'windows'} } || {};
-						$n->{'user_agent'} = &subs::abbreviate_name($n->{'user_agent'});
-						foreach my $nw ( keys %{$neighbourhood} ) {
-							$neighbourhood->{$nw}->{'formatted_name'} = &subs::format_name($neighbourhood->{$nw}->{'app'});
-							$neighbourhood->{$nw}->{'shorthand_name'} = &subs::shorthand_name($neighbourhood->{$nw}->{'formatted_name'});
-						}
-						$n->{'windows'} = encode_json $neighbourhood;
+					$return_data->{'neighbours'} = $neighbours;
+					if (-e './templates/websockets/' . &subs::path_name($app) . '.html.ep') {
+						$return_data->{'template'} = $c->render_to_string(
+							template => 'websockets/' . &subs::path_name($app),
+							ws => $return_data
+						);
+						if ($app eq 'server') { delete $return_data->{'remote'}; }
 					}
 				}
-			}
-
-			my $return_data = {
-				browser_tab_id => $browser_tab_id,
-				browser_tab => $browser_tab,
-				'uuid' => $uuid,
-				timestamp => $timestamp,
-				app => $data->{'app'},
-				from => $hostname,
-				connection_id => $connection_id,
-				user_agent => $user_agent,
-				type => $data->{'type'},
-				local_address => $local_address,
-				remote_address => $remote_address,
-				input => $data->{'input'},
-				remote => $full ? $remote_machines : undef
-			};
-			if ($full) {
-				$return_data->{'neighbours'} = $neighbours;
-				if (-e './templates/websockets/' . &subs::path_name($app) . '.html.ep') {
-					$return_data->{'template'} = $c->render_to_string(
-						template => 'websockets/' . &subs::path_name($app),
-						ws => $return_data
-					);
-					if ($app eq 'server') { delete $return_data->{'remote'}; }
+				else {
+					$return_data->{'slim'} = 1;
 				}
+
+				# A start or stop pushes the header once, and a tab that was
+				# reconnecting can miss that frame. The beat names the version each
+				# open window is wearing; answer any newer header here, so a lost push
+				# is corrected within one beat instead of waiting for a reload. The
+				# cache is written by appt_header_printer on every header it renders.
+				if (($apper || '') eq 'tab' && ref $data->{'headers_at'} eq 'HASH') {
+					my (%stale_headers, %stale_times);
+					my $checked = 0;
+					foreach my $ha ( keys %{ $data->{'headers_at'} } ) {
+						last if $checked++ >= 30;
+						my $wa = &subs::unformat_name($ha);
+						next if $wa eq '';
+						my $hrow = &subs::db_query('select timestamp, data from cache where app = ? and context = ? order by server_time desc limit 1', $wa, 'header')->hashes->[0];
+						next unless $hrow && $hrow->{'data'};
+						my $newer = 0 + ($hrow->{'timestamp'} || 0);
+						my $wearing = 0 + ($data->{'headers_at'}->{$ha} || 0);
+						next unless $newer > $wearing;
+						my $cached = eval { decode_sereal $hrow->{'data'} } || {};
+						my $html = (ref $cached eq 'HASH') ? ($cached->{'header'} // '') : '';
+						next unless length $html;
+						$stale_headers{$wa} = $html;
+						$stale_times{$wa} = $newer;
+					}
+					if (scalar keys %stale_headers) {
+						$return_data->{'headers'} = \%stale_headers;
+						$return_data->{'header_at'} = \%stale_times;
+					}
+				}
+
+				$return_data->{'server_time'} = $server_time;
+				return $return_data;
+			};
+
+			my @beat_apps = ref $data->{'apps'} eq 'ARRAY' ? @{$data->{'apps'}} : ($data->{'app'});
+			my %beat_seen;
+			@beat_apps = grep { defined($_) && length($_) && !$beat_seen{$_}++ } ($data->{'app'}, @beat_apps);
+			@beat_apps = ($data->{'app'}) unless @beat_apps;
+			my %beats;
+			foreach my $beat_app ( @beat_apps ) {
+				$beats{$beat_app} = $beat_once->($beat_app);
+			}
+			if (ref $data->{'apps'} eq 'ARRAY' && scalar(@beat_apps) > 1) {
+				my $server_time = &subs::rightNow();
+				my $frame = {
+					type => 'stayingAlive',
+					app => $data->{'app'},
+					apps => \@beat_apps,
+					beats => \%beats,
+					server_time => $server_time,
+					timestamp => $data->{'timestamp'} || $server_time
+				};
+				my $sent = &Websocket::send($data->{'app'}, $frame);
+				$log->warn('combined beat send failed') unless $sent;
 			}
 			else {
-				$return_data->{'slim'} = 1;
+				&Websocket::send($data->{'app'}, $beats{$data->{'app'}});
 			}
-
-			# A start or stop pushes the header once, and a tab that was
-			# reconnecting can miss that frame. The beat names the version each
-			# open window is wearing; answer any newer header here, so a lost push
-			# is corrected within one beat instead of waiting for a reload. The
-			# cache is written by appt_header_printer on every header it renders.
-			if (($apper || '') eq 'tab' && ref $data->{'headers_at'} eq 'HASH') {
-				my (%stale_headers, %stale_times);
-				my $checked = 0;
-				foreach my $ha ( keys %{ $data->{'headers_at'} } ) {
-					last if $checked++ >= 30;
-					my $wa = &subs::unformat_name($ha);
-					next if $wa eq '';
-					my $hrow = &subs::db_query('select timestamp, data from cache where app = ? and context = ? order by server_time desc limit 1', $wa, 'header')->hashes->[0];
-					next unless $hrow && $hrow->{'data'};
-					my $newer = 0 + ($hrow->{'timestamp'} || 0);
-					my $wearing = 0 + ($data->{'headers_at'}->{$ha} || 0);
-					next unless $newer > $wearing;
-					my $cached = eval { decode_sereal $hrow->{'data'} } || {};
-					my $html = (ref $cached eq 'HASH') ? ($cached->{'header'} // '') : '';
-					next unless length $html;
-					$stale_headers{$wa} = $html;
-					$stale_times{$wa} = $newer;
-				}
-				if (scalar keys %stale_headers) {
-					$return_data->{'headers'} = \%stale_headers;
-					$return_data->{'header_at'} = \%stale_times;
-				}
+			# Legacy clients still put the debrief in the beat. New clients use
+			# /manager/debrief, so this only runs for a page loaded before the
+			# update.
+			if ($data->{'debriefer'} && $c->session('ticket_uuid')) {
+				&subs::db_query('update tickets set debriefer = ? where uuid = ?', $data->{'debriefer'}, $c->session('ticket_uuid'));
 			}
-
-			&Websocket::send($app,$return_data);
-
+			my $server_time = &subs::rightNow();
 			# The lockdown face is a fact, not a beat. Sending it every 10 s made
 			# every open tab eval a console line, append a terminal entry and repaint
 			# its clock - per tab, per beat, for a value that hardly ever moves. Send
@@ -735,7 +763,7 @@ sub action_47050 {
 # the websocket worker (the ws_port), whose keep-alive worker is where
 # %DEVICE_CONN lives. Inputs (buttons, switches, pots) stay on HTTP; this
 # socket carries outputs only.
-sub action_738 {
+sub action_766 {
 	my $c = shift;
 	my $watch_settings = eval { &subs::embedded_authorizer($c) };
 	my $chip_id = $c->param('chip_id') || '';

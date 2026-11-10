@@ -48,7 +48,7 @@
 			var volumeInterval;
 			<% if ($c->session('ticket_uuid')) { %>
 					$.ajax({
-						url: '/manager/debrief_grabber',
+						url: '/manager/debrief',
 						type: 'GET',
 						success: function(deb) {
 							// the debrief is the store's own snapshot, and it seeds this browser
