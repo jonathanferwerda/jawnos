@@ -29,13 +29,11 @@ our %UNIX_ONLY = (
 	'whisper server' => 1,
 );
 
-# `utility functions` is a resident loop whose body still lives in President
-# (it calls President::utility_functions, which needs the manager's own
-# utility_runner). Inline on a no-fork box it would run Mojo::IOLoop->start in
-# the master, so that box logs a skip until the body is lifted too.
+# `utility functions` is not in this table: it reads President's own $gb state,
+# so a box without fork registers its timers on the master's loop instead of
+# spawning a child that could not see them (see perl/President.pl).
 our %NO_FORK_SKIP = (
 	%UNIX_ONLY,
-	'utility functions' => 1,
 );
 
 # The staged app releases (the APKs) reconcile on a slower tick: ask each

@@ -179,8 +179,10 @@ ok($runner->can('read_handle'), 'the seam exposes a read handle');
 	my $pres = read_file("$root/perl/President.pl");
 	my @unnamed = grep { $pres !~ /name => '\Q$_\E'/ } @lifted;
 	is_deeply(\@unnamed, [], 'and each still uses that exact call-site name in President');
-	ok(exists $jobs::NO_FORK_SKIP{'utility functions'},
-		'utility functions (not liftable yet) is skipped, never run in the master');
+	ok(!exists $jobs::NO_FORK_SKIP{'utility functions'},
+		'utility functions runs on the master loop, not as a skipped child');
+	ok(exists $jobs::NO_FORK_SKIP{'sshd watcher'},
+		'a Unix-only job is skipped without fork');
 }
 
 {

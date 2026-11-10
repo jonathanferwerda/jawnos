@@ -778,8 +778,11 @@ sub manager_starter() {
 			}, { name => 'ollama serve' });
 		}
 	}
-	&subs::subprocessor(sub {
-
+	# The scheduler behind the alarms, navigation and sync slots. It reads
+	# President's own $gb state, so a box without fork registers these timers on
+	# this process's loop (started after the jobs) instead of in a child that
+	# cannot see it; the fork path keeps its own loop in the child.
+	my $utility_loop = sub {
 		Mojo::IOLoop->timer(2 => sub {
 			&utility_functions();
 		});
@@ -801,8 +804,14 @@ sub manager_starter() {
 			}
 
 		});
-		Mojo::IOLoop->start;
-	}, { name => 'utility functions' });
+	};
+	if (JawnOS::Platform::use_fork()) {
+		&subs::subprocessor(sub { $utility_loop->(); Mojo::IOLoop->start; },
+			{ name => 'utility functions' });
+	}
+	else {
+		$utility_loop->();
+	}
 
 	# The archive queue's worker. Jobs are enqueued from the web process into
 	# the same SQLite file under ~/.president; one at a time, so a slow link is
