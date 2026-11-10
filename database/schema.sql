@@ -349,6 +349,7 @@ CREATE INDEX idx8_appts on appointments (timestamp, stop_timestamp, seen, stop_s
 CREATE INDEX idx9_appts on appointments (stop_timestamp,stop_seen);
 CREATE INDEX idx10_appts on appointments (duties,next_duty);
 CREATE INDEX idx11_appts on appointments (app,server_time,status);
+CREATE INDEX IF NOT EXISTS idx15_appts on appointments (account);
 CREATE INDEX idx1_ws on websockets (app,browser_tab_id);
 CREATE INDEX idx3_ws on websockets (app,browser_tab_id,remote_address);
 CREATE INDEX idx2_ws on websockets (browser_tab_id);

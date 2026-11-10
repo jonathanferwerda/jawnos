@@ -684,6 +684,11 @@ sub update_database($data) {
 		# not a prefix of idx11 (app,server_time,status), so that count was a full
 		# scan of the whole table on every two-minute tick
 		'CREATE INDEX IF NOT EXISTS idx14_appts on appointments (server_time)',
+		# the manager warms its app search on every page load and again on focus
+		# with a count and a distinct over appointments by account. Neither is a
+		# prefix of an existing index, so both were a full scan of the whole table
+		# - 117k rows here, more on a phone whose database has run longer.
+		'CREATE INDEX IF NOT EXISTS idx15_appts on appointments (account)',
 		# remote machines are looked up by connection state and ip
 		'CREATE INDEX IF NOT EXISTS idx1_remote_machines on remote_machines (connection)',
 		'CREATE INDEX IF NOT EXISTS idx2_remote_machines on remote_machines (ip)',
