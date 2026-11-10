@@ -114,10 +114,12 @@ else {
 # --- the check cadence beside Update now ------------------------------------
 like($tpl, qr/id="update_interval_select"/, 'the Dev panel carries the check cadence');
 like($tpl, qr/value="30"/, 'with a 30-second choice');
-like($tpl, qr/value="3600"/, 'and an hour');
+like($tpl, qr/value="3600"/, 'an hour');
+like($tpl, qr/value="2592000"/, 'and a month at the slow end');
 like($page, qr/update_interval => \$update_interval/, 'the page reads the setting for this machine');
 like($cfgjs, qr/\.update_interval_select/, 'the select has a change handler');
 like($cfgjs, qr/setting: 'update_interval'/, 'and writes the setting');
 like($help, qr/Check every/, 'the help names the control');
+like($help, qr/1 month/, 'and the range it now offers');
 
 done_testing();

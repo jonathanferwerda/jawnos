@@ -74,7 +74,22 @@ unlike($sync_task, qr/lasted_run'\}\s*>=\s*\(\$interval \* 1000\)/,
 	$store{'device'} = ''; $store{'any'} = '30';
 	is(&subs::sync_update_interval_get('machine'), 30, 'a missing per-machine row falls back to the current one');
 	$store{'device'} = '60'; $store{'any'} = '60';
-	is(&subs::sync_update_interval_get('machine'), 3600, 'an unknown value falls back to the hour');
+	is(&subs::sync_update_interval_get('machine'), 60, 'a minute is now a choice');
+	$store{'device'} = '90'; $store{'any'} = '90';
+	is(&subs::sync_update_interval_get('machine'), 3600, 'a value the menu does not offer falls back to the hour');
+
+	# The menu and the getter are two lists that must agree. Read the values the
+	# Dev panel offers and ask the getter to accept each one, so a new option
+	# cannot be drawn without being saved (or saved without being drawn).
+	my $tpl = read_file("$root/templates/configure/device_lister/body.html.ep");
+	my @values = $tpl =~ /<option value="(\d+)"/g;
+	is_deeply(\@values, [ 30, 60, 120, 300, 600, 900, 1200, 1800, 2700, 3600, 7200,
+		10800, 21600, 32400, 43200, 86400, 172800, 259200, 518400, 604800, 1209600,
+		1814400, 2592000 ], 'the menu lists every cadence from 30 seconds to 1 month');
+	for my $secs (@values) {
+		$store{'device'} = $secs; $store{'any'} = $secs;
+		is(&subs::sync_update_interval_get('machine'), $secs, "the menu's $secs seconds is accepted");
+	}
 }
 
 my $jobs = read_file("$root/perl/utility_jobs.pl");

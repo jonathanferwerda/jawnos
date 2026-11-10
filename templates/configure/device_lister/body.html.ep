@@ -50,7 +50,28 @@
 				<label for="update_interval_select"><%= &subs::ui('Check every') %></label>
 				<select id="update_interval_select" class="update_interval_select" data-device="<%= $signatorial %>">
 					<option value="30" <% if (defined $update_interval && $update_interval == 30) { %>selected<% } %>><%= &subs::ui('30 seconds') %></option>
+					<option value="60" <% if (defined $update_interval && $update_interval == 60) { %>selected<% } %>><%= &subs::ui('1 minute') %></option>
+					<option value="120" <% if (defined $update_interval && $update_interval == 120) { %>selected<% } %>><%= &subs::ui('2 minutes') %></option>
+					<option value="300" <% if (defined $update_interval && $update_interval == 300) { %>selected<% } %>><%= &subs::ui('5 minutes') %></option>
+					<option value="600" <% if (defined $update_interval && $update_interval == 600) { %>selected<% } %>><%= &subs::ui('10 minutes') %></option>
+					<option value="900" <% if (defined $update_interval && $update_interval == 900) { %>selected<% } %>><%= &subs::ui('15 minutes') %></option>
+					<option value="1200" <% if (defined $update_interval && $update_interval == 1200) { %>selected<% } %>><%= &subs::ui('20 minutes') %></option>
+					<option value="1800" <% if (defined $update_interval && $update_interval == 1800) { %>selected<% } %>><%= &subs::ui('30 minutes') %></option>
+					<option value="2700" <% if (defined $update_interval && $update_interval == 2700) { %>selected<% } %>><%= &subs::ui('45 minutes') %></option>
 					<option value="3600" <% if (defined $update_interval && $update_interval == 3600) { %>selected<% } %>><%= &subs::ui('1 hour') %></option>
+					<option value="7200" <% if (defined $update_interval && $update_interval == 7200) { %>selected<% } %>><%= &subs::ui('2 hours') %></option>
+					<option value="10800" <% if (defined $update_interval && $update_interval == 10800) { %>selected<% } %>><%= &subs::ui('3 hours') %></option>
+					<option value="21600" <% if (defined $update_interval && $update_interval == 21600) { %>selected<% } %>><%= &subs::ui('6 hours') %></option>
+					<option value="32400" <% if (defined $update_interval && $update_interval == 32400) { %>selected<% } %>><%= &subs::ui('9 hours') %></option>
+					<option value="43200" <% if (defined $update_interval && $update_interval == 43200) { %>selected<% } %>><%= &subs::ui('12 hours') %></option>
+					<option value="86400" <% if (defined $update_interval && $update_interval == 86400) { %>selected<% } %>><%= &subs::ui('24 hours') %></option>
+					<option value="172800" <% if (defined $update_interval && $update_interval == 172800) { %>selected<% } %>><%= &subs::ui('2 days') %></option>
+					<option value="259200" <% if (defined $update_interval && $update_interval == 259200) { %>selected<% } %>><%= &subs::ui('3 days') %></option>
+					<option value="518400" <% if (defined $update_interval && $update_interval == 518400) { %>selected<% } %>><%= &subs::ui('6 days') %></option>
+					<option value="604800" <% if (defined $update_interval && $update_interval == 604800) { %>selected<% } %>><%= &subs::ui('1 week') %></option>
+					<option value="1209600" <% if (defined $update_interval && $update_interval == 1209600) { %>selected<% } %>><%= &subs::ui('2 weeks') %></option>
+					<option value="1814400" <% if (defined $update_interval && $update_interval == 1814400) { %>selected<% } %>><%= &subs::ui('3 weeks') %></option>
+					<option value="2592000" <% if (defined $update_interval && $update_interval == 2592000) { %>selected<% } %>><%= &subs::ui('1 month') %></option>
 				</select>
 				<span id="update_interval_status" class="device_when"></span>
 				<span id="deps_pending_status" class="device_when"></span>

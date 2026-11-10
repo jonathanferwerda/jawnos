@@ -622,8 +622,9 @@ sub sync_update_method_get {
 }
 
 # How often this machine's code watcher runs. A per-machine setting: a dev box
-# can follow the trunk every 30 seconds while a server keeps the quiet hour.
-# Unknown values fall back to the hour, which is the slow pool's pace and the
+# can follow the trunk every 30 seconds while a server sleeps for days.
+# The list is the Dev panel's Check every menu, and the two must agree; an
+# unknown value falls back to the hour, which is the slow pool's pace and the
 # behaviour before this control existed.
 sub sync_update_interval_get {
 	my ($device) = @_;
@@ -633,7 +634,7 @@ sub sync_update_interval_get {
 	my $v = &subs::setting_grabber(\%q);
 	$v = &subs::setting_grabber({ app => 'sync', setting => 'update_interval' })
 		unless defined $v && length $v;
-	return 3600 unless defined $v && $v =~ /^(?:30|3600)$/;
+	return 3600 unless defined $v && $v =~ /^(?:30|60|120|300|600|900|1200|1800|2700|3600|7200|10800|21600|32400|43200|86400|172800|259200|518400|604800|1209600|1814400|2592000)$/;
 	return int $v;
 }
 
