@@ -506,7 +506,10 @@ SKIP: {
 }
 
 # The blank-page colour: the engine's own background plus the widget's palette
-# and stylesheet, so a launch never flashes white.
+# and stylesheet, so a launch never flashes white. The text colour is set with
+# the ground: the engine's own confirm/alert dialog is a QMessageBox parented to
+# this view, so an unreadable black-on-black prompt is what a bare background
+# produces (the AI-model Test button hit exactly that).
 my $black = `cd "$root" && QT_QPA_PLATFORM=offscreen PYTHONPATH=desktop python3 -c 'from PySide6.QtGui import QPalette; from jawnos_desktop.qt_shell import black_page
 class P:
   def setBackgroundColor(self, c): self.c = c.name()
@@ -520,8 +523,22 @@ p, v = P(), V(); black_page(p, v); print(p.c, v.fill, v.css, v.p.color(QPalette.
 SKIP: {
 	skip 'PySide6 is not installed here', 1
 		if $black =~ /No module named .PySide6|ModuleNotFoundError/;
-	like($black, qr/^#000000 True background-color: #000000; #000000$/m,
-		'the page, view palette and stylesheet are all black');
+	like($black, qr/^#000000 True background-color: #000000; color: #ffffff; #000000$/m,
+		'the page, view palette and stylesheet are all black, with white text');
+}
+my $dialog = `cd "$root" && QT_QPA_PLATFORM=offscreen PYTHONPATH=desktop python3 -c 'from PySide6.QtGui import QPalette; from PySide6.QtWidgets import QApplication, QWidget, QMessageBox; from jawnos_desktop.qt_shell import black_page
+class P:
+  def setBackgroundColor(self, c): pass
+app = QApplication([])
+v = QWidget(); black_page(P(), v)
+box = QMessageBox(QMessageBox.Icon.Question, "Confirm", "Continue?", QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel, v)
+box.show(); app.processEvents()
+print(box.palette().color(QPalette.ColorRole.Window).name(), box.palette().color(QPalette.ColorRole.WindowText).name(), box.palette().color(QPalette.ColorRole.ButtonText).name())' 2>&1`;
+SKIP: {
+	skip 'PySide6 is not installed here', 1
+		if $dialog =~ /No module named .PySide6|ModuleNotFoundError/;
+	like($dialog, qr/^#000000 #ffffff #ffffff$/m,
+		'a dialog under the view is white text on the black ground');
 }
 
 # The dark error page: escaped inputs, the retry only for a real URL, and the

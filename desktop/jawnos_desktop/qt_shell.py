@@ -164,11 +164,17 @@ def black_page(page_obj, view_obj):
     nothing to display. The page colour is what the engine composites; the
     view's own palette and stylesheet cover the widget around it.
 
+    The engine's own dialogs -- ``confirm()``, ``alert()`` and ``prompt()`` --
+    are QWidgets parented to this view, so they inherit its palette and
+    stylesheet. A black ground alone leaves their default black text
+    unreadable, so the ground and the text colour are always set together.
+
     PySide6 is imported here for the same reason as in ``tray_icon``.
     """
     from PySide6.QtGui import QColor, QPalette
 
     black = QColor(0, 0, 0)
+    white = QColor(255, 255, 255)
     try:
         page_obj.setBackgroundColor(black)
     except Exception:
@@ -176,9 +182,11 @@ def black_page(page_obj, view_obj):
     try:
         palette = view_obj.palette()
         palette.setColor(QPalette.ColorRole.Window, black)
+        palette.setColor(QPalette.ColorRole.WindowText, white)
+        palette.setColor(QPalette.ColorRole.ButtonText, white)
         view_obj.setPalette(palette)
         view_obj.setAutoFillBackground(True)
-        view_obj.setStyleSheet("background-color: #000000;")
+        view_obj.setStyleSheet("background-color: #000000; color: #ffffff;")
     except Exception:
         pass
 
