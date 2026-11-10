@@ -101,6 +101,30 @@
 		<%= &subs::ui('Each run has an HH:MM time and its systemd timer is retimed to match: saving writes a small drop-in beside the unit (50-jawn-schedule.conf), reloads systemd and restarts the timer on the chosen machine, and every run reports whether its timer was retimed, is not installed there, or failed. The line under each field is the schedule the timer actually holds, so a field and the unit cannot drift apart unseen. Run now starts that run on the chosen machine at once, refuses while it is already running, and shows the job state until it finishes. The drop-in, the reload and the start are root work: that machine needs passwordless sudo for install and systemctl, and the timer units installed under /etc/systemd/system.') %>
 	</p>
 </div>
+<div class="cfg-card" id="release_schedule_card">
+	<div class="cfg-row" style="justify-content:space-between;">
+		<h3 style="margin:0;"><%= &subs::ui('Release schedule') %></h3>
+		<span id="release_schedule_holds" class="cfg-note" style="margin:0;"></span>
+	</div>
+	<p class="cfg-note" style="margin:6px 0 8px;">
+		<%= &subs::ui('When the landing queue promotes working to main. The timer ships weekly; pick a cadence and a time, or write a phrase such as every third friday of the month. Saving writes a drop-in beside the release timer, reloads systemd and restarts it on this machine, so this needs passwordless sudo and the timer installed under /etc/systemd/system.') %>
+	</p>
+	<div class="cfg-row">
+		<label for="release_schedule_select"><%= &subs::ui('Every') %></label>
+		<select id="release_schedule_select">
+			<option value="weekly"><%= &subs::ui('week') %></option>
+			<option value="daily"><%= &subs::ui('day') %></option>
+			<option value="hourly"><%= &subs::ui('hour') %></option>
+			<option value="monthly"><%= &subs::ui('month') %></option>
+			<option value="custom"><%= &subs::ui('custom…') %></option>
+		</select>
+		<input type="time" id="release_schedule_time" value="04:00" step="60">
+		<input type="text" id="release_schedule_custom" size="34" style="display:none;"
+			placeholder="<%= &subs::ui('every third friday of the month') %>" autocomplete="off">
+		<button type="button" id="release_schedule_save" class="button"><%= &subs::ui('Save release schedule') %></button>
+		<span id="release_schedule_status" class="cfg-note" style="margin:0 0 0 8px;white-space:pre-wrap;"></span>
+	</div>
+</div>
 <div class="cfg-card">
 	<div class="cfg-row" style="justify-content:space-between;">
 		<h3 style="margin:0;"><%= &subs::ui('Nightly reports') %></h3>

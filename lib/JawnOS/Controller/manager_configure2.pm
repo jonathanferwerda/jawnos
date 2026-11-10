@@ -509,6 +509,31 @@ sub action_50010 {
 	$c->render(json => $result);
 }
 
+# GET /manager/configure/release_schedule
+# The release timer is the authority's own: this answers for the machine the
+# Manager runs on, and the schedule is written there.
+sub action_50011 {
+	my $c = shift;
+	unless ($c->session('authentication') eq 'approved') {
+		$c->render(json => { ok => 0, error => 'not signed in' }, status => 403);
+		return;
+	}
+	$c->render(json => &subs::release_schedule_state());
+}
+
+# POST /manager/configure/release_schedule_save
+sub action_50012 {
+	my $c = shift;
+	unless ($c->session('authentication') eq 'approved') {
+		$c->render(json => { ok => 0, error => 'not signed in' }, status => 403);
+		return;
+	}
+	my $saved = &subs::release_schedule_save($c->param('phrase'), {
+		dry_run => $c->param('dry_run') ? 1 : 0,
+	});
+	$c->render(json => $saved);
+}
+
 # A root password may only be entered at this machine's own console. A phone or
 # a peer that reached the Manager over the mesh must not be able to install
 # packages here, so the same loopback/local-address rule the padlock uses.

@@ -353,9 +353,80 @@ $(document).on('click', '#plat_setting_list .cfg_tab_toggle[tab="plat_qa"]', fun
 	qaRefresh();
 	qaScheduleRefresh();
 	qaReportsRefresh();
+	releaseScheduleRefresh();
 });
 $(function() {
-	if ($('#plat_qa').length && $('#plat_qa').is(':visible')) { qaRefresh(); qaScheduleRefresh(); qaReportsRefresh(); }
+	if ($('#plat_qa').length && $('#plat_qa').is(':visible')) { qaRefresh(); qaScheduleRefresh(); qaReportsRefresh(); releaseScheduleRefresh(); }
+});
+
+// ---- release schedule (when working is promoted to main) ---------------------
+// The promoter's timer ships weekly; this card rewrites its schedule through a
+// drop-in on this machine. A preset sends "weekly at 04:00"; Custom sends the
+// phrase itself, so "every third friday of the month" is translated server-side.
+function releaseScheduleRender(r) {
+	var holds = $('#release_schedule_holds');
+	if (!holds.length) { return; }
+	if (!r || r.ok === 0) {
+		holds.text((r && r.error) ? r.error : qaT('No answer from this machine.'));
+		return;
+	}
+	var cal = r.oncalendar || '';
+	holds.text(cal ? qaT('The timer holds') + ' ' + cal + (r.source ? ' (' + r.source + ')' : '') : qaT('Not installed'));
+
+	var setting = r.setting || '';
+	var custom = $('#release_schedule_custom');
+	var select = $('#release_schedule_select');
+	var time = $('#release_schedule_time');
+	if (!setting || document.activeElement === custom[0] || document.activeElement === time[0]) { return; }
+	var m = setting.match(/(\d{2}):(\d{2}):\d{2}\s*$/);
+	if (m) { time.val(m[1] + ':' + m[2]); }
+	var kind = 'custom';
+	if (/^\*-\*-\* \*:\d{2}:\d{2}$/.test(setting)) { kind = 'hourly'; }
+	else if (/^\*-\*-\d{2} \d{2}:\d{2}:\d{2}$/.test(setting)) { kind = 'monthly'; }
+	else if (/^[A-Z][a-z]{2} \*-\*-\* \d{2}:\d{2}:\d{2}$/.test(setting)) { kind = 'weekly'; }
+	else if (/^\*-\*-\* \d{2}:\d{2}:\d{2}$/.test(setting)) { kind = 'daily'; }
+	select.val(kind);
+	custom.toggle(kind === 'custom');
+	if (kind === 'custom') { custom.val(setting); }
+}
+
+function releaseScheduleRefresh() {
+	if (!$('#release_schedule_card').length) { return; }
+	$.getJSON('/manager/configure/release_schedule')
+		.done(releaseScheduleRender)
+		.fail(function() { releaseScheduleRender({ ok: 0, error: qaT('No answer from this machine.') }); });
+}
+
+$(document).on('change', '#release_schedule_select', function() {
+	$('#release_schedule_custom').toggle($(this).val() === 'custom');
+});
+
+$(document).on('click', '#release_schedule_save', function() {
+	var button = $(this);
+	var status = $('#release_schedule_status');
+	var kind = $('#release_schedule_select').val();
+	var time = $('#release_schedule_time').val() || '04:00';
+	var phrase = (kind === 'custom') ? $('#release_schedule_custom').val() : (kind + ' at ' + time);
+	if (!phrase || !phrase.replace(/\s+/g, '')) {
+		status.text(qaT('Say when to release.'));
+		return;
+	}
+	button.prop('disabled', true);
+	status.text(qaT('Saving…'));
+	$.post('/manager/configure/release_schedule_save', { phrase: phrase }, function(res) {
+		button.prop('disabled', false);
+		if (!res || res.ok === 0) {
+			status.text((res && res.error) || qaT('The schedule was not saved.'));
+			return;
+		}
+		var lines = [qaT('Saved.')];
+		if (res.retime_ok === 0) { lines.push(res.error || qaT('The schedule is saved but the timer was not retimed.')); }
+		status.text(lines.join('\n'));
+		releaseScheduleRefresh();
+	}).fail(function() {
+		button.prop('disabled', false);
+		status.text(qaT('The schedule could not be saved.'));
+	});
 });
 
 // ---- nightly reports -------------------------------------------------------

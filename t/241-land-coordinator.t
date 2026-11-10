@@ -854,7 +854,7 @@ subtest 'the systemd units run the coordinator and point the timer at it' => sub
 	my $pservice = read_file("$real/scripts/systemd/jawnos-land-promote.service");
 	my $ptimer   = read_file("$real/scripts/systemd/jawnos-land-promote.timer");
 	like($pservice, qr/ExecStart=.*land_promote\.pl --once --jobs 2/, 'the promoter runs the suite gate');
-	like($ptimer, qr/OnUnitActiveSec=1w/, 'the promotion is the weekly release');
+	like($ptimer, qr/OnCalendar=Mon 04:00:00/, 'the promotion is the weekly release by default');
 	like($service, qr/--trunk working --no-apply/, 'the coordinator lands to working without touching main');
 	unlike($service, qr/^ExecStart=.*--promote-now/m, 'a drain does not release by itself');
 };

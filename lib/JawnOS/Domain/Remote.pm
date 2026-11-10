@@ -1469,6 +1469,261 @@ sub qa_retime_local {
 	};
 }
 
+# ---------------------------------------------------------------------------
+# Release schedule: when the land promotion runs
+# ---------------------------------------------------------------------------
+# The promoter is the authority's job, and its timer ships weekly. Configure ->
+# Plat -> QA rewrites that schedule through a drop-in (`OnCalendar=` reset plus
+# the chosen line), so a release can be hourly, daily, weekly, monthly, a fixed
+# date, or a phrase like "every third friday of the month". The phrase becomes
+# the one OnCalendar line systemd understands; anything else is refused rather
+# than guessed. The drop-in is privileged, like the QA times: `sudo -n` here.
+
+my %RELEASE_DOW = (
+	sun => 'Sun', mon => 'Mon', tue => 'Tue', wed => 'Wed',
+	thu => 'Thu', fri => 'Fri', sat => 'Sat',
+);
+my %RELEASE_ORDINAL = (
+	first => 1, '1st' => 1, second => 2, '2nd' => 2, third => 3, '3rd' => 3,
+	fourth => 4, '4th' => 4, fifth => 5, '5th' => 5,
+);
+
+sub release_schedule_default { return 'Mon 04:00:00' }
+
+# One OnCalendar expression out of systemd's one-line report, a unit file or a
+# drop-in. The report ends the value at `;`; a file ends it at the newline.
+sub qa_oncalendar_text {
+	my ($text) = @_;
+	return '' unless defined $text && length $text;
+	while ($text =~ /OnCalendar=([^;\n]*)/g) {
+		my $value = $1;
+		$value =~ s/^\s+|\s+$//g;
+		return $value if length $value;
+	}
+	return '';
+}
+
+sub release_schedule_parse {
+	my ($text) = @_;
+	return { ok => 0, error => 'say when to release' }
+		unless defined $text && $text =~ /\S/;
+	my $phrase = $text;
+	$phrase =~ s/^\s+|\s+$//g;
+	$phrase =~ s/\s+/ /g;
+	my $spoken = $phrase;
+
+	my ($hour, $minute) = (4, 0);
+	my $has_time = 0;
+	if ($phrase =~ s/\bat\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\b//i
+		|| $phrase =~ s/\b(\d{1,2}):(\d{2})\b//) {
+		my ($h, $m, $ap) = ($1 + 0, (defined $2 ? $2 : 0) + 0, lc(defined $3 ? $3 : ''));
+		$h += 12 if $ap eq 'pm' && $h < 12;
+		$h = 0 if $ap eq 'am' && $h == 12;
+		return { ok => 0, error => 'the time must be between 00:00 and 23:59' }
+			if $h > 23 || $m > 59;
+		($hour, $minute) = ($h, $m);
+		$has_time = 1;
+	}
+	$phrase =~ s/\s+/ /g;
+	$phrase =~ s/^\s+|\s+$//g;
+	my $lower = lc $phrase;
+	my $clock = sprintf('%02d:%02d:00', $hour, $minute);
+	my $done = sub {
+		return { ok => 1, oncalendar => $_[0], phrase => $spoken };
+	};
+
+	return $done->(sprintf('*-*-* *:%02d:00', $minute))
+		if $lower =~ /^(?:hourly|every hour|each hour)$/;
+	return $done->("*-*-* $clock")
+		if $lower =~ /^(?:daily|nightly|every day|each day)$/;
+	return $done->("Mon *-*-* $clock")
+		if $lower =~ /^(?:weekly|every week|each week)$/;
+	return $done->("*-*-01 $clock")
+		if $lower =~ /^(?:monthly|every month|each month)$/;
+	if ($lower =~ /^(?:monthly|every month) on the (\d{1,2})(?:st|nd|rd|th)?$/) {
+		my $day = $1 + 0;
+		return { ok => 0, error => 'the day of the month must be 1 to 31' }
+			if $day < 1 || $day > 31;
+		return $done->(sprintf('*-*-%02d %s', $day, $clock));
+	}
+	if ($lower =~ /^(?:every|each) (sun|mon|tue|wed|thu|fri|sat)(?:day)?$/) {
+		return $done->("$RELEASE_DOW{$1} *-*-* $clock");
+	}
+	if ($lower =~ /^(?:every|each|the) (first|second|third|fourth|fifth|1st|2nd|3rd|4th|5th) (sun|mon|tue|wed|thu|fri|sat)(?:day)?(?: of the month)?$/) {
+		my $nth = $RELEASE_ORDINAL{$1};
+		my $from = ($nth - 1) * 7 + 1;
+		my $to = $nth * 7;
+		$to = 31 if $to > 31;
+		return $done->("$RELEASE_DOW{$2} *-*-$from..$to $clock");
+	}
+	if ($lower =~ /^every (\d+) days?$/) {
+		my $n = $1 + 0;
+		return { ok => 0, error => 'every N days needs N between 1 and 31' }
+			if $n < 1 || $n > 31;
+		return $done->(sprintf('*-*-01/%d %s', $n, $clock));
+	}
+	if ($lower =~ /^every (\d+) hours?$/) {
+		my $n = $1 + 0;
+		return { ok => 0, error => 'every N hours needs N between 1 and 23' }
+			if $n < 1 || $n > 23;
+		return $done->(sprintf('*-*-* 00/%d:%02d:00', $n, $minute));
+	}
+	if ($lower =~ /^(\d{4}-\d{2}-\d{2})$/) {
+		return { ok => 0, error => 'a fixed date needs a time, like 2026-12-25 04:00' }
+			unless $has_time;
+		return $done->("$1 $clock");
+	}
+	return {
+		ok => 0,
+		error => 'say hourly, daily, weekly, monthly, every friday, every third friday of the month, '
+			. 'every 3 days, every 2 hours, or a date like 2026-12-25 04:00',
+	};
+}
+
+sub release_schedule_read {
+	my $opts = shift || {};
+	my $raw;
+	if ($opts->{'grabber'}) { $raw = $opts->{'grabber'}->('release_schedule') }
+	else {
+		$raw = &subs::setting_grabber({ app => '__president', setting => 'release_schedule', device => 'all' });
+		$raw = &subs::setting_grabber({ app => '__president', setting => 'release_schedule' })
+			unless defined $raw && length $raw;
+	}
+	$raw = '' unless defined $raw;
+	$raw =~ s/^\s+|\s+$//g;
+	$raw =~ s/\s+/ /g;
+	return &release_schedule_default()
+		unless $raw =~ /^[A-Za-z*0-9][A-Za-z0-9*.,\/:~ -]*$/ && $raw =~ /\S+ \S+/;
+	return $raw;
+}
+
+sub release_schedule_dropin_file {
+	return '/etc/systemd/system/jawnos-land-promote.timer.d/50-jawn-schedule.conf';
+}
+
+sub release_schedule_dropin_body {
+	my ($oncalendar) = @_;
+	$oncalendar = &release_schedule_read() unless defined $oncalendar && length $oncalendar;
+	return "# Written by JawnOS Configure -> Plat -> QA. The panel rewrites this\n"
+		. "# file when the release schedule is changed there; set it in the panel.\n"
+		. "[Timer]\n"
+		. "OnCalendar=\n"
+		. "OnCalendar=$oncalendar\n";
+}
+
+sub release_schedule_apply {
+	my $opts = shift || {};
+	my $dry = $opts->{'dry_run'} ? 1 : 0;
+	my $run_cmd = $opts->{'runner'} || sub { &qa_command(@_) };
+	my $cal = $opts->{'oncalendar'} || &release_schedule_read($opts);
+	my $row = {
+		unit => 'jawnos-land-promote',
+		path => &release_schedule_dropin_file(),
+		oncalendar => $cal,
+		body => &release_schedule_dropin_body($cal),
+	};
+	if ($dry) {
+		$row->{'ok'} = 1;
+		$row->{'state'} = 'planned';
+		$row->{'command'} = [ 'sudo', '-n', 'install', '-D', '-m', '0644', '<drop-in>', $row->{'path'} ];
+		return { ok => 1, dry_run => 1, rows => [$row] };
+	}
+	my ( $fh, $tmp );
+	{
+		require File::Temp;
+		( $fh, $tmp ) = File::Temp::tempfile( 'jawn-release-schedule-XXXXXX', TMPDIR => 1, UNLINK => 1 );
+		print {$fh} $row->{'body'};
+		close $fh;
+	}
+	my ( $rc, $out ) = $run_cmd->( 'sudo', '-n', 'install', '-D', '-m', '0644', $tmp, $row->{'path'} );
+	if ($rc != 0) {
+		$row->{'ok'} = 0;
+		$row->{'state'} = 'failed';
+		$row->{'error'} = length $out ? $out : 'the drop-in could not be written (needs root on that machine)';
+		return { ok => 0, rows => [$row], error => $row->{'error'} };
+	}
+	my ( $drc, $dout ) = $run_cmd->( 'sudo', '-n', 'systemctl', 'daemon-reload' );
+	if ($drc != 0) {
+		$row->{'ok'} = 0;
+		$row->{'state'} = 'failed';
+		$row->{'error'} = 'systemd daemon-reload failed' . (length $dout ? ": $dout" : '');
+		return { ok => 0, rows => [$row], error => $row->{'error'} };
+	}
+	my ( $rrc, $rout ) = $run_cmd->( 'sudo', '-n', 'systemctl', 'restart', $row->{'unit'} . '.timer' );
+	if ($rrc == 0) {
+		$row->{'ok'} = 1;
+		$row->{'state'} = 'retimed';
+		return { ok => 1, rows => [$row] };
+	}
+	if ( &qa_systemd_missing($rout) ) {
+		$row->{'ok'} = 1;
+		$row->{'state'} = 'not-installed';
+		$row->{'note'} = 'the release timer is not installed on that machine';
+		return { ok => 1, rows => [$row] };
+	}
+	$row->{'ok'} = 0;
+	$row->{'state'} = 'failed';
+	$row->{'error'} = length $rout ? $rout : 'systemctl restart exited ' . $rrc;
+	return { ok => 0, rows => [$row], error => $row->{'error'} };
+}
+
+sub release_schedule_save {
+	my ($text, $opts) = @_;
+	$opts ||= {};
+	my $parsed = &release_schedule_parse($text);
+	return { ok => 0, error => $parsed->{'error'} } unless $parsed->{'ok'};
+	my $set = $opts->{'setter'} || sub {
+		&subs::setting_setter({ app => '__president', setting => 'release_schedule', device => 'all', value => $_[0] });
+	};
+	$set->( $parsed->{'oncalendar'} );
+	my $applied = &release_schedule_apply({ %$opts, oncalendar => $parsed->{'oncalendar'} });
+	my $row = $applied->{'rows'}[0] || {};
+	return {
+		ok => 1,
+		saved => 1,
+		oncalendar => $parsed->{'oncalendar'},
+		phrase => $parsed->{'phrase'},
+		state => $row->{'state'},
+		retime_ok => $row->{'ok'} ? 1 : 0,
+		error => $row->{'ok'} ? '' : ($row->{'error'} || $applied->{'error'} || 'the timer was not retimed'),
+	};
+}
+
+sub release_schedule_state {
+	my $opts = shift || {};
+	my $run_cmd = $opts->{'runner'} || sub { &qa_command(@_) };
+	my $repo = defined $opts->{'repo'} ? $opts->{'repo'} : &subs::home('~/jawnos');
+	my $unit = 'jawnos-land-promote';
+	my $row = {
+		unit => $unit,
+		dropin => $opts->{'dropin'} || &release_schedule_dropin_file(),
+		setting => &release_schedule_read($opts),
+		oncalendar => '',
+		source => '',
+	};
+	my ( $rc, $out ) = $run_cmd->( 'systemctl', 'show', '-p', 'TimersCalendar', "$unit.timer" );
+	my $cal = $rc == 0 ? &qa_oncalendar_text($out) : '';
+	if (length $cal) { $row->{'oncalendar'} = $cal; $row->{'source'} = 'systemd' }
+	else {
+		foreach my $pair (
+			[ $row->{'dropin'}, 'drop-in' ],
+			[ "$repo/scripts/systemd/$unit.timer", 'unit' ],
+		) {
+			my $path = $pair->[0];
+			next unless defined $path && length $path && -e $path;
+			open( my $fh, '<', $path ) or next;
+			my $body = do { local $/; <$fh> } // '';
+			close $fh;
+			my $found = &qa_oncalendar_text($body);
+			next unless length $found;
+			$row->{'oncalendar'} = $found;
+			$row->{'source'} = $pair->[1];
+			last;
+		}
+	}
+	return $row;
+}
+
 # The HH:MM a unit's timer really fires at. `systemctl show -p TimersCalendar`
 # answers for an installed timer; a machine with no timer falls back to the
 # drop-in, and then to the unit file shipped in the repo. `source` says which.

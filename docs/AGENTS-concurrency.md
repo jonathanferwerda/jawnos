@@ -161,8 +161,10 @@ from it, and queue with `scripts/land_enqueue.pl --trunk working --wait`. The co
 tested waves on `working` and runs with `--trunk working --no-apply`, so it never moves the primary
 checkout.
 
-`main` moves on a release: `jawnos-land-promote.timer` runs `scripts/land_promote.pl --once` weekly,
-and the same command promotes by hand whenever the owner wants. `--promote-now` on the coordinator is
+`main` moves on a release: `jawnos-land-promote.timer` runs `scripts/land_promote.pl --once` weekly
+(Mon 04:00 by default; Configure → Plat → QA sets the cadence through a drop-in, from hourly to a
+phrase such as "every third friday of the month"), and the same command promotes by hand whenever the
+owner wants. `--promote-now` on the coordinator is
 the opt-in for a box that should release as each drain lands; the shipped unit does not pass it, so
 `working` can carry changes for days without the app moving. The promoter takes the land lock and
 fast-forwards `main` to the working tip, then fast-forwards the primary checkout and restarts the app.
