@@ -868,12 +868,20 @@ sub manager_starter() {
 			my $configured_workers = (defined $config->{'main_workers'} && $config->{'main_workers'} =~ /^\d+$/ && $config->{'main_workers'} > 0)
 				? int($config->{'main_workers'}) : 0;
 			my $main_workers = $configured_workers || ($device eq 'controller' ? 2 : ($device eq 'mobile' ? 2 : ($device eq 'server' ? 4 : 3)));
+			# A burst pool: `main_workers` is where the pool rests and
+			# `main_workers_max` is the ceiling an interactive burst may reach.
+			# Without a configured ceiling the old rule stands: a phone and a
+			# controller rest, a desktop and a server grow by two.
+			my $configured_max = (defined $config->{'main_workers_max'} && $config->{'main_workers_max'} =~ /^\d+$/ && $config->{'main_workers_max'} > 0)
+				? int($config->{'main_workers_max'}) : 0;
+			my $main_workers_max = $configured_max
+				|| (($device eq 'mobile' || $device eq 'controller') ? $main_workers : $main_workers + 2);
+			$main_workers_max = $main_workers if $main_workers_max < $main_workers;
 			&run_server('./perl/Manager.pl', [ $ENV{MOJO_LISTEN} ],
 				purpose => 'main',
 				workers => $main_workers,
 				autoscale_min => $main_workers,
-				autoscale_max => ($device eq 'mobile' || $device eq 'controller')
-					? $main_workers : $main_workers + 2);
+				autoscale_max => $main_workers_max);
 			$log->info('after main server');
 		}, { name => 'Pro Main Server' });
 		# A controller answers no alarm, runs no terminal and keeps no window

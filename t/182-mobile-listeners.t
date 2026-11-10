@@ -1,4 +1,4 @@
-# tests-for: perl/President.pl perl/President/prefork_autoscale.pl
+# tests-for: perl/President.pl perl/President/prefork_autoscale.pl lib/JawnOS/Domain/Calendar.pm
 # covers:    A phone starts the dock/ticket listener, no tty listeners, and never grows its main pool.
 
 use strict;
@@ -43,8 +43,14 @@ for my $keep ('Pro Locker Server', 'Pro WS Server', 'Pro Main Server', 'Pro Alar
 	like($rest, qr/name => '\Q$keep\E'/, "$keep still starts on a phone");
 }
 
-like($src, qr/autoscale_max => \(\$device eq 'mobile' \|\| \$device eq 'controller'\)\s*\n?\s*\? \$main_workers : \$main_workers \+ 2\);/,
-	'a phone and a controller rest at their worker count while a desktop still grows by two');
+like($src, qr/my \$configured_max = .*?main_workers_max/s, 'a configured burst ceiling is read');
+like($src, qr/autoscale_max => \$main_workers_max\)/, 'the ceiling reaches the pool');
+like($autoscale, qr/my \$recent_ms = 3000;/, 'a worker that just finished still counts as active');
+like($autoscale, qr/my \$grow_by = 2;/, 'a burst opens two slots at a time');
+like($autoscale, qr/my \$shrink_after = 10;/, 'ten quiet seconds retires workers');
+like($autoscale, qr/\$kind eq 'end' && \$now - \$at <= \$recent_ms/, 'a recent end is activity');
+my $calendar = read_file("$root/lib/JawnOS/Domain/Calendar.pm");
+like($calendar, qr/\$request_busy_depth > 0 \? 'start ' : 'end '/, 'the marker names a start and an end');
 like($autoscale, qr/return \$prefork if \$max <= \$min;/,
 	'a cap equal to the pool never even starts the supervisor');
 

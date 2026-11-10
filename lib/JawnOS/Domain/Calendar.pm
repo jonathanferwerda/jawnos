@@ -620,18 +620,15 @@ sub request_busy_change {
 	$request_busy_depth = 0 if $request_busy_depth < 0;
 	my $dir = &home('~/.president/busy');
 	my $file = $dir . '/' . $$;
-	if ($request_busy_depth > 0) {
-		return if -e $file;
-		eval {
-			mkdir $dir unless -d $dir;
-			open(my $fh, '>', $file) or die "busy marker: $!";
-			print $fh &rightNow();
-			close $fh;
-		};
-	}
-	else {
-		unlink $file;
-	}
+	# `start` while the request runs, `end` when it finishes. The marker stays
+	# for a few seconds after the end so the autoscaler can see a burst of short
+	# loads; it removes a stale one itself (see prefork_autoscale).
+	eval {
+		mkdir $dir unless -d $dir;
+		open(my $fh, '>', $file) or die "busy marker: $!";
+		print $fh ($request_busy_depth > 0 ? 'start ' : 'end ') . &rightNow() . "\n";
+		close $fh;
+	};
 }
 
 sub request_busy_release {

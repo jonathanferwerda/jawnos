@@ -39,37 +39,53 @@ sub prefork_autoscale {
 	$0 = 'jawn autoscale';
 	$SIG{$_} = 'DEFAULT' for qw/INT TERM HUP CHLD/;
 	my ($current, $high, $low) = ($min, 0, 0);
+	# A worker that has just finished still says the person is moving: the marker
+	# carries `start` while the request runs and `end` when it finishes, and an
+	# `end` inside this window counts as activity. Without it a burst of short
+	# page loads never holds every worker at one sample and the pool never grows.
+	my $recent_ms = 3000;
+	my $grow_after = 1;
+	my $grow_by = 2;
+	my $shrink_after = 10;
+	my $shrink_by = 2;
 	while (1) {
 		sleep 1;
 		last unless kill 0, $parent;
+		my $now = &subs::rightNow();
 		my $busy = 0;
 		if (opendir(my $dh, $dir)) {
 			foreach my $name ( grep { /^\d+$/ } readdir $dh ) {
+				my $pid = int($name);
 				my $file = "$dir/$name";
-				my $age = time - ((stat($file))[9] || 0);
-				# a worker that died leaves its marker; a request lost by a live
-				# worker is aged out rather than left to keep a worker forever
-				unless (kill 0, int($name)) { unlink $file; next; }
-				if ($age > 1800) { unlink $file; next; }
-				$busy++;
+				my $state = '';
+				if (open my $fh, '<', $file) { $state = <$fh> // ''; close $fh; }
+				my ($kind, $at) = $state =~ /^(start|end)\s+(\d+)/;
+				# a worker that died leaves its marker; an old finish is not
+				# activity, and neither is a marker from an older tree
+				unless (kill 0, $pid) { unlink $file; next; }
+				if ($kind eq 'start') { $busy++; next; }
+				if ($kind eq 'end' && $now - $at <= $recent_ms) { $busy++; next; }
+				unlink $file;
 			}
 			closedir $dh;
 		}
-		# Mojo's `spare` only widens the pool while a worker is stopping
-		# gracefully; in steady state the pool is exactly `workers`.
-		my $pool = $current;
-		if ($busy >= $pool) { $high++ } else { $high = 0 }
-		if ($high >= 2 && $current < $max) {
-			kill 'TTIN', $parent;
-			$current++;
+		if ($busy >= $current) { $high++ } else { $high = 0 }
+		if ($high >= $grow_after && $current < $max) {
+			my $add = $grow_by;
+			$add = $max - $current if $current + $add > $max;
+			kill 'TTIN', $parent for 1 .. $add;
+			my $was = $current;
+			$current += $add;
 			$high = 0;
 			$low = 0;
-			$log->info('autoscale: all ' . $pool . ' main workers busy; raising to ' . $current);
+			$log->info('autoscale: all ' . $was . ' main workers active; raising to ' . $current);
 		}
 		if ($busy <= $current - 1) { $low++ } else { $low = 0 }
-		if ($low >= 30 && $current > $min) {
-			kill 'TTOU', $parent;
-			$current--;
+		if ($low >= $shrink_after && $current > $min) {
+			my $drop = $shrink_by;
+			$drop = $current - $min if $current - $drop < $min;
+			kill 'TTOU', $parent for 1 .. $drop;
+			$current -= $drop;
 			$low = 0;
 			$high = 0;
 			$log->info('autoscale: main workers quiet; back to ' . $current);

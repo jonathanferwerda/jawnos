@@ -26,10 +26,14 @@ like($src, qr/\$device eq 'controller' \? 2 :/,
 
 my ($autoscale) = $src =~ /(&run_server\('\.\/perl\/Manager\.pl'.*?autoscale_max =>.*?;)/s;
 ok($autoscale, 'the main pool still autoscales through one call');
-like($autoscale, qr/\$device eq 'controller'/,
-	'the autoscale limit consults the controller device');
-like($autoscale, qr/controller[^\n]*\n\s*\?\s*\$main_workers\s*:/,
-	'a controller does not grow the pool past its resting count');
+like($autoscale, qr/autoscale_max => \$main_workers_max/,
+	'the pool ceiling is the configured or default cap');
+my ($max_rule) = $src =~ /(my \$main_workers_max = \$configured_max.*?\$main_workers \+ 2\);)/s;
+ok($max_rule, 'the ceiling rule is declared before the pool');
+like($max_rule, qr/\$device eq 'mobile' \|\| \$device eq 'controller'/,
+	'the default ceiling consults the controller and mobile device');
+like($max_rule, qr/\$main_workers : \$main_workers \+ 2/,
+	'a controller rests at its count; a desktop grows by two');
 
 # A controller gate is `unless ($device eq 'controller') { ... }` indented one
 # level out from what it wraps, and its closer is a lone tab + brace. Read a
