@@ -228,8 +228,9 @@ sub action_14764 {
 			$folder = &subs::setting_grabber( { app => 'misc', setting => 'download_location', device => $device } );
 			$location = &subs::home($folder) . '/' . $app_path;
 		}
-		`mkdir -p $location` unless -e $location;
-		my $filename = $location . '/' . $upload->{'filename'};
+		system('mkdir', '-p', $location) unless -e $location;
+		my $upload_name = &subs::path_name($upload->{'filename'});
+		my $filename = $location . '/' . $upload_name;
 		my $new_uuid = &subs::random_string_creator(13);
 		if ($is_enc == 1) {
 			$filename = $filename . '.enc';
@@ -251,15 +252,16 @@ sub action_14764 {
 			}
 			$ocr = &ocr_reader($c,$filename);
 		}
-		$linux_file .= `file $filename` . "\n";
-		if ($upload->{'filename'} =~ /avi$|mkv$/gi) {
+		$linux_file .= `file ` . &quote($filename) . "\n";
+		if ($upload_name =~ /avi$|mkv$/gi) {
 			my $old_filename = $filename;
 			$filename =~ s/avi$|mkv$/mp4/;
 			my $tn_o = &subs::terminal_name($old_filename);
 			my $tn_f = &subs::terminal_name($filename);
 			&subs::subprocessor(sub {
-				`ffmpeg -i $tn_o $tn_f & exit /b`;
-				`shred -u $tn_o`;
+				my $ffmpeg_cmd = 'ffmpeg -nostdin -i ' . &quote($tn_o) . ' ' . &quote($tn_f) . ' & exit /b';
+				`$ffmpeg_cmd`;
+				system('shred', '-u', $tn_o);
 				&subs::file_encrypter({ app => $app });
 			}, { name => "Video file converter" });
 		}
@@ -267,9 +269,9 @@ sub action_14764 {
 		my $u_data = { server_time => &subs::rightNow(), ocr => $ocr, f => $filename, uuid => $new_uuid, type => $upload_type };
 
 		if ($thumb) {
-			`mkdir -p $thumb` unless -e $thumb;
+			system('mkdir', '-p', $thumb) unless -e $thumb;
 
-			$u_data->{'thumb'} = $thumb . '/' . $upload->{'filename'};
+			$u_data->{'thumb'} = $thumb . '/' . $upload_name;
 			$u_data = &thumbnail_creator($u_data);
 		}
 		push @uploaded_files, $u_data;

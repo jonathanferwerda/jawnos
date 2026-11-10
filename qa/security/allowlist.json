@@ -2,7 +2,7 @@
 	{
 		"id": "perl.eval.string",
 		"path": "lib/JawnOS/Manager/Part32.pm",
-		"reason": "The unit calculator evaluates a numeric formula built from gb measures; it is not request text."
+		"reason": "The unit calculator evaluates a numeric formula built from gb measures. The request side is restricted to digits and arithmetic operators by formula_calculator's guards before eval, so no request text reaches eval."
 	},
 	{
 		"id": "js.eval",

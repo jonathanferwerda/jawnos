@@ -743,6 +743,9 @@ sub action_35739 {
 	my $signatorial = $c->param('signatorial');
 	my $rm = ($signatorial && &subs::db_select('remote_machines', undef, { signatorial => $signatorial })->hashes->[0]);
 	unless ($rm && $rm->{'pubkey'} && &subs::peer_verify($c, $rm)) { $c->rendered(403); return; }
+	# A pinned key proves the machine; the grant says what it may ask for. Running
+	# a command is the `trusted` rung in `subs::peer_action_scope`.
+	unless (&subs::peer_allows($c, $rm, 'command')) { $c->rendered(403); return; }
 	my $result = remote_command_run($c, {
 		text => $c->param('text'), verb => $c->param('verb'), args => $c->param('args'),
 		target => $c->param('target'), model => $c->param('model')

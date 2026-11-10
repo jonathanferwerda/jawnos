@@ -140,7 +140,7 @@ sub rock_and_roll($c) {
 		if ($mag->{'status'} eq 'publish') {
 			my $public = &subs::setting_grabber({ app => &subs::unformat_name($mag->{'title'}), setting => 'public' });
 
-			if ($public eq 'on' && $mag->{'content'} =~ /$file/) {
+			if ($public eq 'on' && $mag->{'content'} =~ /\Q$file\E/) {
 				$man = 'approved';
 			}
 		}

@@ -637,7 +637,6 @@ sub weather_nws_fetch($lat, $lon, $ua) {
 sub weather_reverse_geocode($lat, $lon) {
 	return '' unless defined $lat && defined $lon;
 	my $ua = Mojo::UserAgent->new(connect_timeout => 4, inactivity_timeout => 5, request_timeout => 6);
-	$ua->insecure(1);
 	my $url = 'https://api.bigdatacloud.net/data/reverse-geocode-client'
 		. "?latitude=$lat&longitude=$lon&localityLanguage=en";
 	my ($json) = &weather_http_get($url, $ua);
@@ -677,7 +676,6 @@ sub weather_fetch($lat, $lon, $opts) {
 		return $cached;
 	}
 	my $ua = Mojo::UserAgent->new(connect_timeout => 6, inactivity_timeout => 10, request_timeout => 15);
-	$ua->insecure(1);
 	my $out;
 	if ($provider eq 'ec') { $out = eval { &weather_ec_fetch($lat, $lon, $ua) }; }
 	elsif ($provider eq 'nws') { $out = eval { &weather_nws_fetch($lat, $lon, $ua) }; }

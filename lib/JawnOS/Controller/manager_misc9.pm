@@ -280,6 +280,7 @@ sub action_28093 {
 	$file = $files->[0];
 	if ($file->{'ocr'}) {
 		$file->{'ocr'} = &subs::note_decrypter(&subs::session_suds($c), $file->{'ocr'}, $file->{'server_time'});
+		$file->{'ocr'} = &subs::html_text($file->{'ocr'});
 		$file->{'ocr'} =~ s/\n/<br>/gi;
 	}
 

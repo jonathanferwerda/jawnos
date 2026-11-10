@@ -596,7 +596,8 @@ sub action_26620 {
 	my $c = shift;
 	my $app = &subs::unformat_name($c->param('app'));
 	my $pos = $c->param('pos');
-	my $qr = `qrencode -o - $pos`;
+	$pos = '' unless defined $pos;
+	my $qr = `qrencode -o - ` . &quote($pos);
 	my $returner = { qr => $qr, app => $app, 'pos' => $pos };
 	$c->render(json => $returner);
 }

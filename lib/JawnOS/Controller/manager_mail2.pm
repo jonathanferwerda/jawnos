@@ -302,7 +302,7 @@ sub action_32554 {
 	my $returner = { config => $configure->{$uuid} };
 	if ($configure->{$uuid}->{'qr'}) {
 		my $qr = $configure->{$uuid}->{'qr'};
-		$qr = `qrencode -o - $qr`;
+		$qr = `qrencode -o - ` . &quote($qr);
 		$configure->{$uuid}->{'qr_image'} = 'data:image/png;base64,' . encode_base64($qr);
 	}
 	$returner->{'html'} = $c->render_to_string(
@@ -374,7 +374,7 @@ sub action_32612 {
 	&subs::setting_setter({ app => 'mail', setting => 'mail_config', value => $jset });
 	if ($configure->{$uuid}->{'qr'}) {
 		my $qr = $configure->{$uuid}->{'qr'};
-		$qr = `qrencode -o - $qr`;
+		$qr = `qrencode -o - ` . &quote($qr);
 		$configure->{$uuid}->{'qr_image'} = 'data:image/png;base64,' . encode_base64($qr);
 	}
 	$c->render(json => $configure->{$uuid});

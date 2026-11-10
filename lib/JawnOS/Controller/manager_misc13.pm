@@ -98,6 +98,9 @@ sub action_42557 {
 			$key = $k;
 		}
 	}
+	# path_name percent-encodes separators and "..", so the name cannot walk the tree
+	$key = &subs::path_name($key // '');
+	if ($key eq '') { $c->render(text => '', status => 404); return; }
 	my $path = './public/icons/lettering/' . $key . '.png';
 	if (! -e $path) {
 		$path = './public/icons/lymeboard' . $key . '.png';

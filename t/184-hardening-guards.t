@@ -1,4 +1,4 @@
-# tests-for: lib/JawnOS/Domain/Format.pm lib/JawnOS/Domain/Crypto.pm lib/JawnOS/Domain/Crypt.pm lib/JawnOS/Domain/Sent.pm lib/JawnOS/Manager/Part04.pm lib/JawnOS/Manager/Part05.pm lib/JawnOS/Manager/Part13.pm lib/JawnOS/Manager/Part17.pm lib/JawnOS/Controller/manager_configure.pm lib/JawnOS/Controller/manager_configure3.pm lib/JawnOS/Controller/manager_configure4.pm lib/JawnOS/Controller/manager_configure5.pm lib/JawnOS/Controller/manager_embedded.pm lib/JawnOS/Controller/manager_misc.pm lib/JawnOS/Controller/manager_misc5.pm lib/JawnOS/Controller/manager_misc6.pm lib/JawnOS/Controller/manager_misc12.pm lib/JawnOS/Controller/manager_misc14.pm lib/JawnOS/Controller/manager_mail.pm lib/JawnOS/Controller/mail_ws.pm qa/coding_night/run.pl qa/systemd/jawnos-qa-coding.service desktop/install-wallet.sh jp/alarmclock/alarmclock_02_ble_handlers_wifi_setup.ino jp/alarmclock/alarmclock_03_loop_house_inputs_jobs.ino jt/jt_01_globals_ble_house.ino jt/jt_02_lorawan_radio_gps.ino jt/jt_03_setup.ino jw/jw_01_globals.ino jw/jw_03_setup.ino public/js/manager/embedded/01_ota_nowme.js templates/embedded/body.html.ep
+# tests-for: lib/JawnOS/Domain/Format.pm lib/JawnOS/Domain/Crypto.pm lib/JawnOS/Domain/Crypt.pm lib/JawnOS/Domain/Sent.pm lib/JawnOS/Manager/Part04.pm lib/JawnOS/Manager/Part05.pm lib/JawnOS/Manager/Part13.pm lib/JawnOS/Manager/Part17.pm lib/JawnOS/Controller/manager_configure.pm lib/JawnOS/Controller/manager_configure3.pm lib/JawnOS/Controller/manager_configure4.pm lib/JawnOS/Controller/manager_configure5.pm lib/JawnOS/Controller/manager_embedded.pm lib/JawnOS/Controller/manager_misc.pm lib/JawnOS/Controller/manager_misc5.pm lib/JawnOS/Controller/manager_misc6.pm lib/JawnOS/Controller/manager_misc12.pm lib/JawnOS/Controller/manager_misc14.pm lib/JawnOS/Controller/manager_mail.pm lib/JawnOS/Controller/mail_ws.pm qa/coding_night/run.pl qa/systemd/jawnos-qa-coding.service desktop/install-wallet.sh jp/alarmclock/alarmclock_02_ble_handlers_wifi_setup.ino jp/alarmclock/alarmclock_03_loop_house_inputs_jobs.ino jt/jt_01_globals_ble_house.ino jt/jt_02_lorawan_radio_gps.ino jt/jt_03_setup.ino jw/jw_01_globals.ino jw/jw_03_setup.ino public/js/manager/embedded/01_ota_nowme.js templates/embedded/body.html.ep lib/JawnOS/Controller/manager_mail2.pm lib/JawnOS/Controller/manager_misc2.pm lib/JawnOS/Controller/manager_misc7.pm lib/JawnOS/Controller/manager_misc9.pm lib/JawnOS/Controller/manager_misc10.pm lib/JawnOS/Controller/manager_misc13.pm lib/JawnOS/Controller/sesh_check.pm lib/JawnOS/Domain/Generate.pm lib/JawnOS/Domain/Weather.pm lib/JawnOS/Manager/Part30.pm lib/JawnOS/Manager/Part32.pm
 # covers:    The second audit pass: file reads stay inside a root, peer proof is
 #           signed, the console channel escapes its data, and OTA needs a token.
 
@@ -121,5 +121,71 @@ like($ota_js, qr/data\.append\('chip_id', chip_id\)/, 'the OTA form carries the 
 
 my $body = source('templates/embedded/body.html.ep');
 like($body, qr/id="embedded_ota_uploader_wifi".*chip_id=/, 'the OTA button carries the chip id');
+
+# --- the second audit pass: request text and data never reach a shell -------
+my $conf5_qr = source('lib/JawnOS/Controller/manager_configure5.pm');
+like($conf5_qr, qr/&quote\(\$pos\)/, 'the environment QR quotes the position it is given');
+unlike($conf5_qr, qr/`qrencode -o - \$pos`/, 'no raw position reaches qrencode');
+
+my $misc5 = source('lib/JawnOS/Controller/manager_misc5.pm');
+like($misc5, qr/&subs::path_name\(\$upload->\{'filename'\}\)/, 'an uploaded name is one filesystem component');
+like($misc5, qr/system\('mkdir', '-p', \$location\)/, 'the upload folder is made in list form');
+like($misc5, qr/`file ` \. &quote\(\$filename\)/, 'the file probe quotes its path');
+like($misc5, qr/system\('shred', '-u', \$tn_o\)/, 'shred runs in list form');
+unlike($misc5, qr/`file \$filename`/, 'no raw upload path reaches the shell');
+
+my $misc7 = source('lib/JawnOS/Controller/manager_misc7.pm');
+like($misc7, qr/my \$cp = 'cp -v ' \. &quote\(\$f\)/, 'a copy builds its command with quoted paths');
+like($misc7, qr/my \$mv = 'mv -v ' \. &quote\(\$file\)/, 'a move builds its command with quoted paths');
+like($misc7, qr/system\('shred', '-u', \$thumb\)/, 'a thumbnail shred runs in list form');
+unlike($misc7, qr/`cp -v \$f \$nf`/, 'no raw copy path reaches the shell');
+
+my $generated = source('lib/JawnOS/Domain/Generate.pm');
+like($generated, qr/File::Path::make_path\(\$public_dir\)/, 'the media folder is made in Perl');
+like($generated, qr/&quote\(\$file_path\)/, 'the media pipeline quotes its paths');
+unlike($generated, qr/`mkdir \$public_dir`/, 'no raw media folder reaches the shell');
+
+my $mail2 = source('lib/JawnOS/Controller/manager_mail2.pm');
+like($mail2, qr/&quote\(\$qr\)/, 'the mail QR quotes its payload');
+unlike($mail2, qr/`qrencode -o - \$qr`/, 'no raw QR payload reaches the shell');
+
+# A pinned key proves the machine; the grant says what it may ask for.
+like(source('lib/JawnOS/Controller/manager_misc10.pm'), qr/peer_allows\(\$c, \$rm, 'command'\)/,
+	'remote_command needs the command grant, not just a pinned key');
+
+my $backup = source('lib/JawnOS/Controller/manager_misc2.pm');
+like($backup, qr/path_is_within\(\$path, \$_/, 'backup_serve confines the requested archive');
+like($backup, qr/backups_dir\(\)/, 'and names the backup directory as a root');
+
+like(source('lib/JawnOS/Controller/manager_misc13.pm'), qr/path_name\(\$key/,
+	'the keyboard alias becomes a filesystem-safe name');
+
+like(source('lib/JawnOS/Controller/manager_misc9.pm'), qr/html_text\(\$file->\{'ocr'\}\)/,
+	'OCR text is escaped before the template prints it raw');
+
+my $weather = source('lib/JawnOS/Domain/Weather.pm');
+my ($wrev) = $weather =~ /(sub weather_reverse_geocode \{.*?\n\})/s;
+my ($wfetch) = $weather =~ /(sub weather_fetch \{.*?\n\})/s;
+unlike($wrev, qr/insecure/, 'the reverse geocode verifies the public certificate');
+unlike($wfetch, qr/insecure/, 'the weather fetch verifies the public certificate');
+
+my $sesh = source('lib/JawnOS/Controller/sesh_check.pm');
+like($sesh, qr/samesite\('Lax'\)/, 'the session cookie is SameSite Lax');
+unlike($sesh, qr/samesite\(undef\)/, 'no login removes the SameSite attribute');
+
+my $part30 = source('lib/JawnOS/Manager/Part30.pm');
+like($part30, qr/return 0 unless length \$ssig/, 'a peer session needs a proved name');
+unlike($part30, qr/return 1 if \$ssig eq ''/, 'a nameless session is no longer a peer');
+
+like(source('lib/JawnOS/Manager/Part04.pm'), qr{=\~ /\\Q\$file\\E/},
+	'the public magazine matches the request path literally');
+
+my $part32 = source('lib/JawnOS/Manager/Part32.pm');
+ok(index($part32, 'next if $pre_number =~ /[^0-9.+-]/;') >= 0,
+	'the quantity substituted into a measure formula is numeric-only');
+ok(index($part32, 'request text is data, not source') >= 0,
+	'the arithmetic eval is guarded');
+like(source('qa/security/allowlist.json'), qr/restricted to digits/,
+	'the allowlist records why the calculator eval remains');
 
 done_testing();

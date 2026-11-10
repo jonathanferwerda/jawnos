@@ -376,10 +376,12 @@ sub action_25772 {
 				$fil->{'uuid'} = &subs::random_string_creator(32);
 				$fil->{'f'} = $nf;
 
-				`cp -v $f $nf`;
+				my $cp = 'cp -v ' . &quote($f) . ' ' . &quote($nf);
+				`$cp`;
 				if ($fil->{'thumb'}) {
 					$fil->{'thumb'} = $tnf;
-					`cp -v $tf $tnf`;
+					my $cp_thumb = 'cp -v ' . &quote($tf) . ' ' . &quote($tnf);
+					`$cp_thumb`;
 				}
 				push @{$files}, $fil;
 			}
@@ -399,7 +401,8 @@ sub action_25772 {
 		write_file($file, $data);
 		my $new_file = $file;
 		$new_file =~ s/\.enc$//gi;
-		`mv -v $file $new_file`;
+		my $mv = 'mv -v ' . &quote($file) . ' ' . &quote($new_file);
+		`$mv`;
 		my ($db) = &subs::database_grabber();
 
 
@@ -412,7 +415,7 @@ sub action_25772 {
 				$fi->{'f'} = $f;
 				if ($fi->{'thumb'}) {
 					my $thumb = $fi->{'thumb'};
-					`shred -u $thumb`;
+					system('shred', '-u', $thumb);
 					$fi = &thumbnail_creator($fi);
 				}
 				$fi->{'server_time'} = &subs::rightNow();
@@ -432,7 +435,7 @@ sub action_25772 {
 	else {
 		$returner->{'image'} = 'data:' . $job->{'fd'} . ';base64,' . encode_base64 read_file($sd);
 	}
-	`shred -u $sd`;
+	system('shred', '-u', $sd);
 	$c->render(json => $returner);
 }
 

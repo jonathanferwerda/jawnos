@@ -550,6 +550,7 @@ sub currency_unit($unit) {
 }
 
 sub formula_calculator($formula) {
+	return ($formula, undef, undef, undef) unless defined $formula && length $formula && length($formula) <= 500;
 	my @formula = split / /, $formula;
 	my ($evaluation,$uom,$format);
 	my $formulas = [];
@@ -566,6 +567,9 @@ sub formula_calculator($formula) {
 				if ($pre_number eq '' && $n >= 2 && $formula[$n - 2] =~ /^\d/) {
 					$pre_number = $formula[$n - 2];
 				}
+				# The number substituted into a measure formula must stay a number
+				# (the empty quantity is the currency branch's 1).
+				next if $pre_number =~ /[^0-9.+-]/;
 
 				my $post = $formula[$n + 1];
 				my $post_number = $post;
@@ -639,7 +643,8 @@ sub formula_calculator($formula) {
 		}
 	}
 	else {
-		$evaluation = eval $formula;
+		# request text is data, not source
+		if ($formula =~ /\A[0-9+\-*\/(). %^]+\z/) { $evaluation = eval $formula; }
 	}
 	return ($formula,$evaluation,$uom,$format);
 }

@@ -800,7 +800,9 @@ sub action_9743 {
 	unless ($rm && $rm->{'pubkey'} && &subs::peer_verify($c, $rm)) { $c->rendered(403); return; }
 	&subs::sync_pull_touch();
 	my $path = &subs::home($c->param('file') || '');
-	unless ($path =~ /\.enc$/ && -f $path) { $c->rendered(404); return; }
+	my @roots = grep { defined && length } (&subs::backups_dir(), &subs::home('~/.president'));
+	my $within = grep { &subs::path_is_within($path, $_) } @roots;
+	unless ($within && $path =~ /\.enc$/ && -f $path) { $c->rendered(404); return; }
 	# A remote backup's archive is a one-shot temp under ~/.president, made for
 	# this pull; delete it once the body is on the wire rather than leave it for
 	# the next boot's ~/.president wipe. Durable backups live beside the database

@@ -381,9 +381,8 @@ sub app_session_ok {
 	# local. The recovery code or the app key is the way back in.
 	if (($c->session('peer') || '') eq '1') {
 		my $ssig = $c->session('peer_signatorial') || '';
-		# A first-contact or pre-upgrade session carries no proved name; keep its
-		# existing access until it logs in again.
-		return 1 if $ssig eq '';
+		# A peer session with no proved name is a pre-upgrade cookie, not a peer.
+		return 0 unless length $ssig;
 		my $rm = &subs::db_query('select * from remote_machines where signatorial = ?', $ssig)->hash;
 		# the row is gone: the session is revoked with it
 		return 0 unless $rm;

@@ -158,7 +158,9 @@ sub action_7519 {
 				}
 				$peer_proved = 1 if $peer_row && $body_sha ne '';
 			}
-			app->sessions->samesite(undef);
+			# A state-changing POST must not ride another site's page; Lax keeps
+			# the ticket redirect working and blocks cross-site POST cookies.
+			app->sessions->samesite('Lax');
 			$c->session('authentication' => 'approved');
 			# A peer logs in with the house password over the signed rail; mark
 			# the session so the app gate lets remote_device_connect through

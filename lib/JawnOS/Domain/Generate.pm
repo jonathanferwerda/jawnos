@@ -95,7 +95,7 @@ sub generate_ai_media {
 	my $folder = &subs::setting_grabber({ app => 'misc', setting => $setting, device => $device });
 	my $location = $folder ? (&subs::home($folder) . '/' . &subs::path_name($app)) : '';
 	my $public_dir = $location || &subs::home('~/Public/generated_' . $kind);
-	`mkdir $public_dir` unless -d $public_dir;
+	File::Path::make_path($public_dir) unless -d $public_dir;
 
 	my $file_path = $public_dir . '/' . $filename;
 	write_file($file_path, $binary);
@@ -114,7 +114,7 @@ sub generate_ai_media {
 	my $thumb;
 	if ($upload_type eq 'image' || $upload_type eq 'video') {
 		my $thumb_dir = $public_dir . '/.thumbs';
-		`mkdir -p $thumb_dir` unless -d $thumb_dir;
+		File::Path::make_path($thumb_dir) unless -d $thumb_dir;
 		my $t = $thumb_dir . '/' . $filename;
 		$t =~ s/\.[^.]+$/.png/;
 		my $thumbnail_size = &subs::setting_grabber({ app => 'misc', setting => 'thumbnail_size' }) || 'none';
@@ -125,8 +125,8 @@ sub generate_ai_media {
 			my $native = &subs::image_bridge_thumbnail($file_path, $max || 256, $t);
 			unless ($native) {
 				my $cmd = ($upload_type eq 'video')
-					? 'ffmpeg -nostdin -ss ' . &subs::thumbnail_seek_position() . ' -i ' . $file_path . ' -vframes 1 -c:v png -f image2pipe - | magick - -resize ' . $thumbnail_size . ' ' . $t
-					: 'magick ' . $file_path . ' -resize ' . $thumbnail_size . ' ' . $t;
+					? 'ffmpeg -nostdin -ss ' . &subs::thumbnail_seek_position() . ' -i ' . &quote($file_path) . ' -vframes 1 -c:v png -f image2pipe - | magick - -resize ' . &quote($thumbnail_size) . ' ' . &quote($t)
+					: 'magick ' . &quote($file_path) . ' -resize ' . &quote($thumbnail_size) . ' ' . &quote($t);
 				`$cmd`;
 			}
 			$thumb = $t if -e $t;
