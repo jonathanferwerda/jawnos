@@ -40,13 +40,31 @@ sub ensure_local_cert {
 
 	my $days = $opt{'days'} || 3650;
 	my $cn   = $opt{'common_name'} || 'jawnos-local';
-	my @base = (
+	$cn =~ s/[^A-Za-z0-9._-]+/-/g;
+	# Strawberry's openssl is a relocated build: its compiled-in config path
+	# (Z:/extlib/.../openssl.cnf) does not exist, so `req` has to be given one.
+	my $conf = $opt{'config'} || "$dir/.local-openssl.cnf";
+	open(my $cfh, '>', $conf) or
+		return { cert => $cert, key => $key, created => 0, error => "cannot write $conf: $!" };
+	print {$cfh} <<"CNF";
+[req]
+distinguished_name = dn
+x509_extensions = v3
+prompt = no
+[dn]
+CN = $cn
+[v3]
+subjectAltName = DNS:localhost,IP:127.0.0.1
+basicConstraints = CA:TRUE
+CNF
+	close $cfh;
+
+	my @cmd = (
 		$openssl, 'req', '-x509', '-newkey', 'rsa:2048', '-nodes',
-		'-keyout', $key, '-out', $cert, '-days', $days, '-subj', "/CN=$cn",
+		'-keyout', $key, '-out', $cert, '-days', $days, '-config', $conf,
 	);
-	# -addext is OpenSSL 1.1.1+; an older tool still gets a working pair from CN.
-	my $rc = system(@base, '-addext', 'subjectAltName=DNS:localhost,IP:127.0.0.1');
-	$rc = system(@base) if $rc != 0;
+	my $rc = system(@cmd);
+	unlink $conf;
 
 	return { cert => $cert, key => $key, created => 0, error => "openssl failed ($rc)" }
 		if $rc != 0 || !-e $cert || !-s $cert || !-e $key || !-s $key;
