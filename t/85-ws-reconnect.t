@@ -65,11 +65,14 @@ like($ws, qr/function websocketWake\(force\) \{.*?websocketRetryClear\(\);.*?if 
 
 # --- hidden: the long backoff, and no poll ----------------------------------
 
-like($ws, qr/function websocketRetryLater\(\) \{.*?if \(document\.hidden \|\| windowVisible != 1\) \{.*?delay = Math\.min\(wsHiddenReconnectMax, wsHiddenReconnectDelay \* Math\.pow\(2, wsRetryFailures - 1\)\);/s,
-	'a hidden failure waits the long, growing backoff');
+like($ws, qr/function websocketRetryLater\(wasAlive\) \{.*?if \(document\.hidden \|\| windowVisible != 1\) \{.*?if \(wasAlive && wsRetryFailures <= wsFastRetryCount\)/s,
+	'a hidden failure from a healthy socket retries fast first');
+like($ws, qr/else \{\s*delay = Math\.min\(wsHiddenReconnectMax, wsHiddenReconnectDelay \* Math\.pow\(2, wsRetryFailures - 1\)\);\s*\}/s,
+	'then a hidden failure waits the long, growing backoff');
 like($ws, qr/else \{\s*delay = Math\.min\(wsVisibleRetryMax, wsVisibleRetryDelay \* Math\.pow\(2, wsRetryFailures - 1\)\);\s*\}/s,
 	'a visible failure backs off too, instead of hammering a server that is down');
-like($ws, qr/if \(ws\[app\] === this\) \{ websocketRetryLater\(\); \}/,
+like($ws, qr/var wasAlive = heard && \(Date\.now\(\) - heard\) < \(stayingAliveInterval \* 2\);/, 'the close tells the retry whether the socket was healthy');
+like($ws, qr/if \(ws\[app\] === this\) \{ websocketRetryLater\(wasAlive\); \}/,
 	'a socket that closes on its own schedules the paced retry');
 like($ws, qr/function wsOpener\(event,app,origin\) \{.*?wsRetryFailures = 0;/s,
 	'a socket that answers clears the failure count');

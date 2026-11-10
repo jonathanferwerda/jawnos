@@ -29,6 +29,11 @@ var windowVisible = 1;
 // one timer per failed socket, doubling to the cap. A test reads these names.
 var wsVisibleRetryDelay = 1000;
 var wsVisibleRetryMax = 30000;
+// A socket that was healthy a moment ago and then closed is a restarted tree
+// (or the app's Start/Stop), not a phone that slept: retry its first few
+// attempts fast even when the page is hidden, then fall back to the long pace.
+var wsFastRetryDelay = 1000;
+var wsFastRetryCount = 4;
 var wsHiddenReconnectDelay = 30000;
 var wsHiddenReconnectMax = 300000;
 var wsRetryTimer = 0;
@@ -125,12 +130,17 @@ function websocketRetryClear() {
 // One paced retry per failed socket, never a loop. Visible, the delay starts at
 // a second and doubles to half a minute; hidden, it starts long and doubles to
 // the cap. A visible wake resets the count and rebuilds at once.
-function websocketRetryLater() {
+function websocketRetryLater(wasAlive) {
 	if (wsRetryTimer) { return; }
 	wsRetryFailures = Math.min((wsRetryFailures || 0) + 1, 8);
 	var delay;
 	if (document.hidden || windowVisible != 1) {
-		delay = Math.min(wsHiddenReconnectMax, wsHiddenReconnectDelay * Math.pow(2, wsRetryFailures - 1));
+		if (wasAlive && wsRetryFailures <= wsFastRetryCount) {
+			delay = wsFastRetryDelay * Math.pow(2, wsRetryFailures - 1);
+		}
+		else {
+			delay = Math.min(wsHiddenReconnectMax, wsHiddenReconnectDelay * Math.pow(2, wsRetryFailures - 1));
+		}
 	}
 	else {
 		delay = Math.min(wsVisibleRetryMax, wsVisibleRetryDelay * Math.pow(2, wsRetryFailures - 1));
@@ -303,8 +313,12 @@ function websocketStart(appt,address) {
 			if (!address && ws[app] && ws[app]['status'] == 'connect') { ws_origin_only = 1; }
 			// A socket still on duty that closed on its own is retried on the
 			// paced backoff. A deliberate close (rebuild/stop) has already
-			// replaced the handle, so this test keeps it quiet.
-			if (ws[app] === this) { websocketRetryLater(); }
+			// replaced the handle, so this test keeps it quiet. Tell the retry
+			// whether this socket had heard from the tree recently: a restart
+			// is fast even while hidden, a phone that slept keeps the long pace.
+			var heard = this['ackAt'] || this['stayingAlive'] || 0;
+			var wasAlive = heard && (Date.now() - heard) < (stayingAliveInterval * 2);
+			if (ws[app] === this) { websocketRetryLater(wasAlive); }
 
 		}
 	});
