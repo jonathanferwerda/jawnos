@@ -55,4 +55,34 @@ like($calendar, qr/\$request_busy_depth > 0 \? 'start ' : 'end '/, 'the marker n
 like($autoscale, qr/return \$prefork if \$max <= \$min;/,
 	'a cap equal to the pool never even starts the supervisor');
 
+# The supervisor used to act on its own worker count. TTIN and TTOU are plain
+# signals, and two sent together coalesce in the kernel, so a grow the manager
+# answered with one worker was booked as two; the next quiet window then sent
+# TTOU for a worker that did not exist. `workers` fell to zero, and
+# Mojo::Server::Prefork spawns nothing at zero (`_manage`: need = workers -
+# keys pool), so the listening socket stayed open with no worker to accept
+# until the master's watchdog restarted the tree. The manager publishes its own
+# target now and the supervisor reads it; below the floor it signals TTIN only.
+like($autoscale, qr/my \$pool_file = &subs::home\('~\/\.president\/pool'\)/,
+	'the supervisor reads the manager worker target');
+like($autoscale, qr/my \$current = &prefork_pool_read\(\$pool_file, \$parent\)/,
+	'the count comes from the manager, not a local tally');
+unlike($autoscale, qr/\$current \+= \$add/, 'the supervisor no longer books its own grow');
+like($autoscale, qr/if \(!defined \$current\) \{ \$high = 0; \$low = 0; next; \}/,
+	'an unreadable pool sends no signal');
+like($autoscale, qr/if \(\$current < \$min\) \{.*?kill 'TTIN', \$parent for 1 \.\. \$add/s,
+	'a pool below its floor is raised back');
+like($autoscale, qr/\$drop = \$current - \$min if \$current - \$drop < \$min;/,
+	'a shrink never goes below the floor');
+like($autoscale, qr/my \$line = \$\$ \. ' ' \. \$prefork->workers;/,
+	'the published target is the manager workers value');
+like($autoscale, qr/return if defined \$prefork_pool_last && \$prefork_pool_last eq \$line/,
+	'the target is written only when it changes');
+like($src, qr/\$prefork->on\(spawn => sub \{.*?&prefork_pool_write\(\$self\);/s,
+	'a spawned worker republishes the target');
+like($src, qr/\$prefork->on\(reap\s+=> sub \{ &prefork_pool_write/,
+	'a reaped worker republishes the target');
+like($src, qr/\$prefork->on\(heartbeat => sub \{ &prefork_pool_write/,
+	'a TTOU is republished on the next heartbeat');
+
 done_testing();

@@ -290,7 +290,15 @@ sub prefork_tune {
 	$prefork->on(spawn => sub {
 		my ($self, $pid) = @_;
 		$log->info('worker spawn purpose=' . ($ENV{PURPOSE} || '?') . " pid=$pid");
+		&prefork_pool_write($self);
 	});
+	# The supervisor (perl/President/prefork_autoscale.pl) reads the target we
+	# publish instead of keeping its own count: signals coalesce, and a count
+	# that drifts can send TTOU for a worker that does not exist. A reap and a
+	# heartbeat catch the two changes a spawn does not - the last worker
+	# leaving, and `workers` moving on TTOU without a fork.
+	$prefork->on(reap      => sub { &prefork_pool_write($_[0]) });
+	$prefork->on(heartbeat => sub { &prefork_pool_write($_[0]) });
 	return $prefork;
 }
 
