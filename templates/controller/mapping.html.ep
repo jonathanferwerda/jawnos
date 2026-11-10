@@ -1,0 +1,299 @@
+<% use Mojo::JSON qw(encode_json); %>
+<%# The per-console control map. The Gou is drawn above and the console
+    it is standing in for below. Arm a button on the Gou, then press the
+    console button it should work as; Save stores the pairing in the Games app
+    and writes the RetroArch remap the core reads. The layouts and the remap
+    names come from lib/JawnOS/GameMapping.pm, so the picture and the file
+    cannot disagree. %>
+<%
+	my $map = ref $mapping eq 'HASH' ? $mapping : {};
+	my $def = ref $defaults eq 'HASH' ? $defaults : {};
+	my $prof = ref $profile eq 'HASH' ? $profile : {};
+	my $buttons = ref $prof->{'buttons'} eq 'ARRAY' ? $prof->{'buttons'} : [];
+	my @physical = @{ &JawnOS::GameMapping::physical_buttons() };
+	my %physical_label = map { $_->{'token'} => $_->{'label'} } @physical;
+	my %assigned;
+	for my $p (@physical) {
+		my $console = $map->{ $p->{'token'} };
+		next unless defined $console;
+		$assigned{$console} //= $p->{'token'};
+	}
+	my @gou_layout = (
+		{ token => 'l2',         x => 55,  y => 16,  shape => 'rect', w => 52, h => 14 },
+		{ token => 'r2',         x => 285, y => 16,  shape => 'rect', w => 52, h => 14 },
+		{ token => 'l',          x => 55,  y => 38,  shape => 'rect', w => 52, h => 18 },
+		{ token => 'r',          x => 285, y => 38,  shape => 'rect', w => 52, h => 18 },
+		{ token => 'dpad_up',    x => 70,  y => 83,  r => 15 },
+		{ token => 'dpad_down',  x => 70,  y => 137, r => 15 },
+		{ token => 'dpad_left',  x => 43,  y => 110, r => 15 },
+		{ token => 'dpad_right', x => 97,  y => 110, r => 15 },
+		{ token => 'select',     x => 156, y => 145, r => 12 },
+		{ token => 'start',      x => 176, y => 145, r => 12 },
+		{ token => 'y',          x => 258, y => 82,  r => 17 },
+		{ token => 'x',          x => 224, y => 106, r => 17 },
+		{ token => 'b',          x => 292, y => 106, r => 17 },
+		{ token => 'a',          x => 258, y => 130, r => 17 },
+	);
+%>
+<style>
+	html, body, .wind, .window_contents { background:#2e2e2e !important; color:#f4f4f4 !important; }
+	.wind[app="games"] .top_navbar, .wind[app="controller"] .top_navbar { display:none !important; }
+	.wind { left:0 !important; top:0 !important; width:100vw !important; height:100vh !important; }
+	.window_contents { width:100% !important; height:100% !important; padding-top:0 !important; }
+	#mapping_shell { display:flex; flex-direction:column; width:100%; height:100%; min-height:0; }
+	#mapping_bar { flex:0 0 auto; display:flex; align-items:center; flex-wrap:wrap; gap:6px; padding:6px 8px 0; }
+	.mapping_button { font:inherit; font-size:13px; line-height:1.2; padding:5px 12px;
+		border:1px solid #4a4a4a; border-radius:8px; background:#3a3a3a; color:#fff;
+		text-decoration:none; cursor:var(--jawnos-cursor-pointer, pointer); }
+	.mapping_button:hover { border-color:var(--accent, #4a90d9); }
+	.mapping_button:disabled { opacity:.5; cursor:var(--jawnos-cursor-default, default); }
+	#mapping_system { font:inherit; font-size:13px; padding:5px 8px; border:1px solid #5a5a5a;
+		border-radius:8px; background:#2e2e2e; color:#fff; }
+	#mapping_hint { flex:1 1 100%; font-size:11px; line-height:1.3; min-height:1em; opacity:.85; }
+	#mapping_note { flex:1 1 100%; font-size:11px; line-height:1.3; min-height:1em; color:#f0c66a; }
+	#mapping_body { flex:1 1 auto; min-height:0; overflow:auto; padding:8px; display:grid;
+		grid-template-columns:1fr; gap:8px; align-content:start; box-sizing:border-box; }
+	.mapping_panel { width:100%; max-width:760px; margin:0 auto; box-sizing:border-box;
+		min-width:0; padding:8px; border:1px solid #4a4a4a; border-radius:12px; background:#353535; }
+	.mapping_panel h3 { margin:0 0 6px; font-size:13px; font-weight:600; }
+	.mapping_svg { width:100%; height:auto; display:block; }
+	.mapping_gou_key, .mapping_console_key { cursor:var(--jawnos-cursor-pointer, pointer); }
+	.mapping_gou_key circle, .mapping_gou_key rect,
+	.mapping_console_key circle, .mapping_console_key rect { fill:#4a4a4a; stroke:#7a7a7a; stroke-width:1.5; }
+	.mapping_gou_key:hover circle, .mapping_gou_key:hover rect,
+	.mapping_console_key:hover circle, .mapping_console_key:hover rect { stroke:var(--accent, #4a90d9); }
+	.mapping_gou_key[aria-pressed="true"] circle,
+	.mapping_gou_key[aria-pressed="true"] rect { fill:#4a90d9; stroke:#9cc4ef; }
+	.mapping_console_key.assigned circle, .mapping_console_key.assigned rect { fill:#3f5a3f; stroke:#7fb27f; }
+	.mapping_gou_key text, .mapping_console_key text { fill:#fff; font-weight:600; pointer-events:none; }
+	.mapping_gou_key text { font-size:10px; }
+	.mapping_console_key .mapping_console_label { font-size:8px; }
+	.mapping_console_assign { fill:#f0c66a !important; font-size:8px !important; }
+	.mapping_stick circle { fill:#262626; stroke:#555; stroke-width:1.5; }
+	.mapping_stick text { fill:#aaa; font-size:8px; }
+	#mapping_rows { grid-column:1 / -1; display:grid; grid-template-columns:repeat(auto-fill, minmax(210px, 1fr));
+		gap:2px 12px; padding:2px; }
+	.mapping_row { display:grid; grid-template-columns:1fr 1fr auto; align-items:center; gap:6px;
+		font-size:12px; line-height:1.5; border-bottom:1px solid #444; }
+	.mapping_row_assign { font-weight:600; color:#f0c66a; }
+	.mapping_clear { font:inherit; font-size:11px; padding:2px 8px; border:1px solid #4a4a4a;
+		border-radius:6px; background:#3a3a3a; color:#fff; cursor:var(--jawnos-cursor-pointer, pointer); }
+	.mapping_clear:hover { border-color:var(--accent, #4a90d9); }
+</style>
+<div id="mapping_shell">
+	<div id="mapping_bar">
+		<a class="mapping_button" id="mapping_back" href="/manager/games"><%= &subs::ui('Games') %></a>
+		<label for="mapping_system"><%= &subs::ui('System') %></label>
+		<select id="mapping_system">
+% for my $s (@{ $systems || [] }) {
+			<option value="<%= $s->{'key'} %>"<%= $s->{'key'} eq $system ? ' selected' : '' %>><%= $s->{'label'} %></option>
+% }
+		</select>
+		<button type="button" class="mapping_button" id="mapping_reset"><%= &subs::ui('Reset to default') %></button>
+		<button type="button" class="mapping_button" id="mapping_save"><%= &subs::ui('Save') %></button>
+		<div id="mapping_hint"><%= &subs::ui('Press a button on the Gou, then the console button it should work as.') %></div>
+		<div id="mapping_note" aria-live="polite"></div>
+	</div>
+	<div id="mapping_body"
+		data-system="<%= $system %>"
+		data-mapping="<%= encode_json($map) %>"
+		data-defaults="<%= encode_json($def) %>"
+		data-physical="<%= encode_json(\%physical_label) %>">
+		<div class="mapping_panel">
+			<h3><%= &subs::ui('Odroid Gou') %></h3>
+			<svg id="mapping_gou" class="mapping_svg" viewBox="0 0 340 220" role="img" aria-label="<%= &subs::ui('Odroid Gou buttons') %>">
+				<rect x="8" y="8" width="324" height="204" rx="30" fill="#3a3a3a" stroke="#4a4a4a" stroke-width="2"/>
+% for my $b (@gou_layout) {
+%   my $token = $b->{'token'};
+%   my $label = $physical_label{$token} // $token;
+%   my $rect = ($b->{'shape'} // '') eq 'rect';
+				<g class="mapping_gou_key" id="gou_key_<%= $token %>" data-physical="<%= $token %>"
+					role="button" tabindex="0" aria-pressed="false" aria-label="<%= $label %>">
+					<title><%= $label %></title>
+%   if ($rect) {
+					<rect x="<%= $b->{'x'} - $b->{'w'} / 2 %>" y="<%= $b->{'y'} - $b->{'h'} / 2 %>"
+						width="<%= $b->{'w'} %>" height="<%= $b->{'h'} %>" rx="6"/>
+%   } else {
+					<circle cx="<%= $b->{'x'} %>" cy="<%= $b->{'y'} %>" r="<%= $b->{'r'} %>"/>
+%   }
+					<text x="<%= $b->{'x'} %>" y="<%= $b->{'y'} + 4 %>" text-anchor="middle"><%= $label %></text>
+				</g>
+% }
+				<g class="mapping_stick">
+					<circle cx="128" cy="180" r="22"/><circle cx="128" cy="180" r="10" fill="#333" stroke="#555"/>
+					<text x="128" y="212" text-anchor="middle"><%= &subs::ui('L stick') %></text>
+				</g>
+				<g class="mapping_stick">
+					<circle cx="212" cy="180" r="22"/><circle cx="212" cy="180" r="10" fill="#333" stroke="#555"/>
+					<text x="212" y="212" text-anchor="middle"><%= &subs::ui('R stick') %></text>
+				</g>
+			</svg>
+		</div>
+		<div class="mapping_panel">
+			<h3><%= $prof->{'label'} // &subs::ui('Console') %></h3>
+			<svg id="mapping_console" class="mapping_svg" viewBox="0 0 340 220" role="img" aria-label="<%= ($prof->{'label'} // &subs::ui('Console')) . ' ' . &subs::ui('buttons') %>">
+				<rect x="8" y="8" width="324" height="204" rx="30" fill="#3a3a3a" stroke="#4a4a4a" stroke-width="2"/>
+% for my $b (@{$buttons}) {
+%   my $token = $b->{'token'};
+%   my $label = $b->{'label'} // $token;
+%   my $rect = ($b->{'shape'} // '') eq 'rect';
+%   my $phys = $assigned{$token};
+%   my $value = defined $phys ? ($physical_label{$phys} // $phys) : '—';
+%   my $assign_y = $rect ? $b->{'y'} + ($b->{'h'} // 18) / 2 + 11 : $b->{'y'} + ($b->{'r'} // 15) + 11;
+				<g class="mapping_console_key<%= defined $phys ? ' assigned' : '' %>" id="console_key_<%= $token %>"
+					data-console="<%= $token %>" role="button" tabindex="0" aria-pressed="false" aria-label="<%= $label %>">
+					<title><%= $label %></title>
+%   if ($rect) {
+					<rect x="<%= $b->{'x'} - ($b->{'w'} // 44) / 2 %>" y="<%= $b->{'y'} - ($b->{'h'} // 18) / 2 %>"
+						width="<%= $b->{'w'} // 44 %>" height="<%= $b->{'h'} // 18 %>" rx="6"/>
+%   } else {
+					<circle cx="<%= $b->{'x'} %>" cy="<%= $b->{'y'} %>" r="<%= $b->{'r'} // 15 %>"/>
+%   }
+					<text class="mapping_console_label" x="<%= $b->{'x'} %>" y="<%= $b->{'y'} + 3 %>" text-anchor="middle"><%= $label %></text>
+					<text class="mapping_console_assign" id="console_assign_<%= $token %>" x="<%= $b->{'x'} %>" y="<%= $assign_y %>" text-anchor="middle"><%= $value %></text>
+				</g>
+% }
+			</svg>
+		</div>
+		<div id="mapping_rows">
+% for my $b (@{$buttons}) {
+%   my $token = $b->{'token'};
+%   my $phys = $assigned{$token};
+%   my $value = defined $phys ? ($physical_label{$phys} // $phys) : '—';
+			<div class="mapping_row" data-console-row="<%= $token %>">
+				<span class="mapping_row_label"><%= $b->{'label'} // $token %></span>
+				<span class="mapping_row_assign" id="mapping_row_assign_<%= $token %>"><%= $value %></span>
+				<button type="button" class="mapping_clear" data-clear="<%= $token %>"><%= &subs::ui('Clear') %></button>
+			</div>
+% }
+		</div>
+	</div>
+</div>
+<script>
+(function () {
+	var body = document.getElementById('mapping_body');
+	if (!body) { return; }
+	function readJson(name, fallback) {
+		try {
+			var raw = body.getAttribute(name);
+			var value = raw ? JSON.parse(raw) : fallback;
+			return (value && typeof value === 'object') ? value : fallback;
+		} catch (e) { return fallback; }
+	}
+	var system = body.getAttribute('data-system') || 'n64';
+	var mapping = readJson('data-mapping', {});
+	var defaults = readJson('data-defaults', {});
+	var physical = readJson('data-physical', {});
+	var note = document.getElementById('mapping_note');
+	var save = document.getElementById('mapping_save');
+	var picker = document.getElementById('mapping_system');
+	var armed = null;
+	function t(text) { return (typeof jawnosT === 'function') ? jawnosT(text) : text; }
+	function label(token) { return physical[token] || token; }
+	function gouKeys() { return Array.prototype.slice.call(document.querySelectorAll('.mapping_gou_key')); }
+	function consoleKeys() { return Array.prototype.slice.call(document.querySelectorAll('.mapping_console_key')); }
+	function disarm() {
+		armed = null;
+		gouKeys().forEach(function (el) { el.setAttribute('aria-pressed', 'false'); });
+	}
+	function arm(token) {
+		armed = token;
+		gouKeys().forEach(function (el) {
+			el.setAttribute('aria-pressed', el.getAttribute('data-physical') === token ? 'true' : 'false');
+		});
+		if (note) { note.textContent = t('Now press the console button that should use ') + label(token) + '.'; }
+	}
+	function assignedTo(consoleToken) {
+		var found = null;
+		Object.keys(mapping).forEach(function (physicalToken) {
+			if (mapping[physicalToken] === consoleToken) { found = physicalToken; }
+		});
+		return found;
+	}
+	function paint() {
+		consoleKeys().forEach(function (el) {
+			var token = el.getAttribute('data-console');
+			var tokenPhysical = assignedTo(token);
+			var input = document.getElementById('console_assign_' + token);
+			var row = document.getElementById('mapping_row_assign_' + token);
+			var value = tokenPhysical ? label(tokenPhysical) : '—';
+			if (input) { input.textContent = value; }
+			if (row) { row.textContent = value; }
+			if (tokenPhysical) { el.classList.add('assigned'); } else { el.classList.remove('assigned'); }
+		});
+	}
+	function assign(consoleToken) {
+		if (!armed) {
+			if (note) { note.textContent = t('Press a button on the Gou first.'); }
+			return;
+		}
+		Object.keys(mapping).forEach(function (physicalToken) {
+			if (mapping[physicalToken] === consoleToken) { delete mapping[physicalToken]; }
+		});
+		mapping[armed] = consoleToken;
+		disarm();
+		paint();
+		if (note) { note.textContent = t('Assigned. Press Save to keep it.'); }
+	}
+	function clear(consoleToken) {
+		Object.keys(mapping).forEach(function (physicalToken) {
+			if (mapping[physicalToken] === consoleToken) { delete mapping[physicalToken]; }
+		});
+		paint();
+	}
+	function reset() {
+		mapping = {};
+		Object.keys(defaults).forEach(function (key) { mapping[key] = defaults[key]; });
+		disarm();
+		paint();
+		if (note) { note.textContent = t('The default map is ready. Press Save to keep it.'); }
+	}
+	function post() {
+		if (note) { note.textContent = ''; }
+		if (save) { save.disabled = true; }
+		fetch('/manager/games/mapping', {
+			method: 'POST',
+			credentials: 'same-origin',
+			headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+			body: new URLSearchParams({ system: system, mapping: JSON.stringify(mapping) })
+		}).then(function (r) { return r.json(); }).then(function (result) {
+			if (note) {
+				note.textContent = result && result.note ? result.note : t('That did not work.');
+			}
+			if (save) { save.disabled = false; }
+		}).catch(function () {
+			if (note) { note.textContent = t('That did not work.'); }
+			if (save) { save.disabled = false; }
+		});
+	}
+	gouKeys().forEach(function (el) {
+		var token = el.getAttribute('data-physical');
+		el.addEventListener('click', function () {
+			if (armed === token) { disarm(); if (note) { note.textContent = ''; } }
+			else { arm(token); }
+		});
+		el.addEventListener('keydown', function (ev) {
+			if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); el.click(); }
+		});
+	});
+	consoleKeys().forEach(function (el) {
+		var token = el.getAttribute('data-console');
+		el.addEventListener('click', function () { assign(token); });
+		el.addEventListener('keydown', function (ev) {
+			if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); el.click(); }
+		});
+	});
+	Array.prototype.slice.call(document.querySelectorAll('.mapping_clear')).forEach(function (el) {
+		el.addEventListener('click', function () { clear(el.getAttribute('data-clear')); });
+	});
+	var resetButton = document.getElementById('mapping_reset');
+	if (resetButton) { resetButton.addEventListener('click', reset); }
+	if (save) { save.addEventListener('click', post); }
+	if (picker) {
+		picker.addEventListener('change', function () {
+			window.location = '/manager/games/mapping?system=' + encodeURIComponent(picker.value);
+		});
+	}
+	paint();
+})();
+</script>
