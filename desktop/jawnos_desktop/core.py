@@ -17,22 +17,38 @@ The start/stop semantics deliberately match the phone:
 * ``restart`` is a real stop-then-start: it kills the master and starts a fresh
   one, then waits for the tree to answer, so it cannot leave a half-boot window
   or a second master.
+
+The platform-shaped pieces live beside this file and are re-exported here so
+callers keep one import: ``core_paths`` (paths), ``core_process``
+(spawn/kill/supervision), ``core_secrets`` (ticket storage), ``core_autostart``
+(login unit) and ``core_shell`` (browser/terminal launch).
 """
 
 import json
 import os
 import re
-import shutil
-import signal
 import socket
 import ssl
 import subprocess
-import sys
 import time
 import urllib.request
-import webbrowser
 
 from . import DESKTOP_DIR
+from .core_autostart import (
+    _AUTOSTART_UNIT, autostart_enabled, autostart_path, set_autostart,
+)
+from .core_paths import (
+    DEFAULT_DIRNAME, _boot_id, _xdg, ble_log_path, ble_pid_path, config_dir,
+    daemon_path, default_jawn_dir, held_path, home, is_held,
+    jawn_stdout_log_path, set_held, settings_path, state_dir,
+)
+from .core_process import (
+    _detached_children, _jawn_master_pids, _perl, _perl_env, _read_pidfile,
+    _remove_stale_pidfile, _wait_port_closed, pid_alive, reap_detached,
+    restart_jawn, spawn_detached, start_ble, start_jawn, stop_ble, stop_jawn,
+)
+from .core_secrets import manager_host
+from .core_shell import _TERMINALS, desktop_launcher, open_console, open_ui
 
 # The BLE bridge listens here on both Android and Linux; keep the number so
 # scripts/jawn-bt (the shared client) needs no change.
@@ -40,90 +56,13 @@ BRIDGE_PORT = 45999
 # config.json's "port" (the dock); 3000 is always answered even when the
 # working port is something else.
 DOCK_PORT = 3000
-DEFAULT_DIRNAME = "jawnos"
 
 
 # --------------------------------------------------------------------------
 # paths and settings
 # --------------------------------------------------------------------------
-
-def home():
-    return os.path.expanduser("~")
-
-
-def _xdg(env, default):
-    value = os.environ.get(env)
-    if value:
-        return value
-    return os.path.join(home(), default)
-
-
-def config_dir():
-    return os.path.join(_xdg("XDG_CONFIG_HOME", ".config"), "jawnos")
-
-
-def state_dir():
-    return os.path.join(_xdg("XDG_STATE_HOME", ".local/state"), "jawnos")
-
-
-def settings_path():
-    return os.path.join(config_dir(), "desktop.json")
-
-
-def _boot_id():
-    try:
-        with open("/proc/sys/kernel/random/boot_id", "r", encoding="utf-8") as fh:
-            return fh.read().strip()
-    except OSError:
-        return ""
-
-
-def held_path():
-    """A deliberate Stop is remembered for this boot only.
-
-    The watcher must not resurrect a tree the person stopped, but a stop before
-    a reboot should not keep jawn down at the next login either. The Android
-    app's ``wantRunning`` has the same lifetime; the boot id gives the desktop
-    the equivalent.
-    """
-    return os.path.join(state_dir(), "held")
-
-
-def is_held():
-    try:
-        with open(held_path(), "r", encoding="utf-8") as fh:
-            return fh.read().strip() == _boot_id() and bool(_boot_id())
-    except OSError:
-        return False
-
-
-def set_held(on):
-    if on:
-        os.makedirs(state_dir(), exist_ok=True)
-        with open(held_path(), "w", encoding="utf-8") as fh:
-            fh.write(_boot_id() + "\n")
-        return
-    try:
-        os.remove(held_path())
-    except OSError:
-        pass
-
-
-def daemon_path():
-    """The BLE bridge daemon that ships beside this package."""
-    return os.path.join(DESKTOP_DIR, "jawnos-bt-daemon")
-
-
-def default_jawn_dir():
-    """Prefer the tree this package lives in (a checkout); else ~/jawnos.
-
-    The package sits at ``<root>/desktop/jawnos_desktop/core.py``, so two
-    levels above the package directory is the repo root."""
-    root = os.path.dirname(DESKTOP_DIR)
-    if os.path.exists(os.path.join(root, "jawn")):
-        return root
-    return os.path.join(home(), DEFAULT_DIRNAME)
-
+# The path helpers live in core_paths.py and are re-exported at the top, so
+# callers keep using core.config_dir() and friends.
 
 def jawn_version(jawn_dir):
     """The human version from <jawn_dir>/VERSION, or None if unavailable."""
@@ -565,278 +504,11 @@ def restart_if_stale(jawn_dir, with_ble=True):
     return "failed", "restart failed (%s); running %s, disk %s" % (message, running, disk)
 
 
-def pid_alive(pid):
-    if not pid:
-        return False
-    try:
-        os.kill(pid, 0)
-        return True
-    except OSError:
-        return False
-
-
-def _jawn_master_pids():
-    """PIDs of a running jawn master, however it was invoked (scans /proc).
-
-    The desktop starts it as `perl ./jawn`, but an autostart or a terminal can
-    use the absolute path (`perl /home/.../jawn`). Matching only `./jawn` made
-    the guard miss a master that was merely mid-restart and start a second tree
-    (2026-10-21), so match the script's basename instead.
-    """
-    pids = []
-    for name in os.listdir("/proc"):
-        if not name.isdigit():
-            continue
-        try:
-            with open(os.path.join("/proc", name, "cmdline"), "rb") as fh:
-                raw = fh.read().replace(b"\x00", b" ")
-        except OSError:
-            continue
-        cmd = raw.decode("utf-8", "replace")
-        if "perl" not in cmd:
-            continue
-        if any(os.path.basename(part) == "jawn" for part in cmd.split()):
-            pids.append(int(name))
-    return pids
-
-
 # --------------------------------------------------------------------------
 # process helpers
 # --------------------------------------------------------------------------
-
-def _perl():
-    return shutil.which("perl") or "perl"
-
-
-def _perl_env():
-    """Environment for the spawned perl, with the user's local::lib on @INC.
-
-    The user's PERL5LIB lives in ~/.zshrc, which a desktop-launched app never
-    sources -- so jawn (and the killer, which also uses local modules) came up
-    with only the system @INC and died on 'Can't locate Mojo/...'. Mirror the
-    shell: put ~/perl5/lib/perl5 (and its arch/version subdirs) first."""
-    env = dict(os.environ)
-    roots = [os.path.join(home(), "perl5", "lib", "perl5")]
-    extra = []
-    for root in roots:
-        if not os.path.isdir(root):
-            continue
-        for entry in os.listdir(root):
-            if "-linux-" in entry or re.match(r"^\d+\.\d+", entry):
-                candidate = os.path.join(root, entry)
-                if os.path.isdir(candidate):
-                    extra.append(candidate)
-    existing = [p for p in env.get("PERL5LIB", "").split(os.pathsep) if p]
-    merged = []
-    for path in roots + extra + existing:
-        if path and path not in merged:
-            merged.append(path)
-    if merged:
-        env["PERL5LIB"] = os.pathsep.join(merged)
-    return env
-
-
-def spawn_detached(argv, cwd, log_path, env=None):
-    """Start a process in its own session, output appended to log_path.
-
-    Its own session means it survives this call and is not killed when a
-    terminal closes -- the desktop equivalent of a background Termux task.
-    """
-    os.makedirs(os.path.dirname(log_path), exist_ok=True)
-    cap_log(log_path)
-    logf = open(log_path, "ab", buffering=0)
-    try:
-        proc = subprocess.Popen(
-            argv, cwd=cwd, stdin=subprocess.DEVNULL,
-            stdout=logf, stderr=subprocess.STDOUT,
-            start_new_session=True, close_fds=True, env=env,
-        )
-    finally:
-        logf.close()
-    # A detached process is still our child (start_new_session only moves its
-    # session, not its parent). Python reaps a Popen only when it is polled or
-    # waited on, so dropping the object left an exited jawn master as
-    # `[perl] <defunct>` under the desktop app for as long as it ran.
-    _detached_children.append(proc)
-    return proc
-
-
-# Detached children we still owe a waitpid(). Polled from the dashboard tick;
-# poll() collects an exited child and is a no-op while it runs.
-_detached_children = []
-
-
-def reap_detached():
-    """Collect detached children that have exited, plus any zombie of ours.
-
-    Popen.poll() only knows the processes we spawned in this run, so a stale
-    zombie inherited from an earlier launch is found by its /proc state instead.
-    """
-    for proc in list(_detached_children):
-        try:
-            if proc.poll() is not None:
-                _detached_children.remove(proc)
-        except OSError:
-            _detached_children.remove(proc)
-    me = os.getpid()
-    try:
-        entries = os.listdir("/proc")
-    except OSError:
-        return
-    for name in entries:
-        if not name.isdigit():
-            continue
-        try:
-            with open("/proc/%s/stat" % name, "rb") as fh:
-                line = fh.read().decode("utf-8", "replace")
-        except OSError:
-            continue
-        # "pid (comm) state ppid ..." - comm may hold spaces and parens
-        fields = line[line.rfind(")") + 2:].split()
-        if len(fields) < 2 or fields[0] != "Z" or fields[1] != str(me):
-            continue
-        try:
-            os.waitpid(int(name), os.WNOHANG)
-        except OSError:
-            pass
-
-
-def start_jawn(jawn_dir):
-    """Start jawn. Skips if it is already up, or a master is mid-restart."""
-    # An explicit start ends a deliberate stop; the watcher may supervise again.
-    set_held(False)
-    mark_start_requested()
-    if jawn_up(jawn_dir):
-        return True, "jawn is already running"
-    if _jawn_master_pids():
-        return True, "a jawn master is already running (mid-restart); not starting a second"
-    if not os.path.exists(os.path.join(jawn_dir, "jawn")):
-        return False, "no 'jawn' launcher in %s" % jawn_dir
-    argv = [_perl(), "./jawn"]
-    spawn_detached(argv, jawn_dir, jawn_stdout_log_path(), env=_perl_env())
-    return True, "starting jawn"
-
-
-def stop_jawn(jawn_dir, wait=12.0):
-    """Take the whole tree and the master down. The killer is the clean path:
-    it first asks the tree to leave over its control channel, then sweeps what
-    did not answer; a master still alive after it is terminated directly, so
-    stop is never a no-op when the master is wedged."""
-    # Remember the choice before the killer runs: a watcher tick during the stop
-    # must not read the gap as a crash and start the tree again.
-    set_held(True)
-    killer = os.path.join(jawn_dir, "scripts", "manager_killer.pl")
-    if not os.path.exists(killer):
-        return False, "no scripts/manager_killer.pl in %s" % jawn_dir
-    subprocess.run([_perl(), "scripts/manager_killer.pl", "master"], cwd=jawn_dir, env=_perl_env())
-    deadline = time.time() + wait
-    while time.time() < deadline:
-        if not jawn_up(jawn_dir) and not _jawn_master_pids():
-            return True, "jawn stopped"
-        time.sleep(0.3)
-    for signum in (signal.SIGTERM, signal.SIGKILL):
-        for pid in _jawn_master_pids():
-            try:
-                os.kill(pid, signum)
-            except OSError:
-                pass
-        time.sleep(0.5)
-        if not _jawn_master_pids():
-            return True, "jawn stopped"
-    return False, "jawn still answering after the sweep"
-
-
-def restart_jawn(jawn_dir):
-    """A real restart: kill the master, start a fresh one, and wait for it to
-    answer, so the caller can trust the result (no half-boot window)."""
-    # The whole restart reads as "starting...", the stop included. Marking it
-    # here means the tray does not drop through red on the way to amber.
-    mark_start_requested()
-    stop_jawn(jawn_dir)
-    ok, message = start_jawn(jawn_dir)
-    if not ok:
-        return ok, message
-    deadline = time.time() + 90.0
-    while time.time() < deadline:
-        if jawn_up(jawn_dir):
-            return True, "jawn restarted"
-        time.sleep(0.5)
-    return False, "jawn did not come back up (see %s)" % jawn_log_path(jawn_dir)
-
-
-# --------------------------------------------------------------------------
-# the BLE bridge
-# --------------------------------------------------------------------------
-
-def start_ble():
-    """Bring up the BLE bridge daemon. No-op if the port already answers."""
-    if ble_up():
-        return True, "BLE bridge already running"
-    daemon = daemon_path()
-    if not os.path.exists(daemon):
-        return False, "BLE bridge daemon not found at %s" % daemon
-    spawn_detached([sys.executable or "python3", daemon], DESKTOP_DIR, ble_log_path())
-    deadline = time.time() + 8.0
-    while time.time() < deadline:
-        if ble_up():
-            return True, "BLE bridge started"
-        time.sleep(0.3)
-    return False, "BLE bridge did not come up (see %s)" % ble_log_path()
-
-
-def stop_ble(wait=6.0):
-    """Ask the daemon to shut down, then make sure it did.
-
-    The graceful path is a ``shutdown`` command; if that does not land (a busy
-    or wedged bridge) fall back to the pid file, so stop is never a no-op."""
-    if not ble_up():
-        _remove_stale_pidfile()
-        return True, "BLE bridge is not running"
-    try:
-        from . import ble as _ble
-        _ble.send_command({"cmd": "shutdown"}, wait_event=None, timeout=0.6)
-    except Exception:
-        pass
-    if _wait_port_closed(wait):
-        return True, "BLE bridge stopped"
-    pid = _read_pidfile()
-    if pid:
-        for signum in (signal.SIGTERM, signal.SIGKILL):
-            try:
-                os.kill(pid, signum)
-            except OSError:
-                break
-            if _wait_port_closed(3.0):
-                return True, "BLE bridge stopped"
-    _remove_stale_pidfile()
-    if ble_up():
-        return False, "BLE bridge still answering on %d" % BRIDGE_PORT
-    return True, "BLE bridge stopped"
-
-
-def _wait_port_closed(timeout):
-    deadline = time.time() + timeout
-    while time.time() < deadline:
-        if not ble_up():
-            return True
-        time.sleep(0.3)
-    return False
-
-
-def _read_pidfile():
-    try:
-        with open(ble_pid_path(), "r", encoding="utf-8") as fh:
-            pid = int(fh.read().strip())
-        return pid if pid_alive(pid) else None
-    except (OSError, ValueError):
-        return None
-
-
-def _remove_stale_pidfile():
-    try:
-        os.remove(ble_pid_path())
-    except OSError:
-        pass
+# pid_alive, the /proc scans, detached spawn/reap and the jawn/BLE lifecycle
+# live in core_process.py and are re-exported at the top.
 
 
 # --------------------------------------------------------------------------
@@ -880,131 +552,16 @@ def restart_all(jawn_dir, with_ble=True):
 # autostart (the XDG analogue of the Android boot receiver)
 # --------------------------------------------------------------------------
 
-def autostart_path():
-    return os.path.join(_xdg("XDG_CONFIG_HOME", ".config"), "autostart", "jawnos-bt.desktop")
-
-
-def autostart_enabled():
-    return os.path.exists(autostart_path())
-
-
-def set_autostart(enabled):
-    path = autostart_path()
-    if not enabled:
-        for candidate in (path, path.replace("jawnos-bt.desktop", "jawnos-desktop.desktop")):
-            try:
-                os.remove(candidate)
-            except OSError:
-                pass
-        return not autostart_enabled()
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "w", encoding="utf-8") as fh:
-        fh.write(_AUTOSTART_UNIT.format(
-            daemon=daemon_path(),
-            log=ble_log_path(),
-            python=sys.executable,
-        ))
-    return True
-
-
-_AUTOSTART_UNIT = """[Desktop Entry]
-Type=Application
-Name=JawnOS BLE bridge
-Comment=Start the JawnOS Bluetooth LE bridge at login
-Exec={python} "{daemon}"
-Icon=jawnos
-Terminal=false
-Hidden=false
-X-GNOME-Autostart-enabled=true
-"""
+# The XDG autostart unit lives in core_autostart.py and is re-exported at the
+# top (autostart_path, autostart_enabled, set_autostart).
 
 
 # --------------------------------------------------------------------------
 # opening things
 # --------------------------------------------------------------------------
-
-def manager_host():
-    """The host the stored ticket logs in on.
-
-    The ticket's session cookie is scoped to that host, so the manager must be
-    opened from it too -- the loopback address is a different origin and shows
-    the login gate. Falls back to loopback when there is no stored ticket."""
-    try:
-        from urllib.parse import urlparse
-        from . import secrets
-        ticket = secrets.load()
-        if ticket:
-            return urlparse(ticket).hostname or "127.0.0.1"
-    except Exception:
-        pass
-    return "127.0.0.1"
-
-
-def desktop_launcher():
-    """The installed jawnos-desktop launcher, if there is one to run."""
-    for candidate in (os.path.join(DESKTOP_DIR, "jawnos-desktop"),
-                      shutil.which("jawnos-desktop")):
-        if candidate and os.access(candidate, os.X_OK):
-            return candidate
-    return None
-
-
-def open_ui(jawn_dir, prefer_app=False):
-    """Open the manager: the desktop app when asked and available, else a browser.
-
-    With app access on Enforce a plain browser is answered with the
-    open-in-the-app page, because it has no key. The CLI therefore starts the
-    installed app (which holds one) when it can, and only falls back to the
-    browser on a headless box or when the app is not installed.
-
-    The browser path prefers the stored ticket: it is addressed on the
-    machine's own domain and mints the session cookie on the way, so the
-    browser lands on the manager instead of the gate on a host it has not
-    logged in to. Fall back to the manager on the ticket's host, then loopback."""
-    if prefer_app and (os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")):
-        launcher = desktop_launcher()
-        if launcher:
-            try:
-                spawn_detached([launcher], jawn_dir, jawn_stdout_log_path(), env=_perl_env())
-                return True
-            except OSError:
-                pass
-    try:
-        from . import secrets
-        ticket = secrets.load()
-        if ticket:
-            return webbrowser.open(ticket)
-    except Exception:
-        pass
-    port = jawn_working_port(jawn_dir)
-    return webbrowser.open("https://%s:%d/manager" % (manager_host(), port))
-
-
-_TERMINALS = [
-    ("x-terminal-emulator", ["-e"]),
-    ("kgx", ["-e"]),
-    ("gnome-terminal", ["--"]),
-    ("konsole", ["-e"]),
-    ("alacritty", ["-e"]),
-    ("kitty", []),
-    ("wezterm", ["start", "--"]),
-    ("xterm", ["-e"]),
-]
-
-
-def open_console(jawn_dir):
-    """Open a terminal running jawn in the foreground, as a hand-run would."""
-    for name, extra in _TERMINALS:
-        binary = shutil.which(name)
-        if not binary:
-            continue
-        argv = [binary] + extra + [_perl(), "./jawn"]
-        try:
-            spawn_detached(argv, jawn_dir, jawn_stdout_log_path(), env=_perl_env())
-            return True, "opened %s" % name
-        except OSError:
-            continue
-    return False, "no terminal emulator found"
+# manager_host lives in core_secrets.py; desktop_launcher, open_ui, the
+# terminal list and open_console live in core_shell.py. Both are re-exported
+# at the top.
 
 
 def tail_log(path, lines=200):

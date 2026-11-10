@@ -26,6 +26,7 @@ my $gpu = read_file("$root/desktop/jawnos_desktop/gpu.py");
 my $theme = read_file("$root/desktop/jawnos_desktop/theme.py");
 my $errpage = read_file("$root/desktop/jawnos_desktop/errorpage.py");
 my $core = read_file("$root/desktop/jawnos_desktop/core.py");
+my $core_process = read_file("$root/desktop/jawnos_desktop/core_process.py");
 my $webauthn = read_file("$root/desktop/jawnos_desktop/webauthn.py");
 my $package = read_file("$root/desktop/jawnos_desktop/__init__.py");
 my $entry = read_file("$root/desktop/jawnos-desktop");
@@ -514,8 +515,8 @@ my $states = `cd "$root" && PYTHONPATH=desktop python3 -c 'import time; from jaw
 like($states, qr/\('not running', 'red'\) \('starting\.\.\. \(\d+s\)', 'amber'\) \('not running', 'red'\) \('running', 'green'\)/,
 	'start-up reads red -> amber (with its age) -> green');
 like($core, qr/STARTING_WINDOW = 150\.0/, 'the amber window is the dashboard\'s 150 s');
-like($core, qr/mark_start_requested\(\)/, 'a start marks the clock');
-like($core, qr/def restart_jawn[^\n]*\n(?:.*\n)*?\s+mark_start_requested\(\)/,
+like($core_process, qr/mark_start_requested\(\)/, 'a start marks the clock');
+like($core_process, qr/def restart_jawn[^\n]*\n(?:.*\n)*?\s+_core\.mark_start_requested\(\)/,
 	'and a restart marks it before the stop, so it never flashes red');
 like($core, qr/clear_start_requested\(\)/, 'a deliberate stop clears it');
 
