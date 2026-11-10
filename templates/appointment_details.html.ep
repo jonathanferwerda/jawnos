@@ -13,7 +13,8 @@
 	<span style="display:none;" class="detail_json" app="<%= $a %>">
 		<%= $appts->{'__specs'}->{'data'} %>
 	</span>
-	<b><span class="detail_quantity" app="<%= $a %>"><%= scalar @{$details} %></span> app<% unless (scalar @{$details} == 1) { %>s<% } %></b>
+	<b><span class="detail_quantity" app="<%= $a %>"><%= scalar @{$details} %></span> app<% unless (scalar @{$details} == 1) { %>s<% } %></b><br>
+	<span class="detail_view_range"><%= &subs::ui('View began') %> <span class="time" timestamp="<%= $appts->{'__specs'}->{'view_start'} %>"></span> <%= &subs::ui('and ended') %> <span class="time" timestamp="<%= $appts->{'__specs'}->{'view_end'} %>"></span></span><br>
 	<% if ($appts->{$a}->{'total_amount'}) { %>
 		<span><u>Amount:</u> <%= $appts->{$a}->{'total_amount'} %></span><br>
 	<% } %>

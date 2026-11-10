@@ -292,6 +292,9 @@ sub log_reader {
 		my $t = &subs::time_span($scope, $timestamp); #timestamp at beginning
 		my $t1 = ($timestamp - $t);
 		my $t2 = ($t1 + $timestamp);
+		# the panel's own header says which window it is reading
+		$appts->{'__specs'}->{'view_start'} = $t;
+		$appts->{'__specs'}->{'view_end'} = $t2;
 		# the window is drawn from the travelled time, so it can be before 1970 (a
 		# negative timestamp): the text column then compares lexicographically and
 		# finds nothing. Cast only when the window is pre-epoch, so the common modern
