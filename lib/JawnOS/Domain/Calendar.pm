@@ -343,6 +343,36 @@ sub session_duration_backfill {
 	return [ sort { $a->{'app'} cmp $b->{'app'} } @out ];
 }
 
+# A row's warranty is what the app's warranty setting says from that row's own
+# moment. appointment_writer used to insert a start/record/usual row before it
+# filled the warranty, and the refresh at the foot does not carry the column, so
+# those rows have none - and a NULL warranty is never expired: the culler skips
+# it and lives forever. This gives each one the warranty it should have had,
+# from the app's own spec (or the writer's -10y fallback). Writes only when
+# $apply. scripts/warranty_backfill.pl is the dry run.
+sub appointment_warranty_backfill {
+	my ($apply) = @_;
+	my $rows = &db_query('select uuid, app, timestamp, server_time from appointments where warranty is null and app is not null and app != ? and type in (?,?,?,?,?) order by timestamp asc', '', 'start', 'record', 'stop', 'usual', 'cancel')->hashes || [];
+	my (%spec, %by_app, @out);
+	foreach my $row ( @{$rows} ) {
+		my $app = $row->{'app'};
+		next unless defined $app && length $app && defined $row->{'uuid'} && length $row->{'uuid'};
+		$by_app{$app}++;
+		my $holder = (0 + ($row->{'timestamp'} || 0)) > (0 + ($row->{'server_time'} || 0))
+			? (0 + $row->{'timestamp'}) : (0 + $row->{'server_time'});
+		$holder = &rightNow() unless $holder;
+		if (!exists $spec{$app}) {
+			my $given = &setting_grabber({ app => $app, setting => 'warranty' });
+			$spec{$app} = (defined $given && $given =~ /\S/) ? $given : '-10y';
+		}
+		my $warranty = &ago_calc($spec{$app}, $holder);
+		next unless defined $warranty && $warranty =~ /^\d{12,}$/;
+		&db_update('appointments', { warranty => $warranty, server_time => &rightNow() }, { uuid => $row->{'uuid'}, app => $app }) if $apply;
+		push @out, { app => $app, uuid => $row->{'uuid'}, warranty => $warranty };
+	}
+	return { rows => \@out, apps => \%by_app };
+}
+
 sub appt_header_printer {
 	my $data = shift;
 	my $app = $data->{'app'};
