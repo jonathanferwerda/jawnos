@@ -130,6 +130,29 @@ sub power_platform {
 	return 'unknown';
 }
 
+# A lithium pack's resting voltage is a usable second opinion when the fuel
+# gauge has not learned its coulomb counter yet. The table is deliberately
+# coarse: it is a displayed estimate, marked as one, not a calibration write.
+our @POWER_OCV = (
+	[4.20, 100], [4.12, 92], [4.05, 83], [4.00, 76], [3.95, 68],
+	[3.90, 60], [3.85, 52], [3.80, 44], [3.75, 36], [3.70, 28],
+	[3.65, 21], [3.60, 14], [3.50, 7], [3.40, 2], [3.30, 0],
+);
+
+sub power_ocv_percent {
+	my ($voltage) = @_;
+	return undef unless defined $voltage && $voltage > 0;
+	return 100 if $voltage >= $POWER_OCV[0][0];
+	return 0 if $voltage <= $POWER_OCV[-1][0];
+	for my $i (0 .. $#POWER_OCV - 1) {
+		my ($vhi, $phi) = @{ $POWER_OCV[$i] };
+		my ($vlo, $plo) = @{ $POWER_OCV[$i + 1] };
+		next unless $voltage <= $vhi && $voltage >= $vlo;
+		return int($plo + ($voltage - $vlo) * ($phi - $plo) / ($vhi - $vlo) + 0.5);
+	}
+	return 0;
+}
+
 # Read the battery directly. On a Linux machine this is cheap and exact; on a
 # phone sysfs is often denied, so the bridge's battery.status is the fallback.
 # The bridge is not asked on a machine that is plainly not a phone: a desktop
@@ -151,9 +174,22 @@ sub power_battery_read {
 		my $temp = &power_number("$battery/temp");
 		$b{'temperature'} = defined $temp ? $temp / 10 : undef;
 		my $volt = &power_number("$battery/voltage_now");
+		$volt = &power_number("$battery/voltage_avg") unless defined $volt;
 		$b{'voltage'} = defined $volt ? $volt / 1_000_000 : undef;
 		my $cur = &power_number("$battery/current_now");
+		$cur = &power_number("$battery/current_avg") unless defined $cur;
 		$b{'current'} = defined $cur ? $cur / 1_000_000 : undef;
+		# A gauge that has not learned its full charge reports 0 or 1 while the
+		# pack is plainly holding a voltage. Show the resting-voltage estimate
+		# instead, and say it is an estimate, so the launcher is not stuck at 0%.
+		if (defined $b{'percentage'} && $b{'percentage'} <= 1 && defined $b{'voltage'} && $b{'voltage'} >= 3.30) {
+			my $guess = &power_ocv_percent($b{'voltage'});
+			if (defined $guess) {
+				$b{'percentage_raw'} = $b{'percentage'};
+				$b{'percentage'} = $guess;
+				$b{'estimated'} = 1;
+			}
+		}
 		my $pow = &power_number("$battery/power_now");
 		$b{'power'} = defined $pow ? $pow / 1_000_000 : undef;
 		$b{'energy_now'} = &power_number("$battery/energy_now");
@@ -161,6 +197,17 @@ sub power_battery_read {
 		$b{'charge_now'} = &power_number("$battery/charge_now");
 		$b{'charge_full'} = &power_number("$battery/charge_full");
 		$b{'ac'} = &power_ac_online(\@supply, \%b) ? 1 : 0;
+		# A charger can put 5 V on the input while the PMIC's plug-in status
+		# stays off (the Gou's cable did exactly that). The cable is worth
+		# reporting even when the pack is not charging, so the panel can say
+		# "cable connected, not charging" instead of hiding the supply.
+		for my $dir (@supply) {
+			next if lc(&power_read("$dir/type")) eq 'battery';
+			next if &power_read("$dir/online") eq '1';
+			my $vin = &power_number("$dir/voltage_avg");
+			$vin = &power_number("$dir/voltage_now") unless defined $vin;
+			$b{'cable'} = 1 if defined $vin && $vin > 4_500_000;
+		}
 		# The pack's own gauge is the honest rate: energy over power, or charge
 		# over current. Both are kept in the gauge's units so no conversion can
 		# drift, and a charging pack's remaining time is the other half.

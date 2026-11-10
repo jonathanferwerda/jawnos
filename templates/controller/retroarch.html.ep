@@ -1,0 +1,149 @@
+<%# RetroArch tuning for the handheld. The controls are drawn from the same
+    tables lib/JawnOS/Domain/Retroarch.pm writes through, so a control cannot
+    name a key the writer does not know. The sound card is the one that made a
+    pitched squeal on the rebuilt frontend: audio latency, resampler and rate
+    control are all here, beside video sync/threading and the two 3D cores. %>
+<% my $ra = ref $settings eq 'HASH' ? $settings : {}; %>
+<% my $values = ref $ra->{'values'} eq 'HASH' ? $ra->{'values'} : {}; %>
+<% my $top = ref $ra->{'settings'} eq 'ARRAY' ? $ra->{'settings'} : []; %>
+<% my $cores = ref $ra->{'cores'} eq 'ARRAY' ? $ra->{'cores'} : []; %>
+<% my $presets = ref $ra->{'presets'} eq 'ARRAY' ? $ra->{'presets'} : []; %>
+<style>
+	html, body, .wind, .window_contents { background:#2e2e2e !important; color:#f4f4f4 !important; }
+	.wind[app="controller"] .top_navbar { display:none !important; }
+	.wind { left:0 !important; top:0 !important; width:100vw !important; height:100vh !important; }
+	.window_contents { width:100% !important; height:100% !important; padding-top:0 !important; }
+	#controller_ra_shell { display:flex; flex-direction:column; width:100%; height:100%; min-height:0; }
+	#controller_ra_bar { flex:0 0 auto; display:flex; align-items:center; gap:6px; padding:6px 8px 0; }
+	.controller_ra_button { font:inherit; font-size:13px; line-height:1.2; padding:5px 12px;
+		border:1px solid #4a4a4a; border-radius:8px; background:#3a3a3a; color:#fff;
+		text-decoration:none; cursor:var(--jawnos-cursor-pointer, pointer); }
+	.controller_ra_button:hover { border-color:var(--accent, #4a90d9); }
+	.controller_ra_button:disabled { opacity:.5; cursor:var(--jawnos-cursor-default, default); }
+	#controller_ra_body { flex:1 1 auto; min-height:0; overflow:auto; padding:10px 12px 18px; }
+	.controller_ra_note { font-size:12px; line-height:1.4; opacity:.85; min-height:1.2em; margin-bottom:8px; }
+	.controller_ra_path { font-size:11px; opacity:.6; overflow-wrap:anywhere; margin-bottom:12px; }
+	.controller_ra_section { padding:12px 14px; border:1px solid #4a4a4a; border-radius:12px;
+		background:#3a3a3a; margin-bottom:10px; }
+	.controller_ra_section h3 { margin:0 0 8px; font-size:15px; font-weight:600; }
+	.controller_ra_row { display:grid; grid-template-columns:1fr minmax(120px, 190px); gap:8px;
+		align-items:center; font-size:13px; line-height:1.6; }
+	.controller_ra_row + .controller_ra_row { border-top:1px solid #4a4a4a; }
+	.controller_ra_row select, .controller_ra_row input { font:inherit; font-size:13px; padding:5px 7px;
+		border-radius:7px; border:1px solid #5a5a5a; background:#2e2e2e; color:#fff; width:100%; }
+	#controller_ra_presets { display:flex; flex-wrap:wrap; gap:8px; margin-bottom:12px; }
+</style>
+<div id="controller_ra_shell">
+	<div id="controller_ra_bar">
+		<a class="controller_ra_button" href="/manager/controller/config"><%= &subs::ui('Back') %></a>
+		<span style="flex:1 1 auto"></span>
+		<a class="controller_ra_button" href="/manager?desk=1"><%= &subs::ui('Manager') %></a>
+	</div>
+	<div id="controller_ra_body">
+% if (!$ra->{'ok'}) {
+		<div class="controller_ra_note"><%= $ra->{'error'} || &subs::ui('The RetroArch settings could not be read.') %></div>
+% } else {
+		<div class="controller_ra_note" id="controller_ra_note" aria-live="polite"><%= &subs::ui('Changes are written now and used the next time a game starts.') %></div>
+		<div class="controller_ra_path"><%= $ra->{'path'} %></div>
+		<div id="controller_ra_presets">
+%  for my $preset (@{$presets}) {
+			<button type="button" class="controller_ra_button" data-ra-preset="<%= $preset->{'id'} %>" title="<%= $preset->{'note'} %>"><%= &subs::ui($preset->{'label'}) %></button>
+%  }
+		</div>
+		<div class="controller_ra_section">
+			<h3><%= &subs::ui('Audio and video') %></h3>
+%  for my $setting (@{$top}) {
+%   my $key = $setting->{'key'};
+%   my $value = defined $values->{$key} ? $values->{$key} : '';
+%   my $type = $setting->{'type'} || 'text';
+			<div class="controller_ra_row">
+				<span><%= &subs::ui($setting->{'label'}) %></span>
+%   if ($type eq 'bool') {
+				<select data-ra-key="<%= $key %>">
+					<option value="true"<%= $value eq 'true' ? ' selected' : '' %>><%= &subs::ui('On') %></option>
+					<option value="false"<%= $value eq 'false' ? ' selected' : '' %>><%= &subs::ui('Off') %></option>
+				</select>
+%   } elsif ($type eq 'select') {
+				<select data-ra-key="<%= $key %>">
+%    for my $option (@{ $setting->{'options'} || [] }) {
+					<option value="<%= $option %>"<%= $value eq $option ? ' selected' : '' %>><%= $option %></option>
+%    }
+				</select>
+%   } else {
+				<input type="number" data-ra-key="<%= $key %>" value="<%= $value %>" min="<%= $setting->{'min'} || 0 %>" max="<%= $setting->{'max'} || 999 %>" step="<%= $setting->{'step'} || 1 %>">
+%   }
+			</div>
+%  }
+		</div>
+%  for my $core (@{$cores}) {
+%   my $core_values = ref $core->{'values'} eq 'HASH' ? $core->{'values'} : {};
+		<div class="controller_ra_section">
+			<h3><%= &subs::ui($core->{'label'}) %></h3>
+%   for my $setting (@{ $core->{'settings'} || [] }) {
+%    my $key = $setting->{'key'};
+%    my $value = defined $core_values->{$key} ? $core_values->{$key} : '';
+%    my $type = $setting->{'type'} || 'text';
+			<div class="controller_ra_row">
+				<span><%= &subs::ui($setting->{'label'}) %></span>
+%    if ($type eq 'bool') {
+%     my $on = $setting->{'bool_true'} || 'true';
+%     my $off = defined $setting->{'bool_false'} ? $setting->{'bool_false'} : 'false';
+				<select data-ra-key="<%= $key %>" data-ra-core="<%= $core->{'id'} %>">
+					<option value="<%= $on %>"<%= $value eq $on ? ' selected' : '' %>><%= &subs::ui('On') %></option>
+					<option value="<%= $off %>"<%= $value eq $off ? ' selected' : '' %>><%= &subs::ui('Off') %></option>
+				</select>
+%    } elsif ($type eq 'select') {
+				<select data-ra-key="<%= $key %>" data-ra-core="<%= $core->{'id'} %>">
+%     for my $option (@{ $setting->{'options'} || [] }) {
+					<option value="<%= $option %>"<%= $value eq $option ? ' selected' : '' %>><%= $option %></option>
+%     }
+				</select>
+%    } else {
+				<input type="number" data-ra-key="<%= $key %>" data-ra-core="<%= $core->{'id'} %>" value="<%= $value %>">
+%    }
+			</div>
+%   }
+		</div>
+%  }
+% }
+	</div>
+</div>
+<script>
+(function () {
+	var note = document.getElementById('controller_ra_note');
+	if (!note) { return; }
+	var failed = <%== encode_json(&subs::ui('That did not work.')) %>;
+	var saved = <%== encode_json(&subs::ui('Saved. It is used the next time a game starts.')) %>;
+	function post(body, reload) {
+		note.textContent = '';
+		note.textContent = <%== encode_json(&subs::ui('Saving…')) %>;
+		fetch('/manager/controller/retroarch', {
+			method: 'POST',
+			credentials: 'same-origin',
+			headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+			body: new URLSearchParams(body)
+		}).then(function (r) { return r.json(); }).then(function (result) {
+			if (result && result.ok) {
+				note.textContent = saved;
+				if (reload) { setTimeout(function () { location.reload(); }, 350); }
+				return;
+			}
+			note.textContent = failed + (result && result.error ? ' (' + result.error + ')' : '');
+		}).catch(function () { note.textContent = failed; });
+	}
+	document.querySelectorAll('[data-ra-key]').forEach(function (el) {
+		el.addEventListener('change', function () {
+			var body = { key: el.getAttribute('data-ra-key'), value: el.value };
+			var core = el.getAttribute('data-ra-core');
+			if (core) { body.core = core; }
+			post(body, false);
+		});
+	});
+	document.querySelectorAll('[data-ra-preset]').forEach(function (el) {
+		el.addEventListener('click', function () {
+			el.disabled = true;
+			post({ preset: el.getAttribute('data-ra-preset') }, true);
+		});
+	});
+})();
+</script>

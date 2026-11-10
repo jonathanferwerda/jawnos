@@ -1,0 +1,112 @@
+<%# Time settings. The launcher and the taskbar read one house setting,
+    `clock_timezone`; the machine itself stays on UTC and keeps perfect time
+    through NTP. The page says both so a person can see why the box and the
+    clock on the bar disagree. %>
+<style>
+	html, body, .wind, .window_contents { background:#2e2e2e !important; color:#f4f4f4 !important; }
+	.wind[app="controller"] .top_navbar { display:none !important; }
+	.wind { left:0 !important; top:0 !important; width:100vw !important; height:100vh !important; }
+	.window_contents { width:100% !important; height:100% !important; padding-top:0 !important; }
+	#controller_time_shell { display:flex; flex-direction:column; width:100%; height:100%; min-height:0; }
+	#controller_time_bar { flex:0 0 auto; display:flex; align-items:center; gap:6px; padding:6px 8px 0; }
+	.controller_time_button { font:inherit; font-size:13px; line-height:1.2; padding:5px 12px;
+		border:1px solid #4a4a4a; border-radius:8px; background:#3a3a3a; color:#fff;
+		text-decoration:none; cursor:var(--jawnos-cursor-pointer, pointer); }
+	.controller_time_button:hover { border-color:var(--accent, #4a90d9); }
+	#controller_time_body { flex:1 1 auto; min-height:0; overflow:auto; padding:18px; display:flex;
+		flex-direction:column; gap:18px; align-items:center; }
+	#controller_time_card { width:min(520px, 100%); padding:20px 22px; border:1px solid #4a4a4a;
+		border-radius:14px; background:#3a3a3a; }
+	#controller_time_now { font-size:52px; font-weight:600; line-height:1.05; font-variant-numeric:tabular-nums; }
+	#controller_time_day { font-size:16px; opacity:.85; margin-top:4px; }
+	.controller_time_row { display:flex; flex-wrap:wrap; align-items:center; gap:10px; margin-top:18px; }
+	.controller_time_row label { font-size:14px; opacity:.9; }
+	#controller_time_zone { font:inherit; font-size:15px; padding:7px 9px; border-radius:8px;
+		border:1px solid #5a5a5a; background:#2e2e2e; color:#fff; min-width:220px; }
+	.controller_time_note { font-size:12px; line-height:1.4; opacity:.8; min-height:1.2em; margin-top:10px; }
+	.controller_time_fact { display:flex; justify-content:space-between; gap:12px; font-size:13px;
+		line-height:1.6; border-top:1px solid #4a4a4a; padding-top:12px; margin-top:14px; }
+</style>
+<div id="controller_time_shell">
+	<div id="controller_time_bar">
+		<a class="controller_time_button" href="/manager/controller/config"><%= &subs::ui('Back') %></a>
+		<span style="flex:1 1 auto"></span>
+		<a class="controller_time_button" href="/manager?desk=1"><%= &subs::ui('Manager') %></a>
+	</div>
+	<div id="controller_time_body">
+		<div id="controller_time_card">
+			<div id="controller_time_now">—</div>
+			<div id="controller_time_day"></div>
+			<div class="controller_time_row">
+				<label for="controller_time_zone"><%= &subs::ui('Time zone') %></label>
+				<select id="controller_time_zone">
+% for my $z (@{$zones}) {
+					<option value="<%= $z %>"<%= $z eq $zone ? ' selected' : '' %>><%= $z %></option>
+% }
+				</select>
+				<button type="button" class="controller_time_button" id="controller_time_save"><%= &subs::ui('Save') %></button>
+			</div>
+			<div class="controller_time_note" id="controller_time_note" aria-live="polite"></div>
+			<div class="controller_time_fact">
+				<span><%= &subs::ui('Machine time zone') %></span>
+				<strong><%= length $system_zone ? $system_zone : &subs::ui('Unknown') %></strong>
+			</div>
+			<div class="controller_time_fact">
+				<span><%= &subs::ui('Network time') %></span>
+				<strong><%= $synchronized ? &subs::ui('Synchronized') : &subs::ui('Not synchronized') %></strong>
+			</div>
+		</div>
+	</div>
+</div>
+<script>
+(function () {
+	var now = document.getElementById('controller_time_now');
+	var day = document.getElementById('controller_time_day');
+	var pick = document.getElementById('controller_time_zone');
+	var save = document.getElementById('controller_time_save');
+	var note = document.getElementById('controller_time_note');
+	if (!now || !pick) { return; }
+	var failed = <%== encode_json(&subs::ui('That did not work.')) %>;
+	var saved = <%== encode_json(&subs::ui('Saved. The launcher and taskbar now use this zone.')) %>;
+	function zone() {
+		var z = pick.value;
+		return (!z || z === 'local') ? undefined : z;
+	}
+	function paint() {
+		var d = new Date();
+		try {
+			now.textContent = new Intl.DateTimeFormat(undefined, {
+				hour: 'numeric', minute: '2-digit', second: '2-digit', timeZone: zone()
+			}).format(d);
+			day.textContent = new Intl.DateTimeFormat(undefined, {
+				weekday: 'long', month: 'long', day: 'numeric', timeZone: zone()
+			}).format(d);
+		}
+		catch (e) {
+			now.textContent = d.toLocaleTimeString();
+			day.textContent = d.toLocaleDateString();
+		}
+	}
+	function post() {
+		if (note) { note.textContent = ''; }
+		if (save) { save.disabled = true; }
+		fetch('/manager/controller/time', {
+			method: 'POST',
+			credentials: 'same-origin',
+			headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+			body: new URLSearchParams({ timezone: pick.value })
+		}).then(function (r) { return r.json(); }).then(function (result) {
+			if (note) { note.textContent = result && result.ok ? saved : (failed + (result && result.error ? ' (' + result.error + ')' : '')); }
+			if (save) { save.disabled = false; }
+			paint();
+		}).catch(function () {
+			if (note) { note.textContent = failed; }
+			if (save) { save.disabled = false; }
+		});
+	}
+	pick.addEventListener('change', paint);
+	if (save) { save.addEventListener('click', post); }
+	paint();
+	setInterval(paint, 1000);
+})();
+</script>

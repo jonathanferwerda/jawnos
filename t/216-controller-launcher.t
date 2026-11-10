@@ -100,6 +100,10 @@ like($desk_js, qr/typeof response === 'object'/, 'a JSON reply is recognised bef
 like($desk_js, qr/response\.html \|\| response\.window/, 'both window envelope shapes are unwrapped');
 like($desk_js, qr/full_app_mode/, 'a launcher press marks a full-screen app');
 like($page, qr/id="controller_battery"/, 'the launcher has a battery button');
+like($page, qr/id="controller_clock"/, 'the launcher has a clock to the right of Manager');
+like($page, qr/Intl\.DateTimeFormat/, 'the clock formats in the house time zone');
+like($page, qr|href="/manager/controller/config"|, 'Configuration opens the handheld sublauncher, not the house Configure app');
+like($page, qr/\.controller_tile_icon\s*\{[^}]*width:80%/, 'a tile icon fills 80% of its container');
 like($page, qr/data-power-plan=/, 'the panel offers the CPU profiles');
 like($page, qr/No battery sensor/, 'a pack with no gauge says so');
 like($page, qr/id="controller_volume"/, 'the launcher has a volume button');
@@ -120,6 +124,8 @@ like($routes, qr/\[\s*44003\s*,\s*'post'\s*,\s*'\/manager\/controller\/volume'\s
 like($controller, qr/sound_status =>/, 'the launcher action passes the sound reading');
 like($page, qr/href="\/manager\?open=music&amp;full=1"/, 'an app tile asks for the full-screen mode');
 like($controller, qr/power_status =>/, 'the launcher action passes the power reading');
+like($controller, qr/clock_timezone/, 'the launcher action reads the house clock zone');
+like($controller, qr/America\/New_York/, 'Eastern is the launcher clock default');
 like(read_file("$root/public/css/manager.css"), qr/body\.full_app_mode #taskbar/,
 	'the full-screen mode hides the taskbar');
 like(read_file("$root/lib/JawnOS/Domain/Misc.pm"), qr/jawnos_screen\.pl/,

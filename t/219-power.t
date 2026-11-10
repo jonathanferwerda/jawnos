@@ -274,6 +274,38 @@ sub helper {
 	like($power_js, qr{url:\s*'/manager/power'}, 'a system power button posts to the fixed power route');
 }
 
+# --- a gauge that has not learned its counter -------------------------------
+# The Gou's rk817 pack reported capacity=1 and ~56 mAh while the cell held
+# 3.94 V, and its charger put 5.01 V on the input while `online` stayed 0. The
+# reading keeps the raw gauge value, shows a resting-voltage estimate, and
+# reports the cable separately so the panel can say "not charging" honestly.
+{
+	my $gou = tempdir(CLEANUP => 1);
+	make_path("$gou/class/power_supply/rk817-battery", "$gou/class/power_supply/rk817-charger");
+	write_file("$gou/class/power_supply/rk817-battery/type", "Battery\n");
+	write_file("$gou/class/power_supply/rk817-battery/capacity", "1\n");
+	write_file("$gou/class/power_supply/rk817-battery/status", "Not charging\n");
+	write_file("$gou/class/power_supply/rk817-battery/voltage_avg", "3940000\n");
+	write_file("$gou/class/power_supply/rk817-battery/current_avg", "1366540\n");
+	write_file("$gou/class/power_supply/rk817-battery/charge_now", "56000\n");
+	write_file("$gou/class/power_supply/rk817-battery/charge_full", "4000000\n");
+	write_file("$gou/class/power_supply/rk817-charger/type", "USB\n");
+	write_file("$gou/class/power_supply/rk817-charger/online", "0\n");
+	write_file("$gou/class/power_supply/rk817-charger/voltage_avg", "5011000\n");
+	$ENV{'JAWNOS_POWER_SYSFS'} = $gou;
+	my $b = subs::power_battery_read();
+	is($b->{'percentage'}, 66, 'the resting voltage replaces a one-percent gauge');
+	is($b->{'percentage_raw'}, 1, 'the raw gauge value is kept');
+	is($b->{'estimated'}, 1, 'the reading says it is an estimate');
+	is($b->{'cable'}, 1, 'a 5 V input is reported as a cable even when online stays off');
+	is($b->{'ac'}, 0, 'the cable alone does not pretend the pack is charging');
+	ok(abs($b->{'current'} - 1.36654) < 0.00001, 'current_avg is the fallback current');
+	is(subs::power_ocv_percent(4.20), 100, 'a full cell is 100%');
+	is(subs::power_ocv_percent(3.30), 0, 'an empty cell is 0%');
+	is(subs::power_ocv_percent(3.90), 60, 'the middle of the table is read');
+	$ENV{'JAWNOS_POWER_SYSFS'} = $sys;
+}
+
 # --- the labels and the help topic -----------------------------------------
 {
 	require "$root/perl/language.pl";

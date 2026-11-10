@@ -109,11 +109,14 @@ function powerRender(status) {
 		$('#power_battery_card').show();
 		$('#power_battery_fill').css('width', pct + '%');
 		$('#power_battery_card').attr('state', charge == 'charging' ? 'charging' : (pct <= 20 ? 'low' : (charge == 'full' ? 'full' : 'normal')));
-		$('#power_battery_pct').text(pct + '%');
+		$('#power_battery_pct').text((battery.estimated ? '~' : '') + pct + '%');
 		var state = '';
 		if (charge == 'charging') { state = jawnosT('Charging'); }
 		else if (charge == 'discharging') { state = jawnosT('Discharging'); }
 		else if (charge == 'full') { state = jawnosT('Full'); }
+		else if (charge == 'not charging') { state = jawnosT('Not charging'); }
+		if (battery.estimated) { state = state ? (state + ' · ' + jawnosT('estimated from voltage')) : jawnosT('estimated from voltage'); }
+		if (battery.cable) { state = state ? (state + ' · ' + jawnosT('cable connected')) : jawnosT('cable connected'); }
 		$('#power_battery_state').text(state);
 		var eta = charge == 'charging' ? battery.charge_eta : battery.discharge_eta;
 		var eta_text = '';

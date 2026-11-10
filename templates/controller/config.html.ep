@@ -1,0 +1,60 @@
+<%# The Configuration tile's sublauncher. A handheld cannot use the house's desk
+    of settings, so this page collects the four machine surfaces and the
+    emulator's own knobs into one row of large tiles. Everything here is one
+    press from the Controller and one press back. %>
+<style>
+	html, body, .wind, .window_contents { background:#2e2e2e !important; color:#f4f4f4 !important; }
+	.wind[app="controller"] .top_navbar { display:none !important; }
+	.wind { left:0 !important; top:0 !important; width:100vw !important; height:100vh !important; }
+	.window_contents { width:100% !important; height:100% !important; padding-top:0 !important; }
+	#controller_config_shell { display:flex; flex-direction:column; width:100%; height:100%; min-height:0; }
+	#controller_config_bar { flex:0 0 auto; display:flex; align-items:center; gap:6px; padding:6px 8px 0; }
+	.controller_config_button { font:inherit; font-size:13px; line-height:1.2; padding:5px 12px;
+		border:1px solid #4a4a4a; border-radius:8px; background:#3a3a3a; color:#fff;
+		text-decoration:none; cursor:var(--jawnos-cursor-pointer, pointer); }
+	.controller_config_button:hover { border-color:var(--accent, #4a90d9); }
+	#controller_config_spacer { flex:1 1 auto; }
+	#controller_config_grid { flex:1 1 auto; min-height:0; display:grid;
+		grid-template-columns:repeat(3,1fr); grid-auto-rows:1fr; gap:8px; padding:8px; box-sizing:border-box; }
+	.controller_config_tile { display:flex; flex-direction:column; align-items:center; justify-content:center;
+		gap:4px; min-width:0; overflow:hidden; padding:8px; border:1px solid #4a4a4a; border-radius:12px;
+		background:#3a3a3a; color:#fff; text-decoration:none; text-align:center; }
+	.controller_config_tile:hover { border-color:var(--accent, #4a90d9); }
+	.controller_config_icon { flex:1 1 auto; width:80%; min-height:0; object-fit:contain; }
+	.controller_config_label { font-size:15px; font-weight:600; line-height:1.1; }
+	.controller_config_note { font-size:10px; line-height:1.2; opacity:.8; }
+</style>
+<div id="controller_config_shell">
+	<div id="controller_config_bar">
+		<a class="controller_config_button" id="controller_config_home" href="/manager/controller"><%= &subs::ui('Launcher') %></a>
+		<span id="controller_config_spacer"></span>
+		<a class="controller_config_button" href="/manager?desk=1"><%= &subs::ui('Manager') %></a>
+	</div>
+	<div id="controller_config_grid">
+		<a class="controller_config_tile" href="/manager?open=network&amp;full=1">
+			<img class="controller_config_icon" src="<%= &subs::icon_for('/icons/network.svg') %>" alt="">
+			<span class="controller_config_label"><%= &subs::ui('Wi-Fi') %></span>
+			<span class="controller_config_note"><%= &subs::ui('Join a network and turn the radio on') %></span>
+		</a>
+		<a class="controller_config_tile" href="/manager?open=power&amp;full=1">
+			<img class="controller_config_icon" src="<%= &subs::icon_for('/icons/power.svg') %>" alt="">
+			<span class="controller_config_label"><%= &subs::ui('Power') %></span>
+			<span class="controller_config_note"><%= &subs::ui('Battery, CPU speed and the power plan') %></span>
+		</a>
+		<a class="controller_config_tile" href="/manager/controller/time">
+			<img class="controller_config_icon" src="<%= &subs::icon_for('/icons/clock.svg') %>" alt="">
+			<span class="controller_config_label"><%= &subs::ui('Time') %></span>
+			<span class="controller_config_note"><%= &subs::ui('The launcher clock and the machine time zone') %></span>
+		</a>
+		<a class="controller_config_tile" href="/manager?open=sound&amp;full=1">
+			<img class="controller_config_icon" src="<%= &subs::icon_for('/icons/sound.svg') %>" alt="">
+			<span class="controller_config_label"><%= &subs::ui('Sound') %></span>
+			<span class="controller_config_note"><%= &subs::ui('Output, volume and the source channels') %></span>
+		</a>
+		<a class="controller_config_tile" href="/manager/controller/retroarch">
+			<img class="controller_config_icon" src="/images/decipherable/tetris.png" alt="">
+			<span class="controller_config_label"><%= &subs::ui('RetroArch') %></span>
+			<span class="controller_config_note"><%= &subs::ui('Audio, video and the PlayStation and Nintendo 64 cores') %></span>
+		</a>
+	</div>
+</div>

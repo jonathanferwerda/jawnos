@@ -757,7 +757,8 @@ sub action_44001 {
 		window_maker => $c->param('window_maker'),
 		power_actions => [ &subs::power_actions() ],
 		power_status => eval { &subs::power_status() } || {},
-		sound_status => eval { &subs::sound_status() } || {}
+		sound_status => eval { &subs::sound_status() } || {},
+		clock_zone => (&subs::misc_setting('clock_timezone') || 'America/New_York')
 	);
 	my $website = &Manager::window_maker({ user_agent => $c->param('user_agent'), app => 'controller', contents => $contents }, $timestamp);
 	$c->render(text => $website);
@@ -939,6 +940,95 @@ sub action_44009 {
 	my $script = Cwd::abs_path('scripts/jawnos_game_launch.pl');
 	my $started = eval { &game_helper_start($script, $game->{'id'}) };
 	$c->render(json => $started ? { ok => 1, title => $game->{'title'} } : { ok => 0, error => 'The emulator could not start.' });
+}
+
+# GET /manager/controller/config
+# The Configuration tile used to open the house's Configure app, which is a desk
+# of settings a handheld cannot comfortably use. It opens this sublauncher
+# instead: four machine settings and the emulator's own knobs, one press each.
+sub action_44010 {
+	my $c = shift;
+	my $timestamp = $c->param('timestamp');
+	my $contents = $c->render_to_string(template => 'controller/config');
+	my $website = &Manager::window_maker({ user_agent => $c->param('user_agent'), app => 'controller', contents => $contents }, $timestamp);
+	$c->render(text => $website);
+}
+
+# GET /manager/controller/time
+# Time settings for the handheld: the zone the launcher and the taskbar read,
+# and what the machine's own clock is doing. The zone is a house setting, so it
+# is saved on this device rather than written into /etc/localtime: the box stays
+# on UTC and every surface agrees on the person's Eastern time.
+sub action_44011 {
+	my $c = shift;
+	my $timestamp = $c->param('timestamp');
+	my $zone = &subs::misc_setting('clock_timezone');
+	$zone = 'America/New_York' unless defined $zone && length $zone;
+	my $system_zone = '';
+	if (open(my $fh, '<', '/etc/timezone')) { $system_zone = <$fh> // ''; close $fh; $system_zone =~ s/\s+$//; }
+	unless (length $system_zone) {
+		my $link = readlink('/etc/localtime');
+		($system_zone) = ($link // '') =~ m{zoneinfo/(.+)$};
+		$system_zone = '' unless defined $system_zone;
+	}
+	my @zones = (
+		'America/New_York', 'America/Chicago', 'America/Denver', 'America/Los_Angeles',
+		'America/Anchorage', 'Pacific/Honolulu', 'America/Toronto', 'America/Phoenix',
+		'Europe/London', 'Europe/Paris', 'Europe/Berlin', 'Asia/Tokyo', 'Australia/Sydney', 'UTC',
+	);
+	unshift @zones, $zone unless grep { $_ eq $zone } @zones;
+	my $contents = $c->render_to_string(
+		template => 'controller/time',
+		zone => $zone,
+		zones => \@zones,
+		system_zone => $system_zone,
+		synchronized => (-e '/run/systemd/timesync/synchronized' ? 1 : 0),
+	);
+	my $website = &Manager::window_maker({ user_agent => $c->param('user_agent'), app => 'controller', contents => $contents }, $timestamp);
+	$c->render(text => $website);
+}
+
+# POST /manager/controller/time
+sub action_44012 {
+	my $c = shift;
+	my $zone = $c->param('timezone') // '';
+	my $ok = ($zone eq 'local')
+		|| ($zone =~ m{^[A-Za-z0-9_+\-/]+$} && $zone !~ m{\.\.} && -e "/usr/share/zoneinfo/$zone");
+	unless ($ok) {
+		$c->render(json => { ok => 0, error => 'That is not a time zone this machine knows.' });
+		return;
+	}
+	&subs::setting_setter({ app => 'misc', setting => 'clock_timezone', value => $zone });
+	$c->render(json => { ok => 1, timezone => $zone });
+}
+
+# GET /manager/controller/retroarch
+# The emulator's knobs, read from and written back to the same files RetroArch
+# loads. Audio and video are here because a rebuilt frontend can pitch-shift or
+# stutter on the handheld's single sound card; the two 3D cores carry the frame
+# skip and threading that decide whether a game is playable.
+sub action_44013 {
+	my $c = shift;
+	my $timestamp = $c->param('timestamp');
+	my $settings = eval { &subs::retroarch_settings() } || { ok => 0, error => 'The RetroArch settings could not be read.' };
+	my $contents = $c->render_to_string(template => 'controller/retroarch', settings => $settings);
+	my $website = &Manager::window_maker({ user_agent => $c->param('user_agent'), app => 'controller', contents => $contents }, $timestamp);
+	$c->render(text => $website);
+}
+
+# POST /manager/controller/retroarch
+sub action_44014 {
+	my $c = shift;
+	my $answer;
+	if (my $preset = $c->param('preset')) {
+		$answer = eval { &subs::retroarch_preset($preset) };
+	}
+	else {
+		$answer = eval { &subs::retroarch_set($c->param('key'), $c->param('value'), $c->param('core')) };
+	}
+	$answer = { ok => 0, error => 'The setting could not be changed.' } unless ref $answer eq 'HASH';
+	$answer->{'settings'} = eval { &subs::retroarch_settings() } || { ok => 0 };
+	$c->render(json => $answer);
 }
 
 1;

@@ -29,7 +29,12 @@
 		color:#ffffff !important; align-items:center; text-align:center; }
 	.controller_tile_label { color:#ffffff !important; }
 	.controller_tile_note { color:#d8d8d8 !important; opacity:1; }
-	.controller_tile_icon { width:46px; height:46px; object-fit:contain; }
+	/* The picture is how a person finds a tile on a small panel: it gets 80% of
+	   the tile, and the two lines of words take the rest. The Leave tile keeps a
+	   fixed picture because its buttons need the room. */
+	.controller_tile_icon { flex:1 1 auto; width:80%; max-height:80%; min-height:0; object-fit:contain; }
+	.controller_tile_leave .controller_tile_icon { flex:0 0 auto; width:56px; height:56px; }
+	.controller_clock { min-width:72px; text-align:center; font-variant-numeric:tabular-nums; }
 
 	/* The launcher is the whole panel. The desk remembers a window's size and
 	   place per app, and this page arrived at 480x640 from y=100 - two rows
@@ -103,9 +108,13 @@
 	my $plan = $entry->{'plan'} || 'balanced';
 	my %profile_label = (auto => 'Auto', saver => 'Power saver', balanced => 'Balanced', performance => 'Performance');
 	my %profile_ui = map { $_ => &subs::ui($profile_label{$_}) } keys %profile_label;
-	my $battery_pct = defined $battery->{'percentage'} ? sprintf('%.0f%%', $battery->{'percentage'}) : '—';
+	my $battery_pct = defined $battery->{'percentage'} ? sprintf('%s%.0f%%', ($battery->{'estimated'} ? '~' : ''), $battery->{'percentage'}) : '—';
+	my @battery_bits;
+	push @battery_bits, $battery->{'status'} if $battery->{'status'};
+	push @battery_bits, &subs::ui('estimated from voltage') if $battery->{'estimated'};
+	push @battery_bits, &subs::ui('cable connected') if $battery->{'cable'};
 	my $battery_note = $battery->{'present'}
-		? ($battery->{'status'} ? $battery->{'status'} : &subs::ui('Battery'))
+		? (@battery_bits ? join(' · ', @battery_bits) : &subs::ui('Battery'))
 		: &subs::ui('No battery sensor');
 	my @cpu_bits;
 	push @cpu_bits, $cpu->{'governor'} if $cpu->{'governor'};
@@ -130,6 +139,7 @@
 		<button type="button" id="controller_volume" class="controller_bar_button" aria-expanded="false" aria-controls="controller_volume_panel"><%= &subs::ui('Sound') %></button>
 		<button type="button" id="controller_battery" class="controller_bar_button" aria-expanded="false" aria-controls="controller_power_panel"><span id="controller_battery_pct"><%= $battery_pct %></span></button>
 		<a id="controller_manager_button" class="controller_bar_button" href="/manager?desk=1"><%= &subs::ui('Manager') %></a>
+		<span id="controller_clock" class="controller_bar_button controller_clock" aria-label="<%= &subs::ui('Time') %>">—</span>
 	</div>
 	<div id="controller_power_panel" hidden>
 		<h3><%= &subs::ui('Battery and CPU') %></h3>
@@ -196,10 +206,10 @@
 			<span class="controller_tile_label"><%= &subs::ui('Games') %></span>
 			<span class="controller_tile_note"><%= &subs::ui('Cards, Twirl and emulated games') %></span>
 		</a>
-		<a class="controller_tile" href="/manager?open=configure&amp;full=1">
+		<a class="controller_tile" href="/manager/controller/config">
 			<img class="controller_tile_icon" src="/images/decipherable/gear.png" alt="">
 			<span class="controller_tile_label"><%= &subs::ui('Configuration') %></span>
-			<span class="controller_tile_note"><%= &subs::ui('Settings and system') %></span>
+			<span class="controller_tile_note"><%= &subs::ui('Wi-Fi, power, time, sound and RetroArch') %></span>
 		</a>
 		<a class="controller_tile" href="/manager?open=phone&amp;full=1">
 			<img class="controller_tile_icon" src="/images/decipherable/phone.png" alt="">
@@ -289,6 +299,8 @@ function closeControllerPanels(except) {
 	var unavailable = <%== encode_json(&subs::ui('No battery sensor')) %>;
 	var unknown = <%== encode_json(&subs::ui('Unknown')) %>;
 	var failed = <%== encode_json(&subs::ui('That did not work.')) %>;
+	var estimated_label = <%== encode_json(&subs::ui('estimated from voltage')) %>;
+	var cable_label = <%== encode_json(&subs::ui('cable connected')) %>;
 	var cores_label = <%== encode_json(&subs::ui('cores')) %>;
 	var data = null;
 	function paint() {
@@ -296,9 +308,16 @@ function closeControllerPanels(except) {
 		var b = s.battery || {};
 		var c = s.cpu || {};
 		var has = b.percentage !== undefined && b.percentage !== null;
-		var text = has ? (Math.round(b.percentage) + '%') : '—';
+		var text = has ? ((b.estimated ? '~' : '') + Math.round(b.percentage) + '%') : '—';
 		if (pct) { pct.textContent = text; }
-		if (batt) { batt.textContent = has ? (text + (b.status ? ' · ' + b.status : '')) : (b.present ? unknown : unavailable); }
+		if (batt) {
+			var bits = [];
+			if (has) { bits.push(text); }
+			if (b.status) { bits.push(b.status); }
+			if (b.estimated) { bits.push(estimated_label); }
+			if (b.cable) { bits.push(cable_label); }
+			batt.textContent = has ? bits.join(' · ') : (b.present ? unknown : unavailable);
+		}
 		if (cpu) {
 			var bits = [];
 			if (c.governor) { bits.push(c.governor); }
@@ -561,6 +580,30 @@ function closeControllerPanels(except) {
 		}
 		button.setAttribute('aria-expanded', opening ? 'true' : 'false');
 	});
+})();
+
+/* The bar clock. `clock_timezone` is the same house setting the taskbar reads;
+   the handheld's box can be on UTC, so the browser is told the zone rather than
+   trusting its own. Eastern is the house default. */
+(function () {
+	var el = document.getElementById('controller_clock');
+	if (!el) { return; }
+	var zone = <%== encode_json($clock_zone) %>;
+	if (!zone || zone === 'local') { zone = undefined; }
+	function paint() {
+		var now = new Date();
+		var text;
+		try {
+			text = new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit', timeZone: zone }).format(now);
+		}
+		catch (e) {
+			text = now.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+		}
+		el.textContent = text;
+		el.title = zone ? ('Time · ' + zone) : 'Time';
+	}
+	paint();
+	setInterval(paint, 15000);
 })();
 
 </script>

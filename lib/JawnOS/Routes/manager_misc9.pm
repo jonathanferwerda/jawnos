@@ -32,6 +32,11 @@ sub routes {
 	[44007, 'post', '/manager/games/install', 'action_44007'],
 	[44008, 'get', '/manager/games/install_status', 'action_44008'],
 	[44009, 'post', '/manager/games/launch', 'action_44009'],
+	[44010, 'get', '/manager/controller/config', 'action_44010'],
+	[44011, 'get', '/manager/controller/time', 'action_44011'],
+	[44012, 'post', '/manager/controller/time', 'action_44012'],
+	[44013, 'get', '/manager/controller/retroarch', 'action_44013'],
+	[44014, 'post', '/manager/controller/retroarch', 'action_44014'],
 	);
 }
 
