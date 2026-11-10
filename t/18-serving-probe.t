@@ -110,4 +110,33 @@ is probe::serving($hang_port, 'timeout' => $timeout), 0,
 	'an open port that never answers is not serving - exactly what a bare connect() called healthy';
 stop_stub($hang_pid);
 
+
+# --- the watchdog's pace -----------------------------------------------------
+# The regression this pins: the master probed every 30s and called the tree dead
+# after TWO misses, so two isolated stalls thirty seconds apart - a slow request,
+# a held database lock, a phone coming out of doze - restarted a tree that was
+# answering. The policy is a slow resting poll plus a tight confirmation, and it
+# takes three failures in a row.
+my %policy = probe::watch_policy();
+cmp_ok $policy{'strikes'}, '>=', 3,
+	'three consecutive failures, not two isolated ones, call a tree down';
+is probe::watch_delay(0), $policy{'rest'}, 'a tree that answers is polled at the resting pace';
+is probe::watch_delay(1), $policy{'confirm'}, 'the first miss is confirmed in seconds, not half a minute';
+is probe::watch_delay(2), $policy{'confirm'}, 'the second miss is confirmed as quickly';
+cmp_ok $policy{'confirm'}, '<', $policy{'rest'}, 'confirmation is tighter than the resting poll';
+cmp_ok $policy{'rest'}, '>=', 30, 'a healthy phone still pays for only one resting probe a half-minute';
+cmp_ok $policy{'rest'} + ($policy{'strikes'} - 1) * $policy{'confirm'}, '<=', 60,
+	'a tree that really is down is noticed no later than the old two-30s-probe rule';
+
+# ./jawn must read that policy rather than carry its own copy of the numbers, or
+# the two drift apart the next time someone tunes one of them.
+my $master = do {
+	local $/;
+	open my $fh, '<', "$root/jawn" or die "$root/jawn: $!";
+	<$fh>;
+};
+like $master, qr/&probe::watch_policy\(\)/, './jawn takes the pace from probe.pl';
+like $master, qr/&probe::watch_delay\(/, './jawn asks probe.pl how long to wait before the next probe';
+unlike $master, qr/\+\+\s*\$tree_misses\s*>=\s*2\b/, './jawn no longer calls the tree down after two misses';
+
 done_testing();

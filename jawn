@@ -452,6 +452,17 @@ my ($master_timer,$master_timer_paused);
 my ($tree_ticks,$tree_misses) = (0,0);
 my ($last_master_tick,$tree_dead_since);
 my $reap_ticks = 0;
+# The liveness watchdog's pace lives in perl/probe.pl, beside the question it
+# asks: a slow resting poll while the tree answers, a tight confirmation once one
+# probe fails. A half-copied tree keeps the same numbers here.
+my %probe_policy = eval { require './perl/probe.pl'; &probe::watch_policy() };
+%probe_policy = ( rest => 30, confirm => 3, strikes => 3, timeout => 2 ) unless %probe_policy;
+my $probe_delay = sub {
+	return &probe::watch_delay($_[0]) if defined &probe::watch_delay;
+	return $_[0] ? $probe_policy{'confirm'} : $probe_policy{'rest'};
+};
+my $tree_wait = $probe_policy{'rest'};
+my $tree_dead_port;
 &master_time_looper();
 # config.json may switch the Coding worker off on a machine that cannot spare
 # the process: it is a copy of the whole app (99 MB PSS measured on the Gou's
@@ -539,37 +550,49 @@ sub master_time_looper() {
 				print "master changed on disk but the tree does not verify; keeping the running master:\n" . ($proof->{'report'} || '') . "\n";
 			}
 		}
-		# Liveness watchdog: 'started' means the tree should be serving. Probe the
-		# port every 30s; two dead probes (~a minute, or ~10s after a wake where a
-		# killed tree is the likely story) mean the pty close handler was missed or
-		# the tree died without its terminal noticing - recover it rather than idle.
-		# This is exactly the case that used to leave the master alive
-		# with nothing on 3000/45545 and no President.pl.
+		# Liveness watchdog: 'started' means the tree should be serving. The pace
+		# is probe::watch_policy(): a slow resting probe while the tree answers,
+		# then a tight confirmation once one fails, and only three failures in a
+		# row call it down. It used to be two probes thirty seconds apart, so two
+		# isolated stalls - a slow request, a database lock, a phone coming out of
+		# doze - restarted a tree that was answering; the wedge dumps written from
+		# those restarts show every process idle in the event loop.
+		# This is the case that used to leave the master alive with nothing on
+		# 3000/45545 and no President.pl.
 		# The boot watch owns the wait for a tree this master just started: it
-		# probes every 3s and restarts after 90s. Running the 30s watchdog as
-		# well would count the same slow boot twice and could tear down a tree
-		# that is still binding its main server.
+		# probes every 3s and restarts after 90s. Running the watchdog as well
+		# would count the same slow boot twice and could tear down a tree that is
+		# still binding its main server.
 		if ($status eq 'started' && !$master_boot_watch) {
-			if ($woke) { $tree_ticks = 29 }   # probe on this very tick
-			if (++$tree_ticks >= 30) {
-				# after a wake the second probe follows in ~10s, not 30
-				$tree_ticks = $woke ? 20 : 0;
-				if (&tree_serving()) { $tree_misses = 0; $tree_dead_since = undef }
-				elsif (++$tree_misses >= 2) {
+			$tree_wait = 0 if $woke;   # probe on this very tick after a freeze
+			if (++$tree_ticks >= $tree_wait) {
+				$tree_ticks = 0;
+				if (&tree_serving()) {
+					$tree_misses = 0;
+					$tree_dead_since = undef;
+					$tree_wait = $probe_delay->(0);
+				}
+				elsif (++$tree_misses >= $probe_policy{'strikes'}) {
 					$tree_dead_since ||= $tick_now;
 					my $dead_for = $tick_now - $tree_dead_since;
+					my $dead_port = $tree_dead_port ? ' (port ' . $tree_dead_port . ')' : '';
 					my $dump = &wedge_dump();
 					print "the web port has been dead for ~" . $dead_for . "s with status 'started'; recovering"
+						. $dead_port
 						. ($dump ne '' ? " (what it was doing: $dump)" : '') . "\n";
 					$tree_misses = 0;
 					$tree_dead_since = undef;
+					$tree_wait = $probe_delay->(0);
 					$status = 'frozen';
-					$status_why = 'the web port stopped answering for ~' . $dead_for . 's';
+					$status_why = 'the web port stopped answering for ~' . $dead_for . 's' . $dead_port;
 				}
-				else { $tree_dead_since ||= $tick_now }
+				else {
+					$tree_dead_since ||= $tick_now;
+					$tree_wait = $probe_delay->($tree_misses);
+				}
 			}
 		}
-		else { $tree_ticks = 0; $tree_misses = 0; $tree_dead_since = undef }
+		else { $tree_ticks = 0; $tree_misses = 0; $tree_dead_since = undef; $tree_wait = $probe_policy{'rest'} }
 		# Safety net for a pty child that outlived its fork object (a teardown that
 		# died halfway, a re-exec): reap it and any defunct child, but never the
 		# current pty child, whose exit status belongs to ReadWriteFork.
@@ -1256,7 +1279,8 @@ sub port_answers {
 	# answers. Ask for an HTTP answer instead; probe.pl asks it, and the route it
 	# asks reads the database.
 	eval { require './perl/probe.pl' };
-	return probe::serving($port, 'timeout' => 2) if defined &probe::serving;
+	my $probe_timeout = $probe_policy{'timeout'} || 2;
+	return probe::serving($port, 'timeout' => $probe_timeout) if defined &probe::serving;
 	# No probe module (a half-copied tree): keep the socket test rather than call
 	# a healthy tree dead and restart the house over a missing file.
 	require IO::Socket::INET;
@@ -1320,8 +1344,14 @@ sub tree_serving {
 	my @ports = &config_ports();
 	return 0 unless scalar @ports;
 	foreach my $port ( @ports ) {
-		return 0 unless &port_answers($port);
+		unless (&port_answers($port)) {
+			# remember which one, so a restart record names the port instead of
+			# blaming "the web port" when the locker answered all along
+			$tree_dead_port = $port;
+			return 0;
+		}
 	}
+	$tree_dead_port = 0;
 	return 1;
 }
 
