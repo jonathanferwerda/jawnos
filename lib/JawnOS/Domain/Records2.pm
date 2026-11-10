@@ -621,6 +621,22 @@ sub sync_update_method_get {
 	return $v;
 }
 
+# How often this machine's code watcher runs. A per-machine setting: a dev box
+# can follow the trunk every 30 seconds while a server keeps the quiet hour.
+# Unknown values fall back to the hour, which is the slow pool's pace and the
+# behaviour before this control existed.
+sub sync_update_interval_get {
+	my ($device) = @_;
+	$device = &subs::signatorial_designer() unless defined $device && length $device;
+	my %q = (app => 'sync', setting => 'update_interval');
+	$q{'device'} = $device if defined $device && length $device;
+	my $v = &subs::setting_grabber(\%q);
+	$v = &subs::setting_grabber({ app => 'sync', setting => 'update_interval' })
+		unless defined $v && length $v;
+	return 3600 unless defined $v && $v =~ /^(?:30|3600)$/;
+	return int $v;
+}
+
 # Where the 06:00 coding nightly pushes. `coding_push_repo` is the JawnOS
 # checkout and `coding_app_push_repo` the Android app checkout; empty means the
 # checkout's own remote (origin / fork). The value is `owner/name` or an https

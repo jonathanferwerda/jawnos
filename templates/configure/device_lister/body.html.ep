@@ -47,6 +47,12 @@
 				<span id="update_method_status" class="device_when"></span>
 				<button id="update_now_button" class="hover" type="button"><%= &subs::ui('Update now') %></button>
 				<span id="update_now_status" class="device_when"></span>
+				<label for="update_interval_select"><%= &subs::ui('Check every') %></label>
+				<select id="update_interval_select" class="update_interval_select" data-device="<%= $signatorial %>">
+					<option value="30" <% if (defined $update_interval && $update_interval == 30) { %>selected<% } %>><%= &subs::ui('30 seconds') %></option>
+					<option value="3600" <% if (defined $update_interval && $update_interval == 3600) { %>selected<% } %>><%= &subs::ui('1 hour') %></option>
+				</select>
+				<span id="update_interval_status" class="device_when"></span>
 				<span id="deps_pending_status" class="device_when"></span>
 				<button id="deps_pending_button" class="hover" type="button" style="display:none;"><%= &subs::ui('Install missing dependencies') %></button>
 			</div>

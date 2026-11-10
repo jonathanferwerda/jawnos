@@ -583,6 +583,23 @@ $(document).on('change', '.update_method_select', function() {
 	});
 });
 
+// The code-watcher cadence is per machine: a dev box can follow the trunk every
+// 30 seconds while a server keeps the quiet hour. The utility runner reads it
+// on its next tick.
+$(document).on('change', '.update_interval_select', function() {
+	var status = $('#update_interval_status');
+	var device = $(this).attr('data-device') || '';
+	var t = function(s) { return (typeof jawnosT === 'function') ? jawnosT(s) : s; };
+	status.text(t('saving…'));
+	$.ajax({
+		url: '/manager/setting_setter',
+		type: 'POST',
+		data: { app: 'sync', setting: 'update_interval', value: $(this).val(), device: device, timestamp: Date.now() },
+		success: function() { status.text(t('saved for this machine')); },
+		error: function() { status.text(t('could not save')); }
+	});
+});
+
 // The coding nightly pushes to the repo named here, not blindly to origin. The
 // server validates owner/name or an https URL (no spaces, no credentials) and
 // answers with the effective target, which is what the line under the fields

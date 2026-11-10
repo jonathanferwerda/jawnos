@@ -123,6 +123,13 @@ sub utility_runner() {
 		# keeps its own interval.
 		my $interval = &subs::batch_interval($gb::timeouts, $t);
 		$interval = $u->{'interval'} || 0 unless defined $interval;
+		# The Dev panel's check cadence is the one control for the code sync: it
+		# overrides the slow pool, so a worker can follow the trunk every 30
+		# seconds while a server keeps the hour.
+		if ($t eq 'git_sync') {
+			my $want = &subs::sync_update_interval_get();
+			$interval = $want if $want > 0;
+		}
 		# navigation keeps the machine's pace, but a running appointment whose app
 		# asks for fixes more often than that moves the slot up to the app's own
 		# rate (floored in subs::navigation_pace) instead of waiting for the slower
@@ -445,6 +452,7 @@ sub utility_functions() {
 					# measured against.
 					my $effective = &subs::batch_interval($gb::timeouts, $t);
 					$effective = $gb::timeouts->{$t}->{'interval'} unless defined $effective && $effective > 0;
+					$effective = &subs::sync_update_interval_get($signatorial) if $t eq 'git_sync';
 					if ($now - $gb::timeouts->{$t}->{'last_run'} > $effective * 5 * 1000) {
 						$controls->{$signatorial}->{$t}->{'status'} = 'bad';
 						$writable = 1;

@@ -1,4 +1,4 @@
-# tests-for: scripts/jawnos_deps.pl scripts/jawnos_update.pl lib/JawnOS/Domain/Run.pm lib/JawnOS/Domain/Git.pm lib/JawnOS/Domain/Records2.pm lib/JawnOS/Domain/Loader.pm lib/JawnOS/Controller/manager_configure2.pm lib/JawnOS/Routes/manager_configure2.pm public/js/manager/configure/01_update_controls.js templates/configure/device_lister/body.html.ep perl/help/topics_configure.pl
+# tests-for: scripts/jawnos_deps.pl scripts/jawnos_update.pl lib/JawnOS/Domain/Run.pm lib/JawnOS/Domain/Git.pm lib/JawnOS/Domain/Records2.pm lib/JawnOS/Domain/Loader.pm lib/JawnOS/Controller/manager_configure2.pm lib/JawnOS/Routes/manager_configure2.pm public/js/manager/configure/01_update_controls.js templates/configure/device_lister/body.html.ep templates/configure/device_lister.html.ep public/js/manager/configure.js perl/help/topics_configure.pl
 # covers:    A code update checks the system packages the new tree names. When
 #            sudo needs no password they are installed silently; otherwise the
 #            update leaves a request that the manager answers with the root
@@ -27,6 +27,8 @@ my $ctl  = slurp_rel('lib/JawnOS/Controller/manager_configure2.pm');
 my $routes = slurp_rel('lib/JawnOS/Routes/manager_configure2.pm');
 my $js   = slurp_rel('public/js/manager/configure/01_update_controls.js');
 my $tpl  = slurp_rel('templates/configure/device_lister/body.html.ep');
+my $page = slurp_rel('templates/configure/device_lister.html.ep');
+my $cfgjs = slurp_rel('public/js/manager/configure.js');
 my $help = slurp_rel('perl/help/topics_configure.pl');
 
 # --- the checker grows one non-interactive mode ------------------------------
@@ -108,5 +110,14 @@ if ($node) {
 else {
 	pass('node is not installed; the JavaScript parse is covered by the browser');
 }
+
+# --- the check cadence beside Update now ------------------------------------
+like($tpl, qr/id="update_interval_select"/, 'the Dev panel carries the check cadence');
+like($tpl, qr/value="30"/, 'with a 30-second choice');
+like($tpl, qr/value="3600"/, 'and an hour');
+like($page, qr/update_interval => \$update_interval/, 'the page reads the setting for this machine');
+like($cfgjs, qr/\.update_interval_select/, 'the select has a change handler');
+like($cfgjs, qr/setting: 'update_interval'/, 'and writes the setting');
+like($help, qr/Check every/, 'the help names the control');
 
 done_testing();
