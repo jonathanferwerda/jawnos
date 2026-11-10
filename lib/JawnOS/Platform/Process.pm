@@ -29,7 +29,7 @@ our @EXPORT_OK = qw(
 	meminfo uptime loadavg cpu_times
 	parse_tasklist parse_cim parse_windows_os parse_windows_cpu
 	cim_epoch windows_rows windows_snapshot windows_os windows_signal
-	reset_cache
+	windows_pid_exists reset_cache
 );
 
 # The /proc mount. Tests point this at a fixture tree; nothing else changes it.
@@ -38,9 +38,10 @@ our $PROC_ROOT = '/proc';
 # The Windows snapshot cache: seconds a tasklist/CIM read stays usable. A
 # Monitor poll is two seconds apart and calls table() once, but the field reads
 # (comm, rss_kib, start_time) call back into the seam per pid; without the cache
-# each of those would enumerate every process again. reset_cache() is the
-# documented way to force a fresh read (tests, and a supervisor that has just
-# started a child).
+# each of those would enumerate every process again. A pid the snapshot does not
+# have makes pid_exists() refresh once (a child may have just started); every
+# other read keeps the cache. reset_cache() is the documented way to force a
+# fresh read unconditionally (tests).
 our $CACHE_TTL = 5;
 our %CACHE;
 
@@ -144,7 +145,7 @@ sub pgrp {
 sub pid_exists {
 	my ($pid) = @_;
 	return 0 unless _is_pid($pid);
-	return _win_row($pid) ? 1 : 0 if $^O eq 'MSWin32';
+	return windows_pid_exists($pid) if $^O eq 'MSWin32';
 	return kill(0, $pid) ? 1 : 0;
 }
 
@@ -732,10 +733,16 @@ sub windows_rows {
 
 # The cached snapshot every Windows field read shares. The cache is what keeps
 # a Monitor poll to one tasklist and one CIM call rather than one per pid.
+# `force => 1` replaces the cache even inside the TTL; only the liveness test
+# asks for that, because a child started after the snapshot was taken is not in
+# it yet. The field readers (comm, state, start_time, ...) never force: they
+# describe a pid the snapshot already has.
 sub windows_snapshot {
+	my (%opt) = @_;
 	my $now = time;
 	my $cached = $CACHE{'snapshot'};
-	return $cached->{'rows'} if $cached && ($now - $cached->{'at'}) < $CACHE_TTL;
+	return $cached->{'rows'}
+		if !$opt{'force'} && $cached && ($now - $cached->{'at'}) < $CACHE_TTL;
 	my $tasklist = _capture('tasklist', '/FO', 'CSV', '/NH');
 	my $cim = _capture($PS, '-NoProfile', '-NonInteractive', '-Command', $CIM_PROCESS);
 	my $os = windows_os();
@@ -804,6 +811,20 @@ sub windows_signal {
 	<$fh>;   # drain its message; the exit status is the answer
 	close $fh;
 	return ($? == 0) ? 1 : 0;
+}
+
+# The Windows liveness test. A pid the cached snapshot does not have is looked
+# for once more in a freshly read snapshot, then answered from that one: a
+# child started after the last snapshot exists even though the cache has not
+# seen it yet, which is what the supervisor loops and the just-spawned-child
+# check in Domain/Process.pm need. A pid that is present keeps the cached
+# answer, so a Monitor poll stays one query. Exactly one refresh per call.
+sub windows_pid_exists {
+	my ($pid) = @_;
+	return 0 unless _is_pid($pid);
+	return 1 if _win_row($pid);
+	windows_snapshot(force => 1);
+	return _win_row($pid) ? 1 : 0;
 }
 
 # The cached snapshot row for a pid, or undef.

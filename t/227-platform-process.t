@@ -35,7 +35,7 @@ use JawnOS::Platform::Process qw(
 	meminfo uptime loadavg cpu_times
 	parse_tasklist parse_cim parse_windows_os parse_windows_cpu
 	cim_epoch windows_rows windows_snapshot windows_os windows_signal
-	reset_cache
+	windows_pid_exists reset_cache
 );
 
 my $linux = ($^O eq 'linux') ? 1 : 0;
@@ -519,6 +519,46 @@ is(windows_signal('not-a-pid'), 0, 'windows_signal refuses a non-numeric pid');
 	reset_cache();
 	windows_snapshot();
 	cmp_ok($calls, '>', $after_first, 'reset_cache forces a fresh snapshot');
+}
+reset_cache();
+
+# ------------------------------------------------------------ a pid that is new
+# A supervisor checks a pid it has just spawned. A snapshot taken a moment
+# earlier cannot have it, so pid_exists() refreshes once; a pid already in the
+# snapshot must not cost another query.
+
+my $live_tasklist = <<'CSV';
+"present.exe","1234","Console","1","1,000 K"
+CSV
+my $live_cim = <<'CSV';
+"ProcessId","ParentProcessId","CommandLine","ExecutablePath","CreationDate","KernelModeTime","UserModeTime","WorkingSetSize"
+"1234","1","present.exe","C:\present.exe","","0","0",""
+CSV
+my $live_os = <<'CSV';
+"LastBootUpTime","TotalVisibleMemorySize","FreePhysicalMemory"
+"20261110090000.000000","8000000","4000000"
+CSV
+
+{
+	my $calls = 0;
+	local $JawnOS::Platform::Process::RUN = sub {
+		my ($command, @args) = @_;
+		$calls++;
+		return $live_tasklist if lc($command) eq 'tasklist';
+		return $live_os if grep { /Win32_OperatingSystem/ } @args;
+		return $live_cim;
+	};
+	reset_cache();
+
+	is(windows_pid_exists(1234), 1, 'a pid in the snapshot is alive');
+	is($calls, 3, 'a present pid reads the snapshot once (tasklist, CIM, OS)');
+	my $warm = $calls;
+	is(windows_pid_exists(1234), 1, 'the cached pid is still alive');
+	is($calls, $warm, 'a present pid does not refresh');
+
+	$calls = 0;
+	is(windows_pid_exists(9999), 0, 'a pid the snapshot and the refresh lack is dead');
+	is($calls, 2, 'a missing pid refreshes exactly once (tasklist and CIM; the OS snapshot is still cached)');
 }
 reset_cache();
 
