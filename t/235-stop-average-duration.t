@@ -125,6 +125,10 @@ my (@writes, @reads);
 my $script = read_file("$root/scripts/duration_backfill.pl");
 like($script, qr/session_duration_backfill\(\$apply\)/, 'the script runs the shared backfill with its apply flag');
 like($script, qr/--apply/, 'and names the write it can make');
+like($script, qr/\(\s*grep \{ \$_ eq '--apply' \} \@ARGV\s*\)/,
+	'the apply flag is matched as one grep, so the option is actually read');
+like($script, qr/\(\s*grep \{ \$_ eq '--all' \} \@ARGV\s*\)/,
+	'and so is --all');
 
 # ------------------------------------------------------------ both writers call it
 

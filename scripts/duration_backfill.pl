@@ -17,8 +17,10 @@ use FindBin;
 chdir "$FindBin::Bin/.." or die "cannot find the jawnos root: $!";
 require './perl/subroutines.pl';
 
-my $apply = grep { $_ eq '--apply' } @ARGV ? 1 : 0;
-my $all   = grep { $_ eq '--all' } @ARGV ? 1 : 0;
+# The parentheses matter: grep is a list operator, so without them the whole
+# `grep {...} @ARGV ? 1 : 0` reads as one grep and --apply is never a match.
+my $apply = (grep { $_ eq '--apply' } @ARGV) ? 1 : 0;
+my $all   = (grep { $_ eq '--all' } @ARGV) ? 1 : 0;
 
 my $rows = subs::session_duration_backfill($apply);
 my $changed = grep { $_->{'changed'} } @{$rows};
