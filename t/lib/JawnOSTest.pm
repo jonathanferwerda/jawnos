@@ -19,6 +19,8 @@ package JawnOSTest;
 #          ts(y,m,d[,h,mi,s])  epoch milliseconds in UTC
 #          ymd(ms)     'YYYY-MM-DD' for an epoch-millisecond value
 #
+# Export on request: config_json($dir)  the sandbox config.json, encoded
+#
 # No test may write to the live database, send mail, or start the app. The
 # helpers here are pure reads.
 
@@ -32,11 +34,12 @@ use File::Path qw(remove_tree);
 use File::Spec ();
 use File::Temp qw(tempdir);
 use FindBin ();
+use JSON::PP ();
 use POSIX ();
 
 our @ISA = ('Exporter');
 our @EXPORT = qw(root sandbox ts ymd);
-our @EXPORT_OK = ();
+our @EXPORT_OK = qw(config_json);
 
 our $ROOT;
 our $SANDBOX;
@@ -297,6 +300,28 @@ sub _find_root {
 	return undef;
 }
 
+# The sandbox config.json, as text. It is encoded, not pasted together from a
+# string literal: on Windows the directory is `C:\Users\...\Temp\jaw...`, and
+# a raw backslash inside a JSON string is an illegal escape, so Mojo::JSON died
+# reading it with "illegal backslash escape sequence" and the guard reported
+# every test file as FAIL. File::Spec gives the separator the platform expects,
+# and JSON::PP escapes it either way.
+#
+# Exported so a test can build the same config for a Windows-shaped path on any
+# platform.
+sub config_json {
+	my ($dir) = @_;
+	return JSON::PP->new->canonical->encode({
+		device       => 'computer',
+		language     => 'en',
+		environment  => 'test',
+		logfile      => File::Spec->catfile($dir, 'manager.log'),
+		port         => '3000',
+		working_port => '3001',
+		ws_port      => '3001',
+	});
+}
+
 sub _setup {
 	return if $_READY;
 
@@ -323,9 +348,7 @@ sub _setup {
 	# so a missing ~/manager.log is never touched.
 	open(my $fh, '>', "$SANDBOX/config.json")
 		or die "JawnOSTest: config.json: $!\n";
-	print $fh '{"device":"computer","language":"en","environment":"test",'
-		. '"logfile":"' . $SANDBOX . '/manager.log",'
-		. '"port":"3000","working_port":"3001","ws_port":"3001"}';
+	print $fh config_json($SANDBOX);
 	close $fh;
 
 	# Calendar code is only sane in one timezone. Windows does not implement

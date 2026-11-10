@@ -1858,6 +1858,13 @@ sub control_socket() {
 		my $args = JawnOS::Transport::server_args('control');
 		my $id = Mojo::IOLoop->server($args => sub {
 			my ($loop, $stream, $cid) = @_;
+			# A restart is answered only when its guard lands, and that sweep runs for
+			# minutes (~11 on this box, bounded by $verify_timeout). Mojo's default 15s
+			# idle timeout closed the stream long before the verdict, so the caller lost
+			# the answer it was waiting for. The client bounds its own wait
+			# (scripts/restart.pl --timeout); the server imposes none. A caller that
+			# hung up is still noticed by the close handler below.
+			$stream->timeout(0);
 			my $buffer = '';
 			$stream->on(read => sub {
 				my ($stream, $bytes) = @_;

@@ -13,6 +13,8 @@ use warnings;
 use FindBin;
 use lib "$FindBin::Bin/lib", "t/lib";
 use Cwd qw(abs_path);
+use File::Spec;
+use JSON::PP ();
 use Test::More;
 use JawnOSTest;
 
@@ -22,7 +24,9 @@ my $test_db = &subs::database_path();
 isnt($test_db, $live, 'the suite does not name the live house database');
 isnt(abs_path(&subs::install_dir()), abs_path(root()),
 	'the install dir is the sandbox, not the checkout');
-like($test_db, qr{\A(?:/tmp|/var/tmp|/private/var/tmp|/dev/shm)/},
+# A Windows sandbox is C:\WINDOWS\TEMP\jaw..., so the system-temp forms are not
+# the Unix ones alone; either way the file is outside the checkout.
+like($test_db, qr{\A(?:/tmp|/var/tmp|/private/var/tmp|/dev/shm|[A-Za-z]:[\\/])},
 	'and the database lives outside the checkout');
 
 SKIP: {
@@ -47,5 +51,26 @@ like($harness, qr/eval \{ POSIX::tzset\(\) \}/,
 (my $hcode = $harness) =~ s/^\s*#.*$//mg;
 $hcode =~ s/eval \{ POSIX::tzset\(\) \}/eval/;
 unlike($hcode, qr/POSIX::tzset/, 'no unguarded POSIX::tzset call is left');
+
+# The sandbox config.json is encoded, not concatenated: Windows wrote
+# `C:\Users\...\Temp\jaw...` straight into a JSON string, a raw backslash is an
+# illegal escape, and Mojo::JSON died at boot - which the guard reported as every
+# test file failing. Build it for a Windows-shaped path on any platform and read
+# it back with the decoder that failed.
+my $win = 'C:\\Users\\jawn\\AppData\\Local\\Temp\\jaw_test';
+my $json = JawnOSTest::config_json($win);
+my $cfg = eval { JSON::PP->new->decode($json) };
+is($@, '', 'the sandbox config decodes') or diag($@);
+is($cfg->{'logfile'}, File::Spec->catfile($win, 'manager.log'),
+	'and a Windows path round-trips unchanged');
+is($cfg->{'device'}, 'computer', 'the boot values are the ones the harness used');
+is($cfg->{'port'}, '3000', 'the ports stay strings');
+is($cfg->{'working_port'}, '3001', 'every one of them');
+is($cfg->{'ws_port'}, '3001', 'including the websocket');
+SKIP: {
+	skip 'Mojo::JSON is not installed here', 1 unless eval { require Mojo::JSON; 1 };
+	my $mojo = eval { Mojo::JSON::decode_json($json) };
+	is($@, '', 'and Mojo::JSON - the decoder that died on the unescaped path - reads it');
+}
 
 done_testing();

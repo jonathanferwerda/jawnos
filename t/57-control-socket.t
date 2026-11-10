@@ -316,4 +316,32 @@ ok(!&control::ask_tree_stop(socket => "$dir/absent", timeout => 1),
 		'Unix sockets still clear CLOEXEC');
 }
 
+# ------------------------------------------ the control stream waits for the verdict
+# A restart is answered when its guard lands, and the guard takes minutes. Mojo's
+# default 15s idle timeout closed the accepted stream first, so a pending restart
+# could never carry its verdict back to the caller. The client bounds the wait
+# itself (scripts/restart.pl --timeout), so only the control callback drops it.
+# The log socket and the process watch keep their timeouts: they are not asked to
+# wait on a sweep.
+{
+	my $master;
+	open(my $fh, '<', "$FindBin::Bin/../jawn") or die $!;
+	{ local $/; $master = <$fh> }
+	close $fh;
+
+	my ($control) = $master =~ /(sub control_socket\(\).*?\n\})/s;
+	ok($control, 'jawn defines control_socket');
+
+	# Up to the read handler: the timeout must be dropped on the accepted stream
+	# in the accept callback, not merely mentioned somewhere in the sub.
+	my ($accept) = $control =~ /Mojo::IOLoop->server\(\$args => sub \{(.*?)\$stream->on\(read/s;
+	ok($accept, 'the control listener has an accept callback');
+	like($accept, qr/\$stream->timeout\(0\);/,
+		'and drops the idle timeout, so a restart can wait for its guard');
+
+	my ($log) = $master =~ /(sub log_socket\(\).*?\n\})/s;
+	ok($log, 'the log socket is present');
+	unlike($log, qr/->timeout\(0\)/, 'and keeps Mojo\'s idle timeout');
+}
+
 done_testing();
