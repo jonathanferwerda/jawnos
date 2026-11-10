@@ -28,6 +28,9 @@
 use strict;
 use warnings;
 
+# The wait prints its verdict after the queued line; do not let a pipe reorder them.
+$| = 1;
+
 use Cwd qw(abs_path);
 use FindBin;
 use Getopt::Long qw(GetOptions);
@@ -166,7 +169,6 @@ sub local_enqueue {
 sub wait_for_verdict {
 	my ($branch, $remote, $primary) = @_;
 	my @args = ('--branch', $branch, '--wait', '--timeout', $opt{'timeout'});
-	print STDERR "land_enqueue: waiting up to $opt{'timeout'}s for ${branch}'s verdict\n";
 	my ($rc, $out, $err);
 	if ($remote) {
 		($rc, $out, $err) = LandQueue::run_authority(
