@@ -92,7 +92,7 @@ if (!ref_exists($working)) {
 		print "land_promote: would create $working from $main\n";
 		exit 0;
 	}
-	my ($crc, $cout) = git_in($primary, 'push', 'origin', "$main:refs/heads/$opt{'trunk'}");
+	my ($crc, $cout) = push_tested($primary, "$main:refs/heads/$opt{'trunk'}");
 	if ($crc != 0) {
 		print STDERR "land_promote: could not create $working from $main: $cout\n";
 		event('create_failed', working => '', main => '');
@@ -153,7 +153,7 @@ $subject =~ s/\s+$//;
 my $working_sha = ref_sha($working);
 my $main_sha = ref_sha($main);
 
-my ($prc, $pout) = git_in($primary, 'push', 'origin', "$working:refs/heads/$opt{'main'}");
+my ($prc, $pout) = push_tested($primary, "$working:refs/heads/$opt{'main'}");
 if ($prc != 0) {
 	git_in($primary, 'worktree', 'remove', '--force', $wt);
 	print STDERR "land_promote: the main push was refused: $pout\n";
@@ -177,6 +177,17 @@ event('promoted',
 );
 git_in($primary, 'worktree', 'remove', '--force', $wt);
 exit 0;
+
+# The pre-push hook is the gate for a hand push. This job already ran the suite
+# on the tree it is promoting (or, for the bootstrap, pushes the tip of main,
+# which the queue tested), so tell the hook not to run it a second time: a
+# flaky repeat would block a green promotion. The coordinator and agent_land
+# mark their pushes the same way.
+sub push_tested {
+	my ($cwd, $spec) = @_;
+	local $ENV{'JAWNOS_SUITE_ALREADY_RUN'} = 1;
+	return git_in($cwd, 'push', 'origin', $spec);
+}
 
 sub apply_primary {
 	my ($primary, $main, $version, $subject) = @_;

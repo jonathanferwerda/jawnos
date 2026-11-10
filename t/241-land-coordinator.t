@@ -567,6 +567,36 @@ subtest 'the promoter tests working and fast-forwards main' => sub {
 	ok(@restart && $restart[-1] =~ /promotion/, 'the promotion restarted the app');
 };
 
+subtest 'the promoter marks its pushes as already tested' => sub {
+	my $f = fixture();
+	my $marker = "$f->{'marker'}/push";
+	my $hook = "#!/bin/sh\n"
+		. '[ "${JAWNOS_SUITE_ALREADY_RUN:-0}" = 1 ] || { echo "not marked as run" >&2; exit 1; }' . "\n"
+		. "echo push >> '$marker'\n";
+	write_file("$f->{'primary'}/.git-hooks/pre-push", $hook);
+	chmod 0755, "$f->{'primary'}/.git-hooks/pre-push" or die "chmod pre-push: $!";
+	git($f->{'primary'}, 'add', '.git-hooks/pre-push');
+	my ($hcommit) = git($f->{'primary'}, 'commit', '-m', 'test: the hook requires a tested push');
+	is($hcommit, 0, 'the strict hook is committed, so the primary stays clean');
+	git($f->{'primary'}, 'push', '--no-verify', 'origin', 'main');
+
+	my ($crc, $cout) = promoter($f);
+	is($crc, 0, 'the bootstrap push is accepted') or diag($cout);
+	my (undef, $created) = git($f->{'primary'}, 'rev-parse', 'origin/working');
+	ok(length $created, 'the promoter created working');
+	is(scalar(lines($marker)), 1, 'the bootstrap push reached the hook with the suite marked');
+
+	git($f->{'wt1'}, 'fetch', 'origin');
+	git($f->{'wt1'}, 'checkout', '-B', 'working', 'origin/working');
+	commit_file($f->{'wt1'}, 'working.txt', "working\n", 'working: add a file');
+	git($f->{'wt1'}, 'push', '--no-verify', 'origin', 'working');
+
+	my ($prc, $pout) = promoter($f);
+	is($prc, 0, 'the promotion push is accepted') or diag($pout);
+	like($pout, qr/promoted main/, 'it promotes') or diag($pout);
+	is(scalar(lines($marker)), 2, 'the promotion push reached the hook with the suite marked');
+};
+
 subtest 'a red working branch does not move main' => sub {
 	my $f = fixture();
 	make_working($f);
