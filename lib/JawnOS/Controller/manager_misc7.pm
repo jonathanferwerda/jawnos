@@ -120,6 +120,10 @@ sub action_25444 {
 	# The Dist picker's last view is one answer for the house, so every machine
 	# opens the list or the same basemap the person left it on.
 	my $dist_view = &subs::setting_grabber({ app => '__president', setting => 'appointment_dist_view', device => 'all' }) || 'fixes';
+	# The Dist and Measures sections keep their open or closed state for the house
+	# too, so a detail comes back the way it was left.
+	my $distance_open = (&subs::setting_grabber({ app => '__president', setting => 'appointment_distance_open', device => 'all' }) || '') eq 'on' ? 1 : 0;
+	my $measures_open = (&subs::setting_grabber({ app => '__president', setting => 'appointment_measures_open', device => 'all' }) || '') eq 'on' ? 1 : 0;
 	foreach my $mo ( @{$models}, @{$options} ) {
 		$mo->{'characteristics'} = eval { return decode_json $mo->{'characteristics'} } || [];
 		if (my @oc = grep { $_->{'name'} eq 'option_category' } @{$mo->{'characteristics'}}) {
@@ -246,6 +250,8 @@ sub action_25444 {
 		option_categories => $option_categories,
 		map_keys => $map_keys,
 		dist_view => $dist_view,
+		distance_open => $distance_open,
+		measures_open => $measures_open,
 		# the template's map fallback draws the house's own home plate when neither
 		# the model nor the app has one, so hand it the decoded plate
 		main_home_plate => $main_home_plate,

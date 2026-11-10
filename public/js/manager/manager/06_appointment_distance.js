@@ -254,6 +254,39 @@ function appointmentDistMap(panel, provider) {
 	engine.draw();
 }
 
+// A remembered open Dist section draws itself as soon as its detail lands. The
+// details arrive by several roads (a window, a search, a push), so watch for one
+// rather than hooking every caller; the select's filled mark keeps the sweep
+// from drawing a panel twice.
+function appointmentDistOpen() {
+	$('.appointment_distance_panel:visible').each(function() {
+		var panel = $(this);
+		if (panel.find('.appointment_dist_view').attr('filled') == 'yes') { return; }
+		var detail = panel.closest('.appointment_detail');
+		appointmentDistFill(detail);
+		appointmentDistShow(panel);
+	});
+}
+
+$(document).ready(function() {
+	appointmentDistOpen();
+	if (!window.MutationObserver) { return; }
+	var timer = null;
+	new MutationObserver(function(mutations) {
+		for (var i = 0; i < mutations.length; i++) {
+			var added = mutations[i].addedNodes;
+			if (!added || !added.length) { continue; }
+			var found = false;
+			for (var j = 0; j < added.length; j++) {
+				if (added[j].nodeType === 1) { found = true; }
+			}
+			if (!found || timer) { continue; }
+			timer = setTimeout(function() { timer = null; appointmentDistOpen(); }, 80);
+			return;
+		}
+	}).observe(document.body, { childList: true, subtree: true });
+});
+
 $(document).on('change', '.appointment_dist_view', function() {
 	var kind = $(this).val() || 'fixes';
 	// one answer for the house, and for every panel already on this page
@@ -266,15 +299,20 @@ $(document).on('click', '.appointment_list_toggle', function() {
 	var list = $(this).attr('list');
 	var detail = $(this).closest('.appointment_detail');
 	var l = detail.find('.appointment_list[list="' + list + '"]');
-	if (l.is(':visible')) {
-		l.hide();
-	}
-	else {
+	var open = !l.is(':visible');
+	if (open) {
 		l.show();
 		if (list == 'distance') {
 			appointmentDistFill(detail);
 			appointmentDistShow(l.filter('.appointment_distance_panel'));
 		}
+	}
+	else {
+		l.hide();
+	}
+	// Dist and Measures are sections the house keeps open or closed
+	if (list == 'distance' || list == 'measures') {
+		settingSetter({ app: '__president', setting: 'appointment_' + list + '_open', device: 'all', value: open ? 'on' : 'off' });
 	}
 	appActSync($(this).closest('.wind'));
 
