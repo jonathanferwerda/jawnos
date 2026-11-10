@@ -155,6 +155,48 @@ sub say_render_wav {
 	return $made ? $wav : '';
 }
 
+# The speaking, with no event loop of its own to reset. say_it runs it in a
+# child - a fork on Unix, perl/subprocessor_worker.pl on a box without fork -
+# because a request may speak and still have to answer (Leave says goodbye).
+# Run inline it would reset the request worker's event loop, and the reply in
+# flight would never leave.
+sub say_speak {
+	my ($text, $voice_override) = @_;
+	return unless defined $text && length $text;
+	my $pick = $voice_override || &subs::misc_setting('say_voice') || &subs::say_default_voice();
+	my $spec = &subs::say_voice_spec($pick) || &subs::say_voice_spec(&subs::say_default_voice());
+	# Piper first, on every device, so the voice is uniform wherever it can
+	# run: the models are shared (voice_sync), only the binary is per-device.
+	if (($spec->{'engine'} || '') eq 'piper') {
+		my $wav = &subs::say_render_wav($text, $pick);
+		if ($wav) {
+			my $player = &subs::say_player_command();
+			# the app plays it natively on a phone; only a desktop has a
+			# shell player to fall back to
+			my $played = $device eq 'mobile'
+				? &subs::device_call('media.player', { action => 'play', path => $wav })
+				: 0;
+			# a headless server has no sink; a failed play is not our problem
+			`$player "$wav" 2>/dev/null` if !$played && length $player;
+			unlink $wav;
+			return;
+		}
+	}
+	# Fallbacks: Android's own engine where piper cannot run; espeak elsewhere.
+	if ($device eq 'mobile') {
+		&subs::device_call('speech.speak', { text => $text });
+		return;
+	}
+	# espeak: the chosen espeak voice, or the fallback when piper is missing.
+	# It is a Unix tool; a box without it has no speech, and probing for it
+	# through the shell printed Windows' "path not found" on every backfill
+	# note. system(LIST) also keeps the words out of the shell.
+	my $voice = $spec->{'voice'} || 'en-us';
+	my $espeak = JawnOS::Platform::tool_path('espeak');
+	system($espeak, '-a70', '-v', $voice, $text) if $espeak;
+	return;
+}
+
 sub say_it {
 	my $text = shift;
 	my $voice_override = shift;
@@ -162,42 +204,14 @@ sub say_it {
 	# the error watch's propose runs are headless: a stand-down notice must not
 	# speak (or block on audio) inside a background fork
 	return if $say_quiet;
-  &subs::subprocessor(sub {
-    Mojo::IOLoop->reset;
-		my $pick = $voice_override || &subs::misc_setting('say_voice') || &subs::say_default_voice();
-		my $spec = &subs::say_voice_spec($pick) || &subs::say_voice_spec(&subs::say_default_voice());
-		# Piper first, on every device, so the voice is uniform wherever it can
-		# run: the models are shared (voice_sync), only the binary is per-device.
-		if (($spec->{'engine'} || '') eq 'piper') {
-			my $wav = &subs::say_render_wav($text, $pick);
-			if ($wav) {
-				my $player = &subs::say_player_command();
-				# the app plays it natively on a phone; only a desktop has a
-				# shell player to fall back to
-				my $played = $device eq 'mobile'
-					? &subs::device_call('media.player', { action => 'play', path => $wav })
-					: 0;
-				# a headless server has no sink; a failed play is not our problem
-				`$player "$wav" 2>/dev/null` if !$played && length $player;
-				unlink $wav;
-				return;
-			}
-		}
-		# Fallbacks: Android's own engine where piper cannot run; espeak elsewhere.
-		if ($device eq 'mobile') {
-			&subs::device_call('speech.speak', { text => $text });
-			return;
-		}
-		# espeak: the chosen espeak voice, or the fallback when piper is missing.
-		# It is a Unix tool; a box without it has no speech, and probing for it
-		# through the shell printed Windows' "path not found" on every backfill
-		# note. system(LIST) also keeps the words out of the shell.
-		my $voice = $spec->{'voice'} || 'en-us';
-		my $espeak = JawnOS::Platform::tool_path('espeak');
-		system($espeak, '-a70', '-v', $voice, $text) if $espeak;
 	# A request may call this (Leave says goodbye): an inline run resets the
-	# request worker's event loop and the reply never leaves. Always a child.
-	}, { name => 'say it', fork => 1 });
+	# request worker's event loop and the reply never leaves. Always a child -
+	# the name is in %JOB, so a box without fork starts the worker by name and
+	# takes the words from args.
+	&subs::subprocessor(sub {
+		Mojo::IOLoop->reset;
+		&subs::say_speak($text, $voice_override);
+	}, { name => 'say it', fork => 1, args => { text => $text, voice => $voice_override } });
 }
 
 # Is the device on WiFi and reachable? Its own web server on the board port is the

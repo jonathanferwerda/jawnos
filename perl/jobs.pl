@@ -41,6 +41,15 @@ our %NO_FORK_SKIP = (
 # The staged app releases (the APKs) reconcile on a slower tick: ask each
 # reachable peer what it holds and pull the newest in, so every device becomes
 # a holder and a source. A first pass soon after boot, then every five minutes.
+# Speech is always its own process: a request may call say_it (Leave says
+# goodbye) and still have to answer, and the body resets its event loop before
+# it starts. On Unix say_it forks; on a box without fork this entry is what
+# the subprocessor starts by name, with the words in JAWNOS_JOB_ARGS.
+sub job_say_it {
+	my ($args) = @_;
+	&subs::say_speak($args->{'text'}, $args->{'voice'});
+}
+
 sub job_app_release_sync {
 	my ($args) = @_;
 	sleep 45;
@@ -460,6 +469,7 @@ sub job_utility_functions {
 	'ble adopt scan' => \&job_ble_adopt_scan,
 	'wake schedule' => \&job_wake_schedule,
 	'address directory' => \&job_address_directory,
+	'say it' => \&job_say_it,
 	'voice sync' => \&job_voice_sync,
 	'whisper server' => \&job_whisper_server,
 	'Minion Worker' => \&job_minion_worker,

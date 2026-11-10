@@ -79,7 +79,7 @@ like($help, qr/Exit refuses and keeps the house open/,
 # fork => 1, so the inline branch reset the request worker's event loop; and
 # the route read the passkey list from the database leave had just shredded.
 my $say = read_file("$root/lib/JawnOS/Domain/Say.pm");
-like($say, qr/\{ name => 'say it', fork => 1 \}/,
+like($say, qr/\{ name => 'say it', fork => 1, args => \{ text => \$text, voice => \$voice_override \} \}/,
 	'say_it is always its own process, so a request can speak and still answer');
 like($backup, qr/\{ name => 'backup shredder', fork => 1 \}/,
 	'the backup shredder is always its own process');

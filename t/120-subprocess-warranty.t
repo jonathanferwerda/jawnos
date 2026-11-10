@@ -353,6 +353,22 @@ like($calendar, qr/setpgrp\(0, 0\)/, 'the wrapper owns its process group');
 my $job_source = read_file("$root/perl/jobs.pl");
 like($job_source, qr/subs::subprocessor_heartbeat\(\)/, 'a resident loop heartbeats');
 
+# A body that resets its own event loop must never run inline on a box without
+# fork: the reset takes the request worker's reply with it. Speech is the cold
+# first request's example - a migration backfill says what it built - so it is
+# a named job, started by the worker with the words in its args.
+like($job_source, qr/'say it' => \\&job_say_it/,
+	'speech is a registered job, so a box without fork runs it in a worker');
+like($job_source, qr/sub job_say_it \{.*?&subs::say_speak\(\$args->\{'text'\}/s,
+	'the job body only speaks, it does not reset a loop it does not own');
+my $say_source = read_file("$root/lib/JawnOS/Domain/Say.pm");
+my ($speak_body) = $say_source =~ /(sub say_speak \{.*?\n\})/s;
+ok($speak_body, 'the speaking body is its own sub');
+unlike($speak_body || '', qr/Mojo::IOLoop->reset/,
+	'and it does not reset the loop');
+like($say_source, qr/name => 'say it', fork => 1, args => \{ text => \$text, voice => \$voice_override \}/,
+	'say_it passes the words to the worker as job args');
+
 my $launcher = read_file("$root/jawn");
 like($launcher, qr/subs::subprocessor_reap\(\$subprocesses/,
 	'the master reaps the records the workers send it');
