@@ -174,6 +174,10 @@ checkout and the master — the authority:
 - **A red wave is split, not retried forever.** The suite is retried once; if it is still red, the
   wave becomes single-ticket waves. The bad branch is refused with its failing lines and the rest
   land.
+- **The refused board.** `land_status.pl --refused` lists every ticket that did not land, with its
+  class and the message the coordinator left; `--check` exits 1 while one is waiting (a monitor's
+  signal), and `--all` includes the landed tickets. This is the read-only answer to "what is
+  stranded?", without needing a branch or ticket id.
 - **The queue is a snapshot.** Re-enqueueing the same branch updates its sha and keeps its place.
   A branch that still carries a commit already on the trunk under another sha (a re-enqueued ticket)
   is not a conflict: the coordinator skips the empty patch and lands the rest. A branch with nothing

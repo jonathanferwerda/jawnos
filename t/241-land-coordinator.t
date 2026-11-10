@@ -3,7 +3,8 @@
 #           coordinator's waves, one suite and one restart per wave, the hot-file
 #           cap, the red-wave split into single tickets, landed-ticket records,
 #           skipping a commit already on the trunk, the bounded enqueue wait,
-#           dead-running reaping, and the status/stats reader
+#           the refused-ticket board, dead-running reaping, and the status/stats
+#           reader
 
 use strict;
 use warnings;
@@ -386,6 +387,33 @@ subtest 'enqueue --wait returns the landed verdict' => sub {
 	like($out, qr/landed/, 'and prints the landed verdict');
 	my (undef, $st) = status($f, '--branch', 'agent/one');
 	is($st->{'ticket'}{'state'}, 'landed', 'the ticket is landed');
+};
+
+# --- the refused board answers without a ticket id -------------------------
+
+subtest 'the refused list answers without a branch id' => sub {
+	my $f = fixture();
+	commit_file($f->{'wt1'}, 'BREAK', "1\n", 'one: break the suite');
+	enqueue($f, $f->{'wt1'});
+	my ($rc, $out) = coordinator($f, '--train-size', '1', '--jobs', '1', '--suite-retries', '0', '--no-restart');
+	is($rc, 0, 'the coordinator drains') or diag($out);
+
+	my ($lrc, $lj, $lout) = status($f, '--refused', '--check');
+	is($lrc, 1, '--check exits 1 when a refusal is waiting') or diag($lout);
+	my ($t) = grep { ($_->{'branch'} // '') eq 'agent/one' } @{ $lj->{'tickets'} || [] };
+	ok($t, 'the refused ticket is listed without a branch id') or diag($lout);
+	is($t->{'state'}, 'refused', 'with its state');
+	is($t->{'result'}{'reason_class'}, 'suite', 'and the class a fixer needs');
+	is($lj->{'counts'}{'refused'}, 1, 'the summary counts it');
+
+	my ($arc, $aj) = status($f, '--all');
+	is($arc, 0, '--all reads the whole queue');
+	ok(scalar(grep { ($_->{'state'} // '') eq 'refused' } @{ $aj->{'tickets'} || [] }),
+		'and includes the refusal');
+
+	my ($crc, $cj) = status($f, '--refused');
+	is($crc, 0, 'the report without --check succeeds');
+	ok(ref $cj->{'tickets'} eq 'ARRAY', 'and still carries the list');
 };
 
 # --- enqueue refuses what it cannot land ----------------------------------

@@ -7,6 +7,9 @@
 #   perl scripts/land_status.pl --branch agent/pen
 #   perl scripts/land_status.pl --id 7 --wait --timeout 60
 #   perl scripts/land_status.pl --stats          measured waits and suite times
+#   perl scripts/land_status.pl --refused         every refused ticket, with its why
+#   perl scripts/land_status.pl --refused --check exit 1 when one is waiting
+#   perl scripts/land_status.pl --all             every ticket, terminal ones included
 #   perl scripts/land_status.pl --json
 #
 # --wait exists for a caller that wants a verdict in this turn; the coordinator
@@ -35,6 +38,9 @@ GetOptions(
 	'wait'             => \$opt{'wait'},
 	'timeout=s'        => \$opt{'timeout'},
 	'stats'            => \$opt{'stats'},
+	'all'              => \$opt{'all'},
+	'refused'          => \$opt{'refused'},
+	'check'            => \$opt{'check'},
 	'authority=s'      => \$opt{'authority'},
 	'authority-root=s' => \$opt{'authority_root'},
 	'authority-port=s' => \$opt{'authority_port'},
@@ -43,6 +49,8 @@ GetOptions(
 usage(0) if $opt{'help'};
 usage(2) unless $opt{'timeout'} =~ /^\d+$/;
 usage(2) unless $opt{'authority_port'} =~ /^\d+$/;
+# A check with no range asks the refused question: the one a monitor wants.
+$opt{'refused'} = 1 if $opt{'check'} && !$opt{'all'};
 $opt{'id'} = sprintf('%08d', $opt{'id'}) if defined $opt{'id'} && $opt{'id'} =~ /^\d+$/;
 
 if ($opt{'authority'}) {
@@ -53,6 +61,9 @@ if ($opt{'authority'}) {
 	push @fwd, '--wait' if $opt{'wait'};
 	push @fwd, '--timeout', $opt{'timeout'};
 	push @fwd, '--stats' if $opt{'stats'};
+	push @fwd, '--all' if $opt{'all'};
+	push @fwd, '--refused' if $opt{'refused'};
+	push @fwd, '--check' if $opt{'check'};
 
 	my ($lroot) = eval { LandQueue::repo() };
 	my $primary = $lroot ? LandQueue::primary_checkout($lroot) : '';
@@ -81,6 +92,29 @@ my $dir = LandQueue::queue_dir($common);
 if ($opt{'stats'}) {
 	stats($dir);
 	exit 0;
+}
+
+if ($opt{'all'} || $opt{'refused'}) {
+	my @all = @{ LandQueue::tickets($dir) };
+	my @shown = $opt{'refused'} ? grep { is_refused($_) } @all : @all;
+	my %state;
+	$state{ $_->{'state'} // 'queued' }++ for @all;
+	my $bad = grep { is_refused($_) } @shown;
+	if ($opt{'json'}) {
+		print JSON::PP->new->canonical->encode({
+			ok => 1,
+			tickets => \@shown,
+			counts => \%state,
+		}), "\n";
+	}
+	else {
+		if (!@shown) {
+			print $opt{'refused'} ? "no refused tickets\n" : "no tickets\n";
+		}
+		print_ticket($_) for @shown;
+		print 'tickets: ', join(', ', map { "$_ $state{$_}" } sort keys %state), "\n" if %state;
+	}
+	exit(($opt{'check'} && $bad) ? 1 : 0);
 }
 
 my $t = LandQueue::find_ticket($dir,
@@ -116,6 +150,14 @@ if ($t) {
 	exit 0;
 }
 exit 0;
+
+# A refused ticket is a terminal one that did not land: it still owes a fix or a
+# decision, and that is what the board must show.
+sub is_refused {
+	my ($t) = @_;
+	my $s = ($t->{'state'} // '');
+	return $s eq 'refused' || $s eq 'blocked' || $s eq 'superseded';
+}
 
 sub json_line {
 	my ($t) = @_;
@@ -229,8 +271,11 @@ sub usage {
 land_status.pl - what is in the landing queue
   perl scripts/land_status.pl [--id ID | --branch B] [--wait] [--timeout 60]
                               [--stats] [--json]
+                              [--refused [--check] | --all]
                               [--authority HOST] [--authority-root PATH]
                               [--authority-port 8022]
+  --refused lists the tickets that are refused, blocked or superseded; --check
+  exits 1 when one is waiting and implies --refused. --all lists every ticket.
 USAGE
 	exit $code;
 }
