@@ -507,8 +507,13 @@ sub action_43857 {
     Mojo::IOLoop->reset;
 
 		if ($teletype->{'ip'} && !$teletype->{'uuid'} && $teletype->{'ip'} eq $ip) {
-			my $ping = 'timeout .2 ping -c 1 ' . $teletype->{'ip'};
-			my $ping_test = `$ping`;
+			my $ping_ip = $teletype->{'ip'};
+			my $ping_test = '';
+			if (&subs::peer_host_is_literal($ping_ip) && open(my $ping_fh, '-|', 'timeout', '.2', 'ping', '-c', '1', $ping_ip)) {
+				local $/;
+				$ping_test = <$ping_fh> // '';
+				close $ping_fh;
+			}
 			my $backup = &subs::backup_now($c);
 			$backup = encode_json $backup;
 			if ($ping_test =~ /ttl/gi) {

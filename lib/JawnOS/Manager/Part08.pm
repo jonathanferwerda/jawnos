@@ -723,7 +723,7 @@ sub sync_rows_batch {
 	}
 	my $plain = eval { &subs::decrypter($secret, $res->body) };
 	return (undef, 'the batch would not decrypt') unless defined $plain && length $plain;
-	my $batch = eval { decode_sereal($plain) };
+	my $batch = eval { Sereal::Decoder->new({ no_bless_objects => 1 })->decode($plain) };
 	return (undef, 'the batch would not decode') unless ref $batch eq 'HASH';
 	return (undef, $batch->{'error'} || 'the peer refused the batch') unless $batch->{'ok'};
 	# The sealed response is what crossed the wire; record it so a v3 pull's size is
@@ -758,7 +758,7 @@ sub sync_buckets_batch {
 	}
 	my $plain = eval { &subs::decrypter($secret, $res->body) };
 	return (undef, 'the bucket map would not decrypt') unless defined $plain && length $plain;
-	my $map = eval { decode_sereal($plain) };
+	my $map = eval { Sereal::Decoder->new({ no_bless_objects => 1 })->decode($plain) };
 	return (undef, 'the bucket map would not decode') unless ref $map eq 'HASH';
 	return (undef, $map->{'error'} || 'the peer refused the bucket map') unless $map->{'ok'};
 	return ($map, undef);

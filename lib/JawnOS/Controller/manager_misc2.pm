@@ -761,7 +761,7 @@ sub action_9711 {
 	my $c = shift;
 	my $signatorial = $c->param('signatorial');
 	my $rm = ($signatorial && &subs::db_select('remote_machines', undef, { signatorial => $signatorial })->hashes->[0]);
-	unless ($rm && $rm->{'pubkey'} && &subs::peer_verify($c, $rm)) { $c->rendered(403); return; }
+	unless ($rm && $rm->{'pubkey'} && &subs::peer_verify($c, $rm) && &subs::peer_allows($c, $rm, 'trusted')) { $c->rendered(403); return; }
 	my $tar = &code_sync_tar(&subs::home('~/'));
 	$c->res->headers->content_type('application/x-gtar');
 	$c->render(data => $tar);
@@ -772,7 +772,7 @@ sub action_9720 {
 	my $c = shift;
 	my $signatorial = $c->param('signatorial');
 	my $rm = ($signatorial && &subs::db_select('remote_machines', undef, { signatorial => $signatorial })->hashes->[0]);
-	unless ($rm && $rm->{'pubkey'} && &subs::peer_verify($c, $rm)) { $c->rendered(403); return; }
+	unless ($rm && $rm->{'pubkey'} && &subs::peer_verify($c, $rm) && &subs::peer_allows($c, $rm, 'trusted')) { $c->rendered(403); return; }
 	my $body = $c->req->body;
 	$body = $body->slurp if ref $body;
 	my $limit = 256 * 1024 * 1024;
@@ -797,7 +797,7 @@ sub action_9743 {
 	my $c = shift;
 	my $signatorial = $c->param('signatorial');
 	my $rm = ($signatorial && &subs::db_select('remote_machines', undef, { signatorial => $signatorial })->hashes->[0]);
-	unless ($rm && $rm->{'pubkey'} && &subs::peer_verify($c, $rm)) { $c->rendered(403); return; }
+	unless ($rm && $rm->{'pubkey'} && &subs::peer_verify($c, $rm) && &subs::peer_allows($c, $rm, 'trusted')) { $c->rendered(403); return; }
 	&subs::sync_pull_touch();
 	my $path = &subs::home($c->param('file') || '');
 	my @roots = grep { defined && length } (&subs::backups_dir(), &subs::home('~/.president'));

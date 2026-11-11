@@ -370,11 +370,10 @@ sub website_grabber($data) {
 					);
 				}
 			}
-			my $hs = HTML::Strip->new(
-				striptags   => [ 'iframe','script' ],
-				emit_spaces => 0
-			);
-			my $content = $hs->parse( $raw_html );
+			# A fetched page is untrusted markup. Keep its safe rich text and drop
+			# scripts, handlers and unsafe URLs: this HTML is served from the
+			# manager's own origin.
+			my $content = &subs::article_html_clean($raw_html);
 
 
 
@@ -383,7 +382,7 @@ sub website_grabber($data) {
 				$uuid = $saved_website->{'uuid'};
 				&subs::db_update('websites',
 					{
-						content => $raw_html,
+						content => $content,
 						timestamp => $timestamp,
 						url => $website,
 						internal_url => $internal_url,
@@ -398,7 +397,7 @@ sub website_grabber($data) {
 			else {
 				$internal_url = &subs::random_string_creator();
 				&subs::db_insert('websites', {
-					content => $raw_html,
+					content => $content,
 					timestamp => $timestamp,
 					url => $website,
 					internal_url => $internal_url,

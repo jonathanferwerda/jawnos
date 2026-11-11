@@ -546,13 +546,13 @@ sub guide_message_warranty {
 				next unless $val =~ /^data:image\/\w+;base64,(.*)$/s;
 				my $img = MIME::Base64::decode_base64($1);
 				next unless $img && length $img;
-				`mkdir -p "$location"` unless -e $location;
+				system('mkdir', '-p', $location) unless -e $location;
 				my $raw = "$location/mugshot.$dev.png";
 				write_file($raw, $img);
 				my $secret = &subs::suds_grabber();
 				my $standard = &subs::setting_grabber({ app => 'misc', setting => 'encryption_standard' }) || 'aes-256-ctr';
 				&openssl_file_crypt('e', $standard, $secret, $raw, "$location/mugshot.$dev.png.enc", 0, 1);
-				`shred -u "$raw"`;
+				system('shred', '-u', $raw);
 				&subs::setting_setter({ app => 'me', setting => 'mugshot', device => $dev, value => "mugshot.$dev.png.enc" });
 			}
 			return 1;
@@ -579,13 +579,13 @@ sub guide_message_warranty {
 				next unless -e $map->{'f'};
 				my $bytes = eval { read_file($map->{'f'}) };
 				next unless $bytes && length $bytes;
-				`mkdir -p "$location"` unless -e $location;
+				system('mkdir', '-p', $location) unless -e $location;
 				my $raw = $location . '/guess_' . $map->{'uuid'} . '.png';
 				my $sealed = $location . '/guess_' . $map->{'uuid'} . '.png.enc';
 				write_file($raw, $bytes);
 				&openssl_file_crypt('e', $standard, $secret, $raw, $sealed, 0, 1);
 				unless (-e $sealed && -s $sealed) { unlink $raw; $failed++; next; }
-				`shred -u "$raw"`;
+				system('shred', '-u', $raw);
 				push @converted, [ $map->{'uuid'}, $map->{'f'}, $sealed ];
 				$map->{'f'} = $sealed;
 			}

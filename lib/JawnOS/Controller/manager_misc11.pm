@@ -67,7 +67,7 @@ sub action_35907 {
 	my $c = shift;
 	my $signatorial = $c->param('signatorial');
 	my $rm = ($signatorial && &subs::db_select('remote_machines', undef, { signatorial => $signatorial })->hashes->[0]);
-	unless ($rm && $rm->{'pubkey'} && &subs::peer_verify($c, $rm)) { $c->rendered(403); return; }
+	unless ($rm && $rm->{'pubkey'} && &subs::peer_verify($c, $rm) && &subs::peer_allows($c, $rm, 'trusted')) { $c->rendered(403); return; }
 	# Input is the most intimate thing a peer can ask for, so it sits on the
 	# Trusted rung rather than with the ordinary house actions.
 	unless (&subs::peer_allows($c, $rm, 'remote_control')) {
@@ -483,7 +483,7 @@ sub action_37365 {
 	my $c = shift;
 	my $signatorial = $c->param('signatorial');
 	my $rm = ($signatorial && &subs::db_select('remote_machines', undef, { signatorial => $signatorial })->hashes->[0]);
-	unless ($rm && $rm->{'pubkey'} && &subs::peer_verify($c, $rm)) { $c->rendered(403); return; }
+	unless ($rm && $rm->{'pubkey'} && &subs::peer_verify($c, $rm) && &subs::peer_allows($c, $rm, 'trusted')) { $c->rendered(403); return; }
 	# A peer that holds the accurate copy asks this machine to clear the records a
 	# bridge bug mangled (a millisecond date read as a span of minutes). This runs
 	# only the unmistakable bad-date pass, is idempotent, and writes through the
@@ -812,6 +812,7 @@ sub action_40678 {
 	my $mms_date = $c->param('mms_date') || 0;
 	my $mms_thread = $c->param('mms_thread') || 0;
 	my $jawn_uuid = $c->param('jawn_uuid') || '';
+	$jawn_uuid =~ s/[^A-Za-z0-9]//g;
 	$log->info('sms bridge result: ok=' . ($ok || '?') . ' via=' . $via . ' id=' . $id . ' mms_id=' . $mms_id . ' mms_date=' . $mms_date . ' error=' . $error);
 	# Only the mms bridge's own answer is the mms outcome. The page also reports
 	# the hand-over itself ('mms_command', an immediate ok) and the plain text's
@@ -838,6 +839,7 @@ sub action_40678 {
 sub action_40709 {
 	my $c = shift;
 	my $jawn_uuid = $c->param('jawn_uuid') || '';
+	$jawn_uuid =~ s/[^A-Za-z0-9]//g;
 	my $digits = $c->param('digits') || '';
 	my $subject = $c->param('subject') || '';
 	my $parts = eval { return decode_json $c->param('parts') } || [];

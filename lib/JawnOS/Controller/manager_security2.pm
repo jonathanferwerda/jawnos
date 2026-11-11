@@ -657,7 +657,7 @@ sub action_40314 {
 	my $c = shift;
 	my $signatorial = $c->param('signatorial') || '';
 	my $rm = ($signatorial && &subs::db_select('remote_machines', undef, { signatorial => $signatorial })->hashes->[0]);
-	unless ($rm && $rm->{'pubkey'} && &subs::peer_verify($c, $rm)) {
+	unless ($rm && $rm->{'pubkey'} && &subs::peer_verify($c, $rm) && &subs::peer_allows($c, $rm, 'trusted')) {
 		$log->info('padlock: peer unlock refused from ' . ($signatorial || '?') . ' at ' . ($c->tx->remote_address || '?'));
 		return $c->rendered(403);
 	}

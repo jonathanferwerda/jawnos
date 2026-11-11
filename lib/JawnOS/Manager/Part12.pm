@@ -235,7 +235,10 @@ sub ticket_desk_allowed($c) {
 		&& &subs::privilege_is_house($c->session('privilege'));
 	my $signatorial = $c->param('signatorial');
 	my $rm = ($signatorial && &subs::db_select('remote_machines', undef, { signatorial => $signatorial })->hashes->[0]);
-	return 1 if $rm && $rm->{'pubkey'} && &subs::peer_verify($c, $rm);
+	# A pinned key is not a grant. This desk mints citizenship, so only a peer
+	# that is trusted may reach it; a visitor-scope row stays out.
+	return 1 if $rm && $rm->{'pubkey'} && &subs::peer_verify($c, $rm)
+		&& &subs::peer_allows($c, $rm, 'trusted');
 	return 0;
 }
 

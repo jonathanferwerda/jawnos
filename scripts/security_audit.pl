@@ -157,6 +157,40 @@ for my $hit ( grep_tree('(system|exec)[[:space:]]*\([[:space:]]*"[^)]*[$]', 'lib
 		fix => 'use list-form system()/exec(), or build the string from quote()ed words');
 }
 
+# terminal_name escapes a short list of characters, not a shell word: `;`, a
+# backtick, `$`, `<` and `>` survive it. It is a display helper; a shell argument
+# must be quote()ed or, better, passed as a list.
+for my $hit ( grep_tree('terminal_name[^;]*`|`[^`]*terminal_name|(system|exec)[[:space:]]*\([^)]*terminal_name', 'lib', 'perl') ) {
+	my ($path, $line, $text) = @{$hit};
+	next if $text =~ /^\s*#/;
+	finding('high', 'perl.shell.terminal_name', 'command injection',
+		'terminal_name is used as a shell quoter', path => $path, line => $line,
+		evidence => redact($text),
+		fix => 'use list-form system()/exec(), or quote() every interpolated word');
+}
+
+# A leading & once meant Perl eval in run_command. It is not a command, and the
+# strings that reach it come from requests, settings and automations.
+for my $hit ( grep_tree('eval[[:space:]]*\{[[:space:]]*\$command', 'lib', 'perl') ) {
+	my ($path, $line, $text) = @{$hit};
+	next if $text =~ /^\s*#/;
+	finding('high', 'perl.eval.command', 'rce',
+		'a command string is eval\'d as Perl', path => $path, line => $line,
+		evidence => redact($text),
+		fix => 'refuse a leading &, or run the text through the tracked subprocessor only');
+}
+
+# am broadcast is the phone's intent rail; its words are data a board or a
+# message supplies, so a shell string around them is an injection.
+for my $hit ( grep_tree('`[^`]*am[[:space:]]+broadcast', 'lib', 'perl') ) {
+	my ($path, $line, $text) = @{$hit};
+	next if $text =~ /^\s*#/;
+	finding('high', 'perl.shell.am_broadcast', 'command injection',
+		'am broadcast runs inside a shell string', path => $path, line => $line,
+		evidence => redact($text),
+		fix => 'pass am an argv list (open -|, system)');
+}
+
 for my $hit ( grep_tree('read_file\s*\(\s*\$c->param|`tail \$', 'lib', 'perl') ) {
 	my ($path, $line, $text) = @{$hit};
 	next if $text =~ /path_is_within|path_name|quote\(/;

@@ -337,7 +337,7 @@ sub action_33508 {
 		$c->render(json => { error => 'the guess could not be sealed' });
 		return;
 	}
-	`shred -u "$raw"`;
+	system('shred', '-u', $raw);
 
 	my $centre_lat = ($box->{'minLat'} + $box->{'maxLat'}) / 2;
 	my $centre_lon = ($box->{'minLon'} + $box->{'maxLon'}) / 2;

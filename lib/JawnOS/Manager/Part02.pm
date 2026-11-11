@@ -369,7 +369,6 @@ sub scan($c,$scandata) {
 
 sub play_audio($file) {
 	&subs::subprocessor(sub {
-		$file = &subs::terminal_name($file);
 		if ( `ps -e | grep play` ) {
 			`pkill play`;
 		}
@@ -443,6 +442,7 @@ sub thumbs_bundle_one {
 		$file = $file_data->{'thumb'};
 	}
 	return undef unless -e $file;
+	return undef unless &subs::media_path_allowed($file);
 	my @st = stat($file);
 	return undef unless @st && $st[7] > 0 && $st[7] <= $max_file;
 	if ($file !~ /\.enc$/i) {

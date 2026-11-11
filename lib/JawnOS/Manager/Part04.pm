@@ -170,6 +170,12 @@ sub rock_and_roll($c) {
 		my $ext = $ext[-1];
 		my $timestamp = $c->param('timestamp') || &subs::rightNow();
 		my $filename = $file;
+		# A path named by the request is not a licence to read any file: the
+		# media this route serves lives in the house's own roots.
+		unless (&subs::media_path_allowed($file)) {
+			$c->render(text => 'not found');
+			return;
+		}
 	#	return 'no' unless -e &subs::terminal_name($file);
 
 		# as_is returns a file's bytes as-is. It is a relay for the app's own
@@ -543,8 +549,7 @@ sub rock_and_roll($c) {
 						return;
 					}
 					else {
-						my $command = 'timeout 25 ffmpeg -nostdin -i ' . &subs::terminal_name($file) . ' -map 0:s:0 ' . &subs::terminal_name($sub_file);
-						`$command`;
+						system('timeout', '25', 'ffmpeg', '-nostdin', '-i', $file, '-map', '0:s:0', $sub_file);
 						if (-e $sub_file) {
 							my $data = read_file($sub_file);
 							$data ? $c->render_file(data => $data, content_type => 'text/vtt', content_disposition => 'inline') : $c->render(text => 'WEBVTT');
@@ -569,7 +574,7 @@ sub rock_and_roll($c) {
 					}
 					else {
 						my $filename = $tdir . '/' . &subs::random_string_creator(20) . '.png';
-						my $command = 'ffmpeg -nostdin -ss 00:01:30.010 -i ' . &subs::terminal_name($file) . ' -vframes 1 -c:v png -f image2pipe - | magick - -resize 200x200 -';
+						my $command = 'ffmpeg -nostdin -ss 00:01:30.010 -i ' . &quote($file) . ' -vframes 1 -c:v png -f image2pipe - | magick - -resize 200x200 -';
 						my $data = &native_thumb_png($file, 200);
 						$data = &run_thumb_command($command) unless defined $data && length $data;
 						if ($c->param('position')) {
@@ -582,7 +587,6 @@ sub rock_and_roll($c) {
 					}
 				}
 				elsif (grep { $ext eq $_ } qw/xcf tiff/) {
-					my $t_file = &subs::terminal_name($file);
 					my $c_command = 'magick ' . &quote($file . '[0]') . ' -alpha on -background none -flatten -resize 256x256 png:-';
 					my $converted = &native_thumb_png($file, 256);
 					$converted = `$c_command` unless defined $converted && length $converted;
@@ -610,8 +614,7 @@ sub rock_and_roll($c) {
 						return;
 					}
 					else {
-						my $command = 'timeout 25 ffmpeg -nostdin -i ' . &subs::terminal_name($file) . ' -map 0:s:0 ' . &subs::terminal_name($sub_file);
-						`$command`;
+						system('timeout', '25', 'ffmpeg', '-nostdin', '-i', $file, '-map', '0:s:0', $sub_file);
 						if (-e $sub_file) {
 							my $data = read_file($sub_file);
 							$data ? $c->render_file(data => $data, content_type => 'text/vtt', content_disposition => 'inline') : $c->render(text => 'WEBVTT');
@@ -641,8 +644,7 @@ sub rock_and_roll($c) {
 						my $tfile = pop @folder;
 						my $folder = join '/', @folder;
 						my $thumb_folder = $folder . '/.thumbs';
-						my $tfd = &subs::terminal_name($thumb_folder);
-						`mkdir -p $tfd` unless -e $thumb_folder;
+						system('mkdir', '-p', $thumb_folder) unless -e $thumb_folder;
 						my @tfile = split /\./, $tfile;
 						pop @tfile;
 						if ($c->param('chapter') eq 'ya') {
@@ -681,7 +683,6 @@ sub rock_and_roll($c) {
 					return;
 				}
 				elsif (grep { $ext eq $_ } qw/xcf tiff/) {
-					my $t_file = &subs::terminal_name($file);
 					my $c_command = 'magick ' . &quote($file . '[0]') . ' -alpha on -background none -flatten -resize 256x256 png:-';
 					my $converted = &native_thumb_png($file, 256);
 					$converted = `$c_command` unless defined $converted && length $converted;

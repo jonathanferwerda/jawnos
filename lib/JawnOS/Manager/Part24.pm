@@ -64,7 +64,6 @@ our ($APP, $ws_live_window, $encoder, $decoder, $tuuid, $thread_uuid, $universal
 # is the same one the gallery reads, so a not-visible app's files stay out until
 # this screen's Folders padlock is open.
 sub folders_listing($folder, $unlocked, $c, $show_hidden) {
-	my $formatted_folder = &subs::terminal_name($folder);
 	my $files = [];
 	my $total_size = 0;
 	foreach my $f ( &folders_entry_names($folder, $show_hidden) ) {
@@ -137,8 +136,14 @@ sub folders_listing($folder, $unlocked, $c, $show_hidden) {
 		} @{$files};
 	}
 	# the disk figures belong to the path being read; `--` keeps a path that
-	# starts with a dash from being read as an option
-	my $df = `df -h -- $formatted_folder 2>/dev/null`;
+	# starts with a dash from being read as an option. List form, so the path is
+	# a word and never shell text.
+	my $df = '';
+	if (open(my $dfh, '-|', 'df', '-h', '--', $folder)) {
+		local $/;
+		$df = <$dfh> // '';
+		close $dfh;
+	}
 	my @df = split /\n/, $df;
 	my @first_line = split(/\s+/, $df[0] // '');
 	my @data_line = split(/\s+/, $df[1] // '');
@@ -171,12 +176,15 @@ sub folders_property_grabber($data) {
 	}
 	my $thumb_dir = $folder . '/.thumbs';
 	if (-e $thumb_dir && $file->{'type'} eq 'video') {
-		my $formatted_thumbs_dir = &subs::terminal_name($thumb_dir);
-		my $thumbs = `ls $formatted_thumbs_dir`;
+		my @thumb_names;
+		if (opendir(my $tdh, $thumb_dir)) {
+			@thumb_names = grep { $_ ne '.' && $_ ne '..' } readdir($tdh);
+			closedir $tdh;
+		}
 		my @f = split /\./, $f;
 		pop @f;
 		my $f_thumb = join '.', @f;
-		my @thumbs = grep { $_ =~ /\Q$f_thumb/ } split /\n/, $thumbs;
+		my @thumbs = grep { $_ =~ /\Q$f_thumb/ } @thumb_names;
 		$file->{'thumbs'} = [ map { $thumb_dir . '/' . $_ }  @thumbs ];
 		$file->{'icon'} = '/file_open?file=' . uri_encode $thumb_dir . '/' . $thumbs[0];
 
@@ -536,7 +544,12 @@ sub ide_opener($data) {
 }
 
 sub ide_file_open($file,$source) {
-	my $content = `cat $file`;
+	my $content = '';
+	# A request path or a stored open-tab key is data, not a command. Read it in
+	# Perl, and only inside this house's home (or the phone's shared store).
+	if (&subs::path_is_under($file, &subs::home('~'), '/sdcard') && -f $file) {
+		$content = eval { read_file($file) } // '';
+	}
 	my @file_name = split '/', $file;
 	my $status = '';
 	if ($source eq 'open') {

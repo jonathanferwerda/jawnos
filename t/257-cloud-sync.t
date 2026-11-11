@@ -20,22 +20,26 @@ use RepoSource;
 my $root = repo_root();
 my $test_home = tempdir(CLEANUP => 1);
 $ENV{'HOME'} = $test_home;
+my $house_sync = "$test_home/house-sync";
 require "$root/lib/JawnOS/Domain/Archive.pm";
 require "$root/lib/JawnOS/Domain/Loader.pm";
 subs::preload('rightNow');
 subs::preload('random_string_creator');
+# run_tests may have asked for home() before this file set HOME, so point the
+# cached root at the test home: the destination policy is checked with it.
+$subs::home_dir = $test_home;
 
 # ---- a destination cannot climb out of its base -----------------------------
 
-my $dest = subs::cloud_sync_destination({ base => '/tmp/house-sync', path => 'photos/autumn/a.jpg' });
-is($dest->{'root'}, '/tmp/house-sync', 'the base is the destination root');
+my $dest = subs::cloud_sync_destination({ base => $house_sync, path => 'photos/autumn/a.jpg' });
+is($dest->{'root'}, $house_sync, 'the base is the destination root');
 is($dest->{'relative'}, 'photos/autumn/a.jpg', 'the path inside the base is kept');
-is($dest->{'path'}, '/tmp/house-sync/photos/autumn/a.jpg', 'the file lands under the base');
-is($dest->{'parent'}, '/tmp/house-sync/photos/autumn', 'and its parent is the folder it sits in');
+is($dest->{'path'}, "$house_sync/photos/autumn/a.jpg", 'the file lands under the base');
+is($dest->{'parent'}, "$house_sync/photos/autumn", 'and its parent is the folder it sits in');
 
-my $climb = subs::cloud_sync_destination({ base => '/tmp/house-sync', path => '../../etc/passwd' });
+my $climb = subs::cloud_sync_destination({ base => $house_sync, path => '../../etc/passwd' });
 is($climb->{'relative'}, 'etc/passwd', 'a path that tries to climb is resolved against the base');
-is($climb->{'path'}, '/tmp/house-sync/etc/passwd', 'and still lands inside the base');
+is($climb->{'path'}, "$house_sync/etc/passwd", 'and still lands inside the base');
 
 # ---- the newer time wins, and a tie is settled by content -------------------
 
@@ -67,13 +71,13 @@ is($state->{'pending'}->[0]->{'rel'}, 'c.txt', 'and keeps the right one');
 
 # ---- a losing copy gets a stable conflict name ------------------------------
 
-my $conflict = subs::cloud_sync_conflict_path({ root => '/tmp/house-sync', path => '/tmp/house-sync/a.txt' }, 'abcdef1234567890');
+my $conflict = subs::cloud_sync_conflict_path({ root => $house_sync, path => "$house_sync/a.txt" }, 'abcdef1234567890');
 is($conflict->{'relative'}, 'a.txt.conflict-abcdef12', 'the loser is named by its content hash');
-is($conflict->{'path'}, '/tmp/house-sync/a.txt.conflict-abcdef12', 'beside the file it lost to');
+is($conflict->{'path'}, "$house_sync/a.txt.conflict-abcdef12", 'beside the file it lost to');
 
 # ---- a partial remembers which device owns it -------------------------------
 
-my $partial_dir = tempdir(CLEANUP => 1);
+my $partial_dir = tempdir(DIR => $test_home, CLEANUP => 1);
 my $owned = "$partial_dir/owned.bin";
 write_file(subs::archive_partial_path($owned), 'abc');
 subs::archive_partial_meta_write($owned, {
@@ -89,7 +93,7 @@ ok($owned_state->{'started'} > 0, 'and when it started, so a stale one can be ta
 
 # ---- the room question answers in bytes -------------------------------------
 
-my $tmp = tempdir(CLEANUP => 1);
+my $tmp = tempdir(DIR => $test_home, CLEANUP => 1);
 make_path("$tmp/root/sub");
 write_file("$tmp/root/keep.bin", 'keep');
 my $space = subs::cloud_sync_free_space($tmp);
@@ -103,7 +107,7 @@ ok($space->{'total_bytes'} >= $space->{'free_bytes'}, 'the total is at least the
 # so the state file under ~/.president/cloud_sync is exercised without touching
 # the person's own state.
 
-my $sync = tempdir(CLEANUP => 1);
+my $sync = tempdir(DIR => $test_home, CLEANUP => 1);
 my $sync_base = $sync;
 write_file("$sync/one.txt", 'one');
 my $collected = subs::cloud_sync_collect_changes($sync, $sync_base);
@@ -133,7 +137,7 @@ ok(!$after_delete->{'files'}->{'one.txt'}, 'the file entry is gone');
 
 # A receive whose copy is newer takes the name and keeps the local copy as a
 # conflict file; one whose copy is older leaves the local copy in place.
-my $incoming_dir = tempdir(CLEANUP => 1);
+my $incoming_dir = tempdir(DIR => $test_home, CLEANUP => 1);
 my $incoming_base = $incoming_dir;
 write_file("$incoming_dir/one.txt", 'local bytes');
 utime 3000, 3000, "$incoming_dir/one.txt";

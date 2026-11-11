@@ -613,8 +613,8 @@ sub action_28480 {
 		my $channel = $filename[-2];
 		my $take = $filename[-1];
 		$data->{$channel}->{'mixer'}->{'out'}->[$take]->{'uuid'} = $take_uuid;
-		my $filename = $location . '/' . $u->filename;
-		`mkdir -p $location` unless -e $location;
+		my $filename = $location . '/' . &subs::path_name($u->filename);
+		system('mkdir', '-p', $location) unless -e $location;
 		$u->move_to($filename);
 		push @files, { f => $filename, uuid => $take_uuid, type => 'recording' };
 	}

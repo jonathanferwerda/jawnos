@@ -996,10 +996,10 @@ sub lan_presence_payload {
 sub lan_presence_verify {
 	my ($rm, $msg) = @_;
 	my $sig = $msg->{'sig'} // '';
+	# An unsigned beacon proves nothing, not even for a keyless row: first contact
+	# is the out-of-band join code, never a stranger's claim on the LAN.
+	return 0 unless $sig;
 	my $stored = $rm->{'pubkey'} // '';
-	# Unsigned is the same first-contact rule the peer rail uses: fine only while
-	# this peer has no key on file yet.
-	return 1 unless $stored || $sig;
 	my $pub = $stored || ($msg->{'pubkey'} // '');
 	return 0 unless $pub && $sig && index($pub, '-----BEGIN PUBLIC KEY-----') == 0;
 	my $ok = &signature_verify($pub, &lan_presence_canonical($msg), $sig);

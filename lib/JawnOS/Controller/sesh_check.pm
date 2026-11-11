@@ -151,12 +151,18 @@ sub action_7519 {
 				# Only the new body-bound login carries a digest. A caller from the
 				# previous version sends the name without one; it may still log in,
 				# but its name is not proved and it is not a peer session.
-				if ($peer_row && $body_sha ne '' && !&subs::peer_verify_strict($c, $peer_row)) {
-					$log->info('sesh_check peer login refused: ' . $claimed . ' did not sign');
-					$c->render(json => { authentication => 'denied', error => 'the peer did not sign' });
-					return;
+				if ($peer_row && $body_sha ne '') {
+					# The name is proved only by a key that is already pinned and a
+					# grant that still allows a house session. A keyless row is not
+					# first contact here: the password is bootstrap, not a key.
+					unless ($peer_row->{'pubkey'} && &subs::peer_verify_strict($c, $peer_row)
+						&& &subs::peer_allows($c, $peer_row, 'resident')) {
+						$log->info('sesh_check peer login refused: ' . $claimed . ' did not sign');
+						$c->render(json => { authentication => 'denied', error => 'the peer did not sign' });
+						return;
+					}
+					$peer_proved = 1;
 				}
-				$peer_proved = 1 if $peer_row && $body_sha ne '';
 			}
 			# A state-changing POST must not ride another site's page; Lax keeps
 			# the ticket redirect working and blocks cross-site POST cookies.

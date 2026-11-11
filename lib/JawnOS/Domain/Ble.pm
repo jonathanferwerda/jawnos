@@ -517,8 +517,19 @@ sub bluetooth_sender {
 			return close $bt_fh;
 		}
 		my $b64 = encode_base64 $json;
-		my $cmd = "am broadcast --user 0 -a $intent -e mac_address '$bt_mac' -e message '$b64' -e name '$name' -e service_uuid '$service_uuid' -e characteristic_uuid_rx '$characteristic_uuid_rx' -e characteristic_uuid_tx '$characteristic_uuid_tx'";
-		return `$cmd`;
+		# The device's own name is data: hand am every word as an argument.
+		my @am = ('am', 'broadcast', '--user', '0', '-a', $intent,
+			'-e', 'mac_address', $bt_mac, '-e', 'message', $b64, '-e', 'name', $name,
+			'-e', 'service_uuid', $service_uuid,
+			'-e', 'characteristic_uuid_rx', $characteristic_uuid_rx,
+			'-e', 'characteristic_uuid_tx', $characteristic_uuid_tx);
+		my $out = '';
+		if (open(my $am_fh, '-|', @am)) {
+			local $/;
+			$out = <$am_fh> // '';
+			close $am_fh;
+		}
+		return $out;
 	}
 }
 

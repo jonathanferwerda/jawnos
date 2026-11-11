@@ -152,8 +152,13 @@ sub notification_sender($m,$db) {
 		my $watch = &subs::device_lister($m->{'timestamp'},$embedded);
 		if (eval {$watch->{'ip'}}) {
 
-			my $ping = 'timeout .2 ping -c 1 ' . $watch->{'ip'};
-			my $ping_test = `$ping`;
+			my $ping_ip = $watch->{'ip'};
+			my $ping_test = '';
+			if (&subs::peer_host_is_literal($ping_ip) && open(my $ping_fh, '-|', 'timeout', '.2', 'ping', '-c', '1', $ping_ip)) {
+				local $/;
+				$ping_test = <$ping_fh> // '';
+				close $ping_fh;
+			}
 			if ($ping_test =~ /ttl/gi) {
 				my $ua = Mojo::UserAgent->new();
 				$ua->connect_timeout(1);

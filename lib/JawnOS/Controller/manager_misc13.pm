@@ -122,7 +122,7 @@ sub action_42585 {
 	my $words = $c->param('words');
 	my $voice = $c->param('voice');
 	&subs::say_it($words, $voice);
-	$c->render(text => 'said ' . $words);
+	$c->render(text => 'said ' . &subs::html_text($words));
 	&Websocket::send('server', { json => { type => 'command', command => 'say_it', params => $words, timestamp => $timestamp } });
 }
 
@@ -367,6 +367,9 @@ sub action_44680 {
 sub action_44701 {
 	my $c = shift;
 	my $timestamp = $c->param('timestamp');
+	unless (defined $timestamp && $timestamp =~ /\A\d{1,16}\z/) {
+		return $c->render(json => { error => 'bad timestamp' }, status => 400);
+	}
 	my $app = &subs::unformat_name($c->param('app'));
 	my $app_path = &subs::path_name($app);
 	my $snapshot = $c->param('snapshot');
@@ -397,6 +400,9 @@ sub action_44701 {
 sub action_44729 {
 	my $c = shift;
 	my $timestamp = $c->param('timestamp');
+	unless (defined $timestamp && $timestamp =~ /\A\d{1,16}\z/) {
+		return $c->render(json => { error => 'bad timestamp' }, status => 400);
+	}
 	my $marker = $c->param('marker');
 	my $image = $c->param('img');
 	my $paper = $c->param('paper');
@@ -590,6 +596,14 @@ sub action_45074 {
 	unless (ref $body eq 'HASH') { $c->render(json => { ok => 0, error => 'bad body' }); return; }
 	my $sig = $body->{'signatorial'} // '';
 	unless ($sig =~ /^[0-9a-f]{32}$/) { $c->render(json => { ok => 0, error => 'bad signatorial' }); return; }
+	# A signed peer may report only itself: the signature covers the query name,
+	# not the body, so a peer naming another machine here would rename its row
+	# in every monitor's Levels card.
+	my $peer_name = $c->param('signatorial') // '';
+	if ($peer_name ne '' && $sig ne $peer_name) {
+		$c->render(json => { ok => 0, error => 'the body names another machine' });
+		return;
+	}
 	# the peer is awake and telling us so: clear the backoff from when it was not
 	&subs::levels_peer_announced($sig);
 	# A machine reports only itself. Ignoring a push for our own row stops a

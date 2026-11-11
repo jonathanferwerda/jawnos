@@ -1915,6 +1915,10 @@ sub cloud_sync_destination {
 	my $root = ($base =~ m{^/}) ? $base : &home('~/' . $base);
 	$root =~ s{/+$}{} unless $root eq '/';
 	return { error => 'no destination' } unless length $root;
+	# An absolute destination still has to be inside the house's own storage:
+	# the member list cannot nominate /etc or another user's directory.
+	return { error => 'destination is outside the house' }
+		unless &subs::path_is_under($root, &home('~'), '/sdcard', '/storage');
 	my @parts;
 	foreach my $part (split m{/+}, ($data->{'path'} // '')) {
 		next if $part eq '' || $part eq '.';

@@ -459,8 +459,13 @@ sub embedded_app_deleter($data) {
 				my $watch_home = 'http://' . $watch->{'ip'} . ':' . $config->{'port'} . '/delete_job' . '?appt_uuid=' . $appt_uuid . '&authorization=' . $op_d->{'__specs'}->{'authorization'} . '&timestamp=' . $timestamp;
 
 				my $ua = Mojo::UserAgent->new();
-				my $ping = 'timeout .2 ping -c 1 ' . $watch->{'ip'};
-				my $ping_test = `$ping`;
+				my $ping_ip = $watch->{'ip'};
+				my $ping_test = '';
+				if (&subs::peer_host_is_literal($ping_ip) && open(my $ping_fh, '-|', 'timeout', '.2', 'ping', '-c', '1', $ping_ip)) {
+					local $/;
+					$ping_test = <$ping_fh> // '';
+					close $ping_fh;
+				}
 				if ($ping_test =~ /ttl/gi) {
 					my $res = $ua->insecure(1)->get($watch_home)->result;
 				}
@@ -571,8 +576,13 @@ sub send_telephone($app,$msg) {
 			my $od = &subs::setting_grabber({ 'app' => $watch->{'purpose'}, 'setting' => 'operator_door', subsetting => $watch->{'chip_id'}  });
 			my $op_d = (eval { decode_json $od }) ? decode_json $od : {};
 			if ($watch->{'ip'} && !$watch->{'uuid'}) {
-				my $ping = 'timeout .2 ping -c 1 ' . $watch->{'ip'};
-				my $ping_test = `$ping`;
+				my $ping_ip = $watch->{'ip'};
+				my $ping_test = '';
+				if (&subs::peer_host_is_literal($ping_ip) && open(my $ping_fh, '-|', 'timeout', '.2', 'ping', '-c', '1', $ping_ip)) {
+					local $/;
+					$ping_test = <$ping_fh> // '';
+					close $ping_fh;
+				}
 
 
 				if ($ping_test =~ /ttl/gi) {

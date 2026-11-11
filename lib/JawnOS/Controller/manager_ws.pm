@@ -253,16 +253,16 @@ sub action_47050 {
 		$data->{'method'} = '' unless defined $data->{'method'};
 		my $app = $data->{'app'};
 		my $apper = $data->{'app'};
-		# A mux tab leaving one window asks the worker to stop feeding that app;
-		# the one socket stays open for the rest.
+		# A mux tab leaving one window stops that app; the socket stays open.
 		if ($c->tx->{'mux'} && $data->{'type'} eq 'close_app') {
 			delete $gb::ws->{$app}->{$data->{'browser_tab_id'} || $browser_tab_id};
 			return;
 		}
 		if ($app =~ /@/gi) {
-			my @app = split /\@/, $app;
-			$apper = $app[0];
+			my @app = split /\@/, $app; $apper = $app[0];
 		}
+		# Below resident, the server app keeps only the liveness beat.
+		return unless &subs::privilege_is_house($c->session('privilege')) || ($app ne 'server' && $apper ne 'server') || $data->{'type'} eq 'stayingAlive';
 		unless ($ws_server->{$app}) {
 			&ws_server_ensure($app);
 		}

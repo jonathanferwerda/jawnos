@@ -79,25 +79,33 @@ sub action_30882 {
 # POST /manager/ide/file_create
 sub action_30894 {
 	my $c = shift;
-	my $filename = &subs::terminal_name($c->param('filename'));
+	my $filename = $c->param('filename');
 	my $timestamp = $c->param('timestamp');
-	`touch $filename`;
+	# The IDE edits this house's own files. A path is data, never a shell word:
+	# confine it to home (or the phone's shared store) and create it in Perl.
+	unless (&subs::path_is_under($filename, &subs::home('~'), '/sdcard')) {
+		return $c->render(json => { status => 'denied' }, status => 403);
+	}
+	open(my $created, '>>', $filename) or return $c->render(json => { status => 'error' }, status => 500);
+	close $created;
 	$c->render('text' => 'ok');
 }
 
 # POST /manager/ide/file_delete
 sub action_30901 {
 	my $c = shift;
-	my $file = &subs::terminal_name($c->param('file'));
+	my $file = $c->param('file');
 	my $type = $c->param('type');
 	my @ext = split /\./,$file;
+	unless (&subs::path_is_under($file, &subs::home('~'), '/sdcard')) {
+		return $c->render(json => { status => 'denied' }, status => 403);
+	}
 	if ($type eq 'file') {
-		my $command = 'shred -u ' . $file;
-
-		`$command`;
+		system('shred', '-u', $file);
 	}
 	else {
-		`rm -R $file`;
+		require File::Path;
+		File::Path::remove_tree($file);
 	}
 
 	$c->render(json => { file => $file, type => $type });
@@ -125,7 +133,7 @@ sub action_30917 {
 
 		my $folder = join '/', @folder;
 		my @files;
-		if (opendir(my $dh, $folder)) {
+		if (&subs::path_is_under($folder, &subs::home('~'), '/sdcard') && opendir(my $dh, $folder)) {
 			@files = sort grep { $_ ne '.' && $_ ne '..' } readdir($dh);
 			closedir $dh;
 		}
@@ -197,6 +205,9 @@ sub action_31008 {
 	my $file = $c->param('file');
 	my $content = $c->param('content');
 
+	unless (&subs::path_is_under($file, &subs::home('~'), '/sdcard')) {
+		return $c->render(json => { status => 'denied' }, status => 403);
+	}
 	write_file($file, $content);
 	$c->render(json => { status => 'success' });
 }

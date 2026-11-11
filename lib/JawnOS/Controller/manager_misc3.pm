@@ -73,7 +73,7 @@ sub action_9883 {
 	# the gate (a keyless machine has no session); peer_verify is its gate.
 	my $signatorial = $c->param('signatorial');
 	my $rm = ($signatorial && &subs::db_select('remote_machines', undef, { signatorial => $signatorial })->hashes->[0]);
-	unless ($rm && $rm->{'pubkey'} && &subs::peer_verify($c, $rm)) { $c->rendered(403); return; }
+	unless ($rm && $rm->{'pubkey'} && &subs::peer_verify($c, $rm) && &subs::peer_allows($c, $rm, 'trusted')) { $c->rendered(403); return; }
 	my $share = &subs::setting_grabber({ app => '__president', setting => 'vault_share' });
 	$share = 'yes' unless defined $share && length $share;
 	unless ($share eq 'yes') { $c->render(json => { ok => 0, error => 'sharing off' }); return; }
@@ -98,7 +98,7 @@ sub action_9907 {
 	# gate, like vault_share.
 	my $signatorial = $c->param('signatorial');
 	my $rm = ($signatorial && &subs::db_select('remote_machines', undef, { signatorial => $signatorial })->hashes->[0]);
-	unless ($rm && $rm->{'pubkey'} && &subs::peer_verify($c, $rm)) { $c->rendered(403); return; }
+	unless ($rm && $rm->{'pubkey'} && &subs::peer_verify($c, $rm) && &subs::peer_allows($c, $rm, 'trusted')) { $c->rendered(403); return; }
 	my $result = eval { &subs::legacy_reseal() } || { ok => 0 };
 	$c->render(json => { %{$result}, by => &subs::signatorial_designer() });
 }
@@ -114,7 +114,7 @@ sub action_9920 {
 	# adopt), and this machine's own sealed files go to its queue.
 	my $signatorial = $c->param('signatorial');
 	my $rm = ($signatorial && &subs::db_select('remote_machines', undef, { signatorial => $signatorial })->hashes->[0]);
-	unless ($rm && $rm->{'pubkey'} && &subs::peer_verify($c, $rm)) { $c->rendered(403); return; }
+	unless ($rm && $rm->{'pubkey'} && &subs::peer_verify($c, $rm) && &subs::peer_allows($c, $rm, 'trusted')) { $c->rendered(403); return; }
 	my $K = eval { &subs::suds_grabber() };
 	my $proved = $c->param('proved');
 	unless ($K && $proved) { $c->render(json => { ok => 0, error => 'no key here' }); return; }
@@ -138,7 +138,7 @@ sub action_9944 {
 	# to store it. peer_verify is the gate; the value is the row Now Me wrote.
 	my $signatorial = $c->param('signatorial');
 	my $rm = ($signatorial && &subs::db_select('remote_machines', undef, { signatorial => $signatorial })->hashes->[0]);
-	unless ($rm && $rm->{'pubkey'} && &subs::peer_verify($c, $rm)) { $c->rendered(403); return; }
+	unless ($rm && $rm->{'pubkey'} && &subs::peer_verify($c, $rm) && &subs::peer_allows($c, $rm, 'trusted')) { $c->rendered(403); return; }
 	my $edt = $c->param('edt');
 	my $chip_id = $c->param('chip_id');
 	my $value = $c->param('value');
@@ -168,7 +168,7 @@ sub action_10187 {
 	my $c = shift;
 	my $signatorial = $c->param('signatorial');
 	my $rm = ($signatorial && &subs::db_select('remote_machines', undef, { signatorial => $signatorial })->hashes->[0]);
-	unless ($rm && $rm->{'pubkey'} && &subs::peer_verify($c, $rm)) { $c->rendered(403); return; }
+	unless ($rm && $rm->{'pubkey'} && &subs::peer_verify($c, $rm) && &subs::peer_allows($c, $rm, 'trusted')) { $c->rendered(403); return; }
 	my $repo = &subs::home('~/jawnos');
 	# force reconciles a tree git cannot fast-forward (the branch's history was
 	# rewritten, or local commits exist) by resetting hard to this machine's
@@ -193,7 +193,7 @@ sub action_10288 {
 	my $c = shift;
 	my $signatorial = $c->param('signatorial');
 	my $rm = ($signatorial && &subs::db_select('remote_machines', undef, { signatorial => $signatorial })->hashes->[0]);
-	unless ($rm && $rm->{'pubkey'} && &subs::peer_verify($c, $rm)) { $c->rendered(403); return; }
+	unless ($rm && $rm->{'pubkey'} && &subs::peer_verify($c, $rm) && &subs::peer_allows($c, $rm, 'trusted')) { $c->rendered(403); return; }
 	my $repo = &subs::home('~/jawnos');
 	my $git = &subs::git_binary();
 	my $base = $c->param('base') || '';
@@ -338,7 +338,7 @@ sub action_10415 {
 	my $c = shift;
 	my $signatorial = $c->param('signatorial');
 	my $rm = ($signatorial && &subs::db_select('remote_machines', undef, { signatorial => $signatorial })->hashes->[0]);
-	unless ($rm && $rm->{'pubkey'} && &subs::peer_verify($c, $rm)) { $c->rendered(403); return; }
+	unless ($rm && $rm->{'pubkey'} && &subs::peer_verify($c, $rm) && &subs::peer_allows($c, $rm, 'trusted')) { $c->rendered(403); return; }
 	# A job payload is bounded: a peer is trusted, but a 4 GB prompt must not be
 	# read into a worker's memory before the kind is even looked at.
 	my $declared = $c->req->headers->content_length || 0;

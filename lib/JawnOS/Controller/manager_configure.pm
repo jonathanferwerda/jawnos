@@ -612,7 +612,7 @@ sub action_9304 {
 		# settings table, which every load and every sync paid for.
 		my $folder = &subs::setting_grabber({ app => 'misc', setting => 'photo_location', device => $dev });
 		my $location = &subs::home($folder) . '/me';
-		`mkdir -p "$location"` unless -e $location;
+		system('mkdir', '-p', $location) unless -e $location;
 		foreach my $u ( @uploads ) {
 			my $ass = $u->asset->slurp;
 			my $raw = $location . '/mugshot.png';
@@ -621,7 +621,7 @@ sub action_9304 {
 			my $standard = &subs::setting_grabber({ app => 'misc', setting => 'encryption_standard' }) || 'aes-256-ctr';
 			my $sealed = "mugshot.$dev.png.enc";
 			&subs::openssl_file_crypt('e', $standard, $secret, $raw, "$location/$sealed", 0, 1);
-			`shred -u "$raw"`;
+			system('shred', '-u', $raw);
 			&subs::setting_setter({ app => 'me', setting => 'mugshot', device => $dev, value => $sealed });
 			$image = &Manager::mugshot_source($dev);
 		}

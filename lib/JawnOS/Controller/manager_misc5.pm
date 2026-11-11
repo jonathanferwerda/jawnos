@@ -97,6 +97,10 @@ sub action_14716 {
 		$c->render(text => 'Not Found');
 		return;
 	}
+	unless (&subs::media_path_allowed($file)) {
+		$c->render(text => 'Not Found');
+		return;
+	}
 	my ($db,$database,$sql) = &subs::database_grabber();
 	my $appt = &subs::db_query('select * from appointments where app = ? and uuid = ?', $app, $uuid)->hashes->[0];
 	my $encryption_standard = $appt->{'encryption_standard'};
@@ -256,12 +260,10 @@ sub action_14764 {
 		if ($upload_name =~ /avi$|mkv$/gi) {
 			my $old_filename = $filename;
 			$filename =~ s/avi$|mkv$/mp4/;
-			my $tn_o = &subs::terminal_name($old_filename);
-			my $tn_f = &subs::terminal_name($filename);
 			&subs::subprocessor(sub {
-				my $ffmpeg_cmd = 'ffmpeg -nostdin -i ' . &quote($tn_o) . ' ' . &quote($tn_f) . ' & exit /b';
+				my $ffmpeg_cmd = 'ffmpeg -nostdin -i ' . &quote($old_filename) . ' ' . &quote($filename) . ' & exit /b';
 				`$ffmpeg_cmd`;
-				system('shred', '-u', $tn_o);
+				system('shred', '-u', $old_filename);
 				&subs::file_encrypter({ app => $app });
 			}, { name => "Video file converter" });
 		}

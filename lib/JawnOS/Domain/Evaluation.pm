@@ -604,6 +604,26 @@ sub evaluation_run_record {
 # with. Cloudflare's @cf text-to-image models run at the run/{model} endpoint and
 # answer with the picture itself; any other model goes through the chat layer,
 # whose image parts are collected here. Returns ($bytes, $mime, $error).
+# A model's image URL is a GET proxy into whatever host it names. Only a
+# public HTTPS host is fethed; a loopback, private, link-local or IPv6 literal
+# is refused, and redirects are not followed for this one request.
+my $ai_media_url_ok = sub {
+	my ($url) = @_;
+	return 0 unless defined $url && length $url;
+	return 0 unless $url =~ m{\Ahttps://([^/:?#]+)}i;
+	my $host = lc $1;
+	$host =~ s/^\[|\]$//g;
+	return 0 if $host eq '' || $host =~ /(?:\.|^)localhost\z/;
+	return 0 if $host =~ /\A127\./ || $host eq '0.0.0.0';
+	return 0 if $host =~ /\A10\./;
+	return 0 if $host =~ /\A192\.168\./;
+	return 0 if $host =~ /\A172\.(?:1[6-9]|2\d|3[01])\./;
+	return 0 if $host =~ /\A169\.254\./;
+	return 0 if $host =~ /\A100\.(?:6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./;
+	return 0 if $host =~ /:/;
+	return 1;
+};
+
 sub ai_text_to_image {
 	my ($data) = @_;
 	my $prompt = $data->{'prompt'} || '';
@@ -666,7 +686,11 @@ sub ai_text_to_image {
 			return ($bytes, $part->{'mime'} || 'image/png', undef) if $bytes && length $bytes;
 		}
 		elsif ($part->{'url'}) {
+			next unless $ai_media_url_ok->($part->{'url'});
+			my $old_redirects = $ua->max_redirects;
+			$ua->max_redirects(0);
 			my $fetch = $ua->get($part->{'url'});
+			$ua->max_redirects($old_redirects);
 			my $bytes = $fetch->res->body;
 			return ($bytes, $fetch->res->headers->content_type || 'image/png', undef) if $bytes && length $bytes;
 		}
@@ -703,7 +727,11 @@ sub ai_text_to_media {
 			return ($bytes, $part->{'mime'}, undef) if $bytes && length $bytes;
 		}
 		elsif ($part->{'url'}) {
+			next unless $ai_media_url_ok->($part->{'url'});
+			my $old_redirects = $ua->max_redirects;
+			$ua->max_redirects(0);
 			my $fetch = $ua->get($part->{'url'});
+			$ua->max_redirects($old_redirects);
 			my $bytes = $fetch->res->body;
 			return ($bytes, $fetch->res->headers->content_type || '', undef) if $bytes && length $bytes;
 		}

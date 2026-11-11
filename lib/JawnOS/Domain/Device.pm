@@ -191,7 +191,8 @@ sub device_scan {
 					};
 					my $ping_ip = $n->{'ip'};
 					# a sleeping esp32 can take a second to answer the first packet
-					my $alive = `timeout 1.2 ping -c 1 -W 1 $ping_ip`;
+					my $alive = '';
+					if (&subs::peer_host_is_literal($ping_ip) && open(my $ping_fh, '-|', 'timeout', '1.2', 'ping', '-c', '1', '-W', '1', $ping_ip)) { local $/; $alive = <$ping_fh> // ''; close $ping_fh; }
 					my $ip_addresses = [ ];
 					if ($n->{'ip'} eq '127.0.0.1') {
 						push @{$ip_addresses}, $n;

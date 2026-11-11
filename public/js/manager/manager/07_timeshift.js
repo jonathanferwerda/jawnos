@@ -368,6 +368,7 @@ $(document).on('click', '.web', function() {
 				src: '/manager/browser?internal_url=' + response.internal_url + '&timestamp=' + ts + '&app=' + app + '&uuid=' + uuid,
 				id:  'browser_' + ts,
 				frameborder: 0,
+				sandbox: 'allow-forms',
 				scrolling: 'yes',
 				style: "width:100%;height:calc(100% - 50px);position:absolute;top:90px;"
 			}).appendTo('#window_contents_' + ts);

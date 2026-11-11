@@ -139,7 +139,7 @@ sub file_encrypter {
 
 				if (defined $f && length $f && -e $f && $f !~ /\.enc/gi) {
 
-					my $path = &subs::terminal_name($f);
+					my $path = $f;
 					my $enc_path = $path;
 					my @enc_path = split '/', $enc_path;
 					my @ext = split /\./, $enc_path[-1];
@@ -225,7 +225,7 @@ sub file_decrypter {
 				my $f = $fi->{$file_type};
 				if (defined $f && length $f && -e $f && $f =~ /\.enc/gi) {
 					my $encryption_standard = $filing->{'encryption_standard'} || &setting_grabber({ app => 'misc', setting => 'encryption_standard' }) || 'aes-256-ctr';
-					my $enc_path = &subs::terminal_name($f);
+					my $enc_path = $f;
 
 
 					my $path = $enc_path;

@@ -496,8 +496,11 @@ sub health_allowed {
 	my ($c) = @_;
 	my $remote = $c->tx->remote_address // '';
 	my $local  = $c->tx->local_address // '';
-	# a loopback caller: the machine's own CLI and monitor, with no login
-	return 1 if $remote eq $local || $remote eq '127.0.0.1' || $remote eq '::1' || $remote =~ /^::ffff:127\.0\.0\.1$/;
+	# a loopback caller: the machine's own CLI and monitor, with no login. A
+	# caller that names a peer is not local even when the TCP hop is loopback
+	# (a tunnel or reverse proxy), so it goes through the signed check below.
+	return 1 if ($c->param('signatorial') // '') eq ''
+		&& ($remote eq $local || $remote eq '127.0.0.1' || $remote eq '::1' || $remote =~ /^::ffff:127\.0\.0\.1$/);
 	# an approved session, but not a visitor's ticket: this rail writes the
 	# levels every monitor reads (health_report) and exposes the backup
 	# watermark (available), so a guest browser is not enough. A paired device

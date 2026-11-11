@@ -571,7 +571,11 @@ sub email_receiver {
 							}
 						}
 
-						$body = $html_text ne "" ? $html_text : $plain_text;
+						$body = $html_text ne "" ? &subs::article_html_clean($html_text) : do {
+							my $plain = &subs::html_text($plain_text);
+							$plain =~ s/\r?\n/<br>/g;
+							$plain;
+						};
 
 
 						my $files = [];

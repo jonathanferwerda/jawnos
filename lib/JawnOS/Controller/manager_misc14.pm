@@ -282,7 +282,7 @@ sub action_46078 {
 
 	my $rm = &subs::db_select('remote_machines', undef, { signatorial => $remote_signatorial })->hashes->[0];
 	$log->info('president route: command=' . ($command || '') . ' from=' . ($remote_signatorial || '') . ' ip=' . $c->tx->remote_address) if $log;
-	if ($rm && $rm->{'pubkey'} && &subs::peer_verify($c, $rm) && $command eq 'restart') {
+	if ($rm && $rm->{'pubkey'} && &subs::peer_verify($c, $rm) && &subs::peer_allows($c, $rm, 'trusted') && $command eq 'restart') {
 		&president_restarter();
 	}
 	$c->render(json => { command => $command, remote_signatorial => $remote_signatorial });
@@ -323,6 +323,9 @@ sub action_46107 {
 	my $rm_rows = &subs::db_query('select * from remote_machines where signatorial = ?', $signatorial)->hashes;
 	my $verified;
 	foreach my $cand ( sort { (($b->{'pubkey'} || '') ne '') <=> (($a->{'pubkey'} || '') ne '') } @{$rm_rows} ) {
+		# A keyless row is not a first-contact shortcut for a login: the join
+		# code is. Pinning belongs to the signed beacon, not to this probe.
+		next unless $cand->{'pubkey'};
 		if (&subs::peer_verify($c, $cand)) { $verified = $cand; last; }
 	}
 	unless ($verified) {

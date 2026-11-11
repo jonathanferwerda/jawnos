@@ -165,6 +165,41 @@ sub path_is_within {
 	return index($real, $base . '/') == 0 ? 1 : 0;
 }
 
+# Is a path inside one of these roots, even though it does not exist yet? Used
+# before a create or a save, where path_is_within's -e test cannot apply. A `..`
+# component is refused outright, and the path must be absolute and name the root
+# or a child of it. Symlinks inside a root are not resolved here; callers that
+# write should also keep the tree free of links they did not make.
+sub path_is_under {
+	my ($path, @roots) = @_;
+	return 0 unless defined $path && length $path && $path =~ m{\A/};
+	return 0 if $path =~ m{(?:\A|/)\.\.(?:/|\z)};
+	$path =~ s{/+}{/}g;
+	$path =~ s{/\z}{};
+	foreach my $root ( @roots ) {
+		next unless defined $root && length $root;
+		my $r = $root;
+		$r =~ s{/+}{/}g;
+		$r =~ s{/\z}{};
+		next unless length $r;
+		return 1 if $path eq $r || index($path, $r . '/') == 0;
+	}
+	return 0;
+}
+
+# A path the manager may read and serve: this house's home, the phone's shared
+# store, or the temp directory. The file must exist, and path_is_within resolves
+# symlinks, so a link inside a root cannot point out of it.
+sub media_path_allowed {
+	my ($path) = @_;
+	return 0 unless defined $path && length $path;
+	my @roots = grep { defined && length } (&subs::home('~'), $gb::tmp_dir, '/sdcard', '/storage');
+	foreach my $root ( @roots ) {
+		return 1 if &subs::path_is_within($path, $root);
+	}
+	return 0;
+}
+
 sub path_name {
 	my $name = shift;
 	$name = '' unless defined $name;

@@ -363,8 +363,13 @@ sub action_45571 {
 									$secret = encode_base64($secret // '', '');
 									my $watch_home = 'http://' . $watch->{'ip'} . ':' . $config->{'port'} . '/chat_received?s=' . $secret . '&timestamp=' . $m->{'timestamp'} . '&uuid=' . $m->{'uuid'};
 
-									my $ping = 'timeout .2 ping -c 1 ' . $watch->{'ip'};
-									my $ping_test = `$ping`;
+									my $ping_ip = $watch->{'ip'};
+									my $ping_test = '';
+									if (&subs::peer_host_is_literal($ping_ip) && open(my $ping_fh, '-|', 'timeout', '.2', 'ping', '-c', '1', $ping_ip)) {
+										local $/;
+										$ping_test = <$ping_fh> // '';
+										close $ping_fh;
+									}
 									if ($ping_test =~ /ttl/gi) {
 										&subs::subprocessor(sub {
 									    Mojo::IOLoop->reset;

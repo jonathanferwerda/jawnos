@@ -77,7 +77,7 @@
 					<% } %>
 				</tbody>
 			</table>
-			<div class="mail_reader_body"><%== $body %></div>
+			<div class="mail_reader_body"><%== &subs::article_html_clean($body) %></div>
 		</div>
 	<% } %>
 </div>

@@ -103,9 +103,10 @@ is(scalar @unguarded, 0, 'every privileged peer_verify names a pinned pubkey')
 
 # --- 3. a password login is not a peer session -------------------------------
 my $sesh = slurp('lib/JawnOS/Controller/sesh_check.pm');
-like($sesh, qr/my \$peer_proved = 0;/, 'the login starts with no peer proof');
-like($sesh, qr/\$peer_proved = 1 if \$peer_row && \$body_sha ne '';/,
-	'only a rostered, body-bound, signed login proves a peer');
+like($sesh, qr/\$peer_proved = 0;/, 'the login starts with no peer proof');
+like($sesh, qr/\$peer_row->\{'pubkey'\} && &subs::peer_verify_strict/, 'a key must already be pinned');
+like($sesh, qr/&subs::peer_allows\(\$c, \$peer_row, 'resident'\)/, 'and the row must still grant a house session');
+like($sesh, qr/\$peer_proved = 1;/, 'only that signed, granted login proves a peer');
 unlike($sesh, qr/my \$peer_login =/, 'neighbour/remote_timestamp no longer mints a peer by itself');
 like($sesh, qr/\$c->session\('privilege' => \(\$peer_proved \? 'resident' : 'guest'\)\)/,
 	'an unproved login stays a guest, not a resident peer');

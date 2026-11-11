@@ -611,29 +611,29 @@ sub run_command {
 	my $whoami = `whoami`;
 	chomp $whoami;
 	my $hostname = &subs::machine_hostname();
-  &subs::subprocessor(sub {
-    Mojo::IOLoop->reset;
+	&subs::subprocessor(sub {
+		Mojo::IOLoop->reset;
+		# A leading & used to be Perl eval. Nothing calls it that way, and the
+		# strings reachable here come from requests, settings and automations, so
+		# the branch turned data into code inside this worker. Refuse it instead.
 		if ($command =~ /^&/) {
-			$exec = eval { $command };
-			my $json = { type => 'command', whoami => 'President', hostname => $hostname, uuid => &subs::random_string_creator(), command => $command, 'return' => $exec, timestamp => $timestamp };
-
+			my $json = { type => 'command', whoami => $whoami, hostname => $hostname, uuid => &subs::random_string_creator(), command => $command, 'return' => 'refused: a leading & is not a command', timestamp => $timestamp };
 			&Websocket::send('server', $json);
+			return 'refused';
 		}
-		else {
-			# A command is a grandchild of this wrapper. The tracked helper gives it
-			# its own warranty, so a hung command is killed instead of extending this
-			# wrapper's deadline forever.
-			my $run = eval { &subs::subprocessor_command($command, { name => 'run command', stderr => 'inherit' }) };
-			$exec = ref $run eq 'HASH' ? ($run->{'error'} // $run->{'output'} // '') : '';
-			my $json = { type => 'command', whoami => $whoami, hostname => $hostname, uuid => &subs::random_string_creator(), command => $command, 'return' => $exec, timestamp => $timestamp };
+		# A command is a grandchild of this wrapper. The tracked helper gives it
+		# its own warranty, so a hung command is killed instead of extending this
+		# wrapper's deadline forever.
+		my $run = eval { &subs::subprocessor_command($command, { name => 'run command', stderr => 'inherit' }) };
+		$exec = ref $run eq 'HASH' ? ($run->{'error'} // $run->{'output'} // '') : '';
+		my $json = { type => 'command', whoami => $whoami, hostname => $hostname, uuid => &subs::random_string_creator(), command => $command, 'return' => $exec, timestamp => $timestamp };
 
-			&Websocket::send('server', $json);
-			sleep(.3);
-			# The terminal is a JS console the person is using deliberately; this
-			# is the one named command that runs the line they typed.
-			my $msg = { app => $app, whoami => $whoami, hostname => $hostname, uuid => &subs::random_string_creator(25), console => &Websocket::console_command('terminalJs', $command) };
-			&Websocket::send('server', $msg);
-		}
+		&Websocket::send('server', $json);
+		sleep(.3);
+		# The terminal is a JS console the person is using deliberately; this
+		# is the one named command that runs the line they typed.
+		my $msg = { app => $app, whoami => $whoami, hostname => $hostname, uuid => &subs::random_string_creator(25), console => &Websocket::console_command('terminalJs', $command) };
+		&Websocket::send('server', $msg);
 		return 'done';
 	}, { name => 'run command' });
 }

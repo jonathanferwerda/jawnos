@@ -623,8 +623,11 @@ sub action_12141 {
 	my $uuid = $c->param('uuid');
 	my $value = $c->param('value');
 	my $name = $c->param('name');
-	# ssh credentials are gone - only benign fields ride this route now
-	if ($name && $name ne 'username' && $name ne 'password') {
+	# ssh credentials are gone - only benign display fields ride this route now.
+	# The name is a column in an UPDATE, so it is whitelisted: a raw name could
+	# rewrite pubkey or grant_scope instead of a label.
+	my %editable = map { $_ => 1 } qw(ip mac port nic hostname manager_file fqdn ws_port connection tunnel device ost version mirrors network archive archive_dir buttons pseudonyms);
+	if ($name && $editable{$name}) {
 		&subs::db_update('remote_machines', { $name => $value }, { signatorial => $signatorial, uuid => $uuid });
 	}
 
