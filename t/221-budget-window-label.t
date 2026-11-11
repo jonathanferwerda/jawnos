@@ -1,5 +1,5 @@
 # tests-for: lib/JawnOS/Domain/Budget.pm lib/JawnOS/Domain/Loader.pm lib/JawnOS/Manager/Part19.pm templates/apps/budget_current_information.html.ep public/js/manager/budget_light.js lib/JawnOS/Controller/manager_misc13.pm perl/help/topics_features.pl perl/help/topics_functions.pl
-# covers:    the budget panel's window label - calendar or rolling - and the label click that flips s_lock
+# covers:    the budget panel's window label - calendar or rolling - the label click that flips s_lock, and a reading held on a status threshold
 
 use strict;
 use warnings;
@@ -77,6 +77,48 @@ like($part19, qr/window_label => \$window_label/, 'and hands it to the template'
 my $controller = read_file("$root/lib/JawnOS/Controller/manager_misc13.pm");
 like($controller, qr/\$setting eq 's_lock'.*?budget_runner/s,
 	'an s_lock write recomputes the budget, so the light and panel are pushed');
+
+# ------------------------------------------------- a reading on a threshold
+# One clock for the two period lengths: the budget's own month and the column
+# asked for name the same span, so they must be the same number. Translating
+# each from its own rightNow() made them differ by a millisecond, which also
+# turned same_width false and the reading stopped being the budget's own period.
+{
+	my $at = ts(2027, 2, 1, 12, 0, 0);   # a month that is not a fixed 30 days
+	my $appts = [ { app => 'trim_beard', timestamp => $at - 3 * 86400000, type => 'stop', duration => -300000 } ];
+	my $reading = &subs::budget_calculator({
+		app => 'trim_beard', circumstance => 'occurences', scope => '1month',
+		budget => '2/1month', settings => { s_lock => 'off', s_calc => 'sum' },
+		timestamp => $at, appts => $appts,
+	});
+	is($reading->{'duration'}, &subs::time_abbrev_translator('1month', $at),
+		'the period length is read at the request\'s moment, not a later wall clock');
+	is($reading->{'duration'}, $reading->{'scope'}, 'the budget and the column measure one span');
+	is($reading->{'is_scope'}, 'yes', 'and the reading is the budget\'s own period');
+	is($reading->{'value'}, 1, 'the rolling month holds the one session');
+	is($reading->{'status'}, 'neglected', 'a reading at exactly half the target is neglected');
+}
+
+# Exactly on a threshold, the threshold's own inclusive direction decides. These
+# month lengths used to round a hair above the half, so the same reading
+# alternated between neglected and achievable and every flip was announced.
+for my $p (2591999019, 2591999021, 2591999023, 2591999025, 2591999027) {
+	my $status = &subs::budget_status_maker({
+		expected => sprintf('%.19f', 2 / $p),
+		actual   => sprintf('%.19f', 1 / $p),
+	});
+	is($status->{'status'}, 'neglected', "half the target reads as neglected at a $p ms period");
+}
+
+{
+	my $expected = 0.0000000007716049832;   # any positive per-millisecond rate
+	for my $case ( [ .80, 'budgeted' ], [ 1, 'accomplished' ], [ 1.2, 'burnt out' ],
+		[ 2, 'overkill' ], [ .25, 'abandoned' ], [ .5, 'neglected' ], [ .6, 'achievable' ] ) {
+		my ($share, $want) = @{$case};
+		my $status = &subs::budget_status_maker({ expected => $expected, actual => $expected * $share });
+		is($status->{'status'}, $want, sprintf('a reading at %.2f of the target reads as %s', $share, $want));
+	}
+}
 
 # ---------------------------------------------------------------- the help
 like(read_file("$root/perl/help/topics_features.pl"),

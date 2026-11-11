@@ -69,7 +69,9 @@ sub budget_calculator($data) {
 			}
 			$window = 1 . $window unless $window =~ /^[0-9]/;
 			$returner->{'scope_name'} = &subs::timespan_widener($window);
-			$returner->{'duration'} = &subs::time_abbrev_translator($window, $server_time);
+			# the period length belongs to the moment being read, not to the wall
+			# clock a moment later: see the one clock note below
+			$returner->{'duration'} = &subs::time_abbrev_translator($window, $timestamp);
 			$returner->{'scope'} = $returner->{'duration'};
 		}
 		else {
@@ -86,7 +88,13 @@ sub budget_calculator($data) {
 				$bud[-1] = &subs::time_span_length($widened) ? $widened : '1month';
 			}
 			$returner->{'scope_name'} = &subs::timespan_widener($bud[-1]);
-			$returner->{'duration'} = &subs::time_abbrev_translator($bud[-1],&subs::rightNow());
+			# One clock for both lengths. The budget's own period and the caller's
+			# column are the same span whenever the names match, so translating each
+			# from its own rightNow() made them differ by a millisecond: duration ne
+			# scope, same_width false, is_scope 'no', and the reading was no longer
+			# the budget's own period. Reading both from the request's moment makes
+			# them identical and the reading reproducible.
+			$returner->{'duration'} = &subs::time_abbrev_translator($bud[-1], $timestamp);
 			# The scope is the column the caller read, not the budget's own period:
 			# the value handed in is that column's total, so the target and the actual
 			# are held per millisecond of that column. A bare word ("week") needs its
@@ -96,7 +104,7 @@ sub budget_calculator($data) {
 				$returner->{'scope'} = $returner->{'duration'} ;
 			}
 			else {
-				$returner->{'scope'} = &subs::time_abbrev_translator($caller_span, &subs::rightNow()) || $returner->{'duration'};
+				$returner->{'scope'} = &subs::time_abbrev_translator($caller_span, $timestamp) || $returner->{'duration'};
 			}
 		}
 		# A fixed quantity budget is a level to keep on hand, not a rate of the
@@ -239,7 +247,7 @@ sub budget_calculator($data) {
 				$returner->{'budgets'}->{'duration'} = $b;
 				$returner->{'circumstance'} = 'duration';
 				$bud[0] = 1 . $bud[0] unless $bud[0] =~ /[0-9]/;
-				$returner->{'budgeted'} = &subs::time_abbrev_translator($bud[0],&subs::rightNow());
+				$returner->{'budgeted'} = &subs::time_abbrev_translator($bud[0], $timestamp);
 				if ($value != 0) {
 					$returner->{'formatted_value'} = &subs::duration_sayer($value / 1000);
 				}
@@ -591,31 +599,39 @@ sub budget_status_maker($returner) {
 		return &{$gb::budget_statuses->{'budgeted'}->{'notifier'}}($returner);
 	}
 	my $status;
-	if ($returner->{'actual'} < $returner->{'expected'} - ( $returner->{'expected'} * .0000000001) && $returner->{'actual'} >= $returner->{'expected'} - ($returner->{'expected'} * .2)) {
+	# actual and expected are rates per millisecond held to nineteen decimals, so
+	# a reading sitting exactly on a threshold rounds to either side of it and
+	# flips status on the next run - at half a 2/month allowance that announced a
+	# budget change every slot. Resolve each threshold by its own inclusive
+	# direction with a relative hair: a part per million is far above that
+	# rounding and clock noise, and far below any real move between two readings.
+	my ($expected, $actual) = ($returner->{'expected'}, $returner->{'actual'});
+	my $hair = $expected * .000001;
+	if ($actual < $expected - $hair && $actual >= $expected - ($expected * .2) - $hair) {
 		$status = 'budgeted';
 		$returner->{'synth'} = 'play -v .3 "| sox -n -p synth .51 sine 391 && play | sox -n -p synth .51 triangle 500"';
 	}
-	elsif ($returner->{'actual'} >= $returner->{'expected'} * 2) {
+	elsif ($actual >= $expected * 2 - $hair) {
 		$status = 'overkill';
 		$returner->{'synth'} = 'play -v .15 "| sox -n -p synth .51 pinknoise 1125 && play | sox -n -p synth .51 whitenoise 100"';
 	}
-	elsif ($returner->{'actual'} >= $returner->{'expected'} * 1.2) {
+	elsif ($actual >= $expected * 1.2 - $hair) {
 		$status = 'burnt_out';
 		$returner->{'synth'} = 'play -v .15 "| sox -n -p synth .51 square 125 && play | sox -n -p synth .51 square 100"';
 	}
-	elsif ($returner->{'actual'} >= $returner->{'expected'}) {
+	elsif ($actual >= $expected - $hair) {
 		$status = 'accomplished';
 		$returner->{'synth'} = 'play -v .15 "| sox -n -p synth .26 pluck 329.64 && play | sox -n -p synth .26 pluck 391.99 && play | sox -n -p synth .26 pluck 369.99 && play | sox -n -p synth .26 pluck 293.672"';
 	}
-	elsif ($returner->{'actual'} <= $returner->{'expected'} / 4) {
+	elsif ($actual <= $expected / 4 + $hair) {
 		$status = 'abandoned';
 		$returner->{'synth'} = 'play -v .15 "| sox -n -p synth .51 triangle 261.64 && play | sox -n -p synth .51 triangle 261.64"';
 	}
-	elsif ($returner->{'actual'} <= $returner->{'expected'} / 2) {
+	elsif ($actual <= $expected / 2 + $hair) {
 		$status = 'neglected';
 		$returner->{'synth'} = 'play -v .15 "| sox -n -p synth .26 saw 349.23 && play | sox -n -p synth .26 saw 329.63 && play | sox -n -p synth .26 saw 415.3 && play | sox -n -p synth .26 saw 439.99"';
 	}
-	elsif ($returner->{'actual'} <= $returner->{'expected'}) {
+	elsif ($actual <= $expected + $hair) {
 		$status = 'achievable';
 		$returner->{'synth'} = 'play -v .15 "| sox -n -p synth .26 pluck 293.67 && play | sox -n -p synth .26 pluck 349.23 && play | sox -n -p synth .26 pluck 349.23 && play | sox -n -p synth .26 pluck 311.13"';
 	}
