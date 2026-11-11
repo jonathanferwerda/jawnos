@@ -198,6 +198,7 @@ $catalog{'id'} = {
 		'chat.space' => 'Spasi',
 		'notes.back' => 'Kembali',
 		'notes.edit' => 'Edit catatan',
+		'notes.categories' => 'Kategori',
 		'notes.draft' => 'Draf',
 		'notes.category' => 'Kategori',
 		'notes.all' => 'Semua',

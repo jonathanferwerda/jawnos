@@ -198,6 +198,7 @@ $catalog{'ar'} = {
 		'chat.space' => 'مسافة',
 		'notes.back' => 'رجوع',
 		'notes.edit' => 'تعديل الملاحظة',
+		'notes.categories' => 'الفئات',
 		'notes.draft' => 'مسودة',
 		'notes.category' => 'الفئة',
 		'notes.all' => 'الكل',

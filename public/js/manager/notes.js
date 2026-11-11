@@ -1,3 +1,10 @@
+/* [[js-split]]
+   notes.js is part 1. The rest live in notes/ in name order:
+     01_edit.js - the note's own screen
+     02_categories.js - adding, renaming and removing categories
+     03_row.js - row clicks, the inline editor, delete, drag and the chip filter
+   /js/manager/bundle.js concatenates the index and these parts.
+   [[/js-split]] */
 // The Notes app: what the watch heard when it was not a command, plus anything typed
 // here. The list comes from the notes table (its own store, not appointments). A
 // row shows a one-line heading - the Guide's condensation when a model is
@@ -25,8 +32,25 @@ function notesMaker(timestamp) {
 	});
 }
 
+// One select's options traded for the freshly rendered ones, keeping the value
+// the person already had when it still exists. Used after a list reload so the
+// composer and the note screen never offer a category the chips no longer have.
+function notesSelectRefresh(select, fresh) {
+	if (!select.length || !fresh.length) { return; }
+	var keep = select.val();
+	select.empty();
+	fresh.find('option').each(function() {
+		select.append($(this).clone());
+	});
+	if (keep && select.find('option[value="' + keep + '"]').length) { select.val(keep); }
+	else { select.val(select.find('option').first().val() || ''); }
+}
+
 // The server pushes notesReload() the moment a note is filed or changed, so an
-// open Notes window stays live instead of waiting for a reopen.
+// open Notes window stays live instead of waiting for a reopen. A category save
+// takes the same path: the body (chips and rows) is replaced, the composer and
+// note-screen pickers are refreshed from the same render, and the category
+// screen is rewritten unless the person is editing in it right now.
 function notesReload() {
 	var w = $('.wind[app="notes"]');
 	if (!w.length) { return; }
@@ -35,14 +59,27 @@ function notesReload() {
 		type: 'GET',
 		data: { window_maker: 'yes', timestamp: w.attr('timestamp') },
 		success: function(response) {
+			var doc = $('<div>').html(response);
 			// The chips and their counts are redrawn with the rows, so the count a
 			// save changes is right without reopening the window; the filter the
 			// person is looking through is re-applied after the swap.
-			var fresh = $(response).find('#notes_body');
+			var fresh = doc.find('#notes_body');
 			if (fresh.length) { w.find('#notes_body').replaceWith(fresh); }
 			else {
-				var list = $(response).find('#notes_list');
+				var list = doc.find('#notes_list');
 				if (list.length) { w.find('#notes_list').replaceWith(list); }
+			}
+			notesSelectRefresh(w.find('#notes_category'), doc.find('#notes_category'));
+			notesSelectRefresh(w.find('#notes_edit_category'), doc.find('#notes_edit_category'));
+			notesSelectRefresh(w.find('#notes_edit_status'), doc.find('#notes_edit_status'));
+			// A category removed on another machine (or by this save) must not leave the
+			// list filtered to a chip that no longer exists.
+			if (notesCategoryFilter && !w.find('#notes_category_bar .notes_chip[category="' + notesCategoryFilter + '"]').length) {
+				notesCategoryFilter = '';
+			}
+			if (!w.find('#notes').hasClass('categories_open')) {
+				var fresh_categories = doc.find('#notes_categories_view');
+				if (fresh_categories.length) { w.find('#notes_categories_view').replaceWith(fresh_categories); }
 			}
 			// The fresh rows carry blank .time spans; paint them now, in the same
 			// frame as the swap, instead of waiting for the next one-second tick.
@@ -175,289 +212,3 @@ function notesHeaderPaint() {
 	}, { root: list[0], rootMargin: '160px 0px' });
 	rows.each(function() { notesHeaderObserver.observe(this); });
 }
-
-// ---- the note's own screen --------------------------------------------------
-// Clicking a row does not edit it in the composer any more: the whole note gets
-// the window, with Back (leave it as it was) and Save (write it). The textarea is
-// upgradeable, so the editor brings its toolbox and dictation.
-var notesEditUuid = null;
-
-function notesEditHtml(text) {
-	return $('<div>').text(text == null ? '' : String(text)).html().replace(/\n/g, '<br>');
-}
-
-function notesEditFocus(box) {
-	if (!box || !box.length) { return; }
-	try { box.focus(); } catch (e) {}
-	try {
-		var el = box[0];
-		var range = document.createRange();
-		range.selectNodeContents(el);
-		range.collapse(false);
-		var sel = window.getSelection();
-		sel.removeAllRanges();
-		sel.addRange(range);
-	} catch (e) {}
-}
-
-// The upgrade request is async, so a very fast click can arrive before the
-// contenteditable exists. Fill the hidden textarea at once (that is what the
-// person sees until the upgrade lands) and retry the editor briefly.
-function notesEditFill(uuid, text, tries) {
-	tries = tries || 0;
-	if (notesEditUuid != uuid) { return; }
-	var box = $('#notes_edit_view .text_editor').first();
-	if (box.length) {
-		box.html(notesEditHtml(text));
-		notesEditFocus(box);
-		return;
-	}
-	if (tries >= 40) {
-		$('#notes_edit_input').val(text).focus();
-		return;
-	}
-	setTimeout(function() { notesEditFill(uuid, text, tries + 1); }, 50);
-}
-
-function notesEditOpen(uuid) {
-	var note = null;
-	notesHeaderRows().each(function() {
-		if (($(this).attr('uuid') || '') == uuid) { note = $(this); }
-	});
-	if (!note) { return; }
-	var text = note.attr('data-text');
-	if (text === undefined) { text = note.find('.note_text').text(); }
-	notesEditUuid = uuid;
-	$('#notes_edit_category').val(note.attr('category') || 'uncategorized');
-	$('#notes_edit_status').val(note.attr('status') || 'open');
-	$('#notes_edit_input').val(text);
-	$('#notes').addClass('edit_open');
-	if (typeof textareaUpgrader == 'function') { textareaUpgrader(); }
-	notesEditFill(uuid, text, 0);
-}
-
-function notesEditClose() {
-	notesEditUuid = null;
-	$('#notes').removeClass('edit_open');
-}
-
-// The upgraded editor holds HTML (a newline is a <br> or a block). A note is
-// stored as plain words, so turn the editor back into text before saving; the
-// server trims the ends and never sees markup.
-function notesEditorPlainText() {
-	var box = $('#notes_edit_view .text_editor').first();
-	if (!box.length) { return $('#notes_edit_input').val() || ''; }
-	var html = box.html() || '';
-	html = html.replace(/<br\s*\/?>/gi, '\n');
-	html = html.replace(/<\/(div|p|li|h[1-6])>/gi, '\n');
-	html = html.replace(/<(div|p|li|h[1-6])(\s[^>]*)?>/gi, '');
-	html = html.replace(/<[^>]*>/g, '');
-	var decoder = document.createElement('textarea');
-	decoder.innerHTML = html;
-	return decoder.value.replace(/\u00a0/g, ' ').replace(/\n{3,}/g, '\n\n').replace(/^\s+|\s+$/g, '');
-}
-
-function notesEditSave() {
-	var uuid = notesEditUuid;
-	if (!uuid) { return; }
-	var text = notesEditorPlainText();
-	if (text.replace(/\s/g, '') == '') { return; }
-	$.ajax({
-		url: '/manager/note_save',
-		type: 'POST',
-		data: {
-			uuid: uuid,
-			text: text,
-			category: $('#notes_edit_category').val() || '',
-			status: $('#notes_edit_status').val() || '',
-			timestamp: Date.now()
-		},
-		success: function(response) {
-			delete notesHeaderCache[uuid];
-			notesEditClose();
-			notesReload();
-		}
-	});
-}
-
-// A row is a click target, except on its own controls. A drag sets the guard so
-// releasing a note over an appointment window does not also open it.
-$(document).on('click', '#notes_list .note', function(e) {
-	if ($(e.target).closest('.note_delete, .note_editor, .note_edit, button, select, option, a, input, textarea').length) { return; }
-	if ($(this).data('notes_dragged')) { return; }
-	var uuid = $(this).attr('uuid') || '';
-	if (uuid) { notesEditOpen(uuid); }
-});
-
-$(document).on('click', '#notes_edit_back', function() { notesEditClose(); });
-$(document).on('click', '#notes_edit_save', function() { notesEditSave(); });
-
-// The small editor on each row: category and status change in place. The same
-// save route the composer uses persists them. The words are NOT sent: the row now
-// shows a heading, so sending .note_text would replace the note with its own
-// heading. The server leaves a field it is not handed alone, which is exactly
-// what a category/status change wants.
-$(document).on('change', '.note_category_edit, .note_status_edit', function() {
-	var note = $(this).closest('.note');
-	var uuid = note.attr('uuid');
-	if (!uuid) { return; }
-	var category = note.find('.note_category_edit').val() || 'uncategorized';
-	var status = note.find('.note_status_edit').val() || 'open';
-	$.ajax({
-		url: '/manager/note_save',
-		type: 'POST',
-		data: {
-			uuid: uuid,
-			category: category,
-			status: status,
-			timestamp: Date.now()
-		},
-		success: function(response) { notesReload(); }
-	});
-});
-
-// Two-click delete, the same arm-then-delete the other app rows use: the first
-// press turns the X red and arms it for two seconds; a second press inside that
-// window removes the note.
-$(document).on('click', '.note_delete', function() {
-	var a = $(this);
-	if (a.attr('armed') == 'yes') {
-		$.ajax({
-			url: '/manager/note_delete',
-			type: 'POST',
-			data: { uuid: a.attr('uuid'), timestamp: Date.now() },
-			success: function(response) {
-				a.closest('.note').remove();
-			}
-		});
-	}
-	else {
-		a.attr('armed', 'yes');
-		var bgcolor = a.css('background-color');
-		a.css({ 'background-color': 'red' });
-		setTimeout(function() {
-			a.css({ 'background-color': bgcolor });
-			a.attr('armed', 'no');
-		}, 2000);
-	}
-});
-
-// Drag a note out of the list. What it lands on decides where it goes: an
-// appointment window takes the note's text into that app's notes (the server
-// encrypts it the way a reset's notes are encrypted).
-function notesDraggable() {
-	$('#notes_list .note').each(function(i, v) {
-		var n = $(v);
-		if (n.hasClass('ui-draggable')) { return; }
-		n.draggable({
-			appendTo: 'body',
-			// Freeze the clone at the row's own width: out of the Notes window's
-			// layout it re-wraps and collapses, which is the shrink that was seen.
-			helper: function() {
-				var el = $(this);
-				var w = el.outerWidth();
-				return el.clone().css({ width: w + 'px', maxWidth: w + 'px' });
-			},
-			revert: 'invalid',
-			zIndex: 999999,
-			cancel: '.note_delete, .note_editor, .note_edit',
-			start: function(p, ui) {
-				// A drag is not a click: releasing over an appointment window must fold
-				// the note in, not open its editor. The click that follows mouseup sees
-				// this guard (it is cleared a moment later).
-				n.data('notes_dragged', true);
-				$(ui.helper).css({ 'opacity': '0.85' });
-			},
-			stop: function(p, ui) {
-				setTimeout(function() { n.data('notes_dragged', false); }, 120);
-				// The helper rides under the cursor, and a full-screen background canvas
-				// sits over the windows, so a plain elementFromPoint finds one of those
-				// instead of the window. Walk the whole stack instead and take the first
-				// appointment (and appointment row) under the cursor.
-				var helper = (ui && ui.helper) ? $(ui.helper) : $('.ui-draggable-dragging');
-				helper.hide();
-				var stack = document.elementsFromPoint(p.clientX, p.clientY) || [];
-				helper.show();
-				var detail = null, appt = null;
-				for (var i = 0; i < stack.length; i++) {
-					var t = $(stack[i]);
-					if (!appt && t.closest('.appointment').length) { appt = t.closest('.appointment'); }
-					if (!detail && t.closest('.appointment_detail').length) { detail = t.closest('.appointment_detail'); }
-				}
-				if (!appt) { return; }
-				// Landed on one of the window's appointment rows: append the note to
-				// that appointment. Anywhere else on the window: the server makes a
-				// new appointment for the app.
-				$.ajax({
-					url: '/manager/note_to_appt',
-					type: 'POST',
-					data: {
-						uuid: n.attr('uuid'),
-						app: appt.attr('app'),
-						appt_uuid: detail ? detail.attr('uuid') : '',
-						timestamp: Date.now()
-					},
-					success: function(response) {
-						if (!response || (!response.uuid && !response.created)) { console.log('note drop failed', response); }
-					}
-				});
-			}
-		});
-	});
-}
-
-// --- Categories ---------------------------------------------------
-// The six categories a note is filed under. The chips, their counts and the
-// picker are drawn by the server with their translated labels, so this script
-// only moves them: which chip is showing, which rows belong under it, and the
-// one link a category hands off to. Roadmap opens Store, Shopping opens Market,
-// Dreams opens the Handbook's Today (where dreams are planted), Social opens
-// People; Journal and JawnOS stay here, because JawnOS is the queue the nightly
-// agent reads.
-var notesCategoryFilter = '';
-
-function notesCategoryApply() {
-	var w = $('.wind[app="notes"]');
-	if (!w.length) { return; }
-	var filter = notesCategoryFilter || '';
-	w.find('#notes_category_bar .notes_chip').each(function() {
-		var chip = $(this);
-		var on = (chip.attr('category') || '') == filter;
-		chip.css({
-			'opacity': (on ? '1' : '0.8'),
-			'font-weight': (on ? 'bold' : 'normal'),
-			'border-color': (on ? 'var(--ink, var(--line))' : 'var(--line)')
-		});
-	});
-	w.find('#notes_list .note').each(function() {
-		var note = $(this);
-		note.toggle(filter == '' || (note.attr('category') || '') == filter);
-	});
-	w.find('.notes_category_open').each(function() {
-		var link = $(this);
-		link.toggle(filter != '' && (link.attr('category') || '') == filter);
-	});
-	// An empty category says so instead of showing a blank list.
-	w.find('#notes_empty').toggle(filter != '' && w.find('#notes_list .note:visible').length == 0);
-}
-
-$(document).on('click', '#notes_category_bar .notes_chip', function() {
-	notesCategoryFilter = $(this).attr('category') || '';
-	var category = notesCategoryFilter;
-	// A note written while a category is showing is filed under it.
-	if (category) { $('#notes_category').val(category); }
-	notesCategoryApply();
-});
-
-// The hand-off. Store, Market and People are windowMaker apps, so they open
-// through appWindowOpener, which loads a lazy app's chunk first. The Handbook is
-// not one: its own grabber is what its links use, and it opens on Today.
-$(document).on('click', '.notes_category_open', function() {
-	var target = $(this).attr('target') || '';
-	if (!target) { return; }
-	if (target == 'handbook') {
-		if (typeof handbookGrabber == 'function') { handbookGrabber('today'); }
-		return;
-	}
-	if (typeof appWindowOpener == 'function') { appWindowOpener(target, Date.now(), { visible: 'yes' }); }
-});

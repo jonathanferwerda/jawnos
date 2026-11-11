@@ -123,6 +123,11 @@ sub action_22702 {
 	# condenses a note when a model is configured; without one the template's own
 	# word cut is the heading and the app never asks. header_agent tells the browser
 	# which of the two it is looking at, so a house with no guide pays no requests.
+	# One settings read per render, not a worker's short memo: a category saved a
+	# moment ago (here or on a peer) must be on the chips and in the pickers the
+	# next time the window draws. The memo still serves every row within this
+	# render, so the list does not ask the settings table three hundred times.
+	&subs::notes_categories_forget();
 	my $notes = &subs::notes_category_rows();
 	my ($counts, $total) = &subs::notes_category_counts($notes);
 	my $guide_model = &subs::setting_grabber({ app => 'mail', setting => 'help_assistant' });
@@ -304,6 +309,10 @@ sub action_24950 {
 	$text =~ s/\r\n/\n/g;
 	$text =~ s/^\s+|\s+$//g;
 	my $category_param = $c->param('category');
+	# Validate against the list the database holds, not a worker's short memo: a
+	# category added seconds ago must be accepted, and one just removed must not be
+	# silently re-created. One settings read per save is what that costs.
+	&subs::notes_categories_forget();
 	my $category = defined $category_param ? &subs::notes_category_valid($category_param) : '';
 	$category = &subs::notes_category_default() if defined $category_param && !length $category;
 	my $status_param = $c->param('status');
@@ -438,6 +447,29 @@ sub action_53027 {
 		$note_header_cache{$sig} = $header if $agent && length $header;
 		$c->render(json => { ok => 1, header => $header, agent => $agent });
 	});
+}
+
+# POST /manager/notes_categories
+#
+# Save the house's category list from the Notes category screen. The screen posts
+# the rows it kept (with their codes) and the rows it added (without one); the
+# store validates and writes them as one setting, then returns the resolved list
+# so the chips, pickers and row labels all speak the new names. Deleting a
+# category rewrites no note: a code that is no longer in the list reads as
+# Uncategorized, so the notes stay and can be refiled at leisure.
+sub action_53040 {
+	my $c = shift;
+	my $raw = $c->param('categories') // '';
+	if ( length($raw) > 20000 ) {
+		return $c->render(json => { ok => 0, error => &subs::ui('The category list could not be read.') });
+	}
+	my $list = eval { decode_json($raw) };
+	my ( $ok, $err ) = &subs::notes_categories_store($list);
+	unless ($ok) {
+		return $c->render(json => { ok => 0, error => $err });
+	}
+	&Websocket::send('tab', { console => &Websocket::console_command('notesCategoriesReload')});
+	$c->render(json => { ok => 1, categories => &subs::notes_category_list() });
 }
 
 # POST /manager/notifications/remove

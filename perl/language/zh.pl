@@ -198,6 +198,7 @@ $catalog{'zh'} = {
 		'chat.space' => '空格',
 		'notes.back' => '返回',
 		'notes.edit' => '编辑笔记',
+		'notes.categories' => '分类',
 		'notes.draft' => '草稿',
 		'notes.category' => '分类',
 		'notes.all' => '全部',

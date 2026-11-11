@@ -198,6 +198,7 @@ $catalog{'bn'} = {
 		'chat.space' => 'স্পেস',
 		'notes.back' => 'ফিরে যান',
 		'notes.edit' => 'নোট সম্পাদনা করুন',
+		'notes.categories' => 'শ্রেণি',
 		'notes.draft' => 'খসড়া',
 		'notes.category' => 'শ্রেণি',
 		'notes.all' => 'সব',

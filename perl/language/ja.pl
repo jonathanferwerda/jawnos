@@ -198,6 +198,7 @@ $catalog{'ja'} = {
 		'chat.space' => 'スペース',
 		'notes.back' => '戻る',
 		'notes.edit' => 'ノートを編集',
+		'notes.categories' => 'カテゴリ',
 		'notes.draft' => '下書き',
 		'notes.category' => 'カテゴリ',
 		'notes.all' => 'すべて',

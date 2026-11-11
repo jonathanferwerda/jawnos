@@ -198,6 +198,7 @@ $catalog{'en'} = {
 		'chat.space' => 'Space',
 		'notes.back' => 'Back',
 		'notes.edit' => 'Edit note',
+		'notes.categories' => 'Categories',
 		'notes.draft' => 'Draft',
 		'notes.category' => 'Category',
 		'notes.all' => 'All',

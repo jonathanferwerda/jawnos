@@ -198,6 +198,7 @@ $catalog{'pa'} = {
 		'chat.space' => 'ਸਪੇਸ',
 		'notes.back' => 'ਵਾਪਸ',
 		'notes.edit' => 'ਨੋਟ ਸੰਪਾਦਿਤ ਕਰੋ',
+		'notes.categories' => 'ਸ਼੍ਰੇਣੀਆਂ',
 		'notes.draft' => 'ਡਰਾਫਟ',
 		'notes.category' => 'ਸ਼੍ਰੇਣੀ',
 		'notes.all' => 'ਸਾਰੇ',

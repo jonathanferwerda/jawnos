@@ -198,6 +198,7 @@ $catalog{'ru'} = {
 		'chat.space' => 'Пробел',
 		'notes.back' => 'Назад',
 		'notes.edit' => 'Изменить заметку',
+		'notes.categories' => 'Категории',
 		'notes.draft' => 'Черновик',
 		'notes.category' => 'Категория',
 		'notes.all' => 'Все',

@@ -198,6 +198,7 @@ $catalog{'tr'} = {
 		'chat.space' => 'Boşluk',
 		'notes.back' => 'Geri',
 		'notes.edit' => 'Notu düzenle',
+		'notes.categories' => 'Kategoriler',
 		'notes.draft' => 'Taslak',
 		'notes.category' => 'Kategori',
 		'notes.all' => 'Tümü',

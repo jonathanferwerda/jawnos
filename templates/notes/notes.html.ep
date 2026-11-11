@@ -19,14 +19,15 @@
     editor screen; data-sig changes when the note is saved, so a stale heading is
     never reused.
 
-    A note is filed under one of six categories, or under Uncategorized when it
-    names none - which is also what a new note starts as. The chips carry the
-    count over the rows below them, the picker at the foot is what a new note (or
-    the note being edited) is saved under, and each category that lives somewhere
-    else hands off to that app: Roadmap to Store, Shopping to Market, Dreams to
-    the Handbook's Today, Social to People. Journal and JawnOS stay here - JawnOS
-    is the queue the nightly agent reads. An appointment's draft has no category
-    of its own: it is not a note the person filed.
+    A note is filed under one of the categories the house keeps - the app ships
+    with six, and the Categories screen beside the chips adds, renames and removes
+    them - or under Uncategorized when it names none, which is also what a new note
+    starts as. The chips carry the count over the rows below them, the picker at
+    the foot is what a new note is saved under, and each shipped category that
+    lives somewhere else hands off to that app: Roadmap to Store, Shopping to
+    Market, Dreams to the Handbook's Today, Social to People. Journal and JawnOS
+    stay here - JawnOS is the queue the nightly agent reads. An appointment's draft
+    has no category of its own: it is not a note the person filed.
 
     Every note is open until the work behind it is done, when the Coding agent
     marks it completed. The badge and the row's own small editor make that state
@@ -99,6 +100,60 @@
 	flex: 1 1 auto;
 	min-height: 120px;
 	overflow-y: auto;
+	/* A note is what the person typed, spaces and blank lines included. Without
+	   pre-wrap the browser collapses runs of spaces and the alignment of a pasted
+	   block is gone the moment the rich editor draws it. */
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+}
+/* The category screen: the same shape as the note screen, over the list. */
+.wind[app="notes"] #notes_categories_view {
+	display: none;
+	flex: 1 1 auto;
+	min-height: 0;
+	flex-direction: column;
+	gap: 6px;
+}
+.wind[app="notes"] #notes.categories_open #notes_body,
+.wind[app="notes"] #notes.categories_open #notes_input_row { display: none; }
+.wind[app="notes"] #notes.categories_open #notes_categories_view { display: flex; }
+.wind[app="notes"] #notes_categories_bar {
+	flex: 0 0 auto;
+	display: flex;
+	align-items: center;
+	gap: 6px;
+}
+.wind[app="notes"] #notes_categories_bar button { width: auto; }
+.wind[app="notes"] #notes_categories_title { flex: 1 1 auto; font-weight: 600; }
+.wind[app="notes"] #notes_categories_list {
+	flex: 1 1 auto;
+	min-height: 0;
+	overflow-y: auto;
+}
+.wind[app="notes"] .notes_category_row {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	padding: 4px 0;
+	border-bottom: 1px solid var(--line);
+}
+.wind[app="notes"] .notes_category_name { flex: 1 1 auto; min-width: 0; }
+.wind[app="notes"] .notes_category_handoff { font-size: 11px; opacity: 0.7; white-space: nowrap; }
+.wind[app="notes"] .notes_category_remove { flex: 0 0 auto; width: auto; }
+.wind[app="notes"] #notes_categories_add {
+	flex: 0 0 auto;
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	padding-top: 6px;
+}
+.wind[app="notes"] #notes_categories_new { flex: 1 1 auto; min-width: 0; }
+.wind[app="notes"] #notes_categories_add_button { flex: 0 0 auto; width: auto; }
+.wind[app="notes"] #notes_categories_status {
+	flex: 0 0 auto;
+	font-size: 12px;
+	min-height: 1em;
+	color: var(--accent-line, var(--ink));
 }
 .wind[app="notes"] #notes_list {
 	flex: 1 1 auto;
@@ -170,9 +225,12 @@ body.soft_kb_open .wind[app="notes"] #notes_input_row {
 			<% foreach my $cat ( @{$categories} ) { %>
 				<button class="notes_chip" category="<%= $cat->{'code'} %>" style="padding:2px 9px;border:1px solid var(--line);border-radius:999px;font-size:13px;opacity:0.8;cursor:var(--jawnos-cursor-pointer, pointer);"><%= $cat->{'label'} %> <span class="notes_count" style="opacity:0.7;font-size:11px;"><%= $counts->{ $cat->{'code'} } || 0 %></span></button>
 			<% } %>
-			<% foreach my $cat ( @{$categories} ) { next unless $cat->{'target'}; %>
-				<button class="notes_category_open" category="<%= $cat->{'code'} %>" target="<%= $cat->{'target'} %>" style="display:none;margin-left:auto;padding:2px 9px;border:1px solid var(--line);border-radius:999px;font-size:13px;cursor:var(--jawnos-cursor-pointer, pointer);" title="<%= $cat->{'open_label'} %>"><%= $cat->{'open_label'} %></button>
-			<% } %>
+			<span id="notes_category_tools" style="margin-left:auto;display:flex;flex-wrap:wrap;align-items:center;gap:4px;">
+				<% foreach my $cat ( @{$categories} ) { next unless $cat->{'target'}; %>
+					<button class="notes_category_open" category="<%= $cat->{'code'} %>" target="<%= $cat->{'target'} %>" style="display:none;padding:2px 9px;border:1px solid var(--line);border-radius:999px;font-size:13px;cursor:var(--jawnos-cursor-pointer, pointer);" title="<%= $cat->{'open_label'} %>"><%= $cat->{'open_label'} %></button>
+				<% } %>
+				<button id="notes_categories_manage" type="button" style="padding:2px 9px;border:1px solid var(--line);border-radius:999px;font-size:13px;cursor:var(--jawnos-cursor-pointer, pointer);"><%= &subs::lang('notes.categories') %></button>
+			</span>
 		</div>
 		<div id="notes_list">
 			<div id="notes_empty" style="display:none;padding:6px;font-size:18px;opacity:0.7;"><%= &subs::ui('No notes in this category yet.') %></div>
@@ -185,7 +243,7 @@ body.soft_kb_open .wind[app="notes"] #notes_input_row {
 				<div class="note hover<%= ($status eq 'completed' ? ' note_completed' : '') %>" uuid="<%= $n->{'uuid'} %>" timestamp="<%= $n->{'timestamp'} %>" category="<%= $n->{'category'} %>" status="<%= $status %>" data-text="<%= $n->{'text'} %>" data-sig="<%= $n->{'server_time'} %>" style="border-bottom:solid 1px var(--line);padding:6px;font-size:18px;cursor:var(--jawnos-cursor-move, move);">
 					<button class="note_delete" uuid="<%= $n->{'uuid'} %>" style="float:right;" title="<%= &subs::lang('delete') %>">X</button>
 					<span class="note_status note_status_<%= $status %>" title="<%= &subs::lang('notes.status') %>"><%= &subs::lang( 'notes.status.' . $status ) %></span>
-					<% if ($draft_of ne '' && $draft_of ne 'notes') { %><span class="note_app" title="<%= &subs::lang('notes.draft') %>"><%= $draft_of %> · <%= &subs::lang('notes.draft') %></span><% } elsif (($n->{'category'} || '') ne '') { %><span class="note_category" title="<%= &subs::lang('notes.category') %>" style="padding:1px 7px;border:1px solid var(--line);border-radius:999px;font-size:11px;opacity:0.8;"><%= &subs::lang( 'notes.category.' . $n->{'category'} ) %></span><% } %>
+					<% if ($draft_of ne '' && $draft_of ne 'notes') { %><span class="note_app" title="<%= &subs::lang('notes.draft') %>"><%= $draft_of %> · <%= &subs::lang('notes.draft') %></span><% } elsif (($n->{'category'} || '') ne '') { %><span class="note_category" title="<%= &subs::lang('notes.category') %>" style="padding:1px 7px;border:1px solid var(--line);border-radius:999px;font-size:11px;opacity:0.8;"><%= &subs::notes_category_label( $n->{'category'} ) %></span><% } %>
 					<span class="time" timestamp="<%= $n->{'timestamp'} %>" style="opacity:0.7;font-size:14px;"></span>
 					<div class="note_text"><%= &subs::notes_header_fallback( $n->{'text'} ) %></div>
 					<div class="note_editor" title="<%= &subs::lang('notes.set_category_status') %>">
@@ -245,5 +303,30 @@ body.soft_kb_open .wind[app="notes"] #notes_input_row {
 			</select>
 		</div>
 		<textarea id="notes_edit_input" rows="8" class="notes_edit_input" placeholder="<%= &subs::ui('Edit this note...') %>" upgradeable="yes"></textarea>
+	</div>
+	<%# The category screen. A kept row posts its code; an added row posts none and
+	    the server gives it a fresh code. Removing a row here only stages the
+	    deletion: Save writes the list, Back reloads and keeps it as it was. Notes
+	    filed under a removed category are not touched - they read as Uncategorized. %>
+	<div id="notes_categories_view">
+		<div id="notes_categories_bar">
+			<button id="notes_categories_back" type="button"><%= &subs::lang('notes.back') %></button>
+			<span id="notes_categories_title"><%= &subs::lang('notes.categories') %></span>
+			<button id="notes_categories_save" type="button"><%= &subs::lang('save') %></button>
+		</div>
+		<div id="notes_categories_list">
+			<% foreach my $cat ( @{$categories} ) { next if $cat->{'code'} eq 'uncategorized'; %>
+				<div class="notes_category_row" data-code="<%= $cat->{'code'} %>" data-default="<%= $cat->{'default_label'} || '' %>">
+					<input class="notes_category_name" type="text" maxlength="40" value="<%= $cat->{'label'} %>">
+					<% if ($cat->{'open_label'}) { %><span class="notes_category_handoff"><%= $cat->{'open_label'} %></span><% } %>
+					<button class="notes_category_remove" type="button" title="<%= &subs::lang('delete') %>">X</button>
+				</div>
+			<% } %>
+		</div>
+		<div id="notes_categories_add">
+			<input id="notes_categories_new" type="text" maxlength="40" placeholder="<%= &subs::ui('New category') %>">
+			<button id="notes_categories_add_button" type="button"><%= &subs::lang('add') %></button>
+		</div>
+		<div id="notes_categories_status"></div>
 	</div>
 </div>

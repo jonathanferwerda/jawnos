@@ -198,6 +198,7 @@ $catalog{'hi'} = {
 		'chat.space' => 'स्पेस',
 		'notes.back' => 'वापस',
 		'notes.edit' => 'नोट संपादित करें',
+		'notes.categories' => 'श्रेणियाँ',
 		'notes.draft' => 'ड्राफ़्ट',
 		'notes.category' => 'श्रेणी',
 		'notes.all' => 'सभी',

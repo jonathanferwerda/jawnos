@@ -22,6 +22,12 @@ binmode Test::More->builder->failure_output, ':encoding(UTF-8)';
 # database: the migration and the read path are proven on a throwaway SQLite file
 # this test creates and installs as the holder, the way t/14-warranty.t does.
 
+# A box that has edited its categories keeps that list in settings, and the live
+# database is copied into this sandbox. Clear it here so the "six" assertions
+# below do not depend on whoever is using the app.
+&subs::db_query("delete from settings where app = 'notes' and setting = 'notes_categories'");
+&subs::notes_categories_forget();
+
 # ------------------------------------------------------------- the six, once
 my @codes = &subs::notes_category_keys();
 is_deeply( \@codes, [qw(journal roadmap social shopping dreams jawnos)],
@@ -40,7 +46,7 @@ is( scalar( grep { $seen{$_}++ } @filter ), 0, 'no filter value is listed twice'
 my @languages = map { $_->{code} } @language::languages;
 is( scalar(@languages), 16, 'the app offers sixteen interface languages' );
 
-my @keys = ( 'notes.category', 'notes.all', 'notes.back', 'notes.edit', 'delete' );
+my @keys = ( 'notes.category', 'notes.categories', 'notes.all', 'notes.back', 'notes.edit', 'delete' );
 push @keys, map { "notes.category.$_" } @filter;
 push @keys, qw(notes.status notes.status.open notes.status.completed notes.set_category_status);
 push @keys, map { "notes.open.$_" } qw(store market handbook people);
@@ -104,6 +110,68 @@ is( $list->[2]{'target'}, 'store', 'the Roadmap chip carries its hand-off' );
 is( $list->[2]{'open_label'}, &subs::lang('notes.open.store'), 'the hand-off button is translated too' );
 is( $list->[0]{'open_label'}, '', 'Uncategorized has no hand-off button' );
 is( $list->[1]{'open_label'}, '', 'Journal has no hand-off button' );
+
+# --------------------------------------------------- the list can be edited
+# The six above are what a house with no setting reads. A house that edits them
+# keeps one house-wide list: a kept row keeps its code, a new row gets an opaque
+# code, a renamed shipped category is a literal override, and a removed one
+# leaves its notes reading as Uncategorized rather than rewriting them.
+my ($ok, $err) = &subs::notes_categories_store([
+	{ code => 'journal' },
+	{ code => 'roadmap', label => 'Plans' },
+	{ label => 'Recipes' },
+]);
+is( $ok, 1, 'a list with a rename and a new category saves' ) or diag($err);
+&subs::notes_categories_forget();
+
+my @custom = &subs::notes_category_keys();
+is( scalar(@custom), 3, 'the saved list is the three rows that were posted' );
+is( $custom[0], 'journal', 'a kept code is kept' );
+is( $custom[1], 'roadmap', 'a renamed shipped category keeps its code, so its notes stay put' );
+isnt( $custom[2], 'journal', 'a new category gets a code of its own' );
+is( &subs::notes_category_valid( $custom[2] ), $custom[2], 'the new code is a valid category' );
+is( &subs::notes_category_valid('shopping'), '', 'a removed category is no longer accepted' );
+is( &subs::notes_category_effective('shopping', 'notes'), 'uncategorized',
+	'notes in a removed category read as Uncategorized, not lost' );
+is( &subs::notes_category_label('roadmap'), 'Plans', 'a renamed shipped category wears the literal name' );
+is( &subs::notes_category_label( $custom[2] ), 'Recipes', 'a custom category wears its own words' );
+is( &subs::notes_category_label_key( $custom[2] ), '', 'there is no core key for a custom category' );
+my $custom_list = &subs::notes_category_list();
+is( $custom_list->[1]{'default_label'}, &subs::lang('notes.category.journal'),
+	'a shipped category still remembers the string its default came from' );
+is( $custom_list->[1]{'custom'}, 0, 'and is not marked custom' );
+is( $custom_list->[3]{'custom'}, 1, 'the added category is marked custom' );
+is( $custom_list->[3]{'target'}, '', 'a custom category hands off to no app' );
+
+# A bad row is refused, and a refused save leaves the old list alone.
+($ok, $err) = &subs::notes_categories_store([ { label => 'Same' }, { label => 'same' } ]);
+is( $ok, 0, 'two categories cannot share a name' );
+($ok, $err) = &subs::notes_categories_store([ { code => 'not-a-category', label => 'X' } ]);
+is( $ok, 0, 'a code that is no longer in the list is refused' );
+($ok, $err) = &subs::notes_categories_store([ { label => '  ' } ]);
+is( $ok, 0, 'a new category needs a name' );
+is( scalar(&subs::notes_category_keys()), 3, 'a refused save changes nothing' );
+
+# Removing a category is just leaving it out of the posted list.
+($ok, $err) = &subs::notes_categories_store([ { code => 'journal' } ]);
+is( $ok, 1, 'a category can be removed by leaving it out' );
+&subs::notes_categories_forget();
+is_deeply( [ &subs::notes_category_keys() ], ['journal'], 'only the kept row remains' );
+
+# Removing every category is allowed: the app still has Uncategorized.
+($ok, $err) = &subs::notes_categories_store([]);
+is( $ok, 1, 'every category can be removed' );
+&subs::notes_categories_forget();
+is_deeply( [ &subs::notes_category_keys() ], [], 'an empty list leaves no category' );
+my $empty_list = &subs::notes_category_list();
+is( scalar(@{$empty_list}), 1, 'the chips keep Uncategorized with no categories' );
+is( $empty_list->[0]{'code'}, 'uncategorized', 'and it is still the first chip' );
+
+# Back to the shipped six for the rest of the file (the holder changes below).
+&subs::db_query("delete from settings where app = 'notes' and setting = 'notes_categories'");
+&subs::notes_categories_forget();
+is_deeply( [ &subs::notes_category_keys() ], [qw(journal roadmap social shopping dreams jawnos)],
+	'with the setting gone the app reads its six again' );
 
 # ---------------------------------------- the one-line heading, without a model
 # Every row is a heading, never the whole note. With no Guide model the server
@@ -220,11 +288,17 @@ like( $controller, qr/notes_category_valid\(\s*\$category_param\s*\)/,
 	'a save validates the category it was handed' );
 like( $controller, qr/header_agent => \$header_agent/,
 	'the route tells the template whether a Guide model is available' );
+like( $controller, qr/notes_categories_forget/,
+	'a Notes render reads the category setting past the worker memo' );
 like( $controller, qr/sub action_53027\b/, 'the heading route action exists' );
 like( $controller, qr/notes_header_clean\(/, 'the heading route cleans the model answer' );
+like( $controller, qr/sub action_53040\b/, 'the category save route action exists' );
+like( $controller, qr/notes_categories_store\(/, 'the route stores the posted category list' );
 my $routes = read_file('lib/JawnOS/Routes/manager_misc6.pm');
 like( $routes, qr{/manager/note_header', 'action_53027'},
 	'the heading route is registered' );
+like( $routes, qr{/manager/notes_categories', 'action_53040'},
+	'the category save route is registered' );
 
 my $template = template_source('notes/notes');
 like( $template, qr/class="notes_chip"/, 'the chips are on screen' );
@@ -232,9 +306,15 @@ like( $template, qr/id="notes_category"/, 'the picker is on screen' );
 like( $template, qr/class="notes_category_open"/, 'the hand-off button is on screen' );
 like( $template, qr/category="<%= \$n->\{'category'\} %>"/,
 	'each row carries its own category' );
-like( $template, qr/subs::lang\( 'notes\.category\.' \. \$n->\{'category'\} \)/,
-	'a row label goes through the core catalog' );
+like( $template, qr/subs::notes_category_label\( \$n->\{'category'\} \)/,
+	'a row label resolves through the configured list' );
 like( $template, qr/subs::lang\('notes\.all'\)/, 'the All chip is a core label' );
+like( $template, qr/id="notes_categories_manage"/, 'the Categories button is on screen' );
+like( $template, qr/id="notes_categories_view"/, 'the category screen exists' );
+like( $template, qr/class="notes_category_row"/, 'each category is a row on that screen' );
+like( $template, qr/class="notes_category_remove"/, 'a category row can be removed' );
+like( $template, qr/id="notes_categories_new"/, 'a new category can be named' );
+like( $template, qr/white-space: pre-wrap/, 'the note editor keeps runs of spaces and blank lines' );
 like( $template, qr/data-text="<%= \$n->\{'text'\} %>"/,
 	'the row carries the whole note for its editor' );
 like( $template, qr/subs::notes_header_fallback\( \$n->\{'text'\} \)/,
@@ -260,6 +340,13 @@ like( $js, qr/function notesEditOpen/, 'a row opens the note screen' );
 like( $js, qr/function notesEditSave/, 'Save writes the note' );
 like( $js, qr/function notesEditorPlainText/, 'the rich editor is stored as plain words' );
 like( $js, qr/notes_edit_back/, 'Back returns to the list' );
+like( $js, qr/function notesCategoriesSave/, 'the category screen saves the list' );
+like( $js, qr{url: '/manager/notes_categories'}, 'the save names the category route' );
+like( $js, qr/function notesCategoriesAdd/, 'a category can be added' );
+like( $js, qr/notes_category_remove/, 'a category row can be removed' );
+like( $js, qr/function notesSelectRefresh/, 'the pickers follow a category change' );
+like( $js, qr/function notesCategoriesReload/, 'a category save refreshes every local tab' );
+unlike( $js, qr/\\n\{3,\}/, 'the editor does not collapse the blank lines it was given' );
 
 # ------------------------------------- and the template draws what it promises
 # Source greps cannot catch a template that no longer compiles, so render it the
@@ -292,6 +379,8 @@ my @opens = $rendered =~ /class="notes_category_open"/g;
 is( scalar(@opens), 4, 'only the four categories that live elsewhere get a hand-off button' );
 like( $rendered, qr/class="note_category"[^>]*>Journal</, 'a note wears its category label' );
 like( $rendered, qr/id="notes_category"/, 'the picker is drawn' );
+my @editable = $rendered =~ /class="notes_category_row"/g;
+is( scalar(@editable), 6, 'the six shipped categories are editable on the category screen' );
 like( $rendered, qr/hello &lt;world&gt;/, 'note text is escaped as it was before' );
 unlike( $rendered, qr/<%/, 'nothing is left unrendered' );
 

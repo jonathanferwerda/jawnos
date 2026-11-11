@@ -198,6 +198,7 @@ $catalog{'ko'} = {
 		'chat.space' => '스페이스',
 		'notes.back' => '뒤로',
 		'notes.edit' => '노트 편집',
+		'notes.categories' => '카테고리',
 		'notes.draft' => '초안',
 		'notes.category' => '분류',
 		'notes.all' => '전체',

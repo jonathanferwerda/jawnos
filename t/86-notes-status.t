@@ -24,6 +24,12 @@ binmode Test::More->builder->failure_output, ':encoding(UTF-8)';
 # Nothing here touches the live database: the migration and the read/write paths
 # are proven on a throwaway SQLite file installed as the holder, as in t/74.
 
+# The live database is copied into this sandbox, and a box that has edited its
+# categories keeps that list in settings. Clear it so the category reads below
+# are the shipped six rather than somebody's live list.
+&subs::db_query("delete from settings where app = 'notes' and setting = 'notes_categories'");
+&subs::notes_categories_forget();
+
 # --------------------------------------------------------------- the statuses
 is_deeply( [ &subs::notes_status_keys() ], [qw(open completed)],
 	'a note is open or completed' );
@@ -203,7 +209,7 @@ like( $js, qr/cancel: '\.note_delete, \.note_editor, \.note_edit'/, 'the editor 
 # ------------------------------------------------ the labels, all sixteen
 my @languages = map { $_->{code} } @language::languages;
 is( scalar(@languages), 16, 'the app offers sixteen interface languages' );
-my @keys = qw(notes.category.uncategorized notes.status notes.status.open notes.status.completed notes.set_category_status delete);
+my @keys = qw(notes.category.uncategorized notes.categories notes.status notes.status.open notes.status.completed notes.set_category_status delete);
 my @missing;
 for my $lang (@languages) {
 	for my $key (@keys) {
