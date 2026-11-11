@@ -9,6 +9,8 @@
 #include <UrlEncode.h>
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
+// The house CA. Every house TLS client pins it as a trust anchor.
+#include <house_ca.h>
 #include <HTTPClient.h>
 #include <Arduino_JSON.h>
 #include <ESP32Time.h>

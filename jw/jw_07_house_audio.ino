@@ -66,7 +66,7 @@ static bool house_probe(const String &host, int arm) {
              + urlEncode(chip_id_maker()) + "&authorization=" + urlEncode(authorization)
              + "&timestamp=" + String(timestamp_maker());
   WiFiClientSecure conn;
-  conn.setInsecure();
+  conn.setCACert(HOUSE_CA_PEM);
   HTTPClient https;
   https.setTimeout(2500);
   if (!https.begin(conn, url)) { return false; }

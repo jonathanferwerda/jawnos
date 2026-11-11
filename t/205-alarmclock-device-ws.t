@@ -52,12 +52,12 @@ like($ws, qr/dev_ws_port\s*=\s*\(uint16_t\)\(arm\s*-\s*1\)/,
 	'the websocket port is the homebase arm port minus one');
 like($ws, qr/hb\.lastIndexOf\(':'\)/, 'the host:port homebase is split');
 
-# --- the route's auth query and the self-signed house cert ----------------
+# --- the route's auth query and the house-CA peer leaf --------------------
 like($ws, qr{"/device/ws\?authorization="}, 'the query targets /device/ws with the token');
 like($ws, qr/&edt=microcontroller&chip_id=/, 'the query names the edt and the chip');
 like($ws, qr/authorization\.length\(\)|dev_ws_escape\(\s*authorization\s*\)/,
 	'the Now Me token is carried (and escaped)');
-like($ws, qr/setInsecure\(\)/, 'the house self-signed certificate is accepted');
+like($ws, qr/setTrustAnchors\(\s*&house_ca_list\s*\)/, 'the house-CA peer leaf is verified, not accepted blindly');
 
 # --- client frames must be masked ----------------------------------------
 like($ws, qr/header\[n\+\+\]\s*=\s*0x80\s*\|\s*\(uint8_t\)len/, 'short frames set FIN and the mask bit');

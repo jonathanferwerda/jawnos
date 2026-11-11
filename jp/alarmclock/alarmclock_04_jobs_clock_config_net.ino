@@ -418,7 +418,7 @@ String https_request(String url) {
     return "no ping";
   }
   url = url_maker(url);
-  connexion -> setInsecure();
+  connexion -> setTrustAnchors(&house_ca_list);
   if (connexion && homebaseOnline > 0) {
     {
       if (https.begin(*connexion, url)) {
@@ -460,7 +460,7 @@ String https_request(String url) {
 int https_post(const String &path, const String &body, String &answer) {
   if (homebaseOnline == 0 || homebaseIP == "") { return -1; }
   String url = url_maker("https://" + homebaseIP + path + "?");
-  connexion -> setInsecure();
+  connexion -> setTrustAnchors(&house_ca_list);
   if (!connexion || !https.begin(*connexion, url)) {
     homebaseOnline = 0;
     return -1;

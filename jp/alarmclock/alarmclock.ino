@@ -1,6 +1,9 @@
 #include <Arduino.h>
 #include <HTTPClient.h>
+// WiFi.h carries WiFiClientSecure and the BearSSL X509List used below.
 #include <WiFi.h>
+// The house CA. Every house TLS client pins it as a trust anchor.
+#include <house_ca.h>
 // SimpleMDNS ships with the arduino-pico core and exposes the same global MDNS
 // as the ESP32; advertise this pico on _jawnos._tcp so the Dev panel names it.
 #include <SimpleMDNS.h>

@@ -127,7 +127,7 @@ static bool dev_ws_handshake() {
   String path = "/device/ws?authorization=" + dev_ws_escape(authorization)
               + "&edt=microcontroller&chip_id=" + dev_ws_escape(dev_ws_chip());
 
-  dev_ws_tls.setInsecure();
+  dev_ws_tls.setTrustAnchors(&house_ca_list);
   // setTimeout() is in milliseconds on the arduino-pico Stream API (the HTTP
   // rail uses 8000/6000 for the same reason). 5 ms here timed out the TLS
   // handshake before it could finish, so the board never registered.
@@ -146,7 +146,7 @@ static bool dev_ws_handshake() {
   dev_ws_tls.print(req);
 
   // The route answers 101 then starts sending. The accept header is not
-  // re-checked: setInsecure() means the TLS peer is not authenticated, and the
+  // re-checked: TLS has already verified the peer against the house CA, and the
   // Now Me token in the query is the credential the route verifies.
   String status;
   uint32_t deadline = millis() + 6000;

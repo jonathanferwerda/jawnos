@@ -126,6 +126,11 @@ void set_epoch_seconds(int64_t seconds) {
   set_epoch_ms(seconds * 1000LL);
 }
 
+// Pinned to the house CA: https_request(), https_post() and the /device/ws
+// client below authenticate the manager's peer leaf against this anchor, so no
+// house connection accepts an arbitrary peer.
+BearSSL::X509List house_ca_list(HOUSE_CA_PEM);
+
 Servo myservo;
 WiFiClientSecure *connexion = new WiFiClientSecure;
 HTTPClient https;

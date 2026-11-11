@@ -431,13 +431,26 @@ void jawn_setup() {
     bool gw_ok = gw.connect("192.168.2.1", 80, 2000);
     g["tcp_gw_80"] = gw_ok ? "connected" : "failed";
     if (gw_ok) { gw.stop(); }
+    // The home probe follows the configured homebase when there is one; the
+    // constants are the LAN the probe was written on, kept for a board that has
+    // not been provisioned yet. The JSON keys keep the historical 45547 name.
+    String probe_host = "192.168.2.3";
+    int probe_port = 45547;
+    int home_split = homebaseIP.lastIndexOf(':');
+    if (home_split > 0) {
+      int configured_port = homebaseIP.substring(home_split + 1).toInt();
+      if (configured_port > 0) {
+        probe_host = homebaseIP.substring(0, home_split);
+        probe_port = configured_port;
+      }
+    }
     WiFiClient plain;
-    bool tcp_ok = plain.connect("192.168.2.3", 45547, 3000);
+    bool tcp_ok = plain.connect(probe_host.c_str(), probe_port, 3000);
     g["tcp_home_45547"] = tcp_ok ? "connected" : "failed";
     if (tcp_ok) { plain.stop(); }
     WiFiClientSecure tls;
-    tls.setInsecure();
-    bool tls_ok = tls.connect("192.168.2.3", 45547, 4000);
+    tls.setCACert(HOUSE_CA_PEM);
+    bool tls_ok = tls.connect(probe_host.c_str(), probe_port, 4000);
     g["tls_home_45547"] = tls_ok ? "connected" : "failed";
     char tls_err[96] = "";
     int tls_code = tls.lastError(tls_err, sizeof(tls_err));

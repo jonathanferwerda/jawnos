@@ -264,7 +264,7 @@ void https_download(fs::FS &fs, String url, String filename) {
   deleteFile(fs, filename.c_str());
 
   Serial.println(url);
-  connexion -> setInsecure();
+  connexion -> setCACert(HOUSE_CA_PEM);
   if (connexion) {
     {
       if (https.begin(*connexion, url)) {
@@ -342,7 +342,7 @@ String https_request(String url) {
   // still free, and the room's buttons never arrived (2026-10-09). The watch
   // was fixed the same way earlier.
   WiFiClientSecure connexion;
-  connexion.setInsecure();
+  connexion.setCACert(HOUSE_CA_PEM);
   HTTPClient https;
   if (!https.begin(connexion, url)) {
     return "failure";
@@ -434,7 +434,7 @@ static bool house_probe(const String &host, int arm) {
              + urlEncode(chip_id_maker()) + "&authorization=" + urlEncode(authorization)
              + "&timestamp=" + String(rtc.getLocalEpoch() - rtc.offset);
   WiFiClientSecure conn;
-  conn.setInsecure();
+  conn.setCACert(HOUSE_CA_PEM);
   HTTPClient https;
   https.setTimeout(2500);
   if (!https.begin(conn, url)) { return false; }

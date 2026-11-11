@@ -604,7 +604,7 @@ void https_download(fs::FS &fs, String url, String filename) {
   // written with their exact length, but appending a new reply onto an old one
   // would leave the WAV's data chunk pointing at the previous clip.
   fs.remove(filename.c_str());
-  connexion -> setInsecure();
+  connexion -> setCACert(HOUSE_CA_PEM);
   if (connexion) {
     {
       if (https.begin(*connexion, url)) {
@@ -702,7 +702,7 @@ String https_request_raw(String url, String method, String payloadData) {
   // A stack client, not "new": one leaked WiFiClientSecure per request is what
   // ground the heap down until the panel's SPI DMA buffers stopped allocating.
   WiFiClientSecure connexion;
-  connexion.setInsecure();
+  connexion.setCACert(HOUSE_CA_PEM);
   bool reached = false;
   {
     HTTPClient https;

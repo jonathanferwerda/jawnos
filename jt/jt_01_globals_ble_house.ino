@@ -588,15 +588,14 @@ TouchLib *touch = NULL;
 TFT_eSPI tft;
 ESP32Time rtc;
 using namespace websockets;
-// The deck dials the manager by LAN IP, but the manager's certificate names its
-// DNS wildcard, so normal verification can never succeed. The library's
-// setInsecure() only clears optional CA pointers on ESP32 and never reaches the
-// WiFiClientSecure; this client does. The Now Me authorization token is still
-// the secret - TLS protects it (and the injected keystrokes) in flight.
-class InsecureDeckTcpClient : public websockets::network::SecuredEsp32TcpClient {
+// The deck dials the manager by LAN IP. The house-CA peer leaf the listener
+// presents carries that address in its SAN, so ordinary verification succeeds;
+// this client pins the house CA. The Now Me authorization token is still the
+// secret - TLS protects it (and the injected keystrokes) in flight.
+class HouseCaDeckTcpClient : public websockets::network::SecuredEsp32TcpClient {
  public:
-  InsecureDeckTcpClient() {
-    client.setInsecure();
+  HouseCaDeckTcpClient() {
+    client.setCACert(HOUSE_CA_PEM);
     // A dead House machine must not hold the UI: the default TLS handshake
     // timeout is tens of seconds and tauth_connect() runs on the loop. The TCP
     // connect has its own 30 s default, which is what made a boot with an
@@ -605,7 +604,7 @@ class InsecureDeckTcpClient : public websockets::network::SecuredEsp32TcpClient 
     client.setConnectionTimeout(2000);
   }
 };
-WebsocketsClient wsclient(std::make_shared<InsecureDeckTcpClient>());
+WebsocketsClient wsclient(std::make_shared<HouseCaDeckTcpClient>());
 WiFiClientSecure *connexion = new WiFiClientSecure;
 HTTPClient https;
 bool ws_connected = 0;

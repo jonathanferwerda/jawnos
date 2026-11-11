@@ -386,7 +386,7 @@ static bool deck_voice_post_clip(const String &path, long ts, const char *mode) 
   File f = store->open(path.c_str(), FILE_READ);
   if (!f) { return false; }
   WiFiClientSecure client;
-  client.setInsecure();
+  client.setCACert(HOUSE_CA_PEM);
   HTTPClient https;
   // Short enough that an unreachable homebase costs a moment, not the reply
   // window: the clip is compressed and the link is local, so this is ample.

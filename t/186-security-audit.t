@@ -205,8 +205,10 @@ is(scalar keys %tls_pin, scalar @tls_entries, 'no two accepted insecure-TLS site
 is(scalar @{$allow}, 24, 'the allowlist carries twenty-four evidence-pinned entries');
 is($report->{'summary'}{'known'}, 26, 'twenty-six findings are known by evidence');
 
-# The run marks those twenty-two known (two entries each cover two findings) and
-# leaves only the firmware setInsecure calls unallowed.
+# The run marks those twenty-two known (two entries each cover two findings).
+# The firmware no longer disables verification: each board pins the house CA
+# (firmware/house_ca.h, t/282), so the thirteen firmware calls are gone and
+# every insecure-TLS finding left is an evidence-pinned design site.
 my @tls_known = grep { $_->{'known'} } @tls;
 is(scalar @tls_known, 22, 'the accepted insecure-TLS findings are known');
 my $design_path = qr{^(?:lib/JawnOS/Domain/(?:Tunnel|Lan)\.pm|lib/JawnOS/Domain/Device\.pm|lib/JawnOS/Controller/manager_configure2\.pm|perl/tunnel\.pl)$};
@@ -215,13 +217,8 @@ my @design = grep { $_->{'path'} =~ $design_path } @tls;
 is(scalar @design, 6, 'the reviewed design sites are still reported');
 ok(!(grep { !$_->{'known'} } @design), 'the design sites are known through their evidence-pinned entries');
 my @firmware = grep { $_->{'path'} =~ $firmware_path } @tls;
-is(scalar @firmware, 13, 'the firmware insecure-TLS calls are still reported');
-ok(!(grep { $_->{'known'} } @firmware), 'firmware setInsecure stays unallowed');
+is(scalar @firmware, 0, 'no board disables certificate verification any more');
 my @unallowed = grep { !$_->{'known'} } @tls;
-is(scalar @unallowed, 13, 'the only unallowed insecure-TLS findings are the firmware calls');
-ok(!(grep { $_->{'path'} !~ $firmware_path } @unallowed),
-	'every unallowed insecure-TLS finding is a firmware setInsecure site');
-ok(!(grep { $_->{'evidence'} !~ /setInsecure\(\)/ } @unallowed),
-	'each one is a setInsecure() call, not a design site');
+is(scalar @unallowed, 0, 'no unallowed insecure-TLS finding remains');
 
 done_testing();

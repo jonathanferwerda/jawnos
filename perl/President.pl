@@ -426,6 +426,11 @@ sub manager_starter() {
 	if (-e "$server_dir/fullchain.pem" && -e "$server_dir/privkey.pem") {
 		$certs = "?cert=$server_dir/fullchain.pem&key=$server_dir/privkey.pem";
 	}
+	# The door a board dials presents the house-CA leaf when there is one: its
+	# SAN carries the LAN address the device used, which the public wildcard
+	# certificate cannot. The dock, main, alarm and teletype doors keep $certs
+	# for browsers.
+	my $device_certs = $peer_certs ne '' ? $peer_certs : $certs;
 	my $time_count = 0;
 	my $now = &subs::rightNow();
 	write_file($duty_file, $now);
@@ -614,7 +619,7 @@ sub manager_starter() {
 			purpose => 'locker', name => 'Dev Locker Server', dev => 1, watch => 1);
 		if ($ENV{PORT_AHOY} != $ENV{PORT_MSG}) {
 			print "Starting WS Server on port " . $ws_port . "\n";
-			&server_process('./perl/Manager.pl', [ 'https://*:' . $ws_port . $certs ],
+			&server_process('./perl/Manager.pl', [ 'https://*:' . $ws_port . $device_certs ],
 				purpose => 'websocket', name => 'Dev WS Server', dev => 1, watch => 1);
 		}
 		print "Starting Main Server on port " . $port . "\n";
@@ -638,7 +643,7 @@ sub manager_starter() {
 		$log->info('after locker server');
 
 		print "Starting Pro WS Server on port " . $ws_port . "\n";
-		my @ws_listeners = ( 'https://*:' . $ws_port . $certs, 'http://127.0.0.1:' . $ws_plain_port );
+		my @ws_listeners = ( 'https://*:' . $ws_port . $device_certs, 'http://127.0.0.1:' . $ws_plain_port );
 		# The peer listener lives on the socket server in production: it is
 		# the worker that already holds long-lived connections, and the same
 		# app answers the peer routes there.
@@ -697,12 +702,12 @@ sub manager_starter() {
 	if ($device ne 'server' && $device ne 'controller') {
 		if ($config->{'environment'} eq 'development') {
 			print "Starting Development Watch Server on $watch_port\n";
-			&server_process('./perl/watch.pl', [ 'https://*:' . $watch_port . $certs ],
+			&server_process('./perl/watch.pl', [ 'https://*:' . $watch_port . $device_certs ],
 				purpose => 'watch', name => 'Watch Server', dev => 1);
 		}
 		elsif ($config->{'environment'} eq 'production') {
 			print "Starting Pro Watch Server on port " . $watch_port . "\n";
-			&server_process('./perl/watch.pl', [ 'https://*:' . $watch_port . $certs ],
+			&server_process('./perl/watch.pl', [ 'https://*:' . $watch_port . $device_certs ],
 				purpose => 'watch', name => 'Watch Server',
 				workers => $device eq 'mobile' ? 1 : ($device eq 'server' ? 2 : 1));
 		}

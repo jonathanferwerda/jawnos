@@ -389,8 +389,9 @@ void tauth_connect() {
   }
   if (ws_connected == 0 && authorization != "") {
     // twshomebaseIP is "host:port" (now_me's twshomebase). The socket is wss:
-    // wsclient was built over InsecureDeckTcpClient above. The Now Me pair is
-    // the credential the server checks, so there is no password to type.
+    // wsclient was built over HouseCaDeckTcpClient above, so the listener's
+    // house-CA leaf is verified. The Now Me pair is the credential the server
+    // checks, so there is no password to type.
     String ws_host = twshomebaseIP;
     int ws_port = 443;
     int split = ws_host.lastIndexOf(':');

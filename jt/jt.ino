@@ -4,6 +4,8 @@
 #include <TFT_eSPI.h>
 #include <lvgl.h>
 #include <WiFi.h>
+// The house CA. Every house TLS client pins it as a trust anchor.
+#include <house_ca.h>
 // ESPmDNS: advertise this deck on _jawnos._tcp so the Dev panel names it at once
 // (see the server's subs::mdns_devices).
 #include <ESPmDNS.h>

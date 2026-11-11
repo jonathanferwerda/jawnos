@@ -30,8 +30,8 @@ like($president, qr/JawnOS::Platform::Ports::port_for\(\s*'ws_plain', base => \$
 	'the plain socket port is derived from the socket port');
 like($president, qr/\$ENV\{PORT_WS_PLAIN\} = \$ws_plain_port if \$config->\{'environment'\} eq 'production';/,
 	'the plain port is exported in production');
-like($president, qr/my \@ws_listeners = \( 'https:\/\/\*:' \. \$ws_port \. \$certs, 'http:\/\/127\.0\.0\.1:' \. \$ws_plain_port \);/,
-	'the socket server listens on https and on plain loopback');
+like($president, qr/my \@ws_listeners = \( 'https:\/\/\*:' \. \$ws_port \. \$device_certs, 'http:\/\/127\.0\.0\.1:' \. \$ws_plain_port \);/,
+	'the socket server listens with the house-CA leaf on https and plainly on loopback');
 like($president, qr/&server_process\('\.\/perl\/Manager\.pl', \\\@ws_listeners,/,
 	'the socket server is handed both listeners');
 
