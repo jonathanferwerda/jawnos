@@ -99,14 +99,20 @@ sub remote_device_connect($rdata) {
 	# that carries it must be verified: the peer listener's house-CA leaf, never
 	# insecure(1). A peer with no verified route is refused rather than handed
 	# the key over an unverified connection.
-	my $tls_row = { %{$rdata} };
+	# The roster row carries the addresses the peer advertises (its network
+	# map, tailnet and LAN literals); rdata carries only the route this login
+	# is taking. The TLS decision needs both: peer_live_manager may have
+	# resolved the route to an address the row publishes but that rdata does
+	# not name, and without it a working listener looked unverifiable and the
+	# login was refused. Start from the stored row and let the caller's own
+	# route win where it has one.
 	my $sig_row = (($rdata->{'signatorial'} || '') =~ /^[0-9a-fA-F]{16,64}$/)
 		? &subs::db_select('remote_machines', undef, { signatorial => $rdata->{'signatorial'} })->hashes->[0]
 		: undef;
-	if ($sig_row) {
-		$tls_row->{'fqdn'} = $sig_row->{'fqdn'} if ($tls_row->{'fqdn'} || '') eq '';
-		$tls_row->{'ip'} = $sig_row->{'ip'} if ($tls_row->{'ip'} || '') eq '';
-		$tls_row->{'port'} = $sig_row->{'port'} if ($tls_row->{'port'} || '') eq '';
+	my $tls_row = $sig_row ? { %{$sig_row} } : {};
+	foreach my $key (qw(fqdn ip port signatorial tunnel manager)) {
+		$tls_row->{$key} = $rdata->{$key}
+			if defined $rdata->{$key} && length $rdata->{$key};
 	}
 	my ($login_manager, $tls_verified) = &subs::peer_secure_url($tls_row, $manager);
 	unless ($tls_verified && &subs::peer_tls_verify($ua)) {

@@ -387,9 +387,23 @@ sub peer_secure_url {
 	if ($url =~ m{^(https?)://(\[[^\]]+\]|[^/:]+)}) { ($scheme, $host) = ($1, $2) }
 	elsif ($url =~ m{^(wss?)://(\[[^\]]+\]|[^/:]+)}) { ($scheme, $host) = ($1, $2) }
 	return ($url, 0) unless defined $host;
-	my $row_host = $rm->{'ip'} // '';
-	my $row_fqdn = $rm->{'fqdn'} // '';
-	return ($url, 0) unless $host eq $row_host || ($row_fqdn ne '' && $host eq $row_fqdn);
+	# A row is the peer, not one address. The stored ip is only where it was
+	# last reached, the fqdn can be loopback (a hand-entered row), and
+	# peer_live_manager resolves a dead name or a departed LAN literal to the
+	# tailnet. Every literal the row advertises is the same peer, so the host
+	# check has to accept any of them: a tailnet address that the row itself
+	# publishes was refused here, which made remote_device_connect call a
+	# working peer listener "not verified" and refuse the peer login - leaving
+	# every relay without the session cookie it needs to pass the gate.
+	my %known;
+	for my $candidate ($rm->{'ip'}, $rm->{'fqdn'}, &peer_resolve_addresses($rm), (&peer_manager_host($rm))[0]) {
+		next unless defined $candidate && length $candidate;
+		$candidate =~ s/^\[|\]$//g;
+		$known{lc $candidate} = 1;
+	}
+	my $host_key = lc $host;
+	$host_key =~ s/^\[|\]$//g;
+	return ($url, 0) unless $known{$host_key};
 	# The listener is the route worth trying: the manager port is often bound to
 	# loopback and published by the tunnel, while the peer listener answers on
 	# the machine's own addresses. A leaf that proves this address lets the

@@ -39,6 +39,14 @@ subs::preload($_) for qw(peer_secure_url peer_tls_verify peer_ca_file log_writer
 	sub result { return undef }
 }
 
+# The roster lookup remote_device_connect makes for a signed login. The row it
+# hands back is the one the TLS decision must see.
+our $ROSTER_ROW;
+{
+	package FakeRoster;
+	sub hashes { return [ $main::ROSTER_ROW ] }
+}
+
 # The identity file and the translations are the machine's own state; a test
 # must not write either.
 local *subs::signatorial_designer = sub { 'self-sig' };
@@ -229,6 +237,36 @@ my $row = {
 	like($fake->{'posts'}->[0] // '', qr{^https://10\.0\.0\.5:45551/sesh_check}, 'to the verified listener');
 	is($fake->{'form'}->{'numerics'} // '', 'house-key-not-a-real-key', 'and it carries the login body');
 	ok(!ref $ret || !$ret->{'tls_refused'}, 'a verified peer is not refused');
+}
+
+# (i) The TLS decision sees every address the roster row advertises.
+# peer_live_manager may resolve the login route to the tailnet while rdata
+# names only the stored LAN address; the row's own network map is the proof
+# that the tailnet address is the same peer. Without it a working listener
+# read as "not verified" and the login never minted a session cookie.
+{
+	my ($seen, $ret);
+	{
+		no warnings 'redefine';
+		local $main::ROSTER_ROW = {
+			signatorial => 'ab' x 8, ip => '10.20.0.10', fqdn => '127.0.0.1',
+			port => 3001, tailnet_ip => '100.64.0.4',
+			network => '{"tailscale0":{"ip":"100.64.0.4"}}',
+		};
+		local *subs::db_select = sub { return bless {}, 'FakeRoster' };
+		local *subs::peer_secure_url = sub { $seen = $_[0]; return ($_[1], 0) };
+		local *subs::peer_ca_file = sub { '/fixture/house-ca.pem' };
+		local *subs::peer_tls_verify = sub { return 1 };
+		local *subs::log_writer = sub { };
+		$ret = Manager::remote_device_connect({
+			manager => 'https://100.64.0.4:3001/manager', ip => '10.20.0.10',
+			signatorial => 'ab' x 8, password => 'house-key-not-a-real-key', tunnel => 'no',
+		});
+	}
+	is($seen->{'tailnet_ip'}, '100.64.0.4', 'the roster tailnet address reaches the TLS decision');
+	like($seen->{'network'} // '', qr/100\.64\.0\.4/, 'and so does its network map');
+	is($seen->{'ip'}, '10.20.0.10', 'the route rdata names still wins for ip');
+	ok($ret->{'tls_refused'}, 'the stubbed refusal still comes back');
 }
 
 # --- the sources -------------------------------------------------------------

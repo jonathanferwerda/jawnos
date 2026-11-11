@@ -275,7 +275,7 @@ SKIP: {
 
 	my ($here_pid, $here_port) = $serve->('here');
 	if (!$here_pid) {
-		skip 'the leaf listener did not start', 5;
+		skip 'the leaf listener did not start', 8;
 	}
 	else {
 		my ($url, $verified) = subs::peer_secure_url(
@@ -285,6 +285,23 @@ SKIP: {
 		like($url, qr{^https://127\.0\.0\.1:$here_port/manager$}, 'and the URL moves to its port');
 		is(subs::peer_tls_port({ ip => '127.0.0.1', port => $here_port - 6 }, { host => '127.0.0.1' }),
 			$here_port, 'the probe answers with the listener port');
+		# A hand-entered row can carry a loopback fqdn while the house reaches
+		# the machine on its advertised tailnet address. That address is the
+		# same peer, so it must be a route the TLS decision will accept.
+		my ($alt_url, $alt_verified) = subs::peer_secure_url(
+			{ ip => '192.168.1.123', fqdn => 'dev.local',
+			  tailnet_ip => '127.0.0.1',
+			  network => '{"tailscale0":{"ip":"127.0.0.1"}}',
+			  port => $here_port - 6, tunnel => 'no' },
+			'https://127.0.0.1:' . ($here_port - 6) . '/manager');
+		is($alt_verified, 1, 'an advertised tailnet address is verified even when it is neither ip nor fqdn');
+		like($alt_url, qr{^https://127\.0\.0\.1:$here_port/manager$}, 'and the URL moves to that listener port');
+		my ($mgr_url, $mgr_verified) = subs::peer_secure_url(
+			{ ip => '192.168.1.123', fqdn => 'dev.local',
+			  manager => 'https://127.0.0.1:' . ($here_port - 6),
+			  port => $here_port - 6, tunnel => 'no' },
+			'https://127.0.0.1:' . ($here_port - 6) . '/manager');
+		is($mgr_verified, 1, 'the stored manager host is a route too');
 		kill 'TERM', $here_pid;
 		waitpid($here_pid, 0);
 		my ($moved_pid, $moved_port) = $serve->('moved');
