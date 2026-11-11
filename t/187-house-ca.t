@@ -143,7 +143,7 @@ SKIP: {
 
 # --- enrolling the roster from remote_machines ------------------------------
 SKIP: {
-	skip 'openssl is not installed', 9 unless $openssl && length $openssl && -x $openssl;
+	skip 'openssl is not installed', 12 unless $openssl && length $openssl && -x $openssl;
 	my $tmp = tempdir(CLEANUP => 1);
 	make_path("$tmp/scripts");
 	copy("$root/scripts/house_ca.pl", "$tmp/scripts/house_ca.pl") or die $!;
@@ -152,12 +152,15 @@ SKIP: {
 	my $db = "$tmp/jawnos.db";
 	require DBI;
 	my $dbh = DBI->connect("dbi:SQLite:dbname=$db", '', '', { RaiseError => 1, PrintError => 0 });
-	$dbh->do('create table remote_machines (hostname text, ip text, tailnet_ip text, fqdn text, manager text)');
-	$dbh->do("insert into remote_machines values ('Laptop','192.168.1.123','100.64.0.3','laptop.example.com','https://192.168.1.123:45545')");
-	$dbh->do("insert into remote_machines values ('Phone','192.168.2.4','100.64.0.9','phone.example.com','https://127.0.0.1:60877')");
+	$dbh->do('create table remote_machines (hostname text, ip text, tailnet_ip text, fqdn text, manager text, network text, domain text)');
+	$dbh->do("insert into remote_machines (hostname,ip,tailnet_ip,fqdn,manager,network,domain) values ('Laptop','192.168.1.123','100.64.0.3','laptop.example.com','https://192.168.1.123:45545',null,null)");
+	$dbh->do("insert into remote_machines (hostname,ip,tailnet_ip,fqdn,manager,network,domain) values ('Phone','192.168.2.4','100.64.0.9','phone.example.com','https://127.0.0.1:60877',null,null)");
+	# A row whose stored ip is the tailnet and whose LAN address exists only in
+	# its network map, with its manager named by DNS: both must reach the leaf.
+	$dbh->do("insert into remote_machines (hostname,ip,tailnet_ip,fqdn,manager,network,domain) values ('Tablet','100.64.0.8','100.64.0.8','100.64.0.8','https://tablet.example.com:45545','{\"wlan0\":{\"ip\":\"192.168.1.103\"}}',null)");
 	my $local = `hostname`;
 	chomp $local;
-	$dbh->do('insert into remote_machines values (?,?,?,?,?)', undef, $local, '10.0.0.9', '', "$local.example.com", '');
+	$dbh->do('insert into remote_machines (hostname,ip,tailnet_ip,fqdn,manager,network,domain) values (?,?,?,?,?,?,?)', undef, $local, '10.0.0.9', '', "$local.example.com", '', undef, undef);
 	$dbh->disconnect;
 
 	my $run = `cd '$tmp' && $perl scripts/house_ca.pl peer --all --db '$db' --out fleet 2>&1`;
@@ -174,6 +177,13 @@ SKIP: {
 	like($sans, qr/IP Address:100\.64\.0\.3/, 'the tailnet address is a SAN');
 	like($sans, qr/IP Address:127\.0\.0\.1/, 'loopback is a SAN');
 	like($sans, qr/DNS:laptop\.example\.com/, 'the fqdn is a SAN');
+
+	my $tabtext = slurp("$tmp/fleet/Tablet/peer-fullchain.pem");
+	my ($tabfirst) = $tabtext =~ /(-----BEGIN CERTIFICATE-----.*?-----END CERTIFICATE-----)/s;
+	write_file("$tmp/tablet.pem", $tabfirst);
+	my $tabsans = `$openssl x509 -in '$tmp/tablet.pem' -noout -ext subjectAltName 2>&1`;
+	like($tabsans, qr/IP Address:192\.168\.1\.103/, 'the LAN address in the network map is a SAN');
+	like($tabsans, qr/DNS:tablet\.example\.com/, 'and a manager named by DNS is a SAN');
 
 	my $again = `cd '$tmp' && $perl scripts/house_ca.pl peer --host Laptop --db '$db' --out fleet 2>&1`;
 	is($? >> 8, 0, 'a second run keeps the existing leaf');

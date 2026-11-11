@@ -1,4 +1,4 @@
-# tests-for: lib/JawnOS.pm lib/JawnOS/Controller/ lib/JawnOS/Domain/Sync.pm lib/JawnOS/Manager.pm lib/JawnOS/Manager/ lib/JawnOS/Routes.pm lib/JawnOS/Routes/ perl/Manager.pl
+# tests-for: lib/JawnOS.pm lib/JawnOS/Controller/ lib/JawnOS/Domain/Remote.pm lib/JawnOS/Domain/Sync.pm lib/JawnOS/Manager.pm lib/JawnOS/Manager/ lib/JawnOS/Routes.pm lib/JawnOS/Routes/ perl/Manager.pl
 # covers:    `subs::remote_upgrade_marker_state` is the one place this machine's pull marker is interpreted (the reconnecto...
 
 use strict;
@@ -81,5 +81,20 @@ ok(!subs::remote_upgrade_marker_reapable(undef), 'a missing row is not reaped');
 my $manager = manager_source();
 like($manager, qr/remote_upgrade_marker_reapable\(/,
 	'the manager reaps a dead pull marker as the tree comes up');
+
+# One silent peer must not hold the sync slot for the pull-sized timeout. The
+# reconnector's agent gets short bounds, and a per-peer alarm skips a call that
+# ignores them; the pull forks and builds its own agent, so its long bound is
+# untouched.
+like($manager, qr/auth_test => 'yes', pass => 1/, 'the reconnector asks for the short pass timeouts');
+like($manager, qr/alarm\(60\)/, 'and bounds each peer with an alarm');
+like($manager, qr/did not answer within 60s/, 'a timed-out peer is named in the log');
+my $remote_source = do {
+	open(my $fh, '<', repo_root() . '/lib/JawnOS/Domain/Remote.pm') or die $!;
+	local $/;
+	<$fh>;
+};
+like($remote_source, qr/\$data->\{'pass'\} && \$rm->\{'ua'\}/, 'remote_useragent_maker has a pass mode');
+like($remote_source, qr/inactivity_timeout\(15\)/, 'that shortens the pass inactivity bound');
 
 done_testing();

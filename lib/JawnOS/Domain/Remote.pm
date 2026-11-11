@@ -537,6 +537,14 @@ sub remote_useragent_maker($data) {
 		$rm->{'ua'}->insecure(1) unless $manager_verified;
 		$rm->{'ua'}->inactivity_timeout(60);
 	}
+	# A reconnector pass is a probe, not a pull: one silent peer must not hold
+	# the utility slot with the pull-sized inactivity bound. The snapshot pull
+	# forks and builds its own agent, so the long bound stays for it.
+	if ($data->{'pass'} && $rm->{'ua'}) {
+		$rm->{'ua'}->inactivity_timeout(15);
+		$rm->{'ua'}->connect_timeout(5);
+		$rm->{'ua'}->request_timeout(20);
+	}
 	$rm->{'data'} = eval { return decode_json $rm->{'data'} };
 
 	return $rm;

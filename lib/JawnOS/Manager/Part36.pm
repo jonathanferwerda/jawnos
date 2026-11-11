@@ -77,8 +77,15 @@ sub remote_machine_reconnector($c) {
 	my $signatorial = &subs::signatorial_designer();
 	# one log line per held pull marker, not one per peer per tick
 	my %own_busy_seen;
+	my %peer_timeout_seen;
 	my $pass_ok = 0;
 	eval {
+		# A peer whose manager accepts the connection and then never answers
+		# must not hold the utility slot for the pull-sized timeout. The user
+		# agent handed to this pass has short timeouts (remote_useragent_maker
+		# `pass`); this alarm is the backstop for a call that ignores them, and
+		# it skips that peer instead of aborting the rest of the pass.
+		local $SIG{ALRM} = sub { die "peer pass timed out\n" };
 		my $remote_machines = &subs::remote_machine_lister({ });
 		# Hub-and-spoke while the server is live: a spoke stops dialling peers it
 		# can only reach through the hub, and falls back to the full mesh when the
@@ -125,6 +132,8 @@ sub remote_machine_reconnector($c) {
 				$direct ||= &subs::peer_lan_address($rm) ? 1 : 0;
 				next unless $direct;
 			}
+			alarm(0);
+			alarm(60);
 			eval {
 
 				my $ip = $rm->{'ip'};
@@ -185,7 +194,7 @@ sub remote_machine_reconnector($c) {
 					# and an offline peer holding a row nobody else saw.
 					my $peer_watermark = &subs::db_query('select server_time from backups where reason=? and signatorial=? and recipient=? order by server_time DESC LIMIT 1', 'remote_upgraded', $rm->{'signatorial'}, $signatorial)->hashes->[0];
 					my $my_digest = &subs::sync_digest_map();
-					$rm = &remote_useragent_maker({ signatorial => $rm->{'signatorial'}, rm => $rm, auth_test => 'yes', tombstone_cursor => ($rm->{'sync_cursor'} || 0), since => ($peer_watermark->{'server_time'} || 0), digest => $my_digest });
+					$rm = &remote_useragent_maker({ signatorial => $rm->{'signatorial'}, rm => $rm, auth_test => 'yes', pass => 1, tombstone_cursor => ($rm->{'sync_cursor'} || 0), since => ($peer_watermark->{'server_time'} || 0), digest => $my_digest });
 					if (!$rm->{'res'}) {
 						$ping_test = 'no';
 					}
@@ -451,10 +460,17 @@ sub remote_machine_reconnector($c) {
 				$update->{'tailnet_ip'} = $tailnet if $tailnet;
 
 				&subs::db_update('remote_machines', $update, { signatorial => $rm->{'signatorial'} });
+			};
+			alarm(0);
+			if ($@ && $@ =~ /peer pass timed out/) {
+				my $who = $rm->{'hostname'} || $rm->{'signatorial'} || '?';
+				$log->warn('sync peer skipped: ' . $who . ' did not answer within 60s')
+					if !$peer_timeout_seen{$who}++;
 			}
 		}
 		$pass_ok = 1;
 	};
+	alarm(0);
 	if (!$pass_ok) {
 		my $err = $@ || 'unknown error';
 		$err =~ s/\s+$//;

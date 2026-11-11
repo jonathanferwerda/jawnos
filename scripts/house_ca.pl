@@ -30,6 +30,7 @@ use Cwd qw(abs_path);
 use File::Copy qw(copy);
 use File::Path qw(make_path);
 use File::Temp qw(tempdir);
+use JSON::PP qw(decode_json);
 
 my $root = abs_path("$FindBin::Bin/..");
 chdir $root or die "house_ca: cannot find the jawnos root: $!\n";
@@ -163,21 +164,41 @@ sub cmd_init {
 	return 0;
 }
 
-# The SANs of a peer come from the row the house already talks to it by: the
-# address it dials, the tailnet address, the manager host, the fqdn and the
-# hostname. Loopback is included so a tunnel route still verifies.
+# The SANs of a peer come from the row the house already talks to it by.
+# `ip` is only where it was last reached, so every advertised address is
+# included: the tailnet, the LAN the peer reports in its network map, its
+# manager host, a pseudonym and loopback (so a tunnel route still verifies).
+# A leaf that omits an address the peer is dialled by makes that listener
+# unverifiable, and remote_device_connect then refuses the peer login.
 sub peer_row_ips {
 	my ($row) = @_;
 	my %seen;
 	my @ips;
-	for my $value ( $row->{'ip'}, $row->{'tailnet_ip'}, '127.0.0.1' ) {
-		next unless valid_ip($value) && !$seen{$value}++;
-		push @ips, $value;
-	}
+	my @values = ($row->{'ip'}, $row->{'tailnet_ip'}, $row->{'lan_ip'},
+		$row->{'vip'}, '127.0.0.1');
 	my $manager = $row->{'manager'} // '';
 	if ($manager =~ m{^https?://(\[[^\]]+\]|[^/:]+)}) {
 		(my $host = $1) =~ s/^\[|\]$//g;
-		push @ips, $host if valid_ip($host) && !$seen{$host}++;
+		push @values, $host;
+	}
+	my $network = eval { decode_json($row->{'network'} || '{}') } || {};
+	if (ref $network eq 'HASH') {
+		foreach my $nic ( sort keys %{$network} ) {
+			my $entry = $network->{$nic};
+			next unless ref $entry eq 'HASH';
+			push @values, $entry->{'ip'};
+			my $m = $entry->{'manager'} // '';
+			if ($m =~ m{^https?://(\[[^\]]+\]|[^/:]+)}) {
+				(my $host = $1) =~ s/^\[|\]$//g;
+				push @values, $host;
+			}
+		}
+	}
+	my $pseu = eval { decode_json($row->{'pseudonyms'} || '{}') } || {};
+	push @values, $pseu->{'ip'} if ref $pseu eq 'HASH';
+	for my $value ( @values ) {
+		next unless valid_ip($value) && !$seen{$value}++;
+		push @ips, $value;
 	}
 	return @ips;
 }
@@ -186,7 +207,19 @@ sub peer_row_dns {
 	my ($row) = @_;
 	my %seen;
 	my @dns;
-	for my $value ( $row->{'fqdn'}, $row->{'hostname'} ) {
+	my @values = ($row->{'fqdn'}, $row->{'hostname'}, $row->{'domain'});
+	my $manager = $row->{'manager'} // '';
+	if ($manager =~ m{^https?://(\[[^\]]+\]|[^/:]+)}) { push @values, $1 }
+	my $network = eval { decode_json($row->{'network'} || '{}') } || {};
+	if (ref $network eq 'HASH') {
+		foreach my $nic ( sort keys %{$network} ) {
+			my $entry = $network->{$nic};
+			next unless ref $entry eq 'HASH';
+			my $m = $entry->{'manager'} // '';
+			push @values, $1 if $m =~ m{^https?://(\[[^\]]+\]|[^/:]+)};
+		}
+	}
+	for my $value ( @values ) {
 		next unless valid_dns($value) && !$seen{lc $value}++;
 		push @dns, $value;
 	}
