@@ -127,4 +127,10 @@ my $handbook = read_file("$root/templates/handbook/handbook.html.ep");
 like($handbook, qr/&subs::note_retriever\(\$app->\{'uuid'\}, &subs::session_suds\(\$c\) \|\| &subs::suds_grabber\(\)\)/,
 	'the handbook calls the reader with the new signature');
 
+# The note a Notes button reveals is a block, so it starts on its own line under
+# the button instead of running on beside the row's inline buttons.
+my $details = read_file("$root/templates/appointment_details.html.ep");
+like($details, qr/<div class="notespace"><\/div>/, 'the note text is a block of its own');
+unlike($details, qr/<span class="notespace">/, 'not an inline span beside the button');
+
 done_testing();

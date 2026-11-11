@@ -103,7 +103,9 @@
 				<% } %>
 				<% if ($l->{'start_notes'} eq 'redacted' || $l->{'notes'} eq 'redacted' || $l->{'end_notes'} eq 'redacted') { %>
 					<img src="<%= &subs::icon_path('note', '/icons/note_button.png') %>" hint="Notes" server_time="<%= $l->{'server_time'} %>" uuid="<%= $l->{'uuid'} %>" class="little_thumb notes_toggle hover" app="<%= $l->{'app'} %>" timestamp="<%= $l->{'timestamp'} %>">
-					<span class="notespace"></span>
+					<%# a block, so the note the button reveals starts on its own line
+					    under it instead of running on beside the row's inline buttons %>
+					<div class="notespace"></div>
 				<% } %>
 				
 				<% if ($l->{'type'} eq 'web') { %>

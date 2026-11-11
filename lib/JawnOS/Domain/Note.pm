@@ -650,7 +650,13 @@ sub note_security_rows {
 
 sub note_unseal {
 	my ($key, $contented) = @_;
-	my $payload = &subs::decrypter_strict($key, $contented);
+	# The ordinary reader, not the strict one: a note written by an older build
+	# had its outer Crypt::Simple layer sealed under the empty passphrase while
+	# its inner cipher stayed keyed to the real secret (an upload with no resolved
+	# session wrote those). decrypter() still reads that empty-key layer and
+	# refuses a JS1 blob that does not open, so the authenticated format stays
+	# closed; the strict reader leaves every one of those notes unreadable.
+	my $payload = &subs::decrypter($key, $contented);
 	return undef unless defined $payload && length $payload;
 	my ($b64, $standard, $md5) = split ':::---:::', $payload, 3;
 	return undef unless defined $b64 && length $b64;

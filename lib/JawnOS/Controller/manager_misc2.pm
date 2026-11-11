@@ -438,32 +438,32 @@ sub action_7994 {
 	my $filter = $c->param('filter');
 	my $type = $c->param('type');
 	my $app = $c->param('app');
-	my $scope = $c->param('scope');
-	my $t = &subs::time_span($scope, $timestamp); #timestamp at beginning
-	my $t1 = ($timestamp - $t);
-	my $t2 = ($t1 + $timestamp + $t1);
 	my $query;
 	my $date = localtime( time() )->strftime('%a %B %d %Y %I:%M%P');
 	# cast: the column is text, so a plain < compares lexicographically and finds
 	# nothing once the view is before 1970 (a negative timestamp)
+	# The walkman steps to the app's previous or next record, so the pivot is
+	# that record's own timestamp. The old code used the view's span as a margin
+	# (a span before for prev, two spans after for next), which skipped the
+	# adjacent record and landed on the one after next.
 	if ($type eq 'prev') {
 		if ($filter ne 'all') {
 			$query = &subs::db_query('select timestamp from appointments where app=? and type=? and cast(timestamp as integer) < ? order by cast(timestamp as integer) DESC LIMIT 1',
-				$app,$filter,$t);
+				$app,$filter,$timestamp);
 		}
 		else {
 			$query = &subs::db_query('select timestamp from appointments where app=? and cast(timestamp as integer) < ? order by cast(timestamp as integer) DESC LIMIT 1',
-				$app,$t);
+				$app,$timestamp);
 		}
 	}
 	elsif ($type eq 'next') {
 		if ($filter ne 'all') {
 			$query = &subs::db_query('select timestamp from appointments where app=? and type=? and cast(timestamp as integer) > ? order by cast(timestamp as integer) ASC LIMIT 1',
-				$app,$filter,$t2);
+				$app,$filter,$timestamp);
 		}
 		else {
 			$query = &subs::db_query('select timestamp from appointments where app=? and cast(timestamp as integer) > ? order by cast(timestamp as integer) ASC LIMIT 1',
-				$app,$t2);
+				$app,$timestamp);
 		}
 	}
 

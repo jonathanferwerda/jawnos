@@ -92,12 +92,11 @@ $(document).on('click', '.time_jump', function() {
 	var type = j.attr('type');
 	var timestamp = j.attr('timestamp') || timestamp;
 	var app = j.attr('app');
-	var delorean = deloreanBringer();
 	var filter = localStorage.getItem('filter');
 	$.ajax({
 		url: '/manager/time_jump',
 		type: 'GET',
-		data: { timestamp: timestamp, filter: filter, type: type, app: app, scope: delorean.scope },
+		data: { timestamp: timestamp, filter: filter, type: type, app: app },
 		success: function(response) {
 			if (response.new_timestamp) {
 				j.attr('timestamp',response.new_timestamp);

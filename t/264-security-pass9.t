@@ -62,8 +62,15 @@ like($hooks, qr/decrypter_strict\(\$pa, \$wsa\)/, 'ws_auth uses the strict reade
 like($hooks, qr/defined \$pa && length \$pa/, 'and shuts when no ws_pa is configured');
 like(source('lib/JawnOS/Manager/Part08.pm'), qr/decrypter_strict\(\$secret, \$res->body\)/,
 	'peer bytes are read strictly');
-like(source('lib/JawnOS/Domain/Note.pm'), qr/decrypter_strict\(\$key, \$contented\)/,
-	'a media unlock token is read strictly');
+# A note is at-rest house data, not a token judged on its own: an old upload may
+# have its outer layer sealed under the empty passphrase while the inner cipher
+# is keyed to the real secret, so the note reader keeps the legacy-compatible
+# reader. A JS1 note that does not open is still refused (the reader checks the
+# prefix before the legacy path), and the token readers above stay strict.
+like(source('lib/JawnOS/Domain/Note.pm'), qr/&subs::decrypter\(\$key, \$contented\)/,
+	'a note reads through the legacy-compatible reader');
+unlike(source('lib/JawnOS/Domain/Note.pm'), qr/&subs::decrypter_strict\(\$key, \$contented\)/,
+	'not the strict reader, which would lose those notes');
 my $root = source('lib/JawnOS/Controller/Root_misc.pm');
 unlike($root, qr/&subs::decrypter\(/, 'the legacy homepage value is not decrypted');
 like($root, qr/\$remote_signatorial eq \$signatorial/, 'it is compared');
