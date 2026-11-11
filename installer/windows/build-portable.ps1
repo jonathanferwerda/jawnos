@@ -1,0 +1,150 @@
+# Build the portable Windows bundle for JawnOS.
+#
+#   powershell -ExecutionPolicy Bypass -File installer\windows\build-portable.ps1 `
+#       -RuntimeDir C:\path\to\strawberry-perl
+#
+# -RuntimeDir is a prepared Strawberry Perl tree (the one you cpanm'd the app's
+# modules into). It is copied as runtime\, not built here: the reproducible
+# path - download the portable Strawberry build and cpanm the pinned module
+# set, as .github/workflows/platform-p0.yml does on a runner - is the next
+# slice. Until then a bundle is only as complete as the runtime it was given.
+#
+# The staged payload is <OutDir>\JawnOS-<version>\ (app\, runtime\ and the
+# install scripts). The zip beside it holds that same folder. Nothing is
+# signed yet.
+
+[CmdletBinding()]
+param(
+    [Parameter(Mandatory=$true)][string]$RuntimeDir,
+    [string]$TreeDir,
+    [string]$OutDir,
+    [switch]$NoZip
+)
+
+$ErrorActionPreference = 'Stop'
+
+function Invoke-Robocopy {
+    param([string]$Source, [string]$Destination)
+    $rcArgs = @($Source, $Destination, '/E', '/NFL', '/NDL', '/NJH', '/NJS', '/NP', '/R:1', '/W:1')
+    & robocopy @rcArgs | Out-Null
+    if ($LASTEXITCODE -ge 8) {
+        throw "robocopy failed (exit $LASTEXITCODE) copying $Source to $Destination"
+    }
+}
+
+function Get-TreeSize {
+    param([string]$Path)
+    $sum = (Get-ChildItem -LiteralPath $Path -Recurse -File | Measure-Object -Property Length -Sum).Sum
+    if ($null -eq $sum) { return [int64]0 }
+    return [int64]$sum
+}
+
+# --- defaults ---------------------------------------------------------------
+# This script lives at <tree>\installer\windows\, so the tree is two levels up.
+
+if ([string]::IsNullOrWhiteSpace($TreeDir)) {
+    $TreeDir = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+}
+$TreeDir = [System.IO.Path]::GetFullPath($TreeDir).TrimEnd('\')
+if ([string]::IsNullOrWhiteSpace($OutDir)) { $OutDir = Join-Path $TreeDir 'dist' }
+$OutDir = [System.IO.Path]::GetFullPath($OutDir).TrimEnd('\')
+
+if (-not (Test-Path -LiteralPath (Join-Path $RuntimeDir 'perl\bin\perl.exe'))) {
+    throw "RuntimeDir is not a Strawberry Perl tree (no perl\bin\perl.exe): $RuntimeDir"
+}
+if (-not (Test-Path -LiteralPath (Join-Path $RuntimeDir 'c\bin'))) {
+    throw "RuntimeDir is missing c\bin, where Net::SSLeay's DLLs live: $RuntimeDir"
+}
+
+$versionPath = Join-Path $TreeDir 'VERSION'
+if (-not (Test-Path -LiteralPath $versionPath)) { throw "VERSION not found under $TreeDir" }
+$version = (Get-Content -LiteralPath $versionPath -Raw).Trim()
+if ([string]::IsNullOrWhiteSpace($version)) { throw "VERSION is empty: $versionPath" }
+
+New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
+$stage = Join-Path $OutDir "JawnOS-$version"
+if (Test-Path -LiteralPath $stage) { Remove-Item -LiteralPath $stage -Recurse -Force }
+New-Item -ItemType Directory -Force -Path $stage | Out-Null
+
+$tmp = Join-Path ([System.IO.Path]::GetTempPath()) ('jawnos-build-' + [Guid]::NewGuid().ToString('N'))
+New-Item -ItemType Directory -Force -Path $tmp | Out-Null
+
+try {
+    # --- app\ comes from the commit, never from the working tree -----------
+    # git archive carries tracked files only: no .git, no config.json, no
+    # database, no untracked leftovers from the machine that built it.
+    $appZip = Join-Path $tmp 'app.zip'
+    Write-Host 'Archiving the tracked application tree ...'
+    & git -C $TreeDir archive --format=zip --prefix=app/ -o $appZip HEAD
+    if ($LASTEXITCODE -ne 0) { throw "git archive failed (exit $LASTEXITCODE) in $TreeDir" }
+    Expand-Archive -Path $appZip -DestinationPath $stage -Force
+
+    # --- runtime\ is the prepared Strawberry tree --------------------------
+    Write-Host 'Copying the Perl runtime ...'
+    Invoke-Robocopy $RuntimeDir (Join-Path $stage 'runtime')
+
+    # --- the installer scripts and the note a person reads -----------------
+    Write-Host 'Copying the installer scripts ...'
+    foreach ($name in @('install.ps1', 'Install.bat', 'uninstall.ps1')) {
+        $from = Join-Path $PSScriptRoot $name
+        if (-not (Test-Path -LiteralPath $from)) { throw "missing installer file: $from" }
+        Copy-Item -LiteralPath $from -Destination $stage -Force
+    }
+
+    $readme = @"
+JawnOS $version
+
+This folder is a complete Windows install of JawnOS. You do not need Perl,
+Python, WSL or Docker.
+
+INSTALL
+  1. Double-click Install.bat.
+  2. If Windows SmartScreen warns, choose "More info" then "Run anyway"
+     (the installer is not code-signed yet).
+  3. Keep the unlock code it shows. It is also saved as
+     %LOCALAPPDATA%\JawnOS\unlock-code.txt.
+  4. JawnOS opens in your browser. A Start menu shortcut is created, and
+     JawnOS starts with Windows unless you installed with -NoAutostart.
+
+THE UNLOCK CODE
+  The six-digit code opens the web interface and is the only key to your
+  data. There is no recovery. Write it down.
+
+STOP AND UNINSTALL
+  JawnOS keeps running in the background so the web interface stays
+  reachable. To stop it, end perl.exe in Task Manager, or uninstall it.
+  To remove the install:
+      powershell -ExecutionPolicy Bypass -File uninstall.ps1
+  Add -PurgeData to also delete the per-user runtime state in
+  %USERPROFILE%\.president.
+
+  The web interface is https://127.0.0.1:45545/manager (the port is
+  working_port in config.json).
+"@
+    Set-Content -LiteralPath (Join-Path $stage 'README.txt') -Value $readme -Encoding ASCII
+
+    $payload = Get-TreeSize $stage
+
+    $zipPath = ''
+    $zipSize = 0
+    if (-not $NoZip) {
+        $zipPath = Join-Path $OutDir "JawnOS-$version.zip"
+        if (Test-Path -LiteralPath $zipPath) { Remove-Item -LiteralPath $zipPath -Force }
+        Write-Host 'Compressing ...'
+        Compress-Archive -Path $stage -DestinationPath $zipPath -CompressionLevel Optimal
+        $zipSize = (Get-Item -LiteralPath $zipPath).Length
+    }
+
+    Write-Host ''
+    Write-Host "JawnOS $version"
+    Write-Host "  payload  $stage"
+    Write-Host ("  size     {0:N1} MB ({1} bytes)" -f ($payload / 1MB), $payload)
+    if ($zipPath) {
+        Write-Host ("  zip      {0} ({1:N1} MB)" -f $zipPath, ($zipSize / 1MB))
+    } else {
+        Write-Host '  zip      (skipped: -NoZip)'
+    }
+    Write-Host ''
+} finally {
+    if (Test-Path -LiteralPath $tmp) { Remove-Item -LiteralPath $tmp -Recurse -Force }
+}

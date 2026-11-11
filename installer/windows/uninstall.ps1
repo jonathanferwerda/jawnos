@@ -1,0 +1,142 @@
+# Remove a per-user JawnOS install.
+#
+#   powershell -ExecutionPolicy Bypass -File uninstall.ps1
+#   powershell -ExecutionPolicy Bypass -File uninstall.ps1 -PurgeData
+#
+# It stops the master first (the tree's own killer, then the master pid record),
+# removes the firewall rule and the three shortcuts, and deletes the install
+# folder. -PurgeData also deletes %USERPROFILE%\.president, the per-user
+# runtime state and job logs. The house database lives under the install folder,
+# so it goes with the folder unless this is a special layout.
+
+[CmdletBinding()]
+param(
+    [string]$InstallDir = (Join-Path $env:LOCALAPPDATA 'JawnOS'),
+    [switch]$PurgeData
+)
+
+$ErrorActionPreference = 'Stop'
+
+$InstallDir = [System.IO.Path]::GetFullPath($InstallDir).TrimEnd('\')
+
+function Note {
+    param([string]$Message)
+    Write-Host $Message
+}
+
+function Get-ShortcutPath {
+    param([string]$Folder)
+    $base = [Environment]::GetFolderPath($Folder)
+    if ([string]::IsNullOrWhiteSpace($base)) { return '' }
+    return (Join-Path $base 'JawnOS.lnk')
+}
+
+if (-not (Test-Path -LiteralPath $InstallDir)) {
+    Write-Host "JawnOS is not installed at $InstallDir."
+    exit 0
+}
+
+$appDir = Join-Path $InstallDir 'app'
+$perl = Join-Path $InstallDir 'runtime\perl\bin\perl.exe'
+
+# --- stop the master --------------------------------------------------------
+# The tree's own killer knows the master, its workers and the port. It is the
+# first answer; the pid record is the fallback when the runtime is already
+# damaged or has been removed.
+
+if ((Test-Path -LiteralPath $perl) -and
+    (Test-Path -LiteralPath (Join-Path $appDir 'scripts\manager_killer.pl'))) {
+    $env:JAWNOS_PORTABLE = '1'
+    $env:JAWNOS_TRANSPORT = 'tcp'
+    $env:JAWNOS_DIR = $appDir
+    $env:PATH = "$InstallDir\runtime\c\bin;$InstallDir\runtime\perl\bin;$env:PATH"
+    Push-Location $appDir
+    try {
+        $saved = $ErrorActionPreference
+        $ErrorActionPreference = 'Continue'
+        try {
+            & $perl 'scripts\manager_killer.pl' 'master'
+        } finally {
+            $ErrorActionPreference = $saved
+        }
+    } catch {
+        Write-Warning "The bundled manager killer did not run: $_"
+    } finally {
+        Pop-Location
+    }
+}
+
+$pidFile = Join-Path $env:USERPROFILE '.president\pid'
+if (Test-Path -LiteralPath $pidFile) {
+    $pidText = (Get-Content -LiteralPath $pidFile -Raw).Trim()
+    if ($pidText -match '^[0-9]+$') {
+        $masterPid = [int]$pidText
+        if (Get-Process -Id $masterPid -ErrorAction SilentlyContinue) {
+            try {
+                Stop-Process -Id $masterPid -Force
+                Note "Stopped the master (pid $masterPid)."
+            } catch {
+                Write-Warning "Could not stop pid $masterPid : $_"
+            }
+        }
+    }
+}
+
+# --- firewall rule ----------------------------------------------------------
+
+try {
+    $proc = Start-Process -FilePath 'netsh.exe' -ArgumentList @(
+        'advfirewall', 'firewall', 'delete', 'rule', 'name=JawnOS'
+    ) -Wait -NoNewWindow -PassThru -ErrorAction Stop
+    if ($proc.ExitCode -eq 0) {
+        Note 'Removed the JawnOS firewall rule.'
+    }
+} catch {
+    Write-Warning "Could not remove the JawnOS firewall rule: $_"
+}
+
+# --- shortcuts --------------------------------------------------------------
+
+foreach ($folder in @('Programs', 'Desktop', 'Startup')) {
+    $link = Get-ShortcutPath $folder
+    if ($link -and (Test-Path -LiteralPath $link)) {
+        try {
+            Remove-Item -LiteralPath $link -Force
+            Note "Removed shortcut $link"
+        } catch {
+            Write-Warning "Could not remove $link : $_"
+        }
+    }
+}
+
+# --- the install folder -----------------------------------------------------
+
+# Leave the install folder so Windows does not hold the current directory open.
+Set-Location $env:USERPROFILE
+try {
+    Remove-Item -LiteralPath $InstallDir -Recurse -Force
+    Note "Removed $InstallDir"
+} catch {
+    Write-Warning "Could not remove $InstallDir : $_"
+    Write-Warning 'Close any JawnOS console or browser tab and run this again.'
+}
+
+# --- optional per-user state ------------------------------------------------
+
+if ($PurgeData) {
+    $dataDir = Join-Path $env:USERPROFILE '.president'
+    if (Test-Path -LiteralPath $dataDir) {
+        Write-Host "Removing per-user runtime state and job logs from $dataDir ..."
+        try {
+            Remove-Item -LiteralPath $dataDir -Recurse -Force
+            Note "Removed $dataDir"
+        } catch {
+            Write-Warning "Could not remove $dataDir : $_"
+        }
+    } else {
+        Note "No per-user state at $dataDir"
+    }
+}
+
+Write-Host ''
+Write-Host 'JawnOS has been uninstalled.'
