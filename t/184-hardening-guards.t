@@ -157,8 +157,10 @@ my $backup = source('lib/JawnOS/Controller/manager_misc2.pm');
 like($backup, qr/path_is_within\(\$path, \$_/, 'backup_serve confines the requested archive');
 like($backup, qr/backups_dir\(\)/, 'and names the backup directory as a root');
 
-like(source('lib/JawnOS/Controller/manager_misc13.pm'), qr/path_name\(\$key/,
-	'the keyboard alias becomes a filesystem-safe name');
+# The keyboard alias endpoint went with the keyboard panels, so the key-to-path
+# read it guarded is gone rather than merely moved.
+unlike(source('lib/JawnOS/Controller/manager_misc13.pm'), qr/sub action_42557\b/,
+	'the keyboard alias route is gone with the panels');
 
 like(source('lib/JawnOS/Controller/manager_misc9.pm'), qr/html_text\(\$file->\{'ocr'\}\)/,
 	'OCR text is escaped before the template prints it raw');

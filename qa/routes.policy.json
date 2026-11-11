@@ -19,7 +19,7 @@
   "tier_exempt": "^/manager/security/(?:padlock_|fingerprint_unlock|biometric_)",
   "tolerate": [
     {
-      "path": "^/manager/(?:appointment_details|appointment_measures|appointment_viewer|configure/appointment_display|editor|inventory/details|inventory/information|keyboard_alias|marker/gallery|settings_grabber|time_jump|transaction/autofill|watch/list_proxy|studio/load)$",
+      "path": "^/manager/(?:appointment_details|appointment_measures|appointment_viewer|configure/appointment_display|editor|inventory/details|inventory/information|marker/gallery|settings_grabber|time_jump|transaction/autofill|watch/list_proxy|studio/load)$",
       "why": "answered only with the query arguments the UI always sends; exercised by the UI layer"
     }
   ]

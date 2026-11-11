@@ -62,37 +62,6 @@ use IPC::Open2 qw(open2);
 
 our ($APP, $ws_live_window, $encoder, $decoder, $tuuid, $thread_uuid, $universal_splitter, $database, $sql, $remote_input_clipboard, $config_file, $config, $logfile, $log, $environment, $random_caching_string, $duty_file, $main_process, $device, $user_agent, %time_machine_guide_cache, @media_unlock_apps, %help_search_tables, %media_type_for_ext, %file_relay_down, @appointments, @results, %market_payment_family, @manager_bundle_files, $manager_bundle_cache, $js_minifier, %app_release_sha, %folders_desk_not_app, $jg_body, $remote_input_geometry_at, $remote_input_geometry_cache, %remote_input_ua, %remote_input_ws, %remote_input_rm, %remote_input_ws_failed, $public_ip_memo, $coding_protocols, $coding_protocols_mtime, $app_schema_done, $fingerprint_checked_at, $fingerprint_ok, %padlock_time_memo, %credential_browser_app, %app_gate_shadow_seen, $ws_server, %mailws_untrusted_rate);
 
-# GET /manager/keyboard_alias
-sub action_42557 {
-	my $c = shift;
-	my $key = $c->param('key');
-	my $toggle = $c->param('toggle');
-	my $browser_tab_id = $c->param('browser_tab_id');
-	my $value = &subs::db_select('settings', ['value','timestamp'], { app => 'keyboard', setting => $toggle, browser_tab_id => $browser_tab_id })->hash;
-	my $key_cutter = &subs::decrypter(&subs::session_suds($c),$value->{'value'});
-	$key_cutter = decode_json $key_cutter;
-	foreach my $k (keys %{$key_cutter}) {
-		if ($key_cutter->{$k} eq $key) {
-			$key = $k;
-		}
-	}
-	# path_name percent-encodes separators and "..", so the name cannot walk the tree
-	$key = &subs::path_name($key // '');
-	if ($key eq '') { $c->render(text => '', status => 404); return; }
-	my $path = './public/icons/lettering/' . $key . '.png';
-	if (! -e $path) {
-		$path = './public/icons/lymeboard' . $key . '.png';
-		if (! -e $path) {
-			my @b = grep { $_->{'c'} eq $key } @{$gb::inputs};
-			if ($b[0]->{'img'}) {
-				$path = './public/icons/lymeboard/' . lc $b[0]->{'img'} . '.png';
-			}
-		}
-	}
-	my $paths = Mojo::File->new($path);
-	$c->render_file('filepath' => $paths->to_string);
-}
-
 # GET /manager/say_it
 sub action_42585 {
 	my $c = shift;

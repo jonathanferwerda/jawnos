@@ -5,7 +5,6 @@ use warnings;
 
 sub routes {
 	return (
-	[42557, 'get', '/manager/keyboard_alias', 'action_42557'],
 	[42585, 'get', '/manager/say_it', 'action_42585'],
 	[42985, 'post', '/manager/teletype/enable_tty', 'action_42985'],
 	[43001, 'get', '/manager/teletype/wifi_update', 'action_43001'],
