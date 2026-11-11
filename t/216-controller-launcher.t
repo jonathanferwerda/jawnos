@@ -62,6 +62,8 @@ like($help, qr/\$topic\{'controller'\}\s*=\s*\{/,
 	'the controller Guide topic exists');
 like($help, qr/category => 'apps', app => 'controller'/,
 	'the topic claims the controller app page');
+like($help, qr/Tapping a text field raises the house keyboard/,
+	'and says the handheld raises the house keyboard for typing');
 
 # --- the desk sends a controller home ----------------------------------------
 # /manager is the desk. A controller cannot use it, and the panel's first

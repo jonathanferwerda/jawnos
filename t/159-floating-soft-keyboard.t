@@ -2,8 +2,9 @@
 # covers:    On a desk the soft keyboard and calculator were the full width of
 #            the screen. They are now a floating panel with its own frame and
 #            shadow, moved by the bar above the keys and remembered on the
-#            device. A phone or tablet keeps the full-width dock, and the
-#            Android input method page is never floated.
+#            device. A phone, a tablet and the handheld controller keep the
+#            full-width dock, and the Android input method page is never
+#            floated. The controller's own keys are not a hardware keyboard.
 
 use strict;
 use warnings;
@@ -78,12 +79,26 @@ like($help, qr/On a desk the dock is a floating panel: drag the bar above the ke
 # --- a desk is the device, not the pointer ----------------------------------
 like($kb, qr/if \(typeof device != 'undefined' && device\) \{/,
 	'the house\'s own device name decides what a desk is');
-like($kb, qr/if \(device == 'mobile'\) \{ return false; \}/,
-	'a phone or tablet keeps the full-width dock');
+like($kb, qr/if \(softKbHandheld\(\)\) \{ return false; \}/,
+	'a phone, tablet or handheld keeps the full-width dock');
+like($kb, qr/return softKbController\(\);/, 'the handheld controller is one of them');
+like($kb, qr/device == 'controller'/, 'named by config.json\'s controller device');
 like($kb, qr/if \(window\.matchMedia\('\(hover: hover\)'\)\.matches\) \{ return true; \}/,
 	'a page without the device name falls back to a hovering pointer');
 unlike($kb, qr/\(any-pointer: coarse\)'\)\.matches\) \{ return false; \}/,
 	'a coarse pointer beside a trackpad no longer disqualifies a desk');
+
+# --- the handheld controller types through the dock -------------------------
+# The Gou has a gamepad and a pointer and no keyboard: its fields get the dock
+# exactly as a phone's do. Its Home button and D-pad arrive as keys, and those
+# must not be mistaken for a hardware keyboard (which hides the dock).
+like($kb, qr/function softKbController\(\)/, 'the handheld is named on its own');
+like($kb, qr/if \(softKbController\(\)\) \{ return true; \}/,
+	'its fields raise the dock without asking');
+like($kb, qr/function softKbHardwareMark\(\) \{\s*if \(softKbController\(\)\) \{ return; \}/s,
+	'its Home key and D-pad do not hide the dock');
+like($help, qr/default on a phone and on the handheld controller/,
+	'and the keyboard topic says the handheld is one of them');
 
 # --- a desk's dock keeps the input, and the keypad feeds the calculator -----
 like($kb, qr/function softKbHardwareKey\(e\)/, 'a real key while the dock is up is routed to it');

@@ -378,35 +378,44 @@ function softKbOn() {
 	var stored = null;
 	try { stored = localStorage.getItem('jawn_soft_keyboard'); } catch (err) {}
 	if (stored == 'off') { return false; }
+	// The handheld controller is the house's own touch story: a gamepad and a
+	// pointer, no keyboard. A key press (its Home button, a D-pad step) is not
+	// evidence of one, so it neither turns the dock off nor hides it.
+	if (softKbController()) { return true; }
 	if (jawnSoftHardware) { return false; }
 	if (jawnSoftForced) { return true; }
 	// a desk with its own keyboard never raises the dock on its own, even if it
-	// was left on last time; only an explicit ask (below) brings it back
+	// was left on last time; only an explicit ask (above) brings it back
+	if (softKbHandheld()) { return true; }
 	if (softKbDesk()) { return false; }
-	if (stored == 'on') { return true; }
-	if (typeof windowPhoneChecker == 'function' && windowPhoneChecker()) { return true; }
-	// A tablet is a touch device with no hovering pointer, so the dock is its
-	// keyboard exactly as it is a phone's. softKbDesk above already refused a
-	// real desk; this is the touch case the phone test misses.
-	if (/Android|iPad|Tablet/i.test(navigator.userAgent || '')) { return true; }
-	return /Android|iPhone|iPad|iPod|Tablet|Mobile/i.test(navigator.userAgent || '');
+	return stored == 'on';
 }
 
-// A desk, as far as the page can tell: not a phone or tablet, and the device
-// the house runs on is a computer or a server. The server's answer is the honest
-// one: a touch laptop has a coarse pointer beside its trackpad and used to lose
-// its floating frame and drag, even though it is a desk. The media query is only
-// the fallback for a page without the device name.
+// The house's own answer for a screen that types through the dock. A phone and
+// a tablet are Android's or the browser's touch story; the handheld controller
+// is the house's, named by the server in `device` (config.json's "controller").
+function softKbController() {
+	return (typeof device != 'undefined') && !!device && device == 'controller';
+}
+
+function softKbHandheld() {
+	if (jawnSoftIme) { return true; }
+	if (typeof windowPhoneChecker == 'function' && windowPhoneChecker()) { return true; }
+	// A tablet is a touch device with no hovering pointer, so the dock is its
+	// keyboard exactly as it is a phone's.
+	if (/Android|iPad|Tablet/i.test(navigator.userAgent || '')) { return true; }
+	return softKbController();
+}
+
+// A desk, as far as the page can tell: not a phone, tablet or the handheld, and
+// the device the house runs on is a computer or a server. The server's answer is
+// the honest one: a touch laptop has a coarse pointer beside its trackpad and
+// used to lose its floating frame and drag, even though it is a desk. The media
+// query is only the fallback for a page without the device name.
 function softKbDesk() {
 	if (jawnSoftIme) { return false; }
-	if (typeof windowPhoneChecker == 'function' && windowPhoneChecker()) { return false; }
-	// An Android or iPad tablet is a touch device even when it reports a
-	// hovering S Pen or a keyboard case; the dock is the keyboard it should get.
-	if (/Android|iPad|Tablet/i.test(navigator.userAgent || '')) { return false; }
-	if (typeof device != 'undefined' && device) {
-		if (device == 'mobile') { return false; }
-		return true;
-	}
+	if (softKbHandheld()) { return false; }
+	if (typeof device != 'undefined' && device) { return true; }
 	try {
 		if (window.matchMedia) {
 			if (window.matchMedia('(hover: hover)').matches) { return true; }
@@ -419,7 +428,10 @@ function softKbDesk() {
 // Remember that a real key was typed, and put the dock away. The flag is kept
 // so the next focus does not bring it straight back; a finger on a phone clears
 // it again (see the touchstart handler), and an explicit ask clears it here.
+// The handheld's own keys are its controls, not a keyboard: marking them would
+// hide the dock on the very field the person just touched.
 function softKbHardwareMark() {
+	if (softKbController()) { return; }
 	if (jawnSoftHardware) { return; }
 	jawnSoftHardware = true;
 	try { localStorage.setItem('jawn_soft_keyboard_hw', 'on'); } catch (err) {}
