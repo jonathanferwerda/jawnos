@@ -402,12 +402,22 @@ Manager::app->hook(before_dispatch => sub {
 		# /manager/president/restart stays behind the gate).
 		$path eq '/manager/president' ||
 		# the archive machine-to-machine routes: a sending machine probes,
-		# uploads and appends its manifest over the bare signed rail. A
-		# transfer has no session on the archive machine, so the login gate
-		# must step aside for the route's archive_peer_allowed check (an
-		# app-keyed session or a pinned peer key). Same reason as the
-		# remote_upgrade lever above.
-		$path =~ m{^/manager/folders/archive/(?:probe|receive|locate|manifest(?:/append|/rescan)?)$} ||
+		# uploads, discards a stale partial and appends its manifest over the
+		# bare signed rail. A transfer has no session on the archive machine, so
+		# the login gate must step aside for the route's archive_peer_allowed
+		# check (an app-keyed session or a pinned peer key). Same reason as the
+		# remote_upgrade lever above. `discard` was missing and answered with the
+		# Gate page, which a transfer reports as a failed machine.
+		$path =~ m{^/manager/folders/archive/(?:probe|receive|locate|discard|manifest(?:/append|/rescan)?)$} ||
+		# CloudSync rides that same archive rail. The space probe asks a device
+		# how much room its copy would have, then the file probe, the upload, the
+		# discard and the register/unregister/delete the mesh keeps on each
+		# member all run with no session on the receiver. Every one of them calls
+		# archive_peer_allowed, so the login gate steps aside for that check;
+		# without these entries the receiver answered the Gate page, which the
+		# job reports as "the archive machine answered 200" and the folder never
+		# synced (the phone, 2026-11-10).
+		$path =~ m{^/manager/folders/cloud/(?:space|probe|receive|discard|register|unregister|delete)$} ||
 		# the code-sync rail: rsync_pack serves the code tree and rsync_unpack
 		# receives one. Both require a pinned peer key (peer_verify, no
 		# trust-on-first-contact) and only accept the jawnos folder with the

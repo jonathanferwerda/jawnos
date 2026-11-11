@@ -83,6 +83,22 @@ like($text, qr{GET /manager/configure/qa_schedule\nsub action_\d+ \{.*?peer_veri
 	'qa_schedule peer_verifies the caller');
 like($text, qr{GET /manager/configure/qa_reports.*?sub action_\d+ \{.*?peer_verify}ms,
 	'qa_reports peer_verifies the caller');
+
+# CloudSync's peer half rides the same archive rail, and the receiver has no
+# session. Each route checks archive_peer_allowed itself (an app-keyed session
+# or a pinned peer key), so this allowlist must let it reach that check. Missing
+# entries answered the Gate page, which the job reports as "the archive machine
+# answered 200" while the folder never synced (the phone, 2026-11-10).
+like($hook, qr!\$path =~ m\{\^/manager/folders/cloud/\(\?:space\|probe\|receive\|discard\|register\|unregister\|delete\)\$\}!,
+	'the CloudSync peer routes are exempt from the login gate');
+like($hook, qr!/manager/folders/archive/\(\?:probe\|receive\|locate\|discard\|!,
+	'a peer archive discard is exempt from the login gate too');
+for my $cloud (qw(space probe receive discard register unregister delete)) {
+	# Bounded to the action body: a match in a later action must not make this
+	# pass for a route that forgot its own check.
+	like($text, qr#POST /manager/folders/cloud/\Q$cloud\E\nsub action_\d+ \{(?:(?!\nsub action_)[\s\S])*?archive_peer_allowed#,
+		"CloudSync $cloud checks archive_peer_allowed");
+}
 # universal.js is an index plus public/js/universal/ parts; the gate and the
 # public layouts load them with no session, so the whole folder must pass the
 # allowlist or the login gate eats the script.
