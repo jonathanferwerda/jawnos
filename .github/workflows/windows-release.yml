@@ -1,0 +1,294 @@
+name: windows-release
+
+# Build, sign (when SignPath is configured) and publish the JawnOS Windows
+# installer, its SHA256SUMS and the update-feed manifest.
+#
+# Two ways in:
+#   - workflow_dispatch builds a version. `version` defaults to the VERSION
+#     file, and v<version> is a draft release unless `draft` is false.
+#   - a push of a v* tag builds that tag and publishes v<version>.
+#
+# Both paths also refresh the fixed `releases` release. That release is the
+# update feed: windows_release.json sits beside the current Setup.exe under a
+# tag that never moves, exactly as the Android feed uses releases/app_release.json
+# (subs::github_release_manifest). Devices read the manifest, compare
+# versionCode, and fetch the Setup.exe from the same directory.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to build (default: the VERSION file)'
+        required: false
+        type: string
+      draft:
+        description: 'Create v<version> as a draft release'
+        required: false
+        default: true
+        type: boolean
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: windows-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  windows-release:
+    runs-on: windows-latest
+    timeout-minutes: 60
+
+    env:
+      # Empty unless the repository holds the secret. The SignPath steps test
+      # this value and are skipped when it is blank, so an unconfigured repo
+      # publishes the unsigned build instead of failing.
+      SIGNPATH_API_TOKEN: ${{ secrets.SIGNPATH_API_TOKEN }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      REPO: ${{ github.repository }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref }}
+
+      - name: Resolve version and draft flag
+        id: version
+        shell: powershell
+        run: |
+          $version = '${{ github.event.inputs.version }}'
+          if ([string]::IsNullOrWhiteSpace($version)) {
+            if ('${{ github.ref_type }}' -eq 'tag' -and '${{ github.ref_name }}' -match '^v(.+)$') {
+              $version = $Matches[1]
+            } else {
+              $version = (Get-Content -LiteralPath VERSION -Raw).Trim()
+            }
+          }
+          if ($version -notmatch '^\d+\.\d+\.\d+$') {
+            throw "Not a version (want MAJOR.MINOR.PATCH): '$version'"
+          }
+
+          # A tag push is a real release; a dispatch defaults to a draft.
+          $draft = '${{ github.event.inputs.draft }}'
+          if ([string]::IsNullOrWhiteSpace($draft)) {
+            if ('${{ github.ref_type }}' -eq 'tag') { $draft = 'false' } else { $draft = 'true' }
+          }
+
+          Add-Content -Path $env:GITHUB_OUTPUT -Value "version=$version"
+          Add-Content -Path $env:GITHUB_OUTPUT -Value "tag=v$version"
+          Add-Content -Path $env:GITHUB_OUTPUT -Value "draft=$draft"
+
+      # --- the build machine -------------------------------------------------
+      # Strawberry Perl is the runtime the bundle ships, so cpanm into it and
+      # copy that tree with build-portable.ps1. The module set is the pinned
+      # platform-p0 list plus the Win32 modules install.ps1 probes for.
+
+      - name: Strawberry Perl
+        shell: powershell
+        run: |
+          choco install strawberryperl -y --no-progress
+          if (-not (Test-Path -LiteralPath 'C:\Strawberry\perl\bin\perl.exe')) {
+            throw 'Strawberry Perl did not land in C:\Strawberry'
+          }
+          Add-Content -Path $env:GITHUB_PATH -Value 'C:\Strawberry\c\bin'
+          Add-Content -Path $env:GITHUB_PATH -Value 'C:\Strawberry\perl\bin'
+          & C:\Strawberry\perl\bin\perl.exe -v
+
+      - name: Perl modules
+        shell: powershell
+        run: |
+          # Pinned to the versions platform-p0.yml uses. Minion::Backend::SQLite
+          # is the app's queue backend; Win32::API and Win32API::File are in the
+          # bundle's own module probe (installer/windows/install.ps1).
+          cpanm --notest --quiet `
+            Mojolicious@9.39 Mojo::SQLite@3.009 Minion@10.31 `
+            Minion::Backend::SQLite@5.0.0 `
+            Sereal::Encoder@5.004 Sereal::Decoder@5.004 CryptX@0.085 `
+            DBD::SQLite@1.76 Net::SSLeay File::Slurp `
+            Win32::API Win32API::File
+          if ($LASTEXITCODE -ne 0) { throw "cpanm failed (exit $LASTEXITCODE)" }
+
+      - name: Inno Setup 6
+        shell: powershell
+        run: |
+          choco install innosetup -y --no-progress
+          $candidates = @(
+            "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
+            "$env:ProgramFiles\Inno Setup 6\ISCC.exe"
+          )
+          $iscc = $candidates | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
+          if (-not $iscc) { throw 'ISCC.exe not found after installing Inno Setup 6' }
+          Add-Content -Path $env:GITHUB_ENV -Value "ISCC=$iscc"
+          Write-Host "ISCC: $iscc"
+
+      # --- build the payload and the wrapper ---------------------------------
+
+      - name: Build the portable bundle
+        shell: powershell
+        run: |
+          $dist = Join-Path $env:GITHUB_WORKSPACE 'dist'
+          New-Item -ItemType Directory -Force -Path $dist | Out-Null
+          powershell -NoProfile -ExecutionPolicy Bypass `
+            -File installer\windows\build-portable.ps1 `
+            -RuntimeDir C:\Strawberry -OutDir $dist
+          if ($LASTEXITCODE -ne 0) { throw "build-portable.ps1 failed (exit $LASTEXITCODE)" }
+
+      - name: Compile Setup.exe
+        shell: powershell
+        run: |
+          $version = '${{ steps.version.outputs.version }}'
+          $dist = Join-Path $env:GITHUB_WORKSPACE 'dist'
+          & $env:ISCC "/DAppVersion=$version" "/DPayloadDir=$dist" installer\windows\jawnos.iss
+          if ($LASTEXITCODE -ne 0) { throw "iscc failed (exit $LASTEXITCODE)" }
+
+      - name: Write the release manifest
+        shell: powershell
+        run: |
+          $version = '${{ steps.version.outputs.version }}'
+          $dist = Join-Path $env:GITHUB_WORKSPACE 'dist'
+          $exe = Join-Path $dist "JawnOS-$version-Setup.exe"
+          # The feed URL never moves: it is the fixed `releases` tag.
+          $url = "https://github.com/$env:REPO/releases/download/releases/JawnOS-$version-Setup.exe"
+          perl scripts\windows_release_manifest.pl `
+            --version $version --file $exe --url $url `
+            --notes "JawnOS $version for Windows" `
+            --out (Join-Path $dist 'windows_release.json') `
+            --sums (Join-Path $dist 'SHA256SUMS')
+          if ($LASTEXITCODE -ne 0) { throw "windows_release_manifest.pl failed (exit $LASTEXITCODE)" }
+
+      - name: Upload the unsigned artifacts
+        id: upload-artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-release-${{ steps.version.outputs.version }}
+          path: |
+            dist/JawnOS-${{ steps.version.outputs.version }}-Setup.exe
+            dist/JawnOS-${{ steps.version.outputs.version }}.zip
+            dist/SHA256SUMS
+            dist/windows_release.json
+          if-no-files-found: error
+
+      # --- publish ------------------------------------------------------------
+      # A staged build that is never uploaded is not a release. Both the
+      # versioned release and the fixed feed are updated here.
+
+      - name: Publish the versioned release
+        shell: powershell
+        run: |
+          $version = '${{ steps.version.outputs.version }}'
+          $tag = '${{ steps.version.outputs.tag }}'
+          $dist = Join-Path $env:GITHUB_WORKSPACE 'dist'
+
+          $draftFlag = @()
+          if ('${{ steps.version.outputs.draft }}' -eq 'true') { $draftFlag = @('--draft') }
+
+          gh release view $tag --repo $env:REPO 2>$null | Out-Null
+          if ($LASTEXITCODE -ne 0) {
+            gh release create $tag --repo $env:REPO @draftFlag `
+              --title "JawnOS $version" --notes "JawnOS $version for Windows."
+            if ($LASTEXITCODE -ne 0) { throw "could not create release $tag" }
+          } elseif ($draftFlag.Count -eq 0) {
+            gh release edit $tag --repo $env:REPO --draft=false
+          }
+
+          gh release upload $tag --repo $env:REPO --clobber `
+            (Join-Path $dist "JawnOS-$version-Setup.exe") `
+            (Join-Path $dist "JawnOS-$version.zip") `
+            (Join-Path $dist 'SHA256SUMS') `
+            (Join-Path $dist 'windows_release.json')
+          if ($LASTEXITCODE -ne 0) { throw "could not upload the $tag assets" }
+
+      - name: Update the fixed release feed
+        shell: powershell
+        run: |
+          $version = '${{ steps.version.outputs.version }}'
+          $dist = Join-Path $env:GITHUB_WORKSPACE 'dist'
+
+          gh release view releases --repo $env:REPO 2>$null | Out-Null
+          if ($LASTEXITCODE -ne 0) {
+            gh release create releases --repo $env:REPO `
+              --title 'JawnOS release feed' `
+              --notes 'Fixed feed for the updater: windows_release.json and the current JawnOS Setup.exe. Do not delete.'
+            if ($LASTEXITCODE -ne 0) { throw 'could not create the releases feed' }
+          }
+
+          gh release upload releases --repo $env:REPO --clobber `
+            (Join-Path $dist 'windows_release.json') `
+            (Join-Path $dist "JawnOS-$version-Setup.exe")
+          if ($LASTEXITCODE -ne 0) { throw 'could not update the releases feed' }
+
+      # --- signing ------------------------------------------------------------
+      # PLACEHOLDER: the JawnOS project is applying to SignPath Foundation.
+      # When accepted, create a project/policy and artifact configuration in
+      # SignPath, then set the real slugs below plus the SIGNPATH_API_TOKEN
+      # repository secret and the SIGNPATH_ORGANIZATION_ID repository variable.
+      # Until then SIGNPATH_API_TOKEN is blank and these steps are skipped, so
+      # the workflow still publishes the unsigned (self-signed test) build.
+      #
+      # SignPath's action signs a workflow artifact: the upload step above keeps
+      # its id (`upload-artifact`) for the artifact-id input, and the signed
+      # files come back under `signed/`.
+
+      - name: Sign the installer with SignPath
+        id: signpath
+        if: ${{ env.SIGNPATH_API_TOKEN != '' }}
+        uses: signpath/github-action-submit-signing-request@v1
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: jawnos
+          signing-policy-slug: release-signing
+          artifact-configuration-slug: setup-exe
+          github-artifact-id: ${{ steps.upload-artifact.outputs.artifact-id }}
+          wait-for-completion: true
+          output-artifact-directory: signed
+
+      - name: Recompute the manifest over the signed Setup.exe
+        if: ${{ env.SIGNPATH_API_TOKEN != '' }}
+        shell: powershell
+        run: |
+          # The signed bytes replace the unsigned asset, so the digest, size and
+          # SHA256SUMS must be recomputed before the feed is republished.
+          $version = '${{ steps.version.outputs.version }}'
+          $tag = '${{ steps.version.outputs.tag }}'
+          $dist = Join-Path $env:GITHUB_WORKSPACE 'dist'
+          $signedDir = Join-Path $env:GITHUB_WORKSPACE 'signed'
+          $signedExe = Get-ChildItem -Path $signedDir -Recurse -File `
+            -Filter "JawnOS-$version-Setup.exe" | Select-Object -First 1
+          if (-not $signedExe) {
+            throw "SignPath produced no JawnOS-$version-Setup.exe under $signedDir"
+          }
+          $exe = Join-Path $dist "JawnOS-$version-Setup.exe"
+          Copy-Item -LiteralPath $signedExe.FullName -Destination $exe -Force
+
+          $url = "https://github.com/$env:REPO/releases/download/releases/JawnOS-$version-Setup.exe"
+          perl scripts\windows_release_manifest.pl `
+            --version $version --file $exe --url $url `
+            --notes "JawnOS $version for Windows" --signed 1 `
+            --out (Join-Path $dist 'windows_release.json') `
+            --sums (Join-Path $dist 'SHA256SUMS')
+          if ($LASTEXITCODE -ne 0) { throw "windows_release_manifest.pl failed after signing (exit $LASTEXITCODE)" }
+
+          gh release upload $tag --repo $env:REPO --clobber `
+            $exe (Join-Path $dist 'SHA256SUMS') (Join-Path $dist 'windows_release.json')
+          if ($LASTEXITCODE -ne 0) { throw "could not replace the $tag assets with the signed build" }
+
+          gh release upload releases --repo $env:REPO --clobber `
+            $exe (Join-Path $dist 'windows_release.json')
+          if ($LASTEXITCODE -ne 0) { throw 'could not replace the releases feed with the signed build' }
+
+      - name: Upload the signed artifacts
+        if: ${{ env.SIGNPATH_API_TOKEN != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-release-${{ steps.version.outputs.version }}-signed
+          path: |
+            dist/JawnOS-${{ steps.version.outputs.version }}-Setup.exe
+            dist/JawnOS-${{ steps.version.outputs.version }}.zip
+            dist/SHA256SUMS
+            dist/windows_release.json
+          if-no-files-found: error
