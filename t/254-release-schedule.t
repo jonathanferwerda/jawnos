@@ -17,7 +17,7 @@ use JawnOSTest;
 subs::preload(qw(
 	release_schedule_default release_schedule_parse release_schedule_read
 	release_schedule_dropin_body release_schedule_apply release_schedule_save
-	release_schedule_state
+	release_schedule_state release_now_local
 ));
 
 sub parsed { return subs::release_schedule_parse($_[0]) }
@@ -90,6 +90,45 @@ my $missing = subs::release_schedule_apply({
 });
 is($missing->{'rows'}[0]{'state'}, 'not-installed', 'a timer that is not installed is reported as such');
 
+# --- Release Now -------------------------------------------------------------
+my $planned = subs::release_now_local({
+	runner => sub { return (3, 'inactive'); },
+	dry_run => 1,
+});
+is($planned->{'ok'}, 1, 'a dry run plans the release');
+is($planned->{'state'}, 'planned', 'and does not start anything');
+is(join(' ', @{$planned->{'command'}}),
+	'sudo -n systemctl start --no-block jawnos-land-promote.service',
+	'starting the service the timer runs');
+
+my @release_cmds;
+my $started = subs::release_now_local({
+	now => 1_000,
+	runner => sub {
+		push @release_cmds, [@_];
+		return (3, 'inactive') if join(' ', @_) eq 'systemctl is-active jawnos-land-promote.service';
+		return (0, '');
+	},
+});
+is($started->{'ok'}, 1, 'Release Now starts the service');
+is($started->{'state'}, 'running', 'and reports it running');
+is($started->{'started'}, 1_000, 'with the time it started');
+like(join("\n", map { join(' ', @$_) } @release_cmds), qr/systemctl start --no-block jawnos-land-promote\.service/,
+	'through the same command the panel promises');
+
+my $busy = subs::release_now_local({ runner => sub { return (0, 'active'); } });
+ok(!$busy->{'ok'}, 'a release already running is refused');
+is($busy->{'state'}, 'running', 'and named as running');
+
+my $gone = subs::release_now_local({
+	runner => sub {
+		return (3, 'inactive') if $_[0] eq 'systemctl';
+		return (1, 'Unit jawnos-land-promote.service not found.');
+	},
+});
+ok(!$gone->{'ok'}, 'a machine without the service refuses');
+is($gone->{'state'}, 'not-installed', 'and says the service is not installed');
+
 # --- what the panel shows ----------------------------------------------------
 my $tmp = tempdir(CLEANUP => 1);
 make_path("$tmp/scripts/systemd");
@@ -118,10 +157,18 @@ my $panel = read_file("$FindBin::Bin/../templates/configure/qa_panel.html.ep");
 like($panel, qr/id="release_schedule_select"/, 'the panel has the cadence select');
 like($panel, qr/id="release_schedule_custom"/, 'and the custom phrase field');
 like($panel, qr/id="release_schedule_save"/, 'and the save button');
+like($panel, qr/id="release_now"/, 'and a Release Now button');
+like($panel, qr/Release Now/, 'whose words say what it does');
 like(read_file("$FindBin::Bin/../public/js/manager/configure/07_qa_nightly.js"),
 	qr{/manager/configure/release_schedule_save}, 'the script saves it');
+like(read_file("$FindBin::Bin/../public/js/manager/configure/07_qa_nightly.js"),
+	qr{/manager/configure/release_now}, 'and starts the release');
 like(read_file("$FindBin::Bin/../lib/JawnOS/Routes/manager_configure2.pm"),
 	qr{/manager/configure/release_schedule_save}, 'the route exists');
+like(read_file("$FindBin::Bin/../lib/JawnOS/Routes/manager_configure2.pm"),
+	qr{/manager/configure/release_now}, 'the Release Now route exists');
+like(read_file("$FindBin::Bin/../lib/JawnOS/Domain/Loader.pm"),
+	qr/release_now_local/, 'the loader maps the helper');
 my $timer = read_file("$FindBin::Bin/../scripts/systemd/jawnos-land-promote.timer");
 like($timer, qr/^OnCalendar=Mon 04:00:00$/m, 'the shipped timer is weekly by default');
 unlike($timer, qr/OnUnitActiveSec/, 'and no longer counts a relative week');

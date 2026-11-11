@@ -534,6 +534,21 @@ sub action_50012 {
 	$c->render(json => $saved);
 }
 
+# POST /manager/configure/release_now
+# Start the promotion the weekly timer would run, on the machine the Manager
+# serves. It answers as soon as systemd has queued the job; the service runs
+# the full suite, fast-forwards main and restarts the app by itself.
+sub action_50013 {
+	my $c = shift;
+	unless ($c->session('authentication') eq 'approved') {
+		$c->render(json => { ok => 0, error => 'not signed in' }, status => 403);
+		return;
+	}
+	$c->render(json => &subs::release_now_local({
+		dry_run => $c->param('dry_run') ? 1 : 0,
+	}));
+}
+
 # A root password may only be entered at this machine's own console. A phone or
 # a peer that reached the Manager over the mesh must not be able to install
 # packages here, so the same loopback/local-address rule the padlock uses.

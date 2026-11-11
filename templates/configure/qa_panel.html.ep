@@ -122,7 +122,9 @@
 		<input type="text" id="release_schedule_custom" size="34" style="display:none;"
 			placeholder="<%= &subs::ui('every third friday of the month') %>" autocomplete="off">
 		<button type="button" id="release_schedule_save" class="button"><%= &subs::ui('Save release schedule') %></button>
+		<button type="button" id="release_now" class="button"><%= &subs::ui('Release Now') %></button>
 		<span id="release_schedule_status" class="cfg-note" style="margin:0 0 0 8px;white-space:pre-wrap;"></span>
+		<span id="release_now_status" class="cfg-note" style="margin:0 0 0 8px;white-space:pre-wrap;"></span>
 	</div>
 </div>
 <div class="cfg-card">

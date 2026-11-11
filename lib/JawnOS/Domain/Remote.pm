@@ -1725,6 +1725,46 @@ sub release_schedule_state {
 	return $row;
 }
 
+# Start the release promotion now: the same oneshot the weekly timer runs.
+# `systemctl is-active` is the guard (a release already going is a refusal),
+# and `--no-block` hands the panel its answer before the suite, the push and
+# the restart take the app away. No person or agent walks the release; the
+# service does it, and a red suite or a diverged main is a refusal it logs.
+sub release_now_local {
+	my $opts = shift || {};
+	my $run_cmd = $opts->{'runner'} || sub { &qa_command(@_) };
+	my $unit = 'jawnos-land-promote';
+	my ( $src, $sout ) = $run_cmd->( 'systemctl', 'is-active', "$unit.service" );
+	my $word = defined $sout ? $sout : '';
+	$word =~ s/\s+$//;
+	my $active = ( $word =~ /^(?:active|activating|reloading|deactivating)$/ ) ? 1 : 0;
+	if ($active) {
+		return {
+			ok => 0, unit => $unit, state => 'running',
+			error => 'a release is already running',
+		};
+	}
+	return {
+		ok => 1, unit => $unit, state => 'planned', dry_run => 1,
+		command => [ 'sudo', '-n', 'systemctl', 'start', '--no-block', "$unit.service" ],
+	} if $opts->{'dry_run'};
+	my ( $rc, $out ) = $run_cmd->( 'sudo', '-n', 'systemctl', 'start', '--no-block', "$unit.service" );
+	unless ($rc == 0) {
+		my $missing = &qa_systemd_missing($out);
+		return {
+			ok => 0, unit => $unit,
+			state => $missing ? 'not-installed' : 'failed',
+			error => $missing
+				? 'the release service is not installed on this machine'
+				: ( length $out ? $out : 'systemctl could not start the release (needs root on this machine)' ),
+		};
+	}
+	return {
+		ok => 1, unit => $unit, state => 'running',
+		started => exists $opts->{'now'} ? $opts->{'now'} : &subs::rightNow(),
+	};
+}
+
 # The HH:MM a unit's timer really fires at. `systemctl show -p TimersCalendar`
 # answers for an installed timer; a machine with no timer falls back to the
 # drop-in, and then to the unit file shipped in the repo. `source` says which.

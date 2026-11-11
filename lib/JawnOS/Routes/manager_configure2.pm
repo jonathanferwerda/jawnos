@@ -37,6 +37,7 @@ sub routes {
 	[50010, 'post', '/manager/configure/deps_install', 'action_50010'],
 	[50011, 'get', '/manager/configure/release_schedule', 'action_50011'],
 	[50012, 'post', '/manager/configure/release_schedule_save', 'action_50012'],
+	[50013, 'post', '/manager/configure/release_now', 'action_50013'],
 	);
 }
 

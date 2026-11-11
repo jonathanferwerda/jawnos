@@ -429,6 +429,24 @@ $(document).on('click', '#release_schedule_save', function() {
 	});
 });
 
+$(document).on('click', '#release_now', function() {
+	var button = $(this);
+	var status = $('#release_now_status');
+	button.prop('disabled', true);
+	status.text(qaT('Starting the release…'));
+	$.post('/manager/configure/release_now', {}, function(res) {
+		button.prop('disabled', false);
+		if (!res || !res.ok) {
+			status.text((res && res.error) || qaT('The release was refused.'));
+			return;
+		}
+		status.text(qaT('Release started. The full suite runs first; the app restarts when main moves.'));
+	}).fail(function() {
+		button.prop('disabled', false);
+		status.text(qaT('The release could not be started.'));
+	});
+});
+
 // ---- nightly reports -------------------------------------------------------
 // The last 14 days of the installer-freshness run, as the machine that ran it
 // recorded: one accordion per run, a table per section inside. The panel only
