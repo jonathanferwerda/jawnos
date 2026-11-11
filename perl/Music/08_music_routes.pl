@@ -114,8 +114,6 @@ Manager::app->routes->post('/music/search' => sub ($c) {
 			window_maker => 'yes',
 			folders => $misc_settings,
 			device => &subs::device_setter(),
-			mao => eval { return decode_json $jmao } || {},
-			jmao => $jmao,
 			search => $search,
 			resizes => $resizes,
 			misses => $misses
@@ -200,7 +198,7 @@ Manager::app->routes->post('/music/audio_output_select' => sub ($c) {
 Manager::app->routes->get('/music/video/outputs' => sub ($c) {
 	unless ($c->session('authentication') eq 'approved') { $c->rendered(403); return; }
 	my $video = eval { return decode_json(&subs::setting_grabber({ app => 'music', setting => 'video' }) // '') } || {};
-	$c->render(json => { machines => &music_video_machines(), settings => $video, me => &music_video_local_enabled() });
+	$c->render(json => { machines => &music_video_machines(), settings => $video, me => &music_video_local_enabled(), mvo => &music_video_settings() });
 });
 
 Manager::app->routes->get('/music/audio' => sub ($c) {

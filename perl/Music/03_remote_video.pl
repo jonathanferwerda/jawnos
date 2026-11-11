@@ -29,22 +29,31 @@ sub music_video_machines {
 		next unless (($rm->{'connection'} || '') eq 'active');
 		my $key = $rm->{'fqdn'} || $rm->{'ip'};
 		next unless $key && !$seen{$key}++;
+		# The map is keyed by whichever identity the row had when the choice was
+		# made. A machine's fqdn can change (a tunnel address replaces a hostname),
+		# and the old off must still be found; a missing entry is off, not on, so a
+		# peer nobody chose can never be switched back on by a refresh.
+		my $state;
+		foreach my $alias ( $rm->{'uuid'}, $key, $rm->{'ip'}, $rm->{'hostname'} ) {
+			next unless defined $alias && length $alias;
+			next unless defined $mvo->{$alias};
+			$state = $mvo->{$alias};
+			last;
+		}
 		push @out, {
 			key => $key,
 			label => &subs::device_hostname_better($rm->{'hostname'}, '', $rm->{'fqdn'}) || $rm->{'hostname'} || $key,
 			device => ($rm->{'device'} || ''),
 			uuid => ($rm->{'uuid'} || ''),
-			# no row means the machine is on, which is how the section
-			# behaved before the TV boxes; an explicit 'off' is a choice
-			enabled => ((defined $mvo->{$key} && $mvo->{$key} eq 'off') ? 0 : 1)
+			enabled => ($state && $state eq 'on') ? 1 : 0
 		};
 	}
 	return \@out;
 }
 
-# The TV boxes' on/off map. A missing key means on, which is how the section
-# behaved before the boxes; an explicit 'off' is a choice. 'me' is this
-# machine's own screen, keyed like a peer so one map holds both.
+# The TV boxes' on/off map. 'me' is this machine's own screen, keyed like a peer
+# so one map holds both. A missing peer key is off: a refresh must not switch a
+# machine on just because the map has no entry for its current address.
 sub music_video_settings {
 	return eval { decode_json(&subs::setting_grabber({ app => 'music', setting => 'mvo' }) // '') } || {};
 }

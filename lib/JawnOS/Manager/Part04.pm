@@ -242,7 +242,9 @@ sub rock_and_roll($c) {
 		# A conditional request for an unchanged file stops here: no key walk, no
 		# decryption, no body. The duty path is an internal collection (mail, file
 		# information) and always wants the bytes, so it skips the revalidation.
-		if (!$c->param('duty') && $file && -e $file && (!$wants_thumb || ($file_data->{'thumb'} && -e $file_data->{'thumb'}))) {
+		# A byte-range request is never answered 304: a media element asking for a
+		# slice needs the bytes, and an empty 304 leaves it unable to seek.
+		if (!$c->param('duty') && !$c->req->headers->range && $c->req->url->path ne '/play' && $file && -e $file && (!$wants_thumb || ($file_data->{'thumb'} && -e $file_data->{'thumb'}))) {
 			my $cc = $wants_thumb ? 'private, max-age=3600' : 'private, no-cache';
 			if (&file_response_cache_headers($c, $file, $cc)) {
 				$c->res->code(304);
@@ -258,6 +260,25 @@ sub rock_and_roll($c) {
 			$thumb_slot = &thumb_generation_slot();
 			unless ($thumb_slot) {
 				&thumb_placeholder($c);
+				return;
+			}
+		}
+		# /play is a media element walking a file, not a download: answer it in a
+		# bounded slice so each response completes and its connection is reused.
+		# The browser aborts a whole-file response after a couple of megabytes and
+		# then waits for the next range; a held response is what starved the video.
+		my $is_play = ($c->req->url->path eq '/play') ? 1 : 0;
+		my $play_range;
+		my $play_total;
+		if ($is_play && -e $file && ($c->param('remoted') // '') ne 'yes' && !$c->param('duty') && !$c->param('loudness') && !$wants_thumb && $file !~ /\.pdf(?:\.enc)?$/i) {
+			$play_total = (-s $file || 0);
+			$play_total -= 16 if $file =~ /\.enc$/i && $play_total > 16;
+			$play_range = &subs::media_range_plan($c->req->headers->range, $play_total);
+			unless ($play_range) {
+				$c->res->code(416);
+				$c->res->headers->content_range('bytes */' . $play_total);
+				$c->res->headers->accept_ranges('bytes');
+				$c->res->body('');
 				return;
 			}
 		}
@@ -327,10 +348,11 @@ sub rock_and_roll($c) {
 			}
 			# One Range is enough: read only the part the client asked for. A
 			# thumbnail needs the whole file for ffmpeg/magick, and a PDF is handed
-			# to the viewer whole, so those keep the full open.
-			my $range;
+			# to the viewer whole, so those keep the full open. A /play range is
+			# already the bounded slice planned above.
+			my $range = $play_range;
 			my $range_header = $c->req->headers->range;
-			if (!$c->param('duty') && !$wants_thumb && $file !~ /\.pdf(?:\.enc)?$/i && defined $range_header && length $range_header) {
+			if (!$is_play && !$c->param('duty') && !$wants_thumb && $file !~ /\.pdf(?:\.enc)?$/i && defined $range_header && length $range_header) {
 				if ($range_header =~ m/^bytes=(\d+)-(\d*)/) {
 					my ($start, $end) = ($1, $2);
 					if (!defined $end || !length $end) { $range = [ $start, undef ] }
@@ -605,7 +627,7 @@ sub rock_and_roll($c) {
 					# filepath streams the file and supports Range; reading it into a
 					# scalar copied the whole thing and then copied it again into the asset.
 					# The FUSE-backed storage paths take the manual streamer above.
-					if ($file && $file =~ m{^/(?:sdcard|storage)/} && &stream_fuse_media($c, $file)) { return; }
+					if ($file && $file =~ m{^/(?:sdcard|storage)/} && &stream_fuse_media($c, $file, $play_range)) { return; }
 					$file ? $c->render_file('filepath' => $file, &media_render_args($file, undef)) : $c->render(text => 'none');
 					return;
 				}
@@ -698,6 +720,28 @@ sub rock_and_roll($c) {
 					$c->render_file(data => $data);
 				}
 				else {
+					# /play walks the file in bounded slices, so the response this
+					# request asked for is finished before the browser abandons it.
+					if ($file && $is_play && $play_range) {
+						my ($start, $len) = @{$play_range};
+						my $data = '';
+						if (open my $fh, '<:raw', $file) {
+							seek($fh, $start, 0);
+							read($fh, $data, $len);
+							close $fh;
+						}
+						if (defined $data && length $data) {
+							my $total = $play_total || (-s $file);
+							$c->res->headers->content_range('bytes ' . $start . '-' . ($start + length($data) - 1) . '/' . $total);
+							$c->res->headers->accept_ranges('bytes');
+							&file_response_headers($c, $file, 'private, no-cache');
+							# the slice is already the Range; render_file must not slice it again
+							$c->req->headers->remove('Range');
+							$c->render_file(data => $data, status => 206, &media_render_args($file, undef));
+						}
+						else { $c->render(text => 'none'); }
+						return;
+					}
 					$file ? $c->render_file('filepath' => $file, &media_render_args($file, undef)) : $c->render(text => 'none');
 					return;
 				}

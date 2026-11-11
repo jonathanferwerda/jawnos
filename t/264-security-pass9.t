@@ -98,8 +98,8 @@ like(source('templates/store/item.html.ep'), qr/article_html_clean/,
 	'a shop description is sanitized HTML');
 like(source('templates/file_information.html.ep'), qr/html_text\(\$file->\{'ocr'\}\)/,
 	'OCR text is escaped');
-like(source('templates/apps/music/music.html.ep'), qr/\$mao_js =~ s\{<\/\}\{<\\\\\/\}/,
-	'the music state cannot close its script element');
+unlike(source('templates/apps/music/music.html.ep'), qr/\$mao_js|mao = JSON\.parse/,
+	'the music window no longer inlines an output map to close a script element with');
 like(source('templates/twirl.html.ep'), qr/\$hs_js =~ s\{<\/\}\{<\\\\\/\}/,
 	'and neither can the high-score table');
 

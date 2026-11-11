@@ -1,4 +1,4 @@
-# tests-for: public/js/manager/websocket.js public/js/manager/websocket/02_heartbeat_and_reload.js lib/JawnOS/Controller/manager_ws.pm lib/JawnOS/Controller/manager_misc2.pm lib/JawnOS/Routes/manager_misc2.pm lib/JawnOS/Domain/Key.pm lib/JawnOS/Domain/Loader.pm templates/layouts/manager.html.ep
+# tests-for: public/js/manager/websocket.js public/js/manager/websocket/02_heartbeat_and_reload.js lib/JawnOS/Controller/manager_ws.pm lib/JawnOS/Controller/manager_misc2.pm lib/JawnOS/Controller/sesh_check.pm lib/JawnOS/Routes/manager_misc2.pm lib/JawnOS/Domain/Key.pm lib/JawnOS/Domain/Loader.pm templates/layouts/manager.html.ep
 # covers:    one stayingAlive frame for the whole tab, one beats reply, and the
 #            debrief moved to its own GET/POST endpoint instead of the beat.
 
@@ -66,5 +66,27 @@ is(&subs::debrief_store($uuid, '{"a":1,"b":[2]}'), 1, 'the snapshot is written t
 is_deeply(&subs::debrief_read($uuid), { a => 1, b => [2] }, 'the getter returns the same snapshot');
 is(&subs::debrief_store($uuid, ''), 0, 'an empty snapshot is refused');
 is_deeply(&subs::debrief_read('missing-' . $$), {}, 'a missing ticket reads as an empty store');
+
+# --- the gate's own snapshot is the newest one --------------------------------
+my $sesh = read_file("$root/lib/JawnOS/Controller/sesh_check.pm");
+like($sesh, qr/&subs::debrief_gate_read\(\$device, &subs::machine_hostname\(\)\)/,
+	'the gate reads through the newest-row helper');
+
+my $dev = 'computer';
+my $host = 'debrief-host-' . $$;
+my $other = 'debrief-other-' . $$;
+&subs::db_insert('settings', { app => '__DEBRIEFING__', setting => $host, device => $dev,
+	value => '{"v":"old"}', server_time => 1000, timestamp => 1000, uuid => 'dbg-a-' . $$ });
+&subs::db_insert('settings', { app => '__DEBRIEFING__', setting => $host, device => $dev,
+	value => '{"v":"new"}', server_time => 2000, timestamp => 2000, uuid => 'dbg-b-' . $$ });
+is(&subs::debrief_gate_read($dev, $host), '{"v":"new"}',
+	'the gate reads the newest row for this hostname');
+&subs::db_insert('settings', { app => '__DEBRIEFING__', setting => $other, device => $dev,
+	value => '{"v":"other"}', server_time => 3000, timestamp => 3000, uuid => 'dbg-c-' . $$ });
+is(&subs::debrief_gate_read($dev, $host), '{"v":"new"}',
+	'the hostname match wins over a newer row under another name');
+is(&subs::debrief_gate_read($dev, 'debrief-none-' . $$), '{"v":"other"}',
+	"a new hostname falls back to the device's newest row");
+is(&subs::debrief_gate_read('', $host), undef, 'no device has no gate snapshot');
 
 done_testing();

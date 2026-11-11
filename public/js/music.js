@@ -137,7 +137,7 @@ var musicVideoStats = { waits: 0, stalled_ms: 0, black_runs: 0, black_ms: 0, bla
 // The Audio drawer's Video section. Each active peer has a TV box, and Me has
 // one too; the audio stream follows the picture to the same machines while a
 // video plays. One setting, like the equalizer.
-var music_video = { preset: 'off', sharpen: 0, quality: '720p', fps: 24, me: 1 };
+var music_video = { preset: 'off', sharpen: 0, quality: '720p', fps: 24, me: 1, mvo: {} };
 var music_video_machines = [];
 var music_video_peers = {};
 var music_video_save_timer = 0;
@@ -1879,7 +1879,7 @@ var music_eq_presets = {
 var music_equalizer = { bands: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], bass: 0, preset: 'flat' };
 var music_eq_save_timer = 0;
 var music_eq_drag = null;
-var music_audio_loading = false;
+var music_audio_loading = null;
 var music_sync_offset = 0;
 // The Sync offset slider's range, mirrored in templates/apps/music/audio.html.ep.
 // The trim has to cover a remote whose own output buffer is not reported, which
@@ -2402,7 +2402,7 @@ async function musicInit(method) {
 	// The Audio drawer is fetched from this machine and is also where the saved
 	// curve lives; fetch it once per opened window so a saved EQ is applied even
 	// if the drawer is never opened.
-	if (!$('#music_audio_panel').children().length) { musicAudioPanelLoad(false); }
+	if (!$('#music_audio_panel').children().length) { try { await musicAudioPanelLoad(false); } catch (e) {} }
 	if (method != 'search') {
 		// a restored window comes back with the setting the server last saved;
 		// a search re-render keeps the value already running in this page
@@ -4383,10 +4383,18 @@ function musicVideoSendRaw(obj) {
 }
 
 function musicVideoOutputsSave() {
-	var mvo = { me: music_video.me ? 'on' : 'off' };
+	// Merge, never replace: a machine that is offline while this save runs must
+	// keep the choice it had, or it comes back on when it reconnects. The uuid is
+	// written beside the stream key so a machine whose fqdn changes keeps its off.
+	var mvo = $.extend({}, music_video.mvo || {});
+	mvo.me = music_video.me ? 'on' : 'off';
 	$.each(music_video_machines, function(i, m) {
-		if (m && m.key) { mvo[m.key] = m.enabled ? 'on' : 'off'; }
+		if (!m || !m.key) { return; }
+		var state = m.enabled ? 'on' : 'off';
+		mvo[m.key] = state;
+		if (m.uuid) { mvo[m.uuid] = state; }
 	});
+	music_video.mvo = mvo;
 	settingSetter({ app: 'music', setting: 'mvo', value: JSON.stringify(mvo) });
 }
 
@@ -4516,6 +4524,7 @@ function musicVideoMachinesLoad(cb) {
 		cache: false,
 		success: function(r) {
 			music_video_machines = (r && r.machines) ? r.machines : [];
+			if (r && r.mvo) { music_video.mvo = r.mvo; }
 			if (r && r.me !== undefined) { music_video.me = (r.me === 0 || r.me === 'off' || r.me === false) ? 0 : 1; }
 			// a start() call must not put an old saved setting back over a
 			// change the person just made; only the init pass reads settings
@@ -4941,12 +4950,11 @@ $(document).on('change', '#music_video_quality, #music_video_fps', function() {
 
 function musicAudioPanelLoad(show) {
 	var panel = $('#music_audio_panel');
-	if (!panel.length) { return; }
+	if (!panel.length) { return Promise.resolve(); }
 	// the drawer floats over the theatre picture like the configuration sheet
 	if (show) { musicConfigShow(panel); }
-	if (music_audio_loading) { return; }
-	music_audio_loading = true;
-	$.ajax({
+	if (music_audio_loading) { return music_audio_loading; }
+	var request = $.ajax({
 		url: '/music/audio',
 		type: 'GET',
 		dataType: 'json',
@@ -4955,6 +4963,7 @@ function musicAudioPanelLoad(show) {
 			if (!r || !r.html) { return; }
 			// the drawer belongs to this machine, including the output list
 			if (r.mao) { mao = r.mao; }
+			if (r.mvo) { music_video.mvo = r.mvo; }
 			if (r.video_machines) { music_video_machines = r.video_machines; }
 			if (r.video_me !== undefined) { music_video.me = (r.video_me === 0 || r.video_me === 'off' || r.video_me === false) ? 0 : 1; }
 			panel.html(r.html);
@@ -4974,8 +4983,10 @@ function musicAudioPanelLoad(show) {
 			musicScreenApply();
 		},
 		error: function() { /* keep whatever the drawer already holds */ },
-		complete: function() { music_audio_loading = false; }
+		complete: function() { music_audio_loading = null; }
 	});
+	music_audio_loading = request;
+	return request;
 }
 
 $(document).on('click', '#music_audio_toggle', function() {

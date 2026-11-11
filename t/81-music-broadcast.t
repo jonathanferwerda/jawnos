@@ -1,4 +1,4 @@
-# tests-for: lib/JawnOS/Domain/Format.pm perl/Music.pl perl/Music/ perl/help.pl perl/help/ perl/language.pl perl/language/ public/css/music.css public/js/music.js templates/
+# tests-for: lib/JawnOS/Domain/Format.pm lib/JawnOS/Manager/Part04.pm perl/Music.pl perl/Music/ perl/help.pl perl/help/ perl/language.pl perl/language/ public/css/music.css public/js/music.js templates/
 # covers:    A remote output that is down used to stay enabled forever: the saved setting still said on, so the stream kept...
 
 use strict;
@@ -23,8 +23,42 @@ my $js = read_file("$root/public/js/music.js");
 my $template = read_file("$root/templates/apps/music/music.html.ep");
 my $css = read_file("$root/public/css/music.css");
 my $music = music_source();
+my $music_main = read_file("$root/perl/Music.pl");
+my $music_routes = read_file("$root/perl/Music/08_music_routes.pl");
+my $video_routes = read_file("$root/perl/Music/03_remote_video.pl");
+my $rock = read_file("$root/lib/JawnOS/Manager/Part04.pm");
 my $language = language_source();
 my $help = help_source();
+
+# --- a long track keeps its body --------------------------------------------
+like($rock, qr/&subs::media_range_plan\(\$c->req->headers->range, \$play_total\)/,
+	'/play plans a bounded media slice instead of holding the whole file');
+like($rock, qr/if \(\$file && \$is_play && \$play_range\)/,
+	'the plain media path answers that slice');
+like($rock, qr/!\$c->param\('duty'\) && !\$c->req->headers->range && \$c->req->url->path ne '\/play' && \$file && -e \$file/,
+	'a byte-range request is never answered 304 with no bytes');
+unlike($music_main, qr/inactivity_timeout\(0\)/,
+	'/play does not disable the connection timeout for a held body');
+
+# --- the window shell carries no stale output map ---------------------------
+unlike($template, qr/mao = JSON\.parse/,
+	'the cached window shell does not replay an old mao');
+like($js, qr/await musicAudioPanelLoad\(false\)/,
+	'a fresh window reads the live output map before restoring the player');
+like($js, qr/var request = \$\.ajax\(\{\s*\n\s*url: '\/music\/audio'/,
+	'the audio drawer load hands back its request so init can wait for it');
+
+# --- a remote video output stays off ---------------------------------------
+like($video_routes, qr/foreach my \$alias \( \$rm->\{'uuid'\}, \$key, \$rm->\{'ip'\}, \$rm->\{'hostname'\} \)/,
+	'the output map is read by the stable uuid and every alias');
+like($video_routes, qr/enabled => \(\$state && \$state eq 'on'\) \? 1 : 0/,
+	'a missing video output entry is off, not on');
+like($js, qr/var mvo = \$\.extend\(\{\}, music_video\.mvo \|\| \{\}\);/,
+	'a save merges the map instead of dropping machines that are offline');
+like($js, qr/if \(m\.uuid\) \{ mvo\[m\.uuid\] = state; \}/,
+	'the stable uuid is written beside the stream key');
+like($music_routes, qr/me => &music_video_local_enabled\(\), mvo => &music_video_settings\(\)/,
+	'the live outputs route carries the map the save must merge');
 
 # --- the decision is a pure function a test can pin -------------------------
 my ($cfg) = $js =~ /(var musicOutputOff = \{[^\n]*\};)/;

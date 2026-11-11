@@ -122,8 +122,3 @@
 #music_padlock .padlock_frame.padlock_compact { top:8px !important; transform:translateX(-50%) !important; }
 </style>
 
-<script>
-	<% my $mao_js = $jmao // ''; $mao_js =~ s/\\/\\\\/g; $mao_js =~ s/'/\\'/g; $mao_js =~ s{</}{<\\/}g; %>
-	mao = JSON.parse('<%== $mao_js %>');
-</script>
-

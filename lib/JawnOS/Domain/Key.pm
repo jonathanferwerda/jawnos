@@ -358,6 +358,29 @@ sub debrief_store {
 	return ($updated && $updated->rows) ? 1 : 0;
 }
 
+# The gate's snapshot lives in `settings`, one row per machine kind. A row
+# written under an old hostname survives a rename, and db_select's first row was
+# whichever one the index happened to return: a gate login could restore a
+# session older than the one that just left. The newest row for this hostname
+# wins, and the device's newest row is the fallback when the hostname is new.
+sub debrief_gate_read {
+	my ($device, $hostname) = @_;
+	return undef unless defined $device && length $device;
+	my $row;
+	if (defined $hostname && length $hostname) {
+		$row = &subs::db_query(
+			'select value from settings where app = ? and device = ? and setting = ? order by server_time desc limit 1',
+			'__DEBRIEFING__', $device, $hostname
+		)->hash;
+		$row = undef unless $row && defined $row->{'value'} && length $row->{'value'};
+	}
+	$row ||= &subs::db_query(
+		'select value from settings where app = ? and device = ? order by server_time desc limit 1',
+		'__DEBRIEFING__', $device
+	)->hash;
+	return (ref $row eq 'HASH' && defined $row->{'value'} && length $row->{'value'}) ? $row->{'value'} : undef;
+}
+
 # A house with a way back in starts gated. The paper recovery code is the
 # emergency door, so a house that has one gets the padlock row, General as its
 # context, and Enforce as the mode the first time this runs, then the marker

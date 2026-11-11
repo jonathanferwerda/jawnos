@@ -325,6 +325,39 @@ sub config_reader {
 	return $config;
 }
 
+# A media element asks /play for the whole file (`bytes=0-`), reads a couple of
+# megabytes, aborts that response and asks for the next range. Keeping the whole
+# file open on the first response leaves the browser's per-host connections held
+# and the next range queued, and the picture stalls when the buffer drains. Plan
+# a bounded slice instead: [start, length] in the plaintext, or undef when the
+# start is past the end. The caller turns the slice into a 206.
+sub media_range_plan {
+	my ($header, $total, $cap) = @_;
+	$total = 0 unless defined $total && $total > 0;
+	$cap = 2 * 1024 * 1024 unless defined $cap && $cap > 0;
+	my ($start, $end) = (0, $total - 1);
+	if (defined $header && $header =~ /^bytes=(\d*)-(\d*)/) {
+		my ($s, $e) = ($1, $2);
+		return undef if $s eq '' && $e eq '';
+		if ($s eq '') {
+			my $n = int($e);
+			$n = $cap if $n > $cap;
+			$start = $total - $n;
+			$start = 0 if $start < 0;
+		}
+		else {
+			$start = int($s);
+			$end = ($e ne '') ? int($e) : $total - 1;
+		}
+	}
+	return undef if $start < 0 || $start >= $total;
+	$end = $total - 1 if $end > $total - 1;
+	$end = $start if $end < $start;
+	my $len = $end - $start + 1;
+	$len = $cap if $len > $cap;
+	return [ $start, $len ];
+}
+
 sub cache_set {
 	my ($params,$data) = @_;
 	my $app = &subs::unformat_name($params->{'app'});

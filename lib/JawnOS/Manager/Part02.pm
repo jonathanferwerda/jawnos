@@ -571,14 +571,28 @@ sub media_render_args($file, $verdict) {
 # sits at readyState 0 and the music player runs through the whole queue. A
 # plain read/seek on the same path works (the /play as_is path proves it), so
 # stream the bytes here instead - with the one Range a media element sends.
-sub stream_fuse_media($c, $file) {
+sub stream_fuse_media($c, $file, $plan = undef) {
 	my $type = &media_content_type($file, undef);
 	return 0 unless defined $type && $type =~ m{^(?:audio|video)/};
 	my $size = -s $file;
 	return 0 unless defined $size && $size > 0;
 	my ($start, $end, $code) = (0, $size - 1, 200);
 	my $range = $c->req->headers->range;
-	if (defined $range && length $range && $range =~ m/^bytes=(\d*)-(\d*)/) {
+	if ($plan && ref $plan eq 'ARRAY') {
+		# /play already planned the bounded slice; do not send the whole tail.
+		$start = $plan->[0];
+		$end = $start + $plan->[1] - 1;
+		$end = $size - 1 if $end >= $size;
+		if ($start > $end || $start >= $size) {
+			$c->res->code(416);
+			$c->res->headers->content_range('bytes */' . $size);
+			$c->res->headers->accept_ranges('bytes');
+			$c->res->body('');
+			return 1;
+		}
+		$code = 206;
+	}
+	elsif (defined $range && length $range && $range =~ m/^bytes=(\d*)-(\d*)/) {
 		my ($s, $e) = ($1, $2);
 		if ($s eq '' && $e ne '') {
 			my $want = int($e);

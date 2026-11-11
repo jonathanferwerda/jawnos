@@ -204,7 +204,7 @@ sub action_7519 {
 			$c->session('app' => $c->param('app'));
 
 
-			my $debbie = eval { return &subs::db_select('settings', ['value'], { app => '__DEBRIEFING__', device => $device })->hash->{value} };
+			my $debbie = eval { &subs::debrief_gate_read($device, &subs::machine_hostname()) };
 			my $deb = $debbie || encode_json [];
 			my $duration = $start_time - &subs::rightNow();
 		#	&subs::db_insert('appointments',{ warranty => $me_warranty, uuid => &subs::random_string_creator(40), app => "customs", type => "entry", timestamp => $timestamp, server_time => $server_time });
