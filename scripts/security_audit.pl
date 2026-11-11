@@ -113,6 +113,14 @@ sub grep_tree($pattern, @paths) {
 	return @hits;
 }
 
+# A hit can be prose: a comment that names the call rather than making it. Only
+# the start of the line decides — `code; // note` is still a call, and no rule
+# should treat a trailing comment as the code.
+sub comment_only($text) {
+	return 0 unless defined $text;
+	return $text =~ m{^\s*(?://|/\*|\*|#)} ? 1 : 0;
+}
+
 # --- tree: code execution, injection, auth, paths, secrets -----------------
 for my $hit ( grep_tree('eval\s+[\$@"\x27]', 'lib', 'perl') ) {
 	my ($path, $line, $text) = @{$hit};
@@ -319,6 +327,7 @@ for my $hit ( grep_tree('(AKIA[0-9A-Z]{16}|ghp_[A-Za-z0-9]{20,}|xox[baprs]-[A-Za
 
 for my $hit ( grep_tree('->insecure\(1\)|setInsecure\(', 'lib', 'perl', 'jp', 'jt', 'jw') ) {
 	my ($path, $line, $text) = @{$hit};
+	next if comment_only($text);
 	finding('medium', 'tls.insecure', 'transport',
 		'certificate verification is disabled', path => $path, line => $line,
 		evidence => redact($text), fix => 'pin the house CA/certificate');

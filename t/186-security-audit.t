@@ -29,6 +29,13 @@ ok(ref $report->{'findings'} eq 'ARRAY' && scalar @{$report->{'findings'}} > 0,
 my @legacy = grep { $_->{'id'} eq 'perl.console.string' } @{$report->{'findings'}};
 is(scalar @legacy, 0, 'no console send is a JS string any more');
 
+# The TLS rule reports the call, not the prose around it: a comment that names
+# the call is not verification being disabled.
+my @tls = grep { $_->{'id'} eq 'tls.insecure' } @{$report->{'findings'}};
+ok(scalar @tls > 0, 'the tree keeps its genuine insecure-TLS calls');
+ok(!(grep { $_->{'evidence'} =~ m{^\s*(?://|/\*|\*|#)} } @tls),
+	'no comment-only line is reported as an insecure-TLS call');
+
 my $allow_text = read_file("$root/qa/security/allowlist.json");
 my $allow = eval { JSON::PP->new->decode($allow_text) };
 ok(ref $allow eq 'ARRAY' && scalar @{$allow} > 0, 'the allowlist is a JSON list');
@@ -78,6 +85,18 @@ write_file("$fx/lib/Bad.pm", join "\n",
 	'1;',
 	'');
 write_file("$fx/perl/Keep.pl", "1;\n");
+# One real call, four shapes of prose. Only the call is a finding, and the
+# trailing comment proves a line is judged by how it starts.
+write_file("$fx/perl/Tls.pl", join "\n",
+	'package Tls;',
+	'my $ua = Mojo::UserAgent->new;',
+	'# $ua->insecure(1) is disabled in prose only',
+	'// setInsecure() only clears optional CA pointers',
+	'/* setInsecure() in a block comment */',
+	' * setInsecure() in a continuation line',
+	'$ua->insecure(1)->get($url); # a real call, trailing note or not',
+	'1;',
+	'');
 system('git', '-C', $fx, 'init', '-q');
 system('git', '-C', $fx, 'config', 'user.email', 'test@example.invalid');
 system('git', '-C', $fx, 'config', 'user.name', 'JawnOS test');
@@ -90,6 +109,11 @@ ok($fx_ids{'perl.shell.base64'}, 'the shell-base64 rule fires on a fixture') or 
 ok($fx_ids{'perl.shell.double_quoted'}, 'the double-quoted-system rule fires on a fixture') or diag($fx_json);
 ok($fx_ids{'perl.shell.mojo_quote'}, 'the Mojo quote rule fires on a fixture') or diag($fx_json);
 ok($fx_ids{'peer.no_pin'}, 'the unpinned-peer rule fires on a fixture') or diag($fx_json);
+my @fx_tls = grep { $_->{'id'} eq 'tls.insecure' } @{ $fx_report->{'findings'} || [] };
+is(scalar @fx_tls, 1, 'only the insecure-TLS call is reported, not the comments about it')
+	or diag($fx_json);
+is($fx_tls[0]{'line'}, 7, 'the call with a trailing comment is the hit')
+	or diag($fx_json);
 
 # --- host fixtures ---------------------------------------------------------
 # The SSH comment is the whole tail of the line, not its last word: an accepted
