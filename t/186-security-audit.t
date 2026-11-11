@@ -91,4 +91,64 @@ ok($fx_ids{'perl.shell.double_quoted'}, 'the double-quoted-system rule fires on 
 ok($fx_ids{'perl.shell.mojo_quote'}, 'the Mojo quote rule fires on a fixture') or diag($fx_json);
 ok($fx_ids{'peer.no_pin'}, 'the unpinned-peer rule fires on a fixture') or diag($fx_json);
 
+# --- host fixtures ---------------------------------------------------------
+# The SSH comment is the whole tail of the line, not its last word: an accepted
+# two-word comment must not be reported, and a stranger must be.
+my $hostdir = tempdir(CLEANUP => 1);
+write_file("$hostdir/authorized_keys", join "\n",
+	'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFixtureKeyBlobOne jawnos-dev nightly',
+	'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFixtureKeyBlobTwo stranger@laptop',
+	'');
+write_file("$hostdir/ss.txt", join "\n",
+	'Netid State  Recv-Q Send-Q Local Address:Port Peer Address:Port Process',
+	'tcp   LISTEN 0      4096   0.0.0.0:39001      0.0.0.0:*',
+	'tcp   LISTEN 0      4096   127.0.0.1:39002    0.0.0.0:*',
+	'tcp   LISTEN 0      100    *:8022             *:*',
+	'udp   UNCONN 0      0      0.0.0.0:41641      0.0.0.0:*',
+	'');
+my $host_json = `perl "$root/scripts/security_audit.pl" --host --json --root "$root" --authorized-keys-file "$hostdir/authorized_keys" --ss-file "$hostdir/ss.txt" 2>/dev/null`;
+my $host_report = eval { JSON::PP->new->decode($host_json) } || {};
+my @host_findings = @{ $host_report->{'findings'} || [] };
+my @keys = grep { $_->{'id'} eq 'host.ssh.key' } @host_findings;
+is(scalar @keys, 1, 'only the unknown SSH key is reported') or diag($host_json);
+is($keys[0]{'evidence'}, 'stranger@laptop', 'the unknown comment is the whole tail');
+ok(!(grep { $_->{'evidence'} =~ /jawnos-dev nightly/ } @keys), 'a two-word accepted comment is not reported');
+my @public = grep { $_->{'id'} eq 'host.public_listener' } @host_findings;
+my %public_ports = map { $_->{'evidence'} =~ /(\d+)/ ? ($1 => 1) : () } @public;
+ok($public_ports{'39001'}, 'an unexpected 0.0.0.0 bind is reported');
+ok(!$public_ports{'39002'}, 'a loopback bind is not reported');
+ok(!$public_ports{'8022'}, 'a known static port is not reported');
+ok(!$public_ports{'41641'}, 'the tailscale port is not reported');
+
+# --- allowlist line pinning ------------------------------------------------
+# A line-pinned allowlist entry covers its own instance only. A second eval in
+# the same accepted file, at a different line, must stay new.
+my $al = tempdir(CLEANUP => 1);
+make_path("$al/public/js", "$al/qa/security");
+write_file("$al/public/js/fixture.js", "var a = eval('one');\nvar b = eval('two');\n");
+write_file("$al/qa/security/allowlist.json", JSON::PP->new->canonical->pretty->encode([
+	{ id => 'js.eval', path => 'public/js/fixture.js', line => 1, reason => 'fixture' },
+]));
+system('git', '-C', $al, 'init', '-q');
+system('git', '-C', $al, 'config', 'user.email', 'test@example.invalid');
+system('git', '-C', $al, 'config', 'user.name', 'JawnOS test');
+system('git', '-C', $al, 'add', '-A');
+is(system('git', '-C', $al, 'commit', '-q', '-m', 'fixture'), 0, 'the allowlist fixture repo commits');
+my $al_json = `perl "$root/scripts/security_audit.pl" --check --json --root "$al" 2>&1`;
+my $al_report = eval { JSON::PP->new->decode($al_json) } || {};
+my @al_evals = grep { $_->{'id'} eq 'js.eval' } @{ $al_report->{'findings'} || [] };
+my ($pinned) = grep { $_->{'line'} == 1 } @al_evals;
+my ($loose)  = grep { $_->{'line'} == 2 } @al_evals;
+ok($pinned && $pinned->{'known'}, 'the pinned line is known');
+ok($loose && !$loose->{'known'}, 'a second instance at a new line in the same file is new')
+	or diag($al_json);
+
+# The real allowlist pins every eval it accepts, so a new one cannot inherit it.
+my @eval_entries = grep { $_->{'id'} eq 'perl.eval.string' || $_->{'id'} eq 'js.eval' } @{ $allow };
+ok(scalar @eval_entries >= 4, 'the accepted evals are listed');
+ok(!(grep { !defined $_->{'line'} } @eval_entries), 'and each accepted eval is pinned by line');
+my @js = grep { $_->{'id'} eq 'js.eval' } @{$report->{'findings'}};
+is(scalar @js, 2, 'the console router carries the two accepted evals');
+ok(!(grep { !$_->{'known'} } @js), 'both are known through their line-pinned entries');
+
 done_testing();

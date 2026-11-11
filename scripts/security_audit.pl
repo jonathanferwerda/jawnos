@@ -33,7 +33,7 @@ use POSIX qw(strftime);
 use Getopt::Long;
 
 my %opt = (check => 0, json => 0, host => 1, 'write-report' => 0, 'fail-on' => 'high', root => '');
-GetOptions(\%opt, 'check', 'json', 'host!', 'write-report', 'fail-on=s', 'root=s') or die "usage: $0 [--check] [--json] [--no-host] [--write-report] [--fail-on high|medium|low] [--root DIR]\n";
+GetOptions(\%opt, 'check', 'json', 'host!', 'write-report', 'fail-on=s', 'root=s', 'ss-file=s', 'authorized-keys-file=s') or die "usage: $0 [--check] [--json] [--no-host] [--write-report] [--fail-on high|medium|low] [--root DIR] [--ss-file FILE] [--authorized-keys-file FILE]\n";
 $opt{host} = 0 if $opt{check};
 
 my $root = $opt{root} ? abs_path($opt{root}) : abs_path(File::Spec->catdir(dirname(abs_path($0)), '..'));
@@ -379,13 +379,19 @@ if ($opt{host}) {
 			if $sshd =~ /^permitemptypasswords yes$/mi;
 	}
 
-	for my $file ( glob('/root/.ssh/authorized_keys /home/*/.ssh/authorized_keys') ) {
+	my @key_files = defined $opt{'authorized-keys-file'} && length $opt{'authorized-keys-file'}
+		? ( $opt{'authorized-keys-file'} )
+		: glob('/root/.ssh/authorized_keys /home/*/.ssh/authorized_keys');
+	for my $file (@key_files) {
 		next unless -f $file;
 		open(my $fh, '<', $file) or next;
 		while (my $line = <$fh>) {
 			next unless $line =~ /^\s*(?:ssh-|ecdsa-|sk-)/;
-			my ($comment) = $line =~ /\s(\S+)\s*$/;
-			$comment //= '(no comment)';
+			# The comment is everything after the key blob, not the last word:
+			# "jawnos-dev nightly" is one accepted comment, not an unknown key.
+			my ($comment) = $line =~ /^\s*\S+\s+\S+\s+(.*?)\s*$/;
+			$comment = '' unless defined $comment;
+			$comment = '(no comment)' unless length $comment;
 			next if $comment =~ /^(?:jawnos-agent|jawnos-dev|root\@ks5|jawn\@)/;
 			finding('medium', 'host.ssh.key', 'authentication', 'an unknown SSH key is authorised',
 				path => $file, evidence => $comment, fix => 'remove the key if it is not a known device');
@@ -393,14 +399,47 @@ if ($opt{host}) {
 		close $fh;
 	}
 
-	my ($lr, $listen) = capture('ss', '-lntup');
+	my ($lr, $listen);
+	if (defined $opt{'ss-file'} && length $opt{'ss-file'}) {
+		if (open(my $sfh, '<', $opt{'ss-file'})) {
+			local $/;
+			$listen = <$sfh> // '';
+			close $sfh;
+			$lr = 0;
+		}
+		else { $lr = 127 }
+	}
+	else {
+		($lr, $listen) = capture('ss', '-lntup');
+	}
 	if ($lr == 0) {
 		my %public;
-		while ($listen =~ /^(?:tcp|udp)\s+\S+\s+\S+\s+(\S+):(\d+)\s+/mg) {
+		# ss -lntup columns: Netid State Recv-Q Send-Q Local:Port Peer:Port
+		while ($listen =~ /^(?:tcp|udp)\s+\S+\s+\S+\s+\S+\s+(\S+):(\d+)\s+/mg) {
 			my ($addr, $port) = ($1, $2);
 			$public{$port} = 1 if $addr =~ /^(?:0\.0\.0\.0|\*|\[::\]|::)$/;
 		}
-		my %known = map { $_ => 1 } qw(25 85 111 443 3128 8006 8022 45545 45546 45550);
+		# The static house rail, the configured app ports (each as its own base),
+		# the duty offsets from lib/JawnOS/Platform/Ports.pm, and the tailscale
+		# port. Ephemeral ports are deliberately absent: they are transient.
+		my %known = map { $_ => 1 } qw(25 85 111 443 3128 8006 8022 45545 45546 45550 41641);
+		my %offset = ( ahoy => 0, ws => 1, watch => 2, bestow => 3, tty => 3,
+			coms => 4, bell => 5, alarm => 5, peer => 6, ws_plain => 101 );
+		my $cfg = do {
+			my $c;
+			if (-e 'config.json' && open(my $cfh, '<', 'config.json')) {
+				local $/;
+				$c = eval { JSON::PP->new->decode(<$cfh>) };
+				close $cfh;
+			}
+			ref $c eq 'HASH' ? $c : {};
+		};
+		for my $key (qw(port working_port ws_port)) {
+			my $base = $cfg->{$key};
+			next unless defined $base && $base =~ /^[0-9]+$/ && $base > 1024;
+			$known{$base} = 1;
+			$known{ $base + $_ } = 1 for values %offset;
+		}
 		for my $port ( sort { $a <=> $b } keys %public ) {
 			next if $known{$port};
 			finding('low', 'host.public_listener', 'exposure', "a new public listener is $port", evidence => "port $port", fix => 'bind loopback or add a firewall rule');
