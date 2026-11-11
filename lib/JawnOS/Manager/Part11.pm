@@ -228,18 +228,20 @@ sub remote_device_connect($rdata) {
 			$manager_window =~ s{/+$}{};
 			$manager_window .= '/manager';
 			$returner->{'button'} .= '<button type="button" class="remote_manager_open" uuid="' . &subs::html_text($uuid) . '" manager="' . &subs::html_text($manager_window) . '" hint="' . &subs::html_text(&subs::ui('Open this machine\'s Manager')) . '">' . &subs::lang('common.go') . '</button> ';
-			# the peer's self-reported version, so a neighbour that is behind is
-			# obvious in the panel instead of a guess.
-			$returner->{'button'} .= '<span class="neighbour_version" hint="their version" style="opacity:0.6;">v' . ($returner->{'body'}->{'version'} || '?') . '</span><br>';
+			# The peer's own fields are untrusted: the version, pwd, signatorial,
+			# database, nic, ip, device, ssh port and button labels all came from
+			# the answering machine, so every one is escaped before it becomes
+			# markup (the panel prints this blob with <%== and .html()).
+			$returner->{'button'} .= '<span class="neighbour_version" hint="their version" style="opacity:0.6;">v' . &subs::html_text($returner->{'body'}->{'version'} || '?') . '</span><br>';
 			foreach my $b ( @{$buttons} ) {
-				$returner->{'button'} .= '<button direction="' . $b->{'direction'} . '" device="' . $remote_device .'"
-					home="' . $returner->{'body'}->{'pwd'} . '" signatorial="' . $returner->{'body'}->{'signatorial'} . '"
-					hostname="' . &subs::html_text($peer_host) . '" uuid="' . $uuid . '" ssh_port="' . $ssh_port .'" ip="' . $ip . '"
-					database="' . $returner->{'body'}->{'database'} .  '" nic="' . $nic . '"
-					class="' . $b->{'class'} . '">' . $b->{'name'} . '</button>';
+				$returner->{'button'} .= '<button direction="' . &subs::html_text($b->{'direction'}) . '" device="' . &subs::html_text($remote_device) .'"
+					home="' . &subs::html_text($returner->{'body'}->{'pwd'}) . '" signatorial="' . &subs::html_text($returner->{'body'}->{'signatorial'}) . '"
+					hostname="' . &subs::html_text($peer_host) . '" uuid="' . &subs::html_text($uuid) . '" ssh_port="' . &subs::html_text($ssh_port) .'" ip="' . &subs::html_text($ip) . '"
+					database="' . &subs::html_text($returner->{'body'}->{'database'}) .  '" nic="' . &subs::html_text($nic) . '"
+					class="' . &subs::html_text($b->{'class'}) . '">' . &subs::html_text($b->{'name'}) . '</button>';
 			}
 			$returner->{'button'} .= '<span class="remote_machine_specials"><br>' .
-				'G: <input type="text" name="gimme" class="gimme_input" uuid="' . $uuid . '" signatorial="' . $returner->{'body'}->{'signatorial'} . '"></span>';
+				'G: <input type="text" name="gimme" class="gimme_input" uuid="' . &subs::html_text($uuid) . '" signatorial="' . &subs::html_text($returner->{'body'}->{'signatorial'}) . '"></span>';
 			$returner->{'status'} = 'Connected';
 
 			my $secret = &subs::db_select('security', ['credential'], { level => 1 })->hash->{credential};

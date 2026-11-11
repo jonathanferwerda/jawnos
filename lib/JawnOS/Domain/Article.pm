@@ -115,10 +115,14 @@ sub article_html_clean {
 		}
 		return unless $ARTICLE_TAG{$tag};
 		my $allowed = $ARTICLE_ATTR{$tag} || {};
+		# A link with target needs rel, or the new tab keeps a window.opener
+		# handle back into this house. Force it rather than trust the markup.
+		my $force_rel = $tag eq 'a' && defined $attr->{'target'} && length $attr->{'target'};
 		my @written;
 		foreach my $name (sort keys %{$attr}) {
 			next unless $allowed->{$name} || $name eq 'class' || $name eq 'style';
 			next if $name =~ /^on/i;
+			next if $name eq 'rel' && $force_rel;
 			my $value = $attr->{$name};
 			next unless defined $value;
 			if ($name eq 'href' || $name eq 'src') {
@@ -136,6 +140,7 @@ sub article_html_clean {
 			}
 			push @written, $name . '="' . $escape->($value) . '"';
 		}
+		push @written, 'rel="noopener noreferrer"' if $force_rel;
 		$out .= '<' . $tag . (@written ? ' ' . join(' ', @written) : '') . '>';
 		push @open, $tag unless $ARTICLE_VOID{$tag};
 	}, 'tagname,attr');

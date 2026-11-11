@@ -12,6 +12,13 @@ function peopleT(text) {
 	return (typeof jawnosT === 'function') ? jawnosT(text) : text;
 }
 
+// A crest's home/store is a peer's own claim and reaches this page as a
+// response field. Only an http(s) URL is handed to window.open.
+function peopleSafeUrl(url) {
+	var s = String(url || '').replace(/^\s+|\s+$/g, '');
+	return /^https?:\/\//i.test(s) ? s : '';
+}
+
 // A construct kind is a core label under 'construct.<name>', which the core
 // catalog already carries; fall back to the raw name for a kind it does not.
 function peopleConstructLabel(type) {
@@ -98,10 +105,12 @@ function peopleCrestDetail(uuid) {
 				$('<button class="people_crest_lookup">').attr('uuid', response.uuid).text(peopleT('Look up their constructs')).appendTo(actions);
 			}
 			if (response.home) {
-				$('<button>').text(peopleT('Homepage')).on('click', function() { window.open(response.home, '_blank'); }).appendTo(actions);
+				var home = peopleSafeUrl(response.home);
+				if (home) { $('<button>').text(peopleT('Homepage')).on('click', function() { window.open(home, '_blank', 'noopener,noreferrer'); }).appendTo(actions); }
 			}
 			if (response.store) {
-				$('<button>').text(peopleT('Store')).on('click', function() { window.open(response.store, '_blank'); }).appendTo(actions);
+				var store = peopleSafeUrl(response.store);
+				if (store) { $('<button>').text(peopleT('Store')).on('click', function() { window.open(store, '_blank', 'noopener,noreferrer'); }).appendTo(actions); }
 			}
 			if (response.contact && (response.contact.phone || response.contact.email)) {
 				$('<button>').text(peopleT('Message')).on('click', function() { peopleCrestMessage(response.contact); }).appendTo(actions);

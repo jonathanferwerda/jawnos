@@ -66,8 +66,10 @@
 						}
 					});
 			<% } %>
-			var me_tax = <%= &subs::setting_grabber({ app => 'me', setting => 'tax' }) || 1.00 %>;
-			var sales_tax = <%= &subs::setting_grabber({ app => 'me', setting => 'sales_tax' }) || 1.00 %>;
+			<% my $tax = &subs::setting_grabber({ app => 'me', setting => 'tax' }); $tax = 1 unless defined $tax && $tax =~ /^\d+(?:\.\d+)?$/; %>
+			<% my $sales_tax = &subs::setting_grabber({ app => 'me', setting => 'sales_tax' }); $sales_tax = 1 unless defined $sales_tax && $sales_tax =~ /^\d+(?:\.\d+)?$/; %>
+			var me_tax = <%= $tax %>;
+			var sales_tax = <%= $sales_tax %>;
 			// what the keyboard's config keeps per device: the damping the timeline
 			// and the clothesline read, seeded here so either is right before its
 			// keyboard is ever opened

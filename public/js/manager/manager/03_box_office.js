@@ -63,7 +63,9 @@ function volumeChecker() {
 			$('#device_volume_control').html(writer);
 
 			$.each(response.remote_machines, function(i,rm) {
-				$('#device_volume_control').prepend('<span class="volume_control_device hover" device="' + rm.uuid + '"><b>' + rm.fqdn + '</b></span><br>');
+				var row = $('<span class="volume_control_device hover">').attr('device', rm.uuid);
+				$('<b>').text(rm.fqdn || '').appendTo(row);
+				$('#device_volume_control').prepend(row, '<br>');
 			});
 
 			$('#device_volume_control').prepend('<span class="volume_control_device hover" device="local"><b>Local</b></span><br>');

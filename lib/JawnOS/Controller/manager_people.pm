@@ -251,6 +251,13 @@ sub action_23879 {
 	my $image_src = (defined $entry->{'image_data'} && length $entry->{'image_data'})
 		? $entry->{'image_data'}
 		: ($has_image ? '/manager/people/crest_image?peer=' . $uuid . '&stamp=' . &subs::rightNow() : '');
+	# A stored row may predate the import check; the panel opens these in a tab,
+	# so answer only with an http(s) URL.
+	my $endpoint_url = sub {
+		my ($url) = @_;
+		(my $clean = defined $url ? $url : '') =~ s/^\s+|\s+$//g;
+		return $clean =~ m{^https?://}i ? $clean : '';
+	};
 	return $c->render(json => {
 		ok => 1,
 		uuid => $uuid,
@@ -263,8 +270,8 @@ sub action_23879 {
 		image => $image_src,
 		origin => &subs::crest_entry_origin($entry),
 		profile => (ref $entry->{'profile'} eq 'HASH' ? $entry->{'profile'} : undef),
-		home => $endpoints->{'home'} || '',
-		store => $endpoints->{'store'} || '',
+		home => $endpoint_url->($endpoints->{'home'}),
+		store => $endpoint_url->($endpoints->{'store'}),
 		manager => $endpoints->{'manager'} || '',
 		linked_app => $linked_app,
 		contact => $contact,
@@ -377,8 +384,13 @@ sub action_24073 {
 		$crest = { name => $incoming->{'name'} || '', fingerprint => $incoming->{'fingerprint'} || '' };
 		$image = &people_crest_image($app);
 		my $endpoints = ref $entry->{'endpoints'} eq 'HASH' ? $entry->{'endpoints'} : {};
-		$home = $endpoints->{'home'} || '';
-		$store = $endpoints->{'store'} || '';
+		my $endpoint_url = sub {
+			my ($url) = @_;
+			(my $clean = defined $url ? $url : '') =~ s/^\s+|\s+$//g;
+			return $clean =~ m{^https?://}i ? $clean : '';
+		};
+		$home = $endpoint_url->($endpoints->{'home'});
+		$store = $endpoint_url->($endpoints->{'store'});
 		my $state = &people_crest_state($entry);
 		$met = $state->{'met'};
 		$met_at = $state->{'met_at'};
@@ -678,6 +690,16 @@ sub action_24390 {
 		$entry->{'image_file'} = $existing->{'image_file'} if !$image_name && $existing->{'image_file'};
 		$entry->{'image_data'} = $existing->{'image_data'} if !$entry->{'image_data'} && defined $existing->{'image_data'};
 		$entry->{'endpoints'} = $existing->{'endpoints'} if !$entry->{'endpoints'} && ref $existing->{'endpoints'} eq 'HASH';
+	}
+	# The card's house advertises where it can be reached. The panel opens
+	# home/store in a new tab, so only an http(s) URL is stored; anything else
+	# is dropped rather than kept for a later window.open.
+	if (ref $entry->{'endpoints'} eq 'HASH') {
+		foreach my $kind (qw(home store)) {
+			my $url = $entry->{'endpoints'}->{$kind};
+			(my $clean = defined $url ? $url : '') =~ s/^\s+|\s+$//g;
+			$entry->{'endpoints'}->{$kind} = $clean =~ m{^https?://}i ? $clean : '';
+		}
 	}
 	$entry->{'image_file'} = $image_name if $image_name;
 	my %seen_vouch;

@@ -314,6 +314,9 @@ sub alarm_haircut() {
 	my $paper_q = &subs::db_query('select * from magazine where status=? and timestamp >= ? and timestamp <= ? and cast(warranty as integer) >= cast(? as integer)', 'publish',$last_paper_moment, $timestamp,$timestamp);
 	my $papers = $paper_q->hashes;
 	foreach my $paper ( @{$papers} ) {
+		# Rows can predate the write-side clean (or arrive from a peer), so the
+		# same allowlist runs again on the way out before the article is drawn.
+		$paper->{'content'} = &subs::article_html_clean($paper->{'content'});
 		my $c = &subs::controller_builder();
 		$paper->{'art'} = $c->render_to_string(template => 'article', art => $paper);
 		&Manager::paperRoute($paper);

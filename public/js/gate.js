@@ -180,7 +180,7 @@ $(document).on('click', '#payment_toggle', function() {
 			payment = JSON.parse(response);
 
 			setTimeout(function() {
-				var win = window.open(payment.payment_link.url, '_blank');
+				var win = window.open(payment.payment_link.url, '_blank', 'noopener,noreferrer');
 				if (win) {
 					win.focus();
 				} else {

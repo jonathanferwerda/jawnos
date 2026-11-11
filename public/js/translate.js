@@ -29,7 +29,7 @@
 	}
 	window.jawnosT = t;
 
-	var TEXT_SKIP = 'script,style,noscript,code,pre,textarea,input,[contenteditable="true"],[contenteditable=""],[data-no-translate],.article_content,.item_description,.model_description,.option_description,.description,.note,.mail_body,.email_body,.chat_message,.terminal,.editor_content,.syntax,.code_block';
+	var TEXT_SKIP = 'script,style,noscript,code,pre,textarea,input,[contenteditable="true"],[contenteditable=""],[data-no-translate],.article_content,.item_description,.model_description,.option_description,.description,.note,.mail_body,.email_body,.email_message,.mailbox_message,.mailbox_message_contents,#mail_body,.chat_message,.chat_text,.chat_messages,.terminal,.editor_content,.syntax,.code_block';
 	var ATTR_SKIP = 'script,style,noscript,code,pre,[contenteditable="true"],[contenteditable=""],[data-no-translate]';
 	var ATTRS = ['hint', 'placeholder', 'title', 'alt', 'aria-label'];
 	var observer = null;

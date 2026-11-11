@@ -70,6 +70,9 @@ sub action_7112 {
 	my $timestamp = &subs::rightNow();
 	my ($db,$database,$sql) = &subs::database_grabber();
 	foreach my $a ( @{$articles} ) {
+		# A publish can arrive from a resident or a peer, so its content is
+		# untrusted exactly like an editor save: clean it before it is stored.
+		$a->{'content'} = &subs::article_html_clean($a->{'content'}) if exists $a->{'content'};
 		my $q = &subs::db_query('select * from magazine where uuid=?', $a->{'uuid'});
 		my $prev = $q->hashes;
 		my $category = &subs::setting_grabber({ app => $a->{'category'}, setting => 'pos' });

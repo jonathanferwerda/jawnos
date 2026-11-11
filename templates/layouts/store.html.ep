@@ -26,8 +26,10 @@
 			var paperboy_url = '<%= $paperboy_url %>';
 			var my_name = '<%= $my_name %>';
 			var advertise_watching = '<%= $advertise_watching %>';
-			var me_tax = <%= &subs::setting_grabber({ app => 'me', setting => 'tax' }) || 1.00 %>;
-			var sales_tax = <%= &subs::setting_grabber({ app => 'me', setting => 'sales_tax' }) || 1.00 %>;
+			<% my $tax = &subs::setting_grabber({ app => 'me', setting => 'tax' }); $tax = 1 unless defined $tax && $tax =~ /^\d+(?:\.\d+)?$/; %>
+			<% my $sales_tax = &subs::setting_grabber({ app => 'me', setting => 'sales_tax' }); $sales_tax = 1 unless defined $sales_tax && $sales_tax =~ /^\d+(?:\.\d+)?$/; %>
+			var me_tax = <%= $tax %>;
+			var sales_tax = <%= $sales_tax %>;
 			window.jawnos_lang = <%== &subs::lang_js() %>;
 			window.jawnos_lang_code = '<%= &subs::language() %>';
 			window.jawnos_lang_dir = '<%= &subs::language_dir() %>';
