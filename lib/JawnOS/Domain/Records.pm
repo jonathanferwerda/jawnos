@@ -128,6 +128,25 @@ sub records_mailbox_tombstone {
 	&db_delete('mailbox', { uuid => $uuid });
 }
 
+# A manager_file that is not a real mailbox (the init demo rows, say) leaves
+# orphaned messages whose bodies no key the house holds can open. Tombstone each
+# one so every peer drops its copy, then remove it here. Dry run unless apply.
+sub mailbox_tombstone_orphans {
+	my ($opts) = @_;
+	$opts ||= {};
+	my $manager_file = $opts->{'manager_file'} || 'jawn@init.note9 pro';
+	my $apply = $opts->{'apply'} ? 1 : 0;
+	my $rows = &db_query('select uuid, manager_file, app from mailbox where manager_file = ?', $manager_file)->hashes || [];
+	my $n = 0;
+	foreach my $row ( @{$rows} ) {
+		next unless $row->{'uuid'};
+		$n++;
+		next unless $apply;
+		&records_mailbox_tombstone($row);
+	}
+	return { ok => 1, manager_file => $manager_file, rows => $n, applied => $apply };
+}
+
 # Run only the bad-date pass. A peer that holds the accurate copy can ask this
 # machine to clear its own mangled dates over the signed records/repair rail;
 # the pass touches only the unmistakable signature and is idempotent. The same

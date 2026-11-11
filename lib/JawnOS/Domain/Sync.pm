@@ -732,13 +732,17 @@ my $returner = '';
 			if ( scalar @{$chats} == 0) {
 				$l->{'body'} =~ s/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]+//g;
 				my $message = &subs::note_encrypter($suds,$l->{'body'});
+				# The body is at rest, so it must be the sealed note, never the
+				# phone's plain words. A message we cannot seal is not written;
+				# the transcript stays for the next attempt, as Phone.pm does.
+				next unless defined $message && length $message;
 				my $sender = &subs::format_name($app);
 				my $suuid = &subs::random_string_creator(44);
 				&subs::db_insert('mailbox', {
 					uuid => $suuid,
 					timestamp => $time,
 					server_time => &subs::rightNow(),
-					body => $l->{'body'}, #$message,
+					body => $message,
 					manager_file => $sender,
 					status => 'public', #$l->{'type'},
 					phone => $phone,
