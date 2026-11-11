@@ -1240,17 +1240,67 @@ sub action_30715 {
 			($sig ? (signatorial => $sig) : ())
 		};
 	}
+	# A peer may add a device but never remove one: the person's own list is the
+	# authority. A register that replaced the list cut the laptop's five devices
+	# down to the two a peer sent, and every upload to the phone then failed
+	# "this folder is not registered for CloudSync" for a minute of sweeps
+	# (2026-11-11). Only the person's Start syncing may replace the list.
 	my $previous = &subs::cloud_sync_registration_for($dest->{'root'});
-	my %old_device = map { ($_->{'uuid'} || '') => 1 } @{ ($previous || {})->{'devices'} || [] };
+	my @old_devices = (ref $previous && ref $previous->{'devices'} eq 'ARRAY')
+		? @{ $previous->{'devices'} } : ();
+	my %old_device;
+	foreach my $old ( @old_devices ) {
+		next unless ref $old eq 'HASH';
+		my $uuid = $old->{'uuid'};
+		next unless (defined $uuid && length $uuid && $uuid ne 'self');
+		next if (($old->{'signatorial'} || '') eq $self);
+		$old_device{$uuid} = $old;
+	}
+	my %incoming = map { ($_->{'uuid'} || '') => 1 } @devices;
+	my $kept = 0;
+	foreach my $uuid ( keys %old_device ) {
+		next if $incoming{$uuid};
+		push @devices, {
+			uuid => $uuid,
+			hostname => ($old_device{$uuid}->{'hostname'} || $uuid),
+			($old_device{$uuid}->{'signatorial'}
+				? (signatorial => $old_device{$uuid}->{'signatorial'}) : ())
+		};
+		$kept++;
+	}
+	# A device the peer did name keeps the hostname and signatorial this machine
+	# already knew when the peer sent only a uuid.
+	foreach my $device ( @devices ) {
+		my $old = $old_device{ $device->{'uuid'} || '' };
+		next unless $old;
+		$device->{'hostname'} = $old->{'hostname'}
+			if ((!defined $device->{'hostname'} || $device->{'hostname'} eq $device->{'uuid'})
+				&& defined $old->{'hostname'} && length $old->{'hostname'});
+		$device->{'signatorial'} = $old->{'signatorial'}
+			if ((!defined $device->{'signatorial'} || !length $device->{'signatorial'})
+				&& defined $old->{'signatorial'} && length $old->{'signatorial'});
+	}
+	my $added = 0;
+	$added++ foreach grep { !$old_device{ $_->{'uuid'} || '' } } @devices;
+	my $row = {
+		path => $dest->{'root'},
+		base => $base,
+		devices => \@devices,
+		added => (ref $previous && defined $previous->{'added'} && length $previous->{'added'})
+			? $previous->{'added'} : &subs::rightNow()
+	};
+	# Keep whatever else the local registration carried (the job that sweeps it);
+	# this route never invents a `starting` marker.
+	if (ref $previous) {
+		foreach my $key ( keys %{$previous} ) {
+			next if exists $row->{$key};
+			$row->{$key} = $previous->{$key};
+		}
+	}
 	&subs::cloud_sync_registrations_modify(sub {
 		my $list = shift;
 		my @keep = grep { ($_->{'path'} || '') ne $dest->{'root'} } @{$list};
-		push @keep, {
-			path => $dest->{'root'},
-			base => $base,
-			devices => \@devices,
-			added => &subs::rightNow()
-		};
+		push @keep, $row;
 		@{$list} = @keep;
 		return 1;
 	});
@@ -1264,7 +1314,13 @@ sub action_30715 {
 			} ] => { retries => 1 });
 		}
 	}
-	$c->render(json => { status => 'ok', path => $dest->{'root'}, devices => scalar @devices });
+	$c->render(json => {
+		status => 'ok',
+		path => $dest->{'root'},
+		devices => scalar @devices,
+		kept => $kept,
+		added => $added
+	});
 }
 
 # A member telling this device to stop watching a folder. The files stay;
