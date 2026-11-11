@@ -67,10 +67,12 @@ like(source('lib/JawnOS/Manager/Part08.pm'), qr/decrypter_strict\(\$secret, \$re
 # is keyed to the real secret, so the note reader keeps the legacy-compatible
 # reader. A JS1 note that does not open is still refused (the reader checks the
 # prefix before the legacy path), and the token readers above stay strict.
-like(source('lib/JawnOS/Domain/Note.pm'), qr/&subs::decrypter\(\$key, \$contented\)/,
-	'a note reads through the legacy-compatible reader');
-unlike(source('lib/JawnOS/Domain/Note.pm'), qr/&subs::decrypter_strict\(\$key, \$contented\)/,
-	'not the strict reader, which would lose those notes');
+like(source('lib/JawnOS/Domain/Note.pm'), qr/: &subs::decrypter\(\$key, \$contented\)/,
+	'a note reads through the legacy-compatible reader by default');
+like(source('lib/JawnOS/Domain/Note.pm'), qr/\$strict \? &subs::decrypter_strict\(\$key, \$contented\)/,
+	'a caller that judges a token asks for the strict reader');
+like(source('lib/JawnOS/Domain/Note.pm'), qr/sub note_decrypter_strict/,
+	'and the strict reader has a name for those callers');
 my $root = source('lib/JawnOS/Controller/Root_misc.pm');
 unlike($root, qr/&subs::decrypter\(/, 'the legacy homepage value is not decrypted');
 like($root, qr/\$remote_signatorial eq \$signatorial/, 'it is compared');

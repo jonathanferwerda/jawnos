@@ -360,8 +360,9 @@ sub embedded_authorizer {
 		# command. MIME::Base64 decodes the same bytes in-process.
 		my $author_raw = eval { return decode_base64($auth) } || '';
 		next unless length $author_raw;
-		my $authorization = &subs::note_decrypter($patience, $author_raw);
-		my $remote_auth = &subs::note_decrypter($patience, $remote_raw);
+		# A token must open under the real patience, never the legacy empty key.
+		my $authorization = &subs::note_decrypter_strict($patience, $author_raw);
+		my $remote_auth = &subs::note_decrypter_strict($patience, $remote_raw);
 		if ($remote_auth && $authorization && secure_compare $remote_auth, $authorization) {
 			$watch_settings->{'__shutup'} = undef;
 			return $watch_settings;

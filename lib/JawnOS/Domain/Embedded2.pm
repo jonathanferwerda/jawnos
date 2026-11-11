@@ -61,7 +61,8 @@ sub embedded_wigi {
 		my $auth = $watch_settings->{'__specs'}->{'authorization'};
 		# Decode in Perl: a shell would expand $(...) inside the quotes.
 		my $author = decode_base64($auth // '');
-		my $authorization = &subs::note_decrypter($watch_settings->{'__shutup'}->{'patience'}, $author);
+		# A token must open under the real patience, never the legacy empty key.
+		my $authorization = &subs::note_decrypter_strict($watch_settings->{'__shutup'}->{'patience'}, $author);
 
 
 		# Plain HTTP board WebServer: TLS/HMAC is firmware work (jp/, jt/, jw/).
@@ -73,7 +74,7 @@ sub embedded_wigi {
 		my $rauth = $wigi->{'authorization'};
 		# The device's answer is request data: decode it in Perl, never a shell.
 		my $rauthorization = decode_base64($rauth // '');
-		my $remote_auth = &subs::note_decrypter($watch_settings->{'__shutup'}->{'patience'}, $rauthorization);
+		my $remote_auth = &subs::note_decrypter_strict($watch_settings->{'__shutup'}->{'patience'}, $rauthorization);
 
 		if (secure_compare($remote_auth, $authorization)) {
 			my $buttons = $wigi->{'buttons'};

@@ -63,9 +63,11 @@ is(_no_credentials(sub { subs::note_decrypter($secret, $tampered) }), '',
 
 # The fix is the reader choice: the strict reader would lose the legacy shape.
 my $note = read_file("$root/lib/JawnOS/Domain/Note.pm");
-like($note, qr/&subs::decrypter\(\$key, \$contented\)/,
-	'note_unseal reads through the legacy-compatible reader');
-unlike($note, qr/&subs::decrypter_strict\(\$key, \$contented\)/,
-	'not the strict reader');
+like($note, qr/: &subs::decrypter\(\$key, \$contented\)/,
+	'note_unseal reads through the legacy-compatible reader by default');
+like($note, qr/\$strict \? &subs::decrypter_strict\(\$key, \$contented\)/,
+	'a strict caller gets the strict reader');
+like($note, qr/sub note_decrypter_strict/,
+	'and the strict reader is a named path');
 
 done_testing();

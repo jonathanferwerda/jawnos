@@ -101,7 +101,7 @@ sub note_seal_container {
 }
 
 sub note_encrypter {
-	my ($secret, $content) = @_;
+	my ($secret, $content, $keep_newline) = @_;
 	return undef unless defined $content && length $content;
 	# The websocket hands text back as characters (an emoji is one code point,
 	# not its four UTF-8 bytes). MD5 and the cipher both refuse a wide string,
@@ -109,7 +109,10 @@ sub note_encrypter {
 	# and never reach the thread. Seal the same UTF-8 bytes the rest of the
 	# house stores, and note_decrypter hands the characters back.
 	$content = encode_utf8($content) if utf8::is_utf8($content);
-	$content =~ s/\r?\n$//;
+	# A new note loses one trailing newline. A re-seal must keep the plaintext
+	# exactly: the note already lost that newline when it was first written, and
+	# stripping again would quietly shorten it.
+	$content =~ s/\r?\n$// unless $keep_newline;
 	my $md5 = &shorthand_name(md5_sum($content), 5);
 	my $standard = &note_encryption_standard();
 	my $container = &note_seal_container($content, $secret, $standard);
@@ -649,14 +652,16 @@ sub note_security_rows {
 }
 
 sub note_unseal {
-	my ($key, $contented) = @_;
-	# The ordinary reader, not the strict one: a note written by an older build
-	# had its outer Crypt::Simple layer sealed under the empty passphrase while
-	# its inner cipher stayed keyed to the real secret (an upload with no resolved
-	# session wrote those). decrypter() still reads that empty-key layer and
-	# refuses a JS1 blob that does not open, so the authenticated format stays
-	# closed; the strict reader leaves every one of those notes unreadable.
-	my $payload = &subs::decrypter($key, $contented);
+	my ($key, $contented, $strict) = @_;
+	# The ordinary reader, not the strict one, by default: a note written by an
+	# older build had its outer Crypt::Simple layer sealed under the empty
+	# passphrase while its inner cipher stayed keyed to the real secret (an upload
+	# with no resolved session wrote those). decrypter() still reads that
+	# empty-key layer and refuses a JS1 blob that does not open, so the
+	# authenticated format stays closed. A caller judging a token passes $strict,
+	# which refuses the empty-key layer instead of accepting it.
+	my $payload = $strict ? &subs::decrypter_strict($key, $contented)
+	                      : &subs::decrypter($key, $contented);
 	return undef unless defined $payload && length $payload;
 	my ($b64, $standard, $md5) = split ':::---:::', $payload, 3;
 	return undef unless defined $b64 && length $b64;
@@ -734,6 +739,128 @@ sub note_decrypter {
 	$plain = '' unless defined $plain;
 	&note_memo_put($memo_key, $plain) if length $plain || !$timestamp;
 	return $plain;
+}
+
+sub note_decrypter_strict {
+	my ($secret, $contented) = @_;
+	return '' unless defined $contented && length $contented;
+	# A token or a peer's bytes must open under the real secret, never the legacy
+	# empty-passphrase layer. Kept beside the ordinary note reader so at-rest
+	# notes can stay compatible while a token read cannot.
+	my $memo_key = 'strict:' . md5_sum($secret // '') . ':' . md5_sum($contented);
+	return $note_memo{$memo_key} if defined $note_memo{$memo_key};
+	my $plain = &note_unseal($secret, $contented, 1);
+	$plain = '' unless defined $plain;
+	&note_memo_put($memo_key, $plain);
+	return $plain;
+}
+
+# --- bringing saved notes to the authenticated seal --------------------------
+# Older uploads sealed the outer Crypt::Simple layer under the empty passphrase
+# while the inner cipher stayed keyed to the real secret. The ordinary reader
+# still opens those, but the value at rest is not in the authenticated JS1
+# format. This sweep rewrites each legacy note as JS1 under the key in use now;
+# it is idempotent and only writes a value that proves it reads back strictly.
+sub note_reseal_value {
+	my ($v, $K, $timestamp) = @_;
+	return undef unless defined $v && length $v && defined $K && length $K;
+	return $v if index($v, 'JS1:') == 0 && defined &subs::decrypter_strict($K, $v);
+	my $plain = &note_decrypter($K, $v, $timestamp);
+	return undef unless defined $plain && length $plain;
+	# Re-seal the plaintext exactly: this note is already missing the newline
+	# note_encrypter drops on a first write, so asking it to drop another would
+	# shorten the note and fail the read-back below.
+	my $re = &note_encrypter($K, $plain, 1);
+	return undef unless defined $re && length $re && index($re, 'JS1:') == 0;
+	return undef unless defined &subs::decrypter_strict($K, $re);
+	return undef unless &note_decrypter_strict($K, $re) eq $plain;
+	return $re;
+}
+
+sub note_reseal {
+	my ($apply, $opts) = @_;
+	$opts ||= {};
+	my $limit = $opts->{'limit'};
+	my $limit_sql = (defined $limit && $limit =~ /^\d+$/ && $limit > 0) ? ' limit ' . int($limit) : '';
+	my $want = $opts->{'table'} || 'both';
+	my $K = &suds_grabber() || $gb::suds;
+	return { ok => 0, error => 'no key on this machine' } unless $K;
+	my $counts = { appointments => 0, notes => 0, ocr => 0, mailbox => 0, failed => 0, already => 0, seen => 0 };
+	my $next_appt = $opts->{'after_appt'} || 0;
+	my $next_mail = $opts->{'after_mail'} || 0;
+	my ($more_appt, $more_mail) = (0, 0);
+
+	if ($want eq 'both' || $want eq 'appointments') {
+		my $rows = &db_query('select rowid, notes, start_notes, end_notes, file, ost from appointments where rowid > ? and (length(notes)>0 or length(start_notes)>0 or length(end_notes)>0 or length(file)>0) order by rowid' . $limit_sql, $next_appt)->hashes;
+		foreach my $row ( @{ $rows || [] } ) {
+			$counts->{'seen'}++;
+			$next_appt = $row->{'rowid'};
+			my %up;
+			foreach my $field ( qw/notes start_notes end_notes/ ) {
+				my $v = $row->{$field};
+				next unless defined $v && length $v;
+				my $re = &note_reseal_value($v, $K, $row->{'ost'});
+				if (!defined $re) { $counts->{'failed'}++; next; }
+				if ($re eq $v) { $counts->{'already'}++; next; }
+				$up{$field} = $re;
+				$counts->{'notes'}++;
+			}
+			if (defined $row->{'file'} && length $row->{'file'}) {
+				my $decoded = eval { decode_json($row->{'file'}) };
+				my $shape = ref $decoded;
+				my @files = $shape eq 'ARRAY' ? @{$decoded} : $shape eq 'HASH' ? ($decoded) : ();
+				my $changed = 0;
+				foreach my $f ( @files ) {
+					next unless ref $f eq 'HASH' && defined $f->{'ocr'} && length $f->{'ocr'};
+					my $re = &note_reseal_value($f->{'ocr'}, $K, $row->{'ost'});
+					if (!defined $re) { $counts->{'failed'}++; next; }
+					if ($re eq $f->{'ocr'}) { $counts->{'already'}++; next; }
+					$f->{'ocr'} = $re;
+					$changed = 1;
+					$counts->{'ocr'}++;
+				}
+				$up{'file'} = encode_json($decoded) if $changed && $shape;
+			}
+			next unless scalar keys %up;
+			$counts->{'appointments'}++;
+			next unless $apply;
+			# Only write the row we read: a live writer's newer value must not be
+			# clobbered by this sweep.
+			my %where = ( rowid => $row->{'rowid'} );
+			$where{$_} = $row->{$_} for keys %up;
+			&db_update('appointments', \%up, \%where);
+		}
+		$more_appt = (defined $limit && $limit > 0 && scalar(@{ $rows || [] }) >= $limit) ? 1 : 0;
+	}
+
+	if ($want eq 'mailbox' || ($want eq 'both' && !$more_appt)) {
+		my $mail = &db_query('select rowid, subject, body, ost from mailbox where rowid > ? and (length(subject)>0 or length(body)>0) order by rowid' . $limit_sql, $next_mail)->hashes;
+		foreach my $row ( @{ $mail || [] } ) {
+			$counts->{'seen'}++;
+			$next_mail = $row->{'rowid'};
+			my %up;
+			foreach my $field ( qw/subject body/ ) {
+				my $v = $row->{$field};
+				next unless defined $v && length $v;
+				my $re = &note_reseal_value($v, $K, $row->{'ost'});
+				if (!defined $re) { $counts->{'failed'}++; next; }
+				if ($re eq $v) { $counts->{'already'}++; next; }
+				$up{$field} = $re;
+			}
+			next unless scalar keys %up;
+			$counts->{'mailbox'}++;
+			next unless $apply;
+			my %where = ( rowid => $row->{'rowid'} );
+			$where{$_} = $row->{$_} for keys %up;
+			&db_update('mailbox', \%up, \%where);
+		}
+		$more_mail = (defined $limit && $limit > 0 && scalar(@{ $mail || [] }) >= $limit) ? 1 : 0;
+	}
+
+	return { ok => 1, apply => $apply ? 1 : 0, %{$counts},
+		next_appt => $next_appt, next_mail => $next_mail,
+		more_appt => $more_appt, more_mail => $more_mail,
+		done => ($more_appt || $more_mail) ? 0 : 1 };
 }
 
 sub manufacturer_grabber {
