@@ -67,10 +67,21 @@ our $hostname_memo;
 sub hostname {
 	return $hostname_memo if defined $hostname_memo;
 	$hostname_memo = '';
-	if ($^O ne 'MSWin32') {
-		my $name = eval { require POSIX; (POSIX::uname())[1] };
-		$hostname_memo = $name if defined $name && length $name;
+	# Windows keeps the computer name in the environment, and Win32 can answer
+	# it directly. Neither starts a process; Sys::Hostname's MSWin32 fallback
+	# can run `hostname`, which is not a cost a page render can carry.
+	if ($^O eq 'MSWin32') {
+		my $name = $ENV{'COMPUTERNAME'} // '';
+		$name =~ s/^\s+|\s+$//g;
+		if (!length $name) {
+			$name = eval { require Win32; Win32::GetComputerName() } // '';
+			$name =~ s/^\s+|\s+$//g;
+		}
+		$hostname_memo = $name;
+		return $hostname_memo;
 	}
+	my $name = eval { require POSIX; (POSIX::uname())[1] };
+	$hostname_memo = $name if defined $name && length $name;
 	if (!length $hostname_memo) {
 		my $name = eval { require Sys::Hostname; Sys::Hostname::hostname() };
 		$hostname_memo = $name if defined $name && length $name;

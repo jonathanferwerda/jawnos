@@ -426,18 +426,31 @@ sub health_process_count {
 	# directory is this tree (so a second tree on the machine is not counted).
 	# Read through JawnOS::Platform::Process, the same source the process monitor
 	# uses; entries we cannot read (another user) are skipped.
+	#
+	# On Windows the identity is the command line alone: another process's cwd is
+	# not readable cheaply, and the tasklist + Get-CimInstance snapshot behind
+	# it costs seconds. This is a request, so it reads the snapshot the worker
+	# already holds (cached => 1) and never starts one; a polling view such as
+	# the process monitor refreshes that snapshot on its own schedule.
 	require Cwd;
 	my $root = Cwd::getcwd();
+	my $windows = ($^O eq 'MSWin32');
+	my $rows = $windows
+		? JawnOS::Platform::Process::table(cached => 1)
+		: JawnOS::Platform::Process::table(cwd => 1);
 	my $count = 0;
-	foreach my $row ( @{ JawnOS::Platform::Process::table(cwd => 1) } ) {
-		next unless $row->{'cwd'} eq $root;
+	foreach my $row ( @{ $rows || [] } ) {
+		next unless $windows || $row->{'cwd'} eq $root;
 		$count++ if ($row->{'cmdline'} || '') =~ /President\.pl|Manager\.pl|Websocket\.pl|teletype\.pl|watch\.pl|jawn-bt|Music\.pl|Alarm\.pl|pen\.pl/;
 	}
 	return $count;
 }
 
 sub health_report {
-	my $hostname = `hostname`; chomp $hostname;
+	# The memoised, process-free nodename: shelling out to hostname(1) starts
+	# cmd.exe on Windows and a shell on every other box, for a value that cannot
+	# change while the worker lives.
+	my $hostname = &subs::machine_hostname();
 	my ($db, $database, $sql) = &subs::database_grabber();
 
 	# The database and its write-ahead log. A WAL grown to the size of the
@@ -463,8 +476,12 @@ sub health_report {
 		};
 	}
 
-	# uptime, for "how long has this been up". Android denies the file.
-	my $uptime = JawnOS::Platform::Process::uptime();
+	# uptime, for "how long has this been up". Android denies the file; Windows
+	# answers from GetTickCount64, and the cached read keeps a box without that
+	# binding from falling back to a Get-CimInstance process on this request.
+	my $uptime = ($^O eq 'MSWin32')
+		? JawnOS::Platform::Process::uptime(cached => 1)
+		: JawnOS::Platform::Process::uptime();
 	$uptime += 0 if defined $uptime;
 
 	return {

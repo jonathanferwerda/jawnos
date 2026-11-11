@@ -299,6 +299,8 @@ sub rss_kib {
 # cwd and exe are read only when asked for (`table(cwd => 1, exe => 1)`); they
 # are '' otherwise, the same "cannot tell" a denied read gives. Each is one more
 # symlink read per pid, which the monitor's two-second poll does not need.
+# On Windows, `cached => 1` answers the snapshot already in hand and never
+# starts tasklist or powershell; a polling caller leaves it off to refresh.
 sub table {
 	my (%opt) = @_;
 	return _windows_table(%opt) if $^O eq 'MSWin32';
@@ -427,7 +429,13 @@ sub meminfo {
 # Seconds since boot as a string, or undef when the platform denies it (Android
 # denies /proc/uptime to apps, and the Monitor shows an unknown age there).
 sub uptime {
-	return _windows_uptime() if $^O eq 'MSWin32';
+	my (%opt) = @_;
+	if ($^O eq 'MSWin32') {
+		my $tick = _win_tick_uptime();
+		return $tick if defined $tick;
+		return undef if $opt{'cached'};
+		return _windows_uptime();
+	}
 	open(my $fh, '<', _proc_path('uptime')) or return undef;
 	my $line = <$fh>;
 	close $fh;
@@ -751,18 +759,31 @@ sub windows_rows {
 	return \@rows;
 }
 
+# How stale a `cached => 1` read may answer. A request must never start a
+# process, but it should not keep showing a snapshot from an hour ago either:
+# past this age the read is empty and a polling path refills it. Sixty seconds
+# is several times the Monitor's two-second poll and far below the timescale on
+# which a running process set visibly changes.
+our $CACHED_MAX_AGE = 60;
+
 # The cached snapshot every Windows field read shares. The cache is what keeps
 # a Monitor poll to one tasklist and one CIM call rather than one per pid.
 # `force => 1` replaces the cache even inside the TTL; only the liveness test
 # asks for that, because a child started after the snapshot was taken is not in
 # it yet. The field readers (comm, state, start_time, ...) never force: they
-# describe a pid the snapshot already has.
+# describe a pid the snapshot already has. `cached => 1` is the request-path
+# read: it answers the snapshot already in hand (up to $CACHED_MAX_AGE) and
+# never starts tasklist or powershell, because those cost seconds on Windows.
 sub windows_snapshot {
 	my (%opt) = @_;
 	my $now = _now();
 	my $cached = $CACHE{'snapshot'};
 	return $cached->{'rows'}
 		if !$opt{'force'} && $cached && ($now - $cached->{'at'}) < $CACHE_TTL;
+	if ($opt{'cached'}) {
+		return [] unless $cached && ref $cached->{'rows'} eq 'ARRAY';
+		return ($now - $cached->{'at'}) < $CACHED_MAX_AGE ? $cached->{'rows'} : [];
+	}
 	my $tasklist = _capture('tasklist', '/FO', 'CSV', '/NH');
 	my $cim = _capture($PS, '-NoProfile', '-NonInteractive', '-Command', $CIM_PROCESS);
 	my $os = windows_os();
@@ -786,7 +807,7 @@ sub windows_os {
 sub _windows_table {
 	my (%opt) = @_;
 	my @rows;
-	foreach my $row ( @{ windows_snapshot() } ) {
+	foreach my $row ( @{ windows_snapshot(cached => $opt{'cached'}) } ) {
 		push @rows, {
 			%{$row},
 			cwd => '',
@@ -802,6 +823,26 @@ sub _windows_meminfo {
 		total     => $os->{'total'} || 0,
 		available => $os->{'available'} || 0,
 	};
+}
+
+# Seconds since boot from GetTickCount64, which is a kernel read rather than a
+# process: a request can ask for the uptime without a tasklist/CIM snapshot.
+# GetTickCount64 excludes time spent hibernating on some Windows versions, so
+# this is a display figure; the CIM boot time remains the fallback when the
+# binding is unavailable.
+my $WIN_TICK;
+my $WIN_TICK_TRIED;
+
+sub _win_tick_uptime {
+	return undef unless $^O eq 'MSWin32';
+	unless ($WIN_TICK_TRIED) {
+		$WIN_TICK_TRIED = 1;
+		$WIN_TICK = eval { require Win32::API; Win32::API->new('kernel32', 'GetTickCount64', '', 'Q') } || 0;
+	}
+	return undef unless $WIN_TICK;
+	my $ms = eval { $WIN_TICK->Call() };
+	return undef unless defined $ms && "$ms" =~ /^\d+$/;
+	return int($ms / 1000);
 }
 
 sub _windows_uptime {

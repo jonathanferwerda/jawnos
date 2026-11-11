@@ -101,6 +101,14 @@ sub power_actions() {
 	my $key = ($machine eq 'mobile') ? 'mobile' : 'machine';
 	return @{ $power_actions_cache{$key} } if $power_actions_cache{$key};
 	my @actions;
+	# Windows has no systemd, logind or xset, and `command -v` is a POSIX shell
+	# builtin: each probe here would start cmd.exe on a page render. There is
+	# nothing to offer, so answer without asking. (Exit in the Leave menu is the
+	# page's own, not a power action.)
+	if ($^O eq 'MSWin32') {
+		$power_actions_cache{$key} = \@actions;
+		return @actions;
+	}
 	unless ($key eq 'mobile') {
 		my $systemctl = `command -v systemctl 2>/dev/null`;
 		my $loginctl = `command -v loginctl 2>/dev/null`;
