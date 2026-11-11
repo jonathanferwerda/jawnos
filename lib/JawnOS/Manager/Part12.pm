@@ -225,14 +225,19 @@ sub pseudonym_maker($context,$app) {
 # A pinned pubkey is required, unlike the trust-on-first-contact peer routes:
 # this desk hands out citizenship, so a machine that has merely linked and not
 # yet completed a signed exchange must not reach it before its key is on file.
+# A stored peer session is held to the same rung: it arrives resident, and only
+# the caller's row granting `trusted` lets it mint.
 sub ticket_desk_allowed($c) {
 	return 1 if $c->session('authentication') eq 'approved' && $c->session('privilege') eq 'citizen';
-	# The Dev panel's Go rides a stored peer session (resident, not citizen). That
-	# session already passed the peer gate; let it mint the ticket, and the
-	# signatorial below is what makes the ticket a vouch. A guest-level ticket
-	# minted by a peer is still a guest, so the peer flag alone is not the desk.
-	return 1 if ($c->session('peer') || '') eq '1'
-		&& &subs::privilege_is_house($c->session('privilege'));
+	# A stored peer session (the Dev panel's Go) already passed the /manager gate,
+	# but that gate only asks for resident. This desk hands out citizenship, so the
+	# caller's row must trust it on the ladder: a resident peer may act in the
+	# house, not mint a pass to it.
+	if (($c->session('peer') || '') eq '1'
+			&& &subs::privilege_is_house($c->session('privilege'))) {
+		my $rm = &peer_row_for_request($c);
+		return 1 if $rm && &subs::peer_allows($c, $rm, 'trusted');
+	}
 	my $signatorial = $c->param('signatorial');
 	my $rm = ($signatorial && &subs::db_select('remote_machines', undef, { signatorial => $signatorial })->hashes->[0]);
 	# A pinned key is not a grant. This desk mints citizenship, so only a peer
@@ -935,6 +940,10 @@ sub qrcode_generator($params) {
 	my $suds = $params->{'suds'};
 	my $warranty = $params->{'warranty'};
 	my $privilege = $params->{'privilege'};
+	# A pass carries one of the desk's four rungs. A missing or unknown name is
+	# never a promotion: the CLI and the approval path name a rung directly, and
+	# the ticket routes whitelist it before they get here.
+	$privilege = 'visitor' unless defined $privilege && $privilege =~ /^(?:citizen|resident|guest|visitor)$/;
 	my $peer_signatorial = $params->{'peer_signatorial'} || '';
 	my $db = $params->{'db'};
 	my $database = $params->{'database'};

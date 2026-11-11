@@ -417,12 +417,17 @@ sub folders_delete_backups {
 #
 # These archive routes are on the peer rail the way remote_upgrade is: a
 # sending machine has no session on the archive machine, so the login gate must
-# step aside for its pinned signature. archive_peer_allowed is their gate.
+# step aside for its pinned signature. archive_peer_allowed is their gate. A
+# peer writing or deleting CloudSync files is a relay or a backup in the ladder,
+# so the caller's row must grant `trusted`: a visitor or resident row stays out.
 sub archive_peer_allowed {
-	my $c = shift;
+	my ($c, $need) = @_;
 	my $until = $c->session('app_until') || 0;
 	return 1 if (($c->session('authentication') || '') eq 'approved' && $until > &subs::rightNow());
-	return &app_peer_ok($c) ? 1 : 0;
+	return 0 unless &app_peer_ok($c);
+	my $rm = &peer_row_for_request($c);
+	return 0 unless $rm;
+	return &subs::peer_allows($c, $rm, $need || 'trusted') ? 1 : 0;
 }
 
 sub file_type_recognizer($f) {

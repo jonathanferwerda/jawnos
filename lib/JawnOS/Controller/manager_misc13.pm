@@ -743,6 +743,12 @@ sub action_45199 {
 	my $value = $c->param('value');
 	my $subsetting = $c->param('subsetting');
 	my $timestamp = $c->param('timestamp');
+	# A setting is configuration: the peer ladder puts it at the trusted rung, so
+	# a resident peer session that reaches /manager cannot rewrite one.
+	unless (&peer_action_gate($c, 'settings')) {
+		$c->rendered(403);
+		return;
+	}
 	# The coding nightly pushes to a repo the house names. The panel has its own
 	# validated route, but this generic setter is a public door too: validate the
 	# value here so a hand-made POST cannot store spaces or credentials and leave

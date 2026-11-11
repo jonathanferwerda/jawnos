@@ -250,6 +250,12 @@ sub action_27792 {
 # POST /manager/terminal
 sub action_27819 {
 	my $c = shift;
+	# A shell command is the trusted rung of the peer ladder: a resident peer
+	# session reaches /manager but may not run one here.
+	unless (&peer_action_gate($c, 'command')) {
+		$c->rendered(403);
+		return;
+	}
 	my $timestamp = $c->param('timestamp');
 	$c->render(text => 'ok');
 

@@ -603,6 +603,9 @@ sub peer_action_scope {
 		# command runs a shell command, not an app toggle: a resident may switch
 		# things, but running a command is the higher tier.
 		command           => 'trusted',
+		# a setting write is configuration, which a peer never has at the
+		# resident rung; the session gate keeps configuration citizen-only.
+		settings          => 'trusted',
 		remote_control    => 'trusted',
 		relay             => 'trusted',
 		backup            => 'trusted',

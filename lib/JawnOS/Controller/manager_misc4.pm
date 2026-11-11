@@ -566,6 +566,11 @@ sub action_13872 {
 	my $app = &subs::unformat_name($c->param('app'));
 	my $name = &subs::unformat_name($c->param('name') || 'visitor');
 	my $privilege = $c->param('privilege') || 'visitor';
+	# The desk mints only a rung it knows; a crafted name is refused, never a pass.
+	unless ($privilege =~ /^(?:citizen|resident|guest|visitor)$/) {
+		$c->render(json => { error => 'bad request' });
+		return;
+	}
 	my $project = $c->param('project');
 	my $debriefer = $c->param('debriefer');
 	my $nic = $c->param('nic');
@@ -602,7 +607,10 @@ sub action_14367 {
 	}
 	my $uuid = $c->param('uuid');
 	my $privilege = $c->param('privilege');
-	unless ($uuid && $gb::chairs->{$privilege}) {
+	# Only the four rungs the desk mints may be written here. The gate above is
+	# the scope check: a citizen session or a trusted peer answers at citizen's
+	# rung, so a pass can never be raised above the caller.
+	unless ($uuid && defined $privilege && $privilege =~ /^(?:citizen|resident|guest|visitor)$/) {
 		$c->render(json => { error => 'bad request' });
 		return;
 	}
