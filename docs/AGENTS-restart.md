@@ -21,6 +21,24 @@ Moved out of `AGENTS.md` (a per-task reference, not an every-request map).
   restart at 3am" is a file read, not a guess. Don't start `./jawn` yourself; never leave a detached
   process.
 
+  **A restart is two frames and then a record.** The master acknowledges the request the moment it
+  reads it (`{"ack":1,"state":"verifying"}`) and sends the verdict when the guard lands, on the same
+  connection. A cold guard is minutes, so a caller that gives up hears *accepted, still verifying*
+  (exit 2) instead of silence. The record is written **before** the tree is swapped and before the
+  verdict is sent, so it also answers when the reply itself is lost (a master re-exec, a stream that
+  stopped being read): `control::send` returns the record with `from => 'record'`. If the control
+  socket does not answer at all, `restart.pl` orders the restart through the status file — which the
+  master's own tick reads every second and which needs no listener — then waits for the record (exit 0
+  accepted / 1 refused by the guard / 3 ordered, no verdict yet). `--no-fallback` keeps the strict
+  reading: a silent socket is an error, exit 2.
+
+  **The master publishes the truth.** `~/.president/status` said `good` through a Windows afternoon in
+  which only the master was left: the tree writes `good` for itself at boot and nothing took it back.
+  The master now writes `good` only while the tree answers and `frozen: <why>` otherwise (the restart
+  sequence, the watchdog's verdict, the boot watch's give-up). A boot that never comes up is retried
+  three times (~4.5 min bound), each attempt recorded as `refused: boot` with the reason in
+  `restart.json`, and then the master stands down so a launcher starts a fresh one.
+
   The master re-verifies the tree before it kills anything, and caches the verdict per file **content**
   in `~/.president/verify-manifest`: a restart with nothing new to judge is ~0.4s, a cold sweep (no
   manifest, new manifest version, `node` newly installed, or the last run failed) is ~2 min. Delete that
@@ -30,7 +48,7 @@ Moved out of `AGENTS.md` (a per-task reference, not an every-request map).
   bound with `FD_CLOEXEC` and their `MOJO_REUSE` entry is dropped (`private_unix_listener` in `./jawn`) —
   Mojo otherwise expects a re-exec to inherit the fd, and with the fd closed but the entry kept, the next
   reload dies in `listen()` and the socket silently never comes back.
-- Status values: `good` / `restart` / `frozen`.
+- Status values: `good` / `restart` / `frozen` (`frozen: <why>` when the master knows the reason).
 - Restart needed? `.ep` **no** (mtime checked per request) · `.pl` **yes** (`perl -c perl/Manager.pl` first)
   · `public/js/*.js` **no restart, plain refresh** — static assets revalidate (`no-cache` + ETag/Last-Modified),
   and the manager's scripts come from `/js/manager/bundle.js`, which the app rebuilds from the files' mtimes

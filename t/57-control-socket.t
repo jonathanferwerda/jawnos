@@ -203,21 +203,31 @@ sub reap {
 
 my $socket = "$dir/control";
 my $pid = &fake_master($socket, '{"ok":1,"cmd":"status","status":"started","pid":9}');
-my $reply = &control::send({ cmd => 'status' }, socket => $socket, timeout => 10);
+my $reply = &control::send({ cmd => 'status' }, socket => $socket, dir => $dir, timeout => 10);
 &reap($pid);
 is($reply->{'ok'}, 1, 'the client decodes the master answer');
 is($reply->{'status'}, 'started', 'and hands back its fields');
 
 unlink $socket;
 $pid = &fake_master($socket, undef);   # accepts, answers nothing, hangs up
-$reply = &control::send({ cmd => 'restart' }, socket => $socket, timeout => 2);
+$reply = &control::send({ cmd => 'restart' }, socket => $socket, dir => $dir, timeout => 2);
 &reap($pid);
 is($reply->{'error'}, 'timeout', 'a master that never answers reads as a timeout, not a crash');
 
 unlink $socket;
-$reply = &control::send({ cmd => 'restart' }, socket => "$dir/absent", timeout => 2);
+$reply = &control::send({ cmd => 'restart' }, socket => "$dir/absent", dir => $dir, timeout => 2);
 is($reply->{'error'}, 'no-master', 'no socket reads as no master, by name');
 like($reply->{'message'}, qr/no jawn master/, 'with a message a person can act on');
+
+# A restart with no reason still has one to match: the wording the master
+# substitutes for a request over the socket. That is what keeps a caller from
+# reading another restart's record as its own answer.
+unlink $socket;
+&control::write_record({ ok => 1, reason => 'asked over the control socket', source => 'scripts/restart.pl' }, dir => $dir);
+my $no_reason_pid = &fake_master_frames($socket, []);
+my $no_reason = &control::send({ cmd => 'restart' }, socket => $socket, dir => $dir, timeout => 2);
+&reap($no_reason_pid);
+is($no_reason->{'from'}, 'record', 'a reasonless restart is matched by the socket wording');
 
 # --------------------------------------------------------------- the tree stop
 # The tree serves ~/.president/tree so a Windows master - which cannot signal a
@@ -314,8 +324,10 @@ ok(!&control::ask_tree_stop(socket => "$dir/absent", timeout => 1),
 		'on Windows the listener clears HANDLE_FLAG_INHERIT via SetHandleInformation');
 	like($tcp, qr/Win32API::File::FdGetOsFHandle\(fileno \$handle\)/,
 		'from the listener handle\'s own OS handle');
-	my ($cleared) = $tcp =~ /(if \(\$\^O eq 'MSWin32'\) \{.*?\};\s*\})/s;
+	my ($cleared) = $tcp =~ /(if \(\$\^O eq 'MSWin32'\) \{.*?\n\t\})/s;
 	ok($cleared && $cleared =~ /eval \{/, 'and the binding is wrapped in eval, never fatal');
+	ok($cleared && $cleared =~ /could not be made private/,
+		'and a listener that could not be made private is said out loud');
 	unlike($tcp, qr/fcntl\(\$handle, F_SETFD, FD_CLOEXEC\);\n/,
 		'and no unguarded Fcntl call remains');
 	my ($unix) = $master =~ /(sub private_unix_listener \{.*?\n\})/s;
@@ -351,4 +363,233 @@ ok(!&control::ask_tree_stop(socket => "$dir/absent", timeout => 1),
 	unlike($log, qr/->timeout\(0\)/, 'and keeps Mojo\'s idle timeout');
 }
 
-done_testing();
+# ------------------------------------------------------- the acknowledgement
+# A restart's verdict waits for the guard, which is minutes on a cold tree. The
+# master acknowledges the request the moment it is read, on the same connection,
+# so a caller that has to give up can say "accepted, still verifying" instead of
+# "the master did not answer" - the shape that made a working master look dead.
+my $action = &control::handle('{"cmd":"restart","reason":"ack me","pid":7}', $ctx);
+ok($action->{'ack'}, 'a restart request is acknowledged as soon as it is read');
+is($action->{'ack'}->{'ack'}, 1, 'and the ack is marked as one');
+is($action->{'ack'}->{'state'}, 'verifying', 'it says what is running');
+is($action->{'ack'}->{'reason'}, 'ack me', 'with the reason it will act on');
+is($action->{'ack'}->{'pid'}, 4242, 'and which master took it');
+ok(!exists $action->{'ack'}->{'verified'}, 'an ack claims no verdict');
+ok(!exists $action->{'ack'}->{'accepted'}, 'and is not an acceptance');
+ok(!&control::handle('{"cmd":"status"}', $ctx)->{'ack'}, 'status is answered directly, with no ack');
+
+# ------------------------------------------------------ two frames, one answer
+# A stand-in master that accepts one request and writes the given lines back, in
+# order, then hangs up. An empty list is a master that read the request and said
+# nothing at all.
+sub fake_master_frames {
+	my ($path, $lines) = @_;
+	my $pid = fork();
+	die "fork: $!" unless defined $pid;
+	if (!$pid) {
+		require IO::Socket::UNIX;
+		require IO::Select;
+		my $server = IO::Socket::UNIX->new(Local => $path, Listen => 5) or exit 1;
+		my $select = IO::Select->new($server);
+		my $client = $select->can_read(15) ? $server->accept : undef;
+		exit 2 unless $client;
+		my $request = <$client>;
+		if (defined $request && length $request) {
+			for my $line (@{ $lines || [] }) { print $client $line, "\n" }
+		}
+		close $client;
+		close $server;
+		exit 0;
+	}
+	my $bound_by = time + 20;
+	sleep 0.01 until -S $path || time > $bound_by;
+	ok(-S $path, 'the stand-in master bound its socket') or die "no socket at $path\n";
+	return $pid;
+}
+
+my $ack_line = '{"ok":1,"ack":1,"cmd":"restart","state":"verifying","pending":1,"pid":4242}';
+
+unlink $socket;
+my $frames_pid = &fake_master_frames($socket, [ $ack_line,
+	'{"ok":1,"cmd":"restart","accepted":1,"verified":1,"reason":"ack me","verify":"745 file(s) pass"}' ]);
+my $two = &control::send({ cmd => 'restart', reason => 'ack me' }, socket => $socket, dir => $dir, timeout => 10);
+&reap($frames_pid);
+is($two->{'accepted'}, 1, 'the verdict is the frame after the ack');
+is($two->{'verify'}, '745 file(s) pass', 'and it is returned, not the acknowledgement');
+ok(!$two->{'ack'}, 'the ack is not mistaken for the verdict');
+
+# The ack alone: the guard is still sweeping. That is an answer, and it is not
+# the same as a master that never read the line.
+unlink $socket;
+$frames_pid = &fake_master_frames($socket, [ $ack_line ]);
+my $still = &control::send({ cmd => 'restart', reason => 'ack me' }, socket => $socket, dir => $dir, timeout => 2);
+&reap($frames_pid);
+is($still->{'error'}, 'pending', 'an ack with no verdict reads as pending');
+is($still->{'ack'}->{'pid'}, 4242, 'naming the master that took the request');
+like($still->{'message'}, qr/still verifying/, 'and saying what it is doing');
+like($still->{'message'}, qr/restart\.json/, 'and where the verdict will land');
+
+# No frame at all, but the restart did happen: the record the master writes
+# before it swaps the tree answers, so a reply lost to a re-exec or a stream
+# that stopped being read is not the same as a restart that never happened.
+unlink $socket;
+&control::write_record({
+	ok => 1, reason => 'the reply was lost', source => 'scripts/restart.pl',
+	version => '0.1.9999', verify => '744 file(s) pass',
+}, dir => $dir);
+$frames_pid = &fake_master_frames($socket, []);
+my $lost = &control::send({ cmd => 'restart', reason => 'the reply was lost' }, socket => $socket, dir => $dir, timeout => 2);
+&reap($frames_pid);
+is($lost->{'from'}, 'record', 'a lost reply is answered from the record');
+is($lost->{'ok'}, 1, 'with the verdict the master wrote there');
+is($lost->{'verify'}, '744 file(s) pass', 'including the guard summary');
+
+# A record that names another restart is not this caller's answer.
+unlink $socket;
+$frames_pid = &fake_master_frames($socket, []);
+my $not_ours = &control::send({ cmd => 'restart', reason => 'a reason no record names' }, socket => $socket, dir => $dir, timeout => 1);
+&reap($frames_pid);
+is($not_ours->{'error'}, 'timeout', 'another restart\'s record is not read as this one\'s');
+
+# ------------------------------------------------- the status file must not lie
+# It is what a person and a script read when nothing else answers, and the tree
+# writes `good` for itself at boot: a tree that never came back left a good
+# behind it, for hours, with only the master on the box.
+is(&control::watch_status(serving => 1), 'good', 'a serving tree reads good');
+my $down = &control::watch_status(serving => 0, why => 'the web port stopped answering for ~25s');
+is($down, 'frozen: the web port stopped answering for ~25s',
+	'a tree that is not serving is named, with the reason');
+unlike(&control::watch_status(serving => 0), qr/^good/, 'and never reads good');
+is_deeply([ &control::status_reason($down) ], [ 0, '' ],
+	'the published value is not read back as a restart request');
+is(&control::status_file(dir => $dir), "$dir/status", 'the status file has one home');
+
+my $status = "$dir/status";
+ok(&control::publish_status($status, 'frozen: no tree'), 'the master publishes the state');
+is(&control::read_text($status), 'frozen: no tree', 'and a reader gets it whole, with no newline');
+ok(!&control::publish_status($status, 'frozen: no tree'), 'publishing the same value again changes nothing');
+open(my $status_fh, '>', $status) or die $!;
+print $status_fh 'restart: an agent asked';
+close $status_fh;
+ok(!&control::publish_status($status, 'good'), 'a pending restart request is never overwritten');
+is(&control::read_text($status), 'restart: an agent asked', 'the request survives the publisher');
+open($status_fh, '>', $status) or die $!;
+print $status_fh 'frozen: an older failure';
+close $status_fh;
+ok(&control::publish_status($status, 'good'), 'a plain state is replaced once the tree answers');
+is(&control::read_text($status), 'good', 'and the file says so');
+
+# --------------------------------------------- the Windows rendezvous, for real
+# On Windows the transport is TCP and a token is mandatory: the client takes the
+# port from the base, the secret from ~/.president/transport_token, and the
+# master's own handler refuses a request without it. Nothing else in the suite
+# runs that client end, so both ends are driven here - the real transport, the
+# real client, and control::handle as the master - on a loopback port.
+#
+# The stand-in master binds port 0 and writes the port it was given: picking a
+# base and racing another test to it made this fail on a loaded suite run, and
+# the port is the one thing the client must be told rather than guess.
+SKIP: {
+	require JawnOS::Transport;
+
+	sub tcp_master {
+		my (%arg) = @_;
+		my $dir = tempdir(CLEANUP => 1);
+		my $port_file = "$dir/port";
+		if (defined $arg{'file_token'}) {
+			open(my $tf, '>', "$dir/transport_token") or die $!;
+			print $tf $arg{'file_token'};
+			close $tf;
+		}
+		my $pid = fork();
+		die "fork: $!" unless defined $pid;
+		if (!$pid) {
+			require IO::Socket::INET;
+			require IO::Select;
+			$ENV{'JAWNOS_DATA_DIR'} = $dir;
+			$ENV{'JAWNOS_TRANSPORT_TOKEN'} = $arg{'server_token'}
+				if defined $arg{'server_token'};
+			my $server = IO::Socket::INET->new(
+				LocalAddr => '127.0.0.1', LocalPort => 0, Proto => 'tcp',
+				Listen => 5, ReuseAddr => 1,
+			) or exit 1;
+			open(my $pf, '>', $port_file) or exit 1;
+			print $pf $server->sockport;
+			close $pf;
+			my $select = IO::Select->new($server);
+			my $client = $select->can_read(20) ? $server->accept : undef;
+			exit 2 unless $client;
+			my $line = <$client>;
+			if (defined $line && length $line) {
+				my $answer = &control::handle($line, {
+					transport => 'tcp', status => 'started', pid => $$,
+					version => '0.1.9999', pending => 0,
+				});
+				my $out = $answer->{'reply'} || $answer->{'ack'};
+				print $client control::encode_json($out), "\n" if $out;
+			}
+			close $client;
+			close $server;
+			exit 0;
+		}
+		my $bound_by = time + 20;
+		my $port = '';
+		while (time < $bound_by) {
+			if (-s $port_file && open(my $pf, '<', $port_file)) {
+				$port = <$pf> // '';
+				close $pf;
+				last if $port =~ /^\d+$/;
+			}
+			sleep 0.02;
+		}
+		return ($pid, $dir, ($port =~ /^(\d+)$/ ? $1 + 0 : 0));
+	}
+
+	# The master's end: one request, answered by control::handle with the TCP
+	# rules (which is where the token is checked), and the boot secret on disk
+	# exactly as the master writes it.
+	my ($pid, $tcpdir, $port) = &tcp_master(file_token => 'boot-secret');
+	if (!$port) {
+		kill 'KILL', $pid;
+		waitpid($pid, 0);
+		skip 'no loopback port for the TCP round trip', 4;
+	}
+	else {
+		# The transport holds one base; the control port is base + 7. The client
+		# is told the base, never the port, which is what the offset table is for.
+		my $base = $port - 7;
+		{
+			local $ENV{'JAWNOS_TRANSPORT'} = 'tcp';
+			local $ENV{'JAWNOS_DATA_DIR'} = $tcpdir;
+			local $ENV{'JAWNOS_TRANSPORT_BASE'} = $base;
+			is(&JawnOS::Transport::port_for('control'), $port,
+				'the control port is the base plus its offset');
+			my $tcp = &control::send({ cmd => 'status' }, timeout => 10);
+			&reap($pid);
+			is($tcp->{'status'}, 'started', 'the TCP client reaches the master with the boot token');
+			is($tcp->{'version'}, '0.1.9999', 'and the answer comes back decoded');
+		}
+	}
+
+	# The same request with the wrong secret is refused by name - so the token is
+	# actually on the wire and actually checked, which is the whole Windows path.
+	my ($refuse_pid, $refuse_dir, $refuse_port) = &tcp_master(server_token => 'master-secret');
+	if (!$refuse_port) {
+		kill 'KILL', $refuse_pid;
+		waitpid($refuse_pid, 0);
+		skip 'no loopback port for the refusal test', 1;
+	}
+	else {
+		{
+			local $ENV{'JAWNOS_TRANSPORT'} = 'tcp';
+			local $ENV{'JAWNOS_DATA_DIR'} = $refuse_dir;
+			local $ENV{'JAWNOS_TRANSPORT_BASE'} = $refuse_port - 7;
+			local $ENV{'JAWNOS_TRANSPORT_TOKEN'} = 'wrong-one';
+			my $tcp = &control::send({ cmd => 'status' }, timeout => 10);
+			&reap($refuse_pid);
+			is($tcp->{'error'}, 'unauthorized', 'a request without the boot token is refused by name');
+		}
+	}
+}
+
+ done_testing();

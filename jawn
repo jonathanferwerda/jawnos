@@ -370,6 +370,11 @@ $SIG{HUP} = sub {
 };
 
 my ($master_boot_watch, $master_boot_tries);
+# Set when the tree this master just started announces its own exit. The boot
+# watch otherwise spends its 90s grace on a tree that may simply be cold - but a
+# tree that has already said it is gone has nothing to wait for, and retrying on
+# the next 3s probe keeps the recovery a restart has always had.
+my $master_boot_dead = 0;
 # The process the pty runs. It names the interpreter rather than relying on
 # President.pl's "#!" line: a shebang of /usr/bin/perl only resolves through
 # termux-exec's LD_PRELOAD, and the app's own supervisor (docs/roadmap-handoff.md
@@ -604,6 +609,9 @@ sub master_time_looper() {
 					$tree_misses = 0;
 					$tree_dead_since = undef;
 					$tree_wait = $probe_delay->(0);
+					# The tree answers again, so the file may say good again - a tree
+					# that recovered on its own must not keep a stale "frozen".
+					&publish_status(1);
 				}
 				elsif (++$tree_misses >= $probe_policy{'strikes'}) {
 					$tree_dead_since ||= $tick_now;
@@ -618,6 +626,10 @@ sub master_time_looper() {
 					$tree_wait = $probe_delay->(0);
 					$status = 'frozen';
 					$status_why = 'the web port stopped answering for ~' . $dead_for . 's' . $dead_port;
+					# Say it in the file at once: the restart sequence below blocks this
+					# loop for seconds, and a failure anywhere in it leaves the master
+					# unable to publish anything at all.
+					&publish_status(0, $status_why);
 				}
 				else {
 					$tree_dead_since ||= $tick_now;
@@ -660,7 +672,14 @@ sub master_time_looper() {
 				$request->{'reason'} .= ' (the tree was already down: ' . $down . ')'
 					unless index($request->{'reason'}, $down) >= 0;
 			}
-			else { $request = { reason => $down, source => 'master-watchdog' } }
+			# The boot watch owns a boot that has not come up yet: it probes every
+			# 3s, retries a bounded number of times and stands down with the reason
+			# recorded. A watchdog restart on top of it started another tree every
+			# second, and on Windows that is one way a master ended up alone with
+			# nothing serving and a status file that still said good.
+			elsif (!$master_boot_watch) {
+				$request = { reason => $down, source => 'master-watchdog' };
+			}
 		}
 		if ($request && !$verify_waiting) {
 			my $before = $status eq 'frozen' ? 'frozen' : 'started';
@@ -859,6 +878,10 @@ sub restart_commit {
 		&answer_restart($proof, $before);
 		$pending_restart = undef;
 		if ($proof->{'ok'}) {
+			# The file stops saying good the moment the tree stops serving. From
+			# here to the new tree's boot this tick may block for a long time, and
+			# a failure halfway through it leaves the master unable to say so.
+			&publish_status(0, 'restarting: ' . $request->{'reason'});
 			# The pty child is the old tree's President. shut_down() closes and
 			# reaps it, and its own children are not in that pty: they have to be
 			# swept by the pid it had, which we take before the close.
@@ -893,7 +916,23 @@ sub restart_commit {
 				sleep .5;
 			}
 			$fork = undef;
-			$fork = &terminal_pty_runner(&president_process());
+			# The spawn is its own step: a runner that cannot start (on Windows a
+			# missing Win32 binding, CreateProcess refusing the command line) used
+			# to throw out of here with $status already 'restarting', and the
+			# handler below refused to mark a tree down because of that very
+			# status. The boot watch was never armed either, so nothing ever
+			# retried: a master alive with no tree and a file that said good.
+			my $started = eval { $fork = &terminal_pty_runner(&president_process()); 1 };
+			unless ($started) {
+				my $error = $@ || 'the runner returned no process';
+				print "the tree could not be started: $error\n";
+				$status = 'frozen';
+				$status_why = 'the tree could not be started: ' . &control::clean_text($error, 300);
+				&publish_status(0, $status_why);
+			}
+			# Armed either way: it is the only thing that notices a tree that
+			# never bound its ports, retries it a bounded number of times, and
+			# names the failure in the record before it stands down.
 			&arm_boot_watch();
 		}
 		else {
@@ -904,12 +943,17 @@ sub restart_commit {
 	} or $died = $@ || 'unknown error';
 	if ($died ne '') {
 		print "restart sequence failed: $died\n";
-		# arm_boot_watch may already be watching; only force a retry when the
-		# sequence died before it armed (a mid-spawn death is recovered there)
-		unless ($status eq 'restarting') {
+		# A tree that did spawn is left alone: the boot watch owns whether it came
+		# up. Anything else is down, with the reason in hand rather than in a
+		# status that merely stops being updated.
+		unless ($status eq 'started') {
 			$status = 'frozen';
-			$status_why = 'the restart sequence failed: ' . $died;
+			$status_why = 'the restart sequence failed: ' . &control::clean_text($died, 300);
+			&publish_status(0, $status_why);
 		}
+		# Nothing else will retry a sequence that died before the boot watch was
+		# armed, so arm it here as well: it is the bound on this failure.
+		&arm_boot_watch();
 	}
 	$master_timer_paused = 0;
 	return;
@@ -1730,6 +1774,7 @@ sub arm_boot_watch {
 	return unless &config_port();
 	Mojo::IOLoop->remove($master_boot_watch) if $master_boot_watch;
 	$master_boot_watch = undef;
+	$master_boot_dead = 0;
 	my $deadline = time + 90;
 	# Same callback-argument rule as the master ticker: the id comes from the return
 	# value, never from the callback (it is not passed), so the "tree is back up"
@@ -1742,23 +1787,58 @@ sub arm_boot_watch {
 			Mojo::IOLoop->remove($master_boot_watch) if $master_boot_watch;
 			$master_boot_watch = undef;
 			$master_boot_tries = 0;
+			$master_boot_dead = 0;
+			# The tree answers, so it owns the file again.
+			&publish_status(1);
 			return;
 		}
-		return if time < $deadline;
+		return if time < $deadline && !$master_boot_dead;
 		Mojo::IOLoop->remove($master_boot_watch) if $master_boot_watch;
 		$master_boot_watch = undef;
 		$master_boot_tries = ($master_boot_tries || 0) + 1;
 		if ($master_boot_tries <= 3) {
+			my $why = 'the tree did not come up in 90s (attempt ' . $master_boot_tries . ')';
 			print "the tree did not come up in 90s; restarting it (attempt $master_boot_tries)\n";
+			# The record is the answer a caller still waiting on a socket reads:
+			# a restart that was accepted and then failed to boot must not look
+			# like an accepted restart that worked.
+			&control::write_record({
+				ok => 0,
+				refused => 'boot',
+				reason => $why,
+				source => 'master-watchdog',
+				status_before => 'restarting',
+				version => &tree_version(),
+				master_pid => $$,
+				verify => '',
+				report => &control::clean_text(length $status_why ? $status_why : 'no tree on any configured port', 300),
+			}, dir => &home('~/.president'));
+			&publish_status(0, $why);
 			$status = 'frozen';
-			$status_why = 'the tree did not come up in 90s (attempt ' . $master_boot_tries . ')';
+			$status_why = $why;
 		}
 		else {
 			# The tree could not boot after several tries. Standing down (rather than
 			# sitting alive-but-idle) lets a fresh launch take over: the mobile app's
 			# autostart sees the master gone and starts a clean one, instead of reading
 			# a half-dead master as "restarting..." forever.
-			print "the tree did not come up after $master_boot_tries attempts; standing down for a fresh launch\n";
+			my $why = 'the tree did not come up after ' . $master_boot_tries . ' restart attempts';
+			print "$why; standing down for a fresh launch\n";
+			# Said before the exit, in both places a person looks: the record names
+			# the reason, and the status file stops claiming a tree that is not
+			# there once the master is gone.
+			&control::write_record({
+				ok => 0,
+				refused => 'boot',
+				reason => $why,
+				source => 'master-watchdog',
+				status_before => 'restarting',
+				version => &tree_version(),
+				master_pid => $$,
+				verify => '',
+				report => &control::clean_text(length $status_why ? $status_why : 'no tree on any configured port', 300),
+			}, dir => &home('~/.president'));
+			&publish_status(0, $why);
 			$master_boot_tries = 0;
 			exit 1;
 		}
@@ -1804,23 +1884,36 @@ sub answer_restart {
 # silently discarded every answer (the caller saw a clean EOF and reported a
 # timeout). A direct syswrite also matters for the restart verdict: it has to be
 # out before shut_down() blocks this loop for seconds.
-sub control_write {
+#
+# control_write_now leaves the stream open, for the acknowledgement that precedes
+# a verdict on the same connection. It returns true when the bytes went out on
+# the socket itself; when it had to hand them to the reactor the caller must use
+# close_gracefully or the buffered frame is dropped.
+sub control_write_now {
 	my ($stream, $text) = @_;
-	return unless $stream && defined $text && length $text;
+	return 0 unless $stream && defined $text && length $text;
 	my $handle = eval { $stream->handle };
 	unless ($handle) {
-		eval { $stream->write($text); $stream->close_gracefully };
-		return;
+		eval { $stream->write($text) };
+		return 0;
 	}
 	my $data = $text;
 	while (length $data) {
 		my $sent = eval { syswrite($handle, $data) };
-		last unless defined $sent && $sent > 0;
+		unless (defined $sent && $sent > 0) {
+			eval { $stream->write($data) };
+			return 0;
+		}
 		substr($data, 0, $sent, '');
 	}
-	# whatever a full socket would not take, hand to the reactor rather than lose
-	if (length $data) { eval { $stream->write($data); $stream->close_gracefully }; return }
-	eval { $stream->close };
+	return 1;
+}
+
+sub control_write {
+	my ($stream, $text) = @_;
+	return unless $stream && defined $text && length $text;
+	if (&control_write_now($stream, $text)) { eval { $stream->close } }
+	else { eval { $stream->close_gracefully } }
 	return;
 }
 
@@ -1885,14 +1978,33 @@ sub private_tcp_listener {
 	if ($^O eq 'MSWin32') {
 		# Guarded: a missing Win32API::File binding must not take the control and
 		# log listeners down with it.
-		eval {
+		my $cleared = eval {
 			require Win32API::File;
 			my $os = Win32API::File::FdGetOsFHandle(fileno $handle);
 			Win32API::File::SetHandleInformation($os, 1, 0);   # HANDLE_FLAG_INHERIT
 		};
+		# Say so when it did not work. Silence was the expensive part: with the
+		# flag still set every child this master starts duplicates the listener,
+		# the accept is never reported readable again, and a control request then
+		# reads as a master that "did not answer" while it is alive and ticking.
+		print "the $address:$port listener could not be made private: "
+			. ($@ || 'no answer from SetHandleInformation') . "\n" unless $cleared;
 	}
 	&forget_tcp_reuse($address, $port);
 	return $id;
+}
+
+# The status file is the one thing a person and a script read when nothing else
+# answers, and the tree writes it `good` for itself at boot. The master is the
+# only party that knows when that stops being true, so it says so: `good` only
+# while the tree answers, `frozen: <why>` otherwise. The Windows afternoon this
+# was measured on ended with a master, no listener and a file that still said
+# good - the lie the boot watch and the restart record now contradict.
+sub publish_status {
+	my ($serving, $why) = @_;
+	my $value = &control::watch_status(serving => $serving, why => $why);
+	&control::publish_status(&home('~/.president/status'), $value);
+	return $value;
 }
 
 sub log_socket() {
@@ -2007,6 +2119,12 @@ sub control_socket() {
 					}) . "\n");
 					return;
 				}
+				# The caller is told at once that the request arrived: the verdict
+				# waits for the guard, which is minutes on a cold tree, and a caller
+				# that bounded its wait could not tell that from a master that never
+				# read the line. The same connection carries both frames, ack first.
+				&control_write_now($stream, encode_json($answer->{'ack'}) . "\n")
+					if $answer->{'ack'};
 				$pending_restart = {
 					reason => $answer->{'reason'},
 					source => $answer->{'source'},
@@ -2216,6 +2334,9 @@ sub terminal_pty_runner() {
 			print "tree exited on its own (exit=$exit_value signal=$signal) - recovering\n";
 			$status = 'frozen';
 			$status_why = 'the tree exited on its own (exit=' . (defined $exit_value ? $exit_value : '?') . ' signal=' . (defined $signal ? $signal : '?') . ')';
+			# The boot watch need not wait its 90s grace for this one: the tree has
+			# said it is gone, so the next probe can retry it.
+			$master_boot_dead = 1;
 		}
   });
 
@@ -2234,15 +2355,32 @@ sub terminal_pty_runner() {
 
 	});
 
-	$fork->start({
-		program      => $data->{'program'},
-		program_args => $data->{'program_args'} || [],
-		env          => {
-	    %ENV,
-	    TERM => 'dumb'
-		}
-	});
-
+	# The runner can refuse or die: on Windows its backend needs Win32API::File
+	# and Win32::API, and CreateProcess rejects a command line it cannot read. Left
+	# unguarded that death came out of here with $status already 'starting' and no
+	# recovery armed anywhere, which is a master alive with no tree. The caller
+	# gets undef and a state that says the tree is down, so the boot watch - or the
+	# next tick - retries it, bounded, and the record names the reason.
+	my $started = eval {
+		$fork->start({
+			program      => $data->{'program'},
+			program_args => $data->{'program_args'} || [],
+			env          => {
+		    %ENV,
+		    TERM => 'dumb'
+			}
+		});
+		1;
+	};
+	unless ($started) {
+		my $error = $@ || 'the runner returned no process';
+		print "the tree could not be started: $error\n";
+		$status = 'frozen';
+		$status_why = 'the tree could not be started: ' . &control::clean_text($error, 300);
+		eval { $fork->close } if $fork;
+		$fork = undef;
+		return undef;
+	}
 
 	return $fork;
 }
