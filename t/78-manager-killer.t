@@ -1,11 +1,11 @@
-# tests-for: jawn perl/Manager.pl perl/President.pl scripts/manager_killer.pl
+# tests-for: jawn perl/Manager.pl perl/President.pl scripts/manager_killer.pl lib/JawnOS/Domain/Network.pm
 # covers:    The killer used to shell out to pkill/pgrep four times per name, and a match was anything whose command line m...
 
 use strict;
 use warnings;
 
 use FindBin;
-use lib "$FindBin::Bin/lib", "t/lib";
+use lib "$FindBin::Bin/lib", "t/lib", "$FindBin::Bin/../lib";
 use Test::More;
 use File::Temp qw(tempdir);
 use File::Slurp qw(read_file write_file);
@@ -57,6 +57,54 @@ unlike($src, qr{(?:open|readlink)\([^)]*['"]/proc/\$}, 'the killer does not read
 unlike($src, qr{kill\s+0\s*,}, 'the killer does not test liveness with kill 0');
 like($src, qr{JawnOS::Platform::Process::table\(cwd => 1, exe => 1\)}, 'one table pass carries cwd and exe');
 like($src, qr{JawnOS::Platform::Process::signal}, 'signals go through the platform module');
+
+# Windows has no getppid: the desktop's Stop/Restart runs this script, and the
+# unguarded call there died before any signal was sent. Both callers now ask the
+# platform seam, which is the real parent on POSIX and the runner's
+# JAWNOS_PARENT_PID hint (or 0, "unknown") on Windows.
+my $network_src = read_file("$root/lib/JawnOS/Domain/Network.pm");
+for my $case (
+	[ 'the killer' => $src ],
+	[ 'Network.pm' => $network_src ],
+) {
+	my ($what, $text) = @$case;
+	unlike($text, qr/\bgetppid\s*\(/, "$what never calls getppid");
+	like($text, qr/JawnOS::Platform::parent_pid\(/, "$what asks the platform for its parent");
+}
+like($network_src, qr/JawnOS::Platform::fork_available\(/,
+	'Network.pm does not enter the fork/exec supervisor without fork');
+
+# The sweep names a process by its command line on every platform. Windows
+# writes the interpreter as perl.exe and joins a path with a backslash, so a
+# POSIX-only matcher finds nothing there and the Stop sweeps no straggler.
+like($src, qr{\Q[\s/\\]\E}, 'the command-line match accepts a Windows backslash');
+ok(index($src, 's/\.exe$//i') >= 0, 'a Windows perl.exe name is accepted as perl');
+
+# The Windows Stop path runs this file before it signals anything, so a stray
+# POSIX call must fail here, not on the desktop.
+my $compile = `$^X -c $script 2>&1`;
+is($?, 0, 'the killer compiles') or diag($compile);
+
+# On Windows parent_pid() answers 0. The publisher supervisor waits for its
+# parent to change (POSIX reparents the orphan to 1), so a zero must return
+# before the loop: waiting for a parent that can never change would spin. The
+# loop body is observed by swapping its command builder for a counter.
+require JawnOS::Platform;
+my $network_loaded = eval { require 'JawnOS/Domain/Network.pm'; 1 };
+ok($network_loaded, 'Network.pm loads for the parent-guard check') or diag($@);
+SKIP: {
+	skip 'Network.pm did not load', 2 unless $network_loaded;
+	no warnings 'redefine';
+	my $fake_parent = 0;
+	my $built = 0;
+	local *JawnOS::Platform::parent_pid = sub { $fake_parent };
+	local *subs::house_advertise_command = sub { $built++; return () };
+	subs::house_advertise_supervise();
+	is($built, 0, 'a parent of 0 skips the publisher wait loop');
+	$fake_parent = $$;
+	subs::house_advertise_supervise();
+	is($built, 1, 'a known parent enters the loop');
+}
 
 my $tmp = tempdir(CLEANUP => 1);
 

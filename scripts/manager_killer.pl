@@ -52,6 +52,7 @@ use lib "$FindBin::Bin/../lib";
 use File::Slurp qw(read_file write_file);
 use Mojo::JSON qw(decode_json);
 use Time::HiRes qw(sleep time);
+use JawnOS::Platform ();
 use JawnOS::Platform::Ports ();
 use JawnOS::Platform::Process ();
 
@@ -100,8 +101,10 @@ foreach my $arg (@ARGV) {
 	elsif ($arg =~ /^--cwd=(.+)$/) { $cwd_scope = $1 }
 }
 
+# The process that started us. Windows has no getppid, and the runner exports
+# the answer it already knows as JAWNOS_PARENT_PID; an unknown parent is 0.
 my $self = $$;
-my $parent = getppid();
+my $parent = JawnOS::Platform::parent_pid();
 my $android = (-e '/system/bin/init' || defined $ENV{'ANDROID_ROOT'}) ? 1 : 0;
 my @SCRIPTS = qw(President.pl Manager.pl Websocket.pl teletype.pl watch.pl Music.pl Alarm.pl);
 my %RANK = (master => 0, tree => 1, 'jawn-bt' => 2, ollama => 3, tts => 4, sshpass => 5, ssh => 6);
@@ -148,6 +151,9 @@ sub base {
 	my ($path) = @_;
 	$path = '' unless defined $path;
 	$path =~ s{.*/}{};
+	# Windows names a path with backslashes; POSIX treats them as ordinary
+	# characters, so only there is a second separator.
+	$path =~ s{.*\\}{} if $^O eq 'MSWin32';
 	return $path;
 }
 
@@ -173,6 +179,10 @@ sub ask_tree_stop {
 
 sub is_perl_exe {
 	my ($name) = @_;
+	# Windows names the interpreter perl.exe; the patterns below are the bare
+	# name. Without this the command-line sweep matches nothing there, and a
+	# desktop Stop has only the tree's own answer to rely on.
+	$name =~ s/\.exe$//i if $^O eq 'MSWin32';
 	return 1 if $name =~ /^perl[0-9.]*$/;
 	return 1 if $name eq 'libbin_perl.so';
 	return 0;
@@ -182,7 +192,7 @@ sub is_master {
 	my ($cmd, $exe) = @_;
 	return 0 unless &is_perl_exe(&base($exe));
 	return 0 if $cmd =~ / (?:-c|-e|-M) /;
-	return $cmd =~ m{(?:^|[\s/])jawn(?:\s|$)} ? 1 : 0;
+	return $cmd =~ m{(?:^|[\s/\\])jawn(?:\s|$)} ? 1 : 0;
 }
 
 sub is_tree {
@@ -191,7 +201,7 @@ sub is_tree {
 	my $perl = &is_perl_exe(&base($exe));
 	if ($perl) {
 		foreach my $name (@SCRIPTS) {
-			return 1 if $cmd =~ m{(?:^|[\s/])\Q$name\E(?:\s|$)};
+			return 1 if $cmd =~ m{(?:^|[\s/\\])\Q$name\E(?:\s|$)};
 		}
 		return 0;
 	}
@@ -222,7 +232,7 @@ sub scan_processes {
 	my @found;
 	foreach my $proc ( @{ JawnOS::Platform::Process::table(cwd => 1, exe => 1) } ) {
 		my $pid = $proc->{'pid'};
-		next if $pid == $self || $pid == $parent;
+		next if $pid == $self || ($parent && $pid == $parent);
 		next unless &live($proc);
 		my $cmd = $proc->{'cmdline'};
 		next unless length $cmd;
@@ -305,7 +315,12 @@ if (@ordered) {
 # The web port is the tree's last claim on the machine. If anything still
 # listens there, it lost its manager; take the pids the socket names. (Skipped
 # under --scope so a test run cannot touch the live tree's port.)
-unless ($list_only || $scope) {
+# `ss` and /dev/null are POSIX, and a listener is held to --cwd, which Windows
+# cannot answer. There the command-line sweep above is the whole stop: it names
+# the tree and the master by their program, which is the only identity Windows
+# exposes. Skipping the port read also keeps a Windows stop from killing an
+# unrelated listener on the same port.
+unless ($list_only || $scope || $^O eq 'MSWin32') {
 	my $working_port = &working_port();
 	my %listeners;
 	my $ss = `ss -tlnp 2>/dev/null`;
@@ -316,7 +331,7 @@ unless ($list_only || $scope) {
 		while ($line =~ /pid=(\d+)/g) { $listeners{$1} = 1 }
 	}
 	foreach my $pid (sort { $a <=> $b } keys %listeners) {
-		next if $pid == $self || $pid == $parent;
+		next if $pid == $self || ($parent && $pid == $parent);
 		next unless &running($pid);
 		next unless &in_cwd_scope($pid);
 		JawnOS::Platform::Process::signal('KILL', $pid);

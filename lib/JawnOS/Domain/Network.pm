@@ -503,8 +503,19 @@ sub house_advertise_supervise {
 	# Keep the publisher up for as long as this tree lives. A nested fork/exec is
 	# used rather than a shell background job so the avahi child dies with the
 	# supervisor (and the supervisor with President).
-	my $ppid = getppid();
-	while ( getppid() == $ppid ) {
+	#
+	# Windows has no getppid, and an unprompted no-fork run has no parent hint:
+	# parent_pid() answers 0, "unknown". A loop that waited for a parent it
+	# cannot name would never end, so there is nothing to supervise there.
+	# Loaded here rather than at compile time so this module still compiles
+	# (perl -c from the repo root) without lib on @INC; the tree always has it.
+	require JawnOS::Platform;
+	# The body is a nested fork/exec. A platform without fork (Windows) would
+	# fail the fork and retry it forever, so it has nothing to supervise either.
+	return unless JawnOS::Platform::fork_available();
+	my $ppid = JawnOS::Platform::parent_pid();
+	return unless defined $ppid && $ppid =~ /^[0-9]+$/ && $ppid > 1;
+	while ( JawnOS::Platform::parent_pid() == $ppid ) {
 		my @cmd = &house_advertise_command();
 		return unless @cmd;
 		my $pid = fork();
