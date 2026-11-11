@@ -787,11 +787,30 @@ sub vault_pull_one {
 	my $manager = $rm->{'manager'};
 	$manager = 'https://' . $rm->{'ip'} . ':' . ($rm->{'port'} || '45545') unless $manager;
 	return unless $manager;
+	$gb::vault_pull_error = '';
 	my ($secure_manager, $verified) = &subs::peer_secure_url($rm, $manager);
-	$manager = $secure_manager if $verified;
-	my $ua = Mojo::UserAgent->new();
-	$ua->max_response_size(0);
-	if ($verified) { &subs::peer_tls_verify($ua) } else { $ua->insecure(1) }
+	# The answer is the house key itself, so the connection that carries it must
+	# be verified. A machine without the house CA, or a peer with no leaf on the
+	# peer listener, has no verified route: refuse the pull rather than send the
+	# one-time seal - and receive the key - over an unverified TLS rail.
+	my ($ua, $why);
+	if (!$verified) {
+		$why = length &subs::peer_ca_file()
+			? 'the peer listener is not verified'
+			: 'the house CA is not enrolled (server/house-ca.pem is missing)';
+	}
+	else {
+		$ua = Mojo::UserAgent->new();
+		$ua->max_response_size(0);
+		$why = 'the house CA could not be applied' unless &subs::peer_tls_verify($ua);
+	}
+	if ($why) {
+		my $who = ($rm->{'signatorial'} || '') ? substr($rm->{'signatorial'}, 0, 8) : ($rm->{'ip'} || '?');
+		$gb::vault_pull_error = 'house key refused over unverified TLS: ' . $why;
+		eval { &subs::log_writer('vault pull refused from ' . $who . ': ' . $why) };
+		return;
+	}
+	$manager = $secure_manager;
 	# every request on the peer rail names this machine and carries a signature
 	$ua->on(start => sub { my ($ua, $tx) = @_; &peer_sign_request($tx->req); });
 	my $url = $manager . '/manager/vault_share?signatorial=' . &signatorial_designer() . '&seal=' . url_escape($seal);

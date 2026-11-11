@@ -71,8 +71,10 @@ like($app, qr/JawnOS::Routes->register\(\$self, \$r\)/,
 unlike($part11, qr/\$dock_port/, 'the peer login no longer rewrites to a dock port');
 like($part11, qr/\$rdata->\{'port'\} \|\| \$ENV\{PORT_AHOY\}/,
 	'the login port falls back to the entry port, not the dock');
-like($part11, qr/&sesh_login_url\(\$manager, \$browser_tab_id, \$signatorial, \$login\)/,
-	'the login still goes to /sesh_check');
+like($part11, qr/my \(\$login_manager, \$tls_verified\) = &subs::peer_secure_url\(/,
+	'the login base is the peer secure-url decision, so the key rides a verified route');
+like($part11, qr/&sesh_login_url\(\$login_manager, \$browser_tab_id, \$signatorial, \$login\)/,
+	'the login still goes to /sesh_check, on that verified base');
 like($part11, qr/&subs::peer_entry_url\(\$manager, \$announced\)/,
 	'the login adopts the port the peer announces');
 

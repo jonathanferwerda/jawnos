@@ -95,6 +95,35 @@ sub remote_device_connect($rdata) {
 
 	my $bti;
 	my $ua = Mojo::UserAgent->new();
+	# The login body carries the house key in `numerics`, so the TLS connection
+	# that carries it must be verified: the peer listener's house-CA leaf, never
+	# insecure(1). A peer with no verified route is refused rather than handed
+	# the key over an unverified connection.
+	my $tls_row = { %{$rdata} };
+	my $sig_row = (($rdata->{'signatorial'} || '') =~ /^[0-9a-fA-F]{16,64}$/)
+		? &subs::db_select('remote_machines', undef, { signatorial => $rdata->{'signatorial'} })->hashes->[0]
+		: undef;
+	if ($sig_row) {
+		$tls_row->{'fqdn'} = $sig_row->{'fqdn'} if ($tls_row->{'fqdn'} || '') eq '';
+		$tls_row->{'ip'} = $sig_row->{'ip'} if ($tls_row->{'ip'} || '') eq '';
+		$tls_row->{'port'} = $sig_row->{'port'} if ($tls_row->{'port'} || '') eq '';
+	}
+	my ($login_manager, $tls_verified) = &subs::peer_secure_url($tls_row, $manager);
+	unless ($tls_verified && &subs::peer_tls_verify($ua)) {
+		my $why = length &subs::peer_ca_file()
+			? 'the peer listener is not verified'
+			: 'the house CA is not enrolled (server/house-ca.pem is missing)';
+		my $error = 'refused to send the house key over unverified TLS: ' . $why;
+		my $who = ($rdata->{'signatorial'} || '') ? substr($rdata->{'signatorial'}, 0, 8) : ($ip || '?');
+		&subs::log_writer('peer connect refused for ' . $who . ': ' . $why);
+		$log->error('peer connect refused: ' . $why) if $log;
+		return {
+			status => &subs::ui('Refused: the house key needs a verified TLS route'),
+			tls_refused => 1,
+			error => $error,
+			body => { authentication => 'refused', error => $error },
+		};
+	}
 	# The login names this machine, so it must sign it: the receiver pins the
 	# offered key on first contact and verifies against it ever after.
 	$ua->on(start => sub { my ($ua, $tx) = @_; &subs::peer_sign_request($tx->req); });
@@ -106,8 +135,8 @@ sub remote_device_connect($rdata) {
 		remote_timestamp => $timestamp // '',
 		manager_file => $manager_file,
 	};
-	my $url = &sesh_login_url($manager, $browser_tab_id, $signatorial, $login);
-	my $res = eval { return $ua->insecure(1)->post($url => form => $login)->result };
+	my $url = &sesh_login_url($login_manager, $browser_tab_id, $signatorial, $login);
+	my $res = eval { return $ua->post($url => form => $login)->result };
 
 	$returner->{'body'} = eval { return decode_json $res->body };
 	# Adopt the port the peer says it serves on - that is the authority every later
@@ -155,9 +184,10 @@ sub remote_device_connect($rdata) {
 
 	if ($returner->{'body'}->{'authentication'} eq 'approved') {
 		$ua = Mojo::UserAgent->new();
+		&subs::peer_tls_verify($ua);
 		$ua->on(start => sub { my ($ua, $tx) = @_; &subs::peer_sign_request($tx->req); });
-		$url = &sesh_login_url($manager, $browser_tab_id, $signatorial, $login);
-		my $double_check = eval { return $ua->insecure(1)->post($url => form => $login)->result };
+		$url = &sesh_login_url($login_manager, $browser_tab_id, $signatorial, $login);
+		my $double_check = eval { return $ua->post($url => form => $login)->result };
 		$returner->{'body'} = eval { return decode_json $double_check->body } ;
 
 		my $signatorial = &subs::signatorial_designer();

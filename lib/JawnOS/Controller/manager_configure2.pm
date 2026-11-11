@@ -613,6 +613,9 @@ sub action_11695 {
 		privilege => 'citizen',
 		tunnel => $tunnel
 	});
+	# A refused peer login has no body to file: return the refusal before the
+	# device row below is touched with fields no peer answered.
+	if ($returner->{'tls_refused'}) { $c->render(json => $returner); return; }
 	my $device = &subs::db_select('devices', undef, { uuid => $uuid })->hash;
 	my $address = decode_json $device->{'address'};
 	my $neighbour = [];
