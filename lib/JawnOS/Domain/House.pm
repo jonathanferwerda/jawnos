@@ -791,7 +791,9 @@ sub peer_presence_probe {
 	}
 	my $fetch = $opts->{'fetch'};
 	my $ping  = $opts->{'ping'};
-	my $rs = &encrypter(&shorthand_name(&rightNow(), 5) . &shorthand_name($remote_signatorial, 5), $remote_signatorial);
+	# A LAN probe carries the peer's own public name under a public key: it is a
+	# liveness ping, not a secret. Keep the seal every build can read.
+	my $rs = &encrypter_legacy(&shorthand_name(&rightNow(), 5) . &shorthand_name($remote_signatorial, 5), $remote_signatorial);
 	foreach my $c ( @candidates ) {
 		my $host = $c->{'host'};
 		next unless defined $host && length $host;

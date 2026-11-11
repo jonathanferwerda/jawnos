@@ -697,7 +697,7 @@ sub sync_rows_batch {
 	my ($remote, $signatorial, $secret, $table, $cut, $after, $range) = @_;
 	my $url = $remote->{'manager'} . '/manager/sync_rows?signatorial=' . $signatorial
 		. '&table=' . Mojo::Util::url_escape($table)
-		. '&limit=500';
+		. '&limit=500&seal=js1';
 	if (ref $range eq 'HASH' && defined $range->{'from'} && defined $range->{'to'}) {
 		$url .= '&from=' . int($range->{'from'}) . '&to=' . int($range->{'to'});
 	}
@@ -747,7 +747,7 @@ sub sync_buckets_batch {
 	my ($remote, $signatorial, $secret, $table, $band) = @_;
 	my $url = $remote->{'manager'} . '/manager/sync_buckets?signatorial=' . $signatorial
 		. '&table=' . Mojo::Util::url_escape($table)
-		. '&band=' . int($band);
+		. '&band=' . int($band) . '&seal=js1';
 	my $res;
 	# Same bound as a row batch: the map is a few integers, so a live peer is
 	# instant and a dead route must not stall the tick for minutes.

@@ -816,6 +816,18 @@ sub encrypter {
 	return $SEAL_PREFIX . encode_base64($salt . $iv . $tag . $ct, '');
 }
 
+# The seal older builds write and read: Crypt::Simple. It stays for the rolling
+# cutover - a sync response uses it until the puller says it reads JS1 - and for
+# a token whose key is public anyway (the LAN probe).
+sub encrypter_legacy {
+	my ($secret,$content) = @_;
+	local *encrypt;
+	local *decrypt;
+	Crypt::Simple->import(passphrase => $secret);
+	my $notes = eval { encrypt($content) };
+	return $notes;
+}
+
 # The same, without the legacy empty-passphrase fallback. A caller that is
 # judging a token or a peer's bytes must accept only a blob sealed under the
 # real secret: otherwise anyone can seal with the public empty key.

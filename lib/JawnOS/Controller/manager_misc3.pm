@@ -521,7 +521,13 @@ sub action_11014 {
 		$c->render(json => { ok => 0, error => 'could not encode the batch' });
 		return;
 	}
-	my $sealed = eval { &subs::encrypter($secret, $plain) };
+	# The puller names the seal it reads in a signed query parameter. An older
+	# puller sends nothing, so the reply keeps the legacy seal it understands.
+	my $sealed = eval {
+		(($c->param('seal') // '') eq 'js1')
+			? &subs::encrypter($secret, $plain)
+			: &subs::encrypter_legacy($secret, $plain)
+	};
 	unless (defined $sealed) {
 		$c->render(json => { ok => 0, error => 'could not seal the batch' });
 		return;
@@ -606,7 +612,11 @@ sub action_11111 {
 		$c->render(json => { ok => 0, error => 'could not encode the buckets' });
 		return;
 	}
-	my $sealed = eval { &subs::encrypter($secret, $plain) };
+	my $sealed = eval {
+		(($c->param('seal') // '') eq 'js1')
+			? &subs::encrypter($secret, $plain)
+			: &subs::encrypter_legacy($secret, $plain)
+	};
 	unless (defined $sealed) {
 		$c->render(json => { ok => 0, error => 'could not seal the buckets' });
 		return;
