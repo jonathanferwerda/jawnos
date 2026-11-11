@@ -78,9 +78,52 @@ function New-JawnShortcut {
     $shortcut.Save()
 }
 
+# GetFolderPath answers empty in a SYSTEM or service context with no profile.
+# The shell folders are still where Explorer looks, so fall back to the paths
+# Windows itself uses and create the directory if it is absent.
+function Resolve-ShortcutDirectory {
+    param([string]$Kind)
+    $candidates = @()
+    switch ($Kind) {
+        'Programs' {
+            $candidates += [Environment]::GetFolderPath('Programs')
+            if ($env:APPDATA) {
+                $candidates += (Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs')
+            }
+            if ($env:ProgramData) {
+                $candidates += (Join-Path $env:ProgramData 'Microsoft\Windows\Start Menu\Programs')
+            }
+        }
+        'Desktop' {
+            $candidates += [Environment]::GetFolderPath('Desktop')
+            if ($env:USERPROFILE) {
+                $candidates += (Join-Path $env:USERPROFILE 'Desktop')
+            }
+        }
+        'Startup' {
+            $candidates += [Environment]::GetFolderPath('Startup')
+            if ($env:APPDATA) {
+                $candidates += (Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\Startup')
+            }
+        }
+    }
+    foreach ($candidate in $candidates) {
+        if ([string]::IsNullOrWhiteSpace($candidate)) { continue }
+        try {
+            if (-not (Test-Path -LiteralPath $candidate)) {
+                New-Item -ItemType Directory -Force -Path $candidate | Out-Null
+            }
+            if (Test-Path -LiteralPath $candidate) { return $candidate }
+        } catch {
+            continue
+        }
+    }
+    return ''
+}
+
 function Get-ShortcutPath {
-    param([string]$Folder)
-    $base = [Environment]::GetFolderPath($Folder)
+    param([string]$Kind)
+    $base = Resolve-ShortcutDirectory $Kind
     if ([string]::IsNullOrWhiteSpace($base)) { return '' }
     return (Join-Path $base 'JawnOS.lnk')
 }
@@ -196,7 +239,7 @@ set "JAWNOS_TRANSPORT=tcp"
 set "JAWNOS_DIR=$appDir"
 set "PATH=$InstallDir\runtime\c\bin;$InstallDir\runtime\perl\bin;%PATH%"
 cd /d "%JAWNOS_DIR%"
-perl.exe jawn >> "$InstallDir\master.log" 2>&1
+"%~dp0runtime\perl\bin\perl.exe" jawn >> "$InstallDir\master.log" 2>&1
 "@
 Set-Content -LiteralPath $batPath -Value $bat -Encoding ASCII
 
@@ -217,6 +260,8 @@ $startMenu = Get-ShortcutPath 'Programs'
 if ($startMenu) {
     New-JawnShortcut -LinkPath $startMenu -Target $wscript -Arguments $launchArgs -WorkingDirectory $InstallDir
     Write-Step "Start menu shortcut: $startMenu"
+} else {
+    Write-Warning 'Could not create the Start menu shortcut: no Start menu Programs folder was found.'
 }
 
 $desktopShortcut = ''
@@ -225,6 +270,8 @@ if ($Desktop) {
     if ($desktopShortcut) {
         New-JawnShortcut -LinkPath $desktopShortcut -Target $wscript -Arguments $launchArgs -WorkingDirectory $InstallDir
         Write-Step "Desktop shortcut: $desktopShortcut"
+    } else {
+        Write-Warning 'Could not create the desktop shortcut: no Desktop folder was found.'
     }
 }
 
@@ -234,6 +281,8 @@ if (-not $NoAutostart) {
     if ($startupShortcut) {
         New-JawnShortcut -LinkPath $startupShortcut -Target $wscript -Arguments $launchArgs -WorkingDirectory $InstallDir
         Write-Step "Autostart shortcut: $startupShortcut"
+    } else {
+        Write-Warning 'Could not create the autostart shortcut: no Startup folder was found.'
     }
 }
 
@@ -272,27 +321,28 @@ if (-not $NoLaunch) {
     Write-Step 'Starting JawnOS ...'
     Start-Process -FilePath $wscript -ArgumentList $launchArgs | Out-Null
 
-    # The house issues its own certificate, so the probe must not trust the
-    # system store. This callback is process-local to the installer.
-    [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.SecurityProtocolType]::Tls12
-    [System.Net.ServicePointManager]::ServerCertificateValidationCallback = { $true }
-
-    Write-Step "Waiting for $url (up to 120 seconds) ..."
+    # Readiness is a TCP connect, not an HTTP request: this box's .NET/SChannel
+    # stack fails the house certificate's handshake even though the server
+    # answers (curl -k returns 200). The browser owns TLS; the installer only
+    # asks whether something is listening on the port.
+    Write-Step "Waiting for 127.0.0.1:$port (up to 120 seconds) ..."
     $deadline = (Get-Date).AddSeconds(120)
     while ((Get-Date) -lt $deadline -and -not $up) {
+        $client = New-Object System.Net.Sockets.TcpClient
         try {
-            $null = Invoke-WebRequest -Uri $url -UseBasicParsing -TimeoutSec 3
-            $up = $true
+            $connect = $client.ConnectAsync('127.0.0.1', $port)
+            if ($connect.Wait(1000)) { $up = $client.Connected }
         } catch {
-            # Any HTTP response, even a 4xx from the gate, means the server is up.
-            if ($_.Exception.Response) { $up = $true }
-            else { Start-Sleep -Seconds 2 }
+            $up = $false
+        } finally {
+            $client.Close()
         }
+        if (-not $up) { Start-Sleep -Seconds 2 }
     }
     if ($up) {
-        Write-Step "JawnOS is up at $url"
+        Write-Step "JawnOS is listening on 127.0.0.1:$port"
     } else {
-        Write-Warning "JawnOS did not answer within 120 seconds. See $InstallDir\master.log"
+        Write-Warning "Nothing is listening on 127.0.0.1:$port after 120 seconds. See $InstallDir\master.log"
     }
     if ($up -and -not $NoBrowser) { Start-Process $url | Out-Null }
 }

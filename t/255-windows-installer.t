@@ -51,6 +51,20 @@ like($install, qr/program=/, 'the firewall rule is program-scoped, not port-scop
 like($install, qr/perl\.exe/, 'the firewall rule names the bundled perl.exe');
 like($install, qr/Startup/, 'install.ps1 creates the Startup shortcut');
 
+like($install, qr/System\.Net\.Sockets\.TcpClient/, 'readiness uses a TCP client');
+like($install, qr/ConnectAsync/, 'readiness polls a TCP connect');
+like($install, qr/listening on 127\.0\.0\.1/, 'a successful probe says listening on the port');
+unlike($install, qr/Invoke-WebRequest/, 'readiness does not depend on the HTTP/TLS stack');
+like($install, qr/Resolve-ShortcutDirectory/, 'shortcut folders resolve through fallbacks');
+like($install, qr/Join-Path \$env:APPDATA 'Microsoft\\Windows\\Start Menu\\Programs'/,
+	'the Start menu falls back to APPDATA');
+like($install, qr/Join-Path \$env:ProgramData 'Microsoft\\Windows\\Start Menu\\Programs'/,
+	'and then to ProgramData');
+like($install, qr/New-Item -ItemType Directory -Force -Path \$candidate/,
+	'the resolved shortcut folder is created');
+like($install, qr/"%~dp0runtime\\perl\\bin\\perl\.exe" jawn/,
+	'launch.bat names the bundled perl by its full path');
+
 unlike($install, qr{C:\\Strawberry}i, 'install.ps1 does not hardcode C:\Strawberry');
 
 # --- build-portable.ps1 -----------------------------------------------------
@@ -60,6 +74,12 @@ like($build, qr/\barchive\b/, 'build-portable.ps1 takes app\ from git archive');
 like($build, qr/RuntimeDir/, 'build-portable.ps1 names its prepared runtime');
 like($build, qr/Mandatory\s*=\s*\$true/, 'build-portable.ps1 requires -RuntimeDir');
 like($build, qr/README\.txt/, 'build-portable.ps1 stages README.txt');
+like($build, qr/Join-Path \$TreeDir 'desktop\\mkosi'/,
+	'plain copy excludes the mkosi image tree');
+like($build, qr/robocopy failed \(exit \$code\)/, 'a robocopy failure is a build error');
+like($build, qr/copying \$Source to \$Destination/,
+	'a robocopy failure names the copy');
+
 unlike($build, qr{C:\\Strawberry}i, 'build-portable.ps1 does not hardcode C:\Strawberry');
 
 # VM200 has no git, so a staged tree must still build. The script probes for a

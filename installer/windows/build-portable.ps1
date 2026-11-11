@@ -39,9 +39,18 @@ function Invoke-Robocopy {
         $rcArgs += '/XF'
         $rcArgs += $ExcludeFiles
     }
-    & robocopy @rcArgs | Out-Null
-    if ($LASTEXITCODE -ge 8) {
-        throw "robocopy failed (exit $LASTEXITCODE) copying $Source to $Destination"
+    $saved = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        $output = @(& robocopy @rcArgs 2>&1 | ForEach-Object { "$_" })
+        $code = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $saved
+    }
+    if ($code -ge 8) {
+        $detail = @($output | Where-Object { $_ -match 'ERROR|error|could not|Access is denied' } | Select-Object -First 5)
+        if (-not $detail) { $detail = @("no detail; source $Source, destination $Destination") }
+        throw "robocopy failed (exit $code) copying $Source to $Destination: " + ($detail -join ' | ')
     }
 }
 
@@ -122,7 +131,7 @@ try {
             (Join-Path $TreeDir 'releases'),
             (Join-Path $TreeDir '.shots'),
             (Join-Path $TreeDir 'qa\docker'),
-            (Join-Path $TreeDir 'desktop\mkosi\.stage'),
+            (Join-Path $TreeDir 'desktop\mkosi'),
             'node_modules',
             '__pycache__'
         )
