@@ -487,12 +487,24 @@ if (-e $allow_file) {
 	my $list = eval { JSON::PP->new->decode($text) };
 	@allow = grep { ref $_ eq 'HASH' && $_->{'id'} } @{ ref $list eq 'ARRAY' ? $list : [] };
 }
+# An entry names its instance by `evidence` (a substring of the reported source
+# line) or, older shape, by `line`. A line number is brittle: an unrelated
+# insert above the code shifts every pin below it and the trunk goes red for a
+# finding that did not change. Evidence survives the reflow and still refuses a
+# second, different instance of the same class in the same file.
 for my $f ( @findings ) {
 	$f->{'known'} = 0;
 	for my $a ( @allow ) {
 		next unless $a->{'id'} eq $f->{'id'};
 		next if defined $a->{'path'} && index($f->{'path'}, $a->{'path'}) < 0;
-		next if defined $a->{'line'} && $a->{'line'} != $f->{'line'};
+		if (defined $a->{'evidence'}) {
+			# An empty substring is contained in every line: fail closed.
+			next unless length $a->{'evidence'};
+			next if index($f->{'evidence'}, $a->{'evidence'}) < 0;
+		}
+		else {
+			next if defined $a->{'line'} && $a->{'line'} != $f->{'line'};
+		}
 		$f->{'known'} = 1;
 		last;
 	}

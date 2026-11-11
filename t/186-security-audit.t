@@ -144,14 +144,21 @@ ok(!$public_ports{'39002'}, 'a loopback bind is not reported');
 ok(!$public_ports{'8022'}, 'a known static port is not reported');
 ok(!$public_ports{'41641'}, 'the tailscale port is not reported');
 
-# --- allowlist line pinning ------------------------------------------------
-# A line-pinned allowlist entry covers its own instance only. A second eval in
-# the same accepted file, at a different line, must stay new.
+# --- allowlist evidence pinning -----------------------------------------------
+# An evidence-pinned entry names the accepted code, wherever a reflow pushed it.
+# A second eval in the same file, with different code, must stay new: the pin is
+# the line's text, not its number.
 my $al = tempdir(CLEANUP => 1);
 make_path("$al/public/js", "$al/qa/security");
-write_file("$al/public/js/fixture.js", "var a = eval('one');\nvar b = eval('two');\n");
+write_file("$al/public/js/fixture.js", join "\n",
+	"var pad = 1;",
+	"var pad = 2;",
+	"var pad = 3;",
+	"var a = eval('one');",
+	"var b = eval('two');",
+	"");
 write_file("$al/qa/security/allowlist.json", JSON::PP->new->canonical->pretty->encode([
-	{ id => 'js.eval', path => 'public/js/fixture.js', line => 1, reason => 'fixture' },
+	{ id => 'js.eval', path => 'public/js/fixture.js', evidence => "eval('one')", reason => 'fixture' },
 ]));
 system('git', '-C', $al, 'init', '-q');
 system('git', '-C', $al, 'config', 'user.email', 'test@example.invalid');
@@ -161,18 +168,25 @@ is(system('git', '-C', $al, 'commit', '-q', '-m', 'fixture'), 0, 'the allowlist 
 my $al_json = `perl "$root/scripts/security_audit.pl" --check --json --root "$al" 2>&1`;
 my $al_report = eval { JSON::PP->new->decode($al_json) } || {};
 my @al_evals = grep { $_->{'id'} eq 'js.eval' } @{ $al_report->{'findings'} || [] };
-my ($pinned) = grep { $_->{'line'} == 1 } @al_evals;
-my ($loose)  = grep { $_->{'line'} == 2 } @al_evals;
-ok($pinned && $pinned->{'known'}, 'the pinned line is known');
-ok($loose && !$loose->{'known'}, 'a second instance at a new line in the same file is new')
+my ($pinned) = grep { index($_->{'evidence'}, "eval('one')") >= 0 } @al_evals;
+my ($loose)  = grep { index($_->{'evidence'}, "eval('two')") >= 0 } @al_evals;
+ok($pinned && $pinned->{'line'} == 4, 'the accepted eval is found three lines below the file head');
+ok($pinned && $pinned->{'known'}, 'a shifted finding matching the evidence stays known')
+	or diag($al_json);
+ok($loose && !$loose->{'known'}, 'a different eval at a new line in the same file is new')
 	or diag($al_json);
 
-# The real allowlist pins every eval it accepts, so a new one cannot inherit it.
+# The real allowlist pins every eval it accepts by evidence, so a reflow above
+# the entry cannot break the trunk and a new instance cannot inherit it.
 my @eval_entries = grep { $_->{'id'} eq 'perl.eval.string' || $_->{'id'} eq 'js.eval' } @{ $allow };
 ok(scalar @eval_entries >= 4, 'the accepted evals are listed');
-ok(!(grep { !defined $_->{'line'} } @eval_entries), 'and each accepted eval is pinned by line');
+ok(!(grep { defined $_->{'line'} } @eval_entries), 'and none is pinned by line');
+ok(!(grep { !defined $_->{'evidence'} || !length $_->{'evidence'} } @eval_entries),
+	'each accepted eval is pinned by evidence');
+my %eval_pin = map { $_->{'evidence'} => 1 } @eval_entries;
+is(scalar keys %eval_pin, scalar @eval_entries, 'no two accepted evals share one pin');
 my @js = grep { $_->{'id'} eq 'js.eval' } @{$report->{'findings'}};
 is(scalar @js, 2, 'the console router carries the two accepted evals');
-ok(!(grep { !$_->{'known'} } @js), 'both are known through their line-pinned entries');
+ok(!(grep { !$_->{'known'} } @js), 'both are known through their evidence-pinned entries');
 
 done_testing();

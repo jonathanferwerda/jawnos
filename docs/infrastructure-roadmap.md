@@ -113,7 +113,7 @@ Re-measured from `cloud` against the ks5 public address.
   `policy_in: ACCEPT`, so guest FORWARD traffic (the three containers) is unaffected. Verified
   after apply: tailnet SSH (`100.64.0.11:8022`) and LAN SSH (`10.20.0.1:8022`) still work, `dev`
   still egresses as `54.39.157.133`, tailscale still reaches ks5 directly on 41641, and
-  443/45545/45550 stay public while 8022/8006 stay closed; ICMP echo still answers.
+  443/45545/45546/45550 stay public while 8022/8006 stay closed; ICMP echo still answers.
 - **Deliberate consequence:** PVE's management-set rules (the set is `54.39.157.0/24`) now sit
   after the catch-all and are unreachable; no service they covered is used (no VMs; sshd is on
   8022; 8006 is tailnet-only). Rollback: `/root/host.fw.bak-default-deny-20261111`, then

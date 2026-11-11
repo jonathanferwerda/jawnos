@@ -2,25 +2,25 @@
 	{
 		"id": "perl.eval.string",
 		"path": "lib/JawnOS/Manager/Part32.pm",
-		"line": 613,
+		"evidence": "$evaluation = eval  $for;",
 		"reason": "The unit calculator evaluates one measure's formula built from gb measures. The request side is restricted to digits and arithmetic operators by formula_calculator's guards before eval, so no request text reaches eval."
 	},
 	{
 		"id": "perl.eval.string",
 		"path": "lib/JawnOS/Manager/Part32.pm",
-		"line": 647,
+		"evidence": "$evaluation = eval $formula;",
 		"reason": "The same calculator's direct path: the formula must match /\\A[0-9+\\-*\\/(). %^]+\\z/ before eval, so only digits and arithmetic operators can reach it."
 	},
 	{
 		"id": "js.eval",
 		"path": "public/js/manager/websocket/00_console_router.js",
-		"line": 288,
+		"evidence": "eval(String(a[0]))",
 		"reason": "The explicit terminalJs command: the terminal is a JS console the person is using deliberately. Only run_command's terminal path sends the marker, so a frame that carries a line without it cannot reach this eval."
 	},
 	{
 		"id": "js.eval",
 		"path": "public/js/manager/websocket/00_console_router.js",
-		"line": 298,
+		"evidence": "eval(command)",
 		"reason": "browserCommand: the same accepted design. The server validated the string and jawnosBrowserCommandValid re-checks it here, accepting only the two fixed shapes (a jQuery click trigger or tree.sound.currentTime arithmetic) and refusing document/window/eval/Function/fetch/alert/angle brackets."
 	}
 ]
