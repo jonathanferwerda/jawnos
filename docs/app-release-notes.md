@@ -16,6 +16,14 @@ under a dated heading; older sections stay as history.
   `--es control_url <url>` alongside `auth_key`, so a device can be pointed at
   the new switch and joined in one command.
 
+- **A phone that was asleep is not ambushed by the sign-in screen.** The view's
+  one-ticket fallback stayed spent after its first recovery, so the next lapsed
+  session - the cookieless first request a woken WebView sends - went straight
+  to the logo splash, with **Try again** as the only way out. The fallback now
+  re-arms whenever the manager itself loads, so every lapse gets its own ticket
+  handover and the splash stays only the escape hatch for a ticket that can no
+  longer sign in.
+
 ## 2026-11-10 — the browser opens again, and a site visit stays one appointment
 
 - **Browse opens on a phone again.** The browser runs in its own process, and
