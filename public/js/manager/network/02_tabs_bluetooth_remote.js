@@ -41,7 +41,7 @@ var networkControllerBeatTimer = null;
 
 function networkControllerSnapshotApply() {
 	if (typeof stayingAliveOne !== 'function') { return; }
-	$.getJSON('/manager/controller/snapshot', function (r) {
+	$.getJSON('/manager/controller/snapshot', { browser_tab_id: sessionStorage.getItem('browser_tab_id') || '' }, function (r) {
 		var beats = (r && r.beats) || {};
 		Object.keys(beats).forEach(function (app) {
 			if (!beats[app]) { return; }

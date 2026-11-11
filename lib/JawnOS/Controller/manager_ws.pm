@@ -486,7 +486,7 @@ sub action_47050 {
 				}
 
 				$return_data->{'server_time'} = $server_time;
-				&controller_snapshot_save($app, $full, $neighbour_stamp, $return_data) if $full; return $return_data;
+				&controller_snapshot_save($app, $full, $neighbour_stamp, $return_data, $browser_tab_id) if $full; return $return_data;
 			};
 
 			my @beat_apps = ref $data->{'apps'} eq 'ARRAY' ? @{$data->{'apps'}} : ($data->{'app'});
@@ -862,14 +862,19 @@ sub synth_frame_checked {
 
 # The Controller's first paint. Keep the last full picture of the three anchor
 # sockets in the house's cache, so opening the Network tab shows the windows,
-# roster and track before the next beat. Only a changed picture is written.
+# roster and track before the next beat. Only a changed picture is written, and
+# it is kept per browser tab: two tabs never paint each other's picture.
 sub controller_snapshot_save {
-	my ($app, $full, $stamp, $return_data) = @_;
+	my ($app, $full, $stamp, $return_data, $browser_tab_id) = @_;
 	return unless $full && $stamp && ref $return_data eq 'HASH';
+	return unless length $browser_tab_id;
 	return unless $app =~ /^(?:music|server|tab)$/;
-	return if (($ws_snapshot_stamp{$app} || '') eq $stamp);
-	$ws_snapshot_stamp{$app} = $stamp;
+	require Digest::SHA;
+	# cache.subcontext is 25 characters: a tab digest short enough to fit.
+	my $key = 't' . substr(Digest::SHA::sha1_hex($browser_tab_id), 0, 24);
+	return if (($ws_snapshot_stamp{$key . '|' . $app} || '') eq $stamp);
+	$ws_snapshot_stamp{$key . '|' . $app} = $stamp;
 	my %snap = %{$return_data};
 	delete $snap{'remote'};
-	&subs::cache_set({ app => 'controller', context => 'beat', subcontext => $app }, \%snap);
+	&subs::cache_set({ app => 'controller', context => 'beat_' . $app, subcontext => $key }, \%snap);
 }

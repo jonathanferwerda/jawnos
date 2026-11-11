@@ -391,10 +391,12 @@ like($routes2, qr{\[7846, 'get', '/manager/controller/snapshot', 'action_7846'\]
 	'the snapshot route is registered');
 my $action2 = source('lib/JawnOS/Controller/manager_misc2.pm');
 like($action2, qr/sub action_7846 \{/, 'the snapshot action exists');
-like($action2, qr/cache_get\(\{ app => 'controller', context => 'beat', subcontext => \$app \}\)/,
-	'it reads the saved anchor beats');
+like($action2, qr/my \$browser_tab_id = \$c->param\('browser_tab_id'\)/, 'keyed by the caller\'s browser tab');
+like($action2, qr/cache_get\(\{ app => 'controller', context => 'beat_' . \$app, subcontext => \$key \}\)/,
+	'it reads the saved anchor beats for this tab');
 my $remote_js2 = source('public/js/manager/network/02_tabs_bluetooth_remote.js');
 like($remote_js2, qr{\$\.getJSON\('/manager/controller/snapshot'}, 'the tab asks for the saved picture');
+like($remote_js2, qr/browser_tab_id: sessionStorage.getItem\('browser_tab_id'\)/, 'and sends its own tab id');
 like($remote_js2, qr/function networkControllerSnapshotApply\(\)/, 'and applies it before the beat');
 like($remote_js2, qr/function networkControllerBeatStart\(\)/, 'a faster beat keeps the tab live');
 like($remote_js2, qr/\}, 5000\);/, 'at five seconds');

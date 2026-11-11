@@ -110,8 +110,10 @@ like($beat, qr/typeof jawnosControllerVisible == 'function' \? jawnosControllerV
 like($ctl, qr/my \$ws_neighbour_refresh = 5000;/, 'the full neighbour payload is refreshed in seconds');
 like($ctl, qr/our \([^;]*%ws_snapshot_stamp\)/s, 'the saved picture keeps its own stamp');
 like($ctl, qr/sub controller_snapshot_save \{/, 'one helper writes the saved picture');
-like($ctl, qr/&subs::cache_set\(\{ app => 'controller', context => 'beat', subcontext => \$app \}/,
-	'a changed anchor picture is kept in the house cache');
+like($ctl, qr/&subs::cache_set\(\{ app => 'controller', context => 'beat_' \. \$app, subcontext => \$key \}/,
+	'a changed anchor picture is kept per tab in the house cache');
+like($ctl, qr/substr\(Digest::SHA::sha1_hex\(\$browser_tab_id\), 0, 24\)/,
+	'the tab is keyed by a short digest');
 like($ctl, qr/\$app =~ \/\^\(\?:music\|server\|tab\)\$\//,
 	'only the three anchored apps are saved');
 

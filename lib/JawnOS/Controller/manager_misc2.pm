@@ -15,6 +15,7 @@ no warnings 'once';
 use strict;
 use warnings ;#'uninitialized';
 use Mojo::Promise;
+use Digest::SHA qw(sha1_hex);
 use Mojo::UserAgent;
 use Time::Local;
 use Time::Piece;
@@ -214,9 +215,14 @@ sub action_7845 {
 sub action_7846 {
 	my $c = shift;
 	my %beats;
-	foreach my $app ( qw/music server tab/ ) {
-		my $snap = &subs::cache_get({ app => 'controller', context => 'beat', subcontext => $app });
-		$beats{$app} = $snap if ref $snap eq 'HASH';
+	my $browser_tab_id = $c->param('browser_tab_id') || '';
+	if (length $browser_tab_id) {
+		# Same digest the beat writes: one cache row per app, per browser tab.
+		my $key = 't' . substr(sha1_hex($browser_tab_id), 0, 24);
+		foreach my $app ( qw/music server tab/ ) {
+			my $snap = &subs::cache_get({ app => 'controller', context => 'beat_' . $app, subcontext => $key });
+			$beats{$app} = $snap if ref $snap eq 'HASH';
+		}
 	}
 	$c->render(json => { beats => \%beats });
 }
