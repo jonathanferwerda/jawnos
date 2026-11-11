@@ -247,6 +247,16 @@ like($qt, qr/core\.jawn_health\(jawn_dir, timeout=3\.0\)/,
 like($qt, qr/restarted a manager that stopped answering/,
 	'and restarts a manager whose HTTP stopped answering');
 like($qt, qr/core\.game_running\(\)/, 'a game in progress is not read as a wedged manager');
+# A code sync writes VERSION while the tree keeps running the build it booted.
+# The restart path follows that mismatch; the page reload must follow the
+# version the manager actually serves, or every sync interrupts the page (a
+# playing video with it) for code that is not live yet.
+like($qt, qr/self\._version = self\._manager_version\(\)/,
+	'the supervisor seeds its version from the disk at startup');
+like($qt, qr/running = core\.running_version\(jawn_dir\)\n\s*if running and running != self\._version:/,
+	'the page reload follows the version the manager serves');
+unlike($qt, qr/\n\s*version = self\._manager_version\(\)/,
+	'a VERSION a sync wrote with no restart does not reload the page');
 like($qt, qr/permissionRequested/, 'the newer permission signal is handled');
 like($qt, qr/PermissionType/, 'through QWebEnginePermission');
 like($qt, qr/featurePermissionRequested/, 'with the older signal kept as a fallback');

@@ -394,8 +394,14 @@ function jawnosRevisionArrived(parts, version, was) {
 	// is what puts the current JS and templates in front of the person.
 	if (!was || !parts || !stored || !stored.js) {
 		var page_version = (typeof jawnos_version !== 'undefined') ? String(jawnos_version) : '';
+		// Store before the reload: the page that comes back must have something to
+		// compare, or a tree held at two builds (an update synced, its restart not
+		// yet) reloads this tab on every socket connect. The page and the socket
+		// disagree every time, and with nothing written down neither reading can
+		// settle it.
+		remember();
 		if (version && page_version && String(version) !== page_version) { jawnosUpdateQuietReload(); return; }
-		remember(); return;
+		return;
 	}
 	var moved = function (k) { return (parts[k] || '') !== (stored[k] || ''); };
 	var what = { js: moved('js'), shell: moved('shell'), css: moved('css'), views: moved('views'), server: moved('server') };

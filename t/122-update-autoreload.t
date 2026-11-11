@@ -32,6 +32,20 @@ like($reload, qr/var auto = jawnosUpdateAutoReload\(\);/,
 like($reload, qr/if \(auto && document\.hidden\) \{ jawnosReloadWhenReady\(\); return; \}/,
 	'a hidden tab waits for the press unless Auto-reload is on');
 
+# --- one move, one reload ---------------------------------------------------
+# A tab that has not recorded a revision yet compares its own version with the
+# one the socket reports. It must write the arrived parts down BEFORE it
+# reloads, because that is what the reloaded page compares against. Without it
+# a tree held at two builds (an update synced, its restart not yet) reloads the
+# tab on every socket connect: the page and the socket disagree every time and
+# neither reading is ever stored.
+my ($first) = $reload =~ /(if \(!was \|\| !parts \|\| !stored \|\| !stored\.js\) \{.*?\n\t\})/s;
+ok($first, 'the no-recorded-parts branch is found');
+my $store_at = defined $first ? index($first, 'remember();') : -1;
+my $reload_at = defined $first ? index($first, 'jawnosUpdateQuietReload()') : -1;
+ok($store_at >= 0 && $reload_at >= 0 && $store_at < $reload_at,
+	'the arrived revision is stored before the reload, so one move reloads once');
+
 # The visibilitychange listener is registered only when auto is on, so an off
 # device never arms the hidden-tab reload after the pill has appeared.
 like($reload, qr/if \(auto\) \{\s*\n\s*\$\(document\)\.on\('visibilitychange\.jawnos_update_pill'/,
