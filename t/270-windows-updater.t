@@ -1,6 +1,7 @@
 # tests-for: lib/JawnOS/Domain/WindowsUpdate.pm lib/JawnOS/Domain/Loader.pm lib/JawnOS/Routes/manager_misc3.pm lib/JawnOS/Controller/manager_misc3.pm lib/JawnOS/Manager/Part08.pm lib/JawnOS/Manager/Index.pm lib/JawnOS/Manager/Declarations.pm templates/configure/device_lister/body.html.ep public/js/manager/configure/01_update_controls.js perl/help/topics_configure.pl
 # covers:    the Windows self-updater - version codes, the release feed, the
-#           detached PowerShell helper and the non-Windows no-op
+#           detached PowerShell helper's one-owner update sequence (stop, wait,
+#           install, verify, start once) and the non-Windows no-op
 
 use strict;
 use warnings;
@@ -91,7 +92,48 @@ like($script, qr/wscript\.exe/, 'the house is started again through wscript');
 like($script, qr/launch\.vbs/, 'with the installer\'s launch.vbs');
 like($script, qr/jawnos-update\.log/, 'and the helper logs to %TEMP%');
 like($script, qr/curl\.exe|Invoke-WebRequest/, 'the download has a Windows tool');
-unlike($script, qr/__URL__|__SHA__|__SIZE__|__FILENAME__/, 'no placeholder is left in it');
+unlike($script, qr/__URL__|__SHA__|__SIZE__|__FILENAME__|__INSTALLDIR__/, 'no placeholder is left in it');
+
+# --- the helper is one ordered sequence: stop, install, verify, start -------
+# The script only runs on Windows, so its order is pinned here. Inno cannot
+# replace a locked perl.exe and a second master would fight for the ports, so
+# the house must be stopped before the Setup runs; and it must be started once,
+# only after the installer has left a tree the updater can prove.
+my $install_root = 'C:\\Users\\me\\AppData\\Local\\JawnOS';
+my $ordered = subs::windows_update_helper_script($manifest, { install_dir => $install_root });
+
+like($ordered, qr/\$installed = '\Q$install_root\E'/,
+	'the install the updater runs from is embedded, not assumed');
+like($ordered, qr/Join-Path \$env:LOCALAPPDATA 'JawnOS'/,
+	'%LOCALAPPDATA%\\JawnOS is the fallback');
+like($ordered, qr/\.president\\pid/, 'the master pid record is read');
+like($ordered, qr/working_port/, 'the configured ports are read');
+like($ordered, qr/config\.json/, 'the install is judged by config.json');
+like($ordered, qr/database\\jawnos\.db/, 'and by the database');
+like($ordered, qr/jawnos-update\.log/, 'every step goes to the update log');
+like($ordered, qr/TotalSeconds/, 'including how long each wait took');
+
+my $stop_at   = index($ordered, "scripts\\manager_killer.pl");
+my $wait_at   = index($ordered, 'Wait-HouseStopped $masterPid $ports 30');
+my $kill_at   = index($ordered, 'Stop-Process -Id $masterPid -Force');
+my $setup_at  = index($ordered, 'Start-Process -FilePath $setup');
+my $exit_at   = index($ordered, '$proc.ExitCode -ne 0');
+my $verify_at = index($ordered, 'Test-InstallTree $root');
+my $launch_at = index($ordered, "Start-Process -FilePath 'wscript.exe'");
+
+ok($stop_at >= 0 && $setup_at > $stop_at,
+	'the house is asked to stop before the Setup.exe runs');
+ok($wait_at > $stop_at && $wait_at < $setup_at,
+	'and the stop is waited for, bounded, before the install');
+ok($kill_at > $wait_at && $kill_at < $setup_at,
+	'with the master pid terminated when the polite stop does not finish');
+ok($exit_at > $setup_at && $exit_at < $launch_at,
+	'a failed installer is reported instead of starting the house');
+ok($verify_at > $exit_at && $verify_at < $launch_at,
+	'and the install tree is proven before the house is started');
+
+my $starts = () = $ordered =~ /Start-Process -FilePath 'wscript\.exe'/g;
+is($starts, 1, 'the house is started exactly once');
 
 # --- non-Windows is a named no-op --------------------------------------------
 SKIP: {
@@ -136,5 +178,6 @@ like($js, qr{url: '/manager/windows_update'}, 'against the routed path');
 
 my $help = read_file("$root/perl/help/topics_configure.pl");
 like($help, qr/Update Windows app/, 'the Configure help explains the button');
+like($help, qr/stops the running house first and waits/, 'and says the house is stopped and waited for');
 
 done_testing();

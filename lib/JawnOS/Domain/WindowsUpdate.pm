@@ -3,10 +3,12 @@ package subs;
 # Windows self-update: the Windows install is a git-archive copy with no .git,
 # so git_watcher_check answers at once and the code watcher can never move it.
 # A Windows program updates the way Windows expects: fetch the release
-# manifest, download the Setup.exe, verify it, run it silently, and let the
-# installer stop the house (PrepareToInstall) and keep config.json and the
-# database. One more step is ours: the helper starts the house again with the
-# same launch.vbs the shortcuts use, after the installer exits.
+# manifest, download the Setup.exe, verify it, then hand the install to Inno.
+# Inno cannot replace a locked perl.exe, and two masters would fight for the
+# ports, so the helper stops the house first - the tree's own killer, then the
+# master pid record, both bounded - before it runs the Setup, and starts the
+# house again only once the installer has left a working tree. The installer
+# keeps config.json and the database.
 #
 # The helper is a detached PowerShell script written under %TEMP%, outside the
 # install tree, so replacing that tree cannot delete the program doing the
@@ -122,16 +124,38 @@ sub _ps_quote {
 # install has begun. The placeholders keep Perl from interpolating PowerShell's
 # own $variables.
 sub windows_update_helper_script {
-	my ($man) = @_;
+	my ($man, $opts) = @_;
+	$opts ||= {};
 	my $url      = &windows_update_url($man) || '';
 	my $sha      = lc($man->{'sha256'} || '');
 	my $size     = $man->{'size'} + 0;
 	my $filename = $man->{'filename'} || '';
 
+	# The install root is the running tree's parent: on a Windows install
+	# subs::install_dir() answers the app tree, <root>\app, and launch.vbs and
+	# runtime\ sit beside it. An explicit option wins (a caller, or a test that
+	# cannot load the tree); when neither answers, the helper falls back to the
+	# Setup.exe's own default under %LOCALAPPDATA%.
+	my $install_root = '';
+	if (defined $opts->{'install_dir'} && length $opts->{'install_dir'}) {
+		$install_root = $opts->{'install_dir'};
+	}
+	else {
+		my $tree = eval { &subs::install_dir() };
+		if (defined $tree && length $tree) {
+			require File::Basename;
+			$install_root = File::Basename::dirname($tree);
+		}
+	}
+	$install_root = '' unless defined $install_root;
+
 	my $script = <<'POWERSHELL';
 # JawnOS Windows self-updater. Written under %TEMP% so replacing the install
-# tree cannot delete it. It downloads the release Setup.exe, verifies its size
-# and sha256, runs it silently, then starts the house again.
+# tree cannot delete it. It downloads the release Setup.exe and verifies its
+# size and sha256. Then, in this order: ask the running house to stop and wait
+# for the master pid and the ports; terminate the master pid if the polite stop
+# did not finish; run the Setup.exe; prove the install left a working tree;
+# start the house once from that tree. Every step and its duration is logged.
 $ErrorActionPreference = 'Stop'
 $log = Join-Path $env:TEMP 'jawnos-update.log'
 function Write-UpdateLog([string]$line) {
@@ -142,6 +166,106 @@ $url = __URL__
 $wantSha = __SHA__
 $wantSize = [int64]__SIZE__
 $setup = Join-Path $env:TEMP __FILENAME__
+$installed = __INSTALLDIR__
+
+# Never stand in the tree this script is about to replace.
+if (Test-Path -LiteralPath $env:TEMP) { Set-Location -LiteralPath $env:TEMP }
+
+function Test-InstallRoot([string]$root) {
+	if (-not $root) { return $false }
+	return ((Test-Path -LiteralPath (Join-Path $root 'app')) -and
+		(Test-Path -LiteralPath (Join-Path $root 'runtime')))
+}
+
+# The install the running manager came from; the Setup.exe's own default is the
+# fallback, for a helper that cannot answer or a tree that is not an install.
+if (-not (Test-InstallRoot $installed)) {
+	$installed = Join-Path $env:LOCALAPPDATA 'JawnOS'
+}
+Write-UpdateLog ('install root: ' + $installed)
+$appDir = Join-Path $installed 'app'
+
+function Get-HousePorts {
+	$ports = @(3000, 45545)
+	$config = Join-Path $appDir 'config.json'
+	if (Test-Path -LiteralPath $config) {
+		try {
+			$cfg = Get-Content -LiteralPath $config -Raw | ConvertFrom-Json
+			if ($cfg.port) { $ports[0] = [int]$cfg.port }
+			if ($cfg.working_port) { $ports[1] = [int]$cfg.working_port }
+			if ($cfg.ws_port) { $ports += [int]$cfg.ws_port }
+		}
+		catch {
+			Write-UpdateLog ('could not read the ports from ' + $config + '; using 3000 and 45545')
+		}
+	}
+	return @($ports | Select-Object -Unique)
+}
+
+function Get-MasterPid {
+	$file = Join-Path $env:USERPROFILE '.president\pid'
+	if (-not (Test-Path -LiteralPath $file)) { return 0 }
+	$text = Get-Content -LiteralPath $file -Raw -ErrorAction SilentlyContinue
+	if (-not $text) { return 0 }
+	$text = $text.Trim()
+	if ($text -match '^[0-9]+$') { return [int]$text }
+	return 0
+}
+
+# A recycled pid is not the master: only a perl.exe is worth signalling.
+function Get-MasterProcess([int]$masterPid) {
+	if ($masterPid -le 0) { return $null }
+	$proc = Get-Process -Id $masterPid -ErrorAction SilentlyContinue
+	if (-not $proc) { return $null }
+	if ($proc.ProcessName -notmatch '^perl') { return $null }
+	return $proc
+}
+
+function Test-PortBusy([int]$port) {
+	$client = $null
+	try {
+		$client = New-Object System.Net.Sockets.TcpClient
+		$task = $client.ConnectAsync('127.0.0.1', $port)
+		if (-not $task.Wait(500)) { return $false }
+		return $client.Connected
+	}
+	catch {
+		return $false
+	}
+	finally {
+		if ($client) { $client.Close() }
+	}
+}
+
+function Test-HouseStopped([int]$masterPid, [int[]]$ports) {
+	if (Get-MasterProcess $masterPid) { return $false }
+	foreach ($port in $ports) {
+		if (Test-PortBusy $port) { return $false }
+	}
+	return $true
+}
+
+function Wait-HouseStopped([int]$masterPid, [int[]]$ports, [int]$seconds) {
+	$deadline = (Get-Date).AddSeconds($seconds)
+	while ((Get-Date) -lt $deadline) {
+		if (Test-HouseStopped $masterPid $ports) { return $true }
+		Start-Sleep -Milliseconds 250
+	}
+	return (Test-HouseStopped $masterPid $ports)
+}
+
+# config.json and the database are what the installer seeds and what the house
+# needs to boot; perl.exe is the runtime it runs on. All three, or no start.
+function Test-InstallTree([string]$root) {
+	if (-not $root) { return $false }
+	$app = Join-Path $root 'app'
+	$perl = Join-Path $root 'runtime\perl\bin\perl.exe'
+	$config = Join-Path $app 'config.json'
+	$db = Join-Path $app 'database\jawnos.db'
+	return ((Test-Path -LiteralPath $perl) -and
+		(Test-Path -LiteralPath $config) -and
+		(Test-Path -LiteralPath $db))
+}
 
 try {
 	Write-UpdateLog ('downloading ' + $url)
@@ -163,19 +287,99 @@ try {
 	}
 	Write-UpdateLog ('verified ' + $item.Length + ' bytes, sha256 ' + $gotSha)
 
-	$setupLog = Join-Path $env:TEMP 'jawnos-setup.log'
-	Write-UpdateLog 'running the installer'
-	$proc = Start-Process -FilePath $setup -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/MERGETASKS=!lanaccess',('/LOG="' + $setupLog + '"') -Wait -PassThru
-	Write-UpdateLog ('installer exited ' + $proc.ExitCode)
-
-	$launch = Join-Path $env:LOCALAPPDATA 'JawnOS\launch.vbs'
-	if (Test-Path -LiteralPath $launch) {
-		Start-Process -FilePath 'wscript.exe' -ArgumentList ('"' + $launch + '"')
-		Write-UpdateLog ('started the house again from ' + $launch)
+	# --- stop the house, and prove it is gone -------------------------------
+	# Inno cannot replace a locked perl.exe, and a second master would fight for
+	# the ports. The tree's own killer knows the master, the workers and the
+	# port; the pid record is the fallback when the runtime cannot run it.
+	$masterPid = Get-MasterPid
+	$ports = @(Get-HousePorts)
+	$perl = Join-Path $installed 'runtime\perl\bin\perl.exe'
+	$killer = Join-Path $appDir 'scripts\manager_killer.pl'
+	$stopStarted = Get-Date
+	if ((Test-Path -LiteralPath $perl) -and (Test-Path -LiteralPath $killer)) {
+		Write-UpdateLog ('asking the house to stop (master pid ' + $masterPid + ', ports ' + ($ports -join ', ') + ')')
+		Push-Location -LiteralPath $appDir
+		try {
+			$env:JAWNOS_PORTABLE = '1'
+			$env:JAWNOS_TRANSPORT = 'tcp'
+			$env:JAWNOS_DIR = $appDir
+			$env:PATH = "$installed\runtime\c\bin;$installed\runtime\perl\bin;$env:PATH"
+			$saved = $ErrorActionPreference
+			$ErrorActionPreference = 'Continue'
+			try {
+				& $perl 'scripts\manager_killer.pl' 'master' 2>&1 | Out-Null
+				Write-UpdateLog ('manager_killer exited ' + $LASTEXITCODE)
+			}
+			catch {
+				Write-UpdateLog ('manager_killer did not run: ' + $_.Exception.Message)
+			}
+			finally {
+				$ErrorActionPreference = $saved
+			}
+		}
+		finally {
+			Pop-Location
+		}
 	}
 	else {
-		Write-UpdateLog ('launch.vbs not found at ' + $launch)
+		Write-UpdateLog ('no bundled killer at ' + $killer + '; using the master pid record')
 	}
+
+	$stopped = Wait-HouseStopped $masterPid $ports 30
+	Write-UpdateLog ('waited for master pid ' + $masterPid + ' and ports ' + ($ports -join ', ') + ': stopped=' + $stopped + ' after ' + [math]::Round(((Get-Date) - $stopStarted).TotalSeconds, 1) + 's')
+
+	if (-not $stopped -and (Get-MasterProcess $masterPid)) {
+		Write-UpdateLog ('the polite stop did not finish; terminating master pid ' + $masterPid)
+		try {
+			Stop-Process -Id $masterPid -Force
+		}
+		catch {
+			Write-UpdateLog ('could not terminate pid ' + $masterPid + ': ' + $_.Exception.Message)
+		}
+		$stopped = Wait-HouseStopped $masterPid $ports 10
+		Write-UpdateLog ('after the forced stop: stopped=' + $stopped + ' after ' + [math]::Round(((Get-Date) - $stopStarted).TotalSeconds, 1) + 's')
+	}
+	if (-not $stopped) {
+		# A tree that will not leave must not wedge the update: the installer
+		# runs against it and the result is recorded, not guessed at.
+		Write-UpdateLog 'warning: the house did not stop; the installer will run against a tree still in use'
+	}
+
+	# --- install, then prove the tree ---------------------------------------
+	$setupLog = Join-Path $env:TEMP 'jawnos-setup.log'
+	Write-UpdateLog ('running the installer ' + $setup)
+	$installStarted = Get-Date
+	$proc = Start-Process -FilePath $setup -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/MERGETASKS=!lanaccess',('/LOG="' + $setupLog + '"') -Wait -PassThru
+	$installSeconds = [math]::Round(((Get-Date) - $installStarted).TotalSeconds, 1)
+	Write-UpdateLog ('installer exited ' + $proc.ExitCode + ' after ' + $installSeconds + 's')
+	if ($proc.ExitCode -ne 0) {
+		throw ('the installer failed with exit code ' + $proc.ExitCode + ' after ' + $installSeconds + 's; see ' + $setupLog)
+	}
+
+	$root = $installed
+	if (-not (Test-InstallTree $root)) {
+		$fallback = Join-Path $env:LOCALAPPDATA 'JawnOS'
+		if (($fallback -ne $root) -and (Test-InstallTree $fallback)) {
+			Write-UpdateLog ('the install is at ' + $fallback + ', not ' + $root)
+			$root = $fallback
+		}
+		else {
+			throw ('the installer did not produce a working tree at ' + $root + '; config.json, the database and perl.exe are required')
+		}
+	}
+	Write-UpdateLog ('install verified at ' + $root)
+
+	# --- start the house exactly once ---------------------------------------
+	$launch = Join-Path $root 'launch.vbs'
+	if (-not (Test-Path -LiteralPath $launch)) {
+		$fallback = Join-Path (Join-Path $env:LOCALAPPDATA 'JawnOS') 'launch.vbs'
+		if (Test-Path -LiteralPath $fallback) { $launch = $fallback }
+	}
+	if (-not (Test-Path -LiteralPath $launch)) {
+		throw ('the install has no launch.vbs at ' + $launch + '; the house was not started')
+	}
+	Start-Process -FilePath 'wscript.exe' -ArgumentList ('"' + $launch + '"')
+	Write-UpdateLog ('started the house again from ' + $launch)
 	exit 0
 }
 catch {
@@ -187,10 +391,12 @@ POWERSHELL
 	my $quoted_url      = &_ps_quote($url);
 	my $quoted_sha      = &_ps_quote($sha);
 	my $quoted_filename = &_ps_quote($filename);
+	my $quoted_install  = &_ps_quote($install_root);
 	$script =~ s/__URL__/$quoted_url/;
 	$script =~ s/__SHA__/$quoted_sha/;
 	$script =~ s/__SIZE__/$size/;
 	$script =~ s/__FILENAME__/$quoted_filename/;
+	$script =~ s/__INSTALLDIR__/$quoted_install/;
 	return $script;
 }
 
