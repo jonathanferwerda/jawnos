@@ -246,7 +246,7 @@ sub clock_relay {
 					# the tunnel-aware 'manager' url, not a bare agent.
 					my $hop = &subs::remote_useragent_maker({ rm => $rm, signatorial => $sig });
 					if ($hop && $hop->{'ua'} && $hop->{'manager'}) {
-						$hop->{'ua'}->insecure(1)->post($hop->{'manager'} . '/manager/clock/alarm' => form => \%form)->result;
+						$hop->{'ua'}->post($hop->{'manager'} . '/manager/clock/alarm' => form => \%form)->result;
 					}
 				};
 			}
@@ -382,7 +382,7 @@ sub clock_alarm_push {
 			# immediate push died and no confirmation was ever possible.
 			my $hop = &subs::remote_useragent_maker({ rm => $rm, signatorial => $sig });
 			die "no agent\n" unless $hop && $hop->{'ua'} && $hop->{'manager'};
-			my $ua = $hop->{'ua'}->insecure(1);
+			my $ua = $hop->{'ua'};
 			$ua->inactivity_timeout(4)->request_timeout(4);
 			my $res = $ua->post($hop->{'manager'} . '/manager/clock/alarm' => form => \%form)->result;
 			die "no answer\n" unless $res && $res->is_success;
@@ -431,7 +431,7 @@ sub clock_alarm_push {
 			eval {
 				my $hop = &subs::remote_useragent_maker({ rm => $rm, signatorial => $relay_sig });
 				die "no agent\n" unless $hop && $hop->{'ua'} && $hop->{'manager'};
-				my $ua = $hop->{'ua'}->insecure(1);
+				my $ua = $hop->{'ua'};
 				$ua->inactivity_timeout(5)->request_timeout(5);
 				my %fwd = %form;
 				$fwd{'forward_to'} = join(',', @still);

@@ -749,7 +749,7 @@ sub volume_relay {
 					# one slow peer must not hold the mixer peer behind it.
 					my $hop = &subs::remote_useragent_maker({ rm => $rm, signatorial => $rm->{'signatorial'}, no_probe => 1 });
 					next unless $hop && $hop->{'ua'} && $hop->{'manager'};
-					my $res = $hop->{'ua'}->insecure(1)->connect_timeout(1)->inactivity_timeout(2)
+					my $res = $hop->{'ua'}->connect_timeout(1)->inactivity_timeout(2)
 						->post($hop->{'manager'} . '/manager/volume' => form => \%form)->result;
 					$log->info('volume relay to ' . ($rm->{'signatorial'} || '?') . ': ' . ($res ? $res->code : 'no answer')) if $log;
 				};

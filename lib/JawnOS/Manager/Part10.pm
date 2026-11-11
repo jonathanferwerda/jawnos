@@ -273,7 +273,7 @@ sub remote_upgrade_plan($c,$params) {
 		}
 		my $ua = $remote_machine->{'ua'};
 
-		my $res = eval { return $ua->insecure(1)->inactivity_timeout(180)->request_timeout(300)->get($url)->result };
+		my $res = eval { return $ua->inactivity_timeout(180)->request_timeout(300)->get($url)->result };
 
 		if ($res) {
 

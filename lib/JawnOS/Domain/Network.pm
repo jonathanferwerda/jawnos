@@ -757,7 +757,7 @@ sub ble_relay_route {
 		my $hop = &subs::remote_useragent_maker({ rm => $rm, signatorial => $sig });
 		next unless $hop && $hop->{'ua'} && $hop->{'manager'};
 		my $res = eval {
-			$hop->{'ua'}->insecure(1)->inactivity_timeout(10)->post(
+			$hop->{'ua'}->inactivity_timeout(10)->post(
 				$hop->{'manager'} . '/manager/ble/relay' => form => { payload => $payload }
 			)->result;
 		};

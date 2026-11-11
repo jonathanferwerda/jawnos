@@ -300,7 +300,7 @@ sub action_3694 {
 			$ua = Mojo::UserAgent->new();
 			$ua->on(start => sub { my ($ua, $tx) = @_; &subs::peer_sign_request($tx->req); });
 		}
-		$ua = $ua->insecure(1)->connect_timeout(2)->inactivity_timeout(4)->request_timeout(6);
+		$ua = $ua->connect_timeout(2)->inactivity_timeout(4)->request_timeout(6);
 		push @uas, $ua;
 		my $url = ($peer->{'manager'} || $rm->{'manager'}) . '/manager/market/cameras?peer=yes&signatorial=' . &subs::signatorial_designer();
 		my $m = $rm->{'ip'} || $rm->{'hostname'} || 'peer';
@@ -371,7 +371,7 @@ sub action_3781 {
 			$ua = Mojo::UserAgent->new();
 			$ua->on(start => sub { my ($ua, $tx) = @_; &subs::peer_sign_request($tx->req); });
 		}
-		$ua = $ua->insecure(1)->connect_timeout(2)->inactivity_timeout(4)->request_timeout(6);
+		$ua = $ua->connect_timeout(2)->inactivity_timeout(4)->request_timeout(6);
 		my $url = ($peer->{'manager'} || $rm->{'manager'}) . '/manager/market/scan/remote?peer=yes&signatorial=' . &subs::signatorial_designer();
 		my $res = eval { $ua->post($url => form => { %pass, browser_tab_id => $bti, timestamp => &subs::rightNow() })->result };
 		return $c->render(json => $res && $res->is_success ? { ok => 1, machine => $machine } : { ok => 0, error => ($res ? ('the peer answered ' . $res->code) : 'the peer did not answer') });
@@ -503,7 +503,7 @@ sub action_4184 {
 				$ua = Mojo::UserAgent->new();
 				$ua->on(start => sub { my ($ua, $tx) = @_; &subs::peer_sign_request($tx->req); });
 			}
-			$ua = $ua->insecure(1)->connect_timeout(2)->inactivity_timeout(4)->request_timeout(6);
+			$ua = $ua->connect_timeout(2)->inactivity_timeout(4)->request_timeout(6);
 			my $url = ($peer->{'manager'} || $rm->{'manager'}) . '/manager/market/scan/collect?peer=yes&signatorial=' . &subs::signatorial_designer();
 			my $res = eval { $ua->post($url => form => {
 				session => $session,

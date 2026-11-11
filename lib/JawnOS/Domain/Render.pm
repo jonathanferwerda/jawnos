@@ -646,7 +646,7 @@ sub destination_relay {
 		# inactivity timeout (3000 s), which is far too long to hold a tap.
 		$hop->{'ua'}->connect_timeout(4)->inactivity_timeout(12);
 		my $res = eval {
-			$hop->{'ua'}->insecure(1)->post($hop->{'manager'} . '/manager/reset' => form => $form)->result;
+			$hop->{'ua'}->post($hop->{'manager'} . '/manager/reset' => form => $form)->result;
 		};
 		if ($res && eval { $res->is_success }) {
 			$sent++;

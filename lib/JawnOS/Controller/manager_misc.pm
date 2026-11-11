@@ -731,7 +731,7 @@ sub action_7077 {
 		my $port = $remote->{'port'};
 		my $string = '/manager/magazine/publishing_receive';
 		my $remote_params = { articles => $json, nonpublished => $npjson };
-		my $res = eval { return $remote_machine->{'ua'}->insecure(1)->post('https://' . $ip . ':' . $port . $string => form => $remote_params)->result };
+		my $res = eval { return $remote_machine->{'ua'}->post('https://' . $ip . ':' . $port . $string => form => $remote_params)->result };
 		if ($res) {
 			$c->render('text' => $res->body);
 		}

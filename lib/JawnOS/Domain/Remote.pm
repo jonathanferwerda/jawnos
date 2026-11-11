@@ -501,6 +501,10 @@ sub remote_useragent_maker($data) {
 		$rm->{'manager'} = $manager;
 		&subs::peer_tls_verify($ua);
 	}
+	# The TLS decision is made here and handed to the caller in `ua`: a verified
+	# peer keeps the house CA, an unverified one is marked insecure below. Callers
+	# must not call insecure(1) on this agent - that override downgrades a peer
+	# this function already proved.
 	if ($rm->{'cookie'}) {
 		my $cookie_jar = decode_json $rm->{'cookie'};
 		# The cookie was stored with the address the peer was reached on (often a

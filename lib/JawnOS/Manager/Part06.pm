@@ -350,7 +350,7 @@ sub market_scan_device_send {
 			$ua = Mojo::UserAgent->new();
 			$ua->on(start => sub { my ($ua, $tx) = @_; &subs::peer_sign_request($tx->req); });
 		}
-		$ua = $ua->insecure(1)->connect_timeout(2)->inactivity_timeout(4)->request_timeout(6);
+		$ua = $ua->connect_timeout(2)->inactivity_timeout(4)->request_timeout(6);
 		my $url = ($peer->{'manager'} || $rm->{'manager'}) . '/manager/market/scan/remote?peer=yes&signatorial=' . &subs::signatorial_designer();
 		my $res = eval { $ua->post($url => form => { %opts, browser_tab_id => $bti, stop => ($stop ? 1 : 0), timestamp => &subs::rightNow() })->result };
 		return ($res && $res->is_success) ? 1 : 0;
