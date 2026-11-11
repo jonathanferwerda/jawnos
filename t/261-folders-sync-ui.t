@@ -1,4 +1,4 @@
-# tests-for: lib/JawnOS/Controller/manager_folders2.pm templates/folders/folders.html.ep public/js/manager/folders.js public/js/manager/folders/02_archive_and_keyboard.js public/css/manager.css perl/help/topics_apps.pl perl/language.pl
+# tests-for: lib/JawnOS/Controller/manager_folders2.pm lib/JawnOS/Controller/manager_folders.pm templates/folders/folders.html.ep public/js/manager/folders.js public/js/manager/folders/02_archive_and_keyboard.js public/css/manager.css perl/help/topics_apps.pl perl/language.pl
 # covers:    Folders on a thin window, CloudSync drawn in the listing, and the Sync queue.
 
 use strict;
@@ -8,7 +8,9 @@ use FindBin;
 use lib "$FindBin::Bin/lib", "t/lib";
 use Test::More;
 use File::Slurp qw(read_file);
+use Mojo::Template;
 use RepoSource;
+use JawnOSTest;
 
 # These are the UI rules the Folders app now follows: Places is automatic on a
 # wide window and an overlay behind the toolbar button on a thin one; CloudSync
@@ -17,6 +19,7 @@ use RepoSource;
 
 my $root      = repo_root();
 my $controller = read_file("$root/lib/JawnOS/Controller/manager_folders2.pm");
+my $listing_controller = read_file("$root/lib/JawnOS/Controller/manager_folders.pm");
 my $template  = template_source('folders/folders');
 my $js        = js_source('public/js/manager/folders.js');
 my $css       = read_file("$root/public/css/manager.css");
@@ -87,6 +90,78 @@ like($js, qr/foldersArchiveBar/, 'the queue keeps the byte progress bar');
 like($js, qr/function foldersJobWatcher/, 'and the job watcher still updates progress');
 like($controller, qr/'archive_fetch_home', 'cloud_sync'/,
 	'action_30392 lists CloudSync jobs beside archive jobs');
+
+# ---- the page compiles with the keys its routes pass ------------------------
+#
+# Mojo::Template declares exactly the stash keys it is handed and compiles the
+# template under strict, so a page that reads a key its route does not pass is
+# not a blank row: it is a 500 on that whole route. The listing route passed
+# neither `place` nor `cloud_rows` (only the CloudSync route did), and every
+# Folders window answered 500 until that was noticed by hand. A default like
+# `my $place = $place // ''` cannot rescue it: the name it reads is the one it
+# is declaring, so it is the same compile error.
+my @page_renders;
+foreach my $source ($controller, $listing_controller) {
+	while ($source =~ /render_to_string\((.*?)\n\t\);/gs) {
+		my $call = $1;
+		push @page_renders, $call if $call =~ /template\s*=>\s*'folders\/folders'/;
+	}
+}
+is(scalar @page_renders, 2, 'the Folders page is rendered from both routes');
+for my $call (@page_renders) {
+	like($call, qr/place\s*=>/, 'every Folders render passes place');
+	like($call, qr/cloud_rows\s*=>/, 'every Folders render passes cloud_rows');
+}
+
+# Render the real page with the stash those routes build. The database calls in
+# the page fail in this sandbox and stop the render partway, so what is asserted
+# is the compile: the strict error (or an aborted template) is the failure this
+# test exists to catch, and the markup above the first query proves the render
+# started.
+my $render_count = 0;
+my $stub_c = bless {}, 'FoldersRenderStub';
+sub FoldersRenderStub::stash { return undef }
+my $read_template = sub { read_file("$root/templates/$_[0].html.ep") };
+my $render_page = sub {
+	my (%stash) = @_;
+	my $namespace = 'FoldersRender' . ++$render_count;
+	my $mt = Mojo::Template->new(vars => 1, namespace => $namespace);
+	no strict 'refs';
+	no warnings 'redefine';
+	*{"${namespace}::include"} = sub {
+		my ($name, @pairs) = @_;
+		return '' unless $name =~ m{^folders/};
+		my $src = $read_template->($name);
+		return $mt->render($src, { @pairs, c => $stub_c });
+	};
+	my $src = $read_template->('folders/folders');
+	return $mt->render($src, \%stash);
+};
+my %page = (
+	fo => { folder => '', display_folder => '', display_name => 'Folders', files => [], disk => {} },
+	folder => '',
+	folders_id => 'f0123456789a',
+	tab_id => 't0123456789a',
+	unlocked => 0,
+	unlock => '',
+	machines => [],
+	remote_uuid => '',
+	settings => {},
+	c => $stub_c
+);
+my $compile_bad = qr/requires explicit package name|Execution of template aborted|syntax error at template/;
+my %shapes = (
+	'the listing, as its route renders it' => [ place => '', cloud_rows => [] ],
+	'the CloudSync place, as its route renders it' => [
+		place => { name => 'CloudSync', home => '/home/test', folder => '', folder_name => '' },
+		cloud_rows => []
+	],
+);
+foreach my $label (sort keys %shapes) {
+	my $out = $render_page->(%page, @{ $shapes{$label} });
+	unlike($out, $compile_bad, "$label compiles with the keys the route passes");
+}
+
 
 # ---- only a folder inside home can sync -------------------------------------
 

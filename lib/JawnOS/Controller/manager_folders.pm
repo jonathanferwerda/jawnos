@@ -132,7 +132,12 @@ sub action_29094 {
 		unlocked => $unlocked,
 		unlock => $unlock,
 		machines => $machines,
-		remote_uuid => $remote_uuid
+		remote_uuid => $remote_uuid,
+		# The page reads these two only when it draws the CloudSync place, but
+		# the template is compiled strictly with the keys it is given: leaving
+		# one out is a 500 on this route, not a blank row.
+		place => '',
+		cloud_rows => []
 	);
 
 	my $html = &Manager::window_maker({ user_agent => $c->param('user_agent'), app => 'folders', window_id => $folders_id, window_name => $window_name, contents => $contents }, $timestamp);

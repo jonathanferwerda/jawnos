@@ -7,7 +7,6 @@
     person is working in, so one set of selectors serves every window. %>
 <% my $home = &subs::home('~/'); $home =~ s{/+$}{}; %>
 <% my $folder = $fo->{'folder'} // ''; %>
-<% my $place = $place // ''; %>
 <% my @crumbs; %>
 % if (index($folder, $home) == 0) {
 	% push @crumbs, { name => 'Home', path => $home };
