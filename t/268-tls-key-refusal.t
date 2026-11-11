@@ -269,6 +269,61 @@ my $row = {
 	ok($ret->{'tls_refused'}, 'the stubbed refusal still comes back');
 }
 
+# --- a tunnel row whose tunnel is not up -------------------------------------
+# The hub's rows for the machines that used to dial out to it kept tunnel 'yes'
+# after the mesh moved their route to the tailnet. Mapping an absent tunnel built
+# a loopback manager with no port, so the login was refused as "unverified"
+# although the peer was answering on a direct address its house-CA leaf proves.
+{
+	package FakeRes;
+	sub body { return '{"authentication":"denied"}' }
+}
+{
+	my ($seen, $ret);
+	{
+		no warnings 'redefine';
+		local *subs::db_select = sub { return bless {}, 'FakeRoster' };
+		local *subs::peer_secure_url = sub { $seen = $_[1]; return ($_[1], 1) };
+		local *subs::peer_ca_file = sub { '/fixture/house-ca.pem' };
+		local *subs::peer_tls_verify = sub { return 1 };
+		local *subs::log_writer = sub { };
+		local *subs::tunnel_port_mapper = sub { return {} };
+		local *Manager::manager_file_maker = sub { return 'here.enc' };
+		local *Manager::sesh_login_url = sub { return 'https://100.64.0.9:45545/manager/sesh_check' };
+		local *FakeTX::result = sub { return bless {}, 'FakeRes' };
+		local *Mojo::UserAgent::new = sub { FakeUA->new };
+		$ret = Manager::remote_device_connect({
+			manager => 'https://100.64.0.9:45545/manager', ip => '100.64.0.9',
+			signatorial => 'ab' x 8, password => 'house-key-not-a-real-key',
+			tunnel => 'yes', port => '45545',
+		});
+	}
+	is($seen, 'https://100.64.0.9:45545', 'an absent tunnel keeps the direct route');
+	ok($ret && !$ret->{'tls_refused'}, 'so the login is not refused as unverified');
+}
+
+# A live tunnel port still takes the loopback route the tunnel serves.
+{
+	my ($seen, $ret);
+	{
+		no warnings 'redefine';
+		local *subs::db_select = sub { return bless {}, 'FakeRoster' };
+		local *subs::peer_secure_url = sub { $seen = $_[1]; return ($_[1], 0) };
+		local *subs::peer_ca_file = sub { '/fixture/house-ca.pem' };
+		local *subs::peer_tls_verify = sub { return 1 };
+		local *subs::log_writer = sub { };
+		local *subs::tunnel_port_mapper = sub { return { PORT_AHOY => 46000 } };
+		local *FakeTX::result = sub { return bless {}, 'FakeRes' };
+		local *Mojo::UserAgent::new = sub { FakeUA->new };
+		$ret = Manager::remote_device_connect({
+			manager => 'https://100.64.0.9:45545/manager', ip => '100.64.0.9',
+			signatorial => 'ab' x 8, password => 'house-key-not-a-real-key',
+			tunnel => 'yes', port => '45545',
+		});
+	}
+	is($seen, 'https://127.0.0.1:46000', 'a live tunnel still dials its loopback port');
+}
+
 # --- the sources -------------------------------------------------------------
 # No secret transfer may turn verification off again.
 sub slurp_file {

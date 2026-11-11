@@ -82,9 +82,19 @@ sub remote_device_connect($rdata) {
 	my $port = $rdata->{'port'} || $ENV{PORT_AHOY};
 	my $signatorial = &subs::signatorial_designer();
 	my $tuns = {};
+	my $tunnel_port;
 	if ($tunnel eq 'yes') {
 		$tuns = &subs::tunnel_port_mapper({ signatorial => $rdata->{'signatorial'} });
-		$port = $tuns->{'PORT_AHOY'};
+		$tunnel_port = $tuns->{'PORT_AHOY'} if ref $tuns eq 'HASH';
+	}
+	# A tunnel row whose listener is not up must not hide a route the row already
+	# advertises. The hub's rows for the machines that used to dial out to it kept
+	# tunnel 'yes' after the mesh moved to the tailnet, and mapping an absent tunnel
+	# built a loopback manager with no port: the login was then refused as
+	# "unverified" while the peer was answering on a direct address its leaf
+	# proves. Only a live tunnel port takes the loopback route.
+	if ($tunnel eq 'yes' && defined $tunnel_port && $tunnel_port =~ /^\d+$/ && $tunnel_port > 0) {
+		$port = $tunnel_port;
 		$manager = 'https://127.0.0.1:' . $port . '/manager';
 		$vip = '127.0.0.1';
 	}
