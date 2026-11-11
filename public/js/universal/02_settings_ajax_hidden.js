@@ -232,11 +232,17 @@ $(document).on('click', '.dot', function(e) {
 	}
 });
 
-// Every request's own url is stashed on its jqXHR as it starts: the ajaxSetup
-// error callback below is handed no settings, so without this the dot could
-// only ever say "request" where it should name the route that failed.
+// Every request's own url and settings are stashed on its jqXHR as it starts:
+// the ajaxSetup error callback below is handed no settings, so without this the
+// dot could only ever say "request" where it should name the route that failed,
+// and a 401 could not be sent again. The copy is taken here, before jQuery
+// appends a GET's data to the url, so it is a request that can be repeated.
 $.ajaxPrefilter(function(options, original, jqXHR) {
 	if (options && options.url) { jqXHR.jawnos_url = options.url; }
+	if (options) {
+		jqXHR.jawnos_options = $.extend({}, options);
+		jqXHR.jawnos_auth_retry = options.jawnos_auth_retry | 0;
+	}
 });
 
 $.ajaxSetup({
@@ -256,12 +262,23 @@ $.ajaxSetup({
 			console.log('request did not reach jawn:', (e && e.jawnos_url) || '?', t);
 			return;
 		}
-		// A lapsed session is not a request fault. The phone wakes with a stale
-		// cookie after a long sleep, the first background request (the phone
-		// facts sync) meets the Gate, and the old code painted a red dot for it
-		// every time. Go back through the Gate instead: the app's page-finished
-		// check hands over a fresh ticket, and a desktop simply lands on the Gate.
+		// A 401 is not always a lapsed session. The first request a WebView
+		// sends as it wakes can beat its own cookie store, so the server sees
+		// no cookie and answers the Gate; reloading at once threw away an open
+		// window, a playing track or a drawing for a session the house never
+		// ended. Send that request again quietly, with room for the store to
+		// catch up. Only a repeated 401 is a real lapse: then reload, so the
+		// app's page-finished check hands over a fresh ticket (a desktop lands
+		// on the Gate).
 		if (e.status === 401) {
+			var attempt = e.jawnos_auth_retry | 0;
+			if (attempt < 2 && e.jawnos_options) {
+				var again = $.extend({}, e.jawnos_options);
+				again.jawnos_auth_retry = attempt + 1;
+				console.log('session not read yet; retrying:', (e.jawnos_url || 'request'));
+				setTimeout(function() { $.ajax(again); }, attempt === 0 ? 900 : 2500);
+				return;
+			}
 			console.log('session lapsed:', (e.jawnos_url || 'request'));
 			if (!window.__jawnSessionReloading && !document.getElementById('welcome_logo')) {
 				window.__jawnSessionReloading = true;
@@ -283,15 +300,9 @@ $.ajaxSetup({
 	}
 });
 
-// A phone that has been asleep longer than the session's activity window wakes
-// with a stale cookie. Reload once on resume so the app can hand over a fresh
-// ticket before the first tap, instead of losing that tap to a 401.
-var jawnHiddenAt = 0;
-document.addEventListener('visibilitychange', function() {
-	if (document.hidden) { jawnHiddenAt = Date.now(); return; }
-	var hidden = jawnHiddenAt ? (Date.now() - jawnHiddenAt) : 0;
-	jawnHiddenAt = 0;
-	if (hidden > 80 * 60 * 1000 && window.JawnPhone) { location.reload(); }
-});
+// Waking no longer reloads the page after a long sleep. The session cookie
+// outlives the sleep (the server validates it on every request), and the first
+// cookieless request is retried above instead of answered with a reload, so an
+// open window, a playing track and a drawing survive the wake.
 
 
