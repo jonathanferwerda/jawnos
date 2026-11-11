@@ -336,4 +336,31 @@ like($template, qr/data-network-tab="controller"/, 'the Network has a Controller
 like($template, qr/network_panel_controller/, 'and its panel');
 like(source('public/js/manager/network/02_tabs_bluetooth_remote.js'), qr/tab === 'controller'/, 'the tab is a valid Network tab');
 
+
+# --- the 500 on /manager/network: the Controller partial's sockets ----------
+# The partial is an include, so a lexical in the parent template could not reach
+# it and the render died with "Global symbol $websockets requires explicit
+# package name". The action now puts the list in the stash for the include.
+my $action = source('lib/JawnOS/Controller/manager_misc2.pm');
+like($action, qr/render_to_string\(template => 'apps\/network', websockets => \$websockets\)/,
+	'the Network action passes the socket list into the template');
+unlike($template, qr/my \$websockets =/,
+	'the parent template no longer wraps it in a lexical the include cannot see');
+like(source('templates/apps/network/controller.html.ep'), qr/\@\{\$websockets \|\| \[\]\}/,
+	'the Controller partial tolerates an empty stash entry');
+
+# --- the widget's VPN switch -------------------------------------------------
+like($taskbar, qr/\.addClass\('taskbar_network_panel_vpn_button'\)\.attr\('status', 'off'\)/,
+	'the quick panel builds a VPN switch beside Scan');
+like($taskbar, qr/name \+ ' ' \+ jawnosT\('VPN'\)/,
+	'the button names the machine carrying the traffic while it is on');
+like($taskbar, qr/localStorage\.setItem\('vpn_exit', ip\)/,
+	'and remembers that machine for the next press');
+like($taskbar, qr{/manager/tailnet/exit},
+	'it sets the exit node through the existing route');
+like($taskbar, qr/JawnVPN\.setExitNode/,
+	'and uses the Android bridge when it has one');
+like($taskbar, qr/jawnosVpnNodes\(status\)/,
+	'it only offers machines that are online exit nodes');
+
 done_testing();

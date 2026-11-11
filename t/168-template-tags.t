@@ -59,7 +59,6 @@ my @self_contained = qw(
 	templates/terminal/terminal.html.ep
 	templates/homepage.html.ep
 	templates/manager.html.ep
-	templates/keyboard.html.ep
 	templates/marker.html.ep
 	templates/pseudonyms.html.ep
 	templates/measures/measures.html.ep

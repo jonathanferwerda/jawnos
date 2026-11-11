@@ -726,22 +726,5 @@ sub action_42101 {
 	$c->render(json => { ok => 1 });
 }
 
-# POST /manager/keyboard
-sub action_42427 {
-	my $c = shift;
-	my $toggle = $c->param('toggle');
-	my $remote_uuid = $c->param('remote_uuid');
-	my $remote_control = &subs::setting_grabber({ app => 'me', setting => $toggle . '_machine' });
-	# The picker's choice rides in this request and is the authority for this
-	# render: the setting POST that saves it can land after us, and an explicit
-	# empty pick (Me) must not fall back to the stored machine. Do not relay the
-	# panel to the peer to fill its view: the panel already renders the local
-	# pick, while a relayed copy shows that machine's own view ("ME!") and can
-	# stall the render while it waits on an unreachable peer.
-	my $picked = defined $remote_uuid ? $remote_uuid : $remote_control;
-	my $kb = &keyboard_maker($c, $picked);
-
-	$c->render(json => { keyboard => $kb });
-}
 
 1;

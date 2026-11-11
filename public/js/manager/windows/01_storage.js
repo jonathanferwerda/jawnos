@@ -74,34 +74,9 @@ function windowSaver(skip_act) {
 		// once per window, then throw the result away. That is very expensive and
 		// runs on every heartbeat windowSaver() call, so it was removed.
 	});
-	$('.keyboard.bc').each(function(i,v) {
-		var left = $(v).css('left');
-		var top = $(v).css('top');
-		var height = $(v).css('height');
-		var width = $(v).css('width');
-		var zindex = $(v).css('z-index');
-		var toggle = $(v).attr('id');
-//		var html = $(v).closest('.typewriter').html();
-		storage[toggle] = {
-			type: 'keyboard',
-			top: top,
-			left: left,
-			height: height,
-			width: width,
-			zindex: zindex,
-			browser_tab_id: bti,
-			toggle: $(v).attr('toggle'),
-	//		typewriter: html
-		};
-	});
 	$.each(storage,function(i,v) {
 		if (v.type == 'window') {
 			if (!$('#window_' + v['timestamp'])) {
-				delete storage[i];
-			}
-		}
-		else if (v.type == 'keyboard') {
-			if (!$('#' + i).is(':visible')) {
 				delete storage[i];
 			}
 		}
@@ -145,30 +120,6 @@ function windowRetriever() {
 		if (v.type == 'window') {
 			var app = JSON.stringify({ name: i });
 			appWindowLoader(i,v);
-		}
-		else if (v.type == 'keyboard') {
-			// the old floating keyboard and calculator panels are retired; their
-			// saved windows now open the docked on-screen keyboard instead
-			if (i == 'keyboard' || i == 'calculator') { return; }
-			
-		//	$('#keyboard_container').append('<div class="typewriter">' + v.typewriter + '</div>');
-
-			keyboardMaker(i);
-			var window = $('#' + i);
-			window.parent().show();
-			var toggle = window.parent().attr('toggle');
-			var kept_style = jawnosWindowStyleGet(i);
-			if (kept_style) {
-				var css = JSON.parse(kept_style);
-				window.css(css);
-			}
-			else {
-
-				window.css({ 'top': v.top, 'left': v.left, 'height': v.height, 'width': v.width, 'z-index': v.zindex });
-			}
-			window.show();
-			window.attr('claimed', 'no');
-			keyboardDragEnabler(window,i,'off');
 		}
 	});
 

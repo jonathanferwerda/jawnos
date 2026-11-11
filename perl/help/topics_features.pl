@@ -148,7 +148,7 @@ $topic{'start_menu'} = {
 		title => 'The dock', category => 'features',
 		verified => '2026-11-09',
 		summary => 'A second bar for the keyboard panels and the apps you keep at hand.',
-		templates => [ 'templates/pseudonyms.html.ep', 'templates/keyboard.html.ep', 'public/js/manager/keyboard.js' ],
+		templates => [ 'templates/pseudonyms.html.ep', 'public/js/manager/keyboard.js' ],
 		body => [
 			'The dock is a second bar you can place on any edge. Its faces are the same pinned apps and widgets as the taskbar. It can also host the search box; a side dock tucks itself away and slides back when you call for it. A row dock (top or bottom) keeps the search\'s strip on screen when it tucks: press that strip to call the row back, and a press on the background where the row would have been stays a press on the background.',
 			'A face opens its own panel: the keyboard and calculator faces open the JawnOS keyboard (the calculator straight to its page), and the others open their keyboard panel above the dock. A pinned app opens its window and a pinned widget opens the app that widget stands for. Press the same face again to put its panel away. A panel is moved by its top bar, resized by its edge or corner, and both its place and its size are remembered on this device.',

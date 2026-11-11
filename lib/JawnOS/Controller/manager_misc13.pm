@@ -62,28 +62,6 @@ use IPC::Open2 qw(open2);
 
 our ($APP, $ws_live_window, $encoder, $decoder, $tuuid, $thread_uuid, $universal_splitter, $database, $sql, $remote_input_clipboard, $config_file, $config, $logfile, $log, $environment, $random_caching_string, $duty_file, $main_process, $device, $user_agent, %time_machine_guide_cache, @media_unlock_apps, %help_search_tables, %media_type_for_ext, %file_relay_down, @appointments, @results, %market_payment_family, @manager_bundle_files, $manager_bundle_cache, $js_minifier, %app_release_sha, %folders_desk_not_app, $jg_body, $remote_input_geometry_at, $remote_input_geometry_cache, %remote_input_ua, %remote_input_ws, %remote_input_rm, %remote_input_ws_failed, $public_ip_memo, $coding_protocols, $coding_protocols_mtime, $app_schema_done, $fingerprint_checked_at, $fingerprint_ok, %padlock_time_memo, %credential_browser_app, %app_gate_shadow_seen, $ws_server, %mailws_untrusted_rate);
 
-# GET /manager/keyboard/config
-sub action_42519 {
-	my $c = shift;
-	my $toggle = $c->param('toggle');
-	my $remote_uuid = $c->param('remote_uuid');
-	my $remoted = $c->param('remoted');
-	my $returner = {};
-	if ($remote_uuid && !$remoted) {
-		$returner = &Manager::remote_relay_request($c);
-		$returner = eval { return decode_json $returner } || {};
-	}
-	else {
-
-		$returner->{'html'} = $c->render_to_string(
-			template => 'keyboard_config',
-			toggle => $toggle,
-			remote_uuid => $remote_uuid
-		);
-	}
-	$c->render(json => $returner);
-}
-
 # GET /manager/keyboard_alias
 sub action_42557 {
 	my $c = shift;

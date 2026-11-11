@@ -1,4 +1,4 @@
-# tests-for: templates/apps/notifications.html.ep public/js/manager/notifications.js public/js/manager/notifications_toast.js public/js/manager/taskbar_notifications.js public/js/manager/websocket/01_message_handler.js lib/JawnOS/Controller/manager_misc6.pm lib/JawnOS/Routes/manager_misc6.pm lib/JawnOS/Manager/Part33.pm lib/JawnOS/Manager/Part12.pm perl/gb/02_labels_and_collectives.pl templates/start_menu/start_menu.html.ep templates/keyboard.html.ep public/js/manager/keyboard/02_keyboard_maker.js perl/help/topics_apps.pl perl/help/topics_features.pl public/css/manager.css public/icons/notifications.svg
+# tests-for: templates/apps/notifications.html.ep public/js/manager/notifications.js public/js/manager/notifications_toast.js public/js/manager/taskbar_notifications.js public/js/manager/websocket/01_message_handler.js lib/JawnOS/Controller/manager_misc6.pm lib/JawnOS/Routes/manager_misc6.pm lib/JawnOS/Manager/Part33.pm lib/JawnOS/Manager/Part12.pm perl/gb/02_labels_and_collectives.pl templates/start_menu/start_menu.html.ep public/js/manager/keyboard/02_music_and_handlers.js perl/help/topics_apps.pl perl/help/topics_features.pl public/css/manager.css public/icons/notifications.svg
 # covers:    The Notifications app (search, app filter, remove all), the in-program
 #            notice cards that replaced the browser's Notification, and the
 #            taskbar bell that counts what arrived since the list was opened.
@@ -59,15 +59,11 @@ like($template, qr/#notifications_app \.notification \.hover \{ line-height: 0; 
 # --- the keyboard panel it replaced -----------------------------------------
 # The app owns the list now. The bell face stays on the dock, but there is no
 # keyboard panel behind it: notifications.js opens the app from that face.
-my $keyboard_tpl = source('templates/keyboard.html.ep');
-unlike($keyboard_tpl, qr/\$toggle eq 'notifications'/, 'the keyboard no longer builds a notifications panel');
-unlike($keyboard_tpl, qr/id="notification_search"/, 'its search box is gone');
-unlike($keyboard_tpl, qr/id="notification_app_select"/, 'and its app filter');
+ok(!-e "$root/templates/keyboard.html.ep", 'the keyboard panel template is gone');
 my $kbuilder = source('lib/JawnOS/Manager/Part33.pm');
 unlike($kbuilder, qr/\$toggle eq 'notifications'/, 'the panel builder no longer reads the notices');
-my $keymaker = source('public/js/manager/keyboard/02_keyboard_maker.js');
-like($keymaker, qr/if \(toggle == 'notifications'\) \{ return; \}/,
-	'the dock face leaves Notifications to the app opener');
+my $keymaker = source('public/js/manager/keyboard/02_music_and_handlers.js');
+unlike($keymaker, qr/function keyboardMaker\(/, 'the panel maker is gone with the panels');
 unlike($keymaker, qr/#notification_search|notificationScrollLoader|notifications\/scroll/,
 	'and the panel handlers and scroll loader are gone');
 my $pseudonyms = source('lib/JawnOS/Manager/Part12.pm');

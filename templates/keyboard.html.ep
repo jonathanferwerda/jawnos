@@ -1,9 +1,0 @@
-<% use Mojo::JSON qw/decode_json/; %>
-<span class="typewriter" style="">
-
-<%# Every keyboard panel has moved into the app that owns its surface. Remote
-    control is now the Network app's Remote Machines accordion; the soft
-    keyboard itself is templates/soft_keyboard.html.ep. This template is kept
-    only because the old /manager/keyboard route still answers, and returns an
-    empty page. %>
-</span>

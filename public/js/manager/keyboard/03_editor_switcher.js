@@ -633,6 +633,9 @@ function jawnosVpnToggle() {
 			b.attr('hint', (r && r.error) || jawnosT('The VPN could not be changed'));
 			return;
 		}
+		// The taskbar widget's own switch remembers the machine, so its button
+		// names the same exit node when it is turned back on there.
+		if (target) { try { localStorage.setItem('vpn_exit', target); } catch (e) {} }
 		jawnosVpnRefresh();
 		// The route can take a moment to appear in the tailnet status, so ask
 		// again rather than leaving the button reading "off" after a success.

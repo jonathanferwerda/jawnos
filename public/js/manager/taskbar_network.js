@@ -451,6 +451,10 @@ function jawnosNetworkTaskbarPanelBuild(panel) {
 	wifi.append(public_row);
 	var controls = $('<div></div>').addClass('taskbar_panel_row').appendTo(wifi);
 	controls.append($('<button type="button"></button>').addClass('taskbar_network_panel_scan').text(jawnosT('Scan')));
+	// The exit-node switch rides beside Scan. It names the machine carrying the
+	// traffic while the route is on, so the button reads "Hub VPN" rather than a
+	// bare state, and it is painted from the tailnet status on every open.
+	controls.append($('<button type="button"></button>').addClass('taskbar_network_panel_vpn_button').attr('status', 'off').text(jawnosT('VPN')));
 	wifi.append($('<div></div>').addClass('taskbar_panel_note taskbar_network_panel_wifi_note'));
 	wifi.append($('<div></div>').addClass('taskbar_panel_scroll taskbar_network_panel_networks'));
 	wifi.append($('<div></div>').addClass('taskbar_network_panel_saved'));
@@ -462,6 +466,7 @@ function jawnosNetworkTaskbarPanelBuild(panel) {
 	jawnosNetworkTaskbarPanelPublicIp(panel);
 	jawnosNetworkTaskbarPanelBluetooth(panel);
 	jawnosNetworkTaskbarPanelVpn(panel);
+	jawnosNetworkTaskbarVpnRefresh(panel);
 
 	var footer = $('<div></div>').addClass('taskbar_panel_footer').appendTo(panel);
 	footer.append($('<button type="button"></button>').addClass('taskbar_panel_open')
@@ -480,6 +485,101 @@ $(document).on('click', '#taskbar_network', function() {
 
 $(document).on('click', '.taskbar_network_panel_scan', function() {
 	jawnosNetworkTaskbarPanelScan($(this).closest('#taskbar_network_panel'));
+});
+
+// ---- the widget's VPN switch ------------------------------------------------
+// The same tailnet exit node the Network app's Remote Machines accordion sets,
+// offered here beside Scan. The machine carrying the traffic is named on the
+// button ("Hub VPN"), and the choice is remembered (vpn_exit) so switching it
+// back on uses the same machine. Turning it on with none remembered falls back
+// to the first online exit node, the way the accordion does.
+function jawnosNetworkVpnPref() {
+	try { return localStorage.getItem('vpn_exit') || ''; } catch (e) { return ''; }
+}
+
+function jawnosNetworkVpnName(status, ip) {
+	var peers = (status && status.peers) || [];
+	for (var i = 0; i < peers.length; i++) {
+		if (peers[i] && peers[i].ip === ip) { return peers[i].name || ip; }
+	}
+	return '';
+}
+
+function jawnosNetworkTaskbarVpnPaint(panel, status) {
+	var b = panel.find('.taskbar_network_panel_vpn_button');
+	if (!b.length) { return; }
+	var exit = (status && status.exit) || '';
+	var nodes = (typeof jawnosVpnNodes == 'function') ? jawnosVpnNodes(status) : [];
+	var name = exit ? jawnosNetworkVpnName(status, exit) : '';
+	b.attr('status', exit ? 'on' : 'off');
+	b.prop('disabled', !exit && !nodes.length);
+	b.css({
+		'opacity': (exit || nodes.length) ? 1 : 0.45,
+		'background-color': exit ? 'var(--jawnos-ok, #4caf50)' : ''
+	});
+	if (exit) {
+		b.text(name ? name + ' ' + jawnosT('VPN') : jawnosT('VPN'));
+		b.attr('hint', jawnosT('Turn the VPN off'));
+	}
+	else {
+		b.text(jawnosT('VPN'));
+		b.attr('hint', nodes.length
+			? jawnosT("Route this device's web traffic through this machine")
+			: jawnosT('No exit node is online'));
+	}
+}
+
+function jawnosNetworkTaskbarVpnRefresh() {
+	var panel = $('#taskbar_network_panel');
+	if (!panel.length || !panel.find('.taskbar_network_panel_vpn_button').length) { return; }
+	if (typeof jawnosVpnStatus != 'function') { return; }
+	jawnosVpnStatus(function (status) {
+		jawnosNetworkTaskbarVpnPaint(panel, status);
+	});
+}
+
+function jawnosNetworkTaskbarVpnSet(ip) {
+	var panel = $('#taskbar_network_panel');
+	var b = panel.find('.taskbar_network_panel_vpn_button');
+	if (!b.length) { return; }
+	b.prop('disabled', true);
+	var finish = function (r) {
+		b.prop('disabled', false);
+		if (!r || r.ok === false || r.ok === 0) {
+			b.attr('hint', (r && r.error) || jawnosT('The VPN could not be changed'));
+			return;
+		}
+		if (ip) { try { localStorage.setItem('vpn_exit', ip); } catch (e) {} }
+		jawnosNetworkTaskbarVpnRefresh();
+		// The route can take a moment to show in the status, so ask again rather
+		// than leaving the button reading "off" after a success.
+		setTimeout(jawnosNetworkTaskbarVpnRefresh, 1200);
+		// The public address is the proof the route moved; refresh it too.
+		if (typeof jawnosPublicIpRefresh == 'function' && $('#local_public_ip').length) {
+			setTimeout(function () { jawnosPublicIpRefresh(true); }, 1500);
+		}
+	};
+	if (window.JawnVPN && typeof window.JawnVPN.setExitNode === 'function') {
+		try { finish(JSON.parse(window.JawnVPN.setExitNode(ip))); return; } catch (e) { finish({ ok: false, error: '' + e }); return; }
+	}
+	$.post('/manager/tailnet/exit', { ip: ip }, finish, 'json').fail(function () { finish({ ok: false }); });
+}
+
+$(document).on('click', '.taskbar_network_panel_vpn_button', function() {
+	var b = $(this);
+	if (b.attr('status') === 'on') { jawnosNetworkTaskbarVpnSet(''); return; }
+	if (typeof jawnosVpnStatus != 'function') { return; }
+	jawnosVpnStatus(function (status) {
+		var nodes = (typeof jawnosVpnNodes == 'function') ? jawnosVpnNodes(status) : [];
+		if (!nodes.length) { return; }
+		var pref = jawnosNetworkVpnPref();
+		var pick = '';
+		for (var i = 0; i < nodes.length; i++) {
+			if (nodes[i].ip === pref) { pick = pref; break; }
+		}
+		if (!pick) { pick = nodes[0].ip; }
+		jawnosNetworkTaskbarVpnSet(pick);
+	});
 });
 
 // One handler for a scanned network and a saved one: the saved row simply has

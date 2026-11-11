@@ -1,4 +1,4 @@
-# tests-for: public/js/manager/manager.js public/js/manager/manager/10_appointment_edit.js public/js/manager/keyboard/02_keyboard_maker.js templates/keyboard_config.html.ep templates/layouts/manager.html.ep perl/help/topics_features.pl
+# tests-for: public/js/manager/manager.js public/js/manager/manager/10_appointment_edit.js public/js/manager/keyboard/02_music_and_handlers.js templates/apps/clock/machine.html.ep templates/layouts/manager.html.ep perl/help/topics_features.pl
 # covers:    An appointment window's reverse/forward walkman walks only the app
 #            whose record it sits under: the app's details are read at that
 #            moment and the house's time machine is left where it stands. The
@@ -17,8 +17,8 @@ use RepoSource;
 my $root = repo_root();
 my $manager = read_file("$root/public/js/manager/manager.js");
 my $edit    = read_file("$root/public/js/manager/manager/10_appointment_edit.js");
-my $maker   = read_file("$root/public/js/manager/keyboard/02_keyboard_maker.js");
-my $config  = read_file("$root/templates/keyboard_config.html.ep");
+my $maker   = read_file("$root/public/js/manager/keyboard/02_music_and_handlers.js");
+my $config  = read_file("$root/templates/apps/clock/machine.html.ep");
 my $layout  = read_file("$root/templates/layouts/manager.html.ep");
 my $help    = read_file("$root/perl/help/topics_features.pl");
 
@@ -69,7 +69,7 @@ if ($node && -x $node) {
 	for my $file (qw(
 		public/js/manager/manager.js
 		public/js/manager/manager/10_appointment_edit.js
-		public/js/manager/keyboard/02_keyboard_maker.js
+		public/js/manager/keyboard/02_music_and_handlers.js
 	)) {
 		my $out = `$node --check "$root/$file" 2>&1`;
 		is($? >> 8, 0, "$file parses") or diag($out);

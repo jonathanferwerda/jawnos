@@ -576,7 +576,6 @@ sub measure_unit_name;
 sub measure_currency_conversions;
 sub measure_unit_conversions;
 sub measure_conversion_rows;
-sub keyboard_maker;
 sub manager_file_maker;
 sub lock_screen;
 sub unlock_screen;

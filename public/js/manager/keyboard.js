@@ -1,7 +1,7 @@
 /* [[js-split]]
    keyboard.js is part 1. The rest live in keyboard/ in name order:
      01_side_dock.js       - side dock slide, keyboard drag bars, pseudonym home, draggable init, rooms, media
-     02_keyboard_maker.js  - keyboardMaker, music receivers, sensitivity, work claims, initializer
+     02_music_and_handlers.js - music receivers, sensitivity, work claims, initializer
      03_editor_switcher.js - text editor upgrade, magic/processor, marker shortcut, key bindings, app switcher, VPN
    /js/manager/bundle.js concatenates the index and these parts.
    [[/js-split]] */

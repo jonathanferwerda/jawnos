@@ -21,7 +21,6 @@ my $manager = js_source('public/js/manager/manager.js');
 my $agents = js_source('public/js/manager/agents.js');
 my $coding = js_source('public/js/manager/coding/02_panels.js');
 my $keyboard = js_source('public/js/manager/keyboard.js');
-my $kb_maker = js_source('public/js/manager/keyboard/02_keyboard_maker.js');
 my $template = template_source('manager');
 my $manager_css = read_file("$root/public/css/manager.css");
 my $help = help_source();
@@ -88,8 +87,6 @@ like($keyboard, qr/stop: function\(\) \{ keyboardPanelSave\(\$\(this\)\); \}/,
 	'the resize stop saves the new size');
 like($keyboard, qr/stop: function\(p\) \{\s*keyboardPanelSave\(\$\(this\)\);\s*\}/,
 	'the drag stop saves through the same helper');
-like($kb_maker, qr/if \(css\['width'\] == null \|\| css\['width'\] === ''\) \{ css\['width'\] = t\.width\(\); \}/,
-	'a saved width is not overwritten by the panel\'s default');
 
 # --- the guide explains it ---------------------------------------------------
 like($help, qr/Drag its edge or corner to size it/, 'the agents topic explains resizing');

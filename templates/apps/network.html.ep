@@ -11,8 +11,6 @@
 	&& ($_->{'hostname'} || '') ne 'me'
 } @{$remote_machines};
 <% my $jawnos_bluetooth = eval { &subs::ble_device_listing() } || []; %>
-<% my $controller_tab_id = $c->param('browser_tab_id') || ''; %>
-<% my $websockets = eval { &subs::db_query('select * from websockets where browser_tab_id = ?', $controller_tab_id)->hashes } || []; %>
 <style>
 	.network_app { display:flex; flex-direction:column; gap:10px; width:100%; height:100%; min-width:0; padding:10px 12px 18px; box-sizing:border-box; overflow-y:auto; color:var(--ink); }
 	.network_bar { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }

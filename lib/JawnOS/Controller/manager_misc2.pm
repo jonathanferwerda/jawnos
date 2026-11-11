@@ -192,7 +192,11 @@ sub action_7783 {
 sub action_7845 {
 	my $c = shift;
 	my $timestamp = $c->param('timestamp') || &subs::rightNow();
-	my $content = $c->render_to_string(template => 'apps/network');
+	# The Controller partial is included, so its sockets must ride the stash
+	# rather than a lexical in the parent template.
+	my $browser_tab_id = $c->param('browser_tab_id') || '';
+	my $websockets = eval { &subs::db_query('select * from websockets where browser_tab_id = ?', $browser_tab_id)->hashes } || [];
+	my $content = $c->render_to_string(template => 'apps/network', websockets => $websockets);
 	my $contents = &window_maker({
 		user_agent => $c->param('user_agent'),
 		app => 'network',

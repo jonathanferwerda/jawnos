@@ -254,7 +254,6 @@ our %SUB = (
 	'js_gzip_body'                           => 'JawnOS/Manager/Part08.pm',
 	'js_minifier_command'                    => 'JawnOS/Manager/Part08.pm',
 	'js_minify'                              => 'JawnOS/Manager/Part08.pm',
-	'keyboard_maker'                         => 'JawnOS/Manager/Part33.pm',
 	'lock_screen'                            => 'JawnOS/Manager/Part33.pm',
 	'lock_session'                           => 'JawnOS/Manager/Part11.pm',
 	'lorawan_deck_call'                      => 'JawnOS/Manager/Part32.pm',

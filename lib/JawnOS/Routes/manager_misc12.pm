@@ -27,7 +27,6 @@ sub routes {
 	[42020, 'post', '/manager/credentials/save', 'action_42020'],
 	[42085, 'post', '/manager/credentials/fill', 'action_42085'],
 	[42101, 'post', '/manager/credentials/forget', 'action_42101'],
-	[42427, 'post', '/manager/keyboard', 'action_42427'],
 	);
 }
 

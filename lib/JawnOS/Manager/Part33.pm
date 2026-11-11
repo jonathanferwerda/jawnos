@@ -163,28 +163,6 @@ sub measure_conversion_rows($unit, $value) {
 	};
 }
 
-sub keyboard_maker($c, $remote_pick) {
-	my $browser_tab_id = $c->param('browser_tab_id');
-	my $remote_machines = $c->param('remote_machines');
-	my $remote_control = defined $remote_pick ? $remote_pick : $c->param('remote_control');
-	my $toggle = $c->param('toggle');
-	my $config = &subs::config_reader();
-	my $remote_connect = $gb::ws;
-	my $kb = $c->render_to_string(
-		browser_tab_id => $browser_tab_id,
-		template => 'keyboard',
-		toggle => $toggle,
-		device => $device,
-		remote_machines => $remote_machines,
-		remote_control => $remote_control,
-		config => $config,
-		manager_file => &manager_file_maker($c->session('name')),
-		pseudonyms => &pseudonym_maker('viewer', ''),
-		ws => $gb::ws,
-	);
-	return $kb;
-}
-
 sub manager_file_maker($session_name = '') {
 	my ($my_name,$hostname,$hostnamer,$database);
 	(undef,$database) = &subs::database_grabber();

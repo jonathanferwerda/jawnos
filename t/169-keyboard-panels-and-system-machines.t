@@ -21,7 +21,6 @@ like($htop, qr/\$u->\{'cores'\}/, 'the usage line shows the core count');
 like($htop, qr/\$u->\{'mem_total_kb'\}/, 'the usage line shows the RAM total');
 like($htop, qr/no battery sensor/, 'a controller with no gauge says so');
 my $menu = js_source('public/js/manager/manager/05_start_menu.js');
-my $maker = js_source('public/js/manager/keyboard/02_keyboard_maker.js');
 my $dock = js_source('public/js/manager/keyboard/01_side_dock.js');
 my $soft = js_source('public/js/manager/soft_keyboard.js');
 my $manager_css = read_file($root . '/public/css/manager.css');
@@ -55,34 +54,6 @@ like($htop, qr/\@devices = sort \{[\s\S]*?lc\(\$a->\{'name'\}[\s\S]*?ip_sort_key
 my $net_tabs = js_source('public/js/manager/network/02_tabs_bluetooth_remote.js');
 like($net_tabs, qr/select\.val\(uuid\)/, 'the accordion picks the row\'s machine');
 like($net_tabs, qr/function networkRemoteControlOpen/, 'and moves the shared panel under the row');
-
-# --- a panel that was never moved gets a default floating spot ---------------
-like($maker, qr/function keyboardPanelDefaultCSS\(panel\)/,
-	'the default spot has one helper');
-like($maker, qr/var limit = \(typeof panelTopLimit === 'function'\) \? panelTopLimit\(\) : 0;/,
-	'the default starts under the clothesline ceiling');
-like($maker, qr/'position': 'fixed',/,
-	'a fresh panel floats rather than sitting in the page flow');
-like($maker, qr/top = Math\.max\(limit, Math\.min\(top, Math\.max\(limit, vh - height - bar - 8\)\)\);/,
-	'the default spot is never above the viewport or off the foot of it');
-like($maker, qr/'max-height': Math\.max\(120, vh - limit - bar - 16\) \+ 'px'/,
-	'its height is capped to the room under the clothesline');
-like($maker, qr/t\.attr\('default_placed', 'yes'\);/,
-	'a panel in its default spot is marked as such');
-like($maker, qr/\$\('\.keyboard\[default_placed="yes"\]:visible'\)/,
-	'the default spot follows a reshaped screen');
-like($maker, qr/t\.attr\('claimed', 'yes'\);\s*keyboardDragBarMaker\(t\);/s,
-	'the framed panel still gets its drag bar');
-
-# --- a restored panel obeys the same ceiling --------------------------------
-like($maker, qr/function keyboardPanelClamp\(panel, css\)/,
-	'a saved spot is clamped before it is painted');
-like($maker, qr/if \(isFinite\(top\) && top < limit\) \{ css\['top'\] = limit \+ 'px'; \}/,
-	'a saved panel cannot start above the clothesline');
-like($maker, qr/if \(css\['position'\] != 'fixed'\) \{ css\['position'\] = 'fixed'; \}/,
-	'an older in-flow save comes back as a floating panel');
-like($maker, qr/t\.removeAttr\('default_placed'\);/,
-	'a moved panel stops following the screen');
 
 # --- dragging a keyboard panel stays on the screen --------------------------
 like($dock, qr/ui\.position\.top = Math\.max\(panelTopLimit\(\), Math\.min\(ui\.position\.top, vh - height - bar\)\);/,

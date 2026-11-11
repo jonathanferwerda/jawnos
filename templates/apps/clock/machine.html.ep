@@ -113,3 +113,37 @@
 			<input type="range" id="background_images_opacity" min="0" max="1" step=".05">Opacity
 			<br>
 			<span timestamp="<%= $c->session('warranty') %>" class="time"></span>
+
+			<%# The delorean's own switches, moved here with the time machine: the two
+			    sensitivities, the timestamps-only view, the ghost appointments, the
+			    clothesline and the walkman's global clock. Their ids and the
+			    .keyboard_sensitivity class are what keyboard.js already reads, so a
+			    change is saved on the spot. %>
+			<%
+			    my $trackpad = &subs::setting_grabber({ app => 'keyboard', setting => 'trackpad_sensitivity' });
+			    my $clothesline_sensitivity = &subs::setting_grabber({ app => 'keyboard', setting => 'clothesline_sensitivity' });
+			    my $in_view = &subs::setting_grabber({ app => 'keyboard', setting => 'timestamp_in_view' });
+			    my $ghosts = &subs::setting_grabber({ app => 'keyboard', setting => 'ghost_appointments' });
+			    my $clothesline_on = &subs::setting_grabber({ app => 'misc', setting => 'clothesline_on' });
+			    my $walkman_global = &subs::setting_grabber({ app => 'keyboard', setting => 'appt_walkman_global' });
+			    my $ghost_claim = &subs::work_claim('ghosts');
+			    $trackpad = '.02' unless (defined $trackpad && length $trackpad);
+			    $clothesline_sensitivity = '.4' unless (defined $clothesline_sensitivity && length $clothesline_sensitivity);
+			%>
+			<div class="clock_machine_settings">
+			    <h5><%= &subs::ui('View settings') %></h5>
+			    <label class="clock_machine_slider"><%= &subs::ui('Trackpad') %>
+			        <input type="range" class="keyboard_sensitivity" setting="trackpad_sensitivity" min=".002" max=".1" step=".002" value="<%= $trackpad %>"><span class="keyboard_sensitivity_viewer" setting="trackpad_sensitivity"><%= $trackpad %></span>
+			    </label>
+			    <label class="clock_machine_slider"><%= &subs::ui('Clothesline') %>
+			        <input type="range" class="keyboard_sensitivity" setting="clothesline_sensitivity" min=".05" max="2" step=".05" value="<%= $clothesline_sensitivity %>"><span class="keyboard_sensitivity_viewer" setting="clothesline_sensitivity"><%= $clothesline_sensitivity %></span>
+			    </label>
+			    <label class="clock_machine_switch"><input type="checkbox" id="timestamp_in_view"<% if ((defined $in_view ? $in_view : '') eq 'checked') { %> checked<% } %>> <%= &subs::ui('Timestamps in view only') %></label>
+			    <label class="clock_machine_switch"><input type="checkbox" id="ghost_appointments"<% if ((defined $ghosts ? $ghosts : '') eq 'checked') { %> checked<% } %>> <%= &subs::ui('Ghost appointments') %></label>
+			    <label class="clock_machine_switch"><input type="checkbox" id="clothesline_on"<% unless (defined $clothesline_on && $clothesline_on eq 'off') { %> checked<% } %>> <%= &subs::ui('Show clothesline') %></label>
+			    <label class="clock_machine_switch"><input type="checkbox" id="appt_walkman_global"<% if ((defined $walkman_global ? $walkman_global : '') eq 'checked') { %> checked<% } %>> <%= &subs::ui('Appt walkman controls global time') %></label>
+			    <div class="ghosts_claim"><%= &subs::ui('Ghosts being sorted out:') %>
+			        <% if ($ghost_claim) { %>by <b><%= $ghost_claim->{'machine'} || $ghost_claim->{'by'} %></b> since <%= &subs::formatted_time($ghost_claim->{'at'}) %> <a href="#" class="work_claim_release" task="ghosts"><%= &subs::ui('release') %></a>
+			        <% } else { %>nobody <a href="#" class="work_claim_take" task="ghosts"><%= &subs::ui('take it') %></a><% } %>
+			    </div>
+			</div>
