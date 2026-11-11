@@ -313,12 +313,16 @@ sub remote_command_run($c, $data) {
 		# sends it over this same signed rail to prepare the target's QA
 		# environment. qa_retime and qa_run_now are the same kind of action -
 		# they write a timer drop-in and start a unit on the machine the house
-		# chose. None is offered to the model in actions_prompt.
+		# chose. release_probe and release_now are the same kind of action too:
+		# a machine with no promotion service asks its peers which one has it,
+		# then hands that machine the release. None is offered to the model.
 		return { ok => 0, error => 'unknown verb: ' . $verb }
 			unless $live->{$verb}
 				|| $verb eq 'qa_install'
 				|| $verb eq 'qa_retime'
-				|| $verb eq 'qa_run_now';
+				|| $verb eq 'qa_run_now'
+				|| $verb eq 'release_probe'
+				|| $verb eq 'release_now';
 		$action = { action => $verb, %{$args} };
 	}
 	elsif (length $text) {
@@ -346,6 +350,15 @@ sub remote_command_execute($c, $action) {
 	$action = &guide_resolve_action($action) if ref $action eq 'HASH';
 	return $action->{'text'} if ref $action eq 'HASH' && ($action->{'action'} || '') eq 'ask';
 	my $a = $action->{'action'};
+	# The release promotion is its own machine action: a peer asks whether this
+	# machine holds the service, and then hands it the release. It is never a
+	# Guide verb and it is not tied to the nightly switch.
+	if ($a eq 'release_probe') {
+		return &subs::release_service_check();
+	}
+	if ($a eq 'release_now') {
+		return &subs::release_now_local({ dry_run => ($action->{'dry_run'} ? 1 : 0) });
+	}
 	# Off is a house decision the far end honours too: no timer edit and no
 	# systemctl start may happen while the nightly system is turned off.
 	if (($a eq 'qa_install' || $a eq 'qa_retime' || $a eq 'qa_run_now')
@@ -415,8 +428,12 @@ sub remote_command_send($data) {
 	$rm = &remote_useragent_maker({ signatorial => $rm->{'signatorial'}, rm => $rm });
 	return { ok => 0, error => 'that machine is not reachable' } unless $rm->{'ua'};
 	my $url = $rm->{'manager'} . '/manager/remote_command';
+	my $ua = $rm->{'ua'};
+	$ua->inactivity_timeout(defined $data->{'inactivity_timeout'} ? $data->{'inactivity_timeout'} : 30);
+	$ua->request_timeout($data->{'request_timeout'})
+		if defined $data->{'request_timeout'} && $data->{'request_timeout'} =~ /^\d+$/;
 	my $res = eval {
-		$rm->{'ua'}->inactivity_timeout(30)->post($url => form => {
+		$ua->post($url => form => {
 			signatorial => &subs::signatorial_designer(),
 			text => $data->{'text'} || '',
 			verb => $data->{'verb'} || '',

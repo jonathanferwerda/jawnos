@@ -1725,20 +1725,49 @@ sub release_schedule_state {
 	return $row;
 }
 
+# Whether this machine has the promotion oneshot, and what it is doing. A peer
+# asks this before a release is handed over, so a machine with no service is
+# skipped instead of being asked to run one that is not there.
+sub release_service_check {
+	my $opts = shift || {};
+	my $run_cmd = $opts->{'runner'} || sub { &qa_command(@_) };
+	my $unit = 'jawnos-land-promote';
+	my ( $rc, $out ) = $run_cmd->( 'systemctl', 'show', '-p', 'LoadState', '-p', 'ActiveState', '-p', 'SubState', "$unit.service" );
+	my $text = defined $out ? $out : '';
+	my $installed = ( $rc == 0 && $text =~ /^LoadState=loaded$/m ) ? 1 : 0;
+	my ($active) = $text =~ /^ActiveState=(\w+)/m;
+	my ($sub) = $text =~ /^SubState=(\w+)/m;
+	$active = '' unless defined $active;
+	$sub = '' unless defined $sub;
+	my $busy = $active =~ /^(?:active|activating|reloading|deactivating)$/ ? 1 : 0;
+	return {
+		ok => 1,
+		unit => $unit,
+		installed => $installed,
+		active => $busy,
+		state => !$installed ? 'not-installed' : ($busy ? 'running' : ($active eq 'failed' ? 'failed' : 'idle')),
+		substate => $sub,
+	};
+}
+
 # Start the release promotion now: the same oneshot the weekly timer runs.
-# `systemctl is-active` is the guard (a release already going is a refusal),
-# and `--no-block` hands the panel its answer before the suite, the push and
-# the restart take the app away. No person or agent walks the release; the
-# service does it, and a red suite or a diverged main is a refusal it logs.
+# `systemctl show` is the guard (no service is a refusal the caller can hand to
+# another machine, and one already running is a refusal too), and `--no-block`
+# hands the panel its answer before the suite, the push and the restart take
+# the app away. No person or agent walks the release; the service does it, and
+# a red suite or a diverged main is a refusal it logs.
 sub release_now_local {
 	my $opts = shift || {};
 	my $run_cmd = $opts->{'runner'} || sub { &qa_command(@_) };
 	my $unit = 'jawnos-land-promote';
-	my ( $src, $sout ) = $run_cmd->( 'systemctl', 'is-active', "$unit.service" );
-	my $word = defined $sout ? $sout : '';
-	$word =~ s/\s+$//;
-	my $active = ( $word =~ /^(?:active|activating|reloading|deactivating)$/ ) ? 1 : 0;
-	if ($active) {
+	my $check = ref $opts->{'check'} eq 'HASH' ? $opts->{'check'} : &release_service_check($opts);
+	unless ($check->{'installed'}) {
+		return {
+			ok => 0, unit => $unit, state => 'not-installed',
+			error => 'the release service is not installed on this machine',
+		};
+	}
+	if ($check->{'active'}) {
 		return {
 			ok => 0, unit => $unit, state => 'running',
 			error => 'a release is already running',
@@ -1763,6 +1792,78 @@ sub release_now_local {
 		ok => 1, unit => $unit, state => 'running',
 		started => exists $opts->{'now'} ? $opts->{'now'} : &subs::rightNow(),
 	};
+}
+
+# Release here when this machine holds the service; otherwise ask the other
+# computers and servers over the signed peer rail which one does, and hand the
+# request to the first that answers. The probe is a read-only check, so a
+# machine with no unit is skipped without being asked to start one.
+sub release_now_anywhere {
+	my $opts = shift || {};
+	my $here = ref $opts->{'check'} eq 'HASH' ? $opts->{'check'} : &release_service_check($opts);
+	if ($here->{'installed'}) {
+		my $run = &release_now_local({ %{$opts}, check => $here });
+		$run->{'where'} = 'local';
+		return $run;
+	}
+	my $machines = ref $opts->{'machines'} eq 'ARRAY' ? $opts->{'machines'} : &qa_target_machines($opts);
+	my $send = $opts->{'sender'} || sub { &Manager::remote_command_send($_[0]) };
+	my @tried;
+	foreach my $rm (@{$machines}) {
+		next unless ref $rm eq 'HASH' && defined $rm->{'uuid'} && length $rm->{'uuid'};
+		my $name = '';
+		foreach my $key (qw(hostname fqdn ip signatorial uuid)) {
+			my $value = $rm->{$key};
+			if (defined $value && length $value) { $name = $value; last; }
+		}
+		my $probe = eval {
+			$send->({
+				uuid => $rm->{'uuid'},
+				verb => 'release_probe',
+				args => {},
+				inactivity_timeout => 5,
+				request_timeout => 8,
+			});
+		};
+		my $seen = &release_observation($probe);
+		unless ($seen && $seen->{'installed'}) {
+			push @tried, $name;
+			next;
+		}
+		my $answer = eval {
+			$send->({
+				uuid => $rm->{'uuid'},
+				verb => 'release_now',
+				args => { dry_run => ($opts->{'dry_run'} ? 1 : 0) },
+			});
+		};
+		my $run = &release_observation($answer);
+		unless (ref $run eq 'HASH') {
+			push @tried, $name;
+			next;
+		}
+		$run->{'where'} = 'remote';
+		$run->{'machine'} = $name;
+		$run->{'machine_uuid'} = $rm->{'uuid'};
+		return $run;
+	}
+	return {
+		ok => 0, state => 'not-installed', where => 'none',
+		error => @tried
+			? 'no machine the house can reach has the release service'
+			: 'no machine in the house has the release service',
+		tried => \@tried,
+	};
+}
+
+# The peer rail wraps a verb's result in an observation; a caller that already
+# speaks to a stub (the tests) may hand back the result itself.
+sub release_observation {
+	my ($res) = @_;
+	return undef unless ref $res eq 'HASH';
+	return $res->{'observation'} if ref $res->{'observation'} eq 'HASH';
+	return $res if exists $res->{'ok'};
+	return undef;
 }
 
 # The HH:MM a unit's timer really fires at. `systemctl show -p TimersCalendar`

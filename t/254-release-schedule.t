@@ -1,4 +1,4 @@
-# tests-for: lib/JawnOS/Domain/Remote.pm lib/JawnOS/Controller/manager_configure2.pm lib/JawnOS/Routes/manager_configure2.pm public/js/manager/configure/07_qa_nightly.js templates/configure/qa_panel.html.ep scripts/systemd/jawnos-land-promote.timer perl/help/topics_configure.pl
+# tests-for: lib/JawnOS/Domain/Remote.pm lib/JawnOS/Controller/manager_configure2.pm lib/JawnOS/Routes/manager_configure2.pm lib/JawnOS/Manager/Part28.pm public/js/manager/configure/07_qa_nightly.js templates/configure/qa_panel.html.ep scripts/systemd/jawnos-land-promote.timer perl/help/topics_configure.pl
 # covers:    the release schedule - presets and phrases become one OnCalendar
 #           line, the drop-in that replaces the shipped schedule, and the
 #           save/state path the Plat -> QA card uses
@@ -17,7 +17,8 @@ use JawnOSTest;
 subs::preload(qw(
 	release_schedule_default release_schedule_parse release_schedule_read
 	release_schedule_dropin_body release_schedule_apply release_schedule_save
-	release_schedule_state release_now_local
+	release_schedule_state release_now_anywhere release_now_local
+	release_service_check
 ));
 
 sub parsed { return subs::release_schedule_parse($_[0]) }
@@ -91,8 +92,18 @@ my $missing = subs::release_schedule_apply({
 is($missing->{'rows'}[0]{'state'}, 'not-installed', 'a timer that is not installed is reported as such');
 
 # --- Release Now -------------------------------------------------------------
+my $running = "LoadState=loaded\nActiveState=active\nSubState=start\n";
+my $idle = "LoadState=loaded\nActiveState=inactive\nSubState=dead\n";
+my $absent = "LoadState=not-found\nActiveState=inactive\nSubState=dead\n";
+
+my $check = subs::release_service_check({ runner => sub { return (0, $idle); } });
+is($check->{'installed'}, 1, 'a loaded unit is installed');
+is($check->{'state'}, 'idle', 'and idle');
+my $busy_check = subs::release_service_check({ runner => sub { return (0, $running); } });
+is($busy_check->{'active'}, 1, 'an active unit is running');
+
 my $planned = subs::release_now_local({
-	runner => sub { return (3, 'inactive'); },
+	runner => sub { return (0, $idle); },
 	dry_run => 1,
 });
 is($planned->{'ok'}, 1, 'a dry run plans the release');
@@ -106,7 +117,7 @@ my $started = subs::release_now_local({
 	now => 1_000,
 	runner => sub {
 		push @release_cmds, [@_];
-		return (3, 'inactive') if join(' ', @_) eq 'systemctl is-active jawnos-land-promote.service';
+		return (0, $idle) if $_[0] eq 'systemctl';
 		return (0, '');
 	},
 });
@@ -116,18 +127,54 @@ is($started->{'started'}, 1_000, 'with the time it started');
 like(join("\n", map { join(' ', @$_) } @release_cmds), qr/systemctl start --no-block jawnos-land-promote\.service/,
 	'through the same command the panel promises');
 
-my $busy = subs::release_now_local({ runner => sub { return (0, 'active'); } });
+my $busy = subs::release_now_local({ runner => sub { return (0, $running); } });
 ok(!$busy->{'ok'}, 'a release already running is refused');
 is($busy->{'state'}, 'running', 'and named as running');
 
-my $gone = subs::release_now_local({
-	runner => sub {
-		return (3, 'inactive') if $_[0] eq 'systemctl';
-		return (1, 'Unit jawnos-land-promote.service not found.');
-	},
-});
+my $gone = subs::release_now_local({ runner => sub { return (0, $absent); } });
 ok(!$gone->{'ok'}, 'a machine without the service refuses');
 is($gone->{'state'}, 'not-installed', 'and says the service is not installed');
+
+# --- Release Now asks the house when this machine has no service --------------
+my $local = subs::release_now_anywhere({
+	check => { installed => 1, active => 0 },
+	runner => sub { return (0, '') },
+	now => 2_000,
+	sender => sub { die 'the local machine must not ask a peer' },
+});
+is($local->{'where'}, 'local', 'a machine with the service releases here');
+
+my @sent;
+my $remote = subs::release_now_anywhere({
+	check => { installed => 0, active => 0 },
+	machines => [
+		{ uuid => 'uuid-a', hostname => 'Table' },
+		{ uuid => 'uuid-b', hostname => 'hub' },
+	],
+	sender => sub {
+		my ($msg) = @_;
+		push @sent, $msg;
+		return { ok => 1, observation => { ok => 1, installed => 0 } }
+			if $msg->{'verb'} eq 'release_probe' && $msg->{'uuid'} eq 'uuid-a';
+		return { ok => 1, observation => { ok => 1, installed => 1 } }
+			if $msg->{'verb'} eq 'release_probe';
+		return { ok => 1, observation => { ok => 1, state => 'running' } };
+	},
+});
+is($remote->{'ok'}, 1, 'a machine without the service asks a peer');
+is($remote->{'where'}, 'remote', 'and reports the release as remote');
+is($remote->{'machine'}, 'hub', 'naming the machine that has the service');
+is(scalar(grep { $_->{'uuid'} eq 'uuid-b' && $_->{'verb'} eq 'release_now' } @sent), 1,
+	'the request is handed to the machine that answered yes');
+
+my $none = subs::release_now_anywhere({
+	check => { installed => 0, active => 0 },
+	machines => [ { uuid => 'uuid-a', hostname => 'Table' } ],
+	sender => sub { return { ok => 1, observation => { ok => 1, installed => 0 } } },
+});
+ok(!$none->{'ok'}, 'a house with no release service refuses');
+is($none->{'state'}, 'not-installed', 'and says so');
+is_deeply($none->{'tried'}, ['Table'], 'naming the machines it asked');
 
 # --- what the panel shows ----------------------------------------------------
 my $tmp = tempdir(CLEANUP => 1);
@@ -168,7 +215,15 @@ like(read_file("$FindBin::Bin/../lib/JawnOS/Routes/manager_configure2.pm"),
 like(read_file("$FindBin::Bin/../lib/JawnOS/Routes/manager_configure2.pm"),
 	qr{/manager/configure/release_now}, 'the Release Now route exists');
 like(read_file("$FindBin::Bin/../lib/JawnOS/Domain/Loader.pm"),
-	qr/release_now_local/, 'the loader maps the helper');
+	qr/release_now_anywhere/, 'the loader maps the forwarding helper');
+like(read_file("$FindBin::Bin/../lib/JawnOS/Domain/Loader.pm"),
+	qr/release_service_check/, 'and the local probe');
+like(read_file("$FindBin::Bin/../lib/JawnOS/Manager/Part28.pm"),
+	qr/release_probe/, 'the peer rail accepts the probe verb');
+like(read_file("$FindBin::Bin/../lib/JawnOS/Manager/Part28.pm"),
+	qr/release_now/, 'and the release verb');
+like(read_file("$FindBin::Bin/../lib/JawnOS/Controller/manager_configure2.pm"),
+	qr/release_now_anywhere\(/, 'the route forwards the request');
 my $timer = read_file("$FindBin::Bin/../scripts/systemd/jawnos-land-promote.timer");
 like($timer, qr/^OnCalendar=Mon 04:00:00$/m, 'the shipped timer is weekly by default');
 unlike($timer, qr/OnUnitActiveSec/, 'and no longer counts a relative week');

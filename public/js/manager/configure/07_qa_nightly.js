@@ -440,7 +440,12 @@ $(document).on('click', '#release_now', function() {
 			status.text((res && res.error) || qaT('The release was refused.'));
 			return;
 		}
-		status.text(qaT('Release started. The full suite runs first; the app restarts when main moves.'));
+		if (res.machine) {
+			status.text(qaT('Release started on') + ' ' + res.machine + '. ' + qaT('The full suite runs there first; that machine restarts when main moves.'));
+		}
+		else {
+			status.text(qaT('Release started. The full suite runs first; the app restarts when main moves.'));
+		}
 	}).fail(function() {
 		button.prop('disabled', false);
 		status.text(qaT('The release could not be started.'));

@@ -535,16 +535,18 @@ sub action_50012 {
 }
 
 # POST /manager/configure/release_now
-# Start the promotion the weekly timer would run, on the machine the Manager
-# serves. It answers as soon as systemd has queued the job; the service runs
-# the full suite, fast-forwards main and restarts the app by itself.
+# Start the promotion the weekly timer would run - here when this machine has
+# the service, otherwise on the first computer or server in the house that
+# answers yes over the signed peer rail. It answers as soon as systemd has
+# queued the job; the service runs the full suite, fast-forwards main and
+# restarts that machine's app by itself.
 sub action_50013 {
 	my $c = shift;
 	unless ($c->session('authentication') eq 'approved') {
 		$c->render(json => { ok => 0, error => 'not signed in' }, status => 403);
 		return;
 	}
-	$c->render(json => &subs::release_now_local({
+	$c->render(json => &subs::release_now_anywhere({
 		dry_run => $c->param('dry_run') ? 1 : 0,
 	}));
 }
