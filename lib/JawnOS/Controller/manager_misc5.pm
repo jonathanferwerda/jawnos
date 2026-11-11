@@ -256,13 +256,13 @@ sub action_14764 {
 			}
 			$ocr = &ocr_reader($c,$filename);
 		}
-		my $file_command = 'file ' . &quote($filename);
+		my $file_command = 'file ' . &subs::shell_quote($filename);
 		$linux_file .= `$file_command` . "\n";
 		if ($upload_name =~ /avi$|mkv$/gi) {
 			my $old_filename = $filename;
 			$filename =~ s/avi$|mkv$/mp4/;
 			&subs::subprocessor(sub {
-				my $ffmpeg_cmd = 'ffmpeg -nostdin -i ' . &quote($old_filename) . ' ' . &quote($filename) . ' & exit /b';
+				my $ffmpeg_cmd = 'ffmpeg -nostdin -i ' . &subs::shell_quote($old_filename) . ' ' . &subs::shell_quote($filename) . ' & exit /b';
 				`$ffmpeg_cmd`;
 				system('shred', '-u', $old_filename);
 				&subs::file_encrypter({ app => $app });

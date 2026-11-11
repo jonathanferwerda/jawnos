@@ -376,11 +376,11 @@ sub action_25772 {
 				$fil->{'uuid'} = &subs::random_string_creator(32);
 				$fil->{'f'} = $nf;
 
-				my $cp = 'cp -v ' . &quote($f) . ' ' . &quote($nf);
+				my $cp = 'cp -v ' . &subs::shell_quote($f) . ' ' . &subs::shell_quote($nf);
 				`$cp`;
 				if ($fil->{'thumb'}) {
 					$fil->{'thumb'} = $tnf;
-					my $cp_thumb = 'cp -v ' . &quote($tf) . ' ' . &quote($tnf);
+					my $cp_thumb = 'cp -v ' . &subs::shell_quote($tf) . ' ' . &subs::shell_quote($tnf);
 					`$cp_thumb`;
 				}
 				push @{$files}, $fil;
@@ -401,7 +401,7 @@ sub action_25772 {
 		write_file($file, $data);
 		my $new_file = $file;
 		$new_file =~ s/\.enc$//gi;
-		my $mv = 'mv -v ' . &quote($file) . ' ' . &quote($new_file);
+		my $mv = 'mv -v ' . &subs::shell_quote($file) . ' ' . &subs::shell_quote($new_file);
 		`$mv`;
 		my ($db) = &subs::database_grabber();
 

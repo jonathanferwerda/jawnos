@@ -100,6 +100,9 @@ sub pay_invoice_lookup {
 	my ($uuid, $cx) = @_;
 	return () unless defined $uuid && length $uuid;
 	my $customer = $cx ? &db_select('settings', undef, { setting => 'uuid', value => $cx })->hashes->[0] : undef;
+	# A named customer token that matches nothing is not a reason to search
+	# without it: that turned a wrong cx into a way to reach the whole table.
+	return () if defined $cx && length $cx && !($customer && $customer->{'app'});
 	my $inv = ($customer && $customer->{'app'})
 		? &db_select('appointments', undef, { uuid => $uuid, app => $customer->{'app'} })->hashes->[0]
 		: &db_select('appointments', undef, { uuid => $uuid })->hashes->[0];

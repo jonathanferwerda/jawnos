@@ -68,7 +68,7 @@ like($part04, qr/path_is_within\(\$file/, '/file_open as_is confines the path to
 my $conf5 = source('lib/JawnOS/Controller/manager_configure5.pm');
 my $guards = () = $conf5 =~ /path_is_within/g;
 cmp_ok($guards, '>=', 3, 'restore, merge and delete each validate the backup path');
-like($conf5, qr/'tail ' \. quote\(\$path\)/, 'the restore tail quotes its path');
+like($conf5, qr/'tail ' \. &subs::shell_quote\(\$path\)/, 'the restore tail quotes its path');
 unlike($conf5, qr/`tail \$path`/, 'no raw restore path reaches the shell');
 
 my $conf = source('lib/JawnOS/Controller/manager_configure.pm');
@@ -124,29 +124,29 @@ like($body, qr/id="embedded_ota_uploader_wifi".*chip_id=/, 'the OTA button carri
 
 # --- the second audit pass: request text and data never reach a shell -------
 my $conf5_qr = source('lib/JawnOS/Controller/manager_configure5.pm');
-like($conf5_qr, qr/&quote\(\$pos\)/, 'the environment QR quotes the position it is given');
+like($conf5_qr, qr/'qrencode', '-o', '-', \$pos/, 'the environment QR hands its position to qrencode as one argv word');
 unlike($conf5_qr, qr/`qrencode -o - \$pos`/, 'no raw position reaches qrencode');
 
 my $misc5 = source('lib/JawnOS/Controller/manager_misc5.pm');
 like($misc5, qr/&subs::path_name\(\$upload->\{'filename'\}\)/, 'an uploaded name is one filesystem component');
 like($misc5, qr/system\('mkdir', '-p', \$location\)/, 'the upload folder is made in list form');
-like($misc5, qr/'file ' \. &quote\(\$filename\)/, 'the file probe quotes its path');
+like($misc5, qr/'file ' \. &subs::shell_quote\(\$filename\)/, 'the file probe quotes its path');
 like($misc5, qr/system\('shred', '-u', \$old_filename\)/, 'shred runs in list form');
 unlike($misc5, qr/`file \$filename`/, 'no raw upload path reaches the shell');
 
 my $misc7 = source('lib/JawnOS/Controller/manager_misc7.pm');
-like($misc7, qr/my \$cp = 'cp -v ' \. &quote\(\$f\)/, 'a copy builds its command with quoted paths');
-like($misc7, qr/my \$mv = 'mv -v ' \. &quote\(\$file\)/, 'a move builds its command with quoted paths');
+like($misc7, qr/my \$cp = 'cp -v ' \. &subs::shell_quote\(\$f\)/, 'a copy builds its command with quoted paths');
+like($misc7, qr/my \$mv = 'mv -v ' \. &subs::shell_quote\(\$file\)/, 'a move builds its command with quoted paths');
 like($misc7, qr/system\('shred', '-u', \$thumb\)/, 'a thumbnail shred runs in list form');
 unlike($misc7, qr/`cp -v \$f \$nf`/, 'no raw copy path reaches the shell');
 
 my $generated = source('lib/JawnOS/Domain/Generate.pm');
 like($generated, qr/File::Path::make_path\(\$public_dir\)/, 'the media folder is made in Perl');
-like($generated, qr/&quote\(\$file_path\)/, 'the media pipeline quotes its paths');
+like($generated, qr/&subs::shell_quote\(\$file_path\)/, 'the media pipeline quotes its paths');
 unlike($generated, qr/`mkdir \$public_dir`/, 'no raw media folder reaches the shell');
 
 my $mail2 = source('lib/JawnOS/Controller/manager_mail2.pm');
-like($mail2, qr/&quote\(\$qr\)/, 'the mail QR quotes its payload');
+like($mail2, qr/&subs::shell_quote\(\$qr\)/, 'the mail QR quotes its payload');
 unlike($mail2, qr/`qrencode -o - \$qr`/, 'no raw QR payload reaches the shell');
 
 # A pinned key proves the machine; the grant says what it may ask for.
@@ -196,9 +196,9 @@ like($ws, qr/\$freq =~ \/\\A\\d\{1,5\}/, 'the synth frequency is digits only');
 like($ws, qr/\$length =~ \/\\A\\d\{1,2\}/, 'the synth length is digits only');
 
 my $conf5 = source('lib/JawnOS/Controller/manager_configure5.pm');
-ok(index($conf5, q{'sqlite3 ' . &quote($database) . ' .tables'}) >= 0,
+ok(index($conf5, q{'sqlite3 ' . &subs::shell_quote($database) . ' .tables'}) >= 0,
 	'a table probe quotes the database path');
-ok(index($conf5, q{quote(".backup '$database.1.db'")}) >= 0, 'a backup operand is quoted whole');
+ok(index($conf5, q{&subs::shell_quote(".backup '$database.1.db'")}) >= 0, 'a backup operand is quoted whole');
 ok(index($conf5, "system('mkdir', '-p', \$temp_folder)") >= 0, 'the export folder is made in list form');
 ok(index($conf5, "system('touch', \$tdatabase)") >= 0, 'the export scratch file is made in list form');
 ok(index($conf5, "system('shred', '-u', \$tdatabase)") >= 0, 'the export scratch file is shredded in list form');
@@ -217,11 +217,11 @@ ok(index($misc3, "system('shred', '-u', \$delb)") >= 0, 'a defunct backup is shr
 ok(index($misc3, "system('shred', '-u', \$f)") >= 0, 'the replaced backup is shredded in list form');
 
 my $backupdom = source('lib/JawnOS/Domain/Backup.pm');
-ok(index($backupdom, q{'sqlite3 ' . &quote($database) . ' .tables'}) >= 0,
+ok(index($backupdom, q{'sqlite3 ' . &subs::shell_quote($database) . ' .tables'}) >= 0,
 	'the backup table probe quotes the database path');
 ok(index($backupdom, "system('shred', '-u', \$schema_file)") >= 0, 'the scratch schema is shredded in list form');
-ok(index($backupdom, q{&quote($temporary_path) . '*'}) >= 0, 'the scratch-file glob is quoted, its wildcard left outside');
-ok(index(source('lib/JawnOS/Domain/Name.pm'), q{'sqlite3 ' . &quote($database) . ' .tables'}) >= 0,
+ok(index($backupdom, q{&subs::shell_quote($temporary_path) . '*'}) >= 0, 'the scratch-file glob is quoted, its wildcard left outside');
+ok(index(source('lib/JawnOS/Domain/Name.pm'), q{'sqlite3 ' . &subs::shell_quote($database) . ' .tables'}) >= 0,
 	'a rename reads its tables through a quoted path');
 
 my $part02 = source('lib/JawnOS/Manager/Part02.pm');

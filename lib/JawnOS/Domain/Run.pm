@@ -353,8 +353,8 @@ sub git_repo_update {
 		$out .= $run->("\"$git\" reset --hard $ref");
 		return ('reset', $out);
 	}
-	my $behind = (system('cd ' . &quote($repo) . ' && ' . &quote($git) . ' merge-base --is-ancestor HEAD ' . &quote($ref) . ' >/dev/null 2>&1') == 0);
-	return ('ahead', $out) if system('cd ' . &quote($repo) . ' && ' . &quote($git) . ' merge-base --is-ancestor ' . &quote($ref) . ' HEAD >/dev/null 2>&1') == 0;
+	my $behind = (system('cd ' . &subs::shell_quote($repo) . ' && ' . &subs::shell_quote($git) . ' merge-base --is-ancestor HEAD ' . &subs::shell_quote($ref) . ' >/dev/null 2>&1') == 0);
+	return ('ahead', $out) if system('cd ' . &subs::shell_quote($repo) . ' && ' . &subs::shell_quote($git) . ' merge-base --is-ancestor ' . &subs::shell_quote($ref) . ' HEAD >/dev/null 2>&1') == 0;
 	if ($behind) {
 		$out .= $run->("\"$git\" merge --ff-only $ref");
 		return ('updated', $out);
@@ -417,7 +417,7 @@ sub git_peer_update {
 		my $out = `cd "$repo" && "$git" reset --hard $target 2>&1`;
 		return ('reset', $out);
 	}
-	if (system('cd ' . &quote($repo) . ' && ' . &quote($git) . ' merge-base --is-ancestor HEAD ' . &quote($target) . ' >/dev/null 2>&1') == 0) {
+	if (system('cd ' . &subs::shell_quote($repo) . ' && ' . &subs::shell_quote($git) . ' merge-base --is-ancestor HEAD ' . &subs::shell_quote($target) . ' >/dev/null 2>&1') == 0) {
 		my $out = `cd "$repo" && "$git" merge --ff-only $target 2>&1`;
 		return ('updated', $out);
 	}

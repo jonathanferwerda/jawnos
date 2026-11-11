@@ -721,12 +721,12 @@ sub clock_alarm_play_command {
 		my $ramp = int($alarm->{'ramp'} || 0);
 		$ramp = 1 if $ramp < 1;
 		my @play = JawnOS::Platform::Audio::player_argv($file, $target);
-		my $play = join(' ', @play[0 .. 3], &quote($play[4]));
+		my $play = join(' ', @play[0 .. 3], &subs::shell_quote($play[4]));
 		return $play . ' fade t ' . $ramp . ' repeat 1000 & echo $! > ' . &clock_alarm_pidfile($alarm->{'uuid'});
 	}
 	my $level = &clock_alarm_volume_at($alarm, $elapsed, $system_set);
 	my @play = JawnOS::Platform::Audio::player_argv($file, $level);
-	return join(' ', @play[0 .. 3], &quote($play[4])) . ' fade t 1';
+	return join(' ', @play[0 .. 3], &subs::shell_quote($play[4])) . ' fade t 1';
 }
 
 # Play one repetition of a short chime through the operating system. The

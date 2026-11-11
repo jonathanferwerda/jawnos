@@ -201,10 +201,10 @@ sub action_10288 {
 	my ($fh, $path) = File::Temp::tempfile(SUFFIX => '.bundle', UNLINK => 1);
 	close $fh;
 	my $delta = '';
-	if ($base =~ /^[0-9a-f]{7,40}$/ && system('cd ' . &quote($repo) . ' && ' . &quote($git) . ' cat-file -e ' . &quote($base) . ' 2>/dev/null') == 0) {
+	if ($base =~ /^[0-9a-f]{7,40}$/ && system('cd ' . &subs::shell_quote($repo) . ' && ' . &subs::shell_quote($git) . ' cat-file -e ' . &subs::shell_quote($base) . ' 2>/dev/null') == 0) {
 		$delta = " ^$base";
 	}
-	my $bundle_command = 'cd ' . &quote($repo) . ' && ' . &quote($git) . ' bundle create ' . &quote($path) . ' HEAD' . $delta . ' 2>&1';
+	my $bundle_command = 'cd ' . &subs::shell_quote($repo) . ' && ' . &subs::shell_quote($git) . ' bundle create ' . &subs::shell_quote($path) . ' HEAD' . $delta . ' 2>&1';
 	`$bundle_command`;
 	my $data = '';
 	if (open(my $bf, '<', $path)) { binmode $bf; local $/; $data = <$bf>; close $bf; }
@@ -452,7 +452,11 @@ sub action_11014 {
 	my $c = shift;
 	my $signatorial = $c->param('signatorial');
 	my $rm = ($signatorial && &subs::db_select('remote_machines', undef, { signatorial => $signatorial })->hashes->[0]);
-	unless (($c->session('authentication') || '') eq 'approved' || ($rm && $rm->{'pubkey'} && &subs::peer_verify($c, $rm))) {
+	# A visitor's ticket is not a house session: these rails carry the whole
+	# database, its deletion log and the backup confirmation. A signed peer stays.
+	unless ((($c->session('authentication') || '') eq 'approved'
+		&& !&subs::guest_browser_session($c->session('privilege'), $c->session('source')))
+		|| ($rm && $rm->{'pubkey'} && &subs::peer_verify($c, $rm))) {
 		$c->rendered(403);
 		return;
 	}
@@ -536,7 +540,11 @@ sub action_11091 {
 	my $c = shift;
 	my $signatorial = $c->param('signatorial');
 	my $rm = ($signatorial && &subs::db_select('remote_machines', undef, { signatorial => $signatorial })->hashes->[0]);
-	unless (($c->session('authentication') || '') eq 'approved' || ($rm && $rm->{'pubkey'} && &subs::peer_verify($c, $rm))) {
+	# A visitor's ticket is not a house session: these rails carry the whole
+	# database, its deletion log and the backup confirmation. A signed peer stays.
+	unless ((($c->session('authentication') || '') eq 'approved'
+		&& !&subs::guest_browser_session($c->session('privilege'), $c->session('source')))
+		|| ($rm && $rm->{'pubkey'} && &subs::peer_verify($c, $rm))) {
 		$c->rendered(403);
 		return;
 	}
@@ -558,7 +566,11 @@ sub action_11111 {
 	my $c = shift;
 	my $signatorial = $c->param('signatorial');
 	my $rm = ($signatorial && &subs::db_select('remote_machines', undef, { signatorial => $signatorial })->hashes->[0]);
-	unless (($c->session('authentication') || '') eq 'approved' || ($rm && $rm->{'pubkey'} && &subs::peer_verify($c, $rm))) {
+	# A visitor's ticket is not a house session: these rails carry the whole
+	# database, its deletion log and the backup confirmation. A signed peer stays.
+	unless ((($c->session('authentication') || '') eq 'approved'
+		&& !&subs::guest_browser_session($c->session('privilege'), $c->session('source')))
+		|| ($rm && $rm->{'pubkey'} && &subs::peer_verify($c, $rm))) {
 		$c->rendered(403);
 		return;
 	}
@@ -610,13 +622,27 @@ sub action_11638 {
 	# signature (the caller names itself in `signatorial`).
 	my $signatorial = $c->param('signatorial');
 	my $rm = ($signatorial && &subs::db_select('remote_machines', undef, { signatorial => $signatorial })->hashes->[0]);
-	unless (($c->session('authentication') || '') eq 'approved' || ($rm && $rm->{'pubkey'} && &subs::peer_verify($c, $rm))) {
+	# A visitor's ticket is not a house session: these rails carry the whole
+	# database, its deletion log and the backup confirmation. A signed peer stays.
+	unless ((($c->session('authentication') || '') eq 'approved'
+		&& !&subs::guest_browser_session($c->session('privilege'), $c->session('source')))
+		|| ($rm && $rm->{'pubkey'} && &subs::peer_verify($c, $rm))) {
 		$c->rendered(403);
 		return;
 	}
 	my $backup_confirm = eval { return decode_json $c->param('backup_confirm') };
 	my $backup_data = $backup_confirm->{'backup_data'};
 	my $returner = $backup_data;
+	# The confirmation names a file to shred. It may only ever be an archive
+	# this house staged in its backup folder; a request naming the live
+	# database, config.json or a secret is refused rather than obeyed.
+	my $backup_root = &subs::backups_dir();
+	my $safe_backup_file = sub {
+		my ($p) = @_;
+		return 0 unless defined $p && length $p && -e $p && !-d $p;
+		return 0 unless &subs::path_is_within($p, $backup_root);
+		return 1;
+	};
 	if ($backup_data->{'server_time'}) {
 		# This is the *completed* snapshot. It was built with reason
 		# `remote_update` (the in-flight name), and storing it under that name
@@ -629,7 +655,7 @@ sub action_11638 {
 		my $signatorial = &subs::signatorial_designer();
 		my $defunct_backups = &subs::db_query('select * from backups where recipient = ? and signatorial = ? and ost < ?', $backup_data->{'recipient'}, $signatorial, $backup_confirm->{'ld_server_time'})->hashes;
 		foreach my $defb ( @{$defunct_backups} ) {
-			if ($defb->{'enc_file'} && -e $defb->{'enc_file'}) {
+			if ($safe_backup_file->($defb->{'enc_file'})) {
 				my $delb = $defb->{'enc_file'};
 				system('shred', '-u', $delb);
 			}
@@ -639,7 +665,7 @@ sub action_11638 {
 		my $last_updated = &subs::db_query('delete from backups where recipient = ? and signatorial = ? and ost <= ?', $backup_data->{'recipient'}, $signatorial, $backup_data->{'ld_server_time'});
 		&subs::db_insert('backups', $backup_data);
 	}
-	if (-e $backup_data->{'enc_file'}) {
+	if ($safe_backup_file->($backup_data->{'enc_file'})) {
 		my $f = $backup_data->{'enc_file'};
 		system('shred', '-u', $f);
 	}

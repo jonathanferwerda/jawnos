@@ -129,7 +129,7 @@ for my $hit ( grep_tree('(system|exec)\s*\(\s*["\x27][^"\x27]*\$|`[^`]*\$', 'lib
 	finding('high', 'perl.shell.request', 'command injection',
 		'request data near a shell execution', path => $path, line => $line,
 		evidence => redact($text),
-		fix => 'list-form system/exec, or quote() every interpolated word');
+		fix => 'list-form system/exec, or subs::shell_quote() every interpolated word');
 }
 
 # A base64 value on a shell command line is a shell metacharacter away from RCE,
@@ -154,7 +154,7 @@ for my $hit ( grep_tree('(system|exec)[[:space:]]*\([[:space:]]*"[^)]*[$]', 'lib
 	finding('high', 'perl.shell.double_quoted', 'command injection',
 		'a double-quoted command string reaches system/exec', path => $path, line => $line,
 		evidence => redact($text),
-		fix => 'use list-form system()/exec(), or build the string from quote()ed words');
+		fix => 'use list-form system()/exec(), or build the string from subs::shell_quote()d words');
 }
 
 # terminal_name escapes a short list of characters, not a shell word: `;`, a
@@ -166,7 +166,7 @@ for my $hit ( grep_tree('terminal_name[^;]*`|`[^`]*terminal_name|(system|exec)[[
 	finding('high', 'perl.shell.terminal_name', 'command injection',
 		'terminal_name is used as a shell quoter', path => $path, line => $line,
 		evidence => redact($text),
-		fix => 'use list-form system()/exec(), or quote() every interpolated word');
+		fix => 'use list-form system()/exec(), or subs::shell_quote() every interpolated word');
 }
 
 # A leading & once meant Perl eval in run_command. It is not a command, and the
@@ -204,13 +204,28 @@ for my $hit ( grep_tree('`[^`]*[[:space:]]`[[:space:]]*\.', 'lib', 'perl') ) {
 		fix => 'build the command in a variable, then `$cmd`; never `cmd ` . arg');
 }
 
+# Mojo::Util::quote escapes only " and \: it is not a shell quoter. `$()`, a
+# backtick or `;` inside its result still runs in the shell, so a command built
+# with it is injectable however tidy the call looks. subs::shell_quote wraps the
+# whole word in single quotes; list form avoids the shell entirely.
+for my $hit ( grep_tree('(^|[^_[:alnum:]:])(&?quote)[[:space:]]*\(', 'lib', 'perl') ) {
+	my ($path, $line, $text) = @{$hit};
+	next if $text =~ /^\s*#/;
+	next if $text =~ /(?:shell|un|url|html|xml|sql|path|js)_quote[[:space:]]*\(/;
+	next unless $text =~ /`|(?:system|exec)[[:space:]]*\(/;
+	finding('high', 'perl.shell.mojo_quote', 'command injection',
+		'Mojo::Util::quote is used to build a shell command', path => $path, line => $line,
+		evidence => redact($text),
+		fix => 'use subs::shell_quote(), or list-form system()/exec()');
+}
+
 for my $hit ( grep_tree('read_file\s*\(\s*\$c->param|`tail \$', 'lib', 'perl') ) {
 	my ($path, $line, $text) = @{$hit};
-	next if $text =~ /path_is_within|path_name|quote\(/;
+	next if $text =~ /path_is_within|path_name|shell_quote\(/;
 	finding('high', 'perl.path.request', 'path traversal',
 		'a caller-named path reaches a file operation', path => $path, line => $line,
 		evidence => redact($text),
-		fix => 'resolve with path_is_within/path_name and quote the shell word');
+		fix => 'resolve with path_is_within/path_name and shell-quote the shell word');
 }
 
 for my $hit ( grep_tree('db_(query|select|insert|update|delete)\s*\(\s*"[^"]*\$', 'lib', 'perl') ) {

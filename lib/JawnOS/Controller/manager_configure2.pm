@@ -91,7 +91,7 @@ sub action_9562 {
 		if (scalar @ip == 4) {
 
 			$returner->{$ip}->{'ip'} = $ip;
-			my $ping_command = "timeout $timeout ping -c 1 " . quote($ip);
+			my $ping_command = "timeout $timeout ping -c 1 " . &subs::shell_quote($ip);
 			$returner->{$ip}->{'result'} = `$ping_command`;
 		}
 		else {
@@ -119,7 +119,7 @@ sub action_9562 {
 								push @gw, $csv;
 								my $ip_address = join '.', @gw;
 								$returner->{$ip_address}->{ip} = $ip_address;
-								my $ping_command = "timeout $timeout ping -c 1 " . quote($ip_address);
+								my $ping_command = "timeout $timeout ping -c 1 " . &subs::shell_quote($ip_address);
 								$returner->{$ip_address}->{'result'} = `$ping_command`;
 							}
 						}
@@ -133,7 +133,7 @@ sub action_9562 {
 								my $ip_address = join '.', @gw;
 
 								$returner->{$ip_address}->{ip} = $ip_address;
-								my $ping_command = "timeout $timeout ping -c 1 " . quote($ip_address);
+								my $ping_command = "timeout $timeout ping -c 1 " . &subs::shell_quote($ip_address);
 								$returner->{$ip_address}->{'result'} = `$ping_command`;
 							}
 						}
@@ -142,7 +142,7 @@ sub action_9562 {
 							push @gw, $ip;
 							my $ip_address = join '.', @gw;
 							$returner->{$ip_address}->{ip} = $ip_address;
-							my $ping_command = "timeout $timeout ping -c 1 " . quote($ip_address);
+							my $ping_command = "timeout $timeout ping -c 1 " . &subs::shell_quote($ip_address);
 							$returner->{$ip_address}->{'result'} = `$ping_command`;
 						}
 					}
@@ -284,7 +284,11 @@ sub action_10035 {
 	# roster instead, so a lapsed cookie cannot wedge the sync again.
 	my $requester = $c->param('signatorial');
 	my $requester_rm = ($requester && &subs::db_select('remote_machines', undef, { signatorial => $requester })->hashes->[0]);
-	unless ($c->session('authentication') eq 'approved' || ($requester_rm && $requester_rm->{'pubkey'} && &subs::peer_verify($c, $requester_rm))) {
+	# A visitor's ticket cannot start a pull: this route forks a fetcher and
+	# names where it fetches from. A signed peer is the house's own machine.
+	my $house_session = ($c->session('authentication') || '') eq 'approved'
+		&& !&subs::guest_browser_session($c->session('privilege'), $c->session('source'));
+	unless ($house_session || ($requester_rm && $requester_rm->{'pubkey'} && &subs::peer_verify($c, $requester_rm))) {
 		$c->rendered(403);
 		return;
 	}
@@ -298,12 +302,13 @@ sub action_10035 {
 	my $full = $c->param('full');
 	my $remote_signatorial = $c->param('signatorial');
 	my $remote_device = $c->param('device');
-	# A local caller (the CLI, or the Dev panel) may name the manager that just
-	# answered when the roster's stored address is stale - a phone that moved to a
-	# new LAN or tailnet address leaves the old ip behind, and the pull then dials
-	# a dead host. Only a session may do this; a peer lever already knows its own
-	# address and must not be able to make this machine fetch an arbitrary URL.
-	my $manager_override = ($c->session('authentication') eq 'approved') ? $c->param('manager') : undef;
+	# Only a house session on this machine may name the manager to dial. A
+	# remote browser gets the roster's address, so a ticket cannot turn this
+	# host into a fetcher for a URL of its choosing.
+	my $caller_addr = $c->tx->remote_address // '';
+	my $caller_local = ($caller_addr eq '127.0.0.1' || $caller_addr eq '::1'
+		|| $caller_addr =~ /^::ffff:127\.0\.0\.1$/);
+	my $manager_override = ($house_session && $caller_local) ? $c->param('manager') : undef;
 	my $params = {
 		timestamp => $timestamp,
 		ip => $ip,
@@ -873,9 +878,43 @@ sub action_12450 {
 		return $c->render(json => { ok => 0, error => 'no code' }) unless $code =~ /^\d{6}$/;
 		my $address = $c->param('address') || '';
 		return $c->render(json => { ok => 0, error => 'no address' }) unless length $address;
+		# This rail answers anyone. A signed peer is the only caller that may
+		# replace a pending request for a code, and only with the identity that
+		# made it: otherwise anyone who guessed six digits could move the address
+		# the citizen is about to accept. Keep a small per-address budget too.
+		my $caller = $c->tx->remote_address // '';
+		my $recent = &subs::db_query(
+			'select count(*) as c from cache where context = ? and subcontext = ? and server_time > ?',
+			'join_request_rate', $caller, $now - 600_000
+		)->hashes->[0];
+		if ($recent && ($recent->{'c'} || 0) >= 20) {
+			return $c->render(json => { ok => 0, error => 'too many join requests' }, status => 429);
+		}
+		&subs::db_query('delete from cache where context = ? and server_time < ?', 'join_request_rate', $now - 600_000);
+		&subs::db_insert('cache', {
+			uuid => &subs::random_string_creator(18),
+			context => 'join_request_rate',
+			subcontext => $caller,
+			app => '__president',
+			server_time => $now,
+			timestamp => $now,
+		});
 		# A repeated code replaces the earlier request rather than stacking up.
 		&subs::db_query('delete from cache where context = ? and server_time < ?', 'join_request', $now - $subs::JOIN_REQUEST_TTL_MS);
-		&subs::db_delete('cache', { context => 'join_request', subcontext => $code });
+		my $pending = &subs::db_select('cache', undef, { context => 'join_request', subcontext => $code })->hashes->[0];
+		if ($pending) {
+			my $old_req = eval { return decode_json $pending->{'data'} } || {};
+			my $old_sig = $old_req->{'signatorial'} || '';
+			my $old_key = $old_req->{'pubkey'} || '';
+			my $new_sig = $c->param('signatorial') || '';
+			my $new_key = $c->param('pubkey') || '';
+			my $same_machine = ($old_sig ne '' || $old_key ne '')
+				&& $old_sig eq $new_sig && $old_key eq $new_key;
+			unless ($same_machine) {
+				return $c->render(json => { ok => 0, error => 'that code is already pending' });
+			}
+			&subs::db_delete('cache', { context => 'join_request', subcontext => $code });
+		}
 		my $data = {
 			code => $code,
 			address => $address,

@@ -99,6 +99,13 @@ sub action_16801 {
 sub action_16824 {
 	my $c = shift;
 	my $name = &subs::unformat_name($c->param('name'));
+	# The name is a column in the query below, not a value: only a real
+	# appointments column may name it, so no request text reaches the SQL.
+	my $is_column = $name && &subs::db_query('select 1 from pragma_table_info(?) where name=?', 'appointments', $name)->hashes->[0];
+	unless ($is_column) {
+		$c->render(json => {});
+		return;
+	}
 	my $app = &subs::unformat_name($c->param('app'));
 	my $movement = $c->param('movement');
 	my $raw_value = $c->param('value');

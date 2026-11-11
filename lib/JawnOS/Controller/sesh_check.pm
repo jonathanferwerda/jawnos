@@ -102,7 +102,7 @@ sub action_7519 {
 		$backup_file =~ s/\.enc\z//i;
 		$database = $backup_file . '.db';
 		unless (-e $database && -s $database > 5000) {
-			my $tail_command = 'tail ' . quote($backup);
+			my $tail_command = 'tail ' . &subs::shell_quote($backup);
 			my $data = `$tail_command`;
 			my @split_data = split $universal_splitter, $data;
 			$encryption_standard = &subs::decrypter($secret, $split_data[1]);

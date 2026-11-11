@@ -328,7 +328,7 @@ sub setting_setter {
 
 
 		my ($db,$database,$sql) = &database_grabber();
-		my $tables_command = 'sqlite3 ' . &quote($database) . ' .tables';
+		my $tables_command = 'sqlite3 ' . &subs::shell_quote($database) . ' .tables';
 		my $tables = `$tables_command`;
 		my @u = sort split ' ', $tables;
 		foreach my $t ( @u ) {

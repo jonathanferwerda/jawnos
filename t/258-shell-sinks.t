@@ -79,7 +79,7 @@ like($part02, qr/system\('ffmpeg', '-nostdin', '-i', '\/dev\/video0', \$filename
 like($part02, qr/system\('play', \$file\)/, 'the audio player runs in list form');
 
 my $part04 = source('lib/JawnOS/Manager/Part04.pm');
-like($part04, qr/'magick ' \. &quote\(\$file \. '\[0\]'\)/, 'the thumbnail convert quotes its path');
+like($part04, qr/'magick ' \. &subs::shell_quote\(\$file \. '\[0\]'\)/, 'the thumbnail convert quotes its path');
 unlike($part04, qr/'magick "' \. \$file/, 'no raw path is embedded in a double-quoted command');
 
 my $part12 = source('lib/JawnOS/Manager/Part12.pm');
@@ -99,23 +99,23 @@ like($sent, qr/system\('mkdir', '-p', \$destination\)/, 'the attachment folder i
 like($sent, qr/system\('shred', '-u', \$loc\)/, 'the attachment scratch is shredded in list form');
 
 my $crypt = source('lib/JawnOS/Domain/Crypt.pm');
-like($crypt, qr/&quote\(\$key_file\)/, 'peer verification quotes its key path');
-like($crypt, qr/&quote\(\$key\)/, 'peer signing quotes its private key path');
+like($crypt, qr/&subs::shell_quote\(\$key_file\)/, 'peer verification quotes its key path');
+like($crypt, qr/&subs::shell_quote\(\$key\)/, 'peer signing quotes its private key path');
 
-like(source('lib/JawnOS/Domain/People.pm'), qr/&quote\(\$key_file\)/,
+like(source('lib/JawnOS/Domain/People.pm'), qr/&subs::shell_quote\(\$key_file\)/,
 	'the device signature check quotes its paths');
 
 my $run = source('lib/JawnOS/Domain/Run.pm');
 like($run, qr/\$branch = 'main' unless \$branch =~ \/\\A\[A-Za-z0-9\]/, 'a branch name is a ref, not a shell word');
-like($run, qr/system\('cd ' \. &quote\(\$repo\)/, 'the ancestry probe quotes its paths');
+like($run, qr/system\('cd ' \. &subs::shell_quote\(\$repo\)/, 'the ancestry probe quotes its paths');
 
 my $embedded = source('lib/JawnOS/Domain/Embedded.pm');
 like($embedded, qr/opendir\(my \$dh, \$directory\)/, 'the backup list is read in Perl');
 unlike($embedded, qr/`ls -t \$directory`/, 'no raw directory reaches ls');
 
-like(source('lib/JawnOS/Controller/manager_misc3.pm'), qr/&quote\(\$base\)/,
+like(source('lib/JawnOS/Controller/manager_misc3.pm'), qr/&subs::shell_quote\(\$base\)/,
 	'the code bundle quotes its base hash');
-like(source('lib/JawnOS/Controller/manager_embedded.pm'), qr/'nohup sh -c ' \. &quote\(\$command\)/,
+like(source('lib/JawnOS/Controller/manager_embedded.pm'), qr/'nohup sh -c ' \. &subs::shell_quote\(\$command\)/,
 	'the USB upload quotes the command it wraps');
 
 like(source('scripts/security_audit.pl'), qr/perl\.shell\.double_quoted/,
@@ -169,5 +169,33 @@ for my $rel (qw(
 )) {
 	unlike(source($rel), $BROKEN_SHELL, "$rel keeps each shell command in one string");
 }
+
+
+my $backup = source('lib/JawnOS/Domain/Backup.pm');
+
+# --- the seventh pass: Mojo::Util::quote is not a shell quoter --------------
+# It escapes only " and \: `$(id)` and a backtick survive it, and the shell runs
+# them. Every shell word in the tree now goes through subs::shell_quote, which
+# wraps the whole word in single quotes.
+like($backup, qr/\$timestamp =~ \/\\A\\d\{10,16\}\\z\//,
+	'a backup timestamp is an epoch before it names an archive');
+like($backup, qr/&subs::shell_quote\(\$database\)/,
+	'the backup table probe shell-quotes its path');
+like($part04, qr/system\('mkdir', '-p', \$folder\)/,
+	'the thumbnail folder is made in list form');
+like($part04, qr/system\('shred', '-u', \$filename\)/,
+	'the thumbnail scratch is shredded in list form');
+like($part04, qr/&subs::shell_quote\(\$filename\)/,
+	'the video thumbnail shell-quotes its path');
+
+my $part13 = source('lib/JawnOS/Manager/Part13.pm');
+like($part13, qr/&subs::shell_quote\(\$filename\)/,
+	'an uploaded video thumbnail shell-quotes its path');
+
+like(source('lib/JawnOS/Controller/manager_configure5.pm'),
+	qr/open\(my \$qr_pipe, '-\\|', 'qrencode', '-o', '-', \$pos\)/,
+	'the environment QR passes its text as one argv word');
+like(source('scripts/security_audit.pl'), qr/perl\.shell\.mojo_quote/,
+	'the audit names a Mojo quote used as a shell quoter');
 
 done_testing();

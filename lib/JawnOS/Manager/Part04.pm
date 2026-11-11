@@ -181,6 +181,14 @@ sub rock_and_roll($c) {
 		# as_is returns a file's bytes as-is. It is a relay for the app's own
 		# files, not a general file reader: resolve the path and keep it inside
 		# the app home (or the temp dir) or it is refused.
+		# as_is hands back a whole file's bytes. A ticket below house level is a
+		# visitor: it may see the apps it was shown, not whatever path it names in
+		# the house's home - config, secrets, the database. A signed peer is the
+		# house's own machine and keeps the relay.
+		if ($c->param('as_is') && !$peer_signed && &subs::guest_browser_session($c->session('privilege'), $c->session('source'))) {
+			$c->render(text => 'not found');
+			return;
+		}
 		if ($c->param('as_is')) {
 			my @roots = grep { defined && length } (&subs::home('~'), $gb::tmp_dir);
 			my $within = 0;
@@ -421,7 +429,7 @@ sub rock_and_roll($c) {
 
 									if ($file_data->{'type'} eq 'video' || grep { $_ eq $ext } qw/mp4 webm mpg mpeg mov mkv avi/ ) {
 										my $seek = defined $hover_position ? sprintf('%.3f', $hover_position) : &subs::thumbnail_seek_position($c->param('duration'));
-										my $command2 = 'ffmpeg -nostdin -ss ' . $seek . ' -f ' . $ext . ' -i ' . $filename . ' -vframes 1 -c:v png -f image2pipe - | magick - -resize ' . $thumbnail_size . ' - ';
+										my $command2 = 'ffmpeg -nostdin -ss ' . &subs::shell_quote($seek) . ' -f ' . &subs::shell_quote($ext) . ' -i ' . &subs::shell_quote($filename) . ' -vframes 1 -c:v png -f image2pipe - | magick - -resize ' . &subs::shell_quote($thumbnail_size) . ' - ';
 										$file_data->{'type'} = 'video';
 										$data = &native_thumb_png($filename, $thumbnail_size);
 										$data = &run_thumb_command($command2) unless defined $data && length $data;
@@ -438,7 +446,7 @@ sub rock_and_roll($c) {
 											my $whole = &subs::note_open_container($opened->{'container'}, $opened->{'secret'}, $opened->{'standard'}, 1);
 											write_file($filename, $whole) if defined $whole && length $whole;
 										}
-										my $command2 = 'magick ' . $filename . ' -auto-orient -strip -resize ' . $thumbnail_size . ' -';
+										my $command2 = 'magick ' . &subs::shell_quote($filename) . ' -auto-orient -strip -resize ' . &subs::shell_quote($thumbnail_size) . ' -';
 										$file_data->{'type'} = 'image';
 										$data = &native_thumb_png($filename, $thumbnail_size);
 										$data = &run_thumb_command($command2) unless defined $data && length $data;
@@ -447,7 +455,7 @@ sub rock_and_roll($c) {
 										pop @file_split;
 										my $folder = join '/', @file_split;
 										$folder = $folder . '/.thumbs';
-										`mkdir -p $folder`;
+											system('mkdir', '-p', $folder);
 										my $worker_id = &subs::random_string_creator(10);
 										my $priority = $folder . '/priority.txt';
 										my $pr = eval { return decode_json read_file($priority) } || {};
@@ -470,7 +478,7 @@ sub rock_and_roll($c) {
 										my $appt = &subs::db_select('appointments', undef, { uuid => $appter->[0]->{'uuid'}, app => $appter->[0]->{'app'} })->hashes->[0];
 										$atf = eval { return decode_json $appt->{'file'} } || [];
 										my @natf = grep { $_->{'uuid'} eq $file_data->{'uuid'} } @{$atf};
-										if (-e $natf[0]->{'thumb'}) { my $natfthumb = $natf[0]->{'thumb'}; `shred -u $natfthumb`; }
+											if (-e $natf[0]->{'thumb'}) { my $natfthumb = $natf[0]->{'thumb'}; system('shred', '-u', $natfthumb); }
 										@{$atf} = grep { $_->{'uuid'} ne $file_data->{'uuid'} } @{$atf};
 
 										push @{$atf}, $file_data;
@@ -478,7 +486,7 @@ sub rock_and_roll($c) {
 										&subs::db_update('appointments', { server_time => &subs::rightNow(), file => $jdata }, { uuid => $appter->[0]->{'uuid'}, app => $appter->[0]->{'app'} });
 										$pr = eval { return decode_json read_file($priority) } || {};
 										delete $pr->{$appter->[0]->{'uuid'}};
-										if (scalar keys %{$pr} == 0) {`shred -u $priority`; }
+											if (scalar keys %{$pr} == 0) { system('shred', '-u', $priority); }
 										else {
 											$jpr = encode_json $pr;
 											write_file($priority, $jpr);
@@ -487,7 +495,7 @@ sub rock_and_roll($c) {
 									&subs::subprocessor(sub {
 								    Mojo::IOLoop->reset;
 
-										`shred -u $filename`;
+											system('shred', '-u', $filename);
 									}, { name => 'thumb shredder' });
 								}
 							}
@@ -574,7 +582,7 @@ sub rock_and_roll($c) {
 					}
 					else {
 						my $filename = $tdir . '/' . &subs::random_string_creator(20) . '.png';
-						my $command = 'ffmpeg -nostdin -ss 00:01:30.010 -i ' . &quote($file) . ' -vframes 1 -c:v png -f image2pipe - | magick - -resize 200x200 -';
+						my $command = 'ffmpeg -nostdin -ss 00:01:30.010 -i ' . &subs::shell_quote($file) . ' -vframes 1 -c:v png -f image2pipe - | magick - -resize 200x200 -';
 						my $data = &native_thumb_png($file, 200);
 						$data = &run_thumb_command($command) unless defined $data && length $data;
 						if ($c->param('position')) {
@@ -587,7 +595,7 @@ sub rock_and_roll($c) {
 					}
 				}
 				elsif (grep { $ext eq $_ } qw/xcf tiff/) {
-					my $c_command = 'magick ' . &quote($file . '[0]') . ' -alpha on -background none -flatten -resize 256x256 png:-';
+					my $c_command = 'magick ' . &subs::shell_quote($file . '[0]') . ' -alpha on -background none -flatten -resize 256x256 png:-';
 					my $converted = &native_thumb_png($file, 256);
 					$converted = `$c_command` unless defined $converted && length $converted;
 					my $data =  $converted;
@@ -672,7 +680,7 @@ sub rock_and_roll($c) {
 							elsif ($c->param('chapter') ne 'ya') {
 								$duration = &subs::thumbnail_seek_position($duration);
 							}
-							my $command = 'ffmpeg -nostdin -ss ' . &quote($duration) . ' -i ' . &quote($file) . ' -vframes 1 -c:v png -f image2pipe - | magick - -resize 200x200 -';
+							my $command = 'ffmpeg -nostdin -ss ' . &subs::shell_quote($duration) . ' -i ' . &subs::shell_quote($file) . ' -vframes 1 -c:v png -f image2pipe - | magick - -resize 200x200 -';
 							$data = &native_thumb_png($file, 200);
 							$data = &run_thumb_command($command) unless defined $data && length $data;
 
@@ -683,7 +691,7 @@ sub rock_and_roll($c) {
 					return;
 				}
 				elsif (grep { $ext eq $_ } qw/xcf tiff/) {
-					my $c_command = 'magick ' . &quote($file . '[0]') . ' -alpha on -background none -flatten -resize 256x256 png:-';
+					my $c_command = 'magick ' . &subs::shell_quote($file . '[0]') . ' -alpha on -background none -flatten -resize 256x256 png:-';
 					my $converted = &native_thumb_png($file, 256);
 					$converted = `$c_command` unless defined $converted && length $converted;
 					my $data =  $converted;

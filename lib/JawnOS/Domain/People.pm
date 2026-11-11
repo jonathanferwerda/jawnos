@@ -179,7 +179,7 @@ sub signature_verify {
 	write_file($msg_file, $msg);
 	write_file($sig_file, $sig);
 	write_file($key_file, $pubkey);
-	my $ok = system('openssl pkeyutl -verify -pubin -inkey ' . &quote($key_file) . ' -rawin -in ' . &quote($msg_file) . ' -sigfile ' . &quote($sig_file) . ' >/dev/null 2>&1') == 0;
+	my $ok = system('openssl pkeyutl -verify -pubin -inkey ' . &subs::shell_quote($key_file) . ' -rawin -in ' . &subs::shell_quote($msg_file) . ' -sigfile ' . &subs::shell_quote($sig_file) . ' >/dev/null 2>&1') == 0;
 	unlink $msg_file, $sig_file, $key_file;
 	return $ok ? 1 : 0;
 }

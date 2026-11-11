@@ -90,8 +90,8 @@ sub action_19406 {
 	# the statistics and sequence tables are internal: replaying their CREATE is
 	# a parse error ("object name reserved for internal use: sqlite_sequence"),
 	# and SQLite builds them again where they are wanted
-	my $schema_dump = 'sqlite3 ' . quote($old_db) . q{ .schema | grep -vE 'sqlite_stat|sqlite_sequence' > } . quote($schema_file);
-	my $schema_load = 'sqlite3 ' . quote($database) . ' < ' . quote($schema_file);
+	my $schema_dump = 'sqlite3 ' . &subs::shell_quote($old_db) . q{ .schema | grep -vE 'sqlite_stat|sqlite_sequence' > } . &subs::shell_quote($schema_file);
+	my $schema_load = 'sqlite3 ' . &subs::shell_quote($database) . ' < ' . &subs::shell_quote($schema_file);
 	`$schema_dump`;
 	`$schema_load`;
 	system('shred', '-u', $schema_file);
@@ -130,7 +130,7 @@ sub action_19406 {
 	});
 	$db->insert('tickets', $data);
 
-	my $backup_command = 'sqlite3 ' . quote($database) . ' ' . quote(".backup '$database.1.db'");
+	my $backup_command = 'sqlite3 ' . &subs::shell_quote($database) . ' ' . &subs::shell_quote(".backup '$database.1.db'");
 	my $backup = `$backup_command`;
 	my $encryption_standard = &subs::setting_grabber({ app => 'misc', setting => 'encryption_standard' } ) || "aes-256-ctr";
 	my $encrypt = &subs::openssl_file_crypt('e', $encryption_standard, $secret, $database . '.1.db', $enc_file, 0, 1);
@@ -179,7 +179,7 @@ sub action_19489 {
 			$filename =~ s/\.enc\z//i;
 			my $t_database = &subs::database_path() . '.restoring';
 #			my $scrypt = `printf "$cr" | scrypt dec -P $path $t_database`;
-			my $tail_command = 'tail ' . quote($path);
+			my $tail_command = 'tail ' . &subs::shell_quote($path);
 			my $data = `$tail_command`;
 			my @split_data = split $universal_splitter, $data;
 			$encryption_standard = &subs::decrypter($cr, $split_data[1]);
@@ -252,7 +252,7 @@ sub action_19589 {
 	my $c = shift;
 	my ($db,$database,$sql) = &subs::database_grabber();
 	my $returner = { tables => [], auuid => &subs::random_string_creator(20) };
-	my $tables_command = 'sqlite3 ' . &quote($database) . ' .tables';
+	my $tables_command = 'sqlite3 ' . &subs::shell_quote($database) . ' .tables';
 	my $tables = `$tables_command`;
 	@{$returner->{'tables'}} = split ' ', $tables;
 
@@ -309,18 +309,18 @@ sub action_19632 {
 	my $tdatabase = $temp_folder . '/' . &subs::random_string_creator(20) . '.db';
 	system('touch', $tdatabase);
 	system('touch', $ndatabase);
-	my $schema_dump = 'sqlite3 ' . &quote($database) . q{ .schema | grep -vE 'sqlite_stat|sqlite_sequence' > } . &quote("$temp_folder/schema.sql");
+	my $schema_dump = 'sqlite3 ' . &subs::shell_quote($database) . q{ .schema | grep -vE 'sqlite_stat|sqlite_sequence' > } . &subs::shell_quote("$temp_folder/schema.sql");
 	`$schema_dump`;
-	my $backup_command = 'sqlite3 ' . &quote($database) . ' ' . &quote(".backup '$tdatabase'");
+	my $backup_command = 'sqlite3 ' . &subs::shell_quote($database) . ' ' . &subs::shell_quote(".backup '$tdatabase'");
 	my $backup = `$backup_command`;
 
-	my $import_command = 'sqlite3 ' . &quote($ndatabase) . ' < ' . &quote("$temp_folder/schema.sql");
+	my $import_command = 'sqlite3 ' . &subs::shell_quote($ndatabase) . ' < ' . &subs::shell_quote("$temp_folder/schema.sql");
 	`$import_command`;
 	my $nsql = Mojo::SQLite->new('sqlite:' . $ndatabase);
 	my $ndb = $nsql->db;
 	my $tsql = Mojo::SQLite->new('sqlite:' . $tdatabase);
 	my $tdb = $tsql->db;
-	my $tables_command = 'sqlite3 ' . &quote($ndatabase) . ' .tables';
+	my $tables_command = 'sqlite3 ' . &subs::shell_quote($ndatabase) . ' .tables';
 	my $tables = `$tables_command`;
 	@{$returner->{'tables'}} = split ' ', $tables;
 
@@ -362,7 +362,7 @@ sub action_19632 {
 			}
 		}
 	}
-	my $backup_command = 'sqlite3 ' . &quote($ndatabase) . ' ' . &quote(".backup '$database'");
+	my $backup_command = 'sqlite3 ' . &subs::shell_quote($ndatabase) . ' ' . &subs::shell_quote(".backup '$database'");
 	$backup = `$backup_command`;
 	system('shred', '-u', "$temp_folder/schema.sql");
 	system('shred', '-u', $tdatabase);
@@ -605,8 +605,14 @@ sub action_26620 {
 	my $app = &subs::unformat_name($c->param('app'));
 	my $pos = $c->param('pos');
 	$pos = '' unless defined $pos;
-	my $qr_command = 'qrencode -o - ' . &quote($pos);
-	my $qr = `$qr_command`;
+	# No shell: the payload is the caller's text, so a list-form pipe hands it
+	# to qrencode as exactly one argument.
+	my $qr = '';
+	if (open my $qr_pipe, '-|', 'qrencode', '-o', '-', $pos) {
+		local $/;
+		$qr = <$qr_pipe> // '';
+		close $qr_pipe;
+	}
 	my $returner = { qr => $qr, app => $app, 'pos' => $pos };
 	$c->render(json => $returner);
 }

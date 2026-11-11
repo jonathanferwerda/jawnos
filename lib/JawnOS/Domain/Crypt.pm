@@ -391,7 +391,7 @@ sub peer_sign_request {
 	my $msg_file = &peer_temp_file('sign_msg');
 	my $sig_file = &peer_temp_file('sign_sig');
 	write_file($msg_file, &peer_sign_message($req->method, $req->url->path_query, $ts, $nonce, $body_sha, $audience));
-	my $sign_command = 'openssl pkeyutl -sign -inkey ' . &quote($key) . ' -rawin -in ' . &quote($msg_file) . ' -out ' . &quote($sig_file) . ' 2>/dev/null';
+	my $sign_command = 'openssl pkeyutl -sign -inkey ' . &subs::shell_quote($key) . ' -rawin -in ' . &subs::shell_quote($msg_file) . ' -out ' . &subs::shell_quote($sig_file) . ' 2>/dev/null';
 	`$sign_command`;
 	my $sig = (-s $sig_file) ? read_file($sig_file) : '';
 	my $pub = &peer_pubkey();
@@ -418,7 +418,7 @@ sub peer_sign_blob {
 	my $msg_file = &peer_temp_file('blob_msg');
 	my $sig_file = &peer_temp_file('blob_sig');
 	write_file($msg_file, $msg);
-	my $sign_command = 'openssl pkeyutl -sign -inkey ' . &quote($key) . ' -rawin -in ' . &quote($msg_file) . ' -out ' . &quote($sig_file) . ' 2>/dev/null';
+	my $sign_command = 'openssl pkeyutl -sign -inkey ' . &subs::shell_quote($key) . ' -rawin -in ' . &subs::shell_quote($msg_file) . ' -out ' . &subs::shell_quote($sig_file) . ' 2>/dev/null';
 	`$sign_command`;
 	my $sig = (-s $sig_file) ? read_file($sig_file) : '';
 	unlink $msg_file, $sig_file;
@@ -477,7 +477,7 @@ sub peer_verify {
 	write_file($msg_file, &peer_sign_message($c->req->method, $c->req->url->path_query, $ts, $nonce, $body_sha, $audience));
 	write_file($sig_file, $sig);
 	write_file($key_file, $pubkey);
-	my $ok = system('openssl pkeyutl -verify -pubin -inkey ' . &quote($key_file) . ' -rawin -in ' . &quote($msg_file) . ' -sigfile ' . &quote($sig_file) . ' >/dev/null 2>&1') == 0;
+	my $ok = system('openssl pkeyutl -verify -pubin -inkey ' . &subs::shell_quote($key_file) . ' -rawin -in ' . &subs::shell_quote($msg_file) . ' -sigfile ' . &subs::shell_quote($sig_file) . ' >/dev/null 2>&1') == 0;
 	unlink $msg_file, $sig_file, $key_file;
 	unless ($ok) {
 		# a failed verification releases the claim; a replay is still one insert

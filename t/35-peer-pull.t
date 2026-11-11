@@ -129,8 +129,8 @@ is Jawn::PeerPull::peer_manager({ manager => 'https://peer.example:45545/manager
 	like $script, qr/local_pull\(\$rm, \$window, \$url\)/, 'the resolved peer url reaches it';
 	my $manager = manager_source();
 	like $manager, qr/manager => \$manager_override/, 'the route accepts a proven manager';
-	like $manager, qr/\$c->session\('authentication'\) eq 'approved'\) \? \$c->param\('manager'\)/,
-		'only an approved session may name it';
+	like $manager, qr/\$house_session && \$caller_local\) \? \$c->param\('manager'\)/,
+		'only a local house session may name it';
 }
 
 done_testing();

@@ -374,8 +374,8 @@ sub action_43677 {
 	my $log = &subs::home('~/.jawnos_usb_upload.log');
 	my $project_path = Mojo::File->new($project)->to_abs_path;
 	Mojo::File->new($log)->spurt("usb upload to $port starting...\n");
-	my $command = 'cd ' . &quote($project_path) . ' && exec ' . &quote($pio) . ' run -j 4 -e ' . &quote($environment) . ' -t upload --upload-port ' . &quote($port);
-	system('nohup sh -c ' . &quote($command) . ' > ' . &quote($log) . ' 2>&1 &');
+	my $command = 'cd ' . &subs::shell_quote($project_path) . ' && exec ' . &subs::shell_quote($pio) . ' run -j 4 -e ' . &subs::shell_quote($environment) . ' -t upload --upload-port ' . &subs::shell_quote($port);
+	system('nohup sh -c ' . &subs::shell_quote($command) . ' > ' . &subs::shell_quote($log) . ' 2>&1 &');
 
 	$c->render(json => { started => 1, port => $port, project => $project });
 }

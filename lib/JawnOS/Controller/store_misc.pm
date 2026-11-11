@@ -320,6 +320,14 @@ sub action_6055 {
 # POST /store/quote/delete
 sub action_6126 {
 	my $c = shift;
+	# A shop's documents change here. cx_uuid is printed into the public
+	# storefront, so it is a label, not a credential: only the house may
+	# delete or move one.
+	unless (($c->session('authentication') || '') eq 'approved'
+		&& !&subs::guest_browser_session($c->session('privilege'), $c->session('source'))) {
+		$c->rendered(403);
+		return;
+	}
 	my $uuid = $c->param('uuid');
 	my $cx_uuid = $c->param('cx_uuid');
 	my $timestamp = $c->param('timestamp');
@@ -339,6 +347,14 @@ sub action_6126 {
 # POST /store/quote/move
 sub action_6143 {
 	my $c = shift;
+	# A shop's documents change here. cx_uuid is printed into the public
+	# storefront, so it is a label, not a credential: only the house may
+	# delete or move one.
+	unless (($c->session('authentication') || '') eq 'approved'
+		&& !&subs::guest_browser_session($c->session('privilege'), $c->session('source'))) {
+		$c->rendered(403);
+		return;
+	}
 	my $timestamp = $c->param('timestamp');
 	my $cx_uuid = $c->param('cx_uuid');
 	my $uuid = $c->param('uuid');
@@ -391,8 +407,20 @@ sub action_6143 {
 sub action_6192 {
 	my $c = shift;
 	my $uuid = $c->param('uuid');
+	my $cx_uuid = $c->param('cx_uuid');
 	my ($db) = &subs::database_grabber();
-	my $quote = &subs::db_select('appointments', undef, { uuid => $uuid })->hashes->[0];
+	# A uuid alone is not a licence to read a customer's document: it must
+	# arrive with the customer token that owns it, or from a house session.
+	my $customer = $cx_uuid ? &subs::db_select('settings', undef, { setting => 'uuid', value => $cx_uuid })->hashes->[0] : undef;
+	my $query = { uuid => $uuid };
+	if ($customer && ($customer->{'app'} // '') =~ /\S/) {
+		$query->{'app'} = $customer->{'app'};
+	}
+	elsif (!(($c->session('authentication') || '') eq 'approved'
+		&& !&subs::guest_browser_session($c->session('privilege'), $c->session('source')))) {
+		return $c->render(json => {});
+	}
+	my $quote = &subs::db_select('appointments', undef, $query)->hashes->[0];
 	if ($quote->{'data'}) {
 		my $data = decode_json $quote->{'data'};
 		$c->render(json => $data);
@@ -438,8 +466,15 @@ sub action_52031 {
 	my $c = shift;
 	my $printer = $c->param('printer') || &subs::printer_default_get();
 	return $c->render(json => { ok => 0, error => 'No printer is selected.' }) unless length $printer;
-	my $customer_app = $c->param('customer_app');
-	$customer_app = &subs::printer_customer_app($c->param('uuid'), $c->param('type')) unless defined $customer_app && length $customer_app;
+	# The document names its own customer. A request may only choose the app
+	# for a house walk-in sale (no uuid to derive from); anyone else is
+	# scoped to what the document itself says.
+	my $customer_app = &subs::printer_customer_app($c->param('uuid'), $c->param('type'));
+	if (defined $c->param('customer_app') && length $c->param('customer_app')
+		&& ($c->session('authentication') || '') eq 'approved'
+		&& !&subs::guest_browser_session($c->session('privilege'), $c->session('source'))) {
+		$customer_app = $c->param('customer_app');
+	}
 	my $paper = &store_printer({
 		type => $c->param('type'),
 		cx_uuid => $c->param('cx_uuid'),
@@ -457,8 +492,15 @@ sub action_52031 {
 # GET /store/print/pdf
 sub action_52032 {
 	my $c = shift;
-	my $customer_app = $c->param('customer_app');
-	$customer_app = &subs::printer_customer_app($c->param('uuid'), $c->param('type')) unless defined $customer_app && length $customer_app;
+	# The document names its own customer. A request may only choose the app
+	# for a house walk-in sale (no uuid to derive from); anyone else is
+	# scoped to what the document itself says.
+	my $customer_app = &subs::printer_customer_app($c->param('uuid'), $c->param('type'));
+	if (defined $c->param('customer_app') && length $c->param('customer_app')
+		&& ($c->session('authentication') || '') eq 'approved'
+		&& !&subs::guest_browser_session($c->session('privilege'), $c->session('source'))) {
+		$customer_app = $c->param('customer_app');
+	}
 	my $paper = &store_printer({
 		type => $c->param('type'),
 		cx_uuid => $c->param('cx_uuid'),

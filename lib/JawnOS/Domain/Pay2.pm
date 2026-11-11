@@ -908,11 +908,11 @@ sub clock_preview_play {
 	my $level = sprintf('%.2f', $volume / 100);
 	# timeout is the stop that a forgotten preview cannot outlive; the pid file
 	# is what a second press, or another sound, uses to end it early.
-	my $command = 'timeout 10 play -q -v ' . $level . ' ' . &quote($file) . ' fade t 1';
+	my $command = 'timeout 10 play -q -v ' . $level . ' ' . &subs::shell_quote($file) . ' fade t 1';
 	my $pidfile = &clock_preview_pidfile();
 	eval {
 		&subprocessor(sub {
-			system('sh', '-c', $command . ' & echo $! > ' . &quote($pidfile));
+			system('sh', '-c', $command . ' & echo $! > ' . &subs::shell_quote($pidfile));
 		}, { name => 'clock preview' });
 	};
 	return 1;
@@ -931,7 +931,7 @@ sub clock_device_broadcast {
 	foreach my $key ( qw/uuid label app file play nfc_action reason/ ) {
 		my $value = $extra{$key};
 		next unless defined $value && length $value;
-		$command .= ' --es ' . $key . ' ' . &quote($value);
+		$command .= ' --es ' . $key . ' ' . &subs::shell_quote($value);
 	}
 	foreach my $key ( qw/volume ramp loop guard snooze nfc stop/ ) {
 		my $value = $extra{$key};

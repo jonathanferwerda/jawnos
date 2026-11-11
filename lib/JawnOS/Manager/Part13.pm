@@ -82,7 +82,7 @@ sub thumbnail_creator($data) {
 			$thumb = join '.', @thumb;
 			$data->{'thumb'} = $thumb;
 			if ($upload_type eq 'video') {
-				my $command2 = 'ffmpeg -nostdin -ss ' . &subs::thumbnail_seek_position() . ' -i ' . $filename . ' -vframes 1 -c:v png -f image2pipe - | magick - -resize ' . $thumbnail_size . ' ' . $thumb;
+				my $command2 = 'ffmpeg -nostdin -ss ' . &subs::thumbnail_seek_position() . ' -i ' . &subs::shell_quote($filename) . ' -vframes 1 -c:v png -f image2pipe - | magick - -resize ' . &subs::shell_quote($thumbnail_size) . ' ' . &subs::shell_quote($thumb);
 				my $native = &native_thumb_png($filename, $thumbnail_size);
 				if (defined $native && length $native) { write_file($thumb, $native); }
 				else { &run_thumb_command($command2); }

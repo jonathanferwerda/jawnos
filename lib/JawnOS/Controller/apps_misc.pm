@@ -100,7 +100,7 @@ sub action_27002 {
 	my $cache = $dir . '/' . Digest::MD5::md5_hex($src . ':' . ($stat[7] // 0) . ':' . ($stat[9] // 0) . ':128') . '.png';
 	my $png = -e $cache ? eval { read_file($cache) } : undef;
 	unless (defined $png && length $png) {
-		my $quoted = quote($file);
+		my $quoted = &subs::shell_quote($file);
 		$png = `rsvg-convert -w 128 -h 128 -o - $quoted 2>/dev/null`;
 		$png = `magick -background none $quoted -resize 128x128 png:- 2>/dev/null` unless defined $png && length $png;
 		return $missing->() unless defined $png && length $png;
