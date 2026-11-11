@@ -1937,17 +1937,45 @@ sub cloud_sync_destination {
 	};
 }
 
+# A registration names an absolute path on THIS machine, so it is local state,
+# not a shared setting. It lived in a settings row, which the house syncs: the
+# source's /home/jawn/Downloads/gptpres landed on the phone, whose own root is
+# under /data/data/com.jawnos/files/home, and every receive there answered "this
+# folder is not registered" while the folders had already been made (2026-11-11).
+# Keep them beside the per-base state, which is already local.
 sub cloud_sync_registrations {
-	my $blob = eval { return &setting_grabber({ app => 'folders', setting => 'cloud_sync' }) };
-	my $list = eval { return decode_json $blob } if (defined $blob && length $blob && ref $blob ne 'ARRAY');
-	$list = $blob if (ref $blob eq 'ARRAY');
-	$list = [] unless ref $list eq 'ARRAY';
+	my $file = &cloud_sync_state_dir() . '/registrations.json';
+	my $list;
+	if (-e $file) {
+		my $raw = eval { read_file($file) };
+		$list = eval { decode_json $raw } if defined $raw && length $raw;
+	}
+	if (ref $list ne 'ARRAY') {
+		# Legacy: adopt a settings-row registration only when the path is under
+		# this machine's home. Anything else arrived from another machine and
+		# would make this one look registered for a folder it does not hold.
+		my $blob = eval { return &setting_grabber({ app => 'folders', setting => 'cloud_sync' }) };
+		my $legacy = eval { return decode_json $blob } if (defined $blob && length $blob);
+		my $home = &home('~');
+		$home =~ s{/+$}{} unless $home eq '/';
+		$legacy = [ grep {
+			ref $_ eq 'HASH' && defined $_->{'path'} && length $_->{'path'}
+				&& (index($_->{'path'}, $home . '/') == 0 || $_->{'path'} eq $home)
+		} @{$legacy} ] if ref $legacy eq 'ARRAY';
+		$list = (ref $legacy eq 'ARRAY') ? $legacy : [];
+		&cloud_sync_registrations_write($list) if scalar @{$list};
+	}
 	return [ grep { ref $_ eq 'HASH' && defined $_->{'path'} && length $_->{'path'} } @{$list} ];
 }
 
 sub cloud_sync_registrations_write {
 	my $list = shift || [];
-	&setting_setter({ app => 'folders', setting => 'cloud_sync', value => encode_json($list) });
+	my $dir = &cloud_sync_state_dir();
+	File::Path::make_path($dir) unless -d $dir;
+	my $file = $dir . '/registrations.json';
+	my $temp = $file . '.tmp.' . $$;
+	write_file($temp, encode_json($list));
+	rename($temp, $file) or unlink $temp;
 	return $list;
 }
 

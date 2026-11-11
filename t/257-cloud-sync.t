@@ -10,6 +10,7 @@ use Test::More;
 use File::Temp qw(tempdir);
 use File::Path qw(make_path);
 use File::Slurp qw(read_file write_file);
+use Mojo::JSON qw(encode_json);
 use RepoSource;
 
 # CloudSync is the archive rail turned into a small mesh: every member watches
@@ -257,5 +258,43 @@ like($js, qr{/manager/folders/cloud/start}, 'the app starts the job');
 like($js, qr/function foldersCloudList/, 'the Places row opens the list');
 like($help, qr/later time wins/, 'the help explains the conflict rule');
 like($help, qr/\.conflict-/, 'and says the losing copy is kept');
+
+# ---- a chunked part is streamed from its asset ----------------------------
+# Mojo keeps a small upload in memory (and the peer signature reads the body
+# first), so asset->path is undef. Reading it back made every file answer "the
+# upload has no file" after the folders had already been made (2026-11-11).
+like($controller, qr/\$asset->get_chunk/, 'a chunked upload streams from its asset');
+unlike($controller, qr/asset->path/, 'no receive route needs a temp path for the part');
+
+# ---- a registration is this machine's own, not a synced setting ------------
+# The settings row is synced across the house, so the source's absolute path
+# landed on the phone and every receive there said "this folder is not
+# registered" while the folders had already been made.
+{
+	my $mine = "$test_home/Downloads/gptpres";
+	make_path($mine) unless -d $mine;
+	subs::cloud_sync_registrations_write([
+		{ path => $mine, base => 'Downloads/gptpres', devices => [], added => 1 }
+	]);
+	my $rows = subs::cloud_sync_registrations();
+	is(scalar @{$rows}, 1, 'a registration round-trips through the local file');
+	is($rows->[0]->{'path'}, $mine, 'and keeps this machine\'s path');
+	ok(-e $subs::home_dir . '/.president/cloud_sync/registrations.json',
+		'it is stored beside the per-base state, not in settings');
+}
+{
+	my $file = $subs::home_dir . '/.president/cloud_sync/registrations.json';
+	unlink $file if -e $file;
+	no warnings 'redefine';
+	local *subs::setting_grabber = sub {
+		return encode_json([
+			{ path => '/home/jawn/Downloads/gptpres', base => 'Downloads/gptpres', devices => [] },
+			{ path => "$test_home/Downloads/mine", base => 'Downloads/mine', devices => [] }
+		]);
+	};
+	my $rows = subs::cloud_sync_registrations();
+	is(scalar @{$rows}, 1, 'only a legacy path under this home is adopted');
+	is($rows->[0]->{'path'}, "$test_home/Downloads/mine", 'the foreign registration is dropped');
+}
 
 done_testing();

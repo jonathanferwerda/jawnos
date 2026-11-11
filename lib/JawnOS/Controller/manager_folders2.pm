@@ -317,8 +317,12 @@ sub action_30562 {
 	my $chunked = (defined $offset && $offset =~ /^\d+$/ && defined $total && $total =~ /^\d+$/) ? 1 : 0;
 	my $written = 0;
 	if ($chunked) {
-		my $source_path = eval { $upload->asset->path };
-		unless ($source_path && -e $source_path) {
+		# A part is a file asset when Mojo spooled it to disk, and a memory
+		# asset when it stayed small (or when the peer signature read the body
+		# first). Its path is undef for memory, so ask the asset for bytes.
+		my $asset = eval { $upload->asset };
+		my $asset_size = ($asset && defined $asset->size) ? $asset->size : undef;
+		unless ($asset && defined $asset_size) {
 			$c->render(json => { status => 'error', error => 'the upload has no file' });
 			return;
 		}
@@ -351,27 +355,20 @@ sub action_30562 {
 			$resumed = 1;
 		}
 		my $mode = ($offset > 0) ? '+<' : '>';
-		my ($in, $out);
+		my $out;
 		unless (open($out, $mode, $part)) {
 			$c->render(json => { status => 'error', error => "cannot open $part: $!", path => $dest->{'path'} });
 			return;
 		}
 		binmode $out;
 		seek($out, $offset, 0) if $offset > 0;
-		unless (open($in, '<:raw', $source_path)) {
-			close $out;
-			$c->render(json => { status => 'error', error => "cannot read the upload: $!", path => $dest->{'path'} });
-			return;
-		}
-		binmode $in;
-		my $buf;
-		while (my $n = read($in, $buf, 1024 * 1024)) {
+		my $pos = 0;
+		while (my $buf = $asset->get_chunk($pos, 1024 * 1024)) {
 			print $out $buf;
-			$written += $n;
+			$written += length $buf;
+			$pos += length $buf;
 		}
-		close $in;
 		close $out;
-		my $asset_size = -s $source_path;
 		if (defined $asset_size && $written != $asset_size) {
 			$c->render(json => { status => 'error', error => "chunk wrote $written of $asset_size bytes", path => $dest->{'path'} });
 			return;
@@ -971,8 +968,12 @@ sub action_30712 {
 		return;
 	}
 	if ($chunked) {
-		my $source_path = eval { $upload->asset->path };
-		unless ($source_path && -e $source_path) {
+		# A part is a file asset when Mojo spooled it to disk, and a memory
+		# asset when it stayed small (or when the peer signature read the body
+		# first). Its path is undef for memory, so ask the asset for bytes.
+		my $asset = eval { $upload->asset };
+		my $asset_size = ($asset && defined $asset->size) ? $asset->size : undef;
+		unless ($asset && defined $asset_size) {
 			$c->render(json => { status => 'error', error => 'the upload has no file' });
 			return;
 		}
@@ -1001,26 +1002,20 @@ sub action_30712 {
 			}
 		}
 		my $mode = ($offset > 0) ? '+<' : '>';
-		my ($in, $out);
+		my $out;
 		unless (open($out, $mode, $part)) {
 			$c->render(json => { status => 'error', error => "cannot open $part: $!", path => $dest->{'path'} });
 			return;
 		}
 		binmode $out;
 		seek($out, $offset, 0) if $offset > 0;
-		unless (open($in, '<:raw', $source_path)) {
-			close $out;
-			$c->render(json => { status => 'error', error => "cannot read the upload: $!", path => $dest->{'path'} });
-			return;
-		}
-		binmode $in;
 		my $written = 0;
-		my $buf;
-		while (my $n = read($in, $buf, 1024 * 1024)) {
+		my $pos = 0;
+		while (my $buf = $asset->get_chunk($pos, 1024 * 1024)) {
 			print $out $buf;
-			$written += $n;
+			$written += length $buf;
+			$pos += length $buf;
 		}
-		close $in;
 		close $out;
 		if ($offset == 0) {
 			&subs::archive_partial_meta_write($dest->{'path'}, {
