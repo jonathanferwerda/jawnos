@@ -338,7 +338,7 @@ sub now_me($data) {
 		return 'pushed over bluetooth';
 	}
 	elsif ($link && $link eq 'http') {
-		my $res = $ua->insecure(1)->get($watch_home)->result;
+		my $res = $ua->get($watch_home)->result;
 		if ($edt eq 'microcontroller') {
 			if (eval { $res->result->body }) {
 				if (eval { decode_json $res->result->body }) {

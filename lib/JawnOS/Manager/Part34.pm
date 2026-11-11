@@ -284,7 +284,7 @@ sub embedded_device_query($embedded) {
 	}
 	my $manager = 'http://' . $embedded->{'ip'} . ':' . ($embedded->{'PORT_DOCK'} || $ENV{PORT_BOARD} || 3000) .  '/device_query';
 	my $ua = Mojo::UserAgent->new();
-	my $res = eval { $ua->insecure(1)->get($manager) };
+	my $res = eval { $ua->get($manager) };
 	if (eval { $res->result->body }) {
 		if (eval { decode_json $res->result->body }) {
 			my $rb = decode_json $res->result->body;
@@ -330,7 +330,7 @@ sub embedded_device_query($embedded) {
 						->query($params)
 						->to_string;
 
-					my $res = $ua->insecure(1)->get($req)->result;
+					my $res = $ua->get($req)->result;
 					if ($res->is_success) {
 						my $data = $res->body;
 						$a->{'data'} = encode_base64 $data;
@@ -479,7 +479,7 @@ sub embedded_app_deleter($data) {
 					close $ping_fh;
 				}
 				if ($ping_test =~ /ttl/gi) {
-					my $res = $ua->insecure(1)->get($watch_home)->result;
+					my $res = $ua->get($watch_home)->result;
 				}
 			}
 		}
@@ -604,7 +604,7 @@ sub send_telephone($app,$msg) {
 				    Mojo::IOLoop->reset;
 
 						my $ua = Mojo::UserAgent->new();
-						my $res = $ua->insecure(1)->get($watch_home)->result;
+						my $res = $ua->get($watch_home)->result;
 					}, { name => 'send telephone' });
 				}
 				sleep 2;

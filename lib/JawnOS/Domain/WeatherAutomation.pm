@@ -775,7 +775,6 @@ sub weather_place_lookup($lat, $lon, $opts = {}) {
 	my $provider = eval { &subs::weather_provider_for($lat, $lon) } || '';
 	if ($provider eq 'ec') {
 		my $ua = Mojo::UserAgent->new(connect_timeout => 4, inactivity_timeout => 6, request_timeout => 8);
-		$ua->insecure(1);
 		my $city = eval { &subs::weather_ec_find_city($lat, $lon, $ua) };
 		$name = ($city && $city->{'name'}) ? $city->{'name'} : '';
 		$log->info("weather place: no city for $lat,$lon") if $log && !length $name;

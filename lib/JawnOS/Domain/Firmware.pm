@@ -242,7 +242,7 @@ sub firmware_query_device($edt, $chip_id) {
 	my $url = 'http://' . $ip . ':' . firmware_board_port() . '/device_query';
 	my $ua = Mojo::UserAgent->new();
 	$ua->inactivity_timeout(8000);
-	my $res = eval { $ua->insecure(1)->get($url)->result };
+	my $res = eval { $ua->get($url)->result };
 	return undef unless $res && $res->is_success;
 	my $reply = eval { decode_json $res->body } || {};
 	my $version = $reply->{'version'} || '';
@@ -296,7 +296,7 @@ sub firmware_push($data) {
 		$ua->transactor->add_generator(stream => sub ($transactor, $tx, $path) {
 			$tx->req->content->asset(Mojo::Asset::File->new(path => $file));
 		});
-		$res = $ua->insecure(1)->post($url => { authorization => $auth } => stream => $file)->result;
+		$res = $ua->post($url => { authorization => $auth } => stream => $file)->result;
 	}
 	else {
 		my $image = read_file($file, binmode => ':raw');

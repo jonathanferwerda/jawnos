@@ -14,6 +14,8 @@ use RepoSource;
 use Mojo::JSON;
 use DBI;
 use Time::Piece;
+use File::Temp qw(tempdir);
+use IO::Socket::INET;
 
 my $root = repo_root();
 require "$root/lib/JawnOS/Domain/Weather.pm";
@@ -1317,6 +1319,80 @@ is(subs::weather_name_is_coordinate(''), 0, 'an empty name is not a coordinate e
 		{ signatorial => 'phone', label => 'Phone', lat => 43.4500, lon => -80.4900, seen => 100 },
 	]);
 	is($groups->[0]{'label'}, 'Kitchener', 'a learned place shows its name instead of the device');
+}
+
+# --- the EC city lookup's user agent verifies TLS ---------------------------
+# weather_place_lookup used to call $ua->insecure(1) before handing the agent
+# to Weather.pm's Environment Canada city lookup. That lookup dials
+# https://api.weather.gc.ca, a public-CA service, so the flag only disabled a
+# check that should run. Point the agent this code builds at a self-signed
+# local server: it must refuse the handshake unless insecure(1) is put back.
+SKIP: {
+	my $openssl = `command -v openssl 2>/dev/null`;
+	chomp $openssl;
+	skip 'openssl is not installed', 4 unless $openssl && length $openssl && -x $openssl;
+	skip 'IO::Socket::SSL is not installed', 4 unless eval { require IO::Socket::SSL; 1 };
+
+	my $tmp = tempdir(CLEANUP => 1);
+	my $cert = "$tmp/cert.pem";
+	my $key  = "$tmp/key.pem";
+	`$openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj '/CN=localhost' -keyout '$key' -out '$cert' >/dev/null 2>&1`;
+	skip 'could not make a self-signed certificate', 4 unless -s $cert && -s $key;
+
+	my $probe = IO::Socket::INET->new(LocalAddr => '127.0.0.1', LocalPort => 0, Proto => 'tcp',
+		Listen => 1, ReuseAddr => 1);
+	skip 'could not find a free port', 4 unless $probe;
+	my $port = $probe->sockport;
+	close $probe;
+
+	my $pid = fork();
+	skip 'fork failed', 4 unless defined $pid;
+	if (!$pid) {
+		open(STDOUT, '>', '/dev/null');
+		open(STDERR, '>', '/dev/null');
+		exec($openssl, 's_server', '-quiet', '-www', '-accept', "127.0.0.1:$port", '-cert', $cert, '-key', $key);
+		exit 1;
+	}
+
+	my $up = 0;
+	for (1 .. 30) {
+		my $s = IO::Socket::INET->new(PeerAddr => '127.0.0.1', PeerPort => $port, Proto => 'tcp', Timeout => 1);
+		if ($s) { $up = 1; close $s; last }
+		select(undef, undef, undef, 0.1);
+	}
+	if (!$up) {
+		kill 'TERM', $pid;
+		waitpid($pid, 0);
+		skip 'the self-signed server did not start', 4;
+	}
+
+	my $tls_error = 'not attempted';
+	my $name = '';
+	{
+		no warnings 'redefine';
+		local *subs::weather_place_name = sub { return '' };
+		local *subs::weather_place_name_remember = sub { return 1 };
+		local *subs::weather_place_misses = sub { return {} };
+		local *subs::weather_provider_for = sub { return 'ec' };
+		local *subs::weather_ec_find_city = sub {
+			my ($lat, $lon, $agent) = @_;
+			my $tx = eval { $agent->get("https://127.0.0.1:$port/") };
+			$tls_error = $tx ? ($tx->error ? ($tx->error->{'message'} // 'refused') : '') : 'exception';
+			return { name => 'Nowhere' };
+		};
+		$name = subs::weather_place_lookup(51.5, -0.1);
+	}
+
+	ok($up, 'the self-signed server came up');
+	is($name, 'Nowhere', 'the EC city lookup still runs');
+	my $permissive = Mojo::UserAgent->new(connect_timeout => 3)->insecure(1)
+		->get("https://127.0.0.1:$port/");
+	ok(!$permissive->error, 'the server answers when verification is disabled');
+	ok(length $tls_error, 'the EC weather user agent refuses the self-signed certificate')
+		or diag('the handshake succeeded, so insecure(1) is still applied');
+
+	kill 'TERM', $pid;
+	waitpid($pid, 0);
 }
 
 {

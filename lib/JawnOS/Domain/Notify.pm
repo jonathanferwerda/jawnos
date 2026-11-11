@@ -165,7 +165,7 @@ sub notification_sender($m,$db) {
 				my $watch_home = 'http://' . $watch->{'ip'} . ':' . $config->{'port'} . '/notification?title=' . $title .
 					'&notification=' . $message . '&sound=/' . $sound . '&sound_file=' . $sound_file;
 				&subs::subprocessor(sub {
-					my $res = eval { return $ua->insecure(1)->get($watch_home)->result };
+					my $res = eval { return $ua->get($watch_home)->result };
 				}, { name => "Watch notification sender" });
 			}
 		}
@@ -407,7 +407,7 @@ sub embedded_toggle_send {
 			# the token on a house address; firmware TLS/HMAC is the follow-up.
 			my $watch_home = 'http://' . $watch_ip . ':' . $port . '/' . $component . '?appt_uuid=' . $appt_uuid . '&uuid=' . $uuid . '&when=' . $when . '&pin=' . $pin . '&state=' . $state . '&component=' . $component . '&authorization=' . $authorization . '&timestamp=' . $timestamp . '&measure=' . $measure;
 			my $ua = Mojo::UserAgent->new(connect_timeout => 1, inactivity_timeout => 2);
-			my $res = $ua->insecure(1)->get($watch_home)->result;
+			my $res = $ua->get($watch_home)->result;
 			my $body = eval { $res->result->body };
 			my $rb = $body ? eval { decode_json($body) } : undef;
 			if (ref $rb eq 'HASH') {
@@ -496,7 +496,7 @@ sub embedded_toggle_refresh {
 		my $watch_home = 'http://' . $watch_ip . ':' . $port . '/' . $component . '?appt_uuid=' . $appt_uuid . '&uuid=' . $uuid . '&when=' . $when . '&pin=' . $pin . '&state=' . $state . '&component=' . $component . '&authorization=' . $authorization . '&timestamp=' . $timestamp . '&measure=' . $measure;
 		my $ua = Mojo::UserAgent->new();
 
-		my $res = $ua->insecure(1)->get($watch_home)->result;
+		my $res = $ua->get($watch_home)->result;
 		if (eval { $res->result->body }) {
 			if (eval { decode_json $res->result->body }) {
 				my $rb = decode_json $res->result->body;

@@ -250,7 +250,7 @@ sub device_scan {
 							}
 							else {
 								my $manager = 'http://' . $n->{'ip'} . ':' . ($n->{'PORT_DOCK'} || $ENV{PORT_BOARD} || 3000) .  '/device_query';
-								my $res = eval { $ua->insecure(1)->get($manager) };
+								my $res = eval { $ua->get($manager) };
 								if (eval { $res->result->body }) {
 									if (eval { decode_json $res->result->body }) {
 										my $rb = decode_json $res->result->body;

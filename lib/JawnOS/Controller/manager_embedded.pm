@@ -170,7 +170,7 @@ sub action_43358 {
 			->query($params)
 			->to_string;
 		my $ua = Mojo::UserAgent->new();
-		$returner->{'res'} = $ua->insecure(1)->get($returner->{'req'})->result;
+		$returner->{'res'} = $ua->get($returner->{'req'})->result;
 		# The request URL carries the board's authorization: log who, not what.
 		$log->info('embedded delete_file for ' . ($embedded->{'chip_id'} // '?') . ' at ' . ($embedded->{'ip'} // '?'));
 		$c->render(json => $returner);
@@ -536,7 +536,7 @@ sub action_43857 {
 			if ($ping_test =~ /ttl/gi) {
 				my $teletype_url = 'http://' . $teletype->{'ip'} . ':' . $config->{'port'} . '/backup?backup=' . $backup . '&timestamp=' . $timestamp;
 				my $ua = Mojo::UserAgent->new();
-				my $res = $ua->insecure(1)->get($teletype_url)->result;
+				my $res = $ua->get($teletype_url)->result;
 			}
 		}
 	}, { name => 'teletype backup' });
@@ -573,7 +573,7 @@ sub action_43881 {
 
 	my $url = 'http://' . $mc->{'ip'} . ':' . $config->{'port'} . '/jobs?authorization=' . $authorization;
 	my $ua = Mojo::UserAgent->new();
-	my $res = $ua->insecure(1)->get($url)->result;
+	my $res = $ua->get($url)->result;
 	my $returner = {};
 	if ($res->is_success) {
 		my $jobs = eval { return decode_json $res->body } || {};

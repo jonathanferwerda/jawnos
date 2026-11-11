@@ -375,7 +375,7 @@ sub action_45571 {
 									    Mojo::IOLoop->reset;
 
 											my $ua = Mojo::UserAgent->new();
-											my $res = $ua->insecure(1)->get($watch_home)->result;
+											my $res = $ua->get($watch_home)->result;
 										}, { name => 'lora embedded sender' });
 									}
 								}

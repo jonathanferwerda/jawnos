@@ -224,7 +224,7 @@ sub remote_send_http {
 		. '&authorization=' . $authorization
 		. '&timestamp=' . $data->{'timestamp'};
 	my $ua = Mojo::UserAgent->new(connect_timeout => 1, inactivity_timeout => 2);
-	my $res = eval { $ua->insecure(1)->get($url)->result };
+	my $res = eval { $ua->get($url)->result };
 	return 0 unless $res && $res->is_success;
 	my $body = eval { $res->body } || '';
 	my $answer = $body ? eval { decode_json($body) } : undef;

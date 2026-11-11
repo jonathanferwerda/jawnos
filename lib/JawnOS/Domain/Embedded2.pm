@@ -67,7 +67,7 @@ sub embedded_wigi {
 		# Plain HTTP board WebServer: TLS/HMAC is firmware work (jp/, jt/, jw/).
 		my $wigi_url = 'http://' . $watch->{'ip'} . ':' . $config->{'port'} . '/wigi?timestamp=' . $timestamp . '&authorization=' . $auth;
 		my $ua = Mojo::UserAgent->new();
-		my $res = $ua->insecure(1)->get($wigi_url)->result;
+		my $res = $ua->get($wigi_url)->result;
 
 		my $wigi = eval { return decode_json $res->body } || {};
 		my $rauth = $wigi->{'authorization'};
@@ -112,7 +112,7 @@ sub embedded_location_grabber {
 			my $ua = Mojo::UserAgent->new();
 			$ua = $ua->connect_timeout(1)->inactivity_timeout(2)->request_timeout(3);
 			my $watch_home = 'http://' . $watch->{'ip'} . ':' . $config->{'port'} . '/my_position';
-			my $res = eval { return $ua->insecure(1)->get($watch_home)->result };
+			my $res = eval { return $ua->get($watch_home)->result };
 			if (eval { return decode_json $res->body }) {
 				my $co = eval { return decode_json $res->body };
 				$returner->{'latitude'} = $co->{'lat'};

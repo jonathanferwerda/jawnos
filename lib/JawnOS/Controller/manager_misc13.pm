@@ -184,7 +184,7 @@ sub action_43067 {
 	}
 	my $wifi_url = 'http://' . $teletype->{'ip'} . ':' . $config->{'port'} . '/wifi_update';
 	my $ua = Mojo::UserAgent->new();
-	my $res = $ua->insecure(1)->get($wifi_url)->result;
+	my $res = $ua->get($wifi_url)->result;
 	$c->render(text => $res->body);
 }
 
