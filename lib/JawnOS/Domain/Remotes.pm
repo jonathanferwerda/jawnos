@@ -205,9 +205,15 @@ sub remote_send_http {
 	my $watch = eval { &subs::device_lister($data->{'timestamp'}, $edt, undef, $chip_id) };
 	my $ip = (ref $watch eq 'HASH' && $watch->{'ip'}) ? $watch->{'ip'} : '';
 	return 0 unless length $ip;
+	# The token rides the /relay query; never dial a public or named host.
+	unless (&board_host_allowed($ip)) {
+		$log->info('remote send refused: ' . $chip_id . ' at ' . $ip . ' (not a house address)') if $log;
+		return 0;
+	}
 
 	my $lock = &subs::device_command_lock($chip_id);
 	my $port = $config->{'port'} || 80;
+	# Plain HTTP board WebServer: TLS/HMAC is firmware work (jp/, jt/, jw/).
 	my $url = 'http://' . $ip . ':' . $port . '/relay'
 		. '?appt_uuid=' . ($data->{'appt_uuid'} // '')
 		. '&uuid=' . $data->{'uuid'}

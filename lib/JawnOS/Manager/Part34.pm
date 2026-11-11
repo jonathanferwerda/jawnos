@@ -276,6 +276,12 @@ sub embedded_grabber($c,$timestamp) {
 }
 
 sub embedded_device_query($embedded) {
+	# The /get_file pass below carries the board token, so the address must be a
+	# house literal before any of this dials. A stale or hostile row is skipped.
+	unless (ref $embedded eq 'HASH' && &subs::board_host_allowed($embedded->{'ip'} || '')) {
+		$log->info('embedded device query refused: ' . (ref $embedded eq 'HASH' ? ($embedded->{'chip_id'} || '?') : '?') . ' at ' . (ref $embedded eq 'HASH' ? ($embedded->{'ip'} || '?') : '?')) if $log;
+		return undef;
+	}
 	my $manager = 'http://' . $embedded->{'ip'} . ':' . ($embedded->{'PORT_DOCK'} || $ENV{PORT_BOARD} || 3000) .  '/device_query';
 	my $ua = Mojo::UserAgent->new();
 	my $res = eval { $ua->insecure(1)->get($manager) };
@@ -454,8 +460,14 @@ sub embedded_app_deleter($data) {
 
 		foreach my $watch ( @{$chips} ) {
 			if ($watch->{'ip'}) {
+				# The token rides the /delete_job query; skip a host that is not ours.
+				unless (&subs::board_host_allowed($watch->{'ip'})) {
+					$log->info('embedded app deleter refused: ' . ($watch->{'chip_id'} || '?') . ' at ' . $watch->{'ip'}) if $log;
+					next;
+				}
 				my $od = &subs::setting_grabber({ app => 'microcontroller', setting => 'operator_door', subsetting => $watch->{'chip_id'} });
 				my $op_d = (eval { decode_json $od }) ? decode_json $od : {};
+				# Plain HTTP board WebServer: TLS/HMAC is firmware work (jp/, jt/, jw/).
 				my $watch_home = 'http://' . $watch->{'ip'} . ':' . $config->{'port'} . '/delete_job' . '?appt_uuid=' . $appt_uuid . '&authorization=' . $op_d->{'__specs'}->{'authorization'} . '&timestamp=' . $timestamp;
 
 				my $ua = Mojo::UserAgent->new();

@@ -272,6 +272,12 @@ sub firmware_push($data) {
 	unless ($ip) {
 		return { success => 0, result => 'no address for ' . $chip_id . ' - update a Bluetooth-only device from the panel file picker' };
 	}
+	# The Now Me token rides this request, so a public literal or a peer/device
+	# name must not be dialled. See t/268 for the firmware TLS/HMAC follow-up.
+	unless (&board_host_allowed($ip)) {
+		&log_writer('firmware push refused: ' . ($chip_id || '?') . ' at ' . $ip . ' (not a house address)');
+		return { success => 0, result => 'refused: ' . ($chip_id || 'the board') . ' is not on a house network address' };
+	}
 	my $od = &setting_grabber({ app => $edt, setting => 'operator_door', subsetting => $chip_id });
 	my $op_d = eval { decode_json $od } || {};
 	my $auth = $op_d->{'__specs'}->{'authorization'} || '';
@@ -281,6 +287,7 @@ sub firmware_push($data) {
 	my $file = $staged->{'path'};
 	my $ua = Mojo::UserAgent->new();
 	$ua->inactivity_timeout(180000);
+	# Plain HTTP board WebServer: TLS/HMAC is firmware work (jp/, jt/, jw/).
 	my $res;
 	if ($edt eq 'microcontroller') {
 		my $total = -s $file;

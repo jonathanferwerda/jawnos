@@ -150,6 +150,12 @@ sub action_43358 {
 	my $embedded = &subs::embedded_device($timestamp,$edt,$chip_id);
 	my $file = $c->param('file');
 	if ($embedded->{'ip'}) {
+		# The token below rides the URL, so the board must be one of ours before
+		# this dials. A stale row naming a public host or a peer name is refused.
+		unless (&subs::board_host_allowed($embedded->{'ip'})) {
+			$log->info('embedded delete_file refused: ' . ($embedded->{'chip_id'} // '?') . ' at ' . ($embedded->{'ip'} // '?')) if $log;
+			return $c->render(json => { success => 0, result => 'refused: board address is not on the house network' });
+		}
 		my $op_d = eval { return decode_json &subs::setting_grabber({ app => $edt, setting => 'operator_door', subsetting => $embedded->{'chip_id'} }) } || {};
 		my $params = {
 			file => $file,
@@ -157,6 +163,9 @@ sub action_43358 {
 		};
 
 		my $returner;
+		# Plain HTTP: the board's WebServer has no TLS, so the token in this query
+		# crosses the LAN in clear text. The guard above keeps it on a house
+		# address; firmware TLS/HMAC is the remaining fix.
 		$returner->{'req'} = Mojo::URL->new("http://$embedded->{ip}:$config->{port}/delete_file")
 			->query($params)
 			->to_string;
@@ -311,6 +320,12 @@ sub action_43620 {
 		return $c->render(json => { success => 0, result => 'needs a board ip and a .bin' });
 	}
 
+	# The token rides this request, so only a house address may be dialled.
+	unless (&subs::board_host_allowed($ip)) {
+		$log->info('embedded ota refused: ' . ($chip_id || '?') . ' at ' . $ip) if $log;
+		return $c->render(json => { success => 0, result => 'refused: board address is not on the house network' });
+	}
+
 	# The board refuses /update without its own Now Me token, and the manager is
 	# the machine that holds that token in operator_door.
 	my $od = ($edt && $chip_id) ? &subs::setting_grabber({ app => $edt, setting => 'operator_door', device => $device, subsetting => $chip_id }) : '';
@@ -330,6 +345,7 @@ sub action_43620 {
 
 	my $ua = Mojo::UserAgent->new();
 	$ua->inactivity_timeout(180000);
+	# Plain HTTP board WebServer: TLS/HMAC is firmware work (jp/, jt/, jw/).
 	my $res = $ua->post('http://' . $ip . '/update?authorization=' . url_escape($auth) => { 'Content-Type' => "multipart/form-data; boundary=$boundary", authorization => $auth } => $body)->result;
 	my $result = $res->is_success ? $res->body : ($res->error ? $res->error->{message} : 'board said ' . $res->code);
 
@@ -535,6 +551,13 @@ sub action_43881 {
 	my $chip_id = $c->param('chip_id');
 	my $timestamp = $c->param('timestamp');
 	my $mc = &subs::device_lister($timestamp, $edt, undef, $chip_id);
+
+	# The Now Me token rides the /jobs query; never dial a public or named host.
+	my $mc_ip = (ref $mc eq 'HASH' && defined $mc->{'ip'}) ? $mc->{'ip'} : '';
+	unless ($mc_ip && &subs::board_host_allowed($mc_ip)) {
+		$log->info('embedded jobs refused: ' . ($chip_id || '?') . ' at ' . ($mc_ip || '?')) if $log;
+		return $c->render(json => {});
+	}
 
 	my $wat_set = &subs::setting_grabber({ app => $edt, setting => 'operator_door', device => $device, subsetting => $chip_id });;
 	my $watch_settings = eval { return decode_json $wat_set } || {};

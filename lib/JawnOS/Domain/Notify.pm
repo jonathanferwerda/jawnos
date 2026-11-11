@@ -391,12 +391,20 @@ sub embedded_toggle_send {
 		return if $ws_sent;
 		my $watch = &subs::device_lister($timestamp, $edt, undef, $chip_id);
 		my $watch_ip = (ref $watch eq 'HASH' && $watch->{'ip'}) ? $watch->{'ip'} : $ip;
+		# The token rides the HTTP query below, so only a house address may be
+		# dialled. A public or named row falls through to the bridge instead.
+		if ($watch_ip && !&subs::board_host_allowed($watch_ip)) {
+			$log->info('device command: ' . ($chip_id || '?') . ' refused board host ' . $watch_ip . ' (not a house address)') if $log;
+			$watch_ip = '';
+		}
 		# One command at a time per board. A Pico services one HTTP client, so
 		# overlapping presses are what make the third and fourth look lost.
 		# The lock covers the bridge fallback too: the radio is shared with
 		# WiFi, and a burst of writes is what wedges the board.
 		my $lock = &subs::device_command_lock($chip_id);
 		my $send_http = sub {
+			# Plain HTTP: the board's WebServer has no TLS. The guard above keeps
+			# the token on a house address; firmware TLS/HMAC is the follow-up.
 			my $watch_home = 'http://' . $watch_ip . ':' . $port . '/' . $component . '?appt_uuid=' . $appt_uuid . '&uuid=' . $uuid . '&when=' . $when . '&pin=' . $pin . '&state=' . $state . '&component=' . $component . '&authorization=' . $authorization . '&timestamp=' . $timestamp . '&measure=' . $measure;
 			my $ua = Mojo::UserAgent->new(connect_timeout => 1, inactivity_timeout => 2);
 			my $res = $ua->insecure(1)->get($watch_home)->result;
@@ -481,8 +489,11 @@ sub embedded_toggle_refresh {
 	my $authorization = $args->{'authorization'};
 	eval {
 		my $watch = &subs::device_lister($timestamp, $edt, undef, $chip_id);
+		my $watch_ip = (ref $watch eq 'HASH' && defined $watch->{'ip'}) ? $watch->{'ip'} : '';
+		# The token rides this query; a public or named host is never dialled.
+		return unless $watch_ip && &subs::board_host_allowed($watch_ip);
 
-		my $watch_home = 'http://' . $watch->{'ip'} . ':' . $port . '/' . $component . '?appt_uuid=' . $appt_uuid . '&uuid=' . $uuid . '&when=' . $when . '&pin=' . $pin . '&state=' . $state . '&component=' . $component . '&authorization=' . $authorization . '&timestamp=' . $timestamp . '&measure=' . $measure;
+		my $watch_home = 'http://' . $watch_ip . ':' . $port . '/' . $component . '?appt_uuid=' . $appt_uuid . '&uuid=' . $uuid . '&when=' . $when . '&pin=' . $pin . '&state=' . $state . '&component=' . $component . '&authorization=' . $authorization . '&timestamp=' . $timestamp . '&measure=' . $measure;
 		my $ua = Mojo::UserAgent->new();
 
 		my $res = $ua->insecure(1)->get($watch_home)->result;

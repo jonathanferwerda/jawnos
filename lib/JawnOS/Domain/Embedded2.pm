@@ -51,6 +51,11 @@ sub embedded_wigi {
 
 	my $watch = &subs::device_lister($timestamp, $edt, undef, $chip_id);
 	if ($watch->{'ip'}) {
+		# The token rides this query, so only a house address is dialled.
+		unless (&subs::board_host_allowed($watch->{'ip'})) {
+			$log->info('embedded wigi refused: ' . ($chip_id || '?') . ' at ' . $watch->{'ip'}) if $log;
+			return;
+		}
 		my $wat_set = &subs::embedded_operator_door($edt, $chip_id);
 		my $watch_settings = eval { return decode_json $wat_set } || {};
 		my $auth = $watch_settings->{'__specs'}->{'authorization'};
@@ -59,6 +64,7 @@ sub embedded_wigi {
 		my $authorization = &subs::note_decrypter($watch_settings->{'__shutup'}->{'patience'}, $author);
 
 
+		# Plain HTTP board WebServer: TLS/HMAC is firmware work (jp/, jt/, jw/).
 		my $wigi_url = 'http://' . $watch->{'ip'} . ':' . $config->{'port'} . '/wigi?timestamp=' . $timestamp . '&authorization=' . $auth;
 		my $ua = Mojo::UserAgent->new();
 		my $res = $ua->insecure(1)->get($wigi_url)->result;

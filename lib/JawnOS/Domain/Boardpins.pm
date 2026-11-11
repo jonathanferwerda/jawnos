@@ -117,7 +117,12 @@ sub board_pins_usb_read($port) {
 # that does not answer right now is not worth a request that hangs.
 sub board_pins_http_read($ip, $port, $authorization) {
 	return { ok => 0, error => 'need an ip' } unless defined $ip && length $ip;
+	# The token rides this query, so only a house address may be dialled. The
+	# caller falls back to USB for an address that is not one of ours.
+	return { ok => 0, error => 'refused: ' . $ip . ' is not a house address' }
+		unless &board_host_allowed($ip);
 	$port = 80 unless defined $port && length $port;
+	# Plain HTTP board WebServer: TLS/HMAC is firmware work (jp/, jt/, jw/).
 	my $url = Mojo::URL->new('http://' . $ip . ':' . $port . '/pins');
 	# The board's /pins is guarded exactly like /jobs and /relay: without the
 	# token it answers 403 and the panel reported "I don't know this chip" for a

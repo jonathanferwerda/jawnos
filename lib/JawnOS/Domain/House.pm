@@ -262,6 +262,30 @@ sub peer_host_is_loopback {
 	return 0;
 }
 
+# A board is a device on the house's own network, and the token that guards its
+# routes rides every request. Only dial an address the house can vouch for: a
+# loopback, private, link-local or carrier-grade-NAT literal. A public literal
+# or any name (a peer's or a device's) is refused - a stale or hostile board row
+# must not carry that token off the house's networks. The house's own LAN
+# addresses are private literals, so they pass; its public name does not.
+#
+# This bounds where the token can go, not whether the hop is encrypted: the
+# boards still serve plain HTTP. Firmware-side TLS or an HMAC-signed request is
+# the follow-up (jp/, jt/, jw/); see the TODO test in t/268.
+sub board_host_allowed {
+	my $host = shift;
+	return 0 unless defined $host && length $host;
+	$host =~ s/^\s+|\s+$//g;
+	$host =~ s/^\[|\]$//g;
+	return 0 unless length $host;
+	# A name needs a resolver and can point anywhere, including the internet.
+	return 0 unless &peer_host_is_literal($host);
+	return 1 if &peer_host_is_loopback($host);
+	return 1 if &peer_address_rank($host) <= 1;   # LAN/link-local, then CGNAT
+	return 1 if $host =~ /^(?:f[cd][0-9a-f]{2}|fe[89ab][0-9a-f]):/i;  # IPv6 ULA / link-local
+	return 0;
+}
+
 # 0 = a private LAN or link-local address, 1 = the tailnet's CGNAT range,
 # 2 = anything else. Probing a same-wifi peer on its LAN first means a dead
 # tailnet route cannot hold up the pass, while the tailnet is still tried.
