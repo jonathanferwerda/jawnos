@@ -464,9 +464,13 @@ sub housekeeping() {
 	foreach my $cf (@cache_folders) {
 		if ($cf ne '/' && $cf ne &subs::home('~/') && $cf =~ /[a-z0-9A-Z]/) {
 			my $folder = &subs::home($cf);
-			my $doomed = `ls -a $cf`;
-
-			my @doomed = split /\n/, $doomed;
+			# The folders come from a setting, but a setting is still text: list in
+			# Perl, where a name is a name.
+			my @doomed;
+			if (opendir(my $dh, $cf)) {
+				@doomed = grep { $_ ne '.' && $_ ne '..' } readdir($dh);
+				closedir($dh);
+			}
 			foreach my $doom ( @doomed ) {
 				my $rip = $folder . '/' . $doom;
 				unless ($doom eq '.' || $doom eq '..') {

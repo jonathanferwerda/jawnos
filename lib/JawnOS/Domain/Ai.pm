@@ -280,7 +280,7 @@ sub whisper_cli_transcribe {
 	# yield with nice 19 so ffmpeg and whisper-cli give the CPU back to the call.
 	my $cmd = sprintf(
 		'nice -n 19 ffmpeg -nostdin -loglevel error -i - -blocksize 4096 -f wav -ar 16000 -ac 1 -acodec pcm_s16le - | nice -n 19 %s -m %s%s --output-txt --file - 2>/dev/null',
-		$bin, $model, $language
+		&subs::shell_quote($bin), &subs::shell_quote($model), $language
 	);
 	my ($in, $out, $err);
 	$err = Symbol::gensym();

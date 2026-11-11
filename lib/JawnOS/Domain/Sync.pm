@@ -784,6 +784,17 @@ sub encrypter {
 	return $notes;
 }
 
+# The same, without the legacy empty-passphrase fallback. A caller that is
+# judging a token or a peer's bytes must accept only a blob sealed under the
+# real secret: otherwise anyone can seal with the public empty key.
+sub decrypter_strict {
+	my ($secret,$content) = @_;
+	local *encrypt;
+	local *decrypt;
+	Crypt::Simple->import(passphrase => $secret);
+	return eval { decrypt($content) };
+}
+
 sub decrypter {
 	my ($secret,$content) = @_;
 	my ($notes,$ok);

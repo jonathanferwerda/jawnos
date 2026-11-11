@@ -372,7 +372,7 @@ sub action_40000 {
 	my $c = shift;
 	my $signatorial = $c->param('signatorial') || '';
 	my $rm = ($signatorial && &subs::db_select('remote_machines', undef, { signatorial => $signatorial })->hashes->[0]);
-	unless ($rm && $rm->{'pubkey'} && &subs::peer_verify($c, $rm)) {
+	unless ($rm && $rm->{'pubkey'} && &subs::peer_verify($c, $rm) && &subs::peer_allows($c, $rm, 'trusted')) {
 		$log->info('go: peer approval refused from ' . ($signatorial || '?') . ' at ' . ($c->tx->remote_address || '?'));
 		return $c->rendered(403);
 	}
@@ -398,7 +398,7 @@ sub action_40024 {
 	my $c = shift;
 	my $signatorial = $c->param('signatorial') || '';
 	my $rm = ($signatorial && &subs::db_select('remote_machines', undef, { signatorial => $signatorial })->hashes->[0]);
-	unless ($rm && $rm->{'pubkey'} && &subs::peer_verify($c, $rm)) {
+	unless ($rm && $rm->{'pubkey'} && &subs::peer_verify($c, $rm) && &subs::peer_allows($c, $rm, 'trusted')) {
 		return $c->rendered(403);
 	}
 	my $request_id = $c->param('request_id') || '';

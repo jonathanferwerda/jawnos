@@ -123,6 +123,7 @@
 </style>
 
 <script>
-	mao = JSON.parse('<%== $jmao %>');
+	<% my $mao_js = $jmao // ''; $mao_js =~ s/\\/\\\\/g; $mao_js =~ s/'/\\'/g; $mao_js =~ s{</}{<\\/}g; %>
+	mao = JSON.parse('<%== $mao_js %>');
 </script>
 

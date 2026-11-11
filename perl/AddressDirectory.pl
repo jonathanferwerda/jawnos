@@ -705,7 +705,8 @@ sub _caller_ok {
 	return 1 if _loopback($c);
 	return 0 unless $row;
 	my $ok = eval { &subs::peer_verify($c, $row) };
-	return $ok ? 1 : 0;
+	return 0 unless $ok;
+	return &subs::peer_allows($c, $row, 'trusted') ? 1 : 0;
 }
 
 sub _manager_is_tailnet {

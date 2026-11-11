@@ -564,7 +564,9 @@ sub main_icon_maker {
 	# every icon built that way warned in the concatenation below.
 	my $onclick = $data->{'onclick'};
 	unless (defined $onclick && length $onclick) {
-		$onclick = 'onclick="windowRestorer(' . $timestamp . ',\'' . $unformatted_name . '\')"';
+		# The name is request- and settings-derived. encode_json makes it a JS
+		# string literal; html_text then keeps its quotes inside the attribute.
+		$onclick = 'onclick="windowRestorer(' . (0 + $timestamp) . ',' . &subs::html_text(encode_json($unformatted_name)) . ')"';
 	}
 	$settings = &subs::settings_grabber({ app => $unformatted_name }) unless $settings;
 	# a window may wear a name that is not its key (the accounting app is still
@@ -574,9 +576,13 @@ sub main_icon_maker {
 	# the window's quiet controls), so it can add a class of its own
 	my $extra_class = (defined $data->{'class'} && length $data->{'class'}) ? ' ' . $data->{'class'} : '';
 	my $src = &subs::main_icon_source({ app => $unformatted_name, settings => $settings });
-	my $main_image = '<span id="window_icon_' . $timestamp . '" style="display:none;" class="window_icon ' . $size . '_thumb' . $extra_class . '" app="' . $unformatted_name . '" hint="' . $hint . '" ' . $onclick . '>' . &subs::initialize_name($hint) . '</span>';
+	my $name_attr = &subs::html_text($unformatted_name);
+	my $hint_attr = &subs::html_text($hint);
+	my $class_attr = &subs::html_text($extra_class);
+	my $src_attr = &subs::html_text($src);
+	my $main_image = '<span id="window_icon_' . (0 + $timestamp) . '" style="display:none;" class="window_icon ' . $size . '_thumb' . $class_attr . '" app="' . $name_attr . '" hint="' . $hint_attr . '" ' . $onclick . '>' . &subs::initialize_name($hint) . '</span>';
 	if (length $src) {
-		$main_image = '<img id="window_icon_' . $timestamp . '" class="window_icon ' . $size . '_thumb' . $extra_class . '" app="' . $unformatted_name . '" hint="' . $hint . '" src="' . $src . '" ' . $onclick . '>';
+		$main_image = '<img id="window_icon_' . (0 + $timestamp) . '" class="window_icon ' . $size . '_thumb' . $class_attr . '" app="' . $name_attr . '" hint="' . $hint_attr . '" src="' . $src_attr . '" ' . $onclick . '>';
 	}
 	return $main_image
 }

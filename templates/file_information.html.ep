@@ -12,7 +12,7 @@
 	    later); the gallery dates by the appointment and this panel follows it %>
 	<span class="time" timestamp="<%= $appt->{'timestamp'} || $file->{'server_time'} %>"></span>
 	<% if ($file->{'ocr'}) { %>
-		<%== $file->{'ocr'} %>
+		<%== &subs::html_text($file->{'ocr'}) %>
 	<% } %>
 	<input type="checkbox" <% unless ($file->{'visible'} eq 'unchecked') { %>checked<% } %>>Visible<br>
 	<input class="warranty time file_information_updater" timestamp="<%= $file->{'warranty'} || $appt->{'warranty'} %>" attribute="warranty">

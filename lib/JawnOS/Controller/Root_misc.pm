@@ -69,14 +69,10 @@ sub action_2998 {
 	my $user_agent = $c->req->headers->user_agent;
 	my $remote_signatorial = $c->param('signatorial');
 	my $signatorial = &subs::signatorial_designer();
-	if ($c->param('signatorial')) {
-		my $rs = &subs::decrypter(&subs::shorthand_name(&subs::rightNow(), 5) . &subs::shorthand_name($signatorial, 5), $remote_signatorial);
-
-		if (defined $rs && $rs eq $signatorial) {
-			$homepage = $signatorial;
-		} else {
-			$homepage = 'dunno';
-		}
+	if (defined $remote_signatorial && length $remote_signatorial) {
+		# This once decrypted a request value with a key derived from public data
+		# and thawed whatever it held. A claim is compared now, never deserialized.
+		$homepage = ($remote_signatorial eq $signatorial) ? $signatorial : 'dunno';
 	} else {
 		$homepage = &homepage_maker($c);
 	}

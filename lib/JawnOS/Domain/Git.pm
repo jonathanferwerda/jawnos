@@ -242,8 +242,12 @@ sub github_fetch {
 	chomp $curl;
 	if ($curl) {
 		foreach my $args ( ['-4'], [] ) {
-			my $tmp = "/tmp/jawn_gh_" . $$ . "_" . int(rand(1_000_000));
-			my $rc = system($curl, @{$args}, '-sSL', '--max-time', "$timeout", '-o', $tmp, $url);
+			# A predictable name in /tmp can be pre-planted as a symlink and curl -o
+			# follows it. Create the file ourselves, exclusively, and hand it over.
+			require File::Temp;
+			my ($tfh, $tmp) = File::Temp::tempfile('jawn_gh_XXXXXX', TMPDIR => 1, UNLINK => 0);
+			close $tfh if $tfh;
+			my $rc = defined $tmp ? system($curl, @{$args}, '-sSL', '--max-time', "$timeout", '-o', $tmp, $url) : 1;
 			if ($rc == 0 && -s $tmp) {
 				my $body;
 				if (open(my $fh, '<', $tmp)) { binmode $fh; local $/; $body = <$fh>; close $fh; }

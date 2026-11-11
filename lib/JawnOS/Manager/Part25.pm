@@ -306,7 +306,8 @@ sub mail_checker($c) {
 			if ($m->{'phone'} && $m->{'status'} eq 'sent') {
 				$m->{'manager_file'} = $me;
 			}
-			$log->info($m->{'body'});
+			# The body is decrypted for the person, not for the log.
+			$log->info('mail view ' . ($m->{'uuid'} // '?') . ' ' . length($m->{'body'} // '') . ' bytes');
 			$m->{'decrypted'} = 'yes';
 			my $content = $c->render_to_string(
 				template => 'mail/message',

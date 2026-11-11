@@ -42,7 +42,7 @@
 		<% } %>
 	</div>
 
-	<span id="item_description"><%== $item->{'settings'}->{'description'} %></span>
+	<span id="item_description"><%== &subs::article_html_clean($item->{'settings'}->{'description'}) %></span>
 	<% if (scalar @{$item->{'models'}} == 0 && scalar @{$item->{'options'}} == 0 && !$item->{'settings'}->{'description'}) { %>
 		<p class="item_plain_note"><%= &subs::ui('This item has no models, options or description; its price is below.') %></p>
 	<% } %>

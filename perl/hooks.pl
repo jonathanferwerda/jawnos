@@ -120,7 +120,8 @@ Manager::app->hook(before_dispatch => sub {
 		/manager/delete_ticket /manager/suspend_ticket
 		/manager/renew_ticket /manager/reinstate_ticket
 		/manager/watch/set_proxy /manager/say_it
-		/manager/budget
+		/manager/budget /manager/qrcode_generator
+		/manager/volume_control /manager/torch
 	);
 	my $csrf_method = $c->req->method // '';
 	my $csrf_path = $c->req->url->path->to_string;
@@ -533,7 +534,7 @@ Manager::app->hook(before_dispatch => sub {
 			my $success = 0;
 			my $wsa = $c->param('ws_auth');
 			my $pa = &subs::setting_grabber({ app => '__president', setting => 'ws_pa' });
-			my @ws_auth = split $gb::universal_splitter, &subs::decrypter($pa, $wsa);
+			my @ws_auth = (defined $pa && length $pa) ? split($gb::universal_splitter, &subs::decrypter_strict($pa, $wsa)) : ();
 			if ($remote_address eq $ws_auth[0] && $ws_auth[1] eq &subs::signatorial_designer()) {
 					$c->session('authentication' => 'approved');
 				#	$c->session('suds' => $c->param('suds'));

@@ -650,7 +650,7 @@ sub note_security_rows {
 
 sub note_unseal {
 	my ($key, $contented) = @_;
-	my $payload = &subs::decrypter($key, $contented);
+	my $payload = &subs::decrypter_strict($key, $contented);
 	return undef unless defined $payload && length $payload;
 	my ($b64, $standard, $md5) = split ':::---:::', $payload, 3;
 	return undef unless defined $b64 && length $b64;

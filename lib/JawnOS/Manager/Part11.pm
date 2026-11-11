@@ -304,10 +304,12 @@ sub remote_device_connect($rdata) {
 # peer rail.
 sub tunnel_rail_allowed {
 	my ($c) = @_;
-	return 1 if $c->session('authentication') eq 'approved';
+	return 1 if ($c->session('authentication') || '') eq 'approved'
+		&& !&subs::guest_browser_session($c->session('privilege'), $c->session('source'));
 	my $signatorial = $c->param('signatorial') || '';
 	my $rm = ($signatorial && &subs::db_select('remote_machines', undef, { signatorial => $signatorial })->hashes->[0]);
-	return 1 if $rm && $rm->{'pubkey'} && &subs::peer_verify($c, $rm);
+	return 1 if $rm && $rm->{'pubkey'} && &subs::peer_verify($c, $rm)
+		&& &subs::peer_allows($c, $rm, 'trusted');
 	return 0;
 }
 

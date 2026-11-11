@@ -296,6 +296,12 @@ sub action_5823 {
 # POST /store/quote/save
 sub action_6055 {
 	my $c = shift;
+	# A shop document is written, read and mailed by the house; a visitor ticket
+	# may browse the storefront but not write into another customer's app.
+	unless ((($c->session('authentication') || '') eq 'approved'
+			&& !&subs::guest_browser_session($c->session('privilege'), $c->session('source')))) {
+		return $c->rendered(403);
+	}
 	my $timestamp = $c->param('timestamp');
 	my $item = $c->param('item');
 	my $quote_uuid = $c->param('uuid');
@@ -522,6 +528,11 @@ sub action_52032 {
 # GET /store/email
 sub action_31938 {
 	my $c = shift;
+	# The compose view carries the customer's address and decrypted drafts.
+	unless ((($c->session('authentication') || '') eq 'approved'
+			&& !&subs::guest_browser_session($c->session('privilege'), $c->session('source')))) {
+		return $c->rendered(403);
+	}
 	my $returner;
 	my $uuid = $c->param('uuid');
 	my $cx_uuid = $c->param('cx_uuid');

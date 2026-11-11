@@ -65,6 +65,13 @@ our ($APP, $ws_live_window, $encoder, $decoder, $tuuid, $thread_uuid, $universal
 # GET /teletype/neighbours
 sub action_43123 {
 	my $c = shift;
+	# Neighbours carry LAN addresses, names and ports: a visitor's ticket is not
+	# enough to enumerate the house's devices.
+	unless ((($c->session('authentication') || '') eq 'approved'
+			&& !&subs::guest_browser_session($c->session('privilege'), $c->session('source')))
+		|| ($c->session('source') || '') eq 'device') {
+		return $c->rendered(403);
+	}
 	my $timestamp = $c->param('timestamp');
 	my $devices = &subs::device_lister($timestamp, '');
 	$c->render(json => $devices);

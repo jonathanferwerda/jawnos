@@ -200,8 +200,8 @@ sub action_45403 {
 
 				my $pipeline_cmd = sprintf(
 					'ffmpeg -nostdin -loglevel error -i - -blocksize 4096 -f wav -ar 16000 -ac 1 -acodec pcm_s16le - | %s -m %s --output-txt --file -',
-					$whisper_bin,
-					$whisper_model
+					&subs::shell_quote($whisper_bin),
+					&subs::shell_quote($whisper_model)
 				);
 
 				# 3. Spawn the execution bridge using shell evaluation

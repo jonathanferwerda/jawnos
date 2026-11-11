@@ -925,12 +925,6 @@ sub random_string_creator {
 	# uuid collided between workers (a UNIQUE constraint failure on every racing
 	# write). Seed once per process: the flag is keyed by pid because a child also
 	# inherits the flag itself, and the pid and clock differ between children.
-	unless (defined $random_seeded_for && $random_seeded_for == $$) {
-		my ($sec, $usec) = gettimeofday();
-		srand( ($$ << 16) ^ $usec ^ $sec );
-		$random_seeded_for = $$;
-	}
-
   my ($string,$count);
 	$count = shift || 8;
 	my $chars = shift;
@@ -950,8 +944,21 @@ sub random_string_creator {
 		@chars = ("A".."Z", "a".."z", "0".."9");
 	}
 
-  $string .= $chars[rand @chars] for 1..$count;
-  return $string;
+  # Ticket passwords, peer nonces and cache ids all come from here, so the bytes
+  # must not be predictable: Perl's rand() is a seeded LCG, not a CSPRNG. Draw
+  # from the OS and reject the top remainder so the distribution stays flat.
+  require Crypt::PRNG;
+  my $n = scalar @chars;
+  my $limit = 256 - (256 % $n);
+  my $out = '';
+  while (length($out) < $count) {
+    for my $b (unpack 'C*', Crypt::PRNG::random_bytes(($count - length($out)) + 8)) {
+      next if $b >= $limit;
+      $out .= $chars[$b % $n];
+      last if length($out) >= $count;
+    }
+  }
+  return $out;
 }
 
 sub inventory_grabber {

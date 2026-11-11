@@ -162,7 +162,8 @@ sub action_43358 {
 			->to_string;
 		my $ua = Mojo::UserAgent->new();
 		$returner->{'res'} = $ua->insecure(1)->get($returner->{'req'})->result;
-		$log->info(Dumper $returner);
+		# The request URL carries the board's authorization: log who, not what.
+		$log->info('embedded delete_file for ' . ($embedded->{'chip_id'} // '?') . ' at ' . ($embedded->{'ip'} // '?'));
 		$c->render(json => $returner);
 	} else {
 		$c->render(json => {});

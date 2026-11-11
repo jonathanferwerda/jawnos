@@ -69,7 +69,7 @@ like( subs::main_image_src($local, 'programming', 1), qr{&thumb=ya\z},
 # --- the icon maker puts the custom picture in the title bar ----------------
 my $custom = subs::main_icon_maker({ app => 'programming', timestamp => 1, settings => { main_image => $local } });
 like( $custom, qr{<img }, 'a custom main image becomes an image' );
-like( $custom, qr{&thumb=ya}, 'and asks for its thumbnail' );
+like( $custom, qr{&amp;thumb=ya}, 'and asks for its thumbnail (the src is HTML-escaped)' );
 unlike( $custom, qr/class="little_thumb"/, 'the image carries one class attribute' );
 
 # --- an app with no picture still gets its window icon ----------------------

@@ -780,12 +780,11 @@ sub tunnel_stopper {
 	my $rm = &subs::remote_useragent_maker({ signatorial => $signatorial });
 	foreach my $tun ( @{$tunnels} ) {
 		my $pid = $tun->{'process_id'};
-		if ($pid) {
-			my $process = `ps -e | grep $pid`;
-			chomp $process;
-			if ($process) {
-				kill('INT', $tun->{'process_id'});
-				waitpid($tun->{'process_id'}, 0);
+		if (defined $pid && $pid =~ /^\d+$/ && $pid > 0) {
+			# A pid is a number, and signal 0 asks the kernel whether it is alive.
+			if (kill(0, $pid)) {
+				kill('INT', $pid);
+				waitpid($pid, 0);
 			}
 			my $url = $rm->{'manager'} . '/manager/configure/remote_machine/tunnel/close';
 			$tun->{'status'} = 'closed';

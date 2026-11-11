@@ -100,8 +100,8 @@ ok(has('lib/JawnOS/Domain/Generate.pm', "(\$ch->{'save_appt'} || '') eq 'on'"),
 	'a character with no save switch is not a warning');
 
 # Root: a signatorial that did not decrypt
-ok(has('lib/JawnOS/Controller/Root_misc.pm', 'defined $rs && $rs eq $signatorial'),
-	'an undecryptable signatorial is compared only when it exists');
+ok(has('lib/JawnOS/Controller/Root_misc.pm', '$remote_signatorial eq $signatorial'),
+	'a signatorial claim is compared, never decrypted');
 
 # File: the cache table may not exist yet
 ok(has('lib/JawnOS/Domain/File.pm', 'my $results = $query ? $query->hashes : [];'),

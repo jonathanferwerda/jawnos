@@ -237,8 +237,11 @@ sub search_engine_grabber($c) {
 		timestamp => $timestamp
 	});
 	my $window_data = { app=> $c->param('app'), contents => &website_grabber($c) };
-	if ($c->param('view') eq 'iframe') {
-		$window_data->{'iframe'} = $website;
+	if (($c->param('view') // '') eq 'iframe') {
+		# Only a web URL may become an iframe source; the attribute is escaped
+		# where it is built, and a javascript:/data: value never gets there.
+		my $iframe = $website // '';
+		$window_data->{'iframe'} = ($iframe =~ m{\Ahttps?://}i) ? $iframe : '';
 	}
 	my ($window,$internal_url) = &window_maker($window_data, $timestamp);
 
@@ -574,7 +577,7 @@ sub window_maker($type,$timestamp) {
 		$title = 'browser';
 	}
 	elsif ($type->{'iframe'}) {
-		my $iframe_src = '"' . $type->{'iframe'} . '"';
+		my $iframe_src = '"' . &subs::html_text($type->{'iframe'}) . '"';
 		$contents = '<iframe src=' . $iframe_src . ' style="width:100%;height:100%;"></iframe>';
 		$title = 'browser';
 	}

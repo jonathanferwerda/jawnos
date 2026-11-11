@@ -729,7 +729,7 @@ sub sync_rows_batch {
 		my $why = $err->{'error'} || 'the peer refused the batch';
 		return (undef, $why, ($why eq 'unknown table' ? 1 : 0));
 	}
-	my $plain = eval { &subs::decrypter($secret, $res->body) };
+	my $plain = eval { &subs::decrypter_strict($secret, $res->body) };
 	return (undef, 'the batch would not decrypt') unless defined $plain && length $plain;
 	my $batch = eval { Sereal::Decoder->new({ no_bless_objects => 1 })->decode($plain) };
 	return (undef, 'the batch would not decode') unless ref $batch eq 'HASH';
@@ -764,7 +764,7 @@ sub sync_buckets_batch {
 		my $err = eval { decode_json($res->body) } || {};
 		return (undef, $err->{'error'} || 'the peer refused the bucket map');
 	}
-	my $plain = eval { &subs::decrypter($secret, $res->body) };
+	my $plain = eval { &subs::decrypter_strict($secret, $res->body) };
 	return (undef, 'the bucket map would not decrypt') unless defined $plain && length $plain;
 	my $map = eval { Sereal::Decoder->new({ no_bless_objects => 1 })->decode($plain) };
 	return (undef, 'the bucket map would not decode') unless ref $map eq 'HASH';

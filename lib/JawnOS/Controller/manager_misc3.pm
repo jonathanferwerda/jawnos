@@ -222,7 +222,7 @@ sub action_10311 {
 	# The signatorial is public (it is rendered into DOM attributes), so naming
 	# one is not a credential: the request must carry the machine's signature.
 	# app_release_sync signs every call through peer_useragent.
-	unless ($rm && $rm->{'pubkey'} && &subs::peer_verify($c, $rm)) { $c->rendered(403); return; }
+	unless ($rm && $rm->{'pubkey'} && &subs::peer_verify($c, $rm) && &subs::peer_allows($c, $rm, 'member')) { $c->rendered(403); return; }
 	my $hostname = `hostname`; chomp $hostname;
 	$c->render(json => { hostname => $hostname, signatorial => &subs::signatorial_designer(), releases => &app_release_lister() });
 }
@@ -232,7 +232,7 @@ sub action_10322 {
 	my $c = shift;
 	my $signatorial = $c->param('signatorial');
 	my $rm = ($signatorial && &subs::db_select('remote_machines', undef, { signatorial => $signatorial })->hashes->[0]);
-	unless ($rm && $rm->{'pubkey'} && &subs::peer_verify($c, $rm)) { $c->rendered(403); return; }
+	unless ($rm && $rm->{'pubkey'} && &subs::peer_verify($c, $rm) && &subs::peer_allows($c, $rm, 'member')) { $c->rendered(403); return; }
 	my $product = $c->param('product') || 'app';
 	my $want = $c->param('versionCode');
 	my $pick;

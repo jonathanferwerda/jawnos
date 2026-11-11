@@ -910,7 +910,9 @@ sub socket_watch() {
 
 						$log->info('A.I. Called');
 
-						$log->info(Dumper $query);
+						# The query carries the person's words (and possibly a key): name its
+						# shape, never its content.
+						$log->info('A.I. query fields: ' . join(',', sort keys %{$query}));
 
 
 

@@ -3,6 +3,7 @@
 <script>
 	var twirlHighScore = '<%= $settings->{'high_score'} %>';
 	var twirlHighScoreInitials = '<%= $settings->{'high_score_initials'} %>';
-	var twirlHighScores = '<%== ($settings->{'high_scores'} && $settings->{'high_scores'} ne '') ? $settings->{'high_scores'} : '[]' %>';
+	<% my $hs_js = ($settings->{'high_scores'} && $settings->{'high_scores'} ne '') ? $settings->{'high_scores'} : '[]'; $hs_js =~ s/\\/\\\\/g; $hs_js =~ s/'/\\'/g; $hs_js =~ s{</}{<\\/}g; %>
+	var twirlHighScores = '<%== $hs_js %>';
 	twirlGame();
 </script>

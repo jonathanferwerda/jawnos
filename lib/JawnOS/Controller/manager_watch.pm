@@ -395,6 +395,8 @@ sub action_44570 {
 	}, {
 		uuid => $uuid
 	});
+	# The id is echoed back as text, not as a page (see delete_proxy).
+	$c->res->headers->content_type('text/plain');
 	$c->render(text => $uuid);
 }
 

@@ -137,6 +137,12 @@ sub action_40363 {
 # GET /manager/security/padlock_state
 sub action_40429 {
 	my $c = shift;
+	# A pre-auth lock screen has no approved session and still needs this. A
+	# visitor's ticket does have one, and is not the house's business.
+	if ((($c->session('authentication') || '') eq 'approved')
+		&& &subs::guest_browser_session($c->session('privilege'), $c->session('source'))) {
+		return $c->render(json => { ok => 0 }, status => 403);
+	}
 	my $padlock = &subs::db_select('security', undef, { level => 'padlock' })->hashes->[0];
 	my $locks = &subs::db_select('security', undef, { level => 'padlock_device' })->hashes || [];
 	my @targets;
