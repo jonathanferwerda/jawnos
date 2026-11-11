@@ -1,21 +1,24 @@
-; JawnOS - Inno Setup 6 script (phase-2 wrapper; NOT TESTED).
+; JawnOS - Inno Setup 6 script.
 ;
-; This is a skeleton for a single Setup.exe around the portable bundle that
-; build-portable.ps1 produces. The supported path today is Install.bat in the
-; bundle; this file exists so the phase-2 wrapper has one place to grow.
+; One per-user Setup.exe around the portable bundle that build-portable.ps1
+; produces. Inno owns the files, the shortcuts and the uninstall; install.ps1
+; only seeds the config/database and starts the house; firewall.ps1 owns the
+; single firewall rule and elevates itself only when the person asks for LAN
+; access.
 ;
-; Build the payload first, then compile this script:
+; Build the payload first, then compile:
 ;   powershell -File installer\windows\build-portable.ps1 -RuntimeDir <strawberry>
-;   set JAWNOS_VERSION=0.1.2679
+;   set JAWNOS_VERSION=0.1.2707
 ;   iscc installer\windows\jawnos.iss
 ;
-; [Run] passes the autostart task choice to install.ps1: a selected task omits
-; -NoAutostart, an unselected one adds it. The installer asks for admin because
-; the firewall rule is machine-wide.
+; The install is per user under %LOCALAPPDATA%\JawnOS, so the app can write its
+; config, database and log without administrator rights. The firewall rule is
+; the only machine-wide step, and it is the only reason Setup ever raises a
+; UAC prompt.
 ;
-; Caveat for phase 2: uninstall.ps1 removes {app} itself and Inno also removes
-; it. That is acceptable in this skeleton, but verify the two do not race
-; before this file is presented as tested.
+; A fresh install seeds an empty config and database. An upgrade stops the
+; running house in PrepareToInstall first (Inno cannot replace a locked
+; perl.exe) and otherwise keeps the existing config and database.
 
 #ifndef AppVersion
   #define AppVersion GetEnv("JAWNOS_VERSION")
@@ -33,7 +36,7 @@ AppId={{7E7D6F2A-3F2B-4C2D-9A55-6A3B1C0D9E11}
 AppName=JawnOS
 AppVersion={#AppVersion}
 AppPublisher=JawnOS
-DefaultDirName={autopf}\JawnOS
+DefaultDirName={localappdata}\JawnOS
 DefaultGroupName=JawnOS
 DisableProgramGroupPage=yes
 OutputDir={#PayloadDir}
@@ -42,11 +45,15 @@ Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
 ArchitecturesAllowed=x64
-ArchitecturesInstallIn64BitMode=x64
-PrivilegesRequired=admin
+PrivilegesRequired=lowest
+; PrepareToInstall stops the house itself. Restart Manager cannot close a
+; console perl.exe reliably, so it must not try.
+CloseApplications=no
+RestartApplications=no
 UninstallDisplayIcon={app}\runtime\perl\bin\perl.exe
 
 [Tasks]
+Name: "lanaccess"; Description: "Allow other devices on this network to reach JawnOS (needs administrator)"; GroupDescription: "Network:"; Flags: checkedonce
 Name: "autostart"; Description: "Start JawnOS with Windows"; GroupDescription: "Startup:"
 Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription: "Additional icons:"; Flags: unchecked
 
@@ -59,9 +66,33 @@ Name: "{autodesktop}\JawnOS"; Filename: "{sys}\wscript.exe"; Parameters: """{app
 Name: "{userstartup}\JawnOS"; Filename: "{sys}\wscript.exe"; Parameters: """{app}\launch.vbs"""; WorkingDir: "{app}"; Tasks: autostart
 
 [Run]
-Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\install.ps1"" -InstallDir ""{app}"" -NoLaunch"; Flags: waituntilterminated; Check: WizardIsTaskSelected('autostart')
-Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\install.ps1"" -InstallDir ""{app}"" -NoLaunch -NoAutostart"; Flags: waituntilterminated; Check: not WizardIsTaskSelected('autostart')
-Filename: "{sys}\wscript.exe"; Parameters: """{app}\launch.vbs"""; Description: "Launch JawnOS"; Flags: nowait postinstall skipifsilent
+; The interactive entry launches the house, waits for the port and opens the
+; manager; it also shows the unlock code. A silent install must not open a
+; browser or wait for the server, so it gets its own entry.
+Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\install.ps1"" -InstallDir ""{app}"" -SkipShortcuts -SkipFirewall"; StatusMsg: "Starting JawnOS (the first run can take a minute) ..."; Flags: waituntilterminated; Check: not WizardSilent
+Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\install.ps1"" -InstallDir ""{app}"" -SkipShortcuts -SkipFirewall -NoLaunch -NoBrowser -Quiet"; Flags: waituntilterminated runhidden; Check: WizardSilent
+; install.ps1 skipped the rule because a per-user install has no admin.
+; firewall.ps1 re-runs itself through UAC; declining leaves the house working
+; locally and can be retried later from an elevated prompt.
+Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\firewall.ps1"" -InstallDir ""{app}"" -Elevate"; StatusMsg: "Allowing JawnOS through the private firewall ..."; Flags: waituntilterminated runhidden; Check: WizardIsTaskSelected('lanaccess')
 
 [UninstallRun]
-Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\uninstall.ps1"" -InstallDir ""{app}"""; Flags: waituntilterminated runhidden
+; RunOnceId keeps each step from repeating on a resumed uninstall. Inno removes
+; the files and shortcuts; these entries only stop the house and drop the rule.
+Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\uninstall.ps1"" -InstallDir ""{app}"" -KeepFolder -SkipShortcuts -SkipFirewall"; Flags: waituntilterminated runhidden; RunOnceId: "StopJawnOS"
+Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\firewall.ps1"" -InstallDir ""{app}"" -Remove -Elevate"; Flags: waituntilterminated runhidden; RunOnceId: "RemoveJawnOSFirewall"
+
+[Code]
+function PrepareToInstall(var NeedsRestart: Boolean): String;
+var
+  Script: String;
+  ResultCode: Integer;
+begin
+  Result := '';
+  Script := ExpandConstant('{app}\uninstall.ps1');
+  if FileExists(Script) then
+    Exec('powershell.exe',
+      '-NoProfile -ExecutionPolicy Bypass -File "' + Script + '" -InstallDir "' +
+      ExpandConstant('{app}') + '" -KeepFolder -SkipShortcuts -SkipFirewall',
+      '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+end;

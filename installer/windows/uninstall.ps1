@@ -8,11 +8,18 @@
 # folder. -PurgeData also deletes %USERPROFILE%\.president, the per-user
 # runtime state and job logs. The house database lives under the install folder,
 # so it goes with the folder unless this is a special layout.
+#
+# The Inno Setup uninstaller owns the files and shortcuts, so it passes
+# -KeepFolder -SkipShortcuts -SkipFirewall: this script then only stops the
+# house, and Inno and firewall.ps1 remove what they installed.
 
 [CmdletBinding()]
 param(
     [string]$InstallDir = (Join-Path $env:LOCALAPPDATA 'JawnOS'),
-    [switch]$PurgeData
+    [switch]$PurgeData,
+    [switch]$KeepFolder,
+    [switch]$SkipShortcuts,
+    [switch]$SkipFirewall
 )
 
 $ErrorActionPreference = 'Stop'
@@ -116,45 +123,62 @@ if (Test-Path -LiteralPath $pidFile) {
 
 # --- firewall rule ----------------------------------------------------------
 
-try {
-    $proc = Start-Process -FilePath 'netsh.exe' -ArgumentList @(
-        'advfirewall', 'firewall', 'delete', 'rule', 'name=JawnOS'
-    ) -Wait -NoNewWindow -PassThru -ErrorAction Stop
-    if ($proc.ExitCode -eq 0) {
-        Note 'Removed the JawnOS firewall rule.'
+if ($SkipFirewall) {
+    Note 'Skipping the firewall rule: the Setup.exe removes it.'
+} else {
+    $ruleScript = Join-Path $PSScriptRoot 'firewall.ps1'
+    if (Test-Path -LiteralPath $ruleScript) {
+        $powershell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+        $savedPreference = $ErrorActionPreference
+        $ErrorActionPreference = 'Continue'
+        try {
+            & $powershell -NoProfile -ExecutionPolicy Bypass -File $ruleScript -InstallDir $InstallDir -Remove
+        } catch {
+            Write-Warning "Could not remove the JawnOS firewall rule: $_"
+        } finally {
+            $ErrorActionPreference = $savedPreference
+        }
+    } else {
+        Write-Warning "The firewall script is missing from the install: $ruleScript"
     }
-} catch {
-    Write-Warning "Could not remove the JawnOS firewall rule: $_"
 }
 
 # --- shortcuts --------------------------------------------------------------
 
-foreach ($kind in @('Programs', 'Desktop', 'Startup')) {
-    $links = @(Get-ShortcutPaths $kind)
-    if (-not $links) {
-        Note "No $kind shortcut found."
-        continue
-    }
-    foreach ($link in $links) {
-        try {
-            Remove-Item -LiteralPath $link -Force
-            Note "Removed shortcut $link"
-        } catch {
-            Write-Warning "Could not remove $link : $_"
+if ($SkipShortcuts) {
+    Note 'Skipping shortcuts: the Setup.exe removes them.'
+} else {
+    foreach ($kind in @('Programs', 'Desktop', 'Startup')) {
+        $links = @(Get-ShortcutPaths $kind)
+        if (-not $links) {
+            Note "No $kind shortcut found."
+            continue
+        }
+        foreach ($link in $links) {
+            try {
+                Remove-Item -LiteralPath $link -Force
+                Note "Removed shortcut $link"
+            } catch {
+                Write-Warning "Could not remove $link : $_"
+            }
         }
     }
 }
 
 # --- the install folder -----------------------------------------------------
 
-# Leave the install folder so Windows does not hold the current directory open.
-Set-Location $env:USERPROFILE
-try {
-    Remove-Item -LiteralPath $InstallDir -Recurse -Force
-    Note "Removed $InstallDir"
-} catch {
-    Write-Warning "Could not remove $InstallDir : $_"
-    Write-Warning 'Close any JawnOS console or browser tab and run this again.'
+if ($KeepFolder) {
+    Note 'Keeping the install folder: the Setup.exe removes it.'
+} else {
+    # Leave the install folder so Windows does not hold the current directory open.
+    Set-Location $env:USERPROFILE
+    try {
+        Remove-Item -LiteralPath $InstallDir -Recurse -Force
+        Note "Removed $InstallDir"
+    } catch {
+        Write-Warning "Could not remove $InstallDir : $_"
+        Write-Warning 'Close any JawnOS console or browser tab and run this again.'
+    }
 }
 
 # --- optional per-user state ------------------------------------------------

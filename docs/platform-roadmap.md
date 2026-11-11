@@ -6,7 +6,7 @@ Linux**: every seam exists and the probe asks it (v0.1.2584). Windows now comes 
 Windows runner, no-fork servers and named jobs, the `Process` backend, cold-start DB/cert bootstrap
 and a trivially easy clean install have landed and been exercised on VM200; restart from the app
 and the CLI is verified (four consecutive restarts, v0.1.2676), and the Windows installer bundle is
-built and verified on VM200 (v0.1.2695). P3 remains in progress for the single signed Setup.exe/MSI,
+built and verified on VM200 (v0.1.2695). P3 remains in progress for the single signed Setup.exe,
 the reproducible runtime build, the Qt shell/tray and the remaining platform bodies. P2 (macOS) is
 deferred until a Mac or a macOS CI runner exists. Runbook and acceptance checklist: `docs/platform-p0.md`.
 **Related:** `desktop/README.md` (the Qt shell and today's supervisor), `docs/docker.md` (the
@@ -43,12 +43,12 @@ Accepted 2026-11-08, unless marked otherwise.
 | D1 | Windows and macOS are **full house machines** (`device=computer`) | **accepted** | Feature parity with the Linux desktop, not a remote client. |
 | D2 | The server is **local** to the shell, on the same loopback | **accepted** | No remote server and no container/VM boundary in the desktop build. |
 | D3 | macOS is **native**: a notarized `.app` with a bundled relocatable Perl 5.40 | **accepted** | POSIX means `fork`, threads, signals, PTY and UNIX sockets keep working. |
-| D4 | Windows is **pure native**: a signed MSI/MSIX with a bundled Perl runtime | **accepted** | No WSL and no Docker dependency. This is the largest risk; see §6.1 and §10. |
+| D4 | Windows is **pure native**: a signed per-user `Setup.exe` (Inno Setup 6) over a bundled Perl runtime | **accepted 2026-11-11** | No WSL and no Docker dependency. Direct distribution (D9) does not need MSI; a signed MSI is a P4/P5 option if managed deployment appears, and MSIX is rejected because package identity fights the in-tree update and the LAN/firewall model. This is the largest risk; see §6.1 and §10. |
 | D5 | Ports are a **bounded range**: fixed base plus offsets, plus a configured tunnel range | **accepted** | Replaces the random `50000–65000` tunnel pool. |
 | D6 | Docker remains the **headless server** deployment only | **accepted** | `docs/docker.md`; not the desktop. |
 | D7 | Qt WebEngine stays the only UI engine | **accepted** | Already true; no GTK/WebKitGTK fallback. |
 | D8 | Keep Perl for this roadmap | **accepted for now** | The Go migration is the alternative if the Windows process model proves too expensive. |
-| D9 | Direct distribution first, not the App Store or Microsoft Store | **proposed** | macOS sandbox would block child processes and broad file access. |
+| D9 | Direct distribution first, not the App Store or Microsoft Store | **accepted 2026-11-11** | The Windows artifact is the project's signed `Setup.exe`, not a Store package; macOS sandbox would block child processes and broad file access. |
 | D10 | **Windows first; macOS (P2) deferred** until a Mac or a macOS CI runner exists | **accepted 2026-11-10** | Windows has a real box (VM200) and carries the process-model risk that P0 named; macOS cannot be measured without hardware or runners, so P2 waits rather than blocking P3. |
 
 ## 3. Resolved questions (2026-11-08)
@@ -434,10 +434,14 @@ P3.
 - Windows platform modules: `Win32::Process`/`Proc::ProcessTable`/`tasklist`, `ipconfig`/`Get-Net*`
   / `netstat -ano`, DNS-SD, WASAPI, `COM*`, the spooler, WinRT BLE, clipboard/toasts/`ShellExecute`;
   `LOCALAPPDATA` and `%TEMP%` in `Paths`.
-- Wrap the tested bundle in a single signed installer: finish `installer/windows/jawnos.iss`
-  (Inno Setup) or an MSI/MSIX, with the updater; make the runtime build reproducible (download the
-  portable Strawberry and `cpanm` the pinned set from `.github/workflows/platform-p0.yml`) instead
-  of trusting a prepared runtime; seed `verify-manifest` at install time.
+- Wrap the tested bundle in one signed per-user `Setup.exe`: `installer/windows/jawnos.iss`
+  (Inno Setup 6) installs under `%LOCALAPPDATA%`, owns the files, the shortcuts and the uninstall,
+  and runs `install.ps1` only for the first-run seed and launch; `firewall.ps1` is the one rule and
+  elevates itself for the optional LAN step. Compile and exercise it on VM200 (install, upgrade over
+  a running house, uninstall, reinstall), then sign it (Authenticode). An MSI is a P4/P5 option and
+  MSIX is out of scope (D4). Also make the runtime build reproducible (download the portable
+  Strawberry and `cpanm` the pinned set from `.github/workflows/platform-p0.yml`) instead of
+  trusting a prepared runtime, and seed `verify-manifest` at install time.
 - Build the Qt shell/tray and "Start with Windows" polish, then repeat the clean install on a fresh
   Windows VM with no Perl, Python or WSL.
 - Acceptance: a `device=computer` house on a real Windows box with no WSL, Docker, Perl or Python

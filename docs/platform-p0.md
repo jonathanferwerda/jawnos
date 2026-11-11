@@ -278,8 +278,8 @@ On a fresh machine with no Perl, Python, Docker or WSL installed by the person:
 
 ### Windows
 
-- Signed MSI/MSIX, tray, "Start with Windows", firewall rules for the fixed and
-  tunnel ranges, updater.
+- Signed per-user `Setup.exe` (Inno Setup 6), tray, "Start with Windows",
+  firewall rules for the fixed and tunnel ranges, updater.
 - WinRT BLE; WASAPI audio and TTS; `COM*` serial and an OTA; DNS-SD; spooler
   print; clipboard/toast/`ShellExecute`; Credential Manager/DPAPI for the ticket.
 - No WSL, Docker, Perl or Python installed by the person.

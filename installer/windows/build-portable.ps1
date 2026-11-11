@@ -160,7 +160,7 @@ try {
 
     # --- the installer scripts and the note a person reads -----------------
     Write-Host 'Copying the installer scripts ...'
-    foreach ($name in @('install.ps1', 'Install.bat', 'uninstall.ps1')) {
+    foreach ($name in @('install.ps1', 'Install.bat', 'uninstall.ps1', 'firewall.ps1')) {
         $from = Join-Path $PSScriptRoot $name
         if (-not (Test-Path -LiteralPath $from)) { throw "missing installer file: $from" }
         Copy-Item -LiteralPath $from -Destination $stage -Force

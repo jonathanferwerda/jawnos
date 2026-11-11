@@ -1,8 +1,9 @@
 # tests-for: installer/windows/
-# covers:    the Windows bundle and first-run installer keep the promises the
-#            VM200 measurements depend on: both bundled PATH directories, the
-#            non-interactive seed, the unlock-code file, the program-scoped
-#            firewall rule, the Startup shortcut, and no fixed Strawberry path.
+# covers:    the Windows bundle, first-run installer and Inno wrapper keep the
+#            promises the VM200 measurements depend on: both bundled PATH
+#            directories, the non-interactive seed, the unlock-code file, the
+#            single program-scoped firewall rule, the Startup shortcut, and the
+#            per-user split (Inno owns files/shortcuts/uninstall).
 
 use strict;
 use warnings;
@@ -29,6 +30,7 @@ sub read_source {
 my $install   = read_source('installer/windows/install.ps1');
 my $build     = read_source('installer/windows/build-portable.ps1');
 my $uninstall = read_source('installer/windows/uninstall.ps1');
+my $firewall  = read_source('installer/windows/firewall.ps1');
 my $bat       = read_source('installer/windows/Install.bat');
 my $iss       = read_source('installer/windows/jawnos.iss');
 
@@ -36,7 +38,7 @@ my $iss       = read_source('installer/windows/jawnos.iss');
 # drive-qualified variable and fails to parse the file. env: and the other
 # scopes are the legitimate exceptions; a drive letter (C:) has no leading $.
 my $scope = qr/(?:env|global|script|local|private|variable|function|alias|using)\b/;
-for my $script (['install.ps1', $install], ['build-portable.ps1', $build], ['uninstall.ps1', $uninstall]) {
+for my $script (['install.ps1', $install], ['build-portable.ps1', $build], ['uninstall.ps1', $uninstall], ['firewall.ps1', $firewall]) {
 	unlike($script->[1], qr/\$(?!$scope)[A-Za-z_][A-Za-z0-9_]*:/,
 		"$script->[0] has no unbraced \$Variable: interpolation");
 }
@@ -56,8 +58,12 @@ like($install, qr/Get-Random\s+-Minimum\s+100000\s+-Maximum\s+999999/,
 	'the generated unlock code is six digits');
 like($install, qr/unlock-code\.txt/, 'install.ps1 writes unlock-code.txt');
 
-like($install, qr/program=/, 'the firewall rule is program-scoped, not port-scoped');
-like($install, qr/perl\.exe/, 'the firewall rule names the bundled perl.exe');
+# The Setup.exe is a per-user install and Inno owns the shortcuts, the rule and
+# the uninstall. These switches are what keep one owner for each.
+like($install, qr/SkipShortcuts/, 'install.ps1 can leave the shortcuts to the Setup.exe');
+like($install, qr/SkipFirewall/, 'install.ps1 can leave the firewall rule to the Setup.exe');
+like($install, qr/firewall\.ps1/, 'install.ps1 delegates the rule to firewall.ps1');
+
 like($install, qr/Startup/, 'install.ps1 creates the Startup shortcut');
 
 like($install, qr/System\.Net\.Sockets\.TcpClient/, 'readiness uses a TCP client');
@@ -80,6 +86,7 @@ unlike($install, qr{C:\\Strawberry}i, 'install.ps1 does not hardcode C:\Strawber
 
 like($build, qr/git/, 'build-portable.ps1 calls git');
 like($build, qr/\barchive\b/, 'build-portable.ps1 takes app\ from git archive');
+like($build, qr/firewall\.ps1/, 'build-portable.ps1 stages firewall.ps1');
 like($build, qr/RuntimeDir/, 'build-portable.ps1 names its prepared runtime');
 like($build, qr/Mandatory\s*=\s*\$true/, 'build-portable.ps1 requires -RuntimeDir');
 like($build, qr/README\.txt/, 'build-portable.ps1 stages README.txt');
@@ -111,11 +118,27 @@ like($build, qr/Join-Path \$TreeDir 'database\\jawnos\.db'/,
 like($build, qr/Join-Path \$TreeDir 'server\\fullchain\.pem'/,
 	'plain copy excludes the TLS material');
 
+# --- firewall.ps1 -----------------------------------------------------------
+# One implementation of the rule, shared by the script installer, the uninstall
+# and the Setup.exe. A port rule or a second name would drift between them.
+
+like($firewall, qr/\$ruleName\s*=\s*'JawnOS'/, 'firewall.ps1 names the JawnOS rule');
+like($firewall, qr/name=\$ruleName/, 'both netsh calls use the one rule name');
+like($firewall, qr/program=/, 'the rule is program-scoped, not port-scoped');
+like($firewall, qr/perl\.exe/, 'the rule names the bundled perl.exe');
+like($firewall, qr/advfirewall/, 'firewall.ps1 talks to the firewall');
+like($firewall, qr/\bdelete\b/, 'a reinstall replaces the rule instead of adding a second');
+like($firewall, qr/profile=private/, 'the rule is private-profile only');
+like($firewall, qr/\bRunAs\b/, 'firewall.ps1 can elevate itself for a per-user install');
+unlike($firewall, qr/C:\\Strawberry/i, 'firewall.ps1 does not hardcode C:\Strawberry');
+
 # --- uninstall.ps1 ----------------------------------------------------------
 
-like($uninstall, qr/advfirewall/, 'uninstall.ps1 talks to the firewall');
-like($uninstall, qr/delete/, 'uninstall.ps1 deletes the named rule');
-like($uninstall, qr/name=JawnOS/, 'uninstall.ps1 names the JawnOS rule');
+like($uninstall, qr/firewall\.ps1/, 'uninstall.ps1 delegates the rule to firewall.ps1');
+like($uninstall, qr/-Remove/, 'uninstall.ps1 asks firewall.ps1 to remove the rule');
+like($uninstall, qr/KeepFolder/, 'uninstall.ps1 can leave the folder to the Setup.exe');
+like($uninstall, qr/SkipShortcuts/, 'uninstall.ps1 can leave the shortcuts to the Setup.exe');
+like($uninstall, qr/SkipFirewall/, 'uninstall.ps1 can leave the rule to the Setup.exe');
 like($uninstall, qr/Startup/, 'uninstall.ps1 removes the Startup shortcut');
 like($uninstall, qr/Join-Path \$env:APPDATA 'Microsoft\\Windows\\Start Menu\\Programs'/,
 	'uninstall.ps1 falls back to APPDATA for the Start menu');
@@ -140,9 +163,16 @@ like($bat, qr/pause/i, 'Install.bat pauses for a double-click');
 # --- jawnos.iss -------------------------------------------------------------
 
 like($iss, qr/\{app\}/, 'jawnos.iss installs into {app}');
+like($iss, qr/DefaultDirName=\{localappdata\}/, 'the install is per user under LOCALAPPDATA');
+like($iss, qr/PrivilegesRequired\s*=\s*lowest/i, 'Setup does not require administrator rights');
 like($iss, qr/install\.ps1/, 'jawnos.iss runs install.ps1');
-like($iss, qr/PrivilegesRequired\s*=\s*admin/i, 'jawnos.iss asks for admin for the firewall');
+like($iss, qr/-SkipShortcuts/, 'install.ps1 does not also create the Inno shortcuts');
+like($iss, qr/firewall\.ps1/, 'jawnos.iss runs the shared firewall script');
 like($iss, qr/\[Tasks\]/, 'jawnos.iss offers autostart and desktop tasks');
+like($iss, qr/\[Icons\]/, 'Inno owns the shortcuts');
 like($iss, qr/\[UninstallRun\]/, 'jawnos.iss runs the uninstaller');
+like($iss, qr/-KeepFolder/, 'the Inno uninstaller owns the folder');
+like($iss, qr/WizardIsTaskSelected\('lanaccess'\)/, 'the firewall entry follows the LAN task');
+like($iss, qr/PrepareToInstall/, 'an upgrade stops the running house before replacing files');
 
 done_testing();

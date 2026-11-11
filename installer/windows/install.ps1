@@ -6,6 +6,13 @@
 # %LOCALAPPDATA%\JawnOS, seeds config.json and the database, and arranges the
 # shortcuts. Run it through Install.bat.
 #
+# Two callers share it:
+#   - Install.bat (this script owns the shortcuts, the firewall rule and the
+#     install folder);
+#   - the Inno Setup Setup.exe (Inno owns the files, the shortcuts and the
+#     uninstall, so it passes -SkipShortcuts -SkipFirewall and lets firewall.ps1
+#     run as its own elevated step).
+#
 # PowerShell 5.1 is the floor, and nothing here names a fixed Strawberry path:
 # the runtime always comes from this bundle's own runtime\ folder.
 
@@ -17,7 +24,9 @@ param(
     [switch]$NoLaunch,
     [switch]$NoBrowser,
     [switch]$Quiet,
-    [switch]$Desktop
+    [switch]$Desktop,
+    [switch]$SkipShortcuts,
+    [switch]$SkipFirewall
 )
 
 $ErrorActionPreference = 'Stop'
@@ -52,15 +61,6 @@ function Invoke-Capture {
     return [pscustomobject]@{ Text = $text; Code = $code }
 }
 
-function Invoke-Netsh {
-    param([string[]]$NetshArgs)
-    try {
-        $proc = Start-Process -FilePath 'netsh.exe' -ArgumentList $NetshArgs -Wait -NoNewWindow -PassThru -ErrorAction Stop
-        return $proc.ExitCode
-    } catch {
-        return 1
-    }
-}
 
 function New-JawnShortcut {
     param(
@@ -251,58 +251,78 @@ sh.Run Chr(34) & "$batPath" & Chr(34), 0, False
 Set-Content -LiteralPath $vbsPath -Value $vbs -Encoding ASCII
 
 # --- shortcuts --------------------------------------------------------------
+# Inno Setup owns them when it wraps this bundle; then -SkipShortcuts keeps the
+# two from creating (and later uninstalling) the same JawnOS.lnk twice.
 
 $wscript = Join-Path $env:SystemRoot 'System32\wscript.exe'
 if (-not (Test-Path -LiteralPath $wscript)) { $wscript = 'wscript.exe' }
 $launchArgs = '"' + $vbsPath + '"'
 
-$startMenu = Get-ShortcutPath 'Programs'
-if ($startMenu) {
-    New-JawnShortcut -LinkPath $startMenu -Target $wscript -Arguments $launchArgs -WorkingDirectory $InstallDir
-    Write-Step "Start menu shortcut: $startMenu"
-} else {
-    Write-Warning 'Could not create the Start menu shortcut: no Start menu Programs folder was found.'
-}
-
+$startMenu = ''
 $desktopShortcut = ''
-if ($Desktop) {
-    $desktopShortcut = Get-ShortcutPath 'Desktop'
-    if ($desktopShortcut) {
-        New-JawnShortcut -LinkPath $desktopShortcut -Target $wscript -Arguments $launchArgs -WorkingDirectory $InstallDir
-        Write-Step "Desktop shortcut: $desktopShortcut"
-    } else {
-        Write-Warning 'Could not create the desktop shortcut: no Desktop folder was found.'
-    }
-}
-
 $startupShortcut = ''
-if (-not $NoAutostart) {
-    $startupShortcut = Get-ShortcutPath 'Startup'
-    if ($startupShortcut) {
-        New-JawnShortcut -LinkPath $startupShortcut -Target $wscript -Arguments $launchArgs -WorkingDirectory $InstallDir
-        Write-Step "Autostart shortcut: $startupShortcut"
+if ($SkipShortcuts) {
+    Write-Step 'Skipping shortcuts: the Setup.exe creates them.'
+} else {
+    $startMenu = Get-ShortcutPath 'Programs'
+    if ($startMenu) {
+        New-JawnShortcut -LinkPath $startMenu -Target $wscript -Arguments $launchArgs -WorkingDirectory $InstallDir
+        Write-Step "Start menu shortcut: $startMenu"
     } else {
-        Write-Warning 'Could not create the autostart shortcut: no Startup folder was found.'
+        Write-Warning 'Could not create the Start menu shortcut: no Start menu Programs folder was found.'
+    }
+
+    if ($Desktop) {
+        $desktopShortcut = Get-ShortcutPath 'Desktop'
+        if ($desktopShortcut) {
+            New-JawnShortcut -LinkPath $desktopShortcut -Target $wscript -Arguments $launchArgs -WorkingDirectory $InstallDir
+            Write-Step "Desktop shortcut: $desktopShortcut"
+        } else {
+            Write-Warning 'Could not create the desktop shortcut: no Desktop folder was found.'
+        }
+    }
+
+    if (-not $NoAutostart) {
+        $startupShortcut = Get-ShortcutPath 'Startup'
+        if ($startupShortcut) {
+            New-JawnShortcut -LinkPath $startupShortcut -Target $wscript -Arguments $launchArgs -WorkingDirectory $InstallDir
+            Write-Step "Autostart shortcut: $startupShortcut"
+        } else {
+            Write-Warning 'Could not create the autostart shortcut: no Startup folder was found.'
+        }
     }
 }
 
 # --- firewall ---------------------------------------------------------------
-# A program rule, not a port rule: the bundled perl.exe is the only process that
-# should accept inbound connections. Private profile only. Elevation is not
-# required for a working local install, so failure is a warning.
+# firewall.ps1 is the one implementation of the rule. Elevation is not required
+# for a working local install, so a refusal is a warning; the Setup.exe runs the
+# same script as its own elevated step.
 
-$ruleName = 'JawnOS'
-Write-Step 'Adding the JawnOS firewall rule ...'
-Invoke-Netsh -NetshArgs @('advfirewall', 'firewall', 'delete', 'rule', "name=$ruleName") | Out-Null
-$programArg = 'program="' + (Join-Path $InstallDir 'runtime\perl\bin\perl.exe') + '"'
-$firewallCode = Invoke-Netsh -NetshArgs @(
-    'advfirewall', 'firewall', 'add', 'rule', "name=$ruleName", 'dir=in',
-    'action=allow', $programArg, 'enable=yes', 'profile=private'
-)
-if ($firewallCode -ne 0) {
-    Write-Warning "Could not add the JawnOS firewall rule (exit $firewallCode). Administrator rights are needed for other devices to reach this machine; JawnOS still works locally. Re-run from an elevated prompt, or allow perl.exe when Windows asks."
+if ($SkipFirewall) {
+    Write-Step 'Skipping the firewall rule: the Setup.exe adds it.'
 } else {
-    Write-Step 'Firewall rule added for the private profile.'
+    $ruleScript = Join-Path $PSScriptRoot 'firewall.ps1'
+    Write-Step 'Adding the JawnOS firewall rule ...'
+    if (Test-Path -LiteralPath $ruleScript) {
+        # A child PowerShell keeps firewall.ps1's exit from ending this script;
+        # its exit code is the verdict.
+        $powershell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+        $savedPreference = $ErrorActionPreference
+        $ErrorActionPreference = 'Continue'
+        try {
+            & $powershell -NoProfile -ExecutionPolicy Bypass -File $ruleScript -InstallDir $InstallDir
+            $firewallCode = $LASTEXITCODE
+        } catch {
+            $firewallCode = 1
+        } finally {
+            $ErrorActionPreference = $savedPreference
+        }
+        if ($firewallCode -ne 0) {
+            Write-Warning 'The JawnOS firewall rule was not added. Administrator rights are needed for other devices to reach this machine; JawnOS still works locally. Re-run from an elevated prompt, or allow perl.exe when Windows asks.'
+        }
+    } else {
+        Write-Warning "The firewall script is missing from the bundle: $ruleScript"
+    }
 }
 
 # --- start and wait for the port --------------------------------------------
