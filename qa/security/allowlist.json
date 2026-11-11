@@ -14,13 +14,13 @@
 	{
 		"id": "js.eval",
 		"path": "public/js/manager/websocket/00_console_router.js",
-		"line": 285,
+		"line": 288,
 		"reason": "The explicit terminalJs command: the terminal is a JS console the person is using deliberately. Only run_command's terminal path sends the marker, so a frame that carries a line without it cannot reach this eval."
 	},
 	{
 		"id": "js.eval",
 		"path": "public/js/manager/websocket/00_console_router.js",
-		"line": 295,
+		"line": 298,
 		"reason": "browserCommand: the same accepted design. The server validated the string and jawnosBrowserCommandValid re-checks it here, accepting only the two fixed shapes (a jQuery click trigger or tree.sound.currentTime arithmetic) and refusing document/window/eval/Function/fetch/alert/angle brackets."
 	}
 ]
