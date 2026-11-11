@@ -785,7 +785,7 @@ sub note_reseal {
 	my $want = $opts->{'table'} || 'both';
 	my $K = &suds_grabber() || $gb::suds;
 	return { ok => 0, error => 'no key on this machine' } unless $K;
-	my $counts = { appointments => 0, notes => 0, ocr => 0, mailbox => 0, failed => 0, already => 0, seen => 0 };
+	my $counts = { appointments => 0, notes => 0, ocr => 0, mailbox => 0, warehouse => 0, credentials => 0, settings => 0, vault => 0, mail_tokens => 0, device_tokens => 0, failed => 0, already => 0, seen => 0 };
 	my $next_appt = $opts->{'after_appt'} || 0;
 	my $next_mail = $opts->{'after_mail'} || 0;
 	my ($more_appt, $more_mail) = (0, 0);
@@ -855,6 +855,113 @@ sub note_reseal {
 			&db_update('mailbox', \%up, \%where);
 		}
 		$more_mail = (defined $limit && $limit > 0 && scalar(@{ $mail || [] }) >= $limit) ? 1 : 0;
+	}
+
+	if ($want eq 'rest') {
+		# Warehouse notes and saved credential payloads are the same note shape.
+		my $wh = &db_query('select rowid, notes, ost from warehouse where length(notes)>0')->hashes;
+		foreach my $row ( @{ $wh || [] } ) {
+			my $re = &note_reseal_value($row->{'notes'}, $K, $row->{'ost'});
+			if (!defined $re) { $counts->{'failed'}++; next; }
+			if ($re eq $row->{'notes'}) { $counts->{'already'}++; next; }
+			$counts->{'warehouse'}++;
+			next unless $apply;
+			&db_update('warehouse', { notes => $re }, { rowid => $row->{'rowid'}, notes => $row->{'notes'} });
+		}
+		my $cr = &db_query('select rowid, payload, ost from credentials where length(payload)>0')->hashes;
+		foreach my $row ( @{ $cr || [] } ) {
+			my $re = &note_reseal_value($row->{'payload'}, $K, $row->{'ost'});
+			if (!defined $re) { $counts->{'failed'}++; next; }
+			if ($re eq $row->{'payload'}) { $counts->{'already'}++; next; }
+			$counts->{'credentials'}++;
+			next unless $apply;
+			&db_update('credentials', { payload => $re }, { rowid => $row->{'rowid'}, payload => $row->{'payload'} });
+		}
+		# Note-shaped settings. Most settings are plain text and are not this
+		# sweep's business; a sealed one that will not open is counted a failure.
+		my $set = &db_query("select rowid, app, setting, value, ost from settings where length(value)>0 and not (app='__president' and setting='vault') and setting != 'operator_door' and not (app='mailbox' and setting='email_config')")->hashes;
+		foreach my $row ( @{ $set || [] } ) {
+			my $re = &note_reseal_value($row->{'value'}, $K, $row->{'ost'});
+			if (!defined $re) {
+				$counts->{'failed'}++
+					if defined &subs::decrypter($K, $row->{'value'})
+					   || defined &subs::decrypter_strict($K, $row->{'value'});
+				next;
+			}
+			if ($re eq $row->{'value'}) { $counts->{'already'}++; next; }
+			$counts->{'settings'}++;
+			next unless $apply;
+			&db_update('settings', { value => $re }, { rowid => $row->{'rowid'}, value => $row->{'value'} });
+		}
+		# The vault is sealed with the house key, not the suds.
+		my $hk = eval { &house_key() } || '';
+		if (length $hk) {
+			my $vr = &db_query("select rowid, value from settings where app='__president' and setting='vault' and length(value)>0")->hashes;
+			foreach my $row ( @{ $vr || [] } ) {
+				my $suds = &note_decrypter($hk, $row->{'value'});
+				next unless defined $suds && length $suds;
+				my $re = &note_encrypter($hk, $suds, 1);
+				next unless defined $re && index($re, 'JS1:') == 0;
+				next unless defined &subs::decrypter_strict($hk, $re);
+				next unless &note_decrypter_strict($hk, $re) eq $suds;
+				if ($re eq $row->{'value'}) { $counts->{'already'}++; next; }
+				$counts->{'vault'}++;
+				next unless $apply;
+				&db_update('settings', { value => $re }, { rowid => $row->{'rowid'}, value => $row->{'value'} });
+			}
+		}
+		# Mail account secrets live inside the email_config JSON.
+		my $ec = &db_query("select rowid, value from settings where app='mailbox' and setting='email_config' and length(value)>0")->hashes;
+		foreach my $row ( @{ $ec || [] } ) {
+			my $servers = eval { decode_json($row->{'value'}) };
+			next unless ref $servers eq 'ARRAY';
+			my $changed = 0;
+			foreach my $es ( @{$servers} ) {
+				next unless ref $es eq 'HASH';
+				foreach my $field ( qw/password oauth_access_token oauth_refresh_token oauth_client_secret/ ) {
+					my $v = $es->{$field};
+					next unless defined $v && length $v;
+					my $re = &note_reseal_value($v, $K, undef);
+					if (!defined $re) { $counts->{'failed'}++; next; }
+					if ($re eq $v) { $counts->{'already'}++; next; }
+					$es->{$field} = $re;
+					$changed = 1;
+					$counts->{'mail_tokens'}++;
+				}
+			}
+			next unless $changed;
+			my $new = encode_json($servers);
+			next unless $apply;
+			&db_update('settings', { value => $new }, { rowid => $row->{'rowid'}, value => $row->{'value'} });
+		}
+		# Watch/deck authorizations live inside the operator_door JSON, sealed
+		# under the per-device patience rather than the house suds.
+		my $od = &db_query("select rowid, value from settings where setting='operator_door' and length(value)>0")->hashes;
+		foreach my $row ( @{ $od || [] } ) {
+			my $door = eval { decode_json($row->{'value'}) };
+			next unless ref $door eq 'HASH';
+			my @pairs = ( [ $door->{'__shutup'}->{'patience'}, $door->{'__specs'}, 'authorization' ] );
+			if (ref $door->{'__shutup'}->{'previous'} eq 'HASH') {
+				push @pairs, [ $door->{'__shutup'}->{'previous'}->{'patience'}, $door->{'__shutup'}->{'previous'}, 'authorization' ];
+			}
+			my $changed = 0;
+			foreach my $pair ( @pairs ) {
+				my ($patience, $holder, $field) = @{$pair};
+				next unless $patience && ref $holder eq 'HASH' && defined $holder->{$field} && length $holder->{$field};
+				my $raw = decode_base64($holder->{$field});
+				next unless length $raw;
+				my $re = &note_reseal_value($raw, $patience, undef);
+				if (!defined $re) { $counts->{'failed'}++; next; }
+				if ($re eq $raw) { $counts->{'already'}++; next; }
+				$holder->{$field} = encode_base64($re, '');
+				$changed = 1;
+				$counts->{'device_tokens'}++;
+			}
+			next unless $changed;
+			my $new = encode_json($door);
+			next unless $apply;
+			&db_update('settings', { value => $new }, { rowid => $row->{'rowid'}, value => $row->{'value'} });
+		}
 	}
 
 	return { ok => 1, apply => $apply ? 1 : 0, %{$counts},

@@ -6,6 +6,7 @@
 #   perl scripts/note_reseal.pl --apply   # rewrite legacy notes as JS1
 #   perl scripts/note_reseal.pl --json    # machine-readable result
 #   perl scripts/note_reseal.pl --batch 100 --after-appt 12000
+#   perl scripts/note_reseal.pl --table rest --apply   # only the rest pass
 #
 # Older uploads sealed a note's outer Crypt::Simple layer under the empty
 # passphrase (public knowledge) while the inner cipher stayed keyed to the real
@@ -27,15 +28,16 @@ require './perl/subroutines.pl';
 
 my $apply = (grep { $_ eq '--apply' } @ARGV) ? 1 : 0;
 my $json  = (grep { $_ eq '--json' } @ARGV) ? 1 : 0;
-my ($batch, $after_appt, $after_mail) = (250, 0, 0);
+my ($batch, $after_appt, $after_mail, $only) = (250, 0, 0, 'all');
 for (my $i = 0; $i < @ARGV; $i++) {
 	$batch      = int($ARGV[$i + 1]) if $ARGV[$i] eq '--batch' && defined $ARGV[$i + 1] && $ARGV[$i + 1] =~ /^\d+$/;
 	$after_appt = int($ARGV[$i + 1]) if $ARGV[$i] eq '--after-appt' && defined $ARGV[$i + 1] && $ARGV[$i + 1] =~ /^\d+$/;
 	$after_mail = int($ARGV[$i + 1]) if $ARGV[$i] eq '--after-mail' && defined $ARGV[$i + 1] && $ARGV[$i + 1] =~ /^\d+$/;
+	$only = $ARGV[$i + 1] if $ARGV[$i] eq '--table' && defined $ARGV[$i + 1] && $ARGV[$i + 1] =~ /^(?:appointments|mailbox|rest|all)$/;
 }
 $batch = 1 if $batch < 1;
 
-my %sum = map { $_ => 0 } qw(seen appointments notes ocr mailbox failed already);
+my %sum = map { $_ => 0 } qw(seen appointments notes ocr mailbox warehouse credentials settings vault mail_tokens device_tokens failed already);
 my $sweep = sub {
 	my ($table) = @_;
 	while (1) {
@@ -57,8 +59,16 @@ my $sweep = sub {
 			$table, ($table eq 'appointments' ? $after_appt : $after_mail), $sum{'seen'};
 	}
 };
-$sweep->('appointments');
-$sweep->('mailbox');
+$sweep->('appointments') if $only eq 'all' || $only eq 'appointments';
+$sweep->('mailbox') if $only eq 'all' || $only eq 'mailbox';
+if ($only eq 'all' || $only eq 'rest') {
+	my $rest = subs::note_reseal($apply, { table => 'rest' });
+	if ($rest->{'error'}) {
+		print "note reseal: $rest->{'error'}\n";
+		exit 1;
+	}
+	$sum{$_} += $rest->{$_} for keys %sum;
+}
 
 my $result = { ok => 1, apply => $apply ? 1 : 0, %sum };
 if ($json) {
@@ -70,5 +80,11 @@ printf "note reseal - %s\n", $apply ? 'applied' : 'dry run (pass --apply to writ
 printf "  appointments: %d row(s), %d note field(s), %d OCR field(s)\n",
 	$result->{'appointments'}, $result->{'notes'}, $result->{'ocr'};
 printf "  mailbox:      %d row(s)\n", $result->{'mailbox'};
+printf "  warehouse:    %d note(s)\n", $result->{'warehouse'};
+printf "  credentials:  %d payload(s)\n", $result->{'credentials'};
+printf "  settings:     %d value(s)\n", $result->{'settings'};
+printf "  vault:        %d row(s)\n", $result->{'vault'};
+printf "  mail secrets: %d field(s)\n", $result->{'mail_tokens'};
+printf "  device auth:  %d token(s)\n", $result->{'device_tokens'};
 printf "  already JS1:  %d field(s)\n", $result->{'already'};
 printf "  unreadable:   %d field(s) (left as they are)\n", $result->{'failed'};
