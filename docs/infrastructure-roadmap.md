@@ -83,16 +83,45 @@ Measured after the install and two reboot drills:
 - The OVH template wrote **no `storage.cfg`**: `local` (dir on `/var/lib/vz`) was the only storage,
   so containers had no snapshot target. A **`local-zfs`** zfspool was added on `data` for
   `images,rootdir`; `local` keeps ISO/template/backup.
-- Hardening in place: SSH keys only (`PasswordAuthentication no`, `PermitRootLogin
-  prohibit-password`) on **8022** (22 closed), unattended upgrades on, `console=ttyS0` in the
-  cmdline, and the PVE firewall enabled with `policy_in: ACCEPT` where **8006 accepts only
-  `100.64.0.0/10`** and is dropped from the internet.
+- Hardening in place: SSH is **`jawn`** (UID 1000, `sudo` group, NOPASSWD) — keys only
+  (`PasswordAuthentication no`), root login disabled, and **8022 restricted to the tailnet
+  (`100.64.0.0/10`) and `10.20.0.0/24`**; unattended upgrades on, `console=ttyS0` in the cmdline,
+  and **8006 accepts only `100.64.0.0/10`**. Details and the external port table: "External
+  exposure" below.
 - **Headscale (P5)** runs in CT **102** (`10.20.0.30`), v0.29.5, with the VPS's state. DNAT
   forwards **443/tcp** and **3478/udp** to it; an OUTPUT rule is needed too, because the host's own
   traffic to its public IP does not traverse PREROUTING.
 - **Host snapshots work** (`zfs snapshot rpool/zd0@…`), but a rollback needs rescue or the
   initramfs because `/` is mounted. Guest snapshots come from `local-zfs`.
-- Unmanaged: **no IPMI/KVM console**, hardware replacement only, rescue mode as the fallback.
+- Unmanaged: **no IPMI/KVM console**; **OVH rescue mode is the break-glass path** (hardware
+  replacement otherwise).
+
+### External exposure (verified 2026-11-11 from the VPS)
+
+Re-measured from `cloud` against the ks5 public address.
+
+- **Root login is disabled.** The drop-in `/etc/ssh/sshd_config.d/10-jawnos-hardening.conf` sets
+  `PermitRootLogin no`, `AllowUsers jawn`, `MaxAuthTries 3` and `LoginGraceTime 20`; the one login
+  is `jawn` (UID 1000, `sudo` group, NOPASSWD).
+- **The PVE host firewall accepts 8022 only from `100.64.0.0/10` and `10.20.0.0/24`** and DROPs
+  the rest on both IPv4 and IPv6; 8022 was closed from the VPS on both.
+- **fail2ban is installed and active:** the `[sshd]` jail watches port 8022 (systemd backend,
+  `maxretry 3`, `findtime 10m`, `bantime 1h`) and ignores `100.64.0.0/10` and `10.20.0.0/24`.
+
+What still answers on the public address:
+
+| Port | State | Destination |
+|---|---|---|
+| 443/tcp | public | `10.20.0.30` — Headscale (CT 102) |
+| 45545/tcp, 45546/tcp | public | `10.20.0.20` — the hub (CT 101) |
+| 45550/tcp | public | `10.20.0.20` — the hub's bell/alarm listener |
+| 45551/tcp | not forwarded | — |
+| 8006/tcp | tailnet only | the PVE host |
+| 25, 111, 3128 | dropped | — |
+| 41641/udp | public | the host's own `tailscaled` (direct path) |
+
+The hub at `hub.jonathanferwerda.com` is the public manager face: `app_access=enforce`, and
+`/manager` returns the Gate page.
 
 ### The cloud server (`cloud`, `vps-7c120a57`)
 
