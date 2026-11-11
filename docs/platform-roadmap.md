@@ -4,9 +4,10 @@
 (333 files, 14,493 assertions at v0.1.2477, `docs/platform-go-no-go.md:35-36`). P1 is **done on
 Linux**: every seam exists and the probe asks it (v0.1.2584). Windows now comes first (D10): the
 Windows runner, no-fork servers and named jobs, the `Process` backend, cold-start DB/cert bootstrap
-and a trivially easy clean install have landed and been exercised on VM200. P3 remains in progress
-for restart, the Job Object, the other platform bodies and packaging. P2 (macOS) is deferred until a
-Mac or a macOS CI runner exists. Runbook and acceptance checklist: `docs/platform-p0.md`.
+and a trivially easy clean install have landed and been exercised on VM200; restart from the app
+and the CLI is verified (four consecutive restarts, v0.1.2676). P3 remains in progress for the Job
+Object, the other platform bodies and packaging. P2 (macOS) is deferred until a Mac or a macOS CI
+runner exists. Runbook and acceptance checklist: `docs/platform-p0.md`.
 **Related:** `desktop/README.md` (the Qt shell and today's supervisor), `docs/docker.md` (the
 headless server), `docs/migration-roadmap.md` (the Go path, the alternative endgame),
 `docs/infrastructure-roadmap.md` (where containers still belong).
@@ -405,16 +406,20 @@ hit was the test's, not the boot browser's.
 
 **Next:**
 
-- **Restart from the app.** The master binds control/log/watch and the accept callback fires, but
-  the accepted stream's read event never does on Windows: at v0.1.2612 `CTRL ACCEPT` appears and
-  `CTRL READ` does not, clients sit in `CLOSE_WAIT`, and `restart.pl --status` times out. A minimal
-  Mojo server on the same box (including the runner's shape) reads correctly, so the cause is still
-  in the master's stream path. This is the one acceptance step that fails.
+- Restart is verified (v0.1.2676): four consecutive control restarts were accepted, `--status`
+  answered at every checkpoint, the master pid stayed and the President pid changed each time, and
+  the old tree's workers were swept (no orphan parents). `manager_killer.pl master` and the
+  desktop's kill+start path work on Windows too.
+- The restart verdict is written **before** the tree swap, so control is briefly unavailable during
+  the restart itself (up to ~2 minutes on the first, cold guard; later ones are ~4 s). Seed
+  `verify-manifest` at install time so a fresh install's first restart does not pay the full
+  `verify_change.pl --all` sweep (minutes); the guard is asynchronous, so the master keeps running
+  while it sweeps.
 - Finish the no-fork mode: a Job Object or watchdog for the parent guard, and an absolute checkout
   path or `JAWNOS_TREE` in the spawns (`jawn:386-387`, `lib/JawnOS/Platform/Job.pm:33`, both
   relative).
-- The `Platform::Process` Windows backend is landed (v0.1.2589) and fixture-tested; the live
-  guard/killer path on VM200 is not yet asserted.
+- The `Platform::Process` Windows backend (v0.1.2589) is exercised on VM200 by the master's
+  liveness checks and `manager_killer.pl`, including the OpenProcess liveness path (v0.1.2629).
 - Windows platform modules: `Win32::Process`/`Proc::ProcessTable`/`tasklist`, `ipconfig`/`Get-Net*`
   / `netstat -ano`, DNS-SD, WASAPI, `COM*`, the spooler, WinRT BLE, clipboard/toasts/`ShellExecute`;
   `LOCALAPPDATA` and `%TEMP%` in `Paths`.
