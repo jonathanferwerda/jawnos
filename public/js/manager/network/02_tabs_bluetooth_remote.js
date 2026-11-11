@@ -179,6 +179,55 @@ $(document).on('click', '#network_refresh', function() {
 	networkBluetoothMaybeRefresh();
 });
 
+
+// ---- the Remote Machines accordion -----------------------------------------
+// One shared panel is moved under the machine it belongs to. The row is the
+// picker, so the hidden select only feeds the existing command, input and VPN
+// scripts; there is no second machine list on screen. A second press closes it.
+function networkRemoteControlClose() {
+	var panel = $('#remote_control');
+	if (!panel.length) { return; }
+	panel.attr('hidden', true).appendTo('#network_remote_section .network_section_body');
+	$('.network_remote_panel_row').attr('hidden', true);
+	$('.network_remote_toggle').attr('aria-expanded', 'false');
+}
+
+function networkRemoteControlOpen(button) {
+	var btn = $(button);
+	var uuid = btn.attr('machine') || '';
+	var row = btn.closest('tr');
+	var slot_row = row.next('.network_remote_panel_row');
+	var slot = slot_row.find('.network_remote_panel_slot').first();
+	var panel = $('#remote_control');
+	if (!uuid || !slot.length || !panel.length) { return; }
+	if (btn.attr('aria-expanded') === 'true') { networkRemoteControlClose(); return; }
+	networkRemoteControlClose();
+	var select = panel.find('#remote_control_machine_select');
+	select.val(uuid);
+	var opt = select.find('option').filter(function () { return this.value === uuid; }).first();
+	var edge = opt.attr('data-edge') || 'right';
+	panel.find('#remote_input_controls').attr('remote_uuid', uuid).attr('data-edge', edge);
+	panel.find('#remote_input_edge').val(edge);
+	panel.find('#remote_control_name').text(opt.text() || uuid);
+	panel.removeAttr('hidden');
+	slot.append(panel);
+	slot_row.removeAttr('hidden');
+	btn.attr('aria-expanded', 'true');
+	if (typeof settingSetter == 'function') {
+		settingSetter({ app: 'me', setting: 'remote_control_machine', value: uuid });
+	}
+	// tell the remote-input scripts which machine is picked, then let the VPN
+	// button decide whether this machine is one of the tailnet's exit nodes
+	select.trigger('change');
+	if (typeof jawnosRemoteInputInit === 'function') { jawnosRemoteInputInit(); }
+	if (typeof jawnosVpnRefresh === 'function') { jawnosVpnRefresh(); }
+}
+
+$(document).on('click', '.network_remote_toggle', function (e) {
+	e.preventDefault();
+	networkRemoteControlOpen(this);
+});
+
 $(document).ready(function() {
 	if (!$('#network_app').length) { return; }
 	var tab = 'network';

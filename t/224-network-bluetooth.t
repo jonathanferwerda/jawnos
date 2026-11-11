@@ -270,7 +270,10 @@ like($template, qr/id="network_bluetooth_found"/, 'the found list exists');
 like($template, qr/id="network_bluetooth_jawnos"/, 'the JawnOS devices list exists');
 like($template, qr/ble_device_listing/, 'the JawnOS list comes from the BLE listing');
 like($template, qr/remote_manager_open/, 'a remote machine can open its Manager');
-like($template, qr/remote_control_open/, 'and its Remote control');
+like($template, qr/network_remote_toggle/, 'and its Remote control accordion toggle');
+like($template, qr/id="remote_control"/, 'the shared remote control panel is in the tab');
+like($template, qr/remote_control_machine_select/, 'a hidden machine list feeds it');
+like(source('public/js/manager/network/02_tabs_bluetooth_remote.js'), qr/function networkRemoteControlOpen/, 'the accordion moves it under the row');
 like($template, qr/remote_machine_lister/, 'Remote Machines uses the same lister as the keyboard');
 
 my $tabs = source('public/js/manager/network/02_tabs_bluetooth_remote.js');

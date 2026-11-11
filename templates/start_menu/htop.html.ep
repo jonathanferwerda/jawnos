@@ -198,7 +198,7 @@ elsif ($sp->{'known'} && defined $sp->{'age'} && $sp->{'age'} < 300) {
 		<% my $pct = $b->{'percentage'}; %>
 		<%# this machine's card is its door too: no machine named means the
 		    remote_control panel opens on its Me view %>
-		<div class="level_tile level_you remote_control_open hover" machine="" hint="<%= &subs::ui('Open Remote control for this machine') %>">
+		<div class="level_tile level_you remote_control_open hover" machine="" hint="<%= &subs::ui('Open Remote control in the Network app') %>">
 			<div class="level_top">
 				<span class="level_name"><%= $m->{'hostname'} || &subs::ui('this machine') %></span>
 				<% if (defined $pct) { %><span class="level_pct <%= $level_class->($pct) %>"><%= sprintf('%.0f%%', $pct) %></span>
@@ -225,7 +225,7 @@ elsif ($sp->{'known'} && defined $sp->{'age'} && $sp->{'age'} < 300) {
 		<% my $pct = $b->{'percentage'}; %>
 		<%# a machine's card is its door: the press opens the Assistant's
 		    remote_control panel already pointed at that peer %>
-		<div class="level_tile remote_control_open hover<% if ($m->{'stale'}) { %> level_stale<% } %>" machine="<%= $m->{'signatorial'} %>" hint="<%= &subs::ui('Open Remote control for this machine') %>">
+		<div class="level_tile remote_control_open hover<% if ($m->{'stale'}) { %> level_stale<% } %>" machine="<%= $m->{'signatorial'} %>" hint="<%= &subs::ui('Open Remote control in the Network app') %>">
 			<div class="level_top">
 				<span class="level_name"><%= $m->{'hostname'} || &subs::ui('machine') %></span>
 				<% if (defined $pct) { %><span class="level_pct <%= $level_class->($pct) %>"><%= sprintf('%.0f%%', $pct) %></span>

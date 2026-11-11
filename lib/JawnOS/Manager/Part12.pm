@@ -81,7 +81,7 @@ sub pseudonym_maker($context,$app) {
 		# taskbar widget, and the Controller, time machine, Walkboy and Sessions
 		# are sections of Network, Clock and Sound. A list cached before they
 		# moved still says 'on', so switch those faces off once.
-		my %retired_face = map { $_ => 1 } qw/keyboard calculator notifications controller delorean walkboy sessions/;
+		my %retired_face = map { $_ => 1 } qw/keyboard calculator notifications controller delorean walkboy sessions remote_control/;
 		foreach my $p ( @{$ps} ) {
 			if ($p->{'name'} && $p->{'name'} eq 'console') {
 				$p->{'name'} = 'sessions';
@@ -100,7 +100,7 @@ sub pseudonym_maker($context,$app) {
 		return $ps;
 	}
 	my $pseudonyms = [
-		{ status => 'on', name => "remote_control", icon => "Froggoli", speech => 'Ribbit' },
+		{ status => 'off', name => "remote_control", icon => "Froggoli", speech => 'Ribbit' },
 		# These panels are sections of an app now, so their old faces start off
 		# the dock: the keyboard and calculator are start-menu apps, and the
 		# time machine, Walkboy, Sessions and Controller live in Clock, Sound

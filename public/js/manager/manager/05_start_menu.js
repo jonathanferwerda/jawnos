@@ -170,12 +170,19 @@ $(document).on('click', '.jonathan, .start_menu_list', function() {
 // peer by its signatorial, which the panel resolves like a uuid or an ip.
 $(document).on('click', '.remote_control_open', function() {
 	var machine = $(this).attr('machine') || '';
-	if (typeof keyboardMaker !== 'function') { return; }
-	if (typeof settingSetter === 'function') {
-		settingSetter({ 'app': 'me', 'setting': 'remote_control_machine', 'value': machine });
-	}
 	if ($('#start_menu').is(':visible')) { startMenuToggle(); }
-	keyboardMaker({ toggle: 'remote_control', state: 'on', remote_uuid: machine });
+	if (typeof appWindowOpener === 'function') { appWindowOpener('network', Date.now(), { visible: 'yes' }); }
+	// The panel opened with a machine is that row's accordion. A fresh window
+	// renders after the opener, so retry once for the tab and the row.
+	var open = function () {
+		if (typeof networkTabShow === 'function') { networkTabShow('remote', true); }
+		if (!machine) { return true; }
+		var btn = $('.network_remote_toggle').filter(function () { return $(this).attr('machine') === machine; }).first();
+		if (!btn.length) { return false; }
+		btn.trigger('click');
+		return true;
+	};
+	if (!open()) { setTimeout(open, 400); }
 });
 
 function startMenuToggle(data) {

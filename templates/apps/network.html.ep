@@ -288,13 +288,57 @@
 											<button type="button" class="network_button remote_manager_open" uuid="<%= $rm->{'uuid'} || '' %>" manager="<%= $rm->{'manager'} || '' %>" hint="<%= &subs::ui("Open this machine's Manager") %>"><%= $t->('common.go') %></button>
 										<% } %>
 										<% if ($rm->{'uuid'} || $rm->{'signatorial'}) { %>
-											<button type="button" class="network_button remote_control_open" machine="<%= $rm->{'uuid'} || $rm->{'signatorial'} %>" hint="<%= &subs::ui('Open Remote control on this machine') %>"><%= &subs::ui('Remote control') %></button>
+											<button type="button" class="network_button network_remote_toggle" machine="<%= $rm->{'uuid'} || $rm->{'signatorial'} %>" aria-expanded="false" hint="<%= &subs::ui('Open Remote control on this machine') %>"><%= &subs::ui('Remote control') %><span class="network_remote_caret" aria-hidden="true">▾</span></button>
 										<% } %>
 									</td>
 								</tr>
+								<tr class="network_remote_panel_row" hidden><td colspan="5"><div class="network_remote_panel_slot"></div></td></tr>
 							<% } %>
 						</tbody>
 					</table>
+				</div>
+				<div id="remote_control" class="network_remote_control" hidden>
+					<select id="remote_control_machine_select" class="network_remote_machine" aria-hidden="true" tabindex="-1">
+						<% foreach my $rm ( @remote_rows ) { %>
+							<% next unless ref $rm eq 'HASH'; %>
+							<% my $rid = $rm->{'uuid'} || $rm->{'signatorial'} || ''; %>
+							<% next unless $rid; %>
+							<% my $edge = &subs::setting_grabber({ app => 'me', setting => 'remote_control_edge', subsetting => $rid }) || 'right'; %>
+							<% $edge = 'right' unless $edge =~ /^(?:left|right|top|bottom)$/; %>
+							<option value="<%= $rid %>" manager="<%= $rm->{'manager'} || '' %>" data-tailnet="<%= &subs::tailnet_address($rm) %>" data-edge="<%= $edge %>"><%= $rm->{'hostname'} || $rm->{'fqdn'} || $rm->{'ip'} || $rid %></option>
+						<% } %>
+					</select>
+					<div class="network_remote_control_head">
+						<b id="remote_control_name"></b>
+						<button type="button" id="remote_control_vpn" class="network_button" status="off" hint="<%= &subs::ui('Route this device\'s web traffic through this machine when it offers an exit node') %>"><%= &subs::lang('vpn') %></button>
+					</div>
+					<select id="remote_control_vpn_node" class="network_remote_vpn_node" aria-hidden="true" tabindex="-1"></select>
+					<div id="remote_command_box" class="network_remote_control_row">
+						<input type="text" id="remote_command_text" placeholder="<%= &subs::ui('Tell that machine to...') %>" onkeydown="if(event.key==='Enter'){jawnosRemoteCommand();}">
+						<button type="button" id="remote_command_send" class="network_button"><%= &subs::ui('Send') %></button>
+						<div id="remote_command_reply" style="flex:1 1 100%;font-size:12px;opacity:.85;"></div>
+					</div>
+					<div id="remote_input_controls" class="network_remote_input" remote_uuid="" data-edge="right">
+						<label><input type="checkbox" id="remote_input_enabled"> <%= &subs::lang('remote_control.input') %></label>
+						<span id="remote_input_edge_row">
+							<%= &subs::lang('remote_control.that_screen') %>
+							<select id="remote_input_edge">
+								<option value="left"><%= &subs::lang('remote_control.edge_left') %></option>
+								<option value="right"><%= &subs::lang('remote_control.edge_right') %></option>
+								<option value="top"><%= &subs::lang('remote_control.edge_top') %></option>
+								<option value="bottom"><%= &subs::lang('remote_control.edge_bottom') %></option>
+							</select>
+						</span>
+						<span>
+							<button type="button" id="remote_input_take" class="network_button" hint="<%= &subs::ui('Send this machine\'s keyboard and mouse to the selected machine') %>"><%= &subs::lang('remote_control.take') %></button>
+							<button type="button" id="remote_input_return" class="network_button" style="display:none;" hint="<%= &subs::ui('Bring the keyboard and mouse back to this machine') %>"><%= &subs::lang('remote_control.release') %></button>
+							<span id="remote_input_state"></span>
+						</span>
+						<div id="remote_input_type_wrap" style="display:none;">
+							<input type="text" id="remote_input_type" placeholder="<%= &subs::ui('Type to that machine...') %>" autocomplete="off" autocapitalize="off" spellcheck="false">
+						</div>
+						<textarea id="remote_input_clipboard" style="display:none;" placeholder="<%= &subs::ui('Clipboard from that machine') %>" spellcheck="false"></textarea>
+					</div>
 				</div>
 			</div>
 		</section>

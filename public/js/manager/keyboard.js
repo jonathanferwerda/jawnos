@@ -593,7 +593,7 @@ function jawnosDockContextBuild() {
 	};
 	// The panels that moved into an app have no keyboard panel left to open, so
 	// they are not offered as a face to put back.
-	var retired_panels = { keyboard: 1, calculator: 1, notifications: 1, controller: 1, delorean: 1, walkboy: 1, sessions: 1 };
+	var retired_panels = { keyboard: 1, calculator: 1, notifications: 1, controller: 1, delorean: 1, walkboy: 1, sessions: 1, remote_control: 1 };
 	var fill_hidden = function () {
 		var rows = [];
 		$('#pseudonym_bar .pseudonym').not('.dock_app, .dock_widget, .dock_launcher').each(function() {
@@ -840,16 +840,6 @@ function pseudonymFreeSpaceFinder(type) {
 			icon.hide();
 		}
 	});
-	// the dock keeps at least the remote control in it
-	if (!icons_hidden && visible.length == 0 && icons.length > 0) {
-		jawnosDockIconSet('remote_control', 'on');
-		$.each(icons, function(i,el) {
-			if ($(el).attr('toggle') == 'remote_control') {
-				$(el).show();
-				visible.push(el);
-			}
-		});
-	}
 	count = Math.max(1, visible.length);
 
 	// the search's own button: it rides with the input while the search sits in

@@ -1,4 +1,4 @@
-# tests-for: templates/start_menu/htop.html.ep public/js/manager/manager/05_start_menu.js public/js/manager/keyboard/02_keyboard_maker.js public/js/manager/keyboard/01_side_dock.js public/js/manager/soft_keyboard.js public/css/manager.css public/css/soft_keyboard.css perl/help/topics_features.pl perl/help/topics_functions.pl
+# tests-for: templates/start_menu/htop.html.ep public/js/manager/manager/05_start_menu.js public/js/manager/network/02_tabs_bluetooth_remote.js templates/apps/network.html.ep public/js/manager/keyboard/01_side_dock.js public/js/manager/soft_keyboard.js public/css/manager.css public/css/soft_keyboard.css perl/help/topics_features.pl perl/help/topics_functions.pl
 # covers:    A machine's card on the start menu's System page is a door to that
 #            machine: it opens the Assistant's remote_control panel already
 #            pointed at the peer. A keyboard panel that has never been moved now
@@ -36,14 +36,13 @@ like($htop, qr/class="level_tile remote_control_open hover/,
 	'a peer card is the remote-control opener');
 like($htop, qr/machine="<%= \$m->\{'signatorial'\} %>"/,
 	'the card names the peer it opens');
-like($htop, qr/hint="<%= &subs::ui\('Open Remote control for this machine'\) %>"/,
+like($htop, qr/hint="<%= &subs::ui\('Open Remote control in the Network app'\) %>"/,
 	'the card says what the press does');
 like($menu, qr/\$\(document\)\.on\('click', '\.remote_control_open'/,
 	'the System page has the opener handler');
-like($menu, qr/keyboardMaker\(\{ toggle: 'remote_control', state: 'on', remote_uuid: machine \}\)/,
-	'it opens the remote_control panel with that machine picked');
-like($menu, qr/settingSetter\(\{ 'app': 'me', 'setting': 'remote_control_machine', 'value': machine \}\)/,
-	'the pick is saved for the next open');
+like($menu, qr/appWindowOpener\('network'/, 'it opens the Network app');
+like($menu, qr/networkTabShow\('remote', true\)/, 'on its Remote Machines tab');
+like($menu, qr/network_remote_toggle/, 'and expands that machine\'s accordion');
 like($menu, qr/if \(\$\('\#start_menu'\)\.is\(':visible'\)\) \{ startMenuToggle\(\); \}/,
 	'the press puts the start menu away');
 
@@ -53,8 +52,9 @@ like($htop, qr/\@peers = sort \{[\s\S]*?lc\(\$a->\{'hostname'\}[\s\S]*?ip_sort_k
 	'peers sort by name, then address');
 like($htop, qr/\@devices = sort \{[\s\S]*?lc\(\$a->\{'name'\}[\s\S]*?ip_sort_key/,
 	'devices sort by name, then address too');
-like($maker, qr/\$\('#remote_control_machine_select option'\)\.filter\(function\(\) \{ return this\.value === remote_uuid; \}\)/,
-	'a signatorial pick leaves the server\'s uuid selection in the picker');
+my $net_tabs = js_source('public/js/manager/network/02_tabs_bluetooth_remote.js');
+like($net_tabs, qr/select\.val\(uuid\)/, 'the accordion picks the row\'s machine');
+like($net_tabs, qr/function networkRemoteControlOpen/, 'and moves the shared panel under the row');
 
 # --- a panel that was never moved gets a default floating spot ---------------
 like($maker, qr/function keyboardPanelDefaultCSS\(panel\)/,
@@ -119,13 +119,13 @@ like($soft, qr/top = Math\.max\(limit, Math\.min\(top, Math\.max\(limit, \$\(win
 	'its saved spot is written back inside the screen');
 
 # --- the guide says so ------------------------------------------------------
-like($features_help, qr/A press on a peer\\'s card opens the Assistant\\'s remote_control panel already pointed at that machine/,
+like($features_help, qr/Network app\\'s Remote Machines tab with that machine\\'s Remote control accordion open/,
 	'the start-menu topic names the door');
-like($features_help, qr/a press on this machine\\'s own card opens its Me view/,
+like($features_help, qr/this machine\\'s own card opens the same tab/,
 	'the start-menu topic names this machine\'s own door');
-like($functions_help, qr/a press on a peer\\'s card on the start menu\\'s System page opens it already pointed at that machine/,
+like($functions_help, qr/opens the tab with that machine\\'s accordion already expanded/,
 	'the remote_control topic names the door');
-like($functions_help, qr/or on this machine\\'s card for its Me view/,
-	'the remote_control topic names the Me view');
+like($functions_help, qr/this machine\\'s own card opens the tab too/,
+	'the remote_control topic names this machine\'s card');
 
 done_testing();

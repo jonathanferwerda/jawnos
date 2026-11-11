@@ -1,4 +1,4 @@
-# tests-for: templates/keyboard.html.ep public/js/manager/keyboard/03_editor_switcher.js
+# tests-for: templates/apps/network.html.ep public/js/manager/keyboard/03_editor_switcher.js
 # covers:    The remote_control VPN button routed only through a machine in the
 #           roster, so an exit node the house had not enrolled - the house
 #           server itself, whose roster row carries no tailnet address - was
@@ -15,20 +15,14 @@ use File::Slurp qw(read_file);
 use RepoSource;
 
 my $root = repo_root();
-my $tpl  = read_file("$root/templates/keyboard.html.ep");
+my $tpl  = read_file("$root/templates/apps/network.html.ep");
 my $js   = read_file("$root/public/js/manager/keyboard/03_editor_switcher.js");
 
-# --- the panel offers the node it will use ----------------------------------
-my ($toolbar, $content) = split /<div id="remote_control_view"/, $tpl, 2;
-unlike($toolbar // '', qr/id="remote_control_vpn_node"/,
-	'the exit-node list is not in the top toolbar');
-my ($me_view) = ($content // '') =~ /if \( !\$selected_rm \) \{(.*?)\} else \{/s;
-like($me_view // '', qr/id="remote_control_vpn_node"/,
-	'the exit-node list lives on the Me view');
-like($me_view // '', qr/id="remote_control_vpn_row"/,
-	'and has a row that can stay hidden when no node offers one');
-like($tpl, qr/<button type="button" id="remote_control_vpn"/,
-	'the VPN button is still there');
+# --- the machine's accordion offers the node it will use --------------------
+like($tpl, qr/id="remote_control"/, 'the shared remote control panel is in the Network app');
+like($tpl, qr/id="remote_control_vpn"/, 'the VPN button is in the accordion');
+like($tpl, qr/id="remote_control_vpn_node"/, 'and a hidden node list feeds it');
+unlike($tpl, qr/id="remote_control_vpn_row"/, 'the old Me-view row is gone');
 
 # --- the list comes from the tailnet, not the roster ------------------------
 like($js, qr/function jawnosVpnNodes\(status\)/,
@@ -41,10 +35,10 @@ unlike($js, qr/if \(!picked\.ip\) \{/,
 	'a machine with no tailnet address no longer blocks the button');
 like($js, qr/sel\.append\(\$\('<option>'\)\.val\(nodes\[i\]\.ip\)\.text\(nodes\[i\]\.name\)\)/,
 	'each exit node becomes an option on the list');
-like($js, qr/\$\('#remote_control_vpn_row'\)\.toggle\(nodes\.length > 0\)/,
-	'the Me view hides the row when no node offers one');
-like($js, qr/if \(!\$\('#remote_control_vpn_node'\)\.length\) \{ b\.hide\(\); return; \}/,
-	'a peer view shows no VPN button');
+like($js, qr/picked\.ip && nodes\[i\]\.ip === picked\.ip/,
+	'only the selected machine is offered as the exit node');
+like($js, qr/if \(!picked\.ip \|\| !mine\.length\) \{\s*b\.hide\(\);/,
+	'a machine that offers no exit node hides the button');
 like($js, qr/function jawnosVpnTarget\(\)/,
 	'the button has one place that names its target');
 like($js, qr/var target = on \? '' : jawnosVpnTarget\(\);/,

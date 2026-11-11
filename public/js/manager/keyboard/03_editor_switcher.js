@@ -567,25 +567,32 @@ function jawnosVpnPaint(on) {
 		'opacity': (on || target) ? 1 : 0.45,
 		'background-color': on ? 'var(--jawnos-ok, #4caf50)' : ''
 	});
-	b.attr('hint', on ? jawnosT('Turn the VPN off') : jawnosT("Route this device's web traffic through the exit node chosen beside it"));
+	b.attr('hint', on ? jawnosT('Turn the VPN off') : jawnosT("Route this device's web traffic through this machine"));
 }
 
 function jawnosVpnRefresh() {
 	var b = $('#remote_control_vpn');
 	if (!b.length) { return; }
-	// The VPN moves this device's own traffic, so it belongs to the Me view;
-	// a peer view has no exit-node list and shows no button.
 	if (!$('#remote_control_vpn_node').length) { b.hide(); return; }
 	jawnosVpnStatus(function (s) {
 		var nodes = jawnosVpnNodes(s);
 		var picked = jawnosVpnSelected();
+		// The button rides in the machine's accordion, so it is offered only when
+		// that machine itself is an online exit node: picking it cannot silently
+		// route the traffic through somebody else.
+		var mine = [];
+		for (var i = 0; i < nodes.length; i++) {
+			if (picked.ip && nodes[i].ip === picked.ip) { mine.push(nodes[i]); }
+		}
+		if (!picked.ip || !mine.length) {
+			b.hide();
+			$('#remote_control_vpn_node').empty();
+			return;
+		}
 		var on = !!(s && s.exit);
-		jawnosVpnChooser(nodes, [picked.ip, (s && s.exit) || '']);
+		jawnosVpnChooser(mine, [picked.ip, (s && s.exit) || '']);
 		b.show();
 		jawnosVpnPaint(on);
-		if (!on && !nodes.length) {
-			b.attr('hint', jawnosT('No machine on the tailnet offers an exit node'));
-		}
 	});
 }
 

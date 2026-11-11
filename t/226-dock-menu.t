@@ -64,6 +64,7 @@ like($dock, qr/jawnosTaskbarWidgetOn/, 'a widget face asks the taskbar widget mo
 like($dock, qr/jawnosTaskbarWidgetToggle/, 'the dock toggles that same widget');
 like($dock, qr/function jawnosDockWidgetOpen\(w\)/, 'a widget face opens the app it stands for');
 like($dock, qr/jawnosDockMigrateApps/, 'a browser\'s old dock apps are carried onto the taskbar');
+like($dock, qr/remote_control: 1/, 'the retired remote control face is not offered back');
 
 # --- Add items reads the same app list as the taskbar ------------------------
 like($dock, qr/jawnosTaskbarAppPins\(\)/, 'Add items reads the taskbar app pins');
@@ -158,7 +159,7 @@ like($body, qr/Edit dock/, 'the topic names Edit dock');
 like($body, qr/Add items/, 'the topic names Add items');
 like($body, qr/Dock position/, 'the topic names Dock position');
 like($body, qr/drag.*reorder|reorder/s, 'the topic explains drag-to-reorder');
-like($body, qr/built-in Remote control panel/, 'the topic names the built-in face');
+like($body, qr/faces are the same pinned apps and widgets/, 'the topic says the dock faces are the taskbar\'s pins');
 like($body, qr/same pinned apps and widgets as the taskbar/, 'the topic says the apps and widgets are the taskbar\'s');
 like($body, qr/unpins the app from the taskbar and the dock together/, 'the topic says one pin serves both bars');
 like($body, qr/widget face is disabled on both bars/, 'and a widget too');
