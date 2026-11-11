@@ -5,6 +5,17 @@ this file, adds the release date and the version codes that are actually
 staged, and writes it back to the release. Keep the newest release at the top
 under a dated heading; older sections stay as history.
 
+## 2026-11-11 — the tailnet server is an admin setting
+
+- **The control URL is no longer built into the APK.** The dashboard's Tailnet
+  card has a **Tailnet server** field. It stores an `https://` URL in the
+  device's `jawn_tailnet` prefs, rejects anything without a host, and the
+  tunnel reports `needs_server` until it is set. Moving the Headscale switch no
+  longer needs a new APK.
+- **Provisioning accepts the server too.** The adb broadcast now takes
+  `--es control_url <url>` alongside `auth_key`, so a device can be pointed at
+  the new switch and joined in one command.
+
 ## 2026-11-10 — the browser opens again, and a site visit stays one appointment
 
 - **Browse opens on a phone again.** The browser runs in its own process, and
