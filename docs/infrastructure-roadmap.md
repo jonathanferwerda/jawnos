@@ -107,6 +107,17 @@ Re-measured from `cloud` against the ks5 public address.
   the rest on both IPv4 and IPv6; 8022 was closed from the VPS on both.
 - **fail2ban is installed and active:** the `[sshd]` jail watches port 8022 (systemd backend,
   `maxretry 3`, `findtime 10m`, `bantime 1h`) and ignores `100.64.0.0/10` and `10.20.0.0/24`.
+- **Host input is default-deny since 2026-11-11.** A final `IN DROP` in
+  `/etc/pve/nodes/ks5/host.fw` closes host input by default; explicit `IN ACCEPT` rules keep
+  `udp/41641` (tailscale direct) and `icmp`/`ipv6-icmp` open. The datacenter policy stays
+  `policy_in: ACCEPT`, so guest FORWARD traffic (the three containers) is unaffected. Verified
+  after apply: tailnet SSH (`100.64.0.11:8022`) and LAN SSH (`10.20.0.1:8022`) still work, `dev`
+  still egresses as `54.39.157.133`, tailscale still reaches ks5 directly on 41641, and
+  443/45545/45550 stay public while 8022/8006 stay closed; ICMP echo still answers.
+- **Deliberate consequence:** PVE's management-set rules (the set is `54.39.157.0/24`) now sit
+  after the catch-all and are unreachable; no service they covered is used (no VMs; sshd is on
+  8022; 8006 is tailnet-only). Rollback: `/root/host.fw.bak-default-deny-20261111`, then
+  `systemctl restart pve-firewall`.
 
 What still answers on the public address:
 
