@@ -382,11 +382,18 @@ sub peer_listener_port {
 sub peer_secure_url {
 	my ($rm, $url) = @_;
 	return ($url, 0) unless ref $rm eq 'HASH' && defined $url && length $url;
-	return ($url, 0) if ($rm->{'tunnel'} || '') eq 'yes';
 	my ($scheme, $host);
 	if ($url =~ m{^(https?)://(\[[^\]]+\]|[^/:]+)}) { ($scheme, $host) = ($1, $2) }
 	elsif ($url =~ m{^(wss?)://(\[[^\]]+\]|[^/:]+)}) { ($scheme, $host) = ($1, $2) }
 	return ($url, 0) unless defined $host;
+	# A tunnel row is a loopback route and is left exactly as it is. The flag can
+	# outlive the tunnel, though: the hub's rows for the machines that used to dial
+	# out to it kept tunnel 'yes' after peer_live_manager moved them to the tailnet,
+	# and the old blanket return answered "unverified" for a direct address whose
+	# leaf proves it - so every login to that peer was refused, which is the
+	# session every relay needs. Only a loopback route belongs to the tunnel; any
+	# other address is verified like any peer's.
+	return ($url, 0) if ($rm->{'tunnel'} || '') eq 'yes' && &subs::peer_host_is_loopback($host);
 	# A row is the peer, not one address. The stored ip is only where it was
 	# last reached, the fqdn can be loopback (a hand-entered row), and
 	# peer_live_manager resolves a dead name or a departed LAN literal to the
