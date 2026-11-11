@@ -538,8 +538,10 @@ function foldersObserveRoot(root) {
 $(document).on('click', '#folders_sidebar_toggle', function () {
 	foldersActivateFrom(this);
 	var root = $(this).closest('.folders_app');
-	var pref = localStorage.getItem('folders_sidebar');
-	localStorage.setItem('folders_sidebar', pref == 'off' ? 'on' : 'off');
+	// Toggle what is on screen, not the stored value: a fresh window has no
+	// preference yet, and its Places column is closed, so the first press opens it.
+	var visible = root.find('.folders_sidebar').is(':visible');
+	try { localStorage.setItem('folders_sidebar', visible ? 'off' : 'on'); } catch (e) {}
 	foldersSidebarApply(root);
 });
 $(document).on('click', '.folders_sidebar_place', function () {

@@ -30,6 +30,14 @@ like($js, qr/localStorage\.getItem\('folders_sidebar'\)/, 'the Places preference
 like($js, qr/folders_sidebar_toggle'\)\.toggle\(!wide\)/,
 	'the toolbar button shows on a thin window, not a wide one');
 like($js, qr/folders_sidebar_overlay/, 'a thin window opens Places as an overlay class');
+my ($sidebar_toggle) = $js =~ /(\$\(document\)\.on\('click', '#folders_sidebar_toggle'.*?\n\}\);)/s;
+ok(defined $sidebar_toggle, 'the Places button handler is readable');
+like($sidebar_toggle, qr/\.folders_sidebar'\)\.is\(':visible'\)/,
+	'the button toggles from the column\'s current visibility');
+unlike($sidebar_toggle, qr/pref == 'off'/,
+	'it does not read the stored preference, so a fresh thin window opens on the first press');
+like($sidebar_toggle, qr/visible \? 'off' : 'on'/,
+	'and stores the opposite of what is on screen');
 like($js, qr/function foldersSidebarClose/, 'choosing a place puts the overlay away');
 like($css, qr/\.folders_app\.folders_sidebar_overlay \.folders_sidebar \{[^}]*position:\s*absolute[^}]*z-index:\s*30/s,
 	'the overlay is positioned above the listing');
