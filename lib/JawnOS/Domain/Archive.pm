@@ -1509,12 +1509,16 @@ sub folders_entry_names {
 # sync registers the folder on each chosen device, so each of them has the same
 # member list and the same job.
 #
-# Each device keeps its own state file (under ~/.president/cloud_sync, never
-# inside the folder): what it last agreed each file was, what it has seen
-# deleted, and what it still has to deliver. That is what lets an offline
-# device's edit and another device's deletion be compared by time instead of
-# one silently winning. A conflict keeps both copies: the deterministic winner
-# stays at the name and the loser is saved beside it as .conflict-<hash>.
+# Each device keeps its own state (in this machine's cache table, never inside
+# the folder): what it last agreed each file was, what it has seen deleted, and
+# what it still has to deliver. That is what lets an offline device's edit and
+# another device's deletion be compared by time instead of one silently
+# winning. A conflict keeps both copies: the deterministic winner stays at the
+# name and the loser is saved beside it as .conflict-<hash>.
+#
+# The cache table is this machine's own view and never syncs, which is why it
+# holds both the registrations and the per-base state. It outlives a restart,
+# unlike ~/.president; the old JSON files there are now only a migration source.
 
 sub cloud_sync_state_empty {
 	return { files => {}, deleted => {}, pending => [] };
@@ -1533,14 +1537,17 @@ sub cloud_sync_state_dir {
 	return &home('~/.president/cloud_sync');
 }
 
+# The old per-base state file. Nothing writes here any more: a state that is
+# still on disk is adopted once, on the first read, and then left alone.
 sub cloud_sync_state_path {
 	my $base = defined $_[0] ? $_[0] : '';
 	return &cloud_sync_state_dir() . '/' . sha256_hex($base) . '.json';
 }
 
-# A per-destination lock under ~/.president, not inside the folder, so two
-# devices pushing the same path cannot write one partial at the same time. The
-# lock file must never become sync content.
+# A transient lock under ~/.president, not inside the folder, so two devices
+# pushing the same path cannot write one partial at the same time. The lock
+# file must never become sync content. It is runtime only: the cache holds the
+# permanent state.
 sub cloud_sync_lock_path {
 	my $path = defined $_[0] ? $_[0] : '';
 	my $dir = &cloud_sync_state_dir() . '/locks';
@@ -1548,17 +1555,55 @@ sub cloud_sync_lock_path {
 	return $dir . '/' . sha256_hex($path) . '.lock';
 }
 
-sub cloud_sync_state_read {
-	my $base = shift;
+# Open one lock file and take it exclusively. The caller closes the handle to
+# release the lock; the file itself is only a rendezvous, never data.
+sub cloud_sync_lock_open {
+	my $key = defined $_[0] ? $_[0] : '';
+	my $path = &cloud_sync_lock_path($key);
+	my $fh;
+	open($fh, '>>', $path) or return undef;
+	flock($fh, LOCK_EX);
+	return $fh;
+}
+
+# The state as the cache has it, or undef when there is no row yet.
+sub cloud_sync_state_cache {
+	my $base = defined $_[0] ? $_[0] : '';
+	my $state = eval { &subs::cache_get({
+		app => 'folders', context => 'cloud_sync_state', subcontext => sha256_hex($base)
+	}) };
+	return undef unless ref $state eq 'HASH';
+	return &cloud_sync_state_normalize($state);
+}
+
+# The state written before the cache held it, at the old per-base path.
+sub cloud_sync_state_legacy {
+	my $base = defined $_[0] ? $_[0] : '';
 	my $path = &cloud_sync_state_path($base);
 	return &cloud_sync_state_empty() unless -e $path;
-	open(my $fh, '<', $path) or return &cloud_sync_state_empty();
-	flock($fh, LOCK_SH);
-	local $/;
-	my $raw = <$fh> // '';
-	close $fh;
-	my $state = eval { return decode_json($raw) };
+	my $raw = eval { read_file($path) };
+	my $state = (defined $raw && length $raw) ? eval { decode_json($raw) } : undef;
 	return &cloud_sync_state_normalize($state);
+}
+
+sub cloud_sync_state_read {
+	my $base = defined $_[0] ? $_[0] : '';
+	my $state = &cloud_sync_state_cache($base);
+	return $state if $state;
+	# The first read after an upgrade adopts the old file, once. The lock keeps
+	# two processes from migrating the same base at the same time. Without it,
+	# serve what the old file has and write nothing rather than race a writer.
+	my $lock = &cloud_sync_lock_open('state:' . $base);
+	return &cloud_sync_state_legacy($base) unless $lock;
+	$state = &cloud_sync_state_cache($base);
+	unless ($state) {
+		$state = &cloud_sync_state_legacy($base);
+		&subs::cache_set({
+			app => 'folders', context => 'cloud_sync_state', subcontext => sha256_hex($base), warranty => '100y'
+		}, $state);
+	}
+	close $lock if $lock;
+	return $state;
 }
 
 # Read, change and write one device's state under one exclusive lock, so a
@@ -1566,30 +1611,21 @@ sub cloud_sync_state_read {
 # other's entries.
 sub cloud_sync_state_modify {
 	my ($base, $code) = @_;
-	my $path = &cloud_sync_state_path($base);
-	my $dir = $path;
-	$dir =~ s{/[^/]+$}{};
-	File::Path::make_path($dir) unless -d $dir;
-	my $fh;
-	unless (open($fh, '+<', $path)) {
-		open($fh, '>', $path) or return { error => "cannot open $path: $!" };
-	}
-	flock($fh, LOCK_EX);
-	local $/;
-	my $raw = <$fh> // '';
-	my $state = eval { return decode_json($raw) };
-	$state = &cloud_sync_state_normalize($state);
+	$base = '' unless defined $base;
+	my $lock = &cloud_sync_lock_open('state:' . $base);
+	return { error => 'the state could not be locked' } unless $lock;
+	my $state = &cloud_sync_state_cache($base) || &cloud_sync_state_legacy($base);
 	my $answer = $code->($state);
-	# A scan that found nothing must not rewrite a large state file every
+	# A scan that found nothing must not rewrite a large state row every
 	# minute. Callers that change state leave __dirty unset or true.
 	my $dirty = $state->{'__dirty'};
 	delete $state->{'__dirty'};
 	if (!defined $dirty || $dirty) {
-		seek($fh, 0, 0);
-		truncate($fh, 0);
-		print $fh encode_json($state);
+		&subs::cache_set({
+			app => 'folders', context => 'cloud_sync_state', subcontext => sha256_hex($base), warranty => '100y'
+		}, $state);
 	}
-	close $fh;
+	close $lock if $lock;
 	return $answer;
 }
 
@@ -1890,9 +1926,10 @@ sub cloud_sync_free_space {
 	};
 }
 
-# The source folder named the way every device can resolve it. Under this
-# machine's home it is a relative path (so the same words mean the same folder
-# on a peer); anywhere else it is absolute.
+# The source folder named the way every device can resolve it: relative to
+# home. CloudSync only carries folders inside the person's home, because that
+# is the one root every member has (a phone's own home is not this machine's),
+# so a folder outside home has no shared base at all.
 sub cloud_sync_base_for {
 	my $path = shift;
 	return '' unless (defined $path && length $path);
@@ -1901,24 +1938,30 @@ sub cloud_sync_base_for {
 	my $home = &home('~');
 	$home =~ s{/+$}{} unless $home eq '/';
 	return '' if ($path eq $home);
-	return substr($path, length($home) + 1) if ($home ne '/' && index($path, $home . '/') == 0);
-	return $path;
+	return '' unless &subs::path_is_under($path, $home);
+	return substr($path, length($home) + 1);
 }
 
 # A file's place on the destination, from the shared base and a path inside
-# it. `..` resolves against what came before it and cannot climb above the
-# base, because the source names both and the destination must never be talked
-# into writing outside the folder the person chose.
+# it. The base is always home-relative: an absolute one would name this
+# machine's home on every other device. `..` resolves against what came before
+# it and cannot climb above the base, because the source names both and the
+# destination must never be talked into writing outside the folder the person
+# chose.
 sub cloud_sync_destination {
 	my $data = shift || {};
 	my $base = defined $data->{'base'} ? $data->{'base'} : '';
-	my $root = ($base =~ m{^/}) ? $base : &home('~/' . $base);
+	return { error => 'no destination' } unless length $base;
+	return { error => 'destination is outside the house' } if $base =~ m{^/};
+	my $home = &home('~');
+	$home =~ s{/+$}{} unless $home eq '/';
+	my $root = &home('~/' . $base);
 	$root =~ s{/+$}{} unless $root eq '/';
 	return { error => 'no destination' } unless length $root;
-	# An absolute destination still has to be inside the house's own storage:
-	# the member list cannot nominate /etc or another user's directory.
+	# The member list cannot nominate anything outside the person's home, so
+	# a stale or hostile base cannot reach /etc or another user's directory.
 	return { error => 'destination is outside the house' }
-		unless &subs::path_is_under($root, &home('~'), '/sdcard', '/storage');
+		unless &subs::path_is_under($root, $home);
 	# A hidden folder is not a shared destination: it is where the house keeps
 	# its secrets, and a peer names both halves of this path.
 	foreach my $part (split m{/+}, $base . '/' . ($data->{'path'} // '')) {
@@ -1934,11 +1977,14 @@ sub cloud_sync_destination {
 	my $relative = join '/', @parts;
 	my @parent = @parts;
 	pop @parent if scalar @parent;
+	my $path = $root . (length $relative ? '/' . $relative : '');
+	return { error => 'destination is outside the house' }
+		unless &subs::path_is_under($path, $home);
 	return {
 		base => $base,
 		root => $root,
 		relative => $relative,
-		path => $root . (length $relative ? '/' . $relative : ''),
+		path => $path,
 		parent => $root . (scalar @parent ? '/' . join('/', @parent) : '')
 	};
 }
@@ -1948,55 +1994,82 @@ sub cloud_sync_destination {
 # source's /home/jawn/Downloads/gptpres landed on the phone, whose own root is
 # under /data/data/com.jawnos/files/home, and every receive there answered "this
 # folder is not registered" while the folders had already been made (2026-11-11).
-# Keep them beside the per-base state, which is already local.
-sub cloud_sync_registrations {
+# It now lives in this machine's cache table, which never syncs and survives a
+# restart; ~/.president is not durable across one.
+
+sub cloud_sync_registrations_clean {
+	my $list = shift;
+	return [] unless ref $list eq 'ARRAY';
+	return [ grep { ref $_ eq 'HASH' && defined $_->{'path'} && length $_->{'path'} } @{$list} ];
+}
+
+# A registration is only usable on a device that shares this home: the base
+# sent to peers is home-relative, and this machine's own home is the only one
+# its absolute path means. Anything else arrived from another machine.
+sub cloud_sync_registrations_under_home {
+	my $list = shift;
+	$list = &cloud_sync_registrations_clean($list);
+	my $home = &home('~');
+	$home =~ s{/+$}{} unless $home eq '/';
+	return [ grep { &subs::path_is_under($_->{'path'}, $home) } @{$list} ];
+}
+
+sub cloud_sync_registrations_cache {
+	my $list = eval { &subs::cache_get({ app => 'folders', context => 'cloud_sync' }) };
+	return undef unless ref $list eq 'ARRAY';
+	return &cloud_sync_registrations_clean($list);
+}
+
+# The registrations written before the cache held them: the local JSON file if
+# there is one, otherwise the synced setting row. The file wins because it was
+# already this machine's own view; the setting is filtered to paths under home.
+sub cloud_sync_registrations_legacy {
 	my $file = &cloud_sync_state_dir() . '/registrations.json';
 	my $list;
 	if (-e $file) {
 		my $raw = eval { read_file($file) };
 		$list = eval { decode_json $raw } if defined $raw && length $raw;
 	}
-	if (ref $list ne 'ARRAY') {
-		# Legacy: adopt a settings-row registration only when the path is under
-		# this machine's home. Anything else arrived from another machine and
-		# would make this one look registered for a folder it does not hold.
-		my $blob = eval { return &setting_grabber({ app => 'folders', setting => 'cloud_sync' }) };
-		my $legacy = eval { return decode_json $blob } if (defined $blob && length $blob);
-		my $home = &home('~');
-		$home =~ s{/+$}{} unless $home eq '/';
-		$legacy = [ grep {
-			ref $_ eq 'HASH' && defined $_->{'path'} && length $_->{'path'}
-				&& (index($_->{'path'}, $home . '/') == 0 || $_->{'path'} eq $home)
-		} @{$legacy} ] if ref $legacy eq 'ARRAY';
-		$list = (ref $legacy eq 'ARRAY') ? $legacy : [];
-		&cloud_sync_registrations_write($list) if scalar @{$list};
-	}
-	return [ grep { ref $_ eq 'HASH' && defined $_->{'path'} && length $_->{'path'} } @{$list} ];
+	return &cloud_sync_registrations_under_home($list) if ref $list eq 'ARRAY';
+	my $blob = eval { return &setting_grabber({ app => 'folders', setting => 'cloud_sync' }) };
+	my $legacy = eval { return decode_json $blob } if (defined $blob && length $blob);
+	return &cloud_sync_registrations_under_home($legacy);
 }
 
-sub cloud_sync_registrations_write {
-	my $list = shift || [];
-	my $dir = &cloud_sync_state_dir();
-	File::Path::make_path($dir) unless -d $dir;
-	my $file = $dir . '/registrations.json';
-	my $temp = $file . '.tmp.' . $$;
-	write_file($temp, encode_json($list));
-	rename($temp, $file) or unlink $temp;
+sub cloud_sync_registrations {
+	my $list = &cloud_sync_registrations_cache();
+	return $list if $list;
+	# The first read after an upgrade adopts the old store, once. The lock keeps
+	# two processes from migrating at the same time; the legacy files stay.
+	# Without it, serve the old store and write nothing rather than race.
+	my $lock = &cloud_sync_lock_open('registrations');
+	return &cloud_sync_registrations_legacy() unless $lock;
+	$list = &cloud_sync_registrations_cache();
+	unless ($list) {
+		$list = &cloud_sync_registrations_legacy();
+		&cloud_sync_registrations_write($list);
+	}
+	close $lock if $lock;
 	return $list;
 }
 
-# Registrations are one JSON setting, so every writer has to take the same lock
+sub cloud_sync_registrations_write {
+	my $list = shift;
+	$list = &cloud_sync_registrations_clean($list);
+	&subs::cache_set({ app => 'folders', context => 'cloud_sync', warranty => '100y' }, $list);
+	return $list;
+}
+
+# Registrations are one cache row, so every writer has to take the same lock
 # or a worker's job id can overwrite a folder the person just started. The
 # callback changes the list in place; the write happens under the lock.
 sub cloud_sync_registrations_modify {
 	my $code = shift;
-	my $dir = &cloud_sync_state_dir();
-	File::Path::make_path($dir) unless -d $dir;
-	my $lock_path = $dir . '/registrations.lock';
-	my $lock;
-	open($lock, '>>', $lock_path) or return $code->([ &cloud_sync_registrations() ]);
-	flock($lock, LOCK_EX);
-	my $list = &cloud_sync_registrations();
+	my $lock = &cloud_sync_lock_open('registrations');
+	my $list = &cloud_sync_registrations_cache() || &cloud_sync_registrations_legacy();
+	# No lock: let the caller change a private copy, but persist nothing, so a
+	# write that cannot be serialized cannot lose a concurrent one.
+	return $code->($list) unless $lock;
 	my $answer = $code->($list);
 	&cloud_sync_registrations_write($list);
 	close $lock;

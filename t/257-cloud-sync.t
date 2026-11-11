@@ -7,11 +7,13 @@ use warnings;
 use FindBin;
 use lib "$FindBin::Bin/lib", "t/lib";
 use Test::More;
+use Digest::SHA qw(sha256_hex);
 use File::Temp qw(tempdir);
 use File::Path qw(make_path);
 use File::Slurp qw(read_file write_file);
 use Mojo::JSON qw(encode_json);
 use RepoSource;
+use JawnOSTest;
 
 # CloudSync is the archive rail turned into a small mesh: every member watches
 # its own copy and pushes changes. These tests pin the pure rules - path
@@ -22,25 +24,40 @@ my $root = repo_root();
 my $test_home = tempdir(CLEANUP => 1);
 $ENV{'HOME'} = $test_home;
 my $house_sync = "$test_home/house-sync";
-require "$root/lib/JawnOS/Domain/Archive.pm";
-require "$root/lib/JawnOS/Domain/Loader.pm";
-subs::preload('rightNow');
-subs::preload('random_string_creator');
 # run_tests may have asked for home() before this file set HOME, so point the
 # cached root at the test home: the destination policy is checked with it.
 $subs::home_dir = $test_home;
 
+# This machine's view is a cache row. The sandbox database is a copy of the
+# machine's, so start from no row at all: the migration below is only exercised
+# when there is nothing to read.
+subs::cache_delete({ app => 'folders', context => 'cloud_sync' });
+subs::cache_delete({ app => 'folders', context => 'cloud_sync_state' });
+
 # ---- a destination cannot climb out of its base -----------------------------
 
-my $dest = subs::cloud_sync_destination({ base => $house_sync, path => 'photos/autumn/a.jpg' });
-is($dest->{'root'}, $house_sync, 'the base is the destination root');
+my $dest = subs::cloud_sync_destination({ base => 'house-sync', path => 'photos/autumn/a.jpg' });
+is($dest->{'root'}, $house_sync, 'the home-relative base is the destination root');
 is($dest->{'relative'}, 'photos/autumn/a.jpg', 'the path inside the base is kept');
 is($dest->{'path'}, "$house_sync/photos/autumn/a.jpg", 'the file lands under the base');
 is($dest->{'parent'}, "$house_sync/photos/autumn", 'and its parent is the folder it sits in');
 
-my $climb = subs::cloud_sync_destination({ base => $house_sync, path => '../../etc/passwd' });
+my $climb = subs::cloud_sync_destination({ base => 'house-sync', path => '../../etc/passwd' });
 is($climb->{'relative'}, 'etc/passwd', 'a path that tries to climb is resolved against the base');
 is($climb->{'path'}, "$house_sync/etc/passwd", 'and still lands inside the base');
+
+# ---- CloudSync is home-only -------------------------------------------------
+
+is(subs::cloud_sync_base_for($house_sync), 'house-sync', 'a folder under home has a home-relative base');
+is(subs::cloud_sync_base_for('/etc'), '', 'a folder outside home has no shared base');
+is(subs::cloud_sync_base_for($test_home), '', 'home itself is not a CloudSync folder');
+
+my $absolute = subs::cloud_sync_destination({ base => $house_sync, path => 'a.txt' });
+ok($absolute->{'error'}, 'an absolute base is refused');
+my $escape = subs::cloud_sync_destination({ base => '../../etc', path => 'passwd' });
+ok($escape->{'error'}, 'a base that climbs out of home is refused');
+my $sdcard = subs::cloud_sync_destination({ base => '/sdcard/Pictures', path => 'a.jpg' });
+ok($sdcard->{'error'}, 'the old /sdcard allowance is gone for CloudSync');
 
 # ---- the newer time wins, and a tie is settled by content -------------------
 
@@ -105,11 +122,11 @@ ok($space->{'total_bytes'} >= $space->{'free_bytes'}, 'the total is at least the
 # ---- the state machine sees, settles and forgets -----------------------------
 #
 # These use a real temp folder as the synced base and the temp HOME set above,
-# so the state file under ~/.president/cloud_sync is exercised without touching
-# the person's own state.
+# so the per-base state in the cache table is exercised without touching the
+# person's own state.
 
 my $sync = tempdir(DIR => $test_home, CLEANUP => 1);
-my $sync_base = $sync;
+my $sync_base = substr($sync, length($test_home) + 1);
 write_file("$sync/one.txt", 'one');
 my $collected = subs::cloud_sync_collect_changes($sync, $sync_base);
 is(scalar @{$collected}, 1, 'a new file becomes one pending change');
@@ -117,6 +134,10 @@ is($collected->[0]->{'kind'}, 'file', 'it is a file change');
 is($collected->[0]->{'rel'}, 'one.txt', 'named by its relative path');
 my $saved_state = subs::cloud_sync_state_read($sync_base);
 ok($saved_state->{'files'}->{'one.txt'}, 'the state records what it last agreed');
+ok(subs::cache_get({ app => 'folders', context => 'cloud_sync_state', subcontext => sha256_hex($sync_base) }),
+	'and the state is stored in the cache table');
+ok(!-e $subs::home_dir . '/.president/cloud_sync/' . sha256_hex($sync_base) . '.json',
+	'not in the old per-base state file');
 subs::cloud_sync_state_modify($sync_base, sub { my $st = shift; $st->{'pending'} = []; return 1 });
 is(scalar @{ subs::cloud_sync_collect_changes($sync, $sync_base) }, 0,
 	'an unchanged file is not queued again after its change was delivered');
@@ -139,7 +160,7 @@ ok(!$after_delete->{'files'}->{'one.txt'}, 'the file entry is gone');
 # A receive whose copy is newer takes the name and keeps the local copy as a
 # conflict file; one whose copy is older leaves the local copy in place.
 my $incoming_dir = tempdir(DIR => $test_home, CLEANUP => 1);
-my $incoming_base = $incoming_dir;
+my $incoming_base = substr($incoming_dir, length($test_home) + 1);
 write_file("$incoming_dir/one.txt", 'local bytes');
 utime 3000, 3000, "$incoming_dir/one.txt";
 my $dest_file = subs::cloud_sync_destination({ base => $incoming_base, path => 'one.txt' });
@@ -269,7 +290,8 @@ unlike($controller, qr/asset->path/, 'no receive route needs a temp path for the
 # ---- a registration is this machine's own, not a synced setting ------------
 # The settings row is synced across the house, so the source's absolute path
 # landed on the phone and every receive there said "this folder is not
-# registered" while the folders had already been made.
+# registered" while the folders had already been made. It now lives in the
+# cache table, which is this machine's own view and survives a restart.
 {
 	my $mine = "$test_home/Downloads/gptpres";
 	make_path($mine) unless -d $mine;
@@ -277,12 +299,31 @@ unlike($controller, qr/asset->path/, 'no receive route needs a temp path for the
 		{ path => $mine, base => 'Downloads/gptpres', devices => [], added => 1 }
 	]);
 	my $rows = subs::cloud_sync_registrations();
-	is(scalar @{$rows}, 1, 'a registration round-trips through the local file');
+	is(scalar @{$rows}, 1, 'a registration round-trips through the cache');
 	is($rows->[0]->{'path'}, $mine, 'and keeps this machine\'s path');
-	ok(-e $subs::home_dir . '/.president/cloud_sync/registrations.json',
-		'it is stored beside the per-base state, not in settings');
+	ok(subs::cache_get({ app => 'folders', context => 'cloud_sync' }),
+		'it is stored in the cache table, not in settings');
+	ok(!-e $subs::home_dir . '/.president/cloud_sync/registrations.json',
+		'and not in a file under ~/.president');
 }
 {
+	# The file written before the cache held registrations is adopted once.
+	subs::cache_delete({ app => 'folders', context => 'cloud_sync' });
+	my $dir = $subs::home_dir . '/.president/cloud_sync';
+	make_path($dir) unless -d $dir;
+	my $file = $dir . '/registrations.json';
+	write_file($file, encode_json([
+		{ path => "$test_home/Downloads/old", base => 'Downloads/old', devices => [] }
+	]));
+	my $rows = subs::cloud_sync_registrations();
+	is(scalar @{$rows}, 1, 'a legacy registrations file is adopted');
+	is($rows->[0]->{'path'}, "$test_home/Downloads/old", 'with the path it held');
+	ok(subs::cache_get({ app => 'folders', context => 'cloud_sync' }),
+		'and written into the cache');
+	ok(-e $file, 'the legacy file is kept');
+}
+{
+	subs::cache_delete({ app => 'folders', context => 'cloud_sync' });
 	my $file = $subs::home_dir . '/.president/cloud_sync/registrations.json';
 	unlink $file if -e $file;
 	no warnings 'redefine';
@@ -295,6 +336,27 @@ unlike($controller, qr/asset->path/, 'no receive route needs a temp path for the
 	my $rows = subs::cloud_sync_registrations();
 	is(scalar @{$rows}, 1, 'only a legacy path under this home is adopted');
 	is($rows->[0]->{'path'}, "$test_home/Downloads/mine", 'the foreign registration is dropped');
+	ok(subs::cache_get({ app => 'folders', context => 'cloud_sync' }),
+		'and the adopted list is written into the cache');
+}
+
+# ---- a per-base state file migrates into the cache --------------------------
+{
+	my $base = 'legacy-state';
+	subs::cache_delete({ app => 'folders', context => 'cloud_sync_state', subcontext => sha256_hex($base) });
+	my $dir = $subs::home_dir . '/.president/cloud_sync';
+	make_path($dir) unless -d $dir;
+	my $file = $dir . '/' . sha256_hex($base) . '.json';
+	write_file($file, encode_json({
+		files => { 'old.txt' => { size => 3, mtime => 4, hash => 'abcd' } },
+		deleted => {},
+		pending => [],
+	}));
+	my $state = subs::cloud_sync_state_read($base);
+	ok($state->{'files'}->{'old.txt'}, 'a legacy per-base state is adopted');
+	ok(subs::cache_get({ app => 'folders', context => 'cloud_sync_state', subcontext => sha256_hex($base) }),
+		'and written into the cache');
+	ok(-e $file, 'the legacy state file is kept');
 }
 
 done_testing();
