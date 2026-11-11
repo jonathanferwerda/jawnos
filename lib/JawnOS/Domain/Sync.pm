@@ -775,13 +775,45 @@ my $returner = '';
 	return $returner;
 }
 
+# A sealed blob carries its own salt and nonce:
+#   JS1: base64( salt(16) . nonce(12) . tag(16) . ciphertext )
+# The key is PBKDF2-HMAC-SHA256(secret, salt, 10000, 32) and the cipher is
+# AES-256-GCM, so a wrong key or a changed byte is refused rather than returned
+# as garbage. The prefix is the format's version; a blob without it is the
+# older Crypt::Simple layering, which decrypter() still reads.
+my $SEAL_PREFIX = 'JS1:';
+my $SEAL_AAD = 'jawnos-seal-v1';
+my $SEAL_ITERS = 10_000;
+# PBKDF2 refuses an empty password. An empty secret was already a public key
+# under the old layer, so a fixed placeholder keeps those callers working
+# without pretending it is a secret.
+my $seal_pass = sub { my ($s) = @_; return (defined $s && length $s) ? $s : 'jawnos-empty-secret-v1' };
+my $seal_open = sub {
+	my ($secret,$content) = @_;
+	return undef unless defined $content && index($content, $SEAL_PREFIX) == 0;
+	require Crypt::KeyDerivation;
+	require Crypt::AuthEnc::GCM;
+	my $raw = eval { decode_base64(substr($content, length $SEAL_PREFIX)) };
+	return undef unless defined $raw && length($raw) >= 44;
+	my ($salt,$iv,$tag,$ct) = (substr($raw,0,16), substr($raw,16,12), substr($raw,28,16), substr($raw,44));
+	my $key = eval { Crypt::KeyDerivation::pbkdf2($seal_pass->($secret), $salt, $SEAL_ITERS, 'SHA256', 32) };
+	return undef unless defined $key && length($key) == 32;
+	return eval { Crypt::AuthEnc::GCM::gcm_decrypt_verify('AES', $key, $iv, $SEAL_AAD, $ct, $tag) };
+};
+
 sub encrypter {
 	my ($secret,$content) = @_;
-	local *encrypt;
-	local *decrypt;
-	Crypt::Simple->import(passphrase => $secret);
-	my $notes = eval { encrypt($content) };
-	return $notes;
+	return undef unless defined $content;
+	require Crypt::KeyDerivation;
+	require Crypt::AuthEnc::GCM;
+	require Crypt::PRNG;
+	my $salt = Crypt::PRNG::random_bytes(16);
+	my $iv = Crypt::PRNG::random_bytes(12);
+	my $key = eval { Crypt::KeyDerivation::pbkdf2($seal_pass->($secret), $salt, $SEAL_ITERS, 'SHA256', 32) };
+	return undef unless defined $key && length($key) == 32;
+	my ($ct,$tag) = eval { Crypt::AuthEnc::GCM::gcm_encrypt_authenticate('AES', $key, $iv, $SEAL_AAD, $content . '') };
+	return undef unless defined $ct && defined $tag;
+	return $SEAL_PREFIX . encode_base64($salt . $iv . $tag . $ct, '');
 }
 
 # The same, without the legacy empty-passphrase fallback. A caller that is
@@ -789,6 +821,11 @@ sub encrypter {
 # real secret: otherwise anyone can seal with the public empty key.
 sub decrypter_strict {
 	my ($secret,$content) = @_;
+	my $plain = $seal_open->($secret,$content);
+	return $plain if defined $plain;
+	# A blob that names the AEAD format and did not open is refused, not passed
+	# to the legacy reader.
+	return undef if defined $content && index($content, $SEAL_PREFIX) == 0;
 	local *encrypt;
 	local *decrypt;
 	Crypt::Simple->import(passphrase => $secret);
@@ -797,6 +834,11 @@ sub decrypter_strict {
 
 sub decrypter {
 	my ($secret,$content) = @_;
+	my $plain = $seal_open->($secret,$content);
+	return $plain if defined $plain;
+	# A blob that names the AEAD format and did not open is refused: never fall
+	# through to the legacy reader or the empty key for it.
+	return undef if defined $content && index($content, $SEAL_PREFIX) == 0;
 	my ($notes,$ok);
 	{
 		local *encrypt;

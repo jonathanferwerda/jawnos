@@ -33,13 +33,28 @@ unlike(source('lib/JawnOS/Domain/Calendar.pm'), qr/\brand \@chars\b/,
 
 # --- a token is judged under the real key, never the empty one -------------
 my $sealed = subs::encrypter('correct-horse', 'the payload');
+like($sealed, qr/\AJS1:/, 'a new seal names the AEAD format');
 is(subs::decrypter_strict('correct-horse', $sealed), 'the payload',
 	'the real key opens its own seal');
 isnt(subs::decrypter_strict('wrong-key', $sealed), 'the payload',
 	'a different key does not');
-my $legacy = subs::encrypter('', 'legacy payload');
+my $tampered = $sealed;
+my $middle = int(length($tampered) / 2);
+substr($tampered, $middle, 1) = chr(ord(substr($tampered, $middle, 1)) ^ 1);
+isnt(subs::decrypter_strict('correct-horse', $tampered), 'the payload',
+	'a changed byte is refused');
+# A legacy blob, written the way older builds wrote it: Crypt::Simple keyed by
+# the empty passphrase.
+my $legacy;
+{
+	require Crypt::Simple;
+	local *main::encrypt;
+	local *main::decrypt;
+	Crypt::Simple->import(passphrase => undef);
+	$legacy = eval { main::encrypt('legacy payload') };
+}
 isnt(subs::decrypter_strict('real-key', $legacy), 'legacy payload',
-	'a blob sealed with the empty key is refused by the strict reader');
+	'a legacy empty-key blob is refused by the strict reader');
 is(subs::decrypter('real-key', $legacy), 'legacy payload',
 	'while the legacy reader still reads it');
 my $hooks = source('perl/hooks.pl');
