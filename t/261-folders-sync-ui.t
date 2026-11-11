@@ -170,6 +170,10 @@ like($template, qr/folders_sync_badge/, 'an item in a watched folder wears a syn
 like($template, qr/folders_sync_<%= \$f->\{'sync_status'\} %>/, 'named for the status the listing passed');
 like($template, qr/synced => 'Synced', syncing => 'Syncing', failed => 'Sync failed', unreached => 'Not reached'/,
 	'and labelled Synced, Syncing, Sync failed or Not reached');
+like($template, qr/my \$sync_hint = \(defined \$f->\{'sync_note'\} && length \$f->\{'sync_note'\}\) \? \$sync_word \. ': ' \. \$f->\{'sync_note'\} : \$sync_word/,
+	'the hint adds the reason the listing passed');
+like($template, qr/aria-label="<%= \$sync_hint %>" hint="<%= \$sync_hint %>"/,
+	'so a pointer and a screen reader both read it');
 like($css, qr/\.folders_thumb \.folders_sync_badge \{[^}]*position:\s*absolute[^}]*right:\s*-4px;\s*bottom:\s*-4px;/s,
 	'the badge sits in the icon\'s lower-right corner');
 like($css, qr/\.folders_thumb \.folders_sync_badge \{[^}]*background:\s*#2e9e4f/s, 'synced is a green badge');
@@ -188,10 +192,13 @@ like($css, qr/\.folders_thumb \.folders_archived_badge \{ left:\s*-3px; right:\s
 like($desk_js, qr/folders_sync_badge/, 'the desk wears the same badge');
 like($desk_js, qr/jawnosT\('Synced'\)/, 'in the same words, ready for translation');
 like($desk_js, qr/unreached: jawnosT\('Not reached'\)/, 'including the yellow question');
+like($desk_js, qr/var hint = f\['sync_note'\] \? word \+ ': ' \+ f\['sync_note'\] : word;/,
+	'and the desk hint carries the reason too');
 like($help, qr/green check when every chosen device has it/, 'the help explains the green check');
 like($help, qr/blue turning mark while a change is still on its way/, 'the blue mark');
 like($help, qr/red cross when a device refused the last copy/, 'the red cross');
 like($help, qr/yellow question mark when a device could not be reached/, 'and the yellow question mark');
+like($help, qr/point at the badge to read the reason/, 'and says the badge tells why');
 
 # ---- only a folder inside home can sync -------------------------------------
 

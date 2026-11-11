@@ -2247,10 +2247,41 @@ sub cloud_sync_status_under {
 	return undef;
 }
 
-# The badge every entry of a listing should wear, keyed by its absolute path.
-# A listed folder that is itself a CloudSync folder shows the whole folder's
-# state; inside one, each entry is judged by its own relative path. A path no
-# registration covers is simply absent from the answer.
+# The reason a file's last delivery could not be made, when there is one, so
+# the badge's hint can name it instead of only saying that something failed.
+sub cloud_sync_status_note {
+	my ($state, $rel) = @_;
+	return undef unless (defined $rel && length $rel && ref $state eq 'HASH');
+	foreach my $change ( @{ $state->{'pending'} || [] } ) {
+		next unless (($change->{'rel'} || '') eq $rel);
+		return (defined $change->{'error'} && length $change->{'error'}) ? $change->{'error'} : undef;
+	}
+	return undef;
+}
+
+# The reason behind a folder's badge: the refusal it carries, else the first
+# device it could not reach. Undefined when nothing under it carries one. The
+# refusal wins because that is the worse state the tally reports too.
+sub cloud_sync_status_note_under {
+	my ($state, $prefix) = @_;
+	return undef unless ref $state eq 'HASH';
+	my $pre = (defined $prefix && length $prefix) ? $prefix . '/' : '';
+	my ($refused, $blind);
+	foreach my $change ( @{ $state->{'pending'} || [] } ) {
+		next unless (defined $change->{'error'} && length $change->{'error'});
+		my $rel = $change->{'rel'} || '';
+		next if (length $pre && index($rel, $pre) != 0);
+		if ($change->{'unreached'}) { $blind = $change->{'error'} unless defined $blind; }
+		else { $refused = $change->{'error'} unless defined $refused; }
+	}
+	return $refused || $blind;
+}
+
+# The badge every entry of a listing should wear, keyed by its absolute path,
+# each with the status and, for a failed or unreached entry, the reason behind
+# it. A listed folder that is itself a CloudSync folder shows the whole
+# folder's state; inside one, each entry is judged by its own relative path. A
+# path no registration covers is simply absent from the answer.
 sub cloud_sync_status_marks {
 	my ($folder, $entries) = @_;
 	my $marks = {};
@@ -2271,7 +2302,13 @@ sub cloud_sync_status_marks {
 				my $status = (($entry->{'type'} || '') eq 'folder')
 					? &cloud_sync_status_under($state, $rel)
 					: &cloud_sync_status_file($state, $rel, $entry);
-				$marks->{$path} = $status if $status;
+				next unless $status;
+				my $note = ($status eq 'failed' || $status eq 'unreached')
+					? (($entry->{'type'} || '') eq 'folder'
+						? &cloud_sync_status_note_under($state, $rel)
+						: &cloud_sync_status_note($state, $rel))
+					: undef;
+				$marks->{$path} = { status => $status, note => $note };
 			}
 			next;
 		}
@@ -2283,7 +2320,10 @@ sub cloud_sync_status_marks {
 		next unless ($parent eq $folder);
 		my $state = &cloud_sync_state_read($reg->{'base'});
 		my $status = &cloud_sync_status_under($state, '');
-		$marks->{$root} = $status if $status;
+		next unless $status;
+		my $note = ($status eq 'failed' || $status eq 'unreached')
+			? &cloud_sync_status_note_under($state, '') : undef;
+		$marks->{$root} = { status => $status, note => $note };
 	}
 	return $marks;
 }

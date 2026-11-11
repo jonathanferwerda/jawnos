@@ -765,6 +765,12 @@ is(subs::cloud_sync_status_under($tally, 'x'), 'failed',
 splice @{ $tally->{'pending'} }, 1, 1;
 is(subs::cloud_sync_status_under($tally, 'x'), 'unreached',
 	'an unanswered device outranks a change still on its way');
+is(subs::cloud_sync_status_note($tally, 'x/question.txt'), 'no answer',
+	'a file names the reason behind its badge');
+is(subs::cloud_sync_status_note($tally, 'x/ok.txt'), undef,
+	'a file with nothing to say has no reason');
+is(subs::cloud_sync_status_note_under($tally, 'x'), 'no answer',
+	'a folder borrows the reason from the file it warns about');
 
 # The marks a listing is built from: the registered folder itself when its
 # parent is read, and its entries when the folder itself is read.
@@ -781,12 +787,13 @@ is(subs::cloud_sync_status_under($tally, 'x'), 'unreached',
 		{ path => "$badge_dir/younger", name => 'younger', type => 'folder', stat => [] }
 	);
 	my $marks = subs::cloud_sync_status_marks($badge_dir, \@entries);
-	is($marks->{"$badge_dir/a.txt"}, 'synced', 'a listed file wears its own state');
+	is($marks->{"$badge_dir/a.txt"}->{'status'}, 'synced', 'a listed file wears its own state');
+	ok(!defined $marks->{"$badge_dir/a.txt"}->{'note'}, 'and a synced file has no reason to give');
 	is($marks->{"$badge_dir/younger"}, undef, 'an empty folder has nothing to claim');
 	my $parent = $badge_dir;
 	$parent =~ s{/[^/]+$}{};
 	my $from_parent = subs::cloud_sync_status_marks($parent, [ { path => $badge_dir, name => 'badge', type => 'folder' } ]);
-	is($from_parent->{$badge_dir}, 'synced', 'the registered folder wears the whole folder state from its parent');
+	is($from_parent->{$badge_dir}->{'status'}, 'synced', 'the registered folder wears the whole folder state from its parent');
 	is(subs::cloud_sync_status_marks("$parent/elsewhere", [ { path => "$parent/elsewhere/x", type => 'file' } ])->{"$parent/elsewhere/x"}, undef,
 		'a path no registration covers has no badge');
 	subs::cloud_sync_registrations_write([]);
@@ -816,6 +823,8 @@ is(subs::cloud_sync_status_under($tally, 'x'), 'unreached',
 	ok($blind_pending->{'unreached'}, 'and says no device answered');
 	is(subs::cloud_sync_status_file($blind_state, 'bad.txt', { size => 3, stat => [ 0, 0, 0, 0, 0, 0, 0, 3, 0, 0 ] }), 'unreached',
 		'so the listing asks with the yellow question mark');
+is(subs::cloud_sync_status_note($blind_state, 'bad.txt'), 'the archive machine did not answer',
+	'and the badge can say what happened');
 	# a pass that reaches it again clears the mark, so the file stops asking
 	subs::cloud_sync_state_modify($blind_base, sub {
 		my $st = shift;
@@ -851,6 +860,8 @@ is(subs::cloud_sync_status_under($tally, 'x'), 'unreached',
 	ok(!$refused_pending->{'unreached'}, 'an answered refusal is not an unreachable device');
 	is(subs::cloud_sync_status_file($refused_state, 'refused.txt', { size => 7, stat => [ 0, 0, 0, 0, 0, 0, 0, 7, 0, 0 ] }), 'failed',
 		'so the listing marks that file failed');
+is(subs::cloud_sync_status_note($refused_state, 'refused.txt'), 'no room for this file',
+	'and the hint can say why the peer refused it');
 }
 
 done_testing();

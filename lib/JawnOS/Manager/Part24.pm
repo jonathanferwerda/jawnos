@@ -106,12 +106,16 @@ sub folders_listing($folder, $unlocked, $c, $show_hidden) {
 	@{$files} = grep { $_->{'type'} ne 'folder' } @{$files};
 	# The CloudSync badge on an item's icon: a green check when every device has
 	# it, a blue mark while a change is on its way, a red cross when a delivery
-	# was refused. Only a registered folder's paths are answered, and a listing
-	# must never fail because that bookkeeping could not be read.
+	# was refused and a yellow question mark when a device never answered. A
+	# refused or unanswered item also carries the reason for the badge's hint.
+	# Only a registered folder's paths are answered, and a listing must never
+	# fail because that bookkeeping could not be read.
 	my $sync_marks = eval { &subs::cloud_sync_status_marks($folder, [ @folders, @{$files} ]) } || {};
 	foreach my $file ( @folders, @{$files} ) {
-		my $status = $sync_marks->{ $file->{'path'} || '' };
-		$file->{'sync_status'} = $status if (defined $status && length $status);
+		my $mark = $sync_marks->{ $file->{'path'} || '' };
+		next unless (ref $mark eq 'HASH' && defined $mark->{'status'} && length $mark->{'status'});
+		$file->{'sync_status'} = $mark->{'status'};
+		$file->{'sync_note'} = $mark->{'note'} if (defined $mark->{'note'} && length $mark->{'note'});
 	}
 	# the names the house gave its own folders and seals, for the eye only: the
 	# path every command works on is still the real one

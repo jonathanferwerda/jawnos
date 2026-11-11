@@ -211,13 +211,16 @@ function deskFileItem(f) {
 	var thumb = $('<span class="folders_thumb"></span>')
 		.append($('<img draggable="false" alt="">').attr('src', f['icon'] || ''));
 	// The same CloudSync badge the window's listing wears: green check when
-	// every device has it, blue turning mark on its way, red cross refused.
+	// every device has it, blue turning mark on its way, red cross refused,
+	// yellow question mark when a device never answered. A refused or
+	// unanswered item carries the reason in its hint.
 	if (f['sync_status']) {
 		var words = { synced: jawnosT('Synced'), syncing: jawnosT('Syncing'), failed: jawnosT('Sync failed'), unreached: jawnosT('Not reached') };
 		var word = words[f['sync_status']] || words.syncing;
+		var hint = f['sync_note'] ? word + ': ' + f['sync_note'] : word;
 		$('<span></span>')
 			.addClass('folders_sync_badge folders_sync_' + f['sync_status'])
-			.attr({ role: 'img', 'aria-label': word, hint: word })
+			.attr({ role: 'img', 'aria-label': hint, hint: hint })
 			.appendTo(thumb);
 	}
 	thumb.appendTo(item);
