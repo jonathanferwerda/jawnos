@@ -112,5 +112,35 @@
 		"path": "perl/junderground.pl",
 		"evidence": "$ua->insecure(1) if (&jg_setting('insecure') || '') eq 'yes';",
 		"reason": "The junderground client keeps insecure as an explicit opt-in setting, default off; the agent is lenient only when the person set it to yes. It is a deliberate user choice, never a default."
+	},
+	{
+		"id": "tls.insecure",
+		"path": "lib/JawnOS/Domain/Tunnel.pm",
+		"evidence": "$ua->insecure(1)->get($url)->result",
+		"reason": "Reviewed design: tunnel_peer_enrol dials the hub's loopback tunnel port, which forwards to the peer's main/PORT_DOCK listener. That listener serves the peer's public wildcard or generated self-signed certificate; the house-CA leaf is on the peer listener (main port + 6), which this tunnel does not carry, so no CA held here can prove the hop. The signed /gate request authenticates the caller. Move the tunnel data plane to the peer listener to verify this later; until then this evidence pin keeps the lenient loopback rail."
+	},
+	{
+		"id": "tls.insecure",
+		"path": "lib/JawnOS/Domain/Device.pm",
+		"evidence": "$ua->insecure(1)->get($manager . '/gate?restore_list=",
+		"reason": "Reviewed design: the device scan's gate call goes through the loopback tunnel (or the LAN manager port) to the peer's main/PORT_DOCK listener, which serves the public wildcard or generated self-signed certificate. The house-CA leaf is on the peer listener (main port + 6), which this scan does not dial, so it shares Tunnel.pm's trust limitation. The signed gate request is the proof here."
+	},
+	{
+		"id": "tls.insecure",
+		"path": "lib/JawnOS/Domain/Lan.pm",
+		"evidence": "else { $ua->insecure(1) }",
+		"reason": "Reviewed design for both nearby_position and operator_door_push (their lines are identical, so one evidence pin covers both): the LAN target is resolved through peer_secure_url and peer_tls_verify, and the house-CA listener (port + 6) is taken only when its leaf proves the address. Otherwise the target's manager port keeps the signed lenient rail, because it serves the public wildcard or generated self-signed certificate that no CA held here can prove."
+	},
+	{
+		"id": "tls.insecure",
+		"path": "lib/JawnOS/Controller/manager_configure2.pm",
+		"evidence": "$ua->insecure(1);",
+		"reason": "Reviewed design: the single lenient rail this route keeps in $lenient_post, for an unrostered house that holds only the generated self-signed certificate. A rostered peer uses peer_secure_url and the house-CA listener when its leaf proves the address; an unrostered public host is verified against the system store, and this lenient retry runs only after that verified request failed at TLS, so a fresh LAN house can still join."
+	},
+	{
+		"id": "tls.insecure",
+		"path": "perl/tunnel.pl",
+		"evidence": "$ua->insecure(1) if $ua;",
+		"reason": "Reviewed design: _hub_allow_self_signed is the peers-side fallback. A hub named by a public-looking domain uses the system store, and a loopback/LAN/tailnet name starts lenient because it may hold the generated self-signed certificate. A public-looking hub that nevertheless serves a self-signed certificate falls back here once, after the websocket callback reports a TLS failure."
 	}
 ]

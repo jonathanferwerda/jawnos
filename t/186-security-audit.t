@@ -191,29 +191,37 @@ ok(!(grep { !$_->{'known'} } @js), 'both are known through their evidence-pinned
 
 # The accepted-by-design TLS fallbacks are evidence-pinned too: the entry names
 # the source line, so a reflow cannot break the trunk and a new insecure call
-# cannot inherit the accepted one. Fifteen entries cover sixteen findings
-# because Remote's helper line appears in two branches under one entry.
+# cannot inherit the accepted one. Twenty entries cover twenty-two findings
+# because Remote's helper line appears in two branches under one entry and
+# Lan's identical line appears in nearby_position and operator_door_push under
+# another.
 my @tls_entries = grep { $_->{'id'} eq 'tls.insecure' } @{$allow};
-is(scalar @tls_entries, 15, 'the accepted insecure-TLS sites are listed');
+is(scalar @tls_entries, 20, 'the accepted insecure-TLS sites are listed');
 ok(!(grep { !defined $_->{'evidence'} || !length $_->{'evidence'} } @tls_entries),
 	'each accepted insecure-TLS site is pinned by evidence');
 ok(!(grep { defined $_->{'line'} } @tls_entries), 'none is pinned by line');
 my %tls_pin = map { (($_->{'path'} // '') . "\0" . $_->{'evidence'}) => 1 } @tls_entries;
 is(scalar keys %tls_pin, scalar @tls_entries, 'no two accepted insecure-TLS sites share a path and pin');
+is(scalar @{$allow}, 24, 'the allowlist carries twenty-four evidence-pinned entries');
+is($report->{'summary'}{'known'}, 26, 'twenty-six findings are known by evidence');
 
-# The run marks those sixteen known (one entry covers two findings) and leaves
-# the design sites and firmware unallowed.
+# The run marks those twenty-two known (two entries each cover two findings) and
+# leaves only the firmware setInsecure calls unallowed.
 my @tls_known = grep { $_->{'known'} } @tls;
-is(scalar @tls_known, 16, 'the accepted insecure-TLS findings are known');
+is(scalar @tls_known, 22, 'the accepted insecure-TLS findings are known');
 my $design_path = qr{^(?:lib/JawnOS/Domain/(?:Tunnel|Lan)\.pm|lib/JawnOS/Domain/Device\.pm|lib/JawnOS/Controller/manager_configure2\.pm|perl/tunnel\.pl)$};
 my $firmware_path = qr{^(?:jp|jt|jw)/};
 my @design = grep { $_->{'path'} =~ $design_path } @tls;
-ok(scalar @design >= 6, 'the design sites are still reported');
-ok(!(grep { $_->{'known'} } @design), 'the design sites stay unallowed');
+is(scalar @design, 6, 'the reviewed design sites are still reported');
+ok(!(grep { !$_->{'known'} } @design), 'the design sites are known through their evidence-pinned entries');
 my @firmware = grep { $_->{'path'} =~ $firmware_path } @tls;
-ok(scalar @firmware > 0, 'firmware insecure-TLS calls are still reported');
+is(scalar @firmware, 13, 'the firmware insecure-TLS calls are still reported');
 ok(!(grep { $_->{'known'} } @firmware), 'firmware setInsecure stays unallowed');
-my @stray = grep { !$_->{'known'} && $_->{'path'} !~ $design_path && $_->{'path'} !~ $firmware_path } @tls;
-is(scalar @stray, 0, 'the only unallowed insecure-TLS calls are the design sites and firmware');
+my @unallowed = grep { !$_->{'known'} } @tls;
+is(scalar @unallowed, 13, 'the only unallowed insecure-TLS findings are the firmware calls');
+ok(!(grep { $_->{'path'} !~ $firmware_path } @unallowed),
+	'every unallowed insecure-TLS finding is a firmware setInsecure site');
+ok(!(grep { $_->{'evidence'} !~ /setInsecure\(\)/ } @unallowed),
+	'each one is a setInsecure() call, not a design site');
 
 done_testing();
