@@ -24,7 +24,10 @@ Moved out of `AGENTS.md` (a per-task reference, not an every-request map).
   the newest staged APK **and** a matching `app_release.json` manifest to the GitHub `releases`
   release, so a device can pull it from github.com as well as from a peer. **A build that is only
   staged never reaches GitHub** — peers carry it, but a device reading the GitHub manifest sees the old
-  versionCode and stays "up to date". Always build **and** publish.
+  versionCode and stays "up to date". Always build **and** publish. The site's
+  `server/downloads.json` is rewritten only when the build it names changes, so
+  rerunning a publish is not a source write and leaves the checkout clean; a
+  genuine change is committed with the release, as before.
 - **Runtime zips ride the same release.** `scripts/runtime_build.pl` assembles the Perl runtime the APK
   unpacks on first run (`jawnrt-<arch>-<version>.zip` for the core, `jawnrt-<arch>-<part>-<version>.zip`
   for the optional parts such as `video`, `media`, `ocr`), and `app_publish.pl` uploads one when the

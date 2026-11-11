@@ -22,6 +22,8 @@ use File::Slurp qw(read_file write_file);
 use Digest::SHA qw(sha256_hex);
 use Mojo::JSON qw(encode_json decode_json);
 
+require "$FindBin::Bin/publish_lib.pl";
+
 my $root = abs_path("$FindBin::Bin/..");
 my $dir  = "$root/releases";
 my ($repo, $tag, $apk, $dry_run) = ('jonathanferwerda/jawnos', 'releases', undef, 0);
@@ -301,36 +303,36 @@ print "runtimes already on the release\n" unless @up;
 
 # The site is static and its host has no outbound network, so it reads this one
 # small file from raw.githubusercontent (the only cross-origin place a browser
-# can read). Update it after a real upload; the routine that publishes also
-# commits it, which is what makes jawnos.ca see the new build.
+# can read). Update it after a real upload; the release routine commits it,
+# which is what makes jawnos.ca see the new build. A rerun for the build the
+# file already names changes nothing, so it cannot leave the checkout dirty.
 sub update_downloads_json {
 	my ($j) = @_;
 	return unless ($j->{'product'} || '') eq 'app';
 	my $path = "$root/server/downloads.json";
-	my $data = {};
-	if (-f $path) {
-		my $text = eval { read_file($path) };
-		$data = eval { decode_json($text) } || {} if defined $text && length $text;
-	}
-	my @t = gmtime(time());
-	$data->{'generated'} = sprintf('%04d-%02d-%02dT%02d:%02d:%02dZ', $t[5] + 1900, $t[4] + 1, $t[3], $t[2], $t[1], $t[0]);
-	$data->{'app'} = {
-		'ok' => Mojo::JSON::true,
-		'url' => "https://github.com/$repo/releases/download/$tag/" . $j->{'filename'},
-		'filename' => $j->{'filename'},
-		'versionName' => $j->{'vn'},
-		'versionCode' => $j->{'vc'} + 0,
-		'size' => $j->{'size'} + 0,
-		'sha256' => $j->{'sha'},
-		'source' => $j->{'source_commit'}
-			? "https://github.com/jonathanferwerda/termux-app/tree/$j->{'source_commit'}"
-			: 'https://github.com/jonathanferwerda/termux-app',
-		'sourceCommit' => $j->{'source_commit'} || '',
-		'sourceVersion' => $j->{'source_version'} || '',
-		'license' => 'GPL-3.0',
-	};
-	write_file($path, encode_json($data));
-	print "updated downloads.json (commit it so jawnos.ca sees this build)\n";
+	my $wrote = PublishManifest::update(
+		$path,
+		{
+			'app' => {
+				'ok' => Mojo::JSON::true,
+				'url' => "https://github.com/$repo/releases/download/$tag/" . $j->{'filename'},
+				'filename' => $j->{'filename'},
+				'versionName' => $j->{'vn'},
+				'versionCode' => $j->{'vc'} + 0,
+				'size' => $j->{'size'} + 0,
+				'sha256' => $j->{'sha'},
+				'source' => $j->{'source_commit'}
+					? "https://github.com/jonathanferwerda/termux-app/tree/$j->{'source_commit'}"
+					: 'https://github.com/jonathanferwerda/termux-app',
+				'sourceCommit' => $j->{'source_commit'} || '',
+				'sourceVersion' => $j->{'source_version'} || '',
+				'license' => 'GPL-3.0',
+			},
+		},
+		sub { encode_json($_[0]) },
+		sub { decode_json($_[0]) },
+	);
+	print "updated downloads.json (commit it so jawnos.ca sees this build)\n" if $wrote;
 }
 
 foreach my $j (@jobs) {

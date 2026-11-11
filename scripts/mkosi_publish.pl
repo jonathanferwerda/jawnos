@@ -50,6 +50,8 @@ use Digest::SHA ();
 use JSON::PP ();
 use Getopt::Long qw(GetOptions);
 
+require "$FindBin::Bin/publish_lib.pl";
+
 my $root = abs_path("$FindBin::Bin/..");
 my $dir  = "$root/desktop/mkosi/output";
 my $repo = $ENV{'JAWNOS_DESKTOP_REPO'} || 'jonathanferwerda/jawnos';
@@ -397,34 +399,29 @@ sub upload_r2 {
 
 # jawnos.ca is static and its host has no outbound network, so the page reads
 # this one small file from raw.githubusercontent. A successful publish records
-# the image; the routine that runs the publish commits the file, which is what
-# makes the site see it.
+# the image; the release routine commits the file, which is what makes the site
+# see it. A rerun for the image the file already names changes nothing, so it
+# cannot leave the checkout dirty.
 sub write_downloads_json {
 	my ($ok, $url, $manifest_url, $version, $size, $sha) = @_;
 	my $path = "$root/server/downloads.json";
-	my $data = {};
-	if (-f $path) {
-		my $text = '';
-		if (open(my $fh, '<', $path)) { local $/; $text = <$fh>; close $fh; }
-		$data = eval { JSON::PP->new->decode($text) } || {} if length $text;
-	}
-	my @t = gmtime(time());
-	$data->{'generated'} = sprintf('%04d-%02d-%02dT%02d:%02d:%02dZ', $t[5] + 1900, $t[4] + 1, $t[3], $t[2], $t[1], $t[0]);
-	$data->{'desktop'} = {
-		'ok' => $ok ? JSON::PP::true : JSON::PP::false,
-		'url' => $url,
-		'manifest' => $manifest_url,
-		'size' => $size + 0,
-		'sha256' => $sha,
-		'version' => $version,
-		'label' => 'One file, no parts',
-	};
-	my $json = JSON::PP->new->canonical->pretty->encode($data);
-	if (open(my $fh, '>', $path)) {
-		print {$fh} $json;
-		close $fh;
-		print "updated downloads.json (commit it so jawnos.ca sees this image)\n";
-	}
+	my $wrote = PublishManifest::update(
+		$path,
+		{
+			'desktop' => {
+				'ok' => $ok ? JSON::PP::true : JSON::PP::false,
+				'url' => $url,
+				'manifest' => $manifest_url,
+				'size' => $size + 0,
+				'sha256' => $sha,
+				'version' => $version,
+				'label' => 'One file, no parts',
+			},
+		},
+		sub { JSON::PP->new->canonical->pretty->encode($_[0]) },
+		sub { JSON::PP->new->decode($_[0]) },
+	);
+	print "updated downloads.json (commit it so jawnos.ca sees this image)\n" if $wrote;
 }
 
 sub download_url {

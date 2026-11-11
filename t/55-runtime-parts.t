@@ -306,6 +306,8 @@ like(read_file("$bins_out/runtime-bins-parts.txt"), qr/^core\tbin\/perl\tfile$/m
 my $tree = "$tmp/publish-tree";
 make_path("$tree/scripts", "$tree/releases", "$tree/app/app/src/main/assets");
 copy($publish, "$tree/scripts/app_publish.pl") or die "copy app_publish.pl: $!";
+copy("$root/scripts/publish_lib.pl", "$tree/scripts/publish_lib.pl")
+	or die "copy publish_lib.pl: $!";
 write_file("$tree/releases/jawnos-app-1-0.0.1.apk", "apk");
 my $core_payload = "core archive";
 write_file("$tree/releases/core.zip", $core_payload);

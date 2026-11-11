@@ -108,6 +108,8 @@ subtest 'the release notes reach gh as the file bytes' => sub {
 	my $copy = "$root/scripts/app_publish.pl";
 	make_path("$root/scripts", "$root/docs", "$root/server");
 	spew($copy, slurp($script));
+	spew("$root/scripts/publish_lib.pl",
+		slurp("$FindBin::Bin/../scripts/publish_lib.pl"));
 	spew("$root/docs/app-release-notes.md",
 		"## 2026-11-10 \xe2\x80\x94 a dash\n\n- one line\n");
 	spew("$root/server/downloads.json", '{}');
