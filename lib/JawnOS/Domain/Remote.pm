@@ -396,10 +396,13 @@ sub peer_secure_url {
 	# working peer listener "not verified" and refuse the peer login - leaving
 	# every relay without the session cookie it needs to pass the gate.
 	my %known;
+	my %raw;
 	for my $candidate ($rm->{'ip'}, $rm->{'fqdn'}, &peer_resolve_addresses($rm), (&peer_manager_host($rm))[0]) {
 		next unless defined $candidate && length $candidate;
+		my $original = $candidate;
 		$candidate =~ s/^\[|\]$//g;
 		$known{lc $candidate} = 1;
+		$raw{lc $candidate} = $original;
 	}
 	my $host_key = lc $host;
 	$host_key =~ s/^\[|\]$//g;
@@ -411,11 +414,28 @@ sub peer_secure_url {
 	# is still used, unverified, because the peer signature alone proves the
 	# caller - the same rail a machine with no leaf has always had.
 	my $verified_port = &peer_tls_port($rm, { host => $host });
+	my $verified_key = $host_key;
+	if (!$verified_port) {
+		# The stored route may be a LAN address whose leaf predates it (the
+		# DHCP move). Another address the same row advertises - its tailnet,
+		# its network map - can still prove itself, and a verified login over
+		# that route is exactly what the house key requires.
+		for my $candidate ( sort keys %known ) {
+			next if $candidate eq $host_key;
+			my $port = &peer_tls_port($rm, { host => $raw{$candidate} });
+			if ($port) { $verified_port = $port; $verified_key = $candidate; last; }
+		}
+	}
 	my $peer = $verified_port || &peer_listener_port($rm, { host => $host });
 	return ($url, 0) unless $peer;
 	my $base = ($scheme eq 'http' || $scheme eq 'https') ? 'https' : 'wss';
 	my $secure = $url;
-	$secure =~ s{^(?:https?|wss?)://(\[[^\]]+\]|[^/:]+)(?::\d+)?}{$base . '://' . $1 . ':' . $peer}e;
+	if ($verified_port && $verified_key ne $host_key) {
+		$secure =~ s{^(?:https?|wss?)://(\[[^\]]+\]|[^/:]+)(?::\d+)?}{$base . '://' . $raw{$verified_key} . ':' . $peer}e;
+	}
+	else {
+		$secure =~ s{^(?:https?|wss?)://(\[[^\]]+\]|[^/:]+)(?::\d+)?}{$base . '://' . $1 . ':' . $peer}e;
+	}
 	return ($secure, $verified_port ? 1 : 0);
 }
 

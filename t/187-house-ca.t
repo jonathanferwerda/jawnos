@@ -196,6 +196,23 @@ is(subs::peer_port_for({ port => 3001 }), 3007, 'and follows a working_port too'
 is(subs::peer_port_for({}), 45551, 'a row with no port falls back to the house port');
 is(subs::peer_port_for(65534), 65528, 'a port that would overflow wraps down');
 
+# A stored LAN route whose leaf predates that address can still be reached on
+# another address the same row advertises (its tailnet), and that listener is
+# verified. This is the route a same-LAN peer uses when the leaf is stale.
+{
+	local *subs::peer_tls_port = sub {
+		my ($rm, $opts) = @_;
+		return 45551 if ($opts->{'host'} || '') eq '100.64.0.1';
+		return 0;
+	};
+	local *subs::peer_listener_port = sub { return 0 };
+	my ($alt_url, $alt_verified) = subs::peer_secure_url(
+		{ ip => '192.168.1.147', tailnet_ip => '100.64.0.1', port => 45545, tunnel => 'no' },
+		'https://192.168.1.147:45545/manager');
+	is($alt_verified, 1, 'a verified alternate address the row advertises is used');
+	is($alt_url, 'https://100.64.0.1:45551/manager', 'and the URL moves to that host and listener port');
+}
+
 my $tmp = tempdir(CLEANUP => 1);
 make_path("$tmp/server");
 write_file("$tmp/server/house-ca.pem", "not a real certificate\n");
