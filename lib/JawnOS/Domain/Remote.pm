@@ -353,6 +353,32 @@ sub peer_tls_port {
 # Rewrite a peer url to the peer listener when that peer answers there and this
 # machine holds the CA. Returns ($url, $verified). A tunnel row is a loopback
 # route and is left exactly as it is.
+# Does anything answer on the peer listener at all? This is the fallback route:
+# a listener whose leaf names another address (a machine whose LAN address moved
+# under DHCP) still serves the signed rail, and that is better than leaving the
+# peer unreachable because the certificate lags an address change.
+my %peer_listener_probe;
+
+sub peer_listener_port {
+	my ($rm, $opts) = @_;
+	$opts ||= {};
+	my $host = $opts->{'host'} // ($rm->{'ip'} // '');
+	return 0 unless defined $host && length $host;
+	my $port = &peer_port_for($rm);
+	my $key = 'tcp:' . $host . ':' . $port;
+	my $now = time;
+	if (my $cached = $peer_listener_probe{$key}) {
+		return $cached->[1] if $now - $cached->[0] < 300;
+	}
+	require IO::Socket::INET;
+	my $sock = IO::Socket::INET->new(
+		PeerAddr => $host, PeerPort => $port, Proto => 'tcp', Timeout => 1);
+	my $ok = $sock ? 1 : 0;
+	close $sock if $sock;
+	$peer_listener_probe{$key} = [ $now, $ok ? $port : 0 ];
+	return $ok ? $port : 0;
+}
+
 sub peer_secure_url {
 	my ($rm, $url) = @_;
 	return ($url, 0) unless ref $rm eq 'HASH' && defined $url && length $url;
@@ -364,12 +390,19 @@ sub peer_secure_url {
 	my $row_host = $rm->{'ip'} // '';
 	my $row_fqdn = $rm->{'fqdn'} // '';
 	return ($url, 0) unless $host eq $row_host || ($row_fqdn ne '' && $host eq $row_fqdn);
-	my $peer = &peer_tls_port($rm, { host => $host });
+	# The listener is the route worth trying: the manager port is often bound to
+	# loopback and published by the tunnel, while the peer listener answers on
+	# the machine's own addresses. A leaf that proves this address lets the
+	# request be verified against the house CA; a listener that cannot prove it
+	# is still used, unverified, because the peer signature alone proves the
+	# caller - the same rail a machine with no leaf has always had.
+	my $verified_port = &peer_tls_port($rm, { host => $host });
+	my $peer = $verified_port || &peer_listener_port($rm, { host => $host });
 	return ($url, 0) unless $peer;
 	my $base = ($scheme eq 'http' || $scheme eq 'https') ? 'https' : 'wss';
 	my $secure = $url;
 	$secure =~ s{^(?:https?|wss?)://(\[[^\]]+\]|[^/:]+)(?::\d+)?}{$base . '://' . $1 . ':' . $peer}e;
-	return ($secure, 1);
+	return ($secure, $verified_port ? 1 : 0);
 }
 
 sub remote_useragent_maker($data) {

@@ -71,6 +71,8 @@ like($crypt, qr/X-Peer-Audience/, 'and the host it is addressed to');
 like($crypt, qr/return 0 unless \(\$c->req->headers->header\('X-Peer-Sig-Version'\) \/\/ ''\) eq '2'/, 'the verifier requires v2');
 like($crypt, qr/secure_compare\(\$body_sha, &sha256_hex\(\$c->req->body \/\/ ''\)\)/, 'the verifier recomputes the body digest');
 like($crypt, qr/\$aud_norm eq \$here/, 'and checks the recipient');
+like($crypt, qr/my \$row_key = \$rm->\{'signatorial'\} \|\| \$rm->\{'uuid'\};/,
+	'the proved identity is the signatorial a mirror entry and its row share');
 like($crypt, qr/insert or ignore into cache \(uuid, context/, 'the nonce is claimed atomically');
 like($crypt, qr/\$claim->rows/, 'and a duplicate claim is refused');
 

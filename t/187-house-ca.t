@@ -207,9 +207,11 @@ SKIP: {
 	skip 'could not open a loopback listener', 5 unless $listener;
 	my $peer_port = $listener->sockport;
 	my $rm = { ip => '127.0.0.1', port => $peer_port - 6, tunnel => 'no' };
-	my ($url, $verified) = subs::peer_secure_url($rm, "https://127.0.0.1:$peer_port/manager/vault_share?x=1");
-	is($verified, 0, 'a listener that cannot prove its address is not chosen');
-	is($url, "https://127.0.0.1:$peer_port/manager/vault_share?x=1", 'the stored route is kept as it is');
+	my $manager_url = 'https://127.0.0.1:' . ($peer_port - 6) . '/manager/vault_share?x=1';
+	my ($url, $verified) = subs::peer_secure_url($rm, $manager_url);
+	is($verified, 0, 'a listener that cannot prove its address is chosen unverified');
+	like($url, qr{^https://127\.0\.0\.1:$peer_port/manager/vault_share\?x=1$},
+		'and the path and query move to the listener port');
 
 	my ($tunnel_url, $tunnel_verified) = subs::peer_secure_url(
 		{ %$rm, tunnel => 'yes' }, "https://127.0.0.1:$peer_port/manager");
@@ -278,9 +280,9 @@ SKIP: {
 	else {
 		my ($url, $verified) = subs::peer_secure_url(
 			{ ip => '127.0.0.1', port => $here_port - 6, tunnel => 'no' },
-			"https://127.0.0.1:$here_port/manager");
-		is($verified, 1, 'a listener whose leaf names this address is chosen');
-		like($url, qr{^https://127\.0\.0\.1:[0-9]+/manager$}, 'and the URL moves to its port');
+			'https://127.0.0.1:' . ($here_port - 6) . '/manager');
+		is($verified, 1, 'a listener whose leaf names this address is verified');
+		like($url, qr{^https://127\.0\.0\.1:$here_port/manager$}, 'and the URL moves to its port');
 		is(subs::peer_tls_port({ ip => '127.0.0.1', port => $here_port - 6 }, { host => '127.0.0.1' }),
 			$here_port, 'the probe answers with the listener port');
 		kill 'TERM', $here_pid;
@@ -292,9 +294,10 @@ SKIP: {
 		else {
 			my ($moved_url, $moved_verified) = subs::peer_secure_url(
 				{ ip => '127.0.0.1', port => $moved_port - 6, tunnel => 'no' },
-				"https://127.0.0.1:$moved_port/manager");
-			is($moved_verified, 0, 'a leaf that names another address is not chosen');
-			is($moved_url, "https://127.0.0.1:$moved_port/manager", 'so the stored route is kept');
+				'https://127.0.0.1:' . ($moved_port - 6) . '/manager');
+			is($moved_verified, 0, 'a leaf that names another address is not trusted for it');
+			like($moved_url, qr{^https://127\.0\.0\.1:$moved_port/manager$},
+				'but the listener is still dialled, on the signature alone');
 			kill 'TERM', $moved_pid;
 			waitpid($moved_pid, 0);
 		}

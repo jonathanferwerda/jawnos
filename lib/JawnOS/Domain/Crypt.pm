@@ -437,7 +437,12 @@ sub peer_verify {
 	# already spent the nonce, so a second call for the same row answers from
 	# that result instead of refusing a request the house just accepted.
 	my $verified = $c->stash('peer_verified_key');
-	my $row_key = $rm->{'uuid'} || $rm->{'signatorial'};
+	# The signatorial is what a roster row and the hub's `mirrors` entry for the
+	# same machine share; the uuid is a row name, and a mirror entry carries the
+	# device's own uuid, which the receiving roster has never seen. A route that
+	# resolves the caller afterwards can only find the row by the signatorial, so
+	# that is the half to keep - and peer_allows accepts either.
+	my $row_key = $rm->{'signatorial'} || $rm->{'uuid'};
 	# either half of the row's identity counts: the gate proves a direct row by
 	# its uuid and a mirror entry by its signatorial (see peer_allows)
 	if ($verified && length $verified) {
