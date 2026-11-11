@@ -821,6 +821,10 @@ sub manager_starter() {
 	# the tree, and a 1.8 GB launcher has no archiving to do.
 	unless ($device eq 'controller') {
 		&subs::subprocessor(\&jobs::job_minion_worker, { name => 'Minion Worker' });
+		# The CloudSync sweep runs in its own child: the Minion worker's loop
+		# reset would drop a timer armed in it, and a folder changed while no
+		# Folders window is open has to reach the other machines on its own.
+		&subs::subprocessor(\&jobs::job_cloud_sync_sweep, { name => 'cloud sync sweep' });
 	}
 
 	# The evaluation schedules live in this machine's queue, but the cadence that

@@ -309,6 +309,7 @@ my $president = read_file("$root/perl/President.pl");
 like($president, qr/JawnOS::Platform::Ports::port_for\('peer', base => \$port\)/, 'President derives the peer port through the ports seam');
 like($president, qr/\$ENV\{PORT_PEER\} = \$peer_port/, 'and exports it for the advertisement');
 like($president, qr/peer-fullchain\.pem.*peer-privkey\.pem/s, 'the peer listener uses the house-CA leaf');
+like($president, qr/jobs::job_cloud_sync_sweep/, 'the tree starts the CloudSync sweeper beside the Minion worker');
 like($president, qr/push \@ws_listeners, 'https:\/\/\*:' \. \$peer_port/, 'the socket server carries the peer listener');
 
 my $network = read_file("$root/lib/JawnOS/Domain/Network.pm");

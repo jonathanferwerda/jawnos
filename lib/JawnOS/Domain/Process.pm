@@ -72,6 +72,7 @@ our %WARRANTY = (
 	'TTY WS Server'                  => 'forever',
 	'utility functions'              => 'forever',
 	'Minion Worker'                  => 'forever',
+	'cloud sync sweep'               => 'forever',
 	'whisper server'                 => 'forever',
 	'ollama serve'                   => 'forever',
 	'slow loops'                     => 'forever',

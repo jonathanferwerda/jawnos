@@ -266,7 +266,20 @@ like($controller, qr/'archive_fetch_home', 'cloud_sync'/, 'the queue lists Cloud
 
 like($loader, qr/\bcloud_sync_job\b/, 'the loader maps the new domain helpers');
 like($key, qr/cloud_sync => \\&cloud_sync_job/, 'Minion knows the task');
-like($jobs, qr/cloud_sync_sweep_start/, 'the worker starts the sweep');
+like($jobs, qr/cloud_sync_sweep_start/, 'the sweep is armed by a process of its own');
+# Minion::Worker::run resets the event loop before it dequeues anything, so a
+# timer armed just before it is dropped and the sweep never fires: a change made
+# while no Folders window was open waited for ever. The sweep therefore has its
+# own subprocessor, and the Minion worker must not arm it.
+like($jobs, qr/sub job_cloud_sync_sweep \{[^}]*cloud_sync_sweep_start[^}]*Mojo::IOLoop->start/s,
+	'the sweep process arms its timer and then runs the loop');
+like($jobs, qr/'cloud sync sweep' => \\&job_cloud_sync_sweep/, 'and is registered by name');
+my ($minion_worker) = $jobs =~ /(sub job_minion_worker \{.*?\n\})/s;
+ok(defined $minion_worker, 'the Minion worker sub is readable');
+unlike($minion_worker, qr/cloud_sync_sweep_start/,
+	'the Minion worker does not arm a timer the loop reset would drop');
+like($jobs, qr/Minion::Worker::run resets the event\b/,
+	'and the reason is written down where the next reader will be');
 
 like($context, qr/'cloud_sync'/, 'the folder menu offers CloudSync');
 like($folders, qr/folders_cloud_open/, 'Places has a CloudSync row');

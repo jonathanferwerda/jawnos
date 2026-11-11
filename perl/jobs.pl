@@ -414,12 +414,22 @@ sub job_minion_worker {
 	# the launcher clears the queue at startup and the nightly evaluation
 	# wishes live in the settings: put their schedules back
 	&subs::nightly_evaluation_reconcile();
-	# CloudSync folders are watched by the worker, not a browser tab: a change
-	# while no Folders window is open still reaches the other machines.
-	&subs::cloud_sync_sweep_start();
+	# The CloudSync sweep is NOT armed here. Minion::Worker::run resets the event
+	# loop as its first act, which drops a timer armed before it - so the sweep
+	# never fired and a change made while nobody pressed Sync waited for ever.
+	# It has its own process below.
 	my $worker = $minion->worker;
 	$worker->status->{jobs} = 1;
 	$worker->run;
+}
+
+# CloudSync folders are watched by a machine, not a browser tab: a change made
+# while no Folders window is open still reaches the other machines. It is a
+# subprocessor of its own because the Minion worker's run resets the event loop
+# and would drop any timer armed before it (see job_minion_worker).
+sub job_cloud_sync_sweep {
+	&subs::cloud_sync_sweep_start();
+	Mojo::IOLoop->start;
 }
 
 # The evaluation schedules live in this machine's queue, but the cadence that
@@ -504,6 +514,7 @@ sub job_utility_functions {
 	'voice sync' => \&job_voice_sync,
 	'whisper server' => \&job_whisper_server,
 	'Minion Worker' => \&job_minion_worker,
+	'cloud sync sweep' => \&job_cloud_sync_sweep,
 	'evaluation schedules' => \&job_evaluation_schedules,
 	'evaluation dispatch' => \&job_evaluation_dispatch,
 );
