@@ -127,7 +127,7 @@ sub notes_category_list {
 # long history opens as quickly as before.
 sub notes_category_rows {
 	my $rows = &subs::db_query(
-		"select text, timestamp, uuid, app, category, status, ost from notes where coalesce(text, '') != '' and coalesce(ost, '') != ? order by timestamp desc limit 300",
+		"select text, timestamp, server_time, uuid, app, category, status, ost from notes where coalesce(text, '') != '' and coalesce(ost, '') != ? order by timestamp desc limit 300",
 		$NOTES_DELETE_MARKER
 	)->hashes;
 	foreach my $row ( @{$rows} ) {
@@ -170,6 +170,55 @@ sub notes_category_counts ($rows) {
 		$count{$code}++ if length $code;
 	}
 	return ( \%count, $total );
+}
+
+# The line a note shows in the list. A note is what the person wrote; the list
+# shows a heading, so a long note does not fill the window and push the next one
+# out of sight. This is the honest cut: one line, whole words, and no model
+# needed. The Guide replaces it with a real heading when a model is configured;
+# this is what the list reads when there is none (or the model cannot answer).
+sub notes_header_fallback ($text) {
+	$text = '' unless defined $text;
+	# A heading is one line: every run of whitespace, a newline included, is one
+	# space, and the cut lands on a word boundary.
+	$text =~ s/\s+/ /g;
+	$text =~ s/^ | $//g;
+	return '' unless length $text;
+	my $max_chars = 60;
+	my $max_words = 12;
+	my @words = split / /, $text;
+	return $text if @words <= $max_words && length($text) <= $max_chars;
+	my @kept;
+	my $chars = 0;
+	foreach my $word ( @words ) {
+		last if @kept >= $max_words;
+		my $add = @kept ? 1 + length($word) : length($word);
+		last if $chars + $add > $max_chars;
+		push @kept, $word;
+		$chars += $add;
+	}
+	# One word longer than the line is cut rather than dropped.
+	@kept = ( substr( $words[0], 0, $max_chars ) ) unless @kept;
+	return join ' ', @kept;
+}
+
+# A model's answer is a sentence far more often than it is a heading. Take the
+# first non-empty line, drop the markup, quotes and trailing full stop a model
+# likes to add, then cut it to the same one-line budget as the fallback, so the
+# list can never be pushed aside by a chatty answer.
+sub notes_header_clean ($text) {
+	$text = '' unless defined $text;
+	my ($line) = grep { /\S/ } split /\r\n?|\n/, $text;
+	$line = '' unless defined $line;
+	$line =~ s/^\s+|\s+$//g;
+	$line =~ s/^(?:\#{1,6}\s*|[-*+>\s]+)//;
+	$line =~ s/^(?:header|heading|title)\s*[:\-]\s*//i;
+	$line =~ s/[*_`]//g;
+	$line =~ s/<[^>]*>//g;
+	$line =~ s/^[\x{201C}\x{201D}\x{2018}\x{2019}"']+//;
+	$line =~ s/[\x{201C}\x{201D}\x{2018}\x{2019}"']+$//;
+	$line =~ s/\.+$//;
+	return &notes_header_fallback($line);
 }
 
 1;

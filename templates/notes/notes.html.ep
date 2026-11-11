@@ -5,11 +5,19 @@
 	$statuses ||= [];
 	$counts ||= {};
 	$total ||= 0;
-	$selected ||= ''; %>
+	$selected ||= '';
+	$header_agent ||= 0; %>
 <%# The Notes app: what the watch heard when the words were not a command, plus
     anything typed here. A note is its own row now, not an appointment. Click a
-    note to edit it in the box at the foot, drag one onto an appointment window to
-    fold it into that app's notes, and the X is a two-click delete.
+    note to open it on a screen of its own: the whole note, a category and status
+    picker, a Back button and a Save button. Drag a note onto an appointment
+    window to fold it into that app's notes, and the X is a two-click delete.
+
+    The list is headings, not the whole notebook: each row is one line, the Guide's
+    condensation of the note when a model is configured (header_agent), otherwise
+    the server's whole-word cut. The full words live on the row's data-text for the
+    editor screen; data-sig changes when the note is saved, so a stale heading is
+    never reused.
 
     A note is filed under one of six categories, or under Uncategorized when it
     names none - which is also what a new note starts as. The chips carry the
@@ -45,6 +53,52 @@
 	min-height: 0;
 	display: flex;
 	flex-direction: column;
+}
+/* The list and its composer are one view; the editor is the other. Only one is
+   in the flow at a time, and either takes the whole window. */
+.wind[app="notes"] #notes_edit_view {
+	display: none;
+	flex: 1 1 auto;
+	min-height: 0;
+	flex-direction: column;
+	gap: 6px;
+}
+.wind[app="notes"] #notes.edit_open #notes_body,
+.wind[app="notes"] #notes.edit_open #notes_input_row { display: none; }
+.wind[app="notes"] #notes.edit_open #notes_edit_view { display: flex; }
+.wind[app="notes"] #notes_edit_bar {
+	flex: 0 0 auto;
+	display: flex;
+	align-items: center;
+	gap: 6px;
+}
+.wind[app="notes"] #notes_edit_bar button { width: auto; }
+.wind[app="notes"] #notes_edit_title { flex: 1 1 auto; font-weight: 600; }
+.wind[app="notes"] #notes_edit_fields {
+	flex: 0 0 auto;
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 8px;
+	font-size: 14px;
+}
+.wind[app="notes"] #notes_edit_input {
+	flex: 1 1 auto;
+	min-height: 120px;
+	width: 100%;
+}
+/* The upgrade replaces the textarea with a contenteditable inside its container;
+   the container takes the room the hidden textarea left. */
+.wind[app="notes"] #notes_edit_view .text_editor_container {
+	flex: 1 1 auto;
+	min-height: 0;
+	display: flex;
+	flex-direction: column;
+}
+.wind[app="notes"] #notes_edit_view .text_editor {
+	flex: 1 1 auto;
+	min-height: 120px;
+	overflow-y: auto;
 }
 .wind[app="notes"] #notes_list {
 	flex: 1 1 auto;
@@ -87,6 +141,16 @@ body.soft_kb_open .wind[app="notes"] #notes_input_row {
 /* Done, still here: the words fade a little and take a line through them, but
    the row is neither hidden nor collapsed. */
 .wind[app="notes"] .note.note_completed .note_text { opacity: 0.6; text-decoration: line-through; }
+/* A heading is one line, whatever the note's length or the window's width. The
+   server (and then the Guide) keeps it around 60 characters; the ellipsis is the
+   last guarantee, so a narrow window cuts a word rather than growing a second
+   line and pushing the composer down. */
+.wind[app="notes"] .note_text {
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	cursor: var(--jawnos-cursor-pointer, pointer);
+}
 .wind[app="notes"] .note_editor {
 	display: flex;
 	flex-wrap: wrap;
@@ -99,7 +163,7 @@ body.soft_kb_open .wind[app="notes"] #notes_input_row {
 }
 .wind[app="notes"] .note_editor select { font-size: 12px; max-width: 45%; }
 </style>
-<div id="notes">
+<div id="notes" data-header-agent="<%= $header_agent ? 1 : 0 %>">
 	<div id="notes_body">
 		<div id="notes_category_bar" style="flex:0 0 auto;display:flex;flex-wrap:wrap;align-items:center;gap:4px;padding-bottom:4px;font-size:13px;">
 			<button class="notes_chip" category="" style="padding:2px 9px;border:1px solid var(--line);border-radius:999px;font-size:13px;opacity:0.8;cursor:var(--jawnos-cursor-pointer, pointer);"><%= &subs::lang('notes.all') %> <span class="notes_count" style="opacity:0.7;font-size:11px;"><%= $total || 0 %></span></button>
@@ -118,12 +182,12 @@ body.soft_kb_open .wind[app="notes"] #notes_input_row {
 			<% foreach my $n ( @{$notes} ) { %>
 				<% my $draft_of = $n->{'app'} || ''; %>
 				<% my $status = &subs::notes_status_effective( $n->{'status'} ); %>
-				<div class="note hover<%= ($status eq 'completed' ? ' note_completed' : '') %>" uuid="<%= $n->{'uuid'} %>" timestamp="<%= $n->{'timestamp'} %>" category="<%= $n->{'category'} %>" status="<%= $status %>" style="border-bottom:solid 1px var(--line);padding:6px;font-size:18px;cursor:var(--jawnos-cursor-move, move);">
+				<div class="note hover<%= ($status eq 'completed' ? ' note_completed' : '') %>" uuid="<%= $n->{'uuid'} %>" timestamp="<%= $n->{'timestamp'} %>" category="<%= $n->{'category'} %>" status="<%= $status %>" data-text="<%= $n->{'text'} %>" data-sig="<%= $n->{'server_time'} %>" style="border-bottom:solid 1px var(--line);padding:6px;font-size:18px;cursor:var(--jawnos-cursor-move, move);">
 					<button class="note_delete" uuid="<%= $n->{'uuid'} %>" style="float:right;" title="<%= &subs::lang('delete') %>">X</button>
 					<span class="note_status note_status_<%= $status %>" title="<%= &subs::lang('notes.status') %>"><%= &subs::lang( 'notes.status.' . $status ) %></span>
 					<% if ($draft_of ne '' && $draft_of ne 'notes') { %><span class="note_app" title="<%= &subs::lang('notes.draft') %>"><%= $draft_of %> · <%= &subs::lang('notes.draft') %></span><% } elsif (($n->{'category'} || '') ne '') { %><span class="note_category" title="<%= &subs::lang('notes.category') %>" style="padding:1px 7px;border:1px solid var(--line);border-radius:999px;font-size:11px;opacity:0.8;"><%= &subs::lang( 'notes.category.' . $n->{'category'} ) %></span><% } %>
 					<span class="time" timestamp="<%= $n->{'timestamp'} %>" style="opacity:0.7;font-size:14px;"></span>
-					<div class="note_text" style="white-space:pre-wrap;"><%= $n->{'text'} %></div>
+					<div class="note_text"><%= &subs::notes_header_fallback( $n->{'text'} ) %></div>
 					<div class="note_editor" title="<%= &subs::lang('notes.set_category_status') %>">
 						<span class="note_editor_label"><%= &subs::lang('notes.set_category_status') %></span>
 						<label><%= &subs::lang('notes.category') %>
@@ -156,5 +220,30 @@ body.soft_kb_open .wind[app="notes"] #notes_input_row {
 		</div>
 		<textarea id="notes_input" rows="2" placeholder="<%= &subs::ui('Write a note... (Enter saves, Shift+Enter makes a line)') %>"></textarea>
 		<button id="notes_save"><%= &subs::lang('save') %></button>
+	</div>
+	<%# The note's own screen. Back returns to the list without writing; Save is
+	    the only thing that changes the row. The textarea is upgradeable, so the
+	    editor brings its formatting, dictation and variable toolbox. %>
+	<div id="notes_edit_view">
+		<div id="notes_edit_bar">
+			<button id="notes_edit_back" type="button"><%= &subs::lang('notes.back') %></button>
+			<span id="notes_edit_title"><%= &subs::lang('notes.edit') %></span>
+			<button id="notes_edit_save" type="button"><%= &subs::lang('save') %></button>
+		</div>
+		<div id="notes_edit_fields">
+			<label for="notes_edit_category"><%= &subs::lang('notes.category') %></label>
+			<select id="notes_edit_category">
+				<% foreach my $cat ( @{$categories} ) { %>
+					<option value="<%= $cat->{'code'} %>"><%= $cat->{'label'} %></option>
+				<% } %>
+			</select>
+			<label for="notes_edit_status"><%= &subs::lang('notes.status') %></label>
+			<select id="notes_edit_status">
+				<% foreach my $st ( @{$statuses} ) { %>
+					<option value="<%= $st->{'code'} %>"><%= $st->{'label'} %></option>
+				<% } %>
+			</select>
+		</div>
+		<textarea id="notes_edit_input" rows="8" class="notes_edit_input" placeholder="<%= &subs::ui('Edit this note...') %>" upgradeable="yes"></textarea>
 	</div>
 </div>

@@ -62,6 +62,13 @@ use IPC::Open2 qw(open2);
 
 our ($APP, $ws_live_window, $encoder, $decoder, $tuuid, $thread_uuid, $universal_splitter, $database, $sql, $remote_input_clipboard, $config_file, $config, $logfile, $log, $environment, $random_caching_string, $duty_file, $main_process, $device, $user_agent, %time_machine_guide_cache, @media_unlock_apps, %help_search_tables, %media_type_for_ext, %file_relay_down, @appointments, @results, %market_payment_family, @manager_bundle_files, $manager_bundle_cache, $js_minifier, %app_release_sha, %folders_desk_not_app, $jg_body, $remote_input_geometry_at, $remote_input_geometry_cache, %remote_input_ua, %remote_input_ws, %remote_input_rm, %remote_input_ws_failed, $public_ip_memo, $coding_protocols, $coding_protocols_mtime, $app_schema_done, $fingerprint_checked_at, $fingerprint_ok, %padlock_time_memo, %credential_browser_app, %app_gate_shadow_seen, $ws_server, %mailws_untrusted_rate);
 
+# A condensed note heading, keyed by a digest of the note's words and the guide
+# model that wrote it. The list asks once per note; a reload, a peer reopening
+# the window, or a second browser on the same machine reads this instead of
+# spending another model call. A failed answer is not cached, so a guide that was
+# briefly away is asked again rather than wearing a word cut for good.
+my %note_header_cache;
+
 # GET /manager/icons
 sub action_18867 {
 	my $c = shift;
@@ -112,8 +119,17 @@ sub action_22702 {
 	# Every note, newest first, with the category it is filed under. Notes are no
 	# longer appointments - a note is its text and its category. The chips, their
 	# counts and the picker are drawn here so their labels go through subs::lang.
+	# The list shows a one-line heading per note, not the whole note. The Guide
+	# condenses a note when a model is configured; without one the template's own
+	# word cut is the heading and the app never asks. header_agent tells the browser
+	# which of the two it is looking at, so a house with no guide pays no requests.
 	my $notes = &subs::notes_category_rows();
 	my ($counts, $total) = &subs::notes_category_counts($notes);
+	my $guide_model = &subs::setting_grabber({ app => 'mail', setting => 'help_assistant' });
+	# Whether a model is NAMED, not whether it answers: asking the daemon here would
+	# hold the window open on a machine whose model is away. The heading route asks
+	# in its own subprocess and falls back to the word cut when the answer is no.
+	my $header_agent = ( defined $guide_model && length $guide_model ) ? 1 : 0;
 	my $content = $c->render_to_string(
 		template => 'notes/notes',
 		notes => $notes,
@@ -121,7 +137,8 @@ sub action_22702 {
 		statuses => &subs::notes_status_list(),
 		counts => $counts,
 		total => $total,
-		selected => &subs::notes_category_default()
+		selected => &subs::notes_category_default(),
+		header_agent => $header_agent
 	);
 	my $contents = &window_maker({ user_agent => $c->param('user_agent'), app => 'notes', title => 'Notes', contents => $content }, $c->param('timestamp'));
 	$c->render(text => $contents);
@@ -370,6 +387,57 @@ sub action_24989 {
 	});
 	&Websocket::send('tab', { console => &Websocket::console_command('appointmentDetailGrabber', $app, $new_uuid)});
 	$c->render(json => { app => $app, uuid => $new_uuid, created => 1 });
+}
+
+# POST /manager/note_header
+#
+# One line for a note in the list. The Guide writes a heading from the note's
+# words when a model is configured; otherwise (and whenever the answer is empty
+# or fails) the server's own word cut is the line, so the list never depends on
+# a model being up. The note is read here by uuid so the browser never has to
+# hand its words back, and the answer is memoized by a digest of those words.
+sub action_53027 {
+	my $c = shift;
+	my $uuid = $c->param('uuid') || '';
+	my $row = $uuid ? &subs::db_select('notes', [ 'text', 'ost' ], { uuid => $uuid })->hash : undef;
+	my $text = $row ? ( $row->{'text'} || '' ) : '';
+	return $c->render(json => { ok => 0, header => '' }) unless length $text;
+	my $fallback = &subs::notes_header_fallback($text);
+	my $model = &subs::setting_grabber({ app => 'mail', setting => 'help_assistant' });
+	unless ( defined $model && length $model ) {
+		return $c->render(json => { ok => 1, header => $fallback, agent => 0 });
+	}
+	my $digest_text = $text;
+	utf8::encode($digest_text);
+	my $sig = md5_sum($digest_text) . '|' . $model;
+	if ( defined $note_header_cache{$sig} ) {
+		return $c->render(json => { ok => 1, header => $note_header_cache{$sig}, agent => 1, cached => 1 });
+	}
+	my $fallback_model = &subs::setting_grabber({ app => 'mail', setting => 'help_assistant_fallback' });
+	my $thinking = &subs::ai_role_thinking_effective('help_assistant');
+	my $system = 'You write the one-line heading for a personal note. Reply with the heading only: at most 8 words and at most 60 characters, one line, no quotation marks, no markdown, no trailing full stop, no explanation. Keep the note\'s own meaning and words where you can; never invent details.';
+	# A note can be long and the heading is the whole point, not the body: the
+	# first 4000 characters carry enough of it, and bound what a note costs.
+	my $user = substr($text, 0, 4000);
+	&subs::render_in_subprocess($c, sub {
+		# The daemon check lives here, with the model call, so a model that is
+		# configured but away costs a fallback and never a held-open window.
+		unless ( eval { &subs::evaluation_model_available($model) } ) {
+			return { header => '', fallback => $fallback, err => 'no guide model available' };
+		}
+		my ($out, $err) = &subs::evaluation_model_call_with_fallback($model, $fallback_model, $system, $user, $thinking, 'help_assistant');
+		return { header => &subs::notes_header_clean( defined $out ? $out : '' ), fallback => $fallback, err => $err };
+	}, sub {
+		my ($c, $r) = @_;
+		$r ||= {};
+		my $header = $r->{'header'} || '';
+		my $agent = length $header ? 1 : 0;
+		$header = $fallback unless length $header;
+		# Only a real answer is memoized. A failure leaves the heading to be
+		# asked for again on the next open rather than frozen for the process.
+		$note_header_cache{$sig} = $header if $agent && length $header;
+		$c->render(json => { ok => 1, header => $header, agent => $agent });
+	});
 }
 
 # POST /manager/notifications/remove

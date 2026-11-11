@@ -1,12 +1,16 @@
 // The Notes app: what the watch heard when it was not a command, plus anything typed
 // here. The list comes from the notes table (its own store, not appointments). A
-// row is clicked to edit, dragged onto an appointment window to fold into that
-// app's notes, and removed with the two-click X.
+// row shows a one-line heading - the Guide's condensation when a model is
+// configured, the server's word cut otherwise - and clicking it opens the whole
+// note on a screen of its own. A row can also be dragged onto an appointment
+// window to fold into that app's notes, and removed with the two-click X.
 $(document).on('click', '#notes_toggle', function() {
 	notesMaker();
 });
 
-// The uuid of the note being edited, or null when the box is a new note.
+// The composer only writes new notes now (an existing note opens on its own
+// screen, with its own Save), so this stays null; the save still names it so an
+// edit accidentally routed here would never become a second note.
 var notesEditing = null;
 
 function notesMaker(timestamp) {
@@ -16,7 +20,7 @@ function notesMaker(timestamp) {
 		type: 'GET',
 		data: { window_maker: 'yes', timestamp: timestamp },
 		success: function(response) {
-			if (response) { windowMaker(response); notesDraggable(); notesCategoryApply(); }
+			if (response) { windowMaker(response); notesDraggable(); notesCategoryApply(); notesHeaderPaint(); }
 		}
 	});
 }
@@ -46,6 +50,7 @@ function notesReload() {
 			if (typeof appointment_chron === 'function') { appointment_chron(); }
 			notesDraggable();
 			notesCategoryApply();
+			notesHeaderPaint();
 		}
 	});
 }
@@ -79,23 +84,219 @@ function noteSave() {
 	});
 }
 
-// Click a note's body to load it into the box for editing; saving updates the
-// same row (notesEditing carries its uuid). The picker follows the note, so a
-// save cannot move a note to another category by accident; a draft has no
-// category of its own, so the picker is left where it was and the save names
-// none (the server keeps the row as it was).
-$(document).on('click', '.note_text', function(e) {
-	var note = $(this).closest('.note');
-	notesEditing = note.attr('uuid');
-	var category = note.attr('category') || '';
-	if (category) { $('#notes_category').val(category); }
-	$('#notes_input').val($(this).text()).focus();
+// ---- headings ---------------------------------------------------------------
+// The list is one line per note. The server already drew the word cut; the Guide
+// is asked for a better heading only when a model is configured (the #notes
+// data-header-agent flag), and only for the rows the person can see. The answer
+// is cached against the row's signature, so a re-render, a scroll back, or a
+// second window does not spend another model call. A saved note gets a new
+// signature and its heading is asked for again.
+var notesHeaderCache = {};
+var notesHeaderPending = {};
+var notesHeaderObserver = null;
+
+function notesHeaderRows() {
+	return $('#notes_list .note');
+}
+
+function notesHeaderApply(uuid, sig, header) {
+	notesHeaderRows().each(function() {
+		var n = $(this);
+		if ((n.attr('uuid') || '') != uuid) { return; }
+		if ((n.attr('data-sig') || '') != sig) { return; }
+		n.find('.note_text').text(header);
+	});
+}
+
+// A note that already fits the heading budget IS its heading, so a model call
+// could only repeat it. Only the long rows ask the Guide; the rest keep the
+// server's own line and cost nothing.
+function notesHeaderNeeded(note) {
+	var text = note.attr('data-text');
+	if (text === undefined) { return true; }
+	var line = String(text).replace(/\s+/g, ' ').replace(/^ | $/g, '');
+	if (!line.length) { return false; }
+	return !(line.length <= 60 && line.split(' ').length <= 12);
+}
+
+function notesHeaderRequest(note) {
+	if (($('#notes').attr('data-header-agent') || '0') != '1') { return; }
+	if (!notesHeaderNeeded(note)) { return; }
+	var uuid = note.attr('uuid') || '';
+	var sig = note.attr('data-sig') || '';
+	if (!uuid) { return; }
+	var cached = notesHeaderCache[uuid];
+	if (cached && cached.sig == sig) { return; }
+	var key = uuid + ':' + sig;
+	if (notesHeaderPending[key]) { return; }
+	notesHeaderPending[key] = 'yes';
+	$.ajax({
+		url: '/manager/note_header',
+		type: 'POST',
+		data: { uuid: uuid, timestamp: Date.now() },
+		success: function(response) {
+			delete notesHeaderPending[key];
+			if (!response || !response.header) { return; }
+			notesHeaderCache[uuid] = { sig: sig, header: response.header };
+			notesHeaderApply(uuid, sig, response.header);
+		},
+		error: function() { delete notesHeaderPending[key]; }
+	});
+}
+
+function notesHeaderPaint() {
+	var list = $('#notes_list');
+	if (!list.length) { return; }
+	if (notesHeaderObserver) { notesHeaderObserver.disconnect(); notesHeaderObserver = null; }
+	var rows = notesHeaderRows();
+	// A cached heading wins over the server's cut; a changed note (a new data-sig)
+	// drops the heading it no longer matches instead of showing yesterday's words.
+	rows.each(function() {
+		var n = $(this);
+		var uuid = n.attr('uuid') || '';
+		var sig = n.attr('data-sig') || '';
+		if (!uuid) { return; }
+		if (notesHeaderCache[uuid] && notesHeaderCache[uuid].sig == sig) {
+			n.find('.note_text').text(notesHeaderCache[uuid].header);
+		}
+		else { delete notesHeaderCache[uuid]; }
+	});
+	if (($('#notes').attr('data-header-agent') || '0') != '1') { return; }
+	if (typeof IntersectionObserver !== 'function') {
+		rows.each(function() { notesHeaderRequest($(this)); });
+		return;
+	}
+	// Only the rows on screen ask: a long notebook does not become one model call
+	// per note, and opening a category is what fetches that category's rows.
+	notesHeaderObserver = new IntersectionObserver(function(entries) {
+		for (var i = 0; i < entries.length; i++) {
+			if (entries[i].isIntersecting) { notesHeaderRequest($(entries[i].target)); }
+		}
+	}, { root: list[0], rootMargin: '160px 0px' });
+	rows.each(function() { notesHeaderObserver.observe(this); });
+}
+
+// ---- the note's own screen --------------------------------------------------
+// Clicking a row does not edit it in the composer any more: the whole note gets
+// the window, with Back (leave it as it was) and Save (write it). The textarea is
+// upgradeable, so the editor brings its toolbox and dictation.
+var notesEditUuid = null;
+
+function notesEditHtml(text) {
+	return $('<div>').text(text == null ? '' : String(text)).html().replace(/\n/g, '<br>');
+}
+
+function notesEditFocus(box) {
+	if (!box || !box.length) { return; }
+	try { box.focus(); } catch (e) {}
+	try {
+		var el = box[0];
+		var range = document.createRange();
+		range.selectNodeContents(el);
+		range.collapse(false);
+		var sel = window.getSelection();
+		sel.removeAllRanges();
+		sel.addRange(range);
+	} catch (e) {}
+}
+
+// The upgrade request is async, so a very fast click can arrive before the
+// contenteditable exists. Fill the hidden textarea at once (that is what the
+// person sees until the upgrade lands) and retry the editor briefly.
+function notesEditFill(uuid, text, tries) {
+	tries = tries || 0;
+	if (notesEditUuid != uuid) { return; }
+	var box = $('#notes_edit_view .text_editor').first();
+	if (box.length) {
+		box.html(notesEditHtml(text));
+		notesEditFocus(box);
+		return;
+	}
+	if (tries >= 40) {
+		$('#notes_edit_input').val(text).focus();
+		return;
+	}
+	setTimeout(function() { notesEditFill(uuid, text, tries + 1); }, 50);
+}
+
+function notesEditOpen(uuid) {
+	var note = null;
+	notesHeaderRows().each(function() {
+		if (($(this).attr('uuid') || '') == uuid) { note = $(this); }
+	});
+	if (!note) { return; }
+	var text = note.attr('data-text');
+	if (text === undefined) { text = note.find('.note_text').text(); }
+	notesEditUuid = uuid;
+	$('#notes_edit_category').val(note.attr('category') || 'uncategorized');
+	$('#notes_edit_status').val(note.attr('status') || 'open');
+	$('#notes_edit_input').val(text);
+	$('#notes').addClass('edit_open');
+	if (typeof textareaUpgrader == 'function') { textareaUpgrader(); }
+	notesEditFill(uuid, text, 0);
+}
+
+function notesEditClose() {
+	notesEditUuid = null;
+	$('#notes').removeClass('edit_open');
+}
+
+// The upgraded editor holds HTML (a newline is a <br> or a block). A note is
+// stored as plain words, so turn the editor back into text before saving; the
+// server trims the ends and never sees markup.
+function notesEditorPlainText() {
+	var box = $('#notes_edit_view .text_editor').first();
+	if (!box.length) { return $('#notes_edit_input').val() || ''; }
+	var html = box.html() || '';
+	html = html.replace(/<br\s*\/?>/gi, '\n');
+	html = html.replace(/<\/(div|p|li|h[1-6])>/gi, '\n');
+	html = html.replace(/<(div|p|li|h[1-6])(\s[^>]*)?>/gi, '');
+	html = html.replace(/<[^>]*>/g, '');
+	var decoder = document.createElement('textarea');
+	decoder.innerHTML = html;
+	return decoder.value.replace(/\u00a0/g, ' ').replace(/\n{3,}/g, '\n\n').replace(/^\s+|\s+$/g, '');
+}
+
+function notesEditSave() {
+	var uuid = notesEditUuid;
+	if (!uuid) { return; }
+	var text = notesEditorPlainText();
+	if (text.replace(/\s/g, '') == '') { return; }
+	$.ajax({
+		url: '/manager/note_save',
+		type: 'POST',
+		data: {
+			uuid: uuid,
+			text: text,
+			category: $('#notes_edit_category').val() || '',
+			status: $('#notes_edit_status').val() || '',
+			timestamp: Date.now()
+		},
+		success: function(response) {
+			delete notesHeaderCache[uuid];
+			notesEditClose();
+			notesReload();
+		}
+	});
+}
+
+// A row is a click target, except on its own controls. A drag sets the guard so
+// releasing a note over an appointment window does not also open it.
+$(document).on('click', '#notes_list .note', function(e) {
+	if ($(e.target).closest('.note_delete, .note_editor, .note_edit, button, select, option, a, input, textarea').length) { return; }
+	if ($(this).data('notes_dragged')) { return; }
+	var uuid = $(this).attr('uuid') || '';
+	if (uuid) { notesEditOpen(uuid); }
 });
 
+$(document).on('click', '#notes_edit_back', function() { notesEditClose(); });
+$(document).on('click', '#notes_edit_save', function() { notesEditSave(); });
+
 // The small editor on each row: category and status change in place. The same
-// save route the composer uses persists them, and the row's own text rides
-// along so a category/status change never has to touch the words. The server
-// tombstone-marks a delete; this only ever edits.
+// save route the composer uses persists them. The words are NOT sent: the row now
+// shows a heading, so sending .note_text would replace the note with its own
+// heading. The server leaves a field it is not handed alone, which is exactly
+// what a category/status change wants.
 $(document).on('change', '.note_category_edit, .note_status_edit', function() {
 	var note = $(this).closest('.note');
 	var uuid = note.attr('uuid');
@@ -107,7 +308,6 @@ $(document).on('change', '.note_category_edit, .note_status_edit', function() {
 		type: 'POST',
 		data: {
 			uuid: uuid,
-			text: note.find('.note_text').text(),
 			category: category,
 			status: status,
 			timestamp: Date.now()
@@ -162,9 +362,14 @@ function notesDraggable() {
 			zIndex: 999999,
 			cancel: '.note_delete, .note_editor, .note_edit',
 			start: function(p, ui) {
+				// A drag is not a click: releasing over an appointment window must fold
+				// the note in, not open its editor. The click that follows mouseup sees
+				// this guard (it is cleared a moment later).
+				n.data('notes_dragged', true);
 				$(ui.helper).css({ 'opacity': '0.85' });
 			},
 			stop: function(p, ui) {
+				setTimeout(function() { n.data('notes_dragged', false); }, 120);
 				// The helper rides under the cursor, and a full-screen background canvas
 				// sits over the windows, so a plain elementFromPoint finds one of those
 				// instead of the window. Walk the whole stack instead and take the first

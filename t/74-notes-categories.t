@@ -40,7 +40,7 @@ is( scalar( grep { $seen{$_}++ } @filter ), 0, 'no filter value is listed twice'
 my @languages = map { $_->{code} } @language::languages;
 is( scalar(@languages), 16, 'the app offers sixteen interface languages' );
 
-my @keys = ( 'notes.category', 'notes.all', 'delete' );
+my @keys = ( 'notes.category', 'notes.all', 'notes.back', 'notes.edit', 'delete' );
 push @keys, map { "notes.category.$_" } @filter;
 push @keys, qw(notes.status notes.status.open notes.status.completed notes.set_category_status);
 push @keys, map { "notes.open.$_" } qw(store market handbook people);
@@ -104,6 +104,27 @@ is( $list->[2]{'target'}, 'store', 'the Roadmap chip carries its hand-off' );
 is( $list->[2]{'open_label'}, &subs::lang('notes.open.store'), 'the hand-off button is translated too' );
 is( $list->[0]{'open_label'}, '', 'Uncategorized has no hand-off button' );
 is( $list->[1]{'open_label'}, '', 'Journal has no hand-off button' );
+
+# ---------------------------------------- the one-line heading, without a model
+# Every row is a heading, never the whole note. With no Guide model the server
+# cuts the first words; a model answer is cleaned to the same one-line budget.
+is( &subs::notes_header_fallback('hello <world>'), 'hello <world>',
+	'a short note is its own heading' );
+my $long_note = 'one two three four five six seven eight nine ten eleven twelve thirteen fourteen';
+my $cut = &subs::notes_header_fallback($long_note);
+cmp_ok( length($cut), '<=', 60, 'a long note is cut to the one-line budget' );
+isnt( $cut, $long_note, 'and it is not the whole note' );
+like( $long_note, qr/\A\Q$cut\E(?: |\z)/, 'the cut lands on a word boundary' );
+is( &subs::notes_header_fallback("first line\nsecond line"), 'first line second line',
+	'newlines become the one line' );
+is( &subs::notes_header_fallback('  spaced   out  '), 'spaced out',
+	'a heading collapses whitespace' );
+is( &subs::notes_header_clean("\"A short heading.\"\nExplanation: the rest"), 'A short heading',
+	'a model answer is one line, unquoted, without its full stop' );
+is( &subs::notes_header_clean('**Bold heading**'), 'Bold heading',
+	'markdown is not left in the heading' );
+is( &subs::notes_header_clean(''), '', 'an empty answer has no heading' );
+is( &subs::notes_header_clean(undef), '', 'a missing answer has no heading' );
 
 # ------------------------------------- the migration on a pre-category database
 my ($fh, $dbfile) = tempfile( 'jawnos-notes-XXXXXX', TMPDIR => 1, UNLINK => 1 );
@@ -197,6 +218,13 @@ like( $controller, qr/categories => &subs::notes_category_list\(\)/,
 like( $controller, qr/counts => \$counts/, 'the route hands the template the counts' );
 like( $controller, qr/notes_category_valid\(\s*\$category_param\s*\)/,
 	'a save validates the category it was handed' );
+like( $controller, qr/header_agent => \$header_agent/,
+	'the route tells the template whether a Guide model is available' );
+like( $controller, qr/sub action_53027\b/, 'the heading route action exists' );
+like( $controller, qr/notes_header_clean\(/, 'the heading route cleans the model answer' );
+my $routes = read_file('lib/JawnOS/Routes/manager_misc6.pm');
+like( $routes, qr{/manager/note_header', 'action_53027'},
+	'the heading route is registered' );
 
 my $template = template_source('notes/notes');
 like( $template, qr/class="notes_chip"/, 'the chips are on screen' );
@@ -207,6 +235,17 @@ like( $template, qr/category="<%= \$n->\{'category'\} %>"/,
 like( $template, qr/subs::lang\( 'notes\.category\.' \. \$n->\{'category'\} \)/,
 	'a row label goes through the core catalog' );
 like( $template, qr/subs::lang\('notes\.all'\)/, 'the All chip is a core label' );
+like( $template, qr/data-text="<%= \$n->\{'text'\} %>"/,
+	'the row carries the whole note for its editor' );
+like( $template, qr/subs::notes_header_fallback\( \$n->\{'text'\} \)/,
+	'the row draws a heading, not the whole note' );
+like( $template, qr/data-header-agent=/,
+	'the list knows whether the Guide can write headings' );
+like( $template, qr/id="notes_edit_view"/, 'a note has a screen of its own' );
+like( $template, qr/id="notes_edit_back"/, 'the note screen has Back' );
+like( $template, qr/id="notes_edit_save"/, 'the note screen has Save' );
+like( $template, qr/id="notes_edit_input"/, 'the note screen has its textarea' );
+like( $template, qr/upgradeable="yes"/, 'the note screen uses the textarea upgrade' );
 
 my $js = js_source('js/manager/notes.js');
 like( $js, qr/function notesCategoryApply/, 'the filter is applied by the app script' );
@@ -214,6 +253,13 @@ like( $js, qr/notesCategoryFilter/, 'the chosen category outlives a refresh of t
 like( $js, qr/appWindowOpener\(target/, 'Store, Market and People open through the window opener' );
 like( $js, qr/handbookGrabber\('today'\)/, 'Dreams opens the Handbook on Today' );
 like( $js, qr/category: \$\('#notes_category'\)\.val\(\)/, 'a save names its category' );
+like( $js, qr/function notesHeaderPaint/, 'the list paints one-line headings' );
+like( $js, qr{url: '/manager/note_header'}, 'a visible row asks for its heading' );
+like( $js, qr/IntersectionObserver/, 'only the rows on screen ask the Guide' );
+like( $js, qr/function notesEditOpen/, 'a row opens the note screen' );
+like( $js, qr/function notesEditSave/, 'Save writes the note' );
+like( $js, qr/function notesEditorPlainText/, 'the rich editor is stored as plain words' );
+like( $js, qr/notes_edit_back/, 'Back returns to the list' );
 
 # ------------------------------------- and the template draws what it promises
 # Source greps cannot catch a template that no longer compiles, so render it the
@@ -227,6 +273,7 @@ my $rendered = eval {
 			counts     => { journal => 1 },
 			total      => 1,
 			selected   => &subs::notes_category_default(),
+			header_agent => 0,
 			notes      => [ {
 				uuid => 'u1', timestamp => '1000', app => 'notes',
 				category => 'journal', status => 'open', text => 'hello <world>',
@@ -247,5 +294,57 @@ like( $rendered, qr/class="note_category"[^>]*>Journal</, 'a note wears its cate
 like( $rendered, qr/id="notes_category"/, 'the picker is drawn' );
 like( $rendered, qr/hello &lt;world&gt;/, 'note text is escaped as it was before' );
 unlike( $rendered, qr/<%/, 'nothing is left unrendered' );
+
+# The whole note is on the row for the editor, but the row SHOWS only the
+# heading. A render that showed the body would put the notebook back on screen.
+my $heading = &subs::notes_header_fallback($long_note);
+my $rendered_long = eval {
+	Mojo::Template->new( vars => 1, auto_escape => 1, name => 'notes/notes' )->render(
+		$template,
+		{
+			categories => &subs::notes_category_list(),
+			statuses   => &subs::notes_status_list(),
+			counts     => { journal => 1 },
+			total      => 1,
+			selected   => &subs::notes_category_default(),
+			header_agent => 1,
+			notes      => [ {
+				uuid => 'u2', timestamp => '1000', server_time => '1000', app => 'notes',
+				category => 'journal', status => 'open', text => $long_note,
+			} ],
+		}
+	);
+};
+ok( defined $rendered_long && length $rendered_long, 'a long note renders' ) or diag($@);
+like( $rendered_long, qr/data-text="\Q$long_note\E"/,
+	'the whole note stays on the row for the editor' );
+like( $rendered_long, qr/data-sig="1000"/, 'the row carries the signature its heading is cached against' );
+like( $rendered_long, qr/data-header-agent="1"/, 'a Guide model is announced to the browser' );
+my ($shown_heading) = $rendered_long =~ m{<div class="note_text">(.*?)</div>}s;
+is( $shown_heading, $heading, 'the row shows the heading, cut at a word' );
+isnt( $shown_heading, $long_note, 'the row does not show the whole note' );
+
+# Without a Guide the list still draws the same heading and asks for nothing.
+my $rendered_plain = eval {
+	Mojo::Template->new( vars => 1, auto_escape => 1, name => 'notes/notes' )->render(
+		$template,
+		{
+			categories => &subs::notes_category_list(),
+			statuses   => &subs::notes_status_list(),
+			counts     => { journal => 1 },
+			total      => 1,
+			selected   => &subs::notes_category_default(),
+			header_agent => 0,
+			notes      => [ {
+				uuid => 'u3', timestamp => '1000', server_time => '1000', app => 'notes',
+				category => 'journal', status => 'open', text => $long_note,
+			} ],
+		}
+	);
+};
+like( $rendered_plain, qr/data-header-agent="0"/,
+	'with no model the browser is told not to ask' );
+my ($plain_heading) = $rendered_plain =~ m{<div class="note_text">(.*?)</div>}s;
+is( $plain_heading, $heading, 'and the server cut is still the heading' );
 
 done_testing();

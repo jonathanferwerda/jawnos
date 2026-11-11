@@ -225,6 +225,7 @@ my $rendered = eval {
 			counts     => { uncategorized => 1, jawnos => 1 },
 			total      => 2,
 			selected   => &subs::notes_category_default(),
+			header_agent => 0,
 			notes      => [
 				{ uuid => 'u1', timestamp => '1000', app => 'notes',
 				  category => 'jawnos', status => 'completed', text => 'done thing' },
