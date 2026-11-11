@@ -36,7 +36,7 @@ use Mojo::IOLoop;
 use Mojo::JSON qw(decode_json encode_json);
 use Mojo::Util qw/md5_sum xml_escape html_unescape term_escape quote unquote secure_compare url_escape url_unescape network_contains punycode_decode punycode_encode b64_decode b64_encode/;
 use POSIX ();   # mktime: a local-time epoch that still predates 1970
-use Socket qw(MSG_PEEK MSG_DONTWAIT);
+use Socket qw(MSG_PEEK);
 use Text::Unidecode;
 use Time::Duration;
 use Time::HiRes qw(gettimeofday time);
@@ -483,18 +483,26 @@ sub socket_retry_note {
 # worker that wrote them (v0.1.1850). The bytes live in the buffer recv filled;
 # the call itself only says whether it succeeded.
 #
+# Both calls must not block. MSG_DONTWAIT says so on Linux, but Winsock has no
+# such flag (Socket's constant is exported and then dies when called), so ask
+# IO::Select whether there is anything to read first and then recv without a
+# flag. A socket at EOF is readable and its recv returns 0 bytes, which is the
+# same answer the flag used to give.
+#
 # 1 means the peek found EOF and the caller should drop the cached socket.
 sub socket_drain_peek {
 	my ($socket, $drain) = @_;
+	my $ready = IO::Select->new($socket);
 	if ($drain) {
-		while (1) {
+		while ($ready->can_read(0)) {
 			my $junk = '';
-			my $got = recv($socket, $junk, 65536, MSG_DONTWAIT);
+			my $got = recv($socket, $junk, 65536, 0);
 			last unless defined $got && length($junk) > 0;
 		}
 	}
+	return 0 unless $ready->can_read(0);
 	my $peek = '';
-	my $peeked = recv($socket, $peek, 1, MSG_PEEK | MSG_DONTWAIT);
+	my $peeked = recv($socket, $peek, 1, MSG_PEEK);
 	return 0 unless defined $peeked;
 	return length($peek) == 0 ? 1 : 0;
 }

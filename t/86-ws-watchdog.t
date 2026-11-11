@@ -161,13 +161,17 @@ unlike($websocket_pl, qr/&padlock_gate_locked\(\)/,
 # write notices: the push then goes into a socket nobody reads. The peek is the
 # honest check, and one retry on a fresh socket keeps a start/stop from being
 # swallowed in the gap.
-like($world, qr/use Socket qw\(MSG_PEEK MSG_DONTWAIT\);/,
+like($world, qr/use Socket qw\(MSG_PEEK\);/,
 	'the sender can ask the kernel whether the peer is still there');
-like($world, qr/my \$peeked = recv\(\$socket, \$peek, 1, MSG_PEEK \| MSG_DONTWAIT\);/,
+# Winsock has no MSG_DONTWAIT: Socket exports the name and dies when it is
+# called, so the non-blocking check is IO::Select instead of a recv flag.
+like($world, qr/my \$ready = IO::Select->new\(\$socket\);/,
+	'the readiness check goes through IO::Select, portable to Windows');
+like($world, qr/my \$peeked = recv\(\$socket, \$peek, 1, MSG_PEEK\);/,
 	'a reused socket is checked for EOF before a send');
 like($world, qr/return length\(\$peek\) == 0 \? 1 : 0;/,
 	'0 bytes in the peeked buffer is a dead peer (recv returns the address, not a count)');
-like($world, qr/my \$got = recv\(\$socket, \$junk, 65536, MSG_DONTWAIT\);\s*last unless defined \$got && length\(\$junk\) > 0;/s,
+like($world, qr/my \$got = recv\(\$socket, \$junk, 65536, 0\);\s*last unless defined \$got && length\(\$junk\) > 0;/s,
 	'the uuid a push is answered with is drained first, so the peek sees EOF');
 like($world, qr/if \(&socket_drain_peek\(\$socket, \$rcv \? 0 : 1\)\) \{/,
 	'the cached socket is drained and peeked in one helper');

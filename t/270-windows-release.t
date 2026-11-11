@@ -166,7 +166,9 @@ like($wf, qr/^\s*ref:\s*\$\{\{\s*github\.ref\s*\}\}/m, 'checkout follows the tag
 like($wf, qr/strawberryperl/, 'Strawberry Perl comes from choco');
 like($wf, qr/cpanm --notest/, 'the module set is installed with cpanm');
 for my $module (qw(Mojolicious Mojo::SQLite Minion Minion::Backend::SQLite
-		DBD::SQLite Net::SSLeay File::Slurp Win32::API Win32API::File)) {
+		DBD::SQLite Net::SSLeay File::Slurp Win32::API Win32API::File
+		Crypt::Simple Time::Duration Date::Parse Clone URI::Encode File::Type
+		HTML::Strip HTML::Parser Number::Format SQL::Abstract Data::UUID)) {
 	like($wf, qr/\b\Q$module\E\b/, "the pinned set includes $module");
 }
 

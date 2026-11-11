@@ -542,12 +542,22 @@ sub house_key {
 	$key = read_file($path) if -e $path;
 	$key =~ s/\s+//g if $key;
 	unless ($key) {
+		# The key comes from the OS, never from rand(). /dev/urandom is Linux's
+		# only; Windows has no device path at all, so ask CryptX first (a
+		# required module everywhere the app runs) and keep the device read as
+		# the fallback. An empty draw must never be written: a keyless vault is
+		# worse than no vault, because every sealed row would sit under ''.
 		my $raw = '';
-		if (open my $fh, '<', '/dev/urandom') {
+		if (eval { require Crypt::PRNG; $raw = Crypt::PRNG::random_bytes(32); 1 }) {
+			# got it
+		}
+		elsif (open my $fh, '<', '/dev/urandom') {
 			binmode $fh;
 			read($fh, $raw, 32);
 			close $fh;
 		}
+		die "house_key: no source of randomness; cannot build the house key\n"
+			unless defined $raw && length $raw;
 		$key = encode_base64($raw, '');
 		write_file($path, $key . "\n");
 		chmod 0600, $path;

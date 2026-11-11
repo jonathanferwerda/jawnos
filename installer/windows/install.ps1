@@ -182,6 +182,11 @@ $probeArgs = @(
     '-MMojolicious', '-MMojo::SQLite', '-MMinion', '-MDBD::SQLite',
     '-MSereal::Encoder', '-MSereal::Decoder', '-MNet::SSLeay', '-MCryptX',
     '-MFile::Slurp', '-MWin32::API', '-MWin32API::File',
+    # the seed's own requires and the manager's eager preamble: without these
+    # the install looks fine and the first page dies
+    '-MCrypt::Simple', '-MTime::Duration', '-MDate::Parse', '-MClone',
+    '-MURI::Encode', '-MFile::Type', '-MHTML::Strip', '-MHTML::Parser',
+    '-MNumber::Format', '-MSQL::Abstract', '-MData::UUID',
     '-e', 'print qq(ok\n)'
 )
 $probe = Invoke-Capture -FilePath $perl -Arguments $probeArgs
@@ -196,18 +201,35 @@ if ($probe.Code -ne 0) {
 
 # --- first run: config.json, the database and the unlock code ---------------
 
+# Both halves are the house. A run that died between them leaves config.json
+# behind with no database, and treating that as an existing install would print
+# "JawnOS is installed" over a house that has nothing in it.
 $code = ''
-if (-not (Test-Path -LiteralPath $configPath)) {
+$dbPath = Join-Path $appDir 'database\jawnos.db'
+$needConfig = -not (Test-Path -LiteralPath $configPath)
+$needDb = -not (Test-Path -LiteralPath $dbPath)
+if ($needConfig -or $needDb) {
     Write-Step 'First run: seeding config.json and the database ...'
-    Copy-Item -LiteralPath (Join-Path $appDir 'config.json.example') -Destination $configPath -Force
+    if ($needConfig) {
+        Copy-Item -LiteralPath (Join-Path $appDir 'config.json.example') -Destination $configPath -Force
 
-    # The bundle must not pop a browser on the manager's own first boot; the
-    # installer opens it once the port answers.
-    $configText = Get-Content -LiteralPath $configPath -Raw
-    $configText = $configText -replace '"open_browser"\s*:\s*"yes"', '"open_browser": "no"'
-    Set-Content -LiteralPath $configPath -Value $configText -Encoding ASCII
+        # The bundle must not pop a browser on the manager's own first boot; the
+        # installer opens it once the port answers.
+        $configText = Get-Content -LiteralPath $configPath -Raw
+        $configText = $configText -replace '"open_browser"\s*:\s*"yes"', '"open_browser": "no"'
+        Set-Content -LiteralPath $configPath -Value $configText -Encoding ASCII
+    }
 
-    $code = [string](Get-Random -Minimum 100000 -Maximum 999999)
+    if ($needDb) {
+        # the code becomes the house key, so it is drawn once, with the database
+        $code = [string](Get-Random -Minimum 100000 -Maximum 999999)
+    }
+    elseif (Test-Path -LiteralPath $codePath) {
+        # the database outlived its config.json: its own code still opens it,
+        # and writing a fresh one here would lock the person out of their house
+        $match = [regex]::Match((Get-Content -LiteralPath $codePath -Raw), '[0-9]{4,12}')
+        if ($match.Success) { $code = $match.Value }
+    }
 
     # The Setup.exe writes the values the person chose into a small key=value
     # file; the script installer can pass the same flags directly. An omitted
@@ -229,8 +251,9 @@ if (-not (Test-Path -LiteralPath $configPath)) {
 
     $seedArgs = @(
         'scripts\jawnos_setup.pl', '--seed', '--name', $Name,
-        '--device', 'computer', '--code', $code, '--language', $Language
+        '--device', 'computer', '--language', $Language
     )
+    if ($code) { $seedArgs += @('--code', $code) }
     if ($Email) { $seedArgs += @('--email', $Email) }
     if ($Domain) { $seedArgs += @('--domain', $Domain) }
 
@@ -244,10 +267,12 @@ if (-not (Test-Path -LiteralPath $configPath)) {
         throw "jawnos_setup.pl failed (exit $($setup.Code)):`n$($setup.Text)"
     }
 
-    $codeText = "JawnOS unlock code: $code" + "`r`n`r`n" +
-        "Enter this code at the JawnOS login screen. It is the only key to your data; keep it safe." + "`r`n"
-    Set-Content -LiteralPath $codePath -Value $codeText -Encoding ASCII
-    Write-Step "Unlock code $code (saved to $codePath)"
+    if ($needDb) {
+        $codeText = "JawnOS unlock code: $code" + "`r`n`r`n" +
+            "Enter this code at the JawnOS login screen. It is the only key to your data; keep it safe." + "`r`n"
+        Set-Content -LiteralPath $codePath -Value $codeText -Encoding ASCII
+        Write-Step "Unlock code $code (saved to $codePath)"
+    }
 } else {
     Write-Step 'Existing install found; keeping config.json and the database.'
     if (Test-Path -LiteralPath $codePath) {

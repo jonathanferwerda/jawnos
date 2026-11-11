@@ -104,12 +104,23 @@ jobs:
           # Pinned to the versions platform-p0.yml uses. Minion::Backend::SQLite
           # is the app's queue backend; Win32::API and Win32API::File are in the
           # bundle's own module probe (installer/windows/install.ps1).
+          #
+          # The rest are the modules the seed script and the manager's eager
+          # preamble `use` at compile time. They are core on a distro Perl and
+          # NOT core in Strawberry, and leaving one out is invisible here: the
+          # install succeeds, install.ps1's probe passes, and then the first
+          # page dies (v0.1.2747 shipped without Crypt::Simple and could not
+          # seed). Keep this list in step with the -M probe in install.ps1;
+          # t/270-windows-release.t pins both.
           cpanm --notest --quiet `
             Mojolicious@9.39 Mojo::SQLite@3.009 Minion@10.31 `
             Minion::Backend::SQLite@5.0.0 `
             Sereal::Encoder@5.004 Sereal::Decoder@5.004 CryptX@0.085 `
             DBD::SQLite@1.76 Net::SSLeay File::Slurp `
-            Win32::API Win32API::File
+            Win32::API Win32API::File `
+            Crypt::Simple Time::Duration Date::Parse Clone URI::Encode `
+            File::Type HTML::Strip HTML::Parser Number::Format `
+            SQL::Abstract Data::UUID
           if ($LASTEXITCODE -ne 0) { throw "cpanm failed (exit $LASTEXITCODE)" }
 
       - name: Inno Setup 6

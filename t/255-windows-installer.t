@@ -58,6 +58,29 @@ like($install, qr/Get-Random\s+-Minimum\s+100000\s+-Maximum\s+999999/,
 	'the generated unlock code is six digits');
 like($install, qr/unlock-code\.txt/, 'install.ps1 writes unlock-code.txt');
 
+# Strawberry is not a distro Perl: the seed's own requires and the manager's
+# eager preamble are absent unless cpanm installed them. The probe is the last
+# gate before the seed, and a gap used to surface only after "JawnOS is
+# installed" (v0.1.2747 shipped without Crypt::Simple and could not seed).
+for my $module (qw(Mojolicious Mojo::SQLite Minion DBD::SQLite Sereal::Encoder
+		Sereal::Decoder Net::SSLeay CryptX File::Slurp Win32::API Win32API::File
+		Crypt::Simple Time::Duration Date::Parse Clone URI::Encode File::Type
+		HTML::Strip HTML::Parser Number::Format SQL::Abstract Data::UUID)) {
+	like($install, qr/'-M\Q$module\E'/, "the runtime probe loads $module");
+}
+
+# config.json without the database is not an install: a run that died between
+# the two used to skip the seed and print "JawnOS is installed" over an empty
+# house. The database existing is what keeps its own unlock code valid.
+like($install, qr/\$dbPath\s*=\s*Join-Path \$appDir 'database\\jawnos\.db'/,
+	'install.ps1 names the database it must find');
+like($install, qr/\$needDb\s*=\s*-not\s*\(Test-Path[^\n]*\$dbPath\)/,
+	'install.ps1 notices a missing database, not just a missing config.json');
+like($install, qr/if\s*\(\$needConfig\s*-or\s*\$needDb\)/,
+	'a missing database still forces the seed');
+like($install, qr/elseif\s*\(Test-Path -LiteralPath \$codePath\)/,
+	'a kept database keeps its own unlock code instead of drawing a new one');
+
 # The Setup.exe is a per-user install and Inno owns the shortcuts, the rule and
 # the uninstall. These switches are what keep one owner for each.
 like($install, qr/SkipShortcuts/, 'install.ps1 can leave the shortcuts to the Setup.exe');

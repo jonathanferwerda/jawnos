@@ -79,6 +79,17 @@ is(vault_rows(), 0, 'a wrong code seeds nothing');
 write_file("$dir/home/UNLOCK-CODE.txt", "not-a-code\n");
 is(subs::local_code_suds(), undef, 'a file that is not a numeric code is refused');
 
+# --- the Windows installer keeps it beside the app dir, one level up --------
+# Setup seeds before it knows who will run the house, so the code is written to
+# the install root (<Install>\unlock-code.txt) while the app lives in
+# <Install>\app. It is prose there, not a bare number.
+my $install_code = "$tmp/unlock-code.txt";
+write_file($install_code,
+	"JawnOS unlock code: $code\r\n\r\nEnter this code at the JawnOS login screen.\r\n");
+is(subs::local_code_suds(), $code, "the installer's file beside the app dir is read");
+unlink $install_code;
+is(subs::local_code_suds(), undef, 'and with it gone nothing else is a key');
+
 # --- the machine's own code is the key, and it seeds the vault -------------
 write_file("$dir/home/UNLOCK-CODE.txt", "  $code \n");
 is(subs::local_code_suds(), $code, 'the code beside the house is accepted');

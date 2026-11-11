@@ -754,14 +754,34 @@ sub legacy_suds {
 # every sealed write - the Exit backup above all - has no secret. suds_current
 # judges the candidate, so a stale or wrong file is never a key.
 sub local_code_suds {
-	my $path = &home('~/UNLOCK-CODE.txt');
-	return undef unless -e $path;
-	my $code = eval { read_file($path) };
-	return undef unless defined $code && length $code;
-	$code =~ s/\s+//g;
-	return undef unless $code =~ /\A[0-9]{4,12}\z/;
-	return undef unless &suds_current($code);
-	return $code;
+	# The file sits beside the house (~/UNLOCK-CODE.txt). The Windows installer
+	# writes it into the tree it launched the house from instead, because install
+	# and launch can happen under two different homes: Setup runs elevated, then
+	# the house starts as the person who owns the machine. Read both, and let the
+	# canary judge the candidate - never the file's shape.
+	my @paths = (&home('~/UNLOCK-CODE.txt'));
+	my $tree = &install_dir();
+	unless (defined $tree && length $tree) {
+		$tree = eval {
+			require JawnOS::Platform::Paths;
+			JawnOS::Platform::Paths::tree_dir();
+		};
+	}
+	if (defined $tree && length $tree) {
+		push @paths, "$tree/unlock-code.txt", "$tree/UNLOCK-CODE.txt";
+		# the Windows installer keeps it in the install root, one level up
+		push @paths, "$tree/../unlock-code.txt", "$tree/../UNLOCK-CODE.txt";
+	}
+	foreach my $path (@paths) {
+		next unless -e $path;
+		my $text = eval { read_file($path) };
+		next unless defined $text && length $text;
+		# the file may be the bare code or a line of prose around it
+		my ($code) = $text =~ /([0-9]{4,12})/;
+		next unless defined $code;
+		return $code if &suds_current($code);
+	}
+	return undef;
 }
 
 # The suds, resolved server-side. Sessions carry only suds_id now; nothing a
