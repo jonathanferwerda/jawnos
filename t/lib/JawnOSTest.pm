@@ -172,17 +172,24 @@ sub _install_scratch_signals {
 # A run killed by SIGKILL (or one whose runner was orphaned) never reaches END,
 # so its scratch dirs never go away. The next suite sweeps what is abandoned. A
 # dir is safe to remove when the pid in its stamp is dead (or has been reused:
-# the starttime no longer matches), or - for a dir written before the stamp, or
-# one caught between mkdir and the stamp landing - when it is older than the
-# threshold (6 hours, JAWNOS_TEST_SCRATCH_MAX_AGE overrides it) AND named by no
-# live process. A live run's own dir stays: its pid is alive and its stamp says
-# so, even though after boot the dir is neither its cwd nor an open file. The
-# duration-hint file is `jawnos-test-times-<uid>`, which is state, not scratch.
+# the starttime no longer matches), or - for a dir whose stamp never landed,
+# because the creator was killed or the write hit a full tmpfs - when it is
+# older than a short grace AND named by no live process. The stamp lands right
+# after mkdir, so a minute is already generous; the old six-hour wait let a full
+# tmpfs stay full until it broke every gdk-pixbuf icon load on the box. A live
+# run's own dir stays: its pid is alive and its stamp says so, even though after
+# boot the dir is neither its cwd nor an open file. The duration-hint file is
+# `jawnos-test-times-<uid>`, which is state, not scratch.
 sub sweep_stale_scratch {
 	my (%opt) = @_;
-	my $max_age = defined $opt{'max_age'} ? $opt{'max_age'}
+	# `max_age` and JAWNOS_TEST_SCRATCH_MAX_AGE are the old names for the same
+	# knob; keep accepting them so an existing QA export still narrows or widens
+	# the grace instead of silently falling back to the default.
+	my $grace = defined $opt{'grace'} ? $opt{'grace'}
+		: defined $ENV{'JAWNOS_TEST_SCRATCH_GRACE'} ? $ENV{'JAWNOS_TEST_SCRATCH_GRACE'}
+		: defined $opt{'max_age'} ? $opt{'max_age'}
 		: defined $ENV{'JAWNOS_TEST_SCRATCH_MAX_AGE'} ? $ENV{'JAWNOS_TEST_SCRATCH_MAX_AGE'}
-		: 6 * 60 * 60;
+		: 60;
 	my $tmp = defined $opt{'dir'} ? $opt{'dir'} : File::Spec->tmpdir();
 	return 0 unless defined $tmp && -d $tmp;
 
@@ -212,7 +219,7 @@ sub sweep_stale_scratch {
 			next;
 		}
 
-		next if $now - $st[9] < $max_age;     # a run may still be writing it
+		next if $now - $st[9] < $grace;   # mkdir -> stamp is instant; older is abandoned
 		remove_tree($path, { error => \my $err });
 		$removed++;
 	}
@@ -324,6 +331,12 @@ sub config_json {
 
 sub _setup {
 	return if $_READY;
+
+	# Reclaim abandoned scratch before this run asks tmpfs for anything. The
+	# fork runner used to call the sweep only after booting this harness, but a
+	# full tmpfs makes the sandbox creation fail first: the sweep never ran on
+	# the one box that most needed it. A sweep needs no space (readdir/unlink).
+	sweep_stale_scratch();
 
 	$ROOT = _find_root();
 	die "JawnOSTest: cannot find the repo root from $FindBin::Bin or the working directory\n"
