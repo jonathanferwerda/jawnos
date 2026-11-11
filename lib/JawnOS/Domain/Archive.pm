@@ -1655,6 +1655,19 @@ sub cloud_sync_pending_remove {
 	return;
 }
 
+# A deletion time travels as a form value between machines, and `time()` is the
+# hi-res one in this package, so a queued change can carry a fraction
+# (1794376135.87). stat() reports whole seconds, so floor it there. A missing or
+# unreadable time is not epoch 0: that made every existing file look newer than
+# the deletion and turned the delete into a silent "kept".
+sub cloud_sync_deleted_at {
+	my $value = shift;
+	return undef unless (defined $value && $value =~ /^\s*(\d+)(?:\.\d*)?\s*$/);
+	my $seconds = 0 + $1;
+	return undef unless $seconds > 0;
+	return $seconds;
+}
+
 sub cloud_sync_relative_for {
 	my ($root, $file) = @_;
 	return '' unless (defined $root && defined $file);
@@ -1822,7 +1835,8 @@ sub cloud_sync_finalize_upload {
 # the deletion; that edit is then marked as changed so it travels back.
 sub cloud_sync_apply_delete {
 	my ($base, $dest, $deleted_at) = @_;
-	$deleted_at = 0 unless (defined $deleted_at && $deleted_at =~ /^\d+$/);
+	$deleted_at = &cloud_sync_deleted_at($deleted_at);
+	return { error => 'the deletion has no time' } unless defined $deleted_at;
 	return { error => 'no destination' } unless (ref $dest eq 'HASH' && defined $dest->{'path'});
 	my $rel = $dest->{'relative'};
 	return &cloud_sync_state_modify($base, sub {
@@ -1831,9 +1845,23 @@ sub cloud_sync_apply_delete {
 		my $exists = -f $path ? 1 : 0;
 		my $mtime = $exists ? ((stat($path))[9] || 0) : 0;
 		if ($exists && $mtime > $deleted_at) {
-			delete $state->{'files'}->{$rel};
-			&cloud_sync_pending_clear($state, $rel);
-			return { deleted => 0, kept => 1, mtime => $mtime };
+			# The local copy was edited after the deletion, so the edit wins.
+			# Queue it as a change of its own: it travels back to the device
+			# that deleted the file and supersedes its tombstone there. Without
+			# this the sender's deletion stayed pending against a file nobody
+			# would remove, or was cleared as if the peer had taken it.
+			my $size = -s $path;
+			$size = 0 unless defined $size;
+			my $hash = &archive_file_digest($path);
+			$state->{'files'}->{$rel} = { size => $size, mtime => $mtime, hash => $hash };
+			&cloud_sync_pending_add($state, {
+				kind => 'file',
+				rel => $rel,
+				size => $size,
+				mtime => $mtime,
+				hash => $hash
+			});
+			return { deleted => 0, kept => 1, mtime => $mtime, hash => $hash };
 		}
 		unlink $path if $exists;
 		my $old = $state->{'deleted'}->{$rel};
@@ -2187,7 +2215,10 @@ sub cloud_sync_collect_changes {
 		}
 		foreach my $rel ( keys %{ $state->{'files'} } ) {
 			next if $seen{$rel};
-			my $deleted_at = time();
+			# Whole seconds: stat() reports whole seconds, and the peer reads the
+			# time back from a form field. A fraction was read there as 0, which
+			# made every file look newer than the deletion (2026-11-11).
+			my $deleted_at = int(time());
 			&cloud_sync_pending_add($state, {
 				kind => 'delete',
 				rel => $rel,
@@ -2207,7 +2238,8 @@ sub cloud_sync_collect_changes {
 # another round trip.
 sub cloud_sync_delete_local {
 	my ($path, $base, $rel, $deleted_at) = @_;
-	$deleted_at = 0 unless (defined $deleted_at && $deleted_at =~ /^\d+$/);
+	$deleted_at = &cloud_sync_deleted_at($deleted_at);
+	return { error => 'the deletion has no time' } unless defined $deleted_at;
 	my $file = $path . '/' . $rel;
 	my $mtime = -f $file ? ((stat($file))[9] || 0) : 0;
 	return { deleted => 0, kept => 1, mtime => $mtime } if ($mtime > $deleted_at);
@@ -2338,6 +2370,17 @@ sub cloud_sync_job {
 	my $index = 0;
 	my @errors;
 	my %result;
+	# A change leaves pending only when every device acknowledged it. A device
+	# that could not be reached, or that kept a newer local copy, leaves its
+	# change here; the next sweep retries it.
+	my %settled = map { (defined $_->{'id'} && length $_->{'id'}) ? ($_->{'id'} => 1) : () } @changes;
+	my $settle = sub {
+		my $change = shift;
+		my $id = $change->{'id'};
+		delete $settled{$id} if (defined $id && length $id);
+		return;
+	};
+	my $kept_total = 0;
 
 	my $note = sub {
 		my ($state, %extra) = @_;
@@ -2358,9 +2401,10 @@ sub cloud_sync_job {
 		if ($agent->{'error'}) {
 			push @errors, $host . ': ' . $agent->{'error'};
 			$result{$host} = { error => $agent->{'error'} };
+			$settle->($_) foreach @changes;
 			next;
 		}
-		my ($sent, $removed, $skipped) = (0, 0, 0);
+		my ($sent, $removed, $skipped, $kept) = (0, 0, 0, 0);
 		foreach my $change ( @changes ) {
 			$index++;
 			my $rel = $change->{'rel'};
@@ -2388,6 +2432,7 @@ sub cloud_sync_job {
 				my ($probe, $probe_error) = &archive_reply($probe_tx);
 				if (!$probe || $probe->{'status'} ne 'ok') {
 					push @errors, $host . ': ' . $rel . ': ' . (($probe && $probe->{'error'}) || $probe_error || 'the machine did not answer');
+					$settle->($change);
 					$bytes_done += $size;
 					next;
 				}
@@ -2398,6 +2443,7 @@ sub cloud_sync_job {
 						&& (&rightNow() - $partial->{'started'}) > 600000) ? 1 : 0;
 					unless ($stale) {
 						push @errors, $host . ': ' . $rel . ': another device is sending this file';
+						$settle->($change);
 						$bytes_done += $size;
 						next;
 					}
@@ -2457,6 +2503,7 @@ sub cloud_sync_job {
 				}
 				if ($send_error) {
 					push @errors, $host . ': ' . $rel . ': ' . $send_error;
+					$settle->($change);
 					$bytes_done += $size;
 					next;
 				}
@@ -2469,29 +2516,44 @@ sub cloud_sync_job {
 				$note->('copying', file => $rel, file_bytes_done => $size, file_bytes_total => $size, bytes_done => $bytes_done);
 			}
 			else {
-				my $deleted_at = $change->{'deleted_at'} || time();
+				my $deleted_at = &cloud_sync_deleted_at($change->{'deleted_at'});
+				$deleted_at = int(time()) unless defined $deleted_at;
 				if (-f $file) {
+					# The file is back locally, so this deletion is obsolete.
 					next;
 				}
 				my $res = &cloud_sync_delete_agent($agent, $base, $rel, $deleted_at);
 				if ($res->{'error'}) {
 					push @errors, $host . ': ' . $rel . ': ' . $res->{'error'};
+					$settle->($change);
+					next;
+				}
+				if ($res->{'kept'}) {
+					# The peer edited its copy after the deletion, so the edit
+					# wins. That is not an acknowledgement: the change stays
+					# pending until the peer's newer file comes back and
+					# supersedes it on arrival.
+					$kept++;
+					$kept_total++;
+					$settle->($change);
 					next;
 				}
 				$removed++;
 			}
 		}
-		$result{$host} = { sent => $sent, removed => $removed, skipped => $skipped };
+		$result{$host} = { sent => $sent, removed => $removed, skipped => $skipped, kept => $kept };
 	}
 
 	$note->('done', bytes_done => $bytes_done);
 	my $final = { changes => scalar @changes, devices => $device_count, files => scalar(@changes) };
+	$final->{'kept'} = $kept_total if $kept_total;
 	if (scalar @errors) {
 		$final->{'errors'} = \@errors;
 		$job->fail($final);
 		return;
 	}
 	my @ids = map { $_->{'id'} } grep { defined $_->{'id'} && length $_->{'id'} } @changes;
+	@ids = grep { $settled{$_} } @ids;
 	&cloud_sync_state_modify($base, sub {
 		my $state = shift;
 		&cloud_sync_pending_remove($state, \@ids);

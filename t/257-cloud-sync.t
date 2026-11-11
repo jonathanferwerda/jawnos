@@ -206,6 +206,145 @@ ok(!-e "$incoming_dir/one.txt", 'the file is gone');
 my $deleted_state = subs::cloud_sync_state_read($incoming_base);
 ok($deleted_state->{'deleted'}->{'one.txt'}, 'and the state remembers the deletion');
 
+# ---- a deletion is delivered, never silently dropped ------------------------
+#
+# The deletion time used to come from the hi-res time() this package imports,
+# so it travelled as a fraction (1794376135.87). The receiver only accepted
+# digits, read that as 0, and then every file looked newer than the deletion:
+# it answered "kept", the sender took that as success and cleared its pending
+# list. The queued time must be whole seconds, a kept file must keep the change
+# pending until the newer edit comes back, and an unreachable device must keep
+# it pending too. A fake agent stands in for the peer, so nothing touches the
+# network.
+
+{
+	package CloudSyncFakeRes;
+	sub new { my ($class, $json) = @_; return bless { json => $json }, $class }
+	sub json { return $_[0]->{'json'} }
+	sub code { return 200 }
+	sub body { return '' }
+
+	package CloudSyncFakeTx;
+	sub new { my ($class, $json) = @_; return bless { res => CloudSyncFakeRes->new($json) }, $class }
+	sub res { return $_[0]->{'res'} }
+
+	package CloudSyncFakeUA;
+	sub new { my ($class, $reply) = @_; return bless { reply => $reply, calls => [] }, $class }
+	sub calls { return $_[0]->{'calls'} }
+	sub post {
+		my ($self, $url, %rest) = @_;
+		my $form = $rest{'form'} || {};
+		push @{ $self->{'calls'} }, { url => $url, form => $form };
+		my $reply = ref $self->{'reply'} eq 'CODE' ? $self->{'reply'}->($url, $form) : $self->{'reply'};
+		return undef unless defined $reply;
+		return CloudSyncFakeTx->new($reply);
+	}
+
+	package CloudSyncFakeJob;
+	sub new { return bless { notes => {} }, shift }
+	sub info { return { notes => {} } }
+	sub note { return 1 }
+	sub finish { my ($self, $result) = @_; $self->{'finished'} = $result; return 1 }
+	sub fail { my ($self, $result) = @_; $self->{'failed'} = $result; return 1 }
+	sub finished { return $_[0]->{'finished'} }
+	sub failed { return $_[0]->{'failed'} }
+}
+
+sub cloud_delete_sender {
+	my $dir = tempdir(DIR => $test_home, CLEANUP => 1);
+	my $base = substr($dir, length($test_home) + 1);
+	write_file("$dir/gone.txt", 'gone');
+	subs::cloud_sync_collect_changes($dir, $base);
+	subs::cloud_sync_state_modify($base, sub { $_[0]->{'pending'} = []; return 1 });
+	unlink "$dir/gone.txt";
+	my $changes = subs::cloud_sync_collect_changes($dir, $base);
+	return ($dir, $base, $changes);
+}
+
+sub cloud_delete_job {
+	my ($dir, $base, $changes, $reply) = @_;
+	my $ua = CloudSyncFakeUA->new($reply);
+	local *subs::remote_agent_for = sub { return { ua => $ua, manager => 'https://peer.invalid' } };
+	my $job = CloudSyncFakeJob->new();
+	subs::cloud_sync_job($job, {
+		path => $dir,
+		base => $base,
+		devices => [ { uuid => 'peer-uuid', hostname => 'Peer' } ],
+		changes => [ map { { %{$_} } } @{$changes} ]
+	});
+	return ($job, $ua);
+}
+
+my ($del_dir, $del_base, $del_changes) = cloud_delete_sender();
+is(scalar @{$del_changes}, 1, 'a disappeared file is one collected change');
+is($del_changes->[0]->{'kind'}, 'delete', 'a delete change');
+like($del_changes->[0]->{'deleted_at'}, qr/^\d+$/, 'its time is whole epoch seconds the peer can read');
+
+my ($del_job, $del_ua) = cloud_delete_job($del_dir, $del_base, $del_changes,
+	{ status => 'ok', deleted => 1, kept => 0, deleted_at => $del_changes->[0]->{'deleted_at'} });
+ok($del_job->finished, 'a deletion every device took finishes');
+ok(!$del_job->failed, 'without an error');
+is(scalar @{ subs::cloud_sync_state_read($del_base)->{'pending'} }, 0,
+	'and the delivered deletion leaves the pending list');
+ok(subs::cloud_sync_state_read($del_base)->{'deleted'}->{'gone.txt'},
+	'the tombstone stays, so a stale copy cannot come back');
+
+# A peer that kept a newer local copy has not taken the deletion. Its edit
+# travels back and supersedes the delete on arrival; until then the change is
+# still pending, and the sender does not treat "kept" as a delivery.
+my ($kept_dir, $kept_base, $kept_changes) = cloud_delete_sender();
+my $kept_reply_for = $kept_changes->[0]->{'deleted_at'};
+my ($kept_job) = cloud_delete_job($kept_dir, $kept_base, $kept_changes,
+	{ status => 'ok', deleted => 0, kept => 1, mtime => $kept_reply_for + 5 });
+ok($kept_job->finished, 'a peer that kept a newer copy still answers the job');
+ok(!$kept_job->failed, 'and it is not a transport failure');
+my $kept_pending = subs::cloud_sync_state_read($kept_base)->{'pending'};
+is(scalar @{$kept_pending}, 1, 'but the deletion stays pending until the newer copy returns');
+is($kept_pending->[0]->{'kind'}, 'delete', 'still the deletion');
+ok(subs::cloud_sync_state_read($kept_base)->{'deleted'}->{'gone.txt'},
+	'and the tombstone is not dropped');
+ok(!-e "$kept_dir/gone.txt", 'the sender does not bring the file back for itself');
+
+# A device that never answers is the retry the pending list exists for.
+my ($down_dir, $down_base, $down_changes) = cloud_delete_sender();
+my ($down_job) = cloud_delete_job($down_dir, $down_base, $down_changes, sub { return undef });
+ok($down_job->failed, 'an unreachable device fails the job');
+is(scalar @{ subs::cloud_sync_state_read($down_base)->{'pending'} }, 1,
+	'and the deletion is kept for the next sweep');
+
+# The receiving half: a local edit newer than the deletion wins, and the
+# winning copy is queued so it travels back to the device that deleted it.
+my $edited_dir = tempdir(DIR => $test_home, CLEANUP => 1);
+my $edited_base = substr($edited_dir, length($test_home) + 1);
+write_file("$edited_dir/edited.txt", 'edited');
+utime 2200, 2200, "$edited_dir/edited.txt";
+my $edited_dest = subs::cloud_sync_destination({ base => $edited_base, path => 'edited.txt' });
+my $edited_kept = subs::cloud_sync_apply_delete($edited_base, $edited_dest, 2100);
+is($edited_kept->{'kept'}, 1, 'a deletion older than the local edit is refused');
+ok(-e "$edited_dir/edited.txt", 'the edited file stays');
+my $edited_state = subs::cloud_sync_state_read($edited_base);
+my ($edited_queued) = grep { ($_->{'rel'} || '') eq 'edited.txt' && ($_->{'kind'} || '') eq 'file' }
+	@{ $edited_state->{'pending'} || [] };
+ok($edited_queued, 'and the winning edit is queued to travel back');
+
+# A fractional time from a peer that still sends one is floored, not read as 0.
+my $fractional_dir = tempdir(DIR => $test_home, CLEANUP => 1);
+my $fractional_base = substr($fractional_dir, length($test_home) + 1);
+write_file("$fractional_dir/fractional.txt", 'x');
+utime 2000, 2000, "$fractional_dir/fractional.txt";
+my $fractional_dest = subs::cloud_sync_destination({ base => $fractional_base, path => 'fractional.txt' });
+my $fractional = subs::cloud_sync_apply_delete($fractional_base, $fractional_dest, '2100.75');
+is($fractional->{'kept'}, 0, 'a fractional deletion time is not read as "nothing is newer"');
+is($fractional->{'deleted'}, 1, 'so the deletion still removes the file');
+ok(!-e "$fractional_dir/fractional.txt", 'and the file is gone');
+is(subs::cloud_sync_state_read($fractional_base)->{'deleted'}->{'fractional.txt'}, 2100,
+	'with a whole-second tombstone');
+
+# A deletion with no readable time is refused so the sender retries; treating it
+# as epoch 0 is what made every existing file win.
+my $timeless = subs::cloud_sync_apply_delete($fractional_base, $fractional_dest, undef);
+ok($timeless->{'error'}, 'a deletion with no time is refused rather than applied as 0');
+
 # ---- a device row stays a hash after the selected flag ----------------------
 
 my $device_rows = [ { uuid => 'u', hostname => 'h', ok => 1, selected => 0 } ];
