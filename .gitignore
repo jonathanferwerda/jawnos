@@ -35,6 +35,10 @@ Thumbs.db
 # --- committed: a ~35 MB binary per version would bloat git history forever. ---
 releases/
 
+# --- Windows build output (build-portable.ps1, the release workflow). ---
+# --- The Setup.exe is a build artifact; release copies live in releases/. ---
+dist/
+
 # --- Speech voices (Piper models + the piper binary). Same deal as releases/: ---
 # --- multi-MB blobs carried across devices, never committed. ---
 voices/
