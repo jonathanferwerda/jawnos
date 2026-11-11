@@ -91,7 +91,8 @@ sub action_9562 {
 		if (scalar @ip == 4) {
 
 			$returner->{$ip}->{'ip'} = $ip;
-			$returner->{$ip}->{'result'} = `timeout $timeout ping -c 1 ` . quote($ip);
+			my $ping_command = "timeout $timeout ping -c 1 " . quote($ip);
+			$returner->{$ip}->{'result'} = `$ping_command`;
 		}
 		else {
 			require JawnOS::Platform::Net; my $interfaces = JawnOS::Platform::Net::interfaces();
@@ -118,7 +119,8 @@ sub action_9562 {
 								push @gw, $csv;
 								my $ip_address = join '.', @gw;
 								$returner->{$ip_address}->{ip} = $ip_address;
-								$returner->{$ip_address}->{'result'} = `timeout $timeout ping -c 1 ` . quote($ip_address);
+								my $ping_command = "timeout $timeout ping -c 1 " . quote($ip_address);
+								$returner->{$ip_address}->{'result'} = `$ping_command`;
 							}
 						}
 						elsif ($sip eq '..' ) {
@@ -131,7 +133,8 @@ sub action_9562 {
 								my $ip_address = join '.', @gw;
 
 								$returner->{$ip_address}->{ip} = $ip_address;
-								$returner->{$ip_address}->{'result'} = `timeout $timeout ping -c 1 ` . quote($ip_address);
+								my $ping_command = "timeout $timeout ping -c 1 " . quote($ip_address);
+								$returner->{$ip_address}->{'result'} = `$ping_command`;
 							}
 						}
 						else {
@@ -139,7 +142,8 @@ sub action_9562 {
 							push @gw, $ip;
 							my $ip_address = join '.', @gw;
 							$returner->{$ip_address}->{ip} = $ip_address;
-							$returner->{$ip_address}->{'result'} = `timeout $timeout ping -c 1 ` . quote($ip_address);
+							my $ping_command = "timeout $timeout ping -c 1 " . quote($ip_address);
+							$returner->{$ip_address}->{'result'} = `$ping_command`;
 						}
 					}
 				}

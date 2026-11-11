@@ -57,9 +57,9 @@ unlike($conf, qr/`timeout \$timeout ping -c 1 \$ip`/,
 	'ping does not interpolate a raw host');
 unlike($conf, qr/`timeout \$timeout ping -c 1 \$ip_address`/,
 	'ping does not interpolate a raw derived address');
-like($conf, qr/ping -c 1 ` \. quote\(\$ip\)/,
+like($conf, qr/"timeout \$timeout ping -c 1 " \. quote\(\$ip\)/,
 	'ping quotes the host');
-like($conf, qr/ping -c 1 ` \. quote\(\$ip_address\)/,
+like($conf, qr/"timeout \$timeout ping -c 1 " \. quote\(\$ip_address\)/,
 	'ping quotes the derived address');
 like($conf, qr/\Q[0-9., ]+\E/,
 	'ping accepts only address/range/list characters');

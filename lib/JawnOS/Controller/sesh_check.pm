@@ -102,7 +102,8 @@ sub action_7519 {
 		$backup_file =~ s/\.enc\z//i;
 		$database = $backup_file . '.db';
 		unless (-e $database && -s $database > 5000) {
-			my $data = `tail ` . quote($backup);
+			my $tail_command = 'tail ' . quote($backup);
+			my $data = `$tail_command`;
 			my @split_data = split $universal_splitter, $data;
 			$encryption_standard = &subs::decrypter($secret, $split_data[1]);
 			&subs::openssl_file_crypt('d', $encryption_standard, $secret, $backup, $database, 0, 1);

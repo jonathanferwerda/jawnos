@@ -625,7 +625,8 @@ sub records_backup_now {
 	my $secret = &suds_grabber();
 	my $standard = &subs::setting_grabber({ app => 'misc', setting => 'encryption_standard' }) || 'aes-256-ctr';
 	my $out = "$dir/jawnos_" . &rightNow() . '.enc';
-	`sqlite3 ` . &quote($database) . ' ' . &quote(".backup '$tmp'");
+	my $backup_command = 'sqlite3 ' . &quote($database) . ' ' . &quote(".backup '$tmp'");
+	`$backup_command`;
 	&openssl_file_crypt('e', $standard, $secret, $tmp, $out, 0, 1);
 	chmod 0600, $out if -e $out;
 	my $appendage = $gb::universal_splitter . &encrypter($secret, $standard);
@@ -657,7 +658,8 @@ sub records_backup_decrypt {
 	return undef unless $path && -e $path;
 	require File::Temp;
 	require File::Spec;
-	my $tail = `tail -c 600 ` . &quote($path);
+	my $tail_command = 'tail -c 600 ' . &quote($path);
+	my $tail = `$tail_command`;
 	my @parts = split /\Q$gb::universal_splitter\E/, ($tail // '');
 	return undef unless scalar @parts > 1;
 	my $appendage = $parts[-1];

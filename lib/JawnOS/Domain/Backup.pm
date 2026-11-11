@@ -303,15 +303,18 @@ sub backup_now {
 			$ld_server_time = $last_update;
 		}
 		$ld_server_time = $ld_server_time - 20000;
-		my $tables = `sqlite3 ` . &quote($database) . ' .tables';
+		my $tables_command = 'sqlite3 ' . &quote($database) . ' .tables';
+		my $tables = `$tables_command`;
 		my @tables = sort split ' ', $tables;
 		my $schema_file = $temporary_path . '.schema.sql';
 		# the statistics and sequence tables are internal: replaying their CREATE is
 		# a parse error ("object name reserved for internal use: sqlite_sequence"),
 		# and SQLite builds them again where they are wanted
-		`sqlite3 ` . &quote($database) . q{ .schema | grep -vE 'sqlite_stat|sqlite_sequence' > } . &quote($schema_file);
+		my $schema_command = 'sqlite3 ' . &quote($database) . q{ .schema | grep -vE 'sqlite_stat|sqlite_sequence' > } . &quote($schema_file);
+		`$schema_command`;
 		chmod 0600, $schema_file;
-		my $command = `sqlite3 ` . &quote($temporary_path) . ' < ' . &quote($schema_file);
+		my $import_command = 'sqlite3 ' . &quote($temporary_path) . ' < ' . &quote($schema_file);
+		`$import_command`;
 		system('shred', '-u', $schema_file);
 #		my $backup = `sqlite3 $database .schema $temporary_path`;
 		my $tsql = Mojo::SQLite->new('sqlite:' . $temporary_path);
@@ -412,7 +415,8 @@ sub backup_now {
 
 
 		&subs::db_query('VACUUM');
-		my $backup = `sqlite3 ` . &quote($database) . ' ' . &quote(".backup '$temporary_path'");
+		my $backup_command = 'sqlite3 ' . &quote($database) . ' ' . &quote(".backup '$temporary_path'");
+		my $backup = `$backup_command`;
 		my $tsql = Mojo::SQLite->new('sqlite:' . $temporary_path);
 		my $tdb = $tsql->db;
 		my $indexes = $tdb->query('select * from sqlite_master where name not like ? and type=?', '%autoindex%', 'index')->hashes;
@@ -443,7 +447,8 @@ sub backup_now {
 	# below, and the caller is told not to destroy the live database.
 	unless ($encrypt && &backup_sealed_ok($archive_enc)) {
 		unlink $archive_enc;
-		`shred -u ` . &quote($temporary_path) . '*';
+		my $shred_command = 'shred -u ' . &quote($temporary_path) . '*';
+		`$shred_command`;
 		$log->error('backup: could not seal ' . ($databaser || $database || 'the database') . '; nothing was archived') if $log;
 		return { status => 'failed', error => 'could not seal the database' };
 	}
@@ -459,14 +464,16 @@ sub backup_now {
 		`cp -v $archive_enc $staged`;
 		unless (-e $staged && (stat($staged))[7] == (stat($archive_enc))[7]) {
 			unlink $staged;
-			`shred -u ` . &quote($temporary_path) . '*';
+			my $shred_command = 'shred -u ' . &quote($temporary_path) . '*';
+			`$shred_command`;
 			$log->error('backup: could not stage the sealed copy at ' . $enc_file) if $log;
 			return { status => 'failed', error => 'could not copy the sealed backup' };
 		}
 		chmod 0600, $staged;
 		unless (rename $staged, $enc_file) {
 			unlink $staged;
-			`shred -u ` . &quote($temporary_path) . '*';
+			my $shred_command = 'shred -u ' . &quote($temporary_path) . '*';
+			`$shred_command`;
 			$log->error('backup: could not replace the sealed copy at ' . $enc_file) if $log;
 			return { status => 'failed', error => 'could not copy the sealed backup' };
 		}
@@ -476,7 +483,8 @@ sub backup_now {
 	# run would reset the request worker's loop and take the gate reply with it.
 	&subs::subprocessor(sub {
 	    Mojo::IOLoop->reset;
-		`shred -u ` . &quote($temporary_path) . '*';
+		my $shred_command = 'shred -u ' . &quote($temporary_path) . '*';
+		`$shred_command`;
 	}, { name => 'backup shredder', fork => 1 });
 
 

@@ -189,7 +189,8 @@ sub action_6704 {
 		my $safe_name = &subs::path_name($upload->{'filename'});
 		my $filename = $location . '/' . $safe_name;
 		$u->move_to($filename);
-		$linux_file .= `file ` . quote($filename);
+		my $file_command = 'file ' . quote($filename);
+		$linux_file .= `$file_command`;
 
 		if ($safe_name =~ /\.avi\z/i) {
 			my $old_filename = $filename;

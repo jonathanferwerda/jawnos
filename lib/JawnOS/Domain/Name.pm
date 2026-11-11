@@ -328,7 +328,8 @@ sub setting_setter {
 
 
 		my ($db,$database,$sql) = &database_grabber();
-		my $tables = `sqlite3 ` . &quote($database) . ' .tables';
+		my $tables_command = 'sqlite3 ' . &quote($database) . ' .tables';
+		my $tables = `$tables_command`;
 		my @u = sort split ' ', $tables;
 		foreach my $t ( @u ) {
 			# a rename is a fact about the app, not about history: the sync log is

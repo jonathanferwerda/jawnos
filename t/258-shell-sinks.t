@@ -1,4 +1,4 @@
-# tests-for: lib/JawnOS/Manager/Part01.pm lib/JawnOS/Manager/Part02.pm lib/JawnOS/Manager/Part04.pm lib/JawnOS/Manager/Part12.pm lib/JawnOS/Domain/Notify.pm lib/JawnOS/Domain/Records2.pm lib/JawnOS/Domain/Records.pm lib/JawnOS/Domain/Crypt.pm lib/JawnOS/Domain/Sent.pm lib/JawnOS/Domain/People.pm lib/JawnOS/Domain/Run.pm lib/JawnOS/Domain/Embedded.pm lib/JawnOS/Controller/manager_misc3.pm lib/JawnOS/Controller/manager_embedded.pm scripts/security_audit.pl
+# tests-for: lib/JawnOS/Manager/Part01.pm lib/JawnOS/Manager/Part02.pm lib/JawnOS/Manager/Part04.pm lib/JawnOS/Manager/Part12.pm lib/JawnOS/Domain/Notify.pm lib/JawnOS/Domain/Records2.pm lib/JawnOS/Domain/Records.pm lib/JawnOS/Domain/Crypt.pm lib/JawnOS/Domain/Sent.pm lib/JawnOS/Domain/People.pm lib/JawnOS/Domain/Run.pm lib/JawnOS/Domain/Embedded.pm lib/JawnOS/Controller/manager_misc3.pm lib/JawnOS/Controller/manager_embedded.pm lib/JawnOS/Controller/manager_configure.pm lib/JawnOS/Controller/manager_configure2.pm lib/JawnOS/Controller/manager_configure5.pm lib/JawnOS/Controller/manager_mail2.pm lib/JawnOS/Controller/sesh_check.pm lib/JawnOS/Manager/Part17.pm lib/JawnOS/Domain/Backup.pm lib/JawnOS/Domain/Name.pm scripts/security_audit.pl
 # covers:    The fourth audit pass: a request timestamp is a number before it
 #           reaches a capture filename, a run command loses every shell
 #           metacharacter, the QR encodes the URL it was given, and the shells
@@ -10,7 +10,11 @@ use warnings;
 use FindBin;
 use lib "$FindBin::Bin/lib", "t/lib";
 use Test::More;
-use File::Slurp qw(read_file);
+use File::Slurp qw(read_file write_file);
+use File::Temp qw(tempdir);
+use Mojo::Message::Request;
+use Mojo::URL;
+BEGIN { $ENV{'HOME'} = tempdir(CLEANUP => 1) }
 use JawnOSTest;
 
 require(root() . '/lib/JawnOS/Manager/Part01.pm');
@@ -116,5 +120,51 @@ like(source('lib/JawnOS/Controller/manager_embedded.pm'), qr/'nohup sh -c ' \. &
 
 like(source('scripts/security_audit.pl'), qr/perl\.shell\.double_quoted/,
 	'the audit names a double-quoted system string');
+
+# --- a peer signature is really produced -----------------------------------
+# The signing command was once written as a backtick string completed by
+# concatenation (`openssl ... -inkey ` . &quote($key)): Perl ran only the
+# backticked part, openssl got no key, no signature file appeared, and every
+# machine-to-machine POST went out unsigned - the receiver answered 403 or the
+# Gate page (v0.1.2659). What peer_verify reads is the headers and the bytes.
+{
+	my $req = Mojo::Message::Request->new;
+	$req->method('POST');
+	$req->url(Mojo::URL->new('/manager/folders/cloud/space'));
+	subs::peer_sign_request($req);
+	my $ts    = $req->headers->header('X-Peer-Timestamp');
+	my $nonce = $req->headers->header('X-Peer-Nonce');
+	my $sig   = $req->headers->header('X-Peer-Signature');
+	my $key   = $req->headers->header('X-Peer-Key');
+	ok($ts && $nonce && $sig && $key, 'peer_sign_request sets all four headers')
+		or diag('ts=' . ($ts // '') . ' nonce=' . ($nonce // '')
+			. ' sig=' . length($sig // '') . ' key=' . length($key // ''));
+
+	my $dir = tempdir(CLEANUP => 1);
+	my $msg_file = "$dir/message";
+	write_file($msg_file, subs::peer_sign_message($req->method, $req->url->path_query, $ts, $nonce));
+	my $sig_file = "$dir/signature";
+	write_file($sig_file, MIME::Base64::decode_base64($sig // ''));
+	my $key_file = "$dir/pubkey";
+	write_file($key_file, MIME::Base64::decode_base64($key // ''));
+	is(system('openssl', 'pkeyutl', '-verify', '-pubin', '-inkey', $key_file,
+		'-rawin', '-in', $msg_file, '-sigfile', $sig_file), 0,
+		'the signature peer_verify reads verifies');
+}
+
+# A backtick command completed by concatenation after its closing backtick is
+# not the command the author meant: Perl runs the backticked part and joins the
+# rest as a string. Pin every file that carried the shape.
+my $BROKEN_SHELL = qr/`[^`\s]+ [^`]*`\s*\./;
+for my $rel (qw(
+	lib/JawnOS/Domain/Crypt.pm lib/JawnOS/Domain/Records.pm lib/JawnOS/Domain/Backup.pm
+	lib/JawnOS/Domain/Name.pm lib/JawnOS/Controller/manager_misc3.pm
+	lib/JawnOS/Controller/manager_configure5.pm lib/JawnOS/Controller/manager_configure2.pm
+	lib/JawnOS/Controller/manager_configure.pm lib/JawnOS/Controller/manager_misc5.pm
+	lib/JawnOS/Controller/sesh_check.pm lib/JawnOS/Controller/manager_mail2.pm
+	lib/JawnOS/Manager/Part17.pm
+)) {
+	unlike(source($rel), $BROKEN_SHELL, "$rel keeps each shell command in one string");
+}
 
 done_testing();

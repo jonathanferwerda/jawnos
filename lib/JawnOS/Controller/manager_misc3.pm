@@ -204,7 +204,8 @@ sub action_10288 {
 	if ($base =~ /^[0-9a-f]{7,40}$/ && system('cd ' . &quote($repo) . ' && ' . &quote($git) . ' cat-file -e ' . &quote($base) . ' 2>/dev/null') == 0) {
 		$delta = " ^$base";
 	}
-	`cd ` . &quote($repo) . ' && ' . &quote($git) . ' bundle create ' . &quote($path) . ' HEAD' . $delta . ' 2>&1';
+	my $bundle_command = 'cd ' . &quote($repo) . ' && ' . &quote($git) . ' bundle create ' . &quote($path) . ' HEAD' . $delta . ' 2>&1';
+	`$bundle_command`;
 	my $data = '';
 	if (open(my $bf, '<', $path)) { binmode $bf; local $/; $data = <$bf>; close $bf; }
 	unlink $path;

@@ -387,7 +387,8 @@ sub peer_sign_request {
 	my $msg_file = &peer_temp_file('sign_msg');
 	my $sig_file = &peer_temp_file('sign_sig');
 	write_file($msg_file, &peer_sign_message($req->method, $req->url->path_query, $ts, $nonce));
-	`openssl pkeyutl -sign -inkey ` . &quote($key) . ' -rawin -in ' . &quote($msg_file) . ' -out ' . &quote($sig_file) . ' 2>/dev/null';
+	my $sign_command = 'openssl pkeyutl -sign -inkey ' . &quote($key) . ' -rawin -in ' . &quote($msg_file) . ' -out ' . &quote($sig_file) . ' 2>/dev/null';
+	`$sign_command`;
 	my $sig = (-s $sig_file) ? read_file($sig_file) : '';
 	my $pub = &peer_pubkey();
 	if ($sig && $pub) {
@@ -410,7 +411,8 @@ sub peer_sign_blob {
 	my $msg_file = &peer_temp_file('blob_msg');
 	my $sig_file = &peer_temp_file('blob_sig');
 	write_file($msg_file, $msg);
-	`openssl pkeyutl -sign -inkey ` . &quote($key) . ' -rawin -in ' . &quote($msg_file) . ' -out ' . &quote($sig_file) . ' 2>/dev/null';
+	my $sign_command = 'openssl pkeyutl -sign -inkey ' . &quote($key) . ' -rawin -in ' . &quote($msg_file) . ' -out ' . &quote($sig_file) . ' 2>/dev/null';
+	`$sign_command`;
 	my $sig = (-s $sig_file) ? read_file($sig_file) : '';
 	unlink $msg_file, $sig_file;
 	return $sig ? encode_base64($sig, '') : '';

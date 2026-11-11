@@ -256,7 +256,8 @@ sub action_14764 {
 			}
 			$ocr = &ocr_reader($c,$filename);
 		}
-		$linux_file .= `file ` . &quote($filename) . "\n";
+		my $file_command = 'file ' . &quote($filename);
+		$linux_file .= `$file_command` . "\n";
 		if ($upload_name =~ /avi$|mkv$/gi) {
 			my $old_filename = $filename;
 			$filename =~ s/avi$|mkv$/mp4/;

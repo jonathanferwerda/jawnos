@@ -616,7 +616,8 @@ sub merge_database($c,$configuration) {
 
 		&Websocket::send('tab', { yellow => $html, uuid => $auuid, colour => $colour });
 		if ($path =~ /\.enc\z/i) {
-			my $data = `tail ` . quote($path);
+			my $tail_command = 'tail ' . quote($path);
+			my $data = `$tail_command`;
 
 			my @split_data = split $universal_splitter, $data;
 
