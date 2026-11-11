@@ -57,9 +57,11 @@ $(document).on('click', '.pseudonym_icon_set', function() {
 	var name = set.attr('name');
 	if ($('#whiteboard').is(':visible')) {
 		$('#alert').html('');
-		$('#alert_message').html('Are you sure you want to change the pseudonym: ' + name + '\'s icon?<br><br>' +
-			'<button pseudonym_name="' + name + '" id="pseudonym_icon_change_submit">Submit</button>'
-		);
+		// The pseudonym is a name the person typed, not markup: the sentence is
+		// text and the name rides an attribute, so it cannot become script.
+		var message = $('<span></span>').text('Are you sure you want to change the pseudonym: ' + name + '\'s icon?');
+		var submit = $('<button id="pseudonym_icon_change_submit"></button>').attr('pseudonym_name', name).text('Submit');
+		$('#alert_message').empty().append(message, $('<br><br>'), submit);
 		jawnosAlert();
 	}
 });

@@ -1,4 +1,14 @@
 var heartbeatSettle = {};
+
+// A beat carries fields the sending tab chose (its pathname, user agent, the
+// names of its windows), and the controller paints them for every viewer. They
+// are text here, never markup: escape each one before it joins a string that
+// becomes HTML. syncEscape in websocket.js does the same through the DOM.
+function hbEscape(value) {
+	return $('<div>').text(value == null ? '' : String(value)).html()
+		.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
 function stayingAlive(data) {
 	if (!data) { return; }
 	var now = Date.now();
@@ -71,20 +81,20 @@ function stayingAliveOne(data) {
 				var neighbour_windows = '';
 				$('#musicData').html('');
 				if (data['app'] == 'tab') {
-					neighbour_windows += '<img class="little_thumb neighbour_link" bti="' + n.browser_tab_id + '" src="/images/make believe/clover.png">';
-					neighbour_windows += '<img class="little_thumb neighbour_refresh" bti="' + n.browser_tab_id + '" src="/icons/lymeboard/star.png">';
+					neighbour_windows += '<img class="little_thumb neighbour_link" bti="' + hbEscape(n.browser_tab_id) + '" src="/images/make believe/clover.png">';
+					neighbour_windows += '<img class="little_thumb neighbour_refresh" bti="' + hbEscape(n.browser_tab_id) + '" src="/icons/lymeboard/star.png">';
 
 					$.each(windows, function(item,value) {
 						if (value.type == 'window') {
-							neighbour_windows += ' <button onClick="appointmentGrabber(\'' + value['app'] + '\',\'' + now + '\')" class="neighbour_window" style="border: solid; border-radius:12px; font-size:21px; padding-top:2px;" app="' + 
-								item + '" shorthand="' + value['shorthand_name'] + '" formatted_name="' + value['formatted_name'] + '">' + value['shorthand_name'] + 
+							neighbour_windows += ' <button data-app="' + hbEscape(value['app']) + '" data-now="' + hbEscape(now) + '" class="neighbour_window" style="border: solid; border-radius:12px; font-size:21px; padding-top:2px;" app="' + 
+								hbEscape(item) + '" shorthand="' + hbEscape(value['shorthand_name']) + '" formatted_name="' + hbEscape(value['formatted_name']) + '">' + hbEscape(value['shorthand_name']) + 
 								'</button>';
 						}
-						$('#musicData').append(value['shorthand_name']);
+						$('#musicData').append(hbEscape(value['shorthand_name']));
 					});
-					neighbours.append('<span style="word-break:break-word;" browser_tab_id="' + n.browser_tab_id + '" local_address="' + n.local_address + '"' +
-						'remote_address="' + n.remote_address + '" class="neighbour"  style="height: 30px; overflow:scroll;" >' +
-						'<div><b>' + n.room +'<b></div><br>' + n.pathname + '<br><i>' + n.remote_address + '</i> on ' + n.local_address + '<br><b>' + n.user_agent + '</b><br>' +
+					neighbours.append('<span style="word-break:break-word;" browser_tab_id="' + hbEscape(n.browser_tab_id) + '" local_address="' + hbEscape(n.local_address) + '"' +
+						'remote_address="' + hbEscape(n.remote_address) + '" class="neighbour"  style="height: 30px; overflow:scroll;" >' +
+						'<div><b>' + hbEscape(n.room) +'<b></div><br>' + hbEscape(n.pathname) + '<br><i>' + hbEscape(n.remote_address) + '</i> on ' + hbEscape(n.local_address) + '<br><b>' + hbEscape(n.user_agent) + '</b><br>' +
 						'<span class="neighbour_windows">' + neighbour_windows + '</span></span>'
 					);
 				}
@@ -100,23 +110,23 @@ function stayingAliveOne(data) {
 						var width = height * md.title.ratio;
 						var vidya = '';
 						if (md.title.image) {
-							vidya = '<img class="video_preview" width="' + width + '" height="' + height + '" style="border:2px;border-radius:12px;" file="' + md.file + '" current_time="' + md.current_time + '" src="' + md.title.image + '">';
+							vidya = '<img class="video_preview" width="' + width + '" height="' + height + '" style="border:2px;border-radius:12px;" file="' + hbEscape(md.file) + '" current_time="' + hbEscape(md.current_time) + '" src="' + hbEscape(md.title.image) + '">';
 						}
 						var volume = 1;
 						if (md.interface) {
 							volume = $(md.interface).find('#music_volume').val();
 						}
-						neighbours.append('<span style="" class="neighbour" browser_tab_id="' + n.browser_tab_id + '">' +
+						neighbours.append('<span style="" class="neighbour" browser_tab_id="' + hbEscape(n.browser_tab_id) + '">' +
 						'<br><span class="media_controls">' + 
-						'<img class="little_thumb remote_media_control" control="prev" browser_tab_id="' + n.browser_tab_id + '" src="/icons/prev.jpg">' +
-						'<img class="little_thumb remote_media_control" control="play" browser_tab_id="' + n.browser_tab_id + '" src="/icons/play.jpg">' +
-						'<img class="little_thumb remote_media_control" control="next" browser_tab_id="' + n.browser_tab_id + '" src="/icons/next.jpg"><br>' + vidya + '<br>' +
-							'<progress style="width:100%;height:30px;" value="' + md.currentTime + '" control="progress_bar" class="remote_media_control" data-label="Progress" max="' + md.total_time + '"></progress><br>' +
-							'<progress style="width:100%;height:30px;" class="remote_media_control" control="volume_control" value="' + volume + '" data-label="Volume"></progress>' +
+						'<img class="little_thumb remote_media_control" control="prev" browser_tab_id="' + hbEscape(n.browser_tab_id) + '" src="/icons/prev.jpg">' +
+						'<img class="little_thumb remote_media_control" control="play" browser_tab_id="' + hbEscape(n.browser_tab_id) + '" src="/icons/play.jpg">' +
+						'<img class="little_thumb remote_media_control" control="next" browser_tab_id="' + hbEscape(n.browser_tab_id) + '" src="/icons/next.jpg"><br>' + vidya + '<br>' +
+							'<progress style="width:100%;height:30px;" value="' + hbEscape(md.currentTime) + '" control="progress_bar" class="remote_media_control" data-label="Progress" max="' + hbEscape(md.total_time) + '"></progress><br>' +
+							'<progress style="width:100%;height:30px;" class="remote_media_control" control="volume_control" value="' + hbEscape(volume) + '" data-label="Volume"></progress>' +
 							'</span><br>' +
-							md.title.artist + '<br>' + md.title.album + '<br>' + md.title.song + '<br>' + 
+							hbEscape(md.title.artist) + '<br>' + hbEscape(md.title.album) + '<br>' + hbEscape(md.title.song) + '<br>' + 
 							numeral(md.currentTime).format('00:00:00') + '/' + numeral(Math.abs(md.total_time)).format('00:00:00') + 
-							'<br><div class="track_item_preview" style="display:none;">' + md.title.playing + '</div></span>'
+							'<br><div class="track_item_preview" style="display:none;">' + hbEscape(md.title.playing) + '</div></span>'
 						);
 					}
 				}
@@ -125,8 +135,8 @@ function stayingAliveOne(data) {
 					$.each(jd, function(ji,jv) {
 						var height = 200;
 						var width = height * jd.ratio;
-						neighbours.append('<span class="neighbour" browser_tab_id="' + n.browser_tab_id + '"><br>' +
-							'<img class="jp_preview video_preview" style="border:2px;border-radius:12px;" height="' + height + '" width="' + width + '" src="' + jv.image + '">' +
+						neighbours.append('<span class="neighbour" browser_tab_id="' + hbEscape(n.browser_tab_id) + '"><br>' +
+							'<img class="jp_preview video_preview" style="border:2px;border-radius:12px;" height="' + height + '" width="' + width + '" src="' + hbEscape(jv.image) + '">' +
 							'</span>'
 						);
 					});
@@ -150,9 +160,9 @@ function stayingAliveOne(data) {
 					});
 					if (data['template']) {
 						if (seen == 0) {
-							$('#everything_socket').append('<span style="" status="active" app="' + data.app + '" class="everything_neighbour neighbour">' + 
+							$('#everything_socket').append('<span style="" status="active" app="' + hbEscape(data.app) + '" class="everything_neighbour neighbour">' + 
 								data['template'] + 
-								'</span><br><button onClick="appointmentGrabber(\'' + data.app + '\',\'' + now + '\')" class="heartbeating everything" timestamp="' + now + '" app="' + data.app + '">' + format_name(data.app) + '</button>'
+								'</span><br><button data-app="' + hbEscape(data.app) + '" data-now="' + hbEscape(now) + '" class="heartbeating everything" timestamp="' + hbEscape(now) + '" app="' + hbEscape(data.app) + '">' + hbEscape(format_name(data.app)) + '</button>'
 							);
 						}
 						else if (seen == 1) {
@@ -162,7 +172,7 @@ function stayingAliveOne(data) {
 					}
 					else {
 						if (seen == 0) {
-							$('#everything_socket').append('<button onClick="appointmentGrabber(\'' + data.app + '\',\'' + now + '\')" class="heartbeating everything" timestamp="' + now + '" app="' + data.app + '">' + format_name(data.app) + '</button>');
+							$('#everything_socket').append('<button data-app="' + hbEscape(data.app) + '" data-now="' + hbEscape(now) + '" class="heartbeating everything" timestamp="' + hbEscape(now) + '" app="' + hbEscape(data.app) + '">' + hbEscape(format_name(data.app)) + '</button>');
 						}
 						else if (seen == 1) {
 							$('#everything_socket').find('.heartbeating.everything[app="' + data.app + '"]').attr('timestamp', now);
@@ -182,6 +192,17 @@ function stayingAliveOne(data) {
 	}
 }
 
+
+// A neighbour's window button (and the everything bar's beat) carries the app
+// and the beat's timestamp as data attributes now: the values are names and
+// numbers, not a call written into an attribute, so a window name can never
+// become script.
+$(document).on('click', '.neighbour_window, .heartbeating.everything', function() {
+	var button = $(this);
+	if (typeof appointmentGrabber === 'function') {
+		appointmentGrabber(button.attr('data-app'), button.attr('data-now'));
+	}
+});
 
 $(document).on('click', '.remote_media_control', function(e) {
 	var control = $(this).attr('control');

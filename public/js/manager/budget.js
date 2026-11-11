@@ -323,6 +323,13 @@ function budgetAccountCanvasWriter(response) {
 	}
 }
 
+// An account name is the person's own text, and the tooltip is built as an HTML
+// string: escape the name before it joins that string, and keep the money
+// formatting untouched.
+function budgetTipEscape(value) {
+	return $('<div>').text(value == null ? '' : String(value)).html();
+}
+
 function budgetStopTip(index) {
 	var stop = timeStops[index];
 	var response = budgetChartResponse || {};
@@ -335,7 +342,7 @@ function budgetStopTip(index) {
 		if (account.graphable == 'no') { return; }
 		var colour = (account.settings && account.settings.colour) ? account.settings.colour : '';
 		html += '<div class="budget_tip_row"><span class="budget_tip_swatch" style="background:' + colour + '"></span>' +
-			format_name(name) + '<b>' + budgetMoneyFull(value) + '</b></div>';
+			budgetTipEscape(format_name(name)) + '<b>' + budgetMoneyFull(value) + '</b></div>';
 	});
 	html += '<div class="budget_tip_row">' + format_name('available') + '<b>' + budgetMoneyFull((numeral(stop.total).value() || 0) - minimum) + '</b></div>';
 	html += '<div class="budget_tip_row budget_tip_total">' + format_name('total') + '<b>' + budgetMoneyFull(stop.total) + '</b></div>';

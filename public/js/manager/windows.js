@@ -76,9 +76,9 @@ function window_initializer(id) {
 	var element = $('#' + id);
 	var app = element.find('div');
 	windows[id] = { formatted_name: app.attr('formatted_name') };
-	var top_bar = '<div id="' + id + '_window">' + windows[id]['formatted_name'] + '</div>';
-
-	wind.html(top_bar);
+	// The name is a label, not markup: build the bar as DOM so a name with
+	// angle brackets in it stays text.
+	wind.empty().append($('<div>').attr('id', id + '_window').text(windows[id]['formatted_name'] || ''));
 	wind.css({ 'left': '30%', 'bottom': 0, 'background-color': 'red', 'height': '80%', 'width': '70%' }).show();
 }
 
@@ -230,9 +230,16 @@ function taskbarDisplayer(destination) {
 		// windowRestorer, so pressing the name restored the window and then fell
 		// through to the button's own answer, which is what made a press behave
 		// like something other than a window manager's.
-		$(v).wrap('<span class="hover window_toggle" id="' + rand + '" app="' + app + '" formatted_name="' + named + '" ' + (terminal_id ? 'data-terminal-id="' + terminal_id + '" ' : '') + (window_id ? 'data-window-id="' + window_id + '" ' : '') + (dialog_id ? 'data-dialog-id="' + dialog_id + '" ' : '') + 'style="text-align:center;"></span>');
-		$('#' + rand).append(' <span class="window_toggle_name_text">' + named + '</span>');
-		$('#' + rand).append(' <span class="window_toggle_shorthand">' + shorthand_name(named, 5) + '</span>');
+		// The app, the names and the ids are attributes, and a window's name is
+		// text: build the wrapper as DOM so a name with markup stays a label.
+		var wrapper = $('<span class="hover window_toggle" style="text-align:center;"></span>')
+			.attr('id', rand).attr('app', app).attr('formatted_name', named);
+		if (terminal_id) { wrapper.attr('data-terminal-id', terminal_id); }
+		if (window_id) { wrapper.attr('data-window-id', window_id); }
+		if (dialog_id) { wrapper.attr('data-dialog-id', dialog_id); }
+		$(v).wrap(wrapper);
+		$('#' + rand).append(' ').append($('<span class="window_toggle_name_text"></span>').text(named));
+		$('#' + rand).append(' ').append($('<span class="window_toggle_shorthand"></span>').text(shorthand_name(named, 5)));
 	});
 
 
@@ -271,7 +278,11 @@ function startMenuDisplayer(destination) {
 	$('.window_toggle_name').remove();
 	$('.window_toggle').each(function(i,v) {
 		var app = $(v).attr('app');
-		$(v).before('<span class="hover window_toggle_name" app="' + app + '" style="vertical-align:top;text-align:center;"><b>' + $(v).attr('formatted_name') + '</b><br></span>');
+		var label = $('<span class="hover window_toggle_name" style="vertical-align:top;text-align:center;"></span>')
+			.attr('app', app)
+			.append($('<b></b>').text($(v).attr('formatted_name') || ''))
+			.append('<br>');
+		$(v).before(label);
 	});
 	appointment_chron();
 }
