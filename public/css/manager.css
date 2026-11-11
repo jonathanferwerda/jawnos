@@ -2939,8 +2939,9 @@ body.dark_theme .folders_file.selected { background: rgba(110, 168, 254, .20); }
 }
 /* The CloudSync status sits in the icon's lower-right corner: a green check
    when every device has the file, a blue turning mark while a change is on
-   its way, a red cross when a delivery was refused. The archive mark moves to
-   the lower left so an archived file can wear both. */
+   its way, a red cross when a delivery was refused, and a yellow question mark
+   when a device never answered at all. The archive mark moves to the lower
+   left so an archived file can wear both. */
 .folders_thumb .folders_archived_badge { left: -3px; right: auto; }
 .folders_contents[data-view=list] .folders_thumb .folders_archived_badge { left: -2px; right: auto; }
 #desk_layer .folders_thumb .folders_archived_badge { left: -3px; right: auto; }
@@ -2961,6 +2962,8 @@ body.dark_theme .folders_file.selected { background: rgba(110, 168, 254, .20); }
 .folders_thumb .folders_sync_badge.folders_sync_syncing::after { content: '\21BB'; }
 .folders_thumb .folders_sync_badge.folders_sync_failed { background: #d33a2c; }
 .folders_thumb .folders_sync_badge.folders_sync_failed::after { content: '\2715'; }
+.folders_thumb .folders_sync_badge.folders_sync_unreached { background: #e8b423; color: #332600; }
+.folders_thumb .folders_sync_badge.folders_sync_unreached::after { content: '\003F'; }
 @keyframes folders_sync_turn { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) {
 	.folders_thumb .folders_sync_badge.folders_sync_syncing { animation: none; }

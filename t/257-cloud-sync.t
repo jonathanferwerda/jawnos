@@ -712,8 +712,9 @@ unlike($controller, qr/asset->path/, 'no receive route needs a temp path for the
 #
 # A file in a CloudSync folder shows its state on the icon: a green check when
 # the state agrees and nothing is pending, a blue mark while a change is still
-# on its way, and a red cross when a delivery was refused. The marks are pure
-# answers over the state, so they are tested without a peer or a window.
+# on its way, a red cross when a delivery was refused and a yellow question
+# mark when a device never answered. The marks are pure answers over the
+# state, so they are tested without a peer or a window.
 
 my $mark_state = subs::cloud_sync_state_empty();
 $mark_state->{'files'} = { 'photos/a.jpg' => { size => 10, mtime => 100, hash => 'abcd' } };
@@ -727,11 +728,19 @@ $listed->{'size'} = 10;
 my $queued = subs::cloud_sync_pending_add($mark_state, { kind => 'file', rel => 'photos/a.jpg', size => 10, mtime => 100 });
 is(subs::cloud_sync_status_file($mark_state, 'photos/a.jpg', $listed), 'syncing',
 	'a queued change is still on its way');
-$mark_state->{'pending'}->[0]->{'error'} = 'the machine did not answer';
+$mark_state->{'pending'}->[0]->{'error'} = 'another device is sending this file';
 is(subs::cloud_sync_status_file($mark_state, 'photos/a.jpg', $listed), 'failed',
 	'a refused delivery is the red cross');
 is(subs::cloud_sync_status_under($mark_state, 'photos'), 'failed',
 	'a folder carries the worst state of the files under it');
+$mark_state->{'pending'}->[0]->{'unreached'} = 1;
+is(subs::cloud_sync_status_file($mark_state, 'photos/a.jpg', $listed), 'unreached',
+	'a device that never answered is the yellow question mark');
+is(subs::cloud_sync_status_under($mark_state, 'photos'), 'unreached',
+	'and the folder wears it too');
+delete $mark_state->{'pending'}->[0]->{'unreached'};
+is(subs::cloud_sync_status_under($mark_state, 'photos'), 'failed',
+	'a refusal is red again once the question is cleared');
 delete $mark_state->{'pending'}->[0]->{'error'};
 is(subs::cloud_sync_status_under($mark_state, 'photos'), 'syncing',
 	'with no error it is still on its way');
@@ -742,6 +751,20 @@ is(subs::cloud_sync_status_under($mark_state, 'nowhere'), undef,
 	'a folder with nothing known has no badge at all');
 is(subs::cloud_sync_status_file($mark_state, 'new.txt', { size => 1, stat => [ 0, 0, 0, 0, 0, 0, 0, 1, 0, 5 ] }), 'syncing',
 	'a local file the state has not seen yet is on its way');
+
+# The folder tally: a refused file is more definite than a device that never
+# answered, which is more definite than a change still on its way.
+my $tally = subs::cloud_sync_state_empty();
+$tally->{'files'} = { 'x/ok.txt' => { size => 1, mtime => 1 } };
+$tally->{'pending'} = [
+	{ id => 'u', rel => 'x/question.txt', kind => 'file', error => 'no answer', unreached => 1 },
+	{ id => 'f', rel => 'x/refused.txt', kind => 'file', error => 'no room' },
+];
+is(subs::cloud_sync_status_under($tally, 'x'), 'failed',
+	'a refusal outranks an unanswered device in the folder');
+splice @{ $tally->{'pending'} }, 1, 1;
+is(subs::cloud_sync_status_under($tally, 'x'), 'unreached',
+	'an unanswered device outranks a change still on its way');
 
 # The marks a listing is built from: the registered folder itself when its
 # parent is read, and its entries when the folder itself is read.
@@ -769,38 +792,65 @@ is(subs::cloud_sync_status_file($mark_state, 'new.txt', { size => 1, stat => [ 0
 	subs::cloud_sync_registrations_write([]);
 }
 
-# A refused file delivery leaves its reason on the pending change, so the
-# listing can turn that file red cross until a later pass reaches it.
+# A device that never answers leaves the pending change marked unreached, so
+# the listing asks with a yellow question mark until a later pass reaches it.
 {
-	my $failed_dir = tempdir(DIR => $test_home, CLEANUP => 1);
-	my $failed_base = substr($failed_dir, length($test_home) + 1);
-	write_file("$failed_dir/bad.txt", 'bad');
-	my $failed_changes = subs::cloud_sync_collect_changes($failed_dir, $failed_base);
-	is(scalar @{$failed_changes}, 1, 'a new file is queued for the failing peer');
-	my $failed_job = CloudSyncFakeJob->new();
+	my $blind_dir = tempdir(DIR => $test_home, CLEANUP => 1);
+	my $blind_base = substr($blind_dir, length($test_home) + 1);
+	write_file("$blind_dir/bad.txt", 'bad');
+	my $blind_changes = subs::cloud_sync_collect_changes($blind_dir, $blind_base);
+	is(scalar @{$blind_changes}, 1, 'a new file is queued for the silent peer');
+	my $blind_job = CloudSyncFakeJob->new();
 	local *subs::remote_agent_for = sub { return { ua => CloudSyncFakeUA->new(undef), manager => 'https://peer.invalid' } };
-	subs::cloud_sync_job($failed_job, {
-		path => $failed_dir,
-		base => $failed_base,
+	subs::cloud_sync_job($blind_job, {
+		path => $blind_dir,
+		base => $blind_base,
 		devices => [ { uuid => 'peer-uuid', hostname => 'Peer' } ],
-		changes => $failed_changes
+		changes => $blind_changes
 	});
-	ok($failed_job->failed, 'a file the peer would not take fails the job');
-	my $failed_state = subs::cloud_sync_state_read($failed_base);
-	my ($failed_pending) = @{ $failed_state->{'pending'} || [] };
-	ok($failed_pending, 'and the change stays pending for the next pass');
-	ok($failed_pending->{'error'}, 'the pending change carries the reason');
-	is(subs::cloud_sync_status_file($failed_state, 'bad.txt', { size => 3, stat => [ 0, 0, 0, 0, 0, 0, 0, 3, 0, 0 ] }), 'failed',
-		'so the listing marks that file failed');
-	# a pass that reaches it again clears the mark, so synced files do not stay red
-	subs::cloud_sync_state_modify($failed_base, sub {
+	ok($blind_job->failed, 'a device that never answers fails the job');
+	my $blind_state = subs::cloud_sync_state_read($blind_base);
+	my ($blind_pending) = @{ $blind_state->{'pending'} || [] };
+	ok($blind_pending, 'and the change stays pending for the next pass');
+	ok($blind_pending->{'error'}, 'the pending change carries the reason');
+	ok($blind_pending->{'unreached'}, 'and says no device answered');
+	is(subs::cloud_sync_status_file($blind_state, 'bad.txt', { size => 3, stat => [ 0, 0, 0, 0, 0, 0, 0, 3, 0, 0 ] }), 'unreached',
+		'so the listing asks with the yellow question mark');
+	# a pass that reaches it again clears the mark, so the file stops asking
+	subs::cloud_sync_state_modify($blind_base, sub {
 		my $st = shift;
-		subs::cloud_sync_pending_mark($st, { $failed_pending->{'id'} => 1 }, {});
+		subs::cloud_sync_pending_mark($st, { $blind_pending->{'id'} => 1 }, {}, {});
 		return 1;
 	});
-	ok(!subs::cloud_sync_state_read($failed_base)->{'pending'}->[0]->{'error'},
-		'a later pass that reaches the change clears the red mark');
-	subs::cloud_sync_registrations_write([]);
+	my $cleared = subs::cloud_sync_state_read($blind_base)->{'pending'}->[0];
+	ok(!$cleared->{'error'} && !$cleared->{'unreached'},
+		'a later pass that reaches the change clears the question mark');
+}
+
+# A peer that answers and refuses the copy is a red cross, not a question mark.
+{
+	my $refused_dir = tempdir(DIR => $test_home, CLEANUP => 1);
+	my $refused_base = substr($refused_dir, length($test_home) + 1);
+	write_file("$refused_dir/refused.txt", 'refused');
+	my $refused_changes = subs::cloud_sync_collect_changes($refused_dir, $refused_base);
+	my $refused_job = CloudSyncFakeJob->new();
+	local *subs::remote_agent_for = sub {
+		return { ua => CloudSyncFakeUA->new({ status => 'error', error => 'no room for this file' }), manager => 'https://peer.invalid' };
+	};
+	subs::cloud_sync_job($refused_job, {
+		path => $refused_dir,
+		base => $refused_base,
+		devices => [ { uuid => 'peer-uuid', hostname => 'Peer' } ],
+		changes => $refused_changes
+	});
+	ok($refused_job->failed, 'a refused copy fails the job');
+	my $refused_state = subs::cloud_sync_state_read($refused_base);
+	my ($refused_pending) = @{ $refused_state->{'pending'} || [] };
+	ok($refused_pending, 'and the change stays pending');
+	is($refused_pending->{'error'}, 'no room for this file', 'the peer\'s reason is kept');
+	ok(!$refused_pending->{'unreached'}, 'an answered refusal is not an unreachable device');
+	is(subs::cloud_sync_status_file($refused_state, 'refused.txt', { size => 7, stat => [ 0, 0, 0, 0, 0, 0, 0, 7, 0, 0 ] }), 'failed',
+		'so the listing marks that file failed');
 }
 
 done_testing();

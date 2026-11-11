@@ -1672,21 +1672,30 @@ sub cloud_sync_pending_remove {
 	return;
 }
 
-# Remember which undelivered changes a pass could not make, so the listing can
-# show a red cross on that file. The mark rides the pending entry, which is
-# already the record of what has not reached every device; a later pass that
+# Remember which undelivered changes a pass could not make, and whether a device
+# answered at all, so the listing can show a red cross (a refusal) or a yellow
+# question mark (nothing was reached). The mark rides the pending entry, which
+# is already the record of what has not reached every device; a later pass that
 # touches the same change clears it, and a change this pass did not try keeps
 # whatever mark it already had.
 sub cloud_sync_pending_mark {
-	my ($state, $attempted, $errors) = @_;
+	my ($state, $attempted, $errors, $unreached) = @_;
 	my $tried = (ref $attempted eq 'HASH') ? $attempted : {};
 	my $why = (ref $errors eq 'HASH') ? $errors : {};
+	my $blind = (ref $unreached eq 'HASH') ? $unreached : {};
 	foreach my $entry ( @{ $state->{'pending'} || [] } ) {
 		my $id = defined $entry->{'id'} ? $entry->{'id'} : '';
 		next unless (length $id && $tried->{$id});
 		my $error = $why->{$id};
-		if (defined $error && length $error) { $entry->{'error'} = $error; }
-		else { delete $entry->{'error'}; }
+		if (defined $error && length $error) {
+			$entry->{'error'} = $error;
+			if ($blind->{$id}) { $entry->{'unreached'} = 1; }
+			else { delete $entry->{'unreached'}; }
+		}
+		else {
+			delete $entry->{'error'};
+			delete $entry->{'unreached'};
+		}
 	}
 	return;
 }
@@ -2182,18 +2191,20 @@ sub cloud_sync_totals {
 	return { files => $files, bytes => $bytes };
 }
 
-# One file's badge in a listing. A pending change that a delivery could not
-# make carries the reason, and that is the red cross. Without an error the
-# change is still on its way (blue). A file the state agrees with, and whose
-# size and time have not moved since the last sweep, is synced (green); one
-# edited since the last pass is not agreed yet, so it reads as syncing.
+# One file's badge in a listing. A pending change carries the reason a delivery
+# could not be made: a refusal is the red cross, a device that never answered is
+# the yellow question mark because that copy's state is unknown. Without an
+# error the change is still on its way (blue). A file the state agrees with, and
+# whose size and time have not moved since the last sweep, is synced (green);
+# one edited since the last pass is not agreed yet, so it reads as syncing.
 sub cloud_sync_status_file {
 	my ($state, $rel, $entry) = @_;
 	return undef unless (defined $rel && length $rel);
 	$state = {} unless ref $state eq 'HASH';
 	foreach my $change ( @{ $state->{'pending'} || [] } ) {
 		next unless (($change->{'rel'} || '') eq $rel);
-		return (defined $change->{'error'} && length $change->{'error'}) ? 'failed' : 'syncing';
+		return 'syncing' unless (defined $change->{'error'} && length $change->{'error'});
+		return $change->{'unreached'} ? 'unreached' : 'failed';
 	}
 	my $known = $state->{'files'}->{$rel};
 	return 'syncing' unless $known;
@@ -2206,18 +2217,22 @@ sub cloud_sync_status_file {
 }
 
 # A folder's badge is the worst of what sits under it: a refused file makes the
-# folder failed, an undelivered one makes it syncing, and a folder whose known
-# files are all agreed is synced. A prefix of '' asks about the whole folder.
-# Nothing known under it means no badge at all, not a green one.
+# folder failed, a file no device took makes it unreached, an undelivered one
+# makes it syncing, and a folder whose known files are all agreed is synced. A
+# prefix of '' asks about the whole folder. Nothing known under it means no
+# badge at all, not a green one.
 sub cloud_sync_status_under {
 	my ($state, $prefix) = @_;
 	$state = {} unless ref $state eq 'HASH';
 	my $pre = (defined $prefix && length $prefix) ? $prefix . '/' : '';
-	my ($known, $syncing, $failed) = (0, 0, 0);
+	my ($known, $syncing, $failed, $unreached) = (0, 0, 0, 0);
 	foreach my $change ( @{ $state->{'pending'} || [] } ) {
 		my $rel = $change->{'rel'} || '';
 		next if (length $pre && index($rel, $pre) != 0);
-		if (defined $change->{'error'} && length $change->{'error'}) { $failed = 1; }
+		if (defined $change->{'error'} && length $change->{'error'}) {
+			if ($change->{'unreached'}) { $unreached = 1; }
+			else { $failed = 1; }
+		}
 		else { $syncing = 1; }
 	}
 	foreach my $rel ( keys %{ $state->{'files'} || {} } ) {
@@ -2226,6 +2241,7 @@ sub cloud_sync_status_under {
 		last;
 	}
 	return 'failed' if $failed;
+	return 'unreached' if $unreached;
 	return 'syncing' if $syncing;
 	return 'synced' if $known;
 	return undef;
@@ -2526,11 +2542,16 @@ sub cloud_sync_job {
 	my %result;
 	# which change a pass tried, and why a delivery to any device was refused,
 	# keyed by the pending entry's id so the state can carry the red cross
-	my (%attempted, %error_for);
+	# which change a pass tried, why a delivery to any device was refused, and
+	# whether that device answered at all, keyed by the pending entry's id so the
+	# state can carry the red cross or the yellow question mark
+	my (%attempted, %error_for, %unreached_for);
 	my $remember = sub {
-		my ($change, $error) = @_;
+		my ($change, $error, $unreached) = @_;
 		my $id = (ref $change eq 'HASH') ? $change->{'id'} : undef;
-		$error_for{$id} = $error if (defined $id && length $id);
+		return unless (defined $id && length $id);
+		$error_for{$id} = $error;
+		$unreached_for{$id} = 1 if $unreached;
 		return;
 	};
 	# A change leaves pending only when every device acknowledged it. A device
@@ -2564,13 +2585,13 @@ sub cloud_sync_job {
 		if ($agent->{'error'}) {
 			push @errors, $host . ': ' . $agent->{'error'};
 			$result{$host} = { error => $agent->{'error'} };
-			# no device answered: every queued change stays behind, and that is
-			# what the red cross on those files means until a pass reaches it
+			# no device answered: every queued change stays behind, and the
+			# listing shows the yellow question mark until a pass reaches it
 			foreach my $change ( @changes ) {
 				my $id = $change->{'id'};
 				next unless (defined $id && length $id);
 				$attempted{$id} = 1;
-				$remember->($change, $agent->{'error'});
+				$remember->($change, $agent->{'error'}, 1);
 			}
 			$settle->($_) foreach @changes;
 			next;
@@ -2606,7 +2627,9 @@ sub cloud_sync_job {
 				if (!$probe || $probe->{'status'} ne 'ok') {
 					my $why = ($probe && $probe->{'error'}) || $probe_error || 'the machine did not answer';
 					push @errors, $host . ': ' . $rel . ': ' . $why;
-					$remember->($change, $why);
+					# no transaction at all means the device never answered;
+					# an answer that refused the copy is a red failure
+					$remember->($change, $why, ($probe_tx ? 0 : 1));
 					$settle->($change);
 					$bytes_done += $size;
 					next;
@@ -2729,7 +2752,7 @@ sub cloud_sync_job {
 		$final->{'errors'} = \@errors;
 		&cloud_sync_state_modify($base, sub {
 			my $state = shift;
-			&cloud_sync_pending_mark($state, \%attempted, \%error_for);
+			&cloud_sync_pending_mark($state, \%attempted, \%error_for, \%unreached_for);
 			return 1;
 		});
 		$job->fail($final);
@@ -2740,7 +2763,7 @@ sub cloud_sync_job {
 	&cloud_sync_state_modify($base, sub {
 		my $state = shift;
 		&cloud_sync_pending_remove($state, \@ids);
-		&cloud_sync_pending_mark($state, \%attempted, \%error_for);
+		&cloud_sync_pending_mark($state, \%attempted, \%error_for, \%unreached_for);
 		return 1;
 	});
 	$job->finish($final);

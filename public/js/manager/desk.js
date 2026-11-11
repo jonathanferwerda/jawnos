@@ -213,7 +213,7 @@ function deskFileItem(f) {
 	// The same CloudSync badge the window's listing wears: green check when
 	// every device has it, blue turning mark on its way, red cross refused.
 	if (f['sync_status']) {
-		var words = { synced: jawnosT('Synced'), syncing: jawnosT('Syncing'), failed: jawnosT('Sync failed') };
+		var words = { synced: jawnosT('Synced'), syncing: jawnosT('Syncing'), failed: jawnosT('Sync failed'), unreached: jawnosT('Not reached') };
 		var word = words[f['sync_status']] || words.syncing;
 		$('<span></span>')
 			.addClass('folders_sync_badge folders_sync_' + f['sync_status'])

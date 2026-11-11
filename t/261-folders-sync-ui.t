@@ -168,25 +168,30 @@ foreach my $label (sort keys %shapes) {
 
 like($template, qr/folders_sync_badge/, 'an item in a watched folder wears a sync badge');
 like($template, qr/folders_sync_<%= \$f->\{'sync_status'\} %>/, 'named for the status the listing passed');
-like($template, qr/'Synced' : .*?eq 'failed' \? 'Sync failed' : 'Syncing'/, 'and labelled Synced, Sync failed or Syncing');
+like($template, qr/synced => 'Synced', syncing => 'Syncing', failed => 'Sync failed', unreached => 'Not reached'/,
+	'and labelled Synced, Syncing, Sync failed or Not reached');
 like($css, qr/\.folders_thumb \.folders_sync_badge \{[^}]*position:\s*absolute[^}]*right:\s*-4px;\s*bottom:\s*-4px;/s,
 	'the badge sits in the icon\'s lower-right corner');
 like($css, qr/\.folders_thumb \.folders_sync_badge \{[^}]*background:\s*#2e9e4f/s, 'synced is a green badge');
 like($css, qr/folders_sync_syncing \{[^}]*background:\s*#2f6feb;[^}]*animation:/s,
 	'syncing is a blue badge that turns');
 like($css, qr/folders_sync_failed \{[^}]*background:\s*#d33a2c/s, 'failed is a red badge');
+like($css, qr/folders_sync_unreached \{[^}]*background:\s*#e8b423/s, 'an unanswered device is a yellow badge');
 like($css, qr/content: '\\2713'/, 'a check for synced');
 like($css, qr/content: '\\21BB'/, 'a turning arrow for syncing');
 like($css, qr/content: '\\2715'/, 'a cross for failed');
+like($css, qr/content: '\\003F'/, 'and a question mark for an unanswered device');
 like($css, qr/\@keyframes folders_sync_turn/, 'the turning mark has its own keyframes');
 like($css, qr/prefers-reduced-motion[^}]*folders_sync_syncing/s, 'and stops turning for a person who asked for less motion');
 like($css, qr/\.folders_thumb \.folders_archived_badge \{ left:\s*-3px; right:\s*auto; \}/,
 	'the archive mark moves to the lower left so both can show');
 like($desk_js, qr/folders_sync_badge/, 'the desk wears the same badge');
 like($desk_js, qr/jawnosT\('Synced'\)/, 'in the same words, ready for translation');
+like($desk_js, qr/unreached: jawnosT\('Not reached'\)/, 'including the yellow question');
 like($help, qr/green check when every chosen device has it/, 'the help explains the green check');
 like($help, qr/blue turning mark while a change is still on its way/, 'the blue mark');
-like($help, qr/red cross when a device refused the last copy/, 'and the red cross');
+like($help, qr/red cross when a device refused the last copy/, 'the red cross');
+like($help, qr/yellow question mark when a device could not be reached/, 'and the yellow question mark');
 
 # ---- only a folder inside home can sync -------------------------------------
 

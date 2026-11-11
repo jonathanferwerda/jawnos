@@ -155,12 +155,15 @@
 				<% if ($place) { %>
 					<%= include 'folders/cloud_list', registrations => $cloud_rows || [] %>
 				<% } else { %>
-				<% foreach my $f ( @{$fo->{'files'}} ) { %>
+					<%# the words a sync badge carries, so the hint and the accessible name
+					    stay one lookup; 'unreached' is a device that never answered %>
+					<% my %sync_words = ( synced => 'Synced', syncing => 'Syncing', failed => 'Sync failed', unreached => 'Not reached' ); %>
+					<% foreach my $f ( @{$fo->{'files'}} ) { %>
 					<% my @stat = @{ $f->{'stat'} || [] }; %>
 					<% my $is_folder = (($f->{'type'} || '') eq 'folder'); %>
 					<% my $display = $f->{'display'} || $f->{'name'}; %>
 					<div class="folders_file" path="<%= $f->{'path'} %>" type="<%= $f->{'type'} %>" data-name="<%= $display %>" tabindex="-1" role="option" aria-selected="false">
-						<span class="folders_thumb"><img src="<%= $f->{'icon'} %>" alt="" draggable="false"><% if ($f->{'archived'}) { %><img class="folders_archived_badge" src="<%= &subs::icon_for('/images/decipherable/diskette.png') %>" alt="" hint="<%= &subs::ui('Archived copy') %>"><% } %><% if ($f->{'sync_status'}) { %><% my $sync_word = &subs::ui($f->{'sync_status'} eq 'synced' ? 'Synced' : $f->{'sync_status'} eq 'failed' ? 'Sync failed' : 'Syncing'); %><span class="folders_sync_badge folders_sync_<%= $f->{'sync_status'} %>" role="img" aria-label="<%= $sync_word %>" hint="<%= $sync_word %>"></span><% } %></span>
+						<span class="folders_thumb"><img src="<%= $f->{'icon'} %>" alt="" draggable="false"><% if ($f->{'archived'}) { %><img class="folders_archived_badge" src="<%= &subs::icon_for('/images/decipherable/diskette.png') %>" alt="" hint="<%= &subs::ui('Archived copy') %>"><% } %><% if ($f->{'sync_status'}) { %><% my $sync_word = &subs::ui($sync_words{ $f->{'sync_status'} } || 'Syncing'); %><span class="folders_sync_badge folders_sync_<%= $f->{'sync_status'} %>" role="img" aria-label="<%= $sync_word %>" hint="<%= $sync_word %>"></span><% } %></span>
 						<span class="folders_label" title="<%= $display %>"><%= $display %></span>
 						<span class="folders_kind"><%= &subs::format_name($f->{'type'} || 'file') %></span>
 						<span class="folders_size"><%= $is_folder ? '' : &subs::data_size($f->{'size'} || 0) %></span>
