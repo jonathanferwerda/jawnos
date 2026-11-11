@@ -644,6 +644,10 @@ sub stream_sealed_file($c, $job, $file, $cache_control) {
 	$name =~ s{.*/}{};
 	$name =~ s/\.enc$//i;
 	utf8::decode($name) if !utf8::is_utf8($name);
+	# A filename header is not a place for CR/LF or a stray quote: a name with a
+	# newline could inject a header. Keep printable ASCII and quote the word.
+	$name =~ s/[\r\n]+/ /g;
+	$name =~ s/[^\x20-\x7e]/_/g;
 	$name = &quote($name);
 	$name = Encode::encode('UTF-8', $name) if eval { require Encode; 1 };
 

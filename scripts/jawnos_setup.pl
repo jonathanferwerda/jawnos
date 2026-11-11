@@ -474,7 +474,20 @@ sub run_setup {
 	unless ( -e "$store/database/jawnos.db" ) {
 		$code = ( defined $in->{'code'} && $in->{'code'} =~ /^[0-9]{4,12}$/ )
 			? $in->{'code'}
-			: sprintf( '%08d', int( rand(100000000) ) );
+			: do {
+				# The code becomes the house key. Perl's rand() is a seeded LCG, so
+				# draw the digits from the OS instead (12 digits, not 8).
+				require Crypt::PRNG;
+				my $fresh = '';
+				while ( length($fresh) < 12 ) {
+					for my $b ( unpack 'C*', Crypt::PRNG::random_bytes(20) ) {
+						next if $b >= 250;   # reject the biased top of the byte range
+						$fresh .= $b % 10;
+						last if length($fresh) >= 12;
+					}
+				}
+				$fresh;
+			};
 		my $made = make_database( $cfg, { code => $code, theme => $in->{'theme'} } );
 		unless ( $made->{'ok'} ) {
 			return { ok => 0, error => $made->{'error'} || 'could not build the database' };

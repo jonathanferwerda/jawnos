@@ -250,6 +250,9 @@ sub signatorial_establisher {
 	# md5 and the deterministic fallback - the daily sign-in).
 	my $pinned = &session_secret_read();
 	if (defined $pinned && !$designer) {
+		# A key written by an older build is the public derivation; rotate it
+		# once, now, so a known signatorial cannot sign a session.
+		$pinned = &session_secret_rotate_legacy($pinned);
 		$gb::secret_maker = [ $pinned ];
 		return $pinned;
 	}
@@ -280,14 +283,97 @@ sub signatorial_establisher {
 	}
 
 	# A home that cannot hold the file (read-only, permissions) must never make
-	# the tree unbootable: keep the old in-memory behaviour exactly. The fallback
-	# path is still deterministic, so the workers of this boot agree.
-	$gb::secret_maker = [ $derived ];
-	return $designer ? $ingredient : &random_string_creator(12);
+	# the tree unbootable. It must not fall back to a key derived from public
+	# data either: anyone who knows the signatorial could then forge a session.
+	# Use a private key in this boot's temp dir - shared by its workers, 0600,
+	# and gone on a reboot, which only asks people to sign in again.
+	my $boot_key = &session_secret_boot_key();
+	$gb::secret_maker = [ $boot_key ];
+	return $designer ? $ingredient : $boot_key;
+}
+
+# The fallback key when ~/.president/session_secret cannot be written: a random
+# key in the boot's temp dir, created 0600 and read back by the other workers of
+# this boot. It is never derived from anything public, and it does not outlive
+# the boot (a restart rotates it, and people sign in again).
+sub session_secret_boot_key {
+	require File::Spec;
+	require Fcntl;
+	$gb::tmp_dir = File::Spec->tmpdir unless defined $gb::tmp_dir && length $gb::tmp_dir;
+	my $file = File::Spec->catfile($gb::tmp_dir, 'jawnos_session_secret.' . ($< // 0));
+	if (-e $file) {
+		my $key = &_slurp_or_empty($file);
+		$key =~ s/\s+\z//;
+		return $key if $key =~ /^[0-9a-f]{32}$/;
+	}
+	require Crypt::PRNG;
+	my $key = unpack 'H*', Crypt::PRNG::random_bytes(16);
+	if (sysopen(my $fh, $file, Fcntl::O_WRONLY() | Fcntl::O_CREAT() | Fcntl::O_EXCL(), 0600)) {
+		print $fh $key;
+		close $fh;
+		return $key;
+	}
+	# A racing worker won the create: read what it wrote.
+	my $again = &_slurp_or_empty($file);
+	$again =~ s/\s+\z//;
+	return $again if $again =~ /^[0-9a-f]{32}$/;
+	return $key;
 }
 
 sub session_secret_file {
 	return &home('~/.president/session_secret');
+}
+
+# A key an older build wrote is md5 of the signatorial image (or of the public
+# signatorial string). Anyone who knows that value can sign a session cookie.
+# Replace such a key with a random one, once, guarded by an exclusive lock so
+# the boot's workers agree on the winner.
+sub session_secret_rotate_legacy {
+	my ($pinned) = @_;
+	my $file = &session_secret_file();
+	return $pinned unless defined $pinned && defined $file && length $file;
+	my @legacy;
+	if ($config->{'signatorial'} && -e $config->{'signatorial'}) {
+		my $j = &subs::home($config->{'signatorial'});
+		push @legacy, md5_sum(encode_base64(&_slurp_or_empty($j)));
+	}
+	push @legacy, md5_sum('signatorial:' . ($config->{'signatorial'} || 'jawnos'));
+	return $pinned unless grep { $_ eq $pinned } @legacy;
+
+	require Fcntl;
+	my $lock = $file . '.rotate';
+	# A rotation killed mid-write leaves its lock; after a minute it is stale.
+	unlink $lock if -e $lock && (time() - ((stat $lock)[9] // 0)) > 60;
+	my $lh;
+	unless (sysopen($lh, $lock, Fcntl::O_WRONLY() | Fcntl::O_CREAT() | Fcntl::O_EXCL(), 0600)) {
+		# Another worker is rotating: wait for the new key it writes.
+		for my $attempt (1 .. 50) {
+			my $now = &session_secret_read();
+			return $now if defined $now && !grep { $_ eq $now } @legacy;
+			Time::HiRes::usleep(10_000);
+		}
+		return $pinned;
+	}
+	close $lh;
+	# Re-read under the lock: a worker that read the old key just before another
+	# rotated must not rotate again and invalidate the new one.
+	my $current = &session_secret_read();
+	if (defined $current && !grep { $_ eq $current } @legacy) {
+		unlink $lock;
+		return $current;
+	}
+	require Crypt::PRNG;
+	my $fresh = unpack 'H*', Crypt::PRNG::random_bytes(16);
+	my $tmp = $file . '.new.' . $$;
+	if (open(my $th, '>', $tmp)) {
+		chmod 0600, $tmp;
+		print $th $fresh, "\n";
+		close $th;
+		rename($tmp, $file) or unlink $tmp;
+	}
+	unlink $lock;
+	my $now = &session_secret_read();
+	return defined $now ? $now : $fresh;
 }
 
 # The key the first boot wrote, or undef when it is not there yet. A writer
@@ -309,10 +395,10 @@ sub session_secret_read {
 }
 
 # Choose the session key once for this tree and keep it. The first process to
-# boot writes its derivation; every later process - and every worker that loses
+# boot writes a random key; every later process - and every worker that loses
 # the create race - reads that file and signs with its bytes. O_CREAT|O_EXCL
-# makes the choice atomic, and an existing file is never rewritten, so the key
-# cannot drift when the signatorial image comes and goes.
+# makes the choice atomic, and an existing file is never rewritten here, so the
+# key cannot drift when the signatorial image comes and goes.
 sub session_secret_pin {
 	my ($derived) = @_;
 	return undef unless defined $derived && length $derived;
@@ -331,9 +417,13 @@ sub session_secret_pin {
 
 	if (sysopen my $fh, $file, O_CREAT | O_EXCL | O_WRONLY, 0600) {
 		chmod 0600, $file;
-		print $fh $derived, "\n";
+		# A fresh key is random, never the derivation: the derivation is public
+		# to anyone who knows the signatorial.
+		require Crypt::PRNG;
+		my $fresh = unpack 'H*', Crypt::PRNG::random_bytes(16);
+		print $fh $fresh, "\n";
 		close $fh;
-		return $derived;
+		return $fresh;
 	}
 
 	# Lost the race, or the file appeared between the read and the create: the

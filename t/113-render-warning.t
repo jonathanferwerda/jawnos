@@ -26,14 +26,16 @@ my $secret_file = &subs::session_secret_file();
 sub reset_secret { unlink $secret_file; return }
 
 my @warnings;
+my $secret;
 {
 	reset_secret();
 	local $SIG{__WARN__} = sub { push @warnings, @_ };
 	local $subs::config = {};
 	local $gb::secret_maker = undef;
-	my $secret = &subs::signatorial_establisher();
-	like($secret, qr/^[0-9a-f]{32}$/, 'a house with no signatorial image gets the deterministic key');
-	is($secret, Mojo::Util::md5_sum('signatorial:jawnos'), 'the key is the fallback derivation');
+	$secret = &subs::signatorial_establisher();
+	like($secret, qr/^[0-9a-f]{32}$/, 'a fresh house gets a 32-hex session key');
+	isnt($secret, Mojo::Util::md5_sum('signatorial:jawnos'),
+		'the key is random, not the public derivation');
 }
 is(scalar @warnings, 0, 'no uninitialized-value warning is printed')
 	or diag(@warnings);
@@ -44,7 +46,7 @@ is((stat $secret_file)[2] & 07777, 0600, 'the secret file is private to its owne
 	local $/;
 	my $stored = <$fh>;
 	$stored =~ s/\s+\z//;
-	is($stored, Mojo::Util::md5_sum('signatorial:jawnos'),
+	is($stored, $secret,
 		'the file holds the key byte-for-byte (the trailing newline is trimmed)');
 }
 
@@ -88,8 +90,9 @@ is((stat $secret_file)[2] & 07777, 0600, 'the secret file is private to its owne
 		$first = &subs::signatorial_establisher();
 		$first_memo = $gb::secret_maker;
 	}
-	is($first, $fallback, 'a first boot with no readable image pins the fallback');
-	is_deeply($first_memo, [ $fallback ], 'and signs this worker with it');
+	like($first, qr/^[0-9a-f]{32}$/, 'a first boot pins a random key');
+	isnt($first, $fallback, 'not the derivation of the missing image');
+	is_deeply($first_memo, [ $first ], 'and signs this worker with it');
 
 	open my $fh, '>', $image or die "cannot write $image: $!";
 	print $fh "portrait\n";
@@ -127,7 +130,8 @@ is((stat $secret_file)[2] & 07777, 0600, 'the secret file is private to its owne
 		local $gb::secret_maker = undef;
 		$first = &subs::signatorial_establisher();
 	}
-	is($first, $image_key, 'a readable image still chooses its own bytes first');
+	like($first, qr/^[0-9a-f]{32}$/, 'a readable image still yields a random key');
+	isnt($first, $image_key, 'the image bytes are an ingredient, not the session key');
 
 	my $second;
 	{
@@ -135,7 +139,7 @@ is((stat $secret_file)[2] & 07777, 0600, 'the secret file is private to its owne
 		local $gb::secret_maker = undef;
 		$second = &subs::signatorial_establisher();
 	}
-	is($second, $image_key, 'a later boot without the image keeps the pinned key');
+	is($second, $first, 'a later boot without the image keeps the pinned key');
 }
 
 # The proof that matters is a process that did not choose the key: a fresh
@@ -157,8 +161,9 @@ is((stat $secret_file)[2] & 07777, 0600, 'the secret file is private to its owne
 		local $gb::secret_maker = undef;
 		$first = &subs::signatorial_establisher();
 	}
-	is($first, Mojo::Util::md5_sum('signatorial:' . $missing),
-		'the first process pins the fallback while external storage is away');
+	like($first, qr/^[0-9a-f]{32}$/, 'the first process pins a random key');
+	isnt($first, Mojo::Util::md5_sum('signatorial:' . $missing),
+		'and not the derivation while external storage is away');
 
 	my $script = <<'SECOND_PROCESS';
 BEGIN { chdir $ARGV[2] or die "chdir $ARGV[2]: $!" }
@@ -180,6 +185,33 @@ SECOND_PROCESS
 	is($key, $first, 'a second process reads the stored key');
 	isnt($key, Mojo::Util::md5_sum(MIME::Base64::encode_base64("portrait\n")),
 		'it does not derive the image it can read now');
+}
+
+# A key written by an older build is the public derivation, so anyone who knows
+# the signatorial could sign a session. The next boot replaces it with a random
+# key and writes that to the file.
+{
+	my $dir = tempdir(CLEANUP => 1);
+	my $missing = "$dir/gone.png";
+	reset_secret();
+	my $legacy = Mojo::Util::md5_sum('signatorial:' . $missing);
+	open my $fh, '>', $secret_file or die "cannot write $secret_file: $!";
+	chmod 0600, $secret_file;
+	print $fh $legacy, "\n";
+	close $fh;
+	my $rotated;
+	{
+		local $subs::config = { signatorial => $missing };
+		local $gb::secret_maker = undef;
+		$rotated = &subs::signatorial_establisher();
+	}
+	isnt($rotated, $legacy, 'a legacy derived key is rotated on boot');
+	like($rotated, qr/^[0-9a-f]{32}$/, 'the replacement is a random 32-hex key');
+	open my $rfh, '<', $secret_file or die "cannot read $secret_file: $!";
+	local $/;
+	my $stored = <$rfh>;
+	$stored =~ s/\s+\z//;
+	is($stored, $rotated, 'and the file holds the rotated key');
 }
 
 done_testing();
