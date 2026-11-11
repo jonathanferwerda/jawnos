@@ -28,8 +28,9 @@ like($router, qr/Object\.prototype\.hasOwnProperty\.call\(jawnosConsoleCommands/
 like($router, qr/var jawnosConsoleExact\s*=\s*\{/, 'static instructions are an exact lookup');
 like($router, qr/function jawnosConsoleLegacyRun/, 'legacy strings are parsed, not evaluated');
 my $evals = () = $router =~ /\beval\s*\(/g;
-is($evals, 1, 'the router has exactly one eval (the named terminalJs command)');
-like($router, qr/terminalJs:\s*function/, 'that eval is the explicit terminal command');
+is($evals, 2, 'the router has exactly two evals (the marked terminal and the validated browser command)');
+like($router, qr/terminalJs:\s*function/, 'one eval is the explicit terminal command');
+like($router, qr/browserCommand:\s*function/, 'the other eval is the validator-gated browser command');
 
 my $handler = source('public/js/manager/websocket/01_message_handler.js');
 like($handler, qr/jawnosConsoleRun\(data\['console'\]\)/, 'the message handler routes the console frame');
@@ -43,7 +44,7 @@ like($part31, qr/cmd => 'smsSend'/, 'sms send is a command object');
 like($part31, qr/cmd => 'smsMms'/, 'sms mms is a command object');
 
 my $render = source('lib/JawnOS/Domain/Render.pm');
-like($render, qr/console_command\('terminalJs', \$command\)/, 'the terminal is the named JS command');
+like($render, qr/console_command\('terminalJs', \$command, 'terminal'\)/, 'the terminal is the named JS command, with its marker');
 
 # Every console send is a command object now. A string literal in `console =>`
 # is the legacy shape the router only just tolerates, so it must not come back.

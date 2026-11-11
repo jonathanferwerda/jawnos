@@ -264,7 +264,7 @@ sub action_27819 {
 		&subs::telephone_call_log_check();
 	}
 	else {
-		my $return = &subs::run_command('terminal',$c->param('command'),$timestamp);
+		my $return = &subs::run_command('terminal',$c->param('command'),$timestamp,{ terminal => 1 });
 	}
 	$c->render('text' => 'ok');
 }

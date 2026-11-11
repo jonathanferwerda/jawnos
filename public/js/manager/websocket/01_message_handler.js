@@ -254,9 +254,11 @@ function wsMessageDispatch(raw) {
 		}
 		else if ( data['type'] == 'command' ) {
 			if (data['return']) {
-				data['return'] = data['return'].replace(/(?:\r\n|\r|\n)/g, '<br>');
+				// A command's output is the shell's bytes, not markup. Escape every
+				// field first, then turn the escaped newlines into breaks.
+				var returned = syncEscape(data['return']).replace(/(?:\r\n|\r|\n)/g, '<br>');
 				var tv = $('#terminal_view');
-				tv.append('<span style="color:red;"><b>' + data['whoami'] + '@' + data['hostname'] + ':</b></span> ' + data['command'] + '<br>' + data['return'] + '<br>');
+				tv.append('<span style="color:red;"><b>' + syncEscape(data['whoami']) + '@' + syncEscape(data['hostname']) + ':</b></span> ' + syncEscape(data['command']) + '<br>' + returned + '<br>');
 				tv.scrollTop(tv.height() * 4000);
 			}
 		}

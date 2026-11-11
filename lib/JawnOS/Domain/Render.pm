@@ -693,10 +693,33 @@ sub destination_relay {
 	};
 }
 
+# A setting's `command` (and a learned verb, or a weather/clock automation)
+# reaches every open manager tab, so a value stored there is script unless it
+# is one of the shapes the house really uses. Only a click on a named element
+# and a seek on the house music player are accepted; the rest is refused and
+# stays a shell command in the worker.
+my $BROWSER_COMMAND_CLICK = qr/^\$\((['"])([#.])([A-Za-z0-9_-]+)\1\)\.trigger\((['"])click\4\);?$/;
+my $BROWSER_COMMAND_CURRENT = qr/^tree\.sound\.currentTime = tree\.sound\.currentTime [+-] (?:\d+(?:\.\d+)?|\.\d+);?$/;
+my $BROWSER_COMMAND_UNSAFE = qr/(?:document|window|eval|Function|fetch|alert|[<>`])/;
+
+sub browser_command_valid {
+	my ($command) = @_;
+	return 0 unless defined $command && !ref $command;
+	my $s = $command;
+	$s =~ s/^\s+|\s+$//g;
+	return 0 unless length $s;
+	return 0 if $s =~ /[\x00-\x1f\x7f]/;
+	return 0 if $s =~ $BROWSER_COMMAND_UNSAFE;
+	return 1 if $s =~ $BROWSER_COMMAND_CLICK;
+	return 1 if $s =~ $BROWSER_COMMAND_CURRENT;
+	return 0;
+}
+
 sub run_command {
 	my $app = shift;
 	my $command = shift;
 	my $timestamp = shift;
+	my $opts = shift || {};
 	my $exec = 'none';
 	my $whoami = `whoami`;
 	chomp $whoami;
@@ -720,10 +743,20 @@ sub run_command {
 
 		&Websocket::send('server', $json);
 		sleep(.3);
-		# The terminal is a JS console the person is using deliberately; this
-		# is the one named command that runs the line they typed.
-		my $msg = { app => $app, whoami => $whoami, hostname => $hostname, uuid => &subs::random_string_creator(25), console => &Websocket::console_command('terminalJs', $command) };
-		&Websocket::send('server', $msg);
+		# The terminal is a JS console the person is using deliberately, and only
+		# that path sends its line; every other caller may send one of the named
+		# browser commands, or nothing at all (a shell command runs here).
+		my $console;
+		if ($opts->{'terminal'}) {
+			$console = &Websocket::console_command('terminalJs', $command, 'terminal');
+		}
+		elsif (&browser_command_valid($command)) {
+			$console = &Websocket::console_command('browserCommand', $command);
+		}
+		if ($console) {
+			my $msg = { app => $app, whoami => $whoami, hostname => $hostname, uuid => &subs::random_string_creator(25), console => $console };
+			&Websocket::send('server', $msg);
+		}
 		return 'done';
 	}, { name => 'run command' });
 }

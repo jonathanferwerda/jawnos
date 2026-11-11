@@ -8,8 +8,24 @@
 // refused and logged.
 //
 // terminalJs is the one deliberate exception: the terminal is a JS console the
-// person is using on purpose, and Render.pm sends the line they typed. It is
-// named here so an audit can find the single eval.
+// person is using on purpose, and Render.pm sends the line they typed alongside
+// the literal marker 'terminal'. It is named here so an audit can find the two
+// evals: that one, and browserCommand, which evals only a string the same strict
+// validator accepts on the server.
+
+var jawnosBrowserCommandClick = /^\$\((['"])([#.])([A-Za-z0-9_-]+)\1\)\.trigger\((['"])click\4\);?$/;
+var jawnosBrowserCommandCurrent = /^tree\.sound\.currentTime = tree\.sound\.currentTime [+-] (?:\d+(?:\.\d+)?|\.\d+);?$/;
+var jawnosBrowserCommandUnsafe = /(?:document|window|eval|Function|fetch|alert|[<>`])/;
+
+// The JS twin of subs::browser_command_valid: trim, refuse a control character
+// or a dangerous name, then accept only the two shapes the house uses.
+function jawnosBrowserCommandValid(command) {
+	if (typeof command !== 'string') { return false; }
+	var s = command.replace(/^\s+|\s+$/g, '');
+	if (!s.length || /[\x00-\x1f\x7f]/.test(s)) { return false; }
+	if (jawnosBrowserCommandUnsafe.test(s)) { return false; }
+	return jawnosBrowserCommandClick.test(s) || jawnosBrowserCommandCurrent.test(s);
+}
 
 var jawnosConsoleCommands = {
 	appointmentDetailGrabber: function (a) {
@@ -259,8 +275,24 @@ var jawnosConsoleCommands = {
 		return r;
 	},
 	terminalJs: function (a) {
-		// The terminal is a JS console the person is using deliberately.
+		// The terminal is a JS console the person is using deliberately. Only
+		// run_command's terminal path sends the marker, so a frame that carries
+		// a line without it cannot reach this eval.
+		if (String(a[1] || '') !== 'terminal') {
+			console.warn('console: terminalJs without the terminal marker refused');
+			return;
+		}
 		try { eval(String(a[0])); } catch (e) {}
+	},
+	browserCommand: function (a) {
+		// A command saved in an app setting. The server already validated it;
+		// the same check runs here so a hand-made frame cannot widen it.
+		var command = String(a[0] == null ? '' : a[0]);
+		if (!jawnosBrowserCommandValid(command)) {
+			console.warn('console: browser command refused', command);
+			return;
+		}
+		try { eval(command); } catch (e) {}
 	}
 };
 

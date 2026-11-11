@@ -762,6 +762,17 @@ sub action_45199 {
 		}
 		$value = $check->{'value'};
 	}
+	# A `command` or `kill` is run on an app's appointment and its value is
+	# relayed to every open manager tab. The shell forms stay allowed, but a
+	# value that looks like script must be one of the validator's browser
+	# commands; anything else would run in each tab as the person.
+	if (($setting eq 'command' || $setting eq 'kill') && defined $value && length $value) {
+		my $jsish = $value =~ /(?:document|window|eval|Function|fetch|alert|console|[<>`]|\$\s*\(|=>|\bfunction\b|;\s*\S)/;
+		if ($jsish && !&subs::browser_command_valid($value)) {
+			$c->render(json => { ok => 0, error => 'That command runs in every open tab, so only a browser command such as $("#play").trigger("click"); or tree.sound.currentTime = tree.sound.currentTime + 25; is accepted. Save a shell command without script.' });
+			return;
+		}
+	}
 	# An address field never accepts a phrase that could spend the wallet. JawnOS
 	# stores public addresses only, so a seed phrase or private key is refused
 	# here as well as in the panel's own warning.
