@@ -115,16 +115,19 @@ my @calls;
 # The panel writes the list, and the role calls read it.
 {
 	my $misc = read_file("$root/templates/configure/misc_setting_list.html.ep");
-	like( $misc, qr/setting="thinking_off" role=/, 'Misc offers a Thinking switch per agent' );
-	like( $misc, qr/'coding_assistant', 'Coding agent'/, 'the switch names the Coding agent' );
-	like( $misc, qr/'help_assistant'/, 'and the Help guide' );
-	unlike( $misc, qr/'text_to_image_assistant'/, 'image generation has no switch, because it never reasons' );
+	my $plat = read_file("$root/templates/configure/plat_setting_list.html.ep");
+	like( $plat, qr/setting="thinking_off" role=/, 'Plat -> AI offers a Thinking switch per agent' );
+	like( $plat, qr/'coding_assistant', 'Coding agent'/, 'the switch names the Coding agent' );
+	like( $plat, qr/'help_assistant'/, 'and the Help guide' );
+	my ($thinking) = $plat =~ /(data-acc="plat-ai-thinking".*?<\/details>)/s;
+	ok( $thinking, 'the switch is its own block in Plat -> AI' );
+	unlike( $thinking, qr/'text_to_image_assistant'/, 'image generation has no switch, because it never reasons' );
+	unlike( $misc, qr/setting="thinking_off" role=/, 'and Misc no longer carries it' );
 
 	my $js = read_file("$root/public/js/manager/configure/03_platform_misc.js");
 	like( $js, qr/\.misc_setting\[setting="thinking_off"\]/, 'the JS collects the thinking switches' );
 	like( $js, qr/setting: 'thinking_off', value: off\.join\(','\)/, 'and saves them as one comma list per device' );
 
-	my $plat = read_file("$root/templates/configure/plat_setting_list.html.ep");
 	like( $plat, qr/\$thinking_cap = 0 unless \$allowed_of->\(\$setting\);/, 'Plat hides the Thinking row for a silenced role' );
 	like( $plat, qr/class="button ai_model_test"/, 'Plat puts a Test button beside a model' );
 	like( $plat, qr/class="cfg-inline ai_model_picker"/, 'the Test button shares the model row, beside the dropdown' );

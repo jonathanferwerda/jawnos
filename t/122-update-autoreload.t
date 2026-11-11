@@ -1,4 +1,4 @@
-# tests-for: perl/help/topics_configure.pl public/js/manager/configure/03_platform_misc.js public/js/manager/websocket/02_heartbeat_and_reload.js templates/configure/misc_setting_list.html.ep templates/layouts/manager.html.ep
+# tests-for: perl/help/topics_configure.pl public/js/manager/configure/03_platform_misc.js public/js/manager/configure/01_update_controls.js public/js/manager/websocket/02_heartbeat_and_reload.js templates/configure/device_lister/body.html.ep templates/layouts/manager.html.ep
 # covers:    Auto-reload on update is a per-device choice, off by default. Off
 #            means pill only: a shipped script change waits for a press instead
 #            of reloading a hidden tab on its own. On restores the auto-reload.
@@ -16,7 +16,8 @@ my $root = "$FindBin::Bin/..";
 
 my $reload = read_file("$root/public/js/manager/websocket/02_heartbeat_and_reload.js");
 my $misc   = read_file("$root/public/js/manager/configure/03_platform_misc.js");
-my $tpl    = read_file("$root/templates/configure/misc_setting_list.html.ep");
+my $tpl    = read_file("$root/templates/configure/device_lister/body.html.ep");
+my $misc_tpl = read_file("$root/templates/configure/misc_setting_list.html.ep");
 my $help   = read_file("$root/perl/help/topics_configure.pl");
 my $layout = read_file("$root/templates/layouts/manager.html.ep");
 
@@ -60,13 +61,19 @@ like($misc, qr/jawnosUpdateAutoreloadPaint\(\);/,
 	'opening the Misc panel paints the saved choice');
 
 # --- the on-screen control and its words ------------------------------------
-like($tpl, qr/id="update_autoreload"/, 'the checkbox has its id');
+# It moved out of Misc: a switch about code updates belongs beside Update
+# Method in the Dev panel, not among appearance and storage.
+like($tpl, qr/id="update_autoreload"/, 'the checkbox has its id in the Dev panel');
 like($tpl, qr/&subs::ui\('Auto-reload on update'\)/,
 	'the label goes through subs::ui so it is translatable');
+unlike($misc_tpl, qr/id="update_autoreload"/,
+	'and the Misc panel no longer carries it');
+like(read_file("$root/public/js/manager/configure/01_update_controls.js"),
+	qr/jawnosUpdateAutoreloadPaint\(\);/, 'opening the Dev panel paints the saved choice');
 
 # --- help matches the label -------------------------------------------------
-like($help, qr/Auto-reload on update, in Misc, is per device and off by default/,
-	'the Configure help names the setting exactly as the panel does');
+like($help, qr/Auto-reload on update, under the Dev panel.*Update Method card, is per screen and off by default/,
+	'the Configure help names the setting and its new home');
 like($help, qr/Off is pill only/, 'the help explains the off state');
 
 # --- the stylesheet swap is guarded ----------------------------------------

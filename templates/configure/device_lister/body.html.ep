@@ -108,6 +108,19 @@
 				<%= &subs::ui('The 06:00 coding night pushes its branch and main to this repo instead of the checkout\'s upstream. Use owner/name or an https URL; leave it empty for origin (and fork for the app).') %>
 			</div>
 		</div>
+		<%# The person's own update manners. localStorage, not a house setting:
+		    it belongs to this browser, so it travels with the screen and not the
+		    mesh. The press-to-update note is the default; auto-reload is the
+		    opt-in, and the choice lives beside the update controls it governs. %>
+		<div class="device_card" id="update_autoreload_card">
+			<div class="device_head">
+				<span class="network_cidr"><%= &subs::ui('Auto-reload on update') %></span>
+				<span class="device_when"><%= &subs::ui('this screen only · off by default') %></span>
+			</div>
+			<div class="device_nic" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+				<label hint="<%= &subs::ui('On: a shipped script change reloads this tab when it is hidden. Off: a press-to-update note waits instead. This device only.') %>"><input type="checkbox" id="update_autoreload"> <%= &subs::ui('Reload this screen by itself when a build ships') %></label>
+			</div>
+		</div>
 		<div class="device_card" id="printer_card"
 			data-ask="<%= &subs::ui('Ask each time') %>"
 			data-system-default="<%= &subs::ui('system default') %>"

@@ -85,6 +85,7 @@
 	</div>
 	<div id="plat_ai" class="cfg_tab_panel" style="<%= $plat_tab eq 'plat_ai' ? '' : 'display:none;' %>">
 	<p class="cfg-note">Every AI model choice and provider key, in one place.</p>
+	<% my $plat_dev = &subs::device_setter(); %>
 
 	<details class="cfg-acc" data-acc="plat-ai" open>
 		<summary><%= &subs::lang('configure.agent_models') %></summary>
@@ -272,6 +273,24 @@
 	<% if (@not_ready) { %>
 		<p class="cfg-note">Not offered until they can answer: <% foreach my $p (@not_ready) { %><b><%= $p->{'label'} %></b><%= ($p->{'id'} eq 'ollama' ? ' (not running)' : ' (no key)') %><%= ($p->{'id'} eq $not_ready[-1]->{'id'} ? '' : ', ') %><% } %>. Paste a key under Provider access and press Plat again, or start Ollama for the local models.</p>
 	<% } %>
+	</details>
+
+	<details class="cfg-acc" data-acc="plat-ai-thinking">
+		<summary><%= &subs::ui('Thinking (AI agents)') %></summary>
+		<div class="cfg-grid misc_grid">
+		<% my $plat_thinking_off = &subs::setting_grabber({ app => 'misc', setting => 'thinking_off', device => $plat_dev }) // '';
+		   my %plat_thinking_off = map { $_ => 1 } split /[,\s]+/, $plat_thinking_off;
+		   foreach my $agent ( [ 'coding_assistant', 'Coding agent' ], [ 'help_assistant', 'Help guide' ], [ 'eval_assistant', 'Evaluation' ], [ 'visual_assistant', 'Vision' ], [ 'chatbot_model', 'Pen chat' ] ) { %>
+			<label hint="<%= &subs::ui('Off: this machine\'s calls for this agent carry no Thinking level, whatever the level above has chosen. On: the level chosen above applies.') %>">
+				<b><%= &subs::ui($agent->[1]) %></b>
+				<select class="misc_setting" device="<%= $plat_dev %>" setting="thinking_off" role="<%= $agent->[0] %>">
+					<option value="on" <% if (($plat_thinking_off{$agent->[0]} || '') eq 'off') { %>selected="selected"<% } %>>on</option>
+					<option value="off" <% if (($plat_thinking_off{$agent->[0]} || '') ne 'off') { %>selected="selected"<% } %>>off</option>
+				</select>
+			</label>
+		<% } %>
+		</div>
+		<p class="cfg-note"><%= &subs::ui('These switches belong to this machine alone: off stops a role asking for its Thinking level here, while every other machine keeps the level chosen above. Image, audio and video generation never reason, so they are not listed.') %></p>
 	</details>
 
 	<details class="cfg-acc" data-acc="plat-self-healing">

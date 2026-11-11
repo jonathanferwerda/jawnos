@@ -544,6 +544,9 @@ $(document).on('click', '#device_lister, .device_scan', function() {
 			$('#device_list').html(response);
 			$('#ping_results').html(ping);
 			printerInkLoad($('#device_list'));
+			// The auto-reload switch rides the update card in this panel; it is
+			// localStorage, so it is painted from the browser, not the response.
+			if (typeof jawnosUpdateAutoreloadPaint === 'function') { jawnosUpdateAutoreloadPaint(); }
 			if (jawnosConfigureShow('device_lister', $('#device_list'))) {
 				b.attr('status', 'active');
 				// Only a panel that is actually on screen needs its queues read; a
@@ -671,6 +674,7 @@ function deviceLister() {
 			var keep = gimmeInputSnapshot(c);
 			c.html(response);
 			jawnosDepsCheck();
+			if (typeof jawnosUpdateAutoreloadPaint === 'function') { jawnosUpdateAutoreloadPaint(); }
 			printerInkLoad(c);
 			printerQueuesLoad(c);
 			deviceListerRestoreButtons(c);

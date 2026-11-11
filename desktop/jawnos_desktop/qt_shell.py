@@ -2025,8 +2025,6 @@ def main(argv=None):
                             self.note.emit(
                                 ("restarted %s -> %s" % (running, disk))
                                 if ok else ("restart failed: %s" % message))
-                            if ok:
-                                self.reload.emit()
                             jawn = core.jawn_up(jawn_dir)
                     newer = core.auto_update_available(shell_settings)
                     if newer:
@@ -2043,17 +2041,17 @@ def main(argv=None):
                             self._update_at = now
                     else:
                         self._update_pending = None
-                    # A code sync writes VERSION while the tree keeps running the
-                    # build it booted; the mismatch check above is what restarts
-                    # it, and that restart's own success path reloads. Following
-                    # the disk file here threw the person's page away first (a
-                    # playing video with it) for code that was not live yet, and
-                    # when the restart was rate-limited the page came back on the
-                    # same old build. Follow the version the manager serves.
+                    # A completed update is the page's own to take: after the
+                    # restart its socket reconnects and the revision handler
+                    # offers the press-to-update note (Auto-reload moves it to a
+                    # hidden tab only when the person chose that in Configure).
+                    # Reloading the view from here took the page away mid-show,
+                    # so this records that the manager moved and leaves the
+                    # choice with the person.
                     running = core.running_version(jawn_dir)
                     if running and running != self._version:
                         self._version = running
-                        self.reload.emit()
+                        self.note.emit("running %s" % running)
             finally:
                 self._busy = False
 
