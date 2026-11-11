@@ -2937,6 +2937,39 @@ body.dark_theme .folders_file.selected { background: rgba(110, 168, 254, .20); }
 #desk_layer .folders_thumb .folders_archived_badge {
 	width: 17px; height: 17px; max-width: 17px; max-height: 17px;
 }
+/* The CloudSync status sits in the icon's lower-right corner: a green check
+   when every device has the file, a blue turning mark while a change is on
+   its way, a red cross when a delivery was refused. The archive mark moves to
+   the lower left so an archived file can wear both. */
+.folders_thumb .folders_archived_badge { left: -3px; right: auto; }
+.folders_contents[data-view=list] .folders_thumb .folders_archived_badge { left: -2px; right: auto; }
+#desk_layer .folders_thumb .folders_archived_badge { left: -3px; right: auto; }
+.folders_thumb .folders_sync_badge {
+	position: absolute; right: -4px; bottom: -4px;
+	width: 17px; height: 17px; max-width: 17px; max-height: 17px;
+	border-radius: 50%; box-sizing: border-box;
+	display: flex; align-items: center; justify-content: center;
+	font-size: 11px; line-height: 1; font-weight: 700; color: #fff;
+	background: #2e9e4f; box-shadow: 0 1px 2px rgba(0, 0, 0, .45);
+	pointer-events: none;
+}
+.folders_thumb .folders_sync_badge::after { content: '\2713'; }
+.folders_thumb .folders_sync_badge.folders_sync_syncing {
+	background: #2f6feb;
+	animation: folders_sync_turn 1.4s linear infinite;
+}
+.folders_thumb .folders_sync_badge.folders_sync_syncing::after { content: '\21BB'; }
+.folders_thumb .folders_sync_badge.folders_sync_failed { background: #d33a2c; }
+.folders_thumb .folders_sync_badge.folders_sync_failed::after { content: '\2715'; }
+@keyframes folders_sync_turn { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+	.folders_thumb .folders_sync_badge.folders_sync_syncing { animation: none; }
+}
+.folders_contents[data-view=list] .folders_thumb .folders_sync_badge {
+	width: 13px; height: 13px; max-width: 13px; max-height: 13px;
+	font-size: 9px; right: -2px; bottom: -2px;
+}
+#desk_layer .folders_thumb .folders_sync_badge { left: auto; right: -4px; }
 .folders_label {
 	font-size: 12.5px; line-height: 1.25; text-align: center;
 	overflow-wrap: anywhere; word-break: break-word; max-height: 2.5em; overflow: hidden;

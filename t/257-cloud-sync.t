@@ -708,4 +708,99 @@ unlike($controller, qr/asset->path/, 'no receive route needs a temp path for the
 	ok(-e $file, 'the legacy state file is kept');
 }
 
+# ---- the badge a listing wears -----------------------------------------------
+#
+# A file in a CloudSync folder shows its state on the icon: a green check when
+# the state agrees and nothing is pending, a blue mark while a change is still
+# on its way, and a red cross when a delivery was refused. The marks are pure
+# answers over the state, so they are tested without a peer or a window.
+
+my $mark_state = subs::cloud_sync_state_empty();
+$mark_state->{'files'} = { 'photos/a.jpg' => { size => 10, mtime => 100, hash => 'abcd' } };
+my $listed = { path => '/home/test/photos/a.jpg', type => 'file', size => 10, stat => [ 0, 0, 0, 0, 0, 0, 0, 10, 0, 100 ] };
+is(subs::cloud_sync_status_file($mark_state, 'photos/a.jpg', $listed), 'synced',
+	'a file the state agrees with is synced');
+$listed->{'size'} = 11;
+is(subs::cloud_sync_status_file($mark_state, 'photos/a.jpg', $listed), 'syncing',
+	'a size that moved since the last pass is not agreed yet');
+$listed->{'size'} = 10;
+my $queued = subs::cloud_sync_pending_add($mark_state, { kind => 'file', rel => 'photos/a.jpg', size => 10, mtime => 100 });
+is(subs::cloud_sync_status_file($mark_state, 'photos/a.jpg', $listed), 'syncing',
+	'a queued change is still on its way');
+$mark_state->{'pending'}->[0]->{'error'} = 'the machine did not answer';
+is(subs::cloud_sync_status_file($mark_state, 'photos/a.jpg', $listed), 'failed',
+	'a refused delivery is the red cross');
+is(subs::cloud_sync_status_under($mark_state, 'photos'), 'failed',
+	'a folder carries the worst state of the files under it');
+delete $mark_state->{'pending'}->[0]->{'error'};
+is(subs::cloud_sync_status_under($mark_state, 'photos'), 'syncing',
+	'with no error it is still on its way');
+$mark_state->{'pending'} = [];
+is(subs::cloud_sync_status_under($mark_state, 'photos'), 'synced',
+	'and with nothing pending the folder is synced');
+is(subs::cloud_sync_status_under($mark_state, 'nowhere'), undef,
+	'a folder with nothing known has no badge at all');
+is(subs::cloud_sync_status_file($mark_state, 'new.txt', { size => 1, stat => [ 0, 0, 0, 0, 0, 0, 0, 1, 0, 5 ] }), 'syncing',
+	'a local file the state has not seen yet is on its way');
+
+# The marks a listing is built from: the registered folder itself when its
+# parent is read, and its entries when the folder itself is read.
+{
+	my $badge_dir = tempdir(DIR => $test_home, CLEANUP => 1);
+	my $badge_base = substr($badge_dir, length($test_home) + 1);
+	make_path("$badge_dir/younger");
+	write_file("$badge_dir/a.txt", 'a');
+	subs::cloud_sync_registrations_write([ { path => $badge_dir, base => $badge_base, devices => [ { uuid => 'peer-uuid' } ] } ]);
+	subs::cloud_sync_collect_changes($badge_dir, $badge_base);
+	subs::cloud_sync_state_modify($badge_base, sub { $_[0]->{'pending'} = []; return 1 });
+	my @entries = (
+		{ path => "$badge_dir/a.txt", name => 'a.txt', type => 'file', size => 1, stat => [ 0, 0, 0, 0, 0, 0, 0, 1, 0, (stat "$badge_dir/a.txt")[9] ] },
+		{ path => "$badge_dir/younger", name => 'younger', type => 'folder', stat => [] }
+	);
+	my $marks = subs::cloud_sync_status_marks($badge_dir, \@entries);
+	is($marks->{"$badge_dir/a.txt"}, 'synced', 'a listed file wears its own state');
+	is($marks->{"$badge_dir/younger"}, undef, 'an empty folder has nothing to claim');
+	my $parent = $badge_dir;
+	$parent =~ s{/[^/]+$}{};
+	my $from_parent = subs::cloud_sync_status_marks($parent, [ { path => $badge_dir, name => 'badge', type => 'folder' } ]);
+	is($from_parent->{$badge_dir}, 'synced', 'the registered folder wears the whole folder state from its parent');
+	is(subs::cloud_sync_status_marks("$parent/elsewhere", [ { path => "$parent/elsewhere/x", type => 'file' } ])->{"$parent/elsewhere/x"}, undef,
+		'a path no registration covers has no badge');
+	subs::cloud_sync_registrations_write([]);
+}
+
+# A refused file delivery leaves its reason on the pending change, so the
+# listing can turn that file red cross until a later pass reaches it.
+{
+	my $failed_dir = tempdir(DIR => $test_home, CLEANUP => 1);
+	my $failed_base = substr($failed_dir, length($test_home) + 1);
+	write_file("$failed_dir/bad.txt", 'bad');
+	my $failed_changes = subs::cloud_sync_collect_changes($failed_dir, $failed_base);
+	is(scalar @{$failed_changes}, 1, 'a new file is queued for the failing peer');
+	my $failed_job = CloudSyncFakeJob->new();
+	local *subs::remote_agent_for = sub { return { ua => CloudSyncFakeUA->new(undef), manager => 'https://peer.invalid' } };
+	subs::cloud_sync_job($failed_job, {
+		path => $failed_dir,
+		base => $failed_base,
+		devices => [ { uuid => 'peer-uuid', hostname => 'Peer' } ],
+		changes => $failed_changes
+	});
+	ok($failed_job->failed, 'a file the peer would not take fails the job');
+	my $failed_state = subs::cloud_sync_state_read($failed_base);
+	my ($failed_pending) = @{ $failed_state->{'pending'} || [] };
+	ok($failed_pending, 'and the change stays pending for the next pass');
+	ok($failed_pending->{'error'}, 'the pending change carries the reason');
+	is(subs::cloud_sync_status_file($failed_state, 'bad.txt', { size => 3, stat => [ 0, 0, 0, 0, 0, 0, 0, 3, 0, 0 ] }), 'failed',
+		'so the listing marks that file failed');
+	# a pass that reaches it again clears the mark, so synced files do not stay red
+	subs::cloud_sync_state_modify($failed_base, sub {
+		my $st = shift;
+		subs::cloud_sync_pending_mark($st, { $failed_pending->{'id'} => 1 }, {});
+		return 1;
+	});
+	ok(!subs::cloud_sync_state_read($failed_base)->{'pending'}->[0]->{'error'},
+		'a later pass that reaches the change clears the red mark');
+	subs::cloud_sync_registrations_write([]);
+}
+
 done_testing();

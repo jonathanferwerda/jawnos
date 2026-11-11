@@ -208,9 +208,19 @@ function deskFileItem(f) {
 	var name = f['display'] || f['name'] || '';
 	var item = $('<div class="folders_file desk_file" tabindex="-1" role="option" aria-selected="false"></div>')
 		.attr({ path: f['path'], type: f['type'], 'data-name': name });
-	$('<span class="folders_thumb"></span>')
-		.append($('<img draggable="false" alt="">').attr('src', f['icon'] || ''))
-		.appendTo(item);
+	var thumb = $('<span class="folders_thumb"></span>')
+		.append($('<img draggable="false" alt="">').attr('src', f['icon'] || ''));
+	// The same CloudSync badge the window's listing wears: green check when
+	// every device has it, blue turning mark on its way, red cross refused.
+	if (f['sync_status']) {
+		var words = { synced: jawnosT('Synced'), syncing: jawnosT('Syncing'), failed: jawnosT('Sync failed') };
+		var word = words[f['sync_status']] || words.syncing;
+		$('<span></span>')
+			.addClass('folders_sync_badge folders_sync_' + f['sync_status'])
+			.attr({ role: 'img', 'aria-label': word, hint: word })
+			.appendTo(thumb);
+	}
+	thumb.appendTo(item);
 	$('<span class="folders_label"></span>').text(name).attr('title', name).appendTo(item);
 	return item;
 }

@@ -1,4 +1,4 @@
-# tests-for: lib/JawnOS/Controller/manager_folders2.pm lib/JawnOS/Controller/manager_folders.pm templates/folders/folders.html.ep public/js/manager/folders.js public/js/manager/folders/02_archive_and_keyboard.js public/css/manager.css perl/help/topics_apps.pl perl/language.pl
+# tests-for: lib/JawnOS/Controller/manager_folders2.pm lib/JawnOS/Controller/manager_folders.pm templates/folders/folders.html.ep public/js/manager/folders.js public/js/manager/folders/02_archive_and_keyboard.js public/js/manager/desk.js public/css/manager.css perl/help/topics_apps.pl perl/language.pl
 # covers:    Folders on a thin window, CloudSync drawn in the listing, and the Sync queue.
 
 use strict;
@@ -22,6 +22,7 @@ my $controller = read_file("$root/lib/JawnOS/Controller/manager_folders2.pm");
 my $listing_controller = read_file("$root/lib/JawnOS/Controller/manager_folders.pm");
 my $template  = template_source('folders/folders');
 my $js        = js_source('public/js/manager/folders.js');
+my $desk_js   = read_file("$root/public/js/manager/desk.js");
 my $css       = read_file("$root/public/css/manager.css");
 my $help      = help_source();
 my $language  = language_source();
@@ -162,6 +163,30 @@ foreach my $label (sort keys %shapes) {
 	unlike($out, $compile_bad, "$label compiles with the keys the route passes");
 }
 
+
+# ---- the CloudSync status badge on an icon ---------------------------------
+
+like($template, qr/folders_sync_badge/, 'an item in a watched folder wears a sync badge');
+like($template, qr/folders_sync_<%= \$f->\{'sync_status'\} %>/, 'named for the status the listing passed');
+like($template, qr/'Synced' : .*?eq 'failed' \? 'Sync failed' : 'Syncing'/, 'and labelled Synced, Sync failed or Syncing');
+like($css, qr/\.folders_thumb \.folders_sync_badge \{[^}]*position:\s*absolute[^}]*right:\s*-4px;\s*bottom:\s*-4px;/s,
+	'the badge sits in the icon\'s lower-right corner');
+like($css, qr/\.folders_thumb \.folders_sync_badge \{[^}]*background:\s*#2e9e4f/s, 'synced is a green badge');
+like($css, qr/folders_sync_syncing \{[^}]*background:\s*#2f6feb;[^}]*animation:/s,
+	'syncing is a blue badge that turns');
+like($css, qr/folders_sync_failed \{[^}]*background:\s*#d33a2c/s, 'failed is a red badge');
+like($css, qr/content: '\\2713'/, 'a check for synced');
+like($css, qr/content: '\\21BB'/, 'a turning arrow for syncing');
+like($css, qr/content: '\\2715'/, 'a cross for failed');
+like($css, qr/\@keyframes folders_sync_turn/, 'the turning mark has its own keyframes');
+like($css, qr/prefers-reduced-motion[^}]*folders_sync_syncing/s, 'and stops turning for a person who asked for less motion');
+like($css, qr/\.folders_thumb \.folders_archived_badge \{ left:\s*-3px; right:\s*auto; \}/,
+	'the archive mark moves to the lower left so both can show');
+like($desk_js, qr/folders_sync_badge/, 'the desk wears the same badge');
+like($desk_js, qr/jawnosT\('Synced'\)/, 'in the same words, ready for translation');
+like($help, qr/green check when every chosen device has it/, 'the help explains the green check');
+like($help, qr/blue turning mark while a change is still on its way/, 'the blue mark');
+like($help, qr/red cross when a device refused the last copy/, 'and the red cross');
 
 # ---- only a folder inside home can sync -------------------------------------
 

@@ -1672,6 +1672,25 @@ sub cloud_sync_pending_remove {
 	return;
 }
 
+# Remember which undelivered changes a pass could not make, so the listing can
+# show a red cross on that file. The mark rides the pending entry, which is
+# already the record of what has not reached every device; a later pass that
+# touches the same change clears it, and a change this pass did not try keeps
+# whatever mark it already had.
+sub cloud_sync_pending_mark {
+	my ($state, $attempted, $errors) = @_;
+	my $tried = (ref $attempted eq 'HASH') ? $attempted : {};
+	my $why = (ref $errors eq 'HASH') ? $errors : {};
+	foreach my $entry ( @{ $state->{'pending'} || [] } ) {
+		my $id = defined $entry->{'id'} ? $entry->{'id'} : '';
+		next unless (length $id && $tried->{$id});
+		my $error = $why->{$id};
+		if (defined $error && length $error) { $entry->{'error'} = $error; }
+		else { delete $entry->{'error'}; }
+	}
+	return;
+}
+
 # A deletion time travels as a form value between machines, and `time()` is the
 # hi-res one in this package, so a queued change can carry a fraction
 # (1794376135.87). stat() reports whole seconds, so floor it there. A missing or
@@ -2163,6 +2182,96 @@ sub cloud_sync_totals {
 	return { files => $files, bytes => $bytes };
 }
 
+# One file's badge in a listing. A pending change that a delivery could not
+# make carries the reason, and that is the red cross. Without an error the
+# change is still on its way (blue). A file the state agrees with, and whose
+# size and time have not moved since the last sweep, is synced (green); one
+# edited since the last pass is not agreed yet, so it reads as syncing.
+sub cloud_sync_status_file {
+	my ($state, $rel, $entry) = @_;
+	return undef unless (defined $rel && length $rel);
+	$state = {} unless ref $state eq 'HASH';
+	foreach my $change ( @{ $state->{'pending'} || [] } ) {
+		next unless (($change->{'rel'} || '') eq $rel);
+		return (defined $change->{'error'} && length $change->{'error'}) ? 'failed' : 'syncing';
+	}
+	my $known = $state->{'files'}->{$rel};
+	return 'syncing' unless $known;
+	my $stat = (ref $entry eq 'HASH' && ref $entry->{'stat'} eq 'ARRAY') ? $entry->{'stat'} : [];
+	my $size = (ref $entry eq 'HASH' && defined $entry->{'size'}) ? $entry->{'size'} : $stat->[7];
+	my $mtime = $stat->[9];
+	return 'syncing' if (defined $size && ($known->{'size'} || 0) != $size);
+	return 'syncing' if (defined $mtime && ($known->{'mtime'} || 0) != $mtime);
+	return 'synced';
+}
+
+# A folder's badge is the worst of what sits under it: a refused file makes the
+# folder failed, an undelivered one makes it syncing, and a folder whose known
+# files are all agreed is synced. A prefix of '' asks about the whole folder.
+# Nothing known under it means no badge at all, not a green one.
+sub cloud_sync_status_under {
+	my ($state, $prefix) = @_;
+	$state = {} unless ref $state eq 'HASH';
+	my $pre = (defined $prefix && length $prefix) ? $prefix . '/' : '';
+	my ($known, $syncing, $failed) = (0, 0, 0);
+	foreach my $change ( @{ $state->{'pending'} || [] } ) {
+		my $rel = $change->{'rel'} || '';
+		next if (length $pre && index($rel, $pre) != 0);
+		if (defined $change->{'error'} && length $change->{'error'}) { $failed = 1; }
+		else { $syncing = 1; }
+	}
+	foreach my $rel ( keys %{ $state->{'files'} || {} } ) {
+		next if (length $pre && index($rel, $pre) != 0);
+		$known = 1;
+		last;
+	}
+	return 'failed' if $failed;
+	return 'syncing' if $syncing;
+	return 'synced' if $known;
+	return undef;
+}
+
+# The badge every entry of a listing should wear, keyed by its absolute path.
+# A listed folder that is itself a CloudSync folder shows the whole folder's
+# state; inside one, each entry is judged by its own relative path. A path no
+# registration covers is simply absent from the answer.
+sub cloud_sync_status_marks {
+	my ($folder, $entries) = @_;
+	my $marks = {};
+	return $marks unless (defined $folder && length $folder && ref $entries eq 'ARRAY' && scalar @{$entries});
+	$folder =~ s{/+$}{} unless $folder eq '/';
+	foreach my $reg ( @{ &cloud_sync_registrations() } ) {
+		my $root = $reg->{'path'} || '';
+		next unless length $root;
+		$root =~ s{/+$}{} unless $root eq '/';
+		# inside the synced folder: one judgement per listed entry
+		if ($folder eq $root || &subs::path_is_under($folder, $root)) {
+			my $state = &cloud_sync_state_read($reg->{'base'});
+			foreach my $entry ( @{$entries} ) {
+				my $path = (ref $entry eq 'HASH') ? ($entry->{'path'} || '') : '';
+				next unless length $path;
+				my $rel = &cloud_sync_relative_for($root, $path);
+				next unless length $rel;
+				my $status = (($entry->{'type'} || '') eq 'folder')
+					? &cloud_sync_status_under($state, $rel)
+					: &cloud_sync_status_file($state, $rel, $entry);
+				$marks->{$path} = $status if $status;
+			}
+			next;
+		}
+		# the listing is the folder that holds the registered one, so that one
+		# entry wears the whole folder's state (the folder entry is the synced
+		# thing, and an ancestor further up is not)
+		my $parent = $root;
+		$parent =~ s{/[^/]+$}{};
+		next unless ($parent eq $folder);
+		my $state = &cloud_sync_state_read($reg->{'base'});
+		my $status = &cloud_sync_status_under($state, '');
+		$marks->{$root} = $status if $status;
+	}
+	return $marks;
+}
+
 # What changed on this device since its own last agreed state. The state is
 # brought forward as changes are queued, and the changes themselves stay in
 # pending until a job has delivered them. Re-reading an unchanged file reuses
@@ -2415,6 +2524,15 @@ sub cloud_sync_job {
 	my $index = 0;
 	my @errors;
 	my %result;
+	# which change a pass tried, and why a delivery to any device was refused,
+	# keyed by the pending entry's id so the state can carry the red cross
+	my (%attempted, %error_for);
+	my $remember = sub {
+		my ($change, $error) = @_;
+		my $id = (ref $change eq 'HASH') ? $change->{'id'} : undef;
+		$error_for{$id} = $error if (defined $id && length $id);
+		return;
+	};
 	# A change leaves pending only when every device acknowledged it. A device
 	# that could not be reached, or that kept a newer local copy, leaves its
 	# change here; the next sweep retries it.
@@ -2446,6 +2564,14 @@ sub cloud_sync_job {
 		if ($agent->{'error'}) {
 			push @errors, $host . ': ' . $agent->{'error'};
 			$result{$host} = { error => $agent->{'error'} };
+			# no device answered: every queued change stays behind, and that is
+			# what the red cross on those files means until a pass reaches it
+			foreach my $change ( @changes ) {
+				my $id = $change->{'id'};
+				next unless (defined $id && length $id);
+				$attempted{$id} = 1;
+				$remember->($change, $agent->{'error'});
+			}
 			$settle->($_) foreach @changes;
 			next;
 		}
@@ -2453,6 +2579,8 @@ sub cloud_sync_job {
 		foreach my $change ( @changes ) {
 			$index++;
 			my $rel = $change->{'rel'};
+			my $change_id = $change->{'id'};
+			$attempted{$change_id} = 1 if (defined $change_id && length $change_id);
 			my $kind = $change->{'kind'} || 'file';
 			my $file = $path . '/' . $rel;
 			if (($job->info->{'notes'} || {})->{'cancel'}) {
@@ -2476,7 +2604,9 @@ sub cloud_sync_job {
 				};
 				my ($probe, $probe_error) = &archive_reply($probe_tx);
 				if (!$probe || $probe->{'status'} ne 'ok') {
-					push @errors, $host . ': ' . $rel . ': ' . (($probe && $probe->{'error'}) || $probe_error || 'the machine did not answer');
+					my $why = ($probe && $probe->{'error'}) || $probe_error || 'the machine did not answer';
+					push @errors, $host . ': ' . $rel . ': ' . $why;
+					$remember->($change, $why);
 					$settle->($change);
 					$bytes_done += $size;
 					next;
@@ -2488,6 +2618,7 @@ sub cloud_sync_job {
 						&& (&rightNow() - $partial->{'started'}) > 600000) ? 1 : 0;
 					unless ($stale) {
 						push @errors, $host . ': ' . $rel . ': another device is sending this file';
+						$remember->($change, 'another device is sending this file');
 						$settle->($change);
 						$bytes_done += $size;
 						next;
@@ -2548,6 +2679,7 @@ sub cloud_sync_job {
 				}
 				if ($send_error) {
 					push @errors, $host . ': ' . $rel . ': ' . $send_error;
+					$remember->($change, $send_error);
 					$settle->($change);
 					$bytes_done += $size;
 					next;
@@ -2570,6 +2702,7 @@ sub cloud_sync_job {
 				my $res = &cloud_sync_delete_agent($agent, $base, $rel, $deleted_at);
 				if ($res->{'error'}) {
 					push @errors, $host . ': ' . $rel . ': ' . $res->{'error'};
+					$remember->($change, $res->{'error'});
 					$settle->($change);
 					next;
 				}
@@ -2594,6 +2727,11 @@ sub cloud_sync_job {
 	$final->{'kept'} = $kept_total if $kept_total;
 	if (scalar @errors) {
 		$final->{'errors'} = \@errors;
+		&cloud_sync_state_modify($base, sub {
+			my $state = shift;
+			&cloud_sync_pending_mark($state, \%attempted, \%error_for);
+			return 1;
+		});
 		$job->fail($final);
 		return;
 	}
@@ -2602,6 +2740,7 @@ sub cloud_sync_job {
 	&cloud_sync_state_modify($base, sub {
 		my $state = shift;
 		&cloud_sync_pending_remove($state, \@ids);
+		&cloud_sync_pending_mark($state, \%attempted, \%error_for);
 		return 1;
 	});
 	$job->finish($final);

@@ -104,6 +104,15 @@ sub folders_listing($folder, $unlocked, $c, $show_hidden) {
 	}
 	my @folders = grep { $_->{'type'} eq 'folder' } @{$files};
 	@{$files} = grep { $_->{'type'} ne 'folder' } @{$files};
+	# The CloudSync badge on an item's icon: a green check when every device has
+	# it, a blue mark while a change is on its way, a red cross when a delivery
+	# was refused. Only a registered folder's paths are answered, and a listing
+	# must never fail because that bookkeeping could not be read.
+	my $sync_marks = eval { &subs::cloud_sync_status_marks($folder, [ @folders, @{$files} ]) } || {};
+	foreach my $file ( @folders, @{$files} ) {
+		my $status = $sync_marks->{ $file->{'path'} || '' };
+		$file->{'sync_status'} = $status if (defined $status && length $status);
+	}
 	# the names the house gave its own folders and seals, for the eye only: the
 	# path every command works on is still the real one
 	my $apps = &folders_app_names();
