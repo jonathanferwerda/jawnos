@@ -718,12 +718,12 @@ sub manager_starter() {
 		if ($device ne 'mobile') {
 			if ($config->{'environment'} eq 'development') {
 				print "Starting Development TTY Server on $tty_port\n";
-				&server_process('./perl/teletype.pl', [ 'https://*:' . $tty_port . $certs ],
+				&server_process('./perl/teletype.pl', [ 'https://*:' . $tty_port . $device_certs ],
 					purpose => 'teletype', name => 'TTY Server', dev => 1);
 			}
 			elsif ($config->{'environment'} eq 'production') {
 				print "Starting Pro TTY Server on port " . $tty_port . "\n";
-				&server_process('./perl/teletype.pl', [ 'https://*:' . $tty_port . $certs ],
+				&server_process('./perl/teletype.pl', [ 'https://*:' . $tty_port . $device_certs ],
 					purpose => 'teletype', name => 'TTY Server',
 					workers => $device eq 'mobile' ? 1 : ($device eq 'server' ? 3 : 2), keep_alive => 1);
 			}
@@ -732,12 +732,12 @@ sub manager_starter() {
 			# wss port handed to a device as PORT_COMS / now_me's twshomebase.
 			if ($config->{'environment'} eq 'development') {
 				print "Starting Development TTYwss Server on $ws_tty_port\n";
-				&server_process('./perl/teletype.pl', [ 'https://*:' . $ws_tty_port . $certs ],
+				&server_process('./perl/teletype.pl', [ 'https://*:' . $ws_tty_port . $device_certs ],
 					purpose => 'teletype', name => 'TTY WS Server', dev => 1);
 			}
 			elsif ($config->{'environment'} eq 'production') {
 				print "Starting Pro TTYwss Server on port " . $ws_tty_port . "\n";
-				&server_process('./perl/teletype.pl', [ 'https://*:' . $ws_tty_port . $certs ],
+				&server_process('./perl/teletype.pl', [ 'https://*:' . $ws_tty_port . $device_certs ],
 					purpose => 'teletype', name => 'TTY WS Server', workers => 1, keep_alive => 1);
 			}
 		}

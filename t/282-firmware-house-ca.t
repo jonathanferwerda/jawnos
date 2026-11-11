@@ -168,6 +168,10 @@ my $watch_doors = () = $president =~ /'https:\/\/\*:' \. \$watch_port \. \$devic
 is($watch_doors, 2, 'both watch listeners (development and production) use the device pair');
 my $ws_doors = () = $president =~ /'https:\/\/\*:' \. \$ws_port \. \$device_certs/g;
 is($ws_doors, 2, 'both socket listeners (development and production) use the device pair');
+my $teletype_doors = () = $president =~ /'https:\/\/\*:' \. \$tty_port \. \$device_certs/g;
+is($teletype_doors, 2, 'both teletype listeners use the device pair (the deck reads its Info room there)');
+my $ws_teletype_doors = () = $president =~ /'https:\/\/\*:' \. \$ws_tty_port \. \$device_certs/g;
+is($ws_teletype_doors, 2, 'both teletype socket listeners use the device pair');
 
 like($president, qr/my \@dev_main_listeners = \('https:\/\/\*:' \. \$port \. \$certs,/,
 	'the development main listener keeps the public certificate');
