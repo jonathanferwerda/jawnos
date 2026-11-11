@@ -841,13 +841,18 @@ sub action_11741 {
 # POST /manager/windows_update
 # Start the detached helper. It returns at once - the download and the install
 # happen in PowerShell, so a 279 MB Setup never passes through this process.
+# Installing a build is a local action: an approved browser session only. A peer
+# may read the status, but it must not be able to replace this machine's code.
 sub action_11742 {
 	my $c = shift;
 	unless (&subs::windows_platform()) {
 		$c->render(json => { ok => 0, error => 'not this platform' });
 		return;
 	}
-	unless (&windows_update_gate($c)) { $c->rendered(403); return; }
+	unless (($c->session('authentication') || '') eq 'approved') {
+		$c->rendered(403);
+		return;
+	}
 	$c->render(json => &subs::windows_update_start());
 }
 

@@ -112,8 +112,10 @@ my $controller = read_file("$root/lib/JawnOS/Controller/manager_misc3.pm");
 like($controller, qr/sub action_11741\b/, 'the GET action exists');
 like($controller, qr/sub action_11742\b/, 'the POST action exists');
 like($controller, qr/not this platform/, 'both say so off Windows');
-like($controller, qr/windows_update_gate\(\$c\)/,
-	'both routes use the shared gate');
+like($controller, qr/windows_update_gate\(\$c\)/, 'the status route uses the shared gate');
+my ($install_action) = $controller =~ /(sub action_11742\b.*?)(?=\nsub |\z)/s;
+like($install_action, qr/session\('authentication'\)/, 'installing is an approved local session');
+unlike($install_action, qr/windows_update_gate\(\$c\)/, 'a peer cannot start an install');
 
 my $manager_part = read_file("$root/lib/JawnOS/Manager/Part08.pm");
 like($manager_part, qr/sub windows_update_gate\b/, 'the gate lives in the manager part');

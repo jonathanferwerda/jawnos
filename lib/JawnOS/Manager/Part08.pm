@@ -648,11 +648,11 @@ sub app_release_sha {
 	return $app_release_sha{$key};
 }
 
-# The Windows self-updater answers the local Configure panel and, like the
-# app-release rail, a verified peer. A named signatorial is not a credential: a
-# peer request must carry the machine's signature and be at least a member. An
-# approved session is the browser that rendered the panel; it has no key to sign
-# with. Shared by the GET and POST routes so the two cannot drift.
+# The Windows self-updater status answers the local Configure panel and, like
+# the app-release rail, a verified peer. Installing is local-only (the POST
+# action checks the session): a peer may read the version but cannot replace
+# this machine's code. An approved session is the browser that rendered the
+# panel; it has no key to sign with. Used by the GET status route.
 sub windows_update_gate {
 	my ($c) = @_;
 	return 1 if (($c->session('authentication') || '') eq 'approved');
