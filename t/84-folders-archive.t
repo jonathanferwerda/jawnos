@@ -217,7 +217,7 @@ like($script, qr/file_percent/, 'with a per-file line');
 like($script, qr/archive_move/, 'and an explicit archive-and-remove command');
 like($script, qr{foldersArchiveJob\('cancel'}, 'cancel still goes through the archive cancel path');
 like($script, qr{'/manager/folders/archive/' \+ action}, 'and it is the archive job endpoint');
-like($script, qr/All archive jobs/, 'and one overall line when several jobs are queued');
+like($script, qr/All sync jobs/, 'and one overall line when several jobs are queued');
 like($template, qr/job_bar/, 'the dialog template has the bar');
 like($context, qr/archive_move/, 'the context menu offers the delete-original choice');
 

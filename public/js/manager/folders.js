@@ -216,7 +216,7 @@ function foldersTabsRender(inst) {
 		var button = $('<button type="button" class="folders_tab"></button>')
 			.attr({ 'data-tab-id': tab.id, title: tab.folder || '' });
 		if (i == inst.active) { button.addClass('active'); }
-		$('<span class="folders_tab_label"></span>').text(foldersTabLabel(tab.folder)).appendTo(button);
+		$('<span class="folders_tab_label"></span>').text((tab.place == 'cloud') ? jawnosT('CloudSync') : foldersTabLabel(tab.folder)).appendTo(button);
 		$('<span class="folders_tab_close" aria-label="' + jawnosT('Close') + '">×</span>').appendTo(button);
 		bar.append(button);
 	});
@@ -226,11 +226,24 @@ function foldersTabsRender(inst) {
 function foldersSidebarApply(root) {
 	root = (root && root.length) ? root : foldersRoot();
 	if (!root.length) { return; }
+	// Places needs 176px beside the listing. A wide window keeps it open by
+	// itself; a thin one shows the toolbar button, and the button opens the same
+	// column over the listing so CloudSync stays reachable.
 	var wide = root.width() >= 720;
 	var pref = localStorage.getItem('folders_sidebar');
-	var show = wide && pref != 'off';
+	var show = wide || pref == 'on';
+	root.toggleClass('folders_sidebar_overlay', !wide && show);
 	root.find('.folders_sidebar').toggle(show);
-	root.find('.folders_sidebar_toggle').toggle(wide).attr('data-on', show ? 'yes' : 'no');
+	root.find('.folders_sidebar_toggle').toggle(!wide).attr('data-on', show ? 'yes' : 'no');
+}
+
+// A place was chosen: on a thin window the overlay has done its job, so put it
+// away and remember that. A wide window keeps its column where it is.
+function foldersSidebarClose(root) {
+	root = (root && root.length) ? root : foldersRoot();
+	if (!root.length || root.width() >= 720) { return; }
+	try { localStorage.setItem('folders_sidebar', 'off'); } catch (e) {}
+	foldersSidebarApply(root);
 }
 
 function foldersActivate(root) {
@@ -372,6 +385,7 @@ function foldersOpener(data) {
 			var root = foldersRootFor(window_id);
 			inst.root = root;
 			tab.folder = response.fo.folder;
+			tab.place = undefined;
 			tab.display_name = response.fo.display_name || '';
 			tab.disk = response.fo.disk;
 			tab.files = response.fo.files;

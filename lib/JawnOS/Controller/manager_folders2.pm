@@ -568,31 +568,36 @@ sub action_30700 {
 	}
 	else {
 		my $base = &subs::cloud_sync_base_for($folder);
-		my $totals = &subs::cloud_sync_totals($folder);
-		my $devices = &subs::cloud_sync_space_rows($base, $totals->{'bytes'});
-		my $registered = &subs::cloud_sync_registration_for($folder);
-		my %chosen = map { ($_->{'uuid'} || '') => 1 } @{ ($registered || {})->{'devices'} || [] };
-		$devices = [ map {
-			my $d = $_;
-			my $selected = $d->{'ok'} ? ($registered ? ($chosen{ $d->{'uuid'} } ? 1 : 0) : 1) : 0;
-			+{ %{$d}, selected => $selected }
-		} @{$devices} ];
-		my $content = $c->render_to_string(
-			template => 'folders/cloud_sync',
-			folder => $folder,
-			base => $base,
-			totals => $totals,
-			devices => $devices,
-			registered => $registered
-		);
-		$box = {
-			name => &subs::ui('CloudSync'),
-			command => 'cloud_sync',
-			content => $content,
-			ok_label => &subs::ui('Start syncing'),
-			height => '70%',
-			width => 'min(620px, 94vw)'
-		};
+		if (!defined $base || !length $base) {
+			$box = { name => &subs::ui('CloudSync'), text => &subs::ui('Only a folder inside your home can sync.'), cancel => 'no', height => '220px' };
+		}
+		else {
+			my $totals = &subs::cloud_sync_totals($folder);
+			my $devices = &subs::cloud_sync_space_rows($base, $totals->{'bytes'});
+			my $registered = &subs::cloud_sync_registration_for($folder);
+			my %chosen = map { ($_->{'uuid'} || '') => 1 } @{ ($registered || {})->{'devices'} || [] };
+			$devices = [ map {
+				my $d = $_;
+				my $selected = $d->{'ok'} ? ($registered ? ($chosen{ $d->{'uuid'} } ? 1 : 0) : 1) : 0;
+				+{ %{$d}, selected => $selected }
+			} @{$devices} ];
+			my $content = $c->render_to_string(
+				template => 'folders/cloud_sync',
+				folder => $folder,
+				base => $base,
+				totals => $totals,
+				devices => $devices,
+				registered => $registered
+			);
+			$box = {
+				name => &subs::ui('CloudSync'),
+				command => 'cloud_sync',
+				content => $content,
+				ok_label => &subs::ui('Start syncing'),
+				height => '70%',
+				width => 'min(620px, 94vw)'
+			};
+		}
 	}
 	my $dialog = $c->render_to_string(
 		template => 'folders/dialog_box',
@@ -631,6 +636,11 @@ sub action_30701 {
 		return;
 	}
 	my $base = &subs::cloud_sync_base_for($folder);
+	if (!defined $base || !length $base) {
+		$answer->({ name => &subs::ui('CloudSync'), text => &subs::ui('Only a folder inside your home can sync.'), cancel => 'no', height => '220px' });
+		$c->render(json => $returner);
+		return;
+	}
 	my $totals = &subs::cloud_sync_totals($folder);
 	my $rows = &subs::cloud_sync_space_rows($base, $totals->{'bytes'});
 	my %by_id = map { ($_->{'uuid'} || '') => $_ } @{$rows};
@@ -736,6 +746,8 @@ sub action_30701 {
 }
 # The list the Places column's CloudSync row opens: every folder registered on
 # this machine, the devices it goes to, and its own Sync now and Stop controls.
+# It is drawn as a place in the listing pane, not a dialog, so the toolbar, the
+# Places column and the breadcrumb all keep working while it is open.
 # GET /manager/folders/cloud
 sub action_30702 {
 	my $c = shift;
@@ -749,23 +761,75 @@ sub action_30702 {
 			totals => &subs::cloud_sync_totals($reg->{'path'})
 		};
 	}
-	my $content = $c->render_to_string(template => 'folders/cloud_list', registrations => \@rows);
-	my $dialog = $c->render_to_string(
-		template => 'folders/dialog_box',
-		folders => { folder => '' },
-		box => {
-			name => &subs::ui('CloudSync'),
-			command => 'cloud_list',
-			content => $content,
-			ok => 'no',
-			cancel => 'yes',
-			cancel_label => &subs::ui('Close'),
-			height => '70%',
-			width => 'min(620px, 94vw)'
+	# The way back: Home, and the folder the person was reading when the Places
+	# row was pressed. A remote folder is left out because CloudSync itself is
+	# this machine's own list.
+	my $home = &subs::home('~');
+	$home =~ s{/+$}{} unless $home eq '/';
+	my $folder = $c->param('folder') || '';
+	my $folder_name = '';
+	if (length $folder && !length($c->param('remote_uuid') || '')) {
+		$folder = &subs::home($folder);
+		$folder =~ s{/+$}{} unless $folder eq '/';
+		if ($folder ne $home && ($home eq '/' || index($folder, $home . '/') == 0)) {
+			my @parts = split '/', $folder;
+			$folder_name = &subs::format_name($parts[-1] || '');
+		}
+		else { $folder = ''; }
+	}
+	else { $folder = ''; }
+	my $place = {
+		name => &subs::ui('CloudSync'),
+		home => $home,
+		folder => $folder,
+		folder_name => $folder_name
+	};
+	# Keep the window and tab the person is working in: the listing is redrawn
+	# inside it rather than opened beside it.
+	my $window_id = $c->param('window_id') // '';
+	$window_id =~ s/[^A-Za-z0-9_\-]//g;
+	$window_id = substr($window_id, 0, 64);
+	$window_id = 'f' . &subs::random_string_creator(12) if length($window_id) < 4;
+	my $tab_id = $c->param('tab_id') // '';
+	$tab_id =~ s/[^A-Za-z0-9_\-]//g;
+	$tab_id = substr($tab_id, 0, 64);
+	$tab_id = 't' . &subs::random_string_creator(12) if length($tab_id) < 4;
+	my $machines = &subs::remote_machine_lister({ self => 'no' });
+	my $contents = $c->render_to_string(
+		template => 'folders/folders',
+		fo => {
+			folder => '',
+			display_folder => '',
+			display_name => $place->{'name'},
+			files => [],
+			disk => {}
 		},
-		uuid => &subs::random_string_creator(10)
+		folder => '',
+		folders_id => $window_id,
+		tab_id => $tab_id,
+		unlocked => (media_unlock_open($c, 'folders') ? 1 : 0),
+		unlock => '',
+		machines => $machines,
+		remote_uuid => '',
+		place => $place,
+		cloud_rows => \@rows
 	);
-	$c->render(json => { status => 'ok', dialog => $dialog, folders => \@rows });
+	my $window_name = &subs::ui('Folders') . ' - ' . $place->{'name'};
+	my $html = &Manager::window_maker({
+		user_agent => $c->param('user_agent'),
+		app => 'folders',
+		window_id => $window_id,
+		window_name => $window_name,
+		contents => $contents
+	}, $c->param('timestamp'));
+	$c->render(json => {
+		status => 'ok',
+		html => $html,
+		place => $place,
+		window_id => $window_id,
+		tab_id => $tab_id,
+		folders => \@rows
+	});
 }
 
 # Stop watching a folder. Copies already on the other devices are left alone;

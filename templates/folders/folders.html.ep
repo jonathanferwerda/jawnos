@@ -7,6 +7,7 @@
     person is working in, so one set of selectors serves every window. %>
 <% my $home = &subs::home('~/'); $home =~ s{/+$}{}; %>
 <% my $folder = $fo->{'folder'} // ''; %>
+<% my $place = $place // ''; %>
 <% my @crumbs; %>
 % if (index($folder, $home) == 0) {
 	% push @crumbs, { name => 'Home', path => $home };
@@ -27,7 +28,7 @@
 		% push @crumbs, { name => $p, path => $acc };
 	% }
 % }
-<div id="folders" class="folders_app" data-folders-id="<%= $folders_id %>" data-tab-id="<%= $tab_id %>" unlock="<%= $unlock %>" folder="<%= $fo->{'folder'} %>" remote_uuid="<%= $remote_uuid || '' %>">
+<div id="folders" class="folders_app<% if ($place) { %> folders_place_cloud<% } %>" data-folders-id="<%= $folders_id %>" data-tab-id="<%= $tab_id %>" unlock="<%= $unlock %>" folder="<%= $fo->{'folder'} %>" remote_uuid="<%= $remote_uuid || '' %>"<% if ($place) { %> place="cloud"<% } %>>
 	<div id="folders_toolbar" class="folders_toolbar">
 		<div class="folders_nav">
 			<button type="button" id="folders_sidebar_toggle" class="folders_sidebar_toggle" hint="Sidebar" aria-label="Sidebar"><img src="<%= &subs::icon_for('/images/decipherable/list.png') %>" alt=""></button>
@@ -39,13 +40,23 @@
 		</div>
 		<div class="folders_pathbar">
 			<nav id="folders_breadcrumb" class="folders_breadcrumb" aria-label="Path">
-				<% foreach my $i ( 0 .. $#crumbs ) { %>
-					<% my $crumb = $crumbs[$i]; %>
-					<% if ($i > 0) { %><span class="folders_crumb_sep" aria-hidden="true">›</span><% } %>
-					<button type="button" class="folders_crumb<% if ($i == $#crumbs) { %> current<% } %>" path="<%= $crumb->{'path'} %>" title="<%= $crumb->{'path'} %>"><%= &Manager::folders_display_segment($crumb->{'name'}) %></button>
+				<% if ($place) { %>
+					<button type="button" class="folders_crumb" path="<%= $place->{'home'} %>" title="<%= $place->{'home'} %>"><%= &subs::ui('Home') %></button>
+					<% if (length($place->{'folder'} || '')) { %>
+						<span class="folders_crumb_sep" aria-hidden="true">›</span>
+						<button type="button" class="folders_crumb" path="<%= $place->{'folder'} %>" title="<%= $place->{'folder'} %>"><%= $place->{'folder_name'} %></button>
+					<% } %>
+					<span class="folders_crumb_sep" aria-hidden="true">›</span>
+					<span class="folders_crumb current" aria-current="page"><%= $place->{'name'} %></span>
+				<% } else { %>
+					<% foreach my $i ( 0 .. $#crumbs ) { %>
+						<% my $crumb = $crumbs[$i]; %>
+						<% if ($i > 0) { %><span class="folders_crumb_sep" aria-hidden="true">›</span><% } %>
+						<button type="button" class="folders_crumb<% if ($i == $#crumbs) { %> current<% } %>" path="<%= $crumb->{'path'} %>" title="<%= $crumb->{'path'} %>"><%= &Manager::folders_display_segment($crumb->{'name'}) %></button>
+					<% } %>
 				<% } %>
 			</nav>
-			<input type="text" id="folders_address" class="folders_address" value="<%= $fo->{'display_folder'} %>" placeholder="Folder path" aria-label="Folder path" spellcheck="false" autocomplete="off">
+			<input type="text" id="folders_address" class="folders_address" value="<%= $place ? '' : $fo->{'display_folder'} %>" placeholder="Folder path" aria-label="Folder path" spellcheck="false" autocomplete="off">
 			<button type="button" id="folders_path_toggle" class="folders_path_toggle" hint="Type a path" aria-label="Type a path"><img src="<%= &subs::icon_for('/images/decipherable/gear.png') %>" alt=""></button>
 		</div>
 		<div class="folders_tools">
@@ -57,7 +68,7 @@
 			</select>
 			<button type="button" id="folders_view_toggle" class="folders_view_toggle" hint="Switch between icons and a list" aria-label="Switch between icons and a list" data-icon-grid="<%= &subs::icon_for('/images/decipherable/windows.png') %>" data-icon-list="<%= &subs::icon_for('/images/decipherable/list.png') %>"><img src="<%= &subs::icon_for('/images/decipherable/windows.png') %>" alt=""></button>
 			<button type="button" id="folders_bookmarks_toggle" class="folders_bookmarks_toggle" hint="Bookmarks" aria-label="Bookmarks"><img src="<%= &subs::icon_for('/images/decipherable/list.png') %>" alt=""></button>
-			<button type="button" id="folders_archive_toggle" class="folders_archive_toggle" hint="Archive queue" aria-label="Archive queue"><img src="<%= &subs::icon_for('/images/make believe/download.png') %>" alt=""></button>
+			<button type="button" id="folders_archive_toggle" class="folders_archive_toggle" hint="<%= &subs::lang('folders.sync') %>" aria-label="<%= &subs::lang('folders.sync') %>"><img src="<%= &subs::icon_for('/images/make believe/download.png') %>" alt=""></button>
 			<% my $fpl = eval { return decode_json &subs::setting_grabber({app => '__president', setting => 'padlock_contexts' }) } || []; %>
 			<% if (grep { $_ eq 'folders' } @{$fpl}) { %>
 				<button type="button" class="folders_lock" hint="Lock" aria-label="Lock"<% if ($unlocked) { %> style="background-color:red;"<% } %>><img src="<%= &subs::icon_for("/images/jbuttons/padlock unlock.png") %>" alt=""></button>
@@ -132,7 +143,7 @@
 					<span><%= $p->{'name'} %></span>
 				</button>
 			<% } %>
-			<button type="button" class="folders_sidebar_place folders_cloud_open hover" title="<%= &subs::ui('CloudSync') %>">
+			<button type="button" class="folders_sidebar_place folders_cloud_open hover<% if ($place) { %> current<% } %>" title="<%= &subs::ui('CloudSync') %>">
 				<img src="<%= &subs::icon_for('/images/decipherable/diskette.png') %>" alt="">
 				<span><%= &subs::ui('CloudSync') %></span>
 			</button>
@@ -141,7 +152,10 @@
 			<div id="folders_list_header" class="folders_list_header" aria-hidden="true">
 				<span></span><span><%= &subs::lang('common.name') %></span><span><%= &subs::lang('folders.type') %></span><span><%= &subs::lang('folders.size') %></span><span><%= &subs::lang('folders.modified') %></span>
 			</div>
-			<div id="folders_contents" class="folders_contents" tabindex="0" role="listbox" aria-label="Folder contents">
+			<div id="folders_contents" class="folders_contents<% if ($place) { %> folders_place_view<% } %>" tabindex="0" role="listbox" aria-label="Folder contents">
+				<% if ($place) { %>
+					<%= include 'folders/cloud_list', registrations => $cloud_rows || [] %>
+				<% } else { %>
 				<% foreach my $f ( @{$fo->{'files'}} ) { %>
 					<% my @stat = @{ $f->{'stat'} || [] }; %>
 					<% my $is_folder = (($f->{'type'} || '') eq 'folder'); %>
@@ -156,6 +170,7 @@
 				<% } %>
 				<% if (!scalar @{$fo->{'files'}}) { %>
 					<div id="folders_empty" class="folders_empty"><%= &subs::ui('This folder is empty.') %></div>
+				<% } %>
 				<% } %>
 			</div>
 		</div>

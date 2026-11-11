@@ -146,6 +146,10 @@ function foldersCommandPOST(data, state) {
 // Read every surface again: the window (when it is open) and the desk (when it
 // is the chosen background). A job's own dialog calls this when it finishes.
 function foldersRefreshAll() {
+	if (folders && folders.place == 'cloud' && $('#folders').length) {
+		foldersCloudList(foldersRoot());
+		return;
+	}
 	if ($('#folders').length) {
 		foldersOpener({ folder: $('#folders').attr('folder') || folders.folder });
 	}
@@ -301,7 +305,7 @@ function foldersArchiveQueue() {
 			}
 			var jobs = (response && response['jobs']) || [];
 			if (!jobs.length) {
-				$('<i>').text('Nothing is queued for the archive.').appendTo(box);
+				$('<i>').text(foldersArchiveT('Nothing is queued to sync.')).appendTo(box);
 				return;
 			}
 			// several items queue as several jobs; one line still says how the
@@ -317,7 +321,7 @@ function foldersArchiveQueue() {
 			if (all_count > 1 && all_total > 0) {
 				var all_pct = Math.floor((all_done / all_total) * 100);
 				var summary = $('<div>').css({ 'font-weight': 'bold', 'padding': '3px' });
-				$('<span>').text(foldersArchiveT('All archive jobs') + ': ' + all_pct + '%').appendTo(summary);
+				$('<span>').text(foldersArchiveT('All sync jobs') + ': ' + all_pct + '%').appendTo(summary);
 				summary.append(foldersArchiveBar({ percent: all_pct }));
 				box.append(summary);
 			}
@@ -333,7 +337,8 @@ function foldersArchiveQueue() {
 					$('<button>').addClass('hover').text('stop').on('click', function () { foldersArchiveJob('cancel', job['id']); }).appendTo(buttons);
 				}
 				buttons.appendTo(line);
-				$('<b>').text(job['state']).appendTo(line);
+				var job_state = (job['state'] == 'inactive') ? 'queued' : (job['state'] == 'active' ? 'copying' : job['state']);
+				$('<b>').text(foldersArchiveT(job_state)).appendTo(line);
 				if (job['task'] == 'archive_manifest_rescan') {
 					$('<span>').text(' reading ' + (item['location'] || '?') + ' again').appendTo(line);
 				}
@@ -433,23 +438,60 @@ function foldersCloudStart(folder, devices) {
 	});
 }
 
-// The Places column's CloudSync row: every folder this machine watches.
-function foldersCloudList() {
+// The Places column's CloudSync row: render this machine's watched folders as
+// a place in the listing pane. It is not a folder, so it does not join history;
+// the breadcrumb's Home and the folder the person came from are the way back.
+function foldersCloudList(root) {
+	root = (root && root.length) ? root : foldersRoot();
+	if (!root.length) { return; }
+	var window_id = root.attr('data-folders-id') || (folders && folders.window_id) || '';
+	var tab_id = root.attr('data-tab-id') || (folders && folders.tab_id) || '';
+	var folder = (folders && folders.folder) || root.attr('folder') || '';
+	var remote_uuid = (folders && folders.remote_uuid) || root.attr('remote_uuid') || '';
 	$.ajax({
 		url: '/manager/folders/cloud',
 		type: 'GET',
+		data: {
+			window_id: window_id,
+			tab_id: tab_id,
+			folder: folder,
+			remote_uuid: remote_uuid,
+			timestamp: Date.now()
+		},
 		success: function (response) {
-			if (!response || !response.dialog) { return; }
-			$('.dialog_box[command="cloud_list"]').remove();
-			$('#dialog_boxes').append($(response.dialog));
-			appointment_chron();
+			if (!response || !response.html) { return; }
+			windowMaker(response.html);
+			window_id = response.window_id || window_id;
+			tab_id = response.tab_id || tab_id;
+			var fresh = foldersRootFor(window_id);
+			if (!fresh.length) { return; }
+			var inst = foldersInstanceFor(fresh);
+			inst.root = fresh;
+			var tab = null;
+			$.each(inst.tabs, function (i, t) { if (t.id == tab_id) { tab = t; } });
+			if (!tab) { tab = inst.tabs[inst.active]; }
+			if (tab) {
+				tab.place = 'cloud';
+				tab.display_name = (response.place && response.place.name) || jawnosT('CloudSync');
+			}
+			foldersActivate(fresh);
+			foldersApplyView(fresh);
+			foldersObserveRoot(fresh);
+			foldersSidebarApply(fresh);
+			var active = folders_instances[window_id];
+			foldersApplyWindowName(active);
+			foldersTabsRender(active);
+			fresh.find('.folders_contents').focus();
+			if (typeof appointment_chron == 'function') { appointment_chron(); }
 		}
 	});
 }
 
 $(document).on('click', '.folders_cloud_open', function () {
-	foldersActivateFrom(this);
-	foldersCloudList();
+	var root = $(this).closest('.folders_app');
+	foldersActivate(root);
+	foldersSidebarClose(root);
+	foldersCloudList(root);
 });
 
 $(document).on('click', '.folders_cloud_stop', function () {
@@ -470,10 +512,11 @@ $(document).on('click', '.folders_cloud_now', function () {
 		data: { folder: path },
 		success: function (response) {
 			if (response && response.dialog) {
-				$('#dialog_boxes').append($(response.dialog));
+				$('#dialog_boxes').append(response.dialog);
 				appointment_chron();
 				foldersJobWatcher();
 			}
+			foldersCloudList();
 		}
 	});
 });
@@ -509,6 +552,7 @@ $(document).on('click', '.folders_sidebar_place', function () {
 		// an Archive place on a machine without the drive names the machine
 		// that holds it; a local place leaves the current machine alone
 		if (remote) { data.remote_uuid = remote; }
+		foldersSidebarClose(root);
 		foldersOpener(data);
 	}
 });

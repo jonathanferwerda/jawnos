@@ -98,6 +98,35 @@ require "./perl/language/it.pl";
 require "./perl/language/tr.pl";
 
 
+# The Folders toolbar's Sync drawer. It is a core label, so it is written in
+# every interface language here rather than left to the English backfill; the
+# sentences around the queue go through subs::ui/jawnosT on demand.
+my @folders_sync_keys = qw( folders.sync );
+my %folders_sync_labels = (
+	en => [ 'Sync' ],
+	zh => [ '同步' ],
+	fr => [ 'Synchroniser' ],
+	es => [ 'Sincronizar' ],
+	de => [ 'Synchronisieren' ],
+	pt => [ 'Sincronizar' ],
+	hi => [ 'सिंक करें' ],
+	ar => [ 'مزامنة' ],
+	bn => [ 'সিঙ্ক' ],
+	ru => [ 'Синхронизировать' ],
+	ja => [ '同期' ],
+	pa => [ 'ਸਿੰਕ' ],
+	id => [ 'Sinkronkan' ],
+	ko => [ '동기화' ],
+	it => [ 'Sincronizza' ],
+	tr => [ 'Eşitle' ],
+);
+foreach my $code ( keys %folders_sync_labels ) {
+	my %add;
+	@add{@folders_sync_keys} = @{$folders_sync_labels{$code}};
+	$catalog{$code} = { %{$catalog{$code} || {}}, %add };
+}
+
+
 # Internet's own labels. They are written in every interface language here
 # rather than left to the English backfill, because they are core labels the
 # app's toolbar and tab strip show on every machine.

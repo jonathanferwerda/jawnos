@@ -2823,6 +2823,8 @@ body.dark_theme .folders_app, body.dark_theme #desk_layer { --folders-accent: #6
 }
 .folders_crumb:hover { background: var(--panel-2); }
 .folders_crumb.current { font-weight: 600; }
+/* a place's current crumb is a span, not a button */
+.folders_breadcrumb span.folders_crumb { display: inline-flex; align-items: center; cursor: var(--jawnos-cursor-default, default); }
 .folders_crumb_sep { opacity: .45; font-size: 14px; padding: 0 1px; }
 .folders_address {
 	display: none; flex: 1 1 auto; min-width: 120px; height: 30px; min-height: 30px;
@@ -2864,13 +2866,19 @@ body.dark_theme .folders_app, body.dark_theme #desk_layer { --folders-accent: #6
 }
 .folders_tab_new:hover { background: var(--panel); border-color: var(--line); }
 
-/* Places beside the listing. It is shown by folders.js only when the window is
-   wide enough (tablets, laptops and desktops), so a phone keeps the full width. */
+/* Places beside the listing. A wide window keeps it open by itself; a thin one
+   shows the toolbar button, and that button draws the same column over the
+   listing so CloudSync and every other place stay reachable. */
 .folders_mainview { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: row; position: relative; }
 .folders_sidebar {
 	display: none; flex: 0 0 176px; width: 176px; box-sizing: border-box;
 	padding: 8px 6px; overflow: auto; overflow-x: hidden;
 	background: var(--panel-2); border-right: 1px solid var(--line);
+}
+.folders_app.folders_sidebar_overlay .folders_sidebar {
+	display: block; position: absolute; top: 0; left: 0; bottom: 0;
+	height: 100%; z-index: 30;
+	box-shadow: 0 0 0 1px var(--line), 8px 0 24px rgba(0, 0, 0, .3);
 }
 .folders_sidebar_title {
 	padding: 4px 8px 7px; font-size: 10.5px; font-weight: 700; letter-spacing: .07em;
@@ -2970,6 +2978,12 @@ body.dark_theme .folders_file.selected { background: rgba(110, 168, 254, .20); }
 }
 .folders_empty, .desk_empty { grid-column: 1 / -1; padding: 28px 12px; text-align: center; opacity: .6; font-size: 14px; }
 .folders_contents[data-view=list] .folders_empty { display: block; }
+/* CloudSync is a place, not a folder: the listing shows its watched folders in
+   the pane itself, with no file columns behind them. */
+.folders_app.folders_place_cloud .folders_list_header { display: none; }
+.folders_contents.folders_place_view { display: block; padding: 10px 12px; }
+.folders_contents.folders_place_view .folders_cloud_list { display: block; }
+.folders_contents.folders_place_view .folders_cloud_row { max-width: 760px; }
 .folders_drawer {
 	position: absolute; top: 40px; left: 2px; max-height: 70%; overflow: auto;
 	background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px;
