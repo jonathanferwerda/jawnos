@@ -1,4 +1,4 @@
-# tests-for: lib/JawnOS/Domain/Pay2.pm lib/JawnOS/Domain/Clock.pm lib/JawnOS/Domain/Clock2.pm lib/JawnOS/Domain/Clock3.pm lib/JawnOS/Controller/manager_clock.pm templates/apps/clock/body.html.ep public/js/manager/clock/01_alarms_timers.js
+# tests-for: lib/JawnOS/Domain/Pay2.pm lib/JawnOS/Domain/Clock.pm lib/JawnOS/Domain/Clock2.pm lib/JawnOS/Domain/Clock3.pm lib/JawnOS/Controller/manager_clock.pm templates/apps/clock/body.html.ep templates/apps/clock/machine.html.ep templates/apps/clock/sessions.html.ep public/js/manager/clock/01_alarms_timers.js
 # covers:    A computer alarm moves the machine's own output volume and puts it back; a timer carries its own Volume...
 
 use strict;
@@ -128,5 +128,11 @@ like($body, qr/class="clock_timer_volume"/,
 	'the timer creator has a Volume slider');
 like($timer_js, qr/volume: volume/,
 	'the timer creator sends its Volume');
+
+
+like($body, qr/data-clock-tab="machine"/, 'the Clock has a time-machine tab');
+like($body, qr/data-clock-tab="sessions"/, 'and a sessions tab');
+like($controller, qr/accounts => \$accts/, 'the Clock action supplies the time-machine accounts');
+like($controller, qr/projects => \$projs/, 'and projects');
 
 done_testing();

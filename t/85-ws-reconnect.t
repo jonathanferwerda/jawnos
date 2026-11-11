@@ -19,7 +19,7 @@ use RepoSource;
 
 my $root = repo_root();
 my $ws   = js_source('public/js/manager/websocket.js');
-my $tpl  = read_file("$root/templates/keyboard.html.ep");
+my $tpl  = js_source('public/js/manager/network/02_tabs_bluetooth_remote.js');
 
 # --- the timing a test (or a tuning pass) can read ---------------------------
 
@@ -92,10 +92,8 @@ like($ws, qr/heartbeatStart\(app\);\s*\/\/ beat once now.*?heartbeatSend\(app\);
 like($ws, qr/if \(!document\.hidden\) \{\s*heartbeatStart\(app\);.*?heartbeatSend\(app\);\s*\}/s,
 	'a socket opened while hidden does not restart the heartbeat');
 my $controller = $tpl;
-like($controller, qr/<% if \(\$toggle eq 'controller'\) \{ %>.*?stayingAliveNow\('server'\)/s,
-	'opening the controller asks for a stayingAlive at once');
-like($controller, qr/setTimeout\(function\(\) \{.*?stayingAliveNow\('server'\);/s,
-	'the request waits until the panel is on screen');
+like($controller, qr/if \(tab === 'controller' && typeof stayingAliveNow == 'function'\) \{ stayingAliveNow\('server'\); \}/,
+	'opening the Controller tab asks for a stayingAlive at once');
 
 # --- the music socket is a permanent line -----------------------------------
 

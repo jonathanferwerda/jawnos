@@ -447,6 +447,19 @@ $(document).on('click','.pseudonym', function() {
 		jawnosDockAppOpen($(this).attr('dock_app'));
 		return;
 	}
+	// A widget face opens the app the widget stands for; a launcher pin hands
+	// its press to the start-menu row it was cloned from.
+	if ($(this).hasClass('dock_widget')) {
+		jawnosDockWidgetOpen($(this).attr('dock_widget'));
+		return;
+	}
+	if ($(this).hasClass('dock_launcher')) {
+		if (typeof jawnosTaskbarPress == 'function') { jawnosTaskbarPress($(this).attr('dock_sel')); }
+		return;
+	}
+	// Notifications is its own app now: notifications.js opens it from this face,
+	// and there is no keyboard panel left to build.
+	if (toggle == 'notifications') { return; }
 	// The old floating keyboard and calculator are gone: both dock icons now
 	// open the JawnOS on-screen keyboard (the calculator on its own page).
 	if ((toggle == 'keyboard' || toggle == 'calculator') && typeof softKbDockOpen == 'function') {
@@ -477,79 +490,18 @@ $(document).on('click', '.notification_remove', function() {
 	var scope = b.attr('scope');
 	var app = b.attr('app');
 	var server_time = b.attr('server_time');
-	var filter = $('#notification_app_select').val();
-	var search = $('#notification_search').val();
 
 	$.ajax({
 		url: '/manager/notifications/remove',
 		type: 'POST',
-		data: { timestamp: timestamp, tag: tag, filter: filter, search: search, scope: scope, title: title, uuid: uuid, app: app, server_time: server_time },
+		data: { timestamp: timestamp, tag: tag, scope: scope, title: title, uuid: uuid, app: app, server_time: server_time },
 		success: function(response) {
 			$.each(response, function(i,v) {
 				$('.notification[uuid="' + v + '"]').remove();
 			});
-			notificationScrollLoader();
 		}
 	});
 });
-
-$(document).on('change', '#notification_app_select', function() {
-	var app = $(this).val();
-
-	$.ajax({ 
-		url: '/manager/notifications/filter',
-		type: 'GET',
-		data: { app: app },
-		success: function(response) {
-			$('#notifications_content').html(response.content);
-		}
-	});
-});
-
-$(document).on('keyup', '#notification_search', function() {
-	var search = $(this).val();
-
-	$.ajax({
-		url: '/manager/notifications/search',
-		type: 'GET',
-		data: { search: search },
-		success: function(response) {
-			$('#notifications_content').html(response.content);
-		}
-	});
-});
-
-var notificationReload = { reload: 0, position: 1 };
-
-$(document).on('mousewheel touchmove', '#notifications_content', function() {
-	notificationScrollLoader();
-
-});
-
-function notificationScrollLoader() {
-	var nc = $('#notifications_content');
-	if (!nc.length) { return; }
-	var scroll = nc.offset().top;
-	var height = nc.height();
-	var cheight = $('#notifications').height();
-
-	if ((height - (cheight + Math.abs(scroll))) < 530) {
-		if (notificationReload['reload'] == 0) {
-			notificationReload['reload'] = 1;
-			$.ajax({
-				url: '/manager/notifications/scroll',
-				type: 'GET',
-				data: { position: notificationReload['position'] },
-				success: function(response) {
-					$('#notifications_content').append(response.content);
-					notificationReload['reload'] = 0;
-					notificationReload['position']++;
-				}
-			});
-		}
-		
-	}
-}
 
 function initializer() {
 	var scope = localStorage.getItem('scope');

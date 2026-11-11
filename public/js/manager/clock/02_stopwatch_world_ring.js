@@ -309,9 +309,21 @@ $(document).on('click', '#taskbar_clock', function (e) {
 
 $(document).on('click', '#clock_nav [data-clock-action="time_machine"]', function () {
 	jawnosClockNavClose();
-	if (typeof jawnosClockEditStart == 'function') { jawnosClockEditStart(); }
-	if (typeof jawnosClockNavClose == 'function') { jawnosClockNavClose(); }
+	jawnosClockOpenTimeMachine();
 });
+
+// The taskbar clock's Time Machine row opens the Clock app on its time-machine
+// tab; a fresh window renders after the opener, so retry once for the tab.
+function jawnosClockOpenTimeMachine() {
+	if (typeof appWindowOpener == 'function') { appWindowOpener('clock', Date.now(), { visible: 'yes' }); }
+	var show = function () {
+		var tab = $('.wind[app="clock"] .clock_tab[data-clock-tab="machine"]');
+		if (!tab.length) { return false; }
+		tab.trigger('click');
+		return true;
+	};
+	if (!show()) { setTimeout(show, 400); }
+}
 
 $(document).on('click', function (e) {
 	if (!$(e.target).closest('#clock_nav, #taskbar_clock').length) { jawnosClockNavClose(); }

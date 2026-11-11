@@ -474,6 +474,9 @@ function jawnosBarsApply() {
 	// clock and the start button are slots the edit mode drags around, and a
 	// pinned app or keyboard rides among them
 	jawnosTaskbarOrderApply();
+	// the dock draws the taskbar's pins and widgets, so a bar change is a dock
+	// change: rebuild the faces before the row is measured
+	if (typeof jawnosDockAppsRender == 'function') { jawnosDockAppsRender(); }
 	// the slot has moved, so the padlock picks which side of the start button
 	// it belongs on now
 	jawnosTopIconsSideApply();

@@ -56,4 +56,8 @@ my @apps = map { $_->[0] } @{ $rows || [] };
 is_deeply(\@apps, ['brushing'],
 	'only the session still running is listed; a sealed start row is not');
 
+
+like($template, qr/id="keyboard_toggle"/, 'the keyboard is a start-menu app');
+like($template, qr/id="calculator_toggle"/, 'and the calculator');
+
 done_testing();

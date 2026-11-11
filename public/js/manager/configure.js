@@ -27,7 +27,6 @@ var jawnos_configure_panels = {
 	appointment_list_grabber: 'configure_appointment_list',
 	device_lister: 'device_list',
 	tunnel_lister: 'tunnel_list',
-	pseudonym_setting_lister: 'pseudonym_list',
 	store_setting_lister: 'store_list'
 };
 // A tab's true label, captured once the first time we see it, so a panel that

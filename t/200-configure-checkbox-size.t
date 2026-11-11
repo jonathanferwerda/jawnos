@@ -38,4 +38,7 @@ unlike($configure,
 	qr/\.cfg-row\s*>\s*input\s*,\s*\.cfg-row\s*>\s*select[^{]*\{[^}]*flex:\s*1\s+1\s+220px/,
 	'no raw .cfg-row > input rule still takes the 220px basis');
 
+
+unlike($configure, qr/id="pseudonym_setting_lister"/, 'the Pseud configuration tab is gone');
+
 done_testing();

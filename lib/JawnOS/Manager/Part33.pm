@@ -168,67 +168,13 @@ sub keyboard_maker($c, $remote_pick) {
 	my $remote_machines = $c->param('remote_machines');
 	my $remote_control = defined $remote_pick ? $remote_pick : $c->param('remote_control');
 	my $toggle = $c->param('toggle');
-	my $accts = [];
-	my $projs = [];
-	my $accounts = &subs::db_query("select * from settings where (setting = ? or setting =?) and value=?",'pos', 'mab', 'account');
-	my $acc = $accounts->hashes;
-	if ($toggle eq 'delorean') {
-		foreach my $a ( reverse @{$acc} ) {
-			push @{$accts},$a unless grep { $_->{'app'} eq $a->{'app'}} @{$accts};
-			$a->{'formatted_name'} = &subs::format_name($a->{'app'});
-		}
-		my $projects = &subs::db_query("select * from settings where (setting = ? or setting = ?) and value=?",'pos', 'mab', 'project');
-		my $proj = $projects->hashes;
-
-		foreach my $a ( reverse @{$proj} ) {
-			push @{$projs},$a unless grep { $_->{'app'} eq $a->{'app'}} @{$projs};
-			$a->{'formatted_name'} = &subs::format_name($a->{'app'});
-		}
-	}
-
-	my ($av_data);
-	if ($c->param('avData') && $toggle eq 'walkboy') {
-		$av_data = decode_json($c->param('avData'));
-
-		foreach my $av (@{$av_data}) {
-			if ($av->{'kind'} eq 'audioinput') {
-				$av->{'icon'} = 'microphone';
-			}
-			elsif ($av->{'kind'} eq 'videoinput') {
-				if ($av->{'label'} =~ /front/gi) {
-					$av->{'icon'} = 'camera front';
-				}
-				else {
-					$av->{'icon'} = 'camera back';
-				}
-
-			}
-			elsif ($av->{'kind'} eq 'audiooutput') {
-				$av->{'icon'} = 'speaker';
-			}
-		}
-	}
-	my $websockets;
-	if ($toggle eq 'sessions' || $toggle eq 'controller') {
-		my $web_query = &subs::db_query('select * from websockets where browser_tab_id = ?',$browser_tab_id);
-		$websockets = $web_query->hashes;
-	}
-	my $notifications;
-	if ($toggle eq 'notifications') {
-		$notifications = &notification_grabber({});
-	};
 	my $config = &subs::config_reader();
 	my $remote_connect = $gb::ws;
 	my $kb = $c->render_to_string(
 		browser_tab_id => $browser_tab_id,
-		accounts => $accts,
-		projects => $projs,
 		template => 'keyboard',
 		toggle => $toggle,
 		device => $device,
-		av_data => $av_data,
-		websockets => $websockets,
-		notifications => $notifications,
 		remote_machines => $remote_machines,
 		remote_control => $remote_control,
 		config => $config,

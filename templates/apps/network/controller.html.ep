@@ -1,0 +1,52 @@
+<%# The Controller, moved here from the keyboard's own panel so the sockets the
+    page holds read beside the network that carries them. Each row names the
+    app, when it connected, the neighbours sharing its socket and a Stop button;
+    the Everything row is the one the heartbeat fills with the page's whole
+    socket list. The neighbour spans and websocketStop are the same globals the
+    keyboard panel used, and when a socket is stopped the row is rebuilt by the
+    normal heartbeat. Music streamed from another machine keeps its receiver
+    control above the table, so a track can be stopped or blocked here too. %>
+    The rows are the page's own browser_tab_id sockets, not every machine's:
+    each app keeps one socket per tab, and the neighbours column is the other
+    tabs sharing the app. Stop closes that socket through websocket.js; the
+    normal heartbeat rebuilds the table. The Everything row is the whole-tab
+    socket, filled by the same heartbeat, and it carries no Stop of its own.
+
+<div class="network_table_wrap">
+	<table class="network_table" id="websocket_list">
+		<thead>
+			<tr>
+				<th><%= &subs::ui('App') %></th>
+				<th><%= &subs::ui('Neighbours') %></th>
+				<th><%= &subs::ui('Close') %></th>
+			</tr>
+		</thead>
+		<tbody>
+			<% foreach my $sock ( @{$websockets || []} ) { %>
+				<tr>
+					<td><%= $sock->{'app'} %></td>
+					<td>
+						<%= &subs::formatted_time($sock->{'connected'}) %>
+						<span class="neighbours" app="<%= $sock->{'app'} %>"></span>
+					</td>
+					<td>
+						<button type="button" class="network_button heartbeating" app="<%= $sock->{'app'} %>" onClick="websocketStop('<%= $sock->{'app'} %>');"><%= &subs::lang('stop') %></button>
+					</td>
+				</tr>
+			<% } %>
+			<tr>
+				<td><%= &subs::ui('Everything') %></td>
+				<td id="everything_socket"></td>
+				<td></td>
+			</tr>
+		</tbody>
+	</table>
+</div>
+<%= include 'keyboard_music' %>
+<script>
+	// The table is drawn from a snapshot; ask for a beat once the tab is on
+	// screen so the neighbour columns and liveness are live at once.
+	setTimeout(function() {
+		if (typeof stayingAliveNow === 'function') { stayingAliveNow('server'); }
+	}, 0);
+</script>

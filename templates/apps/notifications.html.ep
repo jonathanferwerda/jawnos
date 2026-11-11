@@ -5,10 +5,18 @@
 #notifications_app .notifications_app_filter { flex: 0 1 200px; padding: 7px 8px; font: inherit; font-size: 14px; color: inherit; background-color: var(--panel); border: 1px solid var(--line); border-radius: calc(var(--jawnos-corner, 12px) * .45); }
 #notifications_app .notifications_app_clear { flex: 0 0 auto; }
 #notifications_app .notifications_app_list { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; gap: 8px; overflow-y: auto; padding-right: 4px; }
-#notifications_app .notification { position: relative; padding: 10px 12px; border: 1px solid var(--line); border-radius: calc(var(--jawnos-corner, 12px) * .6); background-color: var(--panel-2, rgba(127,127,127,.06)); overflow: hidden; }
-#notifications_app .notification b { font-size: 15px; }
+#notifications_app .notification { --notification_icon: 22px; --notification_line: 30px; position: relative; padding: 10px 12px; border: 1px solid var(--line); border-radius: calc(var(--jawnos-corner, 12px) * .6); background-color: var(--panel-2, rgba(127,127,127,.06)); overflow: hidden; line-height: 1.4; }
+/* The title's line is the picture's line: it clears the icon and its 3px frame
+   (22 + 6), so the message starts below the picture instead of being squeezed
+   into the narrow column beside it. */
+#notifications_app .notification b { font-size: 15px; line-height: var(--notification_line); }
 #notifications_app .notification .time { font-size: 12px; opacity: .6; }
-#notifications_app .notification img.little_thumb { width: 32px; height: 32px; object-fit: contain; }
+/* An app's icon and a phone's image take the same box, and the wrapper adds no
+   text line of its own around it. border-box keeps a configured Button Border
+   from growing the picture past the line that holds it. */
+#notifications_app .notification .hover { line-height: 0; }
+#notifications_app .notification img.window_icon,
+#notifications_app .notification img.little_thumb { box-sizing: border-box; width: var(--notification_icon); height: var(--notification_icon) !important; max-width: none; object-fit: contain; }
 #notifications_app .notifications_app_note { min-height: 1.3em; opacity: .72; font-size: 13px; }
 </style>
 <div id="notifications_app" app="notifications">

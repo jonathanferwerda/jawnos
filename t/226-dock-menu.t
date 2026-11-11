@@ -1,12 +1,13 @@
-# tests-for: public/js/manager/keyboard.js public/css/manager.css perl/help/topics_features.pl
+# tests-for: public/js/manager/keyboard.js public/js/manager/taskbar.js public/js/manager/taskbar_edit.js public/css/manager.css perl/help/topics_features.pl
 # covers:    The dock's right-click menu and its drag-to-reorder mode. The dock
 #            background opens the taskbar's own menu (same builder, same rows)
 #            with Edit dock, Dock position, Show/Hide icons and Add items laid
 #            above it; a face offers the same menu plus Remove from dock.
-#            Add items lists the start menu's apps and the removed pseudonym
-#            faces, through the same dock_apps/dock_icons merge rules the rest
-#            of the dock uses. Edit dock reorders the row and keeps the order
-#            per browser in dock_order, so a reload lays the faces out again.
+#            Add items lists the start menu's apps, the taskbar's widgets and
+#            the removed pseudonym faces. The dock's app and widget faces are
+#            the taskbar's own pins (taskbar_order), so pinning or removing one
+#            on either bar changes both; only the pseudonym order is per browser
+#            (dock_order).
 
 use strict;
 use warnings;
@@ -50,13 +51,29 @@ like($dock, qr/jawnosDockText\('dock\.show_icons', 'Show icons'\)/,
 like($dock, qr/jawnosDockText\('dock\.hide_icons', 'Hide icons'\)/,
 	'a shown row offers Hide icons');
 
+# --- the dock's apps and widgets are the taskbar's pins ----------------------
+like($dock, qr/function jawnosDockApps\(\)/, 'the dock has one reader for its app and widget faces');
+like($dock, qr/function jawnosDockTaskbarOrder\(\)/, 'it reads the taskbar order');
+like($dock, qr/item\.k == 'pin'/, 'a pin becomes a face');
+like($dock, qr/item\.k == 'widget'/, 'an enabled widget becomes a face too');
+like($dock, qr/\(item\.mode \|\| 'full'\) != 'off'/, 'a disabled widget does not');
+like($dock, qr/jawnosTaskbarAppPinned/, 'an app face asks the taskbar whether it is pinned');
+like($dock, qr/jawnosTaskbarAddAppPin/, 'adding an app pins it on the taskbar');
+like($dock, qr/jawnosTaskbarRemoveAppPin/, 'removing it unpins it there too');
+like($dock, qr/jawnosTaskbarWidgetOn/, 'a widget face asks the taskbar widget mode');
+like($dock, qr/jawnosTaskbarWidgetToggle/, 'the dock toggles that same widget');
+like($dock, qr/function jawnosDockWidgetOpen\(w\)/, 'a widget face opens the app it stands for');
+like($dock, qr/jawnosDockMigrateApps/, 'a browser\'s old dock apps are carried onto the taskbar');
+
 # --- Add items reads the same app list as the taskbar ------------------------
 like($dock, qr/jawnosTaskbarAppPins\(\)/, 'Add items reads the taskbar app pins');
 like($dock, qr/jawnosTaskbarPinsFrom\(root\)/, 'a fetched start menu is read with the taskbar reader');
 like($dock, qr/url: '\/manager\/start_menu'/, 'the menu fetches the start menu when it is not in the DOM');
 like($dock, qr/act="dock_add_app"|'dock_add_app'/, 'an app row adds that app to the dock');
 like($dock, qr/jawnosDockAppAdd\(app, row\.attr\('dock_hint'\), row\.attr\('dock_src'\)\)/,
-	'the app row goes through jawnosDockAppAdd, the same merge rule as the start menu');
+	'the app row goes through jawnosDockAppAdd, the merge rule the start menu shares');
+like($dock, qr/'dock_widget_toggle'/, 'a widget row toggles it on both bars');
+like($dock, qr/jawnosDockText\('dock\.widgets', 'Widgets'\)/, 'the widget rows have their own heading');
 like($dock, qr/'dock_show_toggle'/, 'a removed pseudonym face is listed to be put back');
 like($dock, qr/class="taskbar_context_selection dock_context_app"/,
 	'dock add rows are dock rows, not the taskbar add list that pins to the bar');
@@ -81,20 +98,27 @@ like($dock, qr/\$\(document\)\.on\('contextmenu', '#pseudonym_bar \.pseudonym', 
 	'a dock face has its own right-click');
 like($dock, qr/var menu = jawnosDockContextBuild\(\);/, 'the face gets the same menu');
 like($dock, qr/act="dock_app_remove"/, 'an app face can be removed');
+like($dock, qr/act="dock_widget_remove"/, 'a widget face can be disabled');
+like($dock, qr/act="dock_launcher_remove"/, 'a launcher pin can be removed');
 like($dock, qr/act="dock_hide_toggle"/, 'a pseudonym face is switched off in dock_icons');
 like($dock, qr/jawnosDockText\('dock\.remove', 'Remove from dock'\)/,
 	'the face row says Remove from dock');
 like($dock, qr/menu\.prepend\(row\)/, 'the Remove row heads the face menu');
 
-# --- the order is this browser's and survives a reload ----------------------
+# --- the pseudonym order is this browser's ----------------------------------
+# The taskbar's faces keep the bar's order; dock_order must not move them.
 like($dock, qr/function jawnosDockOrder\(\)/, 'the order is read');
 like($dock, qr/jawnosStore\.read\('dock_order'\)/, 'from the dock_order store');
 like($dock, qr/jawnosStore\.set\('dock_order', 'order'/, 'and written per browser');
 like($dock, qr/function jawnosDockOrderSave\(\)/, 'the order can be saved');
+like($dock, qr/children\('\.draggable_icon'\)\.not\('\.dock_taskbar_face'\)/,
+	'the taskbar faces are left out of the saved order');
 like($dock, qr/function jawnosDockOrderApply\(\)/, 'the saved order can be applied');
 like($dock, qr/function jawnosDockFaceKey\(el\)/, 'a face key covers both kinds of face');
 like($dock, qr/if \(app\) \{ return 'app:' \+ app; \}/, 'an added app keeps an app: key');
 like($dock, qr/var toggle = el\.attr\('toggle'\);/, 'a pseudonym is keyed by its toggle');
+like($dock, qr/hasClass\('dock_taskbar_face'\)\) \{ return; \}/,
+	'the applier skips the taskbar faces so their bar order stands');
 my ($render) = $dock =~ /function jawnosDockAppsRender\(\) \{(.*?)\n\}/s;
 ok(defined $render && length $render, 'the app renderer is found');
 like($render, qr/jawnosDockOrderApply\(\);/, 'the app renderer applies the saved order');
@@ -115,7 +139,7 @@ like($dock, qr/jawnosDockOrderSave\(\);/, 'the drop keeps the order');
 like($dock, qr/draggable\('disable'\)/, 'the free per-icon drag stands down while editing');
 like($dock, qr/draggable\('enable'\)/, 'and comes back when the mode ends');
 like($dock, qr/jawnosDockDragBind\(\)/, 'the drag handlers are bound once');
-like($dock, qr/\$\(document\)\.ready\(function\(\) \{\s*jawnosDockAppsRender\(\);\s*jawnosDockOrderApply\(\);/, 'ready lays the saved order out');
+like($dock, qr/\$\(document\)\.ready\(function\(\) \{\s*jawnosDockMigrateApps\(\);\s*jawnosDockAppsRender\(\);\s*jawnosDockOrderApply\(\);/, 'ready migrates the old faces and lays the saved order out');
 
 # --- the mode and its drag are styled ---------------------------------------
 like($css, qr/#pseudonym_home\.dock_edit #pseudonym_bar \.pseudonym\.bar/,
@@ -134,7 +158,10 @@ like($body, qr/Edit dock/, 'the topic names Edit dock');
 like($body, qr/Add items/, 'the topic names Add items');
 like($body, qr/Dock position/, 'the topic names Dock position');
 like($body, qr/drag.*reorder|reorder/s, 'the topic explains drag-to-reorder');
-like($body, qr/order is kept by this browser/i, 'the topic says the order is per browser');
+like($body, qr/built-in Remote control panel/, 'the topic names the built-in face');
+like($body, qr/same pinned apps and widgets as the taskbar/, 'the topic says the apps and widgets are the taskbar\'s');
+like($body, qr/unpins the app from the taskbar and the dock together/, 'the topic says one pin serves both bars');
+like($body, qr/widget face is disabled on both bars/, 'and a widget too');
 like($body, qr/Remove from dock/, 'the topic still explains removing a face');
 my $steps = join(' ', @{ $topic->{steps} || [] });
 like($steps, qr/Right-click the dock background/, 'a step opens the background menu');

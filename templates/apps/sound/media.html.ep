@@ -1,0 +1,25 @@
+<%# The browser's own inputs and outputs, moved here from the Walkboy panel.
+    These are the devices a recording, a call or a stream captures and plays
+    through: the same enumerateDevices() list, and the same one-device-per-kind
+    choice jp.js reads with jawnosDevicePickGet() when it builds a getUserMedia
+    constraint. It is deliberately separate from the machine's mixer above:
+    the mixer's ids are the server's controllable devices, while these are the
+    browser's own faces for the same room, so the label here may differ from
+    the server's default. A press turns one device on and the rest of its kind
+    off; the status attribute is what the picker draws. soundMediaRender is in
+    sound.js, beside the label reader that already enumerated the same list. %>
+    The rows draw the icon for the kind (microphone, camera or speaker) and the
+    device's label; a label is blank until the browser has been granted media
+    permission, so the row falls back to its kind and position. The status
+    attribute is on for the picked device of each kind and off for the rest,
+    and the global .media_picker handler writes the pick through stored.js.
+
+<section class="sound_section sound_media_section" id="sound_media_section">
+	<h3><%= &subs::ui('Media devices') %></h3>
+	<div class="sound_browser"><%= &subs::ui('The inputs and outputs this browser uses for recordings and calls') %></div>
+	<div class="sound_devices" id="sound_media_list"><p class="sound_empty"><%= &subs::ui('Reading the browser devices...') %></p></div>
+	<div class="sound_browser"><%= &subs::ui('One device of each kind is on; the recordings and calls that start from this browser use those picks.') %></div>
+</section>
+<script>
+	if (typeof soundMediaRender === 'function') { soundMediaRender(); }
+</script>

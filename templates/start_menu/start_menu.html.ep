@@ -123,6 +123,8 @@
 				<img id="clock_toggle" class="jonathan clock" category="accessories" src="<%= &subs::icon_for('/icons/clock.svg') %>" hint="<%= &subs::lang('clock') %>"></img>
 				<img id="power_toggle" class="jonathan power" category="system" src="<%= &subs::icon_for('/icons/power.svg') %>" hint="<%= &subs::lang('power') %>"></img>
 				<img id="sound_toggle" class="jonathan sound" category="system" src="<%= &subs::icon_for('/icons/sound.svg') %>" hint="<%= &subs::lang('sound') %>"></img>
+				<img id="keyboard_toggle" class="jonathan" category="accessories" src="<%= &subs::icon_for('/images/decipherable/keyboard.png') %>" hint="<%= &subs::lang('keyboard') %>"></img>
+				<img id="calculator_toggle" class="jonathan" category="accessories" src="<%= &subs::icon_for('/images/decipherable/calculator.png') %>" hint="<%= &subs::ui('Calculator') %>"></img>
 				<img id="weather_toggle" class="jonathan weather" category="system" src="<%= &subs::icon_for($gb::known_appts->{'weather'}->{'icon'}) %>" hint="<%= &subs::ui('Weather') %>"></img>
 
 				<br>

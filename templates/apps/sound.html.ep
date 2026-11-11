@@ -11,6 +11,9 @@
 #sound .sound_columns { display: flex; flex-wrap: wrap; gap: 14px; align-items: flex-start; }
 #sound .sound_section { flex: 1 1 300px; min-width: 0; padding: 12px 16px; border: 1px solid var(--line); border-radius: calc(var(--jawnos-corner, 12px) * .8); }
 #sound .sound_section h3 { margin: 0 0 8px; font-size: 18px; }
+#sound .sound_media_section { flex: 1 1 100%; }
+#sound .sound_media_row { display:flex; align-items:center; gap:8px; }
+#sound .sound_media_row img { width:28px; height:28px; object-fit:contain; }
 #sound .sound_browser { font-size: 14px; opacity: .72; margin-bottom: 10px; }
 #sound .sound_devices { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; }
 #sound .sound_device { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 6px 8px; border: 1px solid transparent; border-radius: calc(var(--jawnos-corner, 12px) * .5); }
@@ -82,5 +85,6 @@
 				<button type="button" id="sound_input_mute" data-kind="input"<% if (!$input_supported || !$input->{'id'}) { %> disabled<% } %>><%= &subs::lang('sound_mute') %></button>
 			</div>
 		</section>
+		<%= include 'apps/sound/media' %>
 	</div>
 </div>

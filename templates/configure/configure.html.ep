@@ -148,7 +148,6 @@
 				<button type="button" class="configure_toggle"  id="appointment_list_grabber">App</button>
 				<button type="button" class="configure_toggle"  id="device_lister" load_type="list">Dev</button>
 				<button type="button" class="configure_toggle"  id="tunnel_lister">Tun</button>
-				<button type="button" class="configure_toggle"  id="pseudonym_setting_lister">Pseud</button>
 				<button type="button" class="configure_toggle"  id="store_setting_lister">Store</button>
 			</div>
 		</div>
@@ -163,7 +162,6 @@
 	<div style="display:none;" id="configure_appointment_list"></div>
 	<div style="display:none;" id="misc_setting_list"></div>
 	<div style="display:none;" id="plat_setting_list"></div>
-	<div style="display:none;" id="pseudonym_list"></div>
 	<div style="display:none;" id="store_list"></div>
 
 </div>

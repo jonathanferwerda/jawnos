@@ -1,0 +1,27 @@
+<%# The marker room, moved here from the keyboard's sessions panel. The
+    past_life, new_room and marker_sessions handlers are the same globals the
+    old panel used; the Clock app is only a new home for the markup. %>
+    Back, load and forward step the room's history; Add starts a room and the
+    backspace key forgets a marker. The Drawings, Named and Wiper checkboxes
+    choose what a room keeps, and #marker_sessions is filled by the Marker
+    chunk's own panel. Nothing here is Clock-specific; the tab only gives the
+    room a permanent window.
+
+			<span class="room">
+
+				<img class="past_life medium_thumb" direction="rew" src="<%= &subs::icon_for('/icons/prev.jpg') %>" hint="Previous"></img>
+				<img class="past_life medium_thumb" direction="load" src="<%= &subs::icon_for('/icons/play.jpg') %>" hint="Play"></img>
+				<img class="past_life medium_thumb" direction="ff" src="<%= &subs::icon_for('/icons/next.jpg') %>" hint="Next"></img>&nbsp;
+				<img type="button" id="new_room" class="medium_thumb" src="<%= &subs::icon_for('/icons/lymeboard/add.png') %>" hint="Add">
+				<img class="life_direction medium_thumb" style="font-size:10px;" src="<%= &subs::icon_for('/icons/lymeboard/backspace.png') %>" hint="Backspace" direction="forget">
+				<span id="life" height="56px" style="font-size:26px;" width="56px"></span>
+				<br>
+				Draw <input type="checkbox" class="" id="drawings_check">
+				Named <input type="checkbox" class="" id="room_check">
+				Wiper <input type="checkbox" class="" id="windshield_wiper">
+				<br>
+				<input type="text" class="timed_input add_something" type="room" style="width:300px;" placeholder="Room Name" id="room_name"><br>
+				<span id="playbook"></span><br>
+				<b>Marker Sessions</b><br>
+				<span id="marker_sessions"></span>
+			</span>

@@ -240,6 +240,12 @@ $(document).on('keydown', function(e) {
 
 	var movInc = 5;
 	if (markerShortcut(e)) { return; }
+	// Ctrl+Super+K opens the on-screen keyboard; Ctrl+Super+C the calculator.
+	if (e.ctrlKey && jawnosSuperKey(e) && !e.altKey && typeof softKbDockOpen == 'function') {
+		var dock_key = (e.key || '').toLowerCase();
+		if (dock_key == 'k') { softKbDockOpen('letters'); e.preventDefault(); return; }
+		if (dock_key == 'c') { softKbDockOpen('calc'); e.preventDefault(); return; }
+	}
 	if (e.keyCode == 13) {
 		// Only a dialog the person can see takes Enter. The alert shell lives in
 		// the page all the time and now carries the OK of a house question, so

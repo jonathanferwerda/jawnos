@@ -85,6 +85,40 @@ function soundBrowserRefresh() {
 	});
 }
 
+// The browser's own inputs and outputs, the list the old Walkboy panel drew:
+// what a recording or a call captures and plays through (jp.js reads these
+// picks through jawnosDevicePickGet). A press toggles one device per kind.
+function soundMediaRender() {
+	var box = $('#sound_media_list');
+	if (!box.length) { return; }
+	if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) {
+		box.html('<p class="sound_empty">' + jawnosT('sound_not_available') + '</p>');
+		return;
+	}
+	navigator.mediaDevices.enumerateDevices().then(function(list) {
+		var icons = { audioinput: 'microphone', videoinput: 'camera back', audiooutput: 'speaker' };
+		box.empty();
+		var count = 0;
+		$.each(list, function(i, device) {
+			if (!device || !device.deviceId || device.deviceId == 'default') { return; }
+			var kind = device.kind || '';
+			if (!icons[kind]) { return; }
+			var picked = jawnosDevicePickGet(kind, device.deviceId) == 'on' ? 'on' : 'off';
+			var row = $('<div class="sound_device sound_media_row"></div>');
+			row.append($('<img class="medium_thumb media_picker">').attr({
+				device_id: device.deviceId, kind: kind, type: icons[kind], status: picked,
+				src: '/images/decipherable/' + icons[kind] + '.png'
+			}));
+			row.append($('<span class="sound_device_name"></span>').text(device.label || (kind + ' ' + (i + 1))));
+			box.append(row);
+			count++;
+		});
+		if (!count) { box.html('<p class="sound_empty">' + jawnosT('sound_not_available') + '</p>'); }
+	}).catch(function() {
+		box.html('<p class="sound_empty">' + jawnosT('sound_not_available') + '</p>');
+	});
+}
+
 function soundRender(status) {
 	soundStatusData = status;
 	var output = (status && status.output) || null;

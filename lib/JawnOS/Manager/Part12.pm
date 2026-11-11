@@ -76,6 +76,12 @@ sub pseudonym_maker($context,$app) {
 		# six dead icons in the dock; take them out but keep them in the
 		# viewer's list, where the ledger reads them by name.
 		my %dockless = map { $_ => 1 } qw/invoice quote encrypt assign reset software/;
+		# The panels that now live in an app start off the dock: the keyboard and
+		# calculator are start-menu apps, Notifications is its own app plus a
+		# taskbar widget, and the Controller, time machine, Walkboy and Sessions
+		# are sections of Network, Clock and Sound. A list cached before they
+		# moved still says 'on', so switch those faces off once.
+		my %retired_face = map { $_ => 1 } qw/keyboard calculator notifications controller delorean walkboy sessions/;
 		foreach my $p ( @{$ps} ) {
 			if ($p->{'name'} && $p->{'name'} eq 'console') {
 				$p->{'name'} = 'sessions';
@@ -85,25 +91,33 @@ sub pseudonym_maker($context,$app) {
 				$p->{'status'} = 'off';
 				$renamed = 1;
 			}
+			if ($p->{'name'} && $retired_face{$p->{'name'}} && ($p->{'status'} || '') eq 'on') {
+				$p->{'status'} = 'off';
+				$renamed = 1;
+			}
 		}
 		if ($renamed) { &subs::cache_set({ app => 'me', context => 'pseudonyms', subcontext => $set_key }, $ps); }
 		return $ps;
 	}
 	my $pseudonyms = [
 		{ status => 'on', name => "remote_control", icon => "Froggoli", speech => 'Ribbit' },
-		{ status => 'on', name => "delorean", icon => "Mr. Sun", speech => 'Run for it Marty!' },
-		{ status => 'on', name => "walkboy", icon => "headphones", speech => 'av room' },
-		{ status => 'on', name => "keyboard", icon => "keyboard", speech => 'typewriter' },
-		{ status => 'on', name => "calculator", icon => "calculator", speech => 'calculator' },
-		{ status => 'on', name => "notifications", icon => "bell", speech => 'where are your friends now?' },
-		{ status => 'on', name => "sessions", icon => "windows", speech => 'i watch the baytch' },
-		{ status => 'on', name => "controller", icon => "heart", speech => 'Run for it Marty!' },
+		# These panels are sections of an app now, so their old faces start off
+		# the dock: the keyboard and calculator are start-menu apps, and the
+		# time machine, Walkboy, Sessions and Controller live in Clock, Sound
+		# and Network. Notifications likewise (its bell is the taskbar widget).
+		{ status => 'off', name => "delorean", icon => "Mr. Sun", speech => 'Run for it Marty!' },
+		{ status => 'off', name => "walkboy", icon => "headphones", speech => 'av room' },
+		{ status => 'off', name => "keyboard", icon => "keyboard", speech => 'typewriter' },
+		{ status => 'off', name => "calculator", icon => "calculator", speech => 'calculator' },
+		{ status => 'off', name => "notifications", icon => "bell", speech => 'where are your friends now?' },
+		{ status => 'off', name => "sessions", icon => "windows", speech => 'i watch the baytch' },
+		{ status => 'off', name => "controller", icon => "heart", speech => 'Run for it Marty!' },
 		# The ledger's own types wear the set's glyphs of the same name: a quote,
 		# an invoice, the encrypt stamp and the rest of the appointment types that
 		# had no pseudonym (they showed no icon in the details and the timeline
 		# until now). They are glyphs, not dock faces: viewer context keeps every
 		# status, so the ledger still reads them by name, while 'off' keeps them out
-		# of the dock (Configure -> Pseud reads on and off, so their glyph is still
+		# of the dock (the viewer's list reads on and off, so their glyph is still
 		# theirs to change).
 		{ status => 'off', name => "invoice", icon => "invoice" },
 		{ status => 'off', name => "quote", icon => "quote" },

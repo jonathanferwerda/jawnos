@@ -338,6 +338,14 @@ function softKbLayoutSet(id) {
 	softKbTitleUpdate();
 }
 
+// The start menu's keyboard and calculator icons open the same dock the old
+// dock faces did; the menu closes behind them.
+$(document).on('click', '#keyboard_toggle, #calculator_toggle', function () {
+	var calc = this.id == 'calculator_toggle';
+	if (typeof startMenuToggle == 'function' && $('#start_menu').is(':visible')) { startMenuToggle(); }
+	softKbDockOpen(calc ? 'calc' : 'letters');
+});
+
 // The dock's keyboard and calculator icons open this dock now instead of the
 // old floating panels. With a field focused it types there; with none it opens
 // anyway, ready for the next field that is touched (the calculator needs no

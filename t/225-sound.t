@@ -1,4 +1,4 @@
-# tests-for: lib/JawnOS/Domain/Sound.pm lib/JawnOS/Domain/Loader.pm lib/JawnOS/Controller/manager_sound.pm lib/JawnOS/Routes/manager_sound.pm lib/JawnOS/Routes.pm templates/apps/sound.html.ep public/js/manager/sound.js public/js/manager/taskbar_sound.js public/icons/sound.svg templates/start_menu/start_menu.html.ep public/css/manager.css lib/JawnOS/Manager/Core1_tables_hooks.pm public/js/manager/windows/01_storage.js public/js/manager/taskbar_edit.js perl/language.pl perl/help/topics_apps.pl perl/help/topics_features.pl perl/gb/02_labels_and_collectives.pl
+# tests-for: lib/JawnOS/Domain/Sound.pm lib/JawnOS/Domain/Loader.pm lib/JawnOS/Controller/manager_sound.pm lib/JawnOS/Routes/manager_sound.pm lib/JawnOS/Routes.pm templates/apps/sound.html.ep templates/apps/sound/media.html.ep public/js/manager/sound.js public/js/manager/taskbar_sound.js public/icons/sound.svg templates/start_menu/start_menu.html.ep public/css/manager.css lib/JawnOS/Manager/Core1_tables_hooks.pm public/js/manager/windows/01_storage.js public/js/manager/taskbar_edit.js perl/language.pl perl/help/topics_apps.pl perl/help/topics_features.pl perl/gb/02_labels_and_collectives.pl
 # covers:    The Sound app: pactl/wpctl/amixer/the Android bridge readings, the
 #            validated writers and the default-device choice, plus the route,
 #            start-menu, taskbar-widget, lazy-chunk, translation and help wiring.
@@ -539,8 +539,11 @@ write_file($log, '');
 	no warnings 'redefine';
 	*subs::lang = sub { $_ [0] };
 	*subs::ui = sub { $_ [0] };
+	# The app renderer supplies include(); the bare render below does not parse it.
+	my $sound_tpl = read_file("$root/templates/apps/sound.html.ep");
+	$sound_tpl =~ s/^[^\n]*include 'apps\/sound\/media'[^\n]*\n//m;
 	my $html = Mojo::Template->new(vars => 1, auto_escape => 1)->render(
-		scalar read_file("$root/templates/apps/sound.html.ep"),
+		$sound_tpl,
 		{
 			status => {
 				ok => 1,
@@ -583,5 +586,9 @@ write_file($log, '');
 	like(join(' ', @{ $taskbar->{body} }), qr/Sound shows/, 'the taskbar topic lists Sound');
 	like(join(' ', @{ $taskbar->{steps} }), qr/sound widget/, 'and has a Sound step');
 }
+
+
+like(read_file("$root/templates/apps/sound/media.html.ep"), qr/id="sound_media_list"/, 'Sound lists the browser media devices');
+like(read_file("$root/public/js/manager/sound.js"), qr/function soundMediaRender\(/, 'and renders them as the media pickers');
 
 done_testing();

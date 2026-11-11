@@ -1,4 +1,4 @@
-# tests-for: scripts/jawnos_bluetooth.pl lib/JawnOS/Controller/manager_misc2.pm lib/JawnOS/Routes/manager_misc2.pm lib/JawnOS/Manager/Part08.pm lib/JawnOS/Manager/Index.pm lib/JawnOS/Manager/Declarations.pm templates/apps/network.html.ep public/js/manager/network.js public/js/manager/network/02_tabs_bluetooth_remote.js public/js/manager/taskbar_network.js public/js/manager/taskbar_edit.js public/css/manager.css perl/help/topics_web.pl
+# tests-for: scripts/jawnos_bluetooth.pl lib/JawnOS/Controller/manager_misc2.pm lib/JawnOS/Routes/manager_misc2.pm lib/JawnOS/Manager/Part08.pm lib/JawnOS/Manager/Index.pm lib/JawnOS/Manager/Declarations.pm templates/apps/network.html.ep templates/apps/network/controller.html.ep public/js/manager/network.js public/js/manager/network/02_tabs_bluetooth_remote.js public/js/manager/taskbar_network.js public/js/manager/taskbar_edit.js public/css/manager.css perl/help/topics_web.pl
 # covers:    The Network app's Bluetooth tab and Remote Machines tab, the
 #            Bluetooth helper's fixed command set and parsers behind a fake
 #            bluetoothctl, the scroll limits, and the taskbar's Bluetooth read.
@@ -320,11 +320,17 @@ like($css, qr/\[bluetooth=on\].*taskbar_network_bluetooth/s, 'and lights up when
 	no warnings 'once';
 	require "$root/perl/help.pl";
 	my $body = join(' ', @{ $help::topic{'network'}->{'body'} });
-	like($body, qr/three tabs/, 'the topic names the tabs');
+	like($body, qr/four tabs/, 'the topic names the tabs');
+	like($body, qr/Controller/, 'the topic explains the Controller tab');
 	like($body, qr/Bluetooth/, 'the topic explains Bluetooth');
 	like($body, qr/Remote Machines/, 'the topic explains Remote Machines');
 	like($body, qr/scroll/, 'the topic explains the scroll limits');
 	like($body, qr/Bluetooth glyph/, 'the topic names the widget\'s Bluetooth glyph');
 }
+
+
+like($template, qr/data-network-tab="controller"/, 'the Network has a Controller tab');
+like($template, qr/network_panel_controller/, 'and its panel');
+like(source('public/js/manager/network/02_tabs_bluetooth_remote.js'), qr/tab === 'controller'/, 'the tab is a valid Network tab');
 
 done_testing();

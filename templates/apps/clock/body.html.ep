@@ -14,6 +14,12 @@
 		<button type="button" class="clock_tab <%= $tab eq 'world' ? 'selected' : '' %>" data-clock-tab="world" role="tab" aria-selected="<%= $tab eq 'world' ? 'true' : 'false' %>">
 			<img src="<%= &subs::icon_path('world_clock', '/icons/world_clock.svg') %>" alt=""><span><%= &subs::lang('world_clock') %></span>
 		</button>
+		<button type="button" class="clock_tab <%= $tab eq 'machine' ? 'selected' : '' %>" data-clock-tab="machine" role="tab" aria-selected="<%= $tab eq 'machine' ? 'true' : 'false' %>">
+			<img src="<%= &subs::icon_path('now', '/images/decipherable/now.png') %>" alt=""><span><%= &subs::lang('time_machine') %></span>
+		</button>
+		<button type="button" class="clock_tab <%= $tab eq 'sessions' ? 'selected' : '' %>" data-clock-tab="sessions" role="tab" aria-selected="<%= $tab eq 'sessions' ? 'true' : 'false' %>">
+			<img src="<%= &subs::icon_path('sessions', '/images/decipherable/windows.png') %>" alt=""><span><%= &subs::ui('Sessions') %></span>
+		</button>
 	</div>
 
 	<div class="clock_panels">
@@ -211,6 +217,16 @@
 				<div class="clock_world_list"></div>
 				<datalist id="clock_zones"></datalist>
 			</div>
+		</section>
+
+		<section class="clock_panel <%= $tab eq 'machine' ? 'selected' : '' %>" data-clock-panel="machine" role="tabpanel">
+			<div class="clock_panel_head"><h4><%= &subs::lang('time_machine') %></h4></div>
+			<%= include 'apps/clock/machine' %>
+		</section>
+
+		<section class="clock_panel <%= $tab eq 'sessions' ? 'selected' : '' %>" data-clock-panel="sessions" role="tabpanel">
+			<div class="clock_panel_head"><h4><%= &subs::ui('Sessions') %></h4></div>
+			<%= include 'apps/clock/sessions' %>
 		</section>
 	</div>
 

@@ -1,4 +1,4 @@
-# tests-for: templates/keyboard.html.ep public/js/manager/keyboard/02_keyboard_maker.js public/js/manager/taskbar.js public/js/manager/leaderboardprinter.js public/js/manager/clothesline/01_timeline.js lib/JawnOS/Controller/manager_misc6.pm
+# tests-for: templates/keyboard.html.ep templates/apps/clock/machine.html.ep public/js/manager/keyboard/02_keyboard_maker.js public/js/manager/taskbar.js public/js/manager/leaderboardprinter.js public/js/manager/clothesline/01_timeline.js lib/JawnOS/Controller/manager_misc6.pm
 # covers:    A fresh browser starts on the desk with the time machine on All,
 #            15 minutes and a 3 s interval, and the header and taskbar clocks
 #            tick every second unless the view is held on one moment.
@@ -26,7 +26,7 @@ use RepoSource;
 # face stands still, which the server now marks in __specs.
 
 my $root    = repo_root();
-my $keyboard = read_file("$root/templates/keyboard.html.ep");
+my $keyboard = read_file("$root/templates/apps/clock/machine.html.ep");
 my $maker    = read_file("$root/public/js/manager/keyboard/02_keyboard_maker.js");
 my $taskbar  = read_file("$root/public/js/manager/taskbar.js");
 my $header   = read_file("$root/public/js/manager/leaderboardprinter.js");

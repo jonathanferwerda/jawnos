@@ -6,12 +6,12 @@
 var network_tab_storage = 'network_tab';
 
 function networkTabValid(tab) {
-	return tab === 'network' || tab === 'bluetooth' || tab === 'remote';
+	return tab === 'network' || tab === 'bluetooth' || tab === 'remote' || tab === 'controller';
 }
 
 function networkTabShow(tab, remember) {
 	if (!networkTabValid(tab)) { tab = 'network'; }
-	$('#network_panel_bluetooth, #network_panel_remote, #network_panel_network').each(function() {
+	$('.network_tab_panel').each(function() {
 		var is_tab = $(this).attr('data-network-panel') === tab;
 		$(this).prop('hidden', !is_tab);
 	});
@@ -23,6 +23,8 @@ function networkTabShow(tab, remember) {
 		try { localStorage.setItem(network_tab_storage, tab); } catch (error) { /* private mode */ }
 	}
 	if (tab === 'bluetooth') { networkBluetoothRefresh(); }
+	// the controller list's neighbour columns are fed by the server heartbeat
+	if (tab === 'controller' && typeof stayingAliveNow == 'function') { stayingAliveNow('server'); }
 }
 
 function networkBluetoothError(text) {

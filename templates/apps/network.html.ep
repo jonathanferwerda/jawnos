@@ -11,6 +11,8 @@
 	&& ($_->{'hostname'} || '') ne 'me'
 } @{$remote_machines};
 <% my $jawnos_bluetooth = eval { &subs::ble_device_listing() } || []; %>
+<% my $controller_tab_id = $c->param('browser_tab_id') || ''; %>
+<% my $websockets = eval { &subs::db_query('select * from websockets where browser_tab_id = ?', $controller_tab_id)->hashes } || []; %>
 <style>
 	.network_app { display:flex; flex-direction:column; gap:10px; width:100%; height:100%; min-width:0; padding:10px 12px 18px; box-sizing:border-box; overflow-y:auto; color:var(--ink); }
 	.network_bar { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
@@ -88,6 +90,7 @@
 		<button type="button" class="network_tab is-active" id="network_tab_network" data-network-tab="network" role="tab" aria-selected="true"><%= $t->('network') %></button>
 		<button type="button" class="network_tab" id="network_tab_bluetooth" data-network-tab="bluetooth" role="tab" aria-selected="false"><%= &subs::ui('Bluetooth') %></button>
 		<button type="button" class="network_tab" id="network_tab_remote" data-network-tab="remote" role="tab" aria-selected="false"><%= &subs::ui('Remote Machines') %></button>
+		<button type="button" class="network_tab" id="network_tab_controller" data-network-tab="controller" role="tab" aria-selected="false"><%= &subs::ui('Controller') %></button>
 	</div>
 
 	<div class="network_tab_panel" id="network_panel_network" data-network-panel="network">
@@ -293,6 +296,15 @@
 						</tbody>
 					</table>
 				</div>
+			</div>
+		</section>
+	</div>
+
+	<div class="network_tab_panel" id="network_panel_controller" data-network-panel="controller" hidden>
+		<section class="network_section" id="network_controller_section">
+			<div class="network_section_head"><h3><%= &subs::ui('Controller') %></h3><span class="network_status"><%= &subs::ui('The browser sockets this house is talking to') %></span></div>
+			<div class="network_section_body">
+				<%= include 'apps/network/controller' %>
 			</div>
 		</section>
 	</div>

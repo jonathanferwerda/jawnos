@@ -87,7 +87,7 @@ function jawnosTaskbarPress(sel) {
 // and one or two wear a different name, so those are spelled out here.
 function jawnosTaskbarAppForToggle(id) {
 	if (!id) { return null; }
-	var action = { backup_now: 1, stop_all: 1, upload: 1, nfc_benign_reader: 1, sms_list_check: 1, permission_asker: 1, torch_toggle: 1, now_toggle: 1 };
+	var action = { backup_now: 1, stop_all: 1, upload: 1, nfc_benign_reader: 1, sms_list_check: 1, permission_asker: 1, torch_toggle: 1, now_toggle: 1, keyboard_toggle: 1, calculator_toggle: 1 };
 	if (action[id]) { return null; }
 	var alias = { image_toggle: 'gallery', ticketmaker: 'box_office' };
 	if (alias[id]) { return alias[id]; }
@@ -316,6 +316,8 @@ function jawnosTaskbarOrderSave() {
 	});
 	jawnosBars.order = order;
 	jawnosTaskbarSave('taskbar_order', JSON.stringify(order));
+	// the dock's app and widget faces follow this order
+	if (typeof jawnosDockAppsRender == 'function') { jawnosDockAppsRender(); }
 }
 
 // Write a misc setting the way the configure panel does, and re-lay the bars.
@@ -391,7 +393,7 @@ function jawnosTaskbarAppPins() {
 // App faces added to the dock are apps, and already appear in the Apps list.
 function jawnosTaskbarKeyboardPins() {
 	var pins = [];
-	$('#pseudonym_home .pseudonym').not('.dock_app').each(function () {
+	$('#pseudonym_home .pseudonym').not('.dock_app, .dock_widget, .dock_launcher').each(function () {
 		var p = $(this);
 		var id = p.attr('id');
 		if (!id) { return; }

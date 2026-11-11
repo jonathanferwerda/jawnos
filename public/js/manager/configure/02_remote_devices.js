@@ -22,25 +22,6 @@ function tunnelLister(b) {
 	//}
 }
 
-$(document).on('click', '#pseudonym_setting_lister', function() {
-	var timestamp = Date.now();
-	var b = $(this);
-	var c = $('#pseudonym_list');
-	b.text('* ' + jawnosConfigureLabel(b));
-	$.ajax({
-		url: '/manager/configure/pseudonym_list',
-		type: 'GET',
-		data: { timestamp: timestamp },
-		success: function(response) {
-			c.html(response);
-			b.text(jawnosConfigureLabel(b));
-			if (jawnosConfigureShow('pseudonym_setting_lister', c)) {
-				b.attr('status', 'active');
-			}
-		}
-	});
-});
-
 $(document).on('change', '.pseudonym_setting', function() {
 	var b = $(this);
 	var timestamp = Date.now();

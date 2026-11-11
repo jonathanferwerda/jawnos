@@ -1,0 +1,115 @@
+<%# The time machine, moved here from the keyboard's delorean panel. It
+    reads the same #time_machine and #timeshift inputs the leaderboard and the
+    taskbar clock use; the accounts, projects and span pickers are supplied by
+    the Clock action. %>
+    The controls are the desk's own time machine: the layout and sort pickers, the
+    shift and its scope, the movement and account/project filters, and the
+    background-image opacity. #time_machine and #timeshift are read by
+    manager.js and time_preview.js wherever they sit, so the Clock tab needs no
+    handler of its own; the accounts and projects come from the Clock action.
+
+			<button id="i" class="now">now</button>
+			<button id="calculate_it">M</button>
+			<button id="appt_view_toggle">V</button>
+			<input style="width:60%" class="time_machine" id="time_machine" placeholder="Time Machine"></input><br>
+
+			<!-- here, because these templates will be linked to user's keyboards which are encoded in their pictures -->
+			<script>
+				var ago_time;
+				$(document).on('change', '#time_machine', function() {
+					var time_machine = $(this).val();
+					var timestamp = Date.now();
+					clearTimeout(ago_time);
+					ago_time = setTimeout(function() {
+						var ago = $(this).val();
+						$.ajax({
+							url: '/manager/ago',
+							type: 'GET',
+							data: { time_machine: time_machine, timestamp: timestamp },
+							success: function(response) {
+								localStorage.setItem('time_machine', time_machine );
+							}
+						});
+					});
+				});
+				var appt_view_toggle = sessionStorage.getItem('appt_view_toggle');
+				if (appt_view_toggle == 'on') { $('#appt_view_toggle').css({ 'background-color': 'green' }) }
+			</script>
+			<select id="update_frequency">
+				<option value="no">NOPE!</option>
+				<option value="1000">1s</option>
+				<option value="3000" selected>3s</option>
+				<option value="5000">5s</option>
+				<option value="10000">10s</option>
+				<option value="20000">20s</option>
+				<option value="30000">30s</option>
+				<option value="40000">40s</option>
+				<option value="50000">50s</option>
+				<option value="60000">60s</option>
+				<option value="70000">70s</option>
+				<option value="300000">5m</option>
+				<option value="600000">10m</option>
+				<option value="1200000">20m</option>
+			</select>
+
+			<select name="layout" id="layout">
+				<option value="leaderboard">Leaderboard</option>
+				<option value="clockface">Clockface</option>
+				<option value="timeline">Timeline</option>
+				<option value="calendar">Calendar</option>
+				<option value="continent">Continent</option>
+				<option value="narrator">Narrator</option>
+				<option value="desk" selected><%= &subs::lang('layout.desktop') %></option>
+			</select>
+			<select name="sorts" id="sorts">
+				<option value="alphabetical">Alphabetical</option>
+				<option value="duration">Duration</option>
+				<option value="occurrences">Occurrences</option>
+				<option value="amount">Dollars</option>
+				<option value="timestamp">Timestamp</option>
+				<option value="server_time">Server Time</option>
+			</select>
+			<br>
+			<input style="max-width: 90%" type="range" id="timeshift" step=1 max=20 min=-20 /><br>
+			<span id="timeshift_viewer"></span><br>
+			<select name="scope" id="scope">
+				<% foreach my $span ( &subs::time_span_picker() ) { %>
+					<option value="<%= $span %>"<%= $span eq 'fifteenminute' ? ' selected' : '' %>><%= &subs::time_span_label($span) %></option>
+				<% } %>
+			</select>
+			<select id="timeshift_scope" name="timeshift_scope">
+				<option value="Mill">Millenium</option>
+				<option value="C">Century</option>
+				<option value="D">Decades</option>
+				<option value="y">Years</option>
+				<option value="M">Months</option>
+				<option value="w">Weeks</option>
+				<option value="d">Days</option>
+				<option value="h">Hours</option>
+				<option value="m" selected>Minutes</option>
+				<option value="s">Seconds</option>
+				<option value="0">No Shift</option>
+			</select>
+			<select name="filter" id="filter">
+				<% foreach my $m ( @gb::movements ) { %>
+					<option value="<%= $m %>"<%= $m eq 'all' ? ' selected' : '' %>><%= ucfirst($m) %></option>
+				<% } %>
+			</select>
+			<br>
+			<select id="accounts" style="max-width: 50%;">
+				<option value="all" selected>All</option>
+				<% foreach my $a ( @{$accounts} ) { %>
+					<option value="<%= $a->{'app'} %>"><%= $a->{'formatted_name'} %></option>
+				<% } %>
+			</select>
+			<select id="projects" style="max-width: 50%">
+				<option value="all" selected>All</option>
+				<% foreach my $a ( @{$projects} ) { %>
+					<option value="<%= $a->{'app'} %>"><%= $a->{'formatted_name'} %></option>
+				<% } %>
+			</select>
+			<br>
+			<input type="checkbox" id="background_images">Background
+			<input type="range" id="background_images_opacity" min="0" max="1" step=".05">Opacity
+			<br>
+			<span timestamp="<%= $c->session('warranty') %>" class="time"></span>

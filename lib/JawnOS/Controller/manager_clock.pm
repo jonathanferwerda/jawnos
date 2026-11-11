@@ -70,11 +70,29 @@ our ($APP, $ws_live_window, $encoder, $decoder, $tuuid, $thread_uuid, $universal
 sub action_22718 {
 	my $c = shift;
 	my $tab = $c->param('tab') || 'alarm';
-	$tab = 'alarm' unless $tab =~ /^(?:alarm|stopwatch|timer|world)$/;
+	$tab = 'alarm' unless $tab =~ /^(?:alarm|stopwatch|timer|world|machine|sessions)$/;
 	my $state = &subs::clock_state();
+	# The time machine is a Clock tab now, and it reads the same accounts and
+	# projects the old delorean panel did.
+	my $accts = [];
+	my $projs = [];
+	my $accounts = &subs::db_query("select * from settings where (setting = ? or setting =?) and value=?", 'pos', 'mab', 'account');
+	foreach my $a ( reverse @{$accounts->hashes} ) {
+		push @{$accts}, $a unless grep { $_->{'app'} eq $a->{'app'} } @{$accts};
+		$a->{'formatted_name'} = &subs::format_name($a->{'app'});
+	}
+	my $projects = &subs::db_query("select * from settings where (setting = ? or setting = ?) and value=?", 'pos', 'mab', 'project');
+	foreach my $a ( reverse @{$projects->hashes} ) {
+		push @{$projs}, $a unless grep { $_->{'app'} eq $a->{'app'} } @{$projs};
+		$a->{'formatted_name'} = &subs::format_name($a->{'app'});
+	}
 	my $content = $c->render_to_string(
 		template => 'apps/clock',
 		tab => $tab,
+		accounts => $accts,
+		projects => $projs,
+		config => &subs::config_reader(),
+		device => $device,
 		alarms => $state->{'alarms'},
 		timers => $state->{'timers'},
 		apps => $state->{'apps'},

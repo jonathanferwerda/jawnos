@@ -1,7 +1,7 @@
 /* [[js-split]]
    keyboard.js is part 1. The rest live in keyboard/ in name order:
      01_side_dock.js       - side dock slide, keyboard drag bars, pseudonym home, draggable init, rooms, media
-     02_keyboard_maker.js  - keyboardMaker, music receivers, sensitivity, work claims, notifications, initializer
+     02_keyboard_maker.js  - keyboardMaker, music receivers, sensitivity, work claims, initializer
      03_editor_switcher.js - text editor upgrade, magic/processor, marker shortcut, key bindings, app switcher, VPN
    /js/manager/bundle.js concatenates the index and these parts.
    [[/js-split]] */
@@ -93,118 +93,132 @@ function jawnosDockIconState(toggle) {
 	return state;
 }
 
-// ---- apps on the dock ------------------------------------------------------
-// The server renders the dock from the pseudonym list, so an app with no
-// pseudonym cannot be one of its faces. The apps a person adds are kept by this
-// browser (localStorage family dock_apps, keyed by the app's own name) as
-// { hint, src }, and drawn as ordinary .pseudonym.bar tiles beside the server's
-// faces: they take a slot in the row or the side stack, shrink with the rest,
-// and follow the same on/off and tuck rules. The trade-off is deliberate - the
-// dock's app faces, like each icon's on/off, belong to this browser's profile,
-// not to the whole house; the pseudonym list itself is the house's.
+// ---- the taskbar's pins and widgets on the dock ----------------------------
+// The dock draws the same pinned apps and widgets as the taskbar: one list
+// (the house's taskbar_order) feeds both bars, so a pin shows on both and a
+// removal takes it off both. The taskbar's fixed slots - its window list, the
+// clock and the search - are not faces. A keyboard pseudonym keeps its own
+// server face; these faces follow the taskbar's order instead of dock_order.
+function jawnosDockTaskbarOrder() {
+	if (typeof jawnosBars == 'undefined') { return []; }
+	if (jawnosBars.order && jawnosBars.order.length) { return jawnosBars.order; }
+	return (typeof jawnosTaskbarDefaultOrder == 'function') ? jawnosTaskbarDefaultOrder() : [];
+}
 function jawnosDockApps() {
-	var data = (typeof jawnosStore != 'undefined') ? (jawnosStore.read('dock_apps') || {}) : {};
-	var list = [];
-	$.each(data, function(app, raw) {
-		if (!app || raw === undefined || raw === null) { return; }
-		var info = raw;
-		if (typeof raw == 'string') {
-			try { info = JSON.parse(raw) || {}; } catch (e) { info = {}; }
+	var faces = [];
+	$.each(jawnosDockTaskbarOrder(), function(i, item) {
+		if (!item || typeof item != 'object') { return; }
+		if (item.k == 'pin') {
+			if (item.app) { faces.push({ kind: 'app', app: item.app, hint: item.hint || item.app, src: item.src || '' }); }
+			else if (item.sel) { faces.push({ kind: 'launcher', sel: item.sel, hint: item.hint || item.sel, src: item.src || '' }); }
 		}
-		if (typeof info != 'object') { info = {}; }
-		list.push({ app: app, hint: info.hint || app, src: info.src || '' });
+		else if (item.k == 'widget' && (item.mode || 'full') != 'off') {
+			var spec = (typeof jawnosTaskbarWidgets != 'undefined') ? jawnosTaskbarWidgets[item.w] : null;
+			if (spec) { faces.push({ kind: 'widget', widget: item.w, hint: spec.hint, src: spec.icon }); }
+		}
 	});
-	return list;
+	return faces;
 }
 function jawnosDockAppHas(app) {
-	if (!app) { return false; }
-	var data = (typeof jawnosStore != 'undefined') ? (jawnosStore.read('dock_apps') || {}) : {};
-	return Object.prototype.hasOwnProperty.call(data, app);
+	return !!(app && typeof jawnosTaskbarAppPinned == 'function' && jawnosTaskbarAppPinned(app));
 }
-// The dock face the house already ships under this name, if any. An app whose
-// name is already a pseudonym is added and removed by flipping that face's
-// dock_icons state rather than growing a second, identical face.
-function jawnosDockPseudonymFor(name) {
-	var found = null;
-	if (!name) { return found; }
-	$('#pseudonym_bar .pseudonym').not('.dock_app').each(function() {
-		var p = $(this);
-		if (p.attr('toggle') === name || p.attr('name') === name) { found = p; return false; }
-	});
-	return found;
-}
-// Is this name on the dock, whether as a pseudonym face or a browser-added app?
+// Is this name on the dock? The dock's apps and widgets are the taskbar's.
 function jawnosDockHas(name) {
-	if (jawnosDockAppHas(name)) { return true; }
-	var ps = jawnosDockPseudonymFor(name);
-	if (ps) { return jawnosDockIconState(ps.attr('toggle')) == 'on'; }
-	return false;
-}
-function jawnosDockAppSave(app, info) {
-	if (!app || typeof jawnosStore == 'undefined') { return; }
-	info = info || {};
-	jawnosStore.set('dock_apps', app, JSON.stringify({ hint: info.hint || app, src: info.src || '' }));
+	return jawnosDockAppHas(name);
 }
 function jawnosDockAppAdd(app, hint, src) {
-	if (!app) { return; }
-	var ps = jawnosDockPseudonymFor(app);
-	if (ps) {
-		// one face, not two: a pseudonym of the same name wins
-		if (typeof jawnosStore != 'undefined') {
-			jawnosStore.remove('dock_apps', app);
-			jawnosStore.remove('dock_icons', 'app:' + app);
-		}
-		jawnosDockAppsRender();
-		jawnosDockIconSet(ps.attr('toggle'), 'on');
-		jawnosDockReveal();
-		return;
-	}
-	jawnosDockAppSave(app, { hint: hint, src: src });
-	jawnosDockAppsRender();
+	if (!app || typeof jawnosTaskbarAddAppPin != 'function') { return; }
+	jawnosTaskbarAddAppPin({ app: app, hint: hint || app, src: src || '' });
 	jawnosDockReveal();
 }
 function jawnosDockAppRemove(app) {
-	if (!app) { return; }
-	var ps = jawnosDockPseudonymFor(app);
-	if (typeof jawnosStore != 'undefined' && jawnosDockAppHas(app)) {
-		jawnosStore.remove('dock_apps', app);
-		jawnosStore.remove('dock_icons', 'app:' + app);
-		jawnosDockAppsRender();
-	}
-	if (ps) {
-		jawnosDockIconSet(ps.attr('toggle'), 'off');
-		if (typeof pseudonymFreeSpaceFinder == 'function') { pseudonymFreeSpaceFinder(); }
-		return;
-	}
-	if (typeof pseudonymFreeSpaceFinder == 'function') { pseudonymFreeSpaceFinder(); }
+	if (!app || typeof jawnosTaskbarRemoveAppPin != 'function') { return; }
+	jawnosTaskbarRemoveAppPin(app);
+	jawnosDockReveal();
 }
 function jawnosDockAppToggle(entry) {
 	if (!entry || !entry.app) { return; }
 	if (jawnosDockHas(entry.app)) { jawnosDockAppRemove(entry.app); }
 	else { jawnosDockAppAdd(entry.app, entry.hint, entry.src); }
 }
-// Draw (or redraw) the browser's own app faces at the end of the row. The
-// server's pseudonyms stay where the template put them; these are appended.
+// A widget is pinned when the bar carries it; enabling or disabling it is the
+// same action on either surface. A press on the dock's widget face opens the
+// app that widget stands for.
+function jawnosDockWidgetHas(w) {
+	return typeof jawnosTaskbarWidgetOn == 'function' && jawnosTaskbarWidgetOn(w);
+}
+function jawnosDockWidgetToggle(w) {
+	if (typeof jawnosTaskbarWidgetToggle == 'function') { jawnosTaskbarWidgetToggle(w); }
+	jawnosDockReveal();
+}
+function jawnosDockWidgetOpen(w) {
+	var app = { power: 'power', network: 'network', sound: 'sound', notifications: 'notifications' }[w] || w;
+	jawnosDockAppOpen(app);
+}
+// A browser that added app faces to the dock before the taskbar owned the list
+// keeps them: on the first load after this change each becomes a taskbar pin
+// (the pin the two bars now share), and the old per-browser list is cleared.
+function jawnosDockMigrateApps() {
+	if (typeof jawnosStore == 'undefined' || typeof jawnosTaskbarAddAppPin != 'function') { return; }
+	var data = jawnosStore.read('dock_apps') || {};
+	var apps = Object.keys(data);
+	if (!apps.length) { return; }
+	$.each(apps, function(i, app) {
+		var raw = data[app];
+		var info = raw;
+		if (typeof raw == 'string') {
+			try { info = JSON.parse(raw) || {}; } catch (e) { info = {}; }
+		}
+		if (typeof info != 'object' || info === null) { info = {}; }
+		if (!jawnosDockAppHas(app)) {
+			jawnosTaskbarAddAppPin({ app: app, hint: info.hint || app, src: info.src || '' });
+		}
+	});
+	try { localStorage.removeItem('dock_apps'); } catch (e) {}
+	jawnosDockAppsRender();
+}
+// Draw (or redraw) the taskbar's pins and widgets at the end of the row. The
+// server's pseudonyms stay where the template put them; these faces follow the
+// taskbar's order and dock_order does not move them.
 function jawnosDockAppsRender() {
 	var bar = $('#pseudonym_bar');
 	if (!bar.length) { return; }
-	bar.children('.draggable_icon.dock_app_wrap').remove();
+	bar.children('.draggable_icon.dock_taskbar_face').remove();
 	$.each(jawnosDockApps(), function(i, entry) {
 		var src = entry.src || '/images/decipherable/gear.png';
-		var icon = $('<img class="ps bar pseudonym keyboard hover theme_surface dock_app">').attr({
-			'id': 'dock_app_' + encodeURIComponent(entry.app) + '_toggle',
-			'dock_app': entry.app,
-			'name': entry.app,
-			'hint': entry.hint || entry.app,
-			'toggle': 'app:' + entry.app,
+		var icon = $('<img class="ps bar pseudonym keyboard hover theme_surface">').attr({
+			'hint': entry.hint || '',
 			'src': src,
 			'jawnos_icon': src
 		});
+		if (entry.kind == 'app') {
+			icon.addClass('dock_app');
+			icon.attr({
+				'id': 'dock_app_' + encodeURIComponent(entry.app) + '_toggle',
+				'dock_app': entry.app,
+				'name': entry.app,
+				'toggle': 'app:' + entry.app
+			});
+		}
+		else if (entry.kind == 'widget') {
+			icon.addClass('dock_widget');
+			icon.attr({
+				'id': 'dock_widget_' + encodeURIComponent(entry.widget) + '_toggle',
+				'dock_widget': entry.widget,
+				'toggle': 'widget:' + entry.widget
+			});
+		}
+		else {
+			icon.addClass('dock_launcher');
+			icon.attr({
+				'id': 'dock_launcher_' + encodeURIComponent(entry.sel) + '_toggle',
+				'dock_sel': entry.sel,
+				'toggle': 'launch:' + entry.sel
+			});
+		}
 		icon.css('background-color', 'var(--panel-2)');
-		bar.append($('<div class="draggable_icon dock_app_wrap"></div>').append(icon));
+		bar.append($('<div class="draggable_icon dock_taskbar_face"></div>').append(icon));
 	});
-	// the saved order names pseudonyms and added apps alike; the new app faces
-	// take their place in it rather than always landing at the end
 	jawnosDockOrderApply();
 }
 // Call the dock back out after an add: a tucked row or side pill must show the
@@ -366,11 +380,12 @@ function jawnosDockOrder() {
 	return Array.isArray(order) ? order : [];
 }
 
-// Keep the order the wrappers are in now: a pseudonym by its toggle, an added
-// app by 'app:<name>'. This is the browser's own list, like dock_apps.
+// Keep the order the wrappers are in now: a pseudonym by its toggle. The
+// taskbar's pins and widgets are not saved here - they follow the taskbar's
+// own order. This is the browser's own list, like each pseudonym's on/off.
 function jawnosDockOrderSave() {
 	var order = [];
-	$('#pseudonym_bar').children('.draggable_icon').each(function() {
+	$('#pseudonym_bar').children('.draggable_icon').not('.dock_taskbar_face').each(function() {
 		var icon = $(this).children('.pseudonym.bar').first();
 		if (!icon.length) { return; }
 		var key = jawnosDockFaceKey(icon);
@@ -392,6 +407,8 @@ function jawnosDockOrderApply() {
 	var saved = jawnosDockOrder();
 	var by_key = {};
 	$.each(wrappers, function(i, w) {
+		// the taskbar's own faces keep the order the bar gave them
+		if ($(w).hasClass('dock_taskbar_face')) { return; }
 		var icon = $(w).children('.pseudonym.bar').first();
 		if (!icon.length) { return; }
 		var key = jawnosDockFaceKey(icon);
@@ -461,6 +478,8 @@ function jawnosDockReorderAt(x, y, drag) {
 
 function jawnosDockDragStart(x, y, target) {
 	if (!jawnosDockEditing()) { return false; }
+	// the taskbar's faces keep the bar's order; Edit dock reorders pseudonyms
+	if ($(target).closest('.dock_taskbar_face').length) { return false; }
 	var icon = $(target).closest('#pseudonym_bar .pseudonym.bar');
 	if (!icon.length) { return false; }
 	var wrapper = icon.closest('.draggable_icon');
@@ -572,12 +591,15 @@ function jawnosDockContextBuild() {
 		row.attr('act', app ? 'dock_add_app' : 'dock_show_toggle');
 		return row;
 	};
+	// The panels that moved into an app have no keyboard panel left to open, so
+	// they are not offered as a face to put back.
+	var retired_panels = { keyboard: 1, calculator: 1, notifications: 1, controller: 1, delorean: 1, walkboy: 1, sessions: 1 };
 	var fill_hidden = function () {
 		var rows = [];
-		$('#pseudonym_bar .pseudonym').not('.dock_app').each(function() {
+		$('#pseudonym_bar .pseudonym').not('.dock_app, .dock_widget, .dock_launcher').each(function() {
 			var p = $(this);
 			var toggle = p.attr('toggle');
-			if (!toggle || jawnosDockIconState(toggle) == 'on') { return; }
+			if (!toggle || retired_panels[toggle] || jawnosDockIconState(toggle) == 'on') { return; }
 			rows.push({ hint: p.attr('hint') || toggle, src: p.attr('src') || '', toggle: toggle });
 		});
 		if (rows.length) {
@@ -598,6 +620,24 @@ function jawnosDockContextBuild() {
 		}
 		return rows.length;
 	};
+	// The widgets are the taskbar's four readings, pinned or disabled by the
+	// same setting that puts them on the bar.
+	var fill_widgets = function () {
+		if (typeof jawnosTaskbarWidgets == 'undefined') { return 0; }
+		add_label(jawnosDockText('dock.widgets', 'Widgets'));
+		var count = 0;
+		Object.keys(jawnosTaskbarWidgets).forEach(function (w) {
+			var spec = jawnosTaskbarWidgets[w];
+			var row = $('<div class="taskbar_context_selection dock_context_app"></div>');
+			row.attr('act', 'dock_widget_toggle').attr('dock_widget', w);
+			if (spec.icon) { $('<img>').attr('src', spec.icon).appendTo(row); }
+			$('<span></span>').text(jawnosDockText(spec.hint, spec.hint)).appendTo(row);
+			row.append('<span class="taskbar_context_check">' + selected(jawnosDockWidgetHas(w)) + '</span>');
+			list.append(row);
+			count++;
+		});
+		return count;
+	};
 	var hidden_count = fill_hidden();
 	var live = (typeof jawnosTaskbarAppPins == 'function') ? jawnosTaskbarAppPins() : [];
 	if (live.length) {
@@ -616,6 +656,7 @@ function jawnosDockContextBuild() {
 			error: function () { loading.text(jawnosDockText('dock.load_error', 'Could not load the apps')); }
 		});
 	}
+	fill_widgets();
 	context.append(add);
 
 	if (typeof jawnosTaskbarContextBuild == 'function') {
@@ -656,6 +697,18 @@ $(document).on('click', '.taskbar_context_selection[act^="dock_"]', function() {
 	else if (act == 'dock_app_remove') {
 		jawnosDockAppRemove(row.attr('dock_app'));
 	}
+	else if (act == 'dock_widget_toggle') {
+		var w = row.attr('dock_widget');
+		jawnosDockWidgetToggle(w);
+		row.find('.taskbar_context_check').text(jawnosDockWidgetHas(w) ? '✓' : '');
+		return;
+	}
+	else if (act == 'dock_widget_remove') {
+		if (typeof jawnosTaskbarWidgetSet == 'function') { jawnosTaskbarWidgetSet(row.attr('dock_widget'), 'off'); }
+	}
+	else if (act == 'dock_launcher_remove') {
+		if (typeof jawnosTaskbarRemovePin == 'function') { jawnosTaskbarRemovePin(row.attr('dock_sel')); }
+	}
 	else if (act == 'dock_hide_toggle') {
 		var toggle = row.attr('dock_toggle');
 		if (toggle) {
@@ -677,16 +730,21 @@ $(document).on('click', '.taskbar_context_selection[act^="dock_"]', function() {
 });
 
 // A right-click on a dock face opens the same menu with a Remove row for that
-// face at the top: an app face leaves this browser's dock_apps, a pseudonym
-// face is switched off in dock_icons (the menu can bring it back).
+// face at the top: an app or launcher unpins it from the taskbar (and so from
+// the dock), a widget is disabled on both bars, and a pseudonym face is switched
+// off in dock_icons (the menu can bring it back).
 $(document).on('contextmenu', '#pseudonym_bar .pseudonym', function(e) {
 	e.preventDefault();
 	e.stopPropagation();
 	var icon = $(this);
 	var app = icon.attr('dock_app');
-	var toggle = app ? null : icon.attr('toggle');
+	var widget = icon.attr('dock_widget');
+	var launcher = icon.attr('dock_sel');
+	var toggle = (app || widget || launcher) ? null : icon.attr('toggle');
 	var row = null;
 	if (app) { row = $('<div class="taskbar_context_selection" act="dock_app_remove"></div>').attr('dock_app', app); }
+	else if (widget) { row = $('<div class="taskbar_context_selection" act="dock_widget_remove"></div>').attr('dock_widget', widget); }
+	else if (launcher) { row = $('<div class="taskbar_context_selection" act="dock_launcher_remove"></div>').attr('dock_sel', launcher); }
 	else if (toggle) { row = $('<div class="taskbar_context_selection" act="dock_hide_toggle"></div>').attr('dock_toggle', toggle); }
 	var menu = jawnosDockContextBuild();
 	if (row) {
@@ -696,7 +754,7 @@ $(document).on('contextmenu', '#pseudonym_bar .pseudonym', function(e) {
 		}
 		$('<span></span>').text(jawnosDockText('dock.remove', 'Remove from dock')).appendTo(row);
 		menu.prepend(row);
-		menu.prepend($('<div class="taskbar_context_label"></div>').text(icon.attr('hint') || app || toggle));
+		menu.prepend($('<div class="taskbar_context_label"></div>').text(icon.attr('hint') || app || widget || launcher || toggle));
 	}
 	jawnosDockMenuPlace(menu, e.clientX, e.clientY);
 });
@@ -724,6 +782,7 @@ $(document).on('contextmenu', '#start_menu .start_menu_main_display img', functi
 });
 
 $(document).ready(function() {
+	jawnosDockMigrateApps();
 	jawnosDockAppsRender();
 	jawnosDockOrderApply();
 	jawnosDockDragBind();
@@ -770,7 +829,10 @@ function pseudonymFreeSpaceFinder(type) {
 	$.each(icons, function(i,el) {
 		var icon = $(el);
 		var toggle = icon.attr('toggle');
-		if (!icons_hidden && jawnosDockIconState(toggle) == 'on') {
+		// the taskbar's pins and widgets are shown whenever the bar carries
+		// them; their dock_icons entry is not a second switch
+		var taskbar_face = icon.hasClass('dock_app') || icon.hasClass('dock_widget') || icon.hasClass('dock_launcher');
+		if (!icons_hidden && (taskbar_face || jawnosDockIconState(toggle) == 'on')) {
 			icon.show();
 			visible.push(el);
 		}

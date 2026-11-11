@@ -71,4 +71,8 @@ else {
 	diag('node is not installed; the behavioural exit-node checks are skipped');
 }
 
+
+like($js, qr/dock_key == 'k'.*?softKbDockOpen\('letters'\)/s, 'Ctrl+Super+K opens the keyboard');
+like($js, qr/dock_key == 'c'.*?softKbDockOpen\('calc'\)/s, 'Ctrl+Super+C opens the calculator');
+
 done_testing();

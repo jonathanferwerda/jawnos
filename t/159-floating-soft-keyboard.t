@@ -158,4 +158,8 @@ like($kb, qr/dock\.css\('position', 'fixed'\);/,
 like($kb, qr/css\(\{ position: '', left: '', top: '', bottom: '', width: '', height: '', 'max-height': '' \}\)/,
 	'a phone dock drops the fixed pin again');
 
+
+like($kb, qr/#keyboard_toggle, #calculator_toggle/, 'the start-menu keyboard and calculator faces are taken');
+like($kb, qr/softKbDockOpen\(calc \? 'calc' : 'letters'\)/, 'and open the dock on their own page');
+
 done_testing();
