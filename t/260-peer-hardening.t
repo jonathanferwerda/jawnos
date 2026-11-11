@@ -43,6 +43,26 @@ $row->{grant_expires} = 1;
 $row->{grant_scope} = 'trusted';
 ok(!subs::peer_allows($c, $row, 'visitor'), 'an expired grant is refused');
 
+# --- the proved key is either half of the row's identity -------------------
+# Which half the gate proved depends on how the caller was found: a direct
+# roster row is proved by its uuid, a machine the hub listed in another row's
+# `mirrors` blob only by its signatorial. Comparing `uuid || signatorial`
+# refused the mirror-proved caller whose row also had a uuid, even with the
+# grant the person had set - that was CloudSync's "that peer is not trusted
+# for cloud sync" on a phone and a Dev whose grants were already trusted.
+{
+	my $mirror = { uuid => 'row-uuid', signatorial => 'mirror-sig', grant_scope => 'trusted', grant_expires => 0 };
+	ok(subs::peer_allows(FakeC->new('mirror-sig'), $mirror, 'trusted'),
+		'a signatorial proved through a mirror reaches the row');
+	ok(subs::peer_allows(FakeC->new('row-uuid'), $mirror, 'trusted'),
+		'and so does the row uuid');
+	ok(!subs::peer_allows(FakeC->new('someone-else'), $mirror, 'trusted'),
+		'an unrelated key is still refused');
+	$mirror->{grant_scope} = 'visitor';
+	ok(!subs::peer_allows(FakeC->new('mirror-sig'), $mirror, 'trusted'),
+		'and the grant still decides what the row may do');
+}
+
 # --- the signature binds body and audience ----------------------------------
 my $crypt = source('lib/JawnOS/Domain/Crypt.pm');
 like($crypt, qr/X-Peer-Sig-Version', '2'/, 'the signer announces v2');

@@ -197,7 +197,9 @@ my $ua = Mojo::UserAgent->new;
 ok(subs::peer_tls_verify($ua), 'peer_tls_verify reports the CA');
 is($ua->tls_options->{'SSL_ca_file'}, "$tmp/server/house-ca.pem", 'and points the agent at it');
 
-# A row whose peer listener is actually open, so the probe can say yes.
+# A socket that answers is not enough: the leaf has to prove the address the
+# peer will be dialled by, or the verified request dies in the handshake. A bare
+# TCP listener serves nothing that can prove, so the stored route is kept.
 my $listener = IO::Socket::INET->new(
 	LocalAddr => '127.0.0.1', LocalPort => 0, Proto => 'tcp',
 	Listen => 5, ReuseAddr => 1);
@@ -206,8 +208,8 @@ SKIP: {
 	my $peer_port = $listener->sockport;
 	my $rm = { ip => '127.0.0.1', port => $peer_port - 6, tunnel => 'no' };
 	my ($url, $verified) = subs::peer_secure_url($rm, "https://127.0.0.1:$peer_port/manager/vault_share?x=1");
-	is($verified, 1, 'the peer listener is chosen when it answers');
-	like($url, qr{^https://127\.0\.0\.1:[0-9]+/manager/vault_share\?x=1$}, 'the path and query survive');
+	is($verified, 0, 'a listener that cannot prove its address is not chosen');
+	is($url, "https://127.0.0.1:$peer_port/manager/vault_share?x=1", 'the stored route is kept as it is');
 
 	my ($tunnel_url, $tunnel_verified) = subs::peer_secure_url(
 		{ %$rm, tunnel => 'yes' }, "https://127.0.0.1:$peer_port/manager");
@@ -217,6 +219,86 @@ SKIP: {
 	my ($other_url, $other_verified) = subs::peer_secure_url($rm, 'https://10.9.9.9/manager');
 	is($other_verified, 0, 'a URL that is not the row address is left alone');
 	is($other_url, 'https://10.9.9.9/manager', 'unchanged');
+}
+
+
+# --- the probe follows the leaf, not just the socket ------------------------
+# The bug this proves: a phone's LAN address moved (DHCP), its leaf still named
+# the old one, and every verified call to the listener failed with "hostname
+# verification failed" and no response at all - CloudSync read the peer as
+# "answered no status" while it was up. The probe now handshakes against the
+# house CA, so only a listener whose leaf names this address is chosen.
+SKIP: {
+	skip 'openssl is not installed', 5 unless $openssl && length $openssl && -x $openssl;
+	my $tmp = tempdir(CLEANUP => 1);
+	make_path("$tmp/scripts");
+	copy("$root/scripts/house_ca.pl", "$tmp/scripts/house_ca.pl") or die $!;
+	`cd '$tmp' && $perl scripts/house_ca.pl init >/dev/null 2>&1`;
+	`cd '$tmp' && $perl scripts/house_ca.pl issue --name here --ip 127.0.0.1 --out here >/dev/null 2>&1`;
+	`cd '$tmp' && $perl scripts/house_ca.pl issue --name moved --ip 10.20.0.10 --out moved >/dev/null 2>&1`;
+	my %cert = (
+		here  => "$tmp/here/peer-fullchain.pem",
+		moved => "$tmp/moved/peer-fullchain.pem",
+	);
+	my %key = (
+		here  => "$tmp/here/peer-privkey.pem",
+		moved => "$tmp/moved/peer-privkey.pem",
+	);
+	local $ENV{'JAWNOS_ROOT'} = $tmp;
+	my $serve = sub {
+		my ($name) = @_;
+		return () unless -s $cert{$name} && -s $key{$name};
+		my $probe = IO::Socket::INET->new(LocalAddr => '127.0.0.1', LocalPort => 0,
+			Proto => 'tcp', Listen => 1, ReuseAddr => 1);
+		return () unless $probe;
+		my $port = $probe->sockport;
+		close $probe;
+		my $pid = fork();
+		return () unless defined $pid;
+		if (!$pid) {
+			open(STDOUT, '>', '/dev/null');
+			open(STDERR, '>', '/dev/null');
+			exec($openssl, 's_server', '-quiet', '-www', '-accept', "127.0.0.1:$port",
+				'-cert', $cert{$name}, '-key', $key{$name});
+			exit 1;
+		}
+		for (1 .. 30) {
+			my $s = IO::Socket::INET->new(PeerAddr => '127.0.0.1', PeerPort => $port,
+				Proto => 'tcp', Timeout => 1);
+			if ($s) { close $s; last }
+			select(undef, undef, undef, 0.1);
+		}
+		return ($pid, $port);
+	};
+
+	my ($here_pid, $here_port) = $serve->('here');
+	if (!$here_pid) {
+		skip 'the leaf listener did not start', 5;
+	}
+	else {
+		my ($url, $verified) = subs::peer_secure_url(
+			{ ip => '127.0.0.1', port => $here_port - 6, tunnel => 'no' },
+			"https://127.0.0.1:$here_port/manager");
+		is($verified, 1, 'a listener whose leaf names this address is chosen');
+		like($url, qr{^https://127\.0\.0\.1:[0-9]+/manager$}, 'and the URL moves to its port');
+		is(subs::peer_tls_port({ ip => '127.0.0.1', port => $here_port - 6 }, { host => '127.0.0.1' }),
+			$here_port, 'the probe answers with the listener port');
+		kill 'TERM', $here_pid;
+		waitpid($here_pid, 0);
+		my ($moved_pid, $moved_port) = $serve->('moved');
+		if (!$moved_pid) {
+			skip 'the second leaf listener did not start', 2;
+		}
+		else {
+			my ($moved_url, $moved_verified) = subs::peer_secure_url(
+				{ ip => '127.0.0.1', port => $moved_port - 6, tunnel => 'no' },
+				"https://127.0.0.1:$moved_port/manager");
+			is($moved_verified, 0, 'a leaf that names another address is not chosen');
+			is($moved_url, "https://127.0.0.1:$moved_port/manager", 'so the stored route is kept');
+			kill 'TERM', $moved_pid;
+			waitpid($moved_pid, 0);
+		}
+	}
 }
 
 # --- the listener and the advertisement -------------------------------------

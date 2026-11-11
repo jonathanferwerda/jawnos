@@ -438,7 +438,13 @@ sub peer_verify {
 	# that result instead of refusing a request the house just accepted.
 	my $verified = $c->stash('peer_verified_key');
 	my $row_key = $rm->{'uuid'} || $rm->{'signatorial'};
-	return 1 if $verified && $row_key && $verified eq $row_key;
+	# either half of the row's identity counts: the gate proves a direct row by
+	# its uuid and a mirror entry by its signatorial (see peer_allows)
+	if ($verified && length $verified) {
+		foreach my $key ( ($rm->{'uuid'} // ''), ($rm->{'signatorial'} // '') ) {
+			return 1 if length $key && $verified eq $key;
+		}
+	}
 	my $stored = $rm->{'pubkey'} // '';
 	my $ts = $c->req->headers->header('X-Peer-Timestamp');
 	my $nonce = $c->req->headers->header('X-Peer-Nonce');

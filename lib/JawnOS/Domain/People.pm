@@ -108,10 +108,20 @@ sub person_for_ticket {
 sub peer_allows {
 	my ($c, $rm, $required) = @_;
 	return 0 unless $rm && ref $rm eq 'HASH';
-	my $row_key = $rm->{'uuid'} || $rm->{'signatorial'};
-	return 0 unless $row_key;
 	my $verified = $c ? $c->stash('peer_verified_key') : undef;
-	return 0 unless $verified && $verified eq $row_key;
+	# The proved key is one half of the row's identity, and which half depends
+	# on how the caller was verified: a direct roster row is proved by its uuid,
+	# but a machine the hub listed in another row's `mirrors` blob is only known
+	# by its signatorial. Either half names the same machine, so either may
+	# match. Comparing only `uuid || signatorial` refused a mirror-verified
+	# caller whose uuid the row happened to have: the phone and Dev answered
+	# "that peer is not trusted for cloud sync" while their grant was trusted.
+	return 0 unless $verified && length $verified;
+	my $row_key = 0;
+	foreach my $key ( ($rm->{'uuid'} // ''), ($rm->{'signatorial'} // '') ) {
+		$row_key = 1 if length $key && $verified eq $key;
+	}
+	return 0 unless $row_key;
 	my %rank = &peer_scope_rank();
 	my $grant = lc($rm->{'grant_scope'} // '');
 	# An empty grant is not trust. A machine is visitor until someone grants

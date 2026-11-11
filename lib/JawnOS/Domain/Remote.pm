@@ -316,7 +316,8 @@ my %peer_tls_probe;
 sub peer_tls_port {
 	my ($rm, $opts) = @_;
 	$opts ||= {};
-	return 0 unless length &peer_ca_file();
+	my $ca = &peer_ca_file();
+	return 0 unless length $ca;
 	my $host = $opts->{'host'} // ($rm->{'ip'} // '');
 	return 0 unless defined $host && length $host;
 	my $port = &peer_port_for($rm);
@@ -325,9 +326,24 @@ sub peer_tls_port {
 	if (my $cached = $peer_tls_probe{$key}) {
 		return $cached->[1] if $now - $cached->[0] < 300;
 	}
-	require IO::Socket::INET;
-	my $sock = IO::Socket::INET->new(
-		PeerAddr => $host, PeerPort => $port, Proto => 'tcp', Timeout => 1);
+	# The listener is worth dialling only when its leaf proves this address. A
+	# LAN address that moved (DHCP) leaves the leaf naming the old one, and then
+	# every verified request to the listener died with "hostname verification
+	# failed" and no response at all: the peer looked like it "answered no
+	# status" while it was up and answering, and CloudSync to it silently found
+	# no device. A TCP probe cannot see that; a handshake against the house CA
+	# can. A peer whose leaf does not match keeps the stored route, which the
+	# peer signature alone proves - exactly what a peer with no leaf does.
+	require IO::Socket::SSL;
+	my $sock = IO::Socket::SSL->new(
+		PeerHost         => $host,
+		PeerPort         => $port,
+		SSL_ca_file      => $ca,
+		SSL_verify_mode  => IO::Socket::SSL::SSL_VERIFY_PEER(),
+		SSL_verifycn_name => $host,
+		SSL_hostname     => $host,
+		Timeout          => 2,
+	);
 	my $ok = $sock ? 1 : 0;
 	close $sock if $sock;
 	$peer_tls_probe{$key} = [ $now, $ok ? $port : 0 ];
