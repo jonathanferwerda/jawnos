@@ -100,6 +100,9 @@ var jawnosConsoleCommands = {
 	notesReload: function () {
 		if (typeof notesReload === 'function') { notesReload(); }
 	},
+	notesCategoriesReload: function () {
+		if (typeof notesCategoriesReload === 'function') { notesCategoriesReload(); }
+	},
 	listProxy: function (a) {
 		if (typeof listProxy === 'function') { listProxy(a[0], a[1]); }
 	},
