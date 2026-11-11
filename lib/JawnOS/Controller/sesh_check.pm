@@ -269,7 +269,13 @@ sub action_7519 {
 			if ($archive_root) {
 				my $formatted_folder = $archive_root;
 				$js->{'archive_dir'} = $formatted_folder;
-				my $df = `df -h $formatted_folder`;
+				my $df = '';
+				if (open(my $dfh, '-|', 'df', '-h', $formatted_folder)) {
+					local $/;
+					$df = <$dfh>;
+					close $dfh;
+				}
+				$df = '' unless defined $df;
 				my @df = split /\n/, $df;
 				my @first_line = split(/\s+/, $df[0]);
 				my @data_line = split(/\s+/, $df[1]);

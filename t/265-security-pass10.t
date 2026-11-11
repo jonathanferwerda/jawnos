@@ -19,6 +19,15 @@ like($setup, qr/Crypt::PRNG::random_bytes/, 'the setup code draws from the OS');
 unlike($setup, qr/int\( rand\(100000000\) \)/, 'it is no longer an 8-digit rand()');
 like($setup, qr/while \( length\(\$fresh\) < 12 \)/, 'and it is twelve digits, not eight');
 
+# The code seals the house, so it must not be an argv word: `-k "$code"` left it
+# in `ps` for as long as openssl ran. A private pass file is read and removed.
+unlike($setup, qr/-k "\$code"/, 'the unlock code is not an openssl argv word');
+like($setup, qr/'-pass', 'file:' \. \$pass_path/, 'openssl reads the code from a private pass file');
+like($setup, qr/chmod 0600, \$pass_path/, 'the pass file is private');
+like($setup, qr/unlink \$pass_path/, 'the pass file is removed');
+like($setup, qr/system\('shred', '-u', \$doomed\)/, 'the scratch copies are shredded in list form');
+unlike($setup, qr/`shred -u/, 'no scratch path reaches a shell');
+
 my $render = source('lib/JawnOS/Domain/Render.pm');
 like($render, qr/sub session_secret_rotate_legacy/, 'a legacy derived key can be rotated');
 like($render, qr/session_secret_rotate_legacy\(\$pinned\)/, 'a boot calls the rotation');

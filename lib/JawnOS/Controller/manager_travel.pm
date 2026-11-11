@@ -33,6 +33,7 @@ use List::Util qw(shuffle);
 use Data::Dumper;
 use Mojo::Util qw/md5_sum html_unescape xml_escape term_escape quote unquote secure_compare url_escape url_unescape network_contains punycode_decode punycode_encode b64_decode b64_encode/;
 use File::Find;
+use File::Path;
 use File::Slurp;
 use File::Type;
 use File::Copy;
@@ -314,7 +315,7 @@ sub action_33508 {
 	# pictures the device holds for itself
 	my $photo = &subs::setting_grabber({ app => 'misc', setting => 'photo_location', device => $device }) || 'Pictures';
 	my $folder = &subs::home($photo) . '/me';
-	`mkdir -p "$folder"`;
+	eval { File::Path::make_path($folder) };
 	my $guess_uuid = &subs::random_string_creator(15);
 	my $raw = $folder . '/guess_' . $guess_uuid . '.png';
 	write_file($raw, $bytes);

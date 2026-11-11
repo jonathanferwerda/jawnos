@@ -605,7 +605,7 @@ sub email_receiver {
 								my $u_data = { server_time => &subs::rightNow(), f => $destination . $asset, uuid => &subs::random_string_creator(28), type => $type, mail_uuid => $mailbox_uuid };
 								my $thumb = $destination . '/.thumbs';
 								if ($type eq 'image') {
-									`mkdir -p $thumb` unless -e $thumb;
+									eval { File::Path::make_path($thumb) } unless -e $thumb;
 									$u_data->{'thumb'} = $thumb . '/' . $asset;
 
 								}

@@ -1,4 +1,4 @@
-# tests-for: lib/JawnOS/Manager/Part01.pm lib/JawnOS/Manager/Part02.pm lib/JawnOS/Manager/Part04.pm lib/JawnOS/Manager/Part12.pm lib/JawnOS/Domain/Notify.pm lib/JawnOS/Domain/Records2.pm lib/JawnOS/Domain/Records.pm lib/JawnOS/Domain/Crypt.pm lib/JawnOS/Domain/Sent.pm lib/JawnOS/Domain/People.pm lib/JawnOS/Domain/Run.pm lib/JawnOS/Domain/Embedded.pm lib/JawnOS/Controller/manager_misc3.pm lib/JawnOS/Controller/manager_embedded.pm lib/JawnOS/Controller/manager_configure.pm lib/JawnOS/Controller/manager_configure2.pm lib/JawnOS/Controller/manager_configure5.pm lib/JawnOS/Controller/manager_mail2.pm lib/JawnOS/Controller/sesh_check.pm lib/JawnOS/Manager/Part17.pm lib/JawnOS/Domain/Backup.pm lib/JawnOS/Domain/Name.pm scripts/security_audit.pl
+# tests-for: lib/JawnOS/Manager/Part01.pm lib/JawnOS/Manager/Part02.pm lib/JawnOS/Manager/Part04.pm lib/JawnOS/Manager/Part12.pm lib/JawnOS/Domain/Notify.pm lib/JawnOS/Domain/Records2.pm lib/JawnOS/Domain/Records.pm lib/JawnOS/Domain/Crypt.pm lib/JawnOS/Domain/Sent.pm lib/JawnOS/Domain/People.pm lib/JawnOS/Domain/Run.pm lib/JawnOS/Domain/Embedded.pm lib/JawnOS/Controller/manager_misc3.pm lib/JawnOS/Controller/manager_embedded.pm lib/JawnOS/Controller/manager_configure.pm lib/JawnOS/Controller/manager_configure2.pm lib/JawnOS/Controller/manager_configure5.pm lib/JawnOS/Controller/manager_mail2.pm lib/JawnOS/Controller/sesh_check.pm lib/JawnOS/Controller/manager_travel.pm lib/JawnOS/Manager/Part17.pm lib/JawnOS/Domain/Backup.pm lib/JawnOS/Domain/Name.pm scripts/security_audit.pl
 # covers:    The fourth audit pass: a request timestamp is a number before it
 #           reaches a capture filename, a run command loses every shell
 #           metacharacter, the QR encodes the URL it was given, and the shells
@@ -102,8 +102,23 @@ my $crypt = source('lib/JawnOS/Domain/Crypt.pm');
 like($crypt, qr/&subs::shell_quote\(\$key_file\)/, 'peer verification quotes its key path');
 like($crypt, qr/&subs::shell_quote\(\$key\)/, 'peer signing quotes its private key path');
 
-like(source('lib/JawnOS/Domain/People.pm'), qr/&subs::shell_quote\(\$key_file\)/,
+my $people = source('lib/JawnOS/Domain/People.pm');
+like($people, qr/&subs::shell_quote\(\$key_file\)/,
 	'the device signature check quotes its paths');
+unlike($people, qr/`mkdir -p \$thumb`/, 'no mail thumbnail folder is made through a shell');
+like($people, qr/eval \{ File::Path::make_path\(\$thumb\) \} unless -e \$thumb/,
+	'the mail thumbnail folder is made in Perl');
+
+# The archive root is a misc setting a resident can write, so `df -h $dir`
+# let a `$(...)` in that setting run. df takes the path as one argv word.
+my $sesh = source('lib/JawnOS/Controller/sesh_check.pm');
+unlike($sesh, qr/`df -h \$formatted_folder`/, 'no archive path reaches df through a shell');
+like($sesh, qr/open\(my \$dfh, '-\\|', 'df', '-h', \$formatted_folder\)/,
+	'the archive disk report runs df in list form');
+
+my $travel = source('lib/JawnOS/Controller/manager_travel.pm');
+unlike($travel, qr/`mkdir -p "\$folder"`/, 'no guessed picture folder is made through a shell');
+like($travel, qr/eval \{ File::Path::make_path\(\$folder\) \}/, 'the guessed picture folder is made in Perl');
 
 my $run = source('lib/JawnOS/Domain/Run.pm');
 like($run, qr/\$branch = 'main' unless \$branch =~ \/\\A\[A-Za-z0-9\]/, 'a branch name is a ref, not a shell word');

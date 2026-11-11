@@ -389,7 +389,15 @@ sub make_database {
 	}
 	my $temp_backup = $working . '.1.db';
 	backup_database($working, $temp_backup);
-	`openssl enc -e -k "$code" -$standard -pbkdf2 -in $temp_backup -out $enc_file`;
+	# The unlock code is a passphrase, not an argv word: `-k` left it in `ps` for
+	# as long as openssl ran. Hand openssl a private file and remove it after.
+	require File::Temp;
+	my ($pass_fh, $pass_path) = File::Temp::tempfile('jawnos-pass-XXXXXX', TMPDIR => 1, UNLINK => 0);
+	chmod 0600, $pass_path;
+	print $pass_fh $code;
+	close $pass_fh;
+	system('openssl', 'enc', '-e', '-pass', 'file:' . $pass_path, '-' . $standard, '-pbkdf2', '-in', $temp_backup, '-out', $enc_file);
+	unlink $pass_path;
 	unless ( -e $enc_file && -s $enc_file > 100 ) {
 		return { error => 'openssl failed to encrypt the database.' };
 	}
@@ -405,8 +413,12 @@ sub make_database {
 		unlink $working, $temp_backup, "$working-wal", "$working-shm";
 	}
 	else {
-		`shred -u $working $temp_backup $working-wal $working-shm 2>/dev/null`;
-		`rm -f $working-wal $working-shm $temp_backup`;
+		# list form: these are the house's paths, but a shell still expands a
+		# `$()` that got into one of them
+		for my $doomed ( $working, $temp_backup, "$working-wal", "$working-shm" ) {
+			system('shred', '-u', $doomed) if -e $doomed;
+		}
+		system('rm', '-f', "$working-wal", "$working-shm", $temp_backup);
 	}
 
 	return { ok => 1, enc_file => $enc_file, database => $live_db, code => $code, seeded => $seeded };
