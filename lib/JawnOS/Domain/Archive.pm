@@ -399,12 +399,22 @@ sub archive_send_file {
 		# streamed in pieces so the bar moves while the bytes do
 		my ($res, $err) = $post_chunk->($file, 0, 1, 0);
 		if ($res && $res->{'status'} eq 'ok') {
-			return ($total || 0, undef, { size => ($res->{'size'} || $total || 0), sha256 => $res->{'sha256'}, resumed => 0 });
+			return ($total || 0, undef, {
+				size => ($res->{'size'} || $total || 0),
+				sha256 => $res->{'sha256'},
+				resumed => 0,
+				kept => $res->{'kept'},
+				deleted_at => $res->{'deleted_at'}
+			});
 		}
 		return (0, ($res && $res->{'error'}) || $err || 'the upload did not land', { resumed => 0 });
 	}
 	my ($offset, $sent) = ($start, 0);
 	my $last_sha;
+	# The last chunk's answer is the receiver's verdict on the whole file;
+	# the caller needs it (a CloudSync peer refuses a copy its tombstone
+	# outlived and names the deletion the sender must take locally).
+	my $last_res;
 	$progress->($start, $total) if $start > 0;
 	while ($offset < $total) {
 		my $take = $total - $offset > $chunk ? $chunk : $total - $offset;
@@ -465,10 +475,17 @@ sub archive_send_file {
 			return (0, ($res && $res->{'error'}) || $err || "the upload stopped at $offset bytes", { resumed => $start > 0 });
 		}
 		$last_sha = $res->{'sha256'} if defined $res->{'sha256'};
+		$last_res = $res if $final;
 		$sent += $take;
 		$offset += $take;
 	}
-	return ($sent, undef, { size => $total, sha256 => $last_sha, resumed => $start > 0 });
+	return ($sent, undef, {
+		size => $total,
+		sha256 => $last_sha,
+		resumed => $start > 0,
+		kept => ($last_res ? $last_res->{'kept'} : undef),
+		deleted_at => ($last_res ? $last_res->{'deleted_at'} : undef)
+	});
 }
 
 # A transfer whose destination is this machine: the same job the queue shows,
@@ -1751,18 +1768,25 @@ sub cloud_sync_finalize_upload {
 		my $local_size = $exists ? ($stat[7] || 0) : 0;
 		my $incoming_size = -s $part;
 		$incoming_size = 0 unless defined $incoming_size;
+		# A copy the person deleted stays deleted, whichever side still holds
+		# one. The tombstone is compared with the upload's time even when a copy
+		# is already on disk here, because that copy is exactly the stale one a
+		# peer keeps pushing back; asking only when the file was absent let the
+		# next sweep bring it in on time alone. Nothing is written for a refusal:
+		# a fresh tombstone time each pass would look like a new deletion to the
+		# sender and the two sides would never agree.
+		if (defined $tomb && $tomb >= $mtime) {
+			unlink $part if -e $part;
+			unlink $meta_path if ($meta_path && -e $meta_path);
+			$state->{'__dirty'} = 0;
+			return { accepted => 0, kept => 'deleted', deleted_at => 0 + $tomb };
+		}
 		my $local_hash;
 		# A hash is only needed where it decides something: identical bytes
 		# under different times, or a real tie. The common changed file is
 		# settled by its time.
 		if ($exists && ($local_size == $incoming_size || $local_mtime == $mtime)) {
 			$local_hash = &archive_file_digest($final_path);
-		}
-
-		if (!$exists && defined $tomb && $tomb >= $mtime) {
-			unlink $part if -e $part;
-			unlink $meta_path if ($meta_path && -e $meta_path);
-			return { accepted => 0, kept => 'deleted', deleted_at => 0 + $tomb };
 		}
 
 		if ($exists && defined $local_hash && $local_hash eq $incoming_hash) {
@@ -2145,17 +2169,25 @@ sub cloud_sync_totals {
 # the hash already in the state, so a large folder is not hashed every minute.
 # Every file, for a device that has just joined an existing folder: the other
 # members consider their copies settled, so only a one-time full list can seed
-# the newcomer. Hashes already in the state are reused.
+# the newcomer. Hashes already in the state are reused. A seed carries the
+# folder's tombstones too: a deleted file is not on disk, so a list of files
+# alone would never tell the peers to delete it, and a device that still held
+# an old copy would go on offering it. A copy that is not newer than its own
+# tombstone is not offered at all - the deletion is the later fact.
 sub cloud_sync_full_changes {
 	my ($path, $base) = @_;
 	my $state = &cloud_sync_state_read($base);
 	my @changes;
+	my %seen;
 	foreach my $file ( @{ &cloud_sync_files($path) } ) {
 		my $rel = &cloud_sync_relative_for($path, $file);
 		next unless length $rel;
+		$seen{$rel} = 1;
 		my @stat = stat($file);
 		my $size = $stat[7] || 0;
 		my $mtime = $stat[9] || 0;
+		my $tomb = $state->{'deleted'}->{$rel};
+		next if (defined $tomb && $tomb >= $mtime);
 		my $old = $state->{'files'}->{$rel};
 		my $hash = ($old && defined $old->{'hash'} && ($old->{'size'} || 0) == $size && ($old->{'mtime'} || 0) == $mtime)
 			? $old->{'hash'} : &archive_file_digest($file);
@@ -2165,6 +2197,19 @@ sub cloud_sync_full_changes {
 			size => $size,
 			mtime => $mtime,
 			hash => $hash
+		};
+	}
+	foreach my $rel ( keys %{ $state->{'deleted'} } ) {
+		next if $seen{$rel};
+		# An unreadable time is not re-stamped: the sweep already refuses to
+		# invent one, and a seed must not turn an old tombstone into a new
+		# deletion on every pass.
+		my $deleted_at = &cloud_sync_deleted_at($state->{'deleted'}->{$rel});
+		next unless defined $deleted_at;
+		push @changes, {
+			kind => 'delete',
+			rel => $rel,
+			deleted_at => $deleted_at
 		};
 	}
 	return \@changes;

@@ -345,6 +345,203 @@ is(subs::cloud_sync_state_read($fractional_base)->{'deleted'}->{'fractional.txt'
 my $timeless = subs::cloud_sync_apply_delete($fractional_base, $fractional_dest, undef);
 ok($timeless->{'error'}, 'a deletion with no time is refused rather than applied as 0');
 
+# ---- a seed pass carries the tombstones, not only the files -----------------
+#
+# "Start syncing" and "Sync now" seed every member with the local folder. The
+# seed listed the files on disk only, so a file the person deleted was never
+# offered as a deletion, and a device that still held a copy could offer it
+# back. A tombstone whose file is gone must travel as a delete, and a copy that
+# is not newer than its own tombstone must not travel at all.
+
+sub cloud_state_at {
+	my ($base, $rel) = @_;
+	my $state = subs::cloud_sync_state_read($base);
+	return $state->{'deleted'}->{$rel};
+}
+
+sub cloud_seed_job {
+	my ($dir, $base, $reply) = @_;
+	my $ua = CloudSyncFakeUA->new($reply);
+	local *subs::remote_agent_for = sub { return { ua => $ua, manager => 'https://peer.invalid' } };
+	my $job = CloudSyncFakeJob->new();
+	subs::cloud_sync_job($job, {
+		path => $dir,
+		base => $base,
+		seed => 1,
+		devices => [ { uuid => 'peer-uuid', hostname => 'Peer' } ]
+	});
+	return ($job, $ua);
+}
+
+my $seed_dir = tempdir(DIR => $test_home, CLEANUP => 1);
+my $seed_base = substr($seed_dir, length($test_home) + 1);
+write_file("$seed_dir/gone.txt", 'gone');
+utime 1000, 1000, "$seed_dir/gone.txt";
+subs::cloud_sync_collect_changes($seed_dir, $seed_base);
+subs::cloud_sync_state_modify($seed_base, sub { $_[0]->{'pending'} = []; return 1 });
+unlink "$seed_dir/gone.txt";
+my $seed_collected = subs::cloud_sync_collect_changes($seed_dir, $seed_base);
+is(scalar @{$seed_collected}, 1, 'the deletion is collected before the seed');
+my $seed_tomb = cloud_state_at($seed_base, 'gone.txt');
+ok($seed_tomb, 'with a tombstone');
+subs::cloud_sync_state_modify($seed_base, sub { $_[0]->{'pending'} = []; return 1 });
+my $seed_changes = subs::cloud_sync_full_changes($seed_dir, $seed_base);
+my ($seed_delete) = grep { ($_->{'kind'} || '') eq 'delete' } @{$seed_changes};
+ok($seed_delete, 'a seed carries the tombstone as a delete');
+is($seed_delete->{'rel'}, 'gone.txt', 'for the path that is gone');
+is($seed_delete->{'deleted_at'}, $seed_tomb, 'with the time the deletion was recorded');
+
+# A stale copy that sits in the folder again must not be offered: its time does
+# not beat the tombstone, so the deletion is still the truth.
+write_file("$seed_dir/gone.txt", 'back again');
+utime 900, 900, "$seed_dir/gone.txt";
+my $seed_stale = subs::cloud_sync_full_changes($seed_dir, $seed_base);
+is(scalar @{$seed_stale}, 0, 'a copy older than its own tombstone is never offered by a seed');
+
+# An edit after the delete is newer than the tombstone, so it does travel - as
+# the file, exactly as the conflict rule says.
+my $seed_edit_at = $seed_tomb + 10;
+write_file("$seed_dir/gone.txt", 'edited after the delete');
+utime $seed_edit_at, $seed_edit_at, "$seed_dir/gone.txt";
+my $seed_edit = subs::cloud_sync_full_changes($seed_dir, $seed_base);
+is(scalar @{$seed_edit}, 1, 'a copy newer than the tombstone is offered');
+is($seed_edit->[0]->{'kind'}, 'file', 'as a file, so the edit wins');
+is($seed_edit->[0]->{'rel'}, 'gone.txt', 'at the path it was deleted from');
+
+# The seed job then has to delete on the peer, not only add files.
+unlink "$seed_dir/gone.txt";
+my $seed_ua_dir = tempdir(DIR => $test_home, CLEANUP => 1);
+my $seed_ua_base = substr($seed_ua_dir, length($test_home) + 1);
+write_file("$seed_ua_dir/gone.txt", 'gone');
+utime 1000, 1000, "$seed_ua_dir/gone.txt";
+subs::cloud_sync_collect_changes($seed_ua_dir, $seed_ua_base);
+subs::cloud_sync_state_modify($seed_ua_base, sub { $_[0]->{'pending'} = []; return 1 });
+unlink "$seed_ua_dir/gone.txt";
+subs::cloud_sync_collect_changes($seed_ua_dir, $seed_ua_base);
+subs::cloud_sync_state_modify($seed_ua_base, sub { $_[0]->{'pending'} = []; return 1 });
+my $seed_ua_tomb = cloud_state_at($seed_ua_base, 'gone.txt');
+my ($seed_job, $seed_job_ua) = cloud_seed_job($seed_ua_dir, $seed_ua_base,
+	{ status => 'ok', deleted => 0, kept => 0, deleted_at => $seed_ua_tomb });
+ok($seed_job->finished, 'a seed that only has a tombstone still finishes');
+my ($seed_delete_call) = grep { $_->{'url'} =~ m{/manager/folders/cloud/delete$} } @{ $seed_job_ua->calls };
+ok($seed_delete_call, 'the seed sends the deletion to the peer');
+is($seed_delete_call->{'form'}->{'path'}, 'gone.txt', 'for the tombstoned path');
+is($seed_delete_call->{'form'}->{'deleted_at'}, $seed_ua_tomb, 'with the same whole-second time');
+
+# ---- a receiver refuses a stale copy against its own tombstone ----------------
+#
+# The receive path only consulted its tombstone when the file was absent. A
+# stale copy already on disk (an earlier sweep's winner, or a copy that came
+# back) let the next upload win on time alone, so a deleted file reappeared on
+# every sweep. The tombstone now decides before the local file does, whichever
+# side still holds the copy.
+
+my $refuse_dir = tempdir(DIR => $test_home, CLEANUP => 1);
+my $refuse_base = substr($refuse_dir, length($test_home) + 1);
+write_file("$refuse_dir/gone.txt", 'stale local copy');
+utime 4000, 4000, "$refuse_dir/gone.txt";
+subs::cloud_sync_state_modify($refuse_base, sub {
+	my $st = shift;
+	$st->{'deleted'}->{'gone.txt'} = 5000;
+	return 1;
+});
+my $refuse_dest = subs::cloud_sync_destination({ base => $refuse_base, path => 'gone.txt' });
+write_file("$refuse_dir/gone.txt.part", 'stale incoming bytes');
+my $refuse_hash = subs::archive_file_digest("$refuse_dir/gone.txt.part");
+my $refused = subs::cloud_sync_finalize_upload({
+	base => $refuse_base,
+	dest => $refuse_dest,
+	part => "$refuse_dir/gone.txt.part",
+	mtime => 4500,
+	hash => $refuse_hash,
+});
+is($refused->{'accepted'}, 0, 'a file older than its tombstone is refused even when a copy is on disk');
+is($refused->{'kept'}, 'deleted', 'the receiver says the deletion stands');
+is($refused->{'deleted_at'}, 5000, 'and names the time the sender must not beat');
+is(read_file("$refuse_dir/gone.txt"), 'stale local copy', 'the file on disk is not overwritten');
+ok(!-e "$refuse_dir/gone.txt.part", 'the refused part is discarded');
+is(cloud_state_at($refuse_base, 'gone.txt'), 5000, 'the refusal writes no new tombstone time');
+
+# Refusing twice must not move the tombstone: a re-sent stale copy is answered
+# the same, so the two sides can agree instead of renewing the deletion.
+write_file("$refuse_dir/gone.txt.part", 'stale incoming bytes');
+my $refused_again = subs::cloud_sync_finalize_upload({
+	base => $refuse_base,
+	dest => $refuse_dest,
+	part => "$refuse_dir/gone.txt.part",
+	mtime => 4500,
+	hash => $refuse_hash,
+});
+is($refused_again->{'kept'}, 'deleted', 'a re-sent stale copy is refused the same way');
+is($refused_again->{'deleted_at'}, 5000, 'with the same deletion time');
+is(cloud_state_at($refuse_base, 'gone.txt'), 5000, 'so the tombstone is not renewed and refusing cannot loop');
+
+# An older tombstone still lets a newer file win: an edit after the delete
+# brings the file back.
+my $win_dir = tempdir(DIR => $test_home, CLEANUP => 1);
+my $win_base = substr($win_dir, length($test_home) + 1);
+write_file("$win_dir/edited.txt", 'stale local copy');
+utime 4000, 4000, "$win_dir/edited.txt";
+subs::cloud_sync_state_modify($win_base, sub {
+	my $st = shift;
+	$st->{'deleted'}->{'edited.txt'} = 4500;
+	return 1;
+});
+my $win_dest = subs::cloud_sync_destination({ base => $win_base, path => 'edited.txt' });
+write_file("$win_dir/edited.txt.part", 'edited after the delete');
+my $win_hash = subs::archive_file_digest("$win_dir/edited.txt.part");
+my $won = subs::cloud_sync_finalize_upload({
+	base => $win_base,
+	dest => $win_dest,
+	part => "$win_dir/edited.txt.part",
+	mtime => 5000,
+	hash => $win_hash,
+});
+is($won->{'accepted'}, 1, 'a file newer than the tombstone is accepted');
+is(read_file("$win_dir/edited.txt"), 'edited after the delete', 'and takes the name');
+ok(!cloud_state_at($win_base, 'edited.txt'), 'the superseded tombstone is gone');
+
+# ---- the sender drops the copy a peer says was deleted ----------------------
+#
+# When the receiver refuses, its answer carries kept => deleted and the time.
+# The sender must take that deletion locally, once, and clear the change; the
+# send detail dropped those fields, so its local copy stayed and every pass
+# offered it again.
+
+my $drop_dir = tempdir(DIR => $test_home, CLEANUP => 1);
+my $drop_base = substr($drop_dir, length($test_home) + 1);
+write_file("$drop_dir/stale.txt", 'stale');
+utime 4000, 4000, "$drop_dir/stale.txt";
+my $drop_changes = subs::cloud_sync_collect_changes($drop_dir, $drop_base);
+is(scalar @{$drop_changes}, 1, 'the stale copy is a collected file change');
+my ($drop_job) = cloud_delete_job($drop_dir, $drop_base, $drop_changes, sub {
+	my ($url, $form) = @_;
+	if ($url =~ m{/manager/folders/cloud/probe$}) {
+		return { status => 'ok', exists => 1, size => 5, mtime => 3000, deleted_at => 0, partial => {} };
+	}
+	if ($url =~ m{/manager/folders/cloud/receive$}) {
+		return { status => 'ok', kept => 'deleted', deleted_at => 5000, size => 5 };
+	}
+	return { status => 'error', error => 'unexpected request' };
+});
+ok($drop_job->finished, 'a refused upload still finishes the job');
+ok(!$drop_job->failed, 'and is not a transport failure');
+ok(!-e "$drop_dir/stale.txt", 'the sender drops the copy the peer says was deleted');
+is(cloud_state_at($drop_base, 'stale.txt'), 5000, 'and records the peer\'s deletion time');
+is(scalar @{ subs::cloud_sync_state_read($drop_base)->{'pending'} || [] }, 0,
+	'and the settled file change leaves pending');
+my $drop_seed = subs::cloud_sync_full_changes($drop_dir, $drop_base);
+my @drop_deletes = grep { ($_->{'kind'} || '') eq 'delete' && $_->{'rel'} eq 'stale.txt' } @{$drop_seed};
+is(scalar @drop_deletes, 1, 'a later seed offers the tombstone, not the file: the loop ends');
+is($drop_deletes[0]->{'deleted_at'}, 5000, 'at the time the peer named');
+
+# A peer that already agrees answers ok, without touching its tombstone.
+my $drop_dest = subs::cloud_sync_destination({ base => $drop_base, path => 'stale.txt' });
+my $agreed = subs::cloud_sync_apply_delete($drop_base, $drop_dest, 5000);
+is($agreed->{'kept'}, 0, 'a repeat deletion is not a conflict');
+is($agreed->{'deleted'}, 0, 'there is nothing left to remove');
+is(cloud_state_at($drop_base, 'stale.txt'), 5000, 'and the tombstone keeps its time');
+
 # ---- a device row stays a hash after the selected flag ----------------------
 
 my $device_rows = [ { uuid => 'u', hostname => 'h', ok => 1, selected => 0 } ];
