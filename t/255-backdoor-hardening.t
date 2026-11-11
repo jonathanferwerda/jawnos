@@ -144,8 +144,21 @@ my $desk = sub_body('lib/JawnOS/Manager/Part12.pm', 'ticket_desk_allowed');
 like($desk, qr/peer_allows\(\$c, \$rm, 'trusted'\)/,
 	'a peer session needs a trusted row at the ticket desk');
 my $mint = sub_body('lib/JawnOS/Manager/Part12.pm', 'qrcode_generator');
-like($mint, qr/\^\(\?:citizen\|resident\|guest\|visitor\)\$/,
-	'a minted pass carries one of the four rungs');
+like($mint, qr/\^\(\?:citizen\|resident\|guest\|visitor\|blacklisted\)\$/,
+	'a minted pass carries a rung the desk knows, the deny rung included');
+my ($mint_rungs) = $mint =~ m{/\^\(\?:([^)]+)\)\$/};
+my %mint_rung = map { $_ => 1 } split /\|/, ($mint_rungs // '');
+ok($mint_rung{'blacklisted'}, 'blacklisted is minted as the deny, never clamped to a visitor');
+ok(!$mint_rung{'mayor'}, 'and a name the desk does not know is refused');
+my $ticket_route = sub_body('lib/JawnOS/Controller/manager_misc4.pm', 'action_13872');
+like($ticket_route, qr/\(\?:citizen\|resident\|guest\|visitor\|blacklisted\)/,
+	'the mint route accepts the same rungs');
+like($ticket_route, qr/error => 'bad request'/, 'and refuses a crafted name');
+my $upgrade = sub_body('lib/JawnOS/Controller/manager_misc4.pm', 'action_14367');
+like($upgrade, qr/\$gb::chairs->\{\$privilege\}/, 'the upgrade route keeps the chair check');
+like($upgrade, qr/error => 'bad request'/, 'and refuses a name that is not a chair');
+ok($gb::chairs->{'blacklisted'}, 'the loaded chair table carries the deny rung');
+ok(!$gb::chairs->{'mayor'}, 'and refuses a name that is not a chair');
 my $clock = sub_body('lib/JawnOS/Controller/manager_clock.pm', 'action_22744');
 unlike($clock, qr/&app_peer_ok\(\$c\)/,
 	'an alarm edit from a peer is the trusted branch, not the app rail');

@@ -940,10 +940,11 @@ sub qrcode_generator($params) {
 	my $suds = $params->{'suds'};
 	my $warranty = $params->{'warranty'};
 	my $privilege = $params->{'privilege'};
-	# A pass carries one of the desk's four rungs. A missing or unknown name is
-	# never a promotion: the CLI and the approval path name a rung directly, and
-	# the ticket routes whitelist it before they get here.
-	$privilege = 'visitor' unless defined $privilege && $privilege =~ /^(?:citizen|resident|guest|visitor)$/;
+	# A pass carries a rung the desk knows - blacklisted included: that is the
+	# deny, and clamping it to a visitor would turn a refusal into an admission.
+	# A missing or unknown name is never a promotion; the CLI and the approval
+	# path name a rung directly, and the ticket routes whitelist it first.
+	$privilege = 'visitor' unless defined $privilege && $privilege =~ /^(?:citizen|resident|guest|visitor|blacklisted)$/;
 	my $peer_signatorial = $params->{'peer_signatorial'} || '';
 	my $db = $params->{'db'};
 	my $database = $params->{'database'};
