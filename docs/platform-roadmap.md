@@ -5,9 +5,10 @@
 Linux**: every seam exists and the probe asks it (v0.1.2584). Windows now comes first (D10): the
 Windows runner, no-fork servers and named jobs, the `Process` backend, cold-start DB/cert bootstrap
 and a trivially easy clean install have landed and been exercised on VM200; restart from the app
-and the CLI is verified (four consecutive restarts, v0.1.2676). P3 remains in progress for the Job
-Object, the other platform bodies and packaging. P2 (macOS) is deferred until a Mac or a macOS CI
-runner exists. Runbook and acceptance checklist: `docs/platform-p0.md`.
+and the CLI is verified (four consecutive restarts, v0.1.2676), and the Windows installer bundle is
+built and verified on VM200 (v0.1.2695). P3 remains in progress for the single signed Setup.exe/MSI,
+the reproducible runtime build, the Qt shell/tray and the remaining platform bodies. P2 (macOS) is
+deferred until a Mac or a macOS CI runner exists. Runbook and acceptance checklist: `docs/platform-p0.md`.
 **Related:** `desktop/README.md` (the Qt shell and today's supervisor), `docs/docker.md` (the
 headless server), `docs/migration-roadmap.md` (the Go path, the alternative endgame),
 `docs/infrastructure-roadmap.md` (where containers still belong).
@@ -377,7 +378,7 @@ machine.
 ### P3 — Windows native — IN PROGRESS on VM200
 
 **Landed on VM200** (win11-p0, Windows 11 x64, 4 cores/8 GB, on ks5; `.shots/AGENT-CHECKPOINT.md`
-v0.1.2508-2612):
+v0.1.2508-2695):
 
 - the runner seam and `Runner/Windows.pm` (v0.1.2508; `t/232`, `t/231`), and a graceful tree stop
   over the tree transport (v0.1.2512);
@@ -396,7 +397,13 @@ v0.1.2508-2612):
   `USERPROFILE`, and the tree no longer inherits the master's log handle; the runner socket is
   non-blocking (v0.1.2606) and registered as a Mojo stream (v0.1.2612);
 - setup builds the database without `sqlite3` or `tail` — one implementation in
-  `lib/JawnOS/Database/Bootstrap.pm`, DBD::SQLite for the schema and backup (v0.1.2602, `t/248`).
+  `lib/JawnOS/Database/Bootstrap.pm`, DBD::SQLite for the schema and backup (v0.1.2602, `t/248`);
+- the Windows installer (`installer/windows/`, v0.1.2695): `build-portable.ps1` assembles the tree
+  plus a prepared Strawberry runtime (with a non-git fallback), `install.ps1`/`Install.bat` install
+  per user, seed the config and database with a 6-digit unlock code, create the Start
+  Menu/Desktop/autostart shortcuts and a program-scoped private firewall rule, launch hidden and
+  probe the port, and `uninstall.ps1` removes the tree, rule and all three shortcuts; `t/255` pins
+  it.
 
 **Clean install verified on VM200** (v0.1.2612): delete the tree, extract the archive, copy
 `config.json.example` to `config.json`, start — `/manager` and `/manager/health` answer 200 on the
@@ -404,12 +411,16 @@ first attempt, the database is 524,288 B from the seed, and the certificate/key 
 `sqlite3`, `tail` or `getpwuid` step remains. The loop was run with `open_browser: no` so the first
 hit was the test's, not the boot browser's.
 
+**Windows installer verified on VM200** (v0.1.2695): with `C:\Strawberry` renamed away, the bundle
+installed to `%LOCALAPPDATA%\JawnOS`, seeded the database, wrote `unlock-code.txt`, served
+`/manager` and `/manager/health` 200, ran the master and every worker from the bundled
+`runtime\perl\bin\perl.exe`, created the Start Menu/Desktop/Startup shortcuts, and added a
+program-scoped private firewall rule for the bundled perl. Uninstall removed the folder, rule and
+all three shortcuts; a reinstall was clean. This is the **web** install; the Qt shell/tray is still
+P3.
+
 **Next:**
 
-- Restart is verified (v0.1.2676): four consecutive control restarts were accepted, `--status`
-  answered at every checkpoint, the master pid stayed and the President pid changed each time, and
-  the old tree's workers were swept (no orphan parents). `manager_killer.pl master` and the
-  desktop's kill+start path work on Windows too.
 - The restart verdict is written **before** the tree swap, so control is briefly unavailable during
   the restart itself (up to ~2 minutes on the first, cold guard; later ones are ~4 s). Seed
   `verify-manifest` at install time so a fresh install's first restart does not pay the full
@@ -423,9 +434,12 @@ hit was the test's, not the boot browser's.
 - Windows platform modules: `Win32::Process`/`Proc::ProcessTable`/`tasklist`, `ipconfig`/`Get-Net*`
   / `netstat -ano`, DNS-SD, WASAPI, `COM*`, the spooler, WinRT BLE, clipboard/toasts/`ShellExecute`;
   `LOCALAPPDATA` and `%TEMP%` in `Paths`.
-- Firewall rules for 46200-46205, then package a signed MSI/MSIX with the bundled Perl runtime,
-  Start menu, tray, "Start with Windows" and an updater, and repeat the clean install on a fresh
-  Windows VM.
+- Wrap the tested bundle in a single signed installer: finish `installer/windows/jawnos.iss`
+  (Inno Setup) or an MSI/MSIX, with the updater; make the runtime build reproducible (download the
+  portable Strawberry and `cpanm` the pinned set from `.github/workflows/platform-p0.yml`) instead
+  of trusting a prepared runtime; seed `verify-manifest` at install time.
+- Build the Qt shell/tray and "Start with Windows" polish, then repeat the clean install on a fresh
+  Windows VM with no Perl, Python or WSL.
 - Acceptance: a `device=computer` house on a real Windows box with no WSL, Docker, Perl or Python
   installed by the user.
 
