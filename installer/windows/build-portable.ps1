@@ -24,11 +24,39 @@ param(
 $ErrorActionPreference = 'Stop'
 
 function Invoke-Robocopy {
-    param([string]$Source, [string]$Destination)
+    param(
+        [string]$Source,
+        [string]$Destination,
+        [string[]]$ExcludeDirs,
+        [string[]]$ExcludeFiles
+    )
     $rcArgs = @($Source, $Destination, '/E', '/NFL', '/NDL', '/NJH', '/NJS', '/NP', '/R:1', '/W:1')
+    if ($ExcludeDirs) {
+        $rcArgs += '/XD'
+        $rcArgs += $ExcludeDirs
+    }
+    if ($ExcludeFiles) {
+        $rcArgs += '/XF'
+        $rcArgs += $ExcludeFiles
+    }
     & robocopy @rcArgs | Out-Null
     if ($LASTEXITCODE -ge 8) {
         throw "robocopy failed (exit $LASTEXITCODE) copying $Source to $Destination"
+    }
+}
+
+function Test-GitWorkTree {
+    param([string]$Path)
+    if (-not (Get-Command git -ErrorAction SilentlyContinue)) { return $false }
+    $saved = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        $null = & git -C $Path rev-parse --is-inside-work-tree 2>&1
+        return ($LASTEXITCODE -eq 0)
+    } catch {
+        return $false
+    } finally {
+        $ErrorActionPreference = $saved
     }
 }
 
@@ -70,14 +98,49 @@ $tmp = Join-Path ([System.IO.Path]::GetTempPath()) ('jawnos-build-' + [Guid]::Ne
 New-Item -ItemType Directory -Force -Path $tmp | Out-Null
 
 try {
-    # --- app\ comes from the commit, never from the working tree -----------
-    # git archive carries tracked files only: no .git, no config.json, no
-    # database, no untracked leftovers from the machine that built it.
-    $appZip = Join-Path $tmp 'app.zip'
-    Write-Host 'Archiving the tracked application tree ...'
-    & git -C $TreeDir archive --format=zip --prefix=app/ -o $appZip HEAD
-    if ($LASTEXITCODE -ne 0) { throw "git archive failed (exit $LASTEXITCODE) in $TreeDir" }
-    Expand-Archive -Path $appZip -DestinationPath $stage -Force
+    # --- app\ comes from the tree ------------------------------------------
+    # A git checkout is archived from HEAD: tracked files only, no .git, no
+    # config.json, no database, no untracked leftovers from the build machine.
+    # VM200 has no git, and a staged tree is often an extracted archive with no
+    # .git at all, so the fallback copies the tree and excludes the same local
+    # state by name. Exclusions are relative to the tree root.
+    $appDir = Join-Path $stage 'app'
+    $appSource = 'plain copy'
+    if (Test-GitWorkTree $TreeDir) {
+        $appSource = 'git archive'
+        $appZip = Join-Path $tmp 'app.zip'
+        Write-Host 'Archiving the tracked application tree with git ...'
+        & git -C $TreeDir archive --format=zip --prefix=app/ -o $appZip HEAD
+        if ($LASTEXITCODE -ne 0) { throw "git archive failed (exit $LASTEXITCODE) in $TreeDir" }
+        Expand-Archive -Path $appZip -DestinationPath $stage -Force
+    } else {
+        Write-Host 'No git work tree here; copying the application tree ...'
+        $excludeDirs = @(
+            (Join-Path $TreeDir '.git'),
+            (Join-Path $TreeDir '.worktrees'),
+            (Join-Path $TreeDir 'dist'),
+            (Join-Path $TreeDir 'releases'),
+            (Join-Path $TreeDir '.shots'),
+            (Join-Path $TreeDir 'qa\docker'),
+            (Join-Path $TreeDir 'desktop\mkosi\.stage'),
+            'node_modules',
+            '__pycache__'
+        )
+        $excludeFiles = @(
+            (Join-Path $TreeDir 'config.json'),
+            (Join-Path $TreeDir 'database\jawnos.db'),
+            (Join-Path $TreeDir 'database\jawnos.db-*'),
+            (Join-Path $TreeDir 'server\fullchain.pem'),
+            (Join-Path $TreeDir 'server\privkey.pem'),
+            '*.pyc',
+            '*.log'
+        )
+        Invoke-Robocopy $TreeDir $appDir -ExcludeDirs $excludeDirs -ExcludeFiles $excludeFiles
+    }
+
+    $appFiles = @(Get-ChildItem -LiteralPath $appDir -Recurse -File).Count
+    Write-Host "App source: $appSource"
+    Write-Host "App payload: $appFiles files"
 
     # --- runtime\ is the prepared Strawberry tree --------------------------
     Write-Host 'Copying the Perl runtime ...'

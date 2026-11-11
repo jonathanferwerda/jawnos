@@ -62,6 +62,24 @@ like($build, qr/Mandatory\s*=\s*\$true/, 'build-portable.ps1 requires -RuntimeDi
 like($build, qr/README\.txt/, 'build-portable.ps1 stages README.txt');
 unlike($build, qr{C:\\Strawberry}i, 'build-portable.ps1 does not hardcode C:\Strawberry');
 
+# VM200 has no git, so a staged tree must still build. The script probes for a
+# work tree and otherwise copies it with the same local state excluded.
+like($build, qr/rev-parse/, 'build-portable.ps1 probes for a git work tree');
+like($build, qr/is-inside-work-tree/, 'the probe asks rev-parse for the work tree');
+like($build, qr/plain copy/, 'build-portable.ps1 names the non-git fallback');
+like($build, qr/App payload:/, 'build-portable.ps1 reports the app file count');
+like($build, qr{/XD}, 'the fallback sends directory exclusions through /XD');
+like($build, qr{/XF}, 'the fallback sends file exclusions through /XF');
+
+like($build, qr/Join-Path \$TreeDir '\.git'/, 'plain copy excludes .git');
+like($build, qr/Join-Path \$TreeDir '\.worktrees'/, 'plain copy excludes .worktrees');
+like($build, qr/Join-Path \$TreeDir 'releases'/, 'plain copy excludes releases');
+like($build, qr/Join-Path \$TreeDir '\.shots'/, 'plain copy excludes .shots');
+like($build, qr/Join-Path \$TreeDir 'database\\jawnos\.db'/,
+	'plain copy excludes the live database');
+like($build, qr/Join-Path \$TreeDir 'server\\fullchain\.pem'/,
+	'plain copy excludes the TLS material');
+
 # --- uninstall.ps1 ----------------------------------------------------------
 
 like($uninstall, qr/advfirewall/, 'uninstall.ps1 talks to the firewall');
