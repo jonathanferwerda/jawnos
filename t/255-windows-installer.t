@@ -32,6 +32,15 @@ my $uninstall = read_source('installer/windows/uninstall.ps1');
 my $bat       = read_source('installer/windows/Install.bat');
 my $iss       = read_source('installer/windows/jawnos.iss');
 
+# PowerShell 5.1 reads "$Variable: ..." inside a double-quoted string as a
+# drive-qualified variable and fails to parse the file. env: and the other
+# scopes are the legitimate exceptions; a drive letter (C:) has no leading $.
+my $scope = qr/(?:env|global|script|local|private|variable|function|alias|using)\b/;
+for my $script (['install.ps1', $install], ['build-portable.ps1', $build], ['uninstall.ps1', $uninstall]) {
+	unlike($script->[1], qr/\$(?!$scope)[A-Za-z_][A-Za-z0-9_]*:/,
+		"$script->[0] has no unbraced \$Variable: interpolation");
+}
+
 # --- install.ps1 ------------------------------------------------------------
 
 like($install, qr/runtime\\c\\bin/, 'install.ps1 puts runtime\c\bin on PATH');
@@ -74,10 +83,11 @@ like($build, qr/\barchive\b/, 'build-portable.ps1 takes app\ from git archive');
 like($build, qr/RuntimeDir/, 'build-portable.ps1 names its prepared runtime');
 like($build, qr/Mandatory\s*=\s*\$true/, 'build-portable.ps1 requires -RuntimeDir');
 like($build, qr/README\.txt/, 'build-portable.ps1 stages README.txt');
+like($build, qr/\$\{Destination\}/, 'the robocopy error braces Destination safely');
 like($build, qr/Join-Path \$TreeDir 'desktop\\mkosi'/,
 	'plain copy excludes the mkosi image tree');
 like($build, qr/robocopy failed \(exit \$code\)/, 'a robocopy failure is a build error');
-like($build, qr/copying \$Source to \$Destination/,
+like($build, qr/copying \$Source to \$\{Destination\}/,
 	'a robocopy failure names the copy');
 
 unlike($build, qr{C:\\Strawberry}i, 'build-portable.ps1 does not hardcode C:\Strawberry');
@@ -107,6 +117,18 @@ like($uninstall, qr/advfirewall/, 'uninstall.ps1 talks to the firewall');
 like($uninstall, qr/delete/, 'uninstall.ps1 deletes the named rule');
 like($uninstall, qr/name=JawnOS/, 'uninstall.ps1 names the JawnOS rule');
 like($uninstall, qr/Startup/, 'uninstall.ps1 removes the Startup shortcut');
+like($uninstall, qr/Join-Path \$env:APPDATA 'Microsoft\\Windows\\Start Menu\\Programs'/,
+	'uninstall.ps1 falls back to APPDATA for the Start menu');
+like($uninstall, qr/Join-Path \$env:ProgramData 'Microsoft\\Windows\\Start Menu\\Programs'/,
+	'uninstall.ps1 falls back to ProgramData');
+like($uninstall, qr/Join-Path \$env:USERPROFILE 'Desktop'/,
+	'uninstall.ps1 falls back to the user profile Desktop');
+like($uninstall, qr/Join-Path \$env:APPDATA 'Microsoft\\Windows\\Start Menu\\Programs\\Startup'/,
+	'uninstall.ps1 falls back to the APPDATA Startup folder');
+like($uninstall, qr/'Programs', 'Desktop', 'Startup'/,
+	'uninstall.ps1 removes all three shortcut kinds');
+like($uninstall, qr/Removed shortcut \$link/,
+	'uninstall.ps1 prints each removed shortcut');
 unlike($uninstall, qr{C:\\Strawberry}i, 'uninstall.ps1 does not hardcode C:\Strawberry');
 
 # --- Install.bat ------------------------------------------------------------

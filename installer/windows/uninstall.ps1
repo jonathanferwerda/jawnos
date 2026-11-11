@@ -24,11 +24,43 @@ function Note {
     Write-Host $Message
 }
 
-function Get-ShortcutPath {
-    param([string]$Folder)
-    $base = [Environment]::GetFolderPath($Folder)
-    if ([string]::IsNullOrWhiteSpace($base)) { return '' }
-    return (Join-Path $base 'JawnOS.lnk')
+# The same fallback order install.ps1 uses, but find-only: an uninstall must
+# not create an empty Start menu folder just to discover it is empty.
+function Get-ShortcutPaths {
+    param([string]$Kind)
+    $paths = @()
+    $candidates = @()
+    switch ($Kind) {
+        'Programs' {
+            $candidates += [Environment]::GetFolderPath('Programs')
+            if ($env:APPDATA) {
+                $candidates += (Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs')
+            }
+            if ($env:ProgramData) {
+                $candidates += (Join-Path $env:ProgramData 'Microsoft\Windows\Start Menu\Programs')
+            }
+        }
+        'Desktop' {
+            $candidates += [Environment]::GetFolderPath('Desktop')
+            if ($env:USERPROFILE) {
+                $candidates += (Join-Path $env:USERPROFILE 'Desktop')
+            }
+        }
+        'Startup' {
+            $candidates += [Environment]::GetFolderPath('Startup')
+            if ($env:APPDATA) {
+                $candidates += (Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\Startup')
+            }
+        }
+    }
+    foreach ($candidate in $candidates) {
+        if ([string]::IsNullOrWhiteSpace($candidate)) { continue }
+        $link = Join-Path $candidate 'JawnOS.lnk'
+        if ((Test-Path -LiteralPath $link) -and ($paths -notcontains $link)) {
+            $paths += $link
+        }
+    }
+    return $paths
 }
 
 if (-not (Test-Path -LiteralPath $InstallDir)) {
@@ -97,9 +129,13 @@ try {
 
 # --- shortcuts --------------------------------------------------------------
 
-foreach ($folder in @('Programs', 'Desktop', 'Startup')) {
-    $link = Get-ShortcutPath $folder
-    if ($link -and (Test-Path -LiteralPath $link)) {
+foreach ($kind in @('Programs', 'Desktop', 'Startup')) {
+    $links = @(Get-ShortcutPaths $kind)
+    if (-not $links) {
+        Note "No $kind shortcut found."
+        continue
+    }
+    foreach ($link in $links) {
         try {
             Remove-Item -LiteralPath $link -Force
             Note "Removed shortcut $link"

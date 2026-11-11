@@ -50,7 +50,7 @@ function Invoke-Robocopy {
     if ($code -ge 8) {
         $detail = @($output | Where-Object { $_ -match 'ERROR|error|could not|Access is denied' } | Select-Object -First 5)
         if (-not $detail) { $detail = @("no detail; source $Source, destination $Destination") }
-        throw "robocopy failed (exit $code) copying $Source to $Destination: " + ($detail -join ' | ')
+        throw "robocopy failed (exit $code) copying $Source to ${Destination}: " + ($detail -join ' | ')
     }
 }
 
