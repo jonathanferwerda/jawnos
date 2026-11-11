@@ -165,11 +165,15 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: windows-release-${{ steps.version.outputs.version }}
+          # The zip is a fallback download, not a signing input; leaving it out
+          # keeps the artifact near 280 MB instead of 690 MB. The release step
+          # still uploads it from dist/. The binaries are already compressed, so
+          # do not spend runner time recompressing them.
           path: |
             dist/JawnOS-${{ steps.version.outputs.version }}-Setup.exe
-            dist/JawnOS-${{ steps.version.outputs.version }}.zip
             dist/SHA256SUMS
             dist/windows_release.json
+          compression-level: 0
           if-no-files-found: error
 
       # --- publish ------------------------------------------------------------
@@ -186,6 +190,13 @@ jobs:
           $draftFlag = @()
           if ('${{ steps.version.outputs.draft }}' -eq 'true') { $draftFlag = @('--draft') }
 
+          # A dispatch can run on a branch other than the default; tag the commit
+          # that was actually built, not whatever the default branch points at.
+          $targetFlag = @()
+          if ('${{ github.ref_type }}' -ne 'tag') {
+            $targetFlag = @('--target', $env:GITHUB_SHA)
+          }
+
           # gh writes "release not found" to stderr; the Actions PowerShell
           # wrapper runs with $ErrorActionPreference='Stop', which turns a
           # redirected native stderr into a terminating error. Ask with
@@ -196,7 +207,7 @@ jobs:
           $exists = ($LASTEXITCODE -eq 0)
           $ErrorActionPreference = $savedPreference
           if (-not $exists) {
-            gh release create $tag --repo $env:REPO @draftFlag `
+            gh release create $tag --repo $env:REPO @draftFlag @targetFlag `
               --title "JawnOS $version" --notes "JawnOS $version for Windows."
             if ($LASTEXITCODE -ne 0) { throw "could not create release $tag" }
           } elseif ($draftFlag.Count -eq 0) {

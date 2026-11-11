@@ -183,6 +183,12 @@ like($wf, qr/windows_release_manifest\.pl/, 'it runs the manifest generator');
 like($wf, qr/windows_release\.json/, 'it publishes windows_release.json');
 like($wf, qr/SHA256SUMS/, 'it publishes SHA256SUMS');
 like($wf, qr/actions\/upload-artifact\@v4/, 'it uploads workflow artifacts');
+like($wf, qr/compression-level:\s*0/,
+	'the artifact upload does not recompress already-compressed binaries');
+my ($unsigned) = $wf =~ /(name: Upload the unsigned artifacts.*?)(?=\n      - name:)/s;
+ok($unsigned, 'the unsigned artifact step is present');
+unlike($unsigned // '', qr/\.zip/, 'the zip stays out of the signing artifact');
+like($wf, qr/--target/, 'a dispatch tags the commit it built');
 
 # The feed: the fixed `releases` tag, the same shape as the Android manifest.
 like($wf, qr{releases/download/releases/}, 'the manifest URL is the fixed releases tag');
