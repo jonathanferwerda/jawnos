@@ -111,14 +111,20 @@ unlike($remote, qr{\$\('#alert_message'\)\.html\('Are you sure},
 unlike($remote, qr{pseudonym_name="' \+ name}, 'no raw pseudonym reaches an attribute');
 
 # --- the server drops angle brackets from what it stores and relays ---------
-like($ws, qr{my \$ws_plain_name = sub}, 'manager_ws has one name sanitizer');
-like($ws, qr{\$value =~ s/\[<>\]//g}, 'which drops the two angle brackets');
-like($ws, qr{pathname => \$ws_plain_name->\(\$data->\{'pathname'\}\)},
-	'a stored pathname is sanitized');
-like($ws, qr{\$n->\{'pathname'\} = \$ws_plain_name->},
-	'a relayed pathname is sanitized');
-like($ws, qr{\$n->\{'room'\} = \$ws_plain_name->},
-	'a relayed room is sanitized');
+like($ws, qr{my \$pathname = \$data->\{'pathname'\}; \$pathname =~ s/\[<>\]//g if defined \$pathname},
+	'a stored pathname loses the two angle brackets');
+like($ws, qr{pathname => \$pathname\n}, 'the stored row uses the sanitized pathname');
+like($ws, qr{\$n->\{'pathname'\} =~ s/\[<>\]//g if defined \$n->\{'pathname'\}},
+	'a relayed pathname loses the two angle brackets');
+like($ws, qr{\$n->\{'room'\} =~ s/\[<>\]//g if defined \$n->\{'room'\}},
+	'a relayed room loses the two angle brackets');
+unlike($ws, qr{ws_plain_name}, 'no file-scoped sanitizer remains above the actions');
+
+# The device action's route row pins it to a line of this file; the helper that
+# used to sit above it is what broke the push. Keep the line honest here too.
+my @ws_lines = split /\n/, $ws;
+like($ws_lines[765] || '', qr{^sub action_766\b},
+	'the device action still sits on its route row line');
 
 # --- the escape helper really escapes, when node is here --------------------
 my ($node) = map { "$_/node" } grep { -x "$_/node" } split /:/, ($ENV{'PATH'} // '');

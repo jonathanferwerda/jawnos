@@ -62,17 +62,6 @@ use IPC::Open2 qw(open2);
 
 our ($APP, $ws_live_window, $encoder, $decoder, $tuuid, $thread_uuid, $universal_splitter, $database, $sql, $remote_input_clipboard, $config_file, $config, $logfile, $log, $environment, $random_caching_string, $duty_file, $main_process, $device, $user_agent, %time_machine_guide_cache, @media_unlock_apps, %help_search_tables, %media_type_for_ext, %file_relay_down, @appointments, @results, %market_payment_family, @manager_bundle_files, $manager_bundle_cache, $js_minifier, %app_release_sha, %folders_desk_not_app, $jg_body, $remote_input_geometry_at, $remote_input_geometry_cache, %remote_input_ua, %remote_input_ws, %remote_input_rm, %remote_input_ws_failed, $public_ip_memo, $coding_protocols, $coding_protocols_mtime, $app_schema_done, $fingerprint_checked_at, $fingerprint_ok, %padlock_time_memo, %credential_browser_app, %app_gate_shadow_seen, $ws_server, %mailws_untrusted_rate);
 
-# The controller is the only view that paints a neighbour's pathname and room,
-# and the beat that carries them is the client's own. A path or a room never
-# holds the two angle brackets, so drop them before a row is stored or relayed:
-# a name that arrives with markup in it stays a name.
-my $ws_plain_name = sub {
-	my ($value) = @_;
-	return $value unless defined $value;
-	$value =~ s/[<>]//g;
-	return $value;
-};
-
 # WEBSOCKET /manager/ws
 sub action_47050 {
 	my $c = shift;
@@ -361,7 +350,7 @@ sub action_47050 {
 				}
 				my $ws_due = (!$ws_cache->{'at'} || ($server_time - $ws_cache->{'at'}) >= $ws_write_refresh);
 				if ($ws_changed || $ws_due) {
-					my $ws_update = {
+					my $pathname = $data->{'pathname'}; $pathname =~ s/[<>]//g if defined $pathname; my $ws_update = {
 						timestamp => $timestamp,
 						server_time => $server_time,
 						type => $data->{'type'},
@@ -369,7 +358,7 @@ sub action_47050 {
 						local_address => $local_address,
 						remote_address => $remote_address,
 						href => $data->{'href'},
-						pathname => $ws_plain_name->($data->{'pathname'})
+						pathname => $pathname
 					};
 					foreach my $optional ( qw/windows music_data jp_data/ ) {
 						$ws_update->{$optional} = $data->{$optional} if defined $data->{$optional};
@@ -426,9 +415,7 @@ sub action_47050 {
 					if ($full) {
 						$ws_neighbour_stamp{$app} = $stamp;
 						$ws_neighbour_at{$app} = $server_time;
-						foreach my $n ( @{$neighbours} ) {
-							$n->{'pathname'} = $ws_plain_name->($n->{'pathname'});
-							$n->{'room'} = $ws_plain_name->($n->{'room'});
+						foreach my $n ( @{$neighbours} ) { $n->{'pathname'} =~ s/[<>]//g if defined $n->{'pathname'}; $n->{'room'} =~ s/[<>]//g if defined $n->{'room'};
 							my $neighbourhood = eval { return decode_json $n->{'windows'} } || {};
 							$n->{'user_agent'} = &subs::abbreviate_name($n->{'user_agent'});
 							foreach my $nw ( keys %{$neighbourhood} ) {
