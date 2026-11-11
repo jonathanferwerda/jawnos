@@ -237,6 +237,24 @@ sub app_gate_shadow_log {
 	$log->info('app gate shadow: would deny ' . $method . ' ' . $path . ' from ' . $remote);
 }
 
+# A Dingaling is the house asking who is at the door, so it is news only from
+# a caller the house cannot place. This machine is 'Me'; an established browser
+# tab (approved, or a session this house already revoked) is a person it knows;
+# and a linked machine on the signed peer rail is a house call. That last one is
+# not obvious: a relay carries the caller's stored cookie, and when the audit
+# left a peer's session 'rejected' (or still 'pending'), every retry fell into
+# the visitor branch and rang the house on each pass - the throttle capped it at
+# one per five minutes, which is still a Dingaling every few minutes for weeks.
+# A rejected cookie is a reason to re-verify the peer, never a reason to treat a
+# linked machine as a stranger: peer_verify proves it far better than a cookie.
+sub dingaling_is_news($c, $visitor, $authentication, $peer_call) {
+	return 0 if ($visitor || '') eq 'Me';
+	return 0 if $peer_call;
+	return 0 if $c->stash('browser_tab_id')
+		&& (($authentication || '') eq 'approved' || ($authentication || '') eq 'revoked');
+	return 1;
+}
+
 sub authentication_passer($c) {
 	my $server_time = &subs::rightNow();
 
@@ -371,11 +389,15 @@ sub authentication_passer($c) {
 
 	my $visitor = $c->tx->local_address eq $c->tx->remote_address ? 'Me' : ($c->param('manager_file') || $c->tx->remote_address);
 	my $string = $app_path;
+	# A linked machine that proved itself on the signed peer rail is a house call,
+	# whatever its stored session says. app_peer_ok is memoised on the stash after
+	# the app gate, so this asks a second time only when the gate was off.
+	my $peer_call = $c->stash('peer_verified_key') || ($app_peer // &app_peer_ok($c));
 	# The Dingaling is for a visitor at the door, not the person at the machine:
 	# a local session's own WebSocket and media-lock polls would otherwise ring
 	# the house every few minutes. Remote visitors still get the throttled alert
 	# below; a request that already carries its tab and session is not news.
-	unless ($visitor eq 'Me' || ($c->stash('browser_tab_id') && ($authentication eq 'approved' || $authentication eq 'revoked'))) {
+	if (&dingaling_is_news($c, $visitor, $authentication, $peer_call)) {
 		# Not every retry deserves a Dingaling: a browser reconnecting after a
 		# network change hammers this, so alert at most once per visitor per
 		# few minutes. The cache row is the throttle stamp (local, unsynced).
