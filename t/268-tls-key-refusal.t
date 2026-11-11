@@ -288,4 +288,16 @@ like(slurp_file("$FindBin::Bin/../lib/JawnOS/Controller/manager_configure2.pm"),
 	qr/if \(\$returner->\{'tls_refused'\}\) \{ \$c->render\(json => \$returner\); return; \}/,
 	'the route returns the refusal before it touches the device row');
 
+# The session the relay rides must be read from the host the login actually
+# reached. remote_device_connect may rewrite $manager to the peer's announced
+# fqdn after the post, and a cookie set for the verified listener literal does
+# not match that name: the jar looked empty and every approved login stored [].
+{
+	my $part11 = slurp_file("$FindBin::Bin/../lib/JawnOS/Manager/Part11.pm");
+	like($part11, qr/find\(Mojo::URL->new\(\$login_manager\)\)/,
+		'the login cookies are read for the listener that served them');
+	unlike($part11, qr/find\(Mojo::URL->new\(\$manager\)\)/,
+		'not for a manager rewritten after the login');
+}
+
 done_testing();

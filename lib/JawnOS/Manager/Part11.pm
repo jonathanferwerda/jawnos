@@ -260,7 +260,15 @@ sub remote_device_connect($rdata) {
 				my $remote_data = encode_json &subs::remote_machine_data_view($returner->{'body'});
 				my $cookie_jar = $ua->cookie_jar;
 				my @cookies;
-				for my $cookie (@{$cookie_jar->find(Mojo::URL->new($manager))}) {
+				# Read the cookies for the host the login was actually posted to.
+				# The branch above can rewrite $manager to the peer's announced
+				# fqdn (a name that pings back to the same address), and a cookie
+				# set for the literal listener address does not match that name:
+				# the jar looked empty and every successful login stored `[]`, so
+				# the session the relay needs was never kept. $login_manager is
+				# the verified listener URL both posts used, and the stored domain
+				# is re-scoped to whatever manager the next request dials.
+				for my $cookie (@{$cookie_jar->find(Mojo::URL->new($login_manager))}) {
 					push @cookies, {
 						name => $cookie->name,
 						value => $cookie->value,
