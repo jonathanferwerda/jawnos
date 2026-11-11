@@ -1,0 +1,53 @@
+# TEMPLATE — substitute <VERSION> and <SHA256> before validating or submitting.
+#
+# <VERSION> is the release version from VERSION (for example 0.1.2724) and
+# <SHA256> is the lowercase hex SHA-256 of that release's Setup.exe (see
+# docs/windows-release.md). The placeholders are deliberately invalid:
+# `winget validate` fails until both are replaced, which is the point.
+#
+# The URL must be the versioned v<VERSION> release, not the fixed `releases`
+# feed. Winget pins the hash, and the feed's bytes change with every release.
+#
+# SilentSwitches in the task notes are winget's InstallerSwitches.Silent; the
+# schema has no field by that name. /MERGETASKS=!lanaccess keeps the optional
+# administrator firewall task out of a silent install.
+PackageIdentifier: JonathanFerwerda.JawnOS
+PackageVersion: <VERSION>
+PackageLocale: en-US
+Publisher: Jonathan Ferwerda
+PublisherUrl: https://jawnos.ca
+PublisherSupportUrl: https://github.com/jonathanferwerda/jawnos/issues
+Author: Jonathan Ferwerda
+PackageName: JawnOS
+PackageUrl: https://jawnos.ca
+License: BSD-2-Clause
+LicenseUrl: https://github.com/jonathanferwerda/jawnos/blob/main/LICENSE
+Copyright: Copyright (c) 2026 Jonathan Ferwerda
+ShortDescription: A personal, self-hosted operating environment.
+Description: JawnOS is a personal, self-hosted operating environment for a house's own devices, data and services. This installer is the per-user Windows x64 build — a bundled Perl runtime and web interface under %LOCALAPPDATA%\JawnOS, with no administrator rights required.
+Moniker: jawnos
+Tags:
+  - personal
+  - self-hosted
+  - operating-environment
+  - server
+  - perl
+  - web
+InstallerType: inno
+Scope: user
+InstallModes:
+  - interactive
+  - silent
+  - silentWithProgress
+ReleaseNotesUrl: https://github.com/jonathanferwerda/jawnos/releases/tag/v<VERSION>
+Installers:
+  - Architecture: x64
+    MinimumOSVersion: 10.0.22000.0
+    InstallerUrl: https://github.com/jonathanferwerda/jawnos/releases/download/v<VERSION>/JawnOS-<VERSION>-Setup.exe
+    InstallerSha256: <SHA256>
+    InstallerSwitches:
+      Silent: /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /MERGETASKS=!lanaccess
+      SilentWithProgress: /SILENT /SUPPRESSMSGBOXES /NORESTART /MERGETASKS=!lanaccess
+    UpgradeBehavior: install
+ManifestType: singleton
+ManifestVersion: 1.6.0
