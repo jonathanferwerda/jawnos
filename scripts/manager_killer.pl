@@ -91,12 +91,14 @@ use JawnOS::Platform::Process ();
 my $kill_master = 0;
 my $list_only = 0;
 my $ask_tree = 0;
+my $keep_coding = 0;
 my $scope = '';
 my $cwd_scope = '';
 foreach my $arg (@ARGV) {
 	if ($arg =~ /^master$/i) { $kill_master = 1 }
 	elsif ($arg eq '--list' || $arg eq '--dry-run') { $list_only = 1 }
 	elsif ($arg eq '--ask-tree') { $ask_tree = 1 }
+	elsif ($arg eq '--keep-coding') { $keep_coding = 1 }
 	elsif ($arg =~ /^--scope=(.+)$/) { $scope = $1 }
 	elsif ($arg =~ /^--cwd=(.+)$/) { $cwd_scope = $1 }
 }
@@ -106,7 +108,14 @@ foreach my $arg (@ARGV) {
 my $self = $$;
 my $parent = JawnOS::Platform::parent_pid();
 my $android = (-e '/system/bin/init' || defined $ENV{'ANDROID_ROOT'}) ? 1 : 0;
-my @SCRIPTS = qw(President.pl Manager.pl Websocket.pl teletype.pl watch.pl Music.pl Alarm.pl);
+# President and the programs it starts. The last three are the ones a Windows
+# Stop used to leave behind: each subprocessor job, the utility scheduler and the
+# Coding daemon - none of them is in the pty the runner ends.
+my @SCRIPTS = qw(President.pl Manager.pl Websocket.pl teletype.pl watch.pl Music.pl Alarm.pl
+	subprocessor_worker.pl utility_jobs.pl Coding.pl);
+# A direct shebang run carries the script as argv[0] and names no interpreter;
+# the same list answers it, so the two can never drift.
+my $SCRIPTS_RE = join '|', map { quotemeta } @SCRIPTS;
 my %RANK = (master => 0, tree => 1, 'jawn-bt' => 2, ollama => 3, tts => 4, sshpass => 5, ssh => 6);
 
 # The executable for a table row: the link when the kernel shows it, otherwise
@@ -195,6 +204,11 @@ sub is_master {
 	return $cmd =~ m{(?:^|[\s/\\])jawn(?:\s|$)} ? 1 : 0;
 }
 
+sub is_coding {
+	my ($cmd) = @_;
+	return $cmd =~ m{(?:^|[\s/\\])Coding\.pl(?:\s|$)} ? 1 : 0;
+}
+
 sub is_tree {
 	my ($cmd, $exe) = @_;
 	return 0 if $cmd =~ / (?:-c|-e|-M) /;
@@ -207,7 +221,7 @@ sub is_tree {
 	}
 	# a direct shebang run carries the script as argv[0]
 	my ($first) = split /\s+/, $cmd;
-	return (defined $first && &base($first)) =~ /^(?:President|Manager|Websocket|teletype|watch|Music|Alarm)\.pl$/
+	return (defined $first && &base($first)) =~ /^(?:$SCRIPTS_RE)$/
 		? 1 : 0;
 }
 
@@ -228,6 +242,11 @@ sub extra {
 # still is perl - a shell, editor, compiler probe or a test that merely mentions
 # a script in its command line is left alone. cwd is read in the same pass so a
 # tree can be held to its checkout without following the link again.
+#
+# --keep-coding leaves Coding.pl alone: the master runs this sweep in its own
+# tree restart, and the Coding daemon is deliberately not part of the tree there
+# (a minutes-long model run must not die in a restart). A desktop Stop or a
+# Restart comes in without the flag and takes it.
 sub scan_processes {
 	my @found;
 	foreach my $proc ( @{ JawnOS::Platform::Process::table(cwd => 1, exe => 1) } ) {
@@ -237,6 +256,7 @@ sub scan_processes {
 		my $cmd = $proc->{'cmdline'};
 		next unless length $cmd;
 		next if length $scope && index($cmd, $scope) < 0;
+		next if $keep_coding && &is_coding($cmd);
 		my $exe = &exe_path($proc->{'exe'}, $cmd);
 		my $label = '';
 		if ($kill_master && &is_master($cmd, $exe)) { $label = 'master' }

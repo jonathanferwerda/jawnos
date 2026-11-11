@@ -80,6 +80,15 @@ like($network_src, qr/JawnOS::Platform::fork_available\(/,
 like($src, qr{\Q[\s/\\]\E}, 'the command-line match accepts a Windows backslash');
 ok(index($src, 's/\.exe$//i') >= 0, 'a Windows perl.exe name is accepted as perl');
 
+# The Windows Stop reads the command line, which is all the identity a worker
+# has there: the runner ends the pty child, not the 12 subprocessor_worker.pl
+# children it started. The utility scheduler and the Coding daemon have the same
+# shape, so all three are in the script list.
+for my $name (qw(subprocessor_worker.pl utility_jobs.pl Coding.pl)) {
+	like($src, qr/my \@SCRIPTS = qw\([^)]*\Q$name\E/s,
+		"$name is named by the command-line sweep");
+}
+
 # The Windows Stop path runs this file before it signals anything, so a stray
 # POSIX call must fail here, not on the desktop.
 my $compile = `$^X -c $script 2>&1`;
@@ -119,6 +128,47 @@ unlike($master_src, qr{kill\s*\(\s*0\s*,}, 'the master does not test liveness wi
 like($master_src, qr{JawnOS::Platform::Process::pid_exists}, 'the master asks the seam whether a pid exists');
 like($master_src, qr{JawnOS::Platform::Process::table}, 'the master scans through the process table');
 
+# A restart replaces only the President in the pty. Its workers are not in that
+# pty: they outlived it (on Windows with the dead pid still in ParentProcessId)
+# and kept the old listeners bound. The master takes the old pid before the fork
+# is closed and walks its subtree after.
+like($master_src, qr/sub restart_sweep/, 'the master carries a restart subtree sweep');
+like($master_src, qr/my \$old_tree_pid = \$fork \? \$fork->pid : 0;/,
+	'the restart takes the old tree pid before the fork is closed');
+like($master_src, qr/&restart_sweep\(\$old_tree_pid\)/,
+	'the restart sweeps the old subtree');
+like($master_src, qr/\$keep_coding \? ' --keep-coding'/,
+	'a restart tells the named sweep to keep the Coding daemon');
+my ($sweep_sub) = $master_src =~ /(sub restart_sweep \{.*?\n\})/s;
+ok($sweep_sub, 'restart_sweep is a self-contained helper');
+like($sweep_sub, qr/JawnOS::Platform::Process::tree/, 'the sweep walks the ppid tree');
+like($sweep_sub, qr/JawnOS::Platform::Process::signal/, 'the sweep signals exact pids');
+like($sweep_sub, qr/reverse @\$kids/, 'the children go before the parent');
+
+# Run the real extracted helper against a fixture: the decision and the order
+# are what the restart depends on, not the live process table.
+my $sweep_pkg = 'JawnOS::Test::RestartSweep';
+{
+	my $ok = eval "package $sweep_pkg; $sweep_sub\n1;";
+	is($@, '', 'the extracted sweep compiles under strict');
+	ok($ok, 'and loads');
+}
+my $sweep = $sweep_pkg->can('restart_sweep');
+ok($sweep, 'the harness can call restart_sweep');
+my @sent;
+my $swept = $sweep->(4_900_000,
+	tree   => sub { [ 4_900_001, 4_900_002, 4_900_003 ] },
+	signal => sub { push @sent, [@_]; return 1 },
+	alive  => sub { 1 },
+	wait   => 0,
+);
+is($swept, 4, 'the sweep sends to every child and the old parent');
+is_deeply([ map { $_->[1] } @sent ], [ 4_900_003, 4_900_002, 4_900_001, 4_900_000 ],
+	'children are signalled before the parent');
+is($sweep->(1, tree => sub { [2] }, signal => sub { 1 }, alive => sub { 1 }, wait => 0),
+	0, 'pid 1 is not a subtree');
+is($sweep->(undef, tree => sub { [2] }, signal => sub { 1 }), 0, 'no pid is not a subtree');
+
 # A real worker-shaped process: perl running a script named President.pl.
 write_file("$tmp/President.pl", "sleep 60;\n");
 my $fake = fork();
@@ -126,6 +176,26 @@ die "fork fake: $!\n" unless defined $fake;
 if ($fake == 0) {
 	chdir($tmp) or exit 126;
 	exec($^X, "$tmp/President.pl");
+	exit 127;
+}
+
+# The two shapes a Windows Stop used to leave behind: a subprocessor job and the
+# Coding daemon. Both are perl running a script from the checkout, exactly as the
+# sweep reads them.
+write_file("$tmp/subprocessor_worker.pl", "sleep 60;\n");
+my $job = fork();
+die "fork job: $!\n" unless defined $job;
+if ($job == 0) {
+	chdir($tmp) or exit 126;
+	exec($^X, "$tmp/subprocessor_worker.pl");
+	exit 127;
+}
+write_file("$tmp/Coding.pl", "sleep 60;\n");
+my $coding = fork();
+die "fork coding: $!\n" unless defined $coding;
+if ($coding == 0) {
+	chdir($tmp) or exit 126;
+	exec($^X, "$tmp/Coding.pl");
 	exit 127;
 }
 
@@ -145,6 +215,8 @@ if ($probe == 0) {
 }
 
 ok(wait_for_cmdline($fake, 'President.pl'), 'the fake worker is running as President.pl');
+ok(wait_for_cmdline($job, 'subprocessor_worker.pl'), 'the subprocessor worker is running');
+ok(wait_for_cmdline($coding, 'Coding.pl'), 'the Coding daemon is running');
 
 # One shot at --list was enough alone and occasionally empty in a loaded 8-job
 # run (a transient fork failure, not a selection bug). Retry briefly; the
@@ -156,6 +228,11 @@ for (1 .. 5) {
 	sleep 0.2;
 }
 like($list, qr/^\Q$fake\E\t/m, 'the perl worker is selected');
+like($list, qr/^\Q$job\E\t/m, 'a subprocessor worker is selected');
+like($list, qr/^\Q$coding\E\t/m, 'the Coding daemon is selected');
+my $kept = `$^X $script --list --keep-coding --scope=$tmp 2>&1`;
+unlike($kept, qr/^\Q$coding\E\t/m, '--keep-coding leaves the Coding daemon alone');
+like($kept, qr/^\Q$job\E\t/m, 'and still names the tree workers');
 unlike($list, qr/^\Q$shell\E\t/m, 'a shell that merely mentions Manager.pl is not');
 unlike($list, qr/^\Q$probe\E\t/m, 'a perl -e probe is not');
 
@@ -212,6 +289,8 @@ while (time < $deadline) {
 	sleep 0.05;
 }
 ok($reaped, 'the worker is stopped');
+&reap($job);
+&reap($coding);
 ok(kill(0, $shell), 'the shell decoy survives');
 ok(kill(0, $probe), 'the compile probe survives');
 

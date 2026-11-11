@@ -859,7 +859,16 @@ sub restart_commit {
 		&answer_restart($proof, $before);
 		$pending_restart = undef;
 		if ($proof->{'ok'}) {
+			# The pty child is the old tree's President. shut_down() closes and
+			# reaps it, and its own children are not in that pty: they have to be
+			# swept by the pid it had, which we take before the close.
+			my $old_tree_pid = $fork ? $fork->pid : 0;
 			&shut_down(1);
+			# shut_down() ends the President but not the workers it started. On
+			# Windows those children keep the dead parent's ParentProcessId, so
+			# the ppid walk still finds them; children first, then the parent.
+			my $swept = &restart_sweep($old_tree_pid);
+			print "restart subtree sweep: $swept pid(s) signalled under $old_tree_pid\n";
 			$status = 'restarting';
 			$status_why = '';
 			# No blind countdown: shut_down() already waited for the pids it
@@ -927,7 +936,12 @@ sub master_reload {
 		}
 		write_file($status_file, 'good');
 		$master_timer_paused = 1;
+		# The re-exec starts a fresh tree in this master; the old tree's workers
+		# outlive the President the pty owns unless the old pid is swept here too.
+		my $old_tree_pid = $fork ? $fork->pid : 0;
 		&shut_down(1);
+		my $swept = &restart_sweep($old_tree_pid);
+		print "reload subtree sweep: $swept pid(s) signalled under $old_tree_pid\n";
 		exec($^X, $master_path, @ARGV) or do {
 			print "re-exec of $master_path failed: $!\n";
 			$master_timer_paused = 0;
@@ -1090,7 +1104,10 @@ sub shut_down() {
 	# /usr/bin/perl, so './scripts/manager_killer.pl' fails to exec and the sweep
 	# silently never runs (leftover processes keep the web port and wedge the
 	# next boot). $^X is the interpreter running this master.
-	`"$^X" ./scripts/manager_killer.pl --cwd='$root_q'`;
+	# The Coding daemon is not part of the tree on a restart: the caller said to
+	# keep it, so the sweep is told not to take a Coding.pl down with the workers.
+	my $keep_arg = $keep_coding ? ' --keep-coding' : '';
+	`"$^X" ./scripts/manager_killer.pl --cwd='$root_q'$keep_arg`;
 	# the pids the tree reported to the master, each by its exact number and only
 	# when its command line still names a jawn program - never a substring match, so
 	# a reused pid (or a new process whose number merely contains an old one) is
@@ -1119,6 +1136,14 @@ sub shut_down() {
 		print "INT $fpid (pty)\n";
 	}
 	$fork->close if $fork;
+	# A full stop takes the old President's children with it. The restart paths
+	# above sweep the old pid themselves (their shut_down call keeps the Coding
+	# daemon and returns to a caller that still has work to do), so this one is
+	# only for the stop the master does not come back from.
+	if (!$keep_coding && $fpid) {
+		my $swept = &restart_sweep($fpid);
+		print "subtree sweep: $swept pid(s) signalled under $fpid\n";
+	}
 	# a short grace for the tree to run its own cleanup, then SIGKILL what is left
 	my @alive;
 	for (1 .. 10) {
@@ -1217,6 +1242,48 @@ sub pid_in_tree {
 	my $dir = &pid_cwd($pid);
 	return 1 unless defined $dir && length $dir;
 	return $dir eq $root ? 1 : 0;
+}
+
+# Stop the old President's subtree after its pty child is closed. The runner
+# stops exactly the process it started; the workers President started are not in
+# that pty, and on Windows they keep running with the dead parent's pid still in
+# ParentProcessId, so the ppid walk still names them even after the parent is
+# gone. On POSIX the same walk covers a tree that forked its own children.
+#
+# Children are signalled before the parent, a pid that is already gone is left
+# out, and after a short bounded wait anything still alive is killed.
+# tree/signal/alive are injectable so a test can prove the order against a
+# fixture rather than the live process table.
+sub restart_sweep {
+	my ($pid, %opt) = @_;
+	return 0 unless defined $pid && $pid =~ /^[0-9]+$/ && $pid > 1;
+	my $tree   = $opt{'tree'}   || sub { JawnOS::Platform::Process::tree($_[0]) };
+	my $signal = $opt{'signal'} || sub { JawnOS::Platform::Process::signal($_[0], $_[1]) };
+	my $alive  = $opt{'alive'}  || sub { JawnOS::Platform::Process::pid_exists($_[0]) };
+	my $wait   = exists $opt{'wait'} ? $opt{'wait'} : 1;
+	my $kids   = $tree->($pid);
+	$kids = [] unless ref $kids eq 'ARRAY';
+	my @targets = ((reverse @$kids), $pid);
+	my $sent = 0;
+	my @live;
+	foreach my $target (@targets) {
+		next unless defined $target && $target =~ /^[0-9]+$/ && $target > 1;
+		next if $target == $$;
+		next unless $alive->($target);
+		push @live, $target;
+		$sent++ if $signal->('TERM', $target);
+	}
+	return $sent unless $wait > 0;
+	my $deadline = time + $wait;
+	while (time < $deadline) {
+		last unless grep { $alive->($_) } @live;
+		select(undef, undef, undef, 0.05);
+	}
+	foreach my $target (@live) {
+		next unless $alive->($target);
+		$signal->('KILL', $target);
+	}
+	return $sent;
 }
 
 # ---- the Coding agent's own process -----------------------------------------
