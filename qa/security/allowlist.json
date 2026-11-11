@@ -22,5 +22,95 @@
 		"path": "public/js/manager/websocket/00_console_router.js",
 		"evidence": "eval(command)",
 		"reason": "browserCommand: the same accepted design. The server validated the string and jawnosBrowserCommandValid re-checks it here, accepting only the two fixed shapes (a jQuery click trigger or tree.sound.currentTime arithmetic) and refusing document/window/eval/Function/fetch/alert/angle brackets."
+	},
+	{
+		"id": "tls.insecure",
+		"path": "lib/JawnOS/Domain/Archive.pm",
+		"evidence": "if ($verified) { &subs::peer_tls_verify($ua) } else { $ua->insecure(1) }",
+		"reason": "The machine-to-machine archive pull takes the peer rail's transport decision: peer_secure_url and peer_tls_verify pin the house CA when the peer proves it, and only an unproven peer (no issued leaf) keeps the signed insecure fallback. The pinned peer signature authenticates the request."
+	},
+	{
+		"id": "tls.insecure",
+		"path": "lib/JawnOS/Domain/Crypt.pm",
+		"evidence": "if ($verified) { &subs::peer_tls_verify($ua) } else { $ua->insecure(1) }",
+		"reason": "legacy_reseal_peer_one mirrors the peer rail: a peer proved by its house-CA leaf is verified, and an unenrolled peer keeps the signed insecure fallback. The request carries the peer signature."
+	},
+	{
+		"id": "tls.insecure",
+		"path": "lib/JawnOS/Domain/Git.pm",
+		"evidence": "else { $ua->insecure(1) }",
+		"reason": "The git/APK/voice sync agent verifies against the house CA when peer_secure_url proves the peer; an unproven peer keeps the signed fallback so an unenrolled machine still syncs. The peer signature authenticates every request."
+	},
+	{
+		"id": "tls.insecure",
+		"path": "lib/JawnOS/Domain/House.pm",
+		"evidence": "if ($ask_verified) { &subs::peer_tls_verify($ua) } else { $ua->insecure(1) }",
+		"reason": "The reachability probe uses the transport each base's own listener proved: the verified house-CA listener is verified, and the plain manager port keeps the signed insecure fallback. The probe carries the signed claim."
+	},
+	{
+		"id": "tls.insecure",
+		"path": "perl/Music/02_remote_audio_stream.pl",
+		"evidence": "if ($source_verified) { &subs::peer_tls_verify($ua) } else { $ua->insecure(1) }",
+		"reason": "music_source_uri decides whether the audio source is proved by its house-CA leaf; a proven source is verified and an unproven one keeps the signed insecure stream. The source signature authenticates the stream."
+	},
+	{
+		"id": "tls.insecure",
+		"path": "perl/Music/03_remote_video.pl",
+		"evidence": "if ($source_verified) { &subs::peer_tls_verify($ua) } else { $ua->insecure(1) }",
+		"reason": "music_video_source_uri decides whether the video source is proved by its house-CA leaf; a proven source is verified and an unproven one keeps the signed insecure stream. The source signature authenticates the stream."
+	},
+	{
+		"id": "tls.insecure",
+		"path": "lib/JawnOS/Manager/Part10.pm",
+		"evidence": "else { $ua->insecure(1); }",
+		"reason": "The remote auth/test path mirrors the peer rail: peer_secure_url and peer_tls_verify choose the transport, and an unproven listener keeps the signed insecure fallback. The request is signed by peer_sign_request."
+	},
+	{
+		"id": "tls.insecure",
+		"path": "lib/JawnOS/Domain/Remote.pm",
+		"evidence": "$fresh->insecure(1);",
+		"reason": "peer_retry_useragent copies the caller's transport policy: when the original agent carries the house CA the fresh agent verifies too, and only a rail with no CA (a peer not yet issued a leaf) keeps the old lenient call so an unenrolled fleet still mints tickets."
+	},
+	{
+		"id": "tls.insecure",
+		"path": "lib/JawnOS/Domain/Remote.pm",
+		"evidence": "$rm->{'ua'}->insecure(1) unless $manager_verified;",
+		"reason": "remote_useragent_maker marks the agent insecure only when peer_secure_url did not verify the peer; a verified peer keeps the house CA. Both the cookie and no-cookie branches reach this same decision, so one entry covers the line in both places, and every request rides peer_sign_request."
+	},
+	{
+		"id": "tls.insecure",
+		"path": "lib/JawnOS/Domain/Key.pm",
+		"evidence": "else { $ua->insecure(1); }",
+		"reason": "key_push_one keeps the stored manager and the signed fallback for a peer with no house-CA leaf yet; the pushed key is what enrols it. Once the listener can prove the peer the same call is verified."
+	},
+	{
+		"id": "tls.insecure",
+		"path": "lib/JawnOS/Domain/Devicews.pm",
+		"evidence": "else { $ua->insecure(1); }",
+		"reason": "A raw homebase candidate with no remote_machines row has no CA to prove, so it keeps the signed insecure fallback; a recorded peer is verified through its house-CA leaf. The frame carries the peer signature and chip identity."
+	},
+	{
+		"id": "tls.insecure",
+		"path": "lib/JawnOS/Manager/Part28.pm",
+		"evidence": "else { $ua->insecure(1); }",
+		"reason": "The remote-input HTTP fallback mirrors the peer rail: peer_secure_url and peer_tls_verify select the verified house-CA listener, and an unverified peer keeps the stored manager and the signed fallback."
+	},
+	{
+		"id": "tls.insecure",
+		"path": "lib/JawnOS/Domain/Ble2.pm",
+		"evidence": "$ua->insecure(1) if $url_tls;",
+		"reason": "A private-LAN device serves a self-signed leaf, so its own route keeps the lenient agent; the public house leaf is fetched by a separate agent on the system store. The LAN device is a known local appliance, not a remote peer."
+	},
+	{
+		"id": "tls.insecure",
+		"path": "lib/JawnOS/Controller/manager_people.pm",
+		"evidence": "else { $ua->insecure(1); }",
+		"reason": "An origin with no remote_machines row has no CA to pin (an unrecorded origin), so the cross-house profile lookup keeps the signed insecure fallback. A recorded origin is verified through peer_secure_url and the house CA."
+	},
+	{
+		"id": "tls.insecure",
+		"path": "perl/junderground.pl",
+		"evidence": "$ua->insecure(1) if (&jg_setting('insecure') || '') eq 'yes';",
+		"reason": "The junderground client keeps insecure as an explicit opt-in setting, default off; the agent is lenient only when the person set it to yes. It is a deliberate user choice, never a default."
 	}
 ]

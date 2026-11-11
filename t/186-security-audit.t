@@ -189,4 +189,31 @@ my @js = grep { $_->{'id'} eq 'js.eval' } @{$report->{'findings'}};
 is(scalar @js, 2, 'the console router carries the two accepted evals');
 ok(!(grep { !$_->{'known'} } @js), 'both are known through their evidence-pinned entries');
 
+# The accepted-by-design TLS fallbacks are evidence-pinned too: the entry names
+# the source line, so a reflow cannot break the trunk and a new insecure call
+# cannot inherit the accepted one. Fifteen entries cover sixteen findings
+# because Remote's helper line appears in two branches under one entry.
+my @tls_entries = grep { $_->{'id'} eq 'tls.insecure' } @{$allow};
+is(scalar @tls_entries, 15, 'the accepted insecure-TLS sites are listed');
+ok(!(grep { !defined $_->{'evidence'} || !length $_->{'evidence'} } @tls_entries),
+	'each accepted insecure-TLS site is pinned by evidence');
+ok(!(grep { defined $_->{'line'} } @tls_entries), 'none is pinned by line');
+my %tls_pin = map { (($_->{'path'} // '') . "\0" . $_->{'evidence'}) => 1 } @tls_entries;
+is(scalar keys %tls_pin, scalar @tls_entries, 'no two accepted insecure-TLS sites share a path and pin');
+
+# The run marks those sixteen known (one entry covers two findings) and leaves
+# the design sites and firmware unallowed.
+my @tls_known = grep { $_->{'known'} } @tls;
+is(scalar @tls_known, 16, 'the accepted insecure-TLS findings are known');
+my $design_path = qr{^(?:lib/JawnOS/Domain/(?:Tunnel|Lan)\.pm|lib/JawnOS/Domain/Device\.pm|lib/JawnOS/Controller/manager_configure2\.pm|perl/tunnel\.pl)$};
+my $firmware_path = qr{^(?:jp|jt|jw)/};
+my @design = grep { $_->{'path'} =~ $design_path } @tls;
+ok(scalar @design >= 6, 'the design sites are still reported');
+ok(!(grep { $_->{'known'} } @design), 'the design sites stay unallowed');
+my @firmware = grep { $_->{'path'} =~ $firmware_path } @tls;
+ok(scalar @firmware > 0, 'firmware insecure-TLS calls are still reported');
+ok(!(grep { $_->{'known'} } @firmware), 'firmware setInsecure stays unallowed');
+my @stray = grep { !$_->{'known'} && $_->{'path'} !~ $design_path && $_->{'path'} !~ $firmware_path } @tls;
+is(scalar @stray, 0, 'the only unallowed insecure-TLS calls are the design sites and firmware');
+
 done_testing();
