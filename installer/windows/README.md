@@ -62,8 +62,11 @@ iscc installer\windows\jawnos.iss
 
 `JAWNOS_VERSION` must match the staged folder: `jawnos.iss` reads
 `dist\JawnOS-<version>\`. The output is
-`dist\JawnOS-<version>-Setup.exe`. Inno Setup 6 (`iscc`) is a build-machine
-tool; it is not part of the shipped bundle.
+`dist\JawnOS-<version>-Setup.exe`; sign that file and keep it in `releases/`
+(gitignored), not the repository root. The root is tracked, and
+`build-portable.ps1` excludes `releases/` from the payload so a Setup.exe kept
+there can never be bundled back into the next build. Inno Setup 6 (`iscc`) is a
+build-machine tool; it is not part of the shipped bundle.
 
 The reproducible build path is deliberately deferred: download the portable
 Strawberry Perl archive and `cpanm` the pinned module set, the way
@@ -118,16 +121,20 @@ the copy, which is what makes the bundle possible.
 
 ## Deferred / follow-ups
 
-- **Signing.** `Setup.exe`, the zip and the PowerShell scripts are unsigned.
-  Authenticode signing and SmartScreen reputation are TODO; until then the
-  installer tells the person to choose "More info" then "Run anyway".
+- **Signing.** `Setup.exe` currently carries a **self-signed test signature**
+  (`CN=JawnOS Test Signing`, timestamped by DigiCert), so Windows reports an
+  untrusted publisher. A CA-issued OV/EV certificate (or Azure Trusted Signing)
+  is still required for SmartScreen trust; re-sign the same file with it. The
+  test certificate is `C:\winxfer\JawnOS-test-signing.cer` on VM200.
 - **Seed `verify-manifest` at install time.** The first restart pays the cold
   `verify_change.pl --all` sweep (minutes, per `docs/platform-roadmap.md`);
   writing the manifest during install makes that first restart fast. Not part
   of this change.
-- **Compile and exercise the wrapper on VM200.** `jawnos.iss` is the per-user
-  wrapper described above, but it has not been compiled or run on the VM yet.
-  That run is what turns it from a script into a tested release artifact.
+- **Compile and exercise the wrapper on VM200 — done 2026-11-11.** Install under
+  `%LOCALAPPDATA%` as a standard user, `/manager/health` 200, and uninstall while
+  the house runs removes the folder, shortcuts and rule. The payload was the
+  0.1.2679 app tree; rebuild from the trunk for a release, and confirm the
+  interactive House settings page on a logged-in desktop.
 - **Stale files on upgrade.** Inno overwrites the payload but does not remove
   files the new version deleted. A clean reinstall is the current answer;
   `[InstallDelete]` must be narrow enough to leave `config.json`, the database
