@@ -9,9 +9,12 @@ the session bar are Qt WebEngine too; there is no GTK/WebKitGTK fallback.
 
 The login is the same ticket the desktop has always used: loading the ticket URL
 mints the cookie and redirects to the Manager, and the profile keeps that
-cookie across launches. The first run also copies the old WebKit shell's page
-layout out of its per-origin SQLite store, and the window geometry comes from
-``~/.config/jawnos/desktop.json``, saved back on close. A certificate error is
+cookie across launches. A launch tries the Manager first - a profile that still
+holds the cookie opens straight in - and hands over to the ticket only when the
+Manager answers with the Gate. The first run also copies the old WebKit
+shell's page layout out of its per-origin SQLite store, and the window
+geometry comes from ``~/.config/jawnos/desktop.json``, saved back on close. A
+certificate error is
 accepted only for this install's own certificates (the leaf in
 ``server/fullchain.pem`` and, on a joined machine, ``server/house-ca.pem``); an
 unrelated certificate stays rejected.
@@ -253,6 +256,26 @@ def manager_url(jawn_dir, ticket=None):
     else:
         host = manager_host() or host
     return "https://%s:%d/manager" % (host, port)
+
+
+def landed_on_gate(url, title, manager):
+    """True when a Manager navigation landed on the Gate instead.
+
+    Only the Gate is titled "Gate", and only on the Manager's own host: a
+    ticket page (whether it redirects or not) must not be mistaken for it.
+    """
+    try:
+        current = urlparse(str(url or ""))
+        expect = urlparse(str(manager or ""))
+    except ValueError:
+        return False
+    if not expect.hostname or (current.hostname or "").lower() != expect.hostname.lower():
+        return False
+    path = (current.path or "").rstrip("/")
+    base = (expect.path or "").rstrip("/")
+    if base and not (path == base or path.startswith(base + "/")):
+        return False
+    return str(title or "").strip().lower() == "gate"
 
 
 def profile_dir():
@@ -1737,7 +1760,11 @@ def main(argv=None):
     ticket = None if (args.url or args.probe) else ticket_url()
     manager = None if (args.url or args.probe) else manager_url(settings["jawn_dir"], ticket)
     manager_base = manager or args.url or ""
-    login_pending = bool(ticket)
+    # A profile that still holds the session cookie opens the Manager directly;
+    # the ticket is only loaded when that Manager answers with the Gate. Loading
+    # the ticket first flashed its splash on every launch and self-restart.
+    login_pending = False
+    ticket_tried = False
     kick = None
     host = port = None
     if manager:
@@ -2144,7 +2171,7 @@ def main(argv=None):
     page.loadStarted.connect(lambda: nav_guard.start(LOAD_TIMEOUT_MS))
 
     def on_load(_ok):
-        nonlocal login_pending, migration_pending
+        nonlocal login_pending, migration_pending, ticket_tried
         nav_guard.stop()
         if not _ok and nav["stalled"]:
             # view.stop() from the deadline: the dark page is already drawn
@@ -2169,6 +2196,15 @@ def main(argv=None):
         nav["retry"] = None
         retry_timer.stop()
         load_failures["n"] = 0
+        if (ticket and not ticket_tried and not login_pending
+                and landed_on_gate(view.url().toString(), view.title(), manager)):
+            # The Manager answered with the Gate: the saved ticket mints a
+            # session, so open it once and land back on the Manager. A refused
+            # or missing ticket leaves the Gate in view rather than looping.
+            ticket_tried = True
+            login_pending = True
+            view.setUrl(QUrl(ticket))
+            return
         if login_pending:
             # The ticket page mints the session cookie; give it a moment, the
             # same 1.5 s the WebKit shell allows, then load the Manager on the
@@ -2197,7 +2233,9 @@ def main(argv=None):
     if args.url:
         url = args.url
     elif ticket:
-        url = ticket
+        # The Manager, on the ticket's host; the Gate check above hands over to
+        # the ticket if this profile no longer holds the session.
+        url = manager or ticket
     elif args.probe:
         url = _probe_url()
     else:

@@ -52,6 +52,13 @@ like($qt, qr/--probe/, 'the probe is a command-line mode');
 like($qt, qr/def ticket_url/, 'it reads the same stored ticket as always');
 like($qt, qr/def _probe_url/, 'the probe uses a real origin for the bridge');
 like($qt, qr/def manager_url/, 'and derives the manager URL from it');
+like($qt, qr/def landed_on_gate/, 'the Gate landing is told from a Manager load');
+like($qt, qr/url = manager or ticket/,
+	'the Manager opens first; the ticket only when the Manager answers with the Gate');
+
+my $gatecheck = `cd "$root" && PYTHONPATH=desktop python3 -c 'from jawnos_desktop.qt_shell import landed_on_gate as g; print(g("https://h:1/manager","Gate","https://h:1/manager"), g("https://h:1/manager","Dev","https://h:1/manager"), g("https://h:1/ticket","Gate","https://h:1/manager"))' 2>&1`;
+like($gatecheck, qr/^True False False\s*$/m,
+	'a Gate title on the Manager host is the Gate; other titles and hosts are not');
 
 like($entry, qr/JAWNOS_DESKTOP_ENGINE/, 'the engine can still be chosen by environment');
 like($entry, qr/--engine/, 'and by flag');
