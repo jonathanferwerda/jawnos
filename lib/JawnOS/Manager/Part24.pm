@@ -560,7 +560,11 @@ sub ide_file_open($file,$source) {
 	if ($source eq 'open') {
 		$status = 'active';
 	}
-	my $tab = '<span class="ide_tab ' . $status . ' hover" file="' . $file . '">' . $file_name[-1] . '<button class="ide_close_tab hover" file="' . $file . '">X</button></span>';
+	# A request path or a stored tab key is data: escape it before it becomes
+	# markup, in both the attributes and the label the person reads.
+	my $esc_file = xml_escape($file);
+	my $esc_name = xml_escape($file_name[-1]);
+	my $tab = '<span class="ide_tab ' . $status . ' hover" file="' . $esc_file . '">' . $esc_name . '<button class="ide_close_tab hover" file="' . $esc_file . '">X</button></span>';
 	return ($tab,$content,$file);
 }
 

@@ -1,4 +1,4 @@
-# tests-for: lib/JawnOS/Domain/Calendar.pm lib/JawnOS/Domain/Sync.pm perl/hooks.pl lib/JawnOS/Controller/Root_misc.pm lib/JawnOS/Manager/Part08.pm lib/JawnOS/Domain/Note.pm perl/Alarm.pl lib/JawnOS/Domain/Ai.pm lib/JawnOS/Controller/manager_misc14.pm lib/JawnOS/Domain/Lan.pm lib/JawnOS/Domain/Git.pm lib/JawnOS/Domain/Say.pm lib/JawnOS/Manager/Part22.pm lib/JawnOS/Controller/manager_watch.pm templates/store/item.html.ep templates/file_information.html.ep templates/apps/music/music.html.ep templates/twirl.html.ep lib/JawnOS/Manager/Part11.pm lib/JawnOS/Controller/manager_clock.pm lib/JawnOS/Controller/manager_security2.pm lib/JawnOS/Controller/manager_misc3.pm perl/AddressDirectory.pl lib/JawnOS/Controller/teletype_misc.pm lib/JawnOS/Controller/store_misc.pm lib/JawnOS/Controller/manager_security3.pm lib/JawnOS/Manager/Part25.pm lib/JawnOS/Controller/manager_embedded.pm perl/President.pl lib/JawnOS/Domain/Web.pm
+# tests-for: lib/JawnOS/Domain/Calendar.pm lib/JawnOS/Domain/Sync.pm perl/hooks.pl lib/JawnOS/Controller/Root_misc.pm lib/JawnOS/Manager/Part08.pm lib/JawnOS/Domain/Note.pm perl/Alarm.pl lib/JawnOS/Domain/Ai.pm lib/JawnOS/Controller/manager_misc14.pm lib/JawnOS/Domain/Lan.pm lib/JawnOS/Domain/Git.pm lib/JawnOS/Domain/Say.pm lib/JawnOS/Manager/Part22.pm lib/JawnOS/Controller/manager_watch.pm templates/store/item.html.ep templates/file_information.html.ep templates/apps/music/music.html.ep templates/twirl.html.ep lib/JawnOS/Manager/Part11.pm lib/JawnOS/Controller/manager_clock.pm lib/JawnOS/Controller/manager_security2.pm lib/JawnOS/Controller/manager_misc3.pm perl/AddressDirectory.pl lib/JawnOS/Controller/teletype_misc.pm lib/JawnOS/Controller/store_misc.pm lib/JawnOS/Controller/manager_security3.pm lib/JawnOS/Manager/Part25.pm lib/JawnOS/Controller/manager_embedded.pm perl/President.pl lib/JawnOS/Domain/Web.pm templates/store/printer/header.html.ep templates/ide.html.ep templates/homepage.html.ep lib/JawnOS/Manager/Part24.pm
 # covers:    The ninth audit pass: ids are drawn from the OS, a token that only
 #           opens with the empty key is refused, the legacy homepage value is
 #           compared not thawed, the last shell sinks are closed, and reflected
@@ -96,6 +96,19 @@ like(source('lib/JawnOS/Controller/manager_watch.pm'),
 	'the watch save echoes an id as text');
 like(source('templates/store/item.html.ep'), qr/article_html_clean/,
 	'a shop description is sanitized HTML');
+my $printer_header = source('templates/store/printer/header.html.ep');
+my $printer_cleans = () = $printer_header =~ /article_html_clean/g;
+cmp_ok($printer_cleans, '>=', 2, 'the printed model and option descriptions are sanitized');
+like($printer_header, qr/\$mdesc = &subs::article_html_clean\(/,
+	'and the model description is cleaned before it is printed');
+like($printer_header, qr/\$odesc = &subs::article_html_clean\(/,
+	'nor the option description');
+my $homepage = source('templates/homepage.html.ep');
+like($homepage, qr/\$information = &subs::article_html_clean\(\$information\)/,
+	'the homepage information is sanitized after newlines become <br>');
+my $part24 = source('lib/JawnOS/Manager/Part24.pm');
+like($part24, qr/xml_escape\(\$file\)/, 'an IDE tab escapes its file path');
+like($part24, qr/xml_escape\(\$file_name\[-1\]\)/, 'and its visible name');
 like(source('templates/file_information.html.ep'), qr/html_text\(\$file->\{'ocr'\}\)/,
 	'OCR text is escaped');
 unlike(source('templates/apps/music/music.html.ep'), qr/\$mao_js|mao = JSON\.parse/,
@@ -159,6 +172,18 @@ like(source('perl/AddressDirectory.pl'), qr/X-Forwarded-For/,
 	'a forwarded caller is not treated as loopback');
 like(source('perl/AddressDirectory.pl'), qr/\bForwarded\b/,
 	'and neither is a Forwarded header');
+
+# --- the IDE tab is data, not markup ---------------------------------------
+{
+	my $part24_file = root() . '/lib/JawnOS/Manager/Part24.pm';
+	require $part24_file;
+	my $payload = '/home/jawn/x" onmouseover=x<y>.txt';
+	my ($tab, $content, $got) = Manager::ide_file_open($payload, 'open');
+	is($got, $payload, 'the IDE opener still returns the raw path');
+	unlike($tab, qr/\Q$payload\E/, 'the tab markup does not carry the raw path');
+	like($tab, qr/&quot; onmouseover=x&lt;y&gt;/, 'the path and label are escaped');
+	unlike($tab, qr/file="[^"]*"[^>]*onmouseover/, 'the injected quote cannot close the attribute');
+}
 
 done_testing();
 

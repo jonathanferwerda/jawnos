@@ -16,7 +16,8 @@
 		<% if ($config->{'email'}) { %><br><a href="mailto:<%= $config->{'email'} %>"><%= $config->{'email'} %><br></a><% } %>
 		<% if (my $information = &subs::setting_grabber({ app => 'me', setting => 'information' })) { %>
 			<% $information =~ s/\n/<br>/gi; %>
-			<p><%== $information %></p><br>
+			<% $information = &subs::article_html_clean($information); %>
+			<% if (length $information) { %><p><%== $information %></p><br><% } %>
 		<% } %>
 		<% if ($c->session('authentication') eq 'approved') { %>
 
