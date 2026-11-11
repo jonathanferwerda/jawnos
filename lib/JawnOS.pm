@@ -130,6 +130,28 @@ sub apply_csp {
 	return 1;
 }
 
+# HSTS pins this origin to https for a year. A browser ignores the header on a
+# plain-http response, and we must not send it there anyway: a manager reached
+# over plain http (the websocket loopback listener is the in-tree case) would
+# otherwise pin a host that never spoke https. The caller passes the request's
+# secure flag, so only a secure request gets it. The value is deliberately just
+# max-age: no includeSubDomains, because the house serves other subdomains over
+# their own certificates, and no preload, which is a one-way door. A route that
+# set its own value keeps it, the same rule as the CSP.
+sub strict_transport_security {
+	return 'max-age=31536000';
+}
+
+sub apply_hsts {
+	my ($headers, $secure) = @_;
+	return 0 unless $headers && $headers->can('header');
+	return 0 unless $secure;
+	my $existing = $headers->header('Strict-Transport-Security');
+	return 0 if defined $existing && length $existing;
+	$headers->header('Strict-Transport-Security' => strict_transport_security());
+	return 1;
+}
+
 sub startup {
 	my $self = shift;
 

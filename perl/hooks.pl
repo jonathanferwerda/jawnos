@@ -586,6 +586,7 @@ Manager::app->hook(after_render => sub  {
   Manager::app->hook(after_dispatch => sub {
 	my ($c) = @_;
 	JawnOS::apply_csp($c->res->headers, $c->req->url->path->to_string // '');
+	JawnOS::apply_hsts($c->res->headers, $c->req->is_secure);
   });
 
   # gzip text-ish responses on the way out. This is the one chokepoint that sees

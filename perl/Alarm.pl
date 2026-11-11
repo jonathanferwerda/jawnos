@@ -554,6 +554,24 @@ sub alarm_timer() {
 	return $alarm_id;
 }
 
+# This listener is a bell, not a page: nothing here renders templates, so a bare
+# request used to reach dispatch with no action to run and Mojo answered a 500
+# ("Route without action and nothing to render"). Answer a health probe at the
+# root and give every other path a plain 404, so the port never reads as a
+# broken server.
+get '/' => sub {
+	my $c = shift;
+	$c->res->headers->content_type('text/plain;charset=UTF-8');
+	$c->render(text => "alarm listener ok\n");
+};
+
+any '/*rest' => sub {
+	my $c = shift;
+	$c->res->code(404);
+	$c->res->headers->content_type('text/plain;charset=UTF-8');
+	$c->render(text => "not found\n");
+};
+
 if ($ENV{PURPOSE} eq "alarm") {
 	app->sessions->samesite('lax');
 	$ENV{MOJO_MAX_MESSAGE_SIZE} = 1023423423473741824;

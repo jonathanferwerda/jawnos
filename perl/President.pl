@@ -234,6 +234,14 @@ if ($environment) {
 	}
 
 }
+# Mojolicious reads MOJO_MODE when each app object is built, and its default is
+# development: with the hub configured as production the public listener still
+# answered a failure with a stack trace. Manager.pl and Alarm.pl are separate
+# processes, so set the mode here and let them inherit it. An empty value leaves
+# the default alone.
+if (defined $config->{'environment'} && $config->{'environment'} =~ /\S/) {
+	$ENV{MOJO_MODE} = $config->{'environment'};
+}
 my $port = $random_number;
 my $watch_port = $port + JawnOS::Platform::Ports::offset('watch');
 my $ws_port = $port + JawnOS::Platform::Ports::offset('ws');

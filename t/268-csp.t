@@ -3,7 +3,9 @@
 #           set centrally after dispatch: the exact directive list, that a page
 #           response gets it, that JSON and media do not, that a route's own
 #           policy is never overwritten, and that inline script is still
-#           executable by design (the nonce migration is the follow-up).
+#           executable by design (the nonce migration is the follow-up). Also
+#           HSTS: one max-age value, sent only on a secure request, never over
+#           plain http and never over a value a route set itself.
 
 use strict;
 use warnings;
@@ -79,11 +81,34 @@ is(JawnOS::apply_csp($own, '/manager/embedded'), 0,
 is($own->header('Content-Security-Policy'), "default-src 'none'",
 	'and the route value is unchanged');
 
+# --- HSTS: secure requests only ---------------------------------------------
+is(JawnOS::strict_transport_security(), 'max-age=31536000',
+	'HSTS is one reviewed max-age value');
+
+my $secure = Mojo::Headers->new;
+$secure->content_type('text/html');
+is(JawnOS::apply_hsts($secure, 1), 1, 'a secure response takes HSTS');
+is($secure->header('Strict-Transport-Security'), 'max-age=31536000',
+	'with the exact header value');
+
+my $plain = Mojo::Headers->new;
+$plain->content_type('text/html');
+is(JawnOS::apply_hsts($plain, 0), 0, 'a plain-http response does not');
+is($plain->header('Strict-Transport-Security'), undef, 'and gets no HSTS header');
+
+my $own_hsts = Mojo::Headers->new;
+$own_hsts->header('Strict-Transport-Security' => 'max-age=60');
+is(JawnOS::apply_hsts($own_hsts, 1), 0, 'a route that set its own value keeps it');
+is($own_hsts->header('Strict-Transport-Security'), 'max-age=60',
+	'and the route value is unchanged');
+
 # --- the policy is installed in one central place ---------------------------
 my $hooks = source('perl/hooks.pl');
 like($hooks,
 	qr/Manager::app->hook\(after_dispatch => sub \{\n\s+my \(\$c\) = \@_;\n\s+JawnOS::apply_csp\(\$c->res->headers, \$c->req->url->path->to_string \/\/ ''\);/,
 	'the after_dispatch hook calls the one helper with the response headers and path');
+like($hooks, qr/JawnOS::apply_hsts\(\$c->res->headers, \$c->req->is_secure\);/,
+	'and asks for HSTS with the request secure flag');
 is(scalar(() = $hooks =~ /Content-Security-Policy/g), 1,
 	'and no other place in hooks.pl writes the header');
 
