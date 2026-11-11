@@ -70,6 +70,66 @@ sub gzip_body_for {
 	return $out;
 }
 
+# One Content-Security-Policy for the app's own HTML pages, installed by an
+# after_dispatch hook in perl/hooks.pl. It is deliberately conservative rather
+# than strict: `script-src` allows inline script and eval because the templates
+# carry inline handlers and eval'd fragments, and every window would break
+# under a nonce tomorrow. That honesty cuts both ways: 'unsafe-inline' also
+# leaves an injected inline script executable, so this policy blocks exfil
+# directions (object-src, base-uri, frame-ancestors) and external code, not
+# inline XSS. The follow-up is a nonce/`strict-dynamic` migration, template by
+# template, which is what would let 'unsafe-inline' go.
+#
+# The directives mirror the app's real needs: ws:/wss: for the manager socket,
+# https: for peer machines, remote media and the saved-web pages, data:/blob:
+# for generated images and recorded audio, and no object/embed at all.
+sub content_security_policy {
+	return join('; ',
+		"default-src 'self'",
+		"script-src 'self' 'unsafe-inline' 'unsafe-eval'",
+		"style-src 'self' 'unsafe-inline'",
+		"img-src 'self' data: blob: https:",
+		"media-src 'self' data: blob: https:",
+		"connect-src 'self' ws: wss: https:",
+		"font-src 'self' data:",
+		"frame-src 'self' https:",
+		"object-src 'none'",
+		"base-uri 'self'",
+		"form-action 'self'",
+		"frame-ancestors 'self'",
+	);
+}
+
+# Pure: whether this response is one of the app's own HTML pages and so wants
+# the policy. JSON, assets, PDFs and media do not. A route that set its own
+# policy keeps it: the caller passes the header's current value. `/file_open`
+# is skipped because rock_and_roll serves a file's raw bytes under the default
+# text/html when it cannot name a better type, so that body is data, not a page.
+sub csp_applies {
+	my ($content_type, $path, $existing) = @_;
+	return 0 if defined $existing && length $existing;
+	return 0 unless defined $content_type && length $content_type;
+	my $type = lc $content_type;
+	$type =~ s/;.*//s;
+	$type =~ s/\s+//g;
+	return 0 unless $type eq 'text/html';
+	return 0 if defined $path && $path eq '/file_open';
+	return 1;
+}
+
+# Set the policy on a response's headers when it belongs there. The hook calls
+# this and nothing else, so the rule can be exercised on a plain Mojo::Headers
+# without starting the tree. Returns 1 when it set the header.
+sub apply_csp {
+	my ($headers, $path) = @_;
+	return 0 unless $headers && $headers->can('content_type');
+	return 0 unless csp_applies(
+		$headers->content_type, $path, $headers->header('Content-Security-Policy')
+	);
+	$headers->header('Content-Security-Policy' => content_security_policy());
+	return 1;
+}
+
 sub startup {
 	my $self = shift;
 

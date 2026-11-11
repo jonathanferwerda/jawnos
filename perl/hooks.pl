@@ -575,6 +575,19 @@ Manager::app->hook(after_render => sub  {
 
   });
 
+  # Every page this app serves carries one Content-Security-Policy, set in this
+  # one place so no route has to remember it. It goes only on a text/html page
+  # response and never over a header a route set itself (JawnOS::csp_applies
+  # decides); JSON, assets and media are left alone. The policy text and the
+  # reasoning live in lib/JawnOS.pm (content_security_policy), beside the gzip
+  # helpers, because it is pure and testable without booting the app. The
+  # policy is enforced, not report-only: see its comment for what 'unsafe-inline'
+  # does and does not buy, and why a nonce is the next step.
+  Manager::app->hook(after_dispatch => sub {
+	my ($c) = @_;
+	JawnOS::apply_csp($c->res->headers, $c->req->url->path->to_string // '');
+  });
+
   # gzip text-ish responses on the way out. This is the one chokepoint that sees
   # both static assets (Mojolicious::Static calls $c->rendered, so after_dispatch
   # fires for them too) and dynamic responses. Binary hazards are avoided two ways:
