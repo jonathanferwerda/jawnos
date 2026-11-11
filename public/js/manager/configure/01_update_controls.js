@@ -55,6 +55,61 @@ $(document).on('click', '#update_now_button', function() {
 	post(0);
 });
 
+// ---- Windows: the install has no checkout to pull ---------------------------
+// A Windows house is a git-archive copy with no .git, so the git update above
+// has nothing to report for it. It updates the way a Windows program does: the
+// manager names the next Setup.exe and a detached helper downloads, verifies
+// and runs it. The card stays hidden until the feed offers one.
+function windowsUpdateCheck() {
+	var card = $('#windows_update_card');
+	if (!card.length) { return; }
+	// The server pushes deviceLister() on tunnel and peer changes, which would
+	// otherwise ask GitHub on every push. One check per open panel is enough;
+	// a failed check clears the flag so a later push tries again.
+	var panel = card.closest('#device_list');
+	if (panel.length && panel.data('windowsUpdateChecked')) { return; }
+	if (panel.length) { panel.data('windowsUpdateChecked', 1); }
+	$.ajax({
+		url: '/manager/windows_update',
+		type: 'GET',
+		dataType: 'json',
+		cache: false,
+		data: { timestamp: Date.now() },
+		success: function(r) {
+			if (!r || !r.available) { card.hide(); return; }
+			$('#windows_update_version').text(r.version || '');
+			card.css('display', 'flex');
+		},
+		error: function() {
+			if (panel.length) { panel.removeData('windowsUpdateChecked'); }
+			card.hide();
+		}
+	});
+}
+$(document).on('click', '#windows_update_button', function() {
+	var button = $(this);
+	var status = $('#windows_update_status');
+	var t = function(s) { return (typeof jawnosT === 'function') ? jawnosT(s) : s; };
+	if (button.attr('disabled') == 'disabled') { return; }
+	button.attr('disabled', 'disabled');
+	status.text(t('installing — the app will restart when it is ready'));
+	$.ajax({
+		url: '/manager/windows_update',
+		type: 'POST',
+		dataType: 'json',
+		data: { timestamp: Date.now() },
+		success: function(r) {
+			if (r && r.ok) { return; }
+			button.removeAttr('disabled');
+			status.text((r && r.error) || t('could not start the update'));
+		},
+		error: function() {
+			button.removeAttr('disabled');
+			status.text(t('could not start the update'));
+		}
+	});
+});
+
 // ---- system dependencies a code update left for a person ---------------------
 // scripts/jawnos_deps.pl --after-update installs the system packages a new tree
 // needs when sudo already works without a password. When it does not, it leaves
@@ -678,6 +733,7 @@ function deviceLister() {
 			printerInkLoad(c);
 			printerQueuesLoad(c);
 			deviceListerRestoreButtons(c);
+			windowsUpdateCheck();
 			gimmeInputRestore(c, keep);
 		}
 	});

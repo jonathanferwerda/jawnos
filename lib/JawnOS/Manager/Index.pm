@@ -46,6 +46,7 @@ our %SUB = (
 	'app_public_path'                        => 'JawnOS/Manager/Part30.pm',
 	'app_release_lister'                     => 'JawnOS/Manager/Part08.pm',
 	'app_release_sha'                        => 'JawnOS/Manager/Part08.pm',
+	'windows_update_gate'                    => 'JawnOS/Manager/Part08.pm',
 	'app_schema_ensure'                      => 'JawnOS/Manager/Part30.pm',
 	'app_session_ok'                         => 'JawnOS/Manager/Part30.pm',
 	'app_signature_ok'                       => 'JawnOS/Manager/Part30.pm',

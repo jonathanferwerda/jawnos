@@ -648,6 +648,19 @@ sub app_release_sha {
 	return $app_release_sha{$key};
 }
 
+# The Windows self-updater answers the local Configure panel and, like the
+# app-release rail, a verified peer. A named signatorial is not a credential: a
+# peer request must carry the machine's signature and be at least a member. An
+# approved session is the browser that rendered the panel; it has no key to sign
+# with. Shared by the GET and POST routes so the two cannot drift.
+sub windows_update_gate {
+	my ($c) = @_;
+	return 1 if (($c->session('authentication') || '') eq 'approved');
+	my $signatorial = $c->param('signatorial');
+	my $rm = ($signatorial && &subs::db_select('remote_machines', undef, { signatorial => $signatorial })->hashes->[0]);
+	return ($rm && $rm->{'pubkey'} && &subs::peer_verify($c, $rm) && &subs::peer_allows($c, $rm, 'member')) ? 1 : 0;
+}
+
 sub app_release_lister {
 	my $dir = &subs::releases_dir();
 	my @out;

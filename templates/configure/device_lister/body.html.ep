@@ -47,6 +47,15 @@
 				<span id="update_method_status" class="device_when"></span>
 				<button id="update_now_button" class="hover" type="button"><%= &subs::ui('Update now') %></button>
 				<span id="update_now_status" class="device_when"></span>
+				<%# A Windows install is a git-archive copy with no .git, so the git
+				    Update now button above has nothing to pull. This card stays hidden
+				    until the release feed offers a newer Setup.exe. %>
+				<div id="windows_update_card" style="display:none;width:100%;align-items:center;gap:8px;flex-wrap:wrap;">
+					<span><%= &subs::ui('Windows update') %></span>
+					<span id="windows_update_version" class="device_when"></span>
+					<button id="windows_update_button" class="hover" type="button"><%= &subs::ui('Update Windows app') %></button>
+					<span id="windows_update_status" class="device_when"></span>
+				</div>
 				<label for="update_interval_select"><%= &subs::ui('Check every') %></label>
 				<select id="update_interval_select" class="update_interval_select" data-device="<%= $signatorial %>">
 					<option value="30" <% if (defined $update_interval && $update_interval == 30) { %>selected<% } %>><%= &subs::ui('30 seconds') %></option>

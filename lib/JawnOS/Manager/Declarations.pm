@@ -153,6 +153,7 @@ sub code_sync_tar;
 sub code_sync_unpack;
 sub app_release_sha;
 sub app_release_lister;
+sub windows_update_gate;
 sub voice_lister;
 sub sync_rows_batch;
 sub sync_buckets_batch;

@@ -809,4 +809,46 @@ sub action_11740 {
 	});
 }
 
+# GET /manager/windows_update
+# A Windows install has no checkout, so there is no git update to report. This
+# says whether the release feed has a newer Setup and what it calls itself.
+# Non-Windows answers by name and changes nothing: the git and APK rails are
+# untouched.
+sub action_11741 {
+	my $c = shift;
+	unless (&subs::windows_platform()) {
+		$c->render(json => { ok => 0, error => 'not this platform' });
+		return;
+	}
+	unless (&windows_update_gate($c)) { $c->rendered(403); return; }
+	my $running = &subs::jawn_version();
+	my $man = &subs::windows_release_available();
+	unless ($man) {
+		$c->render(json => { ok => 1, available => 0, running => $running });
+		return;
+	}
+	$c->render(json => {
+		ok => 1,
+		available => 1,
+		running => $running,
+		version => $man->{'version'} || '',
+		versionCode => $man->{'versionCode'} + 0,
+		filename => $man->{'filename'} || '',
+		notes => $man->{'notes'} || ''
+	});
+}
+
+# POST /manager/windows_update
+# Start the detached helper. It returns at once - the download and the install
+# happen in PowerShell, so a 279 MB Setup never passes through this process.
+sub action_11742 {
+	my $c = shift;
+	unless (&subs::windows_platform()) {
+		$c->render(json => { ok => 0, error => 'not this platform' });
+		return;
+	}
+	unless (&windows_update_gate($c)) { $c->rendered(403); return; }
+	$c->render(json => &subs::windows_update_start());
+}
+
 1;

@@ -26,6 +26,8 @@ sub routes {
 	[11111, 'get', '/manager/sync_buckets', 'action_11111'],
 	[11638, 'post', '/manager/backup/confirm', 'action_11638'],
 	[11740, 'get', '/manager/remote_manager', 'action_11740'],
+	[11741, 'get', '/manager/windows_update', 'action_11741'],
+	[11742, 'post', '/manager/windows_update', 'action_11742'],
 	);
 }
 
