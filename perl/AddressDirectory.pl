@@ -669,6 +669,12 @@ sub _forward_report {
 
 sub _loopback {
 	my ($c) = @_;
+	# A request that names a forwarding hop is not the machine itself, even when
+	# the TCP hop is loopback: a local proxy setting only these headers would
+	# otherwise turn every remote caller into this machine. Mirrors
+	# Manager::health_allowed.
+	return 0 if $c->req->headers->header('X-Forwarded-For');
+	return 0 if $c->req->headers->header('Forwarded');
 	my $remote = eval { $c->tx->remote_address } // '';
 	my $local  = eval { $c->tx->local_address } // '';
 	return 1 if $remote eq '127.0.0.1' || $remote eq '::1' || $remote eq '::ffff:127.0.0.1';

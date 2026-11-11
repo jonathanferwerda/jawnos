@@ -82,6 +82,15 @@ like($pkgbuild, qr/^arch=\('any'\)$/m, 'the AUR package is any-arch');
 like($pkgbuild, qr/^license=\('BSD-2-Clause'\)$/m, 'and carries the licence');
 like($pkgbuild, qr/^depends=\([^)]*'perl-mojolicious'/ms, 'AUR depends on Mojolicious');
 like($pkgbuild, qr/packaging\/vendor\/fetch\.sh arch/, 'AUR fetches its vendored set');
+unlike($pkgbuild, qr/sha256sums=\('SKIP'\)/,
+	'the AUR package does not build an unpinned tarball');
+like($pkgbuild, qr/pin the release tarball with updpkgsums/,
+	'and prepare() says how to pin it');
+like($pkgbuild, qr/\$\{sha256sums\[0\]\}" = "SKIP"/,
+	'prepare() fails closed while the checksum is still SKIP');
+
+is($deps->{'modules'}{'Net::IMAP::Client'}{'version'}, '0.9511',
+	'the vendored IMAP client is pinned to the tested release');
 
 my $install = read_file('packaging/debian/jawnos.install');
 like($install, qr/^perl\s/m, 'the Debian package ships the service layer');

@@ -1,4 +1,4 @@
-# tests-for: lib/JawnOS/Domain/Calendar.pm lib/JawnOS/Domain/Sync.pm perl/hooks.pl lib/JawnOS/Controller/Root_misc.pm lib/JawnOS/Manager/Part08.pm lib/JawnOS/Domain/Note.pm perl/Alarm.pl lib/JawnOS/Domain/Ai.pm lib/JawnOS/Controller/manager_misc14.pm lib/JawnOS/Domain/Lan.pm lib/JawnOS/Domain/Git.pm lib/JawnOS/Domain/Say.pm lib/JawnOS/Manager/Part22.pm lib/JawnOS/Controller/manager_watch.pm templates/store/item.html.ep templates/file_information.html.ep templates/apps/music/music.html.ep templates/twirl.html.ep lib/JawnOS/Manager/Part11.pm lib/JawnOS/Controller/manager_clock.pm lib/JawnOS/Controller/manager_security2.pm lib/JawnOS/Controller/manager_misc3.pm perl/AddressDirectory.pl lib/JawnOS/Controller/teletype_misc.pm lib/JawnOS/Controller/store_misc.pm lib/JawnOS/Controller/manager_security3.pm lib/JawnOS/Manager/Part25.pm lib/JawnOS/Controller/manager_embedded.pm perl/President.pl
+# tests-for: lib/JawnOS/Domain/Calendar.pm lib/JawnOS/Domain/Sync.pm perl/hooks.pl lib/JawnOS/Controller/Root_misc.pm lib/JawnOS/Manager/Part08.pm lib/JawnOS/Domain/Note.pm perl/Alarm.pl lib/JawnOS/Domain/Ai.pm lib/JawnOS/Controller/manager_misc14.pm lib/JawnOS/Domain/Lan.pm lib/JawnOS/Domain/Git.pm lib/JawnOS/Domain/Say.pm lib/JawnOS/Manager/Part22.pm lib/JawnOS/Controller/manager_watch.pm templates/store/item.html.ep templates/file_information.html.ep templates/apps/music/music.html.ep templates/twirl.html.ep lib/JawnOS/Manager/Part11.pm lib/JawnOS/Controller/manager_clock.pm lib/JawnOS/Controller/manager_security2.pm lib/JawnOS/Controller/manager_misc3.pm perl/AddressDirectory.pl lib/JawnOS/Controller/teletype_misc.pm lib/JawnOS/Controller/store_misc.pm lib/JawnOS/Controller/manager_security3.pm lib/JawnOS/Manager/Part25.pm lib/JawnOS/Controller/manager_embedded.pm perl/President.pl lib/JawnOS/Domain/Web.pm
 # covers:    The ninth audit pass: ids are drawn from the OS, a token that only
 #           opens with the empty key is refused, the legacy homepage value is
 #           compared not thawed, the last shell sinks are closed, and reflected
@@ -136,4 +136,29 @@ unlike(source('lib/JawnOS/Controller/manager_embedded.pm'), qr/Dumper \$returner
 	'the embedded request (with its token) is not logged');
 unlike(source('perl/President.pl'), qr/Dumper \$query/, 'nor is an AI query');
 
+# --- the web grabber cannot be aimed inside the house -----------------------
+subs::preload('url_public_http_ok');
+for my $url (qw{
+	http://127.0.0.1:3001/x
+	http://10.1.2.3/x
+	http://192.168.1.1/x
+	http://169.254.1.1/x
+	http://100.64.0.1/x
+	http://[::1]/x
+	http://localhost/x
+	file:///etc/passwd
+	http://user:pass@example.com/x
+}) {
+	ok(!subs::url_public_http_ok($url), "url_public_http_ok refuses $url");
+}
+ok(subs::url_public_http_ok('https://1.1.1.1/x'),
+	'and accepts a public literal without asking a resolver');
+like($part22, qr/&subs::url_public_http_ok\(\$website\)/,
+	'the web grabber checks the URL before fetching it');
+like(source('perl/AddressDirectory.pl'), qr/X-Forwarded-For/,
+	'a forwarded caller is not treated as loopback');
+like(source('perl/AddressDirectory.pl'), qr/\bForwarded\b/,
+	'and neither is a Forwarded header');
+
 done_testing();
+

@@ -351,8 +351,15 @@ sub website_grabber($data) {
 		$timestamp = $saved_website->{'timestamp'} || &subs::rightNow();
 		my $raw_html = $saved_website->{'content'};
 
+		# A resident sets this URL, so the grabber is a way to reach anything the
+		# machine can: loopback, the LAN, a cloud metadata endpoint. Refuse a URL
+		# that is not a public http(s) host before the user agent is handed it. The
+		# refusal leaves $res undefined, so the view keeps what it last fetched
+		# (or "No Page") exactly as a failed fetch does.
 		my $ua = Mojo::UserAgent->new;
-		my $res = eval { $ua->get($website => {user_agent => $user_agent})->result } ;
+		my $res = &subs::url_public_http_ok($website)
+			? eval { $ua->get($website => {user_agent => $user_agent})->result }
+			: undef;
 		$internal_url = $website || $saved_website->{'internal_url'} || "No Page";
 		my ($raw_body, $json);
 

@@ -35,13 +35,20 @@ optdepends=(
 )
 makedepends=('cpanminus')
 # The release tag is v<version>; build one per packaged release, not per VERSION
-# bump. Replace sha256sums with `updpkgsums` after the tarball is published.
+# bump. Pin the tarball with `updpkgsums` in packaging/aur after it is published;
+# while the checksum is SKIP, prepare() refuses to build (see below).
 source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz")
-sha256sums=('SKIP')
+sha256sums=("SKIP")
 backup=('etc/jawnos/jawnos.env')
 
 prepare() {
 	cd "$srcdir/$pkgname-$pkgver"
+	# A SKIP checksum builds whatever the network returned. Fail closed instead:
+	# a published package must not ship unverified code.
+	if [ "${sha256sums[0]}" = "SKIP" ]; then
+		echo "packaging/aur/PKGBUILD: pin the release tarball with updpkgsums" >&2
+		return 1
+	fi
 	# Arch has no packages for Mojo::SQLite, Minion, Minion::Backend::SQLite,
 	# Mojo::IOLoop::ReadWriteFork, Net::IMAP::Client or WebService::Ollama, so the
 	# manifest's null entries are fetched here. --no-deps: their dependencies are

@@ -28,6 +28,7 @@ use Mojo::IOLoop;
 use Mojo::JSON qw(decode_json encode_json);
 use Mojo::Util qw/md5_sum xml_escape html_unescape term_escape quote unquote secure_compare url_escape url_unescape network_contains punycode_decode punycode_encode b64_decode b64_encode/;
 use POSIX ();   # mktime: a local-time epoch that still predates 1970
+use Socket ();  # resolve a URL host before the house fetches it
 use Text::Unidecode;
 use Time::Duration;
 use Time::HiRes qw(gettimeofday time);
@@ -187,6 +188,65 @@ sub setting_value_for {
 	my ($app, $setting) = @_;
 	my $rows = &setting_rows_for($app, $setting);
 	return $rows->[0] ? $rows->[0]->{'value'} : undef;
+}
+
+# A URL the house may fetch on a resident's behalf: http or https, no userinfo,
+# and a host that is neither a private literal nor a name that resolves to one.
+# The web app fetches whatever URL it is set to, so without this a resident
+# could point it at loopback, the LAN or a cloud metadata endpoint and have the
+# answer stored and synced. A literal is judged directly; a name is resolved and
+# every answer checked, so evil.example pointing at 127.0.0.1 is refused too. A
+# resolver that fails is refused, not guessed at.
+sub url_public_http_ok {
+	my ($url) = @_;
+	return 0 unless defined $url && length $url;
+	return 0 unless $url =~ m{\Ahttps?://([^/?#]+)}i;
+	my $authority = $1;
+	# userinfo (user:pass@host) hides the real host from a casual reader.
+	return 0 if $authority =~ /\@/;
+	my $host;
+	if ($authority =~ /\A\[([^\]]+)\]/) { $host = $1 }   # bracketed IPv6
+	else { ($host) = $authority =~ /\A([^:]+)/ }
+	return 0 unless defined $host && length $host;
+	$host = lc $host;
+	return 0 if $host eq 'localhost' || $host =~ /\.localhost\z/;
+	# A literal, not the name an address could hide behind. IPv4 and IPv6
+	# loopback, RFC1918/ULA, link-local, CGNAT and reserved ranges are refused.
+	my $private = sub {
+		my ($ip) = @_;
+		return 0 unless defined $ip && length $ip;
+		$ip = lc $ip;
+		if ($ip =~ /:/) {
+			return 1 if $ip eq '::' || $ip eq '::1';
+			return 1 if $ip =~ /\A::/;                        # unspecified, mapped, compatible
+			return 1 if $ip =~ /\Afe[89ab](?::|\z)/;          # fe80::/10 link-local
+			return 1 if $ip =~ /\Af[cd][0-9a-f]{0,2}(?::|\z)/; # fc00::/7 unique local
+			return 0;
+		}
+		my @o = split /\./, $ip, 4;
+		# Not a dotted quad: a host name, which the resolver below judges.
+		return 0 unless @o == 4 && !grep { !/\A\d{1,3}\z/ || $_ > 255 } @o;
+		return 1 if $o[0] == 0 || $o[0] == 10 || $o[0] == 127;
+		return 1 if $o[0] == 169 && $o[1] == 254;
+		return 1 if $o[0] == 172 && $o[1] >= 16 && $o[1] <= 31;
+		return 1 if $o[0] == 192 && $o[1] == 168;
+		return 1 if $o[0] == 100 && $o[1] >= 64 && $o[1] <= 127;   # CGNAT 100.64/10
+		return 1 if $o[0] >= 224;                                  # multicast and reserved
+		return 0;
+	};
+	return 0 if $private->($host);
+	my @ip;
+	my @res = eval { Socket::getaddrinfo($host, undef, { socktype => Socket::SOCK_STREAM() }) };
+	if (@res) {
+		my ($err, @addrs) = @res;
+		for my $addr (@addrs) {
+			my (undef, $num) = eval { Socket::getnameinfo($addr->{'addr'}, Socket::NI_NUMERICHOST()) };
+			push @ip, $num if defined $num && length $num;
+		}
+	}
+	return 0 unless @ip;
+	for my $ip (@ip) { return 0 if $private->($ip); }
+	return 1;
 }
 
 sub headless_browser {

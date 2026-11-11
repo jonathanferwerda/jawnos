@@ -36,7 +36,7 @@
     "Mojo::SQLite":                    { "deb": "libmojo-sqlite-perl",                      "arch": null, "dist": "Mojo-SQLite", "version": "3.009" },
     "Mojolicious::Lite":               { "deb": "libmojolicious-perl",                      "arch": "perl-mojolicious", "version": "9.39" },
     "Mojolicious::Plugin::RenderFile": { "deb": "libmojolicious-plugin-renderfile-perl",    "arch": "perl-mojolicious-plugin-renderfile" },
-    "Net::IMAP::Client":               { "deb": "libnet-imap-client-perl",                  "arch": null, "dist": "Net-IMAP-Client" },
+    "Net::IMAP::Client":               { "deb": "libnet-imap-client-perl",                  "arch": null, "dist": "Net-IMAP-Client", "version": "0.9511" },
     "Net::SSLeay":                     { "deb": "libnet-ssleay-perl",                       "arch": "perl-net-ssleay" },
     "Number::Format":                  { "deb": "libnumber-format-perl",                    "arch": "perl-number-format" },
     "Sereal::Decoder":                 { "deb": "libsereal-decoder-perl",                   "arch": "perl-sereal-decoder", "version": "5.004" },
@@ -49,7 +49,7 @@
     "URI::db":                         { "deb": "liburi-db-perl",                           "arch": "perl-uri-db" },
     "URI::Encode":                     { "deb": "liburi-encode-perl",                       "arch": "perl-uri-encode" },
     "URI::Escape":                     { "core": true },
-    "WebService::Ollama":              { "deb": null, "arch": null, "dist": "WebService-Ollama" },
+    "WebService::Ollama":              { "deb": null, "arch": null, "dist": "WebService-Ollama", "_todo": "version unpinned: not installed on the build box, so the CPAN release is unverified" },
     "WWW::Mechanize":                  { "deb": "libwww-mechanize-perl",                    "arch": "perl-www-mechanize" },
     "YAML::XS":                        { "deb": "libyaml-libyaml-perl",                     "arch": "perl-yaml-libyaml" }
   },
