@@ -126,10 +126,13 @@ try {
             'node_modules',
             '__pycache__'
         )
+        # Robocopy rejects a wildcard in a full path under /XF ("Invalid
+        # Parameter", exit 16), so the database sidecars go in by bare name:
+        # jawnos.db-wal, -shm and -journal live only under database\ anyway.
         $excludeFiles = @(
             (Join-Path $TreeDir 'config.json'),
             (Join-Path $TreeDir 'database\jawnos.db'),
-            (Join-Path $TreeDir 'database\jawnos.db-*'),
+            'jawnos.db-*',
             (Join-Path $TreeDir 'server\fullchain.pem'),
             (Join-Path $TreeDir 'server\privkey.pem'),
             '*.pyc',

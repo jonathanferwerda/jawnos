@@ -77,6 +77,7 @@ like($build, qr/Join-Path \$TreeDir 'releases'/, 'plain copy excludes releases')
 like($build, qr/Join-Path \$TreeDir '\.shots'/, 'plain copy excludes .shots');
 like($build, qr/Join-Path \$TreeDir 'database\\jawnos\.db'/,
 	'plain copy excludes the live database');
+	like($build, qr/'jawnos\.db-\*'/, 'database sidecars excluded by bare name');
 like($build, qr/Join-Path \$TreeDir 'server\\fullchain\.pem'/,
 	'plain copy excludes the TLS material');
 
