@@ -91,8 +91,18 @@ my $notes = defined $opt{'notes'} ? $opt{'notes'} : '';
 my $size = -s $file;
 fail("could not read the size of $file") unless defined $size;
 
-my $digest = eval { Digest::SHA->new(256)->addfile($file)->hexdigest };
-fail("could not hash $file: $@") unless defined $digest && $digest =~ /\A[0-9a-f]{64}\z/;
+# Read raw bytes: on Windows Perl's default text mode translates CRLF, so a
+# digest taken through a plain filehandle would not match the published file
+# (and the updater, which hashes the downloaded bytes, would refuse it).
+my $digest;
+{
+	open(my $in, '<:raw', $file) or fail("could not read $file: $!");
+	my $sha = Digest::SHA->new(256);
+	$sha->addfile($in);
+	$digest = $sha->hexdigest;
+	close $in;
+}
+fail("could not hash $file") unless defined $digest && $digest =~ /\A[0-9a-f]{64}\z/;
 
 # --- the manifest -----------------------------------------------------------
 # Exactly these keys; the schema is the contract the updater reads.

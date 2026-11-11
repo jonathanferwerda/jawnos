@@ -144,6 +144,12 @@ isnt($code, 0, 'a missing Setup.exe is refused');
 like($out, qr/no such file/, 'the refusal says the file is missing');
 ok(!-e "$tmp/refused.json", 'and still writes no manifest');
 
+# Strawberry Perl on Windows opens in text mode by default and would digest
+# CRLF-translated bytes, which no longer match the published file. The digest
+# must be read raw; the Linux test cannot see the difference, so pin the source.
+like(slurp($script), qr/<:raw|binmode/,
+	'the manifest hashes raw bytes, not CRLF-translated text');
+
 # --- the workflow -----------------------------------------------------------
 
 my $wf = $workflow;
@@ -181,6 +187,10 @@ like($wf, qr/actions\/upload-artifact\@v4/, 'it uploads workflow artifacts');
 # The feed: the fixed `releases` tag, the same shape as the Android manifest.
 like($wf, qr{releases/download/releases/}, 'the manifest URL is the fixed releases tag');
 like($wf, qr/gh release view releases/, 'it checks for the fixed releases feed');
+like($wf, qr/\$ErrorActionPreference = 'Continue'/,
+	'the release probe tolerates gh stderr under the Actions wrapper');
+unlike($wf, qr/gh release view [^\n]*2>\$null/,
+	'no bare gh stderr redirect can terminate the publish step');
 like($wf, qr/gh release create releases/, 'it creates the feed when absent');
 like($wf, qr/gh release upload releases/, 'it replaces the feed assets');
 like($wf, qr/--clobber/, 'old feed assets are replaced');

@@ -186,8 +186,16 @@ jobs:
           $draftFlag = @()
           if ('${{ steps.version.outputs.draft }}' -eq 'true') { $draftFlag = @('--draft') }
 
-          gh release view $tag --repo $env:REPO 2>$null | Out-Null
-          if ($LASTEXITCODE -ne 0) {
+          # gh writes "release not found" to stderr; the Actions PowerShell
+          # wrapper runs with $ErrorActionPreference='Stop', which turns a
+          # redirected native stderr into a terminating error. Ask with
+          # Continue in force and judge the exit code instead.
+          $savedPreference = $ErrorActionPreference
+          $ErrorActionPreference = 'Continue'
+          gh release view $tag --repo $env:REPO 2>&1 | Out-Null
+          $exists = ($LASTEXITCODE -eq 0)
+          $ErrorActionPreference = $savedPreference
+          if (-not $exists) {
             gh release create $tag --repo $env:REPO @draftFlag `
               --title "JawnOS $version" --notes "JawnOS $version for Windows."
             if ($LASTEXITCODE -ne 0) { throw "could not create release $tag" }
@@ -208,8 +216,12 @@ jobs:
           $version = '${{ steps.version.outputs.version }}'
           $dist = Join-Path $env:GITHUB_WORKSPACE 'dist'
 
-          gh release view releases --repo $env:REPO 2>$null | Out-Null
-          if ($LASTEXITCODE -ne 0) {
+          $savedPreference = $ErrorActionPreference
+          $ErrorActionPreference = 'Continue'
+          gh release view releases --repo $env:REPO 2>&1 | Out-Null
+          $feedExists = ($LASTEXITCODE -eq 0)
+          $ErrorActionPreference = $savedPreference
+          if (-not $feedExists) {
             gh release create releases --repo $env:REPO `
               --title 'JawnOS release feed' `
               --notes 'Fixed feed for the updater: windows_release.json and the current JawnOS Setup.exe. Do not delete.'
