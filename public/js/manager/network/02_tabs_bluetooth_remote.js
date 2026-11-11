@@ -23,8 +23,47 @@ function networkTabShow(tab, remember) {
 		try { localStorage.setItem(network_tab_storage, tab); } catch (error) { /* private mode */ }
 	}
 	if (tab === 'bluetooth') { networkBluetoothRefresh(); }
-	// the controller list's neighbour columns are fed by the server heartbeat
-	if (tab === 'controller' && typeof stayingAliveNow == 'function') { stayingAliveNow('server'); }
+	// The Controller's anchor detail is fed by the heartbeat. Paint the saved
+	// picture first, then keep it live while the tab is open; the global beat is
+	// slower than the Controller's own.
+	if (tab === 'controller') {
+		networkControllerSnapshotApply();
+		networkControllerBeatStart();
+		if (typeof stayingAliveNow == 'function') { stayingAliveNow('server'); }
+	}
+	else { networkControllerBeatStop(); }
+}
+
+// The Controller's saved first paint, and the faster beat that keeps it live.
+// The server caches the anchors' last full beat, so opening the tab shows the
+// windows, roster and track instead of waiting for the next socket beat.
+var networkControllerBeatTimer = null;
+
+function networkControllerSnapshotApply() {
+	if (typeof stayingAliveOne !== 'function') { return; }
+	$.getJSON('/manager/controller/snapshot', function (r) {
+		var beats = (r && r.beats) || {};
+		Object.keys(beats).forEach(function (app) {
+			if (!beats[app]) { return; }
+			// A live beat may have painted first; never overwrite it with the cache.
+			if ($('.neighbours[app="' + app + '"] .neighbour').length) { return; }
+			stayingAliveOne(beats[app]);
+		});
+	});
+}
+
+function networkControllerBeatStart() {
+	networkControllerBeatStop();
+	networkControllerBeatTimer = setInterval(function () {
+		if (document.hidden) { return; }
+		if (typeof stayingAliveNow == 'function' && typeof jawnosControllerVisible == 'function' && jawnosControllerVisible()) {
+			stayingAliveNow('server');
+		}
+	}, 5000);
+}
+
+function networkControllerBeatStop() {
+	if (networkControllerBeatTimer) { clearInterval(networkControllerBeatTimer); networkControllerBeatTimer = null; }
 }
 
 function networkBluetoothError(text) {

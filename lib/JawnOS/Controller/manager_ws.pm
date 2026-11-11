@@ -60,7 +60,7 @@ use Minion;
 
 use IPC::Open2 qw(open2);
 
-our ($APP, $ws_live_window, $encoder, $decoder, $tuuid, $thread_uuid, $universal_splitter, $database, $sql, $remote_input_clipboard, $config_file, $config, $logfile, $log, $environment, $random_caching_string, $duty_file, $main_process, $device, $user_agent, %time_machine_guide_cache, @media_unlock_apps, %help_search_tables, %media_type_for_ext, %file_relay_down, @appointments, @results, %market_payment_family, @manager_bundle_files, $manager_bundle_cache, $js_minifier, %app_release_sha, %folders_desk_not_app, $jg_body, $remote_input_geometry_at, $remote_input_geometry_cache, %remote_input_ua, %remote_input_ws, %remote_input_rm, %remote_input_ws_failed, $public_ip_memo, $coding_protocols, $coding_protocols_mtime, $app_schema_done, $fingerprint_checked_at, $fingerprint_ok, %padlock_time_memo, %credential_browser_app, %app_gate_shadow_seen, $ws_server, %mailws_untrusted_rate);
+our ($APP, $ws_live_window, $encoder, $decoder, $tuuid, $thread_uuid, $universal_splitter, $database, $sql, $remote_input_clipboard, $config_file, $config, $logfile, $log, $environment, $random_caching_string, $duty_file, $main_process, $device, $user_agent, %time_machine_guide_cache, @media_unlock_apps, %help_search_tables, %media_type_for_ext, %file_relay_down, @appointments, @results, %market_payment_family, @manager_bundle_files, $manager_bundle_cache, $js_minifier, %app_release_sha, %folders_desk_not_app, $jg_body, $remote_input_geometry_at, $remote_input_geometry_cache, %remote_input_ua, %remote_input_ws, %remote_input_rm, %remote_input_ws_failed, $public_ip_memo, $coding_protocols, $coding_protocols_mtime, $app_schema_done, $fingerprint_checked_at, $fingerprint_ok, %padlock_time_memo, %credential_browser_app, %app_gate_shadow_seen, $ws_server, %mailws_untrusted_rate, %ws_snapshot_stamp);
 
 # WEBSOCKET /manager/ws
 sub action_47050 {
@@ -240,7 +240,7 @@ sub action_47050 {
 	my %ws_lockdown_state;
 	my %ws_lockdown_swept;
 	my (%ws_neighbour_stamp, %ws_neighbour_at);
-	my $ws_neighbour_refresh = 20000;
+	my $ws_neighbour_refresh = 5000;
 	$c->on(message => sub ($ws, $msg) {
 		my $data = eval { return decode_json $msg };
 		# A frame that omits app/type/method used to reach the eq chains below
@@ -402,18 +402,18 @@ sub action_47050 {
 				# nobody can see while the controller is shut, so the reply is a bare
 				# liveness ack. An open controller gets a full payload only when the
 				# neighbourhood moved, or on a slow refresh.
-				my ($neighbours, $full);
+				my ($neighbours, $full, $neighbour_stamp);
 				if ($controller_visible) {
 					my $community = &subs::db_query('select * from websockets where ( app = ? or app like ? ) and type = ? and server_time >= ? order by server_time DESC',$app, $app . '@%', 'stayingAlive',$server_time - $ws_live_window);
 					$neighbours = $community->hashes;
-					my $stamp = join('|', map {
+					$neighbour_stamp = join('|', map {
 						($_->{'browser_tab_id'} // '') . ':' . ($_->{'server_time'} // '') . ':' . ($_->{'pathname'} // '') .
 						':' . length($_->{'windows'} // '') . ':' . length($_->{'music_data'} // '') . ':' . length($_->{'jp_data'} // '')
 					} @{$neighbours});
-					$full = 1 if ($stamp ne $ws_neighbour_stamp{$app});
+					$full = 1 if ($neighbour_stamp ne $ws_neighbour_stamp{$app});
 					$full = 1 if (($server_time - $ws_neighbour_at{$app}) >= $ws_neighbour_refresh);
 					if ($full) {
-						$ws_neighbour_stamp{$app} = $stamp;
+						$ws_neighbour_stamp{$app} = $neighbour_stamp;
 						$ws_neighbour_at{$app} = $server_time;
 						foreach my $n ( @{$neighbours} ) { $n->{'pathname'} =~ s/[<>]//g if defined $n->{'pathname'}; $n->{'room'} =~ s/[<>]//g if defined $n->{'room'};
 							my $neighbourhood = eval { return decode_json $n->{'windows'} } || {};
@@ -486,7 +486,7 @@ sub action_47050 {
 				}
 
 				$return_data->{'server_time'} = $server_time;
-				return $return_data;
+				&controller_snapshot_save($app, $full, $neighbour_stamp, $return_data) if $full; return $return_data;
 			};
 
 			my @beat_apps = ref $data->{'apps'} eq 'ARRAY' ? @{$data->{'apps'}} : ($data->{'app'});
@@ -858,4 +858,18 @@ sub synth_frame_checked {
 		&& defined $freq && $freq =~ /\A\d{1,5}(?:\.\d{1,3})?\z/ && $freq >= 20 && $freq <= 20000;
 	$length = 60 if $length > 60;
 	return ($freq, $waveform, $length);
+}
+
+# The Controller's first paint. Keep the last full picture of the three anchor
+# sockets in the house's cache, so opening the Network tab shows the windows,
+# roster and track before the next beat. Only a changed picture is written.
+sub controller_snapshot_save {
+	my ($app, $full, $stamp, $return_data) = @_;
+	return unless $full && $stamp && ref $return_data eq 'HASH';
+	return unless $app =~ /^(?:music|server|tab)$/;
+	return if (($ws_snapshot_stamp{$app} || '') eq $stamp);
+	$ws_snapshot_stamp{$app} = $stamp;
+	my %snap = %{$return_data};
+	delete $snap{'remote'};
+	&subs::cache_set({ app => 'controller', context => 'beat', subcontext => $app }, \%snap);
 }

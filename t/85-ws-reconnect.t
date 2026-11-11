@@ -92,8 +92,8 @@ like($ws, qr/heartbeatStart\(app\);\s*\/\/ beat once now.*?heartbeatSend\(app\);
 like($ws, qr/if \(!document\.hidden\) \{\s*heartbeatStart\(app\);.*?heartbeatSend\(app\);\s*\}/s,
 	'a socket opened while hidden does not restart the heartbeat');
 my $controller = $tpl;
-like($controller, qr/if \(tab === 'controller' && typeof stayingAliveNow == 'function'\) \{ stayingAliveNow\('server'\); \}/,
-	'opening the Controller tab asks for a stayingAlive at once');
+like($controller, qr/if \(tab === 'controller'\) \{\s*networkControllerSnapshotApply\(\);\s*networkControllerBeatStart\(\);\s*if \(typeof stayingAliveNow == 'function'\) \{ stayingAliveNow\('server'\); \}/s,
+	'opening the Controller tab paints the saved picture and asks for a beat at once');
 
 # --- the music socket is a permanent line -----------------------------------
 

@@ -13,6 +13,7 @@ sub routes {
 	[9002, 'post', '/manager/debrief', 'action_9002'],
 	[7783, 'post', '/manager/fuck_you', 'action_7783'],
 	[7845, 'get', '/manager/network', 'action_7845'],
+	[7846, 'get', '/manager/controller/snapshot', 'action_7846'],
 	[7849, 'get', '/manager/network/bluetooth/status', 'action_7849'],
 	[7852, 'post', '/manager/network/bluetooth/scan', 'action_7852'],
 	[7855, 'post', '/manager/network/bluetooth/action', 'action_7855'],

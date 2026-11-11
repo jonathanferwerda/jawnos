@@ -105,4 +105,14 @@ like($beat, qr/scale\(1\.1\)[\s\S]*?if \(data\.slim\) \{ return; \}/,
 like($beat, qr/typeof jawnosControllerVisible == 'function' \? jawnosControllerVisible\(\)/,
 	'the neighbour rebuild follows the Network Controller tab');
 
+
+# --- the Controller's saved first paint and faster beat ----------------------
+like($ctl, qr/my \$ws_neighbour_refresh = 5000;/, 'the full neighbour payload is refreshed in seconds');
+like($ctl, qr/our \([^;]*%ws_snapshot_stamp\)/s, 'the saved picture keeps its own stamp');
+like($ctl, qr/sub controller_snapshot_save \{/, 'one helper writes the saved picture');
+like($ctl, qr/&subs::cache_set\(\{ app => 'controller', context => 'beat', subcontext => \$app \}/,
+	'a changed anchor picture is kept in the house cache');
+like($ctl, qr/\$app =~ \/\^\(\?:music\|server\|tab\)\$\//,
+	'only the three anchored apps are saved');
+
 done_testing();

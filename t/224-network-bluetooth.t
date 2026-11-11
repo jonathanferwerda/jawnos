@@ -384,4 +384,21 @@ like($remote_js, qr/panel\.removeAttr\('hidden'\)/, 'opening the accordion shows
 like($remote_js, qr/slot\.append\(panel\)/, 'and moves it under the row');
 like($remote_js, qr/slot_row\.removeAttr\('hidden'\)/, 'and unhides the slot row');
 
+
+# --- the Controller opens on its saved picture -------------------------------
+my $routes2 = source('lib/JawnOS/Routes/manager_misc2.pm');
+like($routes2, qr{\[7846, 'get', '/manager/controller/snapshot', 'action_7846'\]},
+	'the snapshot route is registered');
+my $action2 = source('lib/JawnOS/Controller/manager_misc2.pm');
+like($action2, qr/sub action_7846 \{/, 'the snapshot action exists');
+like($action2, qr/cache_get\(\{ app => 'controller', context => 'beat', subcontext => \$app \}\)/,
+	'it reads the saved anchor beats');
+my $remote_js2 = source('public/js/manager/network/02_tabs_bluetooth_remote.js');
+like($remote_js2, qr{\$\.getJSON\('/manager/controller/snapshot'}, 'the tab asks for the saved picture');
+like($remote_js2, qr/function networkControllerSnapshotApply\(\)/, 'and applies it before the beat');
+like($remote_js2, qr/function networkControllerBeatStart\(\)/, 'a faster beat keeps the tab live');
+like($remote_js2, qr/\}, 5000\);/, 'at five seconds');
+like($remote_js2, qr/never overwrite it with the cache/,
+	'a live beat that landed first wins over the saved picture');
+
 done_testing();

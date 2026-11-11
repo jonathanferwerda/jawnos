@@ -206,6 +206,21 @@ sub action_7845 {
 	$c->render(text => $contents);
 }
 
+# GET /manager/controller/snapshot
+# The Controller's first paint. The heartbeat saves the last full picture for
+# Music, Server and Tab in the house's cache; this hands it back at once, so
+# opening the tab does not wait for the next socket beat. The live beat follows
+# and replaces it.
+sub action_7846 {
+	my $c = shift;
+	my %beats;
+	foreach my $app ( qw/music server tab/ ) {
+		my $snap = &subs::cache_get({ app => 'controller', context => 'beat', subcontext => $app });
+		$beats{$app} = $snap if ref $snap eq 'HASH';
+	}
+	$c->render(json => { beats => \%beats });
+}
+
 # GET /manager/network/bluetooth/status
 sub action_7849 {
 	my $c = shift;
