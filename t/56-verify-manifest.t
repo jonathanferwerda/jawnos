@@ -184,4 +184,13 @@ like($capture, qr/File::Spec->devnull/, 'and a null device for its stdin');
 like($capture, qr/seek\(\$fh, 0, 0\)/, 'reading the child output seeks back to the start first');
 like($capture, qr/128 \+ \(\$status & 127\)/, 'a signalled child still reports 128 + the signal');
 
+# A compile that exits 0 passed, whatever the capture did. On the table the
+# child's text was lost through the open3 redirect, so every file in --all read
+# as FAIL and its watcher could never restart the tree; the exit status is the
+# compiler's own verdict.
+like($source, qr/\(\$code \/\/ 1\) == 0 \|\| \$out =~ \/syntax OK\//,
+	'a zero exit status passes even when the captured text is empty');
+like($source, qr/\(\$again_code \/\/ 1\) == 0 \|\| \$again =~ \/syntax OK\//,
+	'the retry honours its own exit status too');
+
 done_testing();

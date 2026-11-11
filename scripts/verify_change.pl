@@ -364,15 +364,20 @@ sub check {
 		# test finds its harness (RepoSource, JawnOSTest): run_tests.pl puts both
 		# on @INC, so the guard must compile a changed .t the same way.
 		my @inc = ('-I' . "$root/lib", '-I' . "$root/t/lib");
-		my ($out) = &run_capture($^X, @inc, '-c', $path);
+		# A compile that exits 0 passed, whatever the captured text says. Some
+		# Perls lose the child's output through the open3 redirect - the table's
+		# /usr/bin/perl printed nothing and exited 0, so every file in --all read
+		# as FAIL and the watcher could never restart the tree (2026-11-11). The
+		# exit status is the compiler's own verdict; the text is for the report.
+		my ($out, $code) = &run_capture($^X, @inc, '-c', $path);
 		$out = '' unless defined $out;
-		unless ($out =~ /syntax OK/) {
+		unless (($code // 1) == 0 || $out =~ /syntax OK/) {
 			# an app fragment (hooks.pl) leans on the DSL and imports Manager.pl
 			# brings in, so retry with them before calling it broken
-			my ($again) = &run_capture($^X, @inc, '-Mfeature=signatures',
+			my ($again, $again_code) = &run_capture($^X, @inc, '-Mfeature=signatures',
 				'-MMojolicious::Lite', '-MMojo::JSON=decode_json,encode_json', '-c', $path);
 			$again = '' unless defined $again;
-			unless ($again =~ /syntax OK/) {
+			unless (($again_code // 1) == 0 || $again =~ /syntax OK/) {
 				my $missing = &missing_module_name($out);
 				$missing = &missing_module_name($again) unless defined $missing;
 				if ($all && &missing_module($out) && $out !~ /syntax error/i) {
@@ -385,7 +390,9 @@ sub check {
 					push @probs, "perl -c: cannot load $missing (install it; this is the hook's environment, not the code)";
 				}
 				else {
-					push @probs, 'perl -c: ' . &first_line($out);
+					my $why = &first_line($out);
+					$why = 'no output, exit ' . (defined $code ? $code : '?') unless length $why;
+					push @probs, 'perl -c: ' . $why;
 				}
 			}
 		}
