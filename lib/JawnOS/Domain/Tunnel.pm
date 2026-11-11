@@ -479,6 +479,12 @@ sub tunnel_peer_enrol {
 		my $ua = Mojo::UserAgent->new();
 		my $url = 'https://127.0.0.1:' . $dock . '/manager/gate?restore_list=' . ($config->{'start_dir'} || '')
 			. '&neighbour=' . $hostname . '&my_name=' . $my_name . '&signatorial=' . &subs::signatorial_designer();
+		# This is the hub's loopback tunnel port, forwarding to the peer's own
+		# PORT_DOCK listener. That listener presents the peer's public wildcard (or
+		# the generated local certificate), never the house-CA leaf: the leaf is on
+		# the peer listener (main port + 6), which the tunnel does not carry. No CA
+		# held here can prove this hop, and the signed gate request is what
+		# authenticates the caller, so the lenient rail stays.
 		my $res = eval { $ua->insecure(1)->get($url)->result };
 		my $body = ($res && $res->is_success) ? eval { decode_json $res->body } : undef;
 		if ($body && $body->{'signatorial'} && $entry) {

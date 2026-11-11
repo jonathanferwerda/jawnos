@@ -38,6 +38,7 @@ package Tunnel;
 
 use Mojo::IOLoop;
 use Mojo::UserAgent;
+use Mojo::URL;
 use Mojo::Server::Daemon;
 use Mojo::JSON qw(decode_json encode_json);
 use IO::Socket::INET;
@@ -47,11 +48,38 @@ our $VERSION = '0.1';
 our $HUB_LISTEN = {};   # used by the CLI hub app below
 
 my %HUB;                # signatorial => hub session
-# The hub's manager serves https with a self-signed certificate, so a peer must
-# not reject it on the wss handshake.
-my $ua = Mojo::UserAgent->new;
-$ua->insecure(1);
-$ua->max_response_size(0);
+
+# A hub host reached by a public name carries a public (Let's Encrypt)
+# certificate, so the system store verifies it - the public switch is exactly
+# this. A loopback, LAN, local or tailnet name can hold the generated
+# self-signed certificate instead, and a peer hub has no shared CA this machine
+# can already hold: the house-CA leaf lives on the hub's peer listener (main
+# port + 6), not on the wss listener this dials, so it cannot prove this hop.
+sub _hub_host_is_public {
+  my ($host) = @_;
+  return 0 unless defined $host && length $host;
+  return 0 if $host =~ /^(?:localhost|::1)$/i;
+  return 0 if $host =~ /^\[/;
+  return 0 if $host =~ /^\d{1,3}(?:\.\d{1,3}){3}$/;
+  return 0 unless $host =~ /\./;
+  return 0 if $host =~ /\.(?:local|localhost|localdomain|internal|intranet|lan|home|home\.arpa|ts\.net|tailscale\.net)$/i;
+  return 1;
+}
+
+sub _hub_allow_self_signed {
+  my ($ua) = @_;
+  $ua->insecure(1) if $ua;
+  return $ua;
+}
+
+sub _hub_useragent {
+  my ($url) = @_;
+  my $ua = Mojo::UserAgent->new;
+  $ua->max_response_size(0);
+  my $host = eval { Mojo::URL->new($url)->host } || '';
+  _hub_allow_self_signed($ua) unless _hub_host_is_public($host);
+  return $ua;
+}
 
 sub _log {
   my ($fmt, @a) = @_;
@@ -248,6 +276,7 @@ sub peer_session {
   my ($url, $opts) = @_;
   my $sig      = $opts->{'signatorial'} || '';
   my %channels;   # channel id => TCP stream to the local service
+  my $ua = _hub_useragent($url);
 
   # sign the ws handshake the way the HTTP peer rail signs its requests, so the
   # hub verifies identity instead of trusting a name alone. The UA's start event
@@ -268,7 +297,13 @@ sub peer_session {
       _log('peer ws callback (is_ws=%d)', $tx->is_websocket ? 1 : 0);
       unless ($tx->is_websocket) {
         my $err = $tx->error || {};
-        _log('peer dial failed: %s', $err->{'message'} // 'unknown');
+        my $message = $err->{'message'} // 'unknown';
+        _log('peer dial failed: %s', $message);
+        # A public-looking host that presents the generated self-signed
+        # certificate instead: fall back to the lenient rail once, so a peer hub
+        # named by such a domain keeps working.
+        _hub_allow_self_signed($ua)
+          if !$ua->insecure && $message =~ /(?:SSL|certificate|TLS|verify)/i;
         _reconnect($connect);
         return;
       }

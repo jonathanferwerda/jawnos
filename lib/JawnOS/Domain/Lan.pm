@@ -345,11 +345,20 @@ sub nearby_position {
 	return {} unless @nics;
 	my $targets = &lan_peer_targets(\@nics, 'mobile');
 	return {} unless scalar @{$targets};
-	my $ua = Mojo::UserAgent->new();
-	$ua->on(start => sub { my ($ua, $tx) = @_; &peer_sign_request($tx->req); });
-	$ua = $ua->insecure(1)->connect_timeout(1)->inactivity_timeout(4)->request_timeout(7);
 	foreach my $target ( @{$targets} ) {
+		my $ua = Mojo::UserAgent->new();
+		$ua->on(start => sub { my ($ua, $tx) = @_; &peer_sign_request($tx->req); });
+		$ua = $ua->connect_timeout(1)->inactivity_timeout(4)->request_timeout(7);
 		my $url = 'https://' . $target->{'ip'} . ':' . $target->{'port'} . '/manager/navigation/position?peer=yes&signatorial=' . &signatorial_designer();
+		# The manager port a peer advertises carries the public/self-signed
+		# certificate; its house-CA leaf is on the peer listener (port + 6). Take
+		# that verified route when the leaf proves this address, and keep the
+		# signed rail when it does not. The row is built from the target so the
+		# decision stays on the LAN address this pass chose.
+		my $row = { ip => $target->{'ip'}, port => $target->{'port'}, signatorial => $target->{'signatorial'} };
+		my ($secure, $verified) = &subs::peer_secure_url($row, $url);
+		if ($verified && &subs::peer_tls_verify($ua)) { $url = $secure }
+		else { $ua->insecure(1) }
 		my $res = eval { $ua->get($url)->result };
 		next unless $res && $res->is_success;
 		my $body = eval { decode_json($res->body) } || {};
@@ -530,10 +539,17 @@ sub operator_door_push {
 		my $lan = &subs::peer_lan_address($rm, 1);
 		next unless $lan && $lan->{'manager'};
 		my $ua = Mojo::UserAgent->new(connect_timeout => 2, inactivity_timeout => 3);
-		$ua = $ua->insecure(1);
+		# The LAN manager carries the peer's public/self-signed certificate; its
+		# house-CA leaf is on the peer listener (port + 6). Verify that listener
+		# when it proves this address, and keep the signed LAN rail otherwise.
+		my $land_row = { ip => $lan->{'ip'}, port => $lan->{'port'}, signatorial => $rm->{'signatorial'} };
+		my $url = $lan->{'manager'} . '/manager/operator_door';
+		my ($secure, $verified) = &subs::peer_secure_url($land_row, $url);
+		if ($verified && &subs::peer_tls_verify($ua)) { $url = $secure }
+		else { $ua->insecure(1) }
 		$ua->on(start => sub { my ($ua, $tx) = @_; &subs::peer_sign_request($tx->req); });
 		my $res = eval {
-			$ua->post($lan->{'manager'} . '/manager/operator_door' => form => {
+			$ua->post($url => form => {
 				signatorial => &subs::signatorial_designer(),
 				edt => $edt,
 				chip_id => $chip_id,

@@ -237,6 +237,10 @@ sub device_scan {
 							$ua->inactivity_timeout(5);
 							my $manager = $n->{'tunnel'} eq 'yes' ? 'https://127.0.0.1:' . ($n->{'PORT_DOCK'} || $ENV{PORT_DOCK}) .  '/manager'
 								: 'https://' . $n->{'ip'} . ':' . ($n->{'PORT_DOCK'} || $ENV{PORT_DOCK}) .  '/manager';
+							# The manager port (or the hub-side tunnel port that forwards to it)
+							# carries the peer's public wildcard or generated local certificate;
+							# the house-CA leaf is on the peer listener (port + 6), which this
+							# scan does not dial. The signed gate request is the proof here.
 							my $res = eval { $ua->insecure(1)->get($manager . '/gate?restore_list=' . $config->{'start_dir'} . '&neighbour=' . $hostname . '&my_name=' . $my_name . '&signatorial=' . $signatorial => {user_agent => $user_agent})->result };
 							if (eval { $res->is_success }){
 								if (eval { decode_json $res->body }) {

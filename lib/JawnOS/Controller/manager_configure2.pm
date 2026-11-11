@@ -987,10 +987,61 @@ sub action_12450 {
 	# The house needs this machine's address, not its own; keep the target in the
 	# local row (what the person asked for) and send the self address across.
 	my $forward = { %{$identity}, address => $self_address };
-	my $res = eval {
-		Mojo::UserAgent->new->insecure(1)->inactivity_timeout(10)->request_timeout(20)
-			->post($base . '/manager/configure/join_request' => form => { forward => 1, %{$forward} })->result;
+	my $join_url = $base . '/manager/configure/join_request';
+	# A target the roster already names is a peer: make the canonical TLS
+	# decision, which uses the house-CA listener when it proves the address. A
+	# house not yet rostered is verified against the system store, which is what
+	# its public certificate needs.
+	my ($target_host) = $base =~ m{^https?://(\[[^\]]+\]|[^/:]+)};
+	$target_host = defined $target_host ? lc $target_host : '';
+	$target_host =~ s/^\[|\]$//g;
+	my $rm;
+	if (length $target_host) {
+		foreach my $row ( @{ &subs::db_select('remote_machines')->hashes || [] } ) {
+			my ($manager_host) = &subs::peer_manager_host($row);
+			my %names;
+			for my $candidate ($row->{'ip'}, $row->{'fqdn'}, $row->{'hostname'}, $manager_host) {
+				next unless defined $candidate && length $candidate;
+				my $name = lc $candidate;
+				$name =~ s/^\[|\]$//g;
+				$names{$name} = 1;
+			}
+			if ($names{$target_host}) { $rm = $row; last }
+		}
+	}
+	my $ua = Mojo::UserAgent->new->inactivity_timeout(10)->request_timeout(20);
+	my $post = sub {
+		return eval { $ua->post($join_url => form => { forward => 1, %{$forward} }) };
 	};
+	my $lenient = 0;
+	if ($rm) {
+		my ($secure, $verified) = &subs::peer_secure_url($rm, $join_url);
+		if ($verified && &subs::peer_tls_verify($ua)) { $join_url = $secure }
+		else { $lenient = 1 }
+	}
+	# The one lenient rail this route keeps: an unproved peer, or a house not yet
+	# rostered that holds only the generated self-signed certificate.
+	my $lenient_post = sub {
+		$ua->insecure(1);
+		my $tx = $post->();
+		return $tx ? eval { $tx->result } : undef;
+	};
+	my $res;
+	if ($lenient) {
+		$res = $lenient_post->();
+	}
+	else {
+		my $tx = $post->();
+		$res = $tx ? eval { $tx->result } : undef;
+		# A house named by its public address has a public certificate, so the
+		# system store verifies it. Retry leniently only when that verified
+		# request actually failed at TLS.
+		if (!$res && !$rm && $tx) {
+			my $error = $tx->error || {};
+			$res = $lenient_post->()
+				if ref $error eq 'HASH' && ($error->{'message'} // '') =~ /(?:SSL|certificate|TLS|verify)/i;
+		}
+	}
 	my $delivered = 0;
 	if ($res) {
 		my $answer = eval { decode_json $res->body } || {};
