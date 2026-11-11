@@ -1,4 +1,4 @@
-# tests-for: lib/JawnOS/Domain/Sync.pm lib/JawnOS/Manager/Part08.pm lib/JawnOS/Manager/Part10.pm lib/JawnOS/Controller/manager_configure2.pm lib/JawnOS/Controller/manager_misc3.pm lib/JawnOS/Domain/House.pm lib/JawnOS/Domain/Loader.pm
+# tests-for: lib/JawnOS/Domain/Sync.pm lib/JawnOS/Manager/Part08.pm lib/JawnOS/Manager/Part10.pm lib/JawnOS/Controller/manager_configure2.pm lib/JawnOS/Controller/manager_configure5.pm lib/JawnOS/Controller/manager_misc3.pm lib/JawnOS/Domain/House.pm lib/JawnOS/Domain/Loader.pm
 # covers:    The AEAD cutover rolls: a puller names the seal it reads in a
 #           signed query parameter, an older puller gets the legacy seal, and
 #           the LAN probe (whose key is public anyway) keeps the old one.
@@ -69,5 +69,15 @@ like($part10, qr/remote_upgrade_plan\(\$c,\$params\) if \$params->\{'handshake'\
 	'only a caller that asked for the handshake pays for it');
 like(source('lib/JawnOS/Controller/manager_configure2.pm'), qr/handshake => 1/,
 	'the Sync route asks for the handshake');
+
+# --- a peer starts a pull or a backup only when its grant allows it --------
+# The sync rail is gate-exempt, so a signed-but-visitor peer could otherwise
+# make this machine fetch and merge a snapshot.
+like(source('lib/JawnOS/Controller/manager_configure2.pm'),
+	qr/&subs::peer_allows\(\$c, \$requester_rm, 'trusted'\)/,
+	'the remote upgrade route requires trusted scope');
+like(source('lib/JawnOS/Controller/manager_configure5.pm'),
+	qr/&subs::peer_allows\(\$c, \$rm, 'trusted'\)/,
+	'and backup_now requires it too');
 
 done_testing();

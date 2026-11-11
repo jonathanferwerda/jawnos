@@ -285,10 +285,11 @@ sub action_10035 {
 	my $requester = $c->param('signatorial');
 	my $requester_rm = ($requester && &subs::db_select('remote_machines', undef, { signatorial => $requester })->hashes->[0]);
 	# A visitor's ticket cannot start a pull: this route forks a fetcher and
-	# names where it fetches from. A signed peer is the house's own machine.
+	# names where it fetches from. A signed peer is the house's own machine, and
+	# its roster grant must reach `trusted`: the snapshot it sends is merged.
 	my $house_session = ($c->session('authentication') || '') eq 'approved'
 		&& !&subs::guest_browser_session($c->session('privilege'), $c->session('source'));
-	unless ($house_session || ($requester_rm && $requester_rm->{'pubkey'} && &subs::peer_verify($c, $requester_rm))) {
+	unless ($house_session || ($requester_rm && $requester_rm->{'pubkey'} && &subs::peer_verify($c, $requester_rm) && &subs::peer_allows($c, $requester_rm, 'trusted'))) {
 		$c->rendered(403);
 		return;
 	}

@@ -852,8 +852,15 @@ sub decrypter_strict {
 sub backup_standard {
 	my ($secret,$content) = @_;
 	my $standard = &decrypter(undef,$content);
-	return $standard if defined $standard && length $standard;
-	return &decrypter($secret,$content);
+	$standard = &decrypter($secret,$content) unless defined $standard && length $standard;
+	return undef unless defined $standard && length $standard;
+	# The footer arrives with a peer's snapshot, so it is attacker-controlled.
+	# `none` and `null` are openssl passthroughs - a forged footer naming one
+	# would hand the merger a plaintext file as if it had been decrypted - and
+	# an unknown name is no better. Accept only a standard this build offers.
+	return undef if $standard eq 'none' || $standard eq 'null';
+	return undef unless grep { $_ eq $standard } @{ &note_encryption_standards() };
+	return $standard;
 }
 
 sub decrypter {
@@ -898,8 +905,8 @@ sub decrypter {
 # The standards the Encryption Standard setting offers. Everything here is
 # filtered by what this machine can actually run (see note_standard_supported),
 # so the Configure list never offers a cipher that would write letters nobody can
-# read back. A standard not listed can still be read: the openssl fallback accepts
-# any cipher that binary knows.
+# read back. This is also the at-rest allow-list: a note or a backup footer that
+# names anything else is refused, never passed to openssl as a maybe-cipher.
 sub note_encryption_standards {
 	my @offered = (
 		'aes-256-ctr', 'aes-192-ctr', 'aes-128-ctr',
@@ -1017,6 +1024,10 @@ sub note_openssl_run {
 # the log when a caller is walking a credential history.
 sub openssl_file_crypt {
 	my ($mode, $standard, $secret, $in_path, $out_path, $nopad, $quiet) = @_;
+	# Never hand an unvetted cipher to openssl: `-none`/`-null` decrypt to the
+	# input unchanged, so a forged fallback would write a plaintext snapshot.
+	return 0 unless defined $standard && length $standard
+		&& grep { $_ eq $standard } @{ &note_encryption_standards() };
 	return 0 unless defined $secret && length $secret && defined $in_path && defined $out_path;
 	require File::Temp;
 	require File::Spec;
@@ -1036,6 +1047,8 @@ sub openssl_file_crypt {
 # The same, but returning the plaintext instead of writing it to a path.
 sub openssl_file_read {
 	my ($standard, $secret, $in_path, $nopad, $quiet) = @_;
+	return undef unless defined $standard && length $standard
+		&& grep { $_ eq $standard } @{ &note_encryption_standards() };
 	return undef unless defined $secret && length $secret && defined $in_path;
 	require File::Temp;
 	require File::Spec;

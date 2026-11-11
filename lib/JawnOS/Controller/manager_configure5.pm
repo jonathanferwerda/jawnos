@@ -499,9 +499,10 @@ sub action_25152 {
 	# lapses and a gated reply - the Gate page, not JSON - silently stalled the
 	# merge. Authorize here instead: the UI's own session, or a peer that signs
 	# the request against its roster row, exactly like the rest of the peer rail.
+	# A peer must also hold `trusted` scope: a snapshot it names is merged.
 	my $signatorial = $c->param('signatorial');
 	my $rm = ($signatorial && &subs::db_select('remote_machines', undef, { signatorial => $signatorial })->hashes->[0]);
-	unless ($c->session('authentication') eq 'approved' || ($rm && $rm->{'pubkey'} && &subs::peer_verify($c, $rm))) {
+	unless ($c->session('authentication') eq 'approved' || ($rm && $rm->{'pubkey'} && &subs::peer_verify($c, $rm) && &subs::peer_allows($c, $rm, 'trusted'))) {
 		$c->rendered(403);
 		return;
 	}

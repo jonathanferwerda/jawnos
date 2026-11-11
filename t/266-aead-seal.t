@@ -10,9 +10,10 @@ use warnings;
 use FindBin;
 use lib "$FindBin::Bin/lib", "t/lib";
 use Test::More;
+use File::Temp qw(tempdir tempfile);
 use JawnOSTest;
 
-subs::preload('encrypter encrypter_legacy decrypter decrypter_strict backup_standard');
+subs::preload('encrypter encrypter_legacy decrypter decrypter_strict backup_standard openssl_file_crypt openssl_file_read');
 
 # --- a new seal is authenticated, and fresh each time -----------------------
 my $a = subs::encrypter('the-key', 'hello');
@@ -95,5 +96,42 @@ is(subs::backup_standard($house_key, $real_footer), 'aes-256-ctr',
 	'a footer sealed with the real credential still opens');
 is(subs::backup_standard($house_key, 'not a footer'), undef,
 	'garbage is still refused');
+
+# --- a forged cipher name cannot ride in on a peer's snapshot --------------
+# The footer is under the public empty key, so a peer controls it. `none` and
+# `null` are openssl passthroughs and would turn a plaintext file into the
+# "decrypted" snapshot; an unknown name is no better.
+is(subs::backup_standard($house_key, subs::encrypter_legacy(undef, 'none')), undef,
+	'a footer naming `none` is refused');
+is(subs::backup_standard($house_key, subs::encrypter_legacy(undef, 'null')), undef,
+	'a footer naming `null` is refused');
+is(subs::backup_standard($house_key, subs::encrypter_legacy(undef, 'made-up-cipher')), undef,
+	'a cipher this build does not offer is refused');
+is(subs::backup_standard($house_key, subs::encrypter_legacy(undef, '')), undef,
+	'an empty standard is refused');
+is(subs::backup_standard($house_key, $real_footer), 'aes-256-ctr',
+	'a legitimate standard still opens');
+
+# The file helpers refuse an unvetted standard before they touch openssl.
+my $tmpdir = tempdir(CLEANUP => 1);
+my ($ifh, $in_file) = tempfile('jawnos-plain-XXXXXX', DIR => $tmpdir);
+print $ifh 'a plaintext snapshot';
+close $ifh;
+my $out_file = "$tmpdir/out.db";
+is(subs::openssl_file_crypt('d', 'none', $house_key, $in_file, $out_file, 1, 1), 0,
+	'openssl_file_crypt refuses `none`');
+ok(!-e $out_file, 'and writes nothing');
+is(subs::openssl_file_read('none', $house_key, $in_file, 1, 1), undef,
+	'openssl_file_read refuses it too');
+
+# A real standard still passes the allow-list and round-trips.
+SKIP: {
+	my $openssl = grep { -x "$_/openssl" } split /:/, ($ENV{PATH} || '');
+	skip 'no openssl binary', 2 unless $openssl;
+	ok(subs::openssl_file_crypt('e', 'aes-256-ctr', $house_key, $in_file, "$tmpdir/sealed", 0, 1),
+		'a real standard still encrypts');
+	is(subs::openssl_file_read('aes-256-ctr', $house_key, "$tmpdir/sealed", 0, 1), 'a plaintext snapshot',
+		'and reads back');
+}
 
 done_testing();
