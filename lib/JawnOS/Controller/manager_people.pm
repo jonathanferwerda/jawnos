@@ -299,9 +299,30 @@ sub action_23959 {
 	}
 	my $code = &subs::crest_code_build($own, $priv);
 	unless ($code) { return $c->render(json => { ok => 0, error => 'the crest code could not be made' }); }
-	my $url = $origin . '/crest/' . $uuid . '/profile';
 	my $ua = Mojo::UserAgent->new(connect_timeout => 5, inactivity_timeout => 10, request_timeout => 15);
-	$ua->insecure(1);
+	# The origin is another house's manager. When it is a peer this machine has a
+	# row for, its house-CA listener can prove the address. An origin with no row
+	# is still authenticated by the signed crest code, so it keeps the fallback.
+	my $origin_row;
+	if ($origin =~ m{^https?://(\[[^\]]+\]|[^/:]+)}) {
+		my $origin_host = lc $1;
+		$origin_host =~ s/^\[|\]$//g;
+		my $rows = eval { &subs::db_select('remote_machines')->hashes } || [];
+		foreach my $row ( grep { ref $_ eq 'HASH' } @{$rows} ) {
+			my $base = &subs::peer_manager_base($row->{'manager'} || '');
+			my $fqdn = lc($row->{'fqdn'} || '');
+			my $ip = lc($row->{'ip'} || '');
+			next unless (length $base && lc $base eq lc $origin)
+				|| (length $fqdn && $fqdn eq $origin_host)
+				|| (length $ip && $ip eq $origin_host);
+			$origin_row = $row;
+			last;
+		}
+	}
+	my ($secure_origin, $origin_verified) = $origin_row ? &subs::peer_secure_url($origin_row, $origin) : ($origin, 0);
+	if ($origin_verified && &subs::peer_tls_verify($ua)) { $origin = $secure_origin; }
+	else { $ua->insecure(1); }
+	my $url = $origin . '/crest/' . $uuid . '/profile';
 	my $res = eval { $ua->get($url => form => { code => $code })->result };
 	unless ($res) { return $c->render(json => { ok => 0, error => 'the other house did not answer' }); }
 	unless ($res->is_success) {

@@ -283,17 +283,31 @@ sub device_ws_peer_relay {
 	my $port = $arm - 2;
 	return 0 if $port <= 0;
 	my @hosts = @{ &device_ws_relay_hosts($od, $host) };
+	my $rows = eval { &subs::db_select('remote_machines')->hashes } || [];
+	my @rows = grep { ref $_ eq 'HASH' } @{$rows};
 	foreach my $candidate ( @hosts ) {
 		# A peer that will answer answers at once (the Table answered a signed
 		# frame in 0.15 s). A peer on a network this machine cannot route to must
 		# not hold the press: one second, then the next address.
 		my $ua = Mojo::UserAgent->new(connect_timeout => 1, inactivity_timeout => 2);
-		$ua->insecure(1);
+		my $url = 'https://' . $candidate . ':' . $port . '/manager/device_ws';
+		# A candidate that is a recorded peer can be proved by its house-CA leaf,
+		# and the verified listener is the route to dial. A raw homebase address
+		# with no row has no CA proof, so it keeps the signed insecure fallback.
+		my ($row) = grep {
+			my $ip = $_->{'ip'};
+			my $tailnet = $_->{'tailnet_ip'};
+			(defined $ip && length $ip && lc $ip eq lc $candidate)
+				|| (defined $tailnet && length $tailnet && lc $tailnet eq lc $candidate)
+		} @rows;
+		my ($secure_url, $verified) = $row ? &subs::peer_secure_url($row, $url) : ($url, 0);
+		if ($verified && &subs::peer_tls_verify($ua)) { $url = $secure_url; }
+		else { $ua->insecure(1); }
 		# Built as a form, not by merging into body_params: Mojo only renders the
 		# body params when the content type is a form, so a merge alone sent an
 		# empty body - the homebase saw no chip_id, answered "not sent", and every
 		# command fell through to HTTP and then Bluetooth.
-		my $tx = $ua->build_tx(POST => 'https://' . $candidate . ':' . $port . '/manager/device_ws'
+		my $tx = $ua->build_tx(POST => $url
 			=> form => { chip_id => $chip_id, frame => encode_json($frame) });
 		&subs::peer_sign_request($tx->req);
 		my $res = eval { $ua->start($tx)->result };

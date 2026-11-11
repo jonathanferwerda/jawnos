@@ -590,9 +590,25 @@ sub ble_message_processor {
 		$log->error('BLE message fetch refused a non-house URL: ' . $url);
 		return;
 	}
+	my $url_tls = ($url =~ m{\Ahttps://}i) ? 1 : 0;
+	my $house_https = $url_tls && length $house_domain && $url_host eq $house_domain;
 	eval {
-		$gb::ble_ua ||= Mojo::UserAgent->new(connect_timeout => 5, inactivity_timeout => 10);
-		$gb::ble_ua->insecure(1)->get($url, sub {
+		my $ua;
+		if ($house_https) {
+			# The house's wildcard leaf is issued by a public CA, so the system
+			# store verifies it; pinning the house CA here would reject it. A
+			# separate agent keeps a LAN device's insecure flag off this call.
+			$gb::ble_ua_house ||= Mojo::UserAgent->new(connect_timeout => 5, inactivity_timeout => 10);
+			$ua = $gb::ble_ua_house;
+		}
+		else {
+			$gb::ble_ua ||= Mojo::UserAgent->new(connect_timeout => 5, inactivity_timeout => 10);
+			$ua = $gb::ble_ua;
+			# A private-LAN device serves a self-signed leaf, so that route keeps
+			# the lenient agent. http:// needs no TLS choice either way.
+			$ua->insecure(1) if $url_tls;
+		}
+		$ua->get($url, sub {
 			my ($ua, $tx) = @_;
 			if ($tx->error) {
 				$log->error('BLE message fetch failed: ' . $tx->error->{message} . ' for ' . $url);

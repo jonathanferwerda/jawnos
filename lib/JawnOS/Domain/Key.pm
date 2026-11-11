@@ -69,7 +69,13 @@ sub key_push_one {
 	return unless $manager;
 	my $ua = Mojo::UserAgent->new();
 	$ua->max_response_size(0);
-	$ua->insecure(1);
+	# key_push hands the peer its new house key, so a peer with no house-CA leaf
+	# yet keeps the stored manager and the signed fallback: peer_secure_url then
+	# answers unverified and the push still enrols it. Once the listener can prove
+	# the peer it is the same signed app route, so the key rides it verified.
+	my ($secure_manager, $manager_verified) = &subs::peer_secure_url($rm, $manager);
+	if ($manager_verified && &subs::peer_tls_verify($ua)) { $manager = $secure_manager; }
+	else { $ua->insecure(1); }
 	$ua->on(start => sub { my ($ua, $tx) = @_; &peer_sign_request($tx->req); });
 	my $url = $manager . '/manager/key_push';
 	my $res = eval { $ua->inactivity_timeout(20)->post($url => form => { signatorial => &signatorial_designer(), proved => $proved })->result };

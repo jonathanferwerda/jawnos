@@ -636,13 +636,19 @@ sub remote_input_socket_for($rm, $browser_tab_id, $events) {
 	}
 	my $manager = $rm->{'manager'} || '';
 	return 0 unless $manager;
+	my $ua = Mojo::UserAgent->new;
+	# Decide on the https manager, before it is rewritten to wss: the verified
+	# route is the house-CA peer listener, and that is the address the socket
+	# must dial. An unverified peer keeps the stored manager and the signed
+	# fallback.
+	my ($secure_manager, $manager_verified) = &subs::peer_secure_url($rm, $manager);
+	if ($manager_verified && &subs::peer_tls_verify($ua)) { $manager = $secure_manager; }
+	else { $ua->insecure(1); }
 	my $url = $manager;
 	$url =~ s{^https://}{wss://}i;
 	$url =~ s{^http://}{ws://}i;
 	$url =~ s{/manager/?$}{}i;
 	$url .= '/manager/remote_input/ws?signatorial=' . uri_encode(&subs::signatorial_designer());
-	my $ua = Mojo::UserAgent->new;
-	$ua->insecure(1);
 	# The auth gate needs the stored peer session, not only the signature: a
 	# signed handshake passes the app gate, but a session-less one still gets the
 	# Gate page. Carry the same cookie jar remote_command uses.
