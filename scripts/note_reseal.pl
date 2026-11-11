@@ -37,7 +37,7 @@ for (my $i = 0; $i < @ARGV; $i++) {
 }
 $batch = 1 if $batch < 1;
 
-my %sum = map { $_ => 0 } qw(seen appointments notes ocr mailbox warehouse credentials settings vault mail_tokens device_tokens failed already);
+my %sum = map { $_ => 0 } qw(seen appointments notes ocr mailbox warehouse credentials settings keyboard tickets appointments_data vault mail_tokens device_tokens failed already);
 my $sweep = sub {
 	my ($table) = @_;
 	while (1) {
@@ -83,6 +83,9 @@ printf "  mailbox:      %d row(s)\n", $result->{'mailbox'};
 printf "  warehouse:    %d note(s)\n", $result->{'warehouse'};
 printf "  credentials:  %d payload(s)\n", $result->{'credentials'};
 printf "  settings:     %d value(s)\n", $result->{'settings'};
+printf "  keyboard:     %d value(s)\n", $result->{'keyboard'};
+printf "  tickets:      %d secret(s)\n", $result->{'tickets'};
+printf "  appt data:    %d value(s)\n", $result->{'appointments_data'};
 printf "  vault:        %d row(s)\n", $result->{'vault'};
 printf "  mail secrets: %d field(s)\n", $result->{'mail_tokens'};
 printf "  device auth:  %d token(s)\n", $result->{'device_tokens'};

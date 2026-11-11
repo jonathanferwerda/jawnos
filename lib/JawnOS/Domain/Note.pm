@@ -777,6 +777,26 @@ sub note_reseal_value {
 	return $re;
 }
 
+# A value sealed by encrypter (not the note container) can be legacy too: the
+# outer Crypt::Simple layer under the real key, or under the empty passphrase.
+# Re-wrap the plaintext as JS1 under the key in use now. A note payload is
+# refused here so a caller can try this after note_reseal_value without ever
+# wrapping a note's inner payload as plain text.
+sub sealed_reseal_value {
+	my ($v, $K) = @_;
+	return undef unless defined $v && length $v && defined $K && length $K;
+	return $v if index($v, 'JS1:') == 0 && defined &subs::decrypter_strict($K, $v);
+	my $plain = &subs::decrypter_strict($K, $v);
+	$plain = &subs::decrypter($K, $v) unless defined $plain;
+	return undef unless defined $plain && length $plain;
+	return undef if index($plain, ':::---:::') >= 0;
+	my $re = &subs::encrypter($K, $plain);
+	return undef unless defined $re && index($re, 'JS1:') == 0;
+	return undef unless defined &subs::decrypter_strict($K, $re);
+	return undef unless &subs::decrypter_strict($K, $re) eq $plain;
+	return $re;
+}
+
 sub note_reseal {
 	my ($apply, $opts) = @_;
 	$opts ||= {};
@@ -785,7 +805,7 @@ sub note_reseal {
 	my $want = $opts->{'table'} || 'both';
 	my $K = &suds_grabber() || $gb::suds;
 	return { ok => 0, error => 'no key on this machine' } unless $K;
-	my $counts = { appointments => 0, notes => 0, ocr => 0, mailbox => 0, warehouse => 0, credentials => 0, settings => 0, vault => 0, mail_tokens => 0, device_tokens => 0, failed => 0, already => 0, seen => 0 };
+	my $counts = { appointments => 0, notes => 0, ocr => 0, mailbox => 0, warehouse => 0, credentials => 0, settings => 0, keyboard => 0, tickets => 0, appointments_data => 0, vault => 0, mail_tokens => 0, device_tokens => 0, failed => 0, already => 0, seen => 0 };
 	my $next_appt = $opts->{'after_appt'} || 0;
 	my $next_mail = $opts->{'after_mail'} || 0;
 	my ($more_appt, $more_mail) = (0, 0);
@@ -800,6 +820,7 @@ sub note_reseal {
 				my $v = $row->{$field};
 				next unless defined $v && length $v;
 				my $re = &note_reseal_value($v, $K, $row->{'ost'});
+				$re = &sealed_reseal_value($v, $K) unless defined $re;
 				if (!defined $re) { $counts->{'failed'}++; next; }
 				if ($re eq $v) { $counts->{'already'}++; next; }
 				$up{$field} = $re;
@@ -843,6 +864,7 @@ sub note_reseal {
 				my $v = $row->{$field};
 				next unless defined $v && length $v;
 				my $re = &note_reseal_value($v, $K, $row->{'ost'});
+				$re = &sealed_reseal_value($v, $K) unless defined $re;
 				if (!defined $re) { $counts->{'failed'}++; next; }
 				if ($re eq $v) { $counts->{'already'}++; next; }
 				$up{$field} = $re;
@@ -879,7 +901,7 @@ sub note_reseal {
 		}
 		# Note-shaped settings. Most settings are plain text and are not this
 		# sweep's business; a sealed one that will not open is counted a failure.
-		my $set = &db_query("select rowid, app, setting, value, ost from settings where length(value)>0 and not (app='__president' and setting='vault') and setting != 'operator_door' and not (app='mailbox' and setting='email_config')")->hashes;
+		my $set = &db_query("select rowid, app, setting, value, ost from settings where length(value)>0 and not (app='__president' and setting='vault') and setting != 'operator_door' and not (app='mailbox' and setting='email_config') and not (app='keyboard' and setting in ('keyboard','calculator'))")->hashes;
 		foreach my $row ( @{ $set || [] } ) {
 			my $re = &note_reseal_value($row->{'value'}, $K, $row->{'ost'});
 			if (!defined $re) {
@@ -893,11 +915,50 @@ sub note_reseal {
 			next unless $apply;
 			&db_update('settings', { value => $re }, { rowid => $row->{'rowid'}, value => $row->{'value'} });
 		}
+		# The keyboard layouts are encrypter-sealed rather than note-shaped.
+		my $kb = &db_query("select rowid, value from settings where app='keyboard' and setting in ('keyboard','calculator') and length(value)>0")->hashes;
+		foreach my $row ( @{ $kb || [] } ) {
+			my $re = &sealed_reseal_value($row->{'value'}, $K);
+			next unless defined $re;
+			if ($re eq $row->{'value'}) { $counts->{'already'}++; next; }
+			$counts->{'keyboard'}++;
+			next unless $apply;
+			&db_update('settings', { value => $re }, { rowid => $row->{'rowid'}, value => $row->{'value'} });
+		}
+		# A ticket's secret is url-escaped base64 of a note sealed under the
+		# ticket's own one-time password; the password stays a random plaintext key.
+		my $tk = &db_query("select rowid, password, secret from tickets where length(password)>0 and length(secret)>0")->hashes;
+		foreach my $row ( @{ $tk || [] } ) {
+			my $ver = url_unescape(decode_base64($row->{'secret'}));
+			next unless defined $ver && length $ver;
+			my $re = &note_reseal_value($ver, $row->{'password'}, undef);
+			next unless defined $re;
+			if ($re eq $ver) { $counts->{'already'}++; next; }
+			my $new = url_escape(encode_base64($re, ''));
+			$counts->{'tickets'}++;
+			next unless $apply;
+			&db_update('tickets', { secret => $new }, { rowid => $row->{'rowid'}, secret => $row->{'secret'} });
+		}
+		# Appointment data is plain JSON for most rows; a row sealed by an older
+		# path is upgraded and the plain rows are left exactly as they are.
+		my $ad = &db_query('select rowid, data, ost from appointments where length(data)>0')->hashes;
+		foreach my $row ( @{ $ad || [] } ) {
+			my $re = &note_reseal_value($row->{'data'}, $K, $row->{'ost'});
+			$re = &sealed_reseal_value($row->{'data'}, $K) unless defined $re;
+			next unless defined $re;
+			if ($re eq $row->{'data'}) { $counts->{'already'}++; next; }
+			$counts->{'appointments_data'}++;
+			next unless $apply;
+			&db_update('appointments', { data => $re }, { rowid => $row->{'rowid'}, data => $row->{'data'} });
+		}
 		# The vault is sealed with the house key, not the suds.
 		my $hk = eval { &house_key() } || '';
 		if (length $hk) {
 			my $vr = &db_query("select rowid, value from settings where app='__president' and setting='vault' and length(value)>0")->hashes;
 			foreach my $row ( @{ $vr || [] } ) {
+				# Already JS1 under the house key: re-sealing would only churn the
+				# salt (and the value) on every run.
+				next if index($row->{'value'}, 'JS1:') == 0 && defined &subs::decrypter_strict($hk, $row->{'value'});
 				my $suds = &note_decrypter($hk, $row->{'value'});
 				next unless defined $suds && length $suds;
 				my $re = &note_encrypter($hk, $suds, 1);

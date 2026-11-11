@@ -16,6 +16,7 @@ use lib "$FindBin::Bin/lib", "t/lib";
 use Test::More;
 use MIME::Base64;
 use Mojo::JSON ();
+use Mojo::Util qw(url_escape url_unescape);
 use File::Slurp qw(read_file);
 use JawnOSTest;
 
@@ -168,6 +169,11 @@ my $door_json = Mojo::JSON::encode_json({
 	__shutup => { patience => $pat, previous => { patience => $pat, authorization => encode_base64($token_prev, '') } },
 	__specs  => { authorization => encode_base64($token_current, '') },
 });
+my $ticket_pw = 'ticket-password';
+my $ticket_plain = '{"p":"ticket-suds","ts":"1"}';
+my $ticket_secret = url_escape(encode_base64(legacy_note($ticket_pw, $ticket_plain, $ticket_pw), ''));
+my $data_note = legacy_note($K, 'sms data payload', $K);
+my $data_plain = '{"mail_uuid":"x"}';
 
 my @rest_updates;
 my $rest;
@@ -182,10 +188,12 @@ my $rest;
 		return FakeRows->new([{ rowid => 51, value => $vault_legacy }]) if $sql =~ /^select rowid, value from settings where app='__president' and setting='vault'/;
 		return FakeRows->new([{ rowid => 61, value => $email_json }]) if $sql =~ /^select rowid, value from settings where app='mailbox' and setting='email_config'/;
 		return FakeRows->new([{ rowid => 71, value => $door_json }]) if $sql =~ /^select rowid, value from settings where setting='operator_door'/;
+		return FakeRows->new([{ rowid => 91, password => $ticket_pw, secret => $ticket_secret }]) if $sql =~ /from tickets/;
+		return FakeRows->new([{ rowid => 101, data => $data_note, ost => 1000 }, { rowid => 102, data => $data_plain, ost => 1000 }]) if $sql =~ /^select rowid, data, ost from appointments/;
+		return FakeRows->new([{ rowid => 82, value => $keyboard_legacy }]) if $sql =~ /^select rowid, value from settings where app='keyboard'/;
 		return FakeRows->new([
-			{ rowid => 81, app => 'mail',     setting => 'ollama_key', value => $set_legacy,      ost => 1000 },
-			{ rowid => 82, app => 'keyboard', setting => 'keyboard',   value => $keyboard_legacy, ost => 1000 },
-			{ rowid => 83, app => 'me',       setting => 'plain',      value => 'just text',      ost => 1000 },
+			{ rowid => 81, app => 'mail',     setting => 'ollama_key', value => $set_legacy, ost => 1000 },
+			{ rowid => 83, app => 'me',       setting => 'plain',      value => 'just text', ost => 1000 },
 		]) if $sql =~ /^select rowid, app, setting, value, ost from settings/;
 		return FakeRows->new([]);
 	};
@@ -196,11 +204,14 @@ my $rest;
 is($rest->{'warehouse'}, 1, 'a warehouse note is re-sealed');
 is($rest->{'credentials'}, 1, 'a saved credential payload is re-sealed');
 is($rest->{'settings'}, 1, 'a note-shaped setting is re-sealed');
+is($rest->{'keyboard'}, 1, 'the keyboard blob is re-wrapped as JS1');
+is($rest->{'tickets'}, 1, 'a ticket secret is re-sealed');
+is($rest->{'appointments_data'}, 1, 'a sealed appointment data value is re-sealed');
 is($rest->{'vault'}, 1, 'the vault is re-sealed under the house key');
 is($rest->{'mail_tokens'}, 1, 'a saved mail password is re-sealed');
 is($rest->{'device_tokens'}, 2, 'both device authorizations are re-sealed');
-is($rest->{'failed'}, 1, 'the encrypter-sealed keyboard blob is reported, not touched');
-is(scalar @rest_updates, 6, 'six rows are written');
+is($rest->{'failed'}, 0, 'nothing in this pass is left unreadable');
+is(scalar @rest_updates, 9, 'nine rows are written');
 
 my %rest_by = map { ($_->[0] . ':' . ($_->[2]->{'rowid'} // '')) => $_ } @rest_updates;
 my $wh_up = $rest_by{'warehouse:31'};
@@ -214,7 +225,9 @@ is(subs::note_decrypter_strict($K, $cr_up->[1]->{'payload'}), 'termux login', 'a
 my $set_up = $rest_by{'settings:81'};
 ok($set_up && index($set_up->[1]->{'value'}, 'JS1:') == 0, 'the setting is JS1');
 is(subs::note_decrypter_strict($K, $set_up->[1]->{'value'}), 'ollama key', 'and reads back');
-ok(!$rest_by{'settings:82'}, 'the encrypter-sealed keyboard blob is left alone');
+my $kb_up = $rest_by{'settings:82'};
+ok($kb_up && index($kb_up->[1]->{'value'}, 'JS1:') == 0, 'the keyboard blob is JS1');
+is(subs::decrypter_strict($K, $kb_up->[1]->{'value'}), 'keyboard layout', 'and reads back');
 ok(!$rest_by{'settings:83'}, 'a plain setting is left alone');
 
 my $vault_up = $rest_by{'settings:51'};
@@ -234,6 +247,15 @@ my $prev_raw = decode_base64($door->{'__shutup'}->{'previous'}->{'authorization'
 ok(index($cur_raw, 'JS1:') == 0 && index($prev_raw, 'JS1:') == 0, 'both device authorizations are JS1');
 is(subs::note_decrypter_strict($pat, $cur_raw), 'current token', 'the current token reads back');
 is(subs::note_decrypter_strict($pat, $prev_raw), 'previous token', 'the previous token reads back');
+
+my $tk_up = $rest_by{'tickets:91'};
+my $tk_ver = url_unescape(decode_base64($tk_up->[1]->{'secret'}));
+is(subs::note_decrypter_strict($ticket_pw, $tk_ver), $ticket_plain, 'the ticket secret is JS1 under its password');
+
+my $ad_up = $rest_by{'appointments:101'};
+ok($ad_up && index($ad_up->[1]->{'data'}, 'JS1:') == 0, 'the sealed appointment data is JS1');
+is(subs::note_decrypter_strict($K, $ad_up->[1]->{'data'}), 'sms data payload', 'and reads back');
+ok(!$rest_by{'appointments:102'}, 'plaintext appointment data is left alone');
 
 
 done_testing();
