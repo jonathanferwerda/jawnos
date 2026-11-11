@@ -483,6 +483,26 @@ sub log_reader {
 	# each location's manifest are shared by every row's files
 	my $archive_cache = {};
 
+	# One session can be written on more than one app's row: the centre view files
+	# the same uuid under each app it names, and only the row that owns the note
+	# carries the ciphertext. Redaction below marks a row by what it holds, so
+	# without this the other apps sharing the uuid got no note icon at all. Ask
+	# once for the whole view which uuids have notes; the answer is a uuid only,
+	# never a field of text.
+	my %uuid_has_notes;
+	{
+		my (@uuids, %seen_uuid);
+		foreach my $a (@{$appointments}) {
+			next unless defined $a->{'uuid'} && length $a->{'uuid'};
+			push @uuids, $a->{'uuid'} unless $seen_uuid{$a->{'uuid'}}++;
+		}
+		if (@uuids) {
+			my $placeholders = join ',', ('?') x scalar @uuids;
+			my $rows = &subs::db_query("select distinct uuid from appointments where uuid in ($placeholders) and (length(notes)>0 or length(start_notes)>0 or length(end_notes)>0)", @uuids);
+			$uuid_has_notes{$_->{'uuid'}} = 1 foreach @{ $rows->hashes };
+		}
+	}
+
 	foreach my $a (@{$appointments}) {
 		next unless $a->{'app'};
 	#	$a->{'file'} = undef if $data->{'view'} eq 'appointment_viewer';
@@ -561,6 +581,8 @@ sub log_reader {
 			$a->{'start_notes'} = 'redacted' if $a->{'start_notes'};
 			$a->{'notes'} = 'redacted' if $a->{'notes'};
 			$a->{'end_notes'} = 'redacted' if $a->{'end_notes'};
+			# a uuid whose note lives on a sibling app's row still gets the icon
+			$a->{'notes'} = 'redacted' if $a->{'uuid'} && $uuid_has_notes{$a->{'uuid'}};
 		}
 		$appts->{$a->{'app'}}->{'formatted_name'} = $fname->($a->{'app'});
 		$appts->{$a->{'app'}}->{'shorthand_name'} = &subs::shorthand_name($appts->{$a->{'app'}}->{'formatted_name'});

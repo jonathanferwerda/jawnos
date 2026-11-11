@@ -335,22 +335,33 @@ sub task_writer {
 	return $tasks;
 }
 
+# A session's notes live in appointments, and one uuid can be written on more
+# than one app's row (a centre view files the same session under each app it
+# names); only the row that owns the note carries the ciphertext. The caller
+# knows the uuid, not which row owns it, so this reads by uuid alone and gathers
+# every encrypted field. The output is HTML for the handbook's raw renderer and
+# the client's .html(), so it passes the article allowlist before it leaves
+# here: a stored <script> or onerror= must never reach a browser.
 sub note_retriever {
-	my ($app,$uuid) = @_;
-	my $noters = &subs::db_select('appointments', ['start_notes','notes','end_notes','server_time'], { app => $app, uuid => $uuid });
+	my ($uuid, $suds) = @_;
+	return '' unless defined $uuid && length $uuid;
+	$suds = &subs::suds_grabber() unless defined $suds && length $suds;
+	my $noters = &subs::db_select('appointments', ['start_notes','notes','end_notes','ost'], { uuid => $uuid });
 	my $noteskis = $noters->hashes;
-	my $cred = &subs::db_select('security');
-	my $creds = $cred->hashes;
-	my $s = &subs::suds_grabber();
-	my $notekeeper;
+	my (@notekeeper, %seen);
 	foreach my $note ( @{$noteskis} ) {
-		my $start_notes = &subs::note_decrypter($s, $note->{'start_notes'},$note->{'ost'}) if eval { &subs::note_decrypter($s, $note->{'start_notes'},$note->{'ost'}) };
-		my $notes = &subs::note_decrypter($s, $note->{'notes'},$note->{'ost'}) if eval { &subs::note_decrypter($s, $note->{'notes'},$note->{'ost'}) };
-		my $end_notes = &subs::note_decrypter($s, $note->{'end_notes'},$note->{'ost'}) if eval { &subs::note_decrypter($s, $note->{'end_notes'},$note->{'ost'}) };
-		$notekeeper = "<br>" . $start_notes . "<br>" . $notes . "<br>" . $end_notes;
-		$notekeeper =~ s/\n/<br>/gi;
+		foreach my $field ( qw/start_notes notes end_notes/ ) {
+			my $value = $note->{$field};
+			next unless defined $value && length $value;
+			my $plain = eval { &subs::note_decrypter($suds, $value, $note->{'ost'}) };
+			next unless defined $plain && length $plain;
+			next if $seen{$plain}++;
+			$plain =~ s/\n/<br>/gi;
+			push @notekeeper, $plain;
+		}
 	}
-	return $notekeeper;
+	return '' unless @notekeeper;
+	return &subs::article_html_clean(join '<br>', @notekeeper);
 }
 
 sub log_reader_file_preparer {

@@ -460,8 +460,7 @@ sub action_25901 {
 	my $app = $c->param('app');
 	my $reflected_server_time = $c->param('server_time');
 	my $uuid = $c->param('uuid');
-	my $s = &subs::session_suds($c);
-	my $notekeeper = &subs::note_retriever($app, $uuid);
+	my $notekeeper = &subs::note_retriever($uuid, &subs::session_suds($c) || &subs::suds_grabber());
 	$c->render(json => { notes => $notekeeper });
 }
 

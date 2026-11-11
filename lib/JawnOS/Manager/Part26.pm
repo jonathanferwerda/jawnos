@@ -567,7 +567,7 @@ sub handbook_journal_entries {
 	my %seen;
 	my $appts = eval { &subs::db_query("select uuid,timestamp from appointments where app='journal' and type='note' and cast(timestamp as integer) >= ? and cast(timestamp as integer) < ? order by cast(timestamp as integer) desc limit ?", $from, $to, $limit)->hashes } || [];
 	foreach my $row ( @{$appts} ) {
-		my $text = &subs::note_retriever('journal', $row->{'uuid'}) || '';
+		my $text = &subs::note_retriever($row->{'uuid'}) || '';
 		$text =~ s/<br\s*\/?>/\n/gi;
 		$text =~ s/<[^>]+>//g;
 		$text =~ s/&nbsp;/ /g;
