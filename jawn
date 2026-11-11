@@ -1802,13 +1802,28 @@ sub private_tcp_listener {
 	my $handle = $acceptor ? $acceptor->handle : undef;
 	return $id unless $handle;
 	# Unix: Mojo keeps listener fds open across exec on purpose, so clear the
-	# flag that would let a child inherit this socket. Windows: handles are
-	# non-inheritable unless explicitly marked, and the only handle the tree
-	# marks inheritable is the runner's own socket - so there is nothing to
-	# clear. It must not be attempted there either: Strawberry's Fcntl has no
-	# F_SETFD macro and calling it dies with "Your vendor has not defined Fcntl
-	# macro F_SETFD", which took the control and log listeners down with it.
+	# flag that would let a child inherit this socket.
+	#
+	# Windows: Strawberry's sockets are inheritable, and CreateProcess runs with
+	# bInheritHandles=1 because the runner needs its one socket. Every
+	# inheritable handle therefore joins the child, so a tree started by a
+	# restart inherited the master's private listeners: the parent still had the
+	# acceptor in `io` and accepting, but the child held the socket and the
+	# listener was never reported readable again. Clear HANDLE_FLAG_INHERIT on
+	# our own listener here. Only the runner's socket may be inheritable, and it
+	# is marked so explicitly in Runner/Windows.pm. Fcntl is still not an option
+	# there: Strawberry's Fcntl has no F_SETFD macro and calling it dies with
+	# "Your vendor has not defined Fcntl macro F_SETFD".
 	fcntl($handle, F_SETFD, FD_CLOEXEC) if $^O ne 'MSWin32';
+	if ($^O eq 'MSWin32') {
+		# Guarded: a missing Win32API::File binding must not take the control and
+		# log listeners down with it.
+		eval {
+			require Win32API::File;
+			my $os = Win32API::File::FdGetOsFHandle(fileno $handle);
+			Win32API::File::SetHandleInformation($os, 1, 0);   # HANDLE_FLAG_INHERIT
+		};
+	}
 	&forget_tcp_reuse($address, $port);
 	return $id;
 }

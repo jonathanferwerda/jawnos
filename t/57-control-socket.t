@@ -296,10 +296,11 @@ ok(!&control::ask_tree_stop(socket => "$dir/absent", timeout => 1),
 }
 
 # ---------------------------------------------- the master's TCP listener
-# Strawberry's Fcntl has no F_SETFD macro: calling it dies with "Your vendor
-# has not defined Fcntl macro F_SETFD", and that took the control and log
-# listeners down with it after boot. The CLOEXEC clear is Unix-only; on Windows
-# handles are non-inheritable unless marked, and only the runner's socket is.
+# Strawberry's sockets are inheritable and CreateProcess runs with
+# bInheritHandles=1 for the runner's socket, so a tree started by a restart
+# inherited the master's private listeners and the parent's poll went deaf after
+# the second swap. Windows clears HANDLE_FLAG_INHERIT instead of the CLOEXEC
+# fcntl (Strawberry's Fcntl has no F_SETFD macro at all).
 {
 	my $master;
 	open(my $fh, '<', "$FindBin::Bin/../jawn") or die $!;
@@ -308,7 +309,13 @@ ok(!&control::ask_tree_stop(socket => "$dir/absent", timeout => 1),
 	my ($tcp) = $master =~ /(sub private_tcp_listener \{.*?\n\})/s;
 	ok($tcp, 'the master has private_tcp_listener');
 	like($tcp, qr/fcntl\(\$handle, F_SETFD, FD_CLOEXEC\) if \$\^O ne 'MSWin32';/,
-		'the CLOEXEC clear is skipped on Windows, where F_SETFD does not exist');
+		'the Unix fcntl CLOEXEC path is kept for every other platform');
+	like($tcp, qr/if \(\$\^O eq 'MSWin32'\) \{.*?require Win32API::File;.*?SetHandleInformation\(\$os, 1, 0\);.*?\};/s,
+		'on Windows the listener clears HANDLE_FLAG_INHERIT via SetHandleInformation');
+	like($tcp, qr/Win32API::File::FdGetOsFHandle\(fileno \$handle\)/,
+		'from the listener handle\'s own OS handle');
+	my ($cleared) = $tcp =~ /(if \(\$\^O eq 'MSWin32'\) \{.*?\};\s*\})/s;
+	ok($cleared && $cleared =~ /eval \{/, 'and the binding is wrapped in eval, never fatal');
 	unlike($tcp, qr/fcntl\(\$handle, F_SETFD, FD_CLOEXEC\);\n/,
 		'and no unguarded Fcntl call remains');
 	my ($unix) = $master =~ /(sub private_unix_listener \{.*?\n\})/s;
