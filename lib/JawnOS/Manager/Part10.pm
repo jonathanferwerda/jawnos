@@ -59,6 +59,66 @@ use IPC::Open2 qw(open2);
 
 our ($APP, $ws_live_window, $encoder, $decoder, $tuuid, $thread_uuid, $universal_splitter, $database, $sql, $remote_input_clipboard, $config_file, $config, $logfile, $log, $environment, $random_caching_string, $duty_file, $main_process, $device, $user_agent, %time_machine_guide_cache, @media_unlock_apps, %help_search_tables, %media_type_for_ext, %file_relay_down, @appointments, @results, %market_payment_family, @manager_bundle_files, $manager_bundle_cache, $js_minifier, %app_release_sha, %folders_desk_not_app, $jg_body, $remote_input_geometry_at, $remote_input_geometry_cache, %remote_input_ua, %remote_input_ws, %remote_input_rm, %remote_input_ws_failed, $public_ip_memo, $coding_protocols, $coding_protocols_mtime, $app_schema_done, $fingerprint_checked_at, $fingerprint_ok, %padlock_time_memo, %credential_browser_app, %app_gate_shadow_seen, $ws_server, %mailws_untrusted_rate);
 
+# A manual pull takes the row stream too. The Upgrade button used to skip the
+# handshake, so remote_upgrade saw sync_version=0 and fell back to the full
+# snapshot: a 14 MB export for one button press, and (until the footer fix) a
+# merge that could not name its cipher. Ask the peer the same question the
+# reconnector asks - its digest, its bands, the cuts we already hold - and hand
+# the plan to sync_rows_pull. A peer older than v3, a failed handshake, or a
+# deliberate full/deep request leaves the snapshot path alone.
+sub remote_upgrade_plan($c,$params) {
+	return 0 if $params->{'full'};
+	return 0 if defined $params->{'gimme'} && length $params->{'gimme'};
+	my $signatorial = $params->{'remote_signatorial'} || '';
+	return 0 unless length $signatorial;
+	my $rm = &subs::remote_machine_lister({ signatorial => $signatorial, limit => 1 });
+	return 0 unless ref $rm eq 'HASH' && $rm;
+	my $manager = $params->{'manager'} || $rm->{'manager'} || '';
+	return 0 unless length $manager;
+	$manager = &subs::peer_manager_base($manager);
+	my $ua = Mojo::UserAgent->new();
+	$ua = $ua->max_response_size(0);
+	$ua->connect_timeout(5);
+	$ua->on(start => sub { my ($ua, $tx) = @_; &subs::peer_sign_request($tx->req) });
+	# Mirror the peer rail's TLS choice: verify against the house CA when the
+	# listener can prove it, otherwise the signature on the request is the proof.
+	my ($secure_manager, $manager_verified) = &subs::peer_secure_url($rm, $manager);
+	if ($manager_verified && &subs::peer_tls_verify($ua)) { $manager = $secure_manager; }
+	else { $ua->insecure(1); }
+	my $me = &subs::signatorial_designer();
+	my $watermark = &subs::db_query('select server_time from backups where reason = ? and signatorial = ? and recipient = ? order by cast(server_time as integer) desc limit 1', 'remote_upgraded', $signatorial, $me)->hashes->[0];
+	my $cut = ($watermark->{'server_time'} || 0) + 0;
+	my $digest = &subs::sync_digest_map();
+	my %cuts = map { $_ => ($digest->{$_}->{'max'} || 0) } keys %{$digest};
+	my $url = $manager . '/manager/remote_auth_test?signatorial=' . $me . '&auth_test=yes'
+		. '&since=' . int($cut)
+		. '&cuts=' . Mojo::Util::url_escape(&subs::sync_map_encode(\%cuts))
+		. '&tombstone_cursor=' . int($rm->{'sync_cursor'} || 0);
+	my $res = eval { $ua->inactivity_timeout(15)->request_timeout(20)->get($url)->result };
+	return 0 unless $res && $res->is_success;
+	my $rj = eval { decode_json($res->body) } || {};
+	return 0 unless ($rj->{'signatorial'} || '') ne '' && (($rj->{'sync_version'} || 0) >= 3);
+	# The handshake just proved this route, so do not let a stale stored name win.
+	$params->{'manager'} = $manager;
+	$params->{'remote_signatorial'} = $rj->{'signatorial'};
+	$params->{'sync_version'} = $rj->{'sync_version'};
+	$params->{'remote_digest'} = $rj->{'digest'} if ref $rj->{'digest'} eq 'HASH';
+	$params->{'default_cut'} = $cut || (&subs::rightNow() - (24 * 60 * 60 * 1000));
+	my $seen = &subs::sync_seen_get($rj->{'signatorial'});
+	my $bands = &subs::sync_bands_peer($rj->{'version'}, $rj->{'bands'});
+	my $plan = &subs::sync_plan($digest, $rj->{'digest'}, $rj->{'above'} || {}, $seen, $bands);
+	$plan = {} unless ref $plan eq 'HASH';
+	# An empty plan cannot say "nothing to read": sync_rows_pull reads every table
+	# without one. Carry the streams that always ride a pull, so a manual sync
+	# that finds no difference still moves them and stays small.
+	unless (scalar keys %{$plan}) {
+		$plan = { map { $_ => ($rj->{'digest'}->{$_}->{'max'} || 0) } qw(continent ai_budget ai_jobs ai_house notifications) };
+	}
+	$params->{'plan'} = $plan;
+	$log->info('manual pull: v3 plan ' . scalar(keys %{$plan}) . ' table(s) from ' . $signatorial) if $log;
+	return 1;
+}
+
 	sub remote_upgrade($c,$params) {
 	# The marker is either a forked pull's pid or the short-lived claim its caller
 	# wrote before the fork (see subs::remote_upgrade_lock_state). A restart or a
@@ -119,6 +179,11 @@ our ($APP, $ws_live_window, $encoder, $decoder, $tuuid, $thread_uuid, $universal
 	my $signatorial = &subs::signatorial_designer();
 	my $download_location = &subs::home('~/.president');
 	my $temp_folder = &subs::home($download_location . '/' . &subs::random_string_creator(10));
+
+	# A caller that asked for the row stream (the manual Sync route) has to
+	# negotiate it first; the scheduled pass already carries the handshake's
+	# sync_version and plan. Run it before the UA is built so the proven route wins.
+	&remote_upgrade_plan($c,$params) if $params->{'handshake'} && ($params->{'sync_version'} || 0) < 3;
 
 	$remote_machine = &remote_useragent_maker({ signatorial => $remote_signatorial });
 	# The caller may already have proved a route (the reconnector's probe rewrites

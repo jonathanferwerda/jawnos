@@ -503,6 +503,7 @@ our %SUB = (
 	'remote_manager_ticket'                  => 'JawnOS/Manager/Part10.pm',
 	'remote_relay_media'                     => 'JawnOS/Manager/Part03.pm',
 	'remote_upgrade'                         => 'JawnOS/Manager/Part10.pm',
+	'remote_upgrade_plan'                    => 'JawnOS/Manager/Part10.pm',
 	'rock_and_roll'                          => 'JawnOS/Manager/Part04.pm',
 	'run_thumb_command'                      => 'JawnOS/Manager/Part03.pm',
 	'scan'                                   => 'JawnOS/Manager/Part02.pm',

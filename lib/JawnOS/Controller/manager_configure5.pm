@@ -185,7 +185,7 @@ sub action_19489 {
 			my $tail_command = 'tail ' . &subs::shell_quote($path);
 			my $data = `$tail_command`;
 			my @split_data = split $universal_splitter, $data;
-			$encryption_standard = &subs::decrypter($cr, $split_data[1]);
+			$encryption_standard = &subs::backup_standard($cr, $split_data[1]);
 			my $scrypt = &subs::openssl_file_crypt('d', $encryption_standard, $cr, $path, $t_database, 0, 1);
 			# A database is per device: the backup row names the machine it came
 			# from, and restoring another one would leave this machine wearing

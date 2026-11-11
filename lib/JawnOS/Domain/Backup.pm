@@ -223,12 +223,13 @@ sub backup_now {
 	$databaser =~ s/_\d+$//;
 	my $encryption_standard = &subs::setting_grabber({ app => 'misc', setting => 'encryption_standard' } ) || "aes-256-ctr";
 	my $suds = &subs::session_suds($c) || &subs::suds_grabber();
-	# Bridge for peers still on the old fixed-key Crypt::Simple: the appended
-	# encryption-standard must be readable by their decrypter, which only uses the
-	# legacy key (md5 of an empty passphrase). Our decrypter falls back to the same
-	# key, so this stays readable by updated peers too. Remove once every device runs
-	# the per-secret code.
-	my $appendage = $gb::universal_splitter . &subs::encrypter(undef,$encryption_standard);
+	# The appended encryption-standard names the cipher, never a secret, so it is
+	# sealed with the public empty key. It must stay in the legacy Crypt::Simple
+	# shape every build can read: encrypter() writes JS1 now, and decrypter()
+	# refuses a JS1 blob under a different key, so a real credential - and an older
+	# peer - could no longer open the footer. v0.1.2691 made exactly that mistake
+	# and broke every snapshot merge and restore; backup_standard() reads this.
+	my $appendage = $gb::universal_splitter . &subs::encrypter_legacy(undef,$encryption_standard);
 	my $path = &subs::backups_dir() . '/' . (do { my $n = $databaser; $n =~ s{.*/}{}; $n });
 	my $temporary_path = &subs::home('~/.president/') . &subs::random_string_creator() . '.sql';
 	# Private from the instant it exists. sqlite3's .backup and the shell's `>`

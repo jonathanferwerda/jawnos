@@ -320,6 +320,9 @@ sub action_10035 {
 		remote_signatorial => $remote_signatorial,
 		remote_device => $remote_device,
 		manager => $manager_override,
+		# Let remote_upgrade negotiate v3 with the peer: the button is a normal
+		# pull, not a migration, so it must not default to a full snapshot.
+		handshake => 1,
 		marker => 'running:claim'
 	};
 	# Claim the marker here, not in the child: the reconnector can walk several

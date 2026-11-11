@@ -48,6 +48,11 @@ like($backup, qr/status => 'failed', error => 'could not seal the database'/,
 	'and reports a failed seal instead of continuing');
 like($backup, qr/rename \$staged, \$enc_file/,
 	'the stable jawnos.enc is replaced atomically after a size check');
+# The footer names the cipher, so it must stay readable by every build: a JS1
+# footer keyed by the empty placeholder is refused when the reader holds the
+# real credential, which broke every restore and snapshot merge in v0.1.2691.
+like($backup, qr/encrypter_legacy\(undef,\$encryption_standard\)/,
+	'the split footer keeps the public legacy shape every build can read');
 
 # --- leave refuses to shred without a sealed archive and stable copy ---------
 my $misc = read_file("$root/lib/JawnOS/Domain/Misc.pm");

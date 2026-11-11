@@ -105,7 +105,7 @@ sub action_7519 {
 			my $tail_command = 'tail ' . &subs::shell_quote($backup);
 			my $data = `$tail_command`;
 			my @split_data = split $universal_splitter, $data;
-			$encryption_standard = &subs::decrypter($secret, $split_data[1]);
+			$encryption_standard = &subs::backup_standard($secret, $split_data[1]);
 			&subs::openssl_file_crypt('d', $encryption_standard, $secret, $backup, $database, 0, 1);
 
 		}

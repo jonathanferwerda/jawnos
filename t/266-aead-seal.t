@@ -12,7 +12,7 @@ use lib "$FindBin::Bin/lib", "t/lib";
 use Test::More;
 use JawnOSTest;
 
-subs::preload('encrypter decrypter decrypter_strict');
+subs::preload('encrypter encrypter_legacy decrypter decrypter_strict backup_standard');
 
 # --- a new seal is authenticated, and fresh each time -----------------------
 my $a = subs::encrypter('the-key', 'hello');
@@ -77,5 +77,23 @@ like($empty, qr/\AJS1:/, 'an empty secret gets the same format');
 is(subs::decrypter_strict('', $empty), 'empty-key payload', 'and round-trips');
 isnt(subs::decrypter_strict('some-key', $empty), 'empty-key payload',
 	'and does not open under another key');
+
+# --- a backup container's footer is public, and every shape opens ----------
+# The footer names the cipher, so backup_now seals it with the empty key. The
+# reader must accept the legacy Crypt::Simple shape, the JS1 shape v0.1.2691
+# wrote under the empty-secret placeholder, and (defensively) a real-key seal.
+my $house_key = 'the-house-key';
+my $legacy_footer = subs::encrypter_legacy(undef, 'aes-256-ctr');
+is(subs::backup_standard($house_key, $legacy_footer), 'aes-256-ctr',
+	'a legacy empty-key footer opens under the real credential');
+my $js1_footer = subs::encrypter(undef, 'aes-256-ctr');
+like($js1_footer, qr/\AJS1:/, 'v0.1.2691 wrote a JS1 footer');
+is(subs::backup_standard($house_key, $js1_footer), 'aes-256-ctr',
+	'a JS1 footer under the empty placeholder opens too (a backup from that build still restores)');
+my $real_footer = subs::encrypter($house_key, 'aes-256-ctr');
+is(subs::backup_standard($house_key, $real_footer), 'aes-256-ctr',
+	'a footer sealed with the real credential still opens');
+is(subs::backup_standard($house_key, 'not a footer'), undef,
+	'garbage is still refused');
 
 done_testing();

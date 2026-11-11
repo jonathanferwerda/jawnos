@@ -844,6 +844,18 @@ sub decrypter_strict {
 	return eval { decrypt($content) };
 }
 
+# The footer appended to a sealed backup names the cipher, never a secret: it is
+# written under the public empty key (see backup_now). Read that shape first, then
+# the real credential - v0.1.2691 wrote the footer as a JS1 blob under the
+# empty-secret placeholder, which decrypter() refuses when handed the real key.
+# Both shapes must open, or a backup made by that build cannot be restored.
+sub backup_standard {
+	my ($secret,$content) = @_;
+	my $standard = &decrypter(undef,$content);
+	return $standard if defined $standard && length $standard;
+	return &decrypter($secret,$content);
+}
+
 sub decrypter {
 	my ($secret,$content) = @_;
 	my $plain = $seal_open->($secret,$content);

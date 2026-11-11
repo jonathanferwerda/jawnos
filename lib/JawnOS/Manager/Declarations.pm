@@ -158,6 +158,7 @@ sub sync_rows_batch;
 sub sync_buckets_batch;
 sub sync_rows_pull;
 sub remote_upgrade;
+sub remote_upgrade_plan;
 sub remote_manager_ticket;
 sub sesh_login_url;
 sub remote_device_connect;

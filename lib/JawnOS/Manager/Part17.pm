@@ -629,7 +629,7 @@ sub merge_database($c,$configuration) {
 				next;
 			}
 
-			$encryption_standard = &subs::decrypter($crud, $split_data[1]);
+			$encryption_standard = &subs::backup_standard($crud, $split_data[1]);
 			&subs::openssl_file_crypt('d', $encryption_standard, $crud, $path, $temporary_file, 1, 1);
 
 			my $tsql = Mojo::SQLite->new('sqlite:' . $temporary_file);
