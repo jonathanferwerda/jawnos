@@ -742,6 +742,9 @@ sub action_30859 {
 sub action_30875 {
 	my $c = shift;
 	my $folder = &subs::home($c->param('folder'));
+	unless (&subs::path_is_under($folder, &subs::home('~'), '/sdcard', '/storage')) {
+		return $c->render(json => { html => '' }, status => 403);
+	}
 	my $files = &subs::ide_folder_listing($folder);
 	my $html = $c->render_to_string(template => 'apps/ide_files', files => $files);
 	$c->render(json => { html => $html });

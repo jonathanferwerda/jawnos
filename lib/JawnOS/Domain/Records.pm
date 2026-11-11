@@ -631,7 +631,7 @@ sub records_backup_now {
 	chmod 0600, $out if -e $out;
 	my $appendage = $gb::universal_splitter . &encrypter($secret, $standard);
 	if (open(my $af, '>>', $out)) { print $af $appendage . "\n"; close $af; }
-	unlink $tmp;
+	system('shred', '-u', $tmp) if -e $tmp;
 	return undef unless -e $out && -s $out > 5000;
 	return $out;
 }

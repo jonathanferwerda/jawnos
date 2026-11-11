@@ -188,6 +188,8 @@ sub action_26628 {
 	elsif ($device eq 'computer') {
 	#	`xclip -i "$clipboard"`;
 	}
+	# A clipboard can hold markup; returning it as a page would render it.
+	$c->res->headers->content_type('text/plain');
 	return $c->render(text => $clipboard);
 }
 

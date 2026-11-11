@@ -403,9 +403,12 @@ sub error_watch_rel {
 sub error_watch_path {
 	my $rel = &error_watch_rel(shift);
 	return undef if $rel =~ /(^|\/)\.\.(\/|$)/;
-	return undef if $rel =~ /[\x00-\x1f"`\\]/;
-	return undef if $rel =~ m{^(?:\.git|\.president|releases|voices)(?:/|$)};
+	return undef if $rel =~ /[\x00-\x1f"`\\\$;(){}|&<>]/;
+	return undef if $rel =~ m{^(?:\.git|\.secrets|\.president|releases|voices)(?:/|$)};
+	return undef if $rel =~ m{(?:^|/)\.env(?:$|\.)};
+	return undef if $rel =~ m{(?:^|/)(?:jawnos\.db(?:-wal|-shm)?|initial\.enc)$};
 	return undef if $rel eq 'config.json';
+	return undef if $rel eq '.shots/ticket.txt';
 	return &error_watch_repo() . ($rel eq '' ? '' : '/' . $rel);
 }
 
@@ -420,6 +423,10 @@ sub coding_verify_text {
 	return '' unless -f "$repo/scripts/verify_change.pl";
 	my $ext = ($rel =~ /\.([A-Za-z0-9]+)$/) ? lc $1 : '';
 	return '' unless $ext =~ /^(?:pl|pm|t|js|mjs|cjs|ep|json)$/;
+	# perl -c runs a file's BEGIN blocks, so compiling proposed Perl would run
+	# the model's text before anyone applied it. The compile happens after the
+	# write, against the tree that is about to be tested, not against a proposal.
+	return '' if $ext =~ /^(?:pl|pm|t)$/;
 	require File::Temp;
 	require File::Spec;
 	my ($fh, $tmp) = File::Temp::tempfile('jawn_verify_XXXXXX', SUFFIX => '.' . $ext, DIR => File::Spec->tmpdir, UNLINK => 1);

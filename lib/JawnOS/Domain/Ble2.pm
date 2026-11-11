@@ -573,6 +573,23 @@ sub ble_message_processor {
 	# The old check looked at the response before the asynchronous request had
 	# any chance to complete, so a dead homebase and a good fetch looked alike.
 	# One kept-alive user agent plus the completion callback log what happened.
+	# The frame supplies the URL, so it is fetched only when it names this house
+	# or a private LAN address. A public host here is an SSRF the watch chose.
+	my $url_host = ($url =~ m{\Ahttps?://([^/:?#]+)}i) ? lc $1 : '';
+	$url_host =~ s/^\[|\]$//g;
+	my $house_domain = lc((&subs::config_reader() || {})->{'domain'} || '');
+	my $url_local = $url_host eq '' ? 0
+		: ($url_host eq 'localhost' || $url_host eq '::1' || $url_host eq '127.0.0.1'
+			|| $url_host =~ /\A127\./
+			|| $url_host =~ /\A10\./
+			|| $url_host =~ /\A192\.168\./
+			|| $url_host =~ /\A172\.(?:1[6-9]|2\d|3[01])\./
+			|| (length $house_domain && $url_host eq $house_domain)
+			|| $url_host =~ /\.local\z/);
+	unless ($url_local) {
+		$log->error('BLE message fetch refused a non-house URL: ' . $url);
+		return;
+	}
 	eval {
 		$gb::ble_ua ||= Mojo::UserAgent->new(connect_timeout => 5, inactivity_timeout => 10);
 		$gb::ble_ua->insecure(1)->get($url, sub {

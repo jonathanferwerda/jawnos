@@ -404,7 +404,9 @@ sub action_44606 {
 	if ($c->param('uuid')) {
 		&subs::db_delete('continent', { uuid => $c->param('uuid') });
 	}
-	$c->render(text => $c->param('uuid') );
+	# The id is echoed back as text, not as a page: an id is not HTML.
+	$c->res->headers->content_type('text/plain');
+	$c->render(text => $c->param('uuid') // '');
 }
 
 1;

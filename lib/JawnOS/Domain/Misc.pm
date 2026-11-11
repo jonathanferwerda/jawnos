@@ -327,8 +327,10 @@ sub coding_path($rel) {
 	$rel =~ s{^\./+}{};
 	$rel =~ s{^/+}{};
 	return undef if $rel =~ /(^|\/)\.\.(\/|$)/;
-	return undef if $rel =~ /[\x00-\x1f"`\\]/;
+	return undef if $rel =~ /[\x00-\x1f"`\\\$;(){}|&<>]/;
 	return undef if $rel =~ m{^(?:\.git|\.secrets|\.president|releases|voices)(?:/|$)};
+	return undef if $rel =~ m{(?:^|/)\.env(?:$|\.)};
+	return undef if $rel =~ m{(?:^|/)(?:jawnos\.db(?:-wal|-shm)?|initial\.enc)$};
 	return undef if $rel eq 'config.json';
 	# the live ticket is a credential, and it sits in a folder that is otherwise
 	# the agent's scratch space

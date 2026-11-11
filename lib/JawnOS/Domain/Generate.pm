@@ -69,7 +69,7 @@ sub generate_ai_media {
 	}
 	$app = &subs::unformat_name($app);
 
-  $log->info(Dumper $data);
+  $log->info('generate media: ' . ($data->{'kind'} // 'media') . ' for ' . $app . ' (' . join(',', sort keys %{$data}) . ')');
 	# the media comes through the Plat generation model for this kind; the
 	# storing, the appointment and the reply are this routine's own work. The
 	# agent's fallback is tried when the primary fails (an outage, no credit).
@@ -136,7 +136,7 @@ sub generate_ai_media {
 	my $file_uuid = &subs::random_string_creator(21);
 	my $u_data = [{ server_time => &subs::rightNow(), appt_uuid => $appt_uuid, mail_uuid => $msg_uuid, ocr => $ocr, f => $file_path, uuid => $file_uuid, type => $upload_type }];
 	$u_data->[0]->{'thumb'} = $thumb if $thumb;
-	$log->info(Dumper $u_data);
+	$log->info('generate media file: ' . $appt_uuid . ' ' . $file_uuid . ' (' . ($upload_type // '') . ')');
 	my $jfile = encode_json $u_data;
 
 	my $write = {

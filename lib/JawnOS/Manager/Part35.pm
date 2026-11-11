@@ -499,7 +499,12 @@ sub health_allowed {
 	# a loopback caller: the machine's own CLI and monitor, with no login. A
 	# caller that names a peer is not local even when the TCP hop is loopback
 	# (a tunnel or reverse proxy), so it goes through the signed check below.
+	# A request that names a forwarding hop is not the machine itself, even when
+	# the TCP hop is loopback: a local proxy would otherwise turn every remote
+	# caller into this machine.
 	return 1 if ($c->param('signatorial') // '') eq ''
+		&& !$c->req->headers->header('X-Forwarded-For')
+		&& !$c->req->headers->header('Forwarded')
 		&& ($remote eq $local || $remote eq '127.0.0.1' || $remote eq '::1' || $remote =~ /^::ffff:127\.0\.0\.1$/);
 	# an approved session, but not a visitor's ticket: this rail writes the
 	# levels every monitor reads (health_report) and exposes the backup

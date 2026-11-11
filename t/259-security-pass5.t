@@ -62,7 +62,8 @@ like($ide, qr/path_is_under\(\$filename, &subs::home\('~'\), '\/sdcard'\)/, 'fil
 like($ide, qr/system\('shred', '-u', \$file\)/, 'file_delete shreds in list form');
 unlike($ide, qr/`touch \$filename`/, 'no raw create path reaches a shell');
 like($ide, qr/path_is_under\(\$file, &subs::home\('~'\), '\/sdcard'\)/, 'file_open and save are confined');
-like($ide, qr/write_file\(\$file, \$content\)/, 'save writes in Perl');
+like($ide, qr/sysopen\(my \$save_fh, \$file, Fcntl::O_WRONLY\(\) \| Fcntl::O_CREAT\(\) \| Fcntl::O_TRUNC\(\) \| Fcntl::O_NOFOLLOW\(\)/,
+	'save writes in Perl and refuses to follow a symlink');
 
 my $part24 = source('lib/JawnOS/Manager/Part24.pm');
 like($part24, qr/path_is_under\(\$file, &subs::home\('~'\), '\/sdcard'\)/, 'the IDE reader is confined');

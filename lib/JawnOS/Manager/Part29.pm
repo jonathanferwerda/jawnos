@@ -411,16 +411,21 @@ sub guide_verb_execute($c, $action) {
 	my $name = $action->{'action'} // '';
 	my ($verb) = grep { $_->{'name'} eq $name } @{ &help::learned_verbs() };
 	return 'no such command: ' . $name unless $verb;
+	my $prim = $verb->{'primitive'};
 	my %p;
 	foreach my $k ( keys %{ $verb->{'params'} || {} } ) {
 		my $v = $verb->{'params'}->{$k};
 		$p{$k} = ref $v eq 'ARRAY' ? [ map { _guide_fill($_, $action) } @{$v} ] : _guide_fill($v, $action);
 	}
-	# an argument the model supplied for a declared arg wins over the literal
+	# An argument the model supplied for a declared arg wins over the literal -
+	# except where the literal is the authority. A run_command's command and a
+	# set_setting's app/setting are what the admin configured; letting the model
+	# replace them turned any verb into "run anything" or "write any setting".
 	foreach my $k ( keys %{ $verb->{'args'} || {} } ) {
+		next if $prim eq 'run_command' && $k eq 'command';
+		next if $prim eq 'set_setting' && ($k eq 'app' || $k eq 'setting');
 		$p{$k} = $action->{$k} if defined $action->{$k} && $action->{$k} ne '';
 	}
-	my $prim = $verb->{'primitive'};
 	if ($prim eq 'say') {
 		return $p{'text'} // $action->{'text'} // 'done';
 	}
@@ -572,6 +577,11 @@ sub coding_execute($c, $action, $touched) {
 		# in an argument would run as code, so no metacharacter may survive.
 		return 'refused: a shell metacharacter in a run command'
 			if $cmd =~ /[\$`\\'"<>(){}*?!\[\]\n]/;
+		# git writes a file with --output, and set-url rewires where this house
+		# pushes. A read-only probe needs neither.
+		return 'refused: --output writes a file' if $cmd =~ /\s--output(?:=|\s|$)/;
+		return 'refused: only git remote -v is read-only'
+			if $cmd =~ /\bgit\s+remote\b/ && $cmd !~ /\bgit\s+remote\s+-v\s*$/;
 		my $repo = coding_repo();
 		my $out = `cd "$repo" && $cmd 2>&1`;
 		$out = '' unless defined $out;

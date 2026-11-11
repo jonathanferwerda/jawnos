@@ -1226,7 +1226,7 @@ sub auto_apply_clean {
 	my @names = sort grep { &error_watch_path($_) } keys %{$files};
 	return 0 unless @names;
 	my $repo = &error_watch_repo();
-	my @q = map { '"' . $_ . '"' } @names;
+	my @q = map { &subs::shell_quote($_) } @names;
 	my $dirty = `cd "$repo" && git status --porcelain -- @q 2>&1`;
 	return 0 if defined $dirty && $dirty =~ /\S/;
 	return 1;
@@ -1271,7 +1271,7 @@ sub staged_fix_apply {
 	# and nothing is committed. (A proposal that reaches here has already been
 	# checked once, as it was staged; this is the check on what is truly on disk.)
 	my ($verify, $vcode) = ('', 0);
-	my $filelist = join(' ', map { '"' . $_ . '"' } sort keys %touched);
+	my $filelist = join(' ', map { &subs::shell_quote($_) } sort keys %touched);
 	if ($filelist && -f "$repo/scripts/verify_change.pl") {
 		$verify = `cd "$repo" && perl scripts/verify_change.pl $filelist 2>&1`;
 		$vcode = $? >> 8;
@@ -1302,8 +1302,8 @@ sub staged_fix_apply {
 	$msg =~ s/["`\$\\]/ /g;
 	$msg =~ s/\s+/ /g;
 	$msg =~ s/^\s+|\s+$//g;
-	my @add = map { '"' . $_ . '"' } sort keys %touched;
-	push @add, '"VERSION"';
+	my @add = map { &subs::shell_quote($_) } sort keys %touched;
+	push @add, &subs::shell_quote('VERSION');
 	my $commit = `cd "$repo" && git add -- @add 2>&1 && git commit -m "v$version - $msg" 2>&1`;
 	$commit = '' unless defined $commit;
 	$commit = substr($commit, 0, 1200);

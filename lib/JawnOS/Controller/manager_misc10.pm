@@ -86,7 +86,8 @@ sub action_30894 {
 	unless (&subs::path_is_under($filename, &subs::home('~'), '/sdcard')) {
 		return $c->render(json => { status => 'denied' }, status => 403);
 	}
-	open(my $created, '>>', $filename) or return $c->render(json => { status => 'error' }, status => 500);
+	my $made = sysopen(my $created, $filename, Fcntl::O_WRONLY() | Fcntl::O_CREAT() | Fcntl::O_APPEND() | Fcntl::O_NOFOLLOW(), 0644);
+	return $c->render(json => { status => 'denied' }, status => 403) unless $made;
 	close $created;
 	$c->render('text' => 'ok');
 }
@@ -208,7 +209,14 @@ sub action_31008 {
 	unless (&subs::path_is_under($file, &subs::home('~'), '/sdcard')) {
 		return $c->render(json => { status => 'denied' }, status => 403);
 	}
-	write_file($file, $content);
+	# A lexical check does not stop a symlink inside the root from taking the
+	# write out of it. O_NOFOLLOW makes the kernel refuse that path.
+	my $opened = sysopen(my $save_fh, $file, Fcntl::O_WRONLY() | Fcntl::O_CREAT() | Fcntl::O_TRUNC() | Fcntl::O_NOFOLLOW(), 0644);
+	unless ($opened) {
+		return $c->render(json => { status => 'denied' }, status => 403);
+	}
+	print $save_fh $content;
+	close $save_fh;
 	$c->render(json => { status => 'success' });
 }
 

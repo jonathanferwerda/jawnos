@@ -412,6 +412,8 @@ void jawn_setup() {
     jonfig["password"] = undefined;
     jonfig["ap_password"] = undefined;
     jonfig["ap_ssid"] = undefined;
+    // This rail answers anyone on the LAN: the pairing token is not a diagnostic.
+    jonfig["authorization"] = undefined;
     String gs = JSON.stringify(jonfig);    
     server.send(200, "text/plain", gs);
 
@@ -496,6 +498,13 @@ void jawn_setup() {
     }
   });
   server.on("/now_me", []() {
+    // Only the holder of the stored token may rewrite the pairing; an empty
+    // stored token is first contact, which is how the board learns one.
+    String rauth = server.arg("authorization");
+    if (authorization.length() > 0 && rauth != authorization) {
+      server.send(403, "text/plain", "no");
+      return;
+    }
     homebaseIP = server.arg("homebase");
     thomebaseIP = server.arg("thomebase");
     twshomebaseIP = server.arg("twshomebase");

@@ -99,7 +99,7 @@ sub embedded_location_grabber {
 	$returner->{'signatorial'} = &subs::signatorial_designer() unless $returner->{'signatorial'};
 	my $watch = &subs::device_lister($returner->{'timestamp'} || &subs::rightNow(),'teletype') || {};
 	if (eval { $watch->{'ip'} }) {
-		my $ping = 'timeout .2 ping -c 1 ' . $watch->{'ip'};
+		my $ping = 'timeout .2 ping -c 1 ' . &subs::shell_quote($watch->{'ip'});
 
 		my $ping_test = `$ping`;
 		if ($ping_test =~ /ttl/gi) {

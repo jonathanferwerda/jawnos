@@ -606,6 +606,14 @@ sub code_sync_unpack {
 	my ($tmp, $home) = @_;
 	my @members = `tar tzf "$tmp" 2>/dev/null`;
 	return 0 unless @members;
+	# A link member can point out of jawnos/ and a later member then writes
+	# through it. Only a regular file or a folder may appear in the pack.
+	my @types = `tar tvzf "$tmp" 2>/dev/null`;
+	return 0 unless @types;
+	foreach my $line (@types) {
+		next if $line =~ /^\s/;   # the wrapped tail of a very long name
+		return 0 unless $line =~ /^[-d]/;
+	}
 	foreach my $m (@members) {
 		chomp $m;
 		next if $m eq '' || $m eq '.' || $m eq './';

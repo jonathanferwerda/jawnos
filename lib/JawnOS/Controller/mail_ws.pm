@@ -294,7 +294,7 @@ sub action_45571 {
 					# is blank and only the depublicizer's later pass carries the text
 					$mesg->{'body'} = $response_text;
 					$mesg->{'decrypted'} = 'yes';
-					$log->info(Dumper $mesg);
+					$log->info('mail reply for ' . ($mesg->{'uuid'} // 'unknown'));
 					my $returner = encode_json $mesg;
 					print $returner;
 					$mesg->{'envelope'} = $c->render_to_string(

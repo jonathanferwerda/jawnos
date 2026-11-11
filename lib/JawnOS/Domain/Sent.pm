@@ -477,6 +477,9 @@ sub pen_message {
 
 
 							unless ($data->{'type'} eq 'assistant') {
+								# The reply is HTML in the mail window: escape it there too,
+								# or a model answer carrying a tag runs it in WebEngine.
+								$text = &subs::html_text($text);
 								$text =~ s/\n/<br>/gi;
 								$response_text .= $text;
 								&Websocket::mail_send({

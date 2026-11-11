@@ -178,7 +178,7 @@ String password = "president";
 String base_password = password;
 String ap_ssid = ssid;
 String base_ap_ssid = ap_ssid;
-String ap_password;
+String ap_password = "president";
 String base_ap_password = ap_password;
 long offset;
 int room = 1;

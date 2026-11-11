@@ -1134,6 +1134,17 @@ sub action_30715 {
 		$c->render(json => { status => 'error', error => 'not allowed' });
 		return;
 	}
+	# A pinned key proves which machine is asking; a shared cloud base is a
+	# folder this machine will write into, so the peer needs the trusted grant.
+	my $peer_key = $c->stash('peer_verified_key');
+	if ($peer_key) {
+		my $pm = &subs::db_select('remote_machines', undef, { uuid => $peer_key })->hashes->[0]
+			|| &subs::db_select('remote_machines', undef, { signatorial => $peer_key })->hashes->[0];
+		unless ($pm && &subs::peer_allows($c, $pm, 'trusted')) {
+			$c->render(json => { status => 'error', error => 'that peer is not trusted for cloud sync' });
+			return;
+		}
+	}
 	my $base = $c->param('base');
 	my $members = eval { return decode_json $c->param('members') } || [];
 	my $dest = &subs::cloud_sync_destination({ base => $base, path => '' });

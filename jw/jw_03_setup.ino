@@ -321,6 +321,8 @@ void jawn_setup() {
     jonfig["password"] = undefined;
     jonfig["ap_password"] = undefined;
     jonfig["ap_ssid"] = undefined;
+    // This rail answers anyone on the LAN: the pairing token is not a diagnostic.
+    jonfig["authorization"] = undefined;
     String gs = JSON.stringify(jonfig);    
     server.send(200, "text/plain", gs);
 
@@ -328,7 +330,7 @@ void jawn_setup() {
   server.on("/delete_file", []() {
     String rauth = server.arg("authorization");
     Serial.println("in the deleter");
-    if (rauth == authorization) {
+    if (authorization.length() > 0 && rauth == authorization) {
       String file = server.arg("file");
       Serial.println(file);
       deleteFile(FFat, file.c_str());
@@ -339,7 +341,7 @@ void jawn_setup() {
   server.on("/get_file", HTTP_GET, []() {
     // 1. Check authorization
     String rauth = server.arg("authorization");
-    if (rauth != authorization) {
+    if (!(authorization.length() > 0 && rauth == authorization)) {
       server.send(401, "text/plain", "Unauthorized");
       return;
     }
@@ -388,7 +390,7 @@ void jawn_setup() {
 
   server.on("/wigi", []() {
     String rauth = server.arg("authorization");
-    if (rauth == authorization) {
+    if (authorization.length() > 0 && rauth == authorization) {
 
       JSONVar wigi_s;
       wigi_s["buttons"] = wigi;
@@ -417,6 +419,13 @@ void jawn_setup() {
     }
   });
   server.on("/now_me", []() {
+    // Only the holder of the stored token may rewrite the pairing; an empty
+    // stored token is first contact, which is how the watch learns one.
+    String rauth = server.arg("authorization");
+    if (authorization.length() > 0 && rauth != authorization) {
+      server.send(403, "text/plain", "no");
+      return;
+    }
     homebaseIP = server.arg("homebase");
     homebase = server.arg("ip");
     // This is the machine the person paired us to; a fallback House machine is

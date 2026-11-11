@@ -28,6 +28,7 @@ use Mojo::IOLoop;
 use Mojo::JSON qw(decode_json encode_json);
 use Mojo::Util qw/md5_sum xml_escape html_unescape term_escape quote unquote secure_compare url_escape url_unescape network_contains punycode_decode punycode_encode b64_decode b64_encode/;
 use POSIX ();   # mktime: a local-time epoch that still predates 1970
+use Socket ();   # resolve a media host before fetching it
 use Text::Unidecode;
 use Time::Duration;
 use Time::HiRes qw(gettimeofday time);
@@ -614,13 +615,35 @@ my $ai_media_url_ok = sub {
 	my $host = lc $1;
 	$host =~ s/^\[|\]$//g;
 	return 0 if $host eq '' || $host =~ /(?:\.|^)localhost\z/;
-	return 0 if $host =~ /\A127\./ || $host eq '0.0.0.0';
-	return 0 if $host =~ /\A10\./;
-	return 0 if $host =~ /\A192\.168\./;
-	return 0 if $host =~ /\A172\.(?:1[6-9]|2\d|3[01])\./;
-	return 0 if $host =~ /\A169\.254\./;
-	return 0 if $host =~ /\A100\.(?:6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./;
-	return 0 if $host =~ /:/;
+	my $private = sub {
+		my ($ip) = @_;
+		return 0 unless defined $ip && length $ip;
+		return 1 if $ip =~ /\A127\./ || $ip eq '0.0.0.0';
+		return 1 if $ip =~ /\A10\./;
+		return 1 if $ip =~ /\A192\.168\./;
+		return 1 if $ip =~ /\A172\.(?:1[6-9]|2\d|3[01])\./;
+		return 1 if $ip =~ /\A169\.254\./;
+		return 1 if $ip =~ /\A100\.(?:6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./;
+		return 1 if $ip eq '::1' || $ip eq '::';
+		return 1 if $ip =~ /\A(?:fe[89ab]|fc|fd)/i;
+		return 1 if $ip =~ /:/;
+		return 0;
+	};
+	return 0 if $private->($host);
+	# The name is not the address. Resolve it, and refuse when any answer is a
+	# private or loopback one: evil.example pointing at 127.0.0.1 is the same
+	# SSRF as the literal. A resolver that fails is refused, not guessed at.
+	my @ip;
+	my @res = eval { Socket::getaddrinfo($host, undef, { socktype => Socket::SOCK_STREAM() }) };
+	if (@res) {
+		my ($err, @addrs) = @res;
+		for my $addr (@addrs) {
+			my (undef, $num) = eval { Socket::getnameinfo($addr->{'addr'}, Socket::NI_NUMERICHOST()) };
+			push @ip, $num if defined $num && length $num;
+		}
+	}
+	return 0 unless @ip;
+	for my $ip (@ip) { return 0 if $private->($ip); }
 	return 1;
 };
 
@@ -773,6 +796,9 @@ sub ai_text_to_video_veo {
 	}
 	return (undef, undef, 'the video model did not finish in time') unless $video_uri;
 	my $sep = (index($video_uri, '?') >= 0) ? '&' : '?';
+	# The video URL comes back from the model. It is fetched with the key on it,
+	# so it must be a public HTTPS host - the same rule as an image URL.
+	return (undef, undef, 'the video URL is not a public host') unless $ai_media_url_ok->($video_uri);
 	my $fetch = $ua->get($video_uri . $sep . 'key=' . url_escape($key));
 	return (undef, undef, 'could not download the video: ' . $fetch->error->{'message'}) if $fetch->error;
 	my $bytes = $fetch->res->body;

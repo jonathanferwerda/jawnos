@@ -86,6 +86,8 @@ sub action_19406 {
 	my $server_time = &subs::rightNow();
 	open(my $touch, '>>', $database) or die "touch $database: $!";
 	close $touch;
+	# sqlite3 creates at 0666 minus the umask; this copy is the whole house.
+	chmod 0600, $database;
 	my $schema_file = $temp_folder . 'schema.sql';
 	# the statistics and sequence tables are internal: replaying their CREATE is
 	# a parse error ("object name reserved for internal use: sqlite_sequence"),
@@ -132,6 +134,7 @@ sub action_19406 {
 
 	my $backup_command = 'sqlite3 ' . &subs::shell_quote($database) . ' ' . &subs::shell_quote(".backup '$database.1.db'");
 	my $backup = `$backup_command`;
+	chmod 0600, $database . '.1.db' if -e $database . '.1.db';
 	my $encryption_standard = &subs::setting_grabber({ app => 'misc', setting => 'encryption_standard' } ) || "aes-256-ctr";
 	my $encrypt = &subs::openssl_file_crypt('e', $encryption_standard, $secret, $database . '.1.db', $enc_file, 0, 1);
 	my $appendage = $universal_splitter . &subs::encrypter($secret,$encryption_standard);
@@ -142,7 +145,7 @@ sub action_19406 {
 
 #	&subs::backup_now($c);
 	system('shred', '-u', $database);
-#	system('shred', '-u', $database . '.1.db');
+	system('shred', '-u', $database . '.1.db');
 	system('shred', '-u', $database . '-shm');
 	system('shred', '-u', $database . '-wal');
 	my $new_enc_file = &subs::database_dir() . '/' . $president . '.enc';
@@ -184,6 +187,25 @@ sub action_19489 {
 			my @split_data = split $universal_splitter, $data;
 			$encryption_standard = &subs::decrypter($cr, $split_data[1]);
 			my $scrypt = &subs::openssl_file_crypt('d', $encryption_standard, $cr, $path, $t_database, 0, 1);
+			# A database is per device: the backup row names the machine it came
+			# from, and restoring another one would leave this machine wearing
+			# that identity. A row with no destination predates the check.
+			my $here = &subs::database_path();
+			my $bak = &subs::db_select('backups', undef, { enc_file => $path })->hashes->[0];
+			if ($bak && ($bak->{'destination'} // '') =~ /\S/ && $bak->{'destination'} ne $here) {
+				system('shred', '-u', $t_database) if -e $t_database;
+				$c->render(json => { status => 'fail', error => 'that backup belongs to another machine' });
+				return;
+			}
+			# Prove the bytes are a database before the live one is destroyed: a
+			# size above the floor is not a restore.
+			my $check_command = 'sqlite3 ' . &subs::shell_quote($t_database) . ' ' . &subs::shell_quote('pragma integrity_check') . ' 2>&1';
+			my $check = `$check_command`;
+			unless (defined $check && $check =~ /^\s*ok\s*$/mi) {
+				system('shred', '-u', $t_database) if -e $t_database;
+				$c->render(json => { status => 'fail', error => 'the snapshot is not a usable database' });
+				return;
+			}
 			if (-s $t_database > 5000) {
 				&subs::backup_now($c);
 				system('shred', '-u', $database);

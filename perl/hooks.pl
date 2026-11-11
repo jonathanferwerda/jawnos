@@ -120,6 +120,7 @@ Manager::app->hook(before_dispatch => sub {
 		/manager/delete_ticket /manager/suspend_ticket
 		/manager/renew_ticket /manager/reinstate_ticket
 		/manager/watch/set_proxy /manager/say_it
+		/manager/budget
 	);
 	my $csrf_method = $c->req->method // '';
 	my $csrf_path = $c->req->url->path->to_string;

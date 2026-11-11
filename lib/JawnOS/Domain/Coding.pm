@@ -284,7 +284,12 @@ sub coding_child_run_ok {
 	my $c = defined $command ? "$command" : '';
 	$c =~ s/^\s+|\s+$//g;
 	return 0 if $c =~ m{\bgit\s+(?:commit|push|checkout|reset|clean|branch|tag|merge|rebase)\b};
-	return 0 if $c =~ m{scripts/(?:restart|manager_killer|app_build|app_publish|git_bootstrap_update|git_peer_update|version_bump)\.pl};
+	# A path can be spelled scripts/./restart.pl or ./scripts//x.pl: judge the
+	# basename of every word, so no spelling reaches a shipping script.
+	for my $word (split /\s+/, $c) {
+		(my $base = $word) =~ s{.*/}{};
+		return 0 if $base =~ /^(?:restart|manager_killer|app_build|app_publish|git_bootstrap_update|git_peer_update|version_bump|land_enqueue|land_promote|agent_land)\.pl$/;
+	}
 	return 1;
 }
 

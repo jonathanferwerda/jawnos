@@ -250,6 +250,16 @@ sub ble_device_record {
 		if ($h eq $hostname) { $row = $r; last; }
 	}
 	my $chips = ($row && $row->{'chip_ids'}) ? (eval { decode_json $row->{'chip_ids'} } || []) : [];
+	# A frame names a chip; the link names a radio. Once a chip is bound to a
+	# radio, a different chip on that radio is not that chip speaking.
+	if ($data->{'mac'}) {
+		my $link = &subs::ble_link_key($data->{'mac'});
+		foreach my $c ( @{$chips} ) {
+			next unless (($c->{'bluetooth'} || '') =~ /\S/);
+			next unless &subs::ble_link_key($c->{'bluetooth'}) eq $link;
+			return undef unless (($c->{'id'} || '') eq $chip_id);
+		}
+	}
 	my $found;
 	foreach my $c ( @{$chips} ) {
 		next unless $c->{'id'} && $c->{'id'} eq $chip_id;

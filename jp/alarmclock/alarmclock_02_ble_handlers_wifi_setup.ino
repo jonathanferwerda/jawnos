@@ -458,6 +458,8 @@ void jawn_setup() {
     jonfig["password"] = undefined;
     jonfig["ap_password"] = undefined;
     jonfig["ap_ssid"] = undefined;
+    // This rail answers anyone on the LAN: the pairing token is not a diagnostic.
+    jonfig["authorization"] = undefined;
     String gs = JSON.stringify(jonfig);
     server.send(200, "text/plain", gs);
     // Do not persist the diagnostics (uptime especially): this route used to
@@ -478,6 +480,14 @@ void jawn_setup() {
 
   server.on("/now_me", []() {
     homebaseChecked();
+    // Now Me rewrites the pairing and the clock. Before the first pairing the
+    // token is empty and this is how it learns one; after it, only the holder
+    // of the stored token may change the board.
+    String rauth = server.arg("authorization");
+    if (authorization.length() > 0 && rauth != authorization) {
+      server.send(403, "text/plain", "no");
+      return;
+    }
     // Now Me is authoritative: the board keeps the homebase it was paired to.
     // An ordinary settings save also pushes a role, and used to carry whichever
     // machine handled the save - so editing one movement on the phone pulled a

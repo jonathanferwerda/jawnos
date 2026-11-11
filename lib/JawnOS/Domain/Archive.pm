@@ -1919,6 +1919,12 @@ sub cloud_sync_destination {
 	# the member list cannot nominate /etc or another user's directory.
 	return { error => 'destination is outside the house' }
 		unless &subs::path_is_under($root, &home('~'), '/sdcard', '/storage');
+	# A hidden folder is not a shared destination: it is where the house keeps
+	# its secrets, and a peer names both halves of this path.
+	foreach my $part (split m{/+}, $base . '/' . ($data->{'path'} // '')) {
+		next if $part eq '' || $part eq '.';
+		return { error => 'a hidden folder is not a sync destination' } if $part =~ /^\./ && $part ne '..';
+	}
 	my @parts;
 	foreach my $part (split m{/+}, ($data->{'path'} // '')) {
 		next if $part eq '' || $part eq '.';
