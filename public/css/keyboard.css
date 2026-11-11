@@ -15,14 +15,6 @@
 		white-space: nowrap;
 		display:none;
 	}
-	#remote_control {
-		position: fixed;
-		left: 0px;
-		z-index: 9100;
-		max-width: 100%;
-		white-space: nowrap;
-		display:none;
-	}
 	#walkboy {
 		position: fixed;
 		left: 0px;
@@ -52,15 +44,6 @@
 		text-align: center;
 		z-index: 9100;
 		max-width: 80%;
-		white-space: nowrap;
-		display:none;
-		padding-bottom: 5px;
-	}
-	#remote_control {
-		position: fixed;
-		text-align: center;
-		z-index: 9100;
-		max-width: 100%;
 		white-space: nowrap;
 		display:none;
 		padding-bottom: 5px;

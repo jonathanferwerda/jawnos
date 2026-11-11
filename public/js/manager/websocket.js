@@ -540,6 +540,15 @@ function heartbeatStartAll() {
 	}, stayingAliveInterval);
 }
 
+// The Controller view is the only one that draws neighbour lists, so the server
+// can answer a beat with a bare liveness ack while it is shut. It is the Network
+// app's Controller tab now (the old floating panel is retired); keep the old
+// id as a fallback for a page that still has one.
+function jawnosControllerVisible() {
+	if ($('#controller').is(':visible')) { return true; }
+	return $('#network_panel_controller').is(':visible');
+}
+
 // One heartbeat: tell the server this tab is still here and hand over anything
 // that changed since the last one.
 function heartbeatSend(app, collect) {
@@ -568,7 +577,7 @@ function heartbeatSend(app, collect) {
 			pathname: window.location.pathname,
 			// the controller is the only thing that renders a neighbour list,
 			// so the server can answer with a bare liveness ack while it is shut
-			controller_visible: $('#controller').is(':visible') ? 'yes' : 'no'
+			controller_visible: (typeof jawnosControllerVisible == 'function' && jawnosControllerVisible()) ? 'yes' : 'no'
 		};
 
 		if (app == 'tab' || apper == 'tab') {

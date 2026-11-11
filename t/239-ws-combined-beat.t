@@ -89,4 +89,20 @@ is(&subs::debrief_gate_read($dev, 'debrief-none-' . $$), '{"v":"other"}',
 	"a new hostname falls back to the device's newest row");
 is(&subs::debrief_gate_read('', $host), undef, 'no device has no gate snapshot');
 
+
+# --- the Controller is the Network app's tab now ----------------------------
+like($ws, qr/function jawnosControllerVisible\(\)/,
+	'the beat asks whether the Controller is open');
+like($ws, qr/\$\('#network_panel_controller'\)\.is\(':visible'\)/,
+	'and finds it in the Network app');
+like($ws, qr/controller_visible: \(typeof jawnosControllerVisible == 'function' && jawnosControllerVisible\(\)\) \? 'yes' : 'no'/,
+	'a beat names the Controller so the server sends the neighbours');
+like($beat, qr/\$\('\.heartbeating\[app="' \+ data\.app \+ '"\]'\)\.css/,
+	'the row pulses when its beat arrives');
+unlike($beat, qr/#controller_toggle/, 'the retired dock face is no longer pulsed');
+like($beat, qr/scale\(1\.1\)[\s\S]*?if \(data\.slim\) \{ return; \}/,
+	'a slim beat still pulses before the heavy neighbour work is skipped');
+like($beat, qr/typeof jawnosControllerVisible == 'function' \? jawnosControllerVisible\(\)/,
+	'the neighbour rebuild follows the Network Controller tab');
+
 done_testing();

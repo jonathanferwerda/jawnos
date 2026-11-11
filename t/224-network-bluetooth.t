@@ -1,4 +1,4 @@
-# tests-for: scripts/jawnos_bluetooth.pl lib/JawnOS/Controller/manager_misc2.pm lib/JawnOS/Routes/manager_misc2.pm lib/JawnOS/Manager/Part08.pm lib/JawnOS/Manager/Index.pm lib/JawnOS/Manager/Declarations.pm templates/apps/network.html.ep templates/apps/network/controller.html.ep public/js/manager/network.js public/js/manager/network/02_tabs_bluetooth_remote.js public/js/manager/taskbar_network.js public/js/manager/taskbar_edit.js public/css/manager.css perl/help/topics_web.pl
+# tests-for: scripts/jawnos_bluetooth.pl lib/JawnOS/Controller/manager_misc2.pm lib/JawnOS/Routes/manager_misc2.pm lib/JawnOS/Manager/Part08.pm lib/JawnOS/Manager/Index.pm lib/JawnOS/Manager/Declarations.pm templates/apps/network.html.ep templates/apps/network/controller.html.ep public/js/manager/network.js public/js/manager/network/02_tabs_bluetooth_remote.js public/js/manager/taskbar_network.js public/js/manager/taskbar_edit.js public/css/manager.css public/css/keyboard.css perl/help/topics_web.pl
 # covers:    The Network app's Bluetooth tab and Remote Machines tab, the
 #            Bluetooth helper's fixed command set and parsers behind a fake
 #            bluetoothctl, the scroll limits, and the taskbar's Bluetooth read.
@@ -329,6 +329,7 @@ like($css, qr/\[bluetooth=on\].*taskbar_network_bluetooth/s, 'and lights up when
 	like($body, qr/Remote Machines/, 'the topic explains Remote Machines');
 	like($body, qr/scroll/, 'the topic explains the scroll limits');
 	like($body, qr/Bluetooth glyph/, 'the topic names the widget\'s Bluetooth glyph');
+	like($body, qr/Music, Server and Tab stay at the top/, 'the topic explains the Controller anchors');
 }
 
 
@@ -362,5 +363,25 @@ like($taskbar, qr/JawnVPN\.setExitNode/,
 	'and uses the Android bridge when it has one');
 like($taskbar, qr/jawnosVpnNodes\(status\)/,
 	'it only offers machines that are online exit nodes');
+
+
+# --- the Controller keeps the three page sockets on top ----------------------
+my $controller_tpl = source('templates/apps/network/controller.html.ep');
+like($controller_tpl, qr/foreach my \$app \( qw\/music server tab\/ \)/,
+	'Music, Server and Tab are drawn first, in that order');
+like($controller_tpl, qr/class="network_socket_anchor"/, 'each anchor is its own row');
+like($controller_tpl, qr/<span class="neighbours" app="<%= \$app %>"><\/span>/,
+	'each anchor carries the neighbour span the heartbeat fills');
+like($controller_tpl, qr/id="everything_socket"/, 'Everything is the row the beat grows');
+like($controller_tpl, qr/stayingAliveNow\('server'\)/, 'the tab asks for a beat as it opens');
+
+# --- the accordion shows the shared panel again ------------------------------
+my $keyboard_css = source('public/css/keyboard.css');
+unlike($keyboard_css, qr/#remote_control\s*\{[^}]*display\s*:\s*none/s,
+	'the retired keyboard panel no longer hides the Network accordion');
+my $remote_js = source('public/js/manager/network/02_tabs_bluetooth_remote.js');
+like($remote_js, qr/panel\.removeAttr\('hidden'\)/, 'opening the accordion shows the panel');
+like($remote_js, qr/slot\.append\(panel\)/, 'and moves it under the row');
+like($remote_js, qr/slot_row\.removeAttr\('hidden'\)/, 'and unhides the slot row');
 
 done_testing();

@@ -41,23 +41,24 @@ function stayingAliveOne(data) {
 			jawnosHeaderApply(app, html, header_at[app] || 0);
 		});
 	}
-	// A slim beat is the server saying "still here; nothing on screen changed".
-	// There is no neighbour list to rebuild and no pulse to paint.
-	if (data.slim) { return; }
-	var closer = $('.close_appointment[app="' + data.app + '"]');
-	var neighbours = $('.neighbours[app="' + data.app + '"]');
-	neighbours.find('.neighbour').each((i,n) => { n.remove() });
+	// The pulse is the liveness signal the Controller exists for, so it is painted
+	// on every beat - a slim beat too. Two style writes cost nothing; the heavy
+	// neighbour work below still waits for a full beat.
 	clearTimeout(heartbeatSettle[data.app]);
-	$('#controller_toggle').css({'transform': 'transform 0.25s ease scale(1.1)', '-webkit-transform':'scale(1.1)' });
 	$('.heartbeating[app="' + data.app + '"]').css({'transform': 'transform 0.25s ease scale(1.1)', '-webkit-transform':'scale(1.1)' });
 	// this was a 200ms interval that kept running until the next heartbeat (or
 	// forever if heartbeats stopped) - a single timeout is all the pulse needs
 	heartbeatSettle[data.app] = setTimeout(function() {
-		$('#controller_toggle').css({'transform': 'transform 0.25s ease scale(1.0)', '-webkit-transform':'scale(1.0)' });
 		$('.heartbeating[app="' + data.app + '"]').css({'transform': 'transform 0.25s ease scale(1.0)', '-webkit-transform':'scale(1.0)' });
 	},250);
+	// A slim beat is the server saying "still here; nothing on screen changed".
+	// There is no neighbour list to rebuild.
+	if (data.slim) { return; }
+	var closer = $('.close_appointment[app="' + data.app + '"]');
+	var neighbours = $('.neighbours[app="' + data.app + '"]');
+	neighbours.find('.neighbour').each((i,n) => { n.remove() });
 	data.neighbours = data.neighbours.sort((a, b) => a.browser_tab_id.localeCompare(b.browser_tab_id));
-	if ($('#controller').is(':visible')) {
+	if (typeof jawnosControllerVisible == 'function' ? jawnosControllerVisible() : $('#controller').is(':visible')) {
 		$.each(data.neighbours, function(i,n) {
 
 			var neighbour = neighbours.find('.neighbour[browser_tab_id="' + n['browser_tab_id'] + '"]');

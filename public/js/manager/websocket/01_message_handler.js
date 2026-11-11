@@ -124,11 +124,14 @@ function wsMessageDispatch(raw) {
 			}
 		}
 		else if (data['type'] == 'stayingAlive') {
-			var scrollT = $('#controller').scrollTop();
-			var scrollL = $('#controller').scrollLeft();
+			// The Controller is the Network app's tab now; keep whatever the
+			// person was scrolled to while the beat redraws its rows.
+			var controller = $('#controller').length ? $('#controller') : $('#network_app');
+			var scrollT = controller.scrollTop();
+			var scrollL = controller.scrollLeft();
 			stayingAlive(data);
-			$('#controller').scrollTop(scrollT);
-			$('#controller').scrollLeft(scrollL);
+			controller.scrollTop(scrollT);
+			controller.scrollLeft(scrollL);
 		}
 		if (typeof data['padlock_gate'] !== 'undefined') {
 			// the gate was turned on/off somewhere: the padlock in the taskbar is
