@@ -144,6 +144,13 @@ for my $name (sort keys %lib) {
 ($code, $out) = verify();
 is($code, 0, 'a lib module that uses a sibling under lib/ compiles') or diag($out);
 
+# 8b. a test file may use a harness under t/lib/: run_tests.pl puts t/lib on
+# @INC, and a changed .t must compile the same way here.
+write_text('t/lib/FixtureHelper.pm', "package FixtureHelper;\n1;\n");
+write_text('t/uses_helper.t', "use FixtureHelper;\n1;\n");
+($code, $out) = verify();
+is($code, 0, 'a test file that uses a t/lib helper compiles') or diag($out);
+
 # 9. the guard runs without a shell. `command -v`, a null-device redirect and
 # `cd ... &&` are Unix shell idioms: cmd.exe rejects all three, which made every
 # check fail on Windows and the restart guard refuse every restart. Each command

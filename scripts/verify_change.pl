@@ -360,14 +360,16 @@ sub check {
 	my $kind = &source_kind($rel, $src);
 
 	if ($kind eq 'perl') {
-		# -I$root/lib is what `cd $root && perl -Ilib` meant: the app's own
-		# modules resolve the same from any working directory.
-		my ($out) = &run_capture($^X, '-I' . "$root/lib", '-c', $path);
+		# -I$root/lib is what `cd $root && perl -Ilib` meant, and t/lib is where a
+		# test finds its harness (RepoSource, JawnOSTest): run_tests.pl puts both
+		# on @INC, so the guard must compile a changed .t the same way.
+		my @inc = ('-I' . "$root/lib", '-I' . "$root/t/lib");
+		my ($out) = &run_capture($^X, @inc, '-c', $path);
 		$out = '' unless defined $out;
 		unless ($out =~ /syntax OK/) {
 			# an app fragment (hooks.pl) leans on the DSL and imports Manager.pl
 			# brings in, so retry with them before calling it broken
-			my ($again) = &run_capture($^X, '-I' . "$root/lib", '-Mfeature=signatures',
+			my ($again) = &run_capture($^X, @inc, '-Mfeature=signatures',
 				'-MMojolicious::Lite', '-MMojo::JSON=decode_json,encode_json', '-c', $path);
 			$again = '' unless defined $again;
 			unless ($again =~ /syntax OK/) {
