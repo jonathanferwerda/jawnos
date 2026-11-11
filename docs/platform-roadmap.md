@@ -436,12 +436,15 @@ P3.
   `LOCALAPPDATA` and `%TEMP%` in `Paths`.
 - Wrap the tested bundle in one signed per-user `Setup.exe`: `installer/windows/jawnos.iss`
   (Inno Setup 6) installs under `%LOCALAPPDATA%`, owns the files, the shortcuts and the uninstall,
-  and runs `install.ps1` only for the first-run seed and launch; `firewall.ps1` is the one rule and
-  elevates itself for the optional LAN step. Compile and exercise it on VM200 (install, upgrade over
-  a running house, uninstall, reinstall), then sign it (Authenticode). An MSI is a P4/P5 option and
-  MSIX is out of scope (D4). Also make the runtime build reproducible (download the portable
-  Strawberry and `cpanm` the pinned set from `.github/workflows/platform-p0.yml`) instead of
-  trusting a prepared runtime, and seed `verify-manifest` at install time.
+  asks for the house settings (name, email, domain, language) and writes `config.json` from them so
+  no web setup wizard follows, and runs `install.ps1` only for the seed and launch; `firewall.ps1`
+  is the one rule and elevates itself for the optional LAN step. `[UninstallDelete]` removes the
+  config, database, certificates and generated launchers that Inno did not install. Compile and
+  exercise it on VM200 (install, upgrade over a running house, uninstall, reinstall), then sign it
+  (Authenticode). An MSI is a P4/P5 option and MSIX is out of scope (D4). Also make the runtime
+  build reproducible (download the portable Strawberry and `cpanm` the pinned set from
+  `.github/workflows/platform-p0.yml`) instead of trusting a prepared runtime, and seed
+  `verify-manifest` at install time.
 - Build the Qt shell/tray and "Start with Windows" polish, then repeat the clean install on a fresh
   Windows VM with no Perl, Python or WSL.
 - Acceptance: a `device=computer` house on a real Windows box with no WSL, Docker, Perl or Python

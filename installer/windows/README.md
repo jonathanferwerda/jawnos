@@ -22,6 +22,9 @@ prepared Strawberry Perl runtime. Two entry points install the same bundle:
 - First-run seeding without `sqlite3`, `tail` or a browser: `install.ps1`
   writes `config.json`, runs `scripts\jawnos_setup.pl --seed`, and saves a
   six-digit unlock code to `unlock-code.txt`.
+- The house settings are asked in Setup (name, email, domain, language) and
+  written to `config.json` during the install. The person is not sent to the
+  web setup wizard, and a silent install uses the computer name and defaults.
 - The per-user split: the app writes its config, database and `master.log` in
   the install folder, so the install never needs administrator rights. Only the
   optional private-profile firewall rule does, and `firewall.ps1` raises UAC
@@ -72,8 +75,9 @@ prepared tree. That is the next slice.
 With the Setup.exe:
 
 1. On a clean Windows 11 x64 VM, run `JawnOS-<version>-Setup.exe`.
-2. Keep the default folder (`%LOCALAPPDATA%\JawnOS`); do not install under
-   `Program Files`, where the app could not write its database.
+2. Name the house on the "House settings" page; email, domain and language are
+   optional. Those values go into `config.json`, so no web setup wizard follows.
+   The install root is fixed at `%LOCALAPPDATA%\JawnOS`.
 3. Leave "Allow other devices on this network" selected if the house should
    answer on the LAN. That is the one UAC prompt; declining leaves it working
    locally.

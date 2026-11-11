@@ -2,9 +2,10 @@
 ;
 ; One per-user Setup.exe around the portable bundle that build-portable.ps1
 ; produces. Inno owns the files, the shortcuts and the uninstall; install.ps1
-; only seeds the config/database and starts the house; firewall.ps1 owns the
-; single firewall rule and elevates itself only when the person asks for LAN
-; access.
+; seeds the config/database from the House settings page and starts the house;
+; firewall.ps1 owns the single firewall rule and elevates itself only when the
+; person asks for LAN access. config.json is written by the install, so there is
+; no web setup wizard after it.
 ;
 ; Build the payload first, then compile:
 ;   powershell -File installer\windows\build-portable.ps1 -RuntimeDir <strawberry>
@@ -39,6 +40,9 @@ AppPublisher=JawnOS
 DefaultDirName={localappdata}\JawnOS
 DefaultGroupName=JawnOS
 DisableProgramGroupPage=yes
+; The install is per user under LOCALAPPDATA; a Program Files choice would
+; make the database unwritable.
+DisableDirPage=yes
 OutputDir={#PayloadDir}
 OutputBaseFilename=JawnOS-{#AppVersion}-Setup
 Compression=lzma2
@@ -69,8 +73,8 @@ Name: "{userstartup}\JawnOS"; Filename: "{sys}\wscript.exe"; Parameters: """{app
 ; The interactive entry launches the house, waits for the port and opens the
 ; manager; it also shows the unlock code. A silent install must not open a
 ; browser or wait for the server, so it gets its own entry.
-Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\install.ps1"" -InstallDir ""{app}"" -SkipShortcuts -SkipFirewall"; StatusMsg: "Starting JawnOS (the first run can take a minute) ..."; Flags: waituntilterminated; Check: not WizardSilent
-Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\install.ps1"" -InstallDir ""{app}"" -SkipShortcuts -SkipFirewall -NoLaunch -NoBrowser -Quiet"; Flags: waituntilterminated runhidden; Check: WizardSilent
+Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\install.ps1"" -InstallDir ""{app}"" -SkipShortcuts -SkipFirewall -AnswersFile ""{tmp}\jawnos-answers.txt"""; StatusMsg: "Starting JawnOS (the first run can take a minute) ..."; Flags: waituntilterminated; Check: not WizardSilent
+Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\install.ps1"" -InstallDir ""{app}"" -SkipShortcuts -SkipFirewall -AnswersFile ""{tmp}\jawnos-answers.txt"" -NoLaunch -NoBrowser -Quiet"; Flags: waituntilterminated runhidden; Check: WizardSilent
 ; install.ps1 skipped the rule because a per-user install has no admin.
 ; firewall.ps1 re-runs itself through UAC; declining leaves the house working
 ; locally and can be retried later from an elevated prompt.
@@ -82,13 +86,66 @@ Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile
 Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\uninstall.ps1"" -InstallDir ""{app}"" -KeepFolder -SkipShortcuts -SkipFirewall"; Flags: waituntilterminated runhidden; RunOnceId: "StopJawnOS"
 Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\firewall.ps1"" -InstallDir ""{app}"" -Remove -Elevate"; Flags: waituntilterminated runhidden; RunOnceId: "RemoveJawnOSFirewall"
 
+[UninstallDelete]
+; Inno removes only the files it installed. config.json, the database, the
+; certificates, launch.bat/vbs and the log are created by install.ps1 and the
+; app, so without these entries the folder cannot be removed (error 145).
+Type: filesandordirs; Name: "{app}\app"
+Type: filesandordirs; Name: "{app}\runtime"
+Type: files; Name: "{app}\launch.bat"
+Type: files; Name: "{app}\launch.vbs"
+Type: files; Name: "{app}\master.log"
+Type: files; Name: "{app}\unlock-code.txt"
+Type: dirifempty; Name: "{app}"
+
 [Code]
+var
+  ConfigPage: TInputQueryWizardPage;
+
+procedure InitializeWizard;
+begin
+  ConfigPage := CreateInputQueryPage(wpSelectTasks,
+    'House settings', 'Name this JawnOS house',
+    'These values are written to config.json. You can change them later in Configure.');
+  ConfigPage.Add('Computer name:', False);
+  ConfigPage.Add('Email (optional):', False);
+  ConfigPage.Add('Domain / host:', False);
+  ConfigPage.Add('Language code (en, es, fr, ...):', False);
+  ConfigPage.Values[0] := ExpandConstant('{computername}');
+  ConfigPage.Values[1] := '';
+  ConfigPage.Values[2] := '127.0.0.1';
+  ConfigPage.Values[3] := 'en';
+end;
+
+function NextButtonClick(CurPageID: Integer): Boolean;
+begin
+  Result := True;
+  if (ConfigPage <> nil) and (CurPageID = ConfigPage.ID) and (Trim(ConfigPage.Values[0]) = '') then
+  begin
+    MsgBox('Please give this house a name.', mbError, MB_OK);
+    Result := False;
+  end;
+end;
+
+procedure WriteAnswers;
+var
+  Text: String;
+begin
+  if ConfigPage = nil then Exit;
+  Text := 'Name=' + Trim(ConfigPage.Values[0]) + #13#10 +
+          'Email=' + Trim(ConfigPage.Values[1]) + #13#10 +
+          'Domain=' + Trim(ConfigPage.Values[2]) + #13#10 +
+          'Language=' + Trim(ConfigPage.Values[3]) + #13#10;
+  SaveStringToFile(ExpandConstant('{tmp}\jawnos-answers.txt'), Text, False);
+end;
+
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 var
   Script: String;
   ResultCode: Integer;
 begin
   Result := '';
+  WriteAnswers;
   Script := ExpandConstant('{app}\uninstall.ps1');
   if FileExists(Script) then
     Exec('powershell.exe',

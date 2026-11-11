@@ -64,6 +64,13 @@ like($install, qr/SkipShortcuts/, 'install.ps1 can leave the shortcuts to the Se
 like($install, qr/SkipFirewall/, 'install.ps1 can leave the firewall rule to the Setup.exe');
 like($install, qr/firewall\.ps1/, 'install.ps1 delegates the rule to firewall.ps1');
 
+# The Setup.exe asks for the house settings and hands them over in a small
+# key=value file; a silent install keeps the seed's own defaults.
+like($install, qr/AnswersFile/, 'install.ps1 reads the Setup.exe answers file');
+like($install, qr/--email/, 'install.ps1 passes the chosen email to the seed');
+like($install, qr/--domain/, 'install.ps1 passes the chosen domain to the seed');
+like($install, qr/--language/, 'install.ps1 passes the chosen language to the seed');
+
 like($install, qr/Startup/, 'install.ps1 creates the Startup shortcut');
 
 like($install, qr/System\.Net\.Sockets\.TcpClient/, 'readiness uses a TCP client');
@@ -173,6 +180,15 @@ like($iss, qr/\[Icons\]/, 'Inno owns the shortcuts');
 like($iss, qr/\[UninstallRun\]/, 'jawnos.iss runs the uninstaller');
 like($iss, qr/-KeepFolder/, 'the Inno uninstaller owns the folder');
 like($iss, qr/WizardIsTaskSelected\('lanaccess'\)/, 'the firewall entry follows the LAN task');
+
+# config.json is written by the installer, not by a web wizard, and the
+# uninstaller has to remove the files Inno did not install.
+like($iss, qr/DisableDirPage\s*=\s*yes/, 'Setup does not offer a Program Files install');
+like($iss, qr/CreateInputQueryPage/, 'Setup asks for the house settings');
+like($iss, qr/SaveStringToFile/, 'Setup writes the answers file');
+like($iss, qr/-AnswersFile/, 'install.ps1 receives the answers file');
+like($iss, qr/\[UninstallDelete\]/, 'the uninstaller removes generated files');
+like($iss, qr/\{app\}\\app/, 'the app tree is removed on uninstall');
 like($iss, qr/PrepareToInstall/, 'an upgrade stops the running house before replacing files');
 
 done_testing();

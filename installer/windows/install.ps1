@@ -26,7 +26,12 @@ param(
     [switch]$Quiet,
     [switch]$Desktop,
     [switch]$SkipShortcuts,
-    [switch]$SkipFirewall
+    [switch]$SkipFirewall,
+    [string]$Name,
+    [string]$Email,
+    [string]$Domain,
+    [string]$Language,
+    [string]$AnswersFile
 )
 
 $ErrorActionPreference = 'Stop'
@@ -203,12 +208,35 @@ if (-not (Test-Path -LiteralPath $configPath)) {
     Set-Content -LiteralPath $configPath -Value $configText -Encoding ASCII
 
     $code = [string](Get-Random -Minimum 100000 -Maximum 999999)
+
+    # The Setup.exe writes the values the person chose into a small key=value
+    # file; the script installer can pass the same flags directly. An omitted
+    # value keeps the seed's own default, so a silent install still works.
+    $answers = @{}
+    if ($AnswersFile -and (Test-Path -LiteralPath $AnswersFile)) {
+        foreach ($line in Get-Content -LiteralPath $AnswersFile) {
+            if ($line -match '^\s*([A-Za-z][A-Za-z0-9_]*)\s*=\s*(.*)$') {
+                $answers[$Matches[1]] = $Matches[2].Trim()
+            }
+        }
+    }
+    if (-not $Name -and $answers['Name']) { $Name = $answers['Name'] }
+    if (-not $Email -and $answers['Email']) { $Email = $answers['Email'] }
+    if (-not $Domain -and $answers['Domain']) { $Domain = $answers['Domain'] }
+    if (-not $Language -and $answers['Language']) { $Language = $answers['Language'] }
+    if (-not $Name) { $Name = 'JawnOS' }
+    if (-not $Language) { $Language = 'en' }
+
+    $seedArgs = @(
+        'scripts\jawnos_setup.pl', '--seed', '--name', $Name,
+        '--device', 'computer', '--code', $code, '--language', $Language
+    )
+    if ($Email) { $seedArgs += @('--email', $Email) }
+    if ($Domain) { $seedArgs += @('--domain', $Domain) }
+
     Push-Location $appDir
     try {
-        $setup = Invoke-Capture -FilePath $perl -Arguments @(
-            'scripts\jawnos_setup.pl', '--seed', '--name', 'JawnOS',
-            '--device', 'computer', '--code', $code
-        )
+        $setup = Invoke-Capture -FilePath $perl -Arguments $seedArgs
     } finally {
         Pop-Location
     }
