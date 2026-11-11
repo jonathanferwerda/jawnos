@@ -130,19 +130,22 @@ like(source('scripts/security_audit.pl'), qr/perl\.shell\.double_quoted/,
 {
 	my $req = Mojo::Message::Request->new;
 	$req->method('POST');
-	$req->url(Mojo::URL->new('/manager/folders/cloud/space'));
+	$req->url(Mojo::URL->new('https://house.example/manager/folders/cloud/space'));
 	subs::peer_sign_request($req);
 	my $ts    = $req->headers->header('X-Peer-Timestamp');
 	my $nonce = $req->headers->header('X-Peer-Nonce');
 	my $sig   = $req->headers->header('X-Peer-Signature');
 	my $key   = $req->headers->header('X-Peer-Key');
-	ok($ts && $nonce && $sig && $key, 'peer_sign_request sets all four headers')
+	my $body_sha = $req->headers->header('X-Peer-Body-Sha256');
+	my $audience = $req->headers->header('X-Peer-Audience');
+	ok($ts && $nonce && $sig && $key && $body_sha && $audience,
+		'peer_sign_request sets the v2 headers')
 		or diag('ts=' . ($ts // '') . ' nonce=' . ($nonce // '')
 			. ' sig=' . length($sig // '') . ' key=' . length($key // ''));
 
 	my $dir = tempdir(CLEANUP => 1);
 	my $msg_file = "$dir/message";
-	write_file($msg_file, subs::peer_sign_message($req->method, $req->url->path_query, $ts, $nonce));
+	write_file($msg_file, subs::peer_sign_message($req->method, $req->url->path_query, $ts, $nonce, $body_sha, $audience));
 	my $sig_file = "$dir/signature";
 	write_file($sig_file, MIME::Base64::decode_base64($sig // ''));
 	my $key_file = "$dir/pubkey";

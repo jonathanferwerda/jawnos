@@ -350,8 +350,8 @@ sub peer_pubkey {
 }
 
 sub peer_sign_message {
-	my ($method, $path_query, $ts, $nonce) = @_;
-	return join "\n", ($method // ''), ($path_query // ''), ($ts // ''), ($nonce // '');
+	my ($method, $path_query, $ts, $nonce, $body_sha, $audience) = @_;
+	return join "\n", ($method // ''), ($path_query // ''), ($ts // ''), ($nonce // ''), ($body_sha // ''), ($audience // '');
 }
 
 # Name this machine and sign the request it is about to make. Attached to a
@@ -384,9 +384,13 @@ sub peer_sign_request {
 	# (1791953166.531) was refused on every hook-signed request.
 	my $ts = int(time());
 	my $nonce = &random_string_creator(24);
+	# The signature covers the body and the host it is addressed to, so an
+	# on-path relay cannot swap the payload or replay it at another machine.
+	my $body_sha = &sha256_hex($req->body // '');
+	my $audience = $req->url->host // '';
 	my $msg_file = &peer_temp_file('sign_msg');
 	my $sig_file = &peer_temp_file('sign_sig');
-	write_file($msg_file, &peer_sign_message($req->method, $req->url->path_query, $ts, $nonce));
+	write_file($msg_file, &peer_sign_message($req->method, $req->url->path_query, $ts, $nonce, $body_sha, $audience));
 	my $sign_command = 'openssl pkeyutl -sign -inkey ' . &quote($key) . ' -rawin -in ' . &quote($msg_file) . ' -out ' . &quote($sig_file) . ' 2>/dev/null';
 	`$sign_command`;
 	my $sig = (-s $sig_file) ? read_file($sig_file) : '';
@@ -394,6 +398,9 @@ sub peer_sign_request {
 	if ($sig && $pub) {
 		$req->headers->header('X-Peer-Timestamp', $ts);
 		$req->headers->header('X-Peer-Nonce', $nonce);
+		$req->headers->header('X-Peer-Sig-Version', '2');
+		$req->headers->header('X-Peer-Body-Sha256', $body_sha);
+		$req->headers->header('X-Peer-Audience', $audience);
 		$req->headers->header('X-Peer-Signature', encode_base64($sig, ''));
 		$req->headers->header('X-Peer-Key', encode_base64($pub, ''));
 	}
@@ -418,10 +425,11 @@ sub peer_sign_blob {
 	return $sig ? encode_base64($sig, '') : '';
 }
 
-# The server half: is this request really from the peer it claims, and has it
-# not been seen before? Unsigned requests pass only while the peer has no key on
-# file yet, so machines upgrade without a flag day; once pinned, only a fresh
-# valid signature from the holder of the private key gets through.
+# The server half: is this request really from the peer it claims, is the body
+# the one that was signed, was it addressed here, and has the nonce not been
+# seen? A v2 signature binds method, path, stamp, nonce, body digest and
+# recipient; an older signature cannot prove the body or the recipient and is
+# refused. A first contact may offer its key, but only with a v2 signature.
 sub peer_verify {
 	my ($c, $rm) = @_;
 	return 0 unless $rm && $rm->{'signatorial'};
@@ -442,27 +450,41 @@ sub peer_verify {
 	return 0 unless $ts && $nonce && $b64sig;
 	return 0 unless $ts =~ /^\d+$/ && abs(time() - $ts) <= 600;
 	return 0 unless $nonce && $nonce =~ /^[A-Za-z0-9]{8,64}$/;
+	# Version 2 binds the body and the recipient. An older signature cannot
+	# prove either, so it is not accepted: every peer must run this version.
+	return 0 unless ($c->req->headers->header('X-Peer-Sig-Version') // '') eq '2';
+	my $body_sha = $c->req->headers->header('X-Peer-Body-Sha256') // '';
+	return 0 unless $body_sha =~ /\A[0-9a-f]{64}\z/;
+	return 0 unless &secure_compare($body_sha, &sha256_hex($c->req->body // ''));
+	my $audience = $c->req->headers->header('X-Peer-Audience') // '';
+	my $aud_norm = lc $audience;
+	$aud_norm =~ s/:\d+$//;
+	my $here = lc($c->req->url->base->host // '');
+	return 0 unless length $here && $aud_norm eq $here;
 	my $pubkey = $stored;
 	$pubkey = eval { decode_base64 $b64key } if (!$pubkey && $b64key);
 	return 0 unless $pubkey && index($pubkey, '-----BEGIN PUBLIC KEY-----') == 0;
 	my $sig = eval { decode_base64 $b64sig } || '';
 	return 0 unless length $sig;
 	my $stamp = $rm->{'signatorial'} . ':' . $nonce;
-	my $q = &db_query('select server_time from cache where context = ? and uuid = ? limit 1', 'peer_nonce', $stamp);
-	my $seen = $q ? $q->hashes->[0] : undef;
-	return 0 if $seen && $seen->{'server_time'};
+	# Claim the nonce before verifying. INSERT OR IGNORE on cache.uuid is one
+	# atomic step, so two workers handling a captured request cannot both pass.
+	my $claim = &db_query('insert or ignore into cache (uuid, context, app, server_time, timestamp) values (?,?,?,?,?)', $stamp, 'peer_nonce', '__president', &rightNow(), &rightNow());
+	return 0 unless $claim && $claim->rows;
 	my $msg_file = &peer_temp_file('verify_msg');
 	my $sig_file = &peer_temp_file('verify_sig');
 	my $key_file = &peer_temp_file('verify_pub');
-	write_file($msg_file, &peer_sign_message($c->req->method, $c->req->url->path_query, $ts, $nonce));
+	write_file($msg_file, &peer_sign_message($c->req->method, $c->req->url->path_query, $ts, $nonce, $body_sha, $audience));
 	write_file($sig_file, $sig);
 	write_file($key_file, $pubkey);
 	my $ok = system('openssl pkeyutl -verify -pubin -inkey ' . &quote($key_file) . ' -rawin -in ' . &quote($msg_file) . ' -sigfile ' . &quote($sig_file) . ' >/dev/null 2>&1') == 0;
 	unlink $msg_file, $sig_file, $key_file;
-	return 0 unless $ok;
-	# the nonce is spent; the first verified contact pins the offered key
-	&db_query('delete from cache where context = ? and uuid = ?', 'peer_nonce', $stamp);
-	&db_query('insert into cache (uuid, context, app, server_time, timestamp) values (?,?,?,?,?)', $stamp, 'peer_nonce', '__president', &rightNow(), &rightNow());
+	unless ($ok) {
+		# a failed verification releases the claim; a replay is still one insert
+		&db_query('delete from cache where context = ? and uuid = ?', 'peer_nonce', $stamp);
+		return 0;
+	}
+	# the claim row is the spent nonce; the first verified contact pins the key
 	unless ($stored) {
 		&db_update('remote_machines', { pubkey => $pubkey }, { uuid => $rm->{'uuid'} });
 	}

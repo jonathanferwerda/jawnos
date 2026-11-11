@@ -112,14 +112,26 @@ Manager::app->hook(before_dispatch => sub {
 	# direct loopback caller are not browsers; the three beacon posts cannot set a
 	# header. An Origin naming another host is refused even with
 	# X-Requested-With, because a cross-origin page cannot set that header.
-	if (($c->req->method // '') =~ /^(?:POST|PUT|PATCH|DELETE)$/
+	#
+	# A few routes mutate on GET (the legacy ticket and watch controls). They are
+	# named here so a cross-site top-level navigation is checked the same way;
+	# their own UI reaches them by XHR from the house page.
+	my %csrf_get = map { $_ => 1 } qw(
+		/manager/delete_ticket /manager/suspend_ticket
+		/manager/renew_ticket /manager/reinstate_ticket
+		/manager/watch/set_proxy /manager/say_it
+	);
+	my $csrf_method = $c->req->method // '';
+	my $csrf_path = $c->req->url->path->to_string;
+	my $csrf_mutating = $csrf_method =~ /^(?:POST|PUT|PATCH|DELETE)$/
+		|| ($csrf_method eq 'GET' && $csrf_get{$csrf_path});
+	if ($csrf_mutating
 		&& ($c->session('authentication') || '') eq 'approved'
 		&& ($c->tx->remote_address ne $c->tx->local_address
 			|| $c->req->headers->header('X-Forwarded-For')
 			|| $c->req->headers->header('Forwarded'))
 		&& !$c->req->headers->header('X-Peer-Signature')
 		&& !$c->req->headers->header('X-Jawn-Authorization')) {
-		my $csrf_path = $c->req->url->path->to_string;
 		my $csrf_source = ($c->req->headers->header('Origin') // '')
 			|| ($c->req->headers->header('Referer') // '');
 		my $csrf_ok = $csrf_path =~ m{^/manager/(?:debrief|js_error|security/media_lock)$}
@@ -129,7 +141,27 @@ Manager::app->hook(before_dispatch => sub {
 				'127.0.0.1', 'localhost', '::1'
 			], ($c->req->headers->header('X-Requested-With') // '') =~ /XMLHttpRequest/i);
 		unless ($csrf_ok) {
-			$log->info('csrf: refused ' . ($c->req->method // '') . ' ' . $csrf_path . ' from ' . ($c->tx->remote_address // '?') . ' source=' . ($csrf_source || '-'));
+			$log->info('csrf: refused ' . $csrf_method . ' ' . $csrf_path . ' from ' . ($c->tx->remote_address // '?') . ' source=' . ($csrf_source || '-'));
+			$c->res->code(403);
+			$c->render(text => 'forbidden');
+			return;
+		}
+	}
+
+	# A websocket upgrade is a GET, so the block above does not see it. A browser
+	# always sends Origin; a foreign one is refused. A peer or embedded caller
+	# carries its own proof and is allowed through (the socket route verifies it).
+	if (($c->req->headers->header('Upgrade') // '') =~ /websocket/i
+		&& !$c->req->headers->header('X-Peer-Signature')
+		&& !$c->req->headers->header('X-Jawn-Authorization')) {
+		my $ws_origin = $c->req->headers->header('Origin') // '';
+		if (length $ws_origin
+			&& !&subs::http_origin_ok($ws_origin, [
+				$c->req->url->base->host, $config->{'domain'},
+				&subs::public_origin_host(), &subs::local_domain(),
+				'127.0.0.1', 'localhost', '::1'
+			], 0)) {
+			$log->info('ws: refused upgrade from ' . ($c->tx->remote_address // '?') . ' origin=' . $ws_origin);
 			$c->res->code(403);
 			$c->render(text => 'forbidden');
 			return;

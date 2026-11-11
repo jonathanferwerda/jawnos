@@ -191,6 +191,19 @@ for my $hit ( grep_tree('`[^`]*am[[:space:]]+broadcast', 'lib', 'perl') ) {
 		fix => 'pass am an argv list (open -|, system)');
 }
 
+# A backtick command concatenated with a string runs only the first fragment:
+# `sqlite3 ` . quote($db) ran sqlite3 with no database, then discarded the path.
+# Build the whole command in a variable, then run that variable.
+for my $hit ( grep_tree('`[^`]*[[:space:]]`[[:space:]]*\.', 'lib', 'perl') ) {
+	my ($path, $line, $text) = @{$hit};
+	next if $text =~ /^\s*#/;
+	next if $path =~ m{^perl/help\.pl$};
+	finding('high', 'perl.shell.concat', 'command injection',
+		'a backtick command is concatenated instead of run as a string', path => $path, line => $line,
+		evidence => redact($text),
+		fix => 'build the command in a variable, then `$cmd`; never `cmd ` . arg');
+}
+
 for my $hit ( grep_tree('read_file\s*\(\s*\$c->param|`tail \$', 'lib', 'perl') ) {
 	my ($path, $line, $text) = @{$hit};
 	next if $text =~ /path_is_within|path_name|quote\(/;

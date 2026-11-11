@@ -39,8 +39,10 @@ like($president, qr/&server_process\('\.\/perl\/Manager\.pl', \\\@ws_listeners,/
 like($manager, qr/^sub ws_url_for \{/m, 'the page has one socket URL builder');
 like($manager, qr/^sub ws_plain_token \{/m, 'a loopback token is minted');
 like($manager, qr/^sub ws_plain_auth \{/m, 'a token restores the session');
-like($manager, qr/warranty => '\+7d'/,
-	'the token outlives a long-lived page');
+like($manager, qr/warranty => '\+12h'/,
+	'the token is a working day, not a week');
+like($manager, qr/\$auth{'_ws_remote'}/,
+	'and is bound to the address that minted it');
 like($manager, qr/\$c->session\(%\{\$auth\}\);/,
 	'the socket session is restored from the token');
 like($manager, qr/\$host eq '127\.0\.0\.1' \|\| \$host eq 'localhost' \|\| \$host eq '::1'/,

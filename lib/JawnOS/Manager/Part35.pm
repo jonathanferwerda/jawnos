@@ -545,7 +545,11 @@ sub ws_plain_token {
 	$token = &subs::random_string_creator(32);
 	my $session = $c->session || {};
 	my %auth = %{$session};
-	&subs::cache_set({ app => '__president', context => 'ws_token', subcontext => $token, warranty => '+7d' }, \%auth);
+	# The token is only usable on the loopback listener, and only from the
+	# address that minted it. A working day is enough for a page to reconnect;
+	# it is no longer a week-long copy of the whole session.
+	$auth{'_ws_remote'} = $c->tx->remote_address // '';
+	&subs::cache_set({ app => '__president', context => 'ws_token', subcontext => $token, warranty => '+12h' }, \%auth);
 	$c->stash('ws_plain_token' => $token);
 	return $token;
 }
@@ -556,6 +560,8 @@ sub ws_plain_auth {
 	return unless defined $token && $token =~ /\A[A-Za-z0-9]{16,64}\z/;
 	my $auth = &subs::cache_get({ app => '__president', context => 'ws_token', subcontext => $token });
 	return unless ref $auth eq 'HASH' && scalar keys %{$auth};
+	my $from = delete $auth->{'_ws_remote'};
+	return unless defined $from && length $from && $from eq ($c->tx->remote_address // '');
 	$c->session(%{$auth});
 	return 1;
 }

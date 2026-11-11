@@ -284,9 +284,10 @@ sub remote_device_connect($rdata) {
 					&subs::db_update('remote_machines', $remote_machine, { signatorial => $returner->{'body'}->{'signatorial'} });
 				}
 				else {
-					my $fresh_scope = (($remote_machine->{'privilege'} || 'citizen') eq 'citizen') ? 'trusted' : 'visitor';
-					$remote_machine->{'privilege'} //= 'citizen';
-					$remote_machine->{'grant_scope'} //= $fresh_scope;
+					# A discovered peer starts at visitor with no house
+					# privilege; a citizen's own machine was marked trusted above.
+					$remote_machine->{'privilege'} //= 'peer';
+					$remote_machine->{'grant_scope'} //= 'visitor';
 					$remote_machine->{'grant_expires'} //= '';
 					&subs::db_insert('remote_machines', $remote_machine);
 				}

@@ -621,6 +621,12 @@ sub update_database($data) {
 		'alter table remote_machines add column privilege VARCHAR(25)',
 		'alter table remote_machines add column grant_scope VARCHAR(25)',
 		'alter table remote_machines add column grant_expires VARCHAR(25)',
+		# An empty grant used to mean full trust. It means visitor now. A peer
+		# that already holds a key was trusted under the old rule, so grandfather
+		# it once; the marker is what makes this idempotent and keeps a grant
+		# cleared later from silently regaining trust.
+		"update remote_machines set grant_scope = 'trusted' where (grant_scope is null or grant_scope = '') and pubkey is not null and length(pubkey) > 0 and not exists (select 1 from cache where context = 'migration' and uuid = 'grant_scope_v2')",
+		"insert or ignore into cache (uuid, context, app, server_time, timestamp) values ('grant_scope_v2', 'migration', '__president', " . &rightNow() . ", " . &rightNow() . ")",
 		# A member machine cosigns the house crest with its peer key. crest_uuid is
 		# the crest it backs and crest_cosig is its signed statement, so the roster
 		# (and the card) can say which machines stand behind the crest.

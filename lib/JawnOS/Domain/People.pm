@@ -114,7 +114,9 @@ sub peer_allows {
 	return 0 unless $verified && $verified eq $row_key;
 	my %rank = &peer_scope_rank();
 	my $grant = lc($rm->{'grant_scope'} // '');
-	$grant = 'trusted' if $grant eq '';
+	# An empty grant is not trust. A machine is visitor until someone grants
+	# more; the one-time migration grandfathers the peers that predate this rule.
+	$grant = 'visitor' if $grant eq '';
 	$grant = 'none' unless exists $rank{$grant};
 	my $need = lc($required // 'member');
 	$need = 'member' unless exists $rank{$need};
