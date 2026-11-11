@@ -791,9 +791,16 @@ sub peer_presence_probe {
 	}
 	my $fetch = $opts->{'fetch'};
 	my $ping  = $opts->{'ping'};
-	# A LAN probe carries the peer's own public name under a public key: it is a
-	# liveness ping, not a secret. Keep the seal every build can read.
+	# The claim is the peer's own public signatorial, and since v0.1.2685 the
+	# manager compares it as text rather than decrypting it. A probe that only
+	# sealed the claim was answered 'dunno', so a peer that is not on this LAN
+	# (the hub, from the laptop) read as inactive and its hub was dropped from
+	# sync. Ask in plaintext first - that is what this build and every build
+	# since answers - and keep the legacy seal as the second try for a peer
+	# still on an older build. The sealed value is only ever echoed back, never
+	# deserialized, so the thaw v0.1.2685 removed stays removed.
 	my $rs = &encrypter_legacy(&shorthand_name(&rightNow(), 5) . &shorthand_name($remote_signatorial, 5), $remote_signatorial);
+	my @claims = grep { defined $_ && length $_ } ($remote_signatorial, $rs);
 	foreach my $c ( @candidates ) {
 		my $host = $c->{'host'};
 		next unless defined $host && length $host;
@@ -819,48 +826,49 @@ sub peer_presence_probe {
 		my $plain_base = &peer_manager_url($rm, $host, $port);
 		my ($secure_base, $verified) = &subs::peer_secure_url($rm, $plain_base);
 		my $base = $verified ? $secure_base : $plain_base;
-		my $url = $base . '/?signatorial=' . url_escape $rs;
-		my $body = '';
-		if (ref $fetch eq 'CODE') {
-			$body = eval { $fetch->({ host => $host, port => $port, base => $base, url => $url, literal => $literal, alive => $alive, why => $c->{'why'}, verified => $verified ? 1 : 0 }) } || '';
-		}
-		else {
+		# Ask one base with one claim. The caller's literals and pings are already
+		# decided above; this is only the request and its answer, so each base
+		# keeps the waits it always had (the verified listener long, the plain
+		# manager port short).
+		my $ask = sub {
+			my ($ask_base, $claim, $ask_verified, $wait) = @_;
+			my $url = $ask_base . '/?signatorial=' . url_escape $claim;
+			if (ref $fetch eq 'CODE') {
+				return eval { $fetch->({ host => $host, port => $port, base => $ask_base, url => $url, literal => $literal, alive => $alive, why => $c->{'why'}, verified => $ask_verified }) } || '';
+			}
 			my $ua = Mojo::UserAgent->new;
 			$ua = $ua->max_response_size(0);
-			if ($verified) { &subs::peer_tls_verify($ua) } else { $ua->insecure(1) }
-			$ua->connect_timeout($alive ? 5 : 3);
-			$ua->inactivity_timeout($alive ? 15 : 6);
-			$ua->request_timeout($alive ? 20 : 8);
-			my $tx = eval { $ua->get($url => { user_agent => $remote_signatorial }) };
-			$body = eval { $tx->result->body } || '';
-		}
-		if (defined $body && $body eq $remote_signatorial) {
-			return { ok => 1, manager => $base, ip => $host, port => $port + 0, host => $host };
-		}
-		# The peer listener answered TCP, but its house-CA leaf may not name
-		# this address: a phone whose DHCP lease moved serves on the LAN while
-		# its leaf still carries the old address, so the verified fetch fails.
-		# The signed rail on the plain manager port authenticates by signature,
-		# not TLS, and the listener probe already proved the host is up, so one
-		# short unverified attempt is enough.
-		if ($verified) {
-			my $plain_url = $plain_base . '/?signatorial=' . url_escape $rs;
-			my $plain_body = '';
-			if (ref $fetch eq 'CODE') {
-				$plain_body = eval { $fetch->({ host => $host, port => $port, base => $plain_base, url => $plain_url, literal => $literal, alive => $alive, why => $c->{'why'}, verified => 0 }) } || '';
+			if ($ask_verified) { &subs::peer_tls_verify($ua) } else { $ua->insecure(1) }
+			if ($wait eq 'long') {
+				$ua->connect_timeout($alive ? 5 : 3);
+				$ua->inactivity_timeout($alive ? 15 : 6);
+				$ua->request_timeout($alive ? 20 : 8);
 			}
 			else {
-				my $ua = Mojo::UserAgent->new;
-				$ua = $ua->max_response_size(0);
-				$ua->insecure(1);
 				$ua->connect_timeout(2);
 				$ua->inactivity_timeout(4);
 				$ua->request_timeout(5);
-				my $tx = eval { $ua->get($plain_url => { user_agent => $remote_signatorial }) };
-				$plain_body = eval { $tx->result->body } || '';
 			}
-			if (defined $plain_body && $plain_body eq $remote_signatorial) {
-				return { ok => 1, manager => $plain_base, ip => $host, port => $port + 0, host => $host };
+			my $tx = eval { $ua->get($url => { user_agent => $remote_signatorial }) };
+			return eval { $tx->result->body } || '';
+		};
+		# The listener first when it proved itself, then - only for a listener
+		# whose house-CA leaf does not name this address (a phone whose DHCP lease
+		# moved) - the plain manager port, which authenticates by signature rather
+		# than TLS, so one short unverified attempt is enough.
+		my @tries = $verified
+			? ( [ $base, 1, 'long' ], [ $plain_base, 0, 'short' ] )
+			: ( [ $base, 0, 'long' ] );
+		foreach my $t ( @tries ) {
+			my ($ask_base, $ask_verified, $wait) = @{$t};
+			foreach my $claim ( @claims ) {
+				my $body = $ask->($ask_base, $claim, $ask_verified, $wait);
+				if (defined $body && $body eq $remote_signatorial) {
+					return { ok => 1, manager => $ask_base, ip => $host, port => $port + 0, host => $host };
+				}
+				# A host that did not answer at all is not an older build; only one
+				# that answered something ('dunno') may still want the sealed claim.
+				last unless defined $body && length $body;
 			}
 		}
 	}

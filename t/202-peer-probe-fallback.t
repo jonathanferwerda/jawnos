@@ -64,11 +64,18 @@ is($fallback_calls->[1]->{'base'}, $plain, 'the fallback uses the pre-rewrite ba
 is($fallback_calls->[1]->{'verified'}, 0, 'and it is marked unverified');
 like($fallback_calls->[1]->{'url'}, qr{^\Q$plain\E/\?signatorial=},
 	'the signature still rides on the fallback url');
+# The claim is the peer's own public signatorial and the manager compares it as
+# text (v0.1.2685), so the plaintext claim is the one that may prove the peer.
+like($fallback_calls->[0]->{'url'}, qr{\?signatorial=\Q$sig\E$},
+	'the first claim is the plaintext signatorial, the form this build answers');
 
-# (b) Neither base answers: the peer is not present.
+# (b) Neither base answers: the peer is not present. A host that said nothing
+# is not an older build, so the sealed claim is not spent on it.
 my ($dead, $dead_calls) = probe_with(1, sub { '' });
 ok(!$dead->{'ok'}, 'when neither base answers the peer is not present');
 is(scalar @{$dead_calls}, 2, 'the verified attempt and its fallback both ran');
+like($dead_calls->[0]->{'url'}, qr{\?signatorial=\Q$sig\E$},
+	'and only the plaintext claim was asked');
 
 # (c) A verified answer is still the preferred route and is not retried.
 my ($verified_ok, $verified_calls) = probe_with(1, sub { $sig });
@@ -83,6 +90,21 @@ ok(!$plain_miss->{'ok'}, 'an unverified miss is still a miss');
 is(scalar @{$plain_miss_calls}, 1, 'no fallback runs when the listener was not chosen');
 is($plain_miss_calls->[0]->{'base'}, $plain, 'the one attempt is the plain base');
 is($plain_miss_calls->[0]->{'verified'}, 0, 'and it is marked unverified');
+like($plain_miss_calls->[0]->{'url'}, qr{\?signatorial=\Q$sig\E$},
+	'and it asks in plaintext first');
+
+# (e) A build that predates the text comparison answers 'dunno' to the
+# plaintext claim and still recognizes the legacy seal. The probe must try the
+# seal on a host that answered, or a mixed-version house reads as absent and
+# the hub is dropped from sync (the laptop, 2026-11-11).
+my ($sealed_ok, $sealed_calls) = probe_with(0, sub {
+	my ($c) = @_;
+	return $c->{'url'} =~ /\?signatorial=\Q$sig\E\z/ ? 'dunno' : $sig;
+});
+is($sealed_ok->{'ok'}, 1, 'a peer that answers dunno is proved by the sealed claim');
+is(scalar @{$sealed_calls}, 2, 'the plaintext claim is followed by the seal');
+like($sealed_calls->[0]->{'url'}, qr{\?signatorial=\Q$sig\E\z}, 'plaintext first');
+unlike($sealed_calls->[1]->{'url'}, qr{\?signatorial=\Q$sig\E\z}, 'then the sealed claim');
 
 my ($plain_ok, $plain_ok_calls) = probe_with(0, sub { $sig });
 is($plain_ok->{'ok'}, 1, 'the plain base proves the peer when the listener is absent');
