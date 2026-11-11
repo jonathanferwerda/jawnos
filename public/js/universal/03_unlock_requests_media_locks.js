@@ -142,6 +142,15 @@ function jawnAppEnrollDesktop() {
 					return $.post('/manager/device/app_request', {
 						device_uuid: uuid, nonce: ch.nonce, app_pubkey: res.pubkey, app_kind: 'ed25519',
 						device_signature: sig || '', name: 'Desktop app'
+					}).then(function (r) {
+						// The code the person compares with the approving screen comes
+						// back on this request's own response. app_status no longer
+						// hands a code to a session that is not bound to this device.
+						if (r && r.ok && r.code) {
+							try { localStorage.setItem('jawn_app_request_code', r.code); } catch (e) {}
+							window.jawnAppRequestCode = r.code;
+						}
+						return r;
 					});
 				}
 				return jawnosSha256Hex(res.pubkey).then(function (hash) {

@@ -210,13 +210,22 @@ sub action_38048 {
 		&subs::db_update('device_requests', { status => 'expired', server_time => &subs::rightNow() }, { uuid => $pending->{'uuid'} });
 		$pending = undef;
 	}
+	# The enrollment code is a short string two screens compare. It belongs to
+	# the device that asked, so only that device's own session (the one whose
+	# device_uuid is the requested one) or a house session may read it; anyone
+	# else learns only that a request waits. The app takes its own code from
+	# the signed app_request response it makes, never from here.
+	my $session_device = $c->session('device_uuid') || '';
+	my $bound = (length $session_device && $session_device eq $device_uuid) ? 1 : 0;
+	my $house = (($c->session('authentication') || '') eq 'approved'
+		&& &subs::privilege_is_house($c->session('privilege'))) ? 1 : 0;
 	$c->render(json => {
 		ok => 1,
 		device => $device_uuid,
 		has_app => ($pubkey ? 1 : 0),
 		kind => ($kind || ''),
 		app_session => (&app_session_ok($c) ? 1 : 0),
-		pending => ($pending ? $pending->{'code'} : ''),
+		pending => ($pending ? (($bound || $house) ? $pending->{'code'} : 1) : ''),
 	});
 }
 

@@ -109,6 +109,13 @@
 				};
 				box.appendChild(b);
 			}
+			function showCode(code) {
+				// The asking screen shows the code the phone will display, so the
+				// person can compare them. It came from the app_request reply.
+				if (!code) { return; }
+				status(<%== &subs::json_chars(&subs::ui('Approval code')) %> + ': ' + code + ' — '
+					+ <%== &subs::json_chars(&subs::ui('waiting for approval on a signed-in phone.')) %>);
+			}
 			function poll() {
 				if (polling || !window.JawnDesktop) { return; }
 				polling = true;
@@ -122,7 +129,7 @@
 						// A request older than an hour is cleared on the server. Ask again
 						// instead of waiting forever on a request that no longer exists.
 						if (s && s.ok && !s.pending && typeof jawnAppEnrollDesktop === 'function') {
-							jawnAppEnrollDesktop().catch(function () {});
+							jawnAppEnrollDesktop().then(function (r) { showCode(r && r.code); }).catch(function () {});
 						}
 						setTimeout(check, 3000);
 					}).catch(function () { setTimeout(check, 5000); });
@@ -145,7 +152,7 @@
 					if (window.JawnDesktop && (e === 'no app key' || e === 'pending')) {
 						status(<%== &subs::json_chars(&subs::ui('Waiting for approval on a signed-in phone.')) %>);
 						if (e !== 'pending' && typeof jawnAppEnrollDesktop === 'function') {
-							jawnAppEnrollDesktop().catch(function () {});
+							jawnAppEnrollDesktop().then(function (r) { showCode(r && r.code); }).catch(function () {});
 						}
 						poll();
 						return;
