@@ -14,6 +14,7 @@ use strict;
 use warnings;
 use utf8;
 use Digest::SHA qw(sha1_hex);
+use JSON::PP ();
 
 our %SYSTEM = (
 	nes         => { label => 'Nintendo', core => 'nestopia_libretro.so', package => 'libretro-nestopia' },
@@ -337,6 +338,84 @@ sub art_for {
 	return undef;
 }
 
+# Looking up a card's picture must never walk the whole library. Every card on
+# the shelf asks for one image, and a full scan behind each request pinned the
+# manager's single request loop while a page of cards loaded, which is what a
+# person saw as "the games will not start". A scan writes the id -> picture map
+# beside the ROMs (a dot file the scan itself ignores), and the art route reads
+# it: one small file instead of a tree walk. The person owns that folder, so the
+# manager can keep the file current without asking root.
+our $ART_INDEX_NAME = '.jawnos-art.json';
+
+sub art_index_file {
+	my ($root) = @_;
+	$root = '' unless defined $root;
+	my $forced = $ENV{'JAWNOS_GAMES_ART_INDEX'};
+	return $forced if defined $forced && length $forced;
+	return undef unless length $root;
+	return "$root/$ART_INDEX_NAME";
+}
+
+sub art_index_read {
+	my ($root) = @_;
+	my $file = art_index_file($root);
+	return {} unless defined $file && -f $file;
+	open(my $fh, '<', $file) or return {};
+	local $/;
+	my $raw = <$fh> // '';
+	close $fh;
+	my $parsed = eval { JSON::PP->new->decode($raw) };
+	return ref $parsed eq 'HASH' ? $parsed : {};
+}
+
+sub _art_index_write {
+	my ($root, $art) = @_;
+	my $file = art_index_file($root);
+	return 0 unless defined $file;
+	my $json = eval { JSON::PP->new->canonical(1)->encode($art) };
+	return 0 unless defined $json;
+	my $tmp = "$file.tmp.$$";
+	open(my $fh, '>', $tmp) or return 0;
+	print $fh $json;
+	unless (close $fh) { unlink $tmp; return 0; }
+	unless (rename $tmp, $file) { unlink $tmp; return 0; }
+	return 1;
+}
+
+# Remember the id -> picture map. The file is written only when a path changed,
+# so a shelf nobody touched costs no write on every visit. A read-only library
+# keeps working: the write fails, and art_path falls back to the scan.
+sub art_index_store {
+	my ($root, $art) = @_;
+	$art = {} unless ref $art eq 'HASH';
+	my $current = art_index_read($root);
+	my $same = scalar(keys %{$current}) == scalar(keys %{$art});
+	if ($same) {
+		foreach my $id (keys %{$art}) {
+			if (!defined $current->{$id} || $current->{$id} ne $art->{$id}) { $same = 0; last; }
+		}
+	}
+	return 0 if $same;
+	return _art_index_write($root, $art);
+}
+
+# The picture beside one card, from the index. A cover fetched since the last
+# scan (or an index lost to a reboot) is looked up once and remembered; the
+# shelf's next scan rewrites the whole map.
+sub art_path {
+	my ($root, $id) = @_;
+	return undef unless defined $id && $id =~ /^[0-9a-f]{40}$/;
+	$root = '' unless defined $root;
+	my $entry = art_index_read($root);
+	my $path = $entry->{$id};
+	return $path if defined $path && length $path && -f $path;
+	my $game = find($root, $id);
+	return undef unless ref $game eq 'HASH' && defined $game->{'art'} && length $game->{'art'};
+	$entry->{$id} = $game->{'art'};
+	_art_index_write($root, $entry);
+	return $game->{'art'};
+}
+
 sub scan {
 	my ($root, $opts) = @_;
 	$opts = {} unless ref $opts eq 'HASH';
@@ -378,6 +457,14 @@ sub scan {
 	} @games;
 	$answer->{'ok'} = 1;
 	$answer->{'games'} = \@games;
+	if ($opts->{'art_index'}) {
+		my %art;
+		foreach my $game (@games) {
+			next unless defined $game->{'art'} && length $game->{'art'};
+			$art{ $game->{'id'} } = $game->{'art'};
+		}
+		art_index_store($root, \%art);
+	}
 	my $requested = ref $opts->{'chosen'} eq 'HASH' ? $opts->{'chosen'} : {};
 	$answer->{'systems'} = [
 		map {

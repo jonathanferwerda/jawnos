@@ -26,8 +26,10 @@ like($action, qr/&Manager::window_maker\(/, 'the page is served through the wind
 
 # --- the shelf ----------------------------------------------------------------
 my $page = read_file("$root/templates/apps/games.html.ep");
-like($page, qr/href="\/manager\?open=cards&amp;full=1"/, 'Cards opens the card room full screen');
-like($page, qr/href="\/manager\?open=twirl&amp;full=1"/, 'Twirl opens the puzzle full screen');
+like($page, qr/href="\/manager\?open=cards&amp;full=1&amp;back=%2Fmanager%2Fgames"/,
+	'Cards opens the card room full screen and remembers the Games launcher');
+like($page, qr/href="\/manager\?open=twirl&amp;full=1&amp;back=%2Fmanager%2Fgames"/,
+	'Twirl opens the puzzle full screen and remembers the Games launcher');
 like($page, qr/Emulated games/, 'the emulated shelf is named');
 like($page, qr/None installed yet/, 'and says there is nothing on it yet');
 like($page, qr/id="games_home"[^>]*href="\/manager\/controller"/, 'Home returns to the Controller launcher');
@@ -84,6 +86,16 @@ my $back = read_file("$root/public/js/manager/manager/09_app_back.js");
 like(read_file("$root/templates/apps/controller.html.ep"), qr/href="\/manager\/games"/,
 	'the Controller Games tile opens the launcher page, not Twirl directly');
 unlike($back, qr/games: '\/manager\/games'/, 'the desk does not deal the launcher as a window');
+like($back, qr/function jawnosHomeBack\(/, 'Home has one page-back rule of its own');
+like($back, qr/'\/manager\/controller\/retroarch': '\/manager\/controller\/config'/,
+	'RetroArch returns to Configuration');
+like($back, qr/'\/manager\/controller\/config': '\/manager\/controller'/,
+	'Configuration returns to the launcher');
+like($back, qr/'\/manager\/games\/mapping': '\/manager\/games\?view=emulated'/,
+	'the controls page returns to the emulated shelf');
+like($back, qr/get\('back'\)/, 'an app opened from a launcher carries the page to return to');
+like($back, qr/view === 'emulated' \? '\/manager\/games' : '\/manager\/controller'/,
+	'the shelf returns to Games and the Games launcher returns to the Controller');
 like($page, qr/\.wind\[app="games"\] \.top_navbar\s*\{[^}]*display:none/, 'the launcher hides its own window bar');
 
 # --- the Guide ----------------------------------------------------------------

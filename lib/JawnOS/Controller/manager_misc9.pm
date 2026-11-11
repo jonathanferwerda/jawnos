@@ -848,7 +848,9 @@ sub action_44005 {
 
 # GET /manager/games/art
 # The picture beside a title, if the ROM folder has one. The path comes from the
-# scan, never from the request: the id is the only thing a browser sends.
+# scan's index, never from the request: the id is the only thing a browser sends.
+# The index is what keeps a page of cards from pinning the request loop: a scan
+# behind every image is a tree walk per card.
 sub action_44006 {
 	my $c = shift;
 	my $path = eval { &subs::game_art($c->param('id') // '') };
@@ -859,6 +861,9 @@ sub action_44006 {
 	my ($suffix) = $path =~ /\.([^.]+)$/;
 	my %type = (png => 'image/png', jpg => 'image/jpeg', jpeg => 'image/jpeg', webp => 'image/webp');
 	$c->res->headers->content_type($type{lc($suffix // '')} // 'application/octet-stream');
+	# A cover changes only when it is fetched again, so a revisit draws it from
+	# the browser's own cache instead of asking this route for every card.
+	$c->res->headers->cache_control('private, max-age=300');
 	$c->res->content->asset(Mojo::Asset::File->new(path => $path));
 }
 
@@ -964,16 +969,12 @@ sub action_44015 {
 }
 
 # POST /manager/games/covers
-# One detached helper looks up covers for the whole shelf. A helper already
-# running is not started twice: the page is told to keep polling its row.
+# One detached helper looks up covers for the whole shelf. This request only
+# starts it: the shelf's scan and the downloads belong to the helper, so a press
+# never holds the manager's one request loop while a cover is fetched. A helper
+# already running is not started twice: the page is told to keep polling its row.
 sub action_44016 {
 	my $c = shift;
-	my $library = eval { &subs::game_library() } || {};
-	my $games = (ref $library eq 'HASH' && ref $library->{'games'} eq 'ARRAY') ? $library->{'games'} : [];
-	unless (@{ $games }) {
-		$c->render(json => { ok => 0, error => 'There are no games to look up.' });
-		return;
-	}
 	my $path = '/run/jawnos-games/covers.json';
 	if (-f $path) {
 		my $raw = '';

@@ -720,11 +720,39 @@ $(function () {
 	} catch (e) { }
 });
 
-/* The handheld's Home button is KEY_HOME (the input daemon sends it). One press,
-   from any window, comes back to the controller's launcher - the kiosk has no
-   other way out of an app that failed to draw. */
+/* The handheld's Home button is KEY_HOME (the input daemon sends it). One press
+   goes back one launcher page, never straight to the top: RetroArch returns to
+   Configuration, Configuration returns to the launcher, and the emulated shelf
+   returns to the Games launcher. An app opened from a launcher carries
+   ?back=<page> (Cards and Twirl from Games, Wi-Fi and the rest from
+   Configuration), so it too returns to the page that opened it. Anywhere else
+   still comes home to the controller's launcher - the kiosk has no other way
+   out of an app that failed to draw. */
+function jawnosHomeBack() {
+	var back = '';
+	try { back = new URLSearchParams(location.search).get('back') || ''; } catch (e) { back = ''; }
+	// the query is only a path inside the house, never another origin
+	if (!/^\/manager\/[^?]*$/.test(back)) { back = ''; }
+	var path = location.pathname.replace(/\/+$/, '') || '/';
+	if (!back) {
+		var launcher = {
+			'/manager/controller/config': '/manager/controller',
+			'/manager/controller/time': '/manager/controller/config',
+			'/manager/controller/retroarch': '/manager/controller/config',
+			'/manager/games/mapping': '/manager/games?view=emulated'
+		};
+		back = launcher[path] || '';
+		if (!back && path === '/manager/games') {
+			var view = '';
+			try { view = new URLSearchParams(location.search).get('view') || ''; } catch (e) { view = ''; }
+			back = view === 'emulated' ? '/manager/games' : '/manager/controller';
+		}
+	}
+	if (!back || back === path + location.search) { back = '/manager/controller'; }
+	location.href = back;
+}
 $(document).on('keydown', function (e) {
 	if (e.key !== 'Home') { return; }
 	e.preventDefault();
-	location.href = '/manager/controller';
+	jawnosHomeBack();
 });

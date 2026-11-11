@@ -31,12 +31,12 @@
 		<a class="controller_config_button" href="/manager?desk=1"><%= &subs::ui('Manager') %></a>
 	</div>
 	<div id="controller_config_grid">
-		<a class="controller_config_tile" href="/manager?open=network&amp;full=1">
+		<a class="controller_config_tile" href="/manager?open=network&amp;full=1&amp;back=%2Fmanager%2Fcontroller%2Fconfig">
 			<img class="controller_config_icon" src="<%= &subs::icon_for('/icons/network.svg') %>" alt="">
 			<span class="controller_config_label"><%= &subs::ui('Wi-Fi') %></span>
 			<span class="controller_config_note"><%= &subs::ui('Join a network and turn the radio on') %></span>
 		</a>
-		<a class="controller_config_tile" href="/manager?open=power&amp;full=1">
+		<a class="controller_config_tile" href="/manager?open=power&amp;full=1&amp;back=%2Fmanager%2Fcontroller%2Fconfig">
 			<img class="controller_config_icon" src="<%= &subs::icon_for('/icons/power.svg') %>" alt="">
 			<span class="controller_config_label"><%= &subs::ui('Power') %></span>
 			<span class="controller_config_note"><%= &subs::ui('Battery, CPU speed and the power plan') %></span>
@@ -46,7 +46,7 @@
 			<span class="controller_config_label"><%= &subs::ui('Time') %></span>
 			<span class="controller_config_note"><%= &subs::ui('The launcher clock and the machine time zone') %></span>
 		</a>
-		<a class="controller_config_tile" href="/manager?open=sound&amp;full=1">
+		<a class="controller_config_tile" href="/manager?open=sound&amp;full=1&amp;back=%2Fmanager%2Fcontroller%2Fconfig">
 			<img class="controller_config_icon" src="<%= &subs::icon_for('/icons/sound.svg') %>" alt="">
 			<span class="controller_config_label"><%= &subs::ui('Sound') %></span>
 			<span class="controller_config_note"><%= &subs::ui('Output, volume and the source channels') %></span>

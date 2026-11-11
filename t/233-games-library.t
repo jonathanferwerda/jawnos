@@ -42,6 +42,33 @@ is(JawnOS::Games::find($tmp, $by_title{'Tetris'}->{'id'})->{'title'}, 'Tetris', 
 ok(!defined JawnOS::Games::find($tmp, 'x' x 40), 'an id that is not in the library finds nothing');
 is(scalar @{ $library->{'systems'} }, 3, 'the systems with games are listed');
 
+# --- the art index ------------------------------------------------------------
+# A card asks for its picture once, and a page of cards used to mean a full tree
+# walk behind every image - the shelf's request loop was pinned for as long as a
+# page took to draw. The scan writes one small id -> picture map and the route
+# reads it instead.
+my $art_index = "$tmp/art-index.json";
+$ENV{'JAWNOS_GAMES_ART_INDEX'} = $art_index;
+JawnOS::Games::scan($tmp, { art_index => 1 });
+ok(-f $art_index, 'the scan writes the art index');
+my $mario_id = $by_title{'Super Mario World'}->{'id'};
+is(JawnOS::Games::art_path($tmp, $mario_id), "$tmp/snes/media/Super Mario World (U) [!]-image.png",
+	'the index answers a card picture without a second scan');
+ok(!defined JawnOS::Games::art_path($tmp, ('0' x 40)), 'an id that is not in the index has no picture');
+ok(!defined JawnOS::Games::art_path($tmp, $by_title{'Tetris'}->{'id'}), 'a game with no picture has none');
+
+# Fetch covers writes <roms>/<system>/images/<rom>.png; the next scan must find
+# that exact file, or every visit would offer to fetch the same cover again.
+make_path("$tmp/nes/images");
+write_file("$tmp/nes/images/Tetris (U) [!].png", 'png');
+my $covered = JawnOS::Games::scan($tmp, { art_index => 1 });
+my ($tetris) = grep { $_->{'title'} eq 'Tetris' } @{ $covered->{'games'} };
+is($tetris->{'art'}, "$tmp/nes/images/Tetris (U) [!].png",
+	'a cover saved where Fetch covers puts it becomes the card art');
+is(JawnOS::Games::art_path($tmp, $tetris->{'id'}), "$tmp/nes/images/Tetris (U) [!].png",
+	'and the refreshed index answers it without another walk');
+delete $ENV{'JAWNOS_GAMES_ART_INDEX'};
+
 # --- the system table ---------------------------------------------------------
 is(JawnOS::Games::system_label('snes'), 'Super Nintendo', 'the table names a system');
 is(JawnOS::Games::system_label('weird_system'), 'Weird System', 'an unknown folder still has a label');
@@ -58,6 +85,8 @@ ok(!(grep { $_ eq 'libretro-ppsspp' } @packages), 'a core the repositories lack 
 my $domain = read_file("$root/lib/JawnOS/Domain/Games.pm");
 like($domain, qr/JAWNOS_GAMES_ROOT/, 'the tests can point the domain at a folder');
 like($domain, qr/sub game_library/, 'the domain exposes the scan');
+like($domain, qr/scan\(&game_root\(\), \{ art_index => 1 \}\)/, 'the shelf scan keeps the art index current');
+like($domain, qr/JawnOS::Games::art_path/, 'and a card picture is read from the index');
 like($domain, qr/sub game_runner/, 'and the runner the launch route checks');
 like(read_file("$root/lib/JawnOS/Domain/Loader.pm"),
 	qr/'JawnOS::Domain::Games' for qw\([^)]*game_library[^)]*game_runner/,
@@ -101,6 +130,9 @@ like($launch, qr/--appendconfig/, 'the game gets the config that names the card'
 like($launch, qr/sub kiosk_active/, 'the restore waits for the kiosk, not just starts it');
 like($launch, qr/game-launch-/, 'a launch writes one log file of its own');
 like($launch, qr/open\(STDERR, '>&', \$LOGFH\)/, 'the emulator\'s own words go to that log');
+like($launch, qr/sub log_tail/, 'and a launch that dies keeps its last words');
+like($launch, qr/The emulator stopped at once/, 'an emulator that exits at once reports why instead of ending silently');
+like($launch, qr/\$home_pressed/, 'Home is not mistaken for a failure');
 like($launch, qr/log_line\("kiosk hidden/, 'and the helper records what it hid');
 like($launch, qr/\$STATUS\{'log'\} = \$LOG/, 'the status row names the log');
 like(read_file("$root/lib/JawnOS/Controller/manager_misc9.pm"), qr/sub action_44018/,
@@ -149,6 +181,7 @@ like($page, qr/No games yet/, 'an empty shelf says so');
 
 my $help = read_file("$root/perl/help/topics_people.pl");
 like($help, qr/Install emulators fetches RetroArch/, 'the Guide describes the shelf');
+like($help, qr/cover is kept beside the ROM/, 'and says a fetched cover is kept, not fetched again');
 like($help, qr/Home button above the arrow keys ends it/, 'and says how a game ends');
 
 # --- the runner table ---------------------------------------------------------
@@ -207,6 +240,11 @@ like($controller, qr/sub action_44015/, 'the emulator choice has an action');
 like($controller, qr/&subs::game_runner_choose/, 'and saves through the domain');
 like($controller, qr/sub action_44016/, 'the cover lookup has an action');
 like($controller, qr/sub action_44017/, 'and a status action');
+my ($covers_action) = $controller =~ /(sub action_44016\b.*?\n\})/s;
+ok($covers_action, 'the cover action can be read on its own');
+unlike($covers_action, qr/game_library\(\)/, 'a cover press does not scan the shelf in the request');
+like($covers_action, qr/game_helper_start\(\$script\)/, 'the whole lookup is handed to the detached helper');
+like($controller, qr/cache_control\('private, max-age=300'\)/, 'a card picture is cached by the browser');
 like($controller, qr/game_helper_start\(\$script, \$game->\{'id'\}, \$runner->\{'id'\}\)/,
 	'the launch hands the chosen runner to the helper');
 like($launch, qr/\$RUNNER_ID/, 'the helper takes the runner id');

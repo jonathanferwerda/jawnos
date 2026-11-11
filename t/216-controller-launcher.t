@@ -96,6 +96,15 @@ like($page, qr/\.wind\[app="controller"\] \.top_navbar\s*\{[^}]*display\s*:\s*no
 my $desk_js = read_file("$root/public/js/manager/manager/09_app_back.js");
 like($desk_js, qr/location\.search\)\.get\('open'\)/, 'the desk reads the app to open');
 like($desk_js, qr/e\.key !== 'Home'/, 'and listens for the handheld Home key');
+like($desk_js, qr/function jawnosHomeBack/, 'Home follows one page-back rule');
+like($desk_js, qr/'\/manager\/controller\/retroarch': '\/manager\/controller\/config'/,
+	'RetroArch returns to Configuration');
+like($desk_js, qr/'\/manager\/controller\/time': '\/manager\/controller\/config'/,
+	'Time returns to Configuration too');
+like($desk_js, qr/'\/manager\/controller\/config': '\/manager\/controller'/,
+	'Configuration returns to the launcher');
+like($desk_js, qr/if \(!back \|\| back === path \+ location\.search\) \{ back = '\/manager\/controller'; \}/,
+	'and anywhere else still comes home to the launcher');
 like($desk_js, qr/typeof response === 'object'/, 'a JSON reply is recognised before the window is made');
 like($desk_js, qr/response\.html \|\| response\.window/, 'both window envelope shapes are unwrapped');
 like($desk_js, qr/full_app_mode/, 'a launcher press marks a full-screen app');

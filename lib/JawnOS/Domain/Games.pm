@@ -19,7 +19,9 @@ sub game_root {
 
 sub game_library {
 	require JawnOS::Games;
-	my $library = &JawnOS::Games::scan(&game_root());
+	# The scan records each card's picture in the art index, so the one image
+	# request per card is answered from a file instead of another tree walk.
+	my $library = &JawnOS::Games::scan(&game_root(), { art_index => 1 });
 	# One scan, then the saved per-system choice is laid over it. The scan's own
 	# `chosen` is the default runner; a system the person has configured must show
 	# that pick instead.
@@ -40,8 +42,7 @@ sub game_by_id {
 
 sub game_art {
 	require JawnOS::Games;
-	my $game = &JawnOS::Games::find(&game_root(), $_[0]);
-	return ($game && defined $game->{'art'}) ? $game->{'art'} : undef;
+	return &JawnOS::Games::art_path(&game_root(), $_[0]);
 }
 
 sub game_systems {

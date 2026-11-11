@@ -91,12 +91,12 @@
 % if ($mode eq 'launcher') {
 	<div id="games_bar"><a id="games_home" href="/manager/controller"><%= &subs::ui('Home') %></a></div>
 	<div id="games_grid">
-		<a class="games_tile" href="/manager?open=cards&amp;full=1">
+		<a class="games_tile" href="/manager?open=cards&amp;full=1&amp;back=%2Fmanager%2Fgames">
 			<img class="games_tile_icon" src="/images/decipherable/cards.png" alt="">
 			<span class="games_tile_label"><%= &subs::ui('Cards') %></span>
 			<span class="games_tile_note"><%= &subs::ui('The card room, solitaire and blackjack') %></span>
 		</a>
-		<a class="games_tile" href="/manager?open=twirl&amp;full=1">
+		<a class="games_tile" href="/manager?open=twirl&amp;full=1&amp;back=%2Fmanager%2Fgames">
 			<img class="games_tile_icon" src="/images/decipherable/tetris.png" alt="">
 			<span class="games_tile_label"><%= &subs::ui('Twirl') %></span>
 			<span class="games_tile_note"><%= &subs::ui('The falling-block puzzle: A turns one way and B the other') %></span>

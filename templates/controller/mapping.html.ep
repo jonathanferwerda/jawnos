@@ -82,7 +82,7 @@
 </style>
 <div id="mapping_shell">
 	<div id="mapping_bar">
-		<a class="mapping_button" id="mapping_back" href="/manager/games"><%= &subs::ui('Games') %></a>
+		<a class="mapping_button" id="mapping_back" href="/manager/games?view=emulated"><%= &subs::ui('Games') %></a>
 		<label for="mapping_system"><%= &subs::ui('System') %></label>
 		<select id="mapping_system">
 % for my $s (@{ $systems || [] }) {

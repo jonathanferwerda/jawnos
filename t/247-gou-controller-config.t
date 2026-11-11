@@ -54,10 +54,10 @@ like($launcher, qr/width:80%/, 'tile icons fill 80% of their tile');
 # --- the sublauncher's five surfaces -----------------------------------------
 my $config = read_file("$root/templates/controller/config.html.ep");
 for my $pair (
-	['network', 'Wi-Fi', '/manager?open=network&amp;full=1'],
-	['power', 'Power', '/manager?open=power&amp;full=1'],
+	['network', 'Wi-Fi', '/manager?open=network&amp;full=1&amp;back=%2Fmanager%2Fcontroller%2Fconfig'],
+	['power', 'Power', '/manager?open=power&amp;full=1&amp;back=%2Fmanager%2Fcontroller%2Fconfig'],
 	['time', 'Time', '/manager/controller/time'],
-	['sound', 'Sound', '/manager?open=sound&amp;full=1'],
+	['sound', 'Sound', '/manager?open=sound&amp;full=1&amp;back=%2Fmanager%2Fcontroller%2Fconfig'],
 	['retroarch', 'RetroArch', '/manager/controller/retroarch'],
 ) {
 	like($config, qr|href="\Q$pair->[2]\E"|, "$pair->[1] opens $pair->[2]");

@@ -43,7 +43,7 @@ my $LOG = "$CACHE/game-launch-" . time() . ".log";
 my $LOGFH;
 
 my %STATUS = (state => 'starting', at => time, game => '');
-my ($child, $interrupted);
+my ($child, $interrupted, $home_pressed, $started_at);
 
 sub log_open {
 	make_path($CACHE) unless -d $CACHE;
@@ -64,6 +64,37 @@ sub log_line {
 	return unless $LOGFH;
 	my ($text) = @_;
 	print $LOGFH scalar(localtime) . ' ' . (defined $text ? $text : '') . "\n";
+}
+
+# The last words the emulator printed. A launch that dies before it draws
+# anything has no other explanation: a core that refused to load, a video driver
+# with no display, or a binary built for another board all say so here. The
+# helper's own stamped lines are skipped; if the emulator said nothing, the
+# newest line (the run command) is the fallback, so even a silent crash names
+# what was attempted.
+sub log_tail {
+	return '' unless $LOG && -f $LOG;
+	open(my $fh, '<', $LOG) or return '';
+	my $size = -s $LOG;
+	seek($fh, $size > 8192 ? $size - 8192 : 0, 0);
+	my @lines = <$fh>;
+	close $fh;
+	chomp @lines;
+	@lines = grep { /\S/ } @lines;
+	return '' unless @lines;
+	my @keep;
+	foreach my $line (reverse @lines) {
+		next if $line =~ /^[A-Z][a-z]{2} [A-Z][a-z]{2} [ \d]\d \d\d:\d\d:\d\d \d{4} /;
+		$line =~ s/\s+/ /g;
+		$line =~ s/^\s+|\s+$//g;
+		push @keep, $line if length $line;
+		last if @keep >= 3;
+	}
+	@keep = ($lines[-1]) unless @keep;
+	my $text = join ' | ', reverse @keep;
+	$text =~ s/\s+/ /g;
+	$text = substr($text, 0, 300) . ' ...' if length $text > 300;
+	return $text;
 }
 
 sub write_status {
@@ -336,6 +367,7 @@ $STATUS{'state'} = 'running';
 $STATUS{'at'} = time;
 $STATUS{'system'} = $game->{'system_label'} // '';
 write_status();
+$started_at = time;
 
 if (defined $evdev && open(my $ev, '<', $evdev)) {
 	my $readable = '';
@@ -349,6 +381,7 @@ if (defined $evdev && open(my $ev, '<', $evdev)) {
 		for (my $at = 0; $at + 24 <= $got; $at += 24) {
 			my (undef, undef, $type, $code, $value) = unpack('q<q<S<S<l<', substr($buffer, $at, 24));
 			if ($type == 1 && $code == $HOME_KEY && $value == 1) {
+				$home_pressed = 1;
 				kill 'TERM', -$child;
 			}
 		}
@@ -370,6 +403,16 @@ if (waitpid($child, POSIX::WNOHANG()) == 0) {
 }
 
 log_line('emulator exited');
+
+# An emulator that stops within a few seconds - and not because Home was
+# pressed - never ran the game. Report why instead of leaving the shelf saying
+# only that the game ended: the last log lines are the one place the reason
+# exists, and without them a broken core looks like a launch that did nothing.
+if (!$interrupted && !$home_pressed && defined $started_at && time - $started_at < 10) {
+	my $why = log_tail();
+	fail('The emulator stopped at once' . (length $why ? ': ' . $why : '.'));
+}
+
 $STATUS{'state'} = 'done';
 $STATUS{'finished'} = time;
 write_status();
