@@ -37,6 +37,8 @@ function pseudonymSideSlide() {
 function pseudonymSideSettle(tucked) {
 	if (typeof jawnosSideDock != 'function' || !jawnosSideDock()) { return 0; }
 	if (tucked && typeof jawnosSideSearchVisible == 'function' && jawnosSideSearchVisible()) { tucked = 0; }
+	// an empty pill has no faces to tuck; keeping it out leaves its menu reachable
+	if (tucked && $('#pseudonym_home').hasClass('dock_empty')) { tucked = 0; }
 	pseudonymSideTucked = tucked ? 1 : 0;
 	pseudonymSideSlide();
 	return 1;
@@ -298,7 +300,8 @@ function pseudonymHomeShower(x,y,interval) {
 
 						}
 					}
-					var ls = jawnosDockIconState(toggle);
+					var ls = (typeof jawnosDockFaceAlwaysOn == 'function' && jawnosDockFaceAlwaysOn(kbg))
+						? 'on' : jawnosDockIconState(toggle);
 					if (ls == 'on' && !(typeof jawnosDockIconsHidden == 'function' && jawnosDockIconsHidden())) {
 						$('.pseudonym.keyboard[toggle="' + toggle + '"]').show();
 					}
@@ -336,6 +339,8 @@ function pseudonymHomeTopSettle() {
 	// past - then tuck it and let the row ride up with it. The strip it keeps is
 	// the search's row, or the sliver when the search rides elsewhere.
 	pseudonymFreeSpaceFinder();
+	// an empty dock has no row to tuck; leaving it at rest keeps its menu reachable
+	if (home.hasClass('dock_empty')) { home.css({ 'top': jawnosDockTopOffset() }); return 1; }
 	home.css({ 'top': jawnosDockTopOffset() + Math.min(0, pseudonymDockStrip() - home.outerHeight()) });
 	pseudonymFreeSpaceFinder();
 	return 1;
@@ -349,6 +354,12 @@ function pseudonymHomeHider(interval) {
 	var dock_top = (typeof jawnosDockTop == 'function') && jawnosDockTop();
 	var dock_side = (typeof jawnosSideDock == 'function') && jawnosSideDock();
 	pseudonymFreeSpaceFinder();
+	// an empty dock has nothing to tuck away; leave its background on screen so
+	// the menu can put a face back
+	if ($('#pseudonym_home').hasClass('dock_empty')) {
+		$('#pseudonym_home').css({ 'bottom': ((typeof jawnosDockBottomOffset == 'function') ? jawnosDockBottomOffset() : 0) });
+		return;
+	}
 	// The pointer hider and the shower share one answer to "is this the dock?"
 	// The tracked pointer is the current one; mouse_position() is only the
 	// fallback before the first move (it reads window.event).

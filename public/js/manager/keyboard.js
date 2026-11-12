@@ -1106,11 +1106,23 @@ $(document).on('contextmenu', '#pseudonym_bar .pseudonym', function(e) {
 // A right-click on the dock's own background (the pill, or the strip it keeps
 // while tucked) opens the same menu, so a face removed a moment ago, the dock's
 // edge, the icon row and the apps to add are all in one place. The search keeps
-// its native menu (paste).
+// its native menu (paste) while it holds text or has the focus; an idle empty
+// search row is the only background a tucked dock may leave, so it opens the
+// dock menu too (as do the toggle and the row around the input).
 $(document).on('contextmenu', '#pseudonym_home', function(e) {
-	if ($(e.target).closest('#search_entanglement, #pseudonym_bar .pseudonym').length) { return; }
+	var target = $(e.target);
+	if (target.closest('#pseudonym_bar .pseudonym').length) { return; }
+	if (target.closest('#search_entanglement').length) {
+		var input = target.closest('#search');
+		var typing = input.length && (input.val() || input.is(':focus'));
+		var results = target.closest('#search_results, #manager_search_results').length;
+		if (typing || results) { return; }
+	}
 	e.preventDefault();
 	e.stopPropagation();
+	// call the row out from a tuck first: the menu belongs to the dock, and the
+	// person should see what they are adding to
+	if (typeof jawnosDockReveal == 'function') { jawnosDockReveal(); }
 	jawnosDockMenuPlace(jawnosDockContextBuild(), e.clientX, e.clientY);
 });
 
@@ -1186,6 +1198,7 @@ function pseudonymFreeSpaceFinder(type) {
 		}
 	});
 	count = Math.max(1, visible.length);
+	home.toggleClass('dock_empty', visible.length == 0);
 
 	// the search's own button: it rides with the input while the search sits in
 	// the dock's row, and keeps the foot of the stack on a side dock, where the
@@ -1331,11 +1344,14 @@ function pseudonymFreeSpaceFinder(type) {
 		}
 	}
 
-	if (visible.length > 0 || (icons_hidden && search_in_dock)) {
-		home.show();
+	// An empty dock (every face switched off) still stays on screen while the
+	// icon row is meant to be shown: its background is the only route to the
+	// menu that puts a face back. Hide it only when Hide icons was chosen.
+	if (icons_hidden && !search_in_dock) {
+		home.hide();
 	}
 	else {
-		home.hide();
+		home.show();
 	}
 	// a home that is tucked away takes its icons with it
 	if (numeral(home.css('bottom')).value() < 0) {
