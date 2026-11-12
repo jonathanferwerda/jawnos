@@ -73,9 +73,9 @@ like($kbd, qr/var typing = input\.length && \(input\.val\(\) \|\| input\.is\(':f
 	'a search with text or focus keeps its own menu');
 like($kbd, qr/if \(typing \|\| results\) \{ return; \}/,
 	'an idle empty search row opens the dock menu');
-like($kbd, qr/target\.closest\('#pseudonym_bar \.pseudonym'\)\.length/,
+like($kbd, qr/target\.closest\('\.pseudonym_bar \.pseudonym'\)\.length/,
 	'a face still keeps its own menu');
-like($kbd, qr/if \(typeof jawnosDockReveal == 'function'\) \{ jawnosDockReveal\(\); \}\s*jawnosDockMenuPlace\(jawnosDockContextBuild\(\), e\.clientX, e\.clientY\);/,
+like($kbd, qr/if \(typeof jawnosDockReveal == 'function'\) \{ jawnosDockReveal\(\); \}\s*jawnosDockMenuPlace\(jawnosDockContextBuild\(\$\(this\)\), e\.clientX, e\.clientY\);/,
 	'opening the menu calls the dock out of a tuck');
 like($shower, qr/jawnosDockFaceAlwaysOn\(kbg\)/,
 	'a dock-owned face is shown by the reveal too');

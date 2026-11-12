@@ -204,7 +204,7 @@ function jawnosDockIconsHidden() {
 // backing, and its own foot controls (the music player's transport row, say)
 // under the dock. Nothing for any other edge, or a hidden dock.
 function jawnosDockWindowReserve() {
-	if (jawnosBars.dock == 'hidden' || jawnosSideDock() || jawnosDockTop()) { return 0; }
+	if (jawnosBars.dock == 'hidden' || jawnosBars.dock == 'floating' || jawnosSideDock() || jawnosDockTop()) { return 0; }
 	return (typeof pseudonymDockStrip == 'function') ? pseudonymDockStrip() : 0;
 }
 function jawnosSideSearchVisible() {
@@ -321,6 +321,14 @@ function jawnosClockShow(timestamp) {
 	if (jawnosClockEditing()) { jawnosClockAstrayApply(); return; }
 	$('#taskbar_clock').html(jawnosClockText(jawnosClockStamp));
 	jawnosClockAstrayApply();
+	// every added taskbar carries the same face: keep its clock with the first
+	var primary_clock = $('#taskbar_clock');
+	$('.jawnos_taskbar').not('#taskbar').children('[data-role="clock"]').each(function () {
+		var clock = $(this);
+		clock.html(primary_clock.html());
+		if (primary_clock.attr('astray')) { clock.attr('astray', primary_clock.attr('astray')); }
+		else { clock.removeAttr('astray'); }
+	});
 }
 
 // The face is anchored on the view's centre as the server last read it, and then
@@ -431,6 +439,11 @@ function jawnosBarsApply() {
 	var dock = $('#pseudonym_home');
 	if (!bar.length) { return; }
 
+	// a bar that moves between an edge and a floating box must lose the inline
+	// geometry the other placement wrote; the shell re-places a floating one below
+	if (bar.attr('position') != jawnosBars.taskbar) {
+		bar.css({ left: '', right: '', top: '', bottom: '', width: '', height: '', transform: '' });
+	}
 	bar.attr('position', jawnosBars.taskbar);
 	bar.attr('autohide', jawnosBars.autohide);
 	dock.toggleClass('dock_transparent', jawnosBars.transparent == 'on');
@@ -499,6 +512,10 @@ function jawnosBarsApply() {
 	jawnosStartMenuPlace();
 	// the taskbar clock's own menu follows the clock the same way
 	if (typeof jawnosClockNavPlace == 'function') { jawnosClockNavPlace(); }
+	// the shell layer owns every bar beyond the first pair: where a floating
+	// bar stands, which workspace is showing, and the edit handles. It runs last
+	// so the legacy edge rules above cannot pull a floating bar back to an edge.
+	if (typeof jawnosShellApply == 'function') { jawnosShellApply(); }
 }
 
 // The menu hangs from the button that opens it, wherever the bars have put that

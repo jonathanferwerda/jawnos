@@ -15,10 +15,10 @@
 
 <span id="header"></span>
 <% my $taskbar_position = &subs::misc_setting('taskbar_position') || 'bottom'; %>
-<div id="taskbar" class="theme_surface_soft" position="<%= $taskbar_position %>">
-	<span id="taskbar_windows"></span>
-	<span id="taskbar_icons"></span>
-	<span id="taskbar_clock"></span>
+<div id="taskbar" class="theme_surface_soft jawnos_bar jawnos_taskbar" data-bar-kind="taskbar" data-bar-primary="1" position="<%= $taskbar_position %>">
+	<span id="taskbar_windows" class="taskbar_windows" data-role="windows"></span>
+	<span id="taskbar_icons" class="taskbar_icons" data-role="icons"></span>
+	<span id="taskbar_clock" class="taskbar_clock" data-role="clock"></span>
 </div>
 <%# The clock's own little menu, hung under or over the taskbar clock by
     clock.js. It is outside #taskbar so opening it never disturbs the bar. %>

@@ -43,7 +43,7 @@ like($edit, qr/\.taskbar_widget/, 'widgets are removed and rebuilt with the pins
 like($edit, qr/> \.taskbar_widget/, 'edit mode can drag a widget');
 
 my $events = read_file("$root/public/js/manager/taskbar_edit/01_window_events.js");
-like($events, qr/jawnosTaskbarWidgetContextBuild\(widget\)/, 'right-clicking a widget opens its menu');
+like($events, qr/jawnosTaskbarWidgetContextBuild\(widget, bar\)/, 'right-clicking a widget opens its menu');
 like($events, qr/act == 'widget_mode'/, 'the mode rows are handled');
 like($events, qr/jawnosTaskbarWidgetToggle\(widget\)/, 'the add-items row toggles a widget');
 like($events, qr/pin_widget/, 'the row carries the widget name');

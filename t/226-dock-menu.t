@@ -27,7 +27,7 @@ my $dock = js_source('public/js/manager/keyboard.js');
 my $css  = read_file("$root/public/css/manager.css");
 
 # --- the menu is the dock's own ---------------------------------------------
-like($dock, qr/function jawnosDockContextBuild\(\)/,
+like($dock, qr/function jawnosDockContextBuild\(dock\)/,
 	'the dock has a context-menu builder');
 unlike($dock, qr/jawnosTaskbarContextBuild\(\)/,
 	'the dock menu does not build on the taskbar menu');
@@ -35,10 +35,9 @@ unlike($dock, qr/dock\.taskbar/,
 	'and carries no taskbar heading');
 
 # --- a background right-click opens it --------------------------------------
-like($dock, qr/\$\(document\)\.on\('contextmenu', '#pseudonym_home', function\(e\) \{/,
+like($dock, qr/\$\(document\)\.on\('contextmenu', '\.jawnos_dock', function\(e\) \{/,
 	'a right-click on the dock background is taken');
-like($dock, qr/jawnosDockMenuPlace\(jawnosDockContextBuild\(\), e\.clientX, e\.clientY\);/,
-	'and opens the dock menu');
+like($dock, qr/jawnosDockMenuPlace\(jawnosDockContextBuild\(\$\(this\)\), e\.clientX, e\.clientY\);/, 'and opens the dock menu');
 
 # --- the dock's own rows ----------------------------------------------------
 like($dock, qr/act="dock_edit"/, 'Edit dock is offered');
@@ -141,7 +140,7 @@ like($dock, qr/jawnosDockText\('dock\.removed_faces', 'Removed faces'\)/,
 	'those rows carry their own heading');
 
 # --- position and icons write the existing settings --------------------------
-like($dock, qr/function jawnosDockPositionSet\(pos\)/,
+like($dock, qr/function jawnosDockPositionSet\(pos, dock\)/,
 	'the dock position has one setter');
 like($dock, qr/jawnosBars\.dock = pos/, 'it moves the live dock edge');
 like($dock, qr/jawnosTaskbarSave\('dock_position', pos\)/,
@@ -153,9 +152,9 @@ like($dock, qr/jawnosTaskbarSave\('dock_icons', state\)/,
 	'and writes the dock_icons setting');
 
 # --- a face's menu still removes that face ----------------------------------
-like($dock, qr/\$\(document\)\.on\('contextmenu', '#pseudonym_bar \.pseudonym', function\(e\) \{/,
+like($dock, qr/\$\(document\)\.on\('contextmenu', '\.pseudonym_bar \.pseudonym', function\(e\) \{/,
 	'a dock face has its own right-click');
-like($dock, qr/var menu = jawnosDockContextBuild\(\);/, 'the face gets the same menu');
+like($dock, qr/var menu = jawnosDockContextBuild\(\$\(this\)\.closest\('\.jawnos_dock'\)\);/, 'the face gets the same menu');
 like($dock, qr/act="dock_app_remove"/, 'an app face can be removed');
 like($dock, qr/act="dock_widget_remove"/, 'a widget face can be disabled');
 like($dock, qr/act="dock_launcher_remove"/, 'a launcher pin can be removed');

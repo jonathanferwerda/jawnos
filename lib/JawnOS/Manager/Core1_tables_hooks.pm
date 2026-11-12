@@ -146,6 +146,7 @@ our @manager_bundle_files = qw(
 	/js/manager/taskbar_network.js
 	/js/manager/taskbar_sound.js
 	/js/manager/taskbar_notifications.js
+	/js/manager/shell_layout.js
 	/js/manager/narratorprinter.js
 	/js/manager/marker.js
 	/js/pm.js

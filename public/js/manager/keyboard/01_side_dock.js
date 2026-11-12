@@ -232,6 +232,8 @@ function pseudonymDockPointOnDock(x, y) {
 }
 
 function pseudonymHomeShower(x,y,interval) { 
+	// a floating dock is not an edge dock: it never tucks away or slides back
+	if (typeof jawnosBars != 'undefined' && jawnosBars.dock == 'floating') { return; }
 	var was = 0;
 	var okay = 1;
 	var dock_top = (typeof jawnosDockTop == 'function') && jawnosDockTop();
@@ -347,6 +349,8 @@ function pseudonymHomeTopSettle() {
 }
 
 function pseudonymHomeHider(interval) {
+	// a floating dock keeps its own box; there is no edge to tuck it under
+	if (typeof jawnosBars != 'undefined' && jawnosBars.dock == 'floating') { return; }
 	// both edges tuck away: the bottom slips down keeping the search and a strip
 	// beneath it on screen, the top slips up keeping its search strip on screen
 	// with the icon row above the visible edge. A hidden dock is already gone.

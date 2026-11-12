@@ -283,6 +283,7 @@ function jawnosDockAppsRender() {
 		bar.append($('<div class="draggable_icon dock_taskbar_face"></div>').append(icon));
 	});
 	jawnosDockOrderApply();
+	if (typeof jawnosShellDockSync == 'function') { jawnosShellDockSync(); }
 }
 // Call the dock back out after an add: a tucked row or side pill must show the
 // new face instead of staying away until the pointer finds the strip again.
@@ -471,6 +472,7 @@ function jawnosDockWindowsRender() {
 		if (typeof pseudonymFreeSpaceFinder == 'function') { pseudonymFreeSpaceFinder(); }
 	}
 	jawnosDockWindowsState();
+	if (typeof jawnosShellDockSync == 'function') { jawnosShellDockSync(); }
 }
 function jawnosDockWindowsState() {
 	var bar = $('#pseudonym_bar');
@@ -587,7 +589,7 @@ function jawnosDockAppMenu(x, y, entry) {
 var jawnosDockDrag = null;
 
 function jawnosDockEditing() {
-	return $('#pseudonym_home').hasClass('dock_edit');
+	return $('.jawnos_dock.dock_edit').length > 0;
 }
 
 // Edit dock: the row is dragged to reorder it. The library's per-icon drag
@@ -597,6 +599,9 @@ function jawnosDockEdit(on) {
 	var home = $('#pseudonym_home');
 	if (!home.length) { return; }
 	if (typeof on == 'undefined') { on = !jawnosDockEditing(); }
+	// every dock in the workspace wears the mode, so a dock added in edit mode
+	// shows its handle at once; the first dock keeps its per-face reorder drag
+	$('.jawnos_dock').toggleClass('dock_edit', !!on);
 	home.toggleClass('dock_edit', !!on);
 	$('.pseudonym').filter('.ui-draggable').each(function() {
 		if (on) { $(this).draggable('disable'); }
@@ -604,6 +609,7 @@ function jawnosDockEdit(on) {
 	});
 	if (!on) { jawnosDockOrderSave(); }
 	jawnosDockReveal();
+	if (typeof jawnosShellApply == 'function') { jawnosShellApply(); }
 }
 
 function jawnosDockFaceKey(el) {
@@ -788,8 +794,13 @@ function jawnosDockDragBind() {
 // The dock's position and icons are the same misc settings the configure panel
 // writes; the menu writes them through the same route and lays the bars out
 // again at once.
-function jawnosDockPositionSet(pos) {
+function jawnosDockPositionSet(pos, dock) {
 	if (!pos) { return; }
+	var dock_id = (typeof dock == 'string') ? dock : ((dock && $(dock).attr('data-bar-id')) || '');
+	if (dock_id && typeof jawnosShellBarIsPrimary == 'function' && !jawnosShellBarIsPrimary(dock_id)) {
+		jawnosShellBarEdgeSet(dock_id, pos);
+		return;
+	}
 	if (typeof jawnosBars != 'undefined') { jawnosBars.dock = pos; }
 	if (typeof jawnosTaskbarSave == 'function') { jawnosTaskbarSave('dock_position', pos); }
 	if (typeof jawnosBarsApply == 'function') { jawnosBarsApply(); }
@@ -817,17 +828,33 @@ function jawnosDockTransparentSet(state) {
 // position, Show/Hide icons, Open windows, Transparent and an Add items flyout
 // of the start menu's apps, the widgets and the faces this browser has removed.
 // The taskbar's menu is its own and stays on the bar.
-function jawnosDockContextBuild() {
+function jawnosDockContextBuild(dock) {
+	dock = (dock && $(dock).length) ? $(dock) : $('#pseudonym_home');
+	var dock_id = dock.attr('data-bar-id') || '';
+	var primary = dock.attr('data-bar-primary') == '1';
+	var desc = (typeof jawnosShellBarGet == 'function') ? jawnosShellBarGet(dock_id) : null;
+	var current_edge = primary ? ((typeof jawnosBars != 'undefined') ? jawnosBars.dock : 'bottom')
+		: ((desc && desc.mode == 'edge') ? desc.edge : '');
 	var selected = function (on) { return on ? '✓' : ''; };
-	var context = $('<div class="taskbar_context"></div>');
+	var context = $('<div class="taskbar_context"></div>').attr('bar_id', dock_id);
 	context.append($('<div class="taskbar_context_label"></div>').text(jawnosDockText('dock.title', 'Dock')));
 	context.append('<div class="taskbar_context_selection" act="dock_edit">'
 		+ jawnosDockText('dock.edit', 'Edit dock')
 		+ '<span class="taskbar_context_check">' + selected(jawnosDockEditing()) + '</span></div>');
+	// A dock is added from the dock's own menu, in Edit dock, just as a taskbar
+	// is added from the taskbar's menu in edit mode.
+	if (jawnosDockEditing()) {
+		context.append('<div class="taskbar_context_selection" act="shell_add_bar" kind="dock">'
+			+ jawnosDockText('dock.add_dock', 'Add dock') + '</div>');
+		if (!primary) {
+			context.append('<div class="taskbar_context_selection" act="shell_remove_bar">'
+				+ jawnosDockText('dock.remove_bar', 'Remove this bar') + '</div>');
+		}
+	}
 
 	context.append($('<div class="taskbar_context_label"></div>').text(jawnosDockText('dock.position', 'Dock position')));
 	[['bottom', 'Bottom'], ['top', 'Top'], ['left', 'Left'], ['right', 'Right'], ['hidden', 'Hidden']].forEach(function(pair) {
-		var on = (typeof jawnosBars != 'undefined') && jawnosBars.dock == pair[0];
+		var on = (current_edge == pair[0]);
 		context.append('<div class="taskbar_context_selection" act="dock_pos" val="' + pair[0] + '">'
 			+ jawnosDockText('dock.pos.' + pair[0], pair[1])
 			+ '<span class="taskbar_context_check">' + selected(on) + '</span></div>');
@@ -847,6 +874,7 @@ function jawnosDockContextBuild() {
 	context.append('<div class="taskbar_context_selection" act="dock_transparent">'
 		+ jawnosDockText('dock.transparent', 'Transparent')
 		+ '<span class="taskbar_context_check">' + selected(transparent) + '</span></div>');
+	if (typeof jawnosShellWorkspaceRows == 'function') { jawnosShellWorkspaceRows(context); }
 
 	// Add items is a flyout, not an inline submenu: the menu would otherwise
 	// grow off the bottom of a bottom-edge dock. The list is built with the menu
@@ -1005,7 +1033,7 @@ $(document).on('click', '.taskbar_context_selection[act^="dock_"]', function() {
 		jawnosDockEdit();
 	}
 	else if (act == 'dock_pos') {
-		jawnosDockPositionSet(row.attr('val'));
+		jawnosDockPositionSet(row.attr('val'), row.closest('.taskbar_context').attr('bar_id'));
 	}
 	else if (act == 'dock_icons') {
 		jawnosDockIconsSet((typeof jawnosBars != 'undefined' && jawnosBars.icons == 'hidden') ? 'shown' : 'hidden');
@@ -1076,7 +1104,7 @@ $(document).on('mousemove keydown click', '.dock_context_menu', function() {
 // face at the top: an app, launcher or widget takes that face off the dock
 // alone, and a pseudonym face is switched off in dock_icons (the menu can bring
 // it back). A window face has no Remove row - its window is its state.
-$(document).on('contextmenu', '#pseudonym_bar .pseudonym', function(e) {
+$(document).on('contextmenu', '.pseudonym_bar .pseudonym', function(e) {
 	e.preventDefault();
 	e.stopPropagation();
 	var icon = $(this);
@@ -1090,7 +1118,7 @@ $(document).on('contextmenu', '#pseudonym_bar .pseudonym', function(e) {
 	else if (widget) { row = $('<div class="taskbar_context_selection" act="dock_widget_remove"></div>').attr('dock_widget', widget); }
 	else if (launcher) { row = $('<div class="taskbar_context_selection" act="dock_launcher_remove"></div>').attr('dock_sel', launcher); }
 	else if (toggle) { row = $('<div class="taskbar_context_selection" act="dock_hide_toggle"></div>').attr('dock_toggle', toggle); }
-	var menu = jawnosDockContextBuild();
+	var menu = jawnosDockContextBuild($(this).closest('.jawnos_dock'));
 	if (row) {
 		if (icon.attr('src')) {
 			$('<img class="miniscule_thumb">').attr('src', icon.attr('src'))
@@ -1109,9 +1137,9 @@ $(document).on('contextmenu', '#pseudonym_bar .pseudonym', function(e) {
 // its native menu (paste) while it holds text or has the focus; an idle empty
 // search row is the only background a tucked dock may leave, so it opens the
 // dock menu too (as do the toggle and the row around the input).
-$(document).on('contextmenu', '#pseudonym_home', function(e) {
+$(document).on('contextmenu', '.jawnos_dock', function(e) {
 	var target = $(e.target);
-	if (target.closest('#pseudonym_bar .pseudonym').length) { return; }
+	if (target.closest('.pseudonym_bar .pseudonym').length) { return; }
 	if (target.closest('#search_entanglement').length) {
 		var input = target.closest('#search');
 		var typing = input.length && (input.val() || input.is(':focus'));
@@ -1123,7 +1151,7 @@ $(document).on('contextmenu', '#pseudonym_home', function(e) {
 	// call the row out from a tuck first: the menu belongs to the dock, and the
 	// person should see what they are adding to
 	if (typeof jawnosDockReveal == 'function') { jawnosDockReveal(); }
-	jawnosDockMenuPlace(jawnosDockContextBuild(), e.clientX, e.clientY);
+	jawnosDockMenuPlace(jawnosDockContextBuild($(this)), e.clientX, e.clientY);
 });
 
 // A right-click on an app in the start menu offers the same add/remove. Only a
@@ -1148,7 +1176,7 @@ $(document).ready(function() {
 	// own .pseudonym press.
 	var home = $('#pseudonym_home');
 	if (home.length) {
-		home.on('click', '.pseudonym', function(e) {
+		$(document).on('click', '.jawnos_dock .pseudonym', function(e) {
 			if (!jawnosDockEditing()) { return; }
 			e.preventDefault();
 			e.stopPropagation();
@@ -1158,11 +1186,14 @@ $(document).ready(function() {
 
 // A hold does what a right-click does on the dock and the start menu's apps.
 if (typeof jawnosContextMenuOn == 'function') {
-	jawnosContextMenuOn('#pseudonym_home');
+	jawnosContextMenuOn('.jawnos_dock');
 	jawnosContextMenuOn('#start_menu .start_menu_main_display');
 }
 
 function pseudonymFreeSpaceFinder(type) {
+	// a floating dock is placed by the shell; the edge maths below would pull it
+	// back to an edge or size it as a row
+	if (typeof jawnosBars != 'undefined' && jawnosBars.dock == 'floating') { return; }
 	var w = $(window).width();
 	var h = $(window).height();
 	var icons = $('#pseudonym_bar .pseudonym.bar').toArray();

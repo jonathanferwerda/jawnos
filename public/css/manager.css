@@ -420,12 +420,12 @@ body.dark_theme #taskbar { background-image: linear-gradient(rgba(255,255,255,.0
 /* One button per open window: its icon and its name in a rounded tile that
    lifts under the pointer. The shorthand stands where the name would when the
    bar is too narrow to spell it out (see the phone's own rules). */
-#taskbar .window_toggle { position: relative; display: inline-flex; align-items: center; gap: 5px; flex: 0 0 auto; height: calc(var(--taskbar_h, 44px) - 8px); padding: 0px 9px; box-sizing: border-box; background-color: transparent; border: 1px solid transparent; border-radius: calc(var(--jawnos-corner, 12px) * .75); transition: background-color .15s ease, border-color .15s ease, transform .12s ease, box-shadow .15s ease; }
-#taskbar .window_toggle:hover { background-color: var(--panel); border-color: var(--line); box-shadow: var(--shadow-1, 0 1px 2px rgba(0,0,0,.06)); }
-#taskbar .window_toggle:active { transform: translateY(1px); }
-#taskbar .window_toggle .window_toggle_icon { height: calc(var(--taskbar_h, 44px) - 18px); width: calc(var(--taskbar_h, 44px) - 18px); max-width: none; object-fit: contain; }
-#taskbar .window_toggle .window_toggle_name_text { font-size: calc(var(--taskbar_h, 44px) * 0.36); white-space: nowrap; }
-#taskbar .window_toggle .window_toggle_shorthand { display: none; }
+.jawnos_taskbar .window_toggle { position: relative; display: inline-flex; align-items: center; gap: 5px; flex: 0 0 auto; height: calc(var(--taskbar_h, 44px) - 8px); padding: 0px 9px; box-sizing: border-box; background-color: transparent; border: 1px solid transparent; border-radius: calc(var(--jawnos-corner, 12px) * .75); transition: background-color .15s ease, border-color .15s ease, transform .12s ease, box-shadow .15s ease; }
+.jawnos_taskbar .window_toggle:hover { background-color: var(--panel); border-color: var(--line); box-shadow: var(--shadow-1, 0 1px 2px rgba(0,0,0,.06)); }
+.jawnos_taskbar .window_toggle:active { transform: translateY(1px); }
+.jawnos_taskbar .window_toggle .window_toggle_icon { height: calc(var(--taskbar_h, 44px) - 18px); width: calc(var(--taskbar_h, 44px) - 18px); max-width: none; object-fit: contain; }
+.jawnos_taskbar .window_toggle .window_toggle_name_text { font-size: calc(var(--taskbar_h, 44px) * 0.36); white-space: nowrap; }
+.jawnos_taskbar .window_toggle .window_toggle_shorthand { display: none; }
 /* Taskbar widgets: a small live reading on the bar, added from Add items and
    dragged in edit mode like the clock. Both wear the same plate; their glyph
    and text differ. */
@@ -446,7 +446,7 @@ body.dark_theme #taskbar { background-image: linear-gradient(rgba(255,255,255,.0
 .taskbar_widget[hidden] { display: none; }
 .taskbar_widget:hover { border-color: var(--accent, #3b7ddd); }
 .taskbar_widget[mode=icon] .taskbar_widget_text { display: none; }
-#taskbar_power .taskbar_power_glyph {
+.taskbar_widget_power .taskbar_power_glyph {
 	position: relative;
 	width: calc(var(--taskbar_h, 44px) * 0.44);
 	height: calc(var(--taskbar_h, 44px) * 0.22);
@@ -455,7 +455,7 @@ body.dark_theme #taskbar { background-image: linear-gradient(rgba(255,255,255,.0
 	padding: 1px;
 	box-sizing: border-box;
 }
-#taskbar_power .taskbar_power_glyph::after {
+.taskbar_widget_power .taskbar_power_glyph::after {
 	content: '';
 	position: absolute;
 	right: -5px;
@@ -466,7 +466,7 @@ body.dark_theme #taskbar { background-image: linear-gradient(rgba(255,255,255,.0
 	border-radius: 0 1px 1px 0;
 	background: var(--ink, currentColor);
 }
-#taskbar_power .taskbar_power_fill {
+.taskbar_widget_power .taskbar_power_fill {
 	display: block;
 	height: 100%;
 	width: 0;
@@ -474,10 +474,10 @@ body.dark_theme #taskbar { background-image: linear-gradient(rgba(255,255,255,.0
 	background: var(--accent, #3b7ddd);
 	transition: width .3s ease, background-color .3s ease;
 }
-#taskbar_power[state=charging] .taskbar_power_fill { background: #3fa34d; }
-#taskbar_power[state=low] .taskbar_power_fill { background: #c0392b; }
-#taskbar_power[state=full] .taskbar_power_fill { background: #3fa34d; }
-#taskbar_network .taskbar_network_glyph {
+.taskbar_widget_power[state=charging] .taskbar_power_fill { background: #3fa34d; }
+.taskbar_widget_power[state=low] .taskbar_power_fill { background: #c0392b; }
+.taskbar_widget_power[state=full] .taskbar_power_fill { background: #3fa34d; }
+.taskbar_widget_network .taskbar_network_glyph {
 	position: relative;
 	display: flex;
 	align-items: flex-end;
@@ -492,16 +492,16 @@ body.dark_theme #taskbar { background-image: linear-gradient(rgba(255,255,255,.0
 .taskbar_network_bars i:nth-child(3) { height: 70%; }
 .taskbar_network_bars i:nth-child(4) { height: 100%; }
 .taskbar_network_bars i.on { opacity: 1; background: var(--accent, #3b7ddd); }
-#taskbar_network[kind=offline] .taskbar_network_bars i { opacity: .14; }
-#taskbar_network[kind=offline] .taskbar_network_glyph::after { content: ''; position: absolute; left: -2px; right: -2px; top: 50%; height: 2px; border-radius: 1px; background: var(--ink, currentColor); transform: rotate(-38deg); }
-#taskbar_network[kind=ethernet] .taskbar_network_bars { display: none; }
+.taskbar_widget_network[kind=offline] .taskbar_network_bars i { opacity: .14; }
+.taskbar_widget_network[kind=offline] .taskbar_network_glyph::after { content: ''; position: absolute; left: -2px; right: -2px; top: 50%; height: 2px; border-radius: 1px; background: var(--ink, currentColor); transform: rotate(-38deg); }
+.taskbar_widget_network[kind=ethernet] .taskbar_network_bars { display: none; }
 .taskbar_network_wire { display: none; width: 82%; height: 58%; border: 2px solid var(--ink, currentColor); border-radius: 2px; position: relative; }
 .taskbar_network_wire::after { content: ''; position: absolute; left: 50%; bottom: -5px; transform: translateX(-50%); width: 2px; height: 4px; background: var(--ink, currentColor); }
-#taskbar_network[kind=ethernet] .taskbar_network_wire { display: block; }
+.taskbar_widget_network[kind=ethernet] .taskbar_network_wire { display: block; }
 .taskbar_network_bluetooth { display: inline-block; font-size: calc(var(--taskbar_h, 44px) * 0.34); line-height: 1; opacity: .25; }
 .taskbar_network_bluetooth::before { content: "\16D2"; }
-#taskbar_network[bluetooth=on] .taskbar_network_bluetooth { opacity: 1; color: var(--accent, #3b7ddd); }
-#taskbar_sound .taskbar_sound_glyph {
+.taskbar_widget_network[bluetooth=on] .taskbar_network_bluetooth { opacity: 1; color: var(--accent, #3b7ddd); }
+.taskbar_widget_sound .taskbar_sound_glyph {
 	position: relative;
 	display: flex;
 	align-items: center;
@@ -522,9 +522,9 @@ body.dark_theme #taskbar { background-image: linear-gradient(rgba(255,255,255,.0
 .taskbar_sound_waves i:nth-child(2) { width: 68%; height: 76%; }
 .taskbar_sound_waves i:nth-child(3) { width: 100%; height: 100%; }
 .taskbar_sound_waves i.on { opacity: 1; }
-#taskbar_sound[state=muted] .taskbar_sound_waves,
-#taskbar_sound[level="0"] .taskbar_sound_waves { display: none; }
-#taskbar_sound[state=muted] .taskbar_sound_glyph::after { content: ''; position: absolute; left: 0; right: 0; top: 50%; height: 2px; border-radius: 1px; background: var(--ink, currentColor); transform: rotate(-38deg); }
+.taskbar_widget_sound[state=muted] .taskbar_sound_waves,
+.taskbar_widget_sound[level="0"] .taskbar_sound_waves { display: none; }
+.taskbar_widget_sound[state=muted] .taskbar_sound_glyph::after { content: ''; position: absolute; left: 0; right: 0; top: 50%; height: 2px; border-radius: 1px; background: var(--ink, currentColor); transform: rotate(-38deg); }
 #taskbar_clock {
 	flex: 0 0 auto;
 	white-space: nowrap;
@@ -745,7 +745,7 @@ body.dark_theme #taskbar { background-image: linear-gradient(rgba(255,255,255,.0
 /* A pinned app or keyboard launcher: the same bare tile the bar's own buttons
    wear. (An app pin is a .window_toggle span, not an img, so this only sizes the
    plain picture pins.) */
-#taskbar img.taskbar_pin {
+.jawnos_taskbar img.taskbar_pin {
 	box-sizing: border-box;
 	flex: 0 0 auto;
 	width: calc(var(--taskbar_h, 44px) - 4px);
@@ -758,12 +758,12 @@ body.dark_theme #taskbar { background-image: linear-gradient(rgba(255,255,255,.0
 /* An app pin is a slot that survives the window being closed: with the window
    open the window button is parked inside it (see jawnosTaskbarPinsRefresh),
    otherwise it shows the app's own picture. */
-#taskbar .taskbar_app_pin { display: inline-flex; align-items: center; flex: 0 0 auto; }
+.jawnos_taskbar .taskbar_app_pin { display: inline-flex; align-items: center; flex: 0 0 auto; }
 /* The slot is only a holder: the picture inside it - or the window button parked
    in its place - wears the Button Border itself. A border on the slot would ring
    an auto-height box, so a thicker setting would grow it past the bar's edges. */
-#taskbar .taskbar_pin.taskbar_app_pin { border-width: 0 !important; }
-#taskbar .taskbar_app_pin > img.taskbar_app_pin_icon {
+.jawnos_taskbar .taskbar_pin.taskbar_app_pin { border-width: 0 !important; }
+.jawnos_taskbar .taskbar_app_pin > img.taskbar_app_pin_icon {
 	box-sizing: border-box;
 	width: calc(var(--taskbar_h, 44px) - 4px);
 	height: calc(var(--taskbar_h, 44px) - 4px);
@@ -775,12 +775,12 @@ body.dark_theme #taskbar { background-image: linear-gradient(rgba(255,255,255,.0
    that are open keep a hairline edge. A bevel and a sunk plate read as a 1990s
    toolbar at this size; the tint reads at a glance without underlining the
    tile. */
-#taskbar .window_toggle[state=active] {
+.jawnos_taskbar .window_toggle[state=active] {
 	background-color: var(--accent-soft, rgba(59,125,221,.18));
 	border-color: var(--accent-line, var(--line));
 	box-shadow: none;
 }
-#taskbar .window_toggle[state=open] {
+.jawnos_taskbar .window_toggle[state=open] {
 	border-color: var(--line);
 	background-color: var(--panel);
 	box-shadow: none;
@@ -790,8 +790,8 @@ body.dark_theme #taskbar { background-image: linear-gradient(rgba(255,255,255,.0
    newest right), or the order they were last dragged into, and any tile can be
    dragged along the list into another place. A press without travel still
    answers as a press; only a real drag sorts. */
-#taskbar_windows .window_toggle { cursor: var(--jawnos-cursor-grab, grab); }
-#taskbar_windows.taskbar_window_dragging .window_toggle { cursor: var(--jawnos-cursor-grabbing, grabbing); }
+.taskbar_windows .window_toggle { cursor: var(--jawnos-cursor-grab, grab); }
+.taskbar_windows.taskbar_window_dragging .window_toggle { cursor: var(--jawnos-cursor-grabbing, grabbing); }
 .taskbar_window_placeholder {
 	flex: 0 0 auto;
 	opacity: .35;
@@ -1268,10 +1268,10 @@ body.dark_theme .top_navbar .name_text { color: var(--ink) !important; }
 	#taskbar_clock { font-size: calc(var(--taskbar_h, 44px) * 0.3); line-height: 1.12; text-align: center; padding: 2px 6px; }
 	/* the phone's window buttons: the icon with its shorthand under it, since
 	   the bar has no room for whole names; everything follows the bar's height */
-	#taskbar .window_toggle { flex-direction: column; gap: 1px; padding: 0px 8px; height: calc(var(--taskbar_h, 44px) - 4px); justify-content: center; }
-	#taskbar .window_toggle .window_toggle_icon { height: calc(var(--taskbar_h, 44px) * 0.45); width: calc(var(--taskbar_h, 44px) * 0.45); max-width: none; }
-	#taskbar .window_toggle .window_toggle_name_text { display: none; }
-	#taskbar .window_toggle .window_toggle_shorthand { display: block; font-size: calc(var(--taskbar_h, 44px) * 0.23); line-height: 1; white-space: nowrap; }
+	.jawnos_taskbar .window_toggle { flex-direction: column; gap: 1px; padding: 0px 8px; height: calc(var(--taskbar_h, 44px) - 4px); justify-content: center; }
+	.jawnos_taskbar .window_toggle .window_toggle_icon { height: calc(var(--taskbar_h, 44px) * 0.45); width: calc(var(--taskbar_h, 44px) * 0.45); max-width: none; }
+	.jawnos_taskbar .window_toggle .window_toggle_name_text { display: none; }
+	.jawnos_taskbar .window_toggle .window_toggle_shorthand { display: block; font-size: calc(var(--taskbar_h, 44px) * 0.23); line-height: 1; white-space: nowrap; }
 	#ticket { width: 100% }
 	.window_view { width: 100%; }
 	.appointment { width: 100%; }
@@ -3996,7 +3996,7 @@ body.full_app_mode .wind.full_app_window .window_contents { padding-top:0 !impor
 
 /* The notifications widget: a bell and a count of what arrived since the list
    was last opened. taskbar_notifications.js paints the count and the panel. */
-#taskbar_notifications { position: relative; }
+.taskbar_widget_notifications { position: relative; }
 .taskbar_notifications_glyph {
 	display: flex;
 	align-items: center;
@@ -4020,7 +4020,7 @@ body.full_app_mode .wind.full_app_window .window_contents { padding-top:0 !impor
 	background-color: #c0392b;
 	border-radius: 8px;
 }
-#taskbar_notifications[unread="0"] .taskbar_notifications_badge { display: none; }
+.taskbar_widget_notifications[unread="0"] .taskbar_notifications_badge { display: none; }
 .taskbar_panel .taskbar_panel_search {
 	width: 100%;
 	box-sizing: border-box;
@@ -4044,3 +4044,136 @@ body.full_app_mode .wind.full_app_window .window_contents { padding-top:0 !impor
 .taskbar_panel .taskbar_notifications_row b { font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .taskbar_panel .taskbar_notifications_message { max-width: 100%; font-size: 11px; opacity: .72; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .taskbar_panel .taskbar_notifications_when { font-size: 10px; opacity: .55; }
+
+/* ---- the shell layer: extra taskbars, extra docks, workspaces ---------------
+   The first taskbar and dock keep their id rules above. A bar beyond them wears
+   the same look through the .jawnos_* classes, and every bar can be locked to
+   an edge or left floating. A floating bar is placed inline by shell_layout.js;
+   an edge bar is placed by these rules. */
+.jawnos_workspace_off { display: none !important; }
+
+/* the grip, on the bar's left edge, only while that kind of bar is edited */
+.jawnos_bar_handle {
+	display: none;
+	position: absolute;
+	left: 3px;
+	top: 50%;
+	transform: translateY(-50%);
+	width: 15px;
+	height: 34px;
+	align-items: center;
+	justify-content: center;
+	box-sizing: border-box;
+	border: 1px solid var(--line);
+	border-radius: 6px;
+	background-color: var(--panel);
+	color: var(--ink-muted, #555);
+	font-size: 12px;
+	line-height: 1;
+	cursor: var(--jawnos-cursor-grab, grab);
+	user-select: none;
+	touch-action: none;
+	z-index: 6;
+}
+.jawnos_taskbar.taskbar_edit > .jawnos_bar_handle,
+.jawnos_dock.dock_edit > .jawnos_bar_handle { display: flex; }
+body.jawnos_bar_dragging, body.jawnos_bar_dragging * { cursor: var(--jawnos-cursor-grabbing, grabbing) !important; }
+body.jawnos_bar_dragging .jawnos_bar_handle { cursor: var(--jawnos-cursor-grabbing, grabbing); }
+
+/* a bar lifted out of its edge follows the pointer above the desk */
+.jawnos_bar[data-bar-mode="floating"] { z-index: 39999; }
+
+/* the edge preview shown while a drag is near an edge */
+.jawnos_snap_preview { display: none; position: fixed; z-index: 60000; pointer-events: none; background: var(--accent, #3b7ddd); opacity: .35; border-radius: 4px; }
+.jawnos_snap_preview.on { display: block; }
+.jawnos_snap_preview[edge="top"] { left: 0; right: 0; top: 0; height: 8px; }
+.jawnos_snap_preview[edge="bottom"] { left: 0; right: 0; bottom: 0; height: 8px; }
+.jawnos_snap_preview[edge="left"] { top: 0; bottom: 0; left: 0; width: 8px; }
+.jawnos_snap_preview[edge="right"] { top: 0; bottom: 0; right: 0; width: 8px; }
+
+/* an added taskbar: the same plate as the first, with the windows, the live
+   widgets and pins, and the clock laid in one row (or one column on a side) */
+.jawnos_taskbar:not(#taskbar) {
+	box-sizing: border-box;
+	position: fixed;
+	left: 0px;
+	right: 0px;
+	height: var(--taskbar_h, 44px);
+	z-index: 39998;
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	padding: 2px 0px;
+	font-size: calc(var(--taskbar_h, 44px) * 0.42);
+	background-color: var(--panel-2);
+	background-image: linear-gradient(rgba(255,255,255,.16), rgba(255,255,255,0));
+	border: solid;
+	border-width: 0px;
+	border-color: var(--line);
+	box-shadow: 0 -1px 0 var(--line), 0 -12px 34px rgba(0,0,0,.10);
+	overflow: hidden;
+}
+body.dark_theme .jawnos_taskbar:not(#taskbar) { background-image: linear-gradient(rgba(255,255,255,.05), rgba(0,0,0,.10)); box-shadow: 0 -1px 0 var(--line), 0 -12px 34px rgba(0,0,0,.34); }
+.jawnos_taskbar:not(#taskbar) .taskbar_windows { display: flex; align-items: center; gap: 4px; flex: 1 1 auto; min-width: 0; height: 100%; overflow-x: auto; overflow-y: hidden; }
+.jawnos_taskbar:not(#taskbar) .taskbar_widgets,
+.jawnos_taskbar:not(#taskbar) .taskbar_pins { display: flex; align-items: center; gap: 4px; flex: 0 0 auto; }
+.jawnos_taskbar:not(#taskbar) .taskbar_clock { white-space: nowrap; padding: 0 8px; flex: 0 0 auto; }
+.jawnos_taskbar:not(#taskbar) img.taskbar_pin,
+.jawnos_taskbar:not(#taskbar) .taskbar_app_pin > img.taskbar_app_pin_icon { box-sizing: border-box; flex: 0 0 auto; width: calc(var(--taskbar_h, 44px) - 4px); height: calc(var(--taskbar_h, 44px) - 4px); max-width: none; object-fit: contain; }
+.jawnos_taskbar:not(#taskbar) .taskbar_app_pin { display: inline-flex; align-items: center; flex: 0 0 auto; }
+
+/* every taskbar, the first one included, can take a side edge */
+.jawnos_taskbar[position="top"] { top: 0px; border-bottom-width: 1px; box-shadow: 0 1px 0 var(--line), 0 12px 34px rgba(0,0,0,.10); }
+.jawnos_taskbar[position="bottom"] { bottom: 0px; border-top-width: 1px; }
+.jawnos_taskbar[position="hidden"] { display: none; }
+#taskbar[position="left"], .jawnos_taskbar[position="left"] { left: 0px; right: auto; top: 0px; bottom: 0px; width: var(--taskbar_h, 44px); height: auto; flex-direction: column; padding: 0px 2px; }
+#taskbar[position="right"], .jawnos_taskbar[position="right"] { right: 0px; left: auto; top: 0px; bottom: 0px; width: var(--taskbar_h, 44px); height: auto; flex-direction: column; padding: 0px 2px; }
+#taskbar[position="left"] [data-role="windows"], #taskbar[position="right"] [data-role="windows"],
+.jawnos_taskbar[position="left"] [data-role="windows"], .jawnos_taskbar[position="right"] [data-role="windows"] {
+	flex-direction: column; height: auto; width: 100%; min-height: 0; overflow-x: hidden; overflow-y: auto;
+}
+#taskbar[position="left"] [data-role="windows"] .window_toggle, #taskbar[position="right"] [data-role="windows"] .window_toggle,
+.jawnos_taskbar[position="left"] [data-role="windows"] .window_toggle, .jawnos_taskbar[position="right"] [data-role="windows"] .window_toggle {
+	flex: 0 0 auto; width: calc(var(--taskbar_h, 44px) - 8px); padding: 0px; justify-content: center;
+}
+#taskbar[position="left"] [data-role="windows"] .window_toggle_name_text, #taskbar[position="right"] [data-role="windows"] .window_toggle_name_text,
+.jawnos_taskbar[position="left"] [data-role="windows"] .window_toggle_name_text, .jawnos_taskbar[position="right"] [data-role="windows"] .window_toggle_name_text { display: none; }
+#taskbar[position="left"] [data-role="windows"] .window_toggle_shorthand, #taskbar[position="right"] [data-role="windows"] .window_toggle_shorthand,
+.jawnos_taskbar[position="left"] [data-role="windows"] .window_toggle_shorthand, .jawnos_taskbar[position="right"] [data-role="windows"] .window_toggle_shorthand { display: inline; }
+#taskbar[position="left"] .taskbar_clock, #taskbar[position="right"] .taskbar_clock,
+.jawnos_taskbar[position="left"] .taskbar_clock, .jawnos_taskbar[position="right"] .taskbar_clock { padding: 6px 0; font-size: calc(var(--taskbar_h, 44px) * 0.28); }
+#taskbar[position="left"] .taskbar_icons, #taskbar[position="right"] .taskbar_icons,
+.jawnos_taskbar[position="left"] .taskbar_icons, .jawnos_taskbar[position="right"] .taskbar_icons { flex-direction: column; height: auto; padding: 4px 0; }
+#taskbar[position="left"] .taskbar_widgets, #taskbar[position="right"] .taskbar_widgets,
+.jawnos_taskbar[position="left"] .taskbar_widgets, .jawnos_taskbar[position="right"] .taskbar_widgets { flex-direction: column; }
+#taskbar[position="left"] .taskbar_pins, #taskbar[position="right"] .taskbar_pins,
+.jawnos_taskbar[position="left"] .taskbar_pins, .jawnos_taskbar[position="right"] .taskbar_pins { flex-direction: column; }
+
+/* a floating taskbar keeps the plate and loses the edge-wide slab */
+#taskbar[position="floating"], .jawnos_taskbar[position="floating"] { border: 1px solid var(--line); border-radius: var(--jawnos-corner, 12px); box-shadow: 0 10px 28px rgba(0,0,0,.24); }
+
+/* an added dock: the first dock's pill, centred on an edge or a free box */
+.jawnos_dock:not(#pseudonym_home) {
+	box-sizing: border-box;
+	position: fixed;
+	height: 120px;
+	background-color: var(--panel);
+	border: 1px solid var(--line);
+	border-radius: var(--jawnos-corner, 16px);
+	box-shadow: var(--shadow-2, 0 8px 24px rgba(0,0,0,.18));
+	padding: 11px 30px;
+	z-index: 39997;
+	max-width: 100%;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+}
+.jawnos_dock:not(#pseudonym_home) .pseudonym_bar { display: flex; align-items: center; justify-content: center; gap: 4px; max-width: 100%; overflow: hidden; }
+.jawnos_dock:not(#pseudonym_home) .draggable_icon { display: inline-flex; }
+.jawnos_dock:not(#pseudonym_home)[position="bottom"] { left: 50%; transform: translateX(-50%); bottom: 0px; }
+.jawnos_dock:not(#pseudonym_home)[position="top"] { left: 50%; transform: translateX(-50%); top: 0px; }
+.jawnos_dock:not(#pseudonym_home)[position="left"] { left: 0px; top: 50%; transform: translateY(-50%); height: auto; max-height: 100%; padding: 11px; flex-direction: column; }
+.jawnos_dock:not(#pseudonym_home)[position="right"] { right: 0px; top: 50%; transform: translateY(-50%); height: auto; max-height: 100%; padding: 11px; flex-direction: column; }
+.jawnos_dock:not(#pseudonym_home)[position="left"] .pseudonym_bar,
+.jawnos_dock:not(#pseudonym_home)[position="right"] .pseudonym_bar { flex-direction: column; overflow-y: auto; }
+#pseudonym_home[position="floating"], .jawnos_dock[position="floating"] { border: 1px solid var(--line); border-radius: var(--jawnos-corner, 16px); box-shadow: 0 10px 28px rgba(0,0,0,.24); }

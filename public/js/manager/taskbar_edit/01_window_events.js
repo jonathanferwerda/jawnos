@@ -21,10 +21,10 @@ function jawnosWindowContextBuild(app) {
 	return context;
 }
 
-function jawnosTaskbarContextOpen(x, y, app, widget) {
+function jawnosTaskbarContextOpen(x, y, app, widget, bar) {
 	jawnosTaskbarContextClose();
 	var context = app ? jawnosWindowContextBuild(app)
-		: (widget ? jawnosTaskbarWidgetContextBuild(widget) : jawnosTaskbarContextBuild());
+		: (widget ? jawnosTaskbarWidgetContextBuild(widget, bar) : jawnosTaskbarContextBuild(bar));
 	$('body').append(context);
 	// keep it on screen
 	var w = context.outerWidth();
@@ -34,13 +34,14 @@ function jawnosTaskbarContextOpen(x, y, app, widget) {
 	context.css({ left: left + 'px', top: top + 'px' });
 }
 
-$(document).on('contextmenu', '#taskbar', function (e) {
+$(document).on('contextmenu', '.jawnos_taskbar', function (e) {
 	e.preventDefault();
+	var bar = $(this);
 	// A widget is not a pin or a window: its menu adds the three display modes
 	// above the bar's normal furniture.
 	var widget = $(e.target).closest('.taskbar_widget');
 	if (widget.length) {
-		jawnosTaskbarContextOpen(e.clientX, e.clientY, null, widget.attr('widget'));
+		jawnosTaskbarContextOpen(e.clientX, e.clientY, null, widget.attr('widget'), bar);
 		return;
 	}
 	// An app pin is a launcher, not a window: its menu is the dock's add/remove.
@@ -56,16 +57,16 @@ $(document).on('contextmenu', '#taskbar', function (e) {
 	// the app under the pointer, if the press landed on a window button
 	var win = $(e.target).closest('.window_toggle');
 	var app = win.length ? win.attr('app') : null;
-	jawnosTaskbarContextOpen(e.clientX, e.clientY, app);
+	jawnosTaskbarContextOpen(e.clientX, e.clientY, app, null, bar);
 });
 
 // a long press opens the same menu on touch: the shared handler dispatches a
 // contextmenu at the finger, which the handler above catches
-if (typeof jawnosContextMenuOn == 'function') { jawnosContextMenuOn('#taskbar'); }
+if (typeof jawnosContextMenuOn == 'function') { jawnosContextMenuOn('.jawnos_taskbar'); }
 
 // any press elsewhere, or Escape, puts it away
 $(document).on('click', function (e) {
-	if ($(e.target).closest('.taskbar_context, #taskbar').length == 0) { jawnosTaskbarContextClose(); }
+	if ($(e.target).closest('.taskbar_context, .jawnos_taskbar').length == 0) { jawnosTaskbarContextClose(); }
 });
 $(document).on('keyup', function (e) {
 	if (e.keyCode == 27) { jawnosTaskbarContextClose(); }
@@ -73,14 +74,37 @@ $(document).on('keyup', function (e) {
 
 $(document).on('click', '.taskbar_context_selection', function () {
 	var act = $(this).attr('act');
+	var bar_id = $(this).closest('.taskbar_context').attr('bar_id') || '';
 	if (act == 'edit') {
 		jawnosTaskbarEdit(!jawnosTaskbarEditing());
 		jawnosTaskbarContextClose();
 	}
 	else if (act == 'pos') {
-		jawnosBars.taskbar = $(this).attr('val');
-		jawnosTaskbarSave('taskbar_position', jawnosBars.taskbar);
-		jawnosBarsApply();
+		var val = $(this).attr('val');
+		if (bar_id && typeof jawnosShellBarIsPrimary == 'function' && !jawnosShellBarIsPrimary(bar_id)) {
+			jawnosShellBarEdgeSet(bar_id, val);
+		}
+		else {
+			jawnosBars.taskbar = val;
+			jawnosTaskbarSave('taskbar_position', jawnosBars.taskbar);
+			jawnosBarsApply();
+		}
+		jawnosTaskbarContextClose();
+	}
+	else if (act == 'shell_add_bar') {
+		jawnosShellBarAdd($(this).attr('kind') || 'taskbar');
+		jawnosTaskbarContextClose();
+	}
+	else if (act == 'shell_remove_bar') {
+		jawnosShellBarRemove(bar_id);
+		jawnosTaskbarContextClose();
+	}
+	else if (act == 'shell_ws') {
+		jawnosShellWorkspaceSet($(this).attr('val'));
+		jawnosTaskbarContextClose();
+	}
+	else if (act == 'shell_ws_add') {
+		jawnosShellWorkspaceAdd();
 		jawnosTaskbarContextClose();
 	}
 	else if (act == 'autohide') {
@@ -182,6 +206,9 @@ $(document).ready(function () {
 			var result = base.apply(this, arguments);
 			if (typeof jawnosTaskbarPinsRefresh == 'function') { jawnosTaskbarPinsRefresh(); }
 			if (typeof jawnosDockWindowsRender == 'function') { jawnosDockWindowsRender(); }
+			// every extra taskbar reads the same windows; the guard in the shell
+			// keeps this from calling itself through the displayer below
+			if (!jawnosShell.syncing && typeof jawnosShellTaskbarSync == 'function') { jawnosShellTaskbarSync(); }
 			return result;
 		};
 		taskbarDisplayer.__jawnos_wrapped = true;

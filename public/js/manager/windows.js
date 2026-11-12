@@ -216,7 +216,7 @@ function taskbarDisplayer(destination) {
 	}
 	$(destination).attr('data-taskbar-stamp', stamp);
 	$(destination).html(html);
-	$('.window_toggle_name').remove();
+	$(destination).find('.window_toggle_name').remove();
 	$(destination).find('.window_toggle_icon').each(function(i,v) {
 		var app = $(v).attr('app');
 		var named = $(v).attr('formatted_name') || format_name(app);
@@ -275,7 +275,7 @@ function startMenuDisplayer(destination) {
 		new_icon.show();
 	});
 	$(destination).html('<table style="text-align:center;"><tbody><tr>' + html + '</tr></tbody></table>');
-	$('.window_toggle_name').remove();
+	$(destination).find('.window_toggle_name').remove();
 	$('.window_toggle').each(function(i,v) {
 		var app = $(v).attr('app');
 		var label = $('<span class="hover window_toggle_name" style="vertical-align:top;text-align:center;"></span>')

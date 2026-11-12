@@ -54,7 +54,7 @@ function jawnosTaskbarDefaultOrder() {
 }
 
 function jawnosTaskbarEditing() {
-	return $('#taskbar').hasClass('taskbar_edit');
+	return $('.jawnos_taskbar.taskbar_edit').length > 0;
 }
 
 // A press on a plain launcher pin hands the press to the thing it was cloned
@@ -339,12 +339,15 @@ function jawnosTaskbarSave(setting, value) {
 function jawnosTaskbarEdit(on) {
 	var bar = $('#taskbar');
 	if (!bar.length) { return; }
+	// every taskbar in the workspace wears the mode, so a bar added in edit mode
+	// shows its handle at once; only the first bar has a slot order to drag today
+	$('.jawnos_taskbar').toggleClass('taskbar_edit', !!on);
+	bar.toggleClass('taskbar_edit', !!on);
 	// the window tiles drag on their own while the bar is not in edit mode; in
 	// edit mode the whole window list is the slot being dragged
 	var tiles = bar.find('#taskbar_windows');
 	if (on) {
 		if (tiles.hasClass('ui-sortable')) { tiles.sortable('disable'); }
-		bar.addClass('taskbar_edit');
 		if (!bar.hasClass('ui-sortable')) {
 			bar.sortable({
 				items: '> #taskbar_windows, > #taskbar_clock, > .taskbar_widget, > #taskbar_icons, > #search_entanglement, > .taskbar_pin',
@@ -357,9 +360,9 @@ function jawnosTaskbarEdit(on) {
 	}
 	else {
 		if (bar.hasClass('ui-sortable')) { bar.sortable('disable'); }
-		bar.removeClass('taskbar_edit');
 		if (tiles.hasClass('ui-sortable')) { tiles.sortable('enable'); }
 	}
+	if (typeof jawnosShellApply == 'function') { jawnosShellApply(); }
 }
 
 // ---- the context menu -----------------------------------------------------
@@ -610,20 +613,37 @@ function jawnosTaskbarClockZones() {
 	return zones;
 }
 
-function jawnosTaskbarContextBuild() {
+function jawnosTaskbarContextBuild(bar) {
+	bar = (bar && $(bar).length) ? $(bar) : $('#taskbar');
+	var bar_id = bar.attr('data-bar-id') || '';
+	var primary = bar.attr('data-bar-primary') == '1';
+	var desc = (typeof jawnosShellBarGet == 'function') ? jawnosShellBarGet(bar_id) : null;
+	var current_edge = primary ? jawnosBars.taskbar : ((desc && desc.mode == 'edge') ? desc.edge : '');
 	var editing = jawnosTaskbarEditing();
 	var selected = function (on) { return on ? '✓' : ''; };
-	var context = $('<div class="taskbar_context"></div>');
+	var context = $('<div class="taskbar_context"></div>').attr('bar_id', bar_id);
 
 	context.append('<div class="taskbar_context_selection" act="edit">Edit mode<span class="taskbar_context_check">' + selected(editing) + '</span></div>');
+	// Adding a bar belongs to edit mode: the new bar arrives with its handle out
+	// and takes the next free edge, or floats when every edge is taken.
+	if (editing) {
+		context.append('<div class="taskbar_context_selection" act="shell_add_bar" kind="taskbar">' + jawnosT('Add taskbar') + '</div>');
+		if (!primary) {
+			context.append('<div class="taskbar_context_selection" act="shell_remove_bar">' + jawnosT('Remove this bar') + '</div>');
+		}
+	}
 
 	context.append('<div class="taskbar_context_label">Position</div>');
-	['top', 'bottom', 'hidden'].forEach(function (edge) {
-		var label = edge == 'bottom' ? 'Bottom' : (edge == 'top' ? 'Top' : 'Hidden');
-		context.append('<div class="taskbar_context_selection" act="pos" val="' + edge + '">' + label + '<span class="taskbar_context_check">' + selected(jawnosBars.taskbar == edge) + '</span></div>');
+	['top', 'bottom', 'left', 'right', 'hidden'].forEach(function (edge) {
+		var labels = { top: 'Top', bottom: 'Bottom', left: 'Left', right: 'Right', hidden: 'Hidden' };
+		context.append('<div class="taskbar_context_selection" act="pos" val="' + edge + '">' + jawnosT(labels[edge]) + '<span class="taskbar_context_check">' + selected(current_edge == edge) + '</span></div>');
 	});
 
 	context.append('<div class="taskbar_context_selection" act="autohide">Autohide<span class="taskbar_context_check">' + selected(jawnosBars.autohide == 'on') + '</span></div>');
+
+	// the workspaces of this desk: each one keeps its own bars, and a press
+	// moves every bar of the desk to that one
+	if (typeof jawnosShellWorkspaceRows == 'function') { jawnosShellWorkspaceRows(context); }
 
 	context.append('<div class="taskbar_context_selection" act="clock">Clock<span class="taskbar_context_check">▸</span></div>');
 	var clock = $('<div class="taskbar_context_sub" sub="clock" style="display:none;"></div>');
@@ -718,17 +738,17 @@ function jawnosTaskbarContextBuild() {
 // menu (edit mode, position, autohide, clock, add items) underneath. The base
 // menu is built by jawnosTaskbarContextBuild and its children are moved here,
 // so the widget menu never has to keep a second copy of those handlers.
-function jawnosTaskbarWidgetContextBuild(w) {
+function jawnosTaskbarWidgetContextBuild(w, bar) {
 	var spec = jawnosTaskbarWidgets[w] || { hint: w };
 	var mode = jawnosTaskbarWidgetMode(w);
 	var selected = function (on) { return on ? '✓' : ''; };
-	var context = $('<div class="taskbar_context"></div>');
+	var context = $('<div class="taskbar_context"></div>').attr('bar_id', (bar && $(bar).attr('data-bar-id')) || '');
 	context.append('<div class="taskbar_context_label">' + jawnosT(spec.hint) + ' ' + jawnosT('widget') + '</div>');
 	[['icon', 'Icon'], ['full', 'Icon and status'], ['off', 'Disabled']].forEach(function (pair) {
 		context.append('<div class="taskbar_context_selection" act="widget_mode" w="' + w + '" mode="' + pair[0] + '">'
 			+ jawnosT(pair[1]) + '<span class="taskbar_context_check">' + selected(mode == pair[0]) + '</span></div>');
 	});
-	var base = jawnosTaskbarContextBuild();
+	var base = jawnosTaskbarContextBuild(bar);
 	context.append('<div class="taskbar_context_label">' + jawnosT('Taskbar') + '</div>');
 	context.append(base.children());
 	return context;
