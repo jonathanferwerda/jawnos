@@ -1,4 +1,4 @@
-# tests-for: qa/android/run.sh qa/db.checks.json qa/lib/ qa/prune.pl qa/run.pl qa/systemd/ qa/ui/probe.js qa/ui/webkit_probe.py scripts/verify_change.pl
+# tests-for: qa/android/run.sh qa/db.checks.json qa/lib/ qa/prune.pl qa/run.pl qa/systemd/ qa/ui/open_probe.js qa/ui/probe.js qa/ui/webkit_probe.py scripts/verify_change.pl
 # covers:    The QA layers that are not plain Perl (a shell device script, a JS probe, a Python Qt WebEngine probe, the SQL check...
 
 use strict;
@@ -45,6 +45,23 @@ if ($node) {
 else {
 	pass('node is not installed; parse skipped');
 }
+
+# --- the opening probe --------------------------------------------------------
+# A regression probe, not part of the nightly sweep: it opens a row of apps in
+# the real manager and reads the slot the tile gave each one.
+my $open_probe = "$qa/ui/open_probe.js";
+ok(-f $open_probe, 'the opening probe exists');
+if ($node) {
+	is(system($node, '--check', $open_probe), 0, 'the opening probe parses');
+}
+else {
+	pass('node is not installed; opening parse skipped');
+}
+my $open_src = read_file($open_probe);
+like($open_src, qr/appWindowOpener\(/, 'it opens windows through the real open path');
+like($open_src, qr/\.attr\('tile'\)/, 'it reads the slot the tile gave each window');
+like($open_src, qr/--reload/, 'it can reload and let the desk restore first');
+like($open_src, qr/two windows in slot/, 'it fails when two windows share a slot');
 
 my $qt_probe = "$qa/ui/webkit_probe.py";
 ok(-f $qt_probe, 'the Qt WebEngine probe exists');

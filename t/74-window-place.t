@@ -245,6 +245,19 @@ let three_with = open([{ id: 'window_a', pinned: true }, { id: 'window_b', pinne
 eq(three_with.fresh.style.left, 100, 'the third tiled window still steps twice');
 eq(three_with.fresh.style.top, 80, 'down two bars');
 
+// Opening a row of windows: each new one joins at the end of the stack, one bar
+// down and one step across, so the fourth never lands on the third.
+ctx.windowTiledRestore = {};
+dom = [];
+for (let n = 0; n < 7; n++) {
+	const fresh = new El('window_' + n, { pre_dimensioned: '0' });
+	dom.push(fresh);
+	ctx.windowReorganizer('window_' + n);
+	eq(fresh.attr('tile'), String(n), 'open ' + (n + 1) + ' takes the next slot');
+	eq(fresh.style.top, 40 * n, 'open ' + (n + 1) + ' steps down ' + n);
+	eq(fresh.style.left, 50 * n, 'open ' + (n + 1) + ' steps across ' + n);
+}
+
 // A desk built by hand: tiled windows get their slot the way the app gives it,
 // a pinned or dragged-out window has none.
 function desk(specs) {

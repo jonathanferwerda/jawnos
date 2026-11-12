@@ -1,3 +1,22 @@
+# Opening probe
+
+`open_probe.js` is the tile's regression check: it signs in with a ticket, clears
+the desk, then opens a row of apps through `appWindowOpener` (the function the
+start menu calls) and reads back the `tile` slot each window took. A `--reload`
+in the app list reloads the page after the 10s heartbeat has saved the layout,
+so the restore path is exercised before the remaining apps open.
+
+```sh
+node qa/ui/open_probe.js .shots/ticket.txt notes,clock,weather,power,sound,network,help
+node qa/ui/open_probe.js .shots/ticket.txt notes,clock,--reload,power,sound
+```
+
+The ticket file holds the full `https://127.0.0.1:3000/box_office/...` URL. The
+probe exits non-zero on a duplicate slot, a missing slot, a window that never
+opened, or a page exception; it closes what it opened so the desk is clean.
+`OPEN_PROBE_PORT`, `CHROMIUM` and `OPEN_PROBE_SETTLE` override its port, browser
+and per-open wait. It is a regression probe, not part of the nightly sweep.
+
 # Qt WebEngine probe — the real-engine check
 
 `webkit_probe.py` loads the QA manager in **Qt WebEngine** (PySide6), the
