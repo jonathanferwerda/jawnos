@@ -667,14 +667,27 @@ function windowNextTileSlot() {
 }
 
 // Hold the next slot for a press before its window exists. A window already on
-// the desk answers a press by refreshing, not by taking a new slot.
+// the desk answers a press by refreshing, so it takes no new slot - but the
+// press is still a press on that window, and on the tile that means walking to
+// the foot. The walk happens now, at the press, so it stays in press order even
+// while another press's window is still on its way.
 function windowTiledReserve(timestamp, app) {
 	if (!timestamp || !app || windowTiledPending[timestamp]) { return; }
-	var open = false;
+	var open = null;
 	$('.wind').each(function() {
-		if ($(this).attr('app') === app) { open = true; return false; }
+		var el = $(this);
+		// a window that is one of several of its app (a terminal session, a second
+		// folders window) does not answer the press: a new window is made, so the
+		// press reserves a slot instead of walking the one already there
+		if (el.attr('app') === app && !el.attr('data-terminal-id') && !el.attr('data-window-id')) {
+			open = this;
+			return false;
+		}
 	});
-	if (open) { return; }
+	if (open) {
+		if (typeof windowTiledPress === 'function') { windowTiledPress(open); }
+		return;
+	}
 	windowTiledPending[timestamp] = { slot: windowNextTileSlot(), at: Date.now(), app: app };
 	windowTiledPendingApp[app] = String(timestamp);
 }

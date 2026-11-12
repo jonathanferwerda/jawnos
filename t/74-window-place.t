@@ -101,6 +101,8 @@ like($storage, qr/if \(v\.tile !== undefined \|\| v\.free == 1\)/, 'a restore ha
 # any order. The slot is reserved at the press, so the stack keeps the order the
 # presses were made in.
 like($windows, qr/function windowTiledReserve\(timestamp, app\)/, 'a press reserves its slot');
+like($windows, qr/windowTiledPress\(open\)/, 'a press on an app that is already open walks its window to the foot');
+like($windows, qr/el\.attr\('data-terminal-id'\)/, 'a session window does not answer a press that makes another');
 like($windows, qr/windowTiledPending\[window_stamp\]/, 'the window claims the slot reserved for its stamp');
 like($windows, qr/var pending_stamp = windowTiledPendingApp\[window_app\]/, 'a bespoke opener that changes its stamp claims the latest press for its app');
 like($windows, qr/if \(taken\) \{/, 'a filled slot steps its occupant down');
@@ -377,6 +379,51 @@ eq(bumped[0].style.top, 80, 'the pressed window sits at the foot');
 eq(Number(bumped[0].style['z-index']) > Number(bumped[1].style['z-index']), true, 'and wears the front');
 ctx.windowTiledBump('#window_a');
 eq(bumped[0].attr('tile'), '2', 'pressing the foot window leaves the pile alone');
+
+// Pressing an app that is already on the desk makes no new window, so the press
+// is a press on that window: it walks to the foot at the press, and holds no
+// slot for a window that will never be made.
+let reopened = desk([
+	{ id: 'window_a', top: 0, left: 0 },
+	{ id: 'window_b', top: 40, left: 50 },
+	{ id: 'window_c', top: 80, left: 100 }
+]);
+ctx.windowTiledPending = {};
+ctx.windowTiledPendingApp = {};
+ctx.windowTiledReserve('901', 'window_a');
+eq(reopened[0].attr('tile'), '2', 'pressing an open app walks its window to the foot');
+eq(reopened[1].attr('tile'), '0', 'the windows it passed close up');
+eq(reopened[2].attr('tile'), '1', 'and keep their order');
+eq(Object.keys(ctx.windowTiledPending).length, 0, 'an open app holds no slot for a window it will not make');
+
+// A press that arrives while a new window is still on its way takes the slot
+// after that window's reservation, so the two keep press order.
+let press_order = desk([
+	{ id: 'window_a', top: 0, left: 0 },
+	{ id: 'window_b', top: 40, left: 50 },
+	{ id: 'window_c', top: 80, left: 100 }
+]);
+ctx.windowTiledPending = {};
+ctx.windowTiledPendingApp = {};
+ctx.windowTiledReserve('902', 'window_a');
+ctx.windowTiledReserve('903', 'window_new');
+eq(press_order[0].attr('tile'), '2', 'the reopened window walks to the foot');
+eq(ctx.windowTiledPending['903'].slot, 3, 'the window pressed after it takes the next slot');
+
+// A terminal session is one of several of its app, so a press on it makes a new
+// window: it reserves a slot and leaves the open session where it is.
+let session = desk([
+	{ id: 'window_a', top: 0, left: 0 },
+	{ id: 'window_b', top: 40, left: 50 }
+]);
+session[0].attr('data-terminal-id', 't1');
+ctx.windowTiledPending = {};
+ctx.windowTiledPendingApp = {};
+ctx.windowTiledReserve('904', 'window_a');
+eq(session[0].attr('tile'), '0', 'a press that makes another window leaves the open one in place');
+eq(ctx.windowTiledPending['904'].slot, 2, 'and reserves the next slot for the new one');
+ctx.windowTiledPending = {};
+ctx.windowTiledPendingApp = {};
 
 // closing a tiled window closes the step it leaves: the windows below it in the
 // stack step back up into its slot, one bar and one across-step, and everything
