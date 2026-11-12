@@ -744,6 +744,26 @@ sub email_sender {
 	return $returner;
 }
 
+# Whether a filed message came in or went out. The stored status is the
+# authority where it is unambiguous: 'sent' is the house's own word, and
+# 'inbox'/'received' is a letter the house accepted. An sms row is what the
+# user's confusion was about: incoming texts were filed 'public' and later
+# promoted to 'sent', so the thread drew both halves as the house's. The
+# remaining statuses ('public', a draft with no direction) fall back to the
+# writer's manager file, which is stable for a row that is never re-keyed.
+sub mail_message_incoming {
+	my ($m, $me) = @_;
+	return 0 unless ref $m eq 'HASH';
+	my $author = defined $m->{'manager_file'} ? $m->{'manager_file'} : '';
+	my $mine = defined $me ? $me : '';
+	if (defined $m->{'phone'} && length $m->{'phone'}) {
+		my $status = lc($m->{'status'} || '');
+		return 0 if $status eq 'sent' || $status eq 'draft';
+		return 1 if $status eq 'inbox' || $status eq 'received' || $status eq 'recieved';
+	}
+	return ($author ne $mine) ? 1 : 0;
+}
+
 # Letters the server accepts all come through here: the imap reader, the
 # telephone's sms list, a watch, a neighbour posting one over. The message
 # travels to the websocket daemon over the mail socket, which matches it to

@@ -186,6 +186,7 @@ $catalog{'hi'} = {
 		'people.aka' => 'इसे भी कहते हैं',
 		'people.aka_add' => 'नाम जोड़ें',
 		'chat.sections' => 'अनुभाग',
+		'chat.recent' => 'हाल के',
 		'chat.phone_numbers' => 'फ़ोन नंबर',
 		'chat.known' => 'ज्ञात',
 		'chat.unknown' => 'अज्ञात',

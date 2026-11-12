@@ -43,6 +43,30 @@
 					<span><%= &subs::ui('Chats') %></span>
 					<span class="chat_rail_count"><%= scalar @{$friends || []} %></span>
 				</div>
+				<% if (@{ $recent_chats || [] }) { %>
+				<div class="chat_rail_group">
+					<button type="button" class="chat_rail_subhead" data-chat_group="recent" aria-expanded="true">
+						<span class="chat_rail_subhead_label"><%= &subs::lang('chat.recent') %></span>
+						<span class="chat_rail_subhead_meta"><span class="chat_rail_count"><%= scalar @{$recent_chats} %></span><span class="chat_rail_chevron" aria-hidden="true">&#9662;</span></span>
+					</button>
+					<div class="chat_rail_list" data-chat_group_body="recent" data-chat-scroll="recent">
+						<div id="chat_recent">
+							<% foreach my $rc ( @{$recent_chats} ) { %>
+								<% my $fallback = $rc->{'kind'} eq 'sms' ? &subs::lang('chat.sms') : $rc->{'kind'} eq 'lora' ? &subs::lang('chat.lora') : &subs::lang('chat.tickets'); %>
+								<% my $preview = length($rc->{'preview'} || '') ? $rc->{'preview'} : $fallback; %>
+								<div class="chat_friend chat_recent" uuid="<%= $rc->{'uuid'} %>" phone="<%= $rc->{'phone'} %>" data-section="<%= $rc->{'section'} %>" data-kind="<%= $rc->{'kind'} %>" name="<%= $rc->{'name'} %>">
+									<span class="chat_friend_avatar"><%= substr($rc->{'name'}, 0, 1) %></span>
+									<span class="chat_friend_text">
+										<span class="chat_friend_name"><%= $rc->{'name'} %></span>
+										<span class="chat_friend_meta chat_recent_preview"><% if (!$rc->{'incoming'}) { %><%= &subs::lang('people.me') %>: <% } %><%= $preview %></span>
+									</span>
+									<span class="time chat_recent_when" timestamp="<%= $rc->{'timestamp'} %>"></span>
+								</div>
+							<% } %>
+						</div>
+					</div>
+				</div>
+				<% } %>
 				<div class="chat_rail_group">
 					<button type="button" class="chat_rail_subhead" data-chat_group="people" aria-expanded="true">
 						<span class="chat_rail_subhead_label"><%= &subs::lang('people') %></span>

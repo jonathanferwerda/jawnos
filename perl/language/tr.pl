@@ -186,6 +186,7 @@ $catalog{'tr'} = {
 		'people.aka' => 'Ayrıca denir',
 		'people.aka_add' => 'Bir ad ekle',
 		'chat.sections' => 'Bölümler',
+		'chat.recent' => 'Son',
 		'chat.phone_numbers' => 'Telefon numaraları',
 		'chat.known' => 'Bilinen',
 		'chat.unknown' => 'Bilinmeyen',

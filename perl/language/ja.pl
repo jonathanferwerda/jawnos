@@ -186,6 +186,7 @@ $catalog{'ja'} = {
 		'people.aka' => '別名',
 		'people.aka_add' => '名前を追加',
 		'chat.sections' => 'セクション',
+		'chat.recent' => '最近',
 		'chat.phone_numbers' => '電話番号',
 		'chat.known' => '既知',
 		'chat.unknown' => '不明',

@@ -186,6 +186,7 @@ $catalog{'ar'} = {
 		'people.aka' => 'يُسمى أيضًا',
 		'people.aka_add' => 'أضف اسمًا',
 		'chat.sections' => 'الأقسام',
+		'chat.recent' => 'الأخيرة',
 		'chat.phone_numbers' => 'أرقام الهاتف',
 		'chat.known' => 'معروف',
 		'chat.unknown' => 'غير معروف',

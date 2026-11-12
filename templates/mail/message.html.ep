@@ -15,13 +15,13 @@
 		<% } %>
 <% } else { %>
 	<% my $chat = $c->stash('chat_ui') ? 1 : 0; %>
-	<% my $incoming = $me ne $m->{'manager_file'}; %>
+	<% my $incoming = &subs::mail_message_incoming($m, $me); %>
 	<% my $body_text = $m->{'decrypted'} eq 'yes' ? ($m->{'body'} || '') : ''; %>
 	<span decrypted="<%= $m->{'decrypted'} || 'no' %>" <% if ($m->{'ephemeral'}) { %>ephemeral="yes" title="A visitor's words are heard live; they are not kept"<% } %> uuid="<%= $m->{'uuid'} %>" class="mailbox_message<% if ($chat) { %> chat_bubble <%= $incoming ? 'chat_in' : 'chat_out' %><% } %>"<% if (!$chat) { %> style="font-size:20px;width:60%;"<% } %> timestamp="<%= $m->{'timestamp'} %>">
 		<% if ($chat) { %>
 			<span class="chat_bubble_inner">
 				<span class="time chat_time" timestamp="<%= $m->{'timestamp'} %>"></span>
-				<% if ($incoming) { %><b class="chat_sender"><%= $m->{'manager_file'} %></b><% } %>
+				<% if ($incoming) { %><b class="chat_sender"><%= $m->{'manager_file'} %></b><% } else { %><b class="chat_sender"><%= &subs::lang('people.me') %></b><% } %>
 				<span class="mailbox_message_contents chat_text" uuid="<%= $m->{'uuid'} %>"><%= $body_text %></span>
 			</span>
 		<% } elsif ($incoming) { %>

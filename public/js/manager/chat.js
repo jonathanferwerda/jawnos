@@ -135,14 +135,17 @@ $(document).on('click', '.mail_subsection', function () {
 	setTimeout(chatTransportOptions, 50);
 });
 
-// A friend opens their one conversation; the dropdown names how the next
-// message travels. The thread is the ticket when they hold one, else the phone
-// number - only the road taken is sent to the reader, so a ticket-holder's
-// thread is their ticket (and the sms history filed under their number re-keys
-// onto it) instead of the phone thread shadowing it.
-$(document).on('click', '#chat_friends .chat_friend', function () {
+// A friend - or a recent conversation, which is the same thing with its last
+// words under the name - opens their one conversation; the dropdown names how
+// the next message travels. The thread is the ticket when they hold one, else
+// the phone number - only the road taken is sent to the reader, so a
+// ticket-holder's thread is their ticket (and the sms history filed under their
+// number re-keys onto it) instead of the phone thread shadowing it. A LoRa row
+// opens the LoRa section, which has no phone or ticket of its own.
+$(document).on('click', '.chat_shell .chat_friend', function () {
 	var uuid = $(this).attr('uuid') || '';
 	var phone = $(this).attr('phone') || '';
+	var section = $(this).attr('data-section') || (uuid ? 'tickets' : 'sms');
 	chatScrollSave();
 	chatRailAutoClose();
 	localStorage.setItem('mail_contact', uuid);
@@ -150,10 +153,10 @@ $(document).on('click', '#chat_friends .chat_friend', function () {
 	var data = {
 		timestamp: Date.now(),
 		window_maker: 'yes',
-		incoming_data: JSON.stringify({ settings: [{ setting: 'subsection', value: uuid ? 'tickets' : 'sms' }] })
+		incoming_data: JSON.stringify({ settings: [{ setting: 'subsection', value: section }] })
 	};
 	if (uuid) { data.mail_contact = uuid; }
-	else { data.phone = phone; }
+	else if (phone) { data.phone = phone; }
 	$.ajax({
 		url: '/manager/chat',
 		type: 'GET',
@@ -163,7 +166,7 @@ $(document).on('click', '#chat_friends .chat_friend', function () {
 			chatDressMessages();
 			// no ticket: the next message must travel by sms, or it would file on
 			// a name that has no ticket thread to read it back from
-			if (!uuid) { $('#mail_transport').val('sms'); }
+			if (!uuid && section == 'sms') { $('#mail_transport').val('sms'); }
 			chatTransportOptions();
 			chatBackRestore();
 			mailWebSocketStart();

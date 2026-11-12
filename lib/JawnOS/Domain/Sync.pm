@@ -737,25 +737,35 @@ my $returner = '';
 				# the transcript stays for the next attempt, as Phone.pm does.
 				next unless defined $message && length $message;
 				my $sender = &subs::format_name($app);
+				# The phone's store is the direction: a row typed into it is 'sent',
+				# every delivered text is 'inbox'. Writing both as 'public' let the
+				# depublicizer mark an incoming text 'sent', and the thread then drew
+				# both halves as the house's own words.
+				my $outgoing = ($l->{'type'} eq 'sent');
+				my $status = $outgoing ? 'sent' : ($l->{'type'} eq 'draft' ? 'draft' : 'inbox');
+				my $author = ($outgoing || $l->{'type'} eq 'draft') ? (&subs::manager_file_maker() || '') : $sender;
 				my $suuid = &subs::random_string_creator(44);
 				&subs::db_insert('mailbox', {
 					uuid => $suuid,
 					timestamp => $time,
 					server_time => &subs::rightNow(),
 					body => $message,
-					manager_file => $sender,
-					status => 'public', #$l->{'type'},
+					manager_file => $author,
+					status => $status,
 					phone => $phone,
 				});
-				# the telephone accepted a message: the browsers hear about it
-				&subs::mail_arrival({
-					c => $c,
-					uuid => $suuid,
-					phone => $phone,
-					manager_file => $sender,
-					body => $l->{'body'},
-					status => 'public'
-				});
+				# a delivered text is news; the person's own sent copy was already
+				# drawn when they sent it, so importing it must not announce it again
+				if ($status eq 'inbox') {
+					&subs::mail_arrival({
+						c => $c,
+						uuid => $suuid,
+						phone => $phone,
+						manager_file => $author,
+						body => $l->{'body'},
+						status => $status
+					});
+				}
 			}
 
 			my $q = &subs::db_query('select * from appointments where app = ? and type = ? and timestamp = ?', $app,'sms',$time);

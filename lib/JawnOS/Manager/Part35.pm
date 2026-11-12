@@ -602,8 +602,11 @@ sub ws_url_for {
 
 sub mail_depublicizer($c) {
 	my $me = &manager_file_maker($c->session('name'));
-	my $publics = &subs::db_query('select * from mailbox where status=?', 'public');
-	my $public = $publics->hashes;
+	my $public = &subs::db_query("select * from mailbox where status=? and coalesce(phone,'') = ''", 'public')->hashes;
+	# A phone row's status is its direction. Incoming sms is filed public by an
+	# older import and must not be promoted to 'sent' here, or the thread shows
+	# the house's own name on both halves (the sms reader keeps the sender
+	# instead).
 	foreach my $p ( @{$public} ) {
 		my $enc_body = &subs::note_encrypter(&subs::session_suds($c), $p->{'body'}, $p->{'timestamp'});
 		&subs::db_query('update mailbox set status=?, body =? where uuid =?', 'sent', $enc_body, $p->{'uuid'});

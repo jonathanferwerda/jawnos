@@ -186,6 +186,7 @@ $catalog{'bn'} = {
 		'people.aka' => 'এছাড়াও বলা হয়',
 		'people.aka_add' => 'একটি নাম যোগ করুন',
 		'chat.sections' => 'বিভাগ',
+		'chat.recent' => 'সাম্প্রতিক',
 		'chat.phone_numbers' => 'ফোন নম্বর',
 		'chat.known' => 'পরিচিত',
 		'chat.unknown' => 'অপরিচিত',

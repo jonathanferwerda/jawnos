@@ -196,6 +196,98 @@ sub mail_checker($c) {
 		}
 	}
 
+	# Chat's recent list: the conversations that have actually spoken lately,
+	# newest first. It is built from the mailbox rather than the friends list so a
+	# thread still shows after its person is renamed or its ticket closes; a
+	# person's ticket thread and the sms filed under their number are one row
+	# because the same friend row joins them. A phone row is labelled by the
+	# number's own app (a stranger's digits until the house names them).
+	my $recent_chats = [];
+	if ($scope && $scope eq 'chat' && $privilege eq 'citizen') {
+		my %ticket_by_app;
+		my %ticket_by_uuid;
+		foreach my $t ( @{$contacts || []} ) {
+			$ticket_by_uuid{$t->{'uuid'}} = $t;
+			my $key = lc($t->{'app'} || $t->{'contact_name'} || $t->{'name'} || '');
+			$ticket_by_app{$key} ||= $t if length $key;
+		}
+		my $rows = &subs::db_query(
+			"select uuid, timestamp, server_time, status, phone, contact, body, manager_file, ost
+			 from mailbox
+			 where coalesce(status,'') not in ('ignored','draft')
+			   and coalesce(contact,'') != 'pen'
+			   and ((phone is not null and phone != '') or (contact is not null and contact != ''))
+			 order by rowid desc limit 2000"
+		)->hashes;
+		my %best;
+		foreach my $r ( @{$rows} ) {
+			my $contact = $r->{'contact'} || '';
+			my $ph = $r->{'phone'} || '';
+			next if $contact eq 'pen';
+			my ($key, $kind, $section, $uuid, $name, $phone) = ('', '', '', '', '', '');
+			if ($contact eq 'lora') {
+				$key = 'lora';
+				$kind = 'lora';
+				$section = 'lora';
+				$name = &subs::lang('chat.lora');
+			}
+			elsif (length $contact && $ticket_by_uuid{$contact}) {
+				my $t = $ticket_by_uuid{$contact};
+				$key = 'c:' . $t->{'uuid'};
+				$uuid = $t->{'uuid'};
+				$phone = $ph;
+				$kind = 'chat';
+				$section = 'tickets';
+				$name = &subs::format_name($t->{'name'} || $t->{'contact_name'} || $t->{'app'} || '');
+			}
+			elsif (length $ph) {
+				my @apps = &subs::contact_apps('phone', $ph);
+				my ($named) = grep { $_ !~ /^\d+$/ } @apps;
+				my $app = $named || $apps[0] || $ph;
+				my $t = $ticket_by_app{lc($app)};
+				if ($t) {
+					$key = 'c:' . $t->{'uuid'};
+					$uuid = $t->{'uuid'};
+					$phone = $ph;
+					$kind = 'chat';
+					$section = 'tickets';
+					$name = &subs::format_name($t->{'name'} || $t->{'contact_name'} || $t->{'app'} || '');
+				}
+				else {
+					$key = 'p:' . $ph;
+					$phone = $ph;
+					$kind = 'sms';
+					$section = 'sms';
+					$name = &subs::format_name($app);
+				}
+			}
+			next unless length $key;
+			my $ts = $r->{'timestamp'};
+			$ts = 0 unless defined $ts && $ts =~ /^\d+$/ && $ts > 0;
+			my $sort = $ts || (($r->{'server_time'} || 0) + 0);
+			next if $best{$key} && $best{$key}->{'sort'} >= $sort;
+			$best{$key} = {
+				key => $key, kind => $kind, section => $section,
+				uuid => $uuid, phone => $phone, name => $name,
+				sort => $sort, timestamp => $ts || $r->{'server_time'} || '',
+				incoming => &subs::mail_message_incoming($r, $me) ? 1 : 0,
+				row => $r,
+			};
+		}
+		foreach my $b ( values %best ) {
+			my $r = delete $b->{'row'};
+			my $body = &mail_text_chars(&subs::note_decrypter(&subs::suds_grabber(), $r->{'body'}, $r->{'ost'}));
+			$body =~ s/<br\s*\/?>/ /gi;
+			$body =~ s/<[^>]+>//g;
+			$body =~ s/\s+/ /g;
+			$body =~ s/^\s+|\s+$//g;
+			$body = substr($body, 0, 90) . (length($body) > 90 ? '…' : '');
+			$b->{'preview'} = $body;
+		}
+		$recent_chats = [ sort { ($b->{'sort'} || 0) <=> ($a->{'sort'} || 0) } values %best ];
+		splice(@{$recent_chats}, 12) if scalar @{$recent_chats} > 12;
+	}
+
 	if ($settings->{'subsection'} eq 'list') {
 		# The list is every distinct address tuple the mailbox holds, built from
 		# whatever $gb::social_constructs names today, so adding or retiring a
@@ -293,8 +385,23 @@ sub mail_checker($c) {
 	my $mails = ref($q) eq 'ARRAY' ? $q : ($q ? $q->hashes : []);
 	&subs::subprocessor(sub {
 		foreach my $m ( @{$mails} ) {
+			# A public row is a word the house heard and may file. For an sms the
+			# phone wrote, the status is the direction: filing it as 'sent' (as the
+			# depublicizer used to) drew both halves of the thread as the house's
+			# own. Keep the incoming text incoming, and seal a plain body on the
+			# way so the next read can open it.
 			if ($m->{'status'} eq 'public' && $c->session('privilege') eq 'citizen') {
-				&subs::db_query('update mailbox set status=?, body =? where uuid =?', 'sent', &subs::note_encrypter(&subs::session_suds($c), $m->{'body'}, $m->{'timestamp'}), $m->{'uuid'});
+				if ($m->{'phone'}) {
+					my $incoming = &subs::mail_message_incoming($m, $me);
+					my $body = &mail_text_chars(&subs::note_decrypter(&subs::suds_grabber(),$m->{'body'},$m->{'ost'}));
+					$body = $m->{'body'} unless length $body;
+					$m->{'body'} = $body;
+					$m->{'status'} = $incoming ? 'inbox' : 'sent';
+					&subs::db_query('update mailbox set status=?, body =? where uuid =?', $m->{'status'}, &subs::note_encrypter(&subs::session_suds($c), $body, $m->{'timestamp'}), $m->{'uuid'});
+				}
+				else {
+					&subs::db_query('update mailbox set status=?, body =? where uuid =?', 'sent', &subs::note_encrypter(&subs::session_suds($c), $m->{'body'}, $m->{'timestamp'}), $m->{'uuid'});
+				}
 			}
 			else {
 				$m->{'body'} = &mail_text_chars(&subs::note_decrypter(&subs::suds_grabber(),$m->{'body'},$m->{'ost'}));
@@ -350,6 +457,7 @@ sub mail_checker($c) {
 		template => ($scope && $scope eq 'email') ? 'apps/email' : ($scope && $scope eq 'chat') ? 'apps/chat' : ($scope && $scope eq 'pen') ? 'apps/pen' : 'mail/mailbox',
 		mail => $mails,
 		friends => $friends,
+		recent_chats => $recent_chats,
 		sms_lines => \@sms_lines,
 		window_maker => $c->param('window_maker'),
 		background_colour => $bgc,

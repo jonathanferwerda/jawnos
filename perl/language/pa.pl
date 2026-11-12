@@ -186,6 +186,7 @@ $catalog{'pa'} = {
 		'people.aka' => 'ਇਹ ਵੀ ਕਿਹਾ ਜਾਂਦਾ ਹੈ',
 		'people.aka_add' => 'ਨਾਮ ਸ਼ਾਮਲ ਕਰੋ',
 		'chat.sections' => 'ਭਾਗ',
+		'chat.recent' => 'ਹਾਲੀਆ',
 		'chat.phone_numbers' => 'ਫ਼ੋਨ ਨੰਬਰ',
 		'chat.known' => 'ਜਾਣੇ-ਪਛਾਣੇ',
 		'chat.unknown' => 'ਅਣਜਾਣ',

@@ -186,6 +186,7 @@ $catalog{'ru'} = {
 		'people.aka' => 'Также называется',
 		'people.aka_add' => 'Добавить имя',
 		'chat.sections' => 'Разделы',
+		'chat.recent' => 'Недавние',
 		'chat.phone_numbers' => 'Номера телефонов',
 		'chat.known' => 'Известные',
 		'chat.unknown' => 'Неизвестные',

@@ -186,6 +186,7 @@ $catalog{'es'} = {
 		'people.aka' => 'También llamado',
 		'people.aka_add' => 'Añadir un nombre',
 		'chat.sections' => 'Secciones',
+		'chat.recent' => 'Recientes',
 		'chat.phone_numbers' => 'Números de teléfono',
 		'chat.known' => 'Conocidos',
 		'chat.unknown' => 'Desconocidos',

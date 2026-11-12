@@ -186,6 +186,7 @@ $catalog{'zh'} = {
 		'people.aka' => '也称为',
 		'people.aka_add' => '添加名称',
 		'chat.sections' => '分区',
+		'chat.recent' => '最近',
 		'chat.phone_numbers' => '电话号码',
 		'chat.known' => '已知',
 		'chat.unknown' => '未知',

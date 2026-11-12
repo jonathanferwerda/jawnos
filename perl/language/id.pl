@@ -186,6 +186,7 @@ $catalog{'id'} = {
 		'people.aka' => 'Juga disebut',
 		'people.aka_add' => 'Tambah nama',
 		'chat.sections' => 'Bagian',
+		'chat.recent' => 'Terbaru',
 		'chat.phone_numbers' => 'Nomor telepon',
 		'chat.known' => 'Dikenal',
 		'chat.unknown' => 'Tidak dikenal',

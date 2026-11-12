@@ -261,6 +261,26 @@
 	font-size: inherit;
 }
 
+.chat_shell #chat_recent {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+}
+
+/* A recent row is a friend row with the thread's last words under the name and
+   the time at the edge; the preview never pushes that time out of the rail. */
+.chat_shell .chat_recent_when {
+	flex: 0 0 auto;
+	margin-left: auto;
+	font-size: 10px;
+	opacity: .6;
+	white-space: nowrap;
+}
+
+.chat_shell .chat_recent_preview {
+	max-width: 100%;
+}
+
 .chat_shell .chat_friend {
 	display: flex;
 	align-items: center;
@@ -464,7 +484,7 @@
 }
 
 .chat_shell .chat_out .chat_sender {
-	display: none;
+	color: #fff;
 }
 
 .chat_shell .chat_text {
@@ -578,9 +598,9 @@
 .chat_shell .chat_composer_bar #message {
 	flex: 1 1 auto;
 	width: auto;
-	min-height: 28px;
+	min-height: 34px;
 	max-height: 140px;
-	height: 28px;
+	height: 34px;
 	margin: 0;
 	padding: 6px 4px;
 	border: 0;

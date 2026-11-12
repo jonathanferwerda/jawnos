@@ -186,6 +186,7 @@ $catalog{'ko'} = {
 		'people.aka' => '다른 이름',
 		'people.aka_add' => '이름 추가',
 		'chat.sections' => '섹션',
+		'chat.recent' => '최근',
 		'chat.phone_numbers' => '전화번호',
 		'chat.known' => '알려진',
 		'chat.unknown' => '알 수 없음',
