@@ -221,7 +221,7 @@ function windowDraggable(win) {
 						if (this === win[0]) { return; }
 						if (windowTiledStackId(this) !== dragFromStack) { return; }
 						if (windowTiledSlot(this) <= startSlot) { return; }
-						dragGroup.push({ el: this, left: parseFloat($(this).css('left')) || 0, top: parseFloat($(this).css('top')) || 0 });
+						dragGroup.push({ el: this, left: parseFloat($(this).css('left')) || 0, top: parseFloat($(this).css('top')) || 0, width: parseFloat($(this).css('width')) || 0, height: parseFloat($(this).css('height')) || 0 });
 					});
 					dragGroup.sort(function(a, b) { return windowTiledSlot(a.el) - windowTiledSlot(b.el); });
 				}

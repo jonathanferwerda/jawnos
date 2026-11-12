@@ -898,24 +898,49 @@ function windowTiledRect(win) {
 	};
 }
 
+// A block member's box where the drag picked it up: its start left/top with the
+// size it has (a drag moves a window, it does not resize one). A group recorded
+// without a start box (a caller that never moved it) is measured where it sits.
+function windowTiledHomeRect(g) {
+	var el = (g && g.el) ? g.el : g;
+	if (!g || g.left === undefined) { return windowTiledRect(el); }
+	return windowTiledBox(g);
+}
+
+// A box with its far edges filled in, whichever pair a caller gave: the drag
+// records left/top/width/height, and the stack tests compare right/bottom.
+function windowTiledBox(r) {
+	if (!r) { return null; }
+	return {
+		left: r.left,
+		top: r.top,
+		right: (r.right !== undefined) ? r.right : r.left + (r.width || 0),
+		bottom: (r.bottom !== undefined) ? r.bottom : r.top + (r.height || 0)
+	};
+}
+
 // The ground one pile covers: its members' boxes taken together (all piles when
-// no stack is named). A window being dragged leaves its present box out of the
-// sum and puts the box it was picked up from there instead (home), so dragging
-// back over its old place finds the pile while carrying it away does not.
-function windowTiledArea(homeEl, homeRect, stack) {
+// no stack is named). A window being dragged - the held one and every window the
+// drag carries with it - leaves its present box out of the sum and puts the box
+// it was picked up from there instead (home), so carrying a whole block away
+// leaves the pile behind while a drag back over its old place finds it.
+function windowTiledArea(homeEl, homeRect, stack, group) {
 	var area = null;
-	var skip = homeEl ? $(homeEl)[0] : null;
+	var homes = [];
+	if (homeEl) { homes.push({ el: $(homeEl)[0], rect: windowTiledBox(homeRect) }); }
+	$.each(group || [], function(i, g) {
+		homes.push({ el: (g && g.el) ? g.el : g, rect: windowTiledHomeRect(g) });
+	});
 	$('.wind').each(function() {
 		if (stack !== undefined && windowTiledStackId(this) !== stack) { return; }
+		var home = null;
+		for (var h = 0; h < homes.length; h++) {
+			if (homes[h].el === this) { home = homes[h].rect; break; }
+		}
 		var r;
-		if (skip && this === skip) {
-			if (!homeRect) { return; }
-			r = {
-				left: homeRect.left,
-				top: homeRect.top,
-				right: (homeRect.right !== undefined) ? homeRect.right : homeRect.left + homeRect.width,
-				bottom: (homeRect.bottom !== undefined) ? homeRect.bottom : homeRect.top + homeRect.height
-			};
+		if (home !== null) {
+			if (!home) { return; }
+			r = home;
 		}
 		else if (windowTiledSlot(this) >= 0) {
 			r = windowTiledRect(this);
@@ -1200,14 +1225,19 @@ function windowTiledInsertAt(win, to, stack) {
 
 // The window under the pointer that is not in a pile - an anchored or a free
 // one. A half or maximized window owns its own place and does not become a pile
-// head, and a hidden window is not under the pointer at all.
-function windowTiledWindowAt(at, skip) {
+// head, and a hidden window is not under the pointer at all. The windows the drag
+// carries are skipped: they sit under the pointer too, and one of them must never
+// be mistaken for the window the pile would start on.
+function windowTiledWindowAt(at, skip, group) {
 	if (!at) { return null; }
 	var skipEl = skip ? $(skip)[0] : null;
+	var carried = [];
+	$.each(group || [], function(i, g) { carried.push((g && g.el) ? g.el : g); });
 	var found = null;
 	var found_z = -Infinity;
 	$('.wind').each(function() {
 		if (skipEl && this === skipEl) { return; }
+		if (carried.indexOf(this) >= 0) { return; }
 		if (windowTiledSlot(this) >= 0) { return; }
 		if ($(this).css('display') == 'none') { return; }
 		var view = $(this).attr('view');
@@ -1225,21 +1255,22 @@ function windowTiledWindowAt(at, skip) {
 // pointer (the front one when two overlap), start a new pile on a window that is
 // not in one, or nothing at all. `from` names the pile the window was picked up
 // from, whose ground uses `home` - the box it left - so a drag back over its own
-// place still finds the pile after the others have stepped up.
-function windowTiledDropTarget(at, skip, home, from) {
+// place still finds the pile after the others have stepped up. `group` is carried
+// with the held window, so its ground is measured where the block was picked up.
+function windowTiledDropTarget(at, skip, home, from, group) {
 	if (!at) { return null; }
 	var skipEl = skip ? $(skip)[0] : null;
 	var best = null;
 	var best_z = -Infinity;
 	var ids = windowTiledStackIds();
 	$.each(ids, function(i, id) {
-		var area = windowTiledArea(skipEl, (id === from) ? home : null, id);
+		var area = windowTiledArea(skipEl, (id === from) ? home : null, id, group);
 		if (!area || !windowTiledOverStack(area, at)) { return; }
 		var z = windowTiledStackTopZ(id);
 		if (z >= best_z) { best_z = z; best = { stack: id }; }
 	});
 	if (best) { return best; }
-	var under = windowTiledWindowAt(at, skip);
+	var under = windowTiledWindowAt(at, skip, group);
 	return under ? { window: under } : null;
 }
 
@@ -1285,7 +1316,7 @@ function windowTiledDragLeave(win, at, home, from, group) {
 	win = $(win);
 	if (from === undefined) { from = (windowTiledSlot(win) >= 0) ? windowTiledStackId(win) : null; }
 	if (!at || windowTiledSlot(win) < 0) { return; }
-	if (windowTiledOverStack(windowTiledArea(win, home, from), at)) { return; }
+	if (windowTiledOverStack(windowTiledArea(win, home, from, group), at)) { return; }
 	windowTiledBlockLeave(win, group);
 }
 
@@ -1341,6 +1372,9 @@ function windowTiledStackStart(win, head, group) {
 	head = $(head);
 	if (!head.length || head[0] === win[0]) { return; }
 	var els = windowTiledBlockEls(win, group);
+	// the head must be a window of its own: if the pointer is over one of the
+	// carried windows, there is no pile to start on, only the block itself
+	if (els.indexOf(head[0]) >= 0) { return; }
 	var stack = windowTiledNewStack();
 	var at = windowTiledRect(head);
 	var anchor = at.left + ',' + at.top;
@@ -1377,7 +1411,7 @@ function windowTiledJoinOrLeave(win, at, home, from, group) {
 	if (from === undefined) { from = (windowTiledSlot(win) >= 0) ? windowTiledStackId(win) : null; }
 	// leaving happened in the hand; the drop only decides where it lands
 	windowTiledDragLeave(win, at, home, from, group);
-	var target = windowTiledDropTarget(at, win, home, from);
+	var target = windowTiledDropTarget(at, win, home, from, group);
 	if (!target) {
 		if (win.attr('pre_dimensioned') == 1) {
 			// an anchored window put down on open desk keeps its anchor
@@ -1405,7 +1439,7 @@ function windowTiledPreview(win, at, home, from, group) {
 	windowTiledDragLeave(win, at, home, from, group);
 	var ww = $(window).width();
 	if (at.x < (ww / 10) || at.x > (ww - (ww / 10))) { box.hide(); return; }
-	var target = windowTiledDropTarget(at, win, home, from);
+	var target = windowTiledDropTarget(at, win, home, from, group);
 	var to;
 	var anchor;
 	if (target && target.stack) {
