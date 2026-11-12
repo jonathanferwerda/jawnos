@@ -256,8 +256,15 @@ sub tick {
 	# gateway to arm again. Arming into a dying line spoke a second plan into it.
 	return if $state eq 'in_call' || $state eq 'done';
 	&keep_bluetooth_ready();
-	# the same settings the Phone app saves, defaults included
+	# the same settings the Phone app saves, defaults included. Silence is the
+	# king of the phone: the reception is armed even when the person turned it
+	# off, and a call that names no flow lands on the receptionist.
 	my $settings = &subs::phone_ivr_settings();
+	if (eval { &subs::silence_active() }) {
+		$settings->{'enabled'} = 'yes';
+		$settings->{'flows'}->{'unknown'} = 'ivr'
+			if ref $settings->{'flows'} eq 'HASH';
+	}
 	if (($settings->{'enabled'} || 'no') ne 'yes') {
 		$client->call({ cmd => 'cancel' }) if $state && $state ne 'idle';
 		return;

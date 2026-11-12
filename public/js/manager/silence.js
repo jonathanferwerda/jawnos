@@ -9,6 +9,7 @@
 // the server also pushes jawnosSilence over the console channel, so a phone and
 // a laptop go quiet at the same moment.
 var jawnosSilenceState = { active: false };
+var jawnosSilenceKnown = false;
 
 function jawnosSilenceActive() {
 	return !!jawnosSilenceState.active;
@@ -45,6 +46,7 @@ function jawnosSilenceApply(state) {
 		try { state = JSON.parse(state); } catch (e) { state = {}; }
 	}
 	var active = false;
+	var was = !!jawnosSilenceState.active;
 	if (typeof state === 'number') { active = !!state; }
 	else if (typeof state === 'boolean') { active = state; }
 	else if (state && typeof state === 'object') { active = !!state.active; }
@@ -52,6 +54,21 @@ function jawnosSilenceApply(state) {
 	jawnosSilenceState.active = active;
 	jawnosSilenceScan(document);
 	$('body').attr('data-jawnos-silence', active ? 'on' : 'off');
+	// The native half is what silences the alarm, ringer, notifications and
+	// every other stream. Hand it the state at once instead of waiting for the
+	// five-minute phone sync, then refresh the phone's facts so a call arriving
+	// with no page up already knows the house is quiet.
+	if (!jawnosSilenceKnown || was !== active) {
+		try {
+			if (window.JawnPhone && typeof window.JawnPhone.setSilence === 'function') {
+				window.JawnPhone.setSilence(active ? '1' : '0');
+			}
+		} catch (e) { }
+		if (typeof jawnPhoneSync === 'function') {
+			try { jawnPhoneSync(); } catch (e) { }
+		}
+	}
+	jawnosSilenceKnown = true;
 	return active;
 }
 

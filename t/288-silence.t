@@ -1,4 +1,4 @@
-# tests-for: lib/JawnOS/Domain/Silence.pm lib/JawnOS/Controller/manager_silence.pm lib/JawnOS/Routes/manager_silence.pm lib/JawnOS/Routes.pm lib/JawnOS/Domain/Phone.pm lib/JawnOS/Manager/Part12.pm lib/JawnOS/Controller/manager_phone.pm lib/JawnOS/Manager/Part05.pm lib/JawnOS/Domain/Notify.pm lib/JawnOS/Domain/Say.pm lib/JawnOS/Domain/Clock.pm lib/JawnOS/Domain/Clock2.pm lib/JawnOS/Manager/Part02.pm lib/JawnOS/Manager/Part30.pm lib/JawnOS/Manager/Core1_tables_hooks.pm lib/JawnOS/Domain/Log.pm lib/JawnOS/Controller/manager_configure4.pm perl/hooks.pl perl/Music.pl perl/help/topics_configure.pl templates/configure/appointment_list.html.ep public/js/manager/silence.js public/js/manager/websocket/00_console_router.js
+# tests-for: lib/JawnOS/Domain/Silence.pm lib/JawnOS/Controller/manager_silence.pm lib/JawnOS/Routes/manager_silence.pm lib/JawnOS/Routes.pm lib/JawnOS/Domain/Phone.pm lib/JawnOS/Manager/Part12.pm lib/JawnOS/Controller/manager_phone.pm lib/JawnOS/Manager/Part05.pm lib/JawnOS/Domain/Notify.pm lib/JawnOS/Domain/Say.pm lib/JawnOS/Domain/Clock.pm lib/JawnOS/Domain/Clock2.pm lib/JawnOS/Manager/Part02.pm lib/JawnOS/Manager/Part30.pm lib/JawnOS/Manager/Core1_tables_hooks.pm lib/JawnOS/Domain/Log.pm lib/JawnOS/Controller/manager_configure4.pm perl/hooks.pl perl/Music.pl perl/help/topics_configure.pl templates/configure/appointment_list.html.ep public/js/manager/silence.js public/js/manager/websocket/00_console_router.js perl/Reception.pl public/js/manager/manager/02_web_nfc.js
 # covers:    Silence: the house-wide state, the local mixer snapshot (with the IVR
 #            sinks kept audible), the appointment start/stop hook, the phone's
 #            forced receptionist route, the audio gates, and the browser guard.
@@ -200,5 +200,11 @@ like($js, qr/MutationObserver/, 'and media that arrives later');
 like($js, qr{/manager/silence}, 'and follows the house state');
 like(source('lib/JawnOS/Manager/Core1_tables_hooks.pm'), qr{/js/manager/silence\.js}, 'the guard rides the manager bundle');
 like(source('perl/help/topics_configure.pl'), qr/Silence, beside Unique and Permanent/, 'the Configure help explains the box');
+my $phone_js = source('public/js/manager/manager/02_web_nfc.js');
+like($phone_js, qr/silence: \(response && response\.silence\)/, 'the phone facts carry the silence state');
+like($phone_js, qr/setSilence/, 'and hand it to the native bridge');
+like($js, qr/JawnPhone\.setSilence/, 'the browser pushes silence to the native half');
+like($js, qr/jawnPhoneSync/, 'and refreshes the phone facts on a change');
+like(source('perl/Reception.pl'), qr/silence_active.*enabled/s, 'the reception worker arms during silence');
 
 done_testing();

@@ -271,9 +271,14 @@ function jawnPhoneSync() {
 						blocked: (response && response.blocked) || [],
 						names: (response && response.names) || {},
 						relationships: (response && response.relationships) || {},
+						routes: (response && response.routes) || {},
 						avatars: (response && response.avatars) || {},
-						ivr: (response && response.ivr) || {}
+						ivr: (response && response.ivr) || {},
+						silence: (response && response.silence) ? 1 : 0
 					}));
+					if (typeof window.JawnPhone.setSilence === 'function') {
+						window.JawnPhone.setSilence((response && response.silence) ? '1' : '0');
+					}
 				} catch (e) { }
 			}
 		});
