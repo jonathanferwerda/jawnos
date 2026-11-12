@@ -1,4 +1,4 @@
-# tests-for: lib/JawnOS/Manager/Part22.pm public/css/manager.css public/js/manager/windows.js public/js/manager/windows/01_storage.js public/js/manager/windows/02_fit.js public/js/manager/windows/03_stack.js
+# tests-for: lib/JawnOS/Manager/Part22.pm public/css/manager.css public/js/manager/windows.js public/js/manager/windows/01_storage.js public/js/manager/windows/02_fit.js public/js/manager/windows/03_stack.js public/js/manager/manager/09_app_back.js
 # covers:    A window's place used to be saved automatically and invisibly, so a desk full of windows became a memory of wh...
 
 use strict;
@@ -22,6 +22,7 @@ my $maker = read_file("$root/lib/JawnOS/Manager/Part22.pm");
 my $fit = read_file("$root/public/js/manager/windows/02_fit.js");
 my $stack = read_file("$root/public/js/manager/windows/03_stack.js");
 my $storage = read_file("$root/public/js/manager/windows/01_storage.js");
+my $back = read_file("$root/public/js/manager/manager/09_app_back.js");
 my $windows = read_file("$root/public/js/manager/windows.js");
 my $css = read_file("$root/public/css/manager.css");
 
@@ -87,6 +88,17 @@ like($fit, qr/windowTiledLeave\(win, false\)/, 'pinning takes it out of the tile
 like($storage, qr/tile: \$\(v\)\.attr\('tile'\)/, 'the tile slot is saved with the window');
 like($storage, qr/free: \$\(v\)\.attr\('free'\)/, 'a dragged-out window is saved as free');
 like($storage, qr/if \(v\.tile !== undefined \|\| v\.free == 1\)/, 'a restore hands its slot to the window that opens');
+
+# --- a press holds its slot before the window arrives ---------------------
+# Clicking down the clothesline fires several opens; their responses can land in
+# any order. The slot is reserved at the press, so the stack keeps the order the
+# presses were made in.
+like($windows, qr/function windowTiledReserve\(timestamp, app\)/, 'a press reserves its slot');
+like($windows, qr/windowTiledPending\[window_stamp\]/, 'the window claims the slot reserved for its stamp');
+like($windows, qr/if \(taken\) \{/, 'a filled slot steps its occupant down');
+like($storage, qr/windowTiledReserve\(timestamp, i\)/, 'the app opener reserves the press slot');
+like($back, qr/windowTiledReserve\(timestamp, app\)/, 'the clothesline grabber reserves the press slot');
+like($back, qr/windowTiledRelease\(timestamp\)/, 'a grabber that never answers frees its slot');
 
 # --- the tile does not count an anchored window ----------------------------
 # The live tiler is exercised in a bare context: windows.js needs jQuery for
@@ -258,6 +270,27 @@ for (let n = 0; n < 7; n++) {
 	eq(fresh.style.left, 50 * n, 'open ' + (n + 1) + ' steps across ' + n);
 }
 
+// Clicking down the clothesline fires the opens faster than their responses:
+// the second press's window can land first. The press reserves its slot, so the
+// first press still settles above it and nothing is covered.
+ctx.windowTiledRestore = {};
+ctx.windowTiledPending = {};
+dom = [];
+ctx.windowTiledReserve('101', 'app_a');
+ctx.windowTiledReserve('102', 'app_b');
+const second = new El('window_102', { pre_dimensioned: '0' });
+dom.push(second);
+ctx.windowReorganizer('window_102');
+eq(second.attr('tile'), '1', 'the second press answers into its reserved slot');
+const first = new El('window_101', { pre_dimensioned: '0' });
+dom.push(first);
+ctx.windowReorganizer('window_101');
+eq(first.attr('tile'), '0', 'the first press takes the slot it reserved');
+eq(second.attr('tile'), '1', 'and does not push the second down a place');
+eq(first.style.top, 0, 'the first press sits at the head of the cascade');
+eq(second.style.top, 40, 'and the second one step below it');
+eq(Object.keys(ctx.windowTiledPending).length, 0, 'both reservations are claimed');
+
 // A desk built by hand: tiled windows get their slot the way the app gives it,
 // a pinned or dragged-out window has none.
 function desk(specs) {
@@ -360,9 +393,9 @@ ctx.windowTiledRestore = { window_c: { tile: '1' } };
 ctx.windowReorganizer('window_c');
 eq(late.attr('tile'), '1', 'a restored window keeps the slot it held before the reload');
 eq(late.style.top, 40, 'and lands in that step of the cascade');
-eq(arriving[1].attr('tile'), '3', 'the window already below it steps down a slot');
+eq(arriving[1].attr('tile'), '2', 'the window below keeps its slot - the hole was the place');
 ctx.windowTiledSettle();
-eq(arriving[1].attr('tile'), '2', 'and the settle takes the hole out of the numbers');
+eq(arriving[1].attr('tile'), '2', 'and the settle leaves it there');
 eq(arriving[1].style.top, 80, 'with the window back on its own step');
 
 // A drag dropped off the stack leaves the tile, and the stack closes behind it.

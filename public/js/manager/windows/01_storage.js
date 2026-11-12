@@ -184,6 +184,11 @@ function appWindowOpener(i,timestamp,v) {
 		return;
 	}
 	timestamp = jawnosWindowTimestamp(timestamp);
+	// a fresh press holds the slot it will take even if a later press's window
+	// renders first; a restore brings its own slot in v, not a new place
+	if (!v || v.type != 'window') {
+		if (typeof windowTiledReserve === 'function') { windowTiledReserve(timestamp, i); }
+	}
 	if (typeof jawnosLoadApp === 'function') {
 		jawnosLoadApp(i, function () { appWindowOpenerNow(i, timestamp, v); });
 		return;
@@ -388,7 +393,14 @@ function appWindowOpenerNow(i,timestamp,v) {
 					delete windowTiledRestore[i];
 
 				},
-				error: function(e) { console.log(e); }
+				error: function(e) {
+					// the press never made a window: give its reserved slot back
+					if (typeof windowTiledRelease === 'function') {
+						windowTiledRelease(timestamp);
+						windowTiledSettleSoon();
+					}
+					console.log(e);
+				}
 			});
 		}
 	}
@@ -426,6 +438,13 @@ function appWindowOpenerNow(i,timestamp,v) {
 				if (v.visible != 'yes') {
 					window.hide();
 				}
+			},
+			error: function(e) {
+				if (typeof windowTiledRelease === 'function') {
+					windowTiledRelease(timestamp);
+					windowTiledSettleSoon();
+				}
+				console.log(e);
 			}
 		});
 	}

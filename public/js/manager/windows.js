@@ -593,6 +593,9 @@ function windowMaker(response, fragment) {
 			}
 		}
 	} catch (err) { console.log('no win: ', err); }
+	// a press that answered with a window already on the desk has no new slot:
+	// give the reserved one back
+	windowTiledRelease(timestamp);
 	windowDimensionSetter($('#' + window_id));
 	return window_id;
 }
@@ -634,15 +637,44 @@ function windowTiledSlot(win) {
 	return isNaN(slot) ? -1 : slot;
 }
 
-// The next free slot at the end of the stack. A window that opens joins there;
-// a pinned or free window has no slot and so does not push it along.
+// The next free slot at the end of the stack: the tiled windows already on the
+// desk and the presses still waiting for their windows. A pinned or free
+// window has no slot and so does not push it along; a reservation nobody ever
+// answers gives its slot back after a while.
 function windowNextTileSlot() {
 	var next = 0;
 	$('.wind').each(function() {
 		var slot = windowTiledSlot(this);
 		if (slot >= next) { next = slot + 1; }
 	});
+	var now = Date.now();
+	var pruned = false;
+	for (var stamp in windowTiledPending) {
+		var p = windowTiledPending[stamp];
+		if (!p) { continue; }
+		if (now - p.at > 20000) { delete windowTiledPending[stamp]; pruned = true; continue; }
+		if (p.slot >= next) { next = p.slot + 1; }
+	}
+	// an open that never made a window leaves a hole where it had reserved; tidy
+	// the stack once the other opens have landed
+	if (pruned && typeof windowTiledSettleSoon === 'function') { windowTiledSettleSoon(); }
 	return next;
+}
+
+// Hold the next slot for a press before its window exists. A window already on
+// the desk answers a press by refreshing, not by taking a new slot.
+function windowTiledReserve(timestamp, app) {
+	if (!timestamp || !app || windowTiledPending[timestamp]) { return; }
+	var open = false;
+	$('.wind').each(function() {
+		if ($(this).attr('app') === app) { open = true; return false; }
+	});
+	if (open) { return; }
+	windowTiledPending[timestamp] = { slot: windowNextTileSlot(), at: Date.now() };
+}
+
+function windowTiledRelease(timestamp) {
+	if (timestamp) { delete windowTiledPending[timestamp]; }
 }
 
 // The step a tiled window takes across, per slot. The same 50 windowReorganizer
@@ -655,6 +687,11 @@ var windowTileAcrossStep = 50;
 // appWindowOpenerNow hands it over just before the window is rendered, and
 // windowReorganizer consumes it.
 var windowTiledRestore = {};
+// A slot held for an app the person has pressed but whose window has not
+// rendered yet, keyed by the timestamp the server will use for its id. A later
+// press's window can arrive first, so the earlier press's place has to be kept
+// for it; windowReorganizer claims the reservation when the window lands.
+var windowTiledPending = {};
 var windowTiledDragging = false;
 var windowTiledSettleTimer = null;
 
@@ -805,6 +842,11 @@ function windowTiledRelayout() {
 function windowTiledSettle() {
 	if (windowTiledDragging && $('.wind.ui-draggable-dragging').length) { windowTiledSettleSoon(); return; }
 	windowTiledDragging = false;
+	var now = Date.now();
+	for (var stamp in windowTiledPending) {
+		var p = windowTiledPending[stamp];
+		if (!p || now - p.at > 20000) { delete windowTiledPending[stamp]; }
+	}
 	var order = [];
 	$('.wind').each(function() {
 		var slot = windowTiledSlot(this);
@@ -823,14 +865,22 @@ function windowTiledSettleSoon() {
 // A restored window takes the slot it held before the reload, and a window
 // already in that slot steps down to make room. That keeps the saved order when
 // the responses arrive in another order, and keeps two windows out of one slot
-// when a fresh one opened while the restore was still coming in.
+// when a fresh one opened while the restore was still coming in. A slot still
+// empty is its own place: filling it moves nobody.
 function windowTiledInsertAt(win, to) {
 	win = $(win);
+	var taken = false;
 	$('.wind').each(function() {
 		if (this === win[0]) { return; }
-		var s = windowTiledSlot(this);
-		if (s >= to) { $(this).attr('tile', String(s + 1)); }
+		if (windowTiledSlot(this) === to) { taken = true; return false; }
 	});
+	if (taken) {
+		$('.wind').each(function() {
+			if (this === win[0]) { return; }
+			var s = windowTiledSlot(this);
+			if (s >= to) { $(this).attr('tile', String(s + 1)); }
+		});
+	}
 	win.attr('tile', String(to));
 	windowTiledRelayout();
 }
@@ -913,9 +963,13 @@ function windowReorganizer(window_id) {
 			winCount = winCount - 1;
 	//	}
 		// if this window is being restored, it brings the slot it held before the
-		// reload (or the fact that it had been dragged out of the tile)
+		// reload (or the fact that it had been dragged out of the tile); a fresh
+		// press brings the slot reserved when it was pressed
+		var window_stamp = String(window_id).replace(/^window_/, '');
 		var restored = windowTiledRestore[window_app];
 		delete windowTiledRestore[window_app];
+		var pending = windowTiledPending[window_stamp];
+		if (pending) { delete windowTiledPending[window_stamp]; }
 		topLevelNow(win);
 		var thisWinTop = Number(numeral(win.css('top')).format());
 		if (jws != undefined && isJson(jws) && !windowPhoneChecker()) {
@@ -948,7 +1002,12 @@ function windowReorganizer(window_id) {
 				// opened while a restore is still arriving is never covered.
 				var tileCount = windowTiledSlot(win);
 				if (tileCount < 0) {
-					if (restored && restored.tile !== undefined && restored.tile !== null && restored.tile !== '') {
+					if (pending) {
+						// the slot was held when the app was pressed, so an earlier press
+						// that answered later still lands above a later one
+						tileCount = pending.slot;
+					}
+					else if (restored && restored.tile !== undefined && restored.tile !== null && restored.tile !== '') {
 						tileCount = parseInt(restored.tile, 10);
 					}
 					if (isNaN(tileCount) || tileCount < 0) { tileCount = windowNextTileSlot(); }

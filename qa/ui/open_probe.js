@@ -18,7 +18,13 @@ const fs = require('fs');
 const { spawn } = require('child_process');
 
 const ticketFile = process.argv[2];
-const apps = (process.argv[3] || 'notes,clock,weather,power,sound,network,help').split(',');
+const apps = (process.argv.slice(3).join(',') || 'notes,clock,weather,power,sound,network,help').split(',');
+// The clothesline's pills call appointmentGrabber (a centre view), not
+// appWindowOpener; --grabber drives that path.
+let opener = 'window';
+let rapid = false;
+if (apps[0] === '--grabber') { opener = 'grabber'; apps.shift(); }
+if (apps[0] === '--rapid') { rapid = true; apps.shift(); }
 if (!ticketFile) {
 	console.error('usage: open_probe.js <ticket-file> [app,app,...]');
 	process.exit(2);
@@ -33,6 +39,7 @@ const CHROME = process.env.CHROMIUM || '/usr/bin/chromium';
 const PORT = Number(process.env.OPEN_PROBE_PORT || 9333);
 const PROFILE = process.env.OPEN_PROBE_PROFILE || '/tmp/jawnos-open-probe';
 const SETTLE = Number(process.env.OPEN_PROBE_SETTLE || 900);
+const RAPID_STAGGER = Number(process.env.OPEN_PROBE_STAGGER || 700);
 const RELOAD_WAIT = Number(process.env.OPEN_PROBE_RELOAD_WAIT || 12000);
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
@@ -81,6 +88,8 @@ async function main() {
 			m.error ? rej(new Error(JSON.stringify(m.error))) : res(m.result);
 		} else if (m.method === 'Runtime.exceptionThrown') {
 			errors.push((m.params.exceptionDetails.exception || {}).description || m.params.exceptionDetails.text);
+		} else if (m.method === 'Runtime.consoleAPICalled' && m.params.type === 'error') {
+			errors.push((m.params.args || []).map(a => a.value !== undefined ? a.value : a.description).join(' '));
 		}
 	};
 	const call = (method, params, ms) => new Promise((res, rej) => {
@@ -177,7 +186,33 @@ async function main() {
 
 	let failed = false;
 	const snapshots = [];
-	for (const app of apps) {
+	if (rapid) {
+		// a person clicking down the rail does not wait for one window before the
+		// next; press the apps a beat apart and let every response land on its own
+		const name = opener === 'grabber' ? 'appointmentGrabber' : 'appWindowOpener';
+		const callFor = a => opener === 'grabber'
+			? name + '(' + JSON.stringify(a) + ', Date.now())'
+			: name + '(' + JSON.stringify(a) + ', Date.now(), { visible: \'yes\' })';
+		for (const app of apps) {
+			await evaluate(callFor(app));
+			await sleep(RAPID_STAGGER);
+		}
+		await sleep(12000);
+		const windows = await evaluate(read);
+		snapshots.push({ app: 'rapid', windows });
+		console.log('RAPID ' + apps.join(',') + ' count=' + windows.length);
+		for (const w of windows) {
+			console.log('  ' + String(w.app).padEnd(10) + ' tile=' + String(w.tile).padEnd(4)
+				+ ' free=' + String(w.free).padEnd(5) + ' top=' + String(w.top).padEnd(8)
+				+ ' left=' + String(w.left).padEnd(8) + ' w=' + w.width);
+		}
+		if (windows.length < apps.length) {
+			console.log('FAIL rapid: ' + (apps.length - windows.length) + ' app(s) did not open');
+			failed = true;
+		}
+		if (check('rapid', windows).bad.length) { failed = true; }
+	}
+	for (const app of (rapid ? [] : apps)) {
 		if (app === '--reload') {
 			// let the 10s heartbeat save the layout, then reload and let the
 			// manager restore what was on the desk
@@ -201,7 +236,12 @@ async function main() {
 		}
 		let opened = false;
 		for (let attempt = 0; attempt < 3 && !opened; attempt++) {
-			await evaluate("appWindowOpener(" + JSON.stringify(app) + ", Date.now(), { visible: 'yes' })");
+			if (opener === 'grabber') {
+				await evaluate("appointmentGrabber(" + JSON.stringify(app) + ", Date.now())");
+			}
+			else {
+				await evaluate("appWindowOpener(" + JSON.stringify(app) + ", Date.now(), { visible: 'yes' })");
+			}
 			for (let i = 0; i < 100; i++) {
 				await sleep(100);
 				try {
@@ -226,6 +266,15 @@ async function main() {
 	const last = snapshots.length ? snapshots[snapshots.length - 1].windows : [];
 	const final = check('final', last);
 	if (final.bad.length) { failed = true; }
+	// the presses were made in list order, so the stack must read in that order:
+	// a response that lands late must not move its window below a later press
+	const pressed = apps.filter(a => a.charAt(0) !== '-');
+	const ordered = last.filter(w => w.tile !== undefined && w.tile !== null && w.tile !== '')
+		.sort((a, b) => Number(a.tile) - Number(b.tile)).map(w => w.app);
+	if (ordered.join(',') !== pressed.join(',')) {
+		console.log('FAIL order: stack is ' + ordered.join(',') + '; pressed ' + pressed.join(','));
+		failed = true;
+	}
 	console.log('FINAL count=' + last.length + ' slots=' + JSON.stringify(final.slots));
 	if (errors.length) {
 		console.log('PAGE ERRORS ' + JSON.stringify(errors.slice(0, 8)));

@@ -461,6 +461,9 @@ function appointmentGrabber(app,timestamp,source) {
 	if (timestamp == '') {
 		timestamp = jawnosWindowTimestamp();
 	}
+	// The press holds the slot its window will take, so a later press whose
+	// response arrives sooner cannot jump above it in the stack.
+	if (typeof windowTiledReserve === 'function') { windowTiledReserve(timestamp, app); }
 	if (source == 'onchange') {
 		waiter = 500;
 	}
@@ -476,6 +479,13 @@ function appointmentGrabber(app,timestamp,source) {
 				jpRestore(app,jpR);
 				var done = Date.now();
 				console.log(app + ' ' + numeral(done - timestamp).value());
+			},
+			error: function(e) {
+				if (typeof windowTiledRelease === 'function') {
+					windowTiledRelease(timestamp);
+					windowTiledSettleSoon();
+				}
+				console.log(e);
 			}
 		});
 	},waiter);
