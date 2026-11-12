@@ -63,6 +63,15 @@ like($fit, qr/var scale = Math\.min\(now_w \/ saved_w, now_h \/ saved_h\);/, 'th
 like($fit, qr/win\.attr\('place_restoring', '1'\)/, 'restoring does not ratchet the saved place down');
 like($windows, qr/windowPlaceRestore\(\$\('#' \+ window_id\)\)/, 'the open path restores a pinned place');
 
+# --- closing a window closes its step in the cascade -----------------------
+# A closed tiled window leaves no hole: the windows that opened after it step
+# back up into its slot, the way a phone's pile re-parks. Pinned windows own
+# their place, so they neither make nor close a step.
+like($stack, qr/windowTiledGapClose\(win\)/, 'closing a window steps the tiled windows below it up');
+like($windows, qr/function windowTiledGapClose\(win\) \{\n\tif \(windowPhoneChecker\(\)\) \{ return; \}/,
+	'the gap closer leaves a phone to its own pile');
+like($windows, qr/tileCount \* windowTileAcrossStep/, 'a window is placed with the tile across step');
+
 # --- the tile does not count an anchored window ----------------------------
 # The live tiler is exercised in a bare context: windows.js needs jQuery for
 # two document handlers at load, and nothing else to reach windowReorganizer.
@@ -209,6 +218,49 @@ eq(with_pin.fresh.style.top, without_pin.fresh.style.top, 'nor down');
 let three_with = open([{ id: 'window_a', pinned: true }, { id: 'window_b', pinned: false }, { id: 'window_c', pinned: false }], 'window_d');
 eq(three_with.fresh.style.left, 100, 'the third tiled window still steps twice');
 eq(three_with.fresh.style.top, 80, 'down two bars');
+
+// closing a tiled window closes the step it leaves: what opened after it steps
+// back up into its slot, one bar and one across-step, and everything above the
+// closed window stays where it was.
+function desk(specs) {
+	dom = specs.map(function (w) {
+		var el = new El(w.id, { pre_dimensioned: w.pinned ? '1' : '0' });
+		el.style.left = (w.left === undefined ? 0 : w.left) + 'px';
+		el.style.top = (w.top === undefined ? 0 : w.top) + 'px';
+		return el;
+	});
+	return dom;
+}
+
+let closed = desk([
+	{ id: 'window_a', top: 0, left: 0 },
+	{ id: 'window_b', top: 40, left: 50 },
+	{ id: 'window_c', top: 80, left: 100 },
+	{ id: 'window_d', top: 120, left: 150 }
+]);
+ctx.windowTiledGapClose('#window_c');
+eq(closed[0].style.top, '0px', 'a window above the closed one stays put');
+eq(closed[1].style.left, '50px', 'and keeps its step across');
+eq(closed[3].style.top, 80, 'the window below steps up one bar');
+eq(closed[3].style.left, 100, 'and across one step');
+
+let pinned_closed = desk([
+	{ id: 'window_a', pinned: true, top: 20, left: 20 },
+	{ id: 'window_b', top: 60, left: 60 },
+	{ id: 'window_c', top: 100, left: 100 }
+]);
+ctx.windowTiledGapClose('#window_a');
+eq(pinned_closed[1].style.top, '60px', 'closing a pinned window leaves the tile alone');
+eq(pinned_closed[2].style.top, '100px', 'so nothing steps up');
+
+let pinned_below = desk([
+	{ id: 'window_a', top: 0, left: 0 },
+	{ id: 'window_b', pinned: true, top: 30, left: 300 },
+	{ id: 'window_c', top: 80, left: 100 }
+]);
+ctx.windowTiledGapClose('#window_a');
+eq(pinned_below[1].style.top, '30px', 'a pinned window below the closed one keeps its place');
+eq(pinned_below[2].style.top, 40, 'an unpinned window after it steps up');
 
 process.exit(failures ? 1 : 0);
 JS

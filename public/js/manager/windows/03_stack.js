@@ -95,6 +95,9 @@ function closeWindow(timestamp) {
 	if ((app == 'gallery' || app == 'music' || app == 'folders') && typeof jawnosMediaLockdown === 'function') {
 		jawnosMediaLockdown(app, true);
 	}
+	// the tiled windows below close the step this one leaves, the way a phone's
+	// pile does; a pinned window has no step to close
+	if (typeof windowTiledGapClose === 'function') { windowTiledGapClose(win); }
 	$('#window_' + timestamp ).remove();
 	$('#window_icon_' + timestamp).remove();
 	// Closing the window that owns the dock puts the keys away with it, rather

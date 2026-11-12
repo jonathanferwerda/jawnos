@@ -634,11 +634,41 @@ function windowTiledCount() {
 	return count;
 }
 
+// The step a tiled window takes across, per slot. The same 50 windowReorganizer
+// cascades with, kept in one place so closing a gap steps back by the step the
+// window was placed with.
+var windowTileAcrossStep = 50;
+
+// Closing an unpinned window on the desk closes the gap it leaves. The tile
+// cascade is the open order: each unpinned window sits one bar lower and one
+// across-step further than the one opened before it. So the windows that came
+// after the closed one step back up into its slot - up by their own title bar
+// (the step they were placed with) and across by the tile's step. A pinned
+// window owns its place: it neither takes a slot nor steps, and closing one
+// leaves no gap at all. A phone re-parks its whole pile in windowStacker, so it
+// takes none of this.
+function windowTiledGapClose(win) {
+	if (windowPhoneChecker()) { return; }
+	win = $(win);
+	if (!win.length || win.attr('pre_dimensioned') == 1) { return; }
+	var below = false;
+	$('.wind').each(function() {
+		if (this === win[0]) { below = true; return; }
+		if (!below || $(this).attr('pre_dimensioned') == 1) { return; }
+		var bar = $(this).find('.top_navbar');
+		var vAdvance = (bar.outerHeight() || 40) - (parseFloat(bar.css('border-top-width')) || 0);
+		$(this).css({
+			// a window dragged toward an edge steps back only as far as the desk
+			'left': Math.max(0, (parseFloat($(this).css('left')) || 0) - windowTileAcrossStep),
+			'top': Math.max(windowTopLimit(), (parseFloat($(this).css('top')) || 0) - vAdvance)
+		});
+	});
+}
+
 function windowReorganizer(window_id) {
 	var windows = [];
 	var startingV = windowTopLimit();
 	var vSpace = 40;
-	var hSpace = 50;
 	if (!window_id) { 
 		$('.wind').each(function(i,v) {
 			windows.push($(v).attr('id'));
@@ -679,7 +709,7 @@ function windowReorganizer(window_id) {
 			// another as a single line.
 			var vAdvance = vStep - (parseFloat(win.find('.top_navbar').css('border-top-width')) || 0);
 			if (!windowPhoneChecker() && $('#' + window_id).attr('pre_dimensioned') != 1) {
-				win.css({ 'left': tileCount * 50, 'top': tileCount * vAdvance + startingV });
+				win.css({ 'left': tileCount * windowTileAcrossStep, 'top': tileCount * vAdvance + startingV });
 				win.show();
 
 
