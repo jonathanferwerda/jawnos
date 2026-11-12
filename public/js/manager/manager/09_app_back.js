@@ -6,6 +6,14 @@ function openApps() {
 	return apps;
 }
 
+// A press on a title bar brings that window forward. On the tile, forward is the
+// foot of the pile, so the tile walks it there; a free or pinned window rises in
+// place.
+function pressWindow(win) {
+	if (typeof windowTiledPress === 'function') { windowTiledPress(win); return; }
+	topLevelNow(win);
+}
+
 $(document).on('click', '.top_navbar, .neighbour_window, .room_appt', function(e) {
 	var clicker = $(this);
 	var win = clicker.closest('.wind');
@@ -23,29 +31,29 @@ $(document).on('click', '.top_navbar, .neighbour_window, .room_appt', function(e
 	var timestamp = Date.now();
 	if (text == 'music' ) {
 		var music_window = $('#music').closest('.wind').attr('id');
-		topLevelNow($('#' + music_window));
+		pressWindow($('#' + music_window));
 	}
 	else if (text == 'video') {
 		var video_window = $('#video').closest('.wind').attr('id');
-		topLevelNow($('#' + video_window));
+		pressWindow($('#' + video_window));
 	}
 	else if ( text == 'gallery' ) {
 		var wind = win.attr('id');
-		topLevelNow($('#' + wind));
+		pressWindow($('#' + wind));
 	}
 	else if (text == 'marker') {
 		var wind = $('#marker').closest('.wind').attr('id');
-		topLevelNow($('#' + wind));
+		pressWindow($('#' + wind));
 	}
 	else if (text == 'mailbox') {
 		var wind = $('#marker').closest('.wind').attr('id');
-		topLevelNow($('#' + wind));
+		pressWindow($('#' + wind));
 	}
 	else if (text == 'terminal') {
-		topLevelNow(win);
+		pressWindow(win);
 	}
 	else {
-		topLevelNow(win);
+		pressWindow(win);
 	}
 	if ($('.wind[app="' + text +'"]').length == 0) {
 		appointmentGrabber(text,Date.now());

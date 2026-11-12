@@ -78,6 +78,13 @@ like($windows, qr/\$\(this\)\.attr\('tile', String\(s - 1\)\)/, 'a step up bring
 like($windows, qr/function windowTiledJoinOrLeave\(win, at, home\)/, 'a drop either joins the stack or leaves it');
 like($windows, qr/function windowTiledInsertSlot\(at, skip\)/, 'the dragged title bar names the slot');
 like($windows, qr/function windowTiledInsertAt\(win, to\)/, 'a restored window inserts at its saved slot');
+like($windows, qr/function windowTiledFront\(\)/, 'the pile front follows the slots');
+like($windows, qr/jawnosWindowFocusApply/, 'the front title-bar cue follows the pile');
+like($windows, qr/function windowTiledBump\(win\)/, 'a title-bar press walks a tiled window to the foot');
+like($windows, qr/function windowTiledPress\(win\)/, 'a press is tiled-aware');
+like($back, qr/pressWindow\(/, 'the title-bar handler presses through the tile');
+like($stack, qr/windowTiledPress\(clicked\)/, 'a press in a tiled body brings it forward through the pile');
+like($windows, qr/windowTiledPendingApp\[window_app\]/, 'a bespoke opener claims the latest press for its app');
 like($windows, qr/function windowTiledPreview\(win, at, home\)/, 'a drag draws the slot it would join');
 like($windows, qr/windowTiledArea\(win, slot >= 0 \? home : null\)/, 'the stack ground uses the box the window left, not where it is');
 like($fit, qr/windowTiledPreview\(win, mouse_position\(\), dragFromTile\)/, 'the drag shows the preview from where it was picked up');
@@ -95,7 +102,7 @@ like($storage, qr/if \(v\.tile !== undefined \|\| v\.free == 1\)/, 'a restore ha
 # presses were made in.
 like($windows, qr/function windowTiledReserve\(timestamp, app\)/, 'a press reserves its slot');
 like($windows, qr/windowTiledPending\[window_stamp\]/, 'the window claims the slot reserved for its stamp');
-like($windows, qr/candidate\.app === window_app/, 'a bespoke opener that changes its stamp still claims the press');
+like($windows, qr/var pending_stamp = windowTiledPendingApp\[window_app\]/, 'a bespoke opener that changes its stamp claims the latest press for its app');
 like($windows, qr/if \(taken\) \{/, 'a filled slot steps its occupant down');
 like($storage, qr/windowTiledReserve\(timestamp, i\)/, 'the app opener reserves the press slot');
 like($back, qr/windowTiledReserve\(timestamp, app\)/, 'the clothesline grabber reserves the press slot');
@@ -303,6 +310,19 @@ ctx.windowReorganizer('window_999');
 eq(help_win.attr('tile'), '0', 'a bespoke opener claims the press by app when the stamp differs');
 eq(Object.keys(ctx.windowTiledPending).length, 0, 'the press is spent after the bespoke window lands');
 
+// Two presses for one app: a bespoke opener must claim the latest press, never
+// an older reservation that would drop it back into an earlier slot.
+ctx.windowTiledPending = {};
+ctx.windowTiledPendingApp = {};
+dom = [];
+ctx.windowTiledReserve('301', 'help');
+ctx.windowTiledReserve('302', 'help');
+const help_late = new El('window_999', { pre_dimensioned: '0', app: 'help' });
+dom.push(help_late);
+ctx.windowReorganizer('window_999');
+eq(help_late.attr('tile'), '1', 'a bespoke opener claims the latest press, not an older one');
+eq(ctx.windowTiledPending['301'] !== undefined, true, 'the older press is left to time out');
+
 // A desk built by hand: tiled windows get their slot the way the app gives it,
 // a pinned or dragged-out window has none.
 function desk(specs) {
@@ -327,6 +347,36 @@ function desk(specs) {
 	});
 	return dom;
 }
+
+// The pile's depth is its slot order: the foot of the pile is the front, and
+// pressing a tiled title bar walks that window down to the foot.
+let pile = desk([
+	{ id: 'window_a', top: 0, left: 0 },
+	{ id: 'window_b', top: 40, left: 50 },
+	{ id: 'window_c', top: 80, left: 100 }
+]);
+let focus_calls = 0;
+ctx.jawnosWindowFocusApply = function () { focus_calls++; };
+ctx.windowTiledFront();
+let z0 = Number(pile[0].style['z-index']);
+let z1 = Number(pile[1].style['z-index']);
+let z2 = Number(pile[2].style['z-index']);
+eq(z1 > z0 && z2 > z1, true, 'z climbs with the slot, so the foot of the pile is in front');
+eq(focus_calls > 0, true, 'the front title-bar cue follows the pile');
+
+let bumped = desk([
+	{ id: 'window_a', top: 0, left: 0 },
+	{ id: 'window_b', top: 40, left: 50 },
+	{ id: 'window_c', top: 80, left: 100 }
+]);
+ctx.windowTiledBump('#window_a');
+eq(bumped[0].attr('tile'), '2', 'a pressed tiled window walks to the foot of the pile');
+eq(bumped[1].attr('tile'), '0', 'the windows above it close up');
+eq(bumped[2].attr('tile'), '1', 'and keep their order');
+eq(bumped[0].style.top, 80, 'the pressed window sits at the foot');
+eq(Number(bumped[0].style['z-index']) > Number(bumped[1].style['z-index']), true, 'and wears the front');
+ctx.windowTiledBump('#window_a');
+eq(bumped[0].attr('tile'), '2', 'pressing the foot window leaves the pile alone');
 
 // closing a tiled window closes the step it leaves: the windows below it in the
 // stack step back up into its slot, one bar and one across-step, and everything

@@ -99,6 +99,8 @@ function closeWindow(timestamp) {
 	// pile does; a pinned window has no step to close
 	if (typeof windowTiledGapClose === 'function') { windowTiledGapClose(win); }
 	$('#window_' + timestamp ).remove();
+	// the pile's front follows its slots, and the closed window no longer has one
+	if (typeof windowTiledFront === 'function') { windowTiledFront(); }
 	$('#window_icon_' + timestamp).remove();
 	// Closing the window that owns the dock puts the keys away with it, rather
 	// than leaving them aimed at a field that is no longer on the page.
@@ -144,7 +146,12 @@ $(document).on('click', '.wind', function(e) {
 		windowStacker(app, true);
 		return;
 	}
-	topLevelNow($(this));
+	var clicked = $(this);
+	// forward is the foot of the pile, so a press anywhere in a tiled window is
+	// the same walk a press on its title bar makes; the window already at the foot
+	// of the pile does not move
+	if (typeof windowTiledPress === 'function') { windowTiledPress(clicked); return; }
+	topLevelNow(clicked);
 });
 
 // A scroll is a touch on that window. Scrolling a window that is not at the
@@ -156,6 +163,8 @@ $(document).on('wheel', '.wind', function() {
 	if (windowPhoneChecker()) { return; }
 	var win = $(this);
 	if (windowIsFront(win)) { return; }
+	// the tile's depth is its slot order; a wheel does not restack a tiled window
+	if (typeof windowTiledSlot === 'function' && windowTiledSlot(win) >= 0) { return; }
 	topLevelNow(win);
 });
 

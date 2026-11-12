@@ -652,7 +652,12 @@ function windowNextTileSlot() {
 	for (var stamp in windowTiledPending) {
 		var p = windowTiledPending[stamp];
 		if (!p) { continue; }
-		if (now - p.at > 20000) { delete windowTiledPending[stamp]; pruned = true; continue; }
+		if (now - p.at > 20000) {
+			delete windowTiledPending[stamp];
+			if (p.app && windowTiledPendingApp[p.app] === stamp) { delete windowTiledPendingApp[p.app]; }
+			pruned = true;
+			continue;
+		}
 		if (p.slot >= next) { next = p.slot + 1; }
 	}
 	// an open that never made a window leaves a hole where it had reserved; tidy
@@ -671,10 +676,16 @@ function windowTiledReserve(timestamp, app) {
 	});
 	if (open) { return; }
 	windowTiledPending[timestamp] = { slot: windowNextTileSlot(), at: Date.now(), app: app };
+	windowTiledPendingApp[app] = String(timestamp);
 }
 
 function windowTiledRelease(timestamp) {
-	if (timestamp) { delete windowTiledPending[timestamp]; }
+	if (!timestamp) { return; }
+	var pending = windowTiledPending[timestamp];
+	delete windowTiledPending[timestamp];
+	if (pending && pending.app && windowTiledPendingApp[pending.app] === String(timestamp)) {
+		delete windowTiledPendingApp[pending.app];
+	}
 }
 
 // The step a tiled window takes across, per slot. The same 50 windowReorganizer
@@ -692,6 +703,9 @@ var windowTiledRestore = {};
 // press's window can arrive first, so the earlier press's place has to be kept
 // for it; windowReorganizer claims the reservation when the window lands.
 var windowTiledPending = {};
+// the latest press for each app, so a bespoke opener that changes its timestamp
+// claims the press it is answering and never an older reservation for the app
+var windowTiledPendingApp = {};
 var windowTiledDragging = false;
 var windowTiledSettleTimer = null;
 
@@ -712,6 +726,7 @@ function windowTiledStepUp(slot) {
 		});
 		$(this).attr('tile', String(s - 1));
 	});
+	windowTiledFront();
 }
 
 // Closing a tiled window closes the slot it held. A pinned or free window has
@@ -834,6 +849,68 @@ function windowTiledRelayout() {
 		var slot = windowTiledSlot(this);
 		if (slot >= 0) { windowTiledPlace(this, slot); }
 	});
+	windowTiledFront();
+}
+
+// The tile is a pile: the window at the foot is the one in front. Its depth is
+// the slot order, so the bottom step wears the highest z, and a window dragged
+// or pressed into the middle is behind the ones below it.
+function windowTiledFront() {
+	if (windowPhoneChecker()) { return; }
+	var order = [];
+	$('.wind').each(function() {
+		var slot = windowTiledSlot(this);
+		if (slot >= 0) { order.push({ el: this, slot: slot }); }
+	});
+	if (!order.length) { return; }
+	order.sort(function(a, b) { return a.slot - b.slot; });
+	var base = Number(top_level_now) || 100;
+	$('.wind').each(function() {
+		var z = parseInt($(this).css('z-index'), 10);
+		if (!isNaN(z) && z > base) { base = z; }
+	});
+	$.each(order, function(i, w) {
+		var win = $(w.el);
+		var z = base + i + 1;
+		win.css({ 'z-index': z, '--frame_z': Math.max(2147483000, z + 3) });
+		win.find('.window_contents').css({ 'z-index': z });
+		win.find('.top_navbar').css({ 'z-index': z + 1 });
+		win.attr('last_top', Date.now());
+	});
+	top_level_now = base + order.length;
+	if (typeof jawnosTaskbarPinsRefresh === 'function') { jawnosTaskbarPinsRefresh(); }
+	// the front window wears the full-strength title bar, so that cue has to
+	// follow the pile as well as the taskbar
+	if (typeof jawnosWindowFocusApply === 'function') { jawnosWindowFocusApply(); }
+}
+
+// A press on a tiled window's title bar walks it to the foot of the pile - it
+// leaves its slot, the stack closes up, and it joins at the end - so it becomes
+// the front. Returns false for a free or pinned window, which keeps its place
+// and just rises.
+function windowTiledBump(win) {
+	if (windowPhoneChecker()) { return false; }
+	win = $(win);
+	if (win.attr('pre_dimensioned') == 1) { return false; }
+	var slot = windowTiledSlot(win);
+	if (slot < 0) { return false; }
+	var last = true;
+	$('.wind').each(function() {
+		if (this === win[0]) { return; }
+		if (windowTiledSlot(this) > slot) { last = false; return false; }
+	});
+	if (last) { windowTiledFront(); return true; }
+	win.removeAttr('tile');
+	windowTiledStepUp(slot);
+	windowTiledInsertAt(win, windowNextTileSlot());
+	if (typeof windowDimensionSetter === 'function') { windowDimensionSetter(win); }
+	if (typeof windowSaver === 'function') { windowSaver(); }
+	return true;
+}
+
+function windowTiledPress(win) {
+	if (typeof windowTiledBump === 'function' && windowTiledBump(win)) { return; }
+	topLevelNow($(win));
 }
 
 // A restore inserts windows at the slots they saved, which can leave gaps while
@@ -845,7 +922,10 @@ function windowTiledSettle() {
 	var now = Date.now();
 	for (var stamp in windowTiledPending) {
 		var p = windowTiledPending[stamp];
-		if (!p || now - p.at > 20000) { delete windowTiledPending[stamp]; }
+		if (!p || now - p.at > 20000) {
+			if (p && p.app && windowTiledPendingApp[p.app] === stamp) { delete windowTiledPendingApp[p.app]; }
+			delete windowTiledPending[stamp];
+		}
 	}
 	var order = [];
 	$('.wind').each(function() {
@@ -971,17 +1051,20 @@ function windowReorganizer(window_id) {
 		var pending = windowTiledPending[window_stamp];
 		if (!pending) {
 			// some bespoke openers render with a timestamp of their own, not the one
-			// the press carried; the reservation still names the app
-			for (var pending_stamp in windowTiledPending) {
-				var candidate = windowTiledPending[pending_stamp];
-				if (candidate && candidate.app === window_app) {
-					pending = candidate;
-					delete windowTiledPending[pending_stamp];
-					break;
-				}
+			// the press carried; the latest press for that app is the one to claim
+			var pending_stamp = windowTiledPendingApp[window_app];
+			if (pending_stamp) {
+				pending = windowTiledPending[pending_stamp];
+				delete windowTiledPending[pending_stamp];
+				if (pending) { delete windowTiledPendingApp[window_app]; }
 			}
 		}
-		if (pending) { delete windowTiledPending[window_stamp]; }
+		if (pending) {
+			delete windowTiledPending[window_stamp];
+			if (pending.app && windowTiledPendingApp[pending.app] === window_stamp) {
+				delete windowTiledPendingApp[pending.app];
+			}
+		}
 		topLevelNow(win);
 		var thisWinTop = Number(numeral(win.css('top')).format());
 		if (jws != undefined && isJson(jws) && !windowPhoneChecker()) {
