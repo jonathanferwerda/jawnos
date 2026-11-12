@@ -135,6 +135,27 @@ ok($verify_at > $exit_at && $verify_at < $launch_at,
 my $starts = () = $ordered =~ /Start-Process -FilePath 'wscript\.exe'/g;
 is($starts, 1, 'the house is started exactly once');
 
+# --- the house is started with a clean reload environment --------------------
+# A listening Mojolicious process exports MOJO_REUSE: the listening sockets it
+# and its prefork siblings share. The helper inherits a worker's environment,
+# and a new house that carries MOJO_REUSE tries to reopen those descriptors. On
+# Windows the handles are not in the new process, so President dies in
+# Mojo::IOLoop::Server::listen and the update leaves the house down.
+like($ordered, qr/Remove-Item Env:MOJO_REUSE/, 'the helper drops the inherited MOJO_REUSE');
+like($ordered, qr/Remove-Item Env:MOJO_LISTEN/, 'and the inherited MOJO_LISTEN');
+my $clean_at  = index($ordered, 'Remove-Item Env:MOJO_REUSE');
+my $reuse_at  = index($ordered, 'Start-Process -FilePath \'wscript.exe\'');
+ok($clean_at >= 0 && $clean_at < $reuse_at, 'before it starts the house');
+
+my $clean = subs::windows_update_helper_env({
+	MOJO_REUSE  => 'https://*:45545:3',
+	MOJO_LISTEN => 'https://*:45545',
+	HOME        => '/home/me',
+	PATH        => '/usr/bin',
+});
+is_deeply($clean, { HOME => '/home/me', PATH => '/usr/bin' },
+	'the helper environment carries no reload leftovers');
+
 # --- non-Windows is a named no-op --------------------------------------------
 SKIP: {
 	skip 'the no-op is for a host that is not Windows', 1 if $^O eq 'MSWin32';

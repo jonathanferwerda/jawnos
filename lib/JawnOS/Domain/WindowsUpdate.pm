@@ -378,6 +378,11 @@ try {
 	if (-not (Test-Path -LiteralPath $launch)) {
 		throw ('the install has no launch.vbs at ' + $launch + '; the house was not started')
 	}
+	# The helper may itself have been started by a listening worker. Its
+	# MOJO_REUSE names the listening sockets of that process, and the house
+	# being started now is a new tree that cannot reopen them. Start it clean.
+	Remove-Item Env:MOJO_REUSE -ErrorAction SilentlyContinue
+	Remove-Item Env:MOJO_LISTEN -ErrorAction SilentlyContinue
 	Start-Process -FilePath 'wscript.exe' -ArgumentList ('"' + $launch + '"')
 	Write-UpdateLog ('started the house again from ' + $launch)
 	exit 0
@@ -411,6 +416,22 @@ sub windows_update_temp_dir {
 	$dir = $ENV{'TMP'}  if !defined $dir || !length $dir;
 	$dir = File::Spec->tmpdir if !defined $dir || !length $dir;
 	return $dir;
+}
+
+# The environment the detached helper starts in: this process's own, less the
+# variables a listening Mojolicious server leaves behind. A prefork worker that
+# answered the update request exports MOJO_REUSE - the listening sockets it and
+# its siblings share - and MOJO_LISTEN, the address it was told to bind. Handed
+# to a house of its own, the new tree tries to reopen those descriptors; on
+# Windows the parent's handles do not exist in the new process, so President
+# dies in Mojo::IOLoop::Server::listen ("Can't open file descriptor 3") and the
+# update leaves the house down. A test can hand in an environment instead of
+# reading this process's.
+sub windows_update_helper_env {
+	my ($env) = @_;
+	my %copy = %{ $env || \%ENV };
+	delete @copy{qw(MOJO_REUSE MOJO_LISTEN)};
+	return \%copy;
 }
 
 # The PowerShell that ships with Windows. The full path avoids a PATH lookup
@@ -456,6 +477,9 @@ sub windows_update_start {
 	my $command = 'Start-Process -FilePath ' . &_ps_quote($powershell)
 		. " -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-File',"
 		. $argument . ' -WindowStyle Hidden';
+	# The helper, and the house it starts, are a new process tree: they must not
+	# inherit this worker's reload environment (see windows_update_helper_env).
+	local %ENV = %{ &windows_update_helper_env() };
 	my $ok = eval {
 		system(1, $powershell, '-NoProfile', '-ExecutionPolicy', 'Bypass',
 			'-WindowStyle', 'Hidden', '-Command', $command);
