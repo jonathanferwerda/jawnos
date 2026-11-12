@@ -85,6 +85,7 @@ like($windows, qr/function windowTiledPress\(win\)/, 'a press is tiled-aware');
 like($back, qr/pressWindow\(/, 'the title-bar handler presses through the tile');
 like($stack, qr/windowTiledPress\(clicked\)/, 'a press in a tiled body brings it forward through the pile');
 like($windows, qr/windowTiledPendingApp\[window_app\]/, 'a bespoke opener claims the latest press for its app');
+like($windows, qr/isJson\(jws\).*pre_dimensioned'\) == 1/, 'a saved view places only a pinned window');
 like($windows, qr/function windowTiledPreview\(win, at, home\)/, 'a drag draws the slot it would join');
 like($windows, qr/windowTiledArea\(win, slot >= 0 \? home : null\)/, 'the stack ground uses the box the window left, not where it is');
 like($fit, qr/windowTiledPreview\(win, mouse_position\(\), dragFromTile\)/, 'the drag shows the preview from where it was picked up');
@@ -219,6 +220,8 @@ const ctx = {
 	clothesLineHeight: 0,
 	windowPhoneChecker: function () { return false; },
 	windowFit: function () {},
+	// gate.js provides this in the page; the harness is a stub for it
+	isJson: function (s) { try { JSON.parse(s); return true; } catch (e) { return false; } },
 	topLevelNow: function () {},
 	taskbarDisplayer: function () {},
 	jawnosAppFieldGet: function () { return ''; },
@@ -607,6 +610,35 @@ ctx.windowTiledSettle();
 eq(restore_race[0].attr('tile'), '0', 'the settle leaves the head alone');
 eq(came_late.attr('tile'), '1', 'and the restored window on its slot');
 eq(restore_race[1].attr('tile'), '2', 'and the stepped window where it landed');
+
+// The tab's saved view of an app is not a place for a fresh unpinned window: that
+// window belongs to the tile, and using the view gave it a fixed place and no
+// slot, so it stood outside the pile.
+let saved_view = desk([
+	{ id: 'window_a', top: 0, left: 0 },
+	{ id: 'window_b', top: 40, left: 50 }
+]);
+ctx.windowTiledPending = {};
+ctx.windowTiledPendingApp = {};
+ctx.windowTiledRestore = {};
+let saved_fresh = new El('window_c', { pre_dimensioned: '0' });
+dom.push(saved_fresh);
+ctx.jws = JSON.stringify({ window_c: { top: 700, left: 900, height: 300, width: 400 } });
+ctx.windowReorganizer('window_c');
+eq(saved_fresh.attr('tile'), '2', 'a fresh window takes a slot even when the app has a saved view');
+eq(saved_fresh.style.top, 80, 'and sits in that step, not at the saved pixels');
+eq(saved_fresh.style.left, 100, 'nor across at the saved pixels');
+
+// the same saved view on a pinned window is the place it keeps
+let saved_pin = desk([{ id: 'window_a', top: 0, left: 0 }]);
+ctx.windowTiledRestore = {};
+let pinned_saved = new El('window_b', { pre_dimensioned: '1' });
+dom.push(pinned_saved);
+ctx.jws = JSON.stringify({ window_b: { top: 700, left: 900, height: 300, width: 400 } });
+ctx.windowReorganizer('window_b');
+eq(pinned_saved.attr('tile'), undefined, 'a pinned window takes no slot');
+eq(pinned_saved.style.top, 700, 'and keeps the place the saved view holds');
+ctx.jws = undefined;
 
 process.exit(failures ? 1 : 0);
 JS

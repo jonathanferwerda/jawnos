@@ -1080,7 +1080,12 @@ function windowReorganizer(window_id) {
 		}
 		topLevelNow(win);
 		var thisWinTop = Number(numeral(win.css('top')).format());
-		if (jws != undefined && isJson(jws) && !windowPhoneChecker()) {
+		// A pinned window has a place of its own, and the saved view is it. An
+		// unpinned window belongs to the tile, so the slot decides where it goes:
+		// the saved view is only the place some earlier session left it in, and
+		// using it here gave the window that fixed place and no slot at all, so it
+		// stood outside the pile.
+		if (jws != undefined && isJson(jws) && !windowPhoneChecker() && win.attr('pre_dimensioned') == 1) {
 			var view = JSON.parse(jws);
 			jws = undefined;
 			win.css({ 'top': view[window_app].top, 'left': (view[window_app].left), 'height': view[window_app].height, 'width': view[window_app].width});
