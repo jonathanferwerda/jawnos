@@ -3059,26 +3059,20 @@ function mediaMaker(data) {
 					}
 					clearInterval(interval);
 					interval = setInterval(function(){
-						// The button follows the track's source, so it appears while the
-						// cues are still being fetched - after a search re-render they
-						// arrive a beat later, and hiding it in that beat was the old
-						// bug. The overlay, though, is only switched on once the cues
-						// have actually parsed: a showing track that has not received
-						// its own cue yet keeps drawing the previous film's last one.
-						// A film that has ended has no line to show, whichever picture
-						// a re-render puts back on screen.
-						var subtitle_track = document.getElementById('video_subtitles');
+						// The subtitles button is a preference, so it lives in the More
+						// tools panel and is always there - hiding it until a track
+						// happened to parse made it impossible to find. Only the
+						// overlay follows what is really there. TextTrack.readyState
+						// is undefined in this engine, so the cues themselves are the
+						// readiness signal: a showing track with no cue of its own
+						// yet keeps drawing the previous film's last line, and a film
+						// that has ended has no line to show at all.
 						var subtitle_text = tree.sound.textTracks && tree.sound.textTracks[0];
 						var subtitle_cues = subtitle_text && subtitle_text.cues;
-						var subtitle_loaded = !!(subtitle_text && subtitle_text.readyState == 2 && subtitle_cues && subtitle_cues.length);
-						var subtitle_loading = !!(subtitle_track && subtitle_track.getAttribute('src') && subtitle_track.readyState < 2);
-						if ((subtitle_loading || subtitle_loaded) && !tree.sound.ended) {
-							$('#video_subtitle_toggle').show();
-							subtitle_text.mode = (subtitle_loaded && $('#video_subtitle_toggle').attr('status') == 'showing') ? 'showing' : 'hidden';
-						}
-						else {
-							$('#video_subtitle_toggle').hide();
-							musicSubtitleHide();
+						var subtitle_parsed = !!(subtitle_cues && subtitle_cues.length);
+						if (subtitle_text) {
+							var subtitle_showing = $('#video_subtitle_toggle').attr('status') == 'showing';
+							subtitle_text.mode = (subtitle_parsed && !tree.sound.ended && subtitle_showing) ? 'showing' : 'hidden';
 						}
 						// A seek is where the media clock and the wall clock disagree: the
 						// interval can be late without the track having jumped, and the

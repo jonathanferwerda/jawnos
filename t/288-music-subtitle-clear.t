@@ -5,8 +5,12 @@
 #            theatre) and a page reload (which restores it at the end
 #            position), so the last thing watched came back on screen. A new
 #            load now resets the track, only a video asks for subtitles, the
-#            one-second tick only shows a cue that has actually parsed (and
-#            never for an ended film), and the end of a film hides the cue.
+#            one-second tick only shows a cue that has actually parsed (the
+#            cues, not TextTrack.readyState, which this engine leaves undefined)
+#            and never for an ended film, and the end of a film hides the cue.
+#            The Subtitles button itself stays in the More tools panel instead
+#            of hiding until a track happened to parse - that is why it could
+#            not be found.
 
 use strict;
 use warnings;
@@ -39,10 +43,14 @@ unlike($music, qr/document\.getElementById\('video_subtitles'\)\.src = st_url;/,
 	'the old unconditional assignment is gone');
 
 # --- the tick only shows a parsed cue, and never for an ended film ----------
-like($music, qr/var subtitle_loaded = !!\(subtitle_text && subtitle_text\.readyState == 2 && subtitle_cues && subtitle_cues\.length\);/,
-	'a cue is shown only once the track has actually parsed');
-like($music, qr/if \(\(subtitle_loading \|\| subtitle_loaded\) && !tree\.sound\.ended\) \{/,
+like($music, qr/var subtitle_parsed = !!\(subtitle_cues && subtitle_cues\.length\);/,
+	'a cue is shown only when the cues themselves have parsed');
+unlike($music, qr/subtitle_text\.readyState/,
+	'readiness comes from the cues, not TextTrack.readyState (undefined in the desktop engine)');
+like($music, qr/subtitle_text\.mode = \(subtitle_parsed && !tree\.sound\.ended && subtitle_showing\) \? 'showing' : 'hidden';/,
 	'an ended film has no line to show, whichever picture returns');
+unlike($music, qr/\$\('#video_subtitle_toggle'\)\.(?:show|hide)\(\)/,
+	'the toggle stays in the More tools panel instead of appearing and vanishing');
 like($music, qr/tree\.sound\.onended = function\(\) \{\s*\n\s*clearInterval\(interval\);\s*\n\s*musicVideoStop\(\);\s*\n\s*musicSubtitleHide\(\);/,
 	'the end of the film hides the cue');
 like($music, qr/if \(tree\.sound\.ended\) \{ musicSubtitleHide\(\); \}/,
