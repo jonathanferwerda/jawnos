@@ -284,6 +284,7 @@ $catalog{'ar'} = {
 		'dock.add' => 'أضف إلى الرصيف',
 		'dock.remove' => 'أزل من الرصيف',
 		'dock.transparent' => 'شفاف',
+		'dock.open_windows' => 'النوافذ المفتوحة',
 		'common.any' => 'أي',
 		'common.all' => 'الكل',
 		'common.specs' => 'المواصفات',

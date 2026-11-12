@@ -181,6 +181,7 @@ $(document).ready(function () {
 		taskbarDisplayer = function () {
 			var result = base.apply(this, arguments);
 			if (typeof jawnosTaskbarPinsRefresh == 'function') { jawnosTaskbarPinsRefresh(); }
+			if (typeof jawnosDockWindowsRender == 'function') { jawnosDockWindowsRender(); }
 			return result;
 		};
 		taskbarDisplayer.__jawnos_wrapped = true;
@@ -188,4 +189,5 @@ $(document).ready(function () {
 	if (typeof jawnosTaskbarOrderApply == 'function') { jawnosTaskbarOrderApply(); }
 	if (typeof jawnosTaskbarWindowDragInit == 'function') { jawnosTaskbarWindowDragInit(); }
 	if (typeof jawnosTaskbarPinsRefresh == 'function') { jawnosTaskbarPinsRefresh(); }
+	if (typeof jawnosDockWindowsRender == 'function') { jawnosDockWindowsRender(); }
 });

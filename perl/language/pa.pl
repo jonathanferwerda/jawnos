@@ -284,6 +284,7 @@ $catalog{'pa'} = {
 		'dock.add' => 'ਡੌਕ ਵਿੱਚ ਸ਼ਾਮਲ ਕਰੋ',
 		'dock.remove' => 'ਡੌਕ ਤੋਂ ਹਟਾਓ',
 		'dock.transparent' => 'ਪਾਰਦਰਸ਼ੀ',
+		'dock.open_windows' => 'ਖੁੱਲ੍ਹੀਆਂ ਵਿੰਡੋਜ਼',
 		'common.any' => 'ਕੋਈ ਵੀ',
 		'common.all' => 'ਸਾਰੇ',
 		'common.specs' => 'ਵਿਸ਼ੇਸ਼ਤਾਵਾਂ',

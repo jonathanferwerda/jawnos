@@ -284,6 +284,7 @@ $catalog{'tr'} = {
 		'dock.add' => "Dock'a ekle",
 		'dock.remove' => "Dock'tan kaldır",
 		'dock.transparent' => 'Saydam',
+		'dock.open_windows' => 'Açık pencereler',
 		'common.any' => 'Herhangi',
 		'common.all' => 'Tümü',
 		'common.specs' => 'Özellikler',

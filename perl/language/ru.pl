@@ -284,6 +284,7 @@ $catalog{'ru'} = {
 		'dock.add' => 'Добавить на док',
 		'dock.remove' => 'Убрать с дока',
 		'dock.transparent' => 'Прозрачный',
+		'dock.open_windows' => 'Открытые окна',
 		'common.any' => 'Любой',
 		'common.all' => 'Все',
 		'common.specs' => 'Характеристики',

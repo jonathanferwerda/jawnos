@@ -284,6 +284,7 @@ $catalog{'es'} = {
 		'dock.add' => 'Añadir al dock',
 		'dock.remove' => 'Quitar del dock',
 		'dock.transparent' => 'Transparente',
+		'dock.open_windows' => 'Ventanas abiertas',
 		'common.any' => 'Cualquiera',
 		'common.all' => 'Todos',
 		'common.specs' => 'Especificaciones',

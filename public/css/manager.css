@@ -71,6 +71,15 @@ html, body {
 }
 .pseudonym.bar:hover { border-color: var(--accent, #3b7ddd); box-shadow: var(--shadow-2, 0 8px 24px rgba(0,0,0,.18)); transform: translateY(-1px); }
 .pseudonym.bar:active { transform: translateY(0); }
+/* An open window on the dock: the same tile, dimmed while it is behind or
+   minimized and ringed while it is the one in front. An app pin whose window
+   is open wears the same state so the two faces never disagree. */
+.pseudonym.dock_window[state=open],
+.pseudonym.dock_window[state=minimized],
+.pseudonym.dock_app[state=open],
+.pseudonym.dock_app[state=minimized] { opacity: .72; }
+.pseudonym.dock_window[state=active],
+.pseudonym.dock_app[state=active] { outline: 2px solid var(--accent, #3b7ddd); outline-offset: 1px; }
 #pseudonym_home {
 	height: 120px;
 	position:fixed;

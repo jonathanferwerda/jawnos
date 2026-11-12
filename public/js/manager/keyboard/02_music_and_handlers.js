@@ -169,6 +169,12 @@ $(document).on('click','.pseudonym', function() {
 		if (typeof jawnosTaskbarPress == 'function') { jawnosTaskbarPress($(this).attr('dock_sel')); }
 		return;
 	}
+	// An open window's face answers like the bar's own tile: it restores a
+	// minimized window, raises a background one, or minimises the top one.
+	if ($(this).hasClass('dock_window')) {
+		jawnosDockWindowPress($(this));
+		return;
+	}
 	// Notifications is its own app now: notifications.js opens it from this face,
 	// and there is no keyboard panel left to build.
 	if (toggle == 'notifications') { return; }

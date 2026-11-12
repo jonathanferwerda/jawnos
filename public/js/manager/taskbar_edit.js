@@ -282,6 +282,8 @@ function jawnosWindowFocusApply() {
 		if (!bar.length) { return; }
 		bar.attr('data-focus', (this === top) ? 'on' : 'off');
 	});
+	// the dock's window faces and app pins wear the same state
+	if (typeof jawnosDockWindowsState == 'function') { jawnosDockWindowsState(); }
 }
 
 // Read the bar back into an order and keep it. Called when a drag settles.

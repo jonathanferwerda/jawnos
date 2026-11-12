@@ -284,6 +284,7 @@ $catalog{'zh'} = {
 		'dock.add' => '添加到停靠栏',
 		'dock.remove' => '从停靠栏移除',
 		'dock.transparent' => '透明',
+		'dock.open_windows' => '打开的窗口',
 		'common.any' => '任意',
 		'common.all' => '全部',
 		'common.specs' => '规格',

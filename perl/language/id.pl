@@ -284,6 +284,7 @@ $catalog{'id'} = {
 		'dock.add' => 'Tambahkan ke dock',
 		'dock.remove' => 'Hapus dari dock',
 		'dock.transparent' => 'Transparan',
+		'dock.open_windows' => 'Jendela terbuka',
 		'common.any' => 'Semua',
 		'common.all' => 'Semua',
 		'common.specs' => 'Spesifikasi',

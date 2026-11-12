@@ -15,7 +15,8 @@ function pseudonymSideSlide() {
 	// ones come back, so a switched-off icon stays off.
 	$('#pseudonym_bar .pseudonym.bar').each(function () {
 		if (pseudonymSideTucked) { $(this).hide(); }
-		else if (!(typeof jawnosDockIconsHidden == 'function' && jawnosDockIconsHidden()) && jawnosDockIconState($(this).attr('toggle')) == 'on') { $(this).show(); }
+		else if (!(typeof jawnosDockIconsHidden == 'function' && jawnosDockIconsHidden())
+			&& ((typeof jawnosDockFaceAlwaysOn == 'function' && jawnosDockFaceAlwaysOn(this)) || jawnosDockIconState($(this).attr('toggle')) == 'on')) { $(this).show(); }
 	});
 	if (L.search_in_dock) {
 		$('#search_toggle').css({ 'left': (L.icon_left + slide) + 'px' });

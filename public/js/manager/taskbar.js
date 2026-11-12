@@ -29,6 +29,10 @@ var jawnosBars = {
 	icons: jawnos_bar_settings['dock_icons'] || 'shown',
 	// the dock's backing, stepped aside by the dock menu's Transparent row
 	transparent: jawnos_bar_settings['dock_transparent'] || 'off',
+	// the dock's own pins and widgets (not the taskbar's), and whether open
+	// windows ride the row as faces
+	dock_pins: jawnos_bar_settings['dock_pins'],
+	dock_windows: jawnos_bar_settings['dock_windows'] || 'on',
 	height: parseInt(jawnos_bar_settings['taskbar_height']) || 44,
 	// the window title bar's own thickness, and the frame every window wears
 	navbar: parseInt(jawnos_bar_settings['navbar_height']) || 36,
@@ -477,9 +481,10 @@ function jawnosBarsApply() {
 	// clock and the start button are slots the edit mode drags around, and a
 	// pinned app or keyboard rides among them
 	jawnosTaskbarOrderApply();
-	// the dock draws the taskbar's pins and widgets, so a bar change is a dock
-	// change: rebuild the faces before the row is measured
+	// the dock draws its own pins and widgets, and the open windows, so a bar
+	// change is a dock change: rebuild the faces before the row is measured
 	if (typeof jawnosDockAppsRender == 'function') { jawnosDockAppsRender(); }
+	if (typeof jawnosDockWindowsRender == 'function') { jawnosDockWindowsRender(); }
 	// the slot has moved, so the padlock picks which side of the start button
 	// it belongs on now
 	jawnosTopIconsSideApply();

@@ -284,6 +284,7 @@ $catalog{'ko'} = {
 		'dock.add' => '독에 추가',
 		'dock.remove' => '독에서 제거',
 		'dock.transparent' => '투명',
+		'dock.open_windows' => '열린 창',
 		'common.any' => '모두',
 		'common.all' => '전체',
 		'common.specs' => '사양',

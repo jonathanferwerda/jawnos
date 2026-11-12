@@ -85,6 +85,7 @@ $(document).on('change', '.misc_setting', function () {
 	else if (setting == 'search_placement') { jawnosBars.search = $(this).val(); }
 	else if (setting == 'dock_icons') { jawnosBars.icons = $(this).val(); }
 	else if (setting == 'dock_transparent') { jawnosBars.transparent = $(this).val(); }
+	else if (setting == 'dock_windows') { jawnosBars.dock_windows = $(this).val(); }
 	else if (setting == 'taskbar_height') { jawnosBars.height = parseInt($(this).val()) || 44; }
 	else if (setting == 'navbar_height') { jawnosWindowNavbarApply($(this).val()); }
 	else if (setting == 'window_border') { jawnosWindowBorderApply($(this).val()); }

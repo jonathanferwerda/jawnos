@@ -284,6 +284,7 @@ $catalog{'hi'} = {
 		'dock.add' => 'डॉक में जोड़ें',
 		'dock.remove' => 'डॉक से हटाएँ',
 		'dock.transparent' => 'पारदर्शी',
+		'dock.open_windows' => 'खुली विंडो',
 		'common.any' => 'कोई भी',
 		'common.all' => 'सभी',
 		'common.specs' => 'विशेषताएं',

@@ -284,6 +284,7 @@ $catalog{'ja'} = {
 		'dock.add' => 'ドックに追加',
 		'dock.remove' => 'ドックから削除',
 		'dock.transparent' => '透明',
+		'dock.open_windows' => '開いているウィンドウ',
 		'common.any' => 'すべて',
 		'common.all' => 'すべて',
 		'common.specs' => '仕様',

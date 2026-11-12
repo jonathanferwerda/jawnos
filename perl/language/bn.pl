@@ -284,6 +284,7 @@ $catalog{'bn'} = {
 		'dock.add' => 'ডকে যোগ করুন',
 		'dock.remove' => 'ডক থেকে সরান',
 		'dock.transparent' => 'স্বচ্ছ',
+		'dock.open_windows' => 'খোলা উইন্ডো',
 		'common.any' => 'যেকোনো',
 		'common.all' => 'সব',
 		'common.specs' => 'বিশেষ উল্লেখ',
