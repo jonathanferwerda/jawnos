@@ -2469,17 +2469,26 @@ async function musicInit(method) {
 		// only the track does not.
 		if (method != 'files') {
 			$('.music_file').removeClass('playing');
-			var mf = pd.file ? $('.music_file[file="' + pd.file + '"]') : $();
+			// The saved key names the track that was playing, so it is preferred over
+			// the saved file. The file can name a stranger: a cache written while a
+			// search re-rendered the list under a player that kept going (before the
+			// saver read the element), or one written by an older build. The key was
+			// right in both, so this also repairs a cache that would otherwise restore
+			// someone else's video at the old position.
+			var mf = pd.key ? musicCardByKey(pd.key) : $();
+			if (!mf.length && pd.file) { mf = $('.music_file[file="' + pd.file + '"]'); }
 			mf.addClass('playing');
 			var playing = $('.playing');
 			tree.current_track = musicKey(playing);
 			thisTrack(playing.closest('.track_item'));
 			$('#video_full_title').text(playing.find('.full_title').text());
 
+			var saved_file = mf.length ? (mf.attr('file') || '') : '';
+
 			// only a saved track is restored: a first-ever open (no player cache) must
 			// not start playing on its own
-			if (pd.file) {
-				mediaMaker({ file: pd.file, currentTime: pd.currentTime, method: 'restore', timestamp: Date.now(), state: pd.state, });
+			if (saved_file) {
+				mediaMaker({ file: saved_file, currentTime: pd.currentTime, method: 'restore', timestamp: Date.now(), state: pd.state, });
 				if (method != 'search') {
 					tree.sound.currentTime = pd.currentTime;
 				}

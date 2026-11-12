@@ -1,10 +1,13 @@
 # tests-for: public/js/music.js
 # covers:    The music player cache names the file the element is actually
-#            playing. It used to write tree.songs[0] - the first row of the
+#            playing, and the restore resolves the saved key before the saved
+#            file. The cache used to write tree.songs[0] - the first row of the
 #            current list - and a search re-renders that list under a track that
 #            keeps playing, so the first row became a stranger while the element
 #            still held the old file. The next open then restored that stranger
-#            at the old track's position (3:12 of a song nobody chose).
+#            at the old track's position (3:12 of a song nobody chose). A cache
+#            already written that way still names the right track in `key`, so
+#            the restore now looks that up first and plays the row it finds.
 
 use strict;
 use warnings;
@@ -25,6 +28,23 @@ like($saver // '', qr/\bfile: playerCacheFile\(\)/,
 	'the saved file comes from the element, not the first row of the list');
 unlike($saver // '', qr/tree\.songs\[0\]/,
 	'the saver no longer reads tree.songs[0] at all');
+
+# --- the restore resolves the saved KEY first -------------------------------
+# A cache written before the saver read the element can name a stranger in
+# `file` while `key` still names the track the person was on, so the restore
+# resolves the key and plays the row it finds.
+my ($restore) = $music =~ /(if \(method != 'files'\) \{.*?\n\t\t\})/s;
+ok(defined $restore, 'the restore block is found');
+like($restore // '', qr/musicCardByKey\(pd\.key\)/,
+	'the saved key is resolved through musicCardByKey');
+like($restore // '', qr/if \(!mf\.length && pd\.file\)/,
+	'and the saved file is only the fallback');
+like($restore // '', qr/var saved_file = mf\.length \? \(mf\.attr\('file'\) \|\| ''\) : '';/,
+	'the file played is the resolved row\'s own');
+like($restore // '', qr/mediaMaker\(\{ file: saved_file,/,
+	'and that is what mediaMaker is handed');
+unlike($restore // '', qr/mediaMaker\(\{ file: pd\.file,/,
+	'the possibly-stale cache file is never played directly');
 
 # --- the traversal mediaMaker sets is the one the saver reads --------------
 like($music, qr{var url = '/play\?track=' \+ uri_track;},
