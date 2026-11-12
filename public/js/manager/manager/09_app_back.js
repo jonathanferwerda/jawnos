@@ -738,11 +738,34 @@ $(function () {
 				// Phone app's tab, for one). The chunk is loaded by now, so the
 				// app's restore function is the one that knows the panel.
 				if (open === 'phone' && typeof jawnPhonePaneRestore === 'function') { jawnPhonePaneRestore(); }
+				// The saved windows may be restored a moment after this success
+				// (a fresh page starts the retriever on its own tick). Sweep the
+				// other launcher apps once more so an old Gallery cannot sit on
+				// the Music just dealt.
+				setTimeout(function () {
+					$('.wind').filter(function () {
+						var a = $(this).attr('app');
+						return a && launcher_apps[a] && a !== open;
+					}).each(function () {
+						var ts = $(this).attr('timestamp');
+						if (ts && typeof closeWindow === 'function') { closeWindow(ts); }
+					});
+				}, 500);
 			},
 			error: function () { }
 		});
 	}
 	function openLauncherApp() {
+		// A fresh page restores its saved windows after this handler may have
+		// run, so drop the other launcher apps from the saved list first; the
+		// DOM sweep below covers a retriever that already read it.
+		try {
+			var saved = JSON.parse(sessionStorage.getItem('window_storage') || '{}') || {};
+			for (var a in launcher_apps) {
+				if (a !== open) { delete saved[a]; }
+			}
+			sessionStorage.setItem('window_storage', JSON.stringify(saved));
+		} catch (e) { }
 		var existing = $('.wind').filter(function () {
 			var a = $(this).attr('app');
 			return a && launcher_apps[a] && a !== open;
